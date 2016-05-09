@@ -6040,6 +6040,9 @@ QualType ASTReader::GetType(TypeID ID) {
     case PREDEF_TYPE_LONGDOUBLE_ID:
       T = Context.LongDoubleTy;
       break;
+    case PREDEF_TYPE_FLOAT128_ID:
+      T = Context.Float128Ty;
+      break;
     case PREDEF_TYPE_OVERLOAD_ID:
       T = Context.OverloadTy;
       break;
@@ -8695,6 +8698,7 @@ ASTReader::ASTReader(
       FileMgr(PP.getFileManager()), PCHContainerRdr(PCHContainerRdr),
       Diags(PP.getDiagnostics()), SemaObj(nullptr), PP(PP), Context(Context),
       Consumer(nullptr), ModuleMgr(PP.getFileManager(), PCHContainerRdr),
+      DummyIdResolver(PP),
       ReadTimer(std::move(ReadTimer)),
       PragmaMSStructState(-1),
       PragmaMSPointersToMembersState(-1),
@@ -8732,4 +8736,8 @@ ASTReader::ASTReader(
 ASTReader::~ASTReader() {
   if (OwnsDeserializationListener)
     delete DeserializationListener;
+}
+
+IdentifierResolver &ASTReader::getIdResolver() {
+  return SemaObj ? SemaObj->IdResolver : DummyIdResolver;
 }

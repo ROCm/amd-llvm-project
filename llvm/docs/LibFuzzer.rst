@@ -201,6 +201,12 @@ The most important command line options are:
 ``-timeout``
   Timeout in seconds, default 1200. If an input takes longer than this timeout,
   the process is treated as a failure case.
+``-rss_limit_mb``
+  Memory usage limit in Mb, default 2048. Use 0 to disable the limit.
+  If an input requires more than this amount of RSS memory to execute,
+  the process is treated as a failure case.
+  The limit is checked in a separate thread every second.
+  If running w/o ASAN/MSAN, you may use 'ulimit -v' instead.
 ``-timeout_exitcode``
   Exit code (default 77) to emit when terminating due to timeout, when
   ``-abort_on_timeout`` is not set.
@@ -618,14 +624,18 @@ Startup initialization
 ----------------------
 If the library being tested needs to be initialized, there are several options.
 
-The simplest way is to have a statically initialized global object:
+The simplest way is to have a statically initialized global object inside
+`LLVMFuzzerTestOneInput` (or in global scope if that works for you):
 
 .. code-block:: c++
 
-   static bool Initialized = DoInitialization();
+  extern "C" int LLVMFuzzerTestOneInput(const uint8_t *Data, size_t Size) {
+    static bool Initialized = DoInitialization();
+    ...
 
 Alternatively, you may define an optional init function and it will receive
-the program arguments that you can read and modify:
+the program arguments that you can read and modify. Do this **only** if you
+realy need to access ``argv``/``argc``.
 
 .. code-block:: c++
 
@@ -653,9 +663,7 @@ pass and if the actual leak is found, it will be reported with the reproducer
 and the process will exit.
 
 If your target has massive leaks and the leak detection is disabled
-you will eventually run out of RAM.
-To protect your machine from OOM death you may use
-e.g. ``ASAN_OPTIONS=hard_rss_limit_mb=2000`` (with AddressSanitizer_).
+you will eventually run out of RAM (see the ``-rss_limit_mb`` flag).
 
 
 Fuzzing components of LLVM

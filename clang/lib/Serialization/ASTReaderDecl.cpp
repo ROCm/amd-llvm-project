@@ -23,7 +23,6 @@
 #include "clang/AST/DeclVisitor.h"
 #include "clang/AST/Expr.h"
 #include "clang/Sema/IdentifierResolver.h"
-#include "clang/Sema/Sema.h"
 #include "clang/Sema/SemaDiagnostic.h"
 #include "llvm/Support/SaveAndRestore.h"
 
@@ -2814,9 +2813,9 @@ ASTDeclReader::FindExistingResult::~FindExistingResult() {
   if (needsAnonymousDeclarationNumber(New)) {
     setAnonymousDeclForMerging(Reader, New->getLexicalDeclContext(),
                                AnonymousDeclNumber, New);
-  } else if (DC->isTranslationUnit() && Reader.SemaObj &&
+  } else if (DC->isTranslationUnit() &&
              !Reader.getContext().getLangOpts().CPlusPlus) {
-    if (Reader.SemaObj->IdResolver.tryAddTopLevelDecl(New, Name))
+    if (Reader.getIdResolver().tryAddTopLevelDecl(New, Name))
       Reader.PendingFakeLookupResults[Name.getAsIdentifierInfo()]
             .push_back(New);
   } else if (DeclContext *MergeDC = getPrimaryContextForMerging(Reader, DC)) {
@@ -2919,9 +2918,9 @@ ASTDeclReader::FindExistingResult ASTDeclReader::findExisting(NamedDecl *D) {
       if (isSameEntity(Existing, D))
         return FindExistingResult(Reader, D, Existing, AnonymousDeclNumber,
                                   TypedefNameForLinkage);
-  } else if (DC->isTranslationUnit() && Reader.SemaObj &&
+  } else if (DC->isTranslationUnit() &&
              !Reader.getContext().getLangOpts().CPlusPlus) {
-    IdentifierResolver &IdResolver = Reader.SemaObj->IdResolver;
+    IdentifierResolver &IdResolver = Reader.getIdResolver();
 
     // Temporarily consider the identifier to be up-to-date. We don't want to
     // cause additional lookups here.
@@ -3891,11 +3890,6 @@ void ASTDeclReader::UpdateDecl(Decl *D, ModuleFile &ModuleFile,
           Reader.Context, ReadSourceRange(Record, Idx)));
       break;
 
-    case UPD_DECL_MARKED_OPENMP_DECLARETARGET:
-      D->addAttr(OMPDeclareTargetDeclAttr::CreateImplicit(
-          Reader.Context, ReadSourceRange(Record, Idx)));
-      break;
-
     case UPD_DECL_EXPORTED: {
       unsigned SubmoduleID = readSubmoduleID(Record, Idx);
       auto *Exported = cast<NamedDecl>(D);
@@ -3921,6 +3915,7 @@ void ASTDeclReader::UpdateDecl(Decl *D, ModuleFile &ModuleFile,
       break;
     }
 
+    case UPD_DECL_MARKED_OPENMP_DECLARETARGET:
     case UPD_ADDED_ATTR_TO_RECORD:
       AttrVec Attrs;
       Reader.ReadAttributes(F, Attrs, Record, Idx);
