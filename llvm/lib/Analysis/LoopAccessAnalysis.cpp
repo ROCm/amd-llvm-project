@@ -583,7 +583,7 @@ bool AccessAnalysis::canCheckPtrAtRT(RuntimePointerChecking &RtCheck,
           // When we run after a failing dependency check we have to make sure
           // we don't have wrapping pointers.
           (!ShouldCheckStride ||
-           isStridedPtr(PSE, Ptr, TheLoop, StridesMap) == 1)) {
+           getPtrStride(PSE, Ptr, TheLoop, StridesMap) == 1)) {
         // The id of the dependence set.
         unsigned DepId;
 
@@ -832,7 +832,7 @@ static bool isNoWrapAddRec(Value *Ptr, const SCEVAddRecExpr *AR,
 }
 
 /// \brief Check whether the access through \p Ptr has a constant stride.
-int llvm::isStridedPtr(PredicatedScalarEvolution &PSE, Value *Ptr,
+int llvm::getPtrStride(PredicatedScalarEvolution &PSE, Value *Ptr,
                        const Loop *Lp, const ValueToValueMap &StridesMap,
                        bool Assume) {
   Type *Ty = Ptr->getType();
@@ -1158,20 +1158,15 @@ MemoryDepChecker::isDependent(const MemAccessInfo &A, unsigned AIdx,
       BPtr->getType()->getPointerAddressSpace())
     return Dependence::Unknown;
 
-  const SCEV *AScev = replaceSymbolicStrideSCEV(PSE, Strides, APtr);
-  const SCEV *BScev = replaceSymbolicStrideSCEV(PSE, Strides, BPtr);
+  int StrideAPtr = getPtrStride(PSE, APtr, InnermostLoop, Strides, true);
+  int StrideBPtr = getPtrStride(PSE, BPtr, InnermostLoop, Strides, true);
 
-  int StrideAPtr = isStridedPtr(PSE, APtr, InnermostLoop, Strides, true);
-  int StrideBPtr = isStridedPtr(PSE, BPtr, InnermostLoop, Strides, true);
-
-  const SCEV *Src = AScev;
-  const SCEV *Sink = BScev;
+  const SCEV *Src = PSE.getSCEV(APtr);
+  const SCEV *Sink = PSE.getSCEV(BPtr);
 
   // If the induction step is negative we have to invert source and sink of the
   // dependence.
   if (StrideAPtr < 0) {
-    //Src = BScev;
-    //Sink = AScev;
     std::swap(APtr, BPtr);
     std::swap(Src, Sink);
     std::swap(AIsWrite, BIsWrite);
@@ -1615,7 +1610,7 @@ void LoopAccessInfo::analyzeLoop(const ValueToValueMap &Strides) {
     // read a few words, modify, and write a few words, and some of the
     // words may be written to the same address.
     bool IsReadOnlyPtr = false;
-    if (Seen.insert(Ptr).second || !isStridedPtr(PSE, Ptr, TheLoop, Strides)) {
+    if (Seen.insert(Ptr).second || !getPtrStride(PSE, Ptr, TheLoop, Strides)) {
       ++NumReads;
       IsReadOnlyPtr = true;
     }
@@ -1694,8 +1689,12 @@ void LoopAccessInfo::analyzeLoop(const ValueToValueMap &Strides) {
                  << (PtrRtChecking.Need ? "" : " don't")
                  << " need runtime memory checks.\n");
   else {
-    emitAnalysis(LoopAccessReport() <<
-                 "unsafe dependent memory operations in loop");
+    emitAnalysis(
+        LoopAccessReport()
+        << "unsafe dependent memory operations in loop. Use "
+           "#pragma loop distribute(enable) to allow loop distribution "
+           "to attempt to isolate the offending operations into a separate "
+           "loop");
     DEBUG(dbgs() << "LAA: unsafe dependent memory operations in loop\n");
   }
 }

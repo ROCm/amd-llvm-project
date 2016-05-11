@@ -129,7 +129,8 @@ template <class ELFT> void elf::writeResult(SymbolTable<ELFT> *Symtab) {
   GotSection<ELFT> Got;
   InterpSection<ELFT> Interp;
   PltSection<ELFT> Plt;
-  RelocationSection<ELFT> RelaDyn(Config->Rela ? ".rela.dyn" : ".rel.dyn");
+  RelocationSection<ELFT> RelaDyn(Config->Rela ? ".rela.dyn" : ".rel.dyn",
+                                  Config->ZCombreloc);
   StringTableSection<ELFT> DynStrTab(".dynstr", true);
   StringTableSection<ELFT> ShStrTab(".shstrtab", false);
   SymbolTableSection<ELFT> DynSymTab(*Symtab, DynStrTab);
@@ -165,7 +166,7 @@ template <class ELFT> void elf::writeResult(SymbolTable<ELFT> *Symtab) {
   if (Target->UseLazyBinding) {
     StringRef S = Config->Rela ? ".rela.plt" : ".rel.plt";
     GotPlt.reset(new GotPltSection<ELFT>);
-    RelaPlt.reset(new RelocationSection<ELFT>(S));
+    RelaPlt.reset(new RelocationSection<ELFT>(S, false /*Sort*/));
   }
   if (!Config->StripAll) {
     StrTab.reset(new StringTableSection<ELFT>(".strtab", false));
@@ -799,7 +800,7 @@ static void reportUndefined(SymbolTable<ELFT> &Symtab, SymbolBody *Sym) {
 
   std::string Msg = "undefined symbol: " + Sym->getName().str();
   if (InputFile *File = Sym->getSourceFile<ELFT>())
-    Msg += " in " + File->getName().str();
+    Msg += " in " + getFilename(File);
   if (Config->NoinhibitExec)
     warning(Msg);
   else
@@ -1104,8 +1105,11 @@ template <class ELFT>
 static Symbol *addOptionalSynthetic(SymbolTable<ELFT> &Table, StringRef Name,
                                     OutputSectionBase<ELFT> *Sec,
                                     typename ELFT::uint Val) {
-  if (!Table.find(Name))
+  SymbolBody *S = Table.find(Name);
+  if (!S)
     return nullptr;
+  if (!S->isUndefined() && !S->isShared())
+    return S->symbol();
   return Table.addSynthetic(Name, Sec, Val);
 }
 

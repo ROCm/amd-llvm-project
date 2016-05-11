@@ -1248,9 +1248,10 @@ public:
     return nullptr;
   }
 
-  /// Returns true if the platform's atomic operations are sign extended.
-  virtual bool hasSignExtendedAtomicOps() const {
-    return false;
+  /// Returns how the platform's atomic operations are extended (ZERO_EXTEND,
+  /// SIGN_EXTEND, or ANY_EXTEND).
+  virtual ISD::NodeType getExtendForAtomicOps() const {
+    return ISD::ZERO_EXTEND;
   }
 
   /// @}
@@ -3018,6 +3019,11 @@ public:
   /// Lower TLS global address SDNode for target independent emulated TLS model.
   virtual SDValue LowerToTLSEmulatedModel(const GlobalAddressSDNode *GA,
                                           SelectionDAG &DAG) const;
+
+private:
+  SDValue simplifySetCCWithAnd(EVT VT, SDValue N0, SDValue N1,
+                               ISD::CondCode Cond, DAGCombinerInfo &DCI,
+                               SDLoc DL) const;
 };
 
 /// Given an LLVM IR type and return type attributes, compute the return value

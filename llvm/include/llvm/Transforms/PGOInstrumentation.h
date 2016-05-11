@@ -14,9 +14,7 @@
 #ifndef LLVM_TRANSFORMS_PGOINSTRUMENTATION_H
 #define LLVM_TRANSFORMS_PGOINSTRUMENTATION_H
 
-#include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/PassManager.h"
-#include "llvm/ProfileData/InstrProf.h"
 #include "llvm/Transforms/Instrumentation.h"
 
 namespace llvm {
@@ -24,9 +22,17 @@ namespace llvm {
 /// The instrumentation (profile-instr-gen) pass for IR based PGO.
 class PGOInstrumentationGen : public PassInfoMixin<PGOInstrumentationGen> {
 public:
-  PGOInstrumentationGen() {}
-
   PreservedAnalyses run(Module &M, AnalysisManager<Module> &AM);
+};
+
+/// The profile annotation (profile-instr-use) pass for IR based PGO.
+class PGOInstrumentationUse : public PassInfoMixin<PGOInstrumentationUse> {
+public:
+  PreservedAnalyses run(Module &M, AnalysisManager<Module> &AM);
+  PGOInstrumentationUse(std::string Filename = "");
+
+private:
+  std::string ProfileFileName;
 };
 
 } // End llvm namespace

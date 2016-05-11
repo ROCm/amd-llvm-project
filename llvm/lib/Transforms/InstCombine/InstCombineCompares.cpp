@@ -2093,8 +2093,28 @@ Instruction *InstCombiner::visitICmpInstWithInstAndIntCst(ICmpInst &ICI,
     break;
   }
 
-  case Instruction::SDiv:
   case Instruction::UDiv:
+    if (ConstantInt *DivLHS = dyn_cast<ConstantInt>(LHSI->getOperand(0))) {
+      Value *X = LHSI->getOperand(1);
+      APInt C1 = RHS->getValue();
+      APInt C2 = DivLHS->getValue();
+      assert(C2 != 0 && "udiv 0, X should have been simplified already.");
+      // (icmp ugt (udiv C2, X), C1) -> (icmp ule X, C2/(C1+1))
+      if (ICI.getPredicate() == ICmpInst::ICMP_UGT) {
+        assert(!C1.isMaxValue() &&
+               "icmp ugt X, UINT_MAX should have been simplified already.");
+        return new ICmpInst(ICmpInst::ICMP_ULE, X,
+                            ConstantInt::get(X->getType(), C2.udiv(C1 + 1)));
+      }
+      // (icmp ult (udiv C2, X), C1) -> (icmp ugt X, C2/C1)
+      if (ICI.getPredicate() == ICmpInst::ICMP_ULT) {
+        assert(C1 != 0 && "icmp ult X, 0 should have been simplified already.");
+        return new ICmpInst(ICmpInst::ICMP_UGT, X,
+                            ConstantInt::get(X->getType(), C2.udiv(C1)));
+      }
+    }
+  // fall-through
+  case Instruction::SDiv:
     // Fold: icmp pred ([us]div X, C1), C2 -> range test
     // Fold this div into the comparison, producing a range check.
     // Determine, based on the divide type, what the range is being
@@ -3583,12 +3603,22 @@ Instruction *InstCombiner::visitICmpInst(ICmpInst &I) {
   // See if we are doing a comparison between a constant and an instruction that
   // can be folded into the comparison.
   if (ConstantInt *CI = dyn_cast<ConstantInt>(Op1)) {
+    Value *A = nullptr, *B = nullptr;
     // Since the RHS is a ConstantInt (CI), if the left hand side is an
     // instruction, see if that instruction also has constants so that the
     // instruction can be folded into the icmp
     if (Instruction *LHSI = dyn_cast<Instruction>(Op0))
       if (Instruction *Res = visitICmpInstWithInstAndIntCst(I, LHSI, CI))
         return Res;
+
+    // (icmp eq/ne (udiv A, B), 0) -> (icmp ugt/ule i32 B, A)
+    if (I.isEquality() && CI->isZero() &&
+        match(Op0, m_UDiv(m_Value(A), m_Value(B)))) {
+      ICmpInst::Predicate Pred = I.getPredicate() == ICmpInst::ICMP_EQ
+                                     ? ICmpInst::ICMP_UGT
+                                     : ICmpInst::ICMP_ULE;
+      return new ICmpInst(Pred, B, A);
+    }
   }
 
   // Handle icmp with constant (but not simple integer constant) RHS
