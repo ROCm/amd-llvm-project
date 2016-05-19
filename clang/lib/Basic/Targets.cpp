@@ -382,6 +382,29 @@ public:
       : OSTargetInfo<Target>(Triple, Opts) {}
 };
 
+// Haiku Target
+template<typename Target>
+class HaikuTargetInfo : public OSTargetInfo<Target> {
+protected:
+  void getOSDefines(const LangOptions &Opts, const llvm::Triple &Triple,
+                    MacroBuilder &Builder) const override {
+    // Haiku defines; list based off of gcc output
+    Builder.defineMacro("__HAIKU__");
+    Builder.defineMacro("__ELF__");
+    DefineStd(Builder, "unix", Opts);
+  }
+public:
+  HaikuTargetInfo(const llvm::Triple &Triple, const TargetOptions &Opts)
+      : OSTargetInfo<Target>(Triple, Opts) {
+    this->SizeType = TargetInfo::UnsignedLong;
+    this->IntPtrType = TargetInfo::SignedLong;
+    this->PtrDiffType = TargetInfo::SignedLong;
+    this->ProcessIDType = TargetInfo::SignedLong;
+    this->TLSSupported = false;
+
+  }
+};
+
 // Minix Target
 template<typename Target>
 class MinixTargetInfo : public OSTargetInfo<Target> {
@@ -609,7 +632,7 @@ protected:
     Builder.defineMacro("__KPRINTF_ATTRIBUTE__");
     DefineStd(Builder, "unix", Opts);
     Builder.defineMacro("__ELF__");
-    Builder.defineMacro("__PS4__");
+    Builder.defineMacro("__ORBIS__");
   }
 public:
   PS4OSTargetInfo(const llvm::Triple &Triple, const TargetOptions &Opts)
@@ -1976,17 +1999,6 @@ public:
       Builder.defineMacro("__HAS_FMAF__");
     if (hasLDEXPF)
       Builder.defineMacro("__HAS_LDEXPF__");
-    if (hasFP64 && Opts.OpenCL)
-      Builder.defineMacro("cl_khr_fp64");
-    if (Opts.OpenCL) {
-      if (GPU >= GK_NORTHERN_ISLANDS) {
-        Builder.defineMacro("cl_khr_byte_addressable_store");
-        Builder.defineMacro("cl_khr_global_int32_base_atomics");
-        Builder.defineMacro("cl_khr_global_int32_extended_atomics");
-        Builder.defineMacro("cl_khr_local_int32_base_atomics");
-        Builder.defineMacro("cl_khr_local_int32_extended_atomics");
-      }
-    }
   }
 
   BuiltinVaListKind getBuiltinVaListKind() const override {
@@ -2073,6 +2085,31 @@ public:
     }
 
     return true;
+  }
+
+   void setSupportedOpenCLOpts() override {
+     auto &Opts = getSupportedOpenCLOpts();
+     Opts.cl_clang_storage_class_specifiers = 1;
+     Opts.cl_khr_gl_sharing = 1;
+     Opts.cl_khr_gl_event = 1;
+     Opts.cl_khr_d3d10_sharing = 1;
+     Opts.cl_khr_subgroups = 1;
+
+     if (hasFP64)
+       Opts.cl_khr_fp64 = 1;
+     if (GPU >= GK_NORTHERN_ISLANDS) {
+       Opts.cl_khr_byte_addressable_store = 1;
+       Opts.cl_khr_global_int32_base_atomics = 1;
+       Opts.cl_khr_global_int32_extended_atomics = 1;
+       Opts.cl_khr_local_int32_base_atomics = 1;
+       Opts.cl_khr_local_int32_extended_atomics = 1;
+     }
+     if (GPU >= GK_SOUTHERN_ISLANDS)
+       Opts.cl_khr_fp16 = 1;
+       Opts.cl_khr_int64_base_atomics = 1;
+       Opts.cl_khr_int64_extended_atomics = 1;
+       Opts.cl_khr_3d_image_writes = 1;
+       Opts.cl_khr_gl_msaa_sharing = 1;
   }
 };
 
@@ -2236,6 +2273,7 @@ class X86TargetInfo : public TargetInfo {
   bool HasXSAVEOPT = false;
   bool HasXSAVEC = false;
   bool HasXSAVES = false;
+  bool HasMWAITX = false;
   bool HasPKU = false;
   bool HasCLFLUSHOPT = false;
   bool HasPCOMMIT = false;
@@ -2693,6 +2731,10 @@ public:
   bool hasSjLjLowering() const override {
     return true;
   }
+
+  void setSupportedOpenCLOpts() override {
+    getSupportedOpenCLOpts().setAll();
+  }
 };
 
 bool X86TargetInfo::setFPMath(StringRef Name) {
@@ -2906,6 +2948,7 @@ bool X86TargetInfo::initFeatureMap(
   case CK_BDVER4:
     setFeatureEnabledImpl(Features, "avx2", true);
     setFeatureEnabledImpl(Features, "bmi2", true);
+    setFeatureEnabledImpl(Features, "mwaitx", true);
     // FALLTHROUGH
   case CK_BDVER3:
     setFeatureEnabledImpl(Features, "fsgsbase", true);
@@ -3225,6 +3268,8 @@ bool X86TargetInfo::handleTargetFeatures(std::vector<std::string> &Features,
       HasXSAVEC = true;
     } else if (Feature == "+xsaves") {
       HasXSAVES = true;
+    } else if (Feature == "+mwaitx") {
+      HasMWAITX = true;
     } else if (Feature == "+pku") {
       HasPKU = true;
     } else if (Feature == "+clflushopt") {
@@ -3496,6 +3541,9 @@ void X86TargetInfo::getTargetDefines(const LangOptions &Opts,
 
   if (HasTBM)
     Builder.defineMacro("__TBM__");
+
+  if (HasMWAITX)
+    Builder.defineMacro("__MWAITX__");
 
   switch (XOPLevel) {
   case XOP:
@@ -4088,21 +4136,15 @@ public:
 };
 
 // x86-32 Haiku target
-class HaikuX86_32TargetInfo : public X86_32TargetInfo {
+class HaikuX86_32TargetInfo : public HaikuTargetInfo<X86_32TargetInfo> {
 public:
   HaikuX86_32TargetInfo(const llvm::Triple &Triple, const TargetOptions &Opts)
-      : X86_32TargetInfo(Triple, Opts) {
-    SizeType = UnsignedLong;
-    IntPtrType = SignedLong;
-    PtrDiffType = SignedLong;
-    ProcessIDType = SignedLong;
-    this->TLSSupported = false;
+    : HaikuTargetInfo<X86_32TargetInfo>(Triple, Opts) {
   }
   void getTargetDefines(const LangOptions &Opts,
                         MacroBuilder &Builder) const override {
-    X86_32TargetInfo::getTargetDefines(Opts, Builder);
+    HaikuTargetInfo<X86_32TargetInfo>::getTargetDefines(Opts, Builder);
     Builder.defineMacro("__INTEL__");
-    Builder.defineMacro("__HAIKU__");
   }
 };
 
@@ -5050,7 +5092,7 @@ public:
     if (ABI == "aapcs" || ABI == "aapcs-linux" || ABI == "aapcs-vfp") {
       // Embedded targets on Darwin follow AAPCS, but not EABI.
       // Windows on ARM follows AAPCS VFP, but does not conform to EABI.
-      if (!getTriple().isOSDarwin() && !getTriple().isOSWindows())
+      if (!getTriple().isOSBinFormatMachO() && !getTriple().isOSWindows())
         Builder.defineMacro("__ARM_EABI__");
       Builder.defineMacro("__ARM_PCS", "1");
     }
@@ -5974,7 +6016,16 @@ public:
 
   bool validateAsmConstraint(const char *&Name,
                              TargetInfo::ConstraintInfo &Info) const override {
-    return true;
+    switch (*Name) {
+      case 'v':
+      case 'q':
+        if (HasHVX) {
+          Info.setAllowsRegister();
+          return true;
+        }
+        break;
+    }
+    return false;
   }
 
   void getTargetDefines(const LangOptions &Opts,
@@ -7841,6 +7892,12 @@ public:
   CallingConv getDefaultCallingConv(CallingConvMethodType MT) const override {
     return CC_SpirFunction;
   }
+
+  void setSupportedOpenCLOpts() override {
+    // Assume all OpenCL extensions and optional core features are supported
+    // for SPIR since it is a generic target.
+    getSupportedOpenCLOpts().setAll();
+  }
 };
 
 class SPIR32TargetInfo : public SPIRTargetInfo {
@@ -8360,6 +8417,8 @@ static TargetInfo *AllocateTarget(const llvm::Triple &Triple,
         return new MicrosoftX86_64TargetInfo(Triple, Opts);
       }
     }
+    case llvm::Triple::Haiku:
+      return new HaikuTargetInfo<X86_64TargetInfo>(Triple, Opts);
     case llvm::Triple::NaCl:
       return new NaClTargetInfo<X86_64TargetInfo>(Triple, Opts);
     case llvm::Triple::PS4:
@@ -8438,6 +8497,8 @@ TargetInfo::CreateTargetInfo(DiagnosticsEngine &Diags,
 
   if (!Target->handleTargetFeatures(Opts->Features, Diags))
     return nullptr;
+
+  Target->setSupportedOpenCLOpts();
 
   return Target.release();
 }

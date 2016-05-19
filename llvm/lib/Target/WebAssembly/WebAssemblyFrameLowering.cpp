@@ -82,20 +82,21 @@ static void writeSPToMemory(unsigned SrcReg, MachineFunction &MF,
                             MachineBasicBlock::iterator &InsertAddr,
                             MachineBasicBlock::iterator &InsertStore,
                             DebugLoc DL) {
-  auto *SPSymbol = MF.createExternalSymbolName("__stack_pointer");
+  const char *ES = "__stack_pointer";
+  auto *SPSymbol = MF.createExternalSymbolName(ES);
   MachineRegisterInfo &MRI = MF.getRegInfo();
   const TargetRegisterClass *PtrRC =
       MRI.getTargetRegisterInfo()->getPointerRegClass(MF);
   unsigned SPAddr = MRI.createVirtualRegister(PtrRC);
-  unsigned Discard = MRI.createVirtualRegister(PtrRC);
+  unsigned Drop = MRI.createVirtualRegister(PtrRC);
   const auto *TII = MF.getSubtarget<WebAssemblySubtarget>().getInstrInfo();
 
   BuildMI(MBB, InsertAddr, DL, TII->get(WebAssembly::CONST_I32), SPAddr)
       .addExternalSymbol(SPSymbol);
-  auto *MMO = new MachineMemOperand(MachinePointerInfo(),
+  auto *MMO = new MachineMemOperand(MachinePointerInfo(MF.getPSVManager()
+                                        .getExternalSymbolCallEntry(ES)),
                                     MachineMemOperand::MOStore, 4, 4);
-  BuildMI(MBB, InsertStore, DL, TII->get(WebAssembly::STORE_I32),
-          Discard)
+  BuildMI(MBB, InsertStore, DL, TII->get(WebAssembly::STORE_I32), Drop)
       .addImm(0)
       .addReg(SPAddr)
       .addImm(2)  // p2align
@@ -138,14 +139,12 @@ void WebAssemblyFrameLowering::emitPrologue(MachineFunction &MF,
       MRI.getTargetRegisterInfo()->getPointerRegClass(MF);
   unsigned SPAddr = MRI.createVirtualRegister(PtrRC);
   unsigned SPReg = MRI.createVirtualRegister(PtrRC);
-  auto *SPSymbol = MF.createExternalSymbolName("__stack_pointer");
+  const char *ES = "__stack_pointer";
+  auto *SPSymbol = MF.createExternalSymbolName(ES);
   BuildMI(MBB, InsertPt, DL, TII->get(WebAssembly::CONST_I32), SPAddr)
       .addExternalSymbol(SPSymbol);
-  // This MachinePointerInfo should reference __stack_pointer as well but
-  // doesn't because MachinePointerInfo() takes a GV which we don't have for
-  // __stack_pointer. TODO: check if PseudoSourceValue::ExternalSymbolCallEntry
-  // is appropriate instead. (likewise for EmitEpologue below)
-  auto *LoadMMO = new MachineMemOperand(MachinePointerInfo(),
+  auto *LoadMMO = new MachineMemOperand(MachinePointerInfo(MF.getPSVManager()
+                                            .getExternalSymbolCallEntry(ES)),
                                         MachineMemOperand::MOLoad, 4, 4);
   // Load the SP value.
   BuildMI(MBB, InsertPt, DL, TII->get(WebAssembly::LOAD_I32),

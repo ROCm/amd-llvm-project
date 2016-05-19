@@ -180,7 +180,7 @@ GotSection<ELFT>::getMipsLocalEntryOffset(uintX_t EntryValue) {
   size_t NewIndex = MipsLocalGotPos.size() + 2;
   auto P = MipsLocalGotPos.insert(std::make_pair(EntryValue, NewIndex));
   assert(!P.second || MipsLocalGotPos.size() <= MipsLocalEntries);
-  return P.first->second * sizeof(uintX_t) - MipsGPOffset;
+  return (uintX_t)P.first->second * sizeof(uintX_t) - MipsGPOffset;
 }
 
 template <class ELFT>
@@ -270,17 +270,14 @@ PltSection<ELFT>::PltSection()
 
 template <class ELFT> void PltSection<ELFT>::writeTo(uint8_t *Buf) {
   size_t Off = 0;
-  if (Target->UseLazyBinding) {
-    // At beginning of PLT, we have code to call the dynamic linker
-    // to resolve dynsyms at runtime. Write such code.
-    Target->writePltZero(Buf);
-    Off += Target->PltZeroSize;
-  }
+  // At beginning of PLT, we have code to call the dynamic linker
+  // to resolve dynsyms at runtime. Write such code.
+  Target->writePltZero(Buf);
+  Off += Target->PltZeroSize;
   for (auto &I : Entries) {
     const SymbolBody *B = I.first;
     unsigned RelOff = I.second;
-    uint64_t Got =
-        Target->UseLazyBinding ? B->getGotPltVA<ELFT>() : B->getGotVA<ELFT>();
+    uint64_t Got = B->getGotPltVA<ELFT>();
     uint64_t Plt = this->getVA() + Off;
     Target->writePlt(Buf + Off, Got, Plt, B->PltIndex, RelOff);
     Off += Target->PltEntrySize;
@@ -289,9 +286,7 @@ template <class ELFT> void PltSection<ELFT>::writeTo(uint8_t *Buf) {
 
 template <class ELFT> void PltSection<ELFT>::addEntry(SymbolBody &Sym) {
   Sym.PltIndex = Entries.size();
-  unsigned RelOff = Target->UseLazyBinding
-                        ? Out<ELFT>::RelaPlt->getRelocOffset()
-                        : Out<ELFT>::RelaDyn->getRelocOffset();
+  unsigned RelOff = Out<ELFT>::RelaPlt->getRelocOffset();
   Entries.push_back(std::make_pair(&Sym, RelOff));
 }
 
@@ -1687,6 +1682,16 @@ void BuildIdSha1<ELFT>::writeBuildId(ArrayRef<ArrayRef<uint8_t>> Bufs) {
 }
 
 template <class ELFT>
+BuildIdHexstring<ELFT>::BuildIdHexstring()
+    : BuildIdSection<ELFT>(Config->BuildIdVector.size()) {}
+
+template <class ELFT>
+void BuildIdHexstring<ELFT>::writeBuildId(ArrayRef<ArrayRef<uint8_t>> Bufs) {
+  memcpy(this->HashBuf, Config->BuildIdVector.data(),
+         Config->BuildIdVector.size());
+}
+
+template <class ELFT>
 MipsReginfoOutputSection<ELFT>::MipsReginfoOutputSection()
     : OutputSectionBase<ELFT>(".reginfo", SHT_MIPS_REGINFO, SHF_ALLOC) {
   this->Header.sh_addralign = 4;
@@ -1852,5 +1857,10 @@ template class BuildIdSha1<ELF32LE>;
 template class BuildIdSha1<ELF32BE>;
 template class BuildIdSha1<ELF64LE>;
 template class BuildIdSha1<ELF64BE>;
+
+template class BuildIdHexstring<ELF32LE>;
+template class BuildIdHexstring<ELF32BE>;
+template class BuildIdHexstring<ELF64LE>;
+template class BuildIdHexstring<ELF64BE>;
 }
 }

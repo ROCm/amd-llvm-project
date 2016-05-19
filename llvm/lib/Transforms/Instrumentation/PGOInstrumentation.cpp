@@ -111,6 +111,16 @@ static cl::opt<unsigned> MaxNumAnnotations(
     cl::desc("Max number of annotations for a single indirect "
              "call callsite"));
 
+// Command line option to enable/disable the warning about missing profile
+// information.
+static cl::opt<bool> NoPGOWarnMissing("no-pgo-warn-missing", cl::init(false),
+                                      cl::Hidden);
+
+// Command line option to enable/disable the warning about a hash mismatch in
+// the profile data.
+static cl::opt<bool> NoPGOWarnMismatch("no-pgo-warn-mismatch", cl::init(false),
+                                       cl::Hidden);
+
 namespace {
 class PGOInstrumentationGenLegacyPass : public ModulePass {
 public:
@@ -572,18 +582,28 @@ void PGOUseFunc::setEdgeCount(DirectEdges &Edges, uint64_t Value) {
 // Return true if the profile are successfully read, and false on errors.
 bool PGOUseFunc::readCounters(IndexedInstrProfReader *PGOReader) {
   auto &Ctx = M->getContext();
-  ErrorOr<InstrProfRecord> Result =
+  Expected<InstrProfRecord> Result =
       PGOReader->getInstrProfRecord(FuncInfo.FuncName, FuncInfo.FunctionHash);
-  if (std::error_code EC = Result.getError()) {
-    if (EC == instrprof_error::unknown_function)
-      NumOfPGOMissing++;
-    else if (EC == instrprof_error::hash_mismatch ||
-             EC == llvm::instrprof_error::malformed)
-      NumOfPGOMismatch++;
+  if (Error E = Result.takeError()) {
+    handleAllErrors(std::move(E), [&](const InstrProfError &IPE) {
+      auto Err = IPE.get();
+      bool SkipWarning = false;
+      if (Err == instrprof_error::unknown_function) {
+        NumOfPGOMissing++;
+        SkipWarning = NoPGOWarnMissing;
+      } else if (Err == instrprof_error::hash_mismatch ||
+                 Err == instrprof_error::malformed) {
+        NumOfPGOMismatch++;
+        SkipWarning = NoPGOWarnMismatch;
+      }
 
-    std::string Msg = EC.message() + std::string(" ") + F.getName().str();
-    Ctx.diagnose(
-        DiagnosticInfoPGOProfile(M->getName().data(), Msg, DS_Warning));
+      if (SkipWarning)
+        return;
+
+      std::string Msg = IPE.message() + std::string(" ") + F.getName().str();
+      Ctx.diagnose(
+          DiagnosticInfoPGOProfile(M->getName().data(), Msg, DS_Warning));
+    });
     return false;
   }
   ProfileRecord = std::move(Result.get());
@@ -839,9 +859,11 @@ static bool annotateAllFunctions(
   auto &Ctx = M.getContext();
   // Read the counter array from file.
   auto ReaderOrErr = IndexedInstrProfReader::create(ProfileFileName);
-  if (std::error_code EC = ReaderOrErr.getError()) {
-    Ctx.diagnose(
-        DiagnosticInfoPGOProfile(ProfileFileName.data(), EC.message()));
+  if (Error E = ReaderOrErr.takeError()) {
+    handleAllErrors(std::move(E), [&](const ErrorInfoBase &EI) {
+      Ctx.diagnose(
+          DiagnosticInfoPGOProfile(ProfileFileName.data(), EI.message()));
+    });
     return false;
   }
 

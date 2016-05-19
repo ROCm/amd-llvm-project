@@ -32,19 +32,25 @@ static uint32_t fileWriter(ProfDataIOVec *IOVecs, uint32_t NumIOVecs,
 
 COMPILER_RT_VISIBILITY ProfBufferIO *
 lprofCreateBufferIOInternal(void *File, uint32_t BufferSz) {
-  CallocHook = calloc;
-  FreeHook = free;
-  return lprofCreateBufferIO(fileWriter, File, BufferSz);
+  FreeHook = &free;
+  DynamicBufferIOBuffer = (uint8_t *)calloc(BufferSz, 1);
+  VPBufferSize = BufferSz;
+  return lprofCreateBufferIO(fileWriter, File);
+}
+
+static void setupIOBuffer() {
+  const char *BufferSzStr = 0;
+  BufferSzStr = getenv("LLVM_VP_BUFFER_SIZE");
+  if (BufferSzStr && BufferSzStr[0]) {
+    VPBufferSize = atoi(BufferSzStr);
+    DynamicBufferIOBuffer = (uint8_t *)calloc(VPBufferSize, 1);
+  }
 }
 
 static int writeFile(FILE *File) {
-  const char *BufferSzStr = 0;
   FreeHook = &free;
-  CallocHook = &calloc;
-  BufferSzStr = getenv("LLVM_VP_BUFFER_SIZE");
-  if (BufferSzStr && BufferSzStr[0])
-    VPBufferSize = atoi(BufferSzStr);
-  return lprofWriteData(fileWriter, File, lprofGatherValueProfData);
+  setupIOBuffer();
+  return lprofWriteData(fileWriter, File, lprofGetVPDataReader());
 }
 
 static int writeFileWithName(const char *OutputName) {
@@ -247,6 +253,8 @@ int __llvm_profile_register_write_file_atexit(void) {
 
   if (HasBeenRegistered)
     return 0;
+
+  lprofSetupValueProfiler();
 
   HasBeenRegistered = 1;
   return atexit(writeFileWithoutReturn);

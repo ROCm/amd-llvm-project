@@ -2444,6 +2444,8 @@ bool Generic_GCC::IsIntegratedAssemblerDefault() const {
   case llvm::Triple::ppc64:
   case llvm::Triple::ppc64le:
   case llvm::Triple::systemz:
+  case llvm::Triple::mips:
+  case llvm::Triple::mipsel:
     return true;
   default:
     return false;
@@ -3038,6 +3040,38 @@ SanitizerMask CloudABI::getSupportedSanitizers() const {
 
 SanitizerMask CloudABI::getDefaultSanitizers() const {
   return SanitizerKind::SafeStack;
+}
+
+/// Haiku - Haiku tool chain which can call as(1) and ld(1) directly.
+
+Haiku::Haiku(const Driver &D, const llvm::Triple& Triple, const ArgList &Args)
+  : Generic_ELF(D, Triple, Args) {
+
+}
+
+void Haiku::AddClangCXXStdlibIncludeArgs(const ArgList &DriverArgs,
+                                          ArgStringList &CC1Args) const {
+  if (DriverArgs.hasArg(options::OPT_nostdlibinc) ||
+      DriverArgs.hasArg(options::OPT_nostdincxx))
+    return;
+
+  switch (GetCXXStdlibType(DriverArgs)) {
+  case ToolChain::CST_Libcxx:
+    addSystemInclude(DriverArgs, CC1Args,
+                     getDriver().SysRoot + "/system/develop/headers/c++/v1");
+    break;
+  case ToolChain::CST_Libstdcxx:
+    addSystemInclude(DriverArgs, CC1Args,
+                     getDriver().SysRoot + "/system/develop/headers/c++");
+    addSystemInclude(DriverArgs, CC1Args,
+                     getDriver().SysRoot + "/system/develop/headers/c++/backward");
+
+    StringRef Triple = getTriple().str();
+    addSystemInclude(DriverArgs, CC1Args,
+                     getDriver().SysRoot + "/system/develop/headers/c++/" +
+                     Triple);
+    break;
+  }
 }
 
 /// OpenBSD - OpenBSD tool chain which can call as(1) and ld(1) directly.
@@ -4096,11 +4130,11 @@ void Linux::AddClangCXXStdlibIncludeArgs(const ArgList &DriverArgs,
   if (GetCXXStdlibType(DriverArgs) == ToolChain::CST_Libcxx) {
     const std::string LibCXXIncludePathCandidates[] = {
         DetectLibcxxIncludePath(getDriver().Dir + "/../include/c++"),
-
-        // We also check the system as for a long time this is the only place
-        // Clang looked.
-        // FIXME: We should really remove this. It doesn't make any sense.
-        DetectLibcxxIncludePath(getDriver().SysRoot + "/usr/include/c++")};
+        // If this is a development, non-installed, clang, libcxx will
+        // not be found at ../include/c++ but it likely to be found at
+        // one of the following two locations:
+        DetectLibcxxIncludePath(getDriver().SysRoot + "/usr/local/include/c++"),
+        DetectLibcxxIncludePath(getDriver().SysRoot + "/usr/include/c++") };
     for (const auto &IncludePath : LibCXXIncludePathCandidates) {
       if (IncludePath.empty() || !getVFS().exists(IncludePath))
         continue;
@@ -4564,12 +4598,12 @@ PS4CPU::PS4CPU(const Driver &D, const llvm::Triple &Triple, const ArgList &Args)
   if (Args.hasArg(options::OPT_static))
     D.Diag(diag::err_drv_unsupported_opt_for_target) << "-static" << "PS4";
 
-  // Determine where to find the PS4 libraries. We use SCE_PS4_SDK_DIR
+  // Determine where to find the PS4 libraries. We use SCE_ORBIS_SDK_DIR
   // if it exists; otherwise use the driver's installation path, which
   // should be <SDK_DIR>/host_tools/bin.
 
   SmallString<512> PS4SDKDir;
-  if (const char *EnvValue = getenv("SCE_PS4_SDK_DIR")) {
+  if (const char *EnvValue = getenv("SCE_ORBIS_SDK_DIR")) {
     if (!llvm::sys::fs::exists(EnvValue))
       getDriver().Diag(clang::diag::warn_drv_ps4_sdk_dir) << EnvValue;
     PS4SDKDir = EnvValue;

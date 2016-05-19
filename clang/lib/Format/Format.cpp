@@ -807,8 +807,10 @@ public:
     assert(FirstInLineIndex == 0);
     do {
       Tokens.push_back(getNextToken());
-      if (Style.Language == FormatStyle::LK_JavaScript)
+      if (Style.Language == FormatStyle::LK_JavaScript) {
         tryParseJSRegexLiteral();
+        tryParseTemplateString();
+      }
       tryMergePreviousTokens();
       if (Tokens.back()->NewlinesBefore > 0 || Tokens.back()->IsMultiline)
         FirstInLineIndex = Tokens.size() - 1;
@@ -828,9 +830,6 @@ private:
       return;
 
     if (Style.Language == FormatStyle::LK_JavaScript) {
-      if (tryMergeTemplateString())
-        return;
-
       static const tok::TokenKind JSIdentity[] = {tok::equalequal, tok::equal};
       static const tok::TokenKind JSNotIdentity[] = {tok::exclaimequal,
                                                      tok::equal};
@@ -992,92 +991,42 @@ private:
     resetLexer(SourceMgr.getFileOffset(Lex->getSourceLocation(Offset)));
   }
 
-  bool tryMergeTemplateString() {
-    if (Tokens.size() < 2)
-      return false;
+  void tryParseTemplateString() {
+    FormatToken *BacktickToken = Tokens.back();
+    if (!BacktickToken->is(tok::unknown) || BacktickToken->TokenText != "`")
+      return;
 
-    FormatToken *EndBacktick = Tokens.back();
-    // Backticks get lexed as tok::unknown tokens. If a template string contains
-    // a comment start, it gets lexed as a tok::comment, or tok::unknown if
-    // unterminated.
-    if (!EndBacktick->isOneOf(tok::comment, tok::string_literal,
-                              tok::char_constant, tok::unknown))
-      return false;
-    size_t CommentBacktickPos = EndBacktick->TokenText.find('`');
-    // Unknown token that's not actually a backtick, or a comment that doesn't
-    // contain a backtick.
-    if (CommentBacktickPos == StringRef::npos)
-      return false;
-
-    unsigned TokenCount = 0;
-    bool IsMultiline = false;
-    unsigned EndColumnInFirstLine =
-        EndBacktick->OriginalColumn + EndBacktick->ColumnWidth;
-    for (auto I = Tokens.rbegin() + 1, E = Tokens.rend(); I != E; I++) {
-      ++TokenCount;
-      if (I[0]->IsMultiline)
-        IsMultiline = true;
-
-      // If there was a preceding template string, this must be the start of a
-      // template string, not the end.
-      if (I[0]->is(TT_TemplateString))
-        return false;
-
-      if (I[0]->isNot(tok::unknown) || I[0]->TokenText != "`") {
-        // Keep track of the rhs offset of the last token to wrap across lines -
-        // its the rhs offset of the first line of the template string, used to
-        // determine its width.
-        if (I[0]->IsMultiline)
-          EndColumnInFirstLine = I[0]->OriginalColumn + I[0]->ColumnWidth;
-        // If the token has newlines, the token before it (if it exists) is the
-        // rhs end of the previous line.
-        if (I[0]->NewlinesBefore > 0 && (I + 1 != E)) {
-          EndColumnInFirstLine = I[1]->OriginalColumn + I[1]->ColumnWidth;
-          IsMultiline = true;
-        }
-        continue;
-      }
-
-      Tokens.resize(Tokens.size() - TokenCount);
-      Tokens.back()->Type = TT_TemplateString;
-      const char *EndOffset =
-          EndBacktick->TokenText.data() + 1 + CommentBacktickPos;
-      if (CommentBacktickPos != 0) {
-        // If the backtick was not the first character (e.g. in a comment),
-        // re-lex after the backtick position.
-        SourceLocation Loc = EndBacktick->Tok.getLocation();
-        resetLexer(SourceMgr.getFileOffset(Loc) + CommentBacktickPos + 1);
-      }
-      Tokens.back()->TokenText =
-          StringRef(Tokens.back()->TokenText.data(),
-                    EndOffset - Tokens.back()->TokenText.data());
-
-      unsigned EndOriginalColumn = EndBacktick->OriginalColumn;
-      if (EndOriginalColumn == 0) {
-        SourceLocation Loc = EndBacktick->Tok.getLocation();
-        EndOriginalColumn = SourceMgr.getSpellingColumnNumber(Loc);
-      }
-      // If the ` is further down within the token (e.g. in a comment).
-      EndOriginalColumn += CommentBacktickPos;
-
-      if (IsMultiline) {
-        // ColumnWidth is from backtick to last token in line.
-        // LastLineColumnWidth is 0 to backtick.
-        // x = `some content
-        //     until here`;
-        Tokens.back()->ColumnWidth =
-            EndColumnInFirstLine - Tokens.back()->OriginalColumn;
-        // +1 for the ` itself.
-        Tokens.back()->LastLineColumnWidth = EndOriginalColumn + 1;
-        Tokens.back()->IsMultiline = true;
-      } else {
-        // Token simply spans from start to end, +1 for the ` itself.
-        Tokens.back()->ColumnWidth =
-            EndOriginalColumn - Tokens.back()->OriginalColumn + 1;
-      }
-      return true;
+    // 'Manually' lex ahead in the current file buffer.
+    const char *Offset = Lex->getBufferLocation();
+    const char *TmplBegin = Offset - BacktickToken->TokenText.size(); // at "`"
+    for (; Offset != Lex->getBuffer().end() && *Offset != '`'; ++Offset) {
+      if (*Offset == '\\')
+        ++Offset; // Skip the escaped character.
     }
-    return false;
+
+    StringRef LiteralText(TmplBegin, Offset - TmplBegin + 1);
+    BacktickToken->Type = TT_TemplateString;
+    BacktickToken->Tok.setKind(tok::string_literal);
+    BacktickToken->TokenText = LiteralText;
+
+    // Adjust width for potentially multiline string literals.
+    size_t FirstBreak = LiteralText.find('\n');
+    StringRef FirstLineText = FirstBreak == StringRef::npos
+                                  ? LiteralText
+                                  : LiteralText.substr(0, FirstBreak);
+    BacktickToken->ColumnWidth = encoding::columnWidthWithTabs(
+        FirstLineText, BacktickToken->OriginalColumn, Style.TabWidth, Encoding);
+    size_t LastBreak = LiteralText.rfind('\n');
+    if (LastBreak != StringRef::npos) {
+      BacktickToken->IsMultiline = true;
+      unsigned StartColumn = 0; // The template tail spans the entire line.
+      BacktickToken->LastLineColumnWidth = encoding::columnWidthWithTabs(
+          LiteralText.substr(LastBreak + 1, LiteralText.size()), StartColumn,
+          Style.TabWidth, Encoding);
+    }
+
+    resetLexer(
+        SourceMgr.getFileOffset(Lex->getSourceLocation(Offset + 1)));
   }
 
   bool tryMerge_TMacro() {
@@ -1652,7 +1601,7 @@ private:
       for (FormatToken *FormatTok = Line->First; FormatTok;
            FormatTok = FormatTok->Next) {
         StringRef Input = FormatTok->TokenText;
-        if (!FormatTok->isStringLiteral() ||
+        if (FormatTok->Finalized || !FormatTok->isStringLiteral() ||
             // NB: testing for not starting with a double quote to avoid
             // breaking
             // `template strings`.
@@ -1816,6 +1765,15 @@ public:
 
     checkEmptyNamespace(AnnotatedLines);
 
+    for (auto &Line : AnnotatedLines) {
+      if (Line->Affected) {
+        cleanupRight(Line->First, tok::comma, tok::comma);
+        cleanupRight(Line->First, TT_CtorInitializerColon, tok::comma);
+        cleanupLeft(Line->First, TT_CtorInitializerComma, tok::l_brace);
+        cleanupLeft(Line->First, TT_CtorInitializerColon, tok::l_brace);
+      }
+    }
+
     return generateFixes();
   }
 
@@ -1904,6 +1862,45 @@ private:
     return true;
   }
 
+  // Checks pairs {start, start->next},..., {end->previous, end} and deletes one
+  // of the token in the pair if the left token has \p LK token kind and the
+  // right token has \p RK token kind. If \p DeleteLeft is true, the left token
+  // is deleted on match; otherwise, the right token is deleted.
+  template <typename LeftKind, typename RightKind>
+  void cleanupPair(FormatToken *Start, LeftKind LK, RightKind RK,
+                   bool DeleteLeft) {
+    auto NextNotDeleted = [this](const FormatToken &Tok) -> FormatToken * {
+      for (auto *Res = Tok.Next; Res; Res = Res->Next)
+        if (!Res->is(tok::comment) &&
+            DeletedTokens.find(Res) == DeletedTokens.end())
+          return Res;
+      return nullptr;
+    };
+    for (auto *Left = Start; Left;) {
+      auto *Right = NextNotDeleted(*Left);
+      if (!Right)
+        break;
+      if (Left->is(LK) && Right->is(RK)) {
+        deleteToken(DeleteLeft ? Left : Right);
+        // If the right token is deleted, we should keep the left token
+        // unchanged and pair it with the new right token.
+        if (!DeleteLeft)
+          continue;
+      }
+      Left = Right;
+    }
+  }
+
+  template <typename LeftKind, typename RightKind>
+  void cleanupLeft(FormatToken *Start, LeftKind LK, RightKind RK) {
+    cleanupPair(Start, LK, RK, /*DeleteLeft=*/true);
+  }
+
+  template <typename LeftKind, typename RightKind>
+  void cleanupRight(FormatToken *Start, LeftKind LK, RightKind RK) {
+    cleanupPair(Start, LK, RK, /*DeleteLeft=*/false);
+  }
+
   // Delete the given token.
   inline void deleteToken(FormatToken *Tok) {
     if (Tok)
@@ -1941,7 +1938,7 @@ private:
   struct FormatTokenLess {
     FormatTokenLess(const SourceManager &SM) : SM(SM) {}
 
-    bool operator()(const FormatToken *LHS, const FormatToken *RHS) {
+    bool operator()(const FormatToken *LHS, const FormatToken *RHS) const {
       return SM.isBeforeInTranslationUnit(LHS->Tok.getLocation(),
                                           RHS->Tok.getLocation());
     }
@@ -2143,13 +2140,23 @@ tooling::Replacements formatReplacements(StringRef Code,
                                          const tooling::Replacements &Replaces,
                                          const FormatStyle &Style) {
   // We need to use lambda function here since there are two versions of
+  // `sortIncludes`.
+  auto SortIncludes = [](const FormatStyle &Style, StringRef Code,
+                         std::vector<tooling::Range> Ranges,
+                         StringRef FileName) -> tooling::Replacements {
+    return sortIncludes(Style, Code, Ranges, FileName);
+  };
+  tooling::Replacements SortedReplaces =
+      processReplacements(SortIncludes, Code, Replaces, Style);
+
+  // We need to use lambda function here since there are two versions of
   // `reformat`.
   auto Reformat = [](const FormatStyle &Style, StringRef Code,
                      std::vector<tooling::Range> Ranges,
                      StringRef FileName) -> tooling::Replacements {
     return reformat(Style, Code, Ranges, FileName);
   };
-  return processReplacements(Reformat, Code, Replaces, Style);
+  return processReplacements(Reformat, Code, SortedReplaces, Style);
 }
 
 tooling::Replacements

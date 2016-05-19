@@ -65,6 +65,13 @@ static cl::opt<unsigned>
                             "loop-access analysis (default = 100)"),
                    cl::init(100));
 
+/// \brief Enable store-to-load forwarding conflict detection. This option can
+/// be disabled for correctness testing.
+static cl::opt<bool> EnableForwardingConflictDetection(
+    "store-to-load-forwarding-conflict-detection", cl::Hidden,
+    cl::desc("Enable conflict detection in loop-access analysis"),
+    cl::init(true));
+
 bool VectorizerParams::isInterleaveForced() {
   return ::VectorizationInterleave.getNumOccurrences() > 0;
 }
@@ -1074,30 +1081,34 @@ bool MemoryDepChecker::couldPreventStoreLoadForward(unsigned Distance,
   //   hence on your typical architecture store-load forwarding does not take
   //   place. Vectorizing in such cases does not make sense.
   // Store-load forwarding distance.
-  const unsigned NumCyclesForStoreLoadThroughMemory = 8*TypeByteSize;
-  // Maximum vector factor.
-  unsigned MaxVFWithoutSLForwardIssues =
-    VectorizerParams::MaxVectorWidth * TypeByteSize;
-  if(MaxSafeDepDistBytes < MaxVFWithoutSLForwardIssues)
-    MaxVFWithoutSLForwardIssues = MaxSafeDepDistBytes;
 
-  for (unsigned vf = 2*TypeByteSize; vf <= MaxVFWithoutSLForwardIssues;
-       vf *= 2) {
-    if (Distance % vf && Distance / vf < NumCyclesForStoreLoadThroughMemory) {
-      MaxVFWithoutSLForwardIssues = (vf >>=1);
+  // After this many iterations store-to-load forwarding conflicts should not
+  // cause any slowdowns.
+  const unsigned NumItersForStoreLoadThroughMemory = 8 * TypeByteSize;
+  // Maximum vector factor.
+  unsigned MaxVFWithoutSLForwardIssues = std::min(
+      VectorizerParams::MaxVectorWidth * TypeByteSize, MaxSafeDepDistBytes);
+
+  // Compute the smallest VF at which the store and load would be misaligned.
+  for (unsigned VF = 2 * TypeByteSize; VF <= MaxVFWithoutSLForwardIssues;
+       VF *= 2) {
+    // If the number of vector iteration between the store and the load are
+    // small we could incur conflicts.
+    if (Distance % VF && Distance / VF < NumItersForStoreLoadThroughMemory) {
+      MaxVFWithoutSLForwardIssues = (VF >>= 1);
       break;
     }
   }
 
-  if (MaxVFWithoutSLForwardIssues< 2*TypeByteSize) {
-    DEBUG(dbgs() << "LAA: Distance " << Distance <<
-          " that could cause a store-load forwarding conflict\n");
+  if (MaxVFWithoutSLForwardIssues < 2 * TypeByteSize) {
+    DEBUG(dbgs() << "LAA: Distance " << Distance
+                 << " that could cause a store-load forwarding conflict\n");
     return true;
   }
 
   if (MaxVFWithoutSLForwardIssues < MaxSafeDepDistBytes &&
       MaxVFWithoutSLForwardIssues !=
-      VectorizerParams::MaxVectorWidth * TypeByteSize)
+          VectorizerParams::MaxVectorWidth * TypeByteSize)
     MaxSafeDepDistBytes = MaxVFWithoutSLForwardIssues;
   return false;
 }
@@ -1205,7 +1216,7 @@ MemoryDepChecker::isDependent(const MemAccessInfo &A, unsigned AIdx,
   const APInt &Val = C->getAPInt();
   if (Val.isNegative()) {
     bool IsTrueDataDependence = (AIsWrite && !BIsWrite);
-    if (IsTrueDataDependence &&
+    if (IsTrueDataDependence && EnableForwardingConflictDetection &&
         (couldPreventStoreLoadForward(Val.abs().getZExtValue(), TypeByteSize) ||
          ATy != BTy)) {
       DEBUG(dbgs() << "LAA: Forward but may prevent st->ld forwarding\n");
@@ -1311,7 +1322,7 @@ MemoryDepChecker::isDependent(const MemAccessInfo &A, unsigned AIdx,
       Distance < MaxSafeDepDistBytes ? Distance : MaxSafeDepDistBytes;
 
   bool IsTrueDataDependence = (!AIsWrite && BIsWrite);
-  if (IsTrueDataDependence &&
+  if (IsTrueDataDependence && EnableForwardingConflictDetection &&
       couldPreventStoreLoadForward(Distance, TypeByteSize))
     return Dependence::BackwardVectorizableButPreventsForwarding;
 
@@ -1875,10 +1886,13 @@ LoopAccessInfo::LoopAccessInfo(Loop *L, ScalarEvolution *SE,
 
 void LoopAccessInfo::print(raw_ostream &OS, unsigned Depth) const {
   if (CanVecMem) {
+    OS.indent(Depth) << "Memory dependences are safe";
+    if (MaxSafeDepDistBytes != -1U)
+      OS << " with a maximum dependence distance of " << MaxSafeDepDistBytes
+         << " bytes";
     if (PtrRtChecking.Need)
-      OS.indent(Depth) << "Memory dependences are safe with run-time checks\n";
-    else
-      OS.indent(Depth) << "Memory dependences are safe\n";
+      OS << " with run-time checks";
+    OS << "\n";
   }
 
   if (Report)

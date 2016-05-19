@@ -106,6 +106,26 @@ static void LowerDins(MCInst& InstIn) {
   return;
 }
 
+// Fix a bad compact branch encoding for beqc/bnec.
+void MipsMCCodeEmitter::LowerCompactBranch(MCInst& Inst) const {
+
+  // Encoding may be illegal !(rs < rt), but this situation is
+  // easily fixed.
+  unsigned RegOp0 = Inst.getOperand(0).getReg();
+  unsigned RegOp1 = Inst.getOperand(1).getReg();
+
+  unsigned Reg0 =  Ctx.getRegisterInfo()->getEncodingValue(RegOp0);
+  unsigned Reg1 =  Ctx.getRegisterInfo()->getEncodingValue(RegOp1);
+
+  assert(Reg0 != Reg1 && "Instruction has bad operands ($rs == $rt)!");
+  if (Reg0 < Reg1)
+    return;
+
+  Inst.getOperand(0).setReg(RegOp1);
+  Inst.getOperand(1).setReg(RegOp0);
+
+}
+
 bool MipsMCCodeEmitter::isMicroMips(const MCSubtargetInfo &STI) const {
   return STI.getFeatureBits()[Mips::FeatureMicroMips];
 }
@@ -160,6 +180,11 @@ encodeInstruction(const MCInst &MI, raw_ostream &OS,
     // Double extract instruction is chosen by pos and size operands
   case Mips::DINS:
     LowerDins(TmpInst);
+    break;
+  // Compact branches.
+  case Mips::BEQC:
+  case Mips::BNEC:
+    LowerCompactBranch(TmpInst);
   }
 
   unsigned long N = Fixups.size();
@@ -219,6 +244,29 @@ getBranchTargetOpValue(const MCInst &MI, unsigned OpNo,
 
   // If the destination is an immediate, divide by 4.
   if (MO.isImm()) return MO.getImm() >> 2;
+
+  assert(MO.isExpr() &&
+         "getBranchTargetOpValue expects only expressions or immediates");
+
+  const MCExpr *FixupExpression = MCBinaryExpr::createAdd(
+      MO.getExpr(), MCConstantExpr::create(-4, Ctx), Ctx);
+  Fixups.push_back(MCFixup::create(0, FixupExpression,
+                                   MCFixupKind(Mips::fixup_Mips_PC16)));
+  return 0;
+}
+
+/// getBranchTargetOpValue1SImm16 - Return binary encoding of the branch
+/// target operand. If the machine operand requires relocation,
+/// record the relocation and return zero.
+unsigned MipsMCCodeEmitter::
+getBranchTargetOpValue1SImm16(const MCInst &MI, unsigned OpNo,
+                              SmallVectorImpl<MCFixup> &Fixups,
+                              const MCSubtargetInfo &STI) const {
+
+  const MCOperand &MO = MI.getOperand(OpNo);
+
+  // If the destination is an immediate, divide by 2.
+  if (MO.isImm()) return MO.getImm() >> 1;
 
   assert(MO.isExpr() &&
          "getBranchTargetOpValue expects only expressions or immediates");
@@ -317,6 +365,26 @@ getBranchTarget21OpValue(const MCInst &MI, unsigned OpNo,
       MO.getExpr(), MCConstantExpr::create(-4, Ctx), Ctx);
   Fixups.push_back(MCFixup::create(0, FixupExpression,
                                    MCFixupKind(Mips::fixup_MIPS_PC21_S2)));
+  return 0;
+}
+
+/// getBranchTarget21OpValueMM - Return binary encoding of the branch
+/// target operand for microMIPS. If the machine operand requires
+/// relocation, record the relocation and return zero.
+unsigned MipsMCCodeEmitter::
+getBranchTarget21OpValueMM(const MCInst &MI, unsigned OpNo,
+                           SmallVectorImpl<MCFixup> &Fixups,
+                           const MCSubtargetInfo &STI) const {
+
+  const MCOperand &MO = MI.getOperand(OpNo);
+
+  // If the destination is an immediate, divide by 2.
+  if (MO.isImm()) return MO.getImm() >> 1;
+
+  assert(MO.isExpr() &&
+    "getBranchTarget21OpValueMM expects only expressions or immediates");
+
+  // TODO: Push fixup.
   return 0;
 }
 

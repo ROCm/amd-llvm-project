@@ -170,7 +170,7 @@ template <class ELFT> static bool shouldMerge(const typename ELFT::Shdr &Sec) {
   if (!EntSize || Sec.sh_size % EntSize)
     fatal("SHF_MERGE section size must be a multiple of sh_entsize");
 
-  // Don't try to merge if the aligment is larger than the sh_entsize and this
+  // Don't try to merge if the alignment is larger than the sh_entsize and this
   // is not SHF_STRINGS.
   //
   // Since this is not a SHF_STRINGS, we would need to pad after every entity.
@@ -394,8 +394,9 @@ MemoryBufferRef ArchiveFile::getMember(const Archive::Symbol *Sym) {
             "could not get the buffer for the member defining symbol " +
                 Sym->getName());
 
-  if (C.getParent()->isThin())
-    maybeCopyInputFile(check(C.getFullName()), Ret.getBuffer());
+  if (C.getParent()->isThin() && Driver->Cpio)
+    Driver->Cpio->append(relativeToRoot(check(C.getFullName())),
+                         Ret.getBuffer());
 
   return Ret;
 }

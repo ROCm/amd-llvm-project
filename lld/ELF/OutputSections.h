@@ -476,7 +476,7 @@ class DynamicSection final : public OutputSectionBase<ELFT> {
   std::vector<Entry> Entries;
 
 public:
-  DynamicSection(SymbolTable<ELFT> &SymTab);
+  explicit DynamicSection(SymbolTable<ELFT> &SymTab);
   void finalize() override;
   void writeTo(uint8_t *Buf) override;
 
@@ -578,6 +578,13 @@ public:
 template <class ELFT> class BuildIdSha1 final : public BuildIdSection<ELFT> {
 public:
   BuildIdSha1() : BuildIdSection<ELFT>(20) {}
+  void writeBuildId(ArrayRef<ArrayRef<uint8_t>> Bufs) override;
+};
+
+template <class ELFT>
+class BuildIdHexstring final : public BuildIdSection<ELFT> {
+public:
+  BuildIdHexstring();
   void writeBuildId(ArrayRef<ArrayRef<uint8_t>> Bufs) override;
 };
 

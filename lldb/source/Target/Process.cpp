@@ -726,7 +726,6 @@ Process::Process(lldb::TargetSP target_sp, ListenerSP listener_sp, const UnixSig
     m_private_state_broadcaster(nullptr, "lldb.process.internal_state_broadcaster"),
     m_private_state_control_broadcaster(nullptr, "lldb.process.internal_state_control_broadcaster"),
     m_private_state_listener_sp (Listener::MakeListener("lldb.process.internal_state_listener")),
-    m_private_state_control_wait(),
     m_mod_id (),
     m_process_unique_id(0),
     m_thread_index_id (0),
@@ -1512,21 +1511,15 @@ Process::IsAlive ()
 // found in the global target list (we want to be completely sure that the
 // lldb_private::Process doesn't go away before we can deliver the signal.
 bool
-Process::SetProcessExitStatus (void *callback_baton,
-                               lldb::pid_t pid,
-                               bool exited,
-                               int signo,          // Zero for no signal
-                               int exit_status     // Exit value of process if signal is zero
-)
+Process::SetProcessExitStatus(lldb::pid_t pid, bool exited,
+                              int signo,      // Zero for no signal
+                              int exit_status // Exit value of process if signal is zero
+                              )
 {
     Log *log(lldb_private::GetLogIfAnyCategoriesSet (LIBLLDB_LOG_PROCESS));
     if (log)
-        log->Printf ("Process::SetProcessExitStatus (baton=%p, pid=%" PRIu64 ", exited=%i, signal=%i, exit_status=%i)\n",
-                     callback_baton,
-                     pid,
-                     exited,
-                     signo,
-                     exit_status);
+        log->Printf("Process::SetProcessExitStatus (pid=%" PRIu64 ", exited=%i, signal=%i, exit_status=%i)\n", pid,
+                    exited, signo, exit_status);
 
     if (exited)
     {
@@ -1802,7 +1795,7 @@ Process::SetPrivateState (StateType new_state)
         log->Printf("Process::SetPrivateState (%s)", StateAsCString(new_state));
 
     Mutex::Locker thread_locker(m_thread_list.GetMutex());
-    Mutex::Locker locker(m_private_state.GetMutex());
+    std::lock_guard<std::recursive_mutex> guard(m_private_state.GetMutex());
 
     const StateType old_state = m_private_state.GetValueNoLock ();
     state_changed = old_state != new_state;
@@ -4115,44 +4108,46 @@ Process::ControlPrivateStateThread (uint32_t signal)
     // Signal the private state thread. First we should copy this is case the
     // thread starts exiting since the private state thread will NULL this out
     // when it exits
-    HostThread private_state_thread(m_private_state_thread);
-    if (private_state_thread.IsJoinable())
     {
-        TimeValue timeout_time;
-        bool timed_out;
-
-        m_private_state_control_broadcaster.BroadcastEvent(signal, nullptr);
-
-        timeout_time = TimeValue::Now();
-        timeout_time.OffsetWithSeconds(2);
-        if (log)
-            log->Printf ("Sending control event of type: %d.", signal);
-        m_private_state_control_wait.WaitForValueEqualTo (true, &timeout_time, &timed_out);
-        m_private_state_control_wait.SetValue (false, eBroadcastNever);
-
-        if (signal == eBroadcastInternalStateControlStop)
+        HostThread private_state_thread(m_private_state_thread);
+        if (private_state_thread.IsJoinable())
         {
-            if (timed_out)
+            if (log)
+                log->Printf ("Sending control event of type: %d.", signal);
+            // Send the control event and wait for the receipt or for the private state
+            // thread to exit
+            std::shared_ptr<EventDataReceipt> event_receipt_sp(new EventDataReceipt());
+            m_private_state_control_broadcaster.BroadcastEvent(signal, event_receipt_sp);
+
+            bool receipt_received = false;
+            while (!receipt_received)
             {
-                Error error = private_state_thread.Cancel();
-                if (log)
-                    log->Printf ("Timed out responding to the control event, cancel got error: \"%s\".", error.AsCString());
-            }
-            else
-            {
-                if (log)
-                    log->Printf ("The control event killed the private state thread without having to cancel.");
+                bool timed_out = false;
+                TimeValue timeout_time;
+                timeout_time = TimeValue::Now();
+                timeout_time.OffsetWithSeconds(2);
+                // Check for a receipt for 2 seconds and then check if the private state
+                // thread is still around.
+                receipt_received = event_receipt_sp->WaitForEventReceived (&timeout_time, &timed_out);
+                if (!receipt_received)
+                {
+                    // Check if the private state thread is still around. If it isn't then we are done waiting
+                    if (!m_private_state_thread.IsJoinable())
+                        break; // Private state thread exited, we are done
+                }
             }
 
-            thread_result_t result = NULL;
-            private_state_thread.Join(&result);
-            m_private_state_thread.Reset();
+            if (signal == eBroadcastInternalStateControlStop)
+            {
+                thread_result_t result = NULL;
+                private_state_thread.Join(&result);
+            }
         }
-    }
-    else
-    {
-        if (log)
-            log->Printf ("Private state thread already dead, no need to signal it to stop.");
+        else
+        {
+            if (log)
+                log->Printf ("Private state thread already dead, no need to signal it to stop.");
+        }
     }
 }
 
@@ -4317,7 +4312,6 @@ thread_result_t
 Process::RunPrivateStateThread (bool is_secondary_thread)
 {
     bool control_only = true;
-    m_private_state_control_wait.SetValue (false, eBroadcastNever);
 
     Log *log(lldb_private::GetLogIfAllCategoriesSet (LIBLLDB_LOG_PROCESS));
     if (log)
@@ -4352,7 +4346,6 @@ Process::RunPrivateStateThread (bool is_secondary_thread)
                 break;
             }
 
-            m_private_state_control_wait.SetValue (true, eBroadcastAlways);
             continue;
         }
         else if (event_sp->GetType() == eBroadcastBitInterrupt)
@@ -4448,7 +4441,6 @@ Process::RunPrivateStateThread (bool is_secondary_thread)
     // try to change it on the way out.
     if (!is_secondary_thread)
         m_public_run_lock.SetStopped();
-    m_private_state_control_wait.SetValue (true, eBroadcastAlways);
     m_private_state_thread.Reset();
     return NULL;
 }

@@ -476,10 +476,12 @@ void MipsELFObjectWriter::sortRelocs(const MCAssembler &Asm,
 
 bool MipsELFObjectWriter::needsRelocateWithSymbol(const MCSymbol &Sym,
                                                   unsigned Type) const {
-  // This must be a compound relocation from the N64 ABI.
-  // FIXME: Return false iff all sub-relocations return false.
+  // If it's a compound relocation for N64 then we need the relocation if any
+  // sub-relocation needs it.
   if (!isUInt<8>(Type))
-    return true;
+    return needsRelocateWithSymbol(Sym, Type & 0xff) ||
+           needsRelocateWithSymbol(Sym, (Type >> 8) & 0xff) ||
+           needsRelocateWithSymbol(Sym, (Type >> 16) & 0xff);
 
   switch (Type) {
   default:
@@ -507,18 +509,24 @@ bool MipsELFObjectWriter::needsRelocateWithSymbol(const MCSymbol &Sym,
   case ELF::R_MIPS_LO16:
   case ELF::R_MIPS16_LO16:
   case ELF::R_MICROMIPS_LO16:
+    // FIXME: It should be safe to return false for the STO_MIPS_MICROMIPS but
+    //        we neglect to handle the adjustment to the LSB of the addend that
+    //        it causes in applyFixup() and similar.
+    if (cast<MCSymbolELF>(Sym).getOther() & ELF::STO_MIPS_MICROMIPS)
+      return true;
     return false;
 
   case ELF::R_MIPS_16:
   case ELF::R_MIPS_32:
+  case ELF::R_MIPS_GPREL32:
     if (cast<MCSymbolELF>(Sym).getOther() & ELF::STO_MIPS_MICROMIPS)
       return true;
     // fallthrough
   case ELF::R_MIPS_26:
   case ELF::R_MIPS_64:
   case ELF::R_MIPS_GPREL16:
-  case ELF::R_MIPS_GPREL32:
   case ELF::R_MIPS_PC16:
+  case ELF::R_MIPS_SUB:
     return false;
 
   // FIXME: Many of these relocations should probably return false but this
@@ -533,7 +541,6 @@ bool MipsELFObjectWriter::needsRelocateWithSymbol(const MCSymbol &Sym,
   case ELF::R_MIPS_GOT_OFST:
   case ELF::R_MIPS_GOT_HI16:
   case ELF::R_MIPS_GOT_LO16:
-  case ELF::R_MIPS_SUB:
   case ELF::R_MIPS_INSERT_A:
   case ELF::R_MIPS_INSERT_B:
   case ELF::R_MIPS_DELETE:
@@ -621,7 +628,6 @@ bool MipsELFObjectWriter::needsRelocateWithSymbol(const MCSymbol &Sym,
   case ELF::R_MIPS16_TLS_TPREL_LO16:
     llvm_unreachable("Unsupported MIPS16 relocation");
     return true;
-
   }
 }
 

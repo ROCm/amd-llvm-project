@@ -570,6 +570,9 @@ FunctionModRefBehavior BasicAAResult::getModRefBehavior(ImmutableCallSite CS) {
 
 /// Returns the behavior when calling the given function. For use when the call
 /// site is not known.
+/// NOTE: Because of the special case handling of llvm.assume below, the result
+/// of this function may not match similar results derived from function
+/// attributes (e.g. "readnone").
 FunctionModRefBehavior BasicAAResult::getModRefBehavior(const Function *F) {
   // If the function declares it doesn't access memory, we can't do better.
   if (F->doesNotAccessMemory())
@@ -577,7 +580,7 @@ FunctionModRefBehavior BasicAAResult::getModRefBehavior(const Function *F) {
 
   // While the assume intrinsic is marked as arbitrarily writing so that
   // proper control dependencies will be maintained, it never aliases any
-  // particular memory location.
+  // actual memory locations.
   if (F->getIntrinsicID() == Intrinsic::assume)
     return FMRB_DoesNotAccessMemory;
 
@@ -847,7 +850,7 @@ static AliasResult aliasSameBasePointerGEPs(const GEPOperator *GEP1,
 
   // If the last (struct) indices are constants and are equal, the other indices
   // might be also be dynamically equal, so the GEPs can alias.
-  if (C1 && C2 && C1 == C2)
+  if (C1 && C2 && C1->getSExtValue() == C2->getSExtValue())
     return MayAlias;
 
   // Find the last-indexed type of the GEP, i.e., the type you'd get if

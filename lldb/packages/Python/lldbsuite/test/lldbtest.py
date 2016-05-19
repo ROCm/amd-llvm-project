@@ -419,7 +419,14 @@ def system(commands, **kwargs):
             cmd = kwargs.get("args")
             if cmd is None:
                 cmd = shellCommand
-            raise CalledProcessError(retcode, cmd)
+            cpe = CalledProcessError(retcode, cmd)
+            # Ensure caller can access the stdout/stderr.
+            cpe.lldb_extensions = {
+                "stdout_content": this_output,
+                "stderr_content": this_error,
+                "command": shellCommand
+            }
+            raise cpe
         output = output + this_output
         error = error + this_error
     return (output, error)
@@ -955,19 +962,27 @@ class Base(unittest2.TestCase):
         if not os.path.isdir(dname):
             os.mkdir(dname)
 
-        compiler = self.getCompiler()
-
-        if compiler[1] == ':':
-            compiler = compiler[2:]
-        if os.path.altsep is not None:
-            compiler = compiler.replace(os.path.altsep, os.path.sep)
-
-        fname = "{}-{}-{}".format(self.id(), self.getArchitecture(), "_".join(compiler.split(os.path.sep)))
-        if len(fname) > 200:
-            fname = "{}-{}-{}".format(self.id(), self.getArchitecture(), compiler.split(os.path.sep)[-1])
-
+        components = []
         if prefix is not None:
-            fname = "{}-{}".format(prefix, fname)
+            components.append(prefix)
+        for c in configuration.session_file_format:
+            if c == 'f':
+                components.append(self.__class__.__module__)
+            elif c == 'n':
+                components.append(self.__class__.__name__)
+            elif c == 'c':
+                compiler = self.getCompiler()
+
+                if compiler[1] == ':':
+                    compiler = compiler[2:]
+                if os.path.altsep is not None:
+                    compiler = compiler.replace(os.path.altsep, os.path.sep)
+                components.extend([x for x in compiler.split(os.path.sep) if x != ""])
+            elif c == 'a':
+                components.append(self.getArchitecture())
+            elif c == 'm':
+                components.append(self.testMethodName)
+        fname = "-".join(components)
 
         return os.path.join(dname, fname)
 

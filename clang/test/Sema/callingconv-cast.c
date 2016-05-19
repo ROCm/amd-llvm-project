@@ -3,9 +3,6 @@
 // RUN: %clang_cc1 -fms-extensions -triple i686-pc-windows-msvc -Wcast-calling-convention -DMSVC -fdiagnostics-parseable-fixits %s 2>&1 | FileCheck %s --check-prefix=MSFIXIT
 // RUN: %clang_cc1 -triple i686-pc-windows-gnu -Wcast-calling-convention -fdiagnostics-parseable-fixits %s 2>&1 | FileCheck %s --check-prefix=GNUFIXIT
 
-// Check that the warning is disabled by default:
-// RUN: %clang_cc1 -fms-extensions -triple i686-pc-windows-msvc -DMSVC -Werror -Wno-pointer-bool-conversion -x c %s
-
 // expected-note@+1 {{consider defining 'mismatched_before_winapi' with the 'stdcall' calling convention}}
 void mismatched_before_winapi(int x) {}
 
@@ -20,6 +17,10 @@ void mismatched(int x) {}
 
 typedef void (WINAPI *callback_t)(int);
 void take_callback(callback_t callback);
+
+void WINAPI mismatched_stdcall(int x) {}
+
+void take_opaque_fn(void (*callback)(int));
 
 int main() {
   // expected-warning@+1 {{cast between incompatible calling conventions 'cdecl' and 'stdcall'}}
@@ -44,14 +45,19 @@ int main() {
 
   // Another way to suppress the warning.
   take_callback((callback_t)(void*)mismatched);
+
+  // Don't warn, because we're casting from stdcall to cdecl. Usually that means
+  // the programmer is rinsing the function pointer through some kind of opaque
+  // API.
+  take_opaque_fn((void (*)(int))mismatched_stdcall);
 }
 
-// MSFIXIT: fix-it:"{{.*}}callingconv-cast.c":{19:6-19:6}:"WINAPI "
-// MSFIXIT: fix-it:"{{.*}}callingconv-cast.c":{19:6-19:6}:"WINAPI "
-// MSFIXIT: fix-it:"{{.*}}callingconv-cast.c":{19:6-19:6}:"WINAPI "
-// MSFIXIT: fix-it:"{{.*}}callingconv-cast.c":{10:6-10:6}:"__stdcall "
+// MSFIXIT: fix-it:"{{.*}}callingconv-cast.c":{16:6-16:6}:"WINAPI "
+// MSFIXIT: fix-it:"{{.*}}callingconv-cast.c":{16:6-16:6}:"WINAPI "
+// MSFIXIT: fix-it:"{{.*}}callingconv-cast.c":{16:6-16:6}:"WINAPI "
+// MSFIXIT: fix-it:"{{.*}}callingconv-cast.c":{7:6-7:6}:"__stdcall "
 
-// GNUFIXIT: fix-it:"{{.*}}callingconv-cast.c":{19:6-19:6}:"WINAPI "
-// GNUFIXIT: fix-it:"{{.*}}callingconv-cast.c":{19:6-19:6}:"WINAPI "
-// GNUFIXIT: fix-it:"{{.*}}callingconv-cast.c":{19:6-19:6}:"WINAPI "
-// GNUFIXIT: fix-it:"{{.*}}callingconv-cast.c":{10:6-10:6}:"__attribute__((stdcall)) "
+// GNUFIXIT: fix-it:"{{.*}}callingconv-cast.c":{16:6-16:6}:"WINAPI "
+// GNUFIXIT: fix-it:"{{.*}}callingconv-cast.c":{16:6-16:6}:"WINAPI "
+// GNUFIXIT: fix-it:"{{.*}}callingconv-cast.c":{16:6-16:6}:"WINAPI "
+// GNUFIXIT: fix-it:"{{.*}}callingconv-cast.c":{7:6-7:6}:"__attribute__((stdcall)) "

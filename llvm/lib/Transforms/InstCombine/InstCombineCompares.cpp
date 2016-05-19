@@ -3102,36 +3102,58 @@ bool InstCombiner::replacedSelectWithOperand(SelectInst *SI,
 /// If we have an icmp le or icmp ge instruction with a constant operand, turn
 /// it into the appropriate icmp lt or icmp gt instruction. This transform
 /// allows them to be folded in visitICmpInst.
-static ICmpInst *canonicalizeCmpWithConstant(ICmpInst &I,
-                                             InstCombiner::BuilderTy &Builder) {
+static ICmpInst *canonicalizeCmpWithConstant(ICmpInst &I) {
+  ICmpInst::Predicate Pred = I.getPredicate();
+  if (Pred != ICmpInst::ICMP_SLE && Pred != ICmpInst::ICMP_SGE &&
+      Pred != ICmpInst::ICMP_ULE && Pred != ICmpInst::ICMP_UGE)
+    return nullptr;
+
   Value *Op0 = I.getOperand(0);
   Value *Op1 = I.getOperand(1);
+  auto *Op1C = dyn_cast<Constant>(Op1);
+  if (!Op1C)
+    return nullptr;
 
-  if (auto *Op1C = dyn_cast<ConstantInt>(Op1)) {
-    // For scalars, SimplifyICmpInst has already handled the edge cases for us,
-    // so we just assert on them.
-    APInt Op1Val = Op1C->getValue();
-    switch (I.getPredicate()) {
-    case ICmpInst::ICMP_ULE:
-      assert(!Op1C->isMaxValue(false)); // A <=u MAX -> TRUE
-      return new ICmpInst(ICmpInst::ICMP_ULT, Op0, Builder.getInt(Op1Val + 1));
-    case ICmpInst::ICMP_SLE:
-      assert(!Op1C->isMaxValue(true));  // A <=s MAX -> TRUE
-      return new ICmpInst(ICmpInst::ICMP_SLT, Op0, Builder.getInt(Op1Val + 1));
-    case ICmpInst::ICMP_UGE:
-      assert(!Op1C->isMinValue(false)); // A >=u MIN -> TRUE
-      return new ICmpInst(ICmpInst::ICMP_UGT, Op0, Builder.getInt(Op1Val - 1));
-    case ICmpInst::ICMP_SGE:
-      assert(!Op1C->isMinValue(true));  // A >=s MIN -> TRUE
-      return new ICmpInst(ICmpInst::ICMP_SGT, Op0, Builder.getInt(Op1Val - 1));
-    default:
-      break;
+  // Check if the constant operand can be safely incremented/decremented without
+  // overflowing/underflowing. For scalars, SimplifyICmpInst has already handled
+  // the edge cases for us, so we just assert on them. For vectors, we must
+  // handle the edge cases.
+  Type *Op1Type = Op1->getType();
+  bool IsSigned = I.isSigned();
+  bool IsLE = (Pred == ICmpInst::ICMP_SLE || Pred == ICmpInst::ICMP_ULE);
+  auto *CI = dyn_cast<ConstantInt>(Op1C);
+  if (CI) {
+    // A <= MAX -> TRUE ; A >= MIN -> TRUE
+    assert(IsLE ? !CI->isMaxValue(IsSigned) : !CI->isMinValue(IsSigned));
+  } else if (Op1Type->isVectorTy()) {
+    // TODO? If the edge cases for vectors were guaranteed to be handled as they
+    // are for scalar, we could remove the min/max checks. However, to do that,
+    // we would have to use insertelement/shufflevector to replace edge values.
+    unsigned NumElts = Op1Type->getVectorNumElements();
+    for (unsigned i = 0; i != NumElts; ++i) {
+      Constant *Elt = Op1C->getAggregateElement(i);
+      if (!Elt)
+        return nullptr;
+
+      if (isa<UndefValue>(Elt))
+        continue;
+      // Bail out if we can't determine if this constant is min/max or if we
+      // know that this constant is min/max.
+      auto *CI = dyn_cast<ConstantInt>(Elt);
+      if (!CI || (IsLE ? CI->isMaxValue(IsSigned) : CI->isMinValue(IsSigned)))
+        return nullptr;
     }
+  } else {
+    // ConstantExpr?
+    return nullptr;
   }
 
-  // TODO: Handle vectors.
-
-  return nullptr;
+  // Increment or decrement the constant and set the new comparison predicate:
+  // ULE -> ULT ; UGE -> UGT ; SLE -> SLT ; SGE -> SGT
+  Constant *OneOrNegOne = ConstantInt::get(Op1Type, IsLE ? 1 : -1, true);
+  CmpInst::Predicate NewPred = IsLE ? ICmpInst::ICMP_ULT: ICmpInst::ICMP_UGT;
+  NewPred = IsSigned ? ICmpInst::getSignedPredicate(NewPred) : NewPred;
+  return new ICmpInst(NewPred, Op0, ConstantExpr::getAdd(Op1C, OneOrNegOne));
 }
 
 Instruction *InstCombiner::visitICmpInst(ICmpInst &I) {
@@ -3217,7 +3239,7 @@ Instruction *InstCombiner::visitICmpInst(ICmpInst &I) {
     }
   }
 
-  if (ICmpInst *NewICmp = canonicalizeCmpWithConstant(I, *Builder))
+  if (ICmpInst *NewICmp = canonicalizeCmpWithConstant(I))
     return NewICmp;
 
   unsigned BitWidth = 0;

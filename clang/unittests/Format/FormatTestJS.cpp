@@ -1076,6 +1076,8 @@ TEST_F(FormatTestJS, TemplateStrings) {
                getGoogleJSStyleWithColumns(34)); // Barely doesn't fit.
   verifyFormat("var x = `hello ${world}` >= some();",
                getGoogleJSStyleWithColumns(35)); // Barely fits.
+  verifyFormat("var x = `hellö ${wörld}` >= söme();",
+               getGoogleJSStyleWithColumns(35)); // Fits due to UTF-8.
   verifyFormat("var x = `hello\n"
             "  ${world}` >=\n"
             "    some();",
@@ -1097,6 +1099,13 @@ TEST_F(FormatTestJS, TemplateStrings) {
                getGoogleJSStyleWithColumns(13));
   verifyFormat("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(\n"
                "    `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`);");
+  // Repro for an obscure width-miscounting issue with template strings.
+  verifyFormat(
+      "someLongVariable =\n"
+      "    "
+      "`${logPrefix[11]}/${logPrefix[12]}/${logPrefix[13]}${logPrefix[14]}`;",
+      "someLongVariable = "
+      "`${logPrefix[11]}/${logPrefix[12]}/${logPrefix[13]}${logPrefix[14]}`;");
 
   // Make sure template strings get a proper ColumnWidth assigned, even if they
   // are first token in line.
@@ -1236,6 +1245,14 @@ TEST_F(FormatTestJS, RequoteStringsSingle) {
   // Code below fits into 15 chars *after* removing the \ escape.
   verifyFormat("var x = 'fo\"o';", "var x = \"fo\\\"o\";",
                getGoogleJSStyleWithColumns(15));
+  verifyFormat("// clang-format off\n"
+               "let x = \"double\";\n"
+               "// clang-format on\n"
+               "let x = 'single';\n",
+               "// clang-format off\n"
+               "let x = \"double\";\n"
+               "// clang-format on\n"
+               "let x = \"single\";\n");
 }
 
 TEST_F(FormatTestJS, RequoteStringsDouble) {

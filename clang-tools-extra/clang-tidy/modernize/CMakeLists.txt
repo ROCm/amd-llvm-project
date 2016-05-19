@@ -1,6 +1,7 @@
 set(LLVM_LINK_COMPONENTS support)
 
 add_clang_library(clangTidyModernizeModule
+  AvoidBindCheck.cpp
   DeprecatedHeadersCheck.cpp
   LoopConvertCheck.cpp
   LoopConvertUtils.cpp
@@ -14,6 +15,7 @@ add_clang_library(clangTidyModernizeModule
   ReplaceAutoPtrCheck.cpp
   ShrinkToFitCheck.cpp
   UseAutoCheck.cpp
+  UseBoolLiteralsCheck.cpp
   UseDefaultCheck.cpp
   UseNullptrCheck.cpp
   UseOverrideCheck.cpp

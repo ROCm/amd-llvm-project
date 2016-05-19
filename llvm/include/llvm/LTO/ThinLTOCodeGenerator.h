@@ -37,7 +37,7 @@ struct TargetMachineBuilder {
   std::string MCpu;
   std::string MAttr;
   TargetOptions Options;
-  Reloc::Model RelocModel = Reloc::Default;
+  Optional<Reloc::Model> RelocModel;
   CodeGenOpt::Level CGOptLevel = CodeGenOpt::Default;
 
   std::unique_ptr<TargetMachine> create() const;
@@ -121,7 +121,6 @@ public:
   /// Cache policy: interval (seconds) between two prune of the cache. Set to a
   /// negative value (default) to disable pruning. A value of 0 will be ignored.
   void setCachePruningInterval(int Interval) {
-    fprintf(stderr, "setCachePruningInterval %d\n", Interval);
     if (Interval)
       CacheOptions.PruningInterval = Interval;
   }
@@ -169,7 +168,9 @@ public:
   }
 
   /// CodeModel
-  void setCodePICModel(Reloc::Model Model) { TMBuilder.RelocModel = Model; }
+  void setCodePICModel(Optional<Reloc::Model> Model) {
+    TMBuilder.RelocModel = Model;
+  }
 
   /// CodeGen optimization level
   void setCodeGenOptLevel(CodeGenOpt::Level CGOptLevel) {

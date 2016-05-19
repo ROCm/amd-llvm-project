@@ -91,6 +91,7 @@ Clang-Tidy Checks
    misc-unused-raii
    misc-unused-using-decls
    misc-virtual-near-miss
+   modernize-avoid-bind
    modernize-deprecated-headers
    modernize-loop-convert
    modernize-make-shared
@@ -101,6 +102,7 @@ Clang-Tidy Checks
    modernize-replace-auto-ptr
    modernize-shrink-to-fit
    modernize-use-auto
+   modernize-use-bool-literals
    modernize-use-default
    modernize-use-nullptr
    modernize-use-override

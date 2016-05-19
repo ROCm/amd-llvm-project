@@ -403,7 +403,8 @@ static void setPGOUseInstrumentor(CodeGenOptions &Opts,
                                   const std::string ProfileName) {
   auto ReaderOrErr = llvm::IndexedInstrProfReader::create(ProfileName);
   // In error, return silently and let Clang PGOUse report the error message.
-  if (ReaderOrErr.getError()) {
+  if (auto E = ReaderOrErr.takeError()) {
+    llvm::consumeError(std::move(E));
     Opts.setProfileUse(CodeGenOptions::ProfileClangInstr);
     return;
   }
@@ -634,6 +635,45 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
       }
     }
   }
+	// Handle -fembed-bitcode option.
+  if (Arg *A = Args.getLastArg(OPT_fembed_bitcode_EQ)) {
+    StringRef Name = A->getValue();
+    unsigned Model = llvm::StringSwitch<unsigned>(Name)
+        .Case("off", CodeGenOptions::Embed_Off)
+        .Case("all", CodeGenOptions::Embed_All)
+        .Case("bitcode", CodeGenOptions::Embed_Bitcode)
+        .Case("marker", CodeGenOptions::Embed_Marker)
+        .Default(~0U);
+    if (Model == ~0U) {
+      Diags.Report(diag::err_drv_invalid_value) << A->getAsString(Args) << Name;
+      Success = false;
+    } else
+      Opts.setEmbedBitcode(
+          static_cast<CodeGenOptions::EmbedBitcodeKind>(Model));
+  }
+  // FIXME: For backend options that are not yet recorded as function
+  // attributes in the IR, keep track of them so we can embed them in a
+  // separate data section and use them when building the bitcode.
+  if (Opts.getEmbedBitcode() == CodeGenOptions::Embed_All) {
+    for (const auto &A : Args) {
+      // Do not encode output and input.
+      if (A->getOption().getID() == options::OPT_o ||
+          A->getOption().getID() == options::OPT_INPUT ||
+          A->getOption().getID() == options::OPT_x ||
+          A->getOption().getID() == options::OPT_fembed_bitcode ||
+          (A->getOption().getGroup().isValid() &&
+           A->getOption().getGroup().getID() == options::OPT_W_Group))
+        continue;
+      ArgStringList ASL;
+      A->render(Args, ASL);
+      for (const auto &arg : ASL) {
+        StringRef ArgStr(arg);
+        Opts.CmdArgs.insert(Opts.CmdArgs.end(), ArgStr.begin(), ArgStr.end());
+        // using \00 to seperate each commandline options.
+        Opts.CmdArgs.push_back('\0');
+      }
+    }
+  }
 
   Opts.InstrumentFunctions = Args.hasArg(OPT_finstrument_functions);
   Opts.InstrumentForProfiling = Args.hasArg(OPT_pg);
@@ -783,6 +823,9 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
       Args.getAllArgValues(OPT_fcuda_include_gpubinary);
 
   Opts.Backchain = Args.hasArg(OPT_mbackchain);
+
+  Opts.EmitCheckPathComponentsToStrip = getLastArgIntValue(
+      Args, OPT_fsanitize_undefined_strip_path_components_EQ, 0, Diags);
 
   return Success;
 }
@@ -1784,7 +1827,6 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
   Opts.NoBitFieldTypeAlign = Args.hasArg(OPT_fno_bitfield_type_align);
   Opts.SinglePrecisionConstants = Args.hasArg(OPT_cl_single_precision_constant);
   Opts.FastRelaxedMath = Args.hasArg(OPT_cl_fast_relaxed_math);
-  Opts.MRTD = Args.hasArg(OPT_mrtd);
   Opts.HexagonQdsp6Compat = Args.hasArg(OPT_mqdsp6_compat);
   Opts.FakeAddressSpaceMap = Args.hasArg(OPT_ffake_address_space_map);
   Opts.ParseUnknownAnytype = Args.hasArg(OPT_funknown_anytype);
@@ -1859,6 +1901,49 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
           << "-fms-memptr-rep=" << A->getValue();
 
     Opts.setMSPointerToMemberRepresentationMethod(InheritanceModel);
+  }
+
+  // Check for MS default calling conventions being specified.
+  if (Arg *A = Args.getLastArg(OPT_fdefault_calling_conv_EQ)) {
+    LangOptions::DefaultCallingConvention DefaultCC =
+        llvm::StringSwitch<LangOptions::DefaultCallingConvention>(
+            A->getValue())
+            .Case("cdecl", LangOptions::DCC_CDecl)
+            .Case("fastcall", LangOptions::DCC_FastCall)
+            .Case("stdcall", LangOptions::DCC_StdCall)
+            .Case("vectorcall", LangOptions::DCC_VectorCall)
+            .Default(LangOptions::DCC_None);
+    if (DefaultCC == LangOptions::DCC_None)
+      Diags.Report(diag::err_drv_invalid_value)
+          << "-fdefault-calling-conv=" << A->getValue();
+
+    llvm::Triple T(TargetOpts.Triple);
+    llvm::Triple::ArchType Arch = T.getArch();
+    bool emitError = (DefaultCC == LangOptions::DCC_FastCall ||
+                  DefaultCC == LangOptions::DCC_StdCall) &&
+                 Arch != llvm::Triple::x86;
+    emitError |= DefaultCC == LangOptions::DCC_VectorCall &&
+                 !(Arch == llvm::Triple::x86 || Arch == llvm::Triple::x86_64);
+    if (emitError)
+      Diags.Report(diag::err_drv_argument_not_allowed_with)
+          << A->getSpelling() << T.getTriple();
+    else
+      Opts.setDefaultCallingConv(DefaultCC);
+  }
+
+  // -mrtd option
+  if (Arg *A = Args.getLastArg(OPT_mrtd)) {
+    if (Opts.getDefaultCallingConv() != LangOptions::DCC_None)
+      Diags.Report(diag::err_drv_argument_not_allowed_with)
+          << A->getSpelling() << "-fdefault-calling-conv";
+    else {
+      llvm::Triple T(TargetOpts.Triple);
+      if (T.getArch() != llvm::Triple::x86)
+        Diags.Report(diag::err_drv_argument_not_allowed_with)
+            << A->getSpelling() << T.getTriple();
+      else
+        Opts.setDefaultCallingConv(LangOptions::DCC_StdCall);
+    }
   }
 
   // Check if -fopenmp is specified.

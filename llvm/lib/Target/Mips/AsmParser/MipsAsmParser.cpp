@@ -433,8 +433,7 @@ public:
 
     CurrentFn = nullptr;
 
-    IsPicEnabled =
-        (getContext().getObjectFileInfo()->getRelocM() == Reloc::PIC_);
+    IsPicEnabled = getContext().getObjectFileInfo()->isPositionIndependent();
 
     IsCpRestoreSet = false;
     CpRestoreOffset = -1;
@@ -1900,6 +1899,11 @@ bool MipsAsmParser::processInstruction(MCInst &Inst, SMLoc IDLoc,
     return true;
   }
 
+  // We know we emitted an instruction on the MER_NotAMacro or MER_Success path.
+  // If we're in microMIPS mode then we must also set EF_MIPS_MICROMIPS.
+  if (inMicroMipsMode())
+    TOut.setUsesMicroMips();
+
   // If this instruction has a delay slot and .set reorder is active,
   // emit a NOP after it.
   if (FillDelaySlot) {
@@ -2633,15 +2637,16 @@ void MipsAsmParser::expandStoreInst(MCInst &Inst, SMLoc IDLoc, MCStreamer &Out,
   unsigned SrcReg = Inst.getOperand(0).getReg();
   unsigned BaseReg = Inst.getOperand(1).getReg();
 
+  if (IsImmOpnd) {
+    TOut.emitStoreWithImmOffset(Inst.getOpcode(), SrcReg, BaseReg,
+                                Inst.getOperand(2).getImm(),
+                                [&]() { return getATReg(IDLoc); }, IDLoc, STI);
+    return;
+  }
+
   unsigned ATReg = getATReg(IDLoc);
   if (!ATReg)
     return;
-
-  if (IsImmOpnd) {
-    TOut.emitStoreWithImmOffset(Inst.getOpcode(), SrcReg, BaseReg,
-                                Inst.getOperand(2).getImm(), ATReg, IDLoc, STI);
-    return;
-  }
 
   const MCExpr *ExprOffset = Inst.getOperand(2).getExpr();
   MCOperand LoOperand = MCOperand::createExpr(
@@ -2945,18 +2950,17 @@ bool MipsAsmParser::expandDiv(MCInst &Inst, SMLoc IDLoc, MCStreamer &Out,
                               const bool Signed) {
   MipsTargetStreamer &TOut = getTargetStreamer();
 
-  if (hasMips32r6()) {
-    Error(IDLoc, "instruction not supported on mips32r6 or mips64r6");
-    return false;
-  }
-
   warnIfNoMacro(IDLoc);
 
-  const MCOperand &RsRegOp = Inst.getOperand(0);
+  const MCOperand &RdRegOp = Inst.getOperand(0);
+  assert(RdRegOp.isReg() && "expected register operand kind");
+  unsigned RdReg = RdRegOp.getReg();
+
+  const MCOperand &RsRegOp = Inst.getOperand(1);
   assert(RsRegOp.isReg() && "expected register operand kind");
   unsigned RsReg = RsRegOp.getReg();
 
-  const MCOperand &RtRegOp = Inst.getOperand(1);
+  const MCOperand &RtRegOp = Inst.getOperand(2);
   assert(RtRegOp.isReg() && "expected register operand kind");
   unsigned RtReg = RtRegOp.getReg();
   unsigned DivOp;
@@ -3025,7 +3029,7 @@ bool MipsAsmParser::expandDiv(MCInst &Inst, SMLoc IDLoc, MCStreamer &Out,
     TOut.emitII(Mips::BREAK, 0x7, 0, IDLoc, STI);
 
   if (!Signed) {
-    TOut.emitR(Mips::MFLO, RsReg, IDLoc, STI);
+    TOut.emitR(Mips::MFLO, RdReg, IDLoc, STI);
     return false;
   }
 
@@ -3053,7 +3057,7 @@ bool MipsAsmParser::expandDiv(MCInst &Inst, SMLoc IDLoc, MCStreamer &Out,
     TOut.emitRRI(Mips::SLL, ZeroReg, ZeroReg, 0, IDLoc, STI);
     TOut.emitII(Mips::BREAK, 0x6, 0, IDLoc, STI);
   }
-  TOut.emitR(Mips::MFLO, RsReg, IDLoc, STI);
+  TOut.emitR(Mips::MFLO, RdReg, IDLoc, STI);
   return false;
 }
 
@@ -3626,12 +3630,8 @@ void MipsAsmParser::createCpRestoreMemOp(bool IsLoad, int StackOffset,
     return;
   }
 
-  unsigned ATReg = getATReg(IDLoc);
-  if (!ATReg)
-    return;
-
-  TOut.emitStoreWithImmOffset(Mips::SW, Mips::GP, Mips::SP, StackOffset, ATReg,
-                              IDLoc, STI);
+  TOut.emitStoreWithImmOffset(Mips::SW, Mips::GP, Mips::SP, StackOffset,
+                              [&]() { return getATReg(IDLoc); }, IDLoc, STI);
 }
 
 unsigned MipsAsmParser::checkTargetMatchPredicate(MCInst &Inst) {
@@ -5292,6 +5292,7 @@ bool MipsAsmParser::parseSetFeature(uint64_t Feature) {
     getTargetStreamer().emitDirectiveSetDsp();
     break;
   case Mips::FeatureMicroMips:
+    setFeatureBits(Mips::FeatureMicroMips, "micromips");
     getTargetStreamer().emitDirectiveSetMicroMips();
     break;
   case Mips::FeatureMips1:
@@ -5448,11 +5449,9 @@ bool MipsAsmParser::parseDirectiveCpRestore(SMLoc Loc) {
     return false;
   }
 
-  unsigned ATReg = getATReg(Loc);
-  if (!ATReg)
+  if (!getTargetStreamer().emitDirectiveCpRestore(
+          CpRestoreOffset, [&]() { return getATReg(Loc); }, Loc, STI))
     return true;
-
-  getTargetStreamer().emitDirectiveCpRestore(CpRestoreOffset, ATReg, Loc, STI);
   Parser.Lex(); // Consume the EndOfStatement.
   return false;
 }
@@ -5592,6 +5591,7 @@ bool MipsAsmParser::parseDirectiveSet() {
   } else if (Tok.getString() == "nomips16") {
     return parseSetNoMips16Directive();
   } else if (Tok.getString() == "nomicromips") {
+    clearFeatureBits(Mips::FeatureMicroMips, "micromips");
     getTargetStreamer().emitDirectiveSetNoMicroMips();
     Parser.eatToEndOfStatement();
     return false;

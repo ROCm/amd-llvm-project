@@ -180,6 +180,11 @@ identified.  The improvements since the 3.8 release include:
 
   Finds unused ``using`` declarations.
 
+- New `modernize-avoid-bind
+  <http://clang.llvm.org/extra/clang-tidy/checks/modernize-avoid-bind.html>`_ check
+
+  Finds uses of ``std::bind`` and replaces simple uses with lambdas.
+
 - New `modernize-deprecated-headers
   <http://clang.llvm.org/extra/clang-tidy/checks/modernize-deprecated-headers.html>`_ check
 
@@ -195,6 +200,11 @@ identified.  The improvements since the 3.8 release include:
 
   Selectively replaces string literals containing escaped characters with raw
   string literals.
+
+- New `modernize-use-bool-literals
+  <http://clang.llvm.org/extra/clang-tidy/checks/modernize-use-bool-literals.html>`_ check
+
+  Finds integer literals which are cast to ``bool``.
 
 - New `performance-faster-string-find
   <http://clang.llvm.org/extra/clang-tidy/checks/performance-faster-string-find.html>`_ check

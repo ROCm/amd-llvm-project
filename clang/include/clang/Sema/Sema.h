@@ -109,7 +109,6 @@ namespace clang {
   class EnumConstantDecl;
   class Expr;
   class ExtVectorType;
-  class ExternalSemaSource;
   class FormatAttr;
   class FriendDecl;
   class FunctionDecl;
@@ -1675,7 +1674,8 @@ public:
                             SourceLocation ConstQualLoc = SourceLocation(),
                             SourceLocation VolatileQualLoc = SourceLocation(),
                             SourceLocation RestrictQualLoc = SourceLocation(),
-                            SourceLocation AtomicQualLoc = SourceLocation());
+                            SourceLocation AtomicQualLoc = SourceLocation(),
+                            SourceLocation UnalignedQualLoc = SourceLocation());
 
   static bool adjustContextForLocalExternDecl(DeclContext *&DC);
   void DiagnoseFunctionSpecifiers(const DeclSpec &DS);
@@ -2525,7 +2525,8 @@ public:
                                             bool PartialOverloading = false);
 
   // Emit as a 'note' the specific overload candidate
-  void NoteOverloadCandidate(FunctionDecl *Fn, QualType DestType = QualType(),
+  void NoteOverloadCandidate(NamedDecl *Found, FunctionDecl *Fn,
+                             QualType DestType = QualType(),
                              bool TakingAddress = false);
 
   // Emit as a series of 'note's all template and non-templates identified by
@@ -4272,6 +4273,7 @@ public:
   /// \param ConstructKind - a CXXConstructExpr::ConstructionKind
   ExprResult
   BuildCXXConstructExpr(SourceLocation ConstructLoc, QualType DeclInitType,
+                        NamedDecl *FoundDecl,
                         CXXConstructorDecl *Constructor, MultiExprArg Exprs,
                         bool HadMultipleCandidates, bool IsListInitialization,
                         bool IsStdInitListInitialization,
@@ -4282,6 +4284,7 @@ public:
   // the constructor can be elidable?
   ExprResult
   BuildCXXConstructExpr(SourceLocation ConstructLoc, QualType DeclInitType,
+                        NamedDecl *FoundDecl,
                         CXXConstructorDecl *Constructor, bool Elidable,
                         MultiExprArg Exprs, bool HadMultipleCandidates,
                         bool IsListInitialization,
@@ -4535,6 +4538,9 @@ public:
   /// \brief Force the declaration of any implicitly-declared members of this
   /// class.
   void ForceDeclarationOfImplicitMembers(CXXRecordDecl *Class);
+
+  /// \brief Check a completed declaration of an implicit special member.
+  void CheckImplicitSpecialMemberDeclaration(Scope *S, FunctionDecl *FD);
 
   /// \brief Determine whether the given function is an implicitly-deleted
   /// special member function.
@@ -7894,13 +7900,15 @@ private:
   ExprResult
   VerifyPositiveIntegerConstantInClause(Expr *Op, OpenMPClauseKind CKind,
                                         bool StrictlyPositive = true);
+  /// Returns OpenMP nesting level for current directive.
+  unsigned getOpenMPNestingLevel() const;
 
 public:
   /// \brief Return true if the provided declaration \a VD should be captured by
-  /// reference in the provided scope \a RSI. This will take into account the
-  /// semantics of the directive and associated clauses.
-  bool IsOpenMPCapturedByRef(ValueDecl *D,
-                             const sema::CapturedRegionScopeInfo *RSI);
+  /// reference.
+  /// \param Level Relative level of nested OpenMP construct for that the check
+  /// is performed.
+  bool IsOpenMPCapturedByRef(ValueDecl *D, unsigned Level);
 
   /// \brief Check if the specified variable is used in one of the private
   /// clauses (private, firstprivate, lastprivate, reduction etc.) in OpenMP

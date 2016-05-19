@@ -44,6 +44,8 @@
 #include "llvm/DebugInfo/PDB/Raw/ModStream.h"
 #include "llvm/DebugInfo/PDB/Raw/NameHashTable.h"
 #include "llvm/DebugInfo/PDB/Raw/PDBFile.h"
+#include "llvm/DebugInfo/PDB/Raw/PublicsStream.h"
+#include "llvm/DebugInfo/PDB/Raw/RawError.h"
 #include "llvm/DebugInfo/PDB/Raw/RawSession.h"
 #include "llvm/DebugInfo/PDB/Raw/StreamReader.h"
 #include "llvm/DebugInfo/PDB/Raw/TpiStream.h"
@@ -121,6 +123,9 @@ cl::opt<std::string> DumpStreamData("dump-stream", cl::desc("dump stream data"),
 cl::opt<bool> DumpModuleSyms("dump-module-syms",
                              cl::desc("dump module symbols"),
                              cl::cat(NativeOtions));
+cl::opt<bool> DumpPublics("dump-publics",
+                          cl::desc("dump Publics stream data"),
+                          cl::cat(NativeOtions));
 
 cl::list<std::string>
     ExcludeTypes("exclude-types",
@@ -376,7 +381,8 @@ static Error dumpTpiStream(ScopedPrinter &P, PDBFile &File) {
     ListScope L(P, "Records");
     codeview::CVTypeDumper TD(P, false);
 
-    for (auto &Type : Tpi.types()) {
+    bool HadError = false;
+    for (auto &Type : Tpi.types(&HadError)) {
       DictScope DD(P, "");
 
       if (opts::DumpTpiRecords)
@@ -385,7 +391,30 @@ static Error dumpTpiStream(ScopedPrinter &P, PDBFile &File) {
       if (opts::DumpTpiRecordBytes)
         P.printBinaryBlock("Bytes", Type.Data);
     }
+    if (HadError)
+      return make_error<RawError>(raw_error_code::corrupt_file,
+                                  "TPI stream contained corrupt record");
   }
+  return Error::success();
+}
+
+static Error dumpPublicsStream(ScopedPrinter &P, PDBFile &File) {
+  if (!opts::DumpPublics)
+    return Error::success();
+
+  DictScope D(P, "Publics Stream");
+  auto PublicsS = File.getPDBPublicsStream();
+  if (auto EC = PublicsS.takeError())
+    return EC;
+  PublicsStream &Publics = PublicsS.get();
+  P.printNumber("Stream number", Publics.getStreamNum());
+  P.printNumber("SymHash", Publics.getSymHash());
+  P.printNumber("AddrMap", Publics.getAddrMap());
+  P.printNumber("Number of buckets", Publics.getNumBuckets());
+  P.printList("Hash Buckets", Publics.getHashBuckets());
+  P.printList("Address Map", Publics.getAddressMap());
+  P.printList("Thunk Map", Publics.getThunkMap());
+  P.printList("Section Offsets", Publics.getSectionOffsets());
   return Error::success();
 }
 
@@ -416,7 +445,10 @@ static Error dumpStructure(RawSession &RS) {
 
   if (auto EC = dumpTpiStream(P, File))
     return EC;
-  return Error::success();
+
+  if (auto EC = dumpPublicsStream(P, File))
+    return EC;
+return Error::success();
 }
 
 static void dumpInput(StringRef Path) {

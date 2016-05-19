@@ -619,7 +619,11 @@ SDValue AMDGPUTargetLowering::LowerCall(CallLoweringInfo &CLI,
   DiagnosticInfoUnsupported NoCalls(
       Fn, "unsupported call to function " + FuncName, CLI.DL.getDebugLoc());
   DAG.getContext()->diagnose(NoCalls);
-  return SDValue();
+
+  for (unsigned I = 0, E = CLI.Ins.size(); I != E; ++I)
+    InVals.push_back(DAG.getUNDEF(CLI.Ins[I].VT));
+
+  return DAG.getEntryNode();
 }
 
 SDValue AMDGPUTargetLowering::LowerDYNAMIC_STACKALLOC(SDValue Op,
@@ -787,6 +791,11 @@ SDValue AMDGPUTargetLowering::LowerGlobalAddress(AMDGPUMachineFunction* MFI,
   const GlobalValue *GV = G->getGlobal();
 
   switch (G->getAddressSpace()) {
+  case AMDGPUAS::CONSTANT_ADDRESS: {
+    MVT ConstPtrVT = getPointerTy(DL, AMDGPUAS::CONSTANT_ADDRESS);
+    SDValue GA = DAG.getTargetGlobalAddress(GV, SDLoc(G), ConstPtrVT);
+    return DAG.getNode(AMDGPUISD::CONST_DATA_PTR, SDLoc(G), ConstPtrVT, GA);
+  }
   case AMDGPUAS::LOCAL_ADDRESS: {
     // XXX: What does the value of G->getOffset() mean?
     assert(G->getOffset() == 0 &&

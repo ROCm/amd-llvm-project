@@ -114,7 +114,8 @@ void LinkerDriver::addFile(StringRef Path) {
     return;
   MemoryBufferRef MBRef = *Buffer;
 
-  maybeCopyInputFile(Path, MBRef.getBuffer());
+  if (Cpio)
+    Cpio->append(relativeToRoot(Path), MBRef.getBuffer());
 
   switch (identify_magic(MBRef.getBuffer())) {
   case file_magic::unknown:
@@ -252,15 +253,12 @@ void LinkerDriver::main(ArrayRef<const char *> ArgsArr) {
   readConfigs(Args);
   initLLVM(Args);
 
-  if (!Config->Reproduce.empty()) {
-    std::error_code EC;
-    std::string File = Config->Reproduce + ".cpio";
-    ReproduceArchive = llvm::make_unique<raw_fd_ostream>(File, EC, fs::F_None);
-    if (EC) {
-      error(EC, "--reproduce: failed to open " + File);
-      return;
-    }
-    createResponseFile(Args);
+  if (auto *Arg = Args.getLastArg(OPT_reproduce)) {
+    // Note that --reproduce is a debug option so you can ignore it
+    // if you are trying to understand the whole picture of the code.
+    Cpio.reset(CpioFile::create(Arg->getValue()));
+    if (Cpio)
+      Cpio->append("response.txt", createResponseFile(Args));
   }
 
   createFiles(Args);
@@ -339,8 +337,8 @@ void LinkerDriver::readConfigs(opt::InputArgList &Args) {
   Config->Entry = getString(Args, OPT_entry);
   Config->Fini = getString(Args, OPT_fini, "_fini");
   Config->Init = getString(Args, OPT_init, "_init");
+  Config->LtoNewPmPasses = getString(Args, OPT_lto_newpm_passes);
   Config->OutputFile = getString(Args, OPT_o);
-  Config->Reproduce = getString(Args, OPT_reproduce);
   Config->SoName = getString(Args, OPT_soname);
   Config->Sysroot = getString(Args, OPT_sysroot);
 
@@ -353,6 +351,7 @@ void LinkerDriver::readConfigs(opt::InputArgList &Args) {
     error("number of threads must be > 0");
 
   Config->ZCombreloc = !hasZOption(Args, "nocombreloc");
+  Config->ZDefs = hasZOption(Args, "defs");
   Config->ZExecStack = hasZOption(Args, "execstack");
   Config->ZNodelete = hasZOption(Args, "nodelete");
   Config->ZNow = hasZOption(Args, "now");
@@ -385,14 +384,18 @@ void LinkerDriver::readConfigs(opt::InputArgList &Args) {
     Config->BuildId = BuildIdKind::Fnv1;
   if (auto *Arg = Args.getLastArg(OPT_build_id_eq)) {
     StringRef S = Arg->getValue();
-    if (S == "md5")
+    if (S == "md5") {
       Config->BuildId = BuildIdKind::Md5;
-    else if (S == "sha1")
+    } else if (S == "sha1") {
       Config->BuildId = BuildIdKind::Sha1;
-    else if (S == "none")
+    } else if (S == "none") {
       Config->BuildId = BuildIdKind::None;
-    else
+    } else if (S.startswith("0x")) {
+      Config->BuildId = BuildIdKind::Hexstring;
+      Config->BuildIdVector = parseHexstring(S.substr(2));
+    } else {
       error("unknown --build-id style: " + S);
+    }
   }
 
   for (auto *Arg : Args.filtered(OPT_undefined))
@@ -493,6 +496,8 @@ template <class ELFT> void LinkerDriver::link(opt::InputArgList &Args) {
   Symtab.scanVersionScript();
 
   Symtab.addCombinedLtoObject();
+  if (HasError)
+    return;
 
   for (auto *Arg : Args.filtered(OPT_wrap))
     Symtab.wrap(Arg->getValue());

@@ -15,10 +15,10 @@ declare void @something()
 
 ; CHECK-LABEL: test0:
 ; CHECK: loop
-; CHECK-NOT: br
-; CHECK: i32.add
 ; CHECK-NEXT: block
-; CHECK-NEXT: i32.lt_s
+; CHECK-NEXT: i32.const
+; CHECK-NEXT: i32.add
+; CHECK:      i32.lt_s
 ; CHECK-NEXT: br_if
 ; CHECK-NEXT: return
 ; CHECK-NEXT: .LBB0_3:
@@ -29,9 +29,9 @@ declare void @something()
 ; CHECK-NEXT: end_loop
 ; OPT-LABEL: test0:
 ; OPT: loop
-; OPT-NOT: br
-; OPT: i32.add
-; OPT-NEXT: i32.ge_s
+; OPT-NEXT: i32.const
+; OPT-NEXT: i32.add
+; OPT:      i32.ge_s
 ; OPT-NEXT: br_if
 ; OPT-NOT: br
 ; OPT: call
@@ -60,10 +60,10 @@ back:
 
 ; CHECK-LABEL: test1:
 ; CHECK: loop
-; CHECK-NOT: br
-; CHECK: i32.add
 ; CHECK-NEXT: block
-; CHECK-NEXT: i32.lt_s
+; CHECK-NEXT: i32.const
+; CHECK-NEXT: i32.add
+; CHECK:      i32.lt_s
 ; CHECK-NEXT: br_if
 ; CHECK-NEXT: return
 ; CHECK-NEXT: .LBB1_3:
@@ -74,9 +74,9 @@ back:
 ; CHECK-NEXT: end_loop
 ; OPT-LABEL: test1:
 ; OPT: loop
-; OPT-NOT: br
-; OPT: i32.add
-; OPT-NEXT: i32.ge_s
+; OPT-NEXT: i32.const
+; OPT-NEXT: i32.add
+; OPT:      i32.ge_s
 ; OPT-NEXT: br_if
 ; OPT-NOT: br
 ; OPT: call
@@ -108,16 +108,22 @@ back:
 ; CHECK: block{{$}}
 ; CHECK: br_if 0, {{[^,]+}}{{$}}
 ; CHECK: .LBB2_{{[0-9]+}}:
-; CHECK: br_if 0, ${{[0-9]+}}{{$}}
+; CHECK: loop
+; CHECK: br_if 0, $pop{{[0-9]+}}{{$}}
 ; CHECK: .LBB2_{{[0-9]+}}:
+; CHECK: end_loop
+; CHECK: end_block
 ; CHECK: return{{$}}
 ; OPT-LABEL: test2:
 ; OPT-NOT: local
 ; OPT: block{{$}}
 ; OPT: br_if 0, {{[^,]+}}{{$}}
 ; OPT: .LBB2_{{[0-9]+}}:
-; OPT: br_if 0, ${{[0-9]+}}{{$}}
+; OPT: loop
+; OPT: br_if 0, $pop{{[0-9]+}}{{$}}
 ; OPT: .LBB2_{{[0-9]+}}:
+; OPT: end_loop
+; OPT: end_block
 ; OPT: return{{$}}
 define void @test2(double* nocapture %p, i32 %n) {
 entry:
@@ -269,13 +275,13 @@ entry:
 ; CHECK-LABEL: minimal_loop:
 ; CHECK-NOT: br
 ; CHECK: .LBB7_1:
-; CHECK: i32.store $discard=, 0($0), $pop{{[0-9]+}}{{$}}
+; CHECK: i32.store $drop=, 0($0), $pop{{[0-9]+}}{{$}}
 ; CHECK: br 0{{$}}
 ; CHECK: .LBB7_2:
 ; OPT-LABEL: minimal_loop:
 ; OPT-NOT: br
 ; OPT: .LBB7_1:
-; OPT: i32.store $discard=, 0($0), $pop{{[0-9]+}}{{$}}
+; OPT: i32.store $drop=, 0($0), $pop{{[0-9]+}}{{$}}
 ; OPT: br 0{{$}}
 ; OPT: .LBB7_2:
 define i32 @minimal_loop(i32* %p) {
@@ -1261,8 +1267,7 @@ bb50:
 ; OPT:        block
 ; OPT:        block
 ; OPT-NEXT:   i32.const   $push
-; OPT-NEXT:   i32.const   $push
-; OPT-NEXT:   i32.eq      $push{{.*}}=, $pop{{.*}}, $pop{{.*}}{{$}}
+; OPT-NEXT:   i32.eqz     $push{{.*}}=, $pop{{.*}}{{$}}
 ; OPT-NEXT:   br_if       0, $pop{{.*}}{{$}}
 ; OPT-NEXT:   call        test15_callee1@FUNCTION{{$}}
 ; OPT-NEXT:   br          1{{$}}
