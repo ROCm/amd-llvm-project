@@ -10,6 +10,7 @@
 // This file implements the C++ related Decl classes.
 //
 //===----------------------------------------------------------------------===//
+#include "clang/AST/Attr.h"
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/ASTLambda.h"
@@ -425,6 +426,17 @@ bool CXXRecordDecl::isTriviallyCopyable() const {
   if (!hasTrivialDestructor()) return false;
 
   return true;
+}
+
+CXXMethodDecl *CXXRecordDecl::getCXXAMPDeserializationConstructor() const {
+  CXXMethodDecl *Deserializer = NULL;
+  for (ctor_iterator CtorIt = ctor_begin(), CtorE = ctor_end();
+      CtorIt != CtorE; ++CtorIt) {
+    if (CtorIt->hasAttr<AnnotateAttr>())
+        if (CtorIt->getAttr<AnnotateAttr>()->getAnnotation().find("deserialize") != StringRef::npos)
+            Deserializer = *CtorIt;
+  }
+  return Deserializer;
 }
 
 void CXXRecordDecl::markedVirtualFunctionPure() {
