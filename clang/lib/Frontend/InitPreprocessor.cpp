@@ -532,6 +532,12 @@ static void InitializePredefinedMacros(const TargetInfo &TI,
   Builder.defineMacro("__hcc_version__", TOSTR(KALMAR_VERSION_STRING));
   Builder.defineMacro("__hcc_workweek__", TOSTR(KALMAR_VERSION_WORKWEEK));
 
+  // hcc backend macro. possible values are:
+  // - CL : for non-HSA systems
+  // - HLC : for HLC backend
+  // - AMDGPU : for Lightning backend
+  Builder.defineMacro("__hcc_backend__", TOSTR(KALMAR_BACKEND));
+
 #undef TOSTR
 #undef TOSTR2
   if (!LangOpts.MSVCCompat) {
