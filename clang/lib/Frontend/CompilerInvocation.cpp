@@ -535,6 +535,8 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
   Opts.AsmVerbose = Args.hasArg(OPT_masm_verbose);
   Opts.AssumeSaneOperatorNew = !Args.hasArg(OPT_fno_assume_sane_operator_new);
   Opts.ObjCAutoRefCountExceptions = Args.hasArg(OPT_fobjc_arc_exceptions);
+  Opts.AMPIsDevice = Args.hasArg(OPT_famp_is_device);
+  Opts.AMPCPU = Args.hasArg(OPT_famp_cpu);
   Opts.CXAAtExit = !Args.hasArg(OPT_fno_use_cxa_atexit);
   Opts.CXXCtorDtorAliases = Args.hasArg(OPT_mconstructor_aliases);
   Opts.CodeModel = getCodeModel(Args, Diags);
@@ -1225,6 +1227,8 @@ static InputKind ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
       .Case("cl", IK_OpenCL)
       .Case("cuda", IK_CUDA)
       .Case("c++", IK_CXX)
+      .Case("c++amp-kernel", IK_CXXAMP) // C++ AMP support
+      .Case("c++amp-kernel-cpu", IK_CXXAMP) // C++ AMP support
       .Case("objective-c", IK_ObjC)
       .Case("objective-c++", IK_ObjCXX)
       .Case("cpp-output", IK_PreprocessedC)
@@ -1439,6 +1443,7 @@ void CompilerInvocation::setLangDefaults(LangOptions &Opts, InputKind IK,
       else
         LangStd = LangStandard::lang_gnu11;
       break;
+    case IK_CXXAMP:
     case IK_CXX:
     case IK_PreprocessedCXX:
     case IK_ObjCXX:
@@ -1564,6 +1569,11 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
         if (!Std.isCPlusPlus())
           Diags.Report(diag::err_drv_argument_not_allowed_with)
             << A->getAsString(Args) << "CUDA";
+        break;
+      case IK_CXXAMP:
+        if (!Std.isCPlusPlusAMP())
+          Diags.Report(diag::err_drv_argument_not_allowed_with)
+            << A->getAsString(Args) << "C++AMP";
         break;
       default:
         break;
@@ -1989,6 +1999,16 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
       Diags.Report(clang::diag::err_drv_omp_host_ir_file_not_found)
           << Opts.OMPHostIRFile;
   }
+
+  // C++ AMP: Decide host path or device path
+  Opts.DevicePath = Args.hasArg(OPT_famp_is_device);
+  Opts.AMPCPU = Args.hasArg(OPT_famp_cpu);
+  Opts.HSAExtension = Args.hasArg(OPT_fhsa_extension);
+
+  // rules for auto-auto:
+  // disabled by default, or explicitly disabled by -fno-auto-auto
+  // enabled by -fauto-auto
+  Opts.AutoAuto = false && /*Args.hasArg(OPT_fauto_auto) && */ !Args.hasArg(OPT_fno_auto_auto);
 
   // Record whether the __DEPRECATED define was requested.
   Opts.Deprecated = Args.hasFlag(OPT_fdeprecated_macro,

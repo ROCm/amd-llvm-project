@@ -720,6 +720,7 @@ void PrintPreambleAction::ExecuteAction() {
   switch (getCurrentFileKind()) {
   case IK_C:
   case IK_CXX:
+  case IK_CXXAMP:
   case IK_ObjC:
   case IK_ObjCXX:
   case IK_OpenCL:

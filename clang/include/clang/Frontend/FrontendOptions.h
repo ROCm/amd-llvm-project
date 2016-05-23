@@ -65,6 +65,7 @@ enum InputKind {
   IK_Asm,
   IK_C,
   IK_CXX,
+  IK_CXXAMP,
   IK_ObjC,
   IK_ObjCXX,
   IK_PreprocessedC,

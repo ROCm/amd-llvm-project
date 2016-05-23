@@ -29,7 +29,8 @@ enum LangFeatures {
   Digraphs = (1 << 8),
   GNUMode = (1 << 9),
   HexFloat = (1 << 10),
-  ImplicitInt = (1 << 11)
+  ImplicitInt = (1 << 11),
+  CPlusPlusAMP = (1 << 12)
 };
 
 }
@@ -90,6 +91,9 @@ public:
 
   /// hasImplicitInt - Language allows variables to be typed as int implicitly.
   bool hasImplicitInt() const { return Flags & frontend::ImplicitInt; }
+
+  /// isCPlusPlusAMP - Language is a C++AMP standard.
+  bool isCPlusPlusAMP() const { return Flags & frontend::CPlusPlusAMP; }
 
   static const LangStandard &getLangStandardForKind(Kind K);
   static const LangStandard *getLangStandardForName(StringRef Name);
