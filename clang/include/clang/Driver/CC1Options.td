@@ -708,8 +708,6 @@ def fopenmp_is_device : Flag<["-"], "fopenmp-is-device">,
 def fomp_host_ir_file_path : Separate<["-"], "fomp-host-ir-file-path">,
   HelpText<"Path to the IR file produced by the frontend for the host.">;
   
-} // let Flags = [CC1Option]
-
 //===----------------------------------------------------------------------===//
 // C++AMP Options
 //===----------------------------------------------------------------------===//
@@ -724,8 +722,11 @@ def fhsa_extension : Flag<["-"], "fhsa-ext">,
   HelpText<"Enable HSA-specific rules for C++AMP kernels">;
 
 def fno_auto_auto : Flag<["-"], "fno-auto-auto">,
-  HelpText<"Disable auto-auto feature">;
+  HelpText<"Disable auto-auto feature (Obsolete, use -fauto-auto to explicit enable it instead)">;
 
+def fauto_auto : Flag<["-"], "fauto-auto">,
+  HelpText<"Enable auto-auto feature">;
+} // let Flags = [CC1Option]
 
 //===----------------------------------------------------------------------===//
 // cc1as-only Options

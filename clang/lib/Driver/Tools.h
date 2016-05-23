@@ -147,6 +147,17 @@ public:
                             const char *LinkingOutput) const;
 };
 
+/// \brief HC host code compile tool.
+class LLVM_LIBRARY_VISIBILITY HCHostCompile : public Clang {
+public:
+  HCHostCompile(const ToolChain &TC) : Clang(TC) {}
+  virtual void ConstructJob(Compilation &C, const JobAction &JA,
+                            const InputInfo &Output,
+                            const InputInfoList &Inputs,
+                            const llvm::opt::ArgList &TCArgs,
+                            const char *LinkingOutput) const;
+};
+
 class LLVM_LIBRARY_VISIBILITY CXXAMPCPUCompile : public Clang {
 public:
   CXXAMPCPUCompile(const ToolChain &TC) : Clang(TC) {}
@@ -162,6 +173,38 @@ class LLVM_LIBRARY_VISIBILITY CXXAMPAssemble : public Tool {
 public:
   CXXAMPAssemble(const ToolChain &TC) : Tool("clamp-assemble",
                                              "C++AMP kernel assembler", TC) {}
+  virtual bool hasGoodDiagnostics() const { return true; }
+  virtual bool hasIntegratedAssembler() const { return false; }
+  virtual bool hasIntegratedCPP() const { return false; }
+
+  virtual void ConstructJob(Compilation &C, const JobAction &JA,
+                            const InputInfo &Output,
+                            const InputInfoList &Inputs,
+                            const llvm::opt::ArgList &TCArgs,
+                            const char *LinkingOuput) const;
+};
+
+/// \brief HC mode kernel assembler tool.
+class LLVM_LIBRARY_VISIBILITY HCKernelAssemble : public Tool {
+public:
+  HCKernelAssemble(const ToolChain &TC) : Tool("hckernelassemble",
+                                                "HC Kernel", TC) {}
+  virtual bool hasGoodDiagnostics() const { return true; }
+  virtual bool hasIntegratedAssembler() const { return false; }
+  virtual bool hasIntegratedCPP() const { return false; }
+
+  virtual void ConstructJob(Compilation &C, const JobAction &JA,
+                            const InputInfo &Output,
+                            const InputInfoList &Inputs,
+                            const llvm::opt::ArgList &TCArgs,
+                            const char *LinkingOuput) const;
+};
+
+/// \brief HC mode host code assembler tool.
+class LLVM_LIBRARY_VISIBILITY HCHostAssemble : public Tool {
+public:
+  HCHostAssemble(const ToolChain &TC) : Tool("hchostassemble",
+                                               "HC Host", TC) {}
   virtual bool hasGoodDiagnostics() const { return true; }
   virtual bool hasIntegratedAssembler() const { return false; }
   virtual bool hasIntegratedCPP() const { return false; }

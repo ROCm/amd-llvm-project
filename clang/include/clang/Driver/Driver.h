@@ -192,9 +192,12 @@ private:
 
   /// path to C++ AMP kernel assembler
   std::string CXXAMPAssemblerPath;
+  std::string HCHostAssemblerPath;
+  std::string HCKernelAssemblerPath;
 
   /// path to C++ AMP linker
   std::string CXXAMPLinkerPath;
+  std::string HCLinkerPath;
 
 public:
   /// Use lazy precompiled headers for PCH support.
@@ -266,6 +269,18 @@ public:
   // \brief Get the path to C++ AMP kernel assembler executable.
   const char *getCXXAMPAssembleProgramPath() const {
     return CXXAMPAssemblerPath.c_str();
+  }
+
+  const char *getHCHostAssembleProgramPath() const {
+    return HCHostAssemblerPath.c_str();
+  }
+
+  const char *getHCKernelAssembleProgramPath() const {
+    return HCKernelAssemblerPath.c_str();
+  }
+
+  const char *getHCLinkProgramPath() const {
+    return HCLinkerPath.c_str();
   }
 
   // \brief Get the path to C++ AMP kernel assembler executable.

@@ -85,14 +85,20 @@ private:
   mutable std::unique_ptr<Tool> Clang;
   mutable std::unique_ptr<Tool> Assemble;
   mutable std::unique_ptr<Tool> CXXAMPCompile;
+  mutable std::unique_ptr<Tool> HCHostCompile;
   mutable std::unique_ptr<Tool> CXXAMPCPUCompile;
   mutable std::unique_ptr<Tool> CXXAMPAssemble;
+  mutable std::unique_ptr<Tool> HCKernelAssemble;
+  mutable std::unique_ptr<Tool> HCHostAssemble;
   mutable std::unique_ptr<Tool> CXXAMPLink;
   mutable std::unique_ptr<Tool> Link;
   Tool *getClang() const;
   Tool *getAssemble() const;
   Tool *getCXXAMPCompile() const;
+  Tool *getHCHostCompile() const;
   Tool *getCXXAMPCPUCompile() const;
+  Tool *getHCKernelAssemble() const;
+  Tool *getHCHostAssemble() const;
   Tool *getCXXAMPAssemble() const;
   Tool *getCXXAMPLink() const;
   Tool *getLink() const;
@@ -109,8 +115,11 @@ protected:
 
   virtual Tool *buildAssembler() const;
   virtual Tool *buildCXXAMPCompiler() const;
+  virtual Tool *buildHCHostCompiler() const;
   virtual Tool *buildCXXAMPCPUCompiler() const;
   virtual Tool *buildCXXAMPAssembler() const;
+  virtual Tool *buildHCKernelAssembler() const;
+  virtual Tool *buildHCHostAssembler() const;
   virtual Tool *buildCXXAMPLinker() const;
   virtual Tool *buildLinker() const;
   virtual Tool *getTool(Action::ActionClass AC) const;
