@@ -530,6 +530,7 @@ static void InitializePredefinedMacros(const TargetInfo &TI,
   Builder.defineMacro("__hcc_minor__", TOSTR(KALMAR_VERSION_MINOR));
   Builder.defineMacro("__hcc_patchlevel__", TOSTR(KALMAR_VERSION_PATCH));
   Builder.defineMacro("__hcc_version__", TOSTR(KALMAR_VERSION_STRING));
+  Builder.defineMacro("__hcc_workweek__", TOSTR(KALMAR_VERSION_WORKWEEK));
 
 #undef TOSTR
 #undef TOSTR2
