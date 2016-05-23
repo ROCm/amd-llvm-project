@@ -739,7 +739,10 @@ FileID SourceManager::getFileIDLocal(unsigned SLocOffset) const {
   // most newly created FileID.
   const SrcMgr::SLocEntry *I;
 
-  if (LastFileIDLookup.ID < 0 ||
+  // FIXME: Handle file start location
+  // It is CXXAMP Specific. However it shall be ok in general
+  bool patch = (LocalSLocEntryTable[LastFileIDLookup.ID].getOffset() <= SLocOffset);
+  if (LastFileIDLookup.ID < 0 || patch ||
       LocalSLocEntryTable[LastFileIDLookup.ID].getOffset() < SLocOffset) {
     // Neither loc prunes our search.
     I = LocalSLocEntryTable.end();

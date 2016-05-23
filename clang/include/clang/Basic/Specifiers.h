@@ -312,6 +312,14 @@ namespace clang {
   };
 
   llvm::StringRef getParameterABISpelling(ParameterABI kind);
+
+  /// \brief C++AMP restricion specifiers
+  enum CPPAMPSpecifier {
+    CPPAMP_None = 0x0,
+    CPPAMP_CPU  = 0x1,
+    CPPAMP_AMP  = 0x2,
+    CPPAMP_AUTO = 0x4
+  };
 } // end namespace clang
 
 #endif // LLVM_CLANG_BASIC_SPECIFIERS_H

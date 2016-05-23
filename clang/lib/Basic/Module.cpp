@@ -69,6 +69,7 @@ static bool hasFeature(StringRef Feature, const LangOptions &LangOpts,
                         .Case("opencl", LangOpts.OpenCL)
                         .Case("tls", Target.isTLSSupported())
                         .Case("zvector", LangOpts.ZVector)
+                        .Case("cplusplusamp", LangOpts.CPlusPlusAMP)
                         .Default(Target.hasFeature(Feature));
   if (!HasFeature)
     HasFeature = std::find(LangOpts.ModuleFeatures.begin(),
