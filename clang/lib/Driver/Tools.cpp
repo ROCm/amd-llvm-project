@@ -3692,6 +3692,36 @@ void CXXAMPAssemble::ConstructJob(Compilation &C, const JobAction &JA,
   C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
 }
 
+void HCPassOptions(const ArgList &Args, ArgStringList &CmdArgs) {
+
+  for(auto A : Args) {
+    Option ArgOpt = A->getOption();
+    // Avoid passing options that have already been processed by the compilation stage or will be used for the linking stage
+    bool hasOpts = ArgOpt.hasFlag(options::LinkerInput) || // omit linking options
+                   ArgOpt.hasFlag(options::DriverOption) || // omit --driver-mode -### -hc -o -Xclang
+                   ArgOpt.matches(options::OPT_L) || // omit -L
+                   ArgOpt.matches(options::OPT_I_Group) || // omit -I
+                   ArgOpt.matches(options::OPT_std_EQ) || // omit -std=
+                   ArgOpt.matches(options::OPT_stdlib_EQ) || // omit -stdlib=
+                   ArgOpt.getKind() == Option::InputClass; // omit <input>
+    if (!hasOpts) {
+      std::string str = A->getSpelling().str();
+
+      // If this is a valued option
+      ArrayRef<const char *> Vals = A->getValues();
+      if(!Vals.empty()) {
+        for(auto V : Vals) {
+          str += V;
+        }
+      }
+      // Need memory on heap or clang crashes
+      char* cstr = new char[str.size() + 1];
+      strcpy(cstr, str.c_str());
+      CmdArgs.push_back(cstr);
+    }
+  }
+}
+
 void HCKernelAssemble::ConstructJob(Compilation &C, const JobAction &JA,
                                     const InputInfo &Output,
                                     const InputInfoList &Inputs,
@@ -3740,6 +3770,8 @@ void HCHostAssemble::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back(Output.getFilename());
   else
     Output.getInputArg().renderAsInput(Args, CmdArgs);
+
+  HCPassOptions(Args, CmdArgs);
 
   const char *Exec = getToolChain().getDriver().getHCHostAssembleProgramPath();
 
