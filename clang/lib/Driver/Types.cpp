@@ -89,6 +89,8 @@ bool types::isAcceptedByClang(ID Id) {
   case TY_CUDA_DEVICE:
   case TY_ObjC: case TY_PP_ObjC: case TY_PP_ObjC_Alias:
   case TY_CXX: case TY_PP_CXX:
+  case TY_CXX_AMP: case TY_PP_CXX_AMP: case TY_CXX_AMP_CPU:
+  case TY_PP_CXX_AMP_CPU:
   case TY_ObjCXX: case TY_PP_ObjCXX: case TY_PP_ObjCXX_Alias:
   case TY_CHeader: case TY_PP_CHeader:
   case TY_CLHeader:
@@ -120,6 +122,8 @@ bool types::isCXX(ID Id) {
     return false;
 
   case TY_CXX: case TY_PP_CXX:
+  case TY_CXX_AMP: case TY_PP_CXX_AMP: case TY_CXX_AMP_CPU:
+  case TY_PP_CXX_AMP_CPU:
   case TY_ObjCXX: case TY_PP_ObjCXX: case TY_PP_ObjCXX_Alias:
   case TY_CXXHeader: case TY_PP_CXXHeader:
   case TY_ObjCXXHeader: case TY_PP_ObjCXXHeader:

@@ -190,6 +190,12 @@ private:
   /// jobs.
   unsigned CheckInputsExist : 1;
 
+  /// path to C++ AMP kernel assembler
+  std::string CXXAMPAssemblerPath;
+
+  /// path to C++ AMP linker
+  std::string CXXAMPLinkerPath;
+
 public:
   /// Use lazy precompiled headers for PCH support.
   unsigned CCCUsePCH : 1;
@@ -253,6 +259,18 @@ public:
   /// \brief Get the path to the main clang executable.
   const char *getClangProgramPath() const {
     return ClangExecutable.c_str();
+  }
+
+  static bool IsCXXAMP(const llvm::opt::ArgList& Args);
+
+  // \brief Get the path to C++ AMP kernel assembler executable.
+  const char *getCXXAMPAssembleProgramPath() const {
+    return CXXAMPAssemblerPath.c_str();
+  }
+
+  // \brief Get the path to C++ AMP kernel assembler executable.
+  const char *getCXXAMPLinkProgramPath() const {
+    return CXXAMPLinkerPath.c_str();
   }
 
   /// \brief Get the path to where the clang executable was installed.

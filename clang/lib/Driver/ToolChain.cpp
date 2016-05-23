@@ -216,6 +216,22 @@ Tool *ToolChain::buildAssembler() const {
   return new tools::ClangAs(*this);
 }
 
+Tool *ToolChain::buildCXXAMPCompiler() const {
+  return new tools::CXXAMPCompile(*this);
+}
+
+Tool *ToolChain::buildCXXAMPCPUCompiler() const {
+    return new tools::CXXAMPCPUCompile(*this);
+}
+
+Tool *ToolChain::buildCXXAMPAssembler() const {
+  return new tools::CXXAMPAssemble(*this);
+}
+
+Tool *ToolChain::buildCXXAMPLinker() const {
+  return new tools::gnutools::CXXAMPLink(*this);
+}
+
 Tool *ToolChain::buildLinker() const {
   llvm_unreachable("Linking is not supported by this toolchain");
 }
@@ -224,6 +240,30 @@ Tool *ToolChain::getAssemble() const {
   if (!Assemble)
     Assemble.reset(buildAssembler());
   return Assemble.get();
+}
+
+Tool *ToolChain::getCXXAMPCompile() const {
+  if (!CXXAMPCompile)
+    CXXAMPCompile.reset(buildCXXAMPCompiler());
+  return CXXAMPCompile.get();
+}
+
+Tool *ToolChain::getCXXAMPCPUCompile() const {
+    if (!CXXAMPCPUCompile)
+        CXXAMPCPUCompile.reset(buildCXXAMPCPUCompiler());
+    return CXXAMPCPUCompile.get();
+}
+
+Tool *ToolChain::getCXXAMPAssemble() const {
+  if (!CXXAMPAssemble)
+    CXXAMPAssemble.reset(buildCXXAMPAssembler());
+  return CXXAMPAssemble.get();
+}
+
+Tool *ToolChain::getCXXAMPLink() const {
+  if (!CXXAMPLink)
+    CXXAMPLink.reset(buildCXXAMPLinker());
+  return CXXAMPLink.get();
 }
 
 Tool *ToolChain::getClangAs() const {
@@ -324,9 +364,32 @@ bool ToolChain::needsProfileRT(const ArgList &Args) {
   return false;
 }
 
+// FIXME: LLVM coding style
+extern bool IsCXXAMPCompileJobAction(const JobAction* A);
+extern bool IsCXXAMPCPUCompileJobAction(const JobAction* A);
+extern bool IsCXXAMPAssembleJobAction(const JobAction* A);
+extern bool IsCXXAMPCPUAssembleJobAction(const JobAction* A);
+extern bool IsCXXAMPLinkJobAction(const JobAction* A);
+
 Tool *ToolChain::SelectTool(const JobAction &JA) const {
-  if (getDriver().ShouldUseClangCompiler(JA)) return getClang();
   Action::ActionClass AC = JA.getKind();
+
+  if (AC == Action::CompileJobClass) {
+      if (IsCXXAMPCompileJobAction(&JA))
+          return getCXXAMPCompile();
+      if (IsCXXAMPCPUCompileJobAction(&JA))
+          return getCXXAMPCPUCompile();
+  }
+  if (AC == Action::AssembleJobClass && (IsCXXAMPAssembleJobAction(&JA) ||
+                                         IsCXXAMPCPUAssembleJobAction(&JA))) {
+    return getCXXAMPAssemble();
+  }
+
+  if (AC == Action::LinkJobClass && IsCXXAMPLinkJobAction(&JA)) {
+    return getCXXAMPLink();
+  }
+
+  if (getDriver().ShouldUseClangCompiler(JA)) return getClang();
   if (AC == Action::AssembleJobClass && useIntegratedAs())
     return getClangAs();
   return getTool(AC);

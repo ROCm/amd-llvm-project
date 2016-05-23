@@ -84,9 +84,17 @@ private:
 
   mutable std::unique_ptr<Tool> Clang;
   mutable std::unique_ptr<Tool> Assemble;
+  mutable std::unique_ptr<Tool> CXXAMPCompile;
+  mutable std::unique_ptr<Tool> CXXAMPCPUCompile;
+  mutable std::unique_ptr<Tool> CXXAMPAssemble;
+  mutable std::unique_ptr<Tool> CXXAMPLink;
   mutable std::unique_ptr<Tool> Link;
   Tool *getClang() const;
   Tool *getAssemble() const;
+  Tool *getCXXAMPCompile() const;
+  Tool *getCXXAMPCPUCompile() const;
+  Tool *getCXXAMPAssemble() const;
+  Tool *getCXXAMPLink() const;
   Tool *getLink() const;
   Tool *getClangAs() const;
 
@@ -100,6 +108,10 @@ protected:
             const llvm::opt::ArgList &Args);
 
   virtual Tool *buildAssembler() const;
+  virtual Tool *buildCXXAMPCompiler() const;
+  virtual Tool *buildCXXAMPCPUCompiler() const;
+  virtual Tool *buildCXXAMPAssembler() const;
+  virtual Tool *buildCXXAMPLinker() const;
   virtual Tool *buildLinker() const;
   virtual Tool *getTool(Action::ActionClass AC) const;
 

@@ -710,6 +710,22 @@ def fomp_host_ir_file_path : Separate<["-"], "fomp-host-ir-file-path">,
   
 } // let Flags = [CC1Option]
 
+//===----------------------------------------------------------------------===//
+// C++AMP Options
+//===----------------------------------------------------------------------===//
+
+def famp_is_device : Flag<["-"], "famp-is-device">,
+  HelpText<"Generate code for AMP kernels">;
+
+def famp_cpu : Flag<["-"], "famp-cpu">,
+  HelpText<"Generate code for AMP CPU kernels">;
+
+def fhsa_extension : Flag<["-"], "fhsa-ext">,
+  HelpText<"Enable HSA-specific rules for C++AMP kernels">;
+
+def fno_auto_auto : Flag<["-"], "fno-auto-auto">,
+  HelpText<"Disable auto-auto feature">;
+
 
 //===----------------------------------------------------------------------===//
 // cc1as-only Options
