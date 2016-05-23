@@ -3780,8 +3780,10 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // add HCC macros, based on compiler modes
   if (Args.hasArg(options::OPT_hc_mode)) {
     CmdArgs.push_back("-D__KALMAR_HC__=1");
+    CmdArgs.push_back("-D__HCC_HC__=1");
   } else if (D.IsCXXAMP(Args)) {
     CmdArgs.push_back("-D__KALMAR_AMP__=1");
+    CmdArgs.push_back("-D__HCC_AMP__=1");
   }
 
   // C++ AMP-specific
@@ -3789,6 +3791,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     // path to compile kernel codes on GPU
     CmdArgs.push_back("-D__GPU__=1");
     CmdArgs.push_back("-D__KALMAR_ACCELERATOR__=1");
+    CmdArgs.push_back("-D__HCC_ACCELERATOR__=1");
     CmdArgs.push_back("-famp-is-device");
     CmdArgs.push_back("-fno-builtin");
     CmdArgs.push_back("-fno-common");
@@ -3800,13 +3803,16 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-famp-cpu");
     CmdArgs.push_back("-D__AMP_CPU__=1");
     CmdArgs.push_back("-D__KALMAR_ACCELERATOR__=2");
+    CmdArgs.push_back("-D__HCC_ACCELERATOR__=2");
   } else if (Args.hasArg(options::OPT_cxxamp_cpu_mode)) {
     // path to compile host codes, while kernel codes are to be compiled on CPU
     CmdArgs.push_back("-D__AMP_CPU__=1");
     CmdArgs.push_back("-D__KALMAR_CPU__=2");
+    CmdArgs.push_back("-D__HCC_CPU__=2");
   } else {
     // path to compile host codes, while kernel codes are to be compiled on GPU
     CmdArgs.push_back("-D__KALMAR_CPU__=1");
+    CmdArgs.push_back("-D__HCC_CPU__=1");
   }
 
   // Add the "effective" target triple.
