@@ -7821,6 +7821,8 @@ def err_sampler_argument_required : Error<
   "sampler_t variable required - got %0">;
 def err_wrong_sampler_addressspace: Error<
   "sampler type cannot be used with the __local and __global address space qualifiers">;
+def error_opencl_cast_non_zero_to_event_t : Error<
+  "cannot cast non-zero value '%0' to 'event_t'">;
 def err_opencl_global_invalid_addr_space : Error<
   "%select{program scope|static local|extern}0 variable must reside in %1 address space">;
 def err_missing_actual_pipe_type : Error<
@@ -7854,6 +7856,8 @@ def err_opencl_type_can_only_be_used_as_function_parameter : Error <
 def warn_opencl_attr_deprecated_ignored : Warning <
   "%0 attribute is deprecated and ignored in OpenCL version %1">,
   InGroup<IgnoredAttributes>;
+def err_opencl_builtin_requires_version : Error<
+  "%0 requires OpenCL version %1%select{| or above}2">;
 
 // OpenCL v2.0 s6.13.6 -- Builtin Pipe Functions
 def err_opencl_builtin_pipe_first_arg : Error<
@@ -7885,6 +7889,11 @@ def err_opencl_invalid_block_declaration : Error<
 def err_opencl_extern_block_declaration : Error<
   "invalid block variable declaration - using 'extern' storage class is disallowed">;
 
+// OpenCL v2.0 s6.13.9 - Address space qualifier functions. 
+def err_opencl_builtin_to_addr_arg_num : Error<
+  "invalid number of arguments to function: %0">;
+def err_opencl_builtin_to_addr_invalid_arg : Error<
+  "invalid argument %0 to function: %1, expecting a generic pointer argument">;
 } // end of sema category
 
 let CategoryName = "OpenMP Issue" in {

@@ -308,6 +308,10 @@ public:
   }
 };
 
+#ifndef FREEBSD_CC_VERSION
+#define FREEBSD_CC_VERSION 0U
+#endif
+
 // FreeBSD Target
 template<typename Target>
 class FreeBSDTargetInfo : public OSTargetInfo<Target> {
@@ -318,10 +322,13 @@ protected:
 
     unsigned Release = Triple.getOSMajorVersion();
     if (Release == 0U)
-      Release = 8;
+      Release = 8U;
+    unsigned CCVersion = FREEBSD_CC_VERSION;
+    if (CCVersion == 0U)
+      CCVersion = Release * 100000U + 1U;
 
     Builder.defineMacro("__FreeBSD__", Twine(Release));
-    Builder.defineMacro("__FreeBSD_cc_version", Twine(Release * 100000U + 1U));
+    Builder.defineMacro("__FreeBSD_cc_version", Twine(CCVersion));
     Builder.defineMacro("__KPRINTF_ATTRIBUTE__");
     DefineStd(Builder, "unix", Opts);
     Builder.defineMacro("__ELF__");
@@ -1689,6 +1696,9 @@ class NVPTXTargetInfo : public TargetInfo {
     GK_SM30,
     GK_SM35,
     GK_SM37,
+    GK_SM50,
+    GK_SM52,
+    GK_SM53,
   } GPU;
 
 public:
@@ -1787,6 +1797,15 @@ public:
       case GK_SM37:
         CUDAArchCode = "370";
         break;
+      case GK_SM50:
+        CUDAArchCode = "500";
+        break;
+      case GK_SM52:
+        CUDAArchCode = "520";
+        break;
+      case GK_SM53:
+        CUDAArchCode = "530";
+        break;
       default:
         llvm_unreachable("Unhandled target CPU");
       }
@@ -1836,6 +1855,9 @@ public:
               .Case("sm_30", GK_SM30)
               .Case("sm_35", GK_SM35)
               .Case("sm_37", GK_SM37)
+              .Case("sm_50", GK_SM50)
+              .Case("sm_52", GK_SM52)
+              .Case("sm_53", GK_SM53)
               .Default(GK_NONE);
 
     return GPU != GK_NONE;
@@ -3738,6 +3760,7 @@ bool X86TargetInfo::validateCpuSupports(StringRef FeatureStr) const {
       .Case("sse", true)
       .Case("sse2", true)
       .Case("sse3", true)
+      .Case("ssse3", true)
       .Case("sse4.1", true)
       .Case("sse4.2", true)
       .Case("avx", true)
@@ -3749,6 +3772,16 @@ bool X86TargetInfo::validateCpuSupports(StringRef FeatureStr) const {
       .Case("avx512f", true)
       .Case("bmi", true)
       .Case("bmi2", true)
+      .Case("aes", true)
+      .Case("pclmul", true)
+      .Case("avx512vl", true)
+      .Case("avx512bw", true)
+      .Case("avx512dq", true)
+      .Case("avx512cd", true)
+      .Case("avx512er", true)
+      .Case("avx512pf", true)
+      .Case("avx512vbmi", true)
+      .Case("avx512ifma", true)
       .Default(false);
 }
 
@@ -6024,6 +6057,9 @@ public:
           return true;
         }
         break;
+      case 's':
+        // Relocatable constant.
+        return true;
     }
     return false;
   }

@@ -248,6 +248,9 @@
 /* Define if you have the shl_load function. */
 #undef HAVE_SHL_LOAD
 
+/* Define to 1 if you have the `sigaltstack' function. */
+#cmakedefine HAVE_SIGALTSTACK ${HAVE_SIGALTSTACK}
+
 /* Define to 1 if you have the `siglongjmp' function. */
 #cmakedefine HAVE_SIGLONGJMP ${HAVE_SIGLONGJMP}
 
@@ -327,6 +330,9 @@
 
 /* Define to 1 if you have the <unistd.h> header file. */
 #cmakedefine HAVE_UNISTD_H ${HAVE_UNISTD_H}
+
+/* Define to 1 if you have the `_Unwind_Backtrace' function. */
+#cmakedefine HAVE_UNWIND_BACKTRACE ${HAVE_UNWIND_BACKTRACE}
 
 /* Define to 1 if you have the <utime.h> header file. */
 #cmakedefine HAVE_UTIME_H ${HAVE_UTIME_H}

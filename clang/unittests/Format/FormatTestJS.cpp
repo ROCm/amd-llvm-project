@@ -125,6 +125,7 @@ TEST_F(FormatTestJS, ReservedWords) {
   verifyFormat("x.class.struct = 1;");
   verifyFormat("x.case = 1;");
   verifyFormat("x.interface = 1;");
+  verifyFormat("x.for = 1;");
   verifyFormat("x.of() = 1;");
   verifyFormat("x.in() = 1;");
   verifyFormat("x.let() = 1;");
@@ -148,6 +149,7 @@ TEST_F(FormatTestJS, CppKeywords) {
 
 TEST_F(FormatTestJS, ES6DestructuringAssignment) {
   verifyFormat("var [a, b, c] = [1, 2, 3];");
+  verifyFormat("const [a, b, c] = [1, 2, 3];");
   verifyFormat("let [a, b, c] = [1, 2, 3];");
   verifyFormat("var {a, b} = {a: 1, b: 2};");
   verifyFormat("let {a, b} = {a: 1, b: 2};");

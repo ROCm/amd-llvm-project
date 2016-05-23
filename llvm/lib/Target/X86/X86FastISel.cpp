@@ -607,7 +607,7 @@ bool X86FastISel::handleConstantAddresses(const Value *V, X86AddressMode &AM) {
       AM.GV = GV;
 
       // Allow the subtarget to classify the global.
-      unsigned char GVFlags = Subtarget->ClassifyGlobalReference(GV, TM);
+      unsigned char GVFlags = Subtarget->classifyGlobalReference(GV);
 
       // If this reference is relative to the pic base, set it now.
       if (isGlobalRelativeToPICBase(GVFlags)) {
@@ -947,10 +947,8 @@ bool X86FastISel::X86SelectCallAddress(const Value *V, X86AddressMode &AM) {
       // base and index registers are unused.
       assert(AM.Base.Reg == 0 && AM.IndexReg == 0);
       AM.Base.Reg = X86::RIP;
-    } else if (Subtarget->isPICStyleStubPIC()) {
-      AM.GVOpFlags = X86II::MO_PIC_BASE_OFFSET;
-    } else if (Subtarget->isPICStyleGOT()) {
-      AM.GVOpFlags = X86II::MO_GOTOFF;
+    } else {
+      AM.GVOpFlags = Subtarget->classifyLocalReference(nullptr);
     }
 
     return true;
@@ -3183,7 +3181,7 @@ bool X86FastISel::fastLowerCall(CallLoweringInfo &CLI) {
     unsigned CallOpc = Is64Bit ? X86::CALL64pcrel32 : X86::CALLpcrel32;
 
     // See if we need any target-specific flags on the GV operand.
-    unsigned char OpFlags = Subtarget->classifyGlobalFunctionReference(GV, TM);
+    unsigned char OpFlags = Subtarget->classifyGlobalFunctionReference(GV);
     // Ignore NonLazyBind attribute in FastISel
     if (OpFlags == X86II::MO_GOTPCREL)
       OpFlags = 0;
@@ -3453,17 +3451,13 @@ unsigned X86FastISel::X86MaterializeFP(const ConstantFP *CFP, MVT VT) {
 
   // x86-32 PIC requires a PIC base register for constant pools.
   unsigned PICBase = 0;
-  unsigned char OpFlag = 0;
-  if (Subtarget->isPICStyleStubPIC()) { // Not dynamic-no-pic
-    OpFlag = X86II::MO_PIC_BASE_OFFSET;
+  unsigned char OpFlag = Subtarget->classifyLocalReference(nullptr);
+  if (OpFlag == X86II::MO_PIC_BASE_OFFSET)
     PICBase = getInstrInfo()->getGlobalBaseReg(FuncInfo.MF);
-  } else if (Subtarget->isPICStyleGOT()) {
-    OpFlag = X86II::MO_GOTOFF;
+  else if (OpFlag == X86II::MO_GOTOFF)
     PICBase = getInstrInfo()->getGlobalBaseReg(FuncInfo.MF);
-  } else if (Subtarget->isPICStyleRIPRel() &&
-             TM.getCodeModel() == CodeModel::Small) {
+  else if (Subtarget->is64Bit() && TM.getCodeModel() == CodeModel::Small)
     PICBase = X86::RIP;
-  }
 
   // Create the load from the constant pool.
   unsigned CPI = MCP.getConstantPoolIndex(CFP, Align);

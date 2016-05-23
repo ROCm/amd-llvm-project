@@ -52,6 +52,9 @@ struct LoadCommand {
   virtual ~LoadCommand();
   llvm::MachO::macho_load_command Data;
   std::vector<Section> Sections;
+  std::vector<llvm::yaml::Hex8> PayloadBytes;
+  std::string PayloadString;
+  uint64_t ZeroPadBytes;
 };
 
 struct Object {
@@ -65,6 +68,7 @@ struct Object {
 
 LLVM_YAML_IS_SEQUENCE_VECTOR(llvm::MachOYAML::LoadCommand)
 LLVM_YAML_IS_SEQUENCE_VECTOR(llvm::MachOYAML::Section)
+LLVM_YAML_IS_SEQUENCE_VECTOR(llvm::yaml::Hex8)
 
 namespace llvm {
 namespace yaml {
@@ -91,6 +95,7 @@ template <> struct MappingTraits<MachOYAML::Section> {
 template <> struct ScalarEnumerationTraits<MachO::LoadCommandType> {
   static void enumeration(IO &io, MachO::LoadCommandType &value) {
 #include "llvm/Support/MachO.def"
+  io.enumFallback<Hex32>(value);
   }
 };
 

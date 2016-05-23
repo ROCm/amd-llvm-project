@@ -10,6 +10,8 @@ movl  $2147483647, %eax
 movl  $-2147483648, %eax
 
 movabsq	$9223372036854775807, %rax
+
+# This line should not induce undefined behavior via negation of INT64_MIN.
 movabsq	$-9223372036854775808, %rax
 
 # CHECK:  movb  $127, %al

@@ -135,15 +135,44 @@ static uint64_t getAArch64Page(uint64_t Expr) {
   return Expr & (~static_cast<uint64_t>(0xFFF));
 }
 
+// For computing values, each R_RELAX_TLS_* corresponds to whatever expression
+// the target uses in the mode this is being relaxed into. For example, anything
+// that relaxes to LE just needs an R_TLS since that is what is used if we
+// had a local exec expression to begin with.
+static RelExpr getRelaxedExpr(RelExpr Expr) {
+  switch (Expr) {
+  default:
+    return Expr;
+  case R_RELAX_TLS_GD_TO_LE:
+    if (Config->EMachine == EM_386)
+      return R_NEG_TLS;
+    return R_TLS;
+  case R_RELAX_TLS_GD_TO_IE:
+    if (Config->EMachine == EM_386)
+      return R_GOT_FROM_END;
+    return R_GOT_PC;
+  case R_RELAX_TLS_IE_TO_LE:
+  case R_RELAX_TLS_LD_TO_LE:
+    return R_TLS;
+  }
+}
+
 template <class ELFT>
 static typename ELFT::uint
 getSymVA(uint32_t Type, typename ELFT::uint A, typename ELFT::uint P,
          const SymbolBody &Body, uint8_t *BufLoc,
          const elf::ObjectFile<ELFT> &File, RelExpr Expr) {
   typedef typename ELFT::uint uintX_t;
+  Expr = getRelaxedExpr(Expr);
+
   switch (Expr) {
   case R_HINT:
     llvm_unreachable("cannot relocate hint relocs");
+  case R_RELAX_TLS_GD_TO_LE:
+  case R_RELAX_TLS_GD_TO_IE:
+  case R_RELAX_TLS_IE_TO_LE:
+  case R_RELAX_TLS_LD_TO_LE:
+    llvm_unreachable("Should have been mapped");
   case R_TLSLD:
     return Out<ELFT>::Got->getTlsIndexOff() + A -
            Out<ELFT>::Got->getNumEntries() * sizeof(uintX_t);
@@ -171,23 +200,21 @@ getSymVA(uint32_t Type, typename ELFT::uint A, typename ELFT::uint P,
     return Body.getGotOffset<ELFT>() + A -
            Out<ELFT>::Got->getNumEntries() * sizeof(uintX_t);
   case R_GOT:
-  case R_RELAX_TLS_GD_TO_IE:
     return Body.getGotVA<ELFT>() + A;
   case R_GOT_PAGE_PC:
     return getAArch64Page(Body.getGotVA<ELFT>() + A) - getAArch64Page(P);
   case R_GOT_PC:
-  case R_RELAX_TLS_GD_TO_IE_PC:
     return Body.getGotVA<ELFT>() + A - P;
   case R_GOTONLY_PC:
     return Out<ELFT>::Got->getVA() + A - P;
   case R_TLS:
+    if (Target->TcbSize)
+      return Body.getVA<ELFT>(A) +
+             alignTo(Target->TcbSize, Out<ELFT>::TlsPhdr->p_align);
     return Body.getVA<ELFT>(A) - Out<ELFT>::TlsPhdr->p_memsz;
   case R_NEG_TLS:
     return Out<ELF32LE>::TlsPhdr->p_memsz - Body.getVA<ELFT>(A);
   case R_ABS:
-  case R_RELAX_TLS_GD_TO_LE:
-  case R_RELAX_TLS_IE_TO_LE:
-  case R_RELAX_TLS_LD_TO_LE:
     return Body.getVA<ELFT>(A);
   case R_GOT_OFF:
     return Body.getGotOffset<ELFT>() + A;
@@ -242,9 +269,11 @@ void InputSection<ELFT>::relocateNonAlloc(uint8_t *Buf, ArrayRef<RelTy> Rels) {
   const unsigned Bits = sizeof(uintX_t) * 8;
   for (const RelTy &Rel : Rels) {
     uint32_t Type = Rel.getType(Config->Mips64EL);
+    uintX_t Offset = this->getOffset(Rel.r_offset);
+    uint8_t *BufLoc = Buf + Offset;
     uintX_t Addend = getAddend<ELFT>(Rel);
     if (!RelTy::IsRela)
-      Addend += Target->getImplicitAddend(Buf + Rel.r_offset, Type);
+      Addend += Target->getImplicitAddend(BufLoc, Type);
 
     SymbolBody &Sym = this->File->getRelocTargetSym(Rel);
     if (Target->getRelExpr(Type, Sym) != R_ABS) {
@@ -252,8 +281,6 @@ void InputSection<ELFT>::relocateNonAlloc(uint8_t *Buf, ArrayRef<RelTy> Rels) {
       return;
     }
 
-    uintX_t Offset = this->getOffset(Rel.r_offset);
-    uint8_t *BufLoc = Buf + Offset;
     uintX_t AddrLoc = this->OutSec->getVA() + Offset;
     uint64_t SymVA = SignExtend64<Bits>(getSymVA<ELFT>(
         Type, Addend, AddrLoc, Sym, BufLoc, *this->File, R_ABS));
@@ -289,30 +316,29 @@ void InputSectionBase<ELFT>::relocate(uint8_t *Buf, uint8_t *BufEnd) {
     uint64_t SymVA = SignExtend64<Bits>(
         getSymVA<ELFT>(Type, A, AddrLoc, *Rel.Sym, BufLoc, *File, Expr));
 
-    if (Expr == R_RELAX_TLS_IE_TO_LE) {
-      Target->relaxTlsIeToLe(BufLoc, Type, SymVA);
-      continue;
-    }
-    if (Expr == R_RELAX_TLS_LD_TO_LE) {
-      Target->relaxTlsLdToLe(BufLoc, Type, SymVA);
-      continue;
-    }
-    if (Expr == R_RELAX_TLS_GD_TO_LE) {
-      Target->relaxTlsGdToLe(BufLoc, Type, SymVA);
-      continue;
-    }
-    if (Expr == R_RELAX_TLS_GD_TO_IE_PC || Expr == R_RELAX_TLS_GD_TO_IE) {
-      Target->relaxTlsGdToIe(BufLoc, Type, SymVA);
-      continue;
-    }
-
     if (Expr == R_PPC_PLT_OPD) {
       uint32_t Nop = 0x60000000;
       if (BufLoc + 8 <= BufEnd && read32be(BufLoc + 4) == Nop)
         write32be(BufLoc + 4, 0xe8410028); // ld %r2, 40(%r1)
     }
 
-    Target->relocateOne(BufLoc, Type, SymVA);
+    switch (Expr) {
+    case R_RELAX_TLS_IE_TO_LE:
+      Target->relaxTlsIeToLe(BufLoc, Type, SymVA);
+      break;
+    case R_RELAX_TLS_LD_TO_LE:
+      Target->relaxTlsLdToLe(BufLoc, Type, SymVA);
+      break;
+    case R_RELAX_TLS_GD_TO_LE:
+      Target->relaxTlsGdToLe(BufLoc, Type, SymVA);
+      break;
+    case R_RELAX_TLS_GD_TO_IE:
+      Target->relaxTlsGdToIe(BufLoc, Type, SymVA);
+      break;
+    default:
+      Target->relocateOne(BufLoc, Type, SymVA);
+      break;
+    }
   }
 }
 
@@ -381,6 +407,38 @@ bool EHInputSection<ELFT>::classof(const InputSectionBase<ELFT> *S) {
   return S->SectionKind == InputSectionBase<ELFT>::EHFrame;
 }
 
+template <class ELFT> static size_t readRecordSize(ArrayRef<uint8_t> D) {
+  const endianness E = ELFT::TargetEndianness;
+  if (D.size() < 4)
+    fatal("CIE/FDE too small");
+
+  // First 4 bytes of CIE/FDE is the size of the record.
+  // If it is 0xFFFFFFFF, the next 8 bytes contain the size instead,
+  // but we do not support that format yet.
+  uint64_t V = read32<E>(D.data());
+  if (V == UINT32_MAX)
+    fatal("CIE/FDE too large");
+  uint64_t Size = V + 4;
+  if (Size > D.size())
+    fatal("CIE/FIE ends past the end of the section");
+  return Size;
+}
+
+// .eh_frame is a sequence of CIE or FDE records.
+// This function splits an input section into records and returns them.
+template <class ELFT>
+void EHInputSection<ELFT>::split() {
+  ArrayRef<uint8_t> Data = this->getSectionData();
+  for (size_t Off = 0, End = Data.size(); Off != End;) {
+    size_t Size = readRecordSize<ELFT>(Data.slice(Off));
+    // The empty record is the end marker.
+    if (Size == 4)
+      break;
+    this->Pieces.emplace_back(Off, Data.slice(Off, Size));
+    Off += Size;
+  }
+}
+
 template <class ELFT>
 typename ELFT::uint EHInputSection<ELFT>::getOffset(uintX_t Offset) {
   // The file crtbeginT.o has relocations pointing to the start of an empty
@@ -388,17 +446,17 @@ typename ELFT::uint EHInputSection<ELFT>::getOffset(uintX_t Offset) {
   // identify the start of the output .eh_frame. Handle this special case.
   if (this->getSectionHdr()->sh_size == 0)
     return Offset;
-  std::pair<uintX_t, uintX_t> *I = this->getRangeAndSize(Offset).first;
-  uintX_t Base = I->second;
-  if (Base == uintX_t(-1))
+  SectionPiece *Piece = this->getSectionPiece(Offset);
+  if (Piece->OutputOff == size_t(-1))
     return -1; // Not in the output
 
-  uintX_t Addend = Offset - I->first;
-  return Base + Addend;
+  uintX_t Addend = Offset - Piece->InputOff;
+  return Piece->OutputOff + Addend;
 }
 
-static size_t findNull(StringRef S, size_t EntSize) {
+static size_t findNull(ArrayRef<uint8_t> A, size_t EntSize) {
   // Optimize the common case.
+  StringRef S((const char *)A.data(), A.size());
   if (EntSize == 1)
     return S.find(0);
 
@@ -410,36 +468,46 @@ static size_t findNull(StringRef S, size_t EntSize) {
   return StringRef::npos;
 }
 
+// Split SHF_STRINGS section. Such section is a sequence of
+// null-terminated strings.
+static std::vector<SectionPiece> splitStrings(ArrayRef<uint8_t> Data,
+                                              size_t EntSize) {
+  std::vector<SectionPiece> V;
+  size_t Off = 0;
+  while (!Data.empty()) {
+    size_t End = findNull(Data, EntSize);
+    if (End == StringRef::npos)
+      fatal("string is not null terminated");
+    size_t Size = End + EntSize;
+    V.emplace_back(Off, Data.slice(0, Size));
+    Data = Data.slice(Size);
+    Off += Size;
+  }
+  return V;
+}
+
+// Split non-SHF_STRINGS section. Such section is a sequence of
+// fixed size records.
+static std::vector<SectionPiece> splitNonStrings(ArrayRef<uint8_t> Data,
+                                                 size_t EntSize) {
+  std::vector<SectionPiece> V;
+  size_t Size = Data.size();
+  assert((Size % EntSize) == 0);
+  for (unsigned I = 0, N = Size; I != N; I += EntSize)
+    V.emplace_back(I, Data.slice(I, EntSize));
+  return V;
+}
+
 template <class ELFT>
 MergeInputSection<ELFT>::MergeInputSection(elf::ObjectFile<ELFT> *F,
                                            const Elf_Shdr *Header)
     : SplitInputSection<ELFT>(F, Header, InputSectionBase<ELFT>::Merge) {
-  uintX_t EntSize = Header->sh_entsize;
-  ArrayRef<uint8_t> D = this->getSectionData();
-  StringRef Data((const char *)D.data(), D.size());
-  std::vector<std::pair<uintX_t, uintX_t>> &Offsets = this->Offsets;
-
-  uintX_t V = Config->GcSections ? MergeInputSection<ELFT>::PieceDead
-                                 : MergeInputSection<ELFT>::PieceLive;
-  if (Header->sh_flags & SHF_STRINGS) {
-    uintX_t Offset = 0;
-    while (!Data.empty()) {
-      size_t End = findNull(Data, EntSize);
-      if (End == StringRef::npos)
-        fatal("string is not null terminated");
-      Offsets.push_back(std::make_pair(Offset, V));
-      uintX_t Size = End + EntSize;
-      Data = Data.substr(Size);
-      Offset += Size;
-    }
-    return;
-  }
-
-  // If this is not of type string, every entry has the same size.
-  size_t Size = Data.size();
-  assert((Size % EntSize) == 0);
-  for (unsigned I = 0, N = Size; I != N; I += EntSize)
-    Offsets.push_back(std::make_pair(I, V));
+  ArrayRef<uint8_t> Data = this->getSectionData();
+  uintX_t EntSize = this->Header->sh_entsize;
+  if (this->Header->sh_flags & SHF_STRINGS)
+    this->Pieces = splitStrings(Data, EntSize);
+  else
+    this->Pieces = splitNonStrings(Data, EntSize);
 }
 
 template <class ELFT>
@@ -448,9 +516,7 @@ bool MergeInputSection<ELFT>::classof(const InputSectionBase<ELFT> *S) {
 }
 
 template <class ELFT>
-std::pair<std::pair<typename ELFT::uint, typename ELFT::uint> *,
-          typename ELFT::uint>
-SplitInputSection<ELFT>::getRangeAndSize(uintX_t Offset) {
+SectionPiece *SplitInputSection<ELFT>::getSectionPiece(uintX_t Offset) {
   ArrayRef<uint8_t> D = this->getSectionData();
   StringRef Data((const char *)D.data(), D.size());
   uintX_t Size = Data.size();
@@ -459,37 +525,29 @@ SplitInputSection<ELFT>::getRangeAndSize(uintX_t Offset) {
 
   // Find the element this offset points to.
   auto I = std::upper_bound(
-      Offsets.begin(), Offsets.end(), Offset,
-      [](const uintX_t &A, const std::pair<uintX_t, uintX_t> &B) {
-        return A < B.first;
-      });
-  uintX_t End = I == Offsets.end() ? Data.size() : I->first;
+      Pieces.begin(), Pieces.end(), Offset,
+      [](const uintX_t &A, const SectionPiece &B) { return A < B.InputOff; });
   --I;
-  return std::make_pair(&*I, End);
+  return &*I;
 }
 
 template <class ELFT>
 typename ELFT::uint MergeInputSection<ELFT>::getOffset(uintX_t Offset) {
-  std::pair<std::pair<uintX_t, uintX_t> *, uintX_t> T =
-      this->getRangeAndSize(Offset);
-  std::pair<uintX_t, uintX_t> *I = T.first;
-  uintX_t End = T.second;
-  uintX_t Start = I->first;
+  SectionPiece &Piece = *this->getSectionPiece(Offset);
+  assert(Piece.Live);
 
   // Compute the Addend and if the Base is cached, return.
-  uintX_t Addend = Offset - Start;
-  uintX_t &Base = I->second;
-  assert(Base != MergeInputSection<ELFT>::PieceDead);
-  if (Base != MergeInputSection<ELFT>::PieceLive)
-    return Base + Addend;
+  uintX_t Addend = Offset - Piece.InputOff;
+  if (Piece.OutputOff != size_t(-1))
+    return Piece.OutputOff + Addend;
 
   // Map the base to the offset in the output section and cache it.
   ArrayRef<uint8_t> D = this->getSectionData();
   StringRef Data((const char *)D.data(), D.size());
-  StringRef Entry = Data.substr(Start, End - Start);
+  StringRef Entry = Data.substr(Piece.InputOff, Piece.size());
   auto *MOS = static_cast<MergeOutputSection<ELFT> *>(this->OutSec);
-  Base = MOS->getOffset(Entry);
-  return Base + Addend;
+  Piece.OutputOff = MOS->getOffset(Entry);
+  return Piece.OutputOff + Addend;
 }
 
 template <class ELFT>

@@ -138,7 +138,8 @@ void DebugLocDwarfExpression::EmitUnsigned(uint64_t Value) {
   BS.EmitULEB128(Value, Twine(Value));
 }
 
-bool DebugLocDwarfExpression::isFrameRegister(unsigned MachineReg) {
+bool DebugLocDwarfExpression::isFrameRegister(const TargetRegisterInfo &TRI,
+                                              unsigned MachineReg) {
   // This information is not available while emitting .debug_loc entries.
   return false;
 }
@@ -268,11 +269,6 @@ DwarfDebug::DwarfDebug(AsmPrinter *A, Module *M)
   UseDWARF2Bitfields = (DwarfVersion < 4) || tuneForGDB();
 
   Asm->OutStreamer->getContext().setDwarfVersion(DwarfVersion);
-
-  {
-    NamedRegionTimer T(DbgTimerName, DWARFGroupName, TimePassesIsEnabled);
-    beginModule();
-  }
 }
 
 // Define out of line so we don't have to include DwarfUnit.h in DwarfDebug.h.
@@ -464,6 +460,7 @@ void DwarfDebug::constructAndAddImportedEntityDIE(DwarfCompileUnit &TheCU,
 // global DIEs and emit initial debug info sections. This is invoked by
 // the target AsmPrinter.
 void DwarfDebug::beginModule() {
+  NamedRegionTimer T(DbgTimerName, DWARFGroupName, TimePassesIsEnabled);
   if (DisableDebugInfoPrinting)
     return;
 
@@ -1400,8 +1397,7 @@ static void emitDebugLocValue(const AsmPrinter &AP, const DIBasicType *BT,
                               ByteStreamer &Streamer,
                               const DebugLocEntry::Value &Value,
                               unsigned PieceOffsetInBits) {
-  DebugLocDwarfExpression DwarfExpr(*AP.MF->getSubtarget().getRegisterInfo(),
-                                    AP.getDwarfDebug()->getDwarfVersion(),
+  DebugLocDwarfExpression DwarfExpr(AP.getDwarfDebug()->getDwarfVersion(),
                                     Streamer);
   // Regular entry.
   if (Value.isInt()) {
@@ -1418,12 +1414,13 @@ static void emitDebugLocValue(const AsmPrinter &AP, const DIBasicType *BT,
       AP.EmitDwarfRegOp(Streamer, Loc);
     else {
       // Complex address entry.
+      const TargetRegisterInfo &TRI = *AP.MF->getSubtarget().getRegisterInfo();
       if (Loc.getOffset()) {
-        DwarfExpr.AddMachineRegIndirect(Loc.getReg(), Loc.getOffset());
+        DwarfExpr.AddMachineRegIndirect(TRI, Loc.getReg(), Loc.getOffset());
         DwarfExpr.AddExpression(Expr->expr_op_begin(), Expr->expr_op_end(),
                                 PieceOffsetInBits);
       } else
-        DwarfExpr.AddMachineRegExpression(Expr, Loc.getReg(),
+        DwarfExpr.AddMachineRegExpression(TRI, Expr, Loc.getReg(),
                                           PieceOffsetInBits);
     }
   } else if (Value.isConstantFP()) {
@@ -1454,8 +1451,7 @@ void DebugLocEntry::finalize(const AsmPrinter &AP,
       assert(Offset <= PieceOffset && "overlapping or duplicate pieces");
       if (Offset < PieceOffset) {
         // The DWARF spec seriously mandates pieces with no locations for gaps.
-        DebugLocDwarfExpression Expr(*AP.MF->getSubtarget().getRegisterInfo(),
-                                     AP.getDwarfDebug()->getDwarfVersion(),
+        DebugLocDwarfExpression Expr(AP.getDwarfDebug()->getDwarfVersion(),
                                      Streamer);
         Expr.AddOpPiece(PieceOffset-Offset, 0);
         Offset += PieceOffset-Offset;
@@ -1554,24 +1550,12 @@ void DwarfDebug::emitDebugARanges() {
     }
   }
 
-  // Add terminating symbols for each section.
-  for (const auto &I : SectionMap) {
-    MCSection *Section = I.first;
-    MCSymbol *Sym = nullptr;
-
-    if (Section)
-      Sym = Asm->OutStreamer->endSection(Section);
-
-    // Insert a final terminator.
-    SectionMap[Section].push_back(SymbolCU(nullptr, Sym));
-  }
-
   DenseMap<DwarfCompileUnit *, std::vector<ArangeSpan>> Spans;
 
   for (auto &I : SectionMap) {
-    const MCSection *Section = I.first;
+    MCSection *Section = I.first;
     SmallVector<SymbolCU, 8> &List = I.second;
-    if (List.size() < 2)
+    if (List.size() < 1)
       continue;
 
     // If we have no section (e.g. common), just write out
@@ -1581,26 +1565,29 @@ void DwarfDebug::emitDebugARanges() {
         ArangeSpan Span;
         Span.Start = Cur.Sym;
         Span.End = nullptr;
-        if (Cur.CU)
-          Spans[Cur.CU].push_back(Span);
+        assert(Cur.CU);
+        Spans[Cur.CU].push_back(Span);
       }
       continue;
     }
 
     // Sort the symbols by offset within the section.
-    std::sort(List.begin(), List.end(),
-              [&](const SymbolCU &A, const SymbolCU &B) {
-      unsigned IA = A.Sym ? Asm->OutStreamer->GetSymbolOrder(A.Sym) : 0;
-      unsigned IB = B.Sym ? Asm->OutStreamer->GetSymbolOrder(B.Sym) : 0;
+    std::sort(
+        List.begin(), List.end(), [&](const SymbolCU &A, const SymbolCU &B) {
+          unsigned IA = A.Sym ? Asm->OutStreamer->GetSymbolOrder(A.Sym) : 0;
+          unsigned IB = B.Sym ? Asm->OutStreamer->GetSymbolOrder(B.Sym) : 0;
 
-      // Symbols with no order assigned should be placed at the end.
-      // (e.g. section end labels)
-      if (IA == 0)
-        return false;
-      if (IB == 0)
-        return true;
-      return IA < IB;
-    });
+          // Symbols with no order assigned should be placed at the end.
+          // (e.g. section end labels)
+          if (IA == 0)
+            return false;
+          if (IB == 0)
+            return true;
+          return IA < IB;
+        });
+
+    // Insert a final terminator.
+    List.push_back(SymbolCU(nullptr, Asm->OutStreamer->endSection(Section)));
 
     // Build spans between each label.
     const MCSymbol *StartSym = List[0].Sym;
@@ -1613,6 +1600,7 @@ void DwarfDebug::emitDebugARanges() {
         ArangeSpan Span;
         Span.Start = StartSym;
         Span.End = Cur.Sym;
+        assert(Prev.CU);
         Spans[Prev.CU].push_back(Span);
         StartSym = Cur.Sym;
       }
