@@ -507,6 +507,11 @@ static void InitializePredefinedMacros(const TargetInfo &TI,
   // Compiler version introspection macros.
   Builder.defineMacro("__llvm__");  // LLVM Backend
   Builder.defineMacro("__clang__"); // Clang Frontend
+
+  // hcc macros
+  Builder.defineMacro("__KALMAR_CC__", "1");
+  Builder.defineMacro("__HCC__", "1");
+
 #define TOSTR2(X) #X
 #define TOSTR(X) TOSTR2(X)
   Builder.defineMacro("__clang_major__", TOSTR(CLANG_VERSION_MAJOR));
@@ -519,6 +524,13 @@ static void InitializePredefinedMacros(const TargetInfo &TI,
   Builder.defineMacro("__clang_version__", 
                       "\"" CLANG_VERSION_STRING " "
                       + getClangFullRepositoryVersion() + "\"");
+
+  // hcc version macros
+  Builder.defineMacro("__hcc_major__", TOSTR(KALMAR_VERSION_MAJOR));
+  Builder.defineMacro("__hcc_minor__", TOSTR(KALMAR_VERSION_MINOR));
+  Builder.defineMacro("__hcc_patchlevel__", TOSTR(KALMAR_VERSION_PATCH));
+  Builder.defineMacro("__hcc_version__", TOSTR(KALMAR_VERSION_STRING));
+
 #undef TOSTR
 #undef TOSTR2
   if (!LangOpts.MSVCCompat) {

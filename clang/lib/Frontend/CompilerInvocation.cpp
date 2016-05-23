@@ -1228,6 +1228,8 @@ static InputKind ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
       .Case("cuda", IK_CUDA)
       .Case("c++", IK_CXX)
       .Case("c++amp-kernel", IK_CXXAMP) // C++ AMP support
+      .Case("hc-kernel", IK_CXXAMP) // HC support
+      .Case("hc-host", IK_CXXAMP) // HC support
       .Case("c++amp-kernel-cpu", IK_CXXAMP) // C++ AMP support
       .Case("objective-c", IK_ObjC)
       .Case("objective-c++", IK_ObjCXX)
@@ -2008,7 +2010,7 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
   // rules for auto-auto:
   // disabled by default, or explicitly disabled by -fno-auto-auto
   // enabled by -fauto-auto
-  Opts.AutoAuto = false && /*Args.hasArg(OPT_fauto_auto) && */ !Args.hasArg(OPT_fno_auto_auto);
+  Opts.AutoAuto = Args.hasArg(OPT_fauto_auto) && !Args.hasArg(OPT_fno_auto_auto);
 
   // Record whether the __DEPRECATED define was requested.
   Opts.Deprecated = Args.hasFlag(OPT_fdeprecated_macro,
