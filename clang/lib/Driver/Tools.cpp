@@ -3714,10 +3714,7 @@ void HCPassOptions(const ArgList &Args, ArgStringList &CmdArgs) {
           str += V;
         }
       }
-      // Need memory on heap or clang crashes
-      char* cstr = new char[str.size() + 1];
-      strcpy(cstr, str.c_str());
-      CmdArgs.push_back(cstr);
+      CmdArgs.push_back(Args.MakeArgString(str));
     }
   }
 }
