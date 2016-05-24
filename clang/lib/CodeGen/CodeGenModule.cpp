@@ -838,6 +838,18 @@ void CodeGenModule::SetLLVMFunctionAttributes(const Decl *D,
                          false);
   F->setAttributes(llvm::AttributeSet::get(getLLVMContext(), AttributeList));
   F->setCallingConv(static_cast<llvm::CallingConv::ID>(CallingConv));
+
+  llvm::AttrBuilder B;
+
+  if (D->hasAttr<HCGridLaunchAttr>()) {
+    // hc_grid_launch attribute implies noinline and will win over always_inline
+    B.addAttribute("hc_grid_launch");
+    B.addAttribute(llvm::Attribute::NoInline);
+  }
+
+  F->addAttributes(llvm::AttributeSet::FunctionIndex,
+                   llvm::AttributeSet::get(
+                       F->getContext(), llvm::AttributeSet::FunctionIndex, B));
 }
 
 /// Determines whether the language options require us to model
@@ -883,12 +895,6 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
                          F->getContext(),
                          llvm::AttributeSet::FunctionIndex, B));
     return;
-  }
-
-  if (D->hasAttr<HCGridLaunchAttr>()) {
-    // hc_grid_launch attribute implies noinline and will win over always_inline
-    B.addAttribute("hc_grid_launch");
-    B.addAttribute(llvm::Attribute::NoInline);
   }
 
   if (D->hasAttr<NakedAttr>()) {
