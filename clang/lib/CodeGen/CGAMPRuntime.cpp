@@ -57,8 +57,6 @@ void CGAMPRuntime::EmitTrampolineBody(CodeGenFunction &CGF,
   Address ai = CGF.CreateMemTemp(QualType(ClassDecl->getTypeForDecl(),0));
   // Locate the constructor to call
   if(ClassDecl->getCXXAMPDeserializationConstructor()==NULL) {
-    // FIXME: if execution on CPU path is correct
-    llvm::errs()<<"[EmitTrampolineBody] DeserializationConstructor is NULL\n";
     return;
   }
   CXXConstructorDecl *DeserializeConstructor =
@@ -168,7 +166,6 @@ void CGAMPRuntime::EmitTrampolineBody(CodeGenFunction &CGF,
       IndexTy = P->getType().getNonReferenceType();
       if (!findValidIndexType(IndexTy))
         continue;
-      //llvm::errs() << "operator() arg type: "<<P->getType().getAsString() << "\n";
       MT = dyn_cast<FunctionType>(MethodDecl->getType().getTypePtr());
       assert(MT);
       KernelDecl = MethodDecl;
@@ -244,7 +241,6 @@ void CGAMPRuntime::EmitTrampolineNameBody(CodeGenFunction &CGF,
   }
   assert(TrampolineDecl && "Trampoline not declared!");
   GlobalDecl GD(TrampolineDecl);
-  //llvm::errs() << "Trampoline mangled name = " << CGM.getMangledName(GD) << "\n";
   llvm::Constant *S = llvm::ConstantDataArray::getString(CGM.getLLVMContext(),
     CGM.getMangledName(GD));
   llvm::GlobalVariable *GV = new llvm::GlobalVariable(CGM.getModule(), S->getType(),
