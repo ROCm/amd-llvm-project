@@ -3905,6 +3905,9 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
     // The MSVC++ personality will implicitly terminate the program if an
     // exception is thrown.  An unwind edge cannot be reached.
     CannotThrow = true;
+  } else if (CGM.getLangOpts().DevicePath) {
+    // If we can in HCC Device Path we do not support exceptions thrown
+    CannotThrow = true;
   } else {
     // Otherwise, nowunind callsites will never throw.
     CannotThrow = Attrs.hasAttribute(llvm::AttributeSet::FunctionIndex,
