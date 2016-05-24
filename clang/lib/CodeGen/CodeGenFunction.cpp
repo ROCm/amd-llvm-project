@@ -14,6 +14,7 @@
 #include "CodeGenFunction.h"
 #include "CGBlocks.h"
 #include "CGCleanup.h"
+#include "CGAMPRuntime.h"
 #include "CGCUDARuntime.h"
 #include "CGCXXABI.h"
 #include "CGDebugInfo.h"
@@ -582,7 +583,7 @@ static void GenOpenCLArgMetadata(const FunctionDecl *FD, llvm::Function *Fn,
   kernelMDArgs.push_back(llvm::MDNode::get(Context, argTypeNames));
   kernelMDArgs.push_back(llvm::MDNode::get(Context, argBaseTypeNames));
   kernelMDArgs.push_back(llvm::MDNode::get(Context, argTypeQuals));
-  if (CGM.getCodeGenOpts().EmitOpenCLArgMetadata)
+  if (CGM.getCodeGenOpts().EmitOpenCLArgMetadata || CGM.getLangOpts().CPlusPlusAMP)
     kernelMDArgs.push_back(llvm::MDNode::get(Context, argNames));
 }
 
@@ -677,7 +678,25 @@ void CodeGenFunction::StartFunction(GlobalDecl GD,
   FnRetTy = RetTy;
   CurFn = Fn;
   CurFnInfo = &FnInfo;
-  assert(CurFn->isDeclaration() && "Function already has body?");
+
+  // Relax duplicated function definition for C++AMP
+  //
+  // The reason is because in the modified GPU build path, both CPU and GPU
+  // codes would be emitted in order to make sure C++ name mangling for
+  // GPU kernels work correctly.  CPU codes would be removed in a later
+  // optimization pass.
+  //
+  // Therefore, in the following case StartFunction() might be called twice
+  // for function foo(), and thus we need to relax the assert check for C++AMP.
+  //
+  // void foo() restrict(amp) { return 1; }
+  // void foo() restrict(cpu) { return 2; }
+
+  if (getContext().getLangOpts().CPlusPlusAMP &&
+      (CGM.getCodeGenOpts().AMPIsDevice || CGM.getCodeGenOpts().AMPCPU)) {
+  } else {
+    assert(CurFn->isDeclaration() && "Function already has body?");
+  }
 
   if (CGM.isInSanitizerBlacklist(Fn, Loc))
     SanOpts.clear();
@@ -718,7 +737,7 @@ void CodeGenFunction::StartFunction(GlobalDecl GD,
   Fn->addFnAttr("no-jump-tables",
                 llvm::toStringRef(CGM.getCodeGenOpts().NoUseJumpTables));
 
-  if (getLangOpts().OpenCL) {
+  if (getLangOpts().OpenCL || getLangOpts().CPlusPlusAMP) {
     // Add metadata for a kernel function.
     if (const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(D))
       EmitOpenCLKernelMetadata(FD, Fn);
@@ -996,6 +1015,16 @@ void CodeGenFunction::GenerateCode(GlobalDecl GD, llvm::Function *Fn,
     EmitDestructorBody(Args);
   else if (isa<CXXConstructorDecl>(FD))
     EmitConstructorBody(Args);
+  else if (getContext().getLangOpts().CPlusPlusAMP &&
+           CGM.getCodeGenOpts().AMPIsDevice &&
+           FD->hasAttr<AnnotateAttr>() &&
+           FD->getAttr<AnnotateAttr>()->getAnnotation() == "__cxxamp_trampoline")
+    CGM.getAMPRuntime().EmitTrampolineBody(*this, FD, Args);
+  else if (getContext().getLangOpts().CPlusPlusAMP &&
+           (!CGM.getCodeGenOpts().AMPIsDevice || CGM.getCodeGenOpts().AMPCPU)&&
+           FD->hasAttr<AnnotateAttr>() &&
+           FD->getAttr<AnnotateAttr>()->getAnnotation() == "__cxxamp_trampoline_name")
+    CGM.getAMPRuntime().EmitTrampolineNameBody(*this, FD, Args);
   else if (getLangOpts().CUDA &&
            !getLangOpts().CUDAIsDevice &&
            FD->hasAttr<CUDAGlobalAttr>())
@@ -1027,7 +1056,8 @@ void CodeGenFunction::GenerateCode(GlobalDecl GD, llvm::Function *Fn,
   // C11 6.9.1p12:
   //   If the '}' that terminates a function is reached, and the value of the
   //   function call is used by the caller, the behavior is undefined.
-  if (getLangOpts().CPlusPlus && !FD->hasImplicitReturnZero() && !SawAsmBlock &&
+  // Relax the rule for C++AMP
+  if (!getLangOpts().CPlusPlusAMP && getLangOpts().CPlusPlus && !FD->hasImplicitReturnZero() && !SawAsmBlock &&
       !FD->getReturnType()->isVoidType() && Builder.GetInsertBlock()) {
     if (SanOpts.has(SanitizerKind::Return)) {
       SanitizerScope SanScope(this);

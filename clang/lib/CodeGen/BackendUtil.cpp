@@ -497,6 +497,14 @@ void EmitAssemblyHelper::setCommandLineOpts() {
   }
   for (const std::string &BackendOption : CodeGenOpts.BackendOptions)
     BackendArgs.push_back(BackendOption.c_str());
+  // Disable loop vectorization in HCC kernel compilation path
+  if (LangOpts.CPlusPlusAMP && CodeGenOpts.AMPIsDevice) {
+    for (unsigned i = 0, e = BackendArgs.size(); i != e; ++i)
+      if (strcmp(BackendArgs[i], "-vectorize-loops") == 0) {
+          BackendArgs.erase(BackendArgs.begin() + i);
+          break;
+      }
+  }
   BackendArgs.push_back(nullptr);
   llvm::cl::ParseCommandLineOptions(BackendArgs.size() - 1,
                                     BackendArgs.data());
