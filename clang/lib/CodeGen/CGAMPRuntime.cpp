@@ -110,10 +110,8 @@ void CGAMPRuntime::EmitTrampolineBody(CodeGenFunction &CGF,
         DeserializerArgs.add(RValue::get(mai.getPointer()), (*CPI)->getType());
       } else { // HSA extension check
         if (MemberType.getTypePtr()->isClassType()) {
-          std::string Info = MemberType.getAsString();
-
           // hc::array should still be serialized as traditional C++AMP objects
-          if (Info.find("hc::array<") != std::string::npos) {
+          if (MemberType.getTypePtr()->isGPUArrayType()) {
             CXXRecordDecl *MemberClass = MemberType.getTypePtr()->getAsCXXRecordDecl();
             CXXConstructorDecl *MemberDeserializer =
             dyn_cast<CXXConstructorDecl>(

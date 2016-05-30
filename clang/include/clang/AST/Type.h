@@ -1988,6 +1988,9 @@ public:
 
   friend class ASTReader;
   friend class ASTWriter;
+
+  /// \brief True if object is of hc::array or Concurrency:type
+  bool isGPUArrayType() const;
 };
 
 /// \brief This will check for a TypedefType by removing any existing sugar

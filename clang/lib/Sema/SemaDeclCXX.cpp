@@ -10932,10 +10932,8 @@ void Sema::DeclareAMPTrampoline(CXXRecordDecl *ClassDecl,
         }
       } else { // HSA extension check
         if (MemberType.getTypePtr()->isClassType()) {
-          std::string Info = MemberType.getAsString();
-
           // hc::array should still be serialized as traditional C++AMP objects
-          if (Info.find("hc::array<") != std::string::npos) {
+          if (MemberType.getTypePtr()->isGPUArrayType()) {
             CXXRecordDecl *MemberClass = MemberType.getTypePtr()->getAsCXXRecordDecl();
             if (!HasDeclaredAMPDeserializer(MemberClass)) {
               DeclareAMPDeserializer(MemberClass, NULL);
@@ -11020,10 +11018,8 @@ void Sema::DeclareAMPTrampoline(CXXRecordDecl *ClassDecl,
         }
       } else { // HSA extension check
         if (MemberType.getTypePtr()->isClassType()) {
-          std::string Info = MemberType.getAsString();
-
           // hc::array should still be serialized as traditional C++AMP objects
-          if (Info.find("hc::array<") != std::string::npos) {
+          if (MemberType.getTypePtr()->isGPUArrayType()) {
             CXXRecordDecl *MemberClass =
               MemberType.getTypePtr()->getAsCXXRecordDecl();
             CXXMethodDecl *MemberDeserializer =
@@ -11138,10 +11134,8 @@ void Sema::DefineAMPTrampoline(SourceLocation CurrentLocation,
         }
       } else {
         if (MemberType.getTypePtr()->isClassType()) {
-          std::string Info = MemberType.getAsString();
-
           // hc::array should still be serialized as traditional C++AMP objects
-          if (Info.find("hc::array<") != std::string::npos) {
+          if (MemberType.getTypePtr()->isGPUArrayType()) {
             CXXRecordDecl *MemberClass =
        	      MemberType.getTypePtr()->getAsCXXRecordDecl();
             CXXMethodDecl *MemberDeserializer =
@@ -11426,19 +11420,8 @@ void Sema::DefineAmpCpuSerializeFunction(SourceLocation CurrentLocation,
     }
     const RecordType *RecordTy = FieldType->getAs<RecordType>();
 
-    // special detection logic for hc::array
-    bool hc_array_flag = false;
-    if (RecordTy) {
-      CXXRecordDecl *FieldClassDecl = cast<CXXRecordDecl>(RecordTy->getDecl());
-      NamespaceDecl *FieldNamespaceDecl = dyn_cast<NamespaceDecl>(FieldClassDecl->getEnclosingNamespaceContext());
-      if (FieldClassDecl && (FieldClassDecl->getName() == "array") &&
-          FieldNamespaceDecl && (FieldNamespaceDecl->getName() == "hc")) {
-        hc_array_flag = true;
-      }
-    }
-
     // hc::array shall be serialized as normal C++AMP objects even in HC mode
-    if (!getLangOpts().HSAExtension || hc_array_flag) {
+    if (!getLangOpts().HSAExtension || FieldType.getTypePtr()->isGPUArrayType()) {
 
       if (RecordTy) {
         CXXRecordDecl *FieldClassDecl = cast<CXXRecordDecl>(RecordTy->getDecl());

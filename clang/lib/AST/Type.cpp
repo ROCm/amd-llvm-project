@@ -3777,3 +3777,17 @@ QualType::DestructionKind QualType::isDestructedTypeImpl(QualType type) {
 CXXRecordDecl *MemberPointerType::getMostRecentCXXRecordDecl() const {
   return getClass()->getAsCXXRecordDecl()->getMostRecentDecl();
 }
+
+bool Type::isGPUArrayType() const {
+  bool gpu_array_flag = false;
+  const Type *type = this;
+  if (type->isClassType()) {
+    CXXRecordDecl* ClassDecl = type->getAsCXXRecordDecl();
+    NamespaceDecl* NSDecl = dyn_cast<NamespaceDecl>(ClassDecl->getEnclosingNamespaceContext());
+    if (ClassDecl && (ClassDecl->getName() == "array")
+        && NSDecl && (NSDecl->getName() == "hc" || NSDecl->getName() == "Concurrency")) {
+      gpu_array_flag = true;
+    }
+  }
+  return gpu_array_flag;
+}
