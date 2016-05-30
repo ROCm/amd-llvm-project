@@ -1210,7 +1210,7 @@ ExprResult Parser::ParseLambdaExpressionAfterIntroducer(
     }
 
     // C++AMP
-    if (getLangOpts().CPlusPlusAMP && getLangOpts().DevicePath) {
+    if (getLangOpts().CPlusPlusAMP) {
       // take all attributed parsed before introducer
       Attr.takeAllFrom(AttrIntro);
       // take all attributes parsed before parameter list
