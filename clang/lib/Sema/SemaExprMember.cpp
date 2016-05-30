@@ -1171,6 +1171,32 @@ Sema::BuildMemberReferenceExpr(Expr *BaseExpr, QualType BaseExprType,
       bool MemberCPU = MemberFn->hasAttr<CXXAMPRestrictCPUAttr>() || !MemberAMP;
       const CXXRecordDecl * RDecl = MemberFn->getParent();
 
+      // Logic for auto-compile-for-accelerator:
+      // In both CPU and device path, if auto-compile-for-accelerator flag is on,
+      // and caller has GPU attribute (CXXAMPRestrictAMPAttr),
+      // and callee method doesn't have GPU attribute (CXXAMPRestrictAMPAttr),
+      // and callee is not within C++ or HCC default library,
+      // then annotate callee with one, and recalculate related boolean flags
+
+      if (getLangOpts().AutoCompileForAccelerator) {
+        if (ParentAMP && !MemberAMP) {
+          std::string QualifiedName = MemberDecl->getQualifiedNameAsString();
+          // Skip self implementation and unwanted
+          if(QualifiedName.find("Kalmar::")!=std::string::npos ||
+             QualifiedName.find("hc::")!=std::string::npos ||
+             QualifiedName.find("Concurrency::")!=std::string::npos ||
+             QualifiedName.find("std::")!=std::string::npos ||
+             QualifiedName.find("__cxxamp_serialize")!=std::string::npos ||
+             QualifiedName.find("__cxxamp_trampoline_name")!=std::string::npos) {
+          } else {
+            //llvm::errs() << "add [[hc]] to member: " << MemberFn->getName() << "\n";
+            MemberFn->addAttr(::new (Context) CXXAMPRestrictAMPAttr(MemberFn->getLocation(), Context, 0));
+            MemberAMP = MemberFn->hasAttr<CXXAMPRestrictAMPAttr>();
+            MemberCPU = MemberFn->hasAttr<CXXAMPRestrictCPUAttr>() || !MemberAMP;
+          }
+        }
+      }
+
       if(RDecl && RDecl->isLocalClass()) {
         // Do nothing
       } else if(ParentCPU== MemberCPU && ParentAMP== MemberAMP) {

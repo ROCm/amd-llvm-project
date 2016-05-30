@@ -2012,6 +2012,9 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
   // enabled by -fauto-auto
   Opts.AutoAuto = Args.hasArg(OPT_fauto_auto) && !Args.hasArg(OPT_fno_auto_auto);
 
+  // rules for auto-compile-for-accelerator:
+  Opts.AutoCompileForAccelerator = Args.hasArg(OPT_fauto_compile_for_accelerator);
+
   // Record whether the __DEPRECATED define was requested.
   Opts.Deprecated = Args.hasFlag(OPT_fdeprecated_macro,
                                  OPT_fno_deprecated_macro,

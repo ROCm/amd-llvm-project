@@ -726,6 +726,10 @@ def fno_auto_auto : Flag<["-"], "fno-auto-auto">,
 
 def fauto_auto : Flag<["-"], "fauto-auto">,
   HelpText<"Enable auto-auto feature">;
+
+def fauto_compile_for_accelerator : Flag<["-"], "fauto-compile-for-accelerator">,
+  HelpText<"Enable auto-compile-for-accelerator feature">;
+
 } // let Flags = [CC1Option]
 
 //===----------------------------------------------------------------------===//

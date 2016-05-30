@@ -5382,6 +5382,19 @@ void Sema::DiagnoseCXXAMPMethodCallExpr(SourceLocation LParenLoc,
   bool CalleeAMP = Callee->hasAttr<CXXAMPRestrictAMPAttr>();
   bool CalleeCPU = Callee->hasAttr<CXXAMPRestrictCPUAttr>();
 
+  // Logic for auto-compile-for-accelerator:
+  // In device path, if auto-compile-for-accelerator flag is on,
+  // and caller method has GPU attribute (CXXAMPRestrictAMPAttr),
+  // and callee method doesn't have GPU attribute (CXXAMPRestrictAMPAttr),
+  // then annotate it with one, and recalculate related boolean flags
+  if (getLangOpts().DevicePath && getLangOpts().AutoCompileForAccelerator) {
+    if (CallerAMP && !CalleeAMP) {
+      //llvm::errs() << "add [[hc]] to callee: " << Callee->getName() << "\n";
+      Callee->addAttr(::new (Context) CXXAMPRestrictAMPAttr(Callee->getLocation(), Context, 0));
+      CalleeAMP = Callee->hasAttr<CXXAMPRestrictAMPAttr>();
+    }
+  }
+
   // Case by case
   if((LambdaInfo && LambdaInfo->CallOperator) && !getLangOpts().AMPCPU) {
     // caller: __GPU, lambda; callee: non __GPU, lambda

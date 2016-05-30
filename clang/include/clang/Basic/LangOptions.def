@@ -196,6 +196,7 @@ LANGOPT(DevicePath        , 1, 0, "C++AMP Device Path")
 LANGOPT(AMPCPU            , 1, 0, "C++AMP CPU Path")
 LANGOPT(HSAExtension      , 1, 0, "C++AMP Extension for HSA")
 LANGOPT(AutoAuto          , 1, 0, "Enable auto-auto")
+LANGOPT(AutoCompileForAccelerator, 1, 0, "Enable auto-compile-for-accelerator")
 
 LANGOPT(SizedDeallocation , 1, 0, "enable sized deallocation functions")
 LANGOPT(ConceptsTS , 1, 0, "enable C++ Extensions for Concepts")
