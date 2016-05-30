@@ -11699,7 +11699,7 @@ void Sema::DiagnoseCXXAMPOverloadedCallExpr(SourceLocation LParenLoc,
   LambdaScopeInfo* LambdaInfo = this->getCurLambda();
   bool CallerAMP = (LambdaInfo && LambdaInfo->CallOperator)?
     LambdaInfo->CallOperator->hasAttr<CXXAMPRestrictAMPAttr>():
-    (Caller?Caller->hasAttr<CXXAMPRestrictAMPAttr>():false);
+    (Caller?(Caller->hasAttr<CXXAMPRestrictAMPAttr>() || Caller->hasAttr<HCGridLaunchAttr>()):false);
   bool CallerCPU= (LambdaInfo && LambdaInfo->CallOperator)?
     LambdaInfo->CallOperator->hasAttr<CXXAMPRestrictCPUAttr>():
     (Caller?Caller->hasAttr<CXXAMPRestrictCPUAttr>():false);
