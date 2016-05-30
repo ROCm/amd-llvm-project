@@ -1565,6 +1565,82 @@ ExprResult Sema::BuildLambdaExpr(SourceLocation StartLoc, SourceLocation EndLoc,
       CaptureInits.push_back(Init);
     }
 
+    // C++AMP
+    std::vector<std::pair<LambdaScopeInfo::Capture, unsigned> > FoundVec;
+    if (getLangOpts().CPlusPlusAMP && CallOperator->hasAttr<CXXAMPRestrictAMPAttr>()) {
+      for (unsigned K = 0, N = LSI->Captures.size(); K != N; ++K) {
+        LambdaScopeInfo::Capture From = LSI->Captures[K];
+        assert(!From.isBlockCapture() && "Cannot capture __block variables");
+        // Handle [Var]
+        if(From.getCaptureType()->isPointerType()) {
+          if (getLangOpts().HSAExtension) {
+            // relax this rule in HSA to allow capturing raw pointers
+          } else {
+            FoundVec.push_back(std::make_pair(From, (unsigned)diag::err_amp_captured_variable_type));
+          }
+        }
+
+        if(From.getCaptureType()->isClassType() && From.isCopyCapture()) {
+          std::string Info = QualType::getAsString(From.getCaptureType().split());
+          // Add the skipped type here
+          if(Info.find("::array")!=std::string::npos &&
+            Info.find("::array_view")==std::string::npos)
+            FoundVec.push_back(std::make_pair(From, (unsigned)diag::err_amp_captured_variable_type));
+        }
+        // Handle [This], [&]
+        if(From.isReferenceCapture() || From.isThisCapture()) {
+          if(const ReferenceType* RT = dyn_cast<ReferenceType>(From.getCaptureType())) {
+            std::string Info = QualType::getAsString(From.getCaptureType()->getPointeeType().split());
+            if (!getLangOpts().HSAExtension) {
+              if(RT->getPointeeType()->isPointerType()) {
+                #if 0
+                // Add the skipped type here
+                if(!Info.empty() && (Info.find("array<")!=std::string::npos ||
+                  Info.find("array_view<")!=std::string::npos))
+                #endif
+                FoundVec.push_back(std::make_pair(From,
+                                                 (unsigned)diag::err_amp_captured_by_reference_for_variables));
+              } else  {
+                // Boolean type is allowed in capture
+                // FIXME: Ugly codes. Need reliable methods to skip amp compatible types
+                if(Info.find("array<")!=std::string::npos || Info.find("array_view<")!=std::string::npos ||
+                  Info.find("texture<")!=std::string::npos ||
+                  RT->getPointeeType()->isBooleanType()){
+                  // amp-compatible types
+                } else
+                  FoundVec.push_back(std::make_pair(From,
+                                             (unsigned)diag::err_amp_captured_by_reference_for_variables));
+              }
+            } // HSA extension check
+          }
+        }
+      }
+    }
+    // Capture a restrict-amp function pointer by value in a restrict(cpu) lambda
+    if (getLangOpts().CPlusPlusAMP &&
+          (((!CallOperator->hasAttr<CXXAMPRestrictAMPAttr>() &&
+            CallOperator->hasAttr<CXXAMPRestrictCPUAttr>()) ||
+            (!CallOperator->hasAttr<CXXAMPRestrictAMPAttr>() &&
+            !CallOperator->hasAttr<CXXAMPRestrictCPUAttr>())))) {
+      for (unsigned K = 0, N = LSI->Captures.size(); K != N; ++K) {
+        LambdaScopeInfo::Capture From = LSI->Captures[K];
+        assert(!From.isBlockCapture() && "Cannot capture __block variables");
+        if(From.getCaptureType()->isFunctionPointerType()) {
+          if( From.getVariable() &&  From.getVariable()->hasAttr<CXXAMPRestrictAMPAttr>())
+            FoundVec.push_back(std::make_pair(From, (unsigned)diag::err_amp_captured_variable_type));
+        }
+      }
+    }
+    if(FoundVec.size()) {
+      for( std::vector<std::pair<LambdaScopeInfo::Capture, unsigned> >::iterator iter = FoundVec.begin();
+        iter!=FoundVec.end(); iter++)
+        if(iter->first.getVariable())
+          Diag(iter->first.getLocation(), iter->second) << iter->first.getVariable()->getName();
+        else
+          Diag(iter->first.getLocation(), iter->second);
+      return ExprError();
+    }
+
     // C++11 [expr.prim.lambda]p6:
     //   The closure type for a lambda-expression with no lambda-capture
     //   has a public non-virtual non-explicit const conversion function
@@ -1594,6 +1670,11 @@ ExprResult Sema::BuildLambdaExpr(SourceLocation StartLoc, SourceLocation EndLoc,
   if (LambdaExprNeedsCleanups)
     ExprNeedsCleanups = true;
   
+  // C++AMP
+  if (getLangOpts().CPlusPlusAMP && NeedAMPDeserializer(Class)) {
+    DeclareAMPDeserializer(Class, NULL);
+  }
+
   LambdaExpr *Lambda = LambdaExpr::Create(Context, Class, IntroducerRange, 
                                           CaptureDefault, CaptureDefaultLoc,
                                           Captures, 

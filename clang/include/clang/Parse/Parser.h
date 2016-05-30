@@ -1226,6 +1226,9 @@ private:
                             bool StopAtSemi = true,
                             bool ConsumeFinalToken = true);
 
+  // C++AMP
+  bool CXXAMPFindRestrictionSeq(CachedTokens &Toks, bool ConsumeFinalToken);
+
   //===--------------------------------------------------------------------===//
   // C99 6.9: External Definitions.
   struct ParsedAttributesWithRange : ParsedAttributes {
@@ -2347,6 +2350,11 @@ private:
          SourceLocation &EllipsisLoc);
   void ParseBracketDeclarator(Declarator &D);
   void ParseMisplacedBracketDeclarator(Declarator &D);
+
+  // C++AMP
+  unsigned ParseRestrictionSpecification(Declarator &D,
+                                         ParsedAttributes &Attrs,
+                                         SourceLocation &DeclEndLoc);
 
   //===--------------------------------------------------------------------===//
   // C++ 7: Declarations [dcl.dcl]

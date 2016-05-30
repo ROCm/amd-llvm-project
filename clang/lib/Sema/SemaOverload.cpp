@@ -889,6 +889,49 @@ static bool checkArgPlaceholdersForOverload(Sema &S,
   return false;
 }
 
+void Sema::DiagnoseCXXAMPDtorOverload(FunctionDecl *New,
+                    const LookupResult &Old) {
+  CXXMethodDecl *NewMethod = dyn_cast<CXXMethodDecl>(New);
+  if(!NewMethod ||!isa<CXXDestructorDecl>(NewMethod))
+    return;
+
+  // class A
+  // {
+  //   public:
+  //     ~A() restrict(cpu) {}
+  //     ~A() restrict(amp) {} // Error
+  // };
+  if(!Old.empty()) {
+    std::vector<std::pair<SourceLocation, diag::kind> > FoundVec;
+    for(LookupResult::iterator PreDecl = Old.begin(); PreDecl != Old.end(); PreDecl++) {
+      diag::kind PrevDiag;
+      FunctionDecl *Old = 0;
+      if (FunctionTemplateDecl *OldFunctionTemplate  = dyn_cast<FunctionTemplateDecl>(*PreDecl))
+        Old = OldFunctionTemplate->getTemplatedDecl();
+      else
+        Old = dyn_cast<FunctionDecl>((*PreDecl));
+      if (Old && Old->isThisDeclarationADefinition())
+        PrevDiag = diag::note_previous_definition;
+      else if (Old && Old->isImplicit())
+        PrevDiag = diag::note_previous_implicit_declaration;
+      else
+        PrevDiag = diag::note_previous_declaration;
+      // FIXME: Since we don't inline restrictions into Function's prototype, if prototype
+      // is the same, the only reason for overloadable is that they have different restrction
+      if(Old && Old->getType() == New->getType())
+        // Make sure they are only different from restrictions
+        if(New->hasAttr<CXXAMPRestrictAMPAttr>()!=(*PreDecl)->hasAttr<CXXAMPRestrictAMPAttr>() ||
+          New->hasAttr<CXXAMPRestrictCPUAttr>()!=(*PreDecl)->hasAttr<CXXAMPRestrictCPUAttr>())
+          FoundVec.push_back(std::make_pair((*PreDecl)->getLocation(), PrevDiag));
+    }
+    if(FoundVec.size()) {
+      Diag(New->getLocation(), diag::err_destructor_redeclared);
+      for(unsigned i = 0; i < FoundVec.size(); i++)
+        Diag(FoundVec[i].first, FoundVec[i].second);
+    }
+  }
+}
+
 // IsOverload - Determine whether the given New declaration is an
 // overload of the declarations in Old. This routine returns false if
 // New and Old cannot be overloaded, e.g., if New has the same
@@ -988,6 +1031,10 @@ Sema::CheckOverload(Scope *S, FunctionDecl *New, const LookupResult &Old,
     }
   }
 
+  // C++AMP
+  if(getLangOpts().CPlusPlusAMP && dyn_cast<CXXMethodDecl>(New))
+    DiagnoseCXXAMPDtorOverload(New, Old);
+
   return Ovl_Overload;
 }
 
@@ -1009,6 +1056,26 @@ bool Sema::IsOverload(FunctionDecl *New, FunctionDecl *Old,
   //   and with normal (non-template) functions.
   if ((OldTemplate == nullptr) != (NewTemplate == nullptr))
     return true;
+
+  // C++AMP
+  if(getLangOpts().CPlusPlusAMP) {
+    // allow this case:
+    // void fun(...) restrict(amp)
+    // void fun(...) restrict(cpu)
+    bool OldisAMP = Old->hasAttr<CXXAMPRestrictAMPAttr>();
+    bool OldisCPU = Old->hasAttr<CXXAMPRestrictCPUAttr>();
+    bool NewisAMP = New->hasAttr<CXXAMPRestrictAMPAttr>();
+    bool NewisCPU = New->hasAttr<CXXAMPRestrictCPUAttr>();
+    //support restrict overload
+    if (NewisAMP && !NewisCPU && !OldisAMP && OldisCPU)
+      return true;
+    if (!NewisAMP && NewisCPU && OldisAMP && !OldisCPU)
+      return true;
+    if (!NewisAMP && !NewisCPU && (OldisAMP ^ OldisCPU))
+      return true;
+    if ((NewisAMP ^ NewisCPU) && !OldisAMP && !OldisCPU)
+      return true;
+  }
 
   // Is the function New an overload of the function Old?
   QualType OldQType = Context.getCanonicalType(Old->getType());
@@ -8486,6 +8553,163 @@ Sema::AddArgumentDependentLookupCandidates(DeclarationName Name,
   }
 }
 
+// FIXME: should consider decltype trailing return type
+bool Sema::IsInAMPRestricted() {
+  return ((getCurFunctionDecl() && getCurFunctionDecl()->hasAttr<CXXAMPRestrictAMPAttr>()) ||
+      (getCurLambda() && getCurLambda()->CallOperator &&
+      getCurLambda()->CallOperator->hasAttr<CXXAMPRestrictAMPAttr>()));
+}
+
+// Determine if in CPU and/or AMP restricted codes
+// FIXME: should consider decltype trailing return type
+bool Sema::IsInAnyExplicitRestricted() {
+  return ((getCurFunctionDecl() && (getCurFunctionDecl()->hasAttr<CXXAMPRestrictAMPAttr>() ||
+    getCurFunctionDecl()->hasAttr<CXXAMPRestrictCPUAttr>())) ||
+    (getCurLambda() && getCurLambda()->CallOperator &&
+    (getCurLambda()->CallOperator->hasAttr<CXXAMPRestrictAMPAttr>() ||
+    getCurLambda()->CallOperator->hasAttr<CXXAMPRestrictCPUAttr>())));
+}
+
+static bool IsInAMPFunction(Scope *scope) {
+  while (scope) {
+    if (scope->getFlags() & Scope::FnScope) {
+      FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(static_cast<DeclContext*>(scope->getEntity()));
+      if (FD && FD->hasAttr<CXXAMPRestrictAMPAttr>()) {
+        return true;
+      }
+    }
+    scope = scope->getParent();
+  }
+  return false;
+}
+
+static bool IsInExplicitCPUFunction(Scope *scope) {
+  while (scope) {
+    if (scope->getFlags() & Scope::FnScope) {
+      FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(static_cast<DeclContext*>(scope->getEntity()));
+      if (FD && FD->hasAttr<CXXAMPRestrictCPUAttr>()) {
+        return true;
+      }
+    }
+    scope = scope->getParent();
+  }
+  return false;
+}
+
+// FIXME: is it a reliable way?
+void Sema::GetCXXAMPParentRestriction(Scope* SC,
+                          bool& ParentCPU, bool& ParentAMP, bool&ParentAUTO) {
+  if(getCurLambda() && getCurLambda()->CallOperator) {
+    ParentCPU = getCurLambda()->CallOperator->hasAttr<CXXAMPRestrictCPUAttr>();
+    ParentAMP = getCurLambda()->CallOperator->hasAttr<CXXAMPRestrictAMPAttr>();
+    // Will deduce in 'auto' inferring, however make the overload resolution happy for now
+    if(getCurLambda()->CallOperator->hasAttr<CXXAMPRestrictAUTOAttr>())
+      ParentAUTO = true;
+  }
+  if(!ParentCPU && !ParentAMP) {
+    if(getCurFunctionDecl()) {
+      ParentCPU = getCurFunctionDecl()->hasAttr<CXXAMPRestrictCPUAttr>();
+      ParentAMP = getCurFunctionDecl()->hasAttr<CXXAMPRestrictAMPAttr>();
+      // Will deduce in 'auto' inferring, however make the overload resolution happy for now
+      if(getCurFunctionDecl()->hasAttr<CXXAMPRestrictAUTOAttr>())
+        ParentAUTO = true;
+    }
+  }
+
+  // To determine class member if it is in AMP restricted
+  //
+  //  void wrap_test_mem_2() restrict(amp) {
+  //
+  //    struct test_mem_2 {
+  //      decltype(f()) member; // expect: amp_t member
+  //    };
+  //
+  //  }
+  if(!getCurFunctionDecl() && !getCurLambda() && SC) {
+    ParentAMP = SC->isAMPScope();
+    ParentCPU = SC->isCPUScope();
+    ParentAUTO = SC->isAUTOScope();
+    if(IsInAMPFunction(SC))
+      ParentAMP = true;
+    if(IsInExplicitCPUFunction(SC))
+      ParentCPU = true;
+
+    // Reach the end? then return
+    if(dyn_cast<TranslationUnitDecl>(getFunctionLevelDeclContext()))
+      return;
+  }
+}
+
+static int getCXXAMPPrio(FunctionDecl *Func, bool isDevice,
+  bool ParentCPU, bool ParentAMP, bool ParentAUTO)
+{
+  bool isAMP = Func->hasAttr<CXXAMPRestrictAMPAttr>();
+  bool isCPU = Func->hasAttr<CXXAMPRestrictCPUAttr>();
+  // Ensure that the callee's 'auto' has been inferred before, otherwise no way to recursively
+  // resolve its overload without any explicit restrictions on it
+  if(Func->hasAttr<CXXAMPRestrictAUTOAttr>()) {
+    llvm::errs()<<"The function should have been inferred at this point!\n";
+    exit(1);
+  }
+  // Deduce to normal case
+  if(ParentCPU && ParentAMP)
+    ParentAUTO = false;
+
+  int NonAutoSpec = 0;
+  if(ParentAUTO) {
+    NonAutoSpec = clang::CPPAMP_AMP | clang::CPPAMP_CPU ;
+    if(ParentCPU)
+      NonAutoSpec &=~clang::CPPAMP_CPU;
+    if(ParentAMP)
+      NonAutoSpec &=~clang::CPPAMP_AMP;
+  }
+
+  if (!isAMP) isCPU = true;
+  int Prio = 0;
+  // Specially handle auto restricted caller
+  if(NonAutoSpec) {
+    if (isAMP && isCPU)
+      Prio = 2;
+    else if (isDevice && isAMP) {
+      Prio = 2; // If the caller is CPU only, this callee will be diagnosed later
+    } else if (!isDevice && isCPU) {
+      Prio = 2;
+    }
+    // unreachable
+    else if (!isAMP && !isCPU)
+       Prio = 2;
+
+   return Prio;
+
+  } else {
+    if (isAMP && isCPU)
+      Prio = 2;
+    else if (isDevice && isAMP)
+      Prio = 2; // If the caller is CPU only, this callee will be diagnosed later
+    else if (!isDevice && isCPU) {
+      // FIXME: proposition:use amp context in CPU fallback
+      // If the pro. is true, we should not allow any explicitly cpu-restricted
+      // in an amp context even in CPU path, i.e. !isDevice
+      if(ParentAMP && !ParentCPU)
+        return Prio;
+      Prio = 2;
+    } else if (!isDevice && isAMP) {
+      // FIXME: We can still select amp restricted function in CPU path
+      // since we don't emit it in code generation phase
+      if(ParentAMP && !ParentCPU)
+        return 2;
+    }
+    // unreachable
+    else if (!isAMP && !isCPU)
+      Prio = 2;
+  }
+
+  // Can't resolve
+  //  (1) isDevice && !isAMP
+  //  (2) !isDevice && isAMP
+  return Prio;
+}
+
 namespace {
 enum class Comparison { Equal, Better, Worse };
 }
@@ -8544,13 +8768,57 @@ static Comparison compareEnableIfAttrs(const Sema &S, const FunctionDecl *Cand1,
 bool clang::isBetterOverloadCandidate(Sema &S, const OverloadCandidate &Cand1,
                                       const OverloadCandidate &Cand2,
                                       SourceLocation Loc,
-                                      bool UserDefinedConversion) {
+                                      bool UserDefinedConversion,
+                                      Scope* SC) {
   // Define viable functions to be better candidates than non-viable
   // functions.
   if (!Cand2.Viable)
     return Cand1.Viable;
   else if (!Cand1.Viable)
     return false;
+
+  // C++AMP
+  if (S.getLangOpts().CPlusPlusAMP && Cand1.Function && Cand2.Function) {
+    bool ParentCPUAttr = false;
+    bool ParentAMPAttr = false;
+    bool ParentAUTOAttr = false;
+    S.GetCXXAMPParentRestriction(SC, ParentCPUAttr, ParentAMPAttr, ParentAUTOAttr);
+
+    FunctionDecl *First = Cand1.Function;
+    FunctionDecl *Second = Cand2.Function;
+    if (!First->isImplicit() && !Second->isImplicit()) {
+      int CurPrio = getCXXAMPPrio(First, S.getLangOpts().DevicePath,
+        ParentCPUAttr, ParentAMPAttr, ParentAUTOAttr);
+      int FunPrio = getCXXAMPPrio(Second, S.getLangOpts().DevicePath,
+        ParentCPUAttr, ParentAMPAttr, ParentAUTOAttr);
+      if (CurPrio > FunPrio)
+        return true;
+      if (CurPrio < FunPrio)
+        return false;
+    } else if (!First->isImplicit()) {
+      if(ParentAMPAttr) {
+         // GPU path
+        if (First->hasAttr<CXXAMPRestrictAMPAttr>())
+            return true;
+      } else {
+        // CPU path
+        if (First->hasAttr<CXXAMPRestrictCPUAttr>() || !First->hasAttr<CXXAMPRestrictAMPAttr>())
+          return true;
+      }
+
+      if(!S.getCurFunctionDecl() && !S.getCurLambda()) {
+        if (S.getLangOpts().DevicePath) {
+          // GPU path
+          if (First->hasAttr<CXXAMPRestrictAMPAttr>())
+            return true;
+        } else {
+          // CPU path
+          if (First->hasAttr<CXXAMPRestrictCPUAttr>() || !First->hasAttr<CXXAMPRestrictAMPAttr>())
+            return true;
+        }
+      }
+    }
+  }
 
   // C++ [over.match.best]p1:
   //
@@ -8746,7 +9014,8 @@ void Sema::diagnoseEquivalentInternalLinkageDeclarations(
 OverloadingResult
 OverloadCandidateSet::BestViableFunction(Sema &S, SourceLocation Loc,
                                          iterator &Best,
-                                         bool UserDefinedConversion) {
+                                         bool UserDefinedConversion,
+                                         Scope* SC) {
   llvm::SmallVector<OverloadCandidate *, 16> Candidates;
   std::transform(begin(), end(), std::back_inserter(Candidates),
                  [](OverloadCandidate &Cand) { return &Cand; });
@@ -8783,7 +9052,7 @@ OverloadCandidateSet::BestViableFunction(Sema &S, SourceLocation Loc,
   for (auto *Cand : Candidates)
     if (Cand->Viable)
       if (Best == end() || isBetterOverloadCandidate(S, *Cand, *Best, Loc,
-                                                     UserDefinedConversion))
+                                                     UserDefinedConversion, SC))
         Best = Cand;
 
   // If we didn't find any viable functions, abort.
@@ -8798,7 +9067,7 @@ OverloadCandidateSet::BestViableFunction(Sema &S, SourceLocation Loc,
     if (Cand->Viable &&
         Cand != Best &&
         !isBetterOverloadCandidate(S, *Best, *Cand, Loc,
-                                   UserDefinedConversion)) {
+                                   UserDefinedConversion, SC)) {
       if (S.isEquivalentInternalLinkageDeclaration(Best->Function,
                                                    Cand->Function)) {
         EquivalentCands.push_back(Cand->Function);
@@ -8819,6 +9088,72 @@ OverloadCandidateSet::BestViableFunction(Sema &S, SourceLocation Loc,
   if (!EquivalentCands.empty())
     S.diagnoseEquivalentInternalLinkageDeclarations(Loc, Best->Function,
                                                     EquivalentCands);
+
+  // C++ AMP-specific
+  if (S.getLangOpts().CPlusPlusAMP) {
+    // Diagnose err_amp_call_from_both_amp_and_cpu_to_disctint
+    // TODO: Will consider implementation dependent, e.g. opencl_fabs.
+#if 0
+    bool ParentHasBoth = false;
+    if(S.getCurLambda() && S.getCurLambda()->CallOperator)
+      ParentHasBoth = S.getCurLambda()->CallOperator->hasAttr<CXXAMPRestrictAMPAttr>() &&
+                                 S.getCurLambda()->CallOperator->hasAttr<CXXAMPRestrictCPUAttr>();
+    else if(S.getCurFunctionDecl())
+      ParentHasBoth = S.getCurFunctionDecl()->hasAttr<CXXAMPRestrictAMPAttr>() &&
+                                 S.getCurFunctionDecl()->hasAttr<CXXAMPRestrictCPUAttr>();
+
+    bool BestFoundHasDistinct = false;
+    if(Best->Function)
+      BestFoundHasDistinct = !Best->Function->hasAttr<CXXAMPRestrictAMPAttr>() ||
+                                 !Best->Function->hasAttr<CXXAMPRestrictCPUAttr>();
+    if(ParentHasBoth && BestFoundHasDistinct) {
+      // There are a lot of overloaded, e.g. with different AMP restrictions
+      if(end()- begin() > 1) {
+        for (iterator Cand = begin(); Cand != end(); ++Cand)
+          Cand->Function->dump();
+        S.Diag(Loc, diag::err_amp_call_from_both_amp_and_cpu_to_disctint);
+        }
+      }
+#endif
+    // Implementation dependent
+    if (S.getLangOpts().DevicePath && !S.getLangOpts().AMPCPU) {
+      // in GPU path, check if calling from AMP to CPU
+      bool ParentAMP = false;
+      if(S.getCurFunctionDecl() && S.getCurFunctionDecl()->hasAttr<CXXAMPRestrictAMPAttr>())
+        ParentAMP = true;
+      // Superess the restrictions
+      if(S.getCurLambda() && S.getCurLambda()->CallOperator) {
+        if(S.getCurLambda()->CallOperator->hasAttr<CXXAMPRestrictAMPAttr>())
+          ParentAMP = true;
+        else
+          ParentAMP = false;
+      }
+      if (ParentAMP && Best->Function && Best->Function->hasAttr<CXXAMPRestrictCPUAttr>() &&
+        !Best->Function->hasAttr<CXXAMPRestrictAMPAttr>()) {
+        S.Diag(Loc, diag::err_amp_call_from_amp_to_cpu);
+      }
+    }
+
+    // in CPU path, check if calling from CPU to AMP
+    // SMF's restriction intersections might take place after selecting best function.
+    // Disable the following semantic checking
+    if (0 && !S.getLangOpts().DevicePath) {
+      bool ParentCPU = false;
+      if(S.getCurFunctionDecl() && !S.getCurFunctionDecl()->hasAttr<CXXAMPRestrictAMPAttr>())
+        ParentCPU = true;
+      // Superess the restrictions
+      if(S.getCurLambda() && S.getCurLambda()->CallOperator) {
+        if(!S.getCurLambda()->CallOperator->hasAttr<CXXAMPRestrictAMPAttr>())
+          ParentCPU = true;
+        else
+          ParentCPU = false;
+        }
+      if (ParentCPU && Best->Function && !Best->Function->hasAttr<CXXAMPRestrictCPUAttr>() &&
+        Best->Function->hasAttr<CXXAMPRestrictAMPAttr>()) {
+        S.Diag(Loc, diag::err_amp_call_from_cpu_to_amp);
+      }
+    }
+  }
 
   return OR_Success;
 }
@@ -10430,8 +10765,38 @@ private:
     if (!S.checkAddressOfFunctionIsAvailable(Specialization))
       return false;
 
-    Matches.push_back(std::make_pair(CurAccessFunPair, Specialization));
-    return true;
+    // C++AMP
+    if (S.getLangOpts().CPlusPlusAMP) {
+      FunctionDecl *Current = S.getCurFunctionDecl();
+
+      // fall back to normal non C++ AMP logic in case we are not in FunctionDecl
+      if (!Current) {
+        Matches.push_back(std::make_pair(CurAccessFunPair, Specialization));
+        return true;
+      }
+
+      bool hasAMP = Current->hasAttr<CXXAMPRestrictAMPAttr>();
+      bool hasCPU = Current->hasAttr<CXXAMPRestrictCPUAttr>();
+
+      if (!hasAMP) {
+        hasCPU = true;
+      }
+
+      if (hasAMP && FunctionTemplate->hasAttr<CXXAMPRestrictAMPAttr>()) {
+        Matches.push_back(std::make_pair(CurAccessFunPair, Specialization));
+        return true;
+      }
+
+      if (hasCPU && (FunctionTemplate->hasAttr<CXXAMPRestrictCPUAttr>() || !FunctionTemplate->hasAttr<CXXAMPRestrictAMPAttr>())) {
+        Matches.push_back(std::make_pair(CurAccessFunPair, Specialization));
+        return true;
+      }
+
+      return false;
+    } else { // non C++ AMP
+      Matches.push_back(std::make_pair(CurAccessFunPair, Specialization));
+      return true;
+    }
   }
   
   bool AddMatchingNonTemplateFunction(NamedDecl* Fn, 
@@ -10466,10 +10831,43 @@ private:
       // If we're in C, we need to support types that aren't exactly identical.
       if (!S.getLangOpts().CPlusPlus ||
           candidateHasExactlyCorrectType(FunDecl)) {
-        Matches.push_back(std::make_pair(
+        // C++AMP
+        if (S.getLangOpts().CPlusPlusAMP) {
+          FunctionDecl *Current = S.getCurFunctionDecl();
+
+          // fall back to normal non C++ AMP logic in case we are not in a FunctionDecl
+          if (!Current) {
+            Matches.push_back(std::make_pair(CurAccessFunPair,
+              cast<FunctionDecl>(FunDecl->getCanonicalDecl())));
+            FoundNonTemplateFunction = true;
+            return true;
+          }
+
+          bool hasAMP = Current->hasAttr<CXXAMPRestrictAMPAttr>();
+          bool hasCPU = Current->hasAttr<CXXAMPRestrictCPUAttr>();
+          if (!hasAMP)
+            hasCPU = true;
+
+          if (hasAMP && FunDecl->hasAttr<CXXAMPRestrictAMPAttr>()) {
+            Matches.push_back(std::make_pair(CurAccessFunPair,
+              cast<FunctionDecl>(FunDecl->getCanonicalDecl())));
+            FoundNonTemplateFunction = true;
+            return true;
+          }
+
+          if (hasCPU && (FunDecl->hasAttr<CXXAMPRestrictCPUAttr>() || !FunDecl->hasAttr<CXXAMPRestrictAMPAttr>())) {
+            Matches.push_back(std::make_pair(CurAccessFunPair,
+              cast<FunctionDecl>(FunDecl->getCanonicalDecl())));
+            FoundNonTemplateFunction = true;
+            return true;
+          }
+          return false;
+        } else { // non C++ AMP
+          Matches.push_back(std::make_pair(
             CurAccessFunPair, cast<FunctionDecl>(FunDecl->getCanonicalDecl())));
-        FoundNonTemplateFunction = true;
-        return true;
+          FoundNonTemplateFunction = true;
+          return true;
+        }
       }
     }
     
@@ -11289,6 +11687,115 @@ bool Sema::buildOverloadedCallSet(Scope *S, Expr *Fn,
   return false;
 }
 
+void Sema::DiagnoseCXXAMPOverloadedCallExpr(SourceLocation LParenLoc,
+                                            FunctionDecl* Callee) {
+  if(!Callee)
+    return;
+
+  if(Callee->getQualifiedNameAsString().find("std::")!=std::string::npos)
+    return;
+
+  FunctionDecl* Caller = this->getCurFunctionDecl();
+  LambdaScopeInfo* LambdaInfo = this->getCurLambda();
+  bool CallerAMP = (LambdaInfo && LambdaInfo->CallOperator)?
+    LambdaInfo->CallOperator->hasAttr<CXXAMPRestrictAMPAttr>():
+    (Caller?Caller->hasAttr<CXXAMPRestrictAMPAttr>():false);
+  bool CallerCPU= (LambdaInfo && LambdaInfo->CallOperator)?
+    LambdaInfo->CallOperator->hasAttr<CXXAMPRestrictCPUAttr>():
+    (Caller?Caller->hasAttr<CXXAMPRestrictCPUAttr>():false);
+  bool CalleeAMP = Callee->hasAttr<CXXAMPRestrictAMPAttr>();
+  bool CalleeCPU = Callee->hasAttr<CXXAMPRestrictCPUAttr>();
+
+  // Case by case
+  if (LambdaInfo && LambdaInfo->CallOperator && !getLangOpts().AMPCPU) {
+    // caller: __GPU, lambda; callee: non __GPU, global
+    //    void f(int &flag) { flag = 1; }
+    //    auto l = [](int &flag) __GPU {
+    //      f();  // Error
+    //    };
+    if(getLangOpts().DevicePath && Callee->isGlobal() && (CallerAMP && CallerCPU) &&
+      (!CalleeAMP &&!CalleeCPU))
+      // FIXME: Need a mangled lambda name as '<lambda_xxxxxID> operator()'
+      Diag(LParenLoc, diag::err_amp_overloaded_member_function)
+        << Callee->getQualifiedNameAsString()
+        <<  LambdaInfo->CallOperator->getQualifiedNameAsString();
+
+    if(getLangOpts().DevicePath && CallerAMP && !CalleeAMP)
+      // FIXME: Need a mangled lambda name as '<lambda_xxxxxID> operator()'
+      Diag(LParenLoc, diag::err_amp_overloaded_member_function)
+        << Callee->getQualifiedNameAsString()
+        <<  LambdaInfo->CallOperator->getQualifiedNameAsString();
+
+    // caller: CPU_Only; callee: has GPU
+    if(!getLangOpts().DevicePath && (!CallerAMP && CalleeAMP && !CalleeCPU))
+      Diag(LParenLoc, diag::err_amp_overloaded_member_function)
+        << Callee->getQualifiedNameAsString()
+        <<  LambdaInfo->CallOperator->getQualifiedNameAsString();
+
+  }
+  else if(Caller && ! (LambdaInfo && LambdaInfo->CallOperator) && !getLangOpts().AMPCPU) {
+    // caller: __GPU, global; callee: non __GPU, global
+    //    void fooxxx(int &flag) { flag = 1; }
+    //    bool test() __GPU {
+    //      int flag = 0;
+    //      fooxxx(flag);  // Error
+    //    }
+    if(getLangOpts().DevicePath && Caller->isGlobal() && Callee->isGlobal() &&
+      (CallerAMP && CallerCPU) && (!CalleeAMP && !CalleeCPU) )
+      Diag(LParenLoc, diag::err_amp_overloaded_member_function)
+        << Callee->getQualifiedNameAsString() << Caller->getNameAsString();
+
+    // caller: __GPU, global; callee: non __GPU, file static
+    //    static void fooxxx(int &flag) { flag = 1; }
+    //    bool test() __GPU {
+    //      int flag = 0;
+    //      fooxxx(flag);  // Error
+    //    }
+    if(getLangOpts().DevicePath && Caller->isGlobal() && Callee->getStorageClass() == SC_Static &&
+      (CallerAMP && CallerCPU) && (!CalleeAMP&&!CalleeCPU) )
+      Diag(LParenLoc, diag::err_amp_overloaded_member_function)
+        << Callee->getQualifiedNameAsString() << Caller->getNameAsString();
+
+    // caller: __GPU, member; callee: non __GPU, global
+    //    void foo(int &flag) { flag = 1; }
+    //    void foo(int &flag) __GPU {
+    //       ::foo(flag);    // Error
+    //    }
+    if(getLangOpts().DevicePath && Callee->isGlobal() && dyn_cast<CXXMethodDecl>(Caller) &&
+      (CallerAMP && CallerCPU) && (!CalleeAMP&&!CalleeCPU) )
+      Diag(LParenLoc, diag::err_amp_overloaded_member_function)
+        << Callee->getQualifiedNameAsString() << Caller->getNameAsString();
+
+    // Handle SMF case by case
+    // Empty class with base class having user-defined default ctor
+    //    struct A2_base {
+    //      A2_base() restrict(cpu) {}
+    //    };
+    //     class A2 : public A2_base {
+    //        // defaulted: A2() restrict(cpu)
+    //     }
+    //
+    //  void test() restrict(amp) {
+    //        A2 a2;     // Error test() is amp restricted, while A2() is cpu restricted
+    //  }
+    CXXMethodDecl* CM = dyn_cast<CXXMethodDecl>(Callee);
+    if((dyn_cast<CXXConstructorDecl>(Callee) ||dyn_cast<CXXDestructorDecl>(Callee) ||
+      (CM && CM ->isCopyAssignmentOperator())) &&
+      (((CallerAMP && !CallerCPU) && (CalleeCPU&&!CalleeAMP)) ||
+      ((!CallerAMP && CallerCPU) && (!CalleeCPU&&CalleeAMP))))
+      Diag(LParenLoc, diag::err_amp_overloaded_member_function)
+        << Callee->getQualifiedNameAsString() << Caller->getQualifiedNameAsString();
+
+    // caller: CPU_Only or non __GPU; callee: GPU_Only
+    // Note that GPU path is already checked in Overload Resolution. We only check CPU path
+    // right after that in here.
+    if(!getLangOpts().DevicePath && (!CallerAMP) && (CalleeAMP && !CalleeCPU))
+      Diag(LParenLoc, diag::err_amp_overloaded_member_function)
+        << Callee->getQualifiedNameAsString() << Caller->getNameAsString();
+  }
+
+}
+
 /// FinishOverloadedCallExpr - given an OverloadCandidateSet, builds and returns
 /// the completed call expression. If overload resolution fails, emits
 /// diagnostics and returns ExprError()
@@ -11313,6 +11820,10 @@ static ExprResult FinishOverloadedCallExpr(Sema &SemaRef, Scope *S, Expr *Fn,
     SemaRef.CheckUnresolvedLookupAccess(ULE, (*Best)->FoundDecl);
     if (SemaRef.DiagnoseUseOfDecl(FDecl, ULE->getNameLoc()))
       return ExprError();
+    // C++AMP
+    if(SemaRef.getLangOpts().CPlusPlusAMP)
+      SemaRef.DiagnoseCXXAMPOverloadedCallExpr(LParenLoc, FDecl);
+
     Fn = SemaRef.FixOverloadedFunctionReference(Fn, (*Best)->FoundDecl, FDecl);
     return SemaRef.BuildResolvedCallExpr(Fn, FDecl, LParenLoc, Args, RParenLoc,
                                          ExecConfig);
@@ -11416,7 +11927,7 @@ ExprResult Sema::BuildOverloadedCallExpr(Scope *S, Expr *Fn,
 
   OverloadCandidateSet::iterator Best;
   OverloadingResult OverloadResult =
-      CandidateSet.BestViableFunction(*this, Fn->getLocStart(), Best);
+      CandidateSet.BestViableFunction(*this, Fn->getLocStart(), Best, false, S);
 
   return FinishOverloadedCallExpr(*this, S, Fn, ULE, LParenLoc, Args,
                                   RParenLoc, ExecConfig, &CandidateSet,
@@ -12580,6 +13091,10 @@ Sema::BuildCallToObjectOfClassType(Scope *S, Expr *Obj,
                           llvm::makeArrayRef(MethodArgs.get(), Args.size() + 1),
                           ResultTy, VK, RParenLoc, false);
   MethodArgs.reset();
+
+  // C++AMP
+  if(getLangOpts().CPlusPlusAMP && Method && Method->getParent()->isLambda())
+    DiagnoseCXXAMPMethodCallExpr(LParenLoc, Method);
 
   if (CheckCallReturnType(Method->getReturnType(), LParenLoc, TheCall, Method))
     return true;

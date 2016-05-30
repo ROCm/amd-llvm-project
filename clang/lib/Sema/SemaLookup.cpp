@@ -814,6 +814,24 @@ static void DeclareImplicitMemberFunctionsWithName(Sema &S,
     }
     break;
 
+  case DeclarationName::Identifier:                                           
+    if (S.getLangOpts().CPlusPlusAMP) {                                       
+      if (const CXXRecordDecl *Record = dyn_cast<CXXRecordDecl>(DC)) {        
+        CXXRecordDecl *Class = const_cast<CXXRecordDecl *>(Record);                 
+        if (!Class->getDefinition() || !CanDeclareSpecialMemberFunction(Record)) {                   
+          break;                                                                    
+        }                                                                           
+        if (Name.getAsString() == "__cxxamp_trampoline") {                    
+          S.DeclareAMPTrampoline(Class, Name);                                
+        } else if (Name.getAsString() == "__cxxamp_trampoline_name") {              
+          S.DeclareAMPTrampolineName(Class, Name);                            
+        } else if (Name.getAsString() == "__cxxamp_serialize") {              
+          S.DeclareAMPSerializer(Class, Name);                                      
+        }                                                                     
+      }                                                                                                   
+    }                                                                         
+    break;
+
   default:
     break;
   }
@@ -3047,10 +3065,54 @@ DeclContext::lookup_result Sema::LookupConstructors(CXXRecordDecl *Class) {
     if (getLangOpts().CPlusPlus11 && Class->needsImplicitMoveConstructor())
       DeclareImplicitMoveConstructor(Class);
   }
+  // C++AMP
+  if (getLangOpts().CPlusPlusAMP && NeedAMPDeserializer(Class)) {                                          
+    DeclareAMPDeserializer(Class, NULL);                                        
+  }
 
   CanQualType T = Context.getCanonicalType(Context.getTypeDeclType(Class));
   DeclarationName Name = Context.DeclarationNames.getCXXConstructorName(T);
-  return Class->lookup(Name);
+
+  // C++AMP
+  DeclContext::lookup_result result = Class->lookup(Name);                    
+
+// UPGRADE_TBD: FIX THIS
+/*
+  DeclContext::lookup_iterator E = result.end();
+  if (FunctionDecl *FD = dyn_cast<FunctionDecl>(CurContext)) {                
+    bool isAMP = FD->hasAttr<CXXAMPRestrictAMPAttr>();                        
+    bool isCPU = FD->hasAttr<CXXAMPRestrictCPUAttr>();                        
+    if (isAMP && isCPU)                                                       
+      return result;                                                          
+    for (DeclContext::lookup_iterator I = result.begin(); I != E; ++I) {  
+      if (FunctionDecl *MD = dyn_cast<FunctionDecl>(*I)) {                    
+        bool delete_this = false;                                             
+        if (!isAMP) { // strip deserialize                                          
+          // Do not report any injected restrict(amp) constructors here             
+          if (!MD->hasAttr<CXXAMPRestrictCPUAttr>() &&                              
+              MD->hasAttr<AnnotateAttr>() &&                                  
+              MD->getAttr<AnnotateAttr>()->getAnnotation()                          
+                .find("auto_deserialize") != StringRef::npos) {               
+            delete_this = true;                                               
+          }                                                                         
+        } else {                                                                    
+          if (!isCPU &&                                                             
+              !MD->hasAttr<CXXAMPRestrictAMPAttr>() &&                        
+              !MD->isImplicit()) {                                                  
+            delete_this = true;                                               
+          }                                                                   
+        }                                                                     
+        if (delete_this) {                                                    
+          std::swap(*I, *(--E));                                  
+          I --;                                                               
+        }                                                                           
+      }                                                                       
+    }                                                                         
+  }                                                                           
+  return DeclContext::lookup_result(result.begin(), E); 
+*/
+
+  return result;
 }
 
 /// \brief Look up the copying assignment operator for the given class.

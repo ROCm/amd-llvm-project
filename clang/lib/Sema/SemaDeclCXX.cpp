@@ -2893,6 +2893,49 @@ Sema::BuildMemInitializer(Decl *ConstructorD,
       ValueDecl *Member;
       if ((Member = dyn_cast<FieldDecl>(Result.front())) ||
           (Member = dyn_cast<IndirectFieldDecl>(Result.front()))) {
+
+        // C++AMP
+        // FIMXE: Need to consider non member initializer cases
+        if(getLangOpts().CPlusPlusAMP && ClassDecl->isStruct()
+          && (Constructor->hasAttr<CXXAMPRestrictAMPAttr>() ||
+          Constructor->hasAttr<CXXAMPRestrictCPUAttr>())) {
+          // Can't use IsIncompatibleType
+          const Type* Ty  = Member->getType().getTypePtrOrNull();
+          QualType TheType = Member->getType();
+          if(Ty) {
+            // Case by case
+            if(Ty->isPointerType())
+              TheType = Ty->getPointeeType();
+            if(Ty->isArrayType())
+              TheType = dyn_cast<ArrayType>(Ty)->getElementType();
+            if(!TheType.isNull() && TheType->isRecordType()) {
+              CXXRecordDecl* RDecl = TheType->getAsCXXRecordDecl();
+                if (RDecl->getName() == "array")
+                  Diag(Member->getLocStart(), diag::err_amp_incompatible);
+            }
+          }
+          // Checke if it is array_view's reference or pointer
+          if(Ty && (Ty->isPointerType() ||Ty->isReferenceType())) {
+            const Type* TargetTy = Ty->getPointeeType().getTypePtrOrNull();
+            if(const TemplateSpecializationType* TST = TargetTy->getAs<TemplateSpecializationType>()) {
+              // Check if it is a TemplateSpecializationType
+              // FIXME: should consider alias Template
+              // Get its underlying template decl*
+              if(ClassTemplateDecl* CTDecl = dyn_cast_or_null<ClassTemplateDecl>(
+                TST->getTemplateName().getAsTemplateDecl())) {
+                if(CXXRecordDecl* RDecl = CTDecl->getTemplatedDecl())
+                  if(RDecl->getName() == "array_view") {
+                    #if 0
+                    Diag(ClassDecl->getLocStart(), diag::err_amp_type_unsupported)
+                      << ClassDecl->getName();
+                    #endif
+                    Diag(Member->getLocation(), diag::err_amp_unsupported_reference_or_pointer);
+                  }
+              }
+            }
+          }
+        }
+
         if (EllipsisLoc.isValid())
           Diag(EllipsisLoc, diag::err_pack_expansion_member_init)
             << MemberOrBase
@@ -6446,6 +6489,273 @@ void Sema::ActOnFinishCXXMemberSpecification(Scope* S, SourceLocation RLoc,
 
   CheckCompletedCXXClass(
                         dyn_cast_or_null<CXXRecordDecl>(TagDecl));
+}
+
+/// FIXME: O(n)
+bool Sema::NeedAMPDeserializer(CXXRecordDecl *ClassDecl) {
+#if 0
+  //FIXME(Ray) have problem supporting templates
+  if (ClassTemplateDecl *Template = ClassDecl->getDescribedClassTemplate())
+    return false;
+#endif
+  bool HasRestrict=false, HasDeserializerDecl=false;
+  for (CXXRecordDecl::method_iterator CI = ClassDecl->method_begin(),
+      CE = ClassDecl->method_end(); CI!=CE; CI++) {
+    if (CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(*CI)) {
+      if (MD->hasAttr<CXXAMPRestrictAMPAttr>()) {
+        HasRestrict = true;
+        if (MD->hasAttr<AnnotateAttr>() &&
+            (MD->getAttr<AnnotateAttr>()->getAnnotation().find("deserialize") != StringRef::npos))
+          HasDeserializerDecl = true;
+      }
+    }
+  }
+  return HasRestrict && !HasDeserializerDecl;
+}
+
+//FIXME: Refactor this
+bool Sema::HasDeclaredAMPDeserializer(CXXRecordDecl *ClassDecl) {
+  return ClassDecl->getCXXAMPDeserializationConstructor() != NULL;
+}
+
+void Sema::DeclareAMPSerializer(CXXRecordDecl *ClassDecl, DeclarationName Name) {
+  SourceLocation CurrentLocation = ClassDecl->getLocation();
+  for (CXXRecordDecl::method_iterator Method = ClassDecl->method_begin(),
+      MethodEnd = ClassDecl->method_end();
+      Method != MethodEnd; ++Method) {
+    if (CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(*Method)) {
+      if (MD->hasAttr<AnnotateAttr>() &&
+        MD->getAttr<AnnotateAttr>()->getAnnotation() == "serialize") {
+        return;
+      }
+    }
+  }
+
+  DeclarationNameInfo DNI(Name, CurrentLocation);
+  const FunctionProtoType *SerializeType;
+  FunctionProtoType::ExtProtoInfo ExtInfo;
+  const CXXRecordDecl *ParmClassDecl;
+
+  AMPDeserializerArgs LocalArgs;
+#if 0
+  for (ASTContext::type_iterator it = ClassDecl->getASTContext().types_begin(),
+       e = ClassDecl->getASTContext().types_end(); it != e; ++it) {
+#endif
+  auto &Types = ClassDecl->getASTContext().getTypes();
+  for (unsigned I = 0; I != Types.size(); ++I) {
+    const auto *it = Types[I];
+    if(/*(**/it/*)*/->isRecordType()) {
+      ParmClassDecl = /*(**/it/*)*/->getAsCXXRecordDecl();
+      std::string RecordName = ParmClassDecl->getDeclName().getAsString();
+      if(RecordName == "Serialize") {
+        QualType ArgType = Context.getTypeDeclType(ParmClassDecl);
+        ArgType = Context.getLValueReferenceType(ArgType);
+        LocalArgs.push_back(ArgType);
+        break;
+      }
+    }
+    ;
+  }
+
+ ExtInfo.TypeQuals|= Qualifiers::Const;
+  SerializeType = dyn_cast<FunctionProtoType>(Context.getFunctionType(Context.VoidTy,
+                                              LocalArgs,
+                                              ExtInfo).getTypePtr());
+  assert(SerializeType != NULL);
+ // SerializeType->TypeQuals |= Qualifiers::Const;
+  TypeSourceInfo *TI = Context.getTrivialTypeSourceInfo(QualType(SerializeType, 0),
+                                                        CurrentLocation);
+  // Set correct parameter information for templates
+  TypeLoc TL = TI->getTypeLoc();
+  FunctionProtoTypeLoc ProtoTL = TL.getAs<FunctionProtoTypeLoc>();
+
+  CXXMethodDecl * SerializeFunc = CXXMethodDecl::Create(Context,
+                                                        ClassDecl,
+                                                        CurrentLocation,
+                                                        DNI,
+                                                    QualType(SerializeType, 0),
+                                                        /*TInfo=*/TI,
+                                                        SC_None,
+                                                        /*Inline=*/false,
+                                                        /*isConstExpr*/false,
+                                                        CurrentLocation);
+  SerializeFunc->setAccess(AS_public);
+
+  int i = 0;
+  SmallVector<ParmVarDecl *, 4> FieldAsArgs;
+  for (AMPDeserializerArgs::iterator it = LocalArgs.begin(),
+    e = LocalArgs.end(); it != e; it ++, i++) {
+    ParmVarDecl *PVD = ParmVarDecl::Create(Context, SerializeFunc,
+                                           CurrentLocation,
+                                           CurrentLocation,
+                                           /*Id=*/0,
+                                           *it,
+    /*TypeSourceInfo*/ Context.getTrivialTypeSourceInfo(*it ,CurrentLocation),
+                                           SC_None, 0);
+    PVD->setScopeInfo(0, i);
+    FieldAsArgs.push_back(PVD);
+    ProtoTL.setParam(i, PVD);
+  }
+  SerializeFunc->setParams(FieldAsArgs);
+  // Set appropriate attributes for AMP
+  if (getLangOpts().AMPCPU)
+      SerializeFunc->addAttr(new (Context)
+                             CXXAMPRestrictAMPAttr(CurrentLocation, Context, 0));
+  SerializeFunc->addAttr(::new (Context)
+                         CXXAMPRestrictCPUAttr(CurrentLocation, Context, 0));
+  SerializeFunc->addAttr(::new (Context)
+                         AnnotateAttr(CurrentLocation, Context, "serialize", 0));
+  ClassDecl->addDecl(SerializeFunc);
+  // Now we've obtained a valid Name. Use that to recursively declare
+  // __cxxamp_serialize() for member classes. TBD: base classes?
+  for (CXXRecordDecl::field_iterator Field = ClassDecl->field_begin(),
+       FieldEnd = ClassDecl->field_end(); Field != FieldEnd; ++Field) {
+    QualType FieldType = Field->getType().getNonReferenceType();
+    if (const RecordType *RecordTy = FieldType->getAs<RecordType>()) {
+      const CXXRecordDecl *MemberClassDecl = dyn_cast<const CXXRecordDecl>(
+                                                RecordTy->getDecl());
+      if (!MemberClassDecl)
+        continue;
+      DeclareAMPSerializer(const_cast<CXXRecordDecl*>(MemberClassDecl), Name);
+    }
+  }
+  for (CXXRecordDecl::base_class_iterator Base = ClassDecl->bases_begin(),
+       BaseEnd = ClassDecl->bases_end(); Base != BaseEnd; ++Base) {
+      QualType BaseType = Base->getType().getNonReferenceType();
+      if (const RecordType *RecordTy = BaseType->getAs<RecordType>()) {
+          const CXXRecordDecl *MemberClassDecl = dyn_cast<const CXXRecordDecl>(RecordTy->getDecl());
+          if (!MemberClassDecl)
+              continue;
+          DeclareAMPSerializer(const_cast<CXXRecordDecl*>(MemberClassDecl), Name);
+      }
+  }
+  MarkFunctionReferenced(CurrentLocation, SerializeFunc);
+}
+
+void Sema::DeclareAMPDeserializer(CXXRecordDecl *ClassDecl, AMPDeserializerArgs *Args) {
+  // Create the deserializer declaration.
+  CanQualType ClassType
+    = Context.getCanonicalType(Context.getTypeDeclType(ClassDecl));
+  SourceLocation ClassLoc = ClassDecl->getLocation();
+  // Build up a function type for this particular constructor.
+  const Type *NewCtorType;
+  AMPDeserializerArgs LocalArgs;
+  //Recursively declare base-class deserializers
+  for (CXXRecordDecl::base_class_iterator B = ClassDecl->bases_begin(),
+                 BEnd = ClassDecl->bases_end(); B!=BEnd; ++B ) {
+    if (const RecordType *BaseType = B->getType()->getAs<RecordType>()) {
+       CXXRecordDecl *BaseClassDecl = cast<CXXRecordDecl>(BaseType->getDecl());
+      if (!HasDeclaredAMPDeserializer(BaseClassDecl)) {
+        DeclareAMPDeserializer(BaseClassDecl, &LocalArgs);
+      } else if(CXXMethodDecl *MD =
+	  BaseClassDecl->getCXXAMPDeserializationConstructor()) {
+	for (CXXMethodDecl::param_iterator CPI = MD->param_begin(),
+	     CPE = MD->param_end(); CPI!=CPE; CPI++) {
+	  LocalArgs.push_back((*CPI)->getType());
+	}
+      }
+    }
+  }
+  for (CXXRecordDecl::field_iterator Field = ClassDecl->field_begin(),
+                                  FieldEnd = ClassDecl->field_end();
+        Field != FieldEnd; Field++) {
+    // Skip fields that are not supposed to be marshalled to GPU space
+    if((Field->getType())->isArrayType()&&!(Field->getType()).isVolatileQualified()) {
+      if(ClassDecl->getQualifiedNameAsString().find("std::")==std::string::npos) {
+        if (getLangOpts().HSAExtension) {
+          // relax this rule in HSA to allow capturing raw pointers
+        } else {
+          const ArrayType* AT = dyn_cast<ArrayType>(Field->getType());
+          if(IsIncompatibleType(AT->getElementType().getTypePtrOrNull())) {
+            Diag(Field->getLocation(), diag::err_amp_incompatible);
+            return;
+          }
+        }
+      }
+    }
+    if (Field->hasAttr<CXXAMPRestrictCPUAttr>() &&
+        !Field->hasAttr<CXXAMPRestrictAMPAttr>()) {
+      continue;
+    }
+    if (Field->isUnnamedBitfield())
+      continue;
+    if (Field->getType()->isRecordType()) {
+      CXXRecordDecl *FieldClassDecl = Field->getType()->getAsCXXRecordDecl();
+      if (!HasDeclaredAMPDeserializer(FieldClassDecl)) {
+	DeclareAMPDeserializer(FieldClassDecl, &LocalArgs);
+      } else if(CXXMethodDecl *MD =
+	  FieldClassDecl->getCXXAMPDeserializationConstructor()) {
+	for (CXXMethodDecl::param_iterator CPI = MD->param_begin(),
+	     CPE = MD->param_end(); CPI!=CPE; CPI++) {
+	  LocalArgs.push_back((*CPI)->getType());
+	}
+      }
+      continue;
+    }
+    LocalArgs.push_back(Field->getType());
+  }
+  if (!LocalArgs.size()) {
+    return;
+  }
+  if(Args)
+    Args->insert(Args->end(), LocalArgs.begin(), LocalArgs.end());
+
+  FunctionProtoType::ExtProtoInfo ExtInfo;
+  NewCtorType = Context.getFunctionType(Context.VoidTy,
+      LocalArgs, ExtInfo)
+    .getTypePtr();
+
+  DeclarationName Name
+    = Context.DeclarationNames.getCXXConstructorName(ClassType);
+  DeclarationNameInfo NameInfo(Name, ClassLoc);
+  TypeSourceInfo *TI = Context.getTrivialTypeSourceInfo(QualType(NewCtorType, 0),ClassLoc);
+  // Set correct parameter information for templates
+  TypeLoc TL = TI->getTypeLoc();
+  FunctionProtoTypeLoc ProtoTL = TL.getAs<FunctionProtoTypeLoc>();
+  assert(ProtoTL && "Missing prototype?");
+  CXXConstructorDecl *Constructor
+      = CXXConstructorDecl::Create(Context, ClassDecl, ClassLoc, NameInfo,
+                            QualType(NewCtorType, 0),
+			    /*TypeSourceInfo*/ TI,
+                                  /*isExplicit=*/false,
+                                  /*isInline=*/true,
+                                  /*isImplicitlyDeclared=*/true,
+                                  /*isConstexp*/false
+                                  );
+  Constructor->setAccess(AS_public);
+  SmallVector<ParmVarDecl *, 4> FieldAsArgs;
+  // Compute arguments needed
+  int i = 0;
+  for (AMPDeserializerArgs::iterator it = LocalArgs.begin(),
+    e = LocalArgs.end(); it != e; it ++, i++) {
+    ParmVarDecl *PVD = ParmVarDecl::Create(Context, Constructor,
+                                               ClassLoc, ClassLoc, /*Id=*/0,
+                                               *it,
+  /*TypeSourceInfo*/ Context.getTrivialTypeSourceInfo(*it ,ClassLoc),
+                                               SC_None, 0);
+    PVD->setScopeInfo(0, i);
+    FieldAsArgs.push_back(PVD);
+    ProtoTL.setParam(i, PVD);
+  }
+  // Popluate arguments
+  Constructor->setParams(FieldAsArgs);
+  // Set appropriate attributes for AMP
+  if (getLangOpts().AMPCPU)
+      Constructor->addAttr(new (Context) CXXAMPRestrictCPUAttr(ClassLoc, Context, 0));
+  Constructor->addAttr(::new (Context) CXXAMPRestrictAMPAttr(ClassLoc, Context, 0));
+  Constructor->addAttr(::new (Context)
+    AnnotateAttr(ClassLoc, Context, "auto_deserialize", 0));
+  // Introduce this constructor into its scope.
+  if (Scope *S = getScopeForContext(ClassDecl))
+    PushOnScopeChains(Constructor, S, false);
+  ClassDecl->addDecl(Constructor);
+#if 0
+  llvm::errs() << "Adding declaration of: ";
+  NewCtorType->dump();
+  llvm::errs() << " in class:";
+  ClassDecl->dump();
+  llvm::errs() << "\n";
+#endif
 }
 
 /// AddImplicitlyDeclaredMembersToClass - Adds any implicitly-declared
@@ -10468,6 +10778,842 @@ void Sema::DefineImplicitCopyAssignment(SourceLocation CurrentLocation,
 
   if (ASTMutationListener *L = getASTMutationListener()) {
     L->CompletedImplicitDefinition(CopyAssignOperator);
+  }
+}
+
+void Sema::DeclareAMPTrampolineName(CXXRecordDecl *ClassDecl, DeclarationName Name) {
+  SourceLocation CurrentLocation = ClassDecl->getLocation();
+  CXXMethodDecl *Trampoline = NULL;
+  for (CXXRecordDecl::method_iterator Method = ClassDecl->method_begin(),
+      MethodEnd = ClassDecl->method_end();
+      Method != MethodEnd; ++Method) {
+    if (Method->hasAttr<AnnotateAttr>() &&
+      Method->getAttr<AnnotateAttr>()->getAnnotation() == "__cxxamp_trampoline_name") {
+      return;
+    }
+  }
+  DeclarationNameInfo DNI(Name, CurrentLocation);
+
+  const Type *TrampolineType;
+  FunctionProtoType::ExtProtoInfo ExtInfo;
+  TypeSourceInfo *TI;
+  TypeLoc TL;
+  FunctionProtoTypeLoc ProtoTL;
+  // Generate name lookup routine: char *__cxxamp_trampoline_name(void)
+  TrampolineType = Context.getFunctionType(
+      Context.getPointerType(Context.CharTy),
+      None,
+      ExtInfo).getTypePtr();
+  TI = Context.getTrivialTypeSourceInfo(QualType(TrampolineType, 0),
+    CurrentLocation);
+  // Set correct parameter information for templates
+  TL = TI->getTypeLoc();
+  ProtoTL = TL.getAs<FunctionProtoTypeLoc>();
+  assert(ProtoTL && "Missing prototype?");
+  Trampoline = CXXMethodDecl::Create(
+      Context, ClassDecl, CurrentLocation, DNI, QualType(TrampolineType, 0),
+      /*TInfo=*/TI,
+      SC_Static,
+      /*Inline=*/false,
+      /*isConstExpr*/false,
+      CurrentLocation
+      );
+  Trampoline->setAccess(AS_public);
+  // Set appropriate attributes for AMP
+ if (getLangOpts().AMPCPU)
+     Trampoline->addAttr(new (Context) CXXAMPRestrictAMPAttr(CurrentLocation, Context, 0));
+  Trampoline->addAttr(new (Context) CXXAMPRestrictCPUAttr(CurrentLocation, Context, 0));
+  Trampoline->addAttr(new (Context) AnnotateAttr(CurrentLocation, Context, "__cxxamp_trampoline_name", 0));
+  ClassDecl->addDecl(Trampoline);
+  // Generate definition
+  MarkFunctionReferenced(CurrentLocation, Trampoline);
+}
+
+void CreateDummyAMPTrampoline(Sema& S, DeclarationName Name, CXXRecordDecl *&ClassDecl, CXXMethodDecl *&Trampoline) {
+  if(Trampoline)
+    return;
+  SourceLocation CurrentLocation = ClassDecl->getLocation();
+  DeclarationNameInfo DNI(Name, CurrentLocation);
+  ASTContext& Context = S.Context;
+  Sema::AMPDeserializerArgs LocalArgs;
+  FunctionProtoType::ExtProtoInfo ExtInfo;
+
+  // Generate name lookup routine: char *__cxxamp_trampoline(void)
+  const Type *TrampolineType =  Context.getFunctionType(Context.VoidTy,
+      LocalArgs,
+      ExtInfo).getTypePtr();
+    TypeSourceInfo *TI = Context.getTrivialTypeSourceInfo(QualType(TrampolineType, 0),
+    CurrentLocation);
+  Trampoline = CXXMethodDecl::Create(
+        Context, ClassDecl, CurrentLocation, DNI, QualType(TrampolineType, 0),
+        /*TInfo=*/TI,
+        SC_Static,
+        /*Inline=*/false,
+        /*isConstExpr*/false,
+        CurrentLocation
+        );
+  Trampoline->setAccess(AS_public);
+
+  // Popluate no arguments
+  // FIXME: Side effects on CPU side
+  #if 0
+  Trampoline->setParams(TrampolineParams);
+  #endif
+
+  // Set appropriate attributes for AMP
+   Trampoline->addAttr(::new (Context) OpenCLKernelAttr(CurrentLocation, Context, 0));
+   Trampoline->addAttr(::new (Context) CXXAMPRestrictAMPAttr(CurrentLocation, Context, 0));
+
+   // In CPU compilation mode, we need an empty implementation of trampoline
+   // so that parallel_for_each can find it.
+   Trampoline->addAttr(::new (Context) CXXAMPRestrictCPUAttr(CurrentLocation, Context, 0));
+   Trampoline->addAttr(::new (Context) AnnotateAttr(CurrentLocation, Context, "__cxxamp_trampoline", 0));
+   // Manually add this Attribute on this stage to avoid
+   //     ClassDecl->getCXXAMPDeserializationConstructor() == NULL
+   Trampoline->addAttr(::new (Context) AnnotateAttr(CurrentLocation, Context, "dummy_deserialize", 0));
+   ClassDecl->addDecl(Trampoline);
+}
+
+void Sema::DeclareAMPTrampoline(CXXRecordDecl *ClassDecl,
+  DeclarationName Name) {
+  SourceLocation CurrentLocation = ClassDecl->getLocation();
+  CXXMethodDecl *Trampoline = NULL;
+  // Deserializer is declared lazily until first lookup, so
+  // if it's not done yet, do so.
+  if (!HasDeclaredAMPDeserializer(ClassDecl)) {
+    DeclareAMPDeserializer(ClassDecl, NULL);
+  }
+  for (CXXRecordDecl::method_iterator Method = ClassDecl->method_begin(),
+      MethodEnd = ClassDecl->method_end();
+      Method != MethodEnd; ++Method) {
+    if (Method->hasAttr<AnnotateAttr>() &&
+      Method->getAttr<AnnotateAttr>()->getAnnotation() == "__cxxamp_trampoline") {
+      return;
+    }
+  }
+  // The AMP deserialized constructor might be NULL if the actual declaration is invalid.
+   // Return at this point to force the compiler to throw compilation errors as expected
+   if(ClassDecl->getCXXAMPDeserializationConstructor() == NULL) {
+     CreateDummyAMPTrampoline(*this, Name, ClassDecl, Trampoline);
+     llvm::errs()<<"[DeclareAMPTrampoline] Deserialization constructor is invalid!\n";
+     return;
+   }
+   CXXConstructorDecl *DeserializeConstructor =
+     dyn_cast<CXXConstructorDecl>(
+       ClassDecl->getCXXAMPDeserializationConstructor());
+  #if 0
+  assert(DeserializeConstructor);
+  #endif
+  DeclarationNameInfo DNI(Name, CurrentLocation);
+
+  //llvm::errs() << "DeclareAMPTrampoline\n";
+  const Type *TrampolineType;
+  FunctionProtoType::ExtProtoInfo ExtInfo;
+  // Now collect the constructors that we already have in the current class.
+  AMPDeserializerArgs LocalArgs;
+  for (CXXMethodDecl::param_iterator CPI = DeserializeConstructor->param_begin(),
+      CPE = DeserializeConstructor->param_end(); CPI!=CPE; CPI++) {
+    // Reference types are only allowed to have one level; i.e. no
+    // class base {&int}; class foo { bar &base; };
+    QualType MemberType = (*CPI)->getType().getNonReferenceType();
+    if (MemberType != (*CPI)->getType()) {
+      if (!getLangOpts().HSAExtension) {
+        if (!MemberType.getTypePtr()->isClassType()) {
+          Diag((*CPI)->getLocation(), diag::err_amp_incompatible);
+        } else {
+          assert(MemberType.getTypePtr()->isClassType() == true &&
+                 "Only supporting taking reference of classes");
+          CXXRecordDecl *MemberClass = MemberType.getTypePtr()->getAsCXXRecordDecl();
+          if (!HasDeclaredAMPDeserializer(MemberClass)) {
+    	    DeclareAMPDeserializer(MemberClass, NULL);
+          }
+          CXXMethodDecl *MemberDeserializer =
+            MemberClass->getCXXAMPDeserializationConstructor();
+          if (!MemberDeserializer) {
+            Diag((*CPI)->getLocation(), diag::err_amp_incompatible);
+          } else {
+            assert(MemberDeserializer);
+            for (CXXMethodDecl::param_iterator CPI = MemberDeserializer->param_begin(),
+                 CPE = MemberDeserializer->param_end(); CPI!=CPE; CPI++) {
+              LocalArgs.push_back((*CPI)->getType());
+            }
+          }
+        }
+      } else { // HSA extension check
+        // In HSA extension mode, capture by reference is simply a pointer
+        LocalArgs.push_back(Context.getPointerType(MemberType));
+      } // HSA extension check
+    } else {
+    // Since OpenCL kernel argument does not allow system dependent built-in types,
+    // e.g. bool. The following is a tricky method to replace _Bool type with Char8.
+    // The alternative way is to replace it in function ActOnVariableDeclarator
+    // line 4876, before a NewVD is created.
+    if(Type::STK_Bool == (*CPI)->getType()->getScalarTypeKind())
+        (*CPI)->setType(Context.CharTy);
+
+      LocalArgs.push_back((*CPI)->getType());
+    }
+  }
+  TrampolineType = Context.getFunctionType(Context.VoidTy,
+      LocalArgs,
+      ExtInfo).getTypePtr();
+  TypeSourceInfo *TI = Context.getTrivialTypeSourceInfo(QualType(TrampolineType, 0),
+    CurrentLocation);
+  // Set correct parameter information for templates
+  Trampoline = CXXMethodDecl::Create(
+      Context, ClassDecl, CurrentLocation, DNI, QualType(TrampolineType, 0),
+      /*TInfo=*/TI,
+      SC_Static,
+      /*Inline=*/false,
+      /*isConstExpr*/false,
+      CurrentLocation
+      );
+  Trampoline->setAccess(AS_public);
+  SmallVector<ParmVarDecl *, 4> TrampolineParams;
+  for (CXXConstructorDecl::param_iterator it = DeserializeConstructor->param_begin();
+    it != DeserializeConstructor->param_end(); it++) {
+    QualType MemberType = (*it)->getType().getNonReferenceType();
+    if (MemberType != (*it)->getType()) {
+      if (!getLangOpts().HSAExtension) {
+        if (!MemberType.getTypePtr()->isClassType()) {
+          Diag((*it)->getLocation(), diag::err_amp_incompatible);
+        } else {
+          assert(MemberType.getTypePtr()->isClassType() == true &&
+                 "Only supporting taking reference of classes");
+          CXXRecordDecl *MemberClass =
+    	    MemberType.getTypePtr()->getAsCXXRecordDecl();
+          CXXMethodDecl *MemberDeserializer =
+            MemberClass->getCXXAMPDeserializationConstructor();
+          if (!MemberDeserializer) {
+            Diag((*it)->getLocation(), diag::err_amp_incompatible);
+          } else {
+            assert(MemberDeserializer);
+            for (CXXMethodDecl::param_iterator CPI =
+      	         MemberDeserializer->param_begin(),
+                 CPE = MemberDeserializer->param_end(); CPI!=CPE; CPI++) {
+              ParmVarDecl *FromParam = ParmVarDecl::Create(Context, Trampoline,
+                                                     CurrentLocation, CurrentLocation,
+                                                     (*CPI)->getIdentifier(),
+                                                     (*CPI)->getType(),
+                                                     /*TInfo=*/0,
+                                                     SC_None, 0);
+      	      TrampolineParams.push_back(FromParam);
+            }
+          }
+        }
+      } else { // HSA extension check
+        ParmVarDecl *FromParam = ParmVarDecl::Create(Context, Trampoline,
+                                               CurrentLocation, CurrentLocation,
+                                               (*it)->getIdentifier(),
+                                               Context.getPointerType(MemberType),
+                                               /*TInfo=*/0,
+                                               SC_None, 0);
+        TrampolineParams.push_back(FromParam);
+      } // HSA extension check
+    } else {
+      TrampolineParams.push_back(*it);
+    }
+  }
+  // Popluate arguments
+  Trampoline->setParams(TrampolineParams);
+  // Set appropriate attributes for AMP
+  Trampoline->addAttr(::new (Context) OpenCLKernelAttr(CurrentLocation, Context, 0));
+  Trampoline->addAttr(::new (Context) CXXAMPRestrictAMPAttr(CurrentLocation, Context, 0));
+  // In CPU compilation mode, we need an empty implementation of trampoline
+  // so that parallel_for_each can find it.
+  Trampoline->addAttr(::new (Context) CXXAMPRestrictCPUAttr(CurrentLocation, Context, 0));
+  Trampoline->addAttr(::new (Context) AnnotateAttr(CurrentLocation, Context, "__cxxamp_trampoline", 0));
+  ClassDecl->addDecl(Trampoline);
+  // Generate definition
+  MarkFunctionReferenced(CurrentLocation, Trampoline);
+  MarkFunctionReferenced(CurrentLocation, DeserializeConstructor);
+}
+
+
+/// Generate an empty body of trampoline code so that the
+/// CodeGenFunction would be invoked on the generated trampoline function;
+/// the actual definition will be done at CodeGen phase.
+void Sema::DefineAMPTrampoline(SourceLocation CurrentLocation,
+                               CXXMethodDecl *Trampoline) {
+  StmtResult Body; // Populate an empty Compound statement body
+  {
+    CompoundScopeRAII CompoundScope(*this);
+    Body = ActOnCompoundStmt(CurrentLocation, CurrentLocation,
+        MultiStmtArg(),
+        /*isStmtExpr=*/false);
+    assert(!Body.isInvalid() && "Compound statement creation cannot fail");
+  }
+  Trampoline->setBody(Body.getAs<Stmt>());
+  if (ASTMutationListener *L = getASTMutationListener()) {
+    L->CompletedImplicitDefinition(Trampoline);
+  }
+  // The constructors for reference types are only referenced
+  // in codegen stage. mark them as referenced so that the code
+  // can be generated.
+  CXXMethodDecl *DeserializeConstructor =
+    Trampoline->getParent()->getCXXAMPDeserializationConstructor();
+  // The AMP deserialized constructor might be NULL if the actual definition is empty.
+  // Return at this point to force the compiler to throw compilation errors as expected
+  if(!DeserializeConstructor) {
+    llvm::errs()<<"[DefineAMPTrampoline] Deserialization constructor is invalid!\n";
+    return;
+  }
+  #if 0
+  assert(DeserializeConstructor&&
+    "Trampoline assumes deserialization constructor");
+  #endif
+  for (CXXConstructorDecl::param_iterator it =
+      DeserializeConstructor->param_begin();
+    it != DeserializeConstructor->param_end(); it++) {
+    QualType MemberType = (*it)->getType().getNonReferenceType();
+    if (MemberType != (*it)->getType()) {
+      if (!getLangOpts().HSAExtension) {
+        if (!MemberType.getTypePtr()->isClassType()) {
+          Diag((*it)->getLocation(), diag::err_amp_incompatible);
+        } else {
+          assert(MemberType.getTypePtr()->isClassType() == true &&
+                 "Only supporting taking reference of classes");
+          CXXRecordDecl *MemberClass =
+       	    MemberType.getTypePtr()->getAsCXXRecordDecl();
+          CXXMethodDecl *MemberDeserializer =
+            MemberClass->getCXXAMPDeserializationConstructor();
+          if (!MemberDeserializer) {
+            Diag((*it)->getLocation(), diag::err_amp_incompatible);
+          } else {
+            assert(MemberDeserializer);
+            MarkFunctionReferenced(CurrentLocation, MemberDeserializer);
+          }
+        }
+      } // HSA extension check
+    }
+  }
+
+}
+
+/// GPU-side Deserialization constructor. Pair arguments to each members
+/// recursively if member is of a compound type
+void Sema::DefineAmpGpuDeSerializeFunction(SourceLocation CurrentLocation,
+                                         CXXMethodDecl *Deserialization) {
+  if (Deserialization->hasBody()
+      || Deserialization->hasInlineBody()
+      || Deserialization->isOutOfLine()
+      || (Deserialization->hasAttr<AnnotateAttr>() &&
+          Deserialization->getAttr<AnnotateAttr>()->getAnnotation()
+          == "user_deserialize"))
+    return;
+  SourceLocation Loc = Deserialization->getLocation();
+  if (CXXConstructorDecl *Constructor =
+    dyn_cast<CXXConstructorDecl>(Deserialization)) {
+    Deserialization->setIsUsed();
+
+    CXXRecordDecl *ClassDecl = Deserialization->getParent();
+
+    if (ClassDecl->isInvalidDecl() || Deserialization->isInvalidDecl()) {
+      Deserialization->setInvalidDecl();
+      return;
+    }
+
+    SmallVector<CXXCtorInitializer*, 4> NewInits;
+    CXXCtorInitializer *CCI;
+    // Assign non-static members.
+    int i = 0;
+
+    // Call direct base-class deserialize.
+    for (CXXRecordDecl::base_class_iterator B = ClassDecl->bases_begin(),
+                                        BEnd = ClassDecl->bases_end();
+         B != BEnd; ++B) {
+      if (const RecordType *BaseType = B->getType()->getAs<RecordType>()) {
+        CXXRecordDecl *BaseClassDecl = cast<CXXRecordDecl>(BaseType->getDecl());
+        SmallVector<Expr*, 4> BaseCtorArgs;
+        int NumArgs = 0;
+        bool FoundBaseClassCtor = false;
+        for (CXXRecordDecl::ctor_iterator CI = BaseClassDecl->ctor_begin(),
+             CE = BaseClassDecl->ctor_end(); CI!=CE; CI++) {
+          CXXMethodDecl *MD = *CI;
+          if (MD->hasAttr<CXXAMPRestrictAMPAttr>() &&
+              MD->hasAttr<AnnotateAttr>() &&
+              MD->getAttr<AnnotateAttr>()->getAnnotation()
+                .find("deserialize") != StringRef::npos) {
+              NumArgs += MD->getNumParams();
+              FoundBaseClassCtor = true;
+              break;
+          }
+        }
+        // Skip base classes that do not have a deserializer defined.
+        if (!FoundBaseClassCtor)
+          continue;
+        for (int j=0; j < NumArgs; j++) {
+          ParmVarDecl *Param = Constructor->getParamDecl(i+j);
+          QualType ParamType = Param->getType().getNonReferenceType();
+          Expr *MemberExprBase =
+            DeclRefExpr::Create(Context, NestedNameSpecifierLoc(),
+                SourceLocation(), Param, false,
+                Loc, ParamType, VK_LValue, 0);
+          Param->setIsUsed();
+          BaseCtorArgs.push_back(MemberExprBase);
+        }
+        i += NumArgs;
+        InitializedEntity InitEntity
+          = InitializedEntity::InitializeBase(Context, B, B->isVirtual());
+        InitializationKind InitKind =
+          InitializationKind::CreateDirect(Loc, Loc, Loc);
+        InitializationSequence InitSeq(*this, InitEntity, InitKind,
+                                       MultiExprArg(BaseCtorArgs.data(), NumArgs));
+        ExprResult BaseInit =
+          InitSeq.Perform(*this, InitEntity, InitKind,
+              MultiExprArg(BaseCtorArgs.data(), NumArgs));
+        BaseInit = MaybeCreateExprWithCleanups(BaseInit);
+        assert (!BaseInit.isInvalid() && "Base initialization failure");
+        CCI = new (Context) CXXCtorInitializer(Context,
+            B->getTypeSourceInfo(), B->isVirtual(), CurrentLocation,
+            BaseInit.get(), CurrentLocation, CurrentLocation);
+        NewInits.push_back(CCI);
+      }
+    }
+    for (CXXRecordDecl::field_iterator Field = ClassDecl->field_begin(),
+	FieldEnd = ClassDecl->field_end();
+	Field != FieldEnd; ++Field) {
+      if (Field->hasAttr<CXXAMPRestrictCPUAttr>() &&
+          !Field->hasAttr<CXXAMPRestrictAMPAttr>()) {
+        // if any data members of the class is restrict(cpu),
+        // skip that field
+        continue;
+      }
+      if (Field->isUnnamedBitfield())
+	continue;
+      // Suppress assigning zero-width bitfields.
+      if (Field->isBitField() && Field->getBitWidthValue(Context) == 0)
+	continue;
+
+      QualType FieldType = Field->getType();
+      if (FieldType->isIncompleteArrayType()) {
+	assert(ClassDecl->hasFlexibleArrayMember() &&
+	    "Incomplete array type is not valid");
+	continue;
+      }
+
+      if (FieldType->isRecordType()) {
+        // Locate the deserialization constructor of the member class,
+        // find # of arguments required.
+        int NumArgs = 0;
+        SmallVector<Expr*, 4> FieldArgs;
+
+        if (CXXRecordDecl *FieldClassDecl = FieldType->getAsCXXRecordDecl()) {
+	  CXXMethodDecl *FieldDes =
+	    FieldClassDecl->getCXXAMPDeserializationConstructor();
+          // Skip member classes that do not have a deserializer defined.
+          if (!FieldDes)
+            continue;
+	  NumArgs = FieldDes->getNumParams();
+          for (int j=0; j < NumArgs; j++) {
+            ParmVarDecl *Param = Constructor->getParamDecl(i+j);
+            QualType ParamType = Param->getType().getNonReferenceType();
+            Expr *MemberExprBase =
+              DeclRefExpr::Create(Context, NestedNameSpecifierLoc(),
+                  SourceLocation(), Param, false,
+                  Loc, ParamType, VK_LValue, 0);
+            Param->setIsUsed();
+            FieldArgs.push_back(MemberExprBase);
+          }
+          i+=NumArgs;
+
+          InitializedEntity InitEntity
+            = InitializedEntity::InitializeMember(*Field);
+          InitializationKind InitKind =
+            InitializationKind::CreateDirect(Loc, Loc, Loc);
+          InitializationSequence InitSeq(*this, InitEntity, InitKind,
+                                         MultiExprArg(FieldArgs.data(), NumArgs));
+          ExprResult MemberInit =
+            InitSeq.Perform(*this, InitEntity, InitKind,
+                MultiExprArg(FieldArgs.data(), NumArgs));
+
+          MemberInit = MaybeCreateExprWithCleanups(MemberInit);
+          assert (!MemberInit.isInvalid() && "Member initialization failure");
+
+          CCI = new (Context) CXXCtorInitializer(Context,
+              *Field, CurrentLocation, CurrentLocation, MemberInit.get(),
+              CurrentLocation);
+        } else {
+          assert(0);
+        }
+      } else { // POD member
+        ParmVarDecl *Param = Constructor->getParamDecl(i++);
+        QualType ParamType = Param->getType().getNonReferenceType();
+
+        Expr *MemberExprBase =
+          DeclRefExpr::Create(Context, NestedNameSpecifierLoc(),
+              SourceLocation(), Param, false,
+              Loc, ParamType, VK_LValue, 0);
+        Param->setIsUsed();
+        CCI= new (Context) CXXCtorInitializer(Context, *Field,
+	  CurrentLocation, CurrentLocation, MemberExprBase, CurrentLocation);
+      }
+      NewInits.push_back(CCI);
+    }
+    SetCtorInitializers(Constructor, false, NewInits);
+  }
+
+  StmtResult Body; // Populate an empty Compound statement body
+  {
+    CompoundScopeRAII CompoundScope(*this);
+    Body = ActOnCompoundStmt(Loc, Loc, MultiStmtArg(),
+                             /*isStmtExpr=*/false);
+    assert(!Body.isInvalid() && "Compound statement creation cannot fail");
+  }
+  Deserialization->setBody(Body.getAs<Stmt>());
+  Deserialization->setImplicitlyInline();
+
+  if (ASTMutationListener *L = getASTMutationListener()) {
+    L->CompletedImplicitDefinition(Deserialization);
+  }
+}
+
+void Sema::DefineAmpCpuSerializeFunction(SourceLocation CurrentLocation,
+                                          CXXMethodDecl *Serialization) {
+  Serialization->setIsUsed();
+  // Avoid overriding user-defined serialization
+  if (Serialization->hasBody()||Serialization->hasInlineBody()||
+      Serialization->isOutOfLine()) {
+    return;
+  }
+  SourceLocation Loc = Serialization->getLocation();
+  SynthesizedFunctionScope Scope(*this, Serialization);
+  CXXRecordDecl *ClassDecl = Serialization->getParent();
+
+  // The statements that form the synthesized function body.
+  SmallVector<Stmt*, 32> Statements;
+
+  // Construct the "this" pointer.
+  Expr *This = ActOnCXXThis(Loc).getAs<Expr>();
+
+  // Construct the Expr of parameter.
+  ParmVarDecl *S = Serialization->getParamDecl(0);
+  QualType SRefType = S->getType();
+  if (const LValueReferenceType *SRef = SRefType->getAs<LValueReferenceType>()) {
+    SRefType = SRef->getPointeeType();
+  }
+  Expr *SRef = BuildDeclRefExpr(S, SRefType, VK_LValue, Loc).get();
+  assert(SRef && "Reference to parameter cannot fail!");
+
+  // Call direct base-class serialize.
+  for (CXXRecordDecl::base_class_iterator B = ClassDecl->bases_begin(),
+                                        BEnd = ClassDecl->bases_end();
+       B != BEnd; ++B) {
+    if (B->isVirtual()) // Cannot Handled VirtualBaseSpec.
+      continue;
+    if (const RecordType *BaseType = B->getType()->getAs<RecordType>()) {
+      CXXRecordDecl *BaseClassDecl = cast<CXXRecordDecl>(BaseType->getDecl());
+      for (CXXRecordDecl::method_iterator Method = BaseClassDecl->method_begin(),
+           MethodEnd = BaseClassDecl->method_end();
+           Method != MethodEnd; ++Method) {
+        if((*Method)->getNameInfo().getAsString() == "__cxxamp_serialize") {
+          LookupResult Methodlookup(*this,
+                                    (*Method)->getNameInfo(),LookupOrdinaryName);
+          LookupQualifiedName(Methodlookup, BaseClassDecl, false);
+          CXXCastPath BasePath;
+          BasePath.push_back(B);
+
+          // Dereference "this".
+          ExprResult Base = CreateBuiltinUnaryOp(Loc, UO_Deref, This);
+
+          // Implicitly cast "this" to the appropriately-qualified base type.
+          Base = ImpCastExprToType(Base.get(),
+                                   Context.getCVRQualifiedType(B->getType().getUnqualifiedType(),
+                                             Serialization->getTypeQualifiers()),
+                                   CK_UncheckedDerivedToBase,
+                                   VK_LValue, &BasePath);
+          CXXScopeSpec SS;
+          ExprResult BaseSerializeFunctionRef
+            = BuildMemberReferenceExpr(Base.getAs<Expr>(),
+                                       B->getType().getNonReferenceType(), Loc,
+                                       /*isArrow=*/false, SS,
+                                       /*TemplateKWLoc=*/SourceLocation(),
+                                       /*FirstQualifierInScope=*/0,
+                                       Methodlookup,
+                                       /*TemplateArgs=*/nullptr,/*S*/nullptr);
+          assert(!BaseSerializeFunctionRef.isInvalid() &&
+                 "BaseSerializeFunctionRef cannot fail");
+          MultiExprArg MEArg(&SRef, 1);
+          ExprResult Call = BuildCallToMemberFunction(/*Scope=*/0,
+                                                      BaseSerializeFunctionRef.getAs<Expr>(),
+                                                      Loc, /*&SRef*/MEArg, /*1,*/ Loc);
+          StmtResult SerializeResult = Call.getAs<Stmt>();
+          Statements.push_back(SerializeResult.getAs<Expr>());
+        }
+      }
+    }
+  }
+
+  //Do the fields serialize.
+  for (CXXRecordDecl::field_iterator Field = ClassDecl->field_begin(),
+       FieldEnd = ClassDecl->field_end(); Field != FieldEnd; ++Field) {
+    QualType FieldType = Field->getType().getNonReferenceType();
+
+    // Skip fields that are not supposed to be marshalled to GPU space
+    if (Field->hasAttr<CXXAMPRestrictCPUAttr>() &&
+        !Field->hasAttr<CXXAMPRestrictAMPAttr>()) {
+      continue;
+    }
+    const RecordType *RecordTy = FieldType->getAs<RecordType>();
+
+    if (!getLangOpts().HSAExtension) {
+
+      if (RecordTy) {
+        CXXRecordDecl *FieldClassDecl = cast<CXXRecordDecl>(RecordTy->getDecl());
+        for (CXXRecordDecl::method_iterator Method = FieldClassDecl->method_begin(),
+             MethodEnd = FieldClassDecl->method_end();
+             Method != MethodEnd; ++Method) {
+          if((*Method)->getNameInfo().getAsString() == "__cxxamp_serialize") {
+            FieldDecl *F = dynamic_cast<FieldDecl*>(*Field);
+            assert(F && "F ERROR!");
+            Expr *FieldRef = BuildDeclRefExpr(F,FieldType,VK_LValue,Loc).get();
+            assert(FieldRef && "Reference to Field cannot fail!");
+  
+            // Intentionally empty
+            CXXScopeSpec CSS;
+            LookupResult MemberLookup(*this, Field->getDeclName(), Loc,
+                                      LookupMemberName);
+            MemberLookup.addDecl(*Field);
+            MemberLookup.resolveKind();
+            ExprResult FRef = BuildMemberReferenceExpr(This, This->getType(),
+                                                       Loc, /*IsArrow=*/true,
+                                                       CSS, SourceLocation(), 0,
+                                                       MemberLookup,
+                                                       /*TemplateArgs=*/nullptr,/*S*/nullptr);
+            LookupResult Methodlookup(*this,
+                                      (*Method)->getNameInfo(),LookupOrdinaryName);
+            LookupQualifiedName(Methodlookup, FieldClassDecl, false);
+            CXXScopeSpec SS;
+            const Type *CanonicalT = Context.getCanonicalType(FieldType.getTypePtr());
+            SS.MakeTrivial(Context,
+                           NestedNameSpecifier::Create(Context, 0,
+                                                       false, CanonicalT),
+                          Loc);
+            ExprResult SerializeFunctionRef
+              = BuildMemberReferenceExpr(FRef.get(), FieldType, Loc,
+                                         /*isArrow=*/false, SS,
+                                         /*TemplateKWLoc=*/SourceLocation(),
+                                         /*FirstQualifierInScope=*/0,
+                                         Methodlookup,
+                                         /*TemplateArgs=*/nullptr,/*S*/nullptr);
+            assert(!SerializeFunctionRef.isInvalid() &&
+                   "SerializeFunctionRef cannot fail");
+            MultiExprArg MEArg(&SRef, 1);
+            ExprResult Call = BuildCallToMemberFunction(/*Scope=*/0,
+                                                        SerializeFunctionRef.getAs<Expr>(),
+                                                        Loc, /*&SRef*/MEArg, /*1,*/ Loc);
+            StmtResult SerializeResult = Call.getAs<Stmt>();
+            Statements.push_back(SerializeResult.getAs<Expr>());
+          }
+        }
+      }
+      else if(FieldType->isScalarType()){
+        if (Field->getType()->isReferenceType()) {
+          Diag(ClassDecl->getLocation(), diag::err_uninitialized_member_for_assign)
+            << Context.getTagDeclType(ClassDecl) << 0 << Field->getDeclName();
+          Diag(Field->getLocation(), diag::note_declared_at);
+          Diag(CurrentLocation, diag::note_member_synthesized_at)
+            << Serialization << Context.getTagDeclType(ClassDecl);
+          continue;
+        }
+        const RecordType *SRecordTy
+          = (S->getType().getNonReferenceType())->getAs<RecordType>();
+        CXXRecordDecl *SClassDecl = cast<CXXRecordDecl>(SRecordTy->getDecl());
+        assert(SClassDecl && "SClassDecl cannot fail!");
+        for (CXXRecordDecl::method_iterator Method = SClassDecl->method_begin(),
+             MethodEnd = SClassDecl->method_end();
+             Method != MethodEnd; ++Method) {
+          if((*Method)->getNameInfo().getAsString() == "Append") {
+            CXXScopeSpec CSS;
+            LookupResult MemberLookup(*this, Field->getDeclName(), Loc,
+                                      LookupMemberName);
+            MemberLookup.addDecl(*Field);
+            MemberLookup.resolveKind();
+            ExprResult FRef = BuildMemberReferenceExpr(This, This->getType(),
+                                                       Loc, /*IsArrow=*/true,
+                                                       CSS, SourceLocation(), 0,
+                                                       MemberLookup,
+                                                       /*TemplateArgs=*/nullptr,/*S*/nullptr);
+  
+            // Construct the parameter "const void *" for Append.
+            ExprResult T = CreateBuiltinUnaryOp(Loc, UO_AddrOf, FRef.getAs<Expr>());
+  
+            // Construct the parameter "size_t" for Append.
+            QualType SizeType = Context.getSizeType();
+            llvm::APInt Size(Context.getTypeSize(SizeType),
+                          Context.getTypeSizeInChars(Field->getType()).getQuantity());
+  
+            LookupResult Methodlookup(*this,
+                                      (*Method)->getNameInfo(),LookupOrdinaryName);
+            LookupQualifiedName(Methodlookup, SClassDecl, false);
+            CXXScopeSpec SS;
+            const Type *CanonicalT = Context.getCanonicalType(SRefType.getTypePtr());
+            SS.MakeTrivial(Context,
+                           NestedNameSpecifier::Create(Context, 0,
+                                                       false, CanonicalT),
+                           Loc);
+            ExprResult AppendFunctionRef
+              = BuildMemberReferenceExpr(SRef, SRefType, Loc,
+                                         /*isArrow=*/false, SS,
+                                         /*TemplateKWLoc=*/SourceLocation(),
+                                         /*FirstQualifierInScope=*/0,
+                                         Methodlookup,
+                                         /*TemplateArgs=*/nullptr,/*S*/nullptr);
+            Expr* CallArgs[2]
+              = {IntegerLiteral::Create(Context, Size, SizeType, Loc),T.getAs<Expr>()};
+            MultiExprArg MEArg(CallArgs, 2);
+            ExprResult Call = BuildCallToMemberFunction(/*Scope=*/0,
+                                                        AppendFunctionRef.getAs<Expr>(),
+                                                        Loc, /*CallArgs*/MEArg, /*2,*/ Loc);
+            Statements.push_back(Call/*.getAs<Stmt>()*/.getAs<Expr>());
+          }
+        }
+      }
+
+    } else { // HSA extension check
+
+      const RecordType *HSARecordTy = Field->getType()->getAs<RecordType>();
+      CXXRecordDecl *FieldClassDecl = NULL;
+      NamespaceDecl* FieldNamespaceDecl = NULL;
+      if (RecordTy) {
+        FieldClassDecl = cast<CXXRecordDecl>(RecordTy->getDecl());
+        FieldNamespaceDecl = dyn_cast<NamespaceDecl>(FieldClassDecl->getEnclosingNamespaceContext());
+      }
+
+      // call __cxxamp_serialize for the following cases:
+      // a) under Concurrency namespace
+      // b) is a lambda/class/union (RecordType) by itself
+      // for all other classes, directly push pointer as kernel argument
+      if (HSARecordTy &&
+          ( (FieldNamespaceDecl && FieldNamespaceDecl->getName() == "Concurrency") ||
+            (FieldClassDecl) ) ) {
+        CXXRecordDecl *FieldClassDecl = cast<CXXRecordDecl>(HSARecordTy->getDecl());
+        for (CXXRecordDecl::method_iterator Method = FieldClassDecl->method_begin(),
+             MethodEnd = FieldClassDecl->method_end();
+             Method != MethodEnd; ++Method) {
+          if((*Method)->getNameInfo().getAsString() == "__cxxamp_serialize") {
+            FieldDecl *F = dynamic_cast<FieldDecl*>(*Field);
+            assert(F && "F ERROR!");
+            Expr *FieldRef = BuildDeclRefExpr(F,FieldType,VK_LValue,Loc).get();
+            assert(FieldRef && "Reference to Field cannot fail!");
+
+            // Intentionally empty
+            CXXScopeSpec CSS;
+            LookupResult MemberLookup(*this, Field->getDeclName(), Loc,
+                                      LookupMemberName);
+            MemberLookup.addDecl(*Field);
+            MemberLookup.resolveKind();
+            ExprResult FRef = BuildMemberReferenceExpr(This, This->getType(),
+                                                       Loc, /*IsArrow=*/true,
+                                                       CSS, SourceLocation(), 0,
+                                                       MemberLookup,
+                                                       /*TemplateArgs=*/nullptr,/*S*/nullptr);
+            LookupResult Methodlookup(*this,
+                                      (*Method)->getNameInfo(),LookupOrdinaryName);
+            LookupQualifiedName(Methodlookup, FieldClassDecl, false);
+            CXXScopeSpec SS;
+            const Type *CanonicalT = Context.getCanonicalType(FieldType.getTypePtr());
+            SS.MakeTrivial(Context,
+                           NestedNameSpecifier::Create(Context, 0,
+                                                       false, CanonicalT),
+                          Loc);
+            ExprResult SerializeFunctionRef
+              = BuildMemberReferenceExpr(FRef.get(), FieldType, Loc,
+                                         /*isArrow=*/false, SS,
+                                         /*TemplateKWLoc=*/SourceLocation(),
+                                         /*FirstQualifierInScope=*/0,
+                                         Methodlookup,
+                                         /*TemplateArgs=*/nullptr,/*S*/nullptr);
+            assert(!SerializeFunctionRef.isInvalid() &&
+                   "SerializeFunctionRef cannot fail");
+            MultiExprArg MEArg(&SRef, 1);
+            ExprResult Call = BuildCallToMemberFunction(/*Scope=*/0,
+                                                        SerializeFunctionRef.getAs<Expr>(),
+                                                        Loc, /*&SRef*/MEArg, /*1,*/ Loc);
+            StmtResult SerializeResult = Call.getAs<Stmt>();
+            Statements.push_back(SerializeResult.getAs<Expr>());
+          }
+        }
+      } else {
+        // HSA capture by reference
+        // use AppendPtr to push pointer to the object
+        const RecordType *SRecordTy
+          = (S->getType().getNonReferenceType())->getAs<RecordType>();
+
+        CXXRecordDecl *SClassDecl = cast<CXXRecordDecl>(SRecordTy->getDecl());
+        assert(SClassDecl && "SClassDecl cannot fail!");
+
+        std::string AppendFuncName;
+        if (Field->getType()->isReferenceType()) {
+          AppendFuncName = "AppendPtr";
+        } else {
+          AppendFuncName = "Append";
+        }
+
+        for (CXXRecordDecl::method_iterator Method = SClassDecl->method_begin(),
+             MethodEnd = SClassDecl->method_end();
+             Method != MethodEnd; ++Method) {
+          if((*Method)->getNameInfo().getAsString() == AppendFuncName) {
+            CXXScopeSpec CSS;
+            LookupResult MemberLookup(*this, Field->getDeclName(), Loc,
+                                      LookupMemberName);
+            MemberLookup.addDecl(*Field);
+            MemberLookup.resolveKind();
+            ExprResult FRef = BuildMemberReferenceExpr(This, This->getType(),
+                                                       Loc, /*IsArrow=*/true,
+                                                       CSS, SourceLocation(), 0,
+                                                       MemberLookup, 
+                                                       /*TemplateArgs=*/nullptr,/*S*/nullptr);
+
+            // Construct the parameter "const void *" for Append.
+            ExprResult T = CreateBuiltinUnaryOp(Loc, UO_AddrOf, FRef.getAs<Expr>());
+
+            // Construct the parameter "size_t" for Append.
+            QualType SizeType = Context.getSizeType();
+            llvm::APInt Size(Context.getTypeSize(SizeType),
+                          Context.getTypeSizeInChars(Field->getType()).getQuantity());
+
+            LookupResult Methodlookup(*this,
+                                      (*Method)->getNameInfo(),LookupOrdinaryName);
+            LookupQualifiedName(Methodlookup, SClassDecl, false);
+            CXXScopeSpec SS;
+            const Type *CanonicalT = Context.getCanonicalType(SRefType.getTypePtr());
+            SS.MakeTrivial(Context,
+                           NestedNameSpecifier::Create(Context, 0,
+                                                       false, CanonicalT),
+                           Loc);
+            ExprResult AppendFunctionRef
+              = BuildMemberReferenceExpr(SRef, SRefType, Loc,
+                                         /*isArrow=*/false, SS,
+                                         /*TemplateKWLoc=*/SourceLocation(),
+                                         /*FirstQualifierInScope=*/0,
+                                         Methodlookup,
+                                         /*TemplateArgs=*/nullptr,/*S*/nullptr);
+            Expr* CallArgs[2]
+              = {IntegerLiteral::Create(Context, Size, SizeType, Loc),T.getAs<Expr>()};
+            MultiExprArg MEArg(CallArgs, 2);
+            ExprResult Call = BuildCallToMemberFunction(/*Scope=*/0,
+                                                        AppendFunctionRef.getAs<Expr>(),
+                                                        Loc, /*CallArgs*/MEArg, /*2,*/ Loc);
+            Statements.push_back(Call/*.getAs<Stmt>()*/.getAs<Expr>());
+          }
+        }
+      }
+
+    } // HSA extension check
+
+  }
+  StmtResult Body;
+  {
+    CompoundScopeRAII CompoundScope(*this);
+    Body = ActOnCompoundStmt(Loc, Loc, (Statements),
+                             /*isStmtExpr=*/false);
+    assert(!Body.isInvalid() && "Compound statement creation cannot fail");
+  }
+  Serialization->setBody(Body.getAs<Stmt>());
+
+  if (ASTMutationListener *L = getASTMutationListener()) {
+    L->CompletedImplicitDefinition(Serialization);
   }
 }
 

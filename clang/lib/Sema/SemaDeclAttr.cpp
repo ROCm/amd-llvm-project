@@ -5316,6 +5316,75 @@ static void handleOpenCLAccessAttr(Sema &S, Decl *D,
 }
 
 //===----------------------------------------------------------------------===//
+// C++ AMP specific attribute handlers.
+// FIXME: Merge these handlers with handleSimpleAttribute
+//===----------------------------------------------------------------------===//
+
+static void handleAutoAttr(Sema &S, Decl *D, const AttributeList &Attr) {
+  if (S.LangOpts.CUDA) {
+    // No support for now
+  } else if (S.LangOpts.CPlusPlusAMP) {
+    D->addAttr(::new (S.Context) AlwaysInlineAttr(Attr.getRange(),
+          S.Context, Attr.getAttributeSpellingListIndex()));
+    D->addAttr(::new (S.Context) CXXAMPRestrictAUTOAttr(Attr.getRange(),
+          S.Context, Attr.getAttributeSpellingListIndex()));
+  } else {
+    S.Diag(Attr.getLoc(), diag::warn_attribute_ignored) << "auto";
+  }
+}
+
+static void handleDeviceAttr(Sema &S, Decl *D, const AttributeList &Attr) {
+  if (S.LangOpts.CUDA) {
+    // check the attribute arguments.
+    if (Attr.getNumArgs() != 0) {
+      S.Diag(Attr.getLoc(), diag::err_attribute_wrong_number_arguments) << 0;
+      return;
+    }
+
+    if (!isa<FunctionDecl>(D) && !isa<VarDecl>(D)) {
+      S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type)
+        << Attr.getName() << ExpectedVariableOrFunction;
+      return;
+    }
+
+    D->addAttr(::new (S.Context)
+               CUDADeviceAttr(Attr.getRange(), S.Context,
+                              Attr.getAttributeSpellingListIndex()));
+  } else if (S.LangOpts.CPlusPlusAMP) {
+    if (!S.LangOpts.AMPCPU)
+      D->addAttr(::new (S.Context) AlwaysInlineAttr(Attr.getRange(),
+                                                    S.Context, Attr.getAttributeSpellingListIndex()));
+    D->addAttr(::new (S.Context) CXXAMPRestrictAMPAttr(Attr.getRange(),
+          S.Context, Attr.getAttributeSpellingListIndex()));
+  } else {
+    S.Diag(Attr.getLoc(), diag::warn_attribute_ignored) << "device";
+  }
+}
+
+static void handleHostAttr(Sema &S, Decl *D, const AttributeList &Attr) {
+  if (S.LangOpts.CUDA) {
+    // check the attribute arguments.
+    if (!checkAttributeNumArgs(S, Attr, 0))
+      return;
+
+    if (!isa<FunctionDecl>(D)) {
+      S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type)
+        << Attr.getName() << ExpectedFunction;
+      return;
+    }
+
+    D->addAttr(::new (S.Context)
+               CUDAHostAttr(Attr.getRange(), S.Context,
+                            Attr.getAttributeSpellingListIndex()));
+  } else if (S.LangOpts.CPlusPlusAMP) {
+    D->addAttr(::new (S.Context) CXXAMPRestrictCPUAttr(Attr.getRange(),
+          S.Context, Attr.getAttributeSpellingListIndex()));
+  } else {
+    S.Diag(Attr.getLoc(), diag::warn_attribute_ignored) << "host";
+  }
+}
+
+//===----------------------------------------------------------------------===//
 // Top Level Sema Entry Points
 //===----------------------------------------------------------------------===//
 
@@ -5468,6 +5537,15 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
     break;
   case AttributeList::AT_CUDAGlobal:
     handleGlobalAttr(S, D, Attr);
+    break;
+  case AttributeList::AT_CXXAMPRestrictAMP:
+    handleDeviceAttr(S, D, Attr);
+    break;
+  case AttributeList::AT_CXXAMPRestrictCPU:
+    handleHostAttr(S, D, Attr);
+    break;
+  case AttributeList::AT_CXXAMPRestrictAUTO:
+    handleAutoAttr(S, D, Attr);
     break;
   case AttributeList::AT_CUDADevice:
     handleSimpleAttributeWithExclusions<CUDADeviceAttr, CUDAGlobalAttr>(S, D,

@@ -193,6 +193,9 @@ private:
   /// \brief Used to determine if errors occurred in this scope.
   DiagnosticErrorTrap ErrorTrap;
 
+  /// C++AMP restriction specifier
+  unsigned short CXXAMPSpecifier;
+
   /// A lattice consisting of undefined, a single NRVO candidate variable in
   /// this scope, or over-defined. The bit is true when over-defined.
   llvm::PointerIntPair<VarDecl *, 1, bool> NRVO;
@@ -370,6 +373,26 @@ public:
   /// function prototype scope.
   bool isFunctionPrototypeScope() const {
     return getFlags() & Scope::FunctionPrototypeScope;
+  }
+
+  /// \brief C++AMP restriction specifiers
+  enum CPPAMPSpecifier {
+    CPPAMP_None = 0x0,
+    CPPAMP_CPU  = 0x1,
+    CPPAMP_AMP  = 0x2,
+    CPPAMP_AUTO = 0x4
+  };
+  void setCXXAMPSpecifier(unsigned A) { CXXAMPSpecifier = A; }
+  void setAMPScope() { CXXAMPSpecifier |= CPPAMP_AMP; }
+  void setCPUScope() { CXXAMPSpecifier |= CPPAMP_CPU; }
+  bool isAMPScope() const {
+    return CXXAMPSpecifier & CPPAMP_AMP;
+  }
+  bool isCPUScope() const {
+    return CXXAMPSpecifier & CPPAMP_CPU;
+  }
+  bool isAUTOScope() const {
+    return CXXAMPSpecifier & CPPAMP_AUTO;
   }
 
   /// isAtCatchScope - Return true if this scope is \@catch.
