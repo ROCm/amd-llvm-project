@@ -25,6 +25,7 @@
 #include "clang/Sema/PrettyDeclStackTrace.h"
 #include "clang/Sema/Scope.h"
 #include "clang/Sema/SemaDiagnostic.h"
+#include "clang/Sema/Lookup.h"
 #include "llvm/ADT/SmallString.h"
 
 using namespace clang;
@@ -3960,4 +3961,236 @@ void Parser::ParseMicrosoftIfExistsClassDeclaration(DeclSpec::TST TagType,
   }
   
   Braces.consumeClose();
+}
+
+/// CXXAMPFindRestrictionSeq - Consume and store the token at the passed
+/// token container until the token '(' is reached (which gets
+/// consumed/stored too, if ConsumeFinalToken) or End Chars are reached.
+/// The EndChars are '{', '}' and ';' which present Funcion Definition Start, End and
+/// Declaration End respectively.
+/// Returns true if token '(' is found.
+/// NOTE: This is a specialized version of Parser::ConsumeAndStoreUntil.
+bool Parser::CXXAMPFindRestrictionSeq(CachedTokens &Toks,
+                                  bool ConsumeFinalToken) {
+  // We always want this function to consume at least one token if the first
+  // token isn't T and if not at EOF.
+  while (1) {
+    // If we found one of the tokens, stop and return true.
+    if (Tok.is(tok::l_paren)) {
+      if (ConsumeFinalToken) {
+        Toks.push_back(Tok);
+        ConsumeAnyToken();
+      }
+      return true;
+    }
+
+    switch (Tok.getKind()) {
+    case tok::eof:
+      // Ran out of tokens.
+      return false;
+    // End Chars
+    case tok::l_brace:
+     return false;
+      break;
+    case tok::r_brace:
+      return false;
+      break;
+
+    case tok::code_completion:
+      Toks.push_back(Tok);
+      ConsumeCodeCompletionToken();
+      break;
+
+    case tok::string_literal:
+    case tok::wide_string_literal:
+    case tok::utf8_string_literal:
+    case tok::utf16_string_literal:
+    case tok::utf32_string_literal:
+      Toks.push_back(Tok);
+      ConsumeStringToken();
+      break;
+    case tok::semi:
+        return false;
+      // FALL THROUGH.
+    default:
+      // consume this token.
+      Toks.push_back(Tok);
+      ConsumeToken();
+      break;
+    }
+  }
+}
+
+/// Parse a C++ restriction-specification if present (C++AMP restrict(amp,cpu)).
+///
+///       restriction-specifier-seq:
+///         restriction-specifier
+///         restriction-specifier-seq restriction-specifier
+///
+///       restriction-specifier:
+///         'restrict' ( restriction-seq )
+///
+///       restriction-seq:
+///         restriction
+///         restriction-seq, restriction
+///
+///       restriction:
+///         amp-restriction
+///         'cpu'
+///
+///       amp-restriction:
+///         'amp'
+unsigned Parser::ParseRestrictionSpecification(Declarator& D,
+  ParsedAttributes &Attrs,
+  SourceLocation &DeclEndLoc) {
+  unsigned retSpec = CPPAMP_None;
+  while (1)
+  {
+    if (Tok.isNot(tok::identifier)) // 'restrict' is an identifier
+      break;
+
+	CachedTokens Ids;
+    if (CXXAMPFindRestrictionSeq(Ids, /*ConsumeFinalToken=*/false)) {
+		if (Ids.size() == 1) {
+                IdentifierInfo* II = Ids[0].getIdentifierInfo();
+                if (II->getName() != "restrict") {
+				Diag(Ids[0], diag::err_expected_restrict);
+				DeclEndLoc = Tok.getLocation();
+				break;
+			}
+        } else if (Ids.size() == 0) {
+			Diag(Tok, diag::err_expected_restrict);
+			DeclEndLoc = Tok.getLocation();
+			break;
+		} else {
+                IdentifierInfo* II = Ids[0].getIdentifierInfo();
+                if (II->getName() != "restrict") {
+				Diag(Ids[0], diag::err_expected_restrict);
+				DeclEndLoc = Tok.getLocation();
+				break;
+			}
+			Diag(Ids[1], diag::err_expected_lparen_after_restriction);
+			DeclEndLoc = Tok.getLocation();
+			break;
+		}
+     } else {
+       break;
+	}
+
+    if (Tok.isNot(tok::l_paren)) {
+      Diag(Tok, diag::err_expected_lparen_after_restriction);
+      DeclEndLoc = Tok.getLocation();
+      break;
+    }
+
+    BalancedDelimiterTracker T(*this, tok::l_paren);
+    T.consumeOpen();
+    CachedTokens Toks;
+    if (ConsumeAndStoreUntil(tok::r_paren, Toks, /*StopAtSemi=*/true, /*ConsumeFinalToken=*/false)) {
+      // We find the ')' we expected
+      // Parse restriction-seq: 'cpu', 'amp'
+      if (Toks.size() == 0)
+        Diag(Tok, diag::err_amp_empty_restriction);
+
+      // The following usages are supported,
+      //   restrict(,), restrict(,,,,), where number of ',' is not cared
+      //   restrict(THE_RES,), restrict(THE_RES,,,,), where THE_RES is cpu, amp, auto
+      //      or any supported restriction specifier in C++AMP
+      bool isStart = true;
+      for (unsigned i = 0; i < Toks.size(); ++i) {
+        if (Toks[i].is(tok::comma)) {
+          isStart = true;
+        } else {
+          IdentifierInfo* II = Toks[i].getIdentifierInfo();
+          if(II) {
+            if (II->getName() == "cpu" ||    // 'cpu' is an identifier
+              II->getName() == "auto" ||    // 'auto' is a keyword
+              II->getName() == "amp" ) {   // 'amp' is an identifier
+              // Clean front and next is tok::comma
+              if(isStart && ((i == Toks.size()-1) ||Toks[i+1].is(tok::comma))) {
+                SourceLocation AttrNameLoc = Toks[i].getLocation();
+                Attrs.addNew(II, AttrNameLoc, 0, AttrNameLoc, /*0,
+                  AttrNameLoc, */0, 0, AttributeList::AS_GNU);
+
+                if (II->getName() == "cpu")
+                  retSpec |= CPPAMP_CPU;
+
+                if (II->getName() == "amp")
+                  retSpec |= CPPAMP_AMP;
+
+                if (II->getName() == "auto")
+                  retSpec |= CPPAMP_AUTO;
+              }
+            } else {
+              // Not valid specifier
+              Diag(Toks[i], diag::err_amp_unrecognized_restriction) << II->getName();
+            }
+          } else {
+            // Punctuators
+            Diag(Toks[i], diag::err_amp_unrecognized_restriction)
+                  <<tok::/*getTokenSimpleSpelling*/getPunctuatorSpelling(Toks[i].getKind());
+          }
+          isStart = false;
+        }
+      }
+    }
+    T.consumeClose();
+    DeclEndLoc = T.getCloseLocation();
+  }
+
+  if (retSpec & CPPAMP_AUTO) {
+    // Since it is not completely parsed, manually determine if it has a funciton body
+    // FIXME: the following can not be determined as a function body
+    //    int f() restrict(auto) const {}
+    //    int restrict(auto) f() {}
+    ParsingDeclSpec DS(*this);
+    ParsingDeclarator PD(*this, DS, D.getContext());
+      if (!isStartOfFunctionDefinition(PD)) {
+        #if 0
+        if (DS.getStorageClassSpec() == DeclSpec::SCS_typedef) {
+          Diag(Tok, diag::err_function_declared_typedef);
+          DS.ClearStorageClassSpecs();
+        }
+        #endif
+        // 'auto' restriction is only allowed on function defintion
+        Diag(DeclEndLoc, diag::err_amp_expected_auto_restriction_on_definition);
+    }
+    DeclarationNameInfo NameInfo = Actions.GetNameFromUnqualifiedId(D.getName());
+    LookupResult R(Actions, NameInfo, Sema::LookupUsingDeclName,
+                    Sema::ForRedeclaration);
+    if (Actions.LookupName(R, getCurScope())) {
+      Diag(DeclEndLoc, diag::err_amp_auto_restricted_function_has_other_declaration)
+        << NameInfo.getName().getAsString();
+      for (LookupResult::iterator I = R.begin(), IEnd = R.end();
+             I != IEnd; ++I)
+        Diag((*I)->getLocation(), diag::note_auto_restricted_prev_declaration);
+    }
+  }
+  // FIXME: this is an inefficient, yet effective method
+  // try walk up enclising scopes and find restriction specifiers
+  if (retSpec == CPPAMP_None) {
+    Scope *scope = getCurScope();
+    while (scope) {
+      if (scope->getFlags() & Scope::FnScope) {
+        FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(static_cast<DeclContext*>(scope->getEntity()));
+        if (FD) {
+          if (FD->hasAttr<CXXAMPRestrictAMPAttr>()) {
+            IdentifierInfo *II = &PP.getIdentifierTable().get("amp");
+            assert(II);
+            Attrs.addNew(II, DeclEndLoc, 0, DeclEndLoc, /*0, DeclEndLoc, */0, 0, AttributeList::AS_GNU);
+            retSpec |= CPPAMP_AMP;
+          }
+          if (FD->hasAttr<CXXAMPRestrictCPUAttr>()) {
+            IdentifierInfo *II = &PP.getIdentifierTable().get("cpu");
+            assert(II);
+            Attrs.addNew(II, DeclEndLoc, 0, DeclEndLoc, /*0, DeclEndLoc, */0, 0, AttributeList::AS_GNU);
+            retSpec |= CPPAMP_CPU;
+          }
+        }
+      }
+      scope = scope->getParent();
+    }
+  }
+
+  return retSpec;
 }
