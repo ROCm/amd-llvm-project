@@ -9212,7 +9212,7 @@ void Sema::DiagnoseCXXAMPExpr(Expr* Stripped, ExprResult &HS, bool DiagnoseWhenS
                 << var->getName();
             }
           } else
-            if (getLangOpts().HSAExtension) {
+            if (getLangOpts().HSAExtension || getLangOpts().AMPCPU) {
               ; // hsa extention
             } else {
               Diag(HS.get()->getLocStart(), diag::err_amp_using_static_or_global_variables)
