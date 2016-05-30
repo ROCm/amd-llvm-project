@@ -4117,7 +4117,11 @@ static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
 
       // Exception specs are not allowed in typedefs. Complain, but add it
       // anyway.
-      if (IsTypedefName && FTI.getExceptionSpecType())
+      //
+      // FIXME: Bypass this check in case of C++AMP.  This is a workaround to
+      // pass C++AMP conformance suite.  Further clarifications with creators
+      // of the conformance suite is required.
+      if (IsTypedefName && FTI.getExceptionSpecType() && !LangOpts.CPlusPlusAMP)
         S.Diag(FTI.getExceptionSpecLocBeg(),
                diag::err_exception_spec_in_typedef)
             << (D.getContext() == Declarator::AliasDeclContext ||

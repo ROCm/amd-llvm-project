@@ -3501,6 +3501,700 @@ ResolveConstructorOverload(Sema &S, SourceLocation DeclLoc,
   return CandidateSet.BestViableFunction(S, DeclLoc, Best);
 }
 
+// Specially diagnose dtor case: "no dtor possible thus no default ctor possible"
+//    struct A3_base_1 {
+//        int i;
+//        ~A3_base_1() restrict(cpu) {}
+//    };
+//    class A3_member_1 {
+//    public:
+//        ~A3_member_1() restrict(amp) {}
+//    };
+//    struct A3 : A3_base_1 {
+//        A3_member_1 m1;
+//        // no dtor possible thus no default ctor possible
+//    };
+static void CheckCXXAMPHasPossibleSMF(Sema&S, CXXRecordDecl* RDecl,
+                           bool OrgCPU, bool OrgAMP,
+                           bool NewCPU, bool NewAMP, unsigned DiagID) {
+  if((OrgCPU && OrgAMP) || (NewCPU && NewAMP))
+    return;
+
+  if(OrgCPU || OrgAMP) {
+    if((OrgCPU !=NewCPU) &&(OrgAMP !=NewAMP))
+      S.Diag(RDecl->getInnerLocStart(), DiagID)
+        << RDecl->getName();
+  }
+}
+
+#define INTERSECT_ATTR(OrgCPU, OrgAMP, NewCPU, NewAMP) \
+  if(!(OrgCPU && OrgAMP) && (OrgCPU!= OrgAMP)) { \
+    if(NewCPU && NewAMP) \
+      ; \
+    else if((OrgCPU!=NewCPU) && (OrgAMP!=NewAMP)) { \
+     /* Mutex situation. Throw exceptions about "Wrong Restrictions" */\
+     ; \
+    } \
+  } else if (OrgCPU && OrgAMP) { \
+     if(!(NewCPU && NewAMP)) { \
+       OrgCPU = NewCPU; \
+       OrgAMP = NewAMP; \
+    } \
+  } else { \
+     OrgCPU |= NewCPU; \
+     OrgAMP |= NewAMP; \
+  }
+
+// Using locally
+#define SMF_DefaultConstructor 0x1
+#define SMF_CopyConstructor 0x2
+#define SMF_MoveConstructor 0x4
+#define SMF_CopyAssignment 0x8
+#define SMF_MoveAssignment 0x10
+#define SMF_Destructor 0x20
+#define SMF_All 0x3f
+
+void Sema::InheritSMFDtorIntersections(CXXRecordDecl* RDecl,
+                           bool& CPUAttr, bool& AMPAttr,
+                           bool& ParentCPUAttr, bool& ParentAMPAttr) {
+  // Step1
+  // The compiler sets the restrictions of compiler-generated destructors to the
+  // intersection of the restrictions on all of the destructors of the data members
+  // [able to destroy all data members] and all of the base classes.destructors
+  // [able to call all base classes destructors]. If there are no such destructors,
+  // then all possible restrictions are used [able to destroy in any context].
+  // However, any restriction that would result in an error is not set.
+
+  if(RDecl->getQualifiedNameAsString().find("std::")!=std::string::npos)
+    return;
+
+  // Check the base classes if any
+  if(RDecl->getDefinition()) {
+    RDecl = RDecl->getDefinition();
+    for(CXXRecordDecl::base_class_const_iterator BaseIt = RDecl->bases_begin();
+           BaseIt!=RDecl->bases_end(); BaseIt++) {
+      CXXRecordDecl *BaseRDecl =
+          cast<CXXRecordDecl>(BaseIt->getType()->getAs<RecordType>()->getDecl());
+      if(!BaseRDecl) continue;
+      if(BaseRDecl->getQualifiedNameAsString().find("std::")!=std::string::npos)
+        continue;
+      if(CXXDestructorDecl * BaseDtor = BaseRDecl ->getDestructor()) {
+        if(!BaseDtor->isUserProvided())
+          InheritSMFDtorIntersections(BaseRDecl, CPUAttr, AMPAttr, ParentCPUAttr, ParentAMPAttr);
+        else{
+          CheckCXXAMPHasPossibleSMF(*this, RDecl, CPUAttr, AMPAttr,
+                                          BaseDtor->hasAttr<CXXAMPRestrictCPUAttr>(),
+                                          BaseDtor->hasAttr<CXXAMPRestrictAMPAttr>(),
+                                          diag::err_amp_has_no_default_ctor);
+          INTERSECT_ATTR(CPUAttr, AMPAttr, BaseDtor->hasAttr<CXXAMPRestrictCPUAttr>(),
+                                          BaseDtor->hasAttr<CXXAMPRestrictAMPAttr>());
+        }
+      } else {
+        InheritSMFDtorIntersections(BaseRDecl, CPUAttr, AMPAttr, ParentCPUAttr, ParentAMPAttr);
+      }
+    }
+  }
+
+  // Check the fields if any
+  for (CXXRecordDecl::field_iterator It = RDecl->field_begin(),
+      ItE = RDecl->field_end(); It != ItE; ++It) {
+    const FieldDecl *FD = *It;
+    const RecordType *RT = Context.getBaseElementType(FD->getType())->getAs<RecordType>();
+    if (!RT) {
+      if(ParentAMPAttr) {
+        const Type* Ty = FD->getType().getTypePtrOrNull();
+        // FIXME:The following codes might not work since the in-compatible scalar types of
+        // struct/union/class are diagnosed in advance, e.g. ActOnDeclarator
+        if(Ty && (Ty->isCharType() ||
+         Ty->isWideCharType() ||
+         Ty->isSpecificBuiltinType(BuiltinType::Short) ||
+         Ty->isSpecificBuiltinType(BuiltinType::LongLong) ||
+         Ty->isSpecificBuiltinType(BuiltinType::LongDouble)))
+          CPUAttr = true;
+      }
+      continue;
+    }
+    CXXRecordDecl *MemberDecl = cast<CXXRecordDecl>(RT->getDecl());
+    InheritSMFDtorIntersections(MemberDecl, CPUAttr, AMPAttr, ParentCPUAttr, ParentAMPAttr);
+  }
+
+  // Check the member methods if any
+  for ( CXXRecordDecl::method_iterator MethodIt = RDecl->method_begin(),
+          MethodItE = RDecl->method_end(); MethodIt != MethodItE; ++MethodIt) {
+    if(dyn_cast<CXXDestructorDecl>(*MethodIt)) {
+      CheckCXXAMPHasPossibleSMF(*this, RDecl, CPUAttr, AMPAttr,
+                                      MethodIt->hasAttr<CXXAMPRestrictCPUAttr>(),
+                                      MethodIt->hasAttr<CXXAMPRestrictAMPAttr>(),
+                                      diag::err_amp_has_no_default_ctor);
+      INTERSECT_ATTR(CPUAttr, AMPAttr, MethodIt->hasAttr<CXXAMPRestrictCPUAttr>(),
+                                        MethodIt->hasAttr<CXXAMPRestrictAMPAttr>());
+    }
+  }
+
+}
+
+void Sema::InheritSMFCtorIntersections(CXXRecordDecl* RDecl,
+                           bool& CPUAttr, bool& AMPAttr,
+                           bool& ParentCPUAttr, bool& ParentAMPAttr, int flag, bool ConstParam) {
+  // Step2
+  // The compiler sets the restrictions of compiler-generated default constructors
+  // to the intersection of the restrictions on all of the default constructors of the member
+  // fields [able to construct all member fields], all of the base classes default constructors
+  // [able to call all base classes default constructors], and the destructor of the class
+  // [able to destroy in any context constructed]. However, any restriction that would result
+  // in an error is not set.
+  if(RDecl->getQualifiedNameAsString().find("std::")!=std::string::npos)
+    return;
+
+  // Check the base classes if any
+  if(RDecl->getDefinition()) {
+    RDecl = RDecl->getDefinition();
+    for(CXXRecordDecl::base_class_const_iterator BaseIt = RDecl->bases_begin();
+           BaseIt != RDecl->bases_end(); BaseIt++) {
+      CXXRecordDecl *BaseRDecl =
+          cast<CXXRecordDecl>(BaseIt->getType()->getAs<RecordType>()->getDecl());
+      if(!BaseRDecl) continue;
+      if(BaseRDecl->getQualifiedNameAsString().find("std::")!=std::string::npos)
+        continue;
+      if(BaseRDecl->ctor_end() == BaseRDecl->ctor_begin())
+        InheritSMFCtorIntersections(BaseRDecl, CPUAttr, AMPAttr,
+                       ParentCPUAttr, ParentAMPAttr, flag, ConstParam);
+      else {
+        bool BaseMergedCPU = false;
+        bool BaseMergedAMP = false;
+        bool DoIt = false;
+        unsigned DiagID;
+        for(CXXRecordDecl::ctor_iterator CtorIt = BaseRDecl->ctor_begin();
+          CtorIt!= BaseRDecl->ctor_end(); CtorIt++) {
+          CXXConstructorDecl* CD = (*CtorIt);
+          if(flag == SMF_DefaultConstructor) {
+            if(!CD->isDefaultConstructor())
+              continue;
+            DiagID = diag::err_amp_has_no_default_ctor;
+            if(CXXDestructorDecl * CDD = BaseRDecl->getDestructor()) {
+              if(CDD->isUserProvided()) {
+                BaseMergedCPU |= CDD->hasAttr<CXXAMPRestrictCPUAttr>();
+                BaseMergedAMP |= CDD->hasAttr<CXXAMPRestrictAMPAttr>();
+                DoIt = true;
+              }
+            }
+          } else if(flag == SMF_CopyConstructor) {
+            if(CD->isCopyConstructor()) {
+              const ReferenceType *ParamTy =
+                CD->getParamDecl(0)->getType()->getAs<ReferenceType>();
+                if (ParamTy && (ConstParam==ParamTy->getPointeeType().isConstQualified())) {
+              } else
+                continue;
+              DiagID = diag::err_amp_has_no_copy_constructor;
+              if(CXXDestructorDecl * CDD = BaseRDecl->getDestructor()) {
+                if(CDD->isUserProvided()) {
+                  BaseMergedCPU |= CDD->hasAttr<CXXAMPRestrictCPUAttr>();
+                  BaseMergedAMP |= CDD->hasAttr<CXXAMPRestrictAMPAttr>();
+                  DoIt = true;
+                }
+              }
+            } else
+            continue;
+          } else if(flag == SMF_MoveConstructor) {
+            if(!CD->isMoveConstructor() || !CD->isDefaulted())
+              continue;
+          } else if (flag != SMF_All) {
+            continue;
+          }
+          if(!CD->isUserProvided())
+            InheritSMFCtorIntersections(BaseRDecl, CPUAttr, AMPAttr,
+                           ParentCPUAttr, ParentAMPAttr, flag, ConstParam);
+          else {
+            // At this point, multiple restrictions might not be merged yet, e.g
+            //   struct A8_base {
+            //        A8_base() restrict(cpu,amp) {}
+            //        A8_base(A8_base&) restrict(cpu) {}    // #1 CopyCtor
+            //        A8_base(A8_base&) restrict(amp) {}   // #2 CopyCotr
+            //    };
+            BaseMergedCPU |= CD->hasAttr<CXXAMPRestrictCPUAttr>();
+            BaseMergedAMP |= CD->hasAttr<CXXAMPRestrictAMPAttr>();
+            DoIt = true;
+          }
+        }
+        if(DoIt) {
+          CheckCXXAMPHasPossibleSMF(*this, RDecl, CPUAttr, AMPAttr,
+            BaseMergedCPU, BaseMergedAMP, DiagID);
+          INTERSECT_ATTR(CPUAttr, AMPAttr, BaseMergedCPU, BaseMergedAMP);
+        }
+
+      }
+    }
+  }
+
+  // Check the fields if any
+  for (CXXRecordDecl::field_iterator It = RDecl->field_begin(),
+      ItE = RDecl->field_end(); It != ItE; ++It) {
+    const FieldDecl *FD = *It;
+    const RecordType *RT = Context.getBaseElementType(FD->getType())->getAs<RecordType>();
+    if (!RT)
+      continue;
+    CXXRecordDecl *MemberDecl = cast<CXXRecordDecl>(RT->getDecl());
+    InheritSMFCtorIntersections(MemberDecl, CPUAttr, AMPAttr,
+                         ParentCPUAttr, ParentAMPAttr, flag, ConstParam);
+  }
+
+  // Empty class with user-defined dtor
+  //   class A1 {
+  //     public:
+  //     ~A1() restrict(amp) {}
+  //      // defaulted: A1() restrict(amp)
+  //   };
+  // Check own ctors
+  {
+    bool BaseMergedCPU = false;
+    bool BaseMergedAMP = false;
+    bool DoIt = false;
+    unsigned DiagID;
+    for(CXXRecordDecl::ctor_iterator CtorIt = RDecl->ctor_begin();
+      CtorIt!= RDecl->ctor_end(); CtorIt++) {
+      CXXConstructorDecl* CD = (*CtorIt);
+      if(flag == SMF_DefaultConstructor) {
+        if(!CD->isDefaultConstructor())
+          continue;
+        DiagID = diag::err_amp_has_no_default_ctor;
+        if(CXXDestructorDecl * CDD = RDecl->getDestructor()) {
+          if(CDD->isUserProvided()) {
+            BaseMergedCPU |= CDD->hasAttr<CXXAMPRestrictCPUAttr>();
+            BaseMergedAMP |= CDD->hasAttr<CXXAMPRestrictAMPAttr>();
+            DoIt = true;
+          }
+        }
+      } else if(flag == SMF_CopyConstructor) {
+        if(CD->isCopyConstructor()) {
+          const ReferenceType *ParamTy =
+            CD->getParamDecl(0)->getType()->getAs<ReferenceType>();
+            if (ParamTy && (ConstParam==ParamTy->getPointeeType().isConstQualified())) {
+            } else
+              continue;
+          DiagID = diag::err_amp_has_no_copy_constructor;
+         if(CXXDestructorDecl * CDD = RDecl->getDestructor()) {
+            if(CDD->isUserProvided()) {
+              BaseMergedCPU |= CDD->hasAttr<CXXAMPRestrictCPUAttr>();
+              BaseMergedAMP |= CDD->hasAttr<CXXAMPRestrictAMPAttr>();
+              DoIt = true;
+            }
+          }
+
+        } else
+        continue;
+      } else if(flag == SMF_MoveConstructor) {
+        if(!CD->isMoveConstructor() ||!CD->isDefaulted())
+          continue;
+      } else if (flag != SMF_All) {
+        continue;
+      }
+      if(CD->isUserProvided()) {
+        // At this point, multiple restrictions might not be merged yet, e.g
+        //   struct A8_base {
+        //        A8_base() restrict(cpu,amp) {}
+        //        A8_base(A8_base&) restrict(cpu) {}    // #1 CopyCtor
+        //        A8_base(A8_base&) restrict(amp) {}   // #2 CopyCotr
+        //    };
+        BaseMergedCPU |= CD->hasAttr<CXXAMPRestrictCPUAttr>();
+        BaseMergedAMP |= CD->hasAttr<CXXAMPRestrictAMPAttr>();
+        DoIt = true;
+      }
+    }
+    if(DoIt) {
+      CheckCXXAMPHasPossibleSMF(*this, RDecl, CPUAttr, AMPAttr,
+          BaseMergedCPU, BaseMergedAMP, DiagID);
+      INTERSECT_ATTR(CPUAttr, AMPAttr, BaseMergedCPU, BaseMergedAMP);
+    }
+  }
+
+  // Check the member methods if any
+  {
+    bool BaseMergedCPU = false;
+    bool BaseMergedAMP = false;
+    bool DoIt = false;
+    for ( CXXRecordDecl::method_iterator MethodIt = RDecl->method_begin(),
+            MethodItE = RDecl->method_end(); MethodIt != MethodItE; ++MethodIt) {
+      // CopyAssign, MoveAssign
+      if(flag == SMF_CopyAssignment) {
+        if(!MethodIt ->isCopyAssignmentOperator())
+            continue;
+      } else  if(flag == SMF_MoveAssignment) {
+        if(!MethodIt ->isMoveAssignmentOperator())
+            continue;
+      } else if (flag != SMF_All) {
+        continue;
+      }
+
+      if(!MethodIt->isUserProvided()) {
+      } else {
+        BaseMergedCPU |= MethodIt->hasAttr<CXXAMPRestrictCPUAttr>();
+        BaseMergedAMP |= MethodIt->hasAttr<CXXAMPRestrictAMPAttr>();
+        DoIt = true;
+      }
+    }
+    if(DoIt) {
+      // FIXME: Comment out this point since no idea of what DiagID it should be
+      #if 0
+      CheckCXXAMPHasPossibleSMF(*this, RDecl, CPUAttr, AMPAttr, BaseMergedCPU, BaseMergedAMP);
+      #endif
+      INTERSECT_ATTR(CPUAttr, AMPAttr, BaseMergedCPU, BaseMergedAMP);
+    }
+  }
+
+}
+
+static void CheckCXXAMPHasPossibleSMFMethod(Sema&S,
+                           CXXRecordDecl* RDecl, CXXMethodDecl* Method,
+                           bool OrgCPU, bool OrgAMP,
+                           bool NewCPU, bool NewAMP, unsigned DiagID) {
+  if((OrgCPU && OrgAMP) || (NewCPU && NewAMP))
+    return;
+
+  if(OrgCPU || OrgAMP) {
+    if((OrgCPU !=NewCPU) &&(OrgAMP !=NewAMP))
+      S.Diag(Method->getInnerLocStart(), DiagID)
+        << Method->getNameAsString()
+        <<RDecl->getName();
+  }
+}
+
+// Defaulted CopyAssign and MoveAssign
+void Sema::InheritSMFMethodIntersections(CXXRecordDecl* RDecl,
+                           bool& CPUAttr, bool& AMPAttr,
+                           bool& ParentCPUAttr, bool& ParentAMPAttr, int flag, bool ConstParam) {
+  // Step3
+  // The compiler sets the restrictions of compiler-generated copy constructors to
+  // the intersection of the restrictions on all of the copy constructors of the member fields
+  // [able to construct all member fields], all of the base classes copy constructors
+  // [able to call all base classes\u2019 copy constructors], and the destructor of the class
+  // [able to destroy in any context constructed].However, any restriction that would result
+  // in an error is not set.
+  //
+  //Step4
+  // The compiler sets the restrictions of compiler-generated assignment operators to
+  // the intersection of the restrictions on all of the assignment operators of the member
+  // fields [able to assign all member fields] and all of the base classes assignment
+  // operators [able to call all base classes assignment operators]. However, any restriction
+  // that would result in an error is not set.
+
+  // Check the base classes if any
+  if(RDecl->getDefinition()) {
+    RDecl = RDecl->getDefinition();
+    for(CXXRecordDecl::base_class_const_iterator BaseIt = RDecl->bases_begin();
+           BaseIt != RDecl->bases_end(); BaseIt++) {
+      CXXRecordDecl *BaseRDecl =
+          cast<CXXRecordDecl>(BaseIt->getType()->getAs<RecordType>()->getDecl());
+      if(!BaseRDecl) continue;
+      if(BaseRDecl->ctor_end() == BaseRDecl->ctor_begin())
+        InheritSMFMethodIntersections(BaseRDecl, CPUAttr, AMPAttr,
+                         ParentCPUAttr, ParentAMPAttr, flag);
+      else {
+        bool BaseMergedCPU = false;
+        bool BaseMergedAMP = false;
+        bool DoIt = false;
+        unsigned DiagID;
+        CXXMethodDecl* Method = NULL;
+        for ( CXXRecordDecl::method_iterator MethodIt = RDecl->method_begin(),
+              MethodItE = RDecl->method_end(); MethodIt != MethodItE; ++MethodIt) {
+          if(flag == SMF_CopyAssignment) {
+            if(!MethodIt->isCopyAssignmentOperator())
+              continue;
+            const ReferenceType *ParamTy =
+              MethodIt->getParamDecl(0)->getType()->getAs<ReferenceType>();
+            if (ParamTy && (ConstParam==ParamTy->getPointeeType().isConstQualified())) {
+            } else
+              continue;
+            DiagID = diag::err_amp_has_no_copy_assign_or_move_assign;
+            Method = (*MethodIt);
+          } else  if(flag == SMF_MoveAssignment) {
+            if(!MethodIt->isMoveAssignmentOperator())
+              continue;
+            // No test cases
+          } else if (flag != SMF_All) {
+            continue;
+          }
+         if( !MethodIt->isUserProvided()) {
+            InheritSMFMethodIntersections(BaseRDecl, CPUAttr, AMPAttr,
+                            ParentCPUAttr, ParentAMPAttr, flag, ConstParam);
+          } else {
+            BaseMergedCPU |= MethodIt->hasAttr<CXXAMPRestrictCPUAttr>();
+            BaseMergedAMP |= MethodIt->hasAttr<CXXAMPRestrictAMPAttr>();
+            DoIt = true;
+          }
+        }
+        if(DoIt) {
+          CheckCXXAMPHasPossibleSMFMethod(*this, RDecl, Method, CPUAttr, AMPAttr,
+            BaseMergedCPU, BaseMergedAMP, DiagID);
+          INTERSECT_ATTR(CPUAttr, AMPAttr, BaseMergedCPU, BaseMergedAMP);
+        }
+      }
+    }
+  }
+
+    // Check the fields if any
+    for (CXXRecordDecl::field_iterator It = RDecl->field_begin(),
+        ItE = RDecl->field_end(); It != ItE; ++It) {
+      const FieldDecl *FD = *It;
+      const RecordType *RT = Context.getBaseElementType(FD->getType())->getAs<RecordType>();
+      if (!RT)
+        continue;
+      CXXRecordDecl *MemberDecl = cast<CXXRecordDecl>(RT->getDecl());
+      InheritSMFMethodIntersections(MemberDecl, CPUAttr, AMPAttr,
+                           ParentCPUAttr, ParentAMPAttr, flag, ConstParam);
+    }
+
+    // Check the member methods if any
+    {
+      bool BaseMergedCPU = false;
+      bool BaseMergedAMP = false;
+      bool DoIt = false;
+      unsigned DiagID;
+      CXXMethodDecl* Method = NULL;
+      for ( CXXRecordDecl::method_iterator MethodIt = RDecl->method_begin(),
+              MethodItE = RDecl->method_end(); MethodIt != MethodItE; ++MethodIt) {
+        // CopyAssign, MoveAssign
+        if(flag == SMF_CopyAssignment) {
+          if(!MethodIt->isCopyAssignmentOperator())
+              continue;
+          const ReferenceType *ParamTy =
+            MethodIt->getParamDecl(0)->getType()->getAs<ReferenceType>();
+          if (ParamTy && (ConstParam==ParamTy->getPointeeType().isConstQualified())) {
+          } else
+            continue;
+          DiagID = diag::err_amp_has_no_copy_assign_or_move_assign;
+          Method = (*MethodIt);
+        } else  if(flag == SMF_MoveAssignment) {
+          if(!MethodIt->isMoveAssignmentOperator())
+              continue;
+        } else if (flag != SMF_All) {
+          continue;
+        }
+
+        if(MethodIt->isUserProvided()) {
+          BaseMergedCPU |= MethodIt->hasAttr<CXXAMPRestrictCPUAttr>();
+          BaseMergedAMP |= MethodIt->hasAttr<CXXAMPRestrictAMPAttr>();
+          DoIt = true;
+        }
+      }
+      if(DoIt) {
+        CheckCXXAMPHasPossibleSMFMethod(*this, RDecl, Method, CPUAttr, AMPAttr,
+          BaseMergedCPU, BaseMergedAMP, DiagID);
+        INTERSECT_ATTR(CPUAttr, AMPAttr, BaseMergedCPU, BaseMergedAMP);
+      }
+    }
+
+}
+
+static void CheckCXXAMPSMFDestructor(Sema &S, CXXRecordDecl* RDecl,
+                           bool& ParentCPUAttr, bool& ParentAMPAttr) {
+  if(!RDecl )
+    return;
+
+  ASTContext &Context = S.Context;
+  SourceLocation Loc = RDecl->getLocation();
+  CXXDestructorDecl * DD = RDecl ->getDestructor();
+  if(DD && !DD->isUserProvided() && !DD->hasAttr<CXXAMPRestrictCPUAttr>() &&
+       !DD->hasAttr<CXXAMPRestrictAMPAttr>()) {
+    bool CPUAttr = false;
+    bool AMPAttr = false;
+    S.InheritSMFDtorIntersections(RDecl, CPUAttr, AMPAttr, ParentCPUAttr, ParentAMPAttr);
+    if(!DD->hasAttr<CXXAMPRestrictCPUAttr>() &&
+       !DD->hasAttr<CXXAMPRestrictAMPAttr>()) {
+      if(CPUAttr && !DD->hasAttr<CXXAMPRestrictCPUAttr>())
+        DD->addAttr(::new (Context) CXXAMPRestrictCPUAttr(Loc, Context, 0));
+
+       if(AMPAttr && !DD->hasAttr<CXXAMPRestrictAMPAttr>()) {
+         DD->addAttr(::new (Context) CXXAMPRestrictAMPAttr(Loc, Context, 0));
+      }
+    } else {
+        // FIXME:
+        llvm::errs()<<"IT SHOULD NOT HAPPEN!\n";
+        exit(1);
+    }
+
+  }
+  if(DD && (DD->hasAttr<CXXAMPRestrictCPUAttr>() ||
+       DD->hasAttr<CXXAMPRestrictAMPAttr>()))
+    S.DiagnoseCXXAMPOverloadedCallExpr(DD->getInnerLocStart(), DD);
+}
+
+static void CheckCXXAMPSMFConstructor(Sema &S, CXXRecordDecl* RDecl,
+                           bool& ParentCPUAttr, bool& ParentAMPAttr) {
+  ASTContext &Context = S.Context;
+  SourceLocation Loc = RDecl->getLocation();
+
+  if(RDecl->hasDefaultConstructor() || RDecl->needsImplicitDefaultConstructor()) {
+    bool CPUAttr = false;
+    bool AMPAttr = false;
+    CXXConstructorDecl* DefaultCtor = NULL;
+    if(!RDecl->needsImplicitDefaultConstructor()) {
+      for(CXXRecordDecl::ctor_iterator CtorIt = RDecl->ctor_begin();
+        CtorIt!=RDecl->ctor_end(); CtorIt++)
+        if((*CtorIt)->isDefaultConstructor() && !(*CtorIt)->isUserProvided() &&
+          (*CtorIt)->isDefaulted()) {
+          DefaultCtor = (*CtorIt);}
+    } else {
+      DefaultCtor = S.DeclareImplicitDefaultConstructor(RDecl);
+    }
+    if(DefaultCtor && !DefaultCtor->hasAttr<CXXAMPRestrictCPUAttr>() &&
+      !DefaultCtor->hasAttr<CXXAMPRestrictAMPAttr>()) {
+        S.InheritSMFCtorIntersections(RDecl, CPUAttr, AMPAttr,
+          ParentCPUAttr, ParentAMPAttr, SMF_DefaultConstructor);
+      if(DefaultCtor && CPUAttr && !DefaultCtor->hasAttr<CXXAMPRestrictCPUAttr>())
+        DefaultCtor->addAttr(::new (Context) CXXAMPRestrictCPUAttr(Loc, Context, 0));
+
+      if(DefaultCtor && AMPAttr && !DefaultCtor->hasAttr<CXXAMPRestrictAMPAttr>())
+        DefaultCtor->addAttr(::new (Context) CXXAMPRestrictAMPAttr(Loc, Context, 0));
+    }
+    if(DefaultCtor && (DefaultCtor->hasAttr<CXXAMPRestrictCPUAttr>() ||
+      DefaultCtor->hasAttr<CXXAMPRestrictAMPAttr>()))
+      S.DiagnoseCXXAMPOverloadedCallExpr(DefaultCtor->getInnerLocStart(), DefaultCtor);
+
+  }
+
+  if(!RDecl->hasUserDeclaredCopyConstructor()) {
+    bool CPUAttr = false;
+    bool AMPAttr = false;
+    CXXConstructorDecl* CopyCtor = NULL;
+    bool ConstParam = RDecl->implicitCopyConstructorHasConstParam();
+    if(!RDecl->needsImplicitCopyConstructor()) {
+      for(CXXRecordDecl::ctor_iterator CtorIt = RDecl->ctor_begin();
+        CtorIt!=RDecl->ctor_end(); CtorIt++)
+        if((*CtorIt)->isCopyConstructor() && !(*CtorIt)->isUserProvided() &&
+          (*CtorIt)->isDefaulted()){
+          CopyCtor = (*CtorIt);
+          ConstParam = RDecl->hasCopyConstructorWithConstParam();
+        }
+    } else {
+      CopyCtor = S.DeclareImplicitCopyConstructor(RDecl);
+    }
+
+    if(CopyCtor && !CopyCtor->hasAttr<CXXAMPRestrictCPUAttr>() &&
+      !CopyCtor->hasAttr<CXXAMPRestrictAMPAttr>()) {
+      S.InheritSMFCtorIntersections(RDecl, CPUAttr, AMPAttr,
+        ParentCPUAttr, ParentAMPAttr, SMF_CopyConstructor, ConstParam);
+      if(CopyCtor && CPUAttr && !CopyCtor->hasAttr<CXXAMPRestrictCPUAttr>())
+        CopyCtor->addAttr(::new (Context) CXXAMPRestrictCPUAttr(Loc, Context, 0));
+
+      if(CopyCtor && AMPAttr && !CopyCtor->hasAttr<CXXAMPRestrictAMPAttr>())
+        CopyCtor->addAttr(::new (Context) CXXAMPRestrictAMPAttr(Loc, Context, 0));
+
+      if(CopyCtor && (CopyCtor->hasAttr<CXXAMPRestrictCPUAttr>() ||
+        CopyCtor->hasAttr<CXXAMPRestrictAMPAttr>()))
+      S.DiagnoseCXXAMPOverloadedCallExpr(CopyCtor->getInnerLocStart(), CopyCtor);
+    }
+  }
+
+  if(!RDecl->hasUserDeclaredMoveConstructor()) {
+    bool CPUAttr = false;
+    bool AMPAttr = false;
+    CXXConstructorDecl* MoveCtor = NULL;
+    if(!RDecl->needsImplicitMoveConstructor()) {
+      for(CXXRecordDecl::ctor_iterator CtorIt = RDecl->ctor_begin();
+        CtorIt!=RDecl->ctor_end(); CtorIt++)
+        if((*CtorIt)->isMoveConstructor() && !(*CtorIt)->isUserProvided() &&
+          (*CtorIt)->isDefaulted()){
+          MoveCtor = (*CtorIt);
+        }
+    } else {
+      MoveCtor = S.DeclareImplicitMoveConstructor(RDecl);
+    }
+
+    if(MoveCtor && !MoveCtor->hasAttr<CXXAMPRestrictCPUAttr>() &&
+      !MoveCtor->hasAttr<CXXAMPRestrictAMPAttr>()) {
+      S.InheritSMFCtorIntersections(RDecl, CPUAttr, AMPAttr,
+        ParentCPUAttr, ParentAMPAttr, SMF_MoveConstructor);
+      if(MoveCtor && CPUAttr && !MoveCtor->hasAttr<CXXAMPRestrictCPUAttr>())
+        MoveCtor->addAttr(::new (Context) CXXAMPRestrictCPUAttr(Loc, Context, 0));
+
+      if(MoveCtor && AMPAttr && !MoveCtor->hasAttr<CXXAMPRestrictAMPAttr>())
+        MoveCtor->addAttr(::new (Context) CXXAMPRestrictAMPAttr(Loc, Context, 0));
+
+      if(MoveCtor && (MoveCtor->hasAttr<CXXAMPRestrictCPUAttr>() ||
+        MoveCtor->hasAttr<CXXAMPRestrictAMPAttr>()))
+      S.DiagnoseCXXAMPOverloadedCallExpr(MoveCtor->getInnerLocStart(), MoveCtor);
+    }
+  }
+
+}
+
+static void CheckCXXAMPSMFMethod(Sema& S, CXXRecordDecl* RDecl,
+                                                                                 bool& ParentCPUAttr, bool& ParentAMPAttr) {
+  ASTContext &Context = S.Context;
+  SourceLocation Loc = RDecl->getLocation();
+  if(!RDecl->hasUserDeclaredCopyAssignment()) {
+    bool CPUAttr = false;
+    bool AMPAttr = false;
+    CXXMethodDecl* CopyAssign = NULL;
+    bool ConstParam = RDecl->implicitCopyAssignmentHasConstParam();
+    if(!RDecl->needsImplicitCopyAssignment()) {
+      for(CXXRecordDecl::method_iterator MethodIt = RDecl->method_begin();
+        MethodIt!=RDecl->method_end(); MethodIt++)
+        if((*MethodIt)->isCopyAssignmentOperator() && !(*MethodIt)->isUserProvided() &&
+          (*MethodIt)->isDefaulted()){
+          CopyAssign = (*MethodIt);
+          ConstParam = RDecl->hasCopyAssignmentWithConstParam();
+        }
+    } else {
+      CopyAssign = S.DeclareImplicitCopyAssignment(RDecl);
+    }
+
+    if(CopyAssign && !CopyAssign->hasAttr<CXXAMPRestrictCPUAttr>() &&
+      !CopyAssign->hasAttr<CXXAMPRestrictAMPAttr>()) {
+      S.InheritSMFMethodIntersections(RDecl, CPUAttr, AMPAttr,
+        ParentCPUAttr, ParentAMPAttr, SMF_CopyAssignment, ConstParam);
+      if(CopyAssign && CPUAttr && !CopyAssign->hasAttr<CXXAMPRestrictCPUAttr>())
+        CopyAssign->addAttr(::new (Context) CXXAMPRestrictCPUAttr(Loc, Context, 0));
+
+      if(CopyAssign && AMPAttr && !CopyAssign->hasAttr<CXXAMPRestrictAMPAttr>())
+        CopyAssign->addAttr(::new (Context) CXXAMPRestrictAMPAttr(Loc, Context, 0));
+
+      if(CopyAssign && (CopyAssign->hasAttr<CXXAMPRestrictCPUAttr>() ||
+        CopyAssign->hasAttr<CXXAMPRestrictAMPAttr>()))
+        S.DiagnoseCXXAMPOverloadedCallExpr(CopyAssign->getInnerLocStart(), CopyAssign);
+    }
+  }
+  // No test cases for move assign
+
+}
+
+static void CheckCXXAMPSMF(Sema& S, CXXRecordDecl *RDecl, bool& Checking) {
+  assert(RDecl);
+
+  bool ParentCPUAttr = false;
+  bool ParentAMPAttr = false;
+  if(S.getCurFunctionDecl() && (S.getCurFunctionDecl()->hasAttr<CXXAMPRestrictAMPAttr>() ||
+          S.getCurFunctionDecl()->hasAttr<CXXAMPRestrictCPUAttr>())) {
+    ParentCPUAttr = S.getCurFunctionDecl()->hasAttr<CXXAMPRestrictCPUAttr>();
+    ParentAMPAttr = S.getCurFunctionDecl()->hasAttr<CXXAMPRestrictAMPAttr>();
+  } else if(S.getCurLambda() && S.getCurLambda()->CallOperator &&
+         (S.getCurLambda()->CallOperator ->hasAttr<CXXAMPRestrictCPUAttr>() ||
+         S.getCurLambda()->CallOperator ->hasAttr<CXXAMPRestrictAMPAttr>())) {
+    ParentCPUAttr = S.getCurLambda()->CallOperator ->hasAttr<CXXAMPRestrictCPUAttr>();
+    ParentAMPAttr = S.getCurLambda()->CallOperator ->hasAttr<CXXAMPRestrictAMPAttr>();
+  } else if(RDecl->isLocalClass ()) {
+    // FIXME: Need to initiate ParentCPU and ParentAMP here
+    ParentCPUAttr = true;
+    ParentAMPAttr = true;
+  }
+
+  if(!ParentCPUAttr && !ParentAMPAttr) {
+    Checking = true;
+    return;
+  }
+
+  Checking = false;
+
+  // Virtual bases are not allowed
+  if(!S.getLangOpts().HSAExtension && RDecl->isClass() && RDecl->getNumVBases())
+    S.Diag(RDecl->getLocStart(), diag::err_amp_virtual_base_class_unsupported)
+    << RDecl->getDeclName().getAsString();
+
+  CheckCXXAMPSMFDestructor(S, RDecl, ParentCPUAttr, ParentAMPAttr);
+  CheckCXXAMPSMFConstructor(S, RDecl, ParentCPUAttr, ParentAMPAttr);
+  CheckCXXAMPSMFMethod(S, RDecl, ParentCPUAttr, ParentAMPAttr);
+}
+
 /// \brief Attempt initialization by constructor (C++ [dcl.init]), which
 /// enumerates the constructors of the initialized entity and performs overload
 /// resolution to select the best.
@@ -3594,6 +4288,12 @@ static void TryConstructorInitialization(Sema &S,
     return;
   }
 
+  // C++AMP Open Spec [2.3.2 Function Overloading]
+  bool NotCXXAMPSpec = true;
+  if(DestRecordDecl && S.getLangOpts().CPlusPlusAMP) {
+    CheckCXXAMPSMF(S, DestRecordDecl, NotCXXAMPSpec);
+  }
+
   // C++11 [dcl.init]p6:
   //   If a program calls for the default initialization of an object
   //   of a const-qualified type T, T shall be a class type with a
@@ -3606,7 +4306,7 @@ static void TryConstructorInitialization(Sema &S,
   if (Kind.getKind() == InitializationKind::IK_Default &&
       Entity.getType().isConstQualified()) {
     if (!CtorDecl->getParent()->allowConstDefaultInit()) {
-      if (!maybeRecoverWithZeroInitialization(S, Sequence, Entity))
+      if (!maybeRecoverWithZeroInitialization(S, Sequence, Entity) && NotCXXAMPSpec)
         Sequence.SetFailed(InitializationSequence::FK_DefaultInitOfConst);
       return;
     }
@@ -4218,6 +4918,39 @@ static void TryReferenceInitializationCore(Sema &S,
   Sema::ReferenceCompareResult RefRelationship
     = S.CompareReferenceRelationship(DeclLoc, cv1T1, cv2T2, DerivedToBase,
                                      ObjCConversion, ObjCLifetimeConversion);
+
+  // C++AMP
+  if(S.getLangOpts().CPlusPlusAMP && isLValueRef && InitCategory.isLValue() &&
+    T2->isFunctionType()) {
+    // Case by case
+    //      int glorp(int x) __GPU_ONLY {
+    //          return 668 + x;
+    //      }
+    //
+    //      int main() {
+    //         typedef int FT(int);
+    //         FT& p = glorp;   // Error: initialize function reference with a function with 
+    //                                  // incompatible restriction specifier
+    //         printf("%d\n", p(-2));
+    //         return 1;
+    //      }
+     const DeclRefExpr* Decl = dyn_cast<DeclRefExpr>(Initializer);
+    // FIXME: better to check source & target signature and invoke function conversion error
+    // when implement amp restriction into signature
+    if(Decl && Decl->getDecl()) {
+      bool EntityCPU = false;
+      bool EntityAMP = false;
+      if(Entity.getDecl()) {
+        EntityCPU = Entity.getDecl()->hasAttr<CXXAMPRestrictCPUAttr>();
+        EntityAMP = Entity.getDecl()->hasAttr<CXXAMPRestrictAMPAttr>();
+      }
+      if(!(EntityCPU ==Decl->getDecl()->hasAttr<CXXAMPRestrictCPUAttr>() &&
+        EntityAMP == Decl->getDecl()->hasAttr<CXXAMPRestrictAMPAttr>())){
+        if(!(EntityAMP && EntityCPU) && (EntityAMP ||EntityCPU))
+          S.Diag(DeclLoc, diag::err_amp_function_conversion);
+      }
+    }
+  }
 
   // C++0x [dcl.init.ref]p5:
   //   A reference to type "cv1 T1" is initialized by an expression of type
@@ -4914,6 +5647,24 @@ static bool TryOCLZeroEventInitialization(Sema &S,
   return true;
 }
 
+// Check if a given InitializedEntity is a tile_static variable
+// Currently tile_static is a macro which expands to:
+//   static __attribute__((section("clamp_opencl_local")))
+// We check if the InitializedEntity has such function attribute.
+static bool IsTileStatic(const InitializedEntity &Entity) {
+  if (Entity.getDecl() && Entity.getDecl()->hasAttr<SectionAttr>()) {
+    SectionAttr *sa = Entity.getDecl()->getAttr<SectionAttr>();
+#ifdef __APPLE__
+    if (sa && sa->getName() == "clamp,opencl_local") {
+#else
+    if (sa && sa->getName() == "clamp_opencl_local") {
+#endif
+      return true;
+    }
+  }
+  return false;
+}
+
 InitializationSequence::InitializationSequence(Sema &S,
                                                const InitializedEntity &Entity,
                                                const InitializationKind &Kind,
@@ -5024,6 +5775,13 @@ void InitializationSequence::InitializeFrom(Sema &S,
 
   // Handle default initialization.
   if (Kind.getKind() == InitializationKind::IK_Default) {
+    // C++ AMP specific
+    // Prevent tile_static variables being initialized
+    if (S.getLangOpts().CPlusPlusAMP) {
+      if (IsTileStatic(Entity))
+        return;
+    }
+
     TryDefaultInitialization(S, Entity, Kind, *this);
     return;
   }
@@ -7331,11 +8089,23 @@ bool InitializationSequence::Diagnose(Sema &S,
         // If this is a defaulted or implicitly-declared function, then
         // it was implicitly deleted. Make it clear that the deletion was
         // implicit.
-        if (S.isImplicitlyDeleted(Best->Function))
-          S.Diag(Kind.getLocation(), diag::err_ovl_deleted_special_init)
+        if (S.isImplicitlyDeleted(Best->Function)) {
+          // C++AMP
+          bool check = true;
+          if(S.getLangOpts().CPlusPlusAMP) {
+            FunctionDecl* F = S.getCurFunctionDecl();
+            // FIXME:Best->Function loses C++AMP restriction after getting candidate
+            if(F && (F->hasAttr<CXXAMPRestrictAMPAttr>() ||
+              F->hasAttr<CXXAMPRestrictCPUAttr>())){
+              check = false;
+             }
+          }
+          if(check) {
+            S.Diag(Kind.getLocation(), diag::err_ovl_deleted_special_init)
             << S.getSpecialMember(cast<CXXMethodDecl>(Best->Function))
             << DestType << ArgsRange;
-        else
+          }
+        } else
           S.Diag(Kind.getLocation(), diag::err_ovl_deleted_init)
             << true << DestType << ArgsRange;
 

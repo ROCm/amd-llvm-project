@@ -551,6 +551,10 @@ private:
     return PP.LookAhead(N-1);
   }
 
+  /// C++ AMP-specific
+  /// check if the given scope is AMP-restricted
+  bool IsInAMPFunction(Scope *);
+
 public:
   /// NextToken - This peeks ahead one token and returns it without
   /// consuming it.

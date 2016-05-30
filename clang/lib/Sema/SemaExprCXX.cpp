@@ -4994,6 +4994,12 @@ QualType Sema::CXXCheckConditionalOperands(ExprResult &Cond, ExprResult &LHS,
   VK = VK_RValue;
   OK = OK_Ordinary;
 
+  // C++AMP
+  if(getLangOpts().CPlusPlusAMP) {
+    DiagnoseCXXAMPExpr(LHS.get()->IgnoreParenImpCasts(), LHS);
+    DiagnoseCXXAMPExpr(RHS.get()->IgnoreParenImpCasts(), RHS);
+  }
+
   // Either of the arguments dependent?
   if (LHS.get()->isTypeDependent() || RHS.get()->isTypeDependent())
     return Context.DependentTy;

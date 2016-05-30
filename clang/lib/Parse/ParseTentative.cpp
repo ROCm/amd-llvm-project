@@ -1794,6 +1794,17 @@ Parser::TPResult Parser::TryParseFunctionDeclarator() {
   if (Tok.isOneOf(tok::amp, tok::ampamp))
     ConsumeToken();
   
+  // C++AMP
+  // 'restrict' is an identifier, not a keyword
+  if (getLangOpts().CPlusPlusAMP && Tok.is(tok::identifier) && (Tok.getIdentifierInfo()->getName() == "restrict")) {
+    ConsumeToken();
+    if (Tok.isNot(tok::l_paren))
+      return TPResult::Error;
+    ConsumeParen();
+    if (!SkipUntil(tok::r_paren))
+      return TPResult::Error;
+  }
+
   // exception-specification
   if (Tok.is(tok::kw_throw)) {
     ConsumeToken();

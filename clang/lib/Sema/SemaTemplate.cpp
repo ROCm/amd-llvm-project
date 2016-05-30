@@ -3436,6 +3436,37 @@ Sema::SubstDefaultTemplateArgumentIfAvailable(TemplateDecl *Template,
                 TempTempParm->getDefaultArgument().getTemplateNameLoc());
 }
 
+void Sema::DiagnoseCXXAMPTemplateArgument(NamedDecl *Param,
+                                          const TemplateArgumentLoc &AL,
+                                          NamedDecl *Template,
+                                          SourceLocation TemplateLoc) {
+   if(!Param ||!Template)
+    return;
+
+  // Check array's template type parameters.
+  IdentifierInfo* Info = Template->getIdentifier();
+  if(Info && Info->isStr("array") &&
+    Template->getQualifiedNameAsString().find("Concurrency::array")!=std::string::npos) {
+    // For a declaration:
+    //         template<typename T, N> class array;
+    // And a usage,
+    //         array<Axxxx, 1>
+    //
+    // Param is related to 'T'
+    // Arg is related to 'Axxxx'
+    // Template is related to 'array'
+
+    if (dyn_cast<TemplateTypeParmDecl>(Param)) {
+      const TemplateArgument &Arg = AL.getArgument();
+      QualType ArgType = Context.getCanonicalType(Arg.getAsType());
+      const Type* Ty = ArgType.getTypePtrOrNull();
+      if(IsIncompatibleType(Ty, true))
+        Diag(AL.getLocation(), diag::err_amp_type_unsupported)
+        << ArgType.getAsString();
+    }
+  }
+}
+
 /// \brief Check that the given template argument corresponds to the given
 /// template parameter.
 ///
@@ -3470,6 +3501,11 @@ bool Sema::CheckTemplateArgument(NamedDecl *Param,
                                  unsigned ArgumentPackIndex,
                             SmallVectorImpl<TemplateArgument> &Converted,
                                  CheckTemplateArgumentKind CTAK) {
+  // C++AMP
+  if(getLangOpts().CPlusPlusAMP && Template) {
+    DiagnoseCXXAMPTemplateArgument(Param, Arg, Template, TemplateLoc);
+  }
+
   // Check template type parameters.
   if (TemplateTypeParmDecl *TTP = dyn_cast<TemplateTypeParmDecl>(Param))
     return CheckTemplateTypeArgument(TTP, Arg, Converted);
@@ -6907,6 +6943,34 @@ bool Sema::CheckFunctionTemplateSpecialization(
         continue;
       }
 
+      // C++ AMP
+      // Check if the specialization has the same or more restriction specifiers
+      // Truth table (row: restriction specifier of the input, column: restriction specifier of the candidate.
+      // +---------+------+-----+-----+---------+
+      // |         | none | cpu | amp | cpu/amp |
+      // +---------+------+-----+-----+---------+
+      // | none    |  OK  |  OK |  NG |  OK     |
+      // +---------+------+-----+-----+---------+
+      // | cpu     |  OK  |  OK |  NG |  OK     |
+      // +---------+------+-----+-----+---------+
+      // | amp     |  NG  |  NG |  OK |  OK     |
+      // +---------+------+-----+-----+---------+
+      // | cpu/amp |  NG  |  NG |  NG |  OK     |
+      // +---------+------+-----+-----+---------+
+      if (getLangOpts().CPlusPlusAMP) {
+        if (FD->hasAttr<CXXAMPRestrictAMPAttr>()) {
+          if (!Specialization->hasAttr<CXXAMPRestrictAMPAttr>()) {
+            continue;
+          } else if (FD->hasAttr<CXXAMPRestrictCPUAttr>() && !Specialization->hasAttr<CXXAMPRestrictCPUAttr>()) {
+            continue;
+          }
+        } else {
+          if (Specialization->hasAttr<CXXAMPRestrictAMPAttr>() && !Specialization->hasAttr<CXXAMPRestrictCPUAttr>()) {
+            continue;
+          }
+        }
+      }
+
       // Record this candidate.
       if (ExplicitTemplateArgs)
         ConvertedTemplateArgs[Specialization] = std::move(Args);
@@ -6996,6 +7060,22 @@ bool Sema::CheckFunctionTemplateSpecialization(
     }
     SpecInfo->setTemplateSpecializationKind(TSK_ExplicitSpecialization);
     MarkUnusedFileScopedDecl(Specialization);
+  }
+
+  // C++ AMP
+  if (getLangOpts().CPlusPlusAMP) {
+    SourceLocation Loc = FD->getLocation();
+    if (FD->hasAttr<CXXAMPRestrictAMPAttr>()) {
+      if (!Specialization->hasAttr<CXXAMPRestrictAMPAttr>())
+        Specialization->addAttr(::new (Context) CXXAMPRestrictAMPAttr(Loc, Context, 0));
+    } else
+      Specialization->dropAttr<CXXAMPRestrictAMPAttr>();
+
+    if (FD->hasAttr<CXXAMPRestrictCPUAttr>()) {
+      if (!Specialization->hasAttr<CXXAMPRestrictCPUAttr>())
+        Specialization->addAttr(::new (Context) CXXAMPRestrictCPUAttr(Loc, Context, 0));
+     } else
+       Specialization->dropAttr<CXXAMPRestrictCPUAttr>();
   }
 
   // Turn the given function declaration into a function template

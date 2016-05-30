@@ -8132,11 +8132,20 @@ void CheckImplicitConversion(Sema &S, Expr *E, QualType T,
       std::string PrettySourceValue = Value.toString(10);
       std::string PrettyTargetValue = PrettyPrintInRange(Value, TargetRange);
 
-      S.DiagRuntimeBehavior(E->getExprLoc(), E,
-        S.PDiag(diag::warn_impcast_integer_precision_constant)
+      // C++AMP [2.4.1.2.1]
+      //   int xxxn = 0x2ffffffffLL;  // Error by using higher precision integer
+      //   int xxxn = 0xffffffffLL;    // Correct. the TargetRange == SourceRange == 32
+      if(S.getLangOpts().CPlusPlusAMP) {
+        // Suppress the warning
+        if(S.IsInAMPRestricted())
+          S.DiagRuntimeBehavior(E->getExprLoc(), E, S.PDiag(diag::err_amp_constant_too_big));
+      } else {
+        S.DiagRuntimeBehavior(E->getExprLoc(), E,
+          S.PDiag(diag::warn_impcast_integer_precision_constant)
             << PrettySourceValue << PrettyTargetValue
             << E->getType() << T << E->getSourceRange()
             << clang::SourceRange(CC));
+      }
       return;
     }
 
@@ -9415,6 +9424,14 @@ void Sema::CheckArrayAccess(const Expr *BaseExpr, const Expr *IndexExpr,
         if (ptrarith_typesize * ratio == array_typesize)
           size *= llvm::APInt(size.getBitWidth(), ratio);
       }
+    }
+
+    // C++AMP
+    // Error if try to access char string since 'char' is not amp compatible type, e.g.
+    //            The StringLiteral "   "Hello"[0]     "
+    if (getLangOpts().CPlusPlusAMP && dyn_cast<StringLiteral>(BaseExpr) &&
+           IsInAMPRestricted()) {
+      Diag(BaseExpr->getExprLoc(), diag::err_amp_unsupported_string_literals);
     }
 
     if (size.getBitWidth() > index.getBitWidth())
