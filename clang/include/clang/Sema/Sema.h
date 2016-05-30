@@ -2537,6 +2537,8 @@ public:
                                             OverloadCandidateSet& CandidateSet,
                                             bool PartialOverloading = false);
 
+  // GridLaunch scope checking rountine
+  bool IsGridLaunchKernel();
   // C++AMP restriction specifier scope checking routines
   bool IsInAMPRestricted();
   // Determine if in CPU and/or AMP restricted codes

@@ -8553,6 +8553,10 @@ Sema::AddArgumentDependentLookupCandidates(DeclarationName Name,
   }
 }
 
+bool Sema::IsGridLaunchKernel() {
+  return (getCurFunctionDecl() && getCurFunctionDecl()->hasAttr<HCGridLaunchAttr>());
+}
+
 // FIXME: should consider decltype trailing return type
 bool Sema::IsInAMPRestricted() {
   return ((getCurFunctionDecl() && getCurFunctionDecl()->hasAttr<CXXAMPRestrictAMPAttr>()) ||

@@ -5235,7 +5235,7 @@ bool Sema::IsCXXAMPTileStatic(Declarator &D) {
 }
 
  void Sema::DiagnosticCXXAMPTileStatic(Declarator &D, Decl *Dcl) {
-  if(!IsInAMPRestricted())
+  if(!IsInAMPRestricted() && !IsGridLaunchKernel())
     Diag(D.getIdentifierLoc(), diag::err_amp_tile_static_unsupported_usage);
 
   if(!Dcl)
