@@ -5181,7 +5181,7 @@ bool Sema::IsIncompatibleType(const Type* Ty, bool CheckContainer, bool IsInfer)
         }
 
         // reject array of incompatible scalar type
-        if (IsIncompatibleScalarType(ETy) || ETy->isBooleanType()) { // array of bool is not 4-bytes aligned
+        if (!getLangOpts().HSAExtension && (IsIncompatibleScalarType(ETy) || ETy->isBooleanType())) { // array of bool is not 4-bytes aligned
           return true;
         }
 

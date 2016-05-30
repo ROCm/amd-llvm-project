@@ -13243,7 +13243,10 @@ void Sema::MarkFunctionReferenced(SourceLocation Loc, FunctionDecl *Func,
         std::string MethodFunName = AmpFunInfo.getAsString();
         llvm::errs() << "Definiting Function = " << MethodFunName << "\n";
 #endif
-        DefineAmpGpuDeSerializeFunction(Loc, Constructor);
+
+        // do not generate deserializer in case there are previous errors
+        if (!this->getDiagnostics().hasErrorOccurred())
+          DefineAmpGpuDeSerializeFunction(Loc, Constructor);
       }
     }
   } else if (CXXDestructorDecl *Destructor =

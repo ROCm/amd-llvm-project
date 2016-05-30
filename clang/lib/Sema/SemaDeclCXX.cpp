@@ -6749,13 +6749,6 @@ void Sema::DeclareAMPDeserializer(CXXRecordDecl *ClassDecl, AMPDeserializerArgs 
   if (Scope *S = getScopeForContext(ClassDecl))
     PushOnScopeChains(Constructor, S, false);
   ClassDecl->addDecl(Constructor);
-#if 0
-  llvm::errs() << "Adding declaration of: ";
-  NewCtorType->dump();
-  llvm::errs() << " in class:";
-  ClassDecl->dump();
-  llvm::errs() << "\n";
-#endif
 }
 
 /// AddImplicitlyDeclaredMembersToClass - Adds any implicitly-declared
@@ -10895,7 +10888,6 @@ void Sema::DeclareAMPTrampoline(CXXRecordDecl *ClassDecl,
    // Return at this point to force the compiler to throw compilation errors as expected
    if(ClassDecl->getCXXAMPDeserializationConstructor() == NULL) {
      CreateDummyAMPTrampoline(*this, Name, ClassDecl, Trampoline);
-     llvm::errs()<<"[DeclareAMPTrampoline] Deserialization constructor is invalid!\n";
      return;
    }
    CXXConstructorDecl *DeserializeConstructor =
@@ -10906,7 +10898,6 @@ void Sema::DeclareAMPTrampoline(CXXRecordDecl *ClassDecl,
   #endif
   DeclarationNameInfo DNI(Name, CurrentLocation);
 
-  //llvm::errs() << "DeclareAMPTrampoline\n";
   const Type *TrampolineType;
   FunctionProtoType::ExtProtoInfo ExtInfo;
   // Now collect the constructors that we already have in the current class.
@@ -11055,7 +11046,6 @@ void Sema::DefineAMPTrampoline(SourceLocation CurrentLocation,
   // The AMP deserialized constructor might be NULL if the actual definition is empty.
   // Return at this point to force the compiler to throw compilation errors as expected
   if(!DeserializeConstructor) {
-    llvm::errs()<<"[DefineAMPTrampoline] Deserialization constructor is invalid!\n";
     return;
   }
   #if 0
