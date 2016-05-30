@@ -6536,6 +6536,8 @@ static void processTypeAttrs(TypeProcessingState &state, QualType &type,
           << attr.getName();
       break;
 
+    case AttributeList::AT_HC_CPU:
+    case AttributeList::AT_HC_HC:
     case AttributeList::IgnoredAttribute:
       break;
 

@@ -9350,6 +9350,7 @@ bool Sema::CheckFunctionDeclaration(Scope *S, FunctionDecl *NewFD,
   }
 
   // C++AMP
+   // Apply this routine only when we have function definition.
    // FIXME: This should be applied after all C++/C++11 semantic checks
    //             And the following assumptiions should be considered if not correct in further impl.
    // (1) No AMP specific restrictions in signature
@@ -9357,6 +9358,7 @@ bool Sema::CheckFunctionDeclaration(Scope *S, FunctionDecl *NewFD,
    // (3) No intersections of all overloaded functions, only Ovl_Match
   if (1 && getLangOpts().CPlusPlusAMP && !Previous.empty() &&
     AllowOverloadingOfFunction(Previous, Context) &&
+    NewFD->hasBody() &&
     CheckOverload(S, NewFD, Previous, OldDecl,
                             /*NewIsUsingDecl*/ false) ==Ovl_Match) {
     //Use different modifiers on a declaration and definiton

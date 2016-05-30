@@ -10931,8 +10931,34 @@ void Sema::DeclareAMPTrampoline(CXXRecordDecl *ClassDecl,
           }
         }
       } else { // HSA extension check
-        // In HSA extension mode, capture by reference is simply a pointer
-        LocalArgs.push_back(Context.getPointerType(MemberType));
+        if (MemberType.getTypePtr()->isClassType()) {
+          std::string Info = MemberType.getAsString();
+
+          // hc::array should still be serialized as traditional C++AMP objects
+          if (Info.find("hc::array<") != std::string::npos) {
+            CXXRecordDecl *MemberClass = MemberType.getTypePtr()->getAsCXXRecordDecl();
+            if (!HasDeclaredAMPDeserializer(MemberClass)) {
+              DeclareAMPDeserializer(MemberClass, NULL);
+            }
+            CXXMethodDecl *MemberDeserializer =
+              MemberClass->getCXXAMPDeserializationConstructor();
+            if (!MemberDeserializer) {
+              Diag((*CPI)->getLocation(), diag::err_amp_incompatible);
+            } else {
+              assert(MemberDeserializer);
+              for (CXXMethodDecl::param_iterator CPI = MemberDeserializer->param_begin(),
+                   CPE = MemberDeserializer->param_end(); CPI!=CPE; CPI++) {
+                LocalArgs.push_back((*CPI)->getType());
+              }
+            }
+          } else {
+            // In HSA extension mode, capture by reference is simply a pointer
+            LocalArgs.push_back(Context.getPointerType(MemberType));
+          }
+        } else {
+          // In HSA extension mode, capture by reference is simply a pointer
+          LocalArgs.push_back(Context.getPointerType(MemberType));
+        }
       } // HSA extension check
     } else {
     // Since OpenCL kernel argument does not allow system dependent built-in types,
@@ -10993,13 +11019,49 @@ void Sema::DeclareAMPTrampoline(CXXRecordDecl *ClassDecl,
           }
         }
       } else { // HSA extension check
-        ParmVarDecl *FromParam = ParmVarDecl::Create(Context, Trampoline,
-                                               CurrentLocation, CurrentLocation,
-                                               (*it)->getIdentifier(),
-                                               Context.getPointerType(MemberType),
-                                               /*TInfo=*/0,
-                                               SC_None, 0);
-        TrampolineParams.push_back(FromParam);
+        if (MemberType.getTypePtr()->isClassType()) {
+          std::string Info = MemberType.getAsString();
+
+          // hc::array should still be serialized as traditional C++AMP objects
+          if (Info.find("hc::array<") != std::string::npos) {
+            CXXRecordDecl *MemberClass =
+              MemberType.getTypePtr()->getAsCXXRecordDecl();
+            CXXMethodDecl *MemberDeserializer =
+              MemberClass->getCXXAMPDeserializationConstructor();
+            if (!MemberDeserializer) {
+              Diag((*it)->getLocation(), diag::err_amp_incompatible);
+            } else {
+              assert(MemberDeserializer);
+              for (CXXMethodDecl::param_iterator CPI =
+                   MemberDeserializer->param_begin(),
+                   CPE = MemberDeserializer->param_end(); CPI!=CPE; CPI++) {
+                ParmVarDecl *FromParam = ParmVarDecl::Create(Context, Trampoline,
+                                                       CurrentLocation, CurrentLocation,
+                                                       (*CPI)->getIdentifier(),
+                                                       (*CPI)->getType(),
+                                                       /*TInfo=*/0,
+                                                       SC_None, 0);
+                TrampolineParams.push_back(FromParam);
+              }
+            }
+          } else {
+            ParmVarDecl *FromParam = ParmVarDecl::Create(Context, Trampoline,
+                                                   CurrentLocation, CurrentLocation,
+                                                   (*it)->getIdentifier(),
+                                                   Context.getPointerType(MemberType),
+                                                   /*TInfo=*/0,
+                                                   SC_None, 0);
+            TrampolineParams.push_back(FromParam);
+          }
+        } else {
+          ParmVarDecl *FromParam = ParmVarDecl::Create(Context, Trampoline,
+                                                 CurrentLocation, CurrentLocation,
+                                                 (*it)->getIdentifier(),
+                                                 Context.getPointerType(MemberType),
+                                                 /*TInfo=*/0,
+                                                 SC_None, 0);
+          TrampolineParams.push_back(FromParam);
+        }
       } // HSA extension check
     } else {
       TrampolineParams.push_back(*it);
@@ -11072,6 +11134,24 @@ void Sema::DefineAMPTrampoline(SourceLocation CurrentLocation,
           } else {
             assert(MemberDeserializer);
             MarkFunctionReferenced(CurrentLocation, MemberDeserializer);
+          }
+        }
+      } else {
+        if (MemberType.getTypePtr()->isClassType()) {
+          std::string Info = MemberType.getAsString();
+
+          // hc::array should still be serialized as traditional C++AMP objects
+          if (Info.find("hc::array<") != std::string::npos) {
+            CXXRecordDecl *MemberClass =
+       	      MemberType.getTypePtr()->getAsCXXRecordDecl();
+            CXXMethodDecl *MemberDeserializer =
+              MemberClass->getCXXAMPDeserializationConstructor();
+            if (!MemberDeserializer) {
+              Diag((*it)->getLocation(), diag::err_amp_incompatible);
+            } else {
+              assert(MemberDeserializer);
+              MarkFunctionReferenced(CurrentLocation, MemberDeserializer);
+            }
           }
         }
       } // HSA extension check
@@ -11346,7 +11426,19 @@ void Sema::DefineAmpCpuSerializeFunction(SourceLocation CurrentLocation,
     }
     const RecordType *RecordTy = FieldType->getAs<RecordType>();
 
-    if (!getLangOpts().HSAExtension) {
+    // special detection logic for hc::array
+    bool hc_array_flag = false;
+    if (RecordTy) {
+      CXXRecordDecl *FieldClassDecl = cast<CXXRecordDecl>(RecordTy->getDecl());
+      NamespaceDecl *FieldNamespaceDecl = dyn_cast<NamespaceDecl>(FieldClassDecl->getEnclosingNamespaceContext());
+      if (FieldClassDecl && (FieldClassDecl->getName() == "array") &&
+          FieldNamespaceDecl && (FieldNamespaceDecl->getName() == "hc")) {
+        hc_array_flag = true;
+      }
+    }
+
+    // hc::array shall be serialized as normal C++AMP objects even in HC mode
+    if (!getLangOpts().HSAExtension || hc_array_flag) {
 
       if (RecordTy) {
         CXXRecordDecl *FieldClassDecl = cast<CXXRecordDecl>(RecordTy->getDecl());

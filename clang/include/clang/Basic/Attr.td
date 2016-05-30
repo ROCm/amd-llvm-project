@@ -573,6 +573,18 @@ def Const : InheritableAttr {
   let Documentation = [Undocumented];
 }
 
+def HC_HC : InheritableAttr {
+  let Spellings = [CXX11<"","hc", 201511>];
+  let Subjects = SubjectList<[Function], ErrorDiag>;
+  let Documentation = [Undocumented];
+}
+
+def HC_CPU : InheritableAttr {
+  let Spellings = [CXX11<"","cpu", 201511>];
+  let Subjects = SubjectList<[Function], ErrorDiag>;
+  let Documentation = [Undocumented];
+}
+
 def Constructor : InheritableAttr {
   let Spellings = [GCC<"constructor">];
   let Args = [DefaultIntArgument<"Priority", 65535>];
