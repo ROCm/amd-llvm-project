@@ -9226,6 +9226,18 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
     }
   }
 
+  // HCC GridLaunch
+  if (NewFD->hasAttr<HCGridLaunchAttr>()) {
+    // Check if first parameter has grid_launch_parm type
+    if (ParmVarDecl *FirstParam = *(NewFD->param_begin())) {
+      QualType PT = FirstParam->getType();
+      if( PT.getAsString() != "grid_launch_parm" ) {
+        Diag(FirstParam->getLocation(), diag::err_hc_grid_launch_parm);
+        D.setInvalidType();
+      }
+    }
+  }
+
   MarkUnusedFileScopedDecl(NewFD);
 
   // Here we have an function template explicit specialization at class scope.

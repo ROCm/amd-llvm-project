@@ -7972,6 +7972,8 @@ def err_amp_has_no_default_ctor : Error<
   " '%0': no appropriate default constructor available">;
 def err_amp_dtor_rest_cover_all_ctor : Error<
   "Destructor's restriction specifiers must cover the union of restrictions on all constructors">;
+def err_hc_grid_launch_parm : Error<
+  "hc_grid_launch function must have grid_launch_parm type as first parameter">;
 } // end of sema category
 
 let CategoryName = "OpenMP Issue" in {
