@@ -538,7 +538,8 @@ Parser::isCXX11AttributeSpecifier(bool Disambiguate,
   // FIXME: If this disambiguation is too slow, fold the tentative lambda parse
   // into the tentative attribute parse below.
   LambdaIntroducer Intro;
-  if (!TryParseLambdaIntroducer(Intro)) {
+  ParsedAttributes AttrIntro(AttrFactory);
+  if (!TryParseLambdaIntroducer(Intro, AttrIntro)) {
     // A lambda cannot end with ']]', and an attribute must.
     bool IsAttribute = Tok.is(tok::r_square);
 

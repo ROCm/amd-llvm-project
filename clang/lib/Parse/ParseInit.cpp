@@ -70,8 +70,9 @@ bool Parser::MayBeDesignationStart() {
   TentativeParsingAction Tentative(*this);
 
   LambdaIntroducer Intro;
+  ParsedAttributes AttrIntro(AttrFactory);
   bool SkippedInits = false;
-  Optional<unsigned> DiagID(ParseLambdaIntroducer(Intro, &SkippedInits));
+  Optional<unsigned> DiagID(ParseLambdaIntroducer(Intro, AttrIntro, &SkippedInits));
 
   if (DiagID) {
     // If this can't be a lambda capture list, it's a designator.
