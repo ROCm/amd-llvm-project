@@ -9229,11 +9229,18 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
   // HCC GridLaunch
   if (NewFD->hasAttr<HCGridLaunchAttr>()) {
     // Check if first parameter has grid_launch_parm type
-    if (ParmVarDecl *FirstParam = *(NewFD->param_begin())) {
-      QualType PT = FirstParam->getType();
-      if( PT.getAsString() != "grid_launch_parm" ) {
-        Diag(FirstParam->getLocation(), diag::err_hc_grid_launch_parm);
+    for(auto PVD : NewFD->parameters()) {
+      QualType PT = PVD->getType();
+      if(PT->getAs<ReferenceType>()) {
+        Diag(PVD->getLocation(), diag::err_hc_grid_launch_ref);
         D.setInvalidType();
+      }
+      else if (PVD == *(NewFD->param_begin())) {
+        std::size_t found = PT.getAsString().find("grid_launch_parm");
+        if (found == std::string::npos) {
+          Diag(PVD->getLocation(), diag::err_hc_grid_launch_parm);
+          D.setInvalidType();
+        }
       }
     }
   }

@@ -7974,6 +7974,8 @@ def err_amp_dtor_rest_cover_all_ctor : Error<
   "Destructor's restriction specifiers must cover the union of restrictions on all constructors">;
 def err_hc_grid_launch_parm : Error<
   "hc_grid_launch function must have grid_launch_parm type as first parameter">;
+def err_hc_grid_launch_ref : Error<
+  "hc_grid_launch function does not support passing by reference">;
 } // end of sema category
 
 let CategoryName = "OpenMP Issue" in {
