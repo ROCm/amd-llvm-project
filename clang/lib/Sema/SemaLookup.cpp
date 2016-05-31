@@ -3075,10 +3075,8 @@ DeclContext::lookup_result Sema::LookupConstructors(CXXRecordDecl *Class) {
 
   // C++AMP
   DeclContext::lookup_result result = Class->lookup(Name);                    
-
-// UPGRADE_TBD: FIX THIS
-/*
   DeclContext::lookup_iterator E = result.end();
+  std::vector<NamedDecl*> MD_vector;
   if (FunctionDecl *FD = dyn_cast<FunctionDecl>(CurContext)) {                
     bool isAMP = FD->hasAttr<CXXAMPRestrictAMPAttr>();                        
     bool isCPU = FD->hasAttr<CXXAMPRestrictCPUAttr>();                        
@@ -3102,17 +3100,13 @@ DeclContext::lookup_result Sema::LookupConstructors(CXXRecordDecl *Class) {
             delete_this = true;                                               
           }                                                                   
         }                                                                     
-        if (delete_this) {                                                    
-          std::swap(*I, *(--E));                                  
-          I --;                                                               
+        if (!delete_this) {
+          MD_vector.push_back(MD);
         }                                                                           
       }                                                                       
     }                                                                         
   }                                                                           
-  return DeclContext::lookup_result(result.begin(), E); 
-*/
-
-  return result;
+  return DeclContext::lookup_result(MD_vector);
 }
 
 /// \brief Look up the copying assignment operator for the given class.
