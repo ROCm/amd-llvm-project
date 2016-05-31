@@ -85,7 +85,7 @@ void CGAMPRuntime::EmitTrampolineBody(CodeGenFunction &CGF,
   	dyn_cast<CXXConstructorDecl>(
             MemberClass->getCXXAMPDeserializationConstructor());
         assert(MemberDeserializer);
-        std::vector<Stmt *>MemberArgDeclRefs;
+        std::vector<Expr*>MemberArgDeclRefs;
         for (CXXMethodDecl::param_iterator MCPI = MemberDeserializer->param_begin(),
           MCPE = MemberDeserializer->param_end(); MCPI!=MCPE; ++MCPI, ++I) {
           Expr *ArgDeclRef = DeclRefExpr::Create(CGM.getContext(),
@@ -100,13 +100,18 @@ void CGAMPRuntime::EmitTrampolineBody(CodeGenFunction &CGF,
         // Allocate "this" for member referenced objects
         Address mai = CGF.CreateMemTemp(MemberType);
         // Emit code to call the deserializing constructor of temp objects
-        // UPGRADE_TBD: use CXXConstructExpr as the last parameter to CGF.EmitCXXConstructorCall
-#if 0
+        CXXConstructExpr *CXXCE = CXXConstructExpr::Create(
+          CGM.getContext(), MemberType,
+          SourceLocation(),
+          MemberDeserializer,
+          MemberDeserializer,
+          false,
+          MemberArgDeclRefs,
+          false, false, false, false,
+          CXXConstructExpr::CK_Complete,
+          SourceLocation());
         CGF.EmitCXXConstructorCall(MemberDeserializer,
-  	  Ctor_Complete, false, false,
-  	  mai, /* CXXConstructExpr */ ConstExprIterator(&*MemberArgDeclRefs.begin())
-  	  ConstExprIterator(&*MemberArgDeclRefs.end())); 
-#endif
+          Ctor_Complete, false, false, mai, CXXCE);
         DeserializerArgs.add(RValue::get(mai.getPointer()), (*CPI)->getType());
       } else { // HSA extension check
         if (MemberType.getTypePtr()->isClassType()) {
@@ -117,7 +122,7 @@ void CGAMPRuntime::EmitTrampolineBody(CodeGenFunction &CGF,
             dyn_cast<CXXConstructorDecl>(
                 MemberClass->getCXXAMPDeserializationConstructor());
             assert(MemberDeserializer);
-            std::vector<Stmt *>MemberArgDeclRefs;
+            std::vector<Expr*>MemberArgDeclRefs;
             for (CXXMethodDecl::param_iterator MCPI = MemberDeserializer->param_begin(),
               MCPE = MemberDeserializer->param_end(); MCPI!=MCPE; ++MCPI, ++I) {
               Expr *ArgDeclRef = DeclRefExpr::Create(CGM.getContext(),
@@ -132,15 +137,19 @@ void CGAMPRuntime::EmitTrampolineBody(CodeGenFunction &CGF,
             // Allocate "this" for member referenced objects
             Address mai = CGF.CreateMemTemp(MemberType);
             // Emit code to call the deserializing constructor of temp objects
-            // UPGRADE_TBD: use CXXConstructExpr as the last paramter of CGF.EmitCXXConstructorCall
-#if 0
+            CXXConstructExpr *CXXCE = CXXConstructExpr::Create(
+              CGM.getContext(), MemberType,
+              SourceLocation(),
+              MemberDeserializer,
+              MemberDeserializer,
+              false,
+              MemberArgDeclRefs,
+              false, false, false, false,
+              CXXConstructExpr::CK_Complete,
+              SourceLocation());
             CGF.EmitCXXConstructorCall(MemberDeserializer,
-              Ctor_Complete, false, false,
-              mai.getPointer(), ConstExprIterator(&*MemberArgDeclRefs.begin()),
-              /* use CXXConstructExpr */ ConstExprIterator(&*MemberArgDeclRefs.end()));
-#endif
+              Ctor_Complete, false, false, mai, CXXCE);
             DeserializerArgs.add(RValue::get(mai.getPointer()), (*CPI)->getType());
-
           } else {
             // capture by refernce for HSA
             Expr *ArgDeclRef = DeclRefExpr::Create(CGM.getContext(),
@@ -234,12 +243,18 @@ void CGAMPRuntime::EmitTrampolineBody(CodeGenFunction &CGF,
   if (!CGF.getLangOpts().AMPCPU) {
     if (CXXConstructorDecl *Constructor =
         dyn_cast <CXXConstructorDecl>(IndexConstructor)) {
-      // UPGRADE_TBD: use CXXConstructExpr as the last paramter of CGF.EmitCXXConstructorCall
-#if 0
+      CXXConstructExpr *CXXCE = CXXConstructExpr::Create(
+        CGM.getContext(), IndexTy,
+        SourceLocation(),
+        Constructor,
+        Constructor,
+        false,
+        ArrayRef<Expr*>(),
+        false, false, false, false,
+        CXXConstructExpr::CK_Complete,
+        SourceLocation());
       CGF.EmitCXXConstructorCall(Constructor,
-          Ctor_Complete, false, false,
-          index.getPointer(), /*CXXConstructExpr */0); 
-#endif
+        Ctor_Complete, false, false, index, CXXCE);
     } else {
       llvm::FunctionType *indexInitType =
         CGM.getTypes().GetFunctionType(
@@ -297,10 +312,9 @@ void CGAMPRuntime::EmitTrampolineNameBody(CodeGenFunction &CGF,
   llvm::ConstantInt *zero = llvm::ConstantInt::get(CGM.getLLVMContext(), llvm::APInt(32, StringRef("0"), 10));
   indices.push_back(zero);
   indices.push_back(zero);
-  // UPGRADE_TBD: verify GV.getValueType() is correct
   llvm::Constant *const_ptr = llvm::ConstantExpr::getGetElementPtr(GV->getValueType(), GV, indices);
   CGF.Builder.CreateStore(const_ptr, CGF.ReturnValue);
 
 }
-}
-}
+} // namespace CodeGen
+} // namespace clang
