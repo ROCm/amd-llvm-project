@@ -3072,7 +3072,13 @@ DeclContext::lookup_result Sema::LookupConstructors(CXXRecordDecl *Class) {
 
   CanQualType T = Context.getCanonicalType(Context.getTypeDeclType(Class));
   DeclarationName Name = Context.DeclarationNames.getCXXConstructorName(T);
+  return Class->lookup(Name);
 
+  // UPGRADE_TBD
+  // It's no longer possible alter items in lookup_result
+  // relevant commits upstream: # a1fdc024 , # a8229d2c
+  // temporarily skipped the logic , need to study its impact
+#if 0
   // C++AMP
   DeclContext::lookup_result result = Class->lookup(Name);                    
   DeclContext::lookup_iterator E = result.end();
@@ -3107,6 +3113,7 @@ DeclContext::lookup_result Sema::LookupConstructors(CXXRecordDecl *Class) {
     }                                                                         
   }                                                                           
   return DeclContext::lookup_result(MD_vector);
+#endif
 }
 
 /// \brief Look up the copying assignment operator for the given class.
