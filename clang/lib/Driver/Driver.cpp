@@ -1962,50 +1962,76 @@ void Driver::BuildJobs(Compilation &C) const {
   }
 }
 
-bool IsCXXAMPCompileJobAction(const JobAction* A) {
+static bool IsBackendJobActionWithInputType(const JobAction* A, types::ID typesID) {
   bool ret = false;
-  // detect if a compile job takes an C++ AMP input
-  if (isa<CompileJobAction>(A)) {
-    const ActionList& al = dyn_cast<CompileJobAction>(A)->getInputs();
-    if ((al.size() == 1) && (al[0]->getType() == types::TY_PP_CXX_AMP)) {
-      ret = true;
+  // detect if a backend job takes a particular kind of input
+  if (isa<BackendJobAction>(A)) {
+    const ActionList& al = dyn_cast<BackendJobAction>(A)->getInputs();
+    if ((al.size() == 1) && (isa<CompileJobAction>(*al[0]))) {
+      const ActionList& bl = dyn_cast<CompileJobAction>(al[0])->getInputs();
+      if ((bl.size() == 1) && (bl[0]->getType() == typesID)) {
+        ret = true;
+      }
     }
   }
   return ret;
+}
+
+bool IsCXXAMPCompileJobAction(const JobAction* A) {
+  // detect if a compile job takes an C++ AMP input
+  return IsBackendJobActionWithInputType(A, types::TY_PP_CXX_AMP);
 }
 
 bool IsHCHostCompileJobAction(const JobAction* A) {
-  bool ret = false;
   // detect if a compile job takes a HC input on host side
-  if (isa<CompileJobAction>(A)) {
-    const ActionList& al = dyn_cast<CompileJobAction>(A)->getInputs();
-    if ((al.size() == 1) && (al[0]->getType() == types::TY_PP_HC_HOST)) {
-      ret = true;
-    }
-  }
-  return ret;
+  return IsBackendJobActionWithInputType(A, types::TY_PP_HC_HOST);
 }
 
 bool IsCXXAMPCPUCompileJobAction(const JobAction* A) {
+  return IsBackendJobActionWithInputType(A, types::TY_PP_CXX_AMP_CPU);
+}
+
+static bool IsAssembleJobActionWithInputType(const JobAction* A, types::ID typesID) {
   bool ret = false;
-  if (isa<CompileJobAction>(A)) {
-    const ActionList& al = dyn_cast<CompileJobAction>(A)->getInputs();
-    if ((al.size() == 1) && (al[0]->getType() == types::TY_PP_CXX_AMP_CPU)) {
-      ret = true;
+  if (isa<AssembleJobAction>(A)) {
+    const ActionList& al = dyn_cast<AssembleJobAction>(A)->getInputs();
+    if ((al.size() == 1) && (isa<BackendJobAction>(*al[0]))) {
+      const ActionList& bl = dyn_cast<BackendJobAction>(al[0])->getInputs();
+      if ((bl.size() == 1) && (isa<CompileJobAction>(*bl[0]))) {
+        const ActionList& cl = dyn_cast<CompileJobAction>(bl[0])->getInputs();
+        if ((cl.size() == 1) && (cl[0]->getType() == typesID)) {
+          ret = true;
+        }
+      }
     }
   }
   return ret;
 }
 
 bool IsCXXAMPCPUAssembleJobAction(const JobAction* A) {
-  bool ret = false;
+  // detect if an assemble job takes an C++ AMP input with CPU as target
+  return IsAssembleJobActionWithInputType(A, types::TY_PP_CXX_AMP_CPU);
+}
+
+bool IsCXXAMPAssembleJobAction(const JobAction* A) {
   // detect if an assemble job takes an C++ AMP input
+  return IsAssembleJobActionWithInputType(A, types::TY_PP_CXX_AMP);
+}
+
+static bool IsHCAssembleJobActionWithInputType(const JobAction* A, types::ID typesID) {
+  bool ret = false;
   if (isa<AssembleJobAction>(A)) {
     const ActionList& al = dyn_cast<AssembleJobAction>(A)->getInputs();
-    if ((al.size() == 1) && (isa<CompileJobAction>(*al[0]))) {
-      const ActionList& cl = dyn_cast<CompileJobAction>(al[0])->getInputs();
-      if ((cl.size() == 1) && (cl[0]->getType() == types::TY_PP_CXX_AMP_CPU)) {
-        ret = true;
+    if ((al.size() == 1) && (isa<BackendJobAction>(*al[0]))) {
+      const ActionList& bl = dyn_cast<BackendJobAction>(al[0])->getInputs();
+      if ((bl.size() == 1) && (isa<CompileJobAction>(*bl[0]))) {
+        const ActionList& cl = dyn_cast<CompileJobAction>(bl[0])->getInputs();
+        if ((cl.size() == 1) && (isa<PreprocessJobAction>(*cl[0]))) {
+          const ActionList& il = dyn_cast<PreprocessJobAction>(cl[0])->getInputs();
+          if((il.size() == 1) && (il[0]->getType() == typesID)) {
+            ret = true;
+          }
+        }
       }
     }
   }
@@ -2013,54 +2039,13 @@ bool IsCXXAMPCPUAssembleJobAction(const JobAction* A) {
 }
 
 bool IsHCKernelAssembleJobAction(const JobAction* A) {
-  bool ret = false;
   // detect if an assemble job takes a HC input on GPU side
-  if (isa<AssembleJobAction>(A)) {
-    const ActionList& al = dyn_cast<AssembleJobAction>(A)->getInputs();
-    if ((al.size() == 1) && (isa<CompileJobAction>(*al[0]))) {
-      const ActionList& cl = dyn_cast<CompileJobAction>(al[0])->getInputs();
-      if ((cl.size() == 1) && (isa<PreprocessJobAction>(*cl[0]))) {
-        const ActionList& il = dyn_cast<PreprocessJobAction>(cl[0])->getInputs();
-        if((il.size() == 1) && (il[0]->getType() == types::TY_HC_KERNEL)) {
-          ret = true;
-        }
-      }
-    }
-  }
-  return ret;
+  return IsHCAssembleJobActionWithInputType(A, types::TY_HC_KERNEL);
 }
 
 bool IsHCHostAssembleJobAction(const JobAction* A) {
-  bool ret = false;
   // detect if an assemble job takes a HC input on host side
-  if (isa<AssembleJobAction>(A)) {
-    const ActionList& al = dyn_cast<AssembleJobAction>(A)->getInputs();
-    if ((al.size() == 1) && (isa<CompileJobAction>(*al[0]))) {
-      const ActionList& cl = dyn_cast<CompileJobAction>(al[0])->getInputs();
-      if ((cl.size() == 1) && (isa<PreprocessJobAction>(*cl[0]))) {
-        const ActionList& il = dyn_cast<PreprocessJobAction>(cl[0])->getInputs();
-        if((il.size() == 1) && (il[0]->getType() == types::TY_HC_HOST)) {
-          ret = true;
-        }
-      }
-    }
-  }
-  return ret;
-}
-
-bool IsCXXAMPAssembleJobAction(const JobAction* A) {
-  bool ret = false;
-  // detect if an assemble job takes an C++ AMP input
-  if (isa<AssembleJobAction>(A)) {
-    const ActionList& al = dyn_cast<AssembleJobAction>(A)->getInputs();
-    if ((al.size() == 1) && (isa<CompileJobAction>(*al[0]))) {
-      const ActionList& cl = dyn_cast<CompileJobAction>(al[0])->getInputs();
-      if ((cl.size() == 1) && (cl[0]->getType() == types::TY_PP_CXX_AMP)) {
-        ret = true;
-      }
-    }
-  }
-  return ret;
+  return IsHCAssembleJobActionWithInputType(A, types::TY_HC_HOST);
 }
 
 bool IsCXXAMPLinkJobAction(const JobAction* A) {
