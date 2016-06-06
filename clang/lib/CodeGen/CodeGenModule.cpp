@@ -839,6 +839,8 @@ void CodeGenModule::SetLLVMFunctionAttributes(const Decl *D,
   F->setAttributes(llvm::AttributeSet::get(getLLVMContext(), AttributeList));
   F->setCallingConv(static_cast<llvm::CallingConv::ID>(CallingConv));
 
+  // UPGRADE_TBD: figure out why this code segment crashes the compiler
+#if 0
   llvm::AttrBuilder B;
 
   if (D->hasAttr<HCGridLaunchAttr>()) {
@@ -850,6 +852,7 @@ void CodeGenModule::SetLLVMFunctionAttributes(const Decl *D,
   F->addAttributes(llvm::AttributeSet::FunctionIndex,
                    llvm::AttributeSet::get(
                        F->getContext(), llvm::AttributeSet::FunctionIndex, B));
+#endif
 }
 
 /// Determines whether the language options require us to model
