@@ -1964,11 +1964,7 @@ static bool IsTileStatic(Declarator &D) {
       if (attr->getName()->isStr("section")) {
         for (unsigned i = 0; i < attr->getNumArgs(); ++i) {
           StringLiteral *s = dyn_cast_or_null<StringLiteral>(attr->getArgAsExpr(i));
-#ifdef __APPLE__
-          if (s && s->getString() == "clamp,opencl_local") {
-#else
           if (s && s->getString() == "clamp_opencl_local") {
-#endif
             return true;
           }
         }

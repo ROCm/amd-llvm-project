@@ -5654,11 +5654,7 @@ static bool TryOCLZeroEventInitialization(Sema &S,
 static bool IsTileStatic(const InitializedEntity &Entity) {
   if (Entity.getDecl() && Entity.getDecl()->hasAttr<SectionAttr>()) {
     SectionAttr *sa = Entity.getDecl()->getAttr<SectionAttr>();
-#ifdef __APPLE__
-    if (sa && sa->getName() == "clamp,opencl_local") {
-#else
     if (sa && sa->getName() == "clamp_opencl_local") {
-#endif
       return true;
     }
   }

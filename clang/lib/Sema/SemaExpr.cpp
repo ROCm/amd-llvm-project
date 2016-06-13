@@ -9198,11 +9198,7 @@ void Sema::DiagnoseCXXAMPExpr(Expr* Stripped, ExprResult &HS, bool DiagnoseWhenS
         // FIXME: Need a common routine to detect a type is a tile_static or not
         if(!var->hasLocalStorage() || var->isStaticDataMember()) {
           if (var->hasAttr<SectionAttr>() && var->getAttr<SectionAttr>() &&
-            #ifdef __APPLE__
-             var->getAttr<SectionAttr>()->getName() == "clamp,opencl_local"
-            #else
              var->getAttr<SectionAttr>()->getName() == "clamp_opencl_local"
-            #endif
              ) {
              // Skip tile_static
           } else if(Type.isConstQualified() /*&& LHS.get()->isRValue()*/) {
