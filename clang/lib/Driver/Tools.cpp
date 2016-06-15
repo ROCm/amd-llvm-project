@@ -3981,8 +3981,12 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 // Disable the verification pass in -asserts builds.
 #ifdef NDEBUG
   CmdArgs.push_back("-disable-llvm-verifier");
-  // Discard LLVM value names in -asserts builds.
-  CmdArgs.push_back("-discard-value-names");
+
+  // Do not discard value names in HC mode
+  if (!Args.hasArg(options::OPT_hc_mode)) {
+    // Discard LLVM value names in -asserts builds.
+    CmdArgs.push_back("-discard-value-names");
+  }
 #endif
 
   // Set the main file name, so that debug info works even with
