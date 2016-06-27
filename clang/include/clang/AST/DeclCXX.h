@@ -829,11 +829,17 @@ public:
   /// This value is used for lazy creation of default constructors.
   bool needsImplicitDefaultConstructor() const {
     return !data().UserDeclaredConstructor &&
-           !(data().DeclaredSpecialMembers & SMF_DefaultConstructor) &&
+           !(data().DeclaredSpecialMembers & SMF_DefaultConstructor)
+           // UPGRADE_TBD: workaround to avoid "no matching constructor" issue
+#if 1
+           ;
+#else
+           &&
            // C++14 [expr.prim.lambda]p20:
            //   The closure type associated with a lambda-expression has no
            //   default constructor.
            !isLambda();
+#endif
   }
 
   /// \brief Returns the deserialization constructor for this class.
