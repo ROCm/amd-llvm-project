@@ -18,23 +18,14 @@ namespace clang {
 namespace tidy {
 namespace misc {
 
-// A function that helps to tell whether a TargetDecl will be checked.
-// We only check a TargetDecl if :
-//   * The corresponding UsingDecl is not defined in macros or in class
-//     definitions.
-//   * Only variable, function and class types are considered.
+// A function that helps to tell whether a TargetDecl in a UsingDecl will be
+// checked. Only variable, function, function template, class template, class,
+// enum declaration and enum constant declaration are considered.
 static bool ShouldCheckDecl(const Decl *TargetDecl) {
-  // Ignores using-declarations defined in macros.
-  if (TargetDecl->getLocation().isMacroID())
-    return false;
-
-  // Ignores using-declarations defined in class definition.
-  if (isa<CXXRecordDecl>(TargetDecl->getDeclContext()))
-    return false;
-
   return isa<RecordDecl>(TargetDecl) || isa<ClassTemplateDecl>(TargetDecl) ||
          isa<FunctionDecl>(TargetDecl) || isa<VarDecl>(TargetDecl) ||
-         isa<FunctionTemplateDecl>(TargetDecl);
+         isa<FunctionTemplateDecl>(TargetDecl) || isa<EnumDecl>(TargetDecl) ||
+         isa<EnumConstantDecl>(TargetDecl);
 }
 
 void UnusedUsingDeclsCheck::registerMatchers(MatchFinder *Finder) {
@@ -49,6 +40,20 @@ void UnusedUsingDeclsCheck::registerMatchers(MatchFinder *Finder) {
 
 void UnusedUsingDeclsCheck::check(const MatchFinder::MatchResult &Result) {
   if (const auto *Using = Result.Nodes.getNodeAs<UsingDecl>("using")) {
+    // Ignores using-declarations defined in macros.
+    if (Using->getLocation().isMacroID())
+      return;
+
+    // Ignores using-declarations defined in class definition.
+    if (isa<CXXRecordDecl>(Using->getDeclContext()))
+      return;
+
+    // FIXME: We ignore using-decls defined in function definitions at the
+    // moment because of false positives caused by ADL and different function
+    // scopes.
+    if (isa<FunctionDecl>(Using->getDeclContext()))
+      return;
+
     UsingDeclContext Context(Using);
     Context.UsingDeclRange = CharSourceRange::getCharRange(
         Using->getLocStart(),
@@ -87,6 +92,8 @@ void UnusedUsingDeclsCheck::check(const MatchFinder::MatchResult &Result) {
         removeFromFoundDecls(FD);
     } else if (const auto *VD = dyn_cast<VarDecl>(DRE->getDecl())) {
       removeFromFoundDecls(VD);
+    } else if (const auto *ECD = dyn_cast<EnumConstantDecl>(DRE->getDecl())) {
+      removeFromFoundDecls(ECD);
     }
   }
   // Check the uninstantiated template function usage.
@@ -99,11 +106,14 @@ void UnusedUsingDeclsCheck::check(const MatchFinder::MatchResult &Result) {
 }
 
 void UnusedUsingDeclsCheck::removeFromFoundDecls(const Decl *D) {
+  // FIXME: Currently, we don't handle the using-decls being used in different
+  // scopes (such as different namespaces, different functions). Instead of
+  // giving an incorrect message, we mark all of them as used.
+  //
+  // FIXME: Use a more efficient way to find a matching context.
   for (auto &Context : Contexts) {
-    if (Context.UsingTargetDecls.count(D->getCanonicalDecl()) > 0) {
+    if (Context.UsingTargetDecls.count(D->getCanonicalDecl()) > 0)
       Context.IsUsed = true;
-      break;
-    }
   }
 }
 

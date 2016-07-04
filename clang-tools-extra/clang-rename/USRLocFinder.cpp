@@ -87,6 +87,28 @@ public:
     return true;
   }
 
+  bool VisitCXXDestructorDecl(clang::CXXDestructorDecl *DestructorDecl) {
+    if (getUSRForDecl(DestructorDecl->getParent()) == USR) {
+      // Handles "~Foo" from "Foo::~Foo".
+      SourceLocation Location = DestructorDecl->getLocation();
+      const ASTContext &Context = DestructorDecl->getASTContext();
+      StringRef LLVM_ATTRIBUTE_UNUSED TokenName = Lexer::getSourceText(
+          CharSourceRange::getTokenRange(Location), Context.getSourceManager(),
+          Context.getLangOpts());
+      // 1 is the length of the "~" string that is not to be touched by the
+      // rename.
+      assert(TokenName.startswith("~"));
+      LocationsFound.push_back(Location.getLocWithOffset(1));
+
+      if (DestructorDecl->isThisDeclarationADefinition()) {
+        // Handles "Foo" from "Foo::~Foo".
+        LocationsFound.push_back(DestructorDecl->getLocStart());
+      }
+    }
+
+    return true;
+  }
+
   // Expression visitors:
 
   bool VisitDeclRefExpr(const DeclRefExpr *Expr) {
@@ -94,7 +116,9 @@ public:
 
     checkNestedNameSpecifierLoc(Expr->getQualifierLoc());
     if (getUSRForDecl(Decl) == USR) {
-      LocationsFound.push_back(Expr->getLocation());
+      const SourceManager &Manager = Decl->getASTContext().getSourceManager();
+      SourceLocation Location = Manager.getSpellingLoc(Expr->getLocation());
+      LocationsFound.push_back(Location);
     }
 
     return true;
@@ -108,6 +132,33 @@ public:
       LocationsFound.push_back(Location);
     }
     return true;
+  }
+
+  bool VisitCXXConstructExpr(const CXXConstructExpr *Expr) {
+    CXXConstructorDecl *Decl = Expr->getConstructor();
+
+    if (getUSRForDecl(Decl) == USR) {
+      // This takes care of 'new <name>' expressions.
+      LocationsFound.push_back(Expr->getLocation());
+    }
+
+    return true;
+  }
+
+  bool VisitCXXStaticCastExpr(clang::CXXStaticCastExpr *Expr) {
+    return handleCXXNamedCastExpr(Expr);
+  }
+
+  bool VisitCXXDynamicCastExpr(clang::CXXDynamicCastExpr *Expr) {
+    return handleCXXNamedCastExpr(Expr);
+  }
+
+  bool VisitCXXReinterpretCastExpr(clang::CXXReinterpretCastExpr *Expr) {
+    return handleCXXNamedCastExpr(Expr);
+  }
+
+  bool VisitCXXConstCastExpr(clang::CXXConstCastExpr *Expr) {
+    return handleCXXNamedCastExpr(Expr);
   }
 
   // Non-visitors:
@@ -127,6 +178,23 @@ private:
         LocationsFound.push_back(NameLoc.getLocalBeginLoc());
       NameLoc = NameLoc.getPrefix();
     }
+  }
+
+  bool handleCXXNamedCastExpr(clang::CXXNamedCastExpr *Expr) {
+    clang::QualType Type = Expr->getType();
+    // See if this a cast of a pointer.
+    const RecordDecl* Decl = Type->getPointeeCXXRecordDecl();
+    if (!Decl) {
+      // See if this is a cast of a reference.
+      Decl = Type->getAsCXXRecordDecl();
+    }
+
+    if (Decl && getUSRForDecl(Decl) == USR) {
+      SourceLocation Location = Expr->getTypeInfoAsWritten()->getTypeLoc().getBeginLoc();
+      LocationsFound.push_back(Location);
+    }
+
+    return true;
   }
 
   // All the locations of the USR were found.

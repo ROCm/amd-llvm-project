@@ -1274,6 +1274,12 @@ QualType QualType::stripObjCKindOfType(const ASTContext &constCtx) const {
            });
 }
 
+QualType QualType::getAtomicUnqualifiedType() const {
+  if (auto AT = getTypePtr()->getAs<AtomicType>())
+    return AT->getValueType().getUnqualifiedType();
+  return getUnqualifiedType();
+}
+
 Optional<ArrayRef<QualType>> Type::getObjCSubstitutions(
                                const DeclContext *dc) const {
   // Look through method scopes.
@@ -2636,7 +2642,7 @@ StringRef FunctionType::getNameForCallConv(CallingConv CC) {
   case CC_AAPCS_VFP: return "aapcs-vfp";
   case CC_IntelOclBicc: return "intel_ocl_bicc";
   case CC_SpirFunction: return "spir_function";
-  case CC_SpirKernel: return "spir_kernel";
+  case CC_OpenCLKernel: return "opencl_kernel";
   case CC_Swift: return "swiftcall";
   case CC_PreserveMost: return "preserve_most";
   case CC_PreserveAll: return "preserve_all";

@@ -71,7 +71,12 @@ void LLVMTargetMachine::initAsmInfo() {
     TmpAsmInfo->setUseIntegratedAssembler(false);
 
   if (Options.CompressDebugSections)
-    TmpAsmInfo->setCompressDebugSections(true);
+    TmpAsmInfo->setCompressDebugSections(DebugCompressionType::DCT_ZlibGnu);
+
+  TmpAsmInfo->setRelaxELFRelocations(Options.RelaxELFRelocations);
+
+  if (Options.ExceptionModel != ExceptionHandling::None)
+    TmpAsmInfo->setExceptionsType(Options.ExceptionModel);
 
   AsmInfo = TmpAsmInfo;
 }
@@ -83,7 +88,10 @@ LLVMTargetMachine::LLVMTargetMachine(const Target &T,
                                      Reloc::Model RM, CodeModel::Model CM,
                                      CodeGenOpt::Level OL)
     : TargetMachine(T, DataLayoutString, TT, CPU, FS, Options) {
-  CodeGenInfo = T.createMCCodeGenInfo(TT.str(), RM, CM, OL);
+  T.adjustCodeGenOpts(TT, RM, CM);
+  this->RM = RM;
+  this->CMModel = CM;
+  this->OptLevel = OL;
 }
 
 TargetIRAnalysis LLVMTargetMachine::getTargetIRAnalysis() {

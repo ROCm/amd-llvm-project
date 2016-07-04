@@ -55,11 +55,13 @@ check_cxx_compiler_flag("-Werror -Wc99-extensions"     COMPILER_RT_HAS_WC99_EXTE
 check_cxx_compiler_flag("-Werror -Wgnu"                COMPILER_RT_HAS_WGNU_FLAG)
 check_cxx_compiler_flag("-Werror -Wnon-virtual-dtor"   COMPILER_RT_HAS_WNON_VIRTUAL_DTOR_FLAG)
 check_cxx_compiler_flag("-Werror -Wvariadic-macros"    COMPILER_RT_HAS_WVARIADIC_MACROS_FLAG)
+check_cxx_compiler_flag("-Werror -Wunused-parameter"   COMPILER_RT_HAS_WUNUSED_PARAMETER_FLAG)
 
-check_cxx_compiler_flag(/W3 COMPILER_RT_HAS_W3_FLAG)
+check_cxx_compiler_flag(/W4 COMPILER_RT_HAS_W4_FLAG)
 check_cxx_compiler_flag(/WX COMPILER_RT_HAS_WX_FLAG)
 check_cxx_compiler_flag(/wd4146 COMPILER_RT_HAS_WD4146_FLAG)
 check_cxx_compiler_flag(/wd4291 COMPILER_RT_HAS_WD4291_FLAG)
+check_cxx_compiler_flag(/wd4221 COMPILER_RT_HAS_WD4221_FLAG)
 check_cxx_compiler_flag(/wd4391 COMPILER_RT_HAS_WD4391_FLAG)
 check_cxx_compiler_flag(/wd4722 COMPILER_RT_HAS_WD4722_FLAG)
 check_cxx_compiler_flag(/wd4800 COMPILER_RT_HAS_WD4800_FLAG)
@@ -98,40 +100,6 @@ macro(add_default_target_arch arch)
   set(TARGET_${arch}_CFLAGS "")
   set(CAN_TARGET_${arch} 1)
   list(APPEND COMPILER_RT_SUPPORTED_ARCH ${arch})
-endmacro()
-
-macro(detect_target_arch)
-  check_symbol_exists(__arm__ "" __ARM)
-  check_symbol_exists(__aarch64__ "" __AARCH64)
-  check_symbol_exists(__x86_64__ "" __X86_64)
-  check_symbol_exists(__i686__ "" __I686)
-  check_symbol_exists(__i386__ "" __I386)
-  check_symbol_exists(__mips__ "" __MIPS)
-  check_symbol_exists(__mips64__ "" __MIPS64)
-  check_symbol_exists(__s390x__ "" __S390X)
-  check_symbol_exists(__wasm32__ "" __WEBASSEMBLY32)
-  check_symbol_exists(__wasm64__ "" __WEBASSEMBLY64)
-  if(__ARM)
-    add_default_target_arch(arm)
-  elseif(__AARCH64)
-    add_default_target_arch(aarch64)
-  elseif(__X86_64)
-    add_default_target_arch(x86_64)
-  elseif(__I686)
-    add_default_target_arch(i686)
-  elseif(__I386)
-    add_default_target_arch(i386)
-  elseif(__MIPS64) # must be checked before __MIPS
-    add_default_target_arch(mips64)
-  elseif(__MIPS)
-    add_default_target_arch(mips)
-  elseif(__S390X)
-    add_default_target_arch(s390x)
-  elseif(__WEBASSEMBLY32)
-    add_default_target_arch(wasm32)
-  elseif(__WEBASSEMBLY64)
-    add_default_target_arch(wasm64)
-  endif()
 endmacro()
 
 # Detect whether the current target platform is 32-bit or 64-bit, and setup
@@ -183,7 +151,7 @@ set(ALL_ASAN_SUPPORTED_ARCH ${X86} ${X86_64} ${ARM32} ${ARM64}
     ${MIPS32} ${MIPS64} ${PPC64})
 set(ALL_DFSAN_SUPPORTED_ARCH ${X86_64} ${MIPS64} ${ARM64})
 set(ALL_LSAN_SUPPORTED_ARCH ${X86_64} ${MIPS64} ${ARM64})
-set(ALL_MSAN_SUPPORTED_ARCH ${X86_64} ${MIPS64} ${ARM64})
+set(ALL_MSAN_SUPPORTED_ARCH ${X86_64} ${MIPS64} ${ARM64} ${PPC64})
 set(ALL_PROFILE_SUPPORTED_ARCH ${X86} ${X86_64} ${ARM32} ${ARM64} ${PPC64}
     ${MIPS32} ${MIPS64})
 set(ALL_TSAN_SUPPORTED_ARCH ${X86_64} ${MIPS64} ${ARM64} ${PPC64})
@@ -192,6 +160,7 @@ set(ALL_UBSAN_SUPPORTED_ARCH ${X86} ${X86_64} ${ARM32} ${ARM64}
 set(ALL_SAFESTACK_SUPPORTED_ARCH ${X86} ${X86_64} ${ARM64} ${MIPS32} ${MIPS64})
 set(ALL_CFI_SUPPORTED_ARCH ${X86} ${X86_64} ${MIPS64})
 set(ALL_ESAN_SUPPORTED_ARCH ${X86_64})
+set(ALL_SCUDO_SUPPORTED_ARCH ${X86_64})
 
 if(APPLE)
   include(CompilerRTDarwinUtils)
@@ -288,7 +257,7 @@ if(APPLE)
         set(DARWIN_${platform}sim_CFLAGS
           ${DARWIN_COMMON_CFLAGS}
           ${DARWIN_${platform}_SANITIZER_MIN_VER_FLAG}
-          -isysroot ${DARWIN_iossim_SYSROOT})
+          -isysroot ${DARWIN_${platform}sim_SYSROOT})
         set(DARWIN_${platform}sim_LINKFLAGS
           ${DARWIN_COMMON_LINKFLAGS}
           ${DARWIN_${platform}_SANITIZER_MIN_VER_FLAG}
@@ -378,6 +347,9 @@ if(APPLE)
   list_intersect(ESAN_SUPPORTED_ARCH
     ALL_ESAN_SUPPORTED_ARCH
     SANITIZER_COMMON_SUPPORTED_ARCH)
+  list_intersect(SCUDO_SUPPORTED_ARCH
+    ALL_SCUDO_SUPPORTED_ARCH
+    SANITIZER_COMMON_SUPPORTED_ARCH)
 else()
   # Architectures supported by compiler-rt libraries.
   filter_available_targets(SANITIZER_COMMON_SUPPORTED_ARCH
@@ -399,6 +371,8 @@ else()
     ${ALL_SAFESTACK_SUPPORTED_ARCH})
   filter_available_targets(CFI_SUPPORTED_ARCH ${ALL_CFI_SUPPORTED_ARCH})
   filter_available_targets(ESAN_SUPPORTED_ARCH ${ALL_ESAN_SUPPORTED_ARCH})
+  filter_available_targets(SCUDO_SUPPORTED_ARCH
+    ${ALL_SCUDO_SUPPORTED_ARCH})
 endif()
 
 if (MSVC)
@@ -429,15 +403,13 @@ else()
   set(COMPILER_RT_HAS_SANITIZER_COMMON FALSE)
 endif()
 
-if (COMPILER_RT_HAS_SANITIZER_COMMON AND
-    (NOT OS_NAME MATCHES "Windows" OR CMAKE_SIZEOF_VOID_P EQUAL 4))
+if (COMPILER_RT_HAS_SANITIZER_COMMON)
   set(COMPILER_RT_HAS_INTERCEPTION TRUE)
 else()
   set(COMPILER_RT_HAS_INTERCEPTION FALSE)
 endif()
 
-if (COMPILER_RT_HAS_SANITIZER_COMMON AND ASAN_SUPPORTED_ARCH AND
-    (NOT OS_NAME MATCHES "Windows" OR CMAKE_SIZEOF_VOID_P EQUAL 4))
+if (COMPILER_RT_HAS_SANITIZER_COMMON AND ASAN_SUPPORTED_ARCH)
   set(COMPILER_RT_HAS_ASAN TRUE)
 else()
   set(COMPILER_RT_HAS_ASAN FALSE)
@@ -513,3 +485,11 @@ if (COMPILER_RT_HAS_SANITIZER_COMMON AND ESAN_SUPPORTED_ARCH AND
 else()
   set(COMPILER_RT_HAS_ESAN FALSE)
 endif()
+
+if (COMPILER_RT_HAS_SANITIZER_COMMON AND SCUDO_SUPPORTED_ARCH AND
+    OS_NAME MATCHES "Linux")
+  set(COMPILER_RT_HAS_SCUDO TRUE)
+else()
+  set(COMPILER_RT_HAS_SCUDO FALSE)
+endif()
+

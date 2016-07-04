@@ -92,19 +92,21 @@ static typename ELFT::uint getSymVA(const SymbolBody &Body,
 
 SymbolBody::SymbolBody(Kind K, uint32_t NameOffset, uint8_t StOther,
                        uint8_t Type)
-    : SymbolKind(K), IsLocal(true), Type(Type), StOther(StOther),
-      NameOffset(NameOffset) {
-  init();
-}
+    : SymbolKind(K), NeedsCopyOrPltAddr(false), IsLocal(true),
+      IsInGlobalMipsGot(false), Type(Type), StOther(StOther),
+      NameOffset(NameOffset) {}
 
 SymbolBody::SymbolBody(Kind K, StringRef Name, uint8_t StOther, uint8_t Type)
-    : SymbolKind(K), IsLocal(false), Type(Type), StOther(StOther),
-      Name({Name.data(), Name.size()}) {
-  init();
-}
+    : SymbolKind(K), NeedsCopyOrPltAddr(false), IsLocal(false),
+      IsInGlobalMipsGot(false), Type(Type), StOther(StOther),
+      Name({Name.data(), Name.size()}) {}
 
-void SymbolBody::init() {
-  NeedsCopyOrPltAddr = false;
+StringRef SymbolBody::getName() const {
+  assert(!isLocal());
+  StringRef S = StringRef(Name.S, Name.Len);
+  if (!symbol()->VersionedName)
+    return S;
+  return S.substr(0, S.find('@'));
 }
 
 // Returns true if a symbol can be replaced at load-time by a symbol
@@ -157,8 +159,7 @@ template <class ELFT> typename ELFT::uint SymbolBody::getGotVA() const {
 }
 
 template <class ELFT> typename ELFT::uint SymbolBody::getGotOffset() const {
-  return (Out<ELFT>::Got->getMipsLocalEntriesNum() + GotIndex) *
-         sizeof(typename ELFT::uint);
+  return GotIndex * sizeof(typename ELFT::uint);
 }
 
 template <class ELFT> typename ELFT::uint SymbolBody::getGotPltVA() const {
@@ -170,7 +171,7 @@ template <class ELFT> typename ELFT::uint SymbolBody::getGotPltOffset() const {
 }
 
 template <class ELFT> typename ELFT::uint SymbolBody::getPltVA() const {
-  return Out<ELFT>::Plt->getVA() + Target->PltZeroSize +
+  return Out<ELFT>::Plt->getVA() + Target->PltHeaderSize +
          PltIndex * Target->PltEntrySize;
 }
 
@@ -229,16 +230,19 @@ std::unique_ptr<InputFile> Lazy::getFile() {
 }
 
 std::unique_ptr<InputFile> LazyArchive::getFile() {
-  MemoryBufferRef MBRef = File->getMember(&Sym);
+  MemoryBufferRef MBRef = File.getMember(&Sym);
 
   // getMember returns an empty buffer if the member was already
   // read from the library.
   if (MBRef.getBuffer().empty())
     return std::unique_ptr<InputFile>(nullptr);
-  return createObjectFile(MBRef, File->getName());
+  return createObjectFile(MBRef, File.getName());
 }
 
 std::unique_ptr<InputFile> LazyObject::getFile() {
+  MemoryBufferRef MBRef = File.getBuffer();
+  if (MBRef.getBuffer().empty())
+    return std::unique_ptr<InputFile>(nullptr);
   return createObjectFile(MBRef);
 }
 
@@ -271,7 +275,7 @@ std::string elf::demangle(StringRef Name) {
 bool Symbol::includeInDynsym() const {
   if (Visibility != STV_DEFAULT && Visibility != STV_PROTECTED)
     return false;
-  return (ExportDynamic && VersionScriptGlobal) || body()->isShared() ||
+  return (ExportDynamic && VersionId != VER_NDX_LOCAL) || body()->isShared() ||
          (body()->isUndefined() && Config->Shared);
 }
 

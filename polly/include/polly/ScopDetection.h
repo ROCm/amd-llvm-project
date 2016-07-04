@@ -71,7 +71,7 @@ class CallInst;
 class Instruction;
 class Value;
 class IntrinsicInst;
-}
+} // namespace llvm
 
 namespace polly {
 typedef std::set<const SCEV *> ParamSetType;
@@ -525,7 +525,7 @@ public:
   bool isMaxRegionInScop(const Region &R, bool Verify = true) const;
 
   /// @brief Return the detection context for @p R, nullptr if @p R was invalid.
-  const DetectionContext *getDetectionContext(const Region *R) const;
+  DetectionContext *getDetectionContext(const Region *R) const;
 
   /// @brief Return the set of rejection causes for @p R.
   const RejectLog *lookupRejectionLog(const Region *R) const;
@@ -590,6 +590,6 @@ public:
 namespace llvm {
 class PassRegistry;
 void initializeScopDetectionPass(llvm::PassRegistry &);
-}
+} // namespace llvm
 
 #endif

@@ -130,6 +130,16 @@ public:
     return strcmp(SM.getBufferName(SM.getSpellingLoc(Loc)), "<built-in>") == 0;
   }
 
+  /// \brief Check whether \c Loc is included or expanded from \c Parent.
+  bool isNestedIn(SourceLocation Loc, FileID Parent) {
+    do {
+      Loc = getIncludeOrExpansionLoc(Loc);
+      if (Loc.isInvalid())
+        return false;
+    } while (!SM.isInFileID(Loc, Parent));
+    return true;
+  }
+
   /// \brief Get the start of \c S ignoring macro arguments and builtin macros.
   SourceLocation getStart(const Stmt *S) {
     SourceLocation Loc = S->getLocStart();
@@ -310,7 +320,27 @@ struct EmptyCoverageMappingBuilder : public CoverageMappingBuilder {
     if (!D->hasBody())
       return;
     auto Body = D->getBody();
-    SourceRegions.emplace_back(Counter(), getStart(Body), getEnd(Body));
+    SourceLocation Start = getStart(Body);
+    SourceLocation End = getEnd(Body);
+    if (!SM.isWrittenInSameFile(Start, End)) {
+      // Walk up to find the common ancestor.
+      // Correct the locations accordingly.
+      FileID StartFileID = SM.getFileID(Start);
+      FileID EndFileID = SM.getFileID(End);
+      while (StartFileID != EndFileID && !isNestedIn(End, StartFileID)) {
+        Start = getIncludeOrExpansionLoc(Start);
+        assert(Start.isValid() &&
+               "Declaration start location not nested within a known region");
+        StartFileID = SM.getFileID(Start);
+      }
+      while (StartFileID != EndFileID) {
+        End = getPreciseTokenLocEnd(getIncludeOrExpansionLoc(End));
+        assert(End.isValid() &&
+               "Declaration end location not nested within a known region");
+        EndFileID = SM.getFileID(End);
+      }
+    }
+    SourceRegions.emplace_back(Counter(), Start, End);
   }
 
   /// \brief Write the mapping data to the output stream
@@ -469,16 +499,6 @@ struct CounterCoverageMappingBuilder
         isRegionAlreadyAdded(getStartOfFileOrMacro(MostRecentLocation),
                              MostRecentLocation))
       MostRecentLocation = getIncludeOrExpansionLoc(MostRecentLocation);
-  }
-
-  /// \brief Check whether \c Loc is included or expanded from \c Parent.
-  bool isNestedIn(SourceLocation Loc, FileID Parent) {
-    do {
-      Loc = getIncludeOrExpansionLoc(Loc);
-      if (Loc.isInvalid())
-        return false;
-    } while (!SM.isInFileID(Loc, Parent));
-    return true;
   }
 
   /// \brief Adjust regions and state when \c NewLoc exits a file.
@@ -792,7 +812,9 @@ struct CounterCoverageMappingBuilder
           BreakContinueStack.back().ContinueCount, BC.ContinueCount);
 
     Counter ExitCount = getRegionCounter(S);
-    pushRegion(ExitCount, getStart(S), getEnd(S));
+    SourceLocation ExitLoc = getEnd(S);
+    pushRegion(ExitCount, getStart(S), ExitLoc);
+    handleFileExit(ExitLoc);
   }
 
   void VisitSwitchCase(const SwitchCase *S) {
@@ -845,7 +867,12 @@ struct CounterCoverageMappingBuilder
 
   void VisitCXXTryStmt(const CXXTryStmt *S) {
     extendRegion(S);
-    Visit(S->getTryBlock());
+    // Handle macros that generate the "try" but not the rest.
+    extendRegion(S->getTryBlock());
+
+    Counter ParentCount = getRegion().getCounter();
+    propagateCounts(ParentCount, S->getTryBlock());
+
     for (unsigned I = 0, E = S->getNumHandlers(); I < E; ++I)
       Visit(S->getHandler(I));
 

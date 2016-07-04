@@ -148,13 +148,15 @@ void initializePollyPasses(PassRegistry &Registry) {
   initializeCodePreparationPass(Registry);
   initializeDeadCodeElimPass(Registry);
   initializeDependenceInfoPass(Registry);
+  initializeDependenceInfoWrapperPassPass(Registry);
   initializeJSONExporterPass(Registry);
   initializeJSONImporterPass(Registry);
   initializeIslAstInfoPass(Registry);
   initializeIslScheduleOptimizerPass(Registry);
   initializePollyCanonicalizePass(Registry);
   initializeScopDetectionPass(Registry);
-  initializeScopInfoPass(Registry);
+  initializeScopInfoRegionPassPass(Registry);
+  initializeScopInfoWrapperPassPass(Registry);
   initializeCodegenCleanupPass(Registry);
 }
 
@@ -199,7 +201,7 @@ void registerPollyPasses(llvm::legacy::PassManagerBase &PM) {
   if (PollyOnlyPrinter)
     PM.add(polly::createDOTOnlyPrinterPass());
 
-  PM.add(polly::createScopInfoPass());
+  PM.add(polly::createScopInfoRegionPassPass());
 
   if (ImportJScop)
     PM.add(polly::createJSONImporterPass());
@@ -336,4 +338,4 @@ static llvm::RegisterStandardPasses
 static llvm::RegisterStandardPasses RegisterPollyOptimizerScalarLate(
     llvm::PassManagerBuilder::EP_VectorizerStart,
     registerPollyScalarOptimizerLatePasses);
-}
+} // namespace polly

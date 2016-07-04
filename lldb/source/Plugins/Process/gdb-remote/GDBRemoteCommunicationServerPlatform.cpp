@@ -53,7 +53,6 @@ GDBRemoteCommunicationServerPlatform::GDBRemoteCommunicationServerPlatform(const
       m_socket_protocol(socket_protocol),
       m_socket_scheme(socket_scheme),
       m_spawned_pids_mutex(),
-      m_platform_sp(Platform::GetHostPlatform()),
       m_port_map(),
       m_port_offset(0)
 {
@@ -132,7 +131,10 @@ GDBRemoteCommunicationServerPlatform::LaunchGDBServer(const lldb_private::Args& 
     assert(ok);
 
     std::ostringstream url;
+    // debugserver does not accept the URL scheme prefix.
+#if !defined(__APPLE__)
     url << m_socket_scheme << "://";
+#endif
     uint16_t* port_ptr = &port;
     if (m_socket_protocol == Socket::ProtocolTcp)
         url << platform_ip << ":" << port;
@@ -460,7 +462,7 @@ GDBRemoteCommunicationServerPlatform::LaunchProcess ()
             std::bind(&GDBRemoteCommunicationServerPlatform::DebugserverProcessReaped, this, std::placeholders::_1),
             false);
 
-    Error error = m_platform_sp->LaunchProcess (m_process_launch_info);
+    Error error = Host::LaunchProcess(m_process_launch_info);
     if (!error.Success ())
     {
         fprintf (stderr, "%s: failed to launch executable %s", __FUNCTION__, m_process_launch_info.GetArguments ().GetArgumentAtIndex (0));

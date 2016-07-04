@@ -670,6 +670,8 @@ void DAGTypeLegalizer::SplitVectorResult(SDNode *N, unsigned ResNo) {
   case ISD::ADD:
   case ISD::SUB:
   case ISD::MUL:
+  case ISD::MULHS:
+  case ISD::MULHU:
   case ISD::FADD:
   case ISD::FSUB:
   case ISD::FMUL:
@@ -851,15 +853,34 @@ void DAGTypeLegalizer::SplitVecRes_INSERT_SUBVECTOR(SDNode *N, SDValue &Lo,
   SDLoc dl(N);
   GetSplitVector(Vec, Lo, Hi);
 
-  // Spill the vector to the stack.
   EVT VecVT = Vec.getValueType();
-  EVT SubVecVT = VecVT.getVectorElementType();
+  EVT VecElemVT = VecVT.getVectorElementType();
+  unsigned VecElems = VecVT.getVectorNumElements();
+  unsigned SubElems = SubVec.getValueType().getVectorNumElements();
+
+  // If we know the index is 0, and we know the subvector doesn't cross the
+  // boundary between the halves, we can avoid spilling the vector, and insert
+  // into the lower half of the split vector directly.
+  // TODO: The IdxVal == 0 constraint is artificial, we could do this whenever
+  // the index is constant and there is no boundary crossing. But those cases
+  // don't seem to get hit in practice.
+  if (ConstantSDNode *ConstIdx = dyn_cast<ConstantSDNode>(Idx)) {
+    unsigned IdxVal = ConstIdx->getZExtValue();
+    if ((IdxVal == 0) && (IdxVal + SubElems <= VecElems / 2)) {
+      EVT LoVT, HiVT;
+      std::tie(LoVT, HiVT) = DAG.GetSplitDestVTs(N->getValueType(0));
+      Lo = DAG.getNode(ISD::INSERT_SUBVECTOR, dl, LoVT, Lo, SubVec, Idx);
+      return;
+    }
+  }
+
+  // Spill the vector to the stack.
   SDValue StackPtr = DAG.CreateStackTemporary(VecVT);
   SDValue Store = DAG.getStore(DAG.getEntryNode(), dl, Vec, StackPtr,
                                MachinePointerInfo(), false, false, 0);
 
   // Store the new subvector into the specified index.
-  SDValue SubVecPtr = GetVectorElementPointer(StackPtr, SubVecVT, Idx);
+  SDValue SubVecPtr = GetVectorElementPointer(StackPtr, VecElemVT, Idx);
   Type *VecType = VecVT.getTypeForEVT(*DAG.getContext());
   unsigned Alignment = DAG.getDataLayout().getPrefTypeAlignment(VecType);
   Store = DAG.getStore(Store, dl, SubVec, SubVecPtr, MachinePointerInfo(),
@@ -1401,7 +1422,7 @@ void DAGTypeLegalizer::SplitVecRes_VECTOR_SHUFFLE(ShuffleVectorSDNode *N,
       SDValue Op1 = InputUsed[1] == -1U ?
         DAG.getUNDEF(NewVT) : Inputs[InputUsed[1]];
       // At least one input vector was used.  Create a new shuffle vector.
-      Output =  DAG.getVectorShuffle(NewVT, dl, Op0, Op1, &Ops[0]);
+      Output =  DAG.getVectorShuffle(NewVT, dl, Op0, Op1, Ops);
     }
 
     Ops.clear();
@@ -2664,7 +2685,7 @@ SDValue DAGTypeLegalizer::WidenVecRes_CONCAT_VECTORS(SDNode *N) {
         return DAG.getVectorShuffle(WidenVT, dl,
                                     GetWidenedVector(N->getOperand(0)),
                                     GetWidenedVector(N->getOperand(1)),
-                                    &MaskOps[0]);
+                                    MaskOps);
       }
     }
   }
@@ -2998,7 +3019,7 @@ SDValue DAGTypeLegalizer::WidenVecRes_VECTOR_SHUFFLE(ShuffleVectorSDNode *N) {
   }
   for (unsigned i = NumElts; i != WidenNumElts; ++i)
     NewMask.push_back(-1);
-  return DAG.getVectorShuffle(WidenVT, dl, InOp1, InOp2, &NewMask[0]);
+  return DAG.getVectorShuffle(WidenVT, dl, InOp1, InOp2, NewMask);
 }
 
 SDValue DAGTypeLegalizer::WidenVecRes_VSETCC(SDNode *N) {

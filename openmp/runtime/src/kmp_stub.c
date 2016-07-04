@@ -41,6 +41,7 @@
 #define kmp_set_blocktime            kmpc_set_blocktime
 #define kmp_set_library              kmpc_set_library
 #define kmp_set_defaults             kmpc_set_defaults
+#define kmp_set_disp_num_buffers     kmpc_set_disp_num_buffers
 #define kmp_malloc                   kmpc_malloc
 #define kmp_aligned_malloc           kmpc_aligned_malloc
 #define kmp_calloc                   kmpc_calloc
@@ -100,6 +101,7 @@ void kmp_set_stacksize_s( size_t arg )    { i; __kmps_set_stacksize( arg ); }
 void kmp_set_blocktime( omp_int_t arg )   { i; __kmps_set_blocktime( arg ); }
 void kmp_set_library( omp_int_t arg )     { i; __kmps_set_library( arg ); }
 void kmp_set_defaults( char const * str ) { i; }
+void kmp_set_disp_num_buffers( omp_int_t arg ) { i; }
 
 /* KMP memory management functions. */
 void * kmp_malloc( size_t size )                 { i; return malloc( size ); }
@@ -109,9 +111,13 @@ void * kmp_aligned_malloc( size_t sz, size_t a ) {
     errno = ENOSYS; // not supported
     return NULL;    // no standard aligned allocator on Windows (pre - C11)
 #else
-    void **res;
-    errno = posix_memalign( res, a, sz );
-    return *res;
+    void *res;
+    int err;
+    if( err = posix_memalign( &res, a, sz ) ) {
+        errno = err; // can be EINVAL or ENOMEM
+        return NULL;
+    }
+    return res;
 #endif
 }
 void * kmp_calloc( size_t nelem, size_t elsize ) { i; return calloc( nelem, elsize ); }

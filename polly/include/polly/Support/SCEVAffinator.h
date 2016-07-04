@@ -37,7 +37,7 @@ class Region;
 class BasicBlock;
 class DataLayout;
 class ScalarEvolution;
-}
+} // namespace llvm
 
 namespace polly {
 class Scop;
@@ -83,13 +83,15 @@ private:
   Scop *S;
   isl_ctx *Ctx;
   unsigned NumIterators;
-  const llvm::Region &R;
   llvm::ScalarEvolution &SE;
   llvm::LoopInfo &LI;
   llvm::BasicBlock *BB;
 
   /// @brief Target data for element size computing.
   const llvm::DataLayout &TD;
+
+  /// @brief Return the loop for the current block if any.
+  llvm::Loop *getScope();
 
   /// @brief Return a PWACtx for @p PWA that is always valid.
   __isl_give PWACtx getPWACtxFromPWA(__isl_take isl_pw_aff *PWA);
@@ -128,6 +130,6 @@ private:
 
   friend struct llvm::SCEVVisitor<SCEVAffinator, PWACtx>;
 };
-}
+} // namespace polly
 
 #endif

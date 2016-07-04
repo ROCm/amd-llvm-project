@@ -11,7 +11,9 @@
 #define LLD_ELF_INPUT_SECTION_H
 
 #include "Config.h"
+#include "Relocations.h"
 #include "lld/Core/LLVM.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/TinyPtrVector.h"
 #include "llvm/Object/ELF.h"
 
@@ -26,54 +28,6 @@ template <class ELFT> class ObjectFile;
 template <class ELFT> class OutputSection;
 template <class ELFT> class OutputSectionBase;
 
-enum RelExpr {
-  R_ABS,
-  R_GOT,
-  R_GOTONLY_PC,
-  R_GOTREL,
-  R_GOT_FROM_END,
-  R_GOT_OFF,
-  R_GOT_PAGE_PC,
-  R_GOT_PC,
-  R_HINT,
-  R_MIPS_GOT_LOCAL,
-  R_MIPS_GOT_LOCAL_PAGE,
-  R_NEG_TLS,
-  R_PAGE_PC,
-  R_PC,
-  R_PLT,
-  R_PLT_PC,
-  R_PPC_OPD,
-  R_PPC_PLT_OPD,
-  R_PPC_TOC,
-  R_RELAX_TLS_GD_TO_IE,
-  R_RELAX_TLS_GD_TO_LE,
-  R_RELAX_TLS_IE_TO_LE,
-  R_RELAX_TLS_LD_TO_LE,
-  R_SIZE,
-  R_THUNK,
-  R_TLS,
-  R_TLSGD,
-  R_TLSGD_PC,
-  R_TLSLD,
-  R_TLSLD_PC
-};
-
-inline bool refersToGotEntry(RelExpr Expr) {
-  return Expr == R_GOT || Expr == R_GOT_OFF || Expr == R_MIPS_GOT_LOCAL ||
-         Expr == R_MIPS_GOT_LOCAL_PAGE || Expr == R_GOT_PAGE_PC ||
-         Expr == R_GOT_PC || Expr == R_GOT_FROM_END || Expr == R_TLSGD ||
-         Expr == R_TLSGD_PC;
-}
-
-struct Relocation {
-  RelExpr Expr;
-  uint32_t Type;
-  uint64_t Offset;
-  uint64_t Addend;
-  SymbolBody *Sym;
-};
-
 // This corresponds to a section of an input file.
 template <class ELFT> class InputSectionBase {
 protected:
@@ -87,6 +41,9 @@ protected:
   // The file this section is from.
   ObjectFile<ELFT> *File;
 
+  // If a section is compressed, this vector has uncompressed section data.
+  SmallVector<char, 0> Uncompressed;
+
 public:
   enum Kind { Regular, EHFrame, Merge, MipsReginfo, MipsOptions };
   Kind SectionKind;
@@ -96,7 +53,7 @@ public:
   InputSectionBase(ObjectFile<ELFT> *File, const Elf_Shdr *Header,
                    Kind SectionKind);
   OutputSectionBase<ELFT> *OutSec = nullptr;
-  uint32_t Align;
+  uint32_t Alignment;
 
   // Used for garbage collection.
   bool Live;
@@ -116,16 +73,20 @@ public:
   StringRef getSectionName() const;
   const Elf_Shdr *getSectionHdr() const { return Header; }
   ObjectFile<ELFT> *getFile() const { return File; }
-  uintX_t getOffset(const DefinedRegular<ELFT> &Sym);
+  uintX_t getOffset(const DefinedRegular<ELFT> &Sym) const;
 
   // Translate an offset in the input section to an offset in the output
   // section.
-  uintX_t getOffset(uintX_t Offset);
+  uintX_t getOffset(uintX_t Offset) const;
 
   ArrayRef<uint8_t> getSectionData() const;
 
+  void uncompress();
+
   void relocate(uint8_t *Buf, uint8_t *BufEnd);
-  std::vector<Relocation> Relocations;
+  std::vector<Relocation<ELFT>> Relocations;
+
+  bool Compressed;
 };
 
 template <class ELFT> InputSectionBase<ELFT> InputSectionBase<ELFT>::Discarded;
@@ -133,13 +94,24 @@ template <class ELFT> InputSectionBase<ELFT> InputSectionBase<ELFT>::Discarded;
 // SectionPiece represents a piece of splittable section contents.
 struct SectionPiece {
   SectionPiece(size_t Off, ArrayRef<uint8_t> Data)
-      : InputOff(Off), Data(Data), Live(!Config->GcSections) {}
-  size_t size() const { return Data.size(); }
+      : InputOff(Off), Data((const uint8_t *)Data.data()), Size(Data.size()),
+        Live(!Config->GcSections) {}
+
+  ArrayRef<uint8_t> data() { return {Data, Size}; }
+  size_t size() const { return Size; }
 
   size_t InputOff;
   size_t OutputOff = -1;
-  ArrayRef<uint8_t> Data; // slice of the input section
-  bool Live;
+
+private:
+  // We use bitfields because SplitInputSection is accessed by
+  // std::upper_bound very often.
+  // We want to save bits to make it cache friendly.
+  const uint8_t *Data;
+  uint32_t Size : 31;
+
+public:
+  uint32_t Live : 1;
 };
 
 // Usually sections are copied to the output as atomic chunks of data,
@@ -160,6 +132,7 @@ public:
 
   // Returns the SectionPiece at a given input section offset.
   SectionPiece *getSectionPiece(uintX_t Offset);
+  const SectionPiece *getSectionPiece(uintX_t Offset) const;
 };
 
 // This corresponds to a SHF_MERGE section of an input file.
@@ -171,23 +144,34 @@ template <class ELFT> class MergeInputSection : public SplitInputSection<ELFT> {
 public:
   MergeInputSection(ObjectFile<ELFT> *F, const Elf_Shdr *Header);
   static bool classof(const InputSectionBase<ELFT> *S);
-  // Translate an offset in the input section to an offset in the output
-  // section.
-  uintX_t getOffset(uintX_t Offset);
+  void splitIntoPieces();
+
+  // Mark the piece at a given offset live. Used by GC.
+  void markLiveAt(uintX_t Offset) { LiveOffsets.insert(Offset); }
+
+  // Translate an offset in the input section to an offset
+  // in the output section.
+  uintX_t getOffset(uintX_t Offset) const;
+
+  void finalizePieces();
+
+private:
+  llvm::DenseMap<uintX_t, uintX_t> OffsetMap;
+  llvm::DenseSet<uintX_t> LiveOffsets;
 };
 
 // This corresponds to a .eh_frame section of an input file.
-template <class ELFT> class EHInputSection : public SplitInputSection<ELFT> {
+template <class ELFT> class EhInputSection : public SplitInputSection<ELFT> {
 public:
   typedef typename ELFT::Shdr Elf_Shdr;
   typedef typename ELFT::uint uintX_t;
-  EHInputSection(ObjectFile<ELFT> *F, const Elf_Shdr *Header);
+  EhInputSection(ObjectFile<ELFT> *F, const Elf_Shdr *Header);
   static bool classof(const InputSectionBase<ELFT> *S);
   void split();
 
   // Translate an offset in the input section to an offset in the output
   // section.
-  uintX_t getOffset(uintX_t Offset);
+  uintX_t getOffset(uintX_t Offset) const;
 
   // Relocation section that refer to this one.
   const Elf_Shdr *RelocSection = nullptr;

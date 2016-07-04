@@ -7,10 +7,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "FindAllMacros.h"
-#include "FindAllSymbols.h"
+#include "FindAllSymbolsAction.h"
 #include "HeaderMapCollector.h"
-#include "PragmaCommentHandler.h"
 #include "SymbolInfo.h"
 #include "SymbolReporter.h"
 #include "clang/ASTMatchers/ASTMatchFinder.h"
@@ -54,44 +52,6 @@ private:
   std::vector<SymbolInfo> Symbols;
 };
 
-class TestFindAllSymbolsAction : public clang::ASTFrontendAction {
-public:
-  TestFindAllSymbolsAction(SymbolReporter *Reporter)
-      : Reporter(Reporter), MatchFinder(), Collector(), Handler(&Collector),
-        Matcher(Reporter, &Collector) {
-    Matcher.registerMatchers(&MatchFinder);
-  }
-
-  std::unique_ptr<clang::ASTConsumer>
-  CreateASTConsumer(clang::CompilerInstance &Compiler,
-                    StringRef InFile) override {
-    Compiler.getPreprocessor().addCommentHandler(&Handler);
-    Compiler.getPreprocessor().addPPCallbacks(llvm::make_unique<FindAllMacros>(
-        Reporter, &Compiler.getSourceManager(), &Collector));
-    return MatchFinder.newASTConsumer();
-  }
-
-private:
-  SymbolReporter *const Reporter;
-  ast_matchers::MatchFinder MatchFinder;
-  HeaderMapCollector Collector;
-  PragmaCommentHandler Handler;
-  FindAllSymbols Matcher;
-};
-
-class TestFindAllSymbolsActionFactory
-    : public clang::tooling::FrontendActionFactory {
-public:
-  TestFindAllSymbolsActionFactory(TestSymbolReporter *Reporter)
-      : Reporter(Reporter) {}
-  clang::FrontendAction *create() override {
-    return new TestFindAllSymbolsAction(Reporter);
-  }
-
-private:
-  TestSymbolReporter *const Reporter;
-};
-
 class FindAllSymbolsTest : public ::testing::Test {
 public:
   bool hasSymbol(const SymbolInfo &Symbol) {
@@ -106,8 +66,30 @@ public:
 
     std::string FileName = "symbol.cc";
 
+    const std::string InternalHeader = "internal/internal.h";
+    const std::string TopHeader = "<top>";
+    // Test .inc header path. The header for `IncHeaderClass` should be
+    // internal.h, which will eventually be mapped to <top>.
+    std::string IncHeader = "internal/private.inc";
+    std::string IncHeaderCode = "class IncHeaderClass {};";
+
+    HeaderMapCollector::HeaderMap PostfixMap = {
+        {"internal.h", TopHeader},
+    };
+
+    std::string InternalCode =
+        "#include \"private.inc\"\nclass Internal {};";
+    SymbolInfo InternalSymbol("Internal", SymbolInfo::SymbolKind::Class,
+                              TopHeader, 2, {});
+    SymbolInfo IncSymbol("IncHeaderClass", SymbolInfo::SymbolKind::Class,
+                         TopHeader, 1, {});
+    InMemoryFileSystem->addFile(
+        IncHeader, 0, llvm::MemoryBuffer::getMemBuffer(IncHeaderCode));
+    InMemoryFileSystem->addFile(InternalHeader, 0,
+                                llvm::MemoryBuffer::getMemBuffer(InternalCode));
+
     std::unique_ptr<clang::tooling::FrontendActionFactory> Factory(
-        new TestFindAllSymbolsActionFactory(&Reporter));
+        new FindAllSymbolsActionFactory(&Reporter, &PostfixMap));
 
     tooling::ToolInvocation Invocation(
         {std::string("find_all_symbols"), std::string("-fsyntax-only"),
@@ -118,10 +100,32 @@ public:
     InMemoryFileSystem->addFile(HeaderName, 0,
                                 llvm::MemoryBuffer::getMemBuffer(Code));
 
-    std::string Content = "#include\"" + std::string(HeaderName) + "\"";
+    std::string Content = "#include\"" + std::string(HeaderName) +
+                          "\"\n"
+                          "#include \"internal/internal.h\"";
+#if !defined(_MSC_VER) && !defined(__MINGW32__)
+    // Test path cleaning for both decls and macros.
+    const std::string DirtyHeader = "./internal/./a/b.h";
+    Content += "\n#include \"" + DirtyHeader + "\"";
+    const std::string CleanHeader = "internal/a/b.h";
+    const std::string DirtyHeaderContent =
+        "#define INTERNAL 1\nclass ExtraInternal {};";
+    InMemoryFileSystem->addFile(
+        DirtyHeader, 0, llvm::MemoryBuffer::getMemBuffer(DirtyHeaderContent));
+    SymbolInfo DirtyMacro("INTERNAL", SymbolInfo::SymbolKind::Macro,
+                          CleanHeader, 1, {});
+    SymbolInfo DirtySymbol("ExtraInternal", SymbolInfo::SymbolKind::Class,
+                           CleanHeader, 2, {});
+#endif // _MSC_VER && __MINGW32__
     InMemoryFileSystem->addFile(FileName, 0,
                                 llvm::MemoryBuffer::getMemBuffer(Content));
     Invocation.run();
+    EXPECT_TRUE(hasSymbol(InternalSymbol));
+    EXPECT_TRUE(hasSymbol(IncSymbol));
+#if !defined(_MSC_VER) && !defined(__MINGW32__)
+    EXPECT_TRUE(hasSymbol(DirtySymbol));
+    EXPECT_TRUE(hasSymbol(DirtyMacro));
+#endif  // _MSC_VER && __MINGW32__
     return true;
   }
 
@@ -330,6 +334,7 @@ TEST_F(FindAllSymbolsTest, EnumTest) {
       public:
         enum A_ENUM { X1, X2 };
       };
+      enum DECL : int;
       )";
   runFindAllSymbols(Code);
 
@@ -371,6 +376,10 @@ TEST_F(FindAllSymbolsTest, EnumTest) {
   Symbol = SymbolInfo("X1", SymbolInfo::SymbolKind::EnumDecl, HeaderName, 7,
                       {{SymbolInfo::ContextType::EnumDecl, "A_ENUM"},
                        {SymbolInfo::ContextType::Record, "A"}});
+  EXPECT_FALSE(hasSymbol(Symbol));
+
+  Symbol =
+      SymbolInfo("DECL", SymbolInfo::SymbolKind::EnumDecl, HeaderName, 9, {});
   EXPECT_FALSE(hasSymbol(Symbol));
 }
 
@@ -422,6 +431,27 @@ TEST_F(FindAllSymbolsTest, MacroTestWithIWYU) {
 
   Symbol = SymbolInfo("MAX", SymbolInfo::SymbolKind::Macro, "bar.h", 5, {});
   EXPECT_TRUE(hasSymbol(Symbol));
+}
+
+TEST_F(FindAllSymbolsTest, NoFriendTest) {
+  static const char Code[] = R"(
+    class WorstFriend {
+      friend void Friend();
+      friend class BestFriend;
+    };
+  )";
+  runFindAllSymbols(Code);
+  SymbolInfo Symbol = SymbolInfo("WorstFriend", SymbolInfo::SymbolKind::Class,
+                                 HeaderName, 2, {});
+  EXPECT_TRUE(hasSymbol(Symbol));
+
+  Symbol = SymbolInfo("Friend", SymbolInfo::SymbolKind::Function, HeaderName,
+                      3, {});
+  EXPECT_FALSE(hasSymbol(Symbol));
+
+  Symbol = SymbolInfo("BestFriend", SymbolInfo::SymbolKind::Class, HeaderName,
+                      4, {});
+  EXPECT_FALSE(hasSymbol(Symbol));
 }
 
 } // namespace find_all_symbols

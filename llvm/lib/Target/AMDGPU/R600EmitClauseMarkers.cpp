@@ -122,8 +122,8 @@ private:
     if (!TII->isALUInstr(MI->getOpcode()) && MI->getOpcode() != AMDGPU::DOT_4)
       return true;
 
-    const SmallVectorImpl<std::pair<MachineOperand *, int64_t> > &Consts =
-        TII->getSrcs(MI);
+    const SmallVectorImpl<std::pair<MachineOperand *, int64_t>> &Consts =
+        TII->getSrcs(*MI);
     assert((TII->isALUInstr(MI->getOpcode()) ||
         MI->getOpcode() == AMDGPU::DOT_4) && "Can't assign Const");
     for (unsigned i = 0, n = Consts.size(); i < n; ++i) {
@@ -245,7 +245,7 @@ private:
         // clause as predicated alus).
         if (AluInstCount > 0)
           break;
-        if (TII->getFlagOp(I).getImm() & MO_FLAG_PUSH)
+        if (TII->getFlagOp(*I).getImm() & MO_FLAG_PUSH)
           PushBeforeModifier = true;
         AluInstCount ++;
         continue;
@@ -276,7 +276,7 @@ private:
     BuildMI(MBB, ClauseHead, MBB.findDebugLoc(ClauseHead), TII->get(Opcode))
     // We don't use the ADDR field until R600ControlFlowFinalizer pass, where
     // it is safe to assume it is 0. However if we always put 0 here, the ifcvt
-    // pass may assume that identical ALU clause starter at the beginning of a 
+    // pass may assume that identical ALU clause starter at the beginning of a
     // true and false branch can be factorized which is not the case.
         .addImm(Address++) // ADDR
         .addImm(KCacheBanks.empty()?0:KCacheBanks[0].first) // KB0
@@ -298,7 +298,8 @@ public:
   }
 
   bool runOnMachineFunction(MachineFunction &MF) override {
-    TII = static_cast<const R600InstrInfo *>(MF.getSubtarget().getInstrInfo());
+    const R600Subtarget &ST = MF.getSubtarget<R600Subtarget>();
+    TII = ST.getInstrInfo();
 
     for (MachineFunction::iterator BB = MF.begin(), BB_E = MF.end();
                                                     BB != BB_E; ++BB) {

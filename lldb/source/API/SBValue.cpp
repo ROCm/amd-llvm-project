@@ -528,6 +528,10 @@ SBValue::GetValueType ()
                 log->Printf ("SBValue(%p)::GetValueType () => eValueTypeConstResult",
                              static_cast<void*>(value_sp.get()));
                 break;
+            case eValueTypeVariableThreadLocal:
+                log->Printf("SBValue(%p)::GetValueType () => eValueTypeVariableThreadLocal",
+                            static_cast<void *>(value_sp.get()));
+                break;
         }
     }
     return result;
@@ -922,16 +926,17 @@ SBValue::CreateValueFromAddress(const char* name, lldb::addr_t address, SBType s
 }
 
 lldb::SBValue
-SBValue::CreateValueFromData (const char* name, SBData data, SBType type)
+SBValue::CreateValueFromData (const char* name, SBData data, SBType sb_type)
 {
     lldb::SBValue sb_value;
     lldb::ValueObjectSP new_value_sp;
     ValueLocker locker;
     lldb::ValueObjectSP value_sp(GetSP(locker));
-    if (value_sp)
+    lldb::TypeImplSP type_impl_sp (sb_type.GetSP());
+    if (value_sp && type_impl_sp)
     {
         ExecutionContext exe_ctx (value_sp->GetExecutionContextRef());
-        new_value_sp = ValueObject::CreateValueObjectFromData(name, **data, exe_ctx, type.GetSP()->GetCompilerType(true));
+        new_value_sp = ValueObject::CreateValueObjectFromData(name, **data, exe_ctx, type_impl_sp->GetCompilerType(true));
         new_value_sp->SetAddressTypeOfChildren(eAddressTypeLoad);
     }
     sb_value.SetSP(new_value_sp);

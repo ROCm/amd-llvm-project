@@ -742,8 +742,8 @@ ASTContext::ASTContext(LangOptions &LOpts, SourceManager &SM,
       sigjmp_bufDecl(nullptr), ucontext_tDecl(nullptr),
       BlockDescriptorType(nullptr), BlockDescriptorExtendedType(nullptr),
       cudaConfigureCallDecl(nullptr), FirstLocalImport(), LastLocalImport(),
-      ExternCContext(nullptr), MakeIntegerSeqDecl(nullptr), SourceMgr(SM),
-      LangOpts(LOpts),
+      ExternCContext(nullptr), MakeIntegerSeqDecl(nullptr),
+      TypePackElementDecl(nullptr), SourceMgr(SM), LangOpts(LOpts),
       SanitizerBL(new SanitizerBlacklist(LangOpts.SanitizerBlacklistFiles, SM)),
       AddrSpaceMap(nullptr), Target(nullptr), AuxTarget(nullptr),
       PrintingPolicy(LOpts), Idents(idents), Selectors(sels),
@@ -816,7 +816,7 @@ void ASTContext::AddDeallocation(void (*Callback)(void*), void *Data) {
 
 void
 ASTContext::setExternalSource(IntrusiveRefCntPtr<ExternalASTSource> Source) {
-  ExternalSource = Source;
+  ExternalSource = std::move(Source);
 }
 
 void ASTContext::PrintStats() const {
@@ -926,6 +926,14 @@ ASTContext::getMakeIntegerSeqDecl() const {
     MakeIntegerSeqDecl = buildBuiltinTemplateDecl(BTK__make_integer_seq,
                                                   getMakeIntegerSeqName());
   return MakeIntegerSeqDecl;
+}
+
+BuiltinTemplateDecl *
+ASTContext::getTypePackElementDecl() const {
+  if (!TypePackElementDecl)
+    TypePackElementDecl = buildBuiltinTemplateDecl(BTK__type_pack_element,
+                                                   getTypePackElementName());
+  return TypePackElementDecl;
 }
 
 RecordDecl *ASTContext::buildImplicitRecord(StringRef Name,
@@ -5138,6 +5146,27 @@ bool ASTContext::isMSStaticDataMemberInlineDefinition(const VarDecl *VD) const {
          !VD->getFirstDecl()->isOutOfLine() && VD->getFirstDecl()->hasInit();
 }
 
+ASTContext::InlineVariableDefinitionKind
+ASTContext::getInlineVariableDefinitionKind(const VarDecl *VD) const {
+  if (!VD->isInline())
+    return InlineVariableDefinitionKind::None;
+
+  // In almost all cases, it's a weak definition.
+  auto *First = VD->getFirstDecl();
+  if (!First->isConstexpr() || First->isInlineSpecified() ||
+      !VD->isStaticDataMember())
+    return InlineVariableDefinitionKind::Weak;
+
+  // If there's a file-context declaration in this translation unit, it's a
+  // non-discardable definition.
+  for (auto *D : VD->redecls())
+    if (D->getLexicalDeclContext()->isFileContext())
+      return InlineVariableDefinitionKind::Strong;
+
+  // If we've not seen one yet, we don't know.
+  return InlineVariableDefinitionKind::WeakUnknown;
+}
+
 static inline 
 std::string charUnitsToString(const CharUnits &CU) {
   return llvm::itostr(CU.getQuantity());
@@ -5164,7 +5193,7 @@ std::string ASTContext::getObjCEncodingForBlock(const BlockExpr *Expr) const {
   SourceLocation Loc;
   CharUnits PtrSize = getTypeSizeInChars(VoidPtrTy);
   CharUnits ParmOffset = PtrSize;
-  for (auto PI : Decl->params()) {
+  for (auto PI : Decl->parameters()) {
     QualType PType = PI->getType();
     CharUnits sz = getObjCEncodingTypeSize(PType);
     if (sz.isZero())
@@ -5179,7 +5208,7 @@ std::string ASTContext::getObjCEncodingForBlock(const BlockExpr *Expr) const {
   
   // Argument types.
   ParmOffset = PtrSize;
-  for (auto PVDecl : Decl->params()) {
+  for (auto PVDecl : Decl->parameters()) {
     QualType PType = PVDecl->getOriginalType(); 
     if (const ArrayType *AT =
           dyn_cast<ArrayType>(PType->getCanonicalTypeInternal())) {
@@ -5207,7 +5236,7 @@ bool ASTContext::getObjCEncodingForFunctionDecl(const FunctionDecl *Decl,
   getObjCEncodingForType(Decl->getReturnType(), S);
   CharUnits ParmOffset;
   // Compute size of all parameters.
-  for (auto PI : Decl->params()) {
+  for (auto PI : Decl->parameters()) {
     QualType PType = PI->getType();
     CharUnits sz = getObjCEncodingTypeSize(PType);
     if (sz.isZero())
@@ -5221,7 +5250,7 @@ bool ASTContext::getObjCEncodingForFunctionDecl(const FunctionDecl *Decl,
   ParmOffset = CharUnits::Zero();
 
   // Argument types.
-  for (auto PVDecl : Decl->params()) {
+  for (auto PVDecl : Decl->parameters()) {
     QualType PType = PVDecl->getOriginalType();
     if (const ArrayType *AT =
           dyn_cast<ArrayType>(PType->getCanonicalTypeInternal())) {
@@ -8486,15 +8515,31 @@ static GVALinkage basicGVALinkageForVariable(const ASTContext &Context,
   if (Context.isMSStaticDataMemberInlineDefinition(VD))
     return GVA_DiscardableODR;
 
+  // Most non-template variables have strong linkage; inline variables are
+  // linkonce_odr or (occasionally, for compatibility) weak_odr.
+  GVALinkage StrongLinkage;
+  switch (Context.getInlineVariableDefinitionKind(VD)) {
+  case ASTContext::InlineVariableDefinitionKind::None:
+    StrongLinkage = GVA_StrongExternal;
+    break;
+  case ASTContext::InlineVariableDefinitionKind::Weak:
+  case ASTContext::InlineVariableDefinitionKind::WeakUnknown:
+    StrongLinkage = GVA_DiscardableODR;
+    break;
+  case ASTContext::InlineVariableDefinitionKind::Strong:
+    StrongLinkage = GVA_StrongODR;
+    break;
+  }
+
   switch (VD->getTemplateSpecializationKind()) {
   case TSK_Undeclared:
-    return GVA_StrongExternal;
+    return StrongLinkage;
 
   case TSK_ExplicitSpecialization:
     return Context.getTargetInfo().getCXXABI().isMicrosoft() &&
                    VD->isStaticDataMember()
                ? GVA_StrongODR
-               : GVA_StrongExternal;
+               : StrongLinkage;
 
   case TSK_ExplicitInstantiationDefinition:
     return GVA_StrongODR;

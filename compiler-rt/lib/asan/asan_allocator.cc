@@ -223,7 +223,7 @@ void AllocatorOptions::CopyTo(Flags *f, CommonFlags *cf) {
 
 struct Allocator {
   static const uptr kMaxAllowedMallocSize =
-      FIRST_32_SECOND_64(3UL << 30, 1UL << 40);
+      FIRST_32_SECOND_64(3UL << 30, 1ULL << 40);
   static const uptr kMaxThreadLocalQuarantine =
       FIRST_32_SECOND_64(1 << 18, 1 << 20);
 
@@ -681,12 +681,15 @@ static StackTrace GetStackTraceFromId(u32 id) {
   return res;
 }
 
+u32 AsanChunkView::GetAllocStackId() { return chunk_->alloc_context_id; }
+u32 AsanChunkView::GetFreeStackId() { return chunk_->free_context_id; }
+
 StackTrace AsanChunkView::GetAllocStack() {
-  return GetStackTraceFromId(chunk_->alloc_context_id);
+  return GetStackTraceFromId(GetAllocStackId());
 }
 
 StackTrace AsanChunkView::GetFreeStack() {
-  return GetStackTraceFromId(chunk_->free_context_id);
+  return GetStackTraceFromId(GetFreeStackId());
 }
 
 void InitializeAllocator(const AllocatorOptions &options) {

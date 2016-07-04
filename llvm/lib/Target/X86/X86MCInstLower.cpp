@@ -127,9 +127,6 @@ GetSymbolFromOperand(const MachineOperand &MO) const {
     // Handle dllimport linkage.
     Name += "__imp_";
     break;
-  case X86II::MO_DARWIN_STUB:
-    Suffix = "$stub";
-    break;
   case X86II::MO_DARWIN_NONLAZY:
   case X86II::MO_DARWIN_NONLAZY_PIC_BASE:
     Suffix = "$non_lazy_ptr";
@@ -138,8 +135,6 @@ GetSymbolFromOperand(const MachineOperand &MO) const {
 
   if (!Suffix.empty())
     Name += DL.getPrivateGlobalPrefix();
-
-  unsigned PrefixLen = Name.size();
 
   if (MO.isGlobal()) {
     const GlobalValue *GV = MO.getGlobal();
@@ -150,13 +145,10 @@ GetSymbolFromOperand(const MachineOperand &MO) const {
     assert(Suffix.empty());
     Sym = MO.getMBB()->getSymbol();
   }
-  unsigned OrigLen = Name.size() - PrefixLen;
 
   Name += Suffix;
   if (!Sym)
     Sym = Ctx.getOrCreateSymbol(Name);
-
-  StringRef OrigName = StringRef(Name).substr(PrefixLen, OrigLen);
 
   // If the target flags on the operand changes the name of the symbol, do that
   // before we return the symbol.
@@ -172,24 +164,6 @@ GetSymbolFromOperand(const MachineOperand &MO) const {
         MachineModuleInfoImpl::
         StubValueTy(AsmPrinter.getSymbol(MO.getGlobal()),
                     !MO.getGlobal()->hasInternalLinkage());
-    }
-    break;
-  }
-  case X86II::MO_DARWIN_STUB: {
-    MachineModuleInfoImpl::StubValueTy &StubSym =
-      getMachOMMI().getFnStubEntry(Sym);
-    if (StubSym.getPointer())
-      return Sym;
-
-    if (MO.isGlobal()) {
-      StubSym =
-        MachineModuleInfoImpl::
-        StubValueTy(AsmPrinter.getSymbol(MO.getGlobal()),
-                    !MO.getGlobal()->hasInternalLinkage());
-    } else {
-      StubSym =
-        MachineModuleInfoImpl::
-        StubValueTy(Ctx.getOrCreateSymbol(OrigName), false);
     }
     break;
   }
@@ -211,7 +185,6 @@ MCOperand X86MCInstLower::LowerSymbolOperand(const MachineOperand &MO,
   // These affect the name of the symbol, not any suffix.
   case X86II::MO_DARWIN_NONLAZY:
   case X86II::MO_DLLIMPORT:
-  case X86II::MO_DARWIN_STUB:
     break;
 
   case X86II::MO_TLVP:      RefKind = MCSymbolRefExpr::VK_TLVP; break;
@@ -245,7 +218,7 @@ MCOperand X86MCInstLower::LowerSymbolOperand(const MachineOperand &MO,
                             MCSymbolRefExpr::create(MF.getPICBaseSymbol(), Ctx),
                                    Ctx);
     if (MO.isJTI()) {
-      assert(MAI.doesSetDirectiveSuppressesReloc());
+      assert(MAI.doesSetDirectiveSuppressReloc());
       // If .set directive is supported, use it to reduce the number of
       // relocations the assembler will generate for differences between
       // local labels. This is only safe when the symbols are in the same
@@ -1422,6 +1395,40 @@ void X86AsmPrinter::EmitInstruction(const MachineInstr *MI) {
     }
     break;
   }
+
+  case X86::VPERMIL2PDrm:
+  case X86::VPERMIL2PSrm:
+  case X86::VPERMIL2PDrmY:
+  case X86::VPERMIL2PSrmY: {
+    if (!OutStreamer->isVerboseAsm())
+      break;
+    assert(MI->getNumOperands() > 7 &&
+      "We should always have at least 7 operands!");
+    const MachineOperand &DstOp = MI->getOperand(0);
+    const MachineOperand &SrcOp1 = MI->getOperand(1);
+    const MachineOperand &SrcOp2 = MI->getOperand(2);
+    const MachineOperand &MaskOp = MI->getOperand(6);
+    const MachineOperand &CtrlOp = MI->getOperand(MI->getNumOperands() - 1);
+
+    if (!CtrlOp.isImm())
+      break;
+
+    unsigned ElSize;
+    switch (MI->getOpcode()) {
+    default: llvm_unreachable("Invalid opcode");
+    case X86::VPERMIL2PSrm: case X86::VPERMIL2PSrmY: ElSize = 32; break;
+    case X86::VPERMIL2PDrm: case X86::VPERMIL2PDrmY: ElSize = 64; break;
+    }
+
+    if (auto *C = getConstantFromPool(*MI, MaskOp)) {
+      SmallVector<int, 16> Mask;
+      DecodeVPERMIL2PMask(C, (unsigned)CtrlOp.getImm(), ElSize, Mask);
+      if (!Mask.empty())
+        OutStreamer->AddComment(getShuffleComment(DstOp, SrcOp1, SrcOp2, Mask));
+    }
+    break;
+  }
+
   case X86::VPPERMrrm: {
     if (!OutStreamer->isVerboseAsm())
       break;
@@ -1509,7 +1516,7 @@ void X86AsmPrinter::EmitInstruction(const MachineInstr *MI) {
               CS << CI->getZExtValue();
             } else {
               // print multi-word constant as (w0,w1)
-              auto Val = CI->getValue();
+              const auto &Val = CI->getValue();
               CS << "(";
               for (int i = 0, N = Val.getNumWords(); i < N; ++i) {
                 if (i > 0)

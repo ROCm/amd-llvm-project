@@ -145,7 +145,7 @@ namespace {
       (void) llvm::createRegionViewerPass();
       (void) llvm::createSCCPPass();
       (void) llvm::createSafeStackPass();
-      (void) llvm::createScalarReplAggregatesPass();
+      (void) llvm::createSROAPass();
       (void) llvm::createSingleLoopExtractorPass();
       (void) llvm::createStripSymbolsPass();
       (void) llvm::createStripNonDebugSymbolsPass();
@@ -183,6 +183,7 @@ namespace {
       (void) llvm::createInstructionSimplifierPass();
       (void) llvm::createLoopVectorizePass();
       (void) llvm::createSLPVectorizerPass();
+      (void) llvm::createLoadStoreVectorizerPass();
       (void) llvm::createBBVectorizePass();
       (void) llvm::createPartiallyInlineLibCallsPass();
       (void) llvm::createScalarizerPass();

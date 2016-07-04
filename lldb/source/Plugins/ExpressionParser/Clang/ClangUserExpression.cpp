@@ -26,6 +26,7 @@
 #include "ClangDiagnostic.h"
 
 #include "lldb/Core/ConstString.h"
+#include "lldb/Core/Debugger.h"
 #include "lldb/Core/Log.h"
 #include "lldb/Core/Module.h"
 #include "lldb/Core/StreamFile.h"
@@ -510,8 +511,6 @@ ClangUserExpression::Parse(DiagnosticManager &diagnostic_manager, ExecutionConte
                     m_fixed_text = fixed_expression.substr(fixed_start, fixed_end - fixed_start);
             }
         }
-        diagnostic_manager.Printf(eDiagnosticSeverityError, "%u error%s parsing expression", num_errors,
-                                  num_errors == 1 ? "" : "s");
 
         ResetDeclMap(); // We are being careful here in the case of breakpoint conditions.
 
@@ -641,9 +640,7 @@ ClangUserExpression::AddArguments(ExecutionContext &exe_ctx, std::vector<lldb::a
 
         if (!object_ptr_error.Success())
         {
-            diagnostic_manager.Printf(eDiagnosticSeverityWarning,
-                                      "couldn't get required object pointer (substituting NULL): %s",
-                                      object_ptr_error.AsCString());
+            exe_ctx.GetTargetRef().GetDebugger().GetAsyncOutputStream()->Printf("warning: `%s' is not accessible (subsituting 0)\n", object_name.AsCString());
             object_ptr = 0;
         }
 
@@ -661,8 +658,8 @@ ClangUserExpression::AddArguments(ExecutionContext &exe_ctx, std::vector<lldb::a
                 cmd_ptr = 0;
             }
         }
-        if (object_ptr)
-            args.push_back(object_ptr);
+        
+        args.push_back(object_ptr);
 
         if (m_in_objectivec_method)
             args.push_back(cmd_ptr);

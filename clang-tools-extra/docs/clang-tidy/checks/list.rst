@@ -4,7 +4,6 @@ Clang-Tidy Checks
 =========================
 
 .. toctree::
-
    boost-use-to-string
    cert-dcl03-c (redirects to misc-static-assert) <cert-dcl03-c>
    cert-dcl50-cpp
@@ -63,6 +62,7 @@ Clang-Tidy Checks
    misc-inefficient-algorithm
    misc-macro-parentheses
    misc-macro-repeated-side-effects
+   misc-misplaced-const
    misc-misplaced-widening-cast
    misc-move-const-arg
    misc-move-constructor-init
@@ -104,8 +104,10 @@ Clang-Tidy Checks
    modernize-use-auto
    modernize-use-bool-literals
    modernize-use-default
+   modernize-use-emplace
    modernize-use-nullptr
    modernize-use-override
+   modernize-use-using
    performance-faster-string-find
    performance-for-range-copy
    performance-implicit-cast-in-loop

@@ -33,6 +33,7 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
 
+#include <iterator>
 using namespace clang;
 using namespace sema;
 
@@ -929,6 +930,13 @@ Sema::CheckClassTemplate(Scope *S, unsigned TagSpec, TagUseKind TUK,
   if (Previous.begin() != Previous.end())
     PrevDecl = (*Previous.begin())->getUnderlyingDecl();
 
+  if (PrevDecl && PrevDecl->isTemplateParameter()) {
+    // Maybe we will complain about the shadowed template parameter.
+    DiagnoseTemplateParameterShadow(NameLoc, PrevDecl);
+    // Just pretend that we didn't see the previous declaration.
+    PrevDecl = nullptr;
+  }
+
   // If there is a previous declaration with the same name, check
   // whether this is a valid redeclaration.
   ClassTemplateDecl *PrevClassTemplate
@@ -1054,12 +1062,7 @@ Sema::CheckClassTemplate(Scope *S, unsigned TagSpec, TagUseKind TUK,
         // definition, as part of error recovery?
         return true;
       }
-    }    
-  } else if (PrevDecl && PrevDecl->isTemplateParameter()) {
-    // Maybe we will complain about the shadowed template parameter.
-    DiagnoseTemplateParameterShadow(NameLoc, PrevDecl);
-    // Just pretend that we didn't see the previous declaration.
-    PrevDecl = nullptr;
+    }
   } else if (PrevDecl) {
     // C++ [temp]p5:
     //   A class template shall not have the same name as any other
@@ -2040,7 +2043,7 @@ checkBuiltinTemplateIdType(Sema &SemaRef, BuiltinTemplateDecl *BTD,
                            TemplateArgumentListInfo &TemplateArgs) {
   ASTContext &Context = SemaRef.getASTContext();
   switch (BTD->getBuiltinTemplateKind()) {
-  case BTK__make_integer_seq:
+  case BTK__make_integer_seq: {
     // Specializations of __make_integer_seq<S, T, N> are treated like
     // S<T, 0, ..., N-1>.
 
@@ -2081,6 +2084,29 @@ checkBuiltinTemplateIdType(Sema &SemaRef, BuiltinTemplateDecl *BTD,
     // our synthetic template arguments will be applied to.
     return SemaRef.CheckTemplateIdType(Converted[0].getAsTemplate(),
                                        TemplateLoc, SyntheticTemplateArgs);
+  }
+
+  case BTK__type_pack_element:
+    // Specializations of
+    //    __type_pack_element<Index, T_1, ..., T_N>
+    // are treated like T_Index.
+    assert(Converted.size() == 2 &&
+      "__type_pack_element should be given an index and a parameter pack");
+
+    // If the Index is out of bounds, the program is ill-formed.
+    TemplateArgument IndexArg = Converted[0], Ts = Converted[1];
+    llvm::APSInt Index = IndexArg.getAsIntegral();
+    assert(Index >= 0 && "the index used with __type_pack_element should be of "
+                         "type std::size_t, and hence be non-negative");
+    if (Index >= Ts.pack_size()) {
+      SemaRef.Diag(TemplateArgs[0].getLocation(),
+                   diag::err_type_pack_element_out_of_bounds);
+      return QualType();
+    }
+
+    // We simply return the type at index `Index`.
+    auto Nth = std::next(Ts.pack_begin(), Index.getExtValue());
+    return Nth->getAsType();
   }
   llvm_unreachable("unexpected BuiltinTemplateDecl!");
 }
@@ -2132,7 +2158,7 @@ QualType Sema::CheckTemplateIdType(TemplateName Name,
       return QualType();
 
     TemplateArgumentList TemplateArgs(TemplateArgumentList::OnStack,
-                                      Converted.data(), Converted.size());
+                                      Converted);
 
     // Only substitute for the innermost template argument list.
     MultiLevelTemplateArgumentList TemplateArgLists;
@@ -2226,8 +2252,7 @@ QualType Sema::CheckTemplateIdType(TemplateName Name,
                             ClassTemplate->getTemplatedDecl()->getLocStart(),
                                                 ClassTemplate->getLocation(),
                                                      ClassTemplate,
-                                                     Converted.data(),
-                                                     Converted.size(), nullptr);
+                                                     Converted, nullptr);
       ClassTemplate->AddSpecialization(Decl, InsertPos);
       if (ClassTemplate->isOutOfLine())
         Decl->setLexicalDeclContext(ClassTemplate->getLexicalDeclContext());
@@ -2608,7 +2633,7 @@ DeclResult Sema::ActOnVarTemplateSpecialization(
         VarTemplatePartialSpecializationDecl::Create(
             Context, VarTemplate->getDeclContext(), TemplateKWLoc,
             TemplateNameLoc, TemplateParams, VarTemplate, DI->getType(), DI, SC,
-            Converted.data(), Converted.size(), TemplateArgs);
+            Converted, TemplateArgs);
 
     if (!PrevPartial)
       VarTemplate->AddPartialSpecialization(Partial, InsertPos);
@@ -2650,7 +2675,7 @@ DeclResult Sema::ActOnVarTemplateSpecialization(
     // this explicit specialization or friend declaration.
     Specialization = VarTemplateSpecializationDecl::Create(
         Context, VarTemplate->getDeclContext(), TemplateKWLoc, TemplateNameLoc,
-        VarTemplate, DI->getType(), DI, SC, Converted.data(), Converted.size());
+        VarTemplate, DI->getType(), DI, SC, Converted);
     Specialization->setTemplateArgsInfo(TemplateArgs);
 
     if (!PrevDecl)
@@ -2758,7 +2783,7 @@ Sema::CheckVarTemplateId(VarTemplateDecl *Template, SourceLocation TemplateLoc,
   // that it represents. That is,
   VarDecl *InstantiationPattern = Template->getTemplatedDecl();
   TemplateArgumentList TemplateArgList(TemplateArgumentList::OnStack,
-                                       Converted.data(), Converted.size());
+                                       Converted);
   TemplateArgumentList *InstantiationArgs = &TemplateArgList;
   bool AmbiguousPartialSpec = false;
   typedef PartialSpecMatchResult MatchResult;
@@ -3237,8 +3262,7 @@ SubstDefaultTemplateArgument(Sema &SemaRef,
     if (Inst.isInvalid())
       return nullptr;
 
-    TemplateArgumentList TemplateArgs(TemplateArgumentList::OnStack,
-                                      Converted.data(), Converted.size());
+    TemplateArgumentList TemplateArgs(TemplateArgumentList::OnStack, Converted);
 
     // Only substitute for the innermost template argument list.
     MultiLevelTemplateArgumentList TemplateArgLists;
@@ -3290,8 +3314,7 @@ SubstDefaultTemplateArgument(Sema &SemaRef,
   if (Inst.isInvalid())
     return ExprError();
 
-  TemplateArgumentList TemplateArgs(TemplateArgumentList::OnStack,
-                                    Converted.data(), Converted.size());
+  TemplateArgumentList TemplateArgs(TemplateArgumentList::OnStack, Converted);
 
   // Only substitute for the innermost template argument list.
   MultiLevelTemplateArgumentList TemplateArgLists;
@@ -3342,8 +3365,7 @@ SubstDefaultTemplateArgument(Sema &SemaRef,
   if (Inst.isInvalid())
     return TemplateName();
 
-  TemplateArgumentList TemplateArgs(TemplateArgumentList::OnStack,
-                                    Converted.data(), Converted.size());
+  TemplateArgumentList TemplateArgs(TemplateArgumentList::OnStack, Converted);
 
   // Only substitute for the innermost template argument list.
   MultiLevelTemplateArgumentList TemplateArgLists;
@@ -3494,7 +3516,7 @@ bool Sema::CheckTemplateArgument(NamedDecl *Param,
         return true;
 
       TemplateArgumentList TemplateArgs(TemplateArgumentList::OnStack,
-                                        Converted.data(), Converted.size());
+                                        Converted);
       NTTPType = SubstType(NTTPType,
                            MultiLevelTemplateArgumentList(TemplateArgs),
                            NTTP->getLocation(),
@@ -3634,8 +3656,7 @@ bool Sema::CheckTemplateArgument(NamedDecl *Param,
     if (Inst.isInvalid())
       return true;
 
-    TemplateArgumentList TemplateArgs(TemplateArgumentList::OnStack,
-                                      Converted.data(), Converted.size());
+    TemplateArgumentList TemplateArgs(TemplateArgumentList::OnStack, Converted);
     TempParm = cast_or_null<TemplateTemplateParmDecl>(
                       SubstDecl(TempParm, CurContext,
                                 MultiLevelTemplateArgumentList(TemplateArgs)));
@@ -6365,8 +6386,7 @@ Sema::ActOnClassTemplateSpecialization(Scope *S, unsigned TagSpec,
                                                        KWLoc, TemplateNameLoc,
                                                        TemplateParams,
                                                        ClassTemplate,
-                                                       Converted.data(),
-                                                       Converted.size(),
+                                                       Converted,
                                                        TemplateArgs,
                                                        CanonType,
                                                        PrevPartial);
@@ -6421,8 +6441,7 @@ Sema::ActOnClassTemplateSpecialization(Scope *S, unsigned TagSpec,
                                              ClassTemplate->getDeclContext(),
                                                 KWLoc, TemplateNameLoc,
                                                 ClassTemplate,
-                                                Converted.data(),
-                                                Converted.size(),
+                                                Converted,
                                                 PrevDecl);
     SetNestedNameSpecifier(Specialization, SS);
     if (TemplateParameterLists.size() > 0) {
@@ -6987,11 +7006,19 @@ bool Sema::CheckFunctionTemplateSpecialization(
   // Mark the prior declaration as an explicit specialization, so that later
   // clients know that this is an explicit specialization.
   if (!isFriend) {
-    // Explicit specializations do not inherit '=delete' from their primary
-    // function template.
-    if (Specialization->isDeleted()) {
-      assert(!SpecInfo->isExplicitSpecialization());
-      assert(Specialization->getCanonicalDecl() == Specialization);
+    // Since explicit specializations do not inherit '=delete' from their
+    // primary function template - check if the 'specialization' that was
+    // implicitly generated (during template argument deduction for partial
+    // ordering) from the most specialized of all the function templates that
+    // 'FD' could have been specializing, has a 'deleted' definition.  If so,
+    // first check that it was implicitly generated during template argument
+    // deduction by making sure it wasn't referenced, and then reset the deleted
+    // flag to not-deleted, so that we can inherit that information from 'FD'.
+    if (Specialization->isDeleted() && !SpecInfo->isExplicitSpecialization() &&
+        !Specialization->getCanonicalDecl()->isReferenced()) {
+      assert(
+          Specialization->getCanonicalDecl() == Specialization &&
+          "This must be the only existing declaration of this specialization");
       Specialization->setDeletedAsWritten(false);
     }
     SpecInfo->setTemplateSpecializationKind(TSK_ExplicitSpecialization);
@@ -7035,6 +7062,7 @@ Sema::CheckMemberSpecialization(NamedDecl *Member, LookupResult &Previous) {
   assert(!isa<TemplateDecl>(Member) && "Only for non-template members");
 
   // Try to find the member we are instantiating.
+  NamedDecl *FoundInstantiation = nullptr;
   NamedDecl *Instantiation = nullptr;
   NamedDecl *InstantiatedFrom = nullptr;
   MemberSpecializationInfo *MSInfo = nullptr;
@@ -7050,6 +7078,7 @@ Sema::CheckMemberSpecialization(NamedDecl *Member, LookupResult &Previous) {
         if (!hasExplicitCallingConv(Adjusted))
           Adjusted = adjustCCAndNoReturn(Adjusted, Method->getType());
         if (Context.hasSameType(Adjusted, Method->getType())) {
+          FoundInstantiation = *I;
           Instantiation = Method;
           InstantiatedFrom = Method->getInstantiatedFromMemberFunction();
           MSInfo = Method->getMemberSpecializationInfo();
@@ -7062,6 +7091,7 @@ Sema::CheckMemberSpecialization(NamedDecl *Member, LookupResult &Previous) {
     if (Previous.isSingleResult() &&
         (PrevVar = dyn_cast<VarDecl>(Previous.getFoundDecl())))
       if (PrevVar->isStaticDataMember()) {
+        FoundInstantiation = Previous.getRepresentativeDecl();
         Instantiation = PrevVar;
         InstantiatedFrom = PrevVar->getInstantiatedFromStaticDataMember();
         MSInfo = PrevVar->getMemberSpecializationInfo();
@@ -7070,6 +7100,7 @@ Sema::CheckMemberSpecialization(NamedDecl *Member, LookupResult &Previous) {
     CXXRecordDecl *PrevRecord;
     if (Previous.isSingleResult() &&
         (PrevRecord = dyn_cast<CXXRecordDecl>(Previous.getFoundDecl()))) {
+      FoundInstantiation = Previous.getRepresentativeDecl();
       Instantiation = PrevRecord;
       InstantiatedFrom = PrevRecord->getInstantiatedFromMemberClass();
       MSInfo = PrevRecord->getMemberSpecializationInfo();
@@ -7078,6 +7109,7 @@ Sema::CheckMemberSpecialization(NamedDecl *Member, LookupResult &Previous) {
     EnumDecl *PrevEnum;
     if (Previous.isSingleResult() &&
         (PrevEnum = dyn_cast<EnumDecl>(Previous.getFoundDecl()))) {
+      FoundInstantiation = Previous.getRepresentativeDecl();
       Instantiation = PrevEnum;
       InstantiatedFrom = PrevEnum->getInstantiatedFromMemberEnum();
       MSInfo = PrevEnum->getMemberSpecializationInfo();
@@ -7106,7 +7138,7 @@ Sema::CheckMemberSpecialization(NamedDecl *Member, LookupResult &Previous) {
     }
 
     Previous.clear();
-    Previous.addDecl(Instantiation);
+    Previous.addDecl(FoundInstantiation);
     return false;
   }
 
@@ -7207,7 +7239,7 @@ Sema::CheckMemberSpecialization(NamedDecl *Member, LookupResult &Previous) {
   // Save the caller the trouble of having to figure out which declaration
   // this specialization matches.
   Previous.clear();
-  Previous.addDecl(Instantiation);
+  Previous.addDecl(FoundInstantiation);
   return false;
 }
 
@@ -7362,6 +7394,29 @@ Sema::ActOnExplicitInstantiation(Scope *S,
     }
   }
 
+  // In MSVC mode, dllimported explicit instantiation definitions are treated as
+  // instantiation declarations for most purposes.
+  bool DLLImportExplicitInstantiationDef = false;
+  if (TSK == TSK_ExplicitInstantiationDefinition &&
+      Context.getTargetInfo().getCXXABI().isMicrosoft()) {
+    // Check for dllimport class template instantiation definitions.
+    bool DLLImport =
+        ClassTemplate->getTemplatedDecl()->getAttr<DLLImportAttr>();
+    for (AttributeList *A = Attr; A; A = A->getNext()) {
+      if (A->getKind() == AttributeList::AT_DLLImport)
+        DLLImport = true;
+      if (A->getKind() == AttributeList::AT_DLLExport) {
+        // dllexport trumps dllimport here.
+        DLLImport = false;
+        break;
+      }
+    }
+    if (DLLImport) {
+      TSK = TSK_ExplicitInstantiationDeclaration;
+      DLLImportExplicitInstantiationDef = true;
+    }
+  }
+
   // Translate the parser's template argument list in our AST format.
   TemplateArgumentListInfo TemplateArgs(LAngleLoc, RAngleLoc);
   translateTemplateArguments(TemplateArgsIn, TemplateArgs);
@@ -7415,6 +7470,12 @@ Sema::ActOnExplicitInstantiation(Scope *S,
       Specialization->setLocation(TemplateNameLoc);
       PrevDecl = nullptr;
     }
+
+    if (PrevDecl_TSK == TSK_ExplicitInstantiationDeclaration &&
+        DLLImportExplicitInstantiationDef) {
+      // The new specialization might add a dllimport attribute.
+      HasNoEffect = false;
+    }
   }
 
   if (!Specialization) {
@@ -7425,8 +7486,7 @@ Sema::ActOnExplicitInstantiation(Scope *S,
                                              ClassTemplate->getDeclContext(),
                                                 KWLoc, TemplateNameLoc,
                                                 ClassTemplate,
-                                                Converted.data(),
-                                                Converted.size(),
+                                                Converted,
                                                 PrevDecl);
     SetNestedNameSpecifier(Specialization, SS);
 
@@ -7492,11 +7552,11 @@ Sema::ActOnExplicitInstantiation(Scope *S,
                                        Specialization->getDefinition());
   if (Def) {
     TemplateSpecializationKind Old_TSK = Def->getTemplateSpecializationKind();
-
     // Fix a TSK_ExplicitInstantiationDeclaration followed by a
     // TSK_ExplicitInstantiationDefinition
     if (Old_TSK == TSK_ExplicitInstantiationDeclaration &&
-        TSK == TSK_ExplicitInstantiationDefinition) {
+        (TSK == TSK_ExplicitInstantiationDefinition ||
+         DLLImportExplicitInstantiationDef)) {
       // FIXME: Need to notify the ASTMutationListener that we did this.
       Def->setTemplateSpecializationKind(TSK);
 

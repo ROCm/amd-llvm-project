@@ -5,6 +5,7 @@ add_public_tablegen_target(ELFOptionsTableGen)
 add_lld_library(lldELF
   Driver.cpp
   DriverUtils.cpp
+  EhFrame.cpp
   Error.cpp
   ICF.cpp
   InputFiles.cpp
@@ -13,7 +14,9 @@ add_lld_library(lldELF
   LinkerScript.cpp
   MarkLive.cpp
   OutputSections.cpp
+  Relocations.cpp
   ScriptParser.cpp
+  Strings.cpp
   SymbolListFile.cpp
   SymbolTable.cpp
   Symbols.cpp
@@ -29,6 +32,7 @@ add_lld_library(lldELF
   Core
   IPO
   Linker
+  LTO
   Object
   Option
   Passes

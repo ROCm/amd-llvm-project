@@ -28,7 +28,9 @@ namespace elf {
 class ArchiveFile;
 class BitcodeFile;
 class InputFile;
+class LazyObjectFile;
 class SymbolBody;
+struct Version;
 template <class ELFT> class ObjectFile;
 template <class ELFT> class OutputSection;
 template <class ELFT> class OutputSectionBase;
@@ -43,8 +45,6 @@ struct Symbol;
 
 // The base class for real symbol classes.
 class SymbolBody {
-  void init();
-
 public:
   enum Kind {
     DefinedFirst,
@@ -77,10 +77,7 @@ public:
   bool isPreemptible() const;
 
   // Returns the symbol name.
-  StringRef getName() const {
-    assert(!isLocal());
-    return StringRef(Name.S, Name.Len);
-  }
+  StringRef getName() const;
   uint32_t getNameOffset() const {
     assert(isLocal());
     return NameOffset;
@@ -93,6 +90,7 @@ public:
   uint32_t GotPltIndex = -1;
   uint32_t PltIndex = -1;
   uint32_t ThunkIndex = -1;
+  uint32_t GlobalDynIndex = -1;
   bool isInGot() const { return GotIndex != -1U; }
   bool isInPlt() const { return PltIndex != -1U; }
   bool hasThunk() const { return ThunkIndex != -1U; }
@@ -126,6 +124,9 @@ public:
 
   // True if this is a local symbol.
   unsigned IsLocal : 1;
+
+  // True if this symbol has an entry in the global part of MIPS GOT.
+  unsigned IsInGlobalMipsGot : 1;
 
   // The following fields have the same meaning as the ELF symbol attributes.
   uint8_t Type;    // symbol type
@@ -299,13 +300,8 @@ public:
   SharedFile<ELFT> *File;
   const Elf_Sym &Sym;
 
-  // This field is initially a pointer to the symbol's version definition. As
-  // symbols are added to the version table, this field is replaced with the
-  // version identifier to be stored in .gnu.version in the output file.
-  union {
-    const Elf_Verdef *Verdef;
-    uint16_t VersionId;
-  };
+  // This field is a pointer to the symbol's version definition.
+  const Elf_Verdef *Verdef;
 
   // OffsetInBss is significant only when needsCopy() is true.
   uintX_t OffsetInBss = 0;
@@ -333,9 +329,9 @@ public:
 // LazyArchive symbols represents symbols in archive files.
 class LazyArchive : public Lazy {
 public:
-  LazyArchive(ArchiveFile *F, const llvm::object::Archive::Symbol S,
+  LazyArchive(ArchiveFile &File, const llvm::object::Archive::Symbol S,
               uint8_t Type)
-      : Lazy(LazyArchiveKind, S.getName(), Type), File(F), Sym(S) {}
+      : Lazy(LazyArchiveKind, S.getName(), Type), File(File), Sym(S) {}
 
   static bool classof(const SymbolBody *S) {
     return S->kind() == LazyArchiveKind;
@@ -344,7 +340,7 @@ public:
   std::unique_ptr<InputFile> getFile();
 
 private:
-  ArchiveFile *File;
+  ArchiveFile &File;
   const llvm::object::Archive::Symbol Sym;
 };
 
@@ -352,8 +348,8 @@ private:
 // --start-lib and --end-lib options.
 class LazyObject : public Lazy {
 public:
-  LazyObject(StringRef Name, MemoryBufferRef M, uint8_t Type)
-      : Lazy(LazyObjectKind, Name, Type), MBRef(M) {}
+  LazyObject(StringRef Name, LazyObjectFile &File, uint8_t Type)
+      : Lazy(LazyObjectKind, Name, Type), File(File) {}
 
   static bool classof(const SymbolBody *S) {
     return S->kind() == LazyObjectKind;
@@ -362,7 +358,7 @@ public:
   std::unique_ptr<InputFile> getFile();
 
 private:
-  MemoryBufferRef MBRef;
+  LazyObjectFile &File;
 };
 
 // Some linker-generated symbols need to be created as
@@ -397,14 +393,15 @@ template <class ELFT> SymbolBody *ElfSym<ELFT>::MipsGpDisp;
 // stored in the Body field of this object as it resolves symbols. Symbol also
 // holds computed properties of symbol names.
 struct Symbol {
-  uint32_t GlobalDynIndex = -1;
-
   // Symbol binding. This is on the Symbol to track changes during resolution.
   // In particular:
   // An undefined weak is still weak when it resolves to a shared library.
   // An undefined weak will not fetch archive members, but we have to remember
   // it is weak.
   uint8_t Binding;
+
+  // Version definition index.
+  uint16_t VersionId;
 
   // Symbol visibility. This is the computed minimum visibility of all
   // observed non-DSO symbols.
@@ -422,10 +419,10 @@ struct Symbol {
   // --export-dynamic, and by dynamic lists.
   unsigned ExportDynamic : 1;
 
-  // This flag acts as an additional filter on the dynamic symbol list. It is
-  // set if there is no version script, or if the symbol appears in the global
-  // section of the version script.
-  unsigned VersionScriptGlobal : 1;
+  // If this flag is true then symbol name also contains version name. Such
+  // name can have single or double symbol @. Double means that version is
+  // used as default. Single signals about depricated symbol version.
+  unsigned VersionedName : 1;
 
   bool includeInDynsym() const;
   bool isWeak() const { return Binding == llvm::ELF::STB_WEAK; }

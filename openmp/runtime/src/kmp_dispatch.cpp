@@ -175,7 +175,7 @@ struct dispatch_shared_info_template {
         dispatch_shared_info64_t               s64;
     } u;
     volatile kmp_uint32     buffer_index;
-#if OMP_41_ENABLED
+#if OMP_45_ENABLED
     volatile kmp_int32      doacross_buf_idx;  // teamwise index
     kmp_uint32             *doacross_flags;    // array of iteration flags (0/1)
     kmp_int32               doacross_num_done; // count finished threads
@@ -190,7 +190,7 @@ struct dispatch_shared_info_template {
 // test_then_add template (general template should NOT be used)
 template< typename T >
 static __forceinline T
-test_then_add( volatile T *p, T d ) { KMP_ASSERT(0); };
+test_then_add( volatile T *p, T d );
 
 template<>
 __forceinline kmp_int32
@@ -213,7 +213,7 @@ test_then_add< kmp_int64 >( volatile kmp_int64 *p, kmp_int64 d )
 // test_then_inc_acq template (general template should NOT be used)
 template< typename T >
 static __forceinline T
-test_then_inc_acq( volatile T *p ) { KMP_ASSERT(0); };
+test_then_inc_acq( volatile T *p );
 
 template<>
 __forceinline kmp_int32
@@ -236,7 +236,7 @@ test_then_inc_acq< kmp_int64 >( volatile kmp_int64 *p )
 // test_then_inc template (general template should NOT be used)
 template< typename T >
 static __forceinline T
-test_then_inc( volatile T *p ) { KMP_ASSERT(0); };
+test_then_inc( volatile T *p );
 
 template<>
 __forceinline kmp_int32
@@ -259,7 +259,7 @@ test_then_inc< kmp_int64 >( volatile kmp_int64 *p )
 // compare_and_swap template (general template should NOT be used)
 template< typename T >
 static __forceinline kmp_int32
-compare_and_swap( volatile T *p, T c, T s ) { KMP_ASSERT(0); };
+compare_and_swap( volatile T *p, T c, T s );
 
 template<>
 __forceinline kmp_int32
@@ -656,9 +656,9 @@ __kmp_dispatch_init(
 
         /* What happens when number of threads changes, need to resize buffer? */
         pr = reinterpret_cast< dispatch_private_info_template< T >  * >
-            ( &th -> th.th_dispatch -> th_disp_buffer[ my_buffer_index % KMP_MAX_DISP_BUF ] );
+            ( &th -> th.th_dispatch -> th_disp_buffer[ my_buffer_index % __kmp_dispatch_num_buffers ] );
         sh = reinterpret_cast< dispatch_shared_info_template< UT > volatile * >
-            ( &team -> t.t_disp_buffer[ my_buffer_index % KMP_MAX_DISP_BUF ] );
+            ( &team -> t.t_disp_buffer[ my_buffer_index % __kmp_dispatch_num_buffers ] );
     }
 
     /* Currently just ignore the monotonic and non-monotonic modifiers (the compiler isn't producing them
@@ -738,7 +738,7 @@ __kmp_dispatch_init(
         }
 
         /* guided analytical not safe for too many threads */
-        if ( team->t.t_nproc > 1<<20 && schedule == kmp_sch_guided_analytical_chunked ) {
+        if ( schedule == kmp_sch_guided_analytical_chunked && th->th.th_team_nproc > 1<<20 ) {
             schedule = kmp_sch_guided_iterative_chunked;
             KMP_WARNING( DispatchManyThreads );
         }
@@ -836,7 +836,7 @@ __kmp_dispatch_init(
     #if  ( KMP_STATIC_STEAL_ENABLED && KMP_ARCH_X86_64 )
     case kmp_sch_static_steal:
         {
-            T nproc = team->t.t_nproc;
+            T nproc = th->th.th_team_nproc;
             T ntc, init;
 
             KD_TRACE(100, ("__kmp_dispatch_init: T#%d kmp_sch_static_steal case\n", gtid ) );
@@ -869,7 +869,7 @@ __kmp_dispatch_init(
     #endif
     case kmp_sch_static_balanced:
         {
-            T nproc = team->t.t_nproc;
+            T nproc = th->th.th_team_nproc;
             T init, limit;
 
             KD_TRACE(100, ("__kmp_dispatch_init: T#%d kmp_sch_static_balanced case\n",
@@ -933,7 +933,7 @@ __kmp_dispatch_init(
         } // case
     case kmp_sch_guided_iterative_chunked :
         {
-            T nproc = team->t.t_nproc;
+            T nproc = th->th.th_team_nproc;
             KD_TRACE(100,("__kmp_dispatch_init: T#%d kmp_sch_guided_iterative_chunked case\n",gtid));
 
             if ( nproc > 1 ) {
@@ -956,7 +956,7 @@ __kmp_dispatch_init(
         break;
     case kmp_sch_guided_analytical_chunked:
         {
-            T nproc = team->t.t_nproc;
+            T nproc = th->th.th_team_nproc;
             KD_TRACE(100, ("__kmp_dispatch_init: T#%d kmp_sch_guided_analytical_chunked case\n", gtid));
 
             if ( nproc > 1 ) {
@@ -1074,8 +1074,8 @@ __kmp_dispatch_init(
         break;
     case kmp_sch_static_greedy:
         KD_TRACE(100,("__kmp_dispatch_init: T#%d kmp_sch_static_greedy case\n",gtid));
-            pr->u.p.parm1 = ( team -> t.t_nproc > 1 ) ?
-                ( tc + team->t.t_nproc - 1 ) / team->t.t_nproc :
+            pr->u.p.parm1 = ( th->th.th_team_nproc > 1 ) ?
+                ( tc + th->th.th_team_nproc - 1 ) / th->th.th_team_nproc :
                 tc;
         break;
     case kmp_sch_static_chunked :
@@ -1095,7 +1095,7 @@ __kmp_dispatch_init(
             parm1 = chunk;
 
             /* F : size of the first cycle */
-            parm2 = ( tc / (2 * team->t.t_nproc) );
+            parm2 = ( tc / (2 * th->th.th_team_nproc) );
 
             if ( parm2 < 1 ) {
                 parm2 = 1;
@@ -1793,7 +1793,7 @@ __kmp_dispatch_next(
 
                         if ( p_st != NULL ) *p_st = incr;
 
-                        pr->u.p.count += team->t.t_nproc;
+                        pr->u.p.count += th->th.th_team_nproc;
 
                         if ( incr == 1 ) {
                             *p_lb = start + init;
@@ -1963,8 +1963,8 @@ __kmp_dispatch_next(
 
                     trip  = pr->u.p.tc;
 
-                    KMP_DEBUG_ASSERT(team->t.t_nproc > 1);
-                    KMP_DEBUG_ASSERT((2UL * chunkspec + 1) * (UT)team->t.t_nproc < trip);
+                    KMP_DEBUG_ASSERT(th->th.th_team_nproc > 1);
+                    KMP_DEBUG_ASSERT((2UL * chunkspec + 1) * (UT)th->th.th_team_nproc < trip);
 
                     while(1) { /* this while loop is a safeguard against unexpected zero chunk sizes */
                         chunkIdx = test_then_inc_acq< ST >((volatile ST *) & sh->u.s.iteration );
@@ -2135,7 +2135,7 @@ __kmp_dispatch_next(
             }
             #endif
 
-            if ( (ST)num_done == team->t.t_nproc-1 ) {
+            if ( (ST)num_done == th->th.th_team_nproc - 1 ) {
                 /* NOTE: release this buffer to be reused */
 
                 KMP_MB();       /* Flush all pending memory write invalidates.  */
@@ -2150,7 +2150,7 @@ __kmp_dispatch_next(
 
                 KMP_MB();       /* Flush all pending memory write invalidates.  */
 
-                sh -> buffer_index += KMP_MAX_DISP_BUF;
+                sh -> buffer_index += __kmp_dispatch_num_buffers;
                 KD_TRACE(100, ("__kmp_dispatch_next: T#%d change buffer_index:%d\n",
                                 gtid, sh->buffer_index) );
 
@@ -2568,6 +2568,32 @@ __kmp_wait_yield_4(volatile kmp_uint32 * spinner,
     }
     KMP_FSYNC_SPIN_ACQUIRED( obj );
     return r;
+}
+
+void
+__kmp_wait_yield_4_ptr(void *spinner,
+                   kmp_uint32 checker,
+                   kmp_uint32 (*pred)( void *, kmp_uint32 ),
+                   void        *obj    // Higher-level synchronization object, or NULL.
+                   )
+{
+    // note: we may not belong to a team at this point
+    register void                *spin          = spinner;
+    register kmp_uint32           check         = checker;
+    register kmp_uint32           spins;
+    register kmp_uint32 (*f) ( void *, kmp_uint32 ) = pred;
+
+    KMP_FSYNC_SPIN_INIT( obj, spin );
+    KMP_INIT_YIELD( spins );
+    // main wait spin loop
+    while ( !f( spin, check ) ) {
+        KMP_FSYNC_SPIN_PREPARE( obj );
+        /* if we have waited a bit, or are oversubscribed, yield */
+        /* pause is in the following code */
+        KMP_YIELD( TCR_4( __kmp_nth ) > __kmp_avail_proc );
+        KMP_YIELD_SPIN( spins );
+    }
+    KMP_FSYNC_SPIN_ACQUIRED( obj );
 }
 
 } // extern "C"

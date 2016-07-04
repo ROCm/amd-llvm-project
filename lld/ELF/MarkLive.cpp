@@ -23,6 +23,7 @@
 #include "InputSection.h"
 #include "LinkerScript.h"
 #include "OutputSections.h"
+#include "Strings.h"
 #include "SymbolTable.h"
 #include "Symbols.h"
 #include "Target.h"
@@ -95,7 +96,7 @@ static void forEachSuccessor(InputSection<ELFT> *Sec,
 }
 
 template <class ELFT>
-static void scanEhFrameSection(EHInputSection<ELFT> &EH,
+static void scanEhFrameSection(EhInputSection<ELFT> &EH,
                                std::function<void(ResolvedReloc<ELFT>)> Fn) {
   if (!EH.RelocSection)
     return;
@@ -141,10 +142,13 @@ template <class ELFT> void elf::markLive() {
   auto Enqueue = [&](ResolvedReloc<ELFT> R) {
     if (!R.Sec)
       return;
-    if (auto *MS = dyn_cast<MergeInputSection<ELFT>>(R.Sec)) {
-      SectionPiece *Piece = MS->getSectionPiece(R.Offset);
-      Piece->Live = true;
-    }
+
+    // Usually, a whole section is marked as live or dead, but in mergeable
+    // (splittable) sections, each piece of data has independent liveness bit.
+    // So we explicitly tell it which offset is in use.
+    if (auto *MS = dyn_cast<MergeInputSection<ELFT>>(R.Sec))
+      MS->markLiveAt(R.Offset);
+
     if (R.Sec->Live)
       return;
     R.Sec->Live = true;
@@ -180,7 +184,7 @@ template <class ELFT> void elf::markLive() {
         // .eh_frame is always marked as live now, but also it can reference to
         // sections that contain personality. We preserve all non-text sections
         // referred by .eh_frame here.
-        if (auto *EH = dyn_cast_or_null<EHInputSection<ELFT>>(Sec))
+        if (auto *EH = dyn_cast_or_null<EhInputSection<ELFT>>(Sec))
           scanEhFrameSection<ELFT>(*EH, Enqueue);
         if (isReserved(Sec) || Script<ELFT>::X->shouldKeep(Sec))
           Enqueue({Sec, 0});

@@ -56,6 +56,11 @@ public:
   // string for creating error messages.
   StringRef ArchiveName;
 
+  // If this is an architecture-specific file, the following members
+  // have ELF type (i.e. ELF{32,64}{LE,BE}) and target machine type.
+  ELFKind EKind = ELFNoneKind;
+  uint16_t EMachine = llvm::ELF::EM_NONE;
+
 protected:
   InputFile(Kind K, MemoryBufferRef M) : MB(M), FileKind(K) {}
 
@@ -79,11 +84,9 @@ public:
     return K == ObjectKind || K == SharedKind;
   }
 
-  static ELFKind getELFKind();
   const llvm::object::ELFFile<ELFT> &getObj() const { return ELFObj; }
   llvm::object::ELFFile<ELFT> &getObj() { return ELFObj; }
 
-  uint16_t getEMachine() const { return getObj().getHeader()->e_machine; }
   uint8_t getOSABI() const {
     return getObj().getHeader()->e_ident[llvm::ELF::EI_OSABI];
   }
@@ -140,6 +143,8 @@ public:
 
   const Elf_Shdr *getSymbolTable() const { return this->Symtab; };
 
+  void traceUndefined(StringRef Name);
+
   // Get MIPS GP0 value defined by this file. This value represents the gp value
   // used to create the relocatable object and required to support
   // R_MIPS_GPREL16 / R_MIPS_GPREL32 relocations.
@@ -171,7 +176,7 @@ private:
   llvm::BumpPtrAllocator Alloc;
   llvm::SpecificBumpPtrAllocator<InputSection<ELFT>> IAlloc;
   llvm::SpecificBumpPtrAllocator<MergeInputSection<ELFT>> MAlloc;
-  llvm::SpecificBumpPtrAllocator<EHInputSection<ELFT>> EHAlloc;
+  llvm::SpecificBumpPtrAllocator<EhInputSection<ELFT>> EHAlloc;
 };
 
 // LazyObjectFile is analogous to ArchiveFile in the sense that
@@ -190,6 +195,7 @@ public:
   }
 
   template <class ELFT> void parse();
+  MemoryBufferRef getBuffer();
 
 private:
   std::vector<StringRef> getSymbols();
@@ -198,6 +204,7 @@ private:
 
   llvm::BumpPtrAllocator Alloc;
   llvm::StringSaver Saver{Alloc};
+  bool Seen = false;
 };
 
 // An ArchiveFile object represents a .a file.

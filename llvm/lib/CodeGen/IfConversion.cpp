@@ -34,6 +34,7 @@
 #include "llvm/Target/TargetRegisterInfo.h"
 #include "llvm/Target/TargetSubtargetInfo.h"
 #include <algorithm>
+#include <utility>
 
 using namespace llvm;
 
@@ -162,7 +163,6 @@ namespace {
     const TargetLoweringBase *TLI;
     const TargetInstrInfo *TII;
     const TargetRegisterInfo *TRI;
-    const MachineBlockFrequencyInfo *MBFI;
     const MachineBranchProbabilityInfo *MBPI;
     MachineRegisterInfo *MRI;
 
@@ -177,7 +177,7 @@ namespace {
   public:
     static char ID;
     IfConverter(std::function<bool(const Function &)> Ftor = nullptr)
-        : MachineFunctionPass(ID), FnNum(-1), PredicateFtor(Ftor) {
+        : MachineFunctionPass(ID), FnNum(-1), PredicateFtor(std::move(Ftor)) {
       initializeIfConverterPass(*PassRegistry::getPassRegistry());
     }
 
@@ -290,7 +290,7 @@ bool IfConverter::runOnMachineFunction(MachineFunction &MF) {
   TLI = ST.getTargetLowering();
   TII = ST.getInstrInfo();
   TRI = ST.getRegisterInfo();
-  MBFI = &getAnalysis<MachineBlockFrequencyInfo>();
+  BranchFolder::MBFIWrapper MBFI(getAnalysis<MachineBlockFrequencyInfo>());
   MBPI = &getAnalysis<MachineBranchProbabilityInfo>();
   MRI = &MF.getRegInfo();
   SchedModel.init(ST.getSchedModel(), &ST, TII);
@@ -302,7 +302,7 @@ bool IfConverter::runOnMachineFunction(MachineFunction &MF) {
   bool BFChange = false;
   if (!PreRegAlloc) {
     // Tail merge tend to expose more if-conversion opportunities.
-    BranchFolder BF(true, false, *MBFI, *MBPI);
+    BranchFolder BF(true, false, MBFI, *MBPI);
     BFChange = BF.OptimizeFunction(MF, TII, ST.getRegisterInfo(),
                                    getAnalysisIfAvailable<MachineModuleInfo>());
   }
@@ -426,7 +426,7 @@ bool IfConverter::runOnMachineFunction(MachineFunction &MF) {
   BBAnalysis.clear();
 
   if (MadeChange && IfCvtBranchFold) {
-    BranchFolder BF(false, false, *MBFI, *MBPI);
+    BranchFolder BF(false, false, MBFI, *MBPI);
     BF.OptimizeFunction(MF, TII, MF.getSubtarget().getRegisterInfo(),
                         getAnalysisIfAvailable<MachineModuleInfo>());
   }
@@ -1588,14 +1588,14 @@ bool IfConverter::IfConvertDiamond(BBInfo &BBI, IfcvtKind Kind,
   return true;
 }
 
-static bool MaySpeculate(const MachineInstr *MI,
+static bool MaySpeculate(const MachineInstr &MI,
                          SmallSet<unsigned, 4> &LaterRedefs) {
   bool SawStore = true;
-  if (!MI->isSafeToMove(nullptr, SawStore))
+  if (!MI.isSafeToMove(nullptr, SawStore))
     return false;
 
-  for (unsigned i = 0, e = MI->getNumOperands(); i != e; ++i) {
-    const MachineOperand &MO = MI->getOperand(i);
+  for (unsigned i = 0, e = MI.getNumOperands(); i != e; ++i) {
+    const MachineOperand &MO = MI.getOperand(i);
     if (!MO.isReg())
       continue;
     unsigned Reg = MO.getReg();
@@ -1616,8 +1616,8 @@ void IfConverter::PredicateBlock(BBInfo &BBI,
                                  SmallSet<unsigned, 4> *LaterRedefs) {
   bool AnyUnpred = false;
   bool MaySpec = LaterRedefs != nullptr;
-  for (MachineBasicBlock::iterator I = BBI.BB->begin(); I != E; ++I) {
-    if (I->isDebugValue() || TII->isPredicated(*I))
+  for (MachineInstr &I : llvm::make_range(BBI.BB->begin(), E)) {
+    if (I.isDebugValue() || TII->isPredicated(I))
       continue;
     // It may be possible not to predicate an instruction if it's the 'true'
     // side of a diamond and the 'false' side may re-define the instruction's
@@ -1629,16 +1629,16 @@ void IfConverter::PredicateBlock(BBInfo &BBI,
     // If any instruction is predicated, then every instruction after it must
     // be predicated.
     MaySpec = false;
-    if (!TII->PredicateInstruction(*I, Cond)) {
+    if (!TII->PredicateInstruction(I, Cond)) {
 #ifndef NDEBUG
-      dbgs() << "Unable to predicate " << *I << "!\n";
+      dbgs() << "Unable to predicate " << I << "!\n";
 #endif
       llvm_unreachable(nullptr);
     }
 
     // If the predicated instruction now redefines a register as the result of
     // if-conversion, add an implicit kill.
-    UpdatePredRedefs(*I, Redefs);
+    UpdatePredRedefs(I, Redefs);
   }
 
   BBI.Predicate.append(Cond.begin(), Cond.end());
@@ -1840,5 +1840,5 @@ void IfConverter::MergeBlocks(BBInfo &ToBBI, BBInfo &FromBBI, bool AddEdges) {
 
 FunctionPass *
 llvm::createIfConverter(std::function<bool(const Function &)> Ftor) {
-  return new IfConverter(Ftor);
+  return new IfConverter(std::move(Ftor));
 }
