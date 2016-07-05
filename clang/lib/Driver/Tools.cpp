@@ -9367,7 +9367,7 @@ void gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   ConstructLinkerJob(C, JA, Output, Inputs, Args, LinkingOutput, CmdArgs);
   // UPGRADE_TBD: remove this once we hace HCCToolChain
   if (Driver::IsCXXAMP(C.getArgs())) {
-    const char *Exec = getToolChain().getDriver().getCXXAMPLinkProgramPath();
+    const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("clamp-link"));
     C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
   } else {
     const toolchains::Linux& ToolChain =
@@ -11120,33 +11120,6 @@ void NVPTX::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
 }
 
-void HCC::CXXAMPAssemble::ConstructJob(Compilation &C, const JobAction &JA,
-                                  const InputInfo &Output,
-                                  const InputInfoList &Inputs,
-                                  const ArgList &Args,
-                                  const char *LinkingOutput) const {
-  assert(Inputs.size() == 1 && "Unable to handle multiple inputs.");
-
-  ArgStringList CmdArgs;
-  for (InputInfoList::const_iterator
-         it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
-    const InputInfo &II = *it;
-    if (II.isFilename())
-      CmdArgs.push_back(II.getFilename());
-    else
-      II.getInputArg().renderAsInput(Args, CmdArgs);
-  }
-
-  if (Output.isFilename())
-    CmdArgs.push_back(Output.getFilename());
-  else
-    Output.getInputArg().renderAsInput(Args, CmdArgs);
-
-  const char *Exec = getToolChain().getDriver().getCXXAMPAssembleProgramPath();
-
-  C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
-}
-
 static void HCPassOptions(const ArgList &Args, ArgStringList &CmdArgs) {
 
   for(auto A : Args) {
@@ -11196,7 +11169,8 @@ void HCC::HCKernelAssemble::ConstructJob(Compilation &C, const JobAction &JA,
   else
     Output.getInputArg().renderAsInput(Args, CmdArgs);
 
-  const char *Exec = getToolChain().getDriver().getHCKernelAssembleProgramPath();
+  // locate where the command is
+  const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("hc-kernel-assemble"));
 
   C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
 }
@@ -11223,9 +11197,37 @@ void HCC::HCHostAssemble::ConstructJob(Compilation &C, const JobAction &JA,
   else
     Output.getInputArg().renderAsInput(Args, CmdArgs);
 
+  // decide which options gets passed through
   HCPassOptions(Args, CmdArgs);
 
-  const char *Exec = getToolChain().getDriver().getHCHostAssembleProgramPath();
+  const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("hc-host-assemble"));
+
+  C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
+}
+
+void HCC::CXXAMPAssemble::ConstructJob(Compilation &C, const JobAction &JA,
+                                  const InputInfo &Output,
+                                  const InputInfoList &Inputs,
+                                  const ArgList &Args,
+                                  const char *LinkingOutput) const {
+  assert(Inputs.size() == 1 && "Unable to handle multiple inputs.");
+
+  ArgStringList CmdArgs;
+  for (InputInfoList::const_iterator
+         it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
+    const InputInfo &II = *it;
+    if (II.isFilename())
+      CmdArgs.push_back(II.getFilename());
+    else
+      II.getInputArg().renderAsInput(Args, CmdArgs);
+  }
+
+  if (Output.isFilename())
+    CmdArgs.push_back(Output.getFilename());
+  else
+    Output.getInputArg().renderAsInput(Args, CmdArgs);
+
+  const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("clamp-assemble"));
 
   C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
 }
@@ -11251,8 +11253,11 @@ void HCC::CXXAMPLink::ConstructJob(Compilation &C, const JobAction &JA,
       }
     }
   }
+  // pass inputs to gnu ld for initial processing
   Linker::ConstructLinkerJob(C, JA, Output, Inputs, Args, LinkingOutput, CmdArgs);
-  const char *Exec = getToolChain().getDriver().getCXXAMPLinkProgramPath();
+
+  const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("clamp-link"));
+
   C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
 }
 
