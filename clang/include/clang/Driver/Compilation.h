@@ -41,6 +41,9 @@ class Compilation {
   const ToolChain *CudaHostToolChain;
   const ToolChain *CudaDeviceToolChain;
 
+  const ToolChain *HCCHostToolChain;
+  const ToolChain *HCCDeviceToolChain;
+
   /// The original (untranslated) input argument list.
   llvm::opt::InputArgList *Args;
 
@@ -99,6 +102,16 @@ public:
   }
   void setCudaDeviceToolChain(const ToolChain *DeviceToolChain) {
     CudaDeviceToolChain = DeviceToolChain;
+  }
+
+  const ToolChain *getHCCHostToolChain() const { return HCCHostToolChain; }
+  const ToolChain *getHCCDeviceToolChain() const { return HCCDeviceToolChain; }
+
+  void setHCCHostToolChain(const ToolChain *HostToolChain) {
+    HCCHostToolChain = HostToolChain;
+  }
+  void setHCCDeviceToolChain(const ToolChain *DeviceToolChain) {
+    HCCDeviceToolChain = DeviceToolChain;
   }
 
   const llvm::opt::InputArgList &getInputArgs() const { return *Args; }

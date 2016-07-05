@@ -26,6 +26,7 @@ Compilation::Compilation(const Driver &D, const ToolChain &_DefaultToolChain,
                          InputArgList *_Args, DerivedArgList *_TranslatedArgs)
     : TheDriver(D), DefaultToolChain(_DefaultToolChain),
       CudaHostToolChain(&DefaultToolChain), CudaDeviceToolChain(nullptr),
+      HCCHostToolChain(&DefaultToolChain), HCCDeviceToolChain(nullptr),
       Args(_Args), TranslatedArgs(_TranslatedArgs), Redirects(nullptr),
       ForDiagnostics(false) {}
 
