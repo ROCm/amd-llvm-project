@@ -217,19 +217,19 @@ Tool *ToolChain::buildAssembler() const {
 }
 
 Tool *ToolChain::buildCXXAMPAssembler() const {
-  return new tools::CXXAMPAssemble(*this);
+  return new tools::HCC::CXXAMPAssemble(*this);
 }
 
 Tool *ToolChain::buildHCKernelAssembler() const {
-  return new tools::HCKernelAssemble(*this);
+  return new tools::HCC::HCKernelAssemble(*this);
 }
 
 Tool *ToolChain::buildHCHostAssembler() const {
-  return new tools::HCHostAssemble(*this);
+  return new tools::HCC::HCHostAssemble(*this);
 }
 
 Tool *ToolChain::buildCXXAMPLinker() const {
-  return new tools::gnutools::CXXAMPLink(*this);
+  return new tools::HCC::CXXAMPLink(*this);
 }
 
 Tool *ToolChain::buildLinker() const {
