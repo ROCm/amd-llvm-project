@@ -216,18 +216,6 @@ Tool *ToolChain::buildAssembler() const {
   return new tools::ClangAs(*this);
 }
 
-Tool *ToolChain::buildCXXAMPAssembler() const {
-  return new tools::HCC::CXXAMPAssemble(*this);
-}
-
-Tool *ToolChain::buildHCKernelAssembler() const {
-  return new tools::HCC::HCKernelAssemble(*this);
-}
-
-Tool *ToolChain::buildHCHostAssembler() const {
-  return new tools::HCC::HCHostAssemble(*this);
-}
-
 Tool *ToolChain::buildLinker() const {
   llvm_unreachable("Linking is not supported by this toolchain");
 }
@@ -236,24 +224,6 @@ Tool *ToolChain::getAssemble() const {
   if (!Assemble)
     Assemble.reset(buildAssembler());
   return Assemble.get();
-}
-
-Tool *ToolChain::getCXXAMPAssemble() const {
-  if (!CXXAMPAssemble)
-    CXXAMPAssemble.reset(buildCXXAMPAssembler());
-  return CXXAMPAssemble.get();
-}
-
-Tool *ToolChain::getHCKernelAssemble() const {
-  if (!HCKernelAssemble)
-    HCKernelAssemble.reset(buildHCKernelAssembler());
-  return HCKernelAssemble.get();
-}
-
-Tool *ToolChain::getHCHostAssemble() const {
-  if (!HCHostAssemble)
-    HCHostAssemble.reset(buildHCHostAssembler());
-  return HCHostAssemble.get();
 }
 
 Tool *ToolChain::getClangAs() const {
@@ -354,26 +324,8 @@ bool ToolChain::needsProfileRT(const ArgList &Args) {
   return false;
 }
 
-// FIXME: LLVM coding style
-extern bool IsCXXAMPAssembleJobAction(const JobAction* A);
-extern bool IsCXXAMPCPUAssembleJobAction(const JobAction* A);
-extern bool IsHCKernelAssembleJobAction(const JobAction* A);
-extern bool IsHCHostAssembleJobAction(const JobAction* A);
-
 Tool *ToolChain::SelectTool(const JobAction &JA) const {
   Action::ActionClass AC = JA.getKind();
-
-  if (AC == Action::AssembleJobClass) {
-    if (IsHCHostAssembleJobAction(&JA))
-      return getHCHostAssemble();
-    if (IsHCKernelAssembleJobAction(&JA))
-      return getHCKernelAssemble();
-  }
-
-  if (AC == Action::AssembleJobClass && (IsCXXAMPAssembleJobAction(&JA) ||
-                                         IsCXXAMPCPUAssembleJobAction(&JA))) {
-    return getCXXAMPAssemble();
-  }
 
   if (getDriver().ShouldUseClangCompiler(JA)) return getClang();
   if (AC == Action::AssembleJobClass && useIntegratedAs())

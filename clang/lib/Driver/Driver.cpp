@@ -581,6 +581,17 @@ Compilation *Driver::BuildCompilation(ArrayRef<const char *> ArgList) {
                                                      : "nvptx-nvidia-cuda")));
   }
 
+  // Initialize HCC device TC if we have HCC inputs.
+  if (llvm::any_of(Inputs, [](const std::pair<types::ID, const Arg *> &I) {
+        return I.first == types::TY_CXX_AMP ||
+               I.first == types::TY_CXX_AMP_CPU ||
+               I.first == types::TY_HC_HOST ||
+               I.first == types::TY_HC_KERNEL;
+      })) {
+    C->setHCCDeviceToolChain(
+        &getToolChain(C->getArgs(), llvm::Triple("amdgcn--amdhsa-hcc")));
+  }
+
   // Construct the list of abstract actions to perform for this compilation. On
   // MachO targets this uses the driver-driver and universal actions.
   if (TC.getTriple().isOSBinFormatMachO())
@@ -2059,8 +2070,11 @@ static const Tool *selectToolForJob(Compilation &C, bool SaveTemps,
   // bottom up, so what we are actually looking for is an assembler job with a
   // compiler input.
 
-  if (IsCXXAMPAssembleJobAction(JA) || IsCXXAMPCPUAssembleJobAction(JA) ||
-      IsHCKernelAssembleJobAction(JA) || IsHCHostAssembleJobAction(JA)) {
+  if (IsHCHostAssembleJobAction(JA) || IsHCKernelAssembleJobAction(JA) ||
+      IsCXXAMPAssembleJobAction(JA) || IsCXXAMPCPUAssembleJobAction(JA)) {
+    const ToolChain *DeviceTC = C.getHCCDeviceToolChain();
+    assert(DeviceTC && "HCC Device ToolChain is not set.");
+    ToolForJob = DeviceTC->SelectTool(*JA);
   } else if (TC->useIntegratedAs() && !SaveTemps &&
       !C.getArgs().hasArg(options::OPT_via_file_asm) &&
       !C.getArgs().hasArg(options::OPT__SLASH_FA) &&
@@ -2667,7 +2681,11 @@ const ToolChain &Driver::getToolChain(const ArgList &Args,
       TC = new toolchains::Solaris(*this, Target, Args);
       break;
     case llvm::Triple::AMDHSA:
-      TC = new toolchains::AMDGPUToolChain(*this, Target, Args);
+      if (Target.getEnvironment() == llvm::Triple::HCC) {
+        TC = new toolchains::HCCToolChain(*this, Target, Args);
+      } else {
+        TC = new toolchains::AMDGPUToolChain(*this, Target, Args);
+      }
       break;
     case llvm::Triple::Win32:
       switch (Target.getEnvironment()) {
