@@ -2042,21 +2042,6 @@ bool IsHCHostAssembleJobAction(const JobAction* A) {
   return IsHCAssembleJobActionWithInputType(A, types::TY_HC_HOST);
 }
 
-bool IsCXXAMPLinkJobAction(const JobAction* A) {
-  bool ret = false;
-  if (isa<LinkJobAction>(A)) {
-    const ActionList& al = dyn_cast<LinkJobAction>(A)->getInputs();
-    for (size_t i = 0; i < al.size(); ++i) {
-      if (isa<JobAction>(*al[i]) && (IsCXXAMPAssembleJobAction(dyn_cast<JobAction>(al[i])) ||
-                                     IsCXXAMPCPUAssembleJobAction(dyn_cast<JobAction>(al[i])))) {
-        ret = true;
-        break;
-      }
-    }
-  }
-  return ret;
-}
-
 // Returns a Tool for a given JobAction.  In case the action and its
 // predecessors can be combined, updates Inputs with the inputs of the
 // first combined action. If one of the collapsed actions is a
@@ -2074,10 +2059,8 @@ static const Tool *selectToolForJob(Compilation &C, bool SaveTemps,
   // bottom up, so what we are actually looking for is an assembler job with a
   // compiler input.
 
-  if (IsCXXAMPAssembleJobAction(JA) || IsCXXAMPLinkJobAction(JA) ||
-      IsCXXAMPCPUAssembleJobAction(JA) ||
+  if (IsCXXAMPAssembleJobAction(JA) || IsCXXAMPCPUAssembleJobAction(JA) ||
       IsHCKernelAssembleJobAction(JA) || IsHCHostAssembleJobAction(JA)) {
-  } else if (isa<LinkJobAction>(JA) && Driver::IsCXXAMP(C.getArgs())) {
   } else if (TC->useIntegratedAs() && !SaveTemps &&
       !C.getArgs().hasArg(options::OPT_via_file_asm) &&
       !C.getArgs().hasArg(options::OPT__SLASH_FA) &&
