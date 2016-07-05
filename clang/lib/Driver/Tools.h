@@ -136,38 +136,6 @@ public:
                     const char *LinkingOutput) const override;
 };
 
-/// \brief C++AMP kernel compiler tool.
-class LLVM_LIBRARY_VISIBILITY CXXAMPCompile : public Clang {
-public:
-  CXXAMPCompile(const ToolChain &TC) : Clang(TC) {}
-  virtual void ConstructJob(Compilation &C, const JobAction &JA,
-                            const InputInfo &Output,
-                            const InputInfoList &Inputs,
-                            const llvm::opt::ArgList &TCArgs,
-                            const char *LinkingOutput) const;
-};
-
-/// \brief HC host code compile tool.
-class LLVM_LIBRARY_VISIBILITY HCHostCompile : public Clang {
-public:
-  HCHostCompile(const ToolChain &TC) : Clang(TC) {}
-  virtual void ConstructJob(Compilation &C, const JobAction &JA,
-                            const InputInfo &Output,
-                            const InputInfoList &Inputs,
-                            const llvm::opt::ArgList &TCArgs,
-                            const char *LinkingOutput) const;
-};
-
-class LLVM_LIBRARY_VISIBILITY CXXAMPCPUCompile : public Clang {
-public:
-  CXXAMPCPUCompile(const ToolChain &TC) : Clang(TC) {}
-  virtual void ConstructJob(Compilation &C, const JobAction &JA,
-                            const InputInfo &Output,
-                            const InputInfoList &Inputs,
-                            const llvm::opt::ArgList &TCArgs,
-                            const char *LinkingOutput) const;
-};
-
 /// \brief C++AMP kernel assembler tool.
 class LLVM_LIBRARY_VISIBILITY CXXAMPAssemble : public Tool {
 public:

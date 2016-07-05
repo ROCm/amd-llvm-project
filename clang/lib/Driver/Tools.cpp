@@ -3635,36 +3635,6 @@ extern bool IsCXXAMPCompileJobAction(const JobAction* A);
 extern bool IsHCHostCompileJobAction(const JobAction* A);
 extern bool IsCXXAMPCPUCompileJobAction(const JobAction* A);
 
-void CXXAMPCompile::ConstructJob(Compilation &C, const JobAction &JA,
-                                 const InputInfo &Output,
-                                 const InputInfoList &Inputs,
-                                 const ArgList &Args,
-                                 const char *LinkingOutput) const {
-  // call base clang job construction
-  Clang::ConstructJob(C, JA, Output, Inputs, Args, LinkingOutput);
-
-}
-
-void HCHostCompile::ConstructJob(Compilation &C, const JobAction &JA,
-                                 const InputInfo &Output,
-                                 const InputInfoList &Inputs,
-                                 const ArgList &Args,
-                                 const char *LinkingOutput) const {
-  // call base clang job construction
-  Clang::ConstructJob(C, JA, Output, Inputs, Args, LinkingOutput);
-
-}
-
-void CXXAMPCPUCompile::ConstructJob(Compilation &C, const JobAction &JA,
-                                    const InputInfo &Output,
-                                    const InputInfoList &Inputs,
-                                    const ArgList &Args,
-                                    const char *LinkingOutput) const {
-  // call base clang job construction
-  Clang::ConstructJob(C, JA, Output, Inputs, Args, LinkingOutput);
-
-}
-
 void CXXAMPAssemble::ConstructJob(Compilation &C, const JobAction &JA,
                                   const InputInfo &Output,
                                   const InputInfoList &Inputs,

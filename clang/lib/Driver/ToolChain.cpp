@@ -216,18 +216,6 @@ Tool *ToolChain::buildAssembler() const {
   return new tools::ClangAs(*this);
 }
 
-Tool *ToolChain::buildCXXAMPCompiler() const {
-  return new tools::CXXAMPCompile(*this);
-}
-
-Tool *ToolChain::buildHCHostCompiler() const {
-  return new tools::HCHostCompile(*this);
-}
-
-Tool *ToolChain::buildCXXAMPCPUCompiler() const {
-    return new tools::CXXAMPCPUCompile(*this);
-}
-
 Tool *ToolChain::buildCXXAMPAssembler() const {
   return new tools::CXXAMPAssemble(*this);
 }
@@ -252,24 +240,6 @@ Tool *ToolChain::getAssemble() const {
   if (!Assemble)
     Assemble.reset(buildAssembler());
   return Assemble.get();
-}
-
-Tool *ToolChain::getCXXAMPCompile() const {
-  if (!CXXAMPCompile)
-    CXXAMPCompile.reset(buildCXXAMPCompiler());
-  return CXXAMPCompile.get();
-}
-
-Tool *ToolChain::getHCHostCompile() const {
-  if (!HCHostCompile)
-    HCHostCompile.reset(buildHCHostCompiler());
-  return HCHostCompile.get();
-}
-
-Tool *ToolChain::getCXXAMPCPUCompile() const {
-    if (!CXXAMPCPUCompile)
-        CXXAMPCPUCompile.reset(buildCXXAMPCPUCompiler());
-    return CXXAMPCPUCompile.get();
 }
 
 Tool *ToolChain::getCXXAMPAssemble() const {
@@ -395,9 +365,6 @@ bool ToolChain::needsProfileRT(const ArgList &Args) {
 }
 
 // FIXME: LLVM coding style
-extern bool IsCXXAMPCompileJobAction(const JobAction* A);
-extern bool IsHCHostCompileJobAction(const JobAction* A);
-extern bool IsCXXAMPCPUCompileJobAction(const JobAction* A);
 extern bool IsCXXAMPAssembleJobAction(const JobAction* A);
 extern bool IsCXXAMPCPUAssembleJobAction(const JobAction* A);
 extern bool IsCXXAMPLinkJobAction(const JobAction* A);
@@ -406,15 +373,6 @@ extern bool IsHCHostAssembleJobAction(const JobAction* A);
 
 Tool *ToolChain::SelectTool(const JobAction &JA) const {
   Action::ActionClass AC = JA.getKind();
-
-  if (AC == Action::CompileJobClass) {
-      if (IsCXXAMPCompileJobAction(&JA))
-          return getCXXAMPCompile();
-      if (IsCXXAMPCPUCompileJobAction(&JA))
-          return getCXXAMPCPUCompile();
-      if (IsHCHostCompileJobAction(&JA))
-          return getHCHostCompile();
-  }
 
   if (AC == Action::AssembleJobClass) {
     if (IsHCHostAssembleJobAction(&JA))

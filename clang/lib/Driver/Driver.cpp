@@ -2080,8 +2080,8 @@ static const Tool *selectToolForJob(Compilation &C, bool SaveTemps,
   // bottom up, so what we are actually looking for is an assembler job with a
   // compiler input.
 
-  if (IsCXXAMPAssembleJobAction(JA) || IsCXXAMPCompileJobAction(JA) || IsCXXAMPLinkJobAction(JA) ||
-      IsCXXAMPCPUCompileJobAction(JA) || IsCXXAMPCPUAssembleJobAction(JA) || IsHCHostCompileJobAction(JA) ||
+  if (IsCXXAMPAssembleJobAction(JA) || IsCXXAMPLinkJobAction(JA) ||
+      IsCXXAMPCPUAssembleJobAction(JA) ||
       IsHCKernelAssembleJobAction(JA) || IsHCHostAssembleJobAction(JA)) {
   } else if (isa<LinkJobAction>(JA) && Driver::IsCXXAMP(C.getArgs())) {
   } else if (TC->useIntegratedAs() && !SaveTemps &&
