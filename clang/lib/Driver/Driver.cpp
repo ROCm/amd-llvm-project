@@ -68,12 +68,6 @@ Driver::Driver(StringRef ClangExecutable, StringRef DefaultTargetTriple,
   Dir = llvm::sys::path::parent_path(ClangExecutable);
   InstalledDir = Dir; // Provide a sensible default installed dir.
 
-  // C++ AMP-specific
-  CXXAMPAssemblerPath = Dir + "/clamp-assemble";
-  CXXAMPLinkerPath = Dir + "/clamp-link";
-  HCHostAssemblerPath = Dir + "/hc-host-assemble";
-  HCKernelAssemblerPath = Dir + "/hc-kernel-assemble";
-
   // Compute the path to the resource directory.
   StringRef ClangResourceDir(CLANG_RESOURCE_DIR);
   SmallString<128> P(Dir);
@@ -2080,8 +2074,8 @@ static const Tool *selectToolForJob(Compilation &C, bool SaveTemps,
   // bottom up, so what we are actually looking for is an assembler job with a
   // compiler input.
 
-  if (IsCXXAMPAssembleJobAction(JA) || IsCXXAMPCompileJobAction(JA) || IsCXXAMPLinkJobAction(JA) ||
-      IsCXXAMPCPUCompileJobAction(JA) || IsCXXAMPCPUAssembleJobAction(JA) || IsHCHostCompileJobAction(JA) ||
+  if (IsCXXAMPAssembleJobAction(JA) || IsCXXAMPLinkJobAction(JA) ||
+      IsCXXAMPCPUAssembleJobAction(JA) ||
       IsHCKernelAssembleJobAction(JA) || IsHCHostAssembleJobAction(JA)) {
   } else if (isa<LinkJobAction>(JA) && Driver::IsCXXAMP(C.getArgs())) {
   } else if (TC->useIntegratedAs() && !SaveTemps &&

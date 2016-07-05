@@ -3635,146 +3635,6 @@ extern bool IsCXXAMPCompileJobAction(const JobAction* A);
 extern bool IsHCHostCompileJobAction(const JobAction* A);
 extern bool IsCXXAMPCPUCompileJobAction(const JobAction* A);
 
-void CXXAMPCompile::ConstructJob(Compilation &C, const JobAction &JA,
-                                 const InputInfo &Output,
-                                 const InputInfoList &Inputs,
-                                 const ArgList &Args,
-                                 const char *LinkingOutput) const {
-  // call base clang job construction
-  Clang::ConstructJob(C, JA, Output, Inputs, Args, LinkingOutput);
-
-}
-
-void HCHostCompile::ConstructJob(Compilation &C, const JobAction &JA,
-                                 const InputInfo &Output,
-                                 const InputInfoList &Inputs,
-                                 const ArgList &Args,
-                                 const char *LinkingOutput) const {
-  // call base clang job construction
-  Clang::ConstructJob(C, JA, Output, Inputs, Args, LinkingOutput);
-
-}
-
-void CXXAMPCPUCompile::ConstructJob(Compilation &C, const JobAction &JA,
-                                    const InputInfo &Output,
-                                    const InputInfoList &Inputs,
-                                    const ArgList &Args,
-                                    const char *LinkingOutput) const {
-  // call base clang job construction
-  Clang::ConstructJob(C, JA, Output, Inputs, Args, LinkingOutput);
-
-}
-
-void CXXAMPAssemble::ConstructJob(Compilation &C, const JobAction &JA,
-                                  const InputInfo &Output,
-                                  const InputInfoList &Inputs,
-                                  const ArgList &Args,
-                                  const char *LinkingOutput) const {
-  assert(Inputs.size() == 1 && "Unable to handle multiple inputs.");
-
-  ArgStringList CmdArgs;
-  for (InputInfoList::const_iterator
-         it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
-    const InputInfo &II = *it;
-    if (II.isFilename())
-      CmdArgs.push_back(II.getFilename());
-    else
-      II.getInputArg().renderAsInput(Args, CmdArgs);
-  }
-
-  if (Output.isFilename())
-    CmdArgs.push_back(Output.getFilename());
-  else
-    Output.getInputArg().renderAsInput(Args, CmdArgs);
-
-  const char *Exec = getToolChain().getDriver().getCXXAMPAssembleProgramPath();
-
-  C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
-}
-
-void HCPassOptions(const ArgList &Args, ArgStringList &CmdArgs) {
-
-  for(auto A : Args) {
-    Option ArgOpt = A->getOption();
-    // Avoid passing options that have already been processed by the compilation stage or will be used for the linking stage
-    bool hasOpts = ArgOpt.hasFlag(options::LinkerInput) || // omit linking options
-                   ArgOpt.hasFlag(options::DriverOption) || // omit --driver-mode -### -hc -o -Xclang
-                   ArgOpt.matches(options::OPT_L) || // omit -L
-                   ArgOpt.matches(options::OPT_I_Group) || // omit -I
-                   ArgOpt.matches(options::OPT_std_EQ) || // omit -std=
-                   ArgOpt.matches(options::OPT_stdlib_EQ) || // omit -stdlib=
-                   ArgOpt.getKind() == Option::InputClass; // omit <input>
-    if (!hasOpts) {
-      std::string str = A->getSpelling().str();
-
-      // If this is a valued option
-      ArrayRef<const char *> Vals = A->getValues();
-      if(!Vals.empty()) {
-        for(auto V : Vals) {
-          str += V;
-        }
-      }
-      CmdArgs.push_back(Args.MakeArgString(str));
-    }
-  }
-}
-
-void HCKernelAssemble::ConstructJob(Compilation &C, const JobAction &JA,
-                                    const InputInfo &Output,
-                                    const InputInfoList &Inputs,
-                                    const ArgList &Args,
-                                    const char *LinkingOutput) const {
-  assert(Inputs.size() == 1 && "Unable to handle multiple inputs.");
-
-  ArgStringList CmdArgs;
-  for (InputInfoList::const_iterator
-         it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
-    const InputInfo &II = *it;
-    if (II.isFilename())
-      CmdArgs.push_back(II.getFilename());
-    else
-      II.getInputArg().renderAsInput(Args, CmdArgs);
-  }
-
-  if (Output.isFilename())
-    CmdArgs.push_back(Output.getFilename());
-  else
-    Output.getInputArg().renderAsInput(Args, CmdArgs);
-
-  const char *Exec = getToolChain().getDriver().getHCKernelAssembleProgramPath();
-
-  C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
-}
-
-void HCHostAssemble::ConstructJob(Compilation &C, const JobAction &JA,
-                                  const InputInfo &Output,
-                                  const InputInfoList &Inputs,
-                                  const ArgList &Args,
-                                  const char *LinkingOutput) const {
-  assert(Inputs.size() == 1 && "Unable to handle multiple inputs.");
-
-  ArgStringList CmdArgs;
-  for (InputInfoList::const_iterator
-         it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
-    const InputInfo &II = *it;
-    if (II.isFilename())
-      CmdArgs.push_back(II.getFilename());
-    else
-      II.getInputArg().renderAsInput(Args, CmdArgs);
-  }
-
-  if (Output.isFilename())
-    CmdArgs.push_back(Output.getFilename());
-  else
-    Output.getInputArg().renderAsInput(Args, CmdArgs);
-
-  HCPassOptions(Args, CmdArgs);
-
-  const char *Exec = getToolChain().getDriver().getHCHostAssembleProgramPath();
-
-  C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
-}
-
 void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                          const InputInfo &Output, const InputInfoList &Inputs,
                          const ArgList &Args, const char *LinkingOutput) const {
@@ -9505,40 +9365,15 @@ void gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
                                     const char *LinkingOutput) const {
   ArgStringList CmdArgs;
   ConstructLinkerJob(C, JA, Output, Inputs, Args, LinkingOutput, CmdArgs);
+  // UPGRADE_TBD: remove this once we hace HCCToolChain
   if (Driver::IsCXXAMP(C.getArgs())) {
-    const char *Exec = getToolChain().getDriver().getCXXAMPLinkProgramPath();
+    const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("clamp-link"));
     C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
   } else {
     const toolchains::Linux& ToolChain =
       static_cast<const toolchains::Linux&>(getToolChain());
     C.addCommand(llvm::make_unique<Command>(JA, *this, ToolChain.GetLinkerPath().c_str(), CmdArgs, Inputs));
   }
-}
-
-void gnutools::CXXAMPLink::ConstructJob(Compilation &C, const JobAction &JA,
-                                        const InputInfo &Output,
-                                        const InputInfoList &Inputs,
-                                        const ArgList &Args,
-                                        const char *LinkingOutput) const {
-  ArgStringList CmdArgs;
-
-  // add verbose flag to linker script if clang++ is invoked with --verbose flag
-  if (Args.hasArg(options::OPT_v))
-    CmdArgs.push_back("--verbose");
-
-  // suppress OpenCL code production if HSA extension or HC mode is used
-  if (Args.hasArg(options::OPT_hc_mode)) {
-    CmdArgs.push_back("--disable-opencl");
-  } else {
-    for (arg_iterator it = Args.filtered_begin(options::OPT_Xclang); it != Args.filtered_end(); ++it) {
-      if ((*it)->containsValue("-fhsa-ext")) {
-        CmdArgs.push_back("--disable-opencl");
-      }
-    }
-  }
-  Linker::ConstructLinkerJob(C, JA, Output, Inputs, Args, LinkingOutput, CmdArgs);
-  const char *Exec = getToolChain().getDriver().getCXXAMPLinkProgramPath();
-  C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
 }
 
 // NaCl ARM assembly (inline or standalone) can be written with a set of macros
@@ -11284,3 +11119,145 @@ void NVPTX::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   const char *Exec = Args.MakeArgString(TC.GetProgramPath("fatbinary"));
   C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
 }
+
+static void HCPassOptions(const ArgList &Args, ArgStringList &CmdArgs) {
+
+  for(auto A : Args) {
+    Option ArgOpt = A->getOption();
+    // Avoid passing options that have already been processed by the compilation stage or will be used for the linking stage
+    bool hasOpts = ArgOpt.hasFlag(options::LinkerInput) || // omit linking options
+                   ArgOpt.hasFlag(options::DriverOption) || // omit --driver-mode -### -hc -o -Xclang
+                   ArgOpt.matches(options::OPT_L) || // omit -L
+                   ArgOpt.matches(options::OPT_I_Group) || // omit -I
+                   ArgOpt.matches(options::OPT_std_EQ) || // omit -std=
+                   ArgOpt.matches(options::OPT_stdlib_EQ) || // omit -stdlib=
+                   ArgOpt.getKind() == Option::InputClass; // omit <input>
+    if (!hasOpts) {
+      std::string str = A->getSpelling().str();
+
+      // If this is a valued option
+      ArrayRef<const char *> Vals = A->getValues();
+      if(!Vals.empty()) {
+        for(auto V : Vals) {
+          str += V;
+        }
+      }
+      CmdArgs.push_back(Args.MakeArgString(str));
+    }
+  }
+}
+
+void HCC::HCKernelAssemble::ConstructJob(Compilation &C, const JobAction &JA,
+                                    const InputInfo &Output,
+                                    const InputInfoList &Inputs,
+                                    const ArgList &Args,
+                                    const char *LinkingOutput) const {
+  assert(Inputs.size() == 1 && "Unable to handle multiple inputs.");
+
+  ArgStringList CmdArgs;
+  for (InputInfoList::const_iterator
+         it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
+    const InputInfo &II = *it;
+    if (II.isFilename())
+      CmdArgs.push_back(II.getFilename());
+    else
+      II.getInputArg().renderAsInput(Args, CmdArgs);
+  }
+
+  if (Output.isFilename())
+    CmdArgs.push_back(Output.getFilename());
+  else
+    Output.getInputArg().renderAsInput(Args, CmdArgs);
+
+  // locate where the command is
+  const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("hc-kernel-assemble"));
+
+  C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
+}
+
+void HCC::HCHostAssemble::ConstructJob(Compilation &C, const JobAction &JA,
+                                  const InputInfo &Output,
+                                  const InputInfoList &Inputs,
+                                  const ArgList &Args,
+                                  const char *LinkingOutput) const {
+  assert(Inputs.size() == 1 && "Unable to handle multiple inputs.");
+
+  ArgStringList CmdArgs;
+  for (InputInfoList::const_iterator
+         it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
+    const InputInfo &II = *it;
+    if (II.isFilename())
+      CmdArgs.push_back(II.getFilename());
+    else
+      II.getInputArg().renderAsInput(Args, CmdArgs);
+  }
+
+  if (Output.isFilename())
+    CmdArgs.push_back(Output.getFilename());
+  else
+    Output.getInputArg().renderAsInput(Args, CmdArgs);
+
+  // decide which options gets passed through
+  HCPassOptions(Args, CmdArgs);
+
+  const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("hc-host-assemble"));
+
+  C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
+}
+
+void HCC::CXXAMPAssemble::ConstructJob(Compilation &C, const JobAction &JA,
+                                  const InputInfo &Output,
+                                  const InputInfoList &Inputs,
+                                  const ArgList &Args,
+                                  const char *LinkingOutput) const {
+  assert(Inputs.size() == 1 && "Unable to handle multiple inputs.");
+
+  ArgStringList CmdArgs;
+  for (InputInfoList::const_iterator
+         it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
+    const InputInfo &II = *it;
+    if (II.isFilename())
+      CmdArgs.push_back(II.getFilename());
+    else
+      II.getInputArg().renderAsInput(Args, CmdArgs);
+  }
+
+  if (Output.isFilename())
+    CmdArgs.push_back(Output.getFilename());
+  else
+    Output.getInputArg().renderAsInput(Args, CmdArgs);
+
+  const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("clamp-assemble"));
+
+  C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
+}
+
+void HCC::CXXAMPLink::ConstructJob(Compilation &C, const JobAction &JA,
+                                        const InputInfo &Output,
+                                        const InputInfoList &Inputs,
+                                        const ArgList &Args,
+                                        const char *LinkingOutput) const {
+  ArgStringList CmdArgs;
+
+  // add verbose flag to linker script if clang++ is invoked with --verbose flag
+  if (Args.hasArg(options::OPT_v))
+    CmdArgs.push_back("--verbose");
+
+  // suppress OpenCL code production if HSA extension or HC mode is used
+  if (Args.hasArg(options::OPT_hc_mode)) {
+    CmdArgs.push_back("--disable-opencl");
+  } else {
+    for (arg_iterator it = Args.filtered_begin(options::OPT_Xclang); it != Args.filtered_end(); ++it) {
+      if ((*it)->containsValue("-fhsa-ext")) {
+        CmdArgs.push_back("--disable-opencl");
+      }
+    }
+  }
+  // pass inputs to gnu ld for initial processing
+  Linker::ConstructLinkerJob(C, JA, Output, Inputs, Args, LinkingOutput, CmdArgs);
+
+  const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("clamp-link"));
+
+  C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
+}
+
