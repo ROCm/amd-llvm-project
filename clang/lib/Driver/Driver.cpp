@@ -581,6 +581,17 @@ Compilation *Driver::BuildCompilation(ArrayRef<const char *> ArgList) {
                                                      : "nvptx-nvidia-cuda")));
   }
 
+  // Initialize HCC device TC if we have HCC inputs.
+  if (llvm::any_of(Inputs, [](const std::pair<types::ID, const Arg *> &I) {
+        return I.first == types::TY_CXX_AMP ||
+               I.first == types::TY_CXX_AMP_CPU ||
+               I.first == types::TY_HC_HOST ||
+               I.first == types::TY_HC_KERNEL;
+      })) {
+    C->setHCCDeviceToolChain(
+        &getToolChain(C->getArgs(), llvm::Triple("amdgcn--amdhsa-hcc")));
+  }
+
   // Construct the list of abstract actions to perform for this compilation. On
   // MachO targets this uses the driver-driver and universal actions.
   if (TC.getTriple().isOSBinFormatMachO())
@@ -1337,7 +1348,7 @@ void Driver::BuildInputs(const ToolChain &TC, DerivedArgList &Args,
             break;
 
             // -S
-            case phases::Compile:
+            case phases::Backend:
               if (Args.hasArg(options::OPT_cxxamp_kernel_mode)) {
                 Inputs.push_back(std::make_pair(types::TY_CXX_AMP, A));
               } else if (Args.hasArg(options::OPT_cxxamp_cpu_mode)) {
@@ -1848,6 +1859,9 @@ Action *Driver::ConstructPhaseAction(Compilation &C, const ArgList &Args,
   llvm_unreachable("invalid phase in ConstructPhaseAction");
 }
 
+// UPGRADE_TBD: see if it's possible to get rid of this check
+extern bool IsCXXAMPBackendJobAction(const JobAction* A);
+
 void Driver::BuildJobs(Compilation &C) const {
   llvm::PrettyStackTraceString CrashInfo("Building compilation jobs");
 
@@ -1894,11 +1908,23 @@ void Driver::BuildJobs(Compilation &C) const {
         LinkingOutput = getDefaultImageName();
     }
 
-    BuildJobsForAction(C, A, &C.getDefaultToolChain(),
+    JobAction *JA = cast<JobAction>(A);
+    // UPGRADE_TBD: FIXME This is hack. Need to find a cleaner way
+    // The line is added so clang -emit-llvm would pick correct toolchain for HCC inputs
+    if (JA && IsCXXAMPBackendJobAction(JA)) {
+      BuildJobsForAction(C, A, C.getHCCDeviceToolChain(),
                        /*BoundArch*/ nullptr,
                        /*AtTopLevel*/ true,
                        /*MultipleArchs*/ ArchNames.size() > 1,
                        /*LinkingOutput*/ LinkingOutput, CachedResults);
+    } else {
+
+      BuildJobsForAction(C, A, &C.getDefaultToolChain(),
+                       /*BoundArch*/ nullptr,
+                       /*AtTopLevel*/ true,
+                       /*MultipleArchs*/ ArchNames.size() > 1,
+                       /*LinkingOutput*/ LinkingOutput, CachedResults);
+    }
   }
 
   // If the user passed -Qunused-arguments or there were errors, don't warn
@@ -1971,17 +1997,17 @@ static bool IsBackendJobActionWithInputType(const JobAction* A, types::ID typesI
   return ret;
 }
 
-bool IsCXXAMPCompileJobAction(const JobAction* A) {
+bool IsCXXAMPBackendJobAction(const JobAction* A) {
   // detect if a compile job takes an C++ AMP input
   return IsBackendJobActionWithInputType(A, types::TY_PP_CXX_AMP);
 }
 
-bool IsHCHostCompileJobAction(const JobAction* A) {
+bool IsHCHostBackendJobAction(const JobAction* A) {
   // detect if a compile job takes a HC input on host side
   return IsBackendJobActionWithInputType(A, types::TY_PP_HC_HOST);
 }
 
-bool IsCXXAMPCPUCompileJobAction(const JobAction* A) {
+bool IsCXXAMPCPUBackendJobAction(const JobAction* A) {
   return IsBackendJobActionWithInputType(A, types::TY_PP_CXX_AMP_CPU);
 }
 
@@ -2042,21 +2068,6 @@ bool IsHCHostAssembleJobAction(const JobAction* A) {
   return IsHCAssembleJobActionWithInputType(A, types::TY_HC_HOST);
 }
 
-bool IsCXXAMPLinkJobAction(const JobAction* A) {
-  bool ret = false;
-  if (isa<LinkJobAction>(A)) {
-    const ActionList& al = dyn_cast<LinkJobAction>(A)->getInputs();
-    for (size_t i = 0; i < al.size(); ++i) {
-      if (isa<JobAction>(*al[i]) && (IsCXXAMPAssembleJobAction(dyn_cast<JobAction>(al[i])) ||
-                                     IsCXXAMPCPUAssembleJobAction(dyn_cast<JobAction>(al[i])))) {
-        ret = true;
-        break;
-      }
-    }
-  }
-  return ret;
-}
-
 // Returns a Tool for a given JobAction.  In case the action and its
 // predecessors can be combined, updates Inputs with the inputs of the
 // first combined action. If one of the collapsed actions is a
@@ -2074,10 +2085,12 @@ static const Tool *selectToolForJob(Compilation &C, bool SaveTemps,
   // bottom up, so what we are actually looking for is an assembler job with a
   // compiler input.
 
-  if (IsCXXAMPAssembleJobAction(JA) || IsCXXAMPLinkJobAction(JA) ||
-      IsCXXAMPCPUAssembleJobAction(JA) ||
-      IsHCKernelAssembleJobAction(JA) || IsHCHostAssembleJobAction(JA)) {
-  } else if (isa<LinkJobAction>(JA) && Driver::IsCXXAMP(C.getArgs())) {
+  if (IsHCHostAssembleJobAction(JA) || IsHCKernelAssembleJobAction(JA) ||
+      IsCXXAMPAssembleJobAction(JA) || IsCXXAMPCPUAssembleJobAction(JA) ||
+      IsCXXAMPBackendJobAction(JA) || IsCXXAMPCPUBackendJobAction(JA)) {
+    const ToolChain *DeviceTC = C.getHCCDeviceToolChain();
+    assert(DeviceTC && "HCC Device ToolChain is not set.");
+    ToolForJob = DeviceTC->SelectTool(*JA);
   } else if (TC->useIntegratedAs() && !SaveTemps &&
       !C.getArgs().hasArg(options::OPT_via_file_asm) &&
       !C.getArgs().hasArg(options::OPT__SLASH_FA) &&
@@ -2268,9 +2281,20 @@ InputInfo Driver::BuildJobsForActionNoCache(
     // FIXME: Clean this up.
     bool SubJobAtTopLevel =
         AtTopLevel && (isa<DsymutilJobAction>(A) || isa<VerifyJobAction>(A));
-    InputInfos.push_back(BuildJobsForAction(C, Input, TC, BoundArch,
-                                            SubJobAtTopLevel, MultipleArchs,
-                                            LinkingOutput, CachedResults));
+
+    // UPGRADE_TBD: Find a better way to check HCC-specific Action objects
+    // Find correct Tool for HCC-specific Actions in HCC ToolChain
+    if (IsCXXAMPBackendJobAction(JA) || IsCXXAMPCPUBackendJobAction(JA) ||
+        IsHCKernelAssembleJobAction(JA) ||
+        IsCXXAMPAssembleJobAction(JA) || IsCXXAMPCPUAssembleJobAction(JA)) {
+      InputInfos.push_back(BuildJobsForAction(C, Input, C.getHCCDeviceToolChain(), BoundArch,
+                                              SubJobAtTopLevel, MultipleArchs,
+                                              LinkingOutput, CachedResults));
+    } else {
+      InputInfos.push_back(BuildJobsForAction(C, Input, TC, BoundArch,
+                                              SubJobAtTopLevel, MultipleArchs,
+                                              LinkingOutput, CachedResults));
+    }
   }
 
   // Always use the first input as the base input.
@@ -2396,7 +2420,7 @@ const char *Driver::GetNamedOutputPath(Compilation &C, const JobAction &JA,
     std::pair<StringRef, StringRef> Split = Name.split('.');
     std::string TmpName = GetTemporaryPath(
         Split.first, types::getTypeTempSuffix(JA.getType(), IsCLMode()));
-    if (IsCXXAMPCPUCompileJobAction(&JA) || IsCXXAMPCPUAssembleJobAction(&JA))
+    if (IsCXXAMPCPUBackendJobAction(&JA) || IsCXXAMPCPUAssembleJobAction(&JA))
       TmpName += ".cpu";
     return C.addTempFile(C.getArgs().MakeArgString(TmpName.c_str()));
   }
@@ -2684,7 +2708,11 @@ const ToolChain &Driver::getToolChain(const ArgList &Args,
       TC = new toolchains::Solaris(*this, Target, Args);
       break;
     case llvm::Triple::AMDHSA:
-      TC = new toolchains::AMDGPUToolChain(*this, Target, Args);
+      if (Target.getEnvironment() == llvm::Triple::HCC) {
+        TC = new toolchains::HCCToolChain(*this, Target, Args);
+      } else {
+        TC = new toolchains::AMDGPUToolChain(*this, Target, Args);
+      }
       break;
     case llvm::Triple::Win32:
       switch (Target.getEnvironment()) {

@@ -1198,6 +1198,33 @@ protected:
   Tool *buildLinker() const override;
 };
 
+class LLVM_LIBRARY_VISIBILITY HCCToolChain : public Linux {
+public:
+  HCCToolChain(const Driver &D, const llvm::Triple &Triple,
+               const llvm::opt::ArgList &Args);
+
+  llvm::opt::DerivedArgList *
+  TranslateArgs(const llvm::opt::DerivedArgList &Args,
+                const char *BoundArch) const override;
+  void addClangTargetOptions(const llvm::opt::ArgList &DriverArgs,
+                             llvm::opt::ArgStringList &CC1Args) const override;
+
+  bool useIntegratedAs() const override { return false; }
+
+  Tool *SelectTool(const JobAction &JA) const override;
+
+  // HCC ToolChain use DWARF version 2 by default
+  unsigned GetDefaultDwarfVersion() const override { return 2; }
+
+protected:
+  Tool *buildLinker() const override;
+
+private:
+  mutable std::unique_ptr<Tool> HCHostAssembler;
+  mutable std::unique_ptr<Tool> HCKernelAssembler;
+  mutable std::unique_ptr<Tool> CXXAMPAssembler;
+};
+
 } // end namespace toolchains
 } // end namespace driver
 } // end namespace clang

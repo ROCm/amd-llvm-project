@@ -2292,6 +2292,13 @@ bool CompilerInvocation::CreateFromArgs(CompilerInvocation &Res,
       Res.getCodeGenOpts().setFPContractMode(CodeGenOptions::FPC_Fast);
   }
 
+  if (LangOpts.CPlusPlusAMP) {
+    // During HCC device-side compilation, the aux triple is the
+    // triple used for host compilation
+    if (LangOpts.DevicePath)
+      Res.getTargetOpts().HostTriple = Res.getFrontendOpts().AuxTriple;
+  }
+
   // FIXME: Override value name discarding when asan or msan is used because the
   // backend passes depend on the name of the alloca in order to print out
   // names.

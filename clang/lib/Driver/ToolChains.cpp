@@ -4869,3 +4869,105 @@ SanitizerMask PS4CPU::getSupportedSanitizers() const {
   Res |= SanitizerKind::Vptr;
   return Res;
 }
+
+/// HCC toolchain. 
+/// It may operate in 2 modes, depending on the Environment in Triple
+/// - C++AMP mode:
+///   - use clamp-assemble as assembler
+///   - use clamp-link as linker
+/// - HC mode:
+///   - use hc-kernel-assemble as assembler for kernel path
+///   - use hc-host-assemble as assembler for host path
+///   - use clamp-link as linker
+
+HCCToolChain::HCCToolChain(const Driver &D, const llvm::Triple &Triple,
+                           const ArgList &Args)
+    : Linux(D, Triple, Args) {}
+
+void
+HCCToolChain::addClangTargetOptions(const llvm::opt::ArgList &DriverArgs,
+                                    llvm::opt::ArgStringList &CC1Args) const {
+  Linux::addClangTargetOptions(DriverArgs, CC1Args);
+
+  // TBD, depends on mode set correct arguments
+}
+
+llvm::opt::DerivedArgList *
+HCCToolChain::TranslateArgs(const llvm::opt::DerivedArgList &Args,
+                            const char *BoundArch) const {
+  // TBD look into what should be properly implemented
+  DerivedArgList *DAL = new DerivedArgList(Args.getBaseArgs());
+  const OptTable &Opts = getDriver().getOpts();
+
+  for (Arg *A : Args) {
+    if (A->getOption().matches(options::OPT_Xarch__)) {
+      // Skip this argument unless the architecture matches BoundArch
+      if (!BoundArch || A->getValue(0) != StringRef(BoundArch))
+        continue;
+
+      unsigned Index = Args.getBaseArgs().MakeIndex(A->getValue(1));
+      unsigned Prev = Index;
+      std::unique_ptr<Arg> XarchArg(Opts.ParseOneArg(Args, Index));
+
+      // If the argument parsing failed or more than one argument was
+      // consumed, the -Xarch_ argument's parameter tried to consume
+      // extra arguments. Emit an error and ignore.
+      //
+      // We also want to disallow any options which would alter the
+      // driver behavior; that isn't going to work in our model. We
+      // use isDriverOption() as an approximation, although things
+      // like -O4 are going to slip through.
+      if (!XarchArg || Index > Prev + 1) {
+        getDriver().Diag(diag::err_drv_invalid_Xarch_argument_with_args)
+            << A->getAsString(Args);
+        continue;
+      } else if (XarchArg->getOption().hasFlag(options::DriverOption)) {
+        getDriver().Diag(diag::err_drv_invalid_Xarch_argument_isdriver)
+            << A->getAsString(Args);
+        continue;
+      }
+      XarchArg->setBaseArg(A);
+      A = XarchArg.release();
+      DAL->AddSynthesizedArg(A);
+    }
+    DAL->append(A);
+  }
+
+  if (BoundArch)
+    DAL->AddJoinedArg(nullptr, Opts.getOption(options::OPT_march_EQ), BoundArch);
+  return DAL;
+}
+
+extern bool IsHCHostAssembleJobAction(const JobAction* A);
+extern bool IsHCKernelAssembleJobAction(const JobAction* A);
+extern bool IsCXXAMPAssembleJobAction(const JobAction* A);
+extern bool IsCXXAMPCPUAssembleJobAction(const JobAction* A);
+
+Tool *HCCToolChain::SelectTool(const JobAction &JA) const {
+  Action::ActionClass AC = JA.getKind();
+
+  if (AC == Action::AssembleJobClass) {
+    if (IsHCHostAssembleJobAction(&JA)) {
+      if (!HCHostAssembler)
+        HCHostAssembler.reset(new tools::HCC::HCHostAssemble(*this));
+      return HCHostAssembler.get();
+    }
+    if (IsHCKernelAssembleJobAction(&JA)) {
+      if (!HCKernelAssembler)
+        HCKernelAssembler.reset(new tools::HCC::HCKernelAssemble(*this));
+      return HCKernelAssembler.get();
+    }
+    if (IsCXXAMPAssembleJobAction(&JA) || IsCXXAMPCPUAssembleJobAction(&JA)) {
+      if (!CXXAMPAssembler)
+        CXXAMPAssembler.reset(new tools::HCC::CXXAMPAssemble(*this));
+      return CXXAMPAssembler.get();
+    }
+  }
+
+  return ToolChain::SelectTool(JA);
+}
+
+Tool *HCCToolChain::buildLinker() const {
+  return new tools::HCC::CXXAMPLink(*this);
+}
+

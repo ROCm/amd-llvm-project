@@ -973,8 +973,8 @@ public:
 /// \brief HC mode kernel assembler tool.
 class LLVM_LIBRARY_VISIBILITY HCKernelAssemble : public Tool {
 public:
-  HCKernelAssemble(const ToolChain &TC) : Tool("hckernelassemble",
-                                                "HC Kernel", TC) {}
+  HCKernelAssemble(const ToolChain &TC) : Tool("hc-kernel-assemble",
+                                                "HC kernel assembler", TC) {}
   virtual bool hasGoodDiagnostics() const { return true; }
   virtual bool hasIntegratedAssembler() const { return false; }
   virtual bool hasIntegratedCPP() const { return false; }
@@ -989,8 +989,8 @@ public:
 /// \brief HC mode host code assembler tool.
 class LLVM_LIBRARY_VISIBILITY HCHostAssemble : public Tool {
 public:
-  HCHostAssemble(const ToolChain &TC) : Tool("hchostassemble",
-                                               "HC Host", TC) {}
+  HCHostAssemble(const ToolChain &TC) : Tool("hc-host-assemble",
+                                               "HC host assembler", TC) {}
   virtual bool hasGoodDiagnostics() const { return true; }
   virtual bool hasIntegratedAssembler() const { return false; }
   virtual bool hasIntegratedCPP() const { return false; }
