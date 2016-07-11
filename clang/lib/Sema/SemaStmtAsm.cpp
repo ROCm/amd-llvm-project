@@ -254,6 +254,8 @@ StmtResult Sema::ActOnGCCAsmStmt(SourceLocation AsmLoc, bool IsSimple,
     TargetInfo::ConstraintInfo Info(Literal->getString(), InputName);
     if (!Context.getTargetInfo().validateInputConstraint(OutputConstraintInfos,
                                                          Info)) {
+      // UPGRADE_TBD: relax it for HCC because AMDGPU target triple inline asm rule is different
+      if (!getLangOpts().CPlusPlusAMP)
       return StmtError(Diag(Literal->getLocStart(),
                             diag::err_asm_invalid_input_constraint)
                        << Info.getConstraintStr());

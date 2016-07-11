@@ -1859,6 +1859,9 @@ Action *Driver::ConstructPhaseAction(Compilation &C, const ArgList &Args,
   llvm_unreachable("invalid phase in ConstructPhaseAction");
 }
 
+// UPGRADE_TBD: see if it's possible to get rid of this check
+extern bool IsCXXAMPBackendJobAction(const JobAction* A);
+
 void Driver::BuildJobs(Compilation &C) const {
   llvm::PrettyStackTraceString CrashInfo("Building compilation jobs");
 
@@ -1905,11 +1908,23 @@ void Driver::BuildJobs(Compilation &C) const {
         LinkingOutput = getDefaultImageName();
     }
 
-    BuildJobsForAction(C, A, &C.getDefaultToolChain(),
+    JobAction *JA = cast<JobAction>(A);
+    // UPGRADE_TBD: FIXME This is hack. Need to find a cleaner way
+    // The line is added so clang -emit-llvm would pick correct toolchain for HCC inputs
+    if (JA && IsCXXAMPBackendJobAction(JA)) {
+      BuildJobsForAction(C, A, C.getHCCDeviceToolChain(),
                        /*BoundArch*/ nullptr,
                        /*AtTopLevel*/ true,
                        /*MultipleArchs*/ ArchNames.size() > 1,
                        /*LinkingOutput*/ LinkingOutput, CachedResults);
+    } else {
+
+      BuildJobsForAction(C, A, &C.getDefaultToolChain(),
+                       /*BoundArch*/ nullptr,
+                       /*AtTopLevel*/ true,
+                       /*MultipleArchs*/ ArchNames.size() > 1,
+                       /*LinkingOutput*/ LinkingOutput, CachedResults);
+    }
   }
 
   // If the user passed -Qunused-arguments or there were errors, don't warn
@@ -2266,9 +2281,20 @@ InputInfo Driver::BuildJobsForActionNoCache(
     // FIXME: Clean this up.
     bool SubJobAtTopLevel =
         AtTopLevel && (isa<DsymutilJobAction>(A) || isa<VerifyJobAction>(A));
-    InputInfos.push_back(BuildJobsForAction(C, Input, TC, BoundArch,
-                                            SubJobAtTopLevel, MultipleArchs,
-                                            LinkingOutput, CachedResults));
+
+    // UPGRADE_TBD: Find a better way to check HCC-specific Action objects
+    // Find correct Tool for HCC-specific Actions in HCC ToolChain
+    if (IsCXXAMPBackendJobAction(JA) || IsCXXAMPCPUBackendJobAction(JA) ||
+        IsHCKernelAssembleJobAction(JA) ||
+        IsCXXAMPAssembleJobAction(JA) || IsCXXAMPCPUAssembleJobAction(JA)) {
+      InputInfos.push_back(BuildJobsForAction(C, Input, C.getHCCDeviceToolChain(), BoundArch,
+                                              SubJobAtTopLevel, MultipleArchs,
+                                              LinkingOutput, CachedResults));
+    } else {
+      InputInfos.push_back(BuildJobsForAction(C, Input, TC, BoundArch,
+                                              SubJobAtTopLevel, MultipleArchs,
+                                              LinkingOutput, CachedResults));
+    }
   }
 
   // Always use the first input as the base input.

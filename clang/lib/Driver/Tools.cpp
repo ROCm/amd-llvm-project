@@ -3661,6 +3661,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   bool IsCuda = types::isCuda(Input.getType());
   assert((IsCuda || Inputs.size() == 1) && "Unable to handle multiple inputs.");
 
+  // Set flag
+  bool IsHCCKernelPath = IsCXXAMPBackendJobAction(&JA) || IsCXXAMPCPUBackendJobAction(&JA);
+
   // Invoke ourselves in -cc1 mode.
   //
   // FIXME: Implement custom jobs for internal actions.
@@ -3723,6 +3726,17 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     assert(AuxToolChain != nullptr && "No aux toolchain.");
     CmdArgs.push_back("-aux-triple");
     CmdArgs.push_back(Args.MakeArgString(AuxToolChain->getTriple().str()));
+  }
+
+  // Make sure host triple is specified for HCC kernel compilation path
+  if (IsHCCKernelPath) {
+    if (&getToolChain() == C.getHCCDeviceToolChain())
+      AuxToolChain = C.getHCCHostToolChain();
+
+    if (AuxToolChain != nullptr) {
+      CmdArgs.push_back("-aux-triple");
+      CmdArgs.push_back(Args.MakeArgString(AuxToolChain->getTriple().str()));
+    }
   }
 
   if (Triple.isOSWindows() && (Triple.getArch() == llvm::Triple::arm ||
