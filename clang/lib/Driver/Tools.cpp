@@ -3631,9 +3631,9 @@ static void AddAssemblerKPIC(const ToolChain &ToolChain, const ArgList &Args,
     CmdArgs.push_back("-KPIC");
 }
 
-extern bool IsCXXAMPCompileJobAction(const JobAction* A);
-extern bool IsHCHostCompileJobAction(const JobAction* A);
-extern bool IsCXXAMPCPUCompileJobAction(const JobAction* A);
+extern bool IsCXXAMPBackendJobAction(const JobAction* A);
+extern bool IsHCHostBackendJobAction(const JobAction* A);
+extern bool IsCXXAMPCPUBackendJobAction(const JobAction* A);
 
 void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                          const InputInfo &Output, const InputInfoList &Inputs,
@@ -3676,7 +3676,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   // C++ AMP-specific
-  if (IsCXXAMPCompileJobAction(&JA)) {
+  if (IsCXXAMPBackendJobAction(&JA)) {
     // path to compile kernel codes on GPU
     CmdArgs.push_back("-D__GPU__=1");
     CmdArgs.push_back("-D__KALMAR_ACCELERATOR__=1");
@@ -3686,7 +3686,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-fno-common");
     //CmdArgs.push_back("-m32"); // added below using -triple
     CmdArgs.push_back("-O2");
-  } else if(IsCXXAMPCPUCompileJobAction(&JA)){
+  } else if(IsCXXAMPCPUBackendJobAction(&JA)){
     // path to compile kernel codes on CPU
     CmdArgs.push_back("-famp-is-device");
     CmdArgs.push_back("-famp-cpu");
@@ -4622,7 +4622,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       D.Diag(diag::warn_O4_is_O3);
     } else {
       // C++ AMP-specific
-      if (IsCXXAMPCompileJobAction(&JA)) {
+      if (IsCXXAMPBackendJobAction(&JA)) {
         // ignore -O0 and -O1 for GPU compilation paths
         // because inliner would not be enabled and will cause compilation fail
         if (A->getOption().matches(options::OPT_O0)) {
@@ -5654,7 +5654,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-fno-gnu-inline-asm");
 
   // Turn off vectorization support for GPU kernels for now
-  if (!IsCXXAMPCompileJobAction(&JA) && !IsCXXAMPCPUCompileJobAction(&JA))  {
+  if (!IsCXXAMPBackendJobAction(&JA) && !IsCXXAMPCPUBackendJobAction(&JA))  {
 
   // Enable vectorization per default according to the optimization level
   // selected. For optimization levels that want vectorization we use the alias
@@ -5870,7 +5870,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   // C++ AMP-specific
-  if (IsCXXAMPCompileJobAction(&JA) || IsCXXAMPCPUCompileJobAction(&JA) || IsHCHostCompileJobAction(&JA)) {
+  if (IsCXXAMPBackendJobAction(&JA) || IsCXXAMPCPUBackendJobAction(&JA) || IsHCHostBackendJobAction(&JA)) {
     CmdArgs.push_back("-emit-llvm-bc");
   }
 

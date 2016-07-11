@@ -1348,7 +1348,7 @@ void Driver::BuildInputs(const ToolChain &TC, DerivedArgList &Args,
             break;
 
             // -S
-            case phases::Compile:
+            case phases::Backend:
               if (Args.hasArg(options::OPT_cxxamp_kernel_mode)) {
                 Inputs.push_back(std::make_pair(types::TY_CXX_AMP, A));
               } else if (Args.hasArg(options::OPT_cxxamp_cpu_mode)) {
@@ -1982,17 +1982,17 @@ static bool IsBackendJobActionWithInputType(const JobAction* A, types::ID typesI
   return ret;
 }
 
-bool IsCXXAMPCompileJobAction(const JobAction* A) {
+bool IsCXXAMPBackendJobAction(const JobAction* A) {
   // detect if a compile job takes an C++ AMP input
   return IsBackendJobActionWithInputType(A, types::TY_PP_CXX_AMP);
 }
 
-bool IsHCHostCompileJobAction(const JobAction* A) {
+bool IsHCHostBackendJobAction(const JobAction* A) {
   // detect if a compile job takes a HC input on host side
   return IsBackendJobActionWithInputType(A, types::TY_PP_HC_HOST);
 }
 
-bool IsCXXAMPCPUCompileJobAction(const JobAction* A) {
+bool IsCXXAMPCPUBackendJobAction(const JobAction* A) {
   return IsBackendJobActionWithInputType(A, types::TY_PP_CXX_AMP_CPU);
 }
 
@@ -2071,7 +2071,8 @@ static const Tool *selectToolForJob(Compilation &C, bool SaveTemps,
   // compiler input.
 
   if (IsHCHostAssembleJobAction(JA) || IsHCKernelAssembleJobAction(JA) ||
-      IsCXXAMPAssembleJobAction(JA) || IsCXXAMPCPUAssembleJobAction(JA)) {
+      IsCXXAMPAssembleJobAction(JA) || IsCXXAMPCPUAssembleJobAction(JA) ||
+      IsCXXAMPBackendJobAction(JA) || IsCXXAMPCPUBackendJobAction(JA)) {
     const ToolChain *DeviceTC = C.getHCCDeviceToolChain();
     assert(DeviceTC && "HCC Device ToolChain is not set.");
     ToolForJob = DeviceTC->SelectTool(*JA);
@@ -2393,7 +2394,7 @@ const char *Driver::GetNamedOutputPath(Compilation &C, const JobAction &JA,
     std::pair<StringRef, StringRef> Split = Name.split('.');
     std::string TmpName = GetTemporaryPath(
         Split.first, types::getTypeTempSuffix(JA.getType(), IsCLMode()));
-    if (IsCXXAMPCPUCompileJobAction(&JA) || IsCXXAMPCPUAssembleJobAction(&JA))
+    if (IsCXXAMPCPUBackendJobAction(&JA) || IsCXXAMPCPUAssembleJobAction(&JA))
       TmpName += ".cpu";
     return C.addTempFile(C.getArgs().MakeArgString(TmpName.c_str()));
   }
