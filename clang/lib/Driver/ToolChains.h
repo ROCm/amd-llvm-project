@@ -830,14 +830,6 @@ public:
 
   std::vector<std::string> ExtraOpts;
 
-  // UPGRADE_TBD: This function is only added as a temporary solution to enable
-  // debugging output for C++AMP/HC kernels. The correct way is to:
-  //
-  // a) adopt clang patch to change DWARF version for AMDGPU toolchain
-  //    http://reviews.llvm.org/D20640
-  // b) change HCC frontend to use AMDGPU toolchain for kernel compilation path
-  unsigned GetDefaultDwarfVersion() const override { return 2; }
-
 protected:
   Tool *buildAssembler() const override;
   Tool *buildLinker() const override;
