@@ -11267,6 +11267,45 @@ void HCC::CXXAMPLink::ConstructJob(Compilation &C, const JobAction &JA,
       }
     }
   }
+
+  // specify AMDGPU target
+  if (Args.hasArg(options::OPT_amdgpu_target_EQ)) {
+    Arg* AMDGPUTargetArg = Args.getLastArg(options::OPT_amdgpu_target_EQ);
+    assert(AMDGPUTargetArg->getNumValues() == 1);
+    // check if valid AMDGPU target is specified
+    StringRef AMDGPUTarget(AMDGPUTargetArg->getValue(0));
+
+    bool FoundAMDGPUTarget = true;
+    SmallString<32> LinkerArgString("--amdgpu-target=");
+
+    // map ISA version string to GPU family
+    if (AMDGPUTarget.equals("AMD:AMDGPU:7:0:0")) {
+      LinkerArgString.append("kaveri");
+    } else if (AMDGPUTarget.equals("AMD:AMDGPU:7:0:1")) {
+      LinkerArgString.append("hawaii");
+    } else if (AMDGPUTarget.equals("AMD:AMDGPU:8:0:1")) {
+      LinkerArgString.append("carrizo");
+    } else if (AMDGPUTarget.equals("AMD:AMDGPU:8:0:3")) {
+      LinkerArgString.append("fiji");
+    } else if (AMDGPUTarget.equals("fiji") ||
+               AMDGPUTarget.equals("kaveri") ||
+               AMDGPUTarget.equals("carrizo") ||
+               AMDGPUTarget.equals("hawaii")) {
+      // directly use GPU family
+      LinkerArgString.append(AMDGPUTarget);
+    } else {
+      FoundAMDGPUTarget = false;
+    }
+
+    if (FoundAMDGPUTarget) {
+      CmdArgs.push_back(Args.MakeArgString(LinkerArgString));
+    } else {
+      // ignore invalid AMDGPU target, use auto
+      C.getDriver().Diag(diag::warn_amdgpu_target_invalid) << AMDGPUTarget;
+      CmdArgs.push_back("--amdgpu-target=auto");
+    }
+  }
+
   // pass inputs to gnu ld for initial processing
   Linker::ConstructLinkerJob(C, JA, Output, Inputs, Args, LinkingOutput, CmdArgs);
 

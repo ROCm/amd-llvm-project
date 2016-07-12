@@ -374,6 +374,8 @@ def cxxamp_kernel_mode : Flag<["-"], "gpu">, Flags<[DriverOption]>,Group<cxxamp_
   HelpText<"C++AMP only.  This option allows the compiler to emit kernel-specific artifacts"> ;
 def cxxamp_cpu_mode : Flag<["-"], "cpu">, Flags<[DriverOption]>,Group<cxxamp_Group>,
   HelpText<"C++AMP only.  This option allows the compiler to emit CPU kernel-specific artifacts"> ;
+def amdgpu_target_EQ : Joined<["-", "--"], "amdgpu-target=">, Flags<[DriverOption]>,
+  HelpText<"Specify AMDGPU ISA version (ex: AMD:AMDGPU:8:0:3). Could be specified only once.">;
 def client__name : JoinedOrSeparate<["-"], "client_name">;
 def combine : Flag<["-", "--"], "combine">, Flags<[DriverOption, Unsupported]>;
 def compatibility__version : JoinedOrSeparate<["-"], "compatibility_version">;
