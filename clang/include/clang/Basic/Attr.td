@@ -2391,7 +2391,7 @@ def CXXAMPRestrictCPU : InheritableAttr {
 }
 
 def HCGridLaunch : InheritableAttr {
-  let Spellings = [GNU<"hc_grid_launch">, CXX11<"", "hc_grid_launch">];
+  let Spellings = [GNU<"hc_grid_launch">, CXX11<"", "hc_grid_launch", 201511>];
   let Subjects = SubjectList<[Function]>;
   let Documentation = [Undocumented];
 }
