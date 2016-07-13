@@ -66,6 +66,9 @@ def export_dynamic: F<"export-dynamic">,
 def export_dynamic_symbol: S<"export-dynamic-symbol">,
   HelpText<"Put a symbol in the dynamic symbol table">;
 
+def fatal_warnings: F<"fatal-warnings">,
+  HelpText<"Treat warnings as errors">;
+
 def fini: S<"fini">, MetaVarName<"<symbol>">,
   HelpText<"Specify a finalizer function">;
 
@@ -75,6 +78,8 @@ def hash_style: S<"hash-style">,
 def help: F<"help">, HelpText<"Print option help">;
 
 def icf: F<"icf=all">, HelpText<"Enable identical code folding">;
+
+def image_base : J<"image-base=">, HelpText<"Set the base address">;
 
 def gc_sections: F<"gc-sections">,
   HelpText<"Enable garbage collection of unused sections">;
@@ -153,6 +158,9 @@ def undefined: J<"undefined=">,
 def unresolved_symbols: J<"unresolved-symbols=">,
   HelpText<"Determine how to handle unresolved symbols">;
 
+def rsp_quoting: J<"rsp-quoting=">,
+  HelpText<"Quoting style for response files. Values supported: windows|posix">;
+
 def verbose: F<"verbose">, HelpText<"Verbose mode">;
 
 def version: F<"version">, HelpText<"Display the version number">;
@@ -183,6 +191,7 @@ def alias_discard_all_x: Flag<["-"], "x">, Alias<discard_all>;
 def alias_discard_locals_X: Flag<["-"], "X">, Alias<discard_locals>;
 def alias_dynamic_list: J<"dynamic-list=">, Alias<dynamic_list>;
 def alias_entry_e: JoinedOrSeparate<["-"], "e">, Alias<entry>;
+def alias_entry_entry: J<"entry=">, Alias<entry>;
 def alias_export_dynamic_E: Flag<["-"], "E">, Alias<export_dynamic>;
 def alias_export_dynamic_symbol: J<"export-dynamic-symbol=">,
   Alias<export_dynamic_symbol>;
@@ -231,8 +240,8 @@ def plugin_opt_eq: J<"plugin-opt=">;
 // Options listed below are silently ignored for now for compatibility.
 def allow_shlib_undefined: F<"allow-shlib-undefined">;
 def define_common: F<"define-common">;
+def demangle: F<"demangle">;
 def detect_odr_violations: F<"detect-odr-violations">;
-def fatal_warnings: F<"fatal-warnings">;
 def no_add_needed: F<"no-add-needed">;
 def no_allow_shlib_undefined: F<"no-allow-shlib-undefined">;
 def no_copy_dt_needed_entries: F<"no-copy-dt-needed-entries">,
