@@ -9415,9 +9415,9 @@ void gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
       if (FoundAMDGPUTarget) {
         CmdArgs.push_back(Args.MakeArgString(LinkerArgString));
       } else {
-        // ignore invalid AMDGPU target, use auto
+        // ignore invalid AMDGPU target, use fiji
         C.getDriver().Diag(diag::warn_amdgpu_target_invalid) << AMDGPUTarget;
-        CmdArgs.push_back("--amdgpu-target=auto");
+        CmdArgs.push_back("--amdgpu-target=fiji");
       }
     }
 
@@ -11340,9 +11340,9 @@ void HCC::CXXAMPLink::ConstructJob(Compilation &C, const JobAction &JA,
     if (FoundAMDGPUTarget) {
       CmdArgs.push_back(Args.MakeArgString(LinkerArgString));
     } else {
-      // ignore invalid AMDGPU target, use auto
+      // ignore invalid AMDGPU target, use fiji
       C.getDriver().Diag(diag::warn_amdgpu_target_invalid) << AMDGPUTarget;
-      CmdArgs.push_back("--amdgpu-target=auto");
+      CmdArgs.push_back("--amdgpu-target=fiji");
     }
   }
 
