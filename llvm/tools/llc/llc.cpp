@@ -74,7 +74,7 @@ NoIntegratedAssembler("no-integrated-as", cl::Hidden,
                       cl::desc("Disable integrated assembler"));
 
 static cl::opt<bool>
-    PreserveComments("fpreserve-as-comments", cl::Hidden,
+    PreserveComments("preserve-as-comments", cl::Hidden,
                      cl::desc("Preserve Comments in outputted assembly"),
                      cl::init(true));
 
@@ -440,7 +440,7 @@ static int compileModule(char **argv, LLVMContext &Context) {
         PM.add(P);
         TPC->printAndVerify(Banner);
       }
-      PM.add(createPrintMIRPass(errs()));
+      PM.add(createPrintMIRPass(*OS));
     } else {
       if (!StartAfter.empty()) {
         const PassInfo *PI = PR->getPassInfo(StartAfter);
