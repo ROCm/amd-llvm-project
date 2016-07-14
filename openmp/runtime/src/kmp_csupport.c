@@ -502,12 +502,12 @@ __kmpc_end_serialized_parallel(ident_t *loc, kmp_int32 global_tid)
     this_thr    = __kmp_threads[ global_tid ];
     serial_team = this_thr->th.th_serial_team;
 
-   #if OMP_41_ENABLED
+   #if OMP_45_ENABLED
    kmp_task_team_t *   task_team = this_thr->th.th_task_team;
 
    // we need to wait for the proxy tasks before finishing the thread
    if ( task_team != NULL && task_team->tt.tt_found_proxy_tasks )
-        __kmp_task_team_wait(this_thr, serial_team, NULL ); // is an ITT object needed here?
+        __kmp_task_team_wait(this_thr, serial_team USE_ITT_BUILD_ARG(NULL) ); // is an ITT object needed here?
    #endif
 
     KMP_MB();
@@ -988,7 +988,7 @@ __kmp_init_indirect_csptr(kmp_critical_name * crit, ident_t const * loc, kmp_int
 // Fast-path test futex lock
 #define KMP_TEST_FUTEX_LOCK(lock, gtid, rc) {                                                                       \
     kmp_futex_lock_t *ftx = (kmp_futex_lock_t *)lock;                                                               \
-    if (KMP_COMPARE_AND_STORE_ACQ32(&(ftx->lk.poll), KMP_LOCK_FREE(futex), KMP_LOCK_BUSY(gtid+1, futex) << 1)) {    \
+    if (KMP_COMPARE_AND_STORE_ACQ32(&(ftx->lk.poll), KMP_LOCK_FREE(futex), KMP_LOCK_BUSY(gtid+1 << 1, futex))) {    \
         KMP_FSYNC_ACQUIRED(ftx);                                                                                    \
         rc = TRUE;                                                                                                  \
     } else {                                                                                                        \
@@ -1096,7 +1096,7 @@ __kmpc_critical( ident_t * loc, kmp_int32 global_tid, kmp_critical_name * crit )
       && ( sizeof( lck->tas.lk.poll ) <= OMP_CRITICAL_SIZE ) ) {
         lck = (kmp_user_lock_p)crit;
     }
-#if KMP_OS_LINUX && (KMP_ARCH_X86 || KMP_ARCH_X86_64 || KMP_ARCH_ARM || KMP_ARCH_AARCH64)
+#if KMP_USE_FUTEX
     else if ( ( __kmp_user_lock_kind == lk_futex )
       && ( sizeof( lck->futex.lk.poll ) <= OMP_CRITICAL_SIZE ) ) {
         lck = (kmp_user_lock_p)crit;
@@ -1308,7 +1308,7 @@ __kmpc_end_critical(ident_t *loc, kmp_int32 global_tid, kmp_critical_name *crit)
       && ( sizeof( lck->tas.lk.poll ) <= OMP_CRITICAL_SIZE ) ) {
         lck = (kmp_user_lock_p)crit;
     }
-#if KMP_OS_LINUX && (KMP_ARCH_X86 || KMP_ARCH_X86_64 || KMP_ARCH_ARM || KMP_ARCH_AARCH64)
+#if KMP_USE_FUTEX
     else if ( ( __kmp_user_lock_kind == lk_futex )
       && ( sizeof( lck->futex.lk.poll ) <= OMP_CRITICAL_SIZE ) ) {
         lck = (kmp_user_lock_p)crit;
@@ -1653,6 +1653,15 @@ kmpc_set_defaults( char const * str )
     __kmp_aux_set_defaults( str, KMP_STRLEN( str ) );
 }
 
+void
+kmpc_set_disp_num_buffers( int arg )
+{
+    // ignore after initialization because some teams have already
+    // allocated dispatch buffers
+    if( __kmp_init_serial == 0 && arg > 0 )
+        __kmp_dispatch_num_buffers = arg;
+}
+
 int
 kmpc_set_affinity_mask_proc( int proc, void **mask )
 {
@@ -1904,7 +1913,7 @@ __kmpc_init_lock( ident_t * loc, kmp_int32 gtid,  void ** user_lock ) {
       && ( sizeof( lck->tas.lk.poll ) <= OMP_LOCK_T_SIZE ) ) {
         lck = (kmp_user_lock_p)user_lock;
     }
-#if KMP_OS_LINUX && (KMP_ARCH_X86 || KMP_ARCH_X86_64 || KMP_ARCH_ARM || KMP_ARCH_AARCH64)
+#if KMP_USE_FUTEX
     else if ( ( __kmp_user_lock_kind == lk_futex )
       && ( sizeof( lck->futex.lk.poll ) <= OMP_LOCK_T_SIZE ) ) {
         lck = (kmp_user_lock_p)user_lock;
@@ -1959,7 +1968,7 @@ __kmpc_init_nest_lock( ident_t * loc, kmp_int32 gtid, void ** user_lock ) {
       + sizeof( lck->tas.lk.depth_locked ) <= OMP_NEST_LOCK_T_SIZE ) ) {
         lck = (kmp_user_lock_p)user_lock;
     }
-#if KMP_OS_LINUX && (KMP_ARCH_X86 || KMP_ARCH_X86_64 || KMP_ARCH_ARM || KMP_ARCH_AARCH64)
+#if KMP_USE_FUTEX
     else if ( ( __kmp_user_lock_kind == lk_futex )
      && ( sizeof( lck->futex.lk.poll ) + sizeof( lck->futex.lk.depth_locked )
      <= OMP_NEST_LOCK_T_SIZE ) ) {
@@ -2008,7 +2017,7 @@ __kmpc_destroy_lock( ident_t * loc, kmp_int32 gtid, void ** user_lock ) {
       && ( sizeof( lck->tas.lk.poll ) <= OMP_LOCK_T_SIZE ) ) {
         lck = (kmp_user_lock_p)user_lock;
     }
-#if KMP_OS_LINUX && (KMP_ARCH_X86 || KMP_ARCH_X86_64 || KMP_ARCH_ARM || KMP_ARCH_AARCH64)
+#if KMP_USE_FUTEX
     else if ( ( __kmp_user_lock_kind == lk_futex )
       && ( sizeof( lck->futex.lk.poll ) <= OMP_LOCK_T_SIZE ) ) {
         lck = (kmp_user_lock_p)user_lock;
@@ -2034,7 +2043,7 @@ __kmpc_destroy_lock( ident_t * loc, kmp_int32 gtid, void ** user_lock ) {
       && ( sizeof( lck->tas.lk.poll ) <= OMP_LOCK_T_SIZE ) ) {
         ;
     }
-#if KMP_OS_LINUX && (KMP_ARCH_X86 || KMP_ARCH_X86_64 || KMP_ARCH_ARM || KMP_ARCH_AARCH64)
+#if KMP_USE_FUTEX
     else if ( ( __kmp_user_lock_kind == lk_futex )
       && ( sizeof( lck->futex.lk.poll ) <= OMP_LOCK_T_SIZE ) ) {
         ;
@@ -2065,7 +2074,7 @@ __kmpc_destroy_nest_lock( ident_t * loc, kmp_int32 gtid, void ** user_lock ) {
       + sizeof( lck->tas.lk.depth_locked ) <= OMP_NEST_LOCK_T_SIZE ) ) {
         lck = (kmp_user_lock_p)user_lock;
     }
-#if KMP_OS_LINUX && (KMP_ARCH_X86 || KMP_ARCH_X86_64 || KMP_ARCH_ARM || KMP_ARCH_AARCH64)
+#if KMP_USE_FUTEX
     else if ( ( __kmp_user_lock_kind == lk_futex )
      && ( sizeof( lck->futex.lk.poll ) + sizeof( lck->futex.lk.depth_locked )
      <= OMP_NEST_LOCK_T_SIZE ) ) {
@@ -2093,7 +2102,7 @@ __kmpc_destroy_nest_lock( ident_t * loc, kmp_int32 gtid, void ** user_lock ) {
      + sizeof( lck->tas.lk.depth_locked ) <= OMP_NEST_LOCK_T_SIZE ) ) {
         ;
     }
-#if KMP_OS_LINUX && (KMP_ARCH_X86 || KMP_ARCH_X86_64 || KMP_ARCH_ARM || KMP_ARCH_AARCH64)
+#if KMP_USE_FUTEX
     else if ( ( __kmp_user_lock_kind == lk_futex )
      && ( sizeof( lck->futex.lk.poll ) + sizeof( lck->futex.lk.depth_locked )
      <= OMP_NEST_LOCK_T_SIZE ) ) {
@@ -2138,7 +2147,7 @@ __kmpc_set_lock( ident_t * loc, kmp_int32 gtid, void ** user_lock ) {
       && ( sizeof( lck->tas.lk.poll ) <= OMP_LOCK_T_SIZE ) ) {
         lck = (kmp_user_lock_p)user_lock;
     }
-#if KMP_OS_LINUX && (KMP_ARCH_X86 || KMP_ARCH_X86_64 || KMP_ARCH_ARM || KMP_ARCH_AARCH64)
+#if KMP_USE_FUTEX
     else if ( ( __kmp_user_lock_kind == lk_futex )
       && ( sizeof( lck->futex.lk.poll ) <= OMP_LOCK_T_SIZE ) ) {
         lck = (kmp_user_lock_p)user_lock;
@@ -2194,7 +2203,7 @@ __kmpc_set_nest_lock( ident_t * loc, kmp_int32 gtid, void ** user_lock ) {
       + sizeof( lck->tas.lk.depth_locked ) <= OMP_NEST_LOCK_T_SIZE ) ) {
         lck = (kmp_user_lock_p)user_lock;
     }
-#if KMP_OS_LINUX && (KMP_ARCH_X86 || KMP_ARCH_X86_64 || KMP_ARCH_ARM || KMP_ARCH_AARCH64)
+#if KMP_USE_FUTEX
     else if ( ( __kmp_user_lock_kind == lk_futex )
      && ( sizeof( lck->futex.lk.poll ) + sizeof( lck->futex.lk.depth_locked )
      <= OMP_NEST_LOCK_T_SIZE ) ) {
@@ -2273,7 +2282,7 @@ __kmpc_unset_lock( ident_t *loc, kmp_int32 gtid, void **user_lock )
         lck = (kmp_user_lock_p)user_lock;
 #endif
     }
-#if KMP_OS_LINUX && (KMP_ARCH_X86 || KMP_ARCH_X86_64 || KMP_ARCH_ARM || KMP_ARCH_AARCH64)
+#if KMP_USE_FUTEX
     else if ( ( __kmp_user_lock_kind == lk_futex )
       && ( sizeof( lck->futex.lk.poll ) <= OMP_LOCK_T_SIZE ) ) {
         lck = (kmp_user_lock_p)user_lock;
@@ -2333,7 +2342,7 @@ __kmpc_unset_nest_lock( ident_t *loc, kmp_int32 gtid, void **user_lock )
         lck = (kmp_user_lock_p)user_lock;
 #endif
     }
-#if KMP_OS_LINUX && (KMP_ARCH_X86 || KMP_ARCH_X86_64 || KMP_ARCH_ARM || KMP_ARCH_AARCH64)
+#if KMP_USE_FUTEX
     else if ( ( __kmp_user_lock_kind == lk_futex )
      && ( sizeof( lck->futex.lk.poll ) + sizeof( lck->futex.lk.depth_locked )
      <= OMP_NEST_LOCK_T_SIZE ) ) {
@@ -2412,7 +2421,7 @@ __kmpc_test_lock( ident_t *loc, kmp_int32 gtid, void **user_lock )
       && ( sizeof( lck->tas.lk.poll ) <= OMP_LOCK_T_SIZE ) ) {
         lck = (kmp_user_lock_p)user_lock;
     }
-#if KMP_OS_LINUX && (KMP_ARCH_X86 || KMP_ARCH_X86_64 || KMP_ARCH_ARM || KMP_ARCH_AARCH64)
+#if KMP_USE_FUTEX
     else if ( ( __kmp_user_lock_kind == lk_futex )
       && ( sizeof( lck->futex.lk.poll ) <= OMP_LOCK_T_SIZE ) ) {
         lck = (kmp_user_lock_p)user_lock;
@@ -2469,7 +2478,7 @@ __kmpc_test_nest_lock( ident_t *loc, kmp_int32 gtid, void **user_lock )
       + sizeof( lck->tas.lk.depth_locked ) <= OMP_NEST_LOCK_T_SIZE ) ) {
         lck = (kmp_user_lock_p)user_lock;
     }
-#if KMP_OS_LINUX && (KMP_ARCH_X86 || KMP_ARCH_X86_64 || KMP_ARCH_ARM || KMP_ARCH_AARCH64)
+#if KMP_USE_FUTEX
     else if ( ( __kmp_user_lock_kind == lk_futex )
      && ( sizeof( lck->futex.lk.poll ) + sizeof( lck->futex.lk.depth_locked )
      <= OMP_NEST_LOCK_T_SIZE ) ) {
@@ -3027,7 +3036,7 @@ void __kmpc_place_threads(int nS, int sO, int nC, int cO, int nT)
     __kmp_place_num_threads_per_core = nT;
 }
 
-#if OMP_41_ENABLED
+#if OMP_45_ENABLED
 /*!
 @ingroup WORK_SHARING
 @param loc  source location information.
@@ -3061,7 +3070,7 @@ __kmpc_doacross_init(ident_t *loc, int gtid, int num_dims, struct kmp_dim * dims
     }
     KMP_DEBUG_ASSERT(team->t.t_nproc > 1);
     idx = pr_buf->th_doacross_buf_idx++; // Increment index of shared buffer for the next loop
-    sh_buf = &team->t.t_disp_buffer[idx % KMP_MAX_DISP_BUF];
+    sh_buf = &team->t.t_disp_buffer[idx % __kmp_dispatch_num_buffers];
 
     // Save bounds info into allocated private buffer
     KMP_DEBUG_ASSERT(pr_buf->th_doacross_info == NULL);
@@ -3111,7 +3120,7 @@ __kmpc_doacross_init(ident_t *loc, int gtid, int num_dims, struct kmp_dim * dims
     }
     KMP_DEBUG_ASSERT(trace_count > 0);
 
-    // Check if shared buffer is not occupied by other loop (idx - KMP_MAX_DISP_BUF)
+    // Check if shared buffer is not occupied by other loop (idx - __kmp_dispatch_num_buffers)
     if( idx != sh_buf->doacross_buf_idx ) {
         // Shared buffer is occupied, wait for it to be free
         __kmp_wait_yield_4( (kmp_uint32*)&sh_buf->doacross_buf_idx, idx, __kmp_eq_4, NULL );
@@ -3300,14 +3309,14 @@ __kmpc_doacross_fini(ident_t *loc, int gtid)
     if( num_done == th->th.th_team_nproc ) {
         // we are the last thread, need to free shared resources
         int idx = pr_buf->th_doacross_buf_idx - 1;
-        dispatch_shared_info_t *sh_buf = &team->t.t_disp_buffer[idx % KMP_MAX_DISP_BUF];
+        dispatch_shared_info_t *sh_buf = &team->t.t_disp_buffer[idx % __kmp_dispatch_num_buffers];
         KMP_DEBUG_ASSERT(pr_buf->th_doacross_info[1] == (kmp_int64)&sh_buf->doacross_num_done);
         KMP_DEBUG_ASSERT(num_done == (kmp_int64)sh_buf->doacross_num_done);
         KMP_DEBUG_ASSERT(idx == sh_buf->doacross_buf_idx);
         __kmp_thread_free(th, (void*)sh_buf->doacross_flags);
         sh_buf->doacross_flags = NULL;
         sh_buf->doacross_num_done = 0;
-        sh_buf->doacross_buf_idx += KMP_MAX_DISP_BUF; // free buffer for future re-use
+        sh_buf->doacross_buf_idx += __kmp_dispatch_num_buffers; // free buffer for future re-use
     }
     // free private resources (need to keep buffer index forever)
     __kmp_thread_free(th, (void*)pr_buf->th_doacross_info);

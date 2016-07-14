@@ -75,26 +75,87 @@ public:
   VersionScriptParser(StringRef S) : ScriptParserBase(S) {}
 
   void run();
+
+private:
+  void parseVersion(StringRef Version);
+  void parseLocal();
+  void parseVersionSymbols(StringRef Version);
 };
 
-void VersionScriptParser::run() {
+size_t elf::defineSymbolVersion(StringRef Version) {
+  // Identifiers start at 2 because 0 and 1 are reserved
+  // for VER_NDX_LOCAL and VER_NDX_GLOBAL constants.
+  size_t VersionId = Config->SymbolVersions.size() + 2;
+  Config->SymbolVersions.push_back(elf::Version(Version, VersionId));
+  return VersionId;
+}
+
+void VersionScriptParser::parseVersion(StringRef Version) {
   expect("{");
+  defineSymbolVersion(Version);
   if (peek() == "global:") {
     next();
-    while (!Error) {
-      Config->VersionScriptGlobals.push_back(next());
-      expect(";");
-      if (peek() == "local:")
-        break;
-    }
+    parseVersionSymbols(Version);
   }
+  if (peek() == "local:")
+    parseLocal();
+  else if (peek() != "}")
+    parseVersionSymbols(Version);
+
+  expect("}");
+
+  // Each version may have a parent version. For example, "Ver2" defined as
+  // "Ver2 { global: foo; local: *; } Ver1;" has "Ver1" as a parent. This
+  // version hierarchy is, probably against your instinct, purely for human; the
+  // runtime doesn't care about them at all. In LLD, we simply skip the token.
+  if (!Version.empty() && peek() != ";")
+    next();
+  expect(";");
+}
+
+void VersionScriptParser::parseLocal() {
   expect("local:");
   expect("*");
   expect(";");
-  expect("}");
-  expect(";");
-  if (!atEOF())
-    setError("expected EOF");
+  Config->VersionScriptGlobalByDefault = false;
+}
+
+void VersionScriptParser::parseVersionSymbols(StringRef Version) {
+  std::vector<StringRef> *Globals;
+  if (Version.empty())
+    Globals = &Config->VersionScriptGlobals;
+  else
+    Globals = &Config->SymbolVersions.back().Globals;
+
+  for (;;) {
+    StringRef Cur = peek();
+    if (Cur == "extern")
+      setError("extern keyword is not supported");
+    if (Cur == "}" || Cur == "local:" || Error)
+      return;
+    next();
+    Globals->push_back(Cur);
+    expect(";");
+  }
+}
+
+void VersionScriptParser::run() {
+  StringRef Msg = "anonymous version definition is used in "
+                  "combination with other version definitions";
+  if (peek() == "{") {
+    parseVersion("");
+    if (!atEOF())
+      setError(Msg);
+    return;
+  }
+
+  while (!atEOF() && !Error) {
+    if (peek() == "{") {
+      setError(Msg);
+      return;
+    }
+    parseVersion(next());
+  }
 }
 
 void elf::parseVersionScript(MemoryBufferRef MB) {

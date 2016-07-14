@@ -537,6 +537,12 @@ TEST(DeclarationMatcher, ClassIsDerived) {
     cxxRecordDecl(isDerivedFrom(namedDecl(hasName("X"))))));
 }
 
+TEST(DeclarationMatcher, IsLambda) {
+  const auto IsLambda = cxxMethodDecl(ofClass(cxxRecordDecl(isLambda())));
+  EXPECT_TRUE(matches("auto x = []{};", IsLambda));
+  EXPECT_TRUE(notMatches("struct S { void operator()() const; };", IsLambda));
+}
+
 TEST(Matcher, BindMatchedNodes) {
   DeclarationMatcher ClassX = has(recordDecl(hasName("::X")).bind("x"));
 
@@ -717,6 +723,18 @@ TEST(IsInteger, ReportsNoFalsePositives) {
                            to(varDecl(hasType(isInteger()))))))));
 }
 
+TEST(IsSignedInteger, MatchesSignedIntegers) {
+  EXPECT_TRUE(matches("int i = 0;", varDecl(hasType(isSignedInteger()))));
+  EXPECT_TRUE(notMatches("unsigned i = 0;",
+                         varDecl(hasType(isSignedInteger()))));
+}
+
+TEST(IsUnsignedInteger, MatchesUnsignedIntegers) {
+  EXPECT_TRUE(notMatches("int i = 0;", varDecl(hasType(isUnsignedInteger()))));
+  EXPECT_TRUE(matches("unsigned i = 0;",
+                      varDecl(hasType(isUnsignedInteger()))));
+}
+
 TEST(IsAnyPointer, MatchesPointers) {
   EXPECT_TRUE(matches("int* i = nullptr;", varDecl(hasType(isAnyPointer()))));
 }
@@ -845,6 +863,13 @@ TEST(IsNoThrow, MatchesNoThrowFunctionDeclarations) {
     notMatches("void f() noexcept(false);", functionDecl(isNoThrow())));
   EXPECT_TRUE(matches("void f() throw();", functionDecl(isNoThrow())));
   EXPECT_TRUE(matches("void f() noexcept;", functionDecl(isNoThrow())));
+
+  EXPECT_TRUE(notMatches("void f();", functionProtoType(isNoThrow())));
+  EXPECT_TRUE(notMatches("void f() throw(int);", functionProtoType(isNoThrow())));
+  EXPECT_TRUE(
+    notMatches("void f() noexcept(false);", functionProtoType(isNoThrow())));
+  EXPECT_TRUE(matches("void f() throw();", functionProtoType(isNoThrow())));
+  EXPECT_TRUE(matches("void f() noexcept;", functionProtoType(isNoThrow())));
 }
 
 TEST(isConstexpr, MatchesConstexprDeclarations) {
@@ -1353,6 +1378,14 @@ TEST(Member, MatchesMember) {
     memberExpr(hasDeclaration(fieldDecl(hasType(isInteger()))))));
 }
 
+TEST(Member, BitFields) {
+  EXPECT_TRUE(matches("class C { int a : 2; int b; };",
+                      fieldDecl(isBitField(), hasName("a"))));
+  EXPECT_TRUE(notMatches("class C { int a : 2; int b; };",
+                         fieldDecl(isBitField(), hasName("b"))));
+  EXPECT_TRUE(matches("class C { int a : 2; int b : 4; };",
+                      fieldDecl(isBitField(), hasBitWidth(2), hasName("a"))));
+}
 
 TEST(Member, UnderstandsAccess) {
   EXPECT_TRUE(matches(
@@ -1396,6 +1429,20 @@ TEST(hasDynamicExceptionSpec, MatchesDynamicExceptionSpecifications) {
       matches("void k() throw(int);", functionDecl(hasDynamicExceptionSpec())));
   EXPECT_TRUE(
       matches("void l() throw(...);", functionDecl(hasDynamicExceptionSpec())));
+
+  EXPECT_TRUE(notMatches("void f();", functionProtoType(hasDynamicExceptionSpec())));
+  EXPECT_TRUE(notMatches("void g() noexcept;",
+                         functionProtoType(hasDynamicExceptionSpec())));
+  EXPECT_TRUE(notMatches("void h() noexcept(true);",
+                         functionProtoType(hasDynamicExceptionSpec())));
+  EXPECT_TRUE(notMatches("void i() noexcept(false);",
+                         functionProtoType(hasDynamicExceptionSpec())));
+  EXPECT_TRUE(
+      matches("void j() throw();", functionProtoType(hasDynamicExceptionSpec())));
+  EXPECT_TRUE(
+      matches("void k() throw(int);", functionProtoType(hasDynamicExceptionSpec())));
+  EXPECT_TRUE(
+      matches("void l() throw(...);", functionProtoType(hasDynamicExceptionSpec())));
 }
 
 TEST(HasObjectExpression, DoesNotMatchMember) {

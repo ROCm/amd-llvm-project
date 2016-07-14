@@ -18,6 +18,7 @@
 // C++ Includes
 #include <list>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 #include <unordered_set>
@@ -2232,11 +2233,11 @@ public:
     ///     order.
     //------------------------------------------------------------------
     uint64_t
-    ReadUnsignedIntegerFromMemory (lldb::addr_t load_addr, 
-                                   size_t byte_size,
-                                   uint64_t fail_value, 
-                                   Error &error);
-    
+    ReadUnsignedIntegerFromMemory(lldb::addr_t load_addr, size_t byte_size, uint64_t fail_value, Error &error);
+
+    int64_t
+    ReadSignedIntegerFromMemory(lldb::addr_t load_addr, size_t byte_size, int64_t fail_value, Error &error);
+
     lldb::addr_t
     ReadPointerFromMemory (lldb::addr_t vm_addr, 
                            Error &error);
@@ -2436,6 +2437,32 @@ public:
     virtual lldb::addr_t
     ResolveIndirectFunction(const Address *address, Error &error);
 
+    //------------------------------------------------------------------
+    /// Locate the memory region that contains load_addr.
+    ///
+    /// If load_addr is within the address space the process has mapped
+    /// range_info will be filled in with the start and end of that range
+    /// as well as the permissions for that range and range_info.GetMapped
+    /// will return true.
+    ///
+    /// If load_addr is outside any mapped region then range_info will
+    /// have its start address set to load_addr and the end of the
+    /// range will indicate the start of the next mapped range or be
+    /// set to LLDB_INVALID_ADDRESS if there are no valid mapped ranges
+    /// between load_addr and the end of the process address space.
+    ///
+    /// GetMemoryRegionInfo will only return an error if it is
+    /// unimplemented for the current process.
+    ///
+    /// @param[in] load_addr
+    ///     The load address to query the range_info for.
+    ///
+    /// @param[out] range_info
+    ///     An range_info value containing the details of the range.
+    ///
+    /// @return
+    ///     An error value.
+    //------------------------------------------------------------------
     virtual Error
     GetMemoryRegionInfo (lldb::addr_t load_addr,
                          MemoryRegionInfo &range_info)
@@ -2444,6 +2471,19 @@ public:
         error.SetErrorString ("Process::GetMemoryRegionInfo() not supported");
         return error;
     }
+
+    //------------------------------------------------------------------
+    /// Obtain all the mapped memory regions within this process.
+    ///
+    /// @param[out] region_list
+    ///     A vector to contain MemoryRegionInfo objects for all mapped
+    ///     ranges.
+    ///
+    /// @return
+    ///     An error value.
+    //------------------------------------------------------------------
+    virtual Error
+    GetMemoryRegions (std::vector<lldb::MemoryRegionInfoSP>& region_list);
 
     virtual Error
     GetWatchpointSupportInfo (uint32_t &num)
@@ -3308,9 +3348,13 @@ protected:
     bool
     PrivateStateThreadIsValid () const
     {
-        return m_private_state_thread.IsJoinable();
+        lldb::StateType state = m_private_state.GetValue();
+        return state != lldb::eStateInvalid &&
+               state != lldb::eStateDetached &&
+               state != lldb::eStateExited &&
+               m_private_state_thread.IsJoinable();
     }
-    
+
     void
     ForceNextEventDelivery()
     {
@@ -3402,6 +3446,7 @@ protected:
     bool m_destroy_in_process;
     bool m_can_interpret_function_calls; // Some targets, e.g the OSX kernel, don't support the ability to modify the stack.
     WarningsCollection          m_warnings_issued;  // A set of object pointers which have already had warnings printed
+    std::mutex                  m_run_thread_plan_lock;
     
     enum {
         eCanJITDontKnow= 0,

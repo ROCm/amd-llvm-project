@@ -157,8 +157,13 @@ Variable::Dump(Stream *s, bool show_context) const
         switch (m_scope)
         {
         case eValueTypeVariableGlobal:       s->PutCString(m_external ? "global" : "static"); break;
-        case eValueTypeVariableArgument:    s->PutCString("parameter"); break;
+        case eValueTypeVariableArgument:
+            s->PutCString("parameter");
+            break;
         case eValueTypeVariableLocal:        s->PutCString("local"); break;
+        case eValueTypeVariableThreadLocal:
+            s->PutCString("thread local");
+            break;
         default:            *s << "??? (" << m_scope << ')';
         }
     }
@@ -252,15 +257,8 @@ Variable::GetDeclContext ()
 CompilerDecl
 Variable::GetDecl ()
 {
-    CompilerDecl decl;
     Type *type = GetType();
-    if (type)
-    {
-        decl = type->GetSymbolFile()->GetDeclForUID(GetID());
-        if (decl)
-            decl.GetTypeSystem()->DeclLinkToObject(decl.GetOpaqueDecl(), shared_from_this());
-    }
-    return decl;
+    return type ? type->GetSymbolFile()->GetDeclForUID(GetID()) : CompilerDecl();
 }
 
 void
@@ -351,6 +349,7 @@ Variable::IsInScope (StackFrame *frame)
     case eValueTypeConstResult:
     case eValueTypeVariableGlobal:
     case eValueTypeVariableStatic:
+    case eValueTypeVariableThreadLocal:
         return true;
 
     case eValueTypeVariableArgument:

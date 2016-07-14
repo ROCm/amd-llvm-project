@@ -23,6 +23,7 @@
 #include "clang/Driver/ToolChain.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/ADT/StringSwitch.h"
@@ -41,6 +42,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include <map>
 #include <memory>
+#include <utility>
 
 using namespace clang::driver;
 using namespace clang;
@@ -49,9 +51,9 @@ using namespace llvm::opt;
 Driver::Driver(StringRef ClangExecutable, StringRef DefaultTargetTriple,
                DiagnosticsEngine &Diags,
                IntrusiveRefCntPtr<vfs::FileSystem> VFS)
-    : Opts(createDriverOptTable()), Diags(Diags), VFS(VFS), Mode(GCCMode),
-      SaveTemps(SaveTempsNone), BitcodeEmbed(EmbedNone), LTOMode(LTOK_None),
-      ClangExecutable(ClangExecutable),
+    : Opts(createDriverOptTable()), Diags(Diags), VFS(std::move(VFS)),
+      Mode(GCCMode), SaveTemps(SaveTempsNone), BitcodeEmbed(EmbedNone),
+      LTOMode(LTOK_None), ClangExecutable(ClangExecutable),
       SysRoot(DEFAULT_SYSROOT), UseStdLib(true),
       DefaultTargetTriple(DefaultTargetTriple),
       DriverTitle("clang LLVM compiler"), CCPrintOptionsFilename(nullptr),
@@ -279,7 +281,7 @@ DerivedArgList *Driver::TranslateInputArgs(const InputArgList &Args) const {
   }
 
   // Enforce -static if -miamcu is present.
-  if (Args.hasArg(options::OPT_miamcu))
+  if (Args.hasFlag(options::OPT_miamcu, options::OPT_mno_iamcu, false))
     DAL->AddFlagArg(0, Opts->getOption(options::OPT_static));
 
 // Add a default value of -mlinker-version=, if one was given and the user
@@ -394,7 +396,7 @@ static llvm::Triple computeTargetTriple(const Driver &D,
   }
 
   // Handle -miamcu flag.
-  if (Args.hasArg(options::OPT_miamcu)) {
+  if (Args.hasFlag(options::OPT_miamcu, options::OPT_mno_iamcu, false)) {
     if (Target.get32BitArchVariant().getArch() != llvm::Triple::x86)
       D.Diag(diag::err_drv_unsupported_opt_for_target) << "-miamcu"
                                                        << Target.str();
@@ -439,6 +441,31 @@ void Driver::setLTOMode(const llvm::opt::ArgList &Args) {
     Diag(diag::err_drv_unsupported_option_argument) << A->getOption().getName()
                                                     << A->getValue();
   }
+}
+
+void Driver::CreateOffloadingDeviceToolChains(Compilation &C,
+                                              InputList &Inputs) {
+
+  //
+  // CUDA
+  //
+  // We need to generate a CUDA toolchain if any of the inputs has a CUDA type.
+  if (llvm::any_of(Inputs, [](std::pair<types::ID, const llvm::opt::Arg *> &I) {
+        return types::isCuda(I.first);
+      })) {
+    const ToolChain &TC = getToolChain(
+        C.getInputArgs(),
+        llvm::Triple(C.getOffloadingHostToolChain()->getTriple().isArch64Bit()
+                         ? "nvptx64-nvidia-cuda"
+                         : "nvptx-nvidia-cuda"));
+    C.addOffloadDeviceToolChain(&TC, Action::OFK_Cuda);
+  }
+
+  //
+  // TODO: Add support for other offloading programming models here.
+  //
+
+  return;
 }
 
 Compilation *Driver::BuildCompilation(ArrayRef<const char *> ArgList) {
@@ -568,18 +595,8 @@ Compilation *Driver::BuildCompilation(ArrayRef<const char *> ArgList) {
   InputList Inputs;
   BuildInputs(C->getDefaultToolChain(), *TranslatedArgs, Inputs);
 
-  // Initialize the CUDA device TC only if we have any CUDA Inputs.  This is
-  // necessary so that we don't break compilations that pass flags that are
-  // incompatible with the NVPTX TC (e.g. -mthread-model single).
-  if (llvm::any_of(Inputs, [](const std::pair<types::ID, const Arg *> &I) {
-        return I.first == types::TY_CUDA || I.first == types::TY_PP_CUDA ||
-               I.first == types::TY_CUDA_DEVICE;
-      })) {
-    C->setCudaDeviceToolChain(
-        &getToolChain(C->getArgs(), llvm::Triple(TC.getTriple().isArch64Bit()
-                                                     ? "nvptx64-nvidia-cuda"
-                                                     : "nvptx-nvidia-cuda")));
-  }
+  // Populate the tool chains for the offloading devices, if any.
+  CreateOffloadingDeviceToolChains(*C, Inputs);
 
   // Initialize HCC device TC if we have HCC inputs.
   if (llvm::any_of(Inputs, [](const std::pair<types::ID, const Arg *> &I) {
@@ -1037,9 +1054,10 @@ static unsigned PrintActions1(const Compilation &C, Action *A,
     os << '"' << BIA->getArchName() << '"' << ", {"
        << PrintActions1(C, *BIA->input_begin(), Ids) << "}";
   } else if (CudaDeviceAction *CDA = dyn_cast<CudaDeviceAction>(A)) {
-    os << '"'
-       << (CDA->getGpuArchName() ? CDA->getGpuArchName() : "(multiple archs)")
-       << '"' << ", {" << PrintActions1(C, *CDA->input_begin(), Ids) << "}";
+    CudaArch Arch = CDA->getGpuArch();
+    if (Arch != CudaArch::UNKNOWN)
+      os << "'" << CudaArchToString(Arch) << "', ";
+    os << "{" << PrintActions1(C, *CDA->input_begin(), Ids) << "}";
   } else {
     const ActionList *AL;
     if (CudaHostAction *CHA = dyn_cast<CudaHostAction>(A)) {
@@ -1460,24 +1478,25 @@ static Action *buildCudaActions(Compilation &C, DerivedArgList &Args,
     return C.MakeAction<CudaHostAction>(HostAction, ActionList());
 
   // Collect all cuda_gpu_arch parameters, removing duplicates.
-  SmallVector<const char *, 4> GpuArchList;
-  llvm::StringSet<> GpuArchNames;
+  SmallVector<CudaArch, 4> GpuArchList;
+  llvm::SmallSet<CudaArch, 4> GpuArchs;
   for (Arg *A : Args) {
     if (!A->getOption().matches(options::OPT_cuda_gpu_arch_EQ))
       continue;
     A->claim();
 
-    const auto& Arch = A->getValue();
-    if (!CudaDeviceAction::IsValidGpuArchName(Arch))
-      C.getDriver().Diag(clang::diag::err_drv_cuda_bad_gpu_arch) << Arch;
-    else if (GpuArchNames.insert(Arch).second)
+    const auto &ArchStr = A->getValue();
+    CudaArch Arch = StringToCudaArch(ArchStr);
+    if (Arch == CudaArch::UNKNOWN)
+      C.getDriver().Diag(clang::diag::err_drv_cuda_bad_gpu_arch) << ArchStr;
+    else if (GpuArchs.insert(Arch).second)
       GpuArchList.push_back(Arch);
   }
 
   // Default to sm_20 which is the lowest common denominator for supported GPUs.
   // sm_20 code should work correctly, if suboptimally, on all newer GPUs.
   if (GpuArchList.empty())
-    GpuArchList.push_back("sm_20");
+    GpuArchList.push_back(CudaArch::SM_20);
 
   // Replicate inputs for each GPU architecture.
   Driver::InputList CudaDeviceInputs;
@@ -1485,7 +1504,7 @@ static Action *buildCudaActions(Compilation &C, DerivedArgList &Args,
     CudaDeviceInputs.push_back(std::make_pair(types::TY_CUDA_DEVICE, InputArg));
 
   // Build actions for all device inputs.
-  assert(C.getCudaDeviceToolChain() &&
+  assert(C.getSingleOffloadToolChain<Action::OFK_Cuda>() &&
          "Missing toolchain for device-side compilation.");
   ActionList CudaDeviceActions;
   C.getDriver().BuildActions(C, Args, CudaDeviceInputs, CudaDeviceActions);
@@ -1543,7 +1562,7 @@ static Action *buildCudaActions(Compilation &C, DerivedArgList &Args,
   }
   auto FatbinAction = C.MakeAction<CudaDeviceAction>(
       C.MakeAction<LinkJobAction>(DeviceActions, types::TY_CUDA_FATBIN),
-      /* GpuArchName = */ nullptr,
+      CudaArch::UNKNOWN,
       /* AtTopLevel = */ false);
   // Return a new host action that incorporates original host action and all
   // device actions.
@@ -2244,9 +2263,9 @@ InputInfo Driver::BuildJobsForActionNoCache(
     // Initial processing of CudaDeviceAction carries host params.
     // Call BuildJobsForAction() again, now with correct device parameters.
     InputInfo II = BuildJobsForAction(
-        C, *CDA->input_begin(), C.getCudaDeviceToolChain(),
-        CDA->getGpuArchName(), CDA->isAtTopLevel(), /*MultipleArchs=*/true,
-        LinkingOutput, CachedResults);
+        C, *CDA->input_begin(), C.getSingleOffloadToolChain<Action::OFK_Cuda>(),
+        CudaArchToString(CDA->getGpuArch()), CDA->isAtTopLevel(),
+        /*MultipleArchs=*/true, LinkingOutput, CachedResults);
     // Currently II's Action is *CDA->input_begin().  Set it to CDA instead, so
     // that one can retrieve II's GPU arch.
     II.setAction(A);
@@ -2693,6 +2712,7 @@ const ToolChain &Driver::getToolChain(const ArgList &Args,
       TC = new toolchains::Minix(*this, Target, Args);
       break;
     case llvm::Triple::Linux:
+    case llvm::Triple::ELFIAMCU:
       if (Target.getArch() == llvm::Triple::hexagon)
         TC = new toolchains::HexagonToolChain(*this, Target, Args);
       else if ((Target.getVendor() == llvm::Triple::MipsTechnologies) &&

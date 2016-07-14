@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "ToolChains.h"
+#include "clang/Basic/Cuda.h"
 #include "clang/Basic/ObjCRuntime.h"
 #include "clang/Basic/Version.h"
 #include "clang/Basic/VirtualFileSystem.h"
@@ -391,24 +392,12 @@ void Darwin::addProfileRTLibs(const ArgList &Args,
 void DarwinClang::AddLinkSanitizerLibArgs(const ArgList &Args,
                                           ArgStringList &CmdArgs,
                                           StringRef Sanitizer) const {
-  if (!Args.hasArg(options::OPT_dynamiclib) &&
-      !Args.hasArg(options::OPT_bundle)) {
-    // Sanitizer runtime libraries requires C++.
-    AddCXXStdlibLibArgs(Args, CmdArgs);
-  }
-
   AddLinkRuntimeLib(
       Args, CmdArgs,
       (Twine("libclang_rt.") + Sanitizer + "_" +
        getOSLibraryNameSuffix() + "_dynamic.dylib").str(),
       /*AlwaysLink*/ true, /*IsEmbedded*/ false,
       /*AddRPath*/ true);
-
-  if (GetCXXStdlibType(Args) == ToolChain::CST_Libcxx) {
-    // Add explicit dependcy on -lc++abi, as -lc++ doesn't re-export
-    // all RTTI-related symbols that UBSan uses.
-    CmdArgs.push_back("-lc++abi");
-  }
 }
 
 void DarwinClang::AddLinkRuntimeLibArgs(const ArgList &Args,
@@ -1298,6 +1287,8 @@ Generic_GCC::GCCVersion Linux::GCCVersion::Parse(StringRef VersionText) {
   if (First.first.getAsInteger(10, GoodVersion.Major) || GoodVersion.Major < 0)
     return BadVersion;
   GoodVersion.MajorStr = First.first.str();
+  if (First.second.empty())
+    return GoodVersion;
   if (Second.first.getAsInteger(10, GoodVersion.Minor) || GoodVersion.Minor < 0)
     return BadVersion;
   GoodVersion.MinorStr = Second.first.str();
@@ -1305,6 +1296,7 @@ Generic_GCC::GCCVersion Linux::GCCVersion::Parse(StringRef VersionText) {
   // First look for a number prefix and parse that if present. Otherwise just
   // stash the entire patch string in the suffix, and leave the number
   // unspecified. This covers versions strings such as:
+  //   5        (handled above)
   //   4.4
   //   4.4.0
   //   4.4.x
@@ -1618,9 +1610,13 @@ bool Generic_GCC::GCCInstallationDetector::getBiarchSibling(Multilib &M) const {
     break;
   case llvm::Triple::x86:
     LibDirs.append(begin(X86LibDirs), end(X86LibDirs));
-    TripleAliases.append(begin(X86Triples), end(X86Triples));
-    BiarchLibDirs.append(begin(X86_64LibDirs), end(X86_64LibDirs));
-    BiarchTripleAliases.append(begin(X86_64Triples), end(X86_64Triples));
+    // MCU toolchain is 32 bit only and its triple alias is TargetTriple
+    // itself, which will be appended below.
+    if (!TargetTriple.isOSIAMCU()) {
+      TripleAliases.append(begin(X86Triples), end(X86Triples));
+      BiarchLibDirs.append(begin(X86_64LibDirs), end(X86_64LibDirs));
+      BiarchTripleAliases.append(begin(X86_64Triples), end(X86_64Triples));
+    }
     break;
   case llvm::Triple::mips:
     LibDirs.append(begin(MIPSLibDirs), end(MIPSLibDirs));
@@ -1696,9 +1692,33 @@ bool Generic_GCC::GCCInstallationDetector::getBiarchSibling(Multilib &M) const {
     BiarchTripleAliases.push_back(BiarchTriple.str());
 }
 
+// Parses the contents of version.txt in an CUDA installation.  It should
+// contain one line of the from e.g. "CUDA Version 7.5.2".
+static CudaVersion ParseCudaVersionFile(llvm::StringRef V) {
+  if (!V.startswith("CUDA Version "))
+    return CudaVersion::UNKNOWN;
+  V = V.substr(strlen("CUDA Version "));
+  int Major = -1, Minor = -1;
+  auto First = V.split('.');
+  auto Second = First.second.split('.');
+  if (!First.first.getAsInteger(10, Major) ||
+      !Second.first.getAsInteger(10, Minor))
+    return CudaVersion::UNKNOWN;
+
+  if (Major == 7 && Minor == 0) {
+    // This doesn't appear to ever happen -- version.txt doesn't exist in the
+    // CUDA 7 installs I've seen.  But no harm in checking.
+    return CudaVersion::CUDA_70;
+  }
+  if (Major == 7 && Minor == 5)
+    return CudaVersion::CUDA_75;
+  if (Major == 8 && Minor == 0)
+    return CudaVersion::CUDA_80;
+  return CudaVersion::UNKNOWN;
+}
+
 // \brief -- try common CUDA installation paths looking for files we need for
 // CUDA compilation.
-
 void Generic_GCC::CudaInstallationDetector::init(
     const llvm::Triple &TargetTriple, const llvm::opt::ArgList &Args) {
   SmallVector<std::string, 4> CudaPathCandidates;
@@ -1708,6 +1728,8 @@ void Generic_GCC::CudaInstallationDetector::init(
         Args.getLastArgValue(options::OPT_cuda_path_EQ));
   else {
     CudaPathCandidates.push_back(D.SysRoot + "/usr/local/cuda");
+    // FIXME: Uncomment this once we can compile the cuda 8 headers.
+    // CudaPathCandidates.push_back(D.SysRoot + "/usr/local/cuda-8.0");
     CudaPathCandidates.push_back(D.SysRoot + "/usr/local/cuda-7.5");
     CudaPathCandidates.push_back(D.SysRoot + "/usr/local/cuda-7.0");
   }
@@ -1716,20 +1738,19 @@ void Generic_GCC::CudaInstallationDetector::init(
     if (CudaPath.empty() || !D.getVFS().exists(CudaPath))
       continue;
 
-    CudaInstallPath = CudaPath;
-    CudaBinPath = CudaPath + "/bin";
-    CudaIncludePath = CudaInstallPath + "/include";
-    CudaLibDevicePath = CudaInstallPath + "/nvvm/libdevice";
-    CudaLibPath =
-        CudaInstallPath + (TargetTriple.isArch64Bit() ? "/lib64" : "/lib");
+    InstallPath = CudaPath;
+    BinPath = CudaPath + "/bin";
+    IncludePath = InstallPath + "/include";
+    LibDevicePath = InstallPath + "/nvvm/libdevice";
+    LibPath = InstallPath + (TargetTriple.isArch64Bit() ? "/lib64" : "/lib");
 
-    if (!(D.getVFS().exists(CudaIncludePath) &&
-          D.getVFS().exists(CudaBinPath) && D.getVFS().exists(CudaLibPath) &&
-          D.getVFS().exists(CudaLibDevicePath)))
+    auto &FS = D.getVFS();
+    if (!(FS.exists(IncludePath) && FS.exists(BinPath) && FS.exists(LibPath) &&
+          FS.exists(LibDevicePath)))
       continue;
 
     std::error_code EC;
-    for (llvm::sys::fs::directory_iterator LI(CudaLibDevicePath, EC), LE;
+    for (llvm::sys::fs::directory_iterator LI(LibDevicePath, EC), LE;
          !EC && LI != LE; LI = LI.increment(EC)) {
       StringRef FilePath = LI->path();
       StringRef FileName = llvm::sys::path::filename(FilePath);
@@ -1739,22 +1760,35 @@ void Generic_GCC::CudaInstallationDetector::init(
         continue;
       StringRef GpuArch = FileName.slice(
           LibDeviceName.size(), FileName.find('.', LibDeviceName.size()));
-      CudaLibDeviceMap[GpuArch] = FilePath.str();
+      LibDeviceMap[GpuArch] = FilePath.str();
       // Insert map entries for specifc devices with this compute capability.
       if (GpuArch == "compute_20") {
-        CudaLibDeviceMap["sm_20"] = FilePath;
-        CudaLibDeviceMap["sm_21"] = FilePath;
+        LibDeviceMap["sm_20"] = FilePath;
+        LibDeviceMap["sm_21"] = FilePath;
       } else if (GpuArch == "compute_30") {
-        CudaLibDeviceMap["sm_30"] = FilePath;
-        CudaLibDeviceMap["sm_32"] = FilePath;
+        LibDeviceMap["sm_30"] = FilePath;
+        LibDeviceMap["sm_32"] = FilePath;
       } else if (GpuArch == "compute_35") {
-        CudaLibDeviceMap["sm_35"] = FilePath;
-        CudaLibDeviceMap["sm_37"] = FilePath;
+        LibDeviceMap["sm_35"] = FilePath;
+        LibDeviceMap["sm_37"] = FilePath;
       } else if (GpuArch == "compute_50") {
-        CudaLibDeviceMap["sm_50"] = FilePath;
-        CudaLibDeviceMap["sm_52"] = FilePath;
-        CudaLibDeviceMap["sm_53"] = FilePath;
+        LibDeviceMap["sm_50"] = FilePath;
+        LibDeviceMap["sm_52"] = FilePath;
+        LibDeviceMap["sm_53"] = FilePath;
+        LibDeviceMap["sm_60"] = FilePath;
+        LibDeviceMap["sm_61"] = FilePath;
+        LibDeviceMap["sm_62"] = FilePath;
       }
+    }
+
+    llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> VersionFile =
+        FS.getBufferForFile(InstallPath + "/version.txt");
+    if (!VersionFile) {
+      // CUDA 7.0 doesn't have a version.txt, so guess that's our version if
+      // version.txt isn't present.
+      Version = CudaVersion::CUDA_70;
+    } else {
+      Version = ParseCudaVersionFile((*VersionFile)->getBuffer());
     }
 
     IsValid = true;
@@ -1762,22 +1796,38 @@ void Generic_GCC::CudaInstallationDetector::init(
   }
 }
 
+void Generic_GCC::CudaInstallationDetector::CheckCudaVersionSupportsArch(
+    CudaArch Arch) const {
+  if (Arch == CudaArch::UNKNOWN || Version == CudaVersion::UNKNOWN ||
+      ArchsWithVersionTooLowErrors.count(Arch) > 0)
+    return;
+
+  auto RequiredVersion = MinVersionForCudaArch(Arch);
+  if (Version < RequiredVersion) {
+    ArchsWithVersionTooLowErrors.insert(Arch);
+    D.Diag(diag::err_drv_cuda_version_too_low)
+        << InstallPath << CudaArchToString(Arch) << CudaVersionToString(Version)
+        << CudaVersionToString(RequiredVersion);
+  }
+}
+
 void Generic_GCC::CudaInstallationDetector::print(raw_ostream &OS) const {
   if (isValid())
-    OS << "Found CUDA installation: " << CudaInstallPath << "\n";
+    OS << "Found CUDA installation: " << InstallPath << ", version "
+       << CudaVersionToString(Version) << "\n";
 }
 
 namespace {
 // Filter to remove Multilibs that don't exist as a suffix to Path
 class FilterNonExistent {
-  StringRef Base;
+  StringRef Base, File;
   vfs::FileSystem &VFS;
 
 public:
-  FilterNonExistent(StringRef Base, vfs::FileSystem &VFS)
-      : Base(Base), VFS(VFS) {}
+  FilterNonExistent(StringRef Base, StringRef File, vfs::FileSystem &VFS)
+      : Base(Base), File(File), VFS(VFS) {}
   bool operator()(const Multilib &M) {
-    return !VFS.exists(Base + M.gccSuffix() + "/crtbegin.o");
+    return !VFS.exists(Base + M.gccSuffix() + File);
   }
 };
 } // end anonymous namespace
@@ -1788,6 +1838,10 @@ static void addMultilibFlag(bool Enabled, const char *const Flag,
     Flags.push_back(std::string("+") + Flag);
   else
     Flags.push_back(std::string("-") + Flag);
+}
+
+static bool isArmOrThumbArch(llvm::Triple::ArchType Arch) {
+  return Arch == llvm::Triple::arm || Arch == llvm::Triple::thumb;
 }
 
 static bool isMipsArch(llvm::Triple::ArchType Arch) {
@@ -1835,37 +1889,150 @@ static Multilib makeMultilib(StringRef commonSuffix) {
   return Multilib(commonSuffix, commonSuffix, commonSuffix);
 }
 
-static bool findMIPSMultilibs(const Driver &D, const llvm::Triple &TargetTriple,
-                              StringRef Path, const ArgList &Args,
-                              DetectedMultilibs &Result) {
-  // Some MIPS toolchains put libraries and object files compiled
-  // using different options in to the sub-directoris which names
-  // reflects the flags used for compilation. For example sysroot
-  // directory might looks like the following examples:
-  //
-  // /usr
-  //   /lib      <= crt*.o files compiled with '-mips32'
-  // /mips16
-  //   /usr
-  //     /lib    <= crt*.o files compiled with '-mips16'
-  //   /el
-  //     /usr
-  //       /lib  <= crt*.o files compiled with '-mips16 -EL'
-  //
-  // or
-  //
-  // /usr
-  //   /lib      <= crt*.o files compiled with '-mips32r2'
-  // /mips16
-  //   /usr
-  //     /lib    <= crt*.o files compiled with '-mips32r2 -mips16'
-  // /mips32
-  //     /usr
-  //       /lib  <= crt*.o files compiled with '-mips32'
+static bool findMipsCsMultilibs(const Multilib::flags_list &Flags,
+                                FilterNonExistent &NonExistent,
+                                DetectedMultilibs &Result) {
+  // Check for Code Sourcery toolchain multilibs
+  MultilibSet CSMipsMultilibs;
+  {
+    auto MArchMips16 = makeMultilib("/mips16").flag("+m32").flag("+mips16");
 
-  FilterNonExistent NonExistent(Path, D.getVFS());
+    auto MArchMicroMips =
+        makeMultilib("/micromips").flag("+m32").flag("+mmicromips");
 
-  // Check for CodeScape MTI toolchain v1.2 and early.
+    auto MArchDefault = makeMultilib("").flag("-mips16").flag("-mmicromips");
+
+    auto UCLibc = makeMultilib("/uclibc").flag("+muclibc");
+
+    auto SoftFloat = makeMultilib("/soft-float").flag("+msoft-float");
+
+    auto Nan2008 = makeMultilib("/nan2008").flag("+mnan=2008");
+
+    auto DefaultFloat =
+        makeMultilib("").flag("-msoft-float").flag("-mnan=2008");
+
+    auto BigEndian = makeMultilib("").flag("+EB").flag("-EL");
+
+    auto LittleEndian = makeMultilib("/el").flag("+EL").flag("-EB");
+
+    // Note that this one's osSuffix is ""
+    auto MAbi64 = makeMultilib("")
+                      .gccSuffix("/64")
+                      .includeSuffix("/64")
+                      .flag("+mabi=n64")
+                      .flag("-mabi=n32")
+                      .flag("-m32");
+
+    CSMipsMultilibs =
+        MultilibSet()
+            .Either(MArchMips16, MArchMicroMips, MArchDefault)
+            .Maybe(UCLibc)
+            .Either(SoftFloat, Nan2008, DefaultFloat)
+            .FilterOut("/micromips/nan2008")
+            .FilterOut("/mips16/nan2008")
+            .Either(BigEndian, LittleEndian)
+            .Maybe(MAbi64)
+            .FilterOut("/mips16.*/64")
+            .FilterOut("/micromips.*/64")
+            .FilterOut(NonExistent)
+            .setIncludeDirsCallback([](const Multilib &M) {
+              std::vector<std::string> Dirs({"/include"});
+              if (StringRef(M.includeSuffix()).startswith("/uclibc"))
+                Dirs.push_back(
+                    "/../../../../mips-linux-gnu/libc/uclibc/usr/include");
+              else
+                Dirs.push_back("/../../../../mips-linux-gnu/libc/usr/include");
+              return Dirs;
+            });
+  }
+
+  MultilibSet DebianMipsMultilibs;
+  {
+    Multilib MAbiN32 =
+        Multilib().gccSuffix("/n32").includeSuffix("/n32").flag("+mabi=n32");
+
+    Multilib M64 = Multilib()
+                       .gccSuffix("/64")
+                       .includeSuffix("/64")
+                       .flag("+m64")
+                       .flag("-m32")
+                       .flag("-mabi=n32");
+
+    Multilib M32 = Multilib().flag("-m64").flag("+m32").flag("-mabi=n32");
+
+    DebianMipsMultilibs =
+        MultilibSet().Either(M32, M64, MAbiN32).FilterOut(NonExistent);
+  }
+
+  // Sort candidates. Toolchain that best meets the directories tree goes first.
+  // Then select the first toolchains matches command line flags.
+  MultilibSet *Candidates[] = {&CSMipsMultilibs, &DebianMipsMultilibs};
+  if (CSMipsMultilibs.size() < DebianMipsMultilibs.size())
+    std::iter_swap(Candidates, Candidates + 1);
+  for (const MultilibSet *Candidate : Candidates) {
+    if (Candidate->select(Flags, Result.SelectedMultilib)) {
+      if (Candidate == &DebianMipsMultilibs)
+        Result.BiarchSibling = Multilib();
+      Result.Multilibs = *Candidate;
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool findMipsAndroidMultilibs(const Multilib::flags_list &Flags,
+                                     FilterNonExistent &NonExistent,
+                                     DetectedMultilibs &Result) {
+
+  MultilibSet AndroidMipsMultilibs =
+      MultilibSet()
+          .Maybe(Multilib("/mips-r2").flag("+march=mips32r2"))
+          .Maybe(Multilib("/mips-r6").flag("+march=mips32r6"))
+          .FilterOut(NonExistent);
+
+  if (AndroidMipsMultilibs.select(Flags, Result.SelectedMultilib)) {
+    Result.Multilibs = AndroidMipsMultilibs;
+    return true;
+  }
+  return false;
+}
+
+static bool findMipsMuslMultilibs(const Multilib::flags_list &Flags,
+                                  FilterNonExistent &NonExistent,
+                                  DetectedMultilibs &Result) {
+  // Musl toolchain multilibs
+  MultilibSet MuslMipsMultilibs;
+  {
+    auto MArchMipsR2 = makeMultilib("")
+                           .osSuffix("/mips-r2-hard-musl")
+                           .flag("+EB")
+                           .flag("-EL")
+                           .flag("+march=mips32r2");
+
+    auto MArchMipselR2 = makeMultilib("/mipsel-r2-hard-musl")
+                             .flag("-EB")
+                             .flag("+EL")
+                             .flag("+march=mips32r2");
+
+    MuslMipsMultilibs = MultilibSet().Either(MArchMipsR2, MArchMipselR2);
+
+    // Specify the callback that computes the include directories.
+    MuslMipsMultilibs.setIncludeDirsCallback([](const Multilib &M) {
+      return std::vector<std::string>(
+          {"/../sysroot" + M.osSuffix() + "/usr/include"});
+    });
+  }
+  if (MuslMipsMultilibs.select(Flags, Result.SelectedMultilib)) {
+    Result.Multilibs = MuslMipsMultilibs;
+    return true;
+  }
+  return false;
+}
+
+static bool findMipsMtiMultilibs(const Multilib::flags_list &Flags,
+                                 FilterNonExistent &NonExistent,
+                                 DetectedMultilibs &Result) {
+  // CodeScape MTI toolchain v1.2 and early.
   MultilibSet MtiMipsMultilibsV1;
   {
     auto MArchMips32 = makeMultilib("/mips32")
@@ -1937,7 +2104,7 @@ static bool findMIPSMultilibs(const Driver &D, const llvm::Triple &TargetTriple,
             });
   }
 
-  // Check for CodeScape IMG toolchain starting from v1.3.
+  // CodeScape IMG toolchain starting from v1.3.
   MultilibSet MtiMipsMultilibsV2;
   {
     auto BeHard = makeMultilib("/mips-r2-hard")
@@ -2025,55 +2192,19 @@ static bool findMIPSMultilibs(const Driver &D, const llvm::Triple &TargetTriple,
                   {"/../../../../mips-mti-linux-gnu/lib" + M.gccSuffix()});
             });
   }
-
-  // Check for Musl toolchain multilibs
-  MultilibSet MuslMipsMultilibs;
-  {
-    auto MArchMipsR2 = makeMultilib("")
-                           .osSuffix("/mips-r2-hard-musl")
-                           .flag("+EB")
-                           .flag("-EL")
-                           .flag("+march=mips32r2");
-
-    auto MArchMipselR2 = makeMultilib("/mipsel-r2-hard-musl")
-                             .flag("-EB")
-                             .flag("+EL")
-                             .flag("+march=mips32r2");
-
-    MuslMipsMultilibs = MultilibSet().Either(MArchMipsR2, MArchMipselR2);
-
-    // Specify the callback that computes the include directories.
-    MuslMipsMultilibs.setIncludeDirsCallback([](const Multilib &M) {
-      return std::vector<std::string>(
-          {"/../sysroot" + M.osSuffix() + "/usr/include"});
-    });
+  for (auto Candidate : {&MtiMipsMultilibsV1, &MtiMipsMultilibsV2}) {
+    if (Candidate->select(Flags, Result.SelectedMultilib)) {
+      Result.Multilibs = *Candidate;
+      return true;
+    }
   }
+  return false;
+}
 
-  MultilibSet AndroidMipsMultilibs =
-      MultilibSet()
-          .Maybe(Multilib("/mips-r2").flag("+march=mips32r2"))
-          .Maybe(Multilib("/mips-r6").flag("+march=mips32r6"))
-          .FilterOut(NonExistent);
-
-  MultilibSet DebianMipsMultilibs;
-  {
-    Multilib MAbiN32 =
-        Multilib().gccSuffix("/n32").includeSuffix("/n32").flag("+mabi=n32");
-
-    Multilib M64 = Multilib()
-                       .gccSuffix("/64")
-                       .includeSuffix("/64")
-                       .flag("+m64")
-                       .flag("-m32")
-                       .flag("-mabi=n32");
-
-    Multilib M32 = Multilib().flag("-m64").flag("+m32").flag("-mabi=n32");
-
-    DebianMipsMultilibs =
-        MultilibSet().Either(M32, M64, MAbiN32).FilterOut(NonExistent);
-  }
-
-  // Check for CodeScape IMG toolchain v1.2 and early.
+static bool findMipsImgMultilibs(const Multilib::flags_list &Flags,
+                                 FilterNonExistent &NonExistent,
+                                 DetectedMultilibs &Result) {
+  // CodeScape IMG toolchain v1.2 and early.
   MultilibSet ImgMultilibsV1;
   {
     auto Mips64r6 = makeMultilib("/mips64r6").flag("+m64").flag("-m32");
@@ -2095,7 +2226,7 @@ static bool findMIPSMultilibs(const Driver &D, const llvm::Triple &TargetTriple,
             });
   }
 
-  // Check for CodeScape IMG toolchain starting from v1.3.
+  // CodeScape IMG toolchain starting from v1.3.
   MultilibSet ImgMultilibsV2;
   {
     auto BeHard = makeMultilib("/mips-r6-hard")
@@ -2154,6 +2285,19 @@ static bool findMIPSMultilibs(const Driver &D, const llvm::Triple &TargetTriple,
                   {"/../../../../mips-img-linux-gnu/lib" + M.gccSuffix()});
             });
   }
+  for (auto Candidate : {&ImgMultilibsV1, &ImgMultilibsV2}) {
+    if (Candidate->select(Flags, Result.SelectedMultilib)) {
+      Result.Multilibs = *Candidate;
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool findMIPSMultilibs(const Driver &D, const llvm::Triple &TargetTriple,
+                              StringRef Path, const ArgList &Args,
+                              DetectedMultilibs &Result) {
+  FilterNonExistent NonExistent(Path, "/crtbegin.o", D.getVFS());
 
   StringRef CPUName;
   StringRef ABIName;
@@ -2185,70 +2329,80 @@ static bool findMIPSMultilibs(const Driver &D, const llvm::Triple &TargetTriple,
   addMultilibFlag(isMipsEL(TargetArch), "EL", Flags);
   addMultilibFlag(!isMipsEL(TargetArch), "EB", Flags);
 
-  if (TargetTriple.isAndroid()) {
-    // Select Android toolchain. It's the only choice in that case.
-    if (AndroidMipsMultilibs.select(Flags, Result.SelectedMultilib)) {
-      Result.Multilibs = AndroidMipsMultilibs;
-      return true;
-    }
-    return false;
-  }
+  if (TargetTriple.isAndroid())
+    return findMipsAndroidMultilibs(Flags, NonExistent, Result);
 
   if (TargetTriple.getVendor() == llvm::Triple::MipsTechnologies &&
       TargetTriple.getOS() == llvm::Triple::Linux &&
-      TargetTriple.getEnvironment() == llvm::Triple::UnknownEnvironment) {
-    if (MuslMipsMultilibs.select(Flags, Result.SelectedMultilib)) {
-      Result.Multilibs = MuslMipsMultilibs;
-      return true;
-    }
-    return false;
-  }
+      TargetTriple.getEnvironment() == llvm::Triple::UnknownEnvironment)
+    return findMipsMuslMultilibs(Flags, NonExistent, Result);
 
   if (TargetTriple.getVendor() == llvm::Triple::MipsTechnologies &&
       TargetTriple.getOS() == llvm::Triple::Linux &&
-      TargetTriple.getEnvironment() == llvm::Triple::GNU) {
-    // Select mips-mti-linux-gnu toolchain.
-    for (auto candidate : {&MtiMipsMultilibsV1, &MtiMipsMultilibsV2}) {
-      if (candidate->select(Flags, Result.SelectedMultilib)) {
-        Result.Multilibs = *candidate;
-        return true;
-      }
-    }
-    return false;
-  }
+      TargetTriple.getEnvironment() == llvm::Triple::GNU)
+    return findMipsMtiMultilibs(Flags, NonExistent, Result);
 
   if (TargetTriple.getVendor() == llvm::Triple::ImaginationTechnologies &&
       TargetTriple.getOS() == llvm::Triple::Linux &&
-      TargetTriple.getEnvironment() == llvm::Triple::GNU) {
-    // Select mips-img-linux-gnu toolchain.
-    for (auto candidate : {&ImgMultilibsV1, &ImgMultilibsV2}) {
-      if (candidate->select(Flags, Result.SelectedMultilib)) {
-        Result.Multilibs = *candidate;
-        return true;
-      }
-    }
-    return false;
-  }
+      TargetTriple.getEnvironment() == llvm::Triple::GNU)
+    return findMipsImgMultilibs(Flags, NonExistent, Result);
 
-  if (DebianMipsMultilibs.select(Flags, Result.SelectedMultilib)) {
+  if (findMipsCsMultilibs(Flags, NonExistent, Result))
+    return true;
+
+  // Fallback to the regular toolchain-tree structure.
+  Multilib Default;
+  Result.Multilibs.push_back(Default);
+  Result.Multilibs.FilterOut(NonExistent);
+
+  if (Result.Multilibs.select(Flags, Result.SelectedMultilib)) {
     Result.BiarchSibling = Multilib();
-    Result.Multilibs = DebianMipsMultilibs;
     return true;
   }
 
-  {
-    // Fallback to the regular toolchain-tree structure.
-    Multilib Default;
-    Result.Multilibs.push_back(Default);
-    Result.Multilibs.FilterOut(NonExistent);
-
-    if (Result.Multilibs.select(Flags, Result.SelectedMultilib)) {
-      Result.BiarchSibling = Multilib();
-      return true;
-    }
-  }
-
   return false;
+}
+
+static void findAndroidArmMultilibs(const Driver &D,
+                                    const llvm::Triple &TargetTriple,
+                                    StringRef Path, const ArgList &Args,
+                                    DetectedMultilibs &Result) {
+  // Find multilibs with subdirectories like armv7-a, thumb, armv7-a/thumb.
+  FilterNonExistent NonExistent(Path, "/crtbegin.o", D.getVFS());
+  Multilib ArmV7Multilib = makeMultilib("/armv7-a")
+                               .flag("+armv7")
+                               .flag("-thumb");
+  Multilib ThumbMultilib = makeMultilib("/thumb")
+                               .flag("-armv7")
+                               .flag("+thumb");
+  Multilib ArmV7ThumbMultilib = makeMultilib("/armv7-a/thumb")
+                               .flag("+armv7")
+                               .flag("+thumb");
+  Multilib DefaultMultilib = makeMultilib("")
+                               .flag("-armv7")
+                               .flag("-thumb");
+  MultilibSet AndroidArmMultilibs =
+      MultilibSet()
+          .Either(ThumbMultilib, ArmV7Multilib,
+                  ArmV7ThumbMultilib, DefaultMultilib)
+          .FilterOut(NonExistent);
+
+  Multilib::flags_list Flags;
+  llvm::StringRef Arch = Args.getLastArgValue(options::OPT_march_EQ);
+  bool IsArmArch = TargetTriple.getArch() == llvm::Triple::arm;
+  bool IsThumbArch = TargetTriple.getArch() == llvm::Triple::thumb;
+  bool IsV7SubArch = TargetTriple.getSubArch() == llvm::Triple::ARMSubArch_v7;
+  bool IsThumbMode = IsThumbArch ||
+      Args.hasFlag(options::OPT_mthumb, options::OPT_mno_thumb, false) ||
+      (IsArmArch && llvm::ARM::parseArchISA(Arch) == llvm::ARM::IK_THUMB);
+  bool IsArmV7Mode = (IsArmArch || IsThumbArch) &&
+      (llvm::ARM::parseArchVersion(Arch) == 7 ||
+       (IsArmArch && Arch == "" && IsV7SubArch));
+  addMultilibFlag(IsArmV7Mode, "armv7", Flags);
+  addMultilibFlag(IsThumbMode, "thumb", Flags);
+
+  if (AndroidArmMultilibs.select(Flags, Result.SelectedMultilib))
+    Result.Multilibs = AndroidArmMultilibs;
 }
 
 static bool findBiarchMultilibs(const Driver &D,
@@ -2283,7 +2437,9 @@ static bool findBiarchMultilibs(const Driver &D,
                         .flag("-m64")
                         .flag("+mx32");
 
-  FilterNonExistent NonExistent(Path, D.getVFS());
+  // GCC toolchain for IAMCU doesn't have crtbegin.o, so look for libgcc.a.
+  FilterNonExistent NonExistent(
+      Path, TargetTriple.isOSIAMCU() ? "/libgcc.a" : "/crtbegin.o", D.getVFS());
 
   // Determine default multilib from: 32, 64, x32
   // Also handle cases such as 64 on 32, 32 on 64, etc.
@@ -2442,9 +2598,13 @@ void Generic_GCC::GCCInstallationDetector::ScanLibDirForGCCTriple(
 
       DetectedMultilibs Detected;
 
+      // Android standalone toolchain could have multilibs for ARM and Thumb.
       // Debian mips multilibs behave more like the rest of the biarch ones,
       // so handle them there
-      if (isMipsArch(TargetArch)) {
+      if (isArmOrThumbArch(TargetArch) && TargetTriple.isAndroid()) {
+        // It should also work without multilibs in a simplified toolchain.
+        findAndroidArmMultilibs(D, TargetTriple, LI->getName(), Args, Detected);
+      } else if (isMipsArch(TargetArch)) {
         if (!findMIPSMultilibs(D, TargetTriple, LI->getName(), Args, Detected))
           continue;
       } else if (!findBiarchMultilibs(D, TargetTriple, LI->getName(), Args,
@@ -3866,10 +4026,9 @@ Linux::Linux(const Driver &D, const llvm::Triple &Triple, const ArgList &Args)
   if (IsRedhat(Distro) && Distro != RHEL5 && Distro != RHEL6)
     ExtraOpts.push_back("--no-add-needed");
 
-  if ((IsDebian(Distro) && Distro >= DebianSqueeze) || IsOpenSUSE(Distro) ||
-      (IsRedhat(Distro) && Distro != RHEL5) ||
-      (IsUbuntu(Distro) && Distro >= UbuntuKarmic))
-    ExtraOpts.push_back("--build-id");
+#ifdef ENABLE_LINKER_BUILD_ID
+  ExtraOpts.push_back("--build-id");
+#endif
 
   if (IsOpenSUSE(Distro))
     ExtraOpts.push_back("--enable-new-dtags");
@@ -4041,6 +4200,23 @@ std::string Linux::getDynamicLinker(const ArgList &Args) const {
 
   if (Triple.isAndroid())
     return Triple.isArch64Bit() ? "/system/bin/linker64" : "/system/bin/linker";
+  else if (Triple.isMusl()) {
+    std::string ArchName;
+    switch (Arch) {
+    case llvm::Triple::thumb:
+      ArchName = "arm";
+      break;
+    case llvm::Triple::thumbeb:
+      ArchName = "armeb";
+      break;
+    default:
+      ArchName = Triple.getArchName().str();
+    }
+    if (Triple.getEnvironment() == llvm::Triple::MuslEABIHF)
+      ArchName += "hf";
+
+    return "/lib/ld-musl-" + ArchName + ".so.1";
+  }
 
   std::string LibDir;
   std::string Loader;
@@ -4413,6 +4589,16 @@ void Linux::AddCudaIncludeArgs(const ArgList &DriverArgs,
   CC1Args.push_back("__clang_cuda_runtime_wrapper.h");
 }
 
+void Linux::AddIAMCUIncludeArgs(const ArgList &DriverArgs,
+                                ArgStringList &CC1Args) const {
+  if (GCCInstallation.isValid()) {
+    CC1Args.push_back("-isystem");
+    CC1Args.push_back(DriverArgs.MakeArgString(
+        GCCInstallation.getParentLibPath() + "/../" +
+        GCCInstallation.getTriple().str() + "/include"));
+  }
+}
+
 bool Linux::isPIEDefault() const { return getSanitizerArgs().requiresPIE(); }
 
 SanitizerMask Linux::getSupportedSanitizers() const {
@@ -4502,6 +4688,10 @@ CudaToolChain::addClangTargetOptions(const llvm::opt::ArgList &DriverArgs,
                          options::OPT_fno_cuda_flush_denormals_to_zero, false))
     CC1Args.push_back("-fcuda-flush-denormals-to-zero");
 
+  if (DriverArgs.hasFlag(options::OPT_fcuda_approx_transcendentals,
+                         options::OPT_fno_cuda_approx_transcendentals, false))
+    CC1Args.push_back("-fcuda-approx-transcendentals");
+
   if (DriverArgs.hasArg(options::OPT_nocudalib))
     return;
 
@@ -4517,6 +4707,18 @@ CudaToolChain::addClangTargetOptions(const llvm::opt::ArgList &DriverArgs,
     CC1Args.push_back("-target-feature");
     CC1Args.push_back("+ptx42");
   }
+}
+
+void CudaToolChain::AddCudaIncludeArgs(const ArgList &DriverArgs,
+                                       ArgStringList &CC1Args) const {
+  // Check our CUDA version if we're going to include the CUDA headers.
+  if (!DriverArgs.hasArg(options::OPT_nocudainc) &&
+      !DriverArgs.hasArg(options::OPT_no_cuda_version_check)) {
+    StringRef Arch = DriverArgs.getLastArgValue(options::OPT_march_EQ);
+    assert(!Arch.empty() && "Must have an explicit GPU arch.");
+    CudaInstallation.CheckCudaVersionSupportsArch(StringToCudaArch(Arch));
+  }
+  Linux::AddCudaIncludeArgs(DriverArgs, CC1Args);
 }
 
 llvm::opt::DerivedArgList *
@@ -4559,8 +4761,10 @@ CudaToolChain::TranslateArgs(const llvm::opt::DerivedArgList &Args,
     DAL->append(A);
   }
 
-  if (BoundArch)
+  if (BoundArch) {
+    DAL->eraseArg(options::OPT_march_EQ);
     DAL->AddJoinedArg(nullptr, Opts.getOption(options::OPT_march_EQ), BoundArch);
+  }
   return DAL;
 }
 

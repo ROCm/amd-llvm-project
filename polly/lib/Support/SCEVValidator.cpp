@@ -32,7 +32,7 @@ enum TYPE {
   // An invalid expression.
   INVALID
 };
-}
+} // namespace SCEVType
 
 /// @brief The result the validator returns for a SCEV expression.
 class ValidatorResult {
@@ -214,8 +214,9 @@ public:
 
     auto *L = Expr->getLoop();
     if (R->contains(L) && (!Scope || !L->contains(Scope))) {
-      DEBUG(dbgs() << "INVALID: AddRec out of a loop whose exit value is not "
-                      "synthesizable");
+      DEBUG(dbgs() << "INVALID: Loop of AddRec expression boxed in an a "
+                      "non-affine subregion or has a non-synthesizable exit "
+                      "value.");
       return ValidatorResult(SCEVType::INVALID);
     }
 
@@ -307,7 +308,7 @@ public:
     // First check if we might be able to model the division, thus if the
     // divisor is constant. If so, check the dividend, otherwise check if
     // the whole division can be seen as a parameter.
-    if (isa<SCEVConstant>(Divisor))
+    if (isa<SCEVConstant>(Divisor) && !Divisor->isZero())
       return visit(Dividend);
 
     // For signed divisions use the SDiv instruction to check for a parameter
@@ -345,7 +346,7 @@ public:
 
     auto *Divisor = SRem->getOperand(1);
     auto *CI = dyn_cast<ConstantInt>(Divisor);
-    if (!CI)
+    if (!CI || CI->isZeroValue())
       return visitGenericInst(SRem, S);
 
     auto *Dividend = SRem->getOperand(0);
@@ -368,6 +369,10 @@ public:
 
     if (Instruction *I = dyn_cast<Instruction>(Expr->getValue())) {
       switch (I->getOpcode()) {
+      case Instruction::IntToPtr:
+        return visit(SE.getSCEVAtScope(I->getOperand(0), Scope));
+      case Instruction::PtrToInt:
+        return visit(SE.getSCEVAtScope(I->getOperand(0), Scope));
       case Instruction::Load:
         return visitLoadInstruction(I, Expr);
       case Instruction::SDiv:
@@ -631,4 +636,4 @@ extractConstantFactor(const SCEV *S, ScalarEvolution &SE) {
 
   return std::make_pair(ConstPart, LeftOver);
 }
-}
+} // namespace polly

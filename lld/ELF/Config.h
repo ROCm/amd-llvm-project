@@ -12,6 +12,7 @@
 
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/Support/ELF.h"
 
 #include <vector>
@@ -32,6 +33,18 @@ enum ELFKind {
 
 enum class BuildIdKind { None, Fnv1, Md5, Sha1, Hexstring };
 
+enum class UnresolvedPolicy { NoUndef, Error, Warn, Ignore };
+
+// This struct contains symbols version definition that
+// can be found in version script if it is used for link.
+struct Version {
+  Version(llvm::StringRef Name, size_t Id) : Name(Name), Id(Id) {}
+  llvm::StringRef Name;
+  size_t Id;
+  std::vector<llvm::StringRef> Globals;
+  size_t NameOff; // Offset in string table.
+};
+
 // This struct contains the global configuration for the linker.
 // Most fields are direct mapping from the command line options
 // and such fields have the same name as the corresponding options.
@@ -44,11 +57,14 @@ struct Configuration {
   llvm::StringRef Emulation;
   llvm::StringRef Fini;
   llvm::StringRef Init;
+  llvm::StringRef LtoAAPipeline;
   llvm::StringRef LtoNewPmPasses;
   llvm::StringRef OutputFile;
   llvm::StringRef SoName;
   llvm::StringRef Sysroot;
+  llvm::StringSet<> TraceSymbol;
   std::string RPath;
+  std::vector<Version> SymbolVersions;
   std::vector<llvm::StringRef> DynamicList;
   std::vector<llvm::StringRef> SearchPaths;
   std::vector<llvm::StringRef> Undefined;
@@ -66,13 +82,14 @@ struct Configuration {
   bool EhFrameHdr;
   bool EnableNewDtags;
   bool ExportDynamic;
+  bool FatalWarnings;
   bool GcSections;
   bool GnuHash = false;
+  bool HasVersionScript = false;
   bool ICF;
   bool Mips64EL = false;
   bool NoGnuUnique;
-  bool NoUndefined;
-  bool NoinhibitExec;
+  bool NoUndefinedVersion;
   bool Pic;
   bool Pie;
   bool PrintGcSections;
@@ -87,19 +104,20 @@ struct Configuration {
   bool Threads;
   bool Trace;
   bool Verbose;
-  bool VersionScript = false;
+  bool VersionScriptGlobalByDefault = true;
   bool WarnCommon;
   bool ZCombreloc;
-  bool ZDefs;
   bool ZExecStack;
   bool ZNodelete;
   bool ZNow;
   bool ZOrigin;
   bool ZRelro;
+  UnresolvedPolicy UnresolvedSymbols;
   BuildIdKind BuildId = BuildIdKind::None;
   ELFKind EKind = ELFNoneKind;
   uint16_t EMachine = llvm::ELF::EM_NONE;
   uint64_t EntryAddr = -1;
+  uint64_t VAStart;
   unsigned LtoJobs;
   unsigned LtoO;
   unsigned Optimize;

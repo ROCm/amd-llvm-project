@@ -215,6 +215,12 @@ public:
     return Qs;
   }
 
+  static Qualifiers fromCVRUMask(unsigned CVRU) {
+    Qualifiers Qs;
+    Qs.addCVRUQualifiers(CVRU);
+    return Qs;
+  }
+
   // Deserialize qualifiers from an opaque representation.
   static Qualifiers fromOpaqueValue(unsigned opaque) {
     Qualifiers Qs;
@@ -263,6 +269,10 @@ public:
   }
   void addCVRQualifiers(unsigned mask) {
     assert(!(mask & ~CVRMask) && "bitmask contains non-CVR bits");
+    Mask |= mask;
+  }
+  void addCVRUQualifiers(unsigned mask) {
+    assert(!(mask & ~CVRMask & ~UMask) && "bitmask contains non-CVRU bits");
     Mask |= mask;
   }
 
@@ -1080,6 +1090,9 @@ public:
   /// Strip Objective-C "__kindof" types from the given type.
   QualType stripObjCKindOfType(const ASTContext &ctx) const;
 
+  /// Remove all qualifiers including _Atomic.
+  QualType getAtomicUnqualifiedType() const;
+
 private:
   // These methods are implemented in a separate translation unit;
   // "static"-ize them to avoid creating temporary QualTypes in the
@@ -1372,7 +1385,7 @@ protected:
     ///
     /// C++ 8.3.5p4: The return type, the parameter type list and the
     /// cv-qualifier-seq, [...], are part of the function type.
-    unsigned TypeQuals : 3;
+    unsigned TypeQuals : 4;
 
     /// \brief The ref-qualifier associated with a \c FunctionProtoType.
     ///
@@ -1884,6 +1897,11 @@ public:
   /// potentially with type qualifiers missing.
   /// This should never be used when type qualifiers are meaningful.
   const Type *getArrayElementTypeNoTypeQual() const;
+
+  /// If this is a pointer type, return the pointee type.
+  /// If this is an array type, return the array element type.
+  /// This should never be used when type qualifiers are meaningful.
+  const Type *getPointeeOrArrayElementType() const;
 
   /// If this is a pointer, ObjC object pointer, or block
   /// pointer, this returns the respective pointee.
@@ -4153,19 +4171,18 @@ class LLVM_ALIGNAS(/*alignof(uint64_t)*/ 8) TemplateSpecializationType
   unsigned NumArgs : 31;
 
   /// Whether this template specialization type is a substituted type alias.
-  bool TypeAlias : 1;
+  unsigned TypeAlias : 1;
 
   TemplateSpecializationType(TemplateName T,
-                             const TemplateArgument *Args,
-                             unsigned NumArgs, QualType Canon,
+                             ArrayRef<TemplateArgument> Args,
+                             QualType Canon,
                              QualType Aliased);
 
   friend class ASTContext;  // ASTContext creates these
 
 public:
   /// Determine whether any of the given template arguments are dependent.
-  static bool anyDependentTemplateArguments(const TemplateArgumentLoc *Args,
-                                            unsigned NumArgs,
+  static bool anyDependentTemplateArguments(ArrayRef<TemplateArgumentLoc> Args,
                                             bool &InstantiationDependent);
 
   static bool anyDependentTemplateArguments(const TemplateArgumentListInfo &,
@@ -4174,14 +4191,12 @@ public:
   /// \brief Print a template argument list, including the '<' and '>'
   /// enclosing the template arguments.
   static void PrintTemplateArgumentList(raw_ostream &OS,
-                                        const TemplateArgument *Args,
-                                        unsigned NumArgs,
+                                        ArrayRef<TemplateArgument> Args,
                                         const PrintingPolicy &Policy,
                                         bool SkipBrackets = false);
 
   static void PrintTemplateArgumentList(raw_ostream &OS,
-                                        const TemplateArgumentLoc *Args,
-                                        unsigned NumArgs,
+                                        ArrayRef<TemplateArgumentLoc> Args,
                                         const PrintingPolicy &Policy);
 
   static void PrintTemplateArgumentList(raw_ostream &OS,
@@ -4238,20 +4253,23 @@ public:
   /// \pre \c isArgType(Arg)
   const TemplateArgument &getArg(unsigned Idx) const; // in TemplateBase.h
 
+  ArrayRef<TemplateArgument> template_arguments() const {
+    return {getArgs(), NumArgs};
+  }
+
   bool isSugared() const {
     return !isDependentType() || isCurrentInstantiation() || isTypeAlias();
   }
   QualType desugar() const { return getCanonicalTypeInternal(); }
 
   void Profile(llvm::FoldingSetNodeID &ID, const ASTContext &Ctx) {
-    Profile(ID, Template, getArgs(), NumArgs, Ctx);
+    Profile(ID, Template, template_arguments(), Ctx);
     if (isTypeAlias())
       getAliasedType().Profile(ID);
   }
 
   static void Profile(llvm::FoldingSetNodeID &ID, TemplateName T,
-                      const TemplateArgument *Args,
-                      unsigned NumArgs,
+                      ArrayRef<TemplateArgument> Args,
                       const ASTContext &Context);
 
   static bool classof(const Type *T) {
@@ -4555,8 +4573,7 @@ class LLVM_ALIGNAS(/*alignof(uint64_t)*/ 8) DependentTemplateSpecializationType
   DependentTemplateSpecializationType(ElaboratedTypeKeyword Keyword,
                                       NestedNameSpecifier *NNS,
                                       const IdentifierInfo *Name,
-                                      unsigned NumArgs,
-                                      const TemplateArgument *Args,
+                                      ArrayRef<TemplateArgument> Args,
                                       QualType Canon);
 
   friend class ASTContext;  // ASTContext creates these
@@ -4575,6 +4592,10 @@ public:
 
   const TemplateArgument &getArg(unsigned Idx) const; // in TemplateBase.h
 
+  ArrayRef<TemplateArgument> template_arguments() const {
+    return {getArgs(), NumArgs};
+  }
+
   typedef const TemplateArgument * iterator;
   iterator begin() const { return getArgs(); }
   iterator end() const; // inline in TemplateBase.h
@@ -4583,7 +4604,7 @@ public:
   QualType desugar() const { return QualType(this, 0); }
 
   void Profile(llvm::FoldingSetNodeID &ID, const ASTContext &Context) {
-    Profile(ID, Context, getKeyword(), NNS, Name, NumArgs, getArgs());
+    Profile(ID, Context, getKeyword(), NNS, Name, {getArgs(), NumArgs});
   }
 
   static void Profile(llvm::FoldingSetNodeID &ID,
@@ -4591,8 +4612,7 @@ public:
                       ElaboratedTypeKeyword Keyword,
                       NestedNameSpecifier *Qualifier,
                       const IdentifierInfo *Name,
-                      unsigned NumArgs,
-                      const TemplateArgument *Args);
+                      ArrayRef<TemplateArgument> Args);
 
   static bool classof(const Type *T) {
     return T->getTypeClass() == DependentTemplateSpecialization;
@@ -5347,7 +5367,8 @@ inline void QualType::removeLocalVolatile() {
 
 inline void QualType::removeLocalCVRQualifiers(unsigned Mask) {
   assert(!(Mask & ~Qualifiers::CVRMask) && "mask has non-CVR bits");
-  assert((int)Qualifiers::CVRMask == (int)Qualifiers::FastMask);
+  static_assert((int)Qualifiers::CVRMask == (int)Qualifiers::FastMask,
+                "Fast bits differ from CVR bits!");
 
   // Fast path: we don't need to touch the slow qualifiers.
   removeLocalFastQualifiers(Mask);
@@ -5757,6 +5778,15 @@ inline const Type *Type::getBaseElementTypeUnsafe() const {
   const Type *type = this;
   while (const ArrayType *arrayType = type->getAsArrayTypeUnsafe())
     type = arrayType->getElementType().getTypePtr();
+  return type;
+}
+
+inline const Type *Type::getPointeeOrArrayElementType() const {
+  const Type *type = this;
+  if (type->isAnyPointerType())
+    return type->getPointeeType().getTypePtr();
+  else if (type->isArrayType())
+    return type->getBaseElementTypeUnsafe();
   return type;
 }
 

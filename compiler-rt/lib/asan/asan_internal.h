@@ -62,6 +62,9 @@ using __sanitizer::StackTrace;
 
 void AsanInitFromRtl();
 
+// asan_win.cc
+void InitializePlatformExceptionHandlers();
+
 // asan_rtl.cc
 void NORETURN ShowStatsAndAbort();
 
@@ -102,16 +105,24 @@ void ReserveShadowMemoryRange(uptr beg, uptr end, const char *name);
 bool PlatformHasDifferentMemcpyAndMemmove();
 # define PLATFORM_HAS_DIFFERENT_MEMCPY_AND_MEMMOVE \
     (PlatformHasDifferentMemcpyAndMemmove())
+#elif SANITIZER_WINDOWS64
+# define PLATFORM_HAS_DIFFERENT_MEMCPY_AND_MEMMOVE false
 #else
 # define PLATFORM_HAS_DIFFERENT_MEMCPY_AND_MEMMOVE true
 #endif  // SANITIZER_MAC
 
 // Add convenient macro for interface functions that may be represented as
 // weak hooks.
-#define ASAN_MALLOC_HOOK(ptr, size) \
-  if (&__sanitizer_malloc_hook) __sanitizer_malloc_hook(ptr, size)
-#define ASAN_FREE_HOOK(ptr) \
-  if (&__sanitizer_free_hook) __sanitizer_free_hook(ptr)
+#define ASAN_MALLOC_HOOK(ptr, size)                                   \
+  do {                                                                \
+    if (&__sanitizer_malloc_hook) __sanitizer_malloc_hook(ptr, size); \
+    RunMallocHooks(ptr, size);                                        \
+  } while (false)
+#define ASAN_FREE_HOOK(ptr)                                 \
+  do {                                                      \
+    if (&__sanitizer_free_hook) __sanitizer_free_hook(ptr); \
+    RunFreeHooks(ptr);                                      \
+  } while (false)
 #define ASAN_ON_ERROR() \
   if (&__asan_on_error) __asan_on_error()
 
@@ -119,7 +130,6 @@ extern int asan_inited;
 // Used to avoid infinite recursion in __asan_init().
 extern bool asan_init_is_running;
 extern void (*death_callback)(void);
-
 // These magic values are written to shadow for better error reporting.
 const int kAsanHeapLeftRedzoneMagic = 0xfa;
 const int kAsanHeapRightRedzoneMagic = 0xfb;

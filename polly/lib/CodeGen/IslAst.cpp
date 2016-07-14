@@ -87,7 +87,7 @@ struct AstBuildUserInfo {
   /// @brief The last iterator id created for the current SCoP.
   isl_id *LastForNodeId;
 };
-}
+} // namespace polly
 
 /// @brief Free an IslAstUserPayload object pointed to by @p Ptr
 static void freeIslAstUserPayload(void *Ptr) {
@@ -564,10 +564,9 @@ isl_ast_build *IslAstInfo::getBuild(__isl_keep isl_ast_node *Node) {
 void IslAstInfo::printScop(raw_ostream &OS, Scop &S) const {
   isl_ast_print_options *Options;
   isl_ast_node *RootNode = getAst();
-  Function *F = S.getRegion().getEntry()->getParent();
+  Function &F = S.getFunction();
 
-  OS << ":: isl ast :: " << F->getName() << " :: " << S.getRegion().getNameStr()
-     << "\n";
+  OS << ":: isl ast :: " << F.getName() << " :: " << S.getNameStr() << "\n";
 
   if (!RootNode) {
     OS << ":: isl ast generation and code generation was skipped!\n\n";
@@ -586,11 +585,11 @@ void IslAstInfo::printScop(raw_ostream &OS, Scop &S) const {
   Options = isl_ast_print_options_set_print_for(Options, cbPrintFor, nullptr);
 
   isl_printer *P = isl_printer_to_str(S.getIslCtx());
+  P = isl_printer_set_output_format(P, ISL_FORMAT_C);
   P = isl_printer_print_ast_expr(P, RunCondition);
   RtCStr = isl_printer_get_str(P);
   P = isl_printer_flush(P);
   P = isl_printer_indent(P, 4);
-  P = isl_printer_set_output_format(P, ISL_FORMAT_C);
   P = isl_ast_node_print(RootNode, P, Options);
   AstStr = isl_printer_get_str(P);
 
@@ -618,7 +617,7 @@ void IslAstInfo::printScop(raw_ostream &OS, Scop &S) const {
 void IslAstInfo::getAnalysisUsage(AnalysisUsage &AU) const {
   // Get the Common analysis usage of ScopPasses.
   ScopPass::getAnalysisUsage(AU);
-  AU.addRequired<ScopInfo>();
+  AU.addRequired<ScopInfoRegionPass>();
   AU.addRequired<DependenceInfo>();
 }
 
@@ -629,7 +628,7 @@ Pass *polly::createIslAstInfoPass() { return new IslAstInfo(); }
 INITIALIZE_PASS_BEGIN(IslAstInfo, "polly-ast",
                       "Polly - Generate an AST of the SCoP (isl)", false,
                       false);
-INITIALIZE_PASS_DEPENDENCY(ScopInfo);
+INITIALIZE_PASS_DEPENDENCY(ScopInfoRegionPass);
 INITIALIZE_PASS_DEPENDENCY(DependenceInfo);
 INITIALIZE_PASS_END(IslAstInfo, "polly-ast",
                     "Polly - Generate an AST from the SCoP (isl)", false, false)

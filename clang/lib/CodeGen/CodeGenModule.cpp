@@ -400,7 +400,6 @@ void CodeGenModule::Release() {
             OpenMPRuntime->emitRegistrationFunction())
       AddGlobalCtor(OpenMPRegistrationFunction, 0);
   if (PGOReader) {
-    getModule().setMaximumFunctionCount(PGOReader->getMaximumFunctionCount());
     getModule().setProfileSummary(PGOReader->getSummary().getMD(VMContext));
     if (PGOStats.hasDiagnostics())
       PGOStats.reportDiagnostics(getDiags(), getCodeGenOpts().MainFileName);
@@ -488,11 +487,8 @@ void CodeGenModule::Release() {
   if (uint32_t PLevel = Context.getLangOpts().PICLevel) {
     assert(PLevel < 3 && "Invalid PIC Level");
     getModule().setPICLevel(static_cast<llvm::PICLevel::Level>(PLevel));
-  }
-
-  if (uint32_t PLevel = Context.getLangOpts().PIELevel) {
-    assert(PLevel < 3 && "Invalid PIE Level");
-    getModule().setPIELevel(static_cast<llvm::PIELevel::Level>(PLevel));
+    if (Context.getLangOpts().PIE)
+      getModule().setPIELevel(static_cast<llvm::PIELevel::Level>(PLevel));
   }
 
   SimplifyPersonality();
@@ -787,6 +783,15 @@ CodeGenModule::getFunctionLinkage(GlobalDecl GD) {
                                    : llvm::GlobalValue::LinkOnceODRLinkage;
   }
 
+  if (isa<CXXConstructorDecl>(D) &&
+      cast<CXXConstructorDecl>(D)->isInheritingConstructor() &&
+      Context.getTargetInfo().getCXXABI().isMicrosoft()) {
+    // Our approach to inheriting constructors is fundamentally different from
+    // that used by the MS ABI, so keep our inheriting constructor thunks
+    // internal rather than trying to pick an unambiguous mangling for them.
+    return llvm::GlobalValue::InternalLinkage;
+  }
+
   return getLLVMLinkageForDeclarator(D, Linkage, /*isConstantVariable=*/false);
 }
 
@@ -809,8 +814,7 @@ void CodeGenModule::setFunctionDLLStorageClass(GlobalDecl GD, llvm::Function *F)
     F->setDLLStorageClass(llvm::GlobalVariable::DefaultStorageClass);
 }
 
-llvm::ConstantInt *
-CodeGenModule::CreateCfiIdForTypeMetadata(llvm::Metadata *MD) {
+llvm::ConstantInt *CodeGenModule::CreateCrossDsoCfiTypeId(llvm::Metadata *MD) {
   llvm::MDString *MDS = dyn_cast<llvm::MDString>(MD);
   if (!MDS) return nullptr;
 
@@ -1017,8 +1021,8 @@ static void setLinkageAndVisibilityForGV(llvm::GlobalValue *GV,
   }
 }
 
-void CodeGenModule::CreateFunctionBitSetEntry(const FunctionDecl *FD,
-                                              llvm::Function *F) {
+void CodeGenModule::CreateFunctionTypeMetadata(const FunctionDecl *FD,
+                                               llvm::Function *F) {
   // Only if we are checking indirect calls.
   if (!LangOpts.Sanitize.has(SanitizerKind::CFIICall))
     return;
@@ -1039,25 +1043,13 @@ void CodeGenModule::CreateFunctionBitSetEntry(const FunctionDecl *FD,
       return;
   }
 
-  llvm::NamedMDNode *BitsetsMD =
-      getModule().getOrInsertNamedMetadata("llvm.bitsets");
-
   llvm::Metadata *MD = CreateMetadataIdentifierForType(FD->getType());
-  llvm::Metadata *BitsetOps[] = {
-      MD, llvm::ConstantAsMetadata::get(F),
-      llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(Int64Ty, 0))};
-  BitsetsMD->addOperand(llvm::MDTuple::get(getLLVMContext(), BitsetOps));
+  F->addTypeMetadata(0, MD);
 
   // Emit a hash-based bit set entry for cross-DSO calls.
-  if (CodeGenOpts.SanitizeCfiCrossDso) {
-    if (auto TypeId = CreateCfiIdForTypeMetadata(MD)) {
-      llvm::Metadata *BitsetOps2[] = {
-          llvm::ConstantAsMetadata::get(TypeId),
-          llvm::ConstantAsMetadata::get(F),
-          llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(Int64Ty, 0))};
-      BitsetsMD->addOperand(llvm::MDTuple::get(getLLVMContext(), BitsetOps2));
-    }
-  }
+  if (CodeGenOpts.SanitizeCfiCrossDso)
+    if (auto CrossDsoTypeId = CreateCrossDsoCfiTypeId(MD))
+      F->addTypeMetadata(0, llvm::ConstantAsMetadata::get(CrossDsoTypeId));
 }
 
 void CodeGenModule::SetFunctionAttributes(GlobalDecl GD, llvm::Function *F,
@@ -1125,12 +1117,12 @@ void CodeGenModule::SetFunctionAttributes(GlobalDecl GD, llvm::Function *F,
   }
 
   if (isa<CXXConstructorDecl>(FD) || isa<CXXDestructorDecl>(FD))
-    F->setUnnamedAddr(true);
+    F->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
   else if (const auto *MD = dyn_cast<CXXMethodDecl>(FD))
     if (MD->isVirtual())
-      F->setUnnamedAddr(true);
+      F->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
 
-  CreateFunctionBitSetEntry(FD, F);
+  CreateFunctionTypeMetadata(FD, F);
 }
 
 void CodeGenModule::addUsedGlobal(llvm::GlobalValue *GV) {
@@ -1383,7 +1375,7 @@ llvm::Constant *CodeGenModule::EmitAnnotationString(StringRef Str) {
       new llvm::GlobalVariable(getModule(), s->getType(), true,
                                llvm::GlobalValue::PrivateLinkage, s, ".str");
   gv->setSection(AnnotationSection);
-  gv->setUnnamedAddr(true);
+  gv->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
   AStr = gv;
   return gv;
 }
@@ -1490,6 +1482,12 @@ bool CodeGenModule::MayBeEmittedEagerly(const ValueDecl *Global) {
     if (FD->getTemplateSpecializationKind() == TSK_ImplicitInstantiation)
       // Implicit template instantiations may change linkage if they are later
       // explicitly instantiated, so they should not be emitted eagerly.
+      return false;
+  if (const auto *VD = dyn_cast<VarDecl>(Global))
+    if (Context.getInlineVariableDefinitionKind(VD) ==
+        ASTContext::InlineVariableDefinitionKind::WeakUnknown)
+      // A definition of an inline constexpr static data member may change
+      // linkage later if it's redeclared outside the class.
       return false;
   // If OpenMP is enabled and threadprivates must be generated like TLS, delay
   // codegen for global variables, because they may be marked as threadprivate.
@@ -1656,8 +1654,14 @@ void CodeGenModule::EmitGlobal(GlobalDecl GD) {
                             VD->hasAttr<CUDADeviceAttr>());
     if (!MustEmitForCuda &&
         VD->isThisDeclarationADefinition() != VarDecl::Definition &&
-        !Context.isMSStaticDataMemberInlineDefinition(VD))
+        !Context.isMSStaticDataMemberInlineDefinition(VD)) {
+      // If this declaration may have caused an inline variable definition to
+      // change linkage, make sure that it's emitted.
+      if (Context.getInlineVariableDefinitionKind(VD) ==
+          ASTContext::InlineVariableDefinitionKind::Strong)
+        GetAddrOfGlobalVar(VD);
       return;
+    }
   }
 
   // Defer code generation to first use when possible, e.g. if this is an inline
@@ -2688,7 +2692,7 @@ static bool isVarDeclStrongDefinition(const ASTContext &Context,
   if (shouldBeInCOMDAT(CGM, *D))
     return true;
 
-  // Declarations with a required alignment do not have common linakge in MSVC
+  // Declarations with a required alignment do not have common linkage in MSVC
   // mode.
   if (Context.getTargetInfo().getCXXABI().isMicrosoft()) {
     if (D->hasAttr<AlignedAttr>())
@@ -2749,9 +2753,18 @@ llvm::GlobalValue::LinkageTypes CodeGenModule::getLLVMLinkageForDeclarator(
   // explicit instantiations can occur in multiple translation units
   // and must all be equivalent. However, we are not allowed to
   // throw away these explicit instantiations.
-  if (Linkage == GVA_StrongODR)
-    return !Context.getLangOpts().AppleKext ? llvm::Function::WeakODRLinkage
-                                            : llvm::Function::ExternalLinkage;
+  //
+  // We don't currently support CUDA device code spread out across multiple TUs,
+  // so say that CUDA templates are either external (for kernels) or internal.
+  // This lets llvm perform aggressive inter-procedural optimizations.
+  if (Linkage == GVA_StrongODR) {
+    if (Context.getLangOpts().AppleKext)
+      return llvm::Function::ExternalLinkage;
+    if (Context.getLangOpts().CUDA && Context.getLangOpts().CUDAIsDevice)
+      return D->hasAttr<CUDAGlobalAttr>() ? llvm::Function::ExternalLinkage
+                                          : llvm::Function::InternalLinkage;
+    return llvm::Function::WeakODRLinkage;
+  }
 
   // C++ doesn't have tentative definitions and thus cannot have common
   // linkage.
@@ -2908,6 +2921,10 @@ static void ReplaceUsesOfNonProtoTypeWithRealFunction(llvm::GlobalValue *Old,
 }
 
 void CodeGenModule::HandleCXXStaticMemberVarInstantiation(VarDecl *VD) {
+  auto DK = VD->isThisDeclarationADefinition();
+  if (DK == VarDecl::Definition && VD->hasAttr<DLLImportAttr>())
+    return;
+
   TemplateSpecializationKind TSK = VD->getTemplateSpecializationKind();
   // If we have a definition, this might be a deferred decl. If the
   // instantiation is explicit, make sure we emit it at the end.
@@ -3166,19 +3183,40 @@ CodeGenModule::GetAddrOfConstantCFString(const StringLiteral *Literal) {
   llvm::Constant *Zero = llvm::Constant::getNullValue(Int32Ty);
   llvm::Constant *Zeros[] = { Zero, Zero };
   llvm::Value *V;
-  
+
   // If we don't already have it, get __CFConstantStringClassReference.
   if (!CFConstantStringClassRef) {
     llvm::Type *Ty = getTypes().ConvertType(getContext().IntTy);
     Ty = llvm::ArrayType::get(Ty, 0);
-    llvm::Constant *GV = CreateRuntimeVariable(Ty,
-                                           "__CFConstantStringClassReference");
+    llvm::Constant *GV =
+        CreateRuntimeVariable(Ty, "__CFConstantStringClassReference");
+
+    if (getTarget().getTriple().isOSBinFormatCOFF()) {
+      IdentifierInfo &II = getContext().Idents.get(GV->getName());
+      TranslationUnitDecl *TUDecl = getContext().getTranslationUnitDecl();
+      DeclContext *DC = TranslationUnitDecl::castToDeclContext(TUDecl);
+      llvm::GlobalValue *CGV = cast<llvm::GlobalValue>(GV);
+
+      const VarDecl *VD = nullptr;
+      for (const auto &Result : DC->lookup(&II))
+        if ((VD = dyn_cast<VarDecl>(Result)))
+          break;
+
+      if (!VD || !VD->hasAttr<DLLExportAttr>()) {
+        CGV->setDLLStorageClass(llvm::GlobalValue::DLLImportStorageClass);
+        CGV->setLinkage(llvm::GlobalValue::ExternalLinkage);
+      } else {
+        CGV->setDLLStorageClass(llvm::GlobalValue::DLLExportStorageClass);
+        CGV->setLinkage(llvm::GlobalValue::ExternalLinkage);
+      }
+    }
+
     // Decay array -> ptr
     V = llvm::ConstantExpr::getGetElementPtr(Ty, GV, Zeros);
     CFConstantStringClassRef = V;
-  }
-  else
+  } else {
     V = CFConstantStringClassRef;
+  }
 
   QualType CFTy = getContext().getCFConstantStringType();
 
@@ -3191,8 +3229,8 @@ CodeGenModule::GetAddrOfConstantCFString(const StringLiteral *Literal) {
 
   // Flags.
   llvm::Type *Ty = getTypes().ConvertType(getContext().UnsignedIntTy);
-  Fields[1] = isUTF16 ? llvm::ConstantInt::get(Ty, 0x07d0) :
-    llvm::ConstantInt::get(Ty, 0x07C8);
+  Fields[1] = isUTF16 ? llvm::ConstantInt::get(Ty, 0x07d0)
+                      : llvm::ConstantInt::get(Ty, 0x07C8);
 
   // String pointer.
   llvm::Constant *C = nullptr;
@@ -3210,21 +3248,20 @@ CodeGenModule::GetAddrOfConstantCFString(const StringLiteral *Literal) {
   auto *GV =
       new llvm::GlobalVariable(getModule(), C->getType(), /*isConstant=*/true,
                                llvm::GlobalValue::PrivateLinkage, C, ".str");
-  GV->setUnnamedAddr(true);
+  GV->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
   // Don't enforce the target's minimum global alignment, since the only use
   // of the string is via this class initializer.
-  // FIXME: We set the section explicitly to avoid a bug in ld64 224.1. Without
-  // it LLVM can merge the string with a non unnamed_addr one during LTO. Doing
-  // that changes the section it ends in, which surprises ld64.
-  if (isUTF16) {
-    CharUnits Align = getContext().getTypeAlignInChars(getContext().ShortTy);
-    GV->setAlignment(Align.getQuantity());
-    GV->setSection("__TEXT,__ustring");
-  } else {
-    CharUnits Align = getContext().getTypeAlignInChars(getContext().CharTy);
-    GV->setAlignment(Align.getQuantity());
-    GV->setSection("__TEXT,__cstring,cstring_literals");
-  }
+  CharUnits Align = isUTF16
+                        ? getContext().getTypeAlignInChars(getContext().ShortTy)
+                        : getContext().getTypeAlignInChars(getContext().CharTy);
+  GV->setAlignment(Align.getQuantity());
+
+  // FIXME: We set the section explicitly to avoid a bug in ld64 224.1.
+  // Without it LLVM can merge the string with a non unnamed_addr one during
+  // LTO.  Doing that changes the section it ends in, which surprises ld64.
+  if (getTarget().getTriple().isOSBinFormatMachO())
+    GV->setSection(isUTF16 ? "__TEXT,__ustring"
+                           : "__TEXT,__cstring,cstring_literals");
 
   // String.
   Fields[2] =
@@ -3245,8 +3282,18 @@ CodeGenModule::GetAddrOfConstantCFString(const StringLiteral *Literal) {
   GV = new llvm::GlobalVariable(getModule(), C->getType(), true,
                                 llvm::GlobalVariable::PrivateLinkage, C,
                                 "_unnamed_cfstring_");
-  GV->setSection("__DATA,__cfstring");
   GV->setAlignment(Alignment.getQuantity());
+  switch (getTarget().getTriple().getObjectFormat()) {
+  case llvm::Triple::UnknownObjectFormat:
+    llvm_unreachable("unknown file format");
+  case llvm::Triple::COFF:
+  case llvm::Triple::ELF:
+    GV->setSection("cfstring");
+    break;
+  case llvm::Triple::MachO:
+    GV->setSection("__DATA,__cfstring");
+    break;
+  }
   Entry.second = GV;
 
   return ConstantAddress(GV, Alignment);
@@ -3339,7 +3386,7 @@ CodeGenModule::GetAddrOfConstantString(const StringLiteral *Literal) {
 
   auto *GV = new llvm::GlobalVariable(getModule(), C->getType(), isConstant,
                                       Linkage, C, ".str");
-  GV->setUnnamedAddr(true);
+  GV->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
   // Don't enforce the target's minimum global alignment, since the only use
   // of the string is via this class initializer.
   CharUnits Align = getContext().getTypeAlignInChars(getContext().CharTy);
@@ -3458,7 +3505,7 @@ GenerateStringLiteral(llvm::Constant *C, llvm::GlobalValue::LinkageTypes LT,
       M, C->getType(), !CGM.getLangOpts().WritableStrings, LT, C, GlobalName,
       nullptr, llvm::GlobalVariable::NotThreadLocal, AddrSpace);
   GV->setAlignment(Alignment.getQuantity());
-  GV->setUnnamedAddr(true);
+  GV->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
   if (GV->isWeakForLinker()) {
     assert(CGM.supportsCOMDAT() && "Only COFF uses weak string literals");
     GV->setComdat(M.getOrInsertComdat(GV->getName()));
@@ -3804,6 +3851,12 @@ void CodeGenModule::EmitTopLevelDecl(Decl *D) {
   // C++ Decls
   case Decl::Namespace:
     EmitNamespace(cast<NamespaceDecl>(D));
+    break;
+  case Decl::CXXRecord:
+    // Emit any static data members, they may be definitions.
+    for (auto *I : cast<CXXRecordDecl>(D)->decls())
+      if (isa<VarDecl>(I) || isa<CXXRecordDecl>(I))
+        EmitTopLevelDecl(I);
     break;
     // No code generation needed.
   case Decl::UsingShadow:
@@ -4265,8 +4318,8 @@ llvm::Metadata *CodeGenModule::CreateMetadataIdentifierForType(QualType T) {
   return InternalId;
 }
 
-/// Returns whether this module needs the "all-vtables" bitset.
-bool CodeGenModule::NeedAllVtablesBitSet() const {
+/// Returns whether this module needs the "all-vtables" type identifier.
+bool CodeGenModule::NeedAllVtablesTypeId() const {
   // Returns true if at least one of vtable-based CFI checkers is enabled and
   // is not in the trapping mode.
   return ((LangOpts.Sanitize.has(SanitizerKind::CFIVCall) &&
@@ -4279,38 +4332,21 @@ bool CodeGenModule::NeedAllVtablesBitSet() const {
            !CodeGenOpts.SanitizeTrap.has(SanitizerKind::CFIUnrelatedCast)));
 }
 
-void CodeGenModule::CreateVTableBitSetEntry(llvm::NamedMDNode *BitsetsMD,
-                                            llvm::GlobalVariable *VTable,
-                                            CharUnits Offset,
-                                            const CXXRecordDecl *RD) {
+void CodeGenModule::AddVTableTypeMetadata(llvm::GlobalVariable *VTable,
+                                          CharUnits Offset,
+                                          const CXXRecordDecl *RD) {
   llvm::Metadata *MD =
       CreateMetadataIdentifierForType(QualType(RD->getTypeForDecl(), 0));
-  llvm::Metadata *BitsetOps[] = {
-      MD, llvm::ConstantAsMetadata::get(VTable),
-      llvm::ConstantAsMetadata::get(
-          llvm::ConstantInt::get(Int64Ty, Offset.getQuantity()))};
-  BitsetsMD->addOperand(llvm::MDTuple::get(getLLVMContext(), BitsetOps));
+  VTable->addTypeMetadata(Offset.getQuantity(), MD);
 
-  if (CodeGenOpts.SanitizeCfiCrossDso) {
-    if (auto TypeId = CreateCfiIdForTypeMetadata(MD)) {
-      llvm::Metadata *BitsetOps2[] = {
-          llvm::ConstantAsMetadata::get(TypeId),
-          llvm::ConstantAsMetadata::get(VTable),
-          llvm::ConstantAsMetadata::get(
-              llvm::ConstantInt::get(Int64Ty, Offset.getQuantity()))};
-      BitsetsMD->addOperand(llvm::MDTuple::get(getLLVMContext(), BitsetOps2));
-    }
-  }
+  if (CodeGenOpts.SanitizeCfiCrossDso)
+    if (auto CrossDsoTypeId = CreateCrossDsoCfiTypeId(MD))
+      VTable->addTypeMetadata(Offset.getQuantity(),
+                              llvm::ConstantAsMetadata::get(CrossDsoTypeId));
 
-  if (NeedAllVtablesBitSet()) {
+  if (NeedAllVtablesTypeId()) {
     llvm::Metadata *MD = llvm::MDString::get(getLLVMContext(), "all-vtables");
-    llvm::Metadata *BitsetOps[] = {
-        MD, llvm::ConstantAsMetadata::get(VTable),
-        llvm::ConstantAsMetadata::get(
-            llvm::ConstantInt::get(Int64Ty, Offset.getQuantity()))};
-    // Avoid adding a node to BitsetsMD twice.
-    if (!llvm::MDTuple::getIfExists(getLLVMContext(), BitsetOps))
-      BitsetsMD->addOperand(llvm::MDTuple::get(getLLVMContext(), BitsetOps));
+    VTable->addTypeMetadata(Offset.getQuantity(), MD);
   }
 }
 

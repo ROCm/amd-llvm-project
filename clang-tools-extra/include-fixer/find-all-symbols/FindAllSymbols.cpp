@@ -9,6 +9,7 @@
 
 #include "FindAllSymbols.h"
 #include "HeaderMapCollector.h"
+#include "PathConfig.h"
 #include "SymbolInfo.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclCXX.h"
@@ -92,18 +93,11 @@ CreateSymbolInfo(const NamedDecl *ND, const SourceManager &SM,
                  << ") has invalid declaration location.";
     return llvm::None;
   }
-  llvm::StringRef FilePath = SM.getFilename(Loc);
-  if (FilePath.empty())
-    return llvm::None;
 
-  // If Collector is not nullptr, check pragma remapping header.
-  if (Collector) {
-    auto Iter = Collector->getHeaderMappingTable().find(FilePath);
-    if (Iter != Collector->getHeaderMappingTable().end())
-      FilePath = Iter->second;
-  }
+  std::string FilePath = getIncludePath(SM, Loc, Collector);
+  if (FilePath.empty()) return llvm::None;
 
-  return SymbolInfo(ND->getNameAsString(), Type, FilePath.str(),
+  return SymbolInfo(ND->getNameAsString(), Type, FilePath,
                     SM.getExpansionLineNumber(Loc), GetContexts(ND));
 }
 
@@ -167,9 +161,14 @@ void FindAllSymbols::registerMatchers(MatchFinder *MatchFinder) {
   MatchFinder->addMatcher(CxxRecordDecl.bind("decl"), this);
 
   // Matchers for function declarations.
-  MatchFinder->addMatcher(
-      functionDecl(CommonFilter, anyOf(ExternCMatcher, CCMatcher)).bind("decl"),
-      this);
+  // We want to exclude friend declaration, but the `DeclContext` of a friend
+  // function declaration is not the class in which it is declared, so we need
+  // to explicitly check if the parent is a `friendDecl`.
+  MatchFinder->addMatcher(functionDecl(CommonFilter,
+                                       unless(hasParent(friendDecl())),
+                                       anyOf(ExternCMatcher, CCMatcher))
+                              .bind("decl"),
+                          this);
 
   // Matcher for typedef and type alias declarations.
   //
@@ -189,10 +188,10 @@ void FindAllSymbols::registerMatchers(MatchFinder *MatchFinder) {
       this);
 
   // Matchers for enum declarations.
-  MatchFinder->addMatcher(
-      enumDecl(CommonFilter, anyOf(HasNSOrTUCtxMatcher, ExternCMatcher))
-          .bind("decl"),
-      this);
+  MatchFinder->addMatcher(enumDecl(CommonFilter, isDefinition(),
+                                   anyOf(HasNSOrTUCtxMatcher, ExternCMatcher))
+                              .bind("decl"),
+                          this);
 
   // Matchers for enum constant declarations.
   // We only match the enum constants in non-scoped enum declarations which are

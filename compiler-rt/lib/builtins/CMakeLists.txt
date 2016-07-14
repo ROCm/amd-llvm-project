@@ -3,7 +3,7 @@
 # architecture-specific code in various subdirectories.
 
 if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-  cmake_minimum_required(VERSION 2.8.12.1)
+  cmake_minimum_required(VERSION 3.4.3)
 
   project(CompilerRTBuiltins C ASM)
   set(COMPILER_RT_STANDALONE_BUILD TRUE)
@@ -386,6 +386,7 @@ set(wasm32_SOURCES ${GENERIC_SOURCES})
 set(wasm64_SOURCES ${GENERIC_SOURCES})
 
 add_custom_target(builtins)
+set_target_properties(builtins PROPERTIES FOLDER "Compiler-RT Misc")
 
 if (APPLE)
   add_subdirectory(Darwin-excludes)

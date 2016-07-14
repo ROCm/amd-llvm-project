@@ -124,7 +124,8 @@
 /* Return type of HandleTopLevelDeclReturn */
 #undef HandleTopLevelDeclReturn
 
-/* Define to the sub-directory where libtool stores uninstalled libraries. */
+/* Define to the sub-directory in which libtool stores uninstalled libraries.
+   */
 #undef LT_OBJDIR
 
 /* Name of package */
@@ -147,6 +148,9 @@
 
 /* Define to the version of this package. */
 #undef PACKAGE_VERSION
+
+/* Define if HeaderSearchOptions::AddPath takes 4 arguments */
+#undef SETLANGDEFAULTS_TAKES_5_ARGUMENTS
 
 /* The size of `char', as computed by sizeof. */
 #undef SIZEOF_CHAR

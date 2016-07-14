@@ -10,6 +10,7 @@
 #ifndef LLVM_CLANG_DRIVER_ACTION_H
 #define LLVM_CLANG_DRIVER_ACTION_H
 
+#include "clang/Basic/Cuda.h"
 #include "clang/Driver/Types.h"
 #include "clang/Driver/Util.h"
 #include "llvm/ADT/SmallVector.h"
@@ -66,6 +67,21 @@ public:
 
     JobClassFirst=PreprocessJobClass,
     JobClassLast=VerifyPCHJobClass
+  };
+
+  // The offloading kind determines if this action is binded to a particular
+  // programming model. Each entry reserves one bit. We also have a special kind
+  // to designate the host offloading tool chain.
+  //
+  // FIXME: This is currently used to indicate that tool chains are used in a
+  // given programming, but will be used here as well once a generic offloading
+  // action is implemented.
+  enum OffloadKind {
+    OFK_None = 0x00,
+    // The host offloading tool chain.
+    OFK_Host = 0x01,
+    // The device offloading tool chains - one bit for each programming model.
+    OFK_Cuda = 0x02,
   };
 
   static const char *getClassName(ActionClass AC);
@@ -142,25 +158,21 @@ public:
 
 class CudaDeviceAction : public Action {
   virtual void anchor();
-  /// GPU architecture to bind.  Always of the form /sm_\d+/ or null (when the
-  /// action applies to multiple architectures).
-  const char *GpuArchName;
+
+  const CudaArch GpuArch;
+
   /// True when action results are not consumed by the host action (e.g when
   /// -fsyntax-only or --cuda-device-only options are used).
   bool AtTopLevel;
 
 public:
-  CudaDeviceAction(Action *Input, const char *ArchName, bool AtTopLevel);
+  CudaDeviceAction(Action *Input, CudaArch Arch, bool AtTopLevel);
 
-  const char *getGpuArchName() const { return GpuArchName; }
-
-  /// Gets the compute_XX that corresponds to getGpuArchName().  Returns null
-  /// when getGpuArchName() is null.
-  const char *getComputeArchName() const;
+  /// Get the CUDA GPU architecture to which this Action corresponds.  Returns
+  /// UNKNOWN if this Action corresponds to multiple architectures.
+  CudaArch getGpuArch() const { return GpuArch; }
 
   bool isAtTopLevel() const { return AtTopLevel; }
-
-  static bool IsValidGpuArchName(llvm::StringRef ArchName);
 
   static bool classof(const Action *A) {
     return A->getKind() == CudaDeviceClass;

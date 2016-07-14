@@ -70,8 +70,8 @@ bool formatAndApplyAllReplacements(const Replacements &Replaces,
   auto FileToReplaces = groupReplacementsByFile(Replaces);
 
   bool Result = true;
-  for (auto &FileAndReplaces : FileToReplaces) {
-    const std::string FilePath = FileAndReplaces.first;
+  for (const auto &FileAndReplaces : FileToReplaces) {
+    const std::string &FilePath = FileAndReplaces.first;
     auto &CurReplaces = FileAndReplaces.second;
 
     const FileEntry *Entry = Files.getFile(FilePath);
@@ -79,9 +79,13 @@ bool formatAndApplyAllReplacements(const Replacements &Replaces,
     StringRef Code = SM.getBufferData(ID);
 
     format::FormatStyle CurStyle = format::getStyle(Style, FilePath, "LLVM");
-    Replacements NewReplacements =
+    auto NewReplacements =
         format::formatReplacements(Code, CurReplaces, CurStyle);
-    Result = applyAllReplacements(NewReplacements, Rewrite) && Result;
+    if (!NewReplacements) {
+      llvm::errs() << llvm::toString(NewReplacements.takeError()) << "\n";
+      return false;
+    }
+    Result = applyAllReplacements(*NewReplacements, Rewrite) && Result;
   }
   return Result;
 }

@@ -23,6 +23,8 @@
 #include "kmp_debug.h"
 
 #ifdef __cplusplus
+#include <atomic>
+
 extern "C" {
 #endif // __cplusplus
 
@@ -176,7 +178,9 @@ extern void __kmp_destroy_nested_tas_lock( kmp_tas_lock_t *lck );
 #define KMP_LOCK_ACQUIRED_FIRST 1
 #define KMP_LOCK_ACQUIRED_NEXT  0
 
-#if KMP_OS_LINUX && (KMP_ARCH_X86 || KMP_ARCH_X86_64 || KMP_ARCH_ARM || KMP_ARCH_AARCH64)
+#define KMP_USE_FUTEX (KMP_OS_LINUX && !KMP_OS_CNK && (KMP_ARCH_X86 || KMP_ARCH_X86_64 || KMP_ARCH_ARM || KMP_ARCH_AARCH64))
+
+#if KMP_USE_FUTEX
 
 // ----------------------------------------------------------------------------
 // futex locks.  futex locks are only available on Linux* OS.
@@ -226,23 +230,48 @@ extern int __kmp_release_nested_futex_lock( kmp_futex_lock_t *lck, kmp_int32 gti
 extern void __kmp_init_nested_futex_lock( kmp_futex_lock_t *lck );
 extern void __kmp_destroy_nested_futex_lock( kmp_futex_lock_t *lck );
 
-#endif // KMP_OS_LINUX && (KMP_ARCH_X86 || KMP_ARCH_X86_64 || KMP_ARCH_ARM || KMP_ARCH_AARCH64)
+#endif // KMP_USE_FUTEX
 
 
 // ----------------------------------------------------------------------------
 // Ticket locks.
 // ----------------------------------------------------------------------------
 
+#ifdef __cplusplus
+
+#ifdef _MSC_VER
+// MSVC won't allow use of std::atomic<> in a union since it has non-trivial copy constructor.
+
 struct kmp_base_ticket_lock {
     // `initialized' must be the first entry in the lock data structure!
-    volatile union kmp_ticket_lock * initialized;  // points to the lock union if in initialized state
-    ident_t const *     location;     // Source code location of omp_init_lock().
-    volatile kmp_uint32 next_ticket;  // ticket number to give to next thread which acquires
-    volatile kmp_uint32 now_serving;  // ticket number for thread which holds the lock
-    volatile kmp_int32  owner_id;     // (gtid+1) of owning thread, 0 if unlocked
-    kmp_int32           depth_locked; // depth locked, for nested locks only
-    kmp_lock_flags_t    flags;        // lock specifics, e.g. critical section lock
+    std::atomic_bool      initialized;
+    volatile union kmp_ticket_lock *self; // points to the lock union
+    ident_t const *       location;       // Source code location of omp_init_lock().
+    std::atomic_uint      next_ticket;    // ticket number to give to next thread which acquires
+    std::atomic_uint      now_serving;    // ticket number for thread which holds the lock
+    std::atomic_int       owner_id;       // (gtid+1) of owning thread, 0 if unlocked
+    std::atomic_int       depth_locked;   // depth locked, for nested locks only
+    kmp_lock_flags_t      flags;          // lock specifics, e.g. critical section lock
 };
+#else
+struct kmp_base_ticket_lock {
+    // `initialized' must be the first entry in the lock data structure!
+    std::atomic<bool>     initialized;
+    volatile union kmp_ticket_lock *self; // points to the lock union
+    ident_t const *       location;       // Source code location of omp_init_lock().
+    std::atomic<unsigned> next_ticket;    // ticket number to give to next thread which acquires
+    std::atomic<unsigned> now_serving;    // ticket number for thread which holds the lock
+    std::atomic<int>      owner_id;       // (gtid+1) of owning thread, 0 if unlocked
+    std::atomic<int>      depth_locked;   // depth locked, for nested locks only
+    kmp_lock_flags_t      flags;          // lock specifics, e.g. critical section lock
+};
+#endif
+
+#else // __cplusplus
+
+struct kmp_base_ticket_lock;
+
+#endif // !__cplusplus
 
 typedef struct kmp_base_ticket_lock kmp_base_ticket_lock_t;
 
@@ -260,7 +289,13 @@ typedef union kmp_ticket_lock kmp_ticket_lock_t;
 //    kmp_ticket_lock_t xlock = KMP_TICKET_LOCK_INITIALIZER( xlock );
 // Note the macro argument. It is important to make var properly initialized.
 //
-#define KMP_TICKET_LOCK_INITIALIZER( lock ) { { (kmp_ticket_lock_t *) & (lock), NULL, 0, 0, 0, -1 } }
+#define KMP_TICKET_LOCK_INITIALIZER( lock ) { { ATOMIC_VAR_INIT(true), \
+                                                              &(lock), \
+                                                                 NULL, \
+                                                  ATOMIC_VAR_INIT(0U), \
+                                                  ATOMIC_VAR_INIT(0U), \
+                                                   ATOMIC_VAR_INIT(0), \
+                                                  ATOMIC_VAR_INIT(-1)    } }
 
 extern int __kmp_acquire_ticket_lock( kmp_ticket_lock_t *lck, kmp_int32 gtid );
 extern int __kmp_test_ticket_lock( kmp_ticket_lock_t *lck, kmp_int32 gtid );
@@ -592,7 +627,7 @@ __kmp_destroy_lock( kmp_lock_t *lck )
 enum kmp_lock_kind {
     lk_default = 0,
     lk_tas,
-#if KMP_OS_LINUX && (KMP_ARCH_X86 || KMP_ARCH_X86_64 || KMP_ARCH_ARM || KMP_ARCH_AARCH64)
+#if KMP_USE_FUTEX
     lk_futex,
 #endif
 #if KMP_USE_DYNAMIC_LOCK && KMP_USE_TSX
@@ -613,7 +648,7 @@ extern kmp_lock_kind_t __kmp_user_lock_kind;
 
 union kmp_user_lock {
     kmp_tas_lock_t     tas;
-#if KMP_OS_LINUX && (KMP_ARCH_X86 || KMP_ARCH_X86_64 || KMP_ARCH_ARM || KMP_ARCH_AARCH64)
+#if KMP_USE_FUTEX
     kmp_futex_lock_t   futex;
 #endif
     kmp_ticket_lock_t  ticket;
@@ -1038,7 +1073,7 @@ extern void __kmp_cleanup_user_locks();
 // KMP_USE_DYNAMIC_LOCK enables dynamic dispatch of lock functions without breaking the current
 // compatibility. Essential functionality of this new code is dynamic dispatch, but it also
 // implements (or enables implementation of) hinted user lock and critical section which will be
-// part of OMP 4.1 soon.
+// part of OMP 4.5 soon.
 //
 // Lock type can be decided at creation time (i.e., lock initialization), and subsequent lock
 // function call on the created lock object requires type extraction and call through jump table
@@ -1068,9 +1103,8 @@ extern void __kmp_cleanup_user_locks();
 #include <stdint.h> // for uintptr_t
 
 // Shortcuts
-#define KMP_USE_FUTEX          (KMP_OS_LINUX && (KMP_ARCH_X86 || KMP_ARCH_X86_64 || KMP_ARCH_ARM || KMP_ARCH_AARCH64))
-#define KMP_USE_INLINED_TAS    (KMP_OS_LINUX && (KMP_ARCH_X86 || KMP_ARCH_X86_64 || KMP_ARCH_ARM)) && 1
-#define KMP_USE_INLINED_FUTEX  KMP_USE_FUTEX && 0
+#define KMP_USE_INLINED_TAS   (KMP_OS_LINUX && (KMP_ARCH_X86 || KMP_ARCH_X86_64 || KMP_ARCH_ARM)) && 1
+#define KMP_USE_INLINED_FUTEX KMP_USE_FUTEX && 0
 
 // List of lock definitions; all nested locks are indirect locks.
 // hle lock is xchg lock prefixed with XACQUIRE/XRELEASE.

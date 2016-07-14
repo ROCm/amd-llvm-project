@@ -82,6 +82,7 @@ template<> struct DenseMapInfo<TableGenStringKey> {
 //===----------------------------------------------------------------------===//
 
 BitRecTy BitRecTy::Shared;
+CodeRecTy CodeRecTy::Shared;
 IntRecTy IntRecTy::Shared;
 StringRecTy StringRecTy::Shared;
 DagRecTy DagRecTy::Shared;
@@ -453,6 +454,14 @@ IntInit::convertInitializerBitRange(const std::vector<unsigned> &Bits) const {
   return BitsInit::get(NewBits);
 }
 
+CodeInit *CodeInit::get(StringRef V) {
+  static StringMap<std::unique_ptr<CodeInit>> ThePool;
+
+  std::unique_ptr<CodeInit> &I = ThePool[V];
+  if (!I) I.reset(new CodeInit(V));
+  return I.get();
+}
+
 StringInit *StringInit::get(StringRef V) {
   static StringMap<std::unique_ptr<StringInit>> ThePool;
 
@@ -464,6 +473,13 @@ StringInit *StringInit::get(StringRef V) {
 Init *StringInit::convertInitializerTo(RecTy *Ty) const {
   if (isa<StringRecTy>(Ty))
     return const_cast<StringInit *>(this);
+
+  return nullptr;
+}
+
+Init *CodeInit::convertInitializerTo(RecTy *Ty) const {
+  if (isa<CodeRecTy>(Ty))
+    return const_cast<CodeInit *>(this);
 
   return nullptr;
 }
@@ -651,7 +667,7 @@ Init *UnOpInit::Fold(Record *CurRec, MultiClass *CurMultiClass) const {
         return StringInit::get(LHSi->getAsString());
     } else {
       if (StringInit *LHSs = dyn_cast<StringInit>(LHS)) {
-        std::string Name = LHSs->getValue();
+        const std::string &Name = LHSs->getValue();
 
         // From TGParser::ParseIDValue
         if (CurRec) {
@@ -1154,6 +1170,12 @@ TypedInit::convertInitializerTo(RecTy *Ty) const {
 
   if (isa<StringRecTy>(Ty)) {
     if (isa<StringRecTy>(getType()))
+      return const_cast<TypedInit *>(this);
+    return nullptr;
+  }
+
+  if (isa<CodeRecTy>(Ty)) {
+    if (isa<CodeRecTy>(getType()))
       return const_cast<TypedInit *>(this);
     return nullptr;
   }
@@ -1744,6 +1766,9 @@ std::string Record::getValueAsString(StringRef FieldName) const {
 
   if (StringInit *SI = dyn_cast<StringInit>(R->getValue()))
     return SI->getValue();
+  if (CodeInit *CI = dyn_cast<CodeInit>(R->getValue()))
+    return CI->getValue();
+
   PrintFatalError(getLoc(), "Record `" + getName() + "', field `" +
     FieldName + "' does not have a string initializer!");
 }

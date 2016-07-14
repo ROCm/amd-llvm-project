@@ -19,15 +19,12 @@
 #include "Symbols.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/StringSwitch.h"
-#include "llvm/Object/Archive.h"
-#include "llvm/Object/ArchiveWriter.h"
 #include "llvm/Object/COFF.h"
 #include "llvm/Option/Arg.h"
 #include "llvm/Option/ArgList.h"
 #include "llvm/Option/Option.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileUtilities.h"
-#include "llvm/Support/Path.h"
 #include "llvm/Support/Process.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
@@ -173,6 +170,47 @@ void parseMerge(StringRef S) {
       llvm::errs() << "warning: " << S << ": already merged into "
                    << Existing << "\n";
   }
+}
+
+static uint32_t parseSectionAttributes(StringRef S) {
+  uint32_t Ret = 0;
+  for (char C : S.lower()) {
+    switch (C) {
+    case 'd':
+      Ret |= IMAGE_SCN_MEM_DISCARDABLE;
+      break;
+    case 'e':
+      Ret |= IMAGE_SCN_MEM_EXECUTE;
+      break;
+    case 'k':
+      Ret |= IMAGE_SCN_MEM_NOT_CACHED;
+      break;
+    case 'p':
+      Ret |= IMAGE_SCN_MEM_NOT_PAGED;
+      break;
+    case 'r':
+      Ret |= IMAGE_SCN_MEM_READ;
+      break;
+    case 's':
+      Ret |= IMAGE_SCN_MEM_SHARED;
+      break;
+    case 'w':
+      Ret |= IMAGE_SCN_MEM_WRITE;
+      break;
+    default:
+      error(Twine("/section: invalid argument: ") + S);
+    }
+  }
+  return Ret;
+}
+
+// Parses /section option argument.
+void parseSection(StringRef S) {
+  StringRef Name, Attrs;
+  std::tie(Name, Attrs) = S.split(',');
+  if (Name.empty() || Attrs.empty())
+    error(Twine("/section: invalid argument: ") + S);
+  Config->Section[Name] = parseSectionAttributes(Attrs);
 }
 
 // Parses a string in the form of "EMBED[,=<integer>]|NO".
@@ -529,167 +567,6 @@ convertResToCOFF(const std::vector<MemoryBufferRef> &MBs) {
   ErrorOr<std::unique_ptr<MemoryBuffer>> Ret = MemoryBuffer::getFile(Path);
   error(Ret, Twine("Could not open ") + Path);
   return std::move(*Ret);
-}
-
-static std::string writeToTempFile(StringRef Contents) {
-  SmallString<128> Path;
-  int FD;
-  if (llvm::sys::fs::createTemporaryFile("tmp", "def", FD, Path)) {
-    llvm::errs() << "failed to create a temporary file\n";
-    return "";
-  }
-  llvm::raw_fd_ostream OS(FD, /*shouldClose*/ true);
-  OS << Contents;
-  return Path.str();
-}
-
-void touchFile(StringRef Path) {
-  int FD;
-  std::error_code EC = sys::fs::openFileForWrite(Path, FD, sys::fs::F_Append);
-  error(EC, "failed to create a file");
-  sys::Process::SafelyCloseFileDescriptor(FD);
-}
-
-static std::string getImplibPath() {
-  if (!Config->Implib.empty())
-    return Config->Implib;
-  SmallString<128> Out = StringRef(Config->OutputFile);
-  sys::path::replace_extension(Out, ".lib");
-  return Out.str();
-}
-
-static std::unique_ptr<MemoryBuffer> createEmptyImportLibrary() {
-  std::string S = (Twine("LIBRARY \"") +
-                   llvm::sys::path::filename(Config->OutputFile) + "\"\n")
-                      .str();
-  std::string Path1 = writeToTempFile(S);
-  std::string Path2 = getImplibPath();
-  llvm::FileRemover Remover1(Path1);
-  llvm::FileRemover Remover2(Path2);
-
-  Executor E("lib.exe");
-  E.add("/nologo");
-  E.add("/machine:" + machineToStr(Config->Machine));
-  E.add(Twine("/def:") + Path1);
-  E.add(Twine("/out:") + Path2);
-  E.run();
-
-  ErrorOr<std::unique_ptr<MemoryBuffer>> BufOrErr =
-      MemoryBuffer::getFile(Path2, -1, false);
-  error(BufOrErr, Twine("Failed to open ") + Path2);
-  return MemoryBuffer::getMemBufferCopy((*BufOrErr)->getBuffer());
-}
-
-static std::vector<NewArchiveIterator>
-readMembers(const object::Archive &Archive) {
-  std::vector<NewArchiveIterator> V;
-  for (const auto &ChildOrErr : Archive.children()) {
-    error(ChildOrErr, "Archive::Child::getName failed");
-    const object::Archive::Child C(*ChildOrErr);
-    ErrorOr<StringRef> NameOrErr = C.getName();
-    error(NameOrErr, "Archive::Child::getName failed");
-    V.emplace_back(C, *NameOrErr);
-  }
-  return V;
-}
-
-// This class creates short import files which is described in
-// PE/COFF spec 7. Import Library Format.
-class ShortImportCreator {
-public:
-  ShortImportCreator(object::Archive *A, StringRef S) : Parent(A), DLLName(S) {}
-
-  NewArchiveIterator create(StringRef Sym, uint16_t Ordinal,
-                            ImportNameType NameType, bool isData) {
-    size_t ImpSize = DLLName.size() + Sym.size() + 2; // +2 for NULs
-    size_t Size = sizeof(object::ArchiveMemberHeader) +
-                  sizeof(coff_import_header) + ImpSize;
-    char *Buf = Alloc.Allocate<char>(Size);
-    memset(Buf, 0, Size);
-    char *P = Buf;
-
-    // Write archive member header
-    auto *Hdr = reinterpret_cast<object::ArchiveMemberHeader *>(P);
-    P += sizeof(*Hdr);
-    sprintf(Hdr->Name, "%-12s", "dummy");
-    sprintf(Hdr->LastModified, "%-12d", 0);
-    sprintf(Hdr->UID, "%-6d", 0);
-    sprintf(Hdr->GID, "%-6d", 0);
-    sprintf(Hdr->AccessMode, "%-8d", 0644);
-    sprintf(Hdr->Size, "%-10d", int(sizeof(coff_import_header) + ImpSize));
-
-    // Write short import library.
-    auto *Imp = reinterpret_cast<coff_import_header *>(P);
-    P += sizeof(*Imp);
-    Imp->Sig2 = 0xFFFF;
-    Imp->Machine = Config->Machine;
-    Imp->SizeOfData = ImpSize;
-    if (Ordinal > 0)
-      Imp->OrdinalHint = Ordinal;
-    Imp->TypeInfo = (isData ? IMPORT_DATA : IMPORT_CODE);
-    Imp->TypeInfo |= NameType << 2;
-
-    // Write symbol name and DLL name.
-    memcpy(P, Sym.data(), Sym.size());
-    P += Sym.size() + 1;
-    memcpy(P, DLLName.data(), DLLName.size());
-
-    std::error_code EC;
-    object::Archive::Child C(Parent, Buf, &EC);
-    assert(!EC && "We created an invalid buffer");
-    return NewArchiveIterator(C, DLLName);
-  }
-
-private:
-  BumpPtrAllocator Alloc;
-  object::Archive *Parent;
-  StringRef DLLName;
-};
-
-static ImportNameType getNameType(StringRef Sym, StringRef ExtName) {
-  if (Sym != ExtName)
-    return IMPORT_NAME_UNDECORATE;
-  if (Config->Machine == I386 && Sym.startswith("_"))
-    return IMPORT_NAME_NOPREFIX;
-  return IMPORT_NAME;
-}
-
-static std::string replace(StringRef S, StringRef From, StringRef To) {
-  size_t Pos = S.find(From);
-  assert(Pos != StringRef::npos);
-  return (Twine(S.substr(0, Pos)) + To + S.substr(Pos + From.size())).str();
-}
-
-// Creates an import library for a DLL. In this function, we first
-// create an empty import library using lib.exe and then adds short
-// import files to that file.
-void writeImportLibrary() {
-  std::unique_ptr<MemoryBuffer> Buf = createEmptyImportLibrary();
-  std::error_code EC;
-  object::Archive Archive(Buf->getMemBufferRef(), EC);
-  error(EC, "Error reading an empty import file");
-  std::vector<NewArchiveIterator> Members = readMembers(Archive);
-
-  std::string DLLName = llvm::sys::path::filename(Config->OutputFile);
-  ShortImportCreator ShortImport(&Archive, DLLName);
-  for (Export &E : Config->Exports) {
-    if (E.Private)
-      continue;
-    if (E.ExtName.empty()) {
-      Members.push_back(ShortImport.create(
-          E.SymbolName, E.Ordinal, getNameType(E.SymbolName, E.Name), E.Data));
-    } else {
-      Members.push_back(ShortImport.create(
-          replace(E.SymbolName, E.Name, E.ExtName), E.Ordinal,
-          getNameType(E.SymbolName, E.Name), E.Data));
-    }
-  }
-
-  std::string Path = getImplibPath();
-  std::pair<StringRef, std::error_code> Result =
-      writeArchive(Path, Members, /*WriteSymtab*/ true, object::Archive::K_GNU,
-                   /*Deterministic*/ true, /*Thin*/ false);
-  error(Result.second, Twine("Failed to write ") + Path);
 }
 
 // Create OptTable

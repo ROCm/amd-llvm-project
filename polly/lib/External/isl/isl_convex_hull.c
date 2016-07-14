@@ -79,8 +79,13 @@ int isl_basic_set_constraint_is_redundant(struct isl_basic_set **bset,
  * constraints.  If the minimal value along the normal of a constraint
  * is the same if the constraint is removed, then the constraint is redundant.
  *
+ * Since some constraints may be mutually redundant, sort the constraints
+ * first such that constraints that involve existentially quantified
+ * variables are considered for removal before those that do not.
+ * The sorting is also need for the use in map_simple_hull.
+ *
  * Alternatively, we could have intersected the basic map with the
- * corresponding equality and the checked if the dimension was that
+ * corresponding equality and then checked if the dimension was that
  * of a facet.
  */
 __isl_give isl_basic_map *isl_basic_map_remove_redundancies(
@@ -99,6 +104,7 @@ __isl_give isl_basic_map *isl_basic_map_remove_redundancies(
 	if (bmap->n_ineq <= 1)
 		return bmap;
 
+	bmap = isl_basic_map_sort_constraints(bmap);
 	tab = isl_tab_from_basic_map(bmap, 0);
 	if (isl_tab_detect_implicit_equalities(tab) < 0)
 		goto error;
@@ -106,6 +112,8 @@ __isl_give isl_basic_map *isl_basic_map_remove_redundancies(
 		goto error;
 	bmap = isl_basic_map_update_from_tab(bmap, tab);
 	isl_tab_free(tab);
+	if (!bmap)
+		return NULL;
 	ISL_F_SET(bmap, ISL_BASIC_MAP_NO_IMPLICIT);
 	ISL_F_SET(bmap, ISL_BASIC_MAP_NO_REDUNDANT);
 	return bmap;
@@ -2378,15 +2386,39 @@ static __isl_give isl_basic_map *map_simple_hull_trivial(
 	return hull;
 }
 
+/* Return a copy of the simple hull cached inside "map".
+ * "shift" determines whether to return the cached unshifted or shifted
+ * simple hull.
+ */
+static __isl_give isl_basic_map *cached_simple_hull(__isl_take isl_map *map,
+	int shift)
+{
+	isl_basic_map *hull;
+
+	hull = isl_basic_map_copy(map->cached_simple_hull[shift]);
+	isl_map_free(map);
+
+	return hull;
+}
+
 /* Compute a superset of the convex hull of map that is described
  * by only (translates of) the constraints in the constituents of map.
  * Translation is only allowed if "shift" is set.
  *
- * Sort the constraints before removing redundant constraints
+ * The constraints are sorted while removing redundant constraints
  * in order to indicate a preference of which constraints should
  * be preserved.  In particular, pairs of constraints that are
  * sorted together are preferred to either both be preserved
- * or both be removed.
+ * or both be removed.  The sorting is performed inside
+ * isl_basic_map_remove_redundancies.
+ *
+ * The result of the computation is stored in map->cached_simple_hull[shift]
+ * such that it can be reused in subsequent calls.  The cache is cleared
+ * whenever the map is modified (in isl_map_cow).
+ * Note that the results need to be stored in the input map for there
+ * to be any chance that they may get reused.  In particular, they
+ * are stored in a copy of the input map that is saved before
+ * the integer division alignment.
  */
 static __isl_give isl_basic_map *map_simple_hull(__isl_take isl_map *map,
 	int shift)
@@ -2396,14 +2428,19 @@ static __isl_give isl_basic_map *map_simple_hull(__isl_take isl_map *map,
 	struct isl_basic_map *hull;
 	struct isl_basic_map *affine_hull;
 	struct isl_basic_set *bset = NULL;
+	isl_map *input;
 
 	if (!map || map->n <= 1)
 		return map_simple_hull_trivial(map);
+
+	if (map->cached_simple_hull[shift])
+		return cached_simple_hull(map, shift);
 
 	map = isl_map_detect_equalities(map);
 	if (!map || map->n <= 1)
 		return map_simple_hull_trivial(map);
 	affine_hull = isl_map_affine_hull(isl_map_copy(map));
+	input = isl_map_copy(map);
 	map = isl_map_align_divs(map);
 	model = map ? isl_basic_map_copy(map->p[0]) : NULL;
 
@@ -2414,15 +2451,17 @@ static __isl_give isl_basic_map *map_simple_hull(__isl_take isl_map *map,
 	hull = isl_basic_map_overlying_set(bset, model);
 
 	hull = isl_basic_map_intersect(hull, affine_hull);
-	hull = isl_basic_map_sort_constraints(hull);
 	hull = isl_basic_map_remove_redundancies(hull);
 
-	if (!hull)
-		return NULL;
-	ISL_F_SET(hull, ISL_BASIC_MAP_NO_IMPLICIT);
-	ISL_F_SET(hull, ISL_BASIC_MAP_ALL_EQUALITIES);
+	if (hull) {
+		ISL_F_SET(hull, ISL_BASIC_MAP_NO_IMPLICIT);
+		ISL_F_SET(hull, ISL_BASIC_MAP_ALL_EQUALITIES);
+	}
 
 	hull = isl_basic_map_finalize(hull);
+	if (input)
+		input->cached_simple_hull[shift] = isl_basic_map_copy(hull);
+	isl_map_free(input);
 
 	return hull;
 }
@@ -2624,6 +2663,17 @@ __isl_give isl_basic_map *isl_map_plain_unshifted_simple_hull(
 
 	isl_map_free(map);
 	return hull;
+}
+
+/* Compute a superset of the convex hull of "set" that is described
+ * by only the constraints in the constituents of "set".
+ * In particular, the result is composed of constraints that appear
+ * in each of the basic sets of "set"
+ */
+__isl_give isl_basic_set *isl_set_plain_unshifted_simple_hull(
+	__isl_take isl_set *set)
+{
+	return isl_map_plain_unshifted_simple_hull(set);
 }
 
 /* Check if "ineq" is a bound on "set" and, if so, add it to "hull".

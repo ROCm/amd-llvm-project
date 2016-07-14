@@ -19,7 +19,10 @@
 #include "InputSection.h"
 #include "OutputSections.h"
 #include "ScriptParser.h"
+#include "Strings.h"
+#include "Symbols.h"
 #include "SymbolTable.h"
+#include "Target.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/ELF.h"
 #include "llvm/Support/FileSystem.h"
@@ -34,8 +37,6 @@ using namespace lld;
 using namespace lld::elf;
 
 ScriptConfiguration *elf::ScriptConfig;
-
-static bool matchStr(StringRef S, StringRef T);
 
 // This is an operator-precedence parser to parse and evaluate
 // a linker script expression. For each linker script arithmetic
@@ -188,7 +189,7 @@ uint64_t ExprParser::parseExpr() { return parseExpr1(parsePrimary(), 0); }
 template <class ELFT>
 StringRef LinkerScript<ELFT>::getOutputSection(InputSectionBase<ELFT> *S) {
   for (SectionRule &R : Opt.Sections)
-    if (matchStr(R.SectionPattern, S->getSectionName()))
+    if (globMatch(R.SectionPattern, S->getSectionName()))
       return R.Dest;
   return "";
 }
@@ -201,7 +202,7 @@ bool LinkerScript<ELFT>::isDiscarded(InputSectionBase<ELFT> *S) {
 template <class ELFT>
 bool LinkerScript<ELFT>::shouldKeep(InputSectionBase<ELFT> *S) {
   for (StringRef Pat : Opt.KeptSections)
-    if (matchStr(Pat, S->getSectionName()))
+    if (globMatch(Pat, S->getSectionName()))
       return true;
   return false;
 }
@@ -222,37 +223,57 @@ void LinkerScript<ELFT>::assignAddresses(
 
   // Assign addresses as instructed by linker script SECTIONS sub-commands.
   Dot = Out<ELFT>::ElfHeader->getSize() + Out<ELFT>::ProgramHeaders->getSize();
+  uintX_t MinVA = std::numeric_limits<uintX_t>::max();
   uintX_t ThreadBssOffset = 0;
 
   for (SectionsCommand &Cmd : Opt.Commands) {
-    if (Cmd.Kind == ExprKind) {
+    switch (Cmd.Kind) {
+    case ExprKind:
       Dot = evalExpr(Cmd.Expr, Dot);
       continue;
+    case SymbolAssignmentKind: {
+      auto *D =
+          cast<DefinedRegular<ELFT>>(Symtab<ELFT>::X->find(Cmd.Name));
+      D->Value = evalExpr(Cmd.Expr, Dot);
+      continue;
+    }
+    default:
+      break;
     }
 
     // Find all the sections with required name. There can be more than
     // ont section with such name, if the alignment, flags or type
     // attribute differs.
     for (OutputSectionBase<ELFT> *Sec : Sections) {
-      if (Sec->getName() != Cmd.SectionName)
+      if (Sec->getName() != Cmd.Name)
         continue;
 
       if ((Sec->getFlags() & SHF_TLS) && Sec->getType() == SHT_NOBITS) {
         uintX_t TVA = Dot + ThreadBssOffset;
-        TVA = alignTo(TVA, Sec->getAlign());
+        TVA = alignTo(TVA, Sec->getAlignment());
         Sec->setVA(TVA);
         ThreadBssOffset = TVA - Dot + Sec->getSize();
         continue;
       }
 
       if (Sec->getFlags() & SHF_ALLOC) {
-        Dot = alignTo(Dot, Sec->getAlign());
+        Dot = alignTo(Dot, Sec->getAlignment());
         Sec->setVA(Dot);
+        MinVA = std::min(MinVA, Dot);
         Dot += Sec->getSize();
         continue;
       }
     }
   }
+
+  // ELF and Program headers need to be right before the first section in
+  // memory.
+  // Set their addresses accordingly.
+  MinVA = alignDown(MinVA - Out<ELFT>::ElfHeader->getSize() -
+                        Out<ELFT>::ProgramHeaders->getSize(),
+                    Target->PageSize);
+  Out<ELFT>::ElfHeader->setVA(MinVA);
+  Out<ELFT>::ProgramHeaders->setVA(Out<ELFT>::ElfHeader->getSize() + MinVA);
 }
 
 template <class ELFT>
@@ -272,7 +293,7 @@ int LinkerScript<ELFT>::getSectionIndex(StringRef Name) {
   auto Begin = Opt.Commands.begin();
   auto End = Opt.Commands.end();
   auto I = std::find_if(Begin, End, [&](SectionsCommand &N) {
-    return N.Kind == SectionKind && N.SectionName == Name;
+    return N.Kind == SectionKind && N.Name == Name;
   });
   return I == End ? INT_MAX : (I - Begin);
 }
@@ -288,28 +309,11 @@ int LinkerScript<ELFT>::compareSections(StringRef A, StringRef B) {
   return I < J ? -1 : 1;
 }
 
-// Returns true if S matches T. S can contain glob meta-characters.
-// The asterisk ('*') matches zero or more characacters, and the question
-// mark ('?') matches one character.
-static bool matchStr(StringRef S, StringRef T) {
-  for (;;) {
-    if (S.empty())
-      return T.empty();
-    if (S[0] == '*') {
-      S = S.substr(1);
-      if (S.empty())
-        // Fast path. If a pattern is '*', it matches anything.
-        return true;
-      for (size_t I = 0, E = T.size(); I < E; ++I)
-        if (matchStr(S, T.substr(I)))
-          return true;
-      return false;
-    }
-    if (T.empty() || (S[0] != T[0] && S[0] != '?'))
-      return false;
-    S = S.substr(1);
-    T = T.substr(1);
-  }
+template <class ELFT>
+void LinkerScript<ELFT>::addScriptedSymbols() {
+  for (SectionsCommand &Cmd : Opt.Commands)
+    if (Cmd.Kind == SymbolAssignmentKind)
+      Symtab<ELFT>::X->addAbsolute(Cmd.Name, STV_DEFAULT);
 }
 
 class elf::ScriptParser : public ScriptParserBase {
@@ -336,7 +340,9 @@ private:
   void readSections();
 
   void readLocationCounterValue();
-  void readOutputSectionDescription();
+  void readOutputSectionDescription(StringRef OutSec);
+  void readSymbolAssignment(StringRef Name);
+  std::vector<StringRef> readSectionsCommandExpr();
 
   const static StringMap<Handler> Cmd;
   ScriptConfiguration &Opt = *ScriptConfig;
@@ -500,30 +506,29 @@ void ScriptParser::readSections() {
   expect("{");
   while (!Error && !skip("}")) {
     StringRef Tok = peek();
-    if (Tok == ".")
+    if (Tok == ".") {
       readLocationCounterValue();
+      continue;
+    }
+    next();
+    if (peek() == "=")
+      readSymbolAssignment(Tok);
     else
-      readOutputSectionDescription();
+      readOutputSectionDescription(Tok);
   }
 }
 
 void ScriptParser::readLocationCounterValue() {
   expect(".");
   expect("=");
-  Opt.Commands.push_back({ExprKind, {}, ""});
-  SectionsCommand &Cmd = Opt.Commands.back();
-  while (!Error) {
-    StringRef Tok = next();
-    if (Tok == ";")
-      break;
-    Cmd.Expr.push_back(Tok);
-  }
-  if (Cmd.Expr.empty())
+  std::vector<StringRef> Expr = readSectionsCommandExpr();
+  if (Expr.empty())
     error("error in location counter expression");
+  else
+    Opt.Commands.push_back({ExprKind, std::move(Expr), ""});
 }
 
-void ScriptParser::readOutputSectionDescription() {
-  StringRef OutSec = next();
+void ScriptParser::readOutputSectionDescription(StringRef OutSec) {
   Opt.Commands.push_back({SectionKind, {}, OutSec});
   expect(":");
   expect("{");
@@ -559,6 +564,26 @@ void ScriptParser::readOutputSectionDescription() {
     Opt.Filler[OutSec] = parseHex(Tok);
     next();
   }
+}
+
+void ScriptParser::readSymbolAssignment(StringRef Name) {
+  expect("=");
+  std::vector<StringRef> Expr = readSectionsCommandExpr();
+  if (Expr.empty())
+    error("error in symbol assignment expression");
+  else
+    Opt.Commands.push_back({SymbolAssignmentKind, std::move(Expr), Name});
+}
+
+std::vector<StringRef> ScriptParser::readSectionsCommandExpr() {
+  std::vector<StringRef> Expr;
+  while (!Error) {
+    StringRef Tok = next();
+    if (Tok == ";")
+      break;
+    Expr.push_back(Tok);
+  }
+  return Expr;
 }
 
 static bool isUnderSysroot(StringRef Path) {

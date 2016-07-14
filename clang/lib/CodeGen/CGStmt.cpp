@@ -277,6 +277,20 @@ void CodeGenFunction::EmitStmt(const Stmt *S) {
   case Stmt::OMPDistributeDirectiveClass:
     EmitOMPDistributeDirective(cast<OMPDistributeDirective>(*S));
     break;
+  case Stmt::OMPTargetUpdateDirectiveClass:
+    EmitOMPTargetUpdateDirective(cast<OMPTargetUpdateDirective>(*S));
+    break;
+  case Stmt::OMPDistributeParallelForDirectiveClass:
+    EmitOMPDistributeParallelForDirective(
+        cast<OMPDistributeParallelForDirective>(*S));
+    break;
+  case Stmt::OMPDistributeParallelForSimdDirectiveClass:
+    EmitOMPDistributeParallelForSimdDirective(
+        cast<OMPDistributeParallelForSimdDirective>(*S));
+    break;
+  case Stmt::OMPDistributeSimdDirectiveClass:
+    EmitOMPDistributeSimdDirective(cast<OMPDistributeSimdDirective>(*S));
+    break;
   }
 }
 
@@ -560,7 +574,8 @@ void CodeGenFunction::EmitIfStmt(const IfStmt &S) {
   // If the condition constant folds and can be elided, try to avoid emitting
   // the condition and the dead arm of the if/else.
   bool CondConstant;
-  if (ConstantFoldsToSimpleInteger(S.getCond(), CondConstant)) {
+  if (ConstantFoldsToSimpleInteger(S.getCond(), CondConstant,
+                                   S.isConstexpr())) {
     // Figure out which block (then or else) is executed.
     const Stmt *Executed = S.getThen();
     const Stmt *Skipped  = S.getElse();
@@ -569,7 +584,7 @@ void CodeGenFunction::EmitIfStmt(const IfStmt &S) {
 
     // If the skipped block has no labels in it, just emit the executed block.
     // This avoids emitting dead code and simplifies the CFG substantially.
-    if (!ContainsLabel(Skipped)) {
+    if (S.isConstexpr() || !ContainsLabel(Skipped)) {
       if (CondConstant)
         incrementProfileCounter(&S);
       if (Executed) {
@@ -598,7 +613,14 @@ void CodeGenFunction::EmitIfStmt(const IfStmt &S) {
     RunCleanupsScope ThenScope(*this);
     EmitStmt(S.getThen());
   }
-  EmitBranch(ContBlock);
+  {
+    auto CurBlock = Builder.GetInsertBlock();
+    EmitBranch(ContBlock);
+    // Eliminate any empty blocks that may have been created by nested
+    // control flow statements in the 'then' clause.
+    if (CurBlock)
+      SimplifyForwardingBlocks(CurBlock); 
+  }
 
   // Emit the 'else' code if present.
   if (const Stmt *Else = S.getElse()) {
@@ -614,7 +636,12 @@ void CodeGenFunction::EmitIfStmt(const IfStmt &S) {
     {
       // There is no need to emit line number for an unconditional branch.
       auto NL = ApplyDebugLocation::CreateEmpty(*this);
+      auto CurBlock = Builder.GetInsertBlock();
       EmitBranch(ContBlock);
+      // Eliminate any empty blocks that may have been created by nested
+      // control flow statements emitted in the 'else' clause.
+      if (CurBlock)
+        SimplifyForwardingBlocks(CurBlock); 
     }
   }
 
@@ -629,7 +656,8 @@ void CodeGenFunction::EmitWhileStmt(const WhileStmt &S,
   JumpDest LoopHeader = getJumpDestInCurrentScope("while.cond");
   EmitBlock(LoopHeader.getBlock());
 
-  LoopStack.push(LoopHeader.getBlock(), CGM.getContext(), WhileAttrs);
+  LoopStack.push(LoopHeader.getBlock(), CGM.getContext(), WhileAttrs,
+                 Builder.getCurrentDebugLocation());
 
   // Create an exit block for when the condition fails, which will
   // also become the break target.
@@ -720,7 +748,8 @@ void CodeGenFunction::EmitDoStmt(const DoStmt &S,
   // Emit the body of the loop.
   llvm::BasicBlock *LoopBody = createBasicBlock("do.body");
 
-  LoopStack.push(LoopBody, CGM.getContext(), DoAttrs);
+  LoopStack.push(LoopBody, CGM.getContext(), DoAttrs,
+                 Builder.getCurrentDebugLocation());
 
   EmitBlockWithFallThrough(LoopBody, &S);
   {
@@ -772,6 +801,8 @@ void CodeGenFunction::EmitForStmt(const ForStmt &S,
 
   LexicalScope ForScope(*this, S.getSourceRange());
 
+  llvm::DebugLoc DL = Builder.getCurrentDebugLocation();
+
   // Evaluate the first part before the loop.
   if (S.getInit())
     EmitStmt(S.getInit());
@@ -783,7 +814,7 @@ void CodeGenFunction::EmitForStmt(const ForStmt &S,
   llvm::BasicBlock *CondBlock = Continue.getBlock();
   EmitBlock(CondBlock);
 
-  LoopStack.push(CondBlock, CGM.getContext(), ForAttrs);
+  LoopStack.push(CondBlock, CGM.getContext(), ForAttrs, DL);
 
   // If the for loop doesn't have an increment we can just use the
   // condition as the continue block.  Otherwise we'll need to create
@@ -868,6 +899,8 @@ CodeGenFunction::EmitCXXForRangeStmt(const CXXForRangeStmt &S,
 
   LexicalScope ForScope(*this, S.getSourceRange());
 
+  llvm::DebugLoc DL = Builder.getCurrentDebugLocation();
+
   // Evaluate the first pieces before the loop.
   EmitStmt(S.getRangeStmt());
   EmitStmt(S.getBeginStmt());
@@ -879,7 +912,7 @@ CodeGenFunction::EmitCXXForRangeStmt(const CXXForRangeStmt &S,
   llvm::BasicBlock *CondBlock = createBasicBlock("for.cond");
   EmitBlock(CondBlock);
 
-  LoopStack.push(CondBlock, CGM.getContext(), ForAttrs);
+  LoopStack.push(CondBlock, CGM.getContext(), ForAttrs, DL);
 
   // If there are any cleanups between here and the loop-exit scope,
   // create a block to stage a loop exit along.
@@ -2043,6 +2076,14 @@ void CodeGenFunction::EmitAsmStmt(const AsmStmt &S) {
     Result->setMetadata("srcloc",
                         llvm::MDNode::get(getLLVMContext(),
                                           llvm::ConstantAsMetadata::get(Loc)));
+  }
+
+  if (getLangOpts().CUDA && getLangOpts().CUDAIsDevice) {
+    // Conservatively, mark all inline asm blocks in CUDA as convergent
+    // (meaning, they may call an intrinsically convergent op, such as bar.sync,
+    // and so can't have certain optimizations applied around them).
+    Result->addAttribute(llvm::AttributeSet::FunctionIndex,
+                         llvm::Attribute::Convergent);
   }
 
   // Extract all of the register value results from the asm.

@@ -7,17 +7,17 @@
 ///
 
 ///==========================================================================///
-// RUN: %clang_cc1 -DCK1 -verify -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK1 --check-prefix CK1-64
-// RUN: %clang_cc1 -DCK1 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK1 --check-prefix CK1-64
-// RUN: %clang_cc1 -DCK1 -verify -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK1 --check-prefix CK1-32
-// RUN: %clang_cc1 -DCK1 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK1 --check-prefix CK1-32
+// RUN: %clang_cc1 -DCK1 -verify -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK1 --check-prefix CK1-64
+// RUN: %clang_cc1 -DCK1 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK1 --check-prefix CK1-64
+// RUN: %clang_cc1 -DCK1 -verify -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK1 --check-prefix CK1-32
+// RUN: %clang_cc1 -DCK1 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK1 --check-prefix CK1-32
 #ifdef CK1
 
 // CK1-DAG: [[SIZES:@.+]] = {{.+}}constant [1 x i[[sz:64|32]]] [i{{64|32}} 4]
-// Map types: OMP_MAP_BYCOPY = 128
-// CK1-DAG: [[TYPES:@.+]] = {{.+}}constant [1 x i32] [i32 128]
+// Map types: OMP_MAP_PRIVATE_VAL | OMP_MAP_IS_FIRST = 288
+// CK1-DAG: [[TYPES:@.+]] = {{.+}}constant [1 x i32] [i32 288]
 
 // CK1-LABEL: implicit_maps_integer
 void implicit_maps_integer (int a){
@@ -52,17 +52,17 @@ void implicit_maps_integer (int a){
 
 #endif
 ///==========================================================================///
-// RUN: %clang_cc1 -DCK2 -verify -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK2 --check-prefix CK2-64
-// RUN: %clang_cc1 -DCK2 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK2 --check-prefix CK2-64
-// RUN: %clang_cc1 -DCK2 -verify -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK2 --check-prefix CK2-32
-// RUN: %clang_cc1 -DCK2 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK2 --check-prefix CK2-32
+// RUN: %clang_cc1 -DCK2 -verify -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK2 --check-prefix CK2-64
+// RUN: %clang_cc1 -DCK2 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK2 --check-prefix CK2-64
+// RUN: %clang_cc1 -DCK2 -verify -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK2 --check-prefix CK2-32
+// RUN: %clang_cc1 -DCK2 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK2 --check-prefix CK2-32
 #ifdef CK2
 
 // CK2-DAG: [[SIZES:@.+]] = {{.+}}constant [1 x i[[sz:64|32]]] [i{{64|32}} 4]
-// Map types: OMP_MAP_BYCOPY = 128
-// CK2-DAG: [[TYPES:@.+]] = {{.+}}constant [1 x i32] [i32 128]
+// Map types: OMP_MAP_PRIVATE_VAL | OMP_MAP_IS_FIRST = 288
+// CK2-DAG: [[TYPES:@.+]] = {{.+}}constant [1 x i32] [i32 288]
 
 // CK2-LABEL: implicit_maps_integer_reference
 void implicit_maps_integer_reference (int a){
@@ -101,17 +101,17 @@ void implicit_maps_integer_reference (int a){
 
 #endif
 ///==========================================================================///
-// RUN: %clang_cc1 -DCK3 -verify -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK3 --check-prefix CK3-64
-// RUN: %clang_cc1 -DCK3 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK3 --check-prefix CK3-64
-// RUN: %clang_cc1 -DCK3 -verify -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK3 --check-prefix CK3-32
-// RUN: %clang_cc1 -DCK3 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK3 --check-prefix CK3-32
+// RUN: %clang_cc1 -DCK3 -verify -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK3 --check-prefix CK3-64
+// RUN: %clang_cc1 -DCK3 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK3 --check-prefix CK3-64
+// RUN: %clang_cc1 -DCK3 -verify -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK3 --check-prefix CK3-32
+// RUN: %clang_cc1 -DCK3 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK3 --check-prefix CK3-32
 #ifdef CK3
 
 // CK3-DAG: [[SIZES:@.+]] = {{.+}}constant [1 x i[[sz:64|32]]] [i{{64|32}} 4]
-// Map types: OMP_MAP_BYCOPY = 128
-// CK3-DAG: [[TYPES:@.+]] = {{.+}}constant [1 x i32] [i32 128]
+// Map types: OMP_MAP_PRIVATE_VAL | OMP_MAP_IS_FIRST = 288
+// CK3-DAG: [[TYPES:@.+]] = {{.+}}constant [1 x i32] [i32 288]
 
 // CK3-LABEL: implicit_maps_parameter
 void implicit_maps_parameter (int a){
@@ -145,17 +145,17 @@ void implicit_maps_parameter (int a){
 
 #endif
 ///==========================================================================///
-// RUN: %clang_cc1 -DCK4 -verify -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK4 --check-prefix CK4-64
-// RUN: %clang_cc1 -DCK4 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK4 --check-prefix CK4-64
-// RUN: %clang_cc1 -DCK4 -verify -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK4 --check-prefix CK4-32
-// RUN: %clang_cc1 -DCK4 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK4 --check-prefix CK4-32
+// RUN: %clang_cc1 -DCK4 -verify -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK4 --check-prefix CK4-64
+// RUN: %clang_cc1 -DCK4 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK4 --check-prefix CK4-64
+// RUN: %clang_cc1 -DCK4 -verify -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK4 --check-prefix CK4-32
+// RUN: %clang_cc1 -DCK4 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK4 --check-prefix CK4-32
 #ifdef CK4
 
 // CK4-DAG: [[SIZES:@.+]] = {{.+}}constant [1 x i[[sz:64|32]]] [i{{64|32}} 4]
-// Map types: OMP_MAP_BYCOPY = 128
-// CK4-DAG: [[TYPES:@.+]] = {{.+}}constant [1 x i32] [i32 128]
+// Map types: OMP_MAP_PRIVATE_VAL | OMP_MAP_IS_FIRST = 288
+// CK4-DAG: [[TYPES:@.+]] = {{.+}}constant [1 x i32] [i32 288]
 
 // CK4-LABEL: implicit_maps_nested_integer
 void implicit_maps_nested_integer (int a){
@@ -201,17 +201,17 @@ void implicit_maps_nested_integer (int a){
 // CK4: define internal void [[KERNELP2]](i32* {{[^,]+}}, i32* {{[^,]+}}, i32* {{[^,]+}})
 #endif
 ///==========================================================================///
-// RUN: %clang_cc1 -DCK5 -verify -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK5 --check-prefix CK5-64
-// RUN: %clang_cc1 -DCK5 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK5 --check-prefix CK5-64
-// RUN: %clang_cc1 -DCK5 -verify -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK5 --check-prefix CK5-32
-// RUN: %clang_cc1 -DCK5 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK5 --check-prefix CK5-32
+// RUN: %clang_cc1 -DCK5 -verify -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK5 --check-prefix CK5-64
+// RUN: %clang_cc1 -DCK5 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK5 --check-prefix CK5-64
+// RUN: %clang_cc1 -DCK5 -verify -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK5 --check-prefix CK5-32
+// RUN: %clang_cc1 -DCK5 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK5 --check-prefix CK5-32
 #ifdef CK5
 
 // CK5-DAG: [[SIZES:@.+]] = {{.+}}constant [1 x i[[sz:64|32]]] [i{{64|32}} 4]
-// Map types: OMP_MAP_BYCOPY = 128
-// CK5-DAG: [[TYPES:@.+]] = {{.+}}constant [1 x i32] [i32 128]
+// Map types: OMP_MAP_PRIVATE_VAL | OMP_MAP_IS_FIRST = 288
+// CK5-DAG: [[TYPES:@.+]] = {{.+}}constant [1 x i32] [i32 288]
 
 // CK5-LABEL: implicit_maps_nested_integer_and_enum
 void implicit_maps_nested_integer_and_enum (int a){
@@ -252,17 +252,17 @@ void implicit_maps_nested_integer_and_enum (int a){
 
 #endif
 ///==========================================================================///
-// RUN: %clang_cc1 -DCK6 -verify -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK6 --check-prefix CK6-64
-// RUN: %clang_cc1 -DCK6 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK6 --check-prefix CK6-64
-// RUN: %clang_cc1 -DCK6 -verify -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK6 --check-prefix CK6-32
-// RUN: %clang_cc1 -DCK6 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK6 --check-prefix CK6-32
+// RUN: %clang_cc1 -DCK6 -verify -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK6 --check-prefix CK6-64
+// RUN: %clang_cc1 -DCK6 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK6 --check-prefix CK6-64
+// RUN: %clang_cc1 -DCK6 -verify -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK6 --check-prefix CK6-32
+// RUN: %clang_cc1 -DCK6 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK6 --check-prefix CK6-32
 #ifdef CK6
 // CK6-DAG: [[GBL:@Gi]] = global i32 0
 // CK6-DAG: [[SIZES:@.+]] = {{.+}}constant [1 x i[[sz:64|32]]] [i{{64|32}} 4]
-// Map types: OMP_MAP_BYCOPY = 128
-// CK6-DAG: [[TYPES:@.+]] = {{.+}}constant [1 x i32] [i32 128]
+// Map types: OMP_MAP_PRIVATE_VAL | OMP_MAP_IS_FIRST = 288
+// CK6-DAG: [[TYPES:@.+]] = {{.+}}constant [1 x i32] [i32 288]
 
 // CK6-LABEL: implicit_maps_host_global
 int Gi;
@@ -298,22 +298,22 @@ void implicit_maps_host_global (int a){
 
 #endif
 ///==========================================================================///
-// RUN: %clang_cc1 -DCK7 -verify -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK7 --check-prefix CK7-64
-// RUN: %clang_cc1 -DCK7 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK7  --check-prefix CK7-64
-// RUN: %clang_cc1 -DCK7 -verify -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK7  --check-prefix CK7-32
-// RUN: %clang_cc1 -DCK7 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK7  --check-prefix CK7-32
+// RUN: %clang_cc1 -DCK7 -verify -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK7 --check-prefix CK7-64
+// RUN: %clang_cc1 -DCK7 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK7  --check-prefix CK7-64
+// RUN: %clang_cc1 -DCK7 -verify -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK7  --check-prefix CK7-32
+// RUN: %clang_cc1 -DCK7 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK7  --check-prefix CK7-32
 #ifdef CK7
 
 // For a 32-bit targets, the value doesn't fit the size of the pointer,
 // therefore it is passed by reference with a map 'to' specification.
 
 // CK7-DAG: [[SIZES:@.+]] = {{.+}}constant [1 x i[[sz:64|32]]] [i{{64|32}} 8]
-// Map types: OMP_MAP_BYCOPY = 128
-// CK7-64-DAG: [[TYPES:@.+]] = {{.+}}constant [1 x i32] [i32 128]
-// Map types: OMP_MAP_TO = 1
-// CK7-32-DAG: [[TYPES:@.+]] = {{.+}}constant [1 x i32] [i32 1]
+// Map types: OMP_MAP_PRIVATE_VAL | OMP_MAP_IS_FIRST = 288
+// CK7-64-DAG: [[TYPES:@.+]] = {{.+}}constant [1 x i32] [i32 288]
+// Map types: OMP_MAP_TO  | OMP_MAP_IS_FIRST = 33
+// CK7-32-DAG: [[TYPES:@.+]] = {{.+}}constant [1 x i32] [i32 33]
 
 // CK7-LABEL: implicit_maps_double
 void implicit_maps_double (int a){
@@ -360,17 +360,17 @@ void implicit_maps_double (int a){
 
 #endif
 ///==========================================================================///
-// RUN: %clang_cc1 -DCK8 -verify -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK8
-// RUN: %clang_cc1 -DCK8 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK8
-// RUN: %clang_cc1 -DCK8 -verify -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK8
-// RUN: %clang_cc1 -DCK8 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK8
+// RUN: %clang_cc1 -DCK8 -verify -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK8
+// RUN: %clang_cc1 -DCK8 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK8
+// RUN: %clang_cc1 -DCK8 -verify -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK8
+// RUN: %clang_cc1 -DCK8 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK8
 #ifdef CK8
 
 // CK8-DAG: [[SIZES:@.+]] = {{.+}}constant [1 x i[[sz:64|32]]] [i{{64|32}} 4]
-// Map types: OMP_MAP_BYCOPY = 128
-// CK8-DAG: [[TYPES:@.+]] = {{.+}}constant [1 x i32] [i32 128]
+// Map types: OMP_MAP_PRIVATE_VAL | OMP_MAP_IS_FIRST = 288
+// CK8-DAG: [[TYPES:@.+]] = {{.+}}constant [1 x i32] [i32 288]
 
 // CK8-LABEL: implicit_maps_float
 void implicit_maps_float (int a){
@@ -404,17 +404,17 @@ void implicit_maps_float (int a){
 
 #endif
 ///==========================================================================///
-// RUN: %clang_cc1 -DCK9 -verify -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK9
-// RUN: %clang_cc1 -DCK9 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK9
-// RUN: %clang_cc1 -DCK9 -verify -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK9
-// RUN: %clang_cc1 -DCK9 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK9
+// RUN: %clang_cc1 -DCK9 -verify -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK9
+// RUN: %clang_cc1 -DCK9 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK9
+// RUN: %clang_cc1 -DCK9 -verify -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK9
+// RUN: %clang_cc1 -DCK9 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK9
 #ifdef CK9
 
 // CK9-DAG: [[SIZES:@.+]] = {{.+}}constant [1 x i[[sz:64|32]]] [i{{64|32}} 16]
-// Map types: OMP_MAP_TO + OMP_MAP_FROM = 2 + 1
-// CK9-DAG: [[TYPES:@.+]] = {{.+}}constant [1 x i32] [i32 3]
+// Map types: OMP_MAP_TO + OMP_MAP_FROM + OMP_MAP_IS_FIRST = 35
+// CK9-DAG: [[TYPES:@.+]] = {{.+}}constant [1 x i32] [i32 35]
 
 // CK9-LABEL: implicit_maps_array
 void implicit_maps_array (int a){
@@ -445,17 +445,17 @@ void implicit_maps_array (int a){
 // CK9: {{.+}} = getelementptr inbounds [2 x double], [2 x double]* [[REF]], i[[sz]] 0, i[[sz]] 0
 #endif
 ///==========================================================================///
-// RUN: %clang_cc1 -DCK10 -verify -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK10
-// RUN: %clang_cc1 -DCK10 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK10
-// RUN: %clang_cc1 -DCK10 -verify -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK10
-// RUN: %clang_cc1 -DCK10 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK10
+// RUN: %clang_cc1 -DCK10 -verify -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK10
+// RUN: %clang_cc1 -DCK10 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK10
+// RUN: %clang_cc1 -DCK10 -verify -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK10
+// RUN: %clang_cc1 -DCK10 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK10
 #ifdef CK10
 
-// CK10-DAG: [[SIZES:@.+]] = {{.+}}constant [1 x i[[sz:64|32]]] [i{{64|32}} {{8|4}}]
-// Map types: OMP_MAP_BYCOPY = 128
-// CK10-DAG: [[TYPES:@.+]] = {{.+}}constant [1 x i32] [i32 128]
+// CK10-DAG: [[SIZES:@.+]] = {{.+}}constant [1 x i[[sz:64|32]]] zeroinitializer
+// Map types: OMP_MAP_IS_FIRST = 32
+// CK10-DAG: [[TYPES:@.+]] = {{.+}}constant [1 x i32] [i32 32]
 
 // CK10-LABEL: implicit_maps_pointer
 void implicit_maps_pointer (){
@@ -487,17 +487,17 @@ void implicit_maps_pointer (){
 
 #endif
 ///==========================================================================///
-// RUN: %clang_cc1 -DCK11 -verify -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK11
-// RUN: %clang_cc1 -DCK11 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK11
-// RUN: %clang_cc1 -DCK11 -verify -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK11
-// RUN: %clang_cc1 -DCK11 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK11
+// RUN: %clang_cc1 -DCK11 -verify -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK11
+// RUN: %clang_cc1 -DCK11 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK11
+// RUN: %clang_cc1 -DCK11 -verify -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK11
+// RUN: %clang_cc1 -DCK11 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK11
 #ifdef CK11
 
 // CK11-DAG: [[SIZES:@.+]] = {{.+}}constant [1 x i[[sz:64|32]]] [i{{64|32}} 16]
-// Map types: OMP_MAP_TO = 1
-// CK11-DAG: [[TYPES:@.+]] = {{.+}}constant [1 x i32] [i32 1]
+// Map types: OMP_MAP_TO + OMP_MAP_IS_FIRST = 33
+// CK11-DAG: [[TYPES:@.+]] = {{.+}}constant [1 x i32] [i32 33]
 
 // CK11-LABEL: implicit_maps_double_complex
 void implicit_maps_double_complex (int a){
@@ -527,22 +527,22 @@ void implicit_maps_double_complex (int a){
 // CK11: {{.+}} = getelementptr inbounds { double, double }, { double, double }* [[REF]], i32 0, i32 0
 #endif
 ///==========================================================================///
-// RUN: %clang_cc1 -DCK12 -verify -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK12 --check-prefix CK12-64
-// RUN: %clang_cc1 -DCK12 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK12 --check-prefix CK12-64
-// RUN: %clang_cc1 -DCK12 -verify -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK12 --check-prefix CK12-32
-// RUN: %clang_cc1 -DCK12 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK12 --check-prefix CK12-32
+// RUN: %clang_cc1 -DCK12 -verify -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK12 --check-prefix CK12-64
+// RUN: %clang_cc1 -DCK12 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK12 --check-prefix CK12-64
+// RUN: %clang_cc1 -DCK12 -verify -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK12 --check-prefix CK12-32
+// RUN: %clang_cc1 -DCK12 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK12 --check-prefix CK12-32
 #ifdef CK12
 
 // For a 32-bit targets, the value doesn't fit the size of the pointer,
 // therefore it is passed by reference with a map 'to' specification.
 
 // CK12-DAG: [[SIZES:@.+]] = {{.+}}constant [1 x i[[sz:64|32]]] [i{{64|32}} 8]
-// Map types: OMP_MAP_BYCOPY = 128
-// CK12-64-DAG: [[TYPES:@.+]] = {{.+}}constant [1 x i32] [i32 128]
-// Map types: OMP_MAP_TO = 1
-// CK12-32-DAG: [[TYPES:@.+]] = {{.+}}constant [1 x i32] [i32 1]
+// Map types: OMP_MAP_PRIVATE_VAL + OMP_MAP_IS_FIRST = 288
+// CK12-64-DAG: [[TYPES:@.+]] = {{.+}}constant [1 x i32] [i32 288]
+// Map types: OMP_MAP_TO + OMP_MAP_IS_FIRST = 33
+// CK12-32-DAG: [[TYPES:@.+]] = {{.+}}constant [1 x i32] [i32 33]
 
 // CK12-LABEL: implicit_maps_float_complex
 void implicit_maps_float_complex (int a){
@@ -588,20 +588,20 @@ void implicit_maps_float_complex (int a){
 // CK12-32: {{.+}} = getelementptr inbounds { float, float }, { float, float }* [[REF]], i32 0, i32 0
 #endif
 ///==========================================================================///
-// RUN: %clang_cc1 -DCK13 -verify -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK13
-// RUN: %clang_cc1 -DCK13 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK13
-// RUN: %clang_cc1 -DCK13 -verify -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK13
-// RUN: %clang_cc1 -DCK13 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK13
+// RUN: %clang_cc1 -DCK13 -verify -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK13
+// RUN: %clang_cc1 -DCK13 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK13
+// RUN: %clang_cc1 -DCK13 -verify -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK13
+// RUN: %clang_cc1 -DCK13 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK13
 #ifdef CK13
 
 // We don't have a constant map size for VLAs.
 // Map types:
-//  - OMP_MAP_BYCOPY = 128 (vla size)
-//  - OMP_MAP_BYCOPY = 128 (vla size)
-//  - OMP_MAP_TO + OMP_MAP_FROM = 2 + 1
-// CK13-DAG: [[TYPES:@.+]] = {{.+}}constant [3 x i32] [i32 128, i32 128, i32 3]
+//  - OMP_MAP_PRIVATE_VAL + OMP_MAP_IS_FIRST = 288 (vla size)
+//  - OMP_MAP_PRIVATE_VAL + OMP_MAP_IS_FIRST = 288 (vla size)
+//  - OMP_MAP_TO + OMP_MAP_FROM + OMP_MAP_IS_FIRST = 35
+// CK13-DAG: [[TYPES:@.+]] = {{.+}}constant [3 x i32] [i32 288, i32 288, i32 35]
 
 // CK13-LABEL: implicit_maps_variable_length_array
 void implicit_maps_variable_length_array (int a){
@@ -658,20 +658,20 @@ void implicit_maps_variable_length_array (int a){
 // CK13: {{.+}} = getelementptr inbounds double, double* [[REF]], i[[sz]] %{{.+}}
 #endif
 ///==========================================================================///
-// RUN: %clang_cc1 -DCK14 -verify -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK14 --check-prefix CK14-64
-// RUN: %clang_cc1 -DCK14 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK14 --check-prefix CK14-64
-// RUN: %clang_cc1 -DCK14 -verify -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK14 --check-prefix CK14-32
-// RUN: %clang_cc1 -DCK14 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK14 --check-prefix CK14-32
+// RUN: %clang_cc1 -DCK14 -verify -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK14 --check-prefix CK14-64
+// RUN: %clang_cc1 -DCK14 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK14 --check-prefix CK14-64
+// RUN: %clang_cc1 -DCK14 -verify -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK14 --check-prefix CK14-32
+// RUN: %clang_cc1 -DCK14 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK14 --check-prefix CK14-32
 #ifdef CK14
 
 // CK14-DAG: [[ST:%.+]] = type { i32, double }
 // CK14-DAG: [[SIZES:@.+]] = {{.+}}constant [2 x i[[sz:64|32]]] [i{{64|32}} {{16|12}}, i{{64|32}} 4]
 // Map types:
-// - OMP_MAP_TO | OMP_MAP_FROM = 1 + 2
-// - OMP_MAP_BYCOPY = 128
-// CK14-DAG: [[TYPES:@.+]] = {{.+}}constant [2 x i32] [i32 3, i32 128]
+// - OMP_MAP_TO + OMP_MAP_FROM + OMP_MAP_IS_FIRST = 35
+// - OMP_MAP_PRIVATE_VAL + OMP_MAP_IS_FIRST = 288
+// CK14-DAG: [[TYPES:@.+]] = {{.+}}constant [2 x i32] [i32 35, i32 288]
 
 class SSS {
 public:
@@ -732,26 +732,26 @@ void implicit_maps_class (int a){
 
 #endif
 ///==========================================================================///
-// RUN: %clang_cc1 -DCK15 -verify -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK15 --check-prefix CK15-64
-// RUN: %clang_cc1 -DCK15 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK15 --check-prefix CK15-64
-// RUN: %clang_cc1 -DCK15 -verify -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK15 --check-prefix CK15-32
-// RUN: %clang_cc1 -DCK15 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK15 --check-prefix CK15-32
+// RUN: %clang_cc1 -DCK15 -verify -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK15 --check-prefix CK15-64
+// RUN: %clang_cc1 -DCK15 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK15 --check-prefix CK15-64
+// RUN: %clang_cc1 -DCK15 -verify -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK15 --check-prefix CK15-32
+// RUN: %clang_cc1 -DCK15 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK15 --check-prefix CK15-32
 #ifdef CK15
 
 // CK15: [[ST:%.+]] = type { i32, double, i32* }
 // CK15: [[SIZES:@.+]] = {{.+}}constant [2 x i[[sz:64|32]]] [i{{64|32}} {{24|16}}, i{{64|32}} 4]
 // Map types:
-// - OMP_MAP_TO | OMP_MAP_FROM = 1 + 2
-// - OMP_MAP_BYCOPY = 128
-// CK15: [[TYPES:@.+]] = {{.+}}constant [2 x i32] [i32 3, i32 128]
+// - OMP_MAP_TO + OMP_MAP_FROM + OMP_MAP_IS_FIRST = 35
+// - OMP_MAP_PRIVATE_VAL + OMP_MAP_IS_FIRST = 288
+// CK15: [[TYPES:@.+]] = {{.+}}constant [2 x i32] [i32 35, i32 288]
 
 // CK15: [[SIZES2:@.+]] = {{.+}}constant [2 x i[[sz]]] [i{{64|32}} {{24|16}}, i{{64|32}} 4]
 // Map types:
-// - OMP_MAP_TO | OMP_MAP_FROM = 1 + 2
-// - OMP_MAP_BYCOPY = 128
-// CK15: [[TYPES2:@.+]] = {{.+}}constant [2 x i32] [i32 3, i32 128]
+// - OMP_MAP_TO + OMP_MAP_FROM + OMP_MAP_IS_FIRST = 35
+// - OMP_MAP_PRIVATE_VAL + OMP_MAP_IS_FIRST = 288
+// CK15: [[TYPES2:@.+]] = {{.+}}constant [2 x i32] [i32 35, i32 288]
 
 template<int x>
 class SSST {
@@ -860,18 +860,18 @@ void implicit_maps_templated_class (int a){
 
 #endif
 ///==========================================================================///
-// RUN: %clang_cc1 -DCK16 -verify -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK16 --check-prefix CK16-64
-// RUN: %clang_cc1 -DCK16 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK16 --check-prefix CK16-64
-// RUN: %clang_cc1 -DCK16 -verify -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK16 --check-prefix CK16-32
-// RUN: %clang_cc1 -DCK16 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK16 --check-prefix CK16-32
+// RUN: %clang_cc1 -DCK16 -verify -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK16 --check-prefix CK16-64
+// RUN: %clang_cc1 -DCK16 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK16 --check-prefix CK16-64
+// RUN: %clang_cc1 -DCK16 -verify -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK16 --check-prefix CK16-32
+// RUN: %clang_cc1 -DCK16 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK16 --check-prefix CK16-32
 #ifdef CK16
 
 // CK16-DAG: [[SIZES:@.+]] = {{.+}}constant [1 x i[[sz:64|32]]] [i{{64|32}} 4]
 // Map types:
-// - OMP_MAP_BYCOPY = 128
-// CK16-DAG: [[TYPES:@.+]] = {{.+}}constant [1 x i32] [i32 128]
+// - OMP_MAP_PRIVATE_VAL + OMP_MAP_IS_FIRST = 288
+// CK16-DAG: [[TYPES:@.+]] = {{.+}}constant [1 x i32] [i32 288]
 
 template<int y>
 int foo(int d) {
@@ -913,18 +913,18 @@ void implicit_maps_templated_function (int a){
 
 #endif
 ///==========================================================================///
-// RUN: %clang_cc1 -DCK17 -verify -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK17
-// RUN: %clang_cc1 -DCK17 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK17
-// RUN: %clang_cc1 -DCK17 -verify -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK17
-// RUN: %clang_cc1 -DCK17 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK17
+// RUN: %clang_cc1 -DCK17 -verify -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK17
+// RUN: %clang_cc1 -DCK17 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK17
+// RUN: %clang_cc1 -DCK17 -verify -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK17
+// RUN: %clang_cc1 -DCK17 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK17
 #ifdef CK17
 
 // CK17-DAG: [[ST:%.+]] = type { i32, double }
 // CK17-DAG: [[SIZES:@.+]] = {{.+}}constant [1 x i[[sz:64|32]]] [i{{64|32}} {{16|12}}]
-// Map types: OMP_MAP_TO + OMP_MAP_FROM = 2 + 1
-// CK17-DAG: [[TYPES:@.+]] = {{.+}}constant [1 x i32] [i32 3]
+// Map types: OMP_MAP_TO + OMP_MAP_FROM + OMP_MAP_IS_FIRST = 35
+// CK17-DAG: [[TYPES:@.+]] = {{.+}}constant [1 x i32] [i32 35]
 
 class SSS {
 public:
@@ -961,18 +961,18 @@ void implicit_maps_struct (int a){
 // CK17: {{.+}} = getelementptr inbounds [[ST]], [[ST]]* [[REF]], i32 0, i32 0
 #endif
 ///==========================================================================///
-// RUN: %clang_cc1 -DCK18 -verify -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK18 --check-prefix CK18-64
-// RUN: %clang_cc1 -DCK18 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK18 --check-prefix CK18-64
-// RUN: %clang_cc1 -DCK18 -verify -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK18 --check-prefix CK18-32
-// RUN: %clang_cc1 -DCK18 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK18 --check-prefix CK18-32
+// RUN: %clang_cc1 -DCK18 -verify -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK18 --check-prefix CK18-64
+// RUN: %clang_cc1 -DCK18 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK18 --check-prefix CK18-64
+// RUN: %clang_cc1 -DCK18 -verify -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK18 --check-prefix CK18-32
+// RUN: %clang_cc1 -DCK18 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK18 --check-prefix CK18-32
 #ifdef CK18
 
 // CK18-DAG: [[SIZES:@.+]] = {{.+}}constant [1 x i[[sz:64|32]]] [i{{64|32}} 4]
 // Map types:
-// - OMP_MAP_BYCOPY = 128
-// CK18-DAG: [[TYPES:@.+]] = {{.+}}constant [1 x i32] [i32 128]
+// - OMP_MAP_PRIVATE_VAL + OMP_MAP_IS_FIRST = 288
+// CK18-DAG: [[TYPES:@.+]] = {{.+}}constant [1 x i32] [i32 288]
 
 template<typename T>
 int foo(T d) {
@@ -1013,131 +1013,131 @@ void implicit_maps_template_type_capture (int a){
 
 #endif
 ///==========================================================================///
-// RUN: %clang_cc1 -DCK19 -verify -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK19 --check-prefix CK19-64
-// RUN: %clang_cc1 -DCK19 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK19 --check-prefix CK19-64
-// RUN: %clang_cc1 -DCK19 -verify -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK19 --check-prefix CK19-32
-// RUN: %clang_cc1 -DCK19 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK19 --check-prefix CK19-32
+// RUN: %clang_cc1 -DCK19 -verify -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK19 --check-prefix CK19-64
+// RUN: %clang_cc1 -DCK19 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK19 --check-prefix CK19-64
+// RUN: %clang_cc1 -DCK19 -verify -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK19 --check-prefix CK19-32
+// RUN: %clang_cc1 -DCK19 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK19 --check-prefix CK19-32
 #ifdef CK19
 
 // CK19: [[SIZE00:@.+]] = private {{.*}}constant [1 x i[[Z:64|32]]] [i[[Z:64|32]] 4]
-// CK19: [[MTYPE00:@.+]] = private {{.*}}constant [1 x i32] zeroinitializer
+// CK19: [[MTYPE00:@.+]] = private {{.*}}constant [1 x i32] [i32 32]
 
 // CK19: [[SIZE01:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 400]
-// CK19: [[MTYPE01:@.+]] = private {{.*}}constant [1 x i32] [i32 1]
+// CK19: [[MTYPE01:@.+]] = private {{.*}}constant [1 x i32] [i32 33]
 
 // CK19: [[SIZE02:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 240]
-// CK19: [[MTYPE02:@.+]] = private {{.*}}constant [1 x i32] [i32 2]
+// CK19: [[MTYPE02:@.+]] = private {{.*}}constant [1 x i32] [i32 34]
 
 // CK19: [[SIZE03:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 240]
-// CK19: [[MTYPE03:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK19: [[MTYPE03:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK19: [[SIZE04:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 400]
-// CK19: [[MTYPE04:@.+]] = private {{.*}}constant [1 x i32] zeroinitializer
+// CK19: [[MTYPE04:@.+]] = private {{.*}}constant [1 x i32] [i32 32]
 
 // CK19: [[SIZE05:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 4]
-// CK19: [[MTYPE05:@.+]] = private {{.*}}constant [1 x i32] [i32 1]
+// CK19: [[MTYPE05:@.+]] = private {{.*}}constant [1 x i32] [i32 33]
 
-// CK19: [[MTYPE06:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK19: [[MTYPE06:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
-// CK19: [[MTYPE07:@.+]] = private {{.*}}constant [1 x i32] zeroinitializer
+// CK19: [[MTYPE07:@.+]] = private {{.*}}constant [1 x i32] [i32 32]
 
 // CK19: [[SIZE08:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 4]
-// CK19: [[MTYPE08:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK19: [[MTYPE08:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK19: [[SIZE09:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] {{8|4}}]
-// CK19: [[MTYPE09:@.+]] = private {{.*}}constant [1 x i32] [i32 2]
+// CK19: [[MTYPE09:@.+]] = private {{.*}}constant [1 x i32] [i32 34]
 
 // CK19: [[SIZE10:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 240]
-// CK19: [[MTYPE10:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK19: [[MTYPE10:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK19: [[SIZE11:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 240]
-// CK19: [[MTYPE11:@.+]] = private {{.*}}constant [1 x i32] zeroinitializer
+// CK19: [[MTYPE11:@.+]] = private {{.*}}constant [1 x i32] [i32 32]
 
 // CK19: [[SIZE12:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 4]
-// CK19: [[MTYPE12:@.+]] = private {{.*}}constant [1 x i32] [i32 1]
+// CK19: [[MTYPE12:@.+]] = private {{.*}}constant [1 x i32] [i32 33]
 
-// CK19: [[MTYPE13:@.+]] = private {{.*}}constant [1 x i32] zeroinitializer
+// CK19: [[MTYPE13:@.+]] = private {{.*}}constant [1 x i32] [i32 32]
 
-// CK19: [[MTYPE14:@.+]] = private {{.*}}constant [1 x i32] [i32 1]
+// CK19: [[MTYPE14:@.+]] = private {{.*}}constant [1 x i32] [i32 33]
 
 // CK19: [[SIZE15:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 4]
-// CK19: [[MTYPE15:@.+]] = private {{.*}}constant [1 x i32] [i32 2]
+// CK19: [[MTYPE15:@.+]] = private {{.*}}constant [1 x i32] [i32 34]
 
-// CK19: [[MTYPE16:@.+]] = private {{.*}}constant [2 x i32] [i32 128, i32 1]
+// CK19: [[MTYPE16:@.+]] = private {{.*}}constant [2 x i32] [i32 288, i32 33]
 
 // CK19: [[SIZE17:@.+]] = private {{.*}}constant [2 x i[[Z]]] [i[[Z]] {{8|4}}, i[[Z]] 240]
-// CK19: [[MTYPE17:@.+]] = private {{.*}}constant [2 x i32] [i32 128, i32 2]
+// CK19: [[MTYPE17:@.+]] = private {{.*}}constant [2 x i32] [i32 288, i32 34]
 
 // CK19: [[SIZE18:@.+]] = private {{.*}}constant [2 x i[[Z]]] [i[[Z]] {{8|4}}, i[[Z]] 240]
-// CK19: [[MTYPE18:@.+]] = private {{.*}}constant [2 x i32] [i32 128, i32 3]
+// CK19: [[MTYPE18:@.+]] = private {{.*}}constant [2 x i32] [i32 288, i32 35]
 
-// CK19: [[MTYPE19:@.+]] = private {{.*}}constant [2 x i32] [i32 128, i32 0]
+// CK19: [[MTYPE19:@.+]] = private {{.*}}constant [2 x i32] [i32 288, i32 32]
 
 // CK19: [[SIZE20:@.+]] = private {{.*}}constant [2 x i[[Z]]] [i[[Z]] {{8|4}}, i[[Z]] 4]
-// CK19: [[MTYPE20:@.+]] = private {{.*}}constant [2 x i32] [i32 128, i32 1]
+// CK19: [[MTYPE20:@.+]] = private {{.*}}constant [2 x i32] [i32 288, i32 33]
 
-// CK19: [[MTYPE21:@.+]] = private {{.*}}constant [2 x i32] [i32 128, i32 3]
+// CK19: [[MTYPE21:@.+]] = private {{.*}}constant [2 x i32] [i32 288, i32 35]
 
 // CK19: [[SIZE22:@.+]] = private {{.*}}constant [2 x i[[Z]]] [i[[Z]] {{8|4}}, i[[Z]] 4]
-// CK19: [[MTYPE22:@.+]] = private {{.*}}constant [2 x i32] [i32 128, i32 3]
+// CK19: [[MTYPE22:@.+]] = private {{.*}}constant [2 x i32] [i32 288, i32 35]
 
 // CK19: [[SIZE23:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 4]
-// CK19: [[MTYPE23:@.+]] = private {{.*}}constant [1 x i32] [i32 7]
+// CK19: [[MTYPE23:@.+]] = private {{.*}}constant [1 x i32] [i32 39]
 
 // CK19: [[SIZE24:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 480]
-// CK19: [[MTYPE24:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK19: [[MTYPE24:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK19: [[SIZE25:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 16]
-// CK19: [[MTYPE25:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK19: [[MTYPE25:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK19: [[SIZE26:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 24]
-// CK19: [[MTYPE26:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK19: [[MTYPE26:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK19: [[SIZE27:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 4]
-// CK19: [[MTYPE27:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK19: [[MTYPE27:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK19: [[SIZE28:@.+]] = private {{.*}}constant [3 x i[[Z]]] [i[[Z]] {{8|4}}, i[[Z]] {{8|4}}, i[[Z]] 16]
-// CK19: [[MTYPE28:@.+]] = private {{.*}}constant [3 x i32] [i32 3, i32 99, i32 99]
+// CK19: [[MTYPE28:@.+]] = private {{.*}}constant [3 x i32] [i32 35, i32 19, i32 19]
 
 // CK19: [[SIZE29:@.+]] = private {{.*}}constant [3 x i[[Z]]] [i[[Z]] {{8|4}}, i[[Z]] {{8|4}}, i[[Z]] 4]
-// CK19: [[MTYPE29:@.+]] = private {{.*}}constant [3 x i32] [i32 3, i32 99, i32 99]
+// CK19: [[MTYPE29:@.+]] = private {{.*}}constant [3 x i32] [i32 35, i32 19, i32 19]
 
-// CK19: [[MTYPE30:@.+]] = private {{.*}}constant [4 x i32] [i32 128, i32 128, i32 128, i32 3]
+// CK19: [[MTYPE30:@.+]] = private {{.*}}constant [4 x i32] [i32 288, i32 288, i32 288, i32 35]
 
 // CK19: [[SIZE31:@.+]] = private {{.*}}constant [4 x i[[Z]]] [i[[Z]] {{8|4}}, i[[Z]] {{8|4}}, i[[Z]] {{8|4}}, i[[Z]] 40]
-// CK19: [[MTYPE31:@.+]] = private {{.*}}constant [4 x i32] [i32 128, i32 128, i32 128, i32 3]
+// CK19: [[MTYPE31:@.+]] = private {{.*}}constant [4 x i32] [i32 288, i32 288, i32 288, i32 35]
 
 // CK19: [[SIZE32:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 13728]
-// CK19: [[MTYPE32:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK19: [[MTYPE32:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK19: [[SIZE33:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 13728]
-// CK19: [[MTYPE33:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK19: [[MTYPE33:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK19: [[SIZE34:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 13728]
-// CK19: [[MTYPE34:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK19: [[MTYPE34:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
-// CK19: [[MTYPE35:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK19: [[MTYPE35:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK19: [[SIZE36:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 208]
-// CK19: [[MTYPE36:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK19: [[MTYPE36:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
-// CK19: [[MTYPE37:@.+]] = private {{.*}}constant [3 x i32] [i32 128, i32 128, i32 3]
+// CK19: [[MTYPE37:@.+]] = private {{.*}}constant [3 x i32] [i32 288, i32 288, i32 35]
 
-// CK19: [[MTYPE38:@.+]] = private {{.*}}constant [3 x i32] [i32 128, i32 128, i32 3]
+// CK19: [[MTYPE38:@.+]] = private {{.*}}constant [3 x i32] [i32 288, i32 288, i32 35]
 
-// CK19: [[MTYPE39:@.+]] = private {{.*}}constant [3 x i32] [i32 128, i32 128, i32 3]
+// CK19: [[MTYPE39:@.+]] = private {{.*}}constant [3 x i32] [i32 288, i32 288, i32 35]
 
-// CK19: [[MTYPE40:@.+]] = private {{.*}}constant [3 x i32] [i32 128, i32 128, i32 3]
+// CK19: [[MTYPE40:@.+]] = private {{.*}}constant [3 x i32] [i32 288, i32 288, i32 35]
 
 // CK19: [[SIZE41:@.+]] = private {{.*}}constant [3 x i[[Z]]] [i[[Z]] {{8|4}}, i[[Z]] {{8|4}}, i[[Z]] 208]
-// CK19: [[MTYPE41:@.+]] = private {{.*}}constant [3 x i32] [i32 128, i32 128, i32 3]
+// CK19: [[MTYPE41:@.+]] = private {{.*}}constant [3 x i32] [i32 288, i32 288, i32 35]
 
 // CK19: [[SIZE42:@.+]] = private {{.*}}constant [3 x i[[Z]]] [i[[Z]] {{8|4}}, i[[Z]] {{8|4}}, i[[Z]] 104]
-// CK19: [[MTYPE42:@.+]] = private {{.*}}constant [3 x i32] [i32 3, i32 99, i32 99]
+// CK19: [[MTYPE42:@.+]] = private {{.*}}constant [3 x i32] [i32 35, i32 19, i32 19]
 
-// CK19: [[MTYPE43:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK19: [[MTYPE43:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK19-LABEL: explicit_maps_single
 void explicit_maps_single (int ii){
@@ -2388,25 +2388,25 @@ void explicit_maps_single (int ii){
 
 #endif
 ///==========================================================================///
-// RUN: %clang_cc1 -DCK20 -verify -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK20 --check-prefix CK20-64
-// RUN: %clang_cc1 -DCK20 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK20 --check-prefix CK20-64
-// RUN: %clang_cc1 -DCK20 -verify -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK20 --check-prefix CK20-32
-// RUN: %clang_cc1 -DCK20 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK20 --check-prefix CK20-32
+// RUN: %clang_cc1 -DCK20 -verify -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK20 --check-prefix CK20-64
+// RUN: %clang_cc1 -DCK20 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK20 --check-prefix CK20-64
+// RUN: %clang_cc1 -DCK20 -verify -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK20 --check-prefix CK20-32
+// RUN: %clang_cc1 -DCK20 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK20 --check-prefix CK20-32
 #ifdef CK20
 
 // CK20: [[SIZE00:@.+]] = private {{.*}}constant [1 x i[[Z:64|32]]] [i[[Z:64|32]] 4]
-// CK20: [[MTYPE00:@.+]] = private {{.*}}constant [1 x i32] [i32 1]
+// CK20: [[MTYPE00:@.+]] = private {{.*}}constant [1 x i32] [i32 33]
 
 // CK20: [[SIZE01:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 20]
-// CK20: [[MTYPE01:@.+]] = private {{.*}}constant [1 x i32] [i32 1]
+// CK20: [[MTYPE01:@.+]] = private {{.*}}constant [1 x i32] [i32 33]
 
 // CK20: [[SIZE02:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 4]
-// CK20: [[MTYPE02:@.+]] = private {{.*}}constant [1 x i32] [i32 2]
+// CK20: [[MTYPE02:@.+]] = private {{.*}}constant [1 x i32] [i32 34]
 
 // CK20: [[SIZE03:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 12]
-// CK20: [[MTYPE03:@.+]] = private {{.*}}constant [1 x i32] [i32 2]
+// CK20: [[MTYPE03:@.+]] = private {{.*}}constant [1 x i32] [i32 34]
 
 // CK20-LABEL: explicit_maps_references_and_function_args
 void explicit_maps_references_and_function_args (int a, float b, int (&c)[10], float *d){
@@ -2504,32 +2504,32 @@ void explicit_maps_references_and_function_args (int a, float b, int (&c)[10], f
 
 #endif
 ///==========================================================================///
-// RUN: %clang_cc1 -DCK21 -verify -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK21 --check-prefix CK21-64
-// RUN: %clang_cc1 -DCK21 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK21 --check-prefix CK21-64
-// RUN: %clang_cc1 -DCK21 -verify -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK21 --check-prefix CK21-32
-// RUN: %clang_cc1 -DCK21 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK21 --check-prefix CK21-32
+// RUN: %clang_cc1 -DCK21 -verify -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK21 --check-prefix CK21-64
+// RUN: %clang_cc1 -DCK21 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK21 --check-prefix CK21-64
+// RUN: %clang_cc1 -DCK21 -verify -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK21 --check-prefix CK21-32
+// RUN: %clang_cc1 -DCK21 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK21 --check-prefix CK21-32
 #ifdef CK21
 // CK21: [[ST:%.+]] = type { i32, i32, float* }
 
 // CK21: [[SIZE00:@.+]] = private {{.*}}constant [1 x i[[Z:64|32]]] [i[[Z:64|32]] 4]
-// CK21: [[MTYPE00:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK21: [[MTYPE00:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK21: [[SIZE01:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 492]
-// CK21: [[MTYPE01:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK21: [[MTYPE01:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK21: [[SIZE02:@.+]] = private {{.*}}constant [2 x i[[Z]]] [i[[Z]] {{8|4}}, i[[Z]] 500]
-// CK21: [[MTYPE02:@.+]] = private {{.*}}constant [2 x i32] [i32 2, i32 98]
+// CK21: [[MTYPE02:@.+]] = private {{.*}}constant [2 x i32] [i32 34, i32 18]
 
 // CK21: [[SIZE03:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 492]
-// CK21: [[MTYPE03:@.+]] = private {{.*}}constant [1 x i32] [i32 2]
+// CK21: [[MTYPE03:@.+]] = private {{.*}}constant [1 x i32] [i32 34]
 
 // CK21: [[SIZE04:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 4]
-// CK21: [[MTYPE04:@.+]] = private {{.*}}constant [1 x i32] [i32 2]
+// CK21: [[MTYPE04:@.+]] = private {{.*}}constant [1 x i32] [i32 34]
 
 // CK21: [[SIZE05:@.+]] = private {{.*}}constant [2 x i[[Z]]] [i[[Z]] 4, i[[Z]] 4]
-// CK21: [[MTYPE05:@.+]] = private {{.*}}constant [2 x i32] [i32 3, i32 67]
+// CK21: [[MTYPE05:@.+]] = private {{.*}}constant [2 x i32] [i32 35, i32 3]
 
 // CK21-LABEL: explicit_maps_template_args_and_members
 
@@ -2693,61 +2693,61 @@ int explicit_maps_template_args_and_members(int a){
 // CK21: define {{.+}}[[CALL05]]
 #endif
 ///==========================================================================///
-// RUN: %clang_cc1 -DCK22 -verify -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK22 --check-prefix CK22-64
-// RUN: %clang_cc1 -DCK22 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK22 --check-prefix CK22-64
-// RUN: %clang_cc1 -DCK22 -verify -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK22 --check-prefix CK22-32
-// RUN: %clang_cc1 -DCK22 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK22 --check-prefix CK22-32
+// RUN: %clang_cc1 -DCK22 -verify -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK22 --check-prefix CK22-64
+// RUN: %clang_cc1 -DCK22 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK22 --check-prefix CK22-64
+// RUN: %clang_cc1 -DCK22 -verify -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK22 --check-prefix CK22-32
+// RUN: %clang_cc1 -DCK22 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK22 --check-prefix CK22-32
 #ifdef CK22
 
 // CK22-DAG: [[ST:%.+]] = type { float }
 // CK22-DAG: [[STT:%.+]] = type { i32 }
 
 // CK22: [[SIZE00:@.+]] = private {{.*}}constant [1 x i[[Z:64|32]]] [i[[Z:64|32]] 4]
-// CK22: [[MTYPE00:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK22: [[MTYPE00:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK22: [[SIZE01:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 400]
-// CK22: [[MTYPE01:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK22: [[MTYPE01:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK22: [[SIZE02:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] {{8|4}}]
-// CK22: [[MTYPE02:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK22: [[MTYPE02:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK22: [[SIZE03:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 16]
-// CK22: [[MTYPE03:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK22: [[MTYPE03:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK22: [[SIZE04:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 20]
-// CK22: [[MTYPE04:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK22: [[MTYPE04:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK22: [[SIZE05:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 4]
-// CK22: [[MTYPE05:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK22: [[MTYPE05:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK22: [[SIZE06:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 400]
-// CK22: [[MTYPE06:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK22: [[MTYPE06:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK22: [[SIZE07:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] {{8|4}}]
-// CK22: [[MTYPE07:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK22: [[MTYPE07:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK22: [[SIZE08:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 16]
-// CK22: [[MTYPE08:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK22: [[MTYPE08:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK22: [[SIZE09:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 20]
-// CK22: [[MTYPE09:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK22: [[MTYPE09:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK22: [[SIZE10:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 4]
-// CK22: [[MTYPE10:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK22: [[MTYPE10:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK22: [[SIZE11:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 400]
-// CK22: [[MTYPE11:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK22: [[MTYPE11:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK22: [[SIZE12:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] {{8|4}}]
-// CK22: [[MTYPE12:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK22: [[MTYPE12:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK22: [[SIZE13:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 16]
-// CK22: [[MTYPE13:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK22: [[MTYPE13:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK22: [[SIZE14:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 20]
-// CK22: [[MTYPE14:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK22: [[MTYPE14:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 int a;
 int c[100];
@@ -3016,31 +3016,31 @@ int explicit_maps_globals(void){
 // CK22: define {{.+}}[[CALL14]]
 #endif
 ///==========================================================================///
-// RUN: %clang_cc1 -std=c++11 -DCK23 -verify -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK23 --check-prefix CK23-64
-// RUN: %clang_cc1 -std=c++11 -DCK23 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -std=c++11 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK23 --check-prefix CK23-64
-// RUN: %clang_cc1 -std=c++11 -DCK23 -verify -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK23 --check-prefix CK23-32
-// RUN: %clang_cc1 -std=c++11 -DCK23 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -std=c++11 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK23 --check-prefix CK23-32
+// RUN: %clang_cc1 -std=c++11 -DCK23 -verify -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK23 --check-prefix CK23-64
+// RUN: %clang_cc1 -std=c++11 -DCK23 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -std=c++11 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK23 --check-prefix CK23-64
+// RUN: %clang_cc1 -std=c++11 -DCK23 -verify -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK23 --check-prefix CK23-32
+// RUN: %clang_cc1 -std=c++11 -DCK23 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -std=c++11 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK23 --check-prefix CK23-32
 #ifdef CK23
 
 // CK23: [[SIZE00:@.+]] = private {{.*}}constant [1 x i[[Z:64|32]]] [i[[Z:64|32]] 4]
-// CK23: [[MTYPE00:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK23: [[MTYPE00:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK23: [[SIZE01:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 4]
-// CK23: [[MTYPE01:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK23: [[MTYPE01:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK23: [[SIZE02:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 400]
-// CK23: [[MTYPE02:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK23: [[MTYPE02:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK23: [[SIZE03:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] {{8|4}}]
-// CK23: [[MTYPE03:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK23: [[MTYPE03:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK23: [[SIZE04:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 16]
-// CK23: [[MTYPE04:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK23: [[MTYPE04:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK23: [[SIZE05:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 16]
-// CK23: [[MTYPE05:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK23: [[MTYPE05:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK23-LABEL: explicit_maps_inside_captured
 int explicit_maps_inside_captured(int a){
@@ -3183,12 +3183,12 @@ int explicit_maps_inside_captured(int a){
 // CK23: define {{.+}}[[CALL05]]
 #endif
 ///==========================================================================///
-// RUN: %clang_cc1 -DCK24 -verify -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK24 --check-prefix CK24-64
-// RUN: %clang_cc1 -DCK24 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK24 --check-prefix CK24-64
-// RUN: %clang_cc1 -DCK24 -verify -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK24 --check-prefix CK24-32
-// RUN: %clang_cc1 -DCK24 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK24 --check-prefix CK24-32
+// RUN: %clang_cc1 -DCK24 -verify -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK24 --check-prefix CK24-64
+// RUN: %clang_cc1 -DCK24 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK24 --check-prefix CK24-64
+// RUN: %clang_cc1 -DCK24 -verify -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK24 --check-prefix CK24-32
+// RUN: %clang_cc1 -DCK24 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK24 --check-prefix CK24-32
 #ifdef CK24
 
 // CK24-DAG: [[SC:%.+]] = type { i32, [[SB:%.+]], [[SB:%.+]]*, [10 x i32] }
@@ -3215,76 +3215,76 @@ struct SC{
 };
 
 // CK24: [[SIZE01:@.+]] = private {{.*}}constant [1 x i[[Z:64|32]]] [i[[Z:64|32]] 4]
-// CK24: [[MTYPE01:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK24: [[MTYPE01:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK24: [[SIZE02:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] {{56|48}}]
-// CK24: [[MTYPE02:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK24: [[MTYPE02:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK24: [[SIZE03:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 4]
-// CK24: [[MTYPE03:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK24: [[MTYPE03:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK24: [[SIZE04:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 20]
-// CK24: [[MTYPE04:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK24: [[MTYPE04:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK24: [[SIZE05:@.+]] = private {{.*}}constant [2 x i[[Z]]] [i[[Z]] {{8|4}}, i[[Z]] {{3560|2880}}]
-// CK24: [[MTYPE05:@.+]] = private {{.*}}constant [2 x i32] [i32 3, i32 99]
+// CK24: [[MTYPE05:@.+]] = private {{.*}}constant [2 x i32] [i32 35, i32 19]
 
 // CK24: [[SIZE06:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 4]
-// CK24: [[MTYPE06:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK24: [[MTYPE06:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK24: [[SIZE07:@.+]] = private {{.*}}constant [2 x i[[Z]]] [i[[Z]] {{8|4}}, i[[Z]] 4]
-// CK24: [[MTYPE07:@.+]] = private {{.*}}constant [2 x i32] [i32 3, i32 99]
+// CK24: [[MTYPE07:@.+]] = private {{.*}}constant [2 x i32] [i32 35, i32 19]
 
 // CK24: [[SIZE08:@.+]] = private {{.*}}constant [2 x i[[Z]]] [i[[Z]] {{8|4}}, i[[Z]] 4]
-// CK24: [[MTYPE08:@.+]] = private {{.*}}constant [2 x i32] [i32 3, i32 99]
+// CK24: [[MTYPE08:@.+]] = private {{.*}}constant [2 x i32] [i32 35, i32 19]
 
 // CK24: [[SIZE09:@.+]] = private {{.*}}constant [2 x i[[Z]]] [i[[Z]] {{8|4}}, i[[Z]] 4]
-// CK24: [[MTYPE09:@.+]] = private {{.*}}constant [2 x i32] [i32 3, i32 99]
+// CK24: [[MTYPE09:@.+]] = private {{.*}}constant [2 x i32] [i32 35, i32 19]
 
 // CK24: [[SIZE10:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 8]
-// CK24: [[MTYPE10:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK24: [[MTYPE10:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK24: [[SIZE11:@.+]] = private {{.*}}constant [2 x i[[Z]]] [i[[Z]] {{8|4}}, i[[Z]] {{8|4}}]
-// CK24: [[MTYPE11:@.+]] = private {{.*}}constant [2 x i32] [i32 3, i32 99]
+// CK24: [[MTYPE11:@.+]] = private {{.*}}constant [2 x i32] [i32 35, i32 19]
 
 // CK24: [[SIZE12:@.+]] = private {{.*}}constant [4 x i[[Z]]] [i[[Z]] {{8|4}}, i[[Z]] {{8|4}}, i[[Z]] {{8|4}}, i[[Z]] 4]
-// CK24: [[MTYPE12:@.+]] = private {{.*}}constant [4 x i32] [i32 3, i32 99, i32 99, i32 99]
+// CK24: [[MTYPE12:@.+]] = private {{.*}}constant [4 x i32] [i32 35, i32 19, i32 19, i32 19]
 
 // CK24: [[SIZE13:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 4]
-// CK24: [[MTYPE13:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK24: [[MTYPE13:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK24: [[SIZE14:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] {{56|48}}]
-// CK24: [[MTYPE14:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK24: [[MTYPE14:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK24: [[SIZE15:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 4]
-// CK24: [[MTYPE15:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK24: [[MTYPE15:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK24: [[SIZE16:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 20]
-// CK24: [[MTYPE16:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK24: [[MTYPE16:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK24: [[SIZE17:@.+]] = private {{.*}}constant [2 x i[[Z]]] [i[[Z]] {{8|4}}, i[[Z]] {{3560|2880}}]
-// CK24: [[MTYPE17:@.+]] = private {{.*}}constant [2 x i32] [i32 3, i32 99]
+// CK24: [[MTYPE17:@.+]] = private {{.*}}constant [2 x i32] [i32 35, i32 19]
 
 // CK24: [[SIZE18:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 4]
-// CK24: [[MTYPE18:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK24: [[MTYPE18:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK24: [[SIZE19:@.+]] = private {{.*}}constant [2 x i[[Z]]] [i[[Z]] {{8|4}}, i[[Z]] 4]
-// CK24: [[MTYPE19:@.+]] = private {{.*}}constant [2 x i32] [i32 3, i32 99]
+// CK24: [[MTYPE19:@.+]] = private {{.*}}constant [2 x i32] [i32 35, i32 19]
 
 // CK24: [[SIZE20:@.+]] = private {{.*}}constant [2 x i[[Z]]] [i[[Z]] {{8|4}}, i[[Z]] 4]
-// CK24: [[MTYPE20:@.+]] = private {{.*}}constant [2 x i32] [i32 3, i32 99]
+// CK24: [[MTYPE20:@.+]] = private {{.*}}constant [2 x i32] [i32 35, i32 19]
 
 // CK24: [[SIZE21:@.+]] = private {{.*}}constant [2 x i[[Z]]] [i[[Z]] {{8|4}}, i[[Z]] 4]
-// CK24: [[MTYPE21:@.+]] = private {{.*}}constant [2 x i32] [i32 3, i32 99]
+// CK24: [[MTYPE21:@.+]] = private {{.*}}constant [2 x i32] [i32 35, i32 19]
 
 // CK24: [[SIZE22:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] {{8|4}}]
-// CK24: [[MTYPE22:@.+]] = private {{.*}}constant [1 x i32] [i32 3]
+// CK24: [[MTYPE22:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
 
 // CK24: [[SIZE23:@.+]] = private {{.*}}constant [2 x i[[Z]]] [i[[Z]] {{8|4}}, i[[Z]] {{8|4}}]
-// CK24: [[MTYPE23:@.+]] = private {{.*}}constant [2 x i32] [i32 3, i32 99]
+// CK24: [[MTYPE23:@.+]] = private {{.*}}constant [2 x i32] [i32 35, i32 19]
 
 // CK24: [[SIZE24:@.+]] = private {{.*}}constant [4 x i[[Z]]] [i[[Z]] {{8|4}}, i[[Z]] {{8|4}}, i[[Z]] {{8|4}}, i[[Z]] 4]
-// CK24: [[MTYPE24:@.+]] = private {{.*}}constant [4 x i32] [i32 3, i32 99, i32 99, i32 99]
+// CK24: [[MTYPE24:@.+]] = private {{.*}}constant [4 x i32] [i32 35, i32 19, i32 19, i32 19]
 
 // CK24-LABEL: explicit_maps_struct_fields
 int explicit_maps_struct_fields(int a){
@@ -3985,22 +3985,22 @@ int explicit_maps_struct_fields(int a){
 // CK24: define {{.+}}[[CALL24]]
 #endif
 ///==========================================================================///
-// RUN: %clang_cc1 -DCK25 -std=c++11 -verify -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK25 --check-prefix CK25-64
-// RUN: %clang_cc1 -DCK25 -std=c++11 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -std=c++11 -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK25 --check-prefix CK25-64
-// RUN: %clang_cc1 -DCK25 -std=c++11 -verify -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK25 --check-prefix CK25-32
-// RUN: %clang_cc1 -DCK25 -std=c++11 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -std=c++11 -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK25 --check-prefix CK25-32
+// RUN: %clang_cc1 -DCK25 -std=c++11 -verify -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK25 --check-prefix CK25-64
+// RUN: %clang_cc1 -DCK25 -std=c++11 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -std=c++11 -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK25 --check-prefix CK25-64
+// RUN: %clang_cc1 -DCK25 -std=c++11 -verify -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK25 --check-prefix CK25-32
+// RUN: %clang_cc1 -DCK25 -std=c++11 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -std=c++11 -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK25 --check-prefix CK25-32
 #ifdef CK25
 // CK25: [[ST:%.+]] = type { i32, float }
 // CK25: [[CA00:%.+]] = type { [[ST]]* }
 // CK25: [[CA01:%.+]] = type { i32* }
 
 // CK25: [[SIZE00:@.+]] = private {{.*}}constant [1 x i[[Z:64|32]]] [i[[Z:64|32]] 4]
-// CK25: [[MTYPE00:@.+]] = private {{.*}}constant [1 x i32] [i32 1]
+// CK25: [[MTYPE00:@.+]] = private {{.*}}constant [1 x i32] [i32 33]
 
 // CK25: [[SIZE01:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 4]
-// CK25: [[MTYPE01:@.+]] = private {{.*}}constant [1 x i32] [i32 1]
+// CK25: [[MTYPE01:@.+]] = private {{.*}}constant [1 x i32] [i32 33]
 
 // CK25-LABEL: explicit_maps_with_inner_lambda
 
@@ -4077,26 +4077,26 @@ int explicit_maps_with_inner_lambda(int a){
 // CK25: call void {{.*}}[[LAMBDA]]{{.*}}([[CA01]]* [[CA]])
 #endif
 ///==========================================================================///
-// RUN: %clang_cc1 -DCK26 -std=c++11 -verify -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK26 --check-prefix CK26-64
-// RUN: %clang_cc1 -DCK26 -std=c++11 -fopenmp -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -std=c++11 -fomptargets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK26 --check-prefix CK26-64
-// RUN: %clang_cc1 -DCK26 -std=c++11 -verify -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK26 --check-prefix CK26-32
-// RUN: %clang_cc1 -DCK26 -std=c++11 -fopenmp -fomptargets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
-// RUN: %clang_cc1 -fopenmp -std=c++11 -fomptargets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK26 --check-prefix CK26-32
+// RUN: %clang_cc1 -DCK26 -std=c++11 -verify -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK26 --check-prefix CK26-64
+// RUN: %clang_cc1 -DCK26 -std=c++11 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -std=c++11 -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK26 --check-prefix CK26-64
+// RUN: %clang_cc1 -DCK26 -std=c++11 -verify -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK26 --check-prefix CK26-32
+// RUN: %clang_cc1 -DCK26 -std=c++11 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -std=c++11 -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK26 --check-prefix CK26-32
 #ifdef CK26
 // CK26: [[ST:%.+]] = type { i32, float*, i32, float* }
 
 // CK26: [[SIZE00:@.+]] = private {{.*}}constant [2 x i[[Z:64|32]]] [i[[Z:64|32]] {{32|16}}, i[[Z:64|32]] 4]
-// CK26: [[MTYPE00:@.+]] = private {{.*}}constant [2 x i32] [i32 3, i32 3]
+// CK26: [[MTYPE00:@.+]] = private {{.*}}constant [2 x i32] [i32 35, i32 35]
 
 // CK26: [[SIZE01:@.+]] = private {{.*}}constant [2 x i[[Z]]] [i[[Z]] {{32|16}}, i[[Z]] 4]
-// CK26: [[MTYPE01:@.+]] = private {{.*}}constant [2 x i32] [i32 3, i32 3]
+// CK26: [[MTYPE01:@.+]] = private {{.*}}constant [2 x i32] [i32 35, i32 35]
 
 // CK26: [[SIZE02:@.+]] = private {{.*}}constant [2 x i[[Z]]] [i[[Z]] {{32|16}}, i[[Z]] 4]
-// CK26: [[MTYPE02:@.+]] = private {{.*}}constant [2 x i32] [i32 3, i32 3]
+// CK26: [[MTYPE02:@.+]] = private {{.*}}constant [2 x i32] [i32 35, i32 35]
 
 // CK26: [[SIZE03:@.+]] = private {{.*}}constant [2 x i[[Z]]] [i[[Z]] {{32|16}}, i[[Z]] 4]
-// CK26: [[MTYPE03:@.+]] = private {{.*}}constant [2 x i32] [i32 3, i32 3]
+// CK26: [[MTYPE03:@.+]] = private {{.*}}constant [2 x i32] [i32 35, i32 35]
 
 // CK26-LABEL: explicit_maps_with_private_class_members
 
@@ -4259,5 +4259,216 @@ int explicit_maps_with_private_class_members(){
   CC c(B);
   return c.foo();
 }
+#endif
+///==========================================================================///
+// RUN: %clang_cc1 -DCK27 -verify -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -emit-llvm %s -o - | FileCheck %s --check-prefix CK27 --check-prefix CK27-64
+// RUN: %clang_cc1 -DCK27 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -std=c++11 -triple powerpc64le-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=powerpc64le-ibm-linux-gnu -x c++ -triple powerpc64le-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK27 --check-prefix CK27-64
+// RUN: %clang_cc1 -DCK27 -verify -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -emit-llvm %s -o - | FileCheck %s  --check-prefix CK27 --check-prefix CK27-32
+// RUN: %clang_cc1 -DCK27 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -std=c++11 -triple i386-unknown-unknown -emit-pch -o %t %s
+// RUN: %clang_cc1 -fopenmp -fopenmp-targets=i386-pc-linux-gnu -x c++ -triple i386-unknown-unknown -std=c++11 -include-pch %t -verify %s -emit-llvm -o - | FileCheck %s  --check-prefix CK27 --check-prefix CK27-32
+#ifdef CK27
+
+// CK27: [[SIZE00:@.+]] = private {{.*}}constant [1 x i[[Z:64|32]]] zeroinitializer
+// CK27: [[MTYPE00:@.+]] = private {{.*}}constant [1 x i32] [i32 32]
+
+// CK27: [[SIZE01:@.+]] = private {{.*}}constant [1 x i[[Z]]] zeroinitializer
+// CK27: [[MTYPE01:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
+
+// CK27: [[SIZE02:@.+]] = private {{.*}}constant [1 x i[[Z]]] zeroinitializer
+// CK27: [[MTYPE02:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
+
+// CK27: [[SIZE03:@.+]] = private {{.*}}constant [1 x i[[Z]]] zeroinitializer
+// CK27: [[MTYPE03:@.+]] = private {{.*}}constant [1 x i32] [i32 35]
+
+// CK27: [[SIZE05:@.+]] = private {{.*}}constant [1 x i[[Z]]] zeroinitializer
+// CK27: [[MTYPE05:@.+]] = private {{.*}}constant [1 x i32] [i32 32]
+
+// CK27: [[SIZE07:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 4]
+// CK27: [[MTYPE07:@.+]] = private {{.*}}constant [1 x i32] [i32 288]
+
+// CK27: [[SIZE09:@.+]] = private {{.*}}constant [1 x i[[Z]]] [i[[Z]] 40]
+// CK27: [[MTYPE09:@.+]] = private {{.*}}constant [1 x i32] [i32 161]
+
+// CK27-LABEL: zero_size_section_and_private_maps
+void zero_size_section_and_private_maps (int ii){
+
+  // Map of a pointer.
+  int *pa;
+
+  // Region 00
+  // CK27-DAG: call i32 @__tgt_target(i32 {{[^,]+}}, i8* {{[^,]+}}, i32 1, i8** [[GEPBP:%.+]], i8** [[GEPP:%.+]], {{.+}}getelementptr {{.+}}[1 x i{{.+}}]* [[SIZE00]], {{.+}}getelementptr {{.+}}[1 x i{{.+}}]* [[MTYPE00]]{{.+}})
+  // CK27-DAG: [[GEPBP]] = getelementptr inbounds {{.+}}[[BP:%[^,]+]]
+  // CK27-DAG: [[GEPP]] = getelementptr inbounds {{.+}}[[P:%[^,]+]]
+
+  // CK27-DAG: [[BP0:%.+]] = getelementptr inbounds {{.+}}[[BP]], i{{.+}} 0, i{{.+}} 0
+  // CK27-DAG: [[P0:%.+]] = getelementptr inbounds {{.+}}[[P]], i{{.+}} 0, i{{.+}} 0
+  // CK27-DAG: store i8* [[CBPVAL0:%[^,]+]], i8** [[BP0]]
+  // CK27-DAG: store i8* [[CPVAL0:%[^,]+]], i8** [[P0]]
+  // CK27-DAG: [[CBPVAL0]] = bitcast i32* [[VAR0:%.+]] to i8*
+  // CK27-DAG: [[CPVAL0]] = bitcast i32* [[VAR0]] to i8*
+
+  // CK27: call void [[CALL00:@.+]](i32* {{[^,]+}})
+  #pragma omp target
+  {
+    pa[50]++;
+  }
+
+  // Region 01
+  // CK27-DAG: call i32 @__tgt_target(i32 {{[^,]+}}, i8* {{[^,]+}}, i32 1, i8** [[GEPBP:%.+]], i8** [[GEPP:%.+]], {{.+}}getelementptr {{.+}}[1 x i{{.+}}]* [[SIZE01]], {{.+}}getelementptr {{.+}}[1 x i{{.+}}]* [[MTYPE01]]{{.+}})
+  // CK27-DAG: [[GEPBP]] = getelementptr inbounds {{.+}}[[BP:%[^,]+]]
+  // CK27-DAG: [[GEPP]] = getelementptr inbounds {{.+}}[[P:%[^,]+]]
+
+  // CK27-DAG: [[BP0:%.+]] = getelementptr inbounds {{.+}}[[BP]], i{{.+}} 0, i{{.+}} 0
+  // CK27-DAG: [[P0:%.+]] = getelementptr inbounds {{.+}}[[P]], i{{.+}} 0, i{{.+}} 0
+  // CK27-DAG: store i8* [[CBPVAL0:%[^,]+]], i8** [[BP0]]
+  // CK27-DAG: store i8* [[CPVAL0:%[^,]+]], i8** [[P0]]
+  // CK27-DAG: [[CBPVAL0]] = bitcast i32* [[RVAR0:%.+]] to i8*
+  // CK27-DAG: [[CPVAL0]] = bitcast i32* [[SEC0:%.+]] to i8*
+  // CK27-DAG: [[RVAR0]] = load i32*, i32** [[VAR0:%[^,]+]]
+  // CK27-DAG: [[SEC0]] = getelementptr {{.*}}i32* [[RVAR00:%.+]], i{{.+}} 0
+  // CK27-DAG: [[RVAR00]] = load i32*, i32** [[VAR0]]
+
+  // CK27: call void [[CALL01:@.+]](i32* {{[^,]+}})
+  #pragma omp target map(pa[:0])
+  {
+    pa[50]++;
+  }
+
+  // Region 02
+  // CK27-DAG: call i32 @__tgt_target(i32 {{[^,]+}}, i8* {{[^,]+}}, i32 1, i8** [[GEPBP:%.+]], i8** [[GEPP:%.+]], {{.+}}getelementptr {{.+}}[1 x i{{.+}}]* [[SIZE02]], {{.+}}getelementptr {{.+}}[1 x i{{.+}}]* [[MTYPE02]]{{.+}})
+  // CK27-DAG: [[GEPBP]] = getelementptr inbounds {{.+}}[[BP:%[^,]+]]
+  // CK27-DAG: [[GEPP]] = getelementptr inbounds {{.+}}[[P:%[^,]+]]
+
+  // CK27-DAG: [[BP0:%.+]] = getelementptr inbounds {{.+}}[[BP]], i{{.+}} 0, i{{.+}} 0
+  // CK27-DAG: [[P0:%.+]] = getelementptr inbounds {{.+}}[[P]], i{{.+}} 0, i{{.+}} 0
+  // CK27-DAG: store i8* [[CBPVAL0:%[^,]+]], i8** [[BP0]]
+  // CK27-DAG: store i8* [[CPVAL0:%[^,]+]], i8** [[P0]]
+  // CK27-DAG: [[CBPVAL0]] = bitcast i32* [[RVAR0:%.+]] to i8*
+  // CK27-DAG: [[CPVAL0]] = bitcast i32* [[SEC0:%.+]] to i8*
+  // CK27-DAG: [[RVAR0]] = load i32*, i32** [[VAR0:%[^,]+]]
+  // CK27-DAG: [[SEC0]] = getelementptr {{.*}}i32* [[RVAR00:%.+]], i{{.+}} 0
+  // CK27-DAG: [[RVAR00]] = load i32*, i32** [[VAR0]]
+
+  // CK27: call void [[CALL02:@.+]](i32* {{[^,]+}})
+  #pragma omp target map(pa[0:0])
+  {
+    pa[50]++;
+  }
+
+  // Region 03
+  // CK27-DAG: call i32 @__tgt_target(i32 {{[^,]+}}, i8* {{[^,]+}}, i32 1, i8** [[GEPBP:%.+]], i8** [[GEPP:%.+]], {{.+}}getelementptr {{.+}}[1 x i{{.+}}]* [[SIZE03]], {{.+}}getelementptr {{.+}}[1 x i{{.+}}]* [[MTYPE03]]{{.+}})
+  // CK27-DAG: [[GEPBP]] = getelementptr inbounds {{.+}}[[BP:%[^,]+]]
+  // CK27-DAG: [[GEPP]] = getelementptr inbounds {{.+}}[[P:%[^,]+]]
+
+  // CK27-DAG: [[BP0:%.+]] = getelementptr inbounds {{.+}}[[BP]], i{{.+}} 0, i{{.+}} 0
+  // CK27-DAG: [[P0:%.+]] = getelementptr inbounds {{.+}}[[P]], i{{.+}} 0, i{{.+}} 0
+  // CK27-DAG: store i8* [[CBPVAL0:%[^,]+]], i8** [[BP0]]
+  // CK27-DAG: store i8* [[CPVAL0:%[^,]+]], i8** [[P0]]
+  // CK27-DAG: [[CBPVAL0]] = bitcast i32* [[RVAR0:%.+]] to i8*
+  // CK27-DAG: [[CPVAL0]] = bitcast i32* [[SEC0:%.+]] to i8*
+  // CK27-DAG: [[RVAR0]] = load i32*, i32** [[VAR0:%[^,]+]]
+  // CK27-DAG: [[SEC0]] = getelementptr {{.*}}i32* [[RVAR00:%.+]], i{{.+}} %{{.+}}
+  // CK27-DAG: [[RVAR00]] = load i32*, i32** [[VAR0]]
+
+  // CK27: call void [[CALL03:@.+]](i32* {{[^,]+}})
+  #pragma omp target map(pa[ii:0])
+  {
+    pa[50]++;
+  }
+
+  int *pvtPtr;
+  int pvtScl;
+  int pvtArr[10];
+
+  // Region 04
+  // CK27: call i32 @__tgt_target(i32 {{[^,]+}}, i8* {{[^,]+}}, i32 0, i8** null, i8** null, i{{64|32}}* null, i32* null)
+  // CK27: call void [[CALL04:@.+]]()
+  #pragma omp target private(pvtPtr)
+  {
+    pvtPtr[5]++;
+  }
+
+  // Region 05
+  // CK27-DAG: call i32 @__tgt_target(i32 {{[^,]+}}, i8* {{[^,]+}}, i32 1, i8** [[GEPBP:%.+]], i8** [[GEPP:%.+]], {{.+}}getelementptr {{.+}}[1 x i{{.+}}]* [[SIZE05]], {{.+}}getelementptr {{.+}}[1 x i{{.+}}]* [[MTYPE05]]{{.+}})
+  // CK27-DAG: [[GEPBP]] = getelementptr inbounds {{.+}}[[BP:%[^,]+]]
+  // CK27-DAG: [[GEPP]] = getelementptr inbounds {{.+}}[[P:%[^,]+]]
+
+  // CK27-DAG: [[BP0:%.+]] = getelementptr inbounds {{.+}}[[BP]], i{{.+}} 0, i{{.+}} 0
+  // CK27-DAG: [[P0:%.+]] = getelementptr inbounds {{.+}}[[P]], i{{.+}} 0, i{{.+}} 0
+  // CK27-DAG: store i8* [[CBPVAL0:%[^,]+]], i8** [[BP0]]
+  // CK27-DAG: store i8* [[CPVAL0:%[^,]+]], i8** [[P0]]
+  // CK27-DAG: [[CBPVAL0]] = bitcast i32* [[VAR0:%.+]] to i8*
+  // CK27-DAG: [[CPVAL0]] = bitcast i32* [[VAR0]] to i8*
+
+  // CK27: call void [[CALL05:@.+]](i32* {{[^,]+}})
+  #pragma omp target firstprivate(pvtPtr)
+  {
+    pvtPtr[5]++;
+  }
+
+  // Region 06
+  // CK27: call i32 @__tgt_target(i32 {{[^,]+}}, i8* {{[^,]+}}, i32 0, i8** null, i8** null, i{{64|32}}* null, i32* null)
+  // CK27: call void [[CALL06:@.+]]()
+  #pragma omp target private(pvtScl)
+  {
+    pvtScl++;
+  }
+
+  // Region 07
+  // CK27-DAG: call i32 @__tgt_target(i32 {{.+}}, i8* {{.+}}, i32 1, i8** [[BPGEP:%[0-9]+]], i8** [[PGEP:%[0-9]+]], {{.+}}[[SIZE07]]{{.+}}, {{.+}}[[MTYPE07]]{{.+}})
+  // CK27-DAG: [[BPGEP]] = getelementptr inbounds {{.+}}[[BPS:%[^,]+]], i32 0, i32 0
+  // CK27-DAG: [[PGEP]] = getelementptr inbounds {{.+}}[[PS:%[^,]+]], i32 0, i32 0
+  // CK27-DAG: [[BP1:%.+]] = getelementptr inbounds {{.+}}[[BPS]], i32 0, i32 0
+  // CK27-DAG: [[P1:%.+]] = getelementptr inbounds {{.+}}[[PS]], i32 0, i32 0
+  // CK27-DAG: store i8* [[VALBP:%.+]], i8** [[BP1]],
+  // CK27-DAG: store i8* [[VALP:%.+]], i8** [[P1]],
+  // CK27-DAG: [[VALBP]] = inttoptr i[[Z]] [[VAL:%.+]] to i8*
+  // CK27-DAG: [[VALP]] = inttoptr i[[Z]] [[VAL:%.+]] to i8*
+  // CK27-DAG: [[VAL]] = load i[[Z]], i[[Z]]* [[ADDR:%.+]],
+  // CK27-64-DAG: [[CADDR:%.+]] = bitcast i[[Z]]* [[ADDR]] to i32*
+  // CK27-64-DAG: store i32 {{.+}}, i32* [[CADDR]],
+
+  // CK27: call void [[CALL07:@.+]](i[[Z]] [[VAL]])
+  #pragma omp target firstprivate(pvtScl)
+  {
+    pvtScl++;
+  }
+
+  // Region 08
+  // CK27: call i32 @__tgt_target(i32 {{[^,]+}}, i8* {{[^,]+}}, i32 0, i8** null, i8** null, i{{64|32}}* null, i32* null)
+  // CK27: call void [[CALL08:@.+]]()
+  #pragma omp target private(pvtArr)
+  {
+    pvtArr[5]++;
+  }
+
+  // Region 09
+  // CK27-DAG: call i32 @__tgt_target(i32 {{[^,]+}}, i8* {{[^,]+}}, i32 1, i8** [[GEPBP:%.+]], i8** [[GEPP:%.+]], {{.+}}getelementptr {{.+}}[1 x i{{.+}}]* [[SIZE09]], {{.+}}getelementptr {{.+}}[1 x i{{.+}}]* [[MTYPE09]]{{.+}})
+  // CK27-DAG: [[GEPBP]] = getelementptr inbounds {{.+}}[[BP:%[^,]+]]
+  // CK27-DAG: [[GEPP]] = getelementptr inbounds {{.+}}[[P:%[^,]+]]
+
+  // CK27-DAG: [[BP0:%.+]] = getelementptr inbounds {{.+}}[[BP]], i{{.+}} 0, i{{.+}} 0
+  // CK27-DAG: [[P0:%.+]] = getelementptr inbounds {{.+}}[[P]], i{{.+}} 0, i{{.+}} 0
+  // CK27-DAG: store i8* [[CBPVAL0:%[^,]+]], i8** [[BP0]]
+  // CK27-DAG: store i8* [[CPVAL0:%[^,]+]], i8** [[P0]]
+  // CK27-DAG: [[CBPVAL0]] = bitcast [10 x i32]* [[VAR0:%.+]] to i8*
+  // CK27-DAG: [[CPVAL0]] = bitcast [10 x i32]* [[VAR0]] to i8*
+
+  // CK27: call void [[CALL09:@.+]]([10 x i32]* {{[^,]+}})
+  #pragma omp target firstprivate(pvtArr)
+  {
+    pvtArr[5]++;
+  }
+}
+
+// CK27: define {{.+}}[[CALL00]]
+// CK27: define {{.+}}[[CALL01]]
+// CK27: define {{.+}}[[CALL02]]
+// CK27: define {{.+}}[[CALL03]]
+// CK27: define {{.+}}[[CALL04]]
+// CK27: define {{.+}}[[CALL05]]
+// CK27: define {{.+}}[[CALL06]]
+// CK27: define {{.+}}[[CALL07]]
 #endif
 #endif

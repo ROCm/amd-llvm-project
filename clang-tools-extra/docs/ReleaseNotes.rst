@@ -44,7 +44,8 @@ infrastructure are described first, followed by tool-specific sections.
 Major New Features
 ------------------
 
-- Feature1...
+- :program:`clang-include-fixer`, a tool that provides an automated way of
+  adding ``#include`` directives for missing symbols in one translation unit.
 
 Improvements to clang-query
 ---------------------------
@@ -122,6 +123,12 @@ identified.  The improvements since the 3.8 release include:
 
   Checks if an unused forward declaration is in a wrong namespace.
 
+- New `misc-misplaced-const
+  <http://clang.llvm.org/extra/clang-tidy/checks/misc-misplaced-const.html>`_ check
+  
+  Checks if a ``const`` qualifier is applied to a ``typedef`` to pointer type
+  instead of the underlying pointee type.
+
 - New `misc-misplaced-widening-cast
   <http://clang.llvm.org/extra/clang-tidy/checks/misc-misplaced-widening-cast.html>`_ check
 
@@ -175,6 +182,13 @@ identified.  The improvements since the 3.8 release include:
 
   Find suspicious usage of runtime string comparison functions.
 
+- New `misc-unconventional-assign-operator
+  <http://clang.llvm.org/extra/clang-tidy/checks/misc-unconventional-assign-operator.html>`_
+  check replacing the *misc-assign-operator-signature* check.
+
+  Does not only checks for correct signature but also for correct ``return``
+  statements (returning ``*this``)
+
 - New `misc-unused-using-decls
   <http://clang.llvm.org/extra/clang-tidy/checks/misc-unused-using-decls.html>`_ check
 
@@ -206,6 +220,16 @@ identified.  The improvements since the 3.8 release include:
 
   Finds integer literals which are cast to ``bool``.
 
+- New `modernize-use-emplace
+  <http://clang.llvm.org/extra/clang-tidy/checks/modernize-use-emplace.html>`_ check
+
+  Finds calls that could be changed to emplace.
+
+- New `modernize-use-using
+  <http://clang.llvm.org/extra/clang-tidy/checks/modernize-use-using.html>`_ check
+
+  Finds typedefs and replaces it with usings.
+
 - New `performance-faster-string-find
   <http://clang.llvm.org/extra/clang-tidy/checks/performance-faster-string-find.html>`_ check
 
@@ -235,6 +259,11 @@ identified.  The improvements since the 3.8 release include:
   Warns about defaulted constructors and assignment operators that are actually
   deleted.
 
+- Updated `readability-identifier-naming-check
+  <http://clang.llvm.org/extra/clang-tidy/checks/readability-identifier-naming.html>`_
+
+  Added support for enforcing the case of macro statements.
+
 - New `readability-redundant-control-flow
   <http://clang.llvm.org/extra/clang-tidy/checks/readability-redundant-control-flow.html>`_ check
 
@@ -250,13 +279,6 @@ identified.  The improvements since the 3.8 release include:
   <http://clang.llvm.org/extra/clang-tidy/checks/readability-static-definition-in-anonymous-namespace.html>`_ check
 
   Finds static function and variable definitions in anonymous namespace.
-
-- New `misc-unconventional-assign-operator
-  <http://clang.llvm.org/extra/clang-tidy/checks/misc-unconventional-assign-operator.html>`_
-  check replacing the *misc-assign-operator-signature* check.
-
-  Does not only checks for correct signature but also for correct ``return``
-  statements (returning ``*this``)
 
 Fixed bugs:
 

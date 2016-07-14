@@ -11,6 +11,7 @@
 #define LLD_ELF_OUTPUT_SECTIONS_H
 
 #include "Config.h"
+#include "Relocations.h"
 
 #include "lld/Core/LLVM.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -24,10 +25,11 @@ namespace elf {
 
 class SymbolBody;
 struct SectionPiece;
+struct Version;
 template <class ELFT> class SymbolTable;
 template <class ELFT> class SymbolTableSection;
 template <class ELFT> class StringTableSection;
-template <class ELFT> class EHInputSection;
+template <class ELFT> class EhInputSection;
 template <class ELFT> class InputSection;
 template <class ELFT> class InputSectionBase;
 template <class ELFT> class MergeInputSection;
@@ -37,18 +39,6 @@ template <class ELFT> class ObjectFile;
 template <class ELFT> class SharedFile;
 template <class ELFT> class SharedSymbol;
 template <class ELFT> class DefinedRegular;
-
-template <class ELFT>
-static inline typename ELFT::uint getAddend(const typename ELFT::Rel &Rel) {
-  return 0;
-}
-
-template <class ELFT>
-static inline typename ELFT::uint getAddend(const typename ELFT::Rela &Rel) {
-  return Rel.r_addend;
-}
-
-bool isValidCIdentifier(StringRef S);
 
 // This represents a section in an output file.
 // Different sub classes represent different types of sections. Some contain
@@ -77,15 +67,15 @@ public:
   void setSize(uintX_t Val) { Header.sh_size = Val; }
   uintX_t getFlags() const { return Header.sh_flags; }
   uintX_t getFileOff() const { return Header.sh_offset; }
-  uintX_t getAlign() const {
+  uintX_t getAlignment() const {
     // The ELF spec states that a value of 0 means the section has no alignment
     // constraits.
     return std::max<uintX_t>(Header.sh_addralign, 1);
   }
   uint32_t getType() const { return Header.sh_type; }
-  void updateAlign(uintX_t Align) {
-    if (Align > Header.sh_addralign)
-      Header.sh_addralign = Align;
+  void updateAlignment(uintX_t Alignment) {
+    if (Alignment > Header.sh_addralign)
+      Header.sh_addralign = Alignment;
   }
 
   // If true, this section will be page aligned on disk.
@@ -93,8 +83,8 @@ public:
   bool PageAlign = false;
 
   virtual void finalize() {}
-  virtual void
-  forEachInputSection(std::function<void(InputSectionBase<ELFT> *)> F) {}
+  virtual void finalizePieces() {}
+  virtual void assignOffsets() {}
   virtual void writeTo(uint8_t *Buf) {}
   virtual ~OutputSectionBase() = default;
 
@@ -112,11 +102,12 @@ public:
   void finalize() override;
   void writeTo(uint8_t *Buf) override;
   void addEntry(SymbolBody &Sym);
+  void addMipsEntry(SymbolBody &Sym, uintX_t Addend, RelExpr Expr);
   bool addDynTlsEntry(SymbolBody &Sym);
   bool addTlsIndex();
-  bool empty() const { return MipsLocalEntries == 0 && Entries.empty(); }
-  uintX_t getMipsLocalEntryOffset(uintX_t EntryValue);
+  bool empty() const { return MipsPageEntries == 0 && Entries.empty(); }
   uintX_t getMipsLocalPageOffset(uintX_t Addr);
+  uintX_t getMipsGotOffset(const SymbolBody &B, uintX_t Addend) const;
   uintX_t getGlobalDynAddr(const SymbolBody &B) const;
   uintX_t getGlobalDynOffset(const SymbolBody &B) const;
   uintX_t getNumEntries() const { return Entries.size(); }
@@ -131,16 +122,40 @@ public:
   // the number of reserved entries. This method is MIPS-specific.
   unsigned getMipsLocalEntriesNum() const;
 
+  // Returns offset of TLS part of the MIPS GOT table. This part goes
+  // after 'local' and 'global' entries.
+  uintX_t getMipsTlsOffset();
+
   uintX_t getTlsIndexVA() { return Base::getVA() + TlsIndexOff; }
   uint32_t getTlsIndexOff() { return TlsIndexOff; }
+
+  // Flag to force GOT to be in output if we have relocations
+  // that relies on its address.
+  bool HasGotOffRel = false;
 
 private:
   std::vector<const SymbolBody *> Entries;
   uint32_t TlsIndexOff = -1;
-  uint32_t MipsLocalEntries = 0;
+  uint32_t MipsPageEntries = 0;
   // Output sections referenced by MIPS GOT relocations.
   llvm::SmallPtrSet<const OutputSectionBase<ELFT> *, 10> MipsOutSections;
   llvm::DenseMap<uintX_t, size_t> MipsLocalGotPos;
+
+  // MIPS ABI requires to create unique GOT entry for each Symbol/Addend
+  // pairs. The `MipsGotMap` maps (S,A) pair to the GOT index in the `MipsLocal`
+  // or `MipsGlobal` vectors. In general it does not have a sence to take in
+  // account addend for preemptible symbols because the corresponding
+  // GOT entries should have one-to-one mapping with dynamic symbols table.
+  // But we use the same container's types for both kind of GOT entries
+  // to handle them uniformly.
+  typedef std::pair<const SymbolBody*, uintX_t> MipsGotEntry;
+  typedef std::vector<MipsGotEntry> MipsGotEntries;
+  llvm::DenseMap<MipsGotEntry, size_t> MipsGotMap;
+  MipsGotEntries MipsLocal;
+  MipsGotEntries MipsGlobal;
+
+  // Write MIPS-specific parts of the GOT.
+  void writeMipsGot(uint8_t *&Buf);
 };
 
 template <class ELFT>
@@ -173,21 +188,36 @@ private:
   std::vector<std::pair<const SymbolBody *, unsigned>> Entries;
 };
 
-template <class ELFT> struct DynamicReloc {
+template <class ELFT> class DynamicReloc {
   typedef typename ELFT::uint uintX_t;
+
+public:
+  DynamicReloc(uint32_t Type, const InputSectionBase<ELFT> *InputSec,
+               uintX_t OffsetInSec, bool UseSymVA, SymbolBody *Sym,
+               uintX_t Addend)
+      : Type(Type), Sym(Sym), InputSec(InputSec), OffsetInSec(OffsetInSec),
+        UseSymVA(UseSymVA), Addend(Addend) {}
+
+  DynamicReloc(uint32_t Type, const OutputSectionBase<ELFT> *OutputSec,
+               uintX_t OffsetInSec, bool UseSymVA, SymbolBody *Sym,
+               uintX_t Addend)
+      : Type(Type), Sym(Sym), OutputSec(OutputSec), OffsetInSec(OffsetInSec),
+        UseSymVA(UseSymVA), Addend(Addend) {}
+
+  uintX_t getOffset() const;
+  uintX_t getAddend() const;
+  uint32_t getSymIndex() const;
+  const OutputSectionBase<ELFT> *getOutputSec() const { return OutputSec; }
+
   uint32_t Type;
 
+private:
   SymbolBody *Sym;
-  const OutputSectionBase<ELFT> *OffsetSec;
+  const InputSectionBase<ELFT> *InputSec = nullptr;
+  const OutputSectionBase<ELFT> *OutputSec = nullptr;
   uintX_t OffsetInSec;
   bool UseSymVA;
   uintX_t Addend;
-
-  DynamicReloc(uint32_t Type, const OutputSectionBase<ELFT> *OffsetSec,
-               uintX_t OffsetInSec, bool UseSymVA, SymbolBody *Sym,
-               uintX_t Addend)
-      : Type(Type), Sym(Sym), OffsetSec(OffsetSec), OffsetInSec(OffsetInSec),
-        UseSymVA(UseSymVA), Addend(Addend) {}
 };
 
 template <class ELFT>
@@ -197,8 +227,7 @@ public:
   typedef typename ELFT::Sym Elf_Sym;
   typedef typename ELFT::SymRange Elf_Sym_Range;
   typedef typename ELFT::uint uintX_t;
-  SymbolTableSection(SymbolTable<ELFT> &Table,
-                     StringTableSection<ELFT> &StrTabSec);
+  SymbolTableSection(StringTableSection<ELFT> &StrTabSec);
 
   void finalize() override;
   void writeTo(uint8_t *Buf) override;
@@ -219,8 +248,6 @@ private:
 
   const OutputSectionBase<ELFT> *getOutputSection(SymbolBody *Sym);
 
-  SymbolTable<ELFT> &Table;
-
   // A vector of symbols and their string table offsets.
   std::vector<std::pair<SymbolBody *, size_t>> Symbols;
 };
@@ -228,10 +255,30 @@ private:
 // For more information about .gnu.version and .gnu.version_r see:
 // https://www.akkadia.org/drepper/symbol-versioning
 
+// The .gnu.version_d section which has a section type of SHT_GNU_verdef shall
+// contain symbol version definitions. The number of entries in this section
+// shall be contained in the DT_VERDEFNUM entry of the .dynamic section.
+// The section shall contain an array of Elf_Verdef structures, optionally
+// followed by an array of Elf_Verdaux structures.
+template <class ELFT>
+class VersionDefinitionSection final : public OutputSectionBase<ELFT> {
+  typedef typename ELFT::Verdef Elf_Verdef;
+  typedef typename ELFT::Verdaux Elf_Verdaux;
+
+  unsigned FileDefNameOff;
+
+public:
+  VersionDefinitionSection();
+  void finalize() override;
+  void writeTo(uint8_t *Buf) override;
+};
+
 // The .gnu.version section specifies the required version of each symbol in the
 // dynamic symbol table. It contains one Elf_Versym for each dynamic symbol
 // table entry. An Elf_Versym is just a 16-bit integer that refers to a version
-// identifier defined in the .gnu.version_r section.
+// identifier defined in the either .gnu.version_r or .gnu.version_d section.
+// The values 0 and 1 are reserved. All other values are used for versions in
+// the own object or in any of the dependencies.
 template <class ELFT>
 class VersionTableSection final : public OutputSectionBase<ELFT> {
   typedef typename ELFT::Versym Elf_Versym;
@@ -256,9 +303,8 @@ class VersionNeedSection final : public OutputSectionBase<ELFT> {
   // string table offsets of their sonames.
   std::vector<std::pair<SharedFile<ELFT> *, size_t>> Needed;
 
-  // The next available version identifier. Identifiers start at 2 because 0 and
-  // 1 are reserved.
-  unsigned NextIndex = 2;
+  // The next available version identifier.
+  unsigned NextIndex;
 
 public:
   VersionNeedSection();
@@ -303,8 +349,7 @@ public:
   void sortCtorsDtors();
   void writeTo(uint8_t *Buf) override;
   void finalize() override;
-  void
-  forEachInputSection(std::function<void(InputSectionBase<ELFT> *)> F) override;
+  void assignOffsets() override;
   std::vector<InputSection<ELFT> *> Sections;
 };
 
@@ -319,53 +364,52 @@ public:
   void writeTo(uint8_t *Buf) override;
   unsigned getOffset(StringRef Val);
   void finalize() override;
+  void finalizePieces() override;
   bool shouldTailMerge() const;
 
 private:
   llvm::StringTableBuilder Builder;
+  std::vector<MergeInputSection<ELFT> *> Sections;
 };
 
 struct CieRecord {
   SectionPiece *Piece = nullptr;
   std::vector<SectionPiece *> FdePieces;
-  uint8_t FdeEncoding = 0;
 };
 
 // Output section for .eh_frame.
 template <class ELFT>
-class EHOutputSection final : public OutputSectionBase<ELFT> {
-public:
+class EhOutputSection final : public OutputSectionBase<ELFT> {
   typedef typename ELFT::uint uintX_t;
   typedef typename ELFT::Shdr Elf_Shdr;
   typedef typename ELFT::Rel Elf_Rel;
   typedef typename ELFT::Rela Elf_Rela;
-  EHOutputSection(StringRef Name, uint32_t Type, uintX_t Flags);
+
+public:
+  EhOutputSection();
   void writeTo(uint8_t *Buf) override;
   void finalize() override;
-  void
-  forEachInputSection(std::function<void(InputSectionBase<ELFT> *)> F) override;
+  bool empty() const { return Sections.empty(); }
 
   void addSection(InputSectionBase<ELFT> *S) override;
 
+  size_t NumFdes = 0;
+
 private:
   template <class RelTy>
-  void addSectionAux(EHInputSection<ELFT> *S, llvm::ArrayRef<RelTy> Rels);
-
-  std::vector<SectionPiece> splitInputSection(const EHInputSection<ELFT> *Sec);
+  void addSectionAux(EhInputSection<ELFT> *S, llvm::ArrayRef<RelTy> Rels);
 
   template <class RelTy>
-  CieRecord *addCie(SectionPiece &Piece, EHInputSection<ELFT> *Sec,
-                    ArrayRef<RelTy> Rels);
+  CieRecord *addCie(SectionPiece &Piece, EhInputSection<ELFT> *Sec,
+                    ArrayRef<RelTy> &Rels);
 
   template <class RelTy>
-  bool isFdeLive(SectionPiece &Piece, EHInputSection<ELFT> *Sec,
-                 ArrayRef<RelTy> Rels);
-
-  uint8_t getFdeEncoding(ArrayRef<uint8_t> D);
+  bool isFdeLive(SectionPiece &Piece, EhInputSection<ELFT> *Sec,
+                 ArrayRef<RelTy> &Rels);
 
   uintX_t getFdePc(uint8_t *Buf, size_t Off, uint8_t Enc);
 
-  std::vector<EHInputSection<ELFT> *> Sections;
+  std::vector<EhInputSection<ELFT> *> Sections;
   std::vector<CieRecord *> Cies;
 
   // CIE records are uniquified by their contents and personality functions.
@@ -482,16 +526,13 @@ class DynamicSection final : public OutputSectionBase<ELFT> {
   std::vector<Entry> Entries;
 
 public:
-  explicit DynamicSection(SymbolTable<ELFT> &SymTab);
+  explicit DynamicSection();
   void finalize() override;
   void writeTo(uint8_t *Buf) override;
 
   OutputSectionBase<ELFT> *PreInitArraySec = nullptr;
   OutputSectionBase<ELFT> *InitArraySec = nullptr;
   OutputSectionBase<ELFT> *FiniArraySec = nullptr;
-
-private:
-  SymbolTable<ELFT> &SymTab;
 };
 
 template <class ELFT>
@@ -536,23 +577,15 @@ class EhFrameHeader final : public OutputSectionBase<ELFT> {
 
 public:
   EhFrameHeader();
+  void finalize() override;
   void writeTo(uint8_t *Buf) override;
-
   void addFde(uint32_t Pc, uint32_t FdeVA);
-  void add(EHOutputSection<ELFT> *Sec);
-  void reserveFde();
-
-  bool Live = false;
-
-  EHOutputSection<ELFT> *Sec = nullptr;
 
 private:
   struct FdeData {
     uint32_t Pc;
     uint32_t FdeVA;
   };
-
-  uintX_t getFdePc(uintX_t EhVA, const FdeData &F);
 
   std::vector<FdeData> Fdes;
 };
@@ -602,6 +635,7 @@ template <class ELFT> struct Out {
   static BuildIdSection<ELFT> *BuildId;
   static DynamicSection<ELFT> *Dynamic;
   static EhFrameHeader<ELFT> *EhFrameHdr;
+  static EhOutputSection<ELFT> *EhFrame;
   static GnuHashTableSection<ELFT> *GnuHashTab;
   static GotPltSection<ELFT> *GotPlt;
   static GotSection<ELFT> *Got;
@@ -619,6 +653,7 @@ template <class ELFT> struct Out {
   static StringTableSection<ELFT> *StrTab;
   static SymbolTableSection<ELFT> *DynSymTab;
   static SymbolTableSection<ELFT> *SymTab;
+  static VersionDefinitionSection<ELFT> *VerDef;
   static VersionTableSection<ELFT> *VerSym;
   static VersionNeedSection<ELFT> *VerNeed;
   static Elf_Phdr *TlsPhdr;
@@ -626,9 +661,39 @@ template <class ELFT> struct Out {
   static OutputSectionBase<ELFT> *ProgramHeaders;
 };
 
+template <bool Is64Bits> struct SectionKey {
+  typedef typename std::conditional<Is64Bits, uint64_t, uint32_t>::type uintX_t;
+  StringRef Name;
+  uint32_t Type;
+  uintX_t Flags;
+  uintX_t Alignment;
+};
+
+// This class knows how to create an output section for a given
+// input section. Output section type is determined by various
+// factors, including input section's sh_flags, sh_type and
+// linker scripts.
+template <class ELFT> class OutputSectionFactory {
+  typedef typename ELFT::Shdr Elf_Shdr;
+  typedef typename ELFT::uint uintX_t;
+  typedef typename elf::SectionKey<ELFT::Is64Bits> Key;
+
+public:
+  std::pair<OutputSectionBase<ELFT> *, bool> create(InputSectionBase<ELFT> *C,
+                                                    StringRef OutsecName);
+
+  OutputSectionBase<ELFT> *lookup(StringRef Name, uint32_t Type, uintX_t Flags);
+
+private:
+  Key createKey(InputSectionBase<ELFT> *C, StringRef OutsecName);
+
+  llvm::SmallDenseMap<Key, OutputSectionBase<ELFT> *> Map;
+};
+
 template <class ELFT> BuildIdSection<ELFT> *Out<ELFT>::BuildId;
 template <class ELFT> DynamicSection<ELFT> *Out<ELFT>::Dynamic;
 template <class ELFT> EhFrameHeader<ELFT> *Out<ELFT>::EhFrameHdr;
+template <class ELFT> EhOutputSection<ELFT> *Out<ELFT>::EhFrame;
 template <class ELFT> GnuHashTableSection<ELFT> *Out<ELFT>::GnuHashTab;
 template <class ELFT> GotPltSection<ELFT> *Out<ELFT>::GotPlt;
 template <class ELFT> GotSection<ELFT> *Out<ELFT>::Got;
@@ -646,6 +711,7 @@ template <class ELFT> StringTableSection<ELFT> *Out<ELFT>::ShStrTab;
 template <class ELFT> StringTableSection<ELFT> *Out<ELFT>::StrTab;
 template <class ELFT> SymbolTableSection<ELFT> *Out<ELFT>::DynSymTab;
 template <class ELFT> SymbolTableSection<ELFT> *Out<ELFT>::SymTab;
+template <class ELFT> VersionDefinitionSection<ELFT> *Out<ELFT>::VerDef;
 template <class ELFT> VersionTableSection<ELFT> *Out<ELFT>::VerSym;
 template <class ELFT> VersionNeedSection<ELFT> *Out<ELFT>::VerNeed;
 template <class ELFT> typename ELFT::Phdr *Out<ELFT>::TlsPhdr;
@@ -655,4 +721,15 @@ template <class ELFT> OutputSectionBase<ELFT> *Out<ELFT>::ProgramHeaders;
 } // namespace elf
 } // namespace lld
 
-#endif // LLD_ELF_OUTPUT_SECTIONS_H
+namespace llvm {
+template <bool Is64Bits> struct DenseMapInfo<lld::elf::SectionKey<Is64Bits>> {
+  typedef typename lld::elf::SectionKey<Is64Bits> Key;
+
+  static Key getEmptyKey();
+  static Key getTombstoneKey();
+  static unsigned getHashValue(const Key &Val);
+  static bool isEqual(const Key &LHS, const Key &RHS);
+};
+}
+
+#endif

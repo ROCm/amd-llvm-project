@@ -583,7 +583,7 @@ class Base(unittest2.TestCase):
             else:
                 categories = "default"
 
-            if channel == "gdb-remote":
+            if channel == "gdb-remote" and lldb.remote_platform is None:
                 # communicate gdb-remote categories to debugserver
                 os.environ["LLDB_DEBUGSERVER_LOG_FLAGS"] = categories
 
@@ -592,15 +592,17 @@ class Base(unittest2.TestCase):
                 raise Exception('log enable failed (check LLDB_LOG_OPTION env variable)')
 
         # Communicate log path name to debugserver & lldb-server
-        server_log_path = "{}-server.log".format(log_basename)
-        open(server_log_path, 'w').close()
-        os.environ["LLDB_DEBUGSERVER_LOG_FILE"] = server_log_path
+        # For remote debugging, these variables need to be set when starting the platform
+        # instance.
+        if lldb.remote_platform is None:
+            server_log_path = "{}-server.log".format(log_basename)
+            open(server_log_path, 'w').close()
+            os.environ["LLDB_DEBUGSERVER_LOG_FILE"] = server_log_path
 
-        # Communicate channels to lldb-server
-        os.environ["LLDB_SERVER_LOG_CHANNELS"] = ":".join(lldbtest_config.channels)
+            # Communicate channels to lldb-server
+            os.environ["LLDB_SERVER_LOG_CHANNELS"] = ":".join(lldbtest_config.channels)
 
-        if len(lldbtest_config.channels) == 0:
-            return
+        self.addTearDownHook(self.disableLogChannelsForCurrentTest)
 
     def disableLogChannelsForCurrentTest(self):
         # close all log files that we opened
@@ -610,6 +612,42 @@ class Base(unittest2.TestCase):
             self.ci.HandleCommand("log disable " + channel, self.res)
             if not self.res.Succeeded():
                 raise Exception('log disable failed (check LLDB_LOG_OPTION env variable)')
+
+        # Retrieve the server log (if any) from the remote system. It is assumed the server log
+        # is writing to the "server.log" file in the current test directory. This can be
+        # achieved by setting LLDB_DEBUGSERVER_LOG_FILE="server.log" when starting remote
+        # platform. If the remote logging is not enabled, then just let the Get() command silently
+        # fail.
+        if lldb.remote_platform:
+            lldb.remote_platform.Get(lldb.SBFileSpec("server.log"),
+                    lldb.SBFileSpec(self.getLogBasenameForCurrentTest()+"-server.log"))
+
+    def setPlatformWorkingDir(self):
+        if not lldb.remote_platform or not configuration.lldb_platform_working_dir:
+            return
+
+        remote_test_dir = lldbutil.join_remote_paths(
+                configuration.lldb_platform_working_dir,
+                self.getArchitecture(),
+                str(self.test_number),
+                self.mydir)
+        error = lldb.remote_platform.MakeDirectory(remote_test_dir, 448) # 448 = 0o700
+        if error.Success():
+            lldb.remote_platform.SetWorkingDirectory(remote_test_dir)
+
+            # This function removes all files from the current working directory while leaving
+            # the directories in place. The cleaup is required to reduce the disk space required
+            # by the test suit while leaving the directories untached is neccessary because
+            # sub-directories might belong to an other test
+            def clean_working_directory():
+                # TODO: Make it working on Windows when we need it for remote debugging support
+                # TODO: Replace the heuristic to remove the files with a logic what collects the
+                # list of files we have to remove during test runs.
+                shell_cmd = lldb.SBPlatformShellCommand("rm %s/*" % remote_test_dir)
+                lldb.remote_platform.Run(shell_cmd)
+            self.addTearDownHook(clean_working_directory)
+        else:
+            print("error: making remote directory '%s': %s" % (remote_test_dir, error))
 
     def setUp(self):
         """Fixture for unittest test case setup.
@@ -716,6 +754,7 @@ class Base(unittest2.TestCase):
         # And the result object.
         self.res = lldb.SBCommandReturnObject()
 
+        self.setPlatformWorkingDir()
         self.enableLogChannelsForCurrentTest()
 
         #Initialize debug_info
@@ -883,8 +922,6 @@ class Base(unittest2.TestCase):
             if self.dicts:
                 for dict in reversed(self.dicts):
                     self.cleanup(dictionary=dict)
-
-        self.disableLogChannelsForCurrentTest()
 
     # =========================================================
     # Various callbacks to allow introspection of test progress
@@ -1329,6 +1366,12 @@ class Base(unittest2.TestCase):
         if not module.buildDwo(self, architecture, compiler, dictionary, clean):
             raise Exception("Don't know how to build binary with dwo")
 
+    def buildGModules(self, architecture=None, compiler=None, dictionary=None, clean=True):
+        """Platform specific way to build binaries with gmodules info."""
+        module = builder_module()
+        if not module.buildGModules(self, architecture, compiler, dictionary, clean):
+            raise Exception("Don't know how to build binary with gmodules")
+
     def buildGo(self):
         """Build the default go binary.
         """
@@ -1447,8 +1490,9 @@ class LLDBTestCaseFactory(type):
                 if not categories:
                     categories = all_dbginfo_categories
 
-                supported_categories = [x for x in categories 
-                                        if test_categories.is_supported_on_platform(x, target_platform)]
+                supported_categories = [x for x in categories
+                                        if test_categories.is_supported_on_platform(
+                                            x, target_platform, configuration.compilers)]
                 if "dsym" in supported_categories:
                     @decorators.add_test_categories(["dsym"])
                     @wraps(attrvalue)
@@ -1478,6 +1522,17 @@ class LLDBTestCaseFactory(type):
                     dwo_method_name = attrname + "_dwo"
                     dwo_test_method.__name__ = dwo_method_name
                     newattrs[dwo_method_name] = dwo_test_method
+
+                if "gmodules" in supported_categories:
+                    @decorators.add_test_categories(["gmodules"])
+                    @wraps(attrvalue)
+                    def gmodules_test_method(self, attrvalue=attrvalue):
+                        self.debug_info = "gmodules"
+                        return attrvalue(self)
+                    gmodules_method_name = attrname + "_gmodules"
+                    gmodules_test_method.__name__ = gmodules_method_name
+                    newattrs[gmodules_method_name] = gmodules_test_method
+
             else:
                 newattrs[attrname] = attrvalue
         return super(LLDBTestCaseFactory, cls).__new__(cls, name, bases, newattrs)
@@ -1596,30 +1651,6 @@ class TestBase(Base):
         # And the result object.
         self.res = lldb.SBCommandReturnObject()
 
-        if lldb.remote_platform and configuration.lldb_platform_working_dir:
-            remote_test_dir = lldbutil.join_remote_paths(
-                    configuration.lldb_platform_working_dir,
-                    self.getArchitecture(),
-                    str(self.test_number),
-                    self.mydir)
-            error = lldb.remote_platform.MakeDirectory(remote_test_dir, 448) # 448 = 0o700
-            if error.Success():
-                lldb.remote_platform.SetWorkingDirectory(remote_test_dir)
-
-                # This function removes all files from the current working directory while leaving
-                # the directories in place. The cleaup is required to reduce the disk space required
-                # by the test suit while leaving the directories untached is neccessary because
-                # sub-directories might belong to an other test
-                def clean_working_directory():
-                    # TODO: Make it working on Windows when we need it for remote debugging support
-                    # TODO: Replace the heuristic to remove the files with a logic what collects the
-                    # list of files we have to remove during test runs.
-                    shell_cmd = lldb.SBPlatformShellCommand("rm %s/*" % remote_test_dir)
-                    lldb.remote_platform.Run(shell_cmd)
-                self.addTearDownHook(clean_working_directory)
-            else:
-                print("error: making remote directory '%s': %s" % (remote_test_dir, error))
-    
     def registerSharedLibrariesWithTarget(self, target, shlibs):
         '''If we are remotely running the test suite, register the shared libraries with the target so they get uploaded, otherwise do nothing
         
@@ -1947,6 +1978,8 @@ class TestBase(Base):
             return self.buildDwarf(architecture, compiler, dictionary, clean)
         elif self.debug_info == "dwo":
             return self.buildDwo(architecture, compiler, dictionary, clean)
+        elif self.debug_info == "gmodules":
+            return self.buildGModules(architecture, compiler, dictionary, clean)
         else:
             self.fail("Can't build for debug info: %s" % self.debug_info)
 

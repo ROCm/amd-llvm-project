@@ -31,6 +31,11 @@ add_custom_command(
 )
 
 # Set the -D definitions for all sources
+# UNICODE and _UNICODE are set in LLVM's CMake system.  They affect the
+# ittnotify code and should only be set when compiling ittnotify_static.c
+# on Windows (done below).
+# TODO: Fix the UNICODE usage in ittnotify code for Windows.
+remove_definitions(-DUNICODE -D_UNICODE)
 libomp_get_definitions_flags(LIBOMP_CONFIGURED_DEFINITIONS_FLAGS)
 add_definitions(${LIBOMP_CONFIGURED_DEFINITIONS_FLAGS})
 
@@ -146,7 +151,11 @@ set_target_properties(omp PROPERTIES
 )
 
 # Get the library's location within the build tree for the unit tester
-get_target_property(LIBOMP_LIBRARY_DIR omp LIBRARY_OUTPUT_DIRECTORY)
+if(NOT WIN32)
+  get_target_property(LIBOMP_LIBRARY_DIR omp LIBRARY_OUTPUT_DIRECTORY)
+else()
+  get_target_property(LIBOMP_LIBRARY_DIR omp RUNTIME_OUTPUT_DIRECTORY)
+endif()
 if(NOT LIBOMP_LIBRARY_DIR)
   set(LIBOMP_LIBRARY_DIR ${CMAKE_CURRENT_BINARY_DIR})
   set(LIBOMP_LIBRARY_DIR ${CMAKE_CURRENT_BINARY_DIR} PARENT_SCOPE)

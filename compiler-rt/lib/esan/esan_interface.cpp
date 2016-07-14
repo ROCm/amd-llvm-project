@@ -17,8 +17,17 @@
 
 using namespace __esan; // NOLINT
 
-void __esan_init(ToolType Tool) {
+void __esan_init(ToolType Tool, void *Ptr) {
+  if (Tool != __esan_which_tool) {
+    Printf("ERROR: tool mismatch: %d vs %d\n", Tool, __esan_which_tool);
+    Die();
+  }
   initializeLibrary(Tool);
+  processCompilationUnitInit(Ptr);
+}
+
+void __esan_exit(void *Ptr) {
+  processCompilationUnitExit(Ptr);
 }
 
 void __esan_aligned_load1(void *Addr) {
@@ -100,3 +109,10 @@ void __esan_unaligned_loadN(void *Addr, uptr Size) {
 void __esan_unaligned_storeN(void *Addr, uptr Size) {
   processRangeAccess(GET_CALLER_PC(), (uptr)Addr, Size, true);
 }
+
+// Public interface:
+extern "C" {
+SANITIZER_INTERFACE_ATTRIBUTE void __esan_report() {
+  reportResults();
+}
+} // extern "C"

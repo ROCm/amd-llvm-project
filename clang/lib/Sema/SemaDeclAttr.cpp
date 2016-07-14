@@ -28,6 +28,7 @@
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Sema/DeclSpec.h"
 #include "clang/Sema/DelayedDiagnostic.h"
+#include "clang/Sema/Initialization.h"
 #include "clang/Sema/Lookup.h"
 #include "clang/Sema/Scope.h"
 #include "llvm/ADT/StringExtras.h"
@@ -4049,48 +4050,60 @@ bool Sema::CheckRegparmAttr(const AttributeList &Attr, unsigned &numParams) {
   return false;
 }
 
-// Checks whether an argument of launch_bounds attribute is acceptable
-// May output an error.
-static bool checkLaunchBoundsArgument(Sema &S, Expr *E,
-                                      const CUDALaunchBoundsAttr &Attr,
-                                      const unsigned Idx) {
+// Checks whether an argument of launch_bounds attribute is
+// acceptable, performs implicit conversion to Rvalue, and returns
+// non-nullptr Expr result on success. Otherwise, it returns nullptr
+// and may output an error.
+static Expr *makeLaunchBoundsArgExpr(Sema &S, Expr *E,
+                                     const CUDALaunchBoundsAttr &Attr,
+                                     const unsigned Idx) {
   if (S.DiagnoseUnexpandedParameterPack(E))
-    return false;
+    return nullptr;
 
   // Accept template arguments for now as they depend on something else.
   // We'll get to check them when they eventually get instantiated.
   if (E->isValueDependent())
-    return true;
+    return E;
 
   llvm::APSInt I(64);
   if (!E->isIntegerConstantExpr(I, S.Context)) {
     S.Diag(E->getExprLoc(), diag::err_attribute_argument_n_type)
         << &Attr << Idx << AANT_ArgumentIntegerConstant << E->getSourceRange();
-    return false;
+    return nullptr;
   }
   // Make sure we can fit it in 32 bits.
   if (!I.isIntN(32)) {
     S.Diag(E->getExprLoc(), diag::err_ice_too_large) << I.toString(10, false)
                                                      << 32 << /* Unsigned */ 1;
-    return false;
+    return nullptr;
   }
   if (I < 0)
     S.Diag(E->getExprLoc(), diag::warn_attribute_argument_n_negative)
         << &Attr << Idx << E->getSourceRange();
 
-  return true;
+  // We may need to perform implicit conversion of the argument.
+  InitializedEntity Entity = InitializedEntity::InitializeParameter(
+      S.Context, S.Context.getConstType(S.Context.IntTy), /*consume*/ false);
+  ExprResult ValArg = S.PerformCopyInitialization(Entity, SourceLocation(), E);
+  assert(!ValArg.isInvalid() &&
+         "Unexpected PerformCopyInitialization() failure.");
+
+  return ValArg.getAs<Expr>();
 }
 
 void Sema::AddLaunchBoundsAttr(SourceRange AttrRange, Decl *D, Expr *MaxThreads,
                                Expr *MinBlocks, unsigned SpellingListIndex) {
   CUDALaunchBoundsAttr TmpAttr(AttrRange, Context, MaxThreads, MinBlocks,
                                SpellingListIndex);
-
-  if (!checkLaunchBoundsArgument(*this, MaxThreads, TmpAttr, 0))
+  MaxThreads = makeLaunchBoundsArgExpr(*this, MaxThreads, TmpAttr, 0);
+  if (MaxThreads == nullptr)
     return;
 
-  if (MinBlocks && !checkLaunchBoundsArgument(*this, MinBlocks, TmpAttr, 1))
-    return;
+  if (MinBlocks) {
+    MinBlocks = makeLaunchBoundsArgExpr(*this, MinBlocks, TmpAttr, 1);
+    if (MinBlocks == nullptr)
+      return;
+  }
 
   D->addAttr(::new (Context) CUDALaunchBoundsAttr(
       AttrRange, Context, MaxThreads, MinBlocks, SpellingListIndex));
@@ -4520,10 +4533,9 @@ static void handleObjCRuntimeName(Sema &S, Decl *D,
                                  Attr.getAttributeSpellingListIndex()));
 }
 
-// when a user wants to use objc_boxable with a union or struct
-// but she doesn't have access to the declaration (legacy/third-party code)
-// then she can 'enable' this feature via trick with a typedef
-// e.g.:
+// When a user wants to use objc_boxable with a union or struct
+// but they don't have access to the declaration (legacy/third-party code)
+// then they can 'enable' this feature with a typedef:
 // typedef struct __attribute((objc_boxable)) legacy_struct legacy_struct;
 static void handleObjCBoxable(Sema &S, Decl *D, const AttributeList &Attr) {
   bool notify = false;
@@ -4711,10 +4723,6 @@ static void handleAbiTagAttr(Sema &S, Decl *D, const AttributeList &Attr) {
   D->addAttr(::new (S.Context)
              AbiTagAttr(Attr.getRange(), S.Context, Tags.data(), Tags.size(),
                         Attr.getAttributeSpellingListIndex()));
-
-  // FIXME: remove this warning as soon as mangled part is ready.
-  S.Diag(Attr.getRange().getBegin(), diag::warn_attribute_ignored)
-        << Attr.getName();
 }
 
 static void handleARMInterruptAttr(Sema &S, Decl *D,
@@ -4976,6 +4984,24 @@ static void handleX86ForceAlignArgPointerAttr(Sema &S, Decl *D,
   D->addAttr(::new (S.Context)
               X86ForceAlignArgPointerAttr(Attr.getRange(), S.Context,
                                         Attr.getAttributeSpellingListIndex()));
+}
+
+static void handleLayoutVersion(Sema &S, Decl *D, const AttributeList &Attr) {
+  uint32_t Version;
+  Expr *VersionExpr = static_cast<Expr *>(Attr.getArgAsExpr(0));
+  if (!checkUInt32Argument(S, Attr, Attr.getArgAsExpr(0), Version))
+    return;
+
+  // TODO: Investigate what happens with the next major version of MSVC.
+  if (Version != LangOptions::MSVC2015) {
+    S.Diag(Attr.getLoc(), diag::err_attribute_argument_out_of_bounds)
+        << Attr.getName() << Version << VersionExpr->getSourceRange();
+    return;
+  }
+
+  D->addAttr(::new (S.Context)
+                 LayoutVersionAttr(Attr.getRange(), S.Context, Version,
+                                   Attr.getAttributeSpellingListIndex()));
 }
 
 DLLImportAttr *Sema::mergeDLLImportAttr(Decl *D, SourceRange Range,
@@ -5844,6 +5870,12 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
     break;
 
   // Microsoft attributes:
+  case AttributeList::AT_EmptyBases:
+    handleSimpleAttribute<EmptyBasesAttr>(S, D, Attr);
+    break;
+  case AttributeList::AT_LayoutVersion:
+    handleLayoutVersion(S, D, Attr);
+    break;
   case AttributeList::AT_MSNoVTable:
     handleSimpleAttribute<MSNoVTableAttr>(S, D, Attr);
     break;
@@ -5862,6 +5894,7 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
   case AttributeList::AT_Thread:
     handleDeclspecThreadAttr(S, D, Attr);
     break;
+
   case AttributeList::AT_AbiTag:
     handleAbiTagAttr(S, D, Attr);
     break;
@@ -5970,6 +6003,10 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
     break;
   case AttributeList::AT_TypeTagForDatatype:
     handleTypeTagForDatatypeAttr(S, D, Attr);
+    break;
+
+  case AttributeList::AT_RenderScriptKernel:
+    handleSimpleAttribute<RenderScriptKernelAttr>(S, D, Attr);
     break;
   }
 }
