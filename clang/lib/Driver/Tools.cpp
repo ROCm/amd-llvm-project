@@ -4669,6 +4669,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   Args.AddAllArgs(CmdArgs, options::OPT_finstrument_functions);
 
+#if 0
   if (Args.hasArg(options::OPT_fxray_instrument,
                   options::OPT_fnoxray_instrument, false)) {
     CmdArgs.push_back("-fxray-instrument");
@@ -4689,6 +4690,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back(A->getValue());
     }
   }
+#endif
 
   addPGOAndCoverageFlags(C, D, Output, Args, CmdArgs);
 
