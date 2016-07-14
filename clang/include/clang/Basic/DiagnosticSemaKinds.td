@@ -7503,9 +7503,6 @@ def warn_empty_switch_body : Warning<
 def note_empty_body_on_separate_line : Note<
   "put the semicolon on a separate line to silence this warning">;
 
-def err_init_stmt_not_supported : Error<
-  "C++1z init-statement not yet supported">;
-
 def err_va_start_used_in_non_variadic_function : Error<
   "'va_start' used in function with fixed args">;
 def err_va_start_used_in_wrong_abi_function : Error<
@@ -8412,6 +8409,10 @@ def err_omp_expected_int_param : Error<
   "expected a reference to an integer-typed parameter">;
 def err_omp_at_least_one_motion_clause_required : Error<
   "expected at least one 'to' clause or 'from' clause specified to '#pragma omp target update'">;
+def  err_omp_usedeviceptr_not_a_pointer : Error<
+  "expected pointer or reference to pointer in 'use_device_ptr' clause">;
+def err_omp_argument_type_isdeviceptr : Error <
+  "expected pointer, array, reference to pointer, or reference to array in 'is_device_ptr clause'">;
 def warn_omp_nesting_simd : Warning<
   "OpenMP only allows an ordered construct with the simd clause nested in a simd construct">,
   InGroup<SourceUsesOpenMP>;
