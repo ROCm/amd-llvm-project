@@ -1624,8 +1624,9 @@ ExprResult Sema::BuildLambdaExpr(SourceLocation StartLoc, SourceLocation EndLoc,
       for (unsigned K = 0, N = LSI->Captures.size(); K != N; ++K) {
         LambdaScopeInfo::Capture From = LSI->Captures[K];
         assert(!From.isBlockCapture() && "Cannot capture __block variables");
-        if(From.getCaptureType()->isFunctionPointerType()) {
-          if( From.getVariable() &&  From.getVariable()->hasAttr<CXXAMPRestrictAMPAttr>())
+        QualType CaptureType = From.getCaptureType();
+        if(!CaptureType.isNull() && CaptureType->isFunctionPointerType()) {
+          if( From.getVariable() && From.getVariable()->hasAttr<CXXAMPRestrictAMPAttr>())
             FoundVec.push_back(std::make_pair(From, (unsigned)diag::err_amp_captured_variable_type));
         }
       }
