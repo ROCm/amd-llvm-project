@@ -462,6 +462,21 @@ void Driver::CreateOffloadingDeviceToolChains(Compilation &C,
   }
 
   //
+  // HCC
+  //
+  // Initialize HCC device TC if we have HCC inputs.
+  if (llvm::any_of(Inputs, [](const std::pair<types::ID, const Arg *> &I) {
+        return I.first == types::TY_CXX_AMP ||
+               I.first == types::TY_CXX_AMP_CPU ||
+               I.first == types::TY_HC_HOST ||
+               I.first == types::TY_HC_KERNEL;
+      })) {
+    const ToolChain &TC = getToolChain(
+        C.getInputArgs(), llvm::Triple("amdgcn--amdhsa-hcc"));
+    C.addOffloadDeviceToolChain(&TC, Action::OFK_HCC);
+  }
+
+  //
   // TODO: Add support for other offloading programming models here.
   //
 
@@ -597,17 +612,6 @@ Compilation *Driver::BuildCompilation(ArrayRef<const char *> ArgList) {
 
   // Populate the tool chains for the offloading devices, if any.
   CreateOffloadingDeviceToolChains(*C, Inputs);
-
-  // Initialize HCC device TC if we have HCC inputs.
-  if (llvm::any_of(Inputs, [](const std::pair<types::ID, const Arg *> &I) {
-        return I.first == types::TY_CXX_AMP ||
-               I.first == types::TY_CXX_AMP_CPU ||
-               I.first == types::TY_HC_HOST ||
-               I.first == types::TY_HC_KERNEL;
-      })) {
-    C->setHCCDeviceToolChain(
-        &getToolChain(C->getArgs(), llvm::Triple("amdgcn--amdhsa-hcc")));
-  }
 
   // Construct the list of abstract actions to perform for this compilation. On
   // MachO targets this uses the driver-driver and universal actions.
@@ -1931,7 +1935,7 @@ void Driver::BuildJobs(Compilation &C) const {
     // UPGRADE_TBD: FIXME This is hack. Need to find a cleaner way
     // The line is added so clang -emit-llvm would pick correct toolchain for HCC inputs
     if (JA && IsCXXAMPBackendJobAction(JA)) {
-      BuildJobsForAction(C, A, C.getHCCDeviceToolChain(),
+      BuildJobsForAction(C, A, C.getSingleOffloadToolChain<Action::OFK_HCC>(),
                        /*BoundArch*/ nullptr,
                        /*AtTopLevel*/ true,
                        /*MultipleArchs*/ ArchNames.size() > 1,
@@ -2107,7 +2111,7 @@ static const Tool *selectToolForJob(Compilation &C, bool SaveTemps,
   if (IsHCHostAssembleJobAction(JA) || IsHCKernelAssembleJobAction(JA) ||
       IsCXXAMPAssembleJobAction(JA) || IsCXXAMPCPUAssembleJobAction(JA) ||
       IsCXXAMPBackendJobAction(JA) || IsCXXAMPCPUBackendJobAction(JA)) {
-    const ToolChain *DeviceTC = C.getHCCDeviceToolChain();
+    const ToolChain *DeviceTC = C.getSingleOffloadToolChain<Action::OFK_HCC>();
     assert(DeviceTC && "HCC Device ToolChain is not set.");
     ToolForJob = DeviceTC->SelectTool(*JA);
   } else if (TC->useIntegratedAs() && !SaveTemps &&
@@ -2306,7 +2310,7 @@ InputInfo Driver::BuildJobsForActionNoCache(
     if (IsCXXAMPBackendJobAction(JA) || IsCXXAMPCPUBackendJobAction(JA) ||
         IsHCKernelAssembleJobAction(JA) ||
         IsCXXAMPAssembleJobAction(JA) || IsCXXAMPCPUAssembleJobAction(JA)) {
-      InputInfos.push_back(BuildJobsForAction(C, Input, C.getHCCDeviceToolChain(), BoundArch,
+      InputInfos.push_back(BuildJobsForAction(C, Input, C.getSingleOffloadToolChain<Action::OFK_HCC>(), BoundArch,
                                               SubJobAtTopLevel, MultipleArchs,
                                               LinkingOutput, CachedResults));
     } else {

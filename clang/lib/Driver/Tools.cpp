@@ -3879,8 +3879,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   // Make sure host triple is specified for HCC kernel compilation path
   if (IsHCCKernelPath) {
-    if (&getToolChain() == C.getHCCDeviceToolChain())
-      AuxToolChain = C.getHCCHostToolChain();
+    if (&getToolChain() == C.getSingleOffloadToolChain<Action::OFK_HCC>())
+      AuxToolChain = C.getOffloadingHostToolChain();
 
     if (AuxToolChain != nullptr) {
       CmdArgs.push_back("-aux-triple");
