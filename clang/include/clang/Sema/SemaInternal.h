@@ -60,6 +60,18 @@ inline bool DeclAttrsMatchCUDAMode(const LangOptions &LangOpts, Decl *D) {
   return isDeviceSideDecl == LangOpts.CUDAIsDevice;
 }
 
+// Helper function to check whether D's attributes match current HCC mode.
+// Decls with mismatched attributes and related diagnostics may have to be
+// ignored during this HCC compilation pass.
+inline bool DeclAttrsMatchHCCMode(const LangOptions &LangOpts, Decl *D) {
+  if (!LangOpts.CPlusPlusAMP || !D)
+    return true;
+  bool isDeviceSideDecl = D->hasAttr<CXXAMPRestrictAMPAttr>();
+                          D->hasAttr<HCGridLaunchAttr>() ||
+                          D->hasAttr<HC_HCAttr>();
+  return isDeviceSideDecl == LangOpts.DevicePath;
+}
+
 // Directly mark a variable odr-used. Given a choice, prefer to use 
 // MarkVariableReferenced since it does additional checks and then 
 // calls MarkVarDeclODRUsed.

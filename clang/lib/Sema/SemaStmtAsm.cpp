@@ -164,6 +164,15 @@ StmtResult Sema::ActOnGCCAsmStmt(SourceLocation AsmLoc, bool IsSimple,
     return NS;
   }
 
+  // If we're compiling HCC file and function attributes indicate that it's not
+  // for this compilation side, skip all the checks.
+  if (!DeclAttrsMatchHCCMode(getLangOpts(), getCurFunctionDecl())) {
+    GCCAsmStmt *NS = new (Context) GCCAsmStmt(
+        Context, AsmLoc, IsSimple, IsVolatile, NumOutputs, NumInputs, Names,
+        Constraints, Exprs.data(), AsmString, NumClobbers, Clobbers, RParenLoc);
+    return NS;
+  }
+
   for (unsigned i = 0; i != NumOutputs; i++) {
     StringLiteral *Literal = Constraints[i];
     assert(Literal->isAscii());
@@ -254,13 +263,9 @@ StmtResult Sema::ActOnGCCAsmStmt(SourceLocation AsmLoc, bool IsSimple,
     TargetInfo::ConstraintInfo Info(Literal->getString(), InputName);
     if (!Context.getTargetInfo().validateInputConstraint(OutputConstraintInfos,
                                                          Info)) {
-      // try check with use AuxTargetInfo if it's available
-      const TargetInfo *auxTargetInfo = Context.getAuxTargetInfo();
-      if (auxTargetInfo &&
-          !auxTargetInfo->validateInputConstraint(OutputConstraintInfos, Info))
-        return StmtError(Diag(Literal->getLocStart(),
-                              diag::err_asm_invalid_input_constraint)
-                         << Info.getConstraintStr());
+      return StmtError(Diag(Literal->getLocStart(),
+                            diag::err_asm_invalid_input_constraint)
+                       << Info.getConstraintStr());
     }
 
     ExprResult ER = CheckPlaceholderExpr(Exprs[i]);
