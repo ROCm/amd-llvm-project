@@ -2002,7 +2002,7 @@ void Driver::BuildJobs(Compilation &C) const {
                        /*AtTopLevel*/ true,
                        /*MultipleArchs*/ ArchNames.size() > 1,
                        /*LinkingOutput*/ LinkingOutput, CachedResults,
-                       /*BuildForOffloadDevice*/ true);
+                       /*BuildForOffloadDevice*/ false);
     } else {
       BuildJobsForAction(C, A, &C.getDefaultToolChain(),
                        /*BoundArch*/ nullptr,
@@ -2095,6 +2095,29 @@ bool IsHCHostBackendJobAction(const JobAction* A) {
 
 bool IsCXXAMPCPUBackendJobAction(const JobAction* A) {
   return IsBackendJobActionWithInputType(A, types::TY_PP_CXX_AMP_CPU);
+}
+
+static bool IsCompileJobActionWithInputType(const JobAction* A, types::ID typesID) {
+  bool ret = false;
+  if (isa<CompileJobAction>(A)) {
+    const ActionList& al = dyn_cast<CompileJobAction>(A)->getInputs();
+    if ((al.size() == 1) && (al[0]->getType() == typesID)) {
+      ret = true;
+    }
+  }
+  return ret;
+}
+
+bool IsCXXAMPCompileJobAction(const JobAction* A) {
+  return IsCompileJobActionWithInputType(A, types::TY_PP_CXX_AMP);
+}
+
+bool IsHCHostCompileJobAction(const JobAction* A) {
+  return IsCompileJobActionWithInputType(A, types::TY_PP_HC_HOST);
+}
+
+bool IsCXXAMPCPUCompileJobAction(const JobAction* A) {
+  return IsCompileJobActionWithInputType(A, types::TY_PP_CXX_AMP_CPU);
 }
 
 static bool IsAssembleJobActionWithInputType(const JobAction* A, types::ID typesID) {
@@ -2202,6 +2225,8 @@ static const Tool *selectToolForJob(Compilation &C, bool SaveTemps,
     ToolForJob = DeviceTC->SelectTool(*JA);
   } 
 
+  if (!ToolForJob) {
+
   // Look through offload actions between assembler and backend actions.
   Action *BackendJA = (isa<AssembleJobAction>(JA) && Inputs->size() == 1)
                           ? *Inputs->begin()
@@ -2274,6 +2299,8 @@ static const Tool *selectToolForJob(Compilation &C, bool SaveTemps,
         CollapsedOffloadAction.push_back(CompileOA);
     }
   }
+
+  } // if (!ToolForJob)
 
   // Otherwise use the tool for the current job.
   if (!ToolForJob)

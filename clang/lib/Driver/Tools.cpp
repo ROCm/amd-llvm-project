@@ -3834,6 +3834,10 @@ extern bool IsCXXAMPBackendJobAction(const JobAction* A);
 extern bool IsHCHostBackendJobAction(const JobAction* A);
 extern bool IsCXXAMPCPUBackendJobAction(const JobAction* A);
 
+extern bool IsCXXAMPCompileJobAction(const JobAction* A);
+extern bool IsHCHostCompileJobAction(const JobAction* A);
+extern bool IsCXXAMPCPUCompileJobAction(const JobAction* A);
+
 void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                          const InputInfo &Output, const InputInfoList &Inputs,
                          const ArgList &Args, const char *LinkingOutput) const {
@@ -3866,7 +3870,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     D.Diag(diag::err_drv_clang_unsupported) << "C++ for IAMCU";
 
   // Set flag
-  bool IsHCCKernelPath = IsCXXAMPBackendJobAction(&JA) || IsCXXAMPCPUBackendJobAction(&JA);
+  bool IsHCCKernelPath = IsCXXAMPBackendJobAction(&JA) || IsCXXAMPCPUBackendJobAction(&JA) || IsCXXAMPCompileJobAction(&JA) || IsCXXAMPCPUCompileJobAction(&JA);
 
   // Invoke ourselves in -cc1 mode.
   //
@@ -3883,7 +3887,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   // C++ AMP-specific
-  if (IsCXXAMPBackendJobAction(&JA)) {
+  if (IsCXXAMPCompileJobAction(&JA) || IsCXXAMPBackendJobAction(&JA)) {
     // path to compile kernel codes on GPU
     CmdArgs.push_back("-D__GPU__=1");
     CmdArgs.push_back("-D__KALMAR_ACCELERATOR__=1");
@@ -3893,7 +3897,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-fno-common");
     //CmdArgs.push_back("-m32"); // added below using -triple
     CmdArgs.push_back("-O2");
-  } else if(IsCXXAMPCPUBackendJobAction(&JA)){
+  } else if(IsCXXAMPCPUCompileJobAction(&JA) || IsCXXAMPCPUBackendJobAction(&JA)){
     // path to compile kernel codes on CPU
     CmdArgs.push_back("-famp-is-device");
     CmdArgs.push_back("-famp-cpu");
@@ -3936,14 +3940,12 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   if (IsHCCKernelPath) {
     // We have to pass the triple of the host if compiling for a HCC device
     std::string NormalizedTriple;
-    if (&getToolChain() == C.getSingleOffloadToolChain<Action::OFK_HCC>()) {
-      NormalizedTriple = C.getSingleOffloadToolChain<Action::OFK_Host>()
-                             ->getTriple()
-                             .normalize();
+    NormalizedTriple = C.getSingleOffloadToolChain<Action::OFK_Host>()
+                         ->getTriple()
+                         .normalize();
 
-      CmdArgs.push_back("-aux-triple");
-      CmdArgs.push_back(Args.MakeArgString(NormalizedTriple));
-    }
+    CmdArgs.push_back("-aux-triple");
+    CmdArgs.push_back(Args.MakeArgString(NormalizedTriple));
   }
 
   if (Triple.isOSWindows() && (Triple.getArch() == llvm::Triple::arm ||
