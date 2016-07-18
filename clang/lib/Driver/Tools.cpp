@@ -311,6 +311,13 @@ static void addExtraOffloadCXXStdlibIncludeArgs(Compilation &C,
     C.getSingleOffloadToolChain<Action::OFK_Host>()
         ->AddClangCXXStdlibIncludeArgs(Args, CmdArgs);
 
+  if (JA.isHostOffloading(Action::OFK_HCC))
+    C.getSingleOffloadToolChain<Action::OFK_HCC>()
+        ->AddClangCXXStdlibIncludeArgs(Args, CmdArgs);
+  else if (JA.isDeviceOffloading(Action::OFK_HCC))
+    C.getSingleOffloadToolChain<Action::OFK_Host>()
+        ->AddClangCXXStdlibIncludeArgs(Args, CmdArgs);
+
   // TODO: Add support for other programming models here.
 }
 
@@ -3927,12 +3934,15 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   // Make sure host triple is specified for HCC kernel compilation path
   if (IsHCCKernelPath) {
-    if (&getToolChain() == C.getSingleOffloadToolChain<Action::OFK_HCC>())
-      AuxToolChain = C.getOffloadingHostToolChain();
+    // We have to pass the triple of the host if compiling for a HCC device
+    std::string NormalizedTriple;
+    if (&getToolChain() == C.getSingleOffloadToolChain<Action::OFK_HCC>()) {
+      NormalizedTriple = C.getSingleOffloadToolChain<Action::OFK_Host>()
+                             ->getTriple()
+                             .normalize();
 
-    if (AuxToolChain != nullptr) {
       CmdArgs.push_back("-aux-triple");
-      CmdArgs.push_back(Args.MakeArgString(AuxToolChain->getTriple().str()));
+      CmdArgs.push_back(Args.MakeArgString(NormalizedTriple));
     }
   }
 

@@ -2010,6 +2010,7 @@ void Driver::BuildJobs(Compilation &C) const {
                        /*MultipleArchs*/ ArchNames.size() > 1,
                        /*LinkingOutput*/ LinkingOutput, CachedResults,
                        /*BuildForOffloadDevice*/ false);
+    }
   }
 
   // If the user passed -Qunused-arguments or there were errors, don't warn
