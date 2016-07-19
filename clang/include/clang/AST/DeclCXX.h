@@ -2973,7 +2973,9 @@ class ConstructorUsingShadowDecl final : public UsingShadowDecl {
     }
   }
   ConstructorUsingShadowDecl(ASTContext &C, EmptyShell Empty)
-      : UsingShadowDecl(ConstructorUsingShadow, C, Empty) {}
+      : UsingShadowDecl(ConstructorUsingShadow, C, Empty),
+        NominatedBaseClassShadowDecl(), ConstructedBaseClassShadowDecl(),
+        IsVirtual(false) {}
 
 public:
   static ConstructorUsingShadowDecl *Create(ASTContext &C, DeclContext *DC,
