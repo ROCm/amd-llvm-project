@@ -53,6 +53,7 @@
 #include "polly/Options.h"
 #include "polly/ScopInfo.h"
 #include "polly/Support/GICHelper.h"
+#include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/Support/Debug.h"
 #include "isl/aff.h"
 #include "isl/band.h"
@@ -119,6 +120,20 @@ static cl::opt<bool> FirstLevelTiling("polly-tiling",
                                       cl::init(true), cl::ZeroOrMore,
                                       cl::cat(PollyCategory));
 
+static cl::opt<int> LatencyVectorFma(
+    "polly-target-latency-vector-fma",
+    cl::desc("The minimal number of cycles between issuing two "
+             "dependent consecutive vector fused multiply-add "
+             "instructions."),
+    cl::Hidden, cl::init(8), cl::ZeroOrMore, cl::cat(PollyCategory));
+
+static cl::opt<int> ThrougputVectorFma(
+    "polly-target-througput-vector-fma",
+    cl::desc("A throughput of the processor floating-point arithmetic units "
+             "expressed in the number of vector fused multiply-add "
+             "instructions per clock cycle."),
+    cl::Hidden, cl::init(1), cl::ZeroOrMore, cl::cat(PollyCategory));
+
 static cl::opt<int> FirstLevelDefaultTileSize(
     "polly-default-tile-size",
     cl::desc("The default tile size (if not enough were provided by"
@@ -166,6 +181,11 @@ static cl::list<int>
                       cl::Hidden, cl::ZeroOrMore, cl::CommaSeparated,
                       cl::cat(PollyCategory));
 
+static cl::opt<bool>
+    PMBasedOpts("polly-pattern-matching-based-opts",
+                cl::desc("Perform optimizations based on pattern matching"),
+                cl::init(false), cl::ZeroOrMore, cl::cat(PollyCategory));
+
 /// @brief Create an isl_union_set, which describes the isolate option based
 ///        on IsoalteDomain.
 ///
@@ -178,7 +198,7 @@ getIsolateOptions(__isl_take isl_set *IsolateDomain) {
   IsolateRelation = isl_map_move_dims(IsolateRelation, isl_dim_out, 0,
                                       isl_dim_in, Dims - 1, 1);
   auto *IsolateOption = isl_map_wrap(IsolateRelation);
-  auto *Id = isl_id_alloc(isl_set_get_ctx(IsolateOption), "isolate", NULL);
+  auto *Id = isl_id_alloc(isl_set_get_ctx(IsolateOption), "isolate", nullptr);
   return isl_union_set_from_set(isl_set_set_tuple_id(IsolateOption, Id));
 }
 
@@ -191,7 +211,7 @@ getIsolateOptions(__isl_take isl_set *IsolateDomain) {
 static __isl_give isl_union_set *getAtomicOptions(__isl_take isl_ctx *Ctx) {
   auto *Space = isl_space_set_alloc(Ctx, 0, 1);
   auto *AtomicOption = isl_set_universe(Space);
-  auto *Id = isl_id_alloc(Ctx, "atomic", NULL);
+  auto *Id = isl_id_alloc(Ctx, "atomic", nullptr);
   return isl_union_set_from_set(isl_set_set_tuple_id(AtomicOption, Id));
 }
 
@@ -227,7 +247,7 @@ static __isl_give isl_set *addExtentConstraints(__isl_take isl_set *Set,
 /// 2. Extend it to a set, which has exactly VectorWidth iterations for
 ///    any prefix from the set that was built on the previous step.
 /// 3. Subtract loop domain from it, project out the vector loop dimension and
-///    get a set of prefixes, which don’t have exactly VectorWidth iterations.
+///    get a set of prefixes, which don't have exactly VectorWidth iterations.
 /// 4. Subtract it from all prefixes of the vector loop and get the desired
 ///    set.
 ///
@@ -330,6 +350,17 @@ ScheduleTreeOptimizer::tileNode(__isl_take isl_schedule_node *Node,
   return Node;
 }
 
+__isl_give isl_schedule_node *
+ScheduleTreeOptimizer::applyRegisterTiling(__isl_take isl_schedule_node *Node,
+                                           llvm::ArrayRef<int> TileSizes,
+                                           int DefaultTileSize) {
+  auto *Ctx = isl_schedule_node_get_ctx(Node);
+  Node = tileNode(Node, "Register tiling", TileSizes, DefaultTileSize);
+  Node = isl_schedule_node_band_set_ast_build_options(
+      Node, isl_union_set_read_from_str(Ctx, "{unroll[x]}"));
+  return Node;
+}
+
 bool ScheduleTreeOptimizer::isTileableBandNode(
     __isl_keep isl_schedule_node *Node) {
   if (isl_schedule_node_get_type(Node) != isl_schedule_node_band)
@@ -359,11 +390,8 @@ bool ScheduleTreeOptimizer::isTileableBandNode(
 }
 
 __isl_give isl_schedule_node *
-ScheduleTreeOptimizer::optimizeBand(__isl_take isl_schedule_node *Node,
-                                    void *User) {
-  if (!isTileableBandNode(Node))
-    return Node;
-
+ScheduleTreeOptimizer::standardBandOpts(__isl_take isl_schedule_node *Node,
+                                        void *User) {
   if (FirstLevelTiling)
     Node = tileNode(Node, "1st level tiling", FirstLevelTileSizes,
                     FirstLevelDefaultTileSize);
@@ -372,13 +400,9 @@ ScheduleTreeOptimizer::optimizeBand(__isl_take isl_schedule_node *Node,
     Node = tileNode(Node, "2nd level tiling", SecondLevelTileSizes,
                     SecondLevelDefaultTileSize);
 
-  if (RegisterTiling) {
-    auto *Ctx = isl_schedule_node_get_ctx(Node);
-    Node = tileNode(Node, "Register tiling", RegisterTileSizes,
-                    RegisterDefaultTileSize);
-    Node = isl_schedule_node_band_set_ast_build_options(
-        Node, isl_union_set_read_from_str(Ctx, "{unroll[x]}"));
-  }
+  if (RegisterTiling)
+    Node =
+        applyRegisterTiling(Node, RegisterTileSizes, RegisterDefaultTileSize);
 
   if (PollyVectorizerChoice == VECTORIZER_NONE)
     return Node;
@@ -396,10 +420,136 @@ ScheduleTreeOptimizer::optimizeBand(__isl_take isl_schedule_node *Node,
   return Node;
 }
 
+/// @brief Check whether output dimensions of the map rely on the specified
+///        input dimension.
+///
+/// @param IslMap The isl map to be considered.
+/// @param DimNum The number of an input dimension to be checked.
+static bool isInputDimUsed(__isl_take isl_map *IslMap, unsigned DimNum) {
+  auto *CheckedAccessRelation =
+      isl_map_project_out(isl_map_copy(IslMap), isl_dim_in, DimNum, 1);
+  CheckedAccessRelation =
+      isl_map_insert_dims(CheckedAccessRelation, isl_dim_in, DimNum, 1);
+  auto *InputDimsId = isl_map_get_tuple_id(IslMap, isl_dim_in);
+  CheckedAccessRelation =
+      isl_map_set_tuple_id(CheckedAccessRelation, isl_dim_in, InputDimsId);
+  InputDimsId = isl_map_get_tuple_id(IslMap, isl_dim_out);
+  CheckedAccessRelation =
+      isl_map_set_tuple_id(CheckedAccessRelation, isl_dim_out, InputDimsId);
+  auto res = !isl_map_is_equal(CheckedAccessRelation, IslMap);
+  isl_map_free(CheckedAccessRelation);
+  isl_map_free(IslMap);
+  return res;
+}
+
+/// @brief Check if the SCoP statement could probably be optimized with
+///        analytical modeling.
+///
+/// containsMatrMult tries to determine whether the following conditions
+/// are true:
+/// 1. all memory accesses of the statement will have stride 0 or 1,
+///    if we interchange loops (switch the variable used in the inner
+///    loop to the outer loop).
+/// 2. all memory accesses of the statement except from the last one, are
+///    read memory access and the last one is write memory access.
+/// 3. all subscripts of the last memory access of the statement don't contain
+///    the variable used in the inner loop.
+///
+/// @param PartialSchedule The PartialSchedule that contains a SCoP statement
+///        to check.
+static bool containsMatrMult(__isl_keep isl_map *PartialSchedule) {
+  auto InputDimsId = isl_map_get_tuple_id(PartialSchedule, isl_dim_in);
+  auto *ScpStmt = static_cast<ScopStmt *>(isl_id_get_user(InputDimsId));
+  isl_id_free(InputDimsId);
+  if (ScpStmt->size() <= 1)
+    return false;
+  auto MemA = ScpStmt->begin();
+  for (unsigned i = 0; i < ScpStmt->size() - 2 && MemA != ScpStmt->end();
+       i++, MemA++)
+    if (!(*MemA)->isRead() ||
+        ((*MemA)->isArrayKind() &&
+         !((*MemA)->isStrideOne(isl_map_copy(PartialSchedule)) ||
+           (*MemA)->isStrideZero(isl_map_copy(PartialSchedule)))))
+      return false;
+  MemA++;
+  if (!(*MemA)->isWrite() || !(*MemA)->isArrayKind() ||
+      !((*MemA)->isStrideOne(isl_map_copy(PartialSchedule)) ||
+        (*MemA)->isStrideZero(isl_map_copy(PartialSchedule))))
+    return false;
+  auto DimNum = isl_map_dim(PartialSchedule, isl_dim_in);
+  return !isInputDimUsed((*MemA)->getAccessRelation(), DimNum - 1);
+}
+
+/// @brief Circular shift of output dimensions of the integer map.
+///
+/// @param IslMap The isl map to be modified.
+static __isl_give isl_map *circularShiftOutputDims(__isl_take isl_map *IslMap) {
+  auto DimNum = isl_map_dim(IslMap, isl_dim_out);
+  if (DimNum == 0)
+    return IslMap;
+  auto InputDimsId = isl_map_get_tuple_id(IslMap, isl_dim_in);
+  IslMap = isl_map_move_dims(IslMap, isl_dim_in, 0, isl_dim_out, DimNum - 1, 1);
+  IslMap = isl_map_move_dims(IslMap, isl_dim_out, 0, isl_dim_in, 0, 1);
+  return isl_map_set_tuple_id(IslMap, isl_dim_in, InputDimsId);
+}
+
+__isl_give isl_schedule_node *ScheduleTreeOptimizer::optimizeMatMulPattern(
+    __isl_take isl_schedule_node *Node, const llvm::TargetTransformInfo *TTI) {
+  assert(TTI && "The target transform info should be provided.");
+  // Get a micro-kernel.
+  // Nvec - Number of double-precision floating-point numbers that can be hold
+  // by a vector register. Use 2 by default.
+  auto Nvec = TTI->getRegisterBitWidth(true) / 64;
+  if (Nvec == 0)
+    Nvec = 2;
+  int Nr =
+      ceil(sqrt(Nvec * LatencyVectorFma * ThrougputVectorFma) / Nvec) * Nvec;
+  int Mr = ceil(Nvec * LatencyVectorFma * ThrougputVectorFma / Nr);
+  std::vector<int> MicroKernelParams{Mr, Nr};
+  Node = applyRegisterTiling(Node, MicroKernelParams, 1);
+  return Node;
+}
+
+bool ScheduleTreeOptimizer::isMatrMultPattern(
+    __isl_keep isl_schedule_node *Node) {
+  auto *PartialSchedule =
+      isl_schedule_node_band_get_partial_schedule_union_map(Node);
+  if (isl_schedule_node_band_n_member(Node) != 3 ||
+      isl_union_map_n_map(PartialSchedule) != 1) {
+    isl_union_map_free(PartialSchedule);
+    return false;
+  }
+  auto *NewPartialSchedule = isl_map_from_union_map(PartialSchedule);
+  NewPartialSchedule = circularShiftOutputDims(NewPartialSchedule);
+  if (containsMatrMult(NewPartialSchedule)) {
+    isl_map_free(NewPartialSchedule);
+    return true;
+  }
+  isl_map_free(NewPartialSchedule);
+  return false;
+}
+
+__isl_give isl_schedule_node *
+ScheduleTreeOptimizer::optimizeBand(__isl_take isl_schedule_node *Node,
+                                    void *User) {
+  if (!isTileableBandNode(Node))
+    return Node;
+
+  if (PMBasedOpts && User && isMatrMultPattern(Node)) {
+    DEBUG(dbgs() << "The matrix multiplication pattern was detected\n");
+    const llvm::TargetTransformInfo *TTI;
+    TTI = static_cast<const llvm::TargetTransformInfo *>(User);
+    Node = optimizeMatMulPattern(Node, TTI);
+  }
+
+  return standardBandOpts(Node, User);
+}
+
 __isl_give isl_schedule *
-ScheduleTreeOptimizer::optimizeSchedule(__isl_take isl_schedule *Schedule) {
+ScheduleTreeOptimizer::optimizeSchedule(__isl_take isl_schedule *Schedule,
+                                        const llvm::TargetTransformInfo *TTI) {
   isl_schedule_node *Root = isl_schedule_get_root(Schedule);
-  Root = optimizeScheduleNode(Root);
+  Root = optimizeScheduleNode(Root, TTI);
   isl_schedule_free(Schedule);
   auto S = isl_schedule_node_get_schedule(Root);
   isl_schedule_node_free(Root);
@@ -407,8 +557,9 @@ ScheduleTreeOptimizer::optimizeSchedule(__isl_take isl_schedule *Schedule) {
 }
 
 __isl_give isl_schedule_node *ScheduleTreeOptimizer::optimizeScheduleNode(
-    __isl_take isl_schedule_node *Node) {
-  Node = isl_schedule_node_map_descendant_bottom_up(Node, optimizeBand, NULL);
+    __isl_take isl_schedule_node *Node, const llvm::TargetTransformInfo *TTI) {
+  Node = isl_schedule_node_map_descendant_bottom_up(
+      Node, optimizeBand, const_cast<void *>(static_cast<const void *>(TTI)));
   return Node;
 }
 
@@ -455,7 +606,7 @@ public:
 private:
   isl_schedule *LastSchedule;
 };
-}
+} // namespace
 
 char IslScheduleOptimizer::ID = 0;
 
@@ -561,15 +712,17 @@ bool IslScheduleOptimizer::runOnScop(Scop &S) {
     IslOuterCoincidence = 0;
   }
 
-  isl_options_set_schedule_outer_coincidence(S.getIslCtx(),
-                                             IslOuterCoincidence);
-  isl_options_set_schedule_serialize_sccs(S.getIslCtx(), IslSerializeSCCs);
-  isl_options_set_schedule_maximize_band_depth(S.getIslCtx(), IslMaximizeBands);
-  isl_options_set_schedule_max_constant_term(S.getIslCtx(), MaxConstantTerm);
-  isl_options_set_schedule_max_coefficient(S.getIslCtx(), MaxCoefficient);
-  isl_options_set_tile_scale_tile_loops(S.getIslCtx(), 0);
+  isl_ctx *Ctx = S.getIslCtx();
 
-  isl_options_set_on_error(S.getIslCtx(), ISL_ON_ERROR_CONTINUE);
+  isl_options_set_schedule_outer_coincidence(Ctx, IslOuterCoincidence);
+  isl_options_set_schedule_serialize_sccs(Ctx, IslSerializeSCCs);
+  isl_options_set_schedule_maximize_band_depth(Ctx, IslMaximizeBands);
+  isl_options_set_schedule_max_constant_term(Ctx, MaxConstantTerm);
+  isl_options_set_schedule_max_coefficient(Ctx, MaxCoefficient);
+  isl_options_set_tile_scale_tile_loops(Ctx, 0);
+
+  auto OnErrorStatus = isl_options_get_on_error(Ctx);
+  isl_options_set_on_error(Ctx, ISL_ON_ERROR_CONTINUE);
 
   isl_schedule_constraints *ScheduleConstraints;
   ScheduleConstraints = isl_schedule_constraints_on_domain(Domain);
@@ -581,7 +734,7 @@ bool IslScheduleOptimizer::runOnScop(Scop &S) {
       isl_schedule_constraints_set_coincidence(ScheduleConstraints, Validity);
   isl_schedule *Schedule;
   Schedule = isl_schedule_constraints_compute_schedule(ScheduleConstraints);
-  isl_options_set_on_error(S.getIslCtx(), ISL_ON_ERROR_ABORT);
+  isl_options_set_on_error(Ctx, OnErrorStatus);
 
   // In cases the scheduler is not able to optimize the code, we just do not
   // touch the schedule.
@@ -589,14 +742,17 @@ bool IslScheduleOptimizer::runOnScop(Scop &S) {
     return false;
 
   DEBUG({
-    auto *P = isl_printer_to_str(S.getIslCtx());
+    auto *P = isl_printer_to_str(Ctx);
     P = isl_printer_set_yaml_style(P, ISL_YAML_STYLE_BLOCK);
     P = isl_printer_print_schedule(P, Schedule);
     dbgs() << "NewScheduleTree: \n" << isl_printer_get_str(P) << "\n";
     isl_printer_free(P);
   });
 
-  isl_schedule *NewSchedule = ScheduleTreeOptimizer::optimizeSchedule(Schedule);
+  Function &F = S.getFunction();
+  auto *TTI = &getAnalysis<TargetTransformInfoWrapperPass>().getTTI(F);
+  isl_schedule *NewSchedule =
+      ScheduleTreeOptimizer::optimizeSchedule(Schedule, TTI);
   isl_union_map *NewScheduleMap = isl_schedule_get_map(NewSchedule);
 
   if (!ScheduleTreeOptimizer::isProfitableSchedule(S, NewScheduleMap)) {
@@ -634,6 +790,7 @@ void IslScheduleOptimizer::printScop(raw_ostream &OS, Scop &) const {
 void IslScheduleOptimizer::getAnalysisUsage(AnalysisUsage &AU) const {
   ScopPass::getAnalysisUsage(AU);
   AU.addRequired<DependenceInfo>();
+  AU.addRequired<TargetTransformInfoWrapperPass>();
 }
 
 Pass *polly::createIslScheduleOptimizerPass() {
@@ -643,6 +800,7 @@ Pass *polly::createIslScheduleOptimizerPass() {
 INITIALIZE_PASS_BEGIN(IslScheduleOptimizer, "polly-opt-isl",
                       "Polly - Optimize schedule of SCoP", false, false);
 INITIALIZE_PASS_DEPENDENCY(DependenceInfo);
-INITIALIZE_PASS_DEPENDENCY(ScopInfo);
+INITIALIZE_PASS_DEPENDENCY(ScopInfoRegionPass);
+INITIALIZE_PASS_DEPENDENCY(TargetTransformInfoWrapperPass);
 INITIALIZE_PASS_END(IslScheduleOptimizer, "polly-opt-isl",
                     "Polly - Optimize schedule of SCoP", false, false)

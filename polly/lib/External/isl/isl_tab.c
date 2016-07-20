@@ -2569,9 +2569,9 @@ struct isl_basic_map *isl_basic_map_update_from_tab(struct isl_basic_map *bmap,
 				isl_basic_map_drop_inequality(bmap, i);
 		}
 	if (bmap->n_eq != n_eq)
-		isl_basic_map_gauss(bmap, NULL);
+		bmap = isl_basic_map_gauss(bmap, NULL);
 	if (!tab->rational &&
-	    !bmap->sample && isl_tab_sample_is_integer(tab))
+	    bmap && !bmap->sample && isl_tab_sample_is_integer(tab))
 		bmap->sample = extract_integer_sample(tab);
 	return bmap;
 }
@@ -3236,7 +3236,7 @@ int isl_tab_is_redundant(struct isl_tab *tab, int con)
 	return tab->con[con].is_row && tab->con[con].index < tab->n_redundant;
 }
 
-/* Take a snapshot of the tableau that can be restored by s call to
+/* Take a snapshot of the tableau that can be restored by a call to
  * isl_tab_rollback.
  */
 struct isl_tab_undo *isl_tab_snap(struct isl_tab *tab)
@@ -3245,6 +3245,31 @@ struct isl_tab_undo *isl_tab_snap(struct isl_tab *tab)
 		return NULL;
 	tab->need_undo = 1;
 	return tab->top;
+}
+
+/* Does "tab" need to keep track of undo information?
+ * That is, was a snapshot taken that may need to be restored?
+ */
+isl_bool isl_tab_need_undo(struct isl_tab *tab)
+{
+	if (!tab)
+		return isl_bool_error;
+
+	return tab->need_undo;
+}
+
+/* Remove all tracking of undo information from "tab", invalidating
+ * any snapshots that may have been taken of the tableau.
+ * Since all snapshots have been invalidated, there is also
+ * no need to start keeping track of undo information again.
+ */
+void isl_tab_clear_undo(struct isl_tab *tab)
+{
+	if (!tab)
+		return;
+
+	free_undo(tab);
+	tab->need_undo = 0;
 }
 
 /* Undo the operation performed by isl_tab_relax.

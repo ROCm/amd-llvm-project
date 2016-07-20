@@ -123,6 +123,8 @@ unsigned ARMELFObjectWriter::GetRelocTypeInner(const MCValue &Target,
       Type = ELF::R_ARM_JUMP24;
       break;
     case ARM::fixup_t2_condbranch:
+      Type = ELF::R_ARM_THM_JUMP19;
+      break;
     case ARM::fixup_t2_uncondbranch:
       Type = ELF::R_ARM_THM_JUMP24;
       break;
@@ -218,6 +220,9 @@ unsigned ARMELFObjectWriter::GetRelocTypeInner(const MCValue &Target,
         break;
       case MCSymbolRefExpr::VK_TLSDESC:
         Type = ELF::R_ARM_TLS_GOTDESC;
+        break;
+      case MCSymbolRefExpr::VK_TLSLDM:
+        Type = ELF::R_ARM_TLS_LDM32;
         break;
       case MCSymbolRefExpr::VK_ARM_TLSDESCSEQ:
         Type = ELF::R_ARM_TLS_DESCSEQ;

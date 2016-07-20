@@ -1,6 +1,7 @@
 # Build for the EfficiencySanitizer runtime support library.
 
 add_custom_target(esan)
+set_target_properties(esan PROPERTIES FOLDER "Compiler-RT Misc")
 
 set(ESAN_RTL_CFLAGS ${SANITIZER_COMMON_CFLAGS})
 append_rtti_flag(OFF ESAN_RTL_CFLAGS)
@@ -11,7 +12,12 @@ set(ESAN_SOURCES
   esan.cpp
   esan_flags.cpp
   esan_interface.cpp
-  esan_interceptors.cpp)
+  esan_interceptors.cpp
+  esan_linux.cpp
+  esan_sideline_linux.cpp
+  cache_frag.cpp
+  working_set.cpp
+  working_set_posix.cpp)
 
 foreach (arch ${ESAN_SUPPORTED_ARCH})
   add_compiler_rt_runtime(clang_rt.esan

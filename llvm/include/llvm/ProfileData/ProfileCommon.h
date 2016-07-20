@@ -18,10 +18,12 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <utility>
 #include <vector>
 
 #include "llvm/IR/ProfileSummary.h"
 #include "llvm/Support/Error.h"
+#include "llvm/ADT/ArrayRef.h"
 
 namespace llvm {
 class Function;
@@ -52,7 +54,7 @@ private:
 protected:
   SummaryEntryVector DetailedSummary;
   ProfileSummaryBuilder(std::vector<uint32_t> Cutoffs)
-      : DetailedSummaryCutoffs(Cutoffs), TotalCount(0), MaxCount(0),
+      : DetailedSummaryCutoffs(std::move(Cutoffs)), TotalCount(0), MaxCount(0),
         MaxFunctionCount(0), NumCounts(0), NumFunctions(0) {}
   inline void addCount(uint64_t Count);
   ~ProfileSummaryBuilder() = default;
@@ -62,7 +64,7 @@ protected:
 
 public:
   /// \brief A vector of useful cutoff values for detailed summary.
-  static const std::vector<uint32_t> DefaultCutoffs;
+  static const ArrayRef<uint32_t> DefaultCutoffs;
 };
 
 class InstrProfSummaryBuilder final : public ProfileSummaryBuilder {
@@ -72,7 +74,7 @@ class InstrProfSummaryBuilder final : public ProfileSummaryBuilder {
 
 public:
   InstrProfSummaryBuilder(std::vector<uint32_t> Cutoffs)
-      : ProfileSummaryBuilder(Cutoffs), MaxInternalBlockCount(0) {}
+      : ProfileSummaryBuilder(std::move(Cutoffs)), MaxInternalBlockCount(0) {}
   void addRecord(const InstrProfRecord &);
   std::unique_ptr<ProfileSummary> getSummary();
 };
@@ -82,7 +84,7 @@ class SampleProfileSummaryBuilder final : public ProfileSummaryBuilder {
 public:
   void addRecord(const sampleprof::FunctionSamples &FS);
   SampleProfileSummaryBuilder(std::vector<uint32_t> Cutoffs)
-      : ProfileSummaryBuilder(Cutoffs) {}
+      : ProfileSummaryBuilder(std::move(Cutoffs)) {}
   std::unique_ptr<ProfileSummary> getSummary();
 };
 

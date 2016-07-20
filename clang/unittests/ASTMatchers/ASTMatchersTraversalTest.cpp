@@ -122,8 +122,8 @@ TEST(Has, MatchesChildTypes) {
 
 TEST(StatementMatcher, Has) {
   StatementMatcher HasVariableI =
-    expr(hasType(pointsTo(recordDecl(hasName("X")))),
-         has(declRefExpr(to(varDecl(hasName("i"))))));
+      expr(hasType(pointsTo(recordDecl(hasName("X")))),
+           has(ignoringParenImpCasts(declRefExpr(to(varDecl(hasName("i")))))));
 
   EXPECT_TRUE(matches(
     "class X; X *x(int); void c() { int i; x(i); }", HasVariableI));
@@ -958,6 +958,28 @@ TEST(Matcher, VisitsTemplateInstantiations) {
       callee(cxxMethodDecl(hasName("x"))))))));
 }
 
+TEST(Matcher, HasCondition) {
+  StatementMatcher IfStmt =
+    ifStmt(hasCondition(cxxBoolLiteral(equals(true))));
+  EXPECT_TRUE(matches("void x() { if (true) {} }", IfStmt));
+  EXPECT_TRUE(notMatches("void x() { if (false) {} }", IfStmt));
+
+  StatementMatcher ForStmt =
+    forStmt(hasCondition(cxxBoolLiteral(equals(true))));
+  EXPECT_TRUE(matches("void x() { for (;true;) {} }", ForStmt));
+  EXPECT_TRUE(notMatches("void x() { for (;false;) {} }", ForStmt));
+
+  StatementMatcher WhileStmt =
+    whileStmt(hasCondition(cxxBoolLiteral(equals(true))));
+  EXPECT_TRUE(matches("void x() { while (true) {} }", WhileStmt));
+  EXPECT_TRUE(notMatches("void x() { while (false) {} }", WhileStmt));
+
+  StatementMatcher SwitchStmt =
+    switchStmt(hasCondition(integerLiteral(equals(42))));
+  EXPECT_TRUE(matches("void x() { switch (42) {case 42:;} }", SwitchStmt));
+  EXPECT_TRUE(notMatches("void x() { switch (43) {case 43:;} }", SwitchStmt));
+}
+
 TEST(For, ForLoopInternals) {
   EXPECT_TRUE(matches("void f(){ int i; for (; i < 3 ; ); }",
                       forStmt(hasCondition(anything()))));
@@ -1064,6 +1086,16 @@ TEST(HasImplicitDestinationType, DoesNotMatchIncorrectly) {
   EXPECT_TRUE(notMatches("int arr[3]; int *p = arr;",
                          implicitCastExpr(hasImplicitDestinationType(
                            unless(anything())))));
+}
+
+TEST(IgnoringImplicit, MatchesImplicit) {
+  EXPECT_TRUE(matches("class C {}; C a = C();",
+                      varDecl(has(ignoringImplicit(cxxConstructExpr())))));
+}
+
+TEST(IgnoringImplicit, DoesNotMatchIncorrectly) {
+  EXPECT_TRUE(
+      notMatches("class C {}; C a = C();", varDecl(has(cxxConstructExpr()))));
 }
 
 TEST(IgnoringImpCasts, MatchesImpCasts) {
@@ -1973,6 +2005,50 @@ TEST(StatementMatcher, ForFunction) {
                  has(integerLiteral()))));
   EXPECT_TRUE(matches(CppString2, returnStmt(forFunction(hasName("F2")))));
   EXPECT_TRUE(notMatches(CppString2, returnStmt(forFunction(hasName("F")))));
+}
+
+TEST(Matcher, ForEachOverriden) {
+  const auto ForEachOverriddenInClass = [](const char *ClassName) {
+    return cxxMethodDecl(ofClass(hasName(ClassName)), isVirtual(),
+                         forEachOverridden(cxxMethodDecl().bind("overridden")))
+        .bind("override");
+  };
+  static const char Code1[] = "class A { virtual void f(); };"
+                              "class B : public A { void f(); };"
+                              "class C : public B { void f(); };";
+  // C::f overrides A::f.
+  EXPECT_TRUE(matchAndVerifyResultTrue(
+      Code1, ForEachOverriddenInClass("C"),
+      llvm::make_unique<VerifyIdIsBoundTo<CXXMethodDecl>>("override", "f", 1)));
+  EXPECT_TRUE(matchAndVerifyResultTrue(
+      Code1, ForEachOverriddenInClass("C"),
+      llvm::make_unique<VerifyIdIsBoundTo<CXXMethodDecl>>("overridden", "f",
+                                                          1)));
+  // B::f overrides A::f.
+  EXPECT_TRUE(matchAndVerifyResultTrue(
+      Code1, ForEachOverriddenInClass("B"),
+      llvm::make_unique<VerifyIdIsBoundTo<CXXMethodDecl>>("override", "f", 1)));
+  EXPECT_TRUE(matchAndVerifyResultTrue(
+      Code1, ForEachOverriddenInClass("B"),
+      llvm::make_unique<VerifyIdIsBoundTo<CXXMethodDecl>>("overridden", "f",
+                                                          1)));
+  // A::f overrides nothing.
+  EXPECT_TRUE(notMatches(Code1, ForEachOverriddenInClass("A")));
+
+  static const char Code2[] =
+      "class A1 { virtual void f(); };"
+      "class A2 { virtual void f(); };"
+      "class B : public A1, public A2 { void f(); };";
+  // B::f overrides A1::f and A2::f. This produces two matches.
+  EXPECT_TRUE(matchAndVerifyResultTrue(
+      Code2, ForEachOverriddenInClass("B"),
+      llvm::make_unique<VerifyIdIsBoundTo<CXXMethodDecl>>("override", "f", 2)));
+  EXPECT_TRUE(matchAndVerifyResultTrue(
+      Code2, ForEachOverriddenInClass("B"),
+      llvm::make_unique<VerifyIdIsBoundTo<CXXMethodDecl>>("overridden", "f",
+                                                          2)));
+  // A1::f overrides nothing.
+  EXPECT_TRUE(notMatches(Code2, ForEachOverriddenInClass("A1")));
 }
 
 } // namespace ast_matchers

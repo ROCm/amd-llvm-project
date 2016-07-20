@@ -415,11 +415,10 @@ CXXMethodDecl *Sema::startLambdaDefinition(CXXRecordDecl *Class,
   // Add parameters.
   if (!Params.empty()) {
     Method->setParams(Params);
-    CheckParmsForFunctionDef(const_cast<ParmVarDecl **>(Params.begin()),
-                             const_cast<ParmVarDecl **>(Params.end()),
+    CheckParmsForFunctionDef(Params,
                              /*CheckParameterNames=*/false);
-    
-    for (auto P : Method->params())
+
+    for (auto P : Method->parameters())
       P->setOwningFunction(Method);
   }
 
@@ -1151,8 +1150,8 @@ static void addFunctionPointerConversion(Sema &S,
                                          CXXMethodDecl *CallOperator) {
   // This conversion is explicitly disabled if the lambda's function has
   // pass_object_size attributes on any of its parameters.
-  if (std::any_of(CallOperator->param_begin(), CallOperator->param_end(),
-                  std::mem_fn(&ParmVarDecl::hasAttr<PassObjectSizeAttr>)))
+  if (llvm::any_of(CallOperator->parameters(),
+                   std::mem_fn(&ParmVarDecl::hasAttr<PassObjectSizeAttr>)))
     return;
 
   // Add the conversion to function pointer.
@@ -1500,7 +1499,7 @@ ExprResult Sema::BuildLambdaExpr(SourceLocation StartLoc, SourceLocation EndLoc,
   SourceRange IntroducerRange;
   bool ExplicitParams;
   bool ExplicitResultType;
-  bool LambdaExprNeedsCleanups;
+  CleanupInfo LambdaCleanup;
   bool ContainsUnexpandedParameterPack;
   SmallVector<VarDecl *, 4> ArrayIndexVars;
   SmallVector<unsigned, 4> ArrayIndexStarts;
@@ -1510,7 +1509,7 @@ ExprResult Sema::BuildLambdaExpr(SourceLocation StartLoc, SourceLocation EndLoc,
     IntroducerRange = LSI->IntroducerRange;
     ExplicitParams = LSI->ExplicitParams;
     ExplicitResultType = !LSI->HasImplicitReturnType;
-    LambdaExprNeedsCleanups = LSI->ExprNeedsCleanups;
+    LambdaCleanup = LSI->Cleanup;
     ContainsUnexpandedParameterPack = LSI->ContainsUnexpandedParameterPack;
     
     CallOperator->setLexicalDeclContext(Class);
@@ -1625,8 +1624,9 @@ ExprResult Sema::BuildLambdaExpr(SourceLocation StartLoc, SourceLocation EndLoc,
       for (unsigned K = 0, N = LSI->Captures.size(); K != N; ++K) {
         LambdaScopeInfo::Capture From = LSI->Captures[K];
         assert(!From.isBlockCapture() && "Cannot capture __block variables");
-        if(From.getCaptureType()->isFunctionPointerType()) {
-          if( From.getVariable() &&  From.getVariable()->hasAttr<CXXAMPRestrictAMPAttr>())
+        QualType CaptureType = From.getCaptureType();
+        if(!CaptureType.isNull() && CaptureType->isFunctionPointerType()) {
+          if( From.getVariable() && From.getVariable()->hasAttr<CXXAMPRestrictAMPAttr>())
             FoundVec.push_back(std::make_pair(From, (unsigned)diag::err_amp_captured_variable_type));
         }
       }
@@ -1667,9 +1667,8 @@ ExprResult Sema::BuildLambdaExpr(SourceLocation StartLoc, SourceLocation EndLoc,
     CheckCompletedCXXClass(Class);
   }
 
-  if (LambdaExprNeedsCleanups)
-    ExprNeedsCleanups = true;
-  
+  Cleanup.mergeFrom(LambdaCleanup);
+
   // C++AMP
   if (getLangOpts().CPlusPlusAMP && NeedAMPDeserializer(Class)) {
     DeclareAMPDeserializer(Class, NULL);
@@ -1717,6 +1716,7 @@ ExprResult Sema::BuildLambdaExpr(SourceLocation StartLoc, SourceLocation EndLoc,
       ExprEvalContexts.back().Lambdas.push_back(Lambda);
       break;
 
+    case DiscardedStatement:
     case PotentiallyEvaluated:
     case PotentiallyEvaluatedIfUsed:
       break;
@@ -1795,7 +1795,7 @@ ExprResult Sema::BuildBlockForLambdaConversion(SourceLocation CurrentLocation,
   // Create the block literal expression.
   Expr *BuildBlock = new (Context) BlockExpr(Block, Conv->getConversionType());
   ExprCleanupObjects.push_back(Block);
-  ExprNeedsCleanups = true;
+  Cleanup.setExprNeedsCleanups(true);
 
   return BuildBlock;
 }

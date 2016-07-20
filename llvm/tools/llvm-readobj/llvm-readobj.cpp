@@ -120,6 +120,8 @@ namespace opts {
   // -dynamic-table
   cl::opt<bool> DynamicTable("dynamic-table",
     cl::desc("Display the ELF .dynamic section table"));
+  cl::alias DynamicTableShort("d", cl::desc("Alias for --dynamic-table"),
+                              cl::aliasopt(DynamicTable));
 
   // -needed-libs
   cl::opt<bool> NeededLibraries("needed-libs",
@@ -128,6 +130,8 @@ namespace opts {
   // -program-headers
   cl::opt<bool> ProgramHeaders("program-headers",
     cl::desc("Display ELF program headers"));
+  cl::alias ProgramHeadersShort("l", cl::desc("Alias for --program-headers"),
+                                cl::aliasopt(ProgramHeaders));
 
   // -hash-table
   cl::opt<bool> HashTable("hash-table",
@@ -195,6 +199,11 @@ namespace opts {
   cl::opt<bool>
   COFFBaseRelocs("coff-basereloc",
                  cl::desc("Display the PE/COFF .reloc section"));
+
+  // -coff-debug-directory
+  cl::opt<bool>
+  COFFDebugDirectory("coff-debug-directory",
+                     cl::desc("Display the PE/COFF debug directory"));
 
   // -macho-data-in-code
   cl::opt<bool>
@@ -288,6 +297,17 @@ static void reportError(StringRef Input, StringRef Message) {
     Input = "<stdin>";
 
   reportError(Twine(Input) + ": " + Message);
+}
+
+static void reportError(StringRef Input, Error Err) {
+  if (Input == "-")
+    Input = "<stdin>";
+  std::string ErrMsg;
+  {
+    raw_string_ostream ErrStream(ErrMsg);
+    logAllUnhandledErrors(std::move(Err), ErrStream, Input + ": ");
+  }
+  reportError(ErrMsg);
 }
 
 static bool isMipsArch(unsigned Arch) {
@@ -392,6 +412,8 @@ static void dumpObject(const ObjectFile *Obj) {
       Dumper->printCOFFDirectives();
     if (opts::COFFBaseRelocs)
       Dumper->printCOFFBaseReloc();
+    if (opts::COFFDebugDirectory)
+      Dumper->printCOFFDebugDirectory();
     if (opts::CodeView)
       Dumper->printCodeViewDebugInfo();
     if (opts::CodeViewMergedTypes)
@@ -417,10 +439,8 @@ static void dumpObject(const ObjectFile *Obj) {
 
 /// @brief Dumps each object file in \a Arc;
 static void dumpArchive(const Archive *Arc) {
-  for (auto &ErrorOrChild : Arc->children()) {
-    if (std::error_code EC = ErrorOrChild.getError())
-      reportError(Arc->getFileName(), EC.message());
-    const auto &Child = *ErrorOrChild;
+  Error Err;
+  for (auto &Child : Arc->children(Err)) {
     Expected<std::unique_ptr<Binary>> ChildOrErr = Child.getAsBinary();
     if (!ChildOrErr) {
       if (auto E = isNotObjectErrorInvalidFileType(ChildOrErr.takeError())) {
@@ -437,18 +457,25 @@ static void dumpArchive(const Archive *Arc) {
     else
       reportError(Arc->getFileName(), readobj_error::unrecognized_file_format);
   }
+  if (Err)
+    reportError(Arc->getFileName(), std::move(Err));
 }
 
 /// @brief Dumps each object file in \a MachO Universal Binary;
 static void dumpMachOUniversalBinary(const MachOUniversalBinary *UBinary) {
   for (const MachOUniversalBinary::ObjectForArch &Obj : UBinary->objects()) {
-    ErrorOr<std::unique_ptr<MachOObjectFile>> ObjOrErr = Obj.getAsObjectFile();
+    Expected<std::unique_ptr<MachOObjectFile>> ObjOrErr = Obj.getAsObjectFile();
     if (ObjOrErr)
       dumpObject(&*ObjOrErr.get());
-    else if (ErrorOr<std::unique_ptr<Archive>> AOrErr = Obj.getAsArchive())
+    else if (auto E = isNotObjectErrorInvalidFileType(ObjOrErr.takeError())) {
+      std::string Buf;
+      raw_string_ostream OS(Buf);
+      logAllUnhandledErrors(ObjOrErr.takeError(), OS, "");
+      OS.flush();
+      reportError(UBinary->getFileName(), Buf);
+    }
+    else if (Expected<std::unique_ptr<Archive>> AOrErr = Obj.getAsArchive())
       dumpArchive(&*AOrErr.get());
-    else
-      reportError(UBinary->getFileName(), ObjOrErr.getError().message());
   }
 }
 
@@ -475,7 +502,7 @@ static void dumpInput(StringRef File) {
 }
 
 int main(int argc, const char *argv[]) {
-  sys::PrintStackTraceOnErrorSignal();
+  sys::PrintStackTraceOnErrorSignal(argv[0]);
   PrettyStackTraceProgram X(argc, argv);
   llvm_shutdown_obj Y;
 

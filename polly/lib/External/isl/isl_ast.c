@@ -1403,7 +1403,7 @@ isl_stat isl_ast_node_foreach_descendant_top_down(
 
 /* Textual C representation of the various operators.
  */
-static char *op_str[] = {
+static char *op_str_c[] = {
 	[isl_ast_op_and] = "&&",
 	[isl_ast_op_and_then] = "&&",
 	[isl_ast_op_or] = "||",
@@ -1514,6 +1514,9 @@ static int is_div_mod(enum isl_ast_op_type op)
 	       op == isl_ast_op_zdiv_r;
 }
 
+static __isl_give isl_printer *print_ast_expr_c(__isl_take isl_printer *p,
+	__isl_keep isl_ast_expr *expr);
+
 /* Do we need/want parentheses around "expr" as a subexpression of
  * an "op" operation?  If "left" is set, then "expr" is the left-most
  * operand.
@@ -1554,10 +1557,10 @@ static int sub_expr_need_parens(enum isl_ast_op_type op,
 	return 0;
 }
 
-/* Print "expr" as a subexpression of an "op" operation.
+/* Print "expr" as a subexpression of an "op" operation in C format.
  * If "left" is set, then "expr" is the left-most operand.
  */
-static __isl_give isl_printer *print_sub_expr(__isl_take isl_printer *p,
+static __isl_give isl_printer *print_sub_expr_c(__isl_take isl_printer *p,
 	enum isl_ast_op_type op, __isl_keep isl_ast_expr *expr, int left)
 {
 	int need_parens;
@@ -1566,7 +1569,7 @@ static __isl_give isl_printer *print_sub_expr(__isl_take isl_printer *p,
 
 	if (need_parens)
 		p = isl_printer_print_str(p, "(");
-	p = isl_printer_print_ast_expr(p, expr);
+	p = print_ast_expr_c(p, expr);
 	if (need_parens)
 		p = isl_printer_print_str(p, ")");
 	return p;
@@ -1575,7 +1578,7 @@ static __isl_give isl_printer *print_sub_expr(__isl_take isl_printer *p,
 #define isl_ast_op_last	isl_ast_op_address_of
 
 /* Data structure that holds the user-specified textual
- * representations for the operators.
+ * representations for the operators in C format.
  * The entries are either NULL or copies of strings.
  * A NULL entry means that the default name should be used.
  */
@@ -1700,13 +1703,13 @@ __isl_give isl_printer *isl_ast_op_type_set_print_name(
 	return p;
 }
 
-/* Return the textual representation of "type".
+/* Return the textual representation of "type" in C format.
  *
  * If there is a user-specified name in an isl_ast_op_names note
  * associated to "p", then return that.
  * Otherwise, return the default name in op_str.
  */
-static const char *get_op_str(__isl_keep isl_printer *p,
+static const char *get_op_str_c(__isl_keep isl_printer *p,
 	enum isl_ast_op_type type)
 {
 	isl_id *id;
@@ -1720,76 +1723,73 @@ static const char *get_op_str(__isl_keep isl_printer *p,
 	isl_id_free(id);
 	if (names && names->op_str[type])
 		return names->op_str[type];
-	return op_str[type];
+	return op_str_c[type];
 }
 
-/* Print a min or max reduction "expr".
+/* Print a min or max reduction "expr" in C format.
  */
-static __isl_give isl_printer *print_min_max(__isl_take isl_printer *p,
+static __isl_give isl_printer *print_min_max_c(__isl_take isl_printer *p,
 	__isl_keep isl_ast_expr *expr)
 {
 	int i = 0;
 
 	for (i = 1; i < expr->u.op.n_arg; ++i) {
-		p = isl_printer_print_str(p, get_op_str(p, expr->u.op.op));
+		p = isl_printer_print_str(p, get_op_str_c(p, expr->u.op.op));
 		p = isl_printer_print_str(p, "(");
 	}
 	p = isl_printer_print_ast_expr(p, expr->u.op.args[0]);
 	for (i = 1; i < expr->u.op.n_arg; ++i) {
 		p = isl_printer_print_str(p, ", ");
-		p = isl_printer_print_ast_expr(p, expr->u.op.args[i]);
+		p = print_ast_expr_c(p, expr->u.op.args[i]);
 		p = isl_printer_print_str(p, ")");
 	}
 
 	return p;
 }
 
-/* Print a function call "expr".
+/* Print a function call "expr" in C format.
  *
  * The first argument represents the function to be called.
  */
-static __isl_give isl_printer *print_call(__isl_take isl_printer *p,
+static __isl_give isl_printer *print_call_c(__isl_take isl_printer *p,
 	__isl_keep isl_ast_expr *expr)
 {
 	int i = 0;
 
-	p = isl_printer_print_ast_expr(p, expr->u.op.args[0]);
+	p = print_ast_expr_c(p, expr->u.op.args[0]);
 	p = isl_printer_print_str(p, "(");
 	for (i = 1; i < expr->u.op.n_arg; ++i) {
 		if (i != 1)
 			p = isl_printer_print_str(p, ", ");
-		p = isl_printer_print_ast_expr(p, expr->u.op.args[i]);
+		p = print_ast_expr_c(p, expr->u.op.args[i]);
 	}
 	p = isl_printer_print_str(p, ")");
 
 	return p;
 }
 
-/* Print an array access "expr".
+/* Print an array access "expr" in C format.
  *
  * The first argument represents the array being accessed.
  */
-static __isl_give isl_printer *print_access(__isl_take isl_printer *p,
+static __isl_give isl_printer *print_access_c(__isl_take isl_printer *p,
 	__isl_keep isl_ast_expr *expr)
 {
 	int i = 0;
 
-	p = isl_printer_print_ast_expr(p, expr->u.op.args[0]);
+	p = print_ast_expr_c(p, expr->u.op.args[0]);
 	for (i = 1; i < expr->u.op.n_arg; ++i) {
 		p = isl_printer_print_str(p, "[");
-		p = isl_printer_print_ast_expr(p, expr->u.op.args[i]);
+		p = print_ast_expr_c(p, expr->u.op.args[i]);
 		p = isl_printer_print_str(p, "]");
 	}
 
 	return p;
 }
 
-/* Print "expr" to "p".
- *
- * If we are printing in isl format, then we also print an indication
- * of the size of the expression (if it was computed).
+/* Print "expr" to "p" in C format.
  */
-__isl_give isl_printer *isl_printer_print_ast_expr(__isl_take isl_printer *p,
+static __isl_give isl_printer *print_ast_expr_c(__isl_take isl_printer *p,
 	__isl_keep isl_ast_expr *expr)
 {
 	if (!p)
@@ -1800,55 +1800,55 @@ __isl_give isl_printer *isl_printer_print_ast_expr(__isl_take isl_printer *p,
 	switch (expr->type) {
 	case isl_ast_expr_op:
 		if (expr->u.op.op == isl_ast_op_call) {
-			p = print_call(p, expr);
+			p = print_call_c(p, expr);
 			break;
 		}
 		if (expr->u.op.op == isl_ast_op_access) {
-			p = print_access(p, expr);
+			p = print_access_c(p, expr);
 			break;
 		}
 		if (expr->u.op.n_arg == 1) {
 			p = isl_printer_print_str(p,
-						get_op_str(p, expr->u.op.op));
-			p = print_sub_expr(p, expr->u.op.op,
+						get_op_str_c(p, expr->u.op.op));
+			p = print_sub_expr_c(p, expr->u.op.op,
 						expr->u.op.args[0], 0);
 			break;
 		}
 		if (expr->u.op.op == isl_ast_op_fdiv_q) {
-			const char *name = get_op_str(p, isl_ast_op_fdiv_q);
+			const char *name = get_op_str_c(p, isl_ast_op_fdiv_q);
 			p = isl_printer_print_str(p, name);
 			p = isl_printer_print_str(p, "(");
-			p = isl_printer_print_ast_expr(p, expr->u.op.args[0]);
+			p = print_ast_expr_c(p, expr->u.op.args[0]);
 			p = isl_printer_print_str(p, ", ");
-			p = isl_printer_print_ast_expr(p, expr->u.op.args[1]);
+			p = print_ast_expr_c(p, expr->u.op.args[1]);
 			p = isl_printer_print_str(p, ")");
 			break;
 		}
 		if (expr->u.op.op == isl_ast_op_max ||
 		    expr->u.op.op == isl_ast_op_min) {
-			p = print_min_max(p, expr);
+			p = print_min_max_c(p, expr);
 			break;
 		}
 		if (expr->u.op.op == isl_ast_op_cond ||
 		    expr->u.op.op == isl_ast_op_select) {
-			p = isl_printer_print_ast_expr(p, expr->u.op.args[0]);
+			p = print_ast_expr_c(p, expr->u.op.args[0]);
 			p = isl_printer_print_str(p, " ? ");
-			p = isl_printer_print_ast_expr(p, expr->u.op.args[1]);
+			p = print_ast_expr_c(p, expr->u.op.args[1]);
 			p = isl_printer_print_str(p, " : ");
-			p = isl_printer_print_ast_expr(p, expr->u.op.args[2]);
+			p = print_ast_expr_c(p, expr->u.op.args[2]);
 			break;
 		}
 		if (expr->u.op.n_arg != 2)
 			isl_die(isl_printer_get_ctx(p), isl_error_internal,
 				"operation should have two arguments",
-				goto error);
-		p = print_sub_expr(p, expr->u.op.op, expr->u.op.args[0], 1);
+				return isl_printer_free(p));
+		p = print_sub_expr_c(p, expr->u.op.op, expr->u.op.args[0], 1);
 		if (expr->u.op.op != isl_ast_op_member)
 			p = isl_printer_print_str(p, " ");
-		p = isl_printer_print_str(p, get_op_str(p, expr->u.op.op));
+		p = isl_printer_print_str(p, get_op_str_c(p, expr->u.op.op));
 		if (expr->u.op.op != isl_ast_op_member)
 			p = isl_printer_print_str(p, " ");
-		p = print_sub_expr(p, expr->u.op.op, expr->u.op.args[1], 0);
+		p = print_sub_expr_c(p, expr->u.op.op, expr->u.op.args[1], 0);
 		break;
 	case isl_ast_expr_id:
 		p = isl_printer_print_str(p, isl_id_get_name(expr->u.id));
@@ -1861,67 +1861,267 @@ __isl_give isl_printer *isl_printer_print_ast_expr(__isl_take isl_printer *p,
 	}
 
 	return p;
-error:
-	isl_printer_free(p);
-	return NULL;
+}
+
+/* Textual representation of the isl_ast_op_type elements
+ * for use in a YAML representation of an isl_ast_expr.
+ */
+static char *op_str[] = {
+	[isl_ast_op_and] = "and",
+	[isl_ast_op_and_then] = "and_then",
+	[isl_ast_op_or] = "or",
+	[isl_ast_op_or_else] = "or_else",
+	[isl_ast_op_max] = "max",
+	[isl_ast_op_min] = "min",
+	[isl_ast_op_minus] = "minus",
+	[isl_ast_op_add] = "add",
+	[isl_ast_op_sub] = "sub",
+	[isl_ast_op_mul] = "mul",
+	[isl_ast_op_div] = "div",
+	[isl_ast_op_fdiv_q] = "fdiv_q",
+	[isl_ast_op_pdiv_q] = "pdiv_q",
+	[isl_ast_op_pdiv_r] = "pdiv_r",
+	[isl_ast_op_zdiv_r] = "zdiv_r",
+	[isl_ast_op_cond] = "cond",
+	[isl_ast_op_select] = "select",
+	[isl_ast_op_eq] = "eq",
+	[isl_ast_op_le] = "le",
+	[isl_ast_op_lt] = "lt",
+	[isl_ast_op_ge] = "ge",
+	[isl_ast_op_gt] = "gt",
+	[isl_ast_op_call] = "call",
+	[isl_ast_op_access] = "access",
+	[isl_ast_op_member] = "member",
+	[isl_ast_op_address_of] = "address_of"
+};
+
+static __isl_give isl_printer *print_ast_expr_isl(__isl_take isl_printer *p,
+	__isl_keep isl_ast_expr *expr);
+
+/* Print the arguments of "expr" to "p" in isl format.
+ *
+ * If there are no arguments, then nothing needs to be printed.
+ * Otherwise add an "args" key to the current mapping with as value
+ * the list of arguments of "expr".
+ */
+static __isl_give isl_printer *print_arguments(__isl_take isl_printer *p,
+	__isl_keep isl_ast_expr *expr)
+{
+	int i, n;
+
+	n = isl_ast_expr_get_op_n_arg(expr);
+	if (n < 0)
+		return isl_printer_free(p);
+	if (n == 0)
+		return p;
+
+	p = isl_printer_print_str(p, "args");
+	p = isl_printer_yaml_next(p);
+	p = isl_printer_yaml_start_sequence(p);
+	for (i = 0; i < n; ++i) {
+		isl_ast_expr *arg;
+
+		arg = isl_ast_expr_get_op_arg(expr, i);
+		p = print_ast_expr_isl(p, arg);
+		isl_ast_expr_free(arg);
+		p = isl_printer_yaml_next(p);
+	}
+	p = isl_printer_yaml_end_sequence(p);
+
+	return p;
+}
+
+/* Print "expr" to "p" in isl format.
+ *
+ * In particular, print the isl_ast_expr as a YAML document.
+ */
+static __isl_give isl_printer *print_ast_expr_isl(__isl_take isl_printer *p,
+	__isl_keep isl_ast_expr *expr)
+{
+	enum isl_ast_expr_type type;
+	enum isl_ast_op_type op;
+	isl_id *id;
+	isl_val *v;
+
+	if (!expr)
+		return isl_printer_free(p);
+
+	p = isl_printer_yaml_start_mapping(p);
+	type = isl_ast_expr_get_type(expr);
+	switch (type) {
+	case isl_ast_expr_error:
+		return isl_printer_free(p);
+	case isl_ast_expr_op:
+		op = isl_ast_expr_get_op_type(expr);
+		if (op == isl_ast_op_error)
+			return isl_printer_free(p);
+		p = isl_printer_print_str(p, "op");
+		p = isl_printer_yaml_next(p);
+		p = isl_printer_print_str(p, op_str[op]);
+		p = isl_printer_yaml_next(p);
+		p = print_arguments(p, expr);
+		break;
+	case isl_ast_expr_id:
+		p = isl_printer_print_str(p, "id");
+		p = isl_printer_yaml_next(p);
+		id = isl_ast_expr_get_id(expr);
+		p = isl_printer_print_id(p, id);
+		isl_id_free(id);
+		break;
+	case isl_ast_expr_int:
+		p = isl_printer_print_str(p, "val");
+		p = isl_printer_yaml_next(p);
+		v = isl_ast_expr_get_val(expr);
+		p = isl_printer_print_val(p, v);
+		isl_val_free(v);
+		break;
+	}
+	p = isl_printer_yaml_end_mapping(p);
+
+	return p;
+}
+
+/* Print "expr" to "p".
+ *
+ * Only an isl and a C format are supported.
+ */
+__isl_give isl_printer *isl_printer_print_ast_expr(__isl_take isl_printer *p,
+	__isl_keep isl_ast_expr *expr)
+{
+	int format;
+
+	if (!p)
+		return NULL;
+
+	format = isl_printer_get_output_format(p);
+	switch (format) {
+	case ISL_FORMAT_ISL:
+		p = print_ast_expr_isl(p, expr);
+		break;
+	case ISL_FORMAT_C:
+		p = print_ast_expr_c(p, expr);
+		break;
+	default:
+		isl_die(isl_printer_get_ctx(p), isl_error_unsupported,
+			"output format not supported for ast_expr",
+			return isl_printer_free(p));
+	}
+
+	return p;
+}
+
+static __isl_give isl_printer *print_ast_node_isl(__isl_take isl_printer *p,
+	__isl_keep isl_ast_node *node);
+
+/* Print a YAML sequence containing the entries in "list" to "p".
+ */
+static __isl_give isl_printer *print_ast_node_list(__isl_take isl_printer *p,
+	__isl_keep isl_ast_node_list *list)
+{
+	int i, n;
+
+	n = isl_ast_node_list_n_ast_node(list);
+	if (n < 0)
+		return isl_printer_free(p);
+
+	p = isl_printer_yaml_start_sequence(p);
+	for (i = 0; i < n; ++i) {
+		isl_ast_node *node;
+
+		node = isl_ast_node_list_get_ast_node(list, i);
+		p = print_ast_node_isl(p, node);
+		isl_ast_node_free(node);
+		p = isl_printer_yaml_next(p);
+	}
+	p = isl_printer_yaml_end_sequence(p);
+
+	return p;
 }
 
 /* Print "node" to "p" in "isl format".
+ *
+ * In particular, print the isl_ast_node as a YAML document.
  */
 static __isl_give isl_printer *print_ast_node_isl(__isl_take isl_printer *p,
 	__isl_keep isl_ast_node *node)
 {
-	p = isl_printer_print_str(p, "(");
 	switch (node->type) {
 	case isl_ast_node_for:
+		p = isl_printer_yaml_start_mapping(p);
+		p = isl_printer_print_str(p, "iterator");
+		p = isl_printer_yaml_next(p);
+		p = isl_printer_print_ast_expr(p, node->u.f.iterator);
+		p = isl_printer_yaml_next(p);
 		if (node->u.f.degenerate) {
+			p = isl_printer_print_str(p, "value");
+			p = isl_printer_yaml_next(p);
 			p = isl_printer_print_ast_expr(p, node->u.f.init);
+			p = isl_printer_yaml_next(p);
 		} else {
-			p = isl_printer_print_str(p, "init: ");
+			p = isl_printer_print_str(p, "init");
+			p = isl_printer_yaml_next(p);
 			p = isl_printer_print_ast_expr(p, node->u.f.init);
-			p = isl_printer_print_str(p, ", ");
-			p = isl_printer_print_str(p, "cond: ");
+			p = isl_printer_yaml_next(p);
+			p = isl_printer_print_str(p, "cond");
+			p = isl_printer_yaml_next(p);
 			p = isl_printer_print_ast_expr(p, node->u.f.cond);
-			p = isl_printer_print_str(p, ", ");
-			p = isl_printer_print_str(p, "inc: ");
+			p = isl_printer_yaml_next(p);
+			p = isl_printer_print_str(p, "inc");
+			p = isl_printer_yaml_next(p);
 			p = isl_printer_print_ast_expr(p, node->u.f.inc);
+			p = isl_printer_yaml_next(p);
 		}
 		if (node->u.f.body) {
-			p = isl_printer_print_str(p, ", ");
-			p = isl_printer_print_str(p, "body: ");
+			p = isl_printer_print_str(p, "body");
+			p = isl_printer_yaml_next(p);
 			p = isl_printer_print_ast_node(p, node->u.f.body);
+			p = isl_printer_yaml_next(p);
 		}
+		p = isl_printer_yaml_end_mapping(p);
 		break;
 	case isl_ast_node_mark:
-		p = isl_printer_print_str(p, "mark: ");
+		p = isl_printer_yaml_start_mapping(p);
+		p = isl_printer_print_str(p, "mark");
+		p = isl_printer_yaml_next(p);
 		p = isl_printer_print_id(p, node->u.m.mark);
-		p = isl_printer_print_str(p, ", ");
-		p = isl_printer_print_str(p, "node: ");
+		p = isl_printer_yaml_next(p);
+		p = isl_printer_print_str(p, "node");
+		p = isl_printer_yaml_next(p);
 		p = isl_printer_print_ast_node(p, node->u.m.node);
+		p = isl_printer_yaml_end_mapping(p);
+		break;
 	case isl_ast_node_user:
+		p = isl_printer_yaml_start_mapping(p);
+		p = isl_printer_print_str(p, "user");
+		p = isl_printer_yaml_next(p);
 		p = isl_printer_print_ast_expr(p, node->u.e.expr);
+		p = isl_printer_yaml_end_mapping(p);
 		break;
 	case isl_ast_node_if:
-		p = isl_printer_print_str(p, "guard: ");
+		p = isl_printer_yaml_start_mapping(p);
+		p = isl_printer_print_str(p, "guard");
+		p = isl_printer_yaml_next(p);
 		p = isl_printer_print_ast_expr(p, node->u.i.guard);
+		p = isl_printer_yaml_next(p);
 		if (node->u.i.then) {
-			p = isl_printer_print_str(p, ", ");
-			p = isl_printer_print_str(p, "then: ");
+			p = isl_printer_print_str(p, "then");
+			p = isl_printer_yaml_next(p);
 			p = isl_printer_print_ast_node(p, node->u.i.then);
+			p = isl_printer_yaml_next(p);
 		}
 		if (node->u.i.else_node) {
-			p = isl_printer_print_str(p, ", ");
-			p = isl_printer_print_str(p, "else: ");
+			p = isl_printer_print_str(p, "else");
+			p = isl_printer_yaml_next(p);
 			p = isl_printer_print_ast_node(p, node->u.i.else_node);
 		}
+		p = isl_printer_yaml_end_mapping(p);
 		break;
 	case isl_ast_node_block:
-		p = isl_printer_print_ast_node_list(p, node->u.b.children);
+		p = print_ast_node_list(p, node->u.b.children);
 		break;
 	case isl_ast_node_error:
 		break;
 	}
-	p = isl_printer_print_str(p, ")");
 	return p;
 }
 
@@ -1961,32 +2161,37 @@ static __isl_give isl_printer *print_ast_node_c(__isl_take isl_printer *p,
 	__isl_keep isl_ast_print_options *options, int in_block, int in_list);
 static __isl_give isl_printer *print_if_c(__isl_take isl_printer *p,
 	__isl_keep isl_ast_node *node,
-	__isl_keep isl_ast_print_options *options, int new_line);
+	__isl_keep isl_ast_print_options *options, int new_line,
+	int force_block);
 
 /* Print the body "node" of a for or if node.
  * If "else_node" is set, then it is printed as well.
+ * If "force_block" is set, then print out the body as a block.
  *
  * We first check if we need to print out a block.
  * We always print out a block if there is an else node to make
  * sure that the else node is matched to the correct if node.
+ * For consistency, the corresponding else node is also printed as a block.
  *
  * If the else node is itself an if, then we print it as
  *
- *	} else if (..)
+ *	} else if (..) {
+ *	}
  *
  * Otherwise the else node is printed as
  *
- *	} else
+ *	} else {
  *	  node
+ *	}
  */
 static __isl_give isl_printer *print_body_c(__isl_take isl_printer *p,
 	__isl_keep isl_ast_node *node, __isl_keep isl_ast_node *else_node,
-	__isl_keep isl_ast_print_options *options)
+	__isl_keep isl_ast_print_options *options, int force_block)
 {
 	if (!node)
 		return isl_printer_free(p);
 
-	if (!else_node && !need_block(node)) {
+	if (!force_block && !else_node && !need_block(node)) {
 		p = isl_printer_end_line(p);
 		p = isl_printer_indent(p, 2);
 		p = isl_ast_node_print(node, p,
@@ -2005,10 +2210,10 @@ static __isl_give isl_printer *print_body_c(__isl_take isl_printer *p,
 	if (else_node) {
 		if (else_node->type == isl_ast_node_if) {
 			p = isl_printer_print_str(p, " else ");
-			p = print_if_c(p, else_node, options, 0);
+			p = print_if_c(p, else_node, options, 0, 1);
 		} else {
 			p = isl_printer_print_str(p, " else");
-			p = print_body_c(p, else_node, NULL, options);
+			p = print_body_c(p, else_node, NULL, options, 1);
 		}
 	} else
 		p = isl_printer_end_line(p);
@@ -2086,7 +2291,7 @@ static __isl_give isl_printer *print_for_c(__isl_take isl_printer *p,
 		p = isl_printer_print_str(p, " += ");
 		p = isl_printer_print_ast_expr(p, node->u.f.inc);
 		p = isl_printer_print_str(p, ")");
-		p = print_body_c(p, node->u.f.body, NULL, options);
+		p = print_body_c(p, node->u.f.body, NULL, options, 0);
 	} else {
 		id = isl_ast_expr_get_id(node->u.f.iterator);
 		name = isl_id_get_name(id);
@@ -2111,17 +2316,20 @@ static __isl_give isl_printer *print_for_c(__isl_take isl_printer *p,
 
 /* Print the if node "node".
  * If "new_line" is set then the if node should be printed on a new line.
+ * If "force_block" is set, then print out the body as a block.
  */
 static __isl_give isl_printer *print_if_c(__isl_take isl_printer *p,
 	__isl_keep isl_ast_node *node,
-	__isl_keep isl_ast_print_options *options, int new_line)
+	__isl_keep isl_ast_print_options *options, int new_line,
+	int force_block)
 {
 	if (new_line)
 		p = isl_printer_start_line(p);
 	p = isl_printer_print_str(p, "if (");
 	p = isl_printer_print_ast_expr(p, node->u.i.guard);
 	p = isl_printer_print_str(p, ")");
-	p = print_body_c(p, node->u.i.then, node->u.i.else_node, options);
+	p = print_body_c(p, node->u.i.then, node->u.i.else_node, options,
+			force_block);
 
 	return p;
 }
@@ -2148,7 +2356,7 @@ static __isl_give isl_printer *print_ast_node_c(__isl_take isl_printer *p,
 		p = print_for_c(p, node, options, in_block, in_list);
 		break;
 	case isl_ast_node_if:
-		p = print_if_c(p, node, options, 1);
+		p = print_if_c(p, node, options, 1, 0);
 		break;
 	case isl_ast_node_block:
 		if (!in_block)
@@ -2209,7 +2417,7 @@ __isl_give isl_printer *isl_ast_node_if_print(__isl_keep isl_ast_node *node,
 	if (node->type != isl_ast_node_if)
 		isl_die(isl_ast_node_get_ctx(node), isl_error_invalid,
 			"not an if node", goto error);
-	p = print_if_c(p, node, options, 1);
+	p = print_if_c(p, node, options, 1, 0);
 	isl_ast_print_options_free(options);
 	return p;
 error:
@@ -2472,7 +2680,7 @@ __isl_give isl_printer *isl_ast_op_type_print_macro(
 	case isl_ast_op_min:
 		p = isl_printer_start_line(p);
 		p = isl_printer_print_str(p, "#define ");
-		p = isl_printer_print_str(p, get_op_str(p, type));
+		p = isl_printer_print_str(p, get_op_str_c(p, type));
 		p = isl_printer_print_str(p,
 			"(x,y)    ((x) < (y) ? (x) : (y))");
 		p = isl_printer_end_line(p);
@@ -2480,7 +2688,7 @@ __isl_give isl_printer *isl_ast_op_type_print_macro(
 	case isl_ast_op_max:
 		p = isl_printer_start_line(p);
 		p = isl_printer_print_str(p, "#define ");
-		p = isl_printer_print_str(p, get_op_str(p, type));
+		p = isl_printer_print_str(p, get_op_str_c(p, type));
 		p = isl_printer_print_str(p,
 			"(x,y)    ((x) > (y) ? (x) : (y))");
 		p = isl_printer_end_line(p);
@@ -2488,7 +2696,7 @@ __isl_give isl_printer *isl_ast_op_type_print_macro(
 	case isl_ast_op_fdiv_q:
 		p = isl_printer_start_line(p);
 		p = isl_printer_print_str(p, "#define ");
-		p = isl_printer_print_str(p, get_op_str(p, type));
+		p = isl_printer_print_str(p, get_op_str_c(p, type));
 		p = isl_printer_print_str(p,
 			"(n,d) "
 			"(((n)<0) ? -((-(n)+(d)-1)/(d)) : (n)/(d))");
@@ -2578,4 +2786,46 @@ __isl_give isl_printer *isl_ast_node_print_macros(
 					    &ast_op_type_print_macro, &p) < 0)
 		return isl_printer_free(p);
 	return p;
+}
+
+/* Return a string containing C code representing this isl_ast_expr.
+ */
+__isl_give char *isl_ast_expr_to_C_str(__isl_keep isl_ast_expr *expr)
+{
+	isl_printer *p;
+	char *str;
+
+	if (!expr)
+		return NULL;
+
+	p = isl_printer_to_str(isl_ast_expr_get_ctx(expr));
+	p = isl_printer_set_output_format(p, ISL_FORMAT_C);
+	p = isl_printer_print_ast_expr(p, expr);
+
+	str = isl_printer_get_str(p);
+
+	isl_printer_free(p);
+
+	return str;
+}
+
+/* Return a string containing C code representing this isl_ast_node.
+ */
+__isl_give char *isl_ast_node_to_C_str(__isl_keep isl_ast_node *node)
+{
+	isl_printer *p;
+	char *str;
+
+	if (!node)
+		return NULL;
+
+	p = isl_printer_to_str(isl_ast_node_get_ctx(node));
+	p = isl_printer_set_output_format(p, ISL_FORMAT_C);
+	p = isl_printer_print_ast_node(p, node);
+
+	str = isl_printer_get_str(p);
+
+	isl_printer_free(p);
+
+	return str;
 }

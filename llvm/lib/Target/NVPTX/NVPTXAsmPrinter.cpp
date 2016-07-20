@@ -117,7 +117,7 @@ void NVPTXAsmPrinter::emitLineNumberAsDotLoc(const MachineInstr &MI) {
   if (ignoreLoc(MI))
     return;
 
-  DebugLoc curLoc = MI.getDebugLoc();
+  const DebugLoc &curLoc = MI.getDebugLoc();
 
   if (!prevDebugLoc && !curLoc)
     return;
@@ -277,7 +277,7 @@ bool NVPTXAsmPrinter::lowerOperand(const MachineOperand &MO,
     break;
   case MachineOperand::MO_FPImmediate: {
     const ConstantFP *Cnt = MO.getFPImm();
-    APFloat Val = Cnt->getValueAPF();
+    const APFloat &Val = Cnt->getValueAPF();
 
     switch (Cnt->getType()->getTypeID()) {
     default: report_fatal_error("Unsupported FP type"); break;
@@ -1589,7 +1589,19 @@ void NVPTXAsmPrinter::emitFunctionParamList(const Function *F, raw_ostream &O) {
       unsigned align = PAL.getParamAlignment(paramIndex + 1);
       if (align == 0)
         align = DL.getABITypeAlignment(ETy);
-
+      // Work around a bug in ptxas. When PTX code takes address of
+      // byval parameter with alignment < 4, ptxas generates code to
+      // spill argument into memory. Alas on sm_50+ ptxas generates
+      // SASS code that fails with misaligned access. To work around
+      // the problem, make sure that we align byval parameters by at
+      // least 4. Matching change must be made in LowerCall() where we
+      // prepare parameters for the call.
+      //
+      // TODO: this will need to be undone when we get to support multi-TU
+      // device-side compilation as it breaks ABI compatibility with nvcc.
+      // Hopefully ptxas bug is fixed by then.
+      if (!isKernelFunc && align < 4)
+        align = 4;
       unsigned sz = DL.getTypeAllocSize(ETy);
       O << "\t.param .align " << align << " .b8 ";
       printParamName(I, paramIndex, O);
@@ -2341,7 +2353,7 @@ void NVPTXAsmPrinter::emitSrcInText(StringRef filename, unsigned line) {
   this->OutStreamer->EmitRawText(temp.str());
 }
 
-LineReader *NVPTXAsmPrinter::getReader(std::string filename) {
+LineReader *NVPTXAsmPrinter::getReader(const std::string &filename) {
   if (!reader) {
     reader = new LineReader(filename);
   }

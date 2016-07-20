@@ -83,19 +83,22 @@ Args::~Args ()
 }
 
 void
-Args::Dump (Stream *s)
+Args::Dump (Stream &s, const char *label_name) const
 {
+    if (!label_name)
+        return;
+
     const size_t argc = m_argv.size();
     for (size_t i=0; i<argc; ++i)
     {
-        s->Indent();
+        s.Indent();
         const char *arg_cstr = m_argv[i];
         if (arg_cstr)
-            s->Printf("argv[%zi]=\"%s\"\n", i, arg_cstr);
+            s.Printf("%s[%zi]=\"%s\"\n", label_name, i, arg_cstr);
         else
-            s->Printf("argv[%zi]=NULL\n", i);
+            s.Printf("%s[%zi]=NULL\n", label_name, i);
     }
-    s->EOL();
+    s.EOL();
 }
 
 bool
@@ -1134,6 +1137,47 @@ Args::LongestCommonPrefix (std::string &common_prefix)
         if (common_prefix.empty())
             break;
     }
+}
+
+bool
+Args::ContainsEnvironmentVariable(const char *env_var_name) const
+{
+    // Validate args.
+    if (!env_var_name)
+        return false;
+
+    // Check each arg to see if it matches the env var name.
+    for (size_t i = 0; i < GetArgumentCount(); ++i)
+    {
+        // Get the arg value.
+        const char *argument_value = GetArgumentAtIndex(i);
+        if (!argument_value)
+            continue;
+
+        // Check if we are the "{env_var_name}={env_var_value}" style.
+        const char *equal_p = strchr(argument_value, '=');
+        if (equal_p)
+        {
+            if (strncmp(env_var_name, argument_value,
+                        equal_p - argument_value) == 0)
+            {
+                // We matched.
+                return true;
+            }
+        }
+        else
+        {
+            // We're a simple {env_var_name}-style entry.
+            if (strcmp(argument_value, env_var_name) == 0)
+            {
+                // We matched.
+                return true;
+            }
+        }
+    }
+
+    // We didn't find a match.
+    return false;
 }
 
 size_t

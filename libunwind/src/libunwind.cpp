@@ -45,30 +45,27 @@ _LIBUNWIND_EXPORT int unw_init_local(unw_cursor_t *cursor,
   _LIBUNWIND_TRACE_API("unw_init_local(cursor=%p, context=%p)\n",
                        static_cast<void *>(cursor),
                        static_cast<void *>(context));
-  // Use "placement new" to allocate UnwindCursor in the cursor buffer.
 #if defined(__i386__)
-  new ((void *)cursor) UnwindCursor<LocalAddressSpace, Registers_x86>(
-                                 context, LocalAddressSpace::sThisAddressSpace);
+# define REGISTER_KIND Registers_x86
 #elif defined(__x86_64__)
-  new ((void *)cursor) UnwindCursor<LocalAddressSpace, Registers_x86_64>(
-                                 context, LocalAddressSpace::sThisAddressSpace);
+# define REGISTER_KIND Registers_x86_64
 #elif defined(__ppc__)
-  new ((void *)cursor) UnwindCursor<LocalAddressSpace, Registers_ppc>(
-                                 context, LocalAddressSpace::sThisAddressSpace);
-#elif defined(__arm64__) || defined(__aarch64__)
-  new ((void *)cursor) UnwindCursor<LocalAddressSpace, Registers_arm64>(
-                                 context, LocalAddressSpace::sThisAddressSpace);
+# define REGISTER_KIND Registers_ppc
+#elif defined(__aarch64__)
+# define REGISTER_KIND Registers_arm64
 #elif _LIBUNWIND_ARM_EHABI
-  new ((void *)cursor) UnwindCursor<LocalAddressSpace, Registers_arm>(
-                                 context, LocalAddressSpace::sThisAddressSpace);
+# define REGISTER_KIND Registers_arm
 #elif defined(__or1k__)
-  new ((void *)cursor) UnwindCursor<LocalAddressSpace, Registers_or1k>(
-                                 context, LocalAddressSpace::sThisAddressSpace);
+# define REGISTER_KIND Registers_or1k
 #elif defined(__mips__)
-#warning The MIPS architecture is not supported.
+# warning The MIPS architecture is not supported.
 #else
-#error Architecture not supported
+# error Architecture not supported
 #endif
+  // Use "placement new" to allocate UnwindCursor in the cursor buffer.
+  new ((void *)cursor) UnwindCursor<LocalAddressSpace, REGISTER_KIND>(
+                                 context, LocalAddressSpace::sThisAddressSpace);
+#undef REGISTER_KIND
   AbstractUnwindCursor *co = (AbstractUnwindCursor *)cursor;
   co->setInfoBasedOnIPRegister();
 
@@ -309,7 +306,7 @@ _LIBUNWIND_EXPORT void unw_save_vfp_as_X(unw_cursor_t *cursor) {
 
 
 #if _LIBUNWIND_SUPPORT_DWARF_UNWIND
-/// SPI: walks cached dwarf entries
+/// SPI: walks cached DWARF entries
 _LIBUNWIND_EXPORT void unw_iterate_dwarf_unwind_cache(void (*func)(
     unw_word_t ip_start, unw_word_t ip_end, unw_word_t fde, unw_word_t mh)) {
   _LIBUNWIND_TRACE_API("unw_iterate_dwarf_unwind_cache(func=%p)\n",

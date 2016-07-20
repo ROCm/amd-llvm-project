@@ -13,6 +13,7 @@
 #define POLLY_SCHEDULE_OPTIMIZER_H
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/Analysis/TargetTransformInfo.h"
 #include "isl/ctx.h"
 
 struct isl_schedule;
@@ -22,7 +23,7 @@ struct isl_union_map;
 namespace polly {
 extern bool DisablePollyTiling;
 class Scop;
-}
+} // namespace polly
 
 class ScheduleTreeOptimizer {
 public:
@@ -37,9 +38,11 @@ public:
   ///
   /// @param Schedule The schedule object the transformations will be applied
   ///                 to.
+  /// @param TTI      Target Transform Info.
   /// @returns        The transformed schedule.
   static __isl_give isl_schedule *
-  optimizeSchedule(__isl_take isl_schedule *Schedule);
+  optimizeSchedule(__isl_take isl_schedule *Schedule,
+                   const llvm::TargetTransformInfo *TTI = nullptr);
 
   /// @brief Apply schedule tree transformations.
   ///
@@ -51,9 +54,11 @@ public:
   ///   - Prevectorization
   ///
   /// @param Node The schedule object post-transformations will be applied to.
+  /// @param TTI  Target Transform Info.
   /// @returns    The transformed schedule.
   static __isl_give isl_schedule_node *
-  optimizeScheduleNode(__isl_take isl_schedule_node *Node);
+  optimizeScheduleNode(__isl_take isl_schedule_node *Node,
+                       const llvm::TargetTransformInfo *TTI = nullptr);
 
   /// @brief Decide if the @p NewSchedule is profitable for @p S.
   ///
@@ -89,6 +94,47 @@ private:
   static __isl_give isl_schedule_node *
   tileNode(__isl_take isl_schedule_node *Node, const char *Identifier,
            llvm::ArrayRef<int> TileSizes, int DefaultTileSize);
+
+  /// @brief Tile a schedule node and unroll point loops.
+  ///
+  /// @param Node            The node to register tile.
+  /// @param TileSizes       A vector of tile sizes that should be used for
+  ///                        tiling.
+  /// @param DefaultTileSize A default tile size that is used for dimensions
+  static __isl_give isl_schedule_node *
+  applyRegisterTiling(__isl_take isl_schedule_node *Node,
+                      llvm::ArrayRef<int> TileSizes, int DefaultTileSize);
+
+  /// @brief Apply the BLIS matmul optimization pattern
+  ///
+  /// Apply the BLIS matmul optimization pattern. BLIS implements gemm
+  /// as three nested loops around a macro-kernel, plus two packing routines.
+  /// The macro-kernel is implemented in terms of two additional loops around
+  /// a micro-kernel. The micro-kernel is a loop around a rank-1
+  /// (i.e., outer product) update.
+  ///
+  /// For a detailed description please see:
+  /// Analytical Modeling is Enough for High Performance BLIS
+  /// Tze Meng Low, Francisco D Igual, Tyler M Smith, Enrique S Quintana-Orti
+  /// Technical Report, 2014
+  /// http://www.cs.utexas.edu/users/flame/pubs/TOMS-BLIS-Analytical.pdf
+  ///
+  /// We create the BLIS micro-kernel by applying a combination of tiling
+  /// and unrolling. In subsequent changes we will add the extraction
+  /// of the BLIS macro-kernel and implement the packing transformation.
+  ///
+  /// It is assumed that the Node is successfully checked
+  /// by ScheduleTreeOptimizer::isMatrMultPattern. Consequently
+  /// in case of matmul kernels the application of optimizeMatMulPattern
+  /// can lead to close-to-peak performance. Maybe it can be generalized
+  /// to effectively optimize the whole class of successfully checked
+  /// statements.
+  ///
+  /// @param Node the node that contains a band to be optimized.
+  /// @return Modified isl_schedule_node.
+  static __isl_give isl_schedule_node *
+  optimizeMatMulPattern(__isl_take isl_schedule_node *Node,
+                        const llvm::TargetTransformInfo *TTI);
 
   /// @brief Check if this node is a band node we want to tile.
   ///
@@ -147,8 +193,45 @@ private:
   ///      - if vectorization is enabled
   ///
   /// @param Node The schedule node to (possibly) optimize.
-  /// @param User A pointer to forward some use information (currently unused).
+  /// @param User A pointer to forward some use information
+  ///        (currently unused).
   static isl_schedule_node *optimizeBand(isl_schedule_node *Node, void *User);
+
+  /// @brief Apply additional optimizations on the bands in the schedule tree.
+  ///
+  /// We apply the following
+  /// transformations:
+  ///
+  ///  - Tile the band
+  ///  - Prevectorize the schedule of the band (or the point loop in case of
+  ///    tiling).
+  ///      - if vectorization is enabled
+  ///
+  /// @param Node The schedule node to (possibly) optimize.
+  /// @param User A pointer to forward some use information
+  ///        (currently unused).
+  static isl_schedule_node *standardBandOpts(__isl_take isl_schedule_node *Node,
+                                             void *User);
+
+  /// @brief Check if this node contains a partial schedule that could
+  ///        probably be optimized with analytical modeling.
+  ///
+  /// isMatrMultPattern tries to determine whether the following conditions
+  /// are true:
+  /// 1. the partial schedule contains only one statement.
+  /// 2. there are exactly three input dimensions.
+  /// 3. all memory accesses of the statement will have stride 0 or 1, if we
+  ///    interchange loops (switch the variable used in the inner loop to
+  ///    the outer loop).
+  /// 4. all memory accesses of the statement except from the last one, are
+  ///    read memory access and the last one is write memory access.
+  /// 5. all subscripts of the last memory access of the statement don't
+  ///    contain the variable used in the inner loop.
+  /// If this is the case, we could try to use an approach that is similar to
+  /// the one used to get close-to-peak performance of matrix multiplications.
+  ///
+  /// @param Node The node to check.
+  static bool isMatrMultPattern(__isl_keep isl_schedule_node *Node);
 };
 
 #endif

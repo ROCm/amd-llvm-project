@@ -18,13 +18,21 @@ We expect that FreeBSD is going to be the first large system
 to adopt LLD as the system linker.
 We are working on it in collaboration with the FreeBSD project.
 
-The linkers are notably small; as of March 2016,
-the COFF linker is under 7k lines and the ELF linker is about 10k lines.
+The linkers are notably small; as of June 2016,
+the COFF linker is under 7k lines and the ELF linker is about 13k lines,
+while gold is 146K lines.
 
 The linkers are designed to be as fast and simple as possible.
 Because it is simple, it is easy to extend to support new features.
 It already supports several advanced features such section garbage
 collection and identical code folding.
+
+The COFF linker supports i386, x86-64 and ARM. The ELF linker supports
+i386, x86-64, x32, MIPS32, MIPS64, PowerPC, AMDGPU, ARM and Aarch64,
+although the quality varies depending on platform. By default, LLD
+provides support for all targets because the amount of code we have for
+each target is so small. We do not even provide a way to disable
+targets at compile time.
 
 There are a few key design choices that we made to achieve these goals.
 We will describe them in this document.

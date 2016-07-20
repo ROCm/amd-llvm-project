@@ -735,16 +735,15 @@ void LoopReroll::DAGRootTracker::collectInLoopUserSet(
   const SmallInstructionSet &Exclude,
   const SmallInstructionSet &Final,
   DenseSet<Instruction *> &Users) {
-  for (SmallInstructionVector::const_iterator I = Roots.begin(),
-       IE = Roots.end(); I != IE; ++I)
-    collectInLoopUserSet(*I, Exclude, Final, Users);
+  for (Instruction *Root : Roots)
+    collectInLoopUserSet(Root, Exclude, Final, Users);
 }
 
-static bool isSimpleLoadStore(Instruction *I) {
+static bool isUnorderedLoadStore(Instruction *I) {
   if (LoadInst *LI = dyn_cast<LoadInst>(I))
-    return LI->isSimple();
+    return LI->isUnordered();
   if (StoreInst *SI = dyn_cast<StoreInst>(I))
-    return SI->isSimple();
+    return SI->isUnordered();
   if (MemIntrinsic *MI = dyn_cast<MemIntrinsic>(I))
     return !MI->isVolatile();
   return false;
@@ -1284,7 +1283,7 @@ bool LoopReroll::DAGRootTracker::validate(ReductionTracker &Reductions) {
         // which while a valid (somewhat arbitrary) micro-optimization, is
         // needed because otherwise isSafeToSpeculativelyExecute returns
         // false on PHI nodes.
-        if (!isa<PHINode>(I) && !isSimpleLoadStore(I) &&
+        if (!isa<PHINode>(I) && !isUnorderedLoadStore(I) &&
             !isSafeToSpeculativelyExecute(I))
           // Intervening instructions cause side effects.
           FutureSideEffects = true;
@@ -1314,10 +1313,10 @@ bool LoopReroll::DAGRootTracker::validate(ReductionTracker &Reductions) {
       // If we've past an instruction from a future iteration that may have
       // side effects, and this instruction might also, then we can't reorder
       // them, and this matching fails. As an exception, we allow the alias
-      // set tracker to handle regular (simple) load/store dependencies.
-      if (FutureSideEffects && ((!isSimpleLoadStore(BaseInst) &&
+      // set tracker to handle regular (unordered) load/store dependencies.
+      if (FutureSideEffects && ((!isUnorderedLoadStore(BaseInst) &&
                                  !isSafeToSpeculativelyExecute(BaseInst)) ||
-                                (!isSimpleLoadStore(RootInst) &&
+                                (!isUnorderedLoadStore(RootInst) &&
                                  !isSafeToSpeculativelyExecute(RootInst)))) {
         DEBUG(dbgs() << "LRR: iteration root match failed at " << *BaseInst <<
                         " vs. " << *RootInst <<
@@ -1562,9 +1561,7 @@ void LoopReroll::DAGRootTracker::replaceIV(Instruction *Inst,
 // entries must appear in order.
 bool LoopReroll::ReductionTracker::validateSelected() {
   // For a non-associative reduction, the chain entries must appear in order.
-  for (DenseSet<int>::iterator RI = Reds.begin(), RIE = Reds.end();
-       RI != RIE; ++RI) {
-    int i = *RI;
+  for (int i : Reds) {
     int PrevIter = 0, BaseCount = 0, Count = 0;
     for (Instruction *J : PossibleReds[i]) {
       // Note that all instructions in the chain must have been found because
@@ -1608,9 +1605,7 @@ bool LoopReroll::ReductionTracker::validateSelected() {
 void LoopReroll::ReductionTracker::replaceSelected() {
   // Fixup reductions to refer to the last instruction associated with the
   // first iteration (not the last).
-  for (DenseSet<int>::iterator RI = Reds.begin(), RIE = Reds.end();
-       RI != RIE; ++RI) {
-    int i = *RI;
+  for (int i : Reds) {
     int j = 0;
     for (int e = PossibleReds[i].size(); j != e; ++j)
       if (PossibleRedIter[PossibleReds[i][j]] != 0) {
@@ -1624,9 +1619,8 @@ void LoopReroll::ReductionTracker::replaceSelected() {
       Users.push_back(cast<Instruction>(U));
     }
 
-    for (SmallInstructionVector::iterator J = Users.begin(),
-         JE = Users.end(); J != JE; ++J)
-      (*J)->replaceUsesOfWith(PossibleReds[i].getReducedValue(),
+    for (Instruction *User : Users)
+      User->replaceUsesOfWith(PossibleReds[i].getReducedValue(),
                               PossibleReds[i][j]);
   }
 }
@@ -1745,9 +1739,8 @@ bool LoopReroll::runOnLoop(Loop *L, LPPassManager &LPM) {
 
   // For each possible IV, collect the associated possible set of 'root' nodes
   // (i+1, i+2, etc.).
-  for (SmallInstructionVector::iterator I = PossibleIVs.begin(),
-       IE = PossibleIVs.end(); I != IE; ++I)
-    if (reroll(*I, L, Header, IterCount, Reductions)) {
+  for (Instruction *PossibleIV : PossibleIVs)
+    if (reroll(PossibleIV, L, Header, IterCount, Reductions)) {
       Changed = true;
       break;
     }

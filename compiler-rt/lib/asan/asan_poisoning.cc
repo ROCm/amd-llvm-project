@@ -315,11 +315,13 @@ static void PoisonAlignedStackMemory(uptr addr, uptr size, bool do_poison) {
 }
 
 void __asan_poison_stack_memory(uptr addr, uptr size) {
+  if (!__asan_option_detect_stack_use_after_scope) return;
   VReport(1, "poisoning: %p %zx\n", (void *)addr, size);
   PoisonAlignedStackMemory(addr, size, true);
 }
 
 void __asan_unpoison_stack_memory(uptr addr, uptr size) {
+  if (!__asan_option_detect_stack_use_after_scope) return;
   VReport(1, "unpoisoning: %p %zx\n", (void *)addr, size);
   PoisonAlignedStackMemory(addr, size, false);
 }
@@ -343,7 +345,7 @@ void __sanitizer_annotate_contiguous_container(const void *beg_p,
                                                  &stack);
   }
   CHECK_LE(end - beg,
-           FIRST_32_SECOND_64(1UL << 30, 1UL << 34)); // Sanity check.
+           FIRST_32_SECOND_64(1UL << 30, 1ULL << 34)); // Sanity check.
 
   uptr a = RoundDownTo(Min(old_mid, new_mid), granularity);
   uptr c = RoundUpTo(Max(old_mid, new_mid), granularity);

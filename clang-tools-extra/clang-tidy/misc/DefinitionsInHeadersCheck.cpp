@@ -53,15 +53,17 @@ void DefinitionsInHeadersCheck::storeOptions(
 void DefinitionsInHeadersCheck::registerMatchers(MatchFinder *Finder) {
   if (!getLangOpts().CPlusPlus)
     return;
+  auto DefinitionMatcher =
+      anyOf(functionDecl(isDefinition(), unless(isDeleted())),
+            varDecl(isDefinition()));
   if (UseHeaderFileExtension) {
-    Finder->addMatcher(
-        namedDecl(anyOf(functionDecl(isDefinition()), varDecl(isDefinition())),
-                  usesHeaderFileExtension(HeaderFileExtensions))
-            .bind("name-decl"),
-        this);
+    Finder->addMatcher(namedDecl(DefinitionMatcher,
+                                 usesHeaderFileExtension(HeaderFileExtensions))
+                           .bind("name-decl"),
+                       this);
   } else {
     Finder->addMatcher(
-        namedDecl(anyOf(functionDecl(isDefinition()), varDecl(isDefinition())),
+        namedDecl(DefinitionMatcher,
                   anyOf(usesHeaderFileExtension(HeaderFileExtensions),
                         unless(isExpansionInMainFile())))
             .bind("name-decl"),
@@ -70,6 +72,10 @@ void DefinitionsInHeadersCheck::registerMatchers(MatchFinder *Finder) {
 }
 
 void DefinitionsInHeadersCheck::check(const MatchFinder::MatchResult &Result) {
+  // Don't run the check in failing TUs.
+  if (Result.Context->getDiagnostics().hasErrorOccurred())
+    return;
+
   // C++ [basic.def.odr] p6:
   // There can be more than one definition of a class type, enumeration type,
   // inline function with external linkage, class template, non-static function
@@ -120,8 +126,8 @@ void DefinitionsInHeadersCheck::check(const MatchFinder::MatchResult &Result) {
     diag(FD->getLocation(),
          "function %0 defined in a header file; "
          "function definitions in header files can lead to ODR violations")
-        << FD << FixItHint::CreateInsertion(FD->getSourceRange().getBegin(),
-                                            "inline ");
+        << FD << FixItHint::CreateInsertion(
+                     FD->getReturnTypeSourceRange().getBegin(), "inline ");
   } else if (const auto *VD = dyn_cast<VarDecl>(ND)) {
     // Static data members of a class template are allowed.
     if (VD->getDeclContext()->isDependentContext() && VD->isStaticDataMember())

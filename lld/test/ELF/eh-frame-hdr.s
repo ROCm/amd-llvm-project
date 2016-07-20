@@ -44,7 +44,7 @@ _start:
 // HDR:        Section {
 // HDR:        Index: 1
 // HDR-NEXT:    Name: .eh_frame
-// HDR-NEXT:    Type: SHT_X86_64_UNWIND
+// HDR-NEXT:    Type: SHT_PROGBITS
 // HDR-NEXT:    Flags [
 // HDR-NEXT:      SHF_ALLOC
 // HDR-NEXT:    ]
@@ -89,7 +89,7 @@ _start:
 // HDR-NEXT:    Size: 36
 // HDR-NEXT:    Link: 0
 // HDR-NEXT:    Info: 0
-// HDR-NEXT:    AddressAlignment: 0
+// HDR-NEXT:    AddressAlignment: 1
 // HDR-NEXT:    EntrySize: 0
 // HDR-NEXT:    SectionData (
 // HDR-NEXT:      0000: 011B033B 9CFFFFFF 03000000 480E0000  |

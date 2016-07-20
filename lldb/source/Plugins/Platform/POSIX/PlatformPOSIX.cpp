@@ -882,6 +882,7 @@ PlatformPOSIX::EvaluateLibdlExpression(lldb_private::Process* process,
     expr_options.SetIgnoreBreakpoints(true);
     expr_options.SetExecutionPolicy(eExecutionPolicyAlways);
     expr_options.SetLanguage(eLanguageTypeC_plus_plus);
+    expr_options.SetTimeoutUsec(2000000); // 2 seconds
 
     Error expr_error;
     UserExpression::Evaluate(exe_ctx,
@@ -943,7 +944,7 @@ PlatformPOSIX::DoLoadImage(lldb_private::Process* process,
     if (image_ptr == 0)
     {
         ValueObjectSP error_str_sp = result_valobj_sp->GetChildAtIndex(1, true);
-        if (error_str_sp && error_str_sp->IsCStringContainer(true))
+        if (error_str_sp)
         {
             DataBufferSP buffer_sp(new DataBufferHeap(10240,0));
             size_t num_chars = error_str_sp->ReadPointedString (buffer_sp, error, 10240).first;

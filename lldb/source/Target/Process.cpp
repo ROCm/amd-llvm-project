@@ -771,6 +771,7 @@ Process::Process(lldb::TargetSP target_sp, ListenerSP listener_sp, const UnixSig
       m_destroy_in_process(false),
       m_can_interpret_function_calls(false),
       m_warnings_issued(),
+      m_run_thread_plan_lock(),
       m_can_jit(eCanJITDontKnow)
 {
     CheckInWithManager();
@@ -1460,14 +1461,6 @@ Process::SetExitStatus (int status, const char *cstr)
         m_exit_string = cstr;
     else
         m_exit_string.clear();
-
-    // When we exit, we don't need the input reader anymore
-    if (m_process_input_reader)
-    {
-        m_process_input_reader->SetIsDone(true);
-        m_process_input_reader->Cancel();
-        m_process_input_reader.reset();
-    }
 
     // Clear the last natural stop ID since it has a strong
     // reference to this process
@@ -2524,11 +2517,21 @@ Process::ReadMemoryFromInferior (addr_t addr, void *buf, size_t size, Error &err
 }
 
 uint64_t
-Process::ReadUnsignedIntegerFromMemory (lldb::addr_t vm_addr, size_t integer_byte_size, uint64_t fail_value, Error &error)
+Process::ReadUnsignedIntegerFromMemory(lldb::addr_t vm_addr, size_t integer_byte_size, uint64_t fail_value,
+                                       Error &error)
 {
     Scalar scalar;
     if (ReadScalarIntegerFromMemory(vm_addr, integer_byte_size, false, scalar, error))
         return scalar.ULongLong(fail_value);
+    return fail_value;
+}
+
+int64_t
+Process::ReadSignedIntegerFromMemory(lldb::addr_t vm_addr, size_t integer_byte_size, int64_t fail_value, Error &error)
+{
+    Scalar scalar;
+    if (ReadScalarIntegerFromMemory(vm_addr, integer_byte_size, true, scalar, error))
+        return scalar.SLongLong(fail_value);
     return fail_value;
 }
 
@@ -3672,7 +3675,7 @@ Process::StopForDestroyOrDetach(lldb::EventSP &exit_event_sp)
             StateType private_state = m_private_state.GetValue();
             if (private_state != eStateStopped)
             {
-                return error;
+                return Error("Attempt to stop the target in order to detach timed out. State = %s", StateAsCString(GetState()));
             }
         }
     }
@@ -4077,7 +4080,7 @@ Process::ResumePrivateStateThread ()
 void
 Process::StopPrivateStateThread ()
 {
-    if (PrivateStateThreadIsValid ())
+    if (m_private_state_thread.IsJoinable ())
         ControlPrivateStateThread (eBroadcastInternalStateControlStop);
     else
     {
@@ -4099,21 +4102,23 @@ Process::ControlPrivateStateThread (uint32_t signal)
     if (log)
         log->Printf ("Process::%s (signal = %d)", __FUNCTION__, signal);
 
-    // Signal the private state thread. First we should copy this is case the
-    // thread starts exiting since the private state thread will NULL this out
-    // when it exits
+    // Signal the private state thread
+    if (m_private_state_thread.IsJoinable())
     {
-        HostThread private_state_thread(m_private_state_thread);
-        if (private_state_thread.IsJoinable())
-        {
-            if (log)
-                log->Printf ("Sending control event of type: %d.", signal);
-            // Send the control event and wait for the receipt or for the private state
-            // thread to exit
-            std::shared_ptr<EventDataReceipt> event_receipt_sp(new EventDataReceipt());
-            m_private_state_control_broadcaster.BroadcastEvent(signal, event_receipt_sp);
+        // Broadcast the event.
+        // It is important to do this outside of the if below, because
+        // it's possible that the thread state is invalid but that the
+        // thread is waiting on a control event instead of simply being
+        // on its way out (this should not happen, but it apparently can).
+        if (log)
+            log->Printf ("Sending control event of type: %d.", signal);
+        std::shared_ptr<EventDataReceipt> event_receipt_sp(new EventDataReceipt());
+        m_private_state_control_broadcaster.BroadcastEvent(signal, event_receipt_sp);
 
-            bool receipt_received = false;
+        // Wait for the event receipt or for the private state thread to exit
+        bool receipt_received = false;
+        if (PrivateStateThreadIsValid())
+        {
             while (!receipt_received)
             {
                 bool timed_out = false;
@@ -4126,22 +4131,23 @@ Process::ControlPrivateStateThread (uint32_t signal)
                 if (!receipt_received)
                 {
                     // Check if the private state thread is still around. If it isn't then we are done waiting
-                    if (!m_private_state_thread.IsJoinable())
-                        break; // Private state thread exited, we are done
+                    if (!PrivateStateThreadIsValid())
+                        break; // Private state thread exited or is exiting, we are done
                 }
             }
+        }
 
-            if (signal == eBroadcastInternalStateControlStop)
-            {
-                thread_result_t result = NULL;
-                private_state_thread.Join(&result);
-            }
-        }
-        else
+        if (signal == eBroadcastInternalStateControlStop)
         {
-            if (log)
-                log->Printf ("Private state thread already dead, no need to signal it to stop.");
+            thread_result_t result = NULL;
+            m_private_state_thread.Join(&result);
+            m_private_state_thread.Reset();
         }
+    }
+    else
+    {
+        if (log)
+            log->Printf("Private state thread already dead, no need to signal it to stop.");
     }
 }
 
@@ -4435,7 +4441,6 @@ Process::RunPrivateStateThread (bool is_secondary_thread)
     // try to change it on the way out.
     if (!is_secondary_thread)
         m_public_run_lock.SetStopped();
-    m_private_state_thread.Reset();
     return NULL;
 }
 
@@ -5185,6 +5190,8 @@ Process::RunThreadPlan(ExecutionContext &exe_ctx, lldb::ThreadPlanSP &thread_pla
                        const EvaluateExpressionOptions &options, DiagnosticManager &diagnostic_manager)
 {
     ExpressionResults return_value = eExpressionSetupError;
+    
+    std::lock_guard<std::mutex> run_thread_plan_locker(m_run_thread_plan_lock);
 
     if (!thread_plan_sp)
     {
@@ -5213,7 +5220,7 @@ Process::RunThreadPlan(ExecutionContext &exe_ctx, lldb::ThreadPlanSP &thread_pla
 
     // We need to change some of the thread plan attributes for the thread plan runner.  This will restore them
     // when we are done:
-    
+        
     RestorePlanState thread_plan_restorer(thread_plan_sp);
     
     // We rely on the thread plan we are running returning "PlanCompleted" if when it successfully completes.
@@ -6592,11 +6599,38 @@ Process::AdvanceAddressToNextBranchInstruction (Address default_stop_addr, Addre
         }
     }
 
-    if (disassembler_sp)
-    {
-        // FIXME: The DisassemblerLLVMC has a reference cycle and won't go away if it has any active instructions.
-        disassembler_sp->GetInstructionList().Clear();
-    }
-
     return retval;
+}
+
+Error
+Process::GetMemoryRegions (std::vector<lldb::MemoryRegionInfoSP>& region_list)
+{
+
+    Error error;
+
+    lldb::addr_t range_base = 0;
+    lldb::addr_t range_end = 0;
+
+    region_list.clear();
+    do
+    {
+        lldb::MemoryRegionInfoSP region_info( new lldb_private::MemoryRegionInfo() );
+        error = GetMemoryRegionInfo (range_end, *region_info);
+        // GetMemoryRegionInfo should only return an error if it is unimplemented.
+        if (error.Fail())
+        {
+            region_list.clear();
+            break;
+        }
+
+        range_base = region_info->GetRange().GetRangeBase();
+        range_end = region_info->GetRange().GetRangeEnd();
+        if( region_info->GetMapped() == MemoryRegionInfo::eYes )
+        {
+            region_list.push_back(region_info);
+        }
+    } while (range_end != LLDB_INVALID_ADDRESS);
+
+    return error;
+
 }

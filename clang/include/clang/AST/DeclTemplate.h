@@ -21,7 +21,7 @@
 #include "llvm/ADT/PointerUnion.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/TrailingObjects.h"
-#include <limits>
+#include <utility>
 
 namespace clang {
 
@@ -183,7 +183,7 @@ class TemplateArgumentList final
 
   // Constructs an instance with an internal Argument list, containing
   // a copy of the Args array. (Called by CreateCopy)
-  TemplateArgumentList(const TemplateArgument *Args, unsigned NumArgs);
+  TemplateArgumentList(ArrayRef<TemplateArgument> Args);
 
 public:
   /// \brief Type used to indicate that the template argument list itself is a
@@ -193,16 +193,14 @@ public:
   /// \brief Create a new template argument list that copies the given set of
   /// template arguments.
   static TemplateArgumentList *CreateCopy(ASTContext &Context,
-                                          const TemplateArgument *Args,
-                                          unsigned NumArgs);
+                                          ArrayRef<TemplateArgument> Args);
 
   /// \brief Construct a new, temporary template argument list on the stack.
   ///
   /// The template argument list does not own the template arguments
   /// provided.
-  explicit TemplateArgumentList(OnStackType, const TemplateArgument *Args,
-                                unsigned NumArgs)
-      : Arguments(Args), NumArguments(NumArgs) {}
+  explicit TemplateArgumentList(OnStackType, ArrayRef<TemplateArgument> Args)
+      : Arguments(Args.data()), NumArguments(Args.size()) {}
 
   /// \brief Produces a shallow copy of the given template argument list.
   ///
@@ -490,8 +488,8 @@ public:
   Profile(llvm::FoldingSetNodeID &ID, ArrayRef<TemplateArgument> TemplateArgs,
           ASTContext &Context) {
     ID.AddInteger(TemplateArgs.size());
-    for (unsigned Arg = 0; Arg != TemplateArgs.size(); ++Arg)
-      TemplateArgs[Arg].Profile(ID, Context);
+    for (const TemplateArgument &TemplateArg : TemplateArgs)
+      TemplateArg.Profile(ID, Context);
   }
 };
 
@@ -1180,9 +1178,8 @@ class NonTypeTemplateParmDecl final
                           SourceLocation IdLoc, unsigned D, unsigned P,
                           IdentifierInfo *Id, QualType T,
                           TypeSourceInfo *TInfo,
-                          const QualType *ExpandedTypes,
-                          unsigned NumExpandedTypes,
-                          TypeSourceInfo **ExpandedTInfos);
+                          ArrayRef<QualType> ExpandedTypes,
+                          ArrayRef<TypeSourceInfo *> ExpandedTInfos);
 
   friend class ASTDeclReader;
   friend TrailingObjects;
@@ -1196,9 +1193,8 @@ public:
   static NonTypeTemplateParmDecl *
   Create(const ASTContext &C, DeclContext *DC, SourceLocation StartLoc,
          SourceLocation IdLoc, unsigned D, unsigned P, IdentifierInfo *Id,
-         QualType T, TypeSourceInfo *TInfo,
-         const QualType *ExpandedTypes, unsigned NumExpandedTypes,
-         TypeSourceInfo **ExpandedTInfos);
+         QualType T, TypeSourceInfo *TInfo, ArrayRef<QualType> ExpandedTypes,
+         ArrayRef<TypeSourceInfo *> ExpandedTInfos);
 
   static NonTypeTemplateParmDecl *CreateDeserialized(ASTContext &C, 
                                                      unsigned ID);
@@ -1361,8 +1357,7 @@ class TemplateTemplateParmDecl final
   TemplateTemplateParmDecl(DeclContext *DC, SourceLocation L,
                            unsigned D, unsigned P,
                            IdentifierInfo *Id, TemplateParameterList *Params,
-                           unsigned NumExpansions,
-                           TemplateParameterList * const *Expansions);
+                           ArrayRef<TemplateParameterList *> Expansions);
 
 public:
   static TemplateTemplateParmDecl *Create(const ASTContext &C, DeclContext *DC,
@@ -1489,8 +1484,8 @@ public:
 };
 
 /// \brief Represents the builtin template declaration which is used to
-/// implement __make_integer_seq.  It serves no real purpose beyond existing as
-/// a place to hold template parameters.
+/// implement __make_integer_seq and other builtin templates.  It serves
+/// no real purpose beyond existing as a place to hold template parameters.
 class BuiltinTemplateDecl : public TemplateDecl {
   void anchor() override;
 
@@ -1582,8 +1577,7 @@ protected:
                                   DeclContext *DC, SourceLocation StartLoc,
                                   SourceLocation IdLoc,
                                   ClassTemplateDecl *SpecializedTemplate,
-                                  const TemplateArgument *Args,
-                                  unsigned NumArgs,
+                                  ArrayRef<TemplateArgument> Args,
                                   ClassTemplateSpecializationDecl *PrevDecl);
 
   explicit ClassTemplateSpecializationDecl(ASTContext &C, Kind DK);
@@ -1593,8 +1587,7 @@ public:
   Create(ASTContext &Context, TagKind TK, DeclContext *DC,
          SourceLocation StartLoc, SourceLocation IdLoc,
          ClassTemplateDecl *SpecializedTemplate,
-         const TemplateArgument *Args,
-         unsigned NumArgs,
+         ArrayRef<TemplateArgument> Args,
          ClassTemplateSpecializationDecl *PrevDecl);
   static ClassTemplateSpecializationDecl *
   CreateDeserialized(ASTContext &C, unsigned ID);
@@ -1771,8 +1764,8 @@ public:
   Profile(llvm::FoldingSetNodeID &ID, ArrayRef<TemplateArgument> TemplateArgs,
           ASTContext &Context) {
     ID.AddInteger(TemplateArgs.size());
-    for (unsigned Arg = 0; Arg != TemplateArgs.size(); ++Arg)
-      TemplateArgs[Arg].Profile(ID, Context);
+    for (const TemplateArgument &TemplateArg : TemplateArgs)
+      TemplateArg.Profile(ID, Context);
   }
 
   static bool classof(const Decl *D) { return classofKind(D->getKind()); }
@@ -1810,8 +1803,7 @@ class ClassTemplatePartialSpecializationDecl
                                          SourceLocation IdLoc,
                                          TemplateParameterList *Params,
                                          ClassTemplateDecl *SpecializedTemplate,
-                                         const TemplateArgument *Args,
-                                         unsigned NumArgs,
+                                         ArrayRef<TemplateArgument> Args,
                                const ASTTemplateArgumentListInfo *ArgsAsWritten,
                                ClassTemplatePartialSpecializationDecl *PrevDecl);
 
@@ -1826,8 +1818,7 @@ public:
          SourceLocation StartLoc, SourceLocation IdLoc,
          TemplateParameterList *Params,
          ClassTemplateDecl *SpecializedTemplate,
-         const TemplateArgument *Args,
-         unsigned NumArgs,
+         ArrayRef<TemplateArgument> Args,
          const TemplateArgumentListInfo &ArgInfos,
          QualType CanonInjectedType,
          ClassTemplatePartialSpecializationDecl *PrevDecl);
@@ -2167,18 +2158,11 @@ private:
   // Location of the 'friend' specifier.
   SourceLocation FriendLoc;
 
-
   FriendTemplateDecl(DeclContext *DC, SourceLocation Loc,
-                     unsigned NParams,
-                     TemplateParameterList **Params,
-                     FriendUnion Friend,
-                     SourceLocation FriendLoc)
-    : Decl(Decl::FriendTemplate, DC, Loc),
-      NumParams(NParams),
-      Params(Params),
-      Friend(Friend),
-      FriendLoc(FriendLoc)
-  {}
+                     MutableArrayRef<TemplateParameterList *> Params,
+                     FriendUnion Friend, SourceLocation FriendLoc)
+      : Decl(Decl::FriendTemplate, DC, Loc), NumParams(Params.size()),
+        Params(Params.data()), Friend(Friend), FriendLoc(FriendLoc) {}
 
   FriendTemplateDecl(EmptyShell Empty)
     : Decl(Decl::FriendTemplate, Empty),
@@ -2187,12 +2171,10 @@ private:
   {}
 
 public:
-  static FriendTemplateDecl *Create(ASTContext &Context,
-                                    DeclContext *DC, SourceLocation Loc,
-                                    unsigned NParams,
-                                    TemplateParameterList **Params,
-                                    FriendUnion Friend,
-                                    SourceLocation FriendLoc);
+  static FriendTemplateDecl *
+  Create(ASTContext &Context, DeclContext *DC, SourceLocation Loc,
+         MutableArrayRef<TemplateParameterList *> Params, FriendUnion Friend,
+         SourceLocation FriendLoc);
 
   static FriendTemplateDecl *CreateDeserialized(ASTContext &C, unsigned ID);
 
@@ -2332,9 +2314,9 @@ class ClassScopeFunctionSpecializationDecl : public Decl {
   ClassScopeFunctionSpecializationDecl(DeclContext *DC, SourceLocation Loc,
                                        CXXMethodDecl *FD, bool Args,
                                        TemplateArgumentListInfo TemplArgs)
-    : Decl(Decl::ClassScopeFunctionSpecialization, DC, Loc),
-      Specialization(FD), HasExplicitTemplateArgs(Args),
-      TemplateArgs(TemplArgs) {}
+      : Decl(Decl::ClassScopeFunctionSpecialization, DC, Loc),
+        Specialization(FD), HasExplicitTemplateArgs(Args),
+        TemplateArgs(std::move(TemplArgs)) {}
 
   ClassScopeFunctionSpecializationDecl(EmptyShell Empty)
     : Decl(Decl::ClassScopeFunctionSpecialization, Empty) {}
@@ -2355,7 +2337,7 @@ public:
                                                    bool HasExplicitTemplateArgs,
                                         TemplateArgumentListInfo TemplateArgs) {
     return new (C, DC) ClassScopeFunctionSpecializationDecl(
-        DC, Loc, FD, HasExplicitTemplateArgs, TemplateArgs);
+        DC, Loc, FD, HasExplicitTemplateArgs, std::move(TemplateArgs));
   }
 
   static ClassScopeFunctionSpecializationDecl *
@@ -2441,8 +2423,8 @@ protected:
                                 SourceLocation StartLoc, SourceLocation IdLoc,
                                 VarTemplateDecl *SpecializedTemplate,
                                 QualType T, TypeSourceInfo *TInfo,
-                                StorageClass S, const TemplateArgument *Args,
-                                unsigned NumArgs);
+                                StorageClass S,
+                                ArrayRef<TemplateArgument> Args);
 
   explicit VarTemplateSpecializationDecl(Kind DK, ASTContext &Context);
 
@@ -2450,8 +2432,8 @@ public:
   static VarTemplateSpecializationDecl *
   Create(ASTContext &Context, DeclContext *DC, SourceLocation StartLoc,
          SourceLocation IdLoc, VarTemplateDecl *SpecializedTemplate, QualType T,
-         TypeSourceInfo *TInfo, StorageClass S, const TemplateArgument *Args,
-         unsigned NumArgs);
+         TypeSourceInfo *TInfo, StorageClass S,
+         ArrayRef<TemplateArgument> Args);
   static VarTemplateSpecializationDecl *CreateDeserialized(ASTContext &C,
                                                            unsigned ID);
 
@@ -2617,8 +2599,8 @@ public:
                       ArrayRef<TemplateArgument> TemplateArgs,
                       ASTContext &Context) {
     ID.AddInteger(TemplateArgs.size());
-    for (unsigned Arg = 0; Arg != TemplateArgs.size(); ++Arg)
-      TemplateArgs[Arg].Profile(ID, Context);
+    for (const TemplateArgument &TemplateArg : TemplateArgs)
+      TemplateArg.Profile(ID, Context);
   }
 
   static bool classof(const Decl *D) { return classofKind(D->getKind()); }
@@ -2654,7 +2636,7 @@ class VarTemplatePartialSpecializationDecl
       ASTContext &Context, DeclContext *DC, SourceLocation StartLoc,
       SourceLocation IdLoc, TemplateParameterList *Params,
       VarTemplateDecl *SpecializedTemplate, QualType T, TypeSourceInfo *TInfo,
-      StorageClass S, const TemplateArgument *Args, unsigned NumArgs,
+      StorageClass S, ArrayRef<TemplateArgument> Args,
       const ASTTemplateArgumentListInfo *ArgInfos);
 
   VarTemplatePartialSpecializationDecl(ASTContext &Context)
@@ -2667,8 +2649,8 @@ public:
   Create(ASTContext &Context, DeclContext *DC, SourceLocation StartLoc,
          SourceLocation IdLoc, TemplateParameterList *Params,
          VarTemplateDecl *SpecializedTemplate, QualType T,
-         TypeSourceInfo *TInfo, StorageClass S, const TemplateArgument *Args,
-         unsigned NumArgs, const TemplateArgumentListInfo &ArgInfos);
+         TypeSourceInfo *TInfo, StorageClass S, ArrayRef<TemplateArgument> Args,
+         const TemplateArgumentListInfo &ArgInfos);
 
   static VarTemplatePartialSpecializationDecl *CreateDeserialized(ASTContext &C,
                                                                   unsigned ID);

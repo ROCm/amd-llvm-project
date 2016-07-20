@@ -34,8 +34,8 @@ namespace {
 class USRLocFindingASTVisitor
     : public clang::RecursiveASTVisitor<USRLocFindingASTVisitor> {
 public:
-  explicit USRLocFindingASTVisitor(StringRef USR, StringRef PrevName) : USR(USR), PrevName(PrevName) {
-  }
+  explicit USRLocFindingASTVisitor(StringRef USR, StringRef PrevName)
+      : USR(USR), PrevName(PrevName) {}
 
   // Declaration visitors:
 
@@ -60,8 +60,7 @@ public:
 
   bool VisitCXXConstructorDecl(clang::CXXConstructorDecl *ConstructorDecl) {
     const ASTContext &Context = ConstructorDecl->getASTContext();
-    for (clang::CXXConstructorDecl::init_const_iterator it = ConstructorDecl->init_begin(); it != ConstructorDecl->init_end(); ++it) {
-      const clang::CXXCtorInitializer* Initializer = *it;
+    for (auto &Initializer : ConstructorDecl->inits()) {
       if (Initializer->getSourceOrder() == -1) {
         // Ignore implicit initializers.
         continue;
@@ -71,9 +70,12 @@ public:
         if (getUSRForDecl(FieldDecl) == USR) {
           // The initializer refers to a field that is to be renamed.
           SourceLocation Location = Initializer->getSourceLocation();
-          StringRef TokenName = Lexer::getSourceText(CharSourceRange::getTokenRange(Location), Context.getSourceManager(), Context.getLangOpts());
+          StringRef TokenName = Lexer::getSourceText(
+              CharSourceRange::getTokenRange(Location),
+              Context.getSourceManager(), Context.getLangOpts());
           if (TokenName == PrevName) {
-            // The token of the source location we find actually has the old name.
+            // The token of the source location we find actually has the old
+            // name.
             LocationsFound.push_back(Initializer->getSourceLocation());
           }
         }
@@ -87,6 +89,28 @@ public:
     return true;
   }
 
+  bool VisitCXXDestructorDecl(clang::CXXDestructorDecl *DestructorDecl) {
+    if (getUSRForDecl(DestructorDecl->getParent()) == USR) {
+      // Handles "~Foo" from "Foo::~Foo".
+      SourceLocation Location = DestructorDecl->getLocation();
+      const ASTContext &Context = DestructorDecl->getASTContext();
+      StringRef LLVM_ATTRIBUTE_UNUSED TokenName = Lexer::getSourceText(
+          CharSourceRange::getTokenRange(Location), Context.getSourceManager(),
+          Context.getLangOpts());
+      // 1 is the length of the "~" string that is not to be touched by the
+      // rename.
+      assert(TokenName.startswith("~"));
+      LocationsFound.push_back(Location.getLocWithOffset(1));
+
+      if (DestructorDecl->isThisDeclarationADefinition()) {
+        // Handles "Foo" from "Foo::~Foo".
+        LocationsFound.push_back(DestructorDecl->getLocStart());
+      }
+    }
+
+    return true;
+  }
+
   // Expression visitors:
 
   bool VisitDeclRefExpr(const DeclRefExpr *Expr) {
@@ -94,7 +118,9 @@ public:
 
     checkNestedNameSpecifierLoc(Expr->getQualifierLoc());
     if (getUSRForDecl(Decl) == USR) {
-      LocationsFound.push_back(Expr->getLocation());
+      const SourceManager &Manager = Decl->getASTContext().getSourceManager();
+      SourceLocation Location = Manager.getSpellingLoc(Expr->getLocation());
+      LocationsFound.push_back(Location);
     }
 
     return true;
@@ -108,6 +134,33 @@ public:
       LocationsFound.push_back(Location);
     }
     return true;
+  }
+
+  bool VisitCXXConstructExpr(const CXXConstructExpr *Expr) {
+    CXXConstructorDecl *Decl = Expr->getConstructor();
+
+    if (getUSRForDecl(Decl) == USR) {
+      // This takes care of 'new <name>' expressions.
+      LocationsFound.push_back(Expr->getLocation());
+    }
+
+    return true;
+  }
+
+  bool VisitCXXStaticCastExpr(clang::CXXStaticCastExpr *Expr) {
+    return handleCXXNamedCastExpr(Expr);
+  }
+
+  bool VisitCXXDynamicCastExpr(clang::CXXDynamicCastExpr *Expr) {
+    return handleCXXNamedCastExpr(Expr);
+  }
+
+  bool VisitCXXReinterpretCastExpr(clang::CXXReinterpretCastExpr *Expr) {
+    return handleCXXNamedCastExpr(Expr);
+  }
+
+  bool VisitCXXConstCastExpr(clang::CXXConstCastExpr *Expr) {
+    return handleCXXNamedCastExpr(Expr);
   }
 
   // Non-visitors:
@@ -129,6 +182,24 @@ private:
     }
   }
 
+  bool handleCXXNamedCastExpr(clang::CXXNamedCastExpr *Expr) {
+    clang::QualType Type = Expr->getType();
+    // See if this a cast of a pointer.
+    const RecordDecl *Decl = Type->getPointeeCXXRecordDecl();
+    if (!Decl) {
+      // See if this is a cast of a reference.
+      Decl = Type->getAsCXXRecordDecl();
+    }
+
+    if (Decl && getUSRForDecl(Decl) == USR) {
+      SourceLocation Location =
+          Expr->getTypeInfoAsWritten()->getTypeLoc().getBeginLoc();
+      LocationsFound.push_back(Location);
+    }
+
+    return true;
+  }
+
   // All the locations of the USR were found.
   const std::string USR;
   // Old name that is renamed.
@@ -137,13 +208,12 @@ private:
 };
 } // namespace
 
-std::vector<SourceLocation> getLocationsOfUSR(StringRef USR,
-                                              StringRef PrevName,
+std::vector<SourceLocation> getLocationsOfUSR(StringRef USR, StringRef PrevName,
                                               Decl *Decl) {
-  USRLocFindingASTVisitor visitor(USR, PrevName);
+  USRLocFindingASTVisitor Visitor(USR, PrevName);
 
-  visitor.TraverseDecl(Decl);
-  return visitor.getLocationsFound();
+  Visitor.TraverseDecl(Decl);
+  return Visitor.getLocationsFound();
 }
 
 } // namespace rename

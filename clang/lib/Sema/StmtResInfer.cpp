@@ -659,7 +659,7 @@ void StmtResInfer::VisitBlockDecl(const BlockDecl *D) {
 
   if (D->capturesCXXThis()) {
   }
-  for (BlockDecl::capture_iterator I = D->capture_begin(), E = D->capture_end();
+  for (BlockDecl::capture_const_iterator I = D->capture_begin(), E = D->capture_end();
        I != E; ++I) {
     if (I->getVariable()) {
       dumpBareDeclRef(I->getVariable());

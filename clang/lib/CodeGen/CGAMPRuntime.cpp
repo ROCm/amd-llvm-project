@@ -104,7 +104,6 @@ void CGAMPRuntime::EmitTrampolineBody(CodeGenFunction &CGF,
           CGM.getContext(), MemberType,
           SourceLocation(),
           MemberDeserializer,
-          MemberDeserializer,
           false,
           MemberArgDeclRefs,
           false, false, false, false,
@@ -140,7 +139,6 @@ void CGAMPRuntime::EmitTrampolineBody(CodeGenFunction &CGF,
             CXXConstructExpr *CXXCE = CXXConstructExpr::Create(
               CGM.getContext(), MemberType,
               SourceLocation(),
-              MemberDeserializer,
               MemberDeserializer,
               false,
               MemberArgDeclRefs,
@@ -194,7 +192,7 @@ void CGAMPRuntime::EmitTrampolineBody(CodeGenFunction &CGF,
     const FunctionProtoType *FPT = 
       DeserializeConstructor->getType()->castAs<FunctionProtoType>();
     RequiredArgs required = RequiredArgs::forPrototypePlus(FPT,
-      DeserializerArgs.size());
+      DeserializerArgs.size(), nullptr);
 
     const CGFunctionInfo &DesFnInfo =
       CGM.getTypes().arrangeCXXMethodCall(
@@ -246,7 +244,6 @@ void CGAMPRuntime::EmitTrampolineBody(CodeGenFunction &CGF,
       CXXConstructExpr *CXXCE = CXXConstructExpr::Create(
         CGM.getContext(), IndexTy,
         SourceLocation(),
-        Constructor,
         Constructor,
         false,
         ArrayRef<Expr*>(),
@@ -305,7 +302,7 @@ void CGAMPRuntime::EmitTrampolineNameBody(CodeGenFunction &CGF,
     CGM.getMangledName(GD));
   llvm::GlobalVariable *GV = new llvm::GlobalVariable(CGM.getModule(), S->getType(),
     true, llvm::GlobalValue::PrivateLinkage, S, "__cxxamp_trampoline.kernelname");
-  GV->setUnnamedAddr(true);
+  GV->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
   
   //Create GetElementPtr(0, 0)
   std::vector<llvm::Constant*> indices;

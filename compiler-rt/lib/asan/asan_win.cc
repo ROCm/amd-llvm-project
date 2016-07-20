@@ -24,6 +24,7 @@
 #include "asan_report.h"
 #include "asan_stack.h"
 #include "asan_thread.h"
+#include "asan_mapping.h"
 #include "sanitizer_common/sanitizer_libc.h"
 #include "sanitizer_common/sanitizer_mutex.h"
 
@@ -36,6 +37,12 @@ int __asan_should_detect_stack_use_after_return() {
   return __asan_option_detect_stack_use_after_return;
 }
 
+SANITIZER_INTERFACE_ATTRIBUTE
+int __asan_should_detect_stack_use_after_scope() {
+  __asan_init();
+  return __asan_option_detect_stack_use_after_scope;
+}
+
 // -------------------- A workaround for the abscence of weak symbols ----- {{{
 // We don't have a direct equivalent of weak symbols when using MSVC, but we can
 // use the /alternatename directive to tell the linker to default a specific
@@ -46,11 +53,20 @@ void __sanitizer_default_free_hook(void *ptr) { }
 const char* __asan_default_default_options() { return ""; }
 const char* __asan_default_default_suppressions() { return ""; }
 void __asan_default_on_error() {}
+// 64-bit msvc will not prepend an underscore for symbols.
+#ifdef _WIN64
+#pragma comment(linker, "/alternatename:__sanitizer_malloc_hook=__sanitizer_default_malloc_hook")  // NOLINT
+#pragma comment(linker, "/alternatename:__sanitizer_free_hook=__sanitizer_default_free_hook")      // NOLINT
+#pragma comment(linker, "/alternatename:__asan_default_options=__asan_default_default_options")    // NOLINT
+#pragma comment(linker, "/alternatename:__asan_default_suppressions=__asan_default_default_suppressions")    // NOLINT
+#pragma comment(linker, "/alternatename:__asan_on_error=__asan_default_on_error")                  // NOLINT
+#else
 #pragma comment(linker, "/alternatename:___sanitizer_malloc_hook=___sanitizer_default_malloc_hook")  // NOLINT
 #pragma comment(linker, "/alternatename:___sanitizer_free_hook=___sanitizer_default_free_hook")      // NOLINT
 #pragma comment(linker, "/alternatename:___asan_default_options=___asan_default_default_options")    // NOLINT
 #pragma comment(linker, "/alternatename:___asan_default_suppressions=___asan_default_default_suppressions")    // NOLINT
 #pragma comment(linker, "/alternatename:___asan_on_error=___asan_default_on_error")                  // NOLINT
+#endif
 // }}}
 }  // extern "C"
 
@@ -60,6 +76,17 @@ INTERCEPTOR_WINAPI(void, RaiseException, void *a, void *b, void *c, void *d) {
   __asan_handle_no_return();
   REAL(RaiseException)(a, b, c, d);
 }
+
+
+#ifdef _WIN64
+
+INTERCEPTOR_WINAPI(int, __C_specific_handler, void *a, void *b, void *c, void *d) {  // NOLINT
+  CHECK(REAL(__C_specific_handler));
+  __asan_handle_no_return();
+  return REAL(__C_specific_handler)(a, b, c, d);
+}
+
+#else
 
 INTERCEPTOR(int, _except_handler3, void *a, void *b, void *c, void *d) {
   CHECK(REAL(_except_handler3));
@@ -76,6 +103,7 @@ INTERCEPTOR(int, _except_handler4, void *a, void *b, void *c, void *d) {
   __asan_handle_no_return();
   return REAL(_except_handler4)(a, b, c, d);
 }
+#endif
 
 static thread_return_t THREAD_CALLING_CONV asan_thread_start(void *arg) {
   AsanThread *t = (AsanThread*)arg;
@@ -139,8 +167,13 @@ namespace __asan {
 void InitializePlatformInterceptors() {
   ASAN_INTERCEPT_FUNC(CreateThread);
   ASAN_INTERCEPT_FUNC(RaiseException);
+
+#ifdef _WIN64
+  ASAN_INTERCEPT_FUNC(__C_specific_handler);
+#else
   ASAN_INTERCEPT_FUNC(_except_handler3);
   ASAN_INTERCEPT_FUNC(_except_handler4);
+#endif
 
   // NtWaitForWorkViaWorkerFactory is always linked dynamically.
   CHECK(::__interception::OverrideFunction(
@@ -196,6 +229,55 @@ void ReadContextStack(void *context, uptr *stack, uptr *ssize) {
 
 void AsanOnDeadlySignal(int, void *siginfo, void *context) {
   UNIMPLEMENTED();
+}
+
+#if SANITIZER_WINDOWS64
+// Exception handler for dealing with shadow memory.
+static LONG CALLBACK
+ShadowExceptionHandler(PEXCEPTION_POINTERS exception_pointers) {
+  static uptr page_size = GetPageSizeCached();
+  static uptr alloc_granularity = GetMmapGranularity();
+  // Only handle access violations.
+  if (exception_pointers->ExceptionRecord->ExceptionCode !=
+      EXCEPTION_ACCESS_VIOLATION) {
+    return EXCEPTION_CONTINUE_SEARCH;
+  }
+
+  // Only handle access violations that land within the shadow memory.
+  uptr addr =
+      (uptr)(exception_pointers->ExceptionRecord->ExceptionInformation[1]);
+
+  // Check valid shadow range.
+  if (!AddrIsInShadow(addr)) return EXCEPTION_CONTINUE_SEARCH;
+
+  // This is an access violation while trying to read from the shadow. Commit
+  // the relevant page and let execution continue.
+
+  // Determine the address of the page that is being accessed.
+  uptr page = RoundDownTo(addr, page_size);
+
+  // Query the existing page.
+  MEMORY_BASIC_INFORMATION mem_info = {};
+  if (::VirtualQuery((LPVOID)page, &mem_info, sizeof(mem_info)) == 0)
+    return EXCEPTION_CONTINUE_SEARCH;
+
+  // Commit the page.
+  uptr result =
+      (uptr)::VirtualAlloc((LPVOID)page, page_size, MEM_COMMIT, PAGE_READWRITE);
+  if (result != page) return EXCEPTION_CONTINUE_SEARCH;
+
+  // The page mapping succeeded, so continue execution as usual.
+  return EXCEPTION_CONTINUE_EXECUTION;
+}
+
+#endif
+
+void InitializePlatformExceptionHandlers() {
+#if SANITIZER_WINDOWS64
+  // On Win64, we map memory on demand with access violation handler.
+  // Install our exception handler.
+  CHECK(AddVectoredExceptionHandler(TRUE, &ShadowExceptionHandler));
+#endif
 }
 
 static LPTOP_LEVEL_EXCEPTION_FILTER default_seh_handler;

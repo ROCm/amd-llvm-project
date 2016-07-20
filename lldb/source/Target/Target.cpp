@@ -709,14 +709,13 @@ CheckIfWatchpointsExhausted(Target *target, Error &error)
 {
     uint32_t num_supported_hardware_watchpoints;
     Error rc = target->GetProcessSP()->GetWatchpointSupportInfo(num_supported_hardware_watchpoints);
-    if (rc.Success())
+    if (num_supported_hardware_watchpoints == 0)
     {
-        uint32_t num_current_watchpoints = target->GetWatchpointList().GetSize();
-        if (num_current_watchpoints >= num_supported_hardware_watchpoints)
-            error.SetErrorStringWithFormat("number of supported hardware watchpoints (%u) has been reached",
-                                           num_supported_hardware_watchpoints);
+        error.SetErrorStringWithFormat ("Target supports (%u) hardware watchpoint slots.\n",
+                    num_supported_hardware_watchpoints);
+        return false;
     }
-    return false;
+    return true;
 }
 
 // See also Watchpoint::SetWatchpointType(uint32_t type) and
@@ -749,6 +748,9 @@ Target::CreateWatchpoint(lldb::addr_t addr, size_t size, const CompilerType *typ
     {
         error.SetErrorStringWithFormat ("invalid watchpoint type: %d", kind);
     }
+
+    if (!CheckIfWatchpointsExhausted (this, error))
+        return wp_sp;
 
     // Currently we only support one watchpoint per address, with total number
     // of watchpoints limited by the hardware which the inferior is running on.
@@ -798,11 +800,9 @@ Target::CreateWatchpoint(lldb::addr_t addr, size_t size, const CompilerType *typ
         // Remove the said watchpoint from the list maintained by the target instance.
         m_watchpoint_list.Remove (wp_sp->GetID(), true);
         // See if we could provide more helpful error message.
-        if (!CheckIfWatchpointsExhausted(this, error))
-        {
-            if (!OptionGroupWatchpoint::IsWatchSizeSupported(size))
-                error.SetErrorStringWithFormat("watch size of %" PRIu64 " is not supported", (uint64_t)size);
-        }
+        if (!OptionGroupWatchpoint::IsWatchSizeSupported(size))
+            error.SetErrorStringWithFormat("watch size of %" PRIu64 " is not supported", (uint64_t)size);
+
         wp_sp.reset();
     }
     else
@@ -2838,10 +2838,10 @@ Target::Install (ProcessLaunchInfo *launch_info)
                 const size_t num_images = modules.GetSize();
                 for (size_t idx = 0; idx < num_images; ++idx)
                 {
-                    const bool is_main_executable = idx == 0;
                     ModuleSP module_sp(modules.GetModuleAtIndex(idx));
                     if (module_sp)
                     {
+                        const bool is_main_executable = module_sp == GetExecutableModule();
                         FileSpec local_file (module_sp->GetFileSpec());
                         if (local_file)
                         {
@@ -3435,7 +3435,7 @@ g_properties[] =
     { "debug-file-search-paths"            , OptionValue::eTypeFileSpecList, false, 0                       , nullptr, nullptr, "List of directories to be searched when locating debug symbol files." },
     { "clang-module-search-paths"          , OptionValue::eTypeFileSpecList, false, 0                       , nullptr, nullptr, "List of directories to be searched when locating modules for Clang." },
     { "auto-import-clang-modules"          , OptionValue::eTypeBoolean   , false, true                      , nullptr, nullptr, "Automatically load Clang modules referred to by the program." },
-    { "auto-apply-fixits"                  , OptionValue::eTypeBoolean   , false, true                      , nullptr, nullptr, "Automatically apply fixit hints to expressions." },
+    { "auto-apply-fixits"                  , OptionValue::eTypeBoolean   , false, true                      , nullptr, nullptr, "Automatically apply fix-it hints to expressions." },
     { "notify-about-fixits"                , OptionValue::eTypeBoolean   , false, true                      , nullptr, nullptr, "Print the fixed expression text." },
     { "max-children-count"                 , OptionValue::eTypeSInt64    , false, 256                       , nullptr, nullptr, "Maximum number of children to expand in any level of depth." },
     { "max-string-summary-length"          , OptionValue::eTypeSInt64    , false, 1024                      , nullptr, nullptr, "Maximum number of characters to show when using %s in summary strings." },
@@ -3520,7 +3520,8 @@ enum
     ePropertyDisplayExpressionsInCrashlogs,
     ePropertyTrapHandlerNames,
     ePropertyDisplayRuntimeSupportValues,
-    ePropertyNonStopModeEnabled
+    ePropertyNonStopModeEnabled,
+    ePropertyExperimental
 };
 
 class TargetOptionValueProperties : public OptionValueProperties
@@ -3631,6 +3632,38 @@ protected:
 //----------------------------------------------------------------------
 // TargetProperties
 //----------------------------------------------------------------------
+static PropertyDefinition
+g_experimental_properties[] 
+{
+{   "inject-local-vars",        OptionValue::eTypeBoolean     , true, true, nullptr, nullptr, "If true, inject local variables explicitly into the expression text.  "
+                                                                                               "This will fix symbol resolution when there are name collisions between ivars and local variables.  "
+                                                                                               "But it can make expressions run much more slowly." },
+{   nullptr,                    OptionValue::eTypeInvalid     , true, 0    , nullptr, nullptr, nullptr }
+};
+
+enum
+{
+    ePropertyInjectLocalVars = 0
+};
+
+class TargetExperimentalOptionValueProperties : public OptionValueProperties
+{
+public:
+    TargetExperimentalOptionValueProperties () :
+        OptionValueProperties (ConstString(Properties::GetExperimentalSettingsName()))
+    {
+    }
+};
+
+TargetExperimentalProperties::TargetExperimentalProperties() :
+    Properties(OptionValuePropertiesSP(new TargetExperimentalOptionValueProperties()))
+{
+    m_collection_sp->Initialize(g_experimental_properties);
+}
+
+//----------------------------------------------------------------------
+// TargetProperties
+//----------------------------------------------------------------------
 TargetProperties::TargetProperties (Target *target) :
     Properties (),
     m_launch_info ()
@@ -3649,7 +3682,13 @@ TargetProperties::TargetProperties (Target *target) :
         m_collection_sp->SetValueChangedCallback(ePropertyDetachOnError, TargetProperties::DetachOnErrorValueChangedCallback, this);
         m_collection_sp->SetValueChangedCallback(ePropertyDisableASLR, TargetProperties::DisableASLRValueChangedCallback, this);
         m_collection_sp->SetValueChangedCallback(ePropertyDisableSTDIO, TargetProperties::DisableSTDIOValueChangedCallback, this);
-    
+
+        m_experimental_properties_up.reset(new TargetExperimentalProperties());
+        m_collection_sp->AppendProperty (ConstString(Properties::GetExperimentalSettingsName()),
+                                         ConstString("Experimental settings - setting these won't produce errors if the setting is not present."),
+                                         true,
+                                         m_experimental_properties_up->GetValueProperties());
+
         // Update m_launch_info once it was created
         Arg0ValueChangedCallback(this, nullptr);
         RunArgsValueChangedCallback(this, nullptr);
@@ -3665,14 +3704,39 @@ TargetProperties::TargetProperties (Target *target) :
     {
         m_collection_sp.reset (new TargetOptionValueProperties(ConstString("target")));
         m_collection_sp->Initialize(g_properties);
+        m_experimental_properties_up.reset(new TargetExperimentalProperties());
+        m_collection_sp->AppendProperty (ConstString(Properties::GetExperimentalSettingsName()),
+                                         ConstString("Experimental settings - setting these won't produce errors if the setting is not present."),
+                                         true,
+                                         m_experimental_properties_up->GetValueProperties());
         m_collection_sp->AppendProperty(ConstString("process"),
-                                        ConstString("Settings specify to processes."),
+                                        ConstString("Settings specific to processes."),
                                         true,
                                         Process::GetGlobalProperties()->GetValueProperties());
     }
 }
 
 TargetProperties::~TargetProperties() = default;
+
+bool
+TargetProperties::GetInjectLocalVariables(ExecutionContext *exe_ctx) const
+{
+    const Property *exp_property = m_collection_sp->GetPropertyAtIndex(exe_ctx, false, ePropertyExperimental);
+    OptionValueProperties *exp_values = exp_property->GetValue()->GetAsProperties();
+    if (exp_values)
+        return exp_values->GetPropertyAtIndexAsBoolean(exe_ctx, ePropertyInjectLocalVars, true);
+    else
+        return true;
+}
+
+void
+TargetProperties::SetInjectLocalVariables(ExecutionContext *exe_ctx, bool b)
+{
+    const Property *exp_property = m_collection_sp->GetPropertyAtIndex(exe_ctx, true, ePropertyExperimental);
+    OptionValueProperties *exp_values = exp_property->GetValue()->GetAsProperties();
+    if (exp_values)
+        exp_values->SetPropertyAtIndexAsBoolean(exe_ctx, ePropertyInjectLocalVars, true);
+}
 
 ArchSpec
 TargetProperties::GetDefaultArchitecture () const

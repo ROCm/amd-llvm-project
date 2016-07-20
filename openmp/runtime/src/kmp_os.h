@@ -650,6 +650,7 @@ typedef void    (*microtask_t)( int *gtid, int *npr, ... );
 #endif
 
 #define KMP_WAIT_YIELD           __kmp_wait_yield_4
+#define KMP_WAIT_YIELD_PTR       __kmp_wait_yield_4_ptr
 #define KMP_EQ                   __kmp_eq_4
 #define KMP_NEQ                  __kmp_neq_4
 #define KMP_LT                   __kmp_lt_4
@@ -678,7 +679,7 @@ typedef void    (*microtask_t)( int *gtid, int *npr, ... );
 #endif
 
 // Enable dynamic user lock
-#if OMP_41_ENABLED
+#if OMP_45_ENABLED
 # define KMP_USE_DYNAMIC_LOCK 1
 #endif
 

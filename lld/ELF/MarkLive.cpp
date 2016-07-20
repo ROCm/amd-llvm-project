@@ -23,6 +23,7 @@
 #include "InputSection.h"
 #include "LinkerScript.h"
 #include "OutputSections.h"
+#include "Strings.h"
 #include "SymbolTable.h"
 #include "Symbols.h"
 #include "Target.h"
@@ -48,22 +49,22 @@ struct ResolvedReloc {
 };
 
 template <class ELFT>
-static typename ELFT::uint getAddend(InputSectionBase<ELFT> *Sec,
+static typename ELFT::uint getAddend(InputSectionBase<ELFT> &Sec,
                                      const typename ELFT::Rel &Rel) {
-  return Target->getImplicitAddend(Sec->getSectionData().begin(),
+  return Target->getImplicitAddend(Sec.getSectionData().begin(),
                                    Rel.getType(Config->Mips64EL));
 }
 
 template <class ELFT>
-static typename ELFT::uint getAddend(InputSectionBase<ELFT> *Sec,
+static typename ELFT::uint getAddend(InputSectionBase<ELFT> &Sec,
                                      const typename ELFT::Rela &Rel) {
   return Rel.r_addend;
 }
 
 template <class ELFT, class RelT>
-static ResolvedReloc<ELFT> resolveReloc(InputSectionBase<ELFT> *Sec,
+static ResolvedReloc<ELFT> resolveReloc(InputSectionBase<ELFT> &Sec,
                                         RelT &Rel) {
-  SymbolBody &B = Sec->getFile()->getRelocTargetSym(Rel);
+  SymbolBody &B = Sec.getFile()->getRelocTargetSym(Rel);
   auto *D = dyn_cast<DefinedRegular<ELFT>>(&B);
   if (!D || !D->Section)
     return {nullptr, 0};
@@ -74,7 +75,7 @@ static ResolvedReloc<ELFT> resolveReloc(InputSectionBase<ELFT> *Sec,
 }
 
 template <class ELFT, class Elf_Shdr>
-static void run(ELFFile<ELFT> &Obj, InputSectionBase<ELFT> *Sec,
+static void run(ELFFile<ELFT> &Obj, InputSectionBase<ELFT> &Sec,
                 Elf_Shdr *RelSec, std::function<void(ResolvedReloc<ELFT>)> Fn) {
   if (RelSec->sh_type == SHT_RELA) {
     for (const typename ELFT::Rela &RI : Obj.relas(RelSec))
@@ -87,20 +88,20 @@ static void run(ELFFile<ELFT> &Obj, InputSectionBase<ELFT> *Sec,
 
 // Calls Fn for each section that Sec refers to via relocations.
 template <class ELFT>
-static void forEachSuccessor(InputSection<ELFT> *Sec,
+static void forEachSuccessor(InputSection<ELFT> &Sec,
                              std::function<void(ResolvedReloc<ELFT>)> Fn) {
-  ELFFile<ELFT> &Obj = Sec->getFile()->getObj();
-  for (const typename ELFT::Shdr *RelSec : Sec->RelocSections)
+  ELFFile<ELFT> &Obj = Sec.getFile()->getObj();
+  for (const typename ELFT::Shdr *RelSec : Sec.RelocSections)
     run(Obj, Sec, RelSec, Fn);
 }
 
 template <class ELFT>
-static void scanEhFrameSection(EHInputSection<ELFT> &EH,
+static void scanEhFrameSection(EhInputSection<ELFT> &EH,
                                std::function<void(ResolvedReloc<ELFT>)> Fn) {
   if (!EH.RelocSection)
     return;
   ELFFile<ELFT> &EObj = EH.getFile()->getObj();
-  run<ELFT>(EObj, &EH, EH.RelocSection, [&](ResolvedReloc<ELFT> R) {
+  run<ELFT>(EObj, EH, EH.RelocSection, [&](ResolvedReloc<ELFT> R) {
     if (!R.Sec || R.Sec == &InputSection<ELFT>::Discarded)
       return;
     if (R.Sec->getSectionHdr()->sh_flags & SHF_EXECINSTR)
@@ -141,10 +142,13 @@ template <class ELFT> void elf::markLive() {
   auto Enqueue = [&](ResolvedReloc<ELFT> R) {
     if (!R.Sec)
       return;
-    if (auto *MS = dyn_cast<MergeInputSection<ELFT>>(R.Sec)) {
-      SectionPiece *Piece = MS->getSectionPiece(R.Offset);
-      Piece->Live = true;
-    }
+
+    // Usually, a whole section is marked as live or dead, but in mergeable
+    // (splittable) sections, each piece of data has independent liveness bit.
+    // So we explicitly tell it which offset is in use.
+    if (auto *MS = dyn_cast<MergeInputSection<ELFT>>(R.Sec))
+      MS->markLiveAt(R.Offset);
+
     if (R.Sec->Live)
       return;
     R.Sec->Live = true;
@@ -180,7 +184,7 @@ template <class ELFT> void elf::markLive() {
         // .eh_frame is always marked as live now, but also it can reference to
         // sections that contain personality. We preserve all non-text sections
         // referred by .eh_frame here.
-        if (auto *EH = dyn_cast_or_null<EHInputSection<ELFT>>(Sec))
+        if (auto *EH = dyn_cast_or_null<EhInputSection<ELFT>>(Sec))
           scanEhFrameSection<ELFT>(*EH, Enqueue);
         if (isReserved(Sec) || Script<ELFT>::X->shouldKeep(Sec))
           Enqueue({Sec, 0});
@@ -188,7 +192,7 @@ template <class ELFT> void elf::markLive() {
 
   // Mark all reachable sections.
   while (!Q.empty())
-    forEachSuccessor<ELFT>(Q.pop_back_val(), Enqueue);
+    forEachSuccessor<ELFT>(*Q.pop_back_val(), Enqueue);
 }
 
 template void elf::markLive<ELF32LE>();

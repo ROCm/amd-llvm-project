@@ -707,7 +707,6 @@ LIB_CLANG_EDIT = @LIB_CLANG_EDIT@
 LIPO = @LIPO@
 LN_S = @LN_S@
 LTLIBOBJS = @LTLIBOBJS@
-LT_SYS_LIBRARY_PATH = @LT_SYS_LIBRARY_PATH@
 MAKEINFO = @MAKEINFO@
 MANIFEST_TOOL = @MANIFEST_TOOL@
 MKDIR_P = @MKDIR_P@
@@ -787,7 +786,6 @@ pkgconfig_libfile = @pkgconfig_libfile@
 prefix = @prefix@
 program_transform_name = @program_transform_name@
 psdir = @psdir@
-runstatedir = @runstatedir@
 sbindir = @sbindir@
 sharedstatedir = @sharedstatedir@
 srcdir = @srcdir@
@@ -1106,11 +1104,13 @@ EXTRA_DIST = \
 	isl_multi_hash.c \
 	isl_multi_intersect.c \
 	print_templ.c \
+	print_templ_yaml.c \
 	isl_power_templ.c \
 	isl_pw_macro.h \
 	isl_pw_templ.c \
 	isl_pw_hash.c \
 	isl_pw_union_opt.c \
+	isl_tab_lexopt_templ.c \
 	isl_union_macro.h \
 	isl_union_templ.c \
 	isl_union_single.c \

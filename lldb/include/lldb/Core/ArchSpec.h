@@ -75,6 +75,20 @@ public:
         eMIPSABI_mask       = 0x000ff000
     };
 
+    // MIPS Floating point ABI Values
+    enum MIPS_ABI_FP
+    {
+        eMIPS_ABI_FP_ANY     = 0x00000000,
+        eMIPS_ABI_FP_DOUBLE  = 0x00100000,  // hard float / -mdouble-float
+        eMIPS_ABI_FP_SINGLE  = 0x00200000,  // hard float / -msingle-float
+        eMIPS_ABI_FP_SOFT    = 0x00300000,  // soft float
+        eMIPS_ABI_FP_OLD_64  = 0x00400000,  // -mips32r2 -mfp64
+        eMIPS_ABI_FP_XX      = 0x00500000,  // -mfpxx
+        eMIPS_ABI_FP_64      = 0x00600000,  // -mips32r2 -mfp64
+        eMIPS_ABI_FP_64A     = 0x00700000,  // -mips32r2 -mfp64 -mno-odd-spreg
+        eMIPS_ABI_FP_mask    = 0x00700000
+    };
+
     // ARM specific e_flags
     enum ARMeflags
     {
@@ -421,7 +435,7 @@ public:
     /// @param[in] cpu The required CPU type.
     ///
     /// @param[in] os The optional OS type
-    /// The default value of 0 was choosen to from the ELF spec value
+    /// The default value of 0 was chosen to from the ELF spec value
     /// ELFOSABI_NONE.  ELF is the only one using this parameter.  If another
     /// format uses this parameter and 0 does not work, use a value over
     /// 255 because in the ELF header this is value is only a byte.

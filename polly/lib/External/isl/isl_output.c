@@ -238,7 +238,7 @@ static enum isl_dim_type pos2type(__isl_keep isl_space *dim, unsigned *pos)
  * be printed?
  * In particular, are the div expressions available and does the selected
  * variable have a known explicit representation?
- * Furthermore, the Omega format does not allow and div expressions
+ * Furthermore, the Omega format does not allow any div expressions
  * to be printed.
  */
 static isl_bool can_print_div_expr(__isl_keep isl_printer *p,
@@ -599,9 +599,13 @@ static __isl_give isl_printer *print_constraints(__isl_keep isl_basic_map *bmap,
 	unsigned total = isl_basic_map_total_dim(bmap);
 	unsigned o_div = isl_basic_map_offset(bmap, isl_dim_div);
 	int first = 1;
+	int dump;
 
+	if (!p)
+		return NULL;
 	bmap = isl_basic_map_copy(bmap);
-	if (!p->dump)
+	dump = p->dump;
+	if (!dump)
 		bmap = isl_basic_map_sort_constraints(bmap);
 	if (!bmap)
 		goto error;
@@ -633,7 +637,8 @@ static __isl_give isl_printer *print_constraints(__isl_keep isl_basic_map *bmap,
 		const char *op;
 		if (l < 0)
 			continue;
-		if (!p->dump && l >= o_div &&
+		if (!dump && l >= o_div &&
+		    can_print_div_expr(p, div, l - o_div) &&
 		    isl_basic_map_is_div_constraint(bmap, bmap->ineq[i],
 						    l - o_div))
 			continue;
@@ -645,7 +650,7 @@ static __isl_give isl_printer *print_constraints(__isl_keep isl_basic_map *bmap,
 			isl_seq_neg(c->el, bmap->ineq[i], 1 + total);
 		if (strict)
 			isl_int_set_si(c->el[0], 0);
-		if (!p->dump && next_is_opposite(bmap, i, l)) {
+		if (!dump && next_is_opposite(bmap, i, l)) {
 			op = constraint_op(-s, strict, latex);
 			p = print_half_constraint(bmap, space, div, p, c->el, l,
 						op, first, latex);
@@ -747,21 +752,25 @@ static isl_bool need_exists(__isl_keep isl_printer *p,
 static __isl_give isl_printer *print_disjunct(__isl_keep isl_basic_map *bmap,
 	__isl_keep isl_space *space, __isl_take isl_printer *p, int latex)
 {
+	int dump;
 	isl_mat *div;
 	isl_bool exists;
 
+	if (!p)
+		return NULL;
+	dump = p->dump;
 	div = isl_basic_map_get_divs(bmap);
-	if (p->dump)
+	if (dump)
 		exists = bmap->n_div > 0;
 	else
 		exists = need_exists(p, bmap, div);
 	if (exists >= 0 && exists) {
 		p = isl_printer_print_str(p, s_open_exists[latex]);
-		p = print_div_list(p, space, div, latex, p->dump);
+		p = print_div_list(p, space, div, latex, dump);
 		p = isl_printer_print_str(p, ": ");
 	}
 
-	if (p->dump)
+	if (dump)
 		div = isl_mat_free(div);
 	p = print_constraints(bmap, space, div, p, latex);
 	isl_mat_free(div);
@@ -931,6 +940,8 @@ static __isl_give isl_printer *print_disjuncts(__isl_keep isl_map *map,
 		return p;
 
 	p = isl_printer_print_str(p, s_such_that[latex]);
+	if (!p)
+		return NULL;
 
 	if (!p->dump && map->n >= 2) {
 		isl_basic_map *hull;
@@ -1151,7 +1162,7 @@ static __isl_give isl_printer *print_dim_eq(__isl_take isl_printer *p,
 			p = isl_printer_print_str(p, " = ");
 		}
 		pos += 1 + isl_space_offset(data->space, data->type);
-		p = print_affine_of_len(eq->dim, NULL, p, eq->eq[j], pos);
+		p = print_affine_of_len(data->space, NULL, p, eq->eq[j], pos);
 	} else {
 		p = print_name(data->space, p, data->type, pos, data->latex);
 	}
@@ -1189,6 +1200,8 @@ static __isl_give isl_printer *isl_map_print_isl_body(__isl_keep isl_map *map,
 	struct isl_aff_split *split = NULL;
 	int rational;
 
+	if (!p || !map)
+		return isl_printer_free(p);
 	if (!p->dump && map->n > 0)
 		split = split_aff(map);
 	if (split) {

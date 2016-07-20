@@ -96,7 +96,7 @@ static Flavor parseFlavor(std::vector<const char *> &V) {
 /// windows linker based on the argv[0] or -flavor option.
 int main(int Argc, const char **Argv) {
   // Standard set up, so program fails gracefully.
-  sys::PrintStackTraceOnErrorSignal();
+  sys::PrintStackTraceOnErrorSignal(Argv[0]);
   PrettyStackTraceProgram StackPrinter(Argc, Argv);
   llvm_shutdown_obj Shutdown;
 
@@ -109,7 +109,7 @@ int main(int Argc, const char **Argv) {
   case Darwin:
     return !mach_o::link(Args);
   default:
-    die("-flavor option is missing. Available flavors are "
-        "gnu, darwin or link.");
+    die("lld is a generic driver.\n"
+        "Invoke ld.lld (Unix), ld (Mac) or lld-link (Windows) instead.");
   }
 }

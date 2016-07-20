@@ -12,13 +12,13 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "clang/Sema/SemaInternal.h"
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/Attr.h"
 #include "clang/AST/Expr.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Sema/Lookup.h"
+#include "clang/Sema/SemaInternal.h"
 using namespace clang;
 
 //===----------------------------------------------------------------------===//
@@ -222,8 +222,9 @@ void Sema::PragmaStack<ValueType>::Act(SourceLocation PragmaLocation,
   else if (Action & PSK_Pop) {
     if (!StackSlotLabel.empty()) {
       // If we've got a label, try to find it and jump there.
-      auto I = std::find_if(Stack.rbegin(), Stack.rend(),
-        [&](const Slot &x) { return x.StackSlotLabel == StackSlotLabel; });
+      auto I = llvm::find_if(llvm::reverse(Stack), [&](const Slot &x) {
+        return x.StackSlotLabel == StackSlotLabel;
+      });
       // If we found the label so pop from there.
       if (I != Stack.rend()) {
         CurrentValue = I->Value;

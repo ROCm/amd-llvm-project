@@ -16,27 +16,29 @@
 
 // Project includes
 #include "CommandObjectMemory.h"
+#include "Plugins/ExpressionParser/Clang/ClangPersistentVariables.h"
 #include "lldb/Core/DataBufferHeap.h"
 #include "lldb/Core/DataExtractor.h"
 #include "lldb/Core/Debugger.h"
 #include "lldb/Core/Module.h"
+#include "lldb/Core/Section.h"
 #include "lldb/Core/StreamString.h"
 #include "lldb/Core/ValueObjectMemory.h"
 #include "lldb/DataFormatters/ValueObjectPrinter.h"
-#include "Plugins/ExpressionParser/Clang/ClangPersistentVariables.h"
 #include "lldb/Host/StringConvert.h"
 #include "lldb/Interpreter/Args.h"
-#include "lldb/Interpreter/CommandReturnObject.h"
 #include "lldb/Interpreter/CommandInterpreter.h"
-#include "lldb/Interpreter/Options.h"
+#include "lldb/Interpreter/CommandReturnObject.h"
 #include "lldb/Interpreter/OptionGroupFormat.h"
 #include "lldb/Interpreter/OptionGroupOutputFile.h"
 #include "lldb/Interpreter/OptionGroupValueObjectDisplay.h"
 #include "lldb/Interpreter/OptionValueString.h"
+#include "lldb/Interpreter/Options.h"
 #include "lldb/Symbol/ClangASTContext.h"
-#include "lldb/Symbol/TypeList.h"
 #include "lldb/Symbol/SymbolFile.h"
+#include "lldb/Symbol/TypeList.h"
 #include "lldb/Target/MemoryHistory.h"
+#include "lldb/Target/MemoryRegionInfo.h"
 #include "lldb/Target/Process.h"
 #include "lldb/Target/StackFrame.h"
 #include "lldb/Target/Thread.h"
@@ -203,9 +205,11 @@ public:
                 if (byte_size_option_set)
                 {
                     if (byte_size_value > 1)
-                        error.SetErrorStringWithFormat ("display format (bytes/bytes with ascii) conflicts with the specified byte size %" PRIu64 "\n"
-                                                        "\tconsider using a different display format or don't specify the byte size",
-                                                        byte_size_value.GetCurrentValue());
+                        error.SetErrorStringWithFormat(
+                            "display format (bytes/bytes with ASCII) conflicts with the specified byte size %" PRIu64
+                            "\n"
+                            "\tconsider using a different display format or don't specify the byte size.",
+                            byte_size_value.GetCurrentValue());
                 }
                 else
                     byte_size_value = 1;
@@ -316,23 +320,20 @@ public:
 class CommandObjectMemoryRead : public CommandObjectParsed
 {
 public:
-    CommandObjectMemoryRead (CommandInterpreter &interpreter) :
-        CommandObjectParsed(interpreter,
-                            "memory read",
-                            "Read from the memory of the process being debugged.",
-                            nullptr,
-                            eCommandRequiresTarget | eCommandProcessMustBePaused),
-        m_option_group (interpreter),
-        m_format_options (eFormatBytesWithASCII, 1, 8),
-        m_memory_options (),
-        m_outfile_options (),
-        m_varobj_options(),
-        m_next_addr(LLDB_INVALID_ADDRESS),
-        m_prev_byte_size(0),
-        m_prev_format_options (eFormatBytesWithASCII, 1, 8),
-        m_prev_memory_options (),
-        m_prev_outfile_options (),
-        m_prev_varobj_options()
+    CommandObjectMemoryRead(CommandInterpreter &interpreter)
+        : CommandObjectParsed(interpreter, "memory read", "Read from the memory of the current target process.",
+                              nullptr, eCommandRequiresTarget | eCommandProcessMustBePaused),
+          m_option_group(interpreter),
+          m_format_options(eFormatBytesWithASCII, 1, 8),
+          m_memory_options(),
+          m_outfile_options(),
+          m_varobj_options(),
+          m_next_addr(LLDB_INVALID_ADDRESS),
+          m_prev_byte_size(0),
+          m_prev_format_options(eFormatBytesWithASCII, 1, 8),
+          m_prev_memory_options(),
+          m_prev_outfile_options(),
+          m_prev_varobj_options()
     {
         CommandArgumentEntry arg1;
         CommandArgumentEntry arg2;
@@ -1039,15 +1040,12 @@ public:
       OptionValueUInt64 m_count;
       OptionValueUInt64 m_offset;
   };
-  
-  CommandObjectMemoryFind (CommandInterpreter &interpreter) :
-  CommandObjectParsed(interpreter,
-                      "memory find",
-                      "Find a value in the memory of the process being debugged.",
-                      nullptr,
-                      eCommandRequiresProcess | eCommandProcessMustBeLaunched),
-  m_option_group (interpreter),
-  m_memory_options ()
+
+  CommandObjectMemoryFind(CommandInterpreter &interpreter)
+      : CommandObjectParsed(interpreter, "memory find", "Find a value in the memory of the current target process.",
+                            nullptr, eCommandRequiresProcess | eCommandProcessMustBeLaunched),
+        m_option_group(interpreter),
+        m_memory_options()
   {
     CommandArgumentEntry arg1;
     CommandArgumentEntry arg2;
@@ -1323,15 +1321,12 @@ public:
         off_t m_infile_offset;
     };
 
-    CommandObjectMemoryWrite (CommandInterpreter &interpreter) :
-        CommandObjectParsed(interpreter,
-                            "memory write",
-                            "Write to the memory of the process being debugged.",
-                            nullptr,
-                            eCommandRequiresProcess | eCommandProcessMustBeLaunched),
-        m_option_group (interpreter),
-        m_format_options (eFormatBytes, 1, UINT64_MAX),
-        m_memory_options ()
+    CommandObjectMemoryWrite(CommandInterpreter &interpreter)
+        : CommandObjectParsed(interpreter, "memory write", "Write to the memory of the current target process.",
+                              nullptr, eCommandRequiresProcess | eCommandProcessMustBeLaunched),
+          m_option_group(interpreter),
+          m_format_options(eFormatBytes, 1, UINT64_MAX),
+          m_memory_options()
     {
         CommandArgumentEntry arg1;
         CommandArgumentEntry arg2;
@@ -1685,13 +1680,12 @@ protected:
 class CommandObjectMemoryHistory : public CommandObjectParsed
 {
 public:
-    CommandObjectMemoryHistory (CommandInterpreter &interpreter) :
-        CommandObjectParsed(interpreter,
-                            "memory history",
-                            "Prints out the recorded stack traces for allocation/deallocation of a memory address.",
-                            nullptr,
-                            eCommandRequiresTarget | eCommandRequiresProcess | eCommandProcessMustBePaused |
-                            eCommandProcessMustBeLaunched)
+    CommandObjectMemoryHistory(CommandInterpreter &interpreter)
+        : CommandObjectParsed(
+              interpreter, "memory history",
+              "Print recorded stack traces for allocation/deallocation events associated with an address.", nullptr,
+              eCommandRequiresTarget | eCommandRequiresProcess | eCommandProcessMustBePaused |
+                  eCommandProcessMustBeLaunched)
     {
         CommandArgumentEntry arg1;
         CommandArgumentData addr_arg;
@@ -1767,19 +1761,121 @@ protected:
 };
 
 //-------------------------------------------------------------------------
+// CommandObjectMemoryRegion
+//-------------------------------------------------------------------------
+#pragma mark CommandObjectMemoryRegion
+
+class CommandObjectMemoryRegion : public CommandObjectParsed
+{
+public:
+    CommandObjectMemoryRegion(CommandInterpreter &interpreter)
+        : CommandObjectParsed(
+              interpreter, "memory region",
+              "Get information on the memory region containing an address in the current target process.",
+              "memory region ADDR", eCommandRequiresProcess | eCommandTryTargetAPILock | eCommandProcessMustBeLaunched),
+          m_prev_end_addr(LLDB_INVALID_ADDRESS)
+    {
+    }
+
+    ~CommandObjectMemoryRegion() override = default;
+
+protected:
+    bool
+    DoExecute(Args &command, CommandReturnObject &result) override
+    {
+        ProcessSP process_sp = m_exe_ctx.GetProcessSP();
+        if (process_sp)
+        {
+            Error error;
+            lldb::addr_t load_addr = m_prev_end_addr;
+            m_prev_end_addr = LLDB_INVALID_ADDRESS;
+
+            const size_t argc = command.GetArgumentCount();
+            if (argc > 1 || (argc == 0 && load_addr == LLDB_INVALID_ADDRESS))
+            {
+                result.AppendErrorWithFormat("'%s' takes one argument:\nUsage: %s\n", m_cmd_name.c_str(),
+                                             m_cmd_syntax.c_str());
+                result.SetStatus(eReturnStatusFailed);
+            }
+            else
+            {
+                const char *load_addr_cstr = command.GetArgumentAtIndex(0);
+                if (command.GetArgumentCount() == 1)
+                {
+                    load_addr = Args::StringToAddress(&m_exe_ctx, load_addr_cstr, LLDB_INVALID_ADDRESS, &error);
+                    if (error.Fail() || load_addr == LLDB_INVALID_ADDRESS)
+                    {
+                        result.AppendErrorWithFormat("invalid address argument \"%s\": %s\n", load_addr_cstr,
+                                                     error.AsCString());
+                        result.SetStatus(eReturnStatusFailed);
+                    }
+                }
+
+                lldb_private::MemoryRegionInfo range_info;
+                error = process_sp->GetMemoryRegionInfo(load_addr, range_info);
+                if (error.Success())
+                {
+                    lldb_private::Address addr;
+                    ConstString section_name;
+                    if (process_sp->GetTarget().ResolveLoadAddress(load_addr, addr))
+                    {
+                        SectionSP section_sp(addr.GetSection());
+                        if (section_sp)
+                        {
+                            // Got the top most section, not the deepest section
+                            while (section_sp->GetParent())
+                                section_sp = section_sp->GetParent();
+                            section_name = section_sp->GetName();
+                        }
+                    }
+                    result.AppendMessageWithFormat(
+                        "[0x%16.16" PRIx64 "-0x%16.16" PRIx64 ") %c%c%c%s%s\n", range_info.GetRange().GetRangeBase(),
+                        range_info.GetRange().GetRangeEnd(), range_info.GetReadable() ? 'r' : '-',
+                        range_info.GetWritable() ? 'w' : '-', range_info.GetExecutable() ? 'x' : '-',
+                        section_name ? " " : "", section_name ? section_name.AsCString() : "");
+                    m_prev_end_addr = range_info.GetRange().GetRangeEnd();
+                    result.SetStatus(eReturnStatusSuccessFinishResult);
+                }
+                else
+                {
+                    result.SetStatus(eReturnStatusFailed);
+                    result.AppendErrorWithFormat("%s\n", error.AsCString());
+                }
+            }
+        }
+        else
+        {
+            m_prev_end_addr = LLDB_INVALID_ADDRESS;
+            result.AppendError("invalid process");
+            result.SetStatus(eReturnStatusFailed);
+        }
+        return result.Succeeded();
+    }
+
+    const char *
+    GetRepeatCommand(Args &current_command_args, uint32_t index) override
+    {
+        // If we repeat this command, repeat it without any arguments so we can
+        // show the next memory range
+        return m_cmd_name.c_str();
+    }
+
+    lldb::addr_t m_prev_end_addr;
+};
+
+//-------------------------------------------------------------------------
 // CommandObjectMemory
 //-------------------------------------------------------------------------
 
-CommandObjectMemory::CommandObjectMemory (CommandInterpreter &interpreter) :
-    CommandObjectMultiword (interpreter,
-                            "memory",
-                            "A set of commands for operating on memory.",
-                            "memory <subcommand> [<subcommand-options>]")
+CommandObjectMemory::CommandObjectMemory(CommandInterpreter &interpreter)
+    : CommandObjectMultiword(interpreter, "memory", "Commands for operating on memory in the current target process.",
+                             "memory <subcommand> [<subcommand-options>]")
 {
-    LoadSubCommand ("find", CommandObjectSP (new CommandObjectMemoryFind (interpreter)));
-    LoadSubCommand ("read",  CommandObjectSP (new CommandObjectMemoryRead (interpreter)));
-    LoadSubCommand ("write", CommandObjectSP (new CommandObjectMemoryWrite (interpreter)));
-    LoadSubCommand ("history", CommandObjectSP (new CommandObjectMemoryHistory (interpreter)));
+    LoadSubCommand("find", CommandObjectSP(new CommandObjectMemoryFind(interpreter)));
+    LoadSubCommand("read", CommandObjectSP(new CommandObjectMemoryRead(interpreter)));
+    LoadSubCommand("write", CommandObjectSP(new CommandObjectMemoryWrite(interpreter)));
+    LoadSubCommand("history", CommandObjectSP(new CommandObjectMemoryHistory(interpreter)));
+    LoadSubCommand("region", CommandObjectSP(new CommandObjectMemoryRegion(interpreter)));
 }
 
 CommandObjectMemory::~CommandObjectMemory() = default;

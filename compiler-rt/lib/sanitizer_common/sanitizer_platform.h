@@ -67,6 +67,12 @@
 # define SANITIZER_WINDOWS 0
 #endif
 
+#if defined(_WIN64)
+# define SANITIZER_WINDOWS64 1
+#else
+# define SANITIZER_WINDOWS64 0
+#endif
+
 #if defined(__ANDROID__)
 # define SANITIZER_ANDROID 1
 #else
@@ -174,6 +180,8 @@
 // will still work but will consume more memory for TwoLevelByteMap.
 #if defined(__mips__)
 # define SANITIZER_MMAP_RANGE_SIZE FIRST_32_SECOND_64(1ULL << 32, 1ULL << 40)
+#elif defined(__aarch64__)
+# define SANITIZER_MMAP_RANGE_SIZE FIRST_32_SECOND_64(1ULL << 32, 1ULL << 48)
 #else
 # define SANITIZER_MMAP_RANGE_SIZE FIRST_32_SECOND_64(1ULL << 32, 1ULL << 47)
 #endif

@@ -20,7 +20,6 @@
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/TemplateBase.h"
 #include "clang/AST/Type.h"
-#include "llvm/ADT/SmallString.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace clang;
@@ -119,7 +118,7 @@ static QualType Desugar(ASTContext &Context, QualType QT, bool &ShouldAKA) {
         if (DesugarArgument) {
           ShouldAKA = true;
           QT = Context.getTemplateSpecializationType(
-              TST->getTemplateName(), Args.data(), Args.size(), QT);
+              TST->getTemplateName(), Args, QT);
         }
         break;
       }
@@ -616,7 +615,7 @@ class TemplateDiff {
       SetDefault(FromDefault, ToDefault);
     }
 
-    void SetIntegerDiff(llvm::APSInt FromInt, llvm::APSInt ToInt,
+    void SetIntegerDiff(const llvm::APSInt &FromInt, const llvm::APSInt &ToInt,
                         bool IsValidFromInt, bool IsValidToInt,
                         QualType FromIntType, QualType ToIntType,
                         Expr *FromExpr, Expr *ToExpr, bool FromDefault,
@@ -653,7 +652,7 @@ class TemplateDiff {
 
     void SetFromDeclarationAndToIntegerDiff(
         ValueDecl *FromValueDecl, bool FromAddressOf, bool FromNullPtr,
-        Expr *FromExpr, llvm::APSInt ToInt, bool IsValidToInt,
+        Expr *FromExpr, const llvm::APSInt &ToInt, bool IsValidToInt,
         QualType ToIntType, Expr *ToExpr, bool FromDefault, bool ToDefault) {
       assert(FlatTree[CurrentNode].Kind == Invalid && "Node is not empty.");
       FlatTree[CurrentNode].Kind = FromDeclarationAndToInteger;
@@ -669,7 +668,7 @@ class TemplateDiff {
     }
 
     void SetFromIntegerAndToDeclarationDiff(
-        llvm::APSInt FromInt, bool IsValidFromInt, QualType FromIntType,
+        const llvm::APSInt &FromInt, bool IsValidFromInt, QualType FromIntType,
         Expr *FromExpr, ValueDecl *ToValueDecl, bool ToAddressOf,
         bool ToNullPtr, Expr *ToExpr, bool FromDefault, bool ToDefault) {
       assert(FlatTree[CurrentNode].Kind == Invalid && "Node is not empty.");
@@ -1060,8 +1059,7 @@ class TemplateDiff {
 
     Ty = Context.getTemplateSpecializationType(
              TemplateName(CTSD->getSpecializedTemplate()),
-             CTSD->getTemplateArgs().data(),
-             CTSD->getTemplateArgs().size(),
+             CTSD->getTemplateArgs().asArray(),
              Ty.getLocalUnqualifiedType().getCanonicalType());
 
     return Ty->getAs<TemplateSpecializationType>();
@@ -1705,7 +1703,7 @@ class TemplateDiff {
 
   /// PrintAPSInt - Handles printing of integral arguments, highlighting
   /// argument differences.
-  void PrintAPSInt(llvm::APSInt FromInt, llvm::APSInt ToInt,
+  void PrintAPSInt(const llvm::APSInt &FromInt, const llvm::APSInt &ToInt,
                    bool IsValidFromInt, bool IsValidToInt, QualType FromIntType,
                    QualType ToIntType, Expr *FromExpr, Expr *ToExpr,
                    bool FromDefault, bool ToDefault, bool Same) {
@@ -1738,8 +1736,8 @@ class TemplateDiff {
 
   /// PrintAPSInt - If valid, print the APSInt.  If the expression is
   /// gives more information, print it too.
-  void PrintAPSInt(llvm::APSInt Val, Expr *E, bool Valid, QualType IntType,
-                   bool PrintType) {
+  void PrintAPSInt(const llvm::APSInt &Val, Expr *E, bool Valid,
+                   QualType IntType, bool PrintType) {
     Bold();
     if (Valid) {
       if (HasExtraInfo(E)) {
@@ -1850,7 +1848,7 @@ class TemplateDiff {
   /// APSInt to print a mixed difference.
   void PrintValueDeclAndInteger(ValueDecl *VD, bool NeedAddressOf,
                                 bool IsNullPtr, Expr *VDExpr, bool DefaultDecl,
-                                llvm::APSInt Val, QualType IntType,
+                                const llvm::APSInt &Val, QualType IntType,
                                 Expr *IntExpr, bool DefaultInt) {
     if (!PrintTree) {
       OS << (DefaultDecl ? "(default) " : "");
@@ -1870,7 +1868,7 @@ class TemplateDiff {
 
   /// PrintIntegerAndValueDecl - Uses the print functions for APSInt and
   /// ValueDecl to print a mixed difference.
-  void PrintIntegerAndValueDecl(llvm::APSInt Val, QualType IntType,
+  void PrintIntegerAndValueDecl(const llvm::APSInt &Val, QualType IntType,
                                 Expr *IntExpr, bool DefaultInt, ValueDecl *VD,
                                 bool NeedAddressOf, bool IsNullPtr,
                                 Expr *VDExpr, bool DefaultDecl) {
