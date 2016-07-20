@@ -9751,10 +9751,13 @@ void gnutools::Linker::ConstructLinkerJob(Compilation &C, const JobAction &JA,
 void gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
                                     const InputInfo &Output,
                                     const InputInfoList &Inputs,
+                                    const llvm::Triple &EffectiveTriple,
                                     const ArgList &Args,
                                     const char *LinkingOutput) const {
   ArgStringList CmdArgs;
-  ConstructLinkerJob(C, JA, Output, Inputs, Args, LinkingOutput, CmdArgs);
+  ConstructLinkerJob(C, JA, Output, Inputs, EffectiveTriple, Args,
+                     LinkingOutput, CmdArgs);
+
   // UPGRADE_TBD: remove this once we hace HCCToolChain
   if (Driver::IsCXXAMP(C.getArgs())) {
 
@@ -11631,6 +11634,7 @@ static void HCPassOptions(const ArgList &Args, ArgStringList &CmdArgs) {
 void HCC::HCKernelAssemble::ConstructJob(Compilation &C, const JobAction &JA,
                                     const InputInfo &Output,
                                     const InputInfoList &Inputs,
+                                    const llvm::Triple &EffectiveTriple,
                                     const ArgList &Args,
                                     const char *LinkingOutput) const {
   assert(Inputs.size() == 1 && "Unable to handle multiple inputs.");
@@ -11659,6 +11663,7 @@ void HCC::HCKernelAssemble::ConstructJob(Compilation &C, const JobAction &JA,
 void HCC::HCHostAssemble::ConstructJob(Compilation &C, const JobAction &JA,
                                   const InputInfo &Output,
                                   const InputInfoList &Inputs,
+                                  const llvm::Triple &EffectiveTriple,
                                   const ArgList &Args,
                                   const char *LinkingOutput) const {
   assert(Inputs.size() == 1 && "Unable to handle multiple inputs.");
@@ -11689,6 +11694,7 @@ void HCC::HCHostAssemble::ConstructJob(Compilation &C, const JobAction &JA,
 void HCC::CXXAMPAssemble::ConstructJob(Compilation &C, const JobAction &JA,
                                   const InputInfo &Output,
                                   const InputInfoList &Inputs,
+                                  const llvm::Triple &EffectiveTriple,
                                   const ArgList &Args,
                                   const char *LinkingOutput) const {
   assert(Inputs.size() == 1 && "Unable to handle multiple inputs.");
@@ -11716,6 +11722,7 @@ void HCC::CXXAMPAssemble::ConstructJob(Compilation &C, const JobAction &JA,
 void HCC::CXXAMPLink::ConstructJob(Compilation &C, const JobAction &JA,
                                         const InputInfo &Output,
                                         const InputInfoList &Inputs,
+                                        const llvm::Triple &EffectiveTriple,
                                         const ArgList &Args,
                                         const char *LinkingOutput) const {
   ArgStringList CmdArgs;
@@ -11774,7 +11781,8 @@ void HCC::CXXAMPLink::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   // pass inputs to gnu ld for initial processing
-  Linker::ConstructLinkerJob(C, JA, Output, Inputs, Args, LinkingOutput, CmdArgs);
+  Linker::ConstructLinkerJob(C, JA, Output, Inputs, EffectiveTriple, Args,
+                             LinkingOutput, CmdArgs);
 
   const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("clamp-link"));
 
