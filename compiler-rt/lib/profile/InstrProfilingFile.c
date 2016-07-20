@@ -63,6 +63,7 @@ static const char *getPNSStr(ProfileNameSpecifier PNS) {
 typedef struct lprofFilename {
   /* File name string possibly with %p or %h specifiers. */
   const char *FilenamePat;
+  const char *ProfilePathPrefix;
   char PidChars[MAX_PID_SIZE];
   char Hostname[COMPILER_RT_MAX_HOSTLEN];
   unsigned NumPids;
@@ -78,7 +79,7 @@ typedef struct lprofFilename {
   ProfileNameSpecifier PNS;
 } lprofFilename;
 
-lprofFilename lprofCurFilename = {0, {0}, {0}, 0, 0, 0, PNS_unknown};
+lprofFilename lprofCurFilename = {0, 0, {0}, {0}, 0, 0, 0, PNS_unknown};
 
 int getpid(void);
 static int getCurFilenameLength();
@@ -265,6 +266,11 @@ static int parseFilenamePattern(const char *FilenamePat) {
   char *Hostname = &lprofCurFilename.Hostname[0];
   int MergingEnabled = 0;
 
+  /* Clean up cached prefix.  */
+  if (lprofCurFilename.ProfilePathPrefix)
+    free((void *)lprofCurFilename.ProfilePathPrefix);
+  memset(&lprofCurFilename, 0, sizeof(lprofCurFilename));
+
   lprofCurFilename.FilenamePat = FilenamePat;
   /* Check the filename for "%p", which indicates a pid-substitution. */
   for (I = 0; FilenamePat[I]; ++I)
@@ -423,6 +429,37 @@ static const char *getFilenamePatFromEnv(void) {
   if (!Filename || !Filename[0])
     return 0;
   return Filename;
+}
+
+COMPILER_RT_VISIBILITY
+const char *__llvm_profile_get_path_prefix(void) {
+  int Length;
+  char *FilenameBuf, *Prefix;
+  const char *Filename, *PrefixEnd;
+
+  if (lprofCurFilename.ProfilePathPrefix)
+    return lprofCurFilename.ProfilePathPrefix;
+
+  Length = getCurFilenameLength();
+  FilenameBuf = (char *)COMPILER_RT_ALLOCA(Length + 1);
+  Filename = getCurFilename(FilenameBuf);
+  if (!Filename)
+    return "\0";
+
+  PrefixEnd = lprofFindLastDirSeparator(Filename);
+  if (!PrefixEnd)
+    return "\0";
+
+  Length = PrefixEnd - Filename + 1;
+  Prefix = (char *)malloc(Length + 1);
+  if (!Prefix) {
+    PROF_ERR("Failed to %s\n", "allocate memory.");
+    return "\0";
+  }
+  memcpy(Prefix, Filename, Length);
+  Prefix[Length] = '\0';
+  lprofCurFilename.ProfilePathPrefix = Prefix;
+  return Prefix;
 }
 
 /* This method is invoked by the runtime initialization hook
