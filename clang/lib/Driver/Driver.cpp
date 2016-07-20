@@ -2273,6 +2273,8 @@ static const Tool *selectToolForJob(Compilation &C, bool SaveTemps,
     }
   }
 
+  } // if (!ToolForJob)
+
   // A backend job should always be combined with the preceding compile job
   // unless OPT_save_temps or OPT_fembed_bitcode is enabled and the compiler is
   // capable of emitting LLVM IR as an intermediate output.
@@ -2298,8 +2300,6 @@ static const Tool *selectToolForJob(Compilation &C, bool SaveTemps,
         CollapsedOffloadAction.push_back(CompileOA);
     }
   }
-
-  } // if (!ToolForJob)
 
   // Otherwise use the tool for the current job.
   if (!ToolForJob)
@@ -2482,7 +2482,10 @@ InputInfo Driver::BuildJobsForActionNoCache(
     if (IsCXXAMPBackendJobAction(JA) || IsCXXAMPCPUBackendJobAction(JA) ||
         IsHCKernelAssembleJobAction(JA) ||
         IsCXXAMPAssembleJobAction(JA) || IsCXXAMPCPUAssembleJobAction(JA)) {
-      InputInfos.push_back(BuildJobsForAction(C, Input, C.getSingleOffloadToolChain<Action::OFK_HCC>(), BoundArch, SubJobAtTopLevel, MultipleArchs, LinkingOutput, CachedResults, BuildForOffloadDevice));
+      InputInfos.push_back(BuildJobsForAction(
+        C, Input, C.getSingleOffloadToolChain<Action::OFK_HCC>(), BoundArch,
+        SubJobAtTopLevel, MultipleArchs, LinkingOutput, CachedResults,
+        BuildForOffloadDevice));
     } else {
       InputInfos.push_back(BuildJobsForAction(
         C, Input, TC, BoundArch, SubJobAtTopLevel, MultipleArchs, LinkingOutput,
