@@ -2096,29 +2096,6 @@ bool IsCXXAMPCPUBackendJobAction(const JobAction* A) {
   return IsBackendJobActionWithInputType(A, types::TY_PP_CXX_AMP_CPU);
 }
 
-static bool IsCompileJobActionWithInputType(const JobAction* A, types::ID typesID) {
-  bool ret = false;
-  if (isa<CompileJobAction>(A)) {
-    const ActionList& al = dyn_cast<CompileJobAction>(A)->getInputs();
-    if ((al.size() == 1) && (al[0]->getType() == typesID)) {
-      ret = true;
-    }
-  }
-  return ret;
-}
-
-bool IsCXXAMPCompileJobAction(const JobAction* A) {
-  return IsCompileJobActionWithInputType(A, types::TY_PP_CXX_AMP);
-}
-
-bool IsHCHostCompileJobAction(const JobAction* A) {
-  return IsCompileJobActionWithInputType(A, types::TY_PP_HC_HOST);
-}
-
-bool IsCXXAMPCPUCompileJobAction(const JobAction* A) {
-  return IsCompileJobActionWithInputType(A, types::TY_PP_CXX_AMP_CPU);
-}
-
 static bool IsAssembleJobActionWithInputType(const JobAction* A, types::ID typesID) {
   bool ret = false;
   if (isa<AssembleJobAction>(A)) {

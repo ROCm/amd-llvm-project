@@ -3863,10 +3863,6 @@ extern bool IsCXXAMPBackendJobAction(const JobAction* A);
 extern bool IsHCHostBackendJobAction(const JobAction* A);
 extern bool IsCXXAMPCPUBackendJobAction(const JobAction* A);
 
-extern bool IsCXXAMPCompileJobAction(const JobAction* A);
-extern bool IsHCHostCompileJobAction(const JobAction* A);
-extern bool IsCXXAMPCPUCompileJobAction(const JobAction* A);
-
 void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                          const InputInfo &Output, const InputInfoList &Inputs,
                          const llvm::Triple &EffectiveTriple,
@@ -3899,7 +3895,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     D.Diag(diag::err_drv_clang_unsupported) << "C++ for IAMCU";
 
   // Set flag
-  bool IsHCCKernelPath = IsCXXAMPBackendJobAction(&JA) || IsCXXAMPCPUBackendJobAction(&JA) || IsCXXAMPCompileJobAction(&JA) || IsCXXAMPCPUCompileJobAction(&JA);
+  bool IsHCCKernelPath = IsCXXAMPBackendJobAction(&JA) || IsCXXAMPCPUBackendJobAction(&JA);
 
   // Invoke ourselves in -cc1 mode.
   //
@@ -3916,7 +3912,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   // C++ AMP-specific
-  if (IsCXXAMPCompileJobAction(&JA) || IsCXXAMPBackendJobAction(&JA)) {
+  if (IsCXXAMPBackendJobAction(&JA)) {
     // path to compile kernel codes on GPU
     CmdArgs.push_back("-D__GPU__=1");
     CmdArgs.push_back("-D__KALMAR_ACCELERATOR__=1");
@@ -3926,7 +3922,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-fno-common");
     //CmdArgs.push_back("-m32"); // added below using -triple
     CmdArgs.push_back("-O2");
-  } else if(IsCXXAMPCPUCompileJobAction(&JA) || IsCXXAMPCPUBackendJobAction(&JA)){
+  } else if(IsCXXAMPCPUBackendJobAction(&JA)){
     // path to compile kernel codes on CPU
     CmdArgs.push_back("-famp-is-device");
     CmdArgs.push_back("-famp-cpu");
