@@ -25,7 +25,6 @@ template <class ELFT> class ObjectFile;
 template <class ELFT> class SymbolTable;
 template <class ELFT> void writeResult(SymbolTable<ELFT> *Symtab);
 template <class ELFT> void markLive();
-template <class ELFT> bool needsInterpSection();
 template <class ELFT> bool isOutputDynamic();
 template <class ELFT> bool isRelroSection(OutputSectionBase<ELFT> *Sec);
 template <class ELFT> bool needsPtLoad(OutputSectionBase<ELFT> *Sec);
@@ -37,7 +36,7 @@ uint32_t toPhdrFlags(uint64_t Flags);
 template<class ELFT>
 struct PhdrEntry {
   PhdrEntry(unsigned Type, unsigned Flags);
-  void AddSec(OutputSectionBase<ELFT> *Sec);
+  void add(OutputSectionBase<ELFT> *Sec);
 
   typename ELFT::Phdr H = {};
   OutputSectionBase<ELFT> *First = nullptr;
