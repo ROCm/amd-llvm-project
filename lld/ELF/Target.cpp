@@ -1461,6 +1461,7 @@ AMDGPUTargetInfo::AMDGPUTargetInfo() {
 void AMDGPUTargetInfo::relocateOne(uint8_t *Loc, uint32_t Type,
                                    uint64_t Val) const {
   switch (Type) {
+  case R_AMDGPU_ABS32:
   case R_AMDGPU_GOTPCREL:
   case R_AMDGPU_REL32:
     write32le(Loc, Val);
@@ -1472,6 +1473,8 @@ void AMDGPUTargetInfo::relocateOne(uint8_t *Loc, uint32_t Type,
 
 RelExpr AMDGPUTargetInfo::getRelExpr(uint32_t Type, const SymbolBody &S) const {
   switch (Type) {
+  case R_AMDGPU_ABS32:
+    return R_ABS;
   case R_AMDGPU_REL32:
     return R_PC;
   case R_AMDGPU_GOTPCREL:
@@ -2037,7 +2040,7 @@ uint64_t MipsTargetInfo<ELFT>::getImplicitAddend(const uint8_t *Buf,
     // FIXME (simon): If the relocation target symbol is not a PLT entry
     // we should use another expression for calculation:
     // ((A << 2) | (P & 0xf0000000)) >> 2
-    return SignExtend64<28>(read32<E>(Buf) << 2);
+    return SignExtend64<28>((read32<E>(Buf) & 0x3ffffff) << 2);
   case R_MIPS_GPREL16:
   case R_MIPS_LO16:
   case R_MIPS_PCLO16:
@@ -2106,7 +2109,7 @@ void MipsTargetInfo<ELFT>::relocateOne(uint8_t *Loc, uint32_t Type,
     write64<E>(Loc, Val);
     break;
   case R_MIPS_26:
-    write32<E>(Loc, (read32<E>(Loc) & ~0x3ffffff) | (Val >> 2));
+    write32<E>(Loc, (read32<E>(Loc) & ~0x3ffffff) | ((Val >> 2) & 0x3ffffff));
     break;
   case R_MIPS_GOT_DISP:
   case R_MIPS_GOT_PAGE:
