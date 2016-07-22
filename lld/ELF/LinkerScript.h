@@ -31,25 +31,13 @@ class ScriptParser;
 template <class ELFT> class InputSectionBase;
 template <class ELFT> class OutputSectionBase;
 
-// This class represents each rule in SECTIONS command.
-struct SectionRule {
-  SectionRule(StringRef D, StringRef S)
-      : Dest(D), SectionPattern(S) {}
-
-  StringRef Dest;
-
-  StringRef SectionPattern;
+// This enum is used to implement linker script SECTIONS command.
+// https://sourceware.org/binutils/docs/ld/SECTIONS.html#SECTIONS
+enum SectionsCommandKind {
+  AssignmentKind,
+  OutputSectionKind,
+  InputSectionKind
 };
-
-// This enum represents what we can observe in SECTIONS tag of script.
-// Each sections-command may of be one of the following:
-// (https://sourceware.org/binutils/docs/ld/SECTIONS.html#SECTIONS)
-// * An ENTRY command.
-// * A symbol assignment.
-// * An output section description.
-// * An overlay description.
-// We support only AssignmentKind and OutputSectionKind for now.
-enum SectionsCommandKind { AssignmentKind, OutputSectionKind };
 
 struct BaseCommand {
   BaseCommand(int K) : Kind(K) {}
@@ -63,15 +51,34 @@ struct SymbolAssignment : BaseCommand {
   static bool classof(const BaseCommand *C);
   StringRef Name;
   std::vector<StringRef> Expr;
+  bool Provide = false;
+  // Hidden and Ignore can be true, only if Provide is true
+  bool Hidden = false;
+  bool Ignore = false;
 };
+
+// Linker scripts allow additional constraints to be put on ouput sections.
+// An output section will only be created if all of its input sections are
+// read-only
+// or all of its input sections are read-write by using the keyword ONLY_IF_RO
+// and ONLY_IF_RW respectively.
+enum ConstraintKind { NoConstraint, ReadOnly, ReadWrite };
 
 struct OutputSectionCommand : BaseCommand {
   OutputSectionCommand(StringRef Name)
       : BaseCommand(OutputSectionKind), Name(Name) {}
   static bool classof(const BaseCommand *C);
   StringRef Name;
+  std::vector<std::unique_ptr<BaseCommand>> Commands;
   std::vector<StringRef> Phdrs;
   std::vector<uint8_t> Filler;
+  ConstraintKind Constraint = NoConstraint;
+};
+
+struct InputSectionDescription : BaseCommand {
+  InputSectionDescription() : BaseCommand(InputSectionKind) {}
+  static bool classof(const BaseCommand *C);
+  std::vector<StringRef> Patterns;
 };
 
 struct PhdrsCommand {
@@ -84,9 +91,6 @@ struct PhdrsCommand {
 
 // ScriptConfiguration holds linker script parse results.
 struct ScriptConfiguration {
-  // SECTIONS commands.
-  std::vector<SectionRule> Sections;
-
   // Used to assign addresses to sections.
   std::vector<std::unique_ptr<BaseCommand>> Commands;
 
@@ -114,7 +118,6 @@ public:
   std::vector<OutputSectionBase<ELFT> *>
   createSections(OutputSectionFactory<ELFT> &Factory);
 
-  StringRef getOutputSection(InputSectionBase<ELFT> *S);
   ArrayRef<uint8_t> getFiller(StringRef Name);
   bool isDiscarded(InputSectionBase<ELFT> *S);
   bool shouldKeep(InputSectionBase<ELFT> *S);
@@ -130,6 +133,7 @@ private:
 
   int getSectionIndex(StringRef Name);
   std::vector<size_t> getPhdrIndicesForSection(StringRef Name);
+  void dispatchAssignment(SymbolAssignment *Cmd);
 
   uintX_t Dot;
 };

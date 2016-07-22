@@ -111,10 +111,6 @@ static void handleMergeWriterError(Error E, StringRef WhenceFile = "",
 struct WeightedFile {
   std::string Filename;
   uint64_t Weight;
-
-  WeightedFile() {}
-
-  WeightedFile(const std::string &F, uint64_t W) : Filename{F}, Weight{W} {}
 };
 typedef SmallVector<WeightedFile, 5> WeightedFileVector;
 
@@ -305,7 +301,7 @@ static WeightedFile parseWeightedFile(const StringRef &WeightedFilename) {
   if (WeightStr.getAsInteger(10, Weight) || Weight < 1)
     exitWithError("Input weight must be a positive integer.");
 
-  return WeightedFile(FileName, Weight);
+  return {FileName, Weight};
 }
 
 static std::unique_ptr<MemoryBuffer>
@@ -323,6 +319,13 @@ getInputFilenamesFileBuf(const StringRef &InputFilenamesFile) {
 static void addWeightedInput(WeightedFileVector &WNI, const WeightedFile &WF) {
   StringRef Filename = WF.Filename;
   uint64_t Weight = WF.Weight;
+
+  // If it's STDIN just pass it on.
+  if (Filename == "-") {
+    WNI.push_back({Filename, Weight});
+    return;
+  }
+
   llvm::sys::fs::file_status Status;
   llvm::sys::fs::status(Filename, Status);
   if (!llvm::sys::fs::exists(Status))
@@ -330,7 +333,7 @@ static void addWeightedInput(WeightedFileVector &WNI, const WeightedFile &WF) {
                       Filename);
   // If it's a source file, collect it.
   if (llvm::sys::fs::is_regular_file(Status)) {
-    WNI.emplace_back(Filename, Weight);
+    WNI.push_back({Filename, Weight});
     return;
   }
 

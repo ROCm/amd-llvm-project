@@ -525,12 +525,12 @@ static void scanRelocs(InputSectionBase<ELFT> &C, ArrayRef<RelTy> Rels) {
   ArrayRef<uint8_t> SectionData = C.getSectionData();
   const uint8_t *Buf = SectionData.begin();
 
-  SectionPiece *PieceI = nullptr;
-  SectionPiece *PieceE = nullptr;
-  if (auto *Eh = dyn_cast<EhInputSection<ELFT>>(&C)) {
-    PieceI = &*Eh->Pieces.begin();
-    PieceE = PieceI + Eh->Pieces.size();
-  }
+  ArrayRef<EhSectionPiece> Pieces;
+  if (auto *Eh = dyn_cast<EhInputSection<ELFT>>(&C))
+    Pieces = Eh->Pieces;
+
+  ArrayRef<EhSectionPiece>::iterator PieceI = Pieces.begin();
+  ArrayRef<EhSectionPiece>::iterator PieceE = Pieces.end();
 
   for (auto I = Rels.begin(), E = Rels.end(); I != E; ++I) {
     const RelTy &RI = *I;
@@ -554,7 +554,7 @@ static void scanRelocs(InputSectionBase<ELFT> &C, ArrayRef<RelTy> Rels) {
     uintX_t Offset;
     if (PieceI != PieceE) {
       assert(PieceI->InputOff <= RI.r_offset && "Relocation not in any piece");
-      if (PieceI->OutputOff == (uintX_t)-1)
+      if (PieceI->OutputOff == (size_t)-1)
         continue;
       Offset = PieceI->OutputOff + RI.r_offset - PieceI->InputOff;
     } else {
