@@ -20,7 +20,6 @@
 #include "sanitizer_common/sanitizer_common.h"
 #include "xray_flags.h"
 #include "xray_interface_internal.h"
-#include "llvm/Support/ELF.h"
 
 extern "C" {
 extern void __xray_init();
@@ -59,7 +58,6 @@ void __xray_init() {
   XRayInstrMap.store(SledMap, std::memory_order_release);
   XRayInitialized.store(true, std::memory_order_release);
 
-  // FIXME: Check the flag/environment before patching.
   if (flags()->patch_premain)
     __xray_patch();
 }

@@ -16,6 +16,7 @@
 #define XRAY_INTERFACE_INTERNAL_H
 
 #include "xray/xray_interface.h"
+#include <cstddef>
 #include <cstdint>
 
 extern "C" {
@@ -33,8 +34,9 @@ namespace __xray {
 
 struct XRaySledMap {
   const XRaySledEntry *Sleds;
-  std::size_t Entries;
+  size_t Entries;
 };
-}
+
+} // namespace __xray
 
 #endif
