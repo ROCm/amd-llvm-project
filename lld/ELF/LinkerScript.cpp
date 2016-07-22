@@ -8,8 +8,12 @@
 //===----------------------------------------------------------------------===//
 //
 // This file contains the parser/evaluator of the linker script.
-// It does not construct an AST but consume linker script directives directly.
-// Results are written to Driver or Config object.
+// It parses a linker script and write the result to Config or ScriptConfig
+// objects.
+//
+// If SECTIONS command is used, a ScriptConfig contains an AST
+// of the command which will later be consumed by createSections() and
+// assignAddresses().
 //
 //===----------------------------------------------------------------------===//
 
@@ -45,6 +49,10 @@ bool SymbolAssignment::classof(const BaseCommand *C) {
 
 bool OutputSectionCommand::classof(const BaseCommand *C) {
   return C->Kind == OutputSectionKind;
+}
+
+bool InputSectionDescription::classof(const BaseCommand *C) {
+  return C->Kind == InputSectionKind;
 }
 
 // This is an operator-precedence parser to parse and evaluate
@@ -97,6 +105,13 @@ uint64_t ExprParser::run() {
   return V;
 }
 
+uint64_t static getConstantValue(StringRef C) {
+  if (C == "COMMONPAGESIZE" || C == "MAXPAGESIZE")
+    return Target->PageSize;
+  error("unknown constant: " + C);
+  return 0;
+}
+
 // This is a part of the operator-precedence parser to evaluate
 // arithmetic expressions in SECTIONS command. This function evaluates an
 // integer literal, a parenthesized expression, the ALIGN function,
@@ -115,6 +130,34 @@ uint64_t ExprParser::parsePrimary() {
     uint64_t V = parseExpr();
     expect(")");
     return alignTo(Dot, V);
+  }
+  if (Tok == "CONSTANT") {
+    expect("(");
+    uint64_t V = getConstantValue(next());
+    expect(")");
+    return V;
+  }
+  // Documentations says there are two ways to compute
+  // the value of DATA_SEGMENT_ALIGN command, depending on whether the second
+  // uses fewer COMMONPAGESIZE sized pages for the data segment(area between the
+  // result of this expression and `DATA_SEGMENT_END') than the first or not.
+  // That is possible optimization, that we do not support, so we compute that
+  // function always as (ALIGN(MAXPAGESIZE) + (. & (MAXPAGESIZE - 1))) now.
+  if (Tok == "DATA_SEGMENT_ALIGN") {
+    expect("(");
+    uint64_t L = parseExpr();
+    expect(",");
+    parseExpr();
+    expect(")");
+    return alignTo(Dot, L) + (Dot & (L - 1));
+  }
+  // Since we do not support the optimization from comment above,
+  // we can just ignore that command.
+  if (Tok == "DATA_SEGMENT_END") {
+    expect("(");
+    expect(".");
+    expect(")");
+    return Dot;
   }
   uint64_t V = 0;
   if (Tok.getAsInteger(0, V))
@@ -195,16 +238,8 @@ uint64_t ExprParser::parseExpr1(uint64_t Lhs, int MinPrec) {
 uint64_t ExprParser::parseExpr() { return parseExpr1(parsePrimary(), 0); }
 
 template <class ELFT>
-StringRef LinkerScript<ELFT>::getOutputSection(InputSectionBase<ELFT> *S) {
-  for (SectionRule &R : Opt.Sections)
-    if (globMatch(R.SectionPattern, S->getSectionName()))
-      return R.Dest;
-  return "";
-}
-
-template <class ELFT>
 bool LinkerScript<ELFT>::isDiscarded(InputSectionBase<ELFT> *S) {
-  return !S || !S->Live || getOutputSection(S) == "/DISCARD/";
+  return !S || !S->Live;
 }
 
 template <class ELFT>
@@ -215,45 +250,98 @@ bool LinkerScript<ELFT>::shouldKeep(InputSectionBase<ELFT> *S) {
   return false;
 }
 
+static bool match(StringRef Pattern, ArrayRef<StringRef> Arr) {
+  for (StringRef S : Arr)
+    if (globMatch(S, Pattern))
+      return true;
+  return false;
+}
+
 template <class ELFT>
 std::vector<OutputSectionBase<ELFT> *>
 LinkerScript<ELFT>::createSections(OutputSectionFactory<ELFT> &Factory) {
+  typedef const std::unique_ptr<ObjectFile<ELFT>> ObjectFile;
   std::vector<OutputSectionBase<ELFT> *> Result;
+  DenseSet<OutputSectionBase<ELFT> *> Removed;
 
   // Add input section to output section. If there is no output section yet,
   // then create it and add to output section list.
-  auto AddInputSec = [&](InputSectionBase<ELFT> *C, StringRef Name) {
+  auto AddInputSec = [&](InputSectionBase<ELFT> *C, StringRef Name,
+                         ConstraintKind Constraint) {
     OutputSectionBase<ELFT> *Sec;
     bool IsNew;
     std::tie(Sec, IsNew) = Factory.create(C, Name);
     if (IsNew)
       Result.push_back(Sec);
+    if ((!(C->getSectionHdr()->sh_flags & SHF_WRITE)) &&
+        Constraint == ReadWrite) {
+      Removed.insert(Sec);
+      return;
+    }
+    if ((C->getSectionHdr()->sh_flags & SHF_WRITE) && Constraint == ReadOnly) {
+      Removed.insert(Sec);
+      return;
+    }
     Sec->addSection(C);
   };
 
   // Select input sections matching rule and add them to corresponding
   // output section. Section rules are processed in order they're listed
   // in script, so correct input section order is maintained by design.
-  for (SectionRule &R : Opt.Sections)
-    for (const std::unique_ptr<ObjectFile<ELFT>> &F :
-         Symtab<ELFT>::X->getObjectFiles())
-      for (InputSectionBase<ELFT> *S : F->getSections())
-        if (!isDiscarded(S) && !S->OutSec &&
-            globMatch(R.SectionPattern, S->getSectionName()))
-          // Add single input section to output section.
-          AddInputSec(S, R.Dest);
+  for (const std::unique_ptr<BaseCommand> &Base : Opt.Commands) {
+    auto *OutCmd = dyn_cast<OutputSectionCommand>(Base.get());
+    if (!OutCmd)
+      continue;
+
+    for (const std::unique_ptr<BaseCommand> &Cmd : OutCmd->Commands) {
+      auto *InCmd = dyn_cast<InputSectionDescription>(Cmd.get());
+      if (!InCmd)
+        continue;
+
+      for (ObjectFile &F : Symtab<ELFT>::X->getObjectFiles()) {
+        for (InputSectionBase<ELFT> *S : F->getSections()) {
+          if (isDiscarded(S) || S->OutSec)
+            continue;
+
+          if (match(S->getSectionName(), InCmd->Patterns)) {
+            if (OutCmd->Name == "/DISCARD/")
+              S->Live = false;
+            else
+              AddInputSec(S, OutCmd->Name, OutCmd->Constraint);
+          }
+        }
+      }
+    }
+  }
 
   // Add all other input sections, which are not listed in script.
-  for (const std::unique_ptr<ObjectFile<ELFT>> &F :
-       Symtab<ELFT>::X->getObjectFiles())
-    for (InputSectionBase<ELFT> *S : F->getSections())
+  for (ObjectFile &F : Symtab<ELFT>::X->getObjectFiles())
+    for (InputSectionBase<ELFT> *S : F->getSections()) {
       if (!isDiscarded(S)) {
         if (!S->OutSec)
-          AddInputSec(S, getOutputSectionName(S));
+          AddInputSec(S, getOutputSectionName(S), NoConstraint);
       } else
         reportDiscarded(S, F);
+    }
 
+  // Remove from the output all the sections which did not met the constraints.
+  Result.erase(std::remove_if(Result.begin(), Result.end(),
+                              [&](OutputSectionBase<ELFT> *Sec) {
+                                return Removed.count(Sec);
+                              }),
+               Result.end());
   return Result;
+}
+
+template <class ELFT>
+void LinkerScript<ELFT>::dispatchAssignment(SymbolAssignment *Cmd) {
+  uint64_t Val = evalExpr(Cmd->Expr, Dot);
+  if (Cmd->Name == ".") {
+    Dot = Val;
+  } else if (!Cmd->Ignore) {
+    auto *D = cast<DefinedRegular<ELFT>>(Symtab<ELFT>::X->find(Cmd->Name));
+    D->Value = Val;
+  }
 }
 
 template <class ELFT>
@@ -277,14 +365,7 @@ void LinkerScript<ELFT>::assignAddresses(
 
   for (const std::unique_ptr<BaseCommand> &Base : Opt.Commands) {
     if (auto *Cmd = dyn_cast<SymbolAssignment>(Base.get())) {
-      uint64_t Val = evalExpr(Cmd->Expr, Dot);
-      if (Cmd->Name == ".") {
-
-        Dot = Val;
-      } else {
-        auto *D = cast<DefinedRegular<ELFT>>(Symtab<ELFT>::X->find(Cmd->Name));
-        D->Value = Val;
-      }
+      dispatchAssignment(Cmd);
       continue;
     }
 
@@ -389,7 +470,6 @@ LinkerScript<ELFT>::createPhdrs(ArrayRef<OutputSectionBase<ELFT> *> Sections) {
         Phdrs[Id].add(Sec);
         if (Opt.PhdrsCommands[Id].Flags == UINT_MAX)
           Phdrs[Id].H.p_flags |= toPhdrFlags(Sec->getFlags());
-        Phdrs[Id].H.p_flags |= toPhdrFlags(Sec->getFlags());
       }
     } else {
       // If we have no load segment or flags've changed then we want new load
@@ -448,10 +528,19 @@ int LinkerScript<ELFT>::compareSections(StringRef A, StringRef B) {
 }
 
 template <class ELFT> void LinkerScript<ELFT>::addScriptedSymbols() {
-  for (const std::unique_ptr<BaseCommand> &Base : Opt.Commands)
-    if (auto *Cmd = dyn_cast<SymbolAssignment>(Base.get()))
-      if (Cmd->Name != "." && Symtab<ELFT>::X->find(Cmd->Name) == nullptr)
-        Symtab<ELFT>::X->addAbsolute(Cmd->Name, STV_DEFAULT);
+  for (const std::unique_ptr<BaseCommand> &Base : Opt.Commands) {
+    auto *Cmd = dyn_cast<SymbolAssignment>(Base.get());
+    if (!Cmd || Cmd->Name == ".")
+      continue;
+
+    if (Symtab<ELFT>::X->find(Cmd->Name) == nullptr)
+      Symtab<ELFT>::X->addAbsolute(Cmd->Name,
+                                   Cmd->Hidden ? STV_HIDDEN : STV_DEFAULT);
+    else
+      // Symbol already exists in symbol table. If it is provided
+      // then we can't override its value.
+      Cmd->Ignore = Cmd->Provide;
+  }
 }
 
 template <class ELFT> bool LinkerScript<ELFT>::hasPhdrsCommands() {
@@ -512,7 +601,8 @@ private:
   void readOutputSectionDescription(StringRef OutSec);
   std::vector<StringRef> readOutputSectionPhdrs();
   unsigned readPhdrType();
-  void readSymbolAssignment(StringRef Name);
+  void readProvide(bool Hidden);
+  SymbolAssignment *readSymbolAssignment(StringRef Name);
   std::vector<StringRef> readSectionsCommandExpr();
 
   const static StringMap<Handler> Cmd;
@@ -709,7 +799,11 @@ void ScriptParser::readSections() {
       continue;
     }
     next();
-    if (peek() == "=")
+    if (Tok == "PROVIDE")
+      readProvide(false);
+    else if (Tok == "PROVIDE_HIDDEN")
+      readProvide(true);
+    else if (peek() == "=")
       readSymbolAssignment(Tok);
     else
       readOutputSectionDescription(Tok);
@@ -730,22 +824,31 @@ void ScriptParser::readOutputSectionDescription(StringRef OutSec) {
   OutputSectionCommand *Cmd = new OutputSectionCommand(OutSec);
   Opt.Commands.emplace_back(Cmd);
   expect(":");
+
+  // Parse constraints.
+  if (skip("ONLY_IF_RO"))
+    Cmd->Constraint = ReadOnly;
+  if (skip("ONLY_IF_RW"))
+    Cmd->Constraint = ReadWrite;
   expect("{");
 
   while (!Error && !skip("}")) {
     StringRef Tok = next();
     if (Tok == "*") {
+      auto *InCmd = new InputSectionDescription();
+      Cmd->Commands.emplace_back(InCmd);
       expect("(");
       while (!Error && !skip(")"))
-        Opt.Sections.emplace_back(OutSec, next());
+        InCmd->Patterns.push_back(next());
     } else if (Tok == "KEEP") {
       expect("(");
       expect("*");
       expect("(");
+      auto *InCmd = new InputSectionDescription();
+      Cmd->Commands.emplace_back(InCmd);
       while (!Error && !skip(")")) {
-        StringRef Sec = next();
-        Opt.Sections.emplace_back(OutSec, Sec);
-        Opt.KeptSections.push_back(Sec);
+        Opt.KeptSections.push_back(peek());
+        InCmd->Patterns.push_back(next());
       }
       expect(")");
     } else {
@@ -766,19 +869,42 @@ void ScriptParser::readOutputSectionDescription(StringRef OutSec) {
   }
 }
 
-void ScriptParser::readSymbolAssignment(StringRef Name) {
-  expect("=");
-  std::vector<StringRef> Expr = readSectionsCommandExpr();
-  if (Expr.empty())
-    error("error in symbol assignment expression");
-  else
-    Opt.Commands.push_back(llvm::make_unique<SymbolAssignment>(Name, Expr));
+void ScriptParser::readProvide(bool Hidden) {
+  expect("(");
+  if (SymbolAssignment *Assignment = readSymbolAssignment(next())) {
+    Assignment->Provide = true;
+    Assignment->Hidden = Hidden;
+  }
+  expect(")");
+  expect(";");
 }
 
+SymbolAssignment *ScriptParser::readSymbolAssignment(StringRef Name) {
+  expect("=");
+  std::vector<StringRef> Expr = readSectionsCommandExpr();
+  if (Expr.empty()) {
+    error("error in symbol assignment expression");
+  } else {
+    Opt.Commands.push_back(llvm::make_unique<SymbolAssignment>(Name, Expr));
+    return static_cast<SymbolAssignment *>(Opt.Commands.back().get());
+  }
+  return nullptr;
+}
+
+// This function reads balanced expression until semicolon is seen.
 std::vector<StringRef> ScriptParser::readSectionsCommandExpr() {
+  int Braces = 0;
   std::vector<StringRef> Expr;
   while (!Error) {
-    StringRef Tok = next();
+    StringRef Tok = peek();
+
+    if (Tok == "(")
+      Braces++;
+    else if (Tok == ")")
+      if (--Braces < 0)
+        break;
+
+    next();
     if (Tok == ";")
       break;
     Expr.push_back(Tok);

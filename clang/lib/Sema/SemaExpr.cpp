@@ -5124,7 +5124,11 @@ static FunctionDecl *rewriteBuiltinFunctionDecl(Sema *Sema, ASTContext &Context,
   for (QualType ParamType : FT->param_types()) {
 
     // Convert array arguments to pointer to simplify type lookup.
-    Expr *Arg = Sema->DefaultFunctionArrayLvalueConversion(ArgExprs[i++]).get();
+    ExprResult ArgRes =
+        Sema->DefaultFunctionArrayLvalueConversion(ArgExprs[i++]);
+    if (ArgRes.isInvalid())
+      return nullptr;
+    Expr *Arg = ArgRes.get();
     QualType ArgType = Arg->getType();
     if (!ParamType->isPointerType() ||
         ParamType.getQualifiers().hasAddressSpace() ||
