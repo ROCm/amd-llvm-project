@@ -757,7 +757,7 @@ llvm::DIType *CGDebugInfo::CreatePointerLikeType(llvm::dwarf::Tag Tag,
                                         Size, Align);
   else
     return DBuilder.createPointerType(getOrCreateType(PointeeTy, Unit), Size,
-                                      Align);
+                                      Align, AS);
 }
 
 llvm::DIType *CGDebugInfo::getOrCreateStructPtrType(StringRef Name,
@@ -1535,7 +1535,7 @@ llvm::DIType *CGDebugInfo::getOrCreateVTablePtrType(llvm::DIFile *Unit) {
   llvm::DIType *SubTy = DBuilder.createSubroutineType(SElements);
   unsigned Size = Context.getTypeSize(Context.VoidPtrTy);
   llvm::DIType *vtbl_ptr_type =
-      DBuilder.createPointerType(SubTy, Size, 0, "__vtbl_ptr_type");
+      DBuilder.createPointerType(SubTy, Size, 0, 0, "__vtbl_ptr_type");
   VTablePtrType = DBuilder.createPointerType(vtbl_ptr_type, Size);
   return VTablePtrType;
 }
