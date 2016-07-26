@@ -2410,8 +2410,13 @@ bool CompilerInvocation::CreateFromArgs(CompilerInvocation &Res,
   if (LangOpts.CPlusPlusAMP) {
     // During HCC device-side compilation, the aux triple is the
     // triple used for host compilation
-    if (LangOpts.DevicePath)
+    if (LangOpts.DevicePath) {
       Res.getTargetOpts().HostTriple = Res.getFrontendOpts().AuxTriple;
+
+      // Enable native fp16 on the device path
+      LangOpts.NativeHalfType = 1;
+      LangOpts.NativeHalfArgsAndReturns = 1;
+    }
   }
 
   // FIXME: Override value name discarding when asan or msan is used because the
