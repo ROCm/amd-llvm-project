@@ -23,6 +23,7 @@
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Scalar/GVN.h"
+#include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Transforms/Utils/MemorySSA.h"
 
 using namespace llvm;
@@ -172,11 +173,56 @@ typedef DenseMap<const BasicBlock *, bool> BBSideEffectsSet;
 typedef SmallVector<Instruction *, 4> SmallVecInsn;
 typedef SmallVectorImpl<Instruction *> SmallVecImplInsn;
 
+static void combineKnownMetadata(Instruction *ReplInst, Instruction *I) {
+  static const unsigned KnownIDs[] = {
+      LLVMContext::MD_tbaa,           LLVMContext::MD_alias_scope,
+      LLVMContext::MD_noalias,        LLVMContext::MD_range,
+      LLVMContext::MD_fpmath,         LLVMContext::MD_invariant_load,
+      LLVMContext::MD_invariant_group};
+  combineMetadata(ReplInst, I, KnownIDs);
+}
+
 // This pass hoists common computations across branches sharing common
 // dominator. The primary goal is to reduce the code size, and in some
 // cases reduce critical path (by exposing more ILP).
 class GVNHoist {
 public:
+  GVNHoist(DominatorTree *Dt, AliasAnalysis *Aa, MemoryDependenceResults *Md,
+           bool OptForMinSize)
+      : DT(Dt), AA(Aa), MD(Md), OptForMinSize(OptForMinSize), HoistedCtr(0) {}
+  bool run(Function &F) {
+    VN.setDomTree(DT);
+    VN.setAliasAnalysis(AA);
+    VN.setMemDep(MD);
+    bool Res = false;
+
+    unsigned I = 0;
+    for (const BasicBlock *BB : depth_first(&F.getEntryBlock()))
+      DFSNumber.insert({BB, ++I});
+
+    // FIXME: use lazy evaluation of VN to avoid the fix-point computation.
+    while (1) {
+      // FIXME: only compute MemorySSA once. We need to update the analysis in
+      // the same time as transforming the code.
+      MemorySSA M(F, AA, DT);
+      MSSA = &M;
+
+      auto HoistStat = hoistExpressions(F);
+      if (HoistStat.first + HoistStat.second == 0) {
+        return Res;
+      }
+      if (HoistStat.second > 0) {
+        // To address a limitation of the current GVN, we need to rerun the
+        // hoisting after we hoisted loads in order to be able to hoist all
+        // scalars dependent on the hoisted loads. Same for stores.
+        VN.clear();
+      }
+      Res = true;
+    }
+
+    return Res;
+  }
+private:
   GVN::ValueTable VN;
   DominatorTree *DT;
   AliasAnalysis *AA;
@@ -188,10 +234,6 @@ public:
   int HoistedCtr;
 
   enum InsKind { Unknown, Scalar, Load, Store };
-
-  GVNHoist(DominatorTree *Dt, AliasAnalysis *Aa, MemoryDependenceResults *Md,
-           bool OptForMinSize)
-      : DT(Dt), AA(Aa), MD(Md), OptForMinSize(OptForMinSize), HoistedCtr(0) {}
 
   // Return true when there are exception handling in BB.
   bool hasEH(const BasicBlock *BB) {
@@ -604,15 +646,15 @@ public:
     ClonedGep->insertBefore(HoistPt->getTerminator());
     // Conservatively discard any optimization hints, they may differ on the
     // other paths.
-    ClonedGep->dropUnknownNonDebugMetadata();
-    for (const Instruction *OtherInst : InstructionsToHoist) {
-      const GetElementPtrInst *OtherGep;
+    for (Instruction *OtherInst : InstructionsToHoist) {
+      GetElementPtrInst *OtherGep;
       if (auto *OtherLd = dyn_cast<LoadInst>(OtherInst))
         OtherGep = cast<GetElementPtrInst>(OtherLd->getPointerOperand());
       else
         OtherGep = cast<GetElementPtrInst>(
             cast<StoreInst>(OtherInst)->getPointerOperand());
       ClonedGep->intersectOptionalDataWith(OtherGep);
+      combineKnownMetadata(ClonedGep, OtherGep);
     }
     Repl->replaceUsesOfWith(Gep, ClonedGep);
 
@@ -622,13 +664,12 @@ public:
       ClonedVal->insertBefore(HoistPt->getTerminator());
       // Conservatively discard any optimization hints, they may differ on the
       // other paths.
-      ClonedVal->dropUnknownNonDebugMetadata();
-      for (const Instruction *OtherInst : InstructionsToHoist) {
-        const auto *OtherVal =
+      for (Instruction *OtherInst : InstructionsToHoist) {
+        auto *OtherVal =
             cast<Instruction>(cast<StoreInst>(OtherInst)->getValueOperand());
         ClonedVal->intersectOptionalDataWith(OtherVal);
+        combineKnownMetadata(ClonedVal, OtherVal);
       }
-      ClonedVal->clearSubclassOptionalData();
       Repl->replaceUsesOfWith(Val, ClonedVal);
     }
 
@@ -669,7 +710,6 @@ public:
         Repl->moveBefore(HoistPt->getTerminator());
         // TBAA may differ on one of the other paths, we need to get rid of
         // anything which might conflict.
-        Repl->dropUnknownNonDebugMetadata();
       }
 
       if (isa<LoadInst>(Repl))
@@ -685,13 +725,25 @@ public:
       for (Instruction *I : InstructionsToHoist)
         if (I != Repl) {
           ++NR;
-          if (isa<LoadInst>(Repl))
+          if (auto *ReplacementLoad = dyn_cast<LoadInst>(Repl)) {
+            ReplacementLoad->setAlignment(
+                std::min(ReplacementLoad->getAlignment(),
+                         cast<LoadInst>(I)->getAlignment()));
             ++NumLoadsRemoved;
-          else if (isa<StoreInst>(Repl))
+          } else if (auto *ReplacementStore = dyn_cast<StoreInst>(Repl)) {
+            ReplacementStore->setAlignment(
+                std::min(ReplacementStore->getAlignment(),
+                         cast<StoreInst>(I)->getAlignment()));
             ++NumStoresRemoved;
-          else if (isa<CallInst>(Repl))
+          } else if (auto *ReplacementAlloca = dyn_cast<AllocaInst>(Repl)) {
+            ReplacementAlloca->setAlignment(
+                std::max(ReplacementAlloca->getAlignment(),
+                         cast<AllocaInst>(I)->getAlignment()));
+          } else if (isa<CallInst>(Repl)) {
             ++NumCallsRemoved;
+          }
           Repl->intersectOptionalDataWith(I);
+          combineKnownMetadata(Repl, I);
           I->replaceAllUsesWith(Repl);
           I->eraseFromParent();
         }
@@ -749,39 +801,6 @@ public:
     computeInsertionPoints(CI.getLoadVNTable(), HPL, InsKind::Load);
     computeInsertionPoints(CI.getStoreVNTable(), HPL, InsKind::Store);
     return hoist(HPL);
-  }
-
-  bool run(Function &F) {
-    VN.setDomTree(DT);
-    VN.setAliasAnalysis(AA);
-    VN.setMemDep(MD);
-    bool Res = false;
-
-    unsigned I = 0;
-    for (const BasicBlock *BB : depth_first(&F.getEntryBlock()))
-      DFSNumber.insert({BB, ++I});
-
-    // FIXME: use lazy evaluation of VN to avoid the fix-point computation.
-    while (1) {
-      // FIXME: only compute MemorySSA once. We need to update the analysis in
-      // the same time as transforming the code.
-      MemorySSA M(F, AA, DT);
-      MSSA = &M;
-
-      auto HoistStat = hoistExpressions(F);
-      if (HoistStat.first + HoistStat.second == 0) {
-        return Res;
-      }
-      if (HoistStat.second > 0) {
-        // To address a limitation of the current GVN, we need to rerun the
-        // hoisting after we hoisted loads in order to be able to hoist all
-        // scalars dependent on the hoisted loads. Same for stores.
-        VN.clear();
-      }
-      Res = true;
-    }
-
-    return Res;
   }
 };
 
