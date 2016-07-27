@@ -150,19 +150,21 @@ LinkerScript<ELFT>::createSections(OutputSectionFactory<ELFT> &Factory) {
 template <class ELFT>
 std::vector<OutputSectionBase<ELFT> *>
 LinkerScript<ELFT>::filter(std::vector<OutputSectionBase<ELFT> *> &Sections) {
-  // Sections and OutputSectionCommands are parallel arrays.
   // In this loop, we remove output sections if they don't satisfy
   // requested properties.
-  auto It = Sections.begin();
   for (const std::unique_ptr<BaseCommand> &Base : Opt.Commands) {
     auto *Cmd = dyn_cast<OutputSectionCommand>(Base.get());
     if (!Cmd || Cmd->Name == "/DISCARD/")
       continue;
 
-    if (Cmd->Constraint == ConstraintKind::NoConstraint) {
-      ++It;
+    if (Cmd->Constraint == ConstraintKind::NoConstraint)
       continue;
-    }
+
+    auto It = llvm::find_if(Sections, [&](OutputSectionBase<ELFT> *S) {
+      return S->getName() == Cmd->Name;
+    });
+    if (It == Sections.end())
+      continue;
 
     OutputSectionBase<ELFT> *Sec = *It;
     bool Writable = (Sec->getFlags() & SHF_WRITE);
@@ -173,7 +175,6 @@ LinkerScript<ELFT>::filter(std::vector<OutputSectionBase<ELFT> *> &Sections) {
       Sections.erase(It);
       continue;
     }
-    ++It;
   }
   return Sections;
 }
@@ -225,6 +226,9 @@ void LinkerScript<ELFT>::assignAddresses(
       if (Cmd->AddrExpr)
         Dot = Cmd->AddrExpr(Dot);
 
+      if (Cmd->AlignExpr)
+        Sec->updateAlignment(Cmd->AlignExpr(Dot));
+
       if ((Sec->getFlags() & SHF_TLS) && Sec->getType() == SHT_NOBITS) {
         uintX_t TVA = Dot + ThreadBssOffset;
         TVA = alignTo(TVA, Sec->getAlignment());
@@ -256,9 +260,6 @@ template <class ELFT>
 std::vector<PhdrEntry<ELFT>>
 LinkerScript<ELFT>::createPhdrs(ArrayRef<OutputSectionBase<ELFT> *> Sections) {
   std::vector<PhdrEntry<ELFT>> Ret;
-  PhdrEntry<ELFT> *TlsPhdr = nullptr;
-  PhdrEntry<ELFT> *NotePhdr = nullptr;
-  PhdrEntry<ELFT> *RelroPhdr = nullptr;
 
   for (const PhdrsCommand &Cmd : Opt.PhdrsCommands) {
     Ret.emplace_back(Cmd.Type, Cmd.Flags == UINT_MAX ? PF_R : Cmd.Flags);
@@ -280,15 +281,6 @@ LinkerScript<ELFT>::createPhdrs(ArrayRef<OutputSectionBase<ELFT> *> Sections) {
         Phdr.add(Out<ELFT>::Dynamic);
       }
       break;
-    case PT_TLS:
-      TlsPhdr = &Phdr;
-      break;
-    case PT_NOTE:
-      NotePhdr = &Phdr;
-      break;
-    case PT_GNU_RELRO:
-      RelroPhdr = &Phdr;
-      break;
     case PT_GNU_EH_FRAME:
       if (!Out<ELFT>::EhFrame->empty() && Out<ELFT>::EhFrameHdr) {
         Phdr.H.p_flags = toPhdrFlags(Out<ELFT>::EhFrameHdr->getFlags());
@@ -303,12 +295,6 @@ LinkerScript<ELFT>::createPhdrs(ArrayRef<OutputSectionBase<ELFT> *> Sections) {
   for (OutputSectionBase<ELFT> *Sec : Sections) {
     if (!(Sec->getFlags() & SHF_ALLOC))
       break;
-
-    if (TlsPhdr && (Sec->getFlags() & SHF_TLS))
-      TlsPhdr->add(Sec);
-
-    if (!needsPtLoad<ELFT>(Sec))
-      continue;
 
     std::vector<size_t> PhdrIds = getPhdrIndices(Sec->getName());
     if (!PhdrIds.empty()) {
@@ -328,11 +314,6 @@ LinkerScript<ELFT>::createPhdrs(ArrayRef<OutputSectionBase<ELFT> *> Sections) {
       }
       Load->add(Sec);
     }
-
-    if (RelroPhdr && isRelroSection(Sec))
-      RelroPhdr->add(Sec);
-    if (NotePhdr && Sec->getType() == SHT_NOTE)
-      NotePhdr->add(Sec);
   }
   return Ret;
 }
@@ -351,16 +332,14 @@ ArrayRef<uint8_t> LinkerScript<ELFT>::getFiller(StringRef Name) {
 // were in the script. If a given name did not appear in the script,
 // it returns INT_MAX, so that it will be laid out at end of file.
 template <class ELFT> int LinkerScript<ELFT>::getSectionIndex(StringRef Name) {
-  auto Begin = Opt.Commands.begin();
-  auto End = Opt.Commands.end();
-  auto I =
-      std::find_if(Begin, End, [&](const std::unique_ptr<BaseCommand> &Base) {
-        if (auto *Cmd = dyn_cast<OutputSectionCommand>(Base.get()))
-          if (Cmd->Name == Name)
-            return true;
-        return false;
-      });
-  return I == End ? INT_MAX : (I - Begin);
+  int I = 0;
+  for (std::unique_ptr<BaseCommand> &Base : Opt.Commands) {
+    if (auto *Cmd = dyn_cast<OutputSectionCommand>(Base.get()))
+      if (Cmd->Name == Name)
+        return I;
+    ++I;
+  }
+  return INT_MAX;
 }
 
 // A compartor to sort output sections. Returns -1 or 1 if
@@ -407,19 +386,24 @@ std::vector<size_t> LinkerScript<ELFT>::getPhdrIndices(StringRef SectionName) {
     if (!Cmd || Cmd->Name != SectionName)
       continue;
 
-    std::vector<size_t> Indices;
-    for (StringRef PhdrName : Cmd->Phdrs) {
-      auto ItPhdr =
-          std::find_if(Opt.PhdrsCommands.rbegin(), Opt.PhdrsCommands.rend(),
-                       [&](PhdrsCommand &P) { return P.Name == PhdrName; });
-      if (ItPhdr == Opt.PhdrsCommands.rend())
-        error("section header '" + PhdrName + "' is not listed in PHDRS");
-      else
-        Indices.push_back(std::distance(ItPhdr, Opt.PhdrsCommands.rend()) - 1);
-    }
-    return Indices;
+    std::vector<size_t> Ret;
+    for (StringRef PhdrName : Cmd->Phdrs)
+      Ret.push_back(getPhdrIndex(PhdrName));
+    return Ret;
   }
   return {};
+}
+
+template <class ELFT>
+size_t LinkerScript<ELFT>::getPhdrIndex(StringRef PhdrName) {
+  size_t I = 0;
+  for (PhdrsCommand &Cmd : Opt.PhdrsCommands) {
+    if (Cmd.Name == PhdrName)
+      return I;
+    ++I;
+  }
+  error("section header '" + PhdrName + "' is not listed in PHDRS");
+  return 0;
 }
 
 class elf::ScriptParser : public ScriptParserBase {
@@ -452,6 +436,7 @@ private:
   std::vector<StringRef> readOutputSectionPhdrs();
   unsigned readPhdrType();
   void readProvide(bool Hidden);
+  void readAlign(OutputSectionCommand *Cmd);
 
   Expr readExpr();
   Expr readExpr1(Expr Lhs, int MinPrec);
@@ -690,6 +675,12 @@ void ScriptParser::readKeep(OutputSectionCommand *Cmd) {
   expect(")");
 }
 
+void ScriptParser::readAlign(OutputSectionCommand *Cmd) {
+  expect("(");
+  Cmd->AlignExpr = readExpr();
+  expect(")");
+}
+
 void ScriptParser::readOutputSectionDescription(StringRef OutSec) {
   OutputSectionCommand *Cmd = new OutputSectionCommand(OutSec);
   Opt.Commands.emplace_back(Cmd);
@@ -700,6 +691,9 @@ void ScriptParser::readOutputSectionDescription(StringRef OutSec) {
     Cmd->AddrExpr = readExpr();
 
   expect(":");
+
+  if (skip("ALIGN"))
+    readAlign(Cmd);
 
   // Parse constraints.
   if (skip("ONLY_IF_RO"))
@@ -761,6 +755,31 @@ SymbolAssignment *ScriptParser::readAssignment(StringRef Name) {
 // This is an operator-precedence parser to parse a linker
 // script expression.
 Expr ScriptParser::readExpr() { return readExpr1(readPrimary(), 0); }
+
+static uint64_t getSymbolValue(StringRef S) {
+  switch (Config->EKind) {
+  case ELF32LEKind:
+    if (SymbolBody *B = Symtab<ELF32LE>::X->find(S))
+      return B->getVA<ELF32LE>();
+    break;
+  case ELF32BEKind:
+    if (SymbolBody *B = Symtab<ELF32BE>::X->find(S))
+      return B->getVA<ELF32BE>();
+    break;
+  case ELF64LEKind:
+    if (SymbolBody *B = Symtab<ELF64LE>::X->find(S))
+      return B->getVA<ELF64LE>();
+    break;
+  case ELF64BEKind:
+    if (SymbolBody *B = Symtab<ELF64BE>::X->find(S))
+      return B->getVA<ELF64BE>();
+    break;
+  default:
+    llvm_unreachable("unsupported target");
+  }
+  error("symbol not found: " + S);
+  return 0;
+}
 
 // This is a part of the operator-precedence parser. This function
 // assumes that the remaining token stream starts with an operator.
@@ -830,10 +849,7 @@ Expr ScriptParser::readPrimary() {
     expect(",");
     readExpr();
     expect(")");
-    return [=](uint64_t Dot) -> uint64_t {
-      uint64_t Val = E(Dot);
-      return alignTo(Dot, Val) + (Dot & (Val - 1));
-    };
+    return [=](uint64_t Dot) { return alignTo(Dot, E(Dot)); };
   }
   if (Tok == "DATA_SEGMENT_END") {
     expect("(");
@@ -841,11 +857,25 @@ Expr ScriptParser::readPrimary() {
     expect(")");
     return [](uint64_t Dot) { return Dot; };
   }
+  // GNU linkers implements more complicated logic to handle
+  // DATA_SEGMENT_RELRO_END. We instead ignore the arguments and just align to
+  // the next page boundary for simplicity.
+  if (Tok == "DATA_SEGMENT_RELRO_END") {
+    expect("(");
+    next();
+    expect(",");
+    readExpr();
+    expect(")");
+    return [](uint64_t Dot) { return alignTo(Dot, Target->PageSize); };
+  }
 
-  // Parse a number literal
+  // Parse a symbol name or a number literal.
   uint64_t V = 0;
-  if (Tok.getAsInteger(0, V))
-    setError("malformed number: " + Tok);
+  if (Tok.getAsInteger(0, V)) {
+    if (!isValidCIdentifier(Tok))
+      setError("malformed number: " + Tok);
+    return [=](uint64_t Dot) { return getSymbolValue(Tok); };
+  }
   return [=](uint64_t Dot) { return V; };
 }
 
