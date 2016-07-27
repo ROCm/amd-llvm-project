@@ -467,15 +467,6 @@ static bool compareSections(OutputSectionBase<ELFT> *A,
   return false;
 }
 
-uint32_t elf::toPhdrFlags(uint64_t Flags) {
-  uint32_t Ret = PF_R;
-  if (Flags & SHF_WRITE)
-    Ret |= PF_W;
-  if (Flags & SHF_EXECINSTR)
-    Ret |= PF_X;
-  return Ret;
-}
-
 template <class ELFT> bool elf::isOutputDynamic() {
   return !Symtab<ELFT>::X->getSharedFiles().empty() || Config->Pic;
 }
@@ -555,7 +546,7 @@ template <class ELFT> void Writer<ELFT>::addRelIpltSymbols() {
 // The linker is expected to define some symbols depending on
 // the linking result. This function defines such symbols.
 template <class ELFT> void Writer<ELFT>::addReservedSymbols() {
-  if (Config->EMachine == EM_MIPS) {
+  if (Config->EMachine == EM_MIPS && !Config->Relocatable) {
     // Define _gp for MIPS. st_value of _gp symbol will be updated by Writer
     // so that it points to an absolute address which is relative to GOT.
     // See "Global Data Symbols" in Chapter 6 in the following document:
@@ -816,7 +807,7 @@ template <class ELFT> bool Writer<ELFT>::needsGot() {
 
   // We add the .got section to the result for dynamic MIPS target because
   // its address and properties are mentioned in the .dynamic section.
-  if (Config->EMachine == EM_MIPS)
+  if (Config->EMachine == EM_MIPS && !Config->Relocatable)
     return true;
 
   // If we have a relocation that is relative to GOT (such as GOTOFFREL),
@@ -959,7 +950,7 @@ std::vector<PhdrEntry<ELFT>> Writer<ELFT>::createPhdrs() {
 
   // PT_INTERP must be the second entry if exists.
   if (Out<ELFT>::Interp) {
-    Phdr &Hdr = *AddHdr(PT_INTERP, toPhdrFlags(Out<ELFT>::Interp->getFlags()));
+    Phdr &Hdr = *AddHdr(PT_INTERP, Out<ELFT>::Interp->getPhdrFlags());
     Hdr.add(Out<ELFT>::Interp);
   }
 
@@ -986,7 +977,7 @@ std::vector<PhdrEntry<ELFT>> Writer<ELFT>::createPhdrs() {
       continue;
 
     // If flags changed then we want new load segment.
-    uintX_t NewFlags = toPhdrFlags(Sec->getFlags());
+    uintX_t NewFlags = Sec->getPhdrFlags();
     if (Flags != NewFlags) {
       Load = AddHdr(PT_LOAD, NewFlags);
       Flags = NewFlags;
@@ -1006,7 +997,7 @@ std::vector<PhdrEntry<ELFT>> Writer<ELFT>::createPhdrs() {
 
   // Add an entry for .dynamic.
   if (isOutputDynamic<ELFT>()) {
-    Phdr &H = *AddHdr(PT_DYNAMIC, toPhdrFlags(Out<ELFT>::Dynamic->getFlags()));
+    Phdr &H = *AddHdr(PT_DYNAMIC, Out<ELFT>::Dynamic->getPhdrFlags());
     H.add(Out<ELFT>::Dynamic);
   }
 
@@ -1017,8 +1008,7 @@ std::vector<PhdrEntry<ELFT>> Writer<ELFT>::createPhdrs() {
 
   // PT_GNU_EH_FRAME is a special section pointing on .eh_frame_hdr.
   if (!Out<ELFT>::EhFrame->empty() && Out<ELFT>::EhFrameHdr) {
-    Phdr &Hdr = *AddHdr(PT_GNU_EH_FRAME,
-                        toPhdrFlags(Out<ELFT>::EhFrameHdr->getFlags()));
+    Phdr &Hdr = *AddHdr(PT_GNU_EH_FRAME, Out<ELFT>::EhFrameHdr->getPhdrFlags());
     Hdr.add(Out<ELFT>::EhFrameHdr);
   }
 
