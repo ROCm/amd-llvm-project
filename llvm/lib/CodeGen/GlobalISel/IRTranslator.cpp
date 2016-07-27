@@ -29,7 +29,7 @@ using namespace llvm;
 
 char IRTranslator::ID = 0;
 INITIALIZE_PASS(IRTranslator, "irtranslator", "IRTranslator LLVM IR -> MI",
-                false, false);
+                false, false)
 
 IRTranslator::IRTranslator() : MachineFunctionPass(ID), MRI(nullptr) {
   initializeIRTranslatorPass(*PassRegistry::getPassRegistry());
@@ -89,7 +89,7 @@ bool IRTranslator::translateBr(const Instruction &Inst) {
   if (BrInst.isUnconditional()) {
     const BasicBlock &BrTgt = *cast<BasicBlock>(BrInst.getOperand(0));
     MachineBasicBlock &TgtBB = getOrCreateBB(BrTgt);
-    MIRBuilder.buildInstr(TargetOpcode::G_BR, LLT{*BrTgt.getType()}, TgtBB);
+    MIRBuilder.buildBr(TgtBB);
   } else {
     assert(0 && "Not yet implemented");
   }
@@ -102,8 +102,8 @@ bool IRTranslator::translateBr(const Instruction &Inst) {
 
 bool IRTranslator::translateBitCast(const CastInst &CI) {
   if (LLT{*CI.getDestTy()} == LLT{*CI.getSrcTy()}) {
-    MIRBuilder.buildInstr(TargetOpcode::COPY, getOrCreateVReg(CI),
-                          getOrCreateVReg(*CI.getOperand(0)));
+    MIRBuilder.buildCopy(getOrCreateVReg(CI),
+                         getOrCreateVReg(*CI.getOperand(0)));
     return true;
   }
   return translateCast(TargetOpcode::G_BITCAST, CI);
