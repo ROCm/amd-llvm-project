@@ -1985,6 +1985,17 @@ public:
     UseAddrSpaceMapMangling = true;
   }
 
+  // for HCC we need it here explicitly
+  // as a single-source programming model, HCC inputs come with x86-64
+  // auxiliary triple, which enables x86-64-specific macros, and host functions
+  // which uses __int128 type
+  bool hasInt128Type() const override { 
+    if (getTriple().getEnvironment() == llvm::Triple::HCC)
+      return true;
+    else 
+      return TargetInfo::hasInt128Type();
+  }
+
   uint64_t getPointerWidthV(unsigned AddrSpace) const override {
     if (GPU <= GK_CAYMAN)
       return 32;
