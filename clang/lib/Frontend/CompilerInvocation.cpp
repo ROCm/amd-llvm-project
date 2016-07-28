@@ -1581,6 +1581,11 @@ void CompilerInvocation::setLangDefaults(LangOptions &Opts, InputKind IK,
     Opts.NativeHalfArgsAndReturns = 1;
   }
 
+  if (Opts.CPlusPlusAMP) {
+    Opts.NativeHalfType = 1;
+    Opts.NativeHalfArgsAndReturns = 1;
+  }
+
   // OpenCL and C++ both have bool, true, false keywords.
   Opts.Bool = Opts.OpenCL || Opts.CPlusPlus;
 
@@ -2414,10 +2419,6 @@ bool CompilerInvocation::CreateFromArgs(CompilerInvocation &Res,
     // triple used for host compilation
     if (LangOpts.DevicePath) {
       Res.getTargetOpts().HostTriple = Res.getFrontendOpts().AuxTriple;
-
-      // Enable native fp16 on the device path
-      LangOpts.NativeHalfType = 1;
-      LangOpts.NativeHalfArgsAndReturns = 1;
     }
   }
 
