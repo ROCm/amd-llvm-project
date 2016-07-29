@@ -172,12 +172,15 @@ bool IRTranslator::translateStaticAlloca(const AllocaInst &AI) {
   unsigned Size =
       ElementSize * cast<ConstantInt>(AI.getArraySize())->getZExtValue();
 
+  // Always allocate at least one byte.
+  Size = std::max(Size, 1u);
+
   unsigned Alignment = AI.getAlignment();
   if (!Alignment)
     Alignment = DL->getABITypeAlignment(AI.getAllocatedType());
 
   unsigned Res = getOrCreateVReg(AI);
-  int FI = MF.getFrameInfo()->CreateStackObject(Size, Alignment, false, &AI);
+  int FI = MF.getFrameInfo().CreateStackObject(Size, Alignment, false, &AI);
   MIRBuilder.buildFrameIndex(LLT::pointer(0), Res, FI);
   return true;
 }

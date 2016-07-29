@@ -14,6 +14,7 @@
 #include "InputFiles.h"
 #include "LinkerScript.h"
 #include "OutputSections.h"
+#include "SymbolTable.h"
 #include "Target.h"
 #include "Thunks.h"
 
@@ -666,6 +667,36 @@ bool MipsOptionsInputSection<ELFT>::classof(const InputSectionBase<ELFT> *S) {
   return S->SectionKind == InputSectionBase<ELFT>::MipsOptions;
 }
 
+template <class ELFT>
+CommonInputSection<ELFT>::CommonInputSection()
+    : InputSection<ELFT>(nullptr, &Hdr) {
+  std::vector<DefinedCommon<ELFT> *> Symbols;
+  Hdr.sh_size = 0;
+  Hdr.sh_type = SHT_NOBITS;
+  Hdr.sh_flags = SHF_ALLOC | SHF_WRITE;
+  this->Live = true;
+
+  for (Symbol *S : Symtab<ELFT>::X->getSymbols())
+    if (auto *C = dyn_cast<DefinedCommon<ELFT>>(S->body()))
+      Symbols.push_back(C);
+
+  std::stable_sort(
+      Symbols.begin(), Symbols.end(),
+      [](const DefinedCommon<ELFT> *A, const DefinedCommon<ELFT> *B) {
+        return A->Alignment > B->Alignment;
+      });
+
+  for (DefinedCommon<ELFT> *C : Symbols) {
+    this->Alignment = std::max<uintX_t>(this->Alignment, C->Alignment);
+    Hdr.sh_size = alignTo(Hdr.sh_size, C->Alignment);
+
+    // Compute symbol offset relative to beginning of input section.
+    C->Offset = Hdr.sh_size;
+    C->Section = this;
+    Hdr.sh_size += C->Size;
+  }
+}
+
 template class elf::InputSectionBase<ELF32LE>;
 template class elf::InputSectionBase<ELF32BE>;
 template class elf::InputSectionBase<ELF64LE>;
@@ -695,3 +726,8 @@ template class elf::MipsOptionsInputSection<ELF32LE>;
 template class elf::MipsOptionsInputSection<ELF32BE>;
 template class elf::MipsOptionsInputSection<ELF64LE>;
 template class elf::MipsOptionsInputSection<ELF64BE>;
+
+template class elf::CommonInputSection<ELF32LE>;
+template class elf::CommonInputSection<ELF32BE>;
+template class elf::CommonInputSection<ELF64LE>;
+template class elf::CommonInputSection<ELF64BE>;
