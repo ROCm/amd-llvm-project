@@ -574,7 +574,6 @@ protected:
   virtual void ConstructLinkerJob(Compilation &C, const JobAction &JA,
                                   const InputInfo &Output,
                                   const InputInfoList &Inputs,
-                                  const llvm::Triple &EffectiveTriple,
                                   const llvm::opt::ArgList &Args,
                                   const char *LinkingOutput,
                                   ArgStringList &CmdArgs) const;
@@ -980,7 +979,6 @@ public:
   void ConstructJob(Compilation &C, const JobAction &JA,
                     const InputInfo &Output,
                     const InputInfoList &Inputs,
-                    const llvm::Triple &EffectiveTriple,
                     const llvm::opt::ArgList &TCArgs,
                     const char *LinkingOuput) const override;
 };
@@ -998,7 +996,6 @@ public:
   void ConstructJob(Compilation &C, const JobAction &JA,
                     const InputInfo &Output,
                     const InputInfoList &Inputs,
-                    const llvm::Triple &EffectiveTriple,
                     const llvm::opt::ArgList &TCArgs,
                     const char *LinkingOuput) const override;
 };
@@ -1016,7 +1013,6 @@ public:
   void ConstructJob(Compilation &C, const JobAction &JA,
                     const InputInfo &Output,
                     const InputInfoList &Inputs,
-                    const llvm::Triple &EffectiveTriple,
                     const llvm::opt::ArgList &TCArgs,
                     const char *LinkingOuput) const override;
 };
@@ -1029,7 +1025,6 @@ public:
   void ConstructJob(Compilation &C, const JobAction &JA,
                     const InputInfo &Output,
                     const InputInfoList &Inputs,
-                    const llvm::Triple &EffectiveTriple,
                     const llvm::opt::ArgList &TCArgs,
                     const char *LinkingOuput) const override;
 };
