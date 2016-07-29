@@ -68,8 +68,6 @@ private:
   void writeSections();
   void writeBuildId();
 
-  void addCommonSymbols(std::vector<DefinedCommon *> &Syms);
-
   std::unique_ptr<FileOutputBuffer> Buffer;
 
   BumpPtrAllocator Alloc;
@@ -223,9 +221,13 @@ template <class ELFT> void Writer<ELFT>::run() {
     copyLocalSymbols();
   addReservedSymbols();
 
-  OutputSections = ScriptConfig->DoLayout
-                       ? Script<ELFT>::X->createSections(Factory)
-                       : createSections();
+  CommonInputSection<ELFT> Common;
+  CommonInputSection<ELFT>::X = &Common;
+
+  OutputSections =
+      ScriptConfig->DoLayout
+          ? Script<ELFT>::X->createSections(Factory)
+          : createSections();
   finalizeSections();
   if (HasError)
     return;
@@ -490,30 +492,6 @@ void PhdrEntry<ELFT>::add(OutputSectionBase<ELFT> *Sec) {
   H.p_align = std::max<typename ELFT::uint>(H.p_align, Sec->getAlignment());
 }
 
-// Until this function is called, common symbols do not belong to any section.
-// This function adds them to end of BSS section.
-template <class ELFT>
-void Writer<ELFT>::addCommonSymbols(std::vector<DefinedCommon *> &Syms) {
-  if (Syms.empty())
-    return;
-
-  // Sort the common symbols by alignment as an heuristic to pack them better.
-  std::stable_sort(Syms.begin(), Syms.end(),
-                   [](const DefinedCommon *A, const DefinedCommon *B) {
-                     return A->Alignment > B->Alignment;
-                   });
-
-  uintX_t Off = Out<ELFT>::Bss->getSize();
-  for (DefinedCommon *C : Syms) {
-    Off = alignTo(Off, C->Alignment);
-    Out<ELFT>::Bss->updateAlignment(C->Alignment);
-    C->OffsetInBss = Off;
-    Off += C->Size;
-  }
-
-  Out<ELFT>::Bss->setSize(Off);
-}
-
 template <class ELFT>
 static Symbol *addOptionalSynthetic(SymbolTable<ELFT> &Table, StringRef Name,
                                     OutputSectionBase<ELFT> *Sec,
@@ -734,7 +712,6 @@ template <class ELFT> void Writer<ELFT>::finalizeSections() {
 
   // Now that we have defined all possible symbols including linker-
   // synthesized ones. Visit all symbols to give the finishing touches.
-  std::vector<DefinedCommon *> CommonSymbols;
   for (Symbol *S : Symtab.getSymbols()) {
     SymbolBody *Body = S->body();
 
@@ -742,9 +719,6 @@ template <class ELFT> void Writer<ELFT>::finalizeSections() {
     // will accept an undefined reference in bitcode if it can be optimized out.
     if (S->IsUsedInRegularObj && Body->isUndefined() && !S->isWeak())
       reportUndefined<ELFT>(Symtab, Body);
-
-    if (auto *C = dyn_cast<DefinedCommon>(Body))
-      CommonSymbols.push_back(C);
 
     if (!includeInSymtab<ELFT>(*Body))
       continue;
@@ -763,7 +737,12 @@ template <class ELFT> void Writer<ELFT>::finalizeSections() {
   if (HasError)
     return;
 
-  addCommonSymbols(CommonSymbols);
+  // If linker script processor hasn't added common symbol section yet,
+  // then add it to .bss now.
+  if (!CommonInputSection<ELFT>::X->OutSec) {
+    Out<ELFT>::Bss->addSection(CommonInputSection<ELFT>::X);
+    Out<ELFT>::Bss->assignOffsets();
+  }
 
   // So far we have added sections from input object files.
   // This function adds linker-created Out<ELFT>::* sections.
