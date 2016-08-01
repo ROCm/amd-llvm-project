@@ -48,7 +48,7 @@ private:
 
   void copyLocalSymbols();
   void addReservedSymbols();
-  std::vector<OutputSectionBase<ELFT> *> createSections();
+  void createSections();
   void forEachRelSec(
       std::function<void(InputSectionBase<ELFT> &, const typename ELFT::Shdr &)>
           Fn);
@@ -215,19 +215,29 @@ template <class ELFT> void elf::writeResult(SymbolTable<ELFT> *Symtab) {
   Writer<ELFT>(*Symtab).run();
 }
 
+template <class ELFT>
+static std::vector<DefinedCommon<ELFT> *> getCommonSymbols() {
+  std::vector<DefinedCommon<ELFT> *> V;
+  for (Symbol *S : Symtab<ELFT>::X->getSymbols())
+    if (auto *B = dyn_cast<DefinedCommon<ELFT>>(S->body()))
+      V.push_back(B);
+  return V;
+}
+
 // The main function of the writer.
 template <class ELFT> void Writer<ELFT>::run() {
   if (!Config->DiscardAll)
     copyLocalSymbols();
   addReservedSymbols();
 
-  CommonInputSection<ELFT> Common;
+  CommonInputSection<ELFT> Common(getCommonSymbols<ELFT>());
   CommonInputSection<ELFT>::X = &Common;
 
-  OutputSections =
-      ScriptConfig->DoLayout
-          ? Script<ELFT>::X->createSections(Factory)
-          : createSections();
+  if (ScriptConfig->HasContents)
+    Script<ELFT>::X->createSections(&OutputSections, Factory);
+  else
+    createSections();
+
   finalizeSections();
   if (HasError)
     return;
@@ -239,7 +249,7 @@ template <class ELFT> void Writer<ELFT>::run() {
                 ? Script<ELFT>::X->createPhdrs(OutputSections)
                 : createPhdrs();
     fixHeaders();
-    if (ScriptConfig->DoLayout) {
+    if (ScriptConfig->HasContents) {
       Script<ELFT>::X->assignAddresses(OutputSections);
     } else {
       fixSectionAlignments();
@@ -627,10 +637,7 @@ void Writer<ELFT>::forEachRelSec(
   }
 }
 
-template <class ELFT>
-std::vector<OutputSectionBase<ELFT> *> Writer<ELFT>::createSections() {
-  std::vector<OutputSectionBase<ELFT> *> Result;
-
+template <class ELFT> void Writer<ELFT>::createSections() {
   for (const std::unique_ptr<elf::ObjectFile<ELFT>> &F :
        Symtab.getObjectFiles()) {
     for (InputSectionBase<ELFT> *C : F->getSections()) {
@@ -642,11 +649,10 @@ std::vector<OutputSectionBase<ELFT> *> Writer<ELFT>::createSections() {
       bool IsNew;
       std::tie(Sec, IsNew) = Factory.create(C, getOutputSectionName(C));
       if (IsNew)
-        Result.push_back(Sec);
+        OutputSections.push_back(Sec);
       Sec->addSection(C);
     }
   }
-  return Result;
 }
 
 // Create output section objects and add them to OutputSections.
@@ -1027,7 +1033,7 @@ template <class ELFT> void Writer<ELFT>::fixSectionAlignments() {
 // sections. These are special, we do not include them into output sections
 // list, but have them to simplify the code.
 template <class ELFT> void Writer<ELFT>::fixHeaders() {
-  uintX_t BaseVA = ScriptConfig->DoLayout ? 0 : Config->ImageBase;
+  uintX_t BaseVA = ScriptConfig->HasContents ? 0 : Config->ImageBase;
   Out<ELFT>::ElfHeader->setVA(BaseVA);
   uintX_t Off = Out<ELFT>::ElfHeader->getSize();
   Out<ELFT>::ProgramHeaders->setVA(Off + BaseVA);
@@ -1126,7 +1132,8 @@ template <class ELFT> void Writer<ELFT>::setPhdrs() {
     // so round up the size to make sure the offsets are correct.
     if (H.p_type == PT_TLS) {
       Out<ELFT>::TlsPhdr = &H;
-      H.p_memsz = alignTo(H.p_memsz, H.p_align);
+      if (H.p_memsz)
+        H.p_memsz = alignTo(H.p_memsz, H.p_align);
     }
   }
 }
