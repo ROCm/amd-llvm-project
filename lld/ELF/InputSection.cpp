@@ -161,9 +161,11 @@ void InputSection<ELFT>::copyRelocations(uint8_t *Buf, ArrayRef<RelTy> Rels) {
     uint32_t Type = Rel.getType(Config->Mips64EL);
     SymbolBody &Body = this->File->getRelocTargetSym(Rel);
 
-    RelTy *P = reinterpret_cast<RelTy *>(Buf);
+    Elf_Rela *P = reinterpret_cast<Elf_Rela *>(Buf);
     Buf += sizeof(RelTy);
 
+    if (Config->Rela)
+      P->r_addend = getAddend<ELFT>(Rel);
     P->r_offset = RelocatedSection->getOffset(Rel.r_offset);
     P->setSymbolAndType(Body.DynsymIndex, Type, Config->Mips64EL);
   }
@@ -687,7 +689,6 @@ CommonInputSection<ELFT>::CommonInputSection(
 
     // Compute symbol offset relative to beginning of input section.
     Sym->Offset = Hdr.sh_size;
-    Sym->Section = this;
     Hdr.sh_size += Sym->Size;
   }
 }
