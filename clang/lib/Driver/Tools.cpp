@@ -11520,6 +11520,7 @@ static void HCPassOptions(const ArgList &Args, ArgStringList &CmdArgs) {
                    ArgOpt.matches(options::OPT_I_Group) || // omit -I
                    ArgOpt.matches(options::OPT_std_EQ) || // omit -std=
                    ArgOpt.matches(options::OPT_stdlib_EQ) || // omit -stdlib=
+                   ArgOpt.matches(options::OPT_m_Group) || // omit -m
                    ArgOpt.getKind() == Option::InputClass; // omit <input>
     if (!hasOpts) {
       std::string str = A->getSpelling().str();
