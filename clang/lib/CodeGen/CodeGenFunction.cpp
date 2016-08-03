@@ -602,9 +602,6 @@ void CodeGenFunction::EmitOpenCLKernelMetadata(const FunctionDecl *FD,
 
   llvm::LLVMContext &Context = getLLVMContext();
 
-  SmallVector<llvm::Metadata *, 5> kernelMDArgs;
-  kernelMDArgs.push_back(llvm::ConstantAsMetadata::get(Fn));
-
   GenOpenCLArgMetadata(FD, Fn, CGM, Context, Builder, getContext());
 
   if (const VecTypeHintAttr *A = FD->getAttr<VecTypeHintAttr>()) {
@@ -637,11 +634,6 @@ void CodeGenFunction::EmitOpenCLKernelMetadata(const FunctionDecl *FD,
         llvm::ConstantAsMetadata::get(Builder.getInt32(A->getZDim()))};
     Fn->setMetadata("reqd_work_group_size", llvm::MDNode::get(Context, attrMDArgs));
   }
-
-  llvm::MDNode *kernelMDNode = llvm::MDNode::get(Context, kernelMDArgs);
-  llvm::NamedMDNode *OpenCLKernelMetadata =
-    CGM.getModule().getOrInsertNamedMetadata("opencl.kernels");
-  OpenCLKernelMetadata->addOperand(kernelMDNode);
 }
 
 /// Determine whether the function F ends with a return stmt.
@@ -760,10 +752,26 @@ void CodeGenFunction::StartFunction(GlobalDecl GD,
   Fn->addFnAttr("no-jump-tables",
                 llvm::toStringRef(CGM.getCodeGenOpts().NoUseJumpTables));
 
-  if (getLangOpts().OpenCL || getLangOpts().CPlusPlusAMP) {
+  if (getLangOpts().OpenCL) {
     // Add metadata for a kernel function.
     if (const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(D))
       EmitOpenCLKernelMetadata(FD, Fn);
+  }
+
+  if (getLangOpts().CPlusPlusAMP) {
+    // Add kernel function signatures into a metadata
+    if (const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(D)) {
+      // FIXME: abolish use of OpenCLKernelAttr for HCC programs
+      if (FD->hasAttr<OpenCLKernelAttr>()) {
+        SmallVector<llvm::Metadata *, 5> kernelMDArgs;
+        kernelMDArgs.push_back(llvm::ConstantAsMetadata::get(Fn));
+  
+        llvm::MDNode *kernelMDNode = llvm::MDNode::get(getLLVMContext(), kernelMDArgs);
+        llvm::NamedMDNode *HCCKernelMetadata =
+          CGM.getModule().getOrInsertNamedMetadata("hcc.kernels");
+        HCCKernelMetadata->addOperand(kernelMDNode);
+      }
+    }
   }
 
   // If we are checking function types, emit a function type signature as
