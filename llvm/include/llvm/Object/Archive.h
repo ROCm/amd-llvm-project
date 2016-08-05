@@ -19,7 +19,7 @@
 #include "llvm/ADT/iterator_range.h"
 #include "llvm/Object/Binary.h"
 #include "llvm/Support/ErrorHandling.h"
-#include "llvm/Support/ErrorOr.h"
+#include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
 
@@ -44,14 +44,14 @@ public:
   /// Members are not larger than 4GB.
   Expected<uint32_t> getSize() const;
 
-  sys::fs::perms getAccessMode() const;
-  sys::TimeValue getLastModified() const;
+  Expected<sys::fs::perms> getAccessMode() const;
+  Expected<sys::TimeValue> getLastModified() const;
   llvm::StringRef getRawLastModified() const {
     return StringRef(ArMemHdr->LastModified,
                      sizeof(ArMemHdr->LastModified)).rtrim(' ');
   }
-  unsigned getUID() const;
-  unsigned getGID() const;
+  Expected<unsigned> getUID() const;
+  Expected<unsigned> getGID() const;
 
   // This returns the size of the private struct ArMemHdrType
   uint64_t getSizeOf() const {
@@ -100,17 +100,17 @@ public:
     Expected<Child> getNext() const;
 
     Expected<StringRef> getName() const;
-    ErrorOr<std::string> getFullName() const;
+    Expected<std::string> getFullName() const;
     Expected<StringRef> getRawName() const { return Header.getRawName(); }
-    sys::TimeValue getLastModified() const {
+    Expected<sys::TimeValue> getLastModified() const {
       return Header.getLastModified();
     }
     StringRef getRawLastModified() const {
       return Header.getRawLastModified();
     }
-    unsigned getUID() const { return Header.getUID(); }
-    unsigned getGID() const { return Header.getGID(); }
-    sys::fs::perms getAccessMode() const {
+    Expected<unsigned> getUID() const { return Header.getUID(); }
+    Expected<unsigned> getGID() const { return Header.getGID(); }
+    Expected<sys::fs::perms> getAccessMode() const {
       return Header.getAccessMode();
     }
     /// \return the size of the archive member without the header or padding.
@@ -118,7 +118,7 @@ public:
     /// \return the size in the archive header for this member.
     Expected<uint64_t> getRawSize() const;
 
-    ErrorOr<StringRef> getBuffer() const;
+    Expected<StringRef> getBuffer() const;
     uint64_t getChildOffset() const;
 
     Expected<MemoryBufferRef> getMemoryBufferRef() const;
@@ -179,7 +179,7 @@ public:
       , SymbolIndex(symi)
       , StringIndex(stri) {}
     StringRef getName() const;
-    ErrorOr<Child> getMember() const;
+    Expected<Child> getMember() const;
     Symbol getNext() const;
   };
 

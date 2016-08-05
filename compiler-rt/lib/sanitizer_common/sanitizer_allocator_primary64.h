@@ -76,15 +76,15 @@ class SizeClassAllocator64 {
     Batch *b = region->free_list.Pop();
     if (!b)
       b = PopulateFreeList(stat, c, class_id, region);
-    region->n_allocated += b->count;
+    region->n_allocated += b->Count();
     return b;
   }
 
   NOINLINE void DeallocateBatch(AllocatorStats *stat, uptr class_id, Batch *b) {
     RegionInfo *region = GetRegionInfo(class_id);
-    CHECK_GT(b->count, 0);
+    CHECK_GT(b->Count(), 0);
     region->free_list.Push(b);
-    region->n_freed += b->count;
+    region->n_freed += b->Count();
   }
 
   bool PointerIsMine(const void *p) {
@@ -92,6 +92,14 @@ class SizeClassAllocator64 {
     if (kUsingConstantSpaceBeg && (kSpaceBeg % kSpaceSize) == 0)
       return P / kSpaceSize == kSpaceBeg / kSpaceSize;
     return P >= SpaceBeg() && P < SpaceEnd();
+  }
+
+  uptr GetRegionBegin(const void *p) {
+    if (kUsingConstantSpaceBeg)
+      return reinterpret_cast<uptr>(p) & ~(kRegionSize - 1);
+    uptr space_beg = SpaceBeg();
+    return ((reinterpret_cast<uptr>(p)  - space_beg) & ~(kRegionSize - 1)) +
+        space_beg;
   }
 
   uptr GetSizeClass(const void *p) {
@@ -106,7 +114,7 @@ class SizeClassAllocator64 {
     uptr size = SizeClassMap::Size(class_id);
     if (!size) return nullptr;
     uptr chunk_idx = GetChunkIdx((uptr)p, size);
-    uptr reg_beg = (uptr)p & ~(kRegionSize - 1);
+    uptr reg_beg = GetRegionBegin(p);
     uptr beg = chunk_idx * size;
     uptr next_beg = beg + size;
     if (class_id >= kNumClasses) return nullptr;
@@ -258,7 +266,10 @@ class SizeClassAllocator64 {
     return &regions[class_id];
   }
 
-  static uptr GetChunkIdx(uptr chunk, uptr size) {
+  uptr GetChunkIdx(uptr chunk, uptr size) {
+    if (!kUsingConstantSpaceBeg)
+      chunk -= SpaceBeg();
+
     uptr offset = chunk % kRegionSize;
     // Here we divide by a non-constant. This is costly.
     // size always fits into 32-bits. If the offset fits too, use 32-bit div.
@@ -310,15 +321,13 @@ class SizeClassAllocator64 {
     }
     for (;;) {
       b = c->CreateBatch(class_id, this, (Batch*)(region_beg + beg_idx));
-      b->count = count;
-      for (uptr i = 0; i < count; i++)
-        b->batch[i] = (void*)(region_beg + beg_idx + i * size);
+      b->SetFromRange(region_beg, beg_idx, size, count);
       region->allocated_user += count * size;
       CHECK_LE(region->allocated_user, region->mapped_user);
       beg_idx += count * size;
       if (beg_idx + count * size + size > region->mapped_user)
         break;
-      CHECK_GT(b->count, 0);
+      CHECK_GT(b->Count(), 0);
       region->free_list.Push(b);
     }
     return b;
