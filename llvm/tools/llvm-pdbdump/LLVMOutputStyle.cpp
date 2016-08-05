@@ -291,9 +291,8 @@ Error LLVMOutputStyle::dumpFreePageMap() {
 
   recordKnownUsedPage(PS, 0); // MSF Super Block
 
-  uint32_t BlocksPerSection = File.getBlockSize();
-  uint32_t NumSections =
-      llvm::alignTo(File.getBlockCount(), BlocksPerSection) / BlocksPerSection;
+  uint32_t BlocksPerSection = msf::getFpmIntervalLength(File.getMsfLayout());
+  uint32_t NumSections = msf::getNumFpmIntervals(File.getMsfLayout());
   for (uint32_t I = 0; I < NumSections; ++I) {
     uint32_t Fpm0 = 1 + BlocksPerSection * I;
     // 2 Fpm blocks spaced at `getBlockSize()` block intervals
@@ -303,14 +302,16 @@ Error LLVMOutputStyle::dumpFreePageMap() {
 
   recordKnownUsedPage(PS, File.getBlockMapIndex()); // Stream Table
 
-  for (auto DB : File.getDirectoryBlockArray()) {
+  for (auto DB : File.getDirectoryBlockArray())
     recordKnownUsedPage(PS, DB);
-  }
-  for (auto &SE : File.getStreamMap()) {
-    for (auto &S : SE) {
+
+  // Record pages used by streams. Note that pages for stream 0
+  // are considered being unused because that's what MSVC tools do.
+  // Stream 0 doesn't contain actual data, so it makes some sense,
+  // though it's a bit confusing to us.
+  for (auto &SE : File.getStreamMap().drop_front(1))
+    for (auto &S : SE)
       recordKnownUsedPage(PS, S);
-    }
-  }
 
   dumpBitVector("Msf Free Pages", FPM);
   dumpBitVector("Orphaned Pages", PS.OrphanedPages);
