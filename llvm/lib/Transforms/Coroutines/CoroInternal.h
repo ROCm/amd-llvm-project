@@ -17,9 +17,6 @@
 
 namespace llvm {
 
-class FunctionType;
-class LLVMContext;
-class Module;
 class PassRegistry;
 
 void initializeCoroEarlyPass(PassRegistry &);
@@ -27,7 +24,24 @@ void initializeCoroSplitPass(PassRegistry &);
 void initializeCoroElidePass(PassRegistry &);
 void initializeCoroCleanupPass(PassRegistry &);
 
+// CoroEarly pass marks every function that has coro.begin with a string
+// attribute "coroutine.presplit"="0". CoroSplit pass processes the coroutine
+// twice. First, it lets it go through complete IPO optimization pipeline as a
+// single function. It forces restart of the pipeline by inserting an indirect
+// call to an empty function "coro.devirt.trigger" which is devirtualized by
+// CoroElide pass that triggers a restart of the pipeline by CGPassManager.
+// When CoroSplit pass sees the same coroutine the second time, it splits it up,
+// adds coroutine subfunctions to the SCC to be processed by IPO pipeline.
+
+#define CORO_PRESPLIT_ATTR "coroutine.presplit"
+#define UNPREPARED_FOR_SPLIT "0"
+#define PREPARED_FOR_SPLIT "1"
+
+#define CORO_DEVIRT_TRIGGER_FN "coro.devirt.trigger"
+
 namespace coro {
+
+bool declaresIntrinsics(Module &M, std::initializer_list<StringRef>);
 
 // Keeps data and helper functions for lowering coroutine intrinsics.
 struct LowererBase {
@@ -37,7 +51,6 @@ struct LowererBase {
 
   LowererBase(Module &M);
   Value *makeSubFnCall(Value *Arg, int Index, Instruction *InsertPt);
-  static bool declaresIntrinsics(Module &M, std::initializer_list<StringRef>);
 };
 
 } // End namespace coro.

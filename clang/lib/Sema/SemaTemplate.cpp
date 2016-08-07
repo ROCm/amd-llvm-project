@@ -8687,6 +8687,7 @@ bool Sema::IsInsideALocalClassWithinATemplateFunction() {
   return false;
 }
 
+namespace {
 /// \brief Walk the path from which a declaration was instantiated, and check
 /// that every explicit specialization along that path is visible. This enforces
 /// C++ [temp.expl.spec]/6:
@@ -8814,6 +8815,7 @@ private:
     }
   }
 };
+} // end anonymous namespace
 
 void Sema::checkSpecializationVisibility(SourceLocation Loc, NamedDecl *Spec) {
   if (!getLangOpts().Modules)

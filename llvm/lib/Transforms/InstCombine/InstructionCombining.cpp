@@ -790,7 +790,7 @@ Instruction *InstCombiner::FoldOpIntoSelect(Instruction &Op, SelectInst *SI) {
 
   if (isa<Constant>(TV) || isa<Constant>(FV)) {
     // Bool selects with constant operands can be folded to logical ops.
-    if (SI->getType()->isIntegerTy(1)) return nullptr;
+    if (SI->getType()->getScalarType()->isIntegerTy(1)) return nullptr;
 
     // If it's a bitcast involving vectors, make sure it has the same number of
     // elements on both sides.
@@ -1895,6 +1895,25 @@ Instruction *InstCombiner::visitGetElementPtrInst(GetElementPtrInst &GEP) {
         if (NGEP->getType()->getPointerAddressSpace() != GEP.getAddressSpace())
           return new AddrSpaceCastInst(NGEP, GEP.getType());
         return new BitCastInst(NGEP, GEP.getType());
+      }
+    }
+  }
+
+  if (!GEP.isInBounds()) {
+    unsigned PtrWidth =
+        DL.getPointerSizeInBits(PtrOp->getType()->getPointerAddressSpace());
+    APInt BasePtrOffset(PtrWidth, 0);
+    Value *UnderlyingPtrOp =
+            PtrOp->stripAndAccumulateInBoundsConstantOffsets(DL,
+                                                             BasePtrOffset);
+    if (auto *AI = dyn_cast<AllocaInst>(UnderlyingPtrOp)) {
+      if (GEP.accumulateConstantOffset(DL, BasePtrOffset) &&
+          BasePtrOffset.isNonNegative()) {
+        APInt AllocSize(PtrWidth, DL.getTypeAllocSize(AI->getAllocatedType()));
+        if (BasePtrOffset.ule(AllocSize)) {
+          return GetElementPtrInst::CreateInBounds(
+              PtrOp, makeArrayRef(Ops).slice(1), GEP.getName());
+        }
       }
     }
   }

@@ -28,7 +28,6 @@ class Lowerer : public coro::LowererBase {
 
 public:
   Lowerer(Module &M) : LowererBase(M) {}
-  static std::unique_ptr<Lowerer> createIfNeeded(Module &M);
   bool lowerEarlyIntrinsics(Function &F);
 };
 }
@@ -53,6 +52,14 @@ bool Lowerer::lowerEarlyIntrinsics(Function &F) {
       switch (CS.getIntrinsicID()) {
       default:
         continue;
+      case Intrinsic::coro_begin:
+        // Mark a function that comes out of the frontend that has a coro.begin
+        // with a coroutine attribute.
+        if (auto *CB = cast<CoroBeginInst>(&I)) {
+          if (CB->getInfo().isPreSplit())
+            F.addFnAttr(CORO_PRESPLIT_ATTR, UNPREPARED_FOR_SPLIT);
+        }
+        break;
       case Intrinsic::coro_resume:
         lowerResumeOrDestroy(CS, CoroSubFnInst::ResumeIndex);
         break;
@@ -61,19 +68,9 @@ bool Lowerer::lowerEarlyIntrinsics(Function &F) {
         break;
       }
       Changed = true;
-      continue;
     }
   }
   return Changed;
-}
-
-// This pass has work to do only if we find intrinsics we are going to lower in
-// the module.
-std::unique_ptr<Lowerer> Lowerer::createIfNeeded(Module &M) {
-  if (declaresIntrinsics(M, {"llvm.coro.resume", "llvm.coro.destroy"}))
-    return llvm::make_unique<Lowerer>(M);
-
-  return {};
 }
 
 //===----------------------------------------------------------------------===//
@@ -88,8 +85,12 @@ struct CoroEarly : public FunctionPass {
 
   std::unique_ptr<Lowerer> L;
 
+  // This pass has work to do only if we find intrinsics we are going to lower
+  // in the module.
   bool doInitialization(Module &M) override {
-    L = Lowerer::createIfNeeded(M);
+    if (coro::declaresIntrinsics(
+            M, {"llvm.coro.begin", "llvm.coro.resume", "llvm.coro.destroy"}))
+      L = llvm::make_unique<Lowerer>(M);
     return false;
   }
 
@@ -104,7 +105,6 @@ struct CoroEarly : public FunctionPass {
     AU.setPreservesCFG();
   }
 };
-
 }
 
 char CoroEarly::ID = 0;
