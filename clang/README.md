@@ -1,9 +1,7 @@
-HCC Clang frontend upgrade repository
-=====================================
+ToT HCC Clang 
+=============
 
-This repository holds the work of upgrading clang frontend used in HCC from
-3.5 to tip of tree. The goal is to align the version used in the frontend and 
-backend.
+This repository ToT HCC Clang which is synchronized with upstream Clang.
 
 Branches
 ========
@@ -26,15 +24,15 @@ This is how I build it now. The commands assumes:
 - LLVM / LLD ToT are built at ~/hcc/llvm_upstream/build .
 
 ```
-git clone -b clang_tot_upgrade git@github.com:RadeonOpenCompute/hcc.git hcc_upstream
+git clone --recursive -b clang_tot_upgrade git@github.com:RadeonOpenCompute/hcc.git hcc_upstream
 mkdir build_upstream
 cd build_upstream
-cmake -Wno-dev \
+cmake \
     -DCMAKE_BUILD_TYPE=Release \
     -DHSA_LLVM_BIN_DIR=~/hcc/llvm_upstream/build/bin \
-    -DHSA_AMDGPU_GPU_TARGET=fiji \
+    -DHSA_AMDGPU_GPU_TARGET=AMD:AMDGPU:8:0:3 \
     -DHSA_USE_AMDGPU_BACKEND=ON \
     ../hcc_upstream
-make -j16 world
-make -j16
+make -j40 world
+make -j40
 ```
