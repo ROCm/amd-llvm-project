@@ -174,6 +174,19 @@ ModuleSummaryIndexBuilder::ModuleSummaryIndexBuilder(
   }
 }
 
+char ModuleSummaryIndexAnalysis::PassID;
+
+const ModuleSummaryIndex &
+ModuleSummaryIndexAnalysis::run(Module &M, ModuleAnalysisManager &AM) {
+  auto &FAM = AM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
+  IndexBuilder = llvm::make_unique<ModuleSummaryIndexBuilder>(
+      &M, [&FAM](const Function &F) {
+        return &(
+            FAM.getResult<BlockFrequencyAnalysis>(*const_cast<Function *>(&F)));
+      });
+  return IndexBuilder->getIndex();
+}
+
 char ModuleSummaryIndexWrapperPass::ID = 0;
 INITIALIZE_PASS_BEGIN(ModuleSummaryIndexWrapperPass, "module-summary-analysis",
                       "Module Summary Analysis", false, true)
@@ -232,13 +245,13 @@ bool llvm::moduleCanBeRenamedForThinLTO(const Module &M) {
   SmallPtrSet<GlobalValue *, 8> Used;
   collectUsedGlobalVariables(M, Used, /*CompilerUsed*/ false);
   bool LocalIsUsed =
-      llvm::any_of(Used, [](GlobalValue *V) { return V->hasLocalLinkage(); });
+      any_of(Used, [](GlobalValue *V) { return V->hasLocalLinkage(); });
   if (!LocalIsUsed)
     return true;
 
   // Walk all the instructions in the module and find if one is inline ASM
-  auto HasInlineAsm = llvm::any_of(M, [](const Function &F) {
-    return llvm::any_of(instructions(F), [](const Instruction &I) {
+  auto HasInlineAsm = any_of(M, [](const Function &F) {
+    return any_of(instructions(F), [](const Instruction &I) {
       const CallInst *CallI = dyn_cast<CallInst>(&I);
       if (!CallI)
         return false;

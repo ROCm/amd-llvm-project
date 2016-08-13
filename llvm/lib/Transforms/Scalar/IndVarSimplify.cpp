@@ -816,6 +816,14 @@ static void visitIVCast(CastInst *Cast, WideIVInfo &WI, ScalarEvolution *SE,
   if (!Cast->getModule()->getDataLayout().isLegalInteger(Width))
     return;
 
+  // Check that `Cast` actually extends the induction variable (we rely on this
+  // later).  This takes care of cases where `Cast` is extending a truncation of
+  // the narrow induction variable, and thus can end up being narrower than the
+  // "narrow" induction variable.
+  uint64_t NarrowIVWidth = SE->getTypeSizeInBits(WI.NarrowIV->getType());
+  if (NarrowIVWidth >= Width)
+    return;
+
   // Cast is either an sext or zext up to this point.
   // We should not widen an indvar if arithmetics on the wider indvar are more
   // expensive than those on the narrower indvar. We check only the cost of ADD
@@ -1989,8 +1997,36 @@ linearFunctionTestReplace(Loop *L,
 
       DEBUG(dbgs() << "  Widen RHS:\t" << *ExitCnt << "\n");
     } else {
-      CmpIndVar = Builder.CreateTrunc(CmpIndVar, ExitCnt->getType(),
-                                      "lftr.wideiv");
+      // We try to extend trip count first. If that doesn't work we truncate IV.
+      // Zext(trunc(IV)) == IV implies equivalence of the following two:
+      // Trunc(IV) == ExitCnt and IV == zext(ExitCnt). Similarly for sext. If
+      // one of the two holds, extend the trip count, otherwise we truncate IV.
+      bool Extended = false;
+      const SCEV *IV = SE->getSCEV(CmpIndVar);
+      const SCEV *ZExtTrunc =
+           SE->getZeroExtendExpr(SE->getTruncateExpr(SE->getSCEV(CmpIndVar),
+                                                     ExitCnt->getType()),
+                                 CmpIndVar->getType());
+
+      if (ZExtTrunc == IV) {
+        Extended = true;
+        ExitCnt = Builder.CreateZExt(ExitCnt, IndVar->getType(),
+                                     "wide.trip.count");
+      } else {
+        const SCEV *SExtTrunc =
+          SE->getSignExtendExpr(SE->getTruncateExpr(SE->getSCEV(CmpIndVar),
+                                                    ExitCnt->getType()),
+                                CmpIndVar->getType());
+        if (SExtTrunc == IV) {
+          Extended = true;
+          ExitCnt = Builder.CreateSExt(ExitCnt, IndVar->getType(),
+                                       "wide.trip.count");
+        }
+      }
+
+      if (!Extended)
+        CmpIndVar = Builder.CreateTrunc(CmpIndVar, ExitCnt->getType(),
+                                        "lftr.wideiv");
     }
   }
   Value *Cond = Builder.CreateICmp(P, CmpIndVar, ExitCnt, "exitcond");

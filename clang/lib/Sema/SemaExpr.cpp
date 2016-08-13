@@ -1788,6 +1788,12 @@ Sema::BuildDeclRefExpr(ValueDecl *D, QualType Ty, ExprValueKind VK,
       E->setObjectKind(OK_BitField);
   }
 
+  // C++ [expr.prim]/8: The expression [...] is a bit-field if the identifier
+  // designates a bit-field.
+  if (auto *BD = dyn_cast<BindingDecl>(D))
+    if (auto *BE = BD->getBinding())
+      E->setObjectKind(BE->getObjectKind());
+
   return E;
 }
 
@@ -2943,7 +2949,6 @@ ExprResult Sema::BuildDeclarationNameExpr(
     case Decl::VarTemplateSpecialization:
     case Decl::VarTemplatePartialSpecialization:
     case Decl::Decomposition:
-    case Decl::Binding:
     case Decl::OMPCapturedExpr:
       // In C, "extern void blah;" is valid and is an r-value.
       if (!getLangOpts().CPlusPlus &&
@@ -2969,6 +2974,14 @@ ExprResult Sema::BuildDeclarationNameExpr(
           type = CapturedType;
       }
       
+      break;
+    }
+
+    case Decl::Binding: {
+      // These are always lvalues.
+      valueKind = VK_LValue;
+      type = type.getNonReferenceType();
+      // FIXME: Adjust cv-qualifiers for capture.
       break;
     }
         
@@ -6009,7 +6022,9 @@ Sema::ActOnCastExpr(Scope *S, SourceLocation LParenLoc,
   CheckTollFreeBridgeCast(castType, CastExpr);
   
   CheckObjCBridgeRelatedCast(castType, CastExpr);
-  
+
+  DiscardMisalignedMemberAddress(castType.getTypePtr(), CastExpr);
+
   return BuildCStyleCastExpr(LParenLoc, castTInfo, RParenLoc, CastExpr);
 }
 
@@ -8669,11 +8684,10 @@ static void DiagnoseBadShiftValues(Sema& S, ExprResult &LHS, ExprResult &RHS,
     << RHS.get()->getSourceRange();
 }
 
-/// \brief Return the resulting type when an OpenCL vector is shifted
+/// \brief Return the resulting type when a vector is shifted
 ///        by a scalar or vector shift amount.
-static QualType checkOpenCLVectorShift(Sema &S,
-                                       ExprResult &LHS, ExprResult &RHS,
-                                       SourceLocation Loc, bool IsCompAssign) {
+static QualType checkVectorShift(Sema &S, ExprResult &LHS, ExprResult &RHS,
+                                 SourceLocation Loc, bool IsCompAssign) {
   // OpenCL v1.1 s6.3.j says RHS can be a vector only if LHS is a vector.
   if (!LHS.get()->getType()->isVectorType()) {
     S.Diag(Loc, diag::err_shift_rhs_only_vector)
@@ -8741,11 +8755,9 @@ QualType Sema::CheckShiftOperands(ExprResult &LHS, ExprResult &RHS,
   // Vector shifts promote their scalar inputs to vector type.
   if (LHS.get()->getType()->isVectorType() ||
       RHS.get()->getType()->isVectorType()) {
-    if (LangOpts.OpenCL)
-      return checkOpenCLVectorShift(*this, LHS, RHS, Loc, IsCompAssign);
     if (LangOpts.ZVector) {
       // The shift operators for the z vector extensions work basically
-      // like OpenCL shifts, except that neither the LHS nor the RHS is
+      // like general shifts, except that neither the LHS nor the RHS is
       // allowed to be a "vector bool".
       if (auto LHSVecType = LHS.get()->getType()->getAs<VectorType>())
         if (LHSVecType->getVectorKind() == VectorType::AltiVecBool)
@@ -8753,11 +8765,8 @@ QualType Sema::CheckShiftOperands(ExprResult &LHS, ExprResult &RHS,
       if (auto RHSVecType = RHS.get()->getType()->getAs<VectorType>())
         if (RHSVecType->getVectorKind() == VectorType::AltiVecBool)
           return InvalidOperands(Loc, LHS, RHS);
-      return checkOpenCLVectorShift(*this, LHS, RHS, Loc, IsCompAssign);
     }
-    return CheckVectorOperands(LHS, RHS, Loc, IsCompAssign,
-                               /*AllowBothBool*/true,
-                               /*AllowBoolConversions*/false);
+    return checkVectorShift(*this, LHS, RHS, Loc, IsCompAssign);
   }
 
   // Shifts don't perform usual arithmetic conversions, they just do integer
@@ -10580,7 +10589,8 @@ QualType Sema::CheckAddressOfOperand(ExprResult &OrigOp, SourceLocation OpLoc) {
           return MPTy;
         }
       }
-    } else if (!isa<FunctionDecl>(dcl) && !isa<NonTypeTemplateParmDecl>(dcl))
+    } else if (!isa<FunctionDecl>(dcl) && !isa<NonTypeTemplateParmDecl>(dcl) &&
+               !isa<BindingDecl>(dcl))
       llvm_unreachable("Unknown/unexpected decl type");
   }
 
@@ -10599,6 +10609,8 @@ QualType Sema::CheckAddressOfOperand(ExprResult &OrigOp, SourceLocation OpLoc) {
   // If the operand has type "type", the result has type "pointer to type".
   if (op->getType()->isObjCObjectType())
     return Context.getObjCObjectPointerType(op->getType());
+
+  CheckAddressOfPackedMember(op);
 
   return Context.getPointerType(op->getType());
 }
