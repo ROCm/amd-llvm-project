@@ -71,6 +71,7 @@ template <class ELFT>
 typename ELFT::uint InputSectionBase<ELFT>::getOffset(uintX_t Offset) const {
   switch (SectionKind) {
   case Regular:
+  case Layout:
     return cast<InputSection<ELFT>>(this)->OutSecOff + Offset;
   case EHFrame:
     // The file crtbeginT.o has relocations pointing to the start of an empty
@@ -81,10 +82,11 @@ typename ELFT::uint InputSectionBase<ELFT>::getOffset(uintX_t Offset) const {
     return cast<MergeInputSection<ELFT>>(this)->getOffset(Offset);
   case MipsReginfo:
   case MipsOptions:
-    // MIPS .reginfo and .MIPS.options sections are consumed by the linker,
-    // and the linker produces a single output section. It is possible that
-    // input files contain section symbol points to the corresponding input
-    // section. Redirect it to the produced output section.
+  case MipsAbiFlags:
+    // MIPS .reginfo, .MIPS.options, and .MIPS.abiflags sections are consumed
+    // by the linker, and the linker produces a single output section. It is
+    // possible that input files contain section symbol points to the
+    // corresponding input section. Redirect it to the produced output section.
     if (Offset != 0)
       fatal(getName(this) + ": unsupported reference to the middle of '" +
             getSectionName() + "' section");
@@ -129,7 +131,7 @@ InputSection<ELFT>::InputSection(elf::ObjectFile<ELFT> *F,
 
 template <class ELFT>
 bool InputSection<ELFT>::classof(const InputSectionBase<ELFT> *S) {
-  return S->SectionKind == Base::Regular;
+  return S->SectionKind == Base::Regular || S->SectionKind == Base::Layout;
 }
 
 template <class ELFT>
@@ -678,6 +680,24 @@ bool MipsOptionsInputSection<ELFT>::classof(const InputSectionBase<ELFT> *S) {
 }
 
 template <class ELFT>
+MipsAbiFlagsInputSection<ELFT>::MipsAbiFlagsInputSection(
+    elf::ObjectFile<ELFT> *F, const Elf_Shdr *Hdr)
+    : InputSectionBase<ELFT>(F, Hdr, InputSectionBase<ELFT>::MipsAbiFlags) {
+  // Initialize this->Flags.
+  ArrayRef<uint8_t> D = this->getSectionData();
+  if (D.size() != sizeof(Elf_Mips_ABIFlags<ELFT>)) {
+    error("invalid size of .MIPS.abiflags section");
+    return;
+  }
+  Flags = reinterpret_cast<const Elf_Mips_ABIFlags<ELFT> *>(D.data());
+}
+
+template <class ELFT>
+bool MipsAbiFlagsInputSection<ELFT>::classof(const InputSectionBase<ELFT> *S) {
+  return S->SectionKind == InputSectionBase<ELFT>::MipsAbiFlags;
+}
+
+template <class ELFT>
 CommonInputSection<ELFT>::CommonInputSection(
     std::vector<DefinedCommon<ELFT> *> Syms)
     : InputSection<ELFT>(nullptr, &Hdr) {
@@ -731,6 +751,11 @@ template class elf::MipsOptionsInputSection<ELF32LE>;
 template class elf::MipsOptionsInputSection<ELF32BE>;
 template class elf::MipsOptionsInputSection<ELF64LE>;
 template class elf::MipsOptionsInputSection<ELF64BE>;
+
+template class elf::MipsAbiFlagsInputSection<ELF32LE>;
+template class elf::MipsAbiFlagsInputSection<ELF32BE>;
+template class elf::MipsAbiFlagsInputSection<ELF64LE>;
+template class elf::MipsAbiFlagsInputSection<ELF64BE>;
 
 template class elf::CommonInputSection<ELF32LE>;
 template class elf::CommonInputSection<ELF32BE>;
