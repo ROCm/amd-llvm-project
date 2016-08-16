@@ -7747,13 +7747,8 @@ static SDValue lowerVectorShuffleAsDecomposedShuffleBlend(const SDLoc &DL,
 /// elements, and takes the low elements as the result. Note that while this is
 /// specified as a *right shift* because x86 is little-endian, it is a *left
 /// rotate* of the vector lanes.
-static SDValue lowerVectorShuffleAsByteRotate(const SDLoc &DL, MVT VT,
-                                              SDValue V1, SDValue V2,
-                                              ArrayRef<int> Mask,
-                                              const X86Subtarget &Subtarget,
-                                              SelectionDAG &DAG) {
-  assert(!isNoopShuffleMask(Mask) && "We shouldn't lower no-op shuffles!");
-
+static int matchVectorShuffleAsByteRotate(MVT VT, SDValue &V1, SDValue &V2,
+                                          ArrayRef<int> Mask) {
   int NumElts = Mask.size();
   int NumLanes = VT.getSizeInBits() / 128;
   int NumLaneElts = NumElts / NumLanes;
@@ -7769,20 +7764,28 @@ static SDValue lowerVectorShuffleAsByteRotate(const SDLoc &DL, MVT VT,
   SDValue Lo, Hi;
   for (int l = 0; l < NumElts; l += NumLaneElts) {
     for (int i = 0; i < NumLaneElts; ++i) {
-      if (Mask[l + i] < 0)
+      int M = Mask[l + i];
+
+      if (M == SM_SentinelUndef)
         continue;
 
+      if (M == SM_SentinelZero)
+        return -1;
+
+      assert(0 <= M && M < (2*NumElts) && "Unexpected mask index.");
+
       // Get the mod-Size index and lane correct it.
-      int LaneIdx = (Mask[l + i] % NumElts) - l;
+      int LaneIdx = (M % NumElts) - l;
+
       // Make sure it was in this lane.
       if (LaneIdx < 0 || LaneIdx >= NumLaneElts)
-        return SDValue();
+        return -1;
 
       // Determine where a rotated vector would have started.
       int StartIdx = i - LaneIdx;
       if (StartIdx == 0)
         // The identity rotation isn't interesting, stop.
-        return SDValue();
+        return -1;
 
       // If we found the tail of a vector the rotation must be the missing
       // front. If we found the head of a vector, it must be how much of the
@@ -7793,10 +7796,10 @@ static SDValue lowerVectorShuffleAsByteRotate(const SDLoc &DL, MVT VT,
         Rotation = CandidateRotation;
       else if (Rotation != CandidateRotation)
         // The rotations don't match, so we can't match this mask.
-        return SDValue();
+        return -1;
 
       // Compute which value this mask is pointing at.
-      SDValue MaskV = Mask[l + i] < NumElts ? V1 : V2;
+      SDValue MaskV = M < NumElts ? V1 : V2;
 
       // Compute which of the two target values this index should be assigned
       // to. This reflects whether the high elements are remaining or the low
@@ -7810,7 +7813,7 @@ static SDValue lowerVectorShuffleAsByteRotate(const SDLoc &DL, MVT VT,
       else if (TargetV != MaskV)
         // This may be a rotation, but it pulls from the inputs in some
         // unsupported interleaving.
-        return SDValue();
+        return -1;
     }
   }
 
@@ -7822,15 +7825,32 @@ static SDValue lowerVectorShuffleAsByteRotate(const SDLoc &DL, MVT VT,
   else if (!Hi)
     Hi = Lo;
 
-  // Cast the inputs to i8 vector of correct length to match PALIGNR or
-  // PSLLDQ/PSRLDQ.
-  MVT ByteVT = MVT::getVectorVT(MVT::i8, 16 * NumLanes);
-  Lo = DAG.getBitcast(ByteVT, Lo);
-  Hi = DAG.getBitcast(ByteVT, Hi);
+  V1 = Lo;
+  V2 = Hi;
 
   // The actual rotate instruction rotates bytes, so we need to scale the
   // rotation based on how many bytes are in the vector lane.
   int Scale = 16 / NumLaneElts;
+  return Rotation * Scale;
+}
+
+static SDValue lowerVectorShuffleAsByteRotate(const SDLoc &DL, MVT VT,
+                                              SDValue V1, SDValue V2,
+                                              ArrayRef<int> Mask,
+                                              const X86Subtarget &Subtarget,
+                                              SelectionDAG &DAG) {
+  assert(!isNoopShuffleMask(Mask) && "We shouldn't lower no-op shuffles!");
+
+  SDValue Lo = V1, Hi = V2;
+  int ByteRotation = matchVectorShuffleAsByteRotate(VT, Lo, Hi, Mask);
+  if (ByteRotation <= 0)
+    return SDValue();
+
+  // Cast the inputs to i8 vector of correct length to match PALIGNR or
+  // PSLLDQ/PSRLDQ.
+  MVT ByteVT = MVT::getVectorVT(MVT::i8, VT.getSizeInBits() / 8);
+  Lo = DAG.getBitcast(ByteVT, Lo);
+  Hi = DAG.getBitcast(ByteVT, Hi);
 
   // SSSE3 targets can use the palignr instruction.
   if (Subtarget.hasSSSE3()) {
@@ -7838,7 +7858,7 @@ static SDValue lowerVectorShuffleAsByteRotate(const SDLoc &DL, MVT VT,
            "512-bit PALIGNR requires BWI instructions");
     return DAG.getBitcast(
         VT, DAG.getNode(X86ISD::PALIGNR, DL, ByteVT, Lo, Hi,
-                        DAG.getConstant(Rotation * Scale, DL, MVT::i8)));
+                        DAG.getConstant(ByteRotation, DL, MVT::i8)));
   }
 
   assert(VT.is128BitVector() &&
@@ -7849,8 +7869,8 @@ static SDValue lowerVectorShuffleAsByteRotate(const SDLoc &DL, MVT VT,
          "SSE2 rotate lowering only needed for v16i8!");
 
   // Default SSE2 implementation
-  int LoByteShift = 16 - Rotation * Scale;
-  int HiByteShift = Rotation * Scale;
+  int LoByteShift = 16 - ByteRotation;
+  int HiByteShift = ByteRotation;
 
   SDValue LoShift = DAG.getNode(X86ISD::VSHLDQ, DL, MVT::v16i8, Lo,
                                 DAG.getConstant(LoByteShift, DL, MVT::i8));
@@ -18480,6 +18500,51 @@ static SDValue getPrefetchNode(unsigned Opc, SDValue Op, SelectionDAG &DAG,
   return SDValue(Res, 0);
 }
 
+/// Handles the lowering of builtin intrinsic that return the value
+/// of the extended control register.
+static void getExtendedControlRegister(SDNode *N, const SDLoc &DL,
+                                       SelectionDAG &DAG,
+                                       const X86Subtarget &Subtarget,
+                                       SmallVectorImpl<SDValue> &Results) {
+  assert(N->getNumOperands() == 3 && "Unexpected number of operands!");
+  SDVTList Tys = DAG.getVTList(MVT::Other, MVT::Glue);
+  SDValue LO, HI;
+
+  // The ECX register is used to select the index of the XCR register to
+  // return.
+  SDValue Chain =
+      DAG.getCopyToReg(N->getOperand(0), DL, X86::ECX, N->getOperand(2));
+  SDNode *N1 = DAG.getMachineNode(X86::XGETBV, DL, Tys, Chain);
+  Chain = SDValue(N1, 0);
+
+  // Reads the content of XCR and returns it in registers EDX:EAX.
+  if (Subtarget.is64Bit()) {
+    LO = DAG.getCopyFromReg(Chain, DL, X86::RAX, MVT::i64, SDValue(N1, 1));
+    HI = DAG.getCopyFromReg(LO.getValue(1), DL, X86::RDX, MVT::i64,
+                            LO.getValue(2));
+  } else {
+    LO = DAG.getCopyFromReg(Chain, DL, X86::EAX, MVT::i32, SDValue(N1, 1));
+    HI = DAG.getCopyFromReg(LO.getValue(1), DL, X86::EDX, MVT::i32,
+                            LO.getValue(2));
+  }
+  Chain = HI.getValue(1);
+
+  if (Subtarget.is64Bit()) {
+    // Merge the two 32-bit values into a 64-bit one..
+    SDValue Tmp = DAG.getNode(ISD::SHL, DL, MVT::i64, HI,
+                              DAG.getConstant(32, DL, MVT::i8));
+    Results.push_back(DAG.getNode(ISD::OR, DL, MVT::i64, LO, Tmp));
+    Results.push_back(Chain);
+    return;
+  }
+
+  // Use a buildpair to merge the two 32-bit values into a 64-bit one.
+  SDValue Ops[] = { LO, HI };
+  SDValue Pair = DAG.getNode(ISD::BUILD_PAIR, DL, MVT::i64, Ops);
+  Results.push_back(Pair);
+  Results.push_back(Chain);
+}
+
 /// Handles the lowering of builtin intrinsics that read performance monitor
 /// counters (x86_rdpmc).
 static void getReadPerformanceCounter(SDNode *N, const SDLoc &DL,
@@ -18720,6 +18785,12 @@ static SDValue LowerINTRINSIC_W_CHAIN(SDValue Op, const X86Subtarget &Subtarget,
   case RDPMC: {
     SmallVector<SDValue, 2> Results;
     getReadPerformanceCounter(Op.getNode(), dl, DAG, Subtarget, Results);
+    return DAG.getMergeValues(Results, dl);
+  }
+  // Get Extended Control Register.
+  case XGETBV: {
+    SmallVector<SDValue, 2> Results;
+    getExtendedControlRegister(Op.getNode(), dl, DAG, Subtarget, Results);
     return DAG.getMergeValues(Results, dl);
   }
   // XTEST intrinsics.
@@ -22176,6 +22247,9 @@ void X86TargetLowering::ReplaceNodeResults(SDNode *N,
                                      Results);
     case Intrinsic::x86_rdpmc:
       return getReadPerformanceCounter(N, dl, DAG, Subtarget, Results);
+
+    case Intrinsic::x86_xgetbv:
+      return getExtendedControlRegister(N, dl, DAG, Subtarget, Results);
     }
   }
   case ISD::INTRINSIC_WO_CHAIN: {
@@ -24810,11 +24884,11 @@ static bool matchUnaryVectorShuffle(MVT MaskVT, ArrayRef<int> Mask,
   bool FloatDomain = MaskVT.isFloatingPoint() ||
                      (!Subtarget.hasAVX2() && MaskVT.is256BitVector());
 
-  // Match a 128-bit integer vector against a VZEXT_MOVL (MOVQ) instruction.
-  if (!FloatDomain && MaskVT.is128BitVector() &&
+  // Match a 128-bit vector against a VZEXT_MOVL instruction.
+  if (MaskVT.is128BitVector() && Subtarget.hasSSE2() &&
       isTargetShuffleEquivalent(Mask, {0, SM_SentinelZero})) {
     Shuffle = X86ISD::VZEXT_MOVL;
-    ShuffleVT = MVT::v2i64;
+    ShuffleVT = MaskVT;
     return true;
   }
 
@@ -25144,6 +25218,19 @@ static bool matchBinaryPermuteVectorShuffle(MVT MaskVT, ArrayRef<int> Mask,
                                             unsigned &Shuffle, MVT &ShuffleVT,
                                             unsigned &PermuteImm) {
   unsigned NumMaskElts = Mask.size();
+  bool FloatDomain = MaskVT.isFloatingPoint();
+
+  // Attempt to match against PALIGNR byte rotate.
+  if (!FloatDomain && ((MaskVT.is128BitVector() && Subtarget.hasSSSE3()) ||
+                       (MaskVT.is256BitVector() && Subtarget.hasAVX2()))) {
+    int ByteRotation = matchVectorShuffleAsByteRotate(MaskVT, V1, V2, Mask);
+    if (0 < ByteRotation) {
+      Shuffle = X86ISD::PALIGNR;
+      ShuffleVT = MVT::getVectorVT(MVT::i8, MaskVT.getSizeInBits() / 8);
+      PermuteImm = ByteRotation;
+      return true;
+    }
+  }
 
   // Attempt to blend with zero.
   if (NumMaskElts <= 8 && ((Subtarget.hasSSE41() && MaskVT.is128BitVector()) ||
