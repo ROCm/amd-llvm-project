@@ -20,6 +20,7 @@
 
 namespace lld {
 namespace elf {
+class ScriptParser;
 class SymbolBody;
 template <class ELFT> class InputSectionBase;
 template <class ELFT> class OutputSectionBase;
@@ -32,10 +33,6 @@ typedef std::function<uint64_t(uint64_t)> Expr;
 // Parses a linker script. Calling this function updates
 // Config and ScriptConfig.
 void readLinkerScript(MemoryBufferRef MB);
-
-class ScriptParser;
-template <class ELFT> class InputSectionBase;
-template <class ELFT> class OutputSectionBase;
 
 // This enum is used to implement linker script SECTIONS command.
 // https://sourceware.org/binutils/docs/ld/SECTIONS.html#SECTIONS
@@ -83,6 +80,8 @@ struct OutputSectionCommand : BaseCommand {
   StringRef Name;
   Expr AddrExpr;
   Expr AlignExpr;
+  Expr LmaExpr;
+  Expr SubalignExpr;
   std::vector<std::unique_ptr<BaseCommand>> Commands;
   std::vector<StringRef> Phdrs;
   std::vector<uint8_t> Filler;
@@ -147,6 +146,7 @@ public:
   bool ignoreInterpSection();
 
   ArrayRef<uint8_t> getFiller(StringRef Name);
+  Expr getLma(StringRef Name);
   bool shouldKeep(InputSectionBase<ELFT> *S);
   void assignAddresses();
   int compareSections(StringRef A, StringRef B);

@@ -4288,7 +4288,7 @@ const SCEV *ScalarEvolution::createNodeForSelectOrPHI(Instruction *I,
   case ICmpInst::ICMP_SLT:
   case ICmpInst::ICMP_SLE:
     std::swap(LHS, RHS);
-  // fall through
+    LLVM_FALLTHROUGH;
   case ICmpInst::ICMP_SGT:
   case ICmpInst::ICMP_SGE:
     // a >s b ? a+x : b+x  ->  smax(a, b)+x
@@ -4311,7 +4311,7 @@ const SCEV *ScalarEvolution::createNodeForSelectOrPHI(Instruction *I,
   case ICmpInst::ICMP_ULT:
   case ICmpInst::ICMP_ULE:
     std::swap(LHS, RHS);
-  // fall through
+    LLVM_FALLTHROUGH;
   case ICmpInst::ICMP_UGT:
   case ICmpInst::ICMP_UGE:
     // a >u b ? a+x : b+x  ->  umax(a, b)+x
@@ -4866,6 +4866,10 @@ bool ScalarEvolution::isSCEVExprNeverPoison(const Instruction *I) {
   // from different loops, so that we know which loop to prove that I is
   // executed in.
   for (unsigned OpIndex = 0; OpIndex < I->getNumOperands(); ++OpIndex) {
+    // I could be an extractvalue from a call to an overflow intrinsic.
+    // TODO: We can do better here in some cases.
+    if (!isSCEVable(I->getOperand(OpIndex)->getType()))
+      return false;
     const SCEV *Op = getSCEV(I->getOperand(OpIndex));
     if (auto *AddRec = dyn_cast<SCEVAddRecExpr>(Op)) {
       bool AllOtherOpsLoopInvariant = true;
@@ -4947,28 +4951,6 @@ bool ScalarEvolution::isAddRecNeverPoison(const Instruction *I, const Loop *L) {
   }
 
   return LatchControlDependentOnPoison && loopHasNoAbnormalExits(L);
-}
-
-bool ScalarEvolution::loopHasNoSideEffects(const Loop *L) {
-  auto Itr = LoopHasNoSideEffects.find(L);
-  if (Itr == LoopHasNoSideEffects.end()) {
-    auto NoSideEffectsInBB = [&](BasicBlock *BB) {
-      return all_of(*BB, [](Instruction &I) {
-        // Non-atomic, non-volatile stores are ok.
-        if (auto *SI = dyn_cast<StoreInst>(&I)) 
-          return SI->isSimple();
-
-        return !I.mayHaveSideEffects();
-      });
-    };
-
-    auto InsertPair = LoopHasNoSideEffects.insert(
-        {L, all_of(L->getBlocks(), NoSideEffectsInBB)});
-    assert(InsertPair.second && "We just checked!");
-    Itr = InsertPair.first;
-  }
-
-  return Itr->second;
 }
 
 bool ScalarEvolution::loopHasNoAbnormalExits(const Loop *L) {
@@ -5558,7 +5540,6 @@ void ScalarEvolution::forgetLoop(const Loop *L) {
     forgetLoop(I);
 
   LoopHasNoAbnormalExits.erase(L);
-  LoopHasNoSideEffects.erase(L);
 }
 
 void ScalarEvolution::forgetValue(Value *V) {
@@ -8525,7 +8506,7 @@ static bool IsKnownPredicateViaMinOrMax(ScalarEvolution &SE,
 
   case ICmpInst::ICMP_SGE:
     std::swap(LHS, RHS);
-    // fall through
+    LLVM_FALLTHROUGH;
   case ICmpInst::ICMP_SLE:
     return
       // min(A, ...) <= A
@@ -8535,7 +8516,7 @@ static bool IsKnownPredicateViaMinOrMax(ScalarEvolution &SE,
 
   case ICmpInst::ICMP_UGE:
     std::swap(LHS, RHS);
-    // fall through
+    LLVM_FALLTHROUGH;
   case ICmpInst::ICMP_ULE:
     return
       // min(A, ...) <= A
@@ -8701,15 +8682,11 @@ ScalarEvolution::howManyLessThans(const SCEV *LHS, const SCEV *RHS,
     return getCouldNotCompute();
 
   const SCEVAddRecExpr *IV = dyn_cast<SCEVAddRecExpr>(LHS);
-  bool PredicatedIV = false;
-
-  if (!IV && AllowPredicates) {
+  if (!IV && AllowPredicates)
     // Try to make this an AddRec using runtime tests, in the first X
     // iterations of this loop, where X is the SCEV expression found by the
     // algorithm below.
     IV = convertSCEVToAddRecWithPredicates(LHS, L, P);
-    PredicatedIV = true;
-  }
 
   // Avoid weird loops
   if (!IV || IV->getLoop() != L || !IV->isAffine())
@@ -8720,55 +8697,9 @@ ScalarEvolution::howManyLessThans(const SCEV *LHS, const SCEV *RHS,
 
   const SCEV *Stride = IV->getStepRecurrence(*this);
 
-  bool PositiveStride = isKnownPositive(Stride);
-
-  // Avoid negative or zero stride values.
-  if (!PositiveStride) 
-    // We can compute the correct backedge taken count for loops with unknown
-    // strides if we can prove that the loop is not an infinite loop with side
-    // effects. Here's the loop structure we are trying to handle -
-    // 
-    // i = start
-    // do {
-    //   A[i] = i;
-    //   i += s;
-    // } while (i < end);
-    //
-    // The backedge taken count for such loops is evaluated as -
-    // (max(end, start + stride) - start - 1) /u stride
-    //
-    // The additional preconditions that we need to check to prove correctness
-    // of the above formula is as follows -
-    //
-    // a) IV is either nuw or nsw depending upon signedness (indicated by the
-    //    NoWrap flag).
-    // b) loop is single exit with no side effects.
-    //
-    //
-    // Precondition a) implies that if the stride is negative, this is a single
-    // trip loop. The backedge taken count formula reduces to zero in this case.
-    //
-    // Precondition b) implies that the unknown stride cannot be zero otherwise
-    // we have UB.
-    //
-    // The positive stride case is the same as isKnownPositive(Stride) returning
-    // true (original behavior of the function).
-    //
-    // We want to make sure that the stride is truly unknown as there are edge
-    // cases where ScalarEvolution propagates no wrap flags to the 
-    // post-increment/decrement IV even though the increment/decrement operation
-    // itself is wrapping. The computed backedge taken count may be wrong in
-    // such cases. This is prevented by checking that the stride is not known to
-    // be either positive or non-positive. For example, no wrap flags are 
-    // propagated to the post-increment IV of this loop with a trip count of 2 -
-    //
-    // unsigned char i;
-    // for(i=127; i<128; i+=129) 
-    //   A[i] = i;
-    // 
-    if (PredicatedIV || !NoWrap || isKnownNonPositive(Stride) || 
-        !loopHasNoSideEffects(L))
-      return getCouldNotCompute();
+  // Avoid negative or zero stride values
+  if (!isKnownPositive(Stride))
+    return getCouldNotCompute();
 
   // Avoid proven overflow cases: this will ensure that the backedge taken count
   // will not generate any unsigned overflow. Relaxed no-overflow conditions
@@ -9931,8 +9862,10 @@ ScalarEvolution::computeBlockDisposition(const SCEV *S, const BasicBlock *BB) {
     const SCEVAddRecExpr *AR = cast<SCEVAddRecExpr>(S);
     if (!DT.dominates(AR->getLoop()->getHeader(), BB))
       return DoesNotDominateBlock;
+
+    // Fall through into SCEVNAryExpr handling.
+    LLVM_FALLTHROUGH;
   }
-  // FALL THROUGH into SCEVNAryExpr handling.
   case scAddExpr:
   case scMulExpr:
   case scUMaxExpr:

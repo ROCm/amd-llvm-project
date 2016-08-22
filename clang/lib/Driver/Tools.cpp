@@ -5490,6 +5490,13 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back(Args.MakeArgString(Path));
   }
 
+  if (HaveModules) {
+    // -fprebuilt-module-path specifies where to load the prebuilt module files.
+    for (const Arg *A : Args.filtered(options::OPT_fprebuilt_module_path))
+      CmdArgs.push_back(Args.MakeArgString(
+          std::string("-fprebuilt-module-path=") + A->getValue()));
+  }
+      
   // -fmodule-name specifies the module that is currently being built (or
   // used for header checking by -fmodule-maps).
   Args.AddLastArg(CmdArgs, options::OPT_fmodule_name_EQ);
@@ -7560,11 +7567,14 @@ llvm::Triple::ArchType darwin::getArchTypeForMachOArchName(StringRef Str) {
 
 void darwin::setTripleTypeForMachOArchName(llvm::Triple &T, StringRef Str) {
   const llvm::Triple::ArchType Arch = getArchTypeForMachOArchName(Str);
+  unsigned ArchKind = llvm::ARM::parseArch(Str);
   T.setArch(Arch);
 
   if (Str == "x86_64h")
     T.setArchName(Str);
-  else if (Str == "armv6m" || Str == "armv7m" || Str == "armv7em") {
+  else if (ArchKind == llvm::ARM::AK_ARMV6M ||
+           ArchKind == llvm::ARM::AK_ARMV7M ||
+           ArchKind == llvm::ARM::AK_ARMV7EM) {
     T.setOS(llvm::Triple::UnknownOS);
     T.setObjectFormat(llvm::Triple::MachO);
   }

@@ -23,6 +23,7 @@ add_clang_library(clangStaticAnalyzerCheckers
   ChrootChecker.cpp
   ClangCheckers.cpp
   CloneChecker.cpp
+  ConversionChecker.cpp
   CXXSelfAssignmentChecker.cpp
   DeadStoresChecker.cpp
   DebugCheckers.cpp
@@ -80,6 +81,7 @@ add_clang_library(clangStaticAnalyzerCheckers
   UnreachableCodeChecker.cpp
   VforkChecker.cpp
   VLASizeChecker.cpp
+  ValistChecker.cpp
   VirtualCallChecker.cpp
 
   DEPENDS

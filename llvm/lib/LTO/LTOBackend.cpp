@@ -19,6 +19,7 @@
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/Bitcode/ReaderWriter.h"
 #include "llvm/IR/LegacyPassManager.h"
+#include "llvm/LTO/LTO.h"
 #include "llvm/MC/SubtargetFeature.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
@@ -39,7 +40,7 @@ Error Config::addSaveTemps(std::string OutputFileName,
 
   std::error_code EC;
   ResolutionFile = llvm::make_unique<raw_fd_ostream>(
-      OutputFileName + ".resolution.txt", EC, sys::fs::OpenFlags::F_Text);
+      OutputFileName + "resolution.txt", EC, sys::fs::OpenFlags::F_Text);
   if (EC)
     return errorCodeToError(EC);
 
@@ -57,9 +58,7 @@ Error Config::addSaveTemps(std::string OutputFileName,
       // user hasn't requested using the input module's path, emit to a file
       // named from the provided OutputFileName with the Task ID appended.
       if (M.getModuleIdentifier() == "ld-temp.o" || !UseInputModulePath) {
-        PathPrefix = OutputFileName;
-        if (Task != 0)
-          PathPrefix += "." + utostr(Task);
+        PathPrefix = OutputFileName + utostr(Task);
       } else
         PathPrefix = M.getModuleIdentifier();
       std::string Path = PathPrefix + "." + PathSuffix + ".bc";
@@ -85,7 +84,7 @@ Error Config::addSaveTemps(std::string OutputFileName,
   setHook("5.precodegen", PreCodeGenModuleHook);
 
   CombinedIndexHook = [=](const ModuleSummaryIndex &Index) {
-    std::string Path = OutputFileName + ".index.bc";
+    std::string Path = OutputFileName + "index.bc";
     std::error_code EC;
     raw_fd_ostream OS(Path, EC, sys::fs::OpenFlags::F_None);
     if (EC) {
@@ -144,12 +143,13 @@ bool opt(Config &C, TargetMachine *TM, unsigned Task, Module &M,
   return true;
 }
 
-void codegen(Config &C, TargetMachine *TM, AddStreamFn AddStream, unsigned Task,
+void codegen(Config &C, TargetMachine *TM, AddOutputFn AddOutput, unsigned Task,
              Module &M) {
   if (C.PreCodeGenModuleHook && !C.PreCodeGenModuleHook(Task, M))
     return;
 
-  std::unique_ptr<raw_pwrite_stream> OS = AddStream(Task);
+  auto Output = AddOutput(Task);
+  std::unique_ptr<raw_pwrite_stream> OS = Output->getStream();
   legacy::PassManager CodeGenPasses;
   if (TM->addPassesToEmitFile(CodeGenPasses, *OS,
                               TargetMachine::CGFT_ObjectFile))
@@ -157,7 +157,7 @@ void codegen(Config &C, TargetMachine *TM, AddStreamFn AddStream, unsigned Task,
   CodeGenPasses.run(M);
 }
 
-void splitCodeGen(Config &C, TargetMachine *TM, AddStreamFn AddStream,
+void splitCodeGen(Config &C, TargetMachine *TM, AddOutputFn AddOutput,
                   unsigned ParallelCodeGenParallelismLevel,
                   std::unique_ptr<Module> M) {
   ThreadPool CodegenThreadPool(ParallelCodeGenParallelismLevel);
@@ -190,7 +190,7 @@ void splitCodeGen(Config &C, TargetMachine *TM, AddStreamFn AddStream,
 
               std::unique_ptr<TargetMachine> TM =
                   createTargetMachine(C, MPartInCtx->getTargetTriple(), T);
-              codegen(C, TM.get(), AddStream, ThreadId, *MPartInCtx);
+              codegen(C, TM.get(), AddOutput, ThreadId, *MPartInCtx);
             },
             // Pass BC using std::move to ensure that it get moved rather than
             // copied into the thread's context.
@@ -214,7 +214,7 @@ Expected<const Target *> initAndLookupTarget(Config &C, Module &M) {
 
 }
 
-Error lto::backend(Config &C, AddStreamFn AddStream,
+Error lto::backend(Config &C, AddOutputFn AddOutput,
                    unsigned ParallelCodeGenParallelismLevel,
                    std::unique_ptr<Module> M) {
   Expected<const Target *> TOrErr = initAndLookupTarget(C, *M);
@@ -224,18 +224,19 @@ Error lto::backend(Config &C, AddStreamFn AddStream,
   std::unique_ptr<TargetMachine> TM =
       createTargetMachine(C, M->getTargetTriple(), *TOrErr);
 
-  if (!opt(C, TM.get(), 0, *M, /*IsThinLto=*/false))
-    return Error();
+  if (!C.CodeGenOnly)
+    if (!opt(C, TM.get(), 0, *M, /*IsThinLto=*/false))
+      return Error();
 
   if (ParallelCodeGenParallelismLevel == 1)
-    codegen(C, TM.get(), AddStream, 0, *M);
+    codegen(C, TM.get(), AddOutput, 0, *M);
   else
-    splitCodeGen(C, TM.get(), AddStream, ParallelCodeGenParallelismLevel,
+    splitCodeGen(C, TM.get(), AddOutput, ParallelCodeGenParallelismLevel,
                  std::move(M));
   return Error();
 }
 
-Error lto::thinBackend(Config &Conf, unsigned Task, AddStreamFn AddStream,
+Error lto::thinBackend(Config &Conf, unsigned Task, AddOutputFn AddOutput,
                        Module &Mod, ModuleSummaryIndex &CombinedIndex,
                        const FunctionImporter::ImportMapTy &ImportList,
                        const GVSummaryMapTy &DefinedGlobals,
@@ -247,12 +248,17 @@ Error lto::thinBackend(Config &Conf, unsigned Task, AddStreamFn AddStream,
   std::unique_ptr<TargetMachine> TM =
       createTargetMachine(Conf, Mod.getTargetTriple(), *TOrErr);
 
+  if (Conf.CodeGenOnly) {
+    codegen(Conf, TM.get(), AddOutput, Task, Mod);
+    return Error();
+  }
+
   if (Conf.PreOptModuleHook && !Conf.PreOptModuleHook(Task, Mod))
     return Error();
 
-  thinLTOResolveWeakForLinkerModule(Mod, DefinedGlobals);
-
   renameModuleForThinLTO(Mod, CombinedIndex);
+
+  thinLTOResolveWeakForLinkerModule(Mod, DefinedGlobals);
 
   if (Conf.PostPromoteModuleHook && !Conf.PostPromoteModuleHook(Task, Mod))
     return Error();
@@ -281,6 +287,6 @@ Error lto::thinBackend(Config &Conf, unsigned Task, AddStreamFn AddStream,
   if (!opt(Conf, TM.get(), Task, Mod, /*IsThinLto=*/true))
     return Error();
 
-  codegen(Conf, TM.get(), AddStream, Task, Mod);
+  codegen(Conf, TM.get(), AddOutput, Task, Mod);
   return Error();
 }

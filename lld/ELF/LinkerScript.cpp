@@ -51,8 +51,8 @@ static void addRegular(SymbolAssignment *Cmd) {
 }
 
 template <class ELFT> static void addSynthetic(SymbolAssignment *Cmd) {
-  Symbol *Sym = Symtab<ELFT>::X->addSynthetic(Cmd->Name, nullptr, 0);
-  Sym->Visibility = Cmd->Hidden ? STV_HIDDEN : STV_DEFAULT;
+  Symbol *Sym = Symtab<ELFT>::X->addSynthetic(
+      Cmd->Name, nullptr, 0, Cmd->Hidden ? STV_HIDDEN : STV_DEFAULT);
   Cmd->Sym = Sym->body();
 }
 
@@ -283,8 +283,14 @@ void LinkerScript<ELFT>::createSections(OutputSectionFactory<ELFT> &Factory) {
       std::tie(OutSec, IsNew) = Factory.create(Head, Cmd->Name);
       if (IsNew)
         OutputSections->push_back(OutSec);
-      for (InputSectionBase<ELFT> *Sec : V)
-        OutSec->addSection(Sec);
+
+      uint32_t Subalign = Cmd->SubalignExpr ? Cmd->SubalignExpr(0) : 0;
+      for (InputSectionBase<ELFT> *Sec : V) {
+        if (Subalign)
+          Sec->Alignment = Subalign;
+        if (!Sec->OutSec)
+          OutSec->addSection(Sec);
+      }
     }
   }
 
@@ -424,11 +430,13 @@ template <class ELFT> void LinkerScript<ELFT>::assignAddresses() {
   Out<ELFT>::ProgramHeaders->setVA(Out<ELFT>::ElfHeader->getSize() + MinVA);
 }
 
+// Creates program headers as instructed by PHDRS linker script command.
 template <class ELFT>
 std::vector<PhdrEntry<ELFT>> LinkerScript<ELFT>::createPhdrs() {
-  ArrayRef<OutputSectionBase<ELFT> *> Sections = *OutputSections;
   std::vector<PhdrEntry<ELFT>> Ret;
 
+  // Process PHDRS and FILEHDR keywords because they are not
+  // real output sections and cannot be added in the following loop.
   for (const PhdrsCommand &Cmd : Opt.PhdrsCommands) {
     Ret.emplace_back(Cmd.Type, Cmd.Flags == UINT_MAX ? PF_R : Cmd.Flags);
     PhdrEntry<ELFT> &Phdr = Ret.back();
@@ -437,30 +445,12 @@ std::vector<PhdrEntry<ELFT>> LinkerScript<ELFT>::createPhdrs() {
       Phdr.add(Out<ELFT>::ElfHeader);
     if (Cmd.HasPhdrs)
       Phdr.add(Out<ELFT>::ProgramHeaders);
-
-    switch (Cmd.Type) {
-    case PT_INTERP:
-      if (Out<ELFT>::Interp)
-        Phdr.add(Out<ELFT>::Interp);
-      break;
-    case PT_DYNAMIC:
-      if (Out<ELFT>::DynSymTab) {
-        Phdr.H.p_flags = Out<ELFT>::Dynamic->getPhdrFlags();
-        Phdr.add(Out<ELFT>::Dynamic);
-      }
-      break;
-    case PT_GNU_EH_FRAME:
-      if (!Out<ELFT>::EhFrame->empty() && Out<ELFT>::EhFrameHdr) {
-        Phdr.H.p_flags = Out<ELFT>::EhFrameHdr->getPhdrFlags();
-        Phdr.add(Out<ELFT>::EhFrameHdr);
-      }
-      break;
-    }
   }
 
+  // Add output sections to program headers.
   PhdrEntry<ELFT> *Load = nullptr;
   uintX_t Flags = PF_R;
-  for (OutputSectionBase<ELFT> *Sec : Sections) {
+  for (OutputSectionBase<ELFT> *Sec : *OutputSections) {
     if (!(Sec->getFlags() & SHF_ALLOC))
       break;
 
@@ -501,6 +491,14 @@ ArrayRef<uint8_t> LinkerScript<ELFT>::getFiller(StringRef Name) {
     if (auto *Cmd = dyn_cast<OutputSectionCommand>(Base.get()))
       if (Cmd->Name == Name)
         return Cmd->Filler;
+  return {};
+}
+
+template <class ELFT> Expr LinkerScript<ELFT>::getLma(StringRef Name) {
+  for (const std::unique_ptr<BaseCommand> &Base : Opt.Commands)
+    if (auto *Cmd = dyn_cast<OutputSectionCommand>(Base.get()))
+      if (Cmd->LmaExpr && Cmd->Name == Name)
+        return Cmd->LmaExpr;
   return {};
 }
 
@@ -613,7 +611,6 @@ private:
   SortKind readSortKind();
   SymbolAssignment *readProvideHidden(bool Provide, bool Hidden);
   SymbolAssignment *readProvideOrAssignment(StringRef Tok);
-  Expr readAlign();
   void readSort();
   Expr readAssert();
 
@@ -621,6 +618,7 @@ private:
   Expr readExpr1(Expr Lhs, int MinPrec);
   Expr readPrimary();
   Expr readTernary(Expr Cond);
+  Expr readParenExpr();
 
   const static StringMap<Handler> Cmd;
   ScriptConfiguration &Opt = *ScriptConfig;
@@ -647,6 +645,8 @@ void ScriptParser::run() {
     StringRef Tok = next();
     if (Handler Fn = Cmd.lookup(Tok))
       (this->*Fn)();
+    else if (SymbolAssignment *Cmd = readProvideOrAssignment(Tok))
+      Opt.Commands.emplace_back(Cmd);
     else
       setError("unknown directive: " + Tok);
   }
@@ -891,13 +891,6 @@ InputSectionDescription *ScriptParser::readInputSectionDescription() {
   return readInputSectionRules();
 }
 
-Expr ScriptParser::readAlign() {
-  expect("(");
-  Expr E = readExpr();
-  expect(")");
-  return E;
-}
-
 void ScriptParser::readSort() {
   expect("(");
   expect("CONSTRUCTORS");
@@ -929,8 +922,12 @@ ScriptParser::readOutputSectionDescription(StringRef OutSec) {
 
   expect(":");
 
+  if (skip("AT"))
+    Cmd->LmaExpr = readParenExpr();
   if (skip("ALIGN"))
-    Cmd->AlignExpr = readAlign();
+    Cmd->AlignExpr = readParenExpr();
+  if (skip("SUBALIGN"))
+    Cmd->SubalignExpr = readParenExpr();
 
   // Parse constraints.
   if (skip("ONLY_IF_RO"))
@@ -1138,29 +1135,26 @@ Expr ScriptParser::readExpr1(Expr Lhs, int MinPrec) {
 }
 
 uint64_t static getConstant(StringRef S) {
-  if (S == "COMMONPAGESIZE" || S == "MAXPAGESIZE")
+  if (S == "COMMONPAGESIZE")
     return Target->PageSize;
+  if (S == "MAXPAGESIZE")
+    return Target->MaxPageSize;
   error("unknown constant: " + S);
   return 0;
 }
 
 Expr ScriptParser::readPrimary() {
-  StringRef Tok = next();
+  if (peek() == "(")
+    return readParenExpr();
 
-  if (Tok == "(") {
-    Expr E = readExpr();
-    expect(")");
-    return E;
-  }
+  StringRef Tok = next();
 
   // Built-in functions are parsed here.
   // https://sourceware.org/binutils/docs/ld/Builtin-Functions.html.
   if (Tok == "ASSERT")
     return readAssert();
   if (Tok == "ALIGN") {
-    expect("(");
-    Expr E = readExpr();
-    expect(")");
+    Expr E = readParenExpr();
     return [=](uint64_t Dot) { return alignTo(Dot, E(Dot)); };
   }
   if (Tok == "CONSTANT") {
@@ -1228,6 +1222,13 @@ Expr ScriptParser::readTernary(Expr Cond) {
   expect(":");
   Expr R = readExpr();
   return [=](uint64_t Dot) { return Cond(Dot) ? L(Dot) : R(Dot); };
+}
+
+Expr ScriptParser::readParenExpr() {
+  expect("(");
+  Expr E = readExpr();
+  expect(")");
+  return E;
 }
 
 std::vector<StringRef> ScriptParser::readOutputSectionPhdrs() {
