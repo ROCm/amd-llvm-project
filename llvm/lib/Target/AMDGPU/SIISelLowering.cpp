@@ -37,12 +37,6 @@
 
 using namespace llvm;
 
-// -amdgpu-fast-fdiv - Command line option to enable faster 2.5 ulp fdiv.
-static cl::opt<bool> EnableAMDGPUFastFDIV(
-  "amdgpu-fast-fdiv",
-  cl::desc("Enable faster 2.5 ulp fdiv"),
-  cl::init(false));
-
 static unsigned findFirstFreeSGPR(CCState &CCInfo) {
   unsigned NumSGPRs = AMDGPU::SGPR_32RegClass.getNumRegs();
   for (unsigned Reg = 0; Reg < NumSGPRs; ++Reg) {
@@ -2224,11 +2218,10 @@ SDValue SITargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
     int CondCode = CD->getSExtValue();
 
     if (CondCode < ICmpInst::Predicate::FIRST_ICMP_PREDICATE ||
-	       CondCode >= ICmpInst::Predicate::BAD_ICMP_PREDICATE)
+        CondCode >= ICmpInst::Predicate::BAD_ICMP_PREDICATE)
       return DAG.getUNDEF(VT);
 
-    ICmpInst::Predicate IcInput =
-	   static_cast<ICmpInst::Predicate>(CondCode);
+    ICmpInst::Predicate IcInput = static_cast<ICmpInst::Predicate>(CondCode);
     ISD::CondCode CCOpcode = getICmpCondCode(IcInput);
     return DAG.getNode(AMDGPUISD::SETCC, DL, VT, Op.getOperand(1),
                        Op.getOperand(2), DAG.getCondCode(CCOpcode));
@@ -2238,11 +2231,10 @@ SDValue SITargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
     int CondCode = CD->getSExtValue();
 
     if (CondCode <= FCmpInst::Predicate::FCMP_FALSE ||
-	       CondCode >= FCmpInst::Predicate::FCMP_TRUE)
+        CondCode >= FCmpInst::Predicate::FCMP_TRUE)
       return DAG.getUNDEF(VT);
 
-    FCmpInst::Predicate IcInput =
-	   static_cast<FCmpInst::Predicate>(CondCode);
+    FCmpInst::Predicate IcInput = static_cast<FCmpInst::Predicate>(CondCode);
     ISD::CondCode CCOpcode = getFCmpCondCode(IcInput);
     return DAG.getNode(AMDGPUISD::SETCC, DL, VT, Op.getOperand(1),
                        Op.getOperand(2), DAG.getCondCode(CCOpcode));
@@ -2389,7 +2381,7 @@ SDValue SITargetLowering::LowerLOAD(SDValue Op, SelectionDAG &DAG) const {
     // have the same legalization requires ments as global and private
     // loads.
     //
-    // Fall-through
+    LLVM_FALLTHROUGH;
   case AMDGPUAS::GLOBAL_ADDRESS:
   case AMDGPUAS::FLAT_ADDRESS:
     if (NumElements > 4)

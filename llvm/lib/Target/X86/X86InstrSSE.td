@@ -1300,11 +1300,17 @@ let Predicates = [UseAVX] in {
   def : Pat<(v2f64 (X86Unpckl VR128:$src1,
                       (scalar_to_vector (loadf64 addr:$src2)))),
             (VMOVHPDrm VR128:$src1, addr:$src2)>;
+
   // Also handle an i64 load because that may get selected as a faster way to
   // load the data.
   def : Pat<(v2f64 (X86Unpckl VR128:$src1,
                       (bc_v2f64 (v2i64 (scalar_to_vector (loadi64 addr:$src2)))))),
             (VMOVHPDrm VR128:$src1, addr:$src2)>;
+
+  def : Pat<(store (f64 (extractelt
+                          (bc_v2f64 (v4f32 (X86Movhlps VR128:$src, VR128:$src))),
+                          (iPTR 0))), addr:$dst),
+            (VMOVHPDmr addr:$dst, VR128:$src)>;
 
   def : Pat<(store (f64 (extractelt
                           (v2f64 (X86VPermilpi VR128:$src, (i8 1))),
@@ -1332,11 +1338,17 @@ let Predicates = [UseSSE2] in {
   def : Pat<(v2f64 (X86Unpckl VR128:$src1,
                       (scalar_to_vector (loadf64 addr:$src2)))),
             (MOVHPDrm VR128:$src1, addr:$src2)>;
+
   // Also handle an i64 load because that may get selected as a faster way to
   // load the data.
   def : Pat<(v2f64 (X86Unpckl VR128:$src1,
                       (bc_v2f64 (v2i64 (scalar_to_vector (loadi64 addr:$src2)))))),
             (MOVHPDrm VR128:$src1, addr:$src2)>;
+
+  def : Pat<(store (f64 (extractelt
+                          (bc_v2f64 (v4f32 (X86Movhlps VR128:$src, VR128:$src))),
+                          (iPTR 0))), addr:$dst),
+            (MOVHPDmr addr:$dst, VR128:$src)>;
 
   def : Pat<(store (f64 (extractelt
                           (v2f64 (X86Shufp VR128:$src, VR128:$src, (i8 1))),
@@ -1799,16 +1811,16 @@ def VCVTSD2SSrm  : I<0x5A, MRMSrcMem, (outs FR32:$dst),
                       Sched<[WriteCvtF2FLd, ReadAfterLd]>;
 }
 
-def : Pat<(f32 (fround FR64:$src)), (VCVTSD2SSrr FR64:$src, FR64:$src)>,
+def : Pat<(f32 (fpround FR64:$src)), (VCVTSD2SSrr FR64:$src, FR64:$src)>,
           Requires<[UseAVX]>;
 
 def CVTSD2SSrr  : SDI<0x5A, MRMSrcReg, (outs FR32:$dst), (ins FR64:$src),
                       "cvtsd2ss\t{$src, $dst|$dst, $src}",
-                      [(set FR32:$dst, (fround FR64:$src))],
+                      [(set FR32:$dst, (fpround FR64:$src))],
                       IIC_SSE_CVT_Scalar_RR>, Sched<[WriteCvtF2F]>;
 def CVTSD2SSrm  : I<0x5A, MRMSrcMem, (outs FR32:$dst), (ins f64mem:$src),
                       "cvtsd2ss\t{$src, $dst|$dst, $src}",
-                      [(set FR32:$dst, (fround (loadf64 addr:$src)))],
+                      [(set FR32:$dst, (fpround (loadf64 addr:$src)))],
                       IIC_SSE_CVT_Scalar_RM>,
                       XD,
                   Requires<[UseSSE2, OptForSize]>, Sched<[WriteCvtF2FLd]>;
@@ -1865,9 +1877,9 @@ def VCVTSS2SDrm : I<0x5A, MRMSrcMem, (outs FR64:$dst),
                     Sched<[WriteCvtF2FLd, ReadAfterLd]>;
 }
 
-def : Pat<(f64 (fextend FR32:$src)),
+def : Pat<(f64 (fpextend FR32:$src)),
     (VCVTSS2SDrr FR32:$src, FR32:$src)>, Requires<[UseAVX]>;
-def : Pat<(fextend (loadf32 addr:$src)),
+def : Pat<(fpextend (loadf32 addr:$src)),
     (VCVTSS2SDrm (f32 (IMPLICIT_DEF)), addr:$src)>, Requires<[UseAVX]>;
 
 def : Pat<(extloadf32 addr:$src),
@@ -1879,7 +1891,7 @@ def : Pat<(extloadf32 addr:$src),
 
 def CVTSS2SDrr : I<0x5A, MRMSrcReg, (outs FR64:$dst), (ins FR32:$src),
                    "cvtss2sd\t{$src, $dst|$dst, $src}",
-                   [(set FR64:$dst, (fextend FR32:$src))],
+                   [(set FR64:$dst, (fpextend FR32:$src))],
                    IIC_SSE_CVT_Scalar_RR>, XS,
                  Requires<[UseSSE2]>, Sched<[WriteCvtF2F]>;
 def CVTSS2SDrm : I<0x5A, MRMSrcMem, (outs FR64:$dst), (ins f32mem:$src),
@@ -1888,12 +1900,12 @@ def CVTSS2SDrm : I<0x5A, MRMSrcMem, (outs FR64:$dst), (ins f32mem:$src),
                    IIC_SSE_CVT_Scalar_RM>, XS,
                  Requires<[UseSSE2, OptForSize]>, Sched<[WriteCvtF2FLd]>;
 
-// extload f32 -> f64.  This matches load+fextend because we have a hack in
+// extload f32 -> f64.  This matches load+fpextend because we have a hack in
 // the isel (PreprocessForFPConvert) that can introduce loads after dag
 // combine.
-// Since these loads aren't folded into the fextend, we have to match it
+// Since these loads aren't folded into the fpextend, we have to match it
 // explicitly here.
-def : Pat<(fextend (loadf32 addr:$src)),
+def : Pat<(fpextend (loadf32 addr:$src)),
           (CVTSS2SDrm addr:$src)>, Requires<[UseSSE2]>;
 def : Pat<(extloadf32 addr:$src),
           (CVTSS2SDrr (MOVSSrm addr:$src))>, Requires<[UseSSE2, OptForSpeed]>;
@@ -2269,26 +2281,26 @@ let Predicates = [HasAVX] in {
 }
 
 let Predicates = [HasAVX, NoVLX] in {
-  // Match fround and fextend for 128/256-bit conversions
+  // Match fpround and fpextend for 128/256-bit conversions
   def : Pat<(v4f32 (X86vfpround (v2f64 VR128:$src))),
             (VCVTPD2PSrr VR128:$src)>;
   def : Pat<(v4f32 (X86vfpround (loadv2f64 addr:$src))),
             (VCVTPD2PSXrm addr:$src)>;
-  def : Pat<(v4f32 (fround (v4f64 VR256:$src))),
+  def : Pat<(v4f32 (fpround (v4f64 VR256:$src))),
             (VCVTPD2PSYrr VR256:$src)>;
-  def : Pat<(v4f32 (fround (loadv4f64 addr:$src))),
+  def : Pat<(v4f32 (fpround (loadv4f64 addr:$src))),
             (VCVTPD2PSYrm addr:$src)>;
 
   def : Pat<(v2f64 (X86vfpext (v4f32 VR128:$src))),
             (VCVTPS2PDrr VR128:$src)>;
-  def : Pat<(v4f64 (fextend (v4f32 VR128:$src))),
+  def : Pat<(v4f64 (fpextend (v4f32 VR128:$src))),
             (VCVTPS2PDYrr VR128:$src)>;
   def : Pat<(v4f64 (extloadv4f32 addr:$src)),
             (VCVTPS2PDYrm addr:$src)>;
 }
 
 let Predicates = [UseSSE2] in {
-  // Match fround and fextend for 128 conversions
+  // Match fpround and fpextend for 128 conversions
   def : Pat<(v4f32 (X86vfpround (v2f64 VR128:$src))),
             (CVTPD2PSrr VR128:$src)>;
   def : Pat<(v4f32 (X86vfpround (memopv2f64 addr:$src))),
@@ -7060,22 +7072,22 @@ multiclass SS41I_quaternary_int_avx<bits<8> opc, string OpcodeStr,
                                     RegisterClass RC, X86MemOperand x86memop,
                                     PatFrag mem_frag, Intrinsic IntId,
                                     X86FoldableSchedWrite Sched> {
-  def rr : Ii8<opc, MRMSrcReg, (outs RC:$dst),
+  def rr : Ii8Reg<opc, MRMSrcReg, (outs RC:$dst),
                   (ins RC:$src1, RC:$src2, RC:$src3),
                   !strconcat(OpcodeStr,
                     "\t{$src3, $src2, $src1, $dst|$dst, $src1, $src2, $src3}"),
                   [(set RC:$dst, (IntId RC:$src1, RC:$src2, RC:$src3))],
-                  NoItinerary, SSEPackedInt>, TAPD, VEX_4V, VEX_I8IMM,
+                  NoItinerary, SSEPackedInt>, TAPD, VEX_4V,
                 Sched<[Sched]>;
 
-  def rm : Ii8<opc, MRMSrcMem, (outs RC:$dst),
+  def rm : Ii8Reg<opc, MRMSrcMem, (outs RC:$dst),
                   (ins RC:$src1, x86memop:$src2, RC:$src3),
                   !strconcat(OpcodeStr,
                     "\t{$src3, $src2, $src1, $dst|$dst, $src1, $src2, $src3}"),
                   [(set RC:$dst,
                         (IntId RC:$src1, (bitconvert (mem_frag addr:$src2)),
                                RC:$src3))],
-                  NoItinerary, SSEPackedInt>, TAPD, VEX_4V, VEX_I8IMM,
+                  NoItinerary, SSEPackedInt>, TAPD, VEX_4V,
                 Sched<[Sched.Folded, ReadAfterLd]>;
 }
 
@@ -8696,16 +8708,16 @@ let Predicates = [HasAVX2, NoVLX] in {
 // VGATHER - GATHER Operations
 multiclass avx2_gather<bits<8> opc, string OpcodeStr, RegisterClass RC256,
                        X86MemOperand memop128, X86MemOperand memop256> {
-  def rm  : AVX28I<opc, MRMSrcMem, (outs VR128:$dst, VR128:$mask_wb),
+  def rm  : AVX28I<opc, MRMSrcMem4VOp3, (outs VR128:$dst, VR128:$mask_wb),
             (ins VR128:$src1, memop128:$src2, VR128:$mask),
             !strconcat(OpcodeStr,
               "\t{$mask, $src2, $dst|$dst, $src2, $mask}"),
-            []>, VEX_4VOp3;
-  def Yrm : AVX28I<opc, MRMSrcMem, (outs RC256:$dst, RC256:$mask_wb),
+            []>, VEX;
+  def Yrm : AVX28I<opc, MRMSrcMem4VOp3, (outs RC256:$dst, RC256:$mask_wb),
             (ins RC256:$src1, memop256:$src2, RC256:$mask),
             !strconcat(OpcodeStr,
               "\t{$mask, $src2, $dst|$dst, $src2, $mask}"),
-            []>, VEX_4VOp3, VEX_L;
+            []>, VEX, VEX_L;
 }
 
 let mayLoad = 1, hasSideEffects = 0, Constraints

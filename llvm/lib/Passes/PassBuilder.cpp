@@ -59,6 +59,7 @@
 #include "llvm/Support/Regex.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Transforms/GCOVProfiler.h"
+#include "llvm/Transforms/IPO/AlwaysInliner.h"
 #include "llvm/Transforms/IPO/ConstantMerge.h"
 #include "llvm/Transforms/IPO/CrossDSOCFI.h"
 #include "llvm/Transforms/IPO/DeadArgumentElimination.h"
@@ -515,8 +516,9 @@ bool PassBuilder::parseModulePass(ModulePassManager &MPM,
   }
 #define MODULE_ANALYSIS(NAME, CREATE_PASS)                                     \
   if (Name == "require<" NAME ">") {                                           \
-    MPM.addPass(RequireAnalysisPass<                                           \
-                std::remove_reference<decltype(CREATE_PASS)>::type>());        \
+    MPM.addPass(                                                               \
+        RequireAnalysisPass<                                                   \
+            std::remove_reference<decltype(CREATE_PASS)>::type, Module>());    \
     return true;                                                               \
   }                                                                            \
   if (Name == "invalidate<" NAME ">") {                                        \
@@ -577,7 +579,8 @@ bool PassBuilder::parseCGSCCPass(CGSCCPassManager &CGPM,
 #define CGSCC_ANALYSIS(NAME, CREATE_PASS)                                      \
   if (Name == "require<" NAME ">") {                                           \
     CGPM.addPass(RequireAnalysisPass<                                          \
-                 std::remove_reference<decltype(CREATE_PASS)>::type>());       \
+                 std::remove_reference<decltype(CREATE_PASS)>::type,           \
+                 LazyCallGraph::SCC>());                                       \
     return true;                                                               \
   }                                                                            \
   if (Name == "invalidate<" NAME ">") {                                        \
@@ -636,8 +639,9 @@ bool PassBuilder::parseFunctionPass(FunctionPassManager &FPM,
   }
 #define FUNCTION_ANALYSIS(NAME, CREATE_PASS)                                   \
   if (Name == "require<" NAME ">") {                                           \
-    FPM.addPass(RequireAnalysisPass<                                           \
-                std::remove_reference<decltype(CREATE_PASS)>::type>());        \
+    FPM.addPass(                                                               \
+        RequireAnalysisPass<                                                   \
+            std::remove_reference<decltype(CREATE_PASS)>::type, Function>());  \
     return true;                                                               \
   }                                                                            \
   if (Name == "invalidate<" NAME ">") {                                        \
@@ -687,7 +691,7 @@ bool PassBuilder::parseLoopPass(LoopPassManager &LPM, const PipelineElement &E,
 #define LOOP_ANALYSIS(NAME, CREATE_PASS)                                       \
   if (Name == "require<" NAME ">") {                                           \
     LPM.addPass(RequireAnalysisPass<                                           \
-                std::remove_reference<decltype(CREATE_PASS)>::type>());        \
+                std::remove_reference<decltype(CREATE_PASS)>::type, Loop>());  \
     return true;                                                               \
   }                                                                            \
   if (Name == "invalidate<" NAME ">") {                                        \

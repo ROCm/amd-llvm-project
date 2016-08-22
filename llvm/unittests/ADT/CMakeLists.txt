@@ -22,6 +22,7 @@ set(ADTSources
   IntEqClassesTest.cpp
   IntervalMapTest.cpp
   IntrusiveRefCntPtrTest.cpp
+  IteratorTest.cpp
   MakeUniqueTest.cpp
   MapVectorTest.cpp
   OptionalTest.cpp
@@ -34,6 +35,7 @@ set(ADTSources
   PriorityWorklistTest.cpp
   RangeAdapterTest.cpp
   SCCIteratorTest.cpp
+  STLExtrasTest.cpp
   ScopeExitTest.cpp
   SequenceTest.cpp
   SetVectorTest.cpp

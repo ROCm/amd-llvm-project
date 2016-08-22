@@ -975,6 +975,7 @@ bool RegisterCoalescer::reMaterializeTrivialDef(const CoalescerPair &CP,
         NewRC = CommonRC;
         DstIdx = 0;
         DefMO.setSubReg(0);
+        DefMO.setIsUndef(false); // Only subregs can have def+undef.
       }
     }
   }
@@ -2231,8 +2232,8 @@ void JoinVals::computeAssignment(unsigned ValNo, JoinVals &Other) {
     if ((OtherV.WriteLanes & ~V.ValidLanes) != 0 && TrackSubRegLiveness)
       OtherV.ErasableImplicitDef = false;
     OtherV.Pruned = true;
+    LLVM_FALLTHROUGH;
   }
-    // Fall through.
   default:
     // This value number needs to go in the final joined live range.
     Assignments[ValNo] = NewVNInfo.size();
@@ -2517,7 +2518,7 @@ void JoinVals::eraseInstrs(SmallPtrSetImpl<MachineInstr*> &ErasedInstrs,
       // make it appear like an unused value number.
       VNI->markUnused();
       DEBUG(dbgs() << "\t\tremoved " << i << '@' << Def << ": " << LR << '\n');
-      // FALL THROUGH.
+      LLVM_FALLTHROUGH;
     }
 
     case CR_Erase: {

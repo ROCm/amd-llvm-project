@@ -33,6 +33,15 @@ static cl::opt<std::string> OutputFilename("o", cl::Required,
 
 static cl::opt<bool> SaveTemps("save-temps", cl::desc("Save temporary files"));
 
+static cl::opt<bool>
+    ThinLTODistributedIndexes("thinlto-distributed-indexes", cl::init(false),
+                              cl::desc("Write out individual index and "
+                                       "import files for the "
+                                       "distributed backend case"));
+
+static cl::opt<int> Threads("-thinlto-threads",
+                            cl::init(thread::hardware_concurrency()));
+
 static cl::list<std::string> SymbolResolutions(
     "r",
     cl::desc("Specify a symbol resolution: filename,symbolname,resolution\n"
@@ -72,6 +81,22 @@ template <typename T> static T check(ErrorOr<T> E, std::string Msg) {
     return std::move(*E);
   check(E.getError(), Msg);
   return T();
+}
+
+namespace {
+// Define the LTOOutput handling
+class LTOOutput : public lto::NativeObjectOutput {
+  std::string Path;
+
+public:
+  LTOOutput(std::string Path) : Path(std::move(Path)) {}
+  std::unique_ptr<raw_pwrite_stream> getStream() override {
+    std::error_code EC;
+    auto S = llvm::make_unique<raw_fd_ostream>(Path, EC, sys::fs::F_None);
+    check(EC, Path);
+    return std::move(S);
+  }
+};
 }
 
 int main(int argc, char **argv) {
@@ -116,9 +141,15 @@ int main(int argc, char **argv) {
   };
 
   if (SaveTemps)
-    check(Conf.addSaveTemps(OutputFilename), "Config::addSaveTemps failed");
+    check(Conf.addSaveTemps(OutputFilename + "."),
+          "Config::addSaveTemps failed");
 
-  LTO Lto(std::move(Conf));
+  ThinBackend Backend;
+  if (ThinLTODistributedIndexes)
+    Backend = createWriteIndexesThinBackend("", "", true, "");
+  else
+    Backend = createInProcessThinBackend(Threads);
+  LTO Lto(std::move(Conf), std::move(Backend));
 
   bool HasErrors = false;
   for (std::string F : InputFilenames) {
@@ -156,13 +187,10 @@ int main(int argc, char **argv) {
   if (HasErrors)
     return 1;
 
-  auto AddStream = [&](size_t Task) {
+  auto AddOutput = [&](size_t Task) {
     std::string Path = OutputFilename + "." + utostr(Task);
-    std::error_code EC;
-    auto S = llvm::make_unique<raw_fd_ostream>(Path, EC, sys::fs::F_None);
-    check(EC, Path);
-    return S;
+    return llvm::make_unique<LTOOutput>(std::move(Path));
   };
 
-  check(Lto.run(AddStream), "LTO::run failed");
+  check(Lto.run(AddOutput), "LTO::run failed");
 }
