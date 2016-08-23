@@ -2016,7 +2016,11 @@ public:
   }
 
   uint64_t getMaxPointerWidth() const override {
-    return getTriple().getArch() == llvm::Triple::amdgcn ? 64 : 32;
+    // for HCC we need to fix max pointer width as 32
+    if (getTriple().getEnvironment() == llvm::Triple::HCC)
+      return 32;
+    else
+      return getTriple().getArch() == llvm::Triple::amdgcn ? 64 : 32;
   }
 
   const char * getClobbers() const override {
