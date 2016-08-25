@@ -4664,6 +4664,12 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                                                  : "-");
   }
 
+  bool splitDwarfInlining =
+      Args.hasFlag(options::OPT_fsplit_dwarf_inlining,
+                   options::OPT_fno_split_dwarf_inlining, true);
+  if (!splitDwarfInlining)
+    CmdArgs.push_back("-fno-split-dwarf-inlining");
+
   Args.ClaimAllArgs(options::OPT_g_Group);
   Arg *SplitDwarfArg = Args.getLastArg(options::OPT_gsplit_dwarf);
   if (Arg *A = Args.getLastArg(options::OPT_g_Group)) {
@@ -4673,8 +4679,15 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       // If you say "-gsplit-dwarf -gline-tables-only", -gsplit-dwarf loses.
       // But -gsplit-dwarf is not a g_group option, hence we have to check the
       // order explicitly. (If -gsplit-dwarf wins, we fix DebugInfoKind later.)
-      if (SplitDwarfArg && DebugInfoKind < codegenoptions::LimitedDebugInfo &&
-          A->getIndex() > SplitDwarfArg->getIndex())
+      // This gets a bit more complicated if you've disabled inline info in the
+      // skeleton CUs (splitDwarfInlining) - then there's value in composing
+      // split-dwarf and line-tables-only, so let those compose naturally in
+      // that case.
+      // And if you just turned off debug info, (-gsplit-dwarf -g0) - do that.
+      if (SplitDwarfArg && A->getIndex() > SplitDwarfArg->getIndex() &&
+          ((DebugInfoKind == codegenoptions::DebugLineTablesOnly &&
+            splitDwarfInlining) ||
+           DebugInfoKind == codegenoptions::NoDebugInfo))
         SplitDwarfArg = nullptr;
     } else
       // For any other 'g' option, use Limited.
@@ -4726,7 +4739,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // splitting and extraction.
   // FIXME: Currently only works on Linux.
   if (getToolChain().getTriple().isOSLinux() && SplitDwarfArg) {
-    DebugInfoKind = codegenoptions::LimitedDebugInfo;
+    if (splitDwarfInlining)
+      DebugInfoKind = codegenoptions::LimitedDebugInfo;
     CmdArgs.push_back("-backend-option");
     CmdArgs.push_back("-split-dwarf=Enable");
   }
