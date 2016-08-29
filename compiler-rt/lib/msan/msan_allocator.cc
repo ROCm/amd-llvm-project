@@ -33,9 +33,9 @@ struct MsanMapUnmapCallback {
 
     // We are about to unmap a chunk of user memory.
     // Mark the corresponding shadow memory as not needed.
-    FlushUnneededShadowMemory(MEM_TO_SHADOW(p), size);
+    ReleaseMemoryToOS(MEM_TO_SHADOW(p), size);
     if (__msan_get_track_origins())
-      FlushUnneededShadowMemory(MEM_TO_ORIGIN(p), size);
+      ReleaseMemoryToOS(MEM_TO_ORIGIN(p), size);
   }
 };
 
@@ -64,6 +64,7 @@ struct MsanMapUnmapCallback {
     static const uptr kMetadataSize = sizeof(Metadata);
     typedef DefaultSizeClassMap SizeClassMap;
     typedef MsanMapUnmapCallback MapUnmapCallback;
+    static const uptr kFlags = 0;
   };
 
   typedef SizeClassAllocator64<AP64> PrimaryAllocator;
@@ -77,6 +78,7 @@ struct MsanMapUnmapCallback {
     static const uptr kMetadataSize = sizeof(Metadata);
     typedef DefaultSizeClassMap SizeClassMap;
     typedef MsanMapUnmapCallback MapUnmapCallback;
+    static const uptr kFlags = 0;
   };
 
   typedef SizeClassAllocator64<AP64> PrimaryAllocator;
