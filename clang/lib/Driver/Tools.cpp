@@ -9843,21 +9843,15 @@ void gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
       SmallString<32> LinkerArgString("--amdgpu-target=");
   
       // map ISA version string to GPU family
-      if (AMDGPUTarget.equals("AMD:AMDGPU:7:0:0")) {
-        LinkerArgString.append("kaveri");
-      } else if (AMDGPUTarget.equals("AMD:AMDGPU:7:0:1")) {
+      if (AMDGPUTarget.equals("AMD:AMDGPU:7:0:1")) {
         LinkerArgString.append("hawaii");
       } else if (AMDGPUTarget.equals("AMD:AMDGPU:8:0:1")) {
         LinkerArgString.append("carrizo");
-      } else if (AMDGPUTarget.equals("AMD:AMDGPU:8:0:2")) {
-        LinkerArgString.append("tonga");
       } else if (AMDGPUTarget.equals("AMD:AMDGPU:8:0:3")) {
         LinkerArgString.append("fiji");
       } else if (AMDGPUTarget.equals("fiji") ||
-                 AMDGPUTarget.equals("kaveri") ||
                  AMDGPUTarget.equals("carrizo") ||
-                 AMDGPUTarget.equals("hawaii") ||
-                 AMDGPUTarget.equals("tonga")) {
+                 AMDGPUTarget.equals("hawaii")) {
         // directly use GPU family
         LinkerArgString.append(AMDGPUTarget);
       } else {
@@ -11795,21 +11789,15 @@ void HCC::CXXAMPLink::ConstructJob(Compilation &C, const JobAction &JA,
     SmallString<32> LinkerArgString("--amdgpu-target=");
 
     // map ISA version string to GPU family
-    if (AMDGPUTarget.equals("AMD:AMDGPU:7:0:0")) {
-      LinkerArgString.append("kaveri");
-    } else if (AMDGPUTarget.equals("AMD:AMDGPU:7:0:1")) {
+    if (AMDGPUTarget.equals("AMD:AMDGPU:7:0:1")) {
       LinkerArgString.append("hawaii");
     } else if (AMDGPUTarget.equals("AMD:AMDGPU:8:0:1")) {
       LinkerArgString.append("carrizo");
-    } else if (AMDGPUTarget.equals("AMD:AMDGPU:8:0:2")) {
-      LinkerArgString.append("tonga");
     } else if (AMDGPUTarget.equals("AMD:AMDGPU:8:0:3")) {
       LinkerArgString.append("fiji");
     } else if (AMDGPUTarget.equals("fiji") ||
-               AMDGPUTarget.equals("kaveri") ||
                AMDGPUTarget.equals("carrizo") ||
-               AMDGPUTarget.equals("hawaii") ||
-               AMDGPUTarget.equals("tonga")) {
+               AMDGPUTarget.equals("hawaii")) {
       // directly use GPU family
       LinkerArgString.append(AMDGPUTarget);
     } else {
