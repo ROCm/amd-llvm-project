@@ -937,6 +937,9 @@ TypeIndex CodeViewDebug::lowerType(const DIType *Ty, const DIType *ClassTy) {
   case dwarf::DW_TAG_base_type:
     return lowerTypeBasic(cast<DIBasicType>(Ty));
   case dwarf::DW_TAG_pointer_type:
+    if (cast<DIDerivedType>(Ty)->getName() == "__vtbl_ptr_type")
+      return lowerTypeVFTableShape(cast<DIDerivedType>(Ty));
+    LLVM_FALLTHROUGH;
   case dwarf::DW_TAG_reference_type:
   case dwarf::DW_TAG_rvalue_reference_type:
     return lowerTypePointer(cast<DIDerivedType>(Ty));
@@ -1137,13 +1140,6 @@ TypeIndex CodeViewDebug::lowerTypeBasic(const DIBasicType *Ty) {
 TypeIndex CodeViewDebug::lowerTypePointer(const DIDerivedType *Ty) {
   TypeIndex PointeeTI = getTypeIndex(Ty->getBaseType());
 
-  // While processing the type being pointed to it is possible we already
-  // created this pointer type.  If so, we check here and return the existing
-  // pointer type.
-  auto I = TypeIndices.find({Ty, nullptr});
-  if (I != TypeIndices.end())
-    return I->second;
-
   // Pointers to simple types can use SimpleTypeMode, rather than having a
   // dedicated pointer type record.
   if (PointeeTI.isSimple() &&
@@ -1264,16 +1260,7 @@ TypeIndex CodeViewDebug::lowerTypeModifier(const DIDerivedType *Ty) {
       BaseTy = cast<DIDerivedType>(BaseTy)->getBaseType().resolve();
   }
   TypeIndex ModifiedTI = getTypeIndex(BaseTy);
-
-  // While processing the type being pointed to, it is possible we already
-  // created this modifier type.  If so, we check here and return the existing
-  // modifier type.
-  auto I = TypeIndices.find({Ty, nullptr});
-  if (I != TypeIndices.end())
-    return I->second;
-
-  ModifierRecord MR(ModifiedTI, Mods);
-  return TypeTable.writeKnownType(MR);
+  return TypeTable.writeKnownType(ModifierRecord(ModifiedTI, Mods));
 }
 
 TypeIndex CodeViewDebug::lowerTypeFunction(const DISubroutineType *Ty) {
@@ -1335,6 +1322,12 @@ TypeIndex CodeViewDebug::lowerTypeMemberFunction(const DISubroutineType *Ty,
       ArgTypeIndices.size(), ArgListIndex, ThisAdjustment));
 
   return TI;
+}
+
+TypeIndex CodeViewDebug::lowerTypeVFTableShape(const DIDerivedType *Ty) {
+  unsigned VSlotCount = Ty->getSizeInBits() / (8 * Asm->MAI->getPointerSize());
+  SmallVector<VFTableSlotKind, 4> Slots(VSlotCount, VFTableSlotKind::Near);
+  return TypeTable.writeKnownType(VFTableShapeRecord(Slots));
 }
 
 static MemberAccess translateAccessFlags(unsigned RecordTag, unsigned Flags) {
@@ -1469,6 +1462,8 @@ struct llvm::ClassInfo {
   // Direct overloaded methods gathered by name.
   MethodsMap Methods;
 
+  TypeIndex VShapeTI;
+
   std::vector<const DICompositeType *> NestedClasses;
 };
 
@@ -1517,11 +1512,13 @@ ClassInfo CodeViewDebug::collectClassInfo(const DICompositeType *Ty) {
         collectMemberInfo(Info, DDTy);
       } else if (DDTy->getTag() == dwarf::DW_TAG_inheritance) {
         Info.Inheritance.push_back(DDTy);
+      } else if (DDTy->getTag() == dwarf::DW_TAG_pointer_type &&
+                 DDTy->getName() == "__vtbl_ptr_type") {
+        Info.VShapeTI = getTypeIndex(DDTy);
       } else if (DDTy->getTag() == dwarf::DW_TAG_friend) {
         // Ignore friend members. It appears that MSVC emitted info about
         // friends in the past, but modern versions do not.
       }
-      // FIXME: Get Clang to emit function virtual table here and handle it.
     } else if (auto *Composite = dyn_cast<DICompositeType>(Element)) {
       Info.NestedClasses.push_back(Composite);
     }
@@ -1662,6 +1659,14 @@ CodeViewDebug::lowerRecordFieldList(const DICompositeType *Ty) {
       continue;
     }
 
+    // Virtual function pointer member.
+    if ((Member->getFlags() & DINode::FlagArtificial) &&
+        Member->getName().startswith("_vptr$")) {
+      Fields.writeMemberType(VFPtrRecord(getTypeIndex(Member->getBaseType())));
+      MemberCount++;
+      continue;
+    }
+
     // Data member.
     uint64_t MemberOffsetInBits =
         Member->getOffsetInBits() + MemberInfo.BaseOffset;
@@ -1720,7 +1725,7 @@ CodeViewDebug::lowerRecordFieldList(const DICompositeType *Ty) {
   }
 
   TypeIndex FieldTI = TypeTable.writeFieldList(Fields);
-  return std::make_tuple(FieldTI, TypeIndex(), MemberCount,
+  return std::make_tuple(FieldTI, Info.VShapeTI, MemberCount,
                          !Info.NestedClasses.empty());
 }
 
