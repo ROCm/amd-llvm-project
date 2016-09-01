@@ -3329,7 +3329,7 @@ SubstDefaultTemplateArgument(Sema &SemaRef,
   // on the previously-computed template arguments.
   if (ArgType->getType()->isDependentType()) {
     Sema::InstantiatingTemplate Inst(SemaRef, TemplateLoc,
-                                     Template, Converted,
+                                     Param, Template, Converted,
                                      SourceRange(TemplateLoc, RAngleLoc));
     if (Inst.isInvalid())
       return nullptr;
@@ -3381,7 +3381,7 @@ SubstDefaultTemplateArgument(Sema &SemaRef,
                              NonTypeTemplateParmDecl *Param,
                         SmallVectorImpl<TemplateArgument> &Converted) {
   Sema::InstantiatingTemplate Inst(SemaRef, TemplateLoc,
-                                   Template, Converted,
+                                   Param, Template, Converted,
                                    SourceRange(TemplateLoc, RAngleLoc));
   if (Inst.isInvalid())
     return ExprError();
@@ -3432,8 +3432,9 @@ SubstDefaultTemplateArgument(Sema &SemaRef,
                              TemplateTemplateParmDecl *Param,
                        SmallVectorImpl<TemplateArgument> &Converted,
                              NestedNameSpecifierLoc &QualifierLoc) {
-  Sema::InstantiatingTemplate Inst(SemaRef, TemplateLoc, Template, Converted,
-                                   SourceRange(TemplateLoc, RAngleLoc));
+  Sema::InstantiatingTemplate Inst(
+      SemaRef, TemplateLoc, TemplateParameter(Param), Template, Converted,
+      SourceRange(TemplateLoc, RAngleLoc));
   if (Inst.isInvalid())
     return TemplateName();
 
@@ -4090,7 +4091,9 @@ bool Sema::CheckTemplateArgumentList(TemplateDecl *Template,
     }
 
     // Introduce an instantiation record that describes where we are using
-    // the default template argument.
+    // the default template argument. We're not actually instantiating a
+    // template here, we just create this object to put a note into the
+    // context stack.
     InstantiatingTemplate Inst(*this, RAngleLoc, Template, *Param, Converted,
                                SourceRange(TemplateLoc, RAngleLoc));
     if (Inst.isInvalid())
@@ -6854,13 +6857,7 @@ Sema::CheckSpecializationInstantiationRedecl(SourceLocation NewLoc,
       //   instantiation of a template appears after a declaration of
       //   an explicit specialization for that template, the explicit
       //   instantiation has no effect.
-      //
-      // In C++98/03 mode, we only give an extension warning here, because it
-      // is not harmful to try to explicitly instantiate something that
-      // has been explicitly specialized.
-      Diag(NewLoc, getLangOpts().CPlusPlus11 ?
-           diag::warn_cxx98_compat_explicit_instantiation_after_specialization :
-           diag::ext_explicit_instantiation_after_specialization)
+      Diag(NewLoc, diag::warn_explicit_instantiation_after_specialization)
         << PrevDecl;
       Diag(PrevDecl->getLocation(),
            diag::note_previous_template_specialization);

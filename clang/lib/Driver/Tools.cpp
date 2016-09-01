@@ -2490,28 +2490,17 @@ static void getAArch64TargetFeatures(const Driver &D, const ArgList &Args,
 
 static void getHexagonTargetFeatures(const ArgList &Args,
                                      std::vector<const char *> &Features) {
-  bool HasHVX = false, HasHVXD = false;
+  handleTargetFeaturesGroup(Args, Features,
+                            options::OPT_m_hexagon_Features_Group);
 
-  // FIXME: This should be able to use handleTargetFeaturesGroup except it is
-  // doing dependent option handling here rather than in initFeatureMap or a
-  // similar handler.
-  for (auto &A : Args) {
-    auto &Opt = A->getOption();
-    if (Opt.matches(options::OPT_mhexagon_hvx))
-      HasHVX = true;
-    else if (Opt.matches(options::OPT_mno_hexagon_hvx))
-      HasHVXD = HasHVX = false;
-    else if (Opt.matches(options::OPT_mhexagon_hvx_double))
-      HasHVXD = HasHVX = true;
-    else if (Opt.matches(options::OPT_mno_hexagon_hvx_double))
-      HasHVXD = false;
-    else
-      continue;
-    A->claim();
+  bool UseLongCalls = false;
+  if (Arg *A = Args.getLastArg(options::OPT_mlong_calls,
+                               options::OPT_mno_long_calls)) {
+    if (A->getOption().matches(options::OPT_mlong_calls))
+      UseLongCalls = true;
   }
 
-  Features.push_back(HasHVX  ? "+hvx" : "-hvx");
-  Features.push_back(HasHVXD ? "+hvx-double" : "-hvx-double");
+  Features.push_back(UseLongCalls ? "+long-calls" : "-long-calls");
 }
 
 static void getWebAssemblyTargetFeatures(const ArgList &Args,
@@ -3200,6 +3189,11 @@ static bool addSanitizerRuntimes(const ToolChain &TC, const ArgList &Args,
   // to be dynamic to be sure we export sanitizer interface functions.
   if (AddExportDynamic)
     CmdArgs.push_back("-export-dynamic");
+
+  const SanitizerArgs &SanArgs = TC.getSanitizerArgs();
+  if (SanArgs.hasCrossDsoCfi() && !AddExportDynamic)
+    CmdArgs.push_back("-export-dynamic-symbol=__cfi_check");
+
   return !StaticRuntimes.empty();
 }
 
@@ -3634,13 +3628,13 @@ static void addPGOAndCoverageFlags(Compilation &C, const Driver &D,
   if (C.getArgs().hasArg(options::OPT_c) ||
       C.getArgs().hasArg(options::OPT_S)) {
     if (Output.isFilename()) {
-      CmdArgs.push_back("-coverage-file");
-      SmallString<128> CoverageFilename;
-      if (Arg *FinalOutput = C.getArgs().getLastArg(options::OPT_o)) {
-        CoverageFilename = FinalOutput->getValue();
-      } else {
-        CoverageFilename = llvm::sys::path::filename(Output.getBaseInput());
-      }
+      CmdArgs.push_back("-coverage-notes-file");
+      SmallString<128> OutputFilename;
+      if (Arg *FinalOutput = C.getArgs().getLastArg(options::OPT_o))
+        OutputFilename = FinalOutput->getValue();
+      else
+        OutputFilename = llvm::sys::path::filename(Output.getBaseInput());
+      SmallString<128> CoverageFilename = OutputFilename;
       if (llvm::sys::path::is_relative(CoverageFilename)) {
         SmallString<128> Pwd;
         if (!llvm::sys::fs::current_path(Pwd)) {
@@ -3648,7 +3642,23 @@ static void addPGOAndCoverageFlags(Compilation &C, const Driver &D,
           CoverageFilename.swap(Pwd);
         }
       }
+      llvm::sys::path::replace_extension(CoverageFilename, "gcno");
       CmdArgs.push_back(Args.MakeArgString(CoverageFilename));
+
+      // Leave -fprofile-dir= an unused argument unless .gcda emission is
+      // enabled. To be polite, with '-fprofile-arcs -fno-profile-arcs' consider
+      // the flag used. There is no -fno-profile-dir, so the user has no
+      // targeted way to suppress the warning.
+      if (Args.hasArg(options::OPT_fprofile_arcs) ||
+          Args.hasArg(options::OPT_coverage)) {
+        CmdArgs.push_back("-coverage-data-file");
+        if (Arg *FProfileDir = Args.getLastArg(options::OPT_fprofile_dir)) {
+          CoverageFilename = FProfileDir->getValue();
+          llvm::sys::path::append(CoverageFilename, OutputFilename);
+        }
+        llvm::sys::path::replace_extension(CoverageFilename, "gcda");
+        CmdArgs.push_back(Args.MakeArgString(CoverageFilename));
+      }
     }
   }
 }
@@ -4039,6 +4049,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
     if (JA.getType() == types::TY_Nothing)
       CmdArgs.push_back("-fsyntax-only");
+    else if (JA.getType() == types::TY_ModuleFile)
+      CmdArgs.push_back("-emit-module-interface");
     else if (UsePCH)
       CmdArgs.push_back("-emit-pch");
     else
@@ -4429,6 +4441,12 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   if (ReciprocalMath)
     CmdArgs.push_back("-freciprocal-math");
 
+  if (!TrappingMath) 
+    CmdArgs.push_back("-fno-trapping-math");
+
+  if (Args.hasArg(options::OPT_fdenormal_fp_math_EQ))
+    Args.AddLastArg(CmdArgs, options::OPT_fdenormal_fp_math_EQ);
+
   // Validate and pass through -fp-contract option.
   if (Arg *A = Args.getLastArg(options::OPT_ffast_math, FastMathAliasOption,
                                options::OPT_fno_fast_math,
@@ -4667,8 +4685,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   bool splitDwarfInlining =
       Args.hasFlag(options::OPT_fsplit_dwarf_inlining,
                    options::OPT_fno_split_dwarf_inlining, true);
-  if (!splitDwarfInlining)
-    CmdArgs.push_back("-fno-split-dwarf-inlining");
 
   Args.ClaimAllArgs(options::OPT_g_Group);
   Arg *SplitDwarfArg = Args.getLastArg(options::OPT_gsplit_dwarf);
@@ -4684,11 +4700,15 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       // split-dwarf and line-tables-only, so let those compose naturally in
       // that case.
       // And if you just turned off debug info, (-gsplit-dwarf -g0) - do that.
-      if (SplitDwarfArg && A->getIndex() > SplitDwarfArg->getIndex() &&
-          ((DebugInfoKind == codegenoptions::DebugLineTablesOnly &&
-            splitDwarfInlining) ||
-           DebugInfoKind == codegenoptions::NoDebugInfo))
-        SplitDwarfArg = nullptr;
+      if (SplitDwarfArg) {
+        if (A->getIndex() > SplitDwarfArg->getIndex()) {
+          if (DebugInfoKind == codegenoptions::NoDebugInfo ||
+              (DebugInfoKind == codegenoptions::DebugLineTablesOnly &&
+               splitDwarfInlining))
+            SplitDwarfArg = nullptr;
+        } else if (splitDwarfInlining)
+          DebugInfoKind = codegenoptions::NoDebugInfo;
+      }
     } else
       // For any other 'g' option, use Limited.
       DebugInfoKind = codegenoptions::LimitedDebugInfo;
@@ -4743,7 +4763,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // splitting and extraction.
   // FIXME: Currently only works on Linux.
   if (getToolChain().getTriple().isOSLinux() && SplitDwarfArg) {
-    if (splitDwarfInlining)
+    if (!splitDwarfInlining)
+      CmdArgs.push_back("-fno-split-dwarf-inlining");
+    if (DebugInfoKind == codegenoptions::NoDebugInfo)
       DebugInfoKind = codegenoptions::LimitedDebugInfo;
     CmdArgs.push_back("-backend-option");
     CmdArgs.push_back("-split-dwarf=Enable");
@@ -5465,20 +5487,26 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // -fmodules enables the use of precompiled modules (off by default).
   // Users can pass -fno-cxx-modules to turn off modules support for
   // C++/Objective-C++ programs.
-  bool HaveModules = false;
+  bool HaveClangModules = false;
   if (Args.hasFlag(options::OPT_fmodules, options::OPT_fno_modules, false)) {
     bool AllowedInCXX = Args.hasFlag(options::OPT_fcxx_modules,
                                      options::OPT_fno_cxx_modules, true);
     if (AllowedInCXX || !types::isCXX(InputType)) {
       CmdArgs.push_back("-fmodules");
-      HaveModules = true;
+      HaveClangModules = true;
     }
   }
 
+  bool HaveAnyModules = HaveClangModules;
+  if (Args.hasArg(options::OPT_fmodules_ts)) {
+    CmdArgs.push_back("-fmodules-ts");
+    HaveAnyModules = true;
+  }
+
   // -fmodule-maps enables implicit reading of module map files. By default,
-  // this is enabled if we are using precompiled modules.
+  // this is enabled if we are using Clang's flavor of precompiled modules.
   if (Args.hasFlag(options::OPT_fimplicit_module_maps,
-                   options::OPT_fno_implicit_module_maps, HaveModules)) {
+                   options::OPT_fno_implicit_module_maps, HaveClangModules)) {
     CmdArgs.push_back("-fimplicit-module-maps");
   }
 
@@ -5498,9 +5526,10 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   // -fno-implicit-modules turns off implicitly compiling modules on demand.
   if (!Args.hasFlag(options::OPT_fimplicit_modules,
-                    options::OPT_fno_implicit_modules)) {
-    CmdArgs.push_back("-fno-implicit-modules");
-  } else if (HaveModules) {
+                    options::OPT_fno_implicit_modules, HaveClangModules)) {
+    if (HaveAnyModules)
+      CmdArgs.push_back("-fno-implicit-modules");
+  } else if (HaveAnyModules) {
     // -fmodule-cache-path specifies where our implicitly-built module files
     // should be written.
     SmallString<128> Path;
@@ -5524,7 +5553,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back(Args.MakeArgString(Path));
   }
 
-  if (HaveModules) {
+  if (HaveAnyModules) {
     // -fprebuilt-module-path specifies where to load the prebuilt module files.
     for (const Arg *A : Args.filtered(options::OPT_fprebuilt_module_path))
       CmdArgs.push_back(Args.MakeArgString(
@@ -5540,14 +5569,14 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddAllArgs(CmdArgs, options::OPT_fmodule_map_file);
 
   // -fmodule-file can be used to specify files containing precompiled modules.
-  if (HaveModules)
+  if (HaveAnyModules)
     Args.AddAllArgs(CmdArgs, options::OPT_fmodule_file);
   else
     Args.ClaimAllArgs(options::OPT_fmodule_file);
 
   // When building modules and generating crashdumps, we need to dump a module
   // dependency VFS alongside the output.
-  if (HaveModules && C.isForDiagnostics()) {
+  if (HaveClangModules && C.isForDiagnostics()) {
     SmallString<128> VFSDir(Output.getFilename());
     llvm::sys::path::replace_extension(VFSDir, ".cache");
     // Add the cache directory as a temp so the crash diagnostics pick it up.
@@ -5558,7 +5587,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back(Args.MakeArgString(VFSDir));
   }
 
-  if (HaveModules)
+  if (HaveClangModules)
     Args.AddLastArg(CmdArgs, options::OPT_fmodules_user_build_path);
 
   // Pass through all -fmodules-ignore-macro arguments.
@@ -6104,7 +6133,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // nice to enable this when doing a crashdump for modules as well.
   if (Args.hasFlag(options::OPT_frewrite_includes,
                    options::OPT_fno_rewrite_includes, false) ||
-      (C.isForDiagnostics() && !HaveModules))
+      (C.isForDiagnostics() && !HaveAnyModules))
     CmdArgs.push_back("-frewrite-includes");
 
   // Only allow -traditional or -traditional-cpp outside in preprocessing modes.

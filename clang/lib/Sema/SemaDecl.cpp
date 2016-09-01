@@ -3368,11 +3368,11 @@ void Sema::MergeVarDeclTypes(VarDecl *New, VarDecl *Old,
       // We are merging a variable declaration New into Old. If it has an array
       // bound, and that bound differs from Old's bound, we should diagnose the
       // mismatch.
-      if (!NewArray->isIncompleteArrayType()) {
+      if (!NewArray->isIncompleteArrayType() && !NewArray->isDependentType()) {
         for (VarDecl *PrevVD = Old->getMostRecentDecl(); PrevVD;
              PrevVD = PrevVD->getPreviousDecl()) {
           const ArrayType *PrevVDTy = Context.getAsArrayType(PrevVD->getType());
-          if (PrevVDTy->isIncompleteArrayType())
+          if (PrevVDTy->isIncompleteArrayType() || PrevVDTy->isDependentType())
             continue;
 
           if (!Context.hasSameType(NewArray, PrevVDTy))
@@ -10444,7 +10444,8 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init,
   }
 
   VarDecl *Def;
-  if ((Def = VDecl->getDefinition()) && Def != VDecl) {
+  if ((Def = VDecl->getDefinition()) && Def != VDecl &&
+      (!VDecl->isStaticDataMember() || VDecl->isOutOfLine())) {
     NamedDecl *Hidden = nullptr;
     if (!hasVisibleDefinition(Def, &Hidden) &&
         (VDecl->getFormalLinkage() == InternalLinkage ||

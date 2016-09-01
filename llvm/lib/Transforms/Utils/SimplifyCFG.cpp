@@ -1433,11 +1433,6 @@ static bool canSinkLastInstruction(ArrayRef<BasicBlock*> Blocks,
     if (isa<PHINode>(I) || I->isEHPad() || isa<AllocaInst>(I) ||
         I->getType()->isTokenTy())
       return false;
-    // Apart from loads and stores, we won't move anything that could
-    // change memory or have sideeffects.
-    if (!isa<StoreInst>(I) && !isa<LoadInst>(I) &&
-        (I->mayHaveSideEffects() || I->mayHaveSideEffects()))
-      return false;
     // Everything must have only one use too, apart from stores which
     // have no uses.
     if (!isa<StoreInst>(I) && !I->hasOneUse())
@@ -1472,10 +1467,11 @@ static bool canSinkLastInstruction(ArrayRef<BasicBlock*> Blocks,
       if (!canReplaceOperandWithVariable(I0, OI))
         // We can't create a PHI from this GEP.
         return false;
-      if ((isa<CallInst>(I0) || isa<InvokeInst>(I0)) && OI != 0)
-        // Don't create indirect calls!
+      // Don't create indirect calls! The called value is the final operand.
+      if ((isa<CallInst>(I0) || isa<InvokeInst>(I0)) && OI == OE - 1) {
         // FIXME: if the call was *already* indirect, we should do this.
         return false;
+      }
       ++NumPHIsRequired;
     }
   }
@@ -1532,6 +1528,11 @@ static void sinkLastInstruction(ArrayRef<BasicBlock*> Blocks) {
   for (unsigned O = 0, E = I0->getNumOperands(); O != E; ++O)
     I0->getOperandUse(O).set(NewOperands[O]);
   I0->moveBefore(&*BBEnd->getFirstInsertionPt());
+
+  // Update metadata.
+  for (auto *I : Insts)
+    if (I != I0)
+      combineMetadataForCSE(I0, I);
 
   if (!isa<StoreInst>(I0)) {
     // canSinkLastInstruction checked that all instructions were used by
@@ -2110,14 +2111,20 @@ static bool FoldTwoEntryPHINode(PHINode *PN, const TargetTransformInfo &TTI,
 
   // Move all 'aggressive' instructions, which are defined in the
   // conditional parts of the if's up to the dominating block.
-  if (IfBlock1)
+  if (IfBlock1) {
+    for (auto &I : *IfBlock1)
+      I.dropUnknownNonDebugMetadata();
     DomBlock->getInstList().splice(InsertPt->getIterator(),
                                    IfBlock1->getInstList(), IfBlock1->begin(),
                                    IfBlock1->getTerminator()->getIterator());
-  if (IfBlock2)
+  }
+  if (IfBlock2) {
+    for (auto &I : *IfBlock2)
+      I.dropUnknownNonDebugMetadata();
     DomBlock->getInstList().splice(InsertPt->getIterator(),
                                    IfBlock2->getInstList(), IfBlock2->begin(),
                                    IfBlock2->getTerminator()->getIterator());
+  }
 
   while (PHINode *PN = dyn_cast<PHINode>(BB->begin())) {
     // Change the PHI node into a select instruction.
