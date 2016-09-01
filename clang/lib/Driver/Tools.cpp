@@ -11767,17 +11767,6 @@ void HCC::CXXAMPLink::ConstructJob(Compilation &C, const JobAction &JA,
   if (Args.hasArg(options::OPT_v))
     CmdArgs.push_back("--verbose");
 
-  // suppress OpenCL code production if HSA extension or HC mode is used
-  if (Args.hasArg(options::OPT_hc_mode)) {
-    CmdArgs.push_back("--disable-opencl");
-  } else {
-    for (arg_iterator it = Args.filtered_begin(options::OPT_Xclang); it != Args.filtered_end(); ++it) {
-      if ((*it)->containsValue("-fhsa-ext")) {
-        CmdArgs.push_back("--disable-opencl");
-      }
-    }
-  }
-
   // specify AMDGPU target
   if (Args.hasArg(options::OPT_amdgpu_target_EQ)) {
     Arg* AMDGPUTargetArg = Args.getLastArg(options::OPT_amdgpu_target_EQ);
