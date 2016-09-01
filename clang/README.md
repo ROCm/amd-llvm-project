@@ -1,4 +1,4 @@
-ToT HCC Clang 
+ToT HCC Clang
 =============
 
 This repository ToT HCC Clang which is synchronized with upstream Clang.
@@ -22,6 +22,7 @@ How to Build It
 This is how I build it now. The commands assumes:
 - ROCm stack is already installed
 - LLVM / LLD ToT are built at ~/hcc/llvm_upstream/build .
+- ROCm-Device-Libs is built, and installed at ~/hcc/ROCm-Device-Libs/build/dist
 
 ```
 git clone --recursive -b clang_tot_upgrade git@github.com:RadeonOpenCompute/hcc.git hcc_upstream
@@ -31,8 +32,8 @@ cmake \
     -DCMAKE_BUILD_TYPE=Release \
     -DHSA_LLVM_BIN_DIR=~/hcc/llvm_upstream/build/bin \
     -DHSA_AMDGPU_GPU_TARGET=AMD:AMDGPU:8:0:3 \
-    -DHSA_USE_AMDGPU_BACKEND=ON \
+    -DROCM_DEVICE_LIB_DIR=~/hcc/ROCm-Device-Libs/build/dist/lib \
     ../hcc_upstream
-make -j40 world
-make -j40
+make -j56 world
+make -j56
 ```
