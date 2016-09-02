@@ -1,4 +1,4 @@
-//===-- Example.cpp - Example code for documentation ----------------------===//
+//===-- CUDASaxpy.cpp - Example of CUDA saxpy with StreamExecutor API -----===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -15,10 +15,10 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include <algorithm>
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
-#include <memory>
 #include <vector>
 
 #include "streamexecutor/StreamExecutor.h"
@@ -52,6 +52,7 @@ static streamexecutor::MultiKernelLoaderSpec SaxpyLoaderSpec = []() {
 /// [Example saxpy compiler-generated]
 
 /// [Example saxpy host PTX]
+// The PTX text for a saxpy kernel.
 const char *__compilergen::SaxpyPTX = R"(
   .version 4.3
   .target sm_20
@@ -111,7 +112,7 @@ int main() {
   se::Device *Device = getOrDie(Platform->getDevice(0));
 
   // Load the kernel onto the device.
-  std::unique_ptr<cg::SaxpyKernel> Kernel =
+  cg::SaxpyKernel Kernel =
       getOrDie(Device->createKernel<cg::SaxpyKernel>(cg::SaxpyLoaderSpec));
 
   // Allocate memory on the device.
@@ -124,19 +125,13 @@ int main() {
   se::Stream Stream = getOrDie(Device->createStream());
   Stream.thenCopyH2D<float>(HostX, X)
       .thenCopyH2D<float>(HostY, Y)
-      .thenLaunch(ArraySize, 1, *Kernel, A, X, Y)
+      .thenLaunch(ArraySize, 1, Kernel, A, X, Y)
       .thenCopyD2H<float>(X, HostX);
   // Wait for the stream to complete.
   se::dieIfError(Stream.blockHostUntilDone());
 
   // Process output data in HostX.
   std::vector<float> ExpectedX = {4, 47, 90, 133};
-  for (size_t I = 0; I < ArraySize; ++I) {
-    assert(HostX[I] == ExpectedX[I]);
-  }
-
-  // Free device memory.
-  se::dieIfError(Device->freeDeviceMemory(X));
-  se::dieIfError(Device->freeDeviceMemory(Y));
+  assert(std::equal(ExpectedX.begin(), ExpectedX.end(), HostX.begin()));
   /// [Example saxpy host main]
 }
