@@ -21,7 +21,6 @@ How to Build It
 ===============
 This is how I build it now. The commands assumes:
 - ROCm stack is already installed
-- LLVM / LLD ToT are built at ~/hcc/llvm_upstream/build .
 - ROCm-Device-Libs is built, and installed at ~/hcc/ROCm-Device-Libs/build/dist
 
 ```
@@ -30,7 +29,6 @@ mkdir build_upstream
 cd build_upstream
 cmake \
     -DCMAKE_BUILD_TYPE=Release \
-    -DHSA_LLVM_BIN_DIR=~/hcc/llvm_upstream/build/bin \
     -DHSA_AMDGPU_GPU_TARGET=AMD:AMDGPU:8:0:3 \
     -DROCM_DEVICE_LIB_DIR=~/hcc/ROCm-Device-Libs/build/dist/lib \
     ../hcc_upstream
