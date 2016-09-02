@@ -7855,6 +7855,9 @@ public:
     SigAtomicType = SignedLong;
     LongDoubleWidth = LongDoubleAlign = 128;
     LongDoubleFormat = &llvm::APFloat::IEEEquad;
+    SizeType = UnsignedInt;
+    PtrDiffType = SignedInt;
+    IntPtrType = SignedInt;
   }
 
 protected:
@@ -7973,6 +7976,9 @@ public:
     LongAlign = LongWidth = 64;
     PointerAlign = PointerWidth = 64;
     MaxAtomicPromoteWidth = MaxAtomicInlineWidth = 64;
+    SizeType = UnsignedLong;
+    PtrDiffType = SignedLong;
+    IntPtrType = SignedLong;
     resetDataLayout("e-m:e-p:64:64-i64:64-n32:64-S128");
   }
 

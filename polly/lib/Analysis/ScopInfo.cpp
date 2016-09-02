@@ -289,7 +289,7 @@ ScopArrayInfo::getFromAccessFunction(__isl_keep isl_pw_multi_aff *PMA) {
   return getFromId(Id);
 }
 
-const ScopArrayInfo *ScopArrayInfo::getFromId(isl_id *Id) {
+const ScopArrayInfo *ScopArrayInfo::getFromId(__isl_take isl_id *Id) {
   void *User = isl_id_get_user(Id);
   const ScopArrayInfo *SAI = static_cast<ScopArrayInfo *>(User);
   isl_id_free(Id);
@@ -499,7 +499,7 @@ MemoryAccess::~MemoryAccess() {
   isl_map_free(NewAccessRelation);
 }
 
-const ScopArrayInfo *MemoryAccess::getScopArrayInfo() const {
+const ScopArrayInfo *MemoryAccess::getOriginalScopArrayInfo() const {
   isl_id *ArrayId = getArrayId();
   void *User = isl_id_get_user(ArrayId);
   const ScopArrayInfo *SAI = static_cast<ScopArrayInfo *>(User);
@@ -507,8 +507,22 @@ const ScopArrayInfo *MemoryAccess::getScopArrayInfo() const {
   return SAI;
 }
 
-__isl_give isl_id *MemoryAccess::getArrayId() const {
+const ScopArrayInfo *MemoryAccess::getLatestScopArrayInfo() const {
+  isl_id *ArrayId = getLatestArrayId();
+  void *User = isl_id_get_user(ArrayId);
+  const ScopArrayInfo *SAI = static_cast<ScopArrayInfo *>(User);
+  isl_id_free(ArrayId);
+  return SAI;
+}
+
+__isl_give isl_id *MemoryAccess::getOriginalArrayId() const {
   return isl_map_get_tuple_id(AccessRelation, isl_dim_out);
+}
+
+__isl_give isl_id *MemoryAccess::getLatestArrayId() const {
+  if (!hasNewAccessRelation())
+    return getOriginalArrayId();
+  return isl_map_get_tuple_id(NewAccessRelation, isl_dim_out);
 }
 
 __isl_give isl_map *MemoryAccess::getAddressFunction() const {
@@ -954,15 +968,53 @@ bool MemoryAccess::isStrideX(__isl_take const isl_map *Schedule,
   return IsStrideX;
 }
 
-bool MemoryAccess::isStrideZero(const isl_map *Schedule) const {
+bool MemoryAccess::isStrideZero(__isl_take const isl_map *Schedule) const {
   return isStrideX(Schedule, 0);
 }
 
-bool MemoryAccess::isStrideOne(const isl_map *Schedule) const {
+bool MemoryAccess::isStrideOne(__isl_take const isl_map *Schedule) const {
   return isStrideX(Schedule, 1);
 }
 
-void MemoryAccess::setNewAccessRelation(isl_map *NewAccess) {
+void MemoryAccess::setNewAccessRelation(__isl_take isl_map *NewAccess) {
+  assert(NewAccess);
+
+#ifndef NDEBUG
+  // Check domain space compatibility.
+  auto *NewSpace = isl_map_get_space(NewAccess);
+  auto *NewDomainSpace = isl_space_domain(isl_space_copy(NewSpace));
+  auto *OriginalDomainSpace = getStatement()->getDomainSpace();
+  assert(isl_space_has_equal_tuples(OriginalDomainSpace, NewDomainSpace));
+  isl_space_free(NewDomainSpace);
+  isl_space_free(OriginalDomainSpace);
+
+  // Check whether there is an access for every statement instance.
+  auto *StmtDomain = getStatement()->getDomain();
+  StmtDomain = isl_set_intersect_params(
+      StmtDomain, getStatement()->getParent()->getContext());
+  auto *NewDomain = isl_map_domain(isl_map_copy(NewAccess));
+  assert(isl_set_is_subset(StmtDomain, NewDomain) &&
+         "Partial accesses not supported");
+  isl_set_free(NewDomain);
+  isl_set_free(StmtDomain);
+
+  // Check whether access dimensions correspond to number of dimensions of the
+  // accesses array.
+  auto *NewAccessSpace = isl_space_range(NewSpace);
+  assert(isl_space_has_tuple_id(NewAccessSpace, isl_dim_set) &&
+         "Must specify the array that is accessed");
+  auto *NewArrayId = isl_space_get_tuple_id(NewAccessSpace, isl_dim_set);
+  auto *SAI = static_cast<ScopArrayInfo *>(isl_id_get_user(NewArrayId));
+  assert(SAI && "Must set a ScopArrayInfo");
+  assert(!SAI->getBasePtrOriginSAI() &&
+         "Indirect array not supported by codegen");
+  auto Dims = SAI->getNumberOfDimensions();
+  assert(isl_space_dim(NewAccessSpace, isl_dim_set) == Dims &&
+         "Access dims must match array dims");
+  isl_space_free(NewAccessSpace);
+  isl_id_free(NewArrayId);
+#endif
+
   isl_map_free(NewAccessRelation);
   NewAccessRelation = NewAccess;
 }
@@ -1806,7 +1858,8 @@ __isl_give isl_id *Scop::getIdForParam(const SCEV *Parameter) {
   return isl_id_copy(ParameterIds.lookup(Parameter));
 }
 
-__isl_give isl_set *Scop::addNonEmptyDomainConstraints(isl_set *C) const {
+__isl_give isl_set *
+Scop::addNonEmptyDomainConstraints(__isl_take isl_set *C) const {
   isl_set *DomainContext = isl_union_set_params(getDomains());
   return isl_set_intersect_params(C, DomainContext);
 }
@@ -2580,10 +2633,10 @@ bool Scop::buildDomainsWithBranchConstraints(Region *R, DominatorTree &DT,
   return true;
 }
 
-__isl_give isl_set *Scop::getPredecessorDomainConstraints(BasicBlock *BB,
-                                                          isl_set *Domain,
-                                                          DominatorTree &DT,
-                                                          LoopInfo &LI) {
+__isl_give isl_set *
+Scop::getPredecessorDomainConstraints(BasicBlock *BB,
+                                      __isl_keep isl_set *Domain,
+                                      DominatorTree &DT, LoopInfo &LI) {
   // If @p BB is the ScopEntry we are done
   if (R.getEntry() == BB)
     return isl_set_universe(isl_set_get_space(Domain));
