@@ -1301,6 +1301,7 @@ def SI_RETURN : SPseudoInstSI <
   let isReturn = 1;
   let hasSideEffects = 1;
   let hasNoSchedulingInfo = 1;
+  let DisableWQM = 1;
 }
 
 let Defs = [M0, EXEC],
@@ -1352,10 +1353,11 @@ multiclass SI_SPILL_SGPR <RegisterClass sgpr_class> {
   } // End UseNamedOperandTable = 1
 }
 
-// It's unclear whether you can use M0 as the output of v_readlane_b32
-// instructions, so use SReg_32_XM0 register class for spills to prevent
-// this from happening.
-defm SI_SPILL_S32  : SI_SPILL_SGPR <SReg_32_XM0>;
+// You cannot use M0 as the output of v_readlane_b32 instructions or
+// use it in the sdata operand of SMEM instructions. We still need to
+// be able to spill the physical register m0, so allow it for
+// SI_SPILL_32_* instructions.
+defm SI_SPILL_S32  : SI_SPILL_SGPR <SReg_32>;
 defm SI_SPILL_S64  : SI_SPILL_SGPR <SReg_64>;
 defm SI_SPILL_S128 : SI_SPILL_SGPR <SReg_128>;
 defm SI_SPILL_S256 : SI_SPILL_SGPR <SReg_256>;
@@ -1369,6 +1371,8 @@ multiclass SI_SPILL_VGPR <RegisterClass vgpr_class> {
            SReg_32:$scratch_offset, i32imm:$offset)> {
       let mayStore = 1;
       let mayLoad = 0;
+      // (2 * 4) + (8 * num_subregs) bytes maximum
+      let Size = !add(!shl(!srl(vgpr_class.Size, 5), 3), 8);
     }
 
     def _RESTORE : VPseudoInstSI <
@@ -1377,6 +1381,9 @@ multiclass SI_SPILL_VGPR <RegisterClass vgpr_class> {
            i32imm:$offset)> {
       let mayStore = 0;
       let mayLoad = 1;
+
+      // (2 * 4) + (8 * num_subregs) bytes maximum
+      let Size = !add(!shl(!srl(vgpr_class.Size, 5), 3), 8);
     }
   } // End UseNamedOperandTable = 1, VGPRSpill = 1
 }
