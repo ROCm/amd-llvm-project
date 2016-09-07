@@ -414,10 +414,12 @@ def X86VPermt2     : SDNode<"X86ISD::VPERMV3",
                                          SDTCisSameSizeAs<0,2>,
                                          SDTCisSameAs<0,3>]>, []>;
 
+// Even though the index operand should be integer, we need to make it match the
+// destination type so that we can pattern match the masked version where the
+// index is also the passthru operand.
 def X86VPermi2X   : SDNode<"X86ISD::VPERMIV3",
-                    SDTypeProfile<1, 3, [SDTCisVec<0>, SDTCisInt<1>,
-                                         SDTCisVec<1>, SDTCisSameNumEltsAs<0, 1>,
-                                         SDTCisSameSizeAs<0,1>,
+                    SDTypeProfile<1, 3, [SDTCisVec<0>,
+                                         SDTCisSameAs<0,1>,
                                          SDTCisSameAs<0,2>,
                                          SDTCisSameAs<0,3>]>, []>;
 
@@ -676,11 +678,6 @@ def alignedload256 : PatFrag<(ops node:$ptr), (load node:$ptr), [{
 def alignedload512 : PatFrag<(ops node:$ptr), (load node:$ptr), [{
   return cast<LoadSDNode>(N)->getAlignment() >= 64;
 }]>;
-
-def alignedloadfsf32 : PatFrag<(ops node:$ptr),
-                               (f32 (alignedload node:$ptr))>;
-def alignedloadfsf64 : PatFrag<(ops node:$ptr),
-                               (f64 (alignedload node:$ptr))>;
 
 // 128-bit aligned load pattern fragments
 // NOTE: all 128-bit integer vector loads are promoted to v2i64

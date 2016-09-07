@@ -1975,6 +1975,11 @@
 // ARMEABIHARDFP:#define __arm 1
 // ARMEABIHARDFP:#define __arm__ 1
 
+// RUN: %clang_cc1 -E -dM -ffreestanding -triple=armv6-unknown-cloudabi-eabihf < /dev/null | FileCheck -match-full-lines -check-prefix ARMV6-CLOUDABI %s
+//
+// ARMV6-CLOUDABI:#define __CloudABI__ 1
+// ARMV6-CLOUDABI:#define __arm__ 1
+
 // RUN: %clang_cc1 -E -dM -ffreestanding -triple=arm-netbsd-eabi < /dev/null | FileCheck -match-full-lines -check-prefix ARM-NETBSD %s
 //
 // ARM-NETBSD-NOT:#define _LP64
@@ -6648,6 +6653,7 @@
 // RUN: %clang_cc1 -x cl -E -dM -ffreestanding -triple=amdgcn < /dev/null | FileCheck -match-full-lines -check-prefix AMDGCN --check-prefix AMDGPU %s
 // RUN: %clang_cc1 -x cl -E -dM -ffreestanding -triple=r600 -target-cpu caicos < /dev/null | FileCheck -match-full-lines --check-prefix AMDGPU %s
 //
+// AMDGPU:#define __ENDIAN_LITTLE__ 1
 // AMDGPU:#define cl_khr_byte_addressable_store 1
 // AMDGCN:#define cl_khr_fp64 1
 // AMDGPU:#define cl_khr_global_int32_base_atomics 1

@@ -879,7 +879,6 @@ public:
     : TargetInfo(Triple), HasVSX(false), HasP8Vector(false),
       HasP8Crypto(false), HasDirectMove(false), HasQPX(false), HasHTM(false),
       HasBPERMD(false), HasExtDiv(false) {
-    BigEndian = (Triple.getArch() != llvm::Triple::ppc64le);
     SimdDefaultAlign = 128;
     LongDoubleWidth = LongDoubleAlign = 128;
     LongDoubleFormat = &llvm::APFloat::PPCDoubleDouble;
@@ -1712,7 +1711,6 @@ class NVPTXTargetInfo : public TargetInfo {
 public:
   NVPTXTargetInfo(const llvm::Triple &Triple, const TargetOptions &Opts)
       : TargetInfo(Triple) {
-    BigEndian = false;
     TLSSupported = false;
     LongWidth = LongAlign = 64;
     AddrSpaceMap = &NVPTXAddrSpaceMap;
@@ -2678,7 +2676,6 @@ class X86TargetInfo : public TargetInfo {
 public:
   X86TargetInfo(const llvm::Triple &Triple, const TargetOptions &)
       : TargetInfo(Triple) {
-    BigEndian = false;
     LongDoubleFormat = &llvm::APFloat::x87DoubleExtended;
   }
   unsigned getFloatEvalMethod() const override {
@@ -4893,11 +4890,9 @@ class ARMTargetInfo : public TargetInfo {
   }
 
 public:
-  ARMTargetInfo(const llvm::Triple &Triple, const TargetOptions &Opts,
-                bool IsBigEndian)
+  ARMTargetInfo(const llvm::Triple &Triple, const TargetOptions &Opts)
       : TargetInfo(Triple), FPMath(FP_Default), IsAAPCS(true), LDREX(0),
         HW_FP(0) {
-    BigEndian = IsBigEndian;
 
     switch (getTriple().getOS()) {
     case llvm::Triple::NetBSD:
@@ -5537,7 +5532,7 @@ const Builtin::Info ARMTargetInfo::BuiltinInfo[] = {
 class ARMleTargetInfo : public ARMTargetInfo {
 public:
   ARMleTargetInfo(const llvm::Triple &Triple, const TargetOptions &Opts)
-      : ARMTargetInfo(Triple, Opts, /*BigEndian=*/false) {}
+      : ARMTargetInfo(Triple, Opts) {}
   void getTargetDefines(const LangOptions &Opts,
                         MacroBuilder &Builder) const override {
     Builder.defineMacro("__ARMEL__");
@@ -5548,7 +5543,7 @@ public:
 class ARMbeTargetInfo : public ARMTargetInfo {
 public:
   ARMbeTargetInfo(const llvm::Triple &Triple, const TargetOptions &Opts)
-      : ARMTargetInfo(Triple, Opts, /*BigEndian=*/true) {}
+      : ARMTargetInfo(Triple, Opts) {}
   void getTargetDefines(const LangOptions &Opts,
                         MacroBuilder &Builder) const override {
     Builder.defineMacro("__ARMEB__");
@@ -6059,7 +6054,6 @@ class AArch64leTargetInfo : public AArch64TargetInfo {
 public:
   AArch64leTargetInfo(const llvm::Triple &Triple, const TargetOptions &Opts)
       : AArch64TargetInfo(Triple, Opts) {
-    BigEndian = false;
   }
   void getTargetDefines(const LangOptions &Opts,
                         MacroBuilder &Builder) const override {
@@ -6131,7 +6125,6 @@ class HexagonTargetInfo : public TargetInfo {
 public:
   HexagonTargetInfo(const llvm::Triple &Triple, const TargetOptions &)
       : TargetInfo(Triple) {
-    BigEndian = false;
     // Specify the vector alignment explicitly. For v512x1, the calculated
     // alignment would be 512*alignment(i1), which is 512 bytes, instead of
     // the required minimum of 64 bytes.
@@ -6761,7 +6754,6 @@ class SparcV8elTargetInfo : public SparcV8TargetInfo {
    SparcV8elTargetInfo(const llvm::Triple &Triple, const TargetOptions &Opts)
        : SparcV8TargetInfo(Triple, Opts) {
      resetDataLayout("e-m:e-p:32:32-i64:64-f128:64-n32-S64");
-     BigEndian = false;
   }
 };
 
@@ -6996,7 +6988,6 @@ class MSP430TargetInfo : public TargetInfo {
 public:
   MSP430TargetInfo(const llvm::Triple &Triple, const TargetOptions &)
       : TargetInfo(Triple) {
-    BigEndian = false;
     TLSSupported = false;
     IntWidth = 16;
     IntAlign = 16;
@@ -7146,10 +7137,8 @@ public:
     Int64Type   = SignedLong;
     RegParmMax = 5;
     if (Triple.getArch() == llvm::Triple::bpfeb) {
-      BigEndian = true;
       resetDataLayout("E-m:e-p:64:64-i64:64-n32:64-S128");
     } else {
-      BigEndian = false;
       resetDataLayout("e-m:e-p:64:64-i64:64-n32:64-S128");
     }
     MaxAtomicPromoteWidth = 64;
@@ -7228,8 +7217,6 @@ public:
         IsNan2008(false), IsSingleFloat(false), FloatABI(HardFloat),
         DspRev(NoDSP), HasMSA(false), HasFP64(false) {
     TheCXXABI.set(TargetCXXABI::GenericMIPS);
-    BigEndian = getTriple().getArch() == llvm::Triple::mips ||
-                getTriple().getArch() == llvm::Triple::mips64;
 
     setABI((getTriple().getArch() == llvm::Triple::mips ||
             getTriple().getArch() == llvm::Triple::mipsel)
@@ -7732,7 +7719,6 @@ class PNaClTargetInfo : public TargetInfo {
 public:
   PNaClTargetInfo(const llvm::Triple &Triple, const TargetOptions &Opts)
       : TargetInfo(Triple) {
-    BigEndian = false;
     this->LongAlign = 32;
     this->LongWidth = 32;
     this->PointerAlign = 32;
@@ -7800,7 +7786,6 @@ class Le64TargetInfo : public TargetInfo {
 public:
   Le64TargetInfo(const llvm::Triple &Triple, const TargetOptions &)
       : TargetInfo(Triple) {
-    BigEndian = false;
     NoAsmVariants = true;
     LongWidth = LongAlign = PointerWidth = PointerAlign = 64;
     MaxAtomicPromoteWidth = MaxAtomicInlineWidth = 64;
@@ -7846,7 +7831,6 @@ class WebAssemblyTargetInfo : public TargetInfo {
 public:
   explicit WebAssemblyTargetInfo(const llvm::Triple &T, const TargetOptions &)
       : TargetInfo(T), SIMDLevel(NoSIMD) {
-    BigEndian = false;
     NoAsmVariants = true;
     SuitableAlign = 128;
     LargeArrayMinWidth = 128;
@@ -8013,7 +7997,6 @@ public:
            "SPIR target must use unknown OS");
     assert(getTriple().getEnvironment() == llvm::Triple::UnknownEnvironment &&
            "SPIR target must use unknown environment type");
-    BigEndian = false;
     TLSSupported = false;
     LongWidth = LongAlign = 64;
     AddrSpaceMap = &SPIRAddrSpaceMap;
@@ -8097,7 +8080,6 @@ class XCoreTargetInfo : public TargetInfo {
 public:
   XCoreTargetInfo(const llvm::Triple &Triple, const TargetOptions &)
       : TargetInfo(Triple) {
-    BigEndian = false;
     NoAsmVariants = true;
     LongLongAlign = 32;
     SuitableAlign = 32;
@@ -8276,6 +8258,8 @@ static TargetInfo *AllocateTarget(const llvm::Triple &Triple,
       return new DarwinARMTargetInfo(Triple, Opts);
 
     switch (os) {
+    case llvm::Triple::CloudABI:
+      return new CloudABITargetInfo<ARMleTargetInfo>(Triple, Opts);
     case llvm::Triple::Linux:
       return new LinuxTargetInfo<ARMleTargetInfo>(Triple, Opts);
     case llvm::Triple::FreeBSD:
