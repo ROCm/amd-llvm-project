@@ -2595,10 +2595,6 @@ bool X86InstrInfo::isReallyTriviallyReMaterializable(const MachineInstr &MI,
   case X86::VMOVDQUYrm:
   case X86::MMX_MOVD64rm:
   case X86::MMX_MOVQ64rm:
-  case X86::FsVMOVAPSrm:
-  case X86::FsVMOVAPDrm:
-  case X86::FsMOVAPSrm:
-  case X86::FsMOVAPDrm:
   // AVX-512
   case X86::VMOVSSZrm:
   case X86::VMOVSDZrm:
@@ -3713,7 +3709,8 @@ bool X86InstrInfo::findFMA3CommutedOpIndices(
 
 bool X86InstrInfo::findCommutedOpIndices(MachineInstr &MI, unsigned &SrcOpIdx1,
                                          unsigned &SrcOpIdx2) const {
-  if (!MI.isCommutable())
+  const MCInstrDesc &Desc = MI.getDesc();
+  if (!Desc.isCommutable())
     return false;
 
   switch (MI.getOpcode()) {
@@ -3754,6 +3751,27 @@ bool X86InstrInfo::findCommutedOpIndices(MachineInstr &MI, unsigned &SrcOpIdx1,
         X86InstrFMA3Info::getFMA3Group(MI.getOpcode());
     if (FMA3Group)
       return findFMA3CommutedOpIndices(MI, SrcOpIdx1, SrcOpIdx2, *FMA3Group);
+
+    // Handled masked instructions since we need to skip over the mask input
+    // and the preserved input.
+    if (Desc.TSFlags & X86II::EVEX_K) {
+      unsigned CommutableOpIdx1 = Desc.getNumDefs() + 1;
+      // If there is no preserved input we only need to skip 1 operand.
+      if (MI.getDesc().getOperandConstraint(Desc.getNumDefs(),
+                                            MCOI::TIED_TO) != -1)
+        ++CommutableOpIdx1;
+      unsigned CommutableOpIdx2 = CommutableOpIdx1 + 1;
+      if (!fixCommutedOpIndices(SrcOpIdx1, SrcOpIdx2,
+                                CommutableOpIdx1, CommutableOpIdx2))
+        return false;
+
+      if (!MI.getOperand(SrcOpIdx1).isReg() ||
+          !MI.getOperand(SrcOpIdx2).isReg())
+        // No idea.
+        return false;
+      return true;
+    }
+
     return TargetInstrInfo::findCommutedOpIndices(MI, SrcOpIdx1, SrcOpIdx2);
   }
   return false;
@@ -4405,16 +4423,63 @@ static bool isHReg(unsigned Reg) {
 }
 
 // Try and copy between VR128/VR64 and GR64 registers.
-static unsigned CopyToFromAsymmetricReg(unsigned DestReg, unsigned SrcReg,
+static unsigned CopyToFromAsymmetricReg(unsigned &DestReg, unsigned &SrcReg,
                                         const X86Subtarget &Subtarget) {
+  bool HasAVX = Subtarget.hasAVX();
+  bool HasAVX512 = Subtarget.hasAVX512();
+
+  // SrcReg(MaskReg) -> DestReg(GR64)
+  // SrcReg(MaskReg) -> DestReg(GR32)
+  // SrcReg(MaskReg) -> DestReg(GR16)
+  // SrcReg(MaskReg) -> DestReg(GR8)
+
+  // All KMASK RegClasses hold the same k registers, can be tested against anyone.
+  if (X86::VK16RegClass.contains(SrcReg)) {
+    if (X86::GR64RegClass.contains(DestReg)) {
+      assert(Subtarget.hasBWI());
+      return X86::KMOVQrk;
+    }
+    if (X86::GR32RegClass.contains(DestReg))
+      return Subtarget.hasBWI() ? X86::KMOVDrk : X86::KMOVWrk;
+    if (X86::GR16RegClass.contains(DestReg)) {
+      DestReg = getX86SubSuperRegister(DestReg, 32);
+      return X86::KMOVWrk;
+    }
+    if (X86::GR8RegClass.contains(DestReg)) {
+      DestReg = getX86SubSuperRegister(DestReg, 32);
+      return Subtarget.hasDQI() ? X86::KMOVBrk : X86::KMOVWrk;
+    }
+  }
+
+  // SrcReg(GR64) -> DestReg(MaskReg)
+  // SrcReg(GR32) -> DestReg(MaskReg)
+  // SrcReg(GR16) -> DestReg(MaskReg)
+  // SrcReg(GR8)  -> DestReg(MaskReg)
+
+  // All KMASK RegClasses hold the same k registers, can be tested against anyone.
+  if (X86::VK16RegClass.contains(DestReg)) {
+    if (X86::GR64RegClass.contains(SrcReg)) {
+      assert(Subtarget.hasBWI());
+      return X86::KMOVQkr;
+    }
+    if (X86::GR32RegClass.contains(SrcReg))
+      return Subtarget.hasBWI() ? X86::KMOVDkr : X86::KMOVWkr;
+    if (X86::GR16RegClass.contains(SrcReg)) {
+      SrcReg = getX86SubSuperRegister(SrcReg, 32);
+      return X86::KMOVWkr;
+    }
+    if (X86::GR8RegClass.contains(SrcReg)) {
+      SrcReg = getX86SubSuperRegister(SrcReg, 32);
+      return Subtarget.hasDQI() ? X86::KMOVBkr : X86::KMOVWkr;
+    }
+  }
+
 
   // SrcReg(VR128) -> DestReg(GR64)
   // SrcReg(VR64)  -> DestReg(GR64)
   // SrcReg(GR64)  -> DestReg(VR128)
   // SrcReg(GR64)  -> DestReg(VR64)
 
-  bool HasAVX = Subtarget.hasAVX();
-  bool HasAVX512 = Subtarget.hasAVX512();
   if (X86::GR64RegClass.contains(DestReg)) {
     if (X86::VR128XRegClass.contains(SrcReg))
       // Copy from a VR128 register to a GR64 register.
@@ -4454,91 +4519,13 @@ static unsigned CopyToFromAsymmetricReg(unsigned DestReg, unsigned SrcReg,
   return 0;
 }
 
-static bool MaskRegClassContains(unsigned Reg) {
-  // All KMASK RegClasses hold the same k registers, can be tested against anyone.
-  return X86::VK16RegClass.contains(Reg);
-}
-
-static bool GRRegClassContains(unsigned Reg) {
-  return X86::GR64RegClass.contains(Reg) ||
-         X86::GR32RegClass.contains(Reg) ||
-         X86::GR16RegClass.contains(Reg) ||
-         X86::GR8RegClass.contains(Reg);
-}
-static
-unsigned copyPhysRegOpcode_AVX512_DQ(unsigned& DestReg, unsigned& SrcReg) {
-  if (MaskRegClassContains(SrcReg) && X86::GR8RegClass.contains(DestReg)) {
-    DestReg = getX86SubSuperRegister(DestReg, 32);
-    return X86::KMOVBrk;
-  }
-  if (MaskRegClassContains(DestReg) && X86::GR8RegClass.contains(SrcReg)) {
-    SrcReg = getX86SubSuperRegister(SrcReg, 32);
-    return X86::KMOVBkr;
-  }
-  return 0;
-}
-
-static
-unsigned copyPhysRegOpcode_AVX512_BW(unsigned& DestReg, unsigned& SrcReg) {
-  if (MaskRegClassContains(SrcReg) && MaskRegClassContains(DestReg))
-    return X86::KMOVQkk;
-  if (MaskRegClassContains(SrcReg) && X86::GR32RegClass.contains(DestReg))
-    return X86::KMOVDrk;
-  if (MaskRegClassContains(SrcReg) && X86::GR64RegClass.contains(DestReg))
-    return X86::KMOVQrk;
-  if (MaskRegClassContains(DestReg) && X86::GR32RegClass.contains(SrcReg))
-    return X86::KMOVDkr;
-  if (MaskRegClassContains(DestReg) && X86::GR64RegClass.contains(SrcReg))
-    return X86::KMOVQkr;
-  return 0;
-}
-
-static
-unsigned copyPhysRegOpcode_AVX512(unsigned& DestReg, unsigned& SrcReg,
-                                  const X86Subtarget &Subtarget)
-{
-  if (Subtarget.hasDQI())
-    if (auto Opc = copyPhysRegOpcode_AVX512_DQ(DestReg, SrcReg))
-      return Opc;
-  if (Subtarget.hasBWI())
-    if (auto Opc = copyPhysRegOpcode_AVX512_BW(DestReg, SrcReg))
-      return Opc;
-  if (X86::VR128XRegClass.contains(DestReg, SrcReg)) {
-    if (Subtarget.hasVLX())
-      return X86::VMOVAPSZ128rr;
-   DestReg = get512BitSuperRegister(DestReg);
-   SrcReg = get512BitSuperRegister(SrcReg);
-   return X86::VMOVAPSZrr;
-  }
-  if (X86::VR256XRegClass.contains(DestReg, SrcReg)) {
-    if (Subtarget.hasVLX())
-      return X86::VMOVAPSZ256rr;
-   DestReg = get512BitSuperRegister(DestReg);
-   SrcReg = get512BitSuperRegister(SrcReg);
-   return X86::VMOVAPSZrr;
-  }
-  if (X86::VR512RegClass.contains(DestReg, SrcReg))
-     return X86::VMOVAPSZrr;
-  if (MaskRegClassContains(DestReg) && MaskRegClassContains(SrcReg))
-    return X86::KMOVWkk;
-  if (MaskRegClassContains(DestReg) && GRRegClassContains(SrcReg)) {
-    SrcReg = getX86SubSuperRegister(SrcReg, 32);
-    return X86::KMOVWkr;
-  }
-  if (GRRegClassContains(DestReg) && MaskRegClassContains(SrcReg)) {
-    DestReg = getX86SubSuperRegister(DestReg, 32);
-    return X86::KMOVWrk;
-  }
-  return 0;
-}
-
 void X86InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
                                MachineBasicBlock::iterator MI,
                                const DebugLoc &DL, unsigned DestReg,
                                unsigned SrcReg, bool KillSrc) const {
   // First deal with the normal symmetric copies.
   bool HasAVX = Subtarget.hasAVX();
-  bool HasAVX512 = Subtarget.hasAVX512();
+  bool HasVLX = Subtarget.hasVLX();
   unsigned Opc = 0;
   if (X86::GR64RegClass.contains(DestReg, SrcReg))
     Opc = X86::MOV64rr;
@@ -4560,12 +4547,15 @@ void X86InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
   }
   else if (X86::VR64RegClass.contains(DestReg, SrcReg))
     Opc = X86::MMX_MOVQ64rr;
-  else if (HasAVX512)
-    Opc = copyPhysRegOpcode_AVX512(DestReg, SrcReg, Subtarget);
-  else if (X86::VR128RegClass.contains(DestReg, SrcReg))
-    Opc = HasAVX ? X86::VMOVAPSrr : X86::MOVAPSrr;
-  else if (X86::VR256RegClass.contains(DestReg, SrcReg))
-    Opc = X86::VMOVAPSYrr;
+  else if (X86::VR128XRegClass.contains(DestReg, SrcReg))
+    Opc = HasVLX ? X86::VMOVAPSZ128rr : HasAVX ? X86::VMOVAPSrr : X86::MOVAPSrr;
+  else if (X86::VR256XRegClass.contains(DestReg, SrcReg))
+    Opc = HasVLX ? X86::VMOVAPSZ256rr : X86::VMOVAPSYrr;
+  else if (X86::VR512RegClass.contains(DestReg, SrcReg))
+    Opc = X86::VMOVAPSZrr;
+  // All KMASK RegClasses hold the same k registers, can be tested against anyone.
+  else if (X86::VK16RegClass.contains(DestReg, SrcReg))
+    Opc = Subtarget.hasBWI() ? X86::KMOVQkk : X86::KMOVWkk;
   if (!Opc)
     Opc = CopyToFromAsymmetricReg(DestReg, SrcReg, Subtarget);
 
@@ -6297,12 +6287,18 @@ static bool isNonFoldablePartialRegisterLoad(const MachineInstr &LoadMI,
     case X86::MINSSrr_Int: case X86::VMINSSrr_Int: case X86::VMINSSZrr_Int:
     case X86::MULSSrr_Int: case X86::VMULSSrr_Int: case X86::VMULSSZrr_Int:
     case X86::SUBSSrr_Int: case X86::VSUBSSrr_Int: case X86::VSUBSSZrr_Int:
-    case X86::VFMADD132SSr_Int: case X86::VFNMADD132SSr_Int:
-    case X86::VFMADD213SSr_Int: case X86::VFNMADD213SSr_Int:
-    case X86::VFMADD231SSr_Int: case X86::VFNMADD231SSr_Int:
-    case X86::VFMSUB132SSr_Int: case X86::VFNMSUB132SSr_Int:
-    case X86::VFMSUB213SSr_Int: case X86::VFNMSUB213SSr_Int:
-    case X86::VFMSUB231SSr_Int: case X86::VFNMSUB231SSr_Int:
+    case X86::VFMADD132SSr_Int:  case X86::VFNMADD132SSr_Int:
+    case X86::VFMADD213SSr_Int:  case X86::VFNMADD213SSr_Int:
+    case X86::VFMADD231SSr_Int:  case X86::VFNMADD231SSr_Int:
+    case X86::VFMSUB132SSr_Int:  case X86::VFNMSUB132SSr_Int:
+    case X86::VFMSUB213SSr_Int:  case X86::VFNMSUB213SSr_Int:
+    case X86::VFMSUB231SSr_Int:  case X86::VFNMSUB231SSr_Int:
+    case X86::VFMADD132SSZr_Int: case X86::VFNMADD132SSZr_Int:
+    case X86::VFMADD213SSZr_Int: case X86::VFNMADD213SSZr_Int:
+    case X86::VFMADD231SSZr_Int: case X86::VFNMADD231SSZr_Int:
+    case X86::VFMSUB132SSZr_Int: case X86::VFNMSUB132SSZr_Int:
+    case X86::VFMSUB213SSZr_Int: case X86::VFNMSUB213SSZr_Int:
+    case X86::VFMSUB231SSZr_Int: case X86::VFNMSUB231SSZr_Int:
       return false;
     default:
       return true;
@@ -6322,12 +6318,18 @@ static bool isNonFoldablePartialRegisterLoad(const MachineInstr &LoadMI,
     case X86::MINSDrr_Int: case X86::VMINSDrr_Int: case X86::VMINSDZrr_Int:
     case X86::MULSDrr_Int: case X86::VMULSDrr_Int: case X86::VMULSDZrr_Int:
     case X86::SUBSDrr_Int: case X86::VSUBSDrr_Int: case X86::VSUBSDZrr_Int:
-    case X86::VFMADD132SDr_Int: case X86::VFNMADD132SDr_Int:
-    case X86::VFMADD213SDr_Int: case X86::VFNMADD213SDr_Int:
-    case X86::VFMADD231SDr_Int: case X86::VFNMADD231SDr_Int:
-    case X86::VFMSUB132SDr_Int: case X86::VFNMSUB132SDr_Int:
-    case X86::VFMSUB213SDr_Int: case X86::VFNMSUB213SDr_Int:
-    case X86::VFMSUB231SDr_Int: case X86::VFNMSUB231SDr_Int:
+    case X86::VFMADD132SDr_Int:  case X86::VFNMADD132SDr_Int:
+    case X86::VFMADD213SDr_Int:  case X86::VFNMADD213SDr_Int:
+    case X86::VFMADD231SDr_Int:  case X86::VFNMADD231SDr_Int:
+    case X86::VFMSUB132SDr_Int:  case X86::VFNMSUB132SDr_Int:
+    case X86::VFMSUB213SDr_Int:  case X86::VFNMSUB213SDr_Int:
+    case X86::VFMSUB231SDr_Int:  case X86::VFNMSUB231SDr_Int:
+    case X86::VFMADD132SDZr_Int: case X86::VFNMADD132SDZr_Int:
+    case X86::VFMADD213SDZr_Int: case X86::VFNMADD213SDZr_Int:
+    case X86::VFMADD231SDZr_Int: case X86::VFNMADD231SDZr_Int:
+    case X86::VFMSUB132SDZr_Int: case X86::VFNMSUB132SDZr_Int:
+    case X86::VFMSUB213SDZr_Int: case X86::VFNMSUB213SDZr_Int:
+    case X86::VFMSUB231SDZr_Int: case X86::VFNMSUB231SDZr_Int:
       return false;
     default:
       return true;
@@ -6748,8 +6750,6 @@ X86InstrInfo::areLoadsFromSameBasePtr(SDNode *Load1, SDNode *Load2,
   case X86::MOVSDrm:
   case X86::MMX_MOVD64rm:
   case X86::MMX_MOVQ64rm:
-  case X86::FsMOVAPSrm:
-  case X86::FsMOVAPDrm:
   case X86::MOVAPSrm:
   case X86::MOVUPSrm:
   case X86::MOVAPDrm:
@@ -6759,8 +6759,6 @@ X86InstrInfo::areLoadsFromSameBasePtr(SDNode *Load1, SDNode *Load2,
   // AVX load instructions
   case X86::VMOVSSrm:
   case X86::VMOVSDrm:
-  case X86::FsVMOVAPSrm:
-  case X86::FsVMOVAPDrm:
   case X86::VMOVAPSrm:
   case X86::VMOVUPSrm:
   case X86::VMOVAPDrm:
@@ -6825,8 +6823,6 @@ X86InstrInfo::areLoadsFromSameBasePtr(SDNode *Load1, SDNode *Load2,
   case X86::MOVSDrm:
   case X86::MMX_MOVD64rm:
   case X86::MMX_MOVQ64rm:
-  case X86::FsMOVAPSrm:
-  case X86::FsMOVAPDrm:
   case X86::MOVAPSrm:
   case X86::MOVUPSrm:
   case X86::MOVAPDrm:
@@ -6836,8 +6832,6 @@ X86InstrInfo::areLoadsFromSameBasePtr(SDNode *Load1, SDNode *Load2,
   // AVX load instructions
   case X86::VMOVSSrm:
   case X86::VMOVSDrm:
-  case X86::FsVMOVAPSrm:
-  case X86::FsVMOVAPDrm:
   case X86::VMOVAPSrm:
   case X86::VMOVUPSrm:
   case X86::VMOVAPDrm:
