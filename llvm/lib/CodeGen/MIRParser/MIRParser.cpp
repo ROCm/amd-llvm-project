@@ -257,7 +257,8 @@ std::unique_ptr<Module> MIRParserImpl::parse() {
 bool MIRParserImpl::parseMachineFunction(yaml::Input &In, Module &M,
                                          bool NoLLVMIR) {
   auto MF = llvm::make_unique<yaml::MachineFunction>();
-  yaml::yamlize(In, *MF, false);
+  yaml::EmptyContext Ctx;
+  yaml::yamlize(In, *MF, false, Ctx);
   if (In.error())
     return true;
   auto FunctionName = MF->Name;
@@ -414,7 +415,7 @@ bool MIRParserImpl::initializeRegisterInfo(PerFunctionMIParsingState &PFS,
     if (StringRef(VReg.Class.Value).equals("_")) {
       // This is a generic virtual register.
       // The size will be set appropriately when we reach the definition.
-      Reg = RegInfo.createGenericVirtualRegister(/*Size*/ 1);
+      Reg = RegInfo.createGenericVirtualRegister(LLT::scalar(1));
       PFS.GenericVRegs.insert(Reg);
     } else {
       const auto *RC = getRegClass(MF, VReg.Class.Value);
@@ -427,7 +428,7 @@ bool MIRParserImpl::initializeRegisterInfo(PerFunctionMIParsingState &PFS,
               VReg.Class.SourceRange.Start,
               Twine("use of undefined register class or register bank '") +
                   VReg.Class.Value + "'");
-        Reg = RegInfo.createGenericVirtualRegister(/*Size*/ 1);
+        Reg = RegInfo.createGenericVirtualRegister(LLT::scalar(1));
         RegInfo.setRegBank(Reg, *RegBank);
         PFS.GenericVRegs.insert(Reg);
       }
