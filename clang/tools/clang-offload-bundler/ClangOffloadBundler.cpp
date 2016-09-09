@@ -969,6 +969,7 @@ int main(int argc, const char **argv) {
                   StringSwitch<bool>(Kind)
                       .Case("host", true)
                       .Case("openmp", true)
+                      .Case("hcc", true)
                       .Default(false);
 
     bool TripleIsValid = !Triple.empty();
