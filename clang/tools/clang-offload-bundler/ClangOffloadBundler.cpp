@@ -293,7 +293,7 @@ public:
       ReadChars += TripleSize;
 
       // Check if the offset and size make sense.
-      if (!Size || !Offset || Offset + Size > FC.size())
+      if (!Offset || Offset + Size > FC.size())
         return;
 
       assert(BundlesInfo.find(Triple) == BundlesInfo.end() &&
