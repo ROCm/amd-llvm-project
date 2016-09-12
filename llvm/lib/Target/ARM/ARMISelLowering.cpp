@@ -59,11 +59,23 @@ using namespace llvm;
 STATISTIC(NumTailCalls, "Number of tail calls");
 STATISTIC(NumMovwMovt, "Number of GAs materialized with movw + movt");
 STATISTIC(NumLoopByVals, "Number of loops generated for byval arguments");
+STATISTIC(NumConstpoolPromoted,
+  "Number of constants with their storage promoted into constant pools");
 
 static cl::opt<bool>
 ARMInterworking("arm-interworking", cl::Hidden,
   cl::desc("Enable / disable ARM interworking (for debugging only)"),
   cl::init(true));
+
+static cl::opt<bool> EnableConstpoolPromotion(
+    "arm-promote-constant", cl::Hidden,
+    cl::desc("Enable / disable promotion of unnamed_addr constants into "
+             "constant pools"),
+    cl::init(true));
+static cl::opt<unsigned> ConstpoolPromotionMaxSize(
+    "arm-promote-constant-max-size", cl::Hidden,
+    cl::desc("Maximum size of constant to promote into a constant pool"),
+    cl::init(64));
 
 namespace {
   class ARMCCState : public CCState {
@@ -78,6 +90,171 @@ namespace {
       CallOrPrologue = PC;
     }
   };
+}
+
+void ARMTargetLowering::InitLibcallCallingConvs() {
+  // The builtins on ARM always use AAPCS, irrespective of wheter C is AAPCS or
+  // AAPCS_VFP.
+  for (const auto LC : {
+           RTLIB::SHL_I16,
+           RTLIB::SHL_I32,
+           RTLIB::SHL_I64,
+           RTLIB::SHL_I128,
+           RTLIB::SRL_I16,
+           RTLIB::SRL_I32,
+           RTLIB::SRL_I64,
+           RTLIB::SRL_I128,
+           RTLIB::SRA_I16,
+           RTLIB::SRA_I32,
+           RTLIB::SRA_I64,
+           RTLIB::SRA_I128,
+           RTLIB::MUL_I8,
+           RTLIB::MUL_I16,
+           RTLIB::MUL_I32,
+           RTLIB::MUL_I64,
+           RTLIB::MUL_I128,
+           RTLIB::MULO_I32,
+           RTLIB::MULO_I64,
+           RTLIB::MULO_I128,
+           RTLIB::SDIV_I8,
+           RTLIB::SDIV_I16,
+           RTLIB::SDIV_I32,
+           RTLIB::SDIV_I64,
+           RTLIB::SDIV_I128,
+           RTLIB::UDIV_I8,
+           RTLIB::UDIV_I16,
+           RTLIB::UDIV_I32,
+           RTLIB::UDIV_I64,
+           RTLIB::UDIV_I128,
+           RTLIB::SREM_I8,
+           RTLIB::SREM_I16,
+           RTLIB::SREM_I32,
+           RTLIB::SREM_I64,
+           RTLIB::SREM_I128,
+           RTLIB::UREM_I8,
+           RTLIB::UREM_I16,
+           RTLIB::UREM_I32,
+           RTLIB::UREM_I64,
+           RTLIB::UREM_I128,
+           RTLIB::SDIVREM_I8,
+           RTLIB::SDIVREM_I16,
+           RTLIB::SDIVREM_I32,
+           RTLIB::SDIVREM_I64,
+           RTLIB::SDIVREM_I128,
+           RTLIB::UDIVREM_I8,
+           RTLIB::UDIVREM_I16,
+           RTLIB::UDIVREM_I32,
+           RTLIB::UDIVREM_I64,
+           RTLIB::UDIVREM_I128,
+           RTLIB::NEG_I32,
+           RTLIB::NEG_I64,
+           RTLIB::ADD_F32,
+           RTLIB::ADD_F64,
+           RTLIB::ADD_F80,
+           RTLIB::ADD_F128,
+           RTLIB::SUB_F32,
+           RTLIB::SUB_F64,
+           RTLIB::SUB_F80,
+           RTLIB::SUB_F128,
+           RTLIB::MUL_F32,
+           RTLIB::MUL_F64,
+           RTLIB::MUL_F80,
+           RTLIB::MUL_F128,
+           RTLIB::DIV_F32,
+           RTLIB::DIV_F64,
+           RTLIB::DIV_F80,
+           RTLIB::DIV_F128,
+           RTLIB::POWI_F32,
+           RTLIB::POWI_F64,
+           RTLIB::POWI_F80,
+           RTLIB::POWI_F128,
+           RTLIB::FPEXT_F64_F128,
+           RTLIB::FPEXT_F32_F128,
+           RTLIB::FPEXT_F32_F64,
+           RTLIB::FPEXT_F16_F32,
+           RTLIB::FPROUND_F32_F16,
+           RTLIB::FPROUND_F64_F16,
+           RTLIB::FPROUND_F80_F16,
+           RTLIB::FPROUND_F128_F16,
+           RTLIB::FPROUND_F64_F32,
+           RTLIB::FPROUND_F80_F32,
+           RTLIB::FPROUND_F128_F32,
+           RTLIB::FPROUND_F80_F64,
+           RTLIB::FPROUND_F128_F64,
+           RTLIB::FPTOSINT_F32_I32,
+           RTLIB::FPTOSINT_F32_I64,
+           RTLIB::FPTOSINT_F32_I128,
+           RTLIB::FPTOSINT_F64_I32,
+           RTLIB::FPTOSINT_F64_I64,
+           RTLIB::FPTOSINT_F64_I128,
+           RTLIB::FPTOSINT_F80_I32,
+           RTLIB::FPTOSINT_F80_I64,
+           RTLIB::FPTOSINT_F80_I128,
+           RTLIB::FPTOSINT_F128_I32,
+           RTLIB::FPTOSINT_F128_I64,
+           RTLIB::FPTOSINT_F128_I128,
+           RTLIB::FPTOUINT_F32_I32,
+           RTLIB::FPTOUINT_F32_I64,
+           RTLIB::FPTOUINT_F32_I128,
+           RTLIB::FPTOUINT_F64_I32,
+           RTLIB::FPTOUINT_F64_I64,
+           RTLIB::FPTOUINT_F64_I128,
+           RTLIB::FPTOUINT_F80_I32,
+           RTLIB::FPTOUINT_F80_I64,
+           RTLIB::FPTOUINT_F80_I128,
+           RTLIB::FPTOUINT_F128_I32,
+           RTLIB::FPTOUINT_F128_I64,
+           RTLIB::FPTOUINT_F128_I128,
+           RTLIB::SINTTOFP_I32_F32,
+           RTLIB::SINTTOFP_I32_F64,
+           RTLIB::SINTTOFP_I32_F80,
+           RTLIB::SINTTOFP_I32_F128,
+           RTLIB::SINTTOFP_I64_F32,
+           RTLIB::SINTTOFP_I64_F64,
+           RTLIB::SINTTOFP_I64_F80,
+           RTLIB::SINTTOFP_I64_F128,
+           RTLIB::SINTTOFP_I128_F32,
+           RTLIB::SINTTOFP_I128_F64,
+           RTLIB::SINTTOFP_I128_F80,
+           RTLIB::SINTTOFP_I128_F128,
+           RTLIB::UINTTOFP_I32_F32,
+           RTLIB::UINTTOFP_I32_F64,
+           RTLIB::UINTTOFP_I32_F80,
+           RTLIB::UINTTOFP_I32_F128,
+           RTLIB::UINTTOFP_I64_F32,
+           RTLIB::UINTTOFP_I64_F64,
+           RTLIB::UINTTOFP_I64_F80,
+           RTLIB::UINTTOFP_I64_F128,
+           RTLIB::UINTTOFP_I128_F32,
+           RTLIB::UINTTOFP_I128_F64,
+           RTLIB::UINTTOFP_I128_F80,
+           RTLIB::UINTTOFP_I128_F128,
+           RTLIB::OEQ_F32,
+           RTLIB::OEQ_F64,
+           RTLIB::OEQ_F128,
+           RTLIB::UNE_F32,
+           RTLIB::UNE_F64,
+           RTLIB::UNE_F128,
+           RTLIB::OGE_F32,
+           RTLIB::OGE_F64,
+           RTLIB::OGE_F128,
+           RTLIB::OLT_F32,
+           RTLIB::OLT_F64,
+           RTLIB::OLT_F128,
+           RTLIB::OLE_F32,
+           RTLIB::OLE_F64,
+           RTLIB::OLE_F128,
+           RTLIB::OGT_F32,
+           RTLIB::OGT_F64,
+           RTLIB::OGT_F128,
+           RTLIB::UO_F32,
+           RTLIB::UO_F64,
+           RTLIB::UO_F128,
+           RTLIB::O_F32,
+           RTLIB::O_F64,
+           RTLIB::O_F128,
+       })
+  setLibcallCallingConv(LC, CallingConv::ARM_AAPCS);
 }
 
 // The APCS parameter registers.
@@ -166,6 +343,8 @@ ARMTargetLowering::ARMTargetLowering(const TargetMachine &TM,
   Itins = Subtarget->getInstrItineraryData();
 
   setBooleanVectorContents(ZeroOrNegativeOneBooleanContent);
+
+  InitLibcallCallingConvs();
 
   if (Subtarget->isTargetMachO()) {
     // Uses VFP for Thumb libfuncs if available.
@@ -1873,10 +2052,11 @@ ARMTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
         Callee = DAG.getNode(
             ARMISD::WrapperPIC, dl, PtrVt,
             DAG.getTargetGlobalAddress(GV, dl, PtrVt, 0, ARMII::MO_NONLAZY));
-        Callee =
-            DAG.getLoad(PtrVt, dl, DAG.getEntryNode(), Callee,
-                        MachinePointerInfo::getGOT(DAG.getMachineFunction()),
-                        /* Alignment = */ 0, MachineMemOperand::MOInvariant);
+        Callee = DAG.getLoad(
+            PtrVt, dl, DAG.getEntryNode(), Callee,
+            MachinePointerInfo::getGOT(DAG.getMachineFunction()),
+            /* Alignment = */ 0, MachineMemOperand::MODereferenceable |
+                                     MachineMemOperand::MOInvariant);
       } else if (Subtarget->isTargetCOFF()) {
         assert(Subtarget->isTargetWindows() &&
                "Windows is the only supported COFF target");
@@ -2588,11 +2768,12 @@ ARMTargetLowering::LowerGlobalTLSAddressDarwin(SDValue Op,
   // The first entry in the descriptor is a function pointer that we must call
   // to obtain the address of the variable.
   SDValue Chain = DAG.getEntryNode();
-  SDValue FuncTLVGet =
-      DAG.getLoad(MVT::i32, DL, Chain, DescAddr,
-                  MachinePointerInfo::getGOT(DAG.getMachineFunction()),
-                  /* Alignment = */ 4, MachineMemOperand::MONonTemporal |
-                                           MachineMemOperand::MOInvariant);
+  SDValue FuncTLVGet = DAG.getLoad(
+      MVT::i32, DL, Chain, DescAddr,
+      MachinePointerInfo::getGOT(DAG.getMachineFunction()),
+      /* Alignment = */ 4,
+      MachineMemOperand::MONonTemporal | MachineMemOperand::MODereferenceable |
+          MachineMemOperand::MOInvariant);
   Chain = FuncTLVGet.getValue(1);
 
   MachineFunction &F = DAG.getMachineFunction();
@@ -2794,6 +2975,78 @@ ARMTargetLowering::LowerGlobalTLSAddress(SDValue Op, SelectionDAG &DAG) const {
   llvm_unreachable("bogus TLS model");
 }
 
+/// Return true if all users of V are within function F, looking through
+/// ConstantExprs.
+static bool allUsersAreInFunction(const Value *V, const Function *F) {
+  SmallVector<const User*,4> Worklist;
+  for (auto *U : V->users())
+    Worklist.push_back(U);
+  while (!Worklist.empty()) {
+    auto *U = Worklist.pop_back_val();
+    if (isa<ConstantExpr>(U)) {
+      for (auto *UU : U->users())
+        Worklist.push_back(UU);
+      continue;
+    }
+
+    auto *I = dyn_cast<Instruction>(U);
+    if (!I || I->getParent()->getParent() != F)
+      return false;
+  }
+  return true;
+}
+
+static SDValue promoteToConstantPool(const GlobalValue *GV, SelectionDAG &DAG,
+                                     EVT PtrVT, SDLoc dl) {
+  // If we're creating a pool entry for a constant global with unnamed address,
+  // and the global is small enough, we can emit it inline into the constant pool
+  // to save ourselves an indirection.
+  //
+  // This is a win if the constant is only used in one function (so it doesn't
+  // need to be duplicated) or duplicating the constant wouldn't increase code
+  // size (implying the constant is no larger than 4 bytes).
+  const Function *F = DAG.getMachineFunction().getFunction();
+  auto *GVar = dyn_cast<GlobalVariable>(GV);
+  if (EnableConstpoolPromotion && GVar && GVar->hasInitializer() &&
+      GVar->isConstant() && GVar->hasGlobalUnnamedAddr()) {
+    // The constant islands pass can only really deal with alignment requests
+    // <= 4 bytes and cannot pad constants itself. Therefore we cannot promote
+    // any type wanting greater alignment requirements than 4 bytes. We also
+    // can only promote constants that are multiples of 4 bytes in size or
+    // are paddable to a multiple of 4. Currently we only try and pad constants
+    // that are strings for simplicity.
+    auto *Init = GVar->getInitializer();
+    auto *CDAInit = dyn_cast<ConstantDataArray>(Init);
+    unsigned Size = DAG.getDataLayout().getTypeAllocSize(Init->getType());
+    unsigned Align = DAG.getDataLayout().getABITypeAlignment(Init->getType());
+    unsigned RequiredPadding = 4 - (Size % 4);
+    bool PaddingPossible =
+        RequiredPadding == 4 || (CDAInit && CDAInit->isString());
+
+    if (PaddingPossible && Align <= 4 && Size <= ConstpoolPromotionMaxSize &&
+        (allUsersAreInFunction(GVar, F) || Size <= 4)) {
+      if (RequiredPadding != 4) {
+        StringRef S = CDAInit->getAsString();
+
+        SmallVector<uint8_t,16> V(S.size());
+        std::copy(S.bytes_begin(), S.bytes_end(), V.begin());
+        while (RequiredPadding--)
+          V.push_back(0);
+        Init = ConstantDataArray::get(*DAG.getContext(), V);
+      }
+      
+      SDValue CPAddr =
+        DAG.getTargetConstantPool(Init, PtrVT, Align);
+
+      MachineFunction &MF = DAG.getMachineFunction();
+      ARMFunctionInfo *AFI = MF.getInfo<ARMFunctionInfo>();
+      AFI->markGlobalAsPromotedToConstantPool(GVar);
+      return DAG.getNode(ARMISD::Wrapper, dl, MVT::i32, CPAddr);
+    }
+  }
+  return SDValue();
+}
+
 SDValue ARMTargetLowering::LowerGlobalAddressELF(SDValue Op,
                                                  SelectionDAG &DAG) const {
   EVT PtrVT = getPointerTy(DAG.getDataLayout());
@@ -2805,6 +3058,11 @@ SDValue ARMTargetLowering::LowerGlobalAddressELF(SDValue Op,
   bool IsRO =
       (isa<GlobalVariable>(GV) && cast<GlobalVariable>(GV)->isConstant()) ||
       isa<Function>(GV);
+  
+  if (TM.shouldAssumeDSOLocal(*GV->getParent(), GV))
+    if (SDValue V = promoteToConstantPool(GV, DAG, PtrVT, dl))
+      return V;
+
   if (isPositionIndependent()) {
     bool UseGOT_PREL = !TM.shouldAssumeDSOLocal(*GV->getParent(), GV);
 
