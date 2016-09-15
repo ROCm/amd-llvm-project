@@ -5393,9 +5393,18 @@ void LoopVectorizationLegality::collectLoopUniforms() {
       if (!Ptr)
         continue;
 
+      // True if all users of Ptr are memory accesses that have Ptr as their
+      // pointer operand.
+      auto UsersAreMemAccesses = all_of(Ptr->users(), [&](User *U) -> bool {
+        return getPointerOperand(U) == Ptr;
+      });
+
       // Ensure the memory instruction will not be scalarized, making its
-      // pointer operand non-uniform.
-      if (memoryInstructionMustBeScalarized(&I))
+      // pointer operand non-uniform. If the pointer operand is used by some
+      // instruction other than a memory access, we're not going to check if
+      // that other instruction may be scalarized here. Thus, conservatively
+      // assume the pointer operand may be non-uniform.
+      if (!UsersAreMemAccesses || memoryInstructionMustBeScalarized(&I))
         PossibleNonUniformPtrs.insert(Ptr);
 
       // If the memory instruction will be vectorized and its pointer operand
@@ -5433,30 +5442,47 @@ void LoopVectorizationLegality::collectLoopUniforms() {
     }
   }
 
+  // Returns true if Ptr is the pointer operand of a memory access instruction
+  // I, and I is known to not require scalarization.
+  auto isVectorizedMemAccessUse = [&](Instruction *I, Value *Ptr) -> bool {
+    return getPointerOperand(I) == Ptr && !memoryInstructionMustBeScalarized(I);
+  };
+
   // For an instruction to be added into Worklist above, all its users inside
-  // the current loop should be already added into Worklist. This condition
-  // cannot be true for phi instructions which is always in a dependence loop.
-  // Because any instruction in the dependence cycle always depends on others
-  // in the cycle to be added into Worklist first, the result is no ones in
-  // the cycle will be added into Worklist in the end.
-  // That is why we process PHI separately.
-  for (auto &Induction : *getInductionVars()) {
-    auto *PN = Induction.first;
-    auto *UpdateV = PN->getIncomingValueForBlock(TheLoop->getLoopLatch());
-    if (all_of(PN->users(),
-               [&](User *U) -> bool {
-                 return U == UpdateV || isOutOfScope(U) ||
-                        Worklist.count(cast<Instruction>(U));
-               }) &&
-        all_of(UpdateV->users(), [&](User *U) -> bool {
-          return U == PN || isOutOfScope(U) ||
-                 Worklist.count(cast<Instruction>(U));
-        })) {
-      Worklist.insert(cast<Instruction>(PN));
-      Worklist.insert(cast<Instruction>(UpdateV));
-      DEBUG(dbgs() << "LV: Found uniform instruction: " << *PN << "\n");
-      DEBUG(dbgs() << "LV: Found uniform instruction: " << *UpdateV << "\n");
-    }
+  // the loop should also be in Worklist. However, this condition cannot be
+  // true for phi nodes that form a cyclic dependence. We must process phi
+  // nodes separately. An induction variable will remain uniform if all users
+  // of the induction variable and induction variable update remain uniform.
+  // The code below handles both pointer and non-pointer induction variables.
+  for (auto &Induction : Inductions) {
+    auto *Ind = Induction.first;
+    auto *IndUpdate = cast<Instruction>(Ind->getIncomingValueForBlock(Latch));
+
+    // Determine if all users of the induction variable are uniform after
+    // vectorization.
+    auto UniformInd = all_of(Ind->users(), [&](User *U) -> bool {
+      auto *I = cast<Instruction>(U);
+      return I == IndUpdate || !TheLoop->contains(I) || Worklist.count(I) ||
+             isVectorizedMemAccessUse(I, Ind);
+    });
+    if (!UniformInd)
+      continue;
+
+    // Determine if all users of the induction variable update instruction are
+    // uniform after vectorization.
+    auto UniformIndUpdate = all_of(IndUpdate->users(), [&](User *U) -> bool {
+      auto *I = cast<Instruction>(U);
+      return I == Ind || !TheLoop->contains(I) || Worklist.count(I) ||
+             isVectorizedMemAccessUse(I, IndUpdate);
+    });
+    if (!UniformIndUpdate)
+      continue;
+
+    // The induction variable and its update instruction will remain uniform.
+    Worklist.insert(Ind);
+    Worklist.insert(IndUpdate);
+    DEBUG(dbgs() << "LV: Found uniform instruction: " << *Ind << "\n");
+    DEBUG(dbgs() << "LV: Found uniform instruction: " << *IndUpdate << "\n");
   }
 
   Uniforms.insert(Worklist.begin(), Worklist.end());

@@ -110,26 +110,6 @@ static bool fileMatches(const InputSectionDescription *Desc,
          !const_cast<Regex &>(Desc->ExcludedFileRe).match(Filename);
 }
 
-// Returns input sections filtered by given glob patterns.
-template <class ELFT>
-std::vector<InputSectionBase<ELFT> *>
-LinkerScript<ELFT>::getInputSections(const InputSectionDescription *I) {
-  const Regex &Re = I->SectionRe;
-  std::vector<InputSectionBase<ELFT> *> Ret;
-  for (const std::unique_ptr<ObjectFile<ELFT>> &F :
-       Symtab<ELFT>::X->getObjectFiles()) {
-    if (fileMatches(I, sys::path::filename(F->getName())))
-      for (InputSectionBase<ELFT> *S : F->getSections())
-        if (!isDiscarded(S) && !S->OutSec &&
-            const_cast<Regex &>(Re).match(S->Name))
-          Ret.push_back(S);
-  }
-
-  if (const_cast<Regex &>(Re).match("COMMON"))
-    Ret.push_back(CommonInputSection<ELFT>::X);
-  return Ret;
-}
-
 static bool compareName(InputSectionData *A, InputSectionData *B) {
   return A->Name < B->Name;
 }
@@ -148,14 +128,6 @@ getComparator(SortKind K) {
   return compareAlignment;
 }
 
-template <class ELFT>
-void LinkerScript<ELFT>::discard(ArrayRef<InputSectionBase<ELFT> *> V) {
-  for (InputSectionBase<ELFT> *S : V) {
-    S->Live = false;
-    reportDiscarded(S);
-  }
-}
-
 static bool checkConstraint(uint64_t Flags, ConstraintKind Kind) {
   bool RO = (Kind == ConstraintKind::ReadOnly);
   bool RW = (Kind == ConstraintKind::ReadWrite);
@@ -171,6 +143,32 @@ static bool matchConstraints(ArrayRef<InputSectionBase<ELFT> *> Sections,
   return llvm::all_of(Sections, [=](InputSectionBase<ELFT> *Sec) {
     return checkConstraint(Sec->getSectionHdr()->sh_flags, Kind);
   });
+}
+
+// Returns input sections filtered by given glob patterns.
+template <class ELFT>
+std::vector<InputSectionBase<ELFT> *>
+LinkerScript<ELFT>::getInputSections(const InputSectionDescription *I) {
+  const Regex &Re = I->SectionRe;
+  std::vector<InputSectionBase<ELFT> *> Ret;
+  for (ObjectFile<ELFT> *F : Symtab<ELFT>::X->getObjectFiles())
+    if (fileMatches(I, sys::path::filename(F->getName())))
+      for (InputSectionBase<ELFT> *S : F->getSections())
+        if (!isDiscarded(S) && !S->OutSec &&
+            const_cast<Regex &>(Re).match(S->Name))
+          Ret.push_back(S);
+
+  if (const_cast<Regex &>(Re).match("COMMON"))
+    Ret.push_back(CommonInputSection<ELFT>::X);
+  return Ret;
+}
+
+template <class ELFT>
+void LinkerScript<ELFT>::discard(ArrayRef<InputSectionBase<ELFT> *> V) {
+  for (InputSectionBase<ELFT> *S : V) {
+    S->Live = false;
+    reportDiscarded(S);
+  }
 }
 
 template <class ELFT>
@@ -286,8 +284,7 @@ void LinkerScript<ELFT>::createSections(OutputSectionFactory<ELFT> &Factory) {
   }
 
   // Add orphan sections.
-  for (const std::unique_ptr<ObjectFile<ELFT>> &F :
-       Symtab<ELFT>::X->getObjectFiles()) {
+  for (ObjectFile<ELFT> *F : Symtab<ELFT>::X->getObjectFiles()) {
     for (InputSectionBase<ELFT> *S : F->getSections()) {
       if (isDiscarded(S) || S->OutSec)
         continue;
@@ -765,7 +762,7 @@ void ScriptParser::readLinkerScript() {
     } else if (Tok == "VERSION") {
       readVersion();
     } else if (SymbolAssignment *Cmd = readProvideOrAssignment(Tok, true)) {
-      if (Opt.HasContents)
+      if (Opt.HasSections)
         Opt.Commands.emplace_back(Cmd);
       else
         Opt.Assignments.emplace_back(Cmd);
@@ -926,7 +923,7 @@ void ScriptParser::readSearchDir() {
 }
 
 void ScriptParser::readSections() {
-  Opt.HasContents = true;
+  Opt.HasSections = true;
   expect("{");
   while (!Error && !skip("}")) {
     StringRef Tok = next();
@@ -1333,7 +1330,7 @@ Expr ScriptParser::readPrimary() {
   // the next page boundary for simplicity.
   if (Tok == "DATA_SEGMENT_RELRO_END") {
     expect("(");
-    next();
+    readExpr();
     expect(",");
     readExpr();
     expect(")");

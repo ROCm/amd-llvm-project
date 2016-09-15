@@ -51,28 +51,25 @@ public:
     bool stop_on_error;
 
   private:
-    enum OptionNames {
+    enum class OptionNames : uint32_t {
       UserSource = 0,
       ScriptSource,
       StopOnError,
       LastOptionName
     };
 
-    static const char *g_option_names[LastOptionName];
+    static const char
+        *g_option_names[static_cast<uint32_t>(OptionNames::LastOptionName)];
 
     static const char *GetKey(enum OptionNames enum_value) {
-      return g_option_names[enum_value];
+      return g_option_names[static_cast<uint32_t>(enum_value)];
     }
   };
 
-  class CommandBaton : public Baton {
+  class CommandBaton : public TypedBaton<CommandData> {
   public:
-    CommandBaton(CommandData *data) : Baton(data) {}
-
-    ~CommandBaton() override {
-      delete ((CommandData *)m_data);
-      m_data = nullptr;
-    }
+    explicit CommandBaton(std::unique_ptr<CommandData> Data)
+        : TypedBaton(std::move(Data)) {}
 
     void GetDescription(Stream *s, lldb::DescriptionLevel level) const override;
   };
@@ -341,7 +338,7 @@ public:
   ///     A new'ed CommandData object.  The breakpoint will take ownership
   ///     of this object.
   //------------------------------------------------------------------
-  void SetCommandDataCallback(CommandData *cmd_data);
+  void SetCommandDataCallback(std::unique_ptr<CommandData> cmd_data);
 
 protected:
   //------------------------------------------------------------------

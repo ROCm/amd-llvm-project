@@ -63,6 +63,7 @@ void Fuzzer::ResetCounters() {
   }
   if (EF->__sanitizer_get_coverage_pc_buffer_pos)
     PcBufferPos = EF->__sanitizer_get_coverage_pc_buffer_pos();
+  TPC.GetNewPCsAndFlush();
 }
 
 void Fuzzer::PrepareCounters(Fuzzer::Coverage *C) {
@@ -77,7 +78,10 @@ void Fuzzer::PrepareCounters(Fuzzer::Coverage *C) {
 bool Fuzzer::RecordMaxCoverage(Fuzzer::Coverage *C) {
   bool Res = false;
 
-  uint64_t NewBlockCoverage = EF->__sanitizer_get_total_unique_coverage();
+  TPC.FinalizeTrace();
+
+  uint64_t NewBlockCoverage =
+      EF->__sanitizer_get_total_unique_coverage() + TPC.GetTotalCoverage();
   if (NewBlockCoverage > C->BlockCoverage) {
     Res = true;
     C->BlockCoverage = NewBlockCoverage;
@@ -96,17 +100,13 @@ bool Fuzzer::RecordMaxCoverage(Fuzzer::Coverage *C) {
   if (Options.UseCounters) {
     uint64_t CounterDelta =
         EF->__sanitizer_update_counter_bitset_and_clear_counters(
-            C->CounterBitmap.data());
+            C->CounterBitmap.data()) +
+        TPC.UpdateCounterMap(&C->TPCMap);
     if (CounterDelta > 0) {
       Res = true;
       C->CounterBitmapBits += CounterDelta;
     }
-  }
 
-  size_t NewPCMapBits = PCMapMergeFromCurrent(C->PCMap);
-  if (NewPCMapBits > C->PCMapBits) {
-    Res = true;
-    C->PCMapBits = NewPCMapBits;
   }
 
   size_t NewVPMapBits = VPMapMergeFromCurrent(C->VPMap);
@@ -163,6 +163,7 @@ Fuzzer::Fuzzer(UserCallback CB, MutationDispatcher &MD, FuzzingOptions Options)
   IsMyThread = true;
   if (Options.DetectLeaks && EF->__sanitizer_install_malloc_and_free_hooks)
     EF->__sanitizer_install_malloc_and_free_hooks(MallocHook, FreeHook);
+  TPC.SetUseCounters(Options.UseCounters);
 
   if (Options.PrintNewCovPcs) {
     PcBufferLen = 1 << 24;
@@ -315,8 +316,6 @@ void Fuzzer::PrintStats(const char *Where, const char *End) {
   Printf("#%zd\t%s", TotalNumberOfRuns, Where);
   if (MaxCoverage.BlockCoverage)
     Printf(" cov: %zd", MaxCoverage.BlockCoverage);
-  if (MaxCoverage.PCMapBits)
-    Printf(" path: %zd", MaxCoverage.PCMapBits);
   if (MaxCoverage.VPMapBits)
     Printf(" vp: %zd", MaxCoverage.VPMapBits);
   if (auto TB = MaxCoverage.CounterBitmapBits)
@@ -508,9 +507,8 @@ std::string Fuzzer::Coverage::DebugString() const {
       std::string("Coverage{") + "BlockCoverage=" +
       std::to_string(BlockCoverage) + " CallerCalleeCoverage=" +
       std::to_string(CallerCalleeCoverage) + " CounterBitmapBits=" +
-      std::to_string(CounterBitmapBits) + " PCMapBits=" +
-      std::to_string(PCMapBits) + " VPMapBits " +
-      std::to_string(VPMapBits) + "}";
+      std::to_string(CounterBitmapBits) +
+      " VPMapBits " + std::to_string(VPMapBits) + "}";
   return Result;
 }
 
@@ -559,22 +557,31 @@ void Fuzzer::PrintStatusForNewUnit(const Unit &U) {
   }
 }
 
+void Fuzzer::PrintOneNewPC(uintptr_t PC) {
+  if (EF->__sanitizer_symbolize_pc) {
+    char PcDescr[1024];
+    EF->__sanitizer_symbolize_pc(reinterpret_cast<void*>(PC),
+                                 "%p %F %L", PcDescr, sizeof(PcDescr));
+    PcDescr[sizeof(PcDescr) - 1] = 0;  // Just in case.
+    Printf("\tNEW_PC: %s\n", PcDescr);
+  } else {
+    Printf("\tNEW_PC: %p\n", PC);
+  }
+}
+
 void Fuzzer::PrintNewPCs() {
-  if (Options.PrintNewCovPcs && PrevPcBufferPos != PcBufferPos) {
+  if (!Options.PrintNewCovPcs) return;
+  if (PrevPcBufferPos != PcBufferPos) {
     int NumPrinted = 0;
     for (size_t I = PrevPcBufferPos; I < PcBufferPos; ++I) {
       if (NumPrinted++ > 30) break;  // Don't print too many new PCs.
-      if (EF->__sanitizer_symbolize_pc) {
-        char PcDescr[1024];
-        EF->__sanitizer_symbolize_pc(reinterpret_cast<void*>(PcBuffer[I]),
-                                     "%p %F %L", PcDescr, sizeof(PcDescr));
-        PcDescr[sizeof(PcDescr) - 1] = 0;  // Just in case.
-        Printf("\tNEW_PC: %s\n", PcDescr);
-      } else {
-        Printf("\tNEW_PC: %p\n", PcBuffer[I]);
-      }
+      PrintOneNewPC(PcBuffer[I]);
     }
   }
+  uintptr_t *PCs;
+  if (size_t NumNewPCs = TPC.GetNewPCsAndFlush(&PCs))
+    for (size_t i = 0; i < NumNewPCs; i++)
+      PrintOneNewPC(PCs[i]);
 }
 
 void Fuzzer::ReportNewCoverage(const Unit &U) {
