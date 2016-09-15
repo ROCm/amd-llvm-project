@@ -3,9 +3,14 @@ cmake_minimum_required(VERSION 3.1)
 option(STREAM_EXECUTOR_UNIT_TESTS "enable unit tests" ON)
 option(STREAM_EXECUTOR_ENABLE_DOXYGEN "enable StreamExecutor doxygen" ON)
 option(STREAM_EXECUTOR_ENABLE_CONFIG_TOOL "enable building streamexecutor-config tool" ON)
+option(STREAM_EXECUTOR_ENABLE_CUDA_PLATFORM "enable building the CUDA StreamExecutor platform" OFF)
+
+configure_file("include/streamexecutor/PlatformOptions.h.in" "include/streamexecutor/PlatformOptions.h")
 
 # First find includes relative to the streamexecutor top-level source path.
 include_directories(BEFORE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+# Also look for configured headers in the top-level binary directory.
+include_directories(BEFORE ${CMAKE_CURRENT_BINARY_DIR}/include)
 
 # If we are not building as part of LLVM, build StreamExecutor as a standalone
 # project using LLVM as an external library:
@@ -26,17 +31,10 @@ if(STREAM_EXECUTOR_STANDALONE)
     include_directories(${LLVM_INCLUDE_DIRS})
     add_definitions(${LLVM_DEFINITIONS})
 
-    # Get the LLVM cxxflags by using llvm-config.
-    #
-    # This is necessary to get -fno-rtti if LLVM is compiled that way.
-    execute_process(
-        COMMAND
-        "${LLVM_BINARY_DIR}/bin/llvm-config"
-        --cxxflags
-        OUTPUT_VARIABLE
-        LLVM_CXXFLAGS
-        OUTPUT_STRIP_TRAILING_WHITESPACE)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${LLVM_CXXFLAGS}")
+    # If LLVM does not have RTTI, don't use it here either.
+    if (NOT LLVM_ENABLE_RTTI)
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-rtti")
+    endif()
 
     set(LLVM_CMAKE_PATH "${LLVM_BINARY_DIR}/lib${LLVM_LIBDIR_SUFFIX}/cmake/llvm")
     list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_PATH}")

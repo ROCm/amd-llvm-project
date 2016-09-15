@@ -1792,7 +1792,9 @@ NamedDecl *Sema::LazilyCreateBuiltin(IdentifierInfo *II, unsigned ID,
     return nullptr;
   }
 
-  if (!ForRedeclaration && Context.BuiltinInfo.isPredefinedLibFunction(ID)) {
+  if (!ForRedeclaration &&
+      (Context.BuiltinInfo.isPredefinedLibFunction(ID) ||
+       Context.BuiltinInfo.isHeaderDependentFunction(ID))) {
     Diag(Loc, diag::ext_implicit_lib_function_decl)
         << Context.BuiltinInfo.getName(ID) << R;
     if (Context.BuiltinInfo.getHeaderName(ID) &&
@@ -2247,6 +2249,13 @@ static bool mergeAlignedAttrs(Sema &S, NamedDecl *New, Decl *Old) {
 static bool mergeDeclAttribute(Sema &S, NamedDecl *D,
                                const InheritableAttr *Attr,
                                Sema::AvailabilityMergeKind AMK) {
+  // This function copies an attribute Attr from a previous declaration to the
+  // new declaration D if the new declaration doesn't itself have that attribute
+  // yet or if that attribute allows duplicates.
+  // If you're adding a new attribute that requires logic different from
+  // "use explicit attribute on decl if present, else use attribute from
+  // previous decl", for example if the attribute needs to be consistent
+  // between redeclarations, you need to call a custom merge function here.
   InheritableAttr *NewAttr = nullptr;
   unsigned AttrSpellingListIndex = Attr->getSpellingListIndex();
   if (const auto *AA = dyn_cast<AvailabilityAttr>(Attr))
@@ -2284,7 +2293,13 @@ static bool mergeDeclAttribute(Sema &S, NamedDecl *D,
     NewAttr = S.mergeAlwaysInlineAttr(D, AA->getRange(),
                                       &S.Context.Idents.get(AA->getSpelling()),
                                       AttrSpellingListIndex);
-  else if (const auto *MA = dyn_cast<MinSizeAttr>(Attr))
+  else if (S.getLangOpts().CUDA && isa<FunctionDecl>(D) &&
+           (isa<CUDAHostAttr>(Attr) || isa<CUDADeviceAttr>(Attr) ||
+            isa<CUDAGlobalAttr>(Attr))) {
+    // CUDA target attributes are part of function signature for
+    // overloading purposes and must not be merged.
+    return false;
+  } else if (const auto *MA = dyn_cast<MinSizeAttr>(Attr))
     NewAttr = S.mergeMinSizeAttr(D, MA->getRange(), AttrSpellingListIndex);
   else if (const auto *OA = dyn_cast<OptimizeNoneAttr>(Attr))
     NewAttr = S.mergeOptimizeNoneAttr(D, OA->getRange(), AttrSpellingListIndex);
@@ -2305,6 +2320,9 @@ static bool mergeDeclAttribute(Sema &S, NamedDecl *D,
            (AMK == Sema::AMK_Override ||
             AMK == Sema::AMK_ProtocolImplementation))
     NewAttr = nullptr;
+  else if (const auto *UA = dyn_cast<UuidAttr>(Attr))
+    NewAttr = S.mergeUuidAttr(D, UA->getRange(), AttrSpellingListIndex,
+                              UA->getGuid());
   else if (Attr->duplicatesAllowed() || !DeclHasAttr(D, Attr))
     NewAttr = cast<InheritableAttr>(Attr->clone(S.Context));
 

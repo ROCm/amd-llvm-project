@@ -2255,6 +2255,8 @@ def err_attribute_only_once_per_parameter : Error<
   "%0 attribute can only be applied once per parameter">;
 def err_attribute_uuid_malformed_guid : Error<
   "uuid attribute contains a malformed GUID">;
+def err_mismatched_uuid : Error<"uuid does not match previous declaration">;
+def note_previous_uuid : Note<"previous uuid specified here">;
 def warn_attribute_pointers_only : Warning<
   "%0 attribute only applies to%select{| constant}1 pointer arguments">,
   InGroup<IgnoredAttributes>;
@@ -7808,7 +7810,7 @@ def err_invalid_protocol_qualifiers : Error<
   "invalid protocol qualifiers on non-ObjC type">;
 def warn_ivar_use_hidden : Warning<
   "local declaration of %0 hides instance variable">,
-   InGroup<DiagGroup<"shadow-ivar">>;
+   InGroup<ShadowIvar>;
 def warn_direct_initialize_call : Warning<
   "explicit call to +initialize results in duplicate call to +initialize">,
    InGroup<ExplicitInitializeCall>;

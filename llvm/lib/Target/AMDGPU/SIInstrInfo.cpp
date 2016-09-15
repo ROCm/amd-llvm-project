@@ -937,17 +937,24 @@ bool SIInstrInfo::swapSourceModifiers(MachineInstr &MI,
 
 static MachineInstr *swapRegAndNonRegOperand(MachineInstr &MI,
                                              MachineOperand &RegOp,
-                                             MachineOperand &ImmOp) {
-  // TODO: Handle other immediate like types.
-  if (!ImmOp.isImm())
+                                             MachineOperand &NonRegOp) {
+  unsigned Reg = RegOp.getReg();
+  unsigned SubReg = RegOp.getSubReg();
+  bool IsKill = RegOp.isKill();
+  bool IsDead = RegOp.isDead();
+  bool IsUndef = RegOp.isUndef();
+  bool IsDebug = RegOp.isDebug();
+
+  if (NonRegOp.isImm())
+    RegOp.ChangeToImmediate(NonRegOp.getImm());
+  else if (NonRegOp.isFI())
+    RegOp.ChangeToFrameIndex(NonRegOp.getIndex());
+  else
     return nullptr;
 
-  int64_t ImmVal = ImmOp.getImm();
-  ImmOp.ChangeToRegister(RegOp.getReg(), false, false,
-                         RegOp.isKill(), RegOp.isDead(), RegOp.isUndef(),
-                         RegOp.isDebug());
-  ImmOp.setSubReg(RegOp.getSubReg());
-  RegOp.ChangeToImmediate(ImmVal);
+  NonRegOp.ChangeToRegister(Reg, false, false, IsKill, IsDead, IsUndef, IsDebug);
+  NonRegOp.setSubReg(SubReg);
+
   return &MI;
 }
 
@@ -1098,29 +1105,38 @@ bool SIInstrInfo::analyzeBranch(MachineBasicBlock &MBB, MachineBasicBlock *&TBB,
   return true;
 }
 
-unsigned SIInstrInfo::RemoveBranch(MachineBasicBlock &MBB) const {
+unsigned SIInstrInfo::removeBranch(MachineBasicBlock &MBB,
+                                   int *BytesRemoved) const {
   MachineBasicBlock::iterator I = MBB.getFirstTerminator();
 
   unsigned Count = 0;
+  unsigned RemovedSize = 0;
   while (I != MBB.end()) {
     MachineBasicBlock::iterator Next = std::next(I);
+    RemovedSize += getInstSizeInBytes(*I);
     I->eraseFromParent();
     ++Count;
     I = Next;
   }
 
+  if (BytesRemoved)
+    *BytesRemoved = RemovedSize;
+
   return Count;
 }
 
-unsigned SIInstrInfo::InsertBranch(MachineBasicBlock &MBB,
+unsigned SIInstrInfo::insertBranch(MachineBasicBlock &MBB,
                                    MachineBasicBlock *TBB,
                                    MachineBasicBlock *FBB,
                                    ArrayRef<MachineOperand> Cond,
-                                   const DebugLoc &DL) const {
+                                   const DebugLoc &DL,
+                                   int *BytesAdded) const {
 
   if (!FBB && Cond.empty()) {
     BuildMI(&MBB, DL, get(AMDGPU::S_BRANCH))
       .addMBB(TBB);
+    if (BytesAdded)
+      *BytesAdded = 4;
     return 1;
   }
 
@@ -1132,6 +1148,9 @@ unsigned SIInstrInfo::InsertBranch(MachineBasicBlock &MBB,
   if (!FBB) {
     BuildMI(&MBB, DL, get(Opcode))
       .addMBB(TBB);
+
+    if (BytesAdded)
+      *BytesAdded = 4;
     return 1;
   }
 
@@ -1142,10 +1161,13 @@ unsigned SIInstrInfo::InsertBranch(MachineBasicBlock &MBB,
   BuildMI(&MBB, DL, get(AMDGPU::S_BRANCH))
     .addMBB(FBB);
 
+  if (BytesAdded)
+      *BytesAdded = 8;
+
   return 2;
 }
 
-bool SIInstrInfo::ReverseBranchCondition(
+bool SIInstrInfo::reverseBranchCondition(
   SmallVectorImpl<MachineOperand> &Cond) const {
   assert(Cond.size() == 1);
   Cond[0].setImm(-Cond[0].getImm());

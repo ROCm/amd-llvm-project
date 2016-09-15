@@ -59,7 +59,7 @@ static typename ELFT::uint getSymVA(const SymbolBody &Body,
       Addend = 0;
     }
     uintX_t VA = (SC->OutSec ? SC->OutSec->getVA() : 0) + SC->getOffset(Offset);
-    if (D.isTls())
+    if (D.isTls() && !Config->Relocatable)
       return VA - Out<ELFT>::TlsPhdr->p_vaddr;
     return VA;
   }
@@ -215,7 +215,7 @@ DefinedCommon::DefinedCommon(StringRef N, uint64_t Size, uint64_t Alignment,
   this->File = File;
 }
 
-std::unique_ptr<InputFile> Lazy::fetch() {
+InputFile *Lazy::fetch() {
   if (auto *S = dyn_cast<LazyArchive>(this))
     return S->fetch();
   return cast<LazyObject>(this)->fetch();
@@ -232,20 +232,20 @@ LazyObject::LazyObject(StringRef Name, LazyObjectFile &File, uint8_t Type)
   this->File = &File;
 }
 
-std::unique_ptr<InputFile> LazyArchive::fetch() {
+InputFile *LazyArchive::fetch() {
   MemoryBufferRef MBRef = file()->getMember(&Sym);
 
   // getMember returns an empty buffer if the member was already
   // read from the library.
   if (MBRef.getBuffer().empty())
-    return std::unique_ptr<InputFile>(nullptr);
+    return nullptr;
   return createObjectFile(MBRef, file()->getName());
 }
 
-std::unique_ptr<InputFile> LazyObject::fetch() {
+InputFile *LazyObject::fetch() {
   MemoryBufferRef MBRef = file()->getBuffer();
   if (MBRef.getBuffer().empty())
-    return std::unique_ptr<InputFile>(nullptr);
+    return nullptr;
   return createObjectFile(MBRef);
 }
 

@@ -1870,10 +1870,11 @@ def rdynamic : Flag<["-"], "rdynamic">;
 def resource_dir : Separate<["-"], "resource-dir">,
   Flags<[DriverOption, CC1Option, CoreOption, HelpHidden]>,
   HelpText<"The directory which holds the compiler resource files">;
-def resource_dir_EQ : Joined<["-"], "resource-dir=">, Flags<[DriverOption]>,
+def resource_dir_EQ : Joined<["-"], "resource-dir=">, Flags<[DriverOption, CoreOption]>,
   Alias<resource_dir>;
 def rpath : Separate<["-"], "rpath">, Flags<[LinkerInput]>;
-def rtlib_EQ : Joined<["-", "--"], "rtlib=">;
+def rtlib_EQ : Joined<["-", "--"], "rtlib=">,
+  HelpText<"Compiler runtime library to use">;
 def r : Flag<["-"], "r">, Flags<[LinkerInput,NoArgumentUnused]>;
 def save_temps_EQ : Joined<["-", "--"], "save-temps=">, Flags<[DriverOption]>,
   HelpText<"Save intermediate compilation results.">;

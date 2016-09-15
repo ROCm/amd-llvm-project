@@ -393,8 +393,7 @@ void SourceCoverageViewHTML::renderViewHeader(raw_ostream &OS) {
 }
 
 void SourceCoverageViewHTML::renderViewFooter(raw_ostream &OS) {
-  OS << EndTable << EndCenteredDiv
-     << tag("h5", escape(getOptions().getLLVMVersionString(), getOptions()));
+  OS << EndTable << EndCenteredDiv;
 }
 
 void SourceCoverageViewHTML::renderSourceName(raw_ostream &OS, bool WholeFile) {
@@ -589,11 +588,10 @@ void SourceCoverageViewHTML::renderInstantiationView(raw_ostream &OS,
   OS << EndExpansionDiv;
 }
 
-void SourceCoverageViewHTML::renderCellInTitle(raw_ostream &OS,
-                                               StringRef CellText) {
+void SourceCoverageViewHTML::renderTitle(raw_ostream &OS, StringRef Title) {
   if (getOptions().hasProjectTitle())
     OS << tag(ProjectTitleTag, escape(getOptions().ProjectTitle, getOptions()));
-  OS << tag(ReportTitleTag, escape(CellText, getOptions()));
+  OS << tag(ReportTitleTag, escape(Title, getOptions()));
   if (getOptions().hasCreatedTime())
     OS << tag(CreatedTimeTag,
               escape(getOptions().CreatedTimeStr, getOptions()));

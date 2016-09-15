@@ -67,10 +67,7 @@ unsigned getDividerWidth(const CoverageViewOptions &Opts) {
 
 void SourceCoverageViewText::renderViewHeader(raw_ostream &) {}
 
-void SourceCoverageViewText::renderViewFooter(raw_ostream &OS) {
-  getOptions().colored_ostream(OS, raw_ostream::CYAN)
-      << "\n" << getOptions().getLLVMVersionString();
-}
+void SourceCoverageViewText::renderViewFooter(raw_ostream &) {}
 
 void SourceCoverageViewText::renderSourceName(raw_ostream &OS, bool WholeFile) {
   std::string ViewInfo = WholeFile ? getVerboseSourceName() : getSourceName();
@@ -221,13 +218,12 @@ void SourceCoverageViewText::renderInstantiationView(raw_ostream &OS,
   ISV.View->print(OS, /*WholeFile=*/false, /*ShowSourceName=*/true, ViewDepth);
 }
 
-void SourceCoverageViewText::renderCellInTitle(raw_ostream &OS,
-                                               StringRef CellText) {
+void SourceCoverageViewText::renderTitle(raw_ostream &OS, StringRef Title) {
   if (getOptions().hasProjectTitle())
     getOptions().colored_ostream(OS, raw_ostream::CYAN)
         << getOptions().ProjectTitle << "\n";
 
-  getOptions().colored_ostream(OS, raw_ostream::CYAN) << CellText << "\n";
+  getOptions().colored_ostream(OS, raw_ostream::CYAN) << Title << "\n";
 
   if (getOptions().hasCreatedTime())
     getOptions().colored_ostream(OS, raw_ostream::CYAN)
