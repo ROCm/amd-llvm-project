@@ -7,55 +7,66 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Driver.h"
+#include "PDB.h"
 #include "Error.h"
-#include "Symbols.h"
+#include "llvm/DebugInfo/MSF/MSFBuilder.h"
+#include "llvm/DebugInfo/MSF/MSFCommon.h"
+#include "llvm/DebugInfo/PDB/Raw/DbiStream.h"
+#include "llvm/DebugInfo/PDB/Raw/DbiStreamBuilder.h"
+#include "llvm/DebugInfo/PDB/Raw/InfoStream.h"
+#include "llvm/DebugInfo/PDB/Raw/InfoStreamBuilder.h"
+#include "llvm/DebugInfo/PDB/Raw/PDBFile.h"
+#include "llvm/DebugInfo/PDB/Raw/PDBFileBuilder.h"
+#include "llvm/DebugInfo/PDB/Raw/TpiStream.h"
+#include "llvm/DebugInfo/PDB/Raw/TpiStreamBuilder.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/FileOutputBuffer.h"
 #include <memory>
 
+using namespace lld;
 using namespace llvm;
 using namespace llvm::support;
 using namespace llvm::support::endian;
 
-const int PageSize = 4096;
-const uint8_t Magic[32] = "Microsoft C/C++ MSF 7.00\r\n\032DS\0\0";
+static ExitOnError ExitOnErr;
 
-namespace {
-struct PDBHeader {
-  uint8_t Magic[32];
-  ulittle32_t PageSize;
-  ulittle32_t FpmPage;
-  ulittle32_t PageCount;
-  ulittle32_t RootSize;
-  ulittle32_t Reserved;
-  ulittle32_t RootPointer;
-};
-}
+const int BlockSize = 4096;
 
-void lld::coff::createPDB(StringRef Path) {
+void coff::createPDB(StringRef Path) {
   // Create a file.
-  size_t FileSize = PageSize * 3;
-  ErrorOr<std::unique_ptr<FileOutputBuffer>> BufferOrErr =
-      FileOutputBuffer::create(Path, FileSize);
+  size_t FileSize = BlockSize * 10;
+  auto BufferOrErr = FileOutputBuffer::create(Path, FileSize);
   if (auto EC = BufferOrErr.getError())
     fatal(EC, "failed to open " + Path);
-  std::unique_ptr<FileOutputBuffer> Buffer = std::move(*BufferOrErr);
+  auto FileByteStream =
+      llvm::make_unique<msf::FileBufferByteStream>(std::move(*BufferOrErr));
 
-  // Write the file header.
-  uint8_t *Buf = Buffer->getBufferStart();
-  auto *Hdr = reinterpret_cast<PDBHeader *>(Buf);
-  memcpy(Hdr->Magic, Magic, sizeof(Magic));
-  Hdr->PageSize = PageSize;
-  // I don't know what FpmPage field means, but it must not be 0.
-  Hdr->FpmPage = 1;
-  Hdr->PageCount = FileSize / PageSize;
-  // Root directory is empty, containing only the length field.
-  Hdr->RootSize = 4;
-  // Root directory is on page 1.
-  Hdr->RootPointer = 1;
+  // Create the superblock.
+  msf::SuperBlock SB;
+  memcpy(SB.MagicBytes, msf::Magic, sizeof(msf::Magic));
+  SB.BlockSize = 4096;
+  SB.FreeBlockMapBlock = 2;
+  SB.NumBlocks = 10;
+  SB.NumDirectoryBytes = 0;
+  SB.Unknown1 = 0;
+  SB.BlockMapAddr = 9;
+
+  BumpPtrAllocator Alloc;
+  pdb::PDBFileBuilder Builder(Alloc);
+  ExitOnErr(Builder.initialize(SB));
+  ExitOnErr(Builder.getMsfBuilder().setDirectoryBlocksHint({8}));
+
+  ExitOnErr(Builder.getMsfBuilder().addStream(1, {4}));
+  ExitOnErr(Builder.getMsfBuilder().addStream(1, {5}));
+  ExitOnErr(Builder.getMsfBuilder().addStream(1, {6}));
+
+  // Add an empty IPI stream.
+  Builder.getInfoBuilder();
+
+  // Add an empty TPI stream.
+  auto &TpiBuilder = Builder.getTpiBuilder();
+  TpiBuilder.setVersionHeader(pdb::PdbTpiV80);
 
   // Write the root directory. Root stream is on page 2.
-  write32le(Buf + PageSize, 2);
-  Buffer->commit();
+  ExitOnErr(Builder.commit(*FileByteStream));
 }
