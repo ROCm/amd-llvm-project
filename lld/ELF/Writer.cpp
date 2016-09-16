@@ -307,7 +307,9 @@ template <class ELFT> static void reportUndefined(SymbolBody *Sym) {
       Config->UnresolvedSymbols != UnresolvedPolicy::NoUndef)
     return;
 
-  std::string Msg = "undefined symbol: " + Sym->getName().str();
+  std::string Msg = "undefined symbol: ";
+  Msg += Config->Demangle ? demangle(Sym->getName()) : Sym->getName().str();
+
   if (Sym->File)
     Msg += " in " + getFilename(Sym->File);
   if (Config->UnresolvedSymbols == UnresolvedPolicy::Warn)
@@ -969,8 +971,15 @@ std::vector<PhdrEntry<ELFT>> Writer<ELFT>::createPhdrs() {
   Phdr RelRo(PT_GNU_RELRO, PF_R);
   Phdr Note(PT_NOTE, PF_R);
   for (OutputSectionBase<ELFT> *Sec : OutputSections) {
+    // Skip non alloc section.
+    // The reason we skip instead of just breaking out of the loop is the way
+    // we implement linker scripts. We always put the linker script sections
+    // first, which means that a non alloc section can be in the middle of the
+    // file. Continuing in here means it will be included in a PT_LOAD anyway.
+    // We should probably sort sections based of SHF_ALLOC even if they are
+    // on linker scripts.
     if (!(Sec->getFlags() & SHF_ALLOC))
-      break;
+      continue;
 
     // If we meet TLS section then we create TLS header
     // and put all TLS sections inside for futher use when

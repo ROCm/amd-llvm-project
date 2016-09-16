@@ -516,12 +516,8 @@ static void InitializePredefinedMacros(const TargetInfo &TI,
 #define TOSTR(X) TOSTR2(X)
   Builder.defineMacro("__clang_major__", TOSTR(CLANG_VERSION_MAJOR));
   Builder.defineMacro("__clang_minor__", TOSTR(CLANG_VERSION_MINOR));
-#ifdef CLANG_VERSION_PATCHLEVEL
   Builder.defineMacro("__clang_patchlevel__", TOSTR(CLANG_VERSION_PATCHLEVEL));
-#else
-  Builder.defineMacro("__clang_patchlevel__", "0");
-#endif
-  Builder.defineMacro("__clang_version__", 
+  Builder.defineMacro("__clang_version__",
                       "\"" CLANG_VERSION_STRING " "
                       + getClangFullRepositoryVersion() + "\"");
 
