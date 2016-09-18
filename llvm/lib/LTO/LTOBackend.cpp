@@ -25,6 +25,7 @@
 #include "llvm/IR/PassManager.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/LTO/LTO.h"
+#include "llvm/LTO/legacy/UpdateCompilerUsed.h"
 #include "llvm/MC/SubtargetFeature.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/Error.h"
@@ -123,9 +124,17 @@ createTargetMachine(Config &Conf, StringRef TheTriple,
 
 static void runNewPMCustomPasses(Module &Mod, TargetMachine *TM,
                                  std::string PipelineDesc,
+                                 std::string AAPipelineDesc,
                                  bool DisableVerify) {
   PassBuilder PB(TM);
   AAManager AA;
+
+  // Parse a custom AA pipeline if asked to.
+  if (!AAPipelineDesc.empty())
+    if (!PB.parseAAPipeline(AA, AAPipelineDesc))
+      report_fatal_error("unable to parse AA pipeline description: " +
+                         AAPipelineDesc);
+
   LoopAnalysisManager LAM;
   FunctionAnalysisManager FAM;
   CGSCCAnalysisManager CGAM;
@@ -184,7 +193,8 @@ bool opt(Config &Conf, TargetMachine *TM, unsigned Task, Module &Mod,
   if (Conf.OptPipeline.empty())
     runOldPMPasses(Conf, Mod, TM, IsThinLto);
   else
-    runNewPMCustomPasses(Mod, TM, Conf.OptPipeline, Conf.DisableVerify);
+    runNewPMCustomPasses(Mod, TM, Conf.OptPipeline, Conf.AAPipeline,
+                         Conf.DisableVerify);
   return !Conf.PostOptModuleHook || Conf.PostOptModuleHook(Task, Mod);
 }
 
@@ -275,6 +285,19 @@ Expected<const Target *> initAndLookupTarget(Config &C, Module &Mod) {
 
 }
 
+static void handleAsmUndefinedRefs(Module &Mod, TargetMachine &TM) {
+  // Collect the list of undefined symbols used in asm and update
+  // llvm.compiler.used to prevent optimization to drop these from the output.
+  StringSet<> AsmUndefinedRefs;
+  object::IRObjectFile::CollectAsmUndefinedRefs(
+      Triple(Mod.getTargetTriple()), Mod.getModuleInlineAsm(),
+      [&AsmUndefinedRefs](StringRef Name, object::BasicSymbolRef::Flags Flags) {
+        if (Flags & object::BasicSymbolRef::SF_Undefined)
+          AsmUndefinedRefs.insert(Name);
+      });
+  updateCompilerUsed(Mod, TM, AsmUndefinedRefs);
+}
+
 Error lto::backend(Config &C, AddOutputFn AddOutput,
                    unsigned ParallelCodeGenParallelismLevel,
                    std::unique_ptr<Module> Mod) {
@@ -284,6 +307,8 @@ Error lto::backend(Config &C, AddOutputFn AddOutput,
 
   std::unique_ptr<TargetMachine> TM =
       createTargetMachine(C, Mod->getTargetTriple(), *TOrErr);
+
+  handleAsmUndefinedRefs(*Mod, *TM);
 
   if (!C.CodeGenOnly)
     if (!opt(C, TM.get(), 0, *Mod, /*IsThinLto=*/false))
@@ -309,6 +334,8 @@ Error lto::thinBackend(Config &Conf, unsigned Task, AddOutputFn AddOutput,
 
   std::unique_ptr<TargetMachine> TM =
       createTargetMachine(Conf, Mod.getTargetTriple(), *TOrErr);
+
+  handleAsmUndefinedRefs(Mod, *TM);
 
   if (Conf.CodeGenOnly) {
     codegen(Conf, TM.get(), AddOutput, Task, Mod);
