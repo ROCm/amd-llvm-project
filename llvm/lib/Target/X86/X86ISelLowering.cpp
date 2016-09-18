@@ -4763,6 +4763,7 @@ static bool getTargetShuffleMaskIndices(SDValue MaskNode,
 
   MVT VT = MaskNode.getSimpleValueType();
   assert(VT.isVector() && "Can't produce a non-vector with a build_vector!");
+  unsigned NumMaskElts = VT.getSizeInBits() / MaskEltSizeInBits;
 
   // Split an APInt element into MaskEltSizeInBits sized pieces and
   // insert into the shuffle mask.
@@ -4794,17 +4795,20 @@ static bool getTargetShuffleMaskIndices(SDValue MaskNode,
 
   if (MaskNode.getOpcode() == X86ISD::VZEXT_MOVL &&
       MaskNode.getOperand(0).getOpcode() == ISD::SCALAR_TO_VECTOR) {
-
-    // TODO: Handle (MaskEltSizeInBits % VT.getScalarSizeInBits()) == 0
-    if ((VT.getScalarSizeInBits() % MaskEltSizeInBits) != 0)
-      return false;
-    unsigned ElementSplit = VT.getScalarSizeInBits() / MaskEltSizeInBits;
-
     SDValue MaskOp = MaskNode.getOperand(0).getOperand(0);
     if (auto *CN = dyn_cast<ConstantSDNode>(MaskOp)) {
-      SplitElementToMask(CN->getAPIntValue());
-      RawMask.append((VT.getVectorNumElements() - 1) * ElementSplit, 0);
-      return true;
+      if ((MaskEltSizeInBits % VT.getScalarSizeInBits()) == 0) {
+        RawMask.push_back(CN->getZExtValue());
+        RawMask.append(NumMaskElts - 1, 0);
+        return true;
+      }
+
+      if ((VT.getScalarSizeInBits() % MaskEltSizeInBits) == 0) {
+        unsigned ElementSplit = VT.getScalarSizeInBits() / MaskEltSizeInBits;
+        SplitElementToMask(CN->getAPIntValue());
+        RawMask.append((VT.getVectorNumElements() - 1) * ElementSplit, 0);
+        return true;
+      }
     }
     return false;
   }
@@ -4815,7 +4819,7 @@ static bool getTargetShuffleMaskIndices(SDValue MaskNode,
   // We can always decode if the buildvector is all zero constants,
   // but can't use isBuildVectorAllZeros as it might contain UNDEFs.
   if (all_of(MaskNode->ops(), X86::isZeroNode)) {
-    RawMask.append(VT.getSizeInBits() / MaskEltSizeInBits, 0);
+    RawMask.append(NumMaskElts, 0);
     return true;
   }
 
@@ -13867,14 +13871,14 @@ SDValue X86TargetLowering::LowerUINT_TO_FP(SDValue Op,
   SDLoc dl(Op);
   auto PtrVT = getPointerTy(DAG.getDataLayout());
 
-  if (Op.getSimpleValueType().isVector())
-    return lowerUINT_TO_FP_vec(Op, DAG);
-
   // Since UINT_TO_FP is legal (it's marked custom), dag combiner won't
   // optimize it to a SINT_TO_FP when the sign bit is known zero. Perform
   // the optimization here.
   if (DAG.SignBitIsZero(N0))
     return DAG.getNode(ISD::SINT_TO_FP, dl, Op.getValueType(), N0);
+
+  if (Op.getSimpleValueType().isVector())
+    return lowerUINT_TO_FP_vec(Op, DAG);
 
   MVT SrcVT = N0.getSimpleValueType();
   MVT DstVT = Op.getSimpleValueType();
@@ -31199,6 +31203,12 @@ static SDValue combineUIntToFP(SDNode *N, SelectionDAG &DAG,
 
     return DAG.getNode(ISD::SINT_TO_FP, dl, VT, P);
   }
+
+  // Since UINT_TO_FP is legal (it's marked custom), dag combiner won't
+  // optimize it to a SINT_TO_FP when the sign bit is known zero. Perform
+  // the optimization here.
+  if (DAG.SignBitIsZero(Op0))
+    return DAG.getNode(ISD::SINT_TO_FP, SDLoc(N), VT, Op0);
 
   return SDValue();
 }
