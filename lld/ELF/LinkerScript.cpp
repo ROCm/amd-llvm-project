@@ -109,12 +109,6 @@ bool LinkerScript<ELFT>::shouldKeep(InputSectionBase<ELFT> *S) {
   return false;
 }
 
-// We need to use const_cast because match() is not a const function.
-// This function encapsulates that ugliness.
-static bool match(const Regex &Re, StringRef S) {
-  return const_cast<Regex &>(Re).match(S);
-}
-
 static bool comparePriority(InputSectionData *A, InputSectionData *B) {
   return getPriority(A->Name) < getPriority(B->Name);
 }
@@ -170,13 +164,13 @@ void LinkerScript<ELFT>::computeInputSections(InputSectionDescription *I) {
   for (SectionPattern &Pat : I->SectionPatterns) {
     for (ObjectFile<ELFT> *F : Symtab<ELFT>::X->getObjectFiles()) {
       StringRef Filename = sys::path::filename(F->getName());
-      if (!match(I->FileRe, Filename) || match(Pat.ExcludedFileRe, Filename))
+      if (!I->FileRe.match(Filename) || Pat.ExcludedFileRe.match(Filename))
         continue;
 
       for (InputSectionBase<ELFT> *S : F->getSections())
-        if (!isDiscarded(S) && !S->OutSec && match(Pat.SectionRe, S->Name))
+        if (!isDiscarded(S) && !S->OutSec && Pat.SectionRe.match(S->Name))
           I->Sections.push_back(S);
-      if (match(Pat.SectionRe, "COMMON"))
+      if (Pat.SectionRe.match("COMMON"))
         I->Sections.push_back(CommonInputSection<ELFT>::X);
     }
   }
@@ -447,11 +441,34 @@ void LinkerScript<ELFT>::assignOffsets(OutputSectionCommand *Cmd) {
     switchTo(Base);
     Dot += CurOutSec->getSize();
   }
-  for (auto I = E, E = Cmd->Commands.end(); I != E; ++I)
-    process(**I);
+  std::for_each(E, Cmd->Commands.end(),
+                [this](std::unique_ptr<BaseCommand> &B) { process(*B.get()); });
 }
 
 template <class ELFT> void LinkerScript<ELFT>::assignAddresses() {
+  // It is common practice to use very generic linker scripts. So for any
+  // given run some of the output sections in the script will be empty.
+  // We could create corresponding empty output sections, but that would
+  // clutter the output.
+  // We instead remove trivially empty sections. The bfd linker seems even
+  // more aggressive at removing them.
+  auto Pos = std::remove_if(
+      Opt.Commands.begin(), Opt.Commands.end(),
+      [&](const std::unique_ptr<BaseCommand> &Base) {
+        auto *Cmd = dyn_cast<OutputSectionCommand>(Base.get());
+        if (!Cmd)
+          return false;
+        std::vector<OutputSectionBase<ELFT> *> Secs =
+            findSections(*Cmd, *OutputSections);
+        if (!Secs.empty())
+          return false;
+        for (const std::unique_ptr<BaseCommand> &I : Cmd->Commands)
+          if (!isa<InputSectionDescription>(I.get()))
+            return false;
+        return true;
+      });
+  Opt.Commands.erase(Pos, Opt.Commands.end());
+
   // Orphan sections are sections present in the input files which
   // are not explicitly placed into the output file by the linker script.
   // We place orphan sections at end of file.
