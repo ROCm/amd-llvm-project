@@ -272,6 +272,10 @@ public:
                              SMLoc &EndLoc) override;
   bool parseAbsoluteExpression(int64_t &Res) override;
 
+  /// \brief Parse a floating point expression using the float \p Semantics
+  /// and set \p Res to the value.
+  bool parseRealValue(const fltSemantics &Semantics, APInt &Res);
+
   /// \brief Parse an identifier or string (as a quoted identifier)
   /// and set \p Res to the identifier contents.
   bool parseIdentifier(StringRef &Res) override;
@@ -342,7 +346,8 @@ private:
 
   /// \brief Process the specified file for the .incbin directive.
   /// This returns true on failure.
-  bool processIncbinFile(const std::string &Filename);
+  bool processIncbinFile(const std::string &Filename, int64_t Skip = 0,
+                         const MCExpr *Count = nullptr, SMLoc Loc = SMLoc());
 
   /// \brief Reset the current lexer position to that given by \p Loc. The
   /// current token is not set; clients should ensure Lex() is called
@@ -383,6 +388,8 @@ private:
     DK_RELOC,
     DK_VALUE, DK_2BYTE, DK_LONG, DK_INT, DK_4BYTE, DK_QUAD, DK_8BYTE, DK_OCTA,
     DK_DC, DK_DC_A, DK_DC_B, DK_DC_D, DK_DC_L, DK_DC_S, DK_DC_W, DK_DC_X,
+    DK_DCB, DK_DCB_B, DK_DCB_D, DK_DCB_L, DK_DCB_S, DK_DCB_W, DK_DCB_X,
+    DK_DS, DK_DS_B, DK_DS_D, DK_DS_L, DK_DS_P, DK_DS_S, DK_DS_W, DK_DS_X,
     DK_SINGLE, DK_FLOAT, DK_DOUBLE, DK_ALIGN, DK_ALIGN32, DK_BALIGN, DK_BALIGNW,
     DK_BALIGNL, DK_P2ALIGN, DK_P2ALIGNW, DK_P2ALIGNL, DK_ORG, DK_FILL, DK_ENDR,
     DK_BUNDLE_ALIGN_MODE, DK_BUNDLE_LOCK, DK_BUNDLE_UNLOCK,
@@ -484,6 +491,12 @@ private:
 
   // ".space", ".skip"
   bool parseDirectiveSpace(StringRef IDVal);
+
+  // ".dcb"
+  bool parseDirectiveDCB(StringRef IDVal, unsigned Size);
+  bool parseDirectiveRealDCB(StringRef IDVal, const fltSemantics &);
+  // ".ds"
+  bool parseDirectiveDS(StringRef IDVal, unsigned Size);
 
   // .sleb128 (Signed=true) and .uleb128 (Signed=false)
   bool parseDirectiveLEB128(bool Signed);
@@ -643,7 +656,8 @@ bool AsmParser::enterIncludeFile(const std::string &Filename) {
 /// Process the specified .incbin file by searching for it in the include paths
 /// then just emitting the byte contents of the file to the streamer. This
 /// returns true on failure.
-bool AsmParser::processIncbinFile(const std::string &Filename) {
+bool AsmParser::processIncbinFile(const std::string &Filename, int64_t Skip,
+                                  const MCExpr *Count, SMLoc Loc) {
   std::string IncludedFile;
   unsigned NewBuf =
       SrcMgr.AddIncludeFile(Filename, Lexer.getLoc(), IncludedFile);
@@ -651,7 +665,17 @@ bool AsmParser::processIncbinFile(const std::string &Filename) {
     return true;
 
   // Pick up the bytes from the file and emit them.
-  getStreamer().EmitBytes(SrcMgr.getMemoryBuffer(NewBuf)->getBuffer());
+  StringRef Bytes = SrcMgr.getMemoryBuffer(NewBuf)->getBuffer();
+  Bytes = Bytes.drop_front(Skip);
+  if (Count) {
+    int64_t Res;
+    if (!Count->evaluateAsAbsolute(Res))
+      return Error(Loc, "expected absolute expression");
+    if (Res < 0)
+      return Warning(Loc, "negative count has no effect");
+    Bytes = Bytes.take_front(Res);
+  }
+  getStreamer().EmitBytes(Bytes);
   return false;
 }
 
@@ -1909,9 +1933,34 @@ bool AsmParser::parseStatement(ParseStatementInfo &Info,
       return parseDirectiveRealValue(APFloat::IEEEsingle);
     case DK_DC_W:
       return parseDirectiveValue(2);
+    case DK_DCB:
+    case DK_DCB_W:
+      return parseDirectiveDCB(IDVal, 2);
+    case DK_DCB_B:
+      return parseDirectiveDCB(IDVal, 1);
+    case DK_DCB_D:
+      return parseDirectiveRealDCB(IDVal, APFloat::IEEEdouble);
+    case DK_DCB_L:
+      return parseDirectiveDCB(IDVal, 4);
+    case DK_DCB_S:
+      return parseDirectiveRealDCB(IDVal, APFloat::IEEEsingle);
     case DK_DC_X:
+    case DK_DCB_X:
       return TokError(Twine(IDVal) +
                       " not currently supported for this target");
+    case DK_DS:
+    case DK_DS_W:
+      return parseDirectiveDS(IDVal, 2);
+    case DK_DS_B:
+      return parseDirectiveDS(IDVal, 1);
+    case DK_DS_D:
+      return parseDirectiveDS(IDVal, 8);
+    case DK_DS_L:
+    case DK_DS_S:
+      return parseDirectiveDS(IDVal, 4);
+    case DK_DS_P:
+    case DK_DS_X:
+      return parseDirectiveDS(IDVal, 12);
     }
 
     return Error(IDLoc, "unknown directive");
@@ -2811,6 +2860,46 @@ bool AsmParser::parseDirectiveOctaValue() {
   return false;
 }
 
+bool AsmParser::parseRealValue(const fltSemantics &Semantics, APInt &Res) {
+  // We don't truly support arithmetic on floating point expressions, so we
+  // have to manually parse unary prefixes.
+  bool IsNeg = false;
+  if (getLexer().is(AsmToken::Minus)) {
+    Lexer.Lex();
+    IsNeg = true;
+  } else if (getLexer().is(AsmToken::Plus))
+    Lexer.Lex();
+
+  if (Lexer.is(AsmToken::Error))
+    return TokError(Lexer.getErr());
+  if (Lexer.isNot(AsmToken::Integer) && Lexer.isNot(AsmToken::Real) &&
+      Lexer.isNot(AsmToken::Identifier))
+    return TokError("unexpected token in directive");
+
+  // Convert to an APFloat.
+  APFloat Value(Semantics);
+  StringRef IDVal = getTok().getString();
+  if (getLexer().is(AsmToken::Identifier)) {
+    if (!IDVal.compare_lower("infinity") || !IDVal.compare_lower("inf"))
+      Value = APFloat::getInf(Semantics);
+    else if (!IDVal.compare_lower("nan"))
+      Value = APFloat::getNaN(Semantics, false, ~0);
+    else
+      return TokError("invalid floating point literal");
+  } else if (Value.convertFromString(IDVal, APFloat::rmNearestTiesToEven) ==
+             APFloat::opInvalidOp)
+    return TokError("invalid floating point literal");
+  if (IsNeg)
+    Value.changeSign();
+
+  // Consume the numeric token.
+  Lex();
+
+  Res = Value.bitcastToAPInt();
+
+  return false;
+}
+
 /// parseDirectiveRealValue
 ///  ::= (.single | .double) [ expression (, expression)* ]
 bool AsmParser::parseDirectiveRealValue(const fltSemantics &Semantics) {
@@ -2818,42 +2907,10 @@ bool AsmParser::parseDirectiveRealValue(const fltSemantics &Semantics) {
     checkForValidSection();
 
     while (true) {
-      // We don't truly support arithmetic on floating point expressions, so we
-      // have to manually parse unary prefixes.
-      bool IsNeg = false;
-      if (getLexer().is(AsmToken::Minus)) {
-        Lexer.Lex();
-        IsNeg = true;
-      } else if (getLexer().is(AsmToken::Plus))
-        Lexer.Lex();
+      APInt AsInt;
+      if (parseRealValue(Semantics, AsInt))
+        return true;
 
-      if (Lexer.is(AsmToken::Error))
-        return TokError(Lexer.getErr());
-      if (Lexer.isNot(AsmToken::Integer) && Lexer.isNot(AsmToken::Real) &&
-          Lexer.isNot(AsmToken::Identifier))
-        return TokError("unexpected token in directive");
-
-      // Convert to an APFloat.
-      APFloat Value(Semantics);
-      StringRef IDVal = getTok().getString();
-      if (getLexer().is(AsmToken::Identifier)) {
-        if (!IDVal.compare_lower("infinity") || !IDVal.compare_lower("inf"))
-          Value = APFloat::getInf(Semantics);
-        else if (!IDVal.compare_lower("nan"))
-          Value = APFloat::getNaN(Semantics, false, ~0);
-        else
-          return TokError("invalid floating point literal");
-      } else if (Value.convertFromString(IDVal, APFloat::rmNearestTiesToEven) ==
-                 APFloat::opInvalidOp)
-        return TokError("invalid floating point literal");
-      if (IsNeg)
-        Value.changeSign();
-
-      // Consume the numeric token.
-      Lex();
-
-      // Emit the value as an integer.
-      APInt AsInt = Value.bitcastToAPInt();
       getStreamer().EmitIntValue(AsInt.getLimitedValue(),
                                  AsInt.getBitWidth() / 8);
 
@@ -4214,6 +4271,109 @@ bool AsmParser::parseDirectiveSpace(StringRef IDVal) {
   return false;
 }
 
+/// parseDirectiveDCB
+/// ::= .dcb.{b, l, w} expression, expression
+bool AsmParser::parseDirectiveDCB(StringRef IDVal, unsigned Size) {
+  checkForValidSection();
+
+  SMLoc NumValuesLoc = Lexer.getLoc();
+  int64_t NumValues;
+  if (parseAbsoluteExpression(NumValues))
+    return true;
+
+  if (NumValues < 0) {
+    Warning(NumValuesLoc, "'" + Twine(IDVal) + "' directive with negative repeat count has no effect");
+    return false;
+  }
+
+  if (parseToken(AsmToken::Comma,
+                 "unexpected token in '" + Twine(IDVal) + "' directive"))
+    return true;
+
+  const MCExpr *Value;
+  SMLoc ExprLoc = getLexer().getLoc();
+  if (parseExpression(Value))
+    return true;
+
+  // Special case constant expressions to match code generator.
+  if (const MCConstantExpr *MCE = dyn_cast<MCConstantExpr>(Value)) {
+    assert(Size <= 8 && "Invalid size");
+    uint64_t IntValue = MCE->getValue();
+    if (!isUIntN(8 * Size, IntValue) && !isIntN(8 * Size, IntValue))
+      return Error(ExprLoc, "literal value out of range for directive");
+    for (uint64_t i = 0, e = NumValues; i != e; ++i)
+      getStreamer().EmitIntValue(IntValue, Size);
+  } else {
+    for (uint64_t i = 0, e = NumValues; i != e; ++i)
+      getStreamer().EmitValue(Value, Size, ExprLoc);
+  }
+
+  if (parseToken(AsmToken::EndOfStatement,
+                 "unexpected token in '" + Twine(IDVal) + "' directive"))
+    return true;
+
+  return false;
+}
+
+/// parseDirectiveRealDCB
+/// ::= .dcb.{d, s} expression, expression
+bool AsmParser::parseDirectiveRealDCB(StringRef IDVal, const fltSemantics &Semantics) {
+  checkForValidSection();
+
+  SMLoc NumValuesLoc = Lexer.getLoc();
+  int64_t NumValues;
+  if (parseAbsoluteExpression(NumValues))
+    return true;
+
+  if (NumValues < 0) {
+    Warning(NumValuesLoc, "'" + Twine(IDVal) + "' directive with negative repeat count has no effect");
+    return false;
+  }
+
+  if (parseToken(AsmToken::Comma,
+                 "unexpected token in '" + Twine(IDVal) + "' directive"))
+    return true;
+
+  APInt AsInt;
+  if (parseRealValue(Semantics, AsInt))
+    return true;
+
+  if (parseToken(AsmToken::EndOfStatement,
+                 "unexpected token in '" + Twine(IDVal) + "' directive"))
+    return true;
+
+  for (uint64_t i = 0, e = NumValues; i != e; ++i)
+    getStreamer().EmitIntValue(AsInt.getLimitedValue(),
+                               AsInt.getBitWidth() / 8);
+
+  return false;
+}
+
+/// parseDirectiveDS
+/// ::= .ds.{b, d, l, p, s, w, x} expression
+bool AsmParser::parseDirectiveDS(StringRef IDVal, unsigned Size) {
+  checkForValidSection();
+
+  SMLoc NumValuesLoc = Lexer.getLoc();
+  int64_t NumValues;
+  if (parseAbsoluteExpression(NumValues))
+    return true;
+
+  if (NumValues < 0) {
+    Warning(NumValuesLoc, "'" + Twine(IDVal) + "' directive with negative repeat count has no effect");
+    return false;
+  }
+
+  if (parseToken(AsmToken::EndOfStatement,
+                 "unexpected token in '" + Twine(IDVal) + "' directive"))
+    return true;
+
+  for (uint64_t i = 0, e = NumValues; i != e; ++i)
+    getStreamer().emitFill(Size, 0);
+
+  return false;
+}
+
 /// parseDirectiveLEB128
 /// ::= (.sleb128 | .uleb128) [ expression (, expression)* ]
 bool AsmParser::parseDirectiveLEB128(bool Signed) {
@@ -4388,20 +4548,46 @@ bool AsmParser::parseDirectiveInclude() {
 }
 
 /// parseDirectiveIncbin
-///  ::= .incbin "filename"
+///  ::= .incbin "filename" [ , skip [ , count ] ]
 bool AsmParser::parseDirectiveIncbin() {
   // Allow the strings to have escaped octal character sequence.
   std::string Filename;
   SMLoc IncbinLoc = getTok().getLoc();
   if (check(getTok().isNot(AsmToken::String),
             "expected string in '.incbin' directive") ||
-      parseEscapedString(Filename) ||
-      parseToken(AsmToken::EndOfStatement,
+      parseEscapedString(Filename))
+    return true;
+
+  int64_t Skip = 0;
+  const MCExpr *Count = nullptr;
+  SMLoc SkipLoc, CountLoc;
+  if (getLexer().isNot(AsmToken::EndOfStatement)) {
+    if (parseToken(AsmToken::Comma, "unexpected token in '.incbin' directive"))
+      return true;
+
+    // The skip expression can be omitted while specifying the count, e.g:
+    //  .incbin "filename",,4
+    if (getTok().isNot(AsmToken::Comma)) {
+      if (parseTokenLoc(SkipLoc) || parseAbsoluteExpression(Skip))
+        return true;
+    }
+
+    if (getLexer().isNot(AsmToken::EndOfStatement)) {
+      if (parseToken(AsmToken::Comma, "unexpected token in '.incbin' directive") ||
+          parseTokenLoc(CountLoc) || parseExpression(Count))
+        return true;
+    }
+  }
+
+  if (parseToken(AsmToken::EndOfStatement,
                  "unexpected token in '.incbin' directive"))
     return true;
 
+  if (check(Skip < 0, SkipLoc, "skip is negative"))
+    return true;
+
   // Attempt to process the included file.
-  if (processIncbinFile(Filename))
+  if (processIncbinFile(Filename, Skip, Count, CountLoc))
     return Error(IncbinLoc, "Could not find incbin file '" + Filename + "'");
   return false;
 }
@@ -4831,6 +5017,21 @@ void AsmParser::initializeDirectiveKindMap() {
   DirectiveKindMap[".dc.s"] = DK_DC_S;
   DirectiveKindMap[".dc.w"] = DK_DC_W;
   DirectiveKindMap[".dc.x"] = DK_DC_X;
+  DirectiveKindMap[".dcb"] = DK_DCB;
+  DirectiveKindMap[".dcb.b"] = DK_DCB_B;
+  DirectiveKindMap[".dcb.d"] = DK_DCB_D;
+  DirectiveKindMap[".dcb.l"] = DK_DCB_L;
+  DirectiveKindMap[".dcb.s"] = DK_DCB_S;
+  DirectiveKindMap[".dcb.w"] = DK_DCB_W;
+  DirectiveKindMap[".dcb.x"] = DK_DCB_X;
+  DirectiveKindMap[".ds"] = DK_DS;
+  DirectiveKindMap[".ds.b"] = DK_DS_B;
+  DirectiveKindMap[".ds.d"] = DK_DS_D;
+  DirectiveKindMap[".ds.l"] = DK_DS_L;
+  DirectiveKindMap[".ds.p"] = DK_DS_P;
+  DirectiveKindMap[".ds.s"] = DK_DS_S;
+  DirectiveKindMap[".ds.w"] = DK_DS_W;
+  DirectiveKindMap[".ds.x"] = DK_DS_X;
 }
 
 MCAsmMacro *AsmParser::parseMacroLikeBody(SMLoc DirectiveLoc) {

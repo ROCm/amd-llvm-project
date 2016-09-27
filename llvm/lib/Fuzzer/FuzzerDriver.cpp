@@ -9,6 +9,7 @@
 // FuzzerDriver and flag parsing.
 //===----------------------------------------------------------------------===//
 
+#include "FuzzerCorpus.h"
 #include "FuzzerInterface.h"
 #include "FuzzerInternal.h"
 #include "FuzzerMutate.h"
@@ -335,19 +336,15 @@ int MinimizeCrashInput(const std::vector<std::string> &Args) {
   return 0;
 }
 
-int MinimizeCrashInputInternalStep(Fuzzer *F) {
+int MinimizeCrashInputInternalStep(Fuzzer *F, InputCorpus *Corpus) {
   assert(Inputs->size() == 1);
   std::string InputFilePath = Inputs->at(0);
   Unit U = FileToVector(InputFilePath);
   assert(U.size() > 2);
   Printf("INFO: Starting MinimizeCrashInputInternalStep: %zd\n", U.size());
-  Unit X(U.size() - 1);
-  for (size_t I = 0; I < U.size(); I++) {
-    std::copy(U.begin(), U.begin() + I, X.begin());
-    std::copy(U.begin() + I + 1, U.end(), X.begin() + I);
-    F->AddToCorpus(X);
-  }
-  F->SetMaxLen(U.size() - 1);
+  Corpus->AddToCorpus(U);
+  F->SetMaxInputLen(U.size());
+  F->SetMaxMutationLen(U.size() - 1);
   F->Loop();
   Printf("INFO: Done MinimizeCrashInputInternalStep, no crashes found\n");
   exit(0);
@@ -400,6 +397,7 @@ int FuzzerDriver(int *argc, char ***argv, UserCallback Callback) {
   Options.UseIndirCalls = Flags.use_indir_calls;
   Options.UseMemcmp = Flags.use_memcmp;
   Options.UseMemmem = Flags.use_memmem;
+  Options.UseValueProfile = Flags.use_value_profile;
   Options.ShuffleAtStartUp = Flags.shuffle;
   Options.PreferSmall = Flags.prefer_small;
   Options.Reload = Flags.reload;
@@ -427,11 +425,11 @@ int FuzzerDriver(int *argc, char ***argv, UserCallback Callback) {
       !DoPlainRun || Flags.minimize_crash_internal_step;
   Options.PrintNewCovPcs = Flags.print_pcs;
   Options.PrintFinalStats = Flags.print_final_stats;
+  Options.PrintCorpusStats = Flags.print_corpus_stats;
   Options.PrintCoverage = Flags.print_coverage;
   Options.PruneCorpus = Flags.prune_corpus;
-
-  if (Flags.use_value_profile)
-    EnableValueProfile();
+  if (Flags.exit_on_src_pos)
+    Options.ExitOnSrcPos = Flags.exit_on_src_pos;
 
   unsigned Seed = Flags.seed;
   // Initialize Seed.
@@ -443,7 +441,8 @@ int FuzzerDriver(int *argc, char ***argv, UserCallback Callback) {
 
   Random Rand(Seed);
   MutationDispatcher MD(Rand, Options);
-  Fuzzer F(Callback, MD, Options);
+  InputCorpus Corpus;
+  Fuzzer F(Callback, Corpus, MD, Options);
 
   for (auto &U: Dictionary)
     if (U.size() <= Word::GetMaxSize())
@@ -463,7 +462,7 @@ int FuzzerDriver(int *argc, char ***argv, UserCallback Callback) {
   if (Flags.handle_term) SetSigTermHandler();
 
   if (Flags.minimize_crash_internal_step)
-    return MinimizeCrashInputInternalStep(&F);
+    return MinimizeCrashInputInternalStep(&F, &Corpus);
 
   if (DoPlainRun) {
     Options.SaveArtifacts = false;
@@ -489,7 +488,7 @@ int FuzzerDriver(int *argc, char ***argv, UserCallback Callback) {
 
   if (Flags.merge) {
     if (Options.MaxLen == 0)
-      F.SetMaxLen(kMaxSaneLen);
+      F.SetMaxInputLen(kMaxSaneLen);
     F.Merge(*Inputs);
     exit(0);
   }
@@ -506,7 +505,7 @@ int FuzzerDriver(int *argc, char ***argv, UserCallback Callback) {
     size_t MaxLen = 0;
     for (auto &U : InitialCorpus)
       MaxLen = std::max(U.size(), MaxLen);
-    F.SetMaxLen(std::min(std::max(kMinDefaultLen, MaxLen), kMaxSaneLen));
+    F.SetMaxInputLen(std::min(std::max(kMinDefaultLen, MaxLen), kMaxSaneLen));
   }
 
   if (InitialCorpus.empty()) {

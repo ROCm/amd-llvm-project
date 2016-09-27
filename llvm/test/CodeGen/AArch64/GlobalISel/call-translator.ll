@@ -101,3 +101,75 @@ define i64 @test_arr_call([4 x i64]* %addr) {
   %val = extractvalue [4 x i64] %res, 1
   ret i64 %val
 }
+
+
+; CHECK-LABEL: name: test_abi_exts_call
+; CHECK: [[VAL:%[0-9]+]](s8) = G_LOAD
+; CHECK: %w0 = COPY [[VAL]]
+; CHECK: BL @take_char, csr_aarch64_aapcs, implicit-def %lr, implicit %sp, implicit %w0
+; CHECK: [[SVAL:%[0-9]+]](s32) = G_SEXT [[VAL]](s8)
+; CHECK: %w0 = COPY [[SVAL]](s32)
+; CHECK: BL @take_char, csr_aarch64_aapcs, implicit-def %lr, implicit %sp, implicit %w0
+; CHECK: [[ZVAL:%[0-9]+]](s32) = G_ZEXT [[VAL]](s8)
+; CHECK: %w0 = COPY [[ZVAL]](s32)
+; CHECK: BL @take_char, csr_aarch64_aapcs, implicit-def %lr, implicit %sp, implicit %w0
+declare void @take_char(i8)
+define void @test_abi_exts_call(i8* %addr) {
+  %val = load i8, i8* %addr
+  call void @take_char(i8 %val)
+  call void @take_char(i8 signext %val)
+  call void @take_char(i8 zeroext %val)
+  ret void
+}
+
+; CHECK-LABEL: name: test_abi_sext_ret
+; CHECK: [[VAL:%[0-9]+]](s8) = G_LOAD
+; CHECK: [[SVAL:%[0-9]+]](s32) = G_SEXT [[VAL]](s8)
+; CHECK: %w0 = COPY [[SVAL]](s32)
+; CHECK: RET_ReallyLR implicit %w0
+define signext i8 @test_abi_sext_ret(i8* %addr) {
+  %val = load i8, i8* %addr
+  ret i8 %val
+}
+
+; CHECK-LABEL: name: test_abi_zext_ret
+; CHECK: [[VAL:%[0-9]+]](s8) = G_LOAD
+; CHECK: [[SVAL:%[0-9]+]](s32) = G_ZEXT [[VAL]](s8)
+; CHECK: %w0 = COPY [[SVAL]](s32)
+; CHECK: RET_ReallyLR implicit %w0
+define zeroext i8 @test_abi_zext_ret(i8* %addr) {
+  %val = load i8, i8* %addr
+  ret i8 %val
+}
+
+; CHECK-LABEL: name: test_stack_slots
+; CHECK: fixedStack:
+; CHECK-DAG:  - { id: [[STACK0:[0-9]+]], offset: 0, size: 8
+; CHECK-DAG:  - { id: [[STACK8:[0-9]+]], offset: 8, size: 8
+; CHECK: [[LHS_ADDR:%[0-9]+]](p0) = G_FRAME_INDEX %fixed-stack.[[STACK0]]
+; CHECK: [[LHS:%[0-9]+]](s64) = G_LOAD [[LHS_ADDR]](p0) :: (invariant load 8 from %fixed-stack.[[STACK0]], align 0)
+; CHECK: [[RHS_ADDR:%[0-9]+]](p0) = G_FRAME_INDEX %fixed-stack.[[STACK8]]
+; CHECK: [[RHS:%[0-9]+]](s64) = G_LOAD [[RHS_ADDR]](p0) :: (invariant load 8 from %fixed-stack.[[STACK8]], align 0)
+; CHECK: [[SUM:%[0-9]+]](s64) = G_ADD [[LHS]], [[RHS]]
+; CHECK: %x0 = COPY [[SUM]](s64)
+define i64 @test_stack_slots([8 x i64], i64 %lhs, i64 %rhs) {
+  %sum = add i64 %lhs, %rhs
+  ret i64 %sum
+}
+
+; CHECK-LABEL: name: test_call_stack
+; CHECK: [[C42:%[0-9]+]](s64) = G_CONSTANT 42
+; CHECK: [[C12:%[0-9]+]](s64) = G_CONSTANT 12
+; CHECK: [[SP:%[0-9]+]](p0) = COPY %sp
+; CHECK: [[C42_OFFS:%[0-9]+]](s64) = G_CONSTANT 0
+; CHECK: [[C42_LOC:%[0-9]+]](p0) = G_GEP [[SP]], [[C42_OFFS]](s64)
+; CHECK: G_STORE [[C42]](s64), [[C42_LOC]](p0) :: (store 8 into stack, align 0)
+; CHECK: [[SP:%[0-9]+]](p0) = COPY %sp
+; CHECK: [[C12_OFFS:%[0-9]+]](s64) = G_CONSTANT 8
+; CHECK: [[C12_LOC:%[0-9]+]](p0) = G_GEP [[SP]], [[C12_OFFS]](s64)
+; CHECK: G_STORE [[C12]](s64), [[C12_LOC]](p0) :: (store 8 into stack + 8, align 0)
+; CHECK: BL @test_stack_slots
+define void @test_call_stack() {
+  call i64 @test_stack_slots([8 x i64] undef, i64 42, i64 12)
+  ret void
+}

@@ -59,7 +59,7 @@ void PrintASCII(const Unit &U, const char *PrintAfter) {
   PrintASCII(U.data(), U.size(), PrintAfter);
 }
 
-std::string Sha1ToString(uint8_t Sha1[kSHA1NumBytes]) {
+std::string Sha1ToString(const uint8_t Sha1[kSHA1NumBytes]) {
   std::stringstream SS;
   for (int i = 0; i < kSHA1NumBytes; i++)
     SS << std::hex << std::setfill('0') << std::setw(2) << (unsigned)Sha1[i];
@@ -290,16 +290,20 @@ size_t GetPeakRSSMb() {
   return 0;
 }
 
+std::string DescribePC(const char *SymbolizedFMT, uintptr_t PC) {
+  if (!EF->__sanitizer_symbolize_pc) return "<can not symbolize>";
+  char PcDescr[1024];
+  EF->__sanitizer_symbolize_pc(reinterpret_cast<void*>(PC),
+                               SymbolizedFMT, PcDescr, sizeof(PcDescr));
+  PcDescr[sizeof(PcDescr) - 1] = 0;  // Just in case.
+  return PcDescr;
+}
+
 void PrintPC(const char *SymbolizedFMT, const char *FallbackFMT, uintptr_t PC) {
-  if (EF->__sanitizer_symbolize_pc) {
-    char PcDescr[1024];
-    EF->__sanitizer_symbolize_pc(reinterpret_cast<void*>(PC),
-                                 SymbolizedFMT, PcDescr, sizeof(PcDescr));
-    PcDescr[sizeof(PcDescr) - 1] = 0;  // Just in case.
-    Printf("%s", PcDescr);
-  } else {
+  if (EF->__sanitizer_symbolize_pc)
+    Printf("%s", DescribePC(SymbolizedFMT, PC).c_str());
+  else
     Printf(FallbackFMT, PC);
-  }
 }
 
 }  // namespace fuzzer

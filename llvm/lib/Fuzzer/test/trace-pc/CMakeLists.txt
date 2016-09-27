@@ -8,6 +8,8 @@ set(TracePCTests
   CounterTest
   CallerCalleeTest
   NullDerefTest
+  MinimizeCorpusTest
+  FullCoverageSetTest
   )
 
 foreach(Test ${TracePCTests})
