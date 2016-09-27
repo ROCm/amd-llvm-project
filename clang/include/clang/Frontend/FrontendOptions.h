@@ -274,6 +274,9 @@ public:
   // included by this file.
   std::string FindPchSource;
 
+  /// Filename to write statistics to.
+  std::string StatsFile;
+
 public:
   FrontendOptions() :
     DisableFree(false), RelocatablePCH(false), ShowHelp(false),

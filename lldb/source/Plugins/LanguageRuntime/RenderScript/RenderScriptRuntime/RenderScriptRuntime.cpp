@@ -1964,8 +1964,9 @@ void RenderScriptRuntime::FindStructTypeName(Element &elem,
   // Find all the global variables from the script rs modules
   VariableList variable_list;
   for (auto module_sp : m_rsmodules)
-    module_sp->m_module->FindGlobalVariables(RegularExpression("."), true,
-                                             UINT32_MAX, variable_list);
+    module_sp->m_module->FindGlobalVariables(
+        RegularExpression(llvm::StringRef(".")), true, UINT32_MAX,
+        variable_list);
 
   // Iterate over all the global variables looking for one with a matching type
   // to the Element.
@@ -3691,6 +3692,15 @@ public:
   }
 };
 
+static OptionDefinition g_renderscript_kernel_bp_set_options[] = {
+    {LLDB_OPT_SET_1, false, "coordinate", 'c', OptionParser::eRequiredArgument,
+     nullptr, nullptr, 0, eArgTypeValue,
+     "Set a breakpoint on a single invocation of the kernel with specified "
+     "coordinate.\n"
+     "Coordinate takes the form 'x[,y][,z] where x,y,z are positive "
+     "integers representing kernel dimensions. "
+     "Any unset dimensions will be defaulted to zero."}};
+
 class CommandObjectRenderScriptRuntimeKernelBreakpointSet
     : public CommandObjectParsed {
 public:
@@ -3741,15 +3751,16 @@ public:
       RegularExpression regex;
       RegularExpression::Match regex_match(3);
 
+      llvm::StringRef id_ref = llvm::StringRef::withNullAsEmpty(id_cstr);
       bool matched = false;
-      if (regex.Compile("^([0-9]+),([0-9]+),([0-9]+)$") &&
-          regex.Execute(id_cstr, &regex_match))
+      if (regex.Compile(llvm::StringRef("^([0-9]+),([0-9]+),([0-9]+)$")) &&
+          regex.Execute(id_ref, &regex_match))
         matched = true;
-      else if (regex.Compile("^([0-9]+),([0-9]+)$") &&
-               regex.Execute(id_cstr, &regex_match))
+      else if (regex.Compile(llvm::StringRef("^([0-9]+),([0-9]+)$")) &&
+               regex.Execute(id_ref, &regex_match))
         matched = true;
-      else if (regex.Compile("^([0-9]+)$") &&
-               regex.Execute(id_cstr, &regex_match))
+      else if (regex.Compile(llvm::StringRef("^([0-9]+)$")) &&
+               regex.Execute(id_ref, &regex_match))
         matched = true;
       for (uint32_t i = 0; i < 3; i++) {
         std::string group;
@@ -3768,9 +3779,10 @@ public:
       m_coord[2] = -1;
     }
 
-    const OptionDefinition *GetDefinitions() override { return g_option_table; }
+    llvm::ArrayRef<OptionDefinition> GetDefinitions() override {
+      return llvm::makeArrayRef(g_renderscript_kernel_bp_set_options);
+    }
 
-    static OptionDefinition g_option_table[];
     std::array<int, 3> m_coord;
   };
 
@@ -3806,17 +3818,6 @@ public:
 private:
   CommandOptions m_options;
 };
-
-OptionDefinition CommandObjectRenderScriptRuntimeKernelBreakpointSet::
-    CommandOptions::g_option_table[] = {
-        {LLDB_OPT_SET_1, false, "coordinate", 'c',
-         OptionParser::eRequiredArgument, nullptr, nullptr, 0, eArgTypeValue,
-         "Set a breakpoint on a single invocation of the kernel with specified "
-         "coordinate.\n"
-         "Coordinate takes the form 'x[,y][,z] where x,y,z are positive "
-         "integers representing kernel dimensions. "
-         "Any unset dimensions will be defaulted to zero."},
-        {0, false, nullptr, 0, 0, nullptr, nullptr, 0, eArgTypeNone, nullptr}};
 
 class CommandObjectRenderScriptRuntimeKernelBreakpointAll
     : public CommandObjectParsed {
@@ -3970,6 +3971,11 @@ public:
   }
 };
 
+static OptionDefinition g_renderscript_runtime_alloc_dump_options[] = {
+    {LLDB_OPT_SET_1, false, "file", 'f', OptionParser::eRequiredArgument,
+     nullptr, nullptr, 0, eArgTypeFilename,
+     "Print results to specified file instead of command line."}};
+
 class CommandObjectRenderScriptRuntimeContext : public CommandObjectMultiword {
 public:
   CommandObjectRenderScriptRuntimeContext(CommandInterpreter &interpreter)
@@ -4032,9 +4038,10 @@ public:
       m_outfile.Clear();
     }
 
-    const OptionDefinition *GetDefinitions() override { return g_option_table; }
+    llvm::ArrayRef<OptionDefinition> GetDefinitions() override {
+      return llvm::makeArrayRef(g_renderscript_runtime_alloc_dump_options);
+    }
 
-    static OptionDefinition g_option_table[];
     FileSpec m_outfile;
   };
 
@@ -4101,12 +4108,10 @@ private:
   CommandOptions m_options;
 };
 
-OptionDefinition CommandObjectRenderScriptRuntimeAllocationDump::
-    CommandOptions::g_option_table[] = {
-        {LLDB_OPT_SET_1, false, "file", 'f', OptionParser::eRequiredArgument,
-         nullptr, nullptr, 0, eArgTypeFilename,
-         "Print results to specified file instead of command line."},
-        {0, false, nullptr, 0, 0, nullptr, nullptr, 0, eArgTypeNone, nullptr}};
+static OptionDefinition g_renderscript_runtime_alloc_list_options[] = {
+    {LLDB_OPT_SET_1, false, "id", 'i', OptionParser::eRequiredArgument, nullptr,
+     nullptr, 0, eArgTypeIndex,
+     "Only show details of a single allocation with specified id."}};
 
 class CommandObjectRenderScriptRuntimeAllocationList
     : public CommandObjectParsed {
@@ -4155,9 +4160,10 @@ public:
       m_id = 0;
     }
 
-    const OptionDefinition *GetDefinitions() override { return g_option_table; }
+    llvm::ArrayRef<OptionDefinition> GetDefinitions() override {
+      return llvm::makeArrayRef(g_renderscript_runtime_alloc_list_options);
+    }
 
-    static OptionDefinition g_option_table[];
     uint32_t m_id;
   };
 
@@ -4174,13 +4180,6 @@ public:
 private:
   CommandOptions m_options;
 };
-
-OptionDefinition CommandObjectRenderScriptRuntimeAllocationList::
-    CommandOptions::g_option_table[] = {
-        {LLDB_OPT_SET_1, false, "id", 'i', OptionParser::eRequiredArgument,
-         nullptr, nullptr, 0, eArgTypeIndex,
-         "Only show details of a single allocation with specified id."},
-        {0, false, nullptr, 0, 0, nullptr, nullptr, 0, eArgTypeNone, nullptr}};
 
 class CommandObjectRenderScriptRuntimeAllocationLoad
     : public CommandObjectParsed {

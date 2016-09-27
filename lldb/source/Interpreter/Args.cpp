@@ -419,7 +419,7 @@ llvm::StringRef Args::ReplaceArgumentAtIndex(size_t idx,
     m_args_quote_char[idx] = quote_char;
     return GetArgumentAtIndex(idx);
   }
-  return nullptr;
+  return llvm::StringRef();
 }
 
 void Args::DeleteArgumentAtIndex(size_t idx) {
@@ -608,6 +608,8 @@ lldb::addr_t Args::StringToAddress(const ExecutionContext *exe_ctx,
                                    Error *error_ptr) {
   bool error_set = false;
   if (s && s[0]) {
+    llvm::StringRef sref = s;
+
     char *end = nullptr;
     lldb::addr_t addr = ::strtoull(s, &end, 0);
     if (*end == '\0') {
@@ -662,10 +664,10 @@ lldb::addr_t Args::StringToAddress(const ExecutionContext *exe_ctx,
           // Since the compiler can't handle things like "main + 12" we should
           // try to do this for now. The compiler doesn't like adding offsets
           // to function pointer types.
-          static RegularExpression g_symbol_plus_offset_regex(
-              "^(.*)([-\\+])[[:space:]]*(0x[0-9A-Fa-f]+|[0-9]+)[[:space:]]*$");
+          static RegularExpression g_symbol_plus_offset_regex(llvm::StringRef(
+              "^(.*)([-\\+])[[:space:]]*(0x[0-9A-Fa-f]+|[0-9]+)[[:space:]]*$"));
           RegularExpression::Match regex_match(3);
-          if (g_symbol_plus_offset_regex.Execute(s, &regex_match)) {
+          if (g_symbol_plus_offset_regex.Execute(sref, &regex_match)) {
             uint64_t offset = 0;
             bool add = true;
             std::string name;
@@ -822,29 +824,32 @@ const char *Args::GetShellSafeArgument(const FileSpec &shell,
   return safe_arg.c_str();
 }
 
-int64_t Args::StringToOptionEnum(const char *s,
+int64_t Args::StringToOptionEnum(llvm::StringRef s,
                                  OptionEnumValueElement *enum_values,
                                  int32_t fail_value, Error &error) {
-  if (enum_values) {
-    if (s && s[0]) {
-      for (int i = 0; enum_values[i].string_value != nullptr; i++) {
-        if (strstr(enum_values[i].string_value, s) ==
-            enum_values[i].string_value) {
-          error.Clear();
-          return enum_values[i].value;
-        }
-      }
-    }
-
-    StreamString strm;
-    strm.PutCString("invalid enumeration value, valid values are: ");
-    for (int i = 0; enum_values[i].string_value != nullptr; i++) {
-      strm.Printf("%s\"%s\"", i > 0 ? ", " : "", enum_values[i].string_value);
-    }
-    error.SetErrorString(strm.GetData());
-  } else {
+  error.Clear();
+  if (!enum_values) {
     error.SetErrorString("invalid enumeration argument");
+    return fail_value;
   }
+
+  if (s.empty()) {
+    error.SetErrorString("empty enumeration string");
+    return fail_value;
+  }
+
+  for (int i = 0; enum_values[i].string_value != nullptr; i++) {
+    llvm::StringRef this_enum(enum_values[i].string_value);
+    if (this_enum.startswith(s))
+      return enum_values[i].value;
+  }
+
+  StreamString strm;
+  strm.PutCString("invalid enumeration value, valid values are: ");
+  for (int i = 0; enum_values[i].string_value != nullptr; i++) {
+    strm.Printf("%s\"%s\"", i > 0 ? ", " : "", enum_values[i].string_value);
+  }
+  error.SetErrorString(strm.GetData());
   return fail_value;
 }
 
@@ -974,13 +979,15 @@ void Args::LongestCommonPrefix(std::string &common_prefix) {
 
 void Args::AddOrReplaceEnvironmentVariable(llvm::StringRef env_var_name,
                                            llvm::StringRef new_value) {
-  if (env_var_name.empty() || new_value.empty())
+  if (env_var_name.empty())
     return;
 
   // Build the new entry.
   std::string var_string(env_var_name);
-  var_string += "=";
-  var_string += new_value;
+  if (!new_value.empty()) {
+    var_string += "=";
+    var_string += new_value;
+  }
 
   size_t index = 0;
   if (ContainsEnvironmentVariable(env_var_name, &index)) {
@@ -1000,11 +1007,11 @@ bool Args::ContainsEnvironmentVariable(llvm::StringRef env_var_name,
 
   // Check each arg to see if it matches the env var name.
   for (size_t i = 0; i < GetArgumentCount(); ++i) {
-    auto arg_value = llvm::StringRef::withNullAsEmpty(GetArgumentAtIndex(0));
+    auto arg_value = llvm::StringRef::withNullAsEmpty(GetArgumentAtIndex(i));
 
     llvm::StringRef name, value;
     std::tie(name, value) = arg_value.split('=');
-    if (name == env_var_name && !value.empty()) {
+    if (name == env_var_name) {
       if (argument_index)
         *argument_index = i;
       return true;
@@ -1252,7 +1259,7 @@ void Args::ParseArgsForCompletion(Options &options,
   OptionParser::EnableError(false);
 
   int val;
-  const OptionDefinition *opt_defs = options.GetDefinitions();
+  auto opt_defs = options.GetDefinitions();
 
   // Fooey... OptionParser::Parse permutes the GetArgumentVector to move the
   // options to the front.
@@ -1343,13 +1350,11 @@ void Args::ParseArgsForCompletion(Options &options,
     // See if the option takes an argument, and see if one was supplied.
     if (long_options_index >= 0) {
       int opt_defs_index = -1;
-      for (int i = 0;; i++) {
-        if (opt_defs[i].short_option == 0)
-          break;
-        else if (opt_defs[i].short_option == val) {
-          opt_defs_index = i;
-          break;
-        }
+      for (size_t i = 0; i < opt_defs.size(); i++) {
+        if (opt_defs[i].short_option != val)
+          continue;
+        opt_defs_index = i;
+        break;
       }
 
       const OptionDefinition *def = long_options[long_options_index].definition;

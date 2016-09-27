@@ -128,6 +128,8 @@ public:
 
   bool GetEnableNotifyAboutFixIts() const;
 
+  bool GetEnableSaveObjects() const;
+
   bool GetEnableSyntheticValue() const;
 
   uint32_t GetMaximumNumberOfChildrenToDisplay() const;
@@ -137,16 +139,16 @@ public:
   uint32_t GetMaximumMemReadSize() const;
 
   FileSpec GetStandardInputPath() const;
-
-  void SetStandardInputPath(const char *path);
-
+  FileSpec GetStandardErrorPath() const;
   FileSpec GetStandardOutputPath() const;
 
-  void SetStandardOutputPath(const char *path);
+  void SetStandardInputPath(llvm::StringRef path);
+  void SetStandardOutputPath(llvm::StringRef path);
+  void SetStandardErrorPath(llvm::StringRef path);
 
-  FileSpec GetStandardErrorPath() const;
-
-  void SetStandardErrorPath(const char *path);
+  void SetStandardInputPath(const char *path) = delete;
+  void SetStandardOutputPath(const char *path) = delete;
+  void SetStandardErrorPath(const char *path) = delete;
 
   bool GetBreakpointsConsultPlatformAvoidList();
 
@@ -679,9 +681,13 @@ public:
   bool IgnoreWatchpointByID(lldb::watch_id_t watch_id, uint32_t ignore_count);
 
   Error SerializeBreakpointsToFile(const FileSpec &file,
-                                   const BreakpointIDList &bp_ids);
+                                   const BreakpointIDList &bp_ids, bool append);
 
   Error CreateBreakpointsFromFile(const FileSpec &file,
+                                  BreakpointIDList &new_bps);
+
+  Error CreateBreakpointsFromFile(const FileSpec &file,
+                                  std::vector<std::string> &names,
                                   BreakpointIDList &new_bps);
 
   //------------------------------------------------------------------

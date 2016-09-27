@@ -36,6 +36,15 @@ using namespace lldb_private;
 // CommandObjectCommandsSource
 //-------------------------------------------------------------------------
 
+static OptionDefinition g_history_options[] = {
+    // clang-format off
+  { LLDB_OPT_SET_1, false, "count",       'c', OptionParser::eRequiredArgument, nullptr, nullptr, 0, eArgTypeUnsignedInteger, "How many history commands to print." },
+  { LLDB_OPT_SET_1, false, "start-index", 's', OptionParser::eRequiredArgument, nullptr, nullptr, 0, eArgTypeUnsignedInteger, "Index at which to start printing history commands (or end to mean tail mode)." },
+  { LLDB_OPT_SET_1, false, "end-index",   'e', OptionParser::eRequiredArgument, nullptr, nullptr, 0, eArgTypeUnsignedInteger, "Index at which to stop printing history commands." },
+  { LLDB_OPT_SET_2, false, "clear",       'C', OptionParser::eNoArgument,       nullptr, nullptr, 0, eArgTypeBoolean,         "Clears the current command history." },
+    // clang-format on
+};
+
 class CommandObjectCommandsHistory : public CommandObjectParsed {
 public:
   CommandObjectCommandsHistory(CommandInterpreter &interpreter)
@@ -61,22 +70,25 @@ protected:
                          ExecutionContext *execution_context) override {
       Error error;
       const int short_option = m_getopt_table[option_idx].val;
+      llvm::StringRef option_strref =
+          llvm::StringRef::withNullAsEmpty(option_arg);
 
       switch (short_option) {
       case 'c':
-        error = m_count.SetValueFromString(option_arg, eVarSetOperationAssign);
+        error =
+            m_count.SetValueFromString(option_strref, eVarSetOperationAssign);
         break;
       case 's':
         if (option_arg && strcmp("end", option_arg) == 0) {
           m_start_idx.SetCurrentValue(UINT64_MAX);
           m_start_idx.SetOptionWasSet();
         } else
-          error = m_start_idx.SetValueFromString(option_arg,
+          error = m_start_idx.SetValueFromString(option_strref,
                                                  eVarSetOperationAssign);
         break;
       case 'e':
-        error =
-            m_stop_idx.SetValueFromString(option_arg, eVarSetOperationAssign);
+        error = m_stop_idx.SetValueFromString(option_strref,
+                                              eVarSetOperationAssign);
         break;
       case 'C':
         m_clear.SetCurrentValue(true);
@@ -98,11 +110,9 @@ protected:
       m_clear.Clear();
     }
 
-    const OptionDefinition *GetDefinitions() override { return g_option_table; }
-
-    // Options table: Required for subclasses of Options.
-
-    static OptionDefinition g_option_table[];
+    llvm::ArrayRef<OptionDefinition> GetDefinitions() override {
+      return llvm::makeArrayRef(g_history_options);
+    }
 
     // Instance variables to hold the values for command options.
 
@@ -180,20 +190,17 @@ protected:
   CommandOptions m_options;
 };
 
-OptionDefinition
-    CommandObjectCommandsHistory::CommandOptions::g_option_table[] = {
-        // clang-format off
-  {LLDB_OPT_SET_1, false, "count",       'c', OptionParser::eRequiredArgument, nullptr, nullptr, 0, eArgTypeUnsignedInteger, "How many history commands to print."},
-  {LLDB_OPT_SET_1, false, "start-index", 's', OptionParser::eRequiredArgument, nullptr, nullptr, 0, eArgTypeUnsignedInteger, "Index at which to start printing history commands (or end to mean tail mode)."},
-  {LLDB_OPT_SET_1, false, "end-index",   'e', OptionParser::eRequiredArgument, nullptr, nullptr, 0, eArgTypeUnsignedInteger, "Index at which to stop printing history commands."},
-  {LLDB_OPT_SET_2, false, "clear",       'C', OptionParser::eNoArgument,       nullptr, nullptr, 0, eArgTypeBoolean,         "Clears the current command history."},
-  {0, false, nullptr, 0, 0, nullptr, nullptr, 0, eArgTypeNone, nullptr}
-        // clang-format on
-};
-
 //-------------------------------------------------------------------------
 // CommandObjectCommandsSource
 //-------------------------------------------------------------------------
+
+static OptionDefinition g_source_options[] = {
+    // clang-format off
+  { LLDB_OPT_SET_ALL, false, "stop-on-error",    'e', OptionParser::eRequiredArgument, nullptr, nullptr, 0, eArgTypeBoolean, "If true, stop executing commands on error." },
+  { LLDB_OPT_SET_ALL, false, "stop-on-continue", 'c', OptionParser::eRequiredArgument, nullptr, nullptr, 0, eArgTypeBoolean, "If true, stop executing commands on continue." },
+  { LLDB_OPT_SET_ALL, false, "silent-run",       's', OptionParser::eRequiredArgument, nullptr, nullptr, 0, eArgTypeBoolean, "If true don't echo commands while executing." },
+    // clang-format on
+};
 
 class CommandObjectCommandsSource : public CommandObjectParsed {
 public:
@@ -256,18 +263,20 @@ protected:
                          ExecutionContext *execution_context) override {
       Error error;
       const int short_option = m_getopt_table[option_idx].val;
+      llvm::StringRef option_strref =
+          llvm::StringRef::withNullAsEmpty(option_arg);
 
       switch (short_option) {
       case 'e':
-        error = m_stop_on_error.SetValueFromString(option_arg);
+        error = m_stop_on_error.SetValueFromString(option_strref);
         break;
 
       case 'c':
-        error = m_stop_on_continue.SetValueFromString(option_arg);
+        error = m_stop_on_continue.SetValueFromString(option_strref);
         break;
 
       case 's':
-        error = m_silent_run.SetValueFromString(option_arg);
+        error = m_silent_run.SetValueFromString(option_strref);
         break;
 
       default:
@@ -285,11 +294,9 @@ protected:
       m_stop_on_continue.Clear();
     }
 
-    const OptionDefinition *GetDefinitions() override { return g_option_table; }
-
-    // Options table: Required for subclasses of Options.
-
-    static OptionDefinition g_option_table[];
+    llvm::ArrayRef<OptionDefinition> GetDefinitions() override {
+      return llvm::makeArrayRef(g_source_options);
+    }
 
     // Instance variables to hold the values for command options.
 
@@ -340,20 +347,17 @@ protected:
   CommandOptions m_options;
 };
 
-OptionDefinition CommandObjectCommandsSource::CommandOptions::g_option_table[] =
-    {
-        // clang-format off
-  {LLDB_OPT_SET_ALL, false, "stop-on-error",    'e', OptionParser::eRequiredArgument, nullptr, nullptr, 0, eArgTypeBoolean, "If true, stop executing commands on error."},
-  {LLDB_OPT_SET_ALL, false, "stop-on-continue", 'c', OptionParser::eRequiredArgument, nullptr, nullptr, 0, eArgTypeBoolean, "If true, stop executing commands on continue."},
-  {LLDB_OPT_SET_ALL, false, "silent-run",       's', OptionParser::eRequiredArgument, nullptr, nullptr, 0, eArgTypeBoolean, "If true don't echo commands while executing."},
-  {0, false, nullptr, 0, 0, nullptr, nullptr, 0, eArgTypeNone, nullptr}
-        // clang-format on
-};
-
 #pragma mark CommandObjectCommandsAlias
 //-------------------------------------------------------------------------
 // CommandObjectCommandsAlias
 //-------------------------------------------------------------------------
+
+static OptionDefinition g_alias_options[] = {
+    // clang-format off
+  { LLDB_OPT_SET_ALL, false, "help",      'h', OptionParser::eRequiredArgument, nullptr, nullptr, 0, eArgTypeHelpText, "Help text for this command" },
+  { LLDB_OPT_SET_ALL, false, "long-help", 'H', OptionParser::eRequiredArgument, nullptr, nullptr, 0, eArgTypeHelpText, "Long help text for this command" },
+    // clang-format on
+};
 
 static const char *g_python_command_instructions =
     "Enter your Python command(s). Type 'DONE' to end.\n"
@@ -368,24 +372,25 @@ protected:
 
     ~CommandOptions() override = default;
 
-    uint32_t GetNumDefinitions() override { return 3; }
+    llvm::ArrayRef<OptionDefinition> GetDefinitions() override {
+      return llvm::makeArrayRef(g_alias_options);
+    }
 
-    const OptionDefinition *GetDefinitions() override { return g_option_table; }
-
-    Error SetOptionValue(uint32_t option_idx, const char *option_value,
+    Error SetOptionValue(uint32_t option_idx, llvm::StringRef option_value,
                          ExecutionContext *execution_context) override {
       Error error;
 
-      const int short_option = g_option_table[option_idx].short_option;
+      const int short_option = GetDefinitions()[option_idx].short_option;
+      std::string option_str(option_value);
 
       switch (short_option) {
       case 'h':
-        m_help.SetCurrentValue(option_value);
+        m_help.SetCurrentValue(option_str);
         m_help.SetOptionWasSet();
         break;
 
       case 'H':
-        m_long_help.SetCurrentValue(option_value);
+        m_long_help.SetCurrentValue(option_str);
         m_long_help.SetOptionWasSet();
         break;
 
@@ -397,15 +402,13 @@ protected:
 
       return error;
     }
+    Error SetOptionValue(uint32_t, const char *, ExecutionContext *) = delete;
 
     void OptionParsingStarting(ExecutionContext *execution_context) override {
       m_help.Clear();
       m_long_help.Clear();
     }
 
-    // Options table: Required for subclasses of Options.
-
-    static OptionDefinition g_option_table[];
     OptionValueString m_help;
     OptionValueString m_long_help;
   };
@@ -810,15 +813,6 @@ protected:
   }
 };
 
-OptionDefinition CommandObjectCommandsAlias::CommandOptions::g_option_table[] =
-    {
-        // clang-format off
-  {LLDB_OPT_SET_ALL, false, "help",      'h', OptionParser::eRequiredArgument, nullptr, nullptr, 0, eArgTypeHelpText, "Help text for this command"},
-  {LLDB_OPT_SET_ALL, false, "long-help", 'H', OptionParser::eRequiredArgument, nullptr, nullptr, 0, eArgTypeHelpText, "Long help text for this command"},
-  {0, false, nullptr, 0, 0, nullptr, nullptr, 0, eArgTypeNone, nullptr}
-        // clang-format on
-};
-
 #pragma mark CommandObjectCommandsUnalias
 //-------------------------------------------------------------------------
 // CommandObjectCommandsUnalias
@@ -966,6 +960,14 @@ protected:
 //-------------------------------------------------------------------------
 // CommandObjectCommandsAddRegex
 //-------------------------------------------------------------------------
+
+static OptionDefinition g_regex_options[] = {
+    // clang-format off
+  { LLDB_OPT_SET_1, false, "help"  , 'h', OptionParser::eRequiredArgument, nullptr, nullptr, 0, eArgTypeNone, "The help text to display for this command." },
+  { LLDB_OPT_SET_1, false, "syntax", 's', OptionParser::eRequiredArgument, nullptr, nullptr, 0, eArgTypeNone, "A syntax string showing the typical usage syntax." },
+    // clang-format on
+};
+
 #pragma mark CommandObjectCommandsAddRegex
 
 class CommandObjectCommandsAddRegex : public CommandObjectParsed,
@@ -1075,9 +1077,9 @@ protected:
         const bool multiple_lines = true; // Get multiple lines
         IOHandlerSP io_handler_sp(new IOHandlerEditline(
             debugger, IOHandler::Type::Other,
-            "lldb-regex", // Name of input reader for history
-            "> ",         // Prompt
-            nullptr,      // Continuation prompt
+            "lldb-regex",          // Name of input reader for history
+            llvm::StringRef("> "), // Prompt
+            llvm::StringRef(),     // Continuation prompt
             multiple_lines, color_prompt,
             0, // Don't show line numbers
             *this));
@@ -1248,11 +1250,9 @@ private:
       m_syntax.clear();
     }
 
-    const OptionDefinition *GetDefinitions() override { return g_option_table; }
-
-    // Options table: Required for subclasses of Options.
-
-    static OptionDefinition g_option_table[];
+    llvm::ArrayRef<OptionDefinition> GetDefinitions() override {
+      return llvm::makeArrayRef(g_regex_options);
+    }
 
     const char *GetHelp() {
       return (m_help.empty() ? nullptr : m_help.c_str());
@@ -1272,15 +1272,6 @@ private:
   Options *GetOptions() override { return &m_options; }
 
   CommandOptions m_options;
-};
-
-OptionDefinition
-    CommandObjectCommandsAddRegex::CommandOptions::g_option_table[] = {
-        // clang-format off
-  {LLDB_OPT_SET_1, false, "help"  , 'h', OptionParser::eRequiredArgument, nullptr, nullptr, 0, eArgTypeNone, "The help text to display for this command."},
-  {LLDB_OPT_SET_1, false, "syntax", 's', OptionParser::eRequiredArgument, nullptr, nullptr, 0, eArgTypeNone, "A syntax string showing the typical usage syntax."},
-  {0, false, nullptr, 0, 0, nullptr, nullptr, 0, eArgTypeNone, nullptr}
-        // clang-format on
 };
 
 class CommandObjectPythonFunction : public CommandObjectRaw {
@@ -1447,6 +1438,12 @@ private:
 // CommandObjectCommandsScriptImport
 //-------------------------------------------------------------------------
 
+OptionDefinition g_script_import_options[] = {
+    // clang-format off
+  { LLDB_OPT_SET_1, false, "allow-reload", 'r', OptionParser::eNoArgument, nullptr, nullptr, 0, eArgTypeNone, "Allow the script to be loaded even if it was already loaded before. This argument exists for backwards compatibility, but reloading is always allowed, whether you specify it or not." },
+    // clang-format on
+};
+
 class CommandObjectCommandsScriptImport : public CommandObjectParsed {
 public:
   CommandObjectCommandsScriptImport(CommandInterpreter &interpreter)
@@ -1517,11 +1514,9 @@ protected:
       m_allow_reload = true;
     }
 
-    const OptionDefinition *GetDefinitions() override { return g_option_table; }
-
-    // Options table: Required for subclasses of Options.
-
-    static OptionDefinition g_option_table[];
+    llvm::ArrayRef<OptionDefinition> GetDefinitions() override {
+      return llvm::makeArrayRef(g_script_import_options);
+    }
 
     // Instance variables to hold the values for command options.
 
@@ -1578,17 +1573,27 @@ protected:
   CommandOptions m_options;
 };
 
-OptionDefinition
-    CommandObjectCommandsScriptImport::CommandOptions::g_option_table[] = {
-        // clang-format off
-  {LLDB_OPT_SET_1, false, "allow-reload", 'r', OptionParser::eNoArgument, nullptr, nullptr, 0, eArgTypeNone, "Allow the script to be loaded even if it was already loaded before. This argument exists for backwards compatibility, but reloading is always allowed, whether you specify it or not."},
-  {0, false, nullptr, 0, 0, nullptr, nullptr, 0, eArgTypeNone, nullptr }
-        // clang-format on
-};
-
 //-------------------------------------------------------------------------
 // CommandObjectCommandsScriptAdd
 //-------------------------------------------------------------------------
+
+static OptionEnumValueElement g_script_synchro_type[] = {
+    {eScriptedCommandSynchronicitySynchronous, "synchronous",
+     "Run synchronous"},
+    {eScriptedCommandSynchronicityAsynchronous, "asynchronous",
+     "Run asynchronous"},
+    {eScriptedCommandSynchronicityCurrentValue, "current",
+     "Do not alter current setting"},
+    {0, nullptr, nullptr}};
+
+static OptionDefinition g_script_add_options[] = {
+    // clang-format off
+  { LLDB_OPT_SET_1,   false, "function",      'f', OptionParser::eRequiredArgument, nullptr, nullptr,               0, eArgTypePythonFunction,               "Name of the Python function to bind to this command name." },
+  { LLDB_OPT_SET_2,   false, "class",         'c', OptionParser::eRequiredArgument, nullptr, nullptr,               0, eArgTypePythonClass,                  "Name of the Python class to bind to this command name." },
+  { LLDB_OPT_SET_1,   false, "help"  ,        'h', OptionParser::eRequiredArgument, nullptr, nullptr,               0, eArgTypeHelpText,                     "The help text to display for this command." },
+  { LLDB_OPT_SET_ALL, false, "synchronicity", 's', OptionParser::eRequiredArgument, nullptr, g_script_synchro_type, 0, eArgTypeScriptedCommandSynchronicity, "Set the synchronicity of this command's executions with regard to LLDB event system." },
+    // clang-format on
+};
 
 class CommandObjectCommandsScriptAdd : public CommandObjectParsed,
                                        public IOHandlerDelegateMultiline {
@@ -1647,7 +1652,8 @@ protected:
       case 's':
         m_synchronicity =
             (ScriptedCommandSynchronicity)Args::StringToOptionEnum(
-                option_arg, g_option_table[option_idx].enum_values, 0, error);
+                llvm::StringRef::withNullAsEmpty(option_arg),
+                GetDefinitions()[option_idx].enum_values, 0, error);
         if (!error.Success())
           error.SetErrorStringWithFormat(
               "unrecognized value for synchronicity '%s'", option_arg);
@@ -1668,11 +1674,9 @@ protected:
       m_synchronicity = eScriptedCommandSynchronicitySynchronous;
     }
 
-    const OptionDefinition *GetDefinitions() override { return g_option_table; }
-
-    // Options table: Required for subclasses of Options.
-
-    static OptionDefinition g_option_table[];
+    llvm::ArrayRef<OptionDefinition> GetDefinitions() override {
+      return llvm::makeArrayRef(g_script_add_options);
+    }
 
     // Instance variables to hold the values for command options.
 
@@ -1814,26 +1818,6 @@ protected:
   std::string m_cmd_name;
   std::string m_short_help;
   ScriptedCommandSynchronicity m_synchronicity;
-};
-
-static OptionEnumValueElement g_script_synchro_type[] = {
-    {eScriptedCommandSynchronicitySynchronous, "synchronous",
-     "Run synchronous"},
-    {eScriptedCommandSynchronicityAsynchronous, "asynchronous",
-     "Run asynchronous"},
-    {eScriptedCommandSynchronicityCurrentValue, "current",
-     "Do not alter current setting"},
-    {0, nullptr, nullptr}};
-
-OptionDefinition
-    CommandObjectCommandsScriptAdd::CommandOptions::g_option_table[] = {
-        // clang-format off
-  {LLDB_OPT_SET_1,   false, "function",      'f', OptionParser::eRequiredArgument, nullptr, nullptr,               0, eArgTypePythonFunction,               "Name of the Python function to bind to this command name."},
-  {LLDB_OPT_SET_2,   false, "class",         'c', OptionParser::eRequiredArgument, nullptr, nullptr,               0, eArgTypePythonClass,                  "Name of the Python class to bind to this command name."},
-  {LLDB_OPT_SET_1,   false, "help"  ,        'h', OptionParser::eRequiredArgument, nullptr, nullptr,               0, eArgTypeHelpText,                     "The help text to display for this command."},
-  {LLDB_OPT_SET_ALL, false, "synchronicity", 's', OptionParser::eRequiredArgument, nullptr, g_script_synchro_type, 0, eArgTypeScriptedCommandSynchronicity, "Set the synchronicity of this command's executions with regard to LLDB event system."},
-  {0, false, nullptr, 0, 0, nullptr, nullptr, 0, eArgTypeNone, nullptr}
-        // clang-format on
 };
 
 //-------------------------------------------------------------------------

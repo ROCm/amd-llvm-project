@@ -1147,9 +1147,13 @@ void llvm::ConvertDebugDeclareToDebugValue(DbgDeclareInst *DDI,
   if (PhiHasDebugValue(DIVar, DIExpr, APN))
     return;
 
-  Instruction *DbgValue = Builder.insertDbgValueIntrinsic(
-      APN, 0, DIVar, DIExpr, DDI->getDebugLoc(), (Instruction *)nullptr);
-  DbgValue->insertBefore(&*APN->getParent()->getFirstInsertionPt());
+  auto BB = APN->getParent();
+  auto InsertionPt = BB->getFirstInsertionPt();
+  if (InsertionPt != BB->end()) {
+    Instruction *DbgValue = Builder.insertDbgValueIntrinsic(
+        APN, 0, DIVar, DIExpr, DDI->getDebugLoc(), (Instruction *)nullptr);
+    DbgValue->insertBefore(&*InsertionPt);
+  }
 }
 
 /// Determine whether this alloca is either a VLA or an array.

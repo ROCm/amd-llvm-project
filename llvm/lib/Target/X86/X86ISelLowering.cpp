@@ -12863,10 +12863,6 @@ static SDValue LowerSCALAR_TO_VECTOR(SDValue Op, SelectionDAG &DAG) {
     return insert128BitVector(DAG.getUNDEF(OpVT), Op, 0, DAG, dl);
   }
 
-  if (OpVT == MVT::v1i64 &&
-      Op.getOperand(0).getValueType() == MVT::i64)
-    return DAG.getNode(ISD::SCALAR_TO_VECTOR, dl, MVT::v1i64, Op.getOperand(0));
-
   SDValue AnyExt = DAG.getNode(ISD::ANY_EXTEND, dl, MVT::i32, Op.getOperand(0));
   assert(OpVT.is128BitVector() && "Expected an SSE type!");
   return DAG.getBitcast(
@@ -14633,28 +14629,22 @@ static SDValue LowerFABSorFNEG(SDValue Op, SelectionDAG &DAG) {
 }
 
 static SDValue LowerFCOPYSIGN(SDValue Op, SelectionDAG &DAG) {
-  const TargetLowering &TLI = DAG.getTargetLoweringInfo();
-  LLVMContext *Context = DAG.getContext();
   SDValue Mag = Op.getOperand(0);
   SDValue Sign = Op.getOperand(1);
   SDLoc dl(Op);
-  MVT VT = Op.getSimpleValueType();
-  MVT SignVT = Sign.getSimpleValueType();
-  bool IsF128 = (VT == MVT::f128);
 
   // If the sign operand is smaller, extend it first.
-  if (SignVT.bitsLT(VT)) {
+  MVT VT = Op.getSimpleValueType();
+  if (Sign.getSimpleValueType().bitsLT(VT))
     Sign = DAG.getNode(ISD::FP_EXTEND, dl, VT, Sign);
-    SignVT = VT;
-  }
+
   // And if it is bigger, shrink it first.
-  if (SignVT.bitsGT(VT)) {
+  if (Sign.getSimpleValueType().bitsGT(VT))
     Sign = DAG.getNode(ISD::FP_ROUND, dl, VT, Sign, DAG.getIntPtrConstant(1, dl));
-    SignVT = VT;
-  }
 
   // At this point the operands and the result should have the same
   // type, and that won't be f80 since that is not custom lowered.
+  bool IsF128 = (VT == MVT::f128);
   assert((VT == MVT::f64 || VT == MVT::f32 || IsF128) &&
          "Unexpected type in LowerFCOPYSIGN");
 
@@ -14663,61 +14653,46 @@ static SDValue LowerFCOPYSIGN(SDValue Op, SelectionDAG &DAG) {
           (IsF128 ? APFloat::IEEEquad : APFloat::IEEEsingle);
   const unsigned SizeInBits = VT.getSizeInBits();
 
-  SmallVector<Constant *, 4> CV(
-      VT == MVT::f64 ? 2 : (IsF128 ? 1 : 4),
-      ConstantFP::get(*Context, APFloat(Sem, APInt(SizeInBits, 0))));
+  // Perform all logic operations as 16-byte vectors because there are no
+  // scalar FP logic instructions in SSE.
+  MVT LogicVT =
+      (VT == MVT::f64) ? MVT::v2f64 : (IsF128 ? MVT::f128 : MVT::v4f32);
+  SDValue SignMask = DAG.getConstantFP(
+      APFloat(Sem, APInt::getSignBit(SizeInBits)), dl, LogicVT);
 
   // First, clear all bits but the sign bit from the second operand (sign).
-  CV[0] = ConstantFP::get(*Context,
-                          APFloat(Sem, APInt::getSignBit(SizeInBits)));
-  Constant *C = ConstantVector::get(CV);
-  auto PtrVT = TLI.getPointerTy(DAG.getDataLayout());
-  SDValue CPIdx = DAG.getConstantPool(C, PtrVT, 16);
-
-  // Perform all logic operations as 16-byte vectors because there are no
-  // scalar FP logic instructions in SSE. This allows load folding of the
-  // constants into the logic instructions.
-  MVT LogicVT = (VT == MVT::f64) ? MVT::v2f64 : (IsF128 ? MVT::f128 : MVT::v4f32);
-  SDValue SignMask =
-      DAG.getLoad(LogicVT, dl, DAG.getEntryNode(), CPIdx,
-                  MachinePointerInfo::getConstantPool(DAG.getMachineFunction()),
-                  /* Alignment = */ 16);
   if (!IsF128)
     Sign = DAG.getNode(ISD::SCALAR_TO_VECTOR, dl, LogicVT, Sign);
   SDValue SignBit = DAG.getNode(X86ISD::FAND, dl, LogicVT, Sign, SignMask);
 
   // Next, clear the sign bit from the first operand (magnitude).
   // If it's a constant, we can clear it here.
+  SDValue MagMask = DAG.getConstantFP(
+      APFloat(Sem, ~APInt::getSignBit(SizeInBits)), dl, LogicVT);
+
+  // FIXME: This check shouldn't be necessary. Logic instructions with constant
+  // operands should be folded!
+  SDValue MagBits;
   if (ConstantFPSDNode *Op0CN = dyn_cast<ConstantFPSDNode>(Mag)) {
     APFloat APF = Op0CN->getValueAPF();
     // If the magnitude is a positive zero, the sign bit alone is enough.
     if (APF.isPosZero())
       return IsF128 ? SignBit :
-          DAG.getNode(ISD::EXTRACT_VECTOR_ELT, dl, SignVT, SignBit,
+          DAG.getNode(ISD::EXTRACT_VECTOR_ELT, dl, VT, SignBit,
                       DAG.getIntPtrConstant(0, dl));
     APF.clearSign();
-    CV[0] = ConstantFP::get(*Context, APF);
+    MagBits = DAG.getConstantFP(APF, dl, LogicVT);
   } else {
-    CV[0] = ConstantFP::get(*Context,
-                            APFloat(Sem, ~APInt::getSignBit(SizeInBits)));
-  }
-  C = ConstantVector::get(CV);
-  CPIdx = DAG.getConstantPool(C, PtrVT, 16);
-  SDValue MagMask =
-      DAG.getLoad(LogicVT, dl, DAG.getEntryNode(), CPIdx,
-                  MachinePointerInfo::getConstantPool(DAG.getMachineFunction()),
-                  /* Alignment = */ 16);
-  // If the magnitude operand wasn't a constant, we need to AND out the sign.
-  SDValue MagBits = MagMask;
-  if (!isa<ConstantFPSDNode>(Mag)) {
+    // If the magnitude operand wasn't a constant, we need to AND out the sign.
     if (!IsF128)
       Mag = DAG.getNode(ISD::SCALAR_TO_VECTOR, dl, LogicVT, Mag);
     MagBits = DAG.getNode(X86ISD::FAND, dl, LogicVT, Mag, MagMask);
   }
+
   // OR the magnitude value with the sign bit.
   SDValue Or = DAG.getNode(X86ISD::FOR, dl, LogicVT, MagBits, SignBit);
   return IsF128 ? Or :
-      DAG.getNode(ISD::EXTRACT_VECTOR_ELT, dl, SignVT, Or,
+      DAG.getNode(ISD::EXTRACT_VECTOR_ELT, dl, VT, Or,
                   DAG.getIntPtrConstant(0, dl));
 }
 
@@ -16016,7 +15991,8 @@ SDValue X86TargetLowering::LowerSELECT(SDValue Op, SelectionDAG &DAG) const {
       if (Subtarget.hasAVX512()) {
         SDValue Cmp = DAG.getNode(X86ISD::FSETCCM, DL, MVT::i1, CondOp0,
                                   CondOp1, DAG.getConstant(SSECC, DL, MVT::i8));
-        return DAG.getNode(X86ISD::SELECT, DL, VT, Cmp, Op1, Op2);
+        return DAG.getNode(VT.isVector() ? X86ISD::SELECT : X86ISD::SELECTS,
+                           DL, VT, Cmp, Op1, Op2);
       }
 
       SDValue Cmp = DAG.getNode(X86ISD::FSETCC, DL, VT, CondOp0, CondOp1,
@@ -17550,7 +17526,7 @@ static SDValue getScalarMaskingNode(SDValue Op, SDValue Mask,
 
   if (PreservedSrc.isUndef())
     PreservedSrc = getZeroVector(VT, Subtarget, DAG, dl);
-  return DAG.getNode(X86ISD::SELECT, dl, VT, IMask, Op, PreservedSrc);
+  return DAG.getNode(X86ISD::SELECTS, dl, VT, IMask, Op, PreservedSrc);
 }
 
 static int getSEHRegistrationNodeSize(const Function *Fn) {
@@ -17690,8 +17666,7 @@ static SDValue LowerINTRINSIC_WO_CHAIN(SDValue Op, const X86Subtarget &Subtarget
       // (2) With rounding mode and sae - 7 operands.
       if (Op.getNumOperands() == 6) {
         SDValue Sae  = Op.getOperand(5);
-        unsigned Opc = IntrData->Opc1 ? IntrData->Opc1 : IntrData->Opc0;
-        return getScalarMaskingNode(DAG.getNode(Opc, dl, VT, Src1, Src2,
+        return getScalarMaskingNode(DAG.getNode(IntrData->Opc0, dl, VT, Src1, Src2,
                                                 Sae),
                                     Mask, Src0, Subtarget, DAG);
       }
@@ -18843,11 +18818,11 @@ static SDValue LowerINTRINSIC_W_CHAIN(SDValue Op, const X86Subtarget &Subtarget,
       return DAG.getStore(Chain, dl, DataToCompress, Addr,
                           MemIntr->getMemOperand());
 
-    SDValue Compressed =
-      getVectorMaskingNode(DAG.getNode(IntrData->Opc0, dl, VT, DataToCompress),
-                           Mask, DAG.getUNDEF(VT), Subtarget, DAG);
-    return DAG.getStore(Chain, dl, Compressed, Addr,
-                        MemIntr->getMemOperand());
+    MVT MaskVT = MVT::getVectorVT(MVT::i1, VT.getVectorNumElements());
+    SDValue VMask = getMaskNode(Mask, MaskVT, Subtarget, DAG, dl);
+
+    return DAG.getMaskedStore(Chain, dl, DataToCompress, Addr, VMask, VT,
+                              MemIntr->getMemOperand(), false, true);
   }
   case TRUNCATE_TO_MEM_VI8:
   case TRUNCATE_TO_MEM_VI16:
@@ -22514,7 +22489,11 @@ const char *X86TargetLowering::getTargetNodeName(unsigned Opcode) const {
   case X86ISD::VTRUNCUS:           return "X86ISD::VTRUNCUS";
   case X86ISD::VINSERT:            return "X86ISD::VINSERT";
   case X86ISD::VFPEXT:             return "X86ISD::VFPEXT";
+  case X86ISD::VFPEXT_RND:         return "X86ISD::VFPEXT_RND";
+  case X86ISD::VFPEXTS_RND:        return "X86ISD::VFPEXTS_RND";
   case X86ISD::VFPROUND:           return "X86ISD::VFPROUND";
+  case X86ISD::VFPROUND_RND:       return "X86ISD::VFPROUND_RND";
+  case X86ISD::VFPROUNDS_RND:      return "X86ISD::VFPROUNDS_RND";
   case X86ISD::CVTDQ2PD:           return "X86ISD::CVTDQ2PD";
   case X86ISD::CVTUDQ2PD:          return "X86ISD::CVTUDQ2PD";
   case X86ISD::CVT2MASK:           return "X86ISD::CVT2MASK";
@@ -22632,24 +22611,32 @@ const char *X86TargetLowering::getTargetNodeName(unsigned Opcode) const {
   case X86ISD::VPMADD52H:          return "X86ISD::VPMADD52H";
   case X86ISD::VPMADD52L:          return "X86ISD::VPMADD52L";
   case X86ISD::VRNDSCALE:          return "X86ISD::VRNDSCALE";
+  case X86ISD::VRNDSCALES:         return "X86ISD::VRNDSCALES";
   case X86ISD::VREDUCE:            return "X86ISD::VREDUCE";
+  case X86ISD::VREDUCES:           return "X86ISD::VREDUCES";
   case X86ISD::VGETMANT:           return "X86ISD::VGETMANT";
+  case X86ISD::VGETMANTS:          return "X86ISD::VGETMANTS";
   case X86ISD::PCMPESTRI:          return "X86ISD::PCMPESTRI";
   case X86ISD::PCMPISTRI:          return "X86ISD::PCMPISTRI";
   case X86ISD::XTEST:              return "X86ISD::XTEST";
   case X86ISD::COMPRESS:           return "X86ISD::COMPRESS";
   case X86ISD::EXPAND:             return "X86ISD::EXPAND";
   case X86ISD::SELECT:             return "X86ISD::SELECT";
+  case X86ISD::SELECTS:            return "X86ISD::SELECTS";
   case X86ISD::ADDSUB:             return "X86ISD::ADDSUB";
   case X86ISD::RCP28:              return "X86ISD::RCP28";
+  case X86ISD::RCP28S:             return "X86ISD::RCP28S";
   case X86ISD::EXP2:               return "X86ISD::EXP2";
   case X86ISD::RSQRT28:            return "X86ISD::RSQRT28";
+  case X86ISD::RSQRT28S:           return "X86ISD::RSQRT28S";
   case X86ISD::FADD_RND:           return "X86ISD::FADD_RND";
   case X86ISD::FSUB_RND:           return "X86ISD::FSUB_RND";
   case X86ISD::FMUL_RND:           return "X86ISD::FMUL_RND";
   case X86ISD::FDIV_RND:           return "X86ISD::FDIV_RND";
   case X86ISD::FSQRT_RND:          return "X86ISD::FSQRT_RND";
+  case X86ISD::FSQRTS_RND:         return "X86ISD::FSQRTS_RND";
   case X86ISD::FGETEXP_RND:        return "X86ISD::FGETEXP_RND";
+  case X86ISD::FGETEXPS_RND:       return "X86ISD::FGETEXPS_RND";
   case X86ISD::SCALEF:             return "X86ISD::SCALEF";
   case X86ISD::SCALEFS:            return "X86ISD::SCALEFS";
   case X86ISD::ADDS:               return "X86ISD::ADDS";
@@ -22658,15 +22645,23 @@ const char *X86TargetLowering::getTargetNodeName(unsigned Opcode) const {
   case X86ISD::MULHRS:             return "X86ISD::MULHRS";
   case X86ISD::SINT_TO_FP_RND:     return "X86ISD::SINT_TO_FP_RND";
   case X86ISD::UINT_TO_FP_RND:     return "X86ISD::UINT_TO_FP_RND";
-  case X86ISD::FP_TO_SINT_RND:     return "X86ISD::FP_TO_SINT_RND";
-  case X86ISD::FP_TO_UINT_RND:     return "X86ISD::FP_TO_UINT_RND";
+  case X86ISD::CVTTP2SI_RND:       return "X86ISD::CVTTP2SI_RND";
+  case X86ISD::CVTTP2UI_RND:       return "X86ISD::CVTTP2UI_RND";
+  case X86ISD::CVTTS2SI_RND:       return "X86ISD::CVTTS2SI_RND";
+  case X86ISD::CVTTS2UI_RND:       return "X86ISD::CVTTS2UI_RND";
   case X86ISD::VFPCLASS:           return "X86ISD::VFPCLASS";
   case X86ISD::VFPCLASSS:          return "X86ISD::VFPCLASSS";
   case X86ISD::MULTISHIFT:         return "X86ISD::MULTISHIFT";
-  case X86ISD::SCALAR_FP_TO_SINT_RND: return "X86ISD::SCALAR_FP_TO_SINT_RND";
-  case X86ISD::SCALAR_FP_TO_UINT_RND: return "X86ISD::SCALAR_FP_TO_UINT_RND";
+  case X86ISD::SCALAR_SINT_TO_FP_RND: return "X86ISD::SCALAR_SINT_TO_FP_RND";
+  case X86ISD::SCALAR_UINT_TO_FP_RND: return "X86ISD::SCALAR_UINT_TO_FP_RND";
   case X86ISD::CVTPS2PH:           return "X86ISD::CVTPS2PH";
   case X86ISD::CVTPH2PS:           return "X86ISD::CVTPH2PS";
+  case X86ISD::CVTP2SI:            return "X86ISD::CVTP2SI";
+  case X86ISD::CVTP2UI:            return "X86ISD::CVTP2UI";
+  case X86ISD::CVTP2SI_RND:        return "X86ISD::CVTP2SI_RND";
+  case X86ISD::CVTP2UI_RND:        return "X86ISD::CVTP2UI_RND";
+  case X86ISD::CVTS2SI_RND:        return "X86ISD::CVTS2SI_RND";
+  case X86ISD::CVTS2UI_RND:        return "X86ISD::CVTS2UI_RND";
   }
   return nullptr;
 }
@@ -26424,13 +26419,18 @@ static SDValue combineShuffle(SDNode *N, SelectionDAG &DAG,
       bool CanFold = false;
       switch (Opcode) {
       default : break;
-      case ISD::ADD :
-      case ISD::FADD :
-      case ISD::SUB :
-      case ISD::FSUB :
-      case ISD::MUL :
-      case ISD::FMUL :
-        CanFold = true;
+      case ISD::ADD:
+      case ISD::SUB:
+      case ISD::MUL:
+        // isOperationLegal lies for integer ops on floating point types.
+        CanFold = VT.isInteger();
+        break;
+      case ISD::FADD:
+      case ISD::FSUB:
+      case ISD::FMUL:
+        // isOperationLegal lies for floating point ops on integer types.
+        CanFold = VT.isFloatingPoint();
+        break;
       }
 
       unsigned SVTNumElts = SVT.getVectorNumElements();
@@ -31066,9 +31066,10 @@ static SDValue combineSetCC(SDNode *N, SelectionDAG &DAG,
     }
   }
 
-  // For an SSE1-only target, lower to X86ISD::CMPP early to avoid scalarization
-  // via legalization because v4i32 is not a legal type.
-  if (Subtarget.hasSSE1() && !Subtarget.hasSSE2() && VT == MVT::v4i32)
+  // For an SSE1-only target, lower a comparison of v4f32 to X86ISD::CMPP early
+  // to avoid scalarization via legalization because v4i32 is not a legal type.
+  if (Subtarget.hasSSE1() && !Subtarget.hasSSE2() && VT == MVT::v4i32 &&
+      LHS.getValueType() == MVT::v4f32)
     return LowerVSETCC(SDValue(N, 0), Subtarget, DAG);
 
   return SDValue();
@@ -32572,4 +32573,8 @@ void X86TargetLowering::insertCopiesSplitCSR(
               TII->get(TargetOpcode::COPY), *I)
           .addReg(NewVR);
   }
+}
+
+bool X86TargetLowering::supportSwiftError() const {
+  return Subtarget.is64Bit();
 }

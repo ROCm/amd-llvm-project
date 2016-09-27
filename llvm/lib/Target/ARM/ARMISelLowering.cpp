@@ -37,6 +37,7 @@
 #include "llvm/IR/CallingConv.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instruction.h"
@@ -3044,7 +3045,7 @@ static SDValue promoteToConstantPool(const GlobalValue *GV, SelectionDAG &DAG,
   // need to be duplicated) or duplicating the constant wouldn't increase code
   // size (implying the constant is no larger than 4 bytes).
   const Function *F = DAG.getMachineFunction().getFunction();
-
+  
   // We rely on this decision to inline being idemopotent and unrelated to the
   // use-site. We know that if we inline a variable at one use site, we'll
   // inline it elsewhere too (and reuse the constant pool entry). Fast-isel
@@ -3054,7 +3055,7 @@ static SDValue promoteToConstantPool(const GlobalValue *GV, SelectionDAG &DAG,
   if (!EnableConstpoolPromotion ||
       DAG.getMachineFunction().getTarget().Options.EnableFastISel)
       return SDValue();
-  
+
   auto *GVar = dyn_cast<GlobalVariable>(GV);
   if (!GVar || !GVar->hasInitializer() ||
       !GVar->isConstant() || !GVar->hasGlobalUnnamedAddr() ||
@@ -3115,8 +3116,9 @@ static SDValue promoteToConstantPool(const GlobalValue *GV, SelectionDAG &DAG,
     Init = ConstantDataArray::get(*DAG.getContext(), V);
   }
 
+  auto CPVal = ARMConstantPoolConstant::Create(GVar, Init);
   SDValue CPAddr =
-    DAG.getTargetConstantPool(Init, PtrVT, /*Align=*/4);
+    DAG.getTargetConstantPool(CPVal, PtrVT, /*Align=*/4);
   if (!AFI->getGlobalsPromotedToConstantPool().count(GVar)) {
     AFI->markGlobalAsPromotedToConstantPool(GVar);
     AFI->setPromotedConstpoolIncrease(AFI->getPromotedConstpoolIncrease() +
@@ -3137,7 +3139,7 @@ SDValue ARMTargetLowering::LowerGlobalAddressELF(SDValue Op,
   bool IsRO =
       (isa<GlobalVariable>(GV) && cast<GlobalVariable>(GV)->isConstant()) ||
       isa<Function>(GV);
-  
+
   if (TM.shouldAssumeDSOLocal(*GV->getParent(), GV))
     if (SDValue V = promoteToConstantPool(GV, DAG, PtrVT, dl))
       return V;

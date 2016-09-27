@@ -2382,6 +2382,9 @@ def err_swift_abi_parameter_wrong_type : Error<
   "'%0' parameter must have pointer%select{| to unqualified pointer}1 type; "
   "type here is %2">;
 
+def err_attribute_argument_invalid : Error<
+  "%0 attribute argument is invalid: %select{max must be 0 since min is 0|"
+  "min must not be greater than max}1">;
 def err_attribute_argument_is_zero : Error<
   "%0 attribute must be greater than 0">;
 def warn_attribute_argument_n_negative : Warning<
@@ -7722,6 +7725,8 @@ def err_ppc_builtin_only_on_pwr7 : Error<
   "this builtin is only valid on POWER7 or later CPUs">;
 def err_x86_builtin_32_bit_tgt : Error<
   "this builtin is only available on x86-64 targets">;
+def err_x86_builtin_invalid_rounding : Error<
+  "invalid rounding argument">;
 
 def err_builtin_longjmp_unsupported : Error<
   "__builtin_longjmp is not supported for the current target">;
@@ -8599,6 +8604,8 @@ def err_module_self_import : Error<
   "import of module '%0' appears within same top-level module '%1'">;
 def err_module_import_in_implementation : Error<
   "@import of module '%0' in implementation of '%1'; use #import">;
+def err_export_within_export : Error<
+  "export declaration appears within another export declaration">;
 
 def ext_equivalent_internal_linkage_decl_in_modules : ExtWarn<
   "ambiguous use of internal linkage declaration %0 defined in multiple modules">,

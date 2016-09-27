@@ -212,6 +212,15 @@ define <2 x double> @test_fpext(float %f) {
   ret <2 x double> %ret
 }
 
+define <4 x double> @test_shuffle(<4 x double> %f) {
+; CHECK-LABEL: @test_shuffle(
+; CHECK-NEXT:    [[RET1:%.*]] = insertelement <4 x double> %f, double 1.000000e+00, i32 3
+; CHECK-NEXT:    ret <4 x double> [[RET1]]
+;
+  %ret = shufflevector <4 x double> %f, <4 x double> <double undef, double 1.0, double undef, double undef>, <4 x i32> <i32 0, i32 1, i32 2, i32 5>
+  ret <4 x double> %ret
+}
+
 define <4 x float> @test_select(float %f, float %g) {
 ; CHECK-LABEL: @test_select(
 ; CHECK-NEXT:    [[A0:%.*]] = insertelement <4 x float> undef, float %f, i32 0
@@ -236,8 +245,8 @@ define <4 x float> @test_select(float %f, float %g) {
 
 define <2 x i64> @PR24922(<2 x i64> %v) {
 ; CHECK-LABEL: @PR24922(
-; CHECK-NEXT:    [[RESULT:%.*]] = shufflevector <2 x i64> %v, <2 x i64> <i64 0, i64 undef>, <2 x i32> <i32 2, i32 1>
-; CHECK-NEXT:    ret <2 x i64> [[RESULT]]
+; CHECK-NEXT:    [[RESULT1:%.*]] = insertelement <2 x i64> %v, i64 0, i32 0
+; CHECK-NEXT:    ret <2 x i64> [[RESULT1]]
 ;
   %result = select <2 x i1> <i1 icmp eq (i64 extractelement (<2 x i64> bitcast (<4 x i32> <i32 15, i32 15, i32 15, i32 15> to <2 x i64>), i64 0), i64 0), i1 true>, <2 x i64> %v, <2 x i64> zeroinitializer
   ret <2 x i64> %result

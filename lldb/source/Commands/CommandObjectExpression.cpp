@@ -49,7 +49,7 @@ static OptionEnumValueElement g_description_verbosity_type[] = {
      "Show the full output, including persistent variable's name and type"},
     {0, nullptr, nullptr}};
 
-OptionDefinition CommandObjectExpression::CommandOptions::g_option_table[] = {
+static OptionDefinition g_expression_options[] = {
     // clang-format off
   {LLDB_OPT_SET_1 | LLDB_OPT_SET_2, false, "all-threads",           'a', OptionParser::eRequiredArgument, nullptr, nullptr,                      0, eArgTypeBoolean,              "Should we run all threads if the execution doesn't complete on one thread."},
   {LLDB_OPT_SET_1 | LLDB_OPT_SET_2, false, "ignore-breakpoints",    'i', OptionParser::eRequiredArgument, nullptr, nullptr,                      0, eArgTypeBoolean,              "Ignore breakpoint hits while running expressions"},
@@ -69,92 +69,90 @@ OptionDefinition CommandObjectExpression::CommandOptions::g_option_table[] = {
     // clang-format on
 };
 
-uint32_t CommandObjectExpression::CommandOptions::GetNumDefinitions() {
-  return llvm::array_lengthof(g_option_table);
-}
-
 Error CommandObjectExpression::CommandOptions::SetOptionValue(
-    uint32_t option_idx, const char *option_arg,
+    uint32_t option_idx, llvm::StringRef option_arg,
     ExecutionContext *execution_context) {
   Error error;
 
-  auto option_strref = llvm::StringRef::withNullAsEmpty(option_arg);
-  const int short_option = g_option_table[option_idx].short_option;
+  const int short_option = GetDefinitions()[option_idx].short_option;
 
   switch (short_option) {
   case 'l':
     language = Language::GetLanguageTypeFromString(option_arg);
     if (language == eLanguageTypeUnknown)
       error.SetErrorStringWithFormat(
-          "unknown language type: '%s' for expression", option_arg);
+          "unknown language type: '%s' for expression",
+          option_arg.str().c_str());
     break;
 
   case 'a': {
     bool success;
     bool result;
-    result = Args::StringToBoolean(option_strref, true, &success);
+    result = Args::StringToBoolean(option_arg, true, &success);
     if (!success)
       error.SetErrorStringWithFormat(
-          "invalid all-threads value setting: \"%s\"", option_arg);
+          "invalid all-threads value setting: \"%s\"",
+          option_arg.str().c_str());
     else
       try_all_threads = result;
   } break;
 
   case 'i': {
     bool success;
-    bool tmp_value = Args::StringToBoolean(option_strref, true, &success);
+    bool tmp_value = Args::StringToBoolean(option_arg, true, &success);
     if (success)
       ignore_breakpoints = tmp_value;
     else
       error.SetErrorStringWithFormat(
-          "could not convert \"%s\" to a boolean value.", option_arg);
+          "could not convert \"%s\" to a boolean value.",
+          option_arg.str().c_str());
     break;
   }
 
   case 'j': {
     bool success;
-    bool tmp_value = Args::StringToBoolean(option_strref, true, &success);
+    bool tmp_value = Args::StringToBoolean(option_arg, true, &success);
     if (success)
       allow_jit = tmp_value;
     else
       error.SetErrorStringWithFormat(
-          "could not convert \"%s\" to a boolean value.", option_arg);
+          "could not convert \"%s\" to a boolean value.",
+          option_arg.str().c_str());
     break;
   }
 
-  case 't': {
-    bool success;
-    uint32_t result;
-    result = StringConvert::ToUInt32(option_arg, 0, 0, &success);
-    if (success)
-      timeout = result;
-    else
+  case 't':
+    if (option_arg.getAsInteger(0, timeout)) {
+      timeout = 0;
       error.SetErrorStringWithFormat("invalid timeout setting \"%s\"",
-                                     option_arg);
-  } break;
+                                     option_arg.str().c_str());
+    }
+    break;
 
   case 'u': {
     bool success;
-    bool tmp_value = Args::StringToBoolean(option_strref, true, &success);
+    bool tmp_value = Args::StringToBoolean(option_arg, true, &success);
     if (success)
       unwind_on_error = tmp_value;
     else
       error.SetErrorStringWithFormat(
-          "could not convert \"%s\" to a boolean value.", option_arg);
+          "could not convert \"%s\" to a boolean value.",
+          option_arg.str().c_str());
     break;
   }
 
   case 'v':
-    if (!option_arg) {
+    if (option_arg.empty()) {
       m_verbosity = eLanguageRuntimeDescriptionDisplayVerbosityFull;
       break;
     }
     m_verbosity =
         (LanguageRuntimeDescriptionDisplayVerbosity)Args::StringToOptionEnum(
-            option_arg, g_option_table[option_idx].enum_values, 0, error);
+            option_arg, GetDefinitions()[option_idx].enum_values, 0, error);
     if (!error.Success())
       error.SetErrorStringWithFormat(
-          "unrecognized value for description-verbosity '%s'", option_arg);
+          "unrecognized value for description-verbosity '%s'",
+          option_arg.str().c_str());
     break;
 
   case 'g':
@@ -169,12 +167,13 @@ Error CommandObjectExpression::CommandOptions::SetOptionValue(
 
   case 'X': {
     bool success;
-    bool tmp_value = Args::StringToBoolean(option_strref, true, &success);
+    bool tmp_value = Args::StringToBoolean(option_arg, true, &success);
     if (success)
       auto_apply_fixits = tmp_value ? eLazyBoolYes : eLazyBoolNo;
     else
       error.SetErrorStringWithFormat(
-          "could not convert \"%s\" to a boolean value.", option_arg);
+          "could not convert \"%s\" to a boolean value.",
+          option_arg.str().c_str());
     break;
   }
 
@@ -210,9 +209,9 @@ void CommandObjectExpression::CommandOptions::OptionParsingStarting(
   allow_jit = true;
 }
 
-const OptionDefinition *
+llvm::ArrayRef<OptionDefinition>
 CommandObjectExpression::CommandOptions::GetDefinitions() {
-  return g_option_table;
+  return llvm::makeArrayRef(g_expression_options);
 }
 
 CommandObjectExpression::CommandObjectExpression(
@@ -483,8 +482,8 @@ void CommandObjectExpression::GetMultilineExpression() {
   IOHandlerSP io_handler_sp(
       new IOHandlerEditline(debugger, IOHandler::Type::Expression,
                             "lldb-expr", // Name of input reader for history
-                            nullptr,     // No prompt
-                            nullptr,     // Continuation prompt
+                            llvm::StringRef(), // No prompt
+                            llvm::StringRef(), // Continuation prompt
                             multiple_lines, color_prompt,
                             1, // Show line numbers starting at 1
                             *this));

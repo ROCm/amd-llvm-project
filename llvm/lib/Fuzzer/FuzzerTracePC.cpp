@@ -12,36 +12,34 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "FuzzerInternal.h"
+#include "FuzzerDefs.h"
 #include "FuzzerTracePC.h"
+#include "FuzzerValueBitMap.h"
 
 namespace fuzzer {
 
 TracePC TPC;
-const size_t TracePC::kNumCounters;
-const size_t TracePC::kNumPCs;
 
 void TracePC::HandleTrace(uintptr_t *Guard, uintptr_t PC) {
   uintptr_t Idx = *Guard;
   if (!Idx) return;
-  if (UseCounters) {
-    uint8_t Counter = Counters[Idx % kNumCounters];
-    if (Counter == 0) {
+  uint8_t *CounterPtr = &Counters[Idx % kNumCounters];
+  uint8_t Counter = *CounterPtr;
+  if (Counter == 0) {
+    if (!PCs[Idx]) {
+      AddNewPCID(Idx);
+      TotalPCCoverage++;
       PCs[Idx] = PC;
-      if (TotalCoverageMap.AddValue(Idx)) {
-        TotalCoverage++;
-        AddNewPC(PC);
-      }
     }
+  }
+  if (UseCounters) {
     if (Counter < 128)
-      Counters[Idx % kNumCounters] = Counter + 1;
+      *CounterPtr = Counter + 1;
     else
       *Guard = 0;
   } else {
+    *CounterPtr = 1;
     *Guard = 0;
-    TotalCoverage++;
-    AddNewPC(PC);
-    PCs[Idx] = PC;
   }
 }
 
@@ -71,8 +69,8 @@ void TracePC::ResetGuards() {
 }
 
 void TracePC::FinalizeTrace() {
-  if (UseCounters && TotalCoverage) {
-    for (size_t Idx = 1, N = std::min(kNumCounters, NumGuards); Idx < N;
+  if (TotalPCCoverage) {
+    for (size_t Idx = 1, N = Min(kNumCounters, NumGuards + 1); Idx < N;
          Idx++) {
       uint8_t Counter = Counters[Idx];
       if (!Counter) continue;
@@ -90,14 +88,6 @@ void TracePC::FinalizeTrace() {
   }
 }
 
-size_t TracePC::UpdateCounterMap(ValueBitMap *Map) {
-  if (!TotalCoverage) return 0;
-  size_t NewTotalCounterBits = Map->MergeFrom(CounterMap);
-  size_t Delta = NewTotalCounterBits - TotalCounterBits;
-  TotalCounterBits = NewTotalCounterBits;
-  return Delta;
-}
-
 void TracePC::HandleCallerCallee(uintptr_t Caller, uintptr_t Callee) {
   const uintptr_t kBits = 12;
   const uintptr_t kMask = (1 << kBits) - 1;
@@ -106,10 +96,35 @@ void TracePC::HandleCallerCallee(uintptr_t Caller, uintptr_t Callee) {
 
 void TracePC::PrintCoverage() {
   Printf("COVERAGE:\n");
-  for (size_t i = 0; i < std::min(NumGuards, kNumPCs); i++) {
+  for (size_t i = 0; i < Min(NumGuards + 1, kNumPCs); i++) {
     if (PCs[i])
       PrintPC("COVERED: %p %F %L\n", "COVERED: %p\n", PCs[i]);
   }
+}
+
+
+void TracePC::UpdateFeatureSet(size_t CurrentElementIdx, size_t CurrentElementSize) {
+  if (!CurrentElementSize) return;
+  for (size_t Idx = 0; Idx < kFeatureSetSize; Idx++) {
+    if (!CounterMap.Get(Idx)) continue;
+    Feature &Fe = FeatureSet[Idx];
+    Fe.Count++;
+    if (!Fe.SmallestElementSize || Fe.SmallestElementSize > CurrentElementSize) {
+      Fe.SmallestElementIdx = CurrentElementIdx;
+      Fe.SmallestElementSize = CurrentElementSize;
+    }
+  }
+}
+
+void TracePC::PrintFeatureSet() {
+  Printf("[id: cnt idx sz] ");
+  for (size_t i = 0; i < kFeatureSetSize; i++) {
+    auto &Fe = FeatureSet[i];
+    if (!Fe.Count) continue;
+    Printf("[%zd: %zd %zd %zd] ", i, Fe.Count, Fe.SmallestElementIdx,
+           Fe.SmallestElementSize);
+  }
+  Printf("\n");
 }
 
 } // namespace fuzzer

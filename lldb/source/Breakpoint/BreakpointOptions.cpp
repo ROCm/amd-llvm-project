@@ -55,17 +55,15 @@ BreakpointOptions::CommandData::SerializeToStructuredData() {
     options_dict_sp->AddItem(GetKey(OptionNames::UserSource), user_source_sp);
   }
 
-  if (!script_source.empty()) {
-    StructuredData::StringSP item_sp(new StructuredData::String(script_source));
-    options_dict_sp->AddItem(GetKey(OptionNames::ScriptSource), user_source_sp);
-  }
+  options_dict_sp->AddStringItem(
+      GetKey(OptionNames::Interpreter),
+      ScriptInterpreter::LanguageToString(interpreter));
   return options_dict_sp;
 }
 
 std::unique_ptr<BreakpointOptions::CommandData>
 BreakpointOptions::CommandData::CreateFromStructuredData(
     const StructuredData::Dictionary &options_dict, Error &error) {
-  std::string script_source;
   std::unique_ptr<CommandData> data_up(new CommandData());
   bool found_something = false;
 
@@ -75,11 +73,24 @@ BreakpointOptions::CommandData::CreateFromStructuredData(
   if (success)
     found_something = true;
 
+  std::string interpreter_str;
+  ScriptLanguage interp_language;
   success = options_dict.GetValueForKeyAsString(
-      GetKey(OptionNames::ScriptSource), data_up->script_source);
+      GetKey(OptionNames::Interpreter), interpreter_str);
 
-  if (success)
-    found_something = true;
+  if (!success) {
+    error.SetErrorString("Missing command language value.");
+    return data_up;
+  }
+
+  found_something = true;
+  interp_language = ScriptInterpreter::StringToLanguage(interpreter_str);
+  if (interp_language == eScriptLanguageUnknown) {
+    error.SetErrorStringWithFormat("Unknown breakpoint command language: %s.",
+                                   interpreter_str.c_str());
+    return data_up;
+  }
+  data_up->interpreter = interp_language;
 
   StructuredData::Array *user_source;
   success = options_dict.GetValueForKeyAsArray(GetKey(OptionNames::UserSource),
@@ -101,9 +112,9 @@ BreakpointOptions::CommandData::CreateFromStructuredData(
     return std::unique_ptr<BreakpointOptions::CommandData>();
 }
 
-const char *BreakpointOptions::g_option_names
-    [BreakpointOptions::OptionNames::LastOptionName]{
-        "ConditionText", "IgnoreCount", "EnabledState", "OneShotState"};
+const char *BreakpointOptions::g_option_names[(
+    size_t)BreakpointOptions::OptionNames::LastOptionName]{
+    "ConditionText", "IgnoreCount", "EnabledState", "OneShotState"};
 
 bool BreakpointOptions::NullCallback(void *baton,
                                      StoppointCallbackContext *context,
@@ -184,7 +195,8 @@ BreakpointOptions::CopyOptionsNoCallback(BreakpointOptions &orig) {
 BreakpointOptions::~BreakpointOptions() = default;
 
 std::unique_ptr<BreakpointOptions> BreakpointOptions::CreateFromStructuredData(
-    const StructuredData::Dictionary &options_dict, Error &error) {
+    Target &target, const StructuredData::Dictionary &options_dict,
+    Error &error) {
   bool enabled = true;
   bool one_shot = false;
   int32_t ignore_count = 0;
@@ -230,8 +242,51 @@ std::unique_ptr<BreakpointOptions> BreakpointOptions::CreateFromStructuredData(
 
   auto bp_options = llvm::make_unique<BreakpointOptions>(
       condition_text.c_str(), enabled, ignore_count, one_shot);
-  if (cmd_data_up.get())
-    bp_options->SetCommandDataCallback(cmd_data_up);
+  if (cmd_data_up.get()) {
+    if (cmd_data_up->interpreter == eScriptLanguageNone)
+      bp_options->SetCommandDataCallback(cmd_data_up);
+    else {
+      ScriptInterpreter *interp =
+          target.GetDebugger().GetCommandInterpreter().GetScriptInterpreter();
+      if (!interp) {
+        error.SetErrorStringWithFormat(
+            "Can't set script commands - no script interpreter");
+        return nullptr;
+      }
+      if (interp->GetLanguage() != cmd_data_up->interpreter) {
+        error.SetErrorStringWithFormat(
+            "Current script language doesn't match breakpoint's language: %s",
+            ScriptInterpreter::LanguageToString(cmd_data_up->interpreter)
+                .c_str());
+        return nullptr;
+      }
+      Error script_error;
+      script_error =
+          interp->SetBreakpointCommandCallback(bp_options.get(), cmd_data_up);
+      if (script_error.Fail()) {
+        error.SetErrorStringWithFormat("Error generating script callback: %s.",
+                                       error.AsCString());
+        return nullptr;
+      }
+    }
+  }
+
+  StructuredData::Dictionary *thread_spec_dict;
+  success = options_dict.GetValueForKeyAsDictionary(
+      ThreadSpec::GetSerializationKey(), thread_spec_dict);
+  if (success) {
+    Error thread_spec_error;
+    std::unique_ptr<ThreadSpec> thread_spec_up =
+        ThreadSpec::CreateFromStructuredData(*thread_spec_dict,
+                                             thread_spec_error);
+    if (thread_spec_error.Fail()) {
+      error.SetErrorStringWithFormat(
+          "Failed to deserialize breakpoint thread spec options: %s.",
+          thread_spec_error.AsCString());
+      return nullptr;
+    }
+    bp_options->SetThreadSpec(thread_spec_up);
+  }
   return bp_options;
 }
 
@@ -255,7 +310,12 @@ StructuredData::ObjectSP BreakpointOptions::SerializeToStructuredData() {
           BreakpointOptions::CommandData::GetSerializationKey(), commands_sp);
     }
   }
-  // FIXME: Need to serialize thread filter...
+  if (m_thread_spec_ap) {
+    StructuredData::ObjectSP thread_spec_sp =
+        m_thread_spec_ap->SerializeToStructuredData();
+    options_dict_sp->AddItem(ThreadSpec::GetSerializationKey(), thread_spec_sp);
+  }
+
   return options_dict_sp;
 }
 
@@ -369,6 +429,11 @@ void BreakpointOptions::SetThreadID(lldb::tid_t thread_id) {
   GetThreadSpec()->SetTID(thread_id);
 }
 
+void BreakpointOptions::SetThreadSpec(
+    std::unique_ptr<ThreadSpec> &thread_spec_up) {
+  m_thread_spec_ap = std::move(thread_spec_up);
+}
+
 void BreakpointOptions::GetDescription(Stream *s,
                                        lldb::DescriptionLevel level) const {
   // Figure out if there are any options not at their default value, and only
@@ -429,7 +494,12 @@ void BreakpointOptions::CommandBaton::GetDescription(
   }
 
   s->IndentMore();
-  s->Indent("Breakpoint commands:\n");
+  s->Indent("Breakpoint commands");
+  if (data->interpreter != eScriptLanguageNone)
+    s->Printf(" (%s):\n",
+              ScriptInterpreter::LanguageToString(data->interpreter).c_str());
+  else
+    s->PutCString(":\n");
 
   s->IndentMore();
   if (data && data->user_source.GetSize() > 0) {
@@ -447,6 +517,7 @@ void BreakpointOptions::CommandBaton::GetDescription(
 
 void BreakpointOptions::SetCommandDataCallback(
     std::unique_ptr<CommandData> &cmd_data) {
+  cmd_data->interpreter = eScriptLanguageNone;
   auto baton_sp = std::make_shared<CommandBaton>(std::move(cmd_data));
   SetCallback(BreakpointOptions::BreakpointOptionsCallbackFunction, baton_sp);
 }

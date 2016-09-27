@@ -44,10 +44,11 @@ void readVersionScript(MemoryBufferRef MB);
 // This enum is used to implement linker script SECTIONS command.
 // https://sourceware.org/binutils/docs/ld/SECTIONS.html#SECTIONS
 enum SectionsCommandKind {
-  AssignmentKind,
+  AssignmentKind, // . = expr or <sym> = expr
   OutputSectionKind,
   InputSectionKind,
-  AssertKind
+  AssertKind,   // ASSERT(expr)
+  BytesDataKind // BYTE(expr), SHORT(expr), LONG(expr) or QUAD(expr)
 };
 
 struct BaseCommand {
@@ -99,6 +100,7 @@ struct OutputSectionCommand : BaseCommand {
 
 // This struct represents one section match pattern in SECTIONS() command.
 // It can optionally have negative match pattern for EXCLUDED_FILE command.
+// Also it may be surrounded with SORT() command, so contains sorting rules.
 struct SectionPattern {
   SectionPattern(llvm::Regex &&Re1, llvm::Regex &&Re2)
       : ExcludedFileRe(std::forward<llvm::Regex>(Re1)),
@@ -107,10 +109,14 @@ struct SectionPattern {
   SectionPattern(SectionPattern &&Other) {
     std::swap(ExcludedFileRe, Other.ExcludedFileRe);
     std::swap(SectionRe, Other.SectionRe);
+    std::swap(SortOuter, Other.SortOuter);
+    std::swap(SortInner, Other.SortInner);
   }
 
   llvm::Regex ExcludedFileRe;
   llvm::Regex SectionRe;
+  SortSectionPolicy SortOuter;
+  SortSectionPolicy SortInner;
 };
 
 struct InputSectionDescription : BaseCommand {
@@ -119,8 +125,6 @@ struct InputSectionDescription : BaseCommand {
         FileRe(compileGlobPatterns({FilePattern})) {}
   static bool classof(const BaseCommand *C);
   llvm::Regex FileRe;
-  SortSectionPolicy SortOuter = SortSectionPolicy::Default;
-  SortSectionPolicy SortInner = SortSectionPolicy::Default;
 
   // Input sections that matches at least one of SectionPatterns
   // will be associated with this InputSectionDescription.
@@ -133,6 +137,15 @@ struct AssertCommand : BaseCommand {
   AssertCommand(Expr E) : BaseCommand(AssertKind), Expression(E) {}
   static bool classof(const BaseCommand *C);
   Expr Expression;
+};
+
+struct BytesDataCommand : BaseCommand {
+  BytesDataCommand(uint64_t Data, unsigned Size)
+      : BaseCommand(BytesDataKind), Data(Data), Size(Size) {}
+  static bool classof(const BaseCommand *C);
+  uint64_t Data;
+  unsigned Offset;
+  unsigned Size;
 };
 
 struct PhdrsCommand {
@@ -154,6 +167,7 @@ public:
   virtual uint64_t getOutputSectionAlign(StringRef Name) = 0;
   virtual uint64_t getHeaderSize() = 0;
   virtual uint64_t getSymbolValue(StringRef S) = 0;
+  virtual bool isDefined(StringRef S) = 0;
 };
 
 // ScriptConfiguration holds linker script parse results.
@@ -184,11 +198,13 @@ public:
   ~LinkerScript();
   void processCommands(OutputSectionFactory<ELFT> &Factory);
   void createSections(OutputSectionFactory<ELFT> &Factory);
+  void adjustSectionsBeforeSorting();
 
   std::vector<PhdrEntry<ELFT>> createPhdrs();
   bool ignoreInterpSection();
 
   ArrayRef<uint8_t> getFiller(StringRef Name);
+  void writeDataBytes(StringRef Name, uint8_t *Buf);
   Expr getLma(StringRef Name);
   bool shouldKeep(InputSectionBase<ELFT> *S);
   void assignOffsets(OutputSectionCommand *Cmd);
@@ -199,6 +215,7 @@ public:
   uint64_t getOutputSectionAlign(StringRef Name) override;
   uint64_t getHeaderSize() override;
   uint64_t getSymbolValue(StringRef S) override;
+  bool isDefined(StringRef S) override;
 
   std::vector<OutputSectionBase<ELFT> *> *OutputSections;
 
