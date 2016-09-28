@@ -260,7 +260,7 @@ void CGAMPRuntime::EmitTrampolineBody(CodeGenFunction &CGF,
         IndexConstructor, indexInitType);
 
       CGF.EmitCXXMemberOrOperatorCall(IndexConstructor, indexInitAddr,
-        ReturnValueSlot(), index.getPointer(), /*ImplicitParam=*/0, QualType(), /*CallExpr=*/nullptr);
+        ReturnValueSlot(), index.getPointer(), /*ImplicitParam=*/0, QualType(), /*CallExpr=*/nullptr, /*RtlArgs=*/nullptr);
     }
   }
   // Invoke this->operator(index)
