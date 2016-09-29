@@ -171,10 +171,12 @@ public:
     bool canBeOmittedFromSymbolTable() const {
       return GV && llvm::canBeOmittedFromSymbolTable(GV);
     }
-    bool isTLS() {
+    bool isTLS() const {
       // FIXME: Expose a thread-local flag for module asm symbols.
       return GV && GV->isThreadLocal();
     }
+
+    //FIXME: We shouldn't expose this information.
     Expected<const Comdat *> getComdat() const {
       if (!GV)
         return nullptr;
@@ -191,6 +193,7 @@ public:
         return GO->getComdat();
       return nullptr;
     }
+
     uint64_t getCommonSize() const {
       assert(Flags & object::BasicSymbolRef::SF_Common);
       if (!GV)
@@ -248,6 +251,11 @@ public:
 
   MemoryBufferRef getMemoryBufferRef() const {
     return Obj->getMemoryBufferRef();
+  }
+
+  // FIXME: We should fix lld and not expose this information.
+  StringMap<Comdat> &getComdatSymbolTable() {
+    return Obj->getModule().getComdatSymbolTable();
   }
 };
 

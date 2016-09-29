@@ -3129,7 +3129,7 @@ static void emitWritebackArg(CodeGenFunction &CGF, CallArgList &args,
 }
 
 void CallArgList::allocateArgumentMemory(CodeGenFunction &CGF) {
-  assert(!StackBase && !StackCleanup.isValid());
+  assert(!StackBase);
 
   // Save the stack.
   llvm::Function *F = CGF.CGM.getIntrinsic(llvm::Intrinsic::stacksave);
