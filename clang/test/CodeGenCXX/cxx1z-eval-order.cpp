@@ -1,5 +1,6 @@
 // RUN: %clang_cc1 -std=c++1z %s -emit-llvm -o - -triple %itanium_abi_triple | FileCheck %s --check-prefix=CHECK --check-prefix=CHECK-ITANIUM
-// RUN: %clang_cc1 -std=c++1z %s -emit-llvm -o - -triple %ms_abi_triple | FileCheck %s --check-prefix=CHECK --check-prefix=CHECK-WINDOWS
+// RUN: %clang_cc1 -std=c++1z %s -emit-llvm -o - -triple i686-windows | FileCheck %s --check-prefix=CHECK --check-prefix=CHECK-WINDOWS
+// RUN: %clang_cc1 -std=c++1z %s -emit-llvm -o - -triple x86_64-windows | FileCheck %s --check-prefix=CHECK --check-prefix=CHECK-WINDOWS
 
 struct B;
 struct A {
@@ -26,8 +27,17 @@ struct C {
   void operator<<(A);
   void operator>>(A);
 
-  void operator=(B);
-  void operator+=(B);
+  void operator=(A);
+  void operator+=(A);
+  friend void operator+=(C, B);
+
+  void operator,(A);
+  friend void operator,(C, B);
+
+  void operator&&(A);
+  void operator||(A);
+  friend void operator&&(C, B);
+  friend void operator||(C, B);
 };
 
 A make_a();
@@ -149,6 +159,8 @@ int dotstar_lhs_before_rhs() {
   // trivially-destructible.
   // CHECK-ITANIUM: call {{.*}}@{{.*}}make_c{{.*}}(
   // CHECK-ITANIUM: call {{.*}}@{{.*}}make_b{{.*}}(
+  // CHECK-WINDOWS: call {{.*}}@{{.*}}make_b{{.*}}(
+  // CHECK-WINDOWS: call {{.*}}@{{.*}}make_c{{.*}}(
   make_c()->*make_b();
 
   // CHECK: call {{.*}}@{{.*}}make_a{{.*}}(
@@ -182,9 +194,13 @@ void assign_rhs_before_lhs() {
   // CHECK: call {{.*}}@{{.*}}lhs_ref{{.*}}(
   lhs_ref() %= rhs();
 
-  // CHECK: call {{.*}}@{{.*}}make_b{{.*}}(
+  // CHECK: call {{.*}}@{{.*}}make_a{{.*}}(
   // CHECK: call {{.*}}@{{.*}}make_c{{.*}}(
-  make_c() = make_b();
+  make_c() = make_a();
+
+  // CHECK: call {{.*}}@{{.*}}make_a{{.*}}(
+  // CHECK: call {{.*}}@{{.*}}make_c{{.*}}(
+  make_c() += make_a();
 
   // CHECK: call {{.*}}@{{.*}}make_b{{.*}}(
   // CHECK: call {{.*}}@{{.*}}make_c{{.*}}(
@@ -212,13 +228,55 @@ void shift_lhs_before_rhs() {
   // CHECK: call {{.*}}@{{.*}}make_a{{.*}}(
   make_c() >> make_a();
 
-  // CHECK: call {{.*}}@{{.*}}make_c{{.*}}(
-  // CHECK: call {{.*}}@{{.*}}make_b{{.*}}(
+  // FIXME: This is unimplementable for Windows ABIs, see above.
+  // CHECK-ITANIUM: call {{.*}}@{{.*}}make_c{{.*}}(
+  // CHECK-ITANIUM: call {{.*}}@{{.*}}make_b{{.*}}(
+  // CHECK-WINDOWS: call {{.*}}@{{.*}}make_b{{.*}}(
+  // CHECK-WINDOWS: call {{.*}}@{{.*}}make_c{{.*}}(
   make_c() << make_b();
+
+  // CHECK-ITANIUM: call {{.*}}@{{.*}}make_c{{.*}}(
+  // CHECK-ITANIUM: call {{.*}}@{{.*}}make_b{{.*}}(
+  // CHECK-WINDOWS: call {{.*}}@{{.*}}make_b{{.*}}(
+  // CHECK-WINDOWS: call {{.*}}@{{.*}}make_c{{.*}}(
+  make_c() >> make_b();
+// CHECK: }
+}
+
+// CHECK-LABEL: define {{.*}}@{{.*}}comma_lhs_before_rhs{{.*}}(
+void comma_lhs_before_rhs() {
+  // CHECK: call {{.*}}@{{.*}}make_c{{.*}}(
+  // CHECK: call {{.*}}@{{.*}}make_a{{.*}}(
+  make_c() , make_a();
 
   // FIXME: This is unimplementable for Windows ABIs, see above.
   // CHECK-ITANIUM: call {{.*}}@{{.*}}make_c{{.*}}(
   // CHECK-ITANIUM: call {{.*}}@{{.*}}make_b{{.*}}(
-  make_c() >> make_b();
-// CHECK: }
+  // CHECK-WINDOWS: call {{.*}}@{{.*}}make_b{{.*}}(
+  // CHECK-WINDOWS: call {{.*}}@{{.*}}make_c{{.*}}(
+  make_c() , make_b();
+}
+
+// CHECK-LABEL: define {{.*}}@{{.*}}andor_lhs_before_rhs{{.*}}(
+void andor_lhs_before_rhs() {
+  // CHECK: call {{.*}}@{{.*}}make_c{{.*}}(
+  // CHECK: call {{.*}}@{{.*}}make_a{{.*}}(
+  make_c() && make_a();
+
+  // CHECK: call {{.*}}@{{.*}}make_c{{.*}}(
+  // CHECK: call {{.*}}@{{.*}}make_a{{.*}}(
+  make_c() || make_a();
+
+  // FIXME: This is unimplementable for Windows ABIs, see above.
+  // CHECK-ITANIUM: call {{.*}}@{{.*}}make_c{{.*}}(
+  // CHECK-ITANIUM: call {{.*}}@{{.*}}make_b{{.*}}(
+  // CHECK-WINDOWS: call {{.*}}@{{.*}}make_b{{.*}}(
+  // CHECK-WINDOWS: call {{.*}}@{{.*}}make_c{{.*}}(
+  make_c() && make_b();
+
+  // CHECK-ITANIUM: call {{.*}}@{{.*}}make_c{{.*}}(
+  // CHECK-ITANIUM: call {{.*}}@{{.*}}make_b{{.*}}(
+  // CHECK-WINDOWS: call {{.*}}@{{.*}}make_b{{.*}}(
+  // CHECK-WINDOWS: call {{.*}}@{{.*}}make_c{{.*}}(
+  make_c() || make_b();
 }
