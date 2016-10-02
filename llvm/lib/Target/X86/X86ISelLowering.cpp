@@ -1958,9 +1958,11 @@ X86TargetLowering::findRepresentativeClass(const TargetRegisterInfo *TRI,
   case MVT::f32: case MVT::f64:
   case MVT::v16i8: case MVT::v8i16: case MVT::v4i32: case MVT::v2i64:
   case MVT::v4f32: case MVT::v2f64:
-  case MVT::v32i8: case MVT::v8i32: case MVT::v4i64: case MVT::v8f32:
-  case MVT::v4f64:
-    RRC = &X86::VR128RegClass;
+  case MVT::v32i8: case MVT::v16i16: case MVT::v8i32: case MVT::v4i64:
+  case MVT::v8f32: case MVT::v4f64:
+  case MVT::v64i8: case MVT::v32i16: case MVT::v16i32: case MVT::v8i64:
+  case MVT::v16f32: case MVT::v8f64:
+    RRC = &X86::VR128XRegClass;
     break;
   }
   return std::make_pair(RRC, Cost);
@@ -25092,8 +25094,7 @@ static bool matchBinaryVectorShuffle(MVT MaskVT, ArrayRef<int> Mask,
       return true;
     }
     if (isTargetShuffleEquivalent(Mask, {0, 3}) && FloatDomain) {
-      // On SSE41 targets use BLENDPD (its commutable).
-      if (Subtarget.hasSSE2() && !Subtarget.hasSSE41()) {
+      if (Subtarget.hasSSE2()) {
         std::swap(V1, V2);
         Shuffle = X86ISD::MOVSD;
         ShuffleVT = MVT::v2f64;
@@ -25101,12 +25102,9 @@ static bool matchBinaryVectorShuffle(MVT MaskVT, ArrayRef<int> Mask,
       }
     }
     if (isTargetShuffleEquivalent(Mask, {4, 1, 2, 3}) && FloatDomain) {
-      // On SSE41 targets use BLENDPS (its commutable).
-      if (!Subtarget.hasSSE41()) {
-        Shuffle = X86ISD::MOVSS;
-        ShuffleVT = MVT::v4f32;
-        return true;
-      }
+      Shuffle = X86ISD::MOVSS;
+      ShuffleVT = MVT::v4f32;
+      return true;
     }
     if (isTargetShuffleEquivalent(Mask, {0, 0, 1, 1}) && FloatDomain) {
       V2 = V1;
@@ -25162,7 +25160,7 @@ static bool matchBinaryPermuteVectorShuffle(MVT MaskVT, ArrayRef<int> Mask,
     }
   }
 
-  // Attempt to blend with zero.
+  // Attempt to combine to X86ISD::BLENDI.
   if (NumMaskElts <= 8 && ((Subtarget.hasSSE41() && MaskVT.is128BitVector()) ||
                            (Subtarget.hasAVX() && MaskVT.is256BitVector()))) {
     // Determine a type compatible with X86ISD::BLENDI.
@@ -25182,12 +25180,13 @@ static bool matchBinaryPermuteVectorShuffle(MVT MaskVT, ArrayRef<int> Mask,
         BlendVT = MVT::v8f32;
     }
 
+    unsigned BlendSize = BlendVT.getVectorNumElements();
+    unsigned MaskRatio = BlendSize / NumMaskElts;
+
+    // Can we blend with zero?
     if (isSequentialOrUndefOrZeroInRange(Mask, /*Pos*/ 0, /*Size*/ NumMaskElts,
                                          /*Low*/ 0) &&
         NumMaskElts <= BlendVT.getVectorNumElements()) {
-      unsigned BlendSize = BlendVT.getVectorNumElements();
-      unsigned MaskRatio = BlendSize / NumMaskElts;
-
       PermuteImm = 0;
       for (unsigned i = 0; i != BlendSize; ++i)
         if (Mask[i / MaskRatio] < 0)
@@ -25197,6 +25196,31 @@ static bool matchBinaryPermuteVectorShuffle(MVT MaskVT, ArrayRef<int> Mask,
       Shuffle = X86ISD::BLENDI;
       ShuffleVT = BlendVT;
       return true;
+    }
+
+    // Attempt to match as a binary blend.
+    if (NumMaskElts <= BlendVT.getVectorNumElements()) {
+      bool MatchBlend = true;
+      for (int i = 0; i != (int)NumMaskElts; ++i) {
+        int M = Mask[i];
+        if (M == SM_SentinelUndef)
+          continue;
+        else if (M == SM_SentinelZero)
+          MatchBlend = false;
+        else if ((M != i) && (M != (i + (int)NumMaskElts)))
+          MatchBlend = false;
+      }
+
+      if (MatchBlend) {
+        PermuteImm = 0;
+        for (unsigned i = 0; i != BlendSize; ++i)
+          if ((int)NumMaskElts <= Mask[i / MaskRatio])
+            PermuteImm |= 1u << i;
+
+        Shuffle = X86ISD::BLENDI;
+        ShuffleVT = BlendVT;
+        return true;
+      }
     }
   }
 

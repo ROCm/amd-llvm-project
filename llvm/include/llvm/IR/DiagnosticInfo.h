@@ -458,7 +458,7 @@ public:
   /// in BackendConsumer::OptimizationRemarkHandler).
   virtual bool isEnabled() const = 0;
 
-  const char *getPassName() const { return PassName; }
+  StringRef getPassName() const { return PassName; }
   std::string getMsg() const;
   Optional<uint64_t> getHotness() const { return Hotness; }
   void setHotness(Optional<uint64_t> H) { Hotness = H; }
@@ -523,6 +523,11 @@ public:
   /// optimization operates on (currently on block is supported).
   OptimizationRemark(const char *PassName, StringRef RemarkName,
                      const DebugLoc &DLoc, Value *CodeRegion);
+
+  /// Same as above but the debug location and code region is derived from \p
+  /// Instr.
+  OptimizationRemark(const char *PassName, StringRef RemarkName,
+                     Instruction *Inst);
 
   static bool classof(const DiagnosticInfo *DI) {
     return DI->getKind() == DK_OptimizationRemark;

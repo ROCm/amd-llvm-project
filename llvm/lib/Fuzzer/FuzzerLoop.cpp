@@ -63,11 +63,8 @@ void Fuzzer::ResetEdgeCoverage() {
 }
 
 void Fuzzer::ResetCounters() {
-  if (Options.UseCounters) {
+  if (Options.UseCounters)
     EF->__sanitizer_update_counter_bitset_and_clear_counters(0);
-  }
-  if (EF->__sanitizer_get_coverage_pc_buffer_pos)
-    PcBufferPos = EF->__sanitizer_get_coverage_pc_buffer_pos();
 }
 
 void Fuzzer::PrepareCounters(Fuzzer::Coverage *C) {
@@ -81,8 +78,6 @@ void Fuzzer::PrepareCounters(Fuzzer::Coverage *C) {
 // coverage was discovered.
 bool Fuzzer::RecordMaxCoverage(Fuzzer::Coverage *C) {
   bool Res = false;
-
-  TPC.FinalizeTrace();
 
   uint64_t NewBlockCoverage = EF->__sanitizer_get_total_unique_coverage();
   if (NewBlockCoverage > C->BlockCoverage) {
@@ -107,25 +102,6 @@ bool Fuzzer::RecordMaxCoverage(Fuzzer::Coverage *C) {
     if (CounterDelta > 0) {
       Res = true;
       C->CounterBitmapBits += CounterDelta;
-    }
-  }
-
-  if (TPC.UpdateCounterMap(&C->TPCMap))
-    Res = true;
-
-  if (TPC.UpdateValueProfileMap(&C->VPMap))
-    Res = true;
-
-  if (EF->__sanitizer_get_coverage_pc_buffer_pos) {
-    uint64_t NewPcBufferPos = EF->__sanitizer_get_coverage_pc_buffer_pos();
-    if (NewPcBufferPos > PcBufferPos) {
-      Res = true;
-      PcBufferPos = NewPcBufferPos;
-    }
-
-    if (PcBufferLen && NewPcBufferPos >= PcBufferLen) {
-      Printf("ERROR: PC buffer overflow\n");
-      _Exit(1);
     }
   }
 
@@ -171,11 +147,6 @@ Fuzzer::Fuzzer(UserCallback CB, InputCorpus &Corpus, MutationDispatcher &MD,
   TPC.SetUseCounters(Options.UseCounters);
   TPC.SetUseValueProfile(Options.UseValueProfile);
 
-  if (Options.PrintNewCovPcs) {
-    PcBufferLen = 1 << 24;
-    PcBuffer = new uintptr_t[PcBufferLen];
-    EF->__sanitizer_set_coverage_pc_buffer(PcBuffer, PcBufferLen);
-  }
   if (Options.Verbosity)
     TPC.PrintModuleInfo();
   if (!Options.OutputCorpus.empty() && Options.Reload)
@@ -374,6 +345,16 @@ void Fuzzer::SetMaxMutationLen(size_t MaxMutationLen) {
   this->MaxMutationLen = MaxMutationLen;
 }
 
+void Fuzzer::CheckExitOnItem() {
+  if (!Options.ExitOnItem.empty()) {
+    if (Corpus.HasUnit(Options.ExitOnItem)) {
+      Printf("INFO: found item with checksum '%s', exiting.\n",
+             Options.ExitOnItem.c_str());
+      _Exit(0);
+    }
+  }
+}
+
 void Fuzzer::CheckExitOnSrcPos() {
   if (!Options.ExitOnSrcPos.empty()) {
     uintptr_t *PCIDs;
@@ -390,19 +371,6 @@ void Fuzzer::CheckExitOnSrcPos() {
   }
 }
 
-void Fuzzer::AddToCorpusAndMaybeRerun(const Unit &U) {
-  CheckExitOnSrcPos();
-  Corpus.AddToCorpus(U);
-  if (TPC.GetTotalPCCoverage()) {
-    TPC.ResetMaps();
-    TPC.ResetGuards();
-    ExecuteCallback(U.data(), U.size());
-    TPC.FinalizeTrace();
-    TPC.UpdateFeatureSet(Corpus.size() - 1, U.size());
-    // TPC.PrintFeatureSet();
-  }
-}
-
 void Fuzzer::RereadOutputCorpus(size_t MaxSize) {
   if (Options.OutputCorpus.empty() || !Options.Reload) return;
   std::vector<Unit> AdditionalCorpus;
@@ -410,12 +378,12 @@ void Fuzzer::RereadOutputCorpus(size_t MaxSize) {
                          &EpochOfLastReadOfOutputCorpus, MaxSize);
   if (Options.Verbosity >= 2)
     Printf("Reload: read %zd new units.\n", AdditionalCorpus.size());
-  for (auto &X : AdditionalCorpus) {
-    if (X.size() > MaxSize)
-      X.resize(MaxSize);
-    if (!Corpus.HasUnit(X)) {
-      if (RunOne(X)) {
-        AddToCorpusAndMaybeRerun(X);
+  for (auto &U : AdditionalCorpus) {
+    if (U.size() > MaxSize)
+      U.resize(MaxSize);
+    if (!Corpus.HasUnit(U)) {
+      if (RunOne(U)) {
+        Corpus.AddToCorpus(U);
         PrintStats("RELOAD");
       }
     }
@@ -436,9 +404,8 @@ void Fuzzer::ShuffleAndMinimize(UnitVector *InitialCorpus) {
     ShuffleCorpus(InitialCorpus);
 
   for (const auto &U : *InitialCorpus) {
-    bool NewCoverage = RunOne(U);
-    if (!Options.PruneCorpus || NewCoverage) {
-      AddToCorpusAndMaybeRerun(U);
+    if (RunOne(U)) {
+      Corpus.AddToCorpus(U);
       if (Options.Verbosity >= 2)
         Printf("NEW0: %zd L %zd\n", MaxCoverage.BlockCoverage, U.size());
     }
@@ -453,19 +420,28 @@ void Fuzzer::ShuffleAndMinimize(UnitVector *InitialCorpus) {
   }
 }
 
-bool Fuzzer::UpdateMaxCoverage() {
-  PrevPcBufferPos = PcBufferPos;
-  bool Res = RecordMaxCoverage(&MaxCoverage);
-
-  return Res;
-}
-
 bool Fuzzer::RunOne(const uint8_t *Data, size_t Size) {
   TotalNumberOfRuns++;
 
   ExecuteCallback(Data, Size);
-  bool Res = UpdateMaxCoverage();
+  bool Res = false;
 
+  if (TPC.FinalizeTrace(Size))
+    if (Options.Shrink)
+      Res = true;
+
+  if (!Res) {
+    if (TPC.UpdateCounterMap(&MaxCoverage.TPCMap))
+      Res = true;
+
+    if (TPC.UpdateValueProfileMap(&MaxCoverage.VPMap))
+      Res = true;
+  }
+
+  if (RecordMaxCoverage(&MaxCoverage))
+    Res = true;
+
+  CheckExitOnSrcPos();
   auto TimeOfUnit =
       duration_cast<seconds>(UnitStopTime - UnitStartTime).count();
   if (!(TotalNumberOfRuns & (TotalNumberOfRuns - 1)) &&
@@ -563,13 +539,6 @@ void Fuzzer::PrintOneNewPC(uintptr_t PC) {
 
 void Fuzzer::PrintNewPCs() {
   if (!Options.PrintNewCovPcs) return;
-  if (PrevPcBufferPos != PcBufferPos) {
-    int NumPrinted = 0;
-    for (size_t I = PrevPcBufferPos; I < PcBufferPos; ++I) {
-      if (NumPrinted++ > 30) break;  // Don't print too many new PCs.
-      PrintOneNewPC(PcBuffer[I]);
-    }
-  }
   uintptr_t *PCIDs;
   if (size_t NumNewPCIDs = TPC.GetNewPCIDs(&PCIDs))
     for (size_t i = 0; i < NumNewPCIDs; i++)
@@ -583,7 +552,6 @@ void Fuzzer::ReportNewCoverage(InputInfo *II, const Unit &U) {
   WriteToOutputCorpus(U);
   NumberOfNewUnitsAdded++;
   PrintNewPCs();
-  AddToCorpusAndMaybeRerun(U);
 }
 
 // Finds minimal number of units in 'Extra' that add coverage to 'Initial'.
@@ -713,8 +681,11 @@ void Fuzzer::MutateAndTestOne() {
     if (i == 0)
       StartTraceRecording();
     II.NumExecutedMutations++;
-    if (RunOne(CurrentUnitData, Size))
+    if (RunOne(CurrentUnitData, Size)) {
+      Corpus.AddToCorpus({CurrentUnitData, CurrentUnitData + Size});
       ReportNewCoverage(&II, {CurrentUnitData, CurrentUnitData + Size});
+      CheckExitOnItem();
+    }
     StopTraceRecording();
     TryDetectingAMemoryLeak(CurrentUnitData, Size,
                             /*DuringInitialCorpusExecution*/ false);
