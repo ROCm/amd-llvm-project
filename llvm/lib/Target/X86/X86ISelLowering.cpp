@@ -286,7 +286,11 @@ X86TargetLowering::X86TargetLowering(const X86TargetMachine &TM,
     setOperationAction(ISD::UDIV, VT, Expand);
     setOperationAction(ISD::SREM, VT, Expand);
     setOperationAction(ISD::UREM, VT, Expand);
+  }
 
+  for (auto VT : { MVT::i8, MVT::i16, MVT::i32, MVT::i64 }) {
+    if (VT == MVT::i64 && !Subtarget.is64Bit())
+      continue;
     // Add/Sub overflow ops with MVT::Glues are lowered to EFLAGS dependences.
     setOperationAction(ISD::ADDC, VT, Custom);
     setOperationAction(ISD::ADDE, VT, Custom);
@@ -8679,6 +8683,17 @@ static SDValue lowerVectorShuffleAsBroadcast(const SDLoc &DL, MVT VT,
     V = DAG.getLoad(SVT, DL, Ld->getChain(), NewAddr,
                     DAG.getMachineFunction().getMachineMemOperand(
                         Ld->getMemOperand(), Offset, SVT.getStoreSize()));
+
+    // Make sure the newly-created LOAD is in the same position as Ld in
+    // terms of dependency. We create a TokenFactor for Ld and V,
+    // and update uses of Ld's output chain to use the TokenFactor.
+    if (Ld->hasAnyUseOfValue(1)) {
+      SDValue NewChain = DAG.getNode(ISD::TokenFactor, DL, MVT::Other,
+                                     SDValue(Ld, 1), SDValue(V.getNode(), 1));
+      DAG.ReplaceAllUsesOfValueWith(SDValue(Ld, 1), NewChain);
+      DAG.UpdateNodeOperands(NewChain.getNode(), SDValue(Ld, 1),
+                             SDValue(V.getNode(), 1));
+    }
   } else if (!BroadcastFromReg) {
     // We can't broadcast from a vector register.
     return SDValue();
@@ -22094,7 +22109,7 @@ void X86TargetLowering::LowerOperationWrapper(SDNode *N,
   // In some cases (LowerSINT_TO_FP for example) Res has more result values
   // than original node, chain should be dropped(last value).
   for (unsigned I = 0, E = N->getNumValues(); I != E; ++I)
-      Results.push_back(Res.getValue(I));
+    Results.push_back(Res.getValue(I));
 }
 
 /// Replace a node with an illegal result type with a new node built out of
@@ -22152,13 +22167,6 @@ void X86TargetLowering::ReplaceNodeResults(SDNode *N,
     Results.push_back(DAG.getNode(N->getOpcode(), dl, MVT::v4f32, LHS, RHS));
     return;
   }
-  case ISD::SIGN_EXTEND_INREG:
-  case ISD::ADDC:
-  case ISD::ADDE:
-  case ISD::SUBC:
-  case ISD::SUBE:
-    // We don't want to expand or promote these.
-    return;
   case ISD::SDIV:
   case ISD::UDIV:
   case ISD::SREM:
@@ -25436,11 +25444,31 @@ static bool combineX86ShuffleChain(ArrayRef<SDValue> Inputs, SDValue Root,
   if (Depth < 2)
     return false;
 
-  if (is128BitLaneCrossingShuffleMask(MaskVT, Mask))
-    return false;
-
   bool MaskContainsZeros =
       any_of(Mask, [](int M) { return M == SM_SentinelZero; });
+
+  if (is128BitLaneCrossingShuffleMask(MaskVT, Mask)) {
+    // If we have a single input lane-crossing shuffle with 32-bit scalars then
+    // lower to VPERMD/VPERMPS.
+    if (UnaryShuffle && (Depth >= 3 || HasVariableMask) && !MaskContainsZeros &&
+        Subtarget.hasAVX2() && (MaskVT == MVT::v8f32 || MaskVT == MVT::v8i32)) {
+      SDValue VPermIdx[8];
+      for (int i = 0; i < 8; ++i)
+        VPermIdx[i] = Mask[i] < 0 ? DAG.getUNDEF(MVT::i32)
+                                  : DAG.getConstant(Mask[i], DL, MVT::i32);
+
+      SDValue VPermMask = DAG.getBuildVector(MVT::v8i32, DL, VPermIdx);
+      DCI.AddToWorklist(VPermMask.getNode());
+      Res = DAG.getBitcast(MaskVT, V1);
+      DCI.AddToWorklist(Res.getNode());
+      Res = DAG.getNode(X86ISD::VPERMV, DL, MaskVT, VPermMask, Res);
+      DCI.AddToWorklist(Res.getNode());
+      DCI.CombineTo(Root.getNode(), DAG.getBitcast(RootVT, Res),
+                    /*AddTo*/ true);
+      return true;
+    }
+    return false;
+  }
 
   // If we have a single input shuffle with different shuffle patterns in the
   // the 128-bit lanes use the variable mask to VPERMILPS.

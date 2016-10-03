@@ -151,7 +151,7 @@ bool ConstantRange::getEquivalentICmp(CmpInst::Predicate &Pred,
     Pred = CmpInst::ICMP_EQ;
     RHS = *OnlyElt;
     Success = true;
-  } else if (auto *OnlyMissingElt = inverse().getSingleElement()) {
+  } else if (auto *OnlyMissingElt = getSingleMissingElement()) {
     Pred = CmpInst::ICMP_NE;
     RHS = *OnlyMissingElt;
     Success = true;
