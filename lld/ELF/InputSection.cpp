@@ -45,6 +45,8 @@ InputSectionBase<ELFT>::InputSectionBase(elf::ObjectFile<ELFT> *File,
       Header(Hdr), File(File), Repl(this) {
   // The ELF spec states that a value of 0 means the section has
   // no alignment constraits.
+  if (Header->sh_addralign > UINT32_MAX)
+    fatal(getFilename(File) + ": section sh_addralign is too large");
   Alignment = std::max<uintX_t>(Header->sh_addralign, 1);
 }
 
@@ -663,7 +665,7 @@ MipsReginfoInputSection<ELFT>::MipsReginfoInputSection(elf::ObjectFile<ELFT> *F,
     return;
   }
   Reginfo = reinterpret_cast<const Elf_Mips_RegInfo<ELFT> *>(Data.data());
-  if (Reginfo->ri_gp_value)
+  if (Config->Relocatable && Reginfo->ri_gp_value)
     error(getName(this) + ": unsupported non-zero ri_gp_value");
 }
 
@@ -688,7 +690,7 @@ MipsOptionsInputSection<ELFT>::MipsOptionsInputSection(elf::ObjectFile<ELFT> *F,
     auto *O = reinterpret_cast<const Elf_Mips_Options<ELFT> *>(D.data());
     if (O->kind == ODK_REGINFO) {
       Reginfo = &O->getRegInfo();
-      if (Reginfo->ri_gp_value)
+      if (Config->Relocatable && Reginfo->ri_gp_value)
         error(getName(this) + ": unsupported non-zero ri_gp_value");
       break;
     }
