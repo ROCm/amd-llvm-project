@@ -128,6 +128,8 @@ static unsigned getBranchDisplacementBits(unsigned Opc) {
   switch (Opc) {
   default:
     llvm_unreachable("unexpected opcode!");
+  case AArch64::B:
+    return 64;
   case AArch64::TBNZW:
   case AArch64::TBZW:
   case AArch64::TBNZX:
@@ -143,30 +145,33 @@ static unsigned getBranchDisplacementBits(unsigned Opc) {
   }
 }
 
-static unsigned getBranchMaxDisplacementBytes(unsigned Opc) {
-  if (Opc == AArch64::B)
-    return -1;
-
-  unsigned Bits = getBranchDisplacementBits(Opc);
-  unsigned MaxOffs = ((1 << (Bits - 1)) - 1) << 2;
-
-  // Verify the displacement bits options have sane values.
-  // XXX: Is there a better place for this?
-  assert(MaxOffs >= 8 &&
-         "max branch displacement must be enough to jump"
-         "over conditional branch expansion");
-
-  return MaxOffs;
+bool AArch64InstrInfo::isBranchOffsetInRange(unsigned BranchOp,
+                                             int64_t BrOffset) const {
+  unsigned Bits = getBranchDisplacementBits(BranchOp);
+  assert(Bits >= 3 && "max branch displacement must be enough to jump"
+                      "over conditional branch expansion");
+  return isIntN(Bits, BrOffset / 4);
 }
 
-bool AArch64InstrInfo::isBranchInRange(unsigned BranchOp, uint64_t BrOffset,
-                                       uint64_t DestOffset) const {
-  unsigned MaxOffs = getBranchMaxDisplacementBytes(BranchOp);
-
-  // Branch before the Dest.
-  if (BrOffset <= DestOffset)
-    return (DestOffset - BrOffset <= MaxOffs);
-  return (BrOffset - DestOffset <= MaxOffs);
+MachineBasicBlock *AArch64InstrInfo::getBranchDestBlock(
+  const MachineInstr &MI) const {
+  switch (MI.getOpcode()) {
+  default:
+    llvm_unreachable("unexpected opcode!");
+  case AArch64::B:
+    return MI.getOperand(0).getMBB();
+  case AArch64::TBZW:
+  case AArch64::TBNZW:
+  case AArch64::TBZX:
+  case AArch64::TBNZX:
+    return MI.getOperand(2).getMBB();
+  case AArch64::CBZW:
+  case AArch64::CBNZW:
+  case AArch64::CBZX:
+  case AArch64::CBNZX:
+  case AArch64::Bcc:
+    return MI.getOperand(1).getMBB();
+  }
 }
 
 // Branch analysis.
@@ -1876,39 +1881,80 @@ bool AArch64InstrInfo::shouldClusterMemOps(MachineInstr &FirstLdSt,
 
 bool AArch64InstrInfo::shouldScheduleAdjacent(MachineInstr &First,
                                               MachineInstr &Second) const {
-  if (Subtarget.hasMacroOpFusion()) {
+  if (Subtarget.hasArithmeticBccFusion()) {
     // Fuse CMN, CMP, TST followed by Bcc.
     unsigned SecondOpcode = Second.getOpcode();
     if (SecondOpcode == AArch64::Bcc) {
       switch (First.getOpcode()) {
       default:
         return false;
-      case AArch64::SUBSWri:
       case AArch64::ADDSWri:
-      case AArch64::ANDSWri:
-      case AArch64::SUBSXri:
+      case AArch64::ADDSWrr:
       case AArch64::ADDSXri:
+      case AArch64::ADDSXrr:
+      case AArch64::ANDSWri:
+      case AArch64::ANDSWrr:
       case AArch64::ANDSXri:
+      case AArch64::ANDSXrr:
+      case AArch64::SUBSWri:
+      case AArch64::SUBSWrr:
+      case AArch64::SUBSXri:
+      case AArch64::SUBSXrr:
+      case AArch64::BICSWrr:
+      case AArch64::BICSXrr:
         return true;
+      case AArch64::ADDSWrs:
+      case AArch64::ADDSXrs:
+      case AArch64::ANDSWrs:
+      case AArch64::ANDSXrs:
+      case AArch64::SUBSWrs:
+      case AArch64::SUBSXrs:
+      case AArch64::BICSWrs:
+      case AArch64::BICSXrs:
+        // Shift value can be 0 making these behave like the "rr" variant...
+        return !hasShiftedReg(Second);
       }
     }
+  }
+  if (Subtarget.hasArithmeticCbzFusion()) {
     // Fuse ALU operations followed by CBZ/CBNZ.
+    unsigned SecondOpcode = Second.getOpcode();
     if (SecondOpcode == AArch64::CBNZW || SecondOpcode == AArch64::CBNZX ||
         SecondOpcode == AArch64::CBZW || SecondOpcode == AArch64::CBZX) {
       switch (First.getOpcode()) {
       default:
         return false;
       case AArch64::ADDWri:
+      case AArch64::ADDWrr:
       case AArch64::ADDXri:
+      case AArch64::ADDXrr:
       case AArch64::ANDWri:
+      case AArch64::ANDWrr:
       case AArch64::ANDXri:
+      case AArch64::ANDXrr:
       case AArch64::EORWri:
+      case AArch64::EORWrr:
       case AArch64::EORXri:
+      case AArch64::EORXrr:
       case AArch64::ORRWri:
+      case AArch64::ORRWrr:
       case AArch64::ORRXri:
+      case AArch64::ORRXrr:
       case AArch64::SUBWri:
+      case AArch64::SUBWrr:
       case AArch64::SUBXri:
+      case AArch64::SUBXrr:
         return true;
+      case AArch64::ADDWrs:
+      case AArch64::ADDXrs:
+      case AArch64::ANDWrs:
+      case AArch64::ANDXrs:
+      case AArch64::SUBWrs:
+      case AArch64::SUBXrs:
+      case AArch64::BICWrs:
+      case AArch64::BICXrs:
+        // Shift value can be 0 making these behave like the "rr" variant...
+        return !hasShiftedReg(Second);
       }
     }
   }

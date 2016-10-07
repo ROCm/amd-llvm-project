@@ -342,7 +342,7 @@ int MinimizeCrashInputInternalStep(Fuzzer *F, InputCorpus *Corpus) {
   Unit U = FileToVector(InputFilePath);
   assert(U.size() > 2);
   Printf("INFO: Starting MinimizeCrashInputInternalStep: %zd\n", U.size());
-  Corpus->AddToCorpus(U);
+  Corpus->AddToCorpus(U, 0);
   F->SetMaxInputLen(U.size());
   F->SetMaxMutationLen(U.size() - 1);
   F->Loop();
@@ -511,11 +511,12 @@ int FuzzerDriver(int *argc, char ***argv, UserCallback Callback) {
   }
 
   if (InitialCorpus.empty()) {
-    InitialCorpus.push_back(Unit());
+    InitialCorpus.push_back(Unit({0}));
     if (Options.Verbosity)
       Printf("INFO: A corpus is not provided, starting from an empty corpus\n");
   }
   F.ShuffleAndMinimize(&InitialCorpus);
+  InitialCorpus.clear();  // Don't need this memory any more.
   F.Loop();
 
   if (Flags.verbosity)
