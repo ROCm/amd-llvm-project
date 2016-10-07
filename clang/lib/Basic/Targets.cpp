@@ -823,6 +823,28 @@ public:
   }
 };
 
+// Fuchsia Target
+template<typename Target>
+class FuchsiaTargetInfo : public OSTargetInfo<Target> {
+protected:
+  void getOSDefines(const LangOptions &Opts, const llvm::Triple &Triple,
+                    MacroBuilder &Builder) const override {
+    Builder.defineMacro("__Fuchsia__");
+    Builder.defineMacro("__ELF__");
+    if (Opts.POSIXThreads)
+      Builder.defineMacro("_REENTRANT");
+    // Required by the libc++ locale support.
+    if (Opts.CPlusPlus)
+      Builder.defineMacro("_GNU_SOURCE");
+  }
+public:
+  FuchsiaTargetInfo(const llvm::Triple &Triple,
+                    const TargetOptions &Opts)
+      : OSTargetInfo<Target>(Triple, Opts) {
+    this->MCountName = "__mcount";
+  }
+};
+
 // WebAssembly target
 template <typename Target>
 class WebAssemblyOSTargetInfo : public OSTargetInfo<Target> {
@@ -2392,18 +2414,22 @@ bool AMDGPUTargetInfo::initFeatureMap(
   return TargetInfo::initFeatureMap(Features, Diags, CPU, FeatureVec);
 }
 
-// Namespace for x86 abstract base class
-const Builtin::Info BuiltinInfo[] = {
+const Builtin::Info BuiltinInfoX86[] = {
 #define BUILTIN(ID, TYPE, ATTRS)                                               \
   { #ID, TYPE, ATTRS, nullptr, ALL_LANGUAGES, nullptr },
-#define LIBBUILTIN(ID, TYPE, ATTRS, HEADER)                                    \
-  { #ID, TYPE, ATTRS, HEADER, ALL_LANGUAGES, nullptr },
 #define TARGET_BUILTIN(ID, TYPE, ATTRS, FEATURE)                               \
   { #ID, TYPE, ATTRS, nullptr, ALL_LANGUAGES, FEATURE },
 #define TARGET_HEADER_BUILTIN(ID, TYPE, ATTRS, HEADER, LANGS, FEATURE)         \
   { #ID, TYPE, ATTRS, HEADER, LANGS, FEATURE },
 #include "clang/Basic/BuiltinsX86.def"
+
+#define BUILTIN(ID, TYPE, ATTRS)                                               \
+  { #ID, TYPE, ATTRS, nullptr, ALL_LANGUAGES, nullptr },
+#define TARGET_HEADER_BUILTIN(ID, TYPE, ATTRS, HEADER, LANGS, FEATURE)         \
+  { #ID, TYPE, ATTRS, HEADER, LANGS, FEATURE },
+#include "clang/Basic/BuiltinsX86_64.def"
 };
+
 
 static const char* const GCCRegNames[] = {
   "ax", "dx", "cx", "bx", "si", "di", "bp", "sp",
@@ -2767,10 +2793,6 @@ public:
   unsigned getFloatEvalMethod() const override {
     // X87 evaluates with 80 bits "long double" precision.
     return SSELevel == NoSSE ? 2 : 0;
-  }
-  ArrayRef<Builtin::Info> getTargetBuiltins() const override {
-    return llvm::makeArrayRef(BuiltinInfo,
-                             clang::X86::LastTSBuiltin-Builtin::FirstTSBuiltin);
   }
   ArrayRef<const char *> getGCCRegNames() const override {
     return llvm::makeArrayRef(GCCRegNames);
@@ -4190,6 +4212,10 @@ public:
 
     return X86TargetInfo::validateOperandSize(Constraint, Size);
   }
+  ArrayRef<Builtin::Info> getTargetBuiltins() const override {
+    return llvm::makeArrayRef(BuiltinInfoX86, clang::X86::LastX86CommonBuiltin -
+                                                  Builtin::FirstTSBuiltin + 1);
+  }
 };
 
 class NetBSDI386TargetInfo : public NetBSDTargetInfo<X86_32TargetInfo> {
@@ -4544,6 +4570,10 @@ public:
     // Check if the register is a 32-bit register the backend can handle.
     return X86TargetInfo::validateGlobalRegisterVariable(RegName, RegSize,
                                                          HasSizeMismatch);
+  }
+  ArrayRef<Builtin::Info> getTargetBuiltins() const override {
+    return llvm::makeArrayRef(BuiltinInfoX86,
+                              X86::LastTSBuiltin - Builtin::FirstTSBuiltin);
   }
 };
 
@@ -8326,6 +8356,8 @@ static TargetInfo *AllocateTarget(const llvm::Triple &Triple,
       return new LinuxTargetInfo<AArch64leTargetInfo>(Triple, Opts);
     case llvm::Triple::NetBSD:
       return new NetBSDTargetInfo<AArch64leTargetInfo>(Triple, Opts);
+    case llvm::Triple::Fuchsia:
+      return new FuchsiaTargetInfo<AArch64leTargetInfo>(Triple, Opts);
     default:
       return new AArch64leTargetInfo(Triple, Opts);
     }
@@ -8694,6 +8726,8 @@ static TargetInfo *AllocateTarget(const llvm::Triple &Triple,
       return new HaikuTargetInfo<X86_64TargetInfo>(Triple, Opts);
     case llvm::Triple::NaCl:
       return new NaClTargetInfo<X86_64TargetInfo>(Triple, Opts);
+    case llvm::Triple::Fuchsia:
+      return new FuchsiaTargetInfo<X86_64TargetInfo>(Triple, Opts);
     case llvm::Triple::PS4:
       return new PS4OSTargetInfo<X86_64TargetInfo>(Triple, Opts);
     default:

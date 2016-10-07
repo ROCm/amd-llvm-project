@@ -5411,6 +5411,7 @@ TryContextuallyConvertToObjCPointer(Sema &S, Expr *From) {
 
 /// PerformContextuallyConvertToObjCPointer - Perform a contextual
 /// conversion of the expression From to an Objective-C pointer type.
+/// Returns a valid but null ExprResult if no conversion sequence exists.
 ExprResult Sema::PerformContextuallyConvertToObjCPointer(Expr *From) {
   if (checkPlaceholderForOverload(*this, From))
     return ExprError();
@@ -5420,7 +5421,7 @@ ExprResult Sema::PerformContextuallyConvertToObjCPointer(Expr *From) {
     TryContextuallyConvertToObjCPointer(*this, From);
   if (!ICS.isBad())
     return PerformImplicitConversion(From, Ty, ICS, AA_Converting);
-  return ExprError();
+  return ExprResult();
 }
 
 /// Determine whether the provided type is an integral type, or an enumeration

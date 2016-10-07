@@ -27,6 +27,8 @@ class ClangMoveTool : public ast_matchers::MatchFinder::MatchCallback {
 public:
   // Information about the declaration being moved.
   struct MovedDecl {
+    // FIXME: Replace Decl with SourceRange to get rid of calculating range for
+    // the Decl duplicately.
     const clang::NamedDecl *Decl = nullptr;
     clang::SourceManager *SM = nullptr;
     MovedDecl() = default;
@@ -50,7 +52,7 @@ public:
   ClangMoveTool(
       const MoveDefinitionSpec &MoveSpec,
       std::map<std::string, tooling::Replacements> &FileToReplacements,
-      llvm::StringRef OriginalRunningDirectory);
+      llvm::StringRef OriginalRunningDirectory, llvm::StringRef Style);
 
   void registerMatchers(ast_matchers::MatchFinder *Finder);
 
@@ -66,7 +68,7 @@ public:
   /// \param SearchPath The search path which was used to find the IncludeHeader
   /// in the file system. It can be a relative path or an absolute path.
   /// \param FileName The name of file where the IncludeHeader comes from.
-  /// \param SourceManager The SourceManager.
+  /// \param SM The SourceManager.
   void addIncludes(llvm::StringRef IncludeHeader,
                    bool IsAngled,
                    llvm::StringRef SearchPath,
@@ -95,6 +97,8 @@ private:
   // directory when analyzing the source file. We save the original working
   // directory in order to get the absolute file path for the fields in Spec.
   std::string OriginalRunningDirectory;
+  // The name of a predefined code style.
+  std::string FallbackStyle;
 };
 
 class ClangMoveAction : public clang::ASTFrontendAction {
@@ -102,8 +106,9 @@ public:
   ClangMoveAction(
       const ClangMoveTool::MoveDefinitionSpec &spec,
       std::map<std::string, tooling::Replacements> &FileToReplacements,
-      llvm::StringRef OriginalRunningDirectory)
-      : MoveTool(spec, FileToReplacements, OriginalRunningDirectory) {
+      llvm::StringRef OriginalRunningDirectory, llvm::StringRef FallbackStyle)
+      : MoveTool(spec, FileToReplacements, OriginalRunningDirectory,
+                 FallbackStyle) {
     MoveTool.registerMatchers(&MatchFinder);
   }
 
@@ -123,18 +128,21 @@ public:
   ClangMoveActionFactory(
       const ClangMoveTool::MoveDefinitionSpec &Spec,
       std::map<std::string, tooling::Replacements> &FileToReplacements,
-      llvm::StringRef OriginalRunningDirectory)
+      llvm::StringRef OriginalRunningDirectory, llvm::StringRef FallbackStyle)
       : Spec(Spec), FileToReplacements(FileToReplacements),
-        OriginalRunningDirectory(OriginalRunningDirectory) {}
+        OriginalRunningDirectory(OriginalRunningDirectory),
+        FallbackStyle(FallbackStyle) {}
 
   clang::FrontendAction *create() override {
-    return new ClangMoveAction(Spec, FileToReplacements, OriginalRunningDirectory);
+    return new ClangMoveAction(Spec, FileToReplacements,
+                               OriginalRunningDirectory, FallbackStyle);
   }
 
 private:
   const ClangMoveTool::MoveDefinitionSpec &Spec;
   std::map<std::string, tooling::Replacements> &FileToReplacements;
   std::string OriginalRunningDirectory;
+  std::string FallbackStyle;
 };
 
 } // namespace move

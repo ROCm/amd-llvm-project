@@ -455,17 +455,6 @@ bool FastISel::selectBinaryOp(const User *I, unsigned ISDOpcode) {
     return true;
   }
 
-  // Check if the second operand is a constant float.
-  if (const auto *CF = dyn_cast<ConstantFP>(I->getOperand(1))) {
-    unsigned ResultReg = fastEmit_rf(VT.getSimpleVT(), VT.getSimpleVT(),
-                                     ISDOpcode, Op0, Op0IsKill, CF);
-    if (ResultReg) {
-      // We successfully emitted code for the given LLVM Instruction.
-      updateValueMap(I, ResultReg);
-      return true;
-    }
-  }
-
   unsigned Op1 = getRegForValue(I->getOperand(1));
   if (!Op1) // Unhandled operand. Halt "fast" selection and bail.
     return false;
@@ -707,7 +696,7 @@ bool FastISel::lowerCallOperands(const CallInst *CI, unsigned ArgIdx,
 
 FastISel::CallLoweringInfo &FastISel::CallLoweringInfo::setCallee(
     const DataLayout &DL, MCContext &Ctx, CallingConv::ID CC, Type *ResultTy,
-    const char *Target, ArgListTy &&ArgsList, unsigned FixedArgs) {
+    StringRef Target, ArgListTy &&ArgsList, unsigned FixedArgs) {
   SmallString<32> MangledName;
   Mangler::getNameWithPrefix(MangledName, Target, DL);
   MCSymbol *Sym = Ctx.getOrCreateSymbol(MangledName);
@@ -1722,18 +1711,6 @@ unsigned FastISel::fastEmit_f(MVT, MVT, unsigned,
 
 unsigned FastISel::fastEmit_ri(MVT, MVT, unsigned, unsigned /*Op0*/,
                                bool /*Op0IsKill*/, uint64_t /*Imm*/) {
-  return 0;
-}
-
-unsigned FastISel::fastEmit_rf(MVT, MVT, unsigned, unsigned /*Op0*/,
-                               bool /*Op0IsKill*/,
-                               const ConstantFP * /*FPImm*/) {
-  return 0;
-}
-
-unsigned FastISel::fastEmit_rri(MVT, MVT, unsigned, unsigned /*Op0*/,
-                                bool /*Op0IsKill*/, unsigned /*Op1*/,
-                                bool /*Op1IsKill*/, uint64_t /*Imm*/) {
   return 0;
 }
 
