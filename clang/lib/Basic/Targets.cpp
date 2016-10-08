@@ -4929,6 +4929,8 @@ class ARMTargetInfo : public TargetInfo {
       return "8M_BASE";
     case llvm::ARM::AK_ARMV8MMainline:
       return "8M_MAIN";
+    case llvm::ARM::AK_ARMV8R:
+      return "8R";
     }
   }
 
@@ -5055,7 +5057,7 @@ public:
                  StringRef CPU,
                  const std::vector<std::string> &FeaturesVec) const override {
 
-    std::vector<const char*> TargetFeatures;
+    std::vector<StringRef> TargetFeatures;
     unsigned Arch = llvm::ARM::parseArch(getTriple().getArchName());
 
     // get default FPU features
@@ -5066,9 +5068,9 @@ public:
     unsigned Extensions = llvm::ARM::getDefaultExtensions(CPU, Arch);
     llvm::ARM::getExtensionFeatures(Extensions, TargetFeatures);
 
-    for (const char *Feature : TargetFeatures)
+    for (auto Feature : TargetFeatures)
       if (Feature[0] == '+')
-        Features[Feature+1] = true;
+        Features[Feature.drop_front(1)] = true;
 
     return TargetInfo::initFeatureMap(Features, Diags, CPU, FeaturesVec);
   }

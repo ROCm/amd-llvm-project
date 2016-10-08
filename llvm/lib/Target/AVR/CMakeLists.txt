@@ -8,8 +8,10 @@ tablegen(LLVM AVRGenSubtargetInfo.inc -gen-subtarget)
 add_public_tablegen_target(AVRCommonTableGen)
 
 add_llvm_target(AVRCodeGen
+  AVRAsmPrinter.cpp
   AVRFrameLowering.cpp
   AVRInstrInfo.cpp
+  AVRMCInstLower.cpp
   AVRRegisterInfo.cpp
   AVRSubtarget.cpp
   AVRTargetMachine.cpp
