@@ -399,7 +399,7 @@ public:
   /// jobs for a given (Action, ToolChain, BoundArch) tuple once.
   InputInfo
   BuildJobsForAction(Compilation &C, const Action *A, const ToolChain *TC,
-                     const char *BoundArch, bool AtTopLevel, bool MultipleArchs,
+                     StringRef BoundArch, bool AtTopLevel, bool MultipleArchs,
                      const char *LinkingOutput,
                      std::map<std::pair<const Action *, std::string>, InputInfo>
                          &CachedResults,
@@ -421,7 +421,7 @@ public:
   /// \param MultipleArchs - Whether multiple -arch options were supplied.
   /// \param NormalizedTriple - The normalized triple of the relevant target.
   const char *GetNamedOutputPath(Compilation &C, const JobAction &JA,
-                                 const char *BaseInput, const char *BoundArch,
+                                 const char *BaseInput, StringRef BoundArch,
                                  bool AtTopLevel, bool MultipleArchs,
                                  StringRef NormalizedTriple) const;
 
@@ -470,9 +470,8 @@ private:
   /// jobs specifically for the given action, but will use the cache when
   /// building jobs for the Action's inputs.
   InputInfo BuildJobsForActionNoCache(
-      Compilation &C, const Action *A, const ToolChain *TC,
-      const char *BoundArch, bool AtTopLevel, bool MultipleArchs,
-      const char *LinkingOutput,
+      Compilation &C, const Action *A, const ToolChain *TC, StringRef BoundArch,
+      bool AtTopLevel, bool MultipleArchs, const char *LinkingOutput,
       std::map<std::pair<const Action *, std::string>, InputInfo>
           &CachedResults,
       bool BuildForOffloadDevice) const;

@@ -2417,14 +2417,14 @@ void Driver::BuildJobs(Compilation &C) const {
     // The line is added so clang -emit-llvm would pick correct toolchain for HCC inputs
     if (JA && IsCXXAMPBackendJobAction(JA)) {
       BuildJobsForAction(C, A, C.getSingleOffloadToolChain<Action::OFK_HCC>(),
-                       /*BoundArch*/ nullptr,
+                       /*BoundArch*/ StringRef(),
                        /*AtTopLevel*/ true,
                        /*MultipleArchs*/ ArchNames.size() > 1,
                        /*LinkingOutput*/ LinkingOutput, CachedResults,
                        /*BuildForOffloadDevice*/ false);
     } else {
       BuildJobsForAction(C, A, &C.getDefaultToolChain(),
-                       /*BoundArch*/ nullptr,
+                       /*BoundArch*/ StringRef(),
                        /*AtTopLevel*/ true,
                        /*MultipleArchs*/ ArchNames.size() > 1,
                        /*LinkingOutput*/ LinkingOutput, CachedResults,
@@ -2725,7 +2725,7 @@ static const Tool *selectToolForJob(Compilation &C, bool SaveTemps,
 }
 
 InputInfo Driver::BuildJobsForAction(
-    Compilation &C, const Action *A, const ToolChain *TC, const char *BoundArch,
+    Compilation &C, const Action *A, const ToolChain *TC, StringRef BoundArch,
     bool AtTopLevel, bool MultipleArchs, const char *LinkingOutput,
     std::map<std::pair<const Action *, std::string>, InputInfo> &CachedResults,
     bool BuildForOffloadDevice) const {
@@ -2733,7 +2733,7 @@ InputInfo Driver::BuildJobsForAction(
   // for example, armv7 and armv7s both map to the same triple -- so we need
   // both in our map.
   std::string TriplePlusArch = TC->getTriple().normalize();
-  if (BoundArch) {
+  if (!BoundArch.empty()) {
     TriplePlusArch += "-";
     TriplePlusArch += BoundArch;
   }
@@ -2750,7 +2750,7 @@ InputInfo Driver::BuildJobsForAction(
 }
 
 InputInfo Driver::BuildJobsForActionNoCache(
-    Compilation &C, const Action *A, const ToolChain *TC, const char *BoundArch,
+    Compilation &C, const Action *A, const ToolChain *TC, StringRef BoundArch,
     bool AtTopLevel, bool MultipleArchs, const char *LinkingOutput,
     std::map<std::pair<const Action *, std::string>, InputInfo> &CachedResults,
     bool BuildForOffloadDevice) const {
@@ -2827,9 +2827,9 @@ InputInfo Driver::BuildJobsForActionNoCache(
 
   if (const BindArchAction *BAA = dyn_cast<BindArchAction>(A)) {
     const ToolChain *TC;
-    const char *ArchName = BAA->getArchName();
+    StringRef ArchName = BAA->getArchName();
 
-    if (ArchName)
+    if (!ArchName.empty())
       TC = &getToolChain(C.getArgs(),
                          computeTargetTriple(*this, DefaultTargetTriple,
                                              C.getArgs(), ArchName));
@@ -2982,7 +2982,7 @@ static const char *MakeCLOutputFilename(const ArgList &Args, StringRef ArgValue,
 
 const char *Driver::GetNamedOutputPath(Compilation &C, const JobAction &JA,
                                        const char *BaseInput,
-                                       const char *BoundArch, bool AtTopLevel,
+                                       StringRef BoundArch, bool AtTopLevel,
                                        bool MultipleArchs,
                                        StringRef NormalizedTriple) const {
   llvm::PrettyStackTraceString CrashInfo("Computing output path");
@@ -3070,7 +3070,7 @@ const char *Driver::GetNamedOutputPath(Compilation &C, const JobAction &JA,
       // clang-cl uses BaseName for the executable name.
       NamedOutput =
           MakeCLOutputFilename(C.getArgs(), "", BaseName, types::TY_Image);
-    } else if (MultipleArchs && BoundArch) {
+    } else if (MultipleArchs && !BoundArch.empty()) {
       SmallString<128> Output(getDefaultImageName());
       Output += JA.getOffloadingFileNamePrefix(NormalizedTriple);
       Output += "-";
@@ -3090,7 +3090,7 @@ const char *Driver::GetNamedOutputPath(Compilation &C, const JobAction &JA,
       End = BaseName.rfind('.');
     SmallString<128> Suffixed(BaseName.substr(0, End));
     Suffixed += JA.getOffloadingFileNamePrefix(NormalizedTriple);
-    if (MultipleArchs && BoundArch) {
+    if (MultipleArchs && !BoundArch.empty()) {
       Suffixed += "-";
       Suffixed.append(BoundArch);
     }
