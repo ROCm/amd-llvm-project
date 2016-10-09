@@ -5306,7 +5306,7 @@ SanitizerMask PS4CPU::getSupportedSanitizers() const {
   return Res;
 }
 
-/// HCC toolchain. 
+/// HCC toolchain.
 /// It may operate in 2 modes, depending on the Environment in Triple
 /// - C++AMP mode:
 ///   - use clamp-assemble as assembler
@@ -5330,7 +5330,7 @@ HCCToolChain::addClangTargetOptions(const llvm::opt::ArgList &DriverArgs,
 
 llvm::opt::DerivedArgList *
 HCCToolChain::TranslateArgs(const llvm::opt::DerivedArgList &Args,
-                            const char *BoundArch) const {
+                            StringRef BoundArch) const {
   // TBD look into what should be properly implemented
   DerivedArgList *DAL = new DerivedArgList(Args.getBaseArgs());
   const OptTable &Opts = getDriver().getOpts();
@@ -5338,7 +5338,7 @@ HCCToolChain::TranslateArgs(const llvm::opt::DerivedArgList &Args,
   for (Arg *A : Args) {
     if (A->getOption().matches(options::OPT_Xarch__)) {
       // Skip this argument unless the architecture matches BoundArch
-      if (!BoundArch || A->getValue(0) != StringRef(BoundArch))
+      if (BoundArch.empty() || A->getValue(0) != BoundArch)
         continue;
 
       unsigned Index = Args.getBaseArgs().MakeIndex(A->getValue(1));
@@ -5369,7 +5369,7 @@ HCCToolChain::TranslateArgs(const llvm::opt::DerivedArgList &Args,
     DAL->append(A);
   }
 
-  if (BoundArch)
+  if (!BoundArch.empty())
     DAL->AddJoinedArg(nullptr, Opts.getOption(options::OPT_march_EQ), BoundArch);
   return DAL;
 }
