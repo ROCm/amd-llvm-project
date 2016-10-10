@@ -9964,9 +9964,8 @@ void gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
     const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("clamp-link"));
     C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
   } else {
-    const toolchains::Linux& ToolChain =
-      static_cast<const toolchains::Linux&>(getToolChain());
-    C.addCommand(llvm::make_unique<Command>(JA, *this, ToolChain.GetLinkerPath().c_str(), CmdArgs, Inputs));
+    const char *Exec = Args.MakeArgString(getToolChain().GetLinkerPath());
+    C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
   }
 }
 
