@@ -1267,6 +1267,9 @@ public:
   // HCC ToolChain use DWARF version 2 by default
   unsigned GetDefaultDwarfVersion() const override { return 2; }
 
+  // HCC ToolChain doesn't support "-pg"-style profiling yet
+  bool SupportsProfiling() const override { return false; }
+
 protected:
   Tool *buildLinker() const override;
 
