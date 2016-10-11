@@ -1949,21 +1949,27 @@ CodeGenModule::GetOrCreateLLVMFunction(StringRef MangledName,
     if (D && !D->hasAttr<DLLImportAttr>() && !D->hasAttr<DLLExportAttr>())
       Entry->setDLLStorageClass(llvm::GlobalValue::DefaultStorageClass);
 
-    // If there are two attempts to define the same mangled name, issue an
-    // error.
-    if (IsForDefinition && !Entry->isDeclaration()) {
-      GlobalDecl OtherGD;
-      // Check that GD is not yet in DiagnosedConflictingDefinitions is required
-      // to make sure that we issue an error only once.
-      if (lookupRepresentativeDecl(MangledName, OtherGD) &&
-          (GD.getCanonicalDecl().getDecl() !=
-           OtherGD.getCanonicalDecl().getDecl()) &&
-          DiagnosedConflictingDefinitions.insert(GD).second) {
-        getDiags().Report(D->getLocation(),
-                          diag::err_duplicate_mangled_name);
-        getDiags().Report(OtherGD.getDecl()->getLocation(),
-                          diag::note_previous_definition);
+
+    // Relax the rule for C++AMP
+    if (!LangOpts.CPlusPlusAMP) {
+
+      // If there are two attempts to define the same mangled name, issue an
+      // error.
+      if (IsForDefinition && !Entry->isDeclaration()) {
+        GlobalDecl OtherGD;
+        // Check that GD is not yet in DiagnosedConflictingDefinitions is required
+        // to make sure that we issue an error only once.
+        if (lookupRepresentativeDecl(MangledName, OtherGD) &&
+            (GD.getCanonicalDecl().getDecl() !=
+             OtherGD.getCanonicalDecl().getDecl()) &&
+            DiagnosedConflictingDefinitions.insert(GD).second) {
+          getDiags().Report(D->getLocation(),
+                            diag::err_duplicate_mangled_name);
+          getDiags().Report(OtherGD.getDecl()->getLocation(),
+                            diag::note_previous_definition);
+        }
       }
+
     }
 
     if ((isa<llvm::Function>(Entry) || isa<llvm::GlobalAlias>(Entry)) &&
