@@ -1863,6 +1863,7 @@ SDValue DAGCombiner::visitSUB(SDNode *N) {
   SDValue N0 = N->getOperand(0);
   SDValue N1 = N->getOperand(1);
   EVT VT = N0.getValueType();
+  SDLoc DL(N);
 
   // fold vector ops
   if (VT.isVector()) {
@@ -1877,62 +1878,67 @@ SDValue DAGCombiner::visitSUB(SDNode *N) {
   // fold (sub x, x) -> 0
   // FIXME: Refactor this and xor and other similar operations together.
   if (N0 == N1)
-    return tryFoldToZero(SDLoc(N), TLI, VT, DAG, LegalOperations, LegalTypes);
+    return tryFoldToZero(DL, TLI, VT, DAG, LegalOperations, LegalTypes);
   if (DAG.isConstantIntBuildVectorOrConstantInt(N0) &&
       DAG.isConstantIntBuildVectorOrConstantInt(N1)) {
     // fold (sub c1, c2) -> c1-c2
-    return DAG.FoldConstantArithmetic(ISD::SUB, SDLoc(N), VT,
-                                      N0.getNode(), N1.getNode());
+    return DAG.FoldConstantArithmetic(ISD::SUB, DL, VT, N0.getNode(),
+                                      N1.getNode());
   }
+
   ConstantSDNode *N0C = getAsNonOpaqueConstant(N0);
   ConstantSDNode *N1C = getAsNonOpaqueConstant(N1);
+
   // fold (sub x, c) -> (add x, -c)
   if (N1C) {
-    SDLoc DL(N);
     return DAG.getNode(ISD::ADD, DL, VT, N0,
                        DAG.getConstant(-N1C->getAPIntValue(), DL, VT));
   }
+
   // Canonicalize (sub -1, x) -> ~x, i.e. (xor x, -1)
   if (isAllOnesConstant(N0))
-    return DAG.getNode(ISD::XOR, SDLoc(N), VT, N1, N0);
+    return DAG.getNode(ISD::XOR, DL, VT, N1, N0);
+
   // fold A-(A-B) -> B
   if (N1.getOpcode() == ISD::SUB && N0 == N1.getOperand(0))
     return N1.getOperand(1);
+
   // fold (A+B)-A -> B
   if (N0.getOpcode() == ISD::ADD && N0.getOperand(0) == N1)
     return N0.getOperand(1);
+
   // fold (A+B)-B -> A
   if (N0.getOpcode() == ISD::ADD && N0.getOperand(1) == N1)
     return N0.getOperand(0);
+
   // fold C2-(A+C1) -> (C2-C1)-A
-  ConstantSDNode *N1C1 = N1.getOpcode() != ISD::ADD ? nullptr :
-    dyn_cast<ConstantSDNode>(N1.getOperand(1).getNode());
-  if (N1.getOpcode() == ISD::ADD && N0C && N1C1) {
-    SDLoc DL(N);
-    SDValue NewC = DAG.getConstant(N0C->getAPIntValue() - N1C1->getAPIntValue(),
-                                   DL, VT);
-    return DAG.getNode(ISD::SUB, DL, VT, NewC,
-                       N1.getOperand(0));
+  if (N1.getOpcode() == ISD::ADD && N0C) {
+    if (auto *N1C1 = dyn_cast<ConstantSDNode>(N1.getOperand(1).getNode())) {
+      SDValue NewC =
+          DAG.getConstant(N0C->getAPIntValue() - N1C1->getAPIntValue(), DL, VT);
+      return DAG.getNode(ISD::SUB, DL, VT, NewC, N1.getOperand(0));
+    }
   }
+
   // fold ((A+(B+or-C))-B) -> A+or-C
   if (N0.getOpcode() == ISD::ADD &&
       (N0.getOperand(1).getOpcode() == ISD::SUB ||
        N0.getOperand(1).getOpcode() == ISD::ADD) &&
       N0.getOperand(1).getOperand(0) == N1)
-    return DAG.getNode(N0.getOperand(1).getOpcode(), SDLoc(N), VT,
-                       N0.getOperand(0), N0.getOperand(1).getOperand(1));
+    return DAG.getNode(N0.getOperand(1).getOpcode(), DL, VT, N0.getOperand(0),
+                       N0.getOperand(1).getOperand(1));
+
   // fold ((A+(C+B))-B) -> A+C
-  if (N0.getOpcode() == ISD::ADD &&
-      N0.getOperand(1).getOpcode() == ISD::ADD &&
+  if (N0.getOpcode() == ISD::ADD && N0.getOperand(1).getOpcode() == ISD::ADD &&
       N0.getOperand(1).getOperand(1) == N1)
-    return DAG.getNode(ISD::ADD, SDLoc(N), VT,
-                       N0.getOperand(0), N0.getOperand(1).getOperand(0));
+    return DAG.getNode(ISD::ADD, DL, VT, N0.getOperand(0),
+                       N0.getOperand(1).getOperand(0));
+
   // fold ((A-(B-C))-C) -> A-B
-  if (N0.getOpcode() == ISD::SUB &&
-      N0.getOperand(1).getOpcode() == ISD::SUB &&
+  if (N0.getOpcode() == ISD::SUB && N0.getOperand(1).getOpcode() == ISD::SUB &&
       N0.getOperand(1).getOperand(1) == N1)
-    return DAG.getNode(ISD::SUB, SDLoc(N), VT,
-                       N0.getOperand(0), N0.getOperand(1).getOperand(0));
+    return DAG.getNode(ISD::SUB, DL, VT, N0.getOperand(0),
+                       N0.getOperand(1).getOperand(0));
 
   // If either operand of a sub is undef, the result is undef
   if (N0.isUndef())
@@ -1947,19 +1953,18 @@ SDValue DAGCombiner::visitSUB(SDNode *N) {
       if (N1C && GA->getOpcode() == ISD::GlobalAddress)
         return DAG.getGlobalAddress(GA->getGlobal(), SDLoc(N1C), VT,
                                     GA->getOffset() -
-                                      (uint64_t)N1C->getSExtValue());
+                                        (uint64_t)N1C->getSExtValue());
       // fold (sub Sym+c1, Sym+c2) -> c1-c2
       if (GlobalAddressSDNode *GB = dyn_cast<GlobalAddressSDNode>(N1))
         if (GA->getGlobal() == GB->getGlobal())
           return DAG.getConstant((uint64_t)GA->getOffset() - GB->getOffset(),
-                                 SDLoc(N), VT);
+                                 DL, VT);
     }
 
   // sub X, (sextinreg Y i1) -> add X, (and Y 1)
   if (N1.getOpcode() == ISD::SIGN_EXTEND_INREG) {
     VTSDNode *TN = cast<VTSDNode>(N1.getOperand(1));
     if (TN->getVT() == MVT::i1) {
-      SDLoc DL(N);
       SDValue ZExt = DAG.getNode(ISD::AND, DL, VT, N1.getOperand(0),
                                  DAG.getConstant(1, DL, VT));
       return DAG.getNode(ISD::ADD, DL, VT, N0, ZExt);
@@ -3309,10 +3314,29 @@ SDValue DAGCombiner::visitAND(SDNode *N) {
     if (SDValue Tmp = SimplifyBinOpWithSameOpcodeHands(N))
       return Tmp;
 
+  // Masking the negated extension of a boolean is just the zero-extended
+  // boolean:
+  // and (sub 0, zext(bool X)), 1 --> zext(bool X)
+  // and (sub 0, sext(bool X)), 1 --> zext(bool X)
+  //
+  // Note: the SimplifyDemandedBits fold below can make an information-losing
+  // transform, and then we have no way to find this better fold.
+  if (N1C && N1C->isOne() && N0.getOpcode() == ISD::SUB) {
+    ConstantSDNode *SubLHS = isConstOrConstSplat(N0.getOperand(0));
+    SDValue SubRHS = N0.getOperand(1);
+    if (SubLHS && SubLHS->isNullValue()) {
+      if (SubRHS.getOpcode() == ISD::ZERO_EXTEND &&
+          SubRHS.getOperand(0).getScalarValueSizeInBits() == 1)
+        return SubRHS;
+      if (SubRHS.getOpcode() == ISD::SIGN_EXTEND &&
+          SubRHS.getOperand(0).getScalarValueSizeInBits() == 1)
+        return DAG.getNode(ISD::ZERO_EXTEND, SDLoc(N), VT, SubRHS.getOperand(0));
+    }
+  }
+
   // fold (and (sign_extend_inreg x, i16 to i32), 1) -> (and x, 1)
   // fold (and (sra)) -> (and (srl)) when possible.
-  if (!VT.isVector() &&
-      SimplifyDemandedBits(SDValue(N, 0)))
+  if (!VT.isVector() && SimplifyDemandedBits(SDValue(N, 0)))
     return SDValue(N, 0);
 
   // fold (zext_inreg (extload x)) -> (zextload x)
@@ -12931,6 +12955,11 @@ SDValue DAGCombiner::createBuildVecShuffle(SDLoc DL, SDNode *N,
           VecIn2 = DAG.getNode(ISD::INSERT_SUBVECTOR, DL, InVT1,
                                DAG.getUNDEF(InVT1), VecIn2, ZeroIdx);
         ShuffleNumElems = NumElems * 2;
+      } else {
+        // Both VecIn1 and VecIn2 are wider than the output, and VecIn2 is wider
+        // than VecIn1. We can't handle this for now - this case will disappear
+        // when we start sorting the vectors by type.
+        return SDValue();
       }
     } else {
       // TODO: Support cases where the length mismatch isn't exactly by a
