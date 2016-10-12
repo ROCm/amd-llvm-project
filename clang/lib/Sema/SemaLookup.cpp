@@ -3070,54 +3070,92 @@ DeclContext::lookup_result Sema::LookupConstructors(CXXRecordDecl *Class) {
       DeclareImplicitMoveConstructor(Class);
   }
   // C++AMP
-  if (getLangOpts().CPlusPlusAMP && NeedAMPDeserializer(Class)) {                                          
-    DeclareAMPDeserializer(Class, NULL);                                        
+  if (getLangOpts().CPlusPlusAMP && NeedAMPDeserializer(Class)) {
+    DeclareAMPDeserializer(Class, NULL);
   }
 
   CanQualType T = Context.getCanonicalType(Context.getTypeDeclType(Class));
   DeclarationName Name = Context.DeclarationNames.getCXXConstructorName(T);
-  return Class->lookup(Name);
+  DeclContext::lookup_result result = Class->lookup(Name);
 
-  // UPGRADE_TBD
-  // It's no longer possible alter items in lookup_result
-  // relevant commits upstream: # a1fdc024 , # a8229d2c
-  // temporarily skipped the logic , need to study its impact
-#if 0
-  // C++AMP
-  DeclContext::lookup_result result = Class->lookup(Name);                    
-  DeclContext::lookup_iterator E = result.end();
-  std::vector<NamedDecl*> MD_vector;
-  if (FunctionDecl *FD = dyn_cast<FunctionDecl>(CurContext)) {                
-    bool isAMP = FD->hasAttr<CXXAMPRestrictAMPAttr>();                        
-    bool isCPU = FD->hasAttr<CXXAMPRestrictCPUAttr>();                        
-    if (isAMP && isCPU)                                                       
-      return result;                                                          
-    for (DeclContext::lookup_iterator I = result.begin(); I != E; ++I) {  
-      if (FunctionDecl *MD = dyn_cast<FunctionDecl>(*I)) {                    
-        bool delete_this = false;                                             
-        if (!isAMP) { // strip deserialize                                          
-          // Do not report any injected restrict(amp) constructors here             
-          if (!MD->hasAttr<CXXAMPRestrictCPUAttr>() &&                              
-              MD->hasAttr<AnnotateAttr>() &&                                  
-              MD->getAttr<AnnotateAttr>()->getAnnotation()                          
-                .find("auto_deserialize") != StringRef::npos) {               
-            delete_this = true;                                               
-          }                                                                         
-        } else {                                                                    
-          if (!isCPU &&                                                             
-              !MD->hasAttr<CXXAMPRestrictAMPAttr>() &&                        
-              !MD->isImplicit()) {                                                  
-            delete_this = true;                                               
-          }                                                                   
-        }                                                                     
-        if (!delete_this) {
-          MD_vector.push_back(MD);
-        }                                                                           
-      }                                                                       
-    }                                                                         
-  }                                                                           
-  return DeclContext::lookup_result(MD_vector);
-#endif
+  // C++AMP-specific logic
+  // We need to trim the result for constructors found
+  bool isAMP = false;
+  bool isCPU = false;
+  if (FunctionDecl *FD = dyn_cast<FunctionDecl>(CurContext)) {
+    isAMP = FD->hasAttr<CXXAMPRestrictAMPAttr>();
+    isCPU = FD->hasAttr<CXXAMPRestrictCPUAttr>();
+    // In case the current context is restrict(amp, cpu), we simply
+    // return the result
+    if (isAMP && isCPU)
+      return result;
+  }
+
+  // walkthrough the result and see if there is anything to be trimmed
+  bool to_trim_result = false;
+  for (DeclContext::lookup_iterator I = result.begin(), E = result.end();
+       I != E; ++I) {
+    if (FunctionDecl *MD = dyn_cast<FunctionDecl>(*I)) {
+      if (!isAMP) {
+        // for host codes (!isAMP)
+        // strip compiler-injected restrict(amp) constructors such as
+        // deserialize functions
+        if (!MD->hasAttr<CXXAMPRestrictCPUAttr>() &&
+            MD->hasAttr<AnnotateAttr>() &&
+            MD->getAttr<AnnotateAttr>()->getAnnotation()
+              .find("auto_deserialize") != StringRef::npos) {
+          to_trim_result = true;
+          break;
+        }
+      } else {
+        // for kernel codes (!isCPU)
+        // strip constructors which don't have restrict(amp)
+        if (!isCPU &&
+            !MD->hasAttr<CXXAMPRestrictAMPAttr>() &&
+            !MD->isImplicit()) {
+          to_trim_result = true;
+          break;
+        }
+      }
+    }
+  }
+
+  // directly return the result if there is nothing to trim
+  if (!to_trim_result) {
+    return result;
+  }
+
+  // FIXME: TrimmedLookupResult is allocated from heap, but it's not deleted
+  SmallVector<NamedDecl*, 8> *TrimmedLookupResult = new SmallVector<NamedDecl*, 8>;
+  for (DeclContext::lookup_iterator I = result.begin(), E = result.end();
+       I != E; ++I) {
+    bool delete_this = false;
+    if (FunctionDecl *MD = dyn_cast<FunctionDecl>(*I)) {
+      if (!isAMP) {
+        // for host codes (!isAMP)
+        // strip compiler-injected restrict(amp) constructors such as
+        // deserialize functions
+        if (!MD->hasAttr<CXXAMPRestrictCPUAttr>() &&
+            MD->hasAttr<AnnotateAttr>() &&
+            MD->getAttr<AnnotateAttr>()->getAnnotation()
+              .find("auto_deserialize") != StringRef::npos) {
+          delete_this = true;
+        }
+      } else {
+        // for kernel codes (!isCPU)
+        // strip constructors which don't have restrict(amp)
+        if (!isCPU &&
+            !MD->hasAttr<CXXAMPRestrictAMPAttr>() &&
+            !MD->isImplicit()) {
+          delete_this = true;
+        }
+      }
+    }
+    if (!delete_this) {
+      TrimmedLookupResult->push_back(*I);
+    }
+  }
+  return DeclContext::lookup_result(*TrimmedLookupResult);
 }
 
 /// \brief Look up the copying assignment operator for the given class.
