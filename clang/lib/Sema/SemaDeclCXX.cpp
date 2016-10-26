@@ -11779,7 +11779,7 @@ void Sema::DeclareAMPTrampoline(CXXRecordDecl *ClassDecl,
     // e.g. bool. The following is a tricky method to replace _Bool type with Char8.
     // The alternative way is to replace it in function ActOnVariableDeclarator
     // line 4876, before a NewVD is created.
-    if(Type::STK_Bool == (*CPI)->getType()->getScalarTypeKind())
+    if((*CPI)->getType()->isScalarType() && Type::STK_Bool == (*CPI)->getType()->getScalarTypeKind())
         (*CPI)->setType(Context.CharTy);
 
       LocalArgs.push_back((*CPI)->getType());
