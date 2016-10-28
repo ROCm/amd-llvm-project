@@ -696,17 +696,6 @@ StringRef CodeGenModule::getMangledName(GlobalDecl GD) {
     Str = II->getName();
   }
 
-  // C++ AMP specific
-  // AMD OpenCL stack has trouble accepting kernel with name longer than 240 characters
-  // Truncate kernel names to prevent this from happening
-  if (LangOpts.CPlusPlusAMP) {
-    if (Str.find(StringRef("__cxxamp_trampolineE")) != StringRef::npos) {
-      if (Str.size() > 240) {
-        Str = Str.slice(0, 240);
-      }
-    }
-  }
-
   // Keep the first result in the case of a mangling collision.
   auto Result = Manglings.insert(std::make_pair(Str, GD));
   return FoundStr = Result.first->first();
