@@ -5327,6 +5327,9 @@ bool Sema::IsCXXAMPTileStatic(Declarator &D) {
   if(!Dcl)
     return;
 
+  if (getLangOpts().HSAExtension)
+    return;
+
   clang::Decl::Kind DK= Dcl->getKind();
   if(DK == clang::Decl::Var) {
     if (const ValueDecl *VD = dyn_cast<ValueDecl>(Dcl)) {
