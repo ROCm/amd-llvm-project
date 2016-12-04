@@ -661,7 +661,7 @@ Decl *TemplateDeclInstantiator::VisitVarDecl(VarDecl *D,
                           DI, D->getStorageClass());
 
   // In ARC, infer 'retaining' for variables of retainable type.
-  if (SemaRef.getLangOpts().ObjCAutoRefCount &&
+  if (SemaRef.getLangOpts().ObjCAutoRefCount && 
       SemaRef.inferObjCARCLifetime(Var))
     Var->setInvalidDecl();
 
@@ -1981,7 +1981,7 @@ TemplateDeclInstantiator::VisitCXXMethodDecl(CXXMethodDecl *D,
   // previous declaration we just found.
   if (isFriend && Method->getPreviousDecl())
     Method->setAccess(Method->getPreviousDecl()->getAccess());
-  else
+  else 
     Method->setAccess(D->getAccess());
   if (FunctionTemplate)
     FunctionTemplate->setAccess(Method->getAccess());
@@ -3232,7 +3232,7 @@ TemplateDeclInstantiator::SubstFunctionType(FunctionDecl *D,
     ThisContext = cast<CXXRecordDecl>(Owner);
     ThisTypeQuals = Method->getTypeQualifiers();
   }
-
+  
   TypeSourceInfo *NewTInfo
     = SemaRef.SubstFunctionDeclType(OldTInfo, TemplateArgs,
                                     D->getTypeSpecStartLoc(),
@@ -4068,10 +4068,6 @@ void Sema::InstantiateVariableDefinition(SourceLocation PointOfInstantiation,
       PrettyDeclStackTraceEntry CrashInfo(*this, Var, SourceLocation(),
                                           "instantiating variable initializer");
 
-      // The instantiation is visible here, even if it was first declared in an
-      // unimported module.
-      Var->setHidden(false);
-
       // If we're performing recursive template instantiation, create our own
       // queue of pending implicit instantiations that we will instantiate
       // later, while we're still within our own instantiation context.
@@ -4120,17 +4116,33 @@ void Sema::InstantiateVariableDefinition(SourceLocation PointOfInstantiation,
     Def = PatternDecl->getDefinition();
   }
 
-  TemplateSpecializationKind TSK = Var->getTemplateSpecializationKind();
+  // FIXME: Check that the definition is visible before trying to instantiate
+  // it. This requires us to track the instantiation stack in order to know
+  // which definitions should be visible.
 
   // If we don't have a definition of the variable template, we won't perform
   // any instantiation. Rather, we rely on the user to instantiate this
   // definition (or provide a specialization for it) in another translation
   // unit.
-  if (!Def && !DefinitionRequired) {
-    if (TSK == TSK_ExplicitInstantiationDefinition) {
+  if (!Def) {
+    if (DefinitionRequired) {
+      if (VarSpec) {
+        Diag(PointOfInstantiation,
+             diag::err_explicit_instantiation_undefined_var_template) << Var;
+        Var->setInvalidDecl();
+      }
+      else
+        Diag(PointOfInstantiation,
+             diag::err_explicit_instantiation_undefined_member)
+            << 2 << Var->getDeclName() << Var->getDeclContext();
+      Diag(PatternDecl->getLocation(),
+           diag::note_explicit_instantiation_here);
+    } else if (Var->getTemplateSpecializationKind()
+                 == TSK_ExplicitInstantiationDefinition) {
       PendingInstantiations.push_back(
         std::make_pair(Var, PointOfInstantiation));
-    } else if (TSK == TSK_ImplicitInstantiation) {
+    } else if (Var->getTemplateSpecializationKind()
+                 == TSK_ImplicitInstantiation) {
       // Warn about missing definition at the end of translation unit.
       if (AtEndOfTU && !getDiagnostics().hasErrorOccurred()) {
         Diag(PointOfInstantiation, diag::warn_var_template_missing)
@@ -4139,20 +4151,12 @@ void Sema::InstantiateVariableDefinition(SourceLocation PointOfInstantiation,
         if (getLangOpts().CPlusPlus11)
           Diag(PointOfInstantiation, diag::note_inst_declaration_hint) << Var;
       }
+    }
+
     return;
   }
 
-  }
-
-  // FIXME: We need to track the instantiation stack in order to know which
-  // definitions should be visible within this instantiation.
-  // FIXME: Produce diagnostics when Var->getInstantiatedFromStaticDataMember().
-  if (DiagnoseUninstantiableTemplate(PointOfInstantiation, Var,
-                                     /*InstantiatedFromMember*/false,
-                                     PatternDecl, Def, TSK,
-                                     /*Complain*/DefinitionRequired))
-    return;
-
+  TemplateSpecializationKind TSK = Var->getTemplateSpecializationKind();
 
   // Never instantiate an explicit specialization.
   if (TSK == TSK_ExplicitSpecialization)
@@ -4261,7 +4265,7 @@ void Sema::InstantiateVariableDefinition(SourceLocation PointOfInstantiation,
   PerformPendingInstantiations(/*LocalOnly=*/true);
 
   Local.Exit();
-
+  
   if (Recursive) {
     // Define any newly required vtables.
     DefineUsedVTables();
@@ -4661,14 +4665,14 @@ DeclContext *Sema::FindInstantiatedContext(SourceLocation Loc, DeclContext* DC,
 NamedDecl *Sema::FindInstantiatedDecl(SourceLocation Loc, NamedDecl *D,
                           const MultiLevelTemplateArgumentList &TemplateArgs) {
   DeclContext *ParentDC = D->getDeclContext();
-  // FIXME: Parmeters of pointer to functions (y below) that are themselves
+  // FIXME: Parmeters of pointer to functions (y below) that are themselves 
   // parameters (p below) can have their ParentDC set to the translation-unit
-  // - thus we can not consistently check if the ParentDC of such a parameter
+  // - thus we can not consistently check if the ParentDC of such a parameter 
   // is Dependent or/and a FunctionOrMethod.
-  // For e.g. this code, during Template argument deduction tries to
+  // For e.g. this code, during Template argument deduction tries to 
   // find an instantiated decl for (T y) when the ParentDC for y is
-  // the translation unit.
-  //   e.g. template <class T> void Foo(auto (*p)(T y) -> decltype(y())) {}
+  // the translation unit.  
+  //   e.g. template <class T> void Foo(auto (*p)(T y) -> decltype(y())) {} 
   //   float baz(float(*)()) { return 0.0; }
   //   Foo(baz);
   // The better fix here is perhaps to ensure that a ParmVarDecl, by the time
