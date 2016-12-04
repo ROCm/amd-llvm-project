@@ -6098,7 +6098,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-fno-gnu-inline-asm");
 
   // Turn off vectorization support for GPU kernels for now
-  if (!IsCXXAMPBackendJobAction(&JA) && !IsCXXAMPCPUBackendJobAction(&JA))  {
+  if (!IsHCCKernelPath) {
 
   // Enable vectorization per default according to the optimization level
   // selected. For optimization levels that want vectorization we use the alias
