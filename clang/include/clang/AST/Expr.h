@@ -445,6 +445,11 @@ public:
     return const_cast<Expr*>(this)->getSourceBitField();
   }
 
+  Decl *getReferencedDeclOfCallee();
+  const Decl *getReferencedDeclOfCallee() const {
+    return const_cast<Expr*>(this)->getReferencedDeclOfCallee();
+  }
+
   /// \brief If this expression is an l-value for an Objective C
   /// property, find the underlying property reference expression.
   const ObjCPropertyRefExpr *getObjCProperty() const;
@@ -823,12 +828,22 @@ public:
   /// behavior if the object isn't dynamically of the derived type.
   const CXXRecordDecl *getBestDynamicClassType() const;
 
+  /// \brief Get the inner expression that determines the best dynamic class.
+  /// If this is a prvalue, we guarantee that it is of the most-derived type
+  /// for the object itself.
+  const Expr *getBestDynamicClassTypeExpr() const;
+
   /// Walk outwards from an expression we want to bind a reference to and
   /// find the expression whose lifetime needs to be extended. Record
   /// the LHSs of comma expressions and adjustments needed along the path.
   const Expr *skipRValueSubobjectAdjustments(
       SmallVectorImpl<const Expr *> &CommaLHS,
       SmallVectorImpl<SubobjectAdjustment> &Adjustments) const;
+  const Expr *skipRValueSubobjectAdjustments() const {
+    SmallVector<const Expr *, 8> CommaLHSs;
+    SmallVector<SubobjectAdjustment, 8> Adjustments;
+    return skipRValueSubobjectAdjustments(CommaLHSs, Adjustments);
+  }
 
   static bool classof(const Stmt *T) {
     return T->getStmtClass() >= firstExprConstant &&
@@ -3771,14 +3786,23 @@ public:
 
   /// \brief Build an empty initializer list.
   explicit InitListExpr(EmptyShell Empty)
-    : Expr(InitListExprClass, Empty) { }
+    : Expr(InitListExprClass, Empty), AltForm(nullptr, true) { }
 
   unsigned getNumInits() const { return InitExprs.size(); }
 
   /// \brief Retrieve the set of initializers.
   Expr **getInits() { return reinterpret_cast<Expr **>(InitExprs.data()); }
 
+  /// \brief Retrieve the set of initializers.
+  Expr * const *getInits() const {
+    return reinterpret_cast<Expr * const *>(InitExprs.data());
+  }
+
   ArrayRef<Expr *> inits() {
+    return llvm::makeArrayRef(getInits(), getNumInits());
+  }
+
+  ArrayRef<Expr *> inits() const {
     return llvm::makeArrayRef(getInits(), getNumInits());
   }
 
@@ -3869,6 +3893,11 @@ public:
   // Is this an initializer for an array of characters, initialized by a string
   // literal or an @encode?
   bool isStringLiteralInit() const;
+
+  /// Is this a transparent initializer list (that is, an InitListExpr that is
+  /// purely syntactic, and whose semantics are that of the sole contained
+  /// initializer)?
+  bool isTransparent() const;
 
   SourceLocation getLBraceLoc() const { return LBraceLoc; }
   void setLBraceLoc(SourceLocation Loc) { LBraceLoc = Loc; }

@@ -62,6 +62,8 @@
 using namespace lldb;
 using namespace lldb_private;
 
+constexpr std::chrono::milliseconds EvaluateExpressionOptions::default_timeout;
+
 ConstString &Target::GetStaticBroadcasterClass() {
   static ConstString class_name("lldb.target");
   return class_name;
@@ -170,7 +172,7 @@ void Target::DeleteCurrentProcess() {
 }
 
 const lldb::ProcessSP &Target::CreateProcess(ListenerSP listener_sp,
-                                             const char *plugin_name,
+                                             llvm::StringRef plugin_name,
                                              const FileSpec *crash_file) {
   DeleteCurrentProcess();
   m_process_sp = Process::FindPlugin(shared_from_this(), plugin_name,
@@ -1961,7 +1963,7 @@ Target::GetPersistentExpressionStateForLanguage(lldb::LanguageType language) {
 }
 
 UserExpression *Target::GetUserExpressionForLanguage(
-    const char *expr, const char *expr_prefix, lldb::LanguageType language,
+    llvm::StringRef expr, llvm::StringRef prefix, lldb::LanguageType language,
     Expression::ResultType desired_type,
     const EvaluateExpressionOptions &options, Error &error) {
   Error type_system_error;
@@ -1978,7 +1980,7 @@ UserExpression *Target::GetUserExpressionForLanguage(
     return nullptr;
   }
 
-  user_expr = type_system->GetUserExpression(expr, expr_prefix, language,
+  user_expr = type_system->GetUserExpression(expr, prefix, language,
                                              desired_type, options);
   if (!user_expr)
     error.SetErrorStringWithFormat(
@@ -2118,14 +2120,14 @@ Target *Target::GetTargetFromContexts(const ExecutionContext *exe_ctx_ptr,
 }
 
 ExpressionResults Target::EvaluateExpression(
-    const char *expr_cstr, ExecutionContextScope *exe_scope,
+    llvm::StringRef expr, ExecutionContextScope *exe_scope,
     lldb::ValueObjectSP &result_valobj_sp,
     const EvaluateExpressionOptions &options, std::string *fixed_expression) {
   result_valobj_sp.reset();
 
   ExpressionResults execution_results = eExpressionSetupError;
 
-  if (expr_cstr == nullptr || expr_cstr[0] == '\0')
+  if (expr.empty())
     return execution_results;
 
   // We shouldn't run stop hooks in expressions.
@@ -2147,10 +2149,10 @@ ExpressionResults Target::EvaluateExpression(
   // variable (something like "$0")
   lldb::ExpressionVariableSP persistent_var_sp;
   // Only check for persistent variables the expression starts with a '$'
-  if (expr_cstr[0] == '$')
+  if (expr[0] == '$')
     persistent_var_sp = GetScratchTypeSystemForLanguage(nullptr, eLanguageTypeC)
                             ->GetPersistentExpressionState()
-                            ->GetVariable(expr_cstr);
+                            ->GetVariable(expr);
 
   if (persistent_var_sp) {
     result_valobj_sp = persistent_var_sp->GetValueObject();
@@ -2158,10 +2160,10 @@ ExpressionResults Target::EvaluateExpression(
   } else {
     const char *prefix = GetExpressionPrefixContentsAsCString();
     Error error;
-    execution_results = UserExpression::Evaluate(
-        exe_ctx, options, expr_cstr, prefix, result_valobj_sp, error,
-        0, // Line Number
-        fixed_expression);
+    execution_results = UserExpression::Evaluate(exe_ctx, options, expr, prefix,
+                                                 result_valobj_sp, error,
+                                                 0, // Line Number
+                                                 fixed_expression);
   }
 
   m_suppress_stop_hooks = old_suppress_value;
@@ -2643,11 +2645,8 @@ void Target::RunStopHooks() {
 const TargetPropertiesSP &Target::GetGlobalProperties() {
   // NOTE: intentional leak so we don't crash if global destructor chain gets
   // called as other threads still use the result of this function
-  static TargetPropertiesSP *g_settings_sp_ptr = nullptr;
-  static std::once_flag g_once_flag;
-  std::call_once(g_once_flag, []() {
-    g_settings_sp_ptr = new TargetPropertiesSP(new TargetProperties(nullptr));
-  });
+  static TargetPropertiesSP *g_settings_sp_ptr =
+      new TargetPropertiesSP(new TargetProperties(nullptr));
   return *g_settings_sp_ptr;
 }
 
@@ -2910,8 +2909,7 @@ Error Target::Launch(ProcessLaunchInfo &launch_info, Stream *stream) {
       }
 
       StateType state = m_process_sp->WaitForProcessToStop(
-          std::chrono::microseconds(0), nullptr, false, hijack_listener_sp,
-          nullptr);
+          llvm::None, nullptr, false, hijack_listener_sp, nullptr);
 
       if (state == eStateStopped) {
         if (!launch_info.GetFlags().Test(eLaunchFlagStopAtEntry)) {
@@ -2919,8 +2917,7 @@ Error Target::Launch(ProcessLaunchInfo &launch_info, Stream *stream) {
             error = m_process_sp->PrivateResume();
             if (error.Success()) {
               state = m_process_sp->WaitForProcessToStop(
-                  std::chrono::microseconds(0), nullptr, true,
-                  hijack_listener_sp, stream);
+                  llvm::None, nullptr, true, hijack_listener_sp, stream);
               const bool must_be_alive =
                   false; // eStateExited is ok, so this must be false
               if (!StateIsStoppedState(state, must_be_alive)) {
@@ -3044,8 +3041,7 @@ Error Target::Attach(ProcessAttachInfo &attach_info, Stream *stream) {
       process_sp->RestoreProcessEvents();
     } else {
       state = process_sp->WaitForProcessToStop(
-          std::chrono::microseconds(0), nullptr, false,
-          attach_info.GetHijackListener(), stream);
+          llvm::None, nullptr, false, attach_info.GetHijackListener(), stream);
       process_sp->RestoreProcessEvents();
 
       if (state != eStateStopped) {
@@ -3112,7 +3108,7 @@ void Target::StopHook::GetDescription(Stream *s,
     s->Indent("Thread:\n");
     m_thread_spec_ap->GetDescription(&tmp, level);
     s->SetIndentLevel(indent_level + 4);
-    s->Indent(tmp.GetData());
+    s->Indent(tmp.GetString());
     s->PutCString("\n");
     s->SetIndentLevel(indent_level + 2);
   }
@@ -3697,15 +3693,15 @@ InlineStrategy TargetProperties::GetInlineStrategy() const {
       nullptr, idx, g_properties[idx].default_uint_value);
 }
 
-const char *TargetProperties::GetArg0() const {
+llvm::StringRef TargetProperties::GetArg0() const {
   const uint32_t idx = ePropertyArg0;
-  return m_collection_sp->GetPropertyAtIndexAsString(nullptr, idx, nullptr);
+  return m_collection_sp->GetPropertyAtIndexAsString(nullptr, idx, llvm::StringRef());
 }
 
-void TargetProperties::SetArg0(const char *arg) {
+void TargetProperties::SetArg0(llvm::StringRef arg) {
   const uint32_t idx = ePropertyArg0;
   m_collection_sp->SetPropertyAtIndexAsString(
-      nullptr, idx, llvm::StringRef::withNullAsEmpty(arg));
+      nullptr, idx, arg);
   m_launch_info.SetArg0(arg);
 }
 

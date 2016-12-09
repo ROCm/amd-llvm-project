@@ -150,8 +150,15 @@ public:
   const char *GetArgumentAtIndex(size_t idx) const;
 
   llvm::ArrayRef<ArgEntry> entries() const { return m_entries; }
-
   char GetArgumentQuoteCharAtIndex(size_t idx) const;
+
+  std::vector<ArgEntry>::const_iterator begin() const {
+    return m_entries.begin();
+  }
+  std::vector<ArgEntry>::const_iterator end() const { return m_entries.end(); }
+
+  size_t size() const { return GetArgumentCount(); }
+  const ArgEntry &operator[](size_t n) const { return m_entries[n]; }
 
   //------------------------------------------------------------------
   /// Gets the argument vector.
@@ -193,12 +200,8 @@ public:
   ///
   /// @param[in] quote_char
   ///     If the argument was originally quoted, put in the quote char here.
-  ///
-  /// @return
-  ///     The NULL terminated C string of the copy of \a arg_cstr.
   //------------------------------------------------------------------
-  llvm::StringRef AppendArgument(llvm::StringRef arg_str,
-                                 char quote_char = '\0');
+  void AppendArgument(llvm::StringRef arg_str, char quote_char = '\0');
 
   void AppendArguments(const Args &rhs);
 
@@ -219,8 +222,8 @@ public:
   /// @return
   ///     The NULL terminated C string of the copy of \a arg_cstr.
   //------------------------------------------------------------------
-  llvm::StringRef InsertArgumentAtIndex(size_t idx, llvm::StringRef arg_str,
-                                        char quote_char = '\0');
+  void InsertArgumentAtIndex(size_t idx, llvm::StringRef arg_str,
+                             char quote_char = '\0');
 
   //------------------------------------------------------------------
   /// Replaces the argument value at index \a idx to \a arg_cstr
@@ -234,13 +237,9 @@ public:
   ///
   /// @param[in] quote_char
   ///     If the argument was originally quoted, put in the quote char here.
-  ///
-  /// @return
-  ///     The NULL terminated C string of the copy of \a arg_cstr if
-  ///     \a idx was a valid index, NULL otherwise.
   //------------------------------------------------------------------
-  llvm::StringRef ReplaceArgumentAtIndex(size_t idx, llvm::StringRef arg_str,
-                                         char quote_char = '\0');
+  void ReplaceArgumentAtIndex(size_t idx, llvm::StringRef arg_str,
+                              char quote_char = '\0');
 
   //------------------------------------------------------------------
   /// Deletes the argument value at index
@@ -289,11 +288,8 @@ public:
   ///
   /// @param[in] quote_char
   ///     If the argument was originally quoted, put in the quote char here.
-  ///
-  /// @return
-  ///     A pointer to the copy of \a arg_cstr that was made.
   //------------------------------------------------------------------
-  llvm::StringRef Unshift(llvm::StringRef arg_str, char quote_char = '\0');
+  void Unshift(llvm::StringRef arg_str, char quote_char = '\0');
 
   //------------------------------------------------------------------
   /// Parse the arguments in the contained arguments.
@@ -369,10 +365,9 @@ public:
     return min <= sval64 && sval64 <= max;
   }
 
-  // TODO: Make this function take a StringRef
   static lldb::addr_t StringToAddress(const ExecutionContext *exe_ctx,
-                                      const char *s, lldb::addr_t fail_value,
-                                      Error *error);
+                                      llvm::StringRef s,
+                                      lldb::addr_t fail_value, Error *error);
 
   static bool StringToBoolean(llvm::StringRef s, bool fail_value,
                               bool *success_ptr);

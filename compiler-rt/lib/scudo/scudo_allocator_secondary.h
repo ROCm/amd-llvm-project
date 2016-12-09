@@ -17,7 +17,9 @@
 #ifndef SCUDO_ALLOCATOR_SECONDARY_H_
 #define SCUDO_ALLOCATOR_SECONDARY_H_
 
-namespace __scudo {
+#ifndef SCUDO_ALLOCATOR_H_
+# error "This file must be included inside scudo_allocator.h."
+#endif
 
 class ScudoLargeMmapAllocator {
  public:
@@ -30,25 +32,60 @@ class ScudoLargeMmapAllocator {
   void *Allocate(AllocatorStats *Stats, uptr Size, uptr Alignment) {
     // The Scudo frontend prevents us from allocating more than
     // MaxAllowedMallocSize, so integer overflow checks would be superfluous.
+    uptr HeadersSize = sizeof(SecondaryHeader) + AlignedChunkHeaderSize;
     uptr MapSize = RoundUpTo(Size + sizeof(SecondaryHeader), PageSize);
     // Account for 2 guard pages, one before and one after the chunk.
-    uptr MapBeg = reinterpret_cast<uptr>(MmapNoAccess(MapSize + 2 * PageSize));
-    CHECK_NE(MapBeg, ~static_cast<uptr>(0));
+    MapSize += 2 * PageSize;
+    // Adding an extra Alignment is not required, it was done by the frontend.
+    uptr MapBeg = reinterpret_cast<uptr>(MmapNoAccess(MapSize));
+    if (MapBeg == ~static_cast<uptr>(0))
+      return ReturnNullOrDieOnOOM();
     // A page-aligned pointer is assumed after that, so check it now.
     CHECK(IsAligned(MapBeg, PageSize));
-    MapBeg += PageSize;
-    CHECK_EQ(MapBeg, reinterpret_cast<uptr>(MmapFixedOrDie(MapBeg, MapSize)));
     uptr MapEnd = MapBeg + MapSize;
-    uptr Ptr = MapBeg + sizeof(SecondaryHeader);
-    // TODO(kostyak): add a random offset to Ptr.
-    CHECK_GT(Ptr + Size, MapBeg);
-    CHECK_LE(Ptr + Size, MapEnd);
+    uptr UserBeg = MapBeg + PageSize + HeadersSize;
+    // In the event of larger alignments, we will attempt to fit the mmap area
+    // better and unmap extraneous memory. This will also ensure that the
+    // offset and unused bytes field of the header stay small.
+    if (Alignment > MinAlignment) {
+      if (UserBeg & (Alignment - 1))
+        UserBeg += Alignment - (UserBeg & (Alignment - 1));
+      CHECK_GE(UserBeg, MapBeg);
+      uptr NewMapBeg = UserBeg - HeadersSize;
+      NewMapBeg = RoundDownTo(NewMapBeg, PageSize) - PageSize;
+      CHECK_GE(NewMapBeg, MapBeg);
+      uptr NewMapSize = RoundUpTo(MapSize - Alignment, PageSize);
+      uptr NewMapEnd = NewMapBeg + NewMapSize;
+      CHECK_LE(NewMapEnd, MapEnd);
+      // Unmap the extra memory if it's large enough.
+      uptr Diff = NewMapBeg - MapBeg;
+      if (Diff > PageSize)
+        UnmapOrDie(reinterpret_cast<void *>(MapBeg), Diff);
+      Diff = MapEnd - NewMapEnd;
+      if (Diff > PageSize)
+        UnmapOrDie(reinterpret_cast<void *>(NewMapEnd), Diff);
+      MapBeg = NewMapBeg;
+      MapSize = NewMapSize;
+      MapEnd = NewMapEnd;
+    }
+    uptr UserEnd = UserBeg - AlignedChunkHeaderSize + Size;
+    // For larger alignments, Alignment was added by the frontend to Size.
+    if (Alignment > MinAlignment)
+      UserEnd -= Alignment;
+    CHECK_LE(UserEnd, MapEnd - PageSize);
+    CHECK_EQ(MapBeg + PageSize, reinterpret_cast<uptr>(
+        MmapFixedOrDie(MapBeg + PageSize, MapSize - 2 * PageSize)));
+    uptr Ptr = UserBeg - AlignedChunkHeaderSize;
     SecondaryHeader *Header = getHeader(Ptr);
-    Header->MapBeg = MapBeg - PageSize;
-    Header->MapSize = MapSize + 2 * PageSize;
-    Stats->Add(AllocatorStatAllocated, MapSize);
-    Stats->Add(AllocatorStatMapped, MapSize);
-    return reinterpret_cast<void *>(Ptr);
+    Header->MapBeg = MapBeg;
+    Header->MapSize = MapSize;
+    // The primary adds the whole class size to the stats when allocating a
+    // chunk, so we will do something similar here. But we will not account for
+    // the guard pages.
+    Stats->Add(AllocatorStatAllocated, MapSize - 2 * PageSize);
+    Stats->Add(AllocatorStatMapped, MapSize - 2 * PageSize);
+    CHECK(IsAligned(UserBeg, Alignment));
+    return reinterpret_cast<void *>(UserBeg);
   }
 
   void *ReturnNullOrDieOnBadRequest() {
@@ -69,8 +106,8 @@ class ScudoLargeMmapAllocator {
 
   void Deallocate(AllocatorStats *Stats, void *Ptr) {
     SecondaryHeader *Header = getHeader(Ptr);
-    Stats->Sub(AllocatorStatAllocated, Header->MapSize);
-    Stats->Sub(AllocatorStatMapped, Header->MapSize);
+    Stats->Sub(AllocatorStatAllocated, Header->MapSize - 2 * PageSize);
+    Stats->Sub(AllocatorStatMapped, Header->MapSize - 2 * PageSize);
     UnmapOrDie(reinterpret_cast<void *>(Header->MapBeg), Header->MapSize);
   }
 
@@ -126,8 +163,8 @@ class ScudoLargeMmapAllocator {
     uptr MapBeg;
     uptr MapSize;
   };
-  // Check that sizeof(SecondaryHeader) is a multiple of 16.
-  COMPILER_CHECK((sizeof(SecondaryHeader) & 0xf) == 0);
+  // Check that sizeof(SecondaryHeader) is a multiple of MinAlignment.
+  COMPILER_CHECK((sizeof(SecondaryHeader) & (MinAlignment - 1)) == 0);
 
   SecondaryHeader *getHeader(uptr Ptr) {
     return reinterpret_cast<SecondaryHeader*>(Ptr - sizeof(SecondaryHeader));
@@ -139,7 +176,5 @@ class ScudoLargeMmapAllocator {
   uptr PageSize;
   atomic_uint8_t MayReturnNull;
 };
-
-} // namespace __scudo
 
 #endif  // SCUDO_ALLOCATOR_SECONDARY_H_

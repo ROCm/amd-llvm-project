@@ -95,6 +95,11 @@ class FunctionArgList;
 class CoverageMappingModuleGen;
 class TargetCodeGenInfo;
 
+enum ForDefinition_t : bool {
+  NotForDefinition = false,
+  ForDefinition = true
+};
+
 struct OrderGlobalInits {
   unsigned int priority;
   unsigned int lex_order;
@@ -422,6 +427,10 @@ private:
   /// \brief The complete set of modules that has been imported.
   llvm::SetVector<clang::Module *> ImportedModules;
 
+  /// \brief The set of modules for which the module initializers
+  /// have been emitted.
+  llvm::SmallPtrSet<clang::Module *, 16> EmittedModuleInitializers;
+
   /// \brief A vector of metadata strings.
   SmallVector<llvm::Metadata *, 16> LinkerOptionsMetadata;
 
@@ -431,13 +440,6 @@ private:
   /// Cached reference to the class for constant strings. This value has type
   /// int * but is actually an Obj-C class pointer.
   llvm::WeakVH CFConstantStringClassRef;
-
-  /// Cached reference to the class for constant strings. This value has type
-  /// int * but is actually an Obj-C class pointer.
-  llvm::WeakVH ConstantStringClassRef;
-
-  /// \brief The LLVM type corresponding to NSConstantString.
-  llvm::StructType *NSConstantStringType = nullptr;
 
   /// \brief The type used to describe the state of a fast enumeration in
   /// Objective-C's for..in loop.
@@ -492,10 +494,6 @@ private:
   /// maintain this mapping because identifiers may be formed from distinct
   /// MDNodes.
   llvm::DenseMap<QualType, llvm::Metadata *> MetadataIdMap;
-
-  /// Diags gathered from FunctionDecl::takeDeferredDiags().  Emitted at the
-  /// very end of codegen.
-  std::vector<std::pair<SourceLocation, PartialDiagnostic>> DeferredDiags;
 
 public:
   CodeGenModule(ASTContext &C, const HeaderSearchOptions &headersearchopts,
@@ -692,7 +690,9 @@ public:
     llvm_unreachable("unknown visibility!");
   }
 
-  llvm::Constant *GetAddrOfGlobal(GlobalDecl GD, bool IsForDefinition = false);
+  llvm::Constant *GetAddrOfGlobal(GlobalDecl GD,
+                                  ForDefinition_t IsForDefinition
+                                    = NotForDefinition);
 
   /// Will return a global variable of the given type. If a variable with a
   /// different type already exists then a new  variable with the right type
@@ -722,14 +722,16 @@ public:
   /// the same mangled name but some other type.
   llvm::Constant *GetAddrOfGlobalVar(const VarDecl *D,
                                      llvm::Type *Ty = nullptr,
-                                     bool IsForDefinition = false);
+                                     ForDefinition_t IsForDefinition
+                                       = NotForDefinition);
 
   /// Return the address of the given function. If Ty is non-null, then this
   /// function will use the specified type if it has to create it.
   llvm::Constant *GetAddrOfFunction(GlobalDecl GD, llvm::Type *Ty = nullptr,
                                     bool ForVTable = false,
                                     bool DontDefer = false,
-                                    bool IsForDefinition = false);
+                                    ForDefinition_t IsForDefinition
+                                      = NotForDefinition);
 
   /// Get the address of the RTTI descriptor for the given type.
   llvm::Constant *GetAddrOfRTTIDescriptor(QualType Ty, bool ForEH = false);
@@ -782,7 +784,7 @@ public:
   llvm::Type *getGenericBlockLiteralType();
 
   /// Gets the address of a block which requires no captures.
-  llvm::Constant *GetAddrOfGlobalBlock(const BlockExpr *BE, const char *);
+  llvm::Constant *GetAddrOfGlobalBlock(const BlockExpr *BE, StringRef Name);
   
   /// Return a pointer to a constant CFString object for the given string.
   ConstantAddress GetAddrOfConstantCFString(const StringLiteral *Literal);
@@ -837,12 +839,13 @@ public:
   getAddrOfCXXStructor(const CXXMethodDecl *MD, StructorType Type,
                        const CGFunctionInfo *FnInfo = nullptr,
                        llvm::FunctionType *FnType = nullptr,
-                       bool DontDefer = false, bool IsForDefinition = false);
+                       bool DontDefer = false,
+                       ForDefinition_t IsForDefinition = NotForDefinition);
 
   /// Given a builtin id for a function like "__builtin_fabsf", return a
   /// Function* for "fabsf".
-  llvm::Value *getBuiltinLibFunction(const FunctionDecl *FD,
-                                     unsigned BuiltinID);
+  llvm::Constant *getBuiltinLibFunction(const FunctionDecl *FD,
+                                        unsigned BuiltinID);
 
   llvm::Function *getIntrinsic(unsigned IID, ArrayRef<llvm::Type*> Tys = None);
 
@@ -1167,12 +1170,13 @@ private:
                           bool ForVTable, bool DontDefer = false,
                           bool IsThunk = false,
                           llvm::AttributeSet ExtraAttrs = llvm::AttributeSet(),
-                          bool IsForDefinition = false);
+                          ForDefinition_t IsForDefinition = NotForDefinition);
 
   llvm::Constant *GetOrCreateLLVMGlobal(StringRef MangledName,
                                         llvm::PointerType *PTy,
                                         const VarDecl *D,
-                                        bool IsForDefinition = false);
+                                        ForDefinition_t IsForDefinition
+                                          = NotForDefinition);
 
   void setNonAliasAttributes(const Decl *D, llvm::GlobalObject *GO);
 
@@ -1218,10 +1222,10 @@ private:
                      llvm::Constant *AssociatedData = nullptr);
   void AddGlobalDtor(llvm::Function *Dtor, int Priority = 65535);
 
-  /// Generates a global array of functions and priorities using the given list
-  /// and name. This array will have appending linkage and is suitable for use
-  /// as a LLVM constructor or destructor array.
-  void EmitCtorList(const CtorList &Fns, const char *GlobalName);
+  /// EmitCtorList - Generates a global array of functions and priorities using
+  /// the given list and name. This array will have appending linkage and is
+  /// suitable for use as a LLVM constructor or destructor array. Clears Fns.
+  void EmitCtorList(CtorList &Fns, const char *GlobalName);
 
   /// Emit any needed decls for which code generation was deferred.
   void EmitDeferred();

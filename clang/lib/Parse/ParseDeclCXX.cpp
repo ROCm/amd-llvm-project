@@ -2040,7 +2040,8 @@ void Parser::HandleMemberFunctionDeclDelays(Declarator& DeclaratorInfo,
     LateMethod->DefaultArgs.reserve(FTI.NumParams);
     for (unsigned ParamIdx = 0; ParamIdx < FTI.NumParams; ++ParamIdx)
       LateMethod->DefaultArgs.push_back(LateParsedDefaultArgument(
-        FTI.Params[ParamIdx].Param, FTI.Params[ParamIdx].DefaultArgTokens));
+          FTI.Params[ParamIdx].Param,
+          std::move(FTI.Params[ParamIdx].DefaultArgTokens)));
   }
 }
 
@@ -2235,7 +2236,7 @@ void Parser::MaybeParseAndDiagnoseDeclSpecAfterCXX11VirtSpecifierSeq(
           if (!(Function.TypeQuals & TypeQual)) {
             std::string Name(FixItName);
             Name += " ";
-            Insertion = FixItHint::CreateInsertion(VS.getFirstLocation(), Name.c_str());
+            Insertion = FixItHint::CreateInsertion(VS.getFirstLocation(), Name);
             Function.TypeQuals |= TypeQual;
             *QualifierLoc = SpecLoc.getRawEncoding();
           }
@@ -3513,7 +3514,11 @@ static void diagnoseDynamicExceptionSpecification(
     Parser &P, SourceRange Range, bool IsNoexcept) {
   if (P.getLangOpts().CPlusPlus11) {
     const char *Replacement = IsNoexcept ? "noexcept" : "noexcept(false)";
-    P.Diag(Range.getBegin(), diag::warn_exception_spec_deprecated) << Range;
+    P.Diag(Range.getBegin(),
+           P.getLangOpts().CPlusPlus1z && !IsNoexcept
+               ? diag::ext_dynamic_exception_spec
+               : diag::warn_exception_spec_deprecated)
+        << Range;
     P.Diag(Range.getBegin(), diag::note_exception_spec_deprecated)
       << Replacement << FixItHint::CreateReplacement(Range, Replacement);
   }

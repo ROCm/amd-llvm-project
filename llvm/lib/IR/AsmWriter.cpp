@@ -311,6 +311,7 @@ static void PrintCallingConv(unsigned cc, raw_ostream &Out) {
   case CallingConv::X86_StdCall:   Out << "x86_stdcallcc"; break;
   case CallingConv::X86_FastCall:  Out << "x86_fastcallcc"; break;
   case CallingConv::X86_ThisCall:  Out << "x86_thiscallcc"; break;
+  case CallingConv::X86_RegCall:   Out << "x86_regcallcc"; break;
   case CallingConv::X86_VectorCall:Out << "x86_vectorcallcc"; break;
   case CallingConv::Intel_OCL_BI:  Out << "intel_ocl_bicc"; break;
   case CallingConv::ARM_APCS:      Out << "arm_apcscc"; break;
@@ -1319,12 +1320,18 @@ static void WriteConstantInternal(raw_ostream &Out, const Constant *CV,
                         static_cast<CmpInst::Predicate>(CE->getPredicate()));
     Out << " (";
 
+    Optional<unsigned> InRangeOp;
     if (const GEPOperator *GEP = dyn_cast<GEPOperator>(CE)) {
       TypePrinter.print(GEP->getSourceElementType(), Out);
       Out << ", ";
+      InRangeOp = GEP->getInRangeIndex();
+      if (InRangeOp)
+        ++*InRangeOp;
     }
 
     for (User::const_op_iterator OI=CE->op_begin(); OI != CE->op_end(); ++OI) {
+      if (InRangeOp && unsigned(OI - CE->op_begin()) == *InRangeOp)
+        Out << "inrange ";
       TypePrinter.print((*OI)->getType(), Out);
       Out << ' ';
       WriteAsOperandInternal(Out, *OI, &TypePrinter, Machine, Context);
@@ -1739,6 +1746,7 @@ static void writeDINamespace(raw_ostream &Out, const DINamespace *N,
   Printer.printMetadata("scope", N->getRawScope(), /* ShouldSkipNull */ false);
   Printer.printMetadata("file", N->getRawFile());
   Printer.printInt("line", N->getLine());
+  Printer.printBool("exportSymbols", N->getExportSymbols(), false);
   Out << ")";
 }
 
@@ -1821,6 +1829,7 @@ static void writeDIGlobalVariable(raw_ostream &Out, const DIGlobalVariable *N,
   Printer.printBool("isDefinition", N->isDefinition());
   Printer.printMetadata("expr", N->getExpr());
   Printer.printMetadata("declaration", N->getRawStaticDataMemberDeclaration());
+  Printer.printInt("align", N->getAlignInBits());
   Out << ")";
 }
 
@@ -1836,6 +1845,7 @@ static void writeDILocalVariable(raw_ostream &Out, const DILocalVariable *N,
   Printer.printInt("line", N->getLine());
   Printer.printMetadata("type", N->getRawType());
   Printer.printDIFlags("flags", N->getFlags());
+  Printer.printInt("align", N->getAlignInBits());
   Out << ")";
 }
 

@@ -36,7 +36,6 @@ namespace {
 class SIMCCodeEmitter : public  AMDGPUMCCodeEmitter {
   SIMCCodeEmitter(const SIMCCodeEmitter &) = delete;
   void operator=(const SIMCCodeEmitter &) = delete;
-  const MCInstrInfo &MCII;
   const MCRegisterInfo &MRI;
 
   /// \brief Encode an fp or int literal
@@ -46,7 +45,7 @@ class SIMCCodeEmitter : public  AMDGPUMCCodeEmitter {
 public:
   SIMCCodeEmitter(const MCInstrInfo &mcii, const MCRegisterInfo &mri,
                   MCContext &ctx)
-    : MCII(mcii), MRI(mri) { }
+      : AMDGPUMCCodeEmitter(mcii), MRI(mri) {}
 
   ~SIMCCodeEmitter() override {}
 
@@ -117,7 +116,8 @@ static uint32_t getLit32Encoding(uint32_t Val, const MCSubtargetInfo &STI) {
   if (Val == FloatToBits(-4.0f))
     return 247;
 
-  if (AMDGPU::isVI(STI) && Val == 0x3e22f983) // 1/(2*pi)
+  if (Val == 0x3e22f983 && // 1.0 / (2.0 * pi)
+      STI.getFeatureBits()[AMDGPU::FeatureInv2PiInlineImm])
     return 248;
 
   return 255;
@@ -152,7 +152,8 @@ static uint32_t getLit64Encoding(uint64_t Val, const MCSubtargetInfo &STI) {
   if (Val == DoubleToBits(-4.0))
     return 247;
 
-  if (AMDGPU::isVI(STI) && Val == 0x3fc45f306dc9c882) // 1/(2*pi)
+  if (Val == 0x3fc45f306dc9c882 && // 1.0 / (2.0 * pi)
+      STI.getFeatureBits()[AMDGPU::FeatureInv2PiInlineImm])
     return 248;
 
   return 255;
@@ -190,6 +191,8 @@ uint32_t SIMCCodeEmitter::getLitEncoding(const MCOperand &MO,
 void SIMCCodeEmitter::encodeInstruction(const MCInst &MI, raw_ostream &OS,
                                        SmallVectorImpl<MCFixup> &Fixups,
                                        const MCSubtargetInfo &STI) const {
+  verifyInstructionPredicates(MI,
+                              computeAvailableFeatures(STI.getFeatureBits()));
 
   uint64_t Encoding = getBinaryCodeForInstr(MI, Fixups, STI);
   const MCInstrDesc &Desc = MCII.get(MI.getOpcode());
@@ -214,7 +217,7 @@ void SIMCCodeEmitter::encodeInstruction(const MCInst &MI, raw_ostream &OS,
 
     // Is this operand a literal immediate?
     const MCOperand &Op = MI.getOperand(i);
-    if (getLitEncoding(Op, RC.getSize(), STI) != 255)
+    if (getLitEncoding(Op, AMDGPU::getRegBitWidth(RC) / 8, STI) != 255)
       continue;
 
     // Yes! Encode it

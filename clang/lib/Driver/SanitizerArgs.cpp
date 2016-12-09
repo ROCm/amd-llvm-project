@@ -165,7 +165,8 @@ bool SanitizerArgs::needsUbsanRt() const {
   return ((Sanitizers.Mask & NeedsUbsanRt & ~TrapSanitizers.Mask) ||
           CoverageFeatures) &&
          !Sanitizers.has(Address) && !Sanitizers.has(Memory) &&
-         !Sanitizers.has(Thread) && !Sanitizers.has(DataFlow) && !CfiCrossDso;
+         !Sanitizers.has(Thread) && !Sanitizers.has(DataFlow) && 
+         !Sanitizers.has(Leak) && !CfiCrossDso;
 }
 
 bool SanitizerArgs::needsCfiRt() const {
@@ -437,6 +438,18 @@ SanitizerArgs::SanitizerArgs(const ToolChain &TC,
                  TC.getTriple().getArch() == llvm::Triple::x86_64);
   }
 
+  if (AllAddedKinds & Thread) {
+    TsanMemoryAccess = Args.hasFlag(options::OPT_fsanitize_thread_memory_access,
+                                    options::OPT_fno_sanitize_thread_memory_access,
+                                    TsanMemoryAccess);
+    TsanFuncEntryExit = Args.hasFlag(options::OPT_fsanitize_thread_func_entry_exit,
+                                     options::OPT_fno_sanitize_thread_func_entry_exit,
+                                     TsanFuncEntryExit);
+    TsanAtomics = Args.hasFlag(options::OPT_fsanitize_thread_atomics,
+                               options::OPT_fno_sanitize_thread_atomics,
+                               TsanAtomics);
+  }
+
   if (AllAddedKinds & CFI) {
     CfiCrossDso = Args.hasFlag(options::OPT_fsanitize_cfi_cross_dso,
                                options::OPT_fno_sanitize_cfi_cross_dso, false);
@@ -684,6 +697,22 @@ void SanitizerArgs::addArgs(const ToolChain &TC, const llvm::opt::ArgList &Args,
 
   if (MsanUseAfterDtor)
     CmdArgs.push_back(Args.MakeArgString("-fsanitize-memory-use-after-dtor"));
+
+  // FIXME: Pass these parameters as function attributes, not as -llvm flags.
+  if (!TsanMemoryAccess) {
+    CmdArgs.push_back("-mllvm");
+    CmdArgs.push_back("-tsan-instrument-memory-accesses=0");
+    CmdArgs.push_back("-mllvm");
+    CmdArgs.push_back("-tsan-instrument-memintrinsics=0");
+  }
+  if (!TsanFuncEntryExit) {
+    CmdArgs.push_back("-mllvm");
+    CmdArgs.push_back("-tsan-instrument-func-entry-exit=0");
+  }
+  if (!TsanAtomics) {
+    CmdArgs.push_back("-mllvm");
+    CmdArgs.push_back("-tsan-instrument-atomics=0");
+  }
 
   if (CfiCrossDso)
     CmdArgs.push_back(Args.MakeArgString("-fsanitize-cfi-cross-dso"));

@@ -678,7 +678,6 @@ class RegionInfoBase {
   friend class MachineRegionInfo;
   typedef DenseMap<BlockT *, BlockT *> BBtoBBMap;
   typedef DenseMap<BlockT *, RegionT *> BBtoRegionMap;
-  typedef SmallPtrSet<RegionT *, 4> RegionSet;
 
   RegionInfoBase();
   virtual ~RegionInfoBase();
@@ -934,7 +933,7 @@ public:
 /// \brief Analysis pass that exposes the \c RegionInfo for a function.
 class RegionInfoAnalysis : public AnalysisInfoMixin<RegionInfoAnalysis> {
   friend AnalysisInfoMixin<RegionInfoAnalysis>;
-  static char PassID;
+  static AnalysisKey Key;
 
 public:
   typedef RegionInfo Result;

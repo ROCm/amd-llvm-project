@@ -327,6 +327,9 @@ public:
   // Return the auxiliary BB information.
   BBInfo &getBBInfo(const BasicBlock *BB) const { return MST.getBBInfo(BB); }
 
+  // Return the auxiliary BB information if available.
+  BBInfo *findBBInfo(const BasicBlock *BB) const { return MST.findBBInfo(BB); }
+
   // Dump edges and BB information.
   void dumpInfo(std::string Str = "") const {
     MST.dumpEdges(dbgs(), Twine("Dump Function ") + FuncName + " Hash: " +
@@ -386,7 +389,10 @@ void FuncPGOInstrumentation<Edge, BBInfo>::computeCFGHash() {
     const TerminatorInst *TI = BB.getTerminator();
     for (unsigned I = 0, E = TI->getNumSuccessors(); I != E; ++I) {
       BasicBlock *Succ = TI->getSuccessor(I);
-      uint32_t Index = getBBInfo(Succ).Index;
+      auto BI = findBBInfo(Succ);
+      if (BI == nullptr)
+        continue;
+      uint32_t Index = BI->Index;
       for (int J = 0; J < 4; J++)
         Indexes.push_back((char)(Index >> (J * 8)));
     }
@@ -642,7 +648,7 @@ public:
              BranchProbabilityInfo *BPI = nullptr,
              BlockFrequencyInfo *BFI = nullptr)
       : F(Func), M(Modu), FuncInfo(Func, ComdatMembers, false, BPI, BFI),
-        FreqAttr(FFA_Normal) {}
+        CountPosition(0), ProfileCountSize(0), FreqAttr(FFA_Normal) {}
 
   // Read counts for the instrumented BB from profile.
   bool readCounters(IndexedInstrProfReader *PGOReader);
@@ -672,6 +678,11 @@ public:
     return FuncInfo.getBBInfo(BB);
   }
 
+  // Return the auxiliary BB information if available.
+  UseBBInfo *findBBInfo(const BasicBlock *BB) const {
+    return FuncInfo.findBBInfo(BB);
+  }
+
 private:
   Function &F;
   Module *M;
@@ -681,6 +692,12 @@ private:
   // The maximum count value in the profile. This is only used in PGO use
   // compilation.
   uint64_t ProgramMaxCount;
+
+  // Position of counter that remains to be read.
+  uint32_t CountPosition;
+
+  // Total size of the profile count for this function.
+  uint32_t ProfileCountSize;
 
   // ProfileRecord for this function.
   InstrProfRecord ProfileRecord;
@@ -750,9 +767,8 @@ void PGOUseFunc::setInstrumentedCounts(
     NewEdge1.InMST = true;
     getBBInfo(InstrBB).setBBInfoCount(CountValue);
   }
-  // Now annotate select instructions
-  FuncInfo.SIVisitor.annotateSelects(F, this, &I);
-  assert(I == CountFromProfile.size());
+  ProfileCountSize =  CountFromProfile.size();
+  CountPosition = I;
 }
 
 // Set the count value for the unknown edge. There should be one and only one
@@ -852,27 +868,29 @@ void PGOUseFunc::populateCounters() {
     // For efficient traversal, it's better to start from the end as most
     // of the instrumented edges are at the end.
     for (auto &BB : reverse(F)) {
-      UseBBInfo &Count = getBBInfo(&BB);
-      if (!Count.CountValid) {
-        if (Count.UnknownCountOutEdge == 0) {
-          Count.CountValue = sumEdgeCount(Count.OutEdges);
-          Count.CountValid = true;
+      UseBBInfo *Count = findBBInfo(&BB);
+      if (Count == nullptr)
+        continue;
+      if (!Count->CountValid) {
+        if (Count->UnknownCountOutEdge == 0) {
+          Count->CountValue = sumEdgeCount(Count->OutEdges);
+          Count->CountValid = true;
           Changes = true;
-        } else if (Count.UnknownCountInEdge == 0) {
-          Count.CountValue = sumEdgeCount(Count.InEdges);
-          Count.CountValid = true;
+        } else if (Count->UnknownCountInEdge == 0) {
+          Count->CountValue = sumEdgeCount(Count->InEdges);
+          Count->CountValid = true;
           Changes = true;
         }
       }
-      if (Count.CountValid) {
-        if (Count.UnknownCountOutEdge == 1) {
-          uint64_t Total = Count.CountValue - sumEdgeCount(Count.OutEdges);
-          setEdgeCount(Count.OutEdges, Total);
+      if (Count->CountValid) {
+        if (Count->UnknownCountOutEdge == 1) {
+          uint64_t Total = Count->CountValue - sumEdgeCount(Count->OutEdges);
+          setEdgeCount(Count->OutEdges, Total);
           Changes = true;
         }
-        if (Count.UnknownCountInEdge == 1) {
-          uint64_t Total = Count.CountValue - sumEdgeCount(Count.InEdges);
-          setEdgeCount(Count.InEdges, Total);
+        if (Count->UnknownCountInEdge == 1) {
+          uint64_t Total = Count->CountValue - sumEdgeCount(Count->InEdges);
+          setEdgeCount(Count->InEdges, Total);
           Changes = true;
         }
       }
@@ -882,15 +900,27 @@ void PGOUseFunc::populateCounters() {
   DEBUG(dbgs() << "Populate counts in " << NumPasses << " passes.\n");
 #ifndef NDEBUG
   // Assert every BB has a valid counter.
-  for (auto &BB : F)
-    assert(getBBInfo(&BB).CountValid && "BB count is not valid");
+  for (auto &BB : F) {
+    auto BI = findBBInfo(&BB);
+    if (BI == nullptr)
+      continue;
+    assert(BI->CountValid && "BB count is not valid");
+  }
 #endif
   uint64_t FuncEntryCount = getBBInfo(&*F.begin()).CountValue;
   F.setEntryCount(FuncEntryCount);
   uint64_t FuncMaxCount = FuncEntryCount;
-  for (auto &BB : F)
-    FuncMaxCount = std::max(FuncMaxCount, getBBInfo(&BB).CountValue);
+  for (auto &BB : F) {
+    auto BI = findBBInfo(&BB);
+    if (BI == nullptr)
+      continue;
+    FuncMaxCount = std::max(FuncMaxCount, BI->CountValue);
+  }
   markFunctionAttributes(FuncEntryCount, FuncMaxCount);
+
+  // Now annotate select instructions
+  FuncInfo.SIVisitor.annotateSelects(F, this, &CountPosition);
+  assert(CountPosition == ProfileCountSize);
 
   DEBUG(FuncInfo.dumpInfo("after reading profile."));
 }
@@ -965,7 +995,10 @@ void SelectInstVisitor::annotateOneSelectInst(SelectInst &SI) {
   uint64_t SCounts[2];
   SCounts[0] = CountFromProfile[*CurCtrIdx]; // True count
   ++(*CurCtrIdx);
-  uint64_t TotalCount = UseFunc->getBBInfo(SI.getParent()).CountValue;
+  uint64_t TotalCount = 0;
+  auto BI = UseFunc->findBBInfo(SI.getParent());
+  if (BI != nullptr)
+    TotalCount = BI->CountValue;
   // False Count
   SCounts[1] = (TotalCount > SCounts[0] ? TotalCount - SCounts[0] : 0);
   uint64_t MaxCount = std::max(SCounts[0], SCounts[1]);

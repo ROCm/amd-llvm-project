@@ -12,7 +12,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/Bitcode/ReaderWriter.h"
+#include "llvm/Bitcode/BitcodeReader.h"
+#include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/CodeGen/CommandFlags.h"
 #include "llvm/Config/config.h" // plugin-api.h requires HAVE_STDINT_H
 #include "llvm/IR/Constants.h"
@@ -118,8 +119,8 @@ namespace options {
   static unsigned OptLevel = 2;
   // Default parallelism of 0 used to indicate that user did not specify.
   // Actual parallelism default value depends on implementation.
-  // Currently only affects ThinLTO, where the default is the
-  // hardware_concurrency.
+  // Currently only affects ThinLTO, where the default is
+  // llvm::heavyweight_hardware_concurrency.
   static unsigned Parallelism = 0;
   // Default regular LTO codegen parallelism (number of partitions).
   static unsigned ParallelCodeGenParallelismLevel = 1;
@@ -202,7 +203,7 @@ namespace options {
       thinlto_emit_imports_files = true;
     } else if (opt.startswith("thinlto-prefix-replace=")) {
       thinlto_prefix_replace = opt.substr(strlen("thinlto-prefix-replace="));
-      if (thinlto_prefix_replace.find(";") == std::string::npos)
+      if (thinlto_prefix_replace.find(';') == std::string::npos)
         message(LDPL_FATAL, "thinlto-prefix-replace expects 'old;new' format");
     } else if (opt.startswith("cache-dir=")) {
       cache_dir = opt.substr(strlen("cache-dir="));
@@ -368,12 +369,6 @@ ld_plugin_status onload(ld_plugin_tv *tv) {
 }
 
 static void diagnosticHandler(const DiagnosticInfo &DI) {
-  if (const auto *BDI = dyn_cast<BitcodeDiagnosticInfo>(&DI)) {
-    std::error_code EC = BDI->getError();
-    if (EC == BitcodeError::InvalidBitcodeSignature)
-      return;
-  }
-
   std::string ErrStorage;
   {
     raw_string_ostream OS(ErrStorage);
@@ -397,7 +392,7 @@ static void diagnosticHandler(const DiagnosticInfo &DI) {
 }
 
 static void check(Error E, std::string Msg = "LLVM gold plugin") {
-  handleAllErrors(std::move(E), [&](ErrorInfoBase &EIB) {
+  handleAllErrors(std::move(E), [&](ErrorInfoBase &EIB) -> Error {
     message(LDPL_FATAL, "%s: %s", Msg.c_str(), EIB.message().c_str());
     return Error::success();
   });
@@ -526,9 +521,11 @@ static ld_plugin_status claim_file_hook(const ld_plugin_input_file *file,
 
     sym.size = 0;
     sym.comdat_key = nullptr;
-    const Comdat *C = check(Sym.getComdat());
-    if (C)
-      sym.comdat_key = strdup(C->getName().str().c_str());
+    int CI = check(Sym.getComdatIndex());
+    if (CI != -1) {
+      StringRef C = Obj->getComdatTable()[CI];
+      sym.comdat_key = strdup(C.str().c_str());
+    }
 
     sym.resolution = LDPR_UNKNOWN;
   }

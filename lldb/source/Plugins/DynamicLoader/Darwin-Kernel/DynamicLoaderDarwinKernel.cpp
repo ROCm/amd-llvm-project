@@ -239,27 +239,42 @@ DynamicLoaderDarwinKernel::SearchForKernelWithDebugHints(Process *process) {
     return LLDB_INVALID_ADDRESS;
 
   Error read_err;
-  addr_t addr = LLDB_INVALID_ADDRESS;
   addr_t kernel_addresses_64[] = {
       0xfffffff000004010ULL, // newest arm64 devices
       0xffffff8000004010ULL, // 2014-2015-ish arm64 devices
       0xffffff8000002010ULL, // oldest arm64 devices
       LLDB_INVALID_ADDRESS};
-  addr_t kernel_addresses_32[] = {0xffff0110, LLDB_INVALID_ADDRESS};
+  addr_t kernel_addresses_32[] = {0xffff0110, // 2016 and earlier armv7 devices
+                                  0xffff1010, 
+                                  LLDB_INVALID_ADDRESS};
+
+  uint8_t uval[8];
+  if (process->GetAddressByteSize() == 8) {
   for (size_t i = 0; kernel_addresses_64[i] != LLDB_INVALID_ADDRESS; i++) {
-    addr = process->ReadUnsignedIntegerFromMemory(
-        kernel_addresses_64[i], 8, LLDB_INVALID_ADDRESS, read_err);
-    if (CheckForKernelImageAtAddress(addr, process).IsValid()) {
-      return addr;
-    }
+      if (process->ReadMemoryFromInferior (kernel_addresses_64[i], uval, 8, read_err) == 8)
+      {
+          DataExtractor data (&uval, 8, process->GetByteOrder(), process->GetAddressByteSize());
+          offset_t offset = 0;
+          uint64_t addr = data.GetU64 (&offset);
+          if (CheckForKernelImageAtAddress(addr, process).IsValid()) {
+              return addr;
+          }
+      }
+  }
   }
 
+  if (process->GetAddressByteSize() == 4) {
   for (size_t i = 0; kernel_addresses_32[i] != LLDB_INVALID_ADDRESS; i++) {
-    addr = process->ReadUnsignedIntegerFromMemory(
-        kernel_addresses_32[i], 4, LLDB_INVALID_ADDRESS, read_err);
-    if (CheckForKernelImageAtAddress(addr, process).IsValid()) {
-      return addr;
-    }
+      if (process->ReadMemoryFromInferior (kernel_addresses_32[i], uval, 4, read_err) == 4)
+      {
+          DataExtractor data (&uval, 4, process->GetByteOrder(), process->GetAddressByteSize());
+          offset_t offset = 0;
+          uint32_t addr = data.GetU32 (&offset);
+          if (CheckForKernelImageAtAddress(addr, process).IsValid()) {
+              return addr;
+          }
+      }
+  }
   }
 
   return LLDB_INVALID_ADDRESS;
@@ -380,12 +395,19 @@ DynamicLoaderDarwinKernel::CheckForKernelImageAtAddress(lldb::addr_t addr,
   // (the first field of the mach_header/mach_header_64 struct).
 
   Error read_error;
-  uint64_t result = process->ReadUnsignedIntegerFromMemory(
-      addr, 4, LLDB_INVALID_ADDRESS, read_error);
-  if (result != llvm::MachO::MH_MAGIC_64 && result != llvm::MachO::MH_MAGIC &&
-      result != llvm::MachO::MH_CIGAM && result != llvm::MachO::MH_CIGAM_64) {
-    return UUID();
-  }
+  uint8_t magicbuf[4];
+  if (process->ReadMemoryFromInferior (addr, magicbuf, sizeof (magicbuf), read_error) != sizeof (magicbuf))
+      return UUID();
+
+  const uint32_t magicks[] = { llvm::MachO::MH_MAGIC_64, llvm::MachO::MH_MAGIC, llvm::MachO::MH_CIGAM, llvm::MachO::MH_CIGAM_64};
+
+  bool found_matching_pattern = false;
+  for (size_t i = 0; i < llvm::array_lengthof (magicks); i++)
+    if (::memcmp (magicbuf, &magicks[i], sizeof (magicbuf)) == 0)
+        found_matching_pattern = true;
+
+  if (found_matching_pattern == false)
+      return UUID();
 
   // Read the mach header and see whether it looks like a kernel
   llvm::MachO::mach_header header;
@@ -415,8 +437,14 @@ DynamicLoaderDarwinKernel::CheckForKernelImageAtAddress(lldb::addr_t addr,
       return UUID();
 
     ObjectFile *exe_objfile = memory_module_sp->GetObjectFile();
-    if (exe_objfile == NULL)
+    if (exe_objfile == NULL) {
+      if (log)
+        log->Printf("DynamicLoaderDarwinKernel::CheckForKernelImageAtAddress "
+                    "found a binary at 0x%" PRIx64
+                    " but could not create an object file from memory",
+                    addr);
       return UUID();
+    }
 
     if (exe_objfile->GetType() == ObjectFile::eTypeExecutable &&
         exe_objfile->GetStrata() == ObjectFile::eStrataKernel) {
@@ -425,10 +453,19 @@ DynamicLoaderDarwinKernel::CheckForKernelImageAtAddress(lldb::addr_t addr,
               kernel_arch)) {
         process->GetTarget().SetArchitecture(kernel_arch);
       }
-      if (log)
-        log->Printf("DynamicLoaderDarwinKernel::CheckForKernelImageAtAddress: "
-                    "kernel binary image found at 0x%" PRIx64,
-                    addr);
+      if (log) {
+        std::string uuid_str;
+        if (memory_module_sp->GetUUID().IsValid()) {
+          uuid_str = "with UUID ";
+          uuid_str += memory_module_sp->GetUUID().GetAsString();
+        } else {
+          uuid_str = "and no LC_UUID found in load commands ";
+        }
+        log->Printf(
+            "DynamicLoaderDarwinKernel::CheckForKernelImageAtAddress: "
+            "kernel binary image found at 0x%" PRIx64 " with arch '%s' %s",
+            addr, kernel_arch.GetTriple().str().c_str(), uuid_str.c_str());
+      }
       return memory_module_sp->GetUUID();
     }
   }

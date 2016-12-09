@@ -58,11 +58,8 @@ using namespace lldb_private;
 const ThreadPropertiesSP &Thread::GetGlobalProperties() {
   // NOTE: intentional leak so we don't crash if global destructor chain gets
   // called as other threads still use the result of this function
-  static ThreadPropertiesSP *g_settings_sp_ptr = nullptr;
-  static std::once_flag g_once_flag;
-  std::call_once(g_once_flag, []() {
-    g_settings_sp_ptr = new ThreadPropertiesSP(new ThreadProperties(true));
-  });
+  static ThreadPropertiesSP *g_settings_sp_ptr =
+      new ThreadPropertiesSP(new ThreadProperties(true));
   return *g_settings_sp_ptr;
 }
 
@@ -1750,8 +1747,7 @@ Error Thread::JumpToLine(const FileSpec &file, uint32_t line,
       StreamString sstr;
       DumpAddressList(sstr, outside_function, target);
       return Error("%s:%i has multiple candidate locations:\n%s",
-                   file.GetFilename().AsCString(), line,
-                   sstr.GetString().c_str());
+                   file.GetFilename().AsCString(), line, sstr.GetData());
     }
   }
 
@@ -1772,7 +1768,8 @@ Error Thread::JumpToLine(const FileSpec &file, uint32_t line,
   return Error();
 }
 
-void Thread::DumpUsingSettingsFormat(Stream &strm, uint32_t frame_idx) {
+void Thread::DumpUsingSettingsFormat(Stream &strm, uint32_t frame_idx,
+                                     bool stop_format) {
   ExecutionContext exe_ctx(shared_from_this());
   Process *process = exe_ctx.GetProcessPtr();
   if (process == nullptr)
@@ -1788,8 +1785,12 @@ void Thread::DumpUsingSettingsFormat(Stream &strm, uint32_t frame_idx) {
     }
   }
 
-  const FormatEntity::Entry *thread_format =
-      exe_ctx.GetTargetRef().GetDebugger().GetThreadFormat();
+  const FormatEntity::Entry *thread_format;
+  if (stop_format)
+    thread_format = exe_ctx.GetTargetRef().GetDebugger().GetThreadStopFormat();
+  else
+    thread_format = exe_ctx.GetTargetRef().GetDebugger().GetThreadFormat();
+
   assert(thread_format);
 
   FormatEntity::Format(*thread_format, strm, frame_sp ? &frame_sc : nullptr,
@@ -1879,7 +1880,8 @@ const char *Thread::RunModeAsCString(lldb::RunMode mode) {
 }
 
 size_t Thread::GetStatus(Stream &strm, uint32_t start_frame,
-                         uint32_t num_frames, uint32_t num_frames_with_source) {
+                         uint32_t num_frames, uint32_t num_frames_with_source,
+                         bool stop_format) {
   ExecutionContext exe_ctx(shared_from_this());
   Target *target = exe_ctx.GetTargetPtr();
   Process *process = exe_ctx.GetProcessPtr();
@@ -1903,7 +1905,7 @@ size_t Thread::GetStatus(Stream &strm, uint32_t start_frame,
     }
   }
 
-  DumpUsingSettingsFormat(strm, start_frame);
+  DumpUsingSettingsFormat(strm, start_frame, stop_format);
 
   if (num_frames > 0) {
     strm.IndentMore();
@@ -1929,7 +1931,8 @@ size_t Thread::GetStatus(Stream &strm, uint32_t start_frame,
 
 bool Thread::GetDescription(Stream &strm, lldb::DescriptionLevel level,
                             bool print_json_thread, bool print_json_stopinfo) {
-  DumpUsingSettingsFormat(strm, 0);
+  const bool stop_format = false;
+  DumpUsingSettingsFormat(strm, 0, stop_format);
   strm.Printf("\n");
 
   StructuredData::ObjectSP thread_info = GetExtendedInfo();

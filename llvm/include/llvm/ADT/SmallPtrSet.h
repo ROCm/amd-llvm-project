@@ -16,18 +16,16 @@
 #define LLVM_ADT_SMALLPTRSET_H
 
 #include "llvm/Support/Compiler.h"
-#include "llvm/Support/DataTypes.h"
 #include "llvm/Support/PointerLikeTypeTraits.h"
 #include <cassert>
 #include <cstddef>
 #include <cstring>
 #include <cstdlib>
+#include <initializer_list>
 #include <iterator>
 #include <utility>
 
 namespace llvm {
-
-class SmallPtrSetIteratorImpl;
 
 /// SmallPtrSetImplBase - This is the common code shared among all the
 /// SmallPtrSet<>'s, which is almost everything.  SmallPtrSet has two modes, one
@@ -71,12 +69,14 @@ protected:
                       const SmallPtrSetImplBase &that);
   SmallPtrSetImplBase(const void **SmallStorage, unsigned SmallSize,
                       SmallPtrSetImplBase &&that);
+
   explicit SmallPtrSetImplBase(const void **SmallStorage, unsigned SmallSize)
       : SmallArray(SmallStorage), CurArray(SmallStorage),
         CurArraySize(SmallSize), NumNonEmpty(0), NumTombstones(0) {
     assert(SmallSize && (SmallSize & (SmallSize-1)) == 0 &&
            "Initial size must be a power of two!");
   }
+
   ~SmallPtrSetImplBase() {
     if (!isSmall())
       free(CurArray);
@@ -84,7 +84,10 @@ protected:
 
 public:
   typedef unsigned size_type;
-  bool LLVM_ATTRIBUTE_UNUSED_RESULT empty() const { return size() == 0; }
+
+  SmallPtrSetImplBase &operator=(const SmallPtrSetImplBase &) = delete;
+
+  LLVM_NODISCARD bool empty() const { return size() == 0; }
   size_type size() const { return NumNonEmpty - NumTombstones; }
 
   void clear() {
@@ -103,6 +106,7 @@ public:
 
 protected:
   static void *getTombstoneMarker() { return reinterpret_cast<void*>(-2); }
+
   static void *getEmptyMarker() {
     // Note that -1 is chosen to make clear() efficiently implementable with
     // memset and because it's not a valid pointer value.
@@ -176,8 +180,6 @@ private:
 
   /// Grow - Allocate a larger backing store for the buckets and move it over.
   void Grow(unsigned NewSize);
-
-  void operator=(const SmallPtrSetImplBase &RHS) = delete;
 
 protected:
   /// swap - Swaps the elements of two sets.
@@ -294,8 +296,6 @@ template <typename PtrType>
 class SmallPtrSetImpl : public SmallPtrSetImplBase {
   typedef PointerLikeTypeTraits<PtrType> PtrTraits;
 
-  SmallPtrSetImpl(const SmallPtrSetImpl &) = delete;
-
 protected:
   // Constructors that forward to the base.
   SmallPtrSetImpl(const void **SmallStorage, const SmallPtrSetImpl &that)
@@ -309,6 +309,8 @@ protected:
 public:
   typedef SmallPtrSetIterator<PtrType> iterator;
   typedef SmallPtrSetIterator<PtrType> const_iterator;
+
+  SmallPtrSetImpl(const SmallPtrSetImpl &) = delete;
 
   /// Inserts Ptr if and only if there is no element in the container equal to
   /// Ptr. The bool component of the returned pair is true if and only if the
@@ -334,6 +336,10 @@ public:
   void insert(IterT I, IterT E) {
     for (; I != E; ++I)
       insert(*I);
+  }
+
+  void insert(std::initializer_list<PtrType> IL) {
+    insert(IL.begin(), IL.end());
   }
 
   inline iterator begin() const {
@@ -374,6 +380,11 @@ public:
     this->insert(I, E);
   }
 
+  SmallPtrSet(std::initializer_list<PtrType> IL)
+      : BaseT(SmallStorage, SmallSizePowTwo) {
+    this->insert(IL.begin(), IL.end());
+  }
+
   SmallPtrSet<PtrType, SmallSize> &
   operator=(const SmallPtrSet<PtrType, SmallSize> &RHS) {
     if (&RHS != this)
@@ -381,10 +392,17 @@ public:
     return *this;
   }
 
-  SmallPtrSet<PtrType, SmallSize>&
+  SmallPtrSet<PtrType, SmallSize> &
   operator=(SmallPtrSet<PtrType, SmallSize> &&RHS) {
     if (&RHS != this)
       this->MoveFrom(SmallSizePowTwo, std::move(RHS));
+    return *this;
+  }
+
+  SmallPtrSet<PtrType, SmallSize> &
+  operator=(std::initializer_list<PtrType> IL) {
+    this->clear();
+    this->insert(IL.begin(), IL.end());
     return *this;
   }
 
@@ -393,14 +411,17 @@ public:
     SmallPtrSetImplBase::swap(RHS);
   }
 };
-}
+
+} // end namespace llvm
 
 namespace std {
+
   /// Implement std::swap in terms of SmallPtrSet swap.
   template<class T, unsigned N>
   inline void swap(llvm::SmallPtrSet<T, N> &LHS, llvm::SmallPtrSet<T, N> &RHS) {
     LHS.swap(RHS);
   }
-}
 
-#endif
+} // end namespace std
+
+#endif // LLVM_ADT_SMALLPTRSET_H

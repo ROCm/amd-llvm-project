@@ -652,9 +652,11 @@ getCoveragePoints(const std::string &ObjectFile,
 static bool isCoveragePointSymbol(StringRef Name) {
   return Name == "__sanitizer_cov" || Name == "__sanitizer_cov_with_check" ||
          Name == "__sanitizer_cov_trace_func_enter" ||
+         Name == "__sanitizer_cov_trace_pc_guard" ||
          // Mac has '___' prefix
          Name == "___sanitizer_cov" || Name == "___sanitizer_cov_with_check" ||
-         Name == "___sanitizer_cov_trace_func_enter";
+         Name == "___sanitizer_cov_trace_func_enter" ||
+         Name == "___sanitizer_cov_trace_pc_guard";
 }
 
 // Locate __sanitizer_cov* function addresses inside the stubs table on MachO.
@@ -819,7 +821,7 @@ static void getObjectCoveragePoints(const object::ObjectFile &O,
 static void
 visitObjectFiles(const object::Archive &A,
                  function_ref<void(const object::ObjectFile &)> Fn) {
-  Error Err;
+  Error Err = Error::success();
   for (auto &C : A.children(Err)) {
     Expected<std::unique_ptr<object::Binary>> ChildOrErr = C.getAsBinary();
     failIfError(ChildOrErr);

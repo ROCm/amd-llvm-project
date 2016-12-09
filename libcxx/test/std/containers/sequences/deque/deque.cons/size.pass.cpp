@@ -13,7 +13,9 @@
 
 #include <deque>
 #include <cassert>
+#include <cstddef>
 
+#include "test_macros.h"
 #include "test_allocator.h"
 #include "DefaultOnly.h"
 #include "min_allocator.h"
@@ -22,15 +24,15 @@ template <class T, class Allocator>
 void
 test2(unsigned n)
 {
-#if _LIBCPP_STD_VER > 11
+#if TEST_STD_VER > 11
     typedef std::deque<T, Allocator> C;
     typedef typename C::const_iterator const_iterator;
     assert(DefaultOnly::count == 0);
     {
     C d(n, Allocator());
-    assert(DefaultOnly::count == n);
+    assert(static_cast<unsigned>(DefaultOnly::count) == n);
     assert(d.size() == n);
-    assert(distance(d.begin(), d.end()) == d.size());
+    assert(static_cast<std::size_t>(distance(d.begin(), d.end())) == d.size());
 #ifndef _LIBCPP_HAS_NO_RVALUE_REFERENCES
     for (const_iterator i = d.begin(), e = d.end(); i != e; ++i)
         assert(*i == T());
@@ -49,9 +51,9 @@ test1(unsigned n)
     assert(DefaultOnly::count == 0);
     {
     C d(n);
-    assert(DefaultOnly::count == n);
+    assert(static_cast<unsigned>(DefaultOnly::count) == n);
     assert(d.size() == n);
-    assert(distance(d.begin(), d.end()) == d.size());
+    assert(static_cast<std::size_t>(distance(d.begin(), d.end())) == d.size());
 #ifndef _LIBCPP_HAS_NO_RVALUE_REFERENCES
     for (const_iterator i = d.begin(), e = d.end(); i != e; ++i)
         assert(*i == T());
@@ -64,7 +66,7 @@ template <class T, class Allocator>
 void
 test3(unsigned n, Allocator const &alloc = Allocator())
 {
-#if _LIBCPP_STD_VER > 11
+#if TEST_STD_VER > 11
     typedef std::deque<T, Allocator> C;
     typedef typename C::const_iterator const_iterator;
     {
@@ -98,13 +100,13 @@ int main()
     test<DefaultOnly, std::allocator<DefaultOnly> >(4096);
     test<DefaultOnly, std::allocator<DefaultOnly> >(4097);
 
-    test1<DefaultOnly, limited_allocator<DefaultOnly, 4096> >(4095);
+    LIBCPP_ONLY(test1<DefaultOnly, limited_allocator<DefaultOnly, 4096> >(4095));
 
 #if TEST_STD_VER >= 11
     test<DefaultOnly, min_allocator<DefaultOnly> >(4095);
 #endif
 
-#if _LIBCPP_STD_VER > 11
+#if TEST_STD_VER > 11
     test3<DefaultOnly, std::allocator<DefaultOnly>> (1023);
     test3<int, std::allocator<int>>(1);
     test3<int, min_allocator<int>> (3);

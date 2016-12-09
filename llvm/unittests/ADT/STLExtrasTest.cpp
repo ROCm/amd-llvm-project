@@ -136,8 +136,7 @@ template <> struct CanCopy<false> {
   CanCopy(const CanCopy &) = delete;
 
   CanCopy() = default;
-  // FIXME: Use '= default' when we drop MSVC 2013.
-  CanCopy(CanCopy &&) {}
+  CanCopy(CanCopy &&) = default;
 };
 
 template <bool Moveable, bool Copyable>
@@ -236,5 +235,22 @@ TEST(STLExtrasTest, ApplyTupleVariadic) {
   EXPECT_EQ(2, std::get<0>(Values));
   EXPECT_EQ("Tes", std::get<1>(Values));
   EXPECT_EQ('Y', std::get<2>(Values));
+}
+
+TEST(STLExtrasTest, CountAdaptor) {
+  std::vector<int> v;
+
+  v.push_back(1);
+  v.push_back(2);
+  v.push_back(1);
+  v.push_back(4);
+  v.push_back(3);
+  v.push_back(2);
+  v.push_back(1);
+
+  EXPECT_EQ(3, count(v, 1));
+  EXPECT_EQ(2, count(v, 2));
+  EXPECT_EQ(1, count(v, 3));
+  EXPECT_EQ(1, count(v, 4));
 }
 }

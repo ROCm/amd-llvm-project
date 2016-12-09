@@ -87,6 +87,9 @@ IsaVersion getIsaVersion(const FeatureBitset &Features) {
   if (Features.test(FeatureISAVersion7_0_1))
     return {7, 0, 1};
 
+  if (Features.test(FeatureISAVersion7_0_2))
+    return {7, 0, 2};
+
   if (Features.test(FeatureISAVersion8_0_0))
     return {8, 0, 0};
 
@@ -98,6 +101,12 @@ IsaVersion getIsaVersion(const FeatureBitset &Features) {
 
   if (Features.test(FeatureISAVersion8_0_3))
     return {8, 0, 3};
+
+  if (Features.test(FeatureISAVersion8_0_4))
+    return {8, 0, 4};
+
+  if (Features.test(FeatureISAVersion8_1_0))
+    return {8, 1, 0};
 
   return {0, 0, 0};
 }
@@ -162,6 +171,10 @@ bool isGlobalSegment(const GlobalValue *GV) {
 
 bool isReadOnlySegment(const GlobalValue *GV) {
   return GV->getType()->getAddressSpace() == AMDGPUAS::CONSTANT_ADDRESS;
+}
+
+bool shouldEmitConstantsToTextSection(const Triple &TT) {
+  return TT.getOS() != Triple::AMDHSA;
 }
 
 int getIntegerAttribute(const Function &F, StringRef Name, int Default) {
@@ -337,47 +350,80 @@ bool isSISrcInlinableOperand(const MCInstrDesc &Desc, unsigned OpNo) {
          OpType == AMDGPU::OPERAND_REG_INLINE_C_FP;
 }
 
+// Avoid using MCRegisterClass::getSize, since that function will go away
+// (move from MC* level to Target* level). Return size in bits.
+unsigned getRegBitWidth(unsigned RCID) {
+  switch (RCID) {
+  case AMDGPU::SGPR_32RegClassID:
+  case AMDGPU::VGPR_32RegClassID:
+  case AMDGPU::VS_32RegClassID:
+  case AMDGPU::SReg_32RegClassID:
+  case AMDGPU::SReg_32_XM0RegClassID:
+    return 32;
+  case AMDGPU::SGPR_64RegClassID:
+  case AMDGPU::VS_64RegClassID:
+  case AMDGPU::SReg_64RegClassID:
+  case AMDGPU::VReg_64RegClassID:
+    return 64;
+  case AMDGPU::VReg_96RegClassID:
+    return 96;
+  case AMDGPU::SGPR_128RegClassID:
+  case AMDGPU::SReg_128RegClassID:
+  case AMDGPU::VReg_128RegClassID:
+    return 128;
+  case AMDGPU::SReg_256RegClassID:
+  case AMDGPU::VReg_256RegClassID:
+    return 256;
+  case AMDGPU::SReg_512RegClassID:
+  case AMDGPU::VReg_512RegClassID:
+    return 512;
+  default:
+    llvm_unreachable("Unexpected register class");
+  }
+}
+
+unsigned getRegBitWidth(const MCRegisterClass &RC) {
+  return getRegBitWidth(RC.getID());
+}
+
 unsigned getRegOperandSize(const MCRegisterInfo *MRI, const MCInstrDesc &Desc,
                            unsigned OpNo) {
-  int RCID = Desc.OpInfo[OpNo].RegClass;
-  const MCRegisterClass &RC = MRI->getRegClass(RCID);
-  return RC.getSize();
+  unsigned RCID = Desc.OpInfo[OpNo].RegClass;
+  return getRegBitWidth(MRI->getRegClass(RCID)) / 8;
 }
 
-bool isInlinableLiteral64(int64_t Literal, bool IsVI) {
+bool isInlinableLiteral64(int64_t Literal, bool HasInv2Pi) {
   if (Literal >= -16 && Literal <= 64)
     return true;
 
-  double D = BitsToDouble(Literal);
-
-  if (D == 0.5 || D == -0.5 ||
-      D == 1.0 || D == -1.0 ||
-      D == 2.0 || D == -2.0 ||
-      D == 4.0 || D == -4.0)
-    return true;
-
-  if (IsVI && Literal == 0x3fc45f306dc9c882)
-    return true;
-
-  return false;
+  uint64_t Val = static_cast<uint64_t>(Literal);
+  return (Val == DoubleToBits(0.0)) ||
+         (Val == DoubleToBits(1.0)) ||
+         (Val == DoubleToBits(-1.0)) ||
+         (Val == DoubleToBits(0.5)) ||
+         (Val == DoubleToBits(-0.5)) ||
+         (Val == DoubleToBits(2.0)) ||
+         (Val == DoubleToBits(-2.0)) ||
+         (Val == DoubleToBits(4.0)) ||
+         (Val == DoubleToBits(-4.0)) ||
+         (Val == 0x3fc45f306dc9c882 && HasInv2Pi);
 }
 
-bool isInlinableLiteral32(int32_t Literal, bool IsVI) {
+bool isInlinableLiteral32(int32_t Literal, bool HasInv2Pi) {
   if (Literal >= -16 && Literal <= 64)
     return true;
 
-  float F = BitsToFloat(Literal);
-
-  if (F == 0.5 || F == -0.5 ||
-      F == 1.0 || F == -1.0 ||
-      F == 2.0 || F == -2.0 ||
-      F == 4.0 || F == -4.0)
-    return true;
-
-  if (IsVI && Literal == 0x3e22f983)
-    return true;
-
-  return false;
+  uint32_t Val = static_cast<uint32_t>(Literal);
+  return (Val == FloatToBits(0.0f)) ||
+         (Val == FloatToBits(1.0f)) ||
+         (Val == FloatToBits(-1.0f)) ||
+         (Val == FloatToBits(0.5f)) ||
+         (Val == FloatToBits(-0.5f)) ||
+         (Val == FloatToBits(2.0f)) ||
+         (Val == FloatToBits(-2.0f)) ||
+         (Val == FloatToBits(4.0f)) ||
+         (Val == FloatToBits(-4.0f)) ||
+         (Val == 0x3e22f983 && HasInv2Pi);
 }
 
 

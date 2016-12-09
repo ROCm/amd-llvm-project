@@ -192,7 +192,7 @@ lldb::addr_t AppleGetPendingItemsHandler::SetupGetPendingItemsFunction(
           m_get_pending_items_impl_code->MakeFunctionCaller(
               get_pending_items_return_type, get_pending_items_arglist,
               thread_sp, error);
-      if (error.Fail()) {
+      if (error.Fail() || get_pending_items_caller == nullptr) {
         if (log)
           log->Printf("Failed to install pending-items introspection function "
                       "caller: %s.",
@@ -351,7 +351,7 @@ AppleGetPendingItemsHandler::GetPendingItems(Thread &thread, addr_t queue,
   options.SetUnwindOnError(true);
   options.SetIgnoreBreakpoints(true);
   options.SetStopOthers(true);
-  options.SetTimeoutUsec(500000);
+  options.SetTimeout(std::chrono::milliseconds(500));
   options.SetTryAllThreads(false);
   thread.CalculateExecutionContext(exe_ctx);
 

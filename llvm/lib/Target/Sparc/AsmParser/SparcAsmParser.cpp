@@ -121,7 +121,7 @@ public:
   static const MCPhysReg DoubleRegs[32] = {
     Sparc::D0,  Sparc::D1,  Sparc::D2,  Sparc::D3,
     Sparc::D4,  Sparc::D5,  Sparc::D6,  Sparc::D7,
-    Sparc::D8,  Sparc::D7,  Sparc::D8,  Sparc::D9,
+    Sparc::D8,  Sparc::D9,  Sparc::D10, Sparc::D11,
     Sparc::D12, Sparc::D13, Sparc::D14, Sparc::D15,
     Sparc::D16, Sparc::D17, Sparc::D18, Sparc::D19,
     Sparc::D20, Sparc::D21, Sparc::D22, Sparc::D23,
@@ -715,7 +715,7 @@ bool SparcAsmParser:: parseDirectiveWord(unsigned Size, SMLoc L) {
   return false;
 }
 
-SparcAsmParser::OperandMatchResultTy
+OperandMatchResultTy
 SparcAsmParser::parseMEMOperand(OperandVector &Operands) {
 
   SMLoc S, E;
@@ -753,7 +753,7 @@ SparcAsmParser::parseMEMOperand(OperandVector &Operands) {
   return MatchOperand_Success;
 }
 
-SparcAsmParser::OperandMatchResultTy
+OperandMatchResultTy
 SparcAsmParser::parseOperand(OperandVector &Operands, StringRef Mnemonic) {
 
   OperandMatchResultTy ResTy = MatchOperandParserImpl(Operands, Mnemonic);
@@ -821,7 +821,7 @@ SparcAsmParser::parseOperand(OperandVector &Operands, StringRef Mnemonic) {
   return MatchOperand_Success;
 }
 
-SparcAsmParser::OperandMatchResultTy
+OperandMatchResultTy
 SparcAsmParser::parseSparcAsmOperand(std::unique_ptr<SparcOperand> &Op,
                                      bool isCall) {
 
@@ -908,7 +908,7 @@ SparcAsmParser::parseSparcAsmOperand(std::unique_ptr<SparcOperand> &Op,
   return (Op) ? MatchOperand_Success : MatchOperand_ParseFail;
 }
 
-SparcAsmParser::OperandMatchResultTy
+OperandMatchResultTy
 SparcAsmParser::parseBranchModifiers(OperandVector &Operands) {
 
   // parse (,a|,pn|,pt)+

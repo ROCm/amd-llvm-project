@@ -58,7 +58,7 @@ static DecodeStatus decodeSoppBrTarget(MCInst &Inst, unsigned Imm,
 
   if (DAsm->tryAddingSymbolicOperand(Inst, Offset, Addr, true, 2, 2))
     return MCDisassembler::Success;
-  return addOperand(Inst, MCOperand::createImm(Imm)); 
+  return addOperand(Inst, MCOperand::createImm(Imm));
 }
 
 #define DECODE_OPERAND2(RegClass, DecName) \
@@ -81,8 +81,9 @@ DECODE_OPERAND(VReg_96)
 DECODE_OPERAND(VReg_128)
 
 DECODE_OPERAND(SReg_32)
-DECODE_OPERAND(SReg_32_XM0)
+DECODE_OPERAND(SReg_32_XM0_XEXEC)
 DECODE_OPERAND(SReg_64)
+DECODE_OPERAND(SReg_64_XEXEC)
 DECODE_OPERAND(SReg_128)
 DECODE_OPERAND(SReg_256)
 DECODE_OPERAND(SReg_512)
@@ -230,12 +231,14 @@ MCOperand AMDGPUDisassembler::createSRegOperand(unsigned SRegClassID,
   // ToDo: unclear if s[88:104] is available on VI. Can we use VCC as SGPR in
   // this bundle?
   default:
-    assert(false);
-    break;
+    llvm_unreachable("unhandled register class");
   }
-  if (Val % (1 << shift))
+
+  if (Val % (1 << shift)) {
     *CommentStream << "Warning: " << getRegClassName(SRegClassID)
                    << ": scalar reg isn't aligned " << Val;
+  }
+
   return createRegOperand(SRegClassID, Val >> shift);
 }
 
@@ -275,13 +278,17 @@ MCOperand AMDGPUDisassembler::decodeOperand_SReg_32(unsigned Val) const {
   return decodeSrcOp(OPW32, Val);
 }
 
-MCOperand AMDGPUDisassembler::decodeOperand_SReg_32_XM0(unsigned Val) const {
-  // SReg_32_XM0 is SReg_32 without M0
+MCOperand AMDGPUDisassembler::decodeOperand_SReg_32_XM0_XEXEC(
+  unsigned Val) const {
+  // SReg_32_XM0 is SReg_32 without M0 or EXEC_LO/EXEC_HI
   return decodeOperand_SReg_32(Val);
 }
 
 MCOperand AMDGPUDisassembler::decodeOperand_SReg_64(unsigned Val) const {
-  // see decodeOperand_SReg_32 comment
+  return decodeSrcOp(OPW64, Val);
+}
+
+MCOperand AMDGPUDisassembler::decodeOperand_SReg_64_XEXEC(unsigned Val) const {
   return decodeSrcOp(OPW64, Val);
 }
 
@@ -447,7 +454,7 @@ MCOperand AMDGPUDisassembler::decodeSpecialReg64(unsigned Val) const {
 //===----------------------------------------------------------------------===//
 // AMDGPUSymbolizer
 //===----------------------------------------------------------------------===//
-  
+
 // Try to find symbol name for specified label
 bool AMDGPUSymbolizer::tryAddingSymbolicOperand(MCInst &Inst,
                                 raw_ostream &/*cStream*/, int64_t Value,
@@ -475,6 +482,12 @@ bool AMDGPUSymbolizer::tryAddingSymbolicOperand(MCInst &Inst,
   return false;
 }
 
+void AMDGPUSymbolizer::tryAddingPcLoadReferenceComment(raw_ostream &cStream,
+                                                       int64_t Value,
+                                                       uint64_t Address) {
+  llvm_unreachable("unimplemented");
+}
+
 //===----------------------------------------------------------------------===//
 // Initialization
 //===----------------------------------------------------------------------===//
@@ -482,7 +495,7 @@ bool AMDGPUSymbolizer::tryAddingSymbolicOperand(MCInst &Inst,
 static MCSymbolizer *createAMDGPUSymbolizer(const Triple &/*TT*/,
                               LLVMOpInfoCallback /*GetOpInfo*/,
                               LLVMSymbolLookupCallback /*SymbolLookUp*/,
-                              void *DisInfo, 
+                              void *DisInfo,
                               MCContext *Ctx,
                               std::unique_ptr<MCRelocationInfo> &&RelInfo) {
   return new AMDGPUSymbolizer(*Ctx, std::move(RelInfo), DisInfo);

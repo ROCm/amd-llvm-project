@@ -45,9 +45,10 @@ NewArchiveMember::getOldMember(const object::Archive::Child &OldMember,
     return BufOrErr.takeError();
 
   NewArchiveMember M;
+  assert(M.IsNew == false);
   M.Buf = MemoryBuffer::getMemBuffer(*BufOrErr, false);
   if (!Deterministic) {
-    Expected<sys::TimeValue> ModTimeOrErr = OldMember.getLastModified();
+    auto ModTimeOrErr = OldMember.getLastModified();
     if (!ModTimeOrErr)
       return ModTimeOrErr.takeError();
     M.ModTime = ModTimeOrErr.get();
@@ -93,9 +94,11 @@ Expected<NewArchiveMember> NewArchiveMember::getFile(StringRef FileName,
     return errorCodeToError(std::error_code(errno, std::generic_category()));
 
   NewArchiveMember M;
+  M.IsNew = true;
   M.Buf = std::move(*MemberBufferOrErr);
   if (!Deterministic) {
-    M.ModTime = Status.getLastModificationTime();
+    M.ModTime = std::chrono::time_point_cast<std::chrono::seconds>(
+        Status.getLastModificationTime());
     M.UID = Status.getUser();
     M.GID = Status.getGroup();
     M.Perms = Status.permissions();
@@ -127,11 +130,10 @@ static void print32(raw_ostream &Out, object::Archive::Kind Kind,
     support::endian::Writer<support::little>(Out).write(Val);
 }
 
-static void printRestOfMemberHeader(raw_fd_ostream &Out,
-                                    const sys::TimeValue &ModTime, unsigned UID,
-                                    unsigned GID, unsigned Perms,
-                                    unsigned Size) {
-  printWithSpacePadding(Out, ModTime.toEpochTime(), 12);
+static void printRestOfMemberHeader(
+    raw_fd_ostream &Out, const sys::TimePoint<std::chrono::seconds> &ModTime,
+    unsigned UID, unsigned GID, unsigned Perms, unsigned Size) {
+  printWithSpacePadding(Out, sys::toTimeT(ModTime), 12);
   printWithSpacePadding(Out, UID, 6, true);
   printWithSpacePadding(Out, GID, 6, true);
   printWithSpacePadding(Out, format("%o", Perms), 8);
@@ -139,17 +141,20 @@ static void printRestOfMemberHeader(raw_fd_ostream &Out,
   Out << "`\n";
 }
 
-static void printGNUSmallMemberHeader(raw_fd_ostream &Out, StringRef Name,
-                                      const sys::TimeValue &ModTime,
-                                      unsigned UID, unsigned GID,
-                                      unsigned Perms, unsigned Size) {
+static void
+printGNUSmallMemberHeader(raw_fd_ostream &Out, StringRef Name,
+                          const sys::TimePoint<std::chrono::seconds> &ModTime,
+                          unsigned UID, unsigned GID, unsigned Perms,
+                          unsigned Size) {
   printWithSpacePadding(Out, Twine(Name) + "/", 16);
   printRestOfMemberHeader(Out, ModTime, UID, GID, Perms, Size);
 }
 
-static void printBSDMemberHeader(raw_fd_ostream &Out, StringRef Name,
-                                 const sys::TimeValue &ModTime, unsigned UID,
-                                 unsigned GID, unsigned Perms, unsigned Size) {
+static void
+printBSDMemberHeader(raw_fd_ostream &Out, StringRef Name,
+                     const sys::TimePoint<std::chrono::seconds> &ModTime,
+                     unsigned UID, unsigned GID, unsigned Perms,
+                     unsigned Size) {
   uint64_t PosAfterHeader = Out.tell() + 60 + Name.size();
   // Pad so that even 64 bit object files are aligned.
   unsigned Pad = OffsetToAlignment(PosAfterHeader, 8);
@@ -171,8 +176,8 @@ static void
 printMemberHeader(raw_fd_ostream &Out, object::Archive::Kind Kind, bool Thin,
                   StringRef Name,
                   std::vector<unsigned>::iterator &StringMapIndexIter,
-                  const sys::TimeValue &ModTime, unsigned UID, unsigned GID,
-                  unsigned Perms, unsigned Size) {
+                  const sys::TimePoint<std::chrono::seconds> &ModTime,
+                  unsigned UID, unsigned GID, unsigned Perms, unsigned Size) {
   if (Kind == object::Archive::K_BSD)
     return printBSDMemberHeader(Out, Name, ModTime, UID, GID, Perms, Size);
   if (!useStringTable(Thin, Name))
@@ -202,6 +207,12 @@ static std::string computeRelativePath(StringRef From, StringRef To) {
   for (auto ToE = sys::path::end(To); ToI != ToE; ++ToI)
     sys::path::append(Relative, *ToI);
 
+#ifdef LLVM_ON_WIN32
+  // Replace backslashes with slashes so that the path is portable between *nix
+  // and Windows.
+  std::replace(Relative.begin(), Relative.end(), '\\', '/');
+#endif
+
   return Relative.str();
 }
 
@@ -222,9 +233,12 @@ static void writeStringTable(raw_fd_ostream &Out, StringRef ArcName,
     }
     StringMapIndexes.push_back(Out.tell() - StartOffset);
 
-    if (Thin)
-      Out << computeRelativePath(ArcName, Path);
-    else
+    if (Thin) {
+      if (M.IsNew)
+        Out << computeRelativePath(ArcName, Path);
+      else
+        Out << M.Buf->getBufferIdentifier();
+    } else
       Out << Name;
 
     Out << "/\n";
@@ -239,12 +253,12 @@ static void writeStringTable(raw_fd_ostream &Out, StringRef ArcName,
   Out.seek(Pos);
 }
 
-static sys::TimeValue now(bool Deterministic) {
+static sys::TimePoint<std::chrono::seconds> now(bool Deterministic) {
+  using namespace std::chrono;
+
   if (!Deterministic)
-    return sys::TimeValue::now();
-  sys::TimeValue TV;
-  TV.fromEpochTime(0);
-  return TV;
+    return time_point_cast<seconds>(system_clock::now());
+  return sys::TimePoint<seconds>();
 }
 
 // Returns the offset of the first reference to a member offset.

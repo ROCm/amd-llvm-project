@@ -778,9 +778,6 @@ public:
   }
 
   llvm::Constant *EmitArrayInitialization(InitListExpr *ILE) {
-    if (ILE->isStringLiteralInit())
-      return Visit(ILE->getInit(0));
-
     llvm::ArrayType *AType =
         cast<llvm::ArrayType>(ConvertType(ILE->getType()));
     llvm::Type *ElemTy = AType->getElementType();
@@ -845,6 +842,9 @@ public:
   }
 
   llvm::Constant *VisitInitListExpr(InitListExpr *ILE) {
+    if (ILE->isTransparent())
+      return Visit(ILE->getInit(0));
+
     if (ILE->getType()->isArrayType())
       return EmitArrayInitialization(ILE);
 
@@ -1086,7 +1086,7 @@ public:
       return CGM.GetAddrOfConstantCFString(Literal);
     }
     case Expr::BlockExprClass: {
-      std::string FunctionName;
+      StringRef FunctionName;
       if (CGF)
         FunctionName = CGF->CurFn->getName();
       else
@@ -1094,7 +1094,7 @@ public:
 
       // This is not really an l-value.
       llvm::Constant *Ptr =
-        CGM.GetAddrOfGlobalBlock(cast<BlockExpr>(E), FunctionName.c_str());
+        CGM.GetAddrOfGlobalBlock(cast<BlockExpr>(E), FunctionName);
       return ConstantAddress(Ptr, CGM.getPointerAlign());
     }
     case Expr::CXXTypeidExprClass: {

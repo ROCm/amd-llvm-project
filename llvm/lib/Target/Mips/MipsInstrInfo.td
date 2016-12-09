@@ -157,6 +157,8 @@ def HasMips3_32r2 :   Predicate<"Subtarget->hasMips3_32r2()">,
                       AssemblerPredicate<"FeatureMips3_32r2">;
 def HasMips3     :    Predicate<"Subtarget->hasMips3()">,
                       AssemblerPredicate<"FeatureMips3">;
+def NotMips3     :    Predicate<"!Subtarget->hasMips3()">,
+                      AssemblerPredicate<"!FeatureMips3">;
 def HasMips4_32  :    Predicate<"Subtarget->hasMips4_32()">,
                       AssemblerPredicate<"FeatureMips4_32">;
 def NotMips4_32  :    Predicate<"!Subtarget->hasMips4_32()">,
@@ -201,6 +203,8 @@ def InMips16Mode :    Predicate<"Subtarget->inMips16Mode()">,
                       AssemblerPredicate<"FeatureMips16">;
 def HasCnMips    :    Predicate<"Subtarget->hasCnMips()">,
                       AssemblerPredicate<"FeatureCnMips">;
+def NotCnMips    :    Predicate<"!Subtarget->hasCnMips()">,
+                      AssemblerPredicate<"!FeatureCnMips">;
 def RelocNotPIC :     Predicate<"!TM.isPositionIndependent()">;
 def RelocPIC    :     Predicate<"TM.isPositionIndependent()">;
 def NoNaNsFPMath :    Predicate<"TM.Options.NoNaNsFPMath">;
@@ -242,6 +246,9 @@ class PTR_64 { list<Predicate> PTRPredicates = [IsPTR64bit]; }
 //        subtractive predicate will hopefully keep us under the 32 predicate
 //        limit long enough to develop an alternative way to handle P1||P2
 //        predicates.
+class ISA_MIPS1_NOT_MIPS3 {
+  list<Predicate> InsnPredicates = [NotMips3];
+}
 class ISA_MIPS1_NOT_4_32 {
   list<Predicate> InsnPredicates = [NotMips4_32];
 }
@@ -328,6 +335,10 @@ class INSN_MIPS5_32R2_NOT_32R6_64R6 {
 
 class ASE_CNMIPS {
   list<Predicate> InsnPredicates = [HasCnMips];
+}
+
+class NOT_ASE_CNMIPS {
+  list<Predicate> InsnPredicates = [NotCnMips];
 }
 
 class ASE_MIPS64_CNMIPS {
@@ -529,6 +540,14 @@ def UImm16RelaxedAsmOperandClass
   let Name = "UImm16_Relaxed";
   let PredicateMethod = "isAnyImm<16>";
   let DiagnosticType = "UImm16_Relaxed";
+}
+// Similar to the relaxed classes which take an SImm and render it as
+// an UImm, this takes a UImm and renders it as an SImm.
+def UImm16AltRelaxedAsmOperandClass
+    : SImmAsmOperandClass<16, [UImm16RelaxedAsmOperandClass]> {
+  let Name = "UImm16_AltRelaxed";
+  let PredicateMethod = "isUImm<16>";
+  let DiagnosticType = "UImm16_AltRelaxed";
 }
 // FIXME: One of these should probably have UImm16AsmOperandClass as the
 //        superclass instead of UImm16RelaxedasmOPerandClass.
@@ -810,6 +829,11 @@ def uimm16_64_relaxed : Operand<i64> {
       !cast<AsmOperandClass>("UImm16RelaxedAsmOperandClass");
 }
 
+def uimm16_altrelaxed : Operand<i32> {
+  let PrintMethod = "printUImm<16>";
+  let ParserMatchClass =
+      !cast<AsmOperandClass>("UImm16AltRelaxedAsmOperandClass");
+}
 // Like uimm5 but reports a less confusing error for 32-63 when
 // an instruction alias permits that.
 def uimm5_report_uimm6 : Operand<i32> {
@@ -1856,11 +1880,10 @@ let DecoderNamespace = "COP3_" in {
   def SDC3 : SW_FT3<"sdc3", COP3Opnd, II_SDC3, store>, LW_FM<0x3f>,
              ISA_MIPS2;
 }
-}
 
-def SYNC : MMRel, StdMMR6Rel, SYNC_FT<"sync">, SYNC_FM,
-           ISA_MIPS32;
-def SYNCI : MMRel, StdMMR6Rel, SYNCI_FT<"synci">, SYNCI_FM, ISA_MIPS32R2;
+  def SYNC : MMRel, StdMMR6Rel, SYNC_FT<"sync">, SYNC_FM, ISA_MIPS2;
+  def SYNCI : MMRel, StdMMR6Rel, SYNCI_FT<"synci">, SYNCI_FM, ISA_MIPS32R2;
+}
 
 let AdditionalPredicates = [NotInMicroMips] in {
   def TEQ : MMRel, TEQ_FT<"teq", GPR32Opnd, uimm10, II_TEQ>, TEQ_FM<0x34>, ISA_MIPS2;
@@ -2243,6 +2266,21 @@ def : MipsInstAlias<"dror $rd, $imm",
 def ABSMacro : MipsAsmPseudoInst<(outs GPR32Opnd:$rd), (ins GPR32Opnd:$rs),
                                  "abs\t$rd, $rs">;
 
+def SEQMacro : MipsAsmPseudoInst<(outs GPR32Opnd:$rd),
+                                 (ins GPR32Opnd:$rs, GPR32Opnd:$rt),
+                                 "seq $rd, $rs, $rt">, NOT_ASE_CNMIPS;
+
+def : MipsInstAlias<"seq $rd, $rs",
+                    (SEQMacro GPR32Opnd:$rd, GPR32Opnd:$rd, GPR32Opnd:$rs), 0>,
+                    NOT_ASE_CNMIPS;
+
+def SEQIMacro : MipsAsmPseudoInst<(outs GPR32Opnd:$rd),
+                                  (ins GPR32Opnd:$rs, simm32_relaxed:$imm),
+                                  "seq $rd, $rs, $imm">, NOT_ASE_CNMIPS;
+
+def : MipsInstAlias<"seq $rd, $imm",
+                    (SEQIMacro GPR32Opnd:$rd, GPR32Opnd:$rd, simm32:$imm), 0>,
+                    NOT_ASE_CNMIPS;
 //===----------------------------------------------------------------------===//
 // Instruction aliases
 //===----------------------------------------------------------------------===//
@@ -2331,6 +2369,9 @@ let AdditionalPredicates = [NotInMicroMips] in {
   def : MipsInstAlias<
           "not $rt, $rs",
           (NOR GPR32Opnd:$rt, GPR32Opnd:$rs, ZERO), 0>;
+  def : MipsInstAlias<
+          "not $rt",
+          (NOR GPR32Opnd:$rt, GPR32Opnd:$rt, ZERO), 0>;
   def : MipsInstAlias<"nop", (SLL ZERO, ZERO, 0), 1>;
 }
 def : MipsInstAlias<"mfc0 $rt, $rd", (MFC0 GPR32Opnd:$rt, COP0Opnd:$rd, 0), 0>;
@@ -2396,6 +2437,10 @@ let AdditionalPredicates = [NotInMicroMips] in {
                       (SRAV GPR32Opnd:$rd, GPR32Opnd:$rd, GPR32Opnd:$rt), 0>;
   def : MipsInstAlias<"srl $rd, $rt",
                       (SRLV GPR32Opnd:$rd, GPR32Opnd:$rd, GPR32Opnd:$rt), 0>;
+  def : MipsInstAlias<"seh $rd", (SEH GPR32Opnd:$rd, GPR32Opnd:$rd), 0>,
+                     ISA_MIPS32R2;
+  def : MipsInstAlias<"seb $rd", (SEB GPR32Opnd:$rd, GPR32Opnd:$rd), 0>,
+                     ISA_MIPS32R2;
 }
 def : MipsInstAlias<"sdbbp", (SDBBP 0)>, ISA_MIPS32_NOT_32R6_64R6;
 def : MipsInstAlias<"sync",
@@ -2528,6 +2573,18 @@ def Ulhu : MipsAsmPseudoInst<(outs GPR32Opnd:$rt), (ins mem:$addr),
 def Ulw : MipsAsmPseudoInst<(outs GPR32Opnd:$rt), (ins mem:$addr),
                             "ulw\t$rt, $addr">; //, ISA_MIPS1_NOT_32R6_64R6;
 
+def Ush : MipsAsmPseudoInst<(outs GPR32Opnd:$rt), (ins mem:$addr),
+                            "ush\t$rt, $addr">; //, ISA_MIPS1_NOT_32R6_64R6;
+
+def Usw : MipsAsmPseudoInst<(outs GPR32Opnd:$rt), (ins mem:$addr),
+                            "usw\t$rt, $addr">; //, ISA_MIPS1_NOT_32R6_64R6;
+
+def LDMacro : MipsAsmPseudoInst<(outs GPR32Opnd:$rt),
+                                (ins mem_simm16:$addr), "ld $rt, $addr">,
+                                ISA_MIPS1_NOT_MIPS3;
+def SDMacro : MipsAsmPseudoInst<(outs GPR32Opnd:$rt),
+                                (ins mem_simm16:$addr), "sd $rt, $addr">,
+                                ISA_MIPS1_NOT_MIPS3;
 //===----------------------------------------------------------------------===//
 //  Arbitrary patterns that map to one or more instructions
 //===----------------------------------------------------------------------===//

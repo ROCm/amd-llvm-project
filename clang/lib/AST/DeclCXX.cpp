@@ -545,6 +545,17 @@ void CXXRecordDecl::addedMember(Decl *D) {
       } else if (Constructor->isMoveConstructor())
         SMKind |= SMF_MoveConstructor;
     }
+
+    // C++ [dcl.init.aggr]p1:
+    //   An aggregate is an array or a class with no user-declared
+    //   constructors [...].
+    // C++11 [dcl.init.aggr]p1: DR1518
+    //  An aggregate is an array or a class with no user-provided, explicit, or
+    //  inherited constructors
+    if (getASTContext().getLangOpts().CPlusPlus11
+            ? (Constructor->isUserProvided() || Constructor->isExplicit())
+            : !Constructor->isImplicit())
+      data().Aggregate = false;
   }
 
   // Handle constructors, including those inherited from base classes.
@@ -558,20 +569,6 @@ void CXXRecordDecl::addedMember(Decl *D) {
     //   constructor [...]
     if (Constructor->isConstexpr() && !Constructor->isCopyOrMoveConstructor())
       data().HasConstexprNonCopyMoveConstructor = true;
-
-    // C++ [dcl.init.aggr]p1:
-    //   An aggregate is an array or a class with no user-declared
-    //   constructors [...].
-    // C++11 [dcl.init.aggr]p1:
-    //   An aggregate is an array or a class with no user-provided
-    //   constructors [...].
-    // C++11 [dcl.init.aggr]p1:
-    //   An aggregate is an array or a class with no user-provided
-    //   constructors (including those inherited from a base class) [...].
-    if (getASTContext().getLangOpts().CPlusPlus11
-            ? Constructor->isUserProvided()
-            : !Constructor->isImplicit())
-      data().Aggregate = false;
   }
 
   // Handle destructors.
@@ -751,7 +748,7 @@ void CXXRecordDecl::addedMember(Decl *D) {
     }
 
     if (!Field->hasInClassInitializer() && !Field->isMutable()) {
-      if (CXXRecordDecl *FieldType = Field->getType()->getAsCXXRecordDecl()) {
+      if (CXXRecordDecl *FieldType = T->getAsCXXRecordDecl()) {
         if (FieldType->hasDefinition() && !FieldType->allowConstDefaultInit())
           data().HasUninitializedFields = true;
       } else {
@@ -1001,8 +998,12 @@ void CXXRecordDecl::addedMember(Decl *D) {
 
   if (UsingDecl *Using = dyn_cast<UsingDecl>(D)) {
     if (Using->getDeclName().getNameKind() ==
-        DeclarationName::CXXConstructorName)
+        DeclarationName::CXXConstructorName) {
       data().HasInheritedConstructor = true;
+      // C++1z [dcl.init.aggr]p1:
+      //  An aggregate is [...] a class [...] with no inherited constructors
+      data().Aggregate = false;
+    }
 
     if (Using->getDeclName().getCXXOverloadedOperator() == OO_Equal)
       data().HasInheritedAssignment = true;
@@ -1809,7 +1810,7 @@ CXXCtorInitializer *CXXCtorInitializer::Create(ASTContext &Context,
                                                VarDecl **Indices,
                                                unsigned NumIndices) {
   void *Mem = Context.Allocate(totalSizeToAlloc<VarDecl *>(NumIndices),
-                               llvm::alignOf<CXXCtorInitializer>());
+                               alignof(CXXCtorInitializer));
   return new (Mem) CXXCtorInitializer(Context, Member, MemberLoc, L, Init, R,
                                       Indices, NumIndices);
 }

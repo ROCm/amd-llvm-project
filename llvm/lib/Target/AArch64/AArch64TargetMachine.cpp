@@ -13,15 +13,16 @@
 #include "AArch64.h"
 #include "AArch64CallLowering.h"
 #include "AArch64InstructionSelector.h"
-#include "AArch64MachineLegalizer.h"
+#include "AArch64LegalizerInfo.h"
 #include "AArch64RegisterBankInfo.h"
 #include "AArch64TargetMachine.h"
 #include "AArch64TargetObjectFile.h"
 #include "AArch64TargetTransformInfo.h"
 #include "llvm/CodeGen/GlobalISel/IRTranslator.h"
 #include "llvm/CodeGen/GlobalISel/InstructionSelect.h"
-#include "llvm/CodeGen/GlobalISel/MachineLegalizePass.h"
+#include "llvm/CodeGen/GlobalISel/Legalizer.h"
 #include "llvm/CodeGen/GlobalISel/RegBankSelect.h"
+#include "llvm/CodeGen/MachineScheduler.h"
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/RegAllocRegistry.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
@@ -159,7 +160,11 @@ static std::unique_ptr<TargetLoweringObjectFile> createTLOF(const Triple &TT) {
 }
 
 // Helper function to build a DataLayout string
-static std::string computeDataLayout(const Triple &TT, bool LittleEndian) {
+static std::string computeDataLayout(const Triple &TT,
+                                     const MCTargetOptions &Options,
+                                     bool LittleEndian) {
+  if (Options.getABIName() == "ilp32")
+    return "e-m:e-p:32:32-i8:8-i16:16-i64:64-S128";
   if (TT.isOSBinFormatMachO())
     return "e-m:o-i64:64-i128:128-n32:64-S128";
   if (LittleEndian)
@@ -188,8 +193,10 @@ AArch64TargetMachine::AArch64TargetMachine(
     CodeModel::Model CM, CodeGenOpt::Level OL, bool LittleEndian)
     // This nested ternary is horrible, but DL needs to be properly
     // initialized before TLInfo is constructed.
-    : LLVMTargetMachine(T, computeDataLayout(TT, LittleEndian), TT, CPU, FS,
-                        Options, getEffectiveRelocModel(TT, RM), CM, OL),
+    : LLVMTargetMachine(T, computeDataLayout(TT, Options.MCOptions,
+                                             LittleEndian),
+                        TT, CPU, FS, Options,
+			getEffectiveRelocModel(TT, RM), CM, OL),
       TLOF(createTLOF(getTargetTriple())),
       isLittle(LittleEndian) {
   initAsmInfo();
@@ -202,7 +209,7 @@ namespace {
 struct AArch64GISelActualAccessor : public GISelAccessor {
   std::unique_ptr<CallLowering> CallLoweringInfo;
   std::unique_ptr<InstructionSelector> InstSelector;
-  std::unique_ptr<MachineLegalizer> Legalizer;
+  std::unique_ptr<LegalizerInfo> Legalizer;
   std::unique_ptr<RegisterBankInfo> RegBankInfo;
   const CallLowering *getCallLowering() const override {
     return CallLoweringInfo.get();
@@ -210,7 +217,7 @@ struct AArch64GISelActualAccessor : public GISelAccessor {
   const InstructionSelector *getInstructionSelector() const override {
     return InstSelector.get();
   }
-  const class MachineLegalizer *getMachineLegalizer() const override {
+  const class LegalizerInfo *getLegalizerInfo() const override {
     return Legalizer.get();
   }
   const RegisterBankInfo *getRegBankInfo() const override {
@@ -241,13 +248,13 @@ AArch64TargetMachine::getSubtargetImpl(const Function &F) const {
     I = llvm::make_unique<AArch64Subtarget>(TargetTriple, CPU, FS, *this,
                                             isLittle);
 #ifndef LLVM_BUILD_GLOBAL_ISEL
-   GISelAccessor *GISel = new GISelAccessor();
+    GISelAccessor *GISel = new GISelAccessor();
 #else
     AArch64GISelActualAccessor *GISel =
         new AArch64GISelActualAccessor();
     GISel->CallLoweringInfo.reset(
         new AArch64CallLowering(*I->getTargetLowering()));
-    GISel->Legalizer.reset(new AArch64MachineLegalizer());
+    GISel->Legalizer.reset(new AArch64LegalizerInfo());
 
     auto *RBI = new AArch64RegisterBankInfo(*I->getRegisterInfo());
 
@@ -291,6 +298,15 @@ public:
 
   AArch64TargetMachine &getAArch64TargetMachine() const {
     return getTM<AArch64TargetMachine>();
+  }
+
+  ScheduleDAGInstrs *
+  createMachineScheduler(MachineSchedContext *C) const override {
+    ScheduleDAGMILive *DAG = createGenericSchedLive(C);
+    DAG->addMutation(createLoadClusterDAGMutation(DAG->TII, DAG->TRI));
+    DAG->addMutation(createStoreClusterDAGMutation(DAG->TII, DAG->TRI));
+    DAG->addMutation(createMacroFusionDAGMutation(DAG->TII));
+    return DAG;
   }
 
   void addIRPasses()  override;
@@ -399,7 +415,7 @@ bool AArch64PassConfig::addIRTranslator() {
   return false;
 }
 bool AArch64PassConfig::addLegalizeMachineIR() {
-  addPass(new MachineLegalizePass());
+  addPass(new Legalizer());
   return false;
 }
 bool AArch64PassConfig::addRegBankSelect() {
@@ -428,6 +444,10 @@ bool AArch64PassConfig::addILPOpts() {
 }
 
 void AArch64PassConfig::addPreRegAlloc() {
+  // Change dead register definitions to refer to the zero register.
+  if (TM->getOptLevel() != CodeGenOpt::None && EnableDeadRegisterElimination)
+    addPass(createAArch64DeadRegisterDefinitions());
+
   // Use AdvSIMD scalar instructions whenever profitable.
   if (TM->getOptLevel() != CodeGenOpt::None && EnableAdvSIMDScalar) {
     addPass(createAArch64AdvSIMDScalar());
@@ -442,9 +462,6 @@ void AArch64PassConfig::addPostRegAlloc() {
   if (TM->getOptLevel() != CodeGenOpt::None && EnableRedundantCopyElimination)
     addPass(createAArch64RedundantCopyEliminationPass());
 
-  // Change dead register definitions to refer to the zero register.
-  if (TM->getOptLevel() != CodeGenOpt::None && EnableDeadRegisterElimination)
-    addPass(createAArch64DeadRegisterDefinitions());
   if (TM->getOptLevel() != CodeGenOpt::None && usingDefaultRegAlloc())
     // Improve performance for some FP/SIMD code for A57.
     addPass(createAArch64A57FPLoadBalancing());

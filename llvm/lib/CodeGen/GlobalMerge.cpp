@@ -432,6 +432,8 @@ bool GlobalMerge::doMerge(const SmallVectorImpl<GlobalVariable *> &Globals,
     std::vector<Type*> Tys;
     std::vector<Constant*> Inits;
 
+    bool HasExternal = false;
+    StringRef FirstExternalName;
     for (j = i; j != -1; j = GlobalSet.find_next(j)) {
       Type *Ty = Globals[j]->getValueType();
       MergedSize += DL.getTypeAllocSize(Ty);
@@ -440,14 +442,35 @@ bool GlobalMerge::doMerge(const SmallVectorImpl<GlobalVariable *> &Globals,
       }
       Tys.push_back(Ty);
       Inits.push_back(Globals[j]->getInitializer());
+
+      if (Globals[j]->hasExternalLinkage() && !HasExternal) {
+        HasExternal = true;
+        FirstExternalName = Globals[j]->getName();
+      }
     }
 
+    // If merged variables doesn't have external linkage, we needn't to expose
+    // the symbol after merging.
+    GlobalValue::LinkageTypes Linkage = HasExternal
+                                            ? GlobalValue::ExternalLinkage
+                                            : GlobalValue::InternalLinkage;
     StructType *MergedTy = StructType::get(M.getContext(), Tys);
     Constant *MergedInit = ConstantStruct::get(MergedTy, Inits);
 
-    GlobalVariable *MergedGV = new GlobalVariable(
-        M, MergedTy, isConst, GlobalValue::PrivateLinkage, MergedInit,
-        "_MergedGlobals", nullptr, GlobalVariable::NotThreadLocal, AddrSpace);
+    // On Darwin external linkage needs to be preserved, otherwise
+    // dsymutil cannot preserve the debug info for the merged
+    // variables.  If they have external linkage, use the symbol name
+    // of the first variable merged as the suffix of global symbol
+    // name.  This avoids a link-time naming conflict for the
+    // _MergedGlobals symbols.
+    Twine MergedName =
+        (IsMachO && HasExternal)
+            ? "_MergedGlobals_" + FirstExternalName
+            : "_MergedGlobals";
+    auto MergedLinkage = IsMachO ? Linkage : GlobalValue::PrivateLinkage;
+    auto *MergedGV = new GlobalVariable(
+        M, MergedTy, isConst, MergedLinkage, MergedInit, MergedName, nullptr,
+        GlobalVariable::NotThreadLocal, AddrSpace);
 
     const StructLayout *MergedLayout = DL.getStructLayout(MergedTy);
 
@@ -502,22 +525,18 @@ void GlobalMerge::collectUsedGlobalVariables(Module &M) {
 void GlobalMerge::setMustKeepGlobalVariables(Module &M) {
   collectUsedGlobalVariables(M);
 
-  for (Module::iterator IFn = M.begin(), IEndFn = M.end(); IFn != IEndFn;
-       ++IFn) {
-    for (Function::iterator IBB = IFn->begin(), IEndBB = IFn->end();
-         IBB != IEndBB; ++IBB) {
-      // Follow the invoke link to find the landing pad instruction
-      const InvokeInst *II = dyn_cast<InvokeInst>(IBB->getTerminator());
-      if (!II) continue;
+  for (Function &F : M) {
+    for (BasicBlock &BB : F) {
+      Instruction *Pad = BB.getFirstNonPHI();
+      if (!Pad->isEHPad())
+        continue;
 
-      const LandingPadInst *LPInst = II->getUnwindDest()->getLandingPadInst();
-      // Look for globals in the clauses of the landing pad instruction
-      for (unsigned Idx = 0, NumClauses = LPInst->getNumClauses();
-           Idx != NumClauses; ++Idx)
+      // Keep globals used by landingpads and catchpads.
+      for (const Use &U : Pad->operands()) {
         if (const GlobalVariable *GV =
-            dyn_cast<GlobalVariable>(LPInst->getClause(Idx)
-                                     ->stripPointerCasts()))
+                dyn_cast<GlobalVariable>(U->stripPointerCasts()))
           MustKeepGlobalVariables.insert(GV);
+      }
     }
   }
 }

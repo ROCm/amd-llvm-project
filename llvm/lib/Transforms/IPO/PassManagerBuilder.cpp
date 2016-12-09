@@ -145,6 +145,11 @@ static cl::opt<bool> EnableGVNHoist(
     "enable-gvn-hoist", cl::init(true), cl::Hidden,
     cl::desc("Enable the GVN hoisting pass (default = on)"));
 
+static cl::opt<bool>
+    DisableLibCallsShrinkWrap("disable-libcalls-shrinkwrap", cl::init(false),
+                              cl::Hidden,
+                              cl::desc("Disable shrink-wrap library calls"));
+
 PassManagerBuilder::PassManagerBuilder() {
     OptLevel = 2;
     SizeLevel = 0;
@@ -297,6 +302,8 @@ void PassManagerBuilder::addFunctionSimplificationPasses(
   MPM.add(createCFGSimplificationPass());     // Merge & remove BBs
   // Combine silly seq's
   addInstructionCombiningPass(MPM);
+  if (SizeLevel == 0 && !DisableLibCallsShrinkWrap)
+    MPM.add(createLibCallsShrinkWrapPass());
   addExtensionsToPM(EP_Peephole, MPM);
 
   MPM.add(createTailCallEliminationPass()); // Eliminate tail calls
@@ -619,10 +626,7 @@ void PassManagerBuilder::populateModulePassManager(
     // outer loop. LICM pass can help to promote the runtime check out if the
     // checked value is loop invariant.
     MPM.add(createLICMPass());
-
-    // Get rid of LCSSA nodes.
-    MPM.add(createInstructionSimplifierPass());
-  }
+ }
 
   // After vectorization and unrolling, assume intrinsics may tell us more
   // about pointer alignments.
@@ -643,6 +647,13 @@ void PassManagerBuilder::populateModulePassManager(
   if (MergeFunctions)
     MPM.add(createMergeFunctionsPass());
 
+  // LoopSink pass sinks instructions hoisted by LICM, which serves as a
+  // canonicalization pass that enables other optimizations. As a result,
+  // LoopSink pass needs to be a very late IR pass to avoid undoing LICM
+  // result too early.
+  MPM.add(createLoopSinkPass());
+  // Get rid of LCSSA nodes.
+  MPM.add(createInstructionSimplifierPass());
   addExtensionsToPM(EP_OptimizerLast, MPM);
 }
 
@@ -680,6 +691,11 @@ void PassManagerBuilder::addLTOOptimizationPasses(legacy::PassManagerBase &PM) {
   // required for virtual constant propagation.
   PM.add(createPostOrderFunctionAttrsLegacyPass());
   PM.add(createReversePostOrderFunctionAttrsPass());
+
+  // Split globals using inrange annotations on GEP indices. This can help
+  // improve the quality of generated code when virtual constant propagation or
+  // control flow integrity are enabled.
+  PM.add(createGlobalSplitPass());
 
   // Apply whole-program devirtualization and virtual constant propagation.
   PM.add(createWholeProgramDevirtPass());

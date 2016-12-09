@@ -206,7 +206,22 @@ public:
     __volatile_mask = 0x2,
     __restrict_mask = 0x4,
     __incomplete_mask = 0x8,
-    __incomplete_class_mask = 0x10
+    __incomplete_class_mask = 0x10,
+    __transaction_safe_mask = 0x20,
+    // This implements the following proposal from cxx-abi-dev (not yet part of
+    // the ABI document):
+    //
+    //   http://sourcerytools.com/pipermail/cxx-abi-dev/2016-October/002986.html
+    //
+    // This is necessary for support of http://wg21.link/p0012, which permits
+    // throwing noexcept function and member function pointers and catching
+    // them as non-noexcept pointers.
+    __noexcept_mask = 0x40,
+
+    // Flags that cannot be removed by a standard conversion.
+    __no_remove_flags_mask = __const_mask | __volatile_mask | __restrict_mask,
+    // Flags that cannot be added by a standard conversion.
+    __no_add_flags_mask = __transaction_safe_mask | __noexcept_mask
   };
 
   _LIBCXXABI_HIDDEN virtual ~__pbase_type_info();

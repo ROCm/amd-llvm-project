@@ -13,6 +13,8 @@
 
 #include <list>
 #include <cassert>
+#include <cstddef>
+#include "test_macros.h"
 #include "DefaultOnly.h"
 #include "test_allocator.h"
 #include "min_allocator.h"
@@ -21,13 +23,13 @@ template <class T, class Allocator>
 void
 test3(unsigned n, Allocator const &alloc = Allocator())
 {
-#if _LIBCPP_STD_VER > 11
+#if TEST_STD_VER > 11
     typedef std::list<T, Allocator> C;
     typedef typename C::const_iterator const_iterator;
     {
     C d(n, alloc);
     assert(d.size() == n);
-    assert(std::distance(d.begin(), d.end()) == n);
+    assert(static_cast<std::size_t>(std::distance(d.begin(), d.end())) == n);
     assert(d.get_allocator() == alloc);
     }
 #endif
@@ -48,7 +50,8 @@ int main()
         assert(*i == 0);
     }
     {
-        std::list<int, limited_allocator<int, 3> > l(3);
+        // Add 2 for implementations that dynamically allocate a sentinel node and container proxy.
+        std::list<int, limited_allocator<int, 3 + 2> > l(3);
         assert(l.size() == 3);
         assert(std::distance(l.begin(), l.end()) == 3);
         std::list<int>::const_iterator i = l.begin();
@@ -58,7 +61,7 @@ int main()
         ++i;
         assert(*i == 0);
     }
-#if _LIBCPP_STD_VER > 11
+#if TEST_STD_VER > 11
     {
         typedef std::list<int, min_allocator<int> > C;
         C l(3, min_allocator<int> ());

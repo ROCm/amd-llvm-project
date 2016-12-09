@@ -759,17 +759,17 @@ LabelDecl *Sema::GetOrCreateMSAsmLabel(StringRef ExternalLabelName,
     // Otherwise, insert it, but only resolve it if we have seen the label itself.
     std::string InternalName;
     llvm::raw_string_ostream OS(InternalName);
-    // Create an internal name for the label.  The name should not be a valid mangled
-    // name, and should be unique.  We use a dot to make the name an invalid mangled
-    // name.
-    OS << "__MSASMLABEL_." << MSAsmLabelNameCounter++ << "__";
-    for (auto it = ExternalLabelName.begin(); it != ExternalLabelName.end();
-         ++it) {
-      OS << *it;
-      if (*it == '$') {
-        // We escape '$' in asm strings by replacing it with "$$"
+    // Create an internal name for the label.  The name should not be a valid
+    // mangled name, and should be unique.  We use a dot to make the name an
+    // invalid mangled name. We use LLVM's inline asm ${:uid} escape so that a
+    // unique label is generated each time this blob is emitted, even after
+    // inlining or LTO.
+    OS << "__MSASMLABEL_.${:uid}__";
+    for (char C : ExternalLabelName) {
+      OS << C;
+      // We escape '$' in asm strings by replacing it with "$$"
+      if (C == '$')
         OS << '$';
-      }
     }
     Label->setMSAsmLabel(OS.str());
   }

@@ -18,6 +18,12 @@
 #
 # The script will modify the output directory which is given as the first
 # argument to the script.
+#
+# FIXME: We should really be using a simpler approach to building this object
+# file, and it should be available as a regular cmake rule. Conceptually, we
+# want to be doing "ld -r" followed by "objcopy -G" to create a relocatable
+# object file with only our entry points exposed. However, this does not work at
+# present, see PR30750.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SRC_DIR=$(readlink -f $SCRIPT_DIR/..)
@@ -82,7 +88,7 @@ make -j${J} libz.a
 if [[ ! -d ${LIBCXX_BUILD} ]]; then
   mkdir -p ${LIBCXX_BUILD}
   cd ${LIBCXX_BUILD}
-  LIBCXX_FLAGS="${FLAGS} -I${LLVM_SRC}/projects/libcxxabi/include"
+  LIBCXX_FLAGS="${FLAGS} -Wno-macro-redefined -I${LLVM_SRC}/projects/libcxxabi/include"
   cmake -GNinja \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_C_COMPILER=$CC \

@@ -38,8 +38,8 @@
 
 using namespace llvm;
 
-static cl::opt<bool> DisablePostRA("disable-post-ra", cl::Hidden,
-    cl::desc("Disable Post Regalloc"));
+static cl::opt<bool> DisablePostRASched("disable-post-ra", cl::Hidden,
+    cl::desc("Disable Post Regalloc Scheduler"));
 static cl::opt<bool> DisableBranchFold("disable-branch-fold", cl::Hidden,
     cl::desc("Disable branch folding"));
 static cl::opt<bool> DisableTailDuplicate("disable-tail-duplicate", cl::Hidden,
@@ -157,7 +157,7 @@ static IdentifyingPassPtr applyDisable(IdentifyingPassPtr PassID,
 static IdentifyingPassPtr overridePass(AnalysisID StandardID,
                                        IdentifyingPassPtr TargetID) {
   if (StandardID == &PostRASchedulerID)
-    return applyDisable(TargetID, DisablePostRA);
+    return applyDisable(TargetID, DisablePostRASched);
 
   if (StandardID == &BranchFolderPassID)
     return applyDisable(TargetID, DisableBranchFold);
@@ -570,9 +570,6 @@ void TargetPassConfig::addISelPrepare() {
 void TargetPassConfig::addMachinePasses() {
   AddingMachinePasses = true;
 
-  if (TM->Options.EnableIPRA)
-    addPass(createRegUsageInfoPropPass());
-
   // Insert a machine instr printer pass after the specified pass.
   if (!StringRef(PrintMachineInstrs.getValue()).equals("") &&
       !StringRef(PrintMachineInstrs.getValue()).equals("option-unspecified")) {
@@ -587,6 +584,9 @@ void TargetPassConfig::addMachinePasses() {
 
   // Print the instruction selected machine code...
   printAndVerify("After Instruction Selection");
+
+  if (TM->Options.EnableIPRA)
+    addPass(createRegUsageInfoPropPass());
 
   // Expand pseudo-instructions emitted by ISel.
   addPass(&ExpandISelPseudosID);

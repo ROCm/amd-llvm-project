@@ -61,7 +61,6 @@ namespace llvm {
   class MCSymbol;
   template<typename T> class SmallVectorImpl;
   class DataLayout;
-  struct TargetRecip;
   class TargetRegisterClass;
   class TargetLibraryInfo;
   class TargetLoweringObjectFile;
@@ -141,6 +140,13 @@ public:
     LLOnly,  // Expand the (load) instruction into just a load-linked, which has
              // greater atomic guarantees than a normal load.
     CmpXChg, // Expand the instruction into cmpxchg; used by at least X86.
+  };
+
+  /// Enum that specifies when a multiplication should be expanded.
+  enum class MulExpansionKind {
+    Always,            // Always expand the instruction.
+    OnlyLegalOrCustom, // Only expand when the resulting instructions are legal
+                       // or custom.
   };
 
   static ISD::NodeType getExtendForContent(BooleanContent Content) {
@@ -246,6 +252,37 @@ public:
     // Default behavior is to replace SQRT(X) with X*RSQRT(X).
     return false;
   }
+
+  /// Reciprocal estimate status values used by the functions below.
+  enum ReciprocalEstimate : int {
+    Unspecified = -1,
+    Disabled = 0,
+    Enabled = 1
+  };
+
+  /// Return a ReciprocalEstimate enum value for a square root of the given type
+  /// based on the function's attributes. If the operation is not overridden by
+  /// the function's attributes, "Unspecified" is returned and target defaults
+  /// are expected to be used for instruction selection.
+  int getRecipEstimateSqrtEnabled(EVT VT, MachineFunction &MF) const;
+
+  /// Return a ReciprocalEstimate enum value for a division of the given type
+  /// based on the function's attributes. If the operation is not overridden by
+  /// the function's attributes, "Unspecified" is returned and target defaults
+  /// are expected to be used for instruction selection.
+  int getRecipEstimateDivEnabled(EVT VT, MachineFunction &MF) const;
+
+  /// Return the refinement step count for a square root of the given type based
+  /// on the function's attributes. If the operation is not overridden by
+  /// the function's attributes, "Unspecified" is returned and target defaults
+  /// are expected to be used for instruction selection.
+  int getSqrtRefinementSteps(EVT VT, MachineFunction &MF) const;
+
+  /// Return the refinement step count for a division of the given type based
+  /// on the function's attributes. If the operation is not overridden by
+  /// the function's attributes, "Unspecified" is returned and target defaults
+  /// are expected to be used for instruction selection.
+  int getDivRefinementSteps(EVT VT, MachineFunction &MF) const;
 
   /// Returns true if target has indicated at least one type should be bypassed.
   bool isSlowDivBypassed() const { return !BypassSlowDivWidths.empty(); }
@@ -538,12 +575,6 @@ public:
       }
     }
   }
-
-  /// Return the reciprocal estimate code generation preferences for this target
-  /// after potentially overriding settings using the function's attributes.
-  /// FIXME: Like all unsafe-math target settings, this should really be an
-  /// instruction-level attribute/metadata/FMF.
-  TargetRecip getTargetRecipForFunc(MachineFunction &MF) const;
 
   /// Vector types are broken down into some number of legal first class types.
   /// For example, EVT::v8f32 maps to 2 EVT::v4f32 with Altivec or SSE1, or 8
@@ -1027,13 +1058,15 @@ public:
   }
 
   /// Return lower limit for number of blocks in a jump table.
-  unsigned getMinimumJumpTableEntries() const {
-    return MinimumJumpTableEntries;
-  }
+  unsigned getMinimumJumpTableEntries() const;
 
   /// Return upper limit for number of entries in a jump table.
   /// Zero if no limit.
   unsigned getMaximumJumpTableSize() const;
+
+  virtual bool isJumpTableRelative() const {
+    return TM.isPositionIndependent();
+  }
 
   /// If a physical register, this specifies the register that
   /// llvm.savestack/llvm.restorestack should save and restore.
@@ -1114,13 +1147,23 @@ public:
   /// Should be used only when getIRStackGuard returns nullptr.
   virtual Value *getSSPStackGuardCheck(const Module &M) const;
 
-  /// If the target has a standard location for the unsafe stack pointer,
-  /// returns the address of that location. Otherwise, returns nullptr.
+protected:
+  Value *getDefaultSafeStackPointerLocation(IRBuilder<> &IRB,
+                                            bool UseTLS) const;
+
+public:
+  /// Returns the target-specific address of the unsafe stack pointer.
   virtual Value *getSafeStackPointerLocation(IRBuilder<> &IRB) const;
 
   /// Returns true if a cast between SrcAS and DestAS is a noop.
   virtual bool isNoopAddrSpaceCast(unsigned SrcAS, unsigned DestAS) const {
     return false;
+  }
+
+  /// Returns true if a cast from SrcAS to DestAS is "cheap", such that e.g. we
+  /// are happy to sink it into basic blocks.
+  virtual bool isCheapAddrSpaceCast(unsigned SrcAS, unsigned DestAS) const {
+    return isNoopAddrSpaceCast(SrcAS, DestAS);
   }
 
   /// Return true if the pointer arguments to CI should be aligned by aligning
@@ -1361,9 +1404,7 @@ protected:
   }
 
   /// Indicate the minimum number of blocks to generate jump tables.
-  void setMinimumJumpTableEntries(unsigned Val) {
-    MinimumJumpTableEntries = Val;
-  }
+  void setMinimumJumpTableEntries(unsigned Val);
 
   /// Indicate the maximum number of entries in jump tables.
   /// Set to zero to generate unlimited jump tables.
@@ -1930,9 +1971,6 @@ private:
   /// Defaults to false.
   bool UseUnderscoreLongJmp;
 
-  /// Number of blocks threshold to use jump tables.
-  int MinimumJumpTableEntries;
-
   /// Information about the contents of the high-bits in boolean values held in
   /// a type wider than i1. See getBooleanContents.
   BooleanContent BooleanContents;
@@ -2080,7 +2118,7 @@ protected:
   virtual bool isExtFreeImpl(const Instruction *I) const { return false; }
 
   /// Depth that GatherAllAliases should should continue looking for chain
-  /// dependencies when trying to find a more preferrable chain. As an
+  /// dependencies when trying to find a more preferable chain. As an
   /// approximation, this should be more than the number of consecutive stores
   /// expected to be merged.
   unsigned GatherAllAliasesMaxDepth;
@@ -2154,7 +2192,6 @@ protected:
   /// sequence of memory operands that is recognized by PrologEpilogInserter.
   MachineBasicBlock *emitPatchPoint(MachineInstr &MI,
                                     MachineBasicBlock *MBB) const;
-  TargetRecip ReciprocalEstimates;
 };
 
 /// This class defines information used to lower LLVM code to legal SelectionDAG
@@ -2167,6 +2204,8 @@ class TargetLowering : public TargetLoweringBase {
   void operator=(const TargetLowering&) = delete;
 
 public:
+  struct DAGCombinerInfo;
+
   /// NOTE: The TargetMachine owns TLOF.
   explicit TargetLowering(const TargetMachine &TM);
 
@@ -2279,6 +2318,16 @@ public:
     /// generalized for targets with other types of implicit widening casts.
     bool ShrinkDemandedOp(SDValue Op, unsigned BitWidth, const APInt &Demanded,
                           const SDLoc &dl);
+
+    /// Helper for SimplifyDemandedBits that can simplify an operation with
+    /// multiple uses.  This function uses TLI.SimplifyDemandedBits to
+    /// simplify Operand \p OpIdx of \p User and then updated \p User with
+    /// the simplified version.  No other uses of \p OpIdx are updated.
+    /// If \p User is the only user of \p OpIdx, this function behaves exactly
+    /// like TLI.SimplifyDemandedBits except that it also updates the DAG by
+    /// calling DCI.CommitTargetLoweringOpt.
+    bool SimplifyDemandedBits(SDNode *User, unsigned OpIdx,
+                              const APInt &Demanded, DAGCombinerInfo &DCI);
   };
 
   /// Look at Op.  At this point, we know that only the DemandedMask bits of the
@@ -2288,9 +2337,17 @@ public:
   /// expression and return a mask of KnownOne and KnownZero bits for the
   /// expression (used to simplify the caller).  The KnownZero/One bits may only
   /// be accurate for those bits in the DemandedMask.
+  /// \p AssumeSingleUse When this paramater is true, this function will
+  ///    attempt to simplify \p Op even if there are multiple uses.
+  ///    Callers are responsible for correctly updating the DAG based on the
+  ///    results of this function, because simply replacing replacing TLO.Old
+  ///    with TLO.New will be incorrect when this paramater is true and TLO.Old
+  ///    has multiple uses.
   bool SimplifyDemandedBits(SDValue Op, const APInt &DemandedMask,
                             APInt &KnownZero, APInt &KnownOne,
-                            TargetLoweringOpt &TLO, unsigned Depth = 0) const;
+                            TargetLoweringOpt &TLO,
+                            unsigned Depth = 0,
+                            bool AssumeSingleUse = false) const;
 
   /// Determine which of the bits specified in Mask are known to be either zero
   /// or one and return them in the KnownZero/KnownOne bitsets.
@@ -2946,38 +3003,61 @@ public:
   /// Hooks for building estimates in place of slower divisions and square
   /// roots.
 
-  /// Return a reciprocal square root estimate value for the input operand.
-  /// The RefinementSteps output is the number of Newton-Raphson refinement
-  /// iterations required to generate a sufficient (though not necessarily
-  /// IEEE-754 compliant) estimate for the value type.
+  /// Return either a square root or its reciprocal estimate value for the input
+  /// operand.
+  /// \p Enabled is a ReciprocalEstimate enum with value either 'Unspecified' or
+  /// 'Enabled' as set by a potential default override attribute.
+  /// If \p RefinementSteps is 'Unspecified', the number of Newton-Raphson
+  /// refinement iterations required to generate a sufficient (though not
+  /// necessarily IEEE-754 compliant) estimate is returned in that parameter.
   /// The boolean UseOneConstNR output is used to select a Newton-Raphson
-  /// algorithm implementation that uses one constant or two constants.
+  /// algorithm implementation that uses either one or two constants.
+  /// The boolean Reciprocal is used to select whether the estimate is for the
+  /// square root of the input operand or the reciprocal of its square root.
   /// A target may choose to implement its own refinement within this function.
   /// If that's true, then return '0' as the number of RefinementSteps to avoid
   /// any further refinement of the estimate.
   /// An empty SDValue return means no estimate sequence can be created.
-  virtual SDValue getRsqrtEstimate(SDValue Operand, DAGCombinerInfo &DCI,
-                                   unsigned &RefinementSteps,
-                                   bool &UseOneConstNR) const {
+  virtual SDValue getSqrtEstimate(SDValue Operand, SelectionDAG &DAG,
+                                  int Enabled, int &RefinementSteps,
+                                  bool &UseOneConstNR, bool Reciprocal) const {
     return SDValue();
   }
 
   /// Return a reciprocal estimate value for the input operand.
-  /// The RefinementSteps output is the number of Newton-Raphson refinement
-  /// iterations required to generate a sufficient (though not necessarily
-  /// IEEE-754 compliant) estimate for the value type.
+  /// \p Enabled is a ReciprocalEstimate enum with value either 'Unspecified' or
+  /// 'Enabled' as set by a potential default override attribute.
+  /// If \p RefinementSteps is 'Unspecified', the number of Newton-Raphson
+  /// refinement iterations required to generate a sufficient (though not
+  /// necessarily IEEE-754 compliant) estimate is returned in that parameter.
   /// A target may choose to implement its own refinement within this function.
   /// If that's true, then return '0' as the number of RefinementSteps to avoid
   /// any further refinement of the estimate.
   /// An empty SDValue return means no estimate sequence can be created.
-  virtual SDValue getRecipEstimate(SDValue Operand, DAGCombinerInfo &DCI,
-                                   unsigned &RefinementSteps) const {
+  virtual SDValue getRecipEstimate(SDValue Operand, SelectionDAG &DAG,
+                                   int Enabled, int &RefinementSteps) const {
     return SDValue();
   }
 
   //===--------------------------------------------------------------------===//
   // Legalization utility functions
   //
+
+  /// Expand a MUL or [US]MUL_LOHI of n-bit values into two or four nodes,
+  /// respectively, each computing an n/2-bit part of the result.
+  /// \param Result A vector that will be filled with the parts of the result
+  ///        in little-endian order.
+  /// \param LL Low bits of the LHS of the MUL.  You can use this parameter
+  ///        if you want to control how low bits are extracted from the LHS.
+  /// \param LH High bits of the LHS of the MUL.  See LL for meaning.
+  /// \param RL Low bits of the RHS of the MUL.  See LL for meaning
+  /// \param RH High bits of the RHS of the MUL.  See LL for meaning.
+  /// \returns true if the node has been expanded, false if it has not
+  bool expandMUL_LOHI(unsigned Opcode, EVT VT, SDLoc dl, SDValue LHS,
+                      SDValue RHS, SmallVectorImpl<SDValue> &Result, EVT HiLoVT,
+                      SelectionDAG &DAG, MulExpansionKind Kind,
+                      SDValue LL = SDValue(), SDValue LH = SDValue(),
+                      SDValue RL = SDValue(), SDValue RH = SDValue()) const;
 
   /// Expand a MUL into two nodes.  One that computes the high bits of
   /// the result and one that computes the low bits.
@@ -2989,9 +3069,9 @@ public:
   /// \param RH High bits of the RHS of the MUL.  See LL for meaning.
   /// \returns true if the node has been expanded. false if it has not
   bool expandMUL(SDNode *N, SDValue &Lo, SDValue &Hi, EVT HiLoVT,
-                 SelectionDAG &DAG, SDValue LL = SDValue(),
-                 SDValue LH = SDValue(), SDValue RL = SDValue(),
-                 SDValue RH = SDValue()) const;
+                 SelectionDAG &DAG, MulExpansionKind Kind,
+                 SDValue LL = SDValue(), SDValue LH = SDValue(),
+                 SDValue RL = SDValue(), SDValue RH = SDValue()) const;
 
   /// Expand float(f32) to SINT(i64) conversion
   /// \param N Node to expand
@@ -3017,6 +3097,17 @@ public:
   /// Expands an unaligned store to 2 half-size stores for integer values, and
   /// possibly more for vectors.
   SDValue expandUnalignedStore(StoreSDNode *ST, SelectionDAG &DAG) const;
+
+  /// Increments memory address \p Addr according to the type of the value
+  /// \p DataVT that should be stored. If the data is stored in compressed
+  /// form, the memory address should be incremented according to the number of
+  /// the stored elements. This number is equal to the number of '1's bits
+  /// in the \p Mask.
+  /// \p DataVT is a vector type. \p Mask is a vector value.
+  /// \p DataVT and \p Mask have the same number of vector elements.
+  SDValue IncrementMemoryAddress(SDValue Addr, SDValue Mask, const SDLoc &DL,
+                                 EVT DataVT, SelectionDAG &DAG,
+                                 bool IsCompressedMemory) const;
 
   //===--------------------------------------------------------------------===//
   // Instruction Emitting Hooks

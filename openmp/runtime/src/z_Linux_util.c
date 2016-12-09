@@ -22,6 +22,7 @@
 #include "kmp_io.h"
 #include "kmp_stats.h"
 #include "kmp_wait_release.h"
+#include "kmp_affinity.h"
 
 #if !KMP_OS_FREEBSD && !KMP_OS_NETBSD
 # include <alloca.h>
@@ -58,6 +59,8 @@
 #include <dirent.h>
 #include <ctype.h>
 #include <fcntl.h>
+
+#include "tsan_annotations.h"
 
 /* ------------------------------------------------------------------------ */
 /* ------------------------------------------------------------------------ */
@@ -111,118 +114,6 @@ __kmp_print_cond( char *buffer, kmp_cond_align_t *cond )
  * Affinity support
  */
 
-/*
- * On some of the older OS's that we build on, these constants aren't present
- * in <asm/unistd.h> #included from <sys.syscall.h>.  They must be the same on
- * all systems of the same arch where they are defined, and they cannot change.
- * stone forever.
- */
-
-#  if KMP_ARCH_X86 || KMP_ARCH_ARM
-#   ifndef __NR_sched_setaffinity
-#    define __NR_sched_setaffinity  241
-#   elif __NR_sched_setaffinity != 241
-#    error Wrong code for setaffinity system call.
-#   endif /* __NR_sched_setaffinity */
-#   ifndef __NR_sched_getaffinity
-#    define __NR_sched_getaffinity  242
-#   elif __NR_sched_getaffinity != 242
-#    error Wrong code for getaffinity system call.
-#   endif /* __NR_sched_getaffinity */
-
-#  elif KMP_ARCH_AARCH64
-#   ifndef __NR_sched_setaffinity
-#    define __NR_sched_setaffinity  122
-#   elif __NR_sched_setaffinity != 122
-#    error Wrong code for setaffinity system call.
-#   endif /* __NR_sched_setaffinity */
-#   ifndef __NR_sched_getaffinity
-#    define __NR_sched_getaffinity  123
-#   elif __NR_sched_getaffinity != 123
-#    error Wrong code for getaffinity system call.
-#   endif /* __NR_sched_getaffinity */
-
-#  elif KMP_ARCH_X86_64
-#   ifndef __NR_sched_setaffinity
-#    define __NR_sched_setaffinity  203
-#   elif __NR_sched_setaffinity != 203
-#    error Wrong code for setaffinity system call.
-#   endif /* __NR_sched_setaffinity */
-#   ifndef __NR_sched_getaffinity
-#    define __NR_sched_getaffinity  204
-#   elif __NR_sched_getaffinity != 204
-#    error Wrong code for getaffinity system call.
-#   endif /* __NR_sched_getaffinity */
-
-#  elif KMP_ARCH_PPC64
-#   ifndef __NR_sched_setaffinity
-#    define __NR_sched_setaffinity  222
-#   elif __NR_sched_setaffinity != 222
-#    error Wrong code for setaffinity system call.
-#   endif /* __NR_sched_setaffinity */
-#   ifndef __NR_sched_getaffinity
-#    define __NR_sched_getaffinity  223
-#   elif __NR_sched_getaffinity != 223
-#    error Wrong code for getaffinity system call.
-#   endif /* __NR_sched_getaffinity */
-
-
-#  else
-#   error Unknown or unsupported architecture
-
-#  endif /* KMP_ARCH_* */
-
-int
-__kmp_set_system_affinity( kmp_affin_mask_t const *mask, int abort_on_error )
-{
-    KMP_ASSERT2(KMP_AFFINITY_CAPABLE(),
-      "Illegal set affinity operation when not capable");
-#if KMP_USE_HWLOC
-    int retval = hwloc_set_cpubind(__kmp_hwloc_topology, (hwloc_cpuset_t)mask, HWLOC_CPUBIND_THREAD);
-#else
-    int retval = syscall( __NR_sched_setaffinity, 0, __kmp_affin_mask_size, mask );
-#endif
-    if (retval >= 0) {
-        return 0;
-    }
-    int error = errno;
-    if (abort_on_error) {
-        __kmp_msg(
-            kmp_ms_fatal,
-            KMP_MSG( FatalSysError ),
-            KMP_ERR( error ),
-            __kmp_msg_null
-        );
-    }
-    return error;
-}
-
-int
-__kmp_get_system_affinity( kmp_affin_mask_t *mask, int abort_on_error )
-{
-    KMP_ASSERT2(KMP_AFFINITY_CAPABLE(),
-      "Illegal get affinity operation when not capable");
-
-#if KMP_USE_HWLOC
-    int retval = hwloc_get_cpubind(__kmp_hwloc_topology, (hwloc_cpuset_t)mask, HWLOC_CPUBIND_THREAD);
-#else
-    int retval = syscall( __NR_sched_getaffinity, 0, __kmp_affin_mask_size, mask );
-#endif
-    if (retval >= 0) {
-        return 0;
-    }
-    int error = errno;
-    if (abort_on_error) {
-        __kmp_msg(
-            kmp_ms_fatal,
-            KMP_MSG( FatalSysError ),
-            KMP_ERR( error ),
-            __kmp_msg_null
-        );
-    }
-    return error;
-}
-
 void
 __kmp_affinity_bind_thread( int which )
 {
@@ -274,12 +165,16 @@ __kmp_affinity_determine_capable(const char *env_var)
           && (__kmp_affinity_type != affinity_default)
           && (__kmp_affinity_type != affinity_disabled))) {
             int error = errno;
+            kmp_msg_t err_code = KMP_ERR( error );
             __kmp_msg(
                 kmp_ms_warning,
                 KMP_MSG( GetAffSysCallNotSupported, env_var ),
-                KMP_ERR( error ),
+                err_code,
                 __kmp_msg_null
             );
+            if (__kmp_generate_warnings == kmp_warnings_off) {
+                __kmp_str_free(&err_code.str);
+            }
         }
         KMP_AFFINITY_DISABLE();
         KMP_INTERNAL_FREE(buf);
@@ -302,12 +197,16 @@ __kmp_affinity_determine_capable(const char *env_var)
                   && (__kmp_affinity_type != affinity_default)
                   && (__kmp_affinity_type != affinity_disabled))) {
                     int error = errno;
+                    kmp_msg_t err_code = KMP_ERR( error );
                     __kmp_msg(
                         kmp_ms_warning,
                         KMP_MSG( SetAffSysCallNotSupported, env_var ),
-                        KMP_ERR( error ),
+                        err_code,
                         __kmp_msg_null
                     );
+                    if (__kmp_generate_warnings == kmp_warnings_off) {
+                        __kmp_str_free(&err_code.str);
+                    }
                 }
                 KMP_AFFINITY_DISABLE();
                 KMP_INTERNAL_FREE(buf);
@@ -350,12 +249,16 @@ __kmp_affinity_determine_capable(const char *env_var)
                   && (__kmp_affinity_type != affinity_default)
                   && (__kmp_affinity_type != affinity_disabled))) {
                     int error = errno;
+                    kmp_msg_t err_code = KMP_ERR( error );
                     __kmp_msg(
                         kmp_ms_warning,
                         KMP_MSG( GetAffSysCallNotSupported, env_var ),
-                        KMP_ERR( error ),
+                        err_code,
                         __kmp_msg_null
                     );
+                    if (__kmp_generate_warnings == kmp_warnings_off) {
+                        __kmp_str_free(&err_code.str);
+                    }
                 }
                 KMP_AFFINITY_DISABLE();
                 KMP_INTERNAL_FREE(buf);
@@ -381,12 +284,16 @@ __kmp_affinity_determine_capable(const char *env_var)
                   && (__kmp_affinity_type != affinity_default)
                   && (__kmp_affinity_type != affinity_disabled))) {
                     int error = errno;
+                    kmp_msg_t err_code = KMP_ERR( error );
                     __kmp_msg(
                         kmp_ms_warning,
                         KMP_MSG( SetAffSysCallNotSupported, env_var ),
-                        KMP_ERR( error ),
+                        err_code,
                         __kmp_msg_null
                     );
+                    if (__kmp_generate_warnings == kmp_warnings_off) {
+                        __kmp_str_free(&err_code.str);
+                    }
                 }
                 KMP_AFFINITY_DISABLE();
                 KMP_INTERNAL_FREE(buf);
@@ -819,13 +726,17 @@ __kmp_launch_monitor( void *thr )
                 rc = sched_setscheduler( 0, sched, & param );
                 if ( rc != 0 ) {
                     int error = errno;
-                  __kmp_msg(
-                      kmp_ms_warning,
-                      KMP_MSG( CantChangeMonitorPriority ),
-                      KMP_ERR( error ),
-                      KMP_MSG( MonitorWillStarve ),
-                      __kmp_msg_null
-                  );
+                    kmp_msg_t err_code = KMP_ERR( error );
+                    __kmp_msg(
+                        kmp_ms_warning,
+                        KMP_MSG( CantChangeMonitorPriority ),
+                        err_code,
+                        KMP_MSG( MonitorWillStarve ),
+                        __kmp_msg_null
+                    );
+                    if (__kmp_generate_warnings == kmp_warnings_off) {
+                        __kmp_str_free(&err_code.str);
+                    }
                 }; // if
             } else {
                 // We cannot abort here, because number of CPUs may be enough for all the threads,
@@ -975,14 +886,12 @@ __kmp_create_worker( int gtid, kmp_info_t *th, size_t stack_size )
     // th->th.th_stats is used to transfer thread specific stats-pointer to __kmp_launch_worker
     // So when thread is created (goes into __kmp_launch_worker) it will
     // set it's __thread local pointer to th->th.th_stats
-    th->th.th_stats = __kmp_stats_list.push_back(gtid);
-    if(KMP_UBER_GTID(gtid)) {
-        __kmp_stats_start_time = tsc_tick_count::now();
-        __kmp_stats_thread_ptr = th->th.th_stats;
-        __kmp_stats_init();
-        KMP_START_EXPLICIT_TIMER(OMP_worker_thread_life);
-        KMP_SET_THREAD_STATE(SERIAL_REGION);
-        KMP_INIT_PARTITIONED_TIMERS(OMP_serial);
+    if(!KMP_UBER_GTID(gtid)) {
+        th->th.th_stats = __kmp_stats_list->push_back(gtid);
+    } else {
+        // For root threads, the __kmp_stats_thread_ptr is set in __kmp_register_root(), so
+        // set the th->th.th_stats field to it.
+        th->th.th_stats = __kmp_stats_thread_ptr;
     }
     __kmp_release_tas_lock(&__kmp_stats_lock, gtid);
 
@@ -1070,7 +979,11 @@ __kmp_create_worker( int gtid, kmp_info_t *th, size_t stack_size )
 #ifdef KMP_THREAD_ATTR
     status = pthread_attr_destroy( & thread_attr );
     if ( status ) {
-        __kmp_msg(kmp_ms_warning, KMP_MSG( CantDestroyThreadAttrs ), KMP_ERR( status ), __kmp_msg_null);
+        kmp_msg_t err_code = KMP_ERR( status );
+        __kmp_msg(kmp_ms_warning, KMP_MSG( CantDestroyThreadAttrs ), err_code, __kmp_msg_null);
+        if (__kmp_generate_warnings == kmp_warnings_off) {
+            __kmp_str_free(&err_code.str);
+        }
     }; // if
 #endif /* KMP_THREAD_ATTR */
 
@@ -1166,13 +1079,17 @@ __kmp_create_monitor( kmp_info_t *th )
                 __kmp_monitor_stksize *= 2;
                 goto retry;
             }
+            kmp_msg_t err_code = KMP_ERR( status );
             __kmp_msg(
                 kmp_ms_warning,  // should this be fatal?  BB
                 KMP_MSG( CantSetMonitorStackSize, (long int) __kmp_monitor_stksize ),
-                KMP_ERR( status ),
+                err_code,
                 KMP_HNT( ChangeMonitorStackSize ),
                 __kmp_msg_null
             );
+            if (__kmp_generate_warnings == kmp_warnings_off) {
+                __kmp_str_free(&err_code.str);
+            }
         }; // if
     #endif /* _POSIX_THREAD_ATTR_STACKSIZE */
 
@@ -1228,12 +1145,16 @@ __kmp_create_monitor( kmp_info_t *th )
     #ifdef KMP_THREAD_ATTR
         status = pthread_attr_destroy( & thread_attr );
         if ( status != 0 ) {
-            __kmp_msg(    //
+            kmp_msg_t err_code = KMP_ERR( status );
+            __kmp_msg( 
                 kmp_ms_warning,
                 KMP_MSG( CantDestroyThreadAttrs ),
-                KMP_ERR( status ),
+                err_code,
                 __kmp_msg_null
             );
+            if (__kmp_generate_warnings == kmp_warnings_off) {
+                __kmp_str_free(&err_code.str);
+            }
         }; // if
     #endif
 
@@ -1609,6 +1530,7 @@ __kmp_suspend_initialize( void )
 static void
 __kmp_suspend_initialize_thread( kmp_info_t *th )
 {
+    ANNOTATE_HAPPENS_AFTER(&th->th.th_suspend_init_count);
     if ( th->th.th_suspend_init_count <= __kmp_fork_count ) {
         /* this means we haven't initialized the suspension pthread objects for this thread
            in this instance of the process */
@@ -1618,6 +1540,7 @@ __kmp_suspend_initialize_thread( kmp_info_t *th )
         status = pthread_mutex_init( &th->th.th_suspend_mx.m_mutex, & __kmp_suspend_mutex_attr );
         KMP_CHECK_SYSFAIL( "pthread_mutex_init", status );
         *(volatile int*)&th->th.th_suspend_init_count = __kmp_fork_count + 1;
+        ANNOTATE_HAPPENS_BEFORE(&th->th.th_suspend_init_count);
     };
 }
 
@@ -1648,7 +1571,7 @@ __kmp_suspend_uninitialize_thread( kmp_info_t *th )
 template <class C>
 static inline void __kmp_suspend_template( int th_gtid, C *flag )
 {
-    KMP_TIME_DEVELOPER_BLOCK(USER_suspend);
+    KMP_TIME_DEVELOPER_PARTITIONED_BLOCK(USER_suspend);
     kmp_info_t *th = __kmp_threads[th_gtid];
     int status;
     typename C::flag_t old_spin;
@@ -1782,7 +1705,7 @@ void __kmp_suspend_oncore(int th_gtid, kmp_flag_oncore *flag) {
 template <class C>
 static inline void __kmp_resume_template( int target_gtid, C *flag )
 {
-    KMP_TIME_DEVELOPER_BLOCK(USER_resume);
+    KMP_TIME_DEVELOPER_PARTITIONED_BLOCK(USER_resume);
     kmp_info_t *th = __kmp_threads[target_gtid];
     int status;
 
@@ -1857,7 +1780,7 @@ void __kmp_resume_oncore(int target_gtid, kmp_flag_oncore *flag) {
 void
 __kmp_resume_monitor()
 {
-    KMP_TIME_DEVELOPER_BLOCK(USER_resume);
+    KMP_TIME_DEVELOPER_PARTITIONED_BLOCK(USER_resume);
     int status;
 #ifdef KMP_DEBUG
     int gtid = TCR_4(__kmp_init_gtid) ? __kmp_get_gtid() : -1;

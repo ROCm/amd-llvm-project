@@ -38,31 +38,6 @@ class Module;
 class Target;
 class raw_pwrite_stream;
 
-/// Helper to load a module from bitcode.
-std::unique_ptr<Module> loadModuleFromBuffer(const MemoryBufferRef &Buffer,
-                                             LLVMContext &Context, bool Lazy);
-
-/// Provide a "loader" for the FunctionImporter to access function from other
-/// modules.
-class ModuleLoader {
-  /// The context that will be used for importing.
-  LLVMContext &Context;
-
-  /// Map from Module identifier to MemoryBuffer. Used by clients like the
-  /// FunctionImported to request loading a Module.
-  StringMap<MemoryBufferRef> &ModuleMap;
-
-public:
-  ModuleLoader(LLVMContext &Context, StringMap<MemoryBufferRef> &ModuleMap)
-      : Context(Context), ModuleMap(ModuleMap) {}
-
-  /// Load a module on demand.
-  std::unique_ptr<Module> operator()(StringRef Identifier) {
-    return loadModuleFromBuffer(ModuleMap[Identifier], Context, /*Lazy*/ true);
-  }
-};
-
-
 /// Resolve Weak and LinkOnce values in the \p Index. Linkage changes recorded
 /// in the index and the ThinLTO backends must apply the changes to the Module
 /// via thinLTOResolveWeakForLinkerModule.
@@ -106,6 +81,8 @@ class InputFile {
   // FIXME: Remove the LLVMContext once we have bitcode symbol tables.
   LLVMContext Ctx;
   std::unique_ptr<object::IRObjectFile> Obj;
+  std::vector<StringRef> Comdats;
+  DenseMap<const Comdat *, unsigned> ComdatMap;
 
 public:
   /// Create an InputFile.
@@ -124,6 +101,7 @@ public:
     friend LTO;
 
     object::basic_symbol_iterator I;
+    const InputFile *File;
     const GlobalValue *GV;
     uint32_t Flags;
     SmallString<64> Name;
@@ -154,14 +132,14 @@ public:
     }
 
   public:
-    Symbol(object::basic_symbol_iterator I) : I(I) { skip(); }
-
-    StringRef getName() const { return Name; }
-    StringRef getIRName() const {
-      if (GV)
-        return GV->getName();
-      return StringRef();
+    Symbol(object::basic_symbol_iterator I, const InputFile *File)
+        : I(I), File(File) {
+      skip();
     }
+
+    /// Returns the mangled name of the global.
+    StringRef getName() const { return Name; }
+
     uint32_t getFlags() const { return Flags; }
     GlobalValue::VisibilityTypes getVisibility() const {
       if (GV)
@@ -176,23 +154,13 @@ public:
       return GV && GV->isThreadLocal();
     }
 
-    //FIXME: We shouldn't expose this information.
-    Expected<const Comdat *> getComdat() const {
-      if (!GV)
-        return nullptr;
-      const GlobalObject *GO;
-      if (auto *GA = dyn_cast<GlobalAlias>(GV)) {
-        GO = GA->getBaseObject();
-        if (!GO)
-          return make_error<StringError>("Unable to determine comdat of alias!",
-                                         inconvertibleErrorCode());
-      } else {
-        GO = cast<GlobalObject>(GV);
-      }
-      if (GO)
-        return GO->getComdat();
-      return nullptr;
-    }
+    // Returns the index of the comdat this symbol is in or -1 if the symbol
+    // is not in a comdat.
+    // FIXME: We have to return Expected<int> because aliases point to an
+    // arbitrary ConstantExpr and that might not actually be a constant. That
+    // means we might not be able to find what an alias is aliased to and
+    // so find its comdat.
+    Expected<int> getComdatIndex() const;
 
     uint64_t getCommonSize() const {
       assert(Flags & object::BasicSymbolRef::SF_Common);
@@ -213,7 +181,8 @@ public:
     Symbol Sym;
 
   public:
-    symbol_iterator(object::basic_symbol_iterator I) : Sym(I) {}
+    symbol_iterator(object::basic_symbol_iterator I, const InputFile *File)
+        : Sym(I, File) {}
 
     symbol_iterator &operator++() {
       ++Sym.I;
@@ -237,12 +206,8 @@ public:
 
   /// A range over the symbols in this InputFile.
   iterator_range<symbol_iterator> symbols() {
-    return llvm::make_range(symbol_iterator(Obj->symbol_begin()),
-                            symbol_iterator(Obj->symbol_end()));
-  }
-
-  StringRef getDataLayoutStr() const {
-    return Obj->getModule().getDataLayoutStr();
+    return llvm::make_range(symbol_iterator(Obj->symbol_begin(), this),
+                            symbol_iterator(Obj->symbol_end(), this));
   }
 
   StringRef getSourceFileName() const {
@@ -253,10 +218,8 @@ public:
     return Obj->getMemoryBufferRef();
   }
 
-  // FIXME: We should fix lld and not expose this information.
-  StringMap<Comdat> &getComdatSymbolTable() {
-    return Obj->getModule().getComdatSymbolTable();
-  }
+  // Returns a table with all the comdats used by this file.
+  ArrayRef<StringRef> getComdatTable() const { return Comdats; }
 };
 
 /// This class wraps an output stream for a native object. Most clients should

@@ -36,6 +36,7 @@
 #include "llvm/Target/TargetInstrInfo.h"
 #include "llvm/Target/TargetIntrinsicInfo.h"
 #include "llvm/Target/TargetSubtargetInfo.h"
+#include <cctype>
 
 using namespace llvm;
 
@@ -124,6 +125,7 @@ public:
   bool parseStandaloneMBB(MachineBasicBlock *&MBB);
   bool parseStandaloneNamedRegister(unsigned &Reg);
   bool parseStandaloneVirtualRegister(VRegInfo *&Info);
+  bool parseStandaloneRegister(unsigned &Reg);
   bool parseStandaloneStackObject(int &FI);
   bool parseStandaloneMDNode(MDNode *&Node);
 
@@ -453,8 +455,19 @@ bool MIParser::parseBasicBlockLiveins(MachineBasicBlock &MBB) {
     unsigned Reg = 0;
     if (parseNamedRegister(Reg))
       return true;
-    MBB.addLiveIn(Reg);
     lex();
+    LaneBitmask Mask = ~LaneBitmask(0);
+    if (consumeIfPresent(MIToken::colon)) {
+      // Parse lane mask.
+      if (Token.isNot(MIToken::IntegerLiteral) &&
+          Token.isNot(MIToken::HexLiteral))
+        return error("expected a lane mask");
+      static_assert(sizeof(LaneBitmask) == sizeof(unsigned), "");
+      if (getUnsigned(Mask))
+        return error("invalid lane mask value");
+      lex();
+    }
+    MBB.addLiveIn(Reg, Mask);
   } while (consumeIfPresent(MIToken::comma));
   return false;
 }
@@ -475,7 +488,8 @@ bool MIParser::parseBasicBlockSuccessors(MachineBasicBlock &MBB) {
     lex();
     unsigned Weight = 0;
     if (consumeIfPresent(MIToken::lparen)) {
-      if (Token.isNot(MIToken::IntegerLiteral))
+      if (Token.isNot(MIToken::IntegerLiteral) &&
+          Token.isNot(MIToken::HexLiteral))
         return error("expected an integer literal after '('");
       if (getUnsigned(Weight))
         return true;
@@ -710,6 +724,22 @@ bool MIParser::parseStandaloneVirtualRegister(VRegInfo *&Info) {
     return error("expected a virtual register");
   if (parseVirtualRegister(Info))
     return true;
+  lex();
+  if (Token.isNot(MIToken::Eof))
+    return error("expected end of string after the register reference");
+  return false;
+}
+
+bool MIParser::parseStandaloneRegister(unsigned &Reg) {
+  lex();
+  if (Token.isNot(MIToken::NamedRegister) &&
+      Token.isNot(MIToken::VirtualRegister))
+    return error("expected either a named or virtual register");
+
+  VRegInfo *Info;
+  if (parseRegister(Reg, Info))
+    return true;
+
   lex();
   if (Token.isNot(MIToken::Eof))
     return error("expected end of string after the register reference");
@@ -1035,7 +1065,7 @@ bool MIParser::parseIRConstant(StringRef::iterator Loc, StringRef StringValue,
                                const Constant *&C) {
   auto Source = StringValue.str(); // The source has to be null terminated.
   SMDiagnostic Err;
-  C = parseConstantValue(Source.c_str(), Err, *MF.getFunction()->getParent(),
+  C = parseConstantValue(Source, Err, *MF.getFunction()->getParent(),
                          &PFS.IRSlots);
   if (!C)
     return error(Loc + Err.getColumnNo(), Err.getMessage());
@@ -1107,7 +1137,8 @@ bool MIParser::parseTypedImmediateOperand(MachineOperand &Dest) {
 bool MIParser::parseFPImmediateOperand(MachineOperand &Dest) {
   auto Loc = Token.location();
   lex();
-  if (Token.isNot(MIToken::FloatingPointLiteral))
+  if (Token.isNot(MIToken::FloatingPointLiteral) &&
+      Token.isNot(MIToken::HexLiteral))
     return error("expected a floating point literal");
   const Constant *C = nullptr;
   if (parseIRConstant(Loc, C))
@@ -1117,13 +1148,30 @@ bool MIParser::parseFPImmediateOperand(MachineOperand &Dest) {
 }
 
 bool MIParser::getUnsigned(unsigned &Result) {
-  assert(Token.hasIntegerValue() && "Expected a token with an integer value");
-  const uint64_t Limit = uint64_t(std::numeric_limits<unsigned>::max()) + 1;
-  uint64_t Val64 = Token.integerValue().getLimitedValue(Limit);
-  if (Val64 == Limit)
-    return error("expected 32-bit integer (too large)");
-  Result = Val64;
-  return false;
+  if (Token.hasIntegerValue()) {
+    const uint64_t Limit = uint64_t(std::numeric_limits<unsigned>::max()) + 1;
+    uint64_t Val64 = Token.integerValue().getLimitedValue(Limit);
+    if (Val64 == Limit)
+      return error("expected 32-bit integer (too large)");
+    Result = Val64;
+    return false;
+  }
+  if (Token.is(MIToken::HexLiteral)) {
+    StringRef S = Token.range();
+    assert(S[0] == '0' && tolower(S[1]) == 'x');
+    // This could be a floating point literal with a special prefix.
+    if (!isxdigit(S[2]))
+      return true;
+    StringRef V = S.substr(2);
+    unsigned BW = std::min<unsigned>(V.size()*4, 32);
+    APInt A(BW, V, 16);
+    APInt Limit = APInt(BW, std::numeric_limits<unsigned>::max());
+    if (A.ugt(Limit))
+      return error("expected 32-bit integer (too large)");
+    Result = A.getZExtValue();
+    return false;
+  }
+  return true;
 }
 
 bool MIParser::parseMBBReference(MachineBasicBlock *&MBB) {
@@ -1343,7 +1391,6 @@ bool MIParser::parseCFIRegister(unsigned &Reg) {
 bool MIParser::parseCFIOperand(MachineOperand &Dest) {
   auto Kind = Token.kind();
   lex();
-  auto &MMI = MF.getMMI();
   int Offset;
   unsigned Reg;
   unsigned CFIIndex;
@@ -1351,27 +1398,26 @@ bool MIParser::parseCFIOperand(MachineOperand &Dest) {
   case MIToken::kw_cfi_same_value:
     if (parseCFIRegister(Reg))
       return true;
-    CFIIndex =
-        MMI.addFrameInst(MCCFIInstruction::createSameValue(nullptr, Reg));
+    CFIIndex = MF.addFrameInst(MCCFIInstruction::createSameValue(nullptr, Reg));
     break;
   case MIToken::kw_cfi_offset:
     if (parseCFIRegister(Reg) || expectAndConsume(MIToken::comma) ||
         parseCFIOffset(Offset))
       return true;
     CFIIndex =
-        MMI.addFrameInst(MCCFIInstruction::createOffset(nullptr, Reg, Offset));
+        MF.addFrameInst(MCCFIInstruction::createOffset(nullptr, Reg, Offset));
     break;
   case MIToken::kw_cfi_def_cfa_register:
     if (parseCFIRegister(Reg))
       return true;
     CFIIndex =
-        MMI.addFrameInst(MCCFIInstruction::createDefCfaRegister(nullptr, Reg));
+        MF.addFrameInst(MCCFIInstruction::createDefCfaRegister(nullptr, Reg));
     break;
   case MIToken::kw_cfi_def_cfa_offset:
     if (parseCFIOffset(Offset))
       return true;
     // NB: MCCFIInstruction::createDefCfaOffset negates the offset.
-    CFIIndex = MMI.addFrameInst(
+    CFIIndex = MF.addFrameInst(
         MCCFIInstruction::createDefCfaOffset(nullptr, -Offset));
     break;
   case MIToken::kw_cfi_def_cfa:
@@ -1380,7 +1426,7 @@ bool MIParser::parseCFIOperand(MachineOperand &Dest) {
       return true;
     // NB: MCCFIInstruction::createDefCfa negates the offset.
     CFIIndex =
-        MMI.addFrameInst(MCCFIInstruction::createDefCfa(nullptr, Reg, -Offset));
+        MF.addFrameInst(MCCFIInstruction::createDefCfa(nullptr, Reg, -Offset));
     break;
   default:
     // TODO: Parse the other CFI operands.
@@ -2198,6 +2244,12 @@ bool llvm::parseMBBReference(PerFunctionMIParsingState &PFS,
                              MachineBasicBlock *&MBB, StringRef Src,
                              SMDiagnostic &Error) {
   return MIParser(PFS, Error, Src).parseStandaloneMBB(MBB);
+}
+
+bool llvm::parseRegisterReference(PerFunctionMIParsingState &PFS,
+                                  unsigned &Reg, StringRef Src,
+                                  SMDiagnostic &Error) {
+  return MIParser(PFS, Error, Src).parseStandaloneRegister(Reg);
 }
 
 bool llvm::parseNamedRegisterReference(PerFunctionMIParsingState &PFS,

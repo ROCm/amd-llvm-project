@@ -44,30 +44,14 @@ namespace lld {
 namespace coff {
 
 int InputFile::NextIndex = 0;
-llvm::LLVMContext BitcodeFile::Context;
-
-// Returns the last element of a path, which is supposed to be a filename.
-static StringRef getBasename(StringRef Path) {
-  size_t Pos = Path.find_last_of("\\/");
-  if (Pos == StringRef::npos)
-    return Path;
-  return Path.substr(Pos + 1);
-}
-
-// Returns a string in the format of "foo.obj" or "foo.obj(bar.lib)".
-std::string InputFile::getShortName() {
-  if (ParentName == "")
-    return getName().lower();
-  std::string Res = (getBasename(ParentName) + "(" +
-                     getBasename(getName()) + ")").str();
-  return StringRef(Res).lower();
-}
+LLVMContext BitcodeFile::Context;
+std::mutex BitcodeFile::Mu;
 
 ArchiveFile::ArchiveFile(MemoryBufferRef M) : InputFile(ArchiveKind, M) {}
 
 void ArchiveFile::parse() {
   // Parse a MemoryBufferRef as an archive file.
-  File = check(Archive::create(MB), getShortName());
+  File = check(Archive::create(MB), toString(this));
 
   // Allocate a buffer for Lazy objects.
   size_t NumSyms = File->getNumberOfSymbols();
@@ -80,11 +64,11 @@ void ArchiveFile::parse() {
   // Seen is a map from member files to boolean values. Initially
   // all members are mapped to false, which indicates all these files
   // are not read yet.
-  Error Err;
+  Error Err = Error::success();
   for (auto &Child : File->children(Err))
     Seen[Child.getChildOffset()].clear();
   if (Err)
-    fatal(Err, getShortName());
+    fatal(Err, toString(this));
 }
 
 // Returns a buffer pointing to a member file containing a given symbol.
@@ -113,14 +97,13 @@ MutableArrayRef<Lazy> ArchiveFile::getLazySymbols() { return LazySymbols; }
 
 void ObjectFile::parse() {
   // Parse a memory buffer as a COFF file.
-  std::unique_ptr<Binary> Bin =
-      check(createBinary(MB), getShortName());
+  std::unique_ptr<Binary> Bin = check(createBinary(MB), toString(this));
 
   if (auto *Obj = dyn_cast<COFFObjectFile>(Bin.get())) {
     Bin.release();
     COFFObj.reset(Obj);
   } else {
-    fatal(getShortName() + " is not a COFF file");
+    fatal(toString(this) + " is not a COFF file");
   }
 
   // Read section and symbol tables.
@@ -150,13 +133,28 @@ void ObjectFile::initializeChunks() {
       Directives = std::string((const char *)Data.data(), Data.size());
       continue;
     }
-    // Skip non-DWARF debug info. MSVC linker converts the sections into
-    // a PDB file, but we don't support that.
-    if (Name == ".debug" || Name.startswith(".debug$"))
-      continue;
-    // We want to preserve DWARF debug sections only when /debug is on.
+
+    // Object files may have DWARF debug info or MS CodeView debug info
+    // (or both).
+    //
+    // DWARF sections don't need any special handling from the perspective
+    // of the linker; they are just a data section containing relocations.
+    // We can just link them to complete debug info.
+    //
+    // CodeView needs a linker support. We need to interpret and debug
+    // info, and then write it to a separate .pdb file.
+
+    // Ignore debug info unless /debug is given.
     if (!Config->Debug && Name.startswith(".debug"))
       continue;
+
+    // CodeView sections are stored to a different vector because they are
+    // not linked in the regular manner.
+    if (Name == ".debug" || Name.startswith(".debug$")) {
+      DebugChunks.push_back(new (Alloc) SectionChunk(this, Sec));
+      continue;
+    }
+
     if (Sec->Characteristics & llvm::COFF::IMAGE_SCN_LNK_REMOVE)
       continue;
     auto *C = new (Alloc) SectionChunk(this, Sec);
@@ -169,12 +167,12 @@ void ObjectFile::initializeSymbols() {
   uint32_t NumSymbols = COFFObj->getNumberOfSymbols();
   SymbolBodies.reserve(NumSymbols);
   SparseSymbolBodies.resize(NumSymbols);
-  llvm::SmallVector<std::pair<Undefined *, uint32_t>, 8> WeakAliases;
+  SmallVector<std::pair<Undefined *, uint32_t>, 8> WeakAliases;
   int32_t LastSectionNumber = 0;
   for (uint32_t I = 0; I < NumSymbols; ++I) {
     // Get a COFFSymbolRef object.
     COFFSymbolRef Sym =
-        check(COFFObj->getSymbol(I), "broken object file: " + getShortName());
+        check(COFFObj->getSymbol(I), "broken object file: " + toString(this));
 
     const void *AuxP = nullptr;
     if (Sym.getNumberOfAuxSymbols())
@@ -236,12 +234,12 @@ Defined *ObjectFile::createDefined(COFFSymbolRef Sym, const void *AuxP,
 
   // Reserved sections numbers don't have contents.
   if (llvm::COFF::isReservedSectionNumber(SectionNumber))
-    fatal("broken object file: " + getShortName());
+    fatal("broken object file: " + toString(this));
 
   // This symbol references a section which is not present in the section
   // header.
   if ((uint32_t)SectionNumber >= SparseChunks.size())
-    fatal("broken object file: " + getShortName());
+    fatal("broken object file: " + toString(this));
 
   // Nothing else to do without a section chunk.
   auto *SC = cast_or_null<SectionChunk>(SparseChunks[SectionNumber]);
@@ -341,7 +339,7 @@ void BitcodeFile::parse() {
       Context, MB.getBufferStart(), MB.getBufferSize(), llvm::TargetOptions());
   M = check(std::move(ModOrErr), "could not create LTO module");
 
-  llvm::StringSaver Saver(Alloc);
+  StringSaver Saver(Alloc);
   for (unsigned I = 0, E = M->getSymbolCount(); I != E; ++I) {
     lto_symbol_attributes Attrs = M->getSymbolAttributes(I);
     if ((Attrs & LTO_SYMBOL_SCOPE_MASK) == LTO_SYMBOL_SCOPE_INTERNAL)
@@ -380,7 +378,26 @@ MachineTypes BitcodeFile::getMachineType() {
   }
 }
 
-std::mutex BitcodeFile::Mu;
+// Returns the last element of a path, which is supposed to be a filename.
+static StringRef getBasename(StringRef Path) {
+  size_t Pos = Path.find_last_of("\\/");
+  if (Pos == StringRef::npos)
+    return Path;
+  return Path.substr(Pos + 1);
+}
+
+// Returns a string in the format of "foo.obj" or "foo.obj(bar.lib)".
+std::string toString(InputFile *File) {
+  if (!File)
+    return "(internal)";
+  if (File->ParentName.empty())
+    return File->getName().lower();
+
+  std::string Res =
+      (getBasename(File->ParentName) + "(" + getBasename(File->getName()) + ")")
+          .str();
+  return StringRef(Res).lower();
+}
 
 } // namespace coff
 } // namespace lld

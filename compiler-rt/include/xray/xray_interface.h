@@ -18,7 +18,7 @@
 
 extern "C" {
 
-enum XRayEntryType { ENTRY = 0, EXIT = 1 };
+enum XRayEntryType { ENTRY = 0, EXIT = 1, TAIL = 2 };
 
 // Provide a function to invoke for when instrumentation points are hit. This is
 // a user-visible control surface that overrides the default implementation. The
@@ -31,6 +31,13 @@ enum XRayEntryType { ENTRY = 0, EXIT = 1 };
 //   - entry type: identifies what kind of instrumentation point was encountered
 //                 (function entry, function exit, etc.). See the enum
 //                 XRayEntryType for more details.
+//
+// The user handler must handle correctly spurious calls after this handler is
+// removed or replaced with another handler, because it would be too costly for
+// XRay runtime to avoid spurious calls.
+// To prevent circular calling, the handler function itself and all its
+// direct&indirect callees must not be instrumented with XRay, which can be
+// achieved by marking them all with: __attribute__((xray_never_instrument))
 //
 // Returns 1 on success, 0 on error.
 extern int __xray_set_handler(void (*entry)(int32_t, XRayEntryType));

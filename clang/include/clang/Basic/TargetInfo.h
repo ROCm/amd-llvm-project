@@ -989,11 +989,18 @@ public:
     return false;
   }
 
-  /// \brief Whether target allows to overalign ABI-specified prefered alignment
+  /// \brief Whether target allows to overalign ABI-specified preferred alignment
   virtual bool allowsLargerPreferedTypeAlignment() const { return true; }
 
   /// \brief Set supported OpenCL extensions and optional core features.
   virtual void setSupportedOpenCLOpts() {}
+
+  /// \brief Set supported OpenCL extensions as written on command line
+  virtual void setOpenCLExtensionOpts() {
+    for (const auto &Ext : getTargetOpts().OpenCLExtensionsAsWritten) {
+      getTargetOpts().SupportedOpenCLOptions.set(Ext);
+    }
+  }
 
   /// \brief Get supported OpenCL extensions and optional core features.
   OpenCLOptions &getSupportedOpenCLOpts() {

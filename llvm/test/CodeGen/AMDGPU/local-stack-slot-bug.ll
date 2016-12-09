@@ -6,9 +6,11 @@
 ; from https://bugs.freedesktop.org/show_bug.cgi?id=96602
 ;
 ; CHECK-LABEL: {{^}}main:
-; CHECK: v_lshlrev_b32_e32 [[BYTES:v[0-9]+]], 2, v0
-; CHECK-DAG: v_mov_b32_e32 [[ZERO_BASE_FI:v[0-9]+]], 0{{$}}
+
+; CHECK-DAG: v_lshlrev_b32_e32 [[BYTES:v[0-9]+]], 2, v0
 ; CHECK-DAG: v_add_i32_e32 [[HI_OFF:v[0-9]+]], vcc, 0x200, [[BYTES]]
+
+; TODO: add 0?
 ; CHECK-DAG: v_add_i32_e32 [[LO_OFF:v[0-9]+]], vcc, 0, [[BYTES]]
 
 ; CHECK: buffer_load_dword {{v[0-9]+}}, [[LO_OFF]], {{s\[[0-9]+:[0-9]+\]}}, {{s[0-9]+}} offen

@@ -109,14 +109,6 @@ private:
   /// Map generic virtual registers to their actual size.
   mutable std::unique_ptr<VRegToTypeMap> VRegToType;
 
-  /// Accessor for VRegToType. This accessor should only be used
-  /// by global-isel related work.
-  VRegToTypeMap &getVRegToType() const {
-    if (!VRegToType)
-      VRegToType.reset(new VRegToTypeMap);
-    return *VRegToType.get();
-  }
-
   /// Keep track of the physical registers that are live in to the function.
   /// Live in values are typically arguments in registers.  LiveIn values are
   /// allowed to have virtual registers associated with them, stored in the
@@ -550,10 +542,9 @@ public:
   void dumpUses(unsigned RegNo) const;
 #endif
 
-  /// isConstantPhysReg - Returns true if PhysReg is unallocatable and constant
-  /// throughout the function.  It is safe to move instructions that read such
-  /// a physreg.
-  bool isConstantPhysReg(unsigned PhysReg, const MachineFunction &MF) const;
+  /// Returns true if PhysReg is unallocatable and constant throughout the
+  /// function. Writing to a constant register has no effect.
+  bool isConstantPhysReg(unsigned PhysReg) const;
 
   /// Get an iterator over the pressure sets affected by the given physical or
   /// virtual register. If RegUnit is physical, it must be a register unit (from
@@ -641,6 +632,14 @@ public:
   /// function with the specified register class.
   ///
   unsigned createVirtualRegister(const TargetRegisterClass *RegClass);
+
+  /// Accessor for VRegToType. This accessor should only be used
+  /// by global-isel related work.
+  VRegToTypeMap &getVRegToType() const {
+    if (!VRegToType)
+      VRegToType.reset(new VRegToTypeMap);
+    return *VRegToType.get();
+  }
 
   /// Get the low-level type of \p VReg or LLT{} if VReg is not a generic
   /// (target independent) virtual register.
@@ -898,10 +897,11 @@ public:
           advance();
         } while (Op && Op->getParent() == P);
       } else if (ByBundle) {
-        MachineInstr &P = getBundleStart(*Op->getParent());
+        MachineBasicBlock::instr_iterator P =
+            getBundleStart(Op->getParent()->getIterator());
         do {
           advance();
-        } while (Op && &getBundleStart(*Op->getParent()) == &P);
+        } while (Op && getBundleStart(Op->getParent()->getIterator()) == P);
       }
 
       return *this;
@@ -1000,10 +1000,11 @@ public:
           advance();
         } while (Op && Op->getParent() == P);
       } else if (ByBundle) {
-        MachineInstr &P = getBundleStart(*Op->getParent());
+        MachineBasicBlock::instr_iterator P =
+            getBundleStart(Op->getParent()->getIterator());
         do {
           advance();
-        } while (Op && &getBundleStart(*Op->getParent()) == &P);
+        } while (Op && getBundleStart(Op->getParent()->getIterator()) == P);
       }
 
       return *this;
@@ -1016,7 +1017,7 @@ public:
     MachineInstr &operator*() const {
       assert(Op && "Cannot dereference end iterator!");
       if (ByBundle)
-        return getBundleStart(*Op->getParent());
+        return *getBundleStart(Op->getParent()->getIterator());
       return *Op->getParent();
     }
 

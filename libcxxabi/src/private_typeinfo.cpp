@@ -390,8 +390,10 @@ __pointer_type_info::can_catch(const __shim_type_info* thrown_type,
     // Do the dereference adjustment
     if (adjustedPtr != NULL)
         adjustedPtr = *static_cast<void**>(adjustedPtr);
-    // bullet 3B
-    if (thrown_pointer_type->__flags & ~__flags)
+    // bullet 3B and 3C
+    if (thrown_pointer_type->__flags & ~__flags & __no_remove_flags_mask)
+        return false;
+    if (__flags & ~thrown_pointer_type->__flags & __no_add_flags_mask)
         return false;
     if (is_equal(__pointee, thrown_pointer_type->__pointee, false))
         return true;
@@ -500,7 +502,9 @@ bool __pointer_to_member_type_info::can_catch(
         dynamic_cast<const __pointer_to_member_type_info*>(thrown_type);
     if (thrown_pointer_type == 0)
         return false;
-    if (thrown_pointer_type->__flags & ~__flags)
+    if (thrown_pointer_type->__flags & ~__flags & __no_remove_flags_mask)
+        return false;
+    if (__flags & ~thrown_pointer_type->__flags & __no_add_flags_mask)
         return false;
     if (!is_equal(__pointee, thrown_pointer_type->__pointee, false))
         return false;

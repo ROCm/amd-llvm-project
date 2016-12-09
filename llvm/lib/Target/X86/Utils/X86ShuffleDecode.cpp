@@ -151,6 +151,16 @@ void DecodePALIGNRMask(MVT VT, unsigned Imm,
   }
 }
 
+void DecodeVALIGNMask(MVT VT, unsigned Imm,
+                      SmallVectorImpl<int> &ShuffleMask) {
+  int NumElts = VT.getVectorNumElements();
+  // Not all bits of the immediate are used so mask it.
+  assert(isPowerOf2_32(NumElts) && "NumElts should be power of 2");
+  Imm = Imm & (NumElts - 1);
+  for (int i = 0; i != NumElts; ++i)
+    ShuffleMask.push_back(i + Imm);
+}
+
 /// DecodePSHUFMask - This decodes the shuffle masks for pshufw, pshufd, and vpermilp*.
 /// VT indicates the type of the vector allowing it to handle different
 /// datatypes and vector widths.
@@ -538,10 +548,11 @@ void DecodeVPERMIL2PMask(MVT VT, unsigned M2Z, ArrayRef<uint64_t> RawMask,
   unsigned VecSize = VT.getSizeInBits();
   unsigned EltSize = VT.getScalarSizeInBits();
   unsigned NumLanes = VecSize / 128;
-  unsigned NumEltsPerLane = VT.getVectorNumElements() / NumLanes;
-  assert((VecSize == 128 || VecSize == 256) &&
-         "Unexpected vector size");
+  unsigned NumElts = VT.getVectorNumElements();
+  unsigned NumEltsPerLane = NumElts / NumLanes;
+  assert((VecSize == 128 || VecSize == 256) && "Unexpected vector size");
   assert((EltSize == 32 || EltSize == 64) && "Unexpected element size");
+  assert((NumElts == RawMask.size()) && "Unexpected mask size");
 
   for (unsigned i = 0, e = RawMask.size(); i < e; ++i) {
     // VPERMIL2 Operation.
@@ -562,14 +573,15 @@ void DecodeVPERMIL2PMask(MVT VT, unsigned M2Z, ArrayRef<uint64_t> RawMask,
       continue;
     }
 
-    unsigned Index = i & ~(NumEltsPerLane - 1);
+    int Index = i & ~(NumEltsPerLane - 1);
     if (EltSize == 64)
       Index += (Selector >> 1) & 0x1;
     else
       Index += Selector & 0x3;
 
-    unsigned SrcOffset = (Selector >> 2) & 1;
-    ShuffleMask.push_back((int)(SrcOffset + Index));
+    int Src = (Selector >> 2) & 0x1;
+    Index += Src * NumElts;
+    ShuffleMask.push_back(Index);
   }
 }
 

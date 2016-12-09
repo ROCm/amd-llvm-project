@@ -241,6 +241,21 @@ TEST(HasDeclaration, HasDeclarationOfTemplateSpecializationType) {
                         hasDeclaration(namedDecl(hasName("A"))))))));
 }
 
+TEST(HasDeclaration, HasDeclarationOfCXXNewExpr) {
+  EXPECT_TRUE(
+      matches("int *A = new int();",
+              cxxNewExpr(hasDeclaration(functionDecl(parameterCountIs(1))))));
+}
+
+TEST(HasUnqualifiedDesugaredType, DesugarsUsing) {
+  EXPECT_TRUE(
+      matches("struct A {}; using B = A; B b;",
+              varDecl(hasType(hasUnqualifiedDesugaredType(recordType())))));
+  EXPECT_TRUE(
+      matches("struct A {}; using B = A; using C = B; C b;",
+              varDecl(hasType(hasUnqualifiedDesugaredType(recordType())))));
+}
+
 TEST(HasUnderlyingDecl, Matches) {
   EXPECT_TRUE(matches("namespace N { template <class T> void f(T t); }"
                       "template <class T> void g() { using N::f; f(T()); }",
@@ -2187,6 +2202,23 @@ TEST(Matcher, HasAnyDeclaration) {
                                hasParameter(0, parmVarDecl(hasName("p3"))))))));
   EXPECT_TRUE(notMatches(Fragment, unresolvedLookupExpr(hasAnyDeclaration(
                                        functionDecl(hasName("bar"))))));
+}
+
+TEST(SubstTemplateTypeParmType, HasReplacementType)
+{
+  std::string Fragment = "template<typename T>"
+                         "double F(T t);"
+                         "int i;"
+                         "double j = F(i);";
+  EXPECT_TRUE(matches(Fragment, substTemplateTypeParmType(hasReplacementType(
+                                    qualType(asString("int"))))));
+  EXPECT_TRUE(notMatches(Fragment, substTemplateTypeParmType(hasReplacementType(
+                                       qualType(asString("double"))))));
+  EXPECT_TRUE(
+      notMatches("template<int N>"
+                 "double F();"
+                 "double j = F<5>();",
+                 substTemplateTypeParmType(hasReplacementType(qualType()))));
 }
 
 } // namespace ast_matchers

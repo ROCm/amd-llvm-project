@@ -229,7 +229,7 @@ def VOP_MOVRELD : VOPProfile<[untyped, i32, untyped, untyped]> {
   let EmitDst = 1; // force vdst emission
 }
 
-let Uses = [M0, EXEC] in {
+let SubtargetPredicate = HasMovrel, Uses = [M0, EXEC] in {
 // v_movreld_b32 is a special case because the destination output
  // register is really a source. It isn't actually read (but may be
  // written), and is only to provide the base register to start
@@ -280,24 +280,38 @@ defm V_EXP_LEGACY_F32 : VOP1Inst <"v_exp_legacy_f32", VOP_F32_F32>;
 
 let SubtargetPredicate = isVI in {
 
-defm V_CVT_F16_U16 : VOP1Inst <"v_cvt_f16_u16", VOP_F16_I16>;
-defm V_CVT_F16_I16 : VOP1Inst <"v_cvt_f16_i16", VOP_F16_I16>;
-defm V_CVT_U16_F16 : VOP1Inst <"v_cvt_u16_f16", VOP_I16_F16>;
-defm V_CVT_I16_F16 : VOP1Inst <"v_cvt_i16_f16", VOP_I16_F16>;
-defm V_RCP_F16 : VOP1Inst <"v_rcp_f16", VOP_F16_F16>;
-defm V_SQRT_F16 : VOP1Inst <"v_sqrt_f16", VOP_F16_F16>;
-defm V_RSQ_F16 : VOP1Inst <"v_rsq_f16", VOP_F16_F16>;
-defm V_LOG_F16 : VOP1Inst <"v_log_f16", VOP_F16_F16>;
-defm V_EXP_F16 : VOP1Inst <"v_exp_f16", VOP_F16_F16>;
-defm V_FREXP_MANT_F16 : VOP1Inst <"v_frexp_mant_f16", VOP_F16_F16>;
-defm V_FREXP_EXP_I16_F16 : VOP1Inst <"v_frexp_exp_i16_f16", VOP_I16_F16>;
-defm V_FLOOR_F16 : VOP1Inst <"v_floor_f16", VOP_F16_F16>;
-defm V_CEIL_F16 : VOP1Inst <"v_ceil_f16", VOP_F16_F16>;
-defm V_TRUNC_F16 : VOP1Inst <"v_trunc_f16", VOP_F16_F16>;
-defm V_RNDNE_F16 : VOP1Inst <"v_rndne_f16", VOP_F16_F16>;
-defm V_FRACT_F16 : VOP1Inst <"v_fract_f16", VOP_F16_F16>;
-defm V_SIN_F16 : VOP1Inst <"v_sin_f16", VOP_F16_F16>;
-defm V_COS_F16 : VOP1Inst <"v_cos_f16", VOP_F16_F16>;
+defm V_CVT_F16_U16 : VOP1Inst <"v_cvt_f16_u16", VOP_F16_I16, uint_to_fp>;
+defm V_CVT_F16_I16 : VOP1Inst <"v_cvt_f16_i16", VOP_F16_I16, sint_to_fp>;
+defm V_CVT_U16_F16 : VOP1Inst <"v_cvt_u16_f16", VOP_I16_F16, fp_to_uint>;
+defm V_CVT_I16_F16 : VOP1Inst <"v_cvt_i16_f16", VOP_I16_F16, fp_to_sint>;
+defm V_RCP_F16 : VOP1Inst <"v_rcp_f16", VOP_F16_F16, AMDGPUrcp>;
+defm V_SQRT_F16 : VOP1Inst <"v_sqrt_f16", VOP_F16_F16, fsqrt>;
+defm V_RSQ_F16 : VOP1Inst <"v_rsq_f16", VOP_F16_F16, AMDGPUrsq>;
+defm V_LOG_F16 : VOP1Inst <"v_log_f16", VOP_F16_F16, flog2>;
+defm V_EXP_F16 : VOP1Inst <"v_exp_f16", VOP_F16_F16, fexp2>;
+defm V_FREXP_MANT_F16 : VOP1Inst <"v_frexp_mant_f16", VOP_F16_F16, int_amdgcn_frexp_mant>;
+defm V_FREXP_EXP_I16_F16 : VOP1Inst <"v_frexp_exp_i16_f16", VOP_I16_F16, int_amdgcn_frexp_exp>;
+defm V_FLOOR_F16 : VOP1Inst <"v_floor_f16", VOP_F16_F16, ffloor>;
+defm V_CEIL_F16 : VOP1Inst <"v_ceil_f16", VOP_F16_F16, fceil>;
+defm V_TRUNC_F16 : VOP1Inst <"v_trunc_f16", VOP_F16_F16, ftrunc>;
+defm V_RNDNE_F16 : VOP1Inst <"v_rndne_f16", VOP_F16_F16, frint>;
+defm V_FRACT_F16 : VOP1Inst <"v_fract_f16", VOP_F16_F16, AMDGPUfract>;
+defm V_SIN_F16 : VOP1Inst <"v_sin_f16", VOP_F16_F16, AMDGPUsin>;
+defm V_COS_F16 : VOP1Inst <"v_cos_f16", VOP_F16_F16, AMDGPUcos>;
+
+}
+
+let Predicates = [isVI] in {
+
+def : Pat<
+    (f32 (f16_to_fp i16:$src)),
+    (V_CVT_F32_F16_e32 $src)
+>;
+
+def : Pat<
+    (i16 (fp_to_f16 f32:$src)),
+    (V_CVT_F16_F32_e32 $src)
+>;
 
 }
 
@@ -527,13 +541,74 @@ defm V_FRACT_F16         : VOP1_Real_vi <0x48>;
 defm V_SIN_F16           : VOP1_Real_vi <0x49>;
 defm V_COS_F16           : VOP1_Real_vi <0x4a>;
 
+
+// Copy of v_mov_b32 with $vdst as a use operand for use with VGPR
+// indexing mode. vdst can't be treated as a def for codegen purposes,
+// and an implicit use and def of the super register should be added.
+def V_MOV_B32_indirect : VPseudoInstSI<(outs),
+  (ins getVALUDstForVT<i32>.ret:$vdst, getVOPSrc0ForVT<i32>.ret:$src0)>,
+  PseudoInstExpansion<(V_MOV_B32_e32_vi getVALUDstForVT<i32>.ret:$vdst,
+                                        getVOPSrc0ForVT<i32>.ret:$src0)> {
+  let VOP1 = 1;
+  let SubtargetPredicate = isVI;
+}
+
+// This is a pseudo variant of the v_movreld_b32 instruction in which the
+// vector operand appears only twice, once as def and once as use. Using this
+// pseudo avoids problems with the Two Address instructions pass.
+class V_MOVRELD_B32_pseudo<RegisterClass rc> : VPseudoInstSI <
+  (outs rc:$vdst),
+  (ins rc:$vsrc, VSrc_b32:$val, i32imm:$offset)> {
+  let VOP1 = 1;
+
+  let Constraints = "$vsrc = $vdst";
+  let Uses = [M0, EXEC];
+
+  let SubtargetPredicate = HasMovrel;
+}
+
+def V_MOVRELD_B32_V1 : V_MOVRELD_B32_pseudo<VGPR_32>;
+def V_MOVRELD_B32_V2 : V_MOVRELD_B32_pseudo<VReg_64>;
+def V_MOVRELD_B32_V4 : V_MOVRELD_B32_pseudo<VReg_128>;
+def V_MOVRELD_B32_V8 : V_MOVRELD_B32_pseudo<VReg_256>;
+def V_MOVRELD_B32_V16 : V_MOVRELD_B32_pseudo<VReg_512>;
+
 let Predicates = [isVI] in {
 
 def : Pat <
-  (int_amdgcn_mov_dpp i32:$src, imm:$dpp_ctrl, imm:$row_mask, imm:$bank_mask,
-                      imm:$bound_ctrl),
+  (i32 (int_amdgcn_mov_dpp i32:$src, imm:$dpp_ctrl, imm:$row_mask, imm:$bank_mask,
+                      imm:$bound_ctrl)),
   (V_MOV_B32_dpp $src, (as_i32imm $dpp_ctrl), (as_i32imm $row_mask),
                        (as_i32imm $bank_mask), (as_i1imm $bound_ctrl))
+>;
+
+
+def : Pat<
+  (i32 (anyext i16:$src)),
+  (COPY $src)
+>;
+
+def : Pat<
+   (i64 (anyext i16:$src)),
+   (REG_SEQUENCE VReg_64,
+     (i32 (COPY $src)), sub0,
+     (V_MOV_B32_e32 (i32 0)), sub1)
+>;
+
+def : Pat<
+  (i16 (trunc i32:$src)),
+  (COPY $src)
+>;
+
+def : Pat<
+  (i1 (trunc i16:$src)),
+  (COPY $src)
+>;
+
+
+def : Pat <
+  (i16 (trunc i64:$src)),
+  (EXTRACT_SUBREG $src, sub0)
 >;
 
 } // End Predicates = [isVI]

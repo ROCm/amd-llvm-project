@@ -135,6 +135,8 @@ private:
 
   void SelectADD_SUB_I64(SDNode *N);
   void SelectDIV_SCALE(SDNode *N);
+  void SelectFMA_W_CHAIN(SDNode *N);
+  void SelectFMUL_W_CHAIN(SDNode *N);
 
   SDNode *getS_BFE(unsigned Opcode, const SDLoc &DL, SDValue Val,
                    uint32_t Offset, uint32_t Width);
@@ -183,8 +185,21 @@ bool AMDGPUDAGToDAGISel::isInlineImmediate(const SDNode *N) const {
 /// determined.
 const TargetRegisterClass *AMDGPUDAGToDAGISel::getOperandRegClass(SDNode *N,
                                                           unsigned OpNo) const {
-  if (!N->isMachineOpcode())
+  if (!N->isMachineOpcode()) {
+    if (N->getOpcode() == ISD::CopyToReg) {
+      unsigned Reg = cast<RegisterSDNode>(N->getOperand(1))->getReg();
+      if (TargetRegisterInfo::isVirtualRegister(Reg)) {
+        MachineRegisterInfo &MRI = CurDAG->getMachineFunction().getRegInfo();
+        return MRI.getRegClass(Reg);
+      }
+
+      const SIRegisterInfo *TRI
+        = static_cast<const SISubtarget *>(Subtarget)->getRegisterInfo();
+      return TRI->getPhysRegClass(Reg);
+    }
+
     return nullptr;
+  }
 
   switch (N->getMachineOpcode()) {
   default: {
@@ -240,7 +255,7 @@ SDNode *AMDGPUDAGToDAGISel::glueCopyToM0(SDNode *N) const {
 static unsigned selectSGPRVectorRegClassID(unsigned NumVectorElts) {
   switch (NumVectorElts) {
   case 1:
-    return AMDGPU::SReg_32RegClassID;
+    return AMDGPU::SReg_32_XM0RegClassID;
   case 2:
     return AMDGPU::SReg_64RegClassID;
   case 4:
@@ -271,7 +286,11 @@ void AMDGPUDAGToDAGISel::Select(SDNode *N) {
   // DAG legalization, so we can fold some i64 ADDs used for address
   // calculation into the LOAD and STORE instructions.
   case ISD::ADD:
-  case ISD::SUB: {
+  case ISD::ADDC:
+  case ISD::ADDE:
+  case ISD::SUB:
+  case ISD::SUBC:
+  case ISD::SUBE: {
     if (N->getValueType(0) != MVT::i64 ||
         Subtarget->getGeneration() < AMDGPUSubtarget::SOUTHERN_ISLANDS)
       break;
@@ -279,6 +298,15 @@ void AMDGPUDAGToDAGISel::Select(SDNode *N) {
     SelectADD_SUB_I64(N);
     return;
   }
+  case AMDGPUISD::FMUL_W_CHAIN: {
+    SelectFMUL_W_CHAIN(N);
+    return;
+  }
+  case AMDGPUISD::FMA_W_CHAIN: {
+    SelectFMA_W_CHAIN(N);
+    return;
+  }
+
   case ISD::SCALAR_TO_VECTOR:
   case AMDGPUISD::BUILD_VERTICAL_VECTOR:
   case ISD::BUILD_VECTOR: {
@@ -576,7 +604,12 @@ void AMDGPUDAGToDAGISel::SelectADD_SUB_I64(SDNode *N) {
   SDValue LHS = N->getOperand(0);
   SDValue RHS = N->getOperand(1);
 
-  bool IsAdd = (N->getOpcode() == ISD::ADD);
+  unsigned Opcode = N->getOpcode();
+  bool ConsumeCarry = (Opcode == ISD::ADDE || Opcode == ISD::SUBE);
+  bool ProduceCarry =
+      ConsumeCarry || Opcode == ISD::ADDC || Opcode == ISD::SUBC;
+  bool IsAdd =
+      (Opcode == ISD::ADD || Opcode == ISD::ADDC || Opcode == ISD::ADDE);
 
   SDValue Sub0 = CurDAG->getTargetConstant(AMDGPU::sub0, DL, MVT::i32);
   SDValue Sub1 = CurDAG->getTargetConstant(AMDGPU::sub1, DL, MVT::i32);
@@ -592,25 +625,70 @@ void AMDGPUDAGToDAGISel::SelectADD_SUB_I64(SDNode *N) {
                                        DL, MVT::i32, RHS, Sub1);
 
   SDVTList VTList = CurDAG->getVTList(MVT::i32, MVT::Glue);
-  SDValue AddLoArgs[] = { SDValue(Lo0, 0), SDValue(Lo1, 0) };
 
   unsigned Opc = IsAdd ? AMDGPU::S_ADD_U32 : AMDGPU::S_SUB_U32;
   unsigned CarryOpc = IsAdd ? AMDGPU::S_ADDC_U32 : AMDGPU::S_SUBB_U32;
 
-  SDNode *AddLo = CurDAG->getMachineNode( Opc, DL, VTList, AddLoArgs);
-  SDValue Carry(AddLo, 1);
-  SDNode *AddHi
-    = CurDAG->getMachineNode(CarryOpc, DL, MVT::i32,
-                             SDValue(Hi0, 0), SDValue(Hi1, 0), Carry);
+  SDNode *AddLo;
+  if (!ConsumeCarry) {
+    SDValue Args[] = { SDValue(Lo0, 0), SDValue(Lo1, 0) };
+    AddLo = CurDAG->getMachineNode(Opc, DL, VTList, Args);
+  } else {
+    SDValue Args[] = { SDValue(Lo0, 0), SDValue(Lo1, 0), N->getOperand(2) };
+    AddLo = CurDAG->getMachineNode(CarryOpc, DL, VTList, Args);
+  }
+  SDValue AddHiArgs[] = {
+    SDValue(Hi0, 0),
+    SDValue(Hi1, 0),
+    SDValue(AddLo, 1)
+  };
+  SDNode *AddHi = CurDAG->getMachineNode(CarryOpc, DL, VTList, AddHiArgs);
 
-  SDValue Args[5] = {
+  SDValue RegSequenceArgs[] = {
     CurDAG->getTargetConstant(AMDGPU::SReg_64RegClassID, DL, MVT::i32),
     SDValue(AddLo,0),
     Sub0,
     SDValue(AddHi,0),
     Sub1,
   };
-  CurDAG->SelectNodeTo(N, AMDGPU::REG_SEQUENCE, MVT::i64, Args);
+  SDNode *RegSequence = CurDAG->getMachineNode(AMDGPU::REG_SEQUENCE, DL,
+                                               MVT::i64, RegSequenceArgs);
+
+  if (ProduceCarry) {
+    // Replace the carry-use
+    CurDAG->ReplaceAllUsesOfValueWith(SDValue(N, 1), SDValue(AddHi, 1));
+  }
+
+  // Replace the remaining uses.
+  CurDAG->ReplaceAllUsesWith(N, RegSequence);
+  CurDAG->RemoveDeadNode(N);
+}
+
+void AMDGPUDAGToDAGISel::SelectFMA_W_CHAIN(SDNode *N) {
+  SDLoc SL(N);
+  //  src0_modifiers, src0,  src1_modifiers, src1, src2_modifiers, src2, clamp, omod
+  SDValue Ops[10];
+
+  SelectVOP3Mods0(N->getOperand(1), Ops[1], Ops[0], Ops[6], Ops[7]);
+  SelectVOP3Mods(N->getOperand(2), Ops[3], Ops[2]);
+  SelectVOP3Mods(N->getOperand(3), Ops[5], Ops[4]);
+  Ops[8] = N->getOperand(0);
+  Ops[9] = N->getOperand(4);
+
+  CurDAG->SelectNodeTo(N, AMDGPU::V_FMA_F32, N->getVTList(), Ops);
+}
+
+void AMDGPUDAGToDAGISel::SelectFMUL_W_CHAIN(SDNode *N) {
+  SDLoc SL(N);
+  //	src0_modifiers, src0,  src1_modifiers, src1, clamp, omod
+  SDValue Ops[8];
+
+  SelectVOP3Mods0(N->getOperand(1), Ops[1], Ops[0], Ops[4], Ops[5]);
+  SelectVOP3Mods(N->getOperand(2), Ops[3], Ops[2]);
+  Ops[6] = N->getOperand(0);
+  Ops[7] = N->getOperand(3);
+
+  CurDAG->SelectNodeTo(N, AMDGPU::V_MUL_F32_e64, N->getVTList(), Ops);
 }
 
 // We need to handle this here because tablegen doesn't support matching
@@ -1367,26 +1445,12 @@ void AMDGPUDAGToDAGISel::SelectBRCOND(SDNode *N) {
     return;
   }
 
-  // The result of VOPC instructions is or'd against ~EXEC before it is
-  // written to vcc or another SGPR.  This means that the value '1' is always
-  // written to the corresponding bit for results that are masked.  In order
-  // to correctly check against vccz, we need to and VCC with the EXEC
-  // register in order to clear the value from the masked bits.
-
   SDLoc SL(N);
 
-  SDNode *MaskedCond =
-        CurDAG->getMachineNode(AMDGPU::S_AND_B64, SL, MVT::i1,
-                               CurDAG->getRegister(AMDGPU::EXEC, MVT::i1),
-                               Cond);
-  SDValue VCC = CurDAG->getCopyToReg(N->getOperand(0), SL, AMDGPU::VCC,
-                                     SDValue(MaskedCond, 0),
-                                     SDValue()); // Passing SDValue() adds a
-                                                 // glue output.
+  SDValue VCC = CurDAG->getCopyToReg(N->getOperand(0), SL, AMDGPU::VCC, Cond);
   CurDAG->SelectNodeTo(N, AMDGPU::S_CBRANCH_VCCNZ, MVT::Other,
                        N->getOperand(2), // Basic Block
-                       VCC.getValue(0),  // Chain
-                       VCC.getValue(1)); // Glue
+                       VCC.getValue(0));
   return;
 }
 

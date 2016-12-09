@@ -147,9 +147,9 @@
 # define KMP_UINT64_SPEC     "llu"
 #endif /* KMP_OS_UNIX */
 
-#if KMP_ARCH_X86 || KMP_ARCH_ARM
+#if KMP_ARCH_X86 || KMP_ARCH_ARM || KMP_ARCH_MIPS
 # define KMP_SIZE_T_SPEC KMP_UINT32_SPEC
-#elif KMP_ARCH_X86_64 || KMP_ARCH_PPC64 || KMP_ARCH_AARCH64
+#elif KMP_ARCH_X86_64 || KMP_ARCH_PPC64 || KMP_ARCH_AARCH64 || KMP_ARCH_MIPS64
 # define KMP_SIZE_T_SPEC KMP_UINT64_SPEC
 #else
 # error "Can't determine size_t printf format specifier."
@@ -236,9 +236,18 @@ typedef double  kmp_real64;
 #endif
 
 #define PAGE_SIZE                       (0x4000)
+
+#if KMP_OS_LINUX
+#define KMP_GET_PAGE_SIZE() getpagesize()
+#else
+// TODO: find the corresponding function to getpagesize() in Windows
+// and use it whenever possible.
+#define KMP_GET_PAGE_SIZE() PAGE_SIZE
+#endif
+
 #define PAGE_ALIGNED(_addr)     ( ! ((size_t) _addr & \
-                                     (size_t)(PAGE_SIZE - 1)))
-#define ALIGN_TO_PAGE(x)   (void *)(((size_t)(x)) & ~((size_t)(PAGE_SIZE - 1)))
+                                     (size_t)(KMP_GET_PAGE_SIZE() - 1)))
+#define ALIGN_TO_PAGE(x)   (void *)(((size_t)(x)) & ~((size_t)(KMP_GET_PAGE_SIZE() - 1)))
 
 /* ---------------------- Support for cache alignment, padding, etc. -----------------*/
 
@@ -550,7 +559,7 @@ extern kmp_real64 __kmp_xchg_real64( volatile kmp_real64 *p, kmp_real64 v );
 # endif
 #endif /* KMP_OS_WINDOWS */
 
-#if KMP_ARCH_PPC64 || KMP_ARCH_ARM || KMP_ARCH_AARCH64
+#if KMP_ARCH_PPC64 || KMP_ARCH_ARM || KMP_ARCH_AARCH64 || KMP_ARCH_MIPS || KMP_ARCH_MIPS64
 # define KMP_MB()       __sync_synchronize()
 #endif
 
@@ -609,7 +618,7 @@ extern kmp_real64 __kmp_xchg_real64( volatile kmp_real64 *p, kmp_real64 v );
 #define TCW_SYNC_8(a,b)     (a) = (b)
 #define TCX_SYNC_8(a,b,c)   KMP_COMPARE_AND_STORE_REL64((volatile kmp_int64 *)(volatile void *)&(a), (kmp_int64)(b), (kmp_int64)(c))
 
-#if KMP_ARCH_X86
+#if KMP_ARCH_X86 || KMP_ARCH_MIPS
 // What about ARM?
     #define TCR_PTR(a)          ((void *)TCR_4(a))
     #define TCW_PTR(a,b)        TCW_4((a),(b))

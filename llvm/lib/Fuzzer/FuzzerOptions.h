@@ -30,6 +30,7 @@ struct FuzzingOptions {
   bool UseIndirCalls = true;
   bool UseMemcmp = true;
   bool UseMemmem = true;
+  bool UseCmp = false;
   bool UseValueProfile = false;
   bool Shrink = false;
   int ReloadIntervalSec = 1;
@@ -51,6 +52,7 @@ struct FuzzingOptions {
   bool PrintCorpusStats = false;
   bool PrintCoverage = false;
   bool DetectLeaks = true;
+  int  TraceMalloc = 0;
 };
 
 }  // namespace fuzzer

@@ -56,8 +56,12 @@ uptr GetThreadSelf() {
   return (uptr)pthread_self();
 }
 
-void ReleaseMemoryToOS(uptr addr, uptr size) {
-  madvise((void*)addr, size, MADV_DONTNEED);
+void ReleaseMemoryPagesToOS(uptr beg, uptr end) {
+  uptr page_size = GetPageSizeCached();
+  uptr beg_aligned = RoundUpTo(beg, page_size);
+  uptr end_aligned = RoundDownTo(end, page_size);
+  if (beg_aligned < end_aligned)
+    madvise((void*)beg_aligned, end_aligned - beg_aligned, MADV_DONTNEED);
 }
 
 void NoHugePagesInRegion(uptr addr, uptr size) {
@@ -128,7 +132,7 @@ void SleepForMillis(int millis) {
 }
 
 void Abort() {
-#ifndef SANITIZER_GO
+#if !SANITIZER_GO
   // If we are handling SIGABRT, unhandle it first.
   if (IsHandledDeadlySignal(SIGABRT)) {
     struct sigaction sigact;
@@ -142,7 +146,7 @@ void Abort() {
 }
 
 int Atexit(void (*function)(void)) {
-#ifndef SANITIZER_GO
+#if !SANITIZER_GO
   return atexit(function);
 #else
   return 0;
@@ -153,7 +157,7 @@ bool SupportsColoredOutput(fd_t fd) {
   return isatty(fd) != 0;
 }
 
-#ifndef SANITIZER_GO
+#if !SANITIZER_GO
 // TODO(glider): different tools may require different altstack size.
 static const uptr kAltStackSize = SIGSTKSZ * 4;  // SIGSTKSZ is not enough.
 

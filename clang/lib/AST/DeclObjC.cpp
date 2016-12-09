@@ -800,8 +800,7 @@ void ObjCMethodDecl::setParamsAndSelLocs(ASTContext &C,
   if (Params.empty() && SelLocs.empty())
     return;
 
-  static_assert(llvm::AlignOf<ParmVarDecl *>::Alignment >=
-                    llvm::AlignOf<SourceLocation>::Alignment,
+  static_assert(alignof(ParmVarDecl *) >= alignof(SourceLocation),
                 "Alignment not sufficient for SourceLocation");
 
   unsigned Size = sizeof(ParmVarDecl *) * NumParams +
@@ -870,6 +869,12 @@ ObjCMethodDecl *ObjCMethodDecl::getNextRedeclarationImpl() {
           Redecl = CatD->getMethod(getSelector(), isInstanceMethod());
     }
   }
+
+  // Ensure that the discovered method redeclaration has a valid declaration
+  // context. Used to prevent infinite loops when iterating redeclarations in
+  // a partially invalid AST.
+  if (Redecl && cast<Decl>(Redecl->getDeclContext())->isInvalidDecl())
+    Redecl = nullptr;
 
   if (!Redecl && isRedeclaration()) {
     // This is the last redeclaration, go back to the first method.
@@ -1374,7 +1379,7 @@ ObjCTypeParamList *ObjCTypeParamList::create(
                      SourceLocation rAngleLoc) {
   void *mem =
       ctx.Allocate(totalSizeToAlloc<ObjCTypeParamDecl *>(typeParams.size()),
-                   llvm::alignOf<ObjCTypeParamList>());
+                   alignof(ObjCTypeParamList));
   return new (mem) ObjCTypeParamList(lAngleLoc, typeParams, rAngleLoc);
 }
 
