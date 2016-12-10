@@ -64,8 +64,10 @@ class EmitAssemblyHelper {
   const LangOptions &LangOpts;
   Module *TheModule;
 
+  Timer PreLinkTime;
   Timer CodeGenerationTime;
 
+  mutable legacy::PassManager *PreLinkPasses;
   std::unique_ptr<raw_pwrite_stream> OS;
 
 private:
@@ -76,8 +78,14 @@ private:
     return TargetIRAnalysis();
   }
 
-  /// Set LLVM command line options passed through -backend-option.
-  void setCommandLineOpts();
+  legacy::PassManager *getPreLinkPasses() const {
+    if (!PreLinkPasses) {
+      PreLinkPasses = new legacy::PassManager();
+      PreLinkPasses->add(
+          createTargetTransformInfoWrapperPass(getTargetIRAnalysis()));
+    }
+    return PreLinkPasses;
+  }
 
   void CreatePasses(legacy::PassManager &MPM, legacy::FunctionPassManager &FPM);
 
@@ -97,14 +105,20 @@ private:
   bool AddEmitPasses(legacy::PassManager &CodeGenPasses, BackendAction Action,
                      raw_pwrite_stream &OS);
 
+  /// Add target specific pre-linking passes.
+  void AddPreLinkPasses();
+
 public:
   EmitAssemblyHelper(DiagnosticsEngine &_Diags, const CodeGenOptions &CGOpts,
                      const clang::TargetOptions &TOpts,
                      const LangOptions &LOpts, Module *M)
       : Diags(_Diags), CodeGenOpts(CGOpts), TargetOpts(TOpts), LangOpts(LOpts),
-        TheModule(M), CodeGenerationTime("codegen", "Code Generation Time") {}
+        TheModule(M), PreLinkTime("prelink", "Pre-Linking Passes Time"),
+        CodeGenerationTime("codegen", "Code Generation Time"),
+        PreLinkPasses(nullptr)  {}
 
   ~EmitAssemblyHelper() {
+    delete PreLinkPasses;
     if (CodeGenOpts.DisableFree)
       BuryPointer(std::move(TM));
   }
@@ -112,7 +126,17 @@ public:
   std::unique_ptr<TargetMachine> TM;
 
   void EmitAssembly(BackendAction Action,
-                    std::unique_ptr<raw_pwrite_stream> OS);
+                    std::unique_ptr<raw_pwrite_stream> &OS);
+
+
+  void DoPreLinkPasses();
+
+  /// Set LLVM command line options passed through -backend-option.
+  void setCommandLineOpts();
+
+  /// Set up target for target specific pre-linking passes and LLVM code
+  /// generation.
+  void setTarget(BackendAction Action);
 };
 
 // We need this wrapper to access LangOpts and CGOpts from extension functions
@@ -499,6 +523,14 @@ void EmitAssemblyHelper::setCommandLineOpts() {
                                     BackendArgs.data());
 }
 
+void EmitAssemblyHelper::setTarget(BackendAction Action) {
+  bool UsesCodeGen = (Action != Backend_EmitNothing &&
+                      Action != Backend_EmitBC &&
+                      Action != Backend_EmitLL);
+  if (!TM)
+    CreateTargetMachine(UsesCodeGen);
+}
+
 void EmitAssemblyHelper::CreateTargetMachine(bool MustCreateTM) {
   // Create the TargetMachine for generating code.
   std::string Error;
@@ -658,16 +690,18 @@ bool EmitAssemblyHelper::AddEmitPasses(legacy::PassManager &CodeGenPasses,
   return true;
 }
 
-void EmitAssemblyHelper::EmitAssembly(BackendAction Action,
-                                      std::unique_ptr<raw_pwrite_stream> OS) {
-  TimeRegion Region(llvm::TimePassesIsEnabled ? &CodeGenerationTime : nullptr);
+void EmitAssemblyHelper::AddPreLinkPasses() {
+  legacy::PassManager *PM = getPreLinkPasses();
+  TM->addPreLinkPasses(*PM);
+}
 
-  setCommandLineOpts();
+void EmitAssemblyHelper::EmitAssembly(BackendAction Action,
+                                      std::unique_ptr<raw_pwrite_stream> &OS) {
+  TimeRegion Region(llvm::TimePassesIsEnabled ? &CodeGenerationTime : nullptr);
 
   bool UsesCodeGen = (Action != Backend_EmitNothing &&
                       Action != Backend_EmitBC &&
                       Action != Backend_EmitLL);
-  CreateTargetMachine(UsesCodeGen);
 
   if (UsesCodeGen && !TM)
     return;
@@ -735,6 +769,23 @@ void EmitAssemblyHelper::EmitAssembly(BackendAction Action,
   }
 }
 
+void EmitAssemblyHelper::DoPreLinkPasses() {
+  TimeRegion Region(llvm::TimePassesIsEnabled ? &PreLinkTime : nullptr);
+
+  if (!TM)
+    return;
+
+  AddPreLinkPasses();
+
+  // Before executing passes, print the final values of the LLVM options.
+  cl::PrintOptionValues();
+
+  if (PreLinkPasses) {
+    PrettyStackTraceString CrashInfo("Pre-linking passes");
+    PreLinkPasses->run(*TheModule);
+  }
+}
+
 static void runThinLTOBackend(const CodeGenOptions &CGOpts, Module *M,
                               std::unique_ptr<raw_pwrite_stream> OS) {
   // If we are performing a ThinLTO importing compile, load the function index
@@ -792,7 +843,8 @@ void clang::EmitBackendOutput(DiagnosticsEngine &Diags,
                               const clang::TargetOptions &TOpts,
                               const LangOptions &LOpts, const llvm::DataLayout &TDesc,
                               Module *M, BackendAction Action,
-                              std::unique_ptr<raw_pwrite_stream> OS) {
+                              std::unique_ptr<raw_pwrite_stream> OS,
+                              bool SetLLVMOpts) {
   if (!CGOpts.ThinLTOIndexFile.empty()) {
     runThinLTOBackend(CGOpts, M, std::move(OS));
     return;
@@ -800,7 +852,10 @@ void clang::EmitBackendOutput(DiagnosticsEngine &Diags,
 
   EmitAssemblyHelper AsmHelper(Diags, CGOpts, TOpts, LOpts, M);
 
-  AsmHelper.EmitAssembly(Action, std::move(OS));
+  if (SetLLVMOpts)
+    AsmHelper.setCommandLineOpts();
+  AsmHelper.setTarget(Action);
+  AsmHelper.EmitAssembly(Action, OS);
 
   // Verify clang's TargetInfo DataLayout against the LLVM TargetMachine's
   // DataLayout.
@@ -813,6 +868,18 @@ void clang::EmitBackendOutput(DiagnosticsEngine &Diags,
       Diags.Report(DiagID) << DLDesc << TDesc.getStringRepresentation();
     }
   }
+}
+
+void clang::PerformPrelinkPasses(DiagnosticsEngine &Diags,
+                                 const CodeGenOptions &CGOpts,
+                                 const clang::TargetOptions &TOpts,
+                                 const LangOptions &LOpts, const llvm::DataLayout &TDesc,
+                                 Module *M, BackendAction Action) {
+  EmitAssemblyHelper AsmHelper(Diags, CGOpts, TOpts, LOpts, M);
+
+  AsmHelper.setCommandLineOpts();
+  AsmHelper.setTarget(Action);
+  AsmHelper.DoPreLinkPasses();
 }
 
 static const char* getSectionNameForBitcode(const Triple &T) {

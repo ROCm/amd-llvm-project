@@ -196,6 +196,10 @@ namespace clang {
       Ctx.setDiagnosticHandler(DiagnosticHandler, this);
       Ctx.setDiagnosticHotnessRequested(CodeGenOpts.DiagnosticsWithHotness);
 
+      PerformPrelinkPasses(Diags, CodeGenOpts, TargetOpts, LangOpts,
+                           C.getTargetInfo().getDataLayout(),
+                           getModule(), Action);
+
       std::unique_ptr<llvm::tool_output_file> OptRecordFile;
       if (!CodeGenOpts.OptRecordFile.empty()) {
         std::error_code EC;
@@ -227,7 +231,8 @@ namespace clang {
 
       EmitBackendOutput(Diags, CodeGenOpts, TargetOpts, LangOpts,
                         C.getTargetInfo().getDataLayout(),
-                        getModule(), Action, std::move(AsmOutStream));
+                        getModule(), Action, std::move(AsmOutStream),
+                        false /* SetLLVMOpts */);
 
       Ctx.setInlineAsmDiagnosticHandler(OldHandler, OldContext);
 
