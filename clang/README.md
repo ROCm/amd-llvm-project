@@ -1,7 +1,7 @@
 ToT HCC Clang
 =============
 
-This repository ToT HCC Clang which is synchronized with upstream Clang.
+This repository hosts ToT HCC Clang which is synchronized with upstream Clang.
 
 Branches
 ========
@@ -22,16 +22,17 @@ How to Build It
 This is how I build it now. The commands assumes:
 - ROCm stack is already installed
 - ROCm-Device-Libs is built, and installed at ~/hcc/ROCm-Device-Libs/build/dist
+- N is the number of threads available for make
 
-```
+```bash
 git clone --recursive -b clang_tot_upgrade git@github.com:RadeonOpenCompute/hcc.git hcc_upstream
 mkdir build_upstream
 cd build_upstream
 cmake \
     -DCMAKE_BUILD_TYPE=Release \
-    -DHSA_AMDGPU_GPU_TARGET=AMD:AMDGPU:8:0:3 \
+    -DHSA_AMDGPU_GPU_TARGET=gfx803 \
     -DROCM_DEVICE_LIB_DIR=~/hcc/ROCm-Device-Libs/build/dist/lib \
     ../hcc_upstream
-make -j56 world
-make -j56
+make -jN world
+make -jN
 ```
