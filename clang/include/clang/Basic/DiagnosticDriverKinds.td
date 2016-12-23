@@ -167,7 +167,7 @@ def warn_drv_omp_offload_target_duplicate : Warning<
 def err_drv_bitcode_unsupported_on_toolchain : Error<
   "-fembed-bitcode is not supported on versions of iOS prior to 6.0">;
 
-def warn_amdgpu_target_invalid : Warning<"-amdgpu-target argument '%0' is not recognized; using fiji instead">, InGroup<InvalidCommandLineArgument>;
+def warn_amdgpu_target_invalid : Warning<"-amdgpu-target argument '%0' is not recognized; using gfx803 instead">, InGroup<InvalidCommandLineArgument>;
 def warn_drv_O0_ignored_for_GPU : Warning<"-O0 is ignored in GPU compilation path">, InGroup<InvalidCommandLineArgument>;
 def warn_drv_O1_ignored_for_GPU : Warning<"-O1 is ignored in GPU compilation path">, InGroup<InvalidCommandLineArgument>;
 def warn_O4_is_O3 : Warning<"-O4 is equivalent to -O3">, InGroup<Deprecated>;

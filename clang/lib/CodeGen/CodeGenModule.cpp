@@ -693,17 +693,6 @@ StringRef CodeGenModule::getMangledName(GlobalDecl GD) {
     }
   }
 
-  // C++ AMP specific
-  // AMD OpenCL stack has trouble accepting kernel with name longer than 240 characters
-  // Truncate kernel names to prevent this from happening
-  if (LangOpts.CPlusPlusAMP) {
-    if (Str.find(StringRef("__cxxamp_trampolineE")) != StringRef::npos) {
-      if (Str.size() > 240) {
-        Str = Str.slice(0, 240);
-      }
-    }
-  }
-
   // Keep the first result in the case of a mangling collision.
   auto Result = Manglings.insert(std::make_pair(Str, GD));
   return FoundStr = Result.first->first();
@@ -853,6 +842,19 @@ void CodeGenModule::SetLLVMFunctionAttributes(const Decl *D,
                          false);
   F->setAttributes(llvm::AttributeSet::get(getLLVMContext(), AttributeList));
   F->setCallingConv(static_cast<llvm::CallingConv::ID>(CallingConv));
+
+  // HCC-specific
+  if (D) {
+    llvm::AttrBuilder B;
+    if (D->hasAttr<HCGridLaunchAttr>()) {
+      // hc_grid_launch attribute implies noinline and will win over always_inline
+      B.addAttribute("hc_grid_launch");
+      B.addAttribute(llvm::Attribute::NoInline);
+    }
+    F->addAttributes(llvm::AttributeSet::FunctionIndex,
+                     llvm::AttributeSet::get(
+                         F->getContext(), llvm::AttributeSet::FunctionIndex, B));
+  }
 }
 
 /// Determines whether the language options require us to model
@@ -898,12 +900,6 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
                          F->getContext(),
                          llvm::AttributeSet::FunctionIndex, B));
     return;
-  }
-
-  if (D->hasAttr<HCGridLaunchAttr>()) {
-    // hc_grid_launch attribute implies noinline and will win over always_inline
-    B.addAttribute("hc_grid_launch");
-    B.addAttribute(llvm::Attribute::NoInline);
   }
 
   if (D->hasAttr<NakedAttr>()) {

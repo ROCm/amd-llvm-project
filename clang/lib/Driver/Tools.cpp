@@ -48,6 +48,10 @@
 #include <unistd.h> // For getuid().
 #endif
 
+#include <algorithm>
+#include <cctype>
+#include <string>
+
 using namespace clang::driver;
 using namespace clang::driver::tools;
 using namespace clang;
@@ -4853,6 +4857,10 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   Args.ClaimAllArgs(options::OPT_g_Group);
   Arg *SplitDwarfArg = Args.getLastArg(options::OPT_gsplit_dwarf);
+
+  // disable debug output for HCC kernel path
+  if (!IsHCCKernelPath) {
+
   if (Arg *A = Args.getLastArg(options::OPT_g_Group)) {
     // If the last option explicitly specified a debug-info level, use it.
     if (A->getOption().matches(options::OPT_gN_Group)) {
@@ -4970,6 +4978,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-backend-option");
     CmdArgs.push_back("-generate-type-units");
   }
+
+  } // if (!IsHCCKernelPath)
 
   bool UseSeparateSections = isUseSeparateSections(Triple);
 
@@ -5750,7 +5760,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back(Args.MakeArgString(
           std::string("-fprebuilt-module-path=") + A->getValue()));
   }
-      
+
   // -fmodule-name specifies the module that is currently being built (or
   // used for header checking by -fmodule-maps).
   Args.AddLastArg(CmdArgs, options::OPT_fmodule_name_EQ);
@@ -6257,7 +6267,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-fno-gnu-inline-asm");
 
   // Turn off vectorization support for GPU kernels for now
-  if (!IsCXXAMPBackendJobAction(&JA) && !IsCXXAMPCPUBackendJobAction(&JA))  {
+  if (!IsHCCKernelPath) {
 
   // Enable vectorization per default according to the optimization level
   // selected. For optimization levels that want vectorization we use the alias
@@ -10319,60 +10329,24 @@ void gnutools::Linker::ConstructLinkerJob(Compilation &C, const JobAction &JA,
   C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
 }
 
-void gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
+void gnutools::Linker::ConstructJob(Compilation &C,
+                                    const JobAction &JA,
                                     const InputInfo &Output,
                                     const InputInfoList &Inputs,
                                     const ArgList &Args,
                                     const char *LinkingOutput) const {
-  ArgStringList CmdArgs;
-  ConstructLinkerJob(C, JA, Output, Inputs, Args, LinkingOutput, CmdArgs);
-
-  // UPGRADE_TBD: remove this once we hace HCCToolChain
   if (Driver::IsCXXAMP(C.getArgs())) {
-
-    // FIXME: logic here should be placed in HCC:CXXAMPLink::ConstructJob()
-    // add verbose flag to linker script if clang++ is invoked with --verbose flag
-    if (Args.hasArg(options::OPT_v))
-      CmdArgs.push_back("--verbose");
-
-    // specify AMDGPU target
-    if (Args.hasArg(options::OPT_amdgpu_target_EQ)) {
-      std::vector<std::string> AMDGPUTargetVector = Args.getAllArgValues(options::OPT_amdgpu_target_EQ);
-
-      for (auto& AMDGPUTarget : AMDGPUTargetVector) {
-        // check if valid AMDGPU target is specified
-        bool FoundAMDGPUTarget = true;
-
-        SmallString<32> LinkerArgString("--amdgpu-target=");
-
-        // map ISA version string to GPU family
-        if (!AMDGPUTarget.compare("AMD:AMDGPU:7:0:1")) {
-          LinkerArgString.append("hawaii");
-        } else if (!AMDGPUTarget.compare("AMD:AMDGPU:8:0:1")) {
-          LinkerArgString.append("carrizo");
-        } else if (!AMDGPUTarget.compare("AMD:AMDGPU:8:0:3")) {
-          LinkerArgString.append("fiji");
-        } else if (!AMDGPUTarget.compare("fiji") ||
-                   !AMDGPUTarget.compare("carrizo") ||
-                   !AMDGPUTarget.compare("hawaii")) {
-          // directly use GPU family
-          LinkerArgString.append(AMDGPUTarget);
-        } else {
-          FoundAMDGPUTarget = false;
-        }
-
-        if (FoundAMDGPUTarget) {
-          CmdArgs.push_back(Args.MakeArgString(LinkerArgString));
-        } else {
-          // ignore invalid AMDGPU target
-          C.getDriver().Diag(diag::warn_amdgpu_target_invalid) << AMDGPUTarget;
-        }
-      }
-    }
-
-    const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("clamp-link"));
-    C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
+    HCC::CXXAMPLink{getToolChain()}.ConstructJob(C,
+                                                 JA,
+                                                 Output,
+                                                 Inputs,
+                                                 Args,
+                                                 LinkingOutput);
   } else {
+    ArgStringList CmdArgs;
+
+    ConstructLinkerJob(C, JA, Output, Inputs, Args, LinkingOutput, CmdArgs);
+
     const char *Exec = Args.MakeArgString(getToolChain().GetLinkerPath());
     C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
   }
@@ -12389,11 +12363,25 @@ void HCC::CXXAMPAssemble::ConstructJob(Compilation &C, const JobAction &JA,
   C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
 }
 
-void HCC::CXXAMPLink::ConstructJob(Compilation &C, const JobAction &JA,
-                                        const InputInfo &Output,
-                                        const InputInfoList &Inputs,
-                                        const ArgList &Args,
-                                        const char *LinkingOutput) const {
+std::string temporaryReplaceLongFormGFXIp(const Compilation& C, std::string l)
+{ // Precondition: l = "AMD:AMDGPU:\d:\d:\d"
+  // TODO: this should be removed once we have transitioned all users to using
+  //       the short form. It is purposefully inefficient.
+  const auto t = l;
+
+  l.replace(0u, 3u, {'g', 'f', 'x'});
+  l.erase(std::copy_if(l.begin() + 3u, l.end(), l.begin() + 3u, isdigit), l.end());
+  C.getDriver().Diag(diag::warn_drv_deprecated_arg) << t << l;
+
+  return l;
+}
+
+void HCC::CXXAMPLink::ConstructJob(Compilation &C,
+                                   const JobAction &JA,
+                                   const InputInfo &Output,
+                                   const InputInfoList &Inputs,
+                                   const ArgList &Args,
+                                   const char *LinkingOutput) const {
   ArgStringList CmdArgs;
 
   // add verbose flag to linker script if clang++ is invoked with --verbose flag
@@ -12402,34 +12390,36 @@ void HCC::CXXAMPLink::ConstructJob(Compilation &C, const JobAction &JA,
 
   // specify AMDGPU target
   if (Args.hasArg(options::OPT_amdgpu_target_EQ)) {
-    std::vector<std::string> AMDGPUTargetVector = Args.getAllArgValues(options::OPT_amdgpu_target_EQ);
+    auto AMDGPUTargetVector = Args.getAllArgValues(options::OPT_amdgpu_target_EQ);
 
-    for (auto& AMDGPUTarget : AMDGPUTargetVector) {
-      // check if valid AMDGPU target is specified
-      bool FoundAMDGPUTarget = true;
+    for (auto&& AMDGPUTarget : AMDGPUTargetVector) {
+      // TODO: the known GFXip list should probably reside in a constant
+      //       global variable so as to allow easy extension in the future.
+      static constexpr const char prefix[] = "--amdgpu-target=";
+      static constexpr unsigned int discard_sz = 3u;
+      static const std::string gfx_ip{"gfx"};
+      static const std::string long_gfx_ip_prefix{"AMD:AMDGPU:"}; // Temporary.
 
-      SmallString<32> LinkerArgString("--amdgpu-target=");
-
-      // map ISA version string to GPU family
-      if (!AMDGPUTarget.compare("AMD:AMDGPU:7:0:1")) {
-        LinkerArgString.append("hawaii");
-      } else if (!AMDGPUTarget.compare("AMD:AMDGPU:8:0:1")) {
-        LinkerArgString.append("carrizo");
-      } else if (!AMDGPUTarget.compare("AMD:AMDGPU:8:0:3")) {
-        LinkerArgString.append("fiji");
-      } else if (!AMDGPUTarget.compare("fiji") ||
-                 !AMDGPUTarget.compare("carrizo") ||
-                 !AMDGPUTarget.compare("hawaii")) {
-        // directly use GPU family
-        LinkerArgString.append(AMDGPUTarget);
-      } else {
-        FoundAMDGPUTarget = false;
+      // TODO: this is temporary.
+      if (std::search(AMDGPUTarget.cbegin(), AMDGPUTarget.cend(), long_gfx_ip_prefix.cbegin(), long_gfx_ip_prefix.cend()) != AMDGPUTarget.cend()) {
+          AMDGPUTarget = temporaryReplaceLongFormGFXIp(C, AMDGPUTarget);
       }
 
-      if (FoundAMDGPUTarget) {
-        CmdArgs.push_back(Args.MakeArgString(LinkerArgString));
-      } else {
-        // ignore invalid AMDGPU target
+      if (std::search(AMDGPUTarget.cbegin(), AMDGPUTarget.cend(), gfx_ip.cbegin(), gfx_ip.cend()) != AMDGPUTarget.cend()) {
+        std::string t{prefix};
+        switch (std::atoi(AMDGPUTarget.data() + discard_sz)) {
+        case 700: t += "kaveri";  break;
+        case 701: t += "hawaii";  break;
+        case 801: t += "carrizo"; break;
+        case 802: t += "tonga";   break;
+        case 803: t += "fiji";    break;
+        default:
+          C.getDriver().Diag(diag::warn_amdgpu_target_invalid) << AMDGPUTarget;
+        break;
+        }
+        CmdArgs.push_back(Args.MakeArgString(t));
+      }
+      else {
         C.getDriver().Diag(diag::warn_amdgpu_target_invalid) << AMDGPUTarget;
       }
     }

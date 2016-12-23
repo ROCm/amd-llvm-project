@@ -1583,6 +1583,7 @@ ExprResult Sema::BuildLambdaExpr(SourceLocation StartLoc, SourceLocation EndLoc,
       for (unsigned K = 0, N = LSI->Captures.size(); K != N; ++K) {
         LambdaScopeInfo::Capture From = LSI->Captures[K];
         assert(!From.isBlockCapture() && "Cannot capture __block variables");
+        if (From.isThisCapture()) continue;
         // Handle [Var]
         if(From.getCaptureType()->isPointerType()) {
           if (getLangOpts().HSAExtension) {
@@ -1637,6 +1638,7 @@ ExprResult Sema::BuildLambdaExpr(SourceLocation StartLoc, SourceLocation EndLoc,
       for (unsigned K = 0, N = LSI->Captures.size(); K != N; ++K) {
         LambdaScopeInfo::Capture From = LSI->Captures[K];
         assert(!From.isBlockCapture() && "Cannot capture __block variables");
+        if (From.isThisCapture()) continue;
         QualType CaptureType = From.getCaptureType();
         if(!CaptureType.isNull() && CaptureType->isFunctionPointerType()) {
           if( From.getVariable() && From.getVariable()->hasAttr<CXXAMPRestrictAMPAttr>())

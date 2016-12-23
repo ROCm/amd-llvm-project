@@ -5299,7 +5299,10 @@ SanitizerMask Contiki::getSupportedSanitizers() const {
 
 HCCToolChain::HCCToolChain(const Driver &D, const llvm::Triple &Triple,
                            const ArgList &Args)
-    : Linux(D, Triple, Args) {}
+    : Linux(D, Triple, Args) {
+  llvm::Triple defaultTriple(llvm::sys::getDefaultTargetTriple());
+  GCCInstallation.init(defaultTriple, Args);
+}
 
 void
 HCCToolChain::addClangTargetOptions(const llvm::opt::ArgList &DriverArgs,
