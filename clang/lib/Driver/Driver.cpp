@@ -3207,6 +3207,17 @@ public:
   /// dropping them. If no suitable tool is found, null will be returned.
   const Tool *getTool(const ActionList *&Inputs,
                       ActionList &CollapsedOffloadAction) {
+
+    if (IsHCHostAssembleJobAction(BaseAction) ||
+        IsHCKernelAssembleJobAction(BaseAction) ||
+        IsCXXAMPAssembleJobAction(BaseAction) ||
+        IsCXXAMPCPUAssembleJobAction(BaseAction)) {
+      const ToolChain *DeviceTC = C.getSingleOffloadToolChain<Action::OFK_HCC>();
+      assert(DeviceTC && "HCC Device ToolChain is not set.");
+      Inputs = &BaseAction->getInputs();
+      return DeviceTC->SelectTool(*BaseAction);
+    }
+
     //
     // Get the largest chain of actions that we could combine.
     //
