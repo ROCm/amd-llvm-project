@@ -12001,11 +12001,11 @@ void HCC::CXXAMPLink::ConstructJob(Compilation &C,
       static const std::string long_gfx_ip_prefix{"AMD:AMDGPU:"}; // Temporary.
 
       // TODO: this is temporary.
-      if (AMDGPUTarget.find_first_of(long_gfx_ip_prefix) == 0u) {
+      if (std::search(AMDGPUTarget.cbegin(), AMDGPUTarget.cend(), long_gfx_ip_prefix.cbegin(), long_gfx_ip_prefix.cend()) != AMDGPUTarget.cend()) {
           AMDGPUTarget = temporaryReplaceLongFormGFXIp(C, AMDGPUTarget);
       }
 
-      if (AMDGPUTarget.find_first_of(gfx_ip) == 0u) {
+      if (std::search(AMDGPUTarget.cbegin(), AMDGPUTarget.cend(), gfx_ip.cbegin(), gfx_ip.cend()) != AMDGPUTarget.cend()) {
         std::string t{prefix};
         switch (std::atoi(AMDGPUTarget.data() + discard_sz)) {
         case 700: t += "kaveri";  break;
@@ -12013,6 +12013,9 @@ void HCC::CXXAMPLink::ConstructJob(Compilation &C,
         case 801: t += "carrizo"; break;
         case 802: t += "tonga";   break;
         case 803: t += "fiji";    break;
+        default:
+          C.getDriver().Diag(diag::warn_amdgpu_target_invalid) << AMDGPUTarget;
+        break;
         }
         CmdArgs.push_back(Args.MakeArgString(t));
       }
