@@ -27,7 +27,6 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/LEB128.h"
-#include "llvm/Support/MemoryObject.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/TargetRegistry.h"
 
@@ -105,9 +104,9 @@ static unsigned getRegFromSubinstEncoding(unsigned encoded_reg);
 
 static DecodeStatus unsignedImmDecoder(MCInst &MI, unsigned tmp,
                                        uint64_t Address, const void *Decoder);
-static DecodeStatus s16ImmDecoder(MCInst &MI, unsigned tmp, uint64_t Address,
+static DecodeStatus s16_0ImmDecoder(MCInst &MI, unsigned tmp, uint64_t Address,
                                   const void *Decoder);
-static DecodeStatus s12ImmDecoder(MCInst &MI, unsigned tmp, uint64_t Address,
+static DecodeStatus s12_0ImmDecoder(MCInst &MI, unsigned tmp, uint64_t Address,
                                   const void *Decoder);
 static DecodeStatus s11_0ImmDecoder(MCInst &MI, unsigned tmp, uint64_t Address,
                                     const void *Decoder);
@@ -117,9 +116,9 @@ static DecodeStatus s11_2ImmDecoder(MCInst &MI, unsigned tmp, uint64_t Address,
                                     const void *Decoder);
 static DecodeStatus s11_3ImmDecoder(MCInst &MI, unsigned tmp, uint64_t Address,
                                     const void *Decoder);
-static DecodeStatus s10ImmDecoder(MCInst &MI, unsigned tmp, uint64_t Address,
+static DecodeStatus s10_0ImmDecoder(MCInst &MI, unsigned tmp, uint64_t Address,
                                   const void *Decoder);
-static DecodeStatus s8ImmDecoder(MCInst &MI, unsigned tmp, uint64_t Address,
+static DecodeStatus s8_0ImmDecoder(MCInst &MI, unsigned tmp, uint64_t Address,
                                  const void *Decoder);
 static DecodeStatus s6_0ImmDecoder(MCInst &MI, unsigned tmp, uint64_t Address,
                                    const void *Decoder);
@@ -339,6 +338,37 @@ DecodeStatus HexagonDisassembler::getSingleInstruction(
         }
       }
     }
+  }
+
+  switch(MI.getOpcode()) {
+  case Hexagon::J4_cmpeqn1_f_jumpnv_nt:
+  case Hexagon::J4_cmpeqn1_f_jumpnv_t:
+  case Hexagon::J4_cmpeqn1_fp0_jump_nt:
+  case Hexagon::J4_cmpeqn1_fp0_jump_t:
+  case Hexagon::J4_cmpeqn1_fp1_jump_nt:
+  case Hexagon::J4_cmpeqn1_fp1_jump_t:
+  case Hexagon::J4_cmpeqn1_t_jumpnv_nt:
+  case Hexagon::J4_cmpeqn1_t_jumpnv_t:
+  case Hexagon::J4_cmpeqn1_tp0_jump_nt:
+  case Hexagon::J4_cmpeqn1_tp0_jump_t:
+  case Hexagon::J4_cmpeqn1_tp1_jump_nt:
+  case Hexagon::J4_cmpeqn1_tp1_jump_t:
+  case Hexagon::J4_cmpgtn1_f_jumpnv_nt:
+  case Hexagon::J4_cmpgtn1_f_jumpnv_t:
+  case Hexagon::J4_cmpgtn1_fp0_jump_nt:
+  case Hexagon::J4_cmpgtn1_fp0_jump_t:
+  case Hexagon::J4_cmpgtn1_fp1_jump_nt:
+  case Hexagon::J4_cmpgtn1_fp1_jump_t:
+  case Hexagon::J4_cmpgtn1_t_jumpnv_nt:
+  case Hexagon::J4_cmpgtn1_t_jumpnv_t:
+  case Hexagon::J4_cmpgtn1_tp0_jump_nt:
+  case Hexagon::J4_cmpgtn1_tp0_jump_t:
+  case Hexagon::J4_cmpgtn1_tp1_jump_nt:
+  case Hexagon::J4_cmpgtn1_tp1_jump_t:
+    MI.insert(MI.begin() + 1, MCOperand::createExpr(MCConstantExpr::create(-1, getContext())));
+    break;
+  default:
+    break;
   }
 
   if (HexagonMCInstrInfo::isNewValue(*MCII, MI)) {
@@ -663,13 +693,13 @@ static DecodeStatus unsignedImmDecoder(MCInst &MI, unsigned tmp,
   return MCDisassembler::Success;
 }
 
-static DecodeStatus s16ImmDecoder(MCInst &MI, unsigned tmp,
+static DecodeStatus s16_0ImmDecoder(MCInst &MI, unsigned tmp,
                                   uint64_t /*Address*/, const void *Decoder) {
   signedDecoder<16>(MI, tmp, Decoder);
   return MCDisassembler::Success;
 }
 
-static DecodeStatus s12ImmDecoder(MCInst &MI, unsigned tmp,
+static DecodeStatus s12_0ImmDecoder(MCInst &MI, unsigned tmp,
                                   uint64_t /*Address*/, const void *Decoder) {
   signedDecoder<12>(MI, tmp, Decoder);
   return MCDisassembler::Success;
@@ -699,13 +729,13 @@ static DecodeStatus s11_3ImmDecoder(MCInst &MI, unsigned tmp,
   return MCDisassembler::Success;
 }
 
-static DecodeStatus s10ImmDecoder(MCInst &MI, unsigned tmp,
+static DecodeStatus s10_0ImmDecoder(MCInst &MI, unsigned tmp,
                                   uint64_t /*Address*/, const void *Decoder) {
   signedDecoder<10>(MI, tmp, Decoder);
   return MCDisassembler::Success;
 }
 
-static DecodeStatus s8ImmDecoder(MCInst &MI, unsigned tmp, uint64_t /*Address*/,
+static DecodeStatus s8_0ImmDecoder(MCInst &MI, unsigned tmp, uint64_t /*Address*/,
                                  const void *Decoder) {
   signedDecoder<8>(MI, tmp, Decoder);
   return MCDisassembler::Success;

@@ -22,6 +22,18 @@ Visibility Macros
   Mark a symbol as being exported by the libc++ library. This attribute must
   be applied to the declaration of all functions exported by the libc++ dylib.
 
+**_LIBCPP_OVERRIDABLE_FUNC_VIS**
+  Mark a symbol as being exported by the libc++ library, but allow it to be
+  overridden locally. On non-Windows, this is equivalent to `_LIBCPP_FUNC_VIS`.
+  This macro is applied to all `operator new` and `operator delete` overloads.
+
+  **Windows Behavior**: Any symbol marked `dllimport` cannot be overridden
+  locally, since `dllimport` indicates the symbol should be bound to a separate
+  DLL. All `operator new` and `operator delete` overloads are required to be
+  locally overridable, and therefore must not be marked `dllimport`. On Windows,
+  this macro therefore expands to `__declspec(dllexport)` when building the
+  library and has an empty definition otherwise.
+
 **_LIBCPP_INLINE_VISIBILITY**
   Mark a function as hidden and force inlining whenever possible.
 
@@ -92,14 +104,13 @@ Visibility Macros
   On all other platforms, this macro has an empty definition.
 
 **_LIBCPP_EXTERN_TEMPLATE_INLINE_VISIBILITY**
-  Mark a member function of a class template as hidden and inline except when
-  building the libc++ library where it marks the symbol as being exported by
-  the library.
+  Mark a member function of a class template as visible and always inline. This
+  macro should only be applied to member functions of class templates that are
+  externally instantiated. It is important that these symbols are not marked
+  as hidden as that will prevent the dylib definition from being found.
 
   This macro is used to maintain ABI compatibility for symbols that have been
-  historically exported by the libc++ library but are now marked inline. It
-  should only be applied to member functions of class templates that are
-  externally instantiated.
+  historically exported by the libc++ library but are now marked inline.
 
 **_LIBCPP_EXCEPTION_ABI**
   Mark the member functions, typeinfo, and vtable of the type as being exported
@@ -107,19 +118,6 @@ Visibility Macros
   Exception types should be defined directly in namespace `std` and not the
   versioning namespace. This allows throwing and catching some exception types
   between libc++ and libstdc++.
-
-**_LIBCPP_NEW_DELETE_VIS**
-  Mark a symbol as being exported by the libc++ library. This macro must be
-  applied to all `operator new` and `operator delete` overloads.
-
-  **Windows Behavior**: When using the Microsoft CRT, all the `operator new` and
-  `operator delete` overloads are defined statically in `msvcrt.lib`. Marking
-  them as `dllimport` in the libc++ `<new>` header is therefore undesirable: if
-  we were to mark them as `dllimport` and then link against libc++, source files
-  which included `<new>` would end up linking against libc++'s `operator new`
-  and `operator delete`, while source files which did not include `<new>` would
-  end up linking against msvcrt's `operator new` and `operator delete`, which
-  would be a confusing and potentially error-prone inconsistency.
 
 Links
 =====

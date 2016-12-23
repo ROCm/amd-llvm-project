@@ -37,6 +37,7 @@ add_llvm_library(LLVMSupport
   BranchProbability.cpp
   CachePruning.cpp
   circular_raw_ostream.cpp
+  Chrono.cpp
   COM.cpp
   CommandLine.cpp
   Compression.cpp
@@ -44,7 +45,6 @@ add_llvm_library(LLVMSupport
   ConvertUTFWrapper.cpp
   CrashRecoveryContext.cpp
   DataExtractor.cpp
-  DataStream.cpp
   Debug.cpp
   DeltaAlgorithm.cpp
   DAGDeltaAlgorithm.cpp
@@ -55,6 +55,7 @@ add_llvm_library(LLVMSupport
   FileOutputBuffer.cpp
   FoldingSet.cpp
   FormattedStream.cpp
+  FormatVariadic.cpp
   GraphWriter.cpp
   Hashing.cpp
   IntEqClasses.cpp
@@ -68,7 +69,6 @@ add_llvm_library(LLVMSupport
   ManagedStatic.cpp
   MathExtras.cpp
   MemoryBuffer.cpp
-  MemoryObject.cpp
   MD5.cpp
   NativeFormatting.cpp
   Options.cpp
@@ -84,7 +84,6 @@ add_llvm_library(LLVMSupport
   SourceMgr.cpp
   SpecialCaseList.cpp
   Statistic.cpp
-  StreamingMemoryObject.cpp
   StringExtras.cpp
   StringMap.cpp
   StringPool.cpp
@@ -95,6 +94,7 @@ add_llvm_library(LLVMSupport
   ThreadPool.cpp
   Timer.cpp
   ToolOutputFile.cpp
+  TrigramIndex.cpp
   Triple.cpp
   Twine.cpp
   Unicode.cpp
@@ -125,7 +125,6 @@ add_llvm_library(LLVMSupport
   TargetRegistry.cpp
   ThreadLocal.cpp
   Threading.cpp
-  TimeValue.cpp
   Valgrind.cpp
   Watchdog.cpp
 

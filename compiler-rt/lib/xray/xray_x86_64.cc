@@ -1,4 +1,5 @@
 #include "sanitizer_common/sanitizer_common.h"
+#include "xray_defs.h"
 #include "xray_interface_internal.h"
 #include <atomic>
 #include <cstdint>
@@ -16,7 +17,7 @@ static constexpr int64_t MinOffset{std::numeric_limits<int32_t>::min()};
 static constexpr int64_t MaxOffset{std::numeric_limits<int32_t>::max()};
 
 bool patchFunctionEntry(const bool Enable, const uint32_t FuncId,
-                        const XRaySledEntry &Sled) {
+                        const XRaySledEntry &Sled) XRAY_NEVER_INSTRUMENT {
   // Here we do the dance of replacing the following sled:
   //
   // xray_sled_n:
@@ -65,7 +66,7 @@ bool patchFunctionEntry(const bool Enable, const uint32_t FuncId,
 }
 
 bool patchFunctionExit(const bool Enable, const uint32_t FuncId,
-                       const XRaySledEntry &Sled) {
+                       const XRaySledEntry &Sled) XRAY_NEVER_INSTRUMENT {
   // Here we do the dance of replacing the following sled:
   //
   // xray_sled_n:
@@ -105,6 +106,36 @@ bool patchFunctionExit(const bool Enable, const uint32_t FuncId,
   } else {
     std::atomic_store_explicit(
         reinterpret_cast<std::atomic<uint8_t> *>(Sled.Address), RetOpCode,
+        std::memory_order_release);
+    // FIXME: Write out the nops still?
+  }
+  return true;
+}
+
+bool patchFunctionTailExit(const bool Enable, const uint32_t FuncId,
+                           const XRaySledEntry &Sled) XRAY_NEVER_INSTRUMENT {
+  // Here we do the dance of replacing the tail call sled with a similar
+  // sequence as the entry sled, but calls the tail exit sled instead.
+  int64_t TrampolineOffset =
+      reinterpret_cast<int64_t>(__xray_FunctionTailExit) -
+      (static_cast<int64_t>(Sled.Address) + 11);
+  if (TrampolineOffset < MinOffset || TrampolineOffset > MaxOffset) {
+    Report("XRay Exit trampoline (%p) too far from sled (%p); distance = "
+           "%ld\n",
+           __xray_FunctionExit, reinterpret_cast<void *>(Sled.Address),
+           TrampolineOffset);
+    return false;
+  }
+  if (Enable) {
+    *reinterpret_cast<uint32_t *>(Sled.Address + 2) = FuncId;
+    *reinterpret_cast<uint8_t *>(Sled.Address + 6) = CallOpCode;
+    *reinterpret_cast<uint32_t *>(Sled.Address + 7) = TrampolineOffset;
+    std::atomic_store_explicit(
+        reinterpret_cast<std::atomic<uint16_t> *>(Sled.Address), MovR10Seq,
+        std::memory_order_release);
+  } else {
+    std::atomic_store_explicit(
+        reinterpret_cast<std::atomic<uint16_t> *>(Sled.Address), Jmp9Seq,
         std::memory_order_release);
     // FIXME: Write out the nops still?
   }

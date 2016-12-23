@@ -39,7 +39,7 @@ enum RuntimeDyldErrorCode {
 // deal with the Error value directly, rather than converting to error_code.
 class RuntimeDyldErrorCategory : public std::error_category {
 public:
-  const char *name() const LLVM_NOEXCEPT override { return "runtimedyld"; }
+  const char *name() const noexcept override { return "runtimedyld"; }
 
   std::string message(int Condition) const override {
     switch (static_cast<RuntimeDyldErrorCode>(Condition)) {
@@ -204,6 +204,10 @@ RuntimeDyldImpl::loadObjectImpl(const object::ObjectFile &Obj) {
   for (symbol_iterator I = Obj.symbol_begin(), E = Obj.symbol_end(); I != E;
        ++I) {
     uint32_t Flags = I->getFlags();
+
+    // Skip undefined symbols.
+    if (Flags & SymbolRef::SF_Undefined)
+      continue;
 
     if (Flags & SymbolRef::SF_Common)
       CommonSymbols.push_back(*I);

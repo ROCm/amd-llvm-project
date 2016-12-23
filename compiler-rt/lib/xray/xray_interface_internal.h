@@ -48,10 +48,11 @@ struct XRaySledMap {
   size_t Entries;
 };
 
-bool patchFunctionEntry(const bool Enable, const uint32_t FuncId,
+bool patchFunctionEntry(bool Enable, uint32_t FuncId,
                         const XRaySledEntry &Sled);
-bool patchFunctionExit(const bool Enable, const uint32_t FuncId,
-                       const XRaySledEntry &Sled);
+bool patchFunctionExit(bool Enable, uint32_t FuncId, const XRaySledEntry &Sled);
+bool patchFunctionTailExit(bool Enable, uint32_t FuncId,
+                           const XRaySledEntry &Sled);
 
 } // namespace __xray
 
@@ -60,6 +61,7 @@ extern "C" {
 // basis. See xray_trampoline_*.S files for implementations.
 extern void __xray_FunctionEntry();
 extern void __xray_FunctionExit();
+extern void __xray_FunctionTailExit();
 }
 
 #endif

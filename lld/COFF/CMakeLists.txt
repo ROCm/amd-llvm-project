@@ -14,6 +14,7 @@ add_lld_library(lldCOFF
   MarkLive.cpp
   ModuleDef.cpp
   PDB.cpp
+  Strings.cpp
   SymbolTable.cpp
   Symbols.cpp
   Writer.cpp
@@ -21,6 +22,7 @@ add_lld_library(lldCOFF
   LINK_COMPONENTS
   ${LLVM_TARGETS_TO_BUILD}
   Core
+  DebugInfoCodeView
   DebugInfoMSF
   DebugInfoPDB
   LTO
@@ -35,6 +37,8 @@ add_lld_library(lldCOFF
   LINK_LIBS
   lldCore
   ${PTHREAD_LIB}
-  )
 
-add_dependencies(lldCOFF COFFOptionsTableGen)
+  DEPENDS
+  COFFOptionsTableGen
+  intrinsics_gen
+  )

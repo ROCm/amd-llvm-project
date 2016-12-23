@@ -142,11 +142,8 @@ const char *ProcessLaunchInfo::GetProcessPluginName() const {
   return (m_plugin_name.empty() ? nullptr : m_plugin_name.c_str());
 }
 
-void ProcessLaunchInfo::SetProcessPluginName(const char *plugin) {
-  if (plugin && plugin[0])
-    m_plugin_name.assign(plugin);
-  else
-    m_plugin_name.clear();
+void ProcessLaunchInfo::SetProcessPluginName(llvm::StringRef plugin) {
+  m_plugin_name = plugin;
 }
 
 const FileSpec &ProcessLaunchInfo::GetShell() const { return m_shell; }
@@ -384,7 +381,7 @@ bool ProcessLaunchInfo::ConvertArgumentsForLaunchingInShell(
             new_path += curr_path;
           }
           new_path += "\" ";
-          shell_command.PutCString(new_path.c_str());
+          shell_command.PutCString(new_path);
         }
 
         if (triple.getOS() != llvm::Triple::Win32 ||

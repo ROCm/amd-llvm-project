@@ -26,16 +26,25 @@
 #ifndef LLVM_IR_CALLSITE_H
 #define LLVM_IR_CALLSITE_H
 
-#include "llvm/ADT/PointerIntPair.h"
 #include "llvm/ADT/iterator_range.h"
+#include "llvm/ADT/Optional.h"
+#include "llvm/ADT/PointerIntPair.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/CallingConv.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/InstrTypes.h"
+#include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/Intrinsics.h"
+#include "llvm/Support/Casting.h"
+#include "llvm/IR/Use.h"
+#include "llvm/IR/User.h"
+#include "llvm/IR/Value.h"
+#include <cassert>
+#include <cstdint>
+#include <iterator>
 
 namespace llvm {
-
-class CallInst;
-class InvokeInst;
 
 template <typename FunTy = const Function,
           typename BBTy = const BasicBlock,
@@ -512,6 +521,10 @@ public:
     CALLSITE_DELEGATE_GETTER(countOperandBundlesOfType(ID));
   }
 
+  bool isBundleOperand(unsigned Idx) const {
+    CALLSITE_DELEGATE_GETTER(isBundleOperand(Idx));
+  }
+
   IterTy arg_begin() const {
     CALLSITE_DELEGATE_GETTER(arg_begin());
   }
@@ -605,7 +618,7 @@ class CallSite : public CallSiteBase<Function, BasicBlock, Value, User, Use,
                                      Instruction, CallInst, InvokeInst,
                                      User::op_iterator> {
 public:
-  CallSite() {}
+  CallSite() = default;
   CallSite(CallSiteBase B) : CallSiteBase(B) {}
   CallSite(CallInst *CI) : CallSiteBase(CI) {}
   CallSite(InvokeInst *II) : CallSiteBase(II) {}
@@ -619,13 +632,39 @@ public:
   }
 
 private:
+  friend struct DenseMapInfo<CallSite>;
+
   User::op_iterator getCallee() const;
+};
+
+template <> struct DenseMapInfo<CallSite> {
+  using BaseInfo = DenseMapInfo<decltype(CallSite::I)>;
+
+  static CallSite getEmptyKey() {
+    CallSite CS;
+    CS.I = BaseInfo::getEmptyKey();
+    return CS;
+  }
+
+  static CallSite getTombstoneKey() {
+    CallSite CS;
+    CS.I = BaseInfo::getTombstoneKey();
+    return CS;
+  }
+
+  static unsigned getHashValue(const CallSite &CS) {
+    return BaseInfo::getHashValue(CS.I);
+  }
+
+  static bool isEqual(const CallSite &LHS, const CallSite &RHS) {
+    return LHS == RHS;
+  }
 };
 
 /// ImmutableCallSite - establish a view to a call site for examination
 class ImmutableCallSite : public CallSiteBase<> {
 public:
-  ImmutableCallSite() {}
+  ImmutableCallSite() = default;
   ImmutableCallSite(const CallInst *CI) : CallSiteBase(CI) {}
   ImmutableCallSite(const InvokeInst *II) : CallSiteBase(II) {}
   explicit ImmutableCallSite(const Instruction *II) : CallSiteBase(II) {}
@@ -633,6 +672,6 @@ public:
   ImmutableCallSite(CallSite CS) : CallSiteBase(CS.getInstruction()) {}
 };
 
-} // End llvm namespace
+} // end namespace llvm
 
-#endif
+#endif // LLVM_IR_CALLSITE_H

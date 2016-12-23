@@ -17,8 +17,14 @@
 #include "polly/CodeGen/IslExprBuilder.h"
 #include "polly/CodeGen/LoopGenerators.h"
 #include "polly/ScopInfo.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/SmallSet.h"
+#include "llvm/ADT/SmallVector.h"
 #include "isl/ctx.h"
 #include "isl/union_map.h"
+#include <utility>
+#include <vector>
 
 using namespace polly;
 using namespace llvm;
@@ -56,14 +62,16 @@ class IslNodeBuilder {
 public:
   IslNodeBuilder(PollyIRBuilder &Builder, ScopAnnotator &Annotator, Pass *P,
                  const DataLayout &DL, LoopInfo &LI, ScalarEvolution &SE,
-                 DominatorTree &DT, Scop &S)
+                 DominatorTree &DT, Scop &S, BasicBlock *StartBlock)
       : S(S), Builder(Builder), Annotator(Annotator),
-        ExprBuilder(S, Builder, IDToValue, ValueMap, DL, SE, DT, LI),
+        ExprBuilder(S, Builder, IDToValue, ValueMap, DL, SE, DT, LI,
+                    StartBlock),
         BlockGen(Builder, LI, SE, DT, ScalarMap, PHIOpMap, EscapeMap, ValueMap,
-                 &ExprBuilder),
-        RegionGen(BlockGen), P(P), DL(DL), LI(LI), SE(SE), DT(DT) {}
+                 &ExprBuilder, StartBlock),
+        RegionGen(BlockGen), P(P), DL(DL), LI(LI), SE(SE), DT(DT),
+        StartBlock(StartBlock) {}
 
-  virtual ~IslNodeBuilder() {}
+  virtual ~IslNodeBuilder() = default;
 
   void addParameters(__isl_take isl_set *Context);
 
@@ -138,6 +146,7 @@ protected:
   LoopInfo &LI;
   ScalarEvolution &SE;
   DominatorTree &DT;
+  BasicBlock *StartBlock;
 
   /// The current iteration of out-of-scop loops
   ///
@@ -392,4 +401,4 @@ private:
                         __isl_keep isl_id_to_ast_expr *NewAccesses);
 };
 
-#endif
+#endif // POLLY_ISL_NODE_BUILDER_H

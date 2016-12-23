@@ -15,50 +15,60 @@ class InstSI <dag outs, dag ins, string asm = "",
               list<dag> pattern = []> :
   AMDGPUInst<outs, ins, asm, pattern>, PredicateControl {
 
-  field bits<1> VM_CNT = 0;
-  field bits<1> EXP_CNT = 0;
-  field bits<1> LGKM_CNT = 0;
+  field bit VM_CNT = 0;
+  field bit EXP_CNT = 0;
+  field bit LGKM_CNT = 0;
 
-  field bits<1> SALU = 0;
-  field bits<1> VALU = 0;
+  field bit SALU = 0;
+  field bit VALU = 0;
 
-  field bits<1> SOP1 = 0;
-  field bits<1> SOP2 = 0;
-  field bits<1> SOPC = 0;
-  field bits<1> SOPK = 0;
-  field bits<1> SOPP = 0;
+  field bit SOP1 = 0;
+  field bit SOP2 = 0;
+  field bit SOPC = 0;
+  field bit SOPK = 0;
+  field bit SOPP = 0;
 
-  field bits<1> VOP1 = 0;
-  field bits<1> VOP2 = 0;
-  field bits<1> VOP3 = 0;
-  field bits<1> VOPC = 0;
-  field bits<1> SDWA = 0;
-  field bits<1> DPP = 0;
+  field bit VOP1 = 0;
+  field bit VOP2 = 0;
+  field bit VOP3 = 0;
+  field bit VOPC = 0;
+  field bit SDWA = 0;
+  field bit DPP = 0;
 
-  field bits<1> MUBUF = 0;
-  field bits<1> MTBUF = 0;
-  field bits<1> SMRD = 0;
-  field bits<1> DS = 0;
-  field bits<1> MIMG = 0;
-  field bits<1> FLAT = 0;
+  field bit MUBUF = 0;
+  field bit MTBUF = 0;
+  field bit SMRD = 0;
+  field bit DS = 0;
+  field bit MIMG = 0;
+  field bit FLAT = 0;
+  field bit EXP = 0;
 
   // Whether WQM _must_ be enabled for this instruction.
-  field bits<1> WQM = 0;
-  field bits<1> VGPRSpill = 0;
-  field bits<1> SGPRSpill = 0;
+  field bit WQM = 0;
+  field bit VGPRSpill = 0;
+  field bit SGPRSpill = 0;
 
   // This bit tells the assembler to use the 32-bit encoding in case it
   // is unable to infer the encoding from the operands.
-  field bits<1> VOPAsmPrefer32Bit = 0;
+  field bit VOPAsmPrefer32Bit = 0;
 
-  field bits<1> Gather4 = 0;
+  field bit Gather4 = 0;
 
   // Whether WQM _must_ be disabled for this instruction.
-  field bits<1> DisableWQM = 0;
+  field bit DisableWQM = 0;
 
   // Most sopk treat the immediate as a signed 16-bit, however some
   // use it as unsigned.
-  field bits<1> SOPKZext = 0;
+  field bit SOPKZext = 0;
+
+  // This is an s_store_dword* instruction that requires a cache flush
+  // on wave termination. It is necessary to distinguish from mayStore
+  // SMEM instructions like the cache flush ones.
+  field bit ScalarStore = 0;
+
+  // Whether the operands can be ignored when computing the
+  // instruction size.
+  field bit FixedSize = 0;
 
   // These need to be kept in sync with the enum in SIInstrFlags.
   let TSFlags{0} = VM_CNT;
@@ -87,13 +97,16 @@ class InstSI <dag outs, dag ins, string asm = "",
   let TSFlags{19} = DS;
   let TSFlags{20} = MIMG;
   let TSFlags{21} = FLAT;
-  let TSFlags{22} = WQM;
-  let TSFlags{23} = VGPRSpill;
-  let TSFlags{24} = SGPRSpill;
-  let TSFlags{25} = VOPAsmPrefer32Bit;
-  let TSFlags{26} = Gather4;
-  let TSFlags{27} = DisableWQM;
-  let TSFlags{28} = SOPKZext;
+  let TSFlags{22} = EXP;
+  let TSFlags{23} = WQM;
+  let TSFlags{24} = VGPRSpill;
+  let TSFlags{25} = SGPRSpill;
+  let TSFlags{26} = VOPAsmPrefer32Bit;
+  let TSFlags{27} = Gather4;
+  let TSFlags{28} = DisableWQM;
+  let TSFlags{29} = SOPKZext;
+  let TSFlags{30} = ScalarStore;
+  let TSFlags{31} = FixedSize;
 
   let SchedRW = [Write32Bit];
 
@@ -216,9 +229,32 @@ let Uses = [EXEC] in {
 
 class VINTRPCommon <dag outs, dag ins, string asm, list<dag> pattern> :
     InstSI <outs, ins, asm, pattern> {
-  let mayLoad = 1;
+
+  // VINTRP instructions read parameter values from LDS, but these parameter
+  // values are stored outside of the LDS memory that is allocated to the
+  // shader for general purpose use.
+  //
+  // While it may be possible for ds_read/ds_write instructions to access
+  // the parameter values in LDS, this would essentially be an out-of-bounds
+  // memory access which we consider to be undefined behavior.
+  //
+  // So even though these instructions read memory, this memory is outside the
+  // addressable memory space for the shader, and we consider these instructions
+  // to be readnone.
+  let mayLoad = 0;
   let mayStore = 0;
   let hasSideEffects = 0;
+}
+
+class EXPCommon<dag outs, dag ins, string asm, list<dag> pattern> :
+  InstSI<outs, ins, asm, pattern> {
+  let EXP = 1;
+  let EXP_CNT = 1;
+  let mayLoad = 0; // Set to 1 if done bit is set.
+  let mayStore = 1;
+  let UseNamedOperandTable = 1;
+  let Uses = [EXEC];
+  let SchedRW = [WriteExport];
 }
 
 } // End Uses = [EXEC]

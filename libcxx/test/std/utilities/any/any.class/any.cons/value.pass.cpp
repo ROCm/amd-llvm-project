@@ -106,19 +106,13 @@ void test_copy_move_value() {
     }
 }
 
-// Test that any(ValueType&&) is *never* selected for a std::in_place type.
+// Test that any(ValueType&&) is *never* selected for a std::in_place_type_t specialization.
 void test_sfinae_constraints() {
-    using Tag = std::in_place_type_t<int>;
-#if defined(__clang__)
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wignored-qualifiers"
-#endif
-    static_assert(std::is_same<Tag, const Tag>::value, "");
-#if defined(__clang__)
-#pragma clang diagnostic pop
-#endif
+    using BadTag = std::in_place_type_t<int>;
+    using OKTag = std::in_place_t;
     // Test that the tag type is properly handled in SFINAE
-    Tag t = std::in_place;
+    BadTag t = std::in_place_type<int>;
+    OKTag ot = std::in_place;
     {
         std::any a(t);
         assertContains<int>(a, 0);
@@ -126,6 +120,10 @@ void test_sfinae_constraints() {
     {
         std::any a(std::move(t));
         assertContains<int>(a, 0);
+    }
+    {
+        std::any a(ot);
+        assert(containsType<OKTag>(a));
     }
     {
         struct Dummy { Dummy() = delete; };

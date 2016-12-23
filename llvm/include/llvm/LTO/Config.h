@@ -33,8 +33,9 @@ namespace lto {
 /// LTO configuration. A linker can configure LTO by setting fields in this data
 /// structure and passing it to the lto::LTO constructor.
 struct Config {
+  // Note: when adding fields here, consider whether they need to be added to
+  // computeCacheKey in LTO.cpp.
   std::string CPU;
-  std::string Features;
   TargetOptions Options;
   std::vector<std::string> MAttrs;
   Reloc::Model RelocModel = Reloc::PIC_;
@@ -133,56 +134,6 @@ struct Config {
   typedef std::function<bool(const ModuleSummaryIndex &Index)>
       CombinedIndexHookFn;
   CombinedIndexHookFn CombinedIndexHook;
-
-  Config() {}
-  // FIXME: Remove once MSVC can synthesize move ops.
-  Config(Config &&X)
-      : CPU(std::move(X.CPU)), Features(std::move(X.Features)),
-        Options(std::move(X.Options)), MAttrs(std::move(X.MAttrs)),
-        RelocModel(std::move(X.RelocModel)), CodeModel(std::move(X.CodeModel)),
-        CGOptLevel(std::move(X.CGOptLevel)), OptLevel(std::move(X.OptLevel)),
-        DisableVerify(std::move(X.DisableVerify)),
-        OptPipeline(std::move(X.OptPipeline)),
-        AAPipeline(std::move(X.AAPipeline)),
-        OverrideTriple(std::move(X.OverrideTriple)),
-        DefaultTriple(std::move(X.DefaultTriple)),
-        ShouldDiscardValueNames(std::move(X.ShouldDiscardValueNames)),
-        DiagHandler(std::move(X.DiagHandler)),
-        ResolutionFile(std::move(X.ResolutionFile)),
-        PreOptModuleHook(std::move(X.PreOptModuleHook)),
-        PostPromoteModuleHook(std::move(X.PostPromoteModuleHook)),
-        PostInternalizeModuleHook(std::move(X.PostInternalizeModuleHook)),
-        PostImportModuleHook(std::move(X.PostImportModuleHook)),
-        PostOptModuleHook(std::move(X.PostOptModuleHook)),
-        PreCodeGenModuleHook(std::move(X.PreCodeGenModuleHook)),
-        CombinedIndexHook(std::move(X.CombinedIndexHook)) {}
-  // FIXME: Remove once MSVC can synthesize move ops.
-  Config &operator=(Config &&X) {
-    CPU = std::move(X.CPU);
-    Features = std::move(X.Features);
-    Options = std::move(X.Options);
-    MAttrs = std::move(X.MAttrs);
-    RelocModel = std::move(X.RelocModel);
-    CodeModel = std::move(X.CodeModel);
-    CGOptLevel = std::move(X.CGOptLevel);
-    OptLevel = std::move(X.OptLevel);
-    DisableVerify = std::move(X.DisableVerify);
-    OptPipeline = std::move(X.OptPipeline);
-    AAPipeline = std::move(X.AAPipeline);
-    OverrideTriple = std::move(X.OverrideTriple);
-    DefaultTriple = std::move(X.DefaultTriple);
-    ShouldDiscardValueNames = std::move(X.ShouldDiscardValueNames);
-    DiagHandler = std::move(X.DiagHandler);
-    ResolutionFile = std::move(X.ResolutionFile);
-    PreOptModuleHook = std::move(X.PreOptModuleHook);
-    PostPromoteModuleHook = std::move(X.PostPromoteModuleHook);
-    PostInternalizeModuleHook = std::move(X.PostInternalizeModuleHook);
-    PostImportModuleHook = std::move(X.PostImportModuleHook);
-    PostOptModuleHook = std::move(X.PostOptModuleHook);
-    PreCodeGenModuleHook = std::move(X.PreCodeGenModuleHook);
-    CombinedIndexHook = std::move(X.CombinedIndexHook);
-    return *this;
-  }
 
   /// This is a convenience function that configures this Config object to write
   /// temporary files named after the given OutputFileName for each of the LTO

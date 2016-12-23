@@ -1050,7 +1050,8 @@ static bool isSimpleZero(const Expr *E, CodeGenFunction &CGF) {
     return true;
   // (int*)0 - Null pointer expressions.
   if (const CastExpr *ICE = dyn_cast<CastExpr>(E))
-    return ICE->getCastKind() == CK_NullToPointer;
+    return ICE->getCastKind() == CK_NullToPointer &&
+        CGF.getTypes().isZeroInitializable(E->getType());
   // '\0'
   if (const CharacterLiteral *CL = dyn_cast<CharacterLiteral>(E))
     return CL->getValue() == 0;
@@ -1145,31 +1146,21 @@ void AggExprEmitter::VisitInitListExpr(InitListExpr *E) {
   if (E->hadArrayRangeDesignator())
     CGF.ErrorUnsupported(E, "GNU array range designator extension");
 
+  if (E->isTransparent())
+    return Visit(E->getInit(0));
+
   AggValueSlot Dest = EnsureSlot(E->getType());
 
   LValue DestLV = CGF.MakeAddrLValue(Dest.getAddress(), E->getType());
 
   // Handle initialization of an array.
   if (E->getType()->isArrayType()) {
-    if (E->isStringLiteralInit())
-      return Visit(E->getInit(0));
-
     QualType elementType =
         CGF.getContext().getAsArrayType(E->getType())->getElementType();
 
     auto AType = cast<llvm::ArrayType>(Dest.getAddress().getElementType());
     EmitArrayInit(Dest.getAddress(), AType, elementType, E);
     return;
-  }
-
-  if (E->getType()->isAtomicType()) {
-    // An _Atomic(T) object can be list-initialized from an expression
-    // of the same type.
-    assert(E->getNumInits() == 1 &&
-           CGF.getContext().hasSameUnqualifiedType(E->getInit(0)->getType(),
-                                                   E->getType()) &&
-           "unexpected list initialization for atomic object");
-    return Visit(E->getInit(0));
   }
 
   assert(E->getType()->isRecordType() && "Only support structs/unions here!");

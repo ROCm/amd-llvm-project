@@ -103,7 +103,7 @@ bool LiveRangeEdit::allUsesAvailableAt(const MachineInstr *OrigMI,
 
     // We can't remat physreg uses, unless it is a constant.
     if (TargetRegisterInfo::isPhysicalRegister(MO.getReg())) {
-      if (MRI.isConstantPhysReg(MO.getReg(), *OrigMI->getParent()->getParent()))
+      if (MRI.isConstantPhysReg(MO.getReg()))
         continue;
       return false;
     }
@@ -272,7 +272,8 @@ void LiveRangeEdit::eliminateDeadDef(MachineInstr *MI, ToShrinkSet &ToShrink,
   bool ReadsPhysRegs = false;
   bool isOrigDef = false;
   unsigned Dest;
-  if (VRM && MI->getOperand(0).isReg()) {
+  if (VRM && MI->getOperand(0).isReg() && MI->getOperand(0).isDef()) {
+    assert(MI->getDesc().getNumDefs() == 1);
     Dest = MI->getOperand(0).getReg();
     unsigned Original = VRM->getOriginal(Dest);
     LiveInterval &OrigLI = LIS.getInterval(Original);

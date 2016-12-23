@@ -213,10 +213,11 @@ enum IIT_Info {
   IIT_HALF_VEC_ARG = 30,
   IIT_SAME_VEC_WIDTH_ARG = 31,
   IIT_PTR_TO_ARG = 32,
-  IIT_VEC_OF_PTRS_TO_ELT = 33,
-  IIT_I128 = 34,
-  IIT_V512 = 35,
-  IIT_V1024 = 36
+  IIT_PTR_TO_ELT = 33,
+  IIT_VEC_OF_PTRS_TO_ELT = 34,
+  IIT_I128 = 35,
+  IIT_V512 = 36,
+  IIT_V1024 = 37
 };
 
 
@@ -251,7 +252,7 @@ static void EncodeFixedValueType(MVT::SimpleValueType VT,
 }
 
 #if defined(_MSC_VER) && !defined(__clang__)
-#pragma optimize("",off) // MSVC 2010 optimizer can't deal with this function.
+#pragma optimize("",off) // MSVC 2015 optimizer can't deal with this function.
 #endif
 
 static void EncodeFixedType(Record *R, std::vector<unsigned char> &ArgCodes,
@@ -277,6 +278,8 @@ static void EncodeFixedType(Record *R, std::vector<unsigned char> &ArgCodes,
       Sig.push_back(IIT_PTR_TO_ARG);
     else if (R->isSubClassOf("LLVMVectorOfPointersToElt"))
       Sig.push_back(IIT_VEC_OF_PTRS_TO_ELT);
+    else if (R->isSubClassOf("LLVMPointerToElt"))
+      Sig.push_back(IIT_PTR_TO_ELT);
     else
       Sig.push_back(IIT_ARG);
     return Sig.push_back((Number << 3) | ArgCodes[Number]);
@@ -643,6 +646,18 @@ void IntrinsicEmitter::EmitAttributes(const CodeGenIntrinsicTable &Ints,
           OS << ",";
         OS << "Attribute::ReadOnly";
         break;
+      case CodeGenIntrinsic::ReadInaccessibleMem:
+        if (addComma)
+          OS << ",";
+        OS << "Attribute::ReadOnly,";
+        OS << "Attribute::InaccessibleMemOnly";
+        break;
+      case CodeGenIntrinsic::ReadInaccessibleMemOrArgMem:
+        if (addComma)
+          OS << ",";
+        OS << "Attribute::ReadOnly,";
+        OS << "Attribute::InaccessibleMemOrArgMemOnly";
+        break;
       case CodeGenIntrinsic::WriteArgMem:
         if (addComma)
           OS << ",";
@@ -654,11 +669,32 @@ void IntrinsicEmitter::EmitAttributes(const CodeGenIntrinsicTable &Ints,
           OS << ",";
         OS << "Attribute::WriteOnly";
         break;
+      case CodeGenIntrinsic::WriteInaccessibleMem:
+        if (addComma)
+          OS << ",";
+        OS << "Attribute::WriteOnly,";
+        OS << "Attribute::InaccessibleMemOnly";
+        break;
+      case CodeGenIntrinsic::WriteInaccessibleMemOrArgMem:
+        if (addComma)
+          OS << ",";
+        OS << "Attribute::WriteOnly,";
+        OS << "Attribute::InaccessibleMemOrArgOnly";
+        break;
       case CodeGenIntrinsic::ReadWriteArgMem:
         if (addComma)
           OS << ",";
         OS << "Attribute::ArgMemOnly";
         break;
+      case CodeGenIntrinsic::ReadWriteInaccessibleMem:
+        if (addComma)
+          OS << ",";
+        OS << "Attribute::InaccessibleMemOnly";
+        break;
+      case CodeGenIntrinsic::ReadWriteInaccessibleMemOrArgMem:
+        if (addComma)
+          OS << ",";
+        OS << "Attribute::InaccessibleMemOrArgMemOnly";
       case CodeGenIntrinsic::ReadWriteMem:
         break;
       }

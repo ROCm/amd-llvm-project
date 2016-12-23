@@ -239,7 +239,8 @@ Expected<sys::fs::perms> ArchiveMemberHeader::getAccessMode() const {
   return static_cast<sys::fs::perms>(Ret);
 }
 
-Expected<sys::TimeValue> ArchiveMemberHeader::getLastModified() const {
+Expected<sys::TimePoint<std::chrono::seconds>>
+ArchiveMemberHeader::getLastModified() const {
   unsigned Seconds;
   if (StringRef(ArMemHdr->LastModified,
                 sizeof(ArMemHdr->LastModified)).rtrim(' ')
@@ -256,9 +257,7 @@ Expected<sys::TimeValue> ArchiveMemberHeader::getLastModified() const {
                           "archive member header at offset " + Twine(Offset));
   }
 
-  sys::TimeValue Ret;
-  Ret.fromEpochTime(Seconds);
-  return Ret;
+  return sys::toTimePoint(Seconds);
 }
 
 Expected<unsigned> ArchiveMemberHeader::getUID() const {
@@ -459,7 +458,7 @@ Expected<Archive::Child> Archive::Child::getNext() const {
       return malformedError(Msg + NameOrErr.get());
   }
 
-  Error Err;
+  Error Err = Error::success();
   Child Ret(Parent, NextLoc, &Err);
   if (Err)
     return std::move(Err);
@@ -509,7 +508,7 @@ Archive::Child::getAsBinary(LLVMContext *Context) const {
 }
 
 Expected<std::unique_ptr<Archive>> Archive::create(MemoryBufferRef Source) {
-  Error Err;
+  Error Err = Error::success();
   std::unique_ptr<Archive> Ret(new Archive(Source, Err));
   if (Err)
     return std::move(Err);
@@ -831,7 +830,7 @@ Expected<Archive::Child> Archive::Symbol::getMember() const {
   }
 
   const char *Loc = Parent->getData().begin() + Offset;
-  Error Err;
+  Error Err = Error::success();
   Child C(Parent, Loc, &Err);
   if (Err)
     return std::move(Err);

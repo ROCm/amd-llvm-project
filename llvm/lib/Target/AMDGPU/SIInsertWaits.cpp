@@ -93,6 +93,9 @@ private:
 
   bool LastInstWritesM0;
 
+  /// Whether or not we have flat operations outstanding.
+  bool IsFlatOutstanding;
+
   /// \brief Whether the machine function returns void
   bool ReturnsVoid;
 
@@ -175,8 +178,10 @@ FunctionPass *llvm::createSIInsertWaitsPass() {
 
 const Counters SIInsertWaits::ZeroCounts = { { 0, 0, 0 } };
 
-static bool readsVCCZ(unsigned Opcode) {
-  return Opcode == AMDGPU::S_CBRANCH_VCCNZ || Opcode == AMDGPU::S_CBRANCH_VCCZ;
+static bool readsVCCZ(const MachineInstr &MI) {
+  unsigned Opc = MI.getOpcode();
+  return (Opc == AMDGPU::S_CBRANCH_VCCNZ || Opc == AMDGPU::S_CBRANCH_VCCZ) &&
+         !MI.getOperand(1).isUndef();
 }
 
 bool SIInsertWaits::hasOutstandingLGKM() const {
@@ -190,8 +195,7 @@ Counters SIInsertWaits::getHwCounts(MachineInstr &MI) {
   Result.Named.VM = !!(TSFlags & SIInstrFlags::VM_CNT);
 
   // Only consider stores or EXP for EXP_CNT
-  Result.Named.EXP = !!(TSFlags & SIInstrFlags::EXP_CNT &&
-      (MI.getOpcode() == AMDGPU::EXP || MI.getDesc().mayStore()));
+  Result.Named.EXP = !!(TSFlags & SIInstrFlags::EXP_CNT) && MI.mayStore();
 
   // LGKM may uses larger values
   if (TSFlags & SIInstrFlags::LGKM_CNT) {
@@ -233,9 +237,10 @@ bool SIInsertWaits::isOpRelevant(MachineOperand &Op) {
   if (Op.isDef())
     return true;
 
-  // For exports all registers are relevant
+  // For exports all registers are relevant.
+  // TODO: Skip undef/disabled registers.
   MachineInstr &MI = *Op.getParent();
-  if (MI.getOpcode() == AMDGPU::EXP)
+  if (TII->isEXP(MI))
     return true;
 
   // For stores the stored value is also relevant
@@ -247,12 +252,6 @@ bool SIInsertWaits::isOpRelevant(MachineOperand &Op) {
   // operand comes before the value operand and it may have
   // multiple data operands.
 
-  if (TII->isDS(MI) || TII->isFLAT(MI)) {
-    MachineOperand *Data = TII->getNamedOperand(MI, AMDGPU::OpName::data);
-    if (Data && Op.isIdenticalTo(*Data))
-      return true;
-  }
-
   if (TII->isDS(MI)) {
     MachineOperand *Data0 = TII->getNamedOperand(MI, AMDGPU::OpName::data0);
     if (Data0 && Op.isIdenticalTo(*Data0))
@@ -260,6 +259,12 @@ bool SIInsertWaits::isOpRelevant(MachineOperand &Op) {
 
     MachineOperand *Data1 = TII->getNamedOperand(MI, AMDGPU::OpName::data1);
     return Data1 && Op.isIdenticalTo(*Data1);
+  }
+
+  if (TII->isFLAT(MI)) {
+    MachineOperand *Data = TII->getNamedOperand(MI, AMDGPU::OpName::vdata);
+    if (Data && Op.isIdenticalTo(*Data))
+      return true;
   }
 
   // NOTE: This assumes that the value operand is before the
@@ -293,6 +298,9 @@ void SIInsertWaits::pushInstruction(MachineBasicBlock &MBB,
   // Get the hardware counter increments and sum them up
   Counters Limit = ZeroCounts;
   unsigned Sum = 0;
+
+  if (TII->mayAccessFlatAddressSpace(*I))
+    IsFlatOutstanding = true;
 
   for (unsigned i = 0; i < 3; ++i) {
     LastIssued.Array[i] += Increment.Array[i];
@@ -332,7 +340,7 @@ void SIInsertWaits::pushInstruction(MachineBasicBlock &MBB,
 
   // Remember which export instructions we have seen
   if (Increment.Named.EXP) {
-    ExpInstrTypesSeen |= I->getOpcode() == AMDGPU::EXP ? 1 : 2;
+    ExpInstrTypesSeen |= TII->isEXP(*I) ? 1 : 2;
   }
 
   for (unsigned i = 0, e = I->getNumOperands(); i != e; ++i) {
@@ -368,8 +376,9 @@ bool SIInsertWaits::insertWait(MachineBasicBlock &MBB,
   // Figure out if the async instructions execute in order
   bool Ordered[3];
 
-  // VM_CNT is always ordered
-  Ordered[0] = true;
+  // VM_CNT is always ordered except when there are flat instructions, which
+  // can return out of order.
+  Ordered[0] = !IsFlatOutstanding;
 
   // EXP_CNT is unordered if we have both EXP & VM-writes
   Ordered[1] = ExpInstrTypesSeen == 3;
@@ -419,6 +428,7 @@ bool SIInsertWaits::insertWait(MachineBasicBlock &MBB,
 
   LastOpcodeType = OTHER;
   LastInstWritesM0 = false;
+  IsFlatOutstanding = false;
   return true;
 }
 
@@ -522,6 +532,7 @@ bool SIInsertWaits::runOnMachineFunction(MachineFunction &MF) {
   TRI = &TII->getRegisterInfo();
   MRI = &MF.getRegInfo();
   IV = getIsaVersion(ST->getFeatureBits());
+  const SIMachineFunctionInfo *MFI = MF.getInfo<SIMachineFunctionInfo>();
 
   HardwareLimits.Named.VM = getVmcntBitMask(IV);
   HardwareLimits.Named.EXP = getExpcntBitMask(IV);
@@ -532,19 +543,27 @@ bool SIInsertWaits::runOnMachineFunction(MachineFunction &MF) {
   LastIssued = ZeroCounts;
   LastOpcodeType = OTHER;
   LastInstWritesM0 = false;
-  ReturnsVoid = MF.getInfo<SIMachineFunctionInfo>()->returnsVoid();
+  IsFlatOutstanding = false;
+  ReturnsVoid = MFI->returnsVoid();
 
   memset(&UsedRegs, 0, sizeof(UsedRegs));
   memset(&DefinedRegs, 0, sizeof(DefinedRegs));
 
   SmallVector<MachineInstr *, 4> RemoveMI;
+  SmallVector<MachineBasicBlock *, 4> EndPgmBlocks;
+
+  bool HaveScalarStores = false;
 
   for (MachineFunction::iterator BI = MF.begin(), BE = MF.end();
        BI != BE; ++BI) {
 
     MachineBasicBlock &MBB = *BI;
+
     for (MachineBasicBlock::iterator I = MBB.begin(), E = MBB.end();
          I != E; ++I) {
+
+      if (!HaveScalarStores && TII->isScalarStore(*I))
+        HaveScalarStores = true;
 
       if (ST->getGeneration() <= SISubtarget::SEA_ISLANDS) {
         // There is a hardware bug on CI/SI where SMRD instruction may corrupt
@@ -565,7 +584,7 @@ bool SIInsertWaits::runOnMachineFunction(MachineFunction &MF) {
         }
 
         // Check if we need to apply the bug work-around
-        if (readsVCCZ(I->getOpcode()) && VCCZCorrupt) {
+        if (VCCZCorrupt && readsVCCZ(*I)) {
           DEBUG(dbgs() << "Inserting vccz bug work-around before: " << *I << '\n');
 
           // Wait on everything, not just LGKM.  vccz reads usually come from
@@ -580,7 +599,7 @@ bool SIInsertWaits::runOnMachineFunction(MachineFunction &MF) {
           // vcc and then writing it back to the register.
           BuildMI(MBB, I, I->getDebugLoc(), TII->get(AMDGPU::S_MOV_B64),
                   AMDGPU::VCC)
-                  .addReg(AMDGPU::VCC);
+            .addReg(AMDGPU::VCC);
         }
       }
 
@@ -614,10 +633,43 @@ bool SIInsertWaits::runOnMachineFunction(MachineFunction &MF) {
 
       pushInstruction(MBB, I, Increment);
       handleSendMsg(MBB, I);
+
+      if (I->getOpcode() == AMDGPU::S_ENDPGM ||
+          I->getOpcode() == AMDGPU::SI_RETURN)
+        EndPgmBlocks.push_back(&MBB);
     }
 
     // Wait for everything at the end of the MBB
     Changes |= insertWait(MBB, MBB.getFirstTerminator(), LastIssued);
+  }
+
+  if (HaveScalarStores) {
+    // If scalar writes are used, the cache must be flushed or else the next
+    // wave to reuse the same scratch memory can be clobbered.
+    //
+    // Insert s_dcache_wb at wave termination points if there were any scalar
+    // stores, and only if the cache hasn't already been flushed. This could be
+    // improved by looking across blocks for flushes in postdominating blocks
+    // from the stores but an explicitly requested flush is probably very rare.
+    for (MachineBasicBlock *MBB : EndPgmBlocks) {
+      bool SeenDCacheWB = false;
+
+      for (MachineBasicBlock::iterator I = MBB->begin(), E = MBB->end();
+           I != E; ++I) {
+
+        if (I->getOpcode() == AMDGPU::S_DCACHE_WB)
+          SeenDCacheWB = true;
+        else if (TII->isScalarStore(*I))
+          SeenDCacheWB = false;
+
+        // FIXME: It would be better to insert this before a waitcnt if any.
+        if ((I->getOpcode() == AMDGPU::S_ENDPGM ||
+             I->getOpcode() == AMDGPU::SI_RETURN) && !SeenDCacheWB) {
+          Changes = true;
+          BuildMI(*MBB, I, I->getDebugLoc(), TII->get(AMDGPU::S_DCACHE_WB));
+        }
+      }
+    }
   }
 
   for (MachineInstr *I : RemoveMI)

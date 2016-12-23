@@ -45,6 +45,8 @@ public:
   }
   /// .indidx
   virtual void emitIndIdx(const MCExpr *Value) = 0;
+  /// .import_global
+  virtual void emitGlobalImport(StringRef name) = 0;
 };
 
 /// This part is for ascii assembly output
@@ -62,6 +64,7 @@ public:
                                 SmallVectorImpl<MVT> &Params,
                                 SmallVectorImpl<MVT> &Results) override;
   void emitIndIdx(const MCExpr *Value) override;
+  void emitGlobalImport(StringRef name) override;
 };
 
 /// This part is for ELF object output
@@ -73,7 +76,11 @@ public:
   void emitResult(ArrayRef<MVT> Types) override;
   void emitLocal(ArrayRef<MVT> Types) override;
   void emitEndFunc() override;
+  void emitIndirectFunctionType(StringRef name,
+                                SmallVectorImpl<MVT> &Params,
+                                SmallVectorImpl<MVT> &Results) override;
   void emitIndIdx(const MCExpr *Value) override;
+  void emitGlobalImport(StringRef name) override;
 };
 
 } // end namespace llvm

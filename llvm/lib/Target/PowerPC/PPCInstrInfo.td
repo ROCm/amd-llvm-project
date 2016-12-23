@@ -327,6 +327,7 @@ def immZExt16  : PatLeaf<(imm), [{
   return (uint64_t)N->getZExtValue() == (unsigned short)N->getZExtValue();
 }], LO16>;
 def immSExt8 : ImmLeaf<i32, [{ return isInt<8>(Imm); }]>;
+def immSExt5NonZero : ImmLeaf<i32, [{ return Imm && isInt<5>(Imm); }]>;
 
 // imm16Shifted* - These match immediates where the low 16-bits are zero.  There
 // are two forms: imm16ShiftedSExt and imm16ShiftedZExt.  These two forms are
@@ -621,6 +622,9 @@ def s17imm  : Operand<i32> {
   let ParserMatchClass = PPCS17ImmAsmOperand;
   let DecoderMethod = "decodeSImmOperand<16>";
 }
+
+def fpimm0 : PatLeaf<(fpimm), [{ return N->isExactlyValue(+0.0); }]>;
+
 def PPCDirectBrAsmOperand : AsmOperandClass {
   let Name = "DirectBr"; let PredicateMethod = "isDirectBr";
   let RenderMethod = "addBranchTargetOperands";

@@ -466,10 +466,14 @@ bool Sema::DiagnoseUninstantiableTemplate(SourceLocation PointOfInstantiation,
                                           const NamedDecl *PatternDef,
                                           TemplateSpecializationKind TSK,
                                           bool Complain /*= true*/) {
-  assert(isa<TagDecl>(Instantiation) || isa<FunctionDecl>(Instantiation));
+  assert(isa<TagDecl>(Instantiation) || isa<FunctionDecl>(Instantiation) ||
+         isa<VarDecl>(Instantiation));
 
-  if (PatternDef && (isa<FunctionDecl>(PatternDef)
-                     || !cast<TagDecl>(PatternDef)->isBeingDefined())) {
+  bool IsEntityBeingDefined = false;
+  if (const TagDecl *TD = dyn_cast_or_null<TagDecl>(PatternDef))
+    IsEntityBeingDefined = TD->isBeingDefined();
+
+  if (PatternDef && !IsEntityBeingDefined) {
     NamedDecl *SuggestedDef = nullptr;
     if (!hasVisibleDefinition(const_cast<NamedDecl*>(PatternDef), &SuggestedDef,
                               /*OnlyNeedComplete*/false)) {
@@ -486,13 +490,14 @@ bool Sema::DiagnoseUninstantiableTemplate(SourceLocation PointOfInstantiation,
   if (!Complain || (PatternDef && PatternDef->isInvalidDecl()))
     return true;
 
+  llvm::Optional<unsigned> Note;
   QualType InstantiationTy;
   if (TagDecl *TD = dyn_cast<TagDecl>(Instantiation))
     InstantiationTy = Context.getTypeDeclType(TD);
   if (PatternDef) {
     Diag(PointOfInstantiation,
          diag::err_template_instantiate_within_definition)
-      << (TSK != TSK_ImplicitInstantiation)
+      << /*implicit|explicit*/(TSK != TSK_ImplicitInstantiation)
       << InstantiationTy;
     // Not much point in noting the template declaration here, since
     // we're lexically inside it.
@@ -501,28 +506,44 @@ bool Sema::DiagnoseUninstantiableTemplate(SourceLocation PointOfInstantiation,
     if (isa<FunctionDecl>(Instantiation)) {
       Diag(PointOfInstantiation,
            diag::err_explicit_instantiation_undefined_member)
-        << 1 << Instantiation->getDeclName() << Instantiation->getDeclContext();
+        << /*member function*/ 1 << Instantiation->getDeclName()
+        << Instantiation->getDeclContext();
+      Note = diag::note_explicit_instantiation_here;
     } else {
+      assert(isa<TagDecl>(Instantiation) && "Must be a TagDecl!");
       Diag(PointOfInstantiation,
            diag::err_implicit_instantiate_member_undefined)
         << InstantiationTy;
+      Note = diag::note_member_declared_at;
     }
-    Diag(Pattern->getLocation(), isa<FunctionDecl>(Instantiation)
-                                     ? diag::note_explicit_instantiation_here
-                                     : diag::note_member_declared_at);
   } else {
-    if (isa<FunctionDecl>(Instantiation))
+    if (isa<FunctionDecl>(Instantiation)) {
       Diag(PointOfInstantiation,
            diag::err_explicit_instantiation_undefined_func_template)
         << Pattern;
-    else
+      Note = diag::note_explicit_instantiation_here;
+    } else if (isa<TagDecl>(Instantiation)) {
       Diag(PointOfInstantiation, diag::err_template_instantiate_undefined)
         << (TSK != TSK_ImplicitInstantiation)
         << InstantiationTy;
-    Diag(Pattern->getLocation(), isa<FunctionDecl>(Instantiation)
-                                     ? diag::note_explicit_instantiation_here
-                                     : diag::note_template_decl_here);
+      Note = diag::note_template_decl_here;
+    } else {
+      assert(isa<VarDecl>(Instantiation) && "Must be a VarDecl!");
+      if (isa<VarTemplateSpecializationDecl>(Instantiation)) {
+        Diag(PointOfInstantiation,
+             diag::err_explicit_instantiation_undefined_var_template)
+          << Instantiation;
+        Instantiation->setInvalidDecl();
+      } else
+        Diag(PointOfInstantiation,
+             diag::err_explicit_instantiation_undefined_member)
+          << /*static data member*/ 2 << Instantiation->getDeclName()
+          << Instantiation->getDeclContext();
+      Note = diag::note_explicit_instantiation_here;
+    }
   }
+  if (Note) // Diagnostics were emitted.
+    Diag(Pattern->getLocation(), Note.getValue());
 
   // In general, Instantiation isn't marked invalid to get more than one
   // error for multiple undefined instantiations. But the code that does
@@ -2969,12 +2990,10 @@ Sema::CheckVarTemplateId(VarTemplateDecl *Template, SourceLocation TemplateLoc,
         << Decl;
 
     // Print the matching partial specializations.
-    for (SmallVector<MatchResult, 4>::iterator P = Matched.begin(),
-                                               PEnd = Matched.end();
-         P != PEnd; ++P)
-      Diag(P->Partial->getLocation(), diag::note_partial_spec_match)
-          << getTemplateArgumentBindingsText(
-                 P->Partial->getTemplateParameters(), *P->Args);
+    for (MatchResult P : Matched)
+      Diag(P.Partial->getLocation(), diag::note_partial_spec_match)
+          << getTemplateArgumentBindingsText(P.Partial->getTemplateParameters(),
+                                             *P.Args);
     return true;
   }
 
@@ -5954,9 +5973,13 @@ Sema::CheckTemplateDeclScope(Scope *S, TemplateParameterList *TemplateParams) {
   // C++ [temp]p4:
   //   A template [...] shall not have C linkage.
   DeclContext *Ctx = S->getEntity();
-  if (Ctx && Ctx->isExternCContext())
-    return Diag(TemplateParams->getTemplateLoc(), diag::err_template_linkage)
-             << TemplateParams->getSourceRange();
+  if (Ctx && Ctx->isExternCContext()) {
+    Diag(TemplateParams->getTemplateLoc(), diag::err_template_linkage)
+        << TemplateParams->getSourceRange();
+    if (const LinkageSpecDecl *LSD = Ctx->getExternCContext())
+      Diag(LSD->getExternLoc(), diag::note_extern_c_begins_here);
+    return true;
+  }
   Ctx = Ctx->getRedeclContext();
 
   // C++ [temp]p2:
@@ -7056,6 +7079,21 @@ bool Sema::CheckFunctionTemplateSpecialization(
         continue;
       }
 
+      // Target attributes are part of the cuda function signature, so
+      // the deduced template's cuda target must match that of the
+      // specialization.  Given that C++ template deduction does not
+      // take target attributes into account, we reject candidates
+      // here that have a different target.
+      if (LangOpts.CUDA &&
+          IdentifyCUDATarget(Specialization,
+                             /* IgnoreImplicitHDAttributes = */ true) !=
+              IdentifyCUDATarget(FD, /* IgnoreImplicitHDAttributes = */ true)) {
+        FailedCandidates.addCandidate().set(
+            I.getPair(), FunTmpl->getTemplatedDecl(),
+            MakeDeductionFailureInfo(Context, TDK_CUDATargetMismatch, Info));
+        continue;
+      }
+
       // C++ AMP
       // Check if the specialization has the same or more restriction specifiers
       // Truth table (row: restriction specifier of the input, column: restriction specifier of the candidate.
@@ -7209,6 +7247,14 @@ bool Sema::CheckFunctionTemplateSpecialization(
       Specialization->getPrimaryTemplate(), TemplArgs, /*InsertPos=*/nullptr,
       SpecInfo->getTemplateSpecializationKind(),
       ExplicitTemplateArgs ? &ConvertedTemplateArgs[Specialization] : nullptr);
+
+  // A function template specialization inherits the target attributes
+  // of its template.  (We require the attributes explicitly in the
+  // code to match, but a template may have implicit attributes by
+  // virtue e.g. of being constexpr, and it passes these implicit
+  // attributes on to its specializations.)
+  if (LangOpts.CUDA)
+    inheritCUDATargetAttrs(FD, *Specialization->getPrimaryTemplate());
 
   // The "previous declaration" for this function template specialization is
   // the prior function template specialization.
@@ -7492,6 +7538,30 @@ static bool ScopeSpecifierHasTemplateId(const CXXScopeSpec &SS) {
   return false;
 }
 
+/// Make a dllexport or dllimport attr on a class template specialization take
+/// effect.
+static void dllExportImportClassTemplateSpecialization(
+    Sema &S, ClassTemplateSpecializationDecl *Def) {
+  auto *A = cast_or_null<InheritableAttr>(getDLLAttr(Def));
+  assert(A && "dllExportImportClassTemplateSpecialization called "
+              "on Def without dllexport or dllimport");
+
+  // We reject explicit instantiations in class scope, so there should
+  // never be any delayed exported classes to worry about.
+  assert(S.DelayedDllExportClasses.empty() &&
+         "delayed exports present at explicit instantiation");
+  S.checkClassLevelDLLAttribute(Def);
+
+  // Propagate attribute to base class templates.
+  for (auto &B : Def->bases()) {
+    if (auto *BT = dyn_cast_or_null<ClassTemplateSpecializationDecl>(
+            B.getType()->getAsCXXRecordDecl()))
+      S.propagateDLLAttrToBaseClassTemplate(Def, A, BT, B.getLocStart());
+  }
+
+  S.referenceDLLExportedClassMethods();
+}
+
 // Explicit instantiation of a class template specialization
 DeclResult
 Sema::ActOnExplicitInstantiation(Scope *S,
@@ -7729,7 +7799,8 @@ Sema::ActOnExplicitInstantiation(Scope *S,
       Def->setTemplateSpecializationKind(TSK);
 
       if (!getDLLAttr(Def) && getDLLAttr(Specialization) &&
-          Context.getTargetInfo().getCXXABI().isMicrosoft()) {
+          (Context.getTargetInfo().getCXXABI().isMicrosoft() ||
+           Context.getTargetInfo().getTriple().isWindowsItaniumEnvironment())) {
         // In the MS ABI, an explicit instantiation definition can add a dll
         // attribute to a template with a previous instantiation declaration.
         // MinGW doesn't allow this.
@@ -7737,21 +7808,31 @@ Sema::ActOnExplicitInstantiation(Scope *S,
             getDLLAttr(Specialization)->clone(getASTContext()));
         A->setInherited(true);
         Def->addAttr(A);
-
-        // We reject explicit instantiations in class scope, so there should
-        // never be any delayed exported classes to worry about.
-        assert(DelayedDllExportClasses.empty() &&
-               "delayed exports present at explicit instantiation");
-        checkClassLevelDLLAttribute(Def);
-        referenceDLLExportedClassMethods();
-
-        // Propagate attribute to base class templates.
-        for (auto &B : Def->bases()) {
-          if (auto *BT = dyn_cast_or_null<ClassTemplateSpecializationDecl>(
-                  B.getType()->getAsCXXRecordDecl()))
-            propagateDLLAttrToBaseClassTemplate(Def, A, BT, B.getLocStart());
-        }
+        dllExportImportClassTemplateSpecialization(*this, Def);
       }
+    }
+
+    // Fix a TSK_ImplicitInstantiation followed by a
+    // TSK_ExplicitInstantiationDefinition
+    if (Old_TSK == TSK_ImplicitInstantiation &&
+        Specialization->hasAttr<DLLExportAttr>() &&
+        (Context.getTargetInfo().getCXXABI().isMicrosoft() ||
+         Context.getTargetInfo().getTriple().isWindowsItaniumEnvironment())) {
+      // In the MS ABI, an explicit instantiation definition can add a dll
+      // attribute to a template with a previous implicit instantiation.
+      // MinGW doesn't allow this. We limit clang to only adding dllexport, to
+      // avoid potentially strange codegen behavior.  For example, if we extend
+      // this conditional to dllimport, and we have a source file calling a
+      // method on an implicitly instantiated template class instance and then
+      // declaring a dllimport explicit instantiation definition for the same
+      // template class, the codegen for the method call will not respect the
+      // dllimport, while it will with cl. The Def will already have the DLL
+      // attribute, since the Def and Specialization will be the same in the
+      // case of Old_TSK == TSK_ImplicitInstantiation, and we already added the
+      // attribute to the Specialization; we just need to make it take effect.
+      assert(Def == Specialization &&
+             "Def and Specialization should match for implicit instantiation");
+      dllExportImportClassTemplateSpecialization(*this, Def);
     }
 
     // Set the template specialization kind. Make sure it is set before
@@ -8125,13 +8206,15 @@ DeclResult Sema::ActOnExplicitInstantiation(Scope *S,
   //  instantiated from the member definition associated with its class
   //  template.
   UnresolvedSet<8> Matches;
+  AttributeList *Attr = D.getDeclSpec().getAttributes().getList();
   TemplateSpecCandidateSet FailedCandidates(D.getIdentifierLoc());
   for (LookupResult::iterator P = Previous.begin(), PEnd = Previous.end();
        P != PEnd; ++P) {
     NamedDecl *Prev = *P;
     if (!HasExplicitTemplateArgs) {
       if (CXXMethodDecl *Method = dyn_cast<CXXMethodDecl>(Prev)) {
-        QualType Adjusted = adjustCCAndNoReturn(R, Method->getType());
+        QualType Adjusted = adjustCCAndNoReturn(R, Method->getType(),
+                                                /*AdjustExceptionSpec*/true);
         if (Context.hasSameUnqualifiedType(Method->getType(), Adjusted)) {
           Matches.clear();
 
@@ -8158,6 +8241,21 @@ DeclResult Sema::ActOnExplicitInstantiation(Scope *S,
           .set(P.getPair(), FunTmpl->getTemplatedDecl(),
                MakeDeductionFailureInfo(Context, TDK, Info));
       (void)TDK;
+      continue;
+    }
+
+    // Target attributes are part of the cuda function signature, so
+    // the cuda target of the instantiated function must match that of its
+    // template.  Given that C++ template deduction does not take
+    // target attributes into account, we reject candidates here that
+    // have a different target.
+    if (LangOpts.CUDA &&
+        IdentifyCUDATarget(Specialization,
+                           /* IgnoreImplicitHDAttributes = */ true) !=
+            IdentifyCUDATarget(Attr)) {
+      FailedCandidates.addCandidate().set(
+          P.getPair(), FunTmpl->getTemplatedDecl(),
+          MakeDeductionFailureInfo(Context, TDK_CUDATargetMismatch, Info));
       continue;
     }
 
@@ -8231,7 +8329,6 @@ DeclResult Sema::ActOnExplicitInstantiation(Scope *S,
   }
 
   Specialization->setTemplateSpecializationKind(TSK, D.getIdentifierLoc());
-  AttributeList *Attr = D.getDeclSpec().getAttributes().getList();
   if (Attr)
     ProcessDeclAttributeList(S, Specialization, Attr);
 

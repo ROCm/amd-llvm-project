@@ -46,6 +46,16 @@ class SITargetLowering final : public AMDGPUTargetLowering {
   SDValue LowerATOMIC_CMP_SWAP(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerBRCOND(SDValue Op, SelectionDAG &DAG) const;
 
+  /// \brief Converts \p Op, which must be of floating point type, to the
+  /// floating point type \p VT, by either extending or truncating it.
+  SDValue getFPExtOrFPTrunc(SelectionDAG &DAG,
+                            SDValue Op,
+                            const SDLoc &DL,
+                            EVT VT) const;
+
+  /// \brief Custom lowering for ISD::FP_ROUND for MVT::f16.
+  SDValue lowerFP_ROUND(SDValue Op, SelectionDAG &DAG) const;
+
   SDValue getSegmentAperture(unsigned AS, SelectionDAG &DAG) const;
   SDValue lowerADDRSPACECAST(SDValue Op, SelectionDAG &DAG) const;
   SDValue lowerTRAP(SDValue Op, SelectionDAG &DAG) const;
@@ -78,6 +88,19 @@ class SITargetLowering final : public AMDGPUTargetLowering {
   bool isCFIntrinsic(const SDNode *Intr) const;
 
   void createDebuggerPrologueStackObjects(MachineFunction &MF) const;
+
+  /// \returns True if fixup needs to be emitted for given global value \p GV,
+  /// false otherwise.
+  bool shouldEmitFixup(const GlobalValue *GV) const;
+
+  /// \returns True if GOT relocation needs to be emitted for given global value
+  /// \p GV, false otherwise.
+  bool shouldEmitGOTReloc(const GlobalValue *GV) const;
+
+  /// \returns True if PC-relative relocation needs to be emitted for given
+  /// global value \p GV, false otherwise.
+  bool shouldEmitPCReloc(const GlobalValue *GV) const;
+
 public:
   SITargetLowering(const TargetMachine &tm, const SISubtarget &STI);
 
@@ -103,7 +126,9 @@ public:
                           MachineFunction &MF) const override;
 
   bool isMemOpUniform(const SDNode *N) const;
+  bool isMemOpHasNoClobberedMemOperand(const SDNode *N) const;
   bool isNoopAddrSpaceCast(unsigned SrcAS, unsigned DestAS) const override;
+  bool isCheapAddrSpaceCast(unsigned SrcAS, unsigned DestAS) const override;
 
   TargetLoweringBase::LegalizeTypeAction
   getPreferredVectorAction(EVT VT) const override;

@@ -25,6 +25,22 @@ using namespace clang;
 //  Child Iterators for iterating over subexpressions/substatements
 //===----------------------------------------------------------------------===//
 
+bool CXXOperatorCallExpr::isInfixBinaryOp() const {
+  // An infix binary operator is any operator with two arguments other than
+  // operator() and operator[]. Note that none of these operators can have
+  // default arguments, so it suffices to check the number of argument
+  // expressions.
+  if (getNumArgs() != 2)
+    return false;
+
+  switch (getOperator()) {
+  case OO_Call: case OO_Subscript:
+    return false;
+  default:
+    return true;
+  }
+}
+
 bool CXXTypeidExpr::isPotentiallyEvaluated() const {
   if (isTypeOperand())
     return false;
@@ -227,7 +243,7 @@ UnresolvedLookupExpr::Create(const ASTContext &C,
   std::size_t Size =
       totalSizeToAlloc<ASTTemplateKWAndArgsInfo, TemplateArgumentLoc>(1,
                                                                       num_args);
-  void *Mem = C.Allocate(Size, llvm::alignOf<UnresolvedLookupExpr>());
+  void *Mem = C.Allocate(Size, alignof(UnresolvedLookupExpr));
   return new (Mem) UnresolvedLookupExpr(C, NamingClass, QualifierLoc,
                                         TemplateKWLoc, NameInfo,
                                         ADL, /*Overload*/ true, Args,
@@ -242,7 +258,7 @@ UnresolvedLookupExpr::CreateEmpty(const ASTContext &C,
   std::size_t Size =
       totalSizeToAlloc<ASTTemplateKWAndArgsInfo, TemplateArgumentLoc>(
           HasTemplateKWAndArgsInfo, NumTemplateArgs);
-  void *Mem = C.Allocate(Size, llvm::alignOf<UnresolvedLookupExpr>());
+  void *Mem = C.Allocate(Size, alignof(UnresolvedLookupExpr));
   UnresolvedLookupExpr *E = new (Mem) UnresolvedLookupExpr(EmptyShell());
   E->HasTemplateKWAndArgsInfo = HasTemplateKWAndArgsInfo;
   return E;
@@ -285,9 +301,8 @@ OverloadExpr::OverloadExpr(StmtClass K, const ASTContext &C,
       }
     }
 
-    Results = static_cast<DeclAccessPair *>(
-                                C.Allocate(sizeof(DeclAccessPair) * NumResults, 
-                                           llvm::alignOf<DeclAccessPair>()));
+    Results = static_cast<DeclAccessPair *>(C.Allocate(
+        sizeof(DeclAccessPair) * NumResults, alignof(DeclAccessPair)));
     memcpy(Results, Begin.I, NumResults * sizeof(DeclAccessPair));
   }
 
@@ -324,11 +339,11 @@ void OverloadExpr::initializeResults(const ASTContext &C,
   assert(!Results && "Results already initialized!");
   NumResults = End - Begin;
   if (NumResults) {
-     Results = static_cast<DeclAccessPair *>(
-                               C.Allocate(sizeof(DeclAccessPair) * NumResults,
- 
-                                          llvm::alignOf<DeclAccessPair>()));
-     memcpy(Results, Begin.I, NumResults * sizeof(DeclAccessPair));
+    Results = static_cast<DeclAccessPair *>(
+        C.Allocate(sizeof(DeclAccessPair) * NumResults,
+
+                   alignof(DeclAccessPair)));
+    memcpy(Results, Begin.I, NumResults * sizeof(DeclAccessPair));
   }
 }
 
@@ -1042,7 +1057,7 @@ ExprWithCleanups *ExprWithCleanups::Create(const ASTContext &C, Expr *subexpr,
                                            bool CleanupsHaveSideEffects,
                                            ArrayRef<CleanupObject> objects) {
   void *buffer = C.Allocate(totalSizeToAlloc<CleanupObject>(objects.size()),
-                            llvm::alignOf<ExprWithCleanups>());
+                            alignof(ExprWithCleanups));
   return new (buffer)
       ExprWithCleanups(subexpr, CleanupsHaveSideEffects, objects);
 }
@@ -1056,7 +1071,7 @@ ExprWithCleanups *ExprWithCleanups::Create(const ASTContext &C,
                                            EmptyShell empty,
                                            unsigned numObjects) {
   void *buffer = C.Allocate(totalSizeToAlloc<CleanupObject>(numObjects),
-                            llvm::alignOf<ExprWithCleanups>());
+                            alignof(ExprWithCleanups));
   return new (buffer) ExprWithCleanups(empty, numObjects);
 }
 
@@ -1155,7 +1170,7 @@ CXXDependentScopeMemberExpr::Create(const ASTContext &C,
       totalSizeToAlloc<ASTTemplateKWAndArgsInfo, TemplateArgumentLoc>(
           HasTemplateKWAndArgsInfo, NumTemplateArgs);
 
-  void *Mem = C.Allocate(Size, llvm::alignOf<CXXDependentScopeMemberExpr>());
+  void *Mem = C.Allocate(Size, alignof(CXXDependentScopeMemberExpr));
   return new (Mem) CXXDependentScopeMemberExpr(C, Base, BaseType,
                                                IsArrow, OperatorLoc,
                                                QualifierLoc,
@@ -1172,7 +1187,7 @@ CXXDependentScopeMemberExpr::CreateEmpty(const ASTContext &C,
   std::size_t Size =
       totalSizeToAlloc<ASTTemplateKWAndArgsInfo, TemplateArgumentLoc>(
           HasTemplateKWAndArgsInfo, NumTemplateArgs);
-  void *Mem = C.Allocate(Size, llvm::alignOf<CXXDependentScopeMemberExpr>());
+  void *Mem = C.Allocate(Size, alignof(CXXDependentScopeMemberExpr));
   CXXDependentScopeMemberExpr *E
     =  new (Mem) CXXDependentScopeMemberExpr(C, nullptr, QualType(),
                                              0, SourceLocation(),
@@ -1256,7 +1271,7 @@ UnresolvedMemberExpr *UnresolvedMemberExpr::Create(
       totalSizeToAlloc<ASTTemplateKWAndArgsInfo, TemplateArgumentLoc>(
           HasTemplateKWAndArgsInfo, TemplateArgs ? TemplateArgs->size() : 0);
 
-  void *Mem = C.Allocate(Size, llvm::alignOf<UnresolvedMemberExpr>());
+  void *Mem = C.Allocate(Size, alignof(UnresolvedMemberExpr));
   return new (Mem) UnresolvedMemberExpr(
       C, HasUnresolvedUsing, Base, BaseType, IsArrow, OperatorLoc, QualifierLoc,
       TemplateKWLoc, MemberNameInfo, TemplateArgs, Begin, End);
@@ -1271,7 +1286,7 @@ UnresolvedMemberExpr::CreateEmpty(const ASTContext &C,
       totalSizeToAlloc<ASTTemplateKWAndArgsInfo, TemplateArgumentLoc>(
           HasTemplateKWAndArgsInfo, NumTemplateArgs);
 
-  void *Mem = C.Allocate(Size, llvm::alignOf<UnresolvedMemberExpr>());
+  void *Mem = C.Allocate(Size, alignof(UnresolvedMemberExpr));
   UnresolvedMemberExpr *E = new (Mem) UnresolvedMemberExpr(EmptyShell());
   E->HasTemplateKWAndArgsInfo = HasTemplateKWAndArgsInfo;
   return E;

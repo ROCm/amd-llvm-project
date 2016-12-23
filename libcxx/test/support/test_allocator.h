@@ -20,6 +20,13 @@
 
 #include "test_macros.h"
 
+template <class Alloc>
+inline typename std::allocator_traits<Alloc>::size_type
+alloc_max_size(Alloc const &a) {
+  typedef std::allocator_traits<Alloc> AT;
+  return AT::max_size(a);
+}
+
 class test_alloc_base
 {
 protected:
@@ -332,6 +339,7 @@ struct limited_alloc_handle {
 template <class T, std::size_t N>
 class limited_allocator
 {
+    template <class U, std::size_t UN> friend class limited_allocator;
     typedef limited_alloc_handle<N> BuffT;
     std::shared_ptr<BuffT> handle_;
 public:

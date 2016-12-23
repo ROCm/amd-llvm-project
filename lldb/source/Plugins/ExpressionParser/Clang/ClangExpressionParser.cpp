@@ -135,7 +135,7 @@ public:
 
   bool hasErrors() { return m_has_errors; }
 
-  const std::string &getErrorString() { return m_error_stream.GetString(); }
+  llvm::StringRef getErrorString() { return m_error_stream.GetString(); }
 };
 
 class ClangDiagnosticManagerAdapter : public clang::DiagnosticConsumer {
@@ -624,10 +624,10 @@ unsigned ClangExpressionParser::Parse(DiagnosticManager &diagnostic_manager) {
 
   if (m_pp_callbacks && m_pp_callbacks->hasErrors()) {
     num_errors++;
-    diagnostic_manager.PutCString(eDiagnosticSeverityError,
-                                  "while importing modules:");
+    diagnostic_manager.PutString(eDiagnosticSeverityError,
+                                 "while importing modules:");
     diagnostic_manager.AppendMessageToDiagnostic(
-        m_pp_callbacks->getErrorString().c_str());
+        m_pp_callbacks->getErrorString());
   }
 
   if (!num_errors) {
@@ -808,9 +808,9 @@ lldb_private::Error ClangExpressionParser::PrepareForExecution(
     if (log)
       log->Printf("%s - Currrent expression language is %s\n", __FUNCTION__,
                   Language::GetNameForLanguageType(lang));
-
-    if (lang != lldb::eLanguageTypeUnknown) {
-      auto runtime = exe_ctx.GetProcessSP()->GetLanguageRuntime(lang);
+    lldb::ProcessSP process_sp = exe_ctx.GetProcessSP();
+    if (process_sp && lang != lldb::eLanguageTypeUnknown) {
+      auto runtime = process_sp->GetLanguageRuntime(lang);
       if (runtime)
         runtime->GetIRPasses(custom_passes);
     }

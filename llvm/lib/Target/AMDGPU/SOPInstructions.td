@@ -7,6 +7,18 @@
 //
 //===----------------------------------------------------------------------===//
 
+def GPRIdxModeMatchClass : AsmOperandClass {
+  let Name = "GPRIdxMode";
+  let PredicateMethod = "isGPRIdxMode";
+  let RenderMethod = "addImmOperands";
+}
+
+def GPRIdxMode : Operand<i32> {
+  let PrintMethod = "printVGPRIndexMode";
+  let ParserMatchClass = GPRIdxModeMatchClass;
+  let OperandType = "OPERAND_IMMEDIATE";
+}
+
 //===----------------------------------------------------------------------===//
 // SOP1 Instructions
 //===----------------------------------------------------------------------===//
@@ -62,6 +74,13 @@ class SOP1_32 <string opName, list<dag> pattern=[]> : SOP1_Pseudo <
   opName, (outs SReg_32:$sdst), (ins SSrc_b32:$src0),
   "$sdst, $src0", pattern
 >;
+
+// 32-bit input, no output.
+class SOP1_0_32 <string opName, list<dag> pattern = []> : SOP1_Pseudo <
+  opName, (outs), (ins SSrc_b32:$src0),
+  "$src0", pattern> {
+  let has_sdst = 0;
+}
 
 class SOP1_64 <string opName, list<dag> pattern=[]> : SOP1_Pseudo <
   opName, (outs SReg_64:$sdst), (ins SSrc_b64:$src0),
@@ -198,6 +217,12 @@ def S_ABS_I32 : SOP1_32 <"s_abs_i32">;
 } // End Defs = [SCC]
 def S_MOV_FED_B32 : SOP1_32 <"s_mov_fed_b32">;
 
+let SubtargetPredicate = HasVGPRIndexMode in {
+def S_SET_GPR_IDX_IDX : SOP1_0_32<"s_set_gpr_idx_idx"> {
+  let Uses = [M0];
+  let Defs = [M0];
+}
+}
 
 //===----------------------------------------------------------------------===//
 // SOP2 Instructions
@@ -565,10 +590,13 @@ def S_GETREG_B32 : SOPK_Pseudo <
 >;
 }
 
+let hasSideEffects = 1 in {
+
 def S_SETREG_B32 : SOPK_Pseudo <
   "s_setreg_b32",
   (outs), (ins SReg_32:$sdst, hwreg:$simm16),
-  "$simm16, $sdst"
+  "$simm16, $sdst",
+  [(AMDGPUsetreg i32:$sdst, (i16 timm:$simm16))]
 >;
 
 // FIXME: Not on SI?
@@ -582,6 +610,7 @@ def S_SETREG_IMM32_B32 : SOPK_Pseudo <
   let has_sdst = 0;
 }
 
+} // End hasSideEffects = 1
 
 //===----------------------------------------------------------------------===//
 // SOPC Instructions
@@ -597,7 +626,8 @@ class SOPCe <bits<7> op> : Enc32 {
   let Inst{31-23} = 0x17e;
 }
 
-class SOPC <bits<7> op, dag outs, dag ins, string asm, list<dag> pattern> :
+class SOPC <bits<7> op, dag outs, dag ins, string asm,
+            list<dag> pattern = []> :
   InstSI<outs, ins, asm, pattern>, SOPCe <op> {
   let mayLoad = 0;
   let mayStore = 0;
@@ -670,6 +700,18 @@ def S_CMP_EQ_U64 : SOPC_CMP_64 <0x12, "s_cmp_eq_u64", COND_EQ>;
 def S_CMP_LG_U64 : SOPC_CMP_64 <0x13, "s_cmp_lg_u64", COND_NE>;
 }
 
+let SubtargetPredicate = HasVGPRIndexMode in {
+def S_SET_GPR_IDX_ON : SOPC <0x11,
+  (outs),
+  (ins SSrc_b32:$src0, GPRIdxMode:$src1),
+  "s_set_gpr_idx_on $src0,$src1"> {
+  let Defs = [M0]; // No scc def
+  let Uses = [M0]; // Other bits of m0 unmodified.
+  let hasSideEffects = 1; // Sets mode.gpr_idx_en
+  let FixedSize = 1;
+}
+}
+
 //===----------------------------------------------------------------------===//
 // SOPP Instructions
 //===----------------------------------------------------------------------===//
@@ -706,8 +748,7 @@ def S_ENDPGM : SOPP <0x00000001, (ins), "s_endpgm",
   [(AMDGPUendpgm)]> {
   let simm16 = 0;
   let isBarrier = 1;
-  let hasCtrlDep = 1;
-  let hasSideEffects = 1;
+  let isReturn = 1;
 }
 
 let isBranch = 1, SchedRW = [WriteBranch] in {
@@ -809,8 +850,20 @@ def S_DECPERFLEVEL : SOPP <0x00000015, (ins i32imm:$simm16), "s_decperflevel $si
 def S_TTRACEDATA : SOPP <0x00000016, (ins), "s_ttracedata"> {
   let simm16 = 0;
 }
+
+let SubtargetPredicate = HasVGPRIndexMode in {
+def S_SET_GPR_IDX_OFF : SOPP<0x1c, (ins), "s_set_gpr_idx_off"> {
+  let simm16 = 0;
+}
+}
 } // End hasSideEffects
 
+let SubtargetPredicate = HasVGPRIndexMode in {
+def S_SET_GPR_IDX_MODE : SOPP<0x1d, (ins GPRIdxMode:$simm16),
+  "s_set_gpr_idx_mode$simm16"> {
+  let Defs = [M0];
+}
+}
 
 let Predicates = [isGCN] in {
 
@@ -830,13 +883,25 @@ def : Pat <
   (i64 (ctpop i64:$src)),
     (i64 (REG_SEQUENCE SReg_64,
      (i32 (COPY_TO_REGCLASS (S_BCNT1_I32_B64 $src), SReg_32)), sub0,
-     (S_MOV_B32 0), sub1))
+     (S_MOV_B32 (i32 0)), sub1))
 >;
 
 def : Pat <
   (i32 (smax i32:$x, (i32 (ineg i32:$x)))),
   (S_ABS_I32 $x)
 >;
+
+def : Pat <
+  (i16 imm:$imm),
+  (S_MOV_B32 imm:$imm)
+>;
+
+// Same as a 32-bit inreg
+def : Pat<
+  (i32 (sext i16:$src)),
+  (S_SEXT_I32_I16 $src)
+>;
+
 
 //===----------------------------------------------------------------------===//
 // SOP2 Patterns
@@ -848,6 +913,29 @@ def : Pat <
   (i32 (addc i32:$src0, i32:$src1)),
   (S_ADD_U32 $src0, $src1)
 >;
+
+// FIXME: We need to use COPY_TO_REGCLASS to work-around the fact that
+// REG_SEQUENCE patterns don't support instructions with multiple
+// outputs.
+def : Pat<
+  (i64 (zext i16:$src)),
+    (REG_SEQUENCE SReg_64,
+      (i32 (COPY_TO_REGCLASS (S_AND_B32 $src, (S_MOV_B32 (i32 0xffff))), SGPR_32)), sub0,
+      (S_MOV_B32 (i32 0)), sub1)
+>;
+
+def : Pat <
+  (i64 (sext i16:$src)),
+    (REG_SEQUENCE SReg_64, (i32 (S_SEXT_I32_I16 $src)), sub0,
+    (i32 (COPY_TO_REGCLASS (S_ASHR_I32 (i32 (S_SEXT_I32_I16 $src)), (S_MOV_B32 (i32 31))), SGPR_32)), sub1)
+>;
+
+def : Pat<
+  (i32 (zext i16:$src)),
+  (S_AND_B32 (S_MOV_B32 (i32 0xffff)), $src)
+>;
+
+
 
 //===----------------------------------------------------------------------===//
 // SOPP Patterns
@@ -1071,6 +1159,7 @@ def S_CBRANCH_JOIN_vi      : SOP1_Real_vi <0x2e, S_CBRANCH_JOIN>;
 def S_MOV_REGRD_B32_vi     : SOP1_Real_vi <0x2f, S_MOV_REGRD_B32>;
 def S_ABS_I32_vi           : SOP1_Real_vi <0x30, S_ABS_I32>;
 def S_MOV_FED_B32_vi       : SOP1_Real_vi <0x31, S_MOV_FED_B32>;
+def S_SET_GPR_IDX_IDX_vi   : SOP1_Real_vi <0x32, S_SET_GPR_IDX_IDX>;
 
 def S_ADD_U32_vi           : SOP2_Real_vi <0x00, S_ADD_U32>;
 def S_ADD_I32_vi           : SOP2_Real_vi <0x02, S_ADD_I32>;

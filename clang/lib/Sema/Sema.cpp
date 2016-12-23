@@ -96,7 +96,6 @@ Sema::Sema(Preprocessor &pp, ASTContext &ctxt, ASTConsumer &consumer,
     ValueWithBytesObjCTypeMethod(nullptr),
     NSArrayDecl(nullptr), ArrayWithObjectsMethod(nullptr),
     NSDictionaryDecl(nullptr), DictionaryWithObjectsMethod(nullptr),
-    MSAsmLabelNameCounter(0),
     GlobalNewDeleteDeclared(false),
     TUKind(TUKind),
     NumSFINAEErrors(0),
@@ -390,6 +389,18 @@ ExprResult Sema::ImpCastExprToType(Expr *E, QualType Ty,
 
   if (ExprTy == TypeTy)
     return E;
+
+  // C++1z [conv.array]: The temporary materialization conversion is applied.
+  // We also use this to fuel C++ DR1213, which applies to C++11 onwards.
+  if (Kind == CK_ArrayToPointerDecay && getLangOpts().CPlusPlus &&
+      E->getValueKind() == VK_RValue) {
+    // The temporary is an lvalue in C++98 and an xvalue otherwise.
+    ExprResult Materialized = CreateMaterializeTemporaryExpr(
+        E->getType(), E, !getLangOpts().CPlusPlus11);
+    if (Materialized.isInvalid())
+      return ExprError();
+    E = Materialized.get();
+  }
 
   if (ImplicitCastExpr *ImpCast = dyn_cast<ImplicitCastExpr>(E)) {
     if (ImpCast->getCastKind() == Kind && (!BasePath || BasePath->empty())) {
@@ -708,7 +719,8 @@ void Sema::ActOnEndOfTranslationUnit() {
 
   if (TUKind == TU_Prefix) {
     // Translation unit prefixes don't need any of the checking below.
-    TUScope = nullptr;
+    if (!PP.isIncrementalProcessingEnabled())
+      TUScope = nullptr;
     return;
   }
 
@@ -864,8 +876,11 @@ void Sema::ActOnEndOfTranslationUnit() {
           Diag(DiagD->getLocation(), diag::warn_unneeded_internal_decl)
                 << /*variable*/1 << DiagD->getDeclName();
         } else if (DiagD->getType().isConstQualified()) {
-          Diag(DiagD->getLocation(), diag::warn_unused_const_variable)
-              << DiagD->getDeclName();
+          const SourceManager &SM = SourceMgr;
+          if (SM.getMainFileID() != SM.getFileID(DiagD->getLocation()) ||
+              !PP.getLangOpts().IsHeaderFile)
+            Diag(DiagD->getLocation(), diag::warn_unused_const_variable)
+                << DiagD->getDeclName();
         } else {
           Diag(DiagD->getLocation(), diag::warn_unused_variable)
               << DiagD->getDeclName();
@@ -908,7 +923,8 @@ void Sema::ActOnEndOfTranslationUnit() {
   assert(ParsingInitForAutoVars.empty() &&
          "Didn't unmark var as having its initializer parsed");
 
-  TUScope = nullptr;
+  if (!PP.isIncrementalProcessingEnabled())
+    TUScope = nullptr;
 }
 
 
@@ -1196,11 +1212,19 @@ BlockScopeInfo *Sema::getCurBlock() {
   return CurBSI;
 }
 
-LambdaScopeInfo *Sema::getCurLambda() {
+LambdaScopeInfo *Sema::getCurLambda(bool IgnoreCapturedRegions) {
   if (FunctionScopes.empty())
     return nullptr;
 
-  auto CurLSI = dyn_cast<LambdaScopeInfo>(FunctionScopes.back());
+  auto I = FunctionScopes.rbegin();
+  if (IgnoreCapturedRegions) {
+    auto E = FunctionScopes.rend();
+    while (I != E && isa<CapturedRegionScopeInfo>(*I))
+      ++I;
+    if (I == E)
+      return nullptr;
+  }
+  auto *CurLSI = dyn_cast<LambdaScopeInfo>(*I);
   if (CurLSI && CurLSI->Lambda &&
       !CurLSI->Lambda->Encloses(CurContext)) {
     // We have switched contexts due to template instantiation.

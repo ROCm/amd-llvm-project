@@ -1067,7 +1067,7 @@ HexagonTargetLowering::LowerDYNAMIC_STACKALLOC(SDValue Op,
     A = HFI.getStackAlignment();
 
   DEBUG({
-    dbgs () << LLVM_FUNCTION_NAME << " Align: " << A << " Size: ";
+    dbgs () << __func__ << " Align: " << A << " Size: ";
     Size.getNode()->dump(&DAG);
     dbgs() << "\n";
   });
@@ -1507,7 +1507,8 @@ HexagonTargetLowering::LowerGLOBALADDRESS(SDValue Op, SelectionDAG &DAG) const {
 
   if (RM == Reloc::Static) {
     SDValue GA = DAG.getTargetGlobalAddress(GV, dl, PtrVT, Offset);
-    if (HLOF.isGlobalInSmallSection(GV, HTM))
+    const GlobalObject *GO = GV->getBaseObject();
+    if (GO && HLOF.isGlobalInSmallSection(GO, HTM))
       return DAG.getNode(HexagonISD::CONST32_GP, dl, PtrVT, GA);
     return DAG.getNode(HexagonISD::CONST32, dl, PtrVT, GA);
   }
@@ -1956,7 +1957,7 @@ HexagonTargetLowering::HexagonTargetLowering(const TargetMachine &TM,
     ISD::FRINT,   ISD::FNEARBYINT,            ISD::FROUND,  ISD::FFLOOR,
     ISD::FMINNUM, ISD::FMAXNUM, ISD::FSINCOS,
     // Misc:
-    ISD::SELECT,  ISD::ConstantPool,
+    ISD::BR_CC,   ISD::SELECT_CC,             ISD::ConstantPool,
     // Vector:
     ISD::BUILD_VECTOR,          ISD::SCALAR_TO_VECTOR,
     ISD::EXTRACT_VECTOR_ELT,    ISD::INSERT_VECTOR_ELT,
@@ -1978,12 +1979,15 @@ HexagonTargetLowering::HexagonTargetLowering(const TargetMachine &TM,
       setTruncStoreAction(VT, TargetVT, Expand);
     }
 
+    // Normalize all inputs to SELECT to be vectors of i32.
+    if (VT.getVectorElementType() != MVT::i32) {
+      MVT VT32 = MVT::getVectorVT(MVT::i32, VT.getSizeInBits()/32);
+      setOperationAction(ISD::SELECT, VT, Promote);
+      AddPromotedToType(ISD::SELECT, VT, VT32);
+    }
     setOperationAction(ISD::SRA, VT, Custom);
     setOperationAction(ISD::SHL, VT, Custom);
     setOperationAction(ISD::SRL, VT, Custom);
-
-    setOperationAction(ISD::BR_CC,     VT, Expand);
-    setOperationAction(ISD::SELECT_CC, VT, Expand);
   }
 
   // Types natively supported:
@@ -2554,7 +2558,7 @@ HexagonTargetLowering::LowerBUILD_VECTOR(SDValue Op, SelectionDAG &DAG) const {
         SDValue pack = DAG.getNode(HexagonISD::PACKHL, dl, MVT::v4i16,
                                    BVN->getOperand(1), BVN->getOperand(0));
 
-        return DAG.getTargetExtractSubreg(Hexagon::subreg_loreg, dl, MVT::v2i16,
+        return DAG.getTargetExtractSubreg(Hexagon::isub_lo, dl, MVT::v2i16,
                                           pack);
       }
     }
@@ -2726,14 +2730,12 @@ HexagonTargetLowering::LowerEXTRACT_SUBVECTOR_HVX(SDValue Op,
   // These two will get lowered to an appropriate EXTRACT_SUBREG in ISel.
   if (Val == 0) {
     SDValue Vec = Op.getOperand(0);
-    unsigned Subreg = Hexagon::subreg_loreg;
-    return DAG.getTargetExtractSubreg(Subreg, dl, ResVT, Vec);
+    return DAG.getTargetExtractSubreg(Hexagon::vsub_lo, dl, ResVT, Vec);
   }
 
   if (ResVT.getVectorNumElements() == Val) {
     SDValue Vec = Op.getOperand(0);
-    unsigned Subreg = Hexagon::subreg_hireg;
-    return DAG.getTargetExtractSubreg(Subreg, dl, ResVT, Vec);
+    return DAG.getTargetExtractSubreg(Hexagon::vsub_hi, dl, ResVT, Vec);
   }
 
   return SDValue();
@@ -2774,16 +2776,16 @@ HexagonTargetLowering::LowerEXTRACT_VECTOR(SDValue Op,
 
     if (W == 32) {
       // Translate this node into EXTRACT_SUBREG.
-      unsigned Subreg = (X == 0) ? Hexagon::subreg_loreg : 0;
+      unsigned Subreg = (X == 0) ? Hexagon::isub_lo : 0;
 
       if (X == 0)
-        Subreg = Hexagon::subreg_loreg;
+        Subreg = Hexagon::isub_lo;
       else if (SVT == MVT::v2i32 && X == 1)
-        Subreg = Hexagon::subreg_hireg;
+        Subreg = Hexagon::isub_hi;
       else if (SVT == MVT::v4i16 && X == 2)
-        Subreg = Hexagon::subreg_hireg;
+        Subreg = Hexagon::isub_hi;
       else if (SVT == MVT::v8i8 && X == 4)
-        Subreg = Hexagon::subreg_hireg;
+        Subreg = Hexagon::isub_hi;
       else
         llvm_unreachable("Bad offset");
       N = DAG.getTargetExtractSubreg(Subreg, dl, MVT::i32, Vec);
@@ -2793,7 +2795,7 @@ HexagonTargetLowering::LowerEXTRACT_VECTOR(SDValue Op,
     } else if (SVT.getSizeInBits() == 64) {
       N = DAG.getNode(HexagonISD::EXTRACTU, dl, MVT::i64, Ops);
       if (VT.getSizeInBits() == 32)
-        N = DAG.getTargetExtractSubreg(Hexagon::subreg_loreg, dl, MVT::i32, N);
+        N = DAG.getTargetExtractSubreg(Hexagon::isub_lo, dl, MVT::i32, N);
     } else
       return SDValue();
 
@@ -2815,7 +2817,7 @@ HexagonTargetLowering::LowerEXTRACT_VECTOR(SDValue Op,
   } else {
     N = DAG.getNode(HexagonISD::EXTRACTURP, dl, MVT::i64, Ops);
     if (VT.getSizeInBits() == 32)
-      N = DAG.getTargetExtractSubreg(Hexagon::subreg_loreg, dl, MVT::i32, N);
+      N = DAG.getTargetExtractSubreg(Hexagon::isub_lo, dl, MVT::i32, N);
   }
   return DAG.getNode(ISD::BITCAST, dl, VT, N);
 }
@@ -3195,20 +3197,6 @@ EVT HexagonTargetLowering::getOptimalMemOpType(uint64_t Size,
     return MVT::i16;
 
   return MVT::Other;
-}
-
-// Return true when the given node fits in a positive half word.
-bool llvm::isPositiveHalfWord(SDNode *N) {
-  ConstantSDNode *CN = dyn_cast<ConstantSDNode>(N);
-  if (CN && CN->getSExtValue() > 0 && isInt<16>(CN->getSExtValue()))
-    return true;
-
-  switch (N->getOpcode()) {
-  default:
-    return false;
-  case ISD::SIGN_EXTEND_INREG:
-    return true;
-  }
 }
 
 bool HexagonTargetLowering::allowsMisalignedMemoryAccesses(EVT VT,

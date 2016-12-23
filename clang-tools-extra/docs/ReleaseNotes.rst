@@ -73,11 +73,36 @@ Improvements to clang-tidy
   Warns when ``std::move`` is applied to a forwarding reference instead of
   ``std::forward``.
 
+- `misc-pointer-and-integral-operation` check was removed.
+
 - New `misc-use-after-move
   <http://clang.llvm.org/extra/clang-tidy/checks/misc-use-after-move.html>`_ check
 
   Warns if an object is used after it has been moved, without an intervening
   reinitialization.
+
+- `modernize-make-unique
+  <http://clang.llvm.org/extra/clang-tidy/checks/modernize-make-unique.html>`_
+  and `modernize-make-shared
+  <http://clang.llvm.org/extra/clang-tidy/checks/modernize-make-shared.html>`_
+  now handle calls to the smart pointer's ``reset()`` method.
+
+- The `modernize-use-auto
+  <http://clang.llvm.org/extra/clang-tidy/checks/modernize-use-auto.html>`_ check
+  now warns about variable declarations that are initialized with a cast.
+
+- The modernize-use-default check has been renamed to `modernize-use-equals-default
+  <http://clang.llvm.org/extra/clang-tidy/checks/modernize-use-equals-default.html>`_.
+
+- New `modernize-use-equals-delete
+  <http://clang.llvm.org/extra/clang-tidy/checks/modernize-use-equals-delete.html>`_ check
+
+  Adds ``= delete`` to unimplemented private special member functions.
+
+- New `modernize-use-transparent-functors
+  <http://clang.llvm.org/extra/clang-tidy/checks/modernize-use-transparent-functors.html>`_ check
+
+  Replaces uses of non-transparent functors with transparent ones where applicable.
 
 - New `mpi-buffer-deref
   <http://clang.llvm.org/extra/clang-tidy/checks/mpi-buffer-deref.html>`_ check
@@ -110,6 +135,21 @@ Improvements to clang-tidy
 
   Flags function parameters of a pointer type that could be changed to point to
   a constant type instead.
+
+- New `readability-redundant-declaration
+  <http://clang.llvm.org/extra/clang-tidy/checks/readability-redundant-declaration.html>`_ check
+
+  Finds redundant variable and function declarations.
+
+- New `readability-redundant-member-init
+  <http://clang.llvm.org/extra/clang-tidy/checks/readability-redundant-member-init.html>`_ check
+
+  Flags member initializations that are unnecessary because the same default
+  constructor would be called if they were not present.
+
+- The `readability-redundant-string-cstr
+  <http://clang.llvm.org/extra/clang-tidy/checks/readability-redundant-string-cstr.html>`_ check
+  now warns about redundant calls to data() too.
 
 Fixed bugs:
 

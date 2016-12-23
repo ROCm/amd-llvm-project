@@ -66,7 +66,7 @@ inline bool DeclAttrsMatchCUDAMode(const LangOptions &LangOpts, Decl *D) {
 inline bool DeclAttrsMatchHCCMode(const LangOptions &LangOpts, Decl *D) {
   if (!LangOpts.CPlusPlusAMP || !D)
     return true;
-  bool isDeviceSideDecl = D->hasAttr<CXXAMPRestrictAMPAttr>();
+  bool isDeviceSideDecl = D->hasAttr<CXXAMPRestrictAMPAttr>() ||
                           D->hasAttr<HCGridLaunchAttr>() ||
                           D->hasAttr<HC_HCAttr>();
   return isDeviceSideDecl == LangOpts.DevicePath;
@@ -345,12 +345,12 @@ private:
 
 inline Sema::TypoExprState::TypoExprState() {}
 
-inline Sema::TypoExprState::TypoExprState(TypoExprState &&other) LLVM_NOEXCEPT {
+inline Sema::TypoExprState::TypoExprState(TypoExprState &&other) noexcept {
   *this = std::move(other);
 }
 
-inline Sema::TypoExprState &Sema::TypoExprState::operator=(
-    Sema::TypoExprState &&other) LLVM_NOEXCEPT {
+inline Sema::TypoExprState &Sema::TypoExprState::
+operator=(Sema::TypoExprState &&other) noexcept {
   Consumer = std::move(other.Consumer);
   DiagHandler = std::move(other.DiagHandler);
   RecoveryHandler = std::move(other.RecoveryHandler);

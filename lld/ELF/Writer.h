@@ -10,34 +10,31 @@
 #ifndef LLD_ELF_WRITER_H
 #define LLD_ELF_WRITER_H
 
+#include "llvm/ADT/StringRef.h"
 #include <cstdint>
 #include <memory>
 
-namespace llvm {
-  class StringRef;
-}
-
 namespace lld {
 namespace elf {
-template <class ELFT> class OutputSectionBase;
+class InputFile;
+class OutputSectionBase;
 template <class ELFT> class InputSectionBase;
 template <class ELFT> class ObjectFile;
 template <class ELFT> class SymbolTable;
 template <class ELFT> void writeResult();
 template <class ELFT> void markLive();
-template <class ELFT> bool isRelroSection(OutputSectionBase<ELFT> *Sec);
+template <class ELFT> bool isRelroSection(const OutputSectionBase *Sec);
 
 // This describes a program header entry.
 // Each contains type, access flags and range of output sections that will be
 // placed in it.
-template<class ELFT>
-struct PhdrEntry {
+template <class ELFT> struct PhdrEntry {
   PhdrEntry(unsigned Type, unsigned Flags);
-  void add(OutputSectionBase<ELFT> *Sec);
+  void add(OutputSectionBase *Sec);
 
   typename ELFT::Phdr H = {};
-  OutputSectionBase<ELFT> *First = nullptr;
-  OutputSectionBase<ELFT> *Last = nullptr;
+  OutputSectionBase *First = nullptr;
+  OutputSectionBase *Last = nullptr;
   bool HasLMA = false;
 };
 
@@ -49,6 +46,9 @@ template <class ELFT> uint32_t getMipsEFlags();
 
 uint8_t getMipsFpAbiFlag(uint8_t OldFlag, uint8_t NewFlag,
                          llvm::StringRef FileName);
+
+bool isMipsN32Abi(const InputFile *F);
+std::string getErrorLocation(uint8_t *Loc);
 }
 }
 

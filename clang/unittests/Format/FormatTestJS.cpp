@@ -135,6 +135,8 @@ TEST_F(FormatTestJS, ReservedWords) {
   verifyFormat("x.in() = 1;");
   verifyFormat("x.let() = 1;");
   verifyFormat("x.var() = 1;");
+  verifyFormat("x.for() = 1;");
+  verifyFormat("x.as() = 1;");
   verifyFormat("x = {\n"
                "  a: 12,\n"
                "  interface: 1,\n"
@@ -257,6 +259,13 @@ TEST_F(FormatTestJS, ContainerLiterals) {
                "  b: b,\n"
                "  'c': c,\n"
                "};");
+
+  // Dict literals can skip the label names.
+  verifyFormat("var x = {\n"
+               "  aaa,\n"
+               "  aaa,\n"
+               "  aaa,\n"
+               "};");
 }
 
 TEST_F(FormatTestJS, MethodsInObjectLiterals) {
@@ -347,6 +356,37 @@ TEST_F(FormatTestJS, FormatsNamespaces) {
                "}\n");
 }
 
+TEST_F(FormatTestJS, NamespacesMayNotWrap) {
+  verifyFormat("declare namespace foobarbaz {\n"
+               "}\n", getGoogleJSStyleWithColumns(18));
+  verifyFormat("declare module foobarbaz {\n"
+               "}\n", getGoogleJSStyleWithColumns(15));
+  verifyFormat("namespace foobarbaz {\n"
+               "}\n", getGoogleJSStyleWithColumns(10));
+  verifyFormat("module foobarbaz {\n"
+               "}\n", getGoogleJSStyleWithColumns(7));
+}
+
+TEST_F(FormatTestJS, AmbientDeclarations) {
+  FormatStyle NineCols = getGoogleJSStyleWithColumns(9);
+  verifyFormat(
+      "declare class\n"
+      "    X {}",
+      NineCols);
+  verifyFormat(
+      "declare function\n"
+      "x();",  // TODO(martinprobst): should ideally be indented.
+      NineCols);
+  verifyFormat(
+      "declare enum X {\n"
+      "}",
+      NineCols);
+  verifyFormat(
+      "declare let\n"
+      "    x: number;",
+      NineCols);
+}
+
 TEST_F(FormatTestJS, FormatsFreestandingFunctions) {
   verifyFormat("function outer1(a, b) {\n"
                "  function inner1(a, b) {\n"
@@ -368,6 +408,8 @@ TEST_F(FormatTestJS, GeneratorFunctions) {
                "  let x = 1;\n"
                "  yield x;\n"
                "  yield* something();\n"
+               "  yield [1, 2];\n"
+               "  yield {a: 1};\n"
                "}");
   verifyFormat("function*\n"
                "    f() {\n"
@@ -381,6 +423,11 @@ TEST_F(FormatTestJS, GeneratorFunctions) {
                "    yield x;\n"
                "  }\n"
                "}");
+  verifyFormat("var x = {\n"
+               "  a: function*() {\n"
+               "    //\n"
+               "  }\n"
+               "}\n");
 }
 
 TEST_F(FormatTestJS, AsyncFunctions) {
@@ -1276,6 +1323,12 @@ TEST_F(FormatTestJS, TemplateStrings) {
   verifyFormat("var x = ` \\${foo}`;\n");
 }
 
+TEST_F(FormatTestJS, TemplateStringASI) {
+  verifyFormat("var x = `hello${world}`;", "var x = `hello${\n"
+                                           "    world\n"
+                                           "}`;");
+}
+
 TEST_F(FormatTestJS, NestedTemplateStrings) {
   verifyFormat(
       "var x = `<ul>${xs.map(x => `<li>${x}</li>`).join('\\n')}</ul>`;");
@@ -1447,6 +1500,7 @@ TEST_F(FormatTestJS, NonNullAssertionOperator) {
   verifyFormat("let x = !foo;\n");
   verifyFormat("let x = foo[0]!;\n");
   verifyFormat("let x = (foo)!;\n");
+  verifyFormat("let x = foo! - 1;\n");
   verifyFormat("let x = {foo: 1}!;\n");
 }
 

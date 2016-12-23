@@ -7,13 +7,16 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Symbols.h"
 #include "Error.h"
 #include "InputFiles.h"
-#include "Symbols.h"
+#include "Strings.h"
+#include "lld/Support/Memory.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 
+using namespace llvm;
 using namespace llvm::object;
 using llvm::sys::fs::identify_magic;
 using llvm::sys::fs::file_magic;
@@ -34,6 +37,16 @@ StringRef SymbolBody::getName() {
     D->File->getCOFFObj()->getSymbolName(D->Sym, Name);
   }
   return Name;
+}
+
+InputFile *SymbolBody::getFile() {
+  if (auto *Sym = dyn_cast<DefinedCOFF>(this))
+    return Sym->File;
+  if (auto *Sym = dyn_cast<DefinedBitcode>(this))
+    return Sym->File;
+  if (auto *Sym = dyn_cast<Lazy>(this))
+    return Sym->File;
+  return nullptr;
 }
 
 // Returns 1, 0 or -1 if this symbol should take precedence
@@ -150,18 +163,6 @@ int SymbolBody::compare(SymbolBody *Other) {
   llvm_unreachable("unknown symbol kind");
 }
 
-std::string SymbolBody::getDebugName() {
-  std::string N = getName().str();
-  if (auto *D = dyn_cast<DefinedCOFF>(this)) {
-    N += " ";
-    N += D->File->getShortName();
-  } else if (auto *D = dyn_cast<DefinedBitcode>(this)) {
-    N += " ";
-    N += D->File->getShortName();
-  }
-  return N;
-}
-
 COFFSymbolRef DefinedCOFF::getCOFFSymbol() {
   size_t SymSize = File->getCOFFObj()->getSymbolTableEntrySize();
   if (SymSize == sizeof(coff_symbol16))
@@ -181,27 +182,27 @@ DefinedImportThunk::DefinedImportThunk(StringRef Name, DefinedImportData *S,
   }
 }
 
-std::unique_ptr<InputFile> Lazy::getMember() {
+InputFile *Lazy::getMember() {
   MemoryBufferRef MBRef = File->getMember(&Sym);
 
   // getMember returns an empty buffer if the member was already
   // read from the library.
   if (MBRef.getBuffer().empty())
-    return std::unique_ptr<InputFile>(nullptr);
+    return nullptr;
 
   file_magic Magic = identify_magic(MBRef.getBuffer());
   if (Magic == file_magic::coff_import_library)
-    return std::unique_ptr<InputFile>(new ImportFile(MBRef));
+    return make<ImportFile>(MBRef);
 
-  std::unique_ptr<InputFile> Obj;
+  InputFile *Obj;
   if (Magic == file_magic::coff_object)
-    Obj.reset(new ObjectFile(MBRef));
+    Obj = make<ObjectFile>(MBRef);
   else if (Magic == file_magic::bitcode)
-    Obj.reset(new BitcodeFile(MBRef));
+    Obj = make<BitcodeFile>(MBRef);
   else
     fatal("unknown file type: " + File->getName());
 
-  Obj->setParentName(File->getName());
+  Obj->ParentName = File->getName();
   return Obj;
 }
 
@@ -211,6 +212,13 @@ Defined *Undefined::getWeakAlias() {
     if (auto *D = dyn_cast<Defined>(A->repl()))
       return D;
   return nullptr;
+}
+
+// Returns a symbol name for an error message.
+std::string toString(SymbolBody &B) {
+  if (Optional<std::string> S = demangle(B.getName()))
+    return ("\"" + *S + "\" (" + B.getName() + ")").str();
+  return B.getName();
 }
 
 } // namespace coff

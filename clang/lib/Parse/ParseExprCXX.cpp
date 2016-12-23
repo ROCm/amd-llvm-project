@@ -1299,6 +1299,7 @@ ExprResult Parser::ParseLambdaExpressionAfterIntroducer(
                                            NoexceptExpr.isUsable() ?
                                              NoexceptExpr.get() : nullptr,
                                            /*ExceptionSpecTokens*/nullptr,
+                                           /*DeclsInPrototype=*/None,
                                            LParenLoc, FunLocalRangeEnd, D,
                                            TrailingReturnType),
                   Attr, DeclEndLoc);
@@ -1368,6 +1369,7 @@ ExprResult Parser::ParseLambdaExpressionAfterIntroducer(
                                                /*NumExceptions=*/0,
                                                /*NoexceptExpr=*/nullptr,
                                                /*ExceptionSpecTokens=*/nullptr,
+                                               /*DeclsInPrototype=*/None,
                                                DeclLoc, DeclEndLoc, D,
                                                TrailingReturnType),
                   Attr, DeclEndLoc);
@@ -1859,6 +1861,10 @@ Sema::ConditionResult Parser::ParseCXXCondition(StmtResult *InitStmt,
   }
 
   case ConditionOrInitStatement::InitStmtDecl: {
+    Diag(Tok.getLocation(), getLangOpts().CPlusPlus1z
+                                ? diag::warn_cxx14_compat_init_statement
+                                : diag::ext_init_statement)
+        << (CK == Sema::ConditionKind::Switch);
     SourceLocation DeclStart = Tok.getLocation(), DeclEnd;
     DeclGroupPtrTy DG = ParseSimpleDeclaration(
         Declarator::InitStmtContext, DeclEnd, attrs, /*RequireSemi=*/true);

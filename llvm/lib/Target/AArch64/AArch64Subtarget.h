@@ -43,6 +43,7 @@ public:
     CortexA73,
     Cyclone,
     ExynosM1,
+    Falkor,
     Kryo,
     Vulcan
   };
@@ -58,6 +59,7 @@ protected:
   bool HasNEON = false;
   bool HasCrypto = false;
   bool HasCRC = false;
+  bool HasLSE = false;
   bool HasRAS = false;
   bool HasPerfMon = false;
   bool HasFullFP16 = false;
@@ -71,7 +73,6 @@ protected:
 
   // StrictAlign - Disallow unaligned memory accesses.
   bool StrictAlign = false;
-  bool MergeNarrowLoads = false;
   bool UseAA = false;
   bool PredictableSelectIsExpensive = false;
   bool BalanceFPOps = false;
@@ -83,6 +84,7 @@ protected:
   bool HasArithmeticBccFusion = false;
   bool HasArithmeticCbzFusion = false;
   bool DisableLatencySchedHeuristic = false;
+  bool UseRSqrt = false;
   uint8_t MaxInterleaveFactor = 2;
   uint8_t VectorInsertExtractBaseCost = 3;
   uint16_t CacheLineSize = 0;
@@ -147,7 +149,7 @@ public:
   }
   const CallLowering *getCallLowering() const override;
   const InstructionSelector *getInstructionSelector() const override;
-  const MachineLegalizer *getMachineLegalizer() const override;
+  const LegalizerInfo *getLegalizerInfo() const override;
   const RegisterBankInfo *getRegBankInfo() const override;
   const Triple &getTargetTriple() const { return TargetTriple; }
   bool enableMachineScheduler() const override { return true; }
@@ -172,13 +174,15 @@ public:
 
   bool requiresStrictAlign() const { return StrictAlign; }
 
+  bool isXRaySupported() const override { return true; }
+
   bool isX18Reserved() const { return ReserveX18; }
   bool hasFPARMv8() const { return HasFPARMv8; }
   bool hasNEON() const { return HasNEON; }
   bool hasCrypto() const { return HasCrypto; }
   bool hasCRC() const { return HasCRC; }
+  bool hasLSE() const { return HasLSE; }
   bool hasRAS() const { return HasRAS; }
-  bool mergeNarrowLoads() const { return MergeNarrowLoads; }
   bool balanceFPOps() const { return BalanceFPOps; }
   bool predictableSelectIsExpensive() const {
     return PredictableSelectIsExpensive;
@@ -191,6 +195,7 @@ public:
   }
   bool hasArithmeticBccFusion() const { return HasArithmeticBccFusion; }
   bool hasArithmeticCbzFusion() const { return HasArithmeticCbzFusion; }
+  bool useRSqrt() const { return UseRSqrt; }
   unsigned getMaxInterleaveFactor() const { return MaxInterleaveFactor; }
   unsigned getVectorInsertExtractBaseCost() const {
     return VectorInsertExtractBaseCost;

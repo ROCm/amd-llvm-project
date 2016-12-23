@@ -7,7 +7,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-// XFAIL: libcpp-no-exceptions
 // <string>
 
 // template <class T>
@@ -24,34 +23,52 @@ template <class S, class SV>
 void
 test(S s, SV sv, typename S::size_type pos, typename S::size_type n, S expected)
 {
-    try
+    if (pos <= sv.size())
     {
         s.assign(sv, pos, n);
         LIBCPP_ASSERT(s.__invariants());
-        assert(pos <= sv.size());
         assert(s == expected);
     }
-    catch (std::out_of_range&)
+#ifndef TEST_HAS_NO_EXCEPTIONS
+    else
     {
-        assert(pos > sv.size());
+        try
+        {
+            s.assign(sv, pos, n);
+            assert(false);
+        }
+        catch (std::out_of_range&)
+        {
+            assert(pos > sv.size());
+        }
     }
+#endif
 }
 
 template <class S, class SV>
 void
 test_npos(S s, SV sv, typename S::size_type pos, S expected)
 {
-    try
+    if (pos <= sv.size())
     {
         s.assign(sv, pos);
         LIBCPP_ASSERT(s.__invariants());
-        assert(pos <= sv.size());
         assert(s == expected);
     }
-    catch (std::out_of_range&)
+#ifndef TEST_HAS_NO_EXCEPTIONS
+    else
     {
-        assert(pos > sv.size());
+        try
+        {
+            s.assign(sv, pos);
+            assert(false);
+        }
+        catch (std::out_of_range&)
+        {
+            assert(pos > sv.size());
+        }
     }
+#endif
 }
 
 int main()
@@ -119,11 +136,10 @@ int main()
     test_npos(S(), SV("12345"), 5, S(""));
     test_npos(S(), SV("12345"), 6, S("not happening"));
     }
+
     {
-    typedef std::string S;
-    typedef std::string_view SV;
-    S s = "ABCD";
-    SV sv = "EFGH";
+    std::string s = "ABCD";
+    std::string_view sv = "EFGH";
     char arr[] = "IJKL";
 
     s.assign("CDEF", 0);    // calls assign(const char *, len)
@@ -137,7 +153,7 @@ int main()
     s.assign(sv, 0);  // calls assign(T, pos, npos)
     assert(s == sv);
     s.clear();
-    
+
     s.assign(sv, 0, std::string::npos);   // calls assign(T, pos, npos)
     assert(s == sv);
     s.clear();
@@ -153,10 +169,11 @@ int main()
     s.assign(arr, 0);     // calls assign(const char *, len)
     assert(s == "");
     s.clear();
+    }
 
     {
-    S s = "ABCD";
-    SV sv = s;
+    std::string s = "ABCD";
+    std::string_view sv = s;
     s.assign(sv);
     assert(s == "ABCD");
 
@@ -164,16 +181,15 @@ int main()
     s.assign(sv, 0, std::string::npos);
     assert(s == "ABCD");
     }
-    
+
     {
-    S s = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    SV sv = s;
+    std::string s = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    std::string_view sv = s;
     s.assign(sv);
     assert(s == "ABCDEFGHIJKLMNOPQRSTUVWXYZ");
 
     sv = s;
     s.assign(sv, 0, std::string::npos);
     assert(s == "ABCDEFGHIJKLMNOPQRSTUVWXYZ");
-    }
     }
 }

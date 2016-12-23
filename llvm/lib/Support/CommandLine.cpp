@@ -30,6 +30,7 @@
 #include "llvm/Support/ConvertUTF.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Host.h"
 #include "llvm/Support/ManagedStatic.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -871,10 +872,10 @@ static bool hasUTF8ByteOrderMark(ArrayRef<char> S) {
   return (S.size() >= 3 && S[0] == '\xef' && S[1] == '\xbb' && S[2] == '\xbf');
 }
 
-static bool ExpandResponseFile(const char *FName, StringSaver &Saver,
+static bool ExpandResponseFile(StringRef FName, StringSaver &Saver,
                                TokenizerCallback Tokenizer,
                                SmallVectorImpl<const char *> &NewArgv,
-                               bool MarkEOLs = false) {
+                               bool MarkEOLs, bool RelativeNames) {
   ErrorOr<std::unique_ptr<MemoryBuffer>> MemBufOrErr =
       MemoryBuffer::getFile(FName);
   if (!MemBufOrErr)
@@ -899,6 +900,30 @@ static bool ExpandResponseFile(const char *FName, StringSaver &Saver,
   // Tokenize the contents into NewArgv.
   Tokenizer(Str, Saver, NewArgv, MarkEOLs);
 
+  // If names of nested response files should be resolved relative to including
+  // file, replace the included response file names with their full paths
+  // obtained by required resolution.
+  if (RelativeNames)
+    for (unsigned I = 0; I < NewArgv.size(); ++I)
+      if (NewArgv[I]) {
+        StringRef Arg = NewArgv[I];
+        if (Arg.front() == '@') {
+          StringRef FileName = Arg.drop_front();
+          if (llvm::sys::path::is_relative(FileName)) {
+            SmallString<128> ResponseFile;
+            ResponseFile.append(1, '@');
+            if (llvm::sys::path::is_relative(FName)) {
+              SmallString<128> curr_dir;
+              llvm::sys::fs::current_path(curr_dir);
+              ResponseFile.append(curr_dir.str());
+            }
+            llvm::sys::path::append(
+                ResponseFile, llvm::sys::path::parent_path(FName), FileName);
+            NewArgv[I] = Saver.save(ResponseFile.c_str()).data();
+          }
+        }
+      }
+
   return true;
 }
 
@@ -906,7 +931,7 @@ static bool ExpandResponseFile(const char *FName, StringSaver &Saver,
 /// StringSaver and tokenization strategy.
 bool cl::ExpandResponseFiles(StringSaver &Saver, TokenizerCallback Tokenizer,
                              SmallVectorImpl<const char *> &Argv,
-                             bool MarkEOLs) {
+                             bool MarkEOLs, bool RelativeNames) {
   unsigned RspFiles = 0;
   bool AllExpanded = true;
 
@@ -930,11 +955,9 @@ bool cl::ExpandResponseFiles(StringSaver &Saver, TokenizerCallback Tokenizer,
 
     // Replace this response file argument with the tokenization of its
     // contents.  Nested response files are expanded in subsequent iterations.
-    // FIXME: If a nested response file uses a relative path, is it relative to
-    // the cwd of the process or the response file?
     SmallVector<const char *, 0> ExpandedArgv;
     if (!ExpandResponseFile(Arg + 1, Saver, Tokenizer, ExpandedArgv,
-                            MarkEOLs)) {
+                            MarkEOLs, RelativeNames)) {
       // We couldn't read this file, so we leave it in the argument stream and
       // move on.
       AllExpanded = false;
@@ -1780,7 +1803,7 @@ public:
     if (ConsumeAfterOpt)
       outs() << " " << ConsumeAfterOpt->HelpStr;
 
-    if (Sub == &*TopLevelSubCommand && Subs.size() > 2) {
+    if (Sub == &*TopLevelSubCommand && !Subs.empty()) {
       // Compute the maximum subcommand length...
       size_t MaxSubLen = 0;
       for (size_t i = 0, e = Subs.size(); i != e; ++i)

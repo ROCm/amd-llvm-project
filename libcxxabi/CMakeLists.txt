@@ -137,13 +137,27 @@ if (NOT LIBCXXABI_ENABLE_SHARED AND NOT LIBCXXABI_ENABLE_STATIC)
   message(FATAL_ERROR "libc++abi must be built as either a shared or static library.")
 endif()
 
+if (LLVM_EXTERNAL_LIBCXX_SOURCE_DIR)
+  set(LIBCXXABI_LIBCXX_SRC_DIRS ${LLVM_EXTERNAL_LIBCXX_SOURCE_DIR})
+else()
+  set(LIBCXXABI_LIBCXX_SRC_DIRS
+    "${LLVM_MAIN_SRC_DIR}/projects/libcxx"
+    "${LLVM_MAIN_SRC_DIR}/runtimes/libcxx"
+    )
+endif()
+
+set(LIBCXXABI_LIBCXX_INCLUDE_DIRS "")
+foreach(dir ${LIBCXXABI_LIBCXX_SRC_DIRS})
+  list(APPEND LIBCXXABI_LIBCXX_INCLUDE_DIRS "${dir}/include")
+endforeach()
+
 find_path(
   LIBCXXABI_LIBCXX_INCLUDES
   vector
   PATHS ${LIBCXXABI_LIBCXX_INCLUDES}
         ${LIBCXXABI_LIBCXX_PATH}/include
         ${CMAKE_BINARY_DIR}/${LIBCXXABI_LIBCXX_INCLUDES}
-        ${LLVM_MAIN_SRC_DIR}/projects/libcxx/include
+        ${LIBCXXABI_LIBCXX_INCLUDE_DIRS}
         ${LLVM_INCLUDE_DIR}/c++/v1
   )
 
@@ -155,7 +169,7 @@ find_path(
   test/libcxx/__init__.py
   PATHS ${LIBCXXABI_LIBCXX_PATH}
         ${LIBCXXABI_LIBCXX_INCLUDES}/../
-        ${LLVM_MAIN_SRC_DIR}/projects/libcxx/
+        ${LIBCXXABI_LIBCXX_SRC_DIRS}
   NO_DEFAULT_PATH
   )
 
@@ -234,6 +248,10 @@ add_target_flags_if(LIBCXXABI_GCC_TOOLCHAIN
          "-gcc-toolchain ${LIBCXXABI_GCC_TOOLCHAIN}")
 add_target_flags_if(LIBCXXABI_SYSROOT
           "--sysroot=${LIBCXXABI_SYSROOT}")
+
+if (LIBCXXABI_TARGET_TRIPLE)
+  set(TARGET_TRIPLE "${LIBCXXABI_TARGET_TRIPLE}")
+endif()
 
 # Configure compiler. Must happen after setting the target flags.
 include(config-ix)
@@ -340,6 +358,7 @@ endif()
 
 if (LIBCXXABI_HAS_PTHREAD_API)
   add_definitions(-D_LIBCPP_HAS_THREAD_API_PTHREAD)
+  add_definitions(-D_LIBCXXABI_USE_THREAD_API_PTHREAD)
 endif()
 
 if (MSVC)
@@ -347,7 +366,7 @@ if (MSVC)
 endif()
 
 # Define LIBCXXABI_USE_LLVM_UNWINDER for conditional compilation.
-if (LIBCXXABI_USE_LLVM_UNWINDER OR LLVM_NATIVE_ARCH MATCHES ARM)
+if (LIBCXXABI_USE_LLVM_UNWINDER)
   add_definitions(-DLIBCXXABI_USE_LLVM_UNWINDER=1)
 endif()
 
@@ -373,6 +392,7 @@ if (LIBCXXABI_USE_LLVM_UNWINDER OR LLVM_NATIVE_ARCH MATCHES ARM)
           ${LIBCXXABI_LIBUNWIND_PATH}/include
           ${CMAKE_BINARY_DIR}/${LIBCXXABI_LIBUNWIND_INCLUDES}
           ${LLVM_MAIN_SRC_DIR}/projects/libunwind/include
+          ${LLVM_MAIN_SRC_DIR}/runtimes/libunwind/include
     NO_DEFAULT_PATH
   )
 
@@ -382,6 +402,7 @@ if (LIBCXXABI_USE_LLVM_UNWINDER OR LLVM_NATIVE_ARCH MATCHES ARM)
     PATHS ${LIBCXXABI_LIBUNWIND_PATH}/src/
           ${LIBCXXABI_LIBUNWIND_INCLUDES}/../src/
           ${LLVM_MAIN_SRC_DIR}/projects/libunwind/src/
+          ${LLVM_MAIN_SRC_DIR}/runtimes/libunwind/src/
     NO_DEFAULT_PATH
   )
 

@@ -545,6 +545,8 @@ namespace  {
       dumpDecl(Node->getLambdaClass());
     }
     void VisitSizeOfPackExpr(const SizeOfPackExpr *Node);
+    void
+    VisitCXXDependentScopeMemberExpr(const CXXDependentScopeMemberExpr *Node);
 
     // ObjC
     void VisitObjCAtCatchStmt(const ObjCAtCatchStmt *Node);
@@ -1135,8 +1137,15 @@ void ASTDumper::VisitFunctionDecl(const FunctionDecl *D) {
 
   if (D->isPure())
     OS << " pure";
-  else if (D->isDeletedAsWritten())
+  if (D->isDefaulted()) {
+    OS << " default";
+    if (D->isDeleted())
+      OS << "_delete";
+  }
+  if (D->isDeletedAsWritten())
     OS << " delete";
+  if (D->isTrivial())
+    OS << " trivial";
 
   if (const FunctionProtoType *FPT = D->getType()->getAs<FunctionProtoType>()) {
     FunctionProtoType::ExtProtoInfo EPI = FPT->getExtProtoInfo();
@@ -1154,11 +1163,6 @@ void ASTDumper::VisitFunctionDecl(const FunctionDecl *D) {
   if (const FunctionTemplateSpecializationInfo *FTSI =
           D->getTemplateSpecializationInfo())
     dumpTemplateArgumentList(*FTSI->TemplateArguments);
-
-  for (ArrayRef<NamedDecl *>::iterator
-       I = D->getDeclsInPrototypeScope().begin(),
-       E = D->getDeclsInPrototypeScope().end(); I != E; ++I)
-    dumpDecl(*I);
 
   if (!D->param_begin() && D->getNumParams())
     dumpChild([=] { OS << "<<NULL params x " << D->getNumParams() << ">>"; });
@@ -2194,6 +2198,11 @@ void ASTDumper::VisitSizeOfPackExpr(const SizeOfPackExpr *Node) {
       dumpTemplateArgument(A);
 }
 
+void ASTDumper::VisitCXXDependentScopeMemberExpr(
+    const CXXDependentScopeMemberExpr *Node) {
+  VisitExpr(Node);
+  OS << " " << (Node->isArrow() ? "->" : ".") << Node->getMember();
+}
 
 //===----------------------------------------------------------------------===//
 // Obj-C Expressions
@@ -2466,12 +2475,18 @@ void QualType::dump(const char *msg) const {
   dump();
 }
 
-LLVM_DUMP_METHOD void QualType::dump() const {
-  ASTDumper Dumper(llvm::errs(), nullptr, nullptr);
+LLVM_DUMP_METHOD void QualType::dump() const { dump(llvm::errs()); }
+
+LLVM_DUMP_METHOD void QualType::dump(llvm::raw_ostream &OS) const {
+  ASTDumper Dumper(OS, nullptr, nullptr);
   Dumper.dumpTypeAsChild(*this);
 }
 
-LLVM_DUMP_METHOD void Type::dump() const { QualType(this, 0).dump(); }
+LLVM_DUMP_METHOD void Type::dump() const { dump(llvm::errs()); }
+
+LLVM_DUMP_METHOD void Type::dump(llvm::raw_ostream &OS) const {
+  QualType(this, 0).dump(OS);
+}
 
 //===----------------------------------------------------------------------===//
 // Decl method implementations

@@ -389,8 +389,9 @@ private:
                        SmallVectorImpl<const MDNode *> &Requirements);
   void visitFunction(const Function &F);
   void visitBasicBlock(BasicBlock &BB);
-  void visitRangeMetadata(Instruction& I, MDNode* Range, Type* Ty);
-  void visitDereferenceableMetadata(Instruction& I, MDNode* MD);
+  void visitRangeMetadata(Instruction &I, MDNode *Range, Type *Ty);
+  void visitDereferenceableMetadata(Instruction &I, MDNode *MD);
+  void visitTBAAMetadata(Instruction &I, MDNode *MD);
 
   template <class Ty> bool isValidMetadataArray(const MDTuple &N);
 #define HANDLE_SPECIALIZED_MDNODE_LEAF(CLASS) void visit##CLASS(const CLASS &N);
@@ -482,7 +483,7 @@ private:
   void verifyFrameRecoverIndices();
   void verifySiblingFuncletUnwinds();
 
-  void verifyBitPieceExpression(const DbgInfoIntrinsic &I);
+  void verifyFragmentExpression(const DbgInfoIntrinsic &I);
 
   /// Module-level debug info verification...
   void verifyCompileUnits();
@@ -864,6 +865,7 @@ void Verifier::visitDIDerivedType(const DIDerivedType &N) {
                N.getTag() == dwarf::DW_TAG_const_type ||
                N.getTag() == dwarf::DW_TAG_volatile_type ||
                N.getTag() == dwarf::DW_TAG_restrict_type ||
+               N.getTag() == dwarf::DW_TAG_atomic_type ||
                N.getTag() == dwarf::DW_TAG_member ||
                N.getTag() == dwarf::DW_TAG_inheritance ||
                N.getTag() == dwarf::DW_TAG_friend,
@@ -2966,10 +2968,8 @@ static bool isContiguous(const ConstantRange &A, const ConstantRange &B) {
   return A.getUpper() == B.getLower() || A.getLower() == B.getUpper();
 }
 
-void Verifier::visitRangeMetadata(Instruction& I,
-                                  MDNode* Range, Type* Ty) {
-  assert(Range &&
-         Range == I.getMetadata(LLVMContext::MD_range) &&
+void Verifier::visitRangeMetadata(Instruction &I, MDNode *Range, Type *Ty) {
+  assert(Range && Range == I.getMetadata(LLVMContext::MD_range) &&
          "precondition violation");
 
   unsigned NumOperands = Range->getNumOperands();
@@ -3657,6 +3657,15 @@ void Verifier::visitDereferenceableMetadata(Instruction& I, MDNode* MD) {
          "dereferenceable_or_null metadata value must be an i64!", &I);
 }
 
+void Verifier::visitTBAAMetadata(Instruction &I, MDNode *MD) {
+  bool IsStructPathTBAA =
+      isa<MDNode>(MD->getOperand(0)) && MD->getNumOperands() >= 3;
+
+  Assert(IsStructPathTBAA,
+         "Old-style TBAA is no longer allowed, use struct-path TBAA instead",
+         &I);
+}
+
 /// verifyInstruction - Verify that an instruction is well formed.
 ///
 void Verifier::visitInstruction(Instruction &I) {
@@ -3792,6 +3801,9 @@ void Verifier::visitInstruction(Instruction &I) {
   if (MDNode *MD = I.getMetadata(LLVMContext::MD_dereferenceable_or_null))
     visitDereferenceableMetadata(I, MD);
 
+  if (MDNode *MD = I.getMetadata(LLVMContext::MD_tbaa))
+    visitTBAAMetadata(I, MD);
+
   if (MDNode *AlignMD = I.getMetadata(LLVMContext::MD_align)) {
     Assert(I.getType()->isPointerTy(), "align applies only to pointer types",
            &I);
@@ -3814,7 +3826,7 @@ void Verifier::visitInstruction(Instruction &I) {
   }
 
   if (auto *DII = dyn_cast<DbgInfoIntrinsic>(&I))
-    verifyBitPieceExpression(*DII);
+    verifyFragmentExpression(*DII);
 
   InstsInThisBlock.insert(&I);
 }
@@ -4295,7 +4307,7 @@ static uint64_t getVariableSize(const DILocalVariable &V) {
   return 0;
 }
 
-void Verifier::verifyBitPieceExpression(const DbgInfoIntrinsic &I) {
+void Verifier::verifyFragmentExpression(const DbgInfoIntrinsic &I) {
   DILocalVariable *V;
   DIExpression *E;
   if (auto *DVI = dyn_cast<DbgValueInst>(&I)) {
@@ -4312,7 +4324,7 @@ void Verifier::verifyBitPieceExpression(const DbgInfoIntrinsic &I) {
     return;
 
   // Nothing to do if this isn't a bit piece expression.
-  if (!E->isBitPiece())
+  if (!E->isFragment())
     return;
 
   // The frontend helps out GDB by emitting the members of local anonymous
@@ -4330,11 +4342,11 @@ void Verifier::verifyBitPieceExpression(const DbgInfoIntrinsic &I) {
   if (!VarSize)
     return;
 
-  unsigned PieceSize = E->getBitPieceSize();
-  unsigned PieceOffset = E->getBitPieceOffset();
-  AssertDI(PieceSize + PieceOffset <= VarSize,
-         "piece is larger than or outside of variable", &I, V, E);
-  AssertDI(PieceSize != VarSize, "piece covers entire variable", &I, V, E);
+  unsigned FragSize = E->getFragmentSizeInBits();
+  unsigned FragOffset = E->getFragmentOffsetInBits();
+  AssertDI(FragSize + FragOffset <= VarSize,
+         "fragment is larger than or outside of variable", &I, V, E);
+  AssertDI(FragSize != VarSize, "fragment covers entire variable", &I, V, E);
 }
 
 void Verifier::verifyCompileUnits() {
@@ -4461,7 +4473,7 @@ FunctionPass *llvm::createVerifierPass(bool FatalErrors) {
   return new VerifierLegacyPass(FatalErrors);
 }
 
-char VerifierAnalysis::PassID;
+AnalysisKey VerifierAnalysis::Key;
 VerifierAnalysis::Result VerifierAnalysis::run(Module &M,
                                                ModuleAnalysisManager &) {
   Result Res;

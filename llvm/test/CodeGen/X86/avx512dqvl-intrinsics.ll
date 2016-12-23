@@ -177,6 +177,24 @@ define <4 x float>@test_int_x86_avx512_mask_cvt_qq2ps_128(<2 x i64> %x0, <4 x fl
   ret <4 x float> %res2
 }
 
+define <4 x float>@test_int_x86_avx512_mask_cvt_qq2ps_128_zext(<2 x i64> %x0, <4 x float> %x1, i8 %x2) {
+; CHECK-LABEL: test_int_x86_avx512_mask_cvt_qq2ps_128_zext:
+; CHECK:       ## BB#0:
+; CHECK-NEXT:    kmovb %edi, %k1 ## encoding: [0xc5,0xf9,0x92,0xcf]
+; CHECK-NEXT:    vcvtqq2ps %xmm0, %xmm1 {%k1} ## encoding: [0x62,0xf1,0xfc,0x09,0x5b,0xc8]
+; CHECK-NEXT:    vmovq %xmm1, %xmm1 ## encoding: [0x62,0xf1,0xfe,0x08,0x7e,0xc9]
+; CHECK-NEXT:    ## xmm1 = xmm1[0],zero
+; CHECK-NEXT:    vcvtqq2ps %xmm0, %xmm0 ## encoding: [0x62,0xf1,0xfc,0x08,0x5b,0xc0]
+; CHECK-NEXT:    vaddps %xmm0, %xmm1, %xmm0 ## encoding: [0x62,0xf1,0x74,0x08,0x58,0xc0]
+; CHECK-NEXT:    retq ## encoding: [0xc3]
+  %res = call <4 x float> @llvm.x86.avx512.mask.cvtqq2ps.128(<2 x i64> %x0, <4 x float> %x1, i8 %x2)
+  %res1 = shufflevector <4 x float> %res, <4 x float> zeroinitializer, <4 x i32> <i32 0, i32 1, i32 4, i32 5>
+  %res2 = call <4 x float> @llvm.x86.avx512.mask.cvtqq2ps.128(<2 x i64> %x0, <4 x float> %x1, i8 -1)
+  %res3 = shufflevector <4 x float> %res2, <4 x float> zeroinitializer, <4 x i32> <i32 0, i32 1, i32 4, i32 5>
+  %res4 = fadd <4 x float> %res1, %res3
+  ret <4 x float> %res4
+}
+
 declare <4 x float> @llvm.x86.avx512.mask.cvtqq2ps.256(<4 x i64>, <4 x float>, i8)
 
 define <4 x float>@test_int_x86_avx512_mask_cvt_qq2ps_256(<4 x i64> %x0, <4 x float> %x1, i8 %x2) {
@@ -335,6 +353,24 @@ define <4 x float>@test_int_x86_avx512_mask_cvt_uqq2ps_128(<2 x i64> %x0, <4 x f
   %res1 = call <4 x float> @llvm.x86.avx512.mask.cvtuqq2ps.128(<2 x i64> %x0, <4 x float> %x1, i8 -1)
   %res2 = fadd <4 x float> %res, %res1
   ret <4 x float> %res2
+}
+
+define <4 x float>@test_int_x86_avx512_mask_cvt_uqq2ps_128_zext(<2 x i64> %x0, <4 x float> %x1, i8 %x2) {
+; CHECK-LABEL: test_int_x86_avx512_mask_cvt_uqq2ps_128_zext:
+; CHECK:       ## BB#0:
+; CHECK-NEXT:    kmovb %edi, %k1 ## encoding: [0xc5,0xf9,0x92,0xcf]
+; CHECK-NEXT:    vcvtuqq2ps %xmm0, %xmm1 {%k1} ## encoding: [0x62,0xf1,0xff,0x09,0x7a,0xc8]
+; CHECK-NEXT:    vmovq %xmm1, %xmm1 ## encoding: [0x62,0xf1,0xfe,0x08,0x7e,0xc9]
+; CHECK-NEXT:    ## xmm1 = xmm1[0],zero
+; CHECK-NEXT:    vcvtuqq2ps %xmm0, %xmm0 ## encoding: [0x62,0xf1,0xff,0x08,0x7a,0xc0]
+; CHECK-NEXT:    vaddps %xmm0, %xmm1, %xmm0 ## encoding: [0x62,0xf1,0x74,0x08,0x58,0xc0]
+; CHECK-NEXT:    retq ## encoding: [0xc3]
+  %res = call <4 x float> @llvm.x86.avx512.mask.cvtuqq2ps.128(<2 x i64> %x0, <4 x float> %x1, i8 %x2)
+  %res1 = shufflevector <4 x float> %res, <4 x float> zeroinitializer, <4 x i32> <i32 0, i32 1, i32 4, i32 5>
+  %res2 = call <4 x float> @llvm.x86.avx512.mask.cvtuqq2ps.128(<2 x i64> %x0, <4 x float> %x1, i8 -1)
+  %res3 = shufflevector <4 x float> %res2, <4 x float> zeroinitializer, <4 x i32> <i32 0, i32 1, i32 4, i32 5>
+  %res4 = fadd <4 x float> %res1, %res3
+  ret <4 x float> %res4
 }
 
 declare <4 x float> @llvm.x86.avx512.mask.cvtuqq2ps.256(<4 x i64>, <4 x float>, i8)
@@ -652,8 +688,11 @@ define <8 x float>@test_int_x86_avx512_mask_broadcastf32x2_256(<4 x float> %x0, 
 ; CHECK:       ## BB#0:
 ; CHECK-NEXT:    kmovb %edi, %k1 ## encoding: [0xc5,0xf9,0x92,0xcf]
 ; CHECK-NEXT:    vbroadcastf32x2 %xmm0, %ymm1 {%k1} ## encoding: [0x62,0xf2,0x7d,0x29,0x19,0xc8]
+; CHECK-NEXT:    ## ymm1 {%k1} = xmm0[0,1,0,1,0,1,0,1]
 ; CHECK-NEXT:    vbroadcastf32x2 %xmm0, %ymm2 {%k1} {z} ## encoding: [0x62,0xf2,0x7d,0xa9,0x19,0xd0]
+; CHECK-NEXT:    ## ymm2 {%k1} {z} = xmm0[0,1,0,1,0,1,0,1]
 ; CHECK-NEXT:    vbroadcastf32x2 %xmm0, %ymm0 ## encoding: [0x62,0xf2,0x7d,0x28,0x19,0xc0]
+; CHECK-NEXT:    ## ymm0 = xmm0[0,1,0,1,0,1,0,1]
 ; CHECK-NEXT:    vaddps %ymm2, %ymm1, %ymm1 ## encoding: [0x62,0xf1,0x74,0x28,0x58,0xca]
 ; CHECK-NEXT:    vaddps %ymm0, %ymm1, %ymm0 ## encoding: [0x62,0xf1,0x74,0x28,0x58,0xc0]
 ; CHECK-NEXT:    retq ## encoding: [0xc3]
@@ -672,8 +711,11 @@ define <8 x i32>@test_int_x86_avx512_mask_broadcasti32x2_256(<4 x i32> %x0, <8 x
 ; CHECK:       ## BB#0:
 ; CHECK-NEXT:    kmovb %edi, %k1 ## encoding: [0xc5,0xf9,0x92,0xcf]
 ; CHECK-NEXT:    vbroadcasti32x2 (%rsi), %ymm1 {%k1} ## encoding: [0x62,0xf2,0x7d,0x29,0x59,0x0e]
+; CHECK-NEXT:    ## ymm1 {%k1} = mem[0,1,0,1,0,1,0,1]
 ; CHECK-NEXT:    vbroadcasti32x2 %xmm0, %ymm2 {%k1} {z} ## encoding: [0x62,0xf2,0x7d,0xa9,0x59,0xd0]
+; CHECK-NEXT:    ## ymm2 {%k1} {z} = xmm0[0,1,0,1,0,1,0,1]
 ; CHECK-NEXT:    vbroadcasti32x2 %xmm0, %ymm0 ## encoding: [0x62,0xf2,0x7d,0x28,0x59,0xc0]
+; CHECK-NEXT:    ## ymm0 = xmm0[0,1,0,1,0,1,0,1]
 ; CHECK-NEXT:    vpaddd %ymm0, %ymm2, %ymm0 ## encoding: [0x62,0xf1,0x6d,0x28,0xfe,0xc0]
 ; CHECK-NEXT:    vpaddd %ymm0, %ymm1, %ymm0 ## encoding: [0x62,0xf1,0x75,0x28,0xfe,0xc0]
 ; CHECK-NEXT:    retq ## encoding: [0xc3]

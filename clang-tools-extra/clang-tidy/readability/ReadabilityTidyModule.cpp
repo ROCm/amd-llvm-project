@@ -23,6 +23,8 @@
 #include "NamedParameterCheck.h"
 #include "NonConstParameterCheck.h"
 #include "RedundantControlFlowCheck.h"
+#include "RedundantDeclarationCheck.h"
+#include "RedundantMemberInitCheck.h"
 #include "RedundantSmartptrGetCheck.h"
 #include "RedundantStringCStrCheck.h"
 #include "RedundantStringInitCheck.h"
@@ -57,6 +59,8 @@ public:
         "readability-inconsistent-declaration-parameter-name");
     CheckFactories.registerCheck<MisplacedArrayIndexCheck>(
         "readability-misplaced-array-index");
+    CheckFactories.registerCheck<RedundantMemberInitCheck>(
+        "readability-redundant-member-init");
     CheckFactories.registerCheck<StaticDefinitionInAnonymousNamespaceCheck>(
         "readability-static-definition-in-anonymous-namespace");
     CheckFactories.registerCheck<readability::NamedParameterCheck>(
@@ -65,6 +69,8 @@ public:
         "readability-non-const-parameter");
     CheckFactories.registerCheck<RedundantControlFlowCheck>(
         "readability-redundant-control-flow");
+    CheckFactories.registerCheck<RedundantDeclarationCheck>(
+        "readability-redundant-declaration");
     CheckFactories.registerCheck<RedundantSmartptrGetCheck>(
         "readability-redundant-smartptr-get");
     CheckFactories.registerCheck<RedundantStringCStrCheck>(

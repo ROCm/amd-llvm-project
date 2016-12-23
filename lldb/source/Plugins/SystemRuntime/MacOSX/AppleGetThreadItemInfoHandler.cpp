@@ -203,7 +203,7 @@ lldb::addr_t AppleGetThreadItemInfoHandler::SetupGetThreadItemInfoFunction(
           m_get_thread_item_info_impl_code->MakeFunctionCaller(
               get_thread_item_info_return_type, get_thread_item_info_arglist,
               thread_sp, error);
-      if (error.Fail()) {
+      if (error.Fail() || get_thread_item_info_caller == nullptr) {
         if (log)
           log->Printf("Failed to install get-thread-item-info introspection "
                       "caller: %s.",
@@ -355,7 +355,7 @@ AppleGetThreadItemInfoHandler::GetThreadItemInfo(Thread &thread,
   options.SetUnwindOnError(true);
   options.SetIgnoreBreakpoints(true);
   options.SetStopOthers(true);
-  options.SetTimeoutUsec(500000);
+  options.SetTimeout(std::chrono::milliseconds(500));
   options.SetTryAllThreads(false);
   thread.CalculateExecutionContext(exe_ctx);
 

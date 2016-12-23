@@ -15,6 +15,7 @@
 
 #include "lldb/Core/RangeMap.h"
 #include "lldb/Symbol/SymbolFile.h"
+#include "llvm/Support/Chrono.h"
 
 #include "UniqueDWARFASTType.h"
 
@@ -154,7 +155,7 @@ protected:
   struct CompileUnitInfo {
     lldb_private::FileSpec so_file;
     lldb_private::ConstString oso_path;
-    lldb_private::TimeValue oso_mod_time;
+    llvm::sys::TimePoint<> oso_mod_time;
     OSOInfoSP oso_sp;
     lldb::CompUnitSP compile_unit_sp;
     uint32_t first_symbol_index;

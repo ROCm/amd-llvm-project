@@ -96,6 +96,9 @@ set(LTDL_SHLIB_EXT ${CMAKE_SHARED_LIBRARY_SUFFIX})
 set(LLVM_PLUGIN_EXT ${CMAKE_SHARED_LIBRARY_SUFFIX})
 
 if(APPLE)
+  if(LLVM_ENABLE_LLD AND LLVM_ENABLE_LTO)
+    message(FATAL_ERROR "lld does not support LTO on Darwin")
+  endif()
   # Darwin-specific linker flags for loadable modules.
   set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} -Wl,-flat_namespace -Wl,-undefined -Wl,suppress")
 endif()
@@ -179,10 +182,6 @@ if( CMAKE_SIZEOF_VOID_P EQUAL 8 AND NOT WIN32 )
     set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} -m32")
   endif( LLVM_BUILD_32_BITS )
 endif( CMAKE_SIZEOF_VOID_P EQUAL 8 AND NOT WIN32 )
-
-if (LLVM_BUILD_STATIC)
-  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static")
-endif()
 
 if( XCODE )
   # For Xcode enable several build settings that correspond to
@@ -647,6 +646,11 @@ string(TOUPPER "${LLVM_ENABLE_LTO}" uppercase_LLVM_ENABLE_LTO)
 if(uppercase_LLVM_ENABLE_LTO STREQUAL "THIN")
   append("-flto=thin" CMAKE_CXX_FLAGS CMAKE_C_FLAGS
                       CMAKE_EXE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS)
+  # On darwin, enable the lto cache. This improves initial build time a little
+  # since we re-link a lot of the same objects, and significantly improves
+  # incremental build time.
+  append_if(APPLE "-Wl,-cache_path_lto,${PROJECT_BINARY_DIR}/lto.cache"
+            CMAKE_EXE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS)
 elseif(uppercase_LLVM_ENABLE_LTO STREQUAL "FULL")
   append("-flto=full" CMAKE_CXX_FLAGS CMAKE_C_FLAGS
                  CMAKE_EXE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS)

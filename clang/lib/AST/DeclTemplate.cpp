@@ -36,7 +36,6 @@ TemplateParameterList::TemplateParameterList(SourceLocation TemplateLoc,
   : TemplateLoc(TemplateLoc), LAngleLoc(LAngleLoc), RAngleLoc(RAngleLoc),
     NumParams(Params.size()), ContainsUnexpandedParameterPack(false),
     HasRequiresClause(static_cast<bool>(RequiresClause)) {
-  assert(this->NumParams == NumParams && "Too many template parameters");
   for (unsigned Idx = 0; Idx < NumParams; ++Idx) {
     NamedDecl *P = Params[Idx];
     begin()[Idx] = P;
@@ -66,7 +65,7 @@ TemplateParameterList::Create(const ASTContext &C, SourceLocation TemplateLoc,
                               SourceLocation RAngleLoc, Expr *RequiresClause) {
   void *Mem = C.Allocate(totalSizeToAlloc<NamedDecl *, Expr *>(
                              Params.size(), RequiresClause ? 1u : 0u),
-                         llvm::alignOf<TemplateParameterList>());
+                         alignof(TemplateParameterList));
   return new (Mem) TemplateParameterList(TemplateLoc, LAngleLoc, Params,
                                          RAngleLoc, RequiresClause);
 }

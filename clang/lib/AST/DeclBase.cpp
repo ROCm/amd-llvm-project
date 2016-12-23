@@ -45,8 +45,7 @@ void Decl::updateOutOfDate(IdentifierInfo &II) const {
 }
 
 #define DECL(DERIVED, BASE)                                                    \
-  static_assert(llvm::AlignOf<Decl>::Alignment >=                              \
-                    llvm::AlignOf<DERIVED##Decl>::Alignment,                   \
+  static_assert(alignof(Decl) >= alignof(DERIVED##Decl),                       \
                 "Alignment sufficient after objects prepended to " #DERIVED);
 #define ABSTRACT_DECL(DECL)
 #include "clang/AST/DeclNodes.inc"
@@ -55,7 +54,7 @@ void *Decl::operator new(std::size_t Size, const ASTContext &Context,
                          unsigned ID, std::size_t Extra) {
   // Allocate an extra 8 bytes worth of storage, which ensures that the
   // resulting pointer will still be 8-byte aligned.
-  static_assert(sizeof(unsigned) * 2 >= llvm::AlignOf<Decl>::Alignment,
+  static_assert(sizeof(unsigned) * 2 >= alignof(Decl),
                 "Decl won't be misaligned");
   void *Start = Context.Allocate(Size + Extra + 8);
   void *Result = (char*)Start + 8;
@@ -80,8 +79,7 @@ void *Decl::operator new(std::size_t Size, const ASTContext &Ctx,
     // Ensure required alignment of the resulting object by adding extra
     // padding at the start if required.
     size_t ExtraAlign =
-        llvm::OffsetToAlignment(sizeof(Module *),
-                                llvm::AlignOf<Decl>::Alignment);
+        llvm::OffsetToAlignment(sizeof(Module *), alignof(Decl));
     char *Buffer = reinterpret_cast<char *>(
         ::operator new(ExtraAlign + sizeof(Module *) + Size + Extra, Ctx));
     Buffer += ExtraAlign;
@@ -111,11 +109,23 @@ const char *Decl::getDeclKindName() const {
 void Decl::setInvalidDecl(bool Invalid) {
   InvalidDecl = Invalid;
   assert(!isa<TagDecl>(this) || !cast<TagDecl>(this)->isCompleteDefinition());
-  if (Invalid && !isa<ParmVarDecl>(this)) {
+  if (!Invalid) {
+    return;
+  }
+
+  if (!isa<ParmVarDecl>(this)) {
     // Defensive maneuver for ill-formed code: we're likely not to make it to
     // a point where we set the access specifier, so default it to "public"
     // to avoid triggering asserts elsewhere in the front end. 
     setAccess(AS_public);
+  }
+
+  // Marking a DecompositionDecl as invalid implies all the child BindingDecl's
+  // are invalid too.
+  if (DecompositionDecl *DD = dyn_cast<DecompositionDecl>(this)) {
+    for (BindingDecl *Binding : DD->bindings()) {
+      Binding->setInvalidDecl();
+    }
   }
 }
 
@@ -992,6 +1002,18 @@ static bool isLinkageSpecContext(const DeclContext *DC,
 
 bool DeclContext::isExternCContext() const {
   return isLinkageSpecContext(this, clang::LinkageSpecDecl::lang_c);
+}
+
+const LinkageSpecDecl *DeclContext::getExternCContext() const {
+  const DeclContext *DC = this;
+  while (DC->getDeclKind() != Decl::TranslationUnit) {
+    if (DC->getDeclKind() == Decl::LinkageSpec &&
+        cast<LinkageSpecDecl>(DC)->getLanguage() ==
+            clang::LinkageSpecDecl::lang_c)
+      return cast<LinkageSpecDecl>(DC);
+    DC = DC->getLexicalParent();
+  }
+  return nullptr;
 }
 
 bool DeclContext::isExternCXXContext() const {

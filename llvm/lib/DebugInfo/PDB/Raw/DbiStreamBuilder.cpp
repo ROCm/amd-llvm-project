@@ -15,6 +15,8 @@
 #include "llvm/DebugInfo/MSF/StreamWriter.h"
 #include "llvm/DebugInfo/PDB/Raw/DbiStream.h"
 #include "llvm/DebugInfo/PDB/Raw/RawError.h"
+#include "llvm/Object/COFF.h"
+#include "llvm/Support/COFF.h"
 
 using namespace llvm;
 using namespace llvm::codeview;
@@ -44,6 +46,14 @@ void DbiStreamBuilder::setFlags(uint16_t F) { Flags = F; }
 
 void DbiStreamBuilder::setMachineType(PDB_Machine M) { MachineType = M; }
 
+void DbiStreamBuilder::setSectionContribs(ArrayRef<SectionContrib> Arr) {
+  SectionContribs = Arr;
+}
+
+void DbiStreamBuilder::setSectionMap(ArrayRef<SecMapEntry> SecMap) {
+  SectionMap = SecMap;
+}
+
 Error DbiStreamBuilder::addDbgStream(pdb::DbgHeaderType Type,
                                      ArrayRef<uint8_t> Data) {
   if (DbgStreams[(int)Type].StreamNumber)
@@ -61,7 +71,8 @@ Error DbiStreamBuilder::addDbgStream(pdb::DbgHeaderType Type,
 uint32_t DbiStreamBuilder::calculateSerializedLength() const {
   // For now we only support serializing the header.
   return sizeof(DbiStreamHeader) + calculateFileInfoSubstreamSize() +
-         calculateModiSubstreamSize() + DbgStreams.size() * sizeof(uint16_t);
+         calculateModiSubstreamSize() + calculateSectionContribsStreamSize() +
+         calculateSectionMapStreamSize() + calculateDbgStreamsSize();
 }
 
 Error DbiStreamBuilder::addModuleInfo(StringRef ObjFile, StringRef Module) {
@@ -96,7 +107,20 @@ uint32_t DbiStreamBuilder::calculateModiSubstreamSize() const {
     Size += M->Mod.size() + 1;
     Size += M->Obj.size() + 1;
   }
-  return Size;
+  return alignTo(Size, sizeof(uint32_t));
+}
+
+uint32_t DbiStreamBuilder::calculateSectionContribsStreamSize() const {
+  if (SectionContribs.empty())
+    return 0;
+  return sizeof(enum PdbRaw_DbiSecContribVer) +
+         sizeof(SectionContribs[0]) * SectionContribs.size();
+}
+
+uint32_t DbiStreamBuilder::calculateSectionMapStreamSize() const {
+  if (SectionMap.empty())
+    return 0;
+  return sizeof(SecMapHeader) + sizeof(SecMapEntry) * SectionMap.size();
 }
 
 uint32_t DbiStreamBuilder::calculateFileInfoSubstreamSize() const {
@@ -110,7 +134,7 @@ uint32_t DbiStreamBuilder::calculateFileInfoSubstreamSize() const {
     NumFileInfos += M->SourceFiles.size();
   Size += NumFileInfos * sizeof(ulittle32_t); // FileNameOffsets
   Size += calculateNamesBufferSize();
-  return Size;
+  return alignTo(Size, sizeof(uint32_t));
 }
 
 uint32_t DbiStreamBuilder::calculateNamesBufferSize() const {
@@ -119,6 +143,10 @@ uint32_t DbiStreamBuilder::calculateNamesBufferSize() const {
     Size += F.getKeyLength() + 1; // Names[I];
   }
   return Size;
+}
+
+uint32_t DbiStreamBuilder::calculateDbgStreamsSize() const {
+  return DbgStreams.size() * sizeof(uint16_t);
 }
 
 Error DbiStreamBuilder::generateModiSubstream() {
@@ -139,7 +167,7 @@ Error DbiStreamBuilder::generateModiSubstream() {
     if (auto EC = ModiWriter.writeZeroString(M->Obj))
       return EC;
   }
-  if (ModiWriter.bytesRemaining() != 0)
+  if (ModiWriter.bytesRemaining() > sizeof(uint32_t))
     return make_error<RawError>(raw_error_code::invalid_format,
                                 "Unexpected bytes in Modi Stream Data");
   return Error::success();
@@ -157,8 +185,8 @@ Error DbiStreamBuilder::generateFileInfoSubstream() {
       WritableStreamRef(FileInfoBuffer).keep_front(NamesOffset);
   StreamWriter MetadataWriter(MetadataBuffer);
 
-  uint16_t ModiCount = std::min<uint16_t>(UINT16_MAX, ModuleInfos.size());
-  uint16_t FileCount = std::min<uint16_t>(UINT16_MAX, SourceFileNames.size());
+  uint16_t ModiCount = std::min<uint32_t>(UINT16_MAX, ModuleInfos.size());
+  uint16_t FileCount = std::min<uint32_t>(UINT16_MAX, SourceFileNames.size());
   if (auto EC = MetadataWriter.writeInteger(ModiCount)) // NumModules
     return EC;
   if (auto EC = MetadataWriter.writeInteger(FileCount)) // NumSourceFiles
@@ -200,7 +228,7 @@ Error DbiStreamBuilder::generateFileInfoSubstream() {
     return make_error<RawError>(raw_error_code::invalid_format,
                                 "The names buffer contained unexpected data.");
 
-  if (MetadataWriter.bytesRemaining() > 0)
+  if (MetadataWriter.bytesRemaining() > sizeof(uint32_t))
     return make_error<RawError>(
         raw_error_code::invalid_format,
         "The metadata buffer contained unexpected data.");
@@ -232,8 +260,8 @@ Error DbiStreamBuilder::finalize() {
   H->FileInfoSize = FileInfoBuffer.getLength();
   H->ModiSubstreamSize = ModInfoBuffer.getLength();
   H->OptionalDbgHdrSize = DbgStreams.size() * sizeof(uint16_t);
-  H->SecContrSubstreamSize = 0;
-  H->SectionMapSize = 0;
+  H->SecContrSubstreamSize = calculateSectionContribsStreamSize();
+  H->SectionMapSize = calculateSectionMapStreamSize();
   H->TypeServerSize = 0;
   H->SymRecordStreamIndex = kInvalidStreamIndex;
   H->PublicSymbolStreamIndex = kInvalidStreamIndex;
@@ -251,25 +279,82 @@ Error DbiStreamBuilder::finalizeMsfLayout() {
   return Error::success();
 }
 
-Expected<std::unique_ptr<DbiStream>>
-DbiStreamBuilder::build(PDBFile &File, const msf::WritableStream &Buffer) {
-  if (!VerHeader.hasValue())
-    return make_error<RawError>(raw_error_code::unspecified,
-                                "Missing DBI Stream Version");
-  if (auto EC = finalize())
-    return std::move(EC);
+static uint16_t toSecMapFlags(uint32_t Flags) {
+  uint16_t Ret = 0;
+  if (Flags & COFF::IMAGE_SCN_MEM_READ)
+    Ret |= static_cast<uint16_t>(OMFSegDescFlags::Read);
+  if (Flags & COFF::IMAGE_SCN_MEM_WRITE)
+    Ret |= static_cast<uint16_t>(OMFSegDescFlags::Write);
+  if (Flags & COFF::IMAGE_SCN_MEM_EXECUTE)
+    Ret |= static_cast<uint16_t>(OMFSegDescFlags::Execute);
+  if (Flags & COFF::IMAGE_SCN_MEM_EXECUTE)
+    Ret |= static_cast<uint16_t>(OMFSegDescFlags::Execute);
+  if (!(Flags & COFF::IMAGE_SCN_MEM_16BIT))
+    Ret |= static_cast<uint16_t>(OMFSegDescFlags::AddressIs32Bit);
 
-  auto StreamData = MappedBlockStream::createIndexedStream(File.getMsfLayout(),
-                                                           Buffer, StreamDBI);
-  auto Dbi = llvm::make_unique<DbiStream>(File, std::move(StreamData));
-  Dbi->Header = Header;
-  Dbi->FileInfoSubstream = ReadableStreamRef(FileInfoBuffer);
-  Dbi->ModInfoSubstream = ReadableStreamRef(ModInfoBuffer);
-  if (auto EC = Dbi->initializeModInfoArray())
-    return std::move(EC);
-  if (auto EC = Dbi->initializeFileInfo())
-    return std::move(EC);
-  return std::move(Dbi);
+  // This seems always 1.
+  Ret |= static_cast<uint16_t>(OMFSegDescFlags::IsSelector);
+
+  return Ret;
+}
+
+// A utility function to create Section Contributions
+// for a given input sections.
+std::vector<SectionContrib> DbiStreamBuilder::createSectionContribs(
+    ArrayRef<object::coff_section> SecHdrs) {
+  std::vector<SectionContrib> Ret;
+
+  // Create a SectionContrib for each input section.
+  for (auto &Sec : SecHdrs) {
+    Ret.emplace_back();
+    auto &Entry = Ret.back();
+    memset(&Entry, 0, sizeof(Entry));
+
+    Entry.Off = Sec.PointerToRawData;
+    Entry.Size = Sec.SizeOfRawData;
+    Entry.Characteristics = Sec.Characteristics;
+  }
+  return Ret;
+}
+
+// A utility function to create a Section Map for a given list of COFF sections.
+//
+// A Section Map seem to be a copy of a COFF section list in other format.
+// I don't know why a PDB file contains both a COFF section header and
+// a Section Map, but it seems it must be present in a PDB.
+std::vector<SecMapEntry> DbiStreamBuilder::createSectionMap(
+    ArrayRef<llvm::object::coff_section> SecHdrs) {
+  std::vector<SecMapEntry> Ret;
+  int Idx = 0;
+
+  auto Add = [&]() -> SecMapEntry & {
+    Ret.emplace_back();
+    auto &Entry = Ret.back();
+    memset(&Entry, 0, sizeof(Entry));
+
+    Entry.Frame = Idx + 1;
+
+    // We don't know the meaning of these fields yet.
+    Entry.SecName = UINT16_MAX;
+    Entry.ClassName = UINT16_MAX;
+
+    return Entry;
+  };
+
+  for (auto &Hdr : SecHdrs) {
+    auto &Entry = Add();
+    Entry.Flags = toSecMapFlags(Hdr.Characteristics);
+    Entry.SecByteLength = Hdr.VirtualSize;
+    ++Idx;
+  }
+
+  // The last entry is for absolute symbols.
+  auto &Entry = Add();
+  Entry.Flags = static_cast<uint16_t>(OMFSegDescFlags::AddressIs32Bit) |
+                static_cast<uint16_t>(OMFSegDescFlags::IsAbsoluteAddress);
+  Entry.SecByteLength = UINT32_MAX;
+
+  return Ret;
 }
 
 Error DbiStreamBuilder::commit(const msf::MSFLayout &Layout,
@@ -286,8 +371,26 @@ Error DbiStreamBuilder::commit(const msf::MSFLayout &Layout,
 
   if (auto EC = Writer.writeStreamRef(ModInfoBuffer))
     return EC;
+
+  if (!SectionContribs.empty()) {
+    if (auto EC = Writer.writeEnum(DbiSecContribVer60))
+      return EC;
+    if (auto EC = Writer.writeArray(SectionContribs))
+      return EC;
+  }
+
+  if (!SectionMap.empty()) {
+    ulittle16_t Size = static_cast<ulittle16_t>(SectionMap.size());
+    SecMapHeader SMHeader = {Size, Size};
+    if (auto EC = Writer.writeObject(SMHeader))
+      return EC;
+    if (auto EC = Writer.writeArray(SectionMap))
+      return EC;
+  }
+
   if (auto EC = Writer.writeStreamRef(FileInfoBuffer))
     return EC;
+
   for (auto &Stream : DbgStreams)
     if (auto EC = Writer.writeInteger(Stream.StreamNumber))
       return EC;

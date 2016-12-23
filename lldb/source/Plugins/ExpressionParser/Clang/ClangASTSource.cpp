@@ -1,5 +1,4 @@
-//===-- ClangASTSource.cpp ---------------------------------------*- C++
-//-*-===//
+//===-- ClangASTSource.cpp ---------------------------------------*- C++-*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -922,7 +921,7 @@ static bool FindObjCMethodDeclsWithOrigin(
     std::string decl_name_string_without_colon(decl_name_string.c_str(),
                                                decl_name_string.length() - 1);
     IdentifierInfo *ident =
-        &original_ctx->Idents.get(decl_name_string_without_colon.c_str());
+        &original_ctx->Idents.get(decl_name_string_without_colon);
     original_selector = original_ctx->Selectors.getSelector(1, &ident);
   } else {
     SmallVector<IdentifierInfo *, 4> idents;
@@ -1042,10 +1041,10 @@ void ClangASTSource::FindObjCMethodDecls(NameSearchContext &context) {
   }
   ss.Flush();
 
-  if (strstr(ss.GetData(), "$__lldb"))
+  if (ss.GetString().contains("$__lldb"))
     return; // we don't need any results
 
-  ConstString selector_name(ss.GetData());
+  ConstString selector_name(ss.GetString());
 
   if (log)
     log->Printf("ClangASTSource::FindObjCMethodDecls[%d] on (ASTContext*)%p "
@@ -1065,7 +1064,7 @@ void ClangASTSource::FindObjCMethodDecls(NameSearchContext &context) {
     StreamString ms;
     ms.Printf("-[%s %s]", interface_name.c_str(), selector_name.AsCString());
     ms.Flush();
-    ConstString instance_method_name(ms.GetData());
+    ConstString instance_method_name(ms.GetString());
 
     m_target->GetImages().FindFunctions(
         instance_method_name, lldb::eFunctionNameTypeFull, include_symbols,
@@ -1077,7 +1076,7 @@ void ClangASTSource::FindObjCMethodDecls(NameSearchContext &context) {
     ms.Clear();
     ms.Printf("+[%s %s]", interface_name.c_str(), selector_name.AsCString());
     ms.Flush();
-    ConstString class_method_name(ms.GetData());
+    ConstString class_method_name(ms.GetString());
 
     m_target->GetImages().FindFunctions(
         class_method_name, lldb::eFunctionNameTypeFull, include_symbols,
@@ -1293,7 +1292,7 @@ static bool FindObjCPropertyAndIvarDeclsWithOrigin(
     return false;
 
   std::string name_str = context.m_decl_name.getAsString();
-  StringRef name(name_str.c_str());
+  StringRef name(name_str);
   IdentifierInfo &name_identifier(
       origin_iface_decl->getASTContext().Idents.get(name));
 

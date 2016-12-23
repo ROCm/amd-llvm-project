@@ -1926,6 +1926,9 @@ VarDecl::isThisDeclarationADefinition(ASTContext &C) const {
   //
   // FIXME: How do you declare (but not define) a partial specialization of
   // a static data member template outside the containing class?
+  if (isThisDeclarationADemotedDefinition())
+    return DeclarationOnly;
+
   if (isStaticDataMember()) {
     if (isOutOfLine() &&
         !(getCanonicalDecl()->isInline() &&
@@ -2248,6 +2251,56 @@ bool VarDecl::checkInitIsICE() const {
   Eval->CheckingICE = false;
   Eval->CheckedICE = true;
   return Eval->IsICE;
+}
+
+VarDecl *VarDecl::getTemplateInstantiationPattern() const {
+  // If it's a variable template specialization, find the template or partial
+  // specialization from which it was instantiated.
+  if (auto *VDTemplSpec = dyn_cast<VarTemplateSpecializationDecl>(this)) {
+    auto From = VDTemplSpec->getInstantiatedFrom();
+    if (auto *VTD = From.dyn_cast<VarTemplateDecl *>()) {
+      while (auto *NewVTD = VTD->getInstantiatedFromMemberTemplate()) {
+        if (NewVTD->isMemberSpecialization())
+          break;
+        VTD = NewVTD;
+      }
+      return VTD->getTemplatedDecl()->getDefinition();
+    }
+    if (auto *VTPSD =
+            From.dyn_cast<VarTemplatePartialSpecializationDecl *>()) {
+      while (auto *NewVTPSD = VTPSD->getInstantiatedFromMember()) {
+        if (NewVTPSD->isMemberSpecialization())
+          break;
+        VTPSD = NewVTPSD;
+      }
+      return VTPSD->getDefinition();
+    }
+  }
+
+  if (MemberSpecializationInfo *MSInfo = getMemberSpecializationInfo()) {
+    if (isTemplateInstantiation(MSInfo->getTemplateSpecializationKind())) {
+      VarDecl *VD = getInstantiatedFromStaticDataMember();
+      while (auto *NewVD = VD->getInstantiatedFromStaticDataMember())
+        VD = NewVD;
+      return VD->getDefinition();
+    }
+  }
+
+  if (VarTemplateDecl *VarTemplate = getDescribedVarTemplate()) {
+
+    while (VarTemplate->getInstantiatedFromMemberTemplate()) {
+      if (VarTemplate->isMemberSpecialization())
+        break;
+      VarTemplate = VarTemplate->getInstantiatedFromMemberTemplate();
+    }
+
+    assert((!VarTemplate->getTemplatedDecl() ||
+            !isTemplateInstantiation(getTemplateSpecializationKind())) &&
+           "couldn't find pattern for variable instantiation");
+
+    return VarTemplate->getTemplatedDecl();
+  }
+  return nullptr;
 }
 
 VarDecl *VarDecl::getInstantiatedFromStaticDataMember() const {
@@ -2787,28 +2840,6 @@ void FunctionDecl::setParams(ASTContext &C,
   }
 }
 
-void FunctionDecl::setDeclsInPrototypeScope(ArrayRef<NamedDecl *> NewDecls) {
-  assert(DeclsInPrototypeScope.empty() && "Already has prototype decls!");
-
-  if (!NewDecls.empty()) {
-    NamedDecl **A = new (getASTContext()) NamedDecl*[NewDecls.size()];
-    std::copy(NewDecls.begin(), NewDecls.end(), A);
-    DeclsInPrototypeScope = llvm::makeArrayRef(A, NewDecls.size());
-    // Move declarations introduced in prototype to the function context.
-    for (auto I : NewDecls) {
-      DeclContext *DC = I->getDeclContext();
-      // Forward-declared reference to an enumeration is not added to
-      // declaration scope, so skip declaration that is absent from its
-      // declaration contexts.
-      if (DC->containsDecl(I)) {
-          DC->removeDecl(I);
-          I->setDeclContext(this);
-          addDecl(I);
-      }
-    }
-  }
-}
-
 /// getMinRequiredArguments - Returns the minimum number of arguments
 /// needed to call this function. This may be fewer than the number of
 /// function parameters, if some of the parameters have default
@@ -2995,7 +3026,8 @@ const Attr *FunctionDecl::getUnusedResultAttr() const {
 /// an externally visible symbol, but "extern inline" will not create an 
 /// externally visible symbol.
 bool FunctionDecl::isInlineDefinitionExternallyVisible() const {
-  assert(doesThisDeclarationHaveABody() && "Must have the function definition");
+  assert((doesThisDeclarationHaveABody() || willHaveBody()) &&
+         "Must be a function definition");
   assert(isInlined() && "Function must be inline");
   ASTContext &Context = getASTContext();
   
@@ -3471,20 +3503,6 @@ unsigned FunctionDecl::getMemoryFunctionKind() const {
     break;
   }
   return 0;
-}
-
-void FunctionDecl::addDeferredDiag(PartialDiagnosticAt PD) {
-  getASTContext().getDeferredDiags()[this].push_back(std::move(PD));
-}
-
-std::vector<PartialDiagnosticAt> FunctionDecl::takeDeferredDiags() const {
-  auto &DD = getASTContext().getDeferredDiags();
-  auto It = DD.find(this);
-  if (It == DD.end())
-    return {};
-  auto Ret = std::move(It->second);
-  DD.erase(It);
-  return Ret;
 }
 
 //===----------------------------------------------------------------------===//

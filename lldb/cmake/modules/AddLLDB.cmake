@@ -4,7 +4,7 @@ function(lldb_link_common_libs name targetkind)
   endif()
 
   if(${targetkind} MATCHES "SHARED")
-    set(LINK_KEYWORD PUBLIC)
+    set(LINK_KEYWORD PRIVATE)
   endif()
 
   if(${targetkind} MATCHES "SHARED" OR ${targetkind} MATCHES "EXE")
@@ -23,7 +23,7 @@ macro(add_lldb_library name)
   cmake_parse_arguments(PARAM
     "MODULE;SHARED;STATIC;OBJECT"
     ""
-    ""
+    "DEPENDS"
     ${ARGN})
   llvm_process_sources(srcs ${PARAM_UNPARSED_ARGUMENTS})
 
@@ -56,19 +56,22 @@ macro(add_lldb_library name)
   if (PARAM_OBJECT)
     add_library(${name} ${libkind} ${srcs})
   else()
-    llvm_add_library(${name} ${libkind} DISABLE_LLVM_LINK_LLVM_DYLIB ${srcs})
-
-    lldb_link_common_libs(${name} "${libkind}")
-
     if (PARAM_SHARED)
       if (LLDB_LINKER_SUPPORTS_GROUPS)
-        target_link_libraries(${name} PUBLIC
-                    -Wl,--start-group ${CLANG_USED_LIBS} -Wl,--end-group)
+        llvm_add_library(${name} ${libkind} ${srcs} LINK_LIBS
+                                -Wl,--start-group ${LLDB_USED_LIBS} -Wl,--end-group
+                                -Wl,--start-group ${CLANG_USED_LIBS} -Wl,--end-group
+                                DEPENDS ${PARAM_DEPENDS}
+          )
       else()
-        target_link_libraries(${name} PUBLIC ${CLANG_USED_LIBS})
+        llvm_add_library(${name} ${libkind} ${srcs} LINK_LIBS
+                                ${LLDB_USED_LIBS} ${CLANG_USED_LIBS}
+                                DEPENDS ${PARAM_DEPENDS}
+          )
       endif()
+    else()
+      llvm_add_library(${name} ${libkind} ${srcs} DEPENDS ${PARAM_DEPENDS})
     endif()
-    llvm_config(${name} ${LLVM_LINK_COMPONENTS} ${LLVM_PRIVATE_LINK_COMPONENTS})
 
     if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY OR ${name} STREQUAL "liblldb")
       if (PARAM_SHARED)
@@ -101,7 +104,7 @@ endmacro(add_lldb_library)
 
 macro(add_lldb_executable name)
   cmake_parse_arguments(ARG "INCLUDE_IN_FRAMEWORK" "" "" ${ARGN})
-  add_llvm_executable(${name} DISABLE_LLVM_LINK_LLVM_DYLIB ${ARG_UNPARSED_ARGUMENTS})
+  add_llvm_executable(${name} ${ARG_UNPARSED_ARGUMENTS})
   set_target_properties(${name} PROPERTIES
     FOLDER "lldb executables")
 
@@ -113,7 +116,8 @@ macro(add_lldb_executable name)
             BUILD_WITH_INSTALL_RPATH On
             INSTALL_RPATH "@loader_path/../../../../${_dots}/${LLDB_FRAMEWORK_INSTALL_DIR}")
 
-      add_llvm_tool_symlink(${name} $<TARGET_FILE:${name}> ARG_ALWAYS_GENERATE)
+      add_llvm_tool_symlink(${name} ${name} ARG_ALWAYS_GENERATE
+                            OUTPUT_DIR ${LLVM_RUNTIME_OUTPUT_INTDIR})
     else()
       set_target_properties(${name} PROPERTIES
             BUILD_WITH_INSTALL_RPATH On

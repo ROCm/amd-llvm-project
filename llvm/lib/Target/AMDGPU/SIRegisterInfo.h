@@ -50,10 +50,13 @@ public:
 
   bool requiresRegisterScavenging(const MachineFunction &Fn) const override;
 
-
   bool requiresFrameIndexScavenging(const MachineFunction &MF) const override;
+  bool requiresFrameIndexReplacementScavenging(
+    const MachineFunction &MF) const override;
   bool requiresVirtualBaseRegisters(const MachineFunction &Fn) const override;
   bool trackLivenessAfterRegAlloc(const MachineFunction &MF) const override;
+
+  int64_t getMUBUFInstrOffset(const MachineInstr *MI) const;
 
   int64_t getFrameIndexInstrOffset(const MachineInstr *MI,
                                    int Idx) const override;
@@ -172,6 +175,8 @@ public:
   unsigned getSGPRPressureSet() const { return SGPRSetID; };
   unsigned getVGPRPressureSet() const { return VGPRSetID; };
 
+  const TargetRegisterClass *getRegClassForReg(const MachineRegisterInfo &MRI,
+                                               unsigned Reg) const;
   bool isVGPR(const MachineRegisterInfo &MRI, unsigned Reg) const;
 
   bool isSGPRPressureSet(unsigned SetID) const {
@@ -245,12 +250,20 @@ public:
   /// unit requirement.
   unsigned getMaxNumVGPRs(const MachineFunction &MF) const;
 
+  ArrayRef<int16_t> getRegSplitParts(const TargetRegisterClass *RC,
+                                     unsigned EltSize) const;
+
 private:
-  void buildScratchLoadStore(MachineBasicBlock::iterator MI,
-                             unsigned LoadStoreOp, const MachineOperand *SrcDst,
-                             unsigned ScratchRsrcReg, unsigned ScratchOffset,
-                             int64_t Offset,
-                             RegScavenger *RS) const;
+  void buildSpillLoadStore(MachineBasicBlock::iterator MI,
+                           unsigned LoadStoreOp,
+                           int Index,
+                           unsigned ValueReg,
+                           bool ValueIsKill,
+                           unsigned ScratchRsrcReg,
+                           unsigned ScratchOffsetReg,
+                           int64_t InstrOffset,
+                           MachineMemOperand *MMO,
+                           RegScavenger *RS) const;
 };
 
 } // End namespace llvm

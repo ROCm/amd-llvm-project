@@ -232,8 +232,10 @@ namespace yaml {
 /// @brief Scans YAML tokens from a MemoryBuffer.
 class Scanner {
 public:
-  Scanner(StringRef Input, SourceMgr &SM, bool ShowColors = true);
-  Scanner(MemoryBufferRef Buffer, SourceMgr &SM_, bool ShowColors = true);
+  Scanner(StringRef Input, SourceMgr &SM, bool ShowColors = true,
+          std::error_code *EC = nullptr);
+  Scanner(MemoryBufferRef Buffer, SourceMgr &SM_, bool ShowColors = true,
+          std::error_code *EC = nullptr);
 
   /// @brief Parse the next token and return it without popping it.
   Token &peekNext();
@@ -249,6 +251,10 @@ public:
   void setError(const Twine &Message, StringRef::iterator Position) {
     if (Current >= End)
       Current = End - 1;
+
+    // propagate the error if possible
+    if (EC)
+      *EC = make_error_code(std::errc::invalid_argument);
 
     // Don't print out more errors after the first one we encounter. The rest
     // are just the result of the first, and have no meaning.
@@ -360,10 +366,7 @@ private:
   /// @brief Scan ns-uri-char[39]s starting at Cur.
   ///
   /// This updates Cur and Column while scanning.
-  ///
-  /// @returns A StringRef starting at Cur which covers the longest contiguous
-  ///          sequence of ns-uri-char.
-  StringRef scan_ns_uri_char();
+  void scan_ns_uri_char();
 
   /// @brief Consume a minimal well-formed code unit subsequence starting at
   ///        \a Cur. Return false if it is not the same Unicode scalar value as
@@ -531,6 +534,8 @@ private:
 
   /// @brief Potential simple keys.
   SmallVector<SimpleKey, 4> SimpleKeys;
+
+  std::error_code *EC;
 };
 
 } // end namespace yaml
@@ -725,13 +730,15 @@ std::string yaml::escape(StringRef Input) {
   return EscapedInput;
 }
 
-Scanner::Scanner(StringRef Input, SourceMgr &sm, bool ShowColors)
-    : SM(sm), ShowColors(ShowColors) {
+Scanner::Scanner(StringRef Input, SourceMgr &sm, bool ShowColors,
+                 std::error_code *EC)
+    : SM(sm), ShowColors(ShowColors), EC(EC) {
   init(MemoryBufferRef(Input, "YAML"));
 }
 
-Scanner::Scanner(MemoryBufferRef Buffer, SourceMgr &SM_, bool ShowColors)
-    : SM(SM_), ShowColors(ShowColors) {
+Scanner::Scanner(MemoryBufferRef Buffer, SourceMgr &SM_, bool ShowColors,
+                 std::error_code *EC)
+    : SM(SM_), ShowColors(ShowColors), EC(EC) {
   init(Buffer);
 }
 
@@ -883,8 +890,7 @@ static bool is_ns_word_char(const char C) {
          || (C >= 'A' && C <= 'Z');
 }
 
-StringRef Scanner::scan_ns_uri_char() {
-  StringRef::iterator Start = Current;
+void Scanner::scan_ns_uri_char() {
   while (true) {
     if (Current == End)
       break;
@@ -900,7 +906,6 @@ StringRef Scanner::scan_ns_uri_char() {
     } else
       break;
   }
-  return StringRef(Start, Current - Start);
 }
 
 bool Scanner::consume(uint32_t Expected) {
@@ -1731,11 +1736,13 @@ bool Scanner::fetchMoreTokens() {
   return false;
 }
 
-Stream::Stream(StringRef Input, SourceMgr &SM, bool ShowColors)
-    : scanner(new Scanner(Input, SM, ShowColors)), CurrentDoc() {}
+Stream::Stream(StringRef Input, SourceMgr &SM, bool ShowColors,
+               std::error_code *EC)
+    : scanner(new Scanner(Input, SM, ShowColors, EC)), CurrentDoc() {}
 
-Stream::Stream(MemoryBufferRef InputBuffer, SourceMgr &SM, bool ShowColors)
-    : scanner(new Scanner(InputBuffer, SM, ShowColors)), CurrentDoc() {}
+Stream::Stream(MemoryBufferRef InputBuffer, SourceMgr &SM, bool ShowColors,
+               std::error_code *EC)
+    : scanner(new Scanner(InputBuffer, SM, ShowColors, EC)), CurrentDoc() {}
 
 Stream::~Stream() {}
 

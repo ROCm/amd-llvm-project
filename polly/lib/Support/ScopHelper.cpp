@@ -30,6 +30,11 @@ using namespace polly;
 
 #define DEBUG_TYPE "polly-scop-helper"
 
+static cl::opt<bool> PollyAllowErrorBlocks(
+    "polly-allow-error-blocks",
+    cl::desc("Allow to speculate on the execution of 'error blocks'."),
+    cl::Hidden, cl::init(true), cl::ZeroOrMore, cl::cat(PollyCategory));
+
 bool polly::hasInvokeEdge(const PHINode *PN) {
   for (unsigned i = 0, e = PN->getNumIncomingValues(); i < e; ++i)
     if (InvokeInst *II = dyn_cast<InvokeInst>(PN->getIncomingValue(i)))
@@ -226,9 +231,10 @@ struct ScopExpander : SCEVVisitor<ScopExpander, const SCEV *> {
   friend struct SCEVVisitor<ScopExpander, const SCEV *>;
 
   explicit ScopExpander(const Region &R, ScalarEvolution &SE,
-                        const DataLayout &DL, const char *Name, ValueMapT *VMap)
+                        const DataLayout &DL, const char *Name, ValueMapT *VMap,
+                        BasicBlock *RTCBB)
       : Expander(SCEVExpander(SE, DL, Name)), SE(SE), Name(Name), R(R),
-        VMap(VMap) {}
+        VMap(VMap), RTCBB(RTCBB) {}
 
   Value *expandCodeFor(const SCEV *E, Type *Ty, Instruction *I) {
     // If we generate code in the region we will immediately fall back to the
@@ -245,6 +251,7 @@ private:
   const char *Name;
   const Region &R;
   ValueMapT *VMap;
+  BasicBlock *RTCBB;
 
   const SCEV *visitGenericInst(const SCEVUnknown *E, Instruction *Inst,
                                Instruction *IP) {
@@ -280,15 +287,14 @@ private:
         return visit(NewE);
     }
 
-    auto *EnteringBB = R.getEnteringBlock();
     Instruction *Inst = dyn_cast<Instruction>(E->getValue());
     Instruction *IP;
     if (Inst && !R.contains(Inst))
       IP = Inst;
-    else if (Inst && EnteringBB->getParent() == Inst->getFunction())
-      IP = EnteringBB->getTerminator();
+    else if (Inst && RTCBB->getParent() == Inst->getFunction())
+      IP = RTCBB->getTerminator();
     else
-      IP = EnteringBB->getParent()->getEntryBlock().getTerminator();
+      IP = RTCBB->getParent()->getEntryBlock().getTerminator();
 
     if (!Inst || (Inst->getOpcode() != Instruction::SRem &&
                   Inst->getOpcode() != Instruction::SDiv))
@@ -363,13 +369,16 @@ private:
 
 Value *polly::expandCodeFor(Scop &S, ScalarEvolution &SE, const DataLayout &DL,
                             const char *Name, const SCEV *E, Type *Ty,
-                            Instruction *IP, ValueMapT *VMap) {
-  ScopExpander Expander(S.getRegion(), SE, DL, Name, VMap);
+                            Instruction *IP, ValueMapT *VMap,
+                            BasicBlock *RTCBB) {
+  ScopExpander Expander(S.getRegion(), SE, DL, Name, VMap, RTCBB);
   return Expander.expandCodeFor(E, Ty, IP);
 }
 
 bool polly::isErrorBlock(BasicBlock &BB, const Region &R, LoopInfo &LI,
                          const DominatorTree &DT) {
+  if (!PollyAllowErrorBlocks)
+    return false;
 
   if (isa<UnreachableInst>(BB.getTerminator()))
     return true;
@@ -427,13 +436,36 @@ Value *polly::getConditionFromTerminator(TerminatorInst *TI) {
 }
 
 bool polly::isHoistableLoad(LoadInst *LInst, Region &R, LoopInfo &LI,
-                            ScalarEvolution &SE) {
+                            ScalarEvolution &SE, const DominatorTree &DT) {
   Loop *L = LI.getLoopFor(LInst->getParent());
-  const SCEV *PtrSCEV = SE.getSCEVAtScope(LInst->getPointerOperand(), L);
+  auto *Ptr = LInst->getPointerOperand();
+  const SCEV *PtrSCEV = SE.getSCEVAtScope(Ptr, L);
   while (L && R.contains(L)) {
     if (!SE.isLoopInvariant(PtrSCEV, L))
       return false;
     L = L->getParentLoop();
+  }
+
+  for (auto *User : Ptr->users()) {
+    auto *UserI = dyn_cast<Instruction>(User);
+    if (!UserI || !R.contains(UserI))
+      continue;
+    if (!UserI->mayWriteToMemory())
+      continue;
+
+    auto &BB = *UserI->getParent();
+    if (DT.dominates(&BB, LInst->getParent()))
+      return false;
+
+    bool DominatesAllPredecessors = true;
+    for (auto Pred : predecessors(R.getExit()))
+      if (R.contains(Pred) && !DT.dominates(&BB, Pred))
+        DominatesAllPredecessors = false;
+
+    if (!DominatesAllPredecessors)
+      continue;
+
+    return false;
   }
 
   return true;
@@ -466,8 +498,7 @@ bool polly::isIgnoredIntrinsic(const Value *V) {
   return false;
 }
 
-bool polly::canSynthesize(const Value *V, const Scop &S,
-                          const llvm::LoopInfo *LI, ScalarEvolution *SE,
+bool polly::canSynthesize(const Value *V, const Scop &S, ScalarEvolution *SE,
                           Loop *Scope) {
   if (!V || !SE->isSCEVable(V->getType()))
     return false;

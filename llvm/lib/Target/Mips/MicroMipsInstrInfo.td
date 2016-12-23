@@ -927,6 +927,7 @@ let DecoderNamespace = "MicroMips", Predicates = [InMicroMips] in {
 
   /// Control Instructions
   def SYNC_MM    : MMRel, SYNC_FT<"sync">, SYNC_FM_MM;
+  def SYNCI_MM   : MMRel, SYNCI_FT<"synci">, SYNCI_FM_MM;
   def BREAK_MM   : MMRel, BRK_FT<"break">, BRK_FM_MM;
   def SYSCALL_MM : MMRel, SYS_FT<"syscall", uimm10, II_SYSCALL>, SYS_FM_MM;
   def WAIT_MM    : WaitMM<"wait">, WAIT_FM_MM;
@@ -1176,8 +1177,14 @@ let Predicates = [InMicroMips] in {
                       (XORi_MM GPR32Opnd:$rs, GPR32Opnd:$rs, uimm16:$imm), 0>;
   def : MipsInstAlias<"not $rt, $rs",
                       (NOR_MM GPR32Opnd:$rt, GPR32Opnd:$rs, ZERO), 0>;
+  def : MipsInstAlias<"not $rt",
+                      (NOR_MM GPR32Opnd:$rt, GPR32Opnd:$rt, ZERO), 0>;
   def : MipsInstAlias<"bnez $rs,$offset",
                       (BNE_MM GPR32Opnd:$rs, ZERO, brtarget:$offset), 0>;
   def : MipsInstAlias<"beqz $rs,$offset",
                       (BEQ_MM GPR32Opnd:$rs, ZERO, brtarget:$offset), 0>;
+  def : MipsInstAlias<"seh $rd", (SEH_MM GPR32Opnd:$rd, GPR32Opnd:$rd), 0>,
+                     ISA_MIPS32R2_NOT_32R6_64R6;
+  def : MipsInstAlias<"seb $rd", (SEB_MM GPR32Opnd:$rd, GPR32Opnd:$rd), 0>,
+                     ISA_MIPS32R2_NOT_32R6_64R6;
 }

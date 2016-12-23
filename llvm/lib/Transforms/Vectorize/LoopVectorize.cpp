@@ -437,9 +437,17 @@ protected:
   /// See PR14725.
   void fixLCSSAPHIs();
 
+  /// Iteratively sink the scalarized operands of a predicated instruction into
+  /// the block that was created for it.
+  void sinkScalarOperands(Instruction *PredInst);
+
   /// Predicate conditional instructions that require predication on their
   /// respective conditions.
   void predicateInstructions();
+
+  /// Collect the instructions from the original loop that would be trivially
+  /// dead in the vectorized loop if generated.
+  void collectTriviallyDeadInstructions();
 
   /// Shrinks vector element sizes to the smallest bitwidth they can be legally
   /// represented as.
@@ -509,6 +517,10 @@ protected:
   /// Widen an integer induction variable \p IV. If \p Trunc is provided, the
   /// induction variable will first be truncated to the corresponding type.
   void widenIntInduction(PHINode *IV, TruncInst *Trunc = nullptr);
+
+  /// Returns true if an instruction \p I should be scalarized instead of
+  /// vectorized for the chosen vectorization factor.
+  bool shouldScalarizeInstruction(Instruction *I) const;
 
   /// Returns true if we should generate a scalar version of \p IV.
   bool needsScalarInduction(Instruction *IV) const;
@@ -763,6 +775,14 @@ protected:
 
   // Record whether runtime checks are added.
   bool AddedSafetyChecks;
+
+  // Holds instructions from the original loop whose counterparts in the
+  // vectorized loop would be trivially dead if generated. For example,
+  // original induction update instructions can become dead because we
+  // separately emit induction "steps" when generating code for the new loop.
+  // Similarly, we create a new latch condition when setting up the structure
+  // of the new loop, so the old one can become dead.
+  SmallPtrSet<Instruction *, 4> DeadInstructions;
 };
 
 class InnerLoopUnroller : public InnerLoopVectorizer {
@@ -1303,8 +1323,7 @@ public:
     else {
       OptimizationRemarkMissed R(LV_NAME, "MissedDetails",
                                  TheLoop->getStartLoc(), TheLoop->getHeader());
-      R << "loop not vectorized: use -Rpass-analysis=loop-vectorize for more "
-           "info";
+      R << "loop not vectorized";
       if (Force.Value == LoopVectorizeHints::FK_Enabled) {
         R << " (Force=" << NV("Force", true);
         if (Width.Value != 0)
@@ -1892,6 +1911,15 @@ public:
     return MinBWs;
   }
 
+  /// \returns True if it is more profitable to scalarize instruction \p I for
+  /// vectorization factor \p VF.
+  bool isProfitableToScalarize(Instruction *I, unsigned VF) const {
+    auto Scalars = InstsToScalarize.find(VF);
+    assert(Scalars != InstsToScalarize.end() &&
+           "VF not yet analyzed for scalarization profitability");
+    return Scalars->second.count(I);
+  }
+
 private:
   /// The vectorization cost is a combination of the cost itself and a boolean
   /// indicating whether any of the contributing operations will actually
@@ -1933,6 +1961,29 @@ private:
   /// represented as. The vector equivalents of these values should be truncated
   /// to this type.
   MapVector<Instruction *, uint64_t> MinBWs;
+
+  /// A type representing the costs for instructions if they were to be
+  /// scalarized rather than vectorized. The entries are Instruction-Cost
+  /// pairs.
+  typedef DenseMap<Instruction *, unsigned> ScalarCostsTy;
+
+  /// A map holding scalar costs for different vectorization factors. The
+  /// presence of a cost for an instruction in the mapping indicates that the
+  /// instruction will be scalarized when vectorizing with the associated
+  /// vectorization factor. The entries are VF-ScalarCostTy pairs.
+  DenseMap<unsigned, ScalarCostsTy> InstsToScalarize;
+
+  /// Returns the expected difference in cost from scalarizing the expression
+  /// feeding a predicated instruction \p PredInst. The instructions to
+  /// scalarize and their scalar costs are collected in \p ScalarCosts. A
+  /// non-negative return value implies the expression will be scalarized.
+  /// Currently, only single-use chains are considered for scalarization.
+  int computePredInstDiscount(Instruction *PredInst, ScalarCostsTy &ScalarCosts,
+                              unsigned VF);
+
+  /// Collects the instructions to scalarize for each predicated instruction in
+  /// the loop.
+  void collectInstsToScalarize(unsigned VF);
 
 public:
   /// The loop that we evaluate.
@@ -2168,12 +2219,17 @@ void InnerLoopVectorizer::createVectorIntInductionPHI(
   VecInd->addIncoming(LastInduction, LoopVectorLatch);
 }
 
+bool InnerLoopVectorizer::shouldScalarizeInstruction(Instruction *I) const {
+  return Legal->isScalarAfterVectorization(I) ||
+         Cost->isProfitableToScalarize(I, VF);
+}
+
 bool InnerLoopVectorizer::needsScalarInduction(Instruction *IV) const {
-  if (Legal->isScalarAfterVectorization(IV))
+  if (shouldScalarizeInstruction(IV))
     return true;
   auto isScalarInst = [&](User *U) -> bool {
     auto *I = cast<Instruction>(U);
-    return (OrigLoop->contains(I) && Legal->isScalarAfterVectorization(I));
+    return (OrigLoop->contains(I) && shouldScalarizeInstruction(I));
   };
   return any_of(IV->users(), isScalarInst);
 }
@@ -2214,7 +2270,7 @@ void InnerLoopVectorizer::widenIntInduction(PHINode *IV, TruncInst *Trunc) {
   // create the phi node, we will splat the scalar induction variable in each
   // loop iteration.
   if (VF > 1 && IV->getType() == Induction->getType() && Step &&
-      !Legal->isScalarAfterVectorization(EntryVal)) {
+      !shouldScalarizeInstruction(EntryVal)) {
     createVectorIntInductionPHI(ID, EntryVal);
     VectorizedIV = true;
   }
@@ -3024,10 +3080,12 @@ PHINode *InnerLoopVectorizer::createInductionVariable(Loop *L, Value *Start,
     Latch = Header;
 
   IRBuilder<> Builder(&*Header->getFirstInsertionPt());
-  setDebugLocFromInst(Builder, getDebugLocFromInstOrOperands(OldInduction));
+  Instruction *OldInst = getDebugLocFromInstOrOperands(OldInduction);
+  setDebugLocFromInst(Builder, OldInst);
   auto *Induction = Builder.CreatePHI(Start->getType(), 2, "index");
 
   Builder.SetInsertPoint(Latch->getTerminator());
+  setDebugLocFromInst(Builder, OldInst);
 
   // Create i+1 and fill the PHINode.
   Value *Next = Builder.CreateAdd(Induction, Step, "index.next");
@@ -3366,7 +3424,7 @@ void InnerLoopVectorizer::createEmptyLoop() {
     } else {
       IRBuilder<> B(LoopBypassBlocks.back()->getTerminator());
       Type *StepType = II.getStep()->getType();
-      Instruction::CastOps CastOp = 
+      Instruction::CastOps CastOp =
         CastInst::getCastOpcode(CountRoundDown, true, StepType, true);
       Value *CRD = B.CreateCast(CastOp, CountRoundDown, StepType, "cast.crd");
       const DataLayout &DL = OrigLoop->getHeader()->getModule()->getDataLayout();
@@ -3542,10 +3600,7 @@ static Value *addFastMathFlag(Value *V) {
 /// \brief Estimate the overhead of scalarizing a value based on its type.
 /// Insert and Extract are set if the result needs to be inserted and/or
 /// extracted from vectors.
-/// If the instruction is also to be predicated, add the cost of a PHI
-/// node to the insertion cost.
 static unsigned getScalarizationOverhead(Type *Ty, bool Insert, bool Extract,
-                                         bool Predicated,
                                          const TargetTransformInfo &TTI) {
   if (Ty->isVoidTy())
     return 0;
@@ -3556,18 +3611,9 @@ static unsigned getScalarizationOverhead(Type *Ty, bool Insert, bool Extract,
   for (unsigned I = 0, E = Ty->getVectorNumElements(); I < E; ++I) {
     if (Extract)
       Cost += TTI.getVectorInstrCost(Instruction::ExtractElement, Ty, I);
-    if (Insert) {
+    if (Insert)
       Cost += TTI.getVectorInstrCost(Instruction::InsertElement, Ty, I);
-      if (Predicated)
-        Cost += TTI.getCFInstrCost(Instruction::PHI);
-    }
   }
-
-  // If we have a predicated instruction, it may not be executed for each
-  // vector lane. Scale the cost by the probability of executing the
-  // predicated block.
-  if (Predicated)
-    Cost /= getReciprocalPredBlockProb();
 
   return Cost;
 }
@@ -3575,14 +3621,13 @@ static unsigned getScalarizationOverhead(Type *Ty, bool Insert, bool Extract,
 /// \brief Estimate the overhead of scalarizing an Instruction based on the
 /// types of its operands and return value.
 static unsigned getScalarizationOverhead(SmallVectorImpl<Type *> &OpTys,
-                                         Type *RetTy, bool Predicated,
+                                         Type *RetTy,
                                          const TargetTransformInfo &TTI) {
   unsigned ScalarizationCost =
-      getScalarizationOverhead(RetTy, true, false, Predicated, TTI);
+      getScalarizationOverhead(RetTy, true, false, TTI);
 
   for (Type *Ty : OpTys)
-    ScalarizationCost +=
-        getScalarizationOverhead(Ty, false, true, Predicated, TTI);
+    ScalarizationCost += getScalarizationOverhead(Ty, false, true, TTI);
 
   return ScalarizationCost;
 }
@@ -3590,7 +3635,6 @@ static unsigned getScalarizationOverhead(SmallVectorImpl<Type *> &OpTys,
 /// \brief Estimate the overhead of scalarizing an instruction. This is a
 /// convenience wrapper for the type-based getScalarizationOverhead API.
 static unsigned getScalarizationOverhead(Instruction *I, unsigned VF,
-                                         bool Predicated,
                                          const TargetTransformInfo &TTI) {
   if (VF == 1)
     return 0;
@@ -3602,7 +3646,7 @@ static unsigned getScalarizationOverhead(Instruction *I, unsigned VF,
   for (unsigned OpInd = 0; OpInd < OperandsNum; ++OpInd)
     OpTys.push_back(ToVectorTy(I->getOperand(OpInd)->getType(), VF));
 
-  return getScalarizationOverhead(OpTys, RetTy, Predicated, TTI);
+  return getScalarizationOverhead(OpTys, RetTy, TTI);
 }
 
 // Estimate cost of a call instruction CI if it were vectorized with factor VF.
@@ -3635,7 +3679,7 @@ static unsigned getVectorCallCost(CallInst *CI, unsigned VF,
 
   // Compute costs of unpacking argument values for the scalar calls and
   // packing the return values to a vector.
-  unsigned ScalarizationCost = getScalarizationOverhead(Tys, RetTy, false, TTI);
+  unsigned ScalarizationCost = getScalarizationOverhead(Tys, RetTy, TTI);
 
   unsigned Cost = ScalarCallCost * VF + ScalarizationCost;
 
@@ -3815,6 +3859,11 @@ void InnerLoopVectorizer::vectorizeLoop() {
   // edges to the PHI. At this point all of the instructions in the basic block
   // are vectorized, so we can use them to construct the PHI.
   PhiVector PHIsToFix;
+
+  // Collect instructions from the original loop that will become trivially
+  // dead in the vectorized loop. We don't need to vectorize these
+  // instructions.
+  collectTriviallyDeadInstructions();
 
   // Scan the loop in a topological order to ensure that defs are vectorized
   // before users.
@@ -4223,15 +4272,105 @@ void InnerLoopVectorizer::fixLCSSAPHIs() {
   }
 }
 
+void InnerLoopVectorizer::collectTriviallyDeadInstructions() {
+  BasicBlock *Latch = OrigLoop->getLoopLatch();
+
+  // We create new control-flow for the vectorized loop, so the original
+  // condition will be dead after vectorization if it's only used by the
+  // branch.
+  auto *Cmp = dyn_cast<Instruction>(Latch->getTerminator()->getOperand(0));
+  if (Cmp && Cmp->hasOneUse())
+    DeadInstructions.insert(Cmp);
+
+  // We create new "steps" for induction variable updates to which the original
+  // induction variables map. An original update instruction will be dead if
+  // all its users except the induction variable are dead.
+  for (auto &Induction : *Legal->getInductionVars()) {
+    PHINode *Ind = Induction.first;
+    auto *IndUpdate = cast<Instruction>(Ind->getIncomingValueForBlock(Latch));
+    if (all_of(IndUpdate->users(), [&](User *U) -> bool {
+          return U == Ind || DeadInstructions.count(cast<Instruction>(U));
+        }))
+      DeadInstructions.insert(IndUpdate);
+  }
+}
+
+void InnerLoopVectorizer::sinkScalarOperands(Instruction *PredInst) {
+
+  // The basic block and loop containing the predicated instruction.
+  auto *PredBB = PredInst->getParent();
+  auto *VectorLoop = LI->getLoopFor(PredBB);
+
+  // Initialize a worklist with the operands of the predicated instruction.
+  SetVector<Value *> Worklist(PredInst->op_begin(), PredInst->op_end());
+
+  // Holds instructions that we need to analyze again. An instruction may be
+  // reanalyzed if we don't yet know if we can sink it or not.
+  SmallVector<Instruction *, 8> InstsToReanalyze;
+
+  // Returns true if a given use occurs in the predicated block. Phi nodes use
+  // their operands in their corresponding predecessor blocks.
+  auto isBlockOfUsePredicated = [&](Use &U) -> bool {
+    auto *I = cast<Instruction>(U.getUser());
+    BasicBlock *BB = I->getParent();
+    if (auto *Phi = dyn_cast<PHINode>(I))
+      BB = Phi->getIncomingBlock(
+          PHINode::getIncomingValueNumForOperand(U.getOperandNo()));
+    return BB == PredBB;
+  };
+
+  // Iteratively sink the scalarized operands of the predicated instruction
+  // into the block we created for it. When an instruction is sunk, it's
+  // operands are then added to the worklist. The algorithm ends after one pass
+  // through the worklist doesn't sink a single instruction.
+  bool Changed;
+  do {
+
+    // Add the instructions that need to be reanalyzed to the worklist, and
+    // reset the changed indicator.
+    Worklist.insert(InstsToReanalyze.begin(), InstsToReanalyze.end());
+    InstsToReanalyze.clear();
+    Changed = false;
+
+    while (!Worklist.empty()) {
+      auto *I = dyn_cast<Instruction>(Worklist.pop_back_val());
+
+      // We can't sink an instruction if it is a phi node, is already in the
+      // predicated block, is not in the loop, or may have side effects.
+      if (!I || isa<PHINode>(I) || I->getParent() == PredBB ||
+          !VectorLoop->contains(I) || I->mayHaveSideEffects())
+        continue;
+
+      // It's legal to sink the instruction if all its uses occur in the
+      // predicated block. Otherwise, there's nothing to do yet, and we may
+      // need to reanalyze the instruction.
+      if (!all_of(I->uses(), isBlockOfUsePredicated)) {
+        InstsToReanalyze.push_back(I);
+        continue;
+      }
+
+      // Move the instruction to the beginning of the predicated block, and add
+      // it's operands to the worklist.
+      I->moveBefore(&*PredBB->getFirstInsertionPt());
+      Worklist.insert(I->op_begin(), I->op_end());
+
+      // The sinking may have enabled other instructions to be sunk, so we will
+      // need to iterate.
+      Changed = true;
+    }
+  } while (Changed);
+}
+
 void InnerLoopVectorizer::predicateInstructions() {
 
   // For each instruction I marked for predication on value C, split I into its
-  // own basic block to form an if-then construct over C.
-  // Since I may be fed by extractelement and/or be feeding an insertelement
-  // generated during scalarization we try to move such instructions into the
-  // predicated basic block as well. For the insertelement this also means that
-  // the PHI will be created for the resulting vector rather than for the
-  // scalar instruction.
+  // own basic block to form an if-then construct over C. Since I may be fed by
+  // an extractelement instruction or other scalar operand, we try to
+  // iteratively sink its scalar operands into the predicated block. If I feeds
+  // an insertelement instruction, we try to move this instruction into the
+  // predicated block as well. For non-void types, a phi node will be created
+  // for the resulting value (either vector or scalar).
+  //
   // So for some predicated instruction, e.g. the conditional sdiv in:
   //
   // for.body:
@@ -4305,13 +4444,7 @@ void InnerLoopVectorizer::predicateInstructions() {
     auto *T = SplitBlockAndInsertIfThen(KV.second, &*I, /*Unreachable=*/false,
                                         /*BranchWeights=*/nullptr, DT, LI);
     I->moveBefore(T);
-    // Try to move any extractelement we may have created for the predicated
-    // instruction into the Then block.
-    for (Use &Op : I->operands()) {
-      auto *OpInst = dyn_cast<ExtractElementInst>(&*Op);
-      if (OpInst && OpInst->hasOneUse()) // TODO: more accurately - hasOneUser()
-        OpInst->moveBefore(&*I);
-    }
+    sinkScalarOperands(&*I);
 
     I->getParent()->setName(Twine("pred.") + I->getOpcodeName() + ".if");
     BB->setName(Twine("pred.") + I->getOpcodeName() + ".continue");
@@ -4550,11 +4683,17 @@ void InnerLoopVectorizer::vectorizeBlockInLoop(BasicBlock *BB, PhiVector *PV) {
   // For each instruction in the old loop.
   for (Instruction &I : *BB) {
 
+    // If the instruction will become trivially dead when vectorized, we don't
+    // need to generate it.
+    if (DeadInstructions.count(&I))
+      continue;
+
     // Scalarize instructions that should remain scalar after vectorization.
-    if (!(isa<BranchInst>(&I) || isa<PHINode>(&I) ||
+    if (VF > 1 &&
+        !(isa<BranchInst>(&I) || isa<PHINode>(&I) ||
           isa<DbgInfoIntrinsic>(&I)) &&
-        Legal->isScalarAfterVectorization(&I)) {
-      scalarizeInstruction(&I);
+        shouldScalarizeInstruction(&I)) {
+      scalarizeInstruction(&I, Legal->isScalarWithPredication(&I));
       continue;
     }
 
@@ -5400,7 +5539,7 @@ void LoopVectorizationLegality::collectLoopUniforms() {
   // are pointers that are treated like consecutive pointers during
   // vectorization. The pointer operands of interleaved accesses are an
   // example.
-  SmallPtrSet<Instruction *, 8> ConsecutiveLikePtrs;
+  SmallSetVector<Instruction *, 8> ConsecutiveLikePtrs;
 
   // Holds pointer operands of instructions that are possibly non-uniform.
   SmallPtrSet<Instruction *, 8> PossibleNonUniformPtrs;
@@ -5638,7 +5777,15 @@ void InterleavedAccessInfo::collectConstStrideAccesses(
         continue;
 
       Value *Ptr = getPointerOperand(&I);
-      int64_t Stride = getPtrStride(PSE, Ptr, TheLoop, Strides);
+      // We don't check wrapping here because we don't know yet if Ptr will be 
+      // part of a full group or a group with gaps. Checking wrapping for all 
+      // pointers (even those that end up in groups with no gaps) will be overly
+      // conservative. For full groups, wrapping should be ok since if we would 
+      // wrap around the address space we would do a memory access at nullptr
+      // even without the transformation. The wrapping checks are therefore
+      // deferred until after we've formed the interleaved groups.
+      int64_t Stride = getPtrStride(PSE, Ptr, TheLoop, Strides,
+                                    /*Assume=*/true, /*ShouldCheckWrap=*/false);
 
       const SCEV *Scev = replaceSymbolicStrideSCEV(PSE, Strides, Ptr);
       PointerType *PtrTy = dyn_cast<PointerType>(Ptr->getType());
@@ -5842,20 +5989,66 @@ void InterleavedAccessInfo::analyzeInterleaving(
     if (Group->getNumMembers() != Group->getFactor())
       releaseGroup(Group);
 
-  // If there is a non-reversed interleaved load group with gaps, we will need
-  // to execute at least one scalar epilogue iteration. This will ensure that
-  // we don't speculatively access memory out-of-bounds. Note that we only need
-  // to look for a member at index factor - 1, since every group must have a
-  // member at index zero.
-  for (InterleaveGroup *Group : LoadGroups)
-    if (!Group->getMember(Group->getFactor() - 1)) {
-      if (Group->isReverse()) {
+  // Remove interleaved groups with gaps (currently only loads) whose memory 
+  // accesses may wrap around. We have to revisit the getPtrStride analysis, 
+  // this time with ShouldCheckWrap=true, since collectConstStrideAccesses does 
+  // not check wrapping (see documentation there).
+  // FORNOW we use Assume=false; 
+  // TODO: Change to Assume=true but making sure we don't exceed the threshold 
+  // of runtime SCEV assumptions checks (thereby potentially failing to
+  // vectorize altogether). 
+  // Additional optional optimizations:
+  // TODO: If we are peeling the loop and we know that the first pointer doesn't 
+  // wrap then we can deduce that all pointers in the group don't wrap.
+  // This means that we can forcefully peel the loop in order to only have to 
+  // check the first pointer for no-wrap. When we'll change to use Assume=true 
+  // we'll only need at most one runtime check per interleaved group.
+  //
+  for (InterleaveGroup *Group : LoadGroups) {
+
+    // Case 1: A full group. Can Skip the checks; For full groups, if the wide
+    // load would wrap around the address space we would do a memory access at 
+    // nullptr even without the transformation. 
+    if (Group->getNumMembers() == Group->getFactor()) 
+      continue;
+
+    // Case 2: If first and last members of the group don't wrap this implies 
+    // that all the pointers in the group don't wrap.
+    // So we check only group member 0 (which is always guaranteed to exist),
+    // and group member Factor - 1; If the latter doesn't exist we rely on 
+    // peeling (if it is a non-reveresed accsess -- see Case 3).
+    Value *FirstMemberPtr = getPointerOperand(Group->getMember(0));
+    if (!getPtrStride(PSE, FirstMemberPtr, TheLoop, Strides, /*Assume=*/false, 
+                      /*ShouldCheckWrap=*/true)) {
+      DEBUG(dbgs() << "LV: Invalidate candidate interleaved group due to "
+                      "first group member potentially pointer-wrapping.\n");
+      releaseGroup(Group);
+      continue;
+    }
+    Instruction *LastMember = Group->getMember(Group->getFactor() - 1);
+    if (LastMember) {
+      Value *LastMemberPtr = getPointerOperand(LastMember);
+      if (!getPtrStride(PSE, LastMemberPtr, TheLoop, Strides, /*Assume=*/false, 
+                        /*ShouldCheckWrap=*/true)) {
+        DEBUG(dbgs() << "LV: Invalidate candidate interleaved group due to "
+                        "last group member potentially pointer-wrapping.\n");
         releaseGroup(Group);
-      } else {
-        DEBUG(dbgs() << "LV: Interleaved group requires epilogue iteration.\n");
-        RequiresScalarEpilogue = true;
       }
     }
+    else {
+      // Case 3: A non-reversed interleaved load group with gaps: We need
+      // to execute at least one scalar epilogue iteration. This will ensure 
+      // we don't speculatively access memory out-of-bounds. We only need
+      // to look for a member at index factor - 1, since every group must have 
+      // a member at index zero.
+      if (Group->isReverse()) {
+        releaseGroup(Group);
+        continue;
+      }
+      DEBUG(dbgs() << "LV: Interleaved group requires epilogue iteration.\n");
+      RequiresScalarEpilogue = true;
+    }
+  }
 }
 
 LoopVectorizationCostModel::VectorizationFactor
@@ -5973,6 +6166,7 @@ LoopVectorizationCostModel::selectVectorizationFactor(bool OptForSize) {
     DEBUG(dbgs() << "LV: Using user VF " << UserVF << ".\n");
 
     Factor.Width = UserVF;
+    collectInstsToScalarize(UserVF);
     return Factor;
   }
 
@@ -6318,14 +6512,15 @@ LoopVectorizationCostModel::calculateRegisterUsage(ArrayRef<unsigned> VFs) {
 
   for (unsigned int i = 0; i < Index; ++i) {
     Instruction *I = IdxToInstr[i];
-    // Ignore instructions that are never used within the loop.
-    if (!Ends.count(I))
-      continue;
 
     // Remove all of the instructions that end at this location.
     InstrList &List = TransposeEnds[i];
     for (Instruction *ToRemove : List)
       OpenIntervals.erase(ToRemove);
+
+    // Ignore instructions that are never used within the loop.
+    if (!Ends.count(I))
+      continue;
 
     // Skip ignored values.
     if (ValuesToIgnore.count(I))
@@ -6378,9 +6573,159 @@ LoopVectorizationCostModel::calculateRegisterUsage(ArrayRef<unsigned> VFs) {
   return RUs;
 }
 
+void LoopVectorizationCostModel::collectInstsToScalarize(unsigned VF) {
+
+  // If we aren't vectorizing the loop, or if we've already collected the
+  // instructions to scalarize, there's nothing to do. Collection may already
+  // have occurred if we have a user-selected VF and are now computing the
+  // expected cost for interleaving.
+  if (VF < 2 || InstsToScalarize.count(VF))
+    return;
+
+  // Initialize a mapping for VF in InstsToScalalarize. If we find that it's
+  // not profitable to scalarize any instructions, the presence of VF in the
+  // map will indicate that we've analyzed it already.
+  ScalarCostsTy &ScalarCostsVF = InstsToScalarize[VF];
+
+  // Find all the instructions that are scalar with predication in the loop and
+  // determine if it would be better to not if-convert the blocks they are in.
+  // If so, we also record the instructions to scalarize.
+  for (BasicBlock *BB : TheLoop->blocks()) {
+    if (!Legal->blockNeedsPredication(BB))
+      continue;
+    for (Instruction &I : *BB)
+      if (Legal->isScalarWithPredication(&I)) {
+        ScalarCostsTy ScalarCosts;
+        if (computePredInstDiscount(&I, ScalarCosts, VF) >= 0)
+          ScalarCostsVF.insert(ScalarCosts.begin(), ScalarCosts.end());
+      }
+  }
+}
+
+int LoopVectorizationCostModel::computePredInstDiscount(
+    Instruction *PredInst, DenseMap<Instruction *, unsigned> &ScalarCosts,
+    unsigned VF) {
+
+  assert(!Legal->isUniformAfterVectorization(PredInst) &&
+         "Instruction marked uniform-after-vectorization will be predicated");
+
+  // Initialize the discount to zero, meaning that the scalar version and the
+  // vector version cost the same.
+  int Discount = 0;
+
+  // Holds instructions to analyze. The instructions we visit are mapped in
+  // ScalarCosts. Those instructions are the ones that would be scalarized if
+  // we find that the scalar version costs less.
+  SmallVector<Instruction *, 8> Worklist;
+
+  // Returns true if the given instruction can be scalarized.
+  auto canBeScalarized = [&](Instruction *I) -> bool {
+
+    // We only attempt to scalarize instructions forming a single-use chain
+    // from the original predicated block that would otherwise be vectorized.
+    // Although not strictly necessary, we give up on instructions we know will
+    // already be scalar to avoid traversing chains that are unlikely to be
+    // beneficial.
+    if (!I->hasOneUse() || PredInst->getParent() != I->getParent() ||
+        Legal->isScalarAfterVectorization(I))
+      return false;
+
+    // If the instruction is scalar with predication, it will be analyzed
+    // separately. We ignore it within the context of PredInst.
+    if (Legal->isScalarWithPredication(I))
+      return false;
+
+    // If any of the instruction's operands are uniform after vectorization,
+    // the instruction cannot be scalarized. This prevents, for example, a
+    // masked load from being scalarized.
+    //
+    // We assume we will only emit a value for lane zero of an instruction
+    // marked uniform after vectorization, rather than VF identical values.
+    // Thus, if we scalarize an instruction that uses a uniform, we would
+    // create uses of values corresponding to the lanes we aren't emitting code
+    // for. This behavior can be changed by allowing getScalarValue to clone
+    // the lane zero values for uniforms rather than asserting.
+    for (Use &U : I->operands())
+      if (auto *J = dyn_cast<Instruction>(U.get()))
+        if (Legal->isUniformAfterVectorization(J))
+          return false;
+
+    // Otherwise, we can scalarize the instruction.
+    return true;
+  };
+
+  // Returns true if an operand that cannot be scalarized must be extracted
+  // from a vector. We will account for this scalarization overhead below. Note
+  // that the non-void predicated instructions are placed in their own blocks,
+  // and their return values are inserted into vectors. Thus, an extract would
+  // still be required.
+  auto needsExtract = [&](Instruction *I) -> bool {
+    return TheLoop->contains(I) && !Legal->isScalarAfterVectorization(I);
+  };
+
+  // Compute the expected cost discount from scalarizing the entire expression
+  // feeding the predicated instruction. We currently only consider expressions
+  // that are single-use instruction chains.
+  Worklist.push_back(PredInst);
+  while (!Worklist.empty()) {
+    Instruction *I = Worklist.pop_back_val();
+
+    // If we've already analyzed the instruction, there's nothing to do.
+    if (ScalarCosts.count(I))
+      continue;
+
+    // Compute the cost of the vector instruction. Note that this cost already
+    // includes the scalarization overhead of the predicated instruction.
+    unsigned VectorCost = getInstructionCost(I, VF).first;
+
+    // Compute the cost of the scalarized instruction. This cost is the cost of
+    // the instruction as if it wasn't if-converted and instead remained in the
+    // predicated block. We will scale this cost by block probability after
+    // computing the scalarization overhead.
+    unsigned ScalarCost = VF * getInstructionCost(I, 1).first;
+
+    // Compute the scalarization overhead of needed insertelement instructions
+    // and phi nodes.
+    if (Legal->isScalarWithPredication(I) && !I->getType()->isVoidTy()) {
+      ScalarCost += getScalarizationOverhead(ToVectorTy(I->getType(), VF), true,
+                                             false, TTI);
+      ScalarCost += VF * TTI.getCFInstrCost(Instruction::PHI);
+    }
+
+    // Compute the scalarization overhead of needed extractelement
+    // instructions. For each of the instruction's operands, if the operand can
+    // be scalarized, add it to the worklist; otherwise, account for the
+    // overhead.
+    for (Use &U : I->operands())
+      if (auto *J = dyn_cast<Instruction>(U.get())) {
+        assert(VectorType::isValidElementType(J->getType()) &&
+               "Instruction has non-scalar type");
+        if (canBeScalarized(J))
+          Worklist.push_back(J);
+        else if (needsExtract(J))
+          ScalarCost += getScalarizationOverhead(ToVectorTy(J->getType(), VF),
+                                                 false, true, TTI);
+      }
+
+    // Scale the total scalar cost by block probability.
+    ScalarCost /= getReciprocalPredBlockProb();
+
+    // Compute the discount. A non-negative discount means the vector version
+    // of the instruction costs more, and scalarizing would be beneficial.
+    Discount += VectorCost - ScalarCost;
+    ScalarCosts[I] = ScalarCost;
+  }
+
+  return Discount;
+}
+
 LoopVectorizationCostModel::VectorizationCostTy
 LoopVectorizationCostModel::expectedCost(unsigned VF) {
   VectorizationCostTy Cost;
+
+  // Collect the instructions (and their associated costs) that will be more
+  // profitable to scalarize.
+  collectInstsToScalarize(VF);
 
   // For each block.
   for (BasicBlock *BB : TheLoop->blocks()) {
@@ -6489,6 +6834,9 @@ LoopVectorizationCostModel::getInstructionCost(Instruction *I, unsigned VF) {
   if (Legal->isUniformAfterVectorization(I))
     VF = 1;
 
+  if (VF > 1 && isProfitableToScalarize(I, VF))
+    return VectorizationCostTy(InstsToScalarize[VF][I], false);
+
   Type *VectorTy;
   unsigned C = getInstructionCost(I, VF, VectorTy);
 
@@ -6536,10 +6884,27 @@ unsigned LoopVectorizationCostModel::getInstructionCost(Instruction *I,
     // vector lane. Get the scalarization cost and scale this amount by the
     // probability of executing the predicated block. If the instruction is not
     // predicated, we fall through to the next case.
-    if (VF > 1 && Legal->isScalarWithPredication(I))
-      return VF * TTI.getArithmeticInstrCost(I->getOpcode(), RetTy) /
-                 getReciprocalPredBlockProb() +
-             getScalarizationOverhead(I, VF, true, TTI);
+    if (VF > 1 && Legal->isScalarWithPredication(I)) {
+      unsigned Cost = 0;
+
+      // These instructions have a non-void type, so account for the phi nodes
+      // that we will create. This cost is likely to be zero. The phi node
+      // cost, if any, should be scaled by the block probability because it
+      // models a copy at the end of each predicated block.
+      Cost += VF * TTI.getCFInstrCost(Instruction::PHI);
+
+      // The cost of the non-predicated instruction.
+      Cost += VF * TTI.getArithmeticInstrCost(I->getOpcode(), RetTy);
+
+      // The cost of insertelement and extractelement instructions needed for
+      // scalarization.
+      Cost += getScalarizationOverhead(I, VF, TTI);
+
+      // Scale the cost by the probability of executing the predicated blocks.
+      // This assumes the predicated block for each vector lane is equally
+      // likely.
+      return Cost / getReciprocalPredBlockProb();
+    }
   case Instruction::Add:
   case Instruction::FAdd:
   case Instruction::Sub:
@@ -6695,7 +7060,13 @@ unsigned LoopVectorizationCostModel::getInstructionCost(Instruction *I,
 
       // Get the overhead of the extractelement and insertelement instructions
       // we might create due to scalarization.
-      Cost += getScalarizationOverhead(I, VF, false, TTI);
+      Cost += getScalarizationOverhead(I, VF, TTI);
+
+      // If we have a predicated store, it may not be executed for each vector
+      // lane. Scale the cost by the probability of executing the predicated
+      // block.
+      if (Legal->isScalarWithPredication(I))
+        Cost /= getReciprocalPredBlockProb();
 
       return Cost;
     }
@@ -6782,7 +7153,7 @@ unsigned LoopVectorizationCostModel::getInstructionCost(Instruction *I,
     // The cost of executing VF copies of the scalar instruction. This opcode
     // is unknown. Assume that it is the same as 'mul'.
     return VF * TTI.getArithmeticInstrCost(Instruction::Mul, VectorTy) +
-           getScalarizationOverhead(I, VF, false, TTI);
+           getScalarizationOverhead(I, VF, TTI);
   } // end of switch.
 }
 
@@ -6832,7 +7203,14 @@ void LoopVectorizationCostModel::collectValuesToIgnore() {
     VecValuesToIgnore.insert(Casts.begin(), Casts.end());
   }
 
-  // Insert values known to be scalar into VecValuesToIgnore.
+  // Insert values known to be scalar into VecValuesToIgnore. This is a
+  // conservative estimation of the values that will later be scalarized.
+  //
+  // FIXME: Even though an instruction is not scalar-after-vectoriztion, it may
+  //        still be scalarized. For example, we may find an instruction to be
+  //        more profitable for a given vectorization factor if it were to be
+  //        scalarized. But at this point, we haven't yet computed the
+  //        vectorization factor.
   for (auto *BB : TheLoop->getBlocks())
     for (auto &I : *BB)
       if (Legal->isScalarAfterVectorization(&I))

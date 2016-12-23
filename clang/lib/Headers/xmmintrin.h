@@ -1560,7 +1560,7 @@ _mm_cvtss_f32(__m128 __a)
   return __a[0];
 }
 
-/// \brief Loads two packed float values from the address __p into the
+/// \brief Loads two packed float values from the address \a __p into the
 ///     high-order bits of a 128-bit vector of [4 x float]. The low-order bits
 ///     are copied from the low-order bits of the first operand.
 ///
@@ -1587,9 +1587,9 @@ _mm_loadh_pi(__m128 __a, const __m64 *__p)
   return __builtin_shufflevector(__a, __bb, 0, 1, 4, 5);
 }
 
-/// \brief Loads two packed float values from the address __p into the low-order
-///    bits of a 128-bit vector of [4 x float]. The high-order bits are copied
-///    from the high-order bits of the first operand.
+/// \brief Loads two packed float values from the address \a __p into the
+///    low-order bits of a 128-bit vector of [4 x float]. The high-order bits
+///    are copied from the high-order bits of the first operand.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -1727,7 +1727,6 @@ _mm_loadr_ps(const float *__p)
 /// This intrinsic has no corresponding instruction.
 ///
 /// \returns A 128-bit vector of [4 x float] containing undefined values.
-
 static __inline__ __m128 __DEFAULT_FN_ATTRS
 _mm_undefined_ps(void)
 {
@@ -1915,8 +1914,8 @@ _mm_store_ss(float *__p, __m128 __a)
   ((struct __mm_store_ss_struct*)__p)->__u = __a[0];
 }
 
-/// \brief Stores float values from a 128-bit vector of [4 x float] to an
-///    unaligned memory location.
+/// \brief Stores a 128-bit vector of [4 x float] to an unaligned memory
+///    location.
 ///
 /// \headerfile <x86intrin.h>
 ///
@@ -1936,19 +1935,18 @@ _mm_storeu_ps(float *__p, __m128 __a)
   ((struct __storeu_ps*)__p)->__v = __a;
 }
 
-/// \brief Stores the lower 32 bits of a 128-bit vector of [4 x float] into
-///    four contiguous elements in an aligned memory location.
+/// \brief Stores a 128-bit vector of [4 x float] into an aligned memory
+///    location.
 ///
 /// \headerfile <x86intrin.h>
 ///
-/// This intrinsic corresponds to \c VMOVAPS / MOVAPS + \c shuffling
-///    instruction.
+/// This intrinsic corresponds to the \c VMOVAPS / MOVAPS instruction.
 ///
 /// \param __p
-///    A pointer to a 128-bit memory location.
+///    A pointer to a 128-bit memory location. The address of the memory
+///    location has to be 16-byte aligned.
 /// \param __a
-///    A 128-bit vector of [4 x float] whose lower 32 bits are stored to each
-///    of the four contiguous elements pointed by __p.
+///    A 128-bit vector of [4 x float] containing the values to be stored.
 static __inline__ void __DEFAULT_FN_ATTRS
 _mm_store_ps(float *__p, __m128 __a)
 {
@@ -1967,7 +1965,7 @@ _mm_store_ps(float *__p, __m128 __a)
 ///    A pointer to a 128-bit memory location.
 /// \param __a
 ///    A 128-bit vector of [4 x float] whose lower 32 bits are stored to each
-///    of the four contiguous elements pointed by __p.
+///    of the four contiguous elements pointed by \a __p.
 static __inline__ void __DEFAULT_FN_ATTRS
 _mm_store1_ps(float *__p, __m128 __a)
 {
@@ -1975,18 +1973,19 @@ _mm_store1_ps(float *__p, __m128 __a)
   _mm_store_ps(__p, __a);
 }
 
-/// \brief Stores float values from a 128-bit vector of [4 x float] to an
-///    aligned memory location.
+/// \brief Stores the lower 32 bits of a 128-bit vector of [4 x float] into
+///    four contiguous elements in an aligned memory location.
 ///
 /// \headerfile <x86intrin.h>
 ///
-/// This intrinsic corresponds to the \c VMOVAPS / MOVAPS instruction.
+/// This intrinsic corresponds to \c VMOVAPS / MOVAPS + \c shuffling
+///    instruction.
 ///
 /// \param __p
-///    A pointer to a 128-bit memory location. The address of the memory
-///    location has to be 128-bit aligned.
+///    A pointer to a 128-bit memory location.
 /// \param __a
-///    A 128-bit vector of [4 x float] containing the values to be stored.
+///    A 128-bit vector of [4 x float] whose lower 32 bits are stored to each
+///    of the four contiguous elements pointed by \a __p.
 static __inline__ void __DEFAULT_FN_ATTRS
 _mm_store_ps1(float *__p, __m128 __a)
 {
@@ -2085,6 +2084,10 @@ _mm_stream_ps(float *__p, __m128 __a)
   __builtin_nontemporal_store((__v4sf)__a, (__v4sf*)__p);
 }
 
+#if defined(__cplusplus)
+extern "C" {
+#endif
+
 /// \brief Forces strong memory ordering (serialization) between store
 ///    instructions preceding this instruction and store instructions following
 ///    this instruction, ensuring the system completes all previous stores
@@ -2094,21 +2097,26 @@ _mm_stream_ps(float *__p, __m128 __a)
 ///
 /// This intrinsic corresponds to the \c SFENCE instruction.
 ///
-#if defined(__cplusplus)
-extern "C"
-#endif
 void _mm_sfence(void);
+
+#if defined(__cplusplus)
+} // extern "C"
+#endif
 
 /// \brief Extracts 16-bit element from a 64-bit vector of [4 x i16] and
 ///    returns it, as specified by the immediate integer operand.
 ///
 /// \headerfile <x86intrin.h>
 ///
+/// \code
+/// void _mm_extract_pi(__m64 a, int n);
+/// \endcode
+///
 /// This intrinsic corresponds to the \c VPEXTRW / PEXTRW instruction.
 ///
-/// \param __a
+/// \param a
 ///    A 64-bit vector of [4 x i16].
-/// \param __n
+/// \param n
 ///    An immediate integer operand that determines which bits are extracted:
 ///    0: Bits [15:0] are copied to the destination.
 ///    1: Bits [31:16] are copied to the destination.
@@ -2120,18 +2128,22 @@ void _mm_sfence(void);
 
 /// \brief Copies data from the 64-bit vector of [4 x i16] to the destination,
 ///    and inserts the lower 16-bits of an integer operand at the 16-bit offset
-///    specified by the immediate operand __n.
+///    specified by the immediate operand \a n.
 ///
 /// \headerfile <x86intrin.h>
 ///
+/// \code
+/// void _mm_insert_pi(__m64 a, int d, int n);
+/// \endcode
+///
 /// This intrinsic corresponds to the \c VPINSRW / PINSRW instruction.
 ///
-/// \param __a
+/// \param a
 ///    A 64-bit vector of [4 x i16].
-/// \param __d
+/// \param d
 ///    An integer. The lower 16-bit value from this operand is written to the
-///    destination at the offset specified by operand __n.
-/// \param __n
+///    destination at the offset specified by operand \a n.
+/// \param n
 ///    An immediate integer operant that determines which the bits to be used
 ///    in the destination.
 ///    0: Bits [15:0] are copied to the destination.
@@ -2139,7 +2151,7 @@ void _mm_sfence(void);
 ///    2: Bits [47:32] are copied to the destination.
 ///    3: Bits [63:48] are copied to the destination.
 ///    The remaining bits in the destination are copied from the corresponding
-///    bits in operand __a.
+///    bits in operand \a a.
 /// \returns A 64-bit integer vector containing the copied packed data from the
 ///    operands.
 #define _mm_insert_pi16(a, d, n) __extension__ ({ \
@@ -2263,27 +2275,27 @@ _mm_mulhi_pu16(__m64 __a, __m64 __b)
 ///
 /// \headerfile <x86intrin.h>
 ///
-/// This intrinsic corresponds to the \c PSHUFW instruction.
-///
 /// \code
 /// __m64 _mm_shuffle_pi16(__m64 a, const int n);
 /// \endcode
+///
+/// This intrinsic corresponds to the \c PSHUFW instruction.
 ///
 /// \param a
 ///    A 64-bit integer vector containing the values to be shuffled.
 /// \param n
 ///    An immediate value containing an 8-bit value specifying which elements to
-///    copy from a. The destinations within the 64-bit destination are assigned
-///    values as follows:
+///    copy from \a a. The destinations within the 64-bit destination are
+///    assigned values as follows:
 ///    Bits [1:0] are used to assign values to bits [15:0] in the destination.
 ///    Bits [3:2] are used to assign values to bits [31:16] in the destination.
 ///    Bits [5:4] are used to assign values to bits [47:32] in the destination.
 ///    Bits [7:6] are used to assign values to bits [63:48] in the destination.
 ///    Bit value assignments:
-///    00: assigned from bits [15:0] of a.
-///    01: assigned from bits [31:16] of a.
-///    10: assigned from bits [47:32] of a.
-///    11: assigned from bits [63:48] of a.
+///    00: assigned from bits [15:0] of \a a.
+///    01: assigned from bits [31:16] of \a a.
+///    10: assigned from bits [47:32] of \a a.
+///    11: assigned from bits [63:48] of \a a.
 /// \returns A 64-bit integer vector containing the shuffled values.
 #define _mm_shuffle_pi16(a, n) __extension__ ({ \
   (__m64)__builtin_ia32_pshufw((__v4hi)(__m64)(a), (n)); })
@@ -2302,9 +2314,9 @@ _mm_mulhi_pu16(__m64 __a, __m64 __b)
 ///    A 64-bit integer vector containing the values with elements to be copied.
 /// \param __n
 ///    A 64-bit integer vector operand. The most significant bit from each 8-bit
-///    element determines whether the corresponding element in operand __d is
-///    copied. If the most significant bit of a given element is 1, the
-///    corresponding element in operand __d is copied.
+///    element determines whether the corresponding element in operand \a __d
+///    is copied. If the most significant bit of a given element is 1, the
+///    corresponding element in operand \a __d is copied.
 /// \param __p
 ///    A pointer to a 64-bit memory location that will receive the conditionally
 ///    copied integer values. The address of the memory location does not have
@@ -2472,9 +2484,9 @@ void _mm_setcsr(unsigned int);
 ///    A 128-bit vector of [4 x float].
 /// \param mask
 ///    An immediate value containing an 8-bit value specifying which elements to
-///    copy from a and b.
-///    Bits [3:0] specify the values copied from operand a.
-///    Bits [7:4] specify the values copied from operand b. The destinations
+///    copy from \ a and \a b.
+///    Bits [3:0] specify the values copied from operand \a a.
+///    Bits [7:4] specify the values copied from operand \a b. The destinations
 ///    within the 128-bit destination are assigned values as follows:
 ///    Bits [1:0] are used to assign values to bits [31:0] in the destination.
 ///    Bits [3:2] are used to assign values to bits [63:32] in the destination.

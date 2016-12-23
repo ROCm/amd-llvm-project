@@ -19,16 +19,17 @@ set(CMAKE_MODULE_PATH
   ${CMAKE_MODULE_PATH}
   )
 
-# Find the LLVM sources and simulate LLVM CMake options.
-include(HandleOutOfTreeLLVM)
 
-if (LIBCXX_STANDALONE_BUILD)
+if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   project(libcxx CXX C)
 
   set(PACKAGE_NAME libcxx)
   set(PACKAGE_VERSION 4.0.0svn)
   set(PACKAGE_STRING "${PACKAGE_NAME} ${PACKAGE_VERSION}")
   set(PACKAGE_BUGREPORT "llvm-bugs@lists.llvm.org")
+
+  # Find the LLVM sources and simulate LLVM CMake options.
+  include(HandleOutOfTreeLLVM)
 endif()
 
 if (LIBCXX_STANDALONE_BUILD AND NOT LLVM_FOUND)
@@ -58,8 +59,23 @@ option(LIBCXX_ENABLE_EXPERIMENTAL_LIBRARY "Build libc++experimental.a" ON)
 option(LIBCXX_ENABLE_FILESYSTEM
         "Build filesystem as part of libc++experimental.a" ${LIBCXX_ENABLE_EXPERIMENTAL_LIBRARY})
 option(LIBCXX_INCLUDE_TESTS "Build the libc++ tests." ${LLVM_INCLUDE_TESTS})
+
+# Benchmark options -----------------------------------------------------------
 option(LIBCXX_INCLUDE_BENCHMARKS "Build the libc++ benchmarks and their dependancies" ON)
-option(LIBCXX_BUILD_BENCHMARK_NATIVE_STDLIB "Build the benchmarks against the native STL" OFF)
+set(LIBCXX_BENCHMARK_NATIVE_STDLIB "" CACHE STRING
+        "Build the benchmarks against the specified native STL.
+         The value must be one of libc++/libstdc++")
+set(LIBCXX_BENCHMARK_NATIVE_GCC_TOOLCHAIN "" CACHE STRING
+    "Use alternate GCC toolchain when building the native benchmarks")
+
+if (LIBCXX_BENCHMARK_NATIVE_STDLIB)
+  if (NOT (LIBCXX_BENCHMARK_NATIVE_STDLIB STREQUAL "libc++"
+        OR LIBCXX_BENCHMARK_NATIVE_STDLIB STREQUAL "libstdc++"))
+    message(FATAL_ERROR "Invalid value for LIBCXX_BENCHMARK_NATIVE_STDLIB: "
+            "'${LIBCXX_BENCHMARK_NATIVE_STDLIB}'")
+  endif()
+endif()
+
 option(LIBCXX_INCLUDE_DOCS "Build the libc++ documentation." ${LLVM_INCLUDE_DOCS})
 set(LIBCXX_LIBDIR_SUFFIX "${LLVM_LIBDIR_SUFFIX}" CACHE STRING
     "Define suffix of library directory name (32/64)")
@@ -85,10 +101,17 @@ set_property(CACHE LIBCXX_CXX_ABI PROPERTY STRINGS ;${CXXABIS})
 
 # Setup the default options if LIBCXX_CXX_ABI is not specified.
 if (NOT LIBCXX_CXX_ABI)
+  find_path(
+    LIBCXX_LIBCXXABI_INCLUDES_INTERNAL
+    cxxabi.h
+    PATHS ${LLVM_MAIN_SRC_DIR}/projects/libcxxabi/include
+          ${LLVM_MAIN_SRC_DIR}/runtimes/libcxxabi/include
+    NO_DEFAULT_PATH
+  )
   if (NOT DEFINED LIBCXX_STANDALONE_BUILD AND
-      IS_DIRECTORY "${CMAKE_SOURCE_DIR}/projects/libcxxabi")
+      IS_DIRECTORY "${LIBCXX_LIBCXXABI_INCLUDES_INTERNAL}")
     set(LIBCXX_CXX_ABI_LIBNAME "libcxxabi")
-    set(LIBCXX_CXX_ABI_INCLUDE_PATHS "${CMAKE_SOURCE_DIR}/projects/libcxxabi/include")
+    set(LIBCXX_CXX_ABI_INCLUDE_PATHS "${LIBCXX_LIBCXXABI_INCLUDES_INTERNAL}")
     set(LIBCXX_CXX_ABI_INTREE 1)
   else()
     set(LIBCXX_CXX_ABI_LIBNAME "none")
@@ -228,6 +251,9 @@ if (LIBCXX_ENABLE_STATIC_ABI_LIBRARY)
   else()
     message(WARNING "LIBCXX_ENABLE_STATIC_ABI_LIBRARY is an experimental option")
   endif()
+  if (LIBCXX_ENABLE_STATIC AND NOT PYTHONINTERP_FOUND)
+    message(FATAL_ERROR "LIBCXX_ENABLE_STATIC_ABI_LIBRARY requires python but it was not found.")
+  endif()
 endif()
 
 if (LIBCXX_ENABLE_ABI_LINKER_SCRIPT)
@@ -289,6 +315,9 @@ add_target_flags_if(LIBCXX_BUILD_32_BITS "-m32")
 add_target_flags_if(LIBCXX_TARGET_TRIPLE "-target ${LIBCXX_TARGET_TRIPLE}")
 add_target_flags_if(LIBCXX_SYSROOT "--sysroot=${LIBCXX_SYSROOT}")
 add_target_flags_if(LIBCXX_GCC_TOOLCHAIN "-gcc-toolchain ${LIBCXX_GCC_TOOLCHAIN}")
+if (LIBCXX_TARGET_TRIPLE)
+  set(TARGET_TRIPLE "${LIBCXX_TARGET_TRIPLE}")
+endif()
 
 # Configure compiler.
 include(config-ix)
@@ -325,6 +354,11 @@ remove_flags(-Wno-pedantic -pedantic-errors -pedantic)
 
 # Required flags ==============================================================
 set(LIBCXX_STANDARD_VER c++11 CACHE INTERNAL "internal option to change build dialect")
+if (LIBCXX_HAS_MUSL_LIBC)
+  # musl's pthread implementations uses volatile types in their structs which is
+  # not a constexpr in C++11 but is in C++14, so we use C++14 with musl.
+  set(LIBCXX_STANDARD_VER c++14 CACHE INTERNAL "internal option to change build dialect")
+endif()
 add_compile_flags_if_supported(-std=${LIBCXX_STANDARD_VER})
 mangle_name("LIBCXX_SUPPORTS_STD_EQ_${LIBCXX_STANDARD_VER}_FLAG" SUPPORTS_DIALECT_NAME)
 if (NOT MSVC AND NOT ${SUPPORTS_DIALECT_NAME})
@@ -336,6 +370,11 @@ endif()
 # Thus, we do nothing and hope we don't accidentally include any of the C++
 # headers
 add_compile_flags_if_supported(-nostdinc++)
+
+# Hide all inline function definitions which have not explicitly been marked
+# visible. This prevents new definitions for inline functions from appearing in
+# the dylib when get ODR used by another function.
+add_compile_flags_if_supported(-fvisibility-inlines-hidden)
 
 # Let the library headers know they are currently being used to build the
 # library.
@@ -411,6 +450,16 @@ endif()
 # Feature flags ===============================================================
 define_if(MSVC -D_CRT_SECURE_NO_WARNINGS)
 
+# Modules flags ===============================================================
+# FIXME The libc++ sources are fundamentally non-modular. They need special
+# versions of the headers in order to provide C++03 and legacy ABI definitions.
+# NOTE: The public headers can be used with modules in all other contexts.
+if (LLVM_ENABLE_MODULES)
+  # Ignore that the rest of the modules flags are now unused.
+  add_compile_flags_if_supported(-Wno-unused-command-line-argument)
+  add_compile_flags(-fno-modules)
+endif()
+
 # Sanitizer flags =============================================================
 
 # Configure for sanitizers. If LIBCXX_STANDALONE_BUILD then we have to do
@@ -469,7 +518,7 @@ config_define_if(LIBCXX_HAS_MUSL_LIBC _LIBCPP_HAS_MUSL_LIBC)
 # static library only we modify the headers to disable DLL import/export.
 if (DEFINED WIN32 AND LIBCXX_ENABLE_STATIC AND NOT LIBCXX_ENABLE_SHARED)
   message(STATUS "Generating custom __config for non-DLL Windows build")
-  config_define(ON _LIBCPP_DISABLE_DLL_IMPORT_EXPORT)
+  config_define(ON _LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS)
 endif()
 
 if (LIBCXX_NEEDS_SITE_CONFIG)
@@ -489,11 +538,13 @@ include_directories(include)
 add_subdirectory(include)
 add_subdirectory(lib)
 
+
 if (LIBCXX_INCLUDE_BENCHMARKS)
   add_subdirectory(benchmarks)
 endif()
 if (LIBCXX_INCLUDE_TESTS)
   add_subdirectory(test)
+  add_subdirectory(lib/abi)
 endif()
 if (LIBCXX_INCLUDE_DOCS)
   add_subdirectory(docs)

@@ -15,6 +15,7 @@
 #include "Symbols.h"
 #include "Writer.h"
 #include "lld/Driver/Driver.h"
+#include "lld/Support/Memory.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/LibDriver/LibDriver.h"
@@ -42,11 +43,9 @@ namespace coff {
 Configuration *Config;
 LinkerDriver *Driver;
 
-bool link(llvm::ArrayRef<const char *> Args) {
-  Configuration C;
-  LinkerDriver D;
-  Config = &C;
-  Driver = &D;
+bool link(ArrayRef<const char *> Args) {
+  Config = make<Configuration>();
+  Driver = make<LinkerDriver>();
   Driver->link(Args);
   return true;
 }
@@ -69,7 +68,7 @@ MemoryBufferRef LinkerDriver::openFile(StringRef Path) {
   return MBRef;
 }
 
-static std::unique_ptr<InputFile> createFile(MemoryBufferRef MB) {
+static InputFile *createFile(MemoryBufferRef MB) {
   if (Driver->Cpio)
     Driver->Cpio->append(relativeToRoot(MB.getBufferIdentifier()),
                          MB.getBuffer());
@@ -77,12 +76,15 @@ static std::unique_ptr<InputFile> createFile(MemoryBufferRef MB) {
   // File type is detected by contents, not by file extension.
   file_magic Magic = identify_magic(MB.getBuffer());
   if (Magic == file_magic::archive)
-    return std::unique_ptr<InputFile>(new ArchiveFile(MB));
+    return make<ArchiveFile>(MB);
   if (Magic == file_magic::bitcode)
-    return std::unique_ptr<InputFile>(new BitcodeFile(MB));
+    return make<BitcodeFile>(MB);
+  if (Magic == file_magic::coff_cl_gl_object)
+    fatal(MB.getBufferIdentifier() + ": is not a native COFF file. "
+          "Recompile without /GL");
   if (Config->OutputFile == "")
     Config->OutputFile = getOutputPath(MB.getBufferIdentifier());
-  return std::unique_ptr<InputFile>(new ObjectFile(MB));
+  return make<ObjectFile>(MB);
 }
 
 static bool isDecorated(StringRef Sym) {
@@ -92,7 +94,7 @@ static bool isDecorated(StringRef Sym) {
 // Parses .drectve section contents and returns a list of files
 // specified by /defaultlib.
 void LinkerDriver::parseDirectives(StringRef S) {
-  llvm::opt::InputArgList Args = Parser.parse(S);
+  opt::InputArgList Args = Parser.parse(S);
 
   for (auto *Arg : Args) {
     switch (Arg->getOption().getID()) {
@@ -140,19 +142,19 @@ void LinkerDriver::parseDirectives(StringRef S) {
 // Find file from search paths. You can omit ".obj", this function takes
 // care of that. Note that the returned path is not guaranteed to exist.
 StringRef LinkerDriver::doFindFile(StringRef Filename) {
-  bool hasPathSep = (Filename.find_first_of("/\\") != StringRef::npos);
-  if (hasPathSep)
+  bool HasPathSep = (Filename.find_first_of("/\\") != StringRef::npos);
+  if (HasPathSep)
     return Filename;
-  bool hasExt = (Filename.find('.') != StringRef::npos);
+  bool HasExt = (Filename.find('.') != StringRef::npos);
   for (StringRef Dir : SearchPaths) {
     SmallString<128> Path = Dir;
-    llvm::sys::path::append(Path, Filename);
-    if (llvm::sys::fs::exists(Path.str()))
-      return Alloc.save(Path.str());
-    if (!hasExt) {
+    sys::path::append(Path, Filename);
+    if (sys::fs::exists(Path.str()))
+      return Saver.save(Path.str());
+    if (!HasExt) {
       Path.append(".obj");
-      if (llvm::sys::fs::exists(Path.str()))
-        return Alloc.save(Path.str());
+      if (sys::fs::exists(Path.str()))
+        return Saver.save(Path.str());
     }
   }
   return Filename;
@@ -171,9 +173,9 @@ Optional<StringRef> LinkerDriver::findFile(StringRef Filename) {
 // Find library file from search path.
 StringRef LinkerDriver::doFindLib(StringRef Filename) {
   // Add ".lib" to Filename if that has no file extension.
-  bool hasExt = (Filename.find('.') != StringRef::npos);
-  if (!hasExt)
-    Filename = Alloc.save(Filename + ".lib");
+  bool HasExt = (Filename.find('.') != StringRef::npos);
+  if (!HasExt)
+    Filename = Saver.save(Filename + ".lib");
   return doFindFile(Filename);
 }
 
@@ -197,7 +199,7 @@ void LinkerDriver::addLibSearchPaths() {
   Optional<std::string> EnvOpt = Process::GetEnv("LIB");
   if (!EnvOpt.hasValue())
     return;
-  StringRef Env = Alloc.save(*EnvOpt);
+  StringRef Env = Saver.save(*EnvOpt);
   while (!Env.empty()) {
     StringRef Path;
     std::tie(Path, Env) = Env.split(';');
@@ -215,7 +217,7 @@ Undefined *LinkerDriver::addUndefined(StringRef Name) {
 StringRef LinkerDriver::mangle(StringRef Sym) {
   assert(Config->Machine != IMAGE_FILE_MACHINE_UNKNOWN);
   if (Config->Machine == I386)
-    return Alloc.save("_" + Sym);
+    return Saver.save("_" + Sym);
   return Sym;
 }
 
@@ -252,7 +254,7 @@ static uint64_t getDefaultImageBase() {
   return Config->DLL ? 0x10000000 : 0x400000;
 }
 
-static std::string createResponseFile(const llvm::opt::InputArgList &Args,
+static std::string createResponseFile(const opt::InputArgList &Args,
                                       ArrayRef<MemoryBufferRef> MBs,
                                       ArrayRef<StringRef> SearchPaths) {
   SmallString<0> Data;
@@ -283,7 +285,7 @@ static std::string createResponseFile(const llvm::opt::InputArgList &Args,
   return Data.str();
 }
 
-static unsigned getDefaultDebugType(const llvm::opt::InputArgList &Args) {
+static unsigned getDefaultDebugType(const opt::InputArgList &Args) {
   unsigned DebugTypes = static_cast<unsigned>(DebugType::CV);
   if (Args.hasArg(OPT_driver))
     DebugTypes |= static_cast<unsigned>(DebugType::PData);
@@ -293,7 +295,7 @@ static unsigned getDefaultDebugType(const llvm::opt::InputArgList &Args) {
 }
 
 static unsigned parseDebugType(StringRef Arg) {
-  llvm::SmallVector<StringRef, 3> Types;
+  SmallVector<StringRef, 3> Types;
   Arg.split(Types, ',', /*KeepEmpty=*/false);
 
   unsigned DebugTypes = static_cast<unsigned>(DebugType::None);
@@ -305,7 +307,7 @@ static unsigned parseDebugType(StringRef Arg) {
   return DebugTypes;
 }
 
-void LinkerDriver::link(llvm::ArrayRef<const char *> ArgsArr) {
+void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
   // If the first command line argument is "/lib", link.exe acts like lib.exe.
   // We call our own implementation of lib.exe that understands bitcode files.
   if (ArgsArr.size() > 1 && StringRef(ArgsArr[1]).equals_lower("/lib")) {
@@ -315,15 +317,15 @@ void LinkerDriver::link(llvm::ArrayRef<const char *> ArgsArr) {
   }
 
   // Needed for LTO.
-  llvm::InitializeAllTargetInfos();
-  llvm::InitializeAllTargets();
-  llvm::InitializeAllTargetMCs();
-  llvm::InitializeAllAsmParsers();
-  llvm::InitializeAllAsmPrinters();
-  llvm::InitializeAllDisassemblers();
+  InitializeAllTargetInfos();
+  InitializeAllTargets();
+  InitializeAllTargetMCs();
+  InitializeAllAsmParsers();
+  InitializeAllAsmPrinters();
+  InitializeAllDisassemblers();
 
   // Parse command line options.
-  llvm::opt::InputArgList Args = Parser.parseLINK(ArgsArr.slice(1));
+  opt::InputArgList Args = Parser.parseLINK(ArgsArr.slice(1));
 
   // Handle /help
   if (Args.hasArg(OPT_help)) {
@@ -333,13 +335,13 @@ void LinkerDriver::link(llvm::ArrayRef<const char *> ArgsArr) {
 
   if (auto *Arg = Args.getLastArg(OPT_linkrepro)) {
     SmallString<64> Path = StringRef(Arg->getValue());
-    llvm::sys::path::append(Path, "repro");
+    sys::path::append(Path, "repro");
     ErrorOr<CpioFile *> F = CpioFile::create(Path);
     if (F)
       Cpio.reset(*F);
     else
-      llvm::errs() << "/linkrepro: failed to open " << Path
-                   << ".cpio: " << F.getError().message() << '\n';
+      errs() << "/linkrepro: failed to open " << Path
+             << ".cpio: " << F.getError().message() << '\n';
   }
 
   if (Args.filtered_begin(OPT_INPUT) == Args.filtered_end())
@@ -525,6 +527,7 @@ void LinkerDriver::link(llvm::ArrayRef<const char *> ArgsArr) {
     Config->TerminalServerAware = false;
   if (Args.hasArg(OPT_nosymtab))
     Config->WriteSymtab = false;
+  Config->DumpPdb = Args.hasArg(OPT_dumppdb);
 
   // Create a list of input files. Files can be given as arguments
   // for /defaultlib option.
@@ -568,7 +571,7 @@ void LinkerDriver::link(llvm::ArrayRef<const char *> ArgsArr) {
   // Determine machine type and check if all object files are
   // for the same CPU type. Note that this needs to be done before
   // any call to mangle().
-  for (std::unique_ptr<InputFile> &File : Symtab.getFiles()) {
+  for (InputFile *File : Symtab.getFiles()) {
     MachineTypes MT = File->getMachineType();
     if (MT == IMAGE_FILE_MACHINE_UNKNOWN)
       continue;
@@ -577,11 +580,11 @@ void LinkerDriver::link(llvm::ArrayRef<const char *> ArgsArr) {
       continue;
     }
     if (Config->Machine != MT)
-      fatal(File->getShortName() + ": machine type " + machineToStr(MT) +
+      fatal(toString(File) + ": machine type " + machineToStr(MT) +
             " conflicts with " + machineToStr(Config->Machine));
   }
   if (Config->Machine == IMAGE_FILE_MACHINE_UNKNOWN) {
-    llvm::errs() << "warning: /machine is not specified. x64 is assumed.\n";
+    errs() << "warning: /machine is not specified. x64 is assumed.\n";
     Config->Machine = AMD64;
   }
 
@@ -622,7 +625,7 @@ void LinkerDriver::link(llvm::ArrayRef<const char *> ArgsArr) {
       fatal("entry point must be defined");
     Config->Entry = addUndefined(S);
     if (Config->Verbose)
-      llvm::outs() << "Entry name inferred: " << S << "\n";
+      outs() << "Entry name inferred: " << S << "\n";
   }
 
   // Handle /export
@@ -630,9 +633,9 @@ void LinkerDriver::link(llvm::ArrayRef<const char *> ArgsArr) {
     Export E = parseExport(Arg->getValue());
     if (Config->Machine == I386) {
       if (!isDecorated(E.Name))
-        E.Name = Alloc.save("_" + E.Name);
+        E.Name = Saver.save("_" + E.Name);
       if (!E.ExtName.empty() && !isDecorated(E.ExtName))
-        E.ExtName = Alloc.save("_" + E.ExtName);
+        E.ExtName = Saver.save("_" + E.ExtName);
     }
     Config->Exports.push_back(E);
   }
@@ -641,7 +644,7 @@ void LinkerDriver::link(llvm::ArrayRef<const char *> ArgsArr) {
   if (auto *Arg = Args.getLastArg(OPT_deffile)) {
     MemoryBufferRef MB = openFile(Arg->getValue());
     // parseModuleDefs mutates Config object.
-    parseModuleDefs(MB, &Alloc);
+    parseModuleDefs(MB);
   }
 
   // Handle /delayload
@@ -762,7 +765,7 @@ void LinkerDriver::link(llvm::ArrayRef<const char *> ArgsArr) {
   // to help debugging.
   if (auto *Arg = Args.getLastArg(OPT_lldmap)) {
     std::error_code EC;
-    llvm::raw_fd_ostream Out(Arg->getValue(), EC, OpenFlags::F_Text);
+    raw_fd_ostream Out(Arg->getValue(), EC, OpenFlags::F_Text);
     if (EC)
       fatal(EC, "could not create the symbol map");
     Symtab.printMap(Out);

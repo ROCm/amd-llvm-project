@@ -135,12 +135,27 @@ public:
     return ValidatorResult(SCEVType::INT);
   }
 
+  class ValidatorResult visitZeroExtendOrTruncateExpr(const SCEV *Expr,
+                                                      const SCEV *Operand) {
+    ValidatorResult Op = visit(Operand);
+    auto Type = Op.getType();
+
+    // If unsigned operations are allowed return the operand, otherwise
+    // check if we can model the expression without unsigned assumptions.
+    if (PollyAllowUnsignedOperations || Type == SCEVType::INVALID)
+      return Op;
+
+    if (Type == SCEVType::IV)
+      return ValidatorResult(SCEVType::INVALID);
+    return ValidatorResult(SCEVType::PARAM, Expr);
+  }
+
   class ValidatorResult visitTruncateExpr(const SCEVTruncateExpr *Expr) {
-    return visit(Expr->getOperand());
+    return visitZeroExtendOrTruncateExpr(Expr, Expr->getOperand());
   }
 
   class ValidatorResult visitZeroExtendExpr(const SCEVZeroExtendExpr *Expr) {
-    return visit(Expr->getOperand());
+    return visitZeroExtendOrTruncateExpr(Expr, Expr->getOperand());
   }
 
   class ValidatorResult visitSignExtendExpr(const SCEVSignExtendExpr *Expr) {
@@ -325,6 +340,9 @@ public:
   }
 
   ValidatorResult visitUDivExpr(const SCEVUDivExpr *Expr) {
+    if (!PollyAllowUnsignedOperations)
+      return ValidatorResult(SCEVType::INVALID);
+
     auto *Dividend = Expr->getLHS();
     auto *Divisor = Expr->getRHS();
     return visitDivision(Dividend, Divisor, Expr);
@@ -403,23 +421,28 @@ public:
       Instruction *Inst = dyn_cast<Instruction>(Unknown->getValue());
 
       // Return true when Inst is defined inside the region R.
-      if (Inst && R->contains(Inst)) {
+      if (!Inst || !R->contains(Inst))
+        return true;
+
+      HasInRegionDeps = true;
+      return false;
+    }
+
+    if (auto AddRec = dyn_cast<SCEVAddRecExpr>(S)) {
+      if (AllowLoops)
+        return true;
+
+      if (!Scope) {
         HasInRegionDeps = true;
         return false;
       }
-    } else if (auto AddRec = dyn_cast<SCEVAddRecExpr>(S)) {
-      if (!AllowLoops) {
-        if (!Scope) {
-          HasInRegionDeps = true;
-          return false;
-        }
-        auto *L = AddRec->getLoop();
-        if (R->contains(L) && !L->contains(Scope)) {
-          HasInRegionDeps = true;
-          return false;
-        }
+      auto *L = AddRec->getLoop();
+      if (R->contains(L) && !L->contains(Scope)) {
+        HasInRegionDeps = true;
+        return false;
       }
     }
+
     return true;
   }
   bool isDone() { return false; }

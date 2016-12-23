@@ -16,7 +16,9 @@
 #include <unordered_set>
 
 #include "FuzzerDefs.h"
+#include "FuzzerIO.h"
 #include "FuzzerRandom.h"
+#include "FuzzerSHA1.h"
 #include "FuzzerTracePC.h"
 
 namespace fuzzer {
@@ -151,6 +153,12 @@ class InputCorpus {
     for (size_t i = 0; i < kFeatureSetSize; i++)
       Res += GetFeature(i) != 0;
     return Res;
+  }
+
+  void ResetFeatureSet() {
+    assert(Inputs.empty());
+    memset(InputSizesPerFeature, 0, sizeof(InputSizesPerFeature));
+    memset(SmallestElementPerFeature, 0, sizeof(SmallestElementPerFeature));
   }
 
 private:

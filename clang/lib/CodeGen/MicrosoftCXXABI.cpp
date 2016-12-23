@@ -19,6 +19,7 @@
 #include "CGVTables.h"
 #include "CodeGenModule.h"
 #include "CodeGenTypes.h"
+#include "ConstantBuilder.h"
 #include "TargetInfo.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclCXX.h"
@@ -164,6 +165,9 @@ public:
   llvm::BasicBlock *
   EmitCtorCompleteObjectHandler(CodeGenFunction &CGF,
                                 const CXXRecordDecl *RD) override;
+  
+  llvm::BasicBlock *
+  EmitDtorCompleteObjectHandler(CodeGenFunction &CGF);
 
   void initializeHiddenVirtualInheritanceMembers(CodeGenFunction &CGF,
                                               const CXXRecordDecl *RD) override;
@@ -284,9 +288,9 @@ public:
   llvm::GlobalVariable *getAddrOfVTable(const CXXRecordDecl *RD,
                                         CharUnits VPtrOffset) override;
 
-  llvm::Value *getVirtualFunctionPointer(CodeGenFunction &CGF, GlobalDecl GD,
-                                         Address This, llvm::Type *Ty,
-                                         SourceLocation Loc) override;
+  CGCallee getVirtualFunctionPointer(CodeGenFunction &CGF, GlobalDecl GD,
+                                     Address This, llvm::Type *Ty,
+                                     SourceLocation Loc) override;
 
   llvm::Value *EmitVirtualDestructorCall(CodeGenFunction &CGF,
                                          const CXXDestructorDecl *Dtor,
@@ -660,7 +664,7 @@ public:
       CastKind CK, CastExpr::path_const_iterator PathBegin,
       CastExpr::path_const_iterator PathEnd, llvm::Constant *Src);
 
-  llvm::Value *
+  CGCallee
   EmitLoadOfMemberFunctionPointer(CodeGenFunction &CGF, const Expr *E,
                                   Address This, llvm::Value *&ThisPtrForCall,
                                   llvm::Value *MemPtr,
@@ -830,25 +834,32 @@ MicrosoftCXXABI::getRecordArgABI(const CXXRecordDecl *RD) const {
         getContext().getTypeSize(RD->getTypeForDecl()) > 64)
       return RAA_Indirect;
 
-    // We have a trivial copy constructor or no copy constructors, but we have
-    // to make sure it isn't deleted.
-    bool CopyDeleted = false;
+    // If this is true, the implicit copy constructor that Sema would have
+    // created would not be deleted. FIXME: We should provide a more direct way
+    // for CodeGen to ask whether the constructor was deleted.
+    if (!RD->hasUserDeclaredCopyConstructor() &&
+        !RD->hasUserDeclaredMoveConstructor() &&
+        !RD->needsOverloadResolutionForMoveConstructor() &&
+        !RD->hasUserDeclaredMoveAssignment() &&
+        !RD->needsOverloadResolutionForMoveAssignment())
+      return RAA_Default;
+
+    // Otherwise, Sema should have created an implicit copy constructor if
+    // needed.
+    assert(!RD->needsImplicitCopyConstructor());
+
+    // We have to make sure the trivial copy constructor isn't deleted.
     for (const CXXConstructorDecl *CD : RD->ctors()) {
       if (CD->isCopyConstructor()) {
         assert(CD->isTrivial());
         // We had at least one undeleted trivial copy ctor.  Return directly.
         if (!CD->isDeleted())
           return RAA_Default;
-        CopyDeleted = true;
       }
     }
 
     // The trivial copy constructor was deleted.  Return indirectly.
-    if (CopyDeleted)
-      return RAA_Indirect;
-
-    // There were no copy ctors.  Return in RAX.
-    return RAA_Default;
+    return RAA_Indirect;
   }
 
   llvm_unreachable("invalid enum");
@@ -1125,6 +1136,25 @@ MicrosoftCXXABI::EmitCtorCompleteObjectHandler(CodeGenFunction &CGF,
   // CGF will put the base ctor calls in this basic block for us later.
 
   return SkipVbaseCtorsBB;
+}
+
+llvm::BasicBlock *
+MicrosoftCXXABI::EmitDtorCompleteObjectHandler(CodeGenFunction &CGF) {
+  llvm::Value *IsMostDerivedClass = getStructorImplicitParamValue(CGF);
+  assert(IsMostDerivedClass &&
+         "ctor for a class with virtual bases must have an implicit parameter");
+  llvm::Value *IsCompleteObject =
+      CGF.Builder.CreateIsNotNull(IsMostDerivedClass, "is_complete_object");
+
+  llvm::BasicBlock *CallVbaseDtorsBB = CGF.createBasicBlock("Dtor.dtor_vbases");
+  llvm::BasicBlock *SkipVbaseDtorsBB = CGF.createBasicBlock("Dtor.skip_vbases");
+  CGF.Builder.CreateCondBr(IsCompleteObject,
+                           CallVbaseDtorsBB, SkipVbaseDtorsBB);
+
+  CGF.EmitBlock(CallVbaseDtorsBB);
+  // CGF will put the base dtor calls in this basic block for us later.
+    
+  return SkipVbaseDtorsBB;
 }
 
 void MicrosoftCXXABI::initializeHiddenVirtualInheritanceMembers(
@@ -1494,7 +1524,9 @@ void MicrosoftCXXABI::EmitDestructorCall(CodeGenFunction &CGF,
                                          const CXXDestructorDecl *DD,
                                          CXXDtorType Type, bool ForVirtualBase,
                                          bool Delegating, Address This) {
-  llvm::Value *Callee = CGM.getAddrOfCXXStructor(DD, getFromDtorType(Type));
+  CGCallee Callee = CGCallee::forDirect(
+                          CGM.getAddrOfCXXStructor(DD, getFromDtorType(Type)),
+                                        DD);
 
   if (DD->isVirtual()) {
     assert(Type != CXXDtorType::Dtor_Deleting &&
@@ -1502,11 +1534,21 @@ void MicrosoftCXXABI::EmitDestructorCall(CodeGenFunction &CGF,
     This = adjustThisArgumentForVirtualFunctionCall(CGF, GlobalDecl(DD, Type),
                                                     This, false);
   }
+  
+  llvm::BasicBlock *BaseDtorEndBB = nullptr;
+  if (ForVirtualBase && isa<CXXConstructorDecl>(CGF.CurCodeDecl)) {
+    BaseDtorEndBB = EmitDtorCompleteObjectHandler(CGF);
+  }  
 
   CGF.EmitCXXDestructorCall(DD, Callee, This.getPointer(),
                             /*ImplicitParam=*/nullptr,
                             /*ImplicitParamTy=*/QualType(), nullptr,
                             getFromDtorType(Type));
+  if (BaseDtorEndBB) {
+    // Complete object handler should continue to be the remaining 
+    CGF.Builder.CreateBr(BaseDtorEndBB);
+    CGF.EmitBlock(BaseDtorEndBB);
+  } 
 }
 
 void MicrosoftCXXABI::emitVTableTypeMetadata(const VPtrInfo &Info,
@@ -1575,9 +1617,10 @@ void MicrosoftCXXABI::emitVTableDefinitions(CodeGenVTables &CGVT,
                [](const VTableComponent &VTC) { return VTC.isRTTIKind(); }))
       RTTI = getMSCompleteObjectLocator(RD, *Info);
 
-    llvm::Constant *Init = CGVT.CreateVTableInitializer(VTLayout, RTTI);
-
-    VTable->setInitializer(Init);
+    ConstantInitBuilder Builder(CGM);
+    auto Components = Builder.beginArray(CGM.Int8PtrTy);
+    CGVT.createVTableInitializer(Components, VTLayout, RTTI);
+    Components.finishAndSetAsInitializer(VTable);
 
     emitVTableTypeMetadata(*Info, RD, VTable);
   }
@@ -1760,54 +1803,11 @@ llvm::GlobalVariable *MicrosoftCXXABI::getAddrOfVTable(const CXXRecordDecl *RD,
   return VTable;
 }
 
-// Compute the identity of the most derived class whose virtual table is located
-// at the given offset into RD.
-static const CXXRecordDecl *getClassAtVTableLocation(ASTContext &Ctx,
-                                                     const CXXRecordDecl *RD,
-                                                     CharUnits Offset) {
-  if (Offset.isZero())
-    return RD;
-
-  const ASTRecordLayout &Layout = Ctx.getASTRecordLayout(RD);
-  const CXXRecordDecl *MaxBase = nullptr;
-  CharUnits MaxBaseOffset;
-  for (auto &&B : RD->bases()) {
-    const CXXRecordDecl *Base = B.getType()->getAsCXXRecordDecl();
-    CharUnits BaseOffset = Layout.getBaseClassOffset(Base);
-    if (BaseOffset <= Offset && BaseOffset >= MaxBaseOffset) {
-      MaxBase = Base;
-      MaxBaseOffset = BaseOffset;
-    }
-  }
-  for (auto &&B : RD->vbases()) {
-    const CXXRecordDecl *Base = B.getType()->getAsCXXRecordDecl();
-    CharUnits BaseOffset = Layout.getVBaseClassOffset(Base);
-    if (BaseOffset <= Offset && BaseOffset >= MaxBaseOffset) {
-      MaxBase = Base;
-      MaxBaseOffset = BaseOffset;
-    }
-  }
-  assert(MaxBase);
-  return getClassAtVTableLocation(Ctx, MaxBase, Offset - MaxBaseOffset);
-}
-
-// Compute the identity of the most derived class whose virtual table is located
-// at the MethodVFTableLocation ML.
-static const CXXRecordDecl *
-getClassAtVTableLocation(ASTContext &Ctx, GlobalDecl GD,
-                         MicrosoftVTableContext::MethodVFTableLocation &ML) {
-  const CXXRecordDecl *RD = ML.VBase;
-  if (!RD)
-    RD = cast<CXXMethodDecl>(GD.getDecl())->getParent();
-
-  return getClassAtVTableLocation(Ctx, RD, ML.VFPtrOffset);
-}
-
-llvm::Value *MicrosoftCXXABI::getVirtualFunctionPointer(CodeGenFunction &CGF,
-                                                        GlobalDecl GD,
-                                                        Address This,
-                                                        llvm::Type *Ty,
-                                                        SourceLocation Loc) {
+CGCallee MicrosoftCXXABI::getVirtualFunctionPointer(CodeGenFunction &CGF,
+                                                    GlobalDecl GD,
+                                                    Address This,
+                                                    llvm::Type *Ty,
+                                                    SourceLocation Loc) {
   GD = GD.getCanonicalDecl();
   CGBuilderTy &Builder = CGF.Builder;
 
@@ -1818,22 +1818,38 @@ llvm::Value *MicrosoftCXXABI::getVirtualFunctionPointer(CodeGenFunction &CGF,
   auto *MethodDecl = cast<CXXMethodDecl>(GD.getDecl());
   llvm::Value *VTable = CGF.GetVTablePtr(VPtr, Ty, MethodDecl->getParent());
 
+  MicrosoftVTableContext &VFTContext = CGM.getMicrosoftVTableContext();
   MicrosoftVTableContext::MethodVFTableLocation ML =
-      CGM.getMicrosoftVTableContext().getMethodVFTableLocation(GD);
+      VFTContext.getMethodVFTableLocation(GD);
 
+  // Compute the identity of the most derived class whose virtual table is
+  // located at the MethodVFTableLocation ML.
+  auto getObjectWithVPtr = [&] {
+    return llvm::find_if(VFTContext.getVFPtrOffsets(
+                             ML.VBase ? ML.VBase : MethodDecl->getParent()),
+                         [&](const std::unique_ptr<VPtrInfo> &Info) {
+                           return Info->FullOffsetInMDC == ML.VFPtrOffset;
+                         })
+        ->get()
+        ->ObjectWithVPtr;
+  };
+
+  llvm::Value *VFunc;
   if (CGF.ShouldEmitVTableTypeCheckedLoad(MethodDecl->getParent())) {
-    return CGF.EmitVTableTypeCheckedLoad(
-        getClassAtVTableLocation(getContext(), GD, ML), VTable,
+    VFunc = CGF.EmitVTableTypeCheckedLoad(
+        getObjectWithVPtr(), VTable,
         ML.Index * CGM.getContext().getTargetInfo().getPointerWidth(0) / 8);
   } else {
     if (CGM.getCodeGenOpts().PrepareForLTO)
-      CGF.EmitTypeMetadataCodeForVCall(
-          getClassAtVTableLocation(getContext(), GD, ML), VTable, Loc);
+      CGF.EmitTypeMetadataCodeForVCall(getObjectWithVPtr(), VTable, Loc);
 
     llvm::Value *VFuncPtr =
         Builder.CreateConstInBoundsGEP1_64(VTable, ML.Index, "vfn");
-    return Builder.CreateAlignedLoad(VFuncPtr, CGF.getPointerAlign());
+    VFunc = Builder.CreateAlignedLoad(VFuncPtr, CGF.getPointerAlign());
   }
+
+  CGCallee Callee(MethodDecl, VFunc);
+  return Callee;
 }
 
 llvm::Value *MicrosoftCXXABI::EmitVirtualDestructorCall(
@@ -1848,7 +1864,7 @@ llvm::Value *MicrosoftCXXABI::EmitVirtualDestructorCall(
   const CGFunctionInfo *FInfo = &CGM.getTypes().arrangeCXXStructorDeclaration(
       Dtor, StructorType::Deleting);
   llvm::Type *Ty = CGF.CGM.getTypes().GetFunctionType(*FInfo);
-  llvm::Value *Callee = getVirtualFunctionPointer(
+  CGCallee Callee = getVirtualFunctionPointer(
       CGF, GD, This, Ty, CE ? CE->getLocStart() : SourceLocation());
 
   ASTContext &Context = getContext();
@@ -3238,7 +3254,7 @@ llvm::Constant *MicrosoftCXXABI::EmitMemberPointerConversion(
   return Dst;
 }
 
-llvm::Value *MicrosoftCXXABI::EmitLoadOfMemberFunctionPointer(
+CGCallee MicrosoftCXXABI::EmitLoadOfMemberFunctionPointer(
     CodeGenFunction &CGF, const Expr *E, Address This,
     llvm::Value *&ThisPtrForCall, llvm::Value *MemPtr,
     const MemberPointerType *MPT) {
@@ -3285,7 +3301,10 @@ llvm::Value *MicrosoftCXXABI::EmitLoadOfMemberFunctionPointer(
                                            "this.adjusted");
   }
 
-  return Builder.CreateBitCast(FunctionPointer, FTy->getPointerTo());
+  FunctionPointer =
+    Builder.CreateBitCast(FunctionPointer, FTy->getPointerTo());
+  CGCallee Callee(FPT, FunctionPointer);
+  return Callee;
 }
 
 CGCXXABI *clang::CodeGen::CreateMicrosoftCXXABI(CodeGenModule &CGM) {
@@ -3862,8 +3881,11 @@ MicrosoftCXXABI::getAddrOfCXXCtorClosure(const CXXConstructorDecl *CD,
     FunctionArgs.push_back(&IsMostDerived);
 
   // Start defining the function.
+  auto NL = ApplyDebugLocation::CreateEmpty(CGF);
   CGF.StartFunction(GlobalDecl(), FnInfo.getReturnType(), ThunkFn, FnInfo,
                     FunctionArgs, CD->getLocation(), SourceLocation());
+  // Create a scope with an artificial location for the body of this function.
+  auto AL = ApplyDebugLocation::CreateArtificial(CGF);
   EmitThisParam(CGF);
   llvm::Value *This = getThisValue(CGF);
 
@@ -3881,11 +3903,11 @@ MicrosoftCXXABI::getAddrOfCXXCtorClosure(const CXXConstructorDecl *CD,
     Args.add(RValue::get(SrcVal), SrcParam.getType());
 
   // Add the rest of the default arguments.
-  std::vector<Stmt *> ArgVec;
-  for (unsigned I = IsCopy ? 1 : 0, E = CD->getNumParams(); I != E; ++I) {
-    Stmt *DefaultArg = getContext().getDefaultArgExprForConstructor(CD, I);
-    assert(DefaultArg && "sema forgot to instantiate default args");
-    ArgVec.push_back(DefaultArg);
+  SmallVector<const Stmt *, 4> ArgVec;
+  ArrayRef<ParmVarDecl *> params = CD->parameters().drop_front(IsCopy ? 1 : 0);
+  for (const ParmVarDecl *PD : params) {
+    assert(PD->hasDefaultArg() && "ctor closure lacks default args");
+    ArgVec.push_back(PD->getDefaultArg());
   }
 
   CodeGenFunction::RunCleanupsScope Cleanups(CGF);
@@ -3899,10 +3921,12 @@ MicrosoftCXXABI::getAddrOfCXXCtorClosure(const CXXConstructorDecl *CD,
                                                   /*Delegating=*/false, Args);
 
   // Call the destructor with our arguments.
-  llvm::Value *CalleeFn = CGM.getAddrOfCXXStructor(CD, StructorType::Complete);
+  llvm::Constant *CalleePtr =
+    CGM.getAddrOfCXXStructor(CD, StructorType::Complete);
+  CGCallee Callee = CGCallee::forDirect(CalleePtr, CD);
   const CGFunctionInfo &CalleeInfo = CGM.getTypes().arrangeCXXConstructorCall(
       Args, CD, Ctor_Complete, ExtraArgs);
-  CGF.EmitCall(CalleeInfo, CalleeFn, ReturnValueSlot(), Args, CD);
+  CGF.EmitCall(CalleeInfo, Callee, ReturnValueSlot(), Args);
 
   Cleanups.ForceCleanup();
 

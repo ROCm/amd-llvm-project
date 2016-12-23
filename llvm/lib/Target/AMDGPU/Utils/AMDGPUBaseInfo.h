@@ -24,6 +24,7 @@ class Function;
 class GlobalValue;
 class MCContext;
 class MCInstrDesc;
+class MCRegisterClass;
 class MCRegisterInfo;
 class MCSection;
 class MCSubtargetInfo;
@@ -53,6 +54,10 @@ MCSection *getHSARodataReadonlyAgentSection(MCContext &Ctx);
 bool isGroupSegment(const GlobalValue *GV);
 bool isGlobalSegment(const GlobalValue *GV);
 bool isReadOnlySegment(const GlobalValue *GV);
+
+/// \returns True if constants should be emitted to .text section for given
+/// target triple \p TT, false otherwise.
+bool shouldEmitConstantsToTextSection(const Triple &TT);
 
 /// \returns Integer value requested using \p F's \p Name attribute.
 ///
@@ -152,13 +157,23 @@ bool isSISrcFPOperand(const MCInstrDesc &Desc, unsigned OpNo);
 /// \brief Does this opearnd support only inlinable literals?
 bool isSISrcInlinableOperand(const MCInstrDesc &Desc, unsigned OpNo);
 
+/// \brief Get the size in bits of a register from the register class \p RC.
+unsigned getRegBitWidth(unsigned RCID);
+
+/// \brief Get the size in bits of a register from the register class \p RC.
+unsigned getRegBitWidth(const MCRegisterClass &RC);
+
 /// \brief Get size of register operand
 unsigned getRegOperandSize(const MCRegisterInfo *MRI, const MCInstrDesc &Desc,
                            unsigned OpNo);
 
 /// \brief Is this literal inlinable
-bool isInlinableLiteral64(int64_t Literal, bool IsVI);
-bool isInlinableLiteral32(int32_t Literal, bool IsVI);
+LLVM_READNONE
+bool isInlinableLiteral64(int64_t Literal, bool HasInv2Pi);
+
+LLVM_READNONE
+bool isInlinableLiteral32(int32_t Literal, bool HasInv2Pi);
+
 
 } // end namespace AMDGPU
 } // end namespace llvm

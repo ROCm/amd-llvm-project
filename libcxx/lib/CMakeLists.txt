@@ -6,7 +6,7 @@ if(WIN32)
   file(GLOB LIBCXX_WIN32_SOURCES ../src/support/win32/*.cpp)
   list(APPEND LIBCXX_SOURCES ${LIBCXX_WIN32_SOURCES})
 elseif("${CMAKE_SYSTEM_NAME}" STREQUAL "SunOS")
-  file(GLOB LIBCXX_SOLARIS_SOURCES ../src/support/solaris/*.c)
+  file(GLOB LIBCXX_SOLARIS_SOURCES ../src/support/solaris/*.cpp)
   list(APPEND LIBCXX_SOURCES ${LIBCXX_SOLARIS_SOURCES})
 endif()
 
@@ -132,7 +132,7 @@ if (LIBCXX_OSX_REEXPORT_SYSTEM_ABI_LIBRARY)
       "-Wl,-unexported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/libc++unexp.exp"
       "/usr/lib/libSystem.B.dylib")
   else()
-    if (DEFINED CMAKE_OSX_SYSROOT)
+    if (DEFINED CMAKE_OSX_SYSROOT AND NOT CMAKE_OSX_SYSROOT STREQUAL "")
       list(FIND CMAKE_OSX_ARCHITECTURES "armv7" OSX_HAS_ARMV7)
       if (NOT OSX_HAS_ARMV7 EQUAL -1)
         set(OSX_RE_EXPORT_LINE
@@ -193,14 +193,32 @@ if (LIBCXX_ENABLE_STATIC)
       OUTPUT_NAME   "c++"
   )
   list(APPEND LIBCXX_TARGETS "cxx_static")
+  # Attempt to merge the libc++.a archive and the ABI library archive into one.
+  if (LIBCXX_ENABLE_STATIC_ABI_LIBRARY)
+    set(MERGE_ARCHIVES_SEARCH_PATHS "")
+    if (LIBCXX_CXX_ABI_LIBRARY_PATH)
+      set(MERGE_ARCHIVES_SEARCH_PATHS "-L${LIBCXX_CXX_ABI_LIBRARY_PATH}")
+    endif()
+    if (TARGET ${LIBCXX_CXX_ABI_LIBRARY})
+      set(MERGE_ARCHIVES_ABI_TARGET "$<TARGET_LINKER_FILE:${LIBCXX_CXX_ABI_LIBRARY}>")
+    else()
+      set(MERGE_ARCHIVES_ABI_TARGET "lib${LIBCXX_CXX_ABI_LIBRARY}.a")
+    endif()
+    add_custom_command(TARGET cxx_static POST_BUILD
+    COMMAND
+      ${PYTHON_EXECUTABLE} ${LIBCXX_SOURCE_DIR}/utils/merge_archives.py
+    ARGS
+      -o $<TARGET_LINKER_FILE:cxx_static>
+      "$<TARGET_LINKER_FILE:cxx_static>"
+      "${MERGE_ARCHIVES_ABI_TARGET}"
+      "${MERGE_ARCHIVES_SEARCH_PATHS}"
+    WORKING_DIRECTORY ${LIBCXX_BUILD_DIR}
+    )
+  endif()
 endif()
 
 # Add a meta-target for both libraries.
 add_custom_target(cxx DEPENDS ${LIBCXX_TARGETS})
-
-if (DEFINED LIBCXX_CXX_ABI_DEPS)
-  add_dependencies(cxx LIBCXX_CXX_ABI_DEPS)
-endif()
 
 if (LIBCXX_ENABLE_EXPERIMENTAL_LIBRARY)
   file(GLOB LIBCXX_EXPERIMENTAL_SOURCES ../src/experimental/*.cpp)

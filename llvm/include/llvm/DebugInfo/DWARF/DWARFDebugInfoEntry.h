@@ -15,6 +15,7 @@
 #include "llvm/DebugInfo/DWARF/DWARFAbbreviationDeclaration.h"
 #include "llvm/DebugInfo/DWARF/DWARFDebugRangeList.h"
 #include "llvm/Support/DataTypes.h"
+#include "llvm/Support/Dwarf.h"
 
 namespace llvm {
 
@@ -41,14 +42,21 @@ public:
   void dump(raw_ostream &OS, DWARFUnit *u, unsigned recurseDepth,
             unsigned indent = 0) const;
   void dumpAttribute(raw_ostream &OS, DWARFUnit *u, uint32_t *offset_ptr,
-                     uint16_t attr, uint16_t form, unsigned indent = 0) const;
+                     dwarf::Attribute attr, dwarf::Form form, 
+                     unsigned indent = 0) const;
 
   /// Extracts a debug info entry, which is a child of a given unit,
   /// starting at a given offset. If DIE can't be extracted, returns false and
   /// doesn't change OffsetPtr.
-  bool extractFast(const DWARFUnit *U, uint32_t *OffsetPtr);
+  bool extractFast(const DWARFUnit &U, uint32_t *OffsetPtr);
+  /// High performance extraction should use this call.
+  bool extractFast(const DWARFUnit &U, uint32_t *OffsetPtr,
+                   const DataExtractor &DebugInfoData, uint32_t UEndOffset);
 
-  uint32_t getTag() const { return AbbrevDecl ? AbbrevDecl->getTag() : 0; }
+  dwarf::Tag getTag() const {
+    return AbbrevDecl ? AbbrevDecl->getTag() : dwarf::DW_TAG_null;
+  }
+
   bool isNULL() const { return AbbrevDecl == nullptr; }
 
   /// Returns true if DIE represents a subprogram (not inlined).
@@ -86,24 +94,31 @@ public:
     return AbbrevDecl;
   }
 
-  bool getAttributeValue(const DWARFUnit *U, const uint16_t Attr,
+  bool getAttributeValue(const DWARFUnit *U, dwarf::Attribute Attr,
                          DWARFFormValue &FormValue) const;
 
-  const char *getAttributeValueAsString(const DWARFUnit *U, const uint16_t Attr,
+  const char *getAttributeValueAsString(const DWARFUnit *U, 
+                                        dwarf::Attribute Attr,
                                         const char *FailValue) const;
 
-  uint64_t getAttributeValueAsAddress(const DWARFUnit *U, const uint16_t Attr,
+  uint64_t getAttributeValueAsAddress(const DWARFUnit *U, 
+                                      dwarf::Attribute Attr,
                                       uint64_t FailValue) const;
 
+  int64_t getAttributeValueAsSignedConstant(const DWARFUnit *U,
+                                            dwarf::Attribute Attr,
+                                            int64_t FailValue) const;
+
   uint64_t getAttributeValueAsUnsignedConstant(const DWARFUnit *U,
-                                               const uint16_t Attr,
+                                               dwarf::Attribute Attr,
                                                uint64_t FailValue) const;
 
-  uint64_t getAttributeValueAsReference(const DWARFUnit *U, const uint16_t Attr,
+  uint64_t getAttributeValueAsReference(const DWARFUnit *U, 
+                                        dwarf::Attribute Attr,
                                         uint64_t FailValue) const;
 
   uint64_t getAttributeValueAsSectionOffset(const DWARFUnit *U,
-                                            const uint16_t Attr,
+                                            dwarf::Attribute Attr,
                                             uint64_t FailValue) const;
 
   uint64_t getRangesBaseAttribute(const DWARFUnit *U, uint64_t FailValue) const;

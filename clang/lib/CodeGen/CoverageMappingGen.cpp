@@ -813,6 +813,8 @@ struct CounterCoverageMappingBuilder
 
   void VisitSwitchStmt(const SwitchStmt *S) {
     extendRegion(S);
+    if (S->getInit())
+      Visit(S->getInit());
     Visit(S->getCond());
 
     BreakContinueStack.push_back(BreakContinue());
@@ -873,6 +875,9 @@ struct CounterCoverageMappingBuilder
 
   void VisitIfStmt(const IfStmt *S) {
     extendRegion(S);
+    if (S->getInit())
+      Visit(S->getInit());
+
     // Extend into the condition before we propagate through it below - this is
     // needed to handle macros that generate the "if" but not the condition.
     extendRegion(S->getCond());
@@ -1034,10 +1039,15 @@ void CoverageMappingModuleGen::addFunctionMappingRecord(
     std::vector<StringRef> Filenames;
     std::vector<CounterExpression> Expressions;
     std::vector<CounterMappingRegion> Regions;
+    llvm::SmallVector<std::string, 16> FilenameStrs;
     llvm::SmallVector<StringRef, 16> FilenameRefs;
+    FilenameStrs.resize(FileEntries.size());
     FilenameRefs.resize(FileEntries.size());
-    for (const auto &Entry : FileEntries)
-      FilenameRefs[Entry.second] = normalizeFilename(Entry.first->getName());
+    for (const auto &Entry : FileEntries) {
+      auto I = Entry.second;
+      FilenameStrs[I] = normalizeFilename(Entry.first->getName());
+      FilenameRefs[I] = FilenameStrs[I];
+    }
     RawCoverageMappingReader Reader(CoverageMapping, FilenameRefs, Filenames,
                                     Expressions, Regions);
     if (Reader.read())

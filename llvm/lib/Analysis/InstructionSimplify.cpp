@@ -67,6 +67,8 @@ static Value *SimplifyFPBinOp(unsigned, Value *, Value *, const FastMathFlags &,
                               const Query &, unsigned);
 static Value *SimplifyCmpInst(unsigned, Value *, Value *, const Query &,
                               unsigned);
+static Value *SimplifyICmpInst(unsigned Predicate, Value *LHS, Value *RHS,
+                               const Query &Q, unsigned MaxRecurse);
 static Value *SimplifyOrInst(Value *, Value *, const Query &, unsigned);
 static Value *SimplifyXorInst(Value *, Value *, const Query &, unsigned);
 static Value *SimplifyCastInst(unsigned, Value *, Type *,
@@ -680,9 +682,26 @@ static Value *SimplifySubInst(Value *Op0, Value *Op1, bool isNSW, bool isNUW,
   if (Op0 == Op1)
     return Constant::getNullValue(Op0->getType());
 
-  // 0 - X -> 0 if the sub is NUW.
-  if (isNUW && match(Op0, m_Zero()))
-    return Op0;
+  // Is this a negation?
+  if (match(Op0, m_Zero())) {
+    // 0 - X -> 0 if the sub is NUW.
+    if (isNUW)
+      return Op0;
+
+    unsigned BitWidth = Op1->getType()->getScalarSizeInBits();
+    APInt KnownZero(BitWidth, 0);
+    APInt KnownOne(BitWidth, 0);
+    computeKnownBits(Op1, KnownZero, KnownOne, Q.DL, 0, Q.AC, Q.CxtI, Q.DT);
+    if (KnownZero == ~APInt::getSignBit(BitWidth)) {
+      // Op1 is either 0 or the minimum signed value. If the sub is NSW, then
+      // Op1 must be 0 because negating the minimum signed value is undefined.
+      if (isNSW)
+        return Op0;
+
+      // 0 - X -> X if X is 0 or the minimum signed value.
+      return Op1;
+    }
+  }
 
   // (X + Y) - Z -> X + (Y - Z) or Y + (X - Z) if everything simplifies.
   // For example, (X + Y) - Y -> X; (Y + X) - Y -> X
@@ -1108,6 +1127,10 @@ static Value *SimplifyFDivInst(Value *Op0, Value *Op1, FastMathFlags FMF,
   if (match(Op1, m_Undef()))
     return Op1;
 
+  // X / 1.0 -> X
+  if (match(Op1, m_FPOne()))
+    return Op0;
+
   // 0 / X -> 0
   // Requires that NaNs are off (X could be zero) and signed zeroes are
   // ignored (X could be positive or negative, so the output sign is unknown).
@@ -1499,8 +1522,38 @@ static Value *simplifyUnsignedRangeCheck(ICmpInst *ZeroICmp,
   return nullptr;
 }
 
+/// Commuted variants are assumed to be handled by calling this function again
+/// with the parameters swapped.
+static Value *simplifyAndOfICmpsWithSameOperands(ICmpInst *Op0, ICmpInst *Op1) {
+  ICmpInst::Predicate Pred0, Pred1;
+  Value *A ,*B;
+  if (!match(Op0, m_ICmp(Pred0, m_Value(A), m_Value(B))) ||
+      !match(Op1, m_ICmp(Pred1, m_Specific(A), m_Specific(B))))
+    return nullptr;
+
+  // We have (icmp Pred0, A, B) & (icmp Pred1, A, B).
+  // If Op1 is always implied true by Op0, then Op0 is a subset of Op1, and we
+  // can eliminate Op1 from this 'and'.
+  if (ICmpInst::isImpliedTrueByMatchingCmp(Pred0, Pred1))
+    return Op0;
+
+  // Check for any combination of predicates that are guaranteed to be disjoint.
+  if ((Pred0 == ICmpInst::getInversePredicate(Pred1)) ||
+      (Pred0 == ICmpInst::ICMP_EQ && ICmpInst::isFalseWhenEqual(Pred1)) ||
+      (Pred0 == ICmpInst::ICMP_SLT && Pred1 == ICmpInst::ICMP_SGT) ||
+      (Pred0 == ICmpInst::ICMP_ULT && Pred1 == ICmpInst::ICMP_UGT))
+    return getFalse(Op0->getType());
+
+  return nullptr;
+}
+
+/// Commuted variants are assumed to be handled by calling this function again
+/// with the parameters swapped.
 static Value *SimplifyAndOfICmps(ICmpInst *Op0, ICmpInst *Op1) {
   if (Value *X = simplifyUnsignedRangeCheck(Op0, Op1, /*IsAnd=*/true))
+    return X;
+
+  if (Value *X = simplifyAndOfICmpsWithSameOperands(Op0, Op1))
     return X;
 
   // Look for this pattern: (icmp V, C0) & (icmp V, C1)).
@@ -1681,10 +1734,39 @@ Value *llvm::SimplifyAndInst(Value *Op0, Value *Op1, const DataLayout &DL,
                            RecursionLimit);
 }
 
-/// Simplify (or (icmp ...) (icmp ...)) to true when we can tell that the union
-/// contains all possible values.
+/// Commuted variants are assumed to be handled by calling this function again
+/// with the parameters swapped.
+static Value *simplifyOrOfICmpsWithSameOperands(ICmpInst *Op0, ICmpInst *Op1) {
+  ICmpInst::Predicate Pred0, Pred1;
+  Value *A ,*B;
+  if (!match(Op0, m_ICmp(Pred0, m_Value(A), m_Value(B))) ||
+      !match(Op1, m_ICmp(Pred1, m_Specific(A), m_Specific(B))))
+    return nullptr;
+
+  // We have (icmp Pred0, A, B) | (icmp Pred1, A, B).
+  // If Op1 is always implied true by Op0, then Op0 is a subset of Op1, and we
+  // can eliminate Op0 from this 'or'.
+  if (ICmpInst::isImpliedTrueByMatchingCmp(Pred0, Pred1))
+    return Op1;
+
+  // Check for any combination of predicates that cover the entire range of
+  // possibilities.
+  if ((Pred0 == ICmpInst::getInversePredicate(Pred1)) ||
+      (Pred0 == ICmpInst::ICMP_NE && ICmpInst::isTrueWhenEqual(Pred1)) ||
+      (Pred0 == ICmpInst::ICMP_SLE && Pred1 == ICmpInst::ICMP_SGE) ||
+      (Pred0 == ICmpInst::ICMP_ULE && Pred1 == ICmpInst::ICMP_UGE))
+    return getTrue(Op0->getType());
+
+  return nullptr;
+}
+
+/// Commuted variants are assumed to be handled by calling this function again
+/// with the parameters swapped.
 static Value *SimplifyOrOfICmps(ICmpInst *Op0, ICmpInst *Op1) {
   if (Value *X = simplifyUnsignedRangeCheck(Op0, Op1, /*IsAnd=*/false))
+    return X;
+
+  if (Value *X = simplifyOrOfICmpsWithSameOperands(Op0, Op1))
     return X;
 
   // (icmp (add V, C0), C1) | (icmp V, C0)
@@ -2150,6 +2232,131 @@ computePointerICmp(const DataLayout &DL, const TargetLibraryInfo *TLI,
   return nullptr;
 }
 
+/// Fold an icmp when its operands have i1 scalar type.
+static Value *simplifyICmpOfBools(CmpInst::Predicate Pred, Value *LHS,
+                                  Value *RHS, const Query &Q) {
+  Type *ITy = GetCompareTy(LHS); // The return type.
+  Type *OpTy = LHS->getType();   // The operand type.
+  if (!OpTy->getScalarType()->isIntegerTy(1))
+    return nullptr;
+
+  switch (Pred) {
+  default:
+    break;
+  case ICmpInst::ICMP_EQ:
+    // X == 1 -> X
+    if (match(RHS, m_One()))
+      return LHS;
+    break;
+  case ICmpInst::ICMP_NE:
+    // X != 0 -> X
+    if (match(RHS, m_Zero()))
+      return LHS;
+    break;
+  case ICmpInst::ICMP_UGT:
+    // X >u 0 -> X
+    if (match(RHS, m_Zero()))
+      return LHS;
+    break;
+  case ICmpInst::ICMP_UGE:
+    // X >=u 1 -> X
+    if (match(RHS, m_One()))
+      return LHS;
+    if (isImpliedCondition(RHS, LHS, Q.DL).getValueOr(false))
+      return getTrue(ITy);
+    break;
+  case ICmpInst::ICMP_SGE:
+    /// For signed comparison, the values for an i1 are 0 and -1
+    /// respectively. This maps into a truth table of:
+    /// LHS | RHS | LHS >=s RHS   | LHS implies RHS
+    ///  0  |  0  |  1 (0 >= 0)   |  1
+    ///  0  |  1  |  1 (0 >= -1)  |  1
+    ///  1  |  0  |  0 (-1 >= 0)  |  0
+    ///  1  |  1  |  1 (-1 >= -1) |  1
+    if (isImpliedCondition(LHS, RHS, Q.DL).getValueOr(false))
+      return getTrue(ITy);
+    break;
+  case ICmpInst::ICMP_SLT:
+    // X <s 0 -> X
+    if (match(RHS, m_Zero()))
+      return LHS;
+    break;
+  case ICmpInst::ICMP_SLE:
+    // X <=s -1 -> X
+    if (match(RHS, m_One()))
+      return LHS;
+    break;
+  case ICmpInst::ICMP_ULE:
+    if (isImpliedCondition(LHS, RHS, Q.DL).getValueOr(false))
+      return getTrue(ITy);
+    break;
+  }
+
+  return nullptr;
+}
+
+/// Try hard to fold icmp with zero RHS because this is a common case.
+static Value *simplifyICmpWithZero(CmpInst::Predicate Pred, Value *LHS,
+                                   Value *RHS, const Query &Q) {
+  if (!match(RHS, m_Zero()))
+    return nullptr;
+
+  Type *ITy = GetCompareTy(LHS); // The return type.
+  bool LHSKnownNonNegative, LHSKnownNegative;
+  switch (Pred) {
+  default:
+    llvm_unreachable("Unknown ICmp predicate!");
+  case ICmpInst::ICMP_ULT:
+    return getFalse(ITy);
+  case ICmpInst::ICMP_UGE:
+    return getTrue(ITy);
+  case ICmpInst::ICMP_EQ:
+  case ICmpInst::ICMP_ULE:
+    if (isKnownNonZero(LHS, Q.DL, 0, Q.AC, Q.CxtI, Q.DT))
+      return getFalse(ITy);
+    break;
+  case ICmpInst::ICMP_NE:
+  case ICmpInst::ICMP_UGT:
+    if (isKnownNonZero(LHS, Q.DL, 0, Q.AC, Q.CxtI, Q.DT))
+      return getTrue(ITy);
+    break;
+  case ICmpInst::ICMP_SLT:
+    ComputeSignBit(LHS, LHSKnownNonNegative, LHSKnownNegative, Q.DL, 0, Q.AC,
+                   Q.CxtI, Q.DT);
+    if (LHSKnownNegative)
+      return getTrue(ITy);
+    if (LHSKnownNonNegative)
+      return getFalse(ITy);
+    break;
+  case ICmpInst::ICMP_SLE:
+    ComputeSignBit(LHS, LHSKnownNonNegative, LHSKnownNegative, Q.DL, 0, Q.AC,
+                   Q.CxtI, Q.DT);
+    if (LHSKnownNegative)
+      return getTrue(ITy);
+    if (LHSKnownNonNegative && isKnownNonZero(LHS, Q.DL, 0, Q.AC, Q.CxtI, Q.DT))
+      return getFalse(ITy);
+    break;
+  case ICmpInst::ICMP_SGE:
+    ComputeSignBit(LHS, LHSKnownNonNegative, LHSKnownNegative, Q.DL, 0, Q.AC,
+                   Q.CxtI, Q.DT);
+    if (LHSKnownNegative)
+      return getFalse(ITy);
+    if (LHSKnownNonNegative)
+      return getTrue(ITy);
+    break;
+  case ICmpInst::ICMP_SGT:
+    ComputeSignBit(LHS, LHSKnownNonNegative, LHSKnownNegative, Q.DL, 0, Q.AC,
+                   Q.CxtI, Q.DT);
+    if (LHSKnownNegative)
+      return getFalse(ITy);
+    if (LHSKnownNonNegative && isKnownNonZero(LHS, Q.DL, 0, Q.AC, Q.CxtI, Q.DT))
+      return getTrue(ITy);
+    break;
+  }
+
+  return nullptr;
+}
+
 static Value *simplifyICmpWithConstant(CmpInst::Predicate Pred, Value *LHS,
                                        Value *RHS) {
   const APInt *C;
@@ -2289,6 +2496,516 @@ static Value *simplifyICmpWithConstant(CmpInst::Predicate Pred, Value *LHS,
   return nullptr;
 }
 
+static Value *simplifyICmpWithBinOp(CmpInst::Predicate Pred, Value *LHS,
+                                    Value *RHS, const Query &Q,
+                                    unsigned MaxRecurse) {
+  Type *ITy = GetCompareTy(LHS); // The return type.
+
+  BinaryOperator *LBO = dyn_cast<BinaryOperator>(LHS);
+  BinaryOperator *RBO = dyn_cast<BinaryOperator>(RHS);
+  if (MaxRecurse && (LBO || RBO)) {
+    // Analyze the case when either LHS or RHS is an add instruction.
+    Value *A = nullptr, *B = nullptr, *C = nullptr, *D = nullptr;
+    // LHS = A + B (or A and B are null); RHS = C + D (or C and D are null).
+    bool NoLHSWrapProblem = false, NoRHSWrapProblem = false;
+    if (LBO && LBO->getOpcode() == Instruction::Add) {
+      A = LBO->getOperand(0);
+      B = LBO->getOperand(1);
+      NoLHSWrapProblem =
+          ICmpInst::isEquality(Pred) ||
+          (CmpInst::isUnsigned(Pred) && LBO->hasNoUnsignedWrap()) ||
+          (CmpInst::isSigned(Pred) && LBO->hasNoSignedWrap());
+    }
+    if (RBO && RBO->getOpcode() == Instruction::Add) {
+      C = RBO->getOperand(0);
+      D = RBO->getOperand(1);
+      NoRHSWrapProblem =
+          ICmpInst::isEquality(Pred) ||
+          (CmpInst::isUnsigned(Pred) && RBO->hasNoUnsignedWrap()) ||
+          (CmpInst::isSigned(Pred) && RBO->hasNoSignedWrap());
+    }
+
+    // icmp (X+Y), X -> icmp Y, 0 for equalities or if there is no overflow.
+    if ((A == RHS || B == RHS) && NoLHSWrapProblem)
+      if (Value *V = SimplifyICmpInst(Pred, A == RHS ? B : A,
+                                      Constant::getNullValue(RHS->getType()), Q,
+                                      MaxRecurse - 1))
+        return V;
+
+    // icmp X, (X+Y) -> icmp 0, Y for equalities or if there is no overflow.
+    if ((C == LHS || D == LHS) && NoRHSWrapProblem)
+      if (Value *V =
+              SimplifyICmpInst(Pred, Constant::getNullValue(LHS->getType()),
+                               C == LHS ? D : C, Q, MaxRecurse - 1))
+        return V;
+
+    // icmp (X+Y), (X+Z) -> icmp Y,Z for equalities or if there is no overflow.
+    if (A && C && (A == C || A == D || B == C || B == D) && NoLHSWrapProblem &&
+        NoRHSWrapProblem) {
+      // Determine Y and Z in the form icmp (X+Y), (X+Z).
+      Value *Y, *Z;
+      if (A == C) {
+        // C + B == C + D  ->  B == D
+        Y = B;
+        Z = D;
+      } else if (A == D) {
+        // D + B == C + D  ->  B == C
+        Y = B;
+        Z = C;
+      } else if (B == C) {
+        // A + C == C + D  ->  A == D
+        Y = A;
+        Z = D;
+      } else {
+        assert(B == D);
+        // A + D == C + D  ->  A == C
+        Y = A;
+        Z = C;
+      }
+      if (Value *V = SimplifyICmpInst(Pred, Y, Z, Q, MaxRecurse - 1))
+        return V;
+    }
+  }
+
+  {
+    Value *Y = nullptr;
+    // icmp pred (or X, Y), X
+    if (LBO && match(LBO, m_c_Or(m_Value(Y), m_Specific(RHS)))) {
+      if (Pred == ICmpInst::ICMP_ULT)
+        return getFalse(ITy);
+      if (Pred == ICmpInst::ICMP_UGE)
+        return getTrue(ITy);
+
+      if (Pred == ICmpInst::ICMP_SLT || Pred == ICmpInst::ICMP_SGE) {
+        bool RHSKnownNonNegative, RHSKnownNegative;
+        bool YKnownNonNegative, YKnownNegative;
+        ComputeSignBit(RHS, RHSKnownNonNegative, RHSKnownNegative, Q.DL, 0,
+                       Q.AC, Q.CxtI, Q.DT);
+        ComputeSignBit(Y, YKnownNonNegative, YKnownNegative, Q.DL, 0, Q.AC,
+                       Q.CxtI, Q.DT);
+        if (RHSKnownNonNegative && YKnownNegative)
+          return Pred == ICmpInst::ICMP_SLT ? getTrue(ITy) : getFalse(ITy);
+        if (RHSKnownNegative || YKnownNonNegative)
+          return Pred == ICmpInst::ICMP_SLT ? getFalse(ITy) : getTrue(ITy);
+      }
+    }
+    // icmp pred X, (or X, Y)
+    if (RBO && match(RBO, m_c_Or(m_Value(Y), m_Specific(LHS)))) {
+      if (Pred == ICmpInst::ICMP_ULE)
+        return getTrue(ITy);
+      if (Pred == ICmpInst::ICMP_UGT)
+        return getFalse(ITy);
+
+      if (Pred == ICmpInst::ICMP_SGT || Pred == ICmpInst::ICMP_SLE) {
+        bool LHSKnownNonNegative, LHSKnownNegative;
+        bool YKnownNonNegative, YKnownNegative;
+        ComputeSignBit(LHS, LHSKnownNonNegative, LHSKnownNegative, Q.DL, 0,
+                       Q.AC, Q.CxtI, Q.DT);
+        ComputeSignBit(Y, YKnownNonNegative, YKnownNegative, Q.DL, 0, Q.AC,
+                       Q.CxtI, Q.DT);
+        if (LHSKnownNonNegative && YKnownNegative)
+          return Pred == ICmpInst::ICMP_SGT ? getTrue(ITy) : getFalse(ITy);
+        if (LHSKnownNegative || YKnownNonNegative)
+          return Pred == ICmpInst::ICMP_SGT ? getFalse(ITy) : getTrue(ITy);
+      }
+    }
+  }
+
+  // icmp pred (and X, Y), X
+  if (LBO && match(LBO, m_CombineOr(m_And(m_Value(), m_Specific(RHS)),
+                                    m_And(m_Specific(RHS), m_Value())))) {
+    if (Pred == ICmpInst::ICMP_UGT)
+      return getFalse(ITy);
+    if (Pred == ICmpInst::ICMP_ULE)
+      return getTrue(ITy);
+  }
+  // icmp pred X, (and X, Y)
+  if (RBO && match(RBO, m_CombineOr(m_And(m_Value(), m_Specific(LHS)),
+                                    m_And(m_Specific(LHS), m_Value())))) {
+    if (Pred == ICmpInst::ICMP_UGE)
+      return getTrue(ITy);
+    if (Pred == ICmpInst::ICMP_ULT)
+      return getFalse(ITy);
+  }
+
+  // 0 - (zext X) pred C
+  if (!CmpInst::isUnsigned(Pred) && match(LHS, m_Neg(m_ZExt(m_Value())))) {
+    if (ConstantInt *RHSC = dyn_cast<ConstantInt>(RHS)) {
+      if (RHSC->getValue().isStrictlyPositive()) {
+        if (Pred == ICmpInst::ICMP_SLT)
+          return ConstantInt::getTrue(RHSC->getContext());
+        if (Pred == ICmpInst::ICMP_SGE)
+          return ConstantInt::getFalse(RHSC->getContext());
+        if (Pred == ICmpInst::ICMP_EQ)
+          return ConstantInt::getFalse(RHSC->getContext());
+        if (Pred == ICmpInst::ICMP_NE)
+          return ConstantInt::getTrue(RHSC->getContext());
+      }
+      if (RHSC->getValue().isNonNegative()) {
+        if (Pred == ICmpInst::ICMP_SLE)
+          return ConstantInt::getTrue(RHSC->getContext());
+        if (Pred == ICmpInst::ICMP_SGT)
+          return ConstantInt::getFalse(RHSC->getContext());
+      }
+    }
+  }
+
+  // icmp pred (urem X, Y), Y
+  if (LBO && match(LBO, m_URem(m_Value(), m_Specific(RHS)))) {
+    bool KnownNonNegative, KnownNegative;
+    switch (Pred) {
+    default:
+      break;
+    case ICmpInst::ICMP_SGT:
+    case ICmpInst::ICMP_SGE:
+      ComputeSignBit(RHS, KnownNonNegative, KnownNegative, Q.DL, 0, Q.AC,
+                     Q.CxtI, Q.DT);
+      if (!KnownNonNegative)
+        break;
+      LLVM_FALLTHROUGH;
+    case ICmpInst::ICMP_EQ:
+    case ICmpInst::ICMP_UGT:
+    case ICmpInst::ICMP_UGE:
+      return getFalse(ITy);
+    case ICmpInst::ICMP_SLT:
+    case ICmpInst::ICMP_SLE:
+      ComputeSignBit(RHS, KnownNonNegative, KnownNegative, Q.DL, 0, Q.AC,
+                     Q.CxtI, Q.DT);
+      if (!KnownNonNegative)
+        break;
+      LLVM_FALLTHROUGH;
+    case ICmpInst::ICMP_NE:
+    case ICmpInst::ICMP_ULT:
+    case ICmpInst::ICMP_ULE:
+      return getTrue(ITy);
+    }
+  }
+
+  // icmp pred X, (urem Y, X)
+  if (RBO && match(RBO, m_URem(m_Value(), m_Specific(LHS)))) {
+    bool KnownNonNegative, KnownNegative;
+    switch (Pred) {
+    default:
+      break;
+    case ICmpInst::ICMP_SGT:
+    case ICmpInst::ICMP_SGE:
+      ComputeSignBit(LHS, KnownNonNegative, KnownNegative, Q.DL, 0, Q.AC,
+                     Q.CxtI, Q.DT);
+      if (!KnownNonNegative)
+        break;
+      LLVM_FALLTHROUGH;
+    case ICmpInst::ICMP_NE:
+    case ICmpInst::ICMP_UGT:
+    case ICmpInst::ICMP_UGE:
+      return getTrue(ITy);
+    case ICmpInst::ICMP_SLT:
+    case ICmpInst::ICMP_SLE:
+      ComputeSignBit(LHS, KnownNonNegative, KnownNegative, Q.DL, 0, Q.AC,
+                     Q.CxtI, Q.DT);
+      if (!KnownNonNegative)
+        break;
+      LLVM_FALLTHROUGH;
+    case ICmpInst::ICMP_EQ:
+    case ICmpInst::ICMP_ULT:
+    case ICmpInst::ICMP_ULE:
+      return getFalse(ITy);
+    }
+  }
+
+  // x >> y <=u x
+  // x udiv y <=u x.
+  if (LBO && (match(LBO, m_LShr(m_Specific(RHS), m_Value())) ||
+              match(LBO, m_UDiv(m_Specific(RHS), m_Value())))) {
+    // icmp pred (X op Y), X
+    if (Pred == ICmpInst::ICMP_UGT)
+      return getFalse(ITy);
+    if (Pred == ICmpInst::ICMP_ULE)
+      return getTrue(ITy);
+  }
+
+  // x >=u x >> y
+  // x >=u x udiv y.
+  if (RBO && (match(RBO, m_LShr(m_Specific(LHS), m_Value())) ||
+              match(RBO, m_UDiv(m_Specific(LHS), m_Value())))) {
+    // icmp pred X, (X op Y)
+    if (Pred == ICmpInst::ICMP_ULT)
+      return getFalse(ITy);
+    if (Pred == ICmpInst::ICMP_UGE)
+      return getTrue(ITy);
+  }
+
+  // handle:
+  //   CI2 << X == CI
+  //   CI2 << X != CI
+  //
+  //   where CI2 is a power of 2 and CI isn't
+  if (auto *CI = dyn_cast<ConstantInt>(RHS)) {
+    const APInt *CI2Val, *CIVal = &CI->getValue();
+    if (LBO && match(LBO, m_Shl(m_APInt(CI2Val), m_Value())) &&
+        CI2Val->isPowerOf2()) {
+      if (!CIVal->isPowerOf2()) {
+        // CI2 << X can equal zero in some circumstances,
+        // this simplification is unsafe if CI is zero.
+        //
+        // We know it is safe if:
+        // - The shift is nsw, we can't shift out the one bit.
+        // - The shift is nuw, we can't shift out the one bit.
+        // - CI2 is one
+        // - CI isn't zero
+        if (LBO->hasNoSignedWrap() || LBO->hasNoUnsignedWrap() ||
+            *CI2Val == 1 || !CI->isZero()) {
+          if (Pred == ICmpInst::ICMP_EQ)
+            return ConstantInt::getFalse(RHS->getContext());
+          if (Pred == ICmpInst::ICMP_NE)
+            return ConstantInt::getTrue(RHS->getContext());
+        }
+      }
+      if (CIVal->isSignBit() && *CI2Val == 1) {
+        if (Pred == ICmpInst::ICMP_UGT)
+          return ConstantInt::getFalse(RHS->getContext());
+        if (Pred == ICmpInst::ICMP_ULE)
+          return ConstantInt::getTrue(RHS->getContext());
+      }
+    }
+  }
+
+  if (MaxRecurse && LBO && RBO && LBO->getOpcode() == RBO->getOpcode() &&
+      LBO->getOperand(1) == RBO->getOperand(1)) {
+    switch (LBO->getOpcode()) {
+    default:
+      break;
+    case Instruction::UDiv:
+    case Instruction::LShr:
+      if (ICmpInst::isSigned(Pred))
+        break;
+      LLVM_FALLTHROUGH;
+    case Instruction::SDiv:
+    case Instruction::AShr:
+      if (!LBO->isExact() || !RBO->isExact())
+        break;
+      if (Value *V = SimplifyICmpInst(Pred, LBO->getOperand(0),
+                                      RBO->getOperand(0), Q, MaxRecurse - 1))
+        return V;
+      break;
+    case Instruction::Shl: {
+      bool NUW = LBO->hasNoUnsignedWrap() && RBO->hasNoUnsignedWrap();
+      bool NSW = LBO->hasNoSignedWrap() && RBO->hasNoSignedWrap();
+      if (!NUW && !NSW)
+        break;
+      if (!NSW && ICmpInst::isSigned(Pred))
+        break;
+      if (Value *V = SimplifyICmpInst(Pred, LBO->getOperand(0),
+                                      RBO->getOperand(0), Q, MaxRecurse - 1))
+        return V;
+      break;
+    }
+    }
+  }
+  return nullptr;
+}
+
+/// Simplify comparisons corresponding to integer min/max idioms.
+static Value *simplifyMinMax(CmpInst::Predicate Pred, Value *LHS, Value *RHS,
+                             const Query &Q, unsigned MaxRecurse) {
+  Type *ITy = GetCompareTy(LHS); // The return type.
+  Value *A, *B;
+  CmpInst::Predicate P = CmpInst::BAD_ICMP_PREDICATE;
+  CmpInst::Predicate EqP; // Chosen so that "A == max/min(A,B)" iff "A EqP B".
+
+  // Signed variants on "max(a,b)>=a -> true".
+  if (match(LHS, m_SMax(m_Value(A), m_Value(B))) && (A == RHS || B == RHS)) {
+    if (A != RHS)
+      std::swap(A, B);       // smax(A, B) pred A.
+    EqP = CmpInst::ICMP_SGE; // "A == smax(A, B)" iff "A sge B".
+    // We analyze this as smax(A, B) pred A.
+    P = Pred;
+  } else if (match(RHS, m_SMax(m_Value(A), m_Value(B))) &&
+             (A == LHS || B == LHS)) {
+    if (A != LHS)
+      std::swap(A, B);       // A pred smax(A, B).
+    EqP = CmpInst::ICMP_SGE; // "A == smax(A, B)" iff "A sge B".
+    // We analyze this as smax(A, B) swapped-pred A.
+    P = CmpInst::getSwappedPredicate(Pred);
+  } else if (match(LHS, m_SMin(m_Value(A), m_Value(B))) &&
+             (A == RHS || B == RHS)) {
+    if (A != RHS)
+      std::swap(A, B);       // smin(A, B) pred A.
+    EqP = CmpInst::ICMP_SLE; // "A == smin(A, B)" iff "A sle B".
+    // We analyze this as smax(-A, -B) swapped-pred -A.
+    // Note that we do not need to actually form -A or -B thanks to EqP.
+    P = CmpInst::getSwappedPredicate(Pred);
+  } else if (match(RHS, m_SMin(m_Value(A), m_Value(B))) &&
+             (A == LHS || B == LHS)) {
+    if (A != LHS)
+      std::swap(A, B);       // A pred smin(A, B).
+    EqP = CmpInst::ICMP_SLE; // "A == smin(A, B)" iff "A sle B".
+    // We analyze this as smax(-A, -B) pred -A.
+    // Note that we do not need to actually form -A or -B thanks to EqP.
+    P = Pred;
+  }
+  if (P != CmpInst::BAD_ICMP_PREDICATE) {
+    // Cases correspond to "max(A, B) p A".
+    switch (P) {
+    default:
+      break;
+    case CmpInst::ICMP_EQ:
+    case CmpInst::ICMP_SLE:
+      // Equivalent to "A EqP B".  This may be the same as the condition tested
+      // in the max/min; if so, we can just return that.
+      if (Value *V = ExtractEquivalentCondition(LHS, EqP, A, B))
+        return V;
+      if (Value *V = ExtractEquivalentCondition(RHS, EqP, A, B))
+        return V;
+      // Otherwise, see if "A EqP B" simplifies.
+      if (MaxRecurse)
+        if (Value *V = SimplifyICmpInst(EqP, A, B, Q, MaxRecurse - 1))
+          return V;
+      break;
+    case CmpInst::ICMP_NE:
+    case CmpInst::ICMP_SGT: {
+      CmpInst::Predicate InvEqP = CmpInst::getInversePredicate(EqP);
+      // Equivalent to "A InvEqP B".  This may be the same as the condition
+      // tested in the max/min; if so, we can just return that.
+      if (Value *V = ExtractEquivalentCondition(LHS, InvEqP, A, B))
+        return V;
+      if (Value *V = ExtractEquivalentCondition(RHS, InvEqP, A, B))
+        return V;
+      // Otherwise, see if "A InvEqP B" simplifies.
+      if (MaxRecurse)
+        if (Value *V = SimplifyICmpInst(InvEqP, A, B, Q, MaxRecurse - 1))
+          return V;
+      break;
+    }
+    case CmpInst::ICMP_SGE:
+      // Always true.
+      return getTrue(ITy);
+    case CmpInst::ICMP_SLT:
+      // Always false.
+      return getFalse(ITy);
+    }
+  }
+
+  // Unsigned variants on "max(a,b)>=a -> true".
+  P = CmpInst::BAD_ICMP_PREDICATE;
+  if (match(LHS, m_UMax(m_Value(A), m_Value(B))) && (A == RHS || B == RHS)) {
+    if (A != RHS)
+      std::swap(A, B);       // umax(A, B) pred A.
+    EqP = CmpInst::ICMP_UGE; // "A == umax(A, B)" iff "A uge B".
+    // We analyze this as umax(A, B) pred A.
+    P = Pred;
+  } else if (match(RHS, m_UMax(m_Value(A), m_Value(B))) &&
+             (A == LHS || B == LHS)) {
+    if (A != LHS)
+      std::swap(A, B);       // A pred umax(A, B).
+    EqP = CmpInst::ICMP_UGE; // "A == umax(A, B)" iff "A uge B".
+    // We analyze this as umax(A, B) swapped-pred A.
+    P = CmpInst::getSwappedPredicate(Pred);
+  } else if (match(LHS, m_UMin(m_Value(A), m_Value(B))) &&
+             (A == RHS || B == RHS)) {
+    if (A != RHS)
+      std::swap(A, B);       // umin(A, B) pred A.
+    EqP = CmpInst::ICMP_ULE; // "A == umin(A, B)" iff "A ule B".
+    // We analyze this as umax(-A, -B) swapped-pred -A.
+    // Note that we do not need to actually form -A or -B thanks to EqP.
+    P = CmpInst::getSwappedPredicate(Pred);
+  } else if (match(RHS, m_UMin(m_Value(A), m_Value(B))) &&
+             (A == LHS || B == LHS)) {
+    if (A != LHS)
+      std::swap(A, B);       // A pred umin(A, B).
+    EqP = CmpInst::ICMP_ULE; // "A == umin(A, B)" iff "A ule B".
+    // We analyze this as umax(-A, -B) pred -A.
+    // Note that we do not need to actually form -A or -B thanks to EqP.
+    P = Pred;
+  }
+  if (P != CmpInst::BAD_ICMP_PREDICATE) {
+    // Cases correspond to "max(A, B) p A".
+    switch (P) {
+    default:
+      break;
+    case CmpInst::ICMP_EQ:
+    case CmpInst::ICMP_ULE:
+      // Equivalent to "A EqP B".  This may be the same as the condition tested
+      // in the max/min; if so, we can just return that.
+      if (Value *V = ExtractEquivalentCondition(LHS, EqP, A, B))
+        return V;
+      if (Value *V = ExtractEquivalentCondition(RHS, EqP, A, B))
+        return V;
+      // Otherwise, see if "A EqP B" simplifies.
+      if (MaxRecurse)
+        if (Value *V = SimplifyICmpInst(EqP, A, B, Q, MaxRecurse - 1))
+          return V;
+      break;
+    case CmpInst::ICMP_NE:
+    case CmpInst::ICMP_UGT: {
+      CmpInst::Predicate InvEqP = CmpInst::getInversePredicate(EqP);
+      // Equivalent to "A InvEqP B".  This may be the same as the condition
+      // tested in the max/min; if so, we can just return that.
+      if (Value *V = ExtractEquivalentCondition(LHS, InvEqP, A, B))
+        return V;
+      if (Value *V = ExtractEquivalentCondition(RHS, InvEqP, A, B))
+        return V;
+      // Otherwise, see if "A InvEqP B" simplifies.
+      if (MaxRecurse)
+        if (Value *V = SimplifyICmpInst(InvEqP, A, B, Q, MaxRecurse - 1))
+          return V;
+      break;
+    }
+    case CmpInst::ICMP_UGE:
+      // Always true.
+      return getTrue(ITy);
+    case CmpInst::ICMP_ULT:
+      // Always false.
+      return getFalse(ITy);
+    }
+  }
+
+  // Variants on "max(x,y) >= min(x,z)".
+  Value *C, *D;
+  if (match(LHS, m_SMax(m_Value(A), m_Value(B))) &&
+      match(RHS, m_SMin(m_Value(C), m_Value(D))) &&
+      (A == C || A == D || B == C || B == D)) {
+    // max(x, ?) pred min(x, ?).
+    if (Pred == CmpInst::ICMP_SGE)
+      // Always true.
+      return getTrue(ITy);
+    if (Pred == CmpInst::ICMP_SLT)
+      // Always false.
+      return getFalse(ITy);
+  } else if (match(LHS, m_SMin(m_Value(A), m_Value(B))) &&
+             match(RHS, m_SMax(m_Value(C), m_Value(D))) &&
+             (A == C || A == D || B == C || B == D)) {
+    // min(x, ?) pred max(x, ?).
+    if (Pred == CmpInst::ICMP_SLE)
+      // Always true.
+      return getTrue(ITy);
+    if (Pred == CmpInst::ICMP_SGT)
+      // Always false.
+      return getFalse(ITy);
+  } else if (match(LHS, m_UMax(m_Value(A), m_Value(B))) &&
+             match(RHS, m_UMin(m_Value(C), m_Value(D))) &&
+             (A == C || A == D || B == C || B == D)) {
+    // max(x, ?) pred min(x, ?).
+    if (Pred == CmpInst::ICMP_UGE)
+      // Always true.
+      return getTrue(ITy);
+    if (Pred == CmpInst::ICMP_ULT)
+      // Always false.
+      return getFalse(ITy);
+  } else if (match(LHS, m_UMin(m_Value(A), m_Value(B))) &&
+             match(RHS, m_UMax(m_Value(C), m_Value(D))) &&
+             (A == C || A == D || B == C || B == D)) {
+    // min(x, ?) pred max(x, ?).
+    if (Pred == CmpInst::ICMP_ULE)
+      // Always true.
+      return getTrue(ITy);
+    if (Pred == CmpInst::ICMP_UGT)
+      // Always false.
+      return getFalse(ITy);
+  }
+
+  return nullptr;
+}
+
 /// Given operands for an ICmpInst, see if we can fold the result.
 /// If not, this returns null.
 static Value *SimplifyICmpInst(unsigned Predicate, Value *LHS, Value *RHS,
@@ -2306,7 +3023,6 @@ static Value *SimplifyICmpInst(unsigned Predicate, Value *LHS, Value *RHS,
   }
 
   Type *ITy = GetCompareTy(LHS); // The return type.
-  Type *OpTy = LHS->getType();   // The operand type.
 
   // icmp X, X -> true/false
   // X icmp undef -> true/false.  For example, icmp ugt %X, undef -> false
@@ -2314,118 +3030,11 @@ static Value *SimplifyICmpInst(unsigned Predicate, Value *LHS, Value *RHS,
   if (LHS == RHS || isa<UndefValue>(RHS))
     return ConstantInt::get(ITy, CmpInst::isTrueWhenEqual(Pred));
 
-  // Special case logic when the operands have i1 type.
-  if (OpTy->getScalarType()->isIntegerTy(1)) {
-    switch (Pred) {
-    default: break;
-    case ICmpInst::ICMP_EQ:
-      // X == 1 -> X
-      if (match(RHS, m_One()))
-        return LHS;
-      break;
-    case ICmpInst::ICMP_NE:
-      // X != 0 -> X
-      if (match(RHS, m_Zero()))
-        return LHS;
-      break;
-    case ICmpInst::ICMP_UGT:
-      // X >u 0 -> X
-      if (match(RHS, m_Zero()))
-        return LHS;
-      break;
-    case ICmpInst::ICMP_UGE: {
-      // X >=u 1 -> X
-      if (match(RHS, m_One()))
-        return LHS;
-      if (isImpliedCondition(RHS, LHS, Q.DL).getValueOr(false))
-        return getTrue(ITy);
-      break;
-    }
-    case ICmpInst::ICMP_SGE: {
-      /// For signed comparison, the values for an i1 are 0 and -1
-      /// respectively. This maps into a truth table of:
-      /// LHS | RHS | LHS >=s RHS   | LHS implies RHS
-      ///  0  |  0  |  1 (0 >= 0)   |  1
-      ///  0  |  1  |  1 (0 >= -1)  |  1
-      ///  1  |  0  |  0 (-1 >= 0)  |  0
-      ///  1  |  1  |  1 (-1 >= -1) |  1
-      if (isImpliedCondition(LHS, RHS, Q.DL).getValueOr(false))
-        return getTrue(ITy);
-      break;
-    }
-    case ICmpInst::ICMP_SLT:
-      // X <s 0 -> X
-      if (match(RHS, m_Zero()))
-        return LHS;
-      break;
-    case ICmpInst::ICMP_SLE:
-      // X <=s -1 -> X
-      if (match(RHS, m_One()))
-        return LHS;
-      break;
-    case ICmpInst::ICMP_ULE: {
-      if (isImpliedCondition(LHS, RHS, Q.DL).getValueOr(false))
-        return getTrue(ITy);
-      break;
-    }
-    }
-  }
+  if (Value *V = simplifyICmpOfBools(Pred, LHS, RHS, Q))
+    return V;
 
-  // If we are comparing with zero then try hard since this is a common case.
-  if (match(RHS, m_Zero())) {
-    bool LHSKnownNonNegative, LHSKnownNegative;
-    switch (Pred) {
-    default: llvm_unreachable("Unknown ICmp predicate!");
-    case ICmpInst::ICMP_ULT:
-      return getFalse(ITy);
-    case ICmpInst::ICMP_UGE:
-      return getTrue(ITy);
-    case ICmpInst::ICMP_EQ:
-    case ICmpInst::ICMP_ULE:
-      if (isKnownNonZero(LHS, Q.DL, 0, Q.AC, Q.CxtI, Q.DT))
-        return getFalse(ITy);
-      break;
-    case ICmpInst::ICMP_NE:
-    case ICmpInst::ICMP_UGT:
-      if (isKnownNonZero(LHS, Q.DL, 0, Q.AC, Q.CxtI, Q.DT))
-        return getTrue(ITy);
-      break;
-    case ICmpInst::ICMP_SLT:
-      ComputeSignBit(LHS, LHSKnownNonNegative, LHSKnownNegative, Q.DL, 0, Q.AC,
-                     Q.CxtI, Q.DT);
-      if (LHSKnownNegative)
-        return getTrue(ITy);
-      if (LHSKnownNonNegative)
-        return getFalse(ITy);
-      break;
-    case ICmpInst::ICMP_SLE:
-      ComputeSignBit(LHS, LHSKnownNonNegative, LHSKnownNegative, Q.DL, 0, Q.AC,
-                     Q.CxtI, Q.DT);
-      if (LHSKnownNegative)
-        return getTrue(ITy);
-      if (LHSKnownNonNegative &&
-          isKnownNonZero(LHS, Q.DL, 0, Q.AC, Q.CxtI, Q.DT))
-        return getFalse(ITy);
-      break;
-    case ICmpInst::ICMP_SGE:
-      ComputeSignBit(LHS, LHSKnownNonNegative, LHSKnownNegative, Q.DL, 0, Q.AC,
-                     Q.CxtI, Q.DT);
-      if (LHSKnownNegative)
-        return getFalse(ITy);
-      if (LHSKnownNonNegative)
-        return getTrue(ITy);
-      break;
-    case ICmpInst::ICMP_SGT:
-      ComputeSignBit(LHS, LHSKnownNonNegative, LHSKnownNegative, Q.DL, 0, Q.AC,
-                     Q.CxtI, Q.DT);
-      if (LHSKnownNegative)
-        return getFalse(ITy);
-      if (LHSKnownNonNegative &&
-          isKnownNonZero(LHS, Q.DL, 0, Q.AC, Q.CxtI, Q.DT))
-        return getTrue(ITy);
-      break;
-    }
-  }
+  if (Value *V = simplifyICmpWithZero(Pred, LHS, RHS, Q))
+    return V;
 
   if (Value *V = simplifyICmpWithConstant(Pred, LHS, RHS))
     return V;
@@ -2621,479 +3230,11 @@ static Value *SimplifyICmpInst(unsigned Predicate, Value *LHS, Value *RHS,
       ConstantInt::getTrue(Ctx) : ConstantInt::getFalse(Ctx);
   }
 
-  // Special logic for binary operators.
-  BinaryOperator *LBO = dyn_cast<BinaryOperator>(LHS);
-  BinaryOperator *RBO = dyn_cast<BinaryOperator>(RHS);
-  if (MaxRecurse && (LBO || RBO)) {
-    // Analyze the case when either LHS or RHS is an add instruction.
-    Value *A = nullptr, *B = nullptr, *C = nullptr, *D = nullptr;
-    // LHS = A + B (or A and B are null); RHS = C + D (or C and D are null).
-    bool NoLHSWrapProblem = false, NoRHSWrapProblem = false;
-    if (LBO && LBO->getOpcode() == Instruction::Add) {
-      A = LBO->getOperand(0); B = LBO->getOperand(1);
-      NoLHSWrapProblem = ICmpInst::isEquality(Pred) ||
-        (CmpInst::isUnsigned(Pred) && LBO->hasNoUnsignedWrap()) ||
-        (CmpInst::isSigned(Pred) && LBO->hasNoSignedWrap());
-    }
-    if (RBO && RBO->getOpcode() == Instruction::Add) {
-      C = RBO->getOperand(0); D = RBO->getOperand(1);
-      NoRHSWrapProblem = ICmpInst::isEquality(Pred) ||
-        (CmpInst::isUnsigned(Pred) && RBO->hasNoUnsignedWrap()) ||
-        (CmpInst::isSigned(Pred) && RBO->hasNoSignedWrap());
-    }
+  if (Value *V = simplifyICmpWithBinOp(Pred, LHS, RHS, Q, MaxRecurse))
+    return V;
 
-    // icmp (X+Y), X -> icmp Y, 0 for equalities or if there is no overflow.
-    if ((A == RHS || B == RHS) && NoLHSWrapProblem)
-      if (Value *V = SimplifyICmpInst(Pred, A == RHS ? B : A,
-                                      Constant::getNullValue(RHS->getType()),
-                                      Q, MaxRecurse-1))
-        return V;
-
-    // icmp X, (X+Y) -> icmp 0, Y for equalities or if there is no overflow.
-    if ((C == LHS || D == LHS) && NoRHSWrapProblem)
-      if (Value *V = SimplifyICmpInst(Pred,
-                                      Constant::getNullValue(LHS->getType()),
-                                      C == LHS ? D : C, Q, MaxRecurse-1))
-        return V;
-
-    // icmp (X+Y), (X+Z) -> icmp Y,Z for equalities or if there is no overflow.
-    if (A && C && (A == C || A == D || B == C || B == D) &&
-        NoLHSWrapProblem && NoRHSWrapProblem) {
-      // Determine Y and Z in the form icmp (X+Y), (X+Z).
-      Value *Y, *Z;
-      if (A == C) {
-        // C + B == C + D  ->  B == D
-        Y = B;
-        Z = D;
-      } else if (A == D) {
-        // D + B == C + D  ->  B == C
-        Y = B;
-        Z = C;
-      } else if (B == C) {
-        // A + C == C + D  ->  A == D
-        Y = A;
-        Z = D;
-      } else {
-        assert(B == D);
-        // A + D == C + D  ->  A == C
-        Y = A;
-        Z = C;
-      }
-      if (Value *V = SimplifyICmpInst(Pred, Y, Z, Q, MaxRecurse-1))
-        return V;
-    }
-  }
-
-  {
-    Value *Y = nullptr;
-    // icmp pred (or X, Y), X
-    if (LBO && match(LBO, m_c_Or(m_Value(Y), m_Specific(RHS)))) {
-      if (Pred == ICmpInst::ICMP_ULT)
-        return getFalse(ITy);
-      if (Pred == ICmpInst::ICMP_UGE)
-        return getTrue(ITy);
-
-      if (Pred == ICmpInst::ICMP_SLT || Pred == ICmpInst::ICMP_SGE) {
-        bool RHSKnownNonNegative, RHSKnownNegative;
-        bool YKnownNonNegative, YKnownNegative;
-        ComputeSignBit(RHS, RHSKnownNonNegative, RHSKnownNegative, Q.DL, 0,
-                       Q.AC, Q.CxtI, Q.DT);
-        ComputeSignBit(Y, YKnownNonNegative, YKnownNegative, Q.DL, 0, Q.AC,
-                       Q.CxtI, Q.DT);
-        if (RHSKnownNonNegative && YKnownNegative)
-          return Pred == ICmpInst::ICMP_SLT ? getTrue(ITy) : getFalse(ITy);
-        if (RHSKnownNegative || YKnownNonNegative)
-          return Pred == ICmpInst::ICMP_SLT ? getFalse(ITy) : getTrue(ITy);
-      }
-    }
-    // icmp pred X, (or X, Y)
-    if (RBO && match(RBO, m_c_Or(m_Value(Y), m_Specific(LHS)))) {
-      if (Pred == ICmpInst::ICMP_ULE)
-        return getTrue(ITy);
-      if (Pred == ICmpInst::ICMP_UGT)
-        return getFalse(ITy);
-
-      if (Pred == ICmpInst::ICMP_SGT || Pred == ICmpInst::ICMP_SLE) {
-        bool LHSKnownNonNegative, LHSKnownNegative;
-        bool YKnownNonNegative, YKnownNegative;
-        ComputeSignBit(LHS, LHSKnownNonNegative, LHSKnownNegative, Q.DL, 0,
-                       Q.AC, Q.CxtI, Q.DT);
-        ComputeSignBit(Y, YKnownNonNegative, YKnownNegative, Q.DL, 0, Q.AC,
-                       Q.CxtI, Q.DT);
-        if (LHSKnownNonNegative && YKnownNegative)
-          return Pred == ICmpInst::ICMP_SGT ? getTrue(ITy) : getFalse(ITy);
-        if (LHSKnownNegative || YKnownNonNegative)
-          return Pred == ICmpInst::ICMP_SGT ? getFalse(ITy) : getTrue(ITy);
-      }
-    }
-  }
-
-  // icmp pred (and X, Y), X
-  if (LBO && match(LBO, m_CombineOr(m_And(m_Value(), m_Specific(RHS)),
-                                    m_And(m_Specific(RHS), m_Value())))) {
-    if (Pred == ICmpInst::ICMP_UGT)
-      return getFalse(ITy);
-    if (Pred == ICmpInst::ICMP_ULE)
-      return getTrue(ITy);
-  }
-  // icmp pred X, (and X, Y)
-  if (RBO && match(RBO, m_CombineOr(m_And(m_Value(), m_Specific(LHS)),
-                                    m_And(m_Specific(LHS), m_Value())))) {
-    if (Pred == ICmpInst::ICMP_UGE)
-      return getTrue(ITy);
-    if (Pred == ICmpInst::ICMP_ULT)
-      return getFalse(ITy);
-  }
-
-  // 0 - (zext X) pred C
-  if (!CmpInst::isUnsigned(Pred) && match(LHS, m_Neg(m_ZExt(m_Value())))) {
-    if (ConstantInt *RHSC = dyn_cast<ConstantInt>(RHS)) {
-      if (RHSC->getValue().isStrictlyPositive()) {
-        if (Pred == ICmpInst::ICMP_SLT)
-          return ConstantInt::getTrue(RHSC->getContext());
-        if (Pred == ICmpInst::ICMP_SGE)
-          return ConstantInt::getFalse(RHSC->getContext());
-        if (Pred == ICmpInst::ICMP_EQ)
-          return ConstantInt::getFalse(RHSC->getContext());
-        if (Pred == ICmpInst::ICMP_NE)
-          return ConstantInt::getTrue(RHSC->getContext());
-      }
-      if (RHSC->getValue().isNonNegative()) {
-        if (Pred == ICmpInst::ICMP_SLE)
-          return ConstantInt::getTrue(RHSC->getContext());
-        if (Pred == ICmpInst::ICMP_SGT)
-          return ConstantInt::getFalse(RHSC->getContext());
-      }
-    }
-  }
-
-  // icmp pred (urem X, Y), Y
-  if (LBO && match(LBO, m_URem(m_Value(), m_Specific(RHS)))) {
-    bool KnownNonNegative, KnownNegative;
-    switch (Pred) {
-    default:
-      break;
-    case ICmpInst::ICMP_SGT:
-    case ICmpInst::ICMP_SGE:
-      ComputeSignBit(RHS, KnownNonNegative, KnownNegative, Q.DL, 0, Q.AC,
-                     Q.CxtI, Q.DT);
-      if (!KnownNonNegative)
-        break;
-      LLVM_FALLTHROUGH;
-    case ICmpInst::ICMP_EQ:
-    case ICmpInst::ICMP_UGT:
-    case ICmpInst::ICMP_UGE:
-      return getFalse(ITy);
-    case ICmpInst::ICMP_SLT:
-    case ICmpInst::ICMP_SLE:
-      ComputeSignBit(RHS, KnownNonNegative, KnownNegative, Q.DL, 0, Q.AC,
-                     Q.CxtI, Q.DT);
-      if (!KnownNonNegative)
-        break;
-      LLVM_FALLTHROUGH;
-    case ICmpInst::ICMP_NE:
-    case ICmpInst::ICMP_ULT:
-    case ICmpInst::ICMP_ULE:
-      return getTrue(ITy);
-    }
-  }
-
-  // icmp pred X, (urem Y, X)
-  if (RBO && match(RBO, m_URem(m_Value(), m_Specific(LHS)))) {
-    bool KnownNonNegative, KnownNegative;
-    switch (Pred) {
-    default:
-      break;
-    case ICmpInst::ICMP_SGT:
-    case ICmpInst::ICMP_SGE:
-      ComputeSignBit(LHS, KnownNonNegative, KnownNegative, Q.DL, 0, Q.AC,
-                     Q.CxtI, Q.DT);
-      if (!KnownNonNegative)
-        break;
-      LLVM_FALLTHROUGH;
-    case ICmpInst::ICMP_NE:
-    case ICmpInst::ICMP_UGT:
-    case ICmpInst::ICMP_UGE:
-      return getTrue(ITy);
-    case ICmpInst::ICMP_SLT:
-    case ICmpInst::ICMP_SLE:
-      ComputeSignBit(LHS, KnownNonNegative, KnownNegative, Q.DL, 0, Q.AC,
-                     Q.CxtI, Q.DT);
-      if (!KnownNonNegative)
-        break;
-      LLVM_FALLTHROUGH;
-    case ICmpInst::ICMP_EQ:
-    case ICmpInst::ICMP_ULT:
-    case ICmpInst::ICMP_ULE:
-      return getFalse(ITy);
-    }
-  }
-
-  // x >> y <=u x
-  // x udiv y <=u x.
-  if (LBO && (match(LBO, m_LShr(m_Specific(RHS), m_Value())) ||
-              match(LBO, m_UDiv(m_Specific(RHS), m_Value())))) {
-    // icmp pred (X op Y), X
-    if (Pred == ICmpInst::ICMP_UGT)
-      return getFalse(ITy);
-    if (Pred == ICmpInst::ICMP_ULE)
-      return getTrue(ITy);
-  }
-
-  // handle:
-  //   CI2 << X == CI
-  //   CI2 << X != CI
-  //
-  //   where CI2 is a power of 2 and CI isn't
-  if (auto *CI = dyn_cast<ConstantInt>(RHS)) {
-    const APInt *CI2Val, *CIVal = &CI->getValue();
-    if (LBO && match(LBO, m_Shl(m_APInt(CI2Val), m_Value())) &&
-        CI2Val->isPowerOf2()) {
-      if (!CIVal->isPowerOf2()) {
-        // CI2 << X can equal zero in some circumstances,
-        // this simplification is unsafe if CI is zero.
-        //
-        // We know it is safe if:
-        // - The shift is nsw, we can't shift out the one bit.
-        // - The shift is nuw, we can't shift out the one bit.
-        // - CI2 is one
-        // - CI isn't zero
-        if (LBO->hasNoSignedWrap() || LBO->hasNoUnsignedWrap() ||
-            *CI2Val == 1 || !CI->isZero()) {
-          if (Pred == ICmpInst::ICMP_EQ)
-            return ConstantInt::getFalse(RHS->getContext());
-          if (Pred == ICmpInst::ICMP_NE)
-            return ConstantInt::getTrue(RHS->getContext());
-        }
-      }
-      if (CIVal->isSignBit() && *CI2Val == 1) {
-        if (Pred == ICmpInst::ICMP_UGT)
-          return ConstantInt::getFalse(RHS->getContext());
-        if (Pred == ICmpInst::ICMP_ULE)
-          return ConstantInt::getTrue(RHS->getContext());
-      }
-    }
-  }
-
-  if (MaxRecurse && LBO && RBO && LBO->getOpcode() == RBO->getOpcode() &&
-      LBO->getOperand(1) == RBO->getOperand(1)) {
-    switch (LBO->getOpcode()) {
-    default: break;
-    case Instruction::UDiv:
-    case Instruction::LShr:
-      if (ICmpInst::isSigned(Pred))
-        break;
-      LLVM_FALLTHROUGH;
-    case Instruction::SDiv:
-    case Instruction::AShr:
-      if (!LBO->isExact() || !RBO->isExact())
-        break;
-      if (Value *V = SimplifyICmpInst(Pred, LBO->getOperand(0),
-                                      RBO->getOperand(0), Q, MaxRecurse-1))
-        return V;
-      break;
-    case Instruction::Shl: {
-      bool NUW = LBO->hasNoUnsignedWrap() && RBO->hasNoUnsignedWrap();
-      bool NSW = LBO->hasNoSignedWrap() && RBO->hasNoSignedWrap();
-      if (!NUW && !NSW)
-        break;
-      if (!NSW && ICmpInst::isSigned(Pred))
-        break;
-      if (Value *V = SimplifyICmpInst(Pred, LBO->getOperand(0),
-                                      RBO->getOperand(0), Q, MaxRecurse-1))
-        return V;
-      break;
-    }
-    }
-  }
-
-  // Simplify comparisons involving max/min.
-  Value *A, *B;
-  CmpInst::Predicate P = CmpInst::BAD_ICMP_PREDICATE;
-  CmpInst::Predicate EqP; // Chosen so that "A == max/min(A,B)" iff "A EqP B".
-
-  // Signed variants on "max(a,b)>=a -> true".
-  if (match(LHS, m_SMax(m_Value(A), m_Value(B))) && (A == RHS || B == RHS)) {
-    if (A != RHS) std::swap(A, B); // smax(A, B) pred A.
-    EqP = CmpInst::ICMP_SGE; // "A == smax(A, B)" iff "A sge B".
-    // We analyze this as smax(A, B) pred A.
-    P = Pred;
-  } else if (match(RHS, m_SMax(m_Value(A), m_Value(B))) &&
-             (A == LHS || B == LHS)) {
-    if (A != LHS) std::swap(A, B); // A pred smax(A, B).
-    EqP = CmpInst::ICMP_SGE; // "A == smax(A, B)" iff "A sge B".
-    // We analyze this as smax(A, B) swapped-pred A.
-    P = CmpInst::getSwappedPredicate(Pred);
-  } else if (match(LHS, m_SMin(m_Value(A), m_Value(B))) &&
-             (A == RHS || B == RHS)) {
-    if (A != RHS) std::swap(A, B); // smin(A, B) pred A.
-    EqP = CmpInst::ICMP_SLE; // "A == smin(A, B)" iff "A sle B".
-    // We analyze this as smax(-A, -B) swapped-pred -A.
-    // Note that we do not need to actually form -A or -B thanks to EqP.
-    P = CmpInst::getSwappedPredicate(Pred);
-  } else if (match(RHS, m_SMin(m_Value(A), m_Value(B))) &&
-             (A == LHS || B == LHS)) {
-    if (A != LHS) std::swap(A, B); // A pred smin(A, B).
-    EqP = CmpInst::ICMP_SLE; // "A == smin(A, B)" iff "A sle B".
-    // We analyze this as smax(-A, -B) pred -A.
-    // Note that we do not need to actually form -A or -B thanks to EqP.
-    P = Pred;
-  }
-  if (P != CmpInst::BAD_ICMP_PREDICATE) {
-    // Cases correspond to "max(A, B) p A".
-    switch (P) {
-    default:
-      break;
-    case CmpInst::ICMP_EQ:
-    case CmpInst::ICMP_SLE:
-      // Equivalent to "A EqP B".  This may be the same as the condition tested
-      // in the max/min; if so, we can just return that.
-      if (Value *V = ExtractEquivalentCondition(LHS, EqP, A, B))
-        return V;
-      if (Value *V = ExtractEquivalentCondition(RHS, EqP, A, B))
-        return V;
-      // Otherwise, see if "A EqP B" simplifies.
-      if (MaxRecurse)
-        if (Value *V = SimplifyICmpInst(EqP, A, B, Q, MaxRecurse-1))
-          return V;
-      break;
-    case CmpInst::ICMP_NE:
-    case CmpInst::ICMP_SGT: {
-      CmpInst::Predicate InvEqP = CmpInst::getInversePredicate(EqP);
-      // Equivalent to "A InvEqP B".  This may be the same as the condition
-      // tested in the max/min; if so, we can just return that.
-      if (Value *V = ExtractEquivalentCondition(LHS, InvEqP, A, B))
-        return V;
-      if (Value *V = ExtractEquivalentCondition(RHS, InvEqP, A, B))
-        return V;
-      // Otherwise, see if "A InvEqP B" simplifies.
-      if (MaxRecurse)
-        if (Value *V = SimplifyICmpInst(InvEqP, A, B, Q, MaxRecurse-1))
-          return V;
-      break;
-    }
-    case CmpInst::ICMP_SGE:
-      // Always true.
-      return getTrue(ITy);
-    case CmpInst::ICMP_SLT:
-      // Always false.
-      return getFalse(ITy);
-    }
-  }
-
-  // Unsigned variants on "max(a,b)>=a -> true".
-  P = CmpInst::BAD_ICMP_PREDICATE;
-  if (match(LHS, m_UMax(m_Value(A), m_Value(B))) && (A == RHS || B == RHS)) {
-    if (A != RHS) std::swap(A, B); // umax(A, B) pred A.
-    EqP = CmpInst::ICMP_UGE; // "A == umax(A, B)" iff "A uge B".
-    // We analyze this as umax(A, B) pred A.
-    P = Pred;
-  } else if (match(RHS, m_UMax(m_Value(A), m_Value(B))) &&
-             (A == LHS || B == LHS)) {
-    if (A != LHS) std::swap(A, B); // A pred umax(A, B).
-    EqP = CmpInst::ICMP_UGE; // "A == umax(A, B)" iff "A uge B".
-    // We analyze this as umax(A, B) swapped-pred A.
-    P = CmpInst::getSwappedPredicate(Pred);
-  } else if (match(LHS, m_UMin(m_Value(A), m_Value(B))) &&
-             (A == RHS || B == RHS)) {
-    if (A != RHS) std::swap(A, B); // umin(A, B) pred A.
-    EqP = CmpInst::ICMP_ULE; // "A == umin(A, B)" iff "A ule B".
-    // We analyze this as umax(-A, -B) swapped-pred -A.
-    // Note that we do not need to actually form -A or -B thanks to EqP.
-    P = CmpInst::getSwappedPredicate(Pred);
-  } else if (match(RHS, m_UMin(m_Value(A), m_Value(B))) &&
-             (A == LHS || B == LHS)) {
-    if (A != LHS) std::swap(A, B); // A pred umin(A, B).
-    EqP = CmpInst::ICMP_ULE; // "A == umin(A, B)" iff "A ule B".
-    // We analyze this as umax(-A, -B) pred -A.
-    // Note that we do not need to actually form -A or -B thanks to EqP.
-    P = Pred;
-  }
-  if (P != CmpInst::BAD_ICMP_PREDICATE) {
-    // Cases correspond to "max(A, B) p A".
-    switch (P) {
-    default:
-      break;
-    case CmpInst::ICMP_EQ:
-    case CmpInst::ICMP_ULE:
-      // Equivalent to "A EqP B".  This may be the same as the condition tested
-      // in the max/min; if so, we can just return that.
-      if (Value *V = ExtractEquivalentCondition(LHS, EqP, A, B))
-        return V;
-      if (Value *V = ExtractEquivalentCondition(RHS, EqP, A, B))
-        return V;
-      // Otherwise, see if "A EqP B" simplifies.
-      if (MaxRecurse)
-        if (Value *V = SimplifyICmpInst(EqP, A, B, Q, MaxRecurse-1))
-          return V;
-      break;
-    case CmpInst::ICMP_NE:
-    case CmpInst::ICMP_UGT: {
-      CmpInst::Predicate InvEqP = CmpInst::getInversePredicate(EqP);
-      // Equivalent to "A InvEqP B".  This may be the same as the condition
-      // tested in the max/min; if so, we can just return that.
-      if (Value *V = ExtractEquivalentCondition(LHS, InvEqP, A, B))
-        return V;
-      if (Value *V = ExtractEquivalentCondition(RHS, InvEqP, A, B))
-        return V;
-      // Otherwise, see if "A InvEqP B" simplifies.
-      if (MaxRecurse)
-        if (Value *V = SimplifyICmpInst(InvEqP, A, B, Q, MaxRecurse-1))
-          return V;
-      break;
-    }
-    case CmpInst::ICMP_UGE:
-      // Always true.
-      return getTrue(ITy);
-    case CmpInst::ICMP_ULT:
-      // Always false.
-      return getFalse(ITy);
-    }
-  }
-
-  // Variants on "max(x,y) >= min(x,z)".
-  Value *C, *D;
-  if (match(LHS, m_SMax(m_Value(A), m_Value(B))) &&
-      match(RHS, m_SMin(m_Value(C), m_Value(D))) &&
-      (A == C || A == D || B == C || B == D)) {
-    // max(x, ?) pred min(x, ?).
-    if (Pred == CmpInst::ICMP_SGE)
-      // Always true.
-      return getTrue(ITy);
-    if (Pred == CmpInst::ICMP_SLT)
-      // Always false.
-      return getFalse(ITy);
-  } else if (match(LHS, m_SMin(m_Value(A), m_Value(B))) &&
-             match(RHS, m_SMax(m_Value(C), m_Value(D))) &&
-             (A == C || A == D || B == C || B == D)) {
-    // min(x, ?) pred max(x, ?).
-    if (Pred == CmpInst::ICMP_SLE)
-      // Always true.
-      return getTrue(ITy);
-    if (Pred == CmpInst::ICMP_SGT)
-      // Always false.
-      return getFalse(ITy);
-  } else if (match(LHS, m_UMax(m_Value(A), m_Value(B))) &&
-             match(RHS, m_UMin(m_Value(C), m_Value(D))) &&
-             (A == C || A == D || B == C || B == D)) {
-    // max(x, ?) pred min(x, ?).
-    if (Pred == CmpInst::ICMP_UGE)
-      // Always true.
-      return getTrue(ITy);
-    if (Pred == CmpInst::ICMP_ULT)
-      // Always false.
-      return getFalse(ITy);
-  } else if (match(LHS, m_UMin(m_Value(A), m_Value(B))) &&
-             match(RHS, m_UMax(m_Value(C), m_Value(D))) &&
-             (A == C || A == D || B == C || B == D)) {
-    // min(x, ?) pred max(x, ?).
-    if (Pred == CmpInst::ICMP_ULE)
-      // Always true.
-      return getTrue(ITy);
-    if (Pred == CmpInst::ICMP_UGT)
-      // Always false.
-      return getFalse(ITy);
-  }
+  if (Value *V = simplifyMinMax(Pred, LHS, RHS, Q, MaxRecurse))
+    return V;
 
   // Simplify comparisons of related pointers using a powerful, recursive
   // GEP-walk when we have target data available..
@@ -3956,6 +4097,8 @@ static Value *SimplifyFPBinOp(unsigned Opcode, Value *LHS, Value *RHS,
     return SimplifyFSubInst(LHS, RHS, FMF, Q, MaxRecurse);
   case Instruction::FMul:
     return SimplifyFMulInst(LHS, RHS, FMF, Q, MaxRecurse);
+  case Instruction::FDiv:
+    return SimplifyFDivInst(LHS, RHS, FMF, Q, MaxRecurse);
   default:
     return SimplifyBinOp(Opcode, LHS, RHS, Q, MaxRecurse);
   }
@@ -4352,13 +4495,13 @@ Value *llvm::SimplifyInstruction(Instruction *I, const DataLayout &DL,
 
   // In general, it is possible for computeKnownBits to determine all bits in a
   // value even when the operands are not all constants.
-  if (!Result && I->getType()->isIntegerTy()) {
+  if (!Result && I->getType()->isIntOrIntVectorTy()) {
     unsigned BitWidth = I->getType()->getScalarSizeInBits();
     APInt KnownZero(BitWidth, 0);
     APInt KnownOne(BitWidth, 0);
     computeKnownBits(I, KnownZero, KnownOne, DL, /*Depth*/0, AC, I, DT);
     if ((KnownZero | KnownOne).isAllOnesValue())
-      Result = ConstantInt::get(I->getContext(), KnownOne);
+      Result = ConstantInt::get(I->getType(), KnownOne);
   }
 
   /// If called on unreachable code, the above logic may report that the

@@ -89,10 +89,9 @@ bb3:
 
 ; GCN-LABEL: {{^}}uniform_conditional_min_long_forward_vcnd_branch:
 ; GCN: s_load_dword [[CND:s[0-9]+]]
-; GCN-DAG: v_cmp_eq_f32_e64 [[CMP:s\[[0-9]+:[0-9]+\]]], [[CND]], 0
 ; GCN-DAG: v_mov_b32_e32 [[V_CND:v[0-9]+]], [[CND]]
-; GCN: s_and_b64 vcc, exec, [[CMP]]
-; GCN-NEXT: s_cbranch_vccz [[LONGBB:BB[0-9]+_[0-9]+]]
+; GCN-DAG: v_cmp_eq_f32_e64 vcc, [[CND]], 0
+; GCN: s_cbranch_vccz [[LONGBB:BB[0-9]+_[0-9]+]]
 
 ; GCN-NEXT: [[LONG_JUMP:BB[0-9]+_[0-9]+]]: ; %bb0
 ; GCN-NEXT: s_getpc_b64 vcc
@@ -164,14 +163,13 @@ bb3:
   ret void
 }
 
-; FIXME: Should be able to use s_cbranch_scc0
 ; GCN-LABEL: {{^}}long_backward_sbranch:
-; GCN: v_mov_b32_e32 [[LOOPIDX:v[0-9]+]], 0{{$}}
+; GCN: s_mov_b32 [[LOOPIDX:s[0-9]+]], 0{{$}}
 
 ; GCN: [[LOOPBB:BB[0-9]+_[0-9]+]]: ; %bb2
 ; GCN-NEXT: ; =>This Inner Loop Header: Depth=1
-; GCN-NEXT: v_add_i32_e32 [[INC:v[0-9]+]], vcc, 1, [[LOOPIDX]]
-; GCN-NEXT: v_cmp_gt_i32_e32 vcc, 10, [[INC]]
+; GCN-NEXT: s_add_i32 [[INC:s[0-9]+]], [[LOOPIDX]], 1
+; GCN-NEXT: s_cmp_lt_i32 [[INC]], 10
 
 ; GCN-NEXT: ;;#ASMSTART
 ; GCN-NEXT: v_nop_e64
@@ -179,8 +177,7 @@ bb3:
 ; GCN-NEXT: v_nop_e64
 ; GCN-NEXT: ;;#ASMEND
 
-; GCN-NEXT: s_and_b64 vcc, exec, vcc
-; GCN-NEXT: s_cbranch_vccz [[ENDBB:BB[0-9]+_[0-9]+]]
+; GCN-NEXT: s_cbranch_scc0 [[ENDBB:BB[0-9]+_[0-9]+]]
 
 ; GCN-NEXT: [[LONG_JUMP:BB[0-9]+_[0-9]+]]: ; %bb2
 ; GCN-NEXT: ; in Loop: Header=[[LOOPBB]] Depth=1
@@ -427,6 +424,8 @@ endif:
 ; GCN-NEXT: s_setpc_b64 vcc
 
 ; GCN-NEXT: [[LOOP_BODY]]: ; %loop_body
+; GCN: s_mov_b64 vcc, -1{{$}}
+; GCN: ;;#ASMSTART
 ; GCN: v_nop_e64
 ; GCN: v_nop_e64
 ; GCN: v_nop_e64
@@ -434,7 +433,6 @@ endif:
 ; GCN: v_nop_e64
 ; GCN: v_nop_e64
 ; GCN: ;;#ASMEND
-; GCN-NEXT: s_and_b64 vcc, exec, -1{{$}}
 ; GCN-NEXT: s_cbranch_vccz [[RET]]
 
 ; GCN-NEXT: [[LONGBB:BB[0-9]+_[0-9]+]]: ; %loop_body
@@ -472,6 +470,59 @@ loop_body:
 
 ret:
   store volatile i32 7, i32 addrspace(1)* undef
+  ret void
+}
+
+; GCN-LABEL: {{^}}long_branch_hang:
+; GCN: s_cmp_lt_i32 s{{[0-9]+}}, 6
+; GCN-NEXT: s_cbranch_scc0 [[LONG_BR_0:BB[0-9]+_[0-9]+]]
+; GCN-NEXT: BB{{[0-9]+_[0-9]+}}:
+
+; GCN: s_add_u32 vcc_lo, vcc_lo, [[LONG_BR_DEST0:BB[0-9]+_[0-9]+]]-(
+; GCN: s_setpc_b64
+
+; GCN-NEXT: [[LONG_BR_0]]:
+; GCN-DAG: v_cmp_lt_i32
+; GCN-DAG: v_cmp_gt_i32
+; GCN: s_cbranch_vccnz
+
+; GCN: s_setpc_b64
+; GCN: s_setpc_b64
+
+; GCN: [[LONG_BR_DEST0]]
+; GCN: v_cmp_ne_u32_e32
+; GCN-NEXT: s_cbranch_vccz
+; GCN: s_setpc_b64
+
+; GCN: s_endpgm
+define amdgpu_kernel void @long_branch_hang(i32 addrspace(1)* nocapture %arg, i32 %arg1, i32 %arg2, i32 %arg3, i32 %arg4, i64 %arg5) #0 {
+bb:
+  %tmp = icmp slt i32 %arg2, 9
+  %tmp6 = icmp eq i32 %arg1, 0
+  %tmp7 = icmp sgt i32 %arg4, 0
+  %tmp8 = icmp sgt i32 %arg4, 5
+  br i1 %tmp8, label %bb9, label %bb13
+
+bb9:                                              ; preds = %bb
+  %tmp10 = and i1 %tmp7, %tmp
+  %tmp11 = icmp slt i32 %arg3, %arg4
+  %tmp12 = or i1 %tmp11, %tmp7
+  br i1 %tmp12, label %bb19, label %bb14
+
+bb13:                                             ; preds = %bb
+  br i1 %tmp6, label %bb19, label %bb14
+
+bb14:                                             ; preds = %bb13, %bb9
+  %tmp15 = icmp slt i32 %arg3, %arg4
+  %tmp16 = or i1 %tmp15, %tmp
+  %tmp17 = and i1 %tmp6, %tmp16
+  %tmp18 = zext i1 %tmp17 to i32
+  br label %bb19
+
+bb19:                                             ; preds = %bb14, %bb13, %bb9
+  %tmp20 = phi i32 [ undef, %bb9 ], [ undef, %bb13 ], [ %tmp18, %bb14 ]
+  %tmp21 = getelementptr inbounds i32, i32 addrspace(1)* %arg, i64 %arg5
+  store i32 %tmp20, i32 addrspace(1)* %tmp21, align 4
   ret void
 }
 
