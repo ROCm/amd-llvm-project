@@ -11998,7 +11998,7 @@ void HCC::CXXAMPLink::ConstructJob(Compilation &C,
       //       global variable so as to allow easy extension in the future.
       static constexpr const char prefix[] = "--amdgpu-target=";
       static constexpr unsigned int discard_sz = 3u;
-      static const std::regex gfx_ip{"gfx(701|801|802|803)"};
+      static const std::regex gfx_ip{"gfx(700|701|801|802|803)"};
       static const std::regex long_gfx_ip_prefix{"AMD:AMDGPU:"}; // Temporary.
 
       // TODO: this is temporary.
@@ -12009,6 +12009,7 @@ void HCC::CXXAMPLink::ConstructJob(Compilation &C,
       if (std::regex_search(AMDGPUTarget, gfx_ip)) {
         std::string t{prefix};
         switch (std::atoi(AMDGPUTarget.data() + discard_sz)) {
+        case 700: t += "kaveri";  break;
         case 701: t += "hawaii";  break;
         case 801: t += "carrizo"; break;
         case 802: t += "tonga";   break;
