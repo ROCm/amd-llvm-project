@@ -50,7 +50,6 @@
 
 #include <algorithm>
 #include <cctype>
-#include <regex>
 #include <string>
 
 using namespace clang::driver;
@@ -11998,15 +11997,15 @@ void HCC::CXXAMPLink::ConstructJob(Compilation &C,
       //       global variable so as to allow easy extension in the future.
       static constexpr const char prefix[] = "--amdgpu-target=";
       static constexpr unsigned int discard_sz = 3u;
-      static const std::regex gfx_ip{"gfx(700|701|801|802|803)"};
-      static const std::regex long_gfx_ip_prefix{"AMD:AMDGPU:"}; // Temporary.
+      static const std::string gfx_ip{"gfx"};
+      static const std::string long_gfx_ip_prefix{"AMD:AMDGPU:"}; // Temporary.
 
       // TODO: this is temporary.
-      if (std::regex_search(AMDGPUTarget, long_gfx_ip_prefix)) {
+      if (AMDGPUTarget.find_first_of(long_gfx_ip_prefix) == 0u) {
           AMDGPUTarget = temporaryReplaceLongFormGFXIp(C, AMDGPUTarget);
       }
 
-      if (std::regex_search(AMDGPUTarget, gfx_ip)) {
+      if (AMDGPUTarget.find_first_of(gfx_ip) == 0u) {
         std::string t{prefix};
         switch (std::atoi(AMDGPUTarget.data() + discard_sz)) {
         case 700: t += "kaveri";  break;
