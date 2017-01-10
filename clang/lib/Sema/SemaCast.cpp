@@ -1823,6 +1823,9 @@ static void checkIntToPointerCast(bool CStyle, SourceLocation Loc,
                                   Sema &Self) {
   QualType SrcType = SrcExpr->getType();
 
+
+#if 0
+
   // C++AMP-specific rule checks
   if (!CStyle && SrcType->isIntegralType(Self.Context)
       && !SrcType->isBooleanType()
@@ -1837,6 +1840,26 @@ static void checkIntToPointerCast(bool CStyle, SourceLocation Loc,
       }
     }
   }
+
+#else
+
+#if 1
+  // C++AMP-specific rule checks
+  if (Self.getLangOpts().CPlusPlusAMP
+      && Self.IsInAMPRestricted()
+      && !Self.getLangOpts().HSAExtension
+      && !CStyle && SrcType->isIntegralType(Self.Context)
+      && !SrcType->isBooleanType()
+      && !SrcType->isEnumeralType()
+      && !SrcExpr->isIntegerConstantExpr(Self.Context)
+      && Self.Context.getTypeSize(DestType) > Self.Context.getTypeSize(SrcType)) {
+    // C++AMP
+    Self.Diag(Loc, diag::err_amp_int_to_pointer_cast)<< SrcType << DestType;
+    return;
+  }
+#endif
+
+#endif
 
   // Not warning on reinterpret_cast, boolean, constant expressions, etc
   // are not explicit design choices, but consistent with GCC's behavior.
