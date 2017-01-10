@@ -8677,6 +8677,8 @@ static GVALinkage adjustGVALinkageForAttributes(const ASTContext &Context,
     // visible externally so they can be launched from host.
     if (L == GVA_DiscardableODR || L == GVA_Internal)
       return GVA_StrongODR;
+  } else if (Context.getLangOpts().CPlusPlusAMP && Context.getLangOpts().DevicePath && D->hasAttr<AnnotateAttr>() && (D->getAttr<AnnotateAttr>()->getAnnotation() == "__cxxamp_trampoline")) {
+    return GVA_StrongODR;
   }
   return L;
 }
