@@ -10325,8 +10325,6 @@ void gnutools::Linker::ConstructLinkerJob(Compilation &C, const JobAction &JA,
 
   // Add OpenMP offloading linker script args if required.
   AddOpenMPLinkerScript(getToolChain(), C, Output, Inputs, Args, CmdArgs, JA);
-
-  C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
 }
 
 void gnutools::Linker::ConstructJob(Compilation &C,
