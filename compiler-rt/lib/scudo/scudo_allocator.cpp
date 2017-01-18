@@ -68,7 +68,7 @@ typedef FlatByteMap<NumRegions> ByteMap;
 # elif SANITIZER_WORDSIZE == 64
 typedef TwoLevelByteMap<(NumRegions >> 12), 1 << 12> ByteMap;
 # endif  // SANITIZER_WORDSIZE
-typedef SizeClassMap<3, 4, 8, 16, 64, 14> SizeClassMap;
+typedef DefaultSizeClassMap SizeClassMap;
 typedef SizeClassAllocator32<0, SANITIZER_MMAP_RANGE_SIZE, 0, SizeClassMap,
     RegionSizeLog, ByteMap> PrimaryAllocator;
 #endif  // SANITIZER_CAN_USE_ALLOCATOR64
@@ -354,11 +354,11 @@ struct Allocator {
                      "header\n");
     }
     // Verify that we can fit the maximum amount of unused bytes in the header.
-    // The worst case scenario would be when allocating 1 byte on a MaxAlignment
-    // alignment. Since the combined allocator currently rounds the size up to
-    // the alignment before passing it to the secondary, we end up with
-    // MaxAlignment - 1 extra bytes.
-    uptr MaxUnusedBytes = MaxAlignment - 1;
+    // Given that the Secondary fits the allocation to a page, the worst case
+    // scenario happens in the Primary. It will depend on the second to last
+    // and last class sizes, as well as the dynamic base for the Primary. The
+    // following is an over-approximation that works for our needs.
+    uptr MaxUnusedBytes = SizeClassMap::kMaxSize - 1 - AlignedChunkHeaderSize;
     Header.UnusedBytes = MaxUnusedBytes;
     if (Header.UnusedBytes != MaxUnusedBytes) {
       dieWithMessage("ERROR: the maximum possible unused bytes doesn't fit in "
@@ -402,12 +402,18 @@ struct Allocator {
       Size = 1;
     if (Size >= MaxAllowedMallocSize)
       return BackendAllocator.ReturnNullOrDieOnBadRequest();
-    uptr RoundedSize = RoundUpTo(Size, MinAlignment);
-    uptr NeededSize = RoundedSize + AlignedChunkHeaderSize;
+
+    uptr NeededSize = RoundUpTo(Size, MinAlignment) + AlignedChunkHeaderSize;
     if (Alignment > MinAlignment)
       NeededSize += Alignment;
     if (NeededSize >= MaxAllowedMallocSize)
       return BackendAllocator.ReturnNullOrDieOnBadRequest();
+
+    // Primary backed and Secondary backed allocations have a different
+    // treatment. We deal with alignment requirements of Primary serviced
+    // allocations here, but the Secondary will take care of its own alignment
+    // needs, which means we also have to work around some limitations of the
+    // combined allocator to accommodate the situation.
     bool FromPrimary = PrimaryAllocator::CanAllocate(NeededSize, MinAlignment);
 
     void *Ptr;
@@ -426,8 +432,11 @@ struct Allocator {
     // If the allocation was serviced by the secondary, the returned pointer
     // accounts for ChunkHeaderSize to pass the alignment check of the combined
     // allocator. Adjust it here.
-    if (!FromPrimary)
+    if (!FromPrimary) {
       AllocBeg -= AlignedChunkHeaderSize;
+      if (Alignment > MinAlignment)
+        NeededSize -= Alignment;
+    }
 
     uptr ActuallyAllocatedSize = BackendAllocator.GetActuallyAllocatedSize(
         reinterpret_cast<void *>(AllocBeg));

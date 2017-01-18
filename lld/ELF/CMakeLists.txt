@@ -2,6 +2,10 @@ set(LLVM_TARGET_DEFINITIONS Options.td)
 tablegen(LLVM Options.inc -gen-opt-parser-defs)
 add_public_tablegen_target(ELFOptionsTableGen)
 
+if(NOT LLD_BUILT_STANDALONE)
+  set(tablegen_deps intrinsics_gen)
+endif()
+
 add_lld_library(lldELF
   Driver.cpp
   DriverUtils.cpp
@@ -49,10 +53,9 @@ add_lld_library(lldELF
   LINK_LIBS
   lldConfig
   lldCore
-  lldSupport
   ${PTHREAD_LIB}
 
   DEPENDS
   ELFOptionsTableGen
-  intrinsics_gen
+  ${tablegen_deps}
   )

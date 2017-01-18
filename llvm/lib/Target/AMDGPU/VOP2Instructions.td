@@ -134,7 +134,8 @@ multiclass VOP2eInst <string opName,
 }
 
 class VOP_MADAK <ValueType vt> : VOPProfile <[vt, vt, vt, vt]> {
-  field dag Ins32 = (ins VCSrc_f32:$src0, VGPR_32:$src1, f32kimm:$imm);
+  field Operand ImmOpType = !if(!eq(vt.Size, 32), f32kimm, f16kimm);
+  field dag Ins32 = (ins VCSrc_f32:$src0, VGPR_32:$src1, ImmOpType:$imm);
   field string Asm32 = "$vdst, $src0, $src1, $imm";
   field bit HasExt = 0;
 }
@@ -143,7 +144,8 @@ def VOP_MADAK_F16 : VOP_MADAK <f16>;
 def VOP_MADAK_F32 : VOP_MADAK <f32>;
 
 class VOP_MADMK <ValueType vt> : VOPProfile <[vt, vt, vt, vt]> {
-  field dag Ins32 = (ins VCSrc_f32:$src0, f32kimm:$imm, VGPR_32:$src1);
+  field Operand ImmOpType = !if(!eq(vt.Size, 32), f32kimm, f16kimm);
+  field dag Ins32 = (ins VCSrc_f32:$src0, ImmOpType:$imm, VGPR_32:$src1);
   field string Asm32 = "$vdst, $src0, $imm, $src1";
   field bit HasExt = 0;
 }
@@ -338,7 +340,7 @@ let SubtargetPredicate = isVI in {
 def V_MADMK_F16 : VOP2_Pseudo <"v_madmk_f16", VOP_MADMK_F16>;
 defm V_LSHLREV_B16 : VOP2Inst <"v_lshlrev_b16", VOP_I16_I16_I16>;
 defm V_LSHRREV_B16 : VOP2Inst <"v_lshrrev_b16", VOP_I16_I16_I16>;
-defm V_ASHRREV_B16 : VOP2Inst <"v_ashrrev_b16", VOP_I16_I16_I16>;
+defm V_ASHRREV_I16 : VOP2Inst <"v_ashrrev_i16", VOP_I16_I16_I16>;
 defm V_LDEXP_F16 : VOP2Inst <"v_ldexp_f16", VOP_F16_F16_I32, AMDGPUldexp>;
 
 let isCommutable = 1 in {
@@ -441,7 +443,7 @@ def : Pat <
 
 defm : Bits_OpsRev_i16_Pats<shl, V_LSHLREV_B16_e32>;
 defm : Bits_OpsRev_i16_Pats<srl, V_LSHRREV_B16_e32>;
-defm : Bits_OpsRev_i16_Pats<sra, V_ASHRREV_B16_e32>;
+defm : Bits_OpsRev_i16_Pats<sra, V_ASHRREV_I16_e32>;
 
 def : ZExt_i16_i1_Pat<zext>;
 def : ZExt_i16_i1_Pat<anyext>;
@@ -687,7 +689,7 @@ defm V_SUBREV_U16         : VOP2_Real_e32e64_vi <0x28>;
 defm V_MUL_LO_U16         : VOP2_Real_e32e64_vi <0x29>;
 defm V_LSHLREV_B16        : VOP2_Real_e32e64_vi <0x2a>;
 defm V_LSHRREV_B16        : VOP2_Real_e32e64_vi <0x2b>;
-defm V_ASHRREV_B16        : VOP2_Real_e32e64_vi <0x2c>;
+defm V_ASHRREV_I16        : VOP2_Real_e32e64_vi <0x2c>;
 defm V_MAX_F16            : VOP2_Real_e32e64_vi <0x2d>;
 defm V_MIN_F16            : VOP2_Real_e32e64_vi <0x2e>;
 defm V_MAX_U16            : VOP2_Real_e32e64_vi <0x2f>;

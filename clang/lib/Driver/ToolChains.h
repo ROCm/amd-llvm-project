@@ -196,6 +196,11 @@ public:
                              SmallVectorImpl<StringRef> &BiarchLibDirs,
                              SmallVectorImpl<StringRef> &BiarchTripleAliases);
 
+    bool ScanGCCForMultilibs(const llvm::Triple &TargetTriple,
+                             const llvm::opt::ArgList &Args,
+                             StringRef Path,
+                             bool NeedsBiarchSuffix = false);
+
     void ScanLibDirForGCCTriple(const llvm::Triple &TargetArch,
                                 const llvm::opt::ArgList &Args,
                                 const std::string &LibDir,
@@ -207,6 +212,11 @@ public:
                                        const std::string &LibDir,
                                        StringRef CandidateTriple,
                                        bool NeedsBiarchSuffix = false);
+
+    bool ScanGentooGccConfig(const llvm::Triple &TargetTriple,
+                             const llvm::opt::ArgList &Args,
+                             StringRef CandidateTriple,
+                             bool NeedsBiarchSuffix = false);
   };
 
 protected:
@@ -951,6 +961,10 @@ public:
                                      : RuntimeLibType::RLT_CompilerRT;
   }
 
+  const char *getDefaultLinker() const override {
+    return "lld";
+  }
+
 private:
   Multilib SelectedMultilib;
   std::string LibSuffix;
@@ -1079,6 +1093,10 @@ public:
   std::string findLibCxxIncludePath() const override;
   void AddCXXStdlibLibArgs(const llvm::opt::ArgList &Args,
                            llvm::opt::ArgStringList &CmdArgs) const override;
+
+  const char *getDefaultLinker() const override {
+    return "lld";
+  }
 
 protected:
   Tool *buildAssembler() const override;
@@ -1278,6 +1296,10 @@ private:
   void AddClangCXXStdlibIncludeArgs(
       const llvm::opt::ArgList &DriverArgs,
       llvm::opt::ArgStringList &CC1Args) const override;
+
+  const char *getDefaultLinker() const override {
+    return "lld";
+  }
 
   Tool *buildLinker() const override;
 };

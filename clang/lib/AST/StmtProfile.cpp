@@ -748,6 +748,11 @@ void StmtProfiler::VisitOMPTeamsDistributeParallelForDirective(
   VisitOMPLoopDirective(S);
 }
 
+void StmtProfiler::VisitOMPTargetTeamsDirective(
+    const OMPTargetTeamsDirective *S) {
+  VisitOMPExecutableDirective(S);
+}
+
 void StmtProfiler::VisitExpr(const Expr *S) {
   VisitStmt(S);
 }
@@ -970,6 +975,14 @@ void StmtProfiler::VisitDesignatedInitUpdateExpr(
     const DesignatedInitUpdateExpr *S) {
   llvm_unreachable("Unexpected DesignatedInitUpdateExpr in syntactic form of "
                    "initializer");
+}
+
+void StmtProfiler::VisitArrayInitLoopExpr(const ArrayInitLoopExpr *S) {
+  VisitExpr(S);
+}
+
+void StmtProfiler::VisitArrayInitIndexExpr(const ArrayInitIndexExpr *S) {
+  VisitExpr(S);
 }
 
 void StmtProfiler::VisitNoInitExpr(const NoInitExpr *S) {

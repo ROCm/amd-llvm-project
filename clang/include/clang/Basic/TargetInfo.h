@@ -303,7 +303,7 @@ public:
 
   /// \brief Get integer value for null pointer.
   /// \param AddrSpace address space of pointee in source language.
-  virtual uint64_t getNullPtrValue(unsigned AddrSpace) const {
+  virtual uint64_t getNullPointerValue(unsigned AddrSpace) const {
     return 0;
   }
 
@@ -1005,7 +1005,7 @@ public:
   /// \brief Set supported OpenCL extensions as written on command line
   virtual void setOpenCLExtensionOpts() {
     for (const auto &Ext : getTargetOpts().OpenCLExtensionsAsWritten) {
-      getTargetOpts().SupportedOpenCLOptions.set(Ext);
+      getTargetOpts().SupportedOpenCLOptions.support(Ext);
     }
   }
 
