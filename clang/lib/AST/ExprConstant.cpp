@@ -76,8 +76,8 @@ namespace {
       const Expr *Inner = Temp->skipRValueSubobjectAdjustments(CommaLHSs,
                                                                Adjustments);
       // Keep any cv-qualifiers from the reference if we generated a temporary
-      // for it.
-      if (Inner != Temp)
+      // for it directly. Otherwise use the type after adjustment.
+      if (!Adjustments.empty())
         return Inner->getType();
     }
 
@@ -433,7 +433,7 @@ namespace {
   /// rules.  For example, the RHS of (0 && foo()) is not evaluated.  We can
   /// evaluate the expression regardless of what the RHS is, but C only allows
   /// certain things in certain situations.
-  struct EvalInfo {
+  struct LLVM_ALIGNAS(/*alignof(uint64_t)*/ 8) EvalInfo {
     ASTContext &Ctx;
 
     /// EvalStatus - Contains information about the evaluation.
@@ -468,6 +468,10 @@ namespace {
     /// EvaluatingDeclValue - This is the value being constructed for the
     /// declaration whose initializer is being evaluated, if any.
     APValue *EvaluatingDeclValue;
+
+    /// The current array initialization index, if we're performing array
+    /// initialization.
+    uint64_t ArrayInitIndex = -1;
 
     /// HasActiveDiagnostic - Was the previous diagnostic stored? If so, further
     /// notes attached to it will also be stored, otherwise they will not be.
@@ -803,6 +807,20 @@ namespace {
     bool allowInvalidBaseExpr() const {
       return EvalMode == EM_DesignatorFold;
     }
+
+    class ArrayInitLoopIndex {
+      EvalInfo &Info;
+      uint64_t OuterIndex;
+
+    public:
+      ArrayInitLoopIndex(EvalInfo &Info)
+          : Info(Info), OuterIndex(Info.ArrayInitIndex) {
+        Info.ArrayInitIndex = 0;
+      }
+      ~ArrayInitLoopIndex() { Info.ArrayInitIndex = OuterIndex; }
+
+      operator uint64_t&() { return Info.ArrayInitIndex; }
+    };
   };
 
   /// Object used to treat all foldable expressions as constant expressions.
@@ -1032,7 +1050,7 @@ namespace {
     APSInt IntReal, IntImag;
     APFloat FloatReal, FloatImag;
 
-    ComplexValue() : FloatReal(APFloat::Bogus), FloatImag(APFloat::Bogus) {}
+    ComplexValue() : FloatReal(APFloat::Bogus()), FloatImag(APFloat::Bogus()) {}
 
     void makeComplexFloat() { IsInt = false; }
     bool isComplexFloat() const { return !IsInt; }
@@ -1078,7 +1096,7 @@ namespace {
     unsigned getLValueCallIndex() const { return CallIndex; }
     SubobjectDesignator &getLValueDesignator() { return Designator; }
     const SubobjectDesignator &getLValueDesignator() const { return Designator;}
-    bool isNullPtr() const { return IsNullPtr;}
+    bool isNullPointer() const { return IsNullPtr;}
 
     void moveInto(APValue &V) const {
       if (Designator.Invalid)
@@ -1095,7 +1113,7 @@ namespace {
       InvalidBase = false;
       CallIndex = V.getLValueCallIndex();
       Designator = SubobjectDesignator(Ctx, V);
-      IsNullPtr = V.isNullPtr();
+      IsNullPtr = V.isNullPointer();
     }
 
     void set(APValue::LValueBase B, unsigned I = 0, bool BInvalid = false,
@@ -1147,9 +1165,8 @@ namespace {
       if (checkSubobject(Info, E, Imag ? CSK_Imag : CSK_Real))
         Designator.addComplexUnchecked(EltTy, Imag);
     }
-    void clearIsNullPtr(bool DoIt) {
-      if (DoIt)
-        IsNullPtr = false;
+    void clearIsNullPointer() {
+      IsNullPtr = false;
     }
     void adjustOffsetAndIndex(EvalInfo &Info, const Expr *E, uint64_t Index,
                               CharUnits ElementSize) {
@@ -1157,11 +1174,13 @@ namespace {
       Offset += Index * ElementSize;
       if (Index && checkNullPointer(Info, E, CSK_ArrayIndex))
         Designator.adjustIndex(Info, E, Index);
-      clearIsNullPtr(Index);
+      if (Index)
+        clearIsNullPointer();
     }
     void adjustOffset(CharUnits N) {
       Offset += N;
-      clearIsNullPtr(N.getQuantity());
+      if (N.getQuantity())
+        clearIsNullPointer();
     }
   };
 
@@ -4432,8 +4451,11 @@ public:
       }
 
       // Don't call function pointers which have been cast to some other type.
-      if (!Info.Ctx.hasSameType(CalleeType->getPointeeType(), FD->getType()))
+      // Per DR (no number yet), the caller and callee can differ in noexcept.
+      if (!Info.Ctx.hasSameFunctionTypeIgnoringExceptionSpec(
+              CalleeType->getPointeeType(), FD->getType())) {
         return Error(E);
+      }
     } else
       return Error(E);
 
@@ -5076,7 +5098,7 @@ public:
     return true;
   }
   bool ZeroInitialization(const Expr *E) {
-    auto Offset = Info.Ctx.getTargetNullPtrValue(E->getType());
+    auto Offset = Info.Ctx.getTargetNullPointerValue(E->getType());
     Result.set((Expr*)nullptr, 0, false, true, Offset);
     return true;
   }
@@ -6049,7 +6071,7 @@ bool VectorExprEvaluator::VisitCastExpr(const CastExpr *E) {
     if (EltTy->isRealFloatingType()) {
       const llvm::fltSemantics &Sem = Info.Ctx.getFloatTypeSemantics(EltTy);
       unsigned FloatEltSize = EltSize;
-      if (&Sem == &APFloat::x87DoubleExtended)
+      if (&Sem == &APFloat::x87DoubleExtended())
         FloatEltSize = 80;
       for (unsigned i = 0; i < NElts; i++) {
         llvm::APInt Elt;
@@ -6189,6 +6211,7 @@ namespace {
       return handleCallExpr(E, Result, &This);
     }
     bool VisitInitListExpr(const InitListExpr *E);
+    bool VisitArrayInitLoopExpr(const ArrayInitLoopExpr *E);
     bool VisitCXXConstructExpr(const CXXConstructExpr *E);
     bool VisitCXXConstructExpr(const CXXConstructExpr *E,
                                const LValue &Subobject,
@@ -6269,6 +6292,35 @@ bool ArrayExprEvaluator::VisitInitListExpr(const InitListExpr *E) {
   assert(FillerExpr && "no array filler for incomplete init list");
   return EvaluateInPlace(Result.getArrayFiller(), Info, Subobject,
                          FillerExpr) && Success;
+}
+
+bool ArrayExprEvaluator::VisitArrayInitLoopExpr(const ArrayInitLoopExpr *E) {
+  if (E->getCommonExpr() &&
+      !Evaluate(Info.CurrentCall->createTemporary(E->getCommonExpr(), false),
+                Info, E->getCommonExpr()->getSourceExpr()))
+    return false;
+
+  auto *CAT = cast<ConstantArrayType>(E->getType()->castAsArrayTypeUnsafe());
+
+  uint64_t Elements = CAT->getSize().getZExtValue();
+  Result = APValue(APValue::UninitArray(), Elements, Elements);
+
+  LValue Subobject = This;
+  Subobject.addArray(Info, E, CAT);
+
+  bool Success = true;
+  for (EvalInfo::ArrayInitLoopIndex Index(Info); Index != Elements; ++Index) {
+    if (!EvaluateInPlace(Result.getArrayInitializedElt(Index),
+                         Info, Subobject, E->getSubExpr()) ||
+        !HandleLValueArrayAdjustment(Info, E, Subobject,
+                                     CAT->getElementType(), 1)) {
+      if (!Info.noteFailure())
+        return false;
+      Success = false;
+    }
+  }
+
+  return Success;
 }
 
 bool ArrayExprEvaluator::VisitCXXConstructExpr(const CXXConstructExpr *E) {
@@ -6425,6 +6477,16 @@ public:
 
   bool VisitObjCBoolLiteralExpr(const ObjCBoolLiteralExpr *E) {
     return Success(E->getValue(), E);
+  }
+
+  bool VisitArrayInitIndexExpr(const ArrayInitIndexExpr *E) {
+    if (Info.ArrayInitIndex == uint64_t(-1)) {
+      // We were asked to evaluate this subexpression independent of the
+      // enclosing ArrayInitLoopExpr. We can't do that.
+      Info.FFDiag(E);
+      return false;
+    }
+    return Success(Info.ArrayInitIndex, E);
   }
     
   // Note, GNU defines __null as an integer, not a pointer.
@@ -8356,8 +8418,8 @@ bool IntExprEvaluator::VisitCastExpr(const CastExpr *E) {
     }
 
     uint64_t V;
-    if (LV.isNullPtr())
-      V = Info.Ctx.getTargetNullPtrValue(SrcType);
+    if (LV.isNullPointer())
+      V = Info.Ctx.getTargetNullPointerValue(SrcType);
     else
       V = LV.getLValueOffset().getQuantity();
 
@@ -9589,6 +9651,8 @@ static ICEDiag CheckICE(const Expr* E, const ASTContext &Ctx) {
   case Expr::CompoundLiteralExprClass:
   case Expr::ExtVectorElementExprClass:
   case Expr::DesignatedInitExprClass:
+  case Expr::ArrayInitLoopExprClass:
+  case Expr::ArrayInitIndexExprClass:
   case Expr::NoInitExprClass:
   case Expr::DesignatedInitUpdateExprClass:
   case Expr::ImplicitValueInitExprClass:

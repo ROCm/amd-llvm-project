@@ -21,8 +21,8 @@
 ;
 ; CHECK: 0x00000025: Beginning address offset: 0x0000000000000004
 ; CHECK:                Ending address offset: 0x0000000000000004
-; CHECK:                 Location description: 10 03 93 04 55 93 04
-; constu 0x00000003, piece 0x00000004, rdi, piece 0x00000004
+; CHECK:                 Location description: 10 03 93 04 55 93 02
+; constu 0x00000003, piece 0x00000004, rdi, piece 0x00000002
 ; CHECK:             Beginning address offset: 0x0000000000000004
 ; CHECK:                Ending address offset: 0x0000000000000014
 ; CHECK:                 Location description: 10 03 93 04 10 00
@@ -86,7 +86,7 @@ entry:
 !18 = !DISubroutineType(types: !19)
 !19 = !{!15}
 !20 = !{!21}
-!21 = !DIGlobalVariable(name: "a", scope: !0, file: !1, line: 4, type: !11, isLocal: false, isDefinition: true)
+!21 = !DIGlobalVariableExpression(var: !DIGlobalVariable(name: "a", scope: !0, file: !1, line: 4, type: !11, isLocal: false, isDefinition: true))
 !22 = !{i32 2, !"Dwarf Version", i32 2}
 !23 = !{i32 2, !"Debug Info Version", i32 3}
 !24 = !{i32 1, !"PIC Level", i32 2}

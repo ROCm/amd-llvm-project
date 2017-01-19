@@ -885,10 +885,11 @@ public:
   }
 
   /// Create a new runtime function with the specified type and name.
-  llvm::Constant *CreateRuntimeFunction(llvm::FunctionType *Ty,
-                                        StringRef Name,
-                                        llvm::AttributeSet ExtraAttrs =
-                                          llvm::AttributeSet());
+  llvm::Constant *
+  CreateRuntimeFunction(llvm::FunctionType *Ty, StringRef Name,
+                        llvm::AttributeSet ExtraAttrs = llvm::AttributeSet(),
+                        bool Local = false);
+
   /// Create a new compiler builtin function with the specified type and name.
   llvm::Constant *CreateBuiltinFunction(llvm::FunctionType *Ty,
                                         StringRef Name,
@@ -1165,7 +1166,9 @@ public:
   createOpenCLIntToSamplerConversion(const Expr *E, CodeGenFunction &CGF);
 
   /// Get target specific null pointer.
-  llvm::Constant *getNullPtr(llvm::PointerType *T, QualType QT);
+  /// \param T is the LLVM type of the null pointer.
+  /// \param QT is the clang QualType of the null pointer.
+  llvm::Constant *getNullPointer(llvm::PointerType *T, QualType QT);
 
 private:
   llvm::Constant *

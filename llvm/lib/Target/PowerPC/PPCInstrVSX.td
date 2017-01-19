@@ -2262,6 +2262,14 @@ let AddedComplexity = 400, Predicates = [HasP9Vector] in {
                                  [(set v4i32: $XT,
                                   (int_ppc_vsx_xvxsigsp v4f32:$XB))]>;
 
+  let AddedComplexity = 400, Predicates = [HasP9Vector] in {
+  // Extra patterns expanding to vector Extract Word/Insert Word
+  def : Pat<(v4i32 (int_ppc_vsx_xxinsertw v4i32:$A, v2i64:$B, imm:$IMM)),
+            (v4i32 (XXINSERTW $A, $B, imm:$IMM))>;
+  def : Pat<(v2i64 (int_ppc_vsx_xxextractuw v2i64:$A, imm:$IMM)),
+            (v2i64 (COPY_TO_REGCLASS (XXEXTRACTUW $A, imm:$IMM), VSRC))>;
+  } // AddedComplexity = 400, HasP9Vector
+
   //===--------------------------------------------------------------------===//
 
   // Test Data Class SP/DP/QP
@@ -2632,6 +2640,7 @@ let AddedComplexity = 400, Predicates = [HasP9Vector] in {
             (STXSIHXv (VSLDOI $S, $S, 10), xoaddr:$dst)>;
   } // IsLittleEndian, HasP9Vector
 
+
   // Vector sign extensions
   def : Pat<(f64 (PPCVexts f64:$A, 1)),
             (f64 (COPY_TO_REGCLASS (VEXTSB2Ds $A), VSFRC))>;
@@ -2856,12 +2865,12 @@ let AddedComplexity = 400 in {
               (v4i32 (MTVSRWS $A))>;
     def : Pat<(v4i32 (build_vector i32:$A, i32:$A, i32:$A, i32:$A)),
               (v4i32 (MTVSRWS $A))>;
-    def : Pat<(v16i8 (build_vector immSExt8:$A, immSExt8:$A, immSExt8:$A,
-                                   immSExt8:$A, immSExt8:$A, immSExt8:$A,
-                                   immSExt8:$A, immSExt8:$A, immSExt8:$A,
-                                   immSExt8:$A, immSExt8:$A, immSExt8:$A,
-                                   immSExt8:$A, immSExt8:$A, immSExt8:$A,
-                                   immSExt8:$A)),
+    def : Pat<(v16i8 (build_vector immAnyExt8:$A, immAnyExt8:$A, immAnyExt8:$A,
+                                   immAnyExt8:$A, immAnyExt8:$A, immAnyExt8:$A,
+                                   immAnyExt8:$A, immAnyExt8:$A, immAnyExt8:$A,
+                                   immAnyExt8:$A, immAnyExt8:$A, immAnyExt8:$A,
+                                   immAnyExt8:$A, immAnyExt8:$A, immAnyExt8:$A,
+                                   immAnyExt8:$A)),
               (v16i8 (COPY_TO_REGCLASS (XXSPLTIB imm:$A), VSRC))>;
     def : Pat<(v16i8 immAllOnesV),
               (v16i8 (COPY_TO_REGCLASS (XXSPLTIB 255), VSRC))>;

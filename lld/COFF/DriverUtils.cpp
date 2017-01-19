@@ -16,8 +16,8 @@
 #include "Config.h"
 #include "Driver.h"
 #include "Error.h"
+#include "Memory.h"
 #include "Symbols.h"
-#include "lld/Support/Memory.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Object/COFF.h"
@@ -510,12 +510,14 @@ void fixupExports() {
   }
 
   for (Export &E : Config->Exports) {
+    SymbolBody *Sym = E.Sym;
     if (!E.ForwardTo.empty()) {
       E.SymbolName = E.Name;
-    } else if (Undefined *U = cast_or_null<Undefined>(E.Sym->WeakAlias)) {
-      E.SymbolName = U->getName();
     } else {
-      E.SymbolName = E.Sym->getName();
+      if (auto *U = dyn_cast<Undefined>(Sym))
+        if (U->WeakAlias)
+          Sym = U->WeakAlias;
+      E.SymbolName = Sym->getName();
     }
   }
 

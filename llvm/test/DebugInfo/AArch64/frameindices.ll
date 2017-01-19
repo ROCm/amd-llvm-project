@@ -5,8 +5,8 @@
 ; CHECK: DW_TAG_inlined_subroutine
 ; CHECK:    "_Z3f111A"
 ; CHECK: DW_TAG_formal_parameter
-; CHECK: DW_AT_location [DW_FORM_block1]    (<0x0b> 91 51 9d 78 08 91 4a 9d 38 88 01 )
-;  -- fbreg -47, bit-piece 120 8 , fbreg -54, bit-piece 56 136 ------^
+; CHECK: DW_AT_location [DW_FORM_block1]    (<0x0c> 93 01 91 51 93 0f 93 01 91 4a 93 07 )
+;  -- piece 0x00000001, fbreg -47, piece 0x0000000f, piece 0x00000001, fbreg -54, piece 0x00000007 ------^
 ; CHECK: DW_AT_abstract_origin {{.*}} "p1"
 ;
 ; long a;
@@ -200,8 +200,8 @@ attributes #5 = { builtin }
 !38 = !DILocalVariable(name: "c", line: 19, scope: !34, file: !26, type: !4)
 !39 = !DILocalVariable(name: "d", line: 20, scope: !34, file: !26, type: !14)
 !40 = !{!41, !42}
-!41 = !DIGlobalVariable(name: "a", line: 1, isLocal: false, isDefinition: true, scope: null, file: !26, type: !20)
-!42 = !DIGlobalVariable(name: "b", line: 7, isLocal: false, isDefinition: true, scope: null, file: !26, type: !12)
+!41 = !DIGlobalVariableExpression(var: !DIGlobalVariable(name: "a", line: 1, isLocal: false, isDefinition: true, scope: null, file: !26, type: !20))
+!42 = !DIGlobalVariableExpression(var: !DIGlobalVariable(name: "b", line: 7, isLocal: false, isDefinition: true, scope: null, file: !26, type: !12))
 !43 = !{i32 2, !"Dwarf Version", i32 2}
 !44 = !{i32 2, !"Debug Info Version", i32 3}
 !45 = !{!"clang version 3.7.0 "}

@@ -20,6 +20,7 @@
 #include "FuzzerTracePC.h"
 #include "FuzzerValueBitMap.h"
 #include <map>
+#include <sanitizer/coverage_interface.h>
 #include <set>
 #include <sstream>
 
@@ -89,8 +90,10 @@ void TracePC::PrintNewPCs() {
 }
 
 void TracePC::PrintCoverage() {
-  if (!EF->__sanitizer_symbolize_pc) {
-    Printf("INFO: __sanitizer_symbolize_pc is not available,"
+  if (!EF->__sanitizer_symbolize_pc ||
+      !EF->__sanitizer_get_module_and_offset_for_pc) {
+    Printf("INFO: __sanitizer_symbolize_pc or "
+           "__sanitizer_get_module_and_offset_for_pc is not available,"
            " not printing coverage\n");
     return;
   }
@@ -106,12 +109,15 @@ void TracePC::PrintCoverage() {
     std::string FixedPCStr = DescribePC("%p", PCs[i]);
     std::string FunctionStr = DescribePC("%F", PCs[i]);
     std::string LineStr = DescribePC("%l", PCs[i]);
-    // TODO(kcc): get the module using some other way since this
-    // does not work with ASAN_OPTIONS=strip_path_prefix=something.
-    std::string Module = DescribePC("%m", PCs[i]);
-    std::string OffsetStr = DescribePC("%o", PCs[i]);
+    char ModulePathRaw[4096] = "";  // What's PATH_MAX in portable C++?
+    void *OffsetRaw = nullptr;
+    if (!EF->__sanitizer_get_module_and_offset_for_pc(
+            reinterpret_cast<void *>(PCs[i]), ModulePathRaw,
+            sizeof(ModulePathRaw), &OffsetRaw))
+      continue;
+    std::string Module = ModulePathRaw;
     uintptr_t FixedPC = std::stol(FixedPCStr, 0, 16);
-    uintptr_t PcOffset = std::stol(OffsetStr, 0, 16);
+    uintptr_t PcOffset = reinterpret_cast<uintptr_t>(OffsetRaw);
     ModuleOffsets[Module] = FixedPC - PcOffset;
     CoveredPCsPerModule[Module].push_back(PcOffset);
     CoveredFunctions.insert(FunctionStr);
@@ -183,6 +189,10 @@ void TracePC::PrintCoverage() {
   }
 }
 
+void TracePC::DumpCoverage() {
+  __sanitizer_dump_coverage(PCs, GetNumPCs());
+}
+
 // Value profile.
 // We keep track of various values that affect control flow.
 // These values are inserted into a bit-set-based hash map.
@@ -193,9 +203,7 @@ void TracePC::PrintCoverage() {
 // For cmp instructions the interesting value is a XOR of the parameters.
 // The interesting value is mixed up with the PC and is then added to the map.
 
-#ifdef __clang__  // avoid gcc warning.
-__attribute__((no_sanitize("memory")))
-#endif
+ATTRIBUTE_NO_SANITIZE_MEMORY
 void TracePC::AddValueForMemcmp(void *caller_pc, const void *s1, const void *s2,
                               size_t n) {
   if (!n) return;
@@ -213,6 +221,7 @@ void TracePC::AddValueForMemcmp(void *caller_pc, const void *s1, const void *s2,
   TPC.HandleValueProfile((PC & 4095) | (Idx << 12));
 }
 
+ATTRIBUTE_NO_SANITIZE_MEMORY
 void TracePC::AddValueForStrcmp(void *caller_pc, const char *s1, const char *s2,
                               size_t n) {
   if (!n) return;
@@ -286,12 +295,32 @@ void __sanitizer_cov_trace_cmp1(uint8_t Arg1, uint8_t Arg2) {
 
 __attribute__((visibility("default")))
 void __sanitizer_cov_trace_switch(uint64_t Val, uint64_t *Cases) {
+  // Updates the value profile based on the relative position of Val and Cases.
+  // We want to handle one random case at every call (handling all is slow).
+  // Since none of the arguments contain any random bits we use a thread-local
+  // counter to choose the random case to handle.
+  static thread_local size_t Counter;
+  Counter++;
   uint64_t N = Cases[0];
   uint64_t *Vals = Cases + 2;
   char *PC = (char*)__builtin_return_address(0);
-  for (size_t i = 0; i < N; i++)
-    if (Val != Vals[i])
-      fuzzer::TPC.HandleCmp(PC + i, Val, Vals[i]);
+  // We need a random number < N using Counter as a seed. But w/o DIV.
+  // * find a power of two >= N
+  // * mask Counter with this power of two.
+  // * maybe subtract N.
+  size_t Nlog = sizeof(long) * 8 - __builtin_clzl((long)N);
+  size_t PowerOfTwoGeN = 1U << Nlog;
+  assert(PowerOfTwoGeN >= N);
+  size_t Idx = Counter & (PowerOfTwoGeN - 1);
+  if (Idx >= N)
+    Idx -= N;
+  assert(Idx < N);
+  uint64_t TwoIn32 = 1ULL << 32;
+  if ((Val | Vals[Idx]) < TwoIn32)
+    fuzzer::TPC.HandleCmp(PC + Idx, static_cast<uint32_t>(Val),
+                          static_cast<uint32_t>(Vals[Idx]));
+  else
+    fuzzer::TPC.HandleCmp(PC + Idx, Val, Vals[Idx]);
 }
 
 __attribute__((visibility("default")))

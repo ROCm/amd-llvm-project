@@ -286,21 +286,21 @@ void CodeGenTypes::RefreshTypeCacheForClass(const CXXRecordDecl *RD) {
 static llvm::Type *getTypeForFormat(llvm::LLVMContext &VMContext,
                                     const llvm::fltSemantics &format,
                                     bool UseNativeHalf = false) {
-  if (&format == &llvm::APFloat::IEEEhalf) {
+  if (&format == &llvm::APFloat::IEEEhalf()) {
     if (UseNativeHalf)
       return llvm::Type::getHalfTy(VMContext);
     else
       return llvm::Type::getInt16Ty(VMContext);
   }
-  if (&format == &llvm::APFloat::IEEEsingle)
+  if (&format == &llvm::APFloat::IEEEsingle())
     return llvm::Type::getFloatTy(VMContext);
-  if (&format == &llvm::APFloat::IEEEdouble)
+  if (&format == &llvm::APFloat::IEEEdouble())
     return llvm::Type::getDoubleTy(VMContext);
-  if (&format == &llvm::APFloat::IEEEquad)
+  if (&format == &llvm::APFloat::IEEEquad())
     return llvm::Type::getFP128Ty(VMContext);
-  if (&format == &llvm::APFloat::PPCDoubleDouble)
+  if (&format == &llvm::APFloat::PPCDoubleDouble())
     return llvm::Type::getPPC_FP128Ty(VMContext);
-  if (&format == &llvm::APFloat::x87DoubleExtended)
+  if (&format == &llvm::APFloat::x87DoubleExtended())
     return llvm::Type::getX86_FP80Ty(VMContext);
   llvm_unreachable("Unknown float format!");
 }
@@ -736,9 +736,14 @@ CodeGenTypes::getCGRecordLayout(const RecordDecl *RD) {
   return *Layout;
 }
 
+bool CodeGenTypes::isPointerZeroInitializable(QualType T) {
+  assert (T->isAnyPointerType() && "Invalid type");
+  return isZeroInitializable(T);
+}
+
 bool CodeGenTypes::isZeroInitializable(QualType T) {
-  if (auto PT = T->getAs<PointerType>())
-    return Context.getTargetNullPtrValue(T) == 0;
+  if (T->getAs<PointerType>())
+    return Context.getTargetNullPointerValue(T) == 0;
 
   if (const auto *AT = Context.getAsArrayType(T)) {
     if (isa<IncompleteArrayType>(AT))

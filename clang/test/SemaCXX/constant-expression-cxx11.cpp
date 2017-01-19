@@ -386,6 +386,18 @@ namespace FakeInitList {
   constexpr init_list_2_init_list_3_ints ils = { { { { 1, 2, 3 } }, { { 4, 5, 6 } } } };
 }
 
+namespace ConstAddedByReference {
+  const int &r = (0);
+  constexpr int n = r;
+
+  struct A { constexpr operator int() const { return 0; }};
+  struct B { constexpr operator const int() const { return 0; }};
+  const int &ra = A();
+  const int &rb = B();
+  constexpr int na = ra;
+  constexpr int nb = rb;
+}
+
 }
 
 constexpr int strcmp_ce(const char *p, const char *q) {
@@ -553,6 +565,21 @@ struct ArrayRVal {
   ArrayElem elems[10];
 };
 static_assert(ArrayRVal().elems[3].f() == 0, "");
+
+namespace CopyCtor {
+  struct A {
+    constexpr A() {}
+    constexpr A(const A &) {}
+  };
+  struct B {
+    A a;
+    int arr[10];
+  };
+  constexpr B b{{}, {1, 2, 3, 4, 5}};
+  constexpr B c = b;
+  static_assert(c.arr[2] == 3, "");
+  static_assert(c.arr[7] == 0, "");
+}
 
 constexpr int selfref[2][2][2] = {
   selfref[1][1][1] + 1, selfref[0][0][0] + 1,

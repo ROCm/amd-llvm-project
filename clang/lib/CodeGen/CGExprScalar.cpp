@@ -173,7 +173,7 @@ public:
 
   /// EmitPointerToBoolConversion - Perform a pointer to boolean conversion.
   Value *EmitPointerToBoolConversion(Value *V, QualType QT) {
-    Value *Zero = CGF.CGM.getNullPtr(cast<llvm::PointerType>(V->getType()), QT);
+    Value *Zero = CGF.CGM.getNullPointer(cast<llvm::PointerType>(V->getType()), QT);
 
     return Builder.CreateICmpNE(V, Zero, "tobool");
   }
@@ -310,6 +310,12 @@ public:
   }
 
   Value *VisitInitListExpr(InitListExpr *E);
+
+  Value *VisitArrayInitIndexExpr(ArrayInitIndexExpr *E) {
+    assert(CGF.getArrayInitIndex() &&
+           "ArrayInitIndexExpr not inside an ArrayInitLoopExpr?");
+    return CGF.getArrayInitIndex();
+  }
 
   Value *VisitImplicitValueInitExpr(const ImplicitValueInitExpr *E) {
     return EmitNullValue(E->getType());
@@ -725,7 +731,7 @@ void ScalarExprEmitter::EmitFloatConversionCheck(
                                   CGF.EmitCheckTypeDescriptor(OrigSrcType),
                                   CGF.EmitCheckTypeDescriptor(DstType)};
   CGF.EmitCheck(std::make_pair(Check, SanitizerKind::FloatCastOverflow),
-                "float_cast_overflow", StaticArgs, OrigSrc);
+                SanitizerHandler::FloatCastOverflow, StaticArgs, OrigSrc);
 }
 
 /// Emit a conversion from the specified type to the specified destination type,
@@ -928,7 +934,7 @@ Value *ScalarExprEmitter::EmitNullValue(QualType Ty) {
 void ScalarExprEmitter::EmitBinOpCheck(
     ArrayRef<std::pair<Value *, SanitizerMask>> Checks, const BinOpInfo &Info) {
   assert(CGF.IsSanitizerScope);
-  StringRef CheckName;
+  SanitizerHandler Check;
   SmallVector<llvm::Constant *, 4> StaticData;
   SmallVector<llvm::Value *, 2> DynamicData;
 
@@ -939,13 +945,13 @@ void ScalarExprEmitter::EmitBinOpCheck(
   StaticData.push_back(CGF.EmitCheckSourceLocation(Info.E->getExprLoc()));
   const UnaryOperator *UO = dyn_cast<UnaryOperator>(Info.E);
   if (UO && UO->getOpcode() == UO_Minus) {
-    CheckName = "negate_overflow";
+    Check = SanitizerHandler::NegateOverflow;
     StaticData.push_back(CGF.EmitCheckTypeDescriptor(UO->getType()));
     DynamicData.push_back(Info.RHS);
   } else {
     if (BinaryOperator::isShiftOp(Opcode)) {
       // Shift LHS negative or too large, or RHS out of bounds.
-      CheckName = "shift_out_of_bounds";
+      Check = SanitizerHandler::ShiftOutOfBounds;
       const BinaryOperator *BO = cast<BinaryOperator>(Info.E);
       StaticData.push_back(
         CGF.EmitCheckTypeDescriptor(BO->getLHS()->getType()));
@@ -953,14 +959,14 @@ void ScalarExprEmitter::EmitBinOpCheck(
         CGF.EmitCheckTypeDescriptor(BO->getRHS()->getType()));
     } else if (Opcode == BO_Div || Opcode == BO_Rem) {
       // Divide or modulo by zero, or signed overflow (eg INT_MAX / -1).
-      CheckName = "divrem_overflow";
+      Check = SanitizerHandler::DivremOverflow;
       StaticData.push_back(CGF.EmitCheckTypeDescriptor(Info.Ty));
     } else {
       // Arithmetic overflow (+, -, *).
       switch (Opcode) {
-      case BO_Add: CheckName = "add_overflow"; break;
-      case BO_Sub: CheckName = "sub_overflow"; break;
-      case BO_Mul: CheckName = "mul_overflow"; break;
+      case BO_Add: Check = SanitizerHandler::AddOverflow; break;
+      case BO_Sub: Check = SanitizerHandler::SubOverflow; break;
+      case BO_Mul: Check = SanitizerHandler::MulOverflow; break;
       default: llvm_unreachable("unexpected opcode for bin op check");
       }
       StaticData.push_back(CGF.EmitCheckTypeDescriptor(Info.Ty));
@@ -969,7 +975,7 @@ void ScalarExprEmitter::EmitBinOpCheck(
     DynamicData.push_back(Info.RHS);
   }
 
-  CGF.EmitCheck(Checks, CheckName, StaticData, DynamicData);
+  CGF.EmitCheck(Checks, Check, StaticData, DynamicData);
 }
 
 //===----------------------------------------------------------------------===//
@@ -1397,14 +1403,21 @@ Value *ScalarExprEmitter::VisitCastExpr(CastExpr *CE) {
   case CK_AddressSpaceConversion: {
     Expr::EvalResult Result;
     if (E->EvaluateAsRValue(Result, CGF.getContext()) &&
-        Result.Val.isNullPtr() && !Result.HasSideEffects)
-      return CGF.CGM.getNullPtr(cast<llvm::PointerType>(ConvertType(DestTy)),
-                                DestTy);
-    Value *Src = Visit(const_cast<Expr*>(E));
+        Result.Val.isNullPointer()) {
+      // If E has side effect, it is emitted even if its final result is a
+      // null pointer. In that case, a DCE pass should be able to
+      // eliminate the useless instructions emitted during translating E.
+      if (Result.HasSideEffects)
+        Visit(E);
+      return CGF.CGM.getNullPointer(cast<llvm::PointerType>(
+          ConvertType(DestTy)), DestTy);
+    }
     // Since target may map different address spaces in AST to the same address
     // space, an address space conversion may end up as a bitcast.
-    return Builder.CreatePointerBitCastOrAddrSpaceCast(Src,
-                                                       ConvertType(DestTy));
+    auto *Src = Visit(E);
+    return CGF.CGM.getTargetCodeGenInfo().performAddrSpaceCast(CGF, Src,
+                                                               E->getType(),
+                                                               DestTy);
   }
   case CK_AtomicToNonAtomic:
   case CK_NonAtomicToAtomic:
@@ -1459,7 +1472,7 @@ Value *ScalarExprEmitter::VisitCastExpr(CastExpr *CE) {
     if (MustVisitNullValue(E))
       (void) Visit(E);
 
-    return CGF.CGM.getNullPtr(cast<llvm::PointerType>(ConvertType(DestTy)),
+    return CGF.CGM.getNullPointer(cast<llvm::PointerType>(ConvertType(DestTy)),
                               DestTy);
 
   case CK_NullToMemberPointer: {
@@ -1524,15 +1537,9 @@ Value *ScalarExprEmitter::VisitCastExpr(CastExpr *CE) {
 
     return Builder.CreateIntToPtr(IntResult, DestLLVMTy);
   }
-  case CK_PointerToIntegral: {
-    Expr::EvalResult Result;
-    if (E->EvaluateAsRValue(Result, CGF.getContext()) &&
-        Result.Val.isNullPtr() && !Result.HasSideEffects)
-      return llvm::ConstantInt::get(ConvertType(DestTy),
-          CGF.getContext().getTargetNullPtrValue(E->getType()));
+  case CK_PointerToIntegral:
     assert(!DestTy->isBooleanType() && "bool should use PointerToBool");
     return Builder.CreatePtrToInt(Visit(E), ConvertType(DestTy));
-  }
 
   case CK_ToVoid: {
     CGF.EmitIgnoredExpr(E);

@@ -14,6 +14,7 @@
 #include "clang/Frontend/CodeGenOptions.h"
 #include "clang/Frontend/FrontendDiagnostic.h"
 #include "clang/Frontend/Utils.h"
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/Triple.h"
@@ -494,10 +495,8 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
   if (CodeGenOpts.hasProfileIRUse())
     PMBuilder.PGOInstrUse = CodeGenOpts.ProfileInstrumentUsePath;
 
-  if (!CodeGenOpts.SampleProfileFile.empty()) {
-    MPM.add(createPruneEHPass());
-    MPM.add(createSampleProfileLoaderPass(CodeGenOpts.SampleProfileFile));
-  }
+  if (!CodeGenOpts.SampleProfileFile.empty())
+    PMBuilder.PGOSampleUse = CodeGenOpts.SampleProfileFile;
 
   PMBuilder.populateFunctionPassManager(FPM);
 
@@ -825,7 +824,7 @@ static void runThinLTOBackend(const CodeGenOptions &CGOpts, Module *M,
                                     ImportList);
 
   std::vector<std::unique_ptr<llvm::MemoryBuffer>> OwnedImports;
-  MapVector<llvm::StringRef, llvm::MemoryBufferRef> ModuleMap;
+  MapVector<llvm::StringRef, llvm::BitcodeModule> ModuleMap;
 
   for (auto &I : ImportList) {
     ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> MBOrErr =
@@ -835,7 +834,34 @@ static void runThinLTOBackend(const CodeGenOptions &CGOpts, Module *M,
              << "': " << MBOrErr.getError().message() << "\n";
       return;
     }
-    ModuleMap[I.first()] = (*MBOrErr)->getMemBufferRef();
+
+    Expected<std::vector<BitcodeModule>> BMsOrErr =
+        getBitcodeModuleList(**MBOrErr);
+    if (!BMsOrErr) {
+      handleAllErrors(BMsOrErr.takeError(), [&](ErrorInfoBase &EIB) {
+        errs() << "Error loading imported file '" << I.first()
+               << "': " << EIB.message() << '\n';
+      });
+      return;
+    }
+
+    // The bitcode file may contain multiple modules, we want the one with a
+    // summary.
+    bool FoundModule = false;
+    for (BitcodeModule &BM : *BMsOrErr) {
+      Expected<bool> HasSummary = BM.hasSummary();
+      if (HasSummary && *HasSummary) {
+        ModuleMap.insert({I.first(), BM});
+        FoundModule = true;
+        break;
+      }
+    }
+    if (!FoundModule) {
+      errs() << "Error loading imported file '" << I.first()
+             << "': Could not find module summary\n";
+      return;
+    }
+
     OwnedImports.push_back(std::move(*MBOrErr));
   }
   auto AddStream = [&](size_t Task) {
