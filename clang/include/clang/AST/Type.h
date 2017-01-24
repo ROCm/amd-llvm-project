@@ -437,7 +437,13 @@ public:
         // Otherwise in OpenCLC v2.0 s6.5.5: every address space except
         // for __constant can be used as __generic.
         (getAddressSpace() == LangAS::opencl_generic &&
-         other.getAddressSpace() != LangAS::opencl_constant);
+         other.getAddressSpace() != LangAS::opencl_constant) ||
+        // HCC AMDGPU hack
+        // generic address space (4) is superset of:
+        // private address space (0)
+        // global address space  (1)
+        // group address space   (3)
+        ((getAddressSpace() == 4) && (other.getAddressSpace() != 2));
   }
 
   /// Determines if these qualifiers compatibly include another set.
