@@ -938,6 +938,10 @@ public:
     return *AddrSpaceMap;
   }
 
+  virtual unsigned getDefaultTargetAddressSpace(const LangOptions &Opt) const {
+    return 0;
+  }
+
   /// \brief Retrieve the name of the platform as it is used in the
   /// availability attribute.
   StringRef getPlatformName() const { return PlatformName; }

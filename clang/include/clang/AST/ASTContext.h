@@ -2253,9 +2253,7 @@ public:
     return getTargetAddressSpace(T.getQualifiers());
   }
 
-  unsigned getTargetAddressSpace(Qualifiers Q) const {
-    return getTargetAddressSpace(Q.getAddressSpace());
-  }
+  unsigned getTargetAddressSpace(Qualifiers Q) const;
 
   unsigned getTargetAddressSpace(unsigned AS) const {
     if (AS < LangAS::Offset || AS >= LangAS::Offset + LangAS::Count)

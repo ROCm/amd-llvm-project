@@ -9328,3 +9328,10 @@ clang::LazyGenerationalUpdatePtr<
 clang::LazyGenerationalUpdatePtr<
     const Decl *, Decl *, &ExternalASTSource::CompleteRedeclChain>::makeValue(
         const clang::ASTContext &Ctx, Decl *Value);
+
+unsigned ASTContext::getTargetAddressSpace(Qualifiers Q) const {
+  return Q.hasAddressSpace()
+           ? getTargetAddressSpace(Q.getAddressSpace())
+           : getTargetInfo().getDefaultTargetAddressSpace(LangOpts);
+}
+
