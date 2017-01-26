@@ -90,6 +90,7 @@ CodeGenModule::CodeGenModule(ASTContext &C, const HeaderSearchOptions &HSO,
       VMContext(M.getContext()), Types(*this), VTables(*this),
       SanitizerMD(new SanitizerMetadata(*this)) {
 
+  unsigned DefaultTargetAddressSpace = Target.getDefaultTargetAddressSpace(LangOpts);
   // Initialize the type cache.
   llvm::LLVMContext &LLVMContext = M.getContext();
   VoidTy = llvm::Type::getVoidTy(LLVMContext);
@@ -99,9 +100,9 @@ CodeGenModule::CodeGenModule(ASTContext &C, const HeaderSearchOptions &HSO,
   Int64Ty = llvm::Type::getInt64Ty(LLVMContext);
   FloatTy = llvm::Type::getFloatTy(LLVMContext);
   DoubleTy = llvm::Type::getDoubleTy(LLVMContext);
-  PointerWidthInBits = C.getTargetInfo().getPointerWidth(0);
+  PointerWidthInBits = C.getTargetInfo().getPointerWidth(DefaultTargetAddressSpace);
   PointerAlignInBytes =
-    C.toCharUnitsFromBits(C.getTargetInfo().getPointerAlign(0)).getQuantity();
+    C.toCharUnitsFromBits(C.getTargetInfo().getPointerAlign(DefaultTargetAddressSpace)).getQuantity();
   SizeSizeInBytes =
     C.toCharUnitsFromBits(C.getTargetInfo().getMaxPointerWidth()).getQuantity();
   IntAlignInBytes =
@@ -109,8 +110,8 @@ CodeGenModule::CodeGenModule(ASTContext &C, const HeaderSearchOptions &HSO,
   IntTy = llvm::IntegerType::get(LLVMContext, C.getTargetInfo().getIntWidth());
   IntPtrTy = llvm::IntegerType::get(LLVMContext,
     C.getTargetInfo().getMaxPointerWidth());
-  Int8PtrTy = Int8Ty->getPointerTo(0);
-  Int8PtrPtrTy = Int8PtrTy->getPointerTo(0);
+  Int8PtrTy = Int8Ty->getPointerTo(DefaultTargetAddressSpace);
+  Int8PtrPtrTy = Int8PtrTy->getPointerTo(DefaultTargetAddressSpace);
 
   RuntimeCC = getTargetCodeGenInfo().getABIInfo().getRuntimeCC();
   BuiltinCC = getTargetCodeGenInfo().getABIInfo().getBuiltinCC();
