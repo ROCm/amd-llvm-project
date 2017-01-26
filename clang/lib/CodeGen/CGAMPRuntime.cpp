@@ -18,6 +18,7 @@
 #include "clang/AST/Decl.h"
 #include "clang/AST/ExprCXX.h"
 #include "CGCall.h"
+#include "TargetInfo.h"
 
 namespace clang {
 namespace CodeGen {
@@ -277,6 +278,7 @@ void CGAMPRuntime::EmitTrampolineBody(CodeGenFunction &CGF,
 
   const CGFunctionInfo &FnInfo = CGM.getTypes().arrangeFreeFunctionCall(KArgs, MT, false);
   CGF.EmitCall(FnInfo, CGCallee::forDirect(fnAddr), ReturnValueSlot(), KArgs);
+  CGM.getTargetCodeGenInfo().setTargetAttributes(KernelDecl, CGF.CurFn, CGM);
 }
 
 void CGAMPRuntime::EmitTrampolineNameBody(CodeGenFunction &CGF,

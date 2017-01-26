@@ -1113,14 +1113,30 @@ specified when the kernel is dispatched. It is the product of the sizes of the
 x, y, and z dimension of the work-group.
 
 Clang supports the
-``__attribute__((amdgpu_flat_work_group_size(<min>, <max>)))`` attribute for the
+``__attribute__((amdgpu_flat_work_group_size(<min>[, <max>][, <ISA>])))`` and 
+``[[ hc_flat_work_group_size(<min>[, <max>][, <ISA>] ]]`` attributes for the
 AMDGPU target. This attribute may be attached to a kernel function definition
-and is an optimization hint.
+in OpenCL or an lambda function definition in HCC and is an optimization hint.
 
 ``<min>`` parameter specifies the minimum flat work-group size, and ``<max>``
 parameter specifies the maximum flat work-group size (must be greater than
-``<min>``) to which all dispatches of the kernel will conform. Passing ``0, 0``
-as ``<min>, <max>`` implies the default behavior (``128, 256``).
+``<min>``) to which all dispatches of the kernel will conform. ``<min>`` and
+``<max>`` must be 32 bit integer constants. Negative value is treated as 32 bit
+two's complement of a positive value. Passing ``0`` or ``0, 0`` as
+``<min>[, <max>]`` implies the default behavior (``128, 256``). If ``<max>``
+is unspecified, platform allowed maximum value is assumed.
+
+``<ISA>`` parameter specifies the target ISA version for which this parameter
+is applied. It is either an ISA version string with "_" as deliminator,
+e.g. "8_1_0", or a case insensative device name, e.g. "Fiji". The device
+name is an alias for the ISA version and is equivalent to specifying the ISA
+version. For example, specifying "Polaris11" for this parameter will cause
+the attribute to be applied if the target GPU is Polaris10 or Fiji, since
+Polaris10, Fiji and Polaris11 shares the same ISA version. If this parameter
+is not specified, the attribute is always applied. If this parameter is
+specified but does not match the ISA version of the target GPU, the attribute
+is not applied. Multiple attributes with different ``<ISA>`` parameter can be
+used for the same function.
 
 If specified, the AMDGPU target backend might be able to produce better machine
 code for barriers and perform scratch promotion by estimating available group
@@ -1146,16 +1162,33 @@ resources used by a single wavefront have to be limited. For example, the number
 of SGPRs and VGPRs. Limiting such resources can allow greater latency hiding,
 but can result in having to spill some register state to memory.
 
-Clang supports the ``__attribute__((amdgpu_waves_per_eu(<min>[, <max>])))``
-attribute for the AMDGPU target. This attribute may be attached to a kernel
-function definition and is an optimization hint.
+Clang supports the
+``__attribute__((amdgpu_waves_per_eu(<min>[, <max>][,<ISA>])))``
+and [[ hc_waves_per_eu(<min>[, <max>][, <ISA>] ]]``
+attribute for the AMDGPU target.  This attribute may be attached to a kernel
+function definition in OpenCL or an lambda function definition in HCC and is an
+optimization hint.
 
 ``<min>`` parameter specifies the requested minimum number of waves per EU, and
 *optional* ``<max>`` parameter specifies the requested maximum number of waves
 per EU (must be greater than ``<min>`` if specified). If ``<max>`` is omitted,
 then there is no restriction on the maximum number of waves per EU other than
 the one dictated by the hardware for which the kernel is compiled. Passing
-``0, 0`` as ``<min>, <max>`` implies the default behavior (no limits).
+``0, 0`` as ``<min>, <max>`` implies the default behavior (no limits). ``<min>``
+and ``<max>`` must be 32 bit integer constants. Negative value is treated as 32
+bit two's complement of a postive value.
+
+``<ISA>`` parameter specifies the target ISA version for which this parameter
+is applied. It is either an ISA version string with "_" as deliminator,
+e.g. "8_1_0", or a case insensative device name, e.g. "Fiji". The device
+name is an alias for the ISA version and is equivalent to specifying the ISA
+version. For example, specifying "Polaris11" for this parameter will cause
+the attribute to be applied if the target GPU is Polaris10 or Fiji, since
+Polaris10, Fiji and Polaris11 shares the same ISA version. If this parameter
+is not specified, the attribute is always applied. If this parameter is
+specified but does not match the ISA version of the target GPU, the attribute
+is not applied. Multiple attributes with different ``<ISA>`` parameter can be
+used for the same function.
 
 If specified, this attribute allows an advanced developer to tune the number of
 wavefronts that are capable of fitting within the resources of an EU. The AMDGPU
@@ -1206,6 +1239,41 @@ An error will be given if:
     attributes;
   - The AMDGPU target backend is unable to create machine code that can meet the
     request.
+  }];
+}
+
+def AMDGPUMaxWorkGroupDimDocs : Documentation {
+  let Category = DocCatAMDGPUAttributes;
+  let Content = [{
+Clang supports the
+``[[ hc_max_work_group_dim(<x>, <y>, <z>[, <ISA>] ]]`` attributes for the
+AMDGPU target. This attribute may be attached to an lambda function definition
+in HCC and is an optimization hint.
+
+``<x>``, ``<y>``, and ``<z>`` parameter specifies the maximum work-group
+dimension in x, y, and z direction. They must be 32 bit integer constants. 0
+indicates platform allowed maximum value. Negative value is treated as 32 bit
+two's complement of a positive value.
+
+``<ISA>`` parameter specifies the target ISA version for which this parameter
+is applied. It is either an ISA version string with "_" as deliminator,
+e.g. "8_1_0", or a case insensative device name, e.g. "Fiji". The device
+name is an alias for the ISA version and is equivalent to specifying the ISA
+version. For example, specifying "Polaris11" for this parameter will cause
+the attribute to be applied if the target GPU is Polaris10 or Fiji, since
+Polaris10, Fiji and Polaris11 shares the same ISA version. If this parameter
+is not specified, the attribute is always applied. If this parameter is
+specified but does not match the ISA version of the target GPU, the attribute
+is not applied. Multiple attributes with different ``<ISA>`` parameter can be
+used for the same function.
+
+If specified, the AMDGPU target backend might be able to produce better machine
+code for array indices calculation.
+
+An error will be given if:
+  - Specified values violate subtarget specifications;
+  - Specified values are not compatible with values provided through other
+    attributes.
   }];
 }
 
