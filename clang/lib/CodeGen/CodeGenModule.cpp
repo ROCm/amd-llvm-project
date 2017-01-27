@@ -1872,7 +1872,7 @@ void CodeGenModule::EmitGlobalDefinition(GlobalDecl GD, llvm::GlobalValue *GV) {
       // Since we will emit both CPU codes and GPU codes to make C++ mangling
       // algorithm happy, we won't reject anything other than ones with only
       // restrict(cpu). Another optimization pass will remove all CPU codes.
-      if (!D->hasAttr<CXXAMPRestrictAMPAttr>())
+      if (!D->hasAttr<CXXAMPRestrictAMPAttr>() && !D->hasAttr<HCGridLaunchAttr>())
         return;
     } else {
       if (D->hasAttr<CXXAMPRestrictAMPAttr>()&&
