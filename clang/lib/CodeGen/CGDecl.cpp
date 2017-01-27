@@ -929,6 +929,10 @@ static bool shouldEmitLifetimeMarkers(const CodeGenOptions &CGOpts,
   if (LangOpts.Sanitize.has(SanitizerKind::Memory))
     return false;
 
+  // Disable lifetime markers for HCC kernel compilation path
+  if (LangOpts.CPlusPlusAMP && LangOpts.DevicePath)
+    return false;
+
   // For now, only in optimized builds.
   return CGOpts.OptimizationLevel != 0;
 }
