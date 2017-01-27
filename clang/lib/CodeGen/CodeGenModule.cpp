@@ -408,7 +408,11 @@ void CodeGenModule::Release() {
   }
   EmitCtorList(GlobalCtors, "llvm.global_ctors");
   EmitCtorList(GlobalDtors, "llvm.global_dtors");
-  EmitGlobalAnnotations();
+  // skip global annotation for HCC kernel path
+  if (Context.getLangOpts().CPlusPlusAMP && getCodeGenOpts().AMPIsDevice) {
+  } else {
+    EmitGlobalAnnotations();
+  }
   EmitStaticExternCAliases();
   EmitDeferredUnusedCoverageMappings();
   if (CoverageMapping)
