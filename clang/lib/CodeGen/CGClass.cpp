@@ -299,8 +299,9 @@ Address CodeGenFunction::GetAddressOfBaseClass(
   }
 
   // Get the base pointer type.
+  unsigned DefaultAddr = CGM.getTarget().getDefaultTargetAddressSpace(CGM.getLangOpts());
   llvm::Type *BasePtrTy =
-    ConvertType((PathEnd[-1])->getType())->getPointerTo();
+    ConvertType((PathEnd[-1])->getType())->getPointerTo(DefaultAddr);
 
   QualType DerivedTy = getContext().getRecordType(Derived);
   CharUnits DerivedAlign = CGM.getClassPointerAlignment(Derived);
@@ -374,8 +375,9 @@ CodeGenFunction::GetAddressOfDerivedClass(Address BaseAddr,
 
   QualType DerivedTy =
     getContext().getCanonicalType(getContext().getTagDeclType(Derived));
-  llvm::Type *DerivedPtrTy = ConvertType(DerivedTy)->getPointerTo();
 
+  unsigned DefaultAddr = CGM.getTarget().getDefaultTargetAddressSpace(CGM.getLangOpts());
+  llvm::Type *DerivedPtrTy = ConvertType(DerivedTy)->getPointerTo(DefaultAddr);
   llvm::Value *NonVirtualOffset =
     CGM.GetNonVirtualBaseClassOffset(Derived, PathBegin, PathEnd);
 
