@@ -8,17 +8,35 @@
 //===----------------------------------------------------------------------===//
 
 #include "Strings.h"
+#include "Config.h"
 #include "Error.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
-#include "llvm/Config/config.h"
 #include "llvm/Demangle/Demangle.h"
 #include <algorithm>
+#include <cstring>
 
 using namespace llvm;
 using namespace lld;
 using namespace lld::elf;
+
+StringMatcher::StringMatcher(ArrayRef<StringRef> Pat) {
+  for (StringRef S : Pat) {
+    Expected<GlobPattern> Pat = GlobPattern::create(S);
+    if (!Pat)
+      error(toString(Pat.takeError()));
+    else
+      Patterns.push_back(*Pat);
+  }
+}
+
+bool StringMatcher::match(StringRef S) const {
+  for (const GlobPattern &Pat : Patterns)
+    if (Pat.match(S))
+      return true;
+  return false;
+}
 
 // If an input string is in the form of "foo.N" where N is a number,
 // return N. Otherwise, returns 65536, which is one greater than the
@@ -41,42 +59,6 @@ StringRef elf::unquote(StringRef S) {
   if (!S.startswith("\""))
     return S;
   return S.substr(1, S.size() - 2);
-}
-
-// Converts a glob pattern to a regular expression.
-static std::string toRegex(StringRef S) {
-  std::string T;
-  bool InBracket = false;
-  while (!S.empty()) {
-    char C = S.front();
-    if (InBracket) {
-      InBracket = C != ']';
-      T += C;
-      S = S.drop_front();
-      continue;
-    }
-
-    if (C == '*')
-      T += ".*";
-    else if (C == '?')
-      T += '.';
-    else if (StringRef(".+^${}()|/\\").find_first_of(C) != StringRef::npos)
-      T += std::string("\\") + C;
-    else
-      T += C;
-
-    InBracket = C == '[';
-    S = S.substr(1);
-  }
-  return T;
-}
-
-// Converts multiple glob patterns to a regular expression.
-Regex elf::compileGlobPatterns(ArrayRef<StringRef> V) {
-  std::string T = "^(" + toRegex(V[0]);
-  for (StringRef S : V.slice(1))
-    T += "|" + toRegex(S);
-  return Regex(T + ")$");
 }
 
 // Converts a hex string (e.g. "deadbeef") to a vector.
@@ -108,18 +90,18 @@ bool elf::isValidCIdentifier(StringRef S) {
 }
 
 // Returns the demangled C++ symbol name for Name.
-std::string elf::demangle(StringRef Name) {
+Optional<std::string> elf::demangle(StringRef Name) {
   // __cxa_demangle can be used to demangle strings other than symbol
   // names which do not necessarily start with "_Z". Name can be
   // either a C or C++ symbol. Don't call __cxa_demangle if the name
   // does not look like a C++ symbol name to avoid getting unexpected
   // result for a C symbol that happens to match a mangled type name.
   if (!Name.startswith("_Z"))
-    return Name;
+    return None;
 
   char *Buf = itaniumDemangle(Name.str().c_str(), nullptr, nullptr, nullptr);
   if (!Buf)
-    return Name;
+    return None;
   std::string S(Buf);
   free(Buf);
   return S;

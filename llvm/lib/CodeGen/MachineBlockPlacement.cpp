@@ -264,7 +264,7 @@ public:
 namespace {
 class MachineBlockPlacement : public MachineFunctionPass {
   /// \brief A typedef for a block filter set.
-  typedef SmallPtrSet<MachineBasicBlock *, 16> BlockFilterSet;
+  typedef SmallSetVector<MachineBasicBlock *, 16> BlockFilterSet;
 
   /// \brief work lists of blocks that are ready to be laid out
   SmallVector<MachineBasicBlock *, 16> BlockWorkList;
@@ -281,6 +281,11 @@ class MachineBlockPlacement : public MachineFunctionPass {
 
   /// \brief A handle to the loop info.
   MachineLoopInfo *MLI;
+
+  /// \brief Preferred loop exit.
+  /// Member variable for convenience. It may be removed by duplication deep
+  /// in the call stack.
+  MachineBasicBlock *PreferredLoopExit;
 
   /// \brief A handle to the target's instruction info.
   const TargetInstrInfo *TII;
@@ -318,6 +323,14 @@ class MachineBlockPlacement : public MachineFunctionPass {
   /// allow implicitly defining edges between chains as the existing edges
   /// between basic blocks.
   DenseMap<MachineBasicBlock *, BlockChain *> BlockToChain;
+
+#ifndef NDEBUG
+  /// The set of basic blocks that have terminators that cannot be fully
+  /// analyzed.  These basic blocks cannot be re-ordered safely by
+  /// MachineBlockPlacement, and we must preserve physical layout of these
+  /// blocks and their successors through the pass.
+  SmallPtrSet<MachineBasicBlock *, 4> BlocksWithUnanalyzableExits;
+#endif
 
   /// Decrease the UnscheduledPredecessors count for all blocks in chain, and
   /// if the count goes to 0, add them to the appropriate work list.
@@ -1474,9 +1487,8 @@ void MachineBlockPlacement::buildLoopChains(MachineLoop &L) {
   // If we selected just the header for the loop top, look for a potentially
   // profitable exit block in the event that rotating the loop can eliminate
   // branches by placing an exit edge at the bottom.
-  MachineBasicBlock *ExitingBB = nullptr;
   if (!RotateLoopWithProfile && LoopTop == L.getHeader())
-    ExitingBB = findBestLoopExit(L, LoopBlockSet);
+    PreferredLoopExit = findBestLoopExit(L, LoopBlockSet);
 
   BlockChain &LoopChain = *BlockToChain[LoopTop];
 
@@ -1495,7 +1507,7 @@ void MachineBlockPlacement::buildLoopChains(MachineLoop &L) {
   if (RotateLoopWithProfile)
     rotateLoopWithProfile(LoopChain, L, LoopBlockSet);
   else
-    rotateLoop(LoopChain, ExitingBB, LoopBlockSet);
+    rotateLoop(LoopChain, PreferredLoopExit, LoopBlockSet);
 
   DEBUG({
     // Crash at the end so we get all of the debugging output first.
@@ -1508,7 +1520,7 @@ void MachineBlockPlacement::buildLoopChains(MachineLoop &L) {
     }
     for (MachineBasicBlock *ChainBB : LoopChain) {
       dbgs() << "          ... " << getBlockName(ChainBB) << "\n";
-      if (!LoopBlockSet.erase(ChainBB)) {
+      if (!LoopBlockSet.remove(ChainBB)) {
         // We don't mark the loop as bad here because there are real situations
         // where this can occur. For example, with an unanalyzable fallthrough
         // from a loop block to a non-loop block or vice versa.
@@ -1585,6 +1597,9 @@ void MachineBlockPlacement::buildCFGChains() {
                    << getBlockName(BB) << " -> " << getBlockName(NextBB)
                    << "\n");
       Chain->merge(NextBB, nullptr);
+#ifndef NDEBUG
+      BlocksWithUnanalyzableExits.insert(&*BB);
+#endif
       FI = NextFI;
       BB = NextBB;
     }
@@ -1594,6 +1609,7 @@ void MachineBlockPlacement::buildCFGChains() {
   collectMustExecuteBBs();
 
   // Build any loop-based chains.
+  PreferredLoopExit = nullptr;
   for (MachineLoop *L : *MLI)
     buildLoopChains(*L);
 
@@ -1655,6 +1671,19 @@ void MachineBlockPlacement::buildCFGChains() {
     // boiler plate.
     Cond.clear();
     MachineBasicBlock *TBB = nullptr, *FBB = nullptr; // For AnalyzeBranch.
+
+#ifndef NDEBUG
+    if (!BlocksWithUnanalyzableExits.count(PrevBB)) {
+      // Given the exact block placement we chose, we may actually not _need_ to
+      // be able to edit PrevBB's terminator sequence, but not being _able_ to
+      // do that at this point is a bug.
+      assert((!TII->analyzeBranch(*PrevBB, TBB, FBB, Cond) ||
+              !PrevBB->canFallThrough()) &&
+             "Unexpected block with un-analyzable fallthrough!");
+      Cond.clear();
+      TBB = FBB = nullptr;
+    }
+#endif
 
     // The "PrevBB" is not yet updated to reflect current code layout, so,
     //   o. it may fall-through to a block without explicit "goto" instruction
@@ -1923,13 +1952,14 @@ bool MachineBlockPlacement::maybeTailDuplicateBlock(
 
         // Handle the filter set
         if (BlockFilter) {
-          BlockFilter->erase(RemBB);
+          BlockFilter->remove(RemBB);
         }
 
         // Remove the block from loop info.
         MLI->removeBlock(RemBB);
+        if (RemBB == PreferredLoopExit)
+          PreferredLoopExit = nullptr;
 
-        // TailDuplicator handles removing it from loops.
         DEBUG(dbgs() << "TailDuplicator deleted block: "
               << getBlockName(RemBB) << "\n");
       };
@@ -1977,6 +2007,11 @@ bool MachineBlockPlacement::runOnMachineFunction(MachineFunction &MF) {
   TII = MF.getSubtarget().getInstrInfo();
   TLI = MF.getSubtarget().getTargetLowering();
   MDT = &getAnalysis<MachineDominatorTree>();
+
+  // Initialize PreferredLoopExit to nullptr here since it may never be set if
+  // there are no MachineLoops.
+  PreferredLoopExit = nullptr;
+
   if (TailDupPlacement) {
     unsigned TailDupSize = TailDuplicatePlacementThreshold;
     if (MF.getFunction()->optForSize())

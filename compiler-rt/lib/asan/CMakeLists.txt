@@ -9,6 +9,7 @@ set(ASAN_SOURCES
   asan_fake_stack.cc
   asan_flags.cc
   asan_globals.cc
+  asan_globals_win.cc
   asan_interceptors.cc
   asan_linux.cc
   asan_mac.cc
@@ -40,8 +41,6 @@ append_rtti_flag(OFF ASAN_CFLAGS)
 set(ASAN_DYNAMIC_LINK_FLAGS)
 
 if(ANDROID)
-  list(APPEND ASAN_COMMON_DEFINITIONS
-    ASAN_LOW_MEMORY=1)
 # On Android, -z global does not do what it is documented to do.
 # On Android, -z global moves the library ahead in the lookup order,
 # placing it right after the LD_PRELOADs. This is used to compensate for the fact
@@ -205,6 +204,7 @@ else()
         STATIC
         ARCHS ${arch}
         SOURCES asan_win_dll_thunk.cc
+                asan_globals_win.cc
                 $<TARGET_OBJECTS:RTInterception.${arch}>
         CFLAGS ${ASAN_CFLAGS} -DASAN_DLL_THUNK
         DEFS ${ASAN_COMMON_DEFINITIONS}
@@ -221,6 +221,7 @@ else()
         STATIC
         ARCHS ${arch}
         SOURCES asan_win_dynamic_runtime_thunk.cc
+                asan_globals_win.cc
         CFLAGS ${ASAN_CFLAGS} ${DYNAMIC_RUNTIME_THUNK_CFLAGS}
         DEFS ${ASAN_COMMON_DEFINITIONS}
         PARENT_TARGET asan)

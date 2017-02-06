@@ -9,6 +9,9 @@
 
 #include "lldb/Symbol/ClangASTContext.h"
 
+#include "llvm/Support/FormatAdapters.h"
+#include "llvm/Support/FormatVariadic.h"
+
 // C Includes
 // C++ Includes
 #include <mutex> // std::once
@@ -113,7 +116,9 @@ ClangASTContextSupportsLanguage(lldb::LanguageType language) {
          Language::LanguageIsPascal(language) ||
          // Use Clang for Rust until there is a proper language plugin for it
          language == eLanguageTypeRust ||
-         language == eLanguageTypeExtRenderScript;
+         language == eLanguageTypeExtRenderScript ||
+         // Use Clang for D until there is a proper language plugin for it
+         language == eLanguageTypeD;
 }
 }
 
@@ -6518,7 +6523,7 @@ CompilerType ClangASTContext::GetChildCompilerTypeAtIndex(
         if (idx == child_idx) {
           // Print the member type if requested
           // Print the member name and equal sign
-          child_name.assign(field->getNameAsString().c_str());
+          child_name.assign(field->getNameAsString());
 
           // Figure out the type byte size (field_type_info.first) and
           // alignment (field_type_info.second) from the AST context.
@@ -6577,7 +6582,7 @@ CompilerType ClangASTContext::GetChildCompilerTypeAtIndex(
                           superclass_interface_decl));
 
                   child_name.assign(
-                      superclass_interface_decl->getNameAsString().c_str());
+                      superclass_interface_decl->getNameAsString());
 
                   clang::TypeInfo ivar_type_info =
                       getASTContext()->getTypeInfo(ivar_qual_type.getTypePtr());
@@ -6608,7 +6613,7 @@ CompilerType ClangASTContext::GetChildCompilerTypeAtIndex(
 
                 clang::QualType ivar_qual_type(ivar_decl->getType());
 
-                child_name.assign(ivar_decl->getNameAsString().c_str());
+                child_name.assign(ivar_decl->getNameAsString());
 
                 clang::TypeInfo ivar_type_info =
                     getASTContext()->getTypeInfo(ivar_qual_type.getTypePtr());
@@ -6737,10 +6742,7 @@ CompilerType ClangASTContext::GetChildCompilerTypeAtIndex(
       if (array) {
         CompilerType element_type(getASTContext(), array->getElementType());
         if (element_type.GetCompleteType()) {
-          char element_name[64];
-          ::snprintf(element_name, sizeof(element_name), "[%" PRIu64 "]",
-                     static_cast<uint64_t>(idx));
-          child_name.assign(element_name);
+          child_name = llvm::formatv("[{0}]", idx);
           child_byte_size = element_type.GetByteSize(
               exe_ctx ? exe_ctx->GetBestExecutionContextScope() : NULL);
           child_byte_offset = (int32_t)idx * (int32_t)child_byte_size;
@@ -8205,14 +8207,14 @@ bool ClangASTContext::AddObjCClassProperty(
           std::string property_setter_no_colon(
               property_setter_name, strlen(property_setter_name) - 1);
           clang::IdentifierInfo *setter_ident =
-              &clang_ast->Idents.get(property_setter_no_colon.c_str());
+              &clang_ast->Idents.get(property_setter_no_colon);
           setter_sel = clang_ast->Selectors.getSelector(1, &setter_ident);
         } else if (!(property_attributes & DW_APPLE_PROPERTY_readonly)) {
           std::string setter_sel_string("set");
           setter_sel_string.push_back(::toupper(property_name[0]));
           setter_sel_string.append(&property_name[1]);
           clang::IdentifierInfo *setter_ident =
-              &clang_ast->Idents.get(setter_sel_string.c_str());
+              &clang_ast->Idents.get(setter_sel_string);
           setter_sel = clang_ast->Selectors.getSelector(1, &setter_ident);
         }
         property_decl->setSetterName(setter_sel);
@@ -8881,8 +8883,8 @@ void ClangASTContext::DumpValue(
           std::string base_class_type_name(base_class_qual_type.getAsString());
 
           // Indent and print the base class type name
-          s->Printf("\n%*s%s ", depth + DEPTH_INCREMENT, "",
-                    base_class_type_name.c_str());
+          s->Format("\n{0}{1}", llvm::fmt_repeat(" ", depth + DEPTH_INCREMENT),
+                    base_class_type_name);
 
           clang::TypeInfo base_class_type_info =
               getASTContext()->getTypeInfo(base_class_qual_type);
@@ -9254,7 +9256,7 @@ bool ClangASTContext::DumpTypeValue(
               enum_end_pos = enum_decl->enumerator_end();
                enum_pos != enum_end_pos; ++enum_pos) {
             if (enum_pos->getInitVal().getSExtValue() == enum_svalue) {
-              s->PutCString(enum_pos->getNameAsString().c_str());
+              s->PutCString(enum_pos->getNameAsString());
               return true;
             }
           }
@@ -9268,7 +9270,7 @@ bool ClangASTContext::DumpTypeValue(
               enum_end_pos = enum_decl->enumerator_end();
                enum_pos != enum_end_pos; ++enum_pos) {
             if (enum_pos->getInitVal().getZExtValue() == enum_uvalue) {
-              s->PutCString(enum_pos->getNameAsString().c_str());
+              s->PutCString(enum_pos->getNameAsString());
               return true;
             }
           }
@@ -9438,7 +9440,7 @@ void ClangASTContext::DumpTypeDescription(lldb::opaque_compiler_type_t type,
             typedef_decl->getQualifiedNameAsString());
         if (!clang_typedef_name.empty()) {
           s->PutCString("typedef ");
-          s->PutCString(clang_typedef_name.c_str());
+          s->PutCString(clang_typedef_name);
         }
       }
     } break;
@@ -9488,7 +9490,7 @@ void ClangASTContext::DumpTypeDescription(lldb::opaque_compiler_type_t type,
       } else {
         std::string clang_type_name(qual_type.getAsString());
         if (!clang_type_name.empty())
-          s->PutCString(clang_type_name.c_str());
+          s->PutCString(clang_type_name);
       }
     }
     }
@@ -10050,14 +10052,14 @@ ClangASTContextForExpressions::ClangASTContextForExpressions(Target &target)
       m_persistent_variables(new ClangPersistentVariables) {}
 
 UserExpression *ClangASTContextForExpressions::GetUserExpression(
-    const char *expr, const char *expr_prefix, lldb::LanguageType language,
+    llvm::StringRef expr, llvm::StringRef prefix, lldb::LanguageType language,
     Expression::ResultType desired_type,
     const EvaluateExpressionOptions &options) {
   TargetSP target_sp = m_target_wp.lock();
   if (!target_sp)
     return nullptr;
 
-  return new ClangUserExpression(*target_sp.get(), expr, expr_prefix, language,
+  return new ClangUserExpression(*target_sp.get(), expr, prefix, language,
                                  desired_type, options);
 }
 

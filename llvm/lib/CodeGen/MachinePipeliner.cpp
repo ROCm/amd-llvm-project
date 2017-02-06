@@ -1726,9 +1726,9 @@ static void computeLiveOuts(MachineFunction &MF, RegPressureTracker &RPTracker,
     const MachineInstr *MI = SU->getInstr();
     if (MI->isPHI())
       continue;
-    for (ConstMIOperands MO(*MI); MO.isValid(); ++MO)
-      if (MO->isReg() && MO->isUse()) {
-        unsigned Reg = MO->getReg();
+    for (const MachineOperand &MO : MI->operands())
+      if (MO.isReg() && MO.isUse()) {
+        unsigned Reg = MO.getReg();
         if (TargetRegisterInfo::isVirtualRegister(Reg))
           Uses.insert(Reg);
         else if (MRI.isAllocatable(Reg))
@@ -1737,16 +1737,18 @@ static void computeLiveOuts(MachineFunction &MF, RegPressureTracker &RPTracker,
       }
   }
   for (SUnit *SU : NS)
-    for (ConstMIOperands MO(*SU->getInstr()); MO.isValid(); ++MO)
-      if (MO->isReg() && MO->isDef() && !MO->isDead()) {
-        unsigned Reg = MO->getReg();
+    for (const MachineOperand &MO : SU->getInstr()->operands())
+      if (MO.isReg() && MO.isDef() && !MO.isDead()) {
+        unsigned Reg = MO.getReg();
         if (TargetRegisterInfo::isVirtualRegister(Reg)) {
           if (!Uses.count(Reg))
-            LiveOutRegs.push_back(RegisterMaskPair(Reg, 0));
+            LiveOutRegs.push_back(RegisterMaskPair(Reg,
+                                                   LaneBitmask::getNone()));
         } else if (MRI.isAllocatable(Reg)) {
           for (MCRegUnitIterator Units(Reg, TRI); Units.isValid(); ++Units)
             if (!Uses.count(*Units))
-              LiveOutRegs.push_back(RegisterMaskPair(*Units, 0));
+              LiveOutRegs.push_back(RegisterMaskPair(*Units,
+                                                     LaneBitmask::getNone()));
         }
       }
   RPTracker.addLiveRegs(LiveOutRegs);
@@ -3805,8 +3807,7 @@ bool SMSchedule::isLoopCarried(SwingSchedulerDAG *SSD, MachineInstr &Phi) {
     return true;
   unsigned LoopCycle = cycleScheduled(UseSU);
   int LoopStage = stageScheduled(UseSU);
-  return LoopCycle > DefCycle ||
-         (LoopCycle <= DefCycle && LoopStage <= DefStage);
+  return (LoopCycle > DefCycle) || (LoopStage <= DefStage);
 }
 
 /// Return true if the instruction is a definition that is loop carried

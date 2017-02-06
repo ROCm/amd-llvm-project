@@ -263,6 +263,11 @@ of the printer needs to have been explicitly set to C<ISL_FORMAT_C>.
 As a result, the function C<isl_ast_expr_to_str> no longer prints
 the expression in C format.  Use C<isl_ast_expr_to_C_str> instead.
 
+=item * The functions C<isl_set_align_divs> and C<isl_map_align_divs>
+have been deprecated.  The function C<isl_set_lift> has an effect
+that is similar to C<isl_set_align_divs> and could in some cases
+be used as an alternative.
+
 =back
 
 =head1 License
@@ -2101,15 +2106,6 @@ variables as integer divisions of the other variables, possibly
 including earlier existentially quantified variables.
 An explicitly represented existentially quantified variable therefore
 has a unique value when the values of the other variables are known.
-If, furthermore, the same existentials, i.e., existentials
-with the same explicit representations, should appear in the
-same order in each of the disjuncts of a set or map, then the user should call
-either of the following functions.
-
-	__isl_give isl_set *isl_set_align_divs(
-		__isl_take isl_set *set);
-	__isl_give isl_map *isl_map_align_divs(
-		__isl_take isl_map *map);
 
 Alternatively, the existentially quantified variables can be removed
 using the following functions, which compute an overapproximation.
@@ -3687,6 +3683,10 @@ C<isl_printer_get_note> fails if the requested note does not exist.
 Alternatively, a string representation can be obtained
 directly using the following functions, which always print
 in isl format.
+
+	#include <isl/id.h>
+	__isl_give char *isl_id_to_str(
+		__isl_keep isl_id *id);
 
 	#include <isl/space.h>
 	__isl_give char *isl_space_to_str(
@@ -7614,7 +7614,7 @@ library.
 
 The function C<isl_basic_set_compute_vertices> performs the
 actual computation of the parametric vertices and the chamber
-decomposition and store the result in an C<isl_vertices> object.
+decomposition and stores the result in an C<isl_vertices> object.
 This information can be queried by either iterating over all
 the vertices or iterating over all the chambers or cells
 and then iterating over all vertices that are active on the chamber.
@@ -8739,8 +8739,8 @@ of type C<isl_union_access_info> can be obtained using
 
 C<isl_union_access_info_to_str> prints the information in flow format.
 
-The output of C<isl_union_access_info_compute_flow> can be examined
-and freed using the following functions.
+The output of C<isl_union_access_info_compute_flow> can be examined,
+copied, and freed using the following functions.
 
 	#include <isl/flow.h>
 	__isl_give isl_union_map *isl_union_flow_get_must_dependence(
@@ -8756,6 +8756,8 @@ and freed using the following functions.
 	__isl_give isl_union_map *isl_union_flow_get_must_no_source(
 		__isl_keep isl_union_flow *flow);
 	__isl_give isl_union_map *isl_union_flow_get_may_no_source(
+		__isl_keep isl_union_flow *flow);
+	__isl_give isl_union_flow *isl_union_flow_copy(
 		__isl_keep isl_union_flow *flow);
 	__isl_null isl_union_flow *isl_union_flow_free(
 		__isl_take isl_union_flow *flow);

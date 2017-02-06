@@ -12,6 +12,7 @@
 
 // C Includes
 // C++ Includes
+#include <set>
 #include <vector>
 
 // Other libraries and framework includes
@@ -92,6 +93,7 @@ public:
     return lldb::eLanguageTypeC_plus_plus;
   }
 
+  std::unique_ptr<TypeScavenger> GetTypeScavenger() override;
   lldb::TypeCategoryImplSP GetFormatters() override;
 
   HardcodedFormatters::HardcodedSummaryFinder GetHardcodedSummaries() override;
@@ -139,6 +141,12 @@ public:
   // to ObjC or other languages if necessary
   static uint32_t FindEquivalentNames(ConstString type_name,
                                       std::vector<ConstString> &equivalents);
+
+  // Given a mangled function name, calculates some alternative manglings since
+  // the compiler mangling may not line up with the symbol we are expecting
+  static uint32_t
+  FindAlternateFunctionManglings(const ConstString mangled,
+                                 std::set<ConstString> &candidates);
 
   //------------------------------------------------------------------
   // PluginInterface protocol

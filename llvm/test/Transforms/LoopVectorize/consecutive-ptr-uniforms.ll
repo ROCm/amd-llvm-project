@@ -1,6 +1,6 @@
 ; REQUIRES: asserts
 ; RUN: opt < %s -loop-vectorize -force-vector-width=4 -force-vector-interleave=1 -instcombine -debug-only=loop-vectorize -disable-output -print-after=instcombine 2>&1 | FileCheck %s
-; RUN: opt < %s -loop-vectorize -force-vector-width=4 -force-vector-interleave=1 -enable-interleaved-mem-accesses -enable-cond-stores-vec -instcombine -debug-only=loop-vectorize -disable-output -print-after=instcombine 2>&1 | FileCheck %s --check-prefix=INTER
+; RUN: opt < %s -loop-vectorize -force-vector-width=4 -force-vector-interleave=1 -enable-interleaved-mem-accesses -instcombine -debug-only=loop-vectorize -disable-output -print-after=instcombine 2>&1 | FileCheck %s --check-prefix=INTER
 
 target datalayout = "e-m:e-i64:64-i128:128-n32:64-S128"
 
@@ -200,15 +200,15 @@ for.end:
 ; INTER-NOT: LV: Found uniform instruction: %tmp0 = getelementptr inbounds %pair, %pair* %p, i64 %i, i32 0
 ; INTER:     vector.body
 ; INTER:       %index = phi i64 [ 0, %vector.ph ], [ %index.next, {{.*}} ]
-; INTER:       %[[I1:.+]] = or i64 %index, 1
-; INTER:       %[[I2:.+]] = or i64 %index, 2
-; INTER:       %[[I3:.+]] = or i64 %index, 3
 ; INTER:       %[[G0:.+]] = getelementptr inbounds %pair, %pair* %p, i64 %index, i32 0
-; INTER:       getelementptr inbounds %pair, %pair* %p, i64 %[[I1]], i32 0
-; INTER:       getelementptr inbounds %pair, %pair* %p, i64 %[[I2]], i32 0
-; INTER:       getelementptr inbounds %pair, %pair* %p, i64 %[[I3]], i32 0
 ; INTER:       %[[B0:.+]] = bitcast i32* %[[G0]] to <8 x i32>*
 ; INTER:       %wide.vec = load <8 x i32>, <8 x i32>* %[[B0]], align 8
+; INTER:       %[[I1:.+]] = or i64 %index, 1
+; INTER:       getelementptr inbounds %pair, %pair* %p, i64 %[[I1]], i32 0
+; INTER:       %[[I2:.+]] = or i64 %index, 2
+; INTER:       getelementptr inbounds %pair, %pair* %p, i64 %[[I2]], i32 0
+; INTER:       %[[I3:.+]] = or i64 %index, 3
+; INTER:       getelementptr inbounds %pair, %pair* %p, i64 %[[I3]], i32 0
 ; INTER:       br i1 {{.*}}, label %middle.block, label %vector.body
 ;
 define void @predicated_store(%pair *%p, i32 %x, i64 %n) {

@@ -221,10 +221,9 @@ const EHPersonality &EHPersonality::get(CodeGenFunction &CGF) {
 
 static llvm::Constant *getPersonalityFn(CodeGenModule &CGM,
                                         const EHPersonality &Personality) {
-  llvm::Constant *Fn =
-    CGM.CreateRuntimeFunction(llvm::FunctionType::get(CGM.Int32Ty, true),
-                              Personality.PersonalityFn);
-  return Fn;
+  return CGM.CreateRuntimeFunction(llvm::FunctionType::get(CGM.Int32Ty, true),
+                                   Personality.PersonalityFn,
+                                   llvm::AttributeSet(), /*Local=*/true);
 }
 
 static llvm::Constant *getOpaquePersonalityFn(CodeGenModule &CGM,
@@ -1433,7 +1432,8 @@ struct PerformSEHFinally final : EHScopeStack::Cleanup {
     const CGFunctionInfo &FnInfo =
         CGM.getTypes().arrangeBuiltinFunctionCall(Context.VoidTy, Args);
 
-    CGF.EmitCall(FnInfo, OutlinedFinally, ReturnValueSlot(), Args);
+    auto Callee = CGCallee::forDirect(OutlinedFinally);
+    CGF.EmitCall(FnInfo, Callee, ReturnValueSlot(), Args);
   }
 };
 } // end anonymous namespace

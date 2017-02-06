@@ -9,8 +9,8 @@
 
 #include "ThrowByValueCatchByReferenceCheck.h"
 #include "clang/AST/ASTContext.h"
-#include "clang/ASTMatchers/ASTMatchFinder.h"
 #include "clang/AST/OperationKinds.h"
+#include "clang/ASTMatchers/ASTMatchFinder.h"
 
 using namespace clang::ast_matchers;
 
@@ -100,10 +100,8 @@ void ThrowByValueCatchByReferenceCheck::diagnoseThrowLocations(
   if (CheckAnonymousTemporaries) {
     bool emit = false;
     auto *currentSubExpr = subExpr->IgnoreImpCasts();
-    const DeclRefExpr *variableReference =
-        dyn_cast<DeclRefExpr>(currentSubExpr);
-    const CXXConstructExpr *constructorCall =
-        dyn_cast<CXXConstructExpr>(currentSubExpr);
+    const auto *variableReference = dyn_cast<DeclRefExpr>(currentSubExpr);
+    const auto *constructorCall = dyn_cast<CXXConstructExpr>(currentSubExpr);
     // If we have a DeclRefExpr, we flag for emitting a diagnosis message in
     // case the referenced variable is neither a function parameter nor a
     // variable declared in the catch statement.

@@ -4,17 +4,15 @@
 
 include(LLVMExternalProjectUtils)
 
+if(LLVM_MAIN_INCLUDE_DIR)
+  set(LLVM_TABLEGEN_FLAGS -I ${LLVM_MAIN_INCLUDE_DIR})
+endif()
+
 function(tablegen project ofn)
   # Validate calling context.
-  foreach(v
-      ${project}_TABLEGEN_EXE
-      LLVM_MAIN_SRC_DIR
-      LLVM_MAIN_INCLUDE_DIR
-      )
-    if(NOT ${v})
-      message(FATAL_ERROR "${v} not set")
-    endif()
-  endforeach()
+  if(NOT ${project}_TABLEGEN_EXE)
+    message(FATAL_ERROR "${project}_TABLEGEN_EXE not set")
+  endif()
 
   file(GLOB local_tds "*.td")
   file(GLOB_RECURSE global_tds "${LLVM_MAIN_INCLUDE_DIR}/llvm/*.td")
@@ -28,7 +26,7 @@ function(tablegen project ofn)
   add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${ofn}.tmp
     # Generate tablegen output in a temporary file.
     COMMAND ${${project}_TABLEGEN_EXE} ${ARGN} -I ${CMAKE_CURRENT_SOURCE_DIR}
-    -I ${LLVM_MAIN_SRC_DIR}/lib/Target -I ${LLVM_MAIN_INCLUDE_DIR}
+    ${LLVM_TABLEGEN_FLAGS} 
     ${LLVM_TARGET_DEFINITIONS_ABSOLUTE}
     -o ${CMAKE_CURRENT_BINARY_DIR}/${ofn}.tmp
     # The file in LLVM_TARGET_DEFINITIONS may be not in the current
@@ -137,8 +135,13 @@ macro(add_tablegen target project)
   endif()
 
   if (${project} STREQUAL LLVM AND NOT LLVM_INSTALL_TOOLCHAIN_ONLY)
+    if(${target} IN_LIST LLVM_DISTRIBUTION_COMPONENTS OR
+        NOT LLVM_DISTRIBUTION_COMPONENTS)
+      set(export_to_llvmexports EXPORT LLVMExports)
+    endif()
+
     install(TARGETS ${target}
-            EXPORT LLVMExports
+            ${export_to_llvmexports}
             RUNTIME DESTINATION ${LLVM_TOOLS_INSTALL_DIR})
   endif()
   set_property(GLOBAL APPEND PROPERTY LLVM_EXPORTS ${target})

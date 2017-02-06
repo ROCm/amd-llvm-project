@@ -324,7 +324,7 @@ llvm::Error processSymboledSection(DefinedAtom::ContentType atomType,
 
   // If section has no symbols and no content, there are no atoms.
   if (symbols.empty() && section.content.empty())
-    return llvm::Error();
+    return llvm::Error::success();
 
   if (symbols.empty()) {
     // Section has no symbols, put all content in one anoymous atom.
@@ -375,7 +375,7 @@ llvm::Error processSymboledSection(DefinedAtom::ContentType atomType,
     });
   }
 
-  return llvm::Error();
+  return llvm::Error::success();
 }
 
 llvm::Error processSection(DefinedAtom::ContentType atomType,
@@ -487,7 +487,7 @@ llvm::Error processSection(DefinedAtom::ContentType atomType,
       offset += size;
     }
   }
-  return llvm::Error();
+  return llvm::Error::success();
 }
 
 const Section* findSectionCoveringAddress(const NormalizedFile &normalizedFile,
@@ -544,7 +544,7 @@ llvm::Error convertRelocs(const Section &section,
     uint64_t offsetInSect = addr - sect->address;
     *atom = file.findAtomCoveringAddress(*sect, offsetInSect, &offsetInTarget);
     *addend = offsetInTarget;
-    return llvm::Error();
+    return llvm::Error::success();
   };
 
   // Utility function for ArchHandler to find atom by its symbol index.
@@ -580,14 +580,14 @@ llvm::Error convertRelocs(const Section &section,
                                                             targetOffsetInSect);
       if (target) {
         *result = target;
-        return llvm::Error();
+        return llvm::Error::success();
       }
       return llvm::make_error<GenericError>("no atom found for defined symbol");
     } else if ((sym->type & N_TYPE) == N_UNDF) {
       const lld::Atom *target = file.findUndefAtom(sym->name);
       if (target) {
         *result = target;
-        return llvm::Error();
+        return llvm::Error::success();
       }
       return llvm::make_error<GenericError>("no undefined atom found for sym");
     } else {
@@ -684,7 +684,7 @@ llvm::Error convertRelocs(const Section &section,
                          kind, offsetInAtom, target, addend);
   }
 
-  return llvm::Error();
+  return llvm::Error::success();
 }
 
 bool isDebugInfoSection(const Section &section) {
@@ -853,7 +853,7 @@ static uint32_t getCUAbbrevOffset(llvm::DataExtractor abbrevData,
 //        inspection" code if possible.
 static Expected<const char *>
 getIndexedString(const NormalizedFile &normalizedFile,
-                 uint32_t form, llvm::DataExtractor infoData,
+                 llvm::dwarf::Form form, llvm::DataExtractor infoData,
                  uint32_t &infoOffset, const Section &stringsSection) {
   if (form == llvm::dwarf::DW_FORM_string)
    return infoData.getCStr(&infoOffset);
@@ -877,10 +877,13 @@ readCompUnit(const NormalizedFile &normalizedFile,
   // FIXME: Cribbed from llvm-dwp -- should share "lightweight CU DIE
   //        inspection" code if possible.
   uint32_t offset = 0;
+  llvm::dwarf::DwarfFormat Format = llvm::dwarf::DwarfFormat::DWARF32;
   auto infoData = dataExtractorFromSection(normalizedFile, info);
   uint32_t length = infoData.getU32(&offset);
-  if (length == 0xffffffff)
+  if (length == 0xffffffff) {
+    Format = llvm::dwarf::DwarfFormat::DWARF64;
     infoData.getU64(&offset);
+  }
   else if (length > 0xffffff00)
     return llvm::make_error<GenericError>("Malformed DWARF in " + path);
 
@@ -902,10 +905,11 @@ readCompUnit(const NormalizedFile &normalizedFile,
   // DW_CHILDREN
   abbrevData.getU8(&abbrevOffset);
   uint32_t name;
-  uint32_t form;
+  llvm::dwarf::Form form;
   TranslationUnitSource tu;
   while ((name = abbrevData.getULEB128(&abbrevOffset)) |
-             (form = abbrevData.getULEB128(&abbrevOffset)) &&
+         (form = static_cast<llvm::dwarf::Form>(
+             abbrevData.getULEB128(&abbrevOffset))) &&
          (name != 0 || form != 0)) {
     switch (name) {
     case llvm::dwarf::DW_AT_name: {
@@ -926,7 +930,7 @@ readCompUnit(const NormalizedFile &normalizedFile,
     }
     default:
       llvm::DWARFFormValue::skipValue(form, infoData, &offset, version,
-                                      addrSize);
+                                      addrSize, Format);
     }
   }
   return tu;
@@ -1011,7 +1015,7 @@ static llvm::Error processAugmentationString(const uint8_t *augStr,
 
   if (augStr[0] == '\0') {
     len = 1;
-    return llvm::Error();
+    return llvm::Error::success();
   }
 
   if (augStr[0] != 'z')
@@ -1061,7 +1065,7 @@ static llvm::Error processAugmentationString(const uint8_t *augStr,
   cieInfo._augmentationDataLength = offsetInAugmentationData;
 
   len = idx + 1;
-  return llvm::Error();
+  return llvm::Error::success();
 }
 
 static llvm::Error processCIE(const NormalizedFile &normalizedFile,
@@ -1166,7 +1170,7 @@ static llvm::Error processCIE(const NormalizedFile &normalizedFile,
 
   cieInfos[atom] = std::move(cieInfo);
 
-  return llvm::Error();
+  return llvm::Error::success();
 }
 
 static llvm::Error processFDE(const NormalizedFile &normalizedFile,
@@ -1310,7 +1314,7 @@ static llvm::Error processFDE(const NormalizedFile &normalizedFile,
     }
   }
 
-  return llvm::Error();
+  return llvm::Error::success();
 }
 
 llvm::Error addEHFrameReferences(const NormalizedFile &normalizedFile,
@@ -1327,9 +1331,9 @@ llvm::Error addEHFrameReferences(const NormalizedFile &normalizedFile,
 
   // No __eh_frame so nothing to do.
   if (!ehFrameSection)
-    return llvm::Error();
+    return llvm::Error::success();
 
-  llvm::Error ehFrameErr;
+  llvm::Error ehFrameErr = llvm::Error::success();
   CIEInfoMap cieInfos;
 
   file.eachAtomInSection(*ehFrameSection,
@@ -1391,7 +1395,7 @@ llvm::Error parseObjCImageInfo(const Section &sect,
 
   file.setSwiftVersion((flags >> 8) & 0xFF);
 
-  return llvm::Error();
+  return llvm::Error::success();
 }
 
 /// Converts normalized mach-o file into an lld::File and lld::Atoms.
@@ -1550,7 +1554,7 @@ normalizedObjectToAtoms(MachOFile *file,
   if (auto err = parseDebugInfo(*file, normalizedFile, copyRefs))
     return err;
 
-  return llvm::Error();
+  return llvm::Error::success();
 }
 
 llvm::Error
@@ -1581,7 +1585,7 @@ normalizedDylibToAtoms(MachODylibFile *file,
     if (dep.kind == llvm::MachO::LC_REEXPORT_DYLIB)
       file->addReExportedDylib(dep.path);
   }
-  return llvm::Error();
+  return llvm::Error::success();
 }
 
 void relocatableSectionInfoForContentType(DefinedAtom::ContentType atomType,

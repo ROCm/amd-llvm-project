@@ -70,7 +70,9 @@
 #include "llvm/Transforms/IPO/FunctionImport.h"
 #include "llvm/Transforms/IPO/GlobalDCE.h"
 #include "llvm/Transforms/IPO/GlobalOpt.h"
+#include "llvm/Transforms/IPO/GlobalSplit.h"
 #include "llvm/Transforms/IPO/InferFunctionAttrs.h"
+#include "llvm/Transforms/IPO/Inliner.h"
 #include "llvm/Transforms/IPO/Internalize.h"
 #include "llvm/Transforms/IPO/LowerTypeTests.h"
 #include "llvm/Transforms/IPO/PartialInlining.h"
@@ -121,6 +123,7 @@
 #include "llvm/Transforms/Utils/AddDiscriminators.h"
 #include "llvm/Transforms/Utils/BreakCriticalEdges.h"
 #include "llvm/Transforms/Utils/LCSSA.h"
+#include "llvm/Transforms/Utils/LibCallsShrinkWrap.h"
 #include "llvm/Transforms/Utils/LoopSimplify.h"
 #include "llvm/Transforms/Utils/LowerInvoke.h"
 #include "llvm/Transforms/Utils/Mem2Reg.h"
@@ -150,7 +153,7 @@ struct NoOpModulePass {
 /// \brief No-op module analysis.
 class NoOpModuleAnalysis : public AnalysisInfoMixin<NoOpModuleAnalysis> {
   friend AnalysisInfoMixin<NoOpModuleAnalysis>;
-  static char PassID;
+  static AnalysisKey Key;
 
 public:
   struct Result {};
@@ -170,7 +173,7 @@ struct NoOpCGSCCPass {
 /// \brief No-op CGSCC analysis.
 class NoOpCGSCCAnalysis : public AnalysisInfoMixin<NoOpCGSCCAnalysis> {
   friend AnalysisInfoMixin<NoOpCGSCCAnalysis>;
-  static char PassID;
+  static AnalysisKey Key;
 
 public:
   struct Result {};
@@ -191,7 +194,7 @@ struct NoOpFunctionPass {
 /// \brief No-op function analysis.
 class NoOpFunctionAnalysis : public AnalysisInfoMixin<NoOpFunctionAnalysis> {
   friend AnalysisInfoMixin<NoOpFunctionAnalysis>;
-  static char PassID;
+  static AnalysisKey Key;
 
 public:
   struct Result {};
@@ -210,7 +213,7 @@ struct NoOpLoopPass {
 /// \brief No-op loop analysis.
 class NoOpLoopAnalysis : public AnalysisInfoMixin<NoOpLoopAnalysis> {
   friend AnalysisInfoMixin<NoOpLoopAnalysis>;
-  static char PassID;
+  static AnalysisKey Key;
 
 public:
   struct Result {};
@@ -218,10 +221,10 @@ public:
   static StringRef name() { return "NoOpLoopAnalysis"; }
 };
 
-char NoOpModuleAnalysis::PassID;
-char NoOpCGSCCAnalysis::PassID;
-char NoOpFunctionAnalysis::PassID;
-char NoOpLoopAnalysis::PassID;
+AnalysisKey NoOpModuleAnalysis::Key;
+AnalysisKey NoOpCGSCCAnalysis::Key;
+AnalysisKey NoOpFunctionAnalysis::Key;
+AnalysisKey NoOpLoopAnalysis::Key;
 
 } // End anonymous namespace.
 
@@ -767,7 +770,6 @@ void PassBuilder::crossRegisterProxies(LoopAnalysisManager &LAM,
                                        ModuleAnalysisManager &MAM) {
   MAM.registerPass([&] { return FunctionAnalysisManagerModuleProxy(FAM); });
   MAM.registerPass([&] { return CGSCCAnalysisManagerModuleProxy(CGAM); });
-  CGAM.registerPass([&] { return FunctionAnalysisManagerCGSCCProxy(FAM); });
   CGAM.registerPass([&] { return ModuleAnalysisManagerCGSCCProxy(MAM); });
   FAM.registerPass([&] { return CGSCCAnalysisManagerFunctionProxy(CGAM); });
   FAM.registerPass([&] { return ModuleAnalysisManagerFunctionProxy(MAM); });

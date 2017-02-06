@@ -18,12 +18,12 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOGDI
 #include <windows.h>
-#include <dbghelp.h>
 #include <io.h>
 #include <psapi.h>
 #include <stdlib.h>
 
 #include "sanitizer_common.h"
+#include "sanitizer_dbghelp.h"
 #include "sanitizer_libc.h"
 #include "sanitizer_mutex.h"
 #include "sanitizer_placement_new.h"
@@ -234,8 +234,7 @@ bool MprotectNoAccess(uptr addr, uptr size) {
   return VirtualProtect((LPVOID)addr, size, PAGE_NOACCESS, &old_protection);
 }
 
-
-void ReleaseMemoryToOS(uptr addr, uptr size) {
+void ReleaseMemoryPagesToOS(uptr beg, uptr end) {
   // This is almost useless on 32-bits.
   // FIXME: add madvise-analog when we move to 64-bits.
 }
@@ -334,7 +333,7 @@ struct ModuleInfo {
   uptr end_address;
 };
 
-#ifndef SANITIZER_GO
+#if !SANITIZER_GO
 int CompareModulesBase(const void *pl, const void *pr) {
   const ModuleInfo *l = (ModuleInfo *)pl, *r = (ModuleInfo *)pr;
   if (l->base_address < r->base_address)
@@ -344,7 +343,7 @@ int CompareModulesBase(const void *pl, const void *pr) {
 #endif
 }  // namespace
 
-#ifndef SANITIZER_GO
+#if !SANITIZER_GO
 void DumpProcessMap() {
   Report("Dumping process modules:\n");
   ListOfModules modules;
@@ -425,12 +424,10 @@ u64 NanoTime() {
 }
 
 void Abort() {
-  if (::IsDebuggerPresent())
-    __debugbreak();
   internal__exit(3);
 }
 
-#ifndef SANITIZER_GO
+#if !SANITIZER_GO
 // Read the file to extract the ImageBase field from the PE header. If ASLR is
 // disabled and this virtual address is available, the loader will typically
 // load the image at this address. Therefore, we call it the preferred base. Any
@@ -656,7 +653,13 @@ uptr internal_sched_yield() {
 }
 
 void internal__exit(int exitcode) {
-  ExitProcess(exitcode);
+  // ExitProcess runs some finalizers, so use TerminateProcess to avoid that.
+  // The debugger doesn't stop on TerminateProcess like it does on ExitProcess,
+  // so add our own breakpoint here.
+  if (::IsDebuggerPresent())
+    __debugbreak();
+  TerminateProcess(GetCurrentProcess(), exitcode);
+  __assume(0);
 }
 
 uptr internal_ftruncate(fd_t fd, uptr size) {
@@ -723,7 +726,7 @@ void InitTlsSize() {
 
 void GetThreadStackAndTls(bool main, uptr *stk_addr, uptr *stk_size,
                           uptr *tls_addr, uptr *tls_size) {
-#ifdef SANITIZER_GO
+#if SANITIZER_GO
   *stk_addr = 0;
   *stk_size = 0;
   *tls_addr = 0;
@@ -778,8 +781,8 @@ void BufferedStackTrace::SlowUnwindStackWithContext(uptr pc, void *context,
   stack_frame.AddrFrame.Mode = AddrModeFlat;
   stack_frame.AddrStack.Mode = AddrModeFlat;
   while (StackWalk64(machine_type, GetCurrentProcess(), GetCurrentThread(),
-                     &stack_frame, &ctx, NULL, &SymFunctionTableAccess64,
-                     &SymGetModuleBase64, NULL) &&
+                     &stack_frame, &ctx, NULL, SymFunctionTableAccess64,
+                     SymGetModuleBase64, NULL) &&
          size < Min(max_depth, kStackTraceMax)) {
     trace_buffer[size++] = (uptr)stack_frame.AddrPC.Offset;
   }
@@ -869,6 +872,10 @@ SignalContext SignalContext::Create(void *siginfo, void *context) {
                        write_flag);
 }
 
+void SignalContext::DumpAllRegisters(void *context) {
+  // FIXME: Implement this.
+}
+
 uptr ReadBinaryName(/*out*/char *buf, uptr buf_len) {
   // FIXME: Actually implement this function.
   CHECK_GT(buf_len, 0);
@@ -915,6 +922,7 @@ void GetMemoryProfile(fill_profile_f cb, uptr *stats, uptr stats_size) { }
 
 }  // namespace __sanitizer
 
+#if !SANITIZER_GO
 // Workaround to implement weak hooks on Windows. COFF doesn't directly support
 // weak symbols, but it does support /alternatename, which is similar. If the
 // user does not override the hook, we will use this default definition instead
@@ -925,6 +933,7 @@ extern "C" void __sanitizer_print_memory_profile(int top_percent) {}
 #pragma comment(linker, "/alternatename:__sanitizer_print_memory_profile=__sanitizer_default_print_memory_profile") // NOLINT
 #else
 #pragma comment(linker, "/alternatename:___sanitizer_print_memory_profile=___sanitizer_default_print_memory_profile") // NOLINT
+#endif
 #endif
 
 #endif  // _WIN32

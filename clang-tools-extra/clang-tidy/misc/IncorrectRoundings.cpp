@@ -23,14 +23,13 @@ namespace misc {
 namespace {
 AST_MATCHER(FloatingLiteral, floatHalf) {
   const auto &literal = Node.getValue();
-  if ((&Node.getSemantics()) == &llvm::APFloat::IEEEsingle)
+  if ((&Node.getSemantics()) == &llvm::APFloat::IEEEsingle())
     return literal.convertToFloat() == 0.5f;
-  if ((&Node.getSemantics()) == &llvm::APFloat::IEEEdouble)
+  if ((&Node.getSemantics()) == &llvm::APFloat::IEEEdouble())
     return literal.convertToDouble() == 0.5;
   return false;
 }
 } // namespace
-
 
 void IncorrectRoundings::registerMatchers(MatchFinder *MatchFinder) {
   // Match a floating literal with value 0.5.
@@ -61,7 +60,7 @@ void IncorrectRoundings::registerMatchers(MatchFinder *MatchFinder) {
 }
 
 void IncorrectRoundings::check(const MatchFinder::MatchResult &Result) {
-  const auto *CastExpr = Result.Nodes.getStmtAs<ImplicitCastExpr>("CastExpr");
+  const auto *CastExpr = Result.Nodes.getNodeAs<ImplicitCastExpr>("CastExpr");
   diag(CastExpr->getLocStart(),
        "casting (double + 0.5) to integer leads to incorrect rounding; "
        "consider using lround (#include <cmath>) instead");

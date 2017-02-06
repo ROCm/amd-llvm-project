@@ -229,6 +229,11 @@ void WebAssemblyPassConfig::addPreEmitPass() {
   // colored, and numbered with the rest of the registers.
   addPass(createWebAssemblyReplacePhysRegs());
 
+  // Rewrite pseudo call_indirect instructions as real instructions.
+  // This needs to run before register stackification, because we change the
+  // order of the arguments.
+  addPass(createWebAssemblyCallIndirectFixup());
+
   if (getOptLevel() != CodeGenOpt::None) {
     // LiveIntervals isn't commonly run this late. Re-establish preconditions.
     addPass(createWebAssemblyPrepareForLiveIntervals());
@@ -250,6 +255,9 @@ void WebAssemblyPassConfig::addPreEmitPass() {
     // that become stackified.
     addPass(createWebAssemblyRegColoring());
   }
+
+  // Insert explicit get_local and set_local operators.
+  addPass(createWebAssemblyExplicitLocals());
 
   // Eliminate multiple-entry loops.
   addPass(createWebAssemblyFixIrreducibleControlFlow());

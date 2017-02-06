@@ -258,8 +258,7 @@ static Value *simplifyX86immShift(const IntrinsicInst &II,
   bool ShiftLeft = false;
 
   switch (II.getIntrinsicID()) {
-  default:
-    return nullptr;
+  default: llvm_unreachable("Unexpected intrinsic!");
   case Intrinsic::x86_sse2_psra_d:
   case Intrinsic::x86_sse2_psra_w:
   case Intrinsic::x86_sse2_psrai_d:
@@ -268,6 +267,16 @@ static Value *simplifyX86immShift(const IntrinsicInst &II,
   case Intrinsic::x86_avx2_psra_w:
   case Intrinsic::x86_avx2_psrai_d:
   case Intrinsic::x86_avx2_psrai_w:
+  case Intrinsic::x86_avx512_psra_q_128:
+  case Intrinsic::x86_avx512_psrai_q_128:
+  case Intrinsic::x86_avx512_psra_q_256:
+  case Intrinsic::x86_avx512_psrai_q_256:
+  case Intrinsic::x86_avx512_psra_d_512:
+  case Intrinsic::x86_avx512_psra_q_512:
+  case Intrinsic::x86_avx512_psra_w_512:
+  case Intrinsic::x86_avx512_psrai_d_512:
+  case Intrinsic::x86_avx512_psrai_q_512:
+  case Intrinsic::x86_avx512_psrai_w_512:
     LogicalShift = false; ShiftLeft = false;
     break;
   case Intrinsic::x86_sse2_psrl_d:
@@ -282,6 +291,12 @@ static Value *simplifyX86immShift(const IntrinsicInst &II,
   case Intrinsic::x86_avx2_psrli_d:
   case Intrinsic::x86_avx2_psrli_q:
   case Intrinsic::x86_avx2_psrli_w:
+  case Intrinsic::x86_avx512_psrl_d_512:
+  case Intrinsic::x86_avx512_psrl_q_512:
+  case Intrinsic::x86_avx512_psrl_w_512:
+  case Intrinsic::x86_avx512_psrli_d_512:
+  case Intrinsic::x86_avx512_psrli_q_512:
+  case Intrinsic::x86_avx512_psrli_w_512:
     LogicalShift = true; ShiftLeft = false;
     break;
   case Intrinsic::x86_sse2_psll_d:
@@ -296,6 +311,12 @@ static Value *simplifyX86immShift(const IntrinsicInst &II,
   case Intrinsic::x86_avx2_pslli_d:
   case Intrinsic::x86_avx2_pslli_q:
   case Intrinsic::x86_avx2_pslli_w:
+  case Intrinsic::x86_avx512_psll_d_512:
+  case Intrinsic::x86_avx512_psll_q_512:
+  case Intrinsic::x86_avx512_psll_w_512:
+  case Intrinsic::x86_avx512_pslli_d_512:
+  case Intrinsic::x86_avx512_pslli_q_512:
+  case Intrinsic::x86_avx512_pslli_w_512:
     LogicalShift = true; ShiftLeft = true;
     break;
   }
@@ -371,10 +392,16 @@ static Value *simplifyX86varShift(const IntrinsicInst &II,
   bool ShiftLeft = false;
 
   switch (II.getIntrinsicID()) {
-  default:
-    return nullptr;
+  default: llvm_unreachable("Unexpected intrinsic!");
   case Intrinsic::x86_avx2_psrav_d:
   case Intrinsic::x86_avx2_psrav_d_256:
+  case Intrinsic::x86_avx512_psrav_q_128:
+  case Intrinsic::x86_avx512_psrav_q_256:
+  case Intrinsic::x86_avx512_psrav_d_512:
+  case Intrinsic::x86_avx512_psrav_q_512:
+  case Intrinsic::x86_avx512_psrav_w_128:
+  case Intrinsic::x86_avx512_psrav_w_256:
+  case Intrinsic::x86_avx512_psrav_w_512:
     LogicalShift = false;
     ShiftLeft = false;
     break;
@@ -382,6 +409,11 @@ static Value *simplifyX86varShift(const IntrinsicInst &II,
   case Intrinsic::x86_avx2_psrlv_d_256:
   case Intrinsic::x86_avx2_psrlv_q:
   case Intrinsic::x86_avx2_psrlv_q_256:
+  case Intrinsic::x86_avx512_psrlv_d_512:
+  case Intrinsic::x86_avx512_psrlv_q_512:
+  case Intrinsic::x86_avx512_psrlv_w_128:
+  case Intrinsic::x86_avx512_psrlv_w_256:
+  case Intrinsic::x86_avx512_psrlv_w_512:
     LogicalShift = true;
     ShiftLeft = false;
     break;
@@ -389,6 +421,11 @@ static Value *simplifyX86varShift(const IntrinsicInst &II,
   case Intrinsic::x86_avx2_psllv_d_256:
   case Intrinsic::x86_avx2_psllv_q:
   case Intrinsic::x86_avx2_psllv_q_256:
+  case Intrinsic::x86_avx512_psllv_d_512:
+  case Intrinsic::x86_avx512_psllv_q_512:
+  case Intrinsic::x86_avx512_psllv_w_128:
+  case Intrinsic::x86_avx512_psllv_w_256:
+  case Intrinsic::x86_avx512_psllv_w_512:
     LogicalShift = true;
     ShiftLeft = true;
     break;
@@ -768,11 +805,11 @@ static Value *simplifyX86pshufb(const IntrinsicInst &II,
   auto *VecTy = cast<VectorType>(II.getType());
   auto *MaskEltTy = Type::getInt32Ty(II.getContext());
   unsigned NumElts = VecTy->getNumElements();
-  assert((NumElts == 16 || NumElts == 32) &&
+  assert((NumElts == 16 || NumElts == 32 || NumElts == 64) &&
          "Unexpected number of elements in shuffle mask!");
 
   // Construct a shuffle mask from constant integers or UNDEFs.
-  Constant *Indexes[32] = {nullptr};
+  Constant *Indexes[64] = {nullptr};
 
   // Each byte in the shuffle control mask forms an index to permute the
   // corresponding byte in the destination operand.
@@ -812,12 +849,15 @@ static Value *simplifyX86vpermilvar(const IntrinsicInst &II,
   if (!V)
     return nullptr;
 
+  auto *VecTy = cast<VectorType>(II.getType());
   auto *MaskEltTy = Type::getInt32Ty(II.getContext());
-  unsigned NumElts = cast<VectorType>(V->getType())->getNumElements();
-  assert(NumElts == 8 || NumElts == 4 || NumElts == 2);
+  unsigned NumElts = VecTy->getVectorNumElements();
+  bool IsPD = VecTy->getScalarType()->isDoubleTy();
+  unsigned NumLaneElts = IsPD ? 2 : 4;
+  assert(NumElts == 16 || NumElts == 8 || NumElts == 4 || NumElts == 2);
 
   // Construct a shuffle mask from constant integers or UNDEFs.
-  Constant *Indexes[8] = {nullptr};
+  Constant *Indexes[16] = {nullptr};
 
   // The intrinsics only read one or two bits, clear the rest.
   for (unsigned I = 0; I < NumElts; ++I) {
@@ -835,18 +875,13 @@ static Value *simplifyX86vpermilvar(const IntrinsicInst &II,
 
     // The PD variants uses bit 1 to select per-lane element index, so
     // shift down to convert to generic shuffle mask index.
-    if (II.getIntrinsicID() == Intrinsic::x86_avx_vpermilvar_pd ||
-        II.getIntrinsicID() == Intrinsic::x86_avx_vpermilvar_pd_256)
+    if (IsPD)
       Index = Index.lshr(1);
 
     // The _256 variants are a bit trickier since the mask bits always index
     // into the corresponding 128 half. In order to convert to a generic
     // shuffle, we have to make that explicit.
-    if ((II.getIntrinsicID() == Intrinsic::x86_avx_vpermilvar_ps_256 ||
-         II.getIntrinsicID() == Intrinsic::x86_avx_vpermilvar_pd_256) &&
-        ((NumElts / 2) <= I)) {
-      Index += APInt(32, NumElts / 2);
-    }
+    Index += APInt(32, (I / NumLaneElts) * NumLaneElts);
 
     Indexes[I] = ConstantInt::get(MaskEltTy, Index);
   }
@@ -1402,26 +1437,15 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
     APInt DemandedElts = APInt::getLowBitsSet(Width, DemandedWidth);
     return SimplifyDemandedVectorElts(Op, DemandedElts, UndefElts);
   };
-  auto SimplifyDemandedVectorEltsHigh = [this](Value *Op, unsigned Width,
-                                              unsigned DemandedWidth) {
-    APInt UndefElts(Width, 0);
-    APInt DemandedElts = APInt::getHighBitsSet(Width, DemandedWidth);
-    return SimplifyDemandedVectorElts(Op, DemandedElts, UndefElts);
-  };
 
   switch (II->getIntrinsicID()) {
   default: break;
-  case Intrinsic::objectsize: {
-    uint64_t Size;
-    if (getObjectSize(II->getArgOperand(0), Size, DL, &TLI)) {
-      APInt APSize(II->getType()->getIntegerBitWidth(), Size);
-      // Equality check to be sure that `Size` can fit in a value of type
-      // `II->getType()`
-      if (APSize == Size)
-        return replaceInstUsesWith(CI, ConstantInt::get(II->getType(), APSize));
-    }
+  case Intrinsic::objectsize:
+    if (ConstantInt *N =
+            lowerObjectSizeCall(II, DL, &TLI, /*MustSucceed=*/false))
+      return replaceInstUsesWith(CI, N);
     return nullptr;
-  }
+
   case Intrinsic::bswap: {
     Value *IIOperand = II->getArgOperand(0);
     Value *X = nullptr;
@@ -1656,7 +1680,23 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
   case Intrinsic::x86_sse2_cvtsd2si:
   case Intrinsic::x86_sse2_cvtsd2si64:
   case Intrinsic::x86_sse2_cvttsd2si:
-  case Intrinsic::x86_sse2_cvttsd2si64: {
+  case Intrinsic::x86_sse2_cvttsd2si64:
+  case Intrinsic::x86_avx512_vcvtss2si32:
+  case Intrinsic::x86_avx512_vcvtss2si64:
+  case Intrinsic::x86_avx512_vcvtss2usi32:
+  case Intrinsic::x86_avx512_vcvtss2usi64:
+  case Intrinsic::x86_avx512_vcvtsd2si32:
+  case Intrinsic::x86_avx512_vcvtsd2si64:
+  case Intrinsic::x86_avx512_vcvtsd2usi32:
+  case Intrinsic::x86_avx512_vcvtsd2usi64:
+  case Intrinsic::x86_avx512_cvttss2si:
+  case Intrinsic::x86_avx512_cvttss2si64:
+  case Intrinsic::x86_avx512_cvttss2usi:
+  case Intrinsic::x86_avx512_cvttss2usi64:
+  case Intrinsic::x86_avx512_cvttsd2si:
+  case Intrinsic::x86_avx512_cvttsd2si64:
+  case Intrinsic::x86_avx512_cvttsd2usi:
+  case Intrinsic::x86_avx512_cvttsd2usi64: {
     // These intrinsics only demand the 0th element of their input vectors. If
     // we can simplify the input based on that, do so now.
     Value *Arg = II->getArgOperand(0);
@@ -1703,7 +1743,9 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
   case Intrinsic::x86_sse2_ucomigt_sd:
   case Intrinsic::x86_sse2_ucomile_sd:
   case Intrinsic::x86_sse2_ucomilt_sd:
-  case Intrinsic::x86_sse2_ucomineq_sd: {
+  case Intrinsic::x86_sse2_ucomineq_sd:
+  case Intrinsic::x86_avx512_mask_cmp_ss:
+  case Intrinsic::x86_avx512_mask_cmp_sd: {
     // These intrinsics only demand the 0th element of their input vectors. If
     // we can simplify the input based on that, do so now.
     bool MadeChange = false;
@@ -1723,50 +1765,56 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
     break;
   }
 
-  case Intrinsic::x86_sse_add_ss:
-  case Intrinsic::x86_sse_sub_ss:
-  case Intrinsic::x86_sse_mul_ss:
-  case Intrinsic::x86_sse_div_ss:
+  // X86 scalar intrinsics simplified with SimplifyDemandedVectorElts.
+  case Intrinsic::x86_avx512_mask_add_ss_round:
+  case Intrinsic::x86_avx512_mask_div_ss_round:
+  case Intrinsic::x86_avx512_mask_mul_ss_round:
+  case Intrinsic::x86_avx512_mask_sub_ss_round:
+  case Intrinsic::x86_avx512_mask_max_ss_round:
+  case Intrinsic::x86_avx512_mask_min_ss_round:
+  case Intrinsic::x86_avx512_mask_add_sd_round:
+  case Intrinsic::x86_avx512_mask_div_sd_round:
+  case Intrinsic::x86_avx512_mask_mul_sd_round:
+  case Intrinsic::x86_avx512_mask_sub_sd_round:
+  case Intrinsic::x86_avx512_mask_max_sd_round:
+  case Intrinsic::x86_avx512_mask_min_sd_round:
+  case Intrinsic::x86_avx512_mask_vfmadd_ss:
+  case Intrinsic::x86_avx512_mask_vfmadd_sd:
+  case Intrinsic::x86_avx512_maskz_vfmadd_ss:
+  case Intrinsic::x86_avx512_maskz_vfmadd_sd:
+  case Intrinsic::x86_avx512_mask3_vfmadd_ss:
+  case Intrinsic::x86_avx512_mask3_vfmadd_sd:
+  case Intrinsic::x86_avx512_mask3_vfmsub_ss:
+  case Intrinsic::x86_avx512_mask3_vfmsub_sd:
+  case Intrinsic::x86_avx512_mask3_vfnmsub_ss:
+  case Intrinsic::x86_avx512_mask3_vfnmsub_sd:
+  case Intrinsic::x86_fma_vfmadd_ss:
+  case Intrinsic::x86_fma_vfmsub_ss:
+  case Intrinsic::x86_fma_vfnmadd_ss:
+  case Intrinsic::x86_fma_vfnmsub_ss:
+  case Intrinsic::x86_fma_vfmadd_sd:
+  case Intrinsic::x86_fma_vfmsub_sd:
+  case Intrinsic::x86_fma_vfnmadd_sd:
+  case Intrinsic::x86_fma_vfnmsub_sd:
+  case Intrinsic::x86_sse_cmp_ss:
   case Intrinsic::x86_sse_min_ss:
   case Intrinsic::x86_sse_max_ss:
-  case Intrinsic::x86_sse_cmp_ss:
-  case Intrinsic::x86_sse2_add_sd:
-  case Intrinsic::x86_sse2_sub_sd:
-  case Intrinsic::x86_sse2_mul_sd:
-  case Intrinsic::x86_sse2_div_sd:
+  case Intrinsic::x86_sse2_cmp_sd:
   case Intrinsic::x86_sse2_min_sd:
   case Intrinsic::x86_sse2_max_sd:
-  case Intrinsic::x86_sse2_cmp_sd: {
-    // These intrinsics only demand the lowest element of the second input
-    // vector.
-    Value *Arg1 = II->getArgOperand(1);
-    unsigned VWidth = Arg1->getType()->getVectorNumElements();
-    if (Value *V = SimplifyDemandedVectorEltsLow(Arg1, VWidth, 1)) {
-      II->setArgOperand(1, V);
-      return II;
-    }
-    break;
-  }
-
   case Intrinsic::x86_sse41_round_ss:
-  case Intrinsic::x86_sse41_round_sd: {
-    // These intrinsics demand the upper elements of the first input vector and
-    // the lowest element of the second input vector.
-    bool MadeChange = false;
-    Value *Arg0 = II->getArgOperand(0);
-    Value *Arg1 = II->getArgOperand(1);
-    unsigned VWidth = Arg0->getType()->getVectorNumElements();
-    if (Value *V = SimplifyDemandedVectorEltsHigh(Arg0, VWidth, VWidth - 1)) {
-      II->setArgOperand(0, V);
-      MadeChange = true;
-    }
-    if (Value *V = SimplifyDemandedVectorEltsLow(Arg1, VWidth, 1)) {
-      II->setArgOperand(1, V);
-      MadeChange = true;
-    }
-    if (MadeChange)
-      return II;
-    break;
+  case Intrinsic::x86_sse41_round_sd:
+  case Intrinsic::x86_xop_vfrcz_ss:
+  case Intrinsic::x86_xop_vfrcz_sd: {
+   unsigned VWidth = II->getType()->getVectorNumElements();
+   APInt UndefElts(VWidth, 0);
+   APInt AllOnesEltMask(APInt::getAllOnesValue(VWidth));
+   if (Value *V = SimplifyDemandedVectorElts(II, AllOnesEltMask, UndefElts)) {
+     if (V != II)
+       return replaceInstUsesWith(*II, V);
+     return II;
+   }
+   break;
   }
 
   // Constant fold ashr( <A x Bi>, Ci ).
@@ -1776,18 +1824,29 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
   case Intrinsic::x86_sse2_psrai_w:
   case Intrinsic::x86_avx2_psrai_d:
   case Intrinsic::x86_avx2_psrai_w:
+  case Intrinsic::x86_avx512_psrai_q_128:
+  case Intrinsic::x86_avx512_psrai_q_256:
+  case Intrinsic::x86_avx512_psrai_d_512:
+  case Intrinsic::x86_avx512_psrai_q_512:
+  case Intrinsic::x86_avx512_psrai_w_512:
   case Intrinsic::x86_sse2_psrli_d:
   case Intrinsic::x86_sse2_psrli_q:
   case Intrinsic::x86_sse2_psrli_w:
   case Intrinsic::x86_avx2_psrli_d:
   case Intrinsic::x86_avx2_psrli_q:
   case Intrinsic::x86_avx2_psrli_w:
+  case Intrinsic::x86_avx512_psrli_d_512:
+  case Intrinsic::x86_avx512_psrli_q_512:
+  case Intrinsic::x86_avx512_psrli_w_512:
   case Intrinsic::x86_sse2_pslli_d:
   case Intrinsic::x86_sse2_pslli_q:
   case Intrinsic::x86_sse2_pslli_w:
   case Intrinsic::x86_avx2_pslli_d:
   case Intrinsic::x86_avx2_pslli_q:
   case Intrinsic::x86_avx2_pslli_w:
+  case Intrinsic::x86_avx512_pslli_d_512:
+  case Intrinsic::x86_avx512_pslli_q_512:
+  case Intrinsic::x86_avx512_pslli_w_512:
     if (Value *V = simplifyX86immShift(*II, *Builder))
       return replaceInstUsesWith(*II, V);
     break;
@@ -1796,18 +1855,29 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
   case Intrinsic::x86_sse2_psra_w:
   case Intrinsic::x86_avx2_psra_d:
   case Intrinsic::x86_avx2_psra_w:
+  case Intrinsic::x86_avx512_psra_q_128:
+  case Intrinsic::x86_avx512_psra_q_256:
+  case Intrinsic::x86_avx512_psra_d_512:
+  case Intrinsic::x86_avx512_psra_q_512:
+  case Intrinsic::x86_avx512_psra_w_512:
   case Intrinsic::x86_sse2_psrl_d:
   case Intrinsic::x86_sse2_psrl_q:
   case Intrinsic::x86_sse2_psrl_w:
   case Intrinsic::x86_avx2_psrl_d:
   case Intrinsic::x86_avx2_psrl_q:
   case Intrinsic::x86_avx2_psrl_w:
+  case Intrinsic::x86_avx512_psrl_d_512:
+  case Intrinsic::x86_avx512_psrl_q_512:
+  case Intrinsic::x86_avx512_psrl_w_512:
   case Intrinsic::x86_sse2_psll_d:
   case Intrinsic::x86_sse2_psll_q:
   case Intrinsic::x86_sse2_psll_w:
   case Intrinsic::x86_avx2_psll_d:
   case Intrinsic::x86_avx2_psll_q:
-  case Intrinsic::x86_avx2_psll_w: {
+  case Intrinsic::x86_avx2_psll_w:
+  case Intrinsic::x86_avx512_psll_d_512:
+  case Intrinsic::x86_avx512_psll_q_512:
+  case Intrinsic::x86_avx512_psll_w_512: {
     if (Value *V = simplifyX86immShift(*II, *Builder))
       return replaceInstUsesWith(*II, V);
 
@@ -1829,12 +1899,29 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
   case Intrinsic::x86_avx2_psllv_d_256:
   case Intrinsic::x86_avx2_psllv_q:
   case Intrinsic::x86_avx2_psllv_q_256:
+  case Intrinsic::x86_avx512_psllv_d_512:
+  case Intrinsic::x86_avx512_psllv_q_512:
+  case Intrinsic::x86_avx512_psllv_w_128:
+  case Intrinsic::x86_avx512_psllv_w_256:
+  case Intrinsic::x86_avx512_psllv_w_512:
   case Intrinsic::x86_avx2_psrav_d:
   case Intrinsic::x86_avx2_psrav_d_256:
+  case Intrinsic::x86_avx512_psrav_q_128:
+  case Intrinsic::x86_avx512_psrav_q_256:
+  case Intrinsic::x86_avx512_psrav_d_512:
+  case Intrinsic::x86_avx512_psrav_q_512:
+  case Intrinsic::x86_avx512_psrav_w_128:
+  case Intrinsic::x86_avx512_psrav_w_256:
+  case Intrinsic::x86_avx512_psrav_w_512:
   case Intrinsic::x86_avx2_psrlv_d:
   case Intrinsic::x86_avx2_psrlv_d_256:
   case Intrinsic::x86_avx2_psrlv_q:
   case Intrinsic::x86_avx2_psrlv_q_256:
+  case Intrinsic::x86_avx512_psrlv_d_512:
+  case Intrinsic::x86_avx512_psrlv_q_512:
+  case Intrinsic::x86_avx512_psrlv_w_128:
+  case Intrinsic::x86_avx512_psrlv_w_256:
+  case Intrinsic::x86_avx512_psrlv_w_512:
     if (Value *V = simplifyX86varShift(*II, *Builder))
       return replaceInstUsesWith(*II, V);
     break;
@@ -2013,14 +2100,17 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
 
   case Intrinsic::x86_ssse3_pshuf_b_128:
   case Intrinsic::x86_avx2_pshuf_b:
+  case Intrinsic::x86_avx512_pshuf_b_512:
     if (Value *V = simplifyX86pshufb(*II, *Builder))
       return replaceInstUsesWith(*II, V);
     break;
 
   case Intrinsic::x86_avx_vpermilvar_ps:
   case Intrinsic::x86_avx_vpermilvar_ps_256:
+  case Intrinsic::x86_avx512_vpermilvar_ps_512:
   case Intrinsic::x86_avx_vpermilvar_pd:
   case Intrinsic::x86_avx_vpermilvar_pd_256:
+  case Intrinsic::x86_avx512_vpermilvar_pd_512:
     if (Value *V = simplifyX86vpermilvar(*II, *Builder))
       return replaceInstUsesWith(*II, V);
     break;
@@ -2975,8 +3065,7 @@ bool InstCombiner::transformConstExprCastCall(CallSite CS) {
     CallInst *CI = cast<CallInst>(Caller);
     NC = Builder->CreateCall(Callee, Args, OpBundles);
     NC->takeName(CI);
-    if (CI->isTailCall())
-      cast<CallInst>(NC)->setTailCall();
+    cast<CallInst>(NC)->setTailCallKind(CI->getTailCallKind());
     cast<CallInst>(NC)->setCallingConv(CI->getCallingConv());
     cast<CallInst>(NC)->setAttributes(NewCallerPAL);
   }
@@ -3160,10 +3249,10 @@ InstCombiner::transformCallThroughTrampoline(CallSite CS,
         cast<InvokeInst>(NewCaller)->setAttributes(NewPAL);
       } else {
         NewCaller = CallInst::Create(NewCallee, NewArgs, OpBundles);
-        if (cast<CallInst>(Caller)->isTailCall())
-          cast<CallInst>(NewCaller)->setTailCall();
-        cast<CallInst>(NewCaller)->
-          setCallingConv(cast<CallInst>(Caller)->getCallingConv());
+        cast<CallInst>(NewCaller)->setTailCallKind(
+            cast<CallInst>(Caller)->getTailCallKind());
+        cast<CallInst>(NewCaller)->setCallingConv(
+            cast<CallInst>(Caller)->getCallingConv());
         cast<CallInst>(NewCaller)->setAttributes(NewPAL);
       }
 

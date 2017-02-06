@@ -100,48 +100,6 @@ void Parser::CheckForTemplateAndDigraph(Token &Next, ParsedType ObjectType,
              /*AtDigraph*/false);
 }
 
-/// \brief Emits an error for a left parentheses after a double colon.
-///
-/// When a '(' is found after a '::', emit an error.  Attempt to fix the token
-/// stream by removing the '(', and the matching ')' if found.
-void Parser::CheckForLParenAfterColonColon() {
-  if (!Tok.is(tok::l_paren))
-    return;
-
-  Token LParen = Tok;
-  Token NextTok = GetLookAheadToken(1);
-  Token StarTok = NextTok;
-  // Check for (identifier or (*identifier
-  Token IdentifierTok = StarTok.is(tok::star) ? GetLookAheadToken(2) : StarTok;
-  if (IdentifierTok.isNot(tok::identifier))
-    return;
-  // Eat the '('.
-  ConsumeParen();
-  Token RParen;
-  RParen.setLocation(SourceLocation());
-  // Do we have a ')' ?
-  NextTok = StarTok.is(tok::star) ? GetLookAheadToken(2) : GetLookAheadToken(1);
-  if (NextTok.is(tok::r_paren)) {
-    RParen = NextTok;
-    // Eat the '*' if it is present.
-    if (StarTok.is(tok::star))
-      ConsumeToken();
-    // Eat the identifier.
-    ConsumeToken();
-    // Add the identifier token back.
-    PP.EnterToken(IdentifierTok);
-    // Add the '*' back if it was present.
-    if (StarTok.is(tok::star))
-      PP.EnterToken(StarTok);
-    // Eat the ')'.
-    ConsumeParen();
-  }
-
-  Diag(LParen.getLocation(), diag::err_paren_after_colon_colon)
-      << FixItHint::CreateRemoval(LParen.getLocation())
-      << FixItHint::CreateRemoval(RParen.getLocation());
-}
-
 /// \brief Parse global scope or nested-name-specifier if present.
 ///
 /// Parses a C++ global scope specifier ('::') or nested-name-specifier (which
@@ -236,8 +194,6 @@ bool Parser::ParseOptionalCXXScopeSpecifier(CXXScopeSpec &SS,
       // '::' - Global scope qualifier.
       if (Actions.ActOnCXXGlobalScopeSpecifier(ConsumeToken(), SS))
         return true;
-
-      CheckForLParenAfterColonColon();
 
       HasScopeSpecifier = true;
     }
@@ -490,8 +446,6 @@ bool Parser::ParseOptionalCXXScopeSpecifier(CXXScopeSpec &SS,
              "NextToken() not working properly!");
       Token ColonColon = Tok;
       SourceLocation CCLoc = ConsumeToken();
-
-      CheckForLParenAfterColonColon();
 
       bool IsCorrectedToColon = false;
       bool *CorrectionFlagPtr = ColonIsSacred ? &IsCorrectedToColon : nullptr;
@@ -964,6 +918,8 @@ Optional<unsigned> Parser::ParseLambdaIntroducer(LambdaIntroducer &Intro,
           SourceLocation StartLoc = Tok.getLocation();
           InMessageExpressionRAIIObject MaybeInMessageExpression(*this, true);
           Init = ParseInitializer();
+          if (!Init.isInvalid())
+            Init = Actions.CorrectDelayedTyposInExpr(Init.get());
 
           if (Tok.getLocation() != StartLoc) {
             // Back out the lexing of the token after the initializer.
@@ -1299,6 +1255,7 @@ ExprResult Parser::ParseLambdaExpressionAfterIntroducer(
                                            NoexceptExpr.isUsable() ?
                                              NoexceptExpr.get() : nullptr,
                                            /*ExceptionSpecTokens*/nullptr,
+                                           /*DeclsInPrototype=*/None,
                                            LParenLoc, FunLocalRangeEnd, D,
                                            TrailingReturnType),
                   Attr, DeclEndLoc);
@@ -1368,6 +1325,7 @@ ExprResult Parser::ParseLambdaExpressionAfterIntroducer(
                                                /*NumExceptions=*/0,
                                                /*NoexceptExpr=*/nullptr,
                                                /*ExceptionSpecTokens=*/nullptr,
+                                               /*DeclsInPrototype=*/None,
                                                DeclLoc, DeclEndLoc, D,
                                                TrailingReturnType),
                   Attr, DeclEndLoc);
@@ -1859,6 +1817,10 @@ Sema::ConditionResult Parser::ParseCXXCondition(StmtResult *InitStmt,
   }
 
   case ConditionOrInitStatement::InitStmtDecl: {
+    Diag(Tok.getLocation(), getLangOpts().CPlusPlus1z
+                                ? diag::warn_cxx14_compat_init_statement
+                                : diag::ext_init_statement)
+        << (CK == Sema::ConditionKind::Switch);
     SourceLocation DeclStart = Tok.getLocation(), DeclEnd;
     DeclGroupPtrTy DG = ParseSimpleDeclaration(
         Declarator::InitStmtContext, DeclEnd, attrs, /*RequireSemi=*/true);

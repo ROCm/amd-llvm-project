@@ -102,7 +102,7 @@ bool areParensNeededForOverloadedOperator(OverloadedOperatorKind OperatorKind) {
 }
 
 bool areParensNeededForStatement(const Stmt *Statement) {
-  if (const CXXOperatorCallExpr *OverloadedOperatorCall =
+  if (const auto *OverloadedOperatorCall =
           llvm::dyn_cast<CXXOperatorCallExpr>(Statement)) {
     return areParensNeededForOverloadedOperator(
         OverloadedOperatorCall->getOperator());
@@ -307,8 +307,7 @@ ImplicitBoolCastCheck::ImplicitBoolCastCheck(StringRef Name,
       AllowConditionalPointerCasts(
           Options.get("AllowConditionalPointerCasts", false)) {}
 
-void ImplicitBoolCastCheck::storeOptions(
-    ClangTidyOptions::OptionMap &Opts) {
+void ImplicitBoolCastCheck::storeOptions(ClangTidyOptions::OptionMap &Opts) {
   Options.store(Opts, "AllowConditionalIntegerCasts",
                 AllowConditionalIntegerCasts);
   Options.store(Opts, "AllowConditionalPointerCasts",

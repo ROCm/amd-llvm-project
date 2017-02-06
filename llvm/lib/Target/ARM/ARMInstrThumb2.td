@@ -3381,7 +3381,9 @@ def t2B   : T2I<(outs), (ins thumb_br_target:$target), IIC_Br,
 }
 
 let Size = 4, isNotDuplicable = 1, isIndirectBranch = 1 in {
-def t2BR_JT : t2PseudoInst<(outs),
+
+// available in both v8-M.Baseline and Thumb2 targets
+def t2BR_JT : t2basePseudoInst<(outs),
           (ins GPR:$target, GPR:$index, i32imm:$jt),
            0, IIC_Br,
           [(ARMbr2jt GPR:$target, GPR:$index, tjumptable:$jt)]>,
@@ -4407,7 +4409,7 @@ def : t2InstAlias<"ldrsh${p} $Rt, $addr",
                   (t2LDRSHs rGPR:$Rt, t2addrmode_so_reg:$addr, pred:$p)>;
 
 def : t2InstAlias<"ldr${p} $Rt, $addr",
-                  (t2LDRpci GPRnopc:$Rt, t2ldrlabel:$addr, pred:$p)>;
+                  (t2LDRpci GPR:$Rt, t2ldrlabel:$addr, pred:$p)>;
 def : t2InstAlias<"ldrb${p} $Rt, $addr",
                   (t2LDRBpci rGPR:$Rt, t2ldrlabel:$addr, pred:$p)>;
 def : t2InstAlias<"ldrh${p} $Rt, $addr",

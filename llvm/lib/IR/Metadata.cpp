@@ -434,7 +434,7 @@ StringRef MDString::getString() const {
 // prepended to them.
 #define HANDLE_MDNODE_LEAF(CLASS)                                              \
   static_assert(                                                               \
-      llvm::AlignOf<uint64_t>::Alignment >= llvm::AlignOf<CLASS>::Alignment,   \
+      alignof(uint64_t) >= alignof(CLASS),                                     \
       "Alignment is insufficient after objects prepended to " #CLASS);
 #include "llvm/IR/Metadata.def"
 
@@ -442,7 +442,7 @@ void *MDNode::operator new(size_t Size, unsigned NumOps) {
   size_t OpSize = NumOps * sizeof(MDOperand);
   // uint64_t is the most aligned type we need support (ensured by static_assert
   // above)
-  OpSize = alignTo(OpSize, llvm::alignOf<uint64_t>());
+  OpSize = alignTo(OpSize, alignof(uint64_t));
   void *Ptr = reinterpret_cast<char *>(::operator new(OpSize + Size)) + OpSize;
   MDOperand *O = static_cast<MDOperand *>(Ptr);
   for (MDOperand *E = O - NumOps; O != E; --O)
@@ -453,7 +453,7 @@ void *MDNode::operator new(size_t Size, unsigned NumOps) {
 void MDNode::operator delete(void *Mem) {
   MDNode *N = static_cast<MDNode *>(Mem);
   size_t OpSize = N->NumOperands * sizeof(MDOperand);
-  OpSize = alignTo(OpSize, llvm::alignOf<uint64_t>());
+  OpSize = alignTo(OpSize, alignof(uint64_t));
 
   MDOperand *O = static_cast<MDOperand *>(Mem);
   for (MDOperand *E = O - N->NumOperands; O != E; --O)
@@ -1054,7 +1054,7 @@ void NamedMDNode::setOperand(unsigned I, MDNode *New) {
 
 void NamedMDNode::eraseFromParent() { getParent()->eraseNamedMetadata(this); }
 
-void NamedMDNode::dropAllReferences() { getNMDOps(Operands).clear(); }
+void NamedMDNode::clearOperands() { getNMDOps(Operands).clear(); }
 
 StringRef NamedMDNode::getName() const { return StringRef(Name); }
 
@@ -1419,9 +1419,15 @@ void GlobalObject::copyMetadata(const GlobalObject *Other, unsigned Offset) {
     // If an offset adjustment was specified we need to modify the DIExpression
     // to prepend the adjustment:
     // !DIExpression(DW_OP_plus, Offset, [original expr])
+    auto *Attachment = MD.second;
     if (Offset != 0 && MD.first == LLVMContext::MD_dbg) {
-      DIGlobalVariable *GV = cast<DIGlobalVariable>(MD.second);
-      DIExpression *E = GV->getExpr();
+      DIGlobalVariable *GV = dyn_cast<DIGlobalVariable>(Attachment);
+      DIExpression *E = nullptr;
+      if (!GV) {
+        auto *GVE = cast<DIGlobalVariableExpression>(Attachment);
+        GV = GVE->getVariable();
+        E = GVE->getExpression();
+      }
       ArrayRef<uint64_t> OrigElements;
       if (E)
         OrigElements = E->getElements();
@@ -1429,9 +1435,10 @@ void GlobalObject::copyMetadata(const GlobalObject *Other, unsigned Offset) {
       Elements[0] = dwarf::DW_OP_plus;
       Elements[1] = Offset;
       std::copy(OrigElements.begin(), OrigElements.end(), Elements.begin() + 2);
-      GV->replaceExpr(DIExpression::get(getContext(), Elements));
+      E = DIExpression::get(getContext(), Elements);
+      Attachment = DIGlobalVariableExpression::get(getContext(), GV, E);
     }
-    addMetadata(MD.first, *MD.second);
+    addMetadata(MD.first, *Attachment);
   }
 }
 
@@ -1452,14 +1459,14 @@ DISubprogram *Function::getSubprogram() const {
   return cast_or_null<DISubprogram>(getMetadata(LLVMContext::MD_dbg));
 }
 
-void GlobalVariable::addDebugInfo(DIGlobalVariable *GV) {
+void GlobalVariable::addDebugInfo(DIGlobalVariableExpression *GV) {
   addMetadata(LLVMContext::MD_dbg, *GV);
 }
 
 void GlobalVariable::getDebugInfo(
-    SmallVectorImpl<DIGlobalVariable *> &GVs) const {
+    SmallVectorImpl<DIGlobalVariableExpression *> &GVs) const {
   SmallVector<MDNode *, 1> MDs;
   getMetadata(LLVMContext::MD_dbg, MDs);
   for (MDNode *MD : MDs)
-    GVs.push_back(cast<DIGlobalVariable>(MD));
+    GVs.push_back(cast<DIGlobalVariableExpression>(MD));
 }

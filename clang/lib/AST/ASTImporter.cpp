@@ -39,6 +39,7 @@ namespace clang {
 
     // Importing types
     QualType VisitType(const Type *T);
+    QualType VisitAtomicType(const AtomicType *T);
     QualType VisitBuiltinType(const BuiltinType *T);
     QualType VisitDecayedType(const DecayedType *T);
     QualType VisitComplexType(const ComplexType *T);
@@ -273,6 +274,8 @@ namespace clang {
     Expr *VisitMemberExpr(MemberExpr *E);
     Expr *VisitCallExpr(CallExpr *E);
     Expr *VisitInitListExpr(InitListExpr *E);
+    Expr *VisitArrayInitLoopExpr(ArrayInitLoopExpr *E);
+    Expr *VisitArrayInitIndexExpr(ArrayInitIndexExpr *E);
     Expr *VisitCXXDefaultInitExpr(CXXDefaultInitExpr *E);
     Expr *VisitCXXNamedCastExpr(CXXNamedCastExpr *E);
 
@@ -1598,6 +1601,14 @@ QualType ASTNodeImporter::VisitType(const Type *T) {
   Importer.FromDiag(SourceLocation(), diag::err_unsupported_ast_node)
     << T->getTypeClassName();
   return QualType();
+}
+
+QualType ASTNodeImporter::VisitAtomicType(const AtomicType *T){
+  QualType UnderlyingType = Importer.Import(T->getValueType());
+  if(UnderlyingType.isNull())
+    return QualType();
+
+  return Importer.getToContext().getAtomicType(UnderlyingType);
 }
 
 QualType ASTNodeImporter::VisitBuiltinType(const BuiltinType *T) {
@@ -6555,6 +6566,30 @@ Expr *ASTNodeImporter::VisitInitListExpr(InitListExpr *ILE) {
   return To;
 }
 
+Expr *ASTNodeImporter::VisitArrayInitLoopExpr(ArrayInitLoopExpr *E) {
+  QualType ToType = Importer.Import(E->getType());
+  if (ToType.isNull())
+    return nullptr;
+
+  Expr *ToCommon = Importer.Import(E->getCommonExpr());
+  if (!ToCommon && E->getCommonExpr())
+    return nullptr;
+
+  Expr *ToSubExpr = Importer.Import(E->getSubExpr());
+  if (!ToSubExpr && E->getSubExpr())
+    return nullptr;
+
+  return new (Importer.getToContext())
+      ArrayInitLoopExpr(ToType, ToCommon, ToSubExpr);
+}
+
+Expr *ASTNodeImporter::VisitArrayInitIndexExpr(ArrayInitIndexExpr *E) {
+  QualType ToType = Importer.Import(E->getType());
+  if (ToType.isNull())
+    return nullptr;
+  return new (Importer.getToContext()) ArrayInitIndexExpr(ToType);
+}
+
 Expr *ASTNodeImporter::VisitCXXDefaultInitExpr(CXXDefaultInitExpr *DIE) {
   FieldDecl *ToField = llvm::dyn_cast_or_null<FieldDecl>(
       Importer.Import(DIE->getField()));
@@ -6943,10 +6978,10 @@ SourceLocation ASTImporter::Import(SourceLocation FromLoc) {
 
   SourceManager &FromSM = FromContext.getSourceManager();
   
-  // For now, map everything down to its spelling location, so that we
+  // For now, map everything down to its file location, so that we
   // don't have to import macro expansions.
   // FIXME: Import macro expansions!
-  FromLoc = FromSM.getSpellingLoc(FromLoc);
+  FromLoc = FromSM.getFileLoc(FromLoc);
   std::pair<FileID, unsigned> Decomposed = FromSM.getDecomposedLoc(FromLoc);
   SourceManager &ToSM = ToContext.getSourceManager();
   FileID ToFileID = Import(Decomposed.first);
@@ -7045,25 +7080,6 @@ CXXCtorInitializer *ASTImporter::Import(CXXCtorInitializer *From) {
     return new (ToContext)
         CXXCtorInitializer(ToContext, ToTInfo, Import(From->getLParenLoc()),
                            ToExpr, Import(From->getRParenLoc()));
-  } else if (unsigned NumArrayIndices = From->getNumArrayIndices()) {
-    FieldDecl *ToField =
-        llvm::cast_or_null<FieldDecl>(Import(From->getMember()));
-    if (!ToField && From->getMember())
-      return nullptr;
-
-    SmallVector<VarDecl *, 4> ToAIs(NumArrayIndices);
-
-    for (unsigned AII = 0; AII < NumArrayIndices; ++AII) {
-      VarDecl *ToArrayIndex =
-          dyn_cast_or_null<VarDecl>(Import(From->getArrayIndex(AII)));
-      if (!ToArrayIndex && From->getArrayIndex(AII))
-        return nullptr;
-    }
-
-    return CXXCtorInitializer::Create(
-        ToContext, ToField, Import(From->getMemberLocation()),
-        Import(From->getLParenLoc()), ToExpr, Import(From->getRParenLoc()),
-        ToAIs.data(), NumArrayIndices);
   } else {
     return nullptr;
   }

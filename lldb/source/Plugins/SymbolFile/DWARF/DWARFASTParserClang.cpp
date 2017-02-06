@@ -1473,8 +1473,7 @@ TypeSP DWARFASTParserClang::ParseTypeFromDWARF(const SymbolContext &sc,
                         }
 
                         if (add_method) {
-                          // REMOVE THE CRASH DESCRIPTION BELOW
-                          Host::SetCrashDescriptionWithFormat(
+                          llvm::PrettyStackTraceFormat stack_trace(
                               "SymbolFileDWARF::ParseType() is adding a method "
                               "%s to class %s in DIE 0x%8.8" PRIx64 " from %s",
                               type_name_cstr,
@@ -1492,12 +1491,12 @@ TypeSP DWARFASTParserClang::ParseTypeFromDWARF(const SymbolContext &sc,
                           if (accessibility == eAccessNone)
                             accessibility = eAccessPublic;
 
-                          clang::CXXMethodDecl *cxx_method_decl;
-                          cxx_method_decl = m_ast.AddMethodToCXXRecordType(
-                              class_opaque_type.GetOpaqueQualType(),
-                              type_name_cstr, clang_type, accessibility,
-                              is_virtual, is_static, is_inline, is_explicit,
-                              is_attr_used, is_artificial);
+                          clang::CXXMethodDecl *cxx_method_decl =
+                              m_ast.AddMethodToCXXRecordType(
+                                  class_opaque_type.GetOpaqueQualType(),
+                                  type_name_cstr, clang_type, accessibility,
+                                  is_virtual, is_static, is_inline, is_explicit,
+                                  is_attr_used, is_artificial);
 
                           type_handled = cxx_method_decl != NULL;
 
@@ -1506,8 +1505,6 @@ TypeSP DWARFASTParserClang::ParseTypeFromDWARF(const SymbolContext &sc,
                                 ClangASTContext::GetAsDeclContext(
                                     cxx_method_decl),
                                 die);
-
-                            Host::SetCrashDescription(NULL);
 
                             ClangASTMetadata metadata;
                             metadata.SetUserID(die.GetID());
@@ -2601,7 +2598,7 @@ Function *DWARFASTParserClang::ParseFunctionFromDWARF(const SymbolContext &sc,
         if (type_quals & clang::Qualifiers::Const)
           sstr << " const";
 
-        func_name.SetValue(ConstString(sstr.GetData()), false);
+        func_name.SetValue(ConstString(sstr.GetString()), false);
       } else
         func_name.SetValue(ConstString(name), false);
 
@@ -2815,7 +2812,7 @@ bool DWARFASTParserClang::ParseChildMembers(
 
             ss.Printf("set%c%s:", toupper(prop_name[0]), &prop_name[1]);
 
-            fixed_setter.SetCString(ss.GetData());
+            fixed_setter.SetString(ss.GetString());
             prop_setter_name = fixed_setter.GetCString();
           }
         }

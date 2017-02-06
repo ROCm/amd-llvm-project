@@ -264,13 +264,14 @@ X86RegisterInfo::getRegPressureLimit(const TargetRegisterClass *RC,
 
 const MCPhysReg *
 X86RegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
+  assert(MF && "MachineFunction required");
+
   const X86Subtarget &Subtarget = MF->getSubtarget<X86Subtarget>();
   bool HasSSE = Subtarget.hasSSE1();
   bool HasAVX = Subtarget.hasAVX();
   bool HasAVX512 = Subtarget.hasAVX512();
-  bool CallsEHReturn = MF->getMMI().callsEHReturn();
+  bool CallsEHReturn = MF->callsEHReturn();
 
-  assert(MF && "MachineFunction required");
   switch (MF->getFunction()->getCallingConv()) {
   case CallingConv::GHC:
   case CallingConv::HiPE:
@@ -305,6 +306,19 @@ X86RegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
   }
   case CallingConv::HHVM:
     return CSR_64_HHVM_SaveList;
+  case CallingConv::X86_RegCall:
+    if (Is64Bit) {
+      if (IsWin64) {
+        return (HasSSE ? CSR_Win64_RegCall_SaveList : 
+                         CSR_Win64_RegCall_NoSSE_SaveList);
+      } else {
+        return (HasSSE ? CSR_SysV64_RegCall_SaveList : 
+                         CSR_SysV64_RegCall_NoSSE_SaveList);
+      }
+    } else {
+      return (HasSSE ? CSR_32_RegCall_SaveList : 
+                       CSR_32_RegCall_NoSSE_SaveList);
+    }
   case CallingConv::Cold:
     if (Is64Bit)
       return CSR_64_MostRegs_SaveList;
@@ -406,6 +420,19 @@ X86RegisterInfo::getCallPreservedMask(const MachineFunction &MF,
   }
   case CallingConv::HHVM:
     return CSR_64_HHVM_RegMask;
+  case CallingConv::X86_RegCall:
+    if (Is64Bit) {
+      if (IsWin64) { 
+        return (HasSSE ? CSR_Win64_RegCall_RegMask : 
+                         CSR_Win64_RegCall_NoSSE_RegMask);
+      } else {
+        return (HasSSE ? CSR_SysV64_RegCall_RegMask : 
+                         CSR_SysV64_RegCall_NoSSE_RegMask);
+      }
+    } else {
+      return (HasSSE ? CSR_32_RegCall_RegMask : 
+                       CSR_32_RegCall_NoSSE_RegMask);
+    }
   case CallingConv::Cold:
     if (Is64Bit)
       return CSR_64_MostRegs_RegMask;
@@ -531,6 +558,8 @@ BitVector X86RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
     }
   }
 
+  assert(checkAllSuperRegsMarked(Reserved,
+                                 {X86::SIL, X86::DIL, X86::BPL, X86::SPL}));
   return Reserved;
 }
 

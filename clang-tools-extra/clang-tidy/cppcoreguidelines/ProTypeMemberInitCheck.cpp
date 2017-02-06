@@ -27,6 +27,10 @@ namespace cppcoreguidelines {
 
 namespace {
 
+AST_MATCHER(CXXRecordDecl, hasDefaultConstructor) {
+  return Node.hasDefaultConstructor();
+}
+
 // Iterate over all the fields in a record type, both direct and indirect (e.g.
 // if the record contains an anonmyous struct). If OneFieldPerUnion is true and
 // the record type (or indirect field) is a union, forEachField will stop after
@@ -192,7 +196,7 @@ computeInsertions(const CXXConstructorDecl::init_const_range &Inits,
 
       // Add all fields between current field up until the next intializer.
       for (; Decl != std::end(OrderedDecls) && *Decl != InitDecl; ++Decl) {
-        if (const T *D = dyn_cast<T>(*Decl)) {
+        if (const auto *D = dyn_cast<T>(*Decl)) {
           if (DeclsToInit.count(D) > 0)
             Insertions.back().Initializers.emplace_back(getName(D));
         }
@@ -204,7 +208,7 @@ computeInsertions(const CXXConstructorDecl::init_const_range &Inits,
 
   // Add remaining decls that require initialization.
   for (; Decl != std::end(OrderedDecls); ++Decl) {
-    if (const T *D = dyn_cast<T>(*Decl)) {
+    if (const auto *D = dyn_cast<T>(*Decl)) {
       if (DeclsToInit.count(D) > 0)
         Insertions.back().Initializers.emplace_back(getName(D));
     }
@@ -274,7 +278,7 @@ void ProTypeMemberInitCheck::registerMatchers(MatchFinder *Finder) {
   // AST.
   Finder->addMatcher(
       cxxRecordDecl(
-          isDefinition(), unless(isInstantiated()),
+          isDefinition(), unless(isInstantiated()), hasDefaultConstructor(),
           anyOf(has(cxxConstructorDecl(isDefaultConstructor(), isDefaulted(),
                                        unless(isImplicit()))),
                 unless(has(cxxConstructorDecl()))),
@@ -353,7 +357,7 @@ void ProTypeMemberInitCheck::checkMissingMemberInitializer(
     if (!F->hasInClassInitializer() &&
         utils::type_traits::isTriviallyDefaultConstructible(F->getType(),
                                                             Context) &&
-        !isEmpty(Context, F->getType()))
+        !isEmpty(Context, F->getType()) && !F->isUnnamedBitfield())
       FieldsToInit.insert(F);
   });
   if (FieldsToInit.empty())
@@ -402,7 +406,9 @@ void ProTypeMemberInitCheck::checkMissingMemberInitializer(
   SmallPtrSet<const FieldDecl *, 16> FieldsToFix;
   forEachField(ClassDecl, FieldsToInit, true, [&](const FieldDecl *F) {
     // Don't suggest fixes for enums because we don't know a good default.
-    if (!F->getType()->isEnumeralType())
+    // Don't suggest fixes for bitfields because in-class initialization is not
+    // possible.
+    if (!F->getType()->isEnumeralType() && !F->isBitField())
       FieldsToFix.insert(F);
   });
   if (FieldsToFix.empty())
@@ -458,7 +464,7 @@ void ProTypeMemberInitCheck::checkMissingBaseClassInitializer(
       << toCommaSeparatedString(AllBases, BasesToInit);
 
   if (Ctor)
-      fixInitializerList(Context, Diag, Ctor, BasesToInit);
+    fixInitializerList(Context, Diag, Ctor, BasesToInit);
 }
 
 void ProTypeMemberInitCheck::checkUninitializedTrivialType(

@@ -450,3 +450,26 @@ struct NegativeIncompleteArrayMember {
   NegativeIncompleteArrayMember() {}
   char e[];
 };
+
+template <typename T> class NoCrash {
+  class B : public NoCrash {
+    template <typename U> B(U u) {}
+  };
+};
+
+struct PositiveBitfieldMember {
+  PositiveBitfieldMember() {}
+  // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: constructor does not initialize these fields: F
+  unsigned F : 5;
+};
+
+struct NegativeUnnamedBitfieldMember {
+  NegativeUnnamedBitfieldMember() {}
+  unsigned : 5;
+};
+
+struct NegativeInitializedBitfieldMembers {
+  NegativeInitializedBitfieldMembers() : F(3) { G = 2; }
+  unsigned F : 5;
+  unsigned G : 5;
+};

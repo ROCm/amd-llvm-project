@@ -30,17 +30,14 @@
 using namespace llvm;
 using namespace clang;
 
-
 static void eatDiagnostics(const SMDiagnostic &, void *) {}
 
 namespace clang {
 namespace replace {
 
-std::error_code
-collectReplacementsFromDirectory(const llvm::StringRef Directory,
-                                 TUReplacements &TUs,
-                                 TUReplacementFiles & TURFiles,
-                                 clang::DiagnosticsEngine &Diagnostics) {
+std::error_code collectReplacementsFromDirectory(
+    const llvm::StringRef Directory, TUReplacements &TUs,
+    TUReplacementFiles &TURFiles, clang::DiagnosticsEngine &Diagnostics) {
   using namespace llvm::sys::fs;
   using namespace llvm::sys::path;
 
@@ -127,9 +124,7 @@ static void reportConflict(
 bool applyAllReplacements(const std::vector<tooling::Replacement> &Replaces,
                           Rewriter &Rewrite) {
   bool Result = true;
-  for (std::vector<tooling::Replacement>::const_iterator I = Replaces.begin(),
-                                                E = Replaces.end();
-       I != E; ++I) {
+  for (auto I = Replaces.begin(), E = Replaces.end(); I != E; ++I) {
     if (I->isApplicable()) {
       Result = I->apply(Rewrite) && Result;
     } else {
@@ -139,11 +134,10 @@ bool applyAllReplacements(const std::vector<tooling::Replacement> &Replaces,
   return Result;
 }
 
-
 // FIXME: moved from libToolingCore. remove this when std::vector<Replacement>
 // is replaced with tooling::Replacements class.
 static void deduplicate(std::vector<tooling::Replacement> &Replaces,
-                 std::vector<tooling::Range> &Conflicts) {
+                        std::vector<tooling::Range> &Conflicts) {
   if (Replaces.empty())
     return;
 
@@ -297,8 +291,7 @@ RangeVector calculateChangedRanges(
 
 bool writeFiles(const clang::Rewriter &Rewrites) {
 
-  for (Rewriter::const_buffer_iterator BufferI = Rewrites.buffer_begin(),
-                                       BufferE = Rewrites.buffer_end();
+  for (auto BufferI = Rewrites.buffer_begin(), BufferE = Rewrites.buffer_end();
        BufferI != BufferE; ++BufferI) {
     StringRef FileName =
         Rewrites.getSourceMgr().getFileEntryForID(BufferI->first)->getName();

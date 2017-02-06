@@ -14,7 +14,7 @@
 
 #include "llvm-c/lto.h"
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/Bitcode/ReaderWriter.h"
+#include "llvm/Bitcode/BitcodeReader.h"
 #include "llvm/CodeGen/CommandFlags.h"
 #include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/DiagnosticPrinter.h"
@@ -153,7 +153,7 @@ static void lto_add_attrs(lto_code_gen_t cg) {
       attrs.append(MAttrs[i]);
     }
 
-    CG->setAttr(attrs.c_str());
+    CG->setAttr(attrs);
   }
 
   if (OptLevel < '0' || OptLevel > '3')
@@ -187,7 +187,9 @@ bool lto_module_has_objc_category(const void *mem, size_t length) {
   if (!Buffer)
     return false;
   LLVMContext Ctx;
-  return llvm::isBitcodeContainingObjCCategory(*Buffer, Ctx);
+  ErrorOr<bool> Result = expectedToErrorOrAndEmitErrors(
+      Ctx, llvm::isBitcodeContainingObjCCategory(*Buffer));
+  return Result && *Result;
 }
 
 bool lto_module_is_object_file_in_memory(const void* mem, size_t length) {
@@ -486,6 +488,16 @@ LTOObjectBuffer thinlto_module_get_object(thinlto_code_gen_t cg,
                          MemBuffer->getBufferSize()};
 }
 
+unsigned int thinlto_module_get_num_object_files(thinlto_code_gen_t cg) {
+  return unwrap(cg)->getProducedBinaryFiles().size();
+}
+const char *thinlto_module_get_object_file(thinlto_code_gen_t cg,
+                                           unsigned int index) {
+  assert(index < unwrap(cg)->getProducedBinaryFiles().size() &&
+         "Index overflow");
+  return unwrap(cg)->getProducedBinaryFiles()[index].c_str();
+}
+
 void thinlto_codegen_disable_codegen(thinlto_code_gen_t cg,
                                      lto_bool_t disable) {
   unwrap(cg)->disableCodeGen(disable);
@@ -547,6 +559,11 @@ void thinlto_codegen_set_final_cache_size_relative_to_available_space(
 void thinlto_codegen_set_savetemps_dir(thinlto_code_gen_t cg,
                                        const char *save_temps_dir) {
   return unwrap(cg)->setSaveTempsDir(save_temps_dir);
+}
+
+void thinlto_set_generated_objects_dir(thinlto_code_gen_t cg,
+                                       const char *save_temps_dir) {
+  unwrap(cg)->setGeneratedObjectsDirectory(save_temps_dir);
 }
 
 lto_bool_t thinlto_codegen_set_pic_model(thinlto_code_gen_t cg,

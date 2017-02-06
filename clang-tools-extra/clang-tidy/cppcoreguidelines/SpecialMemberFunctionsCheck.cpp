@@ -82,8 +82,7 @@ join(ArrayRef<SpecialMemberFunctionsCheck::SpecialMemberFunctionKind> SMFS,
 
 void SpecialMemberFunctionsCheck::check(
     const MatchFinder::MatchResult &Result) {
-  const CXXRecordDecl *MatchedDecl =
-      Result.Nodes.getNodeAs<CXXRecordDecl>("class-def");
+  const auto *MatchedDecl = Result.Nodes.getNodeAs<CXXRecordDecl>("class-def");
   if (!MatchedDecl)
     return;
 
@@ -97,8 +96,13 @@ void SpecialMemberFunctionsCheck::check(
                   {"move-assign", SpecialMemberFunctionKind::MoveAssignment}};
 
   for (const auto &KV : Matchers)
-    if (Result.Nodes.getNodeAs<CXXMethodDecl>(KV.first))
-      ClassWithSpecialMembers[ID].insert(KV.second);
+    if (Result.Nodes.getNodeAs<CXXMethodDecl>(KV.first)) {
+      SpecialMemberFunctionKind Kind = KV.second;
+      llvm::SmallVectorImpl<SpecialMemberFunctionKind> &Members =
+          ClassWithSpecialMembers[ID];
+      if (find(Members, Kind) == Members.end())
+        Members.push_back(Kind);
+    }
 }
 
 void SpecialMemberFunctionsCheck::onEndOfTranslationUnit() {
@@ -125,7 +129,7 @@ void SpecialMemberFunctionsCheck::onEndOfTranslationUnit() {
                         std::back_inserter(UndefinedSpecialMembers));
 
     diag(C.first.first, "class '%0' defines %1 but does not define %2")
-        << C.first.second << join(DefinedSpecialMembers.getArrayRef(), " and ")
+        << C.first.second << join(DefinedSpecialMembers, " and ")
         << join(UndefinedSpecialMembers, " or ");
   }
 }

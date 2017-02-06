@@ -333,18 +333,21 @@ void splitEntryBlockForAlloca(llvm::BasicBlock *EntryBlock, llvm::Pass *P);
 /// The parameters are the same as for the creation of a SCEVExpander as well
 /// as the call to SCEVExpander::expandCodeFor:
 ///
-/// @param S    The current Scop.
-/// @param SE   The Scalar Evolution pass.
-/// @param DL   The module data layout.
-/// @param Name The suffix added to the new instruction names.
-/// @param E    The expression for which code is actually generated.
-/// @param Ty   The type of the resulting code.
-/// @param IP   The insertion point for the new code.
-/// @param VMap A remaping of values used in @p E.
+/// @param S     The current Scop.
+/// @param SE    The Scalar Evolution pass.
+/// @param DL    The module data layout.
+/// @param Name  The suffix added to the new instruction names.
+/// @param E     The expression for which code is actually generated.
+/// @param Ty    The type of the resulting code.
+/// @param IP    The insertion point for the new code.
+/// @param VMap  A remaping of values used in @p E.
+/// @param RTCBB The last block of the RTC. Used to insert loop-invariant
+///              instructions in rare cases.
 llvm::Value *expandCodeFor(Scop &S, llvm::ScalarEvolution &SE,
                            const llvm::DataLayout &DL, const char *Name,
                            const llvm::SCEV *E, llvm::Type *Ty,
-                           llvm::Instruction *IP, ValueMapT *VMap = nullptr);
+                           llvm::Instruction *IP, ValueMapT *VMap,
+                           llvm::BasicBlock *RTCBB);
 
 /// Check if the block is a error block.
 ///
@@ -382,10 +385,11 @@ llvm::Value *getConditionFromTerminator(llvm::TerminatorInst *TI);
 /// @param R     The analyzed region.
 /// @param LI    The loop info.
 /// @param SE    The scalar evolution analysis.
+/// @param DT    The dominator tree of the function.
 ///
 /// @return True if @p LInst can be hoisted in @p R.
 bool isHoistableLoad(llvm::LoadInst *LInst, llvm::Region &R, llvm::LoopInfo &LI,
-                     llvm::ScalarEvolution &SE);
+                     llvm::ScalarEvolution &SE, const llvm::DominatorTree &DT);
 
 /// Return true iff @p V is an intrinsic that we ignore during code
 ///        generation.
@@ -399,15 +403,13 @@ bool isIgnoredIntrinsic(const llvm::Value *V);
 ///
 /// @param V The value to check.
 /// @param S The current SCoP.
-/// @param LI The LoopInfo analysis.
 /// @param SE The scalar evolution database.
 /// @param Scope Location where the value would by synthesized.
 /// @return If the instruction I can be regenerated from its
 ///         scalar evolution representation, return true,
 ///         otherwise return false.
 bool canSynthesize(const llvm::Value *V, const Scop &S,
-                   const llvm::LoopInfo *LI, llvm::ScalarEvolution *SE,
-                   llvm::Loop *Scope);
+                   llvm::ScalarEvolution *SE, llvm::Loop *Scope);
 
 /// Return the block in which a value is used.
 ///

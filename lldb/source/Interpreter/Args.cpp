@@ -332,8 +332,8 @@ void Args::Shift() {
   m_entries.erase(m_entries.begin());
 }
 
-llvm::StringRef Args::Unshift(llvm::StringRef arg_str, char quote_char) {
-  return InsertArgumentAtIndex(0, arg_str, quote_char);
+void Args::Unshift(llvm::StringRef arg_str, char quote_char) {
+  InsertArgumentAtIndex(0, arg_str, quote_char);
 }
 
 void Args::AppendArguments(const Args &rhs) {
@@ -361,30 +361,28 @@ void Args::AppendArguments(const char **argv) {
   m_argv.push_back(nullptr);
 }
 
-llvm::StringRef Args::AppendArgument(llvm::StringRef arg_str, char quote_char) {
-  return InsertArgumentAtIndex(GetArgumentCount(), arg_str, quote_char);
+void Args::AppendArgument(llvm::StringRef arg_str, char quote_char) {
+  InsertArgumentAtIndex(GetArgumentCount(), arg_str, quote_char);
 }
 
-llvm::StringRef Args::InsertArgumentAtIndex(size_t idx, llvm::StringRef arg_str,
-                                            char quote_char) {
+void Args::InsertArgumentAtIndex(size_t idx, llvm::StringRef arg_str,
+                                 char quote_char) {
   assert(m_argv.size() == m_entries.size() + 1);
   assert(m_argv.back() == nullptr);
 
   if (idx > m_entries.size())
-    return llvm::StringRef();
+    return;
   m_entries.emplace(m_entries.begin() + idx, arg_str, quote_char);
   m_argv.insert(m_argv.begin() + idx, m_entries[idx].data());
-  return m_entries[idx].ref;
 }
 
-llvm::StringRef Args::ReplaceArgumentAtIndex(size_t idx,
-                                             llvm::StringRef arg_str,
-                                             char quote_char) {
+void Args::ReplaceArgumentAtIndex(size_t idx, llvm::StringRef arg_str,
+                                  char quote_char) {
   assert(m_argv.size() == m_entries.size() + 1);
   assert(m_argv.back() == nullptr);
 
   if (idx >= m_entries.size())
-    return llvm::StringRef();
+    return;
 
   if (arg_str.size() > m_entries[idx].ref.size()) {
     m_entries[idx] = ArgEntry(arg_str, quote_char);
@@ -395,8 +393,6 @@ llvm::StringRef Args::ReplaceArgumentAtIndex(size_t idx,
     m_entries[idx].ptr[arg_str.size()] = 0;
     m_entries[idx].ref = m_entries[idx].ref.take_front(arg_str.size());
   }
-
-  return m_entries[idx].ref;
 }
 
 void Args::DeleteArgumentAtIndex(size_t idx) {
@@ -461,9 +457,9 @@ Error Args::ParseOptions(Options &options, ExecutionContext *execution_context,
   int val;
   while (1) {
     int long_options_index = -1;
-    val =
-        OptionParser::Parse(GetArgumentCount(), GetArgumentVector(),
-                            sstr.GetData(), long_options, &long_options_index);
+    val = OptionParser::Parse(GetArgumentCount(), GetArgumentVector(),
+                              sstr.GetString(), long_options,
+                              &long_options_index);
     if (val == -1)
       break;
 
@@ -554,110 +550,118 @@ void Args::Clear() {
 }
 
 lldb::addr_t Args::StringToAddress(const ExecutionContext *exe_ctx,
-                                   const char *s, lldb::addr_t fail_value,
+                                   llvm::StringRef s, lldb::addr_t fail_value,
                                    Error *error_ptr) {
   bool error_set = false;
-  if (s && s[0]) {
-    llvm::StringRef sref = s;
+  if (s.empty()) {
+    if (error_ptr)
+      error_ptr->SetErrorStringWithFormat("invalid address expression \"%s\"",
+                                          s.str().c_str());
+    return fail_value;
+  }
 
-    char *end = nullptr;
-    lldb::addr_t addr = ::strtoull(s, &end, 0);
-    if (*end == '\0') {
+  llvm::StringRef sref = s;
+
+  lldb::addr_t addr = LLDB_INVALID_ADDRESS;
+  if (!s.getAsInteger(0, addr)) {
+    if (error_ptr)
+      error_ptr->Clear();
+    return addr;
+  }
+
+  // Try base 16 with no prefix...
+  if (!s.getAsInteger(16, addr)) {
+    if (error_ptr)
+      error_ptr->Clear();
+    return addr;
+  }
+
+  Target *target = nullptr;
+  if (!exe_ctx || !(target = exe_ctx->GetTargetPtr())) {
+    if (error_ptr)
+      error_ptr->SetErrorStringWithFormat("invalid address expression \"%s\"",
+                                          s.str().c_str());
+    return fail_value;
+  }
+
+  lldb::ValueObjectSP valobj_sp;
+  EvaluateExpressionOptions options;
+  options.SetCoerceToId(false);
+  options.SetUnwindOnError(true);
+  options.SetKeepInMemory(false);
+  options.SetTryAllThreads(true);
+
+  ExpressionResults expr_result =
+      target->EvaluateExpression(s, exe_ctx->GetFramePtr(), valobj_sp, options);
+
+  bool success = false;
+  if (expr_result == eExpressionCompleted) {
+    if (valobj_sp)
+      valobj_sp = valobj_sp->GetQualifiedRepresentationIfAvailable(
+          valobj_sp->GetDynamicValueType(), true);
+    // Get the address to watch.
+    if (valobj_sp)
+      addr = valobj_sp->GetValueAsUnsigned(fail_value, &success);
+    if (success) {
       if (error_ptr)
         error_ptr->Clear();
-      return addr; // All characters were used, return the result
+      return addr;
+    } else {
+      if (error_ptr) {
+        error_set = true;
+        error_ptr->SetErrorStringWithFormat(
+            "address expression \"%s\" resulted in a value whose type "
+            "can't be converted to an address: %s",
+            s.str().c_str(), valobj_sp->GetTypeName().GetCString());
+      }
     }
-    // Try base 16 with no prefix...
-    addr = ::strtoull(s, &end, 16);
-    if (*end == '\0') {
-      if (error_ptr)
-        error_ptr->Clear();
-      return addr; // All characters were used, return the result
-    }
 
-    if (exe_ctx) {
-      Target *target = exe_ctx->GetTargetPtr();
-      if (target) {
-        lldb::ValueObjectSP valobj_sp;
-        EvaluateExpressionOptions options;
-        options.SetCoerceToId(false);
-        options.SetUnwindOnError(true);
-        options.SetKeepInMemory(false);
-        options.SetTryAllThreads(true);
+  } else {
+    // Since the compiler can't handle things like "main + 12" we should
+    // try to do this for now. The compiler doesn't like adding offsets
+    // to function pointer types.
+    static RegularExpression g_symbol_plus_offset_regex(
+        "^(.*)([-\\+])[[:space:]]*(0x[0-9A-Fa-f]+|[0-9]+)[[:space:]]*$");
+    RegularExpression::Match regex_match(3);
+    if (g_symbol_plus_offset_regex.Execute(sref, &regex_match)) {
+      uint64_t offset = 0;
+      bool add = true;
+      std::string name;
+      std::string str;
+      if (regex_match.GetMatchAtIndex(s, 1, name)) {
+        if (regex_match.GetMatchAtIndex(s, 2, str)) {
+          add = str[0] == '+';
 
-        ExpressionResults expr_result = target->EvaluateExpression(
-            s, exe_ctx->GetFramePtr(), valobj_sp, options);
+          if (regex_match.GetMatchAtIndex(s, 3, str)) {
+            offset = StringConvert::ToUInt64(str.c_str(), 0, 0, &success);
 
-        bool success = false;
-        if (expr_result == eExpressionCompleted) {
-          if (valobj_sp)
-            valobj_sp = valobj_sp->GetQualifiedRepresentationIfAvailable(
-                valobj_sp->GetDynamicValueType(), true);
-          // Get the address to watch.
-          if (valobj_sp)
-            addr = valobj_sp->GetValueAsUnsigned(fail_value, &success);
-          if (success) {
-            if (error_ptr)
-              error_ptr->Clear();
-            return addr;
-          } else {
-            if (error_ptr) {
-              error_set = true;
-              error_ptr->SetErrorStringWithFormat(
-                  "address expression \"%s\" resulted in a value whose type "
-                  "can't be converted to an address: %s",
-                  s, valobj_sp->GetTypeName().GetCString());
-            }
-          }
-
-        } else {
-          // Since the compiler can't handle things like "main + 12" we should
-          // try to do this for now. The compiler doesn't like adding offsets
-          // to function pointer types.
-          static RegularExpression g_symbol_plus_offset_regex(llvm::StringRef(
-              "^(.*)([-\\+])[[:space:]]*(0x[0-9A-Fa-f]+|[0-9]+)[[:space:]]*$"));
-          RegularExpression::Match regex_match(3);
-          if (g_symbol_plus_offset_regex.Execute(sref, &regex_match)) {
-            uint64_t offset = 0;
-            bool add = true;
-            std::string name;
-            std::string str;
-            if (regex_match.GetMatchAtIndex(s, 1, name)) {
-              if (regex_match.GetMatchAtIndex(s, 2, str)) {
-                add = str[0] == '+';
-
-                if (regex_match.GetMatchAtIndex(s, 3, str)) {
-                  offset = StringConvert::ToUInt64(str.c_str(), 0, 0, &success);
-
-                  if (success) {
-                    Error error;
-                    addr = StringToAddress(exe_ctx, name.c_str(),
-                                           LLDB_INVALID_ADDRESS, &error);
-                    if (addr != LLDB_INVALID_ADDRESS) {
-                      if (add)
-                        return addr + offset;
-                      else
-                        return addr - offset;
-                    }
-                  }
-                }
+            if (success) {
+              Error error;
+              addr = StringToAddress(exe_ctx, name.c_str(),
+                                     LLDB_INVALID_ADDRESS, &error);
+              if (addr != LLDB_INVALID_ADDRESS) {
+                if (add)
+                  return addr + offset;
+                else
+                  return addr - offset;
               }
             }
-          }
-
-          if (error_ptr) {
-            error_set = true;
-            error_ptr->SetErrorStringWithFormat(
-                "address expression \"%s\" evaluation failed", s);
           }
         }
       }
     }
+
+    if (error_ptr) {
+      error_set = true;
+      error_ptr->SetErrorStringWithFormat(
+          "address expression \"%s\" evaluation failed", s.str().c_str());
+    }
   }
+
   if (error_ptr) {
     if (!error_set)
       error_ptr->SetErrorStringWithFormat("invalid address expression \"%s\"",
-                                          s);
+                                          s.str().c_str());
   }
   return fail_value;
 }
@@ -799,7 +803,7 @@ int64_t Args::StringToOptionEnum(llvm::StringRef s,
   for (int i = 0; enum_values[i].string_value != nullptr; i++) {
     strm.Printf("%s\"%s\"", i > 0 ? ", " : "", enum_values[i].string_value);
   }
-  error.SetErrorString(strm.GetData());
+  error.SetErrorString(strm.GetString());
   return fail_value;
 }
 
@@ -855,7 +859,7 @@ Error Args::StringToFormat(const char *s, lldb::Format &format,
       if (byte_size_ptr)
         error_strm.PutCString(
             "An optional byte size can precede the format character.\n");
-      error.SetErrorString(error_strm.GetString().c_str());
+      error.SetErrorString(error_strm.GetString());
     }
 
     if (error.Fail())
@@ -1016,9 +1020,9 @@ std::string Args::ParseAliasOptions(Options &options,
   int val;
   while (1) {
     int long_options_index = -1;
-    val =
-        OptionParser::Parse(GetArgumentCount(), GetArgumentVector(),
-                            sstr.GetData(), long_options, &long_options_index);
+    val = OptionParser::Parse(GetArgumentCount(), GetArgumentVector(),
+                              sstr.GetString(), long_options,
+                              &long_options_index);
 
     if (val == -1)
       break;
@@ -1084,7 +1088,8 @@ std::string Args::ParseAliasOptions(Options &options,
     }
     if (!option_arg)
       option_arg = "<no-argument>";
-    option_arg_vector->emplace_back(option_str.GetData(), has_arg, option_arg);
+    option_arg_vector->emplace_back(option_str.GetString(), has_arg,
+                                    option_arg);
 
     // Find option in the argument list; also see if it was supposed to take
     // an argument and if one was supplied.  Remove option (and argument, if
@@ -1095,23 +1100,22 @@ std::string Args::ParseAliasOptions(Options &options,
       continue;
 
     if (!result_string.empty()) {
-      const char *tmp_arg = GetArgumentAtIndex(idx);
+      auto tmp_arg = m_entries[idx].ref;
       size_t pos = result_string.find(tmp_arg);
       if (pos != std::string::npos)
-        result_string.erase(pos, strlen(tmp_arg));
+        result_string.erase(pos, tmp_arg.size());
     }
     ReplaceArgumentAtIndex(idx, llvm::StringRef());
     if ((long_options[long_options_index].definition->option_has_arg !=
          OptionParser::eNoArgument) &&
         (OptionParser::GetOptionArgument() != nullptr) &&
         (idx + 1 < GetArgumentCount()) &&
-        (strcmp(OptionParser::GetOptionArgument(),
-                GetArgumentAtIndex(idx + 1)) == 0)) {
+        (m_entries[idx + 1].ref == OptionParser::GetOptionArgument())) {
       if (result_string.size() > 0) {
-        const char *tmp_arg = GetArgumentAtIndex(idx + 1);
+        auto tmp_arg = m_entries[idx + 1].ref;
         size_t pos = result_string.find(tmp_arg);
         if (pos != std::string::npos)
-          result_string.erase(pos, strlen(tmp_arg));
+          result_string.erase(pos, tmp_arg.size());
       }
       ReplaceArgumentAtIndex(idx + 1, llvm::StringRef());
     }
@@ -1171,9 +1175,9 @@ void Args::ParseArgsForCompletion(Options &options,
     bool missing_argument = false;
     int long_options_index = -1;
 
-    val =
-        OptionParser::Parse(dummy_vec.size() - 1, &dummy_vec[0], sstr.GetData(),
-                            long_options, &long_options_index);
+    val = OptionParser::Parse(dummy_vec.size() - 1, &dummy_vec[0],
+                              sstr.GetString(), long_options,
+                              &long_options_index);
 
     if (val == -1) {
       // When we're completing a "--" which is the last option on line,

@@ -15,10 +15,11 @@
 #include "CGCleanup.h"
 #include "CGOpenMPRuntime.h"
 #include "CodeGenFunction.h"
+#include "ConstantBuilder.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/StmtOpenMP.h"
 #include "llvm/ADT/ArrayRef.h"
-#include "llvm/Bitcode/ReaderWriter.h"
+#include "llvm/Bitcode/BitcodeReader.h"
 #include "llvm/IR/CallSite.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/GlobalValue.h"
@@ -489,7 +490,7 @@ enum OpenMPSchedType {
   OMP_sch_runtime = 37,
   OMP_sch_auto = 38,
   /// static with chunk adjustment (e.g., simd)
-  OMP_sch_static_balanced_chunked   = 45,
+  OMP_sch_static_balanced_chunked = 45,
   /// \brief Lower bound for 'ordered' versions.
   OMP_ord_lower = 64,
   OMP_ord_static_chunked = 65,
@@ -906,18 +907,19 @@ Address CGOpenMPRuntime::getOrCreateDefaultLocation(unsigned Flags) {
       DefaultOpenMPPSource =
           llvm::ConstantExpr::getBitCast(DefaultOpenMPPSource, CGM.Int8PtrTy);
     }
-    auto DefaultOpenMPLocation = new llvm::GlobalVariable(
-        CGM.getModule(), IdentTy, /*isConstant*/ true,
-        llvm::GlobalValue::PrivateLinkage, /*Initializer*/ nullptr);
-    DefaultOpenMPLocation->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
-    DefaultOpenMPLocation->setAlignment(Align.getQuantity());
 
-    llvm::Constant *Zero = llvm::ConstantInt::get(CGM.Int32Ty, 0, true);
-    llvm::Constant *Values[] = {Zero,
-                                llvm::ConstantInt::get(CGM.Int32Ty, Flags),
-                                Zero, Zero, DefaultOpenMPPSource};
-    llvm::Constant *Init = llvm::ConstantStruct::get(IdentTy, Values);
-    DefaultOpenMPLocation->setInitializer(Init);
+    ConstantInitBuilder builder(CGM);
+    auto fields = builder.beginStruct(IdentTy);
+    fields.addInt(CGM.Int32Ty, 0);
+    fields.addInt(CGM.Int32Ty, Flags);
+    fields.addInt(CGM.Int32Ty, 0);
+    fields.addInt(CGM.Int32Ty, 0);
+    fields.add(DefaultOpenMPPSource);
+    auto DefaultOpenMPLocation =
+      fields.finishAndCreateGlobal("", Align, /*isConstant*/ true,
+                                   llvm::GlobalValue::PrivateLinkage);
+    DefaultOpenMPLocation->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+
     OpenMPDefaultLocMap[Flags] = Entry = DefaultOpenMPLocation;
   }
   return Address(Entry, Align);
@@ -2767,7 +2769,6 @@ createOffloadingBinaryDescriptorFunction(CodeGenModule &CGM, StringRef Name,
   Args.push_back(&DummyPtr);
 
   CodeGenFunction CGF(CGM);
-  GlobalDecl();
   auto &FI = CGM.getTypes().arrangeBuiltinFunctionDeclaration(C.VoidTy, Args);
   auto FTy = CGM.getTypes().GetFunctionType(FI);
   auto *Fn =
@@ -2810,9 +2811,10 @@ CGOpenMPRuntime::createOffloadingBinaryDescriptorRegistration() {
       ".omp_offloading.entries_end");
 
   // Create all device images
-  llvm::SmallVector<llvm::Constant *, 4> DeviceImagesEntires;
   auto *DeviceImageTy = cast<llvm::StructType>(
       CGM.getTypes().ConvertTypeForMem(getTgtDeviceImageQTy()));
+  ConstantInitBuilder DeviceImagesBuilder(CGM);
+  auto DeviceImagesEntries = DeviceImagesBuilder.beginArray(DeviceImageTy);
 
   for (unsigned i = 0; i < Devices.size(); ++i) {
     StringRef T = Devices[i].getTriple();
@@ -2824,22 +2826,19 @@ CGOpenMPRuntime::createOffloadingBinaryDescriptorRegistration() {
         M, CGM.Int8Ty, /*isConstant=*/true, llvm::GlobalValue::ExternalLinkage,
         /*Initializer=*/nullptr, Twine(".omp_offloading.img_end.") + Twine(T));
 
-    llvm::Constant *Dev =
-        llvm::ConstantStruct::get(DeviceImageTy, ImgBegin, ImgEnd,
-                                  HostEntriesBegin, HostEntriesEnd, nullptr);
-    DeviceImagesEntires.push_back(Dev);
+    auto Dev = DeviceImagesEntries.beginStruct(DeviceImageTy);
+    Dev.add(ImgBegin);
+    Dev.add(ImgEnd);
+    Dev.add(HostEntriesBegin);
+    Dev.add(HostEntriesEnd);
+    Dev.finishAndAddTo(DeviceImagesEntries);
   }
 
   // Create device images global array.
-  llvm::ArrayType *DeviceImagesInitTy =
-      llvm::ArrayType::get(DeviceImageTy, DeviceImagesEntires.size());
-  llvm::Constant *DeviceImagesInit =
-      llvm::ConstantArray::get(DeviceImagesInitTy, DeviceImagesEntires);
-
-  llvm::GlobalVariable *DeviceImages = new llvm::GlobalVariable(
-      M, DeviceImagesInitTy, /*isConstant=*/true,
-      llvm::GlobalValue::InternalLinkage, DeviceImagesInit,
-      ".omp_offloading.device_images");
+  llvm::GlobalVariable *DeviceImages =
+    DeviceImagesEntries.finishAndCreateGlobal(".omp_offloading.device_images",
+                                              CGM.getPointerAlign(),
+                                              /*isConstant=*/true);
   DeviceImages->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
 
   // This is a Zero array to be used in the creation of the constant expressions
@@ -2849,16 +2848,18 @@ CGOpenMPRuntime::createOffloadingBinaryDescriptorRegistration() {
   // Create the target region descriptor.
   auto *BinaryDescriptorTy = cast<llvm::StructType>(
       CGM.getTypes().ConvertTypeForMem(getTgtBinaryDescriptorQTy()));
-  llvm::Constant *TargetRegionsDescriptorInit = llvm::ConstantStruct::get(
-      BinaryDescriptorTy, llvm::ConstantInt::get(CGM.Int32Ty, Devices.size()),
-      llvm::ConstantExpr::getGetElementPtr(DeviceImagesInitTy, DeviceImages,
-                                           Index),
-      HostEntriesBegin, HostEntriesEnd, nullptr);
+  ConstantInitBuilder DescBuilder(CGM);
+  auto DescInit = DescBuilder.beginStruct(BinaryDescriptorTy);
+  DescInit.addInt(CGM.Int32Ty, Devices.size());
+  DescInit.add(llvm::ConstantExpr::getGetElementPtr(DeviceImages->getValueType(),
+                                                    DeviceImages,
+                                                    Index));
+  DescInit.add(HostEntriesBegin);
+  DescInit.add(HostEntriesEnd);
 
-  auto *Desc = new llvm::GlobalVariable(
-      M, BinaryDescriptorTy, /*isConstant=*/true,
-      llvm::GlobalValue::InternalLinkage, TargetRegionsDescriptorInit,
-      ".omp_offloading.descriptor");
+  auto *Desc = DescInit.finishAndCreateGlobal(".omp_offloading.descriptor",
+                                              CGM.getPointerAlign(),
+                                              /*isConstant=*/true);
 
   // Emit code to register or unregister the descriptor at execution
   // startup or closing, respectively.
@@ -2906,25 +2907,30 @@ void CGOpenMPRuntime::createOffloadEntry(llvm::Constant *ID,
   Str->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
   llvm::Constant *StrPtr = llvm::ConstantExpr::getBitCast(Str, CGM.Int8PtrTy);
 
+  // We can't have any padding between symbols, so we need to have 1-byte
+  // alignment.
+  auto Align = CharUnits::fromQuantity(1);
+
   // Create the entry struct.
-  llvm::Constant *EntryInit = llvm::ConstantStruct::get(
-      TgtOffloadEntryType, AddrPtr, StrPtr,
-      llvm::ConstantInt::get(CGM.SizeTy, Size), nullptr);
-  llvm::GlobalVariable *Entry = new llvm::GlobalVariable(
-      M, TgtOffloadEntryType, true, llvm::GlobalValue::ExternalLinkage,
-      EntryInit, ".omp_offloading.entry");
+  ConstantInitBuilder EntryBuilder(CGM);
+  auto EntryInit = EntryBuilder.beginStruct(TgtOffloadEntryType);
+  EntryInit.add(AddrPtr);
+  EntryInit.add(StrPtr);
+  EntryInit.addInt(CGM.SizeTy, Size);
+  llvm::GlobalVariable *Entry =
+    EntryInit.finishAndCreateGlobal(".omp_offloading.entry",
+                                    Align,
+                                    /*constant*/ true,
+                                    llvm::GlobalValue::ExternalLinkage);
 
   // The entry has to be created in the section the linker expects it to be.
   Entry->setSection(".omp_offloading.entries");
-  // We can't have any padding between symbols, so we need to have 1-byte
-  // alignment.
-  Entry->setAlignment(1);
 }
 
 void CGOpenMPRuntime::createOffloadEntriesAndInfoMetadata() {
   // Emit the offloading entries and metadata so that the device codegen side
-  // can
-  // easily figure out what to emit. The produced metadata looks like this:
+  // can easily figure out what to emit. The produced metadata looks like
+  // this:
   //
   // !omp_offload.info = !{!1, ...}
   //
@@ -3012,7 +3018,8 @@ void CGOpenMPRuntime::loadOffloadInfoMetadata() {
     return;
 
   llvm::LLVMContext C;
-  auto ME = llvm::parseBitcodeFile(Buf.get()->getMemBufferRef(), C);
+  auto ME = expectedToErrorOrAndEmitErrors(
+      C, llvm::parseBitcodeFile(Buf.get()->getMemBufferRef(), C));
 
   if (ME.getError())
     return;
@@ -4436,9 +4443,8 @@ void CGOpenMPRuntime::emitReduction(CodeGenFunction &CGF, SourceLocation Loc,
   auto *IdentTLoc = emitUpdateLocation(CGF, Loc, OMP_ATOMIC_REDUCE);
   auto *ThreadId = getThreadID(CGF, Loc);
   auto *ReductionArrayTySize = CGF.getTypeSize(ReductionArrayTy);
-  auto *RL =
-    CGF.Builder.CreatePointerBitCastOrAddrSpaceCast(ReductionList.getPointer(),
-                                                    CGF.VoidPtrTy);
+  auto *RL = CGF.Builder.CreatePointerBitCastOrAddrSpaceCast(
+      ReductionList.getPointer(), CGF.VoidPtrTy);
   llvm::Value *Args[] = {
       IdentTLoc,                             // ident_t *<loc>
       ThreadId,                              // i32 <gtid>
@@ -6135,7 +6141,7 @@ bool CGOpenMPRuntime::emitTargetFunctions(GlobalDecl GD) {
   // Try to detect target regions in the function.
   scanForTargetRegionsFunctions(FD.getBody(), CGM.getMangledName(GD));
 
-  // We should not emit any function othen that the ones created during the
+  // We should not emit any function other that the ones created during the
   // scanning. Therefore, we signal that this function is completely dealt
   // with.
   return true;
@@ -6509,7 +6515,7 @@ static unsigned evaluateCDTSize(const FunctionDecl *FD,
 
 static void
 emitX86DeclareSimdFunction(const FunctionDecl *FD, llvm::Function *Fn,
-                           llvm::APSInt VLENVal,
+                           const llvm::APSInt &VLENVal,
                            ArrayRef<ParamAttrTy> ParamAttrs,
                            OMPDeclareSimdDeclAttr::BranchStateTy State) {
   struct ISADataTy {

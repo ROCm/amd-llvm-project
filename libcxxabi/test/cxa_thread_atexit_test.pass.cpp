@@ -7,6 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+// UNSUPPORTED: libcxxabi-no-threads
 // REQUIRES: linux
 
 #include <assert.h>

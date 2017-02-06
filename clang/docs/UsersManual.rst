@@ -25,6 +25,10 @@ processes code, please see :doc:`InternalsManual`. If you are interested in the
 `Clang Static Analyzer <http://clang-analyzer.llvm.org>`_, please see its web
 page.
 
+Clang is one component in a complete toolchain for C family languages.
+A separate document describes the other pieces necessary to
+:doc:`assemble a complete toolchain <Toolchain>`.
+
 Clang is designed to support the C family of programming languages,
 which includes :ref:`C <c>`, :ref:`Objective-C <objc>`, :ref:`C++ <cxx>`, and
 :ref:`Objective-C++ <objcxx>` as well as many dialects of those. For
@@ -1826,6 +1830,10 @@ extensions are not implemented yet:
      ...
      local_function(1);
 
+-  clang only supports global register variables when the register specified
+   is non-allocatable (e.g. the stack pointer). Support for general global
+   register variables is unlikely to be implemented soon because it requires
+   additional LLVM backend support.
 -  clang does not support static initialization of flexible array
    members. This appears to be a rarely used extension, but could be
    implemented pending user demand.

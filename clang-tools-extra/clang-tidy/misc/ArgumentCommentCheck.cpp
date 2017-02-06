@@ -164,8 +164,8 @@ void ArgumentCommentCheck::checkCallArgs(ASTContext *Ctx,
                 << Matches[2] << II;
             if (isLikelyTypo(Callee->parameters(), Matches[2], I)) {
               Diag << FixItHint::CreateReplacement(
-                          Comment.first,
-                          (Matches[1] + II->getName() + Matches[3]).str());
+                  Comment.first,
+                  (Matches[1] + II->getName() + Matches[3]).str());
             }
           }
           diag(PVD->getLocation(), "%0 declared here", DiagnosticIDs::Note)
@@ -177,7 +177,7 @@ void ArgumentCommentCheck::checkCallArgs(ASTContext *Ctx,
 }
 
 void ArgumentCommentCheck::check(const MatchFinder::MatchResult &Result) {
-  const Expr *E = Result.Nodes.getNodeAs<Expr>("expr");
+  const auto *E = Result.Nodes.getNodeAs<Expr>("expr");
   if (const auto *Call = dyn_cast<CallExpr>(E)) {
     const FunctionDecl *Callee = Call->getDirectCallee();
     if (!Callee)

@@ -247,25 +247,21 @@ void ScheduleDAGInstrs::exitRegion() {
 void ScheduleDAGInstrs::addSchedBarrierDeps() {
   MachineInstr *ExitMI = RegionEnd != BB->end() ? &*RegionEnd : nullptr;
   ExitSU.setInstr(ExitMI);
-  bool AllDepKnown = ExitMI &&
-    (ExitMI->isCall() || ExitMI->isBarrier());
-  if (ExitMI && AllDepKnown) {
-    // If it's a call or a barrier, add dependencies on the defs and uses of
-    // instruction.
+  // Add dependencies on the defs and uses of the instruction.
+  if (ExitMI) {
     for (const MachineOperand &MO : ExitMI->operands()) {
       if (!MO.isReg() || MO.isDef()) continue;
       unsigned Reg = MO.getReg();
-      if (Reg == 0) continue;
-
-      if (TRI->isPhysicalRegister(Reg))
+      if (TargetRegisterInfo::isPhysicalRegister(Reg)) {
         Uses.insert(PhysRegSUOper(&ExitSU, -1, Reg));
-      else if (MO.readsReg()) // ignore undef operands
+      } else if (TargetRegisterInfo::isVirtualRegister(Reg) && MO.readsReg()) {
         addVRegUseDeps(&ExitSU, ExitMI->getOperandNo(&MO));
+      }
     }
-  } else {
+  }
+  if (!ExitMI || (!ExitMI->isCall() && !ExitMI->isBarrier())) {
     // For others, e.g. fallthrough, conditional branch, assume the exit
     // uses all the registers that are livein to the successor blocks.
-    assert(Uses.empty() && "Uses in set before adding deps?");
     for (const MachineBasicBlock *Succ : BB->successors()) {
       for (const auto &LI : Succ->liveins()) {
         if (!Uses.contains(LI.PhysReg))
@@ -323,6 +319,10 @@ void ScheduleDAGInstrs::addPhysRegDataDeps(SUnit *SU, unsigned OperIdx) {
 void ScheduleDAGInstrs::addPhysRegDeps(SUnit *SU, unsigned OperIdx) {
   MachineInstr *MI = SU->getInstr();
   MachineOperand &MO = MI->getOperand(OperIdx);
+  unsigned Reg = MO.getReg();
+  // We do not need to track any dependencies for constant registers.
+  if (MRI.isConstantPhysReg(Reg))
+    return;
 
   // Optionally add output and anti dependencies. For anti
   // dependencies we use a latency of 0 because for a multi-issue
@@ -331,8 +331,7 @@ void ScheduleDAGInstrs::addPhysRegDeps(SUnit *SU, unsigned OperIdx) {
   // TODO: Using a latency of 1 here for output dependencies assumes
   //       there's no cost for reusing registers.
   SDep::Kind Kind = MO.isUse() ? SDep::Anti : SDep::Output;
-  for (MCRegAliasIterator Alias(MO.getReg(), TRI, true);
-       Alias.isValid(); ++Alias) {
+  for (MCRegAliasIterator Alias(Reg, TRI, true); Alias.isValid(); ++Alias) {
     if (!Defs.contains(*Alias))
       continue;
     for (Reg2SUnitsMap::iterator I = Defs.find(*Alias); I != Defs.end(); ++I) {
@@ -359,13 +358,11 @@ void ScheduleDAGInstrs::addPhysRegDeps(SUnit *SU, unsigned OperIdx) {
     // Either insert a new Reg2SUnits entry with an empty SUnits list, or
     // retrieve the existing SUnits list for this register's uses.
     // Push this SUnit on the use list.
-    Uses.insert(PhysRegSUOper(SU, OperIdx, MO.getReg()));
+    Uses.insert(PhysRegSUOper(SU, OperIdx, Reg));
     if (RemoveKillFlags)
       MO.setIsKill(false);
-  }
-  else {
+  } else {
     addPhysRegDataDeps(SU, OperIdx);
-    unsigned Reg = MO.getReg();
 
     // clear this register's use list
     if (Uses.contains(Reg))
@@ -401,7 +398,7 @@ LaneBitmask ScheduleDAGInstrs::getLaneMaskForMO(const MachineOperand &MO) const
   // No point in tracking lanemasks if we don't have interesting subregisters.
   const TargetRegisterClass &RC = *MRI.getRegClass(Reg);
   if (!RC.HasDisjunctSubRegs)
-    return ~0u;
+    return LaneBitmask::getAll();
 
   unsigned SubReg = MO.getSubReg();
   if (SubReg == 0)
@@ -427,14 +424,14 @@ void ScheduleDAGInstrs::addVRegDefDeps(SUnit *SU, unsigned OperIdx) {
     DefLaneMask = getLaneMaskForMO(MO);
     // If we have a <read-undef> flag, none of the lane values comes from an
     // earlier instruction.
-    KillLaneMask = IsKill ? ~0u : DefLaneMask;
+    KillLaneMask = IsKill ? LaneBitmask::getAll() : DefLaneMask;
 
     // Clear undef flag, we'll re-add it later once we know which subregister
     // Def is first.
     MO.setIsUndef(false);
   } else {
-    DefLaneMask = ~0u;
-    KillLaneMask = ~0u;
+    DefLaneMask = LaneBitmask::getAll();
+    KillLaneMask = LaneBitmask::getAll();
   }
 
   if (MO.isDead()) {
@@ -447,12 +444,12 @@ void ScheduleDAGInstrs::addVRegDefDeps(SUnit *SU, unsigned OperIdx) {
          E = CurrentVRegUses.end(); I != E; /*empty*/) {
       LaneBitmask LaneMask = I->LaneMask;
       // Ignore uses of other lanes.
-      if ((LaneMask & KillLaneMask) == 0) {
+      if ((LaneMask & KillLaneMask).none()) {
         ++I;
         continue;
       }
 
-      if ((LaneMask & DefLaneMask) != 0) {
+      if ((LaneMask & DefLaneMask).any()) {
         SUnit *UseSU = I->SU;
         MachineInstr *Use = UseSU->getInstr();
         SDep Dep(SU, SDep::Data, Reg);
@@ -464,7 +461,7 @@ void ScheduleDAGInstrs::addVRegDefDeps(SUnit *SU, unsigned OperIdx) {
 
       LaneMask &= ~KillLaneMask;
       // If we found a Def for all lanes of this use, remove it from the list.
-      if (LaneMask != 0) {
+      if (LaneMask.any()) {
         I->LaneMask = LaneMask;
         ++I;
       } else
@@ -487,7 +484,7 @@ void ScheduleDAGInstrs::addVRegDefDeps(SUnit *SU, unsigned OperIdx) {
   for (VReg2SUnit &V2SU : make_range(CurrentVRegDefs.find(Reg),
                                      CurrentVRegDefs.end())) {
     // Ignore defs for other lanes.
-    if ((V2SU.LaneMask & LaneMask) == 0)
+    if ((V2SU.LaneMask & LaneMask).none())
       continue;
     // Add an output dependence.
     SUnit *DefSU = V2SU.SU;
@@ -510,11 +507,11 @@ void ScheduleDAGInstrs::addVRegDefDeps(SUnit *SU, unsigned OperIdx) {
     LaneBitmask NonOverlapMask = V2SU.LaneMask & ~LaneMask;
     V2SU.SU = SU;
     V2SU.LaneMask = OverlapMask;
-    if (NonOverlapMask != 0)
+    if (NonOverlapMask.any())
       CurrentVRegDefs.insert(VReg2SUnit(Reg, NonOverlapMask, DefSU));
   }
   // If there was no CurrentVRegDefs entry for some lanes yet, create one.
-  if (LaneMask != 0)
+  if (LaneMask.any())
     CurrentVRegDefs.insert(VReg2SUnit(Reg, LaneMask, SU));
 }
 
@@ -530,7 +527,8 @@ void ScheduleDAGInstrs::addVRegUseDeps(SUnit *SU, unsigned OperIdx) {
   unsigned Reg = MO.getReg();
 
   // Remember the use. Data dependencies will be added when we find the def.
-  LaneBitmask LaneMask = TrackLaneMasks ? getLaneMaskForMO(MO) : ~0u;
+  LaneBitmask LaneMask = TrackLaneMasks ? getLaneMaskForMO(MO)
+                                        : LaneBitmask::getAll();
   CurrentVRegUses.insert(VReg2SUnitOperIdx(Reg, LaneMask, OperIdx, SU));
 
   // Add antidependences to the following defs of the vreg.
@@ -538,7 +536,7 @@ void ScheduleDAGInstrs::addVRegUseDeps(SUnit *SU, unsigned OperIdx) {
                                      CurrentVRegDefs.end())) {
     // Ignore defs for unrelated lanes.
     LaneBitmask PrevDefLaneMask = V2SU.LaneMask;
-    if ((PrevDefLaneMask & LaneMask) == 0)
+    if ((PrevDefLaneMask & LaneMask).none())
       continue;
     if (V2SU.SU == SU)
       continue;
@@ -680,44 +678,6 @@ void ScheduleDAGInstrs::initSUnits() {
         }
       }
     }
-  }
-}
-
-void ScheduleDAGInstrs::collectVRegUses(SUnit *SU) {
-  const MachineInstr *MI = SU->getInstr();
-  for (const MachineOperand &MO : MI->operands()) {
-    if (!MO.isReg())
-      continue;
-    if (!MO.readsReg())
-      continue;
-    if (TrackLaneMasks && !MO.isUse())
-      continue;
-
-    unsigned Reg = MO.getReg();
-    if (!TargetRegisterInfo::isVirtualRegister(Reg))
-      continue;
-
-    // Ignore re-defs.
-    if (TrackLaneMasks) {
-      bool FoundDef = false;
-      for (const MachineOperand &MO2 : MI->operands()) {
-        if (MO2.isReg() && MO2.isDef() && MO2.getReg() == Reg && !MO2.isDead()) {
-          FoundDef = true;
-          break;
-        }
-      }
-      if (FoundDef)
-        continue;
-    }
-
-    // Record this local VReg use.
-    VReg2SUnitMultiMap::iterator UI = VRegUses.find(Reg);
-    for (; UI != VRegUses.end(); ++UI) {
-      if (UI->SU == SU)
-        break;
-    }
-    if (UI == VRegUses.end())
-      VRegUses.insert(VReg2SUnit(Reg, 0, SU));
   }
 }
 
@@ -898,9 +858,6 @@ void ScheduleDAGInstrs::buildSchedGraph(AliasAnalysis *AA,
   CurrentVRegDefs.setUniverse(NumVirtRegs);
   CurrentVRegUses.setUniverse(NumVirtRegs);
 
-  VRegUses.clear();
-  VRegUses.setUniverse(NumVirtRegs);
-
   // Model data dependencies between instructions being scheduled and the
   // ExitSU.
   addSchedBarrierDeps();
@@ -923,8 +880,6 @@ void ScheduleDAGInstrs::buildSchedGraph(AliasAnalysis *AA,
     assert(SU && "No SUnit mapped to this MI");
 
     if (RPTracker) {
-      collectVRegUses(SU);
-
       RegisterOperands RegOpers;
       RegOpers.collect(MI, *TRI, MRI, TrackLaneMasks, false);
       if (TrackLaneMasks) {
@@ -954,12 +909,9 @@ void ScheduleDAGInstrs::buildSchedGraph(AliasAnalysis *AA,
       if (!MO.isReg() || !MO.isDef())
         continue;
       unsigned Reg = MO.getReg();
-      if (Reg == 0)
-        continue;
-
-      if (TRI->isPhysicalRegister(Reg))
+      if (TargetRegisterInfo::isPhysicalRegister(Reg)) {
         addPhysRegDeps(SU, j);
-      else {
+      } else if (TargetRegisterInfo::isVirtualRegister(Reg)) {
         HasVRegDef = true;
         addVRegDefDeps(SU, j);
       }
@@ -974,13 +926,11 @@ void ScheduleDAGInstrs::buildSchedGraph(AliasAnalysis *AA,
       if (!MO.isReg() || !MO.isUse())
         continue;
       unsigned Reg = MO.getReg();
-      if (Reg == 0)
-        continue;
-
-      if (TRI->isPhysicalRegister(Reg))
+      if (TargetRegisterInfo::isPhysicalRegister(Reg)) {
         addPhysRegDeps(SU, j);
-      else if (MO.readsReg()) // ignore undef operands
+      } else if (TargetRegisterInfo::isVirtualRegister(Reg) && MO.readsReg()) {
         addVRegUseDeps(SU, j);
+      }
     }
 
     // If we haven't seen any uses in this scheduling region, create a
@@ -1222,7 +1172,7 @@ static void toggleBundleKillFlag(MachineInstr *MI, unsigned Reg,
   // might set it on too many operands.  We will clear as many flags as we
   // can though.
   MachineBasicBlock::instr_iterator Begin = MI->getIterator();
-  MachineBasicBlock::instr_iterator End = getBundleEnd(*MI);
+  MachineBasicBlock::instr_iterator End = getBundleEnd(Begin);
   while (Begin != End) {
     if (NewKillState) {
       if ((--End)->addRegisterKilled(Reg, TRI, /* addIfNotFound= */ false))
@@ -1344,7 +1294,7 @@ void ScheduleDAGInstrs::fixupKills(MachineBasicBlock *MBB) {
         DEBUG({
           if (MI.getOpcode() == TargetOpcode::BUNDLE) {
             MachineBasicBlock::instr_iterator Begin = MI.getIterator();
-            MachineBasicBlock::instr_iterator End = getBundleEnd(MI);
+            MachineBasicBlock::instr_iterator End = getBundleEnd(Begin);
             while (++Begin != End)
               DEBUG(Begin->dump());
           }

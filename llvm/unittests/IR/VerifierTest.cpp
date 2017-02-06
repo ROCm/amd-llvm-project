@@ -149,15 +149,13 @@ TEST(VerifierTest, InvalidFunctionLinkage) {
                                           "have external or weak linkage!"));
 }
 
-#ifndef _MSC_VER
-// FIXME: This test causes an ICE in MSVC 2013.
 TEST(VerifierTest, StripInvalidDebugInfo) {
   {
     LLVMContext C;
     Module M("M", C);
     DIBuilder DIB(M);
-    DIB.createCompileUnit(dwarf::DW_LANG_C89, "broken.c", "/", "unittest",
-                          false, "", 0);
+    DIB.createCompileUnit(dwarf::DW_LANG_C89, DIB.createFile("broken.c", "/"),
+                          "unittest", false, "", 0);
     DIB.finalize();
     EXPECT_FALSE(verifyModule(M));
 
@@ -178,7 +176,8 @@ TEST(VerifierTest, StripInvalidDebugInfo) {
     LLVMContext C;
     Module M("M", C);
     DIBuilder DIB(M);
-    auto *CU = DIB.createCompileUnit(dwarf::DW_LANG_C89, "broken.c", "/",
+    auto *CU = DIB.createCompileUnit(dwarf::DW_LANG_C89,
+                                     DIB.createFile("broken.c", "/"),
                                      "unittest", false, "", 0);
     new GlobalVariable(M, Type::getInt8Ty(C), false,
                        GlobalValue::ExternalLinkage, nullptr, "g");
@@ -205,13 +204,12 @@ TEST(VerifierTest, StripInvalidDebugInfo) {
     EXPECT_FALSE(verifyModule(M));
   }
 }
-#endif
 
 TEST(VerifierTest, StripInvalidDebugInfoLegacy) {
   LLVMContext C;
   Module M("M", C);
   DIBuilder DIB(M);
-  DIB.createCompileUnit(dwarf::DW_LANG_C89, "broken.c", "/",
+  DIB.createCompileUnit(dwarf::DW_LANG_C89, DIB.createFile("broken.c", "/"),
                         "unittest", false, "", 0);
   DIB.finalize();
   EXPECT_FALSE(verifyModule(M));

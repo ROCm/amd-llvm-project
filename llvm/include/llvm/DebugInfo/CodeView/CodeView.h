@@ -276,6 +276,7 @@ enum class MethodOptions : uint16_t {
 CV_DEFINE_ENUM_CLASS_FLAGS_OPERATORS(MethodOptions)
 
 /// Equivalent to CV_modifier_t.
+/// TODO: Add flag for _Atomic modifier
 enum class ModifierOptions : uint16_t {
   None = 0x0000,
   Const = 0x0001,
@@ -534,7 +535,7 @@ enum class ThunkOrdinal : uint8_t {
   BranchIsland
 };
 
-enum class TrampolineType { TrampIncremental, BranchIsland };
+enum class TrampolineType : uint16_t { TrampIncremental, BranchIsland };
 
 // These values correspond to the CV_SourceChksum_t enumeration.
 enum class FileChecksumKind : uint8_t { None, MD5, SHA1, SHA256 };

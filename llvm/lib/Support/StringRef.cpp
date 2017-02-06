@@ -69,6 +69,11 @@ bool StringRef::endswith_lower(StringRef Suffix) const {
       ascii_strncasecmp(end() - Suffix.Length, Suffix.Data, Suffix.Length) == 0;
 }
 
+size_t StringRef::find_lower(char C, size_t From) const {
+  char L = ascii_tolower(C);
+  return find_if([L](char D) { return ascii_tolower(D) == L; }, From);
+}
+
 /// compare_numeric - Compare strings, handle embedded numbers.
 int StringRef::compare_numeric(StringRef RHS) const {
   for (size_t I = 0, E = std::min(Length, RHS.Length); I != E; ++I) {
@@ -143,16 +148,20 @@ size_t StringRef::find(StringRef Str, size_t From) const {
   if (From > Length)
     return npos;
 
+  const char *Start = Data + From;
+  size_t Size = Length - From;
+
   const char *Needle = Str.data();
   size_t N = Str.size();
   if (N == 0)
     return From;
-
-  size_t Size = Length - From;
   if (Size < N)
     return npos;
+  if (N == 1) {
+    const char *Ptr = (const char *)::memchr(Start, Needle[0], Size);
+    return Ptr == nullptr ? npos : Ptr - Data;
+  }
 
-  const char *Start = Data + From;
   const char *Stop = Start + (Size - N + 1);
 
   // For short haystacks or unsupported needles fall back to the naive algorithm
@@ -172,13 +181,37 @@ size_t StringRef::find(StringRef Str, size_t From) const {
     BadCharSkip[(uint8_t)Str[i]] = N-1-i;
 
   do {
-    if (std::memcmp(Start, Needle, N) == 0)
-      return Start - Data;
+    uint8_t Last = Start[N - 1];
+    if (LLVM_UNLIKELY(Last == (uint8_t)Needle[N - 1]))
+      if (std::memcmp(Start, Needle, N - 1) == 0)
+        return Start - Data;
 
     // Otherwise skip the appropriate number of bytes.
-    Start += BadCharSkip[(uint8_t)Start[N-1]];
+    Start += BadCharSkip[Last];
   } while (Start < Stop);
 
+  return npos;
+}
+
+size_t StringRef::find_lower(StringRef Str, size_t From) const {
+  StringRef This = substr(From);
+  while (This.size() >= Str.size()) {
+    if (This.startswith_lower(Str))
+      return From;
+    This = This.drop_front();
+    ++From;
+  }
+  return npos;
+}
+
+size_t StringRef::rfind_lower(char C, size_t From) const {
+  From = std::min(From, Length);
+  size_t i = From;
+  while (i != 0) {
+    --i;
+    if (ascii_tolower(Data[i]) == ascii_tolower(C))
+      return i;
+  }
   return npos;
 }
 
@@ -193,6 +226,18 @@ size_t StringRef::rfind(StringRef Str) const {
   for (size_t i = Length - N + 1, e = 0; i != e;) {
     --i;
     if (substr(i, N).equals(Str))
+      return i;
+  }
+  return npos;
+}
+
+size_t StringRef::rfind_lower(StringRef Str) const {
+  size_t N = Str.size();
+  if (N > Length)
+    return npos;
+  for (size_t i = Length - N + 1, e = 0; i != e;) {
+    --i;
+    if (substr(i, N).equals_lower(Str))
       return i;
   }
   return npos;

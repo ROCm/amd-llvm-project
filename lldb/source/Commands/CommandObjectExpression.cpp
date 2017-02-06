@@ -358,9 +358,9 @@ bool CommandObjectExpression::EvaluateExpression(const char *expr,
       options.SetGenerateDebugInfo(true);
 
     if (m_command_options.timeout > 0)
-      options.SetTimeoutUsec(m_command_options.timeout);
+      options.SetTimeout(std::chrono::microseconds(m_command_options.timeout));
     else
-      options.SetTimeoutUsec(0);
+      options.SetTimeout(llvm::None);
 
     ExpressionResults success = target->EvaluateExpression(
         expr, frame, result_valobj_sp, options, &m_fixed_expression);
@@ -614,6 +614,9 @@ bool CommandObjectExpression::DoExecute(const char *command,
   if (EvaluateExpression(expr, &(result.GetOutputStream()),
                          &(result.GetErrorStream()), &result)) {
     Target *target = m_interpreter.GetExecutionContext().GetTargetPtr();
+    if (!target)
+        target = GetDummyTarget();
+
     if (!m_fixed_expression.empty() && target->GetEnableNotifyAboutFixIts()) {
       CommandHistory &history = m_interpreter.GetCommandHistory();
       // FIXME: Can we figure out what the user actually typed (e.g. some alias

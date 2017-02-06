@@ -78,6 +78,7 @@
 #include "Plugins/Platform/gdb-server/PlatformRemoteGDBServer.h"
 #include "Plugins/Process/elf-core/ProcessElfCore.h"
 #include "Plugins/Process/gdb-remote/ProcessGDBRemote.h"
+#include "Plugins/Process/minidump/ProcessMinidump.h"
 #include "Plugins/ScriptInterpreter/None/ScriptInterpreterNone.h"
 #include "Plugins/SymbolFile/DWARF/SymbolFileDWARF.h"
 #include "Plugins/SymbolFile/DWARF/SymbolFileDWARFDebugMap.h"
@@ -106,9 +107,8 @@
 #include "Plugins/Process/FreeBSD/ProcessFreeBSD.h"
 #endif
 
-#if defined(_MSC_VER)
-#include "Plugins/Process/Windows/Live/ProcessWindowsLive.h"
-#include "Plugins/Process/Windows/MiniDump/ProcessWinMiniDump.h"
+#if defined(_WIN32)
+#include "Plugins/Process/Windows/Common/ProcessWindows.h"
 #include "lldb/Host/windows/windows.h"
 #endif
 
@@ -304,9 +304,7 @@ void SystemInitializerFull::Initialize() {
 
   JITLoaderGDB::Initialize();
   ProcessElfCore::Initialize();
-#if defined(_MSC_VER)
-  ProcessWinMiniDump::Initialize();
-#endif
+  minidump::ProcessMinidump::Initialize();
   MemoryHistoryASan::Initialize();
   AddressSanitizerRuntime::Initialize();
   ThreadSanitizerRuntime::Initialize();
@@ -334,8 +332,8 @@ void SystemInitializerFull::Initialize() {
   ObjCPlusPlusLanguage::Initialize();
   OCamlLanguage::Initialize();
 
-#if defined(_MSC_VER)
-  ProcessWindowsLive::Initialize();
+#if defined(_WIN32)
+  ProcessWindows::Initialize();
 #endif
 #if defined(__FreeBSD__)
   ProcessFreeBSD::Initialize();
@@ -429,9 +427,7 @@ void SystemInitializerFull::Terminate() {
 
   JITLoaderGDB::Terminate();
   ProcessElfCore::Terminate();
-#if defined(_MSC_VER)
-  ProcessWinMiniDump::Terminate();
-#endif
+  minidump::ProcessMinidump::Terminate();
   MemoryHistoryASan::Terminate();
   AddressSanitizerRuntime::Terminate();
   ThreadSanitizerRuntime::Terminate();

@@ -106,7 +106,7 @@ define amdgpu_ps void @test_kill_depth_var_x2_instructions(float %x) #0 {
 ; CHECK: v_cmpx_le_f32_e32 vcc, 0, v7
 ; CHECK-NEXT: s_cbranch_execnz [[SPLIT_BB:BB[0-9]+_[0-9]+]]
 ; CHECK-NEXT: ; BB#2:
-; CHECK-NEXT: exp 0, 9, 0, 1, 1, v0, v0, v0, v0
+; CHECK-NEXT: exp null off, off, off, off done vm
 ; CHECK-NEXT: s_endpgm
 
 ; CHECK-NEXT: {{^}}[[SPLIT_BB]]:
@@ -138,6 +138,7 @@ exit:
 
 ; CHECK-LABEL: {{^}}test_kill_control_flow_remainder:
 ; CHECK: s_cmp_lg_u32 s{{[0-9]+}}, 0
+; CHECK-NEXT: v_mov_b32_e32 v{{[0-9]+}}, 0
 ; CHECK-NEXT: s_cbranch_scc1 [[RETURN_BB:BB[0-9]+_[0-9]+]]
 
 ; CHECK-NEXT: ; BB#1: ; %bb
@@ -157,7 +158,7 @@ exit:
 ; CHECK-NEXT: s_cbranch_execnz [[SPLIT_BB:BB[0-9]+_[0-9]+]]
 
 ; CHECK-NEXT: ; BB#2:
-; CHECK-NEXT: exp 0, 9, 0, 1, 1, v0, v0, v0, v0
+; CHECK-NEXT: exp null off, off, off, off done vm
 ; CHECK-NEXT: s_endpgm
 
 ; CHECK-NEXT: {{^}}[[SPLIT_BB]]:
@@ -262,13 +263,11 @@ exit:
 ; CHECK-NEXT: s_endpgm
 
 ; CHECK: [[KILLBB:BB[0-9]+_[0-9]+]]:
-; CHECK: s_and_b64 vcc, exec,
-; CHECK-NEXT: s_cbranch_vccz [[PHIBB:BB[0-9]+_[0-9]+]]
+; CHECK-NEXT: s_cbranch_scc0 [[PHIBB:BB[0-9]+_[0-9]+]]
 
 ; CHECK: [[PHIBB]]:
 ; CHECK: v_cmp_eq_f32_e32 vcc, 0, [[PHIREG]]
-; CHECK: s_and_b64 vcc, exec, vcc
-; CHECK: s_cbranch_vccz [[ENDBB:BB[0-9]+_[0-9]+]]
+; CHECK-NEXT: s_cbranch_vccz [[ENDBB:BB[0-9]+_[0-9]+]]
 
 ; CHECK: ; %bb10
 ; CHECK: v_mov_b32_e32 v{{[0-9]+}}, 9
@@ -303,18 +302,14 @@ end:
 
 ; CHECK-LABEL: {{^}}no_skip_no_successors:
 ; CHECK: v_cmp_nge_f32
-; CHECK: s_and_b64 vcc, exec,
-; CHECK: s_cbranch_vccz [[SKIPKILL:BB[0-9]+_[0-9]+]]
+; CHECK-NEXT: s_cbranch_vccz [[SKIPKILL:BB[0-9]+_[0-9]+]]
 
 ; CHECK: ; %bb6
 ; CHECK: s_mov_b64 exec, 0
 
 ; CHECK: [[SKIPKILL]]:
-; CHECK: v_cmp_nge_f32
-; CHECK: s_and_b64 vcc, exec, vcc
-; CHECK: s_cbranch_vccz [[UNREACHABLE:BB[0-9]+_[0-9]+]]
-
-; CHECK: [[UNREACHABLE]]:
+; CHECK: v_cmp_nge_f32_e32 vcc
+; CHECK-NEXT: BB#3: ; %bb5
 ; CHECK-NEXT: .Lfunc_end{{[0-9]+}}
 define amdgpu_ps void @no_skip_no_successors(float inreg %arg, float inreg %arg1) #0 {
 bb:

@@ -4,7 +4,7 @@ modernize-use-auto
 ==================
 
 This check is responsible for using the ``auto`` type specifier for variable
-declarations to *improve code readability and maintainability*.  For example:
+declarations to *improve code readability and maintainability*. For example:
 
 .. code-block:: c++
 
@@ -114,7 +114,7 @@ New expressions
 ---------------
 
 Frequently, when a pointer is declared and initialized with ``new``, the
-pointee type has to be written twice: in the declaration type and in the
+pointee type is written twice: in the declaration type and in the
 ``new`` expression. In this cases, the declaration type can be replaced with
 ``auto`` improving readability and maintainability.
 
@@ -142,6 +142,29 @@ the following conditions are satisfied:
   // becomes
 
   auto *my_first_pointer = new TypeName, *my_second_pointer = new TypeName;
+
+Cast expressions
+----------------
+
+Frequently, when a variable is declared and initialized with a cast, the
+variable type is written twice: in the declaration type and in the
+cast expression. In this cases, the declaration type can be replaced with
+``auto`` improving readability and maintainability.
+
+.. code-block:: c++
+
+  TypeName *my_pointer = static_cast<TypeName>(my_param);
+
+  // becomes
+
+  auto *my_pointer = static_cast<TypeName>(my_param);
+
+The check handles ``static_cast``, ``dynamic_cast``, ``const_cast``,
+``reinterpret_cast``, functional casts, C-style casts and function templates
+that behave as casts, such as ``llvm::dyn_cast``, ``boost::lexical_cast`` and
+``gsl::narrow_cast``.  Calls to function templates are considered to behave as
+casts if the first template argument is explicit and is a type, and the function
+returns that type, or a pointer or reference to it.
 
 Known Limitations
 -----------------

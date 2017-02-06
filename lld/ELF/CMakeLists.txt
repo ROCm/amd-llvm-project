@@ -2,12 +2,16 @@ set(LLVM_TARGET_DEFINITIONS Options.td)
 tablegen(LLVM Options.inc -gen-opt-parser-defs)
 add_public_tablegen_target(ELFOptionsTableGen)
 
+if(NOT LLD_BUILT_STANDALONE)
+  set(tablegen_deps intrinsics_gen)
+endif()
+
 add_lld_library(lldELF
   Driver.cpp
   DriverUtils.cpp
   EhFrame.cpp
-  ELFCreator.cpp
   Error.cpp
+  GdbIndex.cpp
   ICF.cpp
   InputFiles.cpp
   InputSection.cpp
@@ -19,9 +23,9 @@ add_lld_library(lldELF
   Relocations.cpp
   ScriptParser.cpp
   Strings.cpp
-  SymbolListFile.cpp
   SymbolTable.cpp
   Symbols.cpp
+  SyntheticSections.cpp
   Target.cpp
   Thunks.cpp
   Writer.cpp
@@ -33,6 +37,7 @@ add_lld_library(lldELF
   BitWriter
   Codegen
   Core
+  DebugInfoDWARF
   Demangle
   IPO
   Linker
@@ -49,6 +54,8 @@ add_lld_library(lldELF
   lldConfig
   lldCore
   ${PTHREAD_LIB}
-  )
 
-add_dependencies(lldELF intrinsics_gen ELFOptionsTableGen)
+  DEPENDS
+  ELFOptionsTableGen
+  ${tablegen_deps}
+  )

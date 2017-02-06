@@ -83,6 +83,10 @@ AMDGPU
 * `AMD Compute Resources <http://developer.amd.com/tools/heterogeneous-computing/amd-accelerated-parallel-processing-app-sdk/documentation/>`_
 * `AMDGPU Compute Application Binary Interface <https://github.com/RadeonOpenCompute/ROCm-ComputeABI-Doc/blob/master/AMDGPU-ABI.md>`__
 
+RISC-V
+------
+* `RISC-V User-Level ISA Specification <https://riscv.org/specifications/>`_
+
 SPARC
 -----
 
@@ -98,7 +102,7 @@ SystemZ
 X86
 ---
 
-* `AMD processor manuals <http://www.amd.com/us-en/Processors/TechnicalResources/0,,30_182_739,00.html>`_
+* `AMD processor manuals <http://developer.amd.com/resources/developer-guides-manuals/>`_
 * `Intel 64 and IA-32 manuals <http://www.intel.com/content/www/us/en/processors/architectures-software-developer-manuals.html>`_
 * `Intel Itanium documentation <http://www.intel.com/design/itanium/documentation.htm?iid=ipp_srvr_proc_itanium2+techdocs>`_
 * `X86 and X86-64 SysV psABI <https://github.com/hjl-tools/x86-psABI/wiki/X86-psABI>`_

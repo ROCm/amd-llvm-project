@@ -23,6 +23,10 @@
 #include "isl_tab.h"
 #include <isl_sort.h>
 
+#include <bset_to_bmap.c>
+#include <bset_from_bmap.c>
+#include <set_to_map.c>
+
 static struct isl_basic_set *uset_convex_hull_wrap_bounded(struct isl_set *set);
 
 /* Return 1 if constraint c is redundant with respect to the constraints
@@ -126,8 +130,8 @@ error:
 __isl_give isl_basic_set *isl_basic_set_remove_redundancies(
 	__isl_take isl_basic_set *bset)
 {
-	return (struct isl_basic_set *)
-		isl_basic_map_remove_redundancies((struct isl_basic_map *)bset);
+	return bset_from_bmap(
+		isl_basic_map_remove_redundancies(bset_to_bmap(bset)));
 }
 
 /* Remove redundant constraints in each of the basic maps.
@@ -192,7 +196,7 @@ error:
 }
 
 __isl_give isl_basic_map *isl_basic_map_set_rational(
-	__isl_take isl_basic_set *bmap)
+	__isl_take isl_basic_map *bmap)
 {
 	if (!bmap)
 		return NULL;
@@ -936,7 +940,7 @@ int isl_basic_map_image_is_bounded(__isl_keep isl_basic_map *bmap)
 	bmap = isl_basic_map_cow(bmap);
 	bmap = isl_basic_map_move_dims(bmap, isl_dim_param, nparam,
 					isl_dim_in, 0, n_in);
-	bounded = isl_basic_set_is_bounded((isl_basic_set *)bmap);
+	bounded = isl_basic_set_is_bounded(bset_from_bmap(bmap));
 	isl_basic_map_free(bmap);
 
 	return bounded;
@@ -1503,44 +1507,53 @@ static struct isl_basic_set *uset_combined_lineality_space(struct isl_set *set)
  * lineality space.  If any of the intermediate results has
  * a non-trivial lineality space, it is projected out.
  */
-static struct isl_basic_set *uset_convex_hull_unbounded(struct isl_set *set)
+static __isl_give isl_basic_set *uset_convex_hull_unbounded(
+	__isl_take isl_set *set)
 {
-	struct isl_basic_set *convex_hull = NULL;
+	isl_basic_set_list *list;
 
-	convex_hull = isl_set_copy_basic_set(set);
-	set = isl_set_drop_basic_set(set, convex_hull);
-	if (!set)
-		goto error;
-	while (set->n > 0) {
+	list = isl_set_get_basic_set_list(set);
+	isl_set_free(set);
+
+	while (list) {
+		int n;
 		struct isl_basic_set *t;
-		t = isl_set_copy_basic_set(set);
-		if (!t)
-			goto error;
-		set = isl_set_drop_basic_set(set, t);
-		if (!set)
-			goto error;
-		convex_hull = convex_hull_pair(convex_hull, t);
-		if (set->n == 0)
-			break;
-		t = isl_basic_set_lineality_space(isl_basic_set_copy(convex_hull));
+		isl_basic_set *bset1, *bset2;
+
+		n = isl_basic_set_list_n_basic_set(list);
+		if (n < 2)
+			isl_die(isl_basic_set_list_get_ctx(list),
+				isl_error_internal,
+				"expecting at least two elements", goto error);
+		bset1 = isl_basic_set_list_get_basic_set(list, n - 1);
+		bset2 = isl_basic_set_list_get_basic_set(list, n - 2);
+		bset1 = convex_hull_pair(bset1, bset2);
+		if (n == 2) {
+			isl_basic_set_list_free(list);
+			return bset1;
+		}
+		bset1 = isl_basic_set_underlying_set(bset1);
+		list = isl_basic_set_list_drop(list, n - 2, 2);
+		list = isl_basic_set_list_add(list, bset1);
+
+		t = isl_basic_set_list_get_basic_set(list, n - 2);
+		t = isl_basic_set_lineality_space(t);
 		if (!t)
 			goto error;
 		if (isl_basic_set_plain_is_universe(t)) {
-			isl_basic_set_free(convex_hull);
-			convex_hull = t;
-			break;
+			isl_basic_set_list_free(list);
+			return t;
 		}
 		if (t->n_eq < isl_basic_set_total_dim(t)) {
-			set = isl_set_add_basic_set(set, convex_hull);
+			set = isl_basic_set_list_union(list);
 			return modulo_lineality(set, t);
 		}
 		isl_basic_set_free(t);
 	}
-	isl_set_free(set);
-	return convex_hull;
+
+	return NULL;
 error:
-	isl_set_free(set);
-	isl_basic_set_free(convex_hull);
+	isl_basic_set_list_free(list);
 	return NULL;
 }
 
@@ -1986,8 +1999,7 @@ error:
 
 struct isl_basic_set *isl_set_convex_hull(struct isl_set *set)
 {
-	return (struct isl_basic_set *)
-		isl_map_convex_hull((struct isl_map *)set);
+	return bset_from_bmap(isl_map_convex_hull(set_to_map(set)));
 }
 
 __isl_give isl_basic_map *isl_map_polyhedral_hull(__isl_take isl_map *map)
@@ -2000,7 +2012,7 @@ __isl_give isl_basic_map *isl_map_polyhedral_hull(__isl_take isl_map *map)
 
 __isl_give isl_basic_set *isl_set_polyhedral_hull(__isl_take isl_set *set)
 {
-	return (isl_basic_set *)isl_map_polyhedral_hull((isl_map *)set);
+	return bset_from_bmap(isl_map_polyhedral_hull(set_to_map(set)));
 }
 
 struct sh_data_entry {
@@ -2476,8 +2488,7 @@ __isl_give isl_basic_map *isl_map_simple_hull(__isl_take isl_map *map)
 
 struct isl_basic_set *isl_set_simple_hull(struct isl_set *set)
 {
-	return (struct isl_basic_set *)
-		isl_map_simple_hull((struct isl_map *)set);
+	return bset_from_bmap(isl_map_simple_hull(set_to_map(set)));
 }
 
 /* Compute a superset of the convex hull of map that is described
@@ -2976,7 +2987,7 @@ error:
 
 /* Return a sequence of the basic maps that make up the maps in "list".
  */
-static __isl_give isl_basic_set_list *collect_basic_maps(
+static __isl_give isl_basic_map_list *collect_basic_maps(
 	__isl_take isl_map_list *list)
 {
 	int i, n;
