@@ -508,6 +508,9 @@ KEYWORD(__forceinline               , KEYMS)
 KEYWORD(__unaligned                 , KEYMS)
 KEYWORD(__super                     , KEYMS)
 
+// HCC tile static qualifier
+KEYWORD(__lds                       , KEYCXXAMP)
+
 // OpenCL address space qualifiers
 KEYWORD(__global                    , KEYOPENCL)
 KEYWORD(__local                     , KEYOPENCL)

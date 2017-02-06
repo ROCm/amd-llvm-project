@@ -2483,3 +2483,9 @@ def HCGridLaunch : InheritableAttr {
   let Subjects = SubjectList<[Function]>;
   let Documentation = [Undocumented];
 }
+
+def HCCTileStatic : TypeAttr {
+  let Spellings = [Keyword<"__lds">];
+  let Documentation = [Undocumented];
+}
+

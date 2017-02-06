@@ -9373,11 +9373,8 @@ void Sema::DiagnoseCXXAMPExpr(Expr* Stripped, ExprResult &HS, bool DiagnoseWhenS
     if (DeclRefExpr* DRL = dyn_cast<DeclRefExpr>(Stripped))
       if (VarDecl *var = dyn_cast<VarDecl>(DRL->getDecl())) {
         QualType Type = var->getType();
-        // FIXME: Need a common routine to detect a type is a tile_static or not
         if(!var->hasLocalStorage() || var->isStaticDataMember()) {
-          if (var->hasAttr<SectionAttr>() && var->getAttr<SectionAttr>() &&
-             var->getAttr<SectionAttr>()->getName() == "clamp_opencl_local"
-             ) {
+          if (Type.getAddressSpace() == LangAS::hcc_tilestatic) {
              // Skip tile_static
           } else if(Type.isConstQualified() /*&& LHS.get()->isRValue()*/) {
             // Skip a static const type and global const type that is rvalue

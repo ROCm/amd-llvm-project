@@ -220,8 +220,10 @@ llvm::Constant *CodeGenModule::getOrCreateStaticVarDecl(
       GetGlobalVarAddressSpace(&D, getContext().getTargetAddressSpace(Ty));
 
   // Local address space cannot have an initializer.
+  // HCC tile_static variables cannot have an initializer.
   llvm::Constant *Init = nullptr;
-  if (Ty.getAddressSpace() != LangAS::opencl_local)
+  if ((Ty.getAddressSpace() != LangAS::opencl_local) &&
+      (Ty.getAddressSpace() != LangAS::hcc_tilestatic))
     Init = EmitNullConstant(Ty);
   else
     Init = llvm::UndefValue::get(LTy);

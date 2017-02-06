@@ -689,6 +689,13 @@ void Parser::ParseOpenCLQualifiers(ParsedAttributes &Attrs) {
                AttributeList::AS_Keyword);
 }
 
+void Parser::ParseHCCQualifiers(ParsedAttributes &Attrs) {
+  IdentifierInfo *AttrName = Tok.getIdentifierInfo();
+  SourceLocation AttrNameLoc = Tok.getLocation();
+  Attrs.addNew(AttrName, AttrNameLoc, nullptr, AttrNameLoc, nullptr, 0,
+               AttributeList::AS_Keyword);
+}
+
 void Parser::ParseNullabilityTypeSpecifiers(ParsedAttributes &attrs) {
   // Treat these like attributes, even though they're type specifiers.
   while (true) {
@@ -1980,21 +1987,12 @@ Decl *Parser::ParseDeclarationAfterDeclarator(
 }
 
 // Check if a given Declarator is a tile_static variable
-// Currently tile_static is a macro which expands to:
-//   static __attribute__((section("clamp_opencl_local")))
-// We check if the Declarator has such function attribute.
 static bool IsTileStatic(Declarator &D) {
   if (D.getDeclSpec().hasAttributes()) {
     AttributeList *attr = D.getDeclSpec().getAttributes().getList();
     while (attr) {
-      if (attr->getName()->isStr("section")) {
-        for (unsigned i = 0; i < attr->getNumArgs(); ++i) {
-          StringLiteral *s = dyn_cast_or_null<StringLiteral>(attr->getArgAsExpr(i));
-          if (s && s->getString() == "clamp_opencl_local") {
-            return true;
-          }
-        }
-      }
+      if (attr->getKind() == AttributeList::AT_HCCTileStatic)
+        return true;
       attr = attr->getNext();
     }
   }
@@ -3587,6 +3585,11 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
     case tok::kw___write_only:
     case tok::kw___read_write:
       ParseOpenCLQualifiers(DS.getAttributes());
+      break;
+
+    // HCC tile_static qualifier:
+    case tok::kw___lds:
+      ParseHCCQualifiers(DS.getAttributes());
       break;
 
     case tok::less:

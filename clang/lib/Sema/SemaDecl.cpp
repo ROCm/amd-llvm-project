@@ -5333,14 +5333,8 @@ bool Sema::IsCXXAMPTileStatic(Declarator &D) {
  if (D.getDeclSpec().hasAttributes()) {
     AttributeList *attr = D.getDeclSpec().getAttributes().getList();
     while (attr) {
-      if (attr->getName()->isStr("section")) {
-        for (unsigned i = 0; i < attr->getNumArgs(); ++i) {
-          StringLiteral *s = dyn_cast_or_null<StringLiteral>(attr->getArgAsExpr(i));
-          if (s && s->getString() == "clamp_opencl_local") {
-            return true;
-          }
-        }
-      }
+      if (attr->getKind() == AttributeList::AT_HCCTileStatic)
+        return true;
       attr = attr->getNext();
     }
   }
@@ -9073,12 +9067,8 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
   }
 
   // C++AMP
-  if(getLangOpts().CPlusPlusAMP && NewFD->hasAttr<SectionAttr>()) {
-   const SectionAttr *SA = NewFD->getAttr<SectionAttr>();
-    // Ugly codes
-    if(SA->getName() == StringRef("clamp_opencl_local")) {
-      Diag(D.getIdentifierLoc(), diag::err_amp_tile_static_on_function_return_result);
-    }
+  if(getLangOpts().CPlusPlusAMP && (NewFD->getType().getAddressSpace() == LangAS::hcc_tilestatic)) {
+    Diag(D.getIdentifierLoc(), diag::err_amp_tile_static_on_function_return_result);
   }
   if (getLangOpts().CPlusPlusAMP && NewFD->hasAttr<CXXAMPRestrictAMPAttr>()) {
     DeclaratorChunk::FunctionTypeInfo &FTI = D.getFunctionTypeInfo();

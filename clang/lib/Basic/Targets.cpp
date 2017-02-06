@@ -1745,6 +1745,7 @@ static const unsigned NVPTXAddrSpaceMap[] = {
     1, // cuda_device
     4, // cuda_constant
     3, // cuda_shared
+    3, // hcc_tilestatic
 };
 
 class NVPTXTargetInfo : public TargetInfo {
@@ -1991,7 +1992,7 @@ static const char *const DataLayoutStringSI =
   "-v192:256-v256:256-v512:512-v1024:1024-v2048:2048-n32:64";
 
 class AMDGPUTargetInfo final : public TargetInfo {
-  static const unsigned AddrSpaceMap_[7];
+  static const unsigned AddrSpaceMap_[8];
   static const Builtin::Info BuiltinInfo[];
   static const char * const GCCRegNames[];
 
@@ -2331,7 +2332,8 @@ const unsigned AMDGPUTargetInfo::AddrSpaceMap_[] = {
   AS_Generic,  // opencl_generic
   AS_Global,   // cuda_device
   AS_Constant, // cuda_constant
-  AS_Local     // cuda_shared
+  AS_Local,    // cuda_shared
+  AS_Local,    // hcc_tilestatic
 };
 
 const Builtin::Info AMDGPUTargetInfo::BuiltinInfo[] = {
@@ -7269,7 +7271,8 @@ static const unsigned TCEOpenCLAddrSpaceMap[] = {
     0, // opencl_generic
     0, // cuda_device
     0, // cuda_constant
-    0  // cuda_shared
+    0, // cuda_shared
+    4, // hcc_tilestatic
 };
 
 class TCETargetInfo : public TargetInfo {
@@ -8216,7 +8219,8 @@ static const unsigned SPIRAddrSpaceMap[] = {
     4, // opencl_generic
     0, // cuda_device
     0, // cuda_constant
-    0  // cuda_shared
+    0, // cuda_shared
+    3  // hcc_tilestatic
 };
 class SPIRTargetInfo : public TargetInfo {
 public:
