@@ -307,8 +307,8 @@
 // CHECK-NEXT:     Section: Undefined
 // CHECK-NEXT:   }
 // CHECK-NEXT:  Symbol {
-// CHECK-NEXT:    Name: _start (929)
-// CHECK-NEXT:    Value: 0x11000
+// CHECK-NEXT:    Name: _start
+// CHECK-NEXT:    Value: 0x201000
 // CHECK-NEXT:    Size: 0
 // CHECK-NEXT:    Binding: Global (0x1)
 // CHECK-NEXT:    Type: None (0x0)

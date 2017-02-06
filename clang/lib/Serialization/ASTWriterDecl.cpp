@@ -107,6 +107,7 @@ namespace clang {
     void VisitTemplateTemplateParmDecl(TemplateTemplateParmDecl *D);
     void VisitTypeAliasTemplateDecl(TypeAliasTemplateDecl *D);
     void VisitUsingDecl(UsingDecl *D);
+    void VisitUsingPackDecl(UsingPackDecl *D);
     void VisitUsingShadowDecl(UsingShadowDecl *D);
     void VisitConstructorUsingShadowDecl(ConstructorUsingShadowDecl *D);
     void VisitLinkageSpecDecl(LinkageSpecDecl *D);
@@ -894,6 +895,7 @@ void ASTDeclWriter::VisitVarDecl(VarDecl *D) {
   Record.push_back(D->getTSCSpec());
   Record.push_back(D->getInitStyle());
   if (!isa<ParmVarDecl>(D)) {
+    Record.push_back(D->isThisDeclarationADemotedDefinition());
     Record.push_back(D->isExceptionVariable());
     Record.push_back(D->isNRVOVariable());
     Record.push_back(D->isCXXForRangeDecl());
@@ -998,6 +1000,8 @@ void ASTDeclWriter::VisitParmVarDecl(ParmVarDecl *D) {
   // Check things we know are true of *every* PARM_VAR_DECL, which is more than
   // just us assuming it.
   assert(!D->getTSCSpec() && "PARM_VAR_DECL can't use TLS");
+  assert(!D->isThisDeclarationADemotedDefinition()
+         && "PARM_VAR_DECL can't be demoted definition.");
   assert(D->getAccess() == AS_none && "PARM_VAR_DECL can't be public/private");
   assert(!D->isExceptionVariable() && "PARM_VAR_DECL can't be exception var");
   assert(D->getPreviousDecl() == nullptr && "PARM_VAR_DECL can't be redecl");
@@ -1139,6 +1143,15 @@ void ASTDeclWriter::VisitUsingDecl(UsingDecl *D) {
   Code = serialization::DECL_USING;
 }
 
+void ASTDeclWriter::VisitUsingPackDecl(UsingPackDecl *D) {
+  Record.push_back(D->NumExpansions);
+  VisitNamedDecl(D);
+  Record.AddDeclRef(D->getInstantiatedFromUsingDecl());
+  for (auto *E : D->expansions())
+    Record.AddDeclRef(E);
+  Code = serialization::DECL_USING_PACK;
+}
+
 void ASTDeclWriter::VisitUsingShadowDecl(UsingShadowDecl *D) {
   VisitRedeclarable(D);
   VisitNamedDecl(D);
@@ -1172,6 +1185,7 @@ void ASTDeclWriter::VisitUnresolvedUsingValueDecl(UnresolvedUsingValueDecl *D) {
   Record.AddSourceLocation(D->getUsingLoc());
   Record.AddNestedNameSpecifierLoc(D->getQualifierLoc());
   Record.AddDeclarationNameLoc(D->DNLoc, D->getDeclName());
+  Record.AddSourceLocation(D->getEllipsisLoc());
   Code = serialization::DECL_UNRESOLVED_USING_VALUE;
 }
 
@@ -1180,6 +1194,7 @@ void ASTDeclWriter::VisitUnresolvedUsingTypenameDecl(
   VisitTypeDecl(D);
   Record.AddSourceLocation(D->getTypenameLoc());
   Record.AddNestedNameSpecifierLoc(D->getQualifierLoc());
+  Record.AddSourceLocation(D->getEllipsisLoc());
   Code = serialization::DECL_UNRESOLVED_USING_TYPENAME;
 }
 
@@ -1957,6 +1972,7 @@ void ASTWriter::WriteDeclAbbrevs() {
   Abv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 3)); // SClass
   Abv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 2)); // TSCSpec
   Abv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 2)); // InitStyle
+  Abv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1)); // IsThisDeclarationADemotedDefinition
   Abv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1)); // isExceptionVariable
   Abv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1)); // isNRVOVariable
   Abv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1)); // isCXXForRangeDecl

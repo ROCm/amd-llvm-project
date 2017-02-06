@@ -209,9 +209,11 @@ Sema::InstantiatingTemplate::InstantiatingTemplate(
     sema::TemplateDeductionInfo *DeductionInfo)
     : SemaRef(SemaRef), SavedInNonInstantiationSFINAEContext(
                             SemaRef.InNonInstantiationSFINAEContext) {
-  // Don't allow further instantiation if a fatal error has occcured.  Any
-  // diagnostics we might have raised will not be visible.
-  if (SemaRef.Diags.hasFatalErrorOccurred()) {
+  // Don't allow further instantiation if a fatal error and an uncompilable
+  // error have occurred. Any diagnostics we might have raised will not be
+  // visible, and we do not need to construct a correct AST.
+  if (SemaRef.Diags.hasFatalErrorOccurred() &&
+      SemaRef.Diags.hasUncompilableErrorOccurred()) {
     Invalid = true;
     return;
   }
@@ -1685,7 +1687,7 @@ ParmVarDecl *Sema::SubstParmVarDecl(ParmVarDecl *OldParm,
       // Instantiate default arguments for methods of local classes (DR1484)
       // and non-defining declarations.
       Sema::ContextRAII SavedContext(*this, OwningFunc);
-      LocalInstantiationScope Local(*this);
+      LocalInstantiationScope Local(*this, true);
       ExprResult NewArg = SubstExpr(Arg, TemplateArgs);
       if (NewArg.isUsable()) {
         // It would be nice if we still had this.
@@ -2196,14 +2198,10 @@ bool Sema::InstantiateInClassInitializer(
   if (!OldInit) {
     RecordDecl *PatternRD = Pattern->getParent();
     RecordDecl *OutermostClass = PatternRD->getOuterLexicalRecordContext();
-    if (OutermostClass == PatternRD) {
-      Diag(Pattern->getLocEnd(), diag::err_in_class_initializer_not_yet_parsed)
-          << PatternRD << Pattern;
-    } else {
-      Diag(Pattern->getLocEnd(),
-           diag::err_in_class_initializer_not_yet_parsed_outer_class)
-          << PatternRD << OutermostClass << Pattern;
-    }
+    Diag(PointOfInstantiation,
+         diag::err_in_class_initializer_not_yet_parsed)
+        << OutermostClass << Pattern;
+    Diag(Pattern->getLocEnd(), diag::note_in_class_initializer_not_yet_parsed);
     Instantiation->setInvalidDecl();
     return true;
   }

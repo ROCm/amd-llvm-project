@@ -13,6 +13,7 @@
 
 #include <string_view>
 #include <cassert>
+#include <cstddef>
 
 #include "test_macros.h"
 
@@ -38,9 +39,9 @@ test(S s)
         assert(ce2 !=  s.begin());
     }
 
-    assert(  e -  s.begin() == s.size());
-    assert(ce1 - cs.begin() == cs.size());
-    assert(ce2 - s.cbegin() == s.size());
+    assert(static_cast<std::size_t>(  e -  s.begin()) == s.size());
+    assert(static_cast<std::size_t>(ce1 - cs.begin()) == cs.size());
+    assert(static_cast<std::size_t>(ce2 - s.cbegin()) == s.size());
 
     assert(  e == ce1);
     assert(  e == ce2);
@@ -66,7 +67,7 @@ int main()
     test(u32string_view{U"123"});
 #endif
 
-#if _LIBCPP_STD_VER > 11
+#if TEST_STD_VER > 11
     {
     constexpr string_view       sv { "123", 3 };
     constexpr u16string_view u16sv {u"123", 3 };

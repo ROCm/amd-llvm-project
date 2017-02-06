@@ -541,8 +541,8 @@ bool llvm::attributesPermitTailCall(const Function *F, const Instruction *I,
 
   // Noalias is completely benign as far as calling convention goes, it
   // shouldn't affect whether the call is a tail call.
-  CallerAttrs = CallerAttrs.removeAttribute(Attribute::NoAlias);
-  CalleeAttrs = CalleeAttrs.removeAttribute(Attribute::NoAlias);
+  CallerAttrs.removeAttribute(Attribute::NoAlias);
+  CalleeAttrs.removeAttribute(Attribute::NoAlias);
 
   if (CallerAttrs.contains(Attribute::ZExt)) {
     if (!CalleeAttrs.contains(Attribute::ZExt))
@@ -684,7 +684,7 @@ llvm::getFuncletMembership(const MachineFunction &MF) {
   DenseMap<const MachineBasicBlock *, int> FuncletMembership;
 
   // We don't have anything to do if there aren't any EH pads.
-  if (!MF.getMMI().hasEHFunclets())
+  if (!MF.hasEHFunclets())
     return FuncletMembership;
 
   int EntryBBNumber = MF.front().getNumber();

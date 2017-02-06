@@ -96,6 +96,9 @@ set(LTDL_SHLIB_EXT ${CMAKE_SHARED_LIBRARY_SUFFIX})
 set(LLVM_PLUGIN_EXT ${CMAKE_SHARED_LIBRARY_SUFFIX})
 
 if(APPLE)
+  if(LLVM_ENABLE_LLD AND LLVM_ENABLE_LTO)
+    message(FATAL_ERROR "lld does not support LTO on Darwin")
+  endif()
   # Darwin-specific linker flags for loadable modules.
   set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} -Wl,-flat_namespace -Wl,-undefined -Wl,suppress")
 endif()
@@ -179,10 +182,6 @@ if( CMAKE_SIZEOF_VOID_P EQUAL 8 AND NOT WIN32 )
     set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} -m32")
   endif( LLVM_BUILD_32_BITS )
 endif( CMAKE_SIZEOF_VOID_P EQUAL 8 AND NOT WIN32 )
-
-if (LLVM_BUILD_STATIC)
-  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static")
-endif()
 
 if( XCODE )
   # For Xcode enable several build settings that correspond to
@@ -394,11 +393,6 @@ if( MSVC )
     endif()
   endif()
 
-  # Disable sized deallocation if the flag is supported. MSVC fails to compile
-  # the operator new overload in User otherwise.
-  check_c_compiler_flag("/WX /Zc:sizedDealloc-" SUPPORTS_SIZED_DEALLOC)
-  append_if(SUPPORTS_SIZED_DEALLOC "/Zc:sizedDealloc-" CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
-
 elseif( LLVM_COMPILER_IS_GCC_COMPATIBLE )
   if (LLVM_ENABLE_WARNINGS)
     append("-Wall -W -Wno-unused-parameter -Wwrite-strings" CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
@@ -573,7 +567,7 @@ if(LLVM_USE_SANITIZER)
     message(FATAL_ERROR "LLVM_USE_SANITIZER is not supported on this platform.")
   endif()
   if (LLVM_USE_SANITIZE_COVERAGE)
-    append("-fsanitize-coverage=edge,indirect-calls,8bit-counters,trace-cmp" CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
+    append("-fsanitize-coverage=trace-pc-guard,indirect-calls,trace-cmp" CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
   endif()
 endif()
 
@@ -647,6 +641,11 @@ string(TOUPPER "${LLVM_ENABLE_LTO}" uppercase_LLVM_ENABLE_LTO)
 if(uppercase_LLVM_ENABLE_LTO STREQUAL "THIN")
   append("-flto=thin" CMAKE_CXX_FLAGS CMAKE_C_FLAGS
                       CMAKE_EXE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS)
+  # On darwin, enable the lto cache. This improves initial build time a little
+  # since we re-link a lot of the same objects, and significantly improves
+  # incremental build time.
+  append_if(APPLE "-Wl,-cache_path_lto,${PROJECT_BINARY_DIR}/lto.cache"
+            CMAKE_EXE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS)
 elseif(uppercase_LLVM_ENABLE_LTO STREQUAL "FULL")
   append("-flto=full" CMAKE_CXX_FLAGS CMAKE_C_FLAGS
                  CMAKE_EXE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS)

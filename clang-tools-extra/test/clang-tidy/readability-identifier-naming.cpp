@@ -1,3 +1,6 @@
+// Remove UNSUPPORTED for powerpc64le when the problem introduced by
+// r288563 is resolved.
+// UNSUPPORTED: powerpc64le
 // RUN: %check_clang_tidy %s readability-identifier-naming %t -- \
 // RUN:   -config='{CheckOptions: [ \
 // RUN:     {key: readability-identifier-naming.AbstractClassCase, value: CamelCase}, \
@@ -95,14 +98,41 @@ SYSTEM_MACRO(var1);
 USER_MACRO(var2);
 // NO warnings or fixes expected as var2 is declared in a macro expansion
 
-int global;
-#define USE_IN_MACRO(m) auto use_##m = m
-USE_IN_MACRO(global);
-// NO warnings or fixes expected as global is used in a macro expansion
-
 #define BLA int FOO_bar
 BLA;
 // NO warnings or fixes expected as FOO_bar is from macro expansion
+
+int global0;
+#define USE_NUMBERED_GLOBAL(number) auto use_global##number = global##number
+USE_NUMBERED_GLOBAL(0);
+// NO warnings or fixes expected as global0 is pieced together in a macro
+// expansion.
+
+int global1;
+#define USE_NUMBERED_BAL(prefix, number) \
+  auto use_##prefix##bal##number = prefix##bal##number
+USE_NUMBERED_BAL(glo, 1);
+// NO warnings or fixes expected as global1 is pieced together in a macro
+// expansion.
+
+int global2;
+#define USE_RECONSTRUCTED(glo, bal) auto use_##glo##bal = glo##bal
+USE_RECONSTRUCTED(glo, bal2);
+// NO warnings or fixes expected as global2 is pieced together in a macro
+// expansion.
+
+int global;
+// CHECK-MESSAGES: :[[@LINE-1]]:5: warning: invalid case style for global variable 'global'
+// CHECK-FIXES: {{^}}int g_global;{{$}}
+#define USE_IN_MACRO(m) auto use_##m = m
+USE_IN_MACRO(global);
+
+int global3;
+// CHECK-MESSAGES: :[[@LINE-1]]:5: warning: invalid case style for global variable 'global3'
+// CHECK-FIXES: {{^}}int g_global3;{{$}}
+#define ADD_TO_SELF(m) (m) + (m)
+int g_twice_global3 = ADD_TO_SELF(global3);
+// CHECK-FIXES: {{^}}int g_twice_global3 = ADD_TO_SELF(g_global3);{{$}}
 
 enum my_enumeration {
 // CHECK-MESSAGES: :[[@LINE-1]]:6: warning: invalid case style for enum 'my_enumeration'
@@ -125,8 +155,12 @@ constexpr int ConstExpr_variable = MyConstant;
 class my_class {
 // CHECK-MESSAGES: :[[@LINE-1]]:7: warning: invalid case style for class 'my_class'
 // CHECK-FIXES: {{^}}class CMyClass {{{$}}
+public:
     my_class();
 // CHECK-FIXES: {{^}}    CMyClass();{{$}}
+
+    my_class(void*) : my_class() {}
+// CHECK-FIXES: {{^}}    CMyClass(void*) : CMyClass() {}{{$}}
 
     ~
       my_class();
@@ -134,6 +168,7 @@ class my_class {
 // CHECK-FIXES: {{^}}    ~{{$}}
 // CHECK-FIXES: {{^}}      CMyClass();{{$}}
 
+private:
   const int MEMBER_one_1 = ConstExpr_variable;
 // CHECK-MESSAGES: :[[@LINE-1]]:13: warning: invalid case style for constant member 'MEMBER_one_1'
 // CHECK-FIXES: {{^}}  const int member_one_1 = const_expr_variable;{{$}}
@@ -163,6 +198,11 @@ public:
 // CHECK-MESSAGES: :[[@LINE-1]]:16: warning: invalid case style for class member 'ClassMember_2'
 // CHECK-FIXES: {{^}}    static int ClassMember2;{{$}}
 };
+class my_class;
+// CHECK-MESSAGES: :[[@LINE-1]]:7: warning: invalid case style for class 'my_class'
+// CHECK-FIXES: {{^}}class CMyClass;{{$}}
+
+class my_forward_declared_class; // No warning should be triggered.
 
 const int my_class::classConstant = 4;
 // CHECK-MESSAGES: :[[@LINE-1]]:21: warning: invalid case style for class constant 'classConstant'
@@ -178,6 +218,34 @@ class my_derived_class : public virtual my_class {};
 
 class CMyWellNamedClass {};
 // No warning expected as this class is well named.
+
+template <typename t_t>
+class CMyWellNamedClass2 : public my_class {
+  // CHECK-FIXES: {{^}}class CMyWellNamedClass2 : public CMyClass {{{$}}
+  t_t my_Bad_Member;
+  // CHECK-MESSAGES: :[[@LINE-1]]:7: warning: invalid case style for private member 'my_Bad_Member'
+  // CHECK-FIXES: {{^}}  t_t __my_Bad_Member;{{$}}
+  int my_Other_Bad_Member = 42;
+  // CHECK-MESSAGES: :[[@LINE-1]]:7: warning: invalid case style for private member 'my_Other_Bad_Member'
+  // CHECK-FIXES: {{^}}  int __my_Other_Bad_Member = 42;{{$}}
+public:
+  CMyWellNamedClass2() = default;
+  CMyWellNamedClass2(CMyWellNamedClass2 const&) = default;
+  CMyWellNamedClass2(CMyWellNamedClass2 &&) = default;
+  CMyWellNamedClass2(t_t a_v, void *a_p) : my_class(a_p), my_Bad_Member(a_v) {}
+  // CHECK-FIXES: {{^}}  CMyWellNamedClass2(t_t a_v, void *a_p) : CMyClass(a_p), __my_Bad_Member(a_v) {}{{$}}
+
+  CMyWellNamedClass2(t_t a_v) : my_class(), my_Bad_Member(a_v), my_Other_Bad_Member(11) {}
+  // CHECK-FIXES: {{^}}  CMyWellNamedClass2(t_t a_v) : CMyClass(), __my_Bad_Member(a_v), __my_Other_Bad_Member(11) {}{{$}}
+};
+void InstantiateClassMethods() {
+  // Ensure we trigger the instantiation of each constructor
+  CMyWellNamedClass2<int> x;
+  CMyWellNamedClass2<int> x2 = x;
+  CMyWellNamedClass2<int> x3 = static_cast<CMyWellNamedClass2<int>&&>(x2);
+  CMyWellNamedClass2<int> x4(42);
+  CMyWellNamedClass2<int> x5(42, nullptr);
+}
 
 template<typename T>
 // CHECK-MESSAGES: :[[@LINE-1]]:19: warning: invalid case style for type template parameter 'T'

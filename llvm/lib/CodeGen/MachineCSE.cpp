@@ -177,8 +177,7 @@ MachineCSE::isPhysDefTriviallyDead(unsigned Reg,
   unsigned LookAheadLeft = LookAheadLimit;
   while (LookAheadLeft) {
     // Skip over dbg_value's.
-    while (I != E && I->isDebugValue())
-      ++I;
+    I = skipDebugInstructionsForward(I, E);
 
     if (I == E)
       // Reached end of block, register is obviously dead.
@@ -227,7 +226,7 @@ bool MachineCSE::hasLivePhysRegDefUses(const MachineInstr *MI,
     if (TargetRegisterInfo::isVirtualRegister(Reg))
       continue;
     // Reading constant physregs is ok.
-    if (!MRI->isConstantPhysReg(Reg, *MBB->getParent()))
+    if (!MRI->isConstantPhysReg(Reg))
       for (MCRegAliasIterator AI(Reg, TRI, true); AI.isValid(); ++AI)
         PhysRefs.insert(*AI);
   }

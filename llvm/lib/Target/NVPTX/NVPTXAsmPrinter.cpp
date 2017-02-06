@@ -45,7 +45,6 @@
 #include "llvm/Support/FormattedStream.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/TargetRegistry.h"
-#include "llvm/Support/TimeValue.h"
 #include "llvm/Target/TargetLoweringObjectFile.h"
 #include "llvm/Transforms/Utils/UnrollLoop.h"
 #include <sstream>
@@ -225,8 +224,7 @@ void NVPTXAsmPrinter::lowerImageHandleSymbol(unsigned Index, MCOperand &MCOp) {
   const char *Sym = MFI->getImageHandleSymbol(Index);
   std::string *SymNamePtr =
     nvTM.getManagedStrPool()->getManagedString(Sym);
-  MCOp = GetSymbolRef(OutContext.getOrCreateSymbol(
-    StringRef(SymNamePtr->c_str())));
+  MCOp = GetSymbolRef(OutContext.getOrCreateSymbol(StringRef(*SymNamePtr)));
 }
 
 void NVPTXAsmPrinter::lowerToMCInst(const MachineInstr *MI, MCInst &OutMI) {
@@ -557,6 +555,10 @@ void NVPTXAsmPrinter::emitKernelFunctionDirectives(const Function &F,
   unsigned mincta;
   if (llvm::getMinCTASm(F, mincta))
     O << ".minnctapersm " << mincta << "\n";
+
+  unsigned maxnreg;
+  if (llvm::getMaxNReg(F, maxnreg))
+    O << ".maxnreg " << maxnreg << "\n";
 }
 
 std::string
@@ -1725,11 +1727,11 @@ void NVPTXAsmPrinter::printFPConstant(const ConstantFP *Fp, raw_ostream &O) {
   if (Fp->getType()->getTypeID() == Type::FloatTyID) {
     numHex = 8;
     lead = "0f";
-    APF.convert(APFloat::IEEEsingle, APFloat::rmNearestTiesToEven, &ignored);
+    APF.convert(APFloat::IEEEsingle(), APFloat::rmNearestTiesToEven, &ignored);
   } else if (Fp->getType()->getTypeID() == Type::DoubleTyID) {
     numHex = 16;
     lead = "0d";
-    APF.convert(APFloat::IEEEdouble, APFloat::rmNearestTiesToEven, &ignored);
+    APF.convert(APFloat::IEEEdouble(), APFloat::rmNearestTiesToEven, &ignored);
   } else
     llvm_unreachable("unsupported fp type");
 

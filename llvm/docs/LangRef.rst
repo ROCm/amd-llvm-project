@@ -1616,9 +1616,6 @@ example:
 Operand Bundles
 ---------------
 
-Note: operand bundles are a work in progress, and they should be
-considered experimental at this time.
-
 Operand bundles are tagged sets of SSA values that can be associated
 with certain LLVM instructions (currently only ``call`` s and
 ``invoke`` s).  In a way they are like metadata, but dropping them is
@@ -4078,6 +4075,7 @@ The following ``tag:`` values are valid:
   DW_TAG_friend             = 42
   DW_TAG_volatile_type      = 53
   DW_TAG_restrict_type      = 55
+  DW_TAG_atomic_type        = 71
 
 .. _DIDerivedTypeMember:
 
@@ -4094,8 +4092,8 @@ friends.
 ``DW_TAG_typedef`` is used to provide a name for the ``baseType:``.
 
 ``DW_TAG_pointer_type``, ``DW_TAG_reference_type``, ``DW_TAG_const_type``,
-``DW_TAG_volatile_type`` and ``DW_TAG_restrict_type`` are used to qualify the
-``baseType:``.
+``DW_TAG_volatile_type``, ``DW_TAG_restrict_type`` and ``DW_TAG_atomic_type``
+are used to qualify the ``baseType:``.
 
 Note that the ``void *`` type is expressed as a type derived from NULL.
 
@@ -4590,6 +4588,25 @@ Examples:
     !1 = !{ i8 255, i8 2 }
     !2 = !{ i8 0, i8 2, i8 3, i8 6 }
     !3 = !{ i8 -2, i8 0, i8 3, i8 6 }
+
+'``absolute_symbol``' Metadata
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+``absolute_symbol`` metadata may be attached to a global variable
+declaration. It marks the declaration as a reference to an absolute symbol,
+which causes the backend to use absolute relocations for the symbol even
+in position independent code, and expresses the possible ranges that the
+global variable's *address* (not its value) is in, in the same format as
+``range`` metadata.
+
+Example:
+
+.. code-block:: llvm
+
+      @a = external global i8, !absolute_symbol !0 ; Absolute symbol in range [0,256)
+
+    ...
+    !0 = !{ i64 0, i64 256 }
 
 '``unpredictable``' Metadata
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -6432,9 +6449,7 @@ If the ``nuw`` keyword is present, then the shift produces a :ref:`poison
 value <poisonvalues>` if it shifts out any non-zero bits. If the
 ``nsw`` keyword is present, then the shift produces a :ref:`poison
 value <poisonvalues>` if it shifts out any bits that disagree with the
-resultant sign bit. As such, NUW/NSW have the same semantics as they
-would if the shift were expressed as a mul instruction with the same
-nsw/nuw bits in (mul %op1, (shl 1, %op2)).
+resultant sign bit.
 
 Example:
 """"""""
@@ -7452,9 +7467,9 @@ Syntax:
 
 ::
 
-      <result> = getelementptr <ty>, <ty>* <ptrval>{, <ty> <idx>}*
-      <result> = getelementptr inbounds <ty>, <ty>* <ptrval>{, <ty> <idx>}*
-      <result> = getelementptr <ty>, <ptr vector> <ptrval>, <vector index type> <idx>
+      <result> = getelementptr <ty>, <ty>* <ptrval>{, [inrange] <ty> <idx>}*
+      <result> = getelementptr inbounds <ty>, <ty>* <ptrval>{, [inrange] <ty> <idx>}*
+      <result> = getelementptr <ty>, <ptr vector> <ptrval>, [inrange] <vector index type> <idx>
 
 Overview:
 """""""""
@@ -7570,6 +7585,18 @@ pointer. The result value may not necessarily be used to access memory
 though, even if it happens to point into allocated storage. See the
 :ref:`Pointer Aliasing Rules <pointeraliasing>` section for more
 information.
+
+If the ``inrange`` keyword is present before any index, loading from or
+storing to any pointer derived from the ``getelementptr`` has undefined
+behavior if the load or store would access memory outside of the bounds of
+the element selected by the index marked as ``inrange``. The result of a
+pointer comparison or ``ptrtoint`` (including ``ptrtoint``-like operations
+involving memory) involving a pointer derived from a ``getelementptr`` with
+the ``inrange`` keyword is undefined, with the exception of comparisons
+in the case where both operands are in the range of the element selected
+by the ``inrange`` keyword, inclusive of the address one past the end of
+that element. Note that the ``inrange`` keyword is currently only allowed
+in constant ``getelementptr`` expressions.
 
 The getelementptr instruction is often confusing. For some more insight
 into how it works, see :doc:`the getelementptr FAQ <GetElementPtr>`.
@@ -9294,6 +9321,32 @@ Note that calling this intrinsic does not prevent function inlining or
 other aggressive transformations, so the value returned may not be that
 of the obvious source-language caller.
 
+'``llvm.addressofreturnaddress``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+::
+
+      declare i8  *@llvm.addressofreturnaddress()
+
+Overview:
+"""""""""
+
+The '``llvm.addressofreturnaddress``' intrinsic returns a target-specific
+pointer to the place in the stack frame where the return address of the
+current function is stored.
+
+Semantics:
+""""""""""
+
+Note that calling this intrinsic does not prevent function inlining or
+other aggressive transformations, so the value returned may not be that
+of the obvious source-language caller.
+
+This intrinsic is only implemented for x86.
+
 '``llvm.frameaddress``' Intrinsic
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -10779,7 +10832,7 @@ bitpattern of an integer value; for example ``0b10110110`` becomes
 Semantics:
 """"""""""
 
-The ``llvm.bitreverse.iN`` intrinsic returns an i16 value that has bit
+The ``llvm.bitreverse.iN`` intrinsic returns an iN value that has bit
 ``M`` in the input moved to bit ``N-M`` in the output.
 
 '``llvm.bswap.*``' Intrinsics

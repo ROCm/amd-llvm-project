@@ -19,6 +19,7 @@
 
 #include <experimental/filesystem>
 #include <type_traits>
+#include <cstddef>
 #include <cassert>
 
 #include "test_macros.h"
@@ -196,7 +197,7 @@ TEST_CASE(from_is_directory)
 {
     struct FileInfo {
         path filename;
-        int size;
+        std::size_t size;
     };
     const FileInfo files[] = {
         {"file1", 0},
@@ -254,6 +255,47 @@ TEST_CASE(from_is_directory)
             TEST_CHECK(is_regular_file(nested_created));
             TEST_CHECK(file_size(nested_created) == FI.size);
         }
+    }
+}
+
+TEST_CASE(test_copy_symlinks_to_symlink_dir)
+{
+    scoped_test_env env;
+    const path file1 = env.create_file("file1", 42);
+    const path file2 = env.create_file("file2", 101);
+    const path file2_sym = env.create_symlink(file2, "file2_sym");
+    const path dir = env.create_dir("dir");
+    const path dir_sym = env.create_symlink(dir, "dir_sym");
+    {
+        std::error_code ec = GetTestEC();
+        fs::copy(file1, dir_sym, copy_options::copy_symlinks, ec);
+        TEST_CHECK(!ec);
+        const path dest = env.make_env_path("dir/file1");
+        TEST_CHECK(exists(dest));
+        TEST_CHECK(!is_symlink(dest));
+        TEST_CHECK(file_size(dest) == 42);
+    }
+}
+
+
+TEST_CASE(test_dir_create_symlink)
+{
+    scoped_test_env env;
+    const path dir = env.create_dir("dir1");
+    const path dest = env.make_env_path("dne");
+    {
+        std::error_code ec = GetTestEC();
+        fs::copy(dir, dest, copy_options::create_symlinks, ec);
+        TEST_CHECK(ec == std::make_error_code(std::errc::is_a_directory));
+        TEST_CHECK(!exists(dest));
+        TEST_CHECK(!is_symlink(dest));
+    }
+    {
+        std::error_code ec = GetTestEC();
+        fs::copy(dir, dest, copy_options::create_symlinks|copy_options::recursive, ec);
+        TEST_CHECK(ec == std::make_error_code(std::errc::is_a_directory));
+        TEST_CHECK(!exists(dest));
+        TEST_CHECK(!is_symlink(dest));
     }
 }
 

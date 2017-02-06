@@ -563,7 +563,7 @@ class ALIGN_MMR6_DESC : ALIGN_MMR6_DESC_BASE<"align", GPR32Opnd, uimm2,
 class AUI_MMR6_DESC_BASE<string instr_asm, RegisterOperand GPROpnd,
                          InstrItinClass Itin> : MMR6Arch<instr_asm> {
   dag OutOperandList = (outs GPROpnd:$rt);
-  dag InOperandList = (ins GPROpnd:$rs, simm16:$imm);
+  dag InOperandList = (ins GPROpnd:$rs, uimm16:$imm);
   string AsmString = !strconcat(instr_asm, "\t$rt, $rs, $imm");
   list<dag> Pattern = [];
   InstrItinClass Itinerary = Itin;
@@ -1335,11 +1335,12 @@ class TLBINV_MMR6_DESC : TLBINV_MMR6_DESC_BASE<"tlbinv", II_TLBINV>;
 class TLBINVF_MMR6_DESC : TLBINV_MMR6_DESC_BASE<"tlbinvf", II_TLBINVF>;
 
 class DVPEVP_MMR6_DESC_BASE<string opstr, InstrItinClass Itin> {
-  dag OutOperandList = (outs);
-  dag InOperandList = (ins GPR32Opnd:$rs);
+  dag OutOperandList = (outs GPR32Opnd:$rs);
+  dag InOperandList = (ins);
   string AsmString = !strconcat(opstr, "\t$rs");
   list<dag> Pattern = [];
   InstrItinClass Itinerary = Itin;
+  bit hasUnModeledSideEffects = 1;
 }
 
 class DVP_MMR6_DESC : DVPEVP_MMR6_DESC_BASE<"dvp", II_DVP>;
@@ -1826,6 +1827,10 @@ def : MipsInstAlias<"xor $rs, $imm",
                     ISA_MICROMIPS32R6;
 def : MipsInstAlias<"not $rt, $rs",
                     (NOR_MMR6 GPR32Opnd:$rt, GPR32Opnd:$rs, ZERO), 0>,
+                    ISA_MICROMIPS32R6;
+def : MipsInstAlias<"seh $rd", (SEH_MMR6 GPR32Opnd:$rd, GPR32Opnd:$rd), 0>,
+                    ISA_MICROMIPS32R6;
+def : MipsInstAlias<"seb $rd", (SEB_MMR6 GPR32Opnd:$rd, GPR32Opnd:$rd), 0>,
                     ISA_MICROMIPS32R6;
 
 //===----------------------------------------------------------------------===//

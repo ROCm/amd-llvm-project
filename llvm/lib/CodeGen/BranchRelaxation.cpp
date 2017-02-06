@@ -10,6 +10,7 @@
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
+#include "llvm/CodeGen/LivePhysRegs.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/RegisterScavenging.h"
 #include "llvm/Target/TargetInstrInfo.h"
@@ -69,8 +70,10 @@ class BranchRelaxation : public MachineFunctionPass {
 
   SmallVector<BasicBlockInfo, 16> BlockInfo;
   std::unique_ptr<RegScavenger> RS;
+  LivePhysRegs LiveRegs;
 
   MachineFunction *MF;
+  const TargetRegisterInfo *TRI;
   const TargetInstrInfo *TII;
 
   bool relaxBranchInstructions();
@@ -78,7 +81,8 @@ class BranchRelaxation : public MachineFunctionPass {
 
   MachineBasicBlock *createNewBlockAfter(MachineBasicBlock &BB);
 
-  MachineBasicBlock *splitBlockBeforeInstr(MachineInstr &MI);
+  MachineBasicBlock *splitBlockBeforeInstr(MachineInstr &MI,
+                                           MachineBasicBlock *DestBB);
   void adjustBlockOffsets(MachineBasicBlock &MBB);
   bool isBlockInRange(const MachineInstr &MI, const MachineBasicBlock &BB) const;
 
@@ -116,6 +120,7 @@ void BranchRelaxation::verify() {
     unsigned Num = MBB.getNumber();
     assert(BlockInfo[Num].Offset % (1u << Align) == 0);
     assert(!Num || BlockInfo[PrevNum].postOffset(MBB) <= BlockInfo[Num].Offset);
+    assert(BlockInfo[Num].Size == computeBlockSize(MBB));
     PrevNum = Num;
   }
 #endif
@@ -205,10 +210,8 @@ MachineBasicBlock *BranchRelaxation::createNewBlockAfter(MachineBasicBlock &BB) 
 /// Split the basic block containing MI into two blocks, which are joined by
 /// an unconditional branch.  Update data structures and renumber blocks to
 /// account for this change and returns the newly created block.
-/// NOTE: Successor list of the original BB is out of date after this function,
-/// and must be updated by the caller! Other transforms follow using this
-/// utility function, so no point updating now rather than waiting.
-MachineBasicBlock *BranchRelaxation::splitBlockBeforeInstr(MachineInstr &MI) {
+MachineBasicBlock *BranchRelaxation::splitBlockBeforeInstr(MachineInstr &MI,
+                                                           MachineBasicBlock *DestBB) {
   MachineBasicBlock *OrigBB = MI.getParent();
 
   // Create a new MBB for the code after the OrigBB.
@@ -228,6 +231,16 @@ MachineBasicBlock *BranchRelaxation::splitBlockBeforeInstr(MachineInstr &MI) {
   // Insert an entry into BlockInfo to align it properly with the block numbers.
   BlockInfo.insert(BlockInfo.begin() + NewBB->getNumber(), BasicBlockInfo());
 
+
+  NewBB->transferSuccessors(OrigBB);
+  OrigBB->addSuccessor(NewBB);
+  OrigBB->addSuccessor(DestBB);
+
+  // Cleanup potential unconditional branch to successor block.
+  // Note that updateTerminator may change the size of the blocks.
+  NewBB->updateTerminator();
+  OrigBB->updateTerminator();
+
   // Figure out how large the OrigBB is.  As the first half of the original
   // block, it cannot contain a tablejump.  The size includes
   // the new jump we added.  (It should be possible to do this without
@@ -241,6 +254,10 @@ MachineBasicBlock *BranchRelaxation::splitBlockBeforeInstr(MachineInstr &MI) {
 
   // All BBOffsets following these blocks must be modified.
   adjustBlockOffsets(*OrigBB);
+
+  // Need to fix live-in lists if we track liveness.
+  if (TRI->trackLivenessAfterRegAlloc(*MF))
+    computeLiveIns(LiveRegs, *TRI, *NewBB);
 
   ++NumSplit;
 
@@ -379,18 +396,16 @@ bool BranchRelaxation::fixupUnconditionalBranch(MachineInstr &MI) {
         BranchBB->addLiveIn(LiveIn);
     }
 
+    BranchBB->sortUniqueLiveIns();
     BranchBB->addSuccessor(DestBB);
     MBB->replaceSuccessor(DestBB, BranchBB);
   }
 
   DebugLoc DL = MI.getDebugLoc();
   MI.eraseFromParent();
-
-  // insertUnconditonalBranch may have inserted a new block.
-  BlockInfo[MBB->getNumber()].Size += TII->insertIndirectBranch(
+  BlockInfo[BranchBB->getNumber()].Size += TII->insertIndirectBranch(
     *BranchBB, *DestBB, DL, DestOffset - SrcOffset, RS.get());
 
-  computeBlockSize(*BranchBB);
   adjustBlockOffsets(*MBB);
   return true;
 }
@@ -403,6 +418,29 @@ bool BranchRelaxation::relaxBranchInstructions() {
   for (MachineFunction::iterator I = MF->begin(); I != MF->end(); ++I) {
     MachineBasicBlock &MBB = *I;
 
+    // Empty block?
+    MachineBasicBlock::iterator Last = MBB.getLastNonDebugInstr();
+    if (Last == MBB.end())
+      continue;
+
+    // Expand the unconditional branch first if necessary. If there is a
+    // conditional branch, this will end up changing the branch destination of
+    // it to be over the newly inserted indirect branch block, which may avoid
+    // the need to try expanding the conditional branch first, saving an extra
+    // jump.
+    if (Last->isUnconditionalBranch()) {
+      // Unconditional branch destination might be unanalyzable, assume these
+      // are OK.
+      if (MachineBasicBlock *DestBB = TII->getBranchDestBlock(*Last)) {
+        if (!isBlockInRange(*Last, *DestBB)) {
+          fixupUnconditionalBranch(*Last);
+          ++NumUnconditionalRelaxed;
+          Changed = true;
+        }
+      }
+    }
+
+    // Loop over the conditional branches.
     MachineBasicBlock::iterator Next;
     for (MachineBasicBlock::iterator J = MBB.getFirstTerminator();
          J != MBB.end(); J = Next) {
@@ -417,14 +455,7 @@ bool BranchRelaxation::relaxBranchInstructions() {
             // analyzable block. Split later terminators into a new block so
             // each one will be analyzable.
 
-            MachineBasicBlock *NewBB = splitBlockBeforeInstr(*Next);
-            NewBB->transferSuccessors(&MBB);
-            MBB.addSuccessor(NewBB);
-            MBB.addSuccessor(DestBB);
-
-            // Cleanup potential unconditional branch to successor block.
-            NewBB->updateTerminator();
-            MBB.updateTerminator();
+            splitBlockBeforeInstr(*Next, DestBB);
           } else {
             fixupConditionalBranch(MI);
             ++NumConditionalRelaxed;
@@ -435,21 +466,6 @@ bool BranchRelaxation::relaxBranchInstructions() {
           // This may have modified all of the terminators, so start over.
           Next = MBB.getFirstTerminator();
         }
-      }
-
-      if (MI.isUnconditionalBranch()) {
-        // Unconditional branch destination might be unanalyzable, assume these
-        // are OK.
-        if (MachineBasicBlock *DestBB = TII->getBranchDestBlock(MI)) {
-          if (!isBlockInRange(MI, *DestBB)) {
-            fixupUnconditionalBranch(MI);
-            ++NumUnconditionalRelaxed;
-            Changed = true;
-          }
-        }
-
-        // Unconditional branch is the last terminator.
-        break;
       }
     }
   }
@@ -465,7 +481,7 @@ bool BranchRelaxation::runOnMachineFunction(MachineFunction &mf) {
   const TargetSubtargetInfo &ST = MF->getSubtarget();
   TII = ST.getInstrInfo();
 
-  const TargetRegisterInfo *TRI = ST.getRegisterInfo();
+  TRI = ST.getRegisterInfo();
   if (TRI->trackLivenessAfterRegAlloc(*MF))
     RS.reset(new RegScavenger());
 

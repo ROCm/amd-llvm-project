@@ -38,6 +38,7 @@ class FileSystem;
 
 namespace driver {
   class Compilation;
+  class CudaInstallationDetector;
   class Driver;
   class JobAction;
   class RegisterEffectiveTriple;
@@ -85,10 +86,12 @@ private:
   mutable std::unique_ptr<Tool> Clang;
   mutable std::unique_ptr<Tool> Assemble;
   mutable std::unique_ptr<Tool> Link;
+  mutable std::unique_ptr<Tool> OffloadBundler;
   Tool *getClang() const;
   Tool *getAssemble() const;
   Tool *getLink() const;
   Tool *getClangAs() const;
+  Tool *getOffloadBundler() const;
 
   mutable std::unique_ptr<SanitizerArgs> SanitizerArguments;
 
@@ -102,7 +105,6 @@ private:
 
 protected:
   MultilibSet Multilibs;
-  const char *DefaultLinker = "ld";
 
   ToolChain(const Driver &D, const llvm::Triple &T,
             const llvm::opt::ArgList &Args);
@@ -190,12 +192,15 @@ public:
 
   /// TranslateArgs - Create a new derived argument list for any argument
   /// translations this ToolChain may wish to perform, or 0 if no tool chain
-  /// specific translations are needed.
+  /// specific translations are needed. If \p DeviceOffloadKind is specified
+  /// the translation specific for that offload kind is performed.
   ///
   /// \param BoundArch - The bound architecture name, or 0.
+  /// \param DeviceOffloadKind - The device offload kind used for the
+  /// translation.
   virtual llvm::opt::DerivedArgList *
-  TranslateArgs(const llvm::opt::DerivedArgList &Args,
-                StringRef BoundArch) const {
+  TranslateArgs(const llvm::opt::DerivedArgList &Args, StringRef BoundArch,
+                Action::OffloadKind DeviceOffloadKind) const {
     return nullptr;
   }
 
@@ -264,6 +269,11 @@ public:
   /// this tool chain (0=off, 1=on, 2=strong, 3=all).
   virtual unsigned GetDefaultStackProtectorLevel(bool KernelOrKext) const {
     return 0;
+  }
+
+  /// GetDefaultLinker - Get the default linker to use.
+  virtual const char *getDefaultLinker() const {
+    return "ld";
   }
 
   /// GetDefaultRuntimeLibType - Get the default runtime library variant to use.
@@ -436,15 +446,15 @@ public:
   virtual void AddIAMCUIncludeArgs(const llvm::opt::ArgList &DriverArgs,
                                    llvm::opt::ArgStringList &CC1Args) const;
 
+  /// \brief On Windows, returns the MSVC compatibility version.
+  virtual VersionTuple computeMSVCVersion(const Driver *D,
+                                          const llvm::opt::ArgList &Args) const;
+
   /// \brief Return sanitizers which are available in this toolchain.
   virtual SanitizerMask getSupportedSanitizers() const;
 
   /// \brief Return sanitizers which are enabled by default.
   virtual SanitizerMask getDefaultSanitizers() const { return 0; }
-
-  /// \brief On Windows, returns the version of cl.exe.  On other platforms,
-  /// returns an empty VersionTuple.
-  virtual VersionTuple getMSVCVersionFromExe() const { return VersionTuple(); }
 };
 
 /// Set a ToolChain's effective triple. Reset it when the registration object

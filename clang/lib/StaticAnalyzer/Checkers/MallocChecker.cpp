@@ -778,6 +778,8 @@ void MallocChecker::checkPostStmt(const CallExpr *CE, CheckerContext &C) const {
           State = MallocMemAux(C, CE, CE->getArg(0), UndefinedVal(), State);
       }
     } else if (FunI == II_kmalloc) {
+      if (CE->getNumArgs() < 1)
+        return;
       llvm::Optional<ProgramStateRef> MaybeState =
         performKernelMalloc(CE, C, State);
       if (MaybeState.hasValue())
@@ -807,6 +809,8 @@ void MallocChecker::checkPostStmt(const CallExpr *CE, CheckerContext &C) const {
     } else if (FunI == II_strndup) {
       State = MallocUpdateRefState(C, CE, State);
     } else if (FunI == II_alloca || FunI == II_win_alloca) {
+      if (CE->getNumArgs() < 1)
+        return;
       State = MallocMemAux(C, CE, CE->getArg(0), UndefinedVal(), State,
                            AF_Alloca);
       State = ProcessZeroAllocation(C, CE, 0, State);
@@ -1022,8 +1026,7 @@ ProgramStateRef MallocChecker::addExtentSize(CheckerContext &C,
   ASTContext &AstContext = C.getASTContext();
   CharUnits TypeSize = AstContext.getTypeSizeInChars(ElementType);
 
-  if (Optional<DefinedOrUnknownSVal> DefinedSize =
-          ElementCount.getAs<DefinedOrUnknownSVal>()) {
+  if (ElementCount.getAs<NonLoc>()) {
     DefinedOrUnknownSVal Extent = Region->getExtent(svalBuilder);
     // size in Bytes = ElementCount*TypeSize
     SVal SizeInBytes = svalBuilder.evalBinOpNN(
@@ -2572,6 +2575,11 @@ bool MallocChecker::mayFreeAnyEscapedMemoryOrIsModeledExplicitly(
 
   if (FName == "postEvent" &&
       FD->getQualifiedNameAsString() == "QCoreApplication::postEvent") {
+    return true;
+  }
+
+  if (FName == "connectImpl" &&
+      FD->getQualifiedNameAsString() == "QObject::connectImpl") {
     return true;
   }
 

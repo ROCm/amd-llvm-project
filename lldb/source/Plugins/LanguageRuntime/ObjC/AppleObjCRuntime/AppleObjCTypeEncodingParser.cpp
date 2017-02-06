@@ -147,7 +147,7 @@ clang::QualType AppleObjCTypeEncodingParser::BuildAggregate(
       if (element.name.empty()) {
         StreamString elem_name;
         elem_name.Printf("__unnamed_%u", count);
-        element.name = std::string(elem_name.GetData());
+        element.name = elem_name.GetString();
       }
       ClangASTContext::AddFieldToRecordType(
           union_type, element.name.c_str(),
@@ -249,9 +249,8 @@ clang::QualType AppleObjCTypeEncodingParser::BuildObjCObjectPointerType(
     }
 
     DeclVendor *decl_vendor = m_runtime.GetDeclVendor();
-
-    assert(decl_vendor); // how are we parsing type encodings for expressions if
-                         // a type vendor isn't in play?
+    if (!decl_vendor)
+      return clang::QualType();
 
     const bool append = false;
     const uint32_t max_matches = 1;

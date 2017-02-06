@@ -97,6 +97,9 @@ namespace llvm {
 
 struct CGSCCUpdateResult;
 
+/// Extern template declaration for the analysis set for this IR unit.
+extern template class AllAnalysesOn<LazyCallGraph::SCC>;
+
 extern template class AnalysisManager<LazyCallGraph::SCC, LazyCallGraph &>;
 /// \brief The CGSCC analysis manager.
 ///
@@ -142,13 +145,51 @@ struct RequireAnalysisPass<AnalysisT, LazyCallGraph::SCC, CGSCCAnalysisManager,
   }
 };
 
-extern template class InnerAnalysisManagerProxy<CGSCCAnalysisManager, Module>;
 /// A proxy from a \c CGSCCAnalysisManager to a \c Module.
 typedef InnerAnalysisManagerProxy<CGSCCAnalysisManager, Module>
     CGSCCAnalysisManagerModuleProxy;
 
-extern template class OuterAnalysisManagerProxy<ModuleAnalysisManager,
-                                                LazyCallGraph::SCC>;
+/// We need a specialized result for the \c CGSCCAnalysisManagerModuleProxy so
+/// it can have access to the call graph in order to walk all the SCCs when
+/// invalidating things.
+template <> class CGSCCAnalysisManagerModuleProxy::Result {
+public:
+  explicit Result(CGSCCAnalysisManager &InnerAM, LazyCallGraph &G)
+      : InnerAM(&InnerAM), G(&G) {}
+
+  /// \brief Accessor for the analysis manager.
+  CGSCCAnalysisManager &getManager() { return *InnerAM; }
+
+  /// \brief Handler for invalidation of the Module.
+  ///
+  /// If the proxy analysis itself is preserved, then we assume that the set of
+  /// SCCs in the Module hasn't changed. Thus any pointers to SCCs in the
+  /// CGSCCAnalysisManager are still valid, and we don't need to call \c clear
+  /// on the CGSCCAnalysisManager.
+  ///
+  /// Regardless of whether this analysis is marked as preserved, all of the
+  /// analyses in the \c CGSCCAnalysisManager are potentially invalidated based
+  /// on the set of preserved analyses.
+  bool invalidate(Module &M, const PreservedAnalyses &PA,
+                  ModuleAnalysisManager::Invalidator &Inv);
+
+private:
+  CGSCCAnalysisManager *InnerAM;
+  LazyCallGraph *G;
+};
+
+/// Provide a specialized run method for the \c CGSCCAnalysisManagerModuleProxy
+/// so it can pass the lazy call graph to the result.
+template <>
+CGSCCAnalysisManagerModuleProxy::Result
+CGSCCAnalysisManagerModuleProxy::run(Module &M, ModuleAnalysisManager &AM);
+
+// Ensure the \c CGSCCAnalysisManagerModuleProxy is provided as an extern
+// template.
+extern template class InnerAnalysisManagerProxy<CGSCCAnalysisManager, Module>;
+
+extern template class OuterAnalysisManagerProxy<
+    ModuleAnalysisManager, LazyCallGraph::SCC, LazyCallGraph &>;
 /// A proxy from a \c ModuleAnalysisManager to an \c SCC.
 typedef OuterAnalysisManagerProxy<ModuleAnalysisManager, LazyCallGraph::SCC,
                                   LazyCallGraph &>
@@ -290,7 +331,9 @@ public:
                             InvalidSCCSet, nullptr,   nullptr};
 
     PreservedAnalyses PA = PreservedAnalyses::all();
-    for (LazyCallGraph::RefSCC &InitialRC : CG.postorder_ref_sccs()) {
+    for (auto RCI = CG.postorder_ref_scc_begin(),
+              RCE = CG.postorder_ref_scc_end();
+         RCI != RCE;) {
       assert(RCWorklist.empty() &&
              "Should always start with an empty RefSCC worklist");
       // The postorder_ref_sccs range we are walking is lazily constructed, so
@@ -301,12 +344,18 @@ public:
       // to update as the program is simplified and allows us to have greater
       // cache locality as forming a RefSCC touches all the parts of all the
       // functions within that RefSCC.
-      RCWorklist.insert(&InitialRC);
+      //
+      // We also eagerly increment the iterator to the next position because
+      // the CGSCC passes below may delete the current RefSCC.
+      RCWorklist.insert(&*RCI++);
 
       do {
         LazyCallGraph::RefSCC *RC = RCWorklist.pop_back_val();
-        if (InvalidRefSCCSet.count(RC))
+        if (InvalidRefSCCSet.count(RC)) {
+          if (DebugLogging)
+            dbgs() << "Skipping an invalid RefSCC...\n";
           continue;
+        }
 
         assert(CWorklist.empty() &&
                "Should always start with an empty SCC worklist");
@@ -325,8 +374,17 @@ public:
           // other RefSCCs in the worklist. The invalid ones are dead and the
           // other RefSCCs should be queued above, so we just need to skip both
           // scenarios here.
-          if (InvalidSCCSet.count(C) || &C->getOuterRefSCC() != RC)
+          if (InvalidSCCSet.count(C)) {
+            if (DebugLogging)
+              dbgs() << "Skipping an invalid SCC...\n";
             continue;
+          }
+          if (&C->getOuterRefSCC() != RC) {
+            if (DebugLogging)
+              dbgs() << "Skipping an SCC that is now part of some other "
+                        "RefSCC...\n";
+            continue;
+          }
 
           do {
             // Check that we didn't miss any update scenario.
@@ -345,8 +403,7 @@ public:
             // whatever was updating the call graph. This SCC gets invalidated
             // late as it contains the nodes that were actively being
             // processed.
-            PassPA = CGAM.invalidate(*(UR.UpdatedC ? UR.UpdatedC : C),
-                                     std::move(PassPA));
+            CGAM.invalidate(*(UR.UpdatedC ? UR.UpdatedC : C), PassPA);
 
             // Then intersect the preserved set so that invalidation of module
             // analyses will eventually occur when the module pass completes.
@@ -367,17 +424,22 @@ public:
               dbgs() << "Re-running SCC passes after a refinement of the "
                         "current SCC: "
                      << *UR.UpdatedC << "\n";
+
+            // Note that both `C` and `RC` may at this point refer to deleted,
+            // invalid SCC and RefSCCs respectively. But we will short circuit
+            // the processing when we check them in the loop above.
           } while (UR.UpdatedC);
 
         } while (!CWorklist.empty());
       } while (!RCWorklist.empty());
     }
 
-    // By definition we preserve the proxy. This precludes *any* invalidation
-    // of CGSCC analyses by the proxy, but that's OK because we've taken
-    // care to invalidate analyses in the CGSCC analysis manager
-    // incrementally above.
+    // By definition we preserve the call garph, all SCC analyses, and the
+    // analysis proxies by handling them above and in any nested pass managers.
+    PA.preserve<LazyCallGraphAnalysis>();
+    PA.preserve<AllAnalysesOn<LazyCallGraph::SCC>>();
     PA.preserve<CGSCCAnalysisManagerModuleProxy>();
+    PA.preserve<FunctionAnalysisManagerModuleProxy>();
     return PA;
   }
 
@@ -394,12 +456,43 @@ createModuleToPostOrderCGSCCPassAdaptor(CGSCCPassT Pass, bool DebugLogging = fal
   return ModuleToPostOrderCGSCCPassAdaptor<CGSCCPassT>(std::move(Pass), DebugLogging);
 }
 
-extern template class InnerAnalysisManagerProxy<FunctionAnalysisManager,
-                                                LazyCallGraph::SCC>;
 /// A proxy from a \c FunctionAnalysisManager to an \c SCC.
-typedef InnerAnalysisManagerProxy<FunctionAnalysisManager, LazyCallGraph::SCC,
-                                  LazyCallGraph &>
-    FunctionAnalysisManagerCGSCCProxy;
+///
+/// When a module pass runs and triggers invalidation, both the CGSCC and
+/// Function analysis manager proxies on the module get an invalidation event.
+/// We don't want to fully duplicate responsibility for most of the
+/// invalidation logic. Instead, this layer is only responsible for SCC-local
+/// invalidation events. We work with the module's FunctionAnalysisManager to
+/// invalidate function analyses.
+class FunctionAnalysisManagerCGSCCProxy
+    : public AnalysisInfoMixin<FunctionAnalysisManagerCGSCCProxy> {
+public:
+  class Result {
+  public:
+    explicit Result(FunctionAnalysisManager &FAM) : FAM(&FAM) {}
+
+    /// \brief Accessor for the analysis manager.
+    FunctionAnalysisManager &getManager() { return *FAM; }
+
+    bool invalidate(LazyCallGraph::SCC &C, const PreservedAnalyses &PA,
+                    CGSCCAnalysisManager::Invalidator &Inv);
+
+  private:
+    FunctionAnalysisManager *FAM;
+  };
+
+  /// Computes the \c FunctionAnalysisManager and stores it in the result proxy.
+  Result run(LazyCallGraph::SCC &C, CGSCCAnalysisManager &AM, LazyCallGraph &);
+
+private:
+  friend AnalysisInfoMixin<FunctionAnalysisManagerCGSCCProxy>;
+  static AnalysisKey Key;
+};
+
+// Ensure the \c FunctionAnalysisManagerCGSCCProxy is provided as an extern
+// template.
+extern template class InnerAnalysisManagerProxy<
+    FunctionAnalysisManager, LazyCallGraph::SCC, LazyCallGraph &>;
 
 extern template class OuterAnalysisManagerProxy<CGSCCAnalysisManager, Function>;
 /// A proxy from a \c CGSCCAnalysisManager to a \c Function.
@@ -479,9 +572,7 @@ public:
       // We know that the function pass couldn't have invalidated any other
       // function's analyses (that's the contract of a function pass), so
       // directly handle the function analysis manager's invalidation here.
-      // Also, update the preserved analyses to reflect that once invalidated
-      // these can again be preserved.
-      PassPA = FAM.invalidate(N->getFunction(), std::move(PassPA));
+      FAM.invalidate(N->getFunction(), PassPA);
 
       // Then intersect the preserved set so that invalidation of module
       // analyses will eventually occur when the module pass completes.
@@ -495,10 +586,11 @@ public:
              "Current SCC not updated to the SCC containing the current node!");
     }
 
-    // By definition we preserve the proxy. This precludes *any* invalidation
-    // of function analyses by the proxy, but that's OK because we've taken
-    // care to invalidate analyses in the function analysis manager
-    // incrementally above.
+    // By definition we preserve the proxy. And we preserve all analyses on
+    // Functions. This precludes *any* invalidation of function analyses by the
+    // proxy, but that's OK because we've taken care to invalidate analyses in
+    // the function analysis manager incrementally above.
+    PA.preserve<AllAnalysesOn<Function>>();
     PA.preserve<FunctionAnalysisManagerCGSCCProxy>();
 
     // We've also ensured that we updated the call graph along the way.

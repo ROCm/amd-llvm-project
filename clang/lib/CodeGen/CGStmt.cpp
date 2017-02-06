@@ -142,6 +142,8 @@ void CodeGenFunction::EmitStmt(const Stmt *S) {
   case Stmt::GCCAsmStmtClass:   // Intentional fall-through.
   case Stmt::MSAsmStmtClass:    EmitAsmStmt(cast<AsmStmt>(*S));           break;
   case Stmt::CoroutineBodyStmtClass:
+    EmitCoroutineBody(cast<CoroutineBodyStmt>(*S));
+    break;
   case Stmt::CoreturnStmtClass:
     CGM.ErrorUnsupported(S, "coroutine");
     break;
@@ -300,6 +302,21 @@ void CodeGenFunction::EmitStmt(const Stmt *S) {
     break;
   case Stmt::OMPTeamsDistributeDirectiveClass:
     EmitOMPTeamsDistributeDirective(cast<OMPTeamsDistributeDirective>(*S));
+    break;
+  case Stmt::OMPTeamsDistributeSimdDirectiveClass:
+    EmitOMPTeamsDistributeSimdDirective(
+        cast<OMPTeamsDistributeSimdDirective>(*S));
+    break;
+  case Stmt::OMPTeamsDistributeParallelForSimdDirectiveClass:
+    EmitOMPTeamsDistributeParallelForSimdDirective(
+        cast<OMPTeamsDistributeParallelForSimdDirective>(*S));
+    break;
+  case Stmt::OMPTeamsDistributeParallelForDirectiveClass:
+    EmitOMPTeamsDistributeParallelForDirective(
+        cast<OMPTeamsDistributeParallelForDirective>(*S));
+    break;
+  case Stmt::OMPTargetTeamsDirectiveClass:
+    EmitOMPTargetTeamsDirective(cast<OMPTargetTeamsDirective>(*S));
     break;
   }
 }
@@ -657,8 +674,10 @@ void CodeGenFunction::EmitWhileStmt(const WhileStmt &S,
   JumpDest LoopHeader = getJumpDestInCurrentScope("while.cond");
   EmitBlock(LoopHeader.getBlock());
 
+  const SourceRange &R = S.getSourceRange();
   LoopStack.push(LoopHeader.getBlock(), CGM.getContext(), WhileAttrs,
-                 Builder.getCurrentDebugLocation());
+                 SourceLocToDebugLoc(R.getBegin()),
+                 SourceLocToDebugLoc(R.getEnd()));
 
   // Create an exit block for when the condition fails, which will
   // also become the break target.
@@ -749,8 +768,10 @@ void CodeGenFunction::EmitDoStmt(const DoStmt &S,
   // Emit the body of the loop.
   llvm::BasicBlock *LoopBody = createBasicBlock("do.body");
 
+  const SourceRange &R = S.getSourceRange();
   LoopStack.push(LoopBody, CGM.getContext(), DoAttrs,
-                 Builder.getCurrentDebugLocation());
+                 SourceLocToDebugLoc(R.getBegin()),
+                 SourceLocToDebugLoc(R.getEnd()));
 
   EmitBlockWithFallThrough(LoopBody, &S);
   {
@@ -802,8 +823,6 @@ void CodeGenFunction::EmitForStmt(const ForStmt &S,
 
   LexicalScope ForScope(*this, S.getSourceRange());
 
-  llvm::DebugLoc DL = Builder.getCurrentDebugLocation();
-
   // Evaluate the first part before the loop.
   if (S.getInit())
     EmitStmt(S.getInit());
@@ -815,7 +834,10 @@ void CodeGenFunction::EmitForStmt(const ForStmt &S,
   llvm::BasicBlock *CondBlock = Continue.getBlock();
   EmitBlock(CondBlock);
 
-  LoopStack.push(CondBlock, CGM.getContext(), ForAttrs, DL);
+  const SourceRange &R = S.getSourceRange();
+  LoopStack.push(CondBlock, CGM.getContext(), ForAttrs,
+                 SourceLocToDebugLoc(R.getBegin()),
+                 SourceLocToDebugLoc(R.getEnd()));
 
   // If the for loop doesn't have an increment we can just use the
   // condition as the continue block.  Otherwise we'll need to create
@@ -900,8 +922,6 @@ CodeGenFunction::EmitCXXForRangeStmt(const CXXForRangeStmt &S,
 
   LexicalScope ForScope(*this, S.getSourceRange());
 
-  llvm::DebugLoc DL = Builder.getCurrentDebugLocation();
-
   // Evaluate the first pieces before the loop.
   EmitStmt(S.getRangeStmt());
   EmitStmt(S.getBeginStmt());
@@ -913,7 +933,10 @@ CodeGenFunction::EmitCXXForRangeStmt(const CXXForRangeStmt &S,
   llvm::BasicBlock *CondBlock = createBasicBlock("for.cond");
   EmitBlock(CondBlock);
 
-  LoopStack.push(CondBlock, CGM.getContext(), ForAttrs, DL);
+  const SourceRange &R = S.getSourceRange();
+  LoopStack.push(CondBlock, CGM.getContext(), ForAttrs,
+                 SourceLocToDebugLoc(R.getBegin()),
+                 SourceLocToDebugLoc(R.getEnd()));
 
   // If there are any cleanups between here and the loop-exit scope,
   // create a block to stage a loop exit along.
@@ -2091,15 +2114,6 @@ void CodeGenFunction::EmitAsmStmt(const AsmStmt &S) {
   Result->addAttribute(llvm::AttributeSet::FunctionIndex,
                        llvm::Attribute::NoUnwind);
 
-  if (isa<MSAsmStmt>(&S)) {
-    // If the assembly contains any labels, mark the call noduplicate to prevent
-    // defining the same ASM label twice (PR23715). This is pretty hacky, but it
-    // works.
-    if (AsmString.find("__MSASMLABEL_") != std::string::npos)
-      Result->addAttribute(llvm::AttributeSet::FunctionIndex,
-                           llvm::Attribute::NoDuplicate);
-  }
-
   // Attach readnone and readonly attributes.
   if (!HasSideEffect) {
     if (ReadNone)
@@ -2195,7 +2209,7 @@ LValue CodeGenFunction::InitCapturedStruct(const CapturedStmt &S) {
       auto VAT = CurField->getCapturedVLAType();
       EmitStoreThroughLValue(RValue::get(VLASizeMap[VAT->getSizeExpr()]), LV);
     } else {
-      EmitInitializerForField(*CurField, LV, *I, None);
+      EmitInitializerForField(*CurField, LV, *I);
     }
   }
 

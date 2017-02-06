@@ -18,6 +18,8 @@
 
 #include <vector>
 #include <cassert>
+#include <cstddef>
+#include "test_macros.h"
 #include "test_allocator.h"
 #include "test_iterators.h"
 #include "min_allocator.h"
@@ -37,7 +39,7 @@ int main()
         int j;
         for (j = 0; j < 10; ++j)
             assert(v[j] == 0);
-        for (int k = 0; k < N; ++j, ++k)
+        for (std::size_t k = 0; k < N; ++j, ++k)
             assert(v[j] == a[k]);
         for (; j < 105; ++j)
             assert(v[j] == 0);
@@ -54,7 +56,7 @@ int main()
         int j;
         for (j = 0; j < 10; ++j)
             assert(v[j] == 0);
-        for (int k = 0; k < N; ++j, ++k)
+        for (std::size_t k = 0; k < N; ++j, ++k)
             assert(v[j] == a[k]);
         for (; j < 105; ++j)
             assert(v[j] == 0);
@@ -69,10 +71,10 @@ int main()
                                         forward_iterator<const int*>(a+N));
         assert(v.size() == sz + N);
         assert(i == v.begin() + 10);
-        int j;
+        std::size_t j;
         for (j = 0; j < 10; ++j)
             assert(v[j] == 0);
-        for (int k = 0; k < N; ++j, ++k)
+        for (std::size_t k = 0; k < N; ++j, ++k)
             assert(v[j] == a[k]);
         for (; j < v.size(); ++j)
             assert(v[j] == 0);
@@ -87,10 +89,10 @@ int main()
                                         forward_iterator<const int*>(a+N));
         assert(v.size() == sz + N);
         assert(i == v.begin() + 10);
-        int j;
+        std::size_t j;
         for (j = 0; j < 10; ++j)
             assert(v[j] == 0);
-        for (int k = 0; k < N; ++j, ++k)
+        for (std::size_t k = 0; k < N; ++j, ++k)
             assert(v[j] == a[k]);
         for (; j < v.size(); ++j)
             assert(v[j] == 0);
@@ -107,7 +109,7 @@ int main()
         int j;
         for (j = 0; j < 10; ++j)
             assert(v[j] == 0);
-        for (int k = 0; k < N; ++j, ++k)
+        for (std::size_t k = 0; k < N; ++j, ++k)
             assert(v[j] == a[k]);
         for (; j < 105; ++j)
             assert(v[j] == 0);
@@ -124,7 +126,7 @@ int main()
         int j;
         for (j = 0; j < 10; ++j)
             assert(v[j] == 0);
-        for (int k = 0; k < N; ++j, ++k)
+        for (std::size_t k = 0; k < N; ++j, ++k)
             assert(v[j] == a[k]);
         for (; j < 105; ++j)
             assert(v[j] == 0);
@@ -153,7 +155,7 @@ int main()
         int j;
         for (j = 0; j < 10; ++j)
             assert(v[j] == 0);
-        for (int k = 0; k < N; ++j, ++k)
+        for (std::size_t k = 0; k < N; ++j, ++k)
             assert(v[j] == a[k]);
         for (; j < 105; ++j)
             assert(v[j] == 0);
@@ -170,7 +172,7 @@ int main()
         int j;
         for (j = 0; j < 10; ++j)
             assert(v[j] == 0);
-        for (int k = 0; k < N; ++j, ++k)
+        for (std::size_t k = 0; k < N; ++j, ++k)
             assert(v[j] == a[k]);
         for (; j < 105; ++j)
             assert(v[j] == 0);

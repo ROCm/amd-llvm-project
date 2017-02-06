@@ -1,4 +1,4 @@
-//===--- AvoidBindCheck.cpp - clang-tidy--------------------------------===//
+//===--- AvoidBindCheck.cpp - clang-tidy-----------------------------------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -6,12 +6,25 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
+
 #include "AvoidBindCheck.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/ASTMatchers/ASTMatchFinder.h"
+#include "clang/Basic/LLVM.h"
+#include "clang/Basic/LangOptions.h"
+#include "clang/Basic/SourceLocation.h"
 #include "clang/Lex/Lexer.h"
-#include <cassert>
-#include <unordered_map>
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/SmallSet.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/Support/Casting.h"
+#include "llvm/Support/Regex.h"
+#include "llvm/Support/raw_ostream.h"
+#include <algorithm>
+#include <cstddef>
+#include <string>
 
 using namespace clang::ast_matchers;
 
@@ -20,6 +33,7 @@ namespace tidy {
 namespace modernize {
 
 namespace {
+
 enum BindArgumentKind { BK_Temporary, BK_Placeholder, BK_CallExpr, BK_Other };
 
 struct BindArgument {
@@ -108,8 +122,9 @@ void AvoidBindCheck::registerMatchers(MatchFinder *Finder) {
     return;
 
   Finder->addMatcher(
-      callExpr(callee(namedDecl(hasName("::std::bind"))),
-               hasArgument(0, declRefExpr(to(functionDecl().bind("f")))))
+      callExpr(
+          callee(namedDecl(hasName("::std::bind"))),
+          hasArgument(0, declRefExpr(to(functionDecl().bind("f"))).bind("ref")))
           .bind("bind"),
       this);
 }
@@ -148,14 +163,17 @@ void AvoidBindCheck::check(const MatchFinder::MatchResult &Result) {
 
   bool HasCapturedArgument = llvm::any_of(
       Args, [](const BindArgument &B) { return B.Kind == BK_Other; });
-
+  const auto *Ref = Result.Nodes.getNodeAs<DeclRefExpr>("ref");
   Stream << "[" << (HasCapturedArgument ? "=" : "") << "]";
   addPlaceholderArgs(Args, Stream);
-  Stream << " { return " << F->getName() << "(";
+  Stream << " { return ";
+  Ref->printPretty(Stream, nullptr, Result.Context->getPrintingPolicy());
+  Stream << "(";
   addFunctionCallArgs(Args, Stream);
   Stream << "); };";
 
-  Diag << FixItHint::CreateReplacement(MatchedDecl->getSourceRange(), Stream.str());
+  Diag << FixItHint::CreateReplacement(MatchedDecl->getSourceRange(),
+                                       Stream.str());
 }
 
 } // namespace modernize

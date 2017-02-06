@@ -10,6 +10,7 @@ Clang-Tidy Checks
    cert-dcl54-cpp (redirects to misc-new-delete-overloads) <cert-dcl54-cpp>
    cert-dcl59-cpp (redirects to google-build-namespaces) <cert-dcl59-cpp>
    cert-env33-c
+   cert-err09-cpp (redirects to misc-throw-by-value-catch-by-reference) <cert-err09-cpp>
    cert-err34-c
    cert-err52-cpp
    cert-err58-cpp
@@ -17,8 +18,11 @@ Clang-Tidy Checks
    cert-err61-cpp (redirects to misc-throw-by-value-catch-by-reference) <cert-err61-cpp>
    cert-fio38-c (redirects to misc-non-copyable-objects) <cert-fio38-c>
    cert-flp30-c
+   cert-msc30-c (redirects to cert-msc50-cpp) <cert-msc30-c>
+   cert-msc50-cpp
    cert-oop11-cpp (redirects to misc-move-constructor-init) <cert-oop11-cpp>
    cppcoreguidelines-interfaces-global-init
+   cppcoreguidelines-no-malloc
    cppcoreguidelines-pro-bounds-array-to-pointer-decay
    cppcoreguidelines-pro-bounds-constant-array-index
    cppcoreguidelines-pro-bounds-pointer-arithmetic
@@ -73,7 +77,6 @@ Clang-Tidy Checks
    misc-new-delete-overloads
    misc-noexcept-move-constructor
    misc-non-copyable-objects
-   misc-pointer-and-integral-operation
    misc-redundant-expression
    misc-sizeof-container
    misc-sizeof-expression
@@ -107,10 +110,13 @@ Clang-Tidy Checks
    modernize-shrink-to-fit
    modernize-use-auto
    modernize-use-bool-literals
-   modernize-use-default
+   modernize-use-default-member-init
    modernize-use-emplace
+   modernize-use-equals-default
+   modernize-use-equals-delete
    modernize-use-nullptr
    modernize-use-override
+   modernize-use-transparent-functors
    modernize-use-using
    mpi-buffer-deref
    mpi-type-mismatch
@@ -118,6 +124,7 @@ Clang-Tidy Checks
    performance-for-range-copy
    performance-implicit-cast-in-loop
    performance-inefficient-string-concatenation
+   performance-type-promotion-in-math-fn
    performance-unnecessary-copy-initialization
    performance-unnecessary-value-param
    readability-avoid-const-params-in-decls
@@ -133,6 +140,9 @@ Clang-Tidy Checks
    readability-named-parameter
    readability-non-const-parameter
    readability-redundant-control-flow
+   readability-redundant-declaration
+   readability-redundant-function-ptr-dereference
+   readability-redundant-member-init
    readability-redundant-smartptr-get
    readability-redundant-string-cstr
    readability-redundant-string-init

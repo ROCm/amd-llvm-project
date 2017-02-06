@@ -143,17 +143,6 @@ MachineRegisterInfo::createGenericVirtualRegister(LLT Ty) {
 }
 
 void MachineRegisterInfo::clearVirtRegTypes() {
-#ifndef NDEBUG
-  // Verify that the size of the now-constrained vreg is unchanged.
-  for (auto &VRegToType : getVRegToType()) {
-    auto *RC = getRegClass(VRegToType.first);
-    if (VRegToType.second.isValid() &&
-        VRegToType.second.getSizeInBits() > (RC->getSize() * 8))
-      llvm_unreachable(
-          "Virtual register has explicit size different from its class size");
-  }
-#endif
-
   getVRegToType().clear();
 }
 
@@ -468,8 +457,7 @@ void MachineRegisterInfo::freezeReservedRegs(const MachineFunction &MF) {
          "Invalid ReservedRegs vector from target");
 }
 
-bool MachineRegisterInfo::isConstantPhysReg(unsigned PhysReg,
-                                            const MachineFunction &MF) const {
+bool MachineRegisterInfo::isConstantPhysReg(unsigned PhysReg) const {
   assert(TargetRegisterInfo::isPhysicalRegister(PhysReg));
 
   const TargetRegisterInfo *TRI = getTargetRegisterInfo();

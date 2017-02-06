@@ -10,10 +10,12 @@
 #ifndef LLVM_LIB_DEBUGINFO_DWARFUNIT_H
 #define LLVM_LIB_DEBUGINFO_DWARFUNIT_H
 
+#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/DebugInfo/DWARF/DWARFDebugAbbrev.h"
 #include "llvm/DebugInfo/DWARF/DWARFDebugInfoEntry.h"
 #include "llvm/DebugInfo/DWARF/DWARFDebugRangeList.h"
+#include "llvm/DebugInfo/DWARF/DWARFDie.h"
 #include "llvm/DebugInfo/DWARF/DWARFRelocMap.h"
 #include "llvm/DebugInfo/DWARF/DWARFSection.h"
 #include "llvm/DebugInfo/DWARF/DWARFUnitIndex.h"
@@ -124,7 +126,7 @@ class DWARFUnit {
   uint8_t AddrSize;
   uint64_t BaseAddr;
   // The compile unit debug information entry items.
-  std::vector<DWARFDebugInfoEntryMinimal> DieArray;
+  std::vector<DWARFDebugInfoEntry> DieArray;
 
   class DWOHolder {
     object::OwningBinary<object::ObjectFile> DWOFile;
@@ -191,30 +193,46 @@ public:
   uint32_t getNextUnitOffset() const { return Offset + Length + 4; }
   uint32_t getLength() const { return Length; }
   uint16_t getVersion() const { return Version; }
+  dwarf::DwarfFormat getFormat() const {
+    return dwarf::DwarfFormat::DWARF32; // FIXME: Support DWARF64.
+  }
   const DWARFAbbreviationDeclarationSet *getAbbreviations() const {
     return Abbrevs;
   }
   uint8_t getAddressByteSize() const { return AddrSize; }
+  uint8_t getRefAddrByteSize() const {
+    if (Version == 2)
+      return AddrSize;
+    return getDwarfOffsetByteSize();
+  }
+  uint8_t getDwarfOffsetByteSize() const {
+    if (getFormat() == dwarf::DwarfFormat::DWARF64)
+      return 8;
+    return 4;
+  }
   uint64_t getBaseAddress() const { return BaseAddr; }
 
   void setBaseAddress(uint64_t base_addr) {
     BaseAddr = base_addr;
   }
 
-  const DWARFDebugInfoEntryMinimal *getUnitDIE(bool ExtractUnitDIEOnly = true) {
+  DWARFDie getUnitDIE(bool ExtractUnitDIEOnly = true) {
     extractDIEsIfNeeded(ExtractUnitDIEOnly);
-    return DieArray.empty() ? nullptr : &DieArray[0];
+    if (DieArray.empty())
+      return DWARFDie();
+    return DWARFDie(this, &DieArray[0]);
   }
 
   const char *getCompilationDir();
-  uint64_t getDWOId();
+  Optional<uint64_t> getDWOId();
 
   void collectAddressRanges(DWARFAddressRangesVector &CURanges);
 
   /// getInlinedChainForAddress - fetches inlined chain for a given address.
   /// Returns empty chain if there is no subprogram containing address. The
   /// chain is valid as long as parsed compile unit DIEs are not cleared.
-  DWARFDebugInfoEntryInlinedChain getInlinedChainForAddress(uint64_t Address);
+  void getInlinedChainForAddress(uint64_t Address,
+                                 SmallVectorImpl<DWARFDie> &InlinedChain);
 
   /// getUnitSection - Return the DWARFUnitSection containing this unit.
   const DWARFUnitSectionBase &getUnitSection() const { return UnitSection; }
@@ -232,30 +250,35 @@ public:
   /// created by this unit. In other word, it's illegal to call this
   /// method on a DIE that isn't accessible by following
   /// children/sibling links starting from this unit's getUnitDIE().
-  uint32_t getDIEIndex(const DWARFDebugInfoEntryMinimal *DIE) {
+  uint32_t getDIEIndex(const DWARFDie &D) {
+    auto DIE = D.getDebugInfoEntry();
     assert(!DieArray.empty() && DIE >= &DieArray[0] &&
            DIE < &DieArray[0] + DieArray.size());
     return DIE - &DieArray[0];
   }
 
   /// \brief Return the DIE object at the given index.
-  const DWARFDebugInfoEntryMinimal *getDIEAtIndex(unsigned Index) const {
-    assert(Index < DieArray.size());
-    return &DieArray[Index];
+  DWARFDie getDIEAtIndex(unsigned Index) {
+    if (Index < DieArray.size())
+      return DWARFDie(this, &DieArray[Index]);
+    return DWARFDie();
   }
 
   /// \brief Return the DIE object for a given offset inside the
   /// unit's DIE vector.
   ///
   /// The unit needs to have its DIEs extracted for this method to work.
-  const DWARFDebugInfoEntryMinimal *getDIEForOffset(uint32_t Offset) const {
+  DWARFDie getDIEForOffset(uint32_t Offset) {
+    extractDIEsIfNeeded(false);
     assert(!DieArray.empty());
     auto it = std::lower_bound(
         DieArray.begin(), DieArray.end(), Offset,
-        [](const DWARFDebugInfoEntryMinimal &LHS, uint32_t Offset) {
+        [](const DWARFDebugInfoEntry &LHS, uint32_t Offset) {
           return LHS.getOffset() < Offset;
         });
-    return it == DieArray.end() ? nullptr : &*it;
+    if (it == DieArray.end())
+      return DWARFDie();
+    return DWARFDie(this, &*it);
   }
 
   uint32_t getLineTableOffset() const {
@@ -274,7 +297,7 @@ private:
   size_t extractDIEsIfNeeded(bool CUDieOnly);
   /// extractDIEsToVector - Appends all parsed DIEs to a vector.
   void extractDIEsToVector(bool AppendCUDie, bool AppendNonCUDIEs,
-                           std::vector<DWARFDebugInfoEntryMinimal> &DIEs) const;
+                           std::vector<DWARFDebugInfoEntry> &DIEs) const;
   /// setDIERelations - We read in all of the DIE entries into our flat list
   /// of DIE entries and now we need to go back through all of them and set the
   /// parent, sibling and child pointers for quick DIE navigation.
@@ -289,7 +312,7 @@ private:
   /// getSubprogramForAddress - Returns subprogram DIE with address range
   /// encompassing the provided address. The pointer is alive as long as parsed
   /// compile unit DIEs are not cleared.
-  const DWARFDebugInfoEntryMinimal *getSubprogramForAddress(uint64_t Address);
+  DWARFDie getSubprogramForAddress(uint64_t Address);
 };
 
 }

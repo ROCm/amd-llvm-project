@@ -53,7 +53,7 @@
 #include <sys/attr.h>
 #endif
 
-// Both stdio.h and cstdio are included via different pathes and
+// Both stdio.h and cstdio are included via different paths and
 // stdcxx's cstdio doesn't include stdio.h, so it doesn't #undef the macros
 // either.
 #undef ferror
@@ -198,16 +198,12 @@ std::string getMainExecutable(const char *argv0, void *MainAddr) {
   return "";
 }
 
-TimeValue file_status::getLastAccessedTime() const {
-  TimeValue Ret;
-  Ret.fromEpochTime(fs_st_atime);
-  return Ret;
+TimePoint<> file_status::getLastAccessedTime() const {
+  return toTimePoint(fs_st_atime);
 }
 
-TimeValue file_status::getLastModificationTime() const {
-  TimeValue Ret;
-  Ret.fromEpochTime(fs_st_mtime);
-  return Ret;
+TimePoint<> file_status::getLastModificationTime() const {
+  return toTimePoint(fs_st_mtime);
 }
 
 UniqueID file_status::getUniqueID() const {
@@ -284,6 +280,19 @@ std::error_code create_link(const Twine &to, const Twine &from) {
   StringRef t = to.toNullTerminatedStringRef(to_storage);
 
   if (::symlink(t.begin(), f.begin()) == -1)
+    return std::error_code(errno, std::generic_category());
+
+  return std::error_code();
+}
+
+std::error_code create_hard_link(const Twine &to, const Twine &from) {
+  // Get arguments.
+  SmallString<128> from_storage;
+  SmallString<128> to_storage;
+  StringRef f = from.toNullTerminatedStringRef(from_storage);
+  StringRef t = to.toNullTerminatedStringRef(to_storage);
+
+  if (::link(t.begin(), f.begin()) == -1)
     return std::error_code(errno, std::generic_category());
 
   return std::error_code();
@@ -446,20 +455,17 @@ std::error_code status(int FD, file_status &Result) {
   return fillStatus(StatRet, Status, Result);
 }
 
-std::error_code setLastModificationAndAccessTime(int FD, TimeValue Time) {
+std::error_code setLastModificationAndAccessTime(int FD, TimePoint<> Time) {
 #if defined(HAVE_FUTIMENS)
   timespec Times[2];
-  Times[0].tv_sec = Time.toEpochTime();
-  Times[0].tv_nsec = 0;
-  Times[1] = Times[0];
+  Times[0] = Times[1] = sys::toTimeSpec(Time);
   if (::futimens(FD, Times))
     return std::error_code(errno, std::generic_category());
   return std::error_code();
 #elif defined(HAVE_FUTIMES)
   timeval Times[2];
-  Times[0].tv_sec = Time.toEpochTime();
-  Times[0].tv_usec = 0;
-  Times[1] = Times[0];
+  Times[0] = Times[1] = sys::toTimeVal(
+      std::chrono::time_point_cast<std::chrono::microseconds>(Time));
   if (::futimes(FD, Times))
     return std::error_code(errno, std::generic_category());
   return std::error_code();

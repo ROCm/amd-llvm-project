@@ -91,6 +91,7 @@ static bool canShrink(MachineInstr &MI, const SIInstrInfo *TII,
       default: return false;
 
       case AMDGPU::V_MAC_F32_e64:
+      case AMDGPU::V_MAC_F16_e64:
         if (!isVGPR(Src2, TRI, MRI) ||
             TII->hasModifiersSet(MI, AMDGPU::OpName::src2_modifiers))
           return false;
@@ -133,15 +134,14 @@ static void foldImmediates(MachineInstr &MI, const SIInstrInfo *TII,
   assert(TII->isVOP1(MI) || TII->isVOP2(MI) || TII->isVOPC(MI));
 
   int Src0Idx = AMDGPU::getNamedOperandIdx(MI.getOpcode(), AMDGPU::OpName::src0);
-  MachineOperand &Src0 = MI.getOperand(Src0Idx);
 
   // Only one literal constant is allowed per instruction, so if src0 is a
   // literal constant then we can't do any folding.
-  if (Src0.isImm() &&
-      TII->isLiteralConstant(Src0, TII->getOpSize(MI, Src0Idx)))
+  if (TII->isLiteralConstant(MI, Src0Idx))
     return;
 
   // Try to fold Src0
+  MachineOperand &Src0 = MI.getOperand(Src0Idx);
   if (Src0.isReg() && MRI.hasOneUse(Src0.getReg())) {
     unsigned Reg = Src0.getReg();
     MachineInstr *Def = MRI.getUniqueVRegDef(Reg);
@@ -183,11 +183,15 @@ static void copyFlagsToImplicitVCC(MachineInstr &MI,
 }
 
 static bool isKImmOperand(const SIInstrInfo *TII, const MachineOperand &Src) {
-  return isInt<16>(Src.getImm()) && !TII->isInlineConstant(Src, 4);
+  return isInt<16>(Src.getImm()) &&
+    !TII->isInlineConstant(*Src.getParent(),
+                           Src.getParent()->getOperandNo(&Src));
 }
 
 static bool isKUImmOperand(const SIInstrInfo *TII, const MachineOperand &Src) {
-  return isUInt<16>(Src.getImm()) && !TII->isInlineConstant(Src, 4);
+  return isUInt<16>(Src.getImm()) &&
+    !TII->isInlineConstant(*Src.getParent(),
+                           Src.getParent()->getOperandNo(&Src));
 }
 
 static bool isKImmOrKUImmOperand(const SIInstrInfo *TII,
@@ -195,15 +199,27 @@ static bool isKImmOrKUImmOperand(const SIInstrInfo *TII,
                                  bool &IsUnsigned) {
   if (isInt<16>(Src.getImm())) {
     IsUnsigned = false;
-    return !TII->isInlineConstant(Src, 4);
+    return !TII->isInlineConstant(Src);
   }
 
   if (isUInt<16>(Src.getImm())) {
     IsUnsigned = true;
-    return !TII->isInlineConstant(Src, 4);
+    return !TII->isInlineConstant(Src);
   }
 
   return false;
+}
+
+/// \returns true if the constant in \p Src should be replaced with a bitreverse
+/// of an inline immediate.
+static bool isReverseInlineImm(const SIInstrInfo *TII,
+                               const MachineOperand &Src,
+                               int32_t &ReverseImm) {
+  if (!isInt<32>(Src.getImm()) || TII->isInlineConstant(Src))
+    return false;
+
+  ReverseImm = reverseBits<int32_t>(static_cast<int32_t>(Src.getImm()));
+  return ReverseImm >= -16 && ReverseImm <= 64;
 }
 
 /// Copy implicit register operands from specified instruction to this
@@ -290,14 +306,11 @@ bool SIShrinkInstructions::runOnMachineFunction(MachineFunction &MF) {
         MachineOperand &Src = MI.getOperand(1);
         if (Src.isImm() &&
             TargetRegisterInfo::isPhysicalRegister(MI.getOperand(0).getReg())) {
-          int64_t Imm = Src.getImm();
-          if (isInt<32>(Imm) && !TII->isInlineConstant(Src, 4)) {
-            int32_t ReverseImm = reverseBits<int32_t>(static_cast<int32_t>(Imm));
-            if (ReverseImm >= -16 && ReverseImm <= 64) {
-              MI.setDesc(TII->get(AMDGPU::V_BFREV_B32_e32));
-              Src.setImm(ReverseImm);
-              continue;
-            }
+          int32_t ReverseImm;
+          if (isReverseInlineImm(TII, Src, ReverseImm)) {
+            MI.setDesc(TII->get(AMDGPU::V_BFREV_B32_e32));
+            Src.setImm(ReverseImm);
+            continue;
           }
         }
       }
@@ -374,10 +387,19 @@ bool SIShrinkInstructions::runOnMachineFunction(MachineFunction &MF) {
 
       // Try to use S_MOVK_I32, which will save 4 bytes for small immediates.
       if (MI.getOpcode() == AMDGPU::S_MOV_B32) {
-        const MachineOperand &Src = MI.getOperand(1);
+        const MachineOperand &Dst = MI.getOperand(0);
+        MachineOperand &Src = MI.getOperand(1);
 
-        if (Src.isImm() && isKImmOperand(TII, Src))
-          MI.setDesc(TII->get(AMDGPU::S_MOVK_I32));
+        if (Src.isImm() &&
+            TargetRegisterInfo::isPhysicalRegister(Dst.getReg())) {
+          int32_t ReverseImm;
+          if (isKImmOperand(TII, Src))
+            MI.setDesc(TII->get(AMDGPU::S_MOVK_I32));
+          else if (isReverseInlineImm(TII, Src, ReverseImm)) {
+            MI.setDesc(TII->get(AMDGPU::S_BREV_B32));
+            Src.setImm(ReverseImm);
+          }
+        }
 
         continue;
       }

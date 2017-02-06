@@ -17,9 +17,12 @@
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Object/ObjectFile.h"
-#include "llvm/Support/Casting.h"
-#include "llvm/Support/DataTypes.h"
+#include <cassert>
+#include <cstdint>
+#include <memory>
 #include <string>
+#include <tuple>
+#include <utility>
 
 namespace llvm {
 
@@ -32,8 +35,12 @@ struct DILineInfo {
   uint32_t Line;
   uint32_t Column;
 
+  // DWARF-specific.
+  uint32_t Discriminator;
+
   DILineInfo()
-      : FileName("<invalid>"), FunctionName("<invalid>"), Line(0), Column(0) {}
+      : FileName("<invalid>"), FunctionName("<invalid>"), Line(0), Column(0),
+        Discriminator(0) {}
 
   bool operator==(const DILineInfo &RHS) const {
     return Line == RHS.Line && Column == RHS.Column &&
@@ -53,19 +60,24 @@ typedef SmallVector<std::pair<uint64_t, DILineInfo>, 16> DILineInfoTable;
 /// DIInliningInfo - a format-neutral container for inlined code description.
 class DIInliningInfo {
   SmallVector<DILineInfo, 4> Frames;
- public:
-  DIInliningInfo() {}
+
+public:
+  DIInliningInfo() = default;
+
   DILineInfo getFrame(unsigned Index) const {
     assert(Index < Frames.size());
     return Frames[Index];
   }
+
   DILineInfo *getMutableFrame(unsigned Index) {
     assert(Index < Frames.size());
     return &Frames[Index];
   }
+
   uint32_t getNumberOfFrames() const {
     return Frames.size();
   }
+
   void addFrame(const DILineInfo &Frame) {
     Frames.push_back(Frame);
   }
@@ -138,13 +150,14 @@ public:
     CK_DWARF,
     CK_PDB
   };
-  DIContextKind getKind() const { return Kind; }
 
   DIContext(DIContextKind K) : Kind(K) {}
-  virtual ~DIContext() {}
+  virtual ~DIContext() = default;
+
+  DIContextKind getKind() const { return Kind; }
 
   virtual void dump(raw_ostream &OS, DIDumpType DumpType = DIDT_All,
-                    bool DumpEH = false) = 0;
+                    bool DumpEH = false, bool SummarizeTypes = false) = 0;
 
   virtual DILineInfo getLineInfoForAddress(uint64_t Address,
       DILineInfoSpecifier Specifier = DILineInfoSpecifier()) = 0;
@@ -152,6 +165,7 @@ public:
       uint64_t Size, DILineInfoSpecifier Specifier = DILineInfoSpecifier()) = 0;
   virtual DIInliningInfo getInliningInfoForAddress(uint64_t Address,
       DILineInfoSpecifier Specifier = DILineInfoSpecifier()) = 0;
+
 private:
   const DIContextKind Kind;
 };
@@ -197,6 +211,6 @@ public:
   virtual std::unique_ptr<LoadedObjectInfo> clone() const = 0;
 };
 
-}
+} // end namespace llvm
 
-#endif
+#endif // LLVM_DEBUGINFO_DICONTEXT_H

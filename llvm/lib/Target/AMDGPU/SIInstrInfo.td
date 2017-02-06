@@ -58,6 +58,19 @@ def SItbuffer_store : SDNode<"AMDGPUISD::TBUFFER_STORE_FORMAT",
   [SDNPMayStore, SDNPMemOperand, SDNPHasChain]
 >;
 
+def SDTBufferLoad : SDTypeProfile<1, 5,
+    [                    // vdata
+     SDTCisVT<1, v4i32>, // rsrc
+     SDTCisVT<2, i32>,   // vindex
+     SDTCisVT<3, i32>,   // offset
+     SDTCisVT<4, i1>,    // glc
+     SDTCisVT<5, i1>]>;  // slc
+
+def SIbuffer_load : SDNode <"AMDGPUISD::BUFFER_LOAD", SDTBufferLoad,
+                            [SDNPMemOperand, SDNPHasChain, SDNPMayLoad]>;
+def SIbuffer_load_format : SDNode <"AMDGPUISD::BUFFER_LOAD_FORMAT", SDTBufferLoad,
+                            [SDNPMemOperand, SDNPHasChain, SDNPMayLoad]>;
+
 def SIload_input : SDNode<"AMDGPUISD::LOAD_INPUT",
   SDTypeProfile<1, 3, [SDTCisVT<0, v4f32>, SDTCisVT<1, v4i32>, SDTCisVT<2, i16>,
                        SDTCisVT<3, i32>]>
@@ -74,7 +87,7 @@ def SIsampled : SDSample<"AMDGPUISD::SAMPLED">;
 def SIsamplel : SDSample<"AMDGPUISD::SAMPLEL">;
 
 def SIpc_add_rel_offset : SDNode<"AMDGPUISD::PC_ADD_REL_OFFSET",
-  SDTypeProfile<1, 1, [SDTCisVT<0, iPTR>, SDTCisSameAs<0,1>]>
+  SDTypeProfile<1, 2, [SDTCisVT<0, iPTR>, SDTCisSameAs<0,1>, SDTCisSameAs<0,2>]>
 >;
 
 //===----------------------------------------------------------------------===//
@@ -265,19 +278,25 @@ class InlineFPImm <ValueType vt> : PatLeaf <(vt fpimm), [{
   return isInlineImmediate(N);
 }]>;
 
-class SGPRImm <dag frag> : PatLeaf<frag, [{
+class VGPRImm <dag frag> : PatLeaf<frag, [{
   if (Subtarget->getGeneration() < SISubtarget::SOUTHERN_ISLANDS) {
     return false;
   }
   const SIRegisterInfo *SIRI =
       static_cast<const SIRegisterInfo *>(Subtarget->getRegisterInfo());
+  unsigned Limit = 0;
   for (SDNode::use_iterator U = N->use_begin(), E = SDNode::use_end();
-                                                U != E; ++U) {
+         Limit < 10 && U != E; ++U, ++Limit) {
     const TargetRegisterClass *RC = getOperandRegClass(*U, U.getOperandNo());
-    if (RC && SIRI->isSGPRClass(RC))
-      return true;
+
+    // If the register class is unknown, it could be an unknown
+    // register class that needs to be an SGPR, e.g. an inline asm
+    // constraint
+    if (!RC || SIRI->isSGPRClass(RC))
+      return false;
   }
-  return false;
+
+  return Limit < 10;
 }]>;
 
 //===----------------------------------------------------------------------===//
@@ -298,8 +317,44 @@ def sopp_brtarget : Operand<OtherVT> {
 
 def si_ga : Operand<iPTR>;
 
+def InterpSlotMatchClass : AsmOperandClass {
+  let Name = "InterpSlot";
+  let PredicateMethod = "isInterpSlot";
+  let ParserMethod = "parseInterpSlot";
+  let RenderMethod = "addImmOperands";
+}
+
 def InterpSlot : Operand<i32> {
   let PrintMethod = "printInterpSlot";
+  let ParserMatchClass = InterpSlotMatchClass;
+  let OperandType = "OPERAND_IMMEDIATE";
+}
+
+def AttrMatchClass : AsmOperandClass {
+  let Name = "Attr";
+  let PredicateMethod = "isInterpAttr";
+  let ParserMethod = "parseInterpAttr";
+  let RenderMethod = "addImmOperands";
+}
+
+// It appears to be necessary to create a separate operand for this to
+// be able to parse attr<num> with no space.
+def Attr : Operand<i32> {
+  let PrintMethod = "printInterpAttr";
+  let ParserMatchClass = AttrMatchClass;
+  let OperandType = "OPERAND_IMMEDIATE";
+}
+
+def AttrChanMatchClass : AsmOperandClass {
+  let Name = "AttrChan";
+  let PredicateMethod = "isAttrChan";
+  let RenderMethod = "addImmOperands";
+}
+
+def AttrChan : Operand<i32> {
+  let PrintMethod = "printInterpAttrChan";
+  let ParserMatchClass = AttrChanMatchClass;
+  let OperandType = "OPERAND_IMMEDIATE";
 }
 
 def SendMsgMatchClass : AsmOperandClass {
@@ -307,6 +362,13 @@ def SendMsgMatchClass : AsmOperandClass {
   let PredicateMethod = "isSendMsg";
   let ParserMethod = "parseSendMsgOp";
   let RenderMethod = "addImmOperands";
+}
+
+def ExpTgtMatchClass : AsmOperandClass {
+  let Name = "ExpTgt";
+  let PredicateMethod = "isExpTgt";
+  let ParserMethod = "parseExpTgt";
+  let RenderMethod = "printExpTgt";
 }
 
 def SendMsgImm : Operand<i32> {
@@ -320,6 +382,11 @@ def SWaitMatchClass : AsmOperandClass {
   let ParserMethod = "parseSWaitCntOps";
 }
 
+def VReg32OrOffClass : AsmOperandClass {
+  let Name = "VReg32OrOff";
+  let ParserMethod = "parseVReg32OrOff";
+}
+
 def WAIT_FLAG : Operand <i32> {
   let ParserMatchClass = SWaitMatchClass;
   let PrintMethod = "printWaitFlag";
@@ -327,6 +394,31 @@ def WAIT_FLAG : Operand <i32> {
 
 include "SIInstrFormats.td"
 include "VIInstrFormats.td"
+
+// ===----------------------------------------------------------------------===//
+// ExpSrc* Special cases for exp src operands which are printed as
+// "off" depending on en operand.
+// ===----------------------------------------------------------------------===//
+
+def ExpSrc0 : RegisterOperand<VGPR_32> {
+  let PrintMethod = "printExpSrc0";
+  let ParserMatchClass = VReg32OrOffClass;
+}
+
+def ExpSrc1 : RegisterOperand<VGPR_32> {
+  let PrintMethod = "printExpSrc1";
+  let ParserMatchClass = VReg32OrOffClass;
+}
+
+def ExpSrc2 : RegisterOperand<VGPR_32> {
+  let PrintMethod = "printExpSrc2";
+  let ParserMatchClass = VReg32OrOffClass;
+}
+
+def ExpSrc3 : RegisterOperand<VGPR_32> {
+  let PrintMethod = "printExpSrc3";
+  let ParserMatchClass = VReg32OrOffClass;
+}
 
 class NamedMatchClass<string CName, bit Optional = 1> : AsmOperandClass {
   let Name = "Imm"#CName;
@@ -372,13 +464,15 @@ def gds : NamedOperandBit<"GDS", NamedMatchClass<"GDS">>;
 def omod : NamedOperandU32<"OModSI", NamedMatchClass<"OModSI">>;
 def clampmod : NamedOperandBit<"ClampSI", NamedMatchClass<"ClampSI">>;
 
-def glc : NamedOperandBit<"GLC", NamedMatchClass<"GLC">>;
+def GLC : NamedOperandBit<"GLC", NamedMatchClass<"GLC">>;
 def slc : NamedOperandBit<"SLC", NamedMatchClass<"SLC">>;
 def tfe : NamedOperandBit<"TFE", NamedMatchClass<"TFE">>;
 def unorm : NamedOperandBit<"UNorm", NamedMatchClass<"UNorm">>;
 def da : NamedOperandBit<"DA", NamedMatchClass<"DA">>;
 def r128 : NamedOperandBit<"R128", NamedMatchClass<"R128">>;
 def lwe : NamedOperandBit<"LWE", NamedMatchClass<"LWE">>;
+def exp_compr : NamedOperandBit<"ExpCompr", NamedMatchClass<"ExpCompr">>;
+def exp_vm : NamedOperandBit<"ExpVM", NamedMatchClass<"ExpVM">>;
 
 def dmask : NamedOperandU16<"DMask", NamedMatchClass<"DMask">>;
 
@@ -394,23 +488,35 @@ def dst_unused : NamedOperandU32<"SDWADstUnused", NamedMatchClass<"SDWADstUnused
 
 def hwreg : NamedOperandU16<"Hwreg", NamedMatchClass<"Hwreg", 0>>;
 
+def exp_tgt : NamedOperandU8<"ExpTgt", NamedMatchClass<"ExpTgt", 0>> {
+
+}
+
 } // End OperandType = "OPERAND_IMMEDIATE"
 
+class KImmMatchClass<int size> : AsmOperandClass {
+  let Name = "KImmFP"#size;
+  let PredicateMethod = "isKImmFP"#size;
+  let ParserMethod = "parseImm";
+  let RenderMethod = "addKImmFP"#size#"Operands";
+}
+
+class kimmOperand<ValueType vt> : Operand<vt> {
+  let OperandNamespace = "AMDGPU";
+  let OperandType = "OPERAND_KIMM"#vt.Size;
+  let PrintMethod = "printU"#vt.Size#"ImmOperand";
+  let ParserMatchClass = !cast<AsmOperandClass>("KImmFP"#vt.Size#"MatchClass");
+}
 
 // 32-bit VALU immediate operand that uses the constant bus.
-def KImmFP32MatchClass : AsmOperandClass {
-  let Name = "KImmFP32";
-  let PredicateMethod = "isKImmFP32";
-  let ParserMethod = "parseImm";
-  let RenderMethod = "addKImmFP32Operands";
-}
+def KImmFP32MatchClass : KImmMatchClass<32>;
+def f32kimm : kimmOperand<i32>;
 
-def f32kimm : Operand<i32> {
-  let OperandNamespace = "AMDGPU";
-  let OperandType = "OPERAND_KIMM32";
-  let PrintMethod = "printU32ImmOperand";
-  let ParserMatchClass = KImmFP32MatchClass;
-}
+// 32-bit VALU immediate operand with a 16-bit value that uses the
+// constant bus.
+def KImmFP16MatchClass : KImmMatchClass<16>;
+def f16kimm : kimmOperand<i16>;
+
 
 def VOPDstS64 : VOPDstOperand <SReg_64>;
 
@@ -419,6 +525,7 @@ class FPInputModsMatchClass <int opSize> : AsmOperandClass {
   let ParserMethod = "parseRegOrImmWithFPInputMods";
   let PredicateMethod = "isRegOrImmWithFP"#opSize#"InputMods";
 }
+def FP16InputModsMatchClass : FPInputModsMatchClass<16>;
 def FP32InputModsMatchClass : FPInputModsMatchClass<32>;
 def FP64InputModsMatchClass : FPInputModsMatchClass<64>;
 
@@ -431,6 +538,8 @@ class InputMods <AsmOperandClass matchClass> : Operand <i32> {
 class FPInputMods <FPInputModsMatchClass matchClass> : InputMods <matchClass> {
   let PrintMethod = "printOperandAndFPInputMods";
 }
+
+def FP16InputMods : FPInputMods<FP16InputModsMatchClass>;
 def FP32InputMods : FPInputMods<FP32InputModsMatchClass>;
 def FP64InputMods : FPInputMods<FP64InputModsMatchClass>;
 
@@ -512,32 +621,41 @@ class SIMCInstr <string pseudo, int subtarget> {
 // EXP classes
 //===----------------------------------------------------------------------===//
 
-class EXPCommon : InstSI<
+class EXP_Helper<bit done, SDPatternOperator node = null_frag> : EXPCommon<
   (outs),
-  (ins i32imm:$en, i32imm:$tgt, i32imm:$compr, i32imm:$done, i32imm:$vm,
-       VGPR_32:$src0, VGPR_32:$src1, VGPR_32:$src2, VGPR_32:$src3),
-  "exp $en, $tgt, $compr, $done, $vm, $src0, $src1, $src2, $src3",
-  [] > {
-
-  let EXP_CNT = 1;
-  let Uses = [EXEC];
-  let SchedRW = [WriteExport];
+  (ins exp_tgt:$tgt,
+       ExpSrc0:$src0, ExpSrc1:$src1, ExpSrc2:$src2, ExpSrc3:$src3,
+       exp_vm:$vm, exp_compr:$compr, i8imm:$en),
+  "exp$tgt $src0, $src1, $src2, $src3"#!if(done, " done", "")#"$compr$vm",
+  [(node (i8 timm:$en), (i1 timm:$vm), (i8 timm:$tgt), (i1 timm:$compr),
+         f32:$src0, f32:$src1, f32:$src2, f32:$src3)]> {
+  let AsmMatchConverter = "cvtExp";
 }
 
-multiclass EXP_m {
+// Split EXP instruction into EXP and EXP_DONE so we can set
+// mayLoad for done=1.
+multiclass EXP_m<bit done, SDPatternOperator node> {
+  let mayLoad = done in {
+    let isPseudo = 1, isCodeGenOnly = 1 in {
+      def "" : EXP_Helper<done, node>,
+               SIMCInstr <"exp"#!if(done, "_done", ""), SIEncodingFamily.NONE>;
+    }
 
-  let isPseudo = 1, isCodeGenOnly = 1 in {
-    def "" : EXPCommon, SIMCInstr <"exp", SIEncodingFamily.NONE> ;
-  }
+    let done = done in {
+      def _si : EXP_Helper<done>,
+                SIMCInstr <"exp"#!if(done, "_done", ""), SIEncodingFamily.SI>,
+                EXPe {
+        let DecoderNamespace = "SICI";
+        let DisableDecoder = DisableSIDecoder;
+      }
 
-  def _si : EXPCommon, SIMCInstr <"exp", SIEncodingFamily.SI>, EXPe {
-    let DecoderNamespace="SICI";
-    let DisableDecoder = DisableSIDecoder;
-  }
-
-  def _vi : EXPCommon, SIMCInstr <"exp", SIEncodingFamily.VI>, EXPe_vi {
-    let DecoderNamespace="VI";
-    let DisableDecoder = DisableVIDecoder;
+      def _vi : EXP_Helper<done>,
+                SIMCInstr <"exp"#!if(done, "_done", ""), SIEncodingFamily.VI>,
+                EXPe_vi {
+        let DecoderNamespace = "VI";
+        let DisableDecoder = DisableVIDecoder;
+      }
+    }
   }
 }
 
@@ -571,8 +689,8 @@ class getVOPSrc0ForVT<ValueType VT> {
              !if(!eq(VT.Value, f64.Value), 1,
              0)));
   RegisterOperand ret = !if(isFP,
-                            !if(!eq(VT.Size, 64), VSrc_f64, VSrc_f32),
-                            !if(!eq(VT.Size, 64), VSrc_b64, VSrc_b32));
+                            !if(!eq(VT.Size, 64), VSrc_f64, !if(!eq(VT.Size, 16), VSrc_f16, VSrc_f32)),
+                            !if(!eq(VT.Size, 64), VSrc_b64, !if(!eq(VT.Size, 16), VSrc_b16, VSrc_b32)));
 }
 
 // Returns the vreg register class to use for source operand given VT
@@ -599,8 +717,9 @@ class getVOP3SrcForVT<ValueType VT> {
         !if(!eq(VT.Value, i1.Value),
             SCSrc_b64,
             !if(isFP,
-                VCSrc_f32,
-                VCSrc_b32)
+                !if(!eq(VT.Size, 16), VCSrc_f16, VCSrc_f32),
+                !if(!eq(VT.Size, 16), VCSrc_b16, VCSrc_b32)
+            )
          )
 	   )
      );
@@ -633,7 +752,13 @@ class getSrcMod <ValueType VT> {
                0)));
   Operand ret =  !if(!eq(VT.Size, 64),
                      !if(isFP, FP64InputMods, Int64InputMods),
-                     !if(isFP, FP32InputMods, Int32InputMods));
+                       !if(isFP,
+                         !if(!eq(VT.Value, f16.Value),
+                            FP16InputMods,
+                            FP32InputMods
+                          ),
+                         Int32InputMods)
+                     );
 }
 
 // Returns the input arguments for VOP[12C] instructions for the given SrcVT.
@@ -933,14 +1058,13 @@ class VOP_NO_EXT <VOPProfile p> : VOPProfile <p.ArgVT> {
   let HasExt = 0;
 }
 
-// FIXME: I think these F16/I16 profiles will need to use f16/i16 types in order
-//        for the instruction patterns to work.
 def VOP_F16_F16 : VOPProfile <[f16, f16, untyped, untyped]>;
-def VOP_F16_I16 : VOPProfile <[f16, i32, untyped, untyped]>;
-def VOP_I16_F16 : VOPProfile <[i32, f16, untyped, untyped]>;
+def VOP_F16_I16 : VOPProfile <[f16, i16, untyped, untyped]>;
+def VOP_I16_F16 : VOPProfile <[i16, f16, untyped, untyped]>;
 
 def VOP_F16_F16_F16 : VOPProfile <[f16, f16, f16, untyped]>;
-def VOP_F16_F16_I16 : VOPProfile <[f16, f16, i32, untyped]>;
+def VOP_F16_F16_I16 : VOPProfile <[f16, f16, i16, untyped]>;
+def VOP_F16_F16_I32 : VOPProfile <[f16, f16, i32, untyped]>;
 def VOP_I16_I16_I16 : VOPProfile <[i32, i32, i32, untyped]>;
 
 def VOP_I16_I16_I16_I16 : VOPProfile <[i32, i32, i32, i32, untyped]>;
@@ -958,6 +1082,7 @@ def VOP_I32_F32 : VOPProfile <[i32, f32, untyped, untyped]>;
 def VOP_I32_F64 : VOPProfile <[i32, f64, untyped, untyped]>;
 def VOP_I32_I32 : VOPProfile <[i32, i32, untyped, untyped]>;
 
+def VOP_F32_F32_F16 : VOPProfile <[f32, f32, f16, untyped]>;
 def VOP_F32_F32_F32 : VOPProfile <[f32, f32, f32, untyped]>;
 def VOP_F32_F32_I32 : VOPProfile <[f32, f32, i32, untyped]>;
 def VOP_F64_F64_F64 : VOPProfile <[f64, f64, f64, untyped]>;
@@ -970,6 +1095,8 @@ def VOP_I64_I64_I32 : VOPProfile <[i64, i64, i32, untyped]>;
 def VOP_I64_I32_I64 : VOPProfile <[i64, i32, i64, untyped]>;
 def VOP_I64_I64_I64 : VOPProfile <[i64, i64, i64, untyped]>;
 
+def VOP_F16_F32_F16_F32 : VOPProfile <[f16, f32, f16, f32]>;
+def VOP_F32_F32_F16_F16 : VOPProfile <[f32, f32, f16, f16]>;
 def VOP_F32_F32_F32_F32 : VOPProfile <[f32, f32, f32, f32]>;
 def VOP_F64_F64_F64_F64 : VOPProfile <[f64, f64, f64, f64]>;
 def VOP_I32_I32_I32_I32 : VOPProfile <[i32, i32, i32, i32]>;
@@ -1036,18 +1163,18 @@ multiclass VINTRP_m <bits <2> op, dag outs, dag ins, string asm,
 def getVOPe64 : InstrMapping {
   let FilterClass = "VOP";
   let RowFields = ["OpName"];
-  let ColFields = ["Size"];
-  let KeyCol = ["4"];
-  let ValueCols = [["8"]];
+  let ColFields = ["Size", "VOP3"];
+  let KeyCol = ["4", "0"];
+  let ValueCols = [["8", "1"]];
 }
 
 // Maps an opcode in e64 form to its e32 equivalent
 def getVOPe32 : InstrMapping {
   let FilterClass = "VOP";
   let RowFields = ["OpName"];
-  let ColFields = ["Size"];
-  let KeyCol = ["8"];
-  let ValueCols = [["4"]];
+  let ColFields = ["Size", "VOP3"];
+  let KeyCol = ["8", "1"];
+  let ValueCols = [["4", "0"]];
 }
 
 def getMaskedMIMGOp : InstrMapping {
@@ -1122,7 +1249,6 @@ def getAtomicNoRetOp : InstrMapping {
 
 include "SIInstructions.td"
 include "CIInstructions.td"
-include "VIInstructions.td"
 
 include "DSInstructions.td"
 include "MIMGInstructions.td"

@@ -16,6 +16,7 @@
 #include "CGObjCRuntime.h"
 #include "CGRecordLayout.h"
 #include "CodeGenModule.h"
+#include "TargetInfo.h"
 #include "clang/AST/APValue.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/RecordLayout.h"
@@ -778,9 +779,6 @@ public:
   }
 
   llvm::Constant *EmitArrayInitialization(InitListExpr *ILE) {
-    if (ILE->isStringLiteralInit())
-      return Visit(ILE->getInit(0));
-
     llvm::ArrayType *AType =
         cast<llvm::ArrayType>(ConvertType(ILE->getType()));
     llvm::Type *ElemTy = AType->getElementType();
@@ -845,6 +843,9 @@ public:
   }
 
   llvm::Constant *VisitInitListExpr(InitListExpr *ILE) {
+    if (ILE->isTransparent())
+      return Visit(ILE->getInit(0));
+
     if (ILE->getType()->isArrayType())
       return EmitArrayInitialization(ILE);
 
@@ -1086,7 +1087,7 @@ public:
       return CGM.GetAddrOfConstantCFString(Literal);
     }
     case Expr::BlockExprClass: {
-      std::string FunctionName;
+      StringRef FunctionName;
       if (CGF)
         FunctionName = CGF->CurFn->getName();
       else
@@ -1094,7 +1095,7 @@ public:
 
       // This is not really an l-value.
       llvm::Constant *Ptr =
-        CGM.GetAddrOfGlobalBlock(cast<BlockExpr>(E), FunctionName.c_str());
+        CGM.GetAddrOfGlobalBlock(cast<BlockExpr>(E), FunctionName);
       return ConstantAddress(Ptr, CGM.getPointerAlign());
     }
     case Expr::CXXTypeidExprClass: {
@@ -1262,6 +1263,10 @@ llvm::Constant *CodeGenModule::EmitConstantExpr(const Expr *E,
   return C;
 }
 
+llvm::Constant *CodeGenModule::getNullPointer(llvm::PointerType *T, QualType QT) {
+  return getTargetCodeGenInfo().getNullPointer(*this, T, QT);
+}
+
 llvm::Constant *CodeGenModule::EmitConstantValue(const APValue &Value,
                                                  QualType DestType,
                                                  CodeGenFunction *CGF) {
@@ -1293,6 +1298,7 @@ llvm::Constant *CodeGenModule::EmitConstantValue(const APValue &Value,
       llvm::ConstantInt::get(Int64Ty, Value.getLValueOffset().getQuantity());
 
     llvm::Constant *C = nullptr;
+
     if (APValue::LValueBase LVBase = Value.getLValueBase()) {
       // An array can be represented as an lvalue referring to the base.
       if (isa<llvm::ArrayType>(DestTy)) {
@@ -1323,7 +1329,9 @@ llvm::Constant *CodeGenModule::EmitConstantValue(const APValue &Value,
 
       // Convert to the appropriate type; this could be an lvalue for
       // an integer.
-      if (isa<llvm::PointerType>(DestTy)) {
+      if (auto PT = dyn_cast<llvm::PointerType>(DestTy)) {
+        if (Value.isNullPointer())
+          return getNullPointer(PT, DestType);
         // Convert the integer to a pointer-sized integer before converting it
         // to a pointer.
         C = llvm::ConstantExpr::getIntegerCast(
@@ -1357,7 +1365,7 @@ llvm::Constant *CodeGenModule::EmitConstantValue(const APValue &Value,
   }
   case APValue::Float: {
     const llvm::APFloat &Init = Value.getFloat();
-    if (&Init.getSemantics() == &llvm::APFloat::IEEEhalf &&
+    if (&Init.getSemantics() == &llvm::APFloat::IEEEhalf() &&
         !Context.getLangOpts().NativeHalfType &&
         !Context.getLangOpts().HalfArgsAndReturns)
       return llvm::ConstantInt::get(VMContext, Init.bitcastToAPInt());
@@ -1510,7 +1518,7 @@ static llvm::Constant *EmitNullConstantForBase(CodeGenModule &CGM,
                                                const CXXRecordDecl *base);
 
 static llvm::Constant *EmitNullConstant(CodeGenModule &CGM,
-                                        const CXXRecordDecl *record,
+                                        const RecordDecl *record,
                                         bool asCompleteObject) {
   const CGRecordLayout &layout = CGM.getTypes().getCGRecordLayout(record);
   llvm::StructType *structure =
@@ -1520,25 +1528,29 @@ static llvm::Constant *EmitNullConstant(CodeGenModule &CGM,
   unsigned numElements = structure->getNumElements();
   std::vector<llvm::Constant *> elements(numElements);
 
+  auto CXXR = dyn_cast<CXXRecordDecl>(record);
   // Fill in all the bases.
-  for (const auto &I : record->bases()) {
-    if (I.isVirtual()) {
-      // Ignore virtual bases; if we're laying out for a complete
-      // object, we'll lay these out later.
-      continue;
+  if (CXXR) {
+    for (const auto &I : CXXR->bases()) {
+      if (I.isVirtual()) {
+        // Ignore virtual bases; if we're laying out for a complete
+        // object, we'll lay these out later.
+        continue;
+      }
+
+      const CXXRecordDecl *base =
+        cast<CXXRecordDecl>(I.getType()->castAs<RecordType>()->getDecl());
+
+      // Ignore empty bases.
+      if (base->isEmpty() ||
+          CGM.getContext().getASTRecordLayout(base).getNonVirtualSize()
+              .isZero())
+        continue;
+
+      unsigned fieldIndex = layout.getNonVirtualBaseLLVMFieldNo(base);
+      llvm::Type *baseType = structure->getElementType(fieldIndex);
+      elements[fieldIndex] = EmitNullConstantForBase(CGM, baseType, base);
     }
-
-    const CXXRecordDecl *base = 
-      cast<CXXRecordDecl>(I.getType()->castAs<RecordType>()->getDecl());
-
-    // Ignore empty bases.
-    if (base->isEmpty() ||
-        CGM.getContext().getASTRecordLayout(base).getNonVirtualSize().isZero())
-      continue;
-    
-    unsigned fieldIndex = layout.getNonVirtualBaseLLVMFieldNo(base);
-    llvm::Type *baseType = structure->getElementType(fieldIndex);
-    elements[fieldIndex] = EmitNullConstantForBase(CGM, baseType, base);
   }
 
   // Fill in all the fields.
@@ -1562,8 +1574,8 @@ static llvm::Constant *EmitNullConstant(CodeGenModule &CGM,
   }
 
   // Fill in the virtual bases, if we're working with the complete object.
-  if (asCompleteObject) {
-    for (const auto &I : record->vbases()) {
+  if (CXXR && asCompleteObject) {
+    for (const auto &I : CXXR->vbases()) {
       const CXXRecordDecl *base = 
         cast<CXXRecordDecl>(I.getType()->castAs<RecordType>()->getDecl());
 
@@ -1605,6 +1617,10 @@ static llvm::Constant *EmitNullConstantForBase(CodeGenModule &CGM,
 }
 
 llvm::Constant *CodeGenModule::EmitNullConstant(QualType T) {
+  if (T->getAs<PointerType>())
+    return getNullPointer(
+        cast<llvm::PointerType>(getTypes().ConvertTypeForMem(T)), T);
+
   if (getTypes().isZeroInitializable(T))
     return llvm::Constant::getNullValue(getTypes().ConvertTypeForMem(T));
     
@@ -1620,10 +1636,8 @@ llvm::Constant *CodeGenModule::EmitNullConstant(QualType T) {
     return llvm::ConstantArray::get(ATy, Array);
   }
 
-  if (const RecordType *RT = T->getAs<RecordType>()) {
-    const CXXRecordDecl *RD = cast<CXXRecordDecl>(RT->getDecl());
-    return ::EmitNullConstant(*this, RD, /*complete object*/ true);
-  }
+  if (const RecordType *RT = T->getAs<RecordType>())
+    return ::EmitNullConstant(*this, RT->getDecl(), /*complete object*/ true);
 
   assert(T->isMemberDataPointerType() &&
          "Should only see pointers to data members here!");

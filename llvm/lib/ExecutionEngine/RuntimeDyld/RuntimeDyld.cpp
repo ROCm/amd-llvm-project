@@ -39,7 +39,7 @@ enum RuntimeDyldErrorCode {
 // deal with the Error value directly, rather than converting to error_code.
 class RuntimeDyldErrorCategory : public std::error_category {
 public:
-  const char *name() const LLVM_NOEXCEPT override { return "runtimedyld"; }
+  const char *name() const noexcept override { return "runtimedyld"; }
 
   std::string message(int Condition) const override {
     switch (static_cast<RuntimeDyldErrorCode>(Condition)) {
@@ -204,6 +204,10 @@ RuntimeDyldImpl::loadObjectImpl(const object::ObjectFile &Obj) {
   for (symbol_iterator I = Obj.symbol_begin(), E = Obj.symbol_end(); I != E;
        ++I) {
     uint32_t Flags = I->getFlags();
+
+    // Skip undefined symbols.
+    if (Flags & SymbolRef::SF_Undefined)
+      continue;
 
     if (Flags & SymbolRef::SF_Common)
       CommonSymbols.push_back(*I);
@@ -1019,10 +1023,11 @@ createRuntimeDyldCOFF(Triple::ArchType Arch, RuntimeDyld::MemoryManager &MM,
 }
 
 static std::unique_ptr<RuntimeDyldELF>
-createRuntimeDyldELF(RuntimeDyld::MemoryManager &MM,
+createRuntimeDyldELF(Triple::ArchType Arch, RuntimeDyld::MemoryManager &MM,
                      JITSymbolResolver &Resolver, bool ProcessAllSections,
                      RuntimeDyldCheckerImpl *Checker) {
-  std::unique_ptr<RuntimeDyldELF> Dyld(new RuntimeDyldELF(MM, Resolver));
+  std::unique_ptr<RuntimeDyldELF> Dyld =
+      RuntimeDyldELF::create(Arch, MM, Resolver);
   Dyld->setProcessAllSections(ProcessAllSections);
   Dyld->setRuntimeDyldChecker(Checker);
   return Dyld;
@@ -1044,7 +1049,9 @@ std::unique_ptr<RuntimeDyld::LoadedObjectInfo>
 RuntimeDyld::loadObject(const ObjectFile &Obj) {
   if (!Dyld) {
     if (Obj.isELF())
-      Dyld = createRuntimeDyldELF(MemMgr, Resolver, ProcessAllSections, Checker);
+      Dyld =
+          createRuntimeDyldELF(static_cast<Triple::ArchType>(Obj.getArch()),
+                               MemMgr, Resolver, ProcessAllSections, Checker);
     else if (Obj.isMachO())
       Dyld = createRuntimeDyldMachO(
                static_cast<Triple::ArchType>(Obj.getArch()), MemMgr, Resolver,

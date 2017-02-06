@@ -57,7 +57,7 @@ static std::string getNamespaceComment(const NamespaceDecl *ND,
 }
 
 void NamespaceCommentCheck::check(const MatchFinder::MatchResult &Result) {
-  const NamespaceDecl *ND = Result.Nodes.getNodeAs<NamespaceDecl>("namespace");
+  const auto *ND = Result.Nodes.getNodeAs<NamespaceDecl>("namespace");
   const SourceManager &Sources = *Result.SourceManager;
 
   if (!locationsInSameFile(Sources, ND->getLocStart(), ND->getRBraceLoc()))
@@ -114,7 +114,8 @@ void NamespaceCommentCheck::check(const MatchFinder::MatchResult &Result) {
       Message =
           (llvm::Twine(
                "%0 ends with a comment that refers to a wrong namespace '") +
-           NamespaceNameInComment + "'").str();
+           NamespaceNameInComment + "'")
+              .str();
     } else if (Comment.startswith("//")) {
       // Assume that this is an unrecognized form of a namespace closing line
       // comment. Replace it.

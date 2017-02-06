@@ -535,37 +535,7 @@ static BasicBlock *HandleCallsInBlockInlinedThroughInvoke(
 #endif // NDEBUG
     }
 
-    // Convert this function call into an invoke instruction.  First, split the
-    // basic block.
-    BasicBlock *Split =
-        BB->splitBasicBlock(CI->getIterator(), CI->getName() + ".noexc");
-
-    // Delete the unconditional branch inserted by splitBasicBlock
-    BB->getInstList().pop_back();
-
-    // Create the new invoke instruction.
-    SmallVector<Value*, 8> InvokeArgs(CI->arg_begin(), CI->arg_end());
-    SmallVector<OperandBundleDef, 1> OpBundles;
-
-    CI->getOperandBundlesAsDefs(OpBundles);
-
-    // Note: we're round tripping operand bundles through memory here, and that
-    // can potentially be avoided with a cleverer API design that we do not have
-    // as of this time.
-
-    InvokeInst *II =
-        InvokeInst::Create(CI->getCalledValue(), Split, UnwindEdge, InvokeArgs,
-                           OpBundles, CI->getName(), BB);
-    II->setDebugLoc(CI->getDebugLoc());
-    II->setCallingConv(CI->getCallingConv());
-    II->setAttributes(CI->getAttributes());
-    
-    // Make sure that anything using the call now uses the invoke!  This also
-    // updates the CallGraph if present, because it uses a WeakVH.
-    CI->replaceAllUsesWith(II);
-
-    // Delete the original call
-    Split->getInstList().pop_front();
+    changeToInvokeAndSplitBasicBlock(CI, UnwindEdge);
     return BB;
   }
   return nullptr;
@@ -1380,7 +1350,7 @@ static bool allocaWouldBeStaticInEntry(const AllocaInst *AI ) {
 /// Update inlined instructions' line numbers to
 /// to encode location where these instructions are inlined.
 static void fixupLineNumbers(Function *Fn, Function::iterator FI,
-                             Instruction *TheCall) {
+                             Instruction *TheCall, bool CalleeHasDebugInfo) {
   const DebugLoc &TheCallDL = TheCall->getDebugLoc();
   if (!TheCallDL)
     return;
@@ -1402,22 +1372,26 @@ static void fixupLineNumbers(Function *Fn, Function::iterator FI,
   for (; FI != Fn->end(); ++FI) {
     for (BasicBlock::iterator BI = FI->begin(), BE = FI->end();
          BI != BE; ++BI) {
-      DebugLoc DL = BI->getDebugLoc();
-      if (!DL) {
-        // If the inlined instruction has no line number, make it look as if it
-        // originates from the call location. This is important for
-        // ((__always_inline__, __nodebug__)) functions which must use caller
-        // location for all instructions in their function body.
-
-        // Don't update static allocas, as they may get moved later.
-        if (auto *AI = dyn_cast<AllocaInst>(BI))
-          if (allocaWouldBeStaticInEntry(AI))
-            continue;
-
-        BI->setDebugLoc(TheCallDL);
-      } else {
-        BI->setDebugLoc(updateInlinedAtInfo(DL, InlinedAtNode, BI->getContext(), IANodes));
+      if (DebugLoc DL = BI->getDebugLoc()) {
+        BI->setDebugLoc(
+            updateInlinedAtInfo(DL, InlinedAtNode, BI->getContext(), IANodes));
+        continue;
       }
+
+      if (CalleeHasDebugInfo)
+        continue;
+      
+      // If the inlined instruction has no line number, make it look as if it
+      // originates from the call location. This is important for
+      // ((__always_inline__, __nodebug__)) functions which must use caller
+      // location for all instructions in their function body.
+
+      // Don't update static allocas, as they may get moved later.
+      if (auto *AI = dyn_cast<AllocaInst>(BI))
+        if (allocaWouldBeStaticInEntry(AI))
+          continue;
+
+      BI->setDebugLoc(TheCallDL);
     }
   }
 }
@@ -1670,11 +1644,22 @@ bool llvm::InlineFunction(CallSite CS, InlineFunctionInfo &IFI,
     }
 
     // Update the callgraph if requested.
-    if (IFI.CG)
+    if (IFI.CG) {
       UpdateCallGraphAfterInlining(CS, FirstNewBlock, VMap, IFI);
+    } else {
+      // Otherwise just collect the raw call sites that were inlined.
+      for (BasicBlock &NewBB :
+           make_range(FirstNewBlock->getIterator(), Caller->end()))
+        for (Instruction &I : NewBB)
+          if (auto CS = CallSite(&I))
+            IFI.InlinedCallSites.push_back(CS);
+    }
 
-    // Update inlined instructions' line number information.
-    fixupLineNumbers(Caller, FirstNewBlock, TheCall);
+    // For 'nodebug' functions, the associated DISubprogram is always null.
+    // Conservatively avoid propagating the callsite debug location to
+    // instructions inlined from a function whose DISubprogram is not null.
+    fixupLineNumbers(Caller, FirstNewBlock, TheCall,
+                     CalledFunc->getSubprogram() != nullptr);
 
     // Clone existing noalias metadata if necessary.
     CloneAliasScopeMetadata(CS, VMap);

@@ -84,7 +84,7 @@ template <class T, class Tuple>
   constexpr T make_from_tuple(Tuple&& t); // C++17
 
 // 20.4.1.4, tuple helper classes:
-template <class T> class tuple_size; // undefined
+template <class T> class tuple_size;
 template <class... T> class tuple_size<tuple<T...>>;
 template <class T>
  constexpr size_t tuple_size_v = tuple_size<T>::value; // C++17
@@ -477,6 +477,12 @@ class _LIBCPP_TYPE_VIS_ONLY tuple
 
     base base_;
 
+#if defined(_LIBCPP_ENABLE_TUPLE_IMPLICIT_REDUCED_ARITY_EXTENSION)
+    static constexpr bool _EnableImplicitReducedArityExtension = true;
+#else
+    static constexpr bool _EnableImplicitReducedArityExtension = false;
+#endif
+
     template <class ..._Args>
     struct _PackExpandsToThisTuple : false_type {};
 
@@ -632,7 +638,7 @@ public:
                       <
                          _CheckArgsConstructor<
                             _Dummy
-                         >::template __enable_implicit<_Tp...>(),
+                         >::template __enable_implicit<_Tp const&...>(),
                          bool
                       >::type = false
         >
@@ -650,7 +656,7 @@ public:
                       <
                          _CheckArgsConstructor<
                             _Dummy
-                         >::template __enable_explicit<_Tp...>(),
+                         >::template __enable_explicit<_Tp const&...>(),
                          bool
                       >::type = false
         >
@@ -668,7 +674,7 @@ public:
                       <
                          _CheckArgsConstructor<
                             _Dummy
-                         >::template __enable_implicit<_Tp...>(),
+                         >::template __enable_implicit<_Tp const&...>(),
                          bool
                       >::type = false
         >
@@ -687,7 +693,7 @@ public:
                       <
                          _CheckArgsConstructor<
                             _Dummy
-                         >::template __enable_explicit<_Tp...>(),
+                         >::template __enable_explicit<_Tp const&...>(),
                          bool
                       >::type = false
         >
@@ -703,11 +709,17 @@ public:
                ) {}
 
     template <class ..._Up,
+              bool _PackIsTuple = _PackExpandsToThisTuple<_Up...>::value,
               typename enable_if
                       <
                          _CheckArgsConstructor<
-                             sizeof...(_Up) <= sizeof...(_Tp)
-                             && !_PackExpandsToThisTuple<_Up...>::value
+                             sizeof...(_Up) == sizeof...(_Tp)
+                             && !_PackIsTuple
+                         >::template __enable_implicit<_Up...>() ||
+                        _CheckArgsConstructor<
+                            _EnableImplicitReducedArityExtension
+                            && sizeof...(_Up) < sizeof...(_Tp)
+                            && !_PackIsTuple
                          >::template __enable_implicit<_Up...>(),
                          bool
                       >::type = false
@@ -735,7 +747,12 @@ public:
                          _CheckArgsConstructor<
                              sizeof...(_Up) <= sizeof...(_Tp)
                              && !_PackExpandsToThisTuple<_Up...>::value
-                         >::template __enable_explicit<_Up...>(),
+                         >::template __enable_explicit<_Up...>() ||
+                         _CheckArgsConstructor<
+                            !_EnableImplicitReducedArityExtension
+                            && sizeof...(_Up) < sizeof...(_Tp)
+                            && !_PackExpandsToThisTuple<_Up...>()
+                         >::template __enable_implicit<_Up...>(),
                          bool
                       >::type = false
              >

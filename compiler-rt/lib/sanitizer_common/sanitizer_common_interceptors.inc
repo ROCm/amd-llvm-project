@@ -304,8 +304,14 @@ INTERCEPTOR(int, strncmp, const char *s1, const char *s2, uptr size) {
     c2 = (unsigned char)s2[i];
     if (c1 != c2 || c1 == '\0') break;
   }
-  COMMON_INTERCEPTOR_READ_RANGE(ctx, s1, Min(i + 1, size));
-  COMMON_INTERCEPTOR_READ_RANGE(ctx, s2, Min(i + 1, size));
+  uptr i1 = i;
+  uptr i2 = i;
+  if (common_flags()->strict_string_checks) {
+    for (; i1 < size && s1[i1]; i1++) {}
+    for (; i2 < size && s2[i2]; i2++) {}
+  }
+  COMMON_INTERCEPTOR_READ_RANGE((ctx), (s1), Min(i1 + 1, size));
+  COMMON_INTERCEPTOR_READ_RANGE((ctx), (s2), Min(i2 + 1, size));
   int result = CharCmpX(c1, c2);
   CALL_WEAK_INTERCEPTOR_HOOK(__sanitizer_weak_hook_strncmp, GET_CALLER_PC(), s1,
                              s2, size, result);
@@ -348,24 +354,30 @@ INTERCEPTOR(int, strcasecmp, const char *s1, const char *s2) {
 }
 
 DECLARE_WEAK_INTERCEPTOR_HOOK(__sanitizer_weak_hook_strncasecmp, uptr called_pc,
-                              const char *s1, const char *s2, uptr n,
+                              const char *s1, const char *s2, uptr size,
                               int result)
 
-INTERCEPTOR(int, strncasecmp, const char *s1, const char *s2, SIZE_T n) {
+INTERCEPTOR(int, strncasecmp, const char *s1, const char *s2, SIZE_T size) {
   void *ctx;
-  COMMON_INTERCEPTOR_ENTER(ctx, strncasecmp, s1, s2, n);
+  COMMON_INTERCEPTOR_ENTER(ctx, strncasecmp, s1, s2, size);
   unsigned char c1 = 0, c2 = 0;
   uptr i;
-  for (i = 0; i < n; i++) {
+  for (i = 0; i < size; i++) {
     c1 = (unsigned char)s1[i];
     c2 = (unsigned char)s2[i];
     if (CharCaseCmp(c1, c2) != 0 || c1 == '\0') break;
   }
-  COMMON_INTERCEPTOR_READ_RANGE(ctx, s1, Min(i + 1, n));
-  COMMON_INTERCEPTOR_READ_RANGE(ctx, s2, Min(i + 1, n));
+  uptr i1 = i;
+  uptr i2 = i;
+  if (common_flags()->strict_string_checks) {
+    for (; i1 < size && s1[i1]; i1++) {}
+    for (; i2 < size && s2[i2]; i2++) {}
+  }
+  COMMON_INTERCEPTOR_READ_RANGE((ctx), (s1), Min(i1 + 1, size));
+  COMMON_INTERCEPTOR_READ_RANGE((ctx), (s2), Min(i2 + 1, size));
   int result = CharCaseCmp(c1, c2);
   CALL_WEAK_INTERCEPTOR_HOOK(__sanitizer_weak_hook_strncasecmp, GET_CALLER_PC(),
-                             s1, s2, n, result);
+                             s1, s2, size, result);
   return result;
 }
 
@@ -1227,12 +1239,12 @@ FORMAT_INTERCEPTOR_IMPL(__isoc99_sscanf, __isoc99_vsscanf, str, format)
 
 #if SANITIZER_INTERCEPT_SCANF
 #define INIT_SCANF                    \
-  COMMON_INTERCEPT_FUNCTION(scanf);   \
-  COMMON_INTERCEPT_FUNCTION(sscanf);  \
-  COMMON_INTERCEPT_FUNCTION(fscanf);  \
-  COMMON_INTERCEPT_FUNCTION(vscanf);  \
-  COMMON_INTERCEPT_FUNCTION(vsscanf); \
-  COMMON_INTERCEPT_FUNCTION(vfscanf);
+  COMMON_INTERCEPT_FUNCTION_LDBL(scanf);   \
+  COMMON_INTERCEPT_FUNCTION_LDBL(sscanf);  \
+  COMMON_INTERCEPT_FUNCTION_LDBL(fscanf);  \
+  COMMON_INTERCEPT_FUNCTION_LDBL(vscanf);  \
+  COMMON_INTERCEPT_FUNCTION_LDBL(vsscanf); \
+  COMMON_INTERCEPT_FUNCTION_LDBL(vfscanf);
 #else
 #define INIT_SCANF
 #endif
@@ -1405,16 +1417,16 @@ FORMAT_INTERCEPTOR_IMPL(__isoc99_snprintf, __isoc99_vsnprintf, str, size,
 
 #if SANITIZER_INTERCEPT_PRINTF
 #define INIT_PRINTF                     \
-  COMMON_INTERCEPT_FUNCTION(printf);    \
-  COMMON_INTERCEPT_FUNCTION(sprintf);   \
-  COMMON_INTERCEPT_FUNCTION(snprintf);  \
-  COMMON_INTERCEPT_FUNCTION(asprintf);  \
-  COMMON_INTERCEPT_FUNCTION(fprintf);   \
-  COMMON_INTERCEPT_FUNCTION(vprintf);   \
-  COMMON_INTERCEPT_FUNCTION(vsprintf);  \
-  COMMON_INTERCEPT_FUNCTION(vsnprintf); \
-  COMMON_INTERCEPT_FUNCTION(vasprintf); \
-  COMMON_INTERCEPT_FUNCTION(vfprintf);
+  COMMON_INTERCEPT_FUNCTION_LDBL(printf);    \
+  COMMON_INTERCEPT_FUNCTION_LDBL(sprintf);   \
+  COMMON_INTERCEPT_FUNCTION_LDBL(snprintf);  \
+  COMMON_INTERCEPT_FUNCTION_LDBL(asprintf);  \
+  COMMON_INTERCEPT_FUNCTION_LDBL(fprintf);   \
+  COMMON_INTERCEPT_FUNCTION_LDBL(vprintf);   \
+  COMMON_INTERCEPT_FUNCTION_LDBL(vsprintf);  \
+  COMMON_INTERCEPT_FUNCTION_LDBL(vsnprintf); \
+  COMMON_INTERCEPT_FUNCTION_LDBL(vasprintf); \
+  COMMON_INTERCEPT_FUNCTION_LDBL(vfprintf);
 #else
 #define INIT_PRINTF
 #endif
@@ -5878,6 +5890,72 @@ INTERCEPTOR(int, __lxstat64, int version, const char *path, void *buf) {
 
 // FIXME: add other *stat interceptor
 
+#if SANITIZER_INTERCEPT_UTMP
+INTERCEPTOR(void *, getutent, int dummy) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, getutent, dummy);
+  void *res = REAL(getutent)(dummy);
+  if (res)
+    COMMON_INTERCEPTOR_INITIALIZE_RANGE(res, __sanitizer::struct_utmp_sz);
+  return res;
+}
+INTERCEPTOR(void *, getutid, void *ut) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, getutid, ut);
+  void *res = REAL(getutid)(ut);
+  if (res)
+    COMMON_INTERCEPTOR_INITIALIZE_RANGE(res, __sanitizer::struct_utmp_sz);
+  return res;
+}
+INTERCEPTOR(void *, getutline, void *ut) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, getutline, ut);
+  void *res = REAL(getutline)(ut);
+  if (res)
+    COMMON_INTERCEPTOR_INITIALIZE_RANGE(res, __sanitizer::struct_utmp_sz);
+  return res;
+}
+#define INIT_UTMP                      \
+  COMMON_INTERCEPT_FUNCTION(getutent); \
+  COMMON_INTERCEPT_FUNCTION(getutid);  \
+  COMMON_INTERCEPT_FUNCTION(getutline);
+#else
+#define INIT_UTMP
+#endif
+
+#if SANITIZER_INTERCEPT_UTMPX
+INTERCEPTOR(void *, getutxent, int dummy) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, getutxent, dummy);
+  void *res = REAL(getutxent)(dummy);
+  if (res)
+    COMMON_INTERCEPTOR_INITIALIZE_RANGE(res, __sanitizer::struct_utmpx_sz);
+  return res;
+}
+INTERCEPTOR(void *, getutxid, void *ut) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, getutxid, ut);
+  void *res = REAL(getutxid)(ut);
+  if (res)
+    COMMON_INTERCEPTOR_INITIALIZE_RANGE(res, __sanitizer::struct_utmpx_sz);
+  return res;
+}
+INTERCEPTOR(void *, getutxline, void *ut) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, getutxline, ut);
+  void *res = REAL(getutxline)(ut);
+  if (res)
+    COMMON_INTERCEPTOR_INITIALIZE_RANGE(res, __sanitizer::struct_utmpx_sz);
+  return res;
+}
+#define INIT_UTMPX                      \
+  COMMON_INTERCEPT_FUNCTION(getutxent); \
+  COMMON_INTERCEPT_FUNCTION(getutxid);  \
+  COMMON_INTERCEPT_FUNCTION(getutxline);
+#else
+#define INIT_UTMPX
+#endif
+
 static void InitializeCommonInterceptors() {
   static u64 metadata_mem[sizeof(MetadataHashMap) / sizeof(u64) + 1];
   interceptor_metadata_map = new((void *)&metadata_mem) MetadataHashMap();
@@ -6074,4 +6152,6 @@ static void InitializeCommonInterceptors() {
   INIT___LXSTAT;
   INIT___LXSTAT64;
   // FIXME: add other *stat interceptors.
+  INIT_UTMP;
+  INIT_UTMPX;
 }

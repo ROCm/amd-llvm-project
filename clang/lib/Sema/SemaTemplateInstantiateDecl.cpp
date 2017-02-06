@@ -179,7 +179,7 @@ static void instantiateDependentEnableIfAttr(
       return;
     Cond = Result.getAs<Expr>();
   }
-  if (A->getCond()->isTypeDependent() && !Cond->isTypeDependent()) {
+  if (!Cond->isTypeDependent()) {
     ExprResult Converted = S.PerformContextuallyConvertToBool(Cond);
     if (Converted.isInvalid())
       return;
@@ -188,7 +188,7 @@ static void instantiateDependentEnableIfAttr(
 
   SmallVector<PartialDiagnosticAt, 8> Diags;
   if (A->getCond()->isValueDependent() && !Cond->isValueDependent() &&
-      !Expr::isPotentialConstantExprUnevaluated(Cond, cast<FunctionDecl>(Tmpl),
+      !Expr::isPotentialConstantExprUnevaluated(Cond, cast<FunctionDecl>(New),
                                                 Diags)) {
     S.Diag(A->getLocation(), diag::err_enable_if_never_constant_expr);
     for (int I = 0, N = Diags.size(); I != N; ++I)
@@ -332,8 +332,7 @@ void Sema::InstantiateAttrs(const MultiLevelTemplateArgumentList &TemplateArgs,
       continue;
     }
 
-    const EnableIfAttr *EnableIf = dyn_cast<EnableIfAttr>(TmplAttr);
-    if (EnableIf && EnableIf->getCond()->isValueDependent()) {
+    if (const auto *EnableIf = dyn_cast<EnableIfAttr>(TmplAttr)) {
       instantiateDependentEnableIfAttr(*this, TemplateArgs, EnableIf, Tmpl,
                                        New);
       continue;
@@ -1872,11 +1871,13 @@ TemplateDeclInstantiator::VisitCXXMethodDecl(CXXMethodDecl *D,
                                         Constructor->isExplicit(),
                                         Constructor->isInlineSpecified(),
                                         false, Constructor->isConstexpr());
+    Method->setRangeEnd(Constructor->getLocEnd());
   } else if (CXXDestructorDecl *Destructor = dyn_cast<CXXDestructorDecl>(D)) {
     Method = CXXDestructorDecl::Create(SemaRef.Context, Record,
                                        StartLoc, NameInfo, T, TInfo,
                                        Destructor->isInlineSpecified(),
                                        false);
+    Method->setRangeEnd(Destructor->getLocEnd());
   } else if (CXXConversionDecl *Conversion = dyn_cast<CXXConversionDecl>(D)) {
     Method = CXXConversionDecl::Create(SemaRef.Context, Record,
                                        StartLoc, NameInfo, T, TInfo,
@@ -2429,8 +2430,8 @@ Decl *TemplateDeclInstantiator::VisitUsingDecl(UsingDecl *D) {
   }
 
   if (!NewUD->isInvalidDecl() &&
-      SemaRef.CheckUsingDeclQualifier(D->getUsingLoc(), SS, NameInfo,
-                                      D->getLocation()))
+      SemaRef.CheckUsingDeclQualifier(D->getUsingLoc(), D->hasTypename(),
+                                      SS, NameInfo, D->getLocation()))
     NewUD->setInvalidDecl();
 
   SemaRef.Context.setInstantiatedFromUsingDecl(NewUD, D);
@@ -2494,8 +2495,73 @@ Decl *TemplateDeclInstantiator::VisitConstructorUsingShadowDecl(
   return nullptr;
 }
 
-Decl * TemplateDeclInstantiator
-    ::VisitUnresolvedUsingTypenameDecl(UnresolvedUsingTypenameDecl *D) {
+template <typename T>
+Decl *TemplateDeclInstantiator::instantiateUnresolvedUsingDecl(
+    T *D, bool InstantiatingPackElement) {
+  // If this is a pack expansion, expand it now.
+  if (D->isPackExpansion() && !InstantiatingPackElement) {
+    SmallVector<UnexpandedParameterPack, 2> Unexpanded;
+    SemaRef.collectUnexpandedParameterPacks(D->getQualifierLoc(), Unexpanded);
+    SemaRef.collectUnexpandedParameterPacks(D->getNameInfo(), Unexpanded);
+
+    // Determine whether the set of unexpanded parameter packs can and should
+    // be expanded.
+    bool Expand = true;
+    bool RetainExpansion = false;
+    Optional<unsigned> NumExpansions;
+    if (SemaRef.CheckParameterPacksForExpansion(
+          D->getEllipsisLoc(), D->getSourceRange(), Unexpanded, TemplateArgs,
+            Expand, RetainExpansion, NumExpansions))
+      return nullptr;
+
+    // This declaration cannot appear within a function template signature,
+    // so we can't have a partial argument list for a parameter pack.
+    assert(!RetainExpansion &&
+           "should never need to retain an expansion for UsingPackDecl");
+
+    if (!Expand) {
+      // We cannot fully expand the pack expansion now, so substitute into the
+      // pattern and create a new pack expansion.
+      Sema::ArgumentPackSubstitutionIndexRAII SubstIndex(SemaRef, -1);
+      return instantiateUnresolvedUsingDecl(D, true);
+    }
+
+    // Within a function, we don't have any normal way to check for conflicts
+    // between shadow declarations from different using declarations in the
+    // same pack expansion, but this is always ill-formed because all expansions
+    // must produce (conflicting) enumerators.
+    //
+    // Sadly we can't just reject this in the template definition because it
+    // could be valid if the pack is empty or has exactly one expansion.
+    if (D->getDeclContext()->isFunctionOrMethod() && *NumExpansions > 1) {
+      SemaRef.Diag(D->getEllipsisLoc(),
+                   diag::err_using_decl_redeclaration_expansion);
+      return nullptr;
+    }
+
+    // Instantiate the slices of this pack and build a UsingPackDecl.
+    SmallVector<NamedDecl*, 8> Expansions;
+    for (unsigned I = 0; I != *NumExpansions; ++I) {
+      Sema::ArgumentPackSubstitutionIndexRAII SubstIndex(SemaRef, I);
+      Decl *Slice = instantiateUnresolvedUsingDecl(D, true);
+      if (!Slice)
+        return nullptr;
+      // Note that we can still get unresolved using declarations here, if we
+      // had arguments for all packs but the pattern also contained other
+      // template arguments (this only happens during partial substitution, eg
+      // into the body of a generic lambda in a function template).
+      Expansions.push_back(cast<NamedDecl>(Slice));
+    }
+
+    auto *NewD = SemaRef.BuildUsingPackDecl(D, Expansions);
+    if (isDeclWithinFunction(D))
+      SemaRef.CurrentInstantiationScope->InstantiatedLocal(D, NewD);
+    return NewD;
+  }
+
+  UnresolvedUsingTypenameDecl *TD = dyn_cast<UnresolvedUsingTypenameDecl>(D);
+  SourceLocation TypenameLoc = TD ? TD->getTypenameLoc() : SourceLocation();
+
   NestedNameSpecifierLoc QualifierLoc
     = SemaRef.SubstNestedNameSpecifierLoc(D->getQualifierLoc(),
                                           TemplateArgs);
@@ -2505,44 +2571,51 @@ Decl * TemplateDeclInstantiator
   CXXScopeSpec SS;
   SS.Adopt(QualifierLoc);
 
-  // Since NameInfo refers to a typename, it cannot be a C++ special name.
-  // Hence, no transformation is required for it.
-  DeclarationNameInfo NameInfo(D->getDeclName(), D->getLocation());
-  NamedDecl *UD =
-    SemaRef.BuildUsingDeclaration(/*Scope*/ nullptr, D->getAccess(),
-                                  D->getUsingLoc(), SS, NameInfo, nullptr,
-                                  /*instantiation*/ true,
-                                  /*typename*/ true, D->getTypenameLoc());
-  if (UD)
-    SemaRef.Context.setInstantiatedFromUsingDecl(cast<UsingDecl>(UD), D);
-
-  return UD;
-}
-
-Decl * TemplateDeclInstantiator
-    ::VisitUnresolvedUsingValueDecl(UnresolvedUsingValueDecl *D) {
-  NestedNameSpecifierLoc QualifierLoc
-      = SemaRef.SubstNestedNameSpecifierLoc(D->getQualifierLoc(), TemplateArgs);
-  if (!QualifierLoc)
-    return nullptr;
-
-  CXXScopeSpec SS;
-  SS.Adopt(QualifierLoc);
-
   DeclarationNameInfo NameInfo
     = SemaRef.SubstDeclarationNameInfo(D->getNameInfo(), TemplateArgs);
 
-  NamedDecl *UD =
-    SemaRef.BuildUsingDeclaration(/*Scope*/ nullptr, D->getAccess(),
-                                  D->getUsingLoc(), SS, NameInfo, nullptr,
-                                  /*instantiation*/ true,
-                                  /*typename*/ false, SourceLocation());
+  // Produce a pack expansion only if we're not instantiating a particular
+  // slice of a pack expansion.
+  bool InstantiatingSlice = D->getEllipsisLoc().isValid() &&
+                            SemaRef.ArgumentPackSubstitutionIndex != -1;
+  SourceLocation EllipsisLoc =
+      InstantiatingSlice ? SourceLocation() : D->getEllipsisLoc();
+
+  NamedDecl *UD = SemaRef.BuildUsingDeclaration(
+      /*Scope*/ nullptr, D->getAccess(), D->getUsingLoc(),
+      /*HasTypename*/ TD, TypenameLoc, SS, NameInfo, EllipsisLoc, nullptr,
+      /*IsInstantiation*/ true);
   if (UD)
-    SemaRef.Context.setInstantiatedFromUsingDecl(cast<UsingDecl>(UD), D);
+    SemaRef.Context.setInstantiatedFromUsingDecl(UD, D);
 
   return UD;
 }
 
+Decl *TemplateDeclInstantiator::VisitUnresolvedUsingTypenameDecl(
+    UnresolvedUsingTypenameDecl *D) {
+  return instantiateUnresolvedUsingDecl(D);
+}
+
+Decl *TemplateDeclInstantiator::VisitUnresolvedUsingValueDecl(
+    UnresolvedUsingValueDecl *D) {
+  return instantiateUnresolvedUsingDecl(D);
+}
+
+Decl *TemplateDeclInstantiator::VisitUsingPackDecl(UsingPackDecl *D) {
+  SmallVector<NamedDecl*, 8> Expansions;
+  for (auto *UD : D->expansions()) {
+    if (auto *NewUD =
+            SemaRef.FindInstantiatedDecl(D->getLocation(), UD, TemplateArgs))
+      Expansions.push_back(cast<NamedDecl>(NewUD));
+    else
+      return nullptr;
+  }
+
+  auto *NewD = SemaRef.BuildUsingPackDecl(D, Expansions);
+  if (isDeclWithinFunction(D))
+    SemaRef.CurrentInstantiationScope->InstantiatedLocal(D, NewD);
+  return NewD;
+}
 
 Decl *TemplateDeclInstantiator::VisitClassScopeFunctionSpecializationDecl(
                                      ClassScopeFunctionSpecializationDecl *Decl) {
@@ -4068,6 +4141,10 @@ void Sema::InstantiateVariableDefinition(SourceLocation PointOfInstantiation,
       PrettyDeclStackTraceEntry CrashInfo(*this, Var, SourceLocation(),
                                           "instantiating variable initializer");
 
+      // The instantiation is visible here, even if it was first declared in an
+      // unimported module.
+      Var->setHidden(false);
+
       // If we're performing recursive template instantiation, create our own
       // queue of pending implicit instantiations that we will instantiate
       // later, while we're still within our own instantiation context.
@@ -4116,33 +4193,17 @@ void Sema::InstantiateVariableDefinition(SourceLocation PointOfInstantiation,
     Def = PatternDecl->getDefinition();
   }
 
-  // FIXME: Check that the definition is visible before trying to instantiate
-  // it. This requires us to track the instantiation stack in order to know
-  // which definitions should be visible.
+  TemplateSpecializationKind TSK = Var->getTemplateSpecializationKind();
 
   // If we don't have a definition of the variable template, we won't perform
   // any instantiation. Rather, we rely on the user to instantiate this
   // definition (or provide a specialization for it) in another translation
   // unit.
-  if (!Def) {
-    if (DefinitionRequired) {
-      if (VarSpec) {
-        Diag(PointOfInstantiation,
-             diag::err_explicit_instantiation_undefined_var_template) << Var;
-        Var->setInvalidDecl();
-      }
-      else
-        Diag(PointOfInstantiation,
-             diag::err_explicit_instantiation_undefined_member)
-            << 2 << Var->getDeclName() << Var->getDeclContext();
-      Diag(PatternDecl->getLocation(),
-           diag::note_explicit_instantiation_here);
-    } else if (Var->getTemplateSpecializationKind()
-                 == TSK_ExplicitInstantiationDefinition) {
+  if (!Def && !DefinitionRequired) {
+    if (TSK == TSK_ExplicitInstantiationDefinition) {
       PendingInstantiations.push_back(
         std::make_pair(Var, PointOfInstantiation));
-    } else if (Var->getTemplateSpecializationKind()
-                 == TSK_ImplicitInstantiation) {
+    } else if (TSK == TSK_ImplicitInstantiation) {
       // Warn about missing definition at the end of translation unit.
       if (AtEndOfTU && !getDiagnostics().hasErrorOccurred()) {
         Diag(PointOfInstantiation, diag::warn_var_template_missing)
@@ -4151,12 +4212,20 @@ void Sema::InstantiateVariableDefinition(SourceLocation PointOfInstantiation,
         if (getLangOpts().CPlusPlus11)
           Diag(PointOfInstantiation, diag::note_inst_declaration_hint) << Var;
       }
+      return;
     }
 
-    return;
   }
 
-  TemplateSpecializationKind TSK = Var->getTemplateSpecializationKind();
+  // FIXME: We need to track the instantiation stack in order to know which
+  // definitions should be visible within this instantiation.
+  // FIXME: Produce diagnostics when Var->getInstantiatedFromStaticDataMember().
+  if (DiagnoseUninstantiableTemplate(PointOfInstantiation, Var,
+                                     /*InstantiatedFromMember*/false,
+                                     PatternDecl, Def, TSK,
+                                     /*Complain*/DefinitionRequired))
+    return;
+
 
   // Never instantiate an explicit specialization.
   if (TSK == TSK_ExplicitSpecialization)
@@ -4516,22 +4585,36 @@ static bool isInstantiationOf(UsingShadowDecl *Pattern,
                             Pattern);
 }
 
-static bool isInstantiationOf(UsingDecl *Pattern,
-                              UsingDecl *Instance,
+static bool isInstantiationOf(UsingDecl *Pattern, UsingDecl *Instance,
                               ASTContext &C) {
   return declaresSameEntity(C.getInstantiatedFromUsingDecl(Instance), Pattern);
 }
 
-static bool isInstantiationOf(UnresolvedUsingValueDecl *Pattern,
-                              UsingDecl *Instance,
-                              ASTContext &C) {
-  return declaresSameEntity(C.getInstantiatedFromUsingDecl(Instance), Pattern);
-}
-
-static bool isInstantiationOf(UnresolvedUsingTypenameDecl *Pattern,
-                              UsingDecl *Instance,
-                              ASTContext &C) {
-  return declaresSameEntity(C.getInstantiatedFromUsingDecl(Instance), Pattern);
+template<typename T>
+static bool isInstantiationOfUnresolvedUsingDecl(T *Pattern, Decl *Other,
+                                                 ASTContext &Ctx) {
+  // An unresolved using declaration can instantiate to an unresolved using
+  // declaration, or to a using declaration or a using declaration pack.
+  //
+  // Multiple declarations can claim to be instantiated from an unresolved
+  // using declaration if it's a pack expansion. We want the UsingPackDecl
+  // in that case, not the individual UsingDecls within the pack.
+  bool OtherIsPackExpansion;
+  NamedDecl *OtherFrom;
+  if (auto *OtherUUD = dyn_cast<T>(Other)) {
+    OtherIsPackExpansion = OtherUUD->isPackExpansion();
+    OtherFrom = Ctx.getInstantiatedFromUsingDecl(OtherUUD);
+  } else if (auto *OtherUPD = dyn_cast<UsingPackDecl>(Other)) {
+    OtherIsPackExpansion = true;
+    OtherFrom = OtherUPD->getInstantiatedFromUsingDecl();
+  } else if (auto *OtherUD = dyn_cast<UsingDecl>(Other)) {
+    OtherIsPackExpansion = false;
+    OtherFrom = Ctx.getInstantiatedFromUsingDecl(OtherUD);
+  } else {
+    return false;
+  }
+  return Pattern->isPackExpansion() == OtherIsPackExpansion &&
+         declaresSameEntity(OtherFrom, Pattern);
 }
 
 static bool isInstantiationOfStaticDataMember(VarDecl *Pattern,
@@ -4552,49 +4635,40 @@ static bool isInstantiationOfStaticDataMember(VarDecl *Pattern,
 // Other is the prospective instantiation
 // D is the prospective pattern
 static bool isInstantiationOf(ASTContext &Ctx, NamedDecl *D, Decl *Other) {
-  if (D->getKind() != Other->getKind()) {
-    if (UnresolvedUsingTypenameDecl *UUD
-          = dyn_cast<UnresolvedUsingTypenameDecl>(D)) {
-      if (UsingDecl *UD = dyn_cast<UsingDecl>(Other)) {
-        return isInstantiationOf(UUD, UD, Ctx);
-      }
-    }
+  if (auto *UUD = dyn_cast<UnresolvedUsingTypenameDecl>(D))
+    return isInstantiationOfUnresolvedUsingDecl(UUD, Other, Ctx);
 
-    if (UnresolvedUsingValueDecl *UUD
-          = dyn_cast<UnresolvedUsingValueDecl>(D)) {
-      if (UsingDecl *UD = dyn_cast<UsingDecl>(Other)) {
-        return isInstantiationOf(UUD, UD, Ctx);
-      }
-    }
+  if (auto *UUD = dyn_cast<UnresolvedUsingValueDecl>(D))
+    return isInstantiationOfUnresolvedUsingDecl(UUD, Other, Ctx);
 
+  if (D->getKind() != Other->getKind())
     return false;
-  }
 
-  if (CXXRecordDecl *Record = dyn_cast<CXXRecordDecl>(Other))
+  if (auto *Record = dyn_cast<CXXRecordDecl>(Other))
     return isInstantiationOf(cast<CXXRecordDecl>(D), Record);
 
-  if (FunctionDecl *Function = dyn_cast<FunctionDecl>(Other))
+  if (auto *Function = dyn_cast<FunctionDecl>(Other))
     return isInstantiationOf(cast<FunctionDecl>(D), Function);
 
-  if (EnumDecl *Enum = dyn_cast<EnumDecl>(Other))
+  if (auto *Enum = dyn_cast<EnumDecl>(Other))
     return isInstantiationOf(cast<EnumDecl>(D), Enum);
 
-  if (VarDecl *Var = dyn_cast<VarDecl>(Other))
+  if (auto *Var = dyn_cast<VarDecl>(Other))
     if (Var->isStaticDataMember())
       return isInstantiationOfStaticDataMember(cast<VarDecl>(D), Var);
 
-  if (ClassTemplateDecl *Temp = dyn_cast<ClassTemplateDecl>(Other))
+  if (auto *Temp = dyn_cast<ClassTemplateDecl>(Other))
     return isInstantiationOf(cast<ClassTemplateDecl>(D), Temp);
 
-  if (FunctionTemplateDecl *Temp = dyn_cast<FunctionTemplateDecl>(Other))
+  if (auto *Temp = dyn_cast<FunctionTemplateDecl>(Other))
     return isInstantiationOf(cast<FunctionTemplateDecl>(D), Temp);
 
-  if (ClassTemplatePartialSpecializationDecl *PartialSpec
-        = dyn_cast<ClassTemplatePartialSpecializationDecl>(Other))
+  if (auto *PartialSpec =
+          dyn_cast<ClassTemplatePartialSpecializationDecl>(Other))
     return isInstantiationOf(cast<ClassTemplatePartialSpecializationDecl>(D),
                              PartialSpec);
 
-  if (FieldDecl *Field = dyn_cast<FieldDecl>(Other)) {
+  if (auto *Field = dyn_cast<FieldDecl>(Other)) {
     if (!Field->getDeclName()) {
       // This is an unnamed field.
       return declaresSameEntity(Ctx.getInstantiatedFromUnnamedFieldDecl(Field),
@@ -4602,14 +4676,14 @@ static bool isInstantiationOf(ASTContext &Ctx, NamedDecl *D, Decl *Other) {
     }
   }
 
-  if (UsingDecl *Using = dyn_cast<UsingDecl>(Other))
+  if (auto *Using = dyn_cast<UsingDecl>(Other))
     return isInstantiationOf(cast<UsingDecl>(D), Using, Ctx);
 
-  if (UsingShadowDecl *Shadow = dyn_cast<UsingShadowDecl>(Other))
+  if (auto *Shadow = dyn_cast<UsingShadowDecl>(Other))
     return isInstantiationOf(cast<UsingShadowDecl>(D), Shadow, Ctx);
 
-  return D->getDeclName() && isa<NamedDecl>(Other) &&
-    D->getDeclName() == cast<NamedDecl>(Other)->getDeclName();
+  return D->getDeclName() &&
+         D->getDeclName() == cast<NamedDecl>(Other)->getDeclName();
 }
 
 template<typename ForwardIterator>
@@ -4845,6 +4919,8 @@ NamedDecl *Sema::FindInstantiatedDecl(SourceLocation Loc, NamedDecl *D,
     }
 
     NamedDecl *Result = nullptr;
+    // FIXME: If the name is a dependent name, this lookup won't necessarily
+    // find it. Does that ever matter?
     if (D->getDeclName()) {
       DeclContext::lookup_result Found = ParentDC->lookup(D->getDeclName());
       Result = findInstantiationOf(Context, D, Found.begin(), Found.end());

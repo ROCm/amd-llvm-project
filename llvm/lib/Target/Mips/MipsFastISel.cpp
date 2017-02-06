@@ -102,7 +102,6 @@ class MipsFastISel final : public FastISel {
   bool fastLowerCall(CallLoweringInfo &CLI) override;
   bool fastLowerIntrinsicCall(const IntrinsicInst *II) override;
 
-  bool TargetSupported;
   bool UnsupportedFPMode; // To allow fast-isel to proceed and just not handle
   // floating point but not reject doing fast-isel in other
   // situations
@@ -212,10 +211,6 @@ public:
         TII(*Subtarget->getInstrInfo()), TLI(*Subtarget->getTargetLowering()) {
     MFI = funcInfo.MF->getInfo<MipsFunctionInfo>();
     Context = &funcInfo.Fn->getContext();
-    bool ISASupported = !Subtarget->hasMips32r6() &&
-                        !Subtarget->inMicroMipsMode() && Subtarget->hasMips32();
-    TargetSupported =
-        ISASupported && TM.isPositionIndependent() && getABI().IsO32();
     UnsupportedFPMode = Subtarget->isFP64bit() || Subtarget->useSoftFloat();
   }
 
@@ -291,9 +286,6 @@ unsigned MipsFastISel::emitLogicalOp(unsigned ISDOpc, MVT RetVT,
 }
 
 unsigned MipsFastISel::fastMaterializeAlloca(const AllocaInst *AI) {
-  if (!TargetSupported)
-    return 0;
-
   assert(TLI.getValueType(DL, AI->getType(), true) == MVT::i32 &&
          "Alloca should always return a pointer.");
 
@@ -404,9 +396,6 @@ unsigned MipsFastISel::materializeExternalCallSym(MCSymbol *Sym) {
 // Materialize a constant into a register, and return the register
 // number (or zero if we failed to handle it).
 unsigned MipsFastISel::fastMaterializeConstant(const Constant *C) {
-  if (!TargetSupported)
-    return 0;
-
   EVT CEVT = TLI.getValueType(DL, C->getType(), true);
 
   // Only handle simple types.
@@ -449,14 +438,14 @@ bool MipsFastISel::computeAddress(const Value *Obj, Address &Addr) {
   }
   case Instruction::GetElementPtr: {
     Address SavedAddr = Addr;
-    uint64_t TmpOffset = Addr.getOffset();
+    int64_t TmpOffset = Addr.getOffset();
     // Iterate through the GEP folding the constants into offsets where
     // we can.
     gep_type_iterator GTI = gep_type_begin(U);
     for (User::const_op_iterator i = U->op_begin() + 1, e = U->op_end(); i != e;
          ++i, ++GTI) {
       const Value *Op = *i;
-      if (StructType *STy = dyn_cast<StructType>(*GTI)) {
+      if (StructType *STy = GTI.getStructTypeOrNull()) {
         const StructLayout *SL = DL.getStructLayout(STy);
         unsigned Idx = cast<ConstantInt>(Op)->getZExtValue();
         TmpOffset += SL->getElementOffset(Idx);
@@ -767,7 +756,7 @@ bool MipsFastISel::emitLoad(MVT VT, unsigned &ResultReg, Address &Addr,
   if (Addr.isFIBase()) {
     unsigned FI = Addr.getFI();
     unsigned Align = 4;
-    unsigned Offset = Addr.getOffset();
+    int64_t Offset = Addr.getOffset();
     MachineFrameInfo &MFI = MF->getFrameInfo();
     MachineMemOperand *MMO = MF->getMachineMemOperand(
         MachinePointerInfo::getFixedStack(*MF, FI), MachineMemOperand::MOLoad,
@@ -818,7 +807,7 @@ bool MipsFastISel::emitStore(MVT VT, unsigned SrcReg, Address &Addr,
   if (Addr.isFIBase()) {
     unsigned FI = Addr.getFI();
     unsigned Align = 4;
-    unsigned Offset = Addr.getOffset();
+    int64_t Offset = Addr.getOffset();
     MachineFrameInfo &MFI = MF->getFrameInfo();
     MachineMemOperand *MMO = MF->getMachineMemOperand(
         MachinePointerInfo::getFixedStack(*MF, FI), MachineMemOperand::MOStore,
@@ -1444,9 +1433,6 @@ bool MipsFastISel::fastLowerArguments() {
 }
 
 bool MipsFastISel::fastLowerCall(CallLoweringInfo &CLI) {
-  if (!TargetSupported)
-    return false;
-
   CallingConv::ID CC = CLI.CallConv;
   bool IsTailCall = CLI.IsTailCall;
   bool IsVarArg = CLI.IsVarArg;
@@ -1531,9 +1517,6 @@ bool MipsFastISel::fastLowerCall(CallLoweringInfo &CLI) {
 }
 
 bool MipsFastISel::fastLowerIntrinsicCall(const IntrinsicInst *II) {
-  if (!TargetSupported)
-    return false;
-
   switch (II->getIntrinsicID()) {
   default:
     return false;
@@ -1980,8 +1963,6 @@ bool MipsFastISel::selectShift(const Instruction *I) {
 }
 
 bool MipsFastISel::fastSelectInstruction(const Instruction *I) {
-  if (!TargetSupported)
-    return false;
   switch (I->getOpcode()) {
   default:
     break;

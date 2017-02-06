@@ -44,6 +44,7 @@ private:
   //   like x86/x86_64.
   void replaceRetWithPatchableRet(MachineFunction &MF,
     const TargetInstrInfo *TII);
+
   // Prepend the original return instruction with the exit sled code ("patchable
   //   function exit" pseudo-instruction), preserving the original return
   //   instruction just after the exit sled code.
@@ -95,10 +96,17 @@ void XRayInstrumentation::prependRetWithPatchableExit(MachineFunction &MF,
 {
   for (auto &MBB : MF) {
     for (auto &T : MBB.terminators()) {
+      unsigned Opc = 0;
       if (T.isReturn()) {
-        // Prepend the return instruction with PATCHABLE_FUNCTION_EXIT
-        BuildMI(MBB, T, T.getDebugLoc(),
-                TII->get(TargetOpcode::PATCHABLE_FUNCTION_EXIT));
+        Opc = TargetOpcode::PATCHABLE_FUNCTION_EXIT;
+      }
+      if (TII->isTailCall(T)) {
+        Opc = TargetOpcode::PATCHABLE_TAIL_CALL;
+      }
+      if (Opc != 0) {
+        // Prepend the return instruction with PATCHABLE_FUNCTION_EXIT or
+        //   PATCHABLE_TAIL_CALL .
+        BuildMI(MBB, T, T.getDebugLoc(),TII->get(Opc));
       }
     }
   }
@@ -121,7 +129,15 @@ bool XRayInstrumentation::runOnMachineFunction(MachineFunction &MF) {
       return false; // Function is too small.
   }
 
-  auto &FirstMBB = *MF.begin();
+  // We look for the first non-empty MachineBasicBlock, so that we can insert
+  // the function instrumentation in the appropriate place.
+  auto MBI =
+      find_if(MF, [&](const MachineBasicBlock &MBB) { return !MBB.empty(); });
+  if (MBI == MF.end())
+    return false; // The function is empty.
+
+  auto *TII = MF.getSubtarget().getInstrInfo();
+  auto &FirstMBB = *MBI;
   auto &FirstMI = *FirstMBB.begin();
 
   if (!MF.getSubtarget().isXRaySupported()) {
@@ -134,13 +150,13 @@ bool XRayInstrumentation::runOnMachineFunction(MachineFunction &MF) {
 
   // First, insert an PATCHABLE_FUNCTION_ENTER as the first instruction of the
   // MachineFunction.
-  auto *TII = MF.getSubtarget().getInstrInfo();
   BuildMI(FirstMBB, FirstMI, FirstMI.getDebugLoc(),
           TII->get(TargetOpcode::PATCHABLE_FUNCTION_ENTER));
 
   switch (MF.getTarget().getTargetTriple().getArch()) {
   case Triple::ArchType::arm:
   case Triple::ArchType::thumb:
+  case Triple::ArchType::aarch64:
     // For the architectures which don't have a single return instruction
     prependRetWithPatchableExit(MF, TII);
     break;

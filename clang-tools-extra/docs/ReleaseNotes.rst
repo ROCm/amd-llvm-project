@@ -67,17 +67,63 @@ Improvements to clang-tidy
 
   Flags classes where some, but not all, special member functions are user-defined.
 
+- The UseCERTSemantics option for the `misc-move-constructor-init
+  <http://clang.llvm.org/extra/clang-tidy/checks/misc-move-constructor-init.html>`_ check
+  has been removed as it duplicated the `modernize-pass-by-value
+  <http://clang.llvm.org/extra/clang-tidy/checks/modernize-pass-by-value.html>`_ check.
+
 - New `misc-move-forwarding-reference
   <http://clang.llvm.org/extra/clang-tidy/checks/misc-move-forwarding-reference.html>`_ check
 
   Warns when ``std::move`` is applied to a forwarding reference instead of
   ``std::forward``.
 
+- `misc-pointer-and-integral-operation` check was removed.
+
 - New `misc-use-after-move
   <http://clang.llvm.org/extra/clang-tidy/checks/misc-use-after-move.html>`_ check
 
   Warns if an object is used after it has been moved, without an intervening
   reinitialization.
+
+- New `cppcoreguidelines-no-malloc
+  <http://clang.llvm.org/extra/clang-tidy/checks/cppcoreguidelines-no-malloc.html>`_ check
+  warns if C-style memory management is used and suggests the use of RAII.
+
+- `modernize-make-unique
+  <http://clang.llvm.org/extra/clang-tidy/checks/modernize-make-unique.html>`_
+  and `modernize-make-shared
+  <http://clang.llvm.org/extra/clang-tidy/checks/modernize-make-shared.html>`_
+  now handle calls to the smart pointer's ``reset()`` method.
+
+- The `modernize-pass-by-value
+  <http://clang.llvm.org/extra/clang-tidy/checks/modernize-pass-by-value.html>`_ check
+  now has a ValuesOnly option to only warn about parameters that are passed by
+  value but not moved.
+
+- The `modernize-use-auto
+  <http://clang.llvm.org/extra/clang-tidy/checks/modernize-use-auto.html>`_ check
+  now warns about variable declarations that are initialized with a cast, or by
+  calling a templated function that behaves as a cast.
+
+- The modernize-use-default check has been renamed to `modernize-use-equals-default
+  <http://clang.llvm.org/extra/clang-tidy/checks/modernize-use-equals-default.html>`_.
+  
+- New `modernize-use-default-member-init
+  <http://clang.llvm.org/extra/clang-tidy/checks/modernize-use-default-member-init.html>`_ check
+
+  Converts a default constructor's member initializers into default member initializers.
+  Removes member initializers that are the same as a default member initializer.
+
+- New `modernize-use-equals-delete
+  <http://clang.llvm.org/extra/clang-tidy/checks/modernize-use-equals-delete.html>`_ check
+
+  Adds ``= delete`` to unimplemented private special member functions.
+
+- New `modernize-use-transparent-functors
+  <http://clang.llvm.org/extra/clang-tidy/checks/modernize-use-transparent-functors.html>`_ check
+
+  Replaces uses of non-transparent functors with transparent ones where applicable.
 
 - New `mpi-buffer-deref
   <http://clang.llvm.org/extra/clang-tidy/checks/mpi-buffer-deref.html>`_ check
@@ -95,6 +141,12 @@ Improvements to clang-tidy
   Warns about the performance overhead arising from concatenating strings using
   the ``operator+``, instead of ``operator+=``.
 
+- New `performance-type-promotion-in-math-fn
+  <http://clang.llvm.org/extra/clang-tidy/checks/performance-type-promotion-in-math-fn.html>`_ check
+
+  Replaces uses of C-style standard math functions with double parameters and float
+  arguments with an equivalent function that takes a float parameter.
+
 - `readability-container-size-empty
   <http://clang.llvm.org/extra/clang-tidy/checks/readability-container-size-empty.html>`_ check
   supports arbitrary containers with with suitable ``empty()`` and ``size()``
@@ -110,6 +162,26 @@ Improvements to clang-tidy
 
   Flags function parameters of a pointer type that could be changed to point to
   a constant type instead.
+
+- New `readability-redundant-declaration
+  <http://clang.llvm.org/extra/clang-tidy/checks/readability-redundant-declaration.html>`_ check
+
+  Finds redundant variable and function declarations.
+
+- New `readability-redundant-function-ptr-dereference
+  <http://clang.llvm.org/extra/clang-tidy/checks/readability-redundant-function-ptr-dereference.html>`_ check
+
+  Finds redundant function pointer dereferences.
+
+- New `readability-redundant-member-init
+  <http://clang.llvm.org/extra/clang-tidy/checks/readability-redundant-member-init.html>`_ check
+
+  Flags member initializations that are unnecessary because the same default
+  constructor would be called if they were not present.
+
+- The `readability-redundant-string-cstr
+  <http://clang.llvm.org/extra/clang-tidy/checks/readability-redundant-string-cstr.html>`_ check
+  now warns about redundant calls to data() too.
 
 Fixed bugs:
 

@@ -109,6 +109,13 @@ static cl::opt<bool>
                    cl::Hidden, cl::init(false), cl::ZeroOrMore,
                    cl::cat(PollyCategory));
 
+bool polly::PollyAllowUnsignedOperations;
+static cl::opt<bool, true> XPollyAllowUnsignedOperations(
+    "polly-allow-unsigned-operations",
+    cl::desc("Allow unsigned operations such as comparisons or zero-extends."),
+    cl::location(PollyAllowUnsignedOperations), cl::Hidden, cl::ZeroOrMore,
+    cl::init(true), cl::cat(PollyCategory));
+
 bool polly::PollyUseRuntimeAliasChecks;
 static cl::opt<bool, true> XPollyUseRuntimeAliasChecks(
     "polly-use-runtime-alias-checks",
@@ -188,7 +195,31 @@ StringRef polly::PollySkipFnAttr = "polly.skip.fn";
 //===----------------------------------------------------------------------===//
 // Statistics.
 
-STATISTIC(ValidRegion, "Number of regions that a valid part of Scop");
+STATISTIC(NumScopRegions, "Number of scops");
+STATISTIC(NumLoopsInScop, "Number of loops in scops");
+STATISTIC(NumScopsDepthOne, "Number of scops with maximal loop depth 1");
+STATISTIC(NumScopsDepthTwo, "Number of scops with maximal loop depth 2");
+STATISTIC(NumScopsDepthThree, "Number of scops with maximal loop depth 3");
+STATISTIC(NumScopsDepthFour, "Number of scops with maximal loop depth 4");
+STATISTIC(NumScopsDepthFive, "Number of scops with maximal loop depth 5");
+STATISTIC(NumScopsDepthLarger,
+          "Number of scops with maximal loop depth 6 and larger");
+STATISTIC(NumProfScopRegions, "Number of scops (profitable scops only)");
+STATISTIC(NumLoopsInProfScop,
+          "Number of loops in scops (profitable scops only)");
+STATISTIC(NumLoopsOverall, "Number of total loops");
+STATISTIC(NumProfScopsDepthOne,
+          "Number of scops with maximal loop depth 1 (profitable scops only)");
+STATISTIC(NumProfScopsDepthTwo,
+          "Number of scops with maximal loop depth 2 (profitable scops only)");
+STATISTIC(NumProfScopsDepthThree,
+          "Number of scops with maximal loop depth 3 (profitable scops only)");
+STATISTIC(NumProfScopsDepthFour,
+          "Number of scops with maximal loop depth 4 (profitable scops only)");
+STATISTIC(NumProfScopsDepthFive,
+          "Number of scops with maximal loop depth 5 (profitable scops only)");
+STATISTIC(NumProfScopsDepthLarger, "Number of scops with maximal loop depth 6 "
+                                   "and larger (profitable scops only)");
 
 class DiagnosticScopFound : public DiagnosticInfo {
 private:
@@ -314,12 +345,46 @@ bool ScopDetection::onlyValidRequiredInvariantLoads(
     return false;
 
   for (LoadInst *Load : RequiredILS)
-    if (!isHoistableLoad(Load, CurRegion, *LI, *SE))
+    if (!isHoistableLoad(Load, CurRegion, *LI, *SE, *DT))
       return false;
 
   Context.RequiredILS.insert(RequiredILS.begin(), RequiredILS.end());
 
   return true;
+}
+
+bool ScopDetection::involvesMultiplePtrs(const SCEV *S0, const SCEV *S1,
+                                         Loop *Scope) const {
+  SetVector<Value *> Values;
+  findValues(S0, *SE, Values);
+  if (S1)
+    findValues(S1, *SE, Values);
+
+  SmallPtrSet<Value *, 8> PtrVals;
+  for (auto *V : Values) {
+    if (auto *P2I = dyn_cast<PtrToIntInst>(V))
+      V = P2I->getOperand(0);
+
+    if (!V->getType()->isPointerTy())
+      continue;
+
+    auto *PtrSCEV = SE->getSCEVAtScope(V, Scope);
+    if (isa<SCEVConstant>(PtrSCEV))
+      continue;
+
+    auto *BasePtr = dyn_cast<SCEVUnknown>(SE->getPointerBase(PtrSCEV));
+    if (!BasePtr)
+      return true;
+
+    auto *BasePtrVal = BasePtr->getValue();
+    if (PtrVals.insert(BasePtrVal).second) {
+      for (auto *PtrVal : PtrVals)
+        if (PtrVal != BasePtrVal && !AA->isNoAlias(PtrVal, BasePtrVal))
+          return true;
+    }
+  }
+
+  return false;
 }
 
 bool ScopDetection::isAffine(const SCEV *S, Loop *Scope,
@@ -341,15 +406,19 @@ bool ScopDetection::isValidSwitch(BasicBlock &BB, SwitchInst *SI,
   Loop *L = LI->getLoopFor(&BB);
   const SCEV *ConditionSCEV = SE->getSCEVAtScope(Condition, L);
 
+  if (IsLoopBranch && L->isLoopLatch(&BB))
+    return false;
+
+  // Check for invalid usage of different pointers in one expression.
+  if (involvesMultiplePtrs(ConditionSCEV, nullptr, L))
+    return false;
+
   if (isAffine(ConditionSCEV, L, Context))
     return true;
 
-  if (!IsLoopBranch && AllowNonAffineSubRegions &&
+  if (AllowNonAffineSubRegions &&
       addOverApproximatedRegion(RI->getRegionFor(&BB), Context))
     return true;
-
-  if (IsLoopBranch)
-    return false;
 
   return invalid<ReportNonAffBranch>(Context, /*Assert=*/true, &BB,
                                      ConditionSCEV, ConditionSCEV, SI);
@@ -358,6 +427,10 @@ bool ScopDetection::isValidSwitch(BasicBlock &BB, SwitchInst *SI,
 bool ScopDetection::isValidBranch(BasicBlock &BB, BranchInst *BI,
                                   Value *Condition, bool IsLoopBranch,
                                   DetectionContext &Context) const {
+
+  // Constant integer conditions are always affine.
+  if (isa<ConstantInt>(Condition))
+    return true;
 
   if (BinaryOperator *BinOp = dyn_cast<BinaryOperator>(Condition)) {
     auto Opcode = BinOp->getOpcode();
@@ -384,9 +457,23 @@ bool ScopDetection::isValidBranch(BasicBlock &BB, BranchInst *BI,
       isa<UndefValue>(ICmp->getOperand(1)))
     return invalid<ReportUndefOperand>(Context, /*Assert=*/true, &BB, ICmp);
 
-  Loop *L = LI->getLoopFor(ICmp->getParent());
+  Loop *L = LI->getLoopFor(&BB);
   const SCEV *LHS = SE->getSCEVAtScope(ICmp->getOperand(0), L);
   const SCEV *RHS = SE->getSCEVAtScope(ICmp->getOperand(1), L);
+
+  // If unsigned operations are not allowed try to approximate the region.
+  if (ICmp->isUnsigned() && !PollyAllowUnsignedOperations)
+    return !IsLoopBranch && AllowNonAffineSubRegions &&
+           addOverApproximatedRegion(RI->getRegionFor(&BB), Context);
+
+  // Check for invalid usage of different pointers in one expression.
+  if (ICmp->isEquality() && involvesMultiplePtrs(LHS, nullptr, L) &&
+      involvesMultiplePtrs(RHS, nullptr, L))
+    return false;
+
+  // Check for invalid usage of different pointers in a relational comparison.
+  if (ICmp->isRelational() && involvesMultiplePtrs(LHS, RHS, L))
+    return false;
 
   if (isAffine(LHS, L, Context) && isAffine(RHS, L, Context))
     return true;
@@ -425,10 +512,6 @@ bool ScopDetection::isValidCFG(BasicBlock &BB, bool IsLoopBranch,
   if (isa<UndefValue>(Condition))
     return invalid<ReportUndefCond>(Context, /*Assert=*/true, TI, &BB);
 
-  // Constant integer conditions are always affine.
-  if (isa<ConstantInt>(Condition))
-    return true;
-
   if (BranchInst *BI = dyn_cast<BranchInst>(TI))
     return isValidBranch(BB, BI, Condition, IsLoopBranch, Context);
 
@@ -458,17 +541,17 @@ bool ScopDetection::isValidCallInst(CallInst &CI,
 
   if (AllowModrefCall) {
     switch (AA->getModRefBehavior(CalledFunction)) {
-    case llvm::FMRB_UnknownModRefBehavior:
+    case FMRB_UnknownModRefBehavior:
       return false;
-    case llvm::FMRB_DoesNotAccessMemory:
-    case llvm::FMRB_OnlyReadsMemory:
+    case FMRB_DoesNotAccessMemory:
+    case FMRB_OnlyReadsMemory:
       // Implicitly disable delinearization since we have an unknown
       // accesses with an unknown access function.
       Context.HasUnknownAccess = true;
       Context.AST.add(&CI);
       return true;
-    case llvm::FMRB_OnlyReadsArgumentPointees:
-    case llvm::FMRB_OnlyAccessesArgumentPointees:
+    case FMRB_OnlyReadsArgumentPointees:
+    case FMRB_OnlyAccessesArgumentPointees:
       for (const auto &Arg : CI.arg_operands()) {
         if (!Arg->getType()->isPointerTy())
           continue;
@@ -491,6 +574,8 @@ bool ScopDetection::isValidCallInst(CallInst &CI,
       Context.AST.add(&CI);
       return true;
     case FMRB_DoesNotReadMemory:
+    case FMRB_OnlyAccessesInaccessibleMem:
+    case FMRB_OnlyAccessesInaccessibleOrArgMem:
       return false;
     }
   }
@@ -587,29 +672,16 @@ bool ScopDetection::isInvariant(const Value &Val, const Region &Reg) const {
 /// always add and verify the assumption that for all subscript expressions
 /// 'exp' the inequality 0 <= exp < size holds. Hence, we will also verify
 /// that 0 <= size, which means smax(0, size) == size.
-struct SCEVRemoveMax : public SCEVVisitor<SCEVRemoveMax, const SCEV *> {
+class SCEVRemoveMax : public SCEVRewriteVisitor<SCEVRemoveMax> {
 public:
-  static const SCEV *remove(ScalarEvolution &SE, const SCEV *Expr,
-                            std::vector<const SCEV *> *Terms = nullptr) {
-
-    SCEVRemoveMax D(SE, Terms);
-    return D.visit(Expr);
+  static const SCEV *rewrite(const SCEV *Scev, ScalarEvolution &SE,
+                             std::vector<const SCEV *> *Terms = nullptr) {
+    SCEVRemoveMax Rewriter(SE, Terms);
+    return Rewriter.visit(Scev);
   }
 
   SCEVRemoveMax(ScalarEvolution &SE, std::vector<const SCEV *> *Terms)
-      : SE(SE), Terms(Terms) {}
-
-  const SCEV *visitTruncateExpr(const SCEVTruncateExpr *Expr) { return Expr; }
-
-  const SCEV *visitZeroExtendExpr(const SCEVZeroExtendExpr *Expr) {
-    return Expr;
-  }
-
-  const SCEV *visitSignExtendExpr(const SCEVSignExtendExpr *Expr) {
-    return SE.getSignExtendExpr(visit(Expr->getOperand()), Expr->getType());
-  }
-
-  const SCEV *visitUDivExpr(const SCEVUDivExpr *Expr) { return Expr; }
+      : SCEVRewriteVisitor(SE), Terms(Terms) {}
 
   const SCEV *visitSMaxExpr(const SCEVSMaxExpr *Expr) {
     if ((Expr->getNumOperands() == 2) && Expr->getOperand(0)->isZero()) {
@@ -622,42 +694,7 @@ public:
     return Expr;
   }
 
-  const SCEV *visitUMaxExpr(const SCEVUMaxExpr *Expr) { return Expr; }
-
-  const SCEV *visitUnknown(const SCEVUnknown *Expr) { return Expr; }
-
-  const SCEV *visitCouldNotCompute(const SCEVCouldNotCompute *Expr) {
-    return Expr;
-  }
-
-  const SCEV *visitConstant(const SCEVConstant *Expr) { return Expr; }
-
-  const SCEV *visitAddRecExpr(const SCEVAddRecExpr *Expr) {
-    SmallVector<const SCEV *, 5> NewOps;
-    for (const SCEV *Op : Expr->operands())
-      NewOps.push_back(visit(Op));
-
-    return SE.getAddRecExpr(NewOps, Expr->getLoop(), Expr->getNoWrapFlags());
-  }
-
-  const SCEV *visitAddExpr(const SCEVAddExpr *Expr) {
-    SmallVector<const SCEV *, 5> NewOps;
-    for (const SCEV *Op : Expr->operands())
-      NewOps.push_back(visit(Op));
-
-    return SE.getAddExpr(NewOps);
-  }
-
-  const SCEV *visitMulExpr(const SCEVMulExpr *Expr) {
-    SmallVector<const SCEV *, 5> NewOps;
-    for (const SCEV *Op : Expr->operands())
-      NewOps.push_back(visit(Op));
-
-    return SE.getMulExpr(NewOps);
-  }
-
 private:
-  ScalarEvolution &SE;
   std::vector<const SCEV *> *Terms;
 };
 
@@ -667,7 +704,7 @@ ScopDetection::getDelinearizationTerms(DetectionContext &Context,
   SmallVector<const SCEV *, 4> Terms;
   for (const auto &Pair : Context.Accesses[BasePointer]) {
     std::vector<const SCEV *> MaxTerms;
-    SCEVRemoveMax::remove(*SE, Pair.second, &MaxTerms);
+    SCEVRemoveMax::rewrite(Pair.second, *SE, &MaxTerms);
     if (MaxTerms.size() > 0) {
       Terms.insert(Terms.begin(), MaxTerms.begin(), MaxTerms.end());
       continue;
@@ -726,7 +763,7 @@ bool ScopDetection::hasValidArraySizes(DetectionContext &Context,
       auto *V = dyn_cast<Value>(Unknown->getValue());
       if (auto *Load = dyn_cast<LoadInst>(V)) {
         if (Context.CurRegion.contains(Load) &&
-            isHoistableLoad(Load, CurRegion, *LI, *SE))
+            isHoistableLoad(Load, CurRegion, *LI, *SE, *DT))
           Context.RequiredILS.insert(Load);
         continue;
       }
@@ -773,7 +810,7 @@ bool ScopDetection::computeAccessFunctions(
   for (const auto &Pair : Context.Accesses[BasePointer]) {
     const Instruction *Insn = Pair.first;
     auto *AF = Pair.second;
-    AF = SCEVRemoveMax::remove(*SE, AF);
+    AF = SCEVRemoveMax::rewrite(AF, *SE);
     bool IsNonAffine = false;
     TempMemoryAccesses.insert(std::make_pair(Insn, MemAcc(Insn, Shape)));
     MemAcc *Acc = &TempMemoryAccesses.find(Insn)->second;
@@ -935,7 +972,7 @@ bool ScopDetection::isValidAccess(Instruction *Inst, const SCEV *AF,
         Instruction *Inst = dyn_cast<Instruction>(Ptr.getValue());
         if (Inst && Context.CurRegion.contains(Inst)) {
           auto *Load = dyn_cast<LoadInst>(Inst);
-          if (Load && isHoistableLoad(Load, Context.CurRegion, *LI, *SE)) {
+          if (Load && isHoistableLoad(Load, Context.CurRegion, *LI, *SE, *DT)) {
             Context.RequiredILS.insert(Load);
             continue;
           }
@@ -989,7 +1026,7 @@ bool ScopDetection::isValidInstruction(Instruction &Inst,
     return invalid<ReportFuncCall>(Context, /*Assert=*/true, &Inst);
   }
 
-  if (!Inst.mayWriteToMemory() && !Inst.mayReadFromMemory()) {
+  if (!Inst.mayReadOrWriteMemory()) {
     if (!isa<AllocaInst>(Inst))
       return true;
 
@@ -1088,24 +1125,33 @@ bool ScopDetection::isValidLoop(Loop *L, DetectionContext &Context) const {
 }
 
 /// Return the number of loops in @p L (incl. @p L) that have a trip
-///        count that is not known to be less than MIN_LOOP_TRIP_COUNT.
-static int countBeneficialSubLoops(Loop *L, ScalarEvolution &SE) {
+///        count that is not known to be less than @MinProfitableTrips.
+ScopDetection::LoopStats
+ScopDetection::countBeneficialSubLoops(Loop *L, ScalarEvolution &SE,
+                                       unsigned MinProfitableTrips) const {
   auto *TripCount = SE.getBackedgeTakenCount(L);
 
-  int count = 1;
+  int NumLoops = 1;
+  int MaxLoopDepth = 1;
   if (auto *TripCountC = dyn_cast<SCEVConstant>(TripCount))
     if (TripCountC->getType()->getScalarSizeInBits() <= 64)
-      if (TripCountC->getValue()->getZExtValue() < MIN_LOOP_TRIP_COUNT)
-        count -= 1;
+      if (TripCountC->getValue()->getZExtValue() <= MinProfitableTrips)
+        NumLoops -= 1;
 
-  for (auto &SubLoop : *L)
-    count += countBeneficialSubLoops(SubLoop, SE);
+  for (auto &SubLoop : *L) {
+    LoopStats Stats = countBeneficialSubLoops(SubLoop, SE, MinProfitableTrips);
+    NumLoops += Stats.NumLoops;
+    MaxLoopDepth += std::max(MaxLoopDepth, Stats.MaxDepth + 1);
+  }
 
-  return count;
+  return {NumLoops, MaxLoopDepth};
 }
 
-int ScopDetection::countBeneficialLoops(Region *R) const {
+ScopDetection::LoopStats
+ScopDetection::countBeneficialLoops(Region *R,
+                                    unsigned MinProfitableTrips) const {
   int LoopNum = 0;
+  int MaxLoopDepth = 0;
 
   auto L = LI->getLoopFor(R->getEntry());
   L = L ? R->outermostLoopInRegion(L) : nullptr;
@@ -1115,10 +1161,14 @@ int ScopDetection::countBeneficialLoops(Region *R) const {
       L ? L->getSubLoopsVector() : std::vector<Loop *>(LI->begin(), LI->end());
 
   for (auto &SubLoop : SubLoops)
-    if (R->contains(SubLoop))
-      LoopNum += countBeneficialSubLoops(SubLoop, *SE);
+    if (R->contains(SubLoop)) {
+      LoopStats Stats =
+          countBeneficialSubLoops(SubLoop, *SE, MinProfitableTrips);
+      LoopNum += Stats.NumLoops;
+      MaxLoopDepth = std::max(MaxLoopDepth, Stats.MaxDepth);
+    }
 
-  return LoopNum;
+  return {LoopNum, MaxLoopDepth};
 }
 
 Region *ScopDetection::expandRegion(Region &R) {
@@ -1184,16 +1234,13 @@ static bool regionWithoutLoops(Region &R, LoopInfo *LI) {
   return true;
 }
 
-unsigned ScopDetection::removeCachedResultsRecursively(const Region &R) {
-  unsigned Count = 0;
+void ScopDetection::removeCachedResultsRecursively(const Region &R) {
   for (auto &SubRegion : R) {
     if (ValidRegions.count(SubRegion.get())) {
       removeCachedResults(*SubRegion.get());
-      ++Count;
     } else
-      Count += removeCachedResultsRecursively(*SubRegion);
+      removeCachedResultsRecursively(*SubRegion);
   }
-  return Count;
 }
 
 void ScopDetection::removeCachedResults(const Region &R) {
@@ -1216,7 +1263,6 @@ void ScopDetection::findScops(Region &R) {
   if (HasErrors) {
     removeCachedResults(R);
   } else {
-    ++ValidRegion;
     ValidRegions.insert(&R);
     return;
   }
@@ -1254,10 +1300,7 @@ void ScopDetection::findScops(Region &R) {
     R.addSubRegion(ExpandedR, true);
     ValidRegions.insert(ExpandedR);
     removeCachedResults(*CurrentRegion);
-
-    // Erase all (direct and indirect) children of ExpandedR from the valid
-    // regions and update the number of valid regions.
-    ValidRegion -= removeCachedResultsRecursively(*ExpandedR);
+    removeCachedResultsRecursively(*ExpandedR);
   }
 }
 
@@ -1341,7 +1384,7 @@ bool ScopDetection::isProfitableRegion(DetectionContext &Context) const {
   if (!Context.hasStores || !Context.hasLoads)
     return invalid<ReportUnprofitable>(Context, /*Assert=*/true, &CurRegion);
 
-  int NumLoops = countBeneficialLoops(&CurRegion);
+  int NumLoops = countBeneficialLoops(&CurRegion, MIN_LOOP_TRIP_COUNT).NumLoops;
   int NumAffineLoops = NumLoops - Context.BoxedLoopsSet.size();
 
   // Scops with at least two loops may allow either loop fusion or tiling and
@@ -1502,6 +1545,39 @@ bool ScopDetection::isReducibleRegion(Region &R, DebugLoc &DbgLoc) const {
   return true;
 }
 
+void updateLoopCountStatistic(ScopDetection::LoopStats Stats,
+                              bool OnlyProfitable) {
+  if (!OnlyProfitable) {
+    NumLoopsInScop += Stats.NumLoops;
+    if (Stats.MaxDepth == 1)
+      NumScopsDepthOne++;
+    else if (Stats.MaxDepth == 2)
+      NumScopsDepthTwo++;
+    else if (Stats.MaxDepth == 3)
+      NumScopsDepthThree++;
+    else if (Stats.MaxDepth == 4)
+      NumScopsDepthFour++;
+    else if (Stats.MaxDepth == 5)
+      NumScopsDepthFive++;
+    else
+      NumScopsDepthLarger++;
+  } else {
+    NumLoopsInProfScop += Stats.NumLoops;
+    if (Stats.MaxDepth == 1)
+      NumProfScopsDepthOne++;
+    else if (Stats.MaxDepth == 2)
+      NumProfScopsDepthTwo++;
+    else if (Stats.MaxDepth == 3)
+      NumProfScopsDepthThree++;
+    else if (Stats.MaxDepth == 4)
+      NumProfScopsDepthFour++;
+    else if (Stats.MaxDepth == 5)
+      NumProfScopsDepthFive++;
+    else
+      NumProfScopsDepthLarger++;
+  }
+}
+
 bool ScopDetection::runOnFunction(llvm::Function &F) {
   LI = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
   RI = &getAnalysis<RegionInfoPass>().getRegionInfo();
@@ -1523,6 +1599,8 @@ bool ScopDetection::runOnFunction(llvm::Function &F) {
 
   findScops(*TopRegion);
 
+  NumScopRegions += ValidRegions.size();
+
   // Prune non-profitable regions.
   for (auto &DIt : DetectionContextMap) {
     auto &DC = DIt.getSecond();
@@ -1530,11 +1608,18 @@ bool ScopDetection::runOnFunction(llvm::Function &F) {
       continue;
     if (!ValidRegions.count(&DC.CurRegion))
       continue;
-    if (isProfitableRegion(DC))
+    LoopStats Stats = countBeneficialLoops(&DC.CurRegion, 0);
+    updateLoopCountStatistic(Stats, false /* OnlyProfitable */);
+    if (isProfitableRegion(DC)) {
+      updateLoopCountStatistic(Stats, true /* OnlyProfitable */);
       continue;
+    }
 
     ValidRegions.remove(&DC.CurRegion);
   }
+
+  NumProfScopRegions += ValidRegions.size();
+  NumLoopsOverall += countBeneficialLoops(TopRegion, 0).NumLoops;
 
   // Only makes sense when we tracked errors.
   if (PollyTrackFailures)
@@ -1578,7 +1663,7 @@ void polly::ScopDetection::verifyAnalysis() const {
 
 void ScopDetection::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<LoopInfoWrapperPass>();
-  AU.addRequired<ScalarEvolutionWrapperPass>();
+  AU.addRequiredTransitive<ScalarEvolutionWrapperPass>();
   AU.addRequired<DominatorTreeWrapperPass>();
   // We also need AA and RegionInfo when we are verifying analysis.
   AU.addRequiredTransitive<AAResultsWrapperPass>();

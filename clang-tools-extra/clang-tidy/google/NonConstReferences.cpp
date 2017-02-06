@@ -27,8 +27,8 @@ NonConstReferences::NonConstReferences(StringRef Name,
           utils::options::parseStringList(Options.get("WhiteListTypes", ""))) {}
 
 void NonConstReferences::storeOptions(ClangTidyOptions::OptionMap &Opts) {
-   Options.store(Opts, "WhiteListTypes",
-                 utils::options::serializeStringList(WhiteListTypes));
+  Options.store(Opts, "WhiteListTypes",
+                utils::options::serializeStringList(WhiteListTypes));
 }
 
 void NonConstReferences::registerMatchers(MatchFinder *Finder) {
@@ -56,7 +56,7 @@ void NonConstReferences::check(const MatchFinder::MatchResult &Result) {
   if (!Function->isCanonicalDecl())
     return;
 
-  if (const CXXMethodDecl *Method = dyn_cast<CXXMethodDecl>(Function)) {
+  if (const auto *Method = dyn_cast<CXXMethodDecl>(Function)) {
     // Don't warn on implementations of an interface using references.
     if (Method->begin_overridden_methods() != Method->end_overridden_methods())
       return;
@@ -133,9 +133,8 @@ void NonConstReferences::check(const MatchFinder::MatchResult &Result) {
     return;
 
   if (Parameter->getName().empty()) {
-    diag(Parameter->getLocation(),
-         "non-const reference parameter at index %0, "
-         "make it const or use a pointer")
+    diag(Parameter->getLocation(), "non-const reference parameter at index %0, "
+                                   "make it const or use a pointer")
         << Parameter->getFunctionScopeIndex();
   } else {
     diag(Parameter->getLocation(),

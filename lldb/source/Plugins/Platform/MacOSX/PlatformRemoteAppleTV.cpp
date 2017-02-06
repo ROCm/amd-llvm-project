@@ -232,7 +232,7 @@ Error PlatformRemoteAppleTV::ResolveExecutable(
         error.SetErrorStringWithFormat(
             "'%s' doesn't contain any '%s' platform architectures: %s",
             resolved_module_spec.GetFileSpec().GetPath().c_str(),
-            GetPluginName().GetCString(), arch_names.GetString().c_str());
+            GetPluginName().GetCString(), arch_names.GetData());
       } else {
         error.SetErrorStringWithFormat(
             "'%s' is not readable",
@@ -258,6 +258,7 @@ PlatformRemoteAppleTV::GetContainedFilesIntoVectorOfStringsCallback(
 
 bool PlatformRemoteAppleTV::UpdateSDKDirectoryInfosIfNeeded() {
   Log *log = lldb_private::GetLogIfAllCategoriesSet(LIBLLDB_LOG_HOST);
+  std::lock_guard<std::mutex> guard(m_sdk_dir_mutex);
   if (m_sdk_directory_infos.empty()) {
     const char *device_support_dir = GetDeviceSupportDirectory();
     if (log) {
@@ -271,8 +272,8 @@ bool PlatformRemoteAppleTV::UpdateSDKDirectoryInfosIfNeeded() {
       const bool find_other = false;
 
       SDKDirectoryInfoCollection builtin_sdk_directory_infos;
-      FileSpec::EnumerateDirectory(m_device_support_directory.c_str(),
-                                   find_directories, find_files, find_other,
+      FileSpec::EnumerateDirectory(m_device_support_directory, find_directories,
+                                   find_files, find_other,
                                    GetContainedFilesIntoVectorOfStringsCallback,
                                    &builtin_sdk_directory_infos);
 
@@ -530,7 +531,7 @@ bool PlatformRemoteAppleTV::GetFileInSDK(const char *platform_file_path,
 
       const char *paths_to_try[] = {"Symbols", "", "Symbols.Internal", nullptr};
       for (size_t i = 0; paths_to_try[i] != nullptr; i++) {
-        local_file.SetFile(sdkroot_path.c_str(), false);
+        local_file.SetFile(sdkroot_path, false);
         if (paths_to_try[i][0] != '\0')
           local_file.AppendPathComponent(paths_to_try[i]);
         local_file.AppendPathComponent(platform_file_path);

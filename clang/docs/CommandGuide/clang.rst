@@ -167,16 +167,6 @@ Language Selection and Mode Options
 
  Enable the "Blocks" language feature.
 
-.. option:: -fobjc-gc-only
-
- Indicate that Objective-C code should be compiled in GC-only mode, which only
- works when Objective-C Garbage Collection is enabled.
-
-.. option:: -fobjc-gc
-
- Indicate that Objective-C code should be compiled in hybrid-GC mode, which
- works with both GC and non-GC mode.
-
 .. option:: -fobjc-abi-version=version
 
  Select the Objective-C ABI version to use. Available versions are 1 (legacy
@@ -226,7 +216,7 @@ number of cross compilers, or may only support a native target.
 Code Generation Options
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-.. option:: -O0, -O1, -O2, -O3, -Ofast, -Os, -Oz, -O, -O4
+.. option:: -O0, -O1, -O2, -O3, -Ofast, -Os, -Oz, -Og, -O, -O4
 
   Specify which optimization level to use:
 
@@ -251,6 +241,9 @@ Code Generation Options
 
     :option:`-Oz` Like :option:`-Os` (and thus :option:`-O2`), but reduces code
     size further.
+
+    :option:`-Og` Like :option:`-O1`. In future versions, this option might 
+    disable different optimizations in order to improve debuggability.
 
     :option:`-O` Equivalent to :option:`-O2`.
 
