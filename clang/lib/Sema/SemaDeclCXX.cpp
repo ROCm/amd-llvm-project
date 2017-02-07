@@ -7463,10 +7463,6 @@ void Sema::DeclareAMPSerializer(CXXRecordDecl *ClassDecl, DeclarationName Name) 
                          CXXAMPRestrictCPUAttr(CurrentLocation, Context, 0));
   SerializeFunc->addAttr(::new (Context)
                          AnnotateAttr(CurrentLocation, Context, "serialize", 0));
-
-  // don't generate any debug info
-  SerializeFunc->addAttr(new (Context) NoDebugAttr(CurrentLocation, Context, 0));
-
   ClassDecl->addDecl(SerializeFunc);
   // Now we've obtained a valid Name. Use that to recursively declare
   // __cxxamp_serialize() for member classes. TBD: base classes?
@@ -7607,10 +7603,6 @@ void Sema::DeclareAMPDeserializer(CXXRecordDecl *ClassDecl, AMPDeserializerArgs 
   Constructor->addAttr(::new (Context) CXXAMPRestrictAMPAttr(ClassLoc, Context, 0));
   Constructor->addAttr(::new (Context)
     AnnotateAttr(ClassLoc, Context, "auto_deserialize", 0));
-
-  // don't generate any debug info
-  Constructor->addAttr(new (Context) NoDebugAttr(ClassLoc, Context, 0));
-
   // Introduce this constructor into its scope.
   if (Scope *S = getScopeForContext(ClassDecl))
     PushOnScopeChains(Constructor, S, false);
@@ -11640,10 +11632,6 @@ void Sema::DeclareAMPTrampolineName(CXXRecordDecl *ClassDecl, DeclarationName Na
      Trampoline->addAttr(new (Context) CXXAMPRestrictAMPAttr(CurrentLocation, Context, 0));
   Trampoline->addAttr(new (Context) CXXAMPRestrictCPUAttr(CurrentLocation, Context, 0));
   Trampoline->addAttr(new (Context) AnnotateAttr(CurrentLocation, Context, "__cxxamp_trampoline_name", 0));
-
-  // don't generate any debug info
-  Trampoline->addAttr(new (Context) NoDebugAttr(CurrentLocation, Context, 0));
-
   ClassDecl->addDecl(Trampoline);
   // Generate definition
   MarkFunctionReferenced(CurrentLocation, Trampoline);
@@ -11691,10 +11679,6 @@ void CreateDummyAMPTrampoline(Sema& S, DeclarationName Name, CXXRecordDecl *&Cla
    // Manually add this Attribute on this stage to avoid
    //     ClassDecl->getCXXAMPDeserializationConstructor() == NULL
    Trampoline->addAttr(::new (Context) AnnotateAttr(CurrentLocation, Context, "dummy_deserialize", 0));
-
-   // don't generate any debug info
-   Trampoline->addAttr(new (Context) NoDebugAttr(CurrentLocation, Context, 0));
-
    ClassDecl->addDecl(Trampoline);
 }
 
@@ -11903,10 +11887,6 @@ void Sema::DeclareAMPTrampoline(CXXRecordDecl *ClassDecl,
   // so that parallel_for_each can find it.
   Trampoline->addAttr(::new (Context) CXXAMPRestrictCPUAttr(CurrentLocation, Context, 0));
   Trampoline->addAttr(::new (Context) AnnotateAttr(CurrentLocation, Context, "__cxxamp_trampoline", 0));
-
-  // don't generate any debug info
-  Trampoline->addAttr(new (Context) NoDebugAttr(CurrentLocation, Context, 0));
-
   ClassDecl->addDecl(Trampoline);
   // Generate definition
   MarkFunctionReferenced(CurrentLocation, Trampoline);
