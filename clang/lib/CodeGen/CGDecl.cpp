@@ -252,6 +252,12 @@ llvm::Constant *CodeGenModule::getOrCreateStaticVarDecl(
 
   // Make sure the result is of the correct type.
   unsigned ExpectedAddrSpace = getContext().getTargetAddressSpace(Ty);
+
+  // HCC tile_static pointer would be in generic address space
+  if (Ty.getAddressSpace() == LangAS::hcc_tilestatic) {
+    ExpectedAddrSpace = getContext().getTargetAddressSpace(LangAS::hcc_generic);
+  }
+
   llvm::Constant *Addr = GV;
   if (AddrSpace != ExpectedAddrSpace) {
     llvm::PointerType *PTy = llvm::PointerType::get(LTy, ExpectedAddrSpace);
