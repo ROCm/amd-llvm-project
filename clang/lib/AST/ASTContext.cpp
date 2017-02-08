@@ -8004,7 +8004,7 @@ QualType ASTContext::mergeTypes(QualType LHS, QualType RHS,
   Qualifiers LQuals = LHSCan.getLocalQualifiers();
   Qualifiers RQuals = RHSCan.getLocalQualifiers();
   if (LQuals != RQuals) {
-    if (getLangOpts().OpenCL) {
+    if (getLangOpts().OpenCL || getLangOpts().CPlusPlusAMP) {
       if (LHSCan.getUnqualifiedType() != RHSCan.getUnqualifiedType() ||
           LQuals.getCVRQualifiers() != RQuals.getCVRQualifiers())
         return QualType();

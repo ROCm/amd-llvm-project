@@ -6483,7 +6483,7 @@ static QualType checkConditionalPointerCompatibility(Sema &S, ExprResult &LHS,
     // reason, but this is what gcc does, and we do have to pick
     // to get a consistent AST.
     QualType incompatTy;
-    if (S.getLangOpts().OpenCL) {
+    if (S.getLangOpts().OpenCL && S.getLangOpts().CPlusPlusAMP) {
       // OpenCL v1.1 s6.5 - Conversion between pointers to distinct address
       // spaces is disallowed.
       unsigned ResultAddrSpace;

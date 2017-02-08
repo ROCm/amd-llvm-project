@@ -438,12 +438,10 @@ public:
         // for __constant can be used as __generic.
         (getAddressSpace() == LangAS::opencl_generic &&
          other.getAddressSpace() != LangAS::opencl_constant) ||
-        // HCC AMDGPU hack
-        // generic address space (4) is superset of:
-        // private address space (0)
-        // global address space  (1)
-        // group address space   (3)
-        ((getAddressSpace() == 4) && (other.getAddressSpace() != 2));
+        // HCC
+        // default address space is superset of tile_static address space
+        ((getAddressSpace() == 0) &&
+         (other.getAddressSpace() == LangAS::hcc_tilestatic));
   }
 
   /// Determines if these qualifiers compatibly include another set.
