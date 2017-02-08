@@ -37,6 +37,7 @@ enum ID {
   cuda_shared,
 
   hcc_tilestatic,
+  hcc_generic,
 
   Last,
   Count = Last-Offset
