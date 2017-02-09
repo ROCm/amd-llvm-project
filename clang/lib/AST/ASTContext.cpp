@@ -9448,7 +9448,7 @@ uint64_t ASTContext::getTargetNullPointerValue(QualType QT) const {
   else
     AS = QT->getPointeeType().getAddressSpace();
 
-  return getTargetInfo().getNullPointerValue(AS);
+  return getTargetInfo().getNullPointerValue(AS, LangOpts);
 }
 
 // Explicitly instantiate this in case a Redeclarable<T> is used from a TU that
