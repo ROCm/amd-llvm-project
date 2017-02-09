@@ -1863,6 +1863,20 @@ void CodeGenModule::CompleteDIClassType(const CXXMethodDecl* D) {
     }
 }
 
+static bool isWhiteListForGridLaunch(const ValueDecl* D) {
+  if (!isa<CXXConstructorDecl>(D))
+    return false;
+  const CXXConstructorDecl* CtorD = dyn_cast<CXXConstructorDecl>(D);
+  StringRef ClassName = CtorD->getParent()->getName();
+  if (ClassName.find("gl_dim3") == StringRef::npos &&
+      ClassName.find("grid_launch_parm_cxx") == StringRef::npos &&
+      ClassName.find("grid_launch_parm") == StringRef::npos) {
+    return false;
+  }
+  return true;
+}
+
+
 void CodeGenModule::EmitGlobalDefinition(GlobalDecl GD, llvm::GlobalValue *GV) {
   const auto *D = cast<ValueDecl>(GD.getDecl());
 
@@ -1870,14 +1884,10 @@ void CodeGenModule::EmitGlobalDefinition(GlobalDecl GD, llvm::GlobalValue *GV) {
   if (LangOpts.CPlusPlusAMP && !CodeGenOpts.AMPCPU) {
     if (CodeGenOpts.AMPIsDevice) {
       // If -famp-is-device switch is on, we are in GPU build path.
-      // Since we will emit both CPU codes and GPU codes to make C++ mangling
-      // algorithm happy, we won't reject anything other than ones with only
-      // restrict(cpu). Another optimization pass will remove all CPU codes.
       if (!D->hasAttr<CXXAMPRestrictAMPAttr>() && !D->hasAttr<HCGridLaunchAttr>() &&
           // let grid_launch_parm_cxx ctor pass
-          !isa<CXXConstructorDecl>(D)) {
+          !isWhiteListForGridLaunch(D))
         return;
-      }
     } else {
       if (D->hasAttr<CXXAMPRestrictAMPAttr>()&&
          !D->hasAttr<CXXAMPRestrictCPUAttr>())
