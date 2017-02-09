@@ -21,9 +21,9 @@ void kernel1(grid_launch_parm glp, int *x)
 [[hc_waves_per_eu(0,0)]]
 [[hc_waves_per_eu(-2,-1)]]
 [[hc_waves_per_eu(1,-2)]]
-[[hc_waves_per_eu(1,"fiji")]] // expected-error{{'hc_waves_per_eu' attribute requires an integer constant}}
-[[hc_waves_per_eu(1,2,"unknown")]] // expected-error{{invalid AMD GPU ISA version parameter 'unknown'}}
-[[hc_waves_per_eu(1,2,fiji)]] // expected-error{{use of undeclared identifier 'fiji'}}
+[[hc_waves_per_eu(1,"gfx803")]] // expected-error{{'hc_waves_per_eu' attribute requires an integer constant}}
+[[hc_waves_per_eu(1,2,"fiji")]] // expected-error{{invalid AMD GPU ISA version parameter 'fiji'}}
+[[hc_waves_per_eu(1,2,gfx803)]] // expected-error{{use of undeclared identifier 'gfx803'}}
 [[hc_waves_per_eu(1,2,x)]] // expected-error{{'hc_waves_per_eu' attribute requires a string}}
 
 [[hc_flat_workgroup_size]] // expected-error{{'hc_flat_workgroup_size' attribute takes at least 1 argument}}
@@ -40,9 +40,9 @@ void kernel1(grid_launch_parm glp, int *x)
 [[hc_flat_workgroup_size(0,0)]]
 [[hc_flat_workgroup_size(-2,-1)]]
 [[hc_flat_workgroup_size(2,1)]] // expected-error{{'hc_flat_workgroup_size' attribute argument is invalid: min must not be greater than max}}
-[[hc_flat_workgroup_size(1,"fiji")]] // expected-error{{'hc_flat_workgroup_size' attribute requires an integer constant}}
-[[hc_flat_workgroup_size(1,2,"unknown")]] // expected-error{{invalid AMD GPU ISA version parameter 'unknown'}}
-[[hc_flat_workgroup_size(1,2,fiji)]] // expected-error{{use of undeclared identifier 'fiji'}}
+[[hc_flat_workgroup_size(1,"gfx803")]] // expected-error{{'hc_flat_workgroup_size' attribute requires an integer constant}}
+[[hc_flat_workgroup_size(1,2,"fiji")]] // expected-error{{invalid AMD GPU ISA version parameter 'fiji'}}
+[[hc_flat_workgroup_size(1,2,gfx803)]] // expected-error{{use of undeclared identifier 'gfx803'}}
 [[hc_flat_workgroup_size(1,2,x)]] // expected-error{{'hc_flat_workgroup_size' attribute requires a string}}
 
 [[hc_max_workgroup_dim]] // expected-error{{'hc_max_workgroup_dim' attribute takes at least 1 argument}}
@@ -58,11 +58,11 @@ void kernel1(grid_launch_parm glp, int *x)
 [[hc_max_workgroup_dim(1,1,0)]]
 [[hc_max_workgroup_dim(-1,1,2)]]
 [[hc_max_workgroup_dim(10000000000000,1,2)]] // expected-error{{integer constant expression evaluates to value 10000000000000 that cannot be represented in a 32-bit unsigned integer type}}
-[[hc_max_workgroup_dim(1,"fiji")]] // expected-error{{'hc_max_workgroup_dim' attribute takes at least 3 arguments}}
-[[hc_max_workgroup_dim(1,2,"fiji")]] // expected-error{{'hc_max_workgroup_dim' attribute requires an integer constant}}
-[[hc_max_workgroup_dim(1,2,3,"fiji")]]
-[[hc_max_workgroup_dim(1,2,3,"unknown")]] // expected-error{{invalid AMD GPU ISA version parameter 'unknown'}}
-[[hc_max_workgroup_dim(1,2,3,fiji)]] // expected-error{{use of undeclared identifier 'fiji'}}
+[[hc_max_workgroup_dim(1,"gfx803")]] // expected-error{{'hc_max_workgroup_dim' attribute takes at least 3 arguments}}
+[[hc_max_workgroup_dim(1,2,"gfx803")]] // expected-error{{'hc_max_workgroup_dim' attribute requires an integer constant}}
+[[hc_max_workgroup_dim(1,2,3,"gfx803")]]
+[[hc_max_workgroup_dim(1,2,3,"fiji")]] // expected-error{{invalid AMD GPU ISA version parameter 'fiji'}}
+[[hc_max_workgroup_dim(1,2,3,gfx803)]] // expected-error{{use of undeclared identifier 'gfx803'}}
 [[hc_max_workgroup_dim(1,2,3,x)]] // expected-error{{'hc_max_workgroup_dim' attribute requires a string}}
 {
   x[0] = 0;
@@ -86,9 +86,9 @@ class A {
   [[hc_waves_per_eu(0,0)]]
   [[hc_waves_per_eu(-2,-1)]]
   [[hc_waves_per_eu(1,-2)]]
-  [[hc_waves_per_eu(1,"fiji")]] // expected-error{{'hc_waves_per_eu' attribute requires an integer constant}}
-  [[hc_waves_per_eu(1,2,"unknown")]] // expected-error{{invalid AMD GPU ISA version parameter 'unknown'}}
-  [[hc_waves_per_eu(1,2,fiji)]] // expected-error{{use of undeclared identifier 'fiji'}}
+  [[hc_waves_per_eu(1,"gfx803")]] // expected-error{{'hc_waves_per_eu' attribute requires an integer constant}}
+  [[hc_waves_per_eu(1,2,"fiji")]] // expected-error{{invalid AMD GPU ISA version parameter 'fiji'}}
+  [[hc_waves_per_eu(1,2,gfx803)]] // expected-error{{use of undeclared identifier 'gfx803'}}
   [[hc_waves_per_eu(1,2,x)]] // expected-error{{'hc_waves_per_eu' attribute requires a string}}
 
   [[hc_flat_workgroup_size]] // expected-error{{'hc_flat_workgroup_size' attribute takes at least 1 argument}}
@@ -105,9 +105,9 @@ class A {
   [[hc_flat_workgroup_size(0,0)]]
   [[hc_flat_workgroup_size(-2,-1)]]
   [[hc_flat_workgroup_size(2,1)]] // expected-error{{'hc_flat_workgroup_size' attribute argument is invalid: min must not be greater than max}}
-  [[hc_flat_workgroup_size(1,"fiji")]] // expected-error{{'hc_flat_workgroup_size' attribute requires an integer constant}}
-  [[hc_flat_workgroup_size(1,2,"unknown")]] // expected-error{{invalid AMD GPU ISA version parameter 'unknown'}}
-  [[hc_flat_workgroup_size(1,2,fiji)]] // expected-error{{use of undeclared identifier 'fiji'}}
+  [[hc_flat_workgroup_size(1,"gfx803")]] // expected-error{{'hc_flat_workgroup_size' attribute requires an integer constant}}
+  [[hc_flat_workgroup_size(1,2,"fiji")]] // expected-error{{invalid AMD GPU ISA version parameter 'fiji'}}
+  [[hc_flat_workgroup_size(1,2,gfx803)]] // expected-error{{use of undeclared identifier 'gfx803'}}
   [[hc_flat_workgroup_size(1,2,x)]] // expected-error{{'hc_flat_workgroup_size' attribute requires a string}}
 
   [[hc_max_workgroup_dim]] // expected-error{{'hc_max_workgroup_dim' attribute takes at least 1 argument}}
@@ -123,11 +123,11 @@ class A {
   [[hc_max_workgroup_dim(1,1,0)]]
   [[hc_max_workgroup_dim(-1,1,2)]]
   [[hc_max_workgroup_dim(10000000000000,1,2)]] // expected-error{{integer constant expression evaluates to value 10000000000000 that cannot be represented in a 32-bit unsigned integer type}}
-  [[hc_max_workgroup_dim(1,"fiji")]] // expected-error{{'hc_max_workgroup_dim' attribute takes at least 3 arguments}}
-  [[hc_max_workgroup_dim(1,2,"fiji")]] // expected-error{{'hc_max_workgroup_dim' attribute requires an integer constant}}
-  [[hc_max_workgroup_dim(1,2,3,"fiji")]]
-  [[hc_max_workgroup_dim(1,2,3,"unknown")]] // expected-error{{invalid AMD GPU ISA version parameter 'unknown'}}
-  [[hc_max_workgroup_dim(1,2,3,fiji)]] // expected-error{{use of undeclared identifier 'fiji'}}
+  [[hc_max_workgroup_dim(1,"gfx803")]] // expected-error{{'hc_max_workgroup_dim' attribute takes at least 3 arguments}}
+  [[hc_max_workgroup_dim(1,2,"gfx803")]] // expected-error{{'hc_max_workgroup_dim' attribute requires an integer constant}}
+  [[hc_max_workgroup_dim(1,2,3,"gfx803")]]
+  [[hc_max_workgroup_dim(1,2,3,"fiji")]] // expected-error{{invalid AMD GPU ISA version parameter 'fiji'}}
+  [[hc_max_workgroup_dim(1,2,3,gfx803)]] // expected-error{{use of undeclared identifier 'gfx803'}}
   [[hc_max_workgroup_dim(1,2,3,x)]] // expected-error{{'hc_max_workgroup_dim' attribute requires a string}}
     {
     x[0] = 123;
@@ -154,9 +154,9 @@ int f(unsigned x) {
       [[hc_waves_per_eu(0,0)]]
       [[hc_waves_per_eu(-2,-1)]]
       [[hc_waves_per_eu(1,-2)]]
-      [[hc_waves_per_eu(1,"fiji")]] // expected-error{{'hc_waves_per_eu' attribute requires an integer constant}}
-      [[hc_waves_per_eu(1,2,"unknown")]] // expected-error{{invalid AMD GPU ISA version parameter 'unknown'}}
-      [[hc_waves_per_eu(1,2,fiji)]] // expected-error{{use of undeclared identifier 'fiji'}}
+      [[hc_waves_per_eu(1,"gfx803")]] // expected-error{{'hc_waves_per_eu' attribute requires an integer constant}}
+      [[hc_waves_per_eu(1,2,"fiji")]] // expected-error{{invalid AMD GPU ISA version parameter 'fiji'}}
+      [[hc_waves_per_eu(1,2,gfx803)]] // expected-error{{use of undeclared identifier 'gfx803'}}
       [[hc_waves_per_eu(1,2,x)]] // expected-error{{'hc_waves_per_eu' attribute requires a string}}
 
       [[hc_flat_workgroup_size]] // expected-error{{'hc_flat_workgroup_size' attribute takes at least 1 argument}}
@@ -173,9 +173,9 @@ int f(unsigned x) {
       [[hc_flat_workgroup_size(0,0)]]
       [[hc_flat_workgroup_size(-2,-1)]]
       [[hc_flat_workgroup_size(2,1)]] // expected-error{{'hc_flat_workgroup_size' attribute argument is invalid: min must not be greater than max}}
-      [[hc_flat_workgroup_size(1,"fiji")]] // expected-error{{'hc_flat_workgroup_size' attribute requires an integer constant}}
-      [[hc_flat_workgroup_size(1,2,"unknown")]] // expected-error{{invalid AMD GPU ISA version parameter 'unknown'}}
-      [[hc_flat_workgroup_size(1,2,fiji)]] // expected-error{{use of undeclared identifier 'fiji'}}
+      [[hc_flat_workgroup_size(1,"gfx803")]] // expected-error{{'hc_flat_workgroup_size' attribute requires an integer constant}}
+      [[hc_flat_workgroup_size(1,2,"fiji")]] // expected-error{{invalid AMD GPU ISA version parameter 'fiji'}}
+      [[hc_flat_workgroup_size(1,2,gfx803)]] // expected-error{{use of undeclared identifier 'gfx803'}}
       [[hc_flat_workgroup_size(1,2,x)]] // expected-error{{'hc_flat_workgroup_size' attribute requires a string}}
 
       [[hc_max_workgroup_dim]] // expected-error{{'hc_max_workgroup_dim' attribute takes at least 1 argument}}
@@ -191,11 +191,11 @@ int f(unsigned x) {
       [[hc_max_workgroup_dim(1,1,0)]]
       [[hc_max_workgroup_dim(-1,1,2)]]
       [[hc_max_workgroup_dim(10000000000000,1,2)]] // expected-error{{integer constant expression evaluates to value 10000000000000 that cannot be represented in a 32-bit unsigned integer type}}
-      [[hc_max_workgroup_dim(1,"fiji")]] // expected-error{{'hc_max_workgroup_dim' attribute takes at least 3 arguments}}
-      [[hc_max_workgroup_dim(1,2,"fiji")]] // expected-error{{'hc_max_workgroup_dim' attribute requires an integer constant}}
-      [[hc_max_workgroup_dim(1,2,3,"fiji")]]
-      [[hc_max_workgroup_dim(1,2,3,"unknown")]] // expected-error{{invalid AMD GPU ISA version parameter 'unknown'}}
-      [[hc_max_workgroup_dim(1,2,3,fiji)]] // expected-error{{use of undeclared identifier 'fiji'}}
+      [[hc_max_workgroup_dim(1,"gfx803")]] // expected-error{{'hc_max_workgroup_dim' attribute takes at least 3 arguments}}
+      [[hc_max_workgroup_dim(1,2,"gfx803")]] // expected-error{{'hc_max_workgroup_dim' attribute requires an integer constant}}
+      [[hc_max_workgroup_dim(1,2,3,"gfx803")]]
+      [[hc_max_workgroup_dim(1,2,3,"fiji")]] // expected-error{{invalid AMD GPU ISA version parameter 'fiji'}}
+      [[hc_max_workgroup_dim(1,2,3,gfx803)]] // expected-error{{use of undeclared identifier 'gfx803'}}
       [[hc_max_workgroup_dim(1,2,3,x)]] // expected-error{{'hc_max_workgroup_dim' attribute requires a string}}
       {});
 

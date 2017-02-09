@@ -4994,8 +4994,8 @@ public:
   }
 
   /// Check GPU ISA version parameter of AMDGPU attributes.
-  /// The ISA version parameter is either an ISA version string with "_"
-  /// as deliminator, e.g. "8_1_0", or a case insensitive device name,
+  /// The ISA version parameter is either a three-digit ISA version string
+  /// prefixed by "gfx", e.g. "gfx810", or a case insensitive device name,
   /// e.g. "Fiji".
   /// \param Attr is AMDGPU attribute containing ISA version parameter.
   /// \param Index is the index for the ISA version parameter.
@@ -5016,7 +5016,7 @@ public:
     if (ISA.empty())
       return true;
     auto ISAVer = parseAMDGPUISAVersion(ISA);
-    if (ISAVer == AMDGPU_ISA_NONE) {
+    if (ISAVer == AMDGPU_ISA_NONE || !ISA.startswith("gfx")) {
       S.Diag(Attr.getLoc(), diag::err_attribute_amdgpu_invalid_isa_version)
         << ISA;
       return false;
@@ -5041,19 +5041,22 @@ private:
   };
 
   // Parse AMDGPU ISA version string.
-  // \param ISA is either an ISA version string with "_" as deliminator,
-  //        e.g. "8_1_0", or a case insensitive device name, e.g. "Fiji".
+  // \param ISA is either a three-digit ISA version string with prefix "gfx",
+  //        e.g. "gfx810", or a case insensitive device name, e.g. "Fiji".
   // \return AMDGPU ISA version.
+  // ToDo: The cases need to cover both ISA version parameter of register
+  // control attributes and -target-cpu option. We should phase out using GPU
+  // code names in -target-cpu option and remove them from below.
   AMDGPUISAVersion parseAMDGPUISAVersion(StringRef ISA) {
     return llvm::StringSwitch<AMDGPUISAVersion>(ISA.lower())
       .Case("",          AMDGPU_ISA_600)
-      .Case("6_0_0",     AMDGPU_ISA_600)
-      .Case("7_0_0",     AMDGPU_ISA_700)
-      .Case("7_0_1",     AMDGPU_ISA_701)
-      .Case("8_0_0",     AMDGPU_ISA_800)
-      .Case("8_0_1",     AMDGPU_ISA_801)
-      .Case("8_0_2",     AMDGPU_ISA_802)
-      .Case("8_0_3",     AMDGPU_ISA_803)
+      .Case("gfx600",    AMDGPU_ISA_600)
+      .Case("gfx700",    AMDGPU_ISA_700)
+      .Case("gfx701",    AMDGPU_ISA_701)
+      .Case("gfx800",    AMDGPU_ISA_800)
+      .Case("gfx801",    AMDGPU_ISA_801)
+      .Case("gfx802",    AMDGPU_ISA_802)
+      .Case("gfx803",    AMDGPU_ISA_803)
       .Case("tahiti",    AMDGPU_ISA_600)
       .Case("pitcairn",  AMDGPU_ISA_600)
       .Case("verde",     AMDGPU_ISA_600)

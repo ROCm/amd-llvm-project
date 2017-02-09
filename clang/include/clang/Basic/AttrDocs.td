@@ -1127,16 +1127,11 @@ two's complement of a positive value. Passing ``0`` or ``0, 0`` as
 is unspecified, platform allowed maximum value is assumed.
 
 ``<ISA>`` parameter specifies the target ISA version for which this parameter
-is applied. It is either an ISA version string with "_" as deliminator,
-e.g. "8_1_0", or a case insensative device name, e.g. "Fiji". The device
-name is an alias for the ISA version and is equivalent to specifying the ISA
-version. For example, specifying "Polaris11" for this parameter will cause
-the attribute to be applied if the target GPU is Polaris10 or Fiji, since
-Polaris10, Fiji and Polaris11 shares the same ISA version. If this parameter
-is not specified, the attribute is always applied. If this parameter is
-specified but does not match the ISA version of the target GPU, the attribute
-is not applied. Multiple attributes with different ``<ISA>`` parameter can be
-used for the same function.
+is applied. It is either a three-digit ISA version string prefixed by "gfx",
+e.g. "gfx810". If this parameter is not specified, the attribute is always
+applied. If this parameter is specified but does not match the ISA version of
+the target GPU, the attribute is not applied. Multiple attributes with
+different ``<ISA>`` parameter can be used for the same function.
 
 If specified, the AMDGPU target backend might be able to produce better machine
 code for barriers and perform scratch promotion by estimating available group
@@ -1179,16 +1174,11 @@ and ``<max>`` must be 32 bit integer constants. Negative value is treated as 32
 bit two's complement of a postive value.
 
 ``<ISA>`` parameter specifies the target ISA version for which this parameter
-is applied. It is either an ISA version string with "_" as deliminator,
-e.g. "8_1_0", or a case insensative device name, e.g. "Fiji". The device
-name is an alias for the ISA version and is equivalent to specifying the ISA
-version. For example, specifying "Polaris11" for this parameter will cause
-the attribute to be applied if the target GPU is Polaris10 or Fiji, since
-Polaris10, Fiji and Polaris11 shares the same ISA version. If this parameter
-is not specified, the attribute is always applied. If this parameter is
-specified but does not match the ISA version of the target GPU, the attribute
-is not applied. Multiple attributes with different ``<ISA>`` parameter can be
-used for the same function.
+is applied. It is either a three-digit ISA version string prefixed by "gfx",
+e.g. "gfx810". If this parameter is not specified, the attribute is always
+applied. If this parameter is specified but does not match the ISA version of
+the target GPU, the attribute is not applied. Multiple attributes with
+different ``<ISA>`` parameter can be used for the same function.
 
 If specified, this attribute allows an advanced developer to tune the number of
 wavefronts that are capable of fitting within the resources of an EU. The AMDGPU
@@ -1256,16 +1246,11 @@ indicates platform allowed maximum value. Negative value is treated as 32 bit
 two's complement of a positive value.
 
 ``<ISA>`` parameter specifies the target ISA version for which this parameter
-is applied. It is either an ISA version string with "_" as deliminator,
-e.g. "8_1_0", or a case insensative device name, e.g. "Fiji". The device
-name is an alias for the ISA version and is equivalent to specifying the ISA
-version. For example, specifying "Polaris11" for this parameter will cause
-the attribute to be applied if the target GPU is Polaris10 or Fiji, since
-Polaris10, Fiji and Polaris11 shares the same ISA version. If this parameter
-is not specified, the attribute is always applied. If this parameter is
-specified but does not match the ISA version of the target GPU, the attribute
-is not applied. Multiple attributes with different ``<ISA>`` parameter can be
-used for the same function.
+is applied. It is either a three-digit ISA version string prefixed by "gfx",
+e.g. "gfx810". If this parameter is not specified, the attribute is always
+applied. If this parameter is specified but does not match the ISA version of
+the target GPU, the attribute is not applied. Multiple attributes with
+different ``<ISA>`` parameter can be used for the same function.
 
 If specified, the AMDGPU target backend might be able to produce better machine
 code for array indices calculation.

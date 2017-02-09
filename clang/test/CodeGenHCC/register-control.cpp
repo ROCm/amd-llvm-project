@@ -36,8 +36,8 @@ __attribute__((hc_grid_launch))
 void kernel1(grid_launch_parm glp, int *x)
 [[hc_waves_per_eu(1,2)]]
 [[hc_flat_workgroup_size(1,2)]]
-[[hc_max_workgroup_dim(1,2,3,"fiji")]]
-[[hc_max_workgroup_dim(4,5,6,"bonaire")]]
+[[hc_max_workgroup_dim(1,2,3,"gfx803")]]
+[[hc_max_workgroup_dim(4,5,6,"gfx800")]]
 {
   foo(1);
 }
@@ -62,13 +62,12 @@ int main() {
     [[hc]]
     [[hc_waves_per_eu(3)]]
     [[hc_flat_workgroup_size(1,1)]]
-    [[hc_flat_workgroup_size(1,2,"bonaire")]]
-    [[hc_flat_workgroup_size(2,2,"7_0_0")]]
-    [[hc_flat_workgroup_size(3,3,"7_0_1")]]
-    [[hc_flat_workgroup_size(7,7,"8_0_3")]]
-    [[hc_flat_workgroup_size(4,4,"8_0_0")]]
-    [[hc_flat_workgroup_size(5,5,"8_0_1")]]
-    [[hc_flat_workgroup_size(6,6,"8_0_2")]]
+    [[hc_flat_workgroup_size(2,2,"gfx700")]]
+    [[hc_flat_workgroup_size(3,3,"gfx701")]]
+    [[hc_flat_workgroup_size(7,7,"gfx803")]]
+    [[hc_flat_workgroup_size(4,4,"gfx800")]]
+    [[hc_flat_workgroup_size(5,5,"gfx801")]]
+    [[hc_flat_workgroup_size(6,6,"gfx802")]]
     [[hc_max_workgroup_dim(4,5,6)]]
     { x = i.x; }
     int x;
