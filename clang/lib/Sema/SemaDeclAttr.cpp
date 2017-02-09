@@ -4987,6 +4987,97 @@ static void handleInterruptAttr(Sema &S, Decl *D, const AttributeList &Attr) {
   }
 }
 
+class AMDGPUISAVersionChecker {
+public:
+  AMDGPUISAVersionChecker(Sema &S):S(S){
+    GPU = S.getASTContext().getTargetInfo().getTargetOpts().CPU;
+  }
+
+  /// Check GPU ISA version parameter of AMDGPU attributes.
+  /// The ISA version parameter is either a three-digit ISA version string
+  /// prefixed by "gfx", e.g. "gfx810", or a case insensitive device name,
+  /// e.g. "Fiji".
+  /// \param Attr is AMDGPU attribute containing ISA version parameter.
+  /// \param Index is the index for the ISA version parameter.
+  /// \param ISA will contain the ISA version string if returning true.
+  /// \return true if the attribute does not contain the ISA version parameter,
+  ///         or the ISA version parameter is empty, or the ISA version
+  ///         parameter and the target GPU have the same ISA version.
+  bool checkAMDGPUISAVersion(const AttributeList &Attr, unsigned Index,
+      StringRef &ISA) {
+    if (Attr.getNumArgs() <= Index) {
+      ISA = "";
+      return true;
+    }
+
+    if (!S.checkStringLiteralArgumentAttr(Attr, Index, ISA))
+      return false;
+
+    if (ISA.empty())
+      return true;
+    auto ISAVer = parseAMDGPUISAVersion(ISA);
+    if (ISAVer == AMDGPU_ISA_NONE || !ISA.startswith("gfx")) {
+      S.Diag(Attr.getLoc(), diag::err_attribute_amdgpu_invalid_isa_version)
+        << ISA;
+      return false;
+    }
+    return ISAVer == parseAMDGPUISAVersion(GPU);
+  }
+
+private:
+  Sema &S;
+  StringRef GPU; // target GPU specified by -target-cpu option
+
+  /// \brief The ISA version of AMD GPU.
+  enum AMDGPUISAVersion {
+    AMDGPU_ISA_NONE,
+    AMDGPU_ISA_600,
+    AMDGPU_ISA_700,
+    AMDGPU_ISA_701,
+    AMDGPU_ISA_800,
+    AMDGPU_ISA_801,
+    AMDGPU_ISA_802,
+    AMDGPU_ISA_803,
+  };
+
+  // Parse AMDGPU ISA version string.
+  // \param ISA is either a three-digit ISA version string with prefix "gfx",
+  //        e.g. "gfx810", or a case insensitive device name, e.g. "Fiji".
+  // \return AMDGPU ISA version.
+  // ToDo: The cases need to cover both ISA version parameter of register
+  // control attributes and -target-cpu option. We should phase out using GPU
+  // code names in -target-cpu option and remove them from below.
+  AMDGPUISAVersion parseAMDGPUISAVersion(StringRef ISA) {
+    return llvm::StringSwitch<AMDGPUISAVersion>(ISA.lower())
+      .Case("",          AMDGPU_ISA_600)
+      .Case("gfx600",    AMDGPU_ISA_600)
+      .Case("gfx700",    AMDGPU_ISA_700)
+      .Case("gfx701",    AMDGPU_ISA_701)
+      .Case("gfx800",    AMDGPU_ISA_800)
+      .Case("gfx801",    AMDGPU_ISA_801)
+      .Case("gfx802",    AMDGPU_ISA_802)
+      .Case("gfx803",    AMDGPU_ISA_803)
+      .Case("tahiti",    AMDGPU_ISA_600)
+      .Case("pitcairn",  AMDGPU_ISA_600)
+      .Case("verde",     AMDGPU_ISA_600)
+      .Case("oland",     AMDGPU_ISA_600)
+      .Case("hainan",    AMDGPU_ISA_600)
+      .Case("bonaire",   AMDGPU_ISA_700)
+      .Case("kabini",    AMDGPU_ISA_700)
+      .Case("kaveri",    AMDGPU_ISA_700)
+      .Case("hawaii",    AMDGPU_ISA_701)
+      .Case("mullins",   AMDGPU_ISA_700)
+      .Case("tonga",     AMDGPU_ISA_802)
+      .Case("iceland",   AMDGPU_ISA_800)
+      .Case("carrizo",   AMDGPU_ISA_801)
+      .Case("fiji",      AMDGPU_ISA_803)
+      .Case("stoney",    AMDGPU_ISA_801)
+      .Case("polaris10", AMDGPU_ISA_803)
+      .Case("polaris11", AMDGPU_ISA_803)
+      .Default(AMDGPU_ISA_NONE);
+  }
+};
+
 static void handleAMDGPUFlatWorkGroupSizeAttr(Sema &S, Decl *D,
                                               const AttributeList &Attr) {
   uint32_t Min = 0;
@@ -4995,24 +5086,29 @@ static void handleAMDGPUFlatWorkGroupSizeAttr(Sema &S, Decl *D,
     return;
 
   uint32_t Max = 0;
-  Expr *MaxExpr = Attr.getArgAsExpr(1);
-  if (!checkUInt32Argument(S, Attr, MaxExpr, Max))
-    return;
+  if (Attr.getNumArgs() > 1 ) {
+    Expr *MaxExpr = Attr.getArgAsExpr(1);
+    if (!checkUInt32Argument(S, Attr, MaxExpr, Max))
+      return;
+  }
 
   if (Min == 0 && Max != 0) {
     S.Diag(Attr.getLoc(), diag::err_attribute_argument_invalid)
       << Attr.getName() << 0;
     return;
   }
-  if (Min > Max) {
+  if (Attr.getNumArgs() > 1 && Min > Max) {
     S.Diag(Attr.getLoc(), diag::err_attribute_argument_invalid)
       << Attr.getName() << 1;
     return;
   }
 
-  D->addAttr(::new (S.Context)
-             AMDGPUFlatWorkGroupSizeAttr(Attr.getLoc(), S.Context, Min, Max,
-                                         Attr.getAttributeSpellingListIndex()));
+  AMDGPUISAVersionChecker VC(S);
+  StringRef ISA;
+  if (VC.checkAMDGPUISAVersion(Attr, 2, ISA))
+    D->addAttr(::new (S.Context)
+               AMDGPUFlatWorkGroupSizeAttr(Attr.getLoc(), S.Context, Min, Max,
+                    ISA, Attr.getAttributeSpellingListIndex()));
 }
 
 static void handleAMDGPUWavesPerEUAttr(Sema &S, Decl *D,
@@ -5023,7 +5119,7 @@ static void handleAMDGPUWavesPerEUAttr(Sema &S, Decl *D,
     return;
 
   uint32_t Max = 0;
-  if (Attr.getNumArgs() == 2) {
+  if (Attr.getNumArgs() > 1) {
     Expr *MaxExpr = Attr.getArgAsExpr(1);
     if (!checkUInt32Argument(S, Attr, MaxExpr, Max))
       return;
@@ -5040,8 +5136,11 @@ static void handleAMDGPUWavesPerEUAttr(Sema &S, Decl *D,
     return;
   }
 
-  D->addAttr(::new (S.Context)
-             AMDGPUWavesPerEUAttr(Attr.getLoc(), S.Context, Min, Max,
+  AMDGPUISAVersionChecker VC(S);
+  StringRef ISA;
+  if (VC.checkAMDGPUISAVersion(Attr, 2, ISA))
+    D->addAttr(::new (S.Context)
+               AMDGPUWavesPerEUAttr(Attr.getLoc(), S.Context, Min, Max, ISA,
                                   Attr.getAttributeSpellingListIndex()));
 }
 
@@ -5067,6 +5166,34 @@ static void handleAMDGPUNumVGPRAttr(Sema &S, Decl *D,
   D->addAttr(::new (S.Context)
              AMDGPUNumVGPRAttr(Attr.getLoc(), S.Context, NumVGPR,
                                Attr.getAttributeSpellingListIndex()));
+}
+
+static void handleAMDGPUMaxWorkGroupDimAttr(Sema &S, Decl *D,
+                                            const AttributeList &Attr) {
+  if (!checkAttributeAtLeastNumArgs(S, Attr, 3))
+    return;
+
+  uint32_t X = 0;
+  Expr *XExpr = Attr.getArgAsExpr(0);
+  if (!checkUInt32Argument(S, Attr, XExpr, X))
+    return;
+
+  uint32_t Y = 0;
+  Expr *YExpr = Attr.getArgAsExpr(1);
+  if (!checkUInt32Argument(S, Attr, YExpr, Y))
+    return;
+
+  uint32_t Z = 0;
+  Expr *ZExpr = Attr.getArgAsExpr(2);
+  if (!checkUInt32Argument(S, Attr, ZExpr, Z))
+    return;
+
+  AMDGPUISAVersionChecker VC(S);
+  StringRef ISA;
+  if (VC.checkAMDGPUISAVersion(Attr, 3, ISA))
+    D->addAttr(::new (S.Context)
+         AMDGPUMaxWorkGroupDimAttr(Attr.getLoc(), S.Context, X, Y, Z, ISA,
+                                   Attr.getAttributeSpellingListIndex()));
 }
 
 static void handleX86ForceAlignArgPointerAttr(Sema &S, Decl *D,
@@ -5555,7 +5682,10 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
   // instead.
   if (Attr.isCXX11Attribute() && !IncludeCXX11Attributes &&
       Attr.getKind() != AttributeList::AT_HC_HC &&
-      Attr.getKind() != AttributeList::AT_HC_CPU)
+      Attr.getKind() != AttributeList::AT_HC_CPU &&
+      Attr.getKind() != AttributeList::AT_AMDGPUWavesPerEU &&
+      Attr.getKind() != AttributeList::AT_AMDGPUFlatWorkGroupSize &&
+      Attr.getKind() != AttributeList::AT_AMDGPUMaxWorkGroupDim)
     return;
 
   // Unknown attributes are automatically warned on. Target-specific attributes
@@ -5611,6 +5741,9 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
     break;
   case AttributeList::AT_AMDGPUNumVGPR:
     handleAMDGPUNumVGPRAttr(S, D, Attr);
+    break;
+  case AttributeList::AT_AMDGPUMaxWorkGroupDim:
+    handleAMDGPUMaxWorkGroupDimAttr(S, D, Attr);
     break;
   case AttributeList::AT_IBAction:
     handleSimpleAttribute<IBActionAttr>(S, D, Attr);
@@ -6182,7 +6315,10 @@ void Sema::ProcessDeclAttributeList(Scope *S, Decl *D,
     } else if (Attr *A = D->getAttr<VecTypeHintAttr>()) {
       Diag(D->getLocation(), diag::err_opencl_kernel_attr) << A;
       D->setInvalidDecl();
-    } else if (Attr *A = D->getAttr<AMDGPUFlatWorkGroupSizeAttr>()) {
+    }
+  }
+  if (!D->hasAttr<OpenCLKernelAttr>() && !LangOpts.CPlusPlusAMP) {
+    if (Attr *A = D->getAttr<AMDGPUFlatWorkGroupSizeAttr>()) {
       Diag(D->getLocation(), diag::err_attribute_wrong_decl_type)
         << A << ExpectedKernelFunction;
       D->setInvalidDecl();
