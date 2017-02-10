@@ -38,6 +38,7 @@ enum ID {
 
   hcc_tilestatic,
   hcc_generic,
+  hcc_global,
 
   Last,
   Count = Last-Offset

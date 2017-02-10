@@ -1864,6 +1864,12 @@ void CodeGenModule::CompleteDIClassType(const CXXMethodDecl* D) {
 }
 
 static bool isWhiteListForGridLaunch(const ValueDecl* D) {
+  // let global variables pass
+  if (isa<VarDecl>(D))
+    return true;
+
+  // the remaining ones must be functions
+  // be selective about functions to pass
   if (!isa<CXXConstructorDecl>(D))
     return false;
   const CXXConstructorDecl* CtorD = dyn_cast<CXXConstructorDecl>(D);
@@ -2442,8 +2448,13 @@ llvm::Constant *CodeGenModule::GetAddrOfGlobalVar(const VarDecl *D,
   if (!Ty)
     Ty = getTypes().ConvertTypeForMem(ASTTy);
 
-  llvm::PointerType *PTy =
-    llvm::PointerType::get(Ty, getContext().getTargetAddressSpace(ASTTy));
+  llvm::PointerType *PTy;
+
+  if (LangOpts.CPlusPlusAMP && LangOpts.DevicePath) {
+    PTy = llvm::PointerType::get(Ty, getContext().getTargetAddressSpace(LangAS::hcc_global));
+  } else {
+    PTy = llvm::PointerType::get(Ty, getContext().getTargetAddressSpace(ASTTy));
+  }
 
   StringRef MangledName = getMangledName(D);
   return GetOrCreateLLVMGlobal(MangledName, PTy, D, IsForDefinition);
@@ -2494,6 +2505,10 @@ unsigned CodeGenModule::GetGlobalVarAddressSpace(const VarDecl *D,
       AddrSpace = getContext().getTargetAddressSpace(LangAS::cuda_shared);
     else
       AddrSpace = getContext().getTargetAddressSpace(LangAS::cuda_device);
+  }
+
+  if (D && LangOpts.CPlusPlusAMP && LangOpts.DevicePath) {
+    AddrSpace = getContext().getTargetAddressSpace(LangAS::hcc_global);
   }
 
   return AddrSpace;

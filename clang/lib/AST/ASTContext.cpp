@@ -712,6 +712,7 @@ static const LangAS::Map *getAddressSpaceMap(const TargetInfo &T,
       7, // cuda_shared
       8, // hcc_tilestatic
       9, // hcc_generic
+      10, // hcc_global
     };
     return &FakeAddrSpaceMap;
   } else {
