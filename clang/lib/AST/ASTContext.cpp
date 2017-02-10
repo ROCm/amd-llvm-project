@@ -9448,7 +9448,15 @@ uint64_t ASTContext::getTargetNullPointerValue(QualType QT) const {
   else
     AS = QT->getPointeeType().getAddressSpace();
 
-  return getTargetInfo().getNullPointerValue(AS, LangOpts);
+  // special logic for HCC
+  // use generic address space in case the null pointer does not have an
+  // address space
+  if (AS == 0 &&
+      getTargetInfo().getTriple().getEnvironment() == llvm::Triple::HCC) {
+    AS = LangAS::hcc_generic;
+  }
+
+  return getTargetInfo().getNullPointerValue(AS);
 }
 
 // Explicitly instantiate this in case a Redeclarable<T> is used from a TU that
