@@ -2489,3 +2489,8 @@ def HCCTileStatic : TypeAttr {
   let Documentation = [Undocumented];
 }
 
+def HCCGlobal : TypeAttr {
+  let Spellings = [Keyword<"__device">];
+  let Documentation = [Undocumented];
+}
+

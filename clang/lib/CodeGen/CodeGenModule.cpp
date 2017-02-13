@@ -1865,7 +1865,8 @@ void CodeGenModule::CompleteDIClassType(const CXXMethodDecl* D) {
 
 static bool isWhiteListForGridLaunch(const ValueDecl* D) {
   // let global variables pass
-  if (isa<VarDecl>(D))
+  if (isa<VarDecl>(D) &&
+      D->getType().getAddressSpace() == LangAS::hcc_global)
     return true;
 
   // the remaining ones must be functions

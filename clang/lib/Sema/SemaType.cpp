@@ -5505,6 +5505,8 @@ static void HandleAddressSpaceTypeAttribute(QualType &Type,
       ASIdx = LangAS::opencl_generic; break;
     case AttributeList::AT_HCCTileStatic:
       ASIdx = LangAS::hcc_tilestatic; break;
+    case AttributeList::AT_HCCGlobal:
+      ASIdx = LangAS::hcc_global; break;
     default:
       assert(Attr.getKind() == AttributeList::AT_OpenCLPrivateAddressSpace);
       ASIdx = 0; break;
@@ -6791,6 +6793,7 @@ static void processTypeAttrs(TypeProcessingState &state, QualType &type,
       hasOpenCLAddressSpace = true;
       break;
     case AttributeList::AT_HCCTileStatic:
+    case AttributeList::AT_HCCGlobal:
       HandleAddressSpaceTypeAttribute(type, attr, state.getSema());
       attr.setUsedAsTypeAttr();
       break;

@@ -510,6 +510,8 @@ KEYWORD(__super                     , KEYMS)
 
 // HCC tile static qualifier
 KEYWORD(__lds                       , KEYCXXAMP)
+// HCC __device qualifier
+KEYWORD(__device                    , KEYCXXAMP)
 
 // OpenCL address space qualifiers
 KEYWORD(__global                    , KEYOPENCL)
