@@ -2019,7 +2019,8 @@ class AMDGPUTargetInfo final : public TargetInfo {
     GK_CAYMAN,
     GK_GFX6,
     GK_GFX7,
-    GK_GFX8
+    GK_GFX8,
+    GK_GFX9
   } GPU;
 
   bool hasFP64:1;
@@ -2259,6 +2260,8 @@ public:
       .Case("gfx803",    GK_GFX8)
       .Case("gfx804",    GK_GFX8)
       .Case("gfx810",    GK_GFX8)
+      .Case("vega10",    GK_GFX9)
+      .Case("gfx900",    GK_GFX9)
       .Default(GK_NONE);
   }
 
@@ -2420,6 +2423,7 @@ bool AMDGPUTargetInfo::initFeatureMap(
       break;
 
     case GK_GFX8:
+    case GK_GFX9:
       Features["s-memrealtime"] = true;
       Features["16-bit-insts"] = true;
       break;

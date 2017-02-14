@@ -7105,6 +7105,7 @@ void AMDGPUTargetCodeGenInfo::setTargetAttributes(
   if (!FD)
     return;
 
+  auto GPU = M.getTarget().getTargetOpts().CPU;
   llvm::Function *F = cast<llvm::Function>(GV);
 
   if (const auto *Attr = FD->getAttr<AMDGPUFlatWorkGroupSizeAttr>()) {
@@ -7112,9 +7113,11 @@ void AMDGPUTargetCodeGenInfo::setTargetAttributes(
     unsigned Max = Attr->getMax();
 
     if (Min != 0) {
-      assert(Min <= Max && "Min must be less than or equal Max");
-
-      std::string AttrVal = llvm::utostr(Min) + "," + llvm::utostr(Max);
+      std::string AttrVal = llvm::utostr(Min);
+      if (Max != 0) {
+        assert(Min <= Max && "Min must be less than or equal Max");
+        AttrVal = AttrVal + "," + llvm::utostr(Max);
+      }
       F->addFnAttr("amdgpu-flat-work-group-size", AttrVal);
     } else
       assert(Max == 0 && "Max must be zero");
@@ -7130,6 +7133,7 @@ void AMDGPUTargetCodeGenInfo::setTargetAttributes(
       std::string AttrVal = llvm::utostr(Min);
       if (Max != 0)
         AttrVal = AttrVal + "," + llvm::utostr(Max);
+
       F->addFnAttr("amdgpu-waves-per-eu", AttrVal);
     } else
       assert(Max == 0 && "Max must be zero");
@@ -7147,6 +7151,22 @@ void AMDGPUTargetCodeGenInfo::setTargetAttributes(
 
     if (NumVGPR != 0)
       F->addFnAttr("amdgpu-num-vgpr", llvm::utostr(NumVGPR));
+  }
+
+  if (const auto *Attr = FD->getAttr<AMDGPUMaxWorkGroupDimAttr>()) {
+    unsigned X = Attr->getX();
+    unsigned Y = Attr->getY();
+    unsigned Z = Attr->getZ();
+    std::string AttrVal = llvm::utostr(X) + "," + llvm::utostr(Y) + "," +
+        llvm::utostr(Z);
+    F->addFnAttr("amdgpu-max-work-group-dim", AttrVal);
+    if (FD->getAttr<AMDGPUFlatWorkGroupSizeAttr>() == nullptr) {
+      uint64_t MaxFlat = (uint64_t)X * Y * Z;
+      if (MaxFlat > UINT_MAX)
+        MaxFlat = UINT_MAX;
+      AttrVal = std::string("1,") + llvm::utostr((unsigned)MaxFlat);
+      F->addFnAttr("amdgpu-flat-work-group-size", AttrVal);
+    }
   }
 
   // Append OpenCL-specific metadata only for OpenCL inputs

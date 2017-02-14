@@ -1079,15 +1079,21 @@ def NoMips16 : InheritableAttr, TargetSpecificAttr<TargetMips> {
 // this should be rejected on non-kernels.
 
 def AMDGPUFlatWorkGroupSize : InheritableAttr {
-  let Spellings = [GNU<"amdgpu_flat_work_group_size">];
-  let Args = [UnsignedArgument<"Min">, UnsignedArgument<"Max">];
+  let Spellings = [GNU<"amdgpu_flat_work_group_size">,
+                   CXX11<"","hc_flat_workgroup_size", 201511>];
+  let Args = [UnsignedArgument<"Min">,
+              UnsignedArgument<"Max", 1>,
+              StringArgument<"ISA", 1>];
   let Documentation = [AMDGPUFlatWorkGroupSizeDocs];
   let Subjects = SubjectList<[Function], ErrorDiag, "ExpectedKernelFunction">;
 }
 
 def AMDGPUWavesPerEU : InheritableAttr {
-  let Spellings = [GNU<"amdgpu_waves_per_eu">];
-  let Args = [UnsignedArgument<"Min">, UnsignedArgument<"Max", 1>];
+  let Spellings = [GNU<"amdgpu_waves_per_eu">,
+                   CXX11<"", "hc_waves_per_eu", 201511>];
+  let Args = [UnsignedArgument<"Min">,
+              UnsignedArgument<"Max", 1>,
+              StringArgument<"ISA", 1>];
   let Documentation = [AMDGPUWavesPerEUDocs];
   let Subjects = SubjectList<[Function], ErrorDiag, "ExpectedKernelFunction">;
 }
@@ -1104,6 +1110,16 @@ def AMDGPUNumVGPR : InheritableAttr {
   let Args = [UnsignedArgument<"NumVGPR">];
   let Documentation = [AMDGPUNumSGPRNumVGPRDocs];
   let Subjects = SubjectList<[Function], ErrorDiag, "ExpectedKernelFunction">;
+}
+
+def AMDGPUMaxWorkGroupDim : InheritableParamAttr {
+  let Spellings = [CXX11<"","hc_max_workgroup_dim", 201511>];
+  let Args = [IntArgument<"X">,
+              IntArgument<"Y", 1>,
+              IntArgument<"Z", 1>,
+              StringArgument<"ISA", 1>];
+  let Subjects = SubjectList<[Function], ErrorDiag>;
+  let Documentation = [Undocumented];
 }
 
 def NoSplitStack : InheritableAttr {

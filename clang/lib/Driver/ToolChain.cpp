@@ -112,6 +112,7 @@ const DriverSuffix *FindDriverSuffix(StringRef ProgName) {
       {"clang-g++", "--driver-mode=g++"},
       {"clang-gcc", nullptr},
       {"clang-cl", "--driver-mode=cl"},
+      {"hcc", "--driver-mode=g++"},
       {"cc", nullptr},
       {"cpp", "--driver-mode=cpp"},
       {"cl", "--driver-mode=cl"},
