@@ -2509,7 +2509,10 @@ unsigned CodeGenModule::GetGlobalVarAddressSpace(const VarDecl *D,
   }
 
   if (D && LangOpts.CPlusPlusAMP && LangOpts.DevicePath) {
-    AddrSpace = getContext().getTargetAddressSpace(LangAS::hcc_global);
+    if (D->getType().getAddressSpace() == LangAS::hcc_tilestatic)
+      AddrSpace = getContext().getTargetAddressSpace(LangAS::hcc_tilestatic);
+    else
+      AddrSpace = getContext().getTargetAddressSpace(LangAS::hcc_global);
   }
 
   return AddrSpace;
