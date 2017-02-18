@@ -770,7 +770,7 @@ llvm::DIType *CGDebugInfo::CreatePointerLikeType(llvm::dwarf::Tag Tag,
                                         Size, Align);
   else
     return DBuilder.createPointerType(getOrCreateType(PointeeTy, Unit), Size,
-                                      Align, AS);
+                                      Align);
 }
 
 llvm::DIType *CGDebugInfo::getOrCreateStructPtrType(StringRef Name,
@@ -1576,7 +1576,7 @@ llvm::DIType *CGDebugInfo::getOrCreateVTablePtrType(llvm::DIFile *Unit) {
   llvm::DIType *SubTy = DBuilder.createSubroutineType(SElements);
   unsigned Size = Context.getTypeSize(Context.VoidPtrTy);
   llvm::DIType *vtbl_ptr_type =
-      DBuilder.createPointerType(SubTy, Size, 0,0, "__vtbl_ptr_type");
+      DBuilder.createPointerType(SubTy, Size, 0, "__vtbl_ptr_type");
   VTablePtrType = DBuilder.createPointerType(vtbl_ptr_type, Size);
   return VTablePtrType;
 }
@@ -1618,7 +1618,7 @@ void CGDebugInfo::CollectVTableInfo(const CXXRecordDecl *RD, llvm::DIFile *Unit,
 
     // Create a very wide void* type and insert it directly in the element list.
     llvm::DIType *VTableType =
-        DBuilder.createPointerType(nullptr, VTableWidth, 0,0, "__vtbl_ptr_type");
+        DBuilder.createPointerType(nullptr, VTableWidth, 0, "__vtbl_ptr_type");
     EltTys.push_back(VTableType);
 
     // The vptr is a pointer to this special vtable type.
@@ -2765,9 +2765,8 @@ void CGDebugInfo::collectFunctionDeclProps(GlobalDecl GD, llvm::DIFile *Unit,
 }
 
 void CGDebugInfo::collectVarDeclProps(const VarDecl *VD, llvm::DIFile *&Unit,
-                                      unsigned &LineNo, unsigned &AddressSpace,
-                                      QualType &T, StringRef &Name,
-                                      StringRef &LinkageName,
+                                      unsigned &LineNo, QualType &T,
+                                      StringRef &Name, StringRef &LinkageName,
                                       llvm::DIScope *&VDContext) {
   Unit = getOrCreateFile(VD->getLocation());
   LineNo = getLineNumber(VD->getLocation());
@@ -2783,8 +2782,6 @@ void CGDebugInfo::collectVarDeclProps(const VarDecl *VD, llvm::DIFile *&Unit,
     T = CGM.getContext().getConstantArrayType(ET, ConstVal,
                                               ArrayType::Normal, 0);
   }
-
-  AddressSpace = CGM.getContext().getTargetAddressSpace(T);
 
   Name = VD->getName();
   if (VD->getDeclContext() && !isa<FunctionDecl>(VD->getDeclContext()) &&
@@ -2849,18 +2846,16 @@ llvm::DIGlobalVariable *
 CGDebugInfo::getGlobalVariableForwardDeclaration(const VarDecl *VD) {
   QualType T;
   StringRef Name, LinkageName;
-  unsigned AddressSpace;
   SourceLocation Loc = VD->getLocation();
   llvm::DIFile *Unit = getOrCreateFile(Loc);
   llvm::DIScope *DContext = Unit;
   unsigned Line = getLineNumber(Loc);
 
-  collectVarDeclProps(VD, Unit, Line, AddressSpace, T, Name, LinkageName,
-                      DContext);
+  collectVarDeclProps(VD, Unit, Line, T, Name, LinkageName, DContext);
   auto Align = getDeclAlignIfRequired(VD, CGM.getContext());
   auto *GV = DBuilder.createTempGlobalVariableFwdDecl(
-      DContext, Name, LinkageName, Unit, Line, AddressSpace,
-      getOrCreateType(T, Unit), !VD->isExternallyVisible(), nullptr, Align);
+      DContext, Name, LinkageName, Unit, Line, getOrCreateType(T, Unit),
+      !VD->isExternallyVisible(), nullptr, Align);
   FwdDeclReplaceMap.emplace_back(
       std::piecewise_construct,
       std::make_tuple(cast<VarDecl>(VD->getCanonicalDecl())),
@@ -3310,7 +3305,6 @@ void CGDebugInfo::EmitDeclare(const VarDecl *VD, llvm::Value *Storage,
   auto *Scope = cast<llvm::DIScope>(LexicalBlockStack.back());
 
   StringRef Name = VD->getName();
-  unsigned AddressSpace = CGM.getContext().getTargetAddressSpace(VD->getType());
   if (!Name.empty()) {
     if (VD->hasAttr<BlocksAttr>()) {
       CharUnits offset = CharUnits::fromQuantity(32);
@@ -3328,10 +3322,9 @@ void CGDebugInfo::EmitDeclare(const VarDecl *VD, llvm::Value *Storage,
       // Create the descriptor for the variable.
       auto *D = ArgNo
                     ? DBuilder.createParameterVariable(Scope, VD->getName(),
-                                                       *ArgNo, Unit, Line,
-                                                       AddressSpace, Ty)
+                                                       *ArgNo, Unit, Line, Ty)
                     : DBuilder.createAutoVariable(Scope, VD->getName(), Unit,
-                                                  Line, AddressSpace, Ty, Align);
+                                                  Line, Ty, Align);
 
       // Insert an llvm.dbg.declare into the current block.
       DBuilder.insertDeclare(Storage, D, DBuilder.createExpression(Expr),
@@ -3363,8 +3356,8 @@ void CGDebugInfo::EmitDeclare(const VarDecl *VD, llvm::Value *Storage,
         // Use VarDecl's Tag, Scope and Line number.
         auto FieldAlign = getDeclAlignIfRequired(Field, CGM.getContext());
         auto *D = DBuilder.createAutoVariable(
-            Scope, FieldName, Unit, Line, AddressSpace, FieldTy,
-            CGM.getLangOpts().Optimize, Flags | llvm::DINode::FlagArtificial, FieldAlign);
+            Scope, FieldName, Unit, Line, FieldTy, CGM.getLangOpts().Optimize,
+            Flags | llvm::DINode::FlagArtificial, FieldAlign);
 
         // Insert an llvm.dbg.declare into the current block.
         DBuilder.insertDeclare(Storage, D, DBuilder.createExpression(Expr),
@@ -3377,9 +3370,9 @@ void CGDebugInfo::EmitDeclare(const VarDecl *VD, llvm::Value *Storage,
   // Create the descriptor for the variable.
   auto *D = ArgNo
                 ? DBuilder.createParameterVariable(
-                      Scope, Name, *ArgNo, Unit, Line, AddressSpace, Ty,
+                      Scope, Name, *ArgNo, Unit, Line, Ty,
                       CGM.getLangOpts().Optimize, Flags)
-                : DBuilder.createAutoVariable(Scope, Name, Unit, Line, AddressSpace, Ty,
+                : DBuilder.createAutoVariable(Scope, Name, Unit, Line, Ty,
                                               CGM.getLangOpts().Optimize, Flags,
                                               Align);
 
@@ -3433,7 +3426,6 @@ void CGDebugInfo::EmitDeclareOfBlockDeclRefVariable(
   // Get location information.
   unsigned Line = getLineNumber(VD->getLocation());
   unsigned Column = getColumnNumber(VD->getLocation());
-  unsigned AddressSpace = CGM.getContext().getTargetAddressSpace(VD->getType());
 
   const llvm::DataLayout &target = CGM.getDataLayout();
 
@@ -3464,7 +3456,7 @@ void CGDebugInfo::EmitDeclareOfBlockDeclRefVariable(
   auto Align = getDeclAlignIfRequired(VD, CGM.getContext());
   auto *D = DBuilder.createAutoVariable(
       cast<llvm::DILocalScope>(LexicalBlockStack.back()), VD->getName(), Unit,
-      Line, AddressSpace, Ty, false, llvm::DINode::FlagZero, Align);
+      Line, Ty, false, llvm::DINode::FlagZero, Align);
 
   // Insert an llvm.dbg.declare into the current block.
   auto DL = llvm::DebugLoc::get(Line, Column, LexicalBlockStack.back());
@@ -3628,7 +3620,7 @@ void CGDebugInfo::EmitDeclareOfBlockLiteralArgVariable(const CGBlockInfo &block,
 
   // Create the descriptor for the parameter.
   auto *debugVar = DBuilder.createParameterVariable(
-      scope, Arg->getName(), ArgNo, tunit, line, 0, type,
+      scope, Arg->getName(), ArgNo, tunit, line, type,
       CGM.getLangOpts().Optimize, flags);
 
   if (LocalAddr) {
@@ -3664,8 +3656,7 @@ CGDebugInfo::getOrCreateStaticDataMemberDeclarationOrNull(const VarDecl *D) {
 
 llvm::DIGlobalVariableExpression *CGDebugInfo::CollectAnonRecordDecls(
     const RecordDecl *RD, llvm::DIFile *Unit, unsigned LineNo,
-    unsigned AddressSpace, StringRef LinkageName, llvm::GlobalVariable *Var,
-    llvm::DIScope *DContext) {
+    StringRef LinkageName, llvm::GlobalVariable *Var, llvm::DIScope *DContext) {
   llvm::DIGlobalVariableExpression *GVE = nullptr;
 
   for (const auto *Field : RD->fields()) {
@@ -3675,14 +3666,14 @@ llvm::DIGlobalVariableExpression *CGDebugInfo::CollectAnonRecordDecls(
     // Ignore unnamed fields, but recurse into anonymous records.
     if (FieldName.empty()) {
       if (const auto *RT = dyn_cast<RecordType>(Field->getType()))
-        GVE = CollectAnonRecordDecls(RT->getDecl(), Unit, LineNo, AddressSpace,
-                                     LinkageName, Var, DContext);
+        GVE = CollectAnonRecordDecls(RT->getDecl(), Unit, LineNo, LinkageName,
+                                    Var, DContext);
       continue;
     }
     // Use VarDecl's Tag, Scope and Line number.
     GVE = DBuilder.createGlobalVariableExpression(
-      DContext, FieldName, LinkageName, Unit, LineNo, AddressSpace, FieldTy,
-      Var->hasLocalLinkage());
+        DContext, FieldName, LinkageName, Unit, LineNo, FieldTy,
+        Var->hasLocalLinkage());
     Var->addDebugInfo(GVE);
   }
   return GVE;
@@ -3704,11 +3695,10 @@ void CGDebugInfo::EmitGlobalVariable(llvm::GlobalVariable *Var,
   // Create global variable debug descriptor.
   llvm::DIFile *Unit = nullptr;
   llvm::DIScope *DContext = nullptr;
-  unsigned LineNo, AddressSpace;
+  unsigned LineNo;
   StringRef DeclName, LinkageName;
   QualType T;
-  collectVarDeclProps(D, Unit, LineNo, AddressSpace, T, DeclName, LinkageName,
-                      DContext);
+  collectVarDeclProps(D, Unit, LineNo, T, DeclName, LinkageName, DContext);
 
   // Attempt to store one global variable for the declaration - even if we
   // emit a lot of fields.
@@ -3721,13 +3711,12 @@ void CGDebugInfo::EmitGlobalVariable(llvm::GlobalVariable *Var,
     const RecordDecl *RD = T->castAs<RecordType>()->getDecl();
     assert(RD->isAnonymousStructOrUnion() &&
            "unnamed non-anonymous struct or union?");
-    GVE = CollectAnonRecordDecls(RD, Unit, LineNo, AddressSpace, LinkageName,
-                                 Var, DContext);
+    GVE = CollectAnonRecordDecls(RD, Unit, LineNo, LinkageName, Var, DContext);
   } else {
     auto Align = getDeclAlignIfRequired(D, CGM.getContext());
     GVE = DBuilder.createGlobalVariableExpression(
-        DContext, DeclName, LinkageName, Unit, LineNo, AddressSpace,
-        getOrCreateType(T, Unit), Var->hasLocalLinkage(), /*Expr=*/nullptr,
+        DContext, DeclName, LinkageName, Unit, LineNo, getOrCreateType(T, Unit),
+        Var->hasLocalLinkage(), /*Expr=*/nullptr,
         getOrCreateStaticDataMemberDeclarationOrNull(D), Align);
     Var->addDebugInfo(GVE);
   }
@@ -3785,9 +3774,8 @@ void CGDebugInfo::EmitGlobalVariable(const ValueDecl *VD, const APValue &Init) {
       InitExpr = DBuilder.createConstantValueExpression(
           Init.getFloat().bitcastToAPInt().getZExtValue());
   }
-  unsigned AddressSpace = CGM.getContext().getTargetAddressSpace(VD->getType());
   GV.reset(DBuilder.createGlobalVariableExpression(
-      DContext, Name, StringRef(), Unit, getLineNumber(VD->getLocation()), AddressSpace, Ty,
+      DContext, Name, StringRef(), Unit, getLineNumber(VD->getLocation()), Ty,
       true, InitExpr, getOrCreateStaticDataMemberDeclarationOrNull(VarD),
       Align));
 }
