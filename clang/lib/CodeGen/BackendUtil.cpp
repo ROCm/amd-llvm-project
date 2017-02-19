@@ -314,12 +314,6 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
   unsigned OptLevel = CodeGenOpts.OptimizationLevel;
   CodeGenOptions::InliningMethod Inlining = CodeGenOpts.getInlining();
 
-  // Control HCC kernel path module level optimization passes
-  unsigned ModuleOptLevel = OptLevel;
-  if (LangOpts.CPlusPlusAMP && CodeGenOpts.AMPIsDevice) {
-    ModuleOptLevel = CodeGenOpts.KernelPathOptimizationLevel;
-  }
-
   // Handle disabling of LLVM optimization, where we want to preserve the
   // internal module before any optimization.
   if (CodeGenOpts.DisableLLVMOpts) {
@@ -499,13 +493,6 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
     PMBuilder.PGOSampleUse = CodeGenOpts.SampleProfileFile;
 
   PMBuilder.populateFunctionPassManager(FPM);
-
-  // Control HCC kernel path module level optimization passes
-  // override module-level optimization level for HCC kernel path
-  if (LangOpts.CPlusPlusAMP && CodeGenOpts.AMPIsDevice) {
-    PMBuilder.OptLevel = ModuleOptLevel; 
-  }
-
   PMBuilder.populateModulePassManager(MPM);
 }
 

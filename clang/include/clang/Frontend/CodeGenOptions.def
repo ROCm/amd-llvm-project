@@ -122,7 +122,6 @@ CODEGENOPT(OmitLeafFramePointer , 1, 0) ///< Set when -momit-leaf-frame-pointer 
                                         ///< enabled.
 VALUE_CODEGENOPT(OptimizationLevel, 2, 0) ///< The -O[0-3] option specified.
 VALUE_CODEGENOPT(OptimizeSize, 2, 0) ///< If -Os (==1) or -Oz (==2) is specified.
-VALUE_CODEGENOPT(KernelPathOptimizationLevel, 2, 0) ///< The -KO[0-3] option specified.
 
 /// \brief Choose profile instrumenation kind or no instrumentation.
 ENUM_CODEGENOPT(ProfileInstr, ProfileInstrKind, 2, ProfileNone)

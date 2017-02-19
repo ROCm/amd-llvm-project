@@ -288,7 +288,6 @@ def ObjC : Flag<["-"], "ObjC">, Flags<[DriverOption]>,
 def O : Joined<["-"], "O">, Group<O_Group>, Flags<[CC1Option]>;
 def O_flag : Flag<["-"], "O">, Flags<[CC1Option]>, Alias<O>, AliasArgs<["2"]>;
 def Ofast : Joined<["-"], "Ofast">, Group<O_Group>, Flags<[CC1Option]>;
-def KO_flag : Joined<["-"], "KO">, Flags<[CC1Option]>, AliasArgs<["2"]>; // kernel path optimization flag
 def P : Flag<["-"], "P">, Flags<[CC1Option]>,
   HelpText<"Disable linemarker output in -E mode">;
 def Qn : Flag<["-"], "Qn">;
