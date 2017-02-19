@@ -1863,24 +1863,37 @@ void CodeGenModule::CompleteDIClassType(const CXXMethodDecl* D) {
     }
 }
 
-static bool isWhiteListForGridLaunch(const ValueDecl* D) {
-  // let global variables pass
+static bool isWhiteListForHCC(const ValueDecl* D) {
+  // let global variables with "hcc_global" address space to pass
   if (isa<VarDecl>(D) &&
       D->getType().getAddressSpace() == LangAS::hcc_global)
     return true;
 
   // the remaining ones must be functions
   // be selective about functions to pass
-  if (!isa<CXXConstructorDecl>(D))
-    return false;
-  const CXXConstructorDecl* CtorD = dyn_cast<CXXConstructorDecl>(D);
-  StringRef ClassName = CtorD->getParent()->getName();
-  if (ClassName.find("gl_dim3") == StringRef::npos &&
-      ClassName.find("grid_launch_parm_cxx") == StringRef::npos &&
-      ClassName.find("grid_launch_parm") == StringRef::npos) {
-    return false;
+
+  // C++11 atomic functions are allowed to pass
+  const CXXMethodDecl* MethodD = dyn_cast<CXXMethodDecl>(D);
+  if (MethodD) {
+    StringRef ClassName = MethodD->getParent()->getName();
+    if (ClassName.find("__atomic_base") != StringRef::npos) {
+      return true;
+    }
   }
-  return true;
+
+  // GridLaunch ctors are allowed to pass
+  const CXXConstructorDecl* CtorD = dyn_cast<CXXConstructorDecl>(D);
+  if (CtorD) {
+    StringRef ClassName = CtorD->getParent()->getName();
+    if (ClassName.find("gl_dim3") != StringRef::npos ||
+        ClassName.find("grid_launch_parm_cxx") != StringRef::npos ||
+        ClassName.find("grid_launch_parm") != StringRef::npos) {
+      return true;
+    }
+  }
+
+  // block all others
+  return false;
 }
 
 
@@ -1892,8 +1905,9 @@ void CodeGenModule::EmitGlobalDefinition(GlobalDecl GD, llvm::GlobalValue *GV) {
     if (CodeGenOpts.AMPIsDevice) {
       // If -famp-is-device switch is on, we are in GPU build path.
       if (!D->hasAttr<CXXAMPRestrictAMPAttr>() && !D->hasAttr<HCGridLaunchAttr>() &&
-          // let grid_launch_parm_cxx ctor pass
-          !isWhiteListForGridLaunch(D))
+          // for variables and functions not qualified with restrict(amp),
+          // be selective about which ones to be emitted in HCC kernel path
+          !isWhiteListForHCC(D))
         return;
     } else {
       if (D->hasAttr<CXXAMPRestrictAMPAttr>()&&
