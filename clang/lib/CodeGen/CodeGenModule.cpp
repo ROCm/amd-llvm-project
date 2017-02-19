@@ -1873,11 +1873,14 @@ static bool isWhiteListForHCC(const ValueDecl* D) {
   // be selective about functions to pass
 
   // C++11 atomic functions are allowed to pass
+  // C++11 functional operators are allowed to pass
   const CXXMethodDecl* MethodD = dyn_cast<CXXMethodDecl>(D);
   if (MethodD) {
     StringRef ClassName = MethodD->getParent()->getName();
     if (ClassName.find("__atomic_base") != StringRef::npos ||
-        ClassName.find("plus") != StringRef::npos) {
+        ClassName.find("plus") != StringRef::npos ||
+        ClassName.find("logical_or") != StringRef::npos ||
+        ClassName.find("logical_and") != StringRef::npos) {
       return true;
     }
   }
