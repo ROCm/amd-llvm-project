@@ -1876,7 +1876,8 @@ static bool isWhiteListForHCC(const ValueDecl* D) {
   const CXXMethodDecl* MethodD = dyn_cast<CXXMethodDecl>(D);
   if (MethodD) {
     StringRef ClassName = MethodD->getParent()->getName();
-    if (ClassName.find("__atomic_base") != StringRef::npos) {
+    if (ClassName.find("__atomic_base") != StringRef::npos ||
+        ClassName.find("plus") != StringRef::npos) {
       return true;
     }
   }
