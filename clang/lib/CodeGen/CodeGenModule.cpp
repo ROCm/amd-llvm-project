@@ -1420,10 +1420,13 @@ llvm::Constant *CodeGenModule::EmitAnnotateAttr(llvm::GlobalValue *GV,
                  *LineNoCst = EmitAnnotationLineNo(L);
 
   // Create the ConstantStruct for the global annotation.
+  unsigned AS = GV->getType()->getAddressSpace();
+  llvm::PointerType *I8PTy = (AS == Int8PtrTy->getAddressSpace()) ?
+    Int8PtrTy : Int8Ty->getPointerTo(AS);
   llvm::Constant *Fields[4] = {
-    llvm::ConstantExpr::getBitCast(GV, Int8PtrTy),
-    llvm::ConstantExpr::getBitCast(AnnoGV, Int8PtrTy),
-    llvm::ConstantExpr::getBitCast(UnitGV, Int8PtrTy),
+    llvm::ConstantExpr::getBitCast(GV, I8PTy),
+    llvm::ConstantExpr::getBitCast(AnnoGV, I8PTy),
+    llvm::ConstantExpr::getBitCast(UnitGV, I8PTy),
     LineNoCst
   };
   return llvm::ConstantStruct::getAnon(Fields);
