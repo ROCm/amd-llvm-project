@@ -9374,7 +9374,7 @@ void Sema::DiagnoseCXXAMPExpr(Expr* Stripped, ExprResult &HS, bool DiagnoseWhenS
       if (VarDecl *var = dyn_cast<VarDecl>(DRL->getDecl())) {
         QualType Type = var->getType();
         if(!var->hasLocalStorage() || var->isStaticDataMember()) {
-          if (Type.getAddressSpace() == LangAS::hcc_tilestatic) {
+          if (var->hasAttr<HCCTileStaticAttr>()) {
              // Skip tile_static
           } else if(Type.isConstQualified() /*&& LHS.get()->isRValue()*/) {
             // Skip a static const type and global const type that is rvalue

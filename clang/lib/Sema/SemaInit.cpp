@@ -5903,10 +5903,10 @@ void InitializationSequence::InitializeFrom(Sema &S,
   if (Kind.getKind() == InitializationKind::IK_Default) {
     // C++ AMP specific
     // Prevent tile_static variables being initialized
-    if (S.getLangOpts().CPlusPlusAMP) {
-      if (Entity.getDecl() && (Entity.getDecl()->getType().getAddressSpace() == LangAS::hcc_tilestatic))
+    if (S.getLangOpts().CPlusPlusAMP &&
+        Entity.getDecl() &&
+        Entity.getDecl()->hasAttr<HCCTileStaticAttr>())
         return;
-    }
 
     TryDefaultInitialization(S, Entity, Kind, *this);
     return;

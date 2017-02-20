@@ -3587,8 +3587,6 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
       ParseOpenCLQualifiers(DS.getAttributes());
       break;
 
-    // HCC tile_static qualifier:
-    case tok::kw___lds:
     // HCC __device qualifier:
     case tok::kw___device:
       ParseHCCQualifiers(DS.getAttributes());

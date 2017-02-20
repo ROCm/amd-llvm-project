@@ -222,8 +222,8 @@ llvm::Constant *CodeGenModule::getOrCreateStaticVarDecl(
   // Local address space cannot have an initializer.
   // HCC tile_static variables cannot have an initializer.
   llvm::Constant *Init = nullptr;
-  if ((Ty.getAddressSpace() != LangAS::opencl_local) &&
-      (Ty.getAddressSpace() != LangAS::hcc_tilestatic))
+  if (Ty.getAddressSpace() != LangAS::opencl_local &&
+      !D.hasAttr<HCCTileStaticAttr>())
     Init = EmitNullConstant(Ty);
   else
     Init = llvm::UndefValue::get(LTy);
@@ -254,7 +254,7 @@ llvm::Constant *CodeGenModule::getOrCreateStaticVarDecl(
   unsigned ExpectedAddrSpace = getContext().getTargetAddressSpace(Ty);
 
   // HCC tile_static pointer would be in generic address space
-  if (Ty.getAddressSpace() == LangAS::hcc_tilestatic) {
+  if (D.hasAttr<HCCTileStaticAttr>()) {
     ExpectedAddrSpace = getContext().getTargetAddressSpace(LangAS::hcc_generic);
   }
 
@@ -400,8 +400,10 @@ void CodeGenFunction::EmitStaticVarDecl(const VarDecl &D,
   // a no-op and should not be emitted.
   bool isCudaSharedVar = getLangOpts().CUDA && getLangOpts().CUDAIsDevice &&
                          D.hasAttr<CUDASharedAttr>();
+  bool isHCCTileStaticVar = getLangOpts().CPlusPlusAMP && getLangOpts().DevicePath &&
+                            D.hasAttr<HCCTileStaticAttr>();
   // If this value has an initializer, emit it.
-  if (D.getInit() && !isCudaSharedVar)
+  if (D.getInit() && !isCudaSharedVar && !isHCCTileStaticVar)
     var = AddInitializerToStaticVarDecl(D, var);
 
   var->setAlignment(alignment.getQuantity());

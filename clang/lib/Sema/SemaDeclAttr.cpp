@@ -3743,6 +3743,12 @@ static void handleSharedAttr(Sema &S, Decl *D, const AttributeList &Attr) {
       Attr.getRange(), S.Context, Attr.getAttributeSpellingListIndex()));
 }
 
+static void handleHCCTileStaticAttr(Sema &S, Decl *D, const AttributeList &Attr) {
+  // FIXME more checkings to follow
+  D->addAttr(::new (S.Context) HCCTileStaticAttr(
+      Attr.getRange(), S.Context, Attr.getAttributeSpellingListIndex()));
+}
+
 static void handleGlobalAttr(Sema &S, Decl *D, const AttributeList &Attr) {
   if (checkAttrMutualExclusion<CUDADeviceAttr>(S, D, Attr.getRange(),
                                                Attr.getName()) ||
@@ -5913,6 +5919,9 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
     break;
   case AttributeList::AT_CUDAShared:
     handleSharedAttr(S, D, Attr);
+    break;
+  case AttributeList::AT_HCCTileStatic:
+    handleHCCTileStaticAttr(S, D, Attr);
     break;
   case AttributeList::AT_VecReturn:
     handleVecReturnAttr(S, D, Attr);

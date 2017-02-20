@@ -245,6 +245,7 @@ def COnly : LangOpt<"CPlusPlus", 1>;
 def CPlusPlus : LangOpt<"CPlusPlus">;
 def OpenCL : LangOpt<"OpenCL">;
 def RenderScript : LangOpt<"RenderScript">;
+def CPlusPlusAMP : LangOpt<"CPlusPlusAMP">;
 
 // Defines targets for target-specific attributes. The list of strings should
 // specify architectures for which the target applies, based off the ArchType
@@ -2500,8 +2501,10 @@ def HCGridLaunch : InheritableAttr {
   let Documentation = [Undocumented];
 }
 
-def HCCTileStatic : TypeAttr {
-  let Spellings = [Keyword<"__lds">];
+def HCCTileStatic : InheritableAttr {
+  let Spellings = [GNU<"tile_static">];
+  let Subjects = SubjectList<[Var]>;
+  let LangOpts = [CPlusPlusAMP];
   let Documentation = [Undocumented];
 }
 

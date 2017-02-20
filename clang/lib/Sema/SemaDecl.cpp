@@ -6994,6 +6994,13 @@ NamedDecl *Sema::ActOnVariableDeclarator(
     }
   }
 
+  if (getLangOpts().CPlusPlusAMP) {
+    if (SC == SC_None && S->getFnParent() != nullptr &&
+        (NewVD->hasAttr<HCCTileStaticAttr>())) {
+      NewVD->setStorageClass(SC_Static);
+    }
+  }
+
   // Ensure that dllimport globals without explicit storage class are treated as
   // extern. The storage class is set above using parsed attributes. Now we can
   // check the VarDecl itself.
