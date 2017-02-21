@@ -1255,9 +1255,6 @@ void CodeGenFunction::EmitAutoVarInit(const AutoVarEmission &emission) {
     if (getLangOpts().OpenCL) {
       AS = CGM.getContext().getTargetAddressSpace(LangAS::opencl_constant);
       BP = llvm::PointerType::getInt8PtrTy(getLLVMContext(), AS);
-    } else if (getLangOpts().CPlusPlusAMP && getLangOpts().DevicePath) {
-      AS = CGM.getContext().getTargetAddressSpace(LangAS::hcc_global);
-      BP = llvm::PointerType::getInt8PtrTy(getLLVMContext(), AS);
     }
     llvm::GlobalVariable *GV =
       new llvm::GlobalVariable(CGM.getModule(), constant->getType(), true,
