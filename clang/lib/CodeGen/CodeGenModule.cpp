@@ -1884,7 +1884,9 @@ static bool isWhiteListForHCC(const ValueDecl* D) {
     if (ClassName.find("__atomic_base") != StringRef::npos ||
         ClassName.find("plus") != StringRef::npos ||
         ClassName.find("logical_or") != StringRef::npos ||
-        ClassName.find("logical_and") != StringRef::npos) {
+        ClassName.find("logical_and") != StringRef::npos ||
+        ClassName.find("unique_ptr") != StringRef::npos ||
+        ClassName.find("compressed_pair") != StringRef::npos) {
       return true;
     }
   }
