@@ -6791,10 +6791,6 @@ static void processTypeAttrs(TypeProcessingState &state, QualType &type,
       attr.setUsedAsTypeAttr();
       hasOpenCLAddressSpace = true;
       break;
-    case AttributeList::AT_HCCGlobal:
-      HandleAddressSpaceTypeAttribute(type, attr, state.getSema());
-      attr.setUsedAsTypeAttr();
-      break;
     OBJC_POINTER_TYPE_ATTRS_CASELIST:
       if (!handleObjCPointerTypeAttr(state, attr, type))
         distributeObjCPointerTypeAttr(state, attr, type);
