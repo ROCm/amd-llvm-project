@@ -1864,9 +1864,13 @@ void CodeGenModule::CompleteDIClassType(const CXXMethodDecl* D) {
 }
 
 static bool isWhiteListForHCC(const ValueDecl* D) {
-  // let global variables with "hcc_global" address space to pass
-  if (isa<VarDecl>(D) &&
-      D->getType().getAddressSpace() == LangAS::hcc_global)
+  // let kernels and functions marked with restrict(amp) to pass
+  if (D->hasAttr<CXXAMPRestrictAMPAttr>() ||
+      D->hasAttr<HCGridLaunchAttr>())
+    return true;
+
+  // let __device global variables to pass
+  if (isa<VarDecl>(D) && D->hasAttr<HCCGlobalAttr>())
     return true;
 
   // the remaining ones must be functions
@@ -1908,10 +1912,7 @@ void CodeGenModule::EmitGlobalDefinition(GlobalDecl GD, llvm::GlobalValue *GV) {
   if (LangOpts.CPlusPlusAMP && !CodeGenOpts.AMPCPU) {
     if (CodeGenOpts.AMPIsDevice) {
       // If -famp-is-device switch is on, we are in GPU build path.
-      if (!D->hasAttr<CXXAMPRestrictAMPAttr>() && !D->hasAttr<HCGridLaunchAttr>() &&
-          // for variables and functions not qualified with restrict(amp),
-          // be selective about which ones to be emitted in HCC kernel path
-          !isWhiteListForHCC(D))
+      if (!isWhiteListForHCC(D))
         return;
     } else {
       if (D->hasAttr<CXXAMPRestrictAMPAttr>()&&
@@ -2467,13 +2468,7 @@ llvm::Constant *CodeGenModule::GetAddrOfGlobalVar(const VarDecl *D,
   if (!Ty)
     Ty = getTypes().ConvertTypeForMem(ASTTy);
 
-  llvm::PointerType *PTy;
-
-  if (LangOpts.CPlusPlusAMP && LangOpts.DevicePath) {
-    PTy = llvm::PointerType::get(Ty, getContext().getTargetAddressSpace(LangAS::hcc_global));
-  } else {
-    PTy = llvm::PointerType::get(Ty, getContext().getTargetAddressSpace(ASTTy));
-  }
+  llvm::PointerType *PTy = llvm::PointerType::get(Ty, getContext().getTargetAddressSpace(ASTTy));
 
   StringRef MangledName = getMangledName(D);
   return GetOrCreateLLVMGlobal(MangledName, PTy, D, IsForDefinition);

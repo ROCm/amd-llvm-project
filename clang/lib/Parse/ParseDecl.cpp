@@ -3587,11 +3587,6 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
       ParseOpenCLQualifiers(DS.getAttributes());
       break;
 
-    // HCC __device qualifier:
-    case tok::kw___device:
-      ParseHCCQualifiers(DS.getAttributes());
-      break;
-
     case tok::less:
       // GCC ObjC supports types like "<SomeProtocol>" as a synonym for
       // "id<SomeProtocol>".  This is hopelessly old fashioned and dangerous,

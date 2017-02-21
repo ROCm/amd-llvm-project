@@ -2508,8 +2508,10 @@ def HCCTileStatic : InheritableAttr {
   let Documentation = [Undocumented];
 }
 
-def HCCGlobal : TypeAttr {
-  let Spellings = [Keyword<"__device">];
+def HCCGlobal : InheritableAttr {
+  let Spellings = [GNU<"agent_allocated">];
+  let Subjects = SubjectList<[Var]>;
+  let LangOpts = [CPlusPlusAMP];
   let Documentation = [Undocumented];
 }
 

@@ -508,9 +508,6 @@ KEYWORD(__forceinline               , KEYMS)
 KEYWORD(__unaligned                 , KEYMS)
 KEYWORD(__super                     , KEYMS)
 
-// HCC __device qualifier
-KEYWORD(__device                    , KEYCXXAMP)
-
 // OpenCL address space qualifiers
 KEYWORD(__global                    , KEYOPENCL)
 KEYWORD(__local                     , KEYOPENCL)
