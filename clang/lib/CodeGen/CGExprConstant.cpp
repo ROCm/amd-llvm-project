@@ -1313,7 +1313,7 @@ llvm::Constant *CodeGenModule::EmitConstantValue(const APValue &Value,
       if (!Offset->isNullValue()) {
         unsigned AS = C->getType()->getPointerAddressSpace();
         llvm::Type *CharPtrTy = Int8Ty->getPointerTo(AS);
-        llvm::Constant *Casted = llvm::ConstantExpr::getBitCast(C, CharPtrTy);
+        llvm::Constant *Casted = llvm::ConstantExpr::getPointerCast(C, CharPtrTy);
         Casted = llvm::ConstantExpr::getGetElementPtr(Int8Ty, Casted, Offset);
         C = llvm::ConstantExpr::getPointerCast(Casted, C->getType());
       }

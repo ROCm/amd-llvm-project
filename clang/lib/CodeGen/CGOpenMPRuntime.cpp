@@ -905,7 +905,7 @@ Address CGOpenMPRuntime::getOrCreateDefaultLocation(unsigned Flags) {
       DefaultOpenMPPSource =
           CGM.GetAddrOfConstantCString(";unknown;unknown;0;0;;").getPointer();
       DefaultOpenMPPSource =
-          llvm::ConstantExpr::getBitCast(DefaultOpenMPPSource, CGM.Int8PtrTy);
+          llvm::ConstantExpr::getPointerCast(DefaultOpenMPPSource, CGM.Int8PtrTy);
     }
 
     ConstantInitBuilder builder(CGM);
@@ -2895,7 +2895,7 @@ void CGOpenMPRuntime::createOffloadEntry(llvm::Constant *ID,
   llvm::Module &M = CGM.getModule();
 
   // Make sure the address has the right type.
-  llvm::Constant *AddrPtr = llvm::ConstantExpr::getBitCast(ID, CGM.VoidPtrTy);
+  llvm::Constant *AddrPtr = llvm::ConstantExpr::getPointerCast(ID, CGM.VoidPtrTy);
 
   // Create constant string with the name.
   llvm::Constant *StrPtrInit = llvm::ConstantDataArray::getString(C, Name);
@@ -2905,7 +2905,7 @@ void CGOpenMPRuntime::createOffloadEntry(llvm::Constant *ID,
                                llvm::GlobalValue::InternalLinkage, StrPtrInit,
                                ".omp_offloading.entry_name");
   Str->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
-  llvm::Constant *StrPtr = llvm::ConstantExpr::getBitCast(Str, CGM.Int8PtrTy);
+  llvm::Constant *StrPtr = llvm::ConstantExpr::getPointerCast(Str, CGM.Int8PtrTy);
 
   // We can't have any padding between symbols, so we need to have 1-byte
   // alignment.
@@ -4840,7 +4840,7 @@ void CGOpenMPRuntime::emitTargetOutlinedFunctionHelper(
   // the device, because these functions will be entry points to the device.
 
   if (CGM.getLangOpts().OpenMPIsDevice) {
-    OutlinedFnID = llvm::ConstantExpr::getBitCast(OutlinedFn, CGM.Int8PtrTy);
+    OutlinedFnID = llvm::ConstantExpr::getPointerCast(OutlinedFn, CGM.Int8PtrTy);
     OutlinedFn->setLinkage(llvm::GlobalValue::ExternalLinkage);
   } else
     OutlinedFnID = new llvm::GlobalVariable(
