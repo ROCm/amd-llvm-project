@@ -380,6 +380,10 @@ static void handleHCGridLaunchAttr(Sema &S, Decl *D,
   D->addAttr(::new (S.Context)
              HCGridLaunchAttr(Attr.getRange(), S.Context,
                               Attr.getAttributeSpellingListIndex()));
+  // make all hc_grid_launch functions always be emitted
+  D->addAttr(::new (S.Context)
+             UsedAttr(Attr.getRange(), S.Context,
+                              Attr.getAttributeSpellingListIndex()));
 }
 
 /// \brief Check if the passed-in expression is of type int or bool.
