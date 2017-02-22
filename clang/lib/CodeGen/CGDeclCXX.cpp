@@ -135,7 +135,7 @@ static void EmitDeclInvariant(CodeGenFunction &CGF, const VarDecl &D,
   CharUnits WidthChars = CGF.getContext().getTypeSizeInChars(D.getType());
   uint64_t Width = WidthChars.getQuantity();
   llvm::Value *Args[2] = { llvm::ConstantInt::getSigned(CGF.Int64Ty, Width),
-                           llvm::ConstantExpr::getBitCast(Addr, CGF.Int8PtrTy)};
+                           llvm::ConstantExpr::getPointerCast(Addr, CGF.Int8PtrTy)};
   CGF.Builder.CreateCall(InvariantStart, Args);
 }
 

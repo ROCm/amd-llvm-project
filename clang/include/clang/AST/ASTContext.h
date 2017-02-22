@@ -2301,6 +2301,8 @@ public:
                                              QualType typeDomain) const;
 
   unsigned getTargetAddressSpace(QualType T) const {
+    if (T->isFunctionType() && !T.getQualifiers().hasAddressSpace())
+      return 0;
     return getTargetAddressSpace(T.getQualifiers());
   }
 

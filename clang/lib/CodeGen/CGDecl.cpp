@@ -1254,7 +1254,7 @@ void CodeGenFunction::EmitAutoVarInit(const AutoVarEmission &emission) {
     // memcpy from the global to the alloca.
     std::string Name = getStaticDeclName(CGM, D);
     unsigned AS = 0;
-    if (getLangOpts().OpenCL) {
+    if (getLangOpts().OpenCL || getLangOpts().CPlusPlusAMP) {
       AS = CGM.getContext().getTargetAddressSpace(LangAS::opencl_constant);
       BP = llvm::PointerType::getInt8PtrTy(getLLVMContext(), AS);
     }
