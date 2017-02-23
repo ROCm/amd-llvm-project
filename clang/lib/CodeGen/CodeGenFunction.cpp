@@ -444,7 +444,7 @@ void CodeGenFunction::EmitFunctionInstrumentation(const char *Fn) {
     "callsite");
 
   llvm::Value *args[] = {
-    llvm::ConstantExpr::getBitCast(CurFn, PointerTy),
+    llvm::ConstantExpr::getPointerCast(CurFn, PointerTy),
     CallSite
   };
 
