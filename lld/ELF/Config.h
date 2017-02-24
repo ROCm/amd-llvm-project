@@ -34,14 +34,14 @@ enum ELFKind {
 // For --build-id.
 enum class BuildIdKind { None, Fast, Md5, Sha1, Hexstring, Uuid };
 
-// For --discard-{all,locals,none} and --retain-symbols-file.
-enum class DiscardPolicy { Default, All, Locals, RetainFile, None };
+// For --discard-{all,locals,none}.
+enum class DiscardPolicy { Default, All, Locals, None };
 
 // For --strip-{all,debug}.
 enum class StripPolicy { None, All, Debug };
 
 // For --unresolved-symbols.
-enum class UnresolvedPolicy { NoUndef, ReportError, Warn, Ignore };
+enum class UnresolvedPolicy { ReportError, Warn, WarnAll, Ignore, IgnoreAll };
 
 // For --sort-section and linkerscript sorting rules.
 enum class SortSectionPolicy { Default, None, Alignment, Name, Priority };
@@ -80,10 +80,11 @@ struct Configuration {
   llvm::StringRef Init;
   llvm::StringRef LTOAAPipeline;
   llvm::StringRef LTONewPmPasses;
+  llvm::StringRef MapFile;
   llvm::StringRef OutputFile;
+  llvm::StringRef OptRemarksFilename;
   llvm::StringRef SoName;
   llvm::StringRef Sysroot;
-  llvm::StringSet<> RetainSymbolsFile;
   std::string RPath;
   std::vector<VersionDefinition> VersionDefinitions;
   std::vector<llvm::StringRef> AuxiliaryList;
@@ -98,9 +99,11 @@ struct Configuration {
   bool Bsymbolic;
   bool BsymbolicFunctions;
   bool ColorDiagnostics = false;
+  bool DefineCommon;
   bool Demangle = true;
   bool DisableVerify;
   bool EhFrameHdr;
+  bool EmitRelocs;
   bool EnableNewDtags;
   bool ExportDynamic;
   bool FatalWarnings;
@@ -115,7 +118,7 @@ struct Configuration {
   bool Nostdlib;
   bool OFormatBinary;
   bool OMagic;
-  bool Pic;
+  bool OptRemarksWithHotness;
   bool Pie;
   bool PrintGcSections;
   bool Rela;
@@ -133,6 +136,7 @@ struct Configuration {
   bool WarnMissingEntry;
   bool ZCombreloc;
   bool ZExecstack;
+  bool ZNocopyreloc;
   bool ZNodelete;
   bool ZNow;
   bool ZOrigin;
@@ -156,6 +160,14 @@ struct Configuration {
   unsigned LTOO;
   unsigned Optimize;
   unsigned ThinLTOJobs;
+
+  // Returns true if we need to pass through relocations in input
+  // files to the output file. Usually false because we consume
+  // relocations.
+  bool copyRelocs() const { return Relocatable || EmitRelocs; }
+
+  // Returns true if we are creating position-independent code.
+  bool pic() const { return Pie || Shared; }
 };
 
 // The only instance of Configuration struct.

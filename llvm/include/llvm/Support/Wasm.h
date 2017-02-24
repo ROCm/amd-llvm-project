@@ -23,7 +23,7 @@ namespace wasm {
 // Object file magic string.
 const char WasmMagic[] = {'\0', 'a', 's', 'm'};
 // Wasm binary format version
-const uint32_t WasmVersion = 0xd;
+const uint32_t WasmVersion = 0x1;
 
 struct WasmObjectHeader {
   StringRef Magic;
@@ -38,7 +38,7 @@ struct WasmSection {
 };
 
 enum : unsigned {
-  WASM_SEC_USER = 0,     // User-defined section
+  WASM_SEC_CUSTOM = 0,   // Custom / User-defined section
   WASM_SEC_TYPE = 1,     // Function signature declarations
   WASM_SEC_IMPORT = 2,   // Import declarations
   WASM_SEC_FUNCTION = 3, // Function declarations

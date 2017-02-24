@@ -233,6 +233,7 @@ def note_drv_t_option_is_global : Note<
   "The last /TC or /TP option takes precedence over earlier instances">;
 def note_drv_address_sanitizer_debug_runtime : Note<
   "AddressSanitizer doesn't support linking with debug runtime libraries yet">;
+def note_drv_use_standard : Note<"use '%0' for '%1' standard">;
 
 def err_analyzer_config_no_value : Error<
   "analyzer-config option '%0' has a key but no value">;
@@ -249,6 +250,10 @@ def err_test_module_file_extension_format : Error<
 
 def warn_drv_invoking_fallback : Warning<"falling back to %0">,
   InGroup<Fallback>;
+
+def warn_slash_u_filename : Warning<"'/U%0' treated as the '/U' option">,
+  InGroup<DiagGroup<"slash-u-filename">>;
+def note_use_dashdash : Note<"Use '--' to treat subsequent arguments as filenames">;
 
 def err_drv_ropi_rwpi_incompatible_with_pic : Error<
   "embedded and GOT-based position independence are incompatible">;

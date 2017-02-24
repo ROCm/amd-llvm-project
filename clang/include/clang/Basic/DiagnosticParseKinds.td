@@ -176,6 +176,9 @@ def warn_gcc_attribute_location : Warning<
 def warn_attribute_no_decl : Warning<
   "attribute %0 ignored, because it is not attached to a declaration">, 
   InGroup<IgnoredAttributes>;
+def err_ms_attributes_not_enabled : Error<
+  "'__declspec' attributes are not enabled; use '-fdeclspec' or "
+  "'-fms-extensions' to enable support for __declspec attributes">;
 def err_expected_method_body : Error<"expected method body">;
 def err_declspec_after_virtspec : Error<
   "'%0' qualifier may not appear after the virtual specifier '%1'">;
@@ -669,9 +672,6 @@ def warn_static_inline_explicit_inst_ignored : Warning<
 // Constructor template diagnostics.
 def err_out_of_line_constructor_template_id : Error<
   "out-of-line constructor for %0 cannot have template arguments">;
-def err_out_of_line_template_id_type_names_constructor : Error<
-  "qualified reference to %0 is a constructor name rather than a "
-  "%select{template name|type}1 wherever a constructor can be declared">;
 
 def err_expected_qualified_after_typename : Error<
   "expected a qualified name after 'typename'">;

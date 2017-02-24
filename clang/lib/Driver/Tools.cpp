@@ -1373,9 +1373,9 @@ void Clang::AddAArch64TargetArgs(const ArgList &Args,
                                options::OPT_mno_global_merge)) {
     CmdArgs.push_back("-backend-option");
     if (A->getOption().matches(options::OPT_mno_global_merge))
-      CmdArgs.push_back("-aarch64-global-merge=false");
+      CmdArgs.push_back("-aarch64-enable-global-merge=false");
     else
-      CmdArgs.push_back("-aarch64-global-merge=true");
+      CmdArgs.push_back("-aarch64-enable-global-merge=true");
   }
 }
 
@@ -1550,8 +1550,54 @@ static void getMIPSTargetFeatures(const Driver &D, const llvm::Triple &Triple,
   mips::getMipsCPUAndABI(Args, Triple, CPUName, ABIName);
   ABIName = getGnuCompatibleMipsABIName(ABIName);
 
-  AddTargetFeature(Args, Features, options::OPT_mno_abicalls,
-                   options::OPT_mabicalls, "noabicalls");
+  // Historically, PIC code for MIPS was associated with -mabicalls, a.k.a
+  // SVR4 abicalls. Static code does not use SVR4 calling sequences. An ABI
+  // extension was developed by Richard Sandiford & Code Sourcery to support
+  // static code calling PIC code (CPIC). For O32 and N32 this means we have
+  // several combinations of PIC/static and abicalls. Pure static, static
+  // with the CPIC extension, and pure PIC code.
+
+  // At final link time, O32 and N32 with CPIC will have another section
+  // added to the binary which contains the stub functions to perform
+  // any fixups required for PIC code.
+
+  // For N64, the situation is more regular: code can either be static
+  // (non-abicalls) or PIC (abicalls). GCC has traditionally picked PIC code
+  // code for N64. Since Clang has already built the relocation model portion
+  // of the commandline, we pick add +noabicalls feature in the N64 static
+  // case.
+
+  // The is another case to be accounted for: -msym32, which enforces that all
+  // symbols have 32 bits in size. In this case, N64 can in theory use CPIC
+  // but it is unsupported.
+
+  // The combinations for N64 are:
+  // a) Static without abicalls and 64bit symbols.
+  // b) Static with abicalls and 32bit symbols.
+  // c) PIC with abicalls and 64bit symbols.
+
+  // For case (a) we need to add +noabicalls for N64.
+
+  bool IsN64 = ABIName == "64";
+  bool NonPIC = false;
+
+  Arg *LastPICArg = Args.getLastArg(options::OPT_fPIC, options::OPT_fno_PIC,
+                                    options::OPT_fpic, options::OPT_fno_pic,
+                                    options::OPT_fPIE, options::OPT_fno_PIE,
+                                    options::OPT_fpie, options::OPT_fno_pie);
+  if (LastPICArg) {
+    Option O = LastPICArg->getOption();
+    NonPIC =
+        (O.matches(options::OPT_fno_PIC) || O.matches(options::OPT_fno_pic) ||
+         O.matches(options::OPT_fno_PIE) || O.matches(options::OPT_fno_pie));
+  }
+
+  if (IsN64 && NonPIC) {
+    Features.push_back("+noabicalls");
+  } else {
+    AddTargetFeature(Args, Features, options::OPT_mno_abicalls,
+                     options::OPT_mabicalls, "noabicalls");
+  }
 
   mips::FloatABI FloatABI = getMipsFloatABI(D, Args);
   if (FloatABI == mips::FloatABI::Soft) {
@@ -2244,6 +2290,15 @@ static void AddGoldPlugin(const ToolChain &ToolChain, const ArgList &Args,
   if (Args.hasFlag(options::OPT_fdata_sections, options::OPT_fno_data_sections,
                    UseSeparateSections)) {
     CmdArgs.push_back("-plugin-opt=-data-sections");
+  }
+
+  if (Arg *A = Args.getLastArg(options::OPT_fprofile_sample_use_EQ)) {
+    StringRef FName = A->getValue();
+    if (!llvm::sys::fs::exists(FName))
+      D.Diag(diag::err_drv_no_such_file) << FName;
+    else
+      CmdArgs.push_back(
+          Args.MakeArgString(Twine("-plugin-opt=sample-profile=") + FName));
   }
 }
 
@@ -3068,6 +3123,10 @@ static void CollectArgsForIntegratedAssembler(Compilation &C,
         continue;
       }
 
+      if (C.getDefaultToolChain().getTriple().isOSBinFormatCOFF() &&
+          Value == "-mbig-obj")
+        continue; // LLVM handles bigobj automatically
+
       switch (C.getDefaultToolChain().getArch()) {
       default:
         break;
@@ -3197,14 +3256,6 @@ static void CollectArgsForIntegratedAssembler(Compilation &C,
   }
 }
 
-// This adds the static libclang_rt.builtins-arch.a directly to the command line
-// FIXME: Make sure we can also emit shared objects if they're requested
-// and available, check for possible errors, etc.
-static void addClangRT(const ToolChain &TC, const ArgList &Args,
-                       ArgStringList &CmdArgs) {
-  CmdArgs.push_back(TC.getCompilerRTArgString(Args, "builtins"));
-}
-
 static void addOpenMPRuntime(ArgStringList &CmdArgs, const ToolChain &TC,
                               const ArgList &Args) {
   if (!Args.hasFlag(options::OPT_fopenmp, options::OPT_fopenmp_EQ,
@@ -3316,8 +3367,10 @@ collectSanitizerRuntimes(const ToolChain &TC, const ArgList &Args,
     if (SanArgs.linkCXXRuntimes())
       StaticRuntimes.push_back("ubsan_standalone_cxx");
   }
-  if (SanArgs.needsSafeStackRt())
-    StaticRuntimes.push_back("safestack");
+  if (SanArgs.needsSafeStackRt()) {
+    NonWholeStaticRuntimes.push_back("safestack");
+    RequiredSymbols.push_back("__safestack_init");
+  }
   if (SanArgs.needsCfiRt())
     StaticRuntimes.push_back("cfi");
   if (SanArgs.needsCfiDiagRt()) {
@@ -3368,7 +3421,7 @@ static bool addSanitizerRuntimes(const ToolChain &TC, const ArgList &Args,
   if (SanArgs.hasCrossDsoCfi() && !AddExportDynamic)
     CmdArgs.push_back("-export-dynamic-symbol=__cfi_check");
 
-  return !StaticRuntimes.empty();
+  return !StaticRuntimes.empty() || !NonWholeStaticRuntimes.empty();
 }
 
 static bool addXRayRuntime(const ToolChain &TC, const ArgList &Args,
@@ -3406,7 +3459,7 @@ static bool areOptimizationsEnabled(const ArgList &Args) {
   return false;
 }
 
-static bool mustUseFramePointerForTarget(const llvm::Triple &Triple) {
+static bool mustUseNonLeafFramePointerForTarget(const llvm::Triple &Triple) {
   switch (Triple.getArch()){
   default:
     return false;
@@ -3472,7 +3525,7 @@ static bool shouldUseFramePointer(const ArgList &Args,
   if (Arg *A = Args.getLastArg(options::OPT_fno_omit_frame_pointer,
                                options::OPT_fomit_frame_pointer))
     return A->getOption().matches(options::OPT_fno_omit_frame_pointer) ||
-           mustUseFramePointerForTarget(Triple);
+           mustUseNonLeafFramePointerForTarget(Triple);
 
   if (Args.hasArg(options::OPT_pg))
     return true;
@@ -3484,8 +3537,7 @@ static bool shouldUseLeafFramePointer(const ArgList &Args,
                                       const llvm::Triple &Triple) {
   if (Arg *A = Args.getLastArg(options::OPT_mno_omit_leaf_frame_pointer,
                                options::OPT_momit_leaf_frame_pointer))
-    return A->getOption().matches(options::OPT_mno_omit_leaf_frame_pointer) ||
-           mustUseFramePointerForTarget(Triple);
+    return A->getOption().matches(options::OPT_mno_omit_leaf_frame_pointer);
 
   if (Args.hasArg(options::OPT_pg))
     return true;
@@ -3799,15 +3851,14 @@ static void addPS4ProfileRTArgs(const ToolChain &TC, const ArgList &Args,
 /// this compile should be using PIC mode or not. Returns a tuple of
 /// (RelocationModel, PICLevel, IsPIE).
 static std::tuple<llvm::Reloc::Model, unsigned, bool>
-ParsePICArgs(const ToolChain &ToolChain, const llvm::Triple &Triple,
-             const ArgList &Args) {
-  // FIXME: why does this code...and so much everywhere else, use both
-  // ToolChain.getTriple() and Triple?
+ParsePICArgs(const ToolChain &ToolChain, const ArgList &Args) {
+  const llvm::Triple &EffectiveTriple = ToolChain.getEffectiveTriple();
+  const llvm::Triple &Triple = ToolChain.getTriple();
+
   bool PIE = ToolChain.isPIEDefault();
   bool PIC = PIE || ToolChain.isPICDefault();
   // The Darwin/MachO default to use PIC does not apply when using -static.
-  if (ToolChain.getTriple().isOSBinFormatMachO() &&
-      Args.hasArg(options::OPT_static))
+  if (Triple.isOSBinFormatMachO() && Args.hasArg(options::OPT_static))
     PIE = PIC = false;
   bool IsPICLevelTwo = PIC;
 
@@ -3815,8 +3866,8 @@ ParsePICArgs(const ToolChain &ToolChain, const llvm::Triple &Triple,
       Args.hasArg(options::OPT_mkernel, options::OPT_fapple_kext);
 
   // Android-specific defaults for PIC/PIE
-  if (ToolChain.getTriple().isAndroid()) {
-    switch (ToolChain.getArch()) {
+  if (Triple.isAndroid()) {
+    switch (Triple.getArch()) {
     case llvm::Triple::arm:
     case llvm::Triple::armeb:
     case llvm::Triple::thumb:
@@ -3841,7 +3892,7 @@ ParsePICArgs(const ToolChain &ToolChain, const llvm::Triple &Triple,
   }
 
   // OpenBSD-specific defaults for PIE
-  if (ToolChain.getTriple().getOS() == llvm::Triple::OpenBSD) {
+  if (Triple.getOS() == llvm::Triple::OpenBSD) {
     switch (ToolChain.getArch()) {
     case llvm::Triple::mips64:
     case llvm::Triple::mips64el:
@@ -3870,6 +3921,17 @@ ParsePICArgs(const ToolChain &ToolChain, const llvm::Triple &Triple,
                                     options::OPT_fpic, options::OPT_fno_pic,
                                     options::OPT_fPIE, options::OPT_fno_PIE,
                                     options::OPT_fpie, options::OPT_fno_pie);
+  if (Triple.isOSWindows() && LastPICArg &&
+      LastPICArg ==
+          Args.getLastArg(options::OPT_fPIC, options::OPT_fpic,
+                          options::OPT_fPIE, options::OPT_fpie)) {
+    ToolChain.getDriver().Diag(diag::err_drv_unsupported_opt_for_target)
+        << LastPICArg->getSpelling() << Triple.str();
+    if (Triple.getArch() == llvm::Triple::x86_64)
+      return std::make_tuple(llvm::Reloc::PIC_, 2U, false);
+    return std::make_tuple(llvm::Reloc::Static, 0U, false);
+  }
+
   // Check whether the tool chain trumps the PIC-ness decision. If the PIC-ness
   // is forced, then neither PIC nor PIE flags will have no effect.
   if (!ToolChain.isPICDefaultForced()) {
@@ -3884,7 +3946,7 @@ ParsePICArgs(const ToolChain &ToolChain, const llvm::Triple &Triple,
             O.matches(options::OPT_fPIE) || O.matches(options::OPT_fPIC);
       } else {
         PIE = PIC = false;
-        if (Triple.isPS4CPU()) {
+        if (EffectiveTriple.isPS4CPU()) {
           Arg *ModelArg = Args.getLastArg(options::OPT_mcmodel_EQ);
           StringRef Model = ModelArg ? ModelArg->getValue() : "";
           if (Model != "kernel") {
@@ -3900,21 +3962,22 @@ ParsePICArgs(const ToolChain &ToolChain, const llvm::Triple &Triple,
   // Introduce a Darwin and PS4-specific hack. If the default is PIC, but the
   // PIC level would've been set to level 1, force it back to level 2 PIC
   // instead.
-  if (PIC && (ToolChain.getTriple().isOSDarwin() || Triple.isPS4CPU()))
+  if (PIC && (Triple.isOSDarwin() || EffectiveTriple.isPS4CPU()))
     IsPICLevelTwo |= ToolChain.isPICDefault();
 
   // This kernel flags are a trump-card: they will disable PIC/PIE
   // generation, independent of the argument order.
-  if (KernelOrKext && ((!Triple.isiOS() || Triple.isOSVersionLT(6)) &&
-                       !Triple.isWatchOS()))
+  if (KernelOrKext &&
+      ((!EffectiveTriple.isiOS() || EffectiveTriple.isOSVersionLT(6)) &&
+       !EffectiveTriple.isWatchOS()))
     PIC = PIE = false;
 
   if (Arg *A = Args.getLastArg(options::OPT_mdynamic_no_pic)) {
     // This is a very special mode. It trumps the other modes, almost no one
     // uses it, and it isn't even valid on any OS but Darwin.
-    if (!ToolChain.getTriple().isOSDarwin())
+    if (!Triple.isOSDarwin())
       ToolChain.getDriver().Diag(diag::err_drv_unsupported_opt_for_target)
-          << A->getSpelling() << ToolChain.getTriple().str();
+          << A->getSpelling() << Triple.str();
 
     // FIXME: Warn when this flag trumps some other PIC or PIE flag.
 
@@ -3927,7 +3990,7 @@ ParsePICArgs(const ToolChain &ToolChain, const llvm::Triple &Triple,
   }
 
   bool EmbeddedPISupported;
-  switch (ToolChain.getArch()) {
+  switch (Triple.getArch()) {
     case llvm::Triple::arm:
     case llvm::Triple::armeb:
     case llvm::Triple::thumb:
@@ -3944,21 +4007,27 @@ ParsePICArgs(const ToolChain &ToolChain, const llvm::Triple &Triple,
   if (LastROPIArg && LastROPIArg->getOption().matches(options::OPT_fropi)) {
     if (!EmbeddedPISupported)
       ToolChain.getDriver().Diag(diag::err_drv_unsupported_opt_for_target)
-          << LastROPIArg->getSpelling() << ToolChain.getTriple().str();
+          << LastROPIArg->getSpelling() << Triple.str();
     ROPI = true;
   }
   Arg *LastRWPIArg = Args.getLastArg(options::OPT_frwpi, options::OPT_fno_rwpi);
   if (LastRWPIArg && LastRWPIArg->getOption().matches(options::OPT_frwpi)) {
     if (!EmbeddedPISupported)
       ToolChain.getDriver().Diag(diag::err_drv_unsupported_opt_for_target)
-          << LastRWPIArg->getSpelling() << ToolChain.getTriple().str();
+          << LastRWPIArg->getSpelling() << Triple.str();
     RWPI = true;
   }
 
   // ROPI and RWPI are not comaptible with PIC or PIE.
-  if ((ROPI || RWPI) && (PIC || PIE)) {
+  if ((ROPI || RWPI) && (PIC || PIE))
     ToolChain.getDriver().Diag(diag::err_drv_ropi_rwpi_incompatible_with_pic);
-  }
+
+  // When targettng MIPS64 with N64, the default is PIC, unless -mno-abicalls is
+  // used.
+  if ((Triple.getArch() == llvm::Triple::mips64 ||
+       Triple.getArch() == llvm::Triple::mips64el) &&
+      Args.hasArg(options::OPT_mno_abicalls))
+    return std::make_tuple(llvm::Reloc::Static, 0U, false);
 
   if (PIC)
     return std::make_tuple(llvm::Reloc::PIC_, IsPICLevelTwo ? 2U : 1U, PIE);
@@ -3997,8 +4066,7 @@ static void AddAssemblerKPIC(const ToolChain &ToolChain, const ArgList &Args,
   llvm::Reloc::Model RelocationModel;
   unsigned PICLevel;
   bool IsPIE;
-  std::tie(RelocationModel, PICLevel, IsPIE) =
-      ParsePICArgs(ToolChain, ToolChain.getTriple(), Args);
+  std::tie(RelocationModel, PICLevel, IsPIE) = ParsePICArgs(ToolChain, Args);
 
   if (RelocationModel != llvm::Reloc::Static)
     CmdArgs.push_back("-KPIC");
@@ -4078,13 +4146,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   const Driver &D = getToolChain().getDriver();
   ArgStringList CmdArgs;
 
-  bool IsWindowsGNU = getToolChain().getTriple().isWindowsGNUEnvironment();
-  bool IsWindowsCygnus =
-      getToolChain().getTriple().isWindowsCygwinEnvironment();
-  bool IsWindowsMSVC = getToolChain().getTriple().isWindowsMSVCEnvironment();
-  bool IsPS4CPU = getToolChain().getTriple().isPS4CPU();
-  bool IsIAMCU = getToolChain().getTriple().isOSIAMCU();
-
   // Check number of inputs for sanity. We need at least one input.
   assert(Inputs.size() >= 1 && "Must have at least one input.");
   const InputInfo &Input = Inputs[0];
@@ -4097,6 +4158,23 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   assert((IsCuda || (IsOpenMPDevice && Inputs.size() == 2) ||
           Inputs.size() == 1) &&
          "Unable to handle multiple inputs.");
+
+  bool IsWindowsGNU = getToolChain().getTriple().isWindowsGNUEnvironment();
+  bool IsWindowsCygnus =
+      getToolChain().getTriple().isWindowsCygwinEnvironment();
+  bool IsWindowsMSVC = getToolChain().getTriple().isWindowsMSVCEnvironment();
+  bool IsPS4CPU = getToolChain().getTriple().isPS4CPU();
+  bool IsIAMCU = getToolChain().getTriple().isOSIAMCU();
+
+  // Adjust IsWindowsXYZ for CUDA compilations.  Even when compiling in device
+  // mode (i.e., getToolchain().getTriple() is NVPTX, not Windows), we need to
+  // pass Windows-specific flags to cc1.
+  if (IsCuda) {
+    const llvm::Triple *AuxTriple = getToolChain().getAuxTriple();
+    IsWindowsMSVC |= AuxTriple && AuxTriple->isWindowsMSVCEnvironment();
+    IsWindowsGNU |= AuxTriple && AuxTriple->isWindowsGNUEnvironment();
+    IsWindowsCygnus |= AuxTriple && AuxTriple->isWindowsCygwinEnvironment();
+  }
 
   // C++ is not supported for IAMCU.
   if (IsIAMCU && types::isCXX(Input.getType()))
@@ -4273,8 +4351,16 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     if (JA.getType() == types::TY_LLVM_BC)
       CmdArgs.push_back("-emit-llvm-uselists");
 
-    if (D.isUsingLTO())
+    if (D.isUsingLTO()) {
       Args.AddLastArg(CmdArgs, options::OPT_flto, options::OPT_flto_EQ);
+
+      // The Darwin linker currently uses the legacy LTO API, which does not
+      // support LTO unit features (CFI, whole program vtable opt) under
+      // ThinLTO.
+      if (!getToolChain().getTriple().isOSDarwin() ||
+          D.getLTOMode() == LTOK_Full)
+        CmdArgs.push_back("-flto-unit");
+    }
   }
 
   if (const Arg *A = Args.getLastArg(options::OPT_fthinlto_index_EQ)) {
@@ -4285,14 +4371,14 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   // Embed-bitcode option.
-  if (C.getDriver().embedBitcodeInObject() &&
+  if (C.getDriver().embedBitcodeInObject() && !C.getDriver().isUsingLTO() &&
       (isa<BackendJobAction>(JA) || isa<AssembleJobAction>(JA))) {
     // Add flags implied by -fembed-bitcode.
     Args.AddLastArg(CmdArgs, options::OPT_fembed_bitcode_EQ);
     // Disable all llvm IR level optimizations.
-    CmdArgs.push_back("-disable-llvm-optzns");
+    CmdArgs.push_back("-disable-llvm-passes");
   }
-  if (C.getDriver().embedBitcodeMarkerOnly())
+  if (C.getDriver().embedBitcodeMarkerOnly() && !C.getDriver().isUsingLTO())
     CmdArgs.push_back("-fembed-bitcode=marker");
 
   // We normally speed up the clang process a bit by skipping destructors at
@@ -4401,7 +4487,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   unsigned PICLevel;
   bool IsPIE;
   std::tie(RelocationModel, PICLevel, IsPIE) =
-      ParsePICArgs(getToolChain(), Triple, Args);
+      ParsePICArgs(getToolChain(), Args);
 
   const char *RMName = RelocationModelName(RelocationModel);
 
@@ -4515,6 +4601,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   if (Args.hasFlag(options::OPT_fstrict_enums, options::OPT_fno_strict_enums,
                    false))
     CmdArgs.push_back("-fstrict-enums");
+  if (!Args.hasFlag(options::OPT_fstrict_return, options::OPT_fno_strict_return,
+                    true))
+    CmdArgs.push_back("-fno-strict-return");
   if (Args.hasFlag(options::OPT_fstrict_vtable_pointers,
                    options::OPT_fno_strict_vtable_pointers,
                    false))
@@ -4991,6 +5080,11 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   RenderDebugEnablingArgs(Args, CmdArgs, DebugInfoKind, DwarfVersion,
                           DebuggerTuning);
 
+  // -fdebug-macro turns on macro debug info generation.
+  if (Args.hasFlag(options::OPT_fdebug_macro, options::OPT_fno_debug_macro,
+                   false))
+    CmdArgs.push_back("-debug-info-macro");
+
   // -ggnu-pubnames turns on gnu style pubnames in the backend.
   if (Args.hasArg(options::OPT_ggnu_pubnames)) {
     CmdArgs.push_back("-backend-option");
@@ -5040,6 +5134,11 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       case llvm::Triple::x86_64:
       case llvm::Triple::arm:
       case llvm::Triple::aarch64:
+      case llvm::Triple::ppc64le:
+      case llvm::Triple::mips:
+      case llvm::Triple::mipsel:
+      case llvm::Triple::mips64:
+      case llvm::Triple::mips64el:
         // Supported.
         break;
       default:
@@ -5483,6 +5582,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   if (getToolChain().SupportsProfiling())
     Args.AddLastArg(CmdArgs, options::OPT_pg);
 
+  if (getToolChain().SupportsProfiling())
+    Args.AddLastArg(CmdArgs, options::OPT_mfentry);
+
   // -flax-vector-conversions is default.
   if (!Args.hasFlag(options::OPT_flax_vector_conversions,
                     options::OPT_fno_lax_vector_conversions))
@@ -5529,25 +5631,29 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   // -stack-protector=0 is default.
   unsigned StackProtectorLevel = 0;
-  if (Arg *A = Args.getLastArg(options::OPT_fno_stack_protector,
-                               options::OPT_fstack_protector_all,
-                               options::OPT_fstack_protector_strong,
-                               options::OPT_fstack_protector)) {
-    if (A->getOption().matches(options::OPT_fstack_protector)) {
-      StackProtectorLevel = std::max<unsigned>(
-          LangOptions::SSPOn,
-          getToolChain().GetDefaultStackProtectorLevel(KernelOrKext));
-    } else if (A->getOption().matches(options::OPT_fstack_protector_strong))
-      StackProtectorLevel = LangOptions::SSPStrong;
-    else if (A->getOption().matches(options::OPT_fstack_protector_all))
-      StackProtectorLevel = LangOptions::SSPReq;
-  } else {
-    StackProtectorLevel =
-        getToolChain().GetDefaultStackProtectorLevel(KernelOrKext);
-    // Only use a default stack protector on Darwin in case -ffreestanding
-    // is not specified.
-    if (Triple.isOSDarwin() && !IsHosted)
-      StackProtectorLevel = 0;
+  // NVPTX doesn't support stack protectors; from the compiler's perspective, it
+  // doesn't even have a stack!
+  if (!Triple.isNVPTX()) {
+    if (Arg *A = Args.getLastArg(options::OPT_fno_stack_protector,
+                                 options::OPT_fstack_protector_all,
+                                 options::OPT_fstack_protector_strong,
+                                 options::OPT_fstack_protector)) {
+      if (A->getOption().matches(options::OPT_fstack_protector)) {
+        StackProtectorLevel = std::max<unsigned>(
+            LangOptions::SSPOn,
+            getToolChain().GetDefaultStackProtectorLevel(KernelOrKext));
+      } else if (A->getOption().matches(options::OPT_fstack_protector_strong))
+        StackProtectorLevel = LangOptions::SSPStrong;
+      else if (A->getOption().matches(options::OPT_fstack_protector_all))
+        StackProtectorLevel = LangOptions::SSPReq;
+    } else {
+      StackProtectorLevel =
+          getToolChain().GetDefaultStackProtectorLevel(KernelOrKext);
+      // Only use a default stack protector on Darwin in case -ffreestanding
+      // is not specified.
+      if (Triple.isOSDarwin() && !IsHosted)
+        StackProtectorLevel = 0;
+    }
   }
   if (StackProtectorLevel) {
     CmdArgs.push_back("-stack-protector");
@@ -5666,6 +5772,10 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     else
       A->render(Args, CmdArgs);
   }
+
+  if (Args.hasFlag(options::OPT_fdebug_info_for_profiling,
+                   options::OPT_fno_debug_info_for_profiling, false))
+    CmdArgs.push_back("-fdebug-info-for-profiling");
 
   // -fbuiltin is default unless -mkernel is used.
   bool UseBuiltins =
@@ -6006,6 +6116,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                                        options::OPT_fno_inline_functions))
     InlineArg->render(Args, CmdArgs);
 
+  Args.AddLastArg(CmdArgs, options::OPT_fexperimental_new_pass_manager,
+                  options::OPT_fno_experimental_new_pass_manager);
+
   ObjCRuntime objcRuntime = AddObjCRuntimeArgs(Args, CmdArgs, rewriteKind);
 
   // -fobjc-dispatch-method is only relevant with the nonfragile-abi, and
@@ -6063,7 +6176,13 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                      options::OPT_fno_objc_arc_exceptions,
                      /*default*/ types::isCXX(InputType)))
       CmdArgs.push_back("-fobjc-arc-exceptions");
+  }
 
+  // Silence warning for full exception code emission options when explicitly
+  // set to use no ARC.
+  if (Args.hasArg(options::OPT_fno_objc_arc)) {
+    Args.ClaimAllArgs(options::OPT_fobjc_arc_exceptions);
+    Args.ClaimAllArgs(options::OPT_fno_objc_arc_exceptions);
   }
 
   // -fobjc-infer-related-result-type is the default, except in the Objective-C
@@ -6102,6 +6221,13 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   if (!Args.hasFlag(options::OPT_fassume_sane_operator_new,
                     options::OPT_fno_assume_sane_operator_new))
     CmdArgs.push_back("-fno-assume-sane-operator-new");
+
+  // -frelaxed-template-template-args is off by default, as it is a severe
+  // breaking change until a corresponding change to template partial ordering
+  // is provided.
+  if (Args.hasFlag(options::OPT_frelaxed_template_template_args,
+                   options::OPT_fno_relaxed_template_template_args, false))
+    CmdArgs.push_back("-frelaxed-template-template-args");
 
   // -fsized-deallocation is off by default, as it is an ABI-breaking change for
   // most platforms.
@@ -6486,11 +6612,13 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     A->claim();
 
     // We translate this by hand to the -cc1 argument, since nightly test uses
-    // it and developers have been trained to spell it with -mllvm.
+    // it and developers have been trained to spell it with -mllvm. Both
+    // spellings are now deprecated and should be removed.
     if (StringRef(A->getValue(0)) == "-disable-llvm-optzns") {
       CmdArgs.push_back("-disable-llvm-optzns");
-    } else
+    } else {
       A->render(Args, CmdArgs);
+    }
   }
 
   // With -save-temps, we want to save the unoptimized bitcode output from the
@@ -6502,7 +6630,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // pristine IR generated by the frontend. Ideally, a new compile action should
   // be added so both IR can be captured.
   if (C.getDriver().isSaveTempsEnabled() &&
-      !C.getDriver().embedBitcodeInObject() && isa<CompileJobAction>(JA))
+      !(C.getDriver().embedBitcodeInObject() && !C.getDriver().isUsingLTO()) &&
+      isa<CompileJobAction>(JA))
     CmdArgs.push_back("-disable-llvm-passes");
 
   if (Output.getType() == types::TY_Dependencies) {
@@ -7142,7 +7271,7 @@ void ClangAs::ConstructJob(Compilation &C, const JobAction &JA,
   unsigned PICLevel;
   bool IsPIE;
   std::tie(RelocationModel, PICLevel, IsPIE) =
-      ParsePICArgs(getToolChain(), Triple, Args);
+      ParsePICArgs(getToolChain(), Args);
 
   const char *RMName = RelocationModelName(RelocationModel);
   if (RMName) {
@@ -8480,9 +8609,13 @@ void darwin::Linker::AddLinkArgs(Compilation &C, const ArgList &Args,
   // for embed-bitcode, use -bitcode_bundle in linker command
   if (C.getDriver().embedBitcodeEnabled()) {
     // Check if the toolchain supports bitcode build flow.
-    if (MachOTC.SupportsEmbeddedBitcode())
+    if (MachOTC.SupportsEmbeddedBitcode()) {
       CmdArgs.push_back("-bitcode_bundle");
-    else
+      if (C.getDriver().embedBitcodeMarkerOnly() && Version[0] >= 278) {
+        CmdArgs.push_back("-bitcode_process_mode");
+        CmdArgs.push_back("marker");
+      }
+    } else
       D.Diag(diag::err_drv_bitcode_unsupported_on_toolchain);
   }
 
@@ -8676,6 +8809,10 @@ void darwin::Linker::ConstructJob(Compilation &C, const JobAction &JA,
 
     // Let the tool chain choose which runtime library to link.
     getMachOToolChain().AddLinkRuntimeLibArgs(Args, CmdArgs);
+
+    // No need to do anything for pthreads. Claim argument to avoid warning.
+    Args.ClaimAllArgs(options::OPT_pthread);
+    Args.ClaimAllArgs(options::OPT_pthreads);
   }
 
   if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nostartfiles)) {
@@ -8965,12 +9102,12 @@ void openbsd::Linker::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("__start");
   }
 
+  CmdArgs.push_back("--eh-frame-hdr");
   if (Args.hasArg(options::OPT_static)) {
     CmdArgs.push_back("-Bstatic");
   } else {
     if (Args.hasArg(options::OPT_rdynamic))
       CmdArgs.push_back("-export-dynamic");
-    CmdArgs.push_back("--eh-frame-hdr");
     CmdArgs.push_back("-Bdynamic");
     if (Args.hasArg(options::OPT_shared)) {
       CmdArgs.push_back("-shared");
@@ -8995,6 +9132,10 @@ void openbsd::Linker::ConstructJob(Compilation &C, const JobAction &JA,
       if (Args.hasArg(options::OPT_pg))
         CmdArgs.push_back(
             Args.MakeArgString(getToolChain().GetFilePath("gcrt0.o")));
+      else if (Args.hasArg(options::OPT_static) &&
+               !Args.hasArg(options::OPT_nopie))
+        CmdArgs.push_back(
+            Args.MakeArgString(getToolChain().GetFilePath("rcrt0.o")));
       else
         CmdArgs.push_back(
             Args.MakeArgString(getToolChain().GetFilePath("crt0.o")));
@@ -9704,6 +9845,7 @@ void netbsd::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   if (Major >= 7 || Major == 0) {
     switch (getToolChain().getArch()) {
     case llvm::Triple::aarch64:
+    case llvm::Triple::aarch64_be:
     case llvm::Triple::arm:
     case llvm::Triple::armeb:
     case llvm::Triple::thumb:
@@ -9772,15 +9914,13 @@ void gnutools::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
                                        const char *LinkingOutput) const {
   claimNoWarnArgs(Args);
 
-  const llvm::Triple &Triple = getToolChain().getEffectiveTriple();
-
   ArgStringList CmdArgs;
 
   llvm::Reloc::Model RelocationModel;
   unsigned PICLevel;
   bool IsPIE;
   std::tie(RelocationModel, PICLevel, IsPIE) =
-      ParsePICArgs(getToolChain(), Triple, Args);
+      ParsePICArgs(getToolChain(), Args);
 
   switch (getToolChain().getArch()) {
   default:
@@ -9892,7 +10032,8 @@ void gnutools::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
 
     // LLVM doesn't support -mplt yet and acts as if it is always given.
     // However, -mplt has no effect with the N64 ABI.
-    CmdArgs.push_back(ABIName == "64" ? "-KPIC" : "-call_nonpic");
+    if (ABIName != "64" && !Args.hasArg(options::OPT_mno_abicalls))
+      CmdArgs.push_back("-call_nonpic");
 
     if (getToolChain().getArch() == llvm::Triple::mips ||
         getToolChain().getArch() == llvm::Triple::mips64)
@@ -10030,7 +10171,7 @@ static void AddRunTimeLibs(const ToolChain &TC, const Driver &D,
     case llvm::Triple::Win32:
     case llvm::Triple::Linux:
     case llvm::Triple::Fuchsia:
-      addClangRT(TC, Args, CmdArgs);
+      CmdArgs.push_back(TC.getCompilerRTArgString(Args, "builtins"));
       break;
     }
     break;
@@ -10130,7 +10271,7 @@ void gnutools::Linker::ConstructLinkerJob(Compilation &C, const JobAction &JA,
   Args.ClaimAllArgs(options::OPT_w);
 
   const char *Exec = Args.MakeArgString(ToolChain.GetLinkerPath());
-  if (llvm::sys::path::filename(Exec) == "lld") {
+  if (llvm::sys::path::stem(Exec) == "lld") {
     CmdArgs.push_back("-flavor");
     CmdArgs.push_back("old-gnu");
     CmdArgs.push_back("-target");
@@ -10993,11 +11134,21 @@ void visualstudio::Linker::ConstructJob(Compilation &C, const JobAction &JA,
           TC.getArch() == llvm::Triple::x86
               ? "-include:___asan_seh_interceptor"
               : "-include:__asan_seh_interceptor"));
+      // Make sure the linker consider all object files from the dynamic runtime
+      // thunk.
+      CmdArgs.push_back(Args.MakeArgString(std::string("-wholearchive:") +
+          TC.getCompilerRT(Args, "asan_dynamic_runtime_thunk")));
     } else if (DLL) {
       CmdArgs.push_back(TC.getCompilerRTArgString(Args, "asan_dll_thunk"));
     } else {
-      for (const auto &Lib : {"asan", "asan_cxx"})
+      for (const auto &Lib : {"asan", "asan_cxx"}) {
         CmdArgs.push_back(TC.getCompilerRTArgString(Args, Lib));
+        // Make sure the linker consider all object files from the static lib.
+        // This is necessary because instrumented dlls need access to all the
+        // interface exported by the static lib in the main executable.
+        CmdArgs.push_back(Args.MakeArgString(std::string("-wholearchive:") +
+            TC.getCompilerRT(Args, Lib)));
+      }
     }
   }
 
@@ -12283,6 +12434,22 @@ void NVPTX::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   const char *Exec = Args.MakeArgString(TC.GetProgramPath("fatbinary"));
   C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
 }
+
+void AVR::Linker::ConstructJob(Compilation &C, const JobAction &JA,
+                               const InputInfo &Output,
+                               const InputInfoList &Inputs,
+                               const ArgList &Args,
+                               const char *LinkingOutput) const {
+
+  std::string Linker = getToolChain().GetProgramPath(getShortName());
+  ArgStringList CmdArgs;
+  AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs, JA);
+  CmdArgs.push_back("-o");
+  CmdArgs.push_back(Output.getFilename());
+  C.addCommand(llvm::make_unique<Command>(JA, *this, Args.MakeArgString(Linker),
+                                          CmdArgs, Inputs));
+}
+// AVR tools end.
 
 static void HCPassOptions(const ArgList &Args, ArgStringList &CmdArgs) {
 

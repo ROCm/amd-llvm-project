@@ -16,7 +16,6 @@
 #include "Driver.h"
 #include "Error.h"
 #include "Memory.h"
-#include "ScriptParser.h"
 #include "lld/Config/Version.h"
 #include "lld/Core/Reproduce.h"
 #include "llvm/ADT/Optional.h"
@@ -56,9 +55,12 @@ ELFOptTable::ELFOptTable() : OptTable(OptInfo) {}
 static bool getColorDiagnostics(opt::InputArgList &Args) {
   bool Default = (ErrorOS == &errs() && Process::StandardErrHasColors());
 
-  auto *Arg = Args.getLastArg(OPT_color_diagnostics, OPT_no_color_diagnostics);
+  auto *Arg = Args.getLastArg(OPT_color_diagnostics, OPT_color_diagnostics_eq,
+                              OPT_no_color_diagnostics);
   if (!Arg)
     return Default;
+  if (Arg->getOption().getID() == OPT_color_diagnostics)
+    return true;
   if (Arg->getOption().getID() == OPT_no_color_diagnostics)
     return false;
 
@@ -68,7 +70,7 @@ static bool getColorDiagnostics(opt::InputArgList &Args) {
   if (S == "always")
     return true;
   if (S != "never")
-    error("unknown -color-diagnostics value: " + S);
+    error("unknown option: -color-diagnostics=" + S);
   return false;
 }
 
@@ -133,6 +135,13 @@ std::string elf::createResponseFile(const opt::InputArgList &Args) {
     case OPT_INPUT:
       OS << quote(rewritePath(Arg->getValue())) << "\n";
       break;
+    case OPT_o:
+      // If -o path contains directories, "lld @response.txt" will likely
+      // fail because the archive we are creating doesn't contain empty
+      // directories for the output path (-o doesn't create directories).
+      // Strip directories to prevent the issue.
+      OS << "-o " << quote(sys::path::filename(Arg->getValue())) << "\n";
+      break;
     case OPT_L:
     case OPT_dynamic_list:
     case OPT_rpath:
@@ -143,7 +152,7 @@ std::string elf::createResponseFile(const opt::InputArgList &Args) {
          << "\n";
       break;
     default:
-      OS << stringize(Arg) << "\n";
+      OS << toString(Arg) << "\n";
     }
   }
   return Data.str();

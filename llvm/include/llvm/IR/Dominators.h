@@ -46,6 +46,10 @@ class BasicBlockEdge {
 public:
   BasicBlockEdge(const BasicBlock *Start_, const BasicBlock *End_) :
     Start(Start_), End(End_) { }
+  BasicBlockEdge(const std::pair<BasicBlock *, BasicBlock *> &Pair)
+      : Start(Pair.first), End(Pair.second) {}
+  BasicBlockEdge(const std::pair<const BasicBlock *, const BasicBlock *> &Pair)
+      : Start(Pair.first), End(Pair.second) {}
   const BasicBlock *getStart() const {
     return Start;
   }
@@ -101,6 +105,10 @@ public:
   explicit DominatorTree(Function &F) : DominatorTreeBase<BasicBlock>(false) {
     recalculate(F);
   }
+
+  /// Handle invalidation explicitly.
+  bool invalidate(Function &F, const PreservedAnalyses &PA,
+                  FunctionAnalysisManager::Invalidator &);
 
   /// \brief Returns *false* if the other dominator tree matches this dominator
   /// tree.

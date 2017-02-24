@@ -23,7 +23,6 @@
 #include "Plugins/Language/ObjC/ObjCLanguage.h"
 #include "lldb/Core/Log.h"
 #include "lldb/Core/Module.h"
-#include "lldb/Core/StreamString.h"
 #include "lldb/Core/Value.h"
 #include "lldb/Host/Host.h"
 #include "lldb/Interpreter/Args.h"
@@ -38,6 +37,7 @@
 #include "lldb/Symbol/TypeMap.h"
 #include "lldb/Target/Language.h"
 #include "lldb/Utility/LLDBAssert.h"
+#include "lldb/Utility/StreamString.h"
 
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/DeclObjC.h"
@@ -2647,7 +2647,7 @@ bool DWARFASTParserClang::ParseChildMembers(
 
   // Get the parent byte size so we can verify any members will fit
   const uint64_t parent_byte_size =
-      parent_die.GetAttributeValueAsUnsigned(DW_AT_byte_size, UINT64_MAX) * 8;
+      parent_die.GetAttributeValueAsUnsigned(DW_AT_byte_size, UINT64_MAX);
   const uint64_t parent_bit_size =
       parent_byte_size == UINT64_MAX ? UINT64_MAX : parent_byte_size * 8;
 

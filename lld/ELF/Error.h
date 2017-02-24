@@ -19,6 +19,10 @@
 //
 // Warn doesn't do anything but printing out a given message.
 //
+// It is not recommended to use llvm::outs() or llvm::errs() directly
+// in LLD because they are not thread-safe. The functions declared in
+// this file are thread-safe, so you want to use them instead.
+//
 //===----------------------------------------------------------------------===//
 
 #ifndef LLD_ELF_ERROR_H
@@ -36,14 +40,12 @@ extern llvm::raw_ostream *ErrorOS;
 extern llvm::StringRef Argv0;
 
 void log(const Twine &Msg);
+void message(const Twine &Msg);
 void warn(const Twine &Msg);
-
 void error(const Twine &Msg);
-void error(std::error_code EC, const Twine &Prefix);
+LLVM_ATTRIBUTE_NORETURN void fatal(const Twine &Msg);
 
 LLVM_ATTRIBUTE_NORETURN void exitLld(int Val);
-LLVM_ATTRIBUTE_NORETURN void fatal(const Twine &Msg);
-LLVM_ATTRIBUTE_NORETURN void fatal(std::error_code EC, const Twine &Prefix);
 
 // check() functions are convenient functions to strip errors
 // from error-or-value objects.
@@ -55,11 +57,7 @@ template <class T> T check(ErrorOr<T> E) {
 
 template <class T> T check(Expected<T> E) {
   if (!E)
-    handleAllErrors(std::move(E.takeError()),
-                    [](llvm::ErrorInfoBase &EIB) -> Error {
-                      fatal(EIB.message());
-                      return Error::success();
-                    });
+    fatal(llvm::toString(E.takeError()));
   return std::move(*E);
 }
 

@@ -22,7 +22,6 @@
 #include "lldb/Breakpoint/BreakpointLocation.h"
 #include "lldb/Breakpoint/BreakpointSite.h"
 #include "lldb/Core/Debugger.h"
-#include "lldb/Core/Error.h"
 #include "lldb/Core/Log.h"
 #include "lldb/Core/Module.h"
 #include "lldb/Core/ModuleSpec.h"
@@ -39,7 +38,9 @@
 #include "lldb/Symbol/SymbolVendor.h"
 #include "lldb/Target/Process.h"
 #include "lldb/Target/Target.h"
+#include "lldb/Utility/Error.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/Threading.h"
 
 #if defined(__APPLE__)
 #include <TargetConditionals.h> // for TARGET_OS_TV, TARGET_OS_WATCH
@@ -192,120 +193,6 @@ FileSpecList PlatformDarwin::LocateExecutableScriptingResources(
     }
   }
   return file_list;
-}
-
-Error PlatformDarwin::ResolveExecutable(
-    const ModuleSpec &module_spec, lldb::ModuleSP &exe_module_sp,
-    const FileSpecList *module_search_paths_ptr) {
-  Error error;
-  // Nothing special to do here, just use the actual file and architecture
-
-  char exe_path[PATH_MAX];
-  ModuleSpec resolved_module_spec(module_spec);
-
-  if (IsHost()) {
-    // If we have "ls" as the exe_file, resolve the executable loation based on
-    // the current path variables
-    if (!resolved_module_spec.GetFileSpec().Exists()) {
-      module_spec.GetFileSpec().GetPath(exe_path, sizeof(exe_path));
-      resolved_module_spec.GetFileSpec().SetFile(exe_path, true);
-    }
-
-    if (!resolved_module_spec.GetFileSpec().Exists())
-      resolved_module_spec.GetFileSpec().ResolveExecutableLocation();
-
-    // Resolve any executable within a bundle on MacOSX
-    Host::ResolveExecutableInBundle(resolved_module_spec.GetFileSpec());
-
-    if (resolved_module_spec.GetFileSpec().Exists())
-      error.Clear();
-    else {
-      const uint32_t permissions =
-          resolved_module_spec.GetFileSpec().GetPermissions();
-      if (permissions && (permissions & eFilePermissionsEveryoneR) == 0)
-        error.SetErrorStringWithFormat(
-            "executable '%s' is not readable",
-            resolved_module_spec.GetFileSpec().GetPath().c_str());
-      else
-        error.SetErrorStringWithFormat(
-            "unable to find executable for '%s'",
-            resolved_module_spec.GetFileSpec().GetPath().c_str());
-    }
-  } else {
-    if (m_remote_platform_sp) {
-      error =
-          GetCachedExecutable(resolved_module_spec, exe_module_sp,
-                              module_search_paths_ptr, *m_remote_platform_sp);
-    } else {
-      // We may connect to a process and use the provided executable (Don't use
-      // local $PATH).
-
-      // Resolve any executable within a bundle on MacOSX
-      Host::ResolveExecutableInBundle(resolved_module_spec.GetFileSpec());
-
-      if (resolved_module_spec.GetFileSpec().Exists())
-        error.Clear();
-      else
-        error.SetErrorStringWithFormat(
-            "the platform is not currently connected, and '%s' doesn't exist "
-            "in the system root.",
-            resolved_module_spec.GetFileSpec().GetFilename().AsCString(""));
-    }
-  }
-
-  if (error.Success()) {
-    if (resolved_module_spec.GetArchitecture().IsValid()) {
-      error = ModuleList::GetSharedModule(resolved_module_spec, exe_module_sp,
-                                          module_search_paths_ptr, NULL, NULL);
-
-      if (error.Fail() || exe_module_sp.get() == NULL ||
-          exe_module_sp->GetObjectFile() == NULL) {
-        exe_module_sp.reset();
-        error.SetErrorStringWithFormat(
-            "'%s' doesn't contain the architecture %s",
-            resolved_module_spec.GetFileSpec().GetPath().c_str(),
-            resolved_module_spec.GetArchitecture().GetArchitectureName());
-      }
-    } else {
-      // No valid architecture was specified, ask the platform for
-      // the architectures that we should be using (in the correct order)
-      // and see if we can find a match that way
-      StreamString arch_names;
-      for (uint32_t idx = 0; GetSupportedArchitectureAtIndex(
-               idx, resolved_module_spec.GetArchitecture());
-           ++idx) {
-        error = GetSharedModule(resolved_module_spec, NULL, exe_module_sp,
-                                module_search_paths_ptr, NULL, NULL);
-        // Did we find an executable using one of the
-        if (error.Success()) {
-          if (exe_module_sp && exe_module_sp->GetObjectFile())
-            break;
-          else
-            error.SetErrorToGenericError();
-        }
-
-        if (idx > 0)
-          arch_names.PutCString(", ");
-        arch_names.PutCString(
-            resolved_module_spec.GetArchitecture().GetArchitectureName());
-      }
-
-      if (error.Fail() || !exe_module_sp) {
-        if (resolved_module_spec.GetFileSpec().Readable()) {
-          error.SetErrorStringWithFormat(
-              "'%s' doesn't contain any '%s' platform architectures: %s",
-              resolved_module_spec.GetFileSpec().GetPath().c_str(),
-              GetPluginName().GetCString(), arch_names.GetData());
-        } else {
-          error.SetErrorStringWithFormat(
-              "'%s' is not readable",
-              resolved_module_spec.GetFileSpec().GetPath().c_str());
-        }
-      }
-    }
-  }
-
-  return error;
 }
 
 Error PlatformDarwin::ResolveSymbolFile(Target &target,
@@ -601,34 +488,6 @@ PlatformDarwin::GetSoftwareBreakpointTrapOpcode(Target &target,
       return trap_opcode_size;
   }
   return 0;
-}
-
-bool PlatformDarwin::GetProcessInfo(lldb::pid_t pid,
-                                    ProcessInstanceInfo &process_info) {
-  bool success = false;
-  if (IsHost()) {
-    success = Platform::GetProcessInfo(pid, process_info);
-  } else {
-    if (m_remote_platform_sp)
-      success = m_remote_platform_sp->GetProcessInfo(pid, process_info);
-  }
-  return success;
-}
-
-uint32_t
-PlatformDarwin::FindProcesses(const ProcessInstanceInfoMatch &match_info,
-                              ProcessInstanceInfoList &process_infos) {
-  uint32_t match_count = 0;
-  if (IsHost()) {
-    // Let the base class figure out the host details
-    match_count = Platform::FindProcesses(match_info, process_infos);
-  } else {
-    // If we are remote, we can only return results if we are connected
-    if (m_remote_platform_sp)
-      match_count =
-          m_remote_platform_sp->FindProcesses(match_info, process_infos);
-  }
-  return match_count;
 }
 
 bool PlatformDarwin::ModuleIsExcludedForUnconstrainedSearches(
@@ -1452,8 +1311,8 @@ static FileSpec CheckPathForXcode(const FileSpec &fspec) {
 
 static FileSpec GetXcodeContentsPath() {
   static FileSpec g_xcode_filespec;
-  static std::once_flag g_once_flag;
-  std::call_once(g_once_flag, []() {
+  static llvm::once_flag g_once_flag;
+  llvm::call_once(g_once_flag, []() {
 
     FileSpec fspec;
 
@@ -1835,8 +1694,8 @@ lldb_private::FileSpec PlatformDarwin::LocateExecutable(const char *basename) {
 
   // Find the global list of directories that we will search for
   // executables once so we don't keep doing the work over and over.
-  static std::once_flag g_once_flag;
-  std::call_once(g_once_flag, []() {
+  static llvm::once_flag g_once_flag;
+  llvm::call_once(g_once_flag, []() {
 
     // When locating executables, trust the DEVELOPER_DIR first if it is set
     FileSpec xcode_contents_dir = GetXcodeContentsPath();

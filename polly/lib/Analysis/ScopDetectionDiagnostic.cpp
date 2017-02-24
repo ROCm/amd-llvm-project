@@ -60,8 +60,8 @@ llvm::Statistic RejectStatistics[] = {
     SCOP_STAT(LoopBound, "Uncomputable loop bounds"),
     SCOP_STAT(LoopHasNoExit, "Loop without exit"),
     SCOP_STAT(FuncCall, "Function call with side effects"),
-    SCOP_STAT(NonSimpleMemoryAccess, "Compilated access semantics (volatile or "
-                                     "atomic)"),
+    SCOP_STAT(NonSimpleMemoryAccess,
+              "Compilated access semantics (volatile or atomic)"),
     SCOP_STAT(Alias, "Base address aliasing"),
     SCOP_STAT(Other, ""),
     SCOP_STAT(IntToPtr, "Integer to pointer conversions"),
@@ -133,6 +133,9 @@ void emitRejectionRemarks(const BBPair &P, const RejectLog &Log) {
   for (RejectReasonPtr RR : Log) {
     if (const DebugLoc &Loc = RR->getDebugLoc())
       emitOptimizationRemarkMissed(Ctx, DEBUG_TYPE, F, Loc,
+                                   RR->getEndUserMessage());
+    else
+      emitOptimizationRemarkMissed(Ctx, DEBUG_TYPE, F, Begin,
                                    RR->getEndUserMessage());
   }
 
@@ -309,8 +312,9 @@ bool ReportDifferentArrayElementSize::classof(const RejectReason *RR) {
 std::string ReportDifferentArrayElementSize::getEndUserMessage() const {
   llvm::StringRef BaseName = BaseValue->getName();
   std::string Name = (BaseName.size() > 0) ? BaseName : "UNKNOWN";
-  return "The array \"" + Name + "\" is accessed through elements that differ "
-                                 "in size";
+  return "The array \"" + Name +
+         "\" is accessed through elements that differ "
+         "in size";
 }
 
 //===----------------------------------------------------------------------===//
@@ -439,7 +443,7 @@ std::string ReportAlias::formatInvalidAlias(std::string Prefix,
     assert(V && "Diagnostic info does not match found LLVM-IR anymore.");
 
     if (V->getName().size() == 0)
-      OS << "\"" << *V << "\"";
+      OS << "\" <unknown> \"";
     else
       OS << "\"" << V->getName() << "\"";
 
@@ -543,6 +547,10 @@ ReportEntry::ReportEntry(BasicBlock *BB)
 
 std::string ReportEntry::getMessage() const {
   return "Region containing entry block of function is invalid!";
+}
+
+std::string ReportEntry::getEndUserMessage() const {
+  return "Scop contains function entry (not yet supported).";
 }
 
 const DebugLoc &ReportEntry::getDebugLoc() const {

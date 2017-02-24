@@ -95,7 +95,7 @@ protected:
     return DICompileUnit::getDistinct(Context, 1, getFile(), "clang", false,
                                       "-g", 2, "", DICompileUnit::FullDebug,
                                       getTuple(), getTuple(), getTuple(),
-                                      getTuple(), getTuple(), 0, true);
+                                      getTuple(), getTuple(), 0, true, false);
   }
   DIType *getBasicType(StringRef Name) {
     return DIBasicType::get(Context, dwarf::DW_TAG_unspecified_type, Name);
@@ -1360,15 +1360,21 @@ typedef MetadataTest DIFileTest;
 TEST_F(DIFileTest, get) {
   StringRef Filename = "file";
   StringRef Directory = "dir";
-  auto *N = DIFile::get(Context, Filename, Directory);
+  DIFile::ChecksumKind CSKind = DIFile::CSK_MD5;
+  StringRef Checksum = "000102030405060708090a0b0c0d0e0f";
+  auto *N = DIFile::get(Context, Filename, Directory, CSKind, Checksum);
 
   EXPECT_EQ(dwarf::DW_TAG_file_type, N->getTag());
   EXPECT_EQ(Filename, N->getFilename());
   EXPECT_EQ(Directory, N->getDirectory());
-  EXPECT_EQ(N, DIFile::get(Context, Filename, Directory));
+  EXPECT_EQ(CSKind, N->getChecksumKind());
+  EXPECT_EQ(Checksum, N->getChecksum());
+  EXPECT_EQ(N, DIFile::get(Context, Filename, Directory, CSKind, Checksum));
 
-  EXPECT_NE(N, DIFile::get(Context, "other", Directory));
-  EXPECT_NE(N, DIFile::get(Context, Filename, "other"));
+  EXPECT_NE(N, DIFile::get(Context, "other", Directory, CSKind, Checksum));
+  EXPECT_NE(N, DIFile::get(Context, Filename, "other", CSKind, Checksum));
+  EXPECT_NE(N, DIFile::get(Context, Filename, Directory, DIFile::CSK_SHA1, Checksum));
+  EXPECT_NE(N, DIFile::get(Context, Filename, Directory));
 
   TempDIFile Temp = N->clone();
   EXPECT_EQ(N, MDNode::replaceWithUniqued(std::move(Temp)));
@@ -1400,7 +1406,8 @@ TEST_F(DICompileUnitTest, get) {
   auto *N = DICompileUnit::getDistinct(
       Context, SourceLanguage, File, Producer, IsOptimized, Flags,
       RuntimeVersion, SplitDebugFilename, EmissionKind, EnumTypes,
-      RetainedTypes, GlobalVariables, ImportedEntities, Macros, DWOId, true);
+      RetainedTypes, GlobalVariables, ImportedEntities, Macros, DWOId, true,
+      false);
 
   EXPECT_EQ(dwarf::DW_TAG_compile_unit, N->getTag());
   EXPECT_EQ(SourceLanguage, N->getSourceLanguage());
@@ -1457,7 +1464,7 @@ TEST_F(DICompileUnitTest, replaceArrays) {
   auto *N = DICompileUnit::getDistinct(
       Context, SourceLanguage, File, Producer, IsOptimized, Flags,
       RuntimeVersion, SplitDebugFilename, EmissionKind, EnumTypes,
-      RetainedTypes, nullptr, ImportedEntities, nullptr, DWOId, true);
+      RetainedTypes, nullptr, ImportedEntities, nullptr, DWOId, true, false);
 
   auto *GlobalVariables = MDTuple::getDistinct(Context, None);
   EXPECT_EQ(nullptr, N->getGlobalVariables().get());

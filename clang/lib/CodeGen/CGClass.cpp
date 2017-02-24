@@ -309,8 +309,10 @@ Address CodeGenFunction::GetAddressOfBaseClass(
   // just do a bitcast; null checks are unnecessary.
   if (NonVirtualOffset.isZero() && !VBase) {
     if (sanitizePerformTypeCheck()) {
+      SanitizerSet SkippedChecks;
+      SkippedChecks.set(SanitizerKind::Null, !NullCheckValue);
       EmitTypeCheck(TCK_Upcast, Loc, Value.getPointer(),
-                    DerivedTy, DerivedAlign, !NullCheckValue);
+                    DerivedTy, DerivedAlign, SkippedChecks);
     }
     return Builder.CreateBitCast(Value, BasePtrTy);
   }
@@ -331,8 +333,10 @@ Address CodeGenFunction::GetAddressOfBaseClass(
   }
 
   if (sanitizePerformTypeCheck()) {
+    SanitizerSet SkippedChecks;
+    SkippedChecks.set(SanitizerKind::Null, true);
     EmitTypeCheck(VBase ? TCK_UpcastToVirtualBase : TCK_Upcast, Loc,
-                  Value.getPointer(), DerivedTy, DerivedAlign, true);
+                  Value.getPointer(), DerivedTy, DerivedAlign, SkippedChecks);
   }
 
   // Compute the virtual offset.
@@ -1131,10 +1135,11 @@ namespace {
           RHS = EC->getSubExpr();
         if (!RHS)
           return nullptr;
-        MemberExpr *ME2 = dyn_cast<MemberExpr>(RHS);
-        if (dyn_cast<FieldDecl>(ME2->getMemberDecl()) != Field)
-          return nullptr;
-        return Field;
+        if (MemberExpr *ME2 = dyn_cast<MemberExpr>(RHS)) {
+          if (ME2->getMemberDecl() == Field)
+            return Field;
+        }
+        return nullptr;
       } else if (CXXMemberCallExpr *MCE = dyn_cast<CXXMemberCallExpr>(S)) {
         CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(MCE->getCalleeDecl());
         if (!(MD && isMemcpyEquivalentSpecialMember(MD)))
@@ -1416,9 +1421,7 @@ void CodeGenFunction::EmitDestructorBody(FunctionArgList &Args) {
   // we'd introduce *two* handler blocks.  In the Microsoft ABI, we
   // always delegate because we might not have a definition in this TU.
   switch (DtorType) {
-  case Dtor_Comdat:
-    llvm_unreachable("not expecting a COMDAT");
-
+  case Dtor_Comdat: llvm_unreachable("not expecting a COMDAT");
   case Dtor_Deleting: llvm_unreachable("already handled deleting case");
 
   case Dtor_Complete:
@@ -1433,7 +1436,9 @@ void CodeGenFunction::EmitDestructorBody(FunctionArgList &Args) {
                             /*Delegating=*/false, LoadCXXThisAddress());
       break;
     }
+
     // Fallthrough: act like we're in the base variant.
+    LLVM_FALLTHROUGH;
 
   case Dtor_Base:
     assert(Body);
@@ -1950,7 +1955,11 @@ void CodeGenFunction::EmitCXXConstructorCall(const CXXConstructorDecl *D,
 
   // Add the rest of the user-supplied arguments.
   const FunctionProtoType *FPT = D->getType()->castAs<FunctionProtoType>();
-  EmitCallArgs(Args, FPT, E->arguments(), E->getConstructor());
+  EvaluationOrder Order = E->isListInitialization()
+                              ? EvaluationOrder::ForceLeftToRight
+                              : EvaluationOrder::Default;
+  EmitCallArgs(Args, FPT, E->arguments(), E->getConstructor(),
+               /*ParamsToSkip*/ 0, Order);
 
   EmitCXXConstructorCall(D, Type, ForVirtualBase, Delegating, This, Args);
 }
@@ -1970,7 +1979,7 @@ static bool canEmitDelegateCallArgs(CodeGenFunction &CGF,
 
     // Likewise if they're inalloca.
     const CGFunctionInfo &Info =
-        CGF.CGM.getTypes().arrangeCXXConstructorCall(Args, Ctor, Type, 0);
+        CGF.CGM.getTypes().arrangeCXXConstructorCall(Args, Ctor, Type, 0, 0);
     if (Info.usesInAlloca())
       return false;
   }
@@ -2012,10 +2021,11 @@ void CodeGenFunction::EmitCXXConstructorCall(const CXXConstructorDecl *D,
     return;
   }
 
+  bool PassPrototypeArgs = true;
   // Check whether we can actually emit the constructor before trying to do so.
   if (auto Inherited = D->getInheritedConstructor()) {
-    if (getTypes().inheritingCtorHasParams(Inherited, Type) &&
-        !canEmitDelegateCallArgs(*this, D, Type, Args)) {
+    PassPrototypeArgs = getTypes().inheritingCtorHasParams(Inherited, Type);
+    if (PassPrototypeArgs && !canEmitDelegateCallArgs(*this, D, Type, Args)) {
       EmitInlinedInheritingCXXConstructorCall(D, Type, ForVirtualBase,
                                               Delegating, Args);
       return;
@@ -2023,14 +2033,15 @@ void CodeGenFunction::EmitCXXConstructorCall(const CXXConstructorDecl *D,
   }
 
   // Insert any ABI-specific implicit constructor arguments.
-  unsigned ExtraArgs = CGM.getCXXABI().addImplicitConstructorArgs(
-      *this, D, Type, ForVirtualBase, Delegating, Args);
+  CGCXXABI::AddedStructorArgs ExtraArgs =
+      CGM.getCXXABI().addImplicitConstructorArgs(*this, D, Type, ForVirtualBase,
+                                                 Delegating, Args);
 
   // Emit the call.
   llvm::Constant *CalleePtr =
     CGM.getAddrOfCXXStructor(D, getFromCtorType(Type));
-  const CGFunctionInfo &Info =
-    CGM.getTypes().arrangeCXXConstructorCall(Args, D, Type, ExtraArgs);
+  const CGFunctionInfo &Info = CGM.getTypes().arrangeCXXConstructorCall(
+      Args, D, Type, ExtraArgs.Prefix, ExtraArgs.Suffix, PassPrototypeArgs);
   CGCallee Callee = CGCallee::forDirect(CalleePtr, D);
   EmitCall(Info, Callee, ReturnValueSlot(), Args);
 

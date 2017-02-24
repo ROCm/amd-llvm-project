@@ -138,26 +138,26 @@ inline constexpr CallType operator|(CallType LHS, CallType RHS) {
 struct ForwardingCallObject {
 
   template <class ...Args>
-  bool operator()(Args&&... args) & {
+  bool operator()(Args&&...) & {
       set_call<Args&&...>(CT_NonConst | CT_LValue);
       return true;
   }
 
   template <class ...Args>
-  bool operator()(Args&&... args) const & {
+  bool operator()(Args&&...) const & {
       set_call<Args&&...>(CT_Const | CT_LValue);
       return true;
   }
 
   // Don't allow the call operator to be invoked as an rvalue.
   template <class ...Args>
-  bool operator()(Args&&... args) && {
+  bool operator()(Args&&...) && {
       set_call<Args&&...>(CT_NonConst | CT_RValue);
       return true;
   }
 
   template <class ...Args>
-  bool operator()(Args&&... args) const && {
+  bool operator()(Args&&...) const && {
       set_call<Args&&...>(CT_Const | CT_RValue);
       return true;
   }
@@ -414,7 +414,14 @@ void throws_in_constructor_test()
         throw 42;
       }
       ThrowsOnCopy() = default;
-      bool operator()() const { assert(false); }
+      bool operator()() const {
+        assert(false);
+#if defined(_LIBCPP_MSVC)
+        __assume(0);
+#else
+        __builtin_unreachable();
+#endif
+      }
     };
     {
         ThrowsOnCopy cp;
@@ -526,7 +533,6 @@ void call_operator_forwarding_test()
         assert(Fn::check_call<int&&>(CT_Const | CT_RValue));
     }
     { // test multi arg
-        int x = 42;
         const double y = 3.14;
         std::string s = "abc";
         obj(42, std::move(y), s, std::string{"foo"});

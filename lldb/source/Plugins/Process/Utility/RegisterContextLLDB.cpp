@@ -1053,8 +1053,7 @@ bool RegisterContextLLDB::ReadRegisterValueFromRegisterLocation(
   case UnwindLLDB::RegisterLocation::eRegisterNotSaved:
     break;
   case UnwindLLDB::RegisterLocation::eRegisterSavedAtHostMemoryLocation:
-    assert("FIXME debugger inferior function call unwind");
-    break;
+    llvm_unreachable("FIXME debugger inferior function call unwind");
   case UnwindLLDB::RegisterLocation::eRegisterSavedAtMemoryLocation: {
     Error error(ReadRegisterValueFromMemory(
         reg_info, regloc.location.target_memory_location, reg_info->byte_size,
@@ -1062,8 +1061,7 @@ bool RegisterContextLLDB::ReadRegisterValueFromRegisterLocation(
     success = error.Success();
   } break;
   default:
-    assert("Unknown RegisterLocation type.");
-    break;
+    llvm_unreachable("Unknown RegisterLocation type.");
   }
   return success;
 }
@@ -1097,8 +1095,7 @@ bool RegisterContextLLDB::WriteRegisterValueToRegisterLocation(
   case UnwindLLDB::RegisterLocation::eRegisterNotSaved:
     break;
   case UnwindLLDB::RegisterLocation::eRegisterSavedAtHostMemoryLocation:
-    assert("FIXME debugger inferior function call unwind");
-    break;
+    llvm_unreachable("FIXME debugger inferior function call unwind");
   case UnwindLLDB::RegisterLocation::eRegisterSavedAtMemoryLocation: {
     Error error(WriteRegisterValueToMemory(
         reg_info, regloc.location.target_memory_location, reg_info->byte_size,
@@ -1106,8 +1103,7 @@ bool RegisterContextLLDB::WriteRegisterValueToRegisterLocation(
     success = error.Success();
   } break;
   default:
-    assert("Unknown RegisterLocation type.");
-    break;
+    llvm_unreachable("Unknown RegisterLocation type.");
   }
   return success;
 }
@@ -2019,7 +2015,18 @@ bool RegisterContextLLDB::GetStartPC(addr_t &start_pc) {
     return false;
 
   if (!m_start_pc.IsValid()) {
-    return ReadPC(start_pc);
+        bool read_successfully = ReadPC (start_pc);
+        if (read_successfully)
+        {
+            ProcessSP process_sp (m_thread.GetProcess());
+            if (process_sp)
+            {
+                ABI *abi = process_sp->GetABI().get();
+                if (abi)
+                    start_pc = abi->FixCodeAddress(start_pc);
+            }
+        }
+        return read_successfully;
   }
   start_pc = m_start_pc.GetLoadAddress(CalculateTarget().get());
   return true;
@@ -2048,9 +2055,16 @@ bool RegisterContextLLDB::ReadPC(addr_t &pc) {
     if (m_all_registers_available == false && above_trap_handler == false &&
         (pc == 0 || pc == 1)) {
       return false;
-    } else {
-      return true;
     }
+    
+    ProcessSP process_sp (m_thread.GetProcess());
+    if (process_sp)
+    {
+        ABI *abi = process_sp->GetABI().get();
+        if (abi)
+            pc = abi->FixCodeAddress(pc);
+    }
+    return true;
   } else {
     return false;
   }

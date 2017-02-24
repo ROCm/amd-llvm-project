@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -std=c++14 -fcoroutines-ts -verify %s
+// RUN: %clang_cc1 -std=c++14 -fcoroutines-ts -verify %s -fcxx-exceptions
 
 void no_coroutine_traits_bad_arg_await() {
   co_await a; // expected-error {{include <experimental/coroutine>}}
@@ -154,12 +154,11 @@ void mixed_await() {
 }
 
 void only_coreturn(void_tag) {
-  co_return; // expected-warning {{'co_return' used in a function that uses neither 'co_await' nor 'co_yield'}}
+  co_return; // OK
 }
 
 void mixed_coreturn(void_tag, bool b) {
   if (b)
-    // expected-warning@+1 {{'co_return' used in a function that uses neither}}
     co_return; // expected-note {{use of 'co_return'}}
   else
     return; // expected-error {{not allowed in coroutine}}

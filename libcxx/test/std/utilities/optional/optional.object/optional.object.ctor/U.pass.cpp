@@ -61,11 +61,9 @@ constexpr bool explicit_conversion(Input&& in, const Expect& v)
 void test_implicit()
 {
     {
-        using T = long long;
         static_assert(implicit_conversion<long long>(42, 42), "");
     }
     {
-        using T = long double;
         static_assert(implicit_conversion<long double>(3.14, 3.14), "");
     }
     {
@@ -87,6 +85,7 @@ void test_implicit()
             using T = ImplicitThrow;
             optional<T> t = 42;
             assert(false);
+            ((void)t);
         } catch (int) {
         }
     }
@@ -96,18 +95,15 @@ void test_implicit()
 void test_explicit() {
     {
         using T = ExplicitTrivialTestTypes::TestType;
-        using O = optional<T>;
         static_assert(explicit_conversion<T>(42, 42), "");
     }
     {
         using T = ExplicitConstexprTestTypes::TestType;
-        using O = optional<T>;
         static_assert(explicit_conversion<T>(42, 42), "");
         static_assert(!std::is_convertible<int, T>::value, "");
     }
     {
         using T = ExplicitTestTypes::TestType;
-        using O = optional<T>;
         T::reset();
         {
             assert(explicit_conversion<T>(42, 42));

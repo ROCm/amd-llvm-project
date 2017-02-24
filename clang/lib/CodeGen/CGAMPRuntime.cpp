@@ -197,7 +197,7 @@ void CGAMPRuntime::EmitTrampolineBody(CodeGenFunction &CGF,
 
     const CGFunctionInfo &DesFnInfo =
       CGM.getTypes().arrangeCXXMethodCall(
-	  DeserializerArgs, FPT, required);
+	  DeserializerArgs, FPT, required, 0);
     CGF.EmitCall(DesFnInfo, CGCallee::forDirect(Callee), ReturnValueSlot(), DeserializerArgs);
   }
   // Locate the type of Concurrency::index<1>

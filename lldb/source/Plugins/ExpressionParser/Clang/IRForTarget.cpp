@@ -25,18 +25,18 @@
 
 #include "clang/AST/ASTContext.h"
 
-#include "lldb/Core/ConstString.h"
 #include "lldb/Core/DataBufferHeap.h"
 #include "lldb/Core/Log.h"
 #include "lldb/Core/Scalar.h"
-#include "lldb/Core/StreamString.h"
 #include "lldb/Core/dwarf.h"
 #include "lldb/Expression/IRExecutionUnit.h"
 #include "lldb/Expression/IRInterpreter.h"
-#include "lldb/Host/Endian.h"
 #include "lldb/Symbol/ClangASTContext.h"
 #include "lldb/Symbol/ClangUtil.h"
 #include "lldb/Symbol/CompilerType.h"
+#include "lldb/Utility/ConstString.h"
+#include "lldb/Utility/Endian.h"
+#include "lldb/Utility/StreamString.h"
 
 #include <map>
 
@@ -512,11 +512,9 @@ bool IRForTarget::RewriteObjCConstString(llvm::GlobalVariable *ns_str,
    break;
  default:
    encoding_flags = 0x0600; /* fall back to 0x0600, kCFStringEncodingASCII */
-   if (log) {
-     log->Printf("Encountered an Objective-C constant string with unusual "
-                 "element size %llu",
-                 string_array->getElementByteSize());
-   }
+   LLDB_LOG(log, "Encountered an Objective-C constant string with unusual "
+                 "element size {0}",
+            string_array->getElementByteSize());
  }
  Constant *encoding_arg = ConstantInt::get(i32_ty, encoding_flags, false);
  Constant *isExternal_arg =

@@ -63,7 +63,7 @@ inline static unsigned getDigit(char cdigit, uint8_t radix) {
     r = cdigit - 'a';
     if (r <= radix - 11U)
       return r + 10;
-    
+
     radix = 10;
   }
 
@@ -205,7 +205,7 @@ APInt& APInt::operator++() {
 
 /// This function subtracts a single "digit" (64-bit word), y, from
 /// the multi-digit integer array, x[], propagating the borrowed 1 value until
-/// no further borrowing is neeeded or it runs out of "digits" in x.  The result
+/// no further borrowing is needed or it runs out of "digits" in x.  The result
 /// is 1 if "borrowing" exhausted the digits in x, or 0 if x was not exhausted.
 /// In other words, if y > x then this function returns 1, otherwise 0.
 /// @returns the borrow out of the subtraction
@@ -424,6 +424,18 @@ APInt& APInt::operator&=(const APInt& RHS) {
   return *this;
 }
 
+APInt &APInt::operator&=(uint64_t RHS) {
+  if (isSingleWord()) {
+    VAL &= RHS;
+    return *this;
+  }
+  pVal[0] &= RHS;
+  unsigned numWords = getNumWords();
+  for (unsigned i = 1; i < numWords; ++i)
+    pVal[i] = 0;
+  return *this;
+}
+
 APInt& APInt::operator|=(const APInt& RHS) {
   assert(BitWidth == RHS.BitWidth && "Bit widths must be the same");
   if (isSingleWord()) {
@@ -440,13 +452,12 @@ APInt& APInt::operator^=(const APInt& RHS) {
   assert(BitWidth == RHS.BitWidth && "Bit widths must be the same");
   if (isSingleWord()) {
     VAL ^= RHS.VAL;
-    this->clearUnusedBits();
     return *this;
   }
   unsigned numWords = getNumWords();
   for (unsigned i = 0; i < numWords; ++i)
     pVal[i] ^= RHS.pVal[i];
-  return clearUnusedBits();
+  return *this;
 }
 
 APInt APInt::AndSlowCase(const APInt& RHS) const {
@@ -471,10 +482,7 @@ APInt APInt::XorSlowCase(const APInt& RHS) const {
   for (unsigned i = 0; i < numWords; ++i)
     val[i] = pVal[i] ^ RHS.pVal[i];
 
-  APInt Result(val, getBitWidth());
-  // 0^0==1 so clear the high bits in case they got set.
-  Result.clearUnusedBits();
-  return Result;
+  return APInt(val, getBitWidth());
 }
 
 APInt APInt::operator*(const APInt& RHS) const {
@@ -579,7 +587,7 @@ void APInt::flipBit(unsigned bitPosition) {
 
 unsigned APInt::getBitsNeeded(StringRef str, uint8_t radix) {
   assert(!str.empty() && "Invalid string length");
-  assert((radix == 10 || radix == 8 || radix == 16 || radix == 2 || 
+  assert((radix == 10 || radix == 8 || radix == 16 || radix == 2 ||
           radix == 36) &&
          "Radix should be 2, 8, 10, 16, or 36!");
 
@@ -604,7 +612,7 @@ unsigned APInt::getBitsNeeded(StringRef str, uint8_t radix) {
     return slen * 4 + isNegative;
 
   // FIXME: base 36
-  
+
   // This is grossly inefficient but accurate. We could probably do something
   // with a computation of roughly slen*64/20 and then adjust by the value of
   // the first few digits. But, I'm not sure how accurate that could be.
@@ -613,7 +621,7 @@ unsigned APInt::getBitsNeeded(StringRef str, uint8_t radix) {
   // be too large. This avoids the assertion in the constructor. This
   // calculation doesn't work appropriately for the numbers 0-9, so just use 4
   // bits in that case.
-  unsigned sufficient 
+  unsigned sufficient
     = radix == 10? (slen == 1 ? 4 : slen * 64/18)
                  : (slen == 1 ? 7 : slen * 16/3);
 
@@ -1244,8 +1252,21 @@ APInt APInt::shlSlowCase(unsigned shiftAmt) const {
   return Result;
 }
 
+// Calculate the rotate amount modulo the bit width.
+static unsigned rotateModulo(unsigned BitWidth, const APInt &rotateAmt) {
+  unsigned rotBitWidth = rotateAmt.getBitWidth();
+  APInt rot = rotateAmt;
+  if (rotBitWidth < BitWidth) {
+    // Extend the rotate APInt, so that the urem doesn't divide by 0.
+    // e.g. APInt(1, 32) would give APInt(1, 0).
+    rot = rotateAmt.zext(BitWidth);
+  }
+  rot = rot.urem(APInt(rot.getBitWidth(), BitWidth));
+  return rot.getLimitedValue(BitWidth);
+}
+
 APInt APInt::rotl(const APInt &rotateAmt) const {
-  return rotl((unsigned)rotateAmt.getLimitedValue(BitWidth));
+  return rotl(rotateModulo(BitWidth, rotateAmt));
 }
 
 APInt APInt::rotl(unsigned rotateAmt) const {
@@ -1256,7 +1277,7 @@ APInt APInt::rotl(unsigned rotateAmt) const {
 }
 
 APInt APInt::rotr(const APInt &rotateAmt) const {
-  return rotr((unsigned)rotateAmt.getLimitedValue(BitWidth));
+  return rotr(rotateModulo(BitWidth, rotateAmt));
 }
 
 APInt APInt::rotr(unsigned rotateAmt) const {
@@ -2014,7 +2035,7 @@ APInt APInt::sdiv_ov(const APInt &RHS, bool &Overflow) const {
 
 APInt APInt::smul_ov(const APInt &RHS, bool &Overflow) const {
   APInt Res = *this * RHS;
-  
+
   if (*this != 0 && RHS != 0)
     Overflow = Res.sdiv(RHS) != *this || Res.sdiv(*this) != RHS;
   else
@@ -2041,7 +2062,7 @@ APInt APInt::sshl_ov(const APInt &ShAmt, bool &Overflow) const {
     Overflow = ShAmt.uge(countLeadingZeros());
   else
     Overflow = ShAmt.uge(countLeadingOnes());
-  
+
   return *this << ShAmt;
 }
 
@@ -2061,7 +2082,7 @@ APInt APInt::ushl_ov(const APInt &ShAmt, bool &Overflow) const {
 void APInt::fromString(unsigned numbits, StringRef str, uint8_t radix) {
   // Check our assumptions here
   assert(!str.empty() && "Invalid string length");
-  assert((radix == 10 || radix == 8 || radix == 16 || radix == 2 || 
+  assert((radix == 10 || radix == 8 || radix == 16 || radix == 2 ||
           radix == 36) &&
          "Radix should be 2, 8, 10, 16, or 36!");
 
@@ -2120,7 +2141,7 @@ void APInt::fromString(unsigned numbits, StringRef str, uint8_t radix) {
 
 void APInt::toString(SmallVectorImpl<char> &Str, unsigned Radix,
                      bool Signed, bool formatAsCLiteral) const {
-  assert((Radix == 10 || Radix == 8 || Radix == 16 || Radix == 2 || 
+  assert((Radix == 10 || Radix == 8 || Radix == 16 || Radix == 2 ||
           Radix == 36) &&
          "Radix should be 2, 8, 10, 16, or 36!");
 
@@ -2245,14 +2266,15 @@ std::string APInt::toString(unsigned Radix = 10, bool Signed = true) const {
   return S.str();
 }
 
-
+#if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
 LLVM_DUMP_METHOD void APInt::dump() const {
   SmallString<40> S, U;
   this->toStringUnsigned(U);
   this->toStringSigned(S);
   dbgs() << "APInt(" << BitWidth << "b, "
-         << U << "u " << S << "s)";
+         << U << "u " << S << "s)\n";
 }
+#endif
 
 void APInt::print(raw_ostream &OS, bool isSigned) const {
   SmallString<40> S;

@@ -15,17 +15,26 @@
 #define LLVM_MC_MCSTREAMER_H
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/MC/MCDirectives.h"
 #include "llvm/MC/MCDwarf.h"
 #include "llvm/MC/MCLinkerOptimizationHint.h"
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/MC/MCWinEH.h"
-#include "llvm/Support/DataTypes.h"
 #include "llvm/Support/SMLoc.h"
+#include <cassert>
+#include <cstdint>
+#include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace llvm {
+
+class AssemblerConstantPools;
+class formatted_raw_ostream;
 class MCAsmBackend;
 class MCCodeEmitter;
 class MCContext;
@@ -34,14 +43,11 @@ class MCInst;
 class MCInstPrinter;
 class MCSection;
 class MCStreamer;
-class MCSymbolELF;
 class MCSymbolRefExpr;
+class MCSymbolWasm;
 class MCSubtargetInfo;
-class StringRef;
-class Twine;
 class raw_ostream;
-class formatted_raw_ostream;
-class AssemblerConstantPools;
+class Twine;
 
 typedef std::pair<MCSection *, const MCExpr *> MCSectionSubPair;
 
@@ -162,9 +168,6 @@ class MCStreamer {
   MCContext &Context;
   std::unique_ptr<MCTargetStreamer> TargetStreamer;
 
-  MCStreamer(const MCStreamer &) = delete;
-  MCStreamer &operator=(const MCStreamer &) = delete;
-
   std::vector<MCDwarfFrameInfo> DwarfFrameInfos;
   MCDwarfFrameInfo *getCurrentDwarfFrameInfo();
   void EnsureValidDwarfFrame();
@@ -205,6 +208,8 @@ protected:
   virtual void EmitRawTextImpl(StringRef String);
 
 public:
+  MCStreamer(const MCStreamer &) = delete;
+  MCStreamer &operator=(const MCStreamer &) = delete;
   virtual ~MCStreamer();
 
   void visitUsedExpr(const MCExpr &Expr);
@@ -262,7 +267,11 @@ public:
   ///
   /// If the comment includes embedded \n's, they will each get the comment
   /// prefix as appropriate.  The added comment should not end with a \n.
-  virtual void AddComment(const Twine &T) {}
+  /// By default, each comment is terminated with an end of line, i.e. the
+  /// EOL param is set to true by default. If one prefers not to end the 
+  /// comment with a new line then the EOL param should be passed 
+  /// with a false value.
+  virtual void AddComment(const Twine &T, bool EOL = true) {}
 
   /// \brief Return a raw_ostream that comments can be written to. Unlike
   /// AddComment, you are required to terminate comments with \n if you use this
@@ -278,6 +287,7 @@ public:
   /// \brief Add explicit comment T. T is required to be a valid
   /// comment in the output and does not need to be escaped.
   virtual void addExplicitComment(const Twine &T);
+
   /// \brief Emit added explicit comments.
   virtual void emitExplicitComments();
 
@@ -389,7 +399,7 @@ public:
   /// used in an assignment.
   // FIXME: These emission are non-const because we mutate the symbol to
   // add the section we're emitting it to later.
-  virtual void EmitLabel(MCSymbol *Symbol);
+  virtual void EmitLabel(MCSymbol *Symbol, SMLoc Loc = SMLoc());
 
   virtual void EmitEHSymAttributes(const MCSymbol *Symbol, MCSymbol *EHSymbol);
 
@@ -471,7 +481,7 @@ public:
   /// \brief Emits a COFF section relative relocation.
   ///
   /// \param Symbol - Symbol the section relative relocation should point to.
-  virtual void EmitCOFFSecRel32(MCSymbol const *Symbol);
+  virtual void EmitCOFFSecRel32(MCSymbol const *Symbol, uint64_t Offset);
 
   /// \brief Emit an ELF .size directive.
   ///
@@ -872,6 +882,7 @@ MCStreamer *createAsmStreamer(MCContext &Ctx,
                               bool isVerboseAsm, bool useDwarfDirectory,
                               MCInstPrinter *InstPrint, MCCodeEmitter *CE,
                               MCAsmBackend *TAB, bool ShowInst);
+
 } // end namespace llvm
 
-#endif
+#endif // LLVM_MC_MCSTREAMER_H

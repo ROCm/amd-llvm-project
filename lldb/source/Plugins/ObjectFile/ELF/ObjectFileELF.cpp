@@ -15,19 +15,19 @@
 
 #include "lldb/Core/ArchSpec.h"
 #include "lldb/Core/DataBuffer.h"
-#include "lldb/Core/Error.h"
 #include "lldb/Core/FileSpecList.h"
 #include "lldb/Core/Log.h"
 #include "lldb/Core/Module.h"
 #include "lldb/Core/ModuleSpec.h"
 #include "lldb/Core/PluginManager.h"
 #include "lldb/Core/Section.h"
-#include "lldb/Core/Stream.h"
 #include "lldb/Core/Timer.h"
 #include "lldb/Symbol/DWARFCallFrameInfo.h"
 #include "lldb/Symbol/SymbolContext.h"
 #include "lldb/Target/SectionLoadList.h"
 #include "lldb/Target/Target.h"
+#include "lldb/Utility/Error.h"
+#include "lldb/Utility/Stream.h"
 
 #include "llvm/ADT/PointerUnion.h"
 #include "llvm/ADT/StringRef.h"
@@ -610,7 +610,8 @@ size_t ObjectFileELF::GetModuleSpecifications(
     DataExtractor data;
     data.SetData(data_sp);
     elf::ELFHeader header;
-    if (header.Parse(data, &data_offset)) {
+    lldb::offset_t header_offset = data_offset;
+    if (header.Parse(data, &header_offset)) {
       if (data_sp) {
         ModuleSpec spec(file);
 
@@ -632,6 +633,7 @@ size_t ObjectFileELF::GetModuleSpecifications(
           // SetArchitecture should have set the vendor to unknown
           vendor = spec.GetArchitecture().GetTriple().getVendor();
           assert(vendor == llvm::Triple::UnknownVendor);
+          UNUSED_IF_ASSERT_DISABLED(vendor);
 
           //
           // Validate it is ok to remove GetOsFromOSABI
@@ -644,10 +646,24 @@ size_t ObjectFileELF::GetModuleSpecifications(
                           __FUNCTION__, file.GetPath().c_str());
           }
 
+          // In case there is header extension in the section #0, the header
+          // we parsed above could have sentinel values for e_phnum, e_shnum,
+          // and e_shstrndx.  In this case we need to reparse the header
+          // with a bigger data source to get the actual values.
+          size_t section_header_end = header.e_shoff + header.e_shentsize;
+          if (header.HasHeaderExtension() &&
+            section_header_end > data_sp->GetByteSize()) {
+            data_sp = file.MemoryMapFileContentsIfLocal (file_offset,
+                                                         section_header_end);
+            data.SetData(data_sp);
+            lldb::offset_t header_offset = data_offset;
+            header.Parse(data, &header_offset);
+          }
+
           // Try to get the UUID from the section list. Usually that's at the
           // end, so
           // map the file in if we don't have it already.
-          size_t section_header_end =
+          section_header_end =
               header.e_shoff + header.e_shnum * header.e_shentsize;
           if (section_header_end > data_sp->GetByteSize()) {
             data_sp = file.MemoryMapFileContentsIfLocal(file_offset,
@@ -1524,6 +1540,7 @@ size_t ObjectFileELF::GetSectionHeaderInfo(SectionHeaderColl &section_headers,
     GetOsFromOSABI(header.e_ident[EI_OSABI], ostype);
     spec_ostype = arch_spec.GetTriple().getOS();
     assert(spec_ostype == ostype);
+    UNUSED_IF_ASSERT_DISABLED(spec_ostype);
   }
 
   if (arch_spec.GetMachine() == llvm::Triple::mips ||
@@ -3065,10 +3082,10 @@ void ObjectFileELF::DumpELFHeader(Stream *s, const ELFHeader &header) {
   s->Printf("e_flags     = 0x%8.8x\n", header.e_flags);
   s->Printf("e_ehsize    = 0x%4.4x\n", header.e_ehsize);
   s->Printf("e_phentsize = 0x%4.4x\n", header.e_phentsize);
-  s->Printf("e_phnum     = 0x%4.4x\n", header.e_phnum);
+  s->Printf("e_phnum     = 0x%8.8x\n", header.e_phnum);
   s->Printf("e_shentsize = 0x%4.4x\n", header.e_shentsize);
-  s->Printf("e_shnum     = 0x%4.4x\n", header.e_shnum);
-  s->Printf("e_shstrndx  = 0x%4.4x\n", header.e_shstrndx);
+  s->Printf("e_shnum     = 0x%8.8x\n", header.e_shnum);
+  s->Printf("e_shstrndx  = 0x%8.8x\n", header.e_shstrndx);
 }
 
 //----------------------------------------------------------------------

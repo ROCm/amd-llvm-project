@@ -120,7 +120,7 @@ enum TypeEvaluationKind {
   SANITIZER_CHECK(OutOfBounds, out_of_bounds, 0)                               \
   SANITIZER_CHECK(ShiftOutOfBounds, shift_out_of_bounds, 0)                    \
   SANITIZER_CHECK(SubOverflow, sub_overflow, 0)                                \
-  SANITIZER_CHECK(TypeMismatch, type_mismatch, 0)                              \
+  SANITIZER_CHECK(TypeMismatch, type_mismatch, 1)                              \
   SANITIZER_CHECK(VLABoundNotPositive, vla_bound_not_positive, 0)
 
 enum SanitizerHandler {
@@ -211,6 +211,13 @@ public:
   /// ReturnValue - The temporary alloca to hold the return
   /// value. This is invalid iff the function has no return value.
   Address ReturnValue;
+
+  /// Return true if a label was seen in the current scope.
+  bool hasLabelBeenSeenInCurrentScope() const {
+    if (CurLexicalScope)
+      return CurLexicalScope->hasLabels();
+    return !LabelMap.empty();
+  }
 
   /// AllocaInsertPoint - This is an instruction in the entry block before which
   /// we prefer to insert allocas.
@@ -618,6 +625,10 @@ public:
 
       if (!Labels.empty())
         rescopeLabels();
+    }
+
+    bool hasLabels() const {
+      return !Labels.empty();
     }
 
     void rescopeLabels();
@@ -1499,7 +1510,6 @@ public:
   //===--------------------------------------------------------------------===//
 
   llvm::Value *EmitBlockLiteral(const BlockExpr *);
-  llvm::Value *EmitBlockLiteral(const CGBlockInfo &Info);
   static void destroyBlockInfos(CGBlockInfo *info);
 
   llvm::Function *GenerateBlockFunction(GlobalDecl GD,
@@ -2020,6 +2030,10 @@ public:
   llvm::BlockAddress *GetAddrOfLabel(const LabelDecl *L);
   llvm::BasicBlock *GetIndirectGotoBlock();
 
+  /// Check if \p E is a reference, or a C++ "this" pointer wrapped in value-
+  /// preserving casts.
+  static bool IsDeclRefOrWrappedCXXThis(const Expr *E);
+
   /// EmitNullInitialization - Generate code to set a value of the given type to
   /// null, If the type contains data member pointers, they will be initialized
   /// to -1 in accordance with the Itanium C++ ABI.
@@ -2242,7 +2256,7 @@ public:
   /// appropriate size and alignment for an object of type \p Type.
   void EmitTypeCheck(TypeCheckKind TCK, SourceLocation Loc, llvm::Value *V,
                      QualType Type, CharUnits Alignment = CharUnits::Zero(),
-                     bool SkipNullCheck = false);
+                     SanitizerSet SkippedChecks = SanitizerSet());
 
   /// \brief Emit a check that \p Base points into an array object, which
   /// we can access at index \p Index. \p Accessed should be \c false if we
@@ -2628,7 +2642,9 @@ public:
   /// the end of the directive.
   ///
   /// \param D Directive that has at least one 'reduction' directives.
-  void EmitOMPReductionClauseFinal(const OMPExecutableDirective &D);
+  /// \param ReductionKind The kind of reduction to perform.
+  void EmitOMPReductionClauseFinal(const OMPExecutableDirective &D,
+                                   const OpenMPDirectiveKind ReductionKind);
   /// \brief Emit initial code for linear variables. Creates private copies
   /// and initializes them with the values according to OpenMP standard.
   ///
@@ -2696,14 +2712,25 @@ public:
   void EmitOMPTeamsDistributeParallelForDirective(
       const OMPTeamsDistributeParallelForDirective &S);
   void EmitOMPTargetTeamsDirective(const OMPTargetTeamsDirective &S);
+  void EmitOMPTargetTeamsDistributeDirective(
+      const OMPTargetTeamsDistributeDirective &S);
+  void EmitOMPTargetTeamsDistributeParallelForDirective(
+      const OMPTargetTeamsDistributeParallelForDirective &S);
+  void EmitOMPTargetTeamsDistributeParallelForSimdDirective(
+      const OMPTargetTeamsDistributeParallelForSimdDirective &S);
+  void EmitOMPTargetTeamsDistributeSimdDirective(
+      const OMPTargetTeamsDistributeSimdDirective &S);
 
-  /// Emit outlined function for the target directive.
-  static std::pair<llvm::Function * /*OutlinedFn*/,
-                   llvm::Constant * /*OutlinedFnID*/>
-  EmitOMPTargetDirectiveOutlinedFunction(CodeGenModule &CGM,
-                                         const OMPTargetDirective &S,
-                                         StringRef ParentName,
-                                         bool IsOffloadEntry);
+  /// Emit device code for the target directive.
+  static void EmitOMPTargetDeviceFunction(CodeGenModule &CGM,
+                                          StringRef ParentName,
+                                          const OMPTargetDirective &S);
+  static void
+  EmitOMPTargetParallelDeviceFunction(CodeGenModule &CGM, StringRef ParentName,
+                                      const OMPTargetParallelDirective &S);
+  static void
+  EmitOMPTargetTeamsDeviceFunction(CodeGenModule &CGM, StringRef ParentName,
+                                   const OMPTargetTeamsDirective &S);
   /// \brief Emit inner loop of the worksharing/simd construct.
   ///
   /// \param S Directive, for which the inner loop must be emitted.
@@ -2726,6 +2753,9 @@ public:
                                   OMPPrivateScope &LoopScope);
 
 private:
+  /// Helpers for blocks
+  llvm::Value *EmitBlockLiteral(const CGBlockInfo &Info);
+
   /// Helpers for the OpenMP loop directives.
   void EmitOMPLoopBody(const OMPLoopDirective &D, JumpDest LoopExit);
   void EmitOMPSimdInit(const OMPLoopDirective &D, bool IsMonotonic = false);
@@ -3082,8 +3112,8 @@ public:
   RValue EmitCUDAKernelCallExpr(const CUDAKernelCallExpr *E,
                                 ReturnValueSlot ReturnValue);
 
-  RValue EmitCUDADevicePrintfCallExpr(const CallExpr *E,
-                                      ReturnValueSlot ReturnValue);
+  RValue EmitNVPTXDevicePrintfCallExpr(const CallExpr *E,
+                                       ReturnValueSlot ReturnValue);
 
   RValue EmitBuiltinExpr(const FunctionDecl *FD,
                          unsigned BuiltinID, const CallExpr *E,
@@ -3138,6 +3168,8 @@ private:
 
 public:
   llvm::Value *EmitMSVCBuiltinExpr(MSVCIntrin BuiltinID, const CallExpr *E);
+
+  llvm::Value *EmitBuiltinAvailable(ArrayRef<llvm::Value *> Args);
 
   llvm::Value *EmitObjCProtocolExpr(const ObjCProtocolExpr *E);
   llvm::Value *EmitObjCStringLiteral(const ObjCStringLiteral *E);
@@ -3480,14 +3512,18 @@ private:
   /// \brief Attempts to statically evaluate the object size of E. If that
   /// fails, emits code to figure the size of E out for us. This is
   /// pass_object_size aware.
+  ///
+  /// If EmittedExpr is non-null, this will use that instead of re-emitting E.
   llvm::Value *evaluateOrEmitBuiltinObjectSize(const Expr *E, unsigned Type,
-                                               llvm::IntegerType *ResType);
+                                               llvm::IntegerType *ResType,
+                                               llvm::Value *EmittedE);
 
   /// \brief Emits the size of E, as required by __builtin_object_size. This
   /// function is aware of pass_object_size parameters, and will act accordingly
   /// if E is a parameter with the pass_object_size attribute.
   llvm::Value *emitBuiltinObjectSize(const Expr *E, unsigned Type,
-                                     llvm::IntegerType *ResType);
+                                     llvm::IntegerType *ResType,
+                                     llvm::Value *EmittedE);
 
 public:
 #ifndef NDEBUG
@@ -3563,7 +3599,7 @@ public:
 
     // If we still have any arguments, emit them using the type of the argument.
     for (auto *A : llvm::make_range(Arg, ArgRange.end()))
-      ArgTypes.push_back(getVarArgType(A));
+      ArgTypes.push_back(CallArgTypeInfo ? getVarArgType(A) : A->getType());
 
     EmitCallArgs(Args, ArgTypes, ArgRange, CalleeDecl, ParamsToSkip, Order);
   }

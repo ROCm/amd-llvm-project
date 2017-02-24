@@ -1,7 +1,7 @@
 # Check if this is a in tree build.
 if (NOT DEFINED LLVM_MAIN_SRC_DIR)
   project(Polly)
-  cmake_minimum_required(VERSION 2.8)
+  cmake_minimum_required(VERSION 3.4.3)
 
   # Where is LLVM installed?
   set(LLVM_INSTALL_ROOT "" CACHE PATH "Root of LLVM install.")
@@ -86,8 +86,19 @@ if (NOT DEFINED LLVM_MAIN_SRC_DIR)
   # Enable unit tests if available.
   set(UNITTEST_DIR ${LLVM_SOURCE_ROOT}/utils/unittest)
   if(EXISTS ${UNITTEST_DIR}/googletest/include/gtest/gtest.h)
-    add_library(gtest ${UNITTEST_DIR}/googletest/src/gtest-all.cc)
-    target_include_directories(gtest PUBLIC "${UNITTEST_DIR}/googletest/include" PRIVATE "${UNITTEST_DIR}/googletest")
+    add_library(gtest
+      ${UNITTEST_DIR}/googletest/src/gtest-all.cc
+      ${UNITTEST_DIR}/googlemock/src/gmock-all.cc
+    )
+    target_include_directories(gtest
+      PUBLIC
+      "${UNITTEST_DIR}/googletest/include"
+      "${UNITTEST_DIR}/googlemock/include"
+
+      PRIVATE
+      "${UNITTEST_DIR}/googletest"
+      "${UNITTEST_DIR}/googlemock"
+    )
     target_link_libraries(gtest ${LLVM_SYSTEM_LIBS})
 
     add_library(gtest_main ${UNITTEST_DIR}/UnitTestMain/TestMain.cpp)
@@ -150,7 +161,7 @@ endif(CUDALIB_FOUND)
 include_directories(
   BEFORE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
-  ${CMAKE_CURRENT_SOURCE_DIR}/lib/JSON/include
+  ${CMAKE_CURRENT_SOURCE_DIR}/lib/External/JSON/include
   ${CMAKE_CURRENT_BINARY_DIR}/lib/External/isl/include
   ${CMAKE_CURRENT_SOURCE_DIR}/lib/External/isl/include
   ${CMAKE_CURRENT_SOURCE_DIR}/lib/External/pet/include
@@ -192,9 +203,8 @@ configure_file( ${CMAKE_CURRENT_SOURCE_DIR}/include/polly/Config/config.h.cmake
 
 # Add target to check formatting of polly files
 file( GLOB_RECURSE files *.h lib/*.cpp lib/*.c tools/*.cpp tools/*.c tools/*.h unittests/*.cpp)
-file( GLOB_RECURSE jsonfiles lib/JSON/*.h lib/JSON/*.cpp)
-file( GLOB_RECURSE external lib/External/*.h lib/External/*.c)
-list( REMOVE_ITEM files ${jsonfiles} ${external})
+file( GLOB_RECURSE external lib/External/*.h lib/External/*.c lib/External/*.cpp)
+list( REMOVE_ITEM files ${external})
 
 set(check_format_depends)
 set(update_format_depends)

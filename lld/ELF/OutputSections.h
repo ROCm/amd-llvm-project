@@ -24,8 +24,8 @@ struct PhdrEntry;
 class SymbolBody;
 struct EhSectionPiece;
 template <class ELFT> class EhInputSection;
-template <class ELFT> class InputSection;
-template <class ELFT> class InputSectionBase;
+class InputSection;
+class InputSectionBase;
 template <class ELFT> class MergeInputSection;
 template <class ELFT> class OutputSection;
 template <class ELFT> class ObjectFile;
@@ -53,7 +53,7 @@ public:
   template <typename ELFT> void writeHeaderTo(typename ELFT::Shdr *SHdr);
   StringRef getName() const { return Name; }
 
-  virtual void addSection(InputSectionData *C) {}
+  virtual void addSection(InputSectionBase *C) {}
   virtual Kind getKind() const { return Base; }
   static bool classof(const OutputSectionBase *B) {
     return B->getKind() == Base;
@@ -81,6 +81,7 @@ public:
   OutputSectionBase *FirstInPtLoad = nullptr;
 
   virtual void finalize() {}
+  virtual void forEachInputSection(std::function<void(InputSectionBase *)> F) {}
   virtual void assignOffsets() {}
   virtual void writeTo(uint8_t *Buf) {}
   virtual ~OutputSectionBase() = default;
@@ -110,90 +111,22 @@ public:
   typedef typename ELFT::Rela Elf_Rela;
   typedef typename ELFT::uint uintX_t;
   OutputSection(StringRef Name, uint32_t Type, uintX_t Flags);
-  void addSection(InputSectionData *C) override;
-  void sort(std::function<int(InputSection<ELFT> *S)> Order);
+  void addSection(InputSectionBase *C) override;
+  void sort(std::function<int(InputSectionBase *S)> Order);
   void sortInitFini();
   void sortCtorsDtors();
   void writeTo(uint8_t *Buf) override;
   void finalize() override;
+  void forEachInputSection(std::function<void(InputSectionBase *)> F) override;
   void assignOffsets() override;
   Kind getKind() const override { return Regular; }
   static bool classof(const OutputSectionBase *B) {
     return B->getKind() == Regular;
   }
-  std::vector<InputSection<ELFT> *> Sections;
+  std::vector<InputSection *> Sections;
 
   // Location in the output buffer.
   uint8_t *Loc = nullptr;
-};
-
-template <class ELFT>
-class MergeOutputSection final : public OutputSectionBase {
-  typedef typename ELFT::uint uintX_t;
-
-public:
-  MergeOutputSection(StringRef Name, uint32_t Type, uintX_t Flags,
-                     uintX_t Alignment);
-  void addSection(InputSectionData *S) override;
-  void writeTo(uint8_t *Buf) override;
-  void finalize() override;
-  bool shouldTailMerge() const;
-  Kind getKind() const override { return Merge; }
-  static bool classof(const OutputSectionBase *B) {
-    return B->getKind() == Merge;
-  }
-
-private:
-  void finalizeTailMerge();
-  void finalizeNoTailMerge();
-
-  llvm::StringTableBuilder Builder;
-  std::vector<MergeInputSection<ELFT> *> Sections;
-};
-
-struct CieRecord {
-  EhSectionPiece *Piece = nullptr;
-  std::vector<EhSectionPiece *> FdePieces;
-};
-
-// Output section for .eh_frame.
-template <class ELFT> class EhOutputSection final : public OutputSectionBase {
-  typedef typename ELFT::uint uintX_t;
-  typedef typename ELFT::Shdr Elf_Shdr;
-  typedef typename ELFT::Rel Elf_Rel;
-  typedef typename ELFT::Rela Elf_Rela;
-
-public:
-  EhOutputSection();
-  void writeTo(uint8_t *Buf) override;
-  void finalize() override;
-  bool empty() const { return Sections.empty(); }
-
-  void addSection(InputSectionData *S) override;
-  Kind getKind() const override { return EHFrame; }
-  static bool classof(const OutputSectionBase *B) {
-    return B->getKind() == EHFrame;
-  }
-
-  size_t NumFdes = 0;
-
-private:
-  template <class RelTy>
-  void addSectionAux(EhInputSection<ELFT> *S, llvm::ArrayRef<RelTy> Rels);
-
-  template <class RelTy>
-  CieRecord *addCie(EhSectionPiece &Piece, ArrayRef<RelTy> Rels);
-
-  template <class RelTy>
-  bool isFdeLive(EhSectionPiece &Piece, ArrayRef<RelTy> Rels);
-
-  uintX_t getFdePc(uint8_t *Buf, size_t Off, uint8_t Enc);
-
-  std::vector<EhInputSection<ELFT> *> Sections;
-  std::vector<CieRecord *> Cies;
-
-  // CIE records are uniquified by their contents and personality functions.
-  llvm::DenseMap<std::pair<ArrayRef<uint8_t>, SymbolBody *>, CieRecord> CieMap;
 };
 
 // All output sections that are hadnled by the linker specially are
@@ -204,8 +137,8 @@ template <class ELFT> struct Out {
   typedef typename ELFT::Phdr Elf_Phdr;
 
   static uint8_t First;
-  static EhOutputSection<ELFT> *EhFrame;
   static OutputSection<ELFT> *Bss;
+  static OutputSection<ELFT> *BssRelRo;
   static OutputSectionBase *Opd;
   static uint8_t *OpdBuf;
   static PhdrEntry *TlsPhdr;
@@ -217,13 +150,24 @@ template <class ELFT> struct Out {
   static OutputSectionBase *FiniArray;
 };
 
-template <bool Is64Bits> struct SectionKey {
-  typedef typename std::conditional<Is64Bits, uint64_t, uint32_t>::type uintX_t;
+struct SectionKey {
   StringRef Name;
-  uint32_t Type;
-  uintX_t Flags;
-  uintX_t Alignment;
+  uint64_t Flags;
+  uint64_t Alignment;
 };
+}
+}
+namespace llvm {
+template <> struct DenseMapInfo<lld::elf::SectionKey> {
+  static lld::elf::SectionKey getEmptyKey();
+  static lld::elf::SectionKey getTombstoneKey();
+  static unsigned getHashValue(const lld::elf::SectionKey &Val);
+  static bool isEqual(const lld::elf::SectionKey &LHS,
+                      const lld::elf::SectionKey &RHS);
+};
+}
+namespace lld {
+namespace elf {
 
 // This class knows how to create an output section for a given
 // input section. Output section type is determined by various
@@ -232,16 +176,15 @@ template <bool Is64Bits> struct SectionKey {
 template <class ELFT> class OutputSectionFactory {
   typedef typename ELFT::Shdr Elf_Shdr;
   typedef typename ELFT::uint uintX_t;
-  typedef typename elf::SectionKey<ELFT::Is64Bits> Key;
 
 public:
-  std::pair<OutputSectionBase *, bool> create(InputSectionBase<ELFT> *C,
-                                              StringRef OutsecName);
-  std::pair<OutputSectionBase *, bool>
-  create(const SectionKey<ELFT::Is64Bits> &Key, InputSectionBase<ELFT> *C);
+  OutputSectionFactory(std::vector<OutputSectionBase *> &OutputSections);
+  ~OutputSectionFactory();
+  void addInputSec(InputSectionBase *IS, StringRef OutsecName);
 
 private:
-  llvm::SmallDenseMap<Key, OutputSectionBase *> Map;
+  llvm::SmallDenseMap<SectionKey, OutputSectionBase *> Map;
+  std::vector<OutputSectionBase *> &OutputSections;
 };
 
 template <class ELFT> uint64_t getHeaderSize() {
@@ -251,8 +194,8 @@ template <class ELFT> uint64_t getHeaderSize() {
 }
 
 template <class ELFT> uint8_t Out<ELFT>::First;
-template <class ELFT> EhOutputSection<ELFT> *Out<ELFT>::EhFrame;
 template <class ELFT> OutputSection<ELFT> *Out<ELFT>::Bss;
+template <class ELFT> OutputSection<ELFT> *Out<ELFT>::BssRelRo;
 template <class ELFT> OutputSectionBase *Out<ELFT>::Opd;
 template <class ELFT> uint8_t *Out<ELFT>::OpdBuf;
 template <class ELFT> PhdrEntry *Out<ELFT>::TlsPhdr;
@@ -265,15 +208,5 @@ template <class ELFT> OutputSectionBase *Out<ELFT>::FiniArray;
 } // namespace elf
 } // namespace lld
 
-namespace llvm {
-template <bool Is64Bits> struct DenseMapInfo<lld::elf::SectionKey<Is64Bits>> {
-  typedef typename lld::elf::SectionKey<Is64Bits> Key;
-
-  static Key getEmptyKey();
-  static Key getTombstoneKey();
-  static unsigned getHashValue(const Key &Val);
-  static bool isEqual(const Key &LHS, const Key &RHS);
-};
-}
 
 #endif

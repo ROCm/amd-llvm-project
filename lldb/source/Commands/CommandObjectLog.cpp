@@ -16,8 +16,6 @@
 #include "lldb/Core/Debugger.h"
 #include "lldb/Core/Log.h"
 #include "lldb/Core/Module.h"
-#include "lldb/Core/RegularExpression.h"
-#include "lldb/Core/Stream.h"
 #include "lldb/Core/StreamFile.h"
 #include "lldb/Core/Timer.h"
 #include "lldb/Host/FileSpec.h"
@@ -32,6 +30,8 @@
 #include "lldb/Symbol/SymbolVendor.h"
 #include "lldb/Target/Process.h"
 #include "lldb/Target/Target.h"
+#include "lldb/Utility/RegularExpression.h"
+#include "lldb/Utility/Stream.h"
 
 using namespace lldb;
 using namespace lldb_private;
@@ -41,13 +41,13 @@ static OptionDefinition g_log_options[] = {
   { LLDB_OPT_SET_1, false, "file",       'f', OptionParser::eRequiredArgument, nullptr, nullptr, 0, eArgTypeFilename, "Set the destination file to log to." },
   { LLDB_OPT_SET_1, false, "threadsafe", 't', OptionParser::eNoArgument,       nullptr, nullptr, 0, eArgTypeNone,     "Enable thread safe logging to avoid interweaved log lines." },
   { LLDB_OPT_SET_1, false, "verbose",    'v', OptionParser::eNoArgument,       nullptr, nullptr, 0, eArgTypeNone,     "Enable verbose logging." },
-  { LLDB_OPT_SET_1, false, "debug",      'g', OptionParser::eNoArgument,       nullptr, nullptr, 0, eArgTypeNone,     "Enable debug logging." },
   { LLDB_OPT_SET_1, false, "sequence",   's', OptionParser::eNoArgument,       nullptr, nullptr, 0, eArgTypeNone,     "Prepend all log lines with an increasing integer sequence id." },
   { LLDB_OPT_SET_1, false, "timestamp",  'T', OptionParser::eNoArgument,       nullptr, nullptr, 0, eArgTypeNone,     "Prepend all log lines with a timestamp." },
   { LLDB_OPT_SET_1, false, "pid-tid",    'p', OptionParser::eNoArgument,       nullptr, nullptr, 0, eArgTypeNone,     "Prepend all log lines with the process and thread ID that generates the log line." },
   { LLDB_OPT_SET_1, false, "thread-name",'n', OptionParser::eNoArgument,       nullptr, nullptr, 0, eArgTypeNone,     "Prepend all log lines with the thread name for the thread that generates the log line." },
   { LLDB_OPT_SET_1, false, "stack",      'S', OptionParser::eNoArgument,       nullptr, nullptr, 0, eArgTypeNone,     "Append a stack backtrace to each log line." },
   { LLDB_OPT_SET_1, false, "append",     'a', OptionParser::eNoArgument,       nullptr, nullptr, 0, eArgTypeNone,     "Append to the log file instead of overwriting." },
+  { LLDB_OPT_SET_1, false, "file-function",'F',OptionParser::eNoArgument,      nullptr, nullptr, 0, eArgTypeNone,     "Prepend the names of files and function that generate the logs." },
     // clang-format on
 };
 
@@ -109,9 +109,6 @@ public:
       case 'v':
         log_options |= LLDB_LOG_OPTION_VERBOSE;
         break;
-      case 'g':
-        log_options |= LLDB_LOG_OPTION_DEBUG;
-        break;
       case 's':
         log_options |= LLDB_LOG_OPTION_PREPEND_SEQUENCE;
         break;
@@ -129,6 +126,9 @@ public:
         break;
       case 'a':
         log_options |= LLDB_LOG_OPTION_APPEND;
+        break;
+      case 'F':
+        log_options |= LLDB_LOG_OPTION_PREPEND_FILE_FUNCTION;
         break;
       default:
         error.SetErrorStringWithFormat("unrecognized option '%c'",
@@ -227,25 +227,15 @@ protected:
       return false;
     }
 
-    Log::Callbacks log_callbacks;
-
     const std::string channel = args[0].ref;
     args.Shift(); // Shift off the channel
-    if (Log::GetLogChannelCallbacks(ConstString(channel), log_callbacks)) {
-      log_callbacks.disable(args.GetConstArgumentVector(),
-                            &result.GetErrorStream());
-      result.SetStatus(eReturnStatusSuccessFinishNoResult);
-    } else if (channel == "all") {
+    if (channel == "all") {
       Log::DisableAllLogChannels(&result.GetErrorStream());
+      result.SetStatus(eReturnStatusSuccessFinishNoResult);
     } else {
-      LogChannelSP log_channel_sp(LogChannel::FindPlugin(channel.data()));
-      if (log_channel_sp) {
-        log_channel_sp->Disable(args.GetConstArgumentVector(),
-                                &result.GetErrorStream());
+      if (Log::DisableLogChannel(channel, args.GetConstArgumentVector(),
+                                 result.GetErrorStream()))
         result.SetStatus(eReturnStatusSuccessFinishNoResult);
-      } else
-        result.AppendErrorWithFormat("Invalid log channel '%s'.\n",
-                                     channel.data());
     }
     return result.Succeeded();
   }
@@ -284,26 +274,12 @@ protected:
       Log::ListAllLogChannels(&result.GetOutputStream());
       result.SetStatus(eReturnStatusSuccessFinishResult);
     } else {
-      for (auto &entry : args.entries()) {
-        Log::Callbacks log_callbacks;
-
-        if (Log::GetLogChannelCallbacks(ConstString(entry.ref),
-                                        log_callbacks)) {
-          log_callbacks.list_categories(&result.GetOutputStream());
-          result.SetStatus(eReturnStatusSuccessFinishResult);
-        } else if (entry.ref == "all") {
-          Log::ListAllLogChannels(&result.GetOutputStream());
-          result.SetStatus(eReturnStatusSuccessFinishResult);
-        } else {
-          LogChannelSP log_channel_sp(LogChannel::FindPlugin(entry.c_str()));
-          if (log_channel_sp) {
-            log_channel_sp->ListCategories(&result.GetOutputStream());
-            result.SetStatus(eReturnStatusSuccessFinishNoResult);
-          } else
-            result.AppendErrorWithFormat("Invalid log channel '%s'.\n",
-                                         entry.c_str());
-        }
-      }
+      bool success = true;
+      for (const auto &entry : args.entries())
+        success = success && Log::ListChannelCategories(
+                                 entry.ref, result.GetOutputStream());
+      if (success)
+        result.SetStatus(eReturnStatusSuccessFinishResult);
     }
     return result.Succeeded();
   }

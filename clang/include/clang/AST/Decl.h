@@ -1608,6 +1608,11 @@ private:
   unsigned SClass : 2;
   unsigned IsInline : 1;
   unsigned IsInlineSpecified : 1;
+protected:
+  // This is shared by CXXConstructorDecl, CXXConversionDecl, and
+  // CXXDeductionGuideDecl.
+  unsigned IsExplicitSpecified : 1;
+private:
   unsigned IsVirtualAsWritten : 1;
   unsigned IsPure : 1;
   unsigned HasInheritedPrototype : 1;
@@ -1708,8 +1713,9 @@ protected:
                        StartLoc),
         DeclContext(DK), redeclarable_base(C), ParamInfo(nullptr), Body(),
         SClass(S), IsInline(isInlineSpecified),
-        IsInlineSpecified(isInlineSpecified), IsVirtualAsWritten(false),
-        IsPure(false), HasInheritedPrototype(false), HasWrittenPrototype(true),
+        IsInlineSpecified(isInlineSpecified), IsExplicitSpecified(false),
+        IsVirtualAsWritten(false), IsPure(false),
+        HasInheritedPrototype(false), HasWrittenPrototype(true),
         IsDeleted(false), IsTrivial(false), IsDefaulted(false),
         IsExplicitlyDefaulted(false), HasImplicitReturnZero(false),
         IsLateTemplateParsed(false), IsConstexpr(isConstexprSpecified),
@@ -2060,6 +2066,10 @@ public:
   /// function return type. This may omit qualifiers and other information with
   /// limited representation in the AST.
   SourceRange getReturnTypeSourceRange() const;
+
+  /// \brief Attempt to compute an informative source range covering the
+  /// function exception specification, if any.
+  SourceRange getExceptionSpecSourceRange() const;
 
   /// \brief Determine the type of an expression that calls this function.
   QualType getCallResultType() const {

@@ -17,6 +17,7 @@
 #include "FuzzerRandom.h"
 #include "FuzzerSHA1.h"
 #include "FuzzerTracePC.h"
+#include <algorithm>
 #include <numeric>
 #include <random>
 #include <unordered_set>
@@ -59,6 +60,12 @@ class InputCorpus {
       Res += !II->U.empty();
     return Res;
   }
+  size_t MaxInputSize() const {
+    size_t Res = 0;
+    for (auto II : Inputs)
+        Res = std::max(Res, II->U.size());
+    return Res;
+  }
   bool empty() const { return Inputs.empty(); }
   const Unit &operator[] (size_t Idx) const { return Inputs[Idx]->U; }
   void AddToCorpus(const Unit &U, size_t NumFeatures, bool MayDeleteFile = false) {
@@ -90,7 +97,7 @@ class InputCorpus {
   // Hypothesis: units added to the corpus last are more likely to be
   // interesting. This function gives more weight to the more recent units.
   size_t ChooseUnitIdxToMutate(Random &Rand) {
-    size_t Idx = static_cast<size_t>(CorpusDistribution(Rand.Get_mt19937()));
+    size_t Idx = static_cast<size_t>(CorpusDistribution(Rand));
     assert(Idx < Inputs.size());
     return Idx;
   }

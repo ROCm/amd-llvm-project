@@ -1611,7 +1611,8 @@ parse_function_type(const char* first, const char* last, C& db)
                 {
                     if (t == last)
                     {
-                        db.names.pop_back();
+                        if (!db.names.empty())
+                          db.names.pop_back();
                         return first;
                     }
                     if (*t == 'E')
@@ -1927,10 +1928,11 @@ parse_type(const char* first, const char* last, C& db)
                             if (is_function)
                             {
                                 size_t p = db.names[k].second.size();
-                                if (db.names[k].second[p-2] == '&')
-                                    p -= 3;
-                                else if (db.names[k].second.back() == '&')
+                                if (db.names[k].second[p - 2] == '&' &&
+                                    db.names[k].second[p - 1] == '&')
                                     p -= 2;
+                                else if (db.names[k].second.back() == '&')
+                                    p -= 1;
                                 if (cv & 1)
                                 {
                                     db.names[k].second.insert(p, " const");
@@ -3058,9 +3060,9 @@ parse_unnamed_type_name(const char* first, const char* last, C& db)
             }
             if (t0 == last || *t0 != 'E')
             {
-              if(!db.names.empty())
+              if (!db.names.empty())
                 db.names.pop_back();
-                return first;
+              return first;
             }
             ++t0;
             if (t0 == last)
@@ -4343,6 +4345,8 @@ parse_call_offset(const char* first, const char* last)
 //                    # base is the nominal target function of thunk
 //                ::= GV <object name> # Guard variable for one-time initialization
 //                                     # No <type>
+//                ::= TW <object name> # Thread-local wrapper
+//                ::= TH <object name> # Thread-local initialization
 //      extension ::= TC <first type> <number> _ <second type> # construction vtable for second-in-first
 //      extension ::= GR <object name> # reference temporary for object
 
@@ -4444,6 +4448,28 @@ parse_special_name(const char* first, const char* last, C& db)
                             first = t1;
                         }
                     }
+                }
+                break;
+            case 'W':
+                // TW <object name> # Thread-local wrapper
+                t = parse_name(first + 2, last, db);
+                if (t != first + 2) 
+                {
+                    if (db.names.empty())
+                    return first;
+                    db.names.back().first.insert(0, "thread-local wrapper routine for ");
+                    first = t;
+                }
+                break;
+            case 'H':
+                //TH <object name> # Thread-local initialization
+                t = parse_name(first + 2, last, db);
+                if (t != first + 2) 
+                {
+                    if (db.names.empty())
+                    return first;
+                    db.names.back().first.insert(0, "thread-local initialization routine for ");
+                    first = t;
                 }
                 break;
             default:
@@ -4979,22 +5005,12 @@ __cxa_demangle(const char *mangled_name, char *buf, size_t *n, int *status) {
         return nullptr;
     }
 
-    size_t len = std::strlen(mangled_name);
-    if (len < 2 || strncmp(mangled_name, "_Z", 2))
-    {
-        if (len < 4 || strncmp(mangled_name, "___Z", 4))
-        {
-            if (status)
-                *status = invalid_mangled_name;
-            return nullptr;
-        }
-    }
-
     size_t internal_size = buf != nullptr ? *n : 0;
     arena<bs> a;
     Db db(a);
     db.template_param.emplace_back(a);
     int internal_status = success;
+    size_t len = std::strlen(mangled_name);
     demangle(mangled_name, mangled_name + len, db,
              internal_status);
     if (internal_status == success && db.fix_forward_references &&

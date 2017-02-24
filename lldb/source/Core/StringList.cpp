@@ -10,8 +10,8 @@
 #include "lldb/Core/StringList.h"
 
 #include "lldb/Core/Log.h"
-#include "lldb/Core/StreamString.h"
 #include "lldb/Host/FileSpec.h"
+#include "lldb/Utility/StreamString.h"
 
 #include <string>
 
@@ -267,5 +267,5 @@ void StringList::LogDump(Log *log, const char *name) {
   if (name)
     strm.Printf("End %s.\n", name);
 
-  log->Debug("%s", strm.GetData());
+  LLDB_LOGV(log, "{0}", strm.GetData());
 }

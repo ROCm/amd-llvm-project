@@ -140,12 +140,15 @@ class Argument<string name, bit optional, bit fake = 0> {
   bit Fake = fake;
 }
 
-class BoolArgument<string name, bit opt = 0> : Argument<name, opt>;
+class BoolArgument<string name, bit opt = 0, bit fake = 0> : Argument<name, opt,
+                                                                      fake>;
 class IdentifierArgument<string name, bit opt = 0> : Argument<name, opt>;
 class IntArgument<string name, bit opt = 0> : Argument<name, opt>;
 class StringArgument<string name, bit opt = 0> : Argument<name, opt>;
 class ExprArgument<string name, bit opt = 0> : Argument<name, opt>;
-class FunctionArgument<string name, bit opt = 0> : Argument<name, opt>;
+class FunctionArgument<string name, bit opt = 0, bit fake = 0> : Argument<name,
+                                                                          opt,
+                                                                          fake>;
 class TypeArgument<string name, bit opt = 0> : Argument<name, opt>;
 class UnsignedArgument<string name, bit opt = 0> : Argument<name, opt>;
 class VariadicUnsignedArgument<string name> : Argument<name, 1>;
@@ -255,6 +258,7 @@ class TargetArch<list<string> arches> {
   list<string> CXXABIs;
 }
 def TargetARM : TargetArch<["arm", "thumb", "armeb", "thumbeb"]>;
+def TargetAVR : TargetArch<["avr"]>;
 def TargetMips : TargetArch<["mips", "mipsel"]>;
 def TargetMSP430 : TargetArch<["msp430"]>;
 def TargetX86 : TargetArch<["x86"]>;
@@ -337,7 +341,7 @@ class TargetSpecificAttr<TargetArch target> {
   // should contain a shared value between the attributes.
   //
   // Target-specific attributes which use this feature should ensure that the
-  // spellings match exactly betweeen the attributes, and if the arguments or
+  // spellings match exactly between the attributes, and if the arguments or
   // subjects differ, should specify HasCustomParsing = 1 and implement their
   // own parsing and semantic handling requirements as-needed.
   string ParseKind;
@@ -477,6 +481,19 @@ def ARMInterrupt : InheritableAttr, TargetSpecificAttr<TargetARM> {
   let Documentation = [ARMInterruptDocs];
 }
 
+def AVRInterrupt : InheritableAttr, TargetSpecificAttr<TargetAVR> {
+  let Spellings = [GNU<"interrupt">];
+  let Subjects = SubjectList<[Function]>;
+  let ParseKind = "Interrupt";
+  let Documentation = [AVRInterruptDocs];
+}
+
+def AVRSignal : InheritableAttr, TargetSpecificAttr<TargetAVR> {
+  let Spellings = [GNU<"signal">];
+  let Subjects = SubjectList<[Function]>;
+  let Documentation = [AVRSignalDocs];
+}
+
 def AsmLabel : InheritableAttr {
   let Spellings = [Keyword<"asm">, Keyword<"__asm__">];
   let Args = [StringArgument<"Label">];
@@ -613,49 +630,53 @@ def Constructor : InheritableAttr {
   let Documentation = [Undocumented];
 }
 
+// CUDA attributes are spelled __attribute__((attr)) or __declspec(__attr__).
+
 def CUDAConstant : InheritableAttr {
-  let Spellings = [GNU<"constant">];
+  let Spellings = [GNU<"constant">, Declspec<"__constant__">];
   let Subjects = SubjectList<[Var]>;
   let LangOpts = [CUDA];
   let Documentation = [Undocumented];
 }
 
 def CUDACudartBuiltin : IgnoredAttr {
-  let Spellings = [GNU<"cudart_builtin">];
+  let Spellings = [GNU<"cudart_builtin">, Declspec<"__cudart_builtin__">];
   let LangOpts = [CUDA];
 }
 
 def CUDADevice : InheritableAttr {
-  let Spellings = [GNU<"device">];
+  let Spellings = [GNU<"device">, Declspec<"__device__">];
   let Subjects = SubjectList<[Function, Var]>;
   let LangOpts = [CUDA];
   let Documentation = [Undocumented];
 }
 
 def CUDADeviceBuiltin : IgnoredAttr {
-  let Spellings = [GNU<"device_builtin">];
+  let Spellings = [GNU<"device_builtin">, Declspec<"__device_builtin__">];
   let LangOpts = [CUDA];
 }
 
 def CUDADeviceBuiltinSurfaceType : IgnoredAttr {
-  let Spellings = [GNU<"device_builtin_surface_type">];
+  let Spellings = [GNU<"device_builtin_surface_type">,
+                   Declspec<"__device_builtin_surface_type__">];
   let LangOpts = [CUDA];
 }
 
 def CUDADeviceBuiltinTextureType : IgnoredAttr {
-  let Spellings = [GNU<"device_builtin_texture_type">];
+  let Spellings = [GNU<"device_builtin_texture_type">,
+                   Declspec<"__device_builtin_texture_type__">];
   let LangOpts = [CUDA];
 }
 
 def CUDAGlobal : InheritableAttr {
-  let Spellings = [GNU<"global">];
+  let Spellings = [GNU<"global">, Declspec<"__global__">];
   let Subjects = SubjectList<[Function]>;
   let LangOpts = [CUDA];
   let Documentation = [Undocumented];
 }
 
 def CUDAHost : InheritableAttr {
-  let Spellings = [GNU<"host">];
+  let Spellings = [GNU<"host">, Declspec<"__host__">];
   let Subjects = SubjectList<[Function]>;
   let LangOpts = [CUDA];
   let Documentation = [Undocumented];
@@ -669,7 +690,7 @@ def CUDAInvalidTarget : InheritableAttr {
 }
 
 def CUDALaunchBounds : InheritableAttr {
-  let Spellings = [GNU<"launch_bounds">];
+  let Spellings = [GNU<"launch_bounds">, Declspec<"__launch_bounds__">];
   let Args = [ExprArgument<"MaxThreads">, ExprArgument<"MinBlocks", 1>];
   let LangOpts = [CUDA];
   let Subjects = SubjectList<[ObjCMethod, FunctionLike], WarnDiag,
@@ -681,7 +702,7 @@ def CUDALaunchBounds : InheritableAttr {
 }
 
 def CUDAShared : InheritableAttr {
-  let Spellings = [GNU<"shared">];
+  let Spellings = [GNU<"shared">, Declspec<"__shared__">];
   let Subjects = SubjectList<[Var]>;
   let LangOpts = [CUDA];
   let Documentation = [Undocumented];
@@ -790,6 +811,14 @@ def EmptyBases : InheritableAttr, TargetSpecificAttr<TargetMicrosoftCXXABI> {
   let Spellings = [Declspec<"empty_bases">];
   let Subjects = SubjectList<[CXXRecord]>;
   let Documentation = [EmptyBasesDocs];
+}
+
+def AllocSize : InheritableAttr {
+  let Spellings = [GCC<"alloc_size">];
+  let Subjects = SubjectList<[Function]>;
+  let Args = [IntArgument<"ElemSizeParam">, IntArgument<"NumElemsParam", 1>];
+  let TemplateDependent = 1;
+  let Documentation = [AllocSizeDocs];
 }
 
 def EnableIf : InheritableAttr {
@@ -1215,6 +1244,8 @@ def NoThrow : InheritableAttr {
 }
 
 def NvWeak : IgnoredAttr {
+  // No Declspec spelling of this attribute; the CUDA headers use
+  // __attribute__((nv_weak)) unconditionally.
   let Spellings = [GNU<"nv_weak">];
   let LangOpts = [CUDA];
 }
@@ -1603,6 +1634,26 @@ def Unavailable : InheritableAttr {
                  "IR_ARCInitReturnsUnrelated",
                  "IR_ARCFieldWithOwnership"], 1, /*fake*/ 1>];
   let Documentation = [Undocumented];
+}
+
+def DiagnoseIf : InheritableAttr {
+  let Spellings = [GNU<"diagnose_if">];
+  let Subjects = SubjectList<[Function]>;
+  let Args = [ExprArgument<"Cond">, StringArgument<"Message">,
+              EnumArgument<"DiagnosticType",
+                           "DiagnosticType",
+                           ["error", "warning"],
+                           ["DT_Error", "DT_Warning"]>,
+              BoolArgument<"ArgDependent", 0, /*fake*/ 1>,
+              FunctionArgument<"Parent", 0, /*fake*/ 1>];
+  let DuplicatesAllowedWhileMerging = 1;
+  let LateParsed = 1;
+  let AdditionalMembers = [{
+    bool isError() const { return diagnosticType == DT_Error; }
+    bool isWarning() const { return diagnosticType == DT_Warning; }
+  }];
+  let TemplateDependent = 1;
+  let Documentation = [DiagnoseIfDocs];
 }
 
 def ArcWeakrefUnavailable : InheritableAttr {

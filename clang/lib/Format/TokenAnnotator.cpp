@@ -337,6 +337,9 @@ private:
                  Contexts.back().ContextKind == tok::l_brace &&
                  Parent->isOneOf(tok::l_brace, tok::comma)) {
         Left->Type = TT_JsComputedPropertyName;
+      } else if (CurrentToken->is(tok::r_square) && Parent &&
+                 Parent->is(TT_TemplateCloser)) {
+        Left->Type = TT_ArraySubscriptLSquare;
       } else if (Style.Language == FormatStyle::LK_Proto ||
                  (!CppArrayTemplates && Parent &&
                   Parent->isOneOf(TT_BinaryOperator, TT_TemplateCloser, tok::at,
@@ -684,6 +687,12 @@ private:
       if (Contexts.back().IsForEachMacro)
         Contexts.back().IsExpression = true;
       break;
+    case tok::identifier:
+      if (Tok->isOneOf(Keywords.kw___has_include,
+                       Keywords.kw___has_include_next)) {
+        parseHasInclude();
+      }
+      break;
     default:
       break;
     }
@@ -725,6 +734,14 @@ private:
         next();
       }
     }
+  }
+
+  void parseHasInclude() {
+    if (!CurrentToken || !CurrentToken->is(tok::l_paren))
+      return;
+    next();  // '('
+    parseIncludeDirective();
+    next();  // ')'
   }
 
   LineType parsePreprocessorDirective() {
@@ -777,8 +794,14 @@ private:
     default:
       break;
     }
-    while (CurrentToken)
+    while (CurrentToken) {
+      FormatToken *Tok = CurrentToken;
       next();
+      if (Tok->isOneOf(Keywords.kw___has_include,
+                       Keywords.kw___has_include_next)) {
+        parseHasInclude();
+      }
+    }
     return Type;
   }
 
@@ -1282,9 +1305,7 @@ private:
       return TT_UnaryOperator;
 
     const FormatToken *NextToken = Tok.getNextNonComment();
-    if (!NextToken ||
-        NextToken->isOneOf(tok::arrow, Keywords.kw_final, tok::equal,
-                           Keywords.kw_override) ||
+    if (!NextToken || NextToken->isOneOf(tok::arrow, tok::equal) ||
         (NextToken->is(tok::l_brace) && !NextToken->getNextNonComment()))
       return TT_PointerOrReference;
 
@@ -1447,7 +1468,9 @@ public:
 
       // At the end of the line or when an operator with higher precedence is
       // found, insert fake parenthesis and return.
-      if (!Current || (Current->closesScope() && Current->MatchingParen) ||
+      if (!Current ||
+          (Current->closesScope() &&
+           (Current->MatchingParen || Current->is(TT_TemplateString))) ||
           (CurrentPrecedence != -1 && CurrentPrecedence < Precedence) ||
           (CurrentPrecedence == prec::Conditional &&
            Precedence == prec::Assignment && Current->is(tok::colon))) {
@@ -1456,7 +1479,9 @@ public:
 
       // Consume scopes: (), [], <> and {}
       if (Current->opensScope()) {
-        while (Current && !Current->closesScope()) {
+        // In fragment of a JavaScript template string can look like '}..${' and
+        // thus close a scope and open a new one at the same time.
+        while (Current && (!Current->closesScope() || Current->opensScope())) {
           next();
           parse();
         }
@@ -1596,8 +1621,14 @@ void TokenAnnotator::setCommentLineLevels(
   for (SmallVectorImpl<AnnotatedLine *>::reverse_iterator I = Lines.rbegin(),
                                                           E = Lines.rend();
        I != E; ++I) {
-    if (NextNonCommentLine && (*I)->First->is(tok::comment) &&
-        (*I)->First->Next == nullptr)
+    bool CommentLine = (*I)->First;
+    for (const FormatToken *Tok = (*I)->First; Tok; Tok = Tok->Next) {
+      if (!Tok->is(tok::comment)) {
+        CommentLine = false;
+        break;
+      }
+    }
+    if (NextNonCommentLine && CommentLine)
       (*I)->Level = NextNonCommentLine->Level;
     else
       NextNonCommentLine = (*I)->First->isNot(tok::r_brace) ? (*I) : nullptr;
@@ -1699,7 +1730,7 @@ static bool isFunctionDeclarationName(const FormatToken &Current,
     }
   }
 
-  // Check whether parameter list can be long to a function declaration.
+  // Check whether parameter list can belong to a function declaration.
   if (!Next || !Next->is(tok::l_paren) || !Next->MatchingParen)
     return false;
   // If the lines ends with "{", this is likely an function definition.
@@ -1713,6 +1744,10 @@ static bool isFunctionDeclarationName(const FormatToken &Current,
     return true;
   for (const FormatToken *Tok = Next->Next; Tok && Tok != Next->MatchingParen;
        Tok = Tok->Next) {
+    if (Tok->is(tok::l_paren) && Tok->MatchingParen) {
+      Tok = Tok->MatchingParen;
+      continue;
+    }
     if (Tok->is(tok::kw_const) || Tok->isSimpleTypeSpecifier() ||
         Tok->isOneOf(TT_PointerOrReference, TT_StartOfName, tok::ellipsis))
       return true;
@@ -1755,8 +1790,6 @@ void TokenAnnotator::calculateFormattingInformation(AnnotatedLine &Line) {
 
   Line.First->TotalLength =
       Line.First->IsMultiline ? Style.ColumnLimit : Line.First->ColumnWidth;
-  if (!Line.First->Next)
-    return;
   FormatToken *Current = Line.First->Next;
   bool InFunctionDecl = Line.MightBeFunctionDecl;
   while (Current) {
@@ -1832,9 +1865,18 @@ void TokenAnnotator::calculateFormattingInformation(AnnotatedLine &Line) {
   }
 
   calculateUnbreakableTailLengths(Line);
+  unsigned IndentLevel = Line.Level;
   for (Current = Line.First; Current != nullptr; Current = Current->Next) {
     if (Current->Role)
       Current->Role->precomputeFormattingInfos(Current);
+    if (Current->MatchingParen &&
+        Current->MatchingParen->opensBlockOrBlockTypeList(Style)) {
+      assert(IndentLevel > 0);
+      --IndentLevel;
+    }
+    Current->IndentLevel = IndentLevel;
+    if (Current->opensBlockOrBlockTypeList(Style))
+      ++IndentLevel;
   }
 
   DEBUG({ printDebugInfo(Line); });
@@ -2001,7 +2043,7 @@ unsigned TokenAnnotator::splitPenalty(const AnnotatedLine &Line,
   if (Left.isOneOf(tok::plus, tok::comma) && Left.Previous &&
       Left.Previous->isLabelString() &&
       (Left.NextOperator || Left.OperatorIndex != 0))
-    return 100;
+    return 45;
   if (Right.is(tok::plus) && Left.isLabelString() &&
       (Right.NextOperator || Right.OperatorIndex != 0))
     return 25;
@@ -2088,9 +2130,9 @@ bool TokenAnnotator::spaceRequiredBetween(const AnnotatedLine &Line,
         !Line.IsMultiVariableDeclStmt)))
     return true;
   if (Left.is(TT_PointerOrReference))
-    return Right.Tok.isLiteral() ||
-           Right.isOneOf(TT_BlockComment, Keywords.kw_final,
-                         Keywords.kw_override) ||
+    return Right.Tok.isLiteral() || Right.is(TT_BlockComment) ||
+           (Right.isOneOf(Keywords.kw_override, Keywords.kw_final) &&
+            !Right.is(TT_StartOfName)) ||
            (Right.is(tok::l_brace) && Right.BlockKind == BK_Block) ||
            (!Right.isOneOf(TT_PointerOrReference, TT_ArraySubscriptLSquare,
                            tok::l_paren) &&
@@ -2304,12 +2346,16 @@ bool TokenAnnotator::spaceRequiredBefore(const AnnotatedLine &Line,
   if (!Style.SpaceBeforeAssignmentOperators &&
       Right.getPrecedence() == prec::Assignment)
     return false;
+  if (Right.is(tok::coloncolon) && Left.is(tok::identifier))
+    // Generally don't remove existing spaces between an identifier and "::".
+    // The identifier might actually be a macro name such as ALWAYS_INLINE. If
+    // this turns out to be too lenient, add analysis of the identifier itself.
+    return Right.WhitespaceRange.getBegin() != Right.WhitespaceRange.getEnd();
   if (Right.is(tok::coloncolon) && !Left.isOneOf(tok::l_brace, tok::comment))
     return (Left.is(TT_TemplateOpener) &&
             Style.Standard == FormatStyle::LS_Cpp03) ||
-           !(Left.isOneOf(tok::identifier, tok::l_paren, tok::r_paren,
-                          tok::l_square) ||
-             Left.isOneOf(TT_TemplateCloser, TT_TemplateOpener));
+           !(Left.isOneOf(tok::l_paren, tok::r_paren, tok::l_square,
+                          TT_TemplateCloser, TT_TemplateOpener));
   if ((Left.is(TT_TemplateOpener)) != (Right.is(TT_TemplateCloser)))
     return Style.SpacesInAngles;
   if ((Right.is(TT_BinaryOperator) && !Left.is(tok::l_paren)) ||
@@ -2377,6 +2423,12 @@ bool TokenAnnotator::mustBreakBefore(const AnnotatedLine &Line,
     if (Right.is(tok::plus) && Left.is(tok::string_literal) && Right.Next &&
         Right.Next->is(tok::string_literal))
       return true;
+  } else if (Style.Language == FormatStyle::LK_Cpp ||
+             Style.Language == FormatStyle::LK_ObjC ||
+             Style.Language == FormatStyle::LK_Proto) {
+    if (Left.isStringLiteral() &&
+        (Right.isStringLiteral() || Right.is(TT_ObjCStringLiteral)))
+      return true;
   }
 
   // If the last token before a '}' is a comma or a trailing comment, the
@@ -2399,9 +2451,6 @@ bool TokenAnnotator::mustBreakBefore(const AnnotatedLine &Line,
            Left.isNot(TT_CtorInitializerColon) &&
            (Right.NewlinesBefore > 0 && Right.HasUnescapedNewline);
   if (Left.isTrailingComment())
-    return true;
-  if (Left.isStringLiteral() &&
-      (Right.isStringLiteral() || Right.is(TT_ObjCStringLiteral)))
     return true;
   if (Right.Previous->IsUnterminatedLiteral)
     return true;
@@ -2487,9 +2536,12 @@ bool TokenAnnotator::canBreakBefore(const AnnotatedLine &Line,
       // https://github.com/Microsoft/TypeScript/blob/master/doc/spec.md#A.10
       return false;
     if (Left.isOneOf(Keywords.kw_module, tok::kw_namespace) &&
-        Right.isOneOf(tok::identifier, tok::string_literal)) {
+        Right.isOneOf(tok::identifier, tok::string_literal))
       return false; // must not break in "module foo { ...}"
-    }
+    if (Right.is(TT_TemplateString) && Right.closesScope())
+      return false;
+    if (Left.is(TT_TemplateString) && Left.opensScope())
+      return true;
   }
 
   if (Left.is(tok::at))
@@ -2617,7 +2669,8 @@ bool TokenAnnotator::canBreakBefore(const AnnotatedLine &Line,
                        tok::colon, tok::l_square, tok::at) ||
          (Left.is(tok::r_paren) &&
           Right.isOneOf(tok::identifier, tok::kw_const)) ||
-         (Left.is(tok::l_paren) && !Right.is(tok::r_paren));
+         (Left.is(tok::l_paren) && !Right.is(tok::r_paren)) ||
+         (Left.is(TT_TemplateOpener) && !Right.is(TT_TemplateCloser));
 }
 
 void TokenAnnotator::printDebugInfo(const AnnotatedLine &Line) {
@@ -2629,6 +2682,7 @@ void TokenAnnotator::printDebugInfo(const AnnotatedLine &Line) {
                  << " T=" << getTokenTypeName(Tok->Type)
                  << " S=" << Tok->SpacesRequiredBefore
                  << " B=" << Tok->BlockParameterCount
+                 << " BK=" << Tok->BlockKind
                  << " P=" << Tok->SplitPenalty << " Name=" << Tok->Tok.getName()
                  << " L=" << Tok->TotalLength << " PPK=" << Tok->PackingKind
                  << " FakeLParens=";

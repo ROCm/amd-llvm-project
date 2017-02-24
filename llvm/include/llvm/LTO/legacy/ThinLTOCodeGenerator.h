@@ -31,6 +31,23 @@ class StringRef;
 class LLVMContext;
 class TargetMachine;
 
+/// Wrapper around MemoryBufferRef, owning the identifier
+class ThinLTOBuffer {
+  std::string OwnedIdentifier;
+  StringRef Buffer;
+
+public:
+  ThinLTOBuffer(StringRef Buffer, StringRef Identifier)
+      : OwnedIdentifier(Identifier), Buffer(Buffer) {}
+
+  MemoryBufferRef getMemBuffer() const {
+    return MemoryBufferRef(Buffer,
+                           {OwnedIdentifier.c_str(), OwnedIdentifier.size()});
+  }
+  StringRef getBuffer() const { return Buffer; }
+  StringRef getBufferIdentifier() const { return OwnedIdentifier; }
+};
+
 /// Helper to gather options relevant to the target machine creation
 struct TargetMachineBuilder {
   Triple TheTriple;
@@ -38,7 +55,7 @@ struct TargetMachineBuilder {
   std::string MAttr;
   TargetOptions Options;
   Optional<Reloc::Model> RelocModel;
-  CodeGenOpt::Level CGOptLevel = CodeGenOpt::Default;
+  CodeGenOpt::Level CGOptLevel = CodeGenOpt::Aggressive;
 
   std::unique_ptr<TargetMachine> create() const;
 };
@@ -199,6 +216,11 @@ public:
     TMBuilder.CGOptLevel = CGOptLevel;
   }
 
+  /// IR optimization level: from 0 to 3.
+  void setOptLevel(unsigned NewOptLevel) {
+    OptLevel = (NewOptLevel > 3) ? 3 : NewOptLevel;
+  }
+
   /// Disable CodeGen, only run the stages till codegen and stop. The output
   /// will be bitcode.
   void disableCodeGen(bool Disable) { DisableCodeGen = Disable; }
@@ -275,7 +297,7 @@ private:
 
   /// Vector holding the input buffers containing the bitcode modules to
   /// process.
-  std::vector<MemoryBufferRef> Modules;
+  std::vector<ThinLTOBuffer> Modules;
 
   /// Set of symbols that need to be preserved outside of the set of bitcode
   /// files.
@@ -300,6 +322,9 @@ private:
   /// Flag to indicate that only the CodeGen will be performed, no cross-module
   /// importing or optimization.
   bool CodeGenOnly = false;
+
+  /// IR Optimization Level [0-3].
+  unsigned OptLevel = 3;
 };
 }
 #endif

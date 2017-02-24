@@ -371,6 +371,17 @@ void test_get_group_id(int d, global int *out)
 	}
 }
 
+// CHECK-LABEL: @test_s_getreg(
+// CHECK: tail call i32 @llvm.amdgcn.s.getreg(i32 0)
+// CHECK: tail call i32 @llvm.amdgcn.s.getreg(i32 1)
+// CHECK: tail call i32 @llvm.amdgcn.s.getreg(i32 65535)
+void test_s_getreg(volatile global uint *out)
+{
+  *out = __builtin_amdgcn_s_getreg(0);
+  *out = __builtin_amdgcn_s_getreg(1);
+  *out = __builtin_amdgcn_s_getreg(65535);
+}
+
 // CHECK-LABEL: @test_get_local_id(
 // CHECK: tail call i32 @llvm.amdgcn.workitem.id.x(), !range [[WI_RANGE:![0-9]*]]
 // CHECK: tail call i32 @llvm.amdgcn.workitem.id.y(), !range [[WI_RANGE]]
@@ -383,6 +394,13 @@ void test_get_local_id(int d, global int *out)
 	case 2: *out = __builtin_amdgcn_workitem_id_z(); break;
 	default: *out = 0;
 	}
+}
+
+// CHECK-LABEL: @test_fmed3_f32
+// CHECK: call float @llvm.amdgcn.fmed3.f32(
+void test_fmed3_f32(global float* out, float a, float b, float c)
+{
+  *out = __builtin_amdgcn_fmed3f(a, b, c);
 }
 
 // CHECK-DAG: [[WI_RANGE]] = !{i32 0, i32 1024}

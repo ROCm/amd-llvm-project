@@ -163,7 +163,7 @@
 // CHECK-NEXT:     Link: 0
 // CHECK-NEXT:     Info: 0
 // CHECK-NEXT:     AddressAlignment: 1
-// CHECK-NEXT:     EntrySize: 1
+// CHECK-NEXT:     EntrySize: 0
 // CHECK-NEXT:     SectionData (
 // CHECK-NEXT:       0000: 4C4C4420 312E3000 |LLD 1.0.|
 // CHECK-NEXT:     )
@@ -178,7 +178,7 @@
 // CHECK-NEXT:     Offset: 0x2038
 // CHECK-NEXT:     Size: 32
 // CHECK-NEXT:     Link: 9
-// CHECK-NEXT:     Info: 1
+// CHECK-NEXT:     Info: 2
 // CHECK-NEXT:     AddressAlignment: 4
 // CHECK-NEXT:     EntrySize: 16
 // CHECK-NEXT:     SectionData (
@@ -295,7 +295,7 @@
 // CHECK-NEXT:     VirtualAddress: 0x2000
 // CHECK-NEXT:     PhysicalAddress: 0x2000
 // CHECK-NEXT:     FileSize: 48
-// CHECK-NEXT:     MemSize: 48
+// CHECK-NEXT:     MemSize: 4096
 // CHECK-NEXT:     Flags [ (0x4)
 // CHECK-NEXT:       PF_R (0x4)
 // CHECK-NEXT:     ]

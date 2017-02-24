@@ -35,7 +35,6 @@
 #include "lldb/Core/PluginManager.h"
 #include "lldb/Core/State.h"
 #include "lldb/Core/StreamFile.h"
-#include "lldb/Core/StreamString.h"
 #include "lldb/Core/Timer.h"
 #include "lldb/Core/Value.h"
 #include "lldb/DataFormatters/FormatManager.h"
@@ -43,6 +42,7 @@
 #include "lldb/Host/FileSpec.h"
 #include "lldb/Host/FileSystem.h"
 #include "lldb/Host/HostThread.h"
+#include "lldb/Host/PseudoTerminal.h"
 #include "lldb/Host/StringConvert.h"
 #include "lldb/Host/Symbols.h"
 #include "lldb/Host/ThreadLauncher.h"
@@ -65,7 +65,7 @@
 #include "lldb/Target/TargetList.h"
 #include "lldb/Target/ThreadPlanCallFunction.h"
 #include "lldb/Utility/CleanUp.h"
-#include "lldb/Utility/PseudoTerminal.h"
+#include "lldb/Utility/StreamString.h"
 
 // Project includes
 #include "GDBRemoteRegisterContext.h"
@@ -81,6 +81,7 @@
 
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/Threading.h"
 
 #define DEBUGSERVER_BASENAME "debugserver"
 using namespace lldb;
@@ -576,7 +577,7 @@ void ProcessGDBRemote::BuildDynamicRegisterInfo(bool force) {
             uint32_t ret_val =
                 opcode_extractor.GetHexBytesAvail(dwarf_opcode_bytes);
             assert(dwarf_opcode_len == ret_val);
-
+            UNUSED_IF_ASSERT_DISABLED(ret_val);
             reg_info.dynamic_size_dwarf_expr_bytes = dwarf_opcode_bytes.data();
           }
         }
@@ -1616,9 +1617,7 @@ bool ProcessGDBRemote::UpdateThreadList(ThreadList &old_thread_list,
                                         ThreadList &new_thread_list) {
   // locker will keep a mutex locked until it goes out of scope
   Log *log(ProcessGDBRemoteLog::GetLogIfAllCategoriesSet(GDBR_LOG_THREAD));
-  if (log && log->GetMask().Test(GDBR_LOG_VERBOSE))
-    log->Printf("ProcessGDBRemote::%s (pid = %" PRIu64 ")", __FUNCTION__,
-                GetID());
+  LLDB_LOGV(log, "pid = {0}", GetID());
 
   size_t num_thread_ids = m_thread_ids.size();
   // The "m_thread_ids" thread ID list should always be updated after each stop
@@ -1637,39 +1636,14 @@ bool ProcessGDBRemote::UpdateThreadList(ThreadList &old_thread_list,
           old_thread_list_copy.RemoveThreadByProtocolID(tid, false));
       if (!thread_sp) {
         thread_sp.reset(new ThreadGDBRemote(*this, tid));
-        if (log && log->GetMask().Test(GDBR_LOG_VERBOSE))
-          log->Printf("ProcessGDBRemote::%s Making new thread: %p for thread "
-                      "ID: 0x%" PRIx64 ".\n",
-                      __FUNCTION__, static_cast<void *>(thread_sp.get()),
-                      thread_sp->GetID());
+        LLDB_LOGV(log, "Making new thread: {0} for thread ID: {1:x}.",
+                  thread_sp.get(), thread_sp->GetID());
       } else {
-        if (log && log->GetMask().Test(GDBR_LOG_VERBOSE))
-          log->Printf("ProcessGDBRemote::%s Found old thread: %p for thread "
-                      "ID: 0x%" PRIx64 ".\n",
-                      __FUNCTION__, static_cast<void *>(thread_sp.get()),
-                      thread_sp->GetID());
+        LLDB_LOGV(log, "Found old thread: {0} for thread ID: {1:x}.",
+                  thread_sp.get(), thread_sp->GetID());
       }
-      // The m_thread_pcs vector has pc values in big-endian order, not
-      // target-endian, unlike most
-      // of the register read/write packets in gdb-remote protocol.
-      // Early in the process startup, we may not yet have set the process
-      // ByteOrder so we ignore these;
-      // they are a performance improvement over fetching thread register values
-      // individually, the
-      // method we will fall back to if needed.
-      if (m_thread_ids.size() == m_thread_pcs.size() && thread_sp.get() &&
-          GetByteOrder() != eByteOrderInvalid) {
-        ThreadGDBRemote *gdb_thread =
-            static_cast<ThreadGDBRemote *>(thread_sp.get());
-        RegisterContextSP reg_ctx_sp(thread_sp->GetRegisterContext());
-        if (reg_ctx_sp) {
-          uint32_t pc_regnum = reg_ctx_sp->ConvertRegisterKindToRegisterNumber(
-              eRegisterKindGeneric, LLDB_REGNUM_GENERIC_PC);
-          if (pc_regnum != LLDB_INVALID_REGNUM) {
-            gdb_thread->PrivateSetRegisterValue(pc_regnum, m_thread_pcs[i]);
-          }
-        }
-      }
+
+      SetThreadPc(thread_sp, i);
       new_thread_list.AddThreadSortedByIndexID(thread_sp);
     }
   }
@@ -1687,6 +1661,22 @@ bool ProcessGDBRemote::UpdateThreadList(ThreadList &old_thread_list,
   }
 
   return true;
+}
+
+void ProcessGDBRemote::SetThreadPc(const ThreadSP &thread_sp, uint64_t index) {
+  if (m_thread_ids.size() == m_thread_pcs.size() && thread_sp.get() &&
+      GetByteOrder() != eByteOrderInvalid) {
+    ThreadGDBRemote *gdb_thread =
+        static_cast<ThreadGDBRemote *>(thread_sp.get());
+    RegisterContextSP reg_ctx_sp(thread_sp->GetRegisterContext());
+    if (reg_ctx_sp) {
+      uint32_t pc_regnum = reg_ctx_sp->ConvertRegisterKindToRegisterNumber(
+          eRegisterKindGeneric, LLDB_REGNUM_GENERIC_PC);
+      if (pc_regnum != LLDB_INVALID_REGNUM) {
+        gdb_thread->PrivateSetRegisterValue(pc_regnum, m_thread_pcs[index]);
+      }
+    }
+  }
 }
 
 bool ProcessGDBRemote::GetThreadStopInfoFromJSON(
@@ -1773,6 +1763,11 @@ ThreadSP ProcessGDBRemote::SetThreadStopInfo(
       ThreadGDBRemote *gdb_thread =
           static_cast<ThreadGDBRemote *>(thread_sp.get());
       gdb_thread->GetRegisterContext()->InvalidateIfNeeded(true);
+
+      auto iter = std::find(m_thread_ids.begin(), m_thread_ids.end(), tid);
+      if (iter != m_thread_ids.end()) {
+        SetThreadPc(thread_sp, iter - m_thread_ids.begin());
+      }
 
       for (const auto &pair : expedited_register_map) {
         StringExtractor reg_value_extractor;
@@ -2729,16 +2724,19 @@ void ProcessGDBRemote::WillPublicStop() {
 size_t ProcessGDBRemote::DoReadMemory(addr_t addr, void *buf, size_t size,
                                       Error &error) {
   GetMaxMemorySize();
-  if (size > m_max_memory_size) {
+  bool binary_memory_read = m_gdb_comm.GetxPacketSupported();
+  // M and m packets take 2 bytes for 1 byte of memory
+  size_t max_memory_size =
+      binary_memory_read ? m_max_memory_size : m_max_memory_size / 2;
+  if (size > max_memory_size) {
     // Keep memory read sizes down to a sane limit. This function will be
     // called multiple times in order to complete the task by
     // lldb_private::Process so it is ok to do this.
-    size = m_max_memory_size;
+    size = max_memory_size;
   }
 
   char packet[64];
   int packet_len;
-  bool binary_memory_read = m_gdb_comm.GetxPacketSupported();
   packet_len = ::snprintf(packet, sizeof(packet), "%c%" PRIx64 ",%" PRIx64,
                           binary_memory_read ? 'x' : 'm', (uint64_t)addr,
                           (uint64_t)size);
@@ -2785,11 +2783,13 @@ size_t ProcessGDBRemote::DoReadMemory(addr_t addr, void *buf, size_t size,
 size_t ProcessGDBRemote::DoWriteMemory(addr_t addr, const void *buf,
                                        size_t size, Error &error) {
   GetMaxMemorySize();
-  if (size > m_max_memory_size) {
+  // M and m packets take 2 bytes for 1 byte of memory
+  size_t max_memory_size = m_max_memory_size / 2;
+  if (size > max_memory_size) {
     // Keep memory read sizes down to a sane limit. This function will be
     // called multiple times in order to complete the task by
     // lldb_private::Process so it is ok to do this.
-    size = m_max_memory_size;
+    size = max_memory_size;
   }
 
   StreamString packet;
@@ -3427,9 +3427,9 @@ void ProcessGDBRemote::KillDebugserverProcess() {
 }
 
 void ProcessGDBRemote::Initialize() {
-  static std::once_flag g_once_flag;
+  static llvm::once_flag g_once_flag;
 
-  std::call_once(g_once_flag, []() {
+  llvm::call_once(g_once_flag, []() {
     PluginManager::RegisterPlugin(GetPluginNameStatic(),
                                   GetPluginDescriptionStatic(), CreateInstance,
                                   DebuggerInitialize);
@@ -3988,6 +3988,21 @@ void ProcessGDBRemote::GetMaxMemorySize() {
         stub_max_size = reasonable_largeish_default;
       }
 
+      // Memory packet have other overheads too like Maddr,size:#NN
+      // Instead of calculating the bytes taken by size and addr every
+      // time, we take a maximum guess here.
+      if (stub_max_size > 70)
+        stub_max_size -= 32 + 32 + 6;
+      else {
+        // In unlikely scenario that max packet size is less then 70, we will
+        // hope that data being written is small enough to fit.
+        Log *log(ProcessGDBRemoteLog::GetLogIfAnyCategoryIsSet(
+            GDBR_LOG_COMM | GDBR_LOG_MEMORY));
+        if (log)
+          log->Warning("Packet size is too small. "
+                       "LLDB may face problems while writing memory");
+      }
+
       m_max_memory_size = stub_max_size;
     } else {
       m_max_memory_size = conservative_default;
@@ -4213,7 +4228,7 @@ bool ParseRegisters(XMLNode feature_node, GdbServerTargetInfo &target_info,
             uint32_t ret_val =
                 opcode_extractor.GetHexBytesAvail(dwarf_opcode_bytes);
             assert(dwarf_opcode_len == ret_val);
-
+            UNUSED_IF_ASSERT_DISABLED(ret_val);
             reg_info.dynamic_size_dwarf_expr_bytes = dwarf_opcode_bytes.data();
           } else {
             printf("unhandled attribute %s = %s\n", name.data(), value.data());

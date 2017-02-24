@@ -6,6 +6,22 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
+//
+// The driver drives the entire linking process. It is responsible for
+// parsing command line options and doing whatever it is instructed to do.
+//
+// One notable thing in the LLD's driver when compared to other linkers is
+// that the LLD's driver is agnostic on the host operating system.
+// Other linkers usually have implicit default values (such as a dynamic
+// linker path or library paths) for each host OS.
+//
+// I don't think implicit default values are useful because they are
+// usually explicitly specified by the compiler driver. They can even
+// be harmful when you are doing cross-linking. Therefore, in LLD, we
+// simply trust the compiler driver to pass all required options to us
+// and don't try to make effort on our side.
+//
+//===----------------------------------------------------------------------===//
 
 #include "Driver.h"
 #include "Config.h"
@@ -24,7 +40,10 @@
 #include "lld/Driver/Driver.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSwitch.h"
+#include "llvm/Object/Decompressor.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/Path.h"
+#include "llvm/Support/TarWriter.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
 #include <cstdlib>
@@ -50,6 +69,7 @@ bool elf::link(ArrayRef<const char *> Args, bool CanExitEarly,
   ErrorCount = 0;
   ErrorOS = &Error;
   Argv0 = Args[0];
+  Tar = nullptr;
 
   Config = make<Configuration>();
   Driver = make<LinkerDriver>();
@@ -74,10 +94,8 @@ static std::tuple<ELFKind, uint16_t, uint8_t> parseEmulation(StringRef Emul) {
           .Cases("aarch64elf", "aarch64linux", {ELF64LEKind, EM_AARCH64})
           .Case("armelf_linux_eabi", {ELF32LEKind, EM_ARM})
           .Case("elf32_x86_64", {ELF32LEKind, EM_X86_64})
-          .Case("elf32btsmip", {ELF32BEKind, EM_MIPS})
-          .Case("elf32ltsmip", {ELF32LEKind, EM_MIPS})
-          .Case("elf32btsmipn32", {ELF32BEKind, EM_MIPS})
-          .Case("elf32ltsmipn32", {ELF32LEKind, EM_MIPS})
+          .Cases("elf32btsmip", "elf32btsmipn32", {ELF32BEKind, EM_MIPS})
+          .Cases("elf32ltsmip", "elf32ltsmipn32", {ELF32LEKind, EM_MIPS})
           .Case("elf32ppc", {ELF32BEKind, EM_PPC})
           .Case("elf64btsmip", {ELF64BEKind, EM_MIPS})
           .Case("elf64ltsmip", {ELF64LEKind, EM_MIPS})
@@ -122,7 +140,7 @@ LinkerDriver::getArchiveMembers(MemoryBufferRef MB) {
 
   // Take ownership of memory buffers created for members of thin archives.
   for (std::unique_ptr<MemoryBuffer> &MB : File->takeThinBuffers())
-    OwningMBs.push_back(std::move(MB));
+    make<std::unique_ptr<MemoryBuffer>>(std::move(MB));
 
   return V;
 }
@@ -167,25 +185,6 @@ void LinkerDriver::addFile(StringRef Path) {
     else
       Files.push_back(createObjectFile(MBRef));
   }
-}
-
-Optional<MemoryBufferRef> LinkerDriver::readFile(StringRef Path) {
-  if (Config->Verbose)
-    outs() << Path << "\n";
-
-  auto MBOrErr = MemoryBuffer::getFile(Path);
-  if (auto EC = MBOrErr.getError()) {
-    error(EC, "cannot open " + Path);
-    return None;
-  }
-  std::unique_ptr<MemoryBuffer> &MB = *MBOrErr;
-  MemoryBufferRef MBRef = MB->getMemBufferRef();
-  OwningMBs.push_back(std::move(MB)); // take MB ownership
-
-  if (Cpio)
-    Cpio->append(relativeToRoot(Path), MBRef.getBuffer());
-
-  return MBRef;
 }
 
 // Add a given library by searching it from input search paths.
@@ -300,7 +299,7 @@ void LinkerDriver::main(ArrayRef<const char *> ArgsArr, bool CanExitEarly) {
   // in help to print the version information, GNU ld just normally exits,
   // while gold can continue linking. We are compatible with ld.bfd here.
   if (Args.hasArg(OPT_version) || Args.hasArg(OPT_v))
-    outs() << getLLDVersion() << "\n";
+    message(getLLDVersion());
   if (Args.hasArg(OPT_version))
     return;
 
@@ -309,14 +308,17 @@ void LinkerDriver::main(ArrayRef<const char *> ArgsArr, bool CanExitEarly) {
   if (const char *Path = getReproduceOption(Args)) {
     // Note that --reproduce is a debug option so you can ignore it
     // if you are trying to understand the whole picture of the code.
-    ErrorOr<CpioFile *> F = CpioFile::create(Path);
-    if (F) {
-      Cpio.reset(*F);
-      Cpio->append("response.txt", createResponseFile(Args));
-      Cpio->append("version.txt", getLLDVersion() + "\n");
-    } else
-      error(F.getError(),
-            Twine("--reproduce: failed to open ") + Path + ".cpio");
+    Expected<std::unique_ptr<TarWriter>> ErrOrWriter =
+        TarWriter::create(Path, path::stem(Path));
+    if (ErrOrWriter) {
+      Tar = ErrOrWriter->get();
+      Tar->append("response.txt", createResponseFile(Args));
+      Tar->append("version.txt", getLLDVersion() + "\n");
+      make<std::unique_ptr<TarWriter>>(std::move(*ErrOrWriter));
+    } else {
+      error(Twine("--reproduce: failed to open ") + Path + ": " +
+            toString(ErrOrWriter.takeError()));
+    }
   }
 
   readConfigs(Args);
@@ -345,23 +347,53 @@ void LinkerDriver::main(ArrayRef<const char *> ArgsArr, bool CanExitEarly) {
   }
 }
 
-static UnresolvedPolicy getUnresolvedSymbolOption(opt::InputArgList &Args) {
-  if (Args.hasArg(OPT_noinhibit_exec))
-    return UnresolvedPolicy::Warn;
-  if (Args.hasArg(OPT_no_undefined) || hasZOption(Args, "defs"))
-    return UnresolvedPolicy::NoUndef;
-  if (Config->Relocatable)
-    return UnresolvedPolicy::Ignore;
+static bool getArg(opt::InputArgList &Args, unsigned K1, unsigned K2,
+                   bool Default) {
+  if (auto *Arg = Args.getLastArg(K1, K2))
+    return Arg->getOption().getID() == K1;
+  return Default;
+}
 
-  if (auto *Arg = Args.getLastArg(OPT_unresolved_symbols)) {
-    StringRef S = Arg->getValue();
-    if (S == "ignore-all" || S == "ignore-in-object-files")
-      return UnresolvedPolicy::Ignore;
-    if (S == "ignore-in-shared-libs" || S == "report-all")
-      return UnresolvedPolicy::ReportError;
-    error("unknown --unresolved-symbols value: " + S);
+// Determines what we should do if there are remaining unresolved
+// symbols after the name resolution.
+static UnresolvedPolicy getUnresolvedSymbolPolicy(opt::InputArgList &Args) {
+  // -noinhibit-exec or -r imply some default values.
+  if (Args.hasArg(OPT_noinhibit_exec))
+    return UnresolvedPolicy::WarnAll;
+  if (Config->Relocatable)
+    return UnresolvedPolicy::IgnoreAll;
+
+  UnresolvedPolicy ErrorOrWarn =
+      getArg(Args, OPT_error_undef, OPT_warn_undef, true)
+          ? UnresolvedPolicy::ReportError
+          : UnresolvedPolicy::Warn;
+
+  // Process the last of -unresolved-symbols, -no-undefined or -z defs.
+  for (auto *Arg : llvm::reverse(Args)) {
+    switch (Arg->getOption().getID()) {
+    case OPT_unresolved_symbols: {
+      StringRef S = Arg->getValue();
+      if (S == "ignore-all" || S == "ignore-in-object-files")
+        return UnresolvedPolicy::Ignore;
+      if (S == "ignore-in-shared-libs" || S == "report-all")
+        return ErrorOrWarn;
+      error("unknown --unresolved-symbols value: " + S);
+      continue;
+    }
+    case OPT_no_undefined:
+      return ErrorOrWarn;
+    case OPT_z:
+      if (StringRef(Arg->getValue()) == "defs")
+        return ErrorOrWarn;
+      continue;
+    }
   }
-  return UnresolvedPolicy::ReportError;
+
+  // -shared implies -unresolved-symbols=ignore-all because missing
+  // symbols are likely to be resolved at runtime using other DSOs.
+  if (Config->Shared)
+    return UnresolvedPolicy::Ignore;
+  return ErrorOrWarn;
 }
 
 static Target2Policy getTarget2Option(opt::InputArgList &Args) {
@@ -386,13 +418,6 @@ static bool isOutputFormatBinary(opt::InputArgList &Args) {
     error("unknown --oformat value: " + S);
   }
   return false;
-}
-
-static bool getArg(opt::InputArgList &Args, unsigned K1, unsigned K2,
-                   bool Default) {
-  if (auto *Arg = Args.getLastArg(K1, K2))
-    return Arg->getOption().getID() == K1;
-  return Default;
 }
 
 static DiscardPolicy getDiscardOption(opt::InputArgList &Args) {
@@ -423,7 +448,7 @@ static uint64_t parseSectionAddress(StringRef S, opt::Arg *Arg) {
   if (S.startswith("0x"))
     S = S.drop_front(2);
   if (S.getAsInteger(16, VA))
-    error("invalid argument: " + stringize(Arg));
+    error("invalid argument: " + toString(Arg));
   return VA;
 }
 
@@ -494,10 +519,13 @@ void LinkerDriver::readConfigs(opt::InputArgList &Args) {
   Config->BsymbolicFunctions = Args.hasArg(OPT_Bsymbolic_functions);
   Config->Demangle = getArg(Args, OPT_demangle, OPT_no_demangle, true);
   Config->DisableVerify = Args.hasArg(OPT_disable_verify);
+  Config->EmitRelocs = Args.hasArg(OPT_emit_relocs);
   Config->EhFrameHdr = Args.hasArg(OPT_eh_frame_hdr);
   Config->EnableNewDtags = !Args.hasArg(OPT_disable_new_dtags);
-  Config->ExportDynamic = Args.hasArg(OPT_export_dynamic);
-  Config->FatalWarnings = Args.hasArg(OPT_fatal_warnings);
+  Config->ExportDynamic =
+      getArg(Args, OPT_export_dynamic, OPT_no_export_dynamic, false);
+  Config->FatalWarnings =
+      getArg(Args, OPT_fatal_warnings, OPT_no_fatal_warnings, false);
   Config->GcSections = getArg(Args, OPT_gc_sections, OPT_no_gc_sections, false);
   Config->GdbIndex = Args.hasArg(OPT_gdb_index);
   Config->ICF = Args.hasArg(OPT_icf);
@@ -505,9 +533,12 @@ void LinkerDriver::readConfigs(opt::InputArgList &Args) {
   Config->NoUndefinedVersion = Args.hasArg(OPT_no_undefined_version);
   Config->Nostdlib = Args.hasArg(OPT_nostdlib);
   Config->OMagic = Args.hasArg(OPT_omagic);
+  Config->OptRemarksWithHotness = Args.hasArg(OPT_opt_remarks_with_hotness);
   Config->Pie = getArg(Args, OPT_pie, OPT_nopie, false);
   Config->PrintGcSections = Args.hasArg(OPT_print_gc_sections);
   Config->Relocatable = Args.hasArg(OPT_relocatable);
+  Config->DefineCommon = getArg(Args, OPT_define_common, OPT_no_define_common,
+                                !Config->Relocatable);
   Config->Discard = getDiscardOption(Args);
   Config->SaveTemps = Args.hasArg(OPT_save_temps);
   Config->SingleRoRx = Args.hasArg(OPT_no_rosegment);
@@ -524,6 +555,8 @@ void LinkerDriver::readConfigs(opt::InputArgList &Args) {
   Config->Init = getString(Args, OPT_init, "_init");
   Config->LTOAAPipeline = getString(Args, OPT_lto_aa_pipeline);
   Config->LTONewPmPasses = getString(Args, OPT_lto_newpm_passes);
+  Config->MapFile = getString(Args, OPT_Map);
+  Config->OptRemarksFilename = getString(Args, OPT_opt_remarks_filename);
   Config->OutputFile = getString(Args, OPT_o);
   Config->SoName = getString(Args, OPT_soname);
   Config->Sysroot = getString(Args, OPT_sysroot);
@@ -541,18 +574,22 @@ void LinkerDriver::readConfigs(opt::InputArgList &Args) {
 
   Config->ZCombreloc = !hasZOption(Args, "nocombreloc");
   Config->ZExecstack = hasZOption(Args, "execstack");
+  Config->ZNocopyreloc = hasZOption(Args, "nocopyreloc");
   Config->ZNodelete = hasZOption(Args, "nodelete");
   Config->ZNow = hasZOption(Args, "now");
   Config->ZOrigin = hasZOption(Args, "origin");
   Config->ZRelro = !hasZOption(Args, "norelro");
-  Config->ZStackSize = getZOptionValue(Args, "stack-size", -1);
+  Config->ZStackSize = getZOptionValue(Args, "stack-size", 0);
   Config->ZWxneeded = hasZOption(Args, "wxneeded");
 
   Config->OFormatBinary = isOutputFormatBinary(Args);
   Config->SectionStartMap = getSectionStartMap(Args);
   Config->SortSection = getSortKind(Args);
   Config->Target2 = getTarget2Option(Args);
-  Config->UnresolvedSymbols = getUnresolvedSymbolOption(Args);
+  Config->UnresolvedSymbols = getUnresolvedSymbolPolicy(Args);
+
+  if (Args.hasArg(OPT_print_map))
+    Config->MapFile = "-";
 
   // --omagic is an option to create old-fashioned executables in which
   // .text segments are writable. Today, the option is still in use to
@@ -563,9 +600,6 @@ void LinkerDriver::readConfigs(opt::InputArgList &Args) {
 
   if (!Config->Relocatable)
     Config->Strip = getStripOption(Args);
-
-  // Config->Pic is true if we are generating position-independent code.
-  Config->Pic = Config->Pie || Config->Shared;
 
   if (auto *Arg = Args.getLastArg(OPT_hash_style)) {
     StringRef S = Arg->getValue();
@@ -607,7 +641,7 @@ void LinkerDriver::readConfigs(opt::InputArgList &Args) {
   for (auto *Arg : Args.filtered(OPT_undefined))
     Config->Undefined.push_back(Arg->getValue());
 
-  if (auto *Arg = Args.getLastArg(OPT_dynamic_list))
+  for (auto *Arg : Args.filtered(OPT_dynamic_list))
     if (Optional<MemoryBufferRef> Buffer = readFile(Arg->getValue()))
       readDynamicList(*Buffer);
 
@@ -615,13 +649,14 @@ void LinkerDriver::readConfigs(opt::InputArgList &Args) {
     if (Optional<MemoryBufferRef> Buffer = readFile(Arg->getValue()))
       Config->SymbolOrderingFile = getLines(*Buffer);
 
-  // If --retain-symbol-file is used, we'll retail only the symbols listed in
+  // If --retain-symbol-file is used, we'll keep only the symbols listed in
   // the file and discard all others.
   if (auto *Arg = Args.getLastArg(OPT_retain_symbols_file)) {
-    Config->Discard = DiscardPolicy::RetainFile;
+    Config->DefaultSymbolVersion = VER_NDX_LOCAL;
     if (Optional<MemoryBufferRef> Buffer = readFile(Arg->getValue()))
       for (StringRef S : getLines(*Buffer))
-        Config->RetainSymbolsFile.insert(S);
+        Config->VersionScriptGlobals.push_back(
+            {S, /*IsExternCpp*/ false, /*HasWildcard*/ false});
   }
 
   for (auto *Arg : Args.filtered(OPT_export_dynamic_symbol))
@@ -735,7 +770,7 @@ static uint64_t getImageBase(opt::InputArgList &Args) {
   // has to be called after the variable is initialized.
   auto *Arg = Args.getLastArg(OPT_image_base);
   if (!Arg)
-    return Config->Pic ? 0 : Target->DefaultImageBase;
+    return Config->pic() ? 0 : Target->DefaultImageBase;
 
   StringRef S = Arg->getValue();
   uint64_t V;
@@ -809,12 +844,12 @@ template <class ELFT> void LinkerDriver::link(opt::InputArgList &Args) {
   // Beyond this point, no new files are added.
   // Aggregate all input sections into one place.
   for (elf::ObjectFile<ELFT> *F : Symtab.getObjectFiles())
-    for (InputSectionBase<ELFT> *S : F->getSections())
-      if (S && S != &InputSection<ELFT>::Discarded)
+    for (InputSectionBase *S : F->getSections())
+      if (S && S != &InputSection::Discarded)
         Symtab.Sections.push_back(S);
   for (BinaryFile *F : Symtab.getBinaryFiles())
-    for (InputSectionData *S : F->getSections())
-      Symtab.Sections.push_back(cast<InputSection<ELFT>>(S));
+    for (InputSectionBase *S : F->getSections())
+      Symtab.Sections.push_back(cast<InputSection>(S));
 
   // Do size optimizations: garbage collection and identical code folding.
   if (Config->GcSections)
@@ -825,11 +860,11 @@ template <class ELFT> void LinkerDriver::link(opt::InputArgList &Args) {
   // MergeInputSection::splitIntoPieces needs to be called before
   // any call of MergeInputSection::getOffset. Do that.
   forEach(Symtab.Sections.begin(), Symtab.Sections.end(),
-          [](InputSectionBase<ELFT> *S) {
+          [](InputSectionBase *S) {
             if (!S->Live)
               return;
-            if (S->isCompressed())
-              S->uncompress();
+            if (Decompressor::isCompressedELFSection(S->Flags, S->Name))
+              S->uncompress<ELFT>();
             if (auto *MS = dyn_cast<MergeInputSection<ELFT>>(S))
               MS->splitIntoPieces();
           });

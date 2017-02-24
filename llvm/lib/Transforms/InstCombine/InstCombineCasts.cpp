@@ -278,7 +278,7 @@ Instruction *InstCombiner::commonCastTransforms(CastInst &CI) {
     // Don't do this if it would create a PHI node with an illegal type from a
     // legal type.
     if (!Src->getType()->isIntegerTy() || !CI.getType()->isIntegerTy() ||
-        ShouldChangeType(CI.getType(), Src->getType()))
+        shouldChangeType(CI.getType(), Src->getType()))
       if (Instruction *NV = FoldOpIntoPhi(CI))
         return NV;
   }
@@ -447,7 +447,7 @@ static Instruction *foldVecTruncToExtElt(TruncInst &Trunc, InstCombiner &IC,
 Instruction *InstCombiner::shrinkBitwiseLogic(TruncInst &Trunc) {
   Type *SrcTy = Trunc.getSrcTy();
   Type *DestTy = Trunc.getType();
-  if (isa<IntegerType>(SrcTy) && !ShouldChangeType(SrcTy, DestTy))
+  if (isa<IntegerType>(SrcTy) && !shouldChangeType(SrcTy, DestTy))
     return nullptr;
 
   BinaryOperator *LogicOp;
@@ -488,7 +488,7 @@ Instruction *InstCombiner::visitTrunc(TruncInst &CI) {
   // type.   Only do this if the dest type is a simple type, don't convert the
   // expression tree to something weird like i93 unless the source is also
   // strange.
-  if ((DestTy->isVectorTy() || ShouldChangeType(SrcTy, DestTy)) &&
+  if ((DestTy->isVectorTy() || shouldChangeType(SrcTy, DestTy)) &&
       canEvaluateTruncated(Src, DestTy, *this, &CI)) {
 
     // If this cast is a truncate, evaluting in a different type always
@@ -555,7 +555,7 @@ Instruction *InstCombiner::visitTrunc(TruncInst &CI) {
     return I;
 
   if (Src->hasOneUse() && isa<IntegerType>(SrcTy) &&
-      ShouldChangeType(SrcTy, DestTy)) {
+      shouldChangeType(SrcTy, DestTy)) {
     // Transform "trunc (shl X, cst)" -> "shl (trunc X), cst" so long as the
     // dest type is native and cst < dest size.
     if (match(Src, m_Shl(m_Value(A), m_ConstantInt(Cst))) &&
@@ -851,7 +851,7 @@ Instruction *InstCombiner::visitZExt(ZExtInst &CI) {
   // expression tree to something weird like i93 unless the source is also
   // strange.
   unsigned BitsToClear;
-  if ((DestTy->isVectorTy() || ShouldChangeType(SrcTy, DestTy)) &&
+  if ((DestTy->isVectorTy() || shouldChangeType(SrcTy, DestTy)) &&
       canEvaluateZExtd(Src, DestTy, BitsToClear, *this, &CI)) {
     assert(BitsToClear < SrcTy->getScalarSizeInBits() &&
            "Unreasonable BitsToClear");
@@ -1145,7 +1145,7 @@ Instruction *InstCombiner::visitSExt(SExtInst &CI) {
   // type.   Only do this if the dest type is a simple type, don't convert the
   // expression tree to something weird like i93 unless the source is also
   // strange.
-  if ((DestTy->isVectorTy() || ShouldChangeType(SrcTy, DestTy)) &&
+  if ((DestTy->isVectorTy() || shouldChangeType(SrcTy, DestTy)) &&
       canEvaluateSExtd(Src, DestTy)) {
     // Okay, we can transform this!  Insert the new expression now.
     DEBUG(dbgs() << "ICE: EvaluateInDifferentType converting expression type"
@@ -1167,18 +1167,16 @@ Instruction *InstCombiner::visitSExt(SExtInst &CI) {
                                       ShAmt);
   }
 
-  // If this input is a trunc from our destination, then turn sext(trunc(x))
+  // If the input is a trunc from the destination type, then turn sext(trunc(x))
   // into shifts.
-  if (TruncInst *TI = dyn_cast<TruncInst>(Src))
-    if (TI->hasOneUse() && TI->getOperand(0)->getType() == DestTy) {
-      uint32_t SrcBitSize = SrcTy->getScalarSizeInBits();
-      uint32_t DestBitSize = DestTy->getScalarSizeInBits();
-
-      // We need to emit a shl + ashr to do the sign extend.
-      Value *ShAmt = ConstantInt::get(DestTy, DestBitSize-SrcBitSize);
-      Value *Res = Builder->CreateShl(TI->getOperand(0), ShAmt, "sext");
-      return BinaryOperator::CreateAShr(Res, ShAmt);
-    }
+  Value *X;
+  if (match(Src, m_OneUse(m_Trunc(m_Value(X)))) && X->getType() == DestTy) {
+    // sext(trunc(X)) --> ashr(shl(X, C), C)
+    unsigned SrcBitSize = SrcTy->getScalarSizeInBits();
+    unsigned DestBitSize = DestTy->getScalarSizeInBits();
+    Constant *ShAmt = ConstantInt::get(DestTy, DestBitSize - SrcBitSize);
+    return BinaryOperator::CreateAShr(Builder->CreateShl(X, ShAmt), ShAmt);
+  }
 
   if (ICmpInst *ICI = dyn_cast<ICmpInst>(Src))
     return transformSExtICmp(ICI, CI);
@@ -1225,17 +1223,15 @@ static Constant *fitsInFPType(ConstantFP *CFP, const fltSemantics &Sem) {
   return nullptr;
 }
 
-/// If this is a floating-point extension instruction, look
-/// through it until we get the source value.
+/// Look through floating-point extensions until we get the source value.
 static Value *lookThroughFPExtensions(Value *V) {
-  if (Instruction *I = dyn_cast<Instruction>(V))
-    if (I->getOpcode() == Instruction::FPExt)
-      return lookThroughFPExtensions(I->getOperand(0));
+  while (auto *FPExt = dyn_cast<FPExtInst>(V))
+    V = FPExt->getOperand(0);
 
   // If this value is a constant, return the constant in the smallest FP type
   // that can accurately represent it.  This allows us to turn
   // (float)((double)X+2.0) into x+2.0f.
-  if (ConstantFP *CFP = dyn_cast<ConstantFP>(V)) {
+  if (auto *CFP = dyn_cast<ConstantFP>(V)) {
     if (CFP->getType() == Type::getPPC_FP128Ty(V->getContext()))
       return V;  // No constant folding of this.
     // See if the value can be truncated to half and then reextended.
@@ -1392,21 +1388,31 @@ Instruction *InstCombiner::visitFPTrunc(FPTruncInst &CI) {
   IntrinsicInst *II = dyn_cast<IntrinsicInst>(CI.getOperand(0));
   if (II) {
     switch (II->getIntrinsicID()) {
-      default: break;
-      case Intrinsic::fabs: {
-        // (fptrunc (fabs x)) -> (fabs (fptrunc x))
-        Value *InnerTrunc = Builder->CreateFPTrunc(II->getArgOperand(0),
-                                                   CI.getType());
-        Type *IntrinsicType[] = { CI.getType() };
-        Function *Overload = Intrinsic::getDeclaration(
-            CI.getModule(), II->getIntrinsicID(), IntrinsicType);
+    default: break;
+    case Intrinsic::fabs:
+    case Intrinsic::ceil:
+    case Intrinsic::floor:
+    case Intrinsic::rint:
+    case Intrinsic::round:
+    case Intrinsic::nearbyint:
+    case Intrinsic::trunc: {
+      // Do unary FP operation on smaller type.
+      // (fptrunc (fabs x)) -> (fabs (fptrunc x))
+      Value *InnerTrunc = Builder->CreateFPTrunc(II->getArgOperand(0),
+                                                 CI.getType());
+      Type *IntrinsicType[] = { CI.getType() };
+      Function *Overload = Intrinsic::getDeclaration(
+        CI.getModule(), II->getIntrinsicID(), IntrinsicType);
 
-        SmallVector<OperandBundleDef, 1> OpBundles;
-        II->getOperandBundlesAsDefs(OpBundles);
+      SmallVector<OperandBundleDef, 1> OpBundles;
+      II->getOperandBundlesAsDefs(OpBundles);
 
-        Value *Args[] = { InnerTrunc };
-        return CallInst::Create(Overload, Args, OpBundles, II->getName());
-      }
+      Value *Args[] = { InnerTrunc };
+      CallInst *NewCI =  CallInst::Create(Overload, Args,
+                                          OpBundles, II->getName());
+      NewCI->copyFastMathFlags(II);
+      return NewCI;
+    }
     }
   }
 

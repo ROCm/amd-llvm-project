@@ -65,23 +65,41 @@
 #endif
 
 #include <sys/types.h>
-#if !defined(__APPLE__) && !defined(__OpenBSD__) && !defined(__ANDROID__)
+#if !defined(__APPLE__) && !defined(__OpenBSD__) && !defined(__FreeBSD__) &&   \
+    !defined(__linux__)
 #include <sys/statvfs.h>
 #define STATVFS statvfs
+#define FSTATVFS fstatvfs
 #define STATVFS_F_FRSIZE(vfs) vfs.f_frsize
 #else
-#ifdef __OpenBSD__
+#if defined(__OpenBSD__) || defined(__FreeBSD__)
 #include <sys/param.h>
 #include <sys/mount.h>
-#elif defined(__ANDROID__)
+#elif defined(__linux__)
+#if defined(HAVE_LINUX_MAGIC_H)
+#include <linux/magic.h>
+#else
+#if defined(HAVE_LINUX_NFS_FS_H)
+#include <linux/nfs_fs.h>
+#endif
+#if defined(HAVE_LINUX_SMB_H)
+#include <linux/smb.h>
+#endif
+#endif
 #include <sys/vfs.h>
 #else
 #include <sys/mount.h>
 #endif
 #define STATVFS statfs
+#define FSTATVFS fstatfs
 #define STATVFS_F_FRSIZE(vfs) static_cast<uint64_t>(vfs.f_bsize)
 #endif
 
+#if defined(__NetBSD__)
+#define STATVFS_F_FLAG(vfs) (vfs).f_flag
+#else
+#define STATVFS_F_FLAG(vfs) (vfs).f_flags
+#endif
 
 using namespace llvm;
 
@@ -180,7 +198,7 @@ std::string getMainExecutable(const char *argv0, void *MainAddr) {
       if (getprogpath(exe_path, argv0))
         return exe_path;
   }
-#elif defined(HAVE_DLFCN_H)
+#elif defined(HAVE_DLFCN_H) && defined(HAVE_DLADDR)
   // Use dladdr to get executable path if available.
   Dl_info DLInfo;
   int err = dladdr(MainAddr, &DLInfo);
@@ -257,6 +275,16 @@ std::error_code current_path(SmallVectorImpl<char> &result) {
   return std::error_code();
 }
 
+std::error_code set_current_path(const Twine &path) {
+  SmallString<128> path_storage;
+  StringRef p = path.toNullTerminatedStringRef(path_storage);
+
+  if (::chdir(p.begin()) == -1)
+    return std::error_code(errno, std::generic_category());
+
+  return std::error_code();
+}
+
 std::error_code create_directory(const Twine &path, bool IgnoreExisting,
                                  perms Perms) {
   SmallString<128> path_storage;
@@ -322,6 +350,48 @@ std::error_code remove(const Twine &path, bool IgnoreNonExisting) {
       return std::error_code(errno, std::generic_category());
   }
 
+  return std::error_code();
+}
+
+static bool is_local_impl(struct STATVFS &Vfs) {
+#if defined(__linux__)
+#ifndef NFS_SUPER_MAGIC
+#define NFS_SUPER_MAGIC 0x6969
+#endif
+#ifndef SMB_SUPER_MAGIC
+#define SMB_SUPER_MAGIC 0x517B
+#endif
+#ifndef CIFS_MAGIC_NUMBER
+#define CIFS_MAGIC_NUMBER 0xFF534D42
+#endif
+  switch ((uint32_t)Vfs.f_type) {
+  case NFS_SUPER_MAGIC:
+  case SMB_SUPER_MAGIC:
+  case CIFS_MAGIC_NUMBER:
+    return false;
+  default:
+    return true;
+  }
+#else
+  return !!(STATVFS_F_FLAG(Vfs) & MNT_LOCAL);
+#endif
+}
+
+std::error_code is_local(const Twine &Path, bool &Result) {
+  struct STATVFS Vfs;
+  if (::STATVFS(Path.str().c_str(), &Vfs))
+    return std::error_code(errno, std::generic_category());
+
+  Result = is_local_impl(Vfs);
+  return std::error_code();
+}
+
+std::error_code is_local(int FD, bool &Result) {
+  struct STATVFS Vfs;
+  if (::FSTATVFS(FD, &Vfs))
+    return std::error_code(errno, std::generic_category());
+
+  Result = is_local_impl(Vfs);
   return std::error_code();
 }
 
@@ -481,6 +551,26 @@ std::error_code mapped_file_region::init(int FD, uint64_t Offset,
 
   int flags = (Mode == readwrite) ? MAP_SHARED : MAP_PRIVATE;
   int prot = (Mode == readonly) ? PROT_READ : (PROT_READ | PROT_WRITE);
+#if defined(__APPLE__)
+  //----------------------------------------------------------------------
+  // Newer versions of MacOSX have a flag that will allow us to read from
+  // binaries whose code signature is invalid without crashing by using
+  // the MAP_RESILIENT_CODESIGN flag. Also if a file from removable media
+  // is mapped we can avoid crashing and return zeroes to any pages we try
+  // to read if the media becomes unavailable by using the
+  // MAP_RESILIENT_MEDIA flag.  These flags are only usable when mapping
+  // with PROT_READ, so take care not to specify them otherwise.
+  //----------------------------------------------------------------------
+  if (Mode == readonly) {
+#if defined(MAP_RESILIENT_CODESIGN)
+    flags |= MAP_RESILIENT_CODESIGN;
+#endif
+#if defined(MAP_RESILIENT_MEDIA)
+    flags |= MAP_RESILIENT_MEDIA;
+#endif
+  }
+#endif // #if defined (__APPLE__)
+
   Mapping = ::mmap(nullptr, Size, prot, flags, FD, Offset);
   if (Mapping == MAP_FAILED)
     return std::error_code(errno, std::generic_category());
@@ -577,10 +667,19 @@ std::error_code openFileForRead(const Twine &Name, int &ResultFD,
                                 SmallVectorImpl<char> *RealPath) {
   SmallString<128> Storage;
   StringRef P = Name.toNullTerminatedStringRef(Storage);
-  while ((ResultFD = open(P.begin(), O_RDONLY)) < 0) {
+  int OpenFlags = O_RDONLY;
+#ifdef O_CLOEXEC
+  OpenFlags |= O_CLOEXEC;
+#endif
+  while ((ResultFD = open(P.begin(), OpenFlags)) < 0) {
     if (errno != EINTR)
       return std::error_code(errno, std::generic_category());
   }
+#ifndef O_CLOEXEC
+  int r = fcntl(ResultFD, F_SETFD, FD_CLOEXEC);
+  (void)r;
+  assert(r == 0 && "fcntl(F_SETFD, FD_CLOEXEC) failed");
+#endif
   // Attempt to get the real name of the file, if the user asked
   if(!RealPath)
     return std::error_code();
@@ -616,6 +715,10 @@ std::error_code openFileForWrite(const Twine &Name, int &ResultFD,
 
   int OpenFlags = O_CREAT;
 
+#ifdef O_CLOEXEC
+  OpenFlags |= O_CLOEXEC;
+#endif
+
   if (Flags & F_RW)
     OpenFlags |= O_RDWR;
   else
@@ -635,6 +738,11 @@ std::error_code openFileForWrite(const Twine &Name, int &ResultFD,
     if (errno != EINTR)
       return std::error_code(errno, std::generic_category());
   }
+#ifndef O_CLOEXEC
+  int r = fcntl(ResultFD, F_SETFD, FD_CLOEXEC);
+  (void)r;
+  assert(r == 0 && "fcntl(F_SETFD, FD_CLOEXEC) failed");
+#endif
   return std::error_code();
 }
 

@@ -22,8 +22,6 @@ class Lazy;
 class OutputSectionBase;
 struct Symbol;
 
-typedef llvm::CachedHashStringRef SymName;
-
 // SymbolTable is a bucket of all known symbols, including defined,
 // undefined, or lazy symbols (the last one is symbols in archive
 // files whose archive members are not yet loaded).
@@ -62,7 +60,7 @@ public:
 
   Symbol *addRegular(StringRef Name, uint8_t StOther, uint8_t Type,
                      uintX_t Value, uintX_t Size, uint8_t Binding,
-                     InputSectionBase<ELFT> *Section, InputFile *File);
+                     InputSectionBase *Section, InputFile *File);
 
   Symbol *addSynthetic(StringRef N, const OutputSectionBase *Section,
                        uintX_t Value, uint8_t StOther);
@@ -79,27 +77,28 @@ public:
                     uint8_t Binding, uint8_t StOther, uint8_t Type,
                     InputFile *File);
 
-  void scanUndefinedFlags();
-  void scanShlibUndefined();
-  void scanVersionScript();
-
-  SymbolBody *find(StringRef Name);
-
-  void trace(StringRef Name);
-  void wrap(StringRef Name);
-
-  std::vector<InputSectionBase<ELFT> *> Sections;
-
-private:
   std::pair<Symbol *, bool> insert(StringRef Name);
   std::pair<Symbol *, bool> insert(StringRef Name, uint8_t Type,
                                    uint8_t Visibility, bool CanOmitFromDynSym,
                                    InputFile *File);
 
+  void scanUndefinedFlags();
+  void scanShlibUndefined();
+  void scanVersionScript();
+
+  SymbolBody *find(StringRef Name);
+  SymbolBody *findInCurrentDSO(StringRef Name);
+
+  void trace(StringRef Name);
+  void wrap(StringRef Name);
+
+  std::vector<InputSectionBase *> Sections;
+
+private:
   std::vector<SymbolBody *> findByVersion(SymbolVersion Ver);
   std::vector<SymbolBody *> findAllByVersion(SymbolVersion Ver);
 
-  void initDemangledSyms();
+  llvm::StringMap<std::vector<SymbolBody *>> &getDemangledSyms();
   void handleAnonymousVersion();
   void assignExactVersion(SymbolVersion Ver, uint16_t VersionId,
                           StringRef VersionName);
@@ -118,7 +117,7 @@ private:
   // but a bit inefficient.
   // FIXME: Experiment with passing in a custom hashing or sorting the symbols
   // once symbol resolution is finished.
-  llvm::DenseMap<SymName, SymIndex> Symtab;
+  llvm::DenseMap<llvm::CachedHashStringRef, SymIndex> Symtab;
   std::vector<Symbol *> SymVector;
 
   // Comdat groups define "link once" sections. If two comdat groups have the

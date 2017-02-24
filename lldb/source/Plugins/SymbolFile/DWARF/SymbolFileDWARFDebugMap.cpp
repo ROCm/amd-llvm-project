@@ -19,9 +19,9 @@
 #include "lldb/Core/ModuleList.h"
 #include "lldb/Core/PluginManager.h"
 #include "lldb/Core/RangeMap.h"
-#include "lldb/Core/RegularExpression.h"
 #include "lldb/Core/Section.h"
 #include "lldb/Host/FileSystem.h"
+#include "lldb/Utility/RegularExpression.h"
 
 //#define DEBUG_OSO_DMAP // DO NOT CHECKIN WITH THIS NOT COMMENTED OUT
 #if defined(DEBUG_OSO_DMAP)
@@ -1253,8 +1253,7 @@ SymbolFileDWARFDebugMap::GetCompileUnit(SymbolFileDWARF *oso_dwarf) {
       }
     }
   }
-  assert(!"this shouldn't happen");
-  return lldb::CompUnitSP();
+  llvm_unreachable("this shouldn't happen");
 }
 
 SymbolFileDWARFDebugMap::CompileUnitInfo *

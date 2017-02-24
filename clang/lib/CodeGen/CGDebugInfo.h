@@ -409,9 +409,20 @@ public:
   void completeType(const RecordDecl *RD);
   void completeRequiredType(const RecordDecl *RD);
   void completeClassData(const RecordDecl *RD);
+  void completeClass(const RecordDecl *RD);
 
   void completeTemplateDefinition(const ClassTemplateSpecializationDecl &SD);
 
+  /// Create debug info for a macro defined by a #define directive or a macro
+  /// undefined by a #undef directive.
+  llvm::DIMacro *CreateMacro(llvm::DIMacroFile *Parent, unsigned MType,
+                             SourceLocation LineLoc, StringRef Name,
+                             StringRef Value);
+
+  /// Create debug info for a file referenced by an #include directive.
+  llvm::DIMacroFile *CreateTempMacroFile(llvm::DIMacroFile *Parent,
+                                         SourceLocation LineLoc,
+                                         SourceLocation FileLoc);
 private:
   /// Emit call to llvm.dbg.declare for a variable declaration.
   void EmitDeclare(const VarDecl *decl, llvm::Value *AI,
@@ -441,6 +452,10 @@ private:
 
   /// Remap a given path with the current debug prefix map
   std::string remapDIPath(StringRef) const;
+
+  /// Compute the file checksum debug info for input file ID.
+  llvm::DIFile::ChecksumKind computeChecksum(FileID FID,
+                                             SmallString<32> &Checksum) const;
 
   /// Get the file debug info descriptor for the input location.
   llvm::DIFile *getOrCreateFile(SourceLocation Loc);

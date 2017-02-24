@@ -18,12 +18,10 @@
 #include "llvm/Support/Path.h"
 
 // Project includes
-#include "Utility/ModuleCache.h"
 #include "lldb/Breakpoint/BreakpointIDList.h"
 #include "lldb/Breakpoint/BreakpointLocation.h"
 #include "lldb/Core/DataBufferHeap.h"
 #include "lldb/Core/Debugger.h"
-#include "lldb/Core/Error.h"
 #include "lldb/Core/Log.h"
 #include "lldb/Core/Module.h"
 #include "lldb/Core/ModuleSpec.h"
@@ -37,11 +35,12 @@
 #include "lldb/Interpreter/OptionValueProperties.h"
 #include "lldb/Interpreter/Property.h"
 #include "lldb/Symbol/ObjectFile.h"
+#include "lldb/Target/ModuleCache.h"
 #include "lldb/Target/Platform.h"
 #include "lldb/Target/Process.h"
 #include "lldb/Target/Target.h"
 #include "lldb/Target/UnixSignals.h"
-#include "lldb/Utility/Utils.h"
+#include "lldb/Utility/Error.h"
 
 // Define these constants from POSIX mman.h rather than include the file
 // so that they will be correct even when compiled on Linux.
@@ -523,11 +522,11 @@ void Platform::AddClangModuleCompilationOptions(
 
 FileSpec Platform::GetWorkingDirectory() {
   if (IsHost()) {
-    char cwd[PATH_MAX];
-    if (getcwd(cwd, sizeof(cwd)))
-      return FileSpec{cwd, true};
-    else
+    llvm::SmallString<64> cwd;
+    if (llvm::sys::fs::current_path(cwd))
       return FileSpec{};
+    else
+      return FileSpec(cwd, true);
   } else {
     if (!m_working_dir)
       m_working_dir = GetRemoteWorkingDirectory();
@@ -748,14 +747,12 @@ Error Platform::Install(const FileSpec &src, const FileSpec &dst) {
 bool Platform::SetWorkingDirectory(const FileSpec &file_spec) {
   if (IsHost()) {
     Log *log = GetLogIfAnyCategoriesSet(LIBLLDB_LOG_PLATFORM);
-    if (log)
-      log->Printf("Platform::SetWorkingDirectory('%s')",
-                  file_spec.GetCString());
-    if (file_spec) {
-      if (::chdir(file_spec.GetCString()) == 0)
-        return true;
+    LLDB_LOG(log, "{0}", file_spec);
+    if (std::error_code ec = llvm::sys::fs::set_current_path(file_spec.GetPath())) {
+      LLDB_LOG(log, "error: {0}", ec.message());
+      return false;
     }
-    return false;
+    return true;
   } else {
     m_working_dir.Clear();
     return SetRemoteWorkingDirectory(file_spec);
@@ -1876,9 +1873,8 @@ size_t Platform::GetSoftwareBreakpointTrapOpcode(Target &target,
   } break;
 
   default:
-    assert(
-        !"Unhandled architecture in Platform::GetSoftwareBreakpointTrapOpcode");
-    break;
+    llvm_unreachable(
+        "Unhandled architecture in Platform::GetSoftwareBreakpointTrapOpcode");
   }
 
   assert(bp_site);

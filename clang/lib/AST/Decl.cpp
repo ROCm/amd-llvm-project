@@ -2143,13 +2143,6 @@ APValue *VarDecl::evaluateValue() const {
   return evaluateValue(Notes);
 }
 
-namespace {
-// Destroy an APValue that was allocated in an ASTContext.
-void DestroyAPValue(void* UntypedValue) {
-  static_cast<APValue*>(UntypedValue)->~APValue();
-}
-} // namespace
-
 APValue *VarDecl::evaluateValue(
     SmallVectorImpl<PartialDiagnosticAt> &Notes) const {
   EvaluatedStmt *Eval = ensureEvaluatedStmt();
@@ -2181,7 +2174,7 @@ APValue *VarDecl::evaluateValue(
   if (!Result)
     Eval->Evaluated = APValue();
   else if (Eval->Evaluated.needsCleanup())
-    getASTContext().AddDeallocation(DestroyAPValue, &Eval->Evaluated);
+    getASTContext().addDestruction(&Eval->Evaluated);
 
   Eval->IsEvaluating = false;
   Eval->WasEvaluated = true;
@@ -2510,7 +2503,7 @@ bool FunctionDecl::isVariadic() const {
 
 bool FunctionDecl::hasBody(const FunctionDecl *&Definition) const {
   for (auto I : redecls()) {
-    if (I->Body || I->IsLateTemplateParsed) {
+    if (I->doesThisDeclarationHaveABody()) {
       Definition = I;
       return true;
     }
@@ -2988,6 +2981,18 @@ SourceRange FunctionDecl::getReturnTypeSourceRange() const {
     return SourceRange();
 
   return RTRange;
+}
+
+SourceRange FunctionDecl::getExceptionSpecSourceRange() const {
+  const TypeSourceInfo *TSI = getTypeSourceInfo();
+  if (!TSI)
+    return SourceRange();
+  FunctionTypeLoc FTL =
+    TSI->getTypeLoc().IgnoreParens().getAs<FunctionTypeLoc>();
+  if (!FTL)
+    return SourceRange();
+
+  return FTL.getExceptionSpecRange();
 }
 
 const Attr *FunctionDecl::getUnusedResultAttr() const {
