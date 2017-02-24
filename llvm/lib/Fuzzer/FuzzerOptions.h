@@ -1,4 +1,3 @@
-//===- FuzzerOptions.h - Internal header for the Fuzzer ---------*- C++ -* ===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -19,6 +18,7 @@ namespace fuzzer {
 struct FuzzingOptions {
   int Verbosity = 1;
   size_t MaxLen = 0;
+  bool ExperimentalLenControl = false;
   int UnitTimeoutSec = 300;
   int TimeoutExitCode = 77;
   int ErrorExitCode = 77;
@@ -28,7 +28,6 @@ struct FuzzingOptions {
   int MutateDepth = 5;
   bool UseCounters = false;
   bool UseIndirCalls = true;
-  bool UseMemcmp = true;
   bool UseMemmem = true;
   bool UseCmp = false;
   bool UseValueProfile = false;
@@ -61,6 +60,7 @@ struct FuzzingOptions {
   bool HandleInt = false;
   bool HandleSegv = false;
   bool HandleTerm = false;
+  bool HandleXfsz = false;
 };
 
 }  // namespace fuzzer

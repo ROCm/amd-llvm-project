@@ -42,6 +42,9 @@ class Configuration(LibcxxConfiguration):
             self.config.available_features.add('libcxxabi-no-exceptions')
         if not self.has_cpp_feature('noexcept_function_type', 201510):
             self.config.available_features.add('libcxxabi-no-noexcept-function-type')
+        # test_exception_storage_nodynmem.pass.cpp fails under this specific configuration
+        if self.get_lit_bool('cxx_ext_threads', False) and self.get_lit_bool('libcxxabi_shared', False):
+            self.config.available_features.add('libcxxabi-shared-externally-threaded')
 
     def configure_compile_flags(self):
         self.cxx.compile_flags += ['-DLIBCXXABI_NO_TIMER']
@@ -52,10 +55,6 @@ class Configuration(LibcxxConfiguration):
         if not self.get_lit_bool('enable_threads', True):
             self.cxx.compile_flags += ['-D_LIBCXXABI_HAS_NO_THREADS']
             self.config.available_features.add('libcxxabi-no-threads')
-        # FIXME: Fix the unwind_* tests that test dynamic exception
-        # specifications so they work in C++17 (or always test in C++14).
-        # Suppressing this warning is a temporary workaround.
-        self.cxx.addWarningFlagIfSupported('-Wno-dynamic-exception-spec')
         super(Configuration, self).configure_compile_flags()
     
     def configure_compile_flags_header_includes(self):

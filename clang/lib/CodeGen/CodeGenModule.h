@@ -167,7 +167,7 @@ struct ObjCEntrypoints {
   /// void objc_release(id);
   llvm::Constant *objc_release;
 
-  /// id objc_storeStrong(id*, id);
+  /// void objc_storeStrong(id*, id);
   llvm::Constant *objc_storeStrong;
 
   /// id objc_storeWeak(id*, id);
@@ -458,6 +458,14 @@ private:
   bool isTriviallyRecursive(const FunctionDecl *F);
   bool shouldEmitFunction(GlobalDecl GD);
 
+  /// Map used to be sure we don't emit the same CompoundLiteral twice.
+  llvm::DenseMap<const CompoundLiteralExpr *, llvm::GlobalVariable *>
+      EmittedCompoundLiterals;
+
+  /// Map of the global blocks we've emitted, so that we don't have to re-emit
+  /// them if the constexpr evaluator gets aggressive.
+  llvm::DenseMap<const BlockExpr *, llvm::Constant *> EmittedGlobalBlocks;
+
   /// @name Cache for Blocks Runtime Globals
   /// @{
 
@@ -546,6 +554,10 @@ public:
     assert(ObjCData != nullptr);
     return *ObjCData;
   }
+
+  // Version checking function, used to implement ObjC's @available:
+  // i32 @__isOSVersionAtLeast(i32, i32, i32)
+  llvm::Constant *IsOSVersionAtLeastFn = nullptr;
 
   InstrProfStats &getPGOStats() { return PGOStats; }
   llvm::IndexedInstrProfReader *getPGOReader() const { return PGOReader.get(); }
@@ -785,6 +797,16 @@ public:
 
   /// Gets the address of a block which requires no captures.
   llvm::Constant *GetAddrOfGlobalBlock(const BlockExpr *BE, StringRef Name);
+
+  /// Returns the address of a block which requires no caputres, or null if
+  /// we've yet to emit the block for BE.
+  llvm::Constant *getAddrOfGlobalBlockIfEmitted(const BlockExpr *BE) {
+    return EmittedGlobalBlocks.lookup(BE);
+  }
+
+  /// Notes that BE's global block is available via Addr. Asserts that BE
+  /// isn't already emitted.
+  void setAddrOfGlobalBlock(const BlockExpr *BE, llvm::Constant *Addr);
   
   /// Return a pointer to a constant CFString object for the given string.
   ConstantAddress GetAddrOfConstantCFString(const StringLiteral *Literal);
@@ -818,6 +840,16 @@ public:
   /// Returns a pointer to a constant global variable for the given file-scope
   /// compound literal expression.
   ConstantAddress GetAddrOfConstantCompoundLiteral(const CompoundLiteralExpr*E);
+
+  /// If it's been emitted already, returns the GlobalVariable corresponding to
+  /// a compound literal. Otherwise, returns null.
+  llvm::GlobalVariable *
+  getAddrOfConstantCompoundLiteralIfEmitted(const CompoundLiteralExpr *E);
+
+  /// Notes that CLE's GlobalVariable is GV. Asserts that CLE isn't already
+  /// emitted.
+  void setAddrOfConstantCompoundLiteral(const CompoundLiteralExpr *CLE,
+                                        llvm::GlobalVariable *GV);
 
   /// \brief Returns a pointer to a global variable representing a temporary
   /// with static or thread storage duration.
@@ -1002,6 +1034,25 @@ public:
   void ConstructAttributeList(StringRef Name, const CGFunctionInfo &Info,
                               CGCalleeInfo CalleeInfo, AttributeListType &PAL,
                               unsigned &CallingConv, bool AttrOnCallSite);
+
+  /// Adds attributes to F according to our CodeGenOptions and LangOptions, as
+  /// though we had emitted it ourselves.  We remove any attributes on F that
+  /// conflict with the attributes we add here.
+  ///
+  /// This is useful for adding attrs to bitcode modules that you want to link
+  /// with but don't control, such as CUDA's libdevice.  When linking with such
+  /// a bitcode library, you might want to set e.g. its functions'
+  /// "unsafe-fp-math" attribute to match the attr of the functions you're
+  /// codegen'ing.  Otherwise, LLVM will interpret the bitcode module's lack of
+  /// unsafe-fp-math attrs as tantamount to unsafe-fp-math=false, and then LLVM
+  /// will propagate unsafe-fp-math=false up to every transitive caller of a
+  /// function in the bitcode library!
+  ///
+  /// With the exception of fast-math attrs, this will only make the attributes
+  /// on the function more conservative.  But it's unsafe to call this on a
+  /// function which relies on particular fast-math attributes for correctness.
+  /// It's up to you to ensure that this is safe.
+  void AddDefaultFnAttrs(llvm::Function &F);
 
   // Fills in the supplied string map with the set of target features for the
   // passed in function.
@@ -1203,7 +1254,6 @@ private:
 
   void EmitDeclContext(const DeclContext *DC);
   void EmitLinkageSpec(const LinkageSpecDecl *D);
-  void CompleteDIClassType(const CXXMethodDecl* D);
 
   /// \brief Emit the function that initializes C++ thread_local variables.
   void EmitCXXThreadLocalInitFunc();
@@ -1285,6 +1335,12 @@ private:
   /// Check whether we can use a "simpler", more core exceptions personality
   /// function.
   void SimplifyPersonality();
+
+  /// Helper function for ConstructAttributeList and AddDefaultFnAttrs.
+  /// Constructs an AttrList for a function with the given properties.
+  void ConstructDefaultFnAttrList(StringRef Name, bool HasOptnone,
+                                  bool AttrOnCallSite,
+                                  llvm::AttrBuilder &FuncAttrs);
 };
 }  // end namespace CodeGen
 }  // end namespace clang

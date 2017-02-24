@@ -29,6 +29,7 @@
 
 namespace llvm {
 class DWARFDebugLine;
+class TarWriter;
 namespace lto {
 class InputFile;
 }
@@ -36,12 +37,25 @@ class InputFile;
 
 namespace lld {
 namespace elf {
+class InputFile;
+}
+
+// Returns "(internal)", "foo.a(bar.o)" or "baz.o".
+std::string toString(const elf::InputFile *F);
+
+namespace elf {
 
 using llvm::object::Archive;
 
-class InputFile;
 class Lazy;
 class SymbolBody;
+
+// If -reproduce option is given, all input files are written
+// to this tar archive.
+extern llvm::TarWriter *Tar;
+
+// Opens a given file.
+llvm::Optional<MemoryBufferRef> readFile(StringRef Path);
 
 // The root class of input files.
 class InputFile {
@@ -83,9 +97,6 @@ protected:
 private:
   const Kind FileKind;
 };
-
-// Returns "(internal)", "foo.a(bar.o)" or "baz.o".
-std::string toString(const InputFile *F);
 
 template <typename ELFT> class ELFFileBase : public InputFile {
 public:
@@ -145,8 +156,8 @@ public:
   explicit ObjectFile(MemoryBufferRef M);
   void parse(llvm::DenseSet<llvm::CachedHashStringRef> &ComdatGroups);
 
-  ArrayRef<InputSectionBase<ELFT> *> getSections() const { return Sections; }
-  InputSectionBase<ELFT> *getSection(const Elf_Sym &Sym) const;
+  ArrayRef<InputSectionBase *> getSections() const { return Sections; }
+  InputSectionBase *getSection(const Elf_Sym &Sym) const;
 
   SymbolBody &getSymbolBody(uint32_t SymbolIndex) const {
     if (SymbolIndex >= SymbolBodies.size())
@@ -162,16 +173,12 @@ public:
 
   // Returns source line information for a given offset.
   // If no information is available, returns "".
-  std::string getLineInfo(InputSectionBase<ELFT> *S, uintX_t Offset);
+  std::string getLineInfo(InputSectionBase *S, uintX_t Offset);
 
   // MIPS GP0 value defined by this file. This value represents the gp value
   // used to create the relocatable object and required to support
   // R_MIPS_GPREL16 / R_MIPS_GPREL32 relocations.
   uint32_t MipsGp0 = 0;
-
-  // The number is the offset in the string table. It will be used as the
-  // st_name of the symbol.
-  std::vector<std::pair<const DefinedRegular<ELFT> *, unsigned>> KeptLocalSyms;
 
   // Name of source file obtained from STT_FILE symbol value,
   // or empty string if there is no such symbol in object file
@@ -183,15 +190,15 @@ private:
   initializeSections(llvm::DenseSet<llvm::CachedHashStringRef> &ComdatGroups);
   void initializeSymbols();
   void initializeDwarfLine();
-  InputSectionBase<ELFT> *getRelocTarget(const Elf_Shdr &Sec);
-  InputSectionBase<ELFT> *createInputSection(const Elf_Shdr &Sec,
-                                             StringRef SectionStringTable);
+  InputSectionBase *getRelocTarget(const Elf_Shdr &Sec);
+  InputSectionBase *createInputSection(const Elf_Shdr &Sec,
+                                       StringRef SectionStringTable);
 
   bool shouldMerge(const Elf_Shdr &Sec);
   SymbolBody *createSymbolBody(const Elf_Sym *Sym);
 
   // List of all sections defined by this file.
-  std::vector<InputSectionBase<ELFT> *> Sections;
+  std::vector<InputSectionBase *> Sections;
 
   // List of all symbols referenced or defined by this file.
   std::vector<SymbolBody *> SymbolBodies;
@@ -315,10 +322,10 @@ public:
   explicit BinaryFile(MemoryBufferRef M) : InputFile(BinaryKind, M) {}
   static bool classof(const InputFile *F) { return F->kind() == BinaryKind; }
   template <class ELFT> void parse();
-  ArrayRef<InputSectionData *> getSections() const { return Sections; }
+  ArrayRef<InputSectionBase *> getSections() const { return Sections; }
 
 private:
-  std::vector<InputSectionData *> Sections;
+  std::vector<InputSectionBase *> Sections;
 };
 
 InputFile *createObjectFile(MemoryBufferRef MB, StringRef ArchiveName = "",

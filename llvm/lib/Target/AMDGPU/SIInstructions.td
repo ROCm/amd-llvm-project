@@ -111,6 +111,12 @@ def V_MOV_B64_PSEUDO : VPseudoInstSI <(outs VReg_64:$vdst),
                                       (ins VSrc_b64:$src0)>;
 } // End let hasSideEffects = 0, mayLoad = 0, mayStore = 0, Uses = [EXEC]
 
+def S_TRAP_PSEUDO : SPseudoInstSI <(outs), (ins i16imm:$simm16)> {
+  let hasSideEffects = 1;
+  let SALU = 1;
+  let usesCustomInserter = 1;
+}
+
 let usesCustomInserter = 1, SALU = 1 in {
 def GET_GROUPSTATICSIZE : PseudoInstSI <(outs SReg_32:$sdst), (ins),
   [(set SReg_32:$sdst, (int_amdgcn_groupstaticsize))]>;
@@ -383,6 +389,15 @@ def SI_PC_ADD_REL_OFFSET : SPseudoInstSI <
 } // End SubtargetPredicate = isGCN
 
 let Predicates = [isGCN] in {
+def : Pat<
+  (trap),
+  (S_TRAP_PSEUDO TRAPID.LLVM_TRAP)
+>;
+
+def : Pat<
+  (debugtrap),
+  (S_TRAP_PSEUDO TRAPID.LLVM_DEBUG_TRAP)
+>;
 
 def : Pat<
   (int_amdgcn_else i64:$src, bb:$target),
@@ -423,9 +438,26 @@ def : Pat <
 
 } // End Predicates = [UnsafeFPMath]
 
+
+// f16_to_fp patterns
 def : Pat <
-  (f32 (fpextend f16:$src)),
-  (V_CVT_F32_F16_e32 $src)
+  (f32 (f16_to_fp i32:$src0)),
+  (V_CVT_F32_F16_e64 SRCMODS.NONE, $src0, DSTCLAMP.NONE, DSTOMOD.NONE)
+>;
+
+def : Pat <
+  (f32 (f16_to_fp (and_oneuse i32:$src0, 0x7fff))),
+  (V_CVT_F32_F16_e64 SRCMODS.ABS, $src0, DSTCLAMP.NONE, DSTOMOD.NONE)
+>;
+
+def : Pat <
+  (f32 (f16_to_fp (or_oneuse i32:$src0, 0x8000))),
+  (V_CVT_F32_F16_e64 SRCMODS.NEG_ABS, $src0, DSTCLAMP.NONE, DSTOMOD.NONE)
+>;
+
+def : Pat <
+  (f32 (f16_to_fp (xor_oneuse i32:$src0, 0x8000))),
+  (V_CVT_F32_F16_e64 SRCMODS.NEG, $src0, DSTCLAMP.NONE, DSTOMOD.NONE)
 >;
 
 def : Pat <
@@ -433,14 +465,10 @@ def : Pat <
   (V_CVT_F64_F32_e32 (V_CVT_F32_F16_e32 $src))
 >;
 
+// fp_to_fp16 patterns
 def : Pat <
-  (f16 (fpround f32:$src)),
-  (V_CVT_F16_F32_e32 $src)
->;
-
-def : Pat <
-  (f16 (fpround f64:$src)),
-  (V_CVT_F16_F32_e32 (V_CVT_F32_F64_e32 $src))
+  (i32 (fp_to_f16 (f32 (VOP3Mods0 f32:$src0, i32:$src0_modifiers, i1:$clamp, i32:$omod)))),
+  (V_CVT_F16_F32_e64 $src0_modifiers, f32:$src0, $clamp, $omod)
 >;
 
 def : Pat <
@@ -619,11 +647,19 @@ def : BitConvert <v16f32, v16i32, VReg_512>;
 /********** Src & Dst modifiers **********/
 /********** =================== **********/
 
-def : Pat <
-  (AMDGPUclamp (VOP3Mods0Clamp f32:$src0, i32:$src0_modifiers, i32:$omod),
-               (f32 FP_ZERO), (f32 FP_ONE)),
-  (V_ADD_F32_e64 $src0_modifiers, $src0, 0, (i32 0), 1, $omod)
+
+// If denormals are not enabled, it only impacts the compare of the
+// inputs. The output result is not flushed.
+class ClampPat<Instruction inst, ValueType vt> : Pat <
+  (vt (AMDGPUclamp
+        (VOP3Mods0Clamp vt:$src0, i32:$src0_modifiers, i32:$omod))),
+  (inst i32:$src0_modifiers, vt:$src0,
+        i32:$src0_modifiers, vt:$src0, DSTCLAMP.ENABLE, $omod)
 >;
+
+def : ClampPat<V_MAX_F32_e64, f32>;
+def : ClampPat<V_MAX_F64, f64>;
+def : ClampPat<V_MAX_F16_e64, f16>;
 
 /********** ================================ **********/
 /********** Floating point absolute/negative **********/
@@ -675,6 +711,37 @@ def : Pat <
     (V_XOR_B32_e32 (i32 (EXTRACT_SUBREG f64:$src, sub1)),
                    (i32 (V_MOV_B32_e32 (i32 0x80000000)))),
     sub1)
+>;
+
+def : Pat <
+  (fcopysign f16:$src0, f16:$src1),
+  (V_BFI_B32 (S_MOV_B32 (i32 0x00007fff)), $src0, $src1)
+>;
+
+def : Pat <
+  (fcopysign f32:$src0, f16:$src1),
+  (V_BFI_B32 (S_MOV_B32 (i32 0x7fffffff)), $src0,
+             (V_LSHLREV_B32_e64 (i32 16), $src1))
+>;
+
+def : Pat <
+  (fcopysign f64:$src0, f16:$src1),
+  (REG_SEQUENCE SReg_64,
+    (i32 (EXTRACT_SUBREG $src0, sub0)), sub0,
+    (V_BFI_B32 (S_MOV_B32 (i32 0x7fffffff)), (i32 (EXTRACT_SUBREG $src0, sub1)),
+               (V_LSHLREV_B32_e64 (i32 16), $src1)), sub1)
+>;
+
+def : Pat <
+  (fcopysign f16:$src0, f32:$src1),
+  (V_BFI_B32 (S_MOV_B32 (i32 0x00007fff)), $src0,
+             (V_LSHRREV_B32_e64 (i32 16), $src1))
+>;
+
+def : Pat <
+  (fcopysign f16:$src0, f64:$src1),
+  (V_BFI_B32 (S_MOV_B32 (i32 0x00007fff)), $src0,
+             (V_LSHRREV_B32_e64 (i32 16), (EXTRACT_SUBREG $src1, sub1)))
 >;
 
 def : Pat <
@@ -757,27 +824,6 @@ def : Pat <
 /********** ================== **********/
 
 def : POW_Common <V_LOG_F32_e32, V_EXP_F32_e32, V_MUL_LEGACY_F32_e32>;
-
-def : Pat <
-  (int_AMDGPU_cube v4f32:$src),
-  (REG_SEQUENCE VReg_128,
-    (V_CUBETC_F32 0 /* src0_modifiers */, (f32 (EXTRACT_SUBREG $src, sub0)),
-                  0 /* src1_modifiers */, (f32 (EXTRACT_SUBREG $src, sub1)),
-                  0 /* src2_modifiers */, (f32 (EXTRACT_SUBREG $src, sub2)),
-                  0 /* clamp */, 0 /* omod */), sub0,
-    (V_CUBESC_F32 0 /* src0_modifiers */, (f32 (EXTRACT_SUBREG $src, sub0)),
-                  0 /* src1_modifiers */,(f32 (EXTRACT_SUBREG $src, sub1)),
-                  0 /* src2_modifiers */,(f32 (EXTRACT_SUBREG $src, sub2)),
-                  0 /* clamp */, 0 /* omod */), sub1,
-    (V_CUBEMA_F32 0 /* src1_modifiers */,(f32 (EXTRACT_SUBREG $src, sub0)),
-                  0 /* src1_modifiers */,(f32 (EXTRACT_SUBREG $src, sub1)),
-                  0 /* src1_modifiers */,(f32 (EXTRACT_SUBREG $src, sub2)),
-                  0 /* clamp */, 0 /* omod */), sub2,
-    (V_CUBEID_F32 0 /* src1_modifiers */,(f32 (EXTRACT_SUBREG $src, sub0)),
-                  0 /* src1_modifiers */,(f32 (EXTRACT_SUBREG $src, sub1)),
-                  0 /* src1_modifiers */,(f32 (EXTRACT_SUBREG $src, sub2)),
-                  0 /* clamp */, 0 /* omod */), sub3)
->;
 
 def : Pat <
   (i32 (sext i1:$src0)),
@@ -868,6 +914,11 @@ def : Pat<(i32 (sext_inreg i32:$src, i1)),
 def : Pat <
   (i64 (sext_inreg i64:$src, i1)),
   (S_BFE_I64 i64:$src, (i32 0x10000)) // 0 | 1 << 16
+>;
+
+def : Pat <
+  (i16 (sext_inreg i16:$src, i1)),
+  (S_BFE_I32 $src, (i32 0x00010000)) // 0 | 1 << 16
 >;
 
 def : Pat <
@@ -992,6 +1043,11 @@ def : Pat <
 >;
 
 def : Pat <
+  (i1 (trunc i16:$a)),
+  (V_CMP_EQ_U32_e64 (S_AND_B32 (i32 1), $a), (i32 1))
+>;
+
+def : Pat <
   (i1 (trunc i64:$a)),
   (V_CMP_EQ_U32_e64 (S_AND_B32 (i32 1),
                     (i32 (EXTRACT_SUBREG $a, sub0))), (i32 1))
@@ -1018,18 +1074,31 @@ multiclass BFMPatterns <ValueType vt, InstSI BFM, InstSI MOV> {
 
 defm : BFMPatterns <i32, S_BFM_B32, S_MOV_B32>;
 // FIXME: defm : BFMPatterns <i64, S_BFM_B64, S_MOV_B64>;
-
-def : BFEPattern <V_BFE_U32, S_MOV_B32>;
+defm : BFEPattern <V_BFE_U32, V_BFE_I32, S_MOV_B32>;
 
 def : Pat<
-  (fcanonicalize f32:$src),
-  (V_MUL_F32_e64 0, (i32 CONST.FP32_ONE), 0, $src, 0, 0)
+  (fcanonicalize (f16 (VOP3Mods f16:$src, i32:$src_mods))),
+  (V_MUL_F16_e64 0, (i32 CONST.FP16_ONE), $src_mods, $src, 0, 0)
 >;
 
 def : Pat<
-  (fcanonicalize f64:$src),
-  (V_MUL_F64 0, CONST.FP64_ONE, 0, $src, 0, 0)
+  (fcanonicalize (f32 (VOP3Mods f32:$src, i32:$src_mods))),
+  (V_MUL_F32_e64 0, (i32 CONST.FP32_ONE), $src_mods, $src, 0, 0)
 >;
+
+def : Pat<
+  (fcanonicalize (f64 (VOP3Mods f64:$src, i32:$src_mods))),
+  (V_MUL_F64 0, CONST.FP64_ONE, $src_mods, $src, 0, 0)
+>;
+
+// Allow integer inputs
+class ExpPattern<SDPatternOperator node, ValueType vt, Instruction Inst> : Pat<
+  (node (i8 timm:$tgt), (i8 timm:$en), vt:$src0, vt:$src1, vt:$src2, vt:$src3, (i1 timm:$compr), (i1 timm:$vm)),
+  (Inst i8:$tgt, vt:$src0, vt:$src1, vt:$src2, vt:$src3, i1:$vm, i1:$compr, i8:$en)
+>;
+
+def : ExpPattern<AMDGPUexport, i32, EXP>;
+def : ExpPattern<AMDGPUexport_done, i32, EXP_DONE>;
 
 //===----------------------------------------------------------------------===//
 // Fract Patterns
@@ -1072,6 +1141,29 @@ def : SHA256MaPattern <V_BFI_B32, V_XOR_B32_e64>;
 
 def : IntMed3Pat<V_MED3_I32, smax, smax_oneuse, smin_oneuse>;
 def : IntMed3Pat<V_MED3_U32, umax, umax_oneuse, umin_oneuse>;
+
+// This matches 16 permutations of
+// max(min(x, y), min(max(x, y), z))
+class FPMed3Pat<ValueType vt,
+                Instruction med3Inst> : Pat<
+  (fmaxnum (fminnum_oneuse (VOP3Mods_nnan vt:$src0, i32:$src0_mods),
+                           (VOP3Mods_nnan vt:$src1, i32:$src1_mods)),
+           (fminnum_oneuse (fmaxnum_oneuse (VOP3Mods_nnan vt:$src0, i32:$src0_mods),
+                                           (VOP3Mods_nnan vt:$src1, i32:$src1_mods)),
+                           (vt (VOP3Mods_nnan vt:$src2, i32:$src2_mods)))),
+  (med3Inst $src0_mods, $src0, $src1_mods, $src1, $src2_mods, $src2, DSTCLAMP.NONE, DSTOMOD.NONE)
+>;
+
+def : FPMed3Pat<f32, V_MED3_F32>;
+
+
+// Undo sub x, c -> add x, -c canonicalization since c is more likely
+// an inline immediate than -c.
+// TODO: Also do for 64-bit.
+def : Pat<
+  (add i32:$src0, (i32 NegSubInlineConst32:$src1)),
+  (S_SUB_I32 $src0, NegSubInlineConst32:$src1)
+>;
 
 //============================================================================//
 // Assembler aliases

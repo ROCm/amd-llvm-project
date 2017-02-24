@@ -604,11 +604,8 @@ private:
 public:
   // If NeedType is true, then TryAnnotateTypeOrScopeToken will try harder to
   // find a type name by attempting typo correction.
-  bool TryAnnotateTypeOrScopeToken(bool EnteringContext = false,
-                                   bool NeedType = false);
-  bool TryAnnotateTypeOrScopeTokenAfterScopeSpec(bool EnteringContext,
-                                                 bool NeedType,
-                                                 CXXScopeSpec &SS,
+  bool TryAnnotateTypeOrScopeToken();
+  bool TryAnnotateTypeOrScopeTokenAfterScopeSpec(CXXScopeSpec &SS,
                                                  bool IsNewScope);
   bool TryAnnotateCXXScopeToken(bool EnteringContext = false);
 
@@ -1845,6 +1842,26 @@ private:
     llvm_unreachable("Missing DeclSpecContext case");
   }
 
+  /// Is this a context in which we can perform class template argument
+  /// deduction?
+  static bool isClassTemplateDeductionContext(DeclSpecContext DSC) {
+    switch (DSC) {
+    case DSC_normal:
+    case DSC_class:
+    case DSC_top_level:
+    case DSC_condition:
+    case DSC_type_specifier:
+      return true;
+
+    case DSC_objc_method_result:
+    case DSC_template_type_arg:
+    case DSC_trailing:
+    case DSC_alias_declaration:
+      return false;
+    }
+    llvm_unreachable("Missing DeclSpecContext case");
+  }
+
   /// Information on a C++0x for-range-initializer found while parsing a
   /// declaration which turns out to be a for-range-declaration.
   struct ForRangeInit {
@@ -1958,7 +1975,7 @@ private:
   /// \brief Starting with a scope specifier, identifier, or
   /// template-id that refers to the current class, determine whether
   /// this is a constructor declarator.
-  bool isConstructorDeclarator(bool Unqualified);
+  bool isConstructorDeclarator(bool Unqualified, bool DeductionGuide = false);
 
   /// \brief Specifies the context in which type-id/expression
   /// disambiguation will occur.
@@ -2377,10 +2394,10 @@ private:
                                 AR_DeclspecAttributesParsed
   };
 
-  void ParseTypeQualifierListOpt(DeclSpec &DS,
-                                 unsigned AttrReqs = AR_AllAttributesParsed,
-                                 bool AtomicAllowed = true,
-                                 bool IdentifierRequired = false);
+  void ParseTypeQualifierListOpt(
+      DeclSpec &DS, unsigned AttrReqs = AR_AllAttributesParsed,
+      bool AtomicAllowed = true, bool IdentifierRequired = false,
+      Optional<llvm::function_ref<void()>> CodeCompletionHandler = None);
   void ParseDirectDeclarator(Declarator &D);
   void ParseDecompositionDeclarator(Declarator &D);
   void ParseParenDeclarator(Declarator &D);
@@ -2631,6 +2648,7 @@ public:
   bool ParseUnqualifiedId(CXXScopeSpec &SS, bool EnteringContext,
                           bool AllowDestructorName,
                           bool AllowConstructorName,
+                          bool AllowDeductionGuide,
                           ParsedType ObjectType,
                           SourceLocation& TemplateKWLoc,
                           UnqualifiedId &Result);
@@ -2691,7 +2709,7 @@ private:
                                SourceLocation TemplateKWLoc,
                                UnqualifiedId &TemplateName,
                                bool AllowTypeAnnotation = true);
-  void AnnotateTemplateIdTokenAsType();
+  void AnnotateTemplateIdTokenAsType(bool IsClassName = false);
   bool IsTemplateArgumentList(unsigned Skip = 0);
   bool ParseTemplateArgumentList(TemplateArgList &TemplateArgs);
   ParsedTemplateArgument ParseTemplateTemplateArgument();

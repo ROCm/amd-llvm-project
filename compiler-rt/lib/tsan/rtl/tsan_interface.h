@@ -32,6 +32,8 @@ extern "C" {
 // before any instrumented code is executed and before any call to malloc.
 SANITIZER_INTERFACE_ATTRIBUTE void __tsan_init();
 
+SANITIZER_INTERFACE_ATTRIBUTE void __tsan_flush_memory();
+
 SANITIZER_INTERFACE_ATTRIBUTE void __tsan_read1(void *addr);
 SANITIZER_INTERFACE_ATTRIBUTE void __tsan_read2(void *addr);
 SANITIZER_INTERFACE_ATTRIBUTE void __tsan_read4(void *addr);
@@ -77,6 +79,15 @@ SANITIZER_INTERFACE_ATTRIBUTE void __tsan_ignore_thread_begin();
 SANITIZER_INTERFACE_ATTRIBUTE void __tsan_ignore_thread_end();
 
 SANITIZER_INTERFACE_ATTRIBUTE
+void *__tsan_external_register_tag(const char *object_type);
+SANITIZER_INTERFACE_ATTRIBUTE
+void __tsan_external_assign_tag(void *addr, void *tag);
+SANITIZER_INTERFACE_ATTRIBUTE
+void __tsan_external_read(void *addr, void *caller_pc, void *tag);
+SANITIZER_INTERFACE_ATTRIBUTE
+void __tsan_external_write(void *addr, void *caller_pc, void *tag);
+
+SANITIZER_INTERFACE_ATTRIBUTE
 void __tsan_read_range(void *addr, unsigned long size);  // NOLINT
 SANITIZER_INTERFACE_ATTRIBUTE
 void __tsan_write_range(void *addr, unsigned long size);  // NOLINT
@@ -120,6 +131,10 @@ int __tsan_get_report_loc(void *report, uptr idx, const char **type,
                           void **addr, uptr *start, uptr *size, int *tid,
                           int *fd, int *suppressable, void **trace,
                           uptr trace_size);
+
+SANITIZER_INTERFACE_ATTRIBUTE
+int __tsan_get_report_loc_object_type(void *report, uptr idx,
+                                      const char **object_type);
 
 // Returns information about mutexes included in the report.
 SANITIZER_INTERFACE_ATTRIBUTE

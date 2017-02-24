@@ -14,6 +14,7 @@ set(LLVM_LINK_COMPONENTS
   MC
   ObjCARCOpts
   Object
+  Passes
   ProfileData
   ScalarOpts
   Support
@@ -36,7 +37,6 @@ add_clang_library(clangCodeGen
   CGAtomic.cpp
   CGBlocks.cpp
   CGBuiltin.cpp
-  CGCUDABuiltin.cpp
   CGCUDANV.cpp
   CGCUDARuntime.cpp
   CGCXX.cpp
@@ -55,6 +55,7 @@ add_clang_library(clangCodeGen
   CGExprComplex.cpp
   CGExprConstant.cpp
   CGExprScalar.cpp
+  CGGPUBuiltin.cpp
   CGLoopInfo.cpp
   CGObjC.cpp
   CGObjCGNU.cpp
@@ -77,6 +78,7 @@ add_clang_library(clangCodeGen
   CodeGenTypes.cpp
   CoverageMappingGen.cpp
   ItaniumCXXABI.cpp
+  MacroPPCallbacks.cpp
   MicrosoftCXXABI.cpp
   ModuleBuilder.cpp
   ObjectFilePCHContainerOperations.cpp

@@ -14,10 +14,10 @@
 #include "lldb/Core/FileSpecList.h"
 #include "lldb/Core/ModuleChild.h"
 #include "lldb/Core/PluginInterface.h"
-#include "lldb/Host/Endian.h"
 #include "lldb/Host/FileSpec.h"
 #include "lldb/Symbol/Symtab.h"
 #include "lldb/Symbol/UnwindTable.h"
+#include "lldb/Utility/Endian.h"
 #include "lldb/lldb-private.h"
 
 namespace lldb_private {
@@ -773,6 +773,20 @@ public:
   static lldb::SymbolType GetSymbolTypeFromName(
       llvm::StringRef name,
       lldb::SymbolType symbol_type_hint = lldb::eSymbolTypeUndefined);
+
+  //------------------------------------------------------------------
+  /// Loads this objfile to memory.
+  ///
+  /// Loads the bits needed to create an executable image to the memory.
+  /// It is useful with bare-metal targets where target does not have the
+  /// ability to start a process itself.
+  ///
+  /// @param[in] target
+  ///     Target where to load.
+  ///
+  /// @return
+  //------------------------------------------------------------------
+  virtual Error LoadInMemory(Target &target, bool set_pc);
 
 protected:
   //------------------------------------------------------------------

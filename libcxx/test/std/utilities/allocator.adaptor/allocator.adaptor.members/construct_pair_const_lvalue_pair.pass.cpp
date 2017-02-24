@@ -42,6 +42,7 @@ void test_no_inner_alloc()
         using SA = std::scoped_allocator_adaptor<Alloc>;
         static_assert(std::uses_allocator<T, CountingAllocator<T> >::value, "");
         Pair * ptr = (Pair*)std::malloc(sizeof(Pair));
+        assert(ptr != nullptr);
         Alloc CA(P);
         SA A(CA);
         const PairIn in(x, std::move(y));
@@ -68,6 +69,7 @@ void test_no_inner_alloc()
         using SA = std::scoped_allocator_adaptor<Alloc>;
         static_assert(std::uses_allocator<T, CountingAllocator<T> >::value, "");
         Pair * ptr = (Pair*)std::malloc(sizeof(Pair));
+        assert(ptr != nullptr);
         Alloc CA(P);
         SA A(CA);
         const PairIn in(x, y);
@@ -85,7 +87,6 @@ void test_no_inner_alloc()
 
 void test_with_inner_alloc()
 {
-    using VoidAlloc1 = CountingAllocator<void, 1>;
     using VoidAlloc2 = CountingAllocator<void, 2>;
 
     AllocController POuter;
@@ -104,6 +105,7 @@ void test_with_inner_alloc()
         static_assert(!std::uses_allocator<T, Outer>::value, "");
         static_assert(std::uses_allocator<T, Inner>::value, "");
         Pair * ptr = (Pair*)std::malloc(sizeof(Pair));
+        assert(ptr != nullptr);
         Outer O(POuter);
         Inner I(PInner);
         SA A(O, I);
@@ -134,6 +136,7 @@ void test_with_inner_alloc()
         static_assert(!std::uses_allocator<T, Outer>::value, "");
         static_assert(std::uses_allocator<T, Inner>::value, "");
         Pair * ptr = (Pair*)std::malloc(sizeof(Pair));
+        assert(ptr != nullptr);
         Outer O(POuter);
         Inner I(PInner);
         SA A(O, I);

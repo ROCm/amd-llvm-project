@@ -31,7 +31,6 @@
 #include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/Analysis/LoopInfo.h"
-#include "llvm/Analysis/PostDominators.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
@@ -73,6 +72,11 @@ static cl::opt<bool> PollyGenerateExpressions(
     "polly-codegen-generate-expressions",
     cl::desc("Generate AST expressions for unmodified and modified accesses"),
     cl::Hidden, cl::init(false), cl::ZeroOrMore, cl::cat(PollyCategory));
+
+static cl::opt<int> PollyTargetFirstLevelCacheLineSize(
+    "polly-target-first-level-cache-line-size",
+    cl::desc("The size of the first level cache line size specified in bytes."),
+    cl::Hidden, cl::init(64), cl::ZeroOrMore, cl::cat(PollyCategory));
 
 __isl_give isl_ast_expr *
 IslNodeBuilder::getUpperBound(__isl_keep isl_ast_node *For,
@@ -753,8 +757,6 @@ IslNodeBuilder::createNewAccesses(ScopStmt *Stmt,
     }
     assert(MA->isAffine() &&
            "Only affine memory accesses can be code generated");
-    assert(!MA->getLatestScopArrayInfo()->getBasePtrOriginSAI() &&
-           "Generating new index expressions to indirect arrays not working");
 
     auto Schedule = isl_ast_build_get_schedule(Build);
 
@@ -929,9 +931,8 @@ bool IslNodeBuilder::materializeValue(isl_id *Id) {
           // there is a statement or the domain is not empty Inst is not dead.
           auto MemInst = MemAccInst::dyn_cast(Inst);
           auto Address = MemInst ? MemInst.getPointerOperand() : nullptr;
-          if (Address &&
-              SE.getUnknown(UndefValue::get(Address->getType())) ==
-                  SE.getPointerBase(SE.getSCEV(Address))) {
+          if (Address && SE.getUnknown(UndefValue::get(Address->getType())) ==
+                             SE.getPointerBase(SE.getSCEV(Address))) {
           } else if (S.getStmtFor(Inst)) {
             IsDead = false;
           } else {
@@ -1216,12 +1217,8 @@ bool IslNodeBuilder::preloadInvariantEquivClass(
       }
 
       // For scalar derived SAIs we remap the alloca used for the derived value.
-      if (BasePtr == MA->getAccessInstruction()) {
-        if (DerivedSAI->isPHIKind())
-          PHIOpMap[BasePtr] = Alloca;
-        else
-          ScalarMap[BasePtr] = Alloca;
-      }
+      if (BasePtr == MA->getAccessInstruction())
+        ScalarMap[DerivedSAI] = Alloca;
     }
   }
 
@@ -1269,8 +1266,8 @@ void IslNodeBuilder::allocateNewArrays() {
 
     auto InstIt =
         Builder.GetInsertBlock()->getParent()->getEntryBlock().getTerminator();
-    Value *CreatedArray =
-        new AllocaInst(NewArrayType, SAI->getName(), &*InstIt);
+    auto *CreatedArray = new AllocaInst(NewArrayType, SAI->getName(), &*InstIt);
+    CreatedArray->setAlignment(PollyTargetFirstLevelCacheLineSize);
     SAI->setBasePtr(CreatedArray);
   }
 }

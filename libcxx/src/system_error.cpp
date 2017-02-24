@@ -17,9 +17,9 @@
 #include "cstring"
 #include "cstdio"
 #include "cstdlib"
-#include "cassert"
 #include "string"
 #include "string.h"
+#include "__debug"
 
 #if defined(__ANDROID__)
 #include <android/api-level.h>
@@ -29,9 +29,11 @@ _LIBCPP_BEGIN_NAMESPACE_STD
 
 // class error_category
 
+#if defined(_LIBCPP_DEPRECATED_ABI_LEGACY_LIBRARY_DEFINITIONS_FOR_INLINE_FUNCTIONS)
 error_category::error_category() _NOEXCEPT
 {
 }
+#endif
 
 error_category::~error_category() _NOEXCEPT
 {
@@ -55,6 +57,7 @@ error_category::equivalent(const error_code& code, int condition) const _NOEXCEP
     return *this == code.category() && code.value() == condition;
 }
 
+#if !defined(_LIBCPP_HAS_NO_THREADS)
 namespace {
 
 //  GLIBC also uses 1024 as the maximum buffer size internally.
@@ -62,8 +65,16 @@ constexpr size_t strerror_buff_size = 1024;
 
 string do_strerror_r(int ev);
 
-#if defined(__linux__) && !defined(_LIBCPP_HAS_MUSL_LIBC)                      \
-    && (!defined(__ANDROID__) || __ANDROID_API__ >= 23)
+#if defined(_LIBCPP_MSVCRT)
+string do_strerror_r(int ev) {
+  char buffer[strerror_buff_size];
+  if (::strerror_s(buffer, strerror_buff_size, ev) == 0)
+    return string(buffer);
+  std::snprintf(buffer, strerror_buff_size, "unknown error %d", ev);
+  return string(buffer);
+}
+#elif defined(__linux__) && !defined(_LIBCPP_HAS_MUSL_LIBC) &&                 \
+    (!defined(__ANDROID__) || __ANDROID_API__ >= 23)
 // GNU Extended version
 string do_strerror_r(int ev) {
     char buffer[strerror_buff_size];
@@ -85,7 +96,7 @@ string do_strerror_r(int ev) {
             std::snprintf(buffer, strerror_buff_size, "Unknown error %d", ev);
             return string(buffer);
         } else {
-            assert(new_errno == ERANGE);
+            _LIBCPP_ASSERT(new_errno == ERANGE, "unexpected error from ::strerr_r");
             // FIXME maybe? 'strerror_buff_size' is likely to exceed the
             // maximum error size so ERANGE shouldn't be returned.
             std::abort();
@@ -96,6 +107,7 @@ string do_strerror_r(int ev) {
 #endif
 
 } // end namespace
+#endif
 
 string
 __do_message::message(int ev) const

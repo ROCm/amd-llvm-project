@@ -300,6 +300,24 @@ public:
     return V;
   }
 
+  Value *VisitObjCAvailabilityCheckExpr(ObjCAvailabilityCheckExpr *E) {
+    VersionTuple Version = E->getVersion();
+
+    // If we're checking for a platform older than our minimum deployment
+    // target, we can fold the check away.
+    if (Version <= CGF.CGM.getTarget().getPlatformMinVersion())
+      return llvm::ConstantInt::get(Builder.getInt1Ty(), 1);
+
+    Optional<unsigned> Min = Version.getMinor(), SMin = Version.getSubminor();
+    llvm::Value *Args[] = {
+        llvm::ConstantInt::get(CGF.CGM.Int32Ty, Version.getMajor()),
+        llvm::ConstantInt::get(CGF.CGM.Int32Ty, Min ? *Min : 0),
+        llvm::ConstantInt::get(CGF.CGM.Int32Ty, SMin ? *SMin : 0),
+    };
+
+    return CGF.EmitBuiltinAvailable(Args);
+  }
+
   Value *VisitArraySubscriptExpr(ArraySubscriptExpr *E);
   Value *VisitShuffleVectorExpr(ShuffleVectorExpr *E);
   Value *VisitConvertVectorExpr(ConvertVectorExpr *E);
@@ -1593,6 +1611,11 @@ Value *ScalarExprEmitter::VisitCastExpr(CastExpr *CE) {
     return llvm::Constant::getNullValue(ConvertType(DestTy));
   }
 
+  case CK_ZeroToOCLQueue: {
+    assert(DestTy->isQueueT() && "CK_ZeroToOCLQueue cast on non queue_t type");
+    return llvm::Constant::getNullValue(ConvertType(DestTy));
+  }
+
   case CK_IntToOCLSampler:
     return CGF.CGM.createOpenCLIntToSamplerConversion(E, CGF);
 
@@ -2746,8 +2769,8 @@ Value *ScalarExprEmitter::EmitShl(const BinOpInfo &Ops) {
            isa<llvm::IntegerType>(Ops.LHS->getType())) {
     CodeGenFunction::SanitizerScope SanScope(&CGF);
     SmallVector<std::pair<Value *, SanitizerMask>, 2> Checks;
-    llvm::Value *WidthMinusOne = GetWidthMinusOneValue(Ops.LHS, RHS);
-    llvm::Value *ValidExponent = Builder.CreateICmpULE(RHS, WidthMinusOne);
+    llvm::Value *WidthMinusOne = GetWidthMinusOneValue(Ops.LHS, Ops.RHS);
+    llvm::Value *ValidExponent = Builder.CreateICmpULE(Ops.RHS, WidthMinusOne);
 
     if (SanitizeExponent) {
       Checks.push_back(
@@ -2762,12 +2785,14 @@ Value *ScalarExprEmitter::EmitShl(const BinOpInfo &Ops) {
       llvm::BasicBlock *Cont = CGF.createBasicBlock("cont");
       llvm::BasicBlock *CheckShiftBase = CGF.createBasicBlock("check");
       Builder.CreateCondBr(ValidExponent, CheckShiftBase, Cont);
+      llvm::Value *PromotedWidthMinusOne =
+          (RHS == Ops.RHS) ? WidthMinusOne
+                           : GetWidthMinusOneValue(Ops.LHS, RHS);
       CGF.EmitBlock(CheckShiftBase);
-      llvm::Value *BitsShiftedOff =
-        Builder.CreateLShr(Ops.LHS,
-                           Builder.CreateSub(WidthMinusOne, RHS, "shl.zeros",
-                                             /*NUW*/true, /*NSW*/true),
-                           "shl.check");
+      llvm::Value *BitsShiftedOff = Builder.CreateLShr(
+          Ops.LHS, Builder.CreateSub(PromotedWidthMinusOne, RHS, "shl.zeros",
+                                     /*NUW*/ true, /*NSW*/ true),
+          "shl.check");
       if (CGF.getLangOpts().CPlusPlus) {
         // In C99, we are not permitted to shift a 1 bit into the sign bit.
         // Under C++11's rules, shifting a 1 bit into the sign bit is

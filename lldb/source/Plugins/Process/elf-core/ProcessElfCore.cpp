@@ -27,6 +27,7 @@
 #include "lldb/Target/UnixSignals.h"
 
 #include "llvm/Support/ELF.h"
+#include "llvm/Support/Threading.h"
 
 #include "Plugins/DynamicLoader/POSIX-DYLD/DynamicLoaderPOSIXDYLD.h"
 #include "Plugins/ObjectFile/ELF/ObjectFileELF.h"
@@ -56,6 +57,8 @@ lldb::ProcessSP ProcessElfCore::CreateInstance(lldb::TargetSP target_sp,
   lldb::ProcessSP process_sp;
   if (crash_file) {
     // Read enough data for a ELF32 header or ELF64 header
+    // Note: Here we care about e_type field only, so it is safe
+    // to ignore possible presence of the header extension.
     const size_t header_size = sizeof(llvm::ELF::Elf64_Ehdr);
 
     lldb::DataBufferSP data_sp(crash_file->ReadFileContents(0, header_size));
@@ -398,9 +401,9 @@ void ProcessElfCore::Clear() {
 }
 
 void ProcessElfCore::Initialize() {
-  static std::once_flag g_once_flag;
+  static llvm::once_flag g_once_flag;
 
-  std::call_once(g_once_flag, []() {
+  llvm::call_once(g_once_flag, []() {
     PluginManager::RegisterPlugin(GetPluginNameStatic(),
                                   GetPluginDescriptionStatic(), CreateInstance);
   });

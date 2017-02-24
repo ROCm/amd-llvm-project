@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 //
 // UNSUPPORTED: c++98, c++03, c++11, c++14
+
 // <numeric>
 
 // template<class _M, class _N>
@@ -44,7 +45,7 @@ constexpr bool test0(Input1 in1, Input2 in2, Output out)
 
 
 template <typename Input1, typename Input2 = Input1>
-constexpr bool do_test(int dummy = 0)
+constexpr bool do_test(int = 0)
 {
     using S1 = typename std::make_signed<Input1>::type;
     using S2 = typename std::make_signed<Input2>::type;
@@ -129,4 +130,11 @@ int main()
     assert((do_test<long, int>(non_cce)));
     assert((do_test<int, long long>(non_cce)));
     assert((do_test<long long, int>(non_cce)));
+
+//  LWG#2837
+    {
+        auto res = std::gcd((int64_t)1234, (int32_t)-2147483648);
+        static_assert( std::is_same<decltype(res), std::common_type<int64_t, int32_t>::type>::value, "");
+        assert(res == 2);
+    }
 }

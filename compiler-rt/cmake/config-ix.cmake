@@ -31,6 +31,7 @@ check_cxx_compiler_flag(-fno-lto             COMPILER_RT_HAS_FNO_LTO_FLAG)
 check_cxx_compiler_flag("-Werror -msse3" COMPILER_RT_HAS_MSSE3_FLAG)
 check_cxx_compiler_flag("-Werror -msse4.2"   COMPILER_RT_HAS_MSSE4_2_FLAG)
 check_cxx_compiler_flag(--sysroot=.          COMPILER_RT_HAS_SYSROOT_FLAG)
+check_cxx_compiler_flag("-Werror -mcrc"      COMPILER_RT_HAS_MCRC_FLAG)
 
 if(NOT WIN32 AND NOT CYGWIN)
   # MinGW warns if -fvisibility-inlines-hidden is used.
@@ -57,6 +58,7 @@ check_cxx_compiler_flag("-Werror -Wgnu"                COMPILER_RT_HAS_WGNU_FLAG
 check_cxx_compiler_flag("-Werror -Wnon-virtual-dtor"   COMPILER_RT_HAS_WNON_VIRTUAL_DTOR_FLAG)
 check_cxx_compiler_flag("-Werror -Wvariadic-macros"    COMPILER_RT_HAS_WVARIADIC_MACROS_FLAG)
 check_cxx_compiler_flag("-Werror -Wunused-parameter"   COMPILER_RT_HAS_WUNUSED_PARAMETER_FLAG)
+check_cxx_compiler_flag("-Werror -Wcovered-switch-default" COMPILER_RT_HAS_WCOVERED_SWITCH_DEFAULT_FLAG)
 
 check_cxx_compiler_flag(/W4 COMPILER_RT_HAS_W4_FLAG)
 check_cxx_compiler_flag(/WX COMPILER_RT_HAS_WX_FLAG)
@@ -162,7 +164,15 @@ set(ALL_SANITIZER_COMMON_SUPPORTED_ARCH ${X86} ${X86_64} ${PPC64}
 set(ALL_ASAN_SUPPORTED_ARCH ${X86} ${X86_64} ${ARM32} ${ARM64}
     ${MIPS32} ${MIPS64} ${PPC64} ${S390X})
 set(ALL_DFSAN_SUPPORTED_ARCH ${X86_64} ${MIPS64} ${ARM64})
-set(ALL_LSAN_SUPPORTED_ARCH ${X86_64} ${MIPS64} ${ARM64})
+
+# Darwin does not support 32-bit thread-local storage on ios versions
+# below 9.0. Until the min ios version is bumped to 9.0, lsan will
+# not build for 32-bit darwin targets.
+if(APPLE)
+  set(ALL_LSAN_SUPPORTED_ARCH ${X86_64} ${ARM64})
+else()
+  set(ALL_LSAN_SUPPORTED_ARCH ${X86} ${X86_64} ${MIPS64} ${ARM64})
+endif()
 set(ALL_MSAN_SUPPORTED_ARCH ${X86_64} ${MIPS64} ${ARM64} ${PPC64})
 set(ALL_PROFILE_SUPPORTED_ARCH ${X86} ${X86_64} ${ARM32} ${ARM64} ${PPC64}
     ${MIPS32} ${MIPS64} ${S390X})
@@ -172,8 +182,8 @@ set(ALL_UBSAN_SUPPORTED_ARCH ${X86} ${X86_64} ${ARM32} ${ARM64}
 set(ALL_SAFESTACK_SUPPORTED_ARCH ${X86} ${X86_64} ${ARM64} ${MIPS32} ${MIPS64})
 set(ALL_CFI_SUPPORTED_ARCH ${X86} ${X86_64} ${MIPS64})
 set(ALL_ESAN_SUPPORTED_ARCH ${X86_64} ${MIPS64})
-set(ALL_SCUDO_SUPPORTED_ARCH ${X86} ${X86_64} ${ARM32})
-set(ALL_XRAY_SUPPORTED_ARCH ${X86_64} ${ARM32} ${ARM64})
+set(ALL_SCUDO_SUPPORTED_ARCH ${X86} ${X86_64} ${ARM32} ${ARM64})
+set(ALL_XRAY_SUPPORTED_ARCH ${X86_64} ${ARM32} ${ARM64} ${MIPS32} ${MIPS64} powerpc64le)
 
 if(APPLE)
   include(CompilerRTDarwinUtils)
@@ -241,26 +251,26 @@ if(APPLE)
   set(CMAKE_OSX_DEPLOYMENT_TARGET "")
   
   set(DARWIN_COMMON_CFLAGS -stdlib=libc++)
-  set(DARWIN_COMMON_LINKFLAGS
+  set(DARWIN_COMMON_LINK_FLAGS
     -stdlib=libc++
     -lc++
     -lc++abi)
   
   check_linker_flag("-fapplication-extension" COMPILER_RT_HAS_APP_EXTENSION)
   if(COMPILER_RT_HAS_APP_EXTENSION)
-    list(APPEND DARWIN_COMMON_LINKFLAGS "-fapplication-extension")
+    list(APPEND DARWIN_COMMON_LINK_FLAGS "-fapplication-extension")
   endif()
 
   set(DARWIN_osx_CFLAGS
     ${DARWIN_COMMON_CFLAGS}
     -mmacosx-version-min=${SANITIZER_MIN_OSX_VERSION})
-  set(DARWIN_osx_LINKFLAGS
-    ${DARWIN_COMMON_LINKFLAGS}
+  set(DARWIN_osx_LINK_FLAGS
+    ${DARWIN_COMMON_LINK_FLAGS}
     -mmacosx-version-min=${SANITIZER_MIN_OSX_VERSION})
 
   if(DARWIN_osx_SYSROOT)
     list(APPEND DARWIN_osx_CFLAGS -isysroot ${DARWIN_osx_SYSROOT})
-    list(APPEND DARWIN_osx_LINKFLAGS -isysroot ${DARWIN_osx_SYSROOT})
+    list(APPEND DARWIN_osx_LINK_FLAGS -isysroot ${DARWIN_osx_SYSROOT})
   endif()
 
   # Figure out which arches to use for each OS
@@ -283,8 +293,8 @@ if(APPLE)
           ${DARWIN_COMMON_CFLAGS}
           ${DARWIN_${platform}_SANITIZER_MIN_VER_FLAG}
           -isysroot ${DARWIN_${platform}sim_SYSROOT})
-        set(DARWIN_${platform}sim_LINKFLAGS
-          ${DARWIN_COMMON_LINKFLAGS}
+        set(DARWIN_${platform}sim_LINK_FLAGS
+          ${DARWIN_COMMON_LINK_FLAGS}
           ${DARWIN_${platform}_SANITIZER_MIN_VER_FLAG}
           -isysroot ${DARWIN_${platform}sim_SYSROOT})
 
@@ -311,8 +321,8 @@ if(APPLE)
           ${DARWIN_COMMON_CFLAGS}
           ${DARWIN_${platform}_SANITIZER_MIN_VER_FLAG}
           -isysroot ${DARWIN_${platform}_SYSROOT})
-        set(DARWIN_${platform}_LINKFLAGS
-          ${DARWIN_COMMON_LINKFLAGS}
+        set(DARWIN_${platform}_LINK_FLAGS
+          ${DARWIN_COMMON_LINK_FLAGS}
           ${DARWIN_${platform}_SANITIZER_MIN_VER_FLAG}
           -isysroot ${DARWIN_${platform}_SYSROOT})
 
@@ -475,6 +485,13 @@ else()
   set(COMPILER_RT_HAS_LSAN FALSE)
 endif()
 
+if(APPLE)
+  option(COMPILER_RT_ENABLE_LSAN_OSX "Enable building LSan for OS X - Experimental" Off)
+  if(COMPILER_RT_ENABLE_LSAN_OSX)
+    set(COMPILER_RT_HAS_LSAN TRUE)
+  endif()
+endif()
+
 if (COMPILER_RT_HAS_SANITIZER_COMMON AND MSAN_SUPPORTED_ARCH AND
     OS_NAME MATCHES "Linux")
   set(COMPILER_RT_HAS_MSAN TRUE)
@@ -483,21 +500,21 @@ else()
 endif()
 
 if (PROFILE_SUPPORTED_ARCH AND NOT LLVM_USE_SANITIZER AND
-    OS_NAME MATCHES "Darwin|Linux|FreeBSD|Windows")
+    OS_NAME MATCHES "Darwin|Linux|FreeBSD|Windows|Android")
   set(COMPILER_RT_HAS_PROFILE TRUE)
 else()
   set(COMPILER_RT_HAS_PROFILE FALSE)
 endif()
 
 if (COMPILER_RT_HAS_SANITIZER_COMMON AND TSAN_SUPPORTED_ARCH AND
-    OS_NAME MATCHES "Darwin|Linux|FreeBSD")
+    OS_NAME MATCHES "Darwin|Linux|FreeBSD|Android")
   set(COMPILER_RT_HAS_TSAN TRUE)
 else()
   set(COMPILER_RT_HAS_TSAN FALSE)
 endif()
 
 if (COMPILER_RT_HAS_SANITIZER_COMMON AND UBSAN_SUPPORTED_ARCH AND
-    OS_NAME MATCHES "Darwin|Linux|FreeBSD|Windows")
+    OS_NAME MATCHES "Darwin|Linux|FreeBSD|Windows|Android")
   set(COMPILER_RT_HAS_UBSAN TRUE)
 else()
   set(COMPILER_RT_HAS_UBSAN FALSE)

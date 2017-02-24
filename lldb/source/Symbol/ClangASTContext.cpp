@@ -14,7 +14,7 @@
 
 // C Includes
 // C++ Includes
-#include <mutex> // std::once
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -65,16 +65,17 @@
 #endif
 
 #include "llvm/Support/Signals.h"
+#include "llvm/Support/Threading.h"
 
 #include "Plugins/ExpressionParser/Clang/ClangFunctionCaller.h"
 #include "Plugins/ExpressionParser/Clang/ClangUserExpression.h"
 #include "Plugins/ExpressionParser/Clang/ClangUtilityFunction.h"
 #include "lldb/Core/ArchSpec.h"
-#include "lldb/Core/Flags.h"
+#include "lldb/Utility/Flags.h"
+
 #include "lldb/Core/Log.h"
 #include "lldb/Core/Module.h"
 #include "lldb/Core/PluginManager.h"
-#include "lldb/Core/RegularExpression.h"
 #include "lldb/Core/Scalar.h"
 #include "lldb/Core/StreamFile.h"
 #include "lldb/Core/ThreadSafeDenseMap.h"
@@ -93,6 +94,7 @@
 #include "lldb/Target/Process.h"
 #include "lldb/Target/Target.h"
 #include "lldb/Utility/LLDBAssert.h"
+#include "lldb/Utility/RegularExpression.h"
 
 #include "Plugins/SymbolFile/DWARF/DWARFASTParserClang.h"
 #include "Plugins/SymbolFile/PDB/PDBASTParser.h"
@@ -127,8 +129,8 @@ typedef lldb_private::ThreadSafeDenseMap<clang::ASTContext *, ClangASTContext *>
 
 static ClangASTMap &GetASTMap() {
   static ClangASTMap *g_map_ptr = nullptr;
-  static std::once_flag g_once_flag;
-  std::call_once(g_once_flag, []() {
+  static llvm::once_flag g_once_flag;
+  llvm::call_once(g_once_flag, []() {
     g_map_ptr = new ClangASTMap(); // leaked on purpose to avoid spins
   });
   return *g_map_ptr;
@@ -390,7 +392,7 @@ static void ParseLangArgs(LangOptions &Opts, InputKind IK, const char *triple) {
     case IK_AST:
     case IK_LLVM_IR:
     case IK_RenderScript:
-      assert(!"Invalid input kind!");
+      llvm_unreachable("Invalid input kind!");
     case IK_OpenCL:
       LangStd = LangStandard::lang_opencl;
       break;
@@ -954,8 +956,8 @@ ClangASTContext::GetBasicTypeEnumeration(const ConstString &name) {
   if (name) {
     typedef UniqueCStringMap<lldb::BasicType> TypeNameToBasicTypeMap;
     static TypeNameToBasicTypeMap g_type_map;
-    static std::once_flag g_once_flag;
-    std::call_once(g_once_flag, []() {
+    static llvm::once_flag g_once_flag;
+    llvm::call_once(g_once_flag, []() {
       // "void"
       g_type_map.Append(ConstString("void").GetStringRef(), eBasicTypeVoid);
 
@@ -1528,8 +1530,7 @@ ClassTemplateDecl *ClangASTContext::CreateClassTemplateDecl(
       *ast,
       decl_ctx, // What decl context do we use here? TU? The actual decl
                 // context?
-      SourceLocation(), decl_name, template_param_list, template_cxx_decl,
-      nullptr);
+      SourceLocation(), decl_name, template_param_list, template_cxx_decl);
 
   if (class_template_decl) {
     if (access_type != eAccessNone)
@@ -2119,7 +2120,7 @@ CompilerType ClangASTContext::CreateStructForIdentifier(
   if (!type_name.IsEmpty() &&
       (type = GetTypeForIdentifier<clang::CXXRecordDecl>(type_name))
           .IsValid()) {
-    lldbassert("Trying to create a type for an existing name");
+    lldbassert(0 && "Trying to create a type for an existing name");
     return type;
   }
 
@@ -4315,6 +4316,8 @@ ClangASTContext::GetTypeClass(lldb::opaque_compiler_type_t type) {
     break;
   case clang::Type::TemplateSpecialization:
     break;
+  case clang::Type::DeducedTemplateSpecialization:
+    break;
   case clang::Type::Atomic:
     break;
   case clang::Type::Pipe:
@@ -5040,7 +5043,6 @@ lldb::Encoding ClangASTContext::GetEncoding(lldb::opaque_compiler_type_t type,
     case clang::BuiltinType::Kind::OCLImage3dWO:
     case clang::BuiltinType::Kind::OCLImage3dRW:
     case clang::BuiltinType::Kind::OCLQueue:
-    case clang::BuiltinType::Kind::OCLNDRange:
     case clang::BuiltinType::Kind::OCLReserveID:
     case clang::BuiltinType::Kind::OCLSampler:
     case clang::BuiltinType::Kind::OMPArraySection:
@@ -5124,6 +5126,7 @@ lldb::Encoding ClangASTContext::GetEncoding(lldb::opaque_compiler_type_t type,
   case clang::Type::TypeOf:
   case clang::Type::Decltype:
   case clang::Type::TemplateSpecialization:
+  case clang::Type::DeducedTemplateSpecialization:
   case clang::Type::Atomic:
   case clang::Type::Adjusted:
   case clang::Type::Pipe:
@@ -5273,6 +5276,7 @@ lldb::Format ClangASTContext::GetFormat(lldb::opaque_compiler_type_t type) {
   case clang::Type::TypeOf:
   case clang::Type::Decltype:
   case clang::Type::TemplateSpecialization:
+  case clang::Type::DeducedTemplateSpecialization:
   case clang::Type::Atomic:
   case clang::Type::Adjusted:
   case clang::Type::Pipe:
@@ -6752,43 +6756,42 @@ CompilerType ClangASTContext::GetChildCompilerTypeAtIndex(
     }
     break;
 
-  case clang::Type::Pointer:
-    if (idx_is_valid) {
-      CompilerType pointee_clang_type(GetPointeeType(type));
+  case clang::Type::Pointer: {
+    CompilerType pointee_clang_type(GetPointeeType(type));
 
-      // Don't dereference "void *" pointers
-      if (pointee_clang_type.IsVoidType())
-        return CompilerType();
+    // Don't dereference "void *" pointers
+    if (pointee_clang_type.IsVoidType())
+      return CompilerType();
 
-      if (transparent_pointers && pointee_clang_type.IsAggregateType()) {
-        child_is_deref_of_parent = false;
-        bool tmp_child_is_deref_of_parent = false;
-        return pointee_clang_type.GetChildCompilerTypeAtIndex(
-            exe_ctx, idx, transparent_pointers, omit_empty_base_classes,
-            ignore_array_bounds, child_name, child_byte_size, child_byte_offset,
-            child_bitfield_bit_size, child_bitfield_bit_offset,
-            child_is_base_class, tmp_child_is_deref_of_parent, valobj,
-            language_flags);
-      } else {
-        child_is_deref_of_parent = true;
+    if (transparent_pointers && pointee_clang_type.IsAggregateType()) {
+      child_is_deref_of_parent = false;
+      bool tmp_child_is_deref_of_parent = false;
+      return pointee_clang_type.GetChildCompilerTypeAtIndex(
+          exe_ctx, idx, transparent_pointers, omit_empty_base_classes,
+          ignore_array_bounds, child_name, child_byte_size, child_byte_offset,
+          child_bitfield_bit_size, child_bitfield_bit_offset,
+          child_is_base_class, tmp_child_is_deref_of_parent, valobj,
+          language_flags);
+    } else {
+      child_is_deref_of_parent = true;
 
-        const char *parent_name =
-            valobj ? valobj->GetName().GetCString() : NULL;
-        if (parent_name) {
-          child_name.assign(1, '*');
-          child_name += parent_name;
-        }
+      const char *parent_name =
+          valobj ? valobj->GetName().GetCString() : NULL;
+      if (parent_name) {
+        child_name.assign(1, '*');
+        child_name += parent_name;
+      }
 
-        // We have a pointer to an simple type
-        if (idx == 0) {
-          child_byte_size = pointee_clang_type.GetByteSize(
-              exe_ctx ? exe_ctx->GetBestExecutionContextScope() : NULL);
-          child_byte_offset = 0;
-          return pointee_clang_type;
-        }
+      // We have a pointer to an simple type
+      if (idx == 0) {
+        child_byte_size = pointee_clang_type.GetByteSize(
+            exe_ctx ? exe_ctx->GetBestExecutionContextScope() : NULL);
+        child_byte_offset = 0;
+        return pointee_clang_type;
       }
     }
     break;
+  }
 
   case clang::Type::LValueReference:
   case clang::Type::RValueReference:
@@ -7568,8 +7571,7 @@ ClangASTContext::GetTemplateArgument(lldb::opaque_compiler_type_t type,
             return CompilerType();
 
           default:
-            assert(!"Unhandled clang::TemplateArgument::ArgKind");
-            break;
+            llvm_unreachable("Unhandled clang::TemplateArgument::ArgKind");
           }
         }
       }

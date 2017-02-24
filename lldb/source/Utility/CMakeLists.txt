@@ -1,19 +1,25 @@
 add_lldb_library(lldbUtility
-  ARM_DWARF_Registers.cpp
-  ARM64_DWARF_Registers.cpp
-  ConvertEnum.cpp
+  ConstString.cpp
+  Error.cpp
   JSON.cpp
   LLDBAssert.cpp
-  ModuleCache.cpp
   NameMatches.cpp
-  PseudoTerminal.cpp
   Range.cpp
-  RegisterNumber.cpp
+  RegularExpression.cpp
   SelectHelper.cpp
   SharingPtr.cpp
+  Stream.cpp
+  StreamString.cpp
   StringExtractor.cpp
   StringExtractorGDBRemote.cpp
   StringLexer.cpp
   TaskPool.cpp
   UriParser.cpp
+  VASprintf.cpp
+
+  LINK_LIBS
+  # lldbUtility cannot have any dependencies
+
+  LINK_COMPONENTS
+    Support
   )

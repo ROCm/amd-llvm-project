@@ -43,8 +43,20 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     set(LLVM_INCLUDE_DIR ${INCLUDE_DIR} CACHE PATH "Path to llvm/include")
     set(LLVM_BINARY_DIR ${LLVM_OBJ_ROOT} CACHE PATH "Path to LLVM build tree")
     set(LLVM_MAIN_SRC_DIR ${MAIN_SRC_DIR} CACHE PATH "Path to LLVM source tree")
-    set(LLVM_CMAKE_PATH "${LLVM_BINARY_DIR}/lib${LLVM_LIBDIR_SUFFIX}/cmake/llvm")
     set(LLVM_LIT_PATH "${LLVM_PATH}/utils/lit/lit.py")
+
+    # --cmakedir is supported since llvm r291218 (4.0 release)
+    execute_process(
+      COMMAND ${LLVM_CONFIG_PATH} --cmakedir
+      RESULT_VARIABLE HAD_ERROR
+      OUTPUT_VARIABLE CONFIG_OUTPUT
+      ERROR_QUIET)
+    if(NOT HAD_ERROR)
+      string(STRIP "${CONFIG_OUTPUT}" LLVM_CMAKE_PATH)
+    else()
+      set(LLVM_CMAKE_PATH
+          "${LLVM_BINARY_DIR}/lib${LLVM_LIBDIR_SUFFIX}/cmake/llvm")
+    endif()
   else()
     message(FATAL_ERROR "llvm-config not found and LLVM_MAIN_SRC_DIR not defined. "
                         "Reconfigure with -DLLVM_CONFIG=path/to/llvm-config "
@@ -60,7 +72,7 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   endif()
 
   set(PACKAGE_NAME libunwind)
-  set(PACKAGE_VERSION 4.0.0svn)
+  set(PACKAGE_VERSION 5.0.0svn)
   set(PACKAGE_STRING "${PACKAGE_NAME} ${PACKAGE_VERSION}")
   set(PACKAGE_BUGREPORT "llvm-bugs@lists.llvm.org")
 
@@ -269,5 +281,25 @@ endif()
 #===============================================================================
 
 include_directories(include)
+
+find_path(
+  LIBUNWIND_LIBCXX_INCLUDES_INTERNAL
+  __libcpp_version
+  PATHS ${LLVM_MAIN_SRC_DIR}/projects/libcxx/include
+        ${LLVM_MAIN_SRC_DIR}/runtimes/libcxx/include
+  NO_DEFAULT_PATH
+)
+if ((NOT LIBUNWIND_STANDALONE_BUILD OR HAVE_LIBCXX) AND
+    IS_DIRECTORY "${LIBUNWIND_LIBCXX_INCLUDES_INTERNAL}")
+  set(LIBUNWIND_CXX_INCLUDE_PATHS_DEFAULT "${LIBUNWIND_LIBCXX_INCLUDES_INTERNAL}")
+endif()
+
+set(LIBUNWIND_CXX_INCLUDE_PATHS "${LIBUNWIND_CXX_INCLUDE_PATHS_DEFAULT}" CACHE PATH
+    "Paths to C++ header directories separated by ';'.")
+
+if (NOT LIBUNWIND_CXX_INCLUDE_PATHS STREQUAL "")
+  list(APPEND LIBUNWIND_CXX_FLAGS -nostdinc++)
+  include_directories("${LIBUNWIND_CXX_INCLUDE_PATHS}")
+endif()
 
 add_subdirectory(src)

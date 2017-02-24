@@ -14,15 +14,15 @@
 #include "lldb/Core/DataBufferHeap.h"
 #include "lldb/Core/DataExtractor.h"
 #include "lldb/Core/Disassembler.h"
-#include "lldb/Core/Error.h"
 #include "lldb/Core/FormatEntity.h"
 #include "lldb/Core/Log.h"
 #include "lldb/Core/PluginManager.h"
-#include "lldb/Core/StreamString.h"
 #include "lldb/Target/ExecutionContext.h"
 #include "lldb/Target/Process.h"
 #include "lldb/Target/Target.h"
 #include "lldb/Target/Thread.h"
+#include "lldb/Utility/Error.h"
+#include "lldb/Utility/StreamString.h"
 
 using namespace lldb;
 using namespace lldb_private;
@@ -442,15 +442,14 @@ size_t UnwindAssemblyInstEmulation::WriteMemory(
   case EmulateInstruction::eContextPushRegisterOnStack: {
     uint32_t reg_num = LLDB_INVALID_REGNUM;
     uint32_t generic_regnum = LLDB_INVALID_REGNUM;
-    if (context.info_type ==
-        EmulateInstruction::eInfoTypeRegisterToRegisterPlusOffset) {
-      const uint32_t unwind_reg_kind = m_unwind_plan_ptr->GetRegisterKind();
-      reg_num = context.info.RegisterToRegisterPlusOffset.data_reg
-                    .kinds[unwind_reg_kind];
-      generic_regnum = context.info.RegisterToRegisterPlusOffset.data_reg
-                           .kinds[eRegisterKindGeneric];
-    } else
-      assert(!"unhandled case, add code to handle this!");
+    assert(context.info_type ==
+               EmulateInstruction::eInfoTypeRegisterToRegisterPlusOffset &&
+           "unhandled case, add code to handle this!");
+    const uint32_t unwind_reg_kind = m_unwind_plan_ptr->GetRegisterKind();
+    reg_num = context.info.RegisterToRegisterPlusOffset.data_reg
+                  .kinds[unwind_reg_kind];
+    generic_regnum = context.info.RegisterToRegisterPlusOffset.data_reg
+                         .kinds[eRegisterKindGeneric];
 
     if (reg_num != LLDB_INVALID_REGNUM &&
         generic_regnum != LLDB_REGNUM_GENERIC_SP) {

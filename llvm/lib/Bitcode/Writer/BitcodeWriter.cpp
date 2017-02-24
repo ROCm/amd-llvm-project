@@ -38,6 +38,11 @@
 using namespace llvm;
 
 namespace {
+
+cl::opt<unsigned>
+    IndexThreshold("bitcode-mdindex-threshold", cl::Hidden, cl::init(25),
+                   cl::desc("Number of metadatas above which we emit an index "
+                            "to enable lazy-loading"));
 /// These are manifest constants used by the bitcode writer. They do not need to
 /// be kept in sync with the reader, but need to be consistent within this file.
 enum {
@@ -224,7 +229,9 @@ private:
   void writeMetadataStrings(ArrayRef<const Metadata *> Strings,
                             SmallVectorImpl<uint64_t> &Record);
   void writeMetadataRecords(ArrayRef<const Metadata *> MDs,
-                            SmallVectorImpl<uint64_t> &Record);
+                            SmallVectorImpl<uint64_t> &Record,
+                            std::vector<unsigned> *MDAbbrevs = nullptr,
+                            std::vector<uint64_t> *IndexPos = nullptr);
   void writeModuleMetadata();
   void writeFunctionMetadata(const Function &F);
   void writeFunctionMetadataAttachment(const Function &F);
@@ -777,53 +784,53 @@ void ModuleBitcodeWriter::writeTypeTable() {
   uint64_t NumBits = VE.computeBitsRequiredForTypeIndicies();
 
   // Abbrev for TYPE_CODE_POINTER.
-  BitCodeAbbrev *Abbv = new BitCodeAbbrev();
+  auto Abbv = std::make_shared<BitCodeAbbrev>();
   Abbv->Add(BitCodeAbbrevOp(bitc::TYPE_CODE_POINTER));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, NumBits));
   Abbv->Add(BitCodeAbbrevOp(0));  // Addrspace = 0
-  unsigned PtrAbbrev = Stream.EmitAbbrev(Abbv);
+  unsigned PtrAbbrev = Stream.EmitAbbrev(std::move(Abbv));
 
   // Abbrev for TYPE_CODE_FUNCTION.
-  Abbv = new BitCodeAbbrev();
+  Abbv = std::make_shared<BitCodeAbbrev>();
   Abbv->Add(BitCodeAbbrevOp(bitc::TYPE_CODE_FUNCTION));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1));  // isvararg
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Array));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, NumBits));
 
-  unsigned FunctionAbbrev = Stream.EmitAbbrev(Abbv);
+  unsigned FunctionAbbrev = Stream.EmitAbbrev(std::move(Abbv));
 
   // Abbrev for TYPE_CODE_STRUCT_ANON.
-  Abbv = new BitCodeAbbrev();
+  Abbv = std::make_shared<BitCodeAbbrev>();
   Abbv->Add(BitCodeAbbrevOp(bitc::TYPE_CODE_STRUCT_ANON));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1));  // ispacked
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Array));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, NumBits));
 
-  unsigned StructAnonAbbrev = Stream.EmitAbbrev(Abbv);
+  unsigned StructAnonAbbrev = Stream.EmitAbbrev(std::move(Abbv));
 
   // Abbrev for TYPE_CODE_STRUCT_NAME.
-  Abbv = new BitCodeAbbrev();
+  Abbv = std::make_shared<BitCodeAbbrev>();
   Abbv->Add(BitCodeAbbrevOp(bitc::TYPE_CODE_STRUCT_NAME));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Array));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Char6));
-  unsigned StructNameAbbrev = Stream.EmitAbbrev(Abbv);
+  unsigned StructNameAbbrev = Stream.EmitAbbrev(std::move(Abbv));
 
   // Abbrev for TYPE_CODE_STRUCT_NAMED.
-  Abbv = new BitCodeAbbrev();
+  Abbv = std::make_shared<BitCodeAbbrev>();
   Abbv->Add(BitCodeAbbrevOp(bitc::TYPE_CODE_STRUCT_NAMED));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1));  // ispacked
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Array));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, NumBits));
 
-  unsigned StructNamedAbbrev = Stream.EmitAbbrev(Abbv);
+  unsigned StructNamedAbbrev = Stream.EmitAbbrev(std::move(Abbv));
 
   // Abbrev for TYPE_CODE_ARRAY.
-  Abbv = new BitCodeAbbrev();
+  Abbv = std::make_shared<BitCodeAbbrev>();
   Abbv->Add(BitCodeAbbrevOp(bitc::TYPE_CODE_ARRAY));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));   // size
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, NumBits));
 
-  unsigned ArrayAbbrev = Stream.EmitAbbrev(Abbv);
+  unsigned ArrayAbbrev = Stream.EmitAbbrev(std::move(Abbv));
 
   // Emit an entry count so the reader can reserve space.
   TypeVals.push_back(TypeList.size());
@@ -964,9 +971,8 @@ static unsigned getEncodedLinkage(const GlobalValue &GV) {
 static uint64_t getEncodedGVSummaryFlags(GlobalValueSummary::GVFlags Flags) {
   uint64_t RawFlags = 0;
 
-  RawFlags |= Flags.NoRename; // bool
-  RawFlags |= (Flags.IsNotViableToInline << 1);
-  RawFlags |= (Flags.HasInlineAsmMaybeReferencingInternal << 2);
+  RawFlags |= Flags.NotEligibleToImport; // bool
+  RawFlags |= (Flags.LiveRoot << 1);
   // Linkage don't need to be remapped at that time for the summary. Any future
   // change to the getEncodedLinkage() function will need to be taken into
   // account here as well.
@@ -1052,13 +1058,13 @@ void BitcodeWriterBase::writeValueSymbolTableForwardDecl() {
   // which is written after the function blocks so that it can include
   // the offset of each function. The placeholder offset will be
   // updated when the real VST is written.
-  BitCodeAbbrev *Abbv = new BitCodeAbbrev();
+  auto Abbv = std::make_shared<BitCodeAbbrev>();
   Abbv->Add(BitCodeAbbrevOp(bitc::MODULE_CODE_VSTOFFSET));
   // Blocks are 32-bit aligned, so we can use a 32-bit word offset to
   // hold the real VST offset. Must use fixed instead of VBR as we don't
   // know how many VBR chunks to reserve ahead of time.
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 32));
-  unsigned VSTOffsetAbbrev = Stream.EmitAbbrev(Abbv);
+  unsigned VSTOffsetAbbrev = Stream.EmitAbbrev(std::move(Abbv));
 
   // Emit the placeholder
   uint64_t Vals[] = {bitc::MODULE_CODE_VSTOFFSET, 0};
@@ -1148,7 +1154,7 @@ void ModuleBitcodeWriter::writeModuleInfo() {
   unsigned SimpleGVarAbbrev = 0;
   if (!M.global_empty()) {
     // Add an abbrev for common globals with no visibility or thread localness.
-    BitCodeAbbrev *Abbv = new BitCodeAbbrev();
+    auto Abbv = std::make_shared<BitCodeAbbrev>();
     Abbv->Add(BitCodeAbbrevOp(bitc::MODULE_CODE_GLOBALVAR));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed,
                               Log2_32_Ceil(MaxGlobalType+1)));
@@ -1170,7 +1176,7 @@ void ModuleBitcodeWriter::writeModuleInfo() {
       Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed,
                                Log2_32_Ceil(SectionMap.size()+1)));
     // Don't bother emitting vis + thread local.
-    SimpleGVarAbbrev = Stream.EmitAbbrev(Abbv);
+    SimpleGVarAbbrev = Stream.EmitAbbrev(std::move(Abbv));
   }
 
   // Emit the global variable information.
@@ -1278,11 +1284,11 @@ void ModuleBitcodeWriter::writeModuleInfo() {
       AbbrevOpToUse = BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 7);
 
     // MODULE_CODE_SOURCE_FILENAME: [namechar x N]
-    BitCodeAbbrev *Abbv = new BitCodeAbbrev();
+    auto Abbv = std::make_shared<BitCodeAbbrev>();
     Abbv->Add(BitCodeAbbrevOp(bitc::MODULE_CODE_SOURCE_FILENAME));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Array));
     Abbv->Add(AbbrevOpToUse);
-    unsigned FilenameAbbrev = Stream.EmitAbbrev(Abbv);
+    unsigned FilenameAbbrev = Stream.EmitAbbrev(std::move(Abbv));
 
     for (const auto P : M.getSourceFileName())
       Vals.push_back((unsigned char)P);
@@ -1353,14 +1359,14 @@ void ModuleBitcodeWriter::writeMDTuple(const MDTuple *N,
 unsigned ModuleBitcodeWriter::createDILocationAbbrev() {
   // Assume the column is usually under 128, and always output the inlined-at
   // location (it's never more expensive than building an array size 1).
-  BitCodeAbbrev *Abbv = new BitCodeAbbrev();
+  auto Abbv = std::make_shared<BitCodeAbbrev>();
   Abbv->Add(BitCodeAbbrevOp(bitc::METADATA_LOCATION));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6));
-  return Stream.EmitAbbrev(Abbv);
+  return Stream.EmitAbbrev(std::move(Abbv));
 }
 
 void ModuleBitcodeWriter::writeDILocation(const DILocation *N,
@@ -1382,7 +1388,7 @@ void ModuleBitcodeWriter::writeDILocation(const DILocation *N,
 unsigned ModuleBitcodeWriter::createGenericDINodeAbbrev() {
   // Assume the column is usually under 128, and always output the inlined-at
   // location (it's never more expensive than building an array size 1).
-  BitCodeAbbrev *Abbv = new BitCodeAbbrev();
+  auto Abbv = std::make_shared<BitCodeAbbrev>();
   Abbv->Add(BitCodeAbbrevOp(bitc::METADATA_GENERIC_DEBUG));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6));
@@ -1390,7 +1396,7 @@ unsigned ModuleBitcodeWriter::createGenericDINodeAbbrev() {
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Array));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6));
-  return Stream.EmitAbbrev(Abbv);
+  return Stream.EmitAbbrev(std::move(Abbv));
 }
 
 void ModuleBitcodeWriter::writeGenericDINode(const GenericDINode *N,
@@ -1515,6 +1521,8 @@ void ModuleBitcodeWriter::writeDIFile(const DIFile *N,
   Record.push_back(N->isDistinct());
   Record.push_back(VE.getMetadataOrNullID(N->getRawFilename()));
   Record.push_back(VE.getMetadataOrNullID(N->getRawDirectory()));
+  Record.push_back(N->getChecksumKind());
+  Record.push_back(VE.getMetadataOrNullID(N->getRawChecksum()));
 
   Stream.EmitRecord(bitc::METADATA_FILE, Record, Abbrev);
   Record.clear();
@@ -1541,6 +1549,7 @@ void ModuleBitcodeWriter::writeDICompileUnit(const DICompileUnit *N,
   Record.push_back(N->getDWOId());
   Record.push_back(VE.getMetadataOrNullID(N->getMacros().get()));
   Record.push_back(N->getSplitDebugInlining());
+  Record.push_back(N->getDebugInfoForProfiling());
 
   Stream.EmitRecord(bitc::METADATA_COMPILE_UNIT, Record, Abbrev);
   Record.clear();
@@ -1781,11 +1790,11 @@ void ModuleBitcodeWriter::writeDIImportedEntity(
 }
 
 unsigned ModuleBitcodeWriter::createNamedMetadataAbbrev() {
-  BitCodeAbbrev *Abbv = new BitCodeAbbrev();
+  auto Abbv = std::make_shared<BitCodeAbbrev>();
   Abbv->Add(BitCodeAbbrevOp(bitc::METADATA_NAME));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Array));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 8));
-  return Stream.EmitAbbrev(Abbv);
+  return Stream.EmitAbbrev(std::move(Abbv));
 }
 
 void ModuleBitcodeWriter::writeNamedMetadata(
@@ -1810,12 +1819,12 @@ void ModuleBitcodeWriter::writeNamedMetadata(
 }
 
 unsigned ModuleBitcodeWriter::createMetadataStringsAbbrev() {
-  BitCodeAbbrev *Abbv = new BitCodeAbbrev();
+  auto Abbv = std::make_shared<BitCodeAbbrev>();
   Abbv->Add(BitCodeAbbrevOp(bitc::METADATA_STRINGS));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6)); // # of strings
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6)); // offset to chars
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Blob));
-  return Stream.EmitAbbrev(Abbv);
+  return Stream.EmitAbbrev(std::move(Abbv));
 }
 
 /// Write out a record for MDString.
@@ -1852,8 +1861,16 @@ void ModuleBitcodeWriter::writeMetadataStrings(
   Record.clear();
 }
 
+// Generates an enum to use as an index in the Abbrev array of Metadata record.
+enum MetadataAbbrev : unsigned {
+#define HANDLE_MDNODE_LEAF(CLASS) CLASS##AbbrevID,
+#include "llvm/IR/Metadata.def"
+  LastPlusOne
+};
+
 void ModuleBitcodeWriter::writeMetadataRecords(
-    ArrayRef<const Metadata *> MDs, SmallVectorImpl<uint64_t> &Record) {
+    ArrayRef<const Metadata *> MDs, SmallVectorImpl<uint64_t> &Record,
+    std::vector<unsigned> *MDAbbrevs, std::vector<uint64_t> *IndexPos) {
   if (MDs.empty())
     return;
 
@@ -1862,6 +1879,8 @@ void ModuleBitcodeWriter::writeMetadataRecords(
 #include "llvm/IR/Metadata.def"
 
   for (const Metadata *MD : MDs) {
+    if (IndexPos)
+      IndexPos->push_back(Stream.GetCurrentBitNo());
     if (const MDNode *N = dyn_cast<MDNode>(MD)) {
       assert(N->isResolved() && "Expected forward references to be resolved");
 
@@ -1870,7 +1889,11 @@ void ModuleBitcodeWriter::writeMetadataRecords(
         llvm_unreachable("Invalid MDNode subclass");
 #define HANDLE_MDNODE_LEAF(CLASS)                                              \
   case Metadata::CLASS##Kind:                                                  \
-    write##CLASS(cast<CLASS>(N), Record, CLASS##Abbrev);                       \
+    if (MDAbbrevs)                                                             \
+      write##CLASS(cast<CLASS>(N), Record,                                     \
+                   (*MDAbbrevs)[MetadataAbbrev::CLASS##AbbrevID]);             \
+    else                                                                       \
+      write##CLASS(cast<CLASS>(N), Record, CLASS##Abbrev);                     \
     continue;
 #include "llvm/IR/Metadata.def"
       }
@@ -1883,10 +1906,77 @@ void ModuleBitcodeWriter::writeModuleMetadata() {
   if (!VE.hasMDs() && M.named_metadata_empty())
     return;
 
-  Stream.EnterSubblock(bitc::METADATA_BLOCK_ID, 3);
+  Stream.EnterSubblock(bitc::METADATA_BLOCK_ID, 4);
   SmallVector<uint64_t, 64> Record;
+
+  // Emit all abbrevs upfront, so that the reader can jump in the middle of the
+  // block and load any metadata.
+  std::vector<unsigned> MDAbbrevs;
+
+  MDAbbrevs.resize(MetadataAbbrev::LastPlusOne);
+  MDAbbrevs[MetadataAbbrev::DILocationAbbrevID] = createDILocationAbbrev();
+  MDAbbrevs[MetadataAbbrev::GenericDINodeAbbrevID] =
+      createGenericDINodeAbbrev();
+
+  auto Abbv = std::make_shared<BitCodeAbbrev>();
+  Abbv->Add(BitCodeAbbrevOp(bitc::METADATA_INDEX_OFFSET));
+  Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 32));
+  Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 32));
+  unsigned OffsetAbbrev = Stream.EmitAbbrev(std::move(Abbv));
+
+  Abbv = std::make_shared<BitCodeAbbrev>();
+  Abbv->Add(BitCodeAbbrevOp(bitc::METADATA_INDEX));
+  Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Array));
+  Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6));
+  unsigned IndexAbbrev = Stream.EmitAbbrev(std::move(Abbv));
+
+  // Emit MDStrings together upfront.
   writeMetadataStrings(VE.getMDStrings(), Record);
-  writeMetadataRecords(VE.getNonMDStrings(), Record);
+
+  // We only emit an index for the metadata record if we have more than a given
+  // (naive) threshold of metadatas, otherwise it is not worth it.
+  if (VE.getNonMDStrings().size() > IndexThreshold) {
+    // Write a placeholder value in for the offset of the metadata index,
+    // which is written after the records, so that it can include
+    // the offset of each entry. The placeholder offset will be
+    // updated after all records are emitted.
+    uint64_t Vals[] = {0, 0};
+    Stream.EmitRecord(bitc::METADATA_INDEX_OFFSET, Vals, OffsetAbbrev);
+  }
+
+  // Compute and save the bit offset to the current position, which will be
+  // patched when we emit the index later. We can simply subtract the 64-bit
+  // fixed size from the current bit number to get the location to backpatch.
+  uint64_t IndexOffsetRecordBitPos = Stream.GetCurrentBitNo();
+
+  // This index will contain the bitpos for each individual record.
+  std::vector<uint64_t> IndexPos;
+  IndexPos.reserve(VE.getNonMDStrings().size());
+
+  // Write all the records
+  writeMetadataRecords(VE.getNonMDStrings(), Record, &MDAbbrevs, &IndexPos);
+
+  if (VE.getNonMDStrings().size() > IndexThreshold) {
+    // Now that we have emitted all the records we will emit the index. But
+    // first
+    // backpatch the forward reference so that the reader can skip the records
+    // efficiently.
+    Stream.BackpatchWord64(IndexOffsetRecordBitPos - 64,
+                           Stream.GetCurrentBitNo() - IndexOffsetRecordBitPos);
+
+    // Delta encode the index.
+    uint64_t PreviousValue = IndexOffsetRecordBitPos;
+    for (auto &Elt : IndexPos) {
+      auto EltDelta = Elt - PreviousValue;
+      PreviousValue = Elt;
+      Elt = EltDelta;
+    }
+    // Emit the index record.
+    Stream.EmitRecord(bitc::METADATA_INDEX, IndexPos, IndexAbbrev);
+    IndexPos.clear();
+  }
+
+  // Write the named metadata now.
   writeNamedMetadata(Record);
 
   auto AddDeclAttachedMetadata = [&](const GlobalObject &GO) {
@@ -2035,30 +2125,30 @@ void ModuleBitcodeWriter::writeConstants(unsigned FirstVal, unsigned LastVal,
   // If this is a constant pool for the module, emit module-specific abbrevs.
   if (isGlobal) {
     // Abbrev for CST_CODE_AGGREGATE.
-    BitCodeAbbrev *Abbv = new BitCodeAbbrev();
+    auto Abbv = std::make_shared<BitCodeAbbrev>();
     Abbv->Add(BitCodeAbbrevOp(bitc::CST_CODE_AGGREGATE));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Array));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, Log2_32_Ceil(LastVal+1)));
-    AggregateAbbrev = Stream.EmitAbbrev(Abbv);
+    AggregateAbbrev = Stream.EmitAbbrev(std::move(Abbv));
 
     // Abbrev for CST_CODE_STRING.
-    Abbv = new BitCodeAbbrev();
+    Abbv = std::make_shared<BitCodeAbbrev>();
     Abbv->Add(BitCodeAbbrevOp(bitc::CST_CODE_STRING));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Array));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 8));
-    String8Abbrev = Stream.EmitAbbrev(Abbv);
+    String8Abbrev = Stream.EmitAbbrev(std::move(Abbv));
     // Abbrev for CST_CODE_CSTRING.
-    Abbv = new BitCodeAbbrev();
+    Abbv = std::make_shared<BitCodeAbbrev>();
     Abbv->Add(BitCodeAbbrevOp(bitc::CST_CODE_CSTRING));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Array));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 7));
-    CString7Abbrev = Stream.EmitAbbrev(Abbv);
+    CString7Abbrev = Stream.EmitAbbrev(std::move(Abbv));
     // Abbrev for CST_CODE_CSTRING.
-    Abbv = new BitCodeAbbrev();
+    Abbv = std::make_shared<BitCodeAbbrev>();
     Abbv->Add(BitCodeAbbrevOp(bitc::CST_CODE_CSTRING));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Array));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Char6));
-    CString6Abbrev = Stream.EmitAbbrev(Abbv);
+    CString6Abbrev = Stream.EmitAbbrev(std::move(Abbv));
   }
 
   SmallVector<uint64_t, 64> Record;
@@ -2768,39 +2858,39 @@ void ModuleBitcodeWriter::writeValueSymbolTable(
   unsigned GUIDEntryAbbrev;
   if (IsModuleLevel && hasVSTOffsetPlaceholder()) {
     // 8-bit fixed-width VST_CODE_FNENTRY function strings.
-    BitCodeAbbrev *Abbv = new BitCodeAbbrev();
+    auto Abbv = std::make_shared<BitCodeAbbrev>();
     Abbv->Add(BitCodeAbbrevOp(bitc::VST_CODE_FNENTRY));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8)); // value id
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8)); // funcoffset
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Array));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 8));
-    FnEntry8BitAbbrev = Stream.EmitAbbrev(Abbv);
+    FnEntry8BitAbbrev = Stream.EmitAbbrev(std::move(Abbv));
 
     // 7-bit fixed width VST_CODE_FNENTRY function strings.
-    Abbv = new BitCodeAbbrev();
+    Abbv = std::make_shared<BitCodeAbbrev>();
     Abbv->Add(BitCodeAbbrevOp(bitc::VST_CODE_FNENTRY));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8)); // value id
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8)); // funcoffset
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Array));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 7));
-    FnEntry7BitAbbrev = Stream.EmitAbbrev(Abbv);
+    FnEntry7BitAbbrev = Stream.EmitAbbrev(std::move(Abbv));
 
     // 6-bit char6 VST_CODE_FNENTRY function strings.
-    Abbv = new BitCodeAbbrev();
+    Abbv = std::make_shared<BitCodeAbbrev>();
     Abbv->Add(BitCodeAbbrevOp(bitc::VST_CODE_FNENTRY));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8)); // value id
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8)); // funcoffset
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Array));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Char6));
-    FnEntry6BitAbbrev = Stream.EmitAbbrev(Abbv);
+    FnEntry6BitAbbrev = Stream.EmitAbbrev(std::move(Abbv));
 
     // FIXME: Change the name of this record as it is now used by
     // the per-module index as well.
-    Abbv = new BitCodeAbbrev();
+    Abbv = std::make_shared<BitCodeAbbrev>();
     Abbv->Add(BitCodeAbbrevOp(bitc::VST_CODE_COMBINED_ENTRY));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8)); // valueid
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8)); // refguid
-    GUIDEntryAbbrev = Stream.EmitAbbrev(Abbv);
+    GUIDEntryAbbrev = Stream.EmitAbbrev(std::move(Abbv));
   }
 
   // FIXME: Set up the abbrev, we know how many values there are!
@@ -2894,11 +2984,11 @@ void IndexBitcodeWriter::writeCombinedValueSymbolTable() {
 
   Stream.EnterSubblock(bitc::VALUE_SYMTAB_BLOCK_ID, 4);
 
-  BitCodeAbbrev *Abbv = new BitCodeAbbrev();
+  auto Abbv = std::make_shared<BitCodeAbbrev>();
   Abbv->Add(BitCodeAbbrevOp(bitc::VST_CODE_COMBINED_ENTRY));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8)); // valueid
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8)); // refguid
-  unsigned EntryAbbrev = Stream.EmitAbbrev(Abbv);
+  unsigned EntryAbbrev = Stream.EmitAbbrev(std::move(Abbv));
 
   SmallVector<uint64_t, 64> NameVals;
   for (const auto &GVI : valueIds()) {
@@ -3031,7 +3121,7 @@ void ModuleBitcodeWriter::writeBlockInfo() {
   Stream.EnterBlockInfoBlock();
 
   { // 8-bit fixed-width VST_CODE_ENTRY/VST_CODE_BBENTRY strings.
-    BitCodeAbbrev *Abbv = new BitCodeAbbrev();
+    auto Abbv = std::make_shared<BitCodeAbbrev>();
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 3));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Array));
@@ -3042,7 +3132,7 @@ void ModuleBitcodeWriter::writeBlockInfo() {
   }
 
   { // 7-bit fixed width VST_CODE_ENTRY strings.
-    BitCodeAbbrev *Abbv = new BitCodeAbbrev();
+    auto Abbv = std::make_shared<BitCodeAbbrev>();
     Abbv->Add(BitCodeAbbrevOp(bitc::VST_CODE_ENTRY));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Array));
@@ -3052,7 +3142,7 @@ void ModuleBitcodeWriter::writeBlockInfo() {
       llvm_unreachable("Unexpected abbrev ordering!");
   }
   { // 6-bit char6 VST_CODE_ENTRY strings.
-    BitCodeAbbrev *Abbv = new BitCodeAbbrev();
+    auto Abbv = std::make_shared<BitCodeAbbrev>();
     Abbv->Add(BitCodeAbbrevOp(bitc::VST_CODE_ENTRY));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Array));
@@ -3062,7 +3152,7 @@ void ModuleBitcodeWriter::writeBlockInfo() {
       llvm_unreachable("Unexpected abbrev ordering!");
   }
   { // 6-bit char6 VST_CODE_BBENTRY strings.
-    BitCodeAbbrev *Abbv = new BitCodeAbbrev();
+    auto Abbv = std::make_shared<BitCodeAbbrev>();
     Abbv->Add(BitCodeAbbrevOp(bitc::VST_CODE_BBENTRY));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Array));
@@ -3075,7 +3165,7 @@ void ModuleBitcodeWriter::writeBlockInfo() {
 
 
   { // SETTYPE abbrev for CONSTANTS_BLOCK.
-    BitCodeAbbrev *Abbv = new BitCodeAbbrev();
+    auto Abbv = std::make_shared<BitCodeAbbrev>();
     Abbv->Add(BitCodeAbbrevOp(bitc::CST_CODE_SETTYPE));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed,
                               VE.computeBitsRequiredForTypeIndicies()));
@@ -3085,7 +3175,7 @@ void ModuleBitcodeWriter::writeBlockInfo() {
   }
 
   { // INTEGER abbrev for CONSTANTS_BLOCK.
-    BitCodeAbbrev *Abbv = new BitCodeAbbrev();
+    auto Abbv = std::make_shared<BitCodeAbbrev>();
     Abbv->Add(BitCodeAbbrevOp(bitc::CST_CODE_INTEGER));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));
     if (Stream.EmitBlockInfoAbbrev(bitc::CONSTANTS_BLOCK_ID, Abbv) !=
@@ -3094,7 +3184,7 @@ void ModuleBitcodeWriter::writeBlockInfo() {
   }
 
   { // CE_CAST abbrev for CONSTANTS_BLOCK.
-    BitCodeAbbrev *Abbv = new BitCodeAbbrev();
+    auto Abbv = std::make_shared<BitCodeAbbrev>();
     Abbv->Add(BitCodeAbbrevOp(bitc::CST_CODE_CE_CAST));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 4));  // cast opc
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed,       // typeid
@@ -3106,7 +3196,7 @@ void ModuleBitcodeWriter::writeBlockInfo() {
       llvm_unreachable("Unexpected abbrev ordering!");
   }
   { // NULL abbrev for CONSTANTS_BLOCK.
-    BitCodeAbbrev *Abbv = new BitCodeAbbrev();
+    auto Abbv = std::make_shared<BitCodeAbbrev>();
     Abbv->Add(BitCodeAbbrevOp(bitc::CST_CODE_NULL));
     if (Stream.EmitBlockInfoAbbrev(bitc::CONSTANTS_BLOCK_ID, Abbv) !=
         CONSTANTS_NULL_Abbrev)
@@ -3116,7 +3206,7 @@ void ModuleBitcodeWriter::writeBlockInfo() {
   // FIXME: This should only use space for first class types!
 
   { // INST_LOAD abbrev for FUNCTION_BLOCK.
-    BitCodeAbbrev *Abbv = new BitCodeAbbrev();
+    auto Abbv = std::make_shared<BitCodeAbbrev>();
     Abbv->Add(BitCodeAbbrevOp(bitc::FUNC_CODE_INST_LOAD));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6)); // Ptr
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed,    // dest ty
@@ -3128,7 +3218,7 @@ void ModuleBitcodeWriter::writeBlockInfo() {
       llvm_unreachable("Unexpected abbrev ordering!");
   }
   { // INST_BINOP abbrev for FUNCTION_BLOCK.
-    BitCodeAbbrev *Abbv = new BitCodeAbbrev();
+    auto Abbv = std::make_shared<BitCodeAbbrev>();
     Abbv->Add(BitCodeAbbrevOp(bitc::FUNC_CODE_INST_BINOP));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6)); // LHS
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6)); // RHS
@@ -3138,7 +3228,7 @@ void ModuleBitcodeWriter::writeBlockInfo() {
       llvm_unreachable("Unexpected abbrev ordering!");
   }
   { // INST_BINOP_FLAGS abbrev for FUNCTION_BLOCK.
-    BitCodeAbbrev *Abbv = new BitCodeAbbrev();
+    auto Abbv = std::make_shared<BitCodeAbbrev>();
     Abbv->Add(BitCodeAbbrevOp(bitc::FUNC_CODE_INST_BINOP));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6)); // LHS
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6)); // RHS
@@ -3149,7 +3239,7 @@ void ModuleBitcodeWriter::writeBlockInfo() {
       llvm_unreachable("Unexpected abbrev ordering!");
   }
   { // INST_CAST abbrev for FUNCTION_BLOCK.
-    BitCodeAbbrev *Abbv = new BitCodeAbbrev();
+    auto Abbv = std::make_shared<BitCodeAbbrev>();
     Abbv->Add(BitCodeAbbrevOp(bitc::FUNC_CODE_INST_CAST));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6));    // OpVal
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed,       // dest ty
@@ -3161,14 +3251,14 @@ void ModuleBitcodeWriter::writeBlockInfo() {
   }
 
   { // INST_RET abbrev for FUNCTION_BLOCK.
-    BitCodeAbbrev *Abbv = new BitCodeAbbrev();
+    auto Abbv = std::make_shared<BitCodeAbbrev>();
     Abbv->Add(BitCodeAbbrevOp(bitc::FUNC_CODE_INST_RET));
     if (Stream.EmitBlockInfoAbbrev(bitc::FUNCTION_BLOCK_ID, Abbv) !=
         FUNCTION_INST_RET_VOID_ABBREV)
       llvm_unreachable("Unexpected abbrev ordering!");
   }
   { // INST_RET abbrev for FUNCTION_BLOCK.
-    BitCodeAbbrev *Abbv = new BitCodeAbbrev();
+    auto Abbv = std::make_shared<BitCodeAbbrev>();
     Abbv->Add(BitCodeAbbrevOp(bitc::FUNC_CODE_INST_RET));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6)); // ValID
     if (Stream.EmitBlockInfoAbbrev(bitc::FUNCTION_BLOCK_ID, Abbv) !=
@@ -3176,14 +3266,14 @@ void ModuleBitcodeWriter::writeBlockInfo() {
       llvm_unreachable("Unexpected abbrev ordering!");
   }
   { // INST_UNREACHABLE abbrev for FUNCTION_BLOCK.
-    BitCodeAbbrev *Abbv = new BitCodeAbbrev();
+    auto Abbv = std::make_shared<BitCodeAbbrev>();
     Abbv->Add(BitCodeAbbrevOp(bitc::FUNC_CODE_INST_UNREACHABLE));
     if (Stream.EmitBlockInfoAbbrev(bitc::FUNCTION_BLOCK_ID, Abbv) !=
         FUNCTION_INST_UNREACHABLE_ABBREV)
       llvm_unreachable("Unexpected abbrev ordering!");
   }
   {
-    BitCodeAbbrev *Abbv = new BitCodeAbbrev();
+    auto Abbv = std::make_shared<BitCodeAbbrev>();
     Abbv->Add(BitCodeAbbrevOp(bitc::FUNC_CODE_INST_GEP));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1));
     Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, // dest ty
@@ -3206,38 +3296,38 @@ void IndexBitcodeWriter::writeModStrings() {
   // TODO: See which abbrev sizes we actually need to emit
 
   // 8-bit fixed-width MST_ENTRY strings.
-  BitCodeAbbrev *Abbv = new BitCodeAbbrev();
+  auto Abbv = std::make_shared<BitCodeAbbrev>();
   Abbv->Add(BitCodeAbbrevOp(bitc::MST_CODE_ENTRY));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Array));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 8));
-  unsigned Abbrev8Bit = Stream.EmitAbbrev(Abbv);
+  unsigned Abbrev8Bit = Stream.EmitAbbrev(std::move(Abbv));
 
   // 7-bit fixed width MST_ENTRY strings.
-  Abbv = new BitCodeAbbrev();
+  Abbv = std::make_shared<BitCodeAbbrev>();
   Abbv->Add(BitCodeAbbrevOp(bitc::MST_CODE_ENTRY));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Array));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 7));
-  unsigned Abbrev7Bit = Stream.EmitAbbrev(Abbv);
+  unsigned Abbrev7Bit = Stream.EmitAbbrev(std::move(Abbv));
 
   // 6-bit char6 MST_ENTRY strings.
-  Abbv = new BitCodeAbbrev();
+  Abbv = std::make_shared<BitCodeAbbrev>();
   Abbv->Add(BitCodeAbbrevOp(bitc::MST_CODE_ENTRY));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Array));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Char6));
-  unsigned Abbrev6Bit = Stream.EmitAbbrev(Abbv);
+  unsigned Abbrev6Bit = Stream.EmitAbbrev(std::move(Abbv));
 
   // Module Hash, 160 bits SHA1. Optionally, emitted after each MST_CODE_ENTRY.
-  Abbv = new BitCodeAbbrev();
+  Abbv = std::make_shared<BitCodeAbbrev>();
   Abbv->Add(BitCodeAbbrevOp(bitc::MST_CODE_HASH));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 32));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 32));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 32));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 32));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 32));
-  unsigned AbbrevHash = Stream.EmitAbbrev(Abbv);
+  unsigned AbbrevHash = Stream.EmitAbbrev(std::move(Abbv));
 
   SmallVector<unsigned, 64> Vals;
   for (const auto &MPSE : Index.modulePaths()) {
@@ -3278,6 +3368,49 @@ void IndexBitcodeWriter::writeModStrings() {
   Stream.ExitBlock();
 }
 
+/// Write the function type metadata related records that need to appear before
+/// a function summary entry (whether per-module or combined).
+static void writeFunctionTypeMetadataRecords(BitstreamWriter &Stream,
+                                             FunctionSummary *FS) {
+  if (!FS->type_tests().empty())
+    Stream.EmitRecord(bitc::FS_TYPE_TESTS, FS->type_tests());
+
+  SmallVector<uint64_t, 64> Record;
+
+  auto WriteVFuncIdVec = [&](uint64_t Ty,
+                             ArrayRef<FunctionSummary::VFuncId> VFs) {
+    if (VFs.empty())
+      return;
+    Record.clear();
+    for (auto &VF : VFs) {
+      Record.push_back(VF.GUID);
+      Record.push_back(VF.Offset);
+    }
+    Stream.EmitRecord(Ty, Record);
+  };
+
+  WriteVFuncIdVec(bitc::FS_TYPE_TEST_ASSUME_VCALLS,
+                  FS->type_test_assume_vcalls());
+  WriteVFuncIdVec(bitc::FS_TYPE_CHECKED_LOAD_VCALLS,
+                  FS->type_checked_load_vcalls());
+
+  auto WriteConstVCallVec = [&](uint64_t Ty,
+                                ArrayRef<FunctionSummary::ConstVCall> VCs) {
+    for (auto &VC : VCs) {
+      Record.clear();
+      Record.push_back(VC.VFunc.GUID);
+      Record.push_back(VC.VFunc.Offset);
+      Record.insert(Record.end(), VC.Args.begin(), VC.Args.end());
+      Stream.EmitRecord(Ty, Record);
+    }
+  };
+
+  WriteConstVCallVec(bitc::FS_TYPE_TEST_ASSUME_CONST_VCALL,
+                     FS->type_test_assume_const_vcalls());
+  WriteConstVCallVec(bitc::FS_TYPE_CHECKED_LOAD_CONST_VCALL,
+                     FS->type_checked_load_const_vcalls());
+}
+
 // Helper to emit a single function summary record.
 void ModuleBitcodeWriter::writePerModuleFunctionSummaryRecord(
     SmallVector<uint64_t, 64> &NameVals, GlobalValueSummary *Summary,
@@ -3286,6 +3419,8 @@ void ModuleBitcodeWriter::writePerModuleFunctionSummaryRecord(
   NameVals.push_back(ValueID);
 
   FunctionSummary *FS = cast<FunctionSummary>(Summary);
+  writeFunctionTypeMetadataRecords(Stream, FS);
+
   NameVals.push_back(getEncodedGVSummaryFlags(FS->flags()));
   NameVals.push_back(FS->instCount());
   NameVals.push_back(FS->refs().size());
@@ -3342,7 +3477,7 @@ void ModuleBitcodeWriter::writeModuleLevelReferences(
 // Current version for the summary.
 // This is bumped whenever we introduce changes in the way some record are
 // interpreted, like flags for instance.
-static const uint64_t INDEX_VERSION = 2;
+static const uint64_t INDEX_VERSION = 3;
 
 /// Emit the per-module summary section alongside the rest of
 /// the module's bitcode.
@@ -3357,7 +3492,7 @@ void ModuleBitcodeWriter::writePerModuleGlobalValueSummary() {
   }
 
   // Abbrev for FS_PERMODULE.
-  BitCodeAbbrev *Abbv = new BitCodeAbbrev();
+  auto Abbv = std::make_shared<BitCodeAbbrev>();
   Abbv->Add(BitCodeAbbrevOp(bitc::FS_PERMODULE));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));   // valueid
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6));   // flags
@@ -3366,10 +3501,10 @@ void ModuleBitcodeWriter::writePerModuleGlobalValueSummary() {
   // numrefs x valueid, n x (valueid)
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Array));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));
-  unsigned FSCallsAbbrev = Stream.EmitAbbrev(Abbv);
+  unsigned FSCallsAbbrev = Stream.EmitAbbrev(std::move(Abbv));
 
   // Abbrev for FS_PERMODULE_PROFILE.
-  Abbv = new BitCodeAbbrev();
+  Abbv = std::make_shared<BitCodeAbbrev>();
   Abbv->Add(BitCodeAbbrevOp(bitc::FS_PERMODULE_PROFILE));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));   // valueid
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6));   // flags
@@ -3378,24 +3513,24 @@ void ModuleBitcodeWriter::writePerModuleGlobalValueSummary() {
   // numrefs x valueid, n x (valueid, hotness)
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Array));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));
-  unsigned FSCallsProfileAbbrev = Stream.EmitAbbrev(Abbv);
+  unsigned FSCallsProfileAbbrev = Stream.EmitAbbrev(std::move(Abbv));
 
   // Abbrev for FS_PERMODULE_GLOBALVAR_INIT_REFS.
-  Abbv = new BitCodeAbbrev();
+  Abbv = std::make_shared<BitCodeAbbrev>();
   Abbv->Add(BitCodeAbbrevOp(bitc::FS_PERMODULE_GLOBALVAR_INIT_REFS));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8)); // valueid
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6)); // flags
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Array));  // valueids
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));
-  unsigned FSModRefsAbbrev = Stream.EmitAbbrev(Abbv);
+  unsigned FSModRefsAbbrev = Stream.EmitAbbrev(std::move(Abbv));
 
   // Abbrev for FS_ALIAS.
-  Abbv = new BitCodeAbbrev();
+  Abbv = std::make_shared<BitCodeAbbrev>();
   Abbv->Add(BitCodeAbbrevOp(bitc::FS_ALIAS));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));   // valueid
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6));   // flags
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));   // valueid
-  unsigned FSAliasAbbrev = Stream.EmitAbbrev(Abbv);
+  unsigned FSAliasAbbrev = Stream.EmitAbbrev(std::move(Abbv));
 
   SmallVector<uint64_t, 64> NameVals;
   // Iterate over the list of functions instead of the Index to
@@ -3449,7 +3584,7 @@ void IndexBitcodeWriter::writeCombinedGlobalValueSummary() {
   Stream.EmitRecord(bitc::FS_VERSION, ArrayRef<uint64_t>{INDEX_VERSION});
 
   // Abbrev for FS_COMBINED.
-  BitCodeAbbrev *Abbv = new BitCodeAbbrev();
+  auto Abbv = std::make_shared<BitCodeAbbrev>();
   Abbv->Add(BitCodeAbbrevOp(bitc::FS_COMBINED));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));   // valueid
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));   // modid
@@ -3459,10 +3594,10 @@ void IndexBitcodeWriter::writeCombinedGlobalValueSummary() {
   // numrefs x valueid, n x (valueid)
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Array));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));
-  unsigned FSCallsAbbrev = Stream.EmitAbbrev(Abbv);
+  unsigned FSCallsAbbrev = Stream.EmitAbbrev(std::move(Abbv));
 
   // Abbrev for FS_COMBINED_PROFILE.
-  Abbv = new BitCodeAbbrev();
+  Abbv = std::make_shared<BitCodeAbbrev>();
   Abbv->Add(BitCodeAbbrevOp(bitc::FS_COMBINED_PROFILE));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));   // valueid
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));   // modid
@@ -3472,26 +3607,26 @@ void IndexBitcodeWriter::writeCombinedGlobalValueSummary() {
   // numrefs x valueid, n x (valueid, hotness)
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Array));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));
-  unsigned FSCallsProfileAbbrev = Stream.EmitAbbrev(Abbv);
+  unsigned FSCallsProfileAbbrev = Stream.EmitAbbrev(std::move(Abbv));
 
   // Abbrev for FS_COMBINED_GLOBALVAR_INIT_REFS.
-  Abbv = new BitCodeAbbrev();
+  Abbv = std::make_shared<BitCodeAbbrev>();
   Abbv->Add(BitCodeAbbrevOp(bitc::FS_COMBINED_GLOBALVAR_INIT_REFS));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));   // valueid
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));   // modid
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6));   // flags
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Array));    // valueids
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));
-  unsigned FSModRefsAbbrev = Stream.EmitAbbrev(Abbv);
+  unsigned FSModRefsAbbrev = Stream.EmitAbbrev(std::move(Abbv));
 
   // Abbrev for FS_COMBINED_ALIAS.
-  Abbv = new BitCodeAbbrev();
+  Abbv = std::make_shared<BitCodeAbbrev>();
   Abbv->Add(BitCodeAbbrevOp(bitc::FS_COMBINED_ALIAS));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));   // valueid
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));   // modid
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6));   // flags
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));   // valueid
-  unsigned FSAliasAbbrev = Stream.EmitAbbrev(Abbv);
+  unsigned FSAliasAbbrev = Stream.EmitAbbrev(std::move(Abbv));
 
   // The aliases are emitted as a post-pass, and will point to the value
   // id of the aliasee. Save them in a vector for post-processing.
@@ -3544,6 +3679,8 @@ void IndexBitcodeWriter::writeCombinedGlobalValueSummary() {
     }
 
     auto *FS = cast<FunctionSummary>(S);
+    writeFunctionTypeMetadataRecords(Stream, FS);
+
     NameVals.push_back(ValueId);
     NameVals.push_back(Index.getModuleId(FS->modulePath()));
     NameVals.push_back(getEncodedGVSummaryFlags(FS->flags()));
@@ -3602,23 +3739,23 @@ void IndexBitcodeWriter::writeCombinedGlobalValueSummary() {
 
 /// Create the "IDENTIFICATION_BLOCK_ID" containing a single string with the
 /// current llvm version, and a record for the epoch number.
-void writeIdentificationBlock(BitstreamWriter &Stream) {
+static void writeIdentificationBlock(BitstreamWriter &Stream) {
   Stream.EnterSubblock(bitc::IDENTIFICATION_BLOCK_ID, 5);
 
   // Write the "user readable" string identifying the bitcode producer
-  BitCodeAbbrev *Abbv = new BitCodeAbbrev();
+  auto Abbv = std::make_shared<BitCodeAbbrev>();
   Abbv->Add(BitCodeAbbrevOp(bitc::IDENTIFICATION_CODE_STRING));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Array));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Char6));
-  auto StringAbbrev = Stream.EmitAbbrev(Abbv);
+  auto StringAbbrev = Stream.EmitAbbrev(std::move(Abbv));
   writeStringRecord(Stream, bitc::IDENTIFICATION_CODE_STRING,
                     "LLVM" LLVM_VERSION_STRING, StringAbbrev);
 
   // Write the epoch version
-  Abbv = new BitCodeAbbrev();
+  Abbv = std::make_shared<BitCodeAbbrev>();
   Abbv->Add(BitCodeAbbrevOp(bitc::IDENTIFICATION_CODE_EPOCH));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6));
-  auto EpochAbbrev = Stream.EmitAbbrev(Abbv);
+  auto EpochAbbrev = Stream.EmitAbbrev(std::move(Abbv));
   SmallVector<unsigned, 1> Vals = {bitc::BITCODE_CURRENT_EPOCH};
   Stream.EmitRecord(bitc::IDENTIFICATION_CODE_EPOCH, Vals, EpochAbbrev);
   Stream.ExitBlock();

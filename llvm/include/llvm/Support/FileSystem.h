@@ -27,7 +27,6 @@
 #ifndef LLVM_SUPPORT_FILESYSTEM_H
 #define LLVM_SUPPORT_FILESYSTEM_H
 
-#include "llvm/ADT/IntrusiveRefCntPtr.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
@@ -37,6 +36,7 @@
 #include <cassert>
 #include <cstdint>
 #include <ctime>
+#include <memory>
 #include <stack>
 #include <string>
 #include <system_error>
@@ -357,6 +357,13 @@ std::error_code create_hard_link(const Twine &to, const Twine &from);
 ///          otherwise a platform-specific error_code.
 std::error_code current_path(SmallVectorImpl<char> &result);
 
+/// @brief Set the current path.
+///
+/// @param path The path to set.
+/// @returns errc::success if the current path was successfully set,
+///          otherwise a platform-specific error_code.
+std::error_code set_current_path(const Twine &path);
+
 /// @brief Remove path. Equivalent to POSIX remove().
 ///
 /// @param path Input path.
@@ -455,6 +462,32 @@ std::error_code equivalent(const Twine &A, const Twine &B, bool &result);
 inline bool equivalent(const Twine &A, const Twine &B) {
   bool result;
   return !equivalent(A, B, result) && result;
+}
+
+/// @brief Is the file mounted on a local filesystem?
+///
+/// @param path Input path.
+/// @param result Set to true if \a path is on fixed media such as a hard disk,
+///               false if it is not.
+/// @returns errc::success if result has been successfully set, otherwise a
+///          platform specific error_code.
+std::error_code is_local(const Twine &path, bool &result);
+
+/// @brief Version of is_local accepting an open file descriptor.
+std::error_code is_local(int FD, bool &result);
+
+/// @brief Simpler version of is_local for clients that don't need to
+///        differentiate between an error and false.
+inline bool is_local(const Twine &Path) {
+  bool Result;
+  return !is_local(Path, Result) && Result;
+}
+
+/// @brief Simpler version of is_local accepting an open file descriptor for
+///        clients that don't need to differentiate between an error and false.
+inline bool is_local(int FD) {
+  bool Result;
+  return !is_local(FD, Result) && Result;
 }
 
 /// @brief Does status represent a directory?
@@ -769,17 +802,13 @@ namespace detail {
   std::error_code directory_iterator_increment(DirIterState &);
   std::error_code directory_iterator_destruct(DirIterState &);
 
-  /// DirIterState - Keeps state for the directory_iterator. It is reference
-  /// counted in order to preserve InputIterator semantics on copy.
-  struct DirIterState : public RefCountedBase<DirIterState> {
-    DirIterState()
-      : IterationHandle(0) {}
-
+  /// Keeps state for the directory_iterator.
+  struct DirIterState {
     ~DirIterState() {
       directory_iterator_destruct(*this);
     }
 
-    intptr_t IterationHandle;
+    intptr_t IterationHandle = 0;
     directory_entry CurrentEntry;
   };
 } // end namespace detail
@@ -788,23 +817,23 @@ namespace detail {
 /// operator++ because we need an error_code. If it's really needed we can make
 /// it call report_fatal_error on error.
 class directory_iterator {
-  IntrusiveRefCntPtr<detail::DirIterState> State;
+  std::shared_ptr<detail::DirIterState> State;
 
 public:
   explicit directory_iterator(const Twine &path, std::error_code &ec) {
-    State = new detail::DirIterState;
+    State = std::make_shared<detail::DirIterState>();
     SmallString<128> path_storage;
     ec = detail::directory_iterator_construct(*State,
             path.toStringRef(path_storage));
   }
 
   explicit directory_iterator(const directory_entry &de, std::error_code &ec) {
-    State = new detail::DirIterState;
+    State = std::make_shared<detail::DirIterState>();
     ec = detail::directory_iterator_construct(*State, de.path());
   }
 
   /// Construct end iterator.
-  directory_iterator() : State(nullptr) {}
+  directory_iterator() = default;
 
   // No operator++ because we need error_code.
   directory_iterator &increment(std::error_code &ec) {
@@ -833,28 +862,23 @@ public:
 };
 
 namespace detail {
-  /// RecDirIterState - Keeps state for the recursive_directory_iterator. It is
-  /// reference counted in order to preserve InputIterator semantics on copy.
-  struct RecDirIterState : public RefCountedBase<RecDirIterState> {
-    RecDirIterState()
-      : Level(0)
-      , HasNoPushRequest(false) {}
-
+  /// Keeps state for the recursive_directory_iterator.
+  struct RecDirIterState {
     std::stack<directory_iterator, std::vector<directory_iterator>> Stack;
-    uint16_t Level;
-    bool HasNoPushRequest;
+    uint16_t Level = 0;
+    bool HasNoPushRequest = false;
   };
 } // end namespace detail
 
 /// recursive_directory_iterator - Same as directory_iterator except for it
 /// recurses down into child directories.
 class recursive_directory_iterator {
-  IntrusiveRefCntPtr<detail::RecDirIterState> State;
+  std::shared_ptr<detail::RecDirIterState> State;
 
 public:
   recursive_directory_iterator() = default;
   explicit recursive_directory_iterator(const Twine &path, std::error_code &ec)
-      : State(new detail::RecDirIterState) {
+      : State(std::make_shared<detail::RecDirIterState>()) {
     State->Stack.push(directory_iterator(path, ec));
     if (State->Stack.top() == directory_iterator())
       State.reset();
@@ -862,7 +886,7 @@ public:
 
   // No operator++ because we need error_code.
   recursive_directory_iterator &increment(std::error_code &ec) {
-    const directory_iterator end_itr;
+    const directory_iterator end_itr = {};
 
     if (State->HasNoPushRequest)
       State->HasNoPushRequest = false;
@@ -909,7 +933,7 @@ public:
     assert(State && "Cannot pop an end iterator!");
     assert(State->Level > 0 && "Cannot pop an iterator with level < 1");
 
-    const directory_iterator end_itr;
+    const directory_iterator end_itr = {};
     std::error_code ec;
     do {
       if (ec)

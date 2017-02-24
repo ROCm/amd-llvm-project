@@ -45,9 +45,16 @@ static void print(StringRef S, raw_ostream::Colors C) {
 }
 
 void elf::log(const Twine &Msg) {
-  std::lock_guard<std::mutex> Lock(Mu);
-  if (Config->Verbose)
+  if (Config->Verbose) {
+    std::lock_guard<std::mutex> Lock(Mu);
     outs() << Argv0 << ": " << Msg << "\n";
+  }
+}
+
+void elf::message(const Twine &Msg) {
+  std::lock_guard<std::mutex> Lock(Mu);
+  outs() << Msg << "\n";
+  outs().flush();
 }
 
 void elf::warn(const Twine &Msg) {
@@ -77,10 +84,6 @@ void elf::error(const Twine &Msg) {
   ++ErrorCount;
 }
 
-void elf::error(std::error_code EC, const Twine &Prefix) {
-  error(Prefix + ": " + EC.message());
-}
-
 void elf::exitLld(int Val) {
   // Dealloc/destroy ManagedStatic variables before calling
   // _exit(). In a non-LTO build, this is a nop. In an LTO
@@ -97,10 +100,6 @@ void elf::fatal(const Twine &Msg) {
   print("error: ", raw_ostream::RED);
   *ErrorOS << Msg << "\n";
   exitLld(1);
-}
-
-void elf::fatal(std::error_code EC, const Twine &Prefix) {
-  fatal(Prefix + ": " + EC.message());
 }
 
 } // namespace lld

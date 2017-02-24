@@ -12,6 +12,30 @@ include(AddLLVMDefinitions)
 include(CheckCCompilerFlag)
 include(CheckCXXCompilerFlag)
 
+# Ninja Job Pool support
+# The following only works with the Ninja generator in CMake >= 3.0.
+set(LLVM_PARALLEL_COMPILE_JOBS "" CACHE STRING
+  "Define the maximum number of concurrent compilation jobs.")
+if(LLVM_PARALLEL_COMPILE_JOBS)
+  if(NOT CMAKE_MAKE_PROGRAM MATCHES "ninja")
+    message(WARNING "Job pooling is only available with Ninja generators.")
+  else()
+    set_property(GLOBAL APPEND PROPERTY JOB_POOLS compile_job_pool=${LLVM_PARALLEL_COMPILE_JOBS})
+    set(CMAKE_JOB_POOL_COMPILE compile_job_pool)
+  endif()
+endif()
+
+set(LLVM_PARALLEL_LINK_JOBS "" CACHE STRING
+  "Define the maximum number of concurrent link jobs.")
+if(LLVM_PARALLEL_LINK_JOBS)
+  if(NOT CMAKE_MAKE_PROGRAM MATCHES "ninja")
+    message(WARNING "Job pooling is only available with Ninja generators.")
+  else()
+    set_property(GLOBAL APPEND PROPERTY JOB_POOLS link_job_pool=${LLVM_PARALLEL_LINK_JOBS})
+    set(CMAKE_JOB_POOL_LINK link_job_pool)
+  endif()
+endif()
+
 
 if (CMAKE_LINKER MATCHES "lld-link.exe")
   # Pass /MANIFEST:NO so that CMake doesn't run mt.exe on our binaries.  Adding
@@ -147,9 +171,19 @@ function(add_flag_or_print_warning flag name)
   endif()
 endfunction()
 
-if(LLVM_ENABLE_LLD)
-  check_cxx_compiler_flag("-fuse-ld=lld" CXX_SUPPORTS_LLD)
-  append_if(CXX_SUPPORTS_LLD "-fuse-ld=lld"
+if( LLVM_ENABLE_LLD )
+	if ( LLVM_USE_LINKER )
+		message(FATAL_ERROR "LLVM_ENABLE_LLD and LLVM_USE_LINKER can't be set at the same time")
+	endif()
+	set(LLVM_USE_LINKER "lld")
+endif()
+
+if( LLVM_USE_LINKER )
+  check_cxx_compiler_flag("-fuse-ld=${LLVM_USE_LINKER}" CXX_SUPPORTS_CUSTOM_LINKER)
+  if ( NOT CXX_SUPPORTS_CUSTOM_LINKER )
+	  message(FATAL_ERROR "Host compiler does not support '-fuse-ld=${LLVM_USE_LINKER}'")
+  endif()
+  append("-fuse-ld=${LLVM_USE_LINKER}"
     CMAKE_EXE_LINKER_FLAGS CMAKE_MODULE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS)
 endif()
 
@@ -232,6 +266,13 @@ if(MSVC)
   set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /STACK:10000000")
 elseif(MINGW) # FIXME: Also cygwin?
   set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--stack,16777216")
+
+  # Pass -mbig-obj to mingw gas on Win64. COFF has a 2**16 section limit, and
+  # on Win64, every COMDAT function creates at least 3 sections: .text, .pdata,
+  # and .xdata.
+  if (CMAKE_SIZEOF_VOID_P EQUAL 8)
+    append("-Wa,-mbig-obj" CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
+  endif()
 endif()
 
 if( MSVC )
@@ -447,6 +488,9 @@ elseif( LLVM_COMPILER_IS_GCC_COMPATIBLE )
     if (NOT C_WCOMMENT_ALLOWS_LINE_WRAP)
       append("-Wno-comment" CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
     endif()
+
+    # Enable -Wstring-conversion to catch misuse of string literals.
+    add_flag_if_supported("-Wstring-conversion" STRING_CONVERSION_FLAG)
   endif (LLVM_ENABLE_WARNINGS)
   append_if(LLVM_ENABLE_WERROR "-Werror" CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
   add_flag_if_supported("-Werror=date-time" WERROR_DATE_TIME)
@@ -545,6 +589,11 @@ if(LLVM_USE_SANITIZER)
       append_common_sanitizer_flags()
       append("-fsanitize=undefined -fno-sanitize=vptr,function -fno-sanitize-recover=all"
               CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
+      set(BLACKLIST_FILE "${CMAKE_SOURCE_DIR}/utils/sanitizers/ubsan_blacklist.txt")
+      if (EXISTS "${BLACKLIST_FILE}")
+        append("-fsanitize-blacklist=${BLACKLIST_FILE}"
+	              CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
+      endif()
     elseif (LLVM_USE_SANITIZER STREQUAL "Thread")
       append_common_sanitizer_flags()
       append("-fsanitize=thread" CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
@@ -566,6 +615,10 @@ if(LLVM_USE_SANITIZER)
   else()
     message(FATAL_ERROR "LLVM_USE_SANITIZER is not supported on this platform.")
   endif()
+  if (LLVM_USE_SANITIZER MATCHES "(Undefined;)?Address(;Undefined)?")
+    add_flag_if_supported("-fsanitize-address-use-after-scope"
+                          FSANITIZE_USE_AFTER_SCOPE_FLAG)
+  endif()
   if (LLVM_USE_SANITIZE_COVERAGE)
     append("-fsanitize-coverage=trace-pc-guard,indirect-calls,trace-cmp" CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
   endif()
@@ -585,6 +638,14 @@ if (UNIX AND
     CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND
     CMAKE_GENERATOR STREQUAL "Ninja")
   append("-fcolor-diagnostics" CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
+endif()
+
+# lld doesn't print colored diagnostics when invoked from Ninja
+if (UNIX AND CMAKE_GENERATOR STREQUAL "Ninja")
+  include(CheckLinkerFlag)
+  check_linker_flag("-Wl,-color-diagnostics" LINKER_SUPPORTS_COLOR_DIAGNOSTICS)
+  append_if(LINKER_SUPPORTS_COLOR_DIAGNOSTICS "-Wl,-color-diagnostics"
+    CMAKE_EXE_LINKER_FLAGS CMAKE_MODULE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS)
 endif()
 
 # Add flags for add_dead_strip().

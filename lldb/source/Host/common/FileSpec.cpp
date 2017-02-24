@@ -28,14 +28,14 @@
 #include "lldb/Core/ArchSpec.h"
 #include "lldb/Core/DataBufferHeap.h"
 #include "lldb/Core/DataBufferMemoryMap.h"
-#include "lldb/Core/RegularExpression.h"
-#include "lldb/Core/Stream.h"
-#include "lldb/Core/StreamString.h"
 #include "lldb/Host/File.h"
 #include "lldb/Host/FileSpec.h"
 #include "lldb/Host/FileSystem.h"
 #include "lldb/Host/Host.h"
 #include "lldb/Utility/CleanUp.h"
+#include "lldb/Utility/RegularExpression.h"
+#include "lldb/Utility/Stream.h"
+#include "lldb/Utility/StreamString.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
@@ -1107,46 +1107,46 @@ FileSpec::ForEachItemInDirectory(llvm::StringRef dir_path,
         else
           child_path = llvm::join_items('/', dir_path, dp->d_name);
 
-          // Don't resolve the file type or path
-          FileSpec child_path_spec(child_path, false);
+        // Don't resolve the file type or path
+        FileSpec child_path_spec(child_path, false);
 
-          EnumerateDirectoryResult result =
-              callback(file_type, child_path_spec);
+        EnumerateDirectoryResult result =
+            callback(file_type, child_path_spec);
 
-          switch (result) {
-          case eEnumerateDirectoryResultNext:
-            // Enumerate next entry in the current directory. We just
-            // exit this switch and will continue enumerating the
-            // current directory as we currently are...
-            break;
+        switch (result) {
+        case eEnumerateDirectoryResultNext:
+          // Enumerate next entry in the current directory. We just
+          // exit this switch and will continue enumerating the
+          // current directory as we currently are...
+          break;
 
-          case eEnumerateDirectoryResultEnter: // Recurse into the current entry
-                                               // if it is a directory or
-                                               // symlink, or next if not
-            if (FileSpec::ForEachItemInDirectory(child_path, callback) ==
-                eEnumerateDirectoryResultQuit) {
-              // The subdirectory returned Quit, which means to
-              // stop all directory enumerations at all levels.
-              if (buf)
-                free(buf);
-              return eEnumerateDirectoryResultQuit;
-            }
-            break;
-
-          case eEnumerateDirectoryResultExit: // Exit from the current directory
-                                              // at the current level.
-            // Exit from this directory level and tell parent to
-            // keep enumerating.
-            if (buf)
-              free(buf);
-            return eEnumerateDirectoryResultNext;
-
-          case eEnumerateDirectoryResultQuit: // Stop directory enumerations at
-                                              // any level
+        case eEnumerateDirectoryResultEnter: // Recurse into the current entry
+                                             // if it is a directory or
+                                             // symlink, or next if not
+          if (FileSpec::ForEachItemInDirectory(child_path, callback) ==
+              eEnumerateDirectoryResultQuit) {
+            // The subdirectory returned Quit, which means to
+            // stop all directory enumerations at all levels.
             if (buf)
               free(buf);
             return eEnumerateDirectoryResultQuit;
           }
+          break;
+
+        case eEnumerateDirectoryResultExit: // Exit from the current directory
+                                            // at the current level.
+          // Exit from this directory level and tell parent to
+          // keep enumerating.
+          if (buf)
+            free(buf);
+          return eEnumerateDirectoryResultNext;
+
+        case eEnumerateDirectoryResultQuit: // Stop directory enumerations at
+                                            // any level
+          if (buf)
+            free(buf);
+          return eEnumerateDirectoryResultQuit;
+        }
       }
       if (buf) {
         free(buf);
@@ -1248,6 +1248,22 @@ ConstString FileSpec::GetLastPathComponent() const {
   return ConstString();
 }
 
+static std::string
+join_path_components(FileSpec::PathSyntax syntax,
+                     const std::vector<llvm::StringRef> components) {
+  std::string result;
+  for (size_t i = 0; i < components.size(); ++i) {
+    if (components[i].empty())
+      continue;
+    result += components[i];
+    if (i != components.size() - 1 &&
+        !IsPathSeparator(components[i].back(), syntax))
+      result += GetPreferredPathSeparator(syntax);
+  }
+
+  return result;
+}
+
 void FileSpec::PrependPathComponent(llvm::StringRef component) {
   if (component.empty())
     return;
@@ -1258,17 +1274,10 @@ void FileSpec::PrependPathComponent(llvm::StringRef component) {
     return;
   }
 
-  char sep = GetPreferredPathSeparator(m_syntax);
-  std::string result;
-  if (m_filename.IsEmpty())
-    result = llvm::join_items(sep, component, m_directory.GetStringRef());
-  else if (m_directory.IsEmpty())
-    result = llvm::join_items(sep, component, m_filename.GetStringRef());
-  else
-    result = llvm::join_items(sep, component, m_directory.GetStringRef(),
-                              m_filename.GetStringRef());
-
-  SetFile(result, resolve);
+  std::string result =
+      join_path_components(m_syntax, {component, m_directory.GetStringRef(),
+                                      m_filename.GetStringRef()});
+  SetFile(result, resolve, m_syntax);
 }
 
 void FileSpec::PrependPathComponent(const FileSpec &new_path) {
@@ -1279,23 +1288,12 @@ void FileSpec::AppendPathComponent(llvm::StringRef component) {
   if (component.empty())
     return;
 
-  std::string result;
-  if (!m_directory.IsEmpty()) {
-    result += m_directory.GetStringRef();
-    if (!IsPathSeparator(m_directory.GetStringRef().back(), m_syntax))
-      result += GetPreferredPathSeparator(m_syntax);
-  }
-
-  if (!m_filename.IsEmpty()) {
-    result += m_filename.GetStringRef();
-    if (!IsPathSeparator(m_filename.GetStringRef().back(), m_syntax))
-      result += GetPreferredPathSeparator(m_syntax);
-  }
-
   component = component.drop_while(
       [this](char c) { return IsPathSeparator(c, m_syntax); });
 
-  result += component;
+  std::string result =
+      join_path_components(m_syntax, {m_directory.GetStringRef(),
+                                      m_filename.GetStringRef(), component});
 
   SetFile(result, false, m_syntax);
 }

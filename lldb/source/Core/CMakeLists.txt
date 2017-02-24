@@ -9,7 +9,6 @@ add_lldb_library(lldbCore
   Broadcaster.cpp
   Communication.cpp
   Connection.cpp
-  ConstString.cpp
   DataBufferHeap.cpp
   DataBufferMemoryMap.cpp
   DataEncoder.cpp
@@ -18,7 +17,6 @@ add_lldb_library(lldbCore
   Disassembler.cpp
   DynamicLoader.cpp
   EmulateInstruction.cpp
-  Error.cpp
   Event.cpp
   FastDemangle.cpp
   FileLineResolver.cpp
@@ -36,18 +34,15 @@ add_lldb_library(lldbCore
   Opcode.cpp
   PluginManager.cpp
   RegisterValue.cpp
-  RegularExpression.cpp
   Scalar.cpp
   SearchFilter.cpp
   Section.cpp
   SourceManager.cpp
   State.cpp
-  Stream.cpp
   StreamAsynchronousIO.cpp
   StreamCallback.cpp
   StreamFile.cpp
   StreamGDBRemote.cpp
-  StreamString.cpp
   StringList.cpp
   StructuredData.cpp
   Timer.cpp
@@ -69,5 +64,27 @@ add_lldb_library(lldbCore
   ValueObjectSyntheticFilter.cpp
   ValueObjectVariable.cpp
   VMRange.cpp
+
+  LINK_LIBS
+    lldbBreakpoint
+    lldbDataFormatters
+    lldbExpression
+    lldbHost
+    lldbInterpreter
+    lldbSymbol
+    lldbTarget
+    lldbUtility
+    lldbPluginProcessUtility
+    lldbPluginCPlusPlusLanguage
+    lldbPluginObjCLanguage
+    lldbPluginObjectFileJIT
+    lldbPluginExpressionParserClang
+
+  LINK_COMPONENTS
+    Support
+    Demangle
   )
 
+# Needed to properly resolve references in a debug build.
+# TODO: Remove once we have better layering
+set_target_properties(lldbCore PROPERTIES LINK_INTERFACE_MULTIPLICITY 3)

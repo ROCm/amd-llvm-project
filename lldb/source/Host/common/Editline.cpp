@@ -11,16 +11,18 @@
 #include <iostream>
 #include <limits.h>
 
-#include "lldb/Core/Error.h"
-#include "lldb/Core/StreamString.h"
 #include "lldb/Core/StringList.h"
 #include "lldb/Host/ConnectionFileDescriptor.h"
 #include "lldb/Host/Editline.h"
 #include "lldb/Host/FileSpec.h"
 #include "lldb/Host/FileSystem.h"
 #include "lldb/Host/Host.h"
+#include "lldb/Utility/Error.h"
 #include "lldb/Utility/LLDBAssert.h"
 #include "lldb/Utility/SelectHelper.h"
+#include "lldb/Utility/StreamString.h"
+
+#include "llvm/Support/Threading.h"
 
 using namespace lldb_private;
 using namespace lldb_private::line_editor;
@@ -526,17 +528,8 @@ int Editline::GetCharacter(EditLineCharType *c) {
     }
 
     if (read_count) {
-#if LLDB_EDITLINE_USE_WCHAR
-      // After the initial interruptible read, this is guaranteed not to block
-      ungetc(ch, m_input_file);
-      *c = fgetwc(m_input_file);
-      if (*c != WEOF)
+      if (CompleteCharacter(ch, *c))
         return 1;
-#else
-      *c = ch;
-      if (ch != (char)EOF)
-        return 1;
-#endif
     } else {
       switch (status) {
       case lldb::eConnectionStatusSuccess: // Success
@@ -1160,8 +1153,8 @@ Editline::Editline(const char *editline_name, FILE *input_file,
     if (term_fd != -1) {
       static std::mutex *g_init_terminal_fds_mutex_ptr = nullptr;
       static std::set<int> *g_init_terminal_fds_ptr = nullptr;
-      static std::once_flag g_once_flag;
-      std::call_once(g_once_flag, [&]() {
+      static llvm::once_flag g_once_flag;
+      llvm::call_once(g_once_flag, [&]() {
         g_init_terminal_fds_mutex_ptr =
             new std::mutex(); // NOTE: Leak to avoid C++ destructor chain issues
         g_init_terminal_fds_ptr = new std::set<int>(); // NOTE: Leak to avoid
@@ -1366,4 +1359,40 @@ void Editline::PrintAsync(Stream *stream, const char *s, size_t len) {
     DisplayInput();
     MoveCursor(CursorLocation::BlockEnd, CursorLocation::EditingCursor);
   }
+}
+
+bool Editline::CompleteCharacter(char ch, EditLineCharType &out) {
+#if !LLDB_EDITLINE_USE_WCHAR
+  if (ch == (char)EOF)
+    return false;
+
+  out = ch;
+  return true;
+#else
+  std::codecvt_utf8<wchar_t> cvt;
+  llvm::SmallString<4> input;
+  for (;;) {
+    const char *from_next;
+    wchar_t *to_next;
+    std::mbstate_t state = std::mbstate_t();
+    input.push_back(ch);
+    switch (cvt.in(state, input.begin(), input.end(), from_next, &out, &out + 1,
+                   to_next)) {
+    case std::codecvt_base::ok:
+      return out != WEOF;
+
+    case std::codecvt_base::error:
+    case std::codecvt_base::noconv:
+      return false;
+
+    case std::codecvt_base::partial:
+      lldb::ConnectionStatus status;
+      size_t read_count = m_input_connection.Read(
+          &ch, 1, std::chrono::seconds(0), status, nullptr);
+      if (read_count == 0)
+        return false;
+      break;
+    }
+  }
+#endif
 }

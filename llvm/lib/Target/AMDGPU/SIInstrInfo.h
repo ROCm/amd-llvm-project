@@ -203,6 +203,18 @@ public:
   bool reverseBranchCondition(
     SmallVectorImpl<MachineOperand> &Cond) const override;
 
+
+  bool canInsertSelect(const MachineBasicBlock &MBB,
+                       ArrayRef<MachineOperand> Cond,
+                       unsigned TrueReg, unsigned FalseReg,
+                       int &CondCycles,
+                       int &TrueCycles, int &FalseCycles) const override;
+
+  void insertSelect(MachineBasicBlock &MBB,
+                    MachineBasicBlock::iterator I, const DebugLoc &DL,
+                    unsigned DstReg, ArrayRef<MachineOperand> Cond,
+                    unsigned TrueReg, unsigned FalseReg) const override;
+
   bool
   areMemAccessesTriviallyDisjoint(MachineInstr &MIa, MachineInstr &MIb,
                                   AliasAnalysis *AA = nullptr) const override;
@@ -306,6 +318,14 @@ public:
 
   bool isVOP3(uint16_t Opcode) const {
     return get(Opcode).TSFlags & SIInstrFlags::VOP3;
+  }
+
+  static bool isSDWA(const MachineInstr &MI) {
+    return MI.getDesc().TSFlags & SIInstrFlags::SDWA;
+  }
+
+  bool isSDWA(uint16_t Opcode) const {
+    return get(Opcode).TSFlags & SIInstrFlags::SDWA;
   }
 
   static bool isVOPC(const MachineInstr &MI) {
@@ -452,6 +472,14 @@ public:
 
   bool isFixedSize(uint16_t Opcode) const {
     return get(Opcode).TSFlags & SIInstrFlags::FIXED_SIZE;
+  }
+
+  static bool hasFPClamp(const MachineInstr &MI) {
+    return MI.getDesc().TSFlags & SIInstrFlags::HasFPClamp;
+  }
+
+  bool hasFPClamp(uint16_t Opcode) const {
+    return get(Opcode).TSFlags & SIInstrFlags::HasFPClamp;
   }
 
   bool isVGPRCopy(const MachineInstr &MI) const {
@@ -731,6 +759,8 @@ public:
 
   ScheduleHazardRecognizer *
   CreateTargetPostRAHazardRecognizer(const MachineFunction &MF) const override;
+
+  bool isBasicBlockPrologue(const MachineInstr &MI) const override;
 };
 
 namespace AMDGPU {

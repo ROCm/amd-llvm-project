@@ -22,10 +22,9 @@
 #include "llvm/ADT/SmallVector.h"
 
 // Project includes
-#include "lldb/Core/ConstString.h"
 #include "lldb/Core/DataExtractor.h"
-#include "lldb/Core/Error.h"
-#include "lldb/Core/Flags.h"
+#include "lldb/Utility/Flags.h"
+
 #include "lldb/Core/UserID.h"
 #include "lldb/Core/Value.h"
 #include "lldb/Symbol/CompilerType.h"
@@ -33,6 +32,8 @@
 #include "lldb/Target/ExecutionContextScope.h"
 #include "lldb/Target/Process.h"
 #include "lldb/Target/StackID.h"
+#include "lldb/Utility/ConstString.h"
+#include "lldb/Utility/Error.h"
 #include "lldb/Utility/SharedCluster.h"
 #include "lldb/lldb-private.h"
 
@@ -1009,6 +1010,48 @@ private:
       ExpressionPathAftermath *final_task_on_target);
 
   DISALLOW_COPY_AND_ASSIGN(ValueObject);
+};
+
+//------------------------------------------------------------------------------
+// A value object manager class that is seeded with the static variable value
+// and it vends the user facing value object. If the type is dynamic it can
+// vend the dynamic type. If this user type also has a synthetic type associated
+// with it, it will vend the synthetic type. The class watches the process' stop
+// ID and will update the user type when needed.
+//------------------------------------------------------------------------------
+class ValueObjectManager {
+  // The root value object is the static typed variable object.
+  lldb::ValueObjectSP m_root_valobj_sp;
+  // The user value object is the value object the user wants to see.
+  lldb::ValueObjectSP m_user_valobj_sp;
+  lldb::DynamicValueType m_use_dynamic;
+  uint32_t m_stop_id; // The stop ID that m_user_valobj_sp is valid for.
+  bool m_use_synthetic;
+
+public:
+  ValueObjectManager() {}
+  
+  ValueObjectManager(lldb::ValueObjectSP in_valobj_sp,
+                     lldb::DynamicValueType use_dynamic, bool use_synthetic);
+  
+  bool IsValid() const;
+  
+  lldb::ValueObjectSP GetRootSP() const { return m_root_valobj_sp; }
+  
+  // Gets the correct value object from the root object for a given process
+  // stop ID. If dynamic values are enabled, or if synthetic children are
+  // enabled, the value object that the user wants to see might change while
+  // debugging.
+  lldb::ValueObjectSP GetSP();
+  
+  void SetUseDynamic(lldb::DynamicValueType use_dynamic);
+  void SetUseSynthetic(bool use_synthetic);
+  lldb::DynamicValueType GetUseDynamic() const { return m_use_dynamic; }
+  bool GetUseSynthetic() const { return m_use_synthetic; }
+  lldb::TargetSP GetTargetSP() const;
+  lldb::ProcessSP GetProcessSP() const;
+  lldb::ThreadSP GetThreadSP() const;
+  lldb::StackFrameSP GetFrameSP() const;
 };
 
 } // namespace lldb_private

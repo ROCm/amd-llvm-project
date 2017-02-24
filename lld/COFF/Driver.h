@@ -20,6 +20,7 @@
 #include "llvm/Object/COFF.h"
 #include "llvm/Option/Arg.h"
 #include "llvm/Option/ArgList.h"
+#include "llvm/Support/TarWriter.h"
 #include <memory>
 #include <set>
 #include <vector>
@@ -74,7 +75,7 @@ private:
   ArgParser Parser;
   SymbolTable Symtab;
 
-  std::unique_ptr<CpioFile> Cpio; // for /linkrepro
+  std::unique_ptr<llvm::TarWriter> Tar; // for /linkrepro
 
   // Opens a file. Path has to be resolved already.
   MemoryBufferRef openFile(StringRef Path);
@@ -105,6 +106,8 @@ private:
   // entry point name.
   StringRef findDefaultEntry();
   WindowsSubsystem inferSubsystem();
+
+  void invokeMSVC(llvm::opt::InputArgList &Args);
 
   MemoryBufferRef takeBuffer(std::unique_ptr<MemoryBuffer> MB);
   void addBuffer(std::unique_ptr<MemoryBuffer> MB);
@@ -176,6 +179,8 @@ void checkFailIfMismatch(StringRef Arg);
 // using cvtres.exe.
 std::unique_ptr<MemoryBuffer>
 convertResToCOFF(const std::vector<MemoryBufferRef> &MBs);
+
+void runMSVCLinker(std::string Rsp, ArrayRef<StringRef> Objects);
 
 // Create enum with OPT_xxx values for each option in Options.td
 enum {

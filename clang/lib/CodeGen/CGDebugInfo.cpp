@@ -41,6 +41,7 @@
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/MD5.h"
 #include "llvm/Support/Path.h"
 using namespace clang;
 using namespace clang::CodeGen;
@@ -320,11 +321,36 @@ StringRef CGDebugInfo::getClassName(const RecordDecl *RD) {
   return StringRef();
 }
 
+llvm::DIFile::ChecksumKind
+CGDebugInfo::computeChecksum(FileID FID, SmallString<32> &Checksum) const {
+  Checksum.clear();
+
+  if (!CGM.getCodeGenOpts().EmitCodeView)
+    return llvm::DIFile::CSK_None;
+
+  SourceManager &SM = CGM.getContext().getSourceManager();
+  bool Invalid;
+  llvm::MemoryBuffer *MemBuffer = SM.getBuffer(FID, &Invalid);
+  if (Invalid)
+    return llvm::DIFile::CSK_None;
+
+  llvm::MD5 Hash;
+  llvm::MD5::MD5Result Result;
+
+  Hash.update(MemBuffer->getBuffer());
+  Hash.final(Result);
+
+  Hash.stringifyResult(Result, Checksum);
+  return llvm::DIFile::CSK_MD5;
+}
+
 llvm::DIFile *CGDebugInfo::getOrCreateFile(SourceLocation Loc) {
   if (!Loc.isValid())
     // If Location is not valid then use main input file.
     return DBuilder.createFile(remapDIPath(TheCU->getFilename()),
-                               remapDIPath(TheCU->getDirectory()));
+                               remapDIPath(TheCU->getDirectory()),
+                               TheCU->getFile()->getChecksumKind(),
+                               TheCU->getFile()->getChecksum());
 
   SourceManager &SM = CGM.getContext().getSourceManager();
   PresumedLoc PLoc = SM.getPresumedLoc(Loc);
@@ -332,7 +358,9 @@ llvm::DIFile *CGDebugInfo::getOrCreateFile(SourceLocation Loc) {
   if (PLoc.isInvalid() || StringRef(PLoc.getFilename()).empty())
     // If the location is not valid then use main input file.
     return DBuilder.createFile(remapDIPath(TheCU->getFilename()),
-                               remapDIPath(TheCU->getDirectory()));
+                               remapDIPath(TheCU->getDirectory()),
+                               TheCU->getFile()->getChecksumKind(),
+                               TheCU->getFile()->getChecksum());
 
   // Cache the results.
   const char *fname = PLoc.getFilename();
@@ -344,8 +372,13 @@ llvm::DIFile *CGDebugInfo::getOrCreateFile(SourceLocation Loc) {
       return cast<llvm::DIFile>(V);
   }
 
+  SmallString<32> Checksum;
+  llvm::DIFile::ChecksumKind CSKind =
+      computeChecksum(SM.getFileID(Loc), Checksum);
+
   llvm::DIFile *F = DBuilder.createFile(remapDIPath(PLoc.getFilename()),
-                                        remapDIPath(getCurrentDirname()));
+                                        remapDIPath(getCurrentDirname()),
+                                        CSKind, Checksum);
 
   DIFileCache[fname].reset(F);
   return F;
@@ -353,7 +386,9 @@ llvm::DIFile *CGDebugInfo::getOrCreateFile(SourceLocation Loc) {
 
 llvm::DIFile *CGDebugInfo::getOrCreateMainFile() {
   return DBuilder.createFile(remapDIPath(TheCU->getFilename()),
-                             remapDIPath(TheCU->getDirectory()));
+                             remapDIPath(TheCU->getDirectory()),
+                             TheCU->getFile()->getChecksumKind(),
+                             TheCU->getFile()->getChecksum());
 }
 
 std::string CGDebugInfo::remapDIPath(StringRef Path) const {
@@ -396,6 +431,8 @@ StringRef CGDebugInfo::getCurrentDirname() {
 }
 
 void CGDebugInfo::CreateCompileUnit() {
+  SmallString<32> Checksum;
+  llvm::DIFile::ChecksumKind CSKind = llvm::DIFile::CSK_None;
 
   // Should we be asking the SourceManager for the main file name, instead of
   // accepting it as an argument? This just causes the main file name to
@@ -422,6 +459,7 @@ void CGDebugInfo::CreateCompileUnit() {
       llvm::sys::path::append(MainFileDirSS, MainFileName);
       MainFileName = MainFileDirSS.str();
     }
+    CSKind = computeChecksum(SM.getMainFileID(), Checksum);
   }
 
   llvm::dwarf::SourceLanguage LangTag;
@@ -467,10 +505,12 @@ void CGDebugInfo::CreateCompileUnit() {
   // FIXME - Eliminate TheCU.
   TheCU = DBuilder.createCompileUnit(
       LangTag, DBuilder.createFile(remapDIPath(MainFileName),
-                                    remapDIPath(getCurrentDirname())),
+                                   remapDIPath(getCurrentDirname()), CSKind,
+                                   Checksum),
       Producer, LO.Optimize, CGM.getCodeGenOpts().DwarfDebugFlags, RuntimeVers,
       CGM.getCodeGenOpts().SplitDwarfFile, EmissionKind, 0 /* DWOid */,
-      CGM.getCodeGenOpts().SplitDwarfInlining);
+      CGM.getCodeGenOpts().SplitDwarfInlining,
+      CGM.getCodeGenOpts().DebugInfoForProfiling);
 }
 
 llvm::DIType *CGDebugInfo::CreateType(const BuiltinType *BT) {
@@ -542,8 +582,6 @@ llvm::DIType *CGDebugInfo::CreateType(const BuiltinType *BT) {
     return getOrCreateStructPtrType("opencl_clk_event_t", OCLClkEventDITy);
   case BuiltinType::OCLQueue:
     return getOrCreateStructPtrType("opencl_queue_t", OCLQueueDITy);
-  case BuiltinType::OCLNDRange:
-    return getOrCreateStructPtrType("opencl_ndrange_t", OCLNDRangeDITy);
   case BuiltinType::OCLReserveID:
     return getOrCreateStructPtrType("opencl_reserve_id_t", OCLReserveIDDITy);
 
@@ -735,12 +773,6 @@ CGDebugInfo::getOrCreateRecordFwdDecl(const RecordType *Ty,
 
   uint64_t Size = 0;
   uint32_t Align = 0;
-
-  const RecordDecl *D = RD->getDefinition();
-  if (D && D->isCompleteDefinition()) {
-    Size = CGM.getContext().getTypeSize(Ty);
-    Align = getDeclAlignIfRequired(D, CGM.getContext());
-  }
 
   // Create the type.
   SmallString<256> FullName = getUniqueTagTypeName(Ty, CGM, TheCU);
@@ -1681,7 +1713,27 @@ void CGDebugInfo::completeType(const RecordDecl *RD) {
     completeRequiredType(RD);
 }
 
+/// Return true if the class or any of its methods are marked dllimport.
+static bool isClassOrMethodDLLImport(const CXXRecordDecl *RD) {
+  if (RD->hasAttr<DLLImportAttr>())
+    return true;
+  for (const CXXMethodDecl *MD : RD->methods())
+    if (MD->hasAttr<DLLImportAttr>())
+      return true;
+  return false;
+}
+
 void CGDebugInfo::completeClassData(const RecordDecl *RD) {
+  if (auto *CXXRD = dyn_cast<CXXRecordDecl>(RD))
+    if (CXXRD->isDynamicClass() &&
+        CGM.getVTableLinkage(CXXRD) ==
+            llvm::GlobalValue::AvailableExternallyLinkage &&
+        !isClassOrMethodDLLImport(CXXRD))
+      return;
+  completeClass(RD);
+}
+
+void CGDebugInfo::completeClass(const RecordDecl *RD) {
   if (DebugKind <= codegenoptions::DebugLineTablesOnly)
     return;
   QualType Ty = CGM.getContext().getRecordType(RD);
@@ -1725,16 +1777,6 @@ static bool isDefinedInClangModule(const RecordDecl *RD) {
     }
   }
   return true;
-}
-
-/// Return true if the class or any of its methods are marked dllimport.
-static bool isClassOrMethodDLLImport(const CXXRecordDecl *RD) {
-  if (RD->hasAttr<DLLImportAttr>())
-    return true;
-  for (const CXXMethodDecl *MD : RD->methods())
-    if (MD->hasAttr<DLLImportAttr>())
-      return true;
-  return false;
 }
 
 static bool shouldOmitDefinition(codegenoptions::DebugInfoKind DebugKind,
@@ -2375,6 +2417,21 @@ llvm::DIType *CGDebugInfo::CreateTypeDefinition(const EnumType *Ty) {
                                         FullName);
 }
 
+llvm::DIMacro *CGDebugInfo::CreateMacro(llvm::DIMacroFile *Parent,
+                                        unsigned MType, SourceLocation LineLoc,
+                                        StringRef Name, StringRef Value) {
+  unsigned Line = LineLoc.isInvalid() ? 0 : getLineNumber(LineLoc);
+  return DBuilder.createMacro(Parent, Line, MType, Name, Value);
+}
+
+llvm::DIMacroFile *CGDebugInfo::CreateTempMacroFile(llvm::DIMacroFile *Parent,
+                                                    SourceLocation LineLoc,
+                                                    SourceLocation FileLoc) {
+  llvm::DIFile *FName = getOrCreateFile(FileLoc);
+  unsigned Line = LineLoc.isInvalid() ? 0 : getLineNumber(LineLoc);
+  return DBuilder.createTempMacroFile(Parent, Line, FName);
+}
+
 static QualType UnwrapTypeForDebugInfo(QualType T, const ASTContext &C) {
   Qualifiers Quals;
   do {
@@ -2418,8 +2475,9 @@ static QualType UnwrapTypeForDebugInfo(QualType T, const ASTContext &C) {
     case Type::SubstTemplateTypeParm:
       T = cast<SubstTemplateTypeParmType>(T)->getReplacementType();
       break;
-    case Type::Auto: {
-      QualType DT = cast<AutoType>(T)->getDeducedType();
+    case Type::Auto:
+    case Type::DeducedTemplateSpecialization: {
+      QualType DT = cast<DeducedType>(T)->getDeducedType();
       assert(!DT.isNull() && "Undeduced types shouldn't reach here.");
       T = DT;
       break;
@@ -2585,6 +2643,7 @@ llvm::DIType *CGDebugInfo::CreateTypeNode(QualType Ty, llvm::DIFile *Unit) {
   case Type::Attributed:
   case Type::Adjusted:
   case Type::Decayed:
+  case Type::DeducedTemplateSpecialization:
   case Type::Elaborated:
   case Type::Paren:
   case Type::SubstTemplateTypeParm:
@@ -2741,9 +2800,10 @@ void CGDebugInfo::collectFunctionDeclProps(GlobalDecl GD, llvm::DIFile *Unit,
   }
   // No need to replicate the linkage name if it isn't different from the
   // subprogram name, no need to have it at all unless coverage is enabled or
-  // debug is set to more than just line tables.
+  // debug is set to more than just line tables or extra debug info is needed.
   if (LinkageName == Name || (!CGM.getCodeGenOpts().EmitGcovArcs &&
                               !CGM.getCodeGenOpts().EmitGcovNotes &&
+                              !CGM.getCodeGenOpts().DebugInfoForProfiling &&
                               DebugKind <= codegenoptions::DebugLineTablesOnly))
     LinkageName = StringRef();
 

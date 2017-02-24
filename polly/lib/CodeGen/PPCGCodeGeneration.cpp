@@ -25,7 +25,6 @@
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/BasicAliasAnalysis.h"
 #include "llvm/Analysis/GlobalsModRef.h"
-#include "llvm/Analysis/PostDominators.h"
 #include "llvm/Analysis/ScalarEvolutionAliasAnalysis.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
@@ -835,9 +834,8 @@ void GPUNodeBuilder::createDataTransfer(__isl_take isl_ast_node *TransferStmt,
 
   if (Offset) {
     Size = Builder.CreateSub(
-        Size,
-        Builder.CreateMul(Offset,
-                          Builder.getInt64(ScopArray->getElemSizeInBytes())));
+        Size, Builder.CreateMul(
+                  Offset, Builder.getInt64(ScopArray->getElemSizeInBytes())));
   }
 
   if (Direction == HOST_TO_DEVICE)
@@ -1205,10 +1203,8 @@ void GPUNodeBuilder::createKernel(__isl_take isl_ast_node *KernelStmt) {
   Instruction &HostInsertPoint = *Builder.GetInsertPoint();
   IslExprBuilder::IDToValueTy HostIDs = IDToValue;
   ValueMapT HostValueMap = ValueMap;
-  BlockGenerator::ScalarAllocaMapTy HostScalarMap = ScalarMap;
-  BlockGenerator::ScalarAllocaMapTy HostPHIOpMap = PHIOpMap;
+  BlockGenerator::AllocaMapTy HostScalarMap = ScalarMap;
   ScalarMap.clear();
-  PHIOpMap.clear();
 
   SetVector<const Loop *> Loops;
 
@@ -1239,12 +1235,11 @@ void GPUNodeBuilder::createKernel(__isl_take isl_ast_node *KernelStmt) {
 
   ValueMap = std::move(HostValueMap);
   ScalarMap = std::move(HostScalarMap);
-  PHIOpMap = std::move(HostPHIOpMap);
   EscapeMap.clear();
   IDToSAI.clear();
   Annotator.resetAlternativeAliasBases();
   for (auto &BasePtr : LocalArrays)
-    S.invalidateScopArrayInfo(BasePtr, ScopArrayInfo::MK_Array);
+    S.invalidateScopArrayInfo(BasePtr, MemoryKind::Array);
   LocalArrays.clear();
 
   std::string ASMString = finalizeKernelFunction();
@@ -1346,7 +1341,7 @@ GPUNodeBuilder::createKernelFunctionDecl(ppcg_kernel *Kernel,
       Sizes.push_back(SE.getSCEV(V));
     }
     const ScopArrayInfo *SAIRep =
-        S.getOrCreateScopArrayInfo(Val, EleTy, Sizes, ScopArrayInfo::MK_Array);
+        S.getOrCreateScopArrayInfo(Val, EleTy, Sizes, MemoryKind::Array);
     LocalArrays.push_back(Val);
 
     isl_ast_build_free(Build);
@@ -1525,8 +1520,8 @@ void GPUNodeBuilder::createKernelVariables(ppcg_kernel *Kernel, Function *FN) {
     } else {
       llvm_unreachable("unknown variable type");
     }
-    SAI = S.getOrCreateScopArrayInfo(Allocation, EleTy, Sizes,
-                                     ScopArrayInfo::MK_Array);
+    SAI =
+        S.getOrCreateScopArrayInfo(Allocation, EleTy, Sizes, MemoryKind::Array);
     Id = isl_id_alloc(S.getIslCtx(), Var.name, nullptr);
     IDToValue[Id] = Allocation;
     LocalArrays.push_back(Allocation);
@@ -2485,7 +2480,6 @@ public:
     AU.addPreserved<LoopInfoWrapperPass>();
     AU.addPreserved<DominatorTreeWrapperPass>();
     AU.addPreserved<GlobalsAAWrapperPass>();
-    AU.addPreserved<PostDominatorTreeWrapperPass>();
     AU.addPreserved<ScopDetection>();
     AU.addPreserved<ScalarEvolutionWrapperPass>();
     AU.addPreserved<SCEVAAWrapperPass>();

@@ -704,8 +704,8 @@ static const LangAS::Map *getAddressSpaceMap(const TargetInfo &T,
     // language-specific address space.
     static const unsigned FakeAddrSpaceMap[] = {
       1, // opencl_global
-      2, // opencl_local
-      3, // opencl_constant
+      3, // opencl_local
+      2, // opencl_constant
       4, // opencl_generic
       5, // cuda_device
       6, // cuda_constant
@@ -1170,7 +1170,6 @@ void ASTContext::InitBuiltinTypes(const TargetInfo &Target,
     InitBuiltinType(OCLEventTy, BuiltinType::OCLEvent);
     InitBuiltinType(OCLClkEventTy, BuiltinType::OCLClkEvent);
     InitBuiltinType(OCLQueueTy, BuiltinType::OCLQueue);
-    InitBuiltinType(OCLNDRangeTy, BuiltinType::OCLNDRange);
     InitBuiltinType(OCLReserveIDTy, BuiltinType::OCLReserveID);
   }
   
@@ -1461,7 +1460,9 @@ CharUnits ASTContext::getDeclAlign(const Decl *D, bool ForAlignof) const {
         T = getPointerType(RT->getPointeeType());
     }
     QualType BaseT = getBaseElementType(T);
-    if (!BaseT->isIncompleteType() && !T->isFunctionType()) {
+    if (T->isFunctionType())
+      Align = getTypeInfoImpl(T.getTypePtr()).Align;
+    else if (!BaseT->isIncompleteType()) {
       // Adjust alignments of declarations with array type by the
       // large-array alignment on the target.
       if (const ArrayType *arrayType = getAsArrayType(T)) {
@@ -1776,7 +1777,6 @@ TypeInfo ASTContext::getTypeInfoImpl(const Type *T) const {
     case BuiltinType::OCLEvent:
     case BuiltinType::OCLClkEvent:
     case BuiltinType::OCLQueue:
-    case BuiltinType::OCLNDRange:
     case BuiltinType::OCLReserveID:
       // Currently these types are pointers to opaque types.
       Width = Target->getPointerWidth(0);
@@ -1878,8 +1878,9 @@ TypeInfo ASTContext::getTypeInfoImpl(const Type *T) const {
     return getTypeInfo(cast<SubstTemplateTypeParmType>(T)->
                        getReplacementType().getTypePtr());
 
-  case Type::Auto: {
-    const AutoType *A = cast<AutoType>(T);
+  case Type::Auto:
+  case Type::DeducedTemplateSpecialization: {
+    const DeducedType *A = cast<DeducedType>(T);
     assert(!A->getDeducedType().isNull() &&
            "cannot request the size of an undeduced or dependent auto type");
     return getTypeInfo(A->getDeducedType().getTypePtr());
@@ -2766,6 +2767,7 @@ QualType ASTContext::getVariableArrayDecayedType(QualType type) const {
   case Type::TemplateTypeParm:
   case Type::SubstTemplateTypeParmPack:
   case Type::Auto:
+  case Type::DeducedTemplateSpecialization:
   case Type::PackExpansion:
     llvm_unreachable("type should never be variably-modified");
 
@@ -3786,12 +3788,8 @@ QualType ASTContext::getDependentNameType(ElaboratedTypeKeyword Keyword,
                                           QualType Canon) const {
   if (Canon.isNull()) {
     NestedNameSpecifier *CanonNNS = getCanonicalNestedNameSpecifier(NNS);
-    ElaboratedTypeKeyword CanonKeyword = Keyword;
-    if (Keyword == ETK_None)
-      CanonKeyword = ETK_Typename;
-    
-    if (CanonNNS != NNS || CanonKeyword != Keyword)
-      Canon = getDependentNameType(CanonKeyword, CanonNNS, Name);
+    if (CanonNNS != NNS)
+      Canon = getDependentNameType(Keyword, CanonNNS, Name);
   }
 
   llvm::FoldingSetNodeID ID;
@@ -3873,6 +3871,47 @@ ASTContext::getDependentTemplateSpecializationType(
   Types.push_back(T);
   DependentTemplateSpecializationTypes.InsertNode(T, InsertPos);
   return QualType(T, 0);
+}
+
+TemplateArgument ASTContext::getInjectedTemplateArg(NamedDecl *Param) {
+  TemplateArgument Arg;
+  if (auto *TTP = dyn_cast<TemplateTypeParmDecl>(Param)) {
+    QualType ArgType = getTypeDeclType(TTP);
+    if (TTP->isParameterPack())
+      ArgType = getPackExpansionType(ArgType, None);
+
+    Arg = TemplateArgument(ArgType);
+  } else if (auto *NTTP = dyn_cast<NonTypeTemplateParmDecl>(Param)) {
+    Expr *E = new (*this) DeclRefExpr(
+        NTTP, /*enclosing*/false,
+        NTTP->getType().getNonLValueExprType(*this),
+        Expr::getValueKindForType(NTTP->getType()), NTTP->getLocation());
+
+    if (NTTP->isParameterPack())
+      E = new (*this) PackExpansionExpr(DependentTy, E, NTTP->getLocation(),
+                                        None);
+    Arg = TemplateArgument(E);
+  } else {
+    auto *TTP = cast<TemplateTemplateParmDecl>(Param);
+    if (TTP->isParameterPack())
+      Arg = TemplateArgument(TemplateName(TTP), Optional<unsigned>());
+    else
+      Arg = TemplateArgument(TemplateName(TTP));
+  }
+
+  if (Param->isTemplateParameterPack())
+    Arg = TemplateArgument::CreatePackCopy(*this, Arg);
+
+  return Arg;
+}
+
+void
+ASTContext::getInjectedTemplateArgs(const TemplateParameterList *Params,
+                                    SmallVectorImpl<TemplateArgument> &Args) {
+  Args.reserve(Args.size() + Params->size());
+
+  for (NamedDecl *Param : *Params)
+    Args.push_back(getInjectedTemplateArg(Param));
 }
 
 QualType ASTContext::getPackExpansionType(QualType Pattern,
@@ -4400,6 +4439,28 @@ QualType ASTContext::getAutoType(QualType DeducedType, AutoTypeKeyword Keyword,
   if (InsertPos)
     AutoTypes.InsertNode(AT, InsertPos);
   return QualType(AT, 0);
+}
+
+/// Return the uniqued reference to the deduced template specialization type
+/// which has been deduced to the given type, or to the canonical undeduced
+/// such type, or the canonical deduced-but-dependent such type.
+QualType ASTContext::getDeducedTemplateSpecializationType(
+    TemplateName Template, QualType DeducedType, bool IsDependent) const {
+  // Look in the folding set for an existing type.
+  void *InsertPos = nullptr;
+  llvm::FoldingSetNodeID ID;
+  DeducedTemplateSpecializationType::Profile(ID, Template, DeducedType,
+                                             IsDependent);
+  if (DeducedTemplateSpecializationType *DTST =
+          DeducedTemplateSpecializationTypes.FindNodeOrInsertPos(ID, InsertPos))
+    return QualType(DTST, 0);
+
+  DeducedTemplateSpecializationType *DTST = new (*this, TypeAlignment)
+      DeducedTemplateSpecializationType(Template, DeducedType, IsDependent);
+  Types.push_back(DTST);
+  if (InsertPos)
+    DeducedTemplateSpecializationTypes.InsertNode(DTST, InsertPos);
+  return QualType(DTST, 0);
 }
 
 /// getAtomicType - Return the uniqued reference to the atomic type for
@@ -5885,7 +5946,6 @@ static char getObjCEncodingForPrimitiveKind(const ASTContext *C,
     case BuiltinType::OCLEvent:
     case BuiltinType::OCLClkEvent:
     case BuiltinType::OCLQueue:
-    case BuiltinType::OCLNDRange:
     case BuiltinType::OCLReserveID:
     case BuiltinType::OCLSampler:
     case BuiltinType::Dependent:
@@ -6300,6 +6360,7 @@ void ASTContext::getObjCEncodingForTypeImpl(QualType T, std::string& S,
   // We could see an undeduced auto type here during error recovery.
   // Just ignore it.
   case Type::Auto:
+  case Type::DeducedTemplateSpecialization:
     return;
 
   case Type::Pipe:
@@ -8099,6 +8160,7 @@ QualType ASTContext::mergeTypes(QualType LHS, QualType RHS,
     llvm_unreachable("Non-canonical and dependent types shouldn't get here");
 
   case Type::Auto:
+  case Type::DeducedTemplateSpecialization:
   case Type::LValueReference:
   case Type::RValueReference:
   case Type::MemberPointer:
@@ -8751,7 +8813,7 @@ static GVALinkage basicGVALinkageForFunction(const ASTContext &Context,
   if (!FD->isExternallyVisible())
     return GVA_Internal;
 
-  GVALinkage External = GVA_StrongExternal;
+  GVALinkage External;
   switch (FD->getTemplateSpecializationKind()) {
   case TSK_Undeclared:
   case TSK_ExplicitSpecialization:
@@ -8825,8 +8887,22 @@ static GVALinkage adjustGVALinkageForAttributes(const ASTContext &Context,
 }
 
 GVALinkage ASTContext::GetGVALinkageForFunction(const FunctionDecl *FD) const {
-  return adjustGVALinkageForAttributes(
+  auto L = adjustGVALinkageForAttributes(
       *this, basicGVALinkageForFunction(*this, FD), FD);
+  auto EK = ExternalASTSource::EK_ReplyHazy;
+  if (auto *Ext = getExternalSource())
+    EK = Ext->hasExternalDefinitions(FD->getOwningModuleID());
+  switch (EK) {
+  case ExternalASTSource::EK_Never:
+    if (L == GVA_DiscardableODR)
+      return GVA_StrongODR;
+    break;
+  case ExternalASTSource::EK_Always:
+    return GVA_AvailableExternally;
+  case ExternalASTSource::EK_ReplyHazy:
+    break;
+  }
+  return L;
 }
 
 static GVALinkage basicGVALinkageForVariable(const ASTContext &Context,
@@ -8835,22 +8911,30 @@ static GVALinkage basicGVALinkageForVariable(const ASTContext &Context,
     return GVA_Internal;
 
   if (VD->isStaticLocal()) {
-    GVALinkage StaticLocalLinkage = GVA_DiscardableODR;
     const DeclContext *LexicalContext = VD->getParentFunctionOrMethod();
     while (LexicalContext && !isa<FunctionDecl>(LexicalContext))
       LexicalContext = LexicalContext->getLexicalParent();
 
-    // Let the static local variable inherit its linkage from the nearest
-    // enclosing function.
-    if (LexicalContext)
-      StaticLocalLinkage =
-          Context.GetGVALinkageForFunction(cast<FunctionDecl>(LexicalContext));
+    // ObjC Blocks can create local variables that don't have a FunctionDecl
+    // LexicalContext.
+    if (!LexicalContext)
+      return GVA_DiscardableODR;
 
-    // GVA_StrongODR function linkage is stronger than what we need,
-    // downgrade to GVA_DiscardableODR.
-    // This allows us to discard the variable if we never end up needing it.
-    return StaticLocalLinkage == GVA_StrongODR ? GVA_DiscardableODR
-                                               : StaticLocalLinkage;
+    // Otherwise, let the static local variable inherit its linkage from the
+    // nearest enclosing function.
+    auto StaticLocalLinkage =
+        Context.GetGVALinkageForFunction(cast<FunctionDecl>(LexicalContext));
+
+    // Itanium ABI 5.2.2: "Each COMDAT group [for a static local variable] must
+    // be emitted in any object with references to the symbol for the object it
+    // contains, whether inline or out-of-line."
+    // Similar behavior is observed with MSVC. An alternative ABI could use
+    // StrongODR/AvailableExternally to match the function, but none are
+    // known/supported currently.
+    if (StaticLocalLinkage == GVA_StrongODR ||
+        StaticLocalLinkage == GVA_AvailableExternally)
+      return GVA_DiscardableODR;
+    return StaticLocalLinkage;
   }
 
   // MSVC treats in-class initialized static data members as definitions.
@@ -8903,7 +8987,7 @@ GVALinkage ASTContext::GetGVALinkageForVariable(const VarDecl *VD) {
       *this, basicGVALinkageForVariable(*this, VD), VD);
 }
 
-bool ASTContext::DeclMustBeEmitted(const Decl *D) {
+bool ASTContext::DeclMustBeEmitted(const Decl *D, bool ForModularCodegen) {
   if (const VarDecl *VD = dyn_cast<VarDecl>(D)) {
     if (!VD->isFileVarDecl())
       return false;
@@ -8967,10 +9051,15 @@ bool ASTContext::DeclMustBeEmitted(const Decl *D) {
       }
     }
 
+    GVALinkage Linkage = GetGVALinkageForFunction(FD);
+
+    if (Linkage == GVA_DiscardableODR && ForModularCodegen)
+      return true;
+
     // static, static inline, always_inline, and extern inline functions can
     // always be deferred.  Normal inline functions can be deferred in C99/C++.
     // Implicit template instantiations can also be deferred in C++.
-    return !isDiscardableGVALinkage(GetGVALinkageForFunction(FD));
+    return !isDiscardableGVALinkage(Linkage);
   }
   
   const VarDecl *VD = cast<VarDecl>(D);
@@ -8990,7 +9079,8 @@ bool ASTContext::DeclMustBeEmitted(const Decl *D) {
 
   // Variables that have initialization with side-effects are required.
   if (VD->getInit() && VD->getInit()->HasSideEffects(*this) &&
-      !VD->evaluateValue())
+      // We can get a value-dependent initializer during error recovery.
+      (VD->getInit()->isValueDependent() || !VD->evaluateValue()))
     return true;
 
   // Likewise, variables with tuple-like bindings are required if their

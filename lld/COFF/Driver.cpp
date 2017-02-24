@@ -25,6 +25,7 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Process.h"
+#include "llvm/Support/TarWriter.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
@@ -40,7 +41,6 @@
 using namespace llvm;
 using namespace llvm::COFF;
 using llvm::sys::Process;
-using llvm::sys::fs::OpenFlags;
 using llvm::sys::fs::file_magic;
 using llvm::sys::fs::identify_magic;
 
@@ -54,8 +54,13 @@ BumpPtrAllocator BAlloc;
 StringSaver Saver{BAlloc};
 std::vector<SpecificAllocBase *> SpecificAllocBase::Instances;
 
-bool link(ArrayRef<const char *> Args) {
+bool link(ArrayRef<const char *> Args, raw_ostream &Diag) {
+  ErrorCount = 0;
+  ErrorOS = &Diag;
+  Argv0 = Args[0];
   Config = make<Configuration>();
+  Config->ColorDiagnostics =
+      (ErrorOS == &llvm::errs() && Process::StandardErrHasColors());
   Driver = make<LinkerDriver>();
   Driver->link(Args);
   return true;
@@ -98,9 +103,9 @@ MemoryBufferRef LinkerDriver::takeBuffer(std::unique_ptr<MemoryBuffer> MB) {
   MemoryBufferRef MBRef = *MB;
   OwningMBs.push_back(std::move(MB));
 
-  if (Driver->Cpio)
-    Driver->Cpio->append(relativeToRoot(MBRef.getBufferIdentifier()),
-                         MBRef.getBuffer());
+  if (Driver->Tar)
+    Driver->Tar->append(relativeToRoot(MBRef.getBufferIdentifier()),
+                        MBRef.getBuffer());
 
   return MBRef;
 }
@@ -159,8 +164,7 @@ void LinkerDriver::addArchiveBuffer(MemoryBufferRef MB, StringRef SymName,
 
   Obj->ParentName = ParentName;
   Symtab.addFile(Obj);
-  if (Config->Verbose)
-    outs() << "Loaded " << toString(Obj) << " for " << SymName << "\n";
+  log("Loaded " + toString(Obj) + " for " + SymName);
 }
 
 void LinkerDriver::enqueueArchiveMember(const Archive::Child &C,
@@ -368,7 +372,7 @@ static std::string createResponseFile(const opt::InputArgList &Args,
     case OPT_libpath:
       break;
     default:
-      OS << stringize(Arg) << "\n";
+      OS << toString(Arg) << "\n";
     }
   }
 
@@ -401,7 +405,8 @@ static unsigned parseDebugType(StringRef Arg) {
     DebugTypes |= StringSwitch<unsigned>(Type.lower())
                       .Case("cv", static_cast<unsigned>(DebugType::CV))
                       .Case("pdata", static_cast<unsigned>(DebugType::PData))
-                      .Case("fixup", static_cast<unsigned>(DebugType::Fixup));
+                      .Case("fixup", static_cast<unsigned>(DebugType::Fixup))
+                      .Default(0);
   return DebugTypes;
 }
 
@@ -415,6 +420,46 @@ static std::string getMapFile(const opt::InputArgList &Args) {
   assert(Arg->getOption().getID() == OPT_lldmap);
   StringRef OutFile = Config->OutputFile;
   return (OutFile.substr(0, OutFile.rfind('.')) + ".map").str();
+}
+
+static bool isBitcodeFile(StringRef Path) {
+  std::unique_ptr<MemoryBuffer> MB = check(
+      MemoryBuffer::getFile(Path, -1, false, true), "could not open " + Path);
+  StringRef Buf = MB->getBuffer();
+  return sys::fs::identify_magic(Buf) == sys::fs::file_magic::bitcode;
+}
+
+// Create response file contents and invoke the MSVC linker.
+void LinkerDriver::invokeMSVC(opt::InputArgList &Args) {
+  std::string Rsp = "/nologo ";
+
+  for (auto *Arg : Args) {
+    switch (Arg->getOption().getID()) {
+    case OPT_linkrepro:
+    case OPT_lldmap:
+    case OPT_lldmap_file:
+    case OPT_msvclto:
+      // LLD-specific options are stripped.
+      break;
+    case OPT_opt:
+      if (!StringRef(Arg->getValue()).startswith("lld"))
+        Rsp += toString(Arg) + " ";
+      break;
+    case OPT_INPUT:
+      // Bitcode files are stripped as they've been compiled to
+      // native object files.
+      if (Optional<StringRef> Path = doFindFile(Arg->getValue()))
+        if (isBitcodeFile(*Path))
+          break;
+      Rsp += quote(Arg->getValue()) + " ";
+      break;
+    default:
+      Rsp += toString(Arg) + " ";
+    }
+  }
+
+  std::vector<StringRef> ObjectFiles = Symtab.compileBitcodeFiles();
+  runMSVCLinker(Rsp, ObjectFiles);
 }
 
 void LinkerDriver::enqueueTask(std::function<void()> Task) {
@@ -458,13 +503,17 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
 
   if (auto *Arg = Args.getLastArg(OPT_linkrepro)) {
     SmallString<64> Path = StringRef(Arg->getValue());
-    sys::path::append(Path, "repro");
-    ErrorOr<CpioFile *> F = CpioFile::create(Path);
-    if (F)
-      Cpio.reset(*F);
-    else
-      errs() << "/linkrepro: failed to open " << Path
-             << ".cpio: " << F.getError().message() << '\n';
+    sys::path::append(Path, "repro.tar");
+
+    Expected<std::unique_ptr<TarWriter>> ErrOrWriter =
+        TarWriter::create(Path, "repro");
+
+    if (ErrOrWriter) {
+      Tar = std::move(*ErrOrWriter);
+    } else {
+      error("/linkrepro: failed to open " + Path + ": " +
+            toString(ErrOrWriter.takeError()));
+    }
   }
 
   if (Args.filtered_begin(OPT_INPUT) == Args.filtered_end())
@@ -600,10 +649,21 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
           fatal("/opt:lldltojobs: invalid job count: " + Jobs);
         continue;
       }
+      if (StringRef(S).startswith("lldltopartitions=")) {
+        StringRef N = StringRef(S).substr(17);
+        if (N.getAsInteger(10, Config->LTOPartitions) ||
+            Config->LTOPartitions == 0)
+          fatal("/opt:lldltopartitions: invalid partition count: " + N);
+        continue;
+      }
       if (S != "ref" && S != "lbr" && S != "nolbr")
         fatal("/opt: unknown option: " + S);
     }
   }
+
+  // Handle /lldsavetemps
+  if (Args.hasArg(OPT_lldsavetemps))
+    Config->SaveTemps = true;
 
   // Handle /failifmismatch
   for (auto *Arg : Args.filtered(OPT_failifmismatch))
@@ -653,6 +713,8 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
   Config->DumpPdb = Args.hasArg(OPT_dumppdb);
   Config->DebugPdb = Args.hasArg(OPT_debugpdb);
 
+  Config->MapFile = getMapFile(Args);
+
   // Create a list of input files. Files can be given as arguments
   // for /defaultlib option.
   std::vector<MemoryBufferRef> MBs;
@@ -673,7 +735,7 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
   // We should have inferred a machine type by now from the input files, but if
   // not we assume x64.
   if (Config->Machine == IMAGE_FILE_MACHINE_UNKNOWN) {
-    errs() << "warning: /machine is not specified. x64 is assumed.\n";
+    warn("/machine is not specified. x64 is assumed");
     Config->Machine = AMD64;
   }
 
@@ -683,10 +745,10 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
   if (!Resources.empty())
     addBuffer(convertResToCOFF(Resources));
 
-  if (Cpio)
-    Cpio->append("response.txt",
-                 createResponseFile(Args, FilePaths,
-                                    ArrayRef<StringRef>(SearchPaths).slice(1)));
+  if (Tar)
+    Tar->append("response.txt",
+                createResponseFile(Args, FilePaths,
+                                   ArrayRef<StringRef>(SearchPaths).slice(1)));
 
   // Handle /largeaddressaware
   if (Config->is64() || Args.hasArg(OPT_largeaddressaware))
@@ -710,8 +772,7 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
     if (S.empty())
       fatal("entry point must be defined");
     Config->Entry = addUndefined(S);
-    if (Config->Verbose)
-      outs() << "Entry name inferred: " << S << "\n";
+    log("Entry name inferred: " + S);
   }
 
   // Handle /export
@@ -796,6 +857,13 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
       addUndefined(mangle("_load_config_used"));
   } while (run());
 
+  // If /msvclto is given, we use the MSVC linker to link LTO output files.
+  // This is useful because MSVC link.exe can generate complete PDBs.
+  if (Args.hasArg(OPT_msvclto)) {
+    invokeMSVC(Args);
+    exit(0);
+  }
+
   // Do LTO by compiling bitcode input files to a set of native COFF files then
   // link those files.
   Symtab.addCombinedLTOObjects();
@@ -840,17 +908,6 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
 
   // Write the result.
   writeResult(&Symtab);
-
-  // Create a symbol map file containing symbol VAs and their names
-  // to help debugging.
-  std::string MapFile = getMapFile(Args);
-  if (!MapFile.empty()) {
-    std::error_code EC;
-    raw_fd_ostream Out(MapFile, EC, OpenFlags::F_Text);
-    if (EC)
-      fatal(EC, "could not create the symbol map " + MapFile);
-    Symtab.printMap(Out);
-  }
 
   // Call exit to avoid calling destructors.
   exit(0);

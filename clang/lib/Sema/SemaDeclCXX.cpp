@@ -647,6 +647,17 @@ bool Sema::MergeCXXFunctionDecl(FunctionDecl *New, FunctionDecl *Old,
     Invalid = true;
   }
 
+  // FIXME: It's not clear what should happen if multiple declarations of a
+  // deduction guide have different explicitness. For now at least we simply
+  // reject any case where the explicitness changes.
+  auto *NewGuide = dyn_cast<CXXDeductionGuideDecl>(New);
+  if (NewGuide && NewGuide->isExplicitSpecified() !=
+                      cast<CXXDeductionGuideDecl>(Old)->isExplicitSpecified()) {
+    Diag(New->getLocation(), diag::err_deduction_guide_explicit_mismatch)
+      << NewGuide->isExplicitSpecified();
+    Diag(Old->getLocation(), diag::note_previous_declaration);
+  }
+
   // C++11 [dcl.fct.default]p4: If a friend declaration specifies a default
   // argument expression, that declaration shall be a definition and shall be
   // the only declaration of the function or function template in the
@@ -2758,6 +2769,56 @@ static AttributeList *getMSPropertyAttr(AttributeList *list) {
   return nullptr;
 }
 
+// Check if there is a field shadowing.
+void Sema::CheckShadowInheritedFields(const SourceLocation &Loc,
+                                      DeclarationName FieldName,
+                                      const CXXRecordDecl *RD) {
+  if (Diags.isIgnored(diag::warn_shadow_field, Loc))
+    return;
+
+  // To record a shadowed field in a base
+  std::map<CXXRecordDecl*, NamedDecl*> Bases;
+  auto FieldShadowed = [&](const CXXBaseSpecifier *Specifier,
+                           CXXBasePath &Path) {
+    const auto Base = Specifier->getType()->getAsCXXRecordDecl();
+    // Record an ambiguous path directly
+    if (Bases.find(Base) != Bases.end())
+      return true;
+    for (const auto Field : Base->lookup(FieldName)) {
+      if ((isa<FieldDecl>(Field) || isa<IndirectFieldDecl>(Field)) &&
+          Field->getAccess() != AS_private) {
+        assert(Field->getAccess() != AS_none);
+        assert(Bases.find(Base) == Bases.end());
+        Bases[Base] = Field;
+        return true;
+      }
+    }
+    return false;
+  };
+
+  CXXBasePaths Paths(/*FindAmbiguities=*/true, /*RecordPaths=*/true,
+                     /*DetectVirtual=*/true);
+  if (!RD->lookupInBases(FieldShadowed, Paths))
+    return;
+
+  for (const auto &P : Paths) {
+    auto Base = P.back().Base->getType()->getAsCXXRecordDecl();
+    auto It = Bases.find(Base);
+    // Skip duplicated bases
+    if (It == Bases.end())
+      continue;
+    auto BaseField = It->second;
+    assert(BaseField->getAccess() != AS_private);
+    if (AS_none !=
+        CXXRecordDecl::MergeAccess(P.Access, BaseField->getAccess())) {
+      Diag(Loc, diag::warn_shadow_field)
+        << FieldName.getAsString() << RD->getName() << Base->getName();
+      Diag(BaseField->getLocation(), diag::note_shadow_field);
+      Bases.erase(It);
+    }
+  }
+}
+
 /// ActOnCXXMemberDeclarator - This is invoked when a C++ class member
 /// declarator is parsed. 'AS' is the access specifier, 'BW' specifies the
 /// bitfield width if there is one, 'InitExpr' specifies the initializer if
@@ -2957,6 +3018,8 @@ Sema::ActOnCXXMemberDeclarator(Scope *S, AccessSpecifier AS, Declarator &D,
       if (!Member)
         return nullptr;
     }
+
+    CheckShadowInheritedFields(Loc, Name, cast<CXXRecordDecl>(CurContext));
   } else {
     Member = HandleDeclarator(S, D, TemplateParameterLists);
     if (!Member)
@@ -3716,6 +3779,9 @@ Sema::BuildMemInitializer(Decl *ConstructorD,
     BaseType = GetTypeFromParser(TemplateTypeTy, &TInfo);
   } else if (DS.getTypeSpecType() == TST_decltype) {
     BaseType = BuildDecltypeType(DS.getRepAsExpr(), DS.getTypeSpecTypeLoc());
+  } else if (DS.getTypeSpecType() == TST_decltype_auto) {
+    Diag(DS.getTypeSpecTypeLoc(), diag::err_decltype_auto_invalid);
+    return true;
   } else {
     LookupResult R(*this, MemberOrBase, IdLoc, LookupOrdinaryName);
     LookupParsedName(R, S, &SS);
@@ -5435,6 +5501,44 @@ static void ReferenceDllExportedMethods(Sema &S, CXXRecordDecl *Class) {
         S.Consumer.HandleTopLevelDecl(DeclGroupRef(MD));
       }
     }
+  }
+}
+
+static void checkForMultipleExportedDefaultConstructors(Sema &S,
+                                                        CXXRecordDecl *Class) {
+  // Only the MS ABI has default constructor closures, so we don't need to do
+  // this semantic checking anywhere else.
+  if (!S.Context.getTargetInfo().getCXXABI().isMicrosoft())
+    return;
+
+  CXXConstructorDecl *LastExportedDefaultCtor = nullptr;
+  for (Decl *Member : Class->decls()) {
+    // Look for exported default constructors.
+    auto *CD = dyn_cast<CXXConstructorDecl>(Member);
+    if (!CD || !CD->isDefaultConstructor())
+      continue;
+    auto *Attr = CD->getAttr<DLLExportAttr>();
+    if (!Attr)
+      continue;
+
+    // If the class is non-dependent, mark the default arguments as ODR-used so
+    // that we can properly codegen the constructor closure.
+    if (!Class->isDependentContext()) {
+      for (ParmVarDecl *PD : CD->parameters()) {
+        (void)S.CheckCXXDefaultArgExpr(Attr->getLocation(), CD, PD);
+        S.DiscardCleanupsInEvaluationContext();
+      }
+    }
+
+    if (LastExportedDefaultCtor) {
+      S.Diag(LastExportedDefaultCtor->getLocation(),
+             diag::err_attribute_dll_ambiguous_default_ctor)
+          << Class;
+      S.Diag(CD->getLocation(), diag::note_entity_declared_at)
+          << CD->getDeclName();
+      return;
+    }
+    LastExportedDefaultCtor = CD;
   }
 }
 
@@ -8298,6 +8402,154 @@ Decl *Sema::ActOnConversionDeclarator(CXXConversionDecl *Conversion) {
   return Conversion;
 }
 
+namespace {
+/// Utility class to accumulate and print a diagnostic listing the invalid
+/// specifier(s) on a declaration.
+struct BadSpecifierDiagnoser {
+  BadSpecifierDiagnoser(Sema &S, SourceLocation Loc, unsigned DiagID)
+      : S(S), Diagnostic(S.Diag(Loc, DiagID)) {}
+  ~BadSpecifierDiagnoser() {
+    Diagnostic << Specifiers;
+  }
+
+  template<typename T> void check(SourceLocation SpecLoc, T Spec) {
+    return check(SpecLoc, DeclSpec::getSpecifierName(Spec));
+  }
+  void check(SourceLocation SpecLoc, DeclSpec::TST Spec) {
+    return check(SpecLoc,
+                 DeclSpec::getSpecifierName(Spec, S.getPrintingPolicy()));
+  }
+  void check(SourceLocation SpecLoc, const char *Spec) {
+    if (SpecLoc.isInvalid()) return;
+    Diagnostic << SourceRange(SpecLoc, SpecLoc);
+    if (!Specifiers.empty()) Specifiers += " ";
+    Specifiers += Spec;
+  }
+
+  Sema &S;
+  Sema::SemaDiagnosticBuilder Diagnostic;
+  std::string Specifiers;
+};
+}
+
+/// Check the validity of a declarator that we parsed for a deduction-guide.
+/// These aren't actually declarators in the grammar, so we need to check that
+/// the user didn't specify any pieces that are not part of the deduction-guide
+/// grammar.
+void Sema::CheckDeductionGuideDeclarator(Declarator &D, QualType &R,
+                                         StorageClass &SC) {
+  TemplateName GuidedTemplate = D.getName().TemplateName.get().get();
+  TemplateDecl *GuidedTemplateDecl = GuidedTemplate.getAsTemplateDecl();
+  assert(GuidedTemplateDecl && "missing template decl for deduction guide");
+
+  // C++ [temp.deduct.guide]p3:
+  //   A deduction-gide shall be declared in the same scope as the
+  //   corresponding class template.
+  if (!CurContext->getRedeclContext()->Equals(
+          GuidedTemplateDecl->getDeclContext()->getRedeclContext())) {
+    Diag(D.getIdentifierLoc(), diag::err_deduction_guide_wrong_scope)
+      << GuidedTemplateDecl;
+    Diag(GuidedTemplateDecl->getLocation(), diag::note_template_decl_here);
+  }
+
+  auto &DS = D.getMutableDeclSpec();
+  // We leave 'friend' and 'virtual' to be rejected in the normal way.
+  if (DS.hasTypeSpecifier() || DS.getTypeQualifiers() ||
+      DS.getStorageClassSpecLoc().isValid() || DS.isInlineSpecified() ||
+      DS.isNoreturnSpecified() || DS.isConstexprSpecified() ||
+      DS.isConceptSpecified()) {
+    BadSpecifierDiagnoser Diagnoser(
+        *this, D.getIdentifierLoc(),
+        diag::err_deduction_guide_invalid_specifier);
+
+    Diagnoser.check(DS.getStorageClassSpecLoc(), DS.getStorageClassSpec());
+    DS.ClearStorageClassSpecs();
+    SC = SC_None;
+
+    // 'explicit' is permitted.
+    Diagnoser.check(DS.getInlineSpecLoc(), "inline");
+    Diagnoser.check(DS.getNoreturnSpecLoc(), "_Noreturn");
+    Diagnoser.check(DS.getConstexprSpecLoc(), "constexpr");
+    Diagnoser.check(DS.getConceptSpecLoc(), "concept");
+    DS.ClearConstexprSpec();
+    DS.ClearConceptSpec();
+
+    Diagnoser.check(DS.getConstSpecLoc(), "const");
+    Diagnoser.check(DS.getRestrictSpecLoc(), "__restrict");
+    Diagnoser.check(DS.getVolatileSpecLoc(), "volatile");
+    Diagnoser.check(DS.getAtomicSpecLoc(), "_Atomic");
+    Diagnoser.check(DS.getUnalignedSpecLoc(), "__unaligned");
+    DS.ClearTypeQualifiers();
+
+    Diagnoser.check(DS.getTypeSpecComplexLoc(), DS.getTypeSpecComplex());
+    Diagnoser.check(DS.getTypeSpecSignLoc(), DS.getTypeSpecSign());
+    Diagnoser.check(DS.getTypeSpecWidthLoc(), DS.getTypeSpecWidth());
+    Diagnoser.check(DS.getTypeSpecTypeLoc(), DS.getTypeSpecType());
+    DS.ClearTypeSpecType();
+  }
+
+  if (D.isInvalidType())
+    return;
+
+  // Check the declarator is simple enough.
+  bool FoundFunction = false;
+  for (const DeclaratorChunk &Chunk : llvm::reverse(D.type_objects())) {
+    if (Chunk.Kind == DeclaratorChunk::Paren)
+      continue;
+    if (Chunk.Kind != DeclaratorChunk::Function || FoundFunction) {
+      Diag(D.getDeclSpec().getLocStart(),
+          diag::err_deduction_guide_with_complex_decl)
+        << D.getSourceRange();
+      break;
+    }
+    if (!Chunk.Fun.hasTrailingReturnType()) {
+      Diag(D.getName().getLocStart(),
+           diag::err_deduction_guide_no_trailing_return_type);
+      break;
+    }
+
+    // Check that the return type is written as a specialization of
+    // the template specified as the deduction-guide's name.
+    ParsedType TrailingReturnType = Chunk.Fun.getTrailingReturnType();
+    TypeSourceInfo *TSI = nullptr;
+    QualType RetTy = GetTypeFromParser(TrailingReturnType, &TSI);
+    assert(TSI && "deduction guide has valid type but invalid return type?");
+    bool AcceptableReturnType = false;
+    bool MightInstantiateToSpecialization = false;
+    if (auto RetTST =
+            TSI->getTypeLoc().getAs<TemplateSpecializationTypeLoc>()) {
+      TemplateName SpecifiedName = RetTST.getTypePtr()->getTemplateName();
+      bool TemplateMatches =
+          Context.hasSameTemplateName(SpecifiedName, GuidedTemplate);
+      if (SpecifiedName.getKind() == TemplateName::Template && TemplateMatches)
+        AcceptableReturnType = true;
+      else {
+        // This could still instantiate to the right type, unless we know it
+        // names the wrong class template.
+        auto *TD = SpecifiedName.getAsTemplateDecl();
+        MightInstantiateToSpecialization = !(TD && isa<ClassTemplateDecl>(TD) &&
+                                             !TemplateMatches);
+      }
+    } else if (!RetTy.hasQualifiers() && RetTy->isDependentType()) {
+      MightInstantiateToSpecialization = true;
+    }
+
+    if (!AcceptableReturnType) {
+      Diag(TSI->getTypeLoc().getLocStart(),
+           diag::err_deduction_guide_bad_trailing_return_type)
+        << GuidedTemplate << TSI->getType() << MightInstantiateToSpecialization
+        << TSI->getTypeLoc().getSourceRange();
+    }
+
+    // Keep going to check that we don't have any inner declarator pieces (we
+    // could still have a function returning a pointer to a function).
+    FoundFunction = true;
+  }
+
+  if (D.isFunctionDefinition())
+    Diag(D.getIdentifierLoc(), diag::err_deduction_guide_defines_function);
+}
+
 //===----------------------------------------------------------------------===//
 // Namespace Handling
 //===----------------------------------------------------------------------===//
@@ -8662,7 +8914,7 @@ QualType Sema::BuildStdInitializerList(QualType Element, SourceLocation Loc) {
       CheckTemplateIdType(TemplateName(StdInitializerList), Loc, Args));
 }
 
-bool Sema::isInitListConstructor(const CXXConstructorDecl* Ctor) {
+bool Sema::isInitListConstructor(const FunctionDecl *Ctor) {
   // C++ [dcl.init.list]p2:
   //   A constructor is an initializer-list constructor if its first parameter
   //   is of type std::initializer_list<E> or reference to possibly cv-qualified
@@ -8878,6 +9130,9 @@ Decl *Sema::ActOnUsingDeclaration(Scope *S,
     Diag(Name.getLocStart(), diag::err_using_decl_template_id)
       << SourceRange(Name.TemplateId->LAngleLoc, Name.TemplateId->RAngleLoc);
     return nullptr;
+
+  case UnqualifiedId::IK_DeductionGuideName:
+    llvm_unreachable("cannot parse qualified deduction guide name");
   }
 
   DeclarationNameInfo TargetNameInfo = GetNameFromUnqualifiedId(Name);
@@ -9418,20 +9673,33 @@ NamedDecl *Sema::BuildUsingDeclaration(Scope *S, AccessSpecifier AS,
   // invalid).
   if (R.empty() &&
       NameInfo.getName().getNameKind() != DeclarationName::CXXConstructorName) {
+    // HACK: Work around a bug in libstdc++'s detection of ::gets. Sometimes
+    // it will believe that glibc provides a ::gets in cases where it does not,
+    // and will try to pull it into namespace std with a using-declaration.
+    // Just ignore the using-declaration in that case.
+    auto *II = NameInfo.getName().getAsIdentifierInfo();
+    if (getLangOpts().CPlusPlus14 && II && II->isStr("gets") &&
+        CurContext->isStdNamespace() &&
+        isa<TranslationUnitDecl>(LookupContext) &&
+        getSourceManager().isInSystemHeader(UsingLoc))
+      return nullptr;
     if (TypoCorrection Corrected = CorrectTypo(
             R.getLookupNameInfo(), R.getLookupKind(), S, &SS,
             llvm::make_unique<UsingValidatorCCC>(
                 HasTypenameKeyword, IsInstantiation, SS.getScopeRep(),
                 dyn_cast<CXXRecordDecl>(CurContext)),
             CTK_ErrorRecovery)) {
-      // We reject any correction for which ND would be NULL.
-      NamedDecl *ND = Corrected.getCorrectionDecl();
-
       // We reject candidates where DroppedSpecifier == true, hence the
       // literal '0' below.
       diagnoseTypo(Corrected, PDiag(diag::err_no_member_suggest)
                                 << NameInfo.getName() << LookupContext << 0
                                 << SS.getRange());
+
+      // If we picked a correction with no attached Decl we can't do anything
+      // useful with it, bail out.
+      NamedDecl *ND = Corrected.getCorrectionDecl();
+      if (!ND)
+        return BuildInvalid();
 
       // If we corrected to an inheriting constructor, handle it as one.
       auto *RD = dyn_cast<CXXRecordDecl>(ND);
@@ -10111,9 +10379,14 @@ Sema::ComputeDefaultedDefaultCtorExceptionSpec(SourceLocation Loc,
   }
 
   // Field constructors.
-  for (const auto *F : ClassDecl->fields()) {
+  for (auto *F : ClassDecl->fields()) {
     if (F->hasInClassInitializer()) {
-      if (Expr *E = F->getInClassInitializer())
+      Expr *E = F->getInClassInitializer();
+      if (!E)
+        // FIXME: It's a little wasteful to build and throw away a
+        // CXXDefaultInitExpr here.
+        E = BuildCXXDefaultInitExpr(Loc, F).get();
+      if (E)
         ExceptSpec.CalledExpr(E);
     } else if (const RecordType *RecordTy
               = Context.getBaseElementType(F->getType())->getAs<RecordType>()) {
@@ -10194,19 +10467,34 @@ struct DeclaringSpecialMember {
   bool WasAlreadyBeingDeclared;
 
   DeclaringSpecialMember(Sema &S, CXXRecordDecl *RD, Sema::CXXSpecialMember CSM)
-    : S(S), D(RD, CSM), SavedContext(S, RD) {
+      : S(S), D(RD, CSM), SavedContext(S, RD) {
     WasAlreadyBeingDeclared = !S.SpecialMembersBeingDeclared.insert(D).second;
     if (WasAlreadyBeingDeclared)
       // This almost never happens, but if it does, ensure that our cache
       // doesn't contain a stale result.
       S.SpecialMemberCache.clear();
-
-    // FIXME: Register a note to be produced if we encounter an error while
-    // declaring the special member.
+    else {
+      // Register a note to be produced if we encounter an error while
+      // declaring the special member.
+      Sema::CodeSynthesisContext Ctx;
+      Ctx.Kind = Sema::CodeSynthesisContext::DeclaringSpecialMember;
+      // FIXME: We don't have a location to use here. Using the class's
+      // location maintains the fiction that we declare all special members
+      // with the class, but (1) it's not clear that lying about that helps our
+      // users understand what's going on, and (2) there may be outer contexts
+      // on the stack (some of which are relevant) and printing them exposes
+      // our lies.
+      Ctx.PointOfInstantiation = RD->getLocation();
+      Ctx.Entity = RD;
+      Ctx.SpecialMember = CSM;
+      S.pushCodeSynthesisContext(Ctx);
+    }
   }
   ~DeclaringSpecialMember() {
-    if (!WasAlreadyBeingDeclared)
+    if (!WasAlreadyBeingDeclared) {
       S.SpecialMembersBeingDeclared.erase(D);
+      S.popCodeSynthesisContext();
+    }
   }
 
   /// \brief Are we already trying to declare this special member?
@@ -10228,7 +10516,7 @@ void Sema::CheckImplicitSpecialMemberDeclaration(Scope *S, FunctionDecl *FD) {
   R.resolveKind();
   R.suppressDiagnostics();
 
-  CheckFunctionDeclaration(S, FD, R, /*IsExplicitSpecialization*/false);
+  CheckFunctionDeclaration(S, FD, R, /*IsMemberSpecialization*/false);
 }
 
 CXXConstructorDecl *Sema::DeclareImplicitDefaultConstructor(
@@ -10665,64 +10953,11 @@ void Sema::ActOnFinishCXXMemberDecls() {
       DelayedExceptionSpecChecks.clear();
       return;
     }
-  }
-}
-
-static void checkDefaultArgExprsForConstructors(Sema &S, CXXRecordDecl *Class) {
-  // Don't do anything for template patterns.
-  if (Class->getDescribedClassTemplate())
-    return;
-
-  CallingConv ExpectedCallingConv = S.Context.getDefaultCallingConvention(
-      /*IsVariadic=*/false, /*IsCXXMethod=*/true);
-
-  CXXConstructorDecl *LastExportedDefaultCtor = nullptr;
-  for (Decl *Member : Class->decls()) {
-    auto *CD = dyn_cast<CXXConstructorDecl>(Member);
-    if (!CD) {
-      // Recurse on nested classes.
-      if (auto *NestedRD = dyn_cast<CXXRecordDecl>(Member))
-        checkDefaultArgExprsForConstructors(S, NestedRD);
-      continue;
-    } else if (!CD->isDefaultConstructor() || !CD->hasAttr<DLLExportAttr>()) {
-      continue;
-    }
-
-    CallingConv ActualCallingConv =
-        CD->getType()->getAs<FunctionProtoType>()->getCallConv();
-
-    // Skip default constructors with typical calling conventions and no default
-    // arguments.
-    unsigned NumParams = CD->getNumParams();
-    if (ExpectedCallingConv == ActualCallingConv && NumParams == 0)
-      continue;
-
-    if (LastExportedDefaultCtor) {
-      S.Diag(LastExportedDefaultCtor->getLocation(),
-             diag::err_attribute_dll_ambiguous_default_ctor) << Class;
-      S.Diag(CD->getLocation(), diag::note_entity_declared_at)
-          << CD->getDeclName();
-      return;
-    }
-    LastExportedDefaultCtor = CD;
-
-    for (unsigned I = 0; I != NumParams; ++I) {
-      (void)S.CheckCXXDefaultArgExpr(Class->getLocation(), CD,
-                                     CD->getParamDecl(I));
-      S.DiscardCleanupsInEvaluationContext();
-    }
+    checkForMultipleExportedDefaultConstructors(*this, Record);
   }
 }
 
 void Sema::ActOnFinishCXXNonNestedClass(Decl *D) {
-  auto *RD = dyn_cast<CXXRecordDecl>(D);
-
-  // Default constructors that are annotated with __declspec(dllexport) which
-  // have default arguments or don't use the standard calling convention are
-  // wrapped with a thunk called the default constructor closure.
-  if (RD && Context.getTargetInfo().getCXXABI().isMicrosoft())
-    checkDefaultArgExprsForConstructors(*this, RD);
-
   referenceDLLExportedClassMethods();
 }
 
@@ -13525,6 +13760,10 @@ ExprResult Sema::BuildCXXDefaultInitExpr(SourceLocation Loc, FieldDecl *Field) {
   if (Field->getInClassInitializer())
     return CXXDefaultInitExpr::Create(Context, Loc, Field);
 
+  // If we might have already tried and failed to instantiate, don't try again.
+  if (Field->isInvalidDecl())
+    return ExprError();
+
   // Maybe we haven't instantiated the in-class initializer. Go check the
   // pattern FieldDecl to see if it has one.
   CXXRecordDecl *ParentRD = cast<CXXRecordDecl>(Field->getParent());
@@ -13554,8 +13793,11 @@ ExprResult Sema::BuildCXXDefaultInitExpr(SourceLocation Loc, FieldDecl *Field) {
     }
 
     if (InstantiateInClassInitializer(Loc, Field, Pattern,
-                                      getTemplateInstantiationArgs(Field)))
+                                      getTemplateInstantiationArgs(Field))) {
+      // Don't diagnose this again.
+      Field->setInvalidDecl();
       return ExprError();
+    }
     return CXXDefaultInitExpr::Create(Context, Loc, Field);
   }
 
@@ -13577,7 +13819,9 @@ ExprResult Sema::BuildCXXDefaultInitExpr(SourceLocation Loc, FieldDecl *Field) {
   Diag(Loc, diag::err_in_class_initializer_not_yet_parsed)
       << OutermostClass << Field;
   Diag(Field->getLocEnd(), diag::note_in_class_initializer_not_yet_parsed);
-
+  // Recover by marking the field invalid, unless we're in a SFINAE context.
+  if (!isSFINAEContext())
+    Field->setInvalidDecl();
   return ExprError();
 }
 
@@ -13942,7 +14186,7 @@ checkLiteralOperatorTemplateParameterList(Sema &SemaRef,
           PmArgs->getType()->getAs<TemplateTypeParmType>();
       if (TArgs && TArgs->getDepth() == PmType->getDepth() &&
           TArgs->getIndex() == PmType->getIndex()) {
-        if (SemaRef.ActiveTemplateInstantiations.empty())
+        if (!SemaRef.inTemplateInstantiation())
           SemaRef.Diag(TpDecl->getLocation(),
                        diag::ext_string_literal_operator_template);
         return false;
@@ -14114,7 +14358,7 @@ bool Sema::CheckLiteralOperatorDeclaration(FunctionDecl *FnDecl) {
     //   Literal suffix identifiers that do not start with an underscore
     //   are reserved for future standardization.
     Diag(FnDecl->getLocation(), diag::warn_user_literal_reserved)
-      << NumericLiteralParser::isValidUDSuffix(getLangOpts(), LiteralName);
+      << StringLiteralParser::isValidUDSuffix(getLangOpts(), LiteralName);
   }
 
   return false;
@@ -14437,10 +14681,10 @@ FriendDecl *Sema::CheckFriendTypeDecl(SourceLocation LocStart,
   //   for a class.*
   //
   //   * The class-key of the elaborated-type-specifier is required.
-  if (!ActiveTemplateInstantiations.empty()) {
-    // Do not complain about the form of friend template types during
-    // template instantiation; we will already have complained when the
-    // template was declared.
+  if (!CodeSynthesisContexts.empty()) {
+    // Do not complain about the form of friend template types during any kind
+    // of code synthesis. For template instantiation, we will have complained
+    // when the template was defined.
   } else {
     if (!T->isElaboratedTypeSpecifier()) {
       // If we evaluated the type to a record type, suggest putting
@@ -14505,13 +14749,13 @@ Decl *Sema::ActOnTemplatedFriendTag(Scope *S, SourceLocation FriendLoc,
                                     MultiTemplateParamsArg TempParamLists) {
   TagTypeKind Kind = TypeWithKeyword::getTagTypeKindForTypeSpec(TagSpec);
 
-  bool isExplicitSpecialization = false;
+  bool IsMemberSpecialization = false;
   bool Invalid = false;
 
   if (TemplateParameterList *TemplateParams =
           MatchTemplateParametersToScopeSpecifier(
               TagLoc, NameLoc, SS, nullptr, TempParamLists, /*friend*/ true,
-              isExplicitSpecialization, Invalid)) {
+              IsMemberSpecialization, Invalid)) {
     if (TemplateParams->size() > 0) {
       // This is a declaration of a class template.
       if (Invalid)
@@ -14526,7 +14770,7 @@ Decl *Sema::ActOnTemplatedFriendTag(Scope *S, SourceLocation FriendLoc,
       // The "template<>" header is extraneous.
       Diag(TemplateParams->getTemplateLoc(), diag::err_template_tag_noparams)
         << TypeWithKeyword::getTagTypeKindName(Kind) << Name;
-      isExplicitSpecialization = true;
+      IsMemberSpecialization = true;
     }
   }
 
@@ -14935,6 +15179,9 @@ NamedDecl *Sema::ActOnFriendFunctionDecl(Scope *S, Declarator &D,
       break;
     case UnqualifiedId::IK_ConversionFunctionId:
       DiagArg = 2;
+      break;
+    case UnqualifiedId::IK_DeductionGuideName:
+      DiagArg = 3;
       break;
     case UnqualifiedId::IK_Identifier:
     case UnqualifiedId::IK_ImplicitSelfParam:

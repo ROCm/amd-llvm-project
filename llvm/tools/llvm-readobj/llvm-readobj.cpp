@@ -166,7 +166,7 @@ namespace opts {
   // -arm-attributes, -a
   cl::opt<bool> ARMAttributes("arm-attributes",
                               cl::desc("Display the ARM attributes section"));
-  cl::alias ARMAttributesShort("-a", cl::desc("Alias for --arm-attributes"),
+  cl::alias ARMAttributesShort("a", cl::desc("Alias for --arm-attributes"),
                                cl::aliasopt(ARMAttributes));
 
   // -mips-plt-got
@@ -358,6 +358,8 @@ static std::error_code createDumper(const ObjectFile *Obj,
     return createELFDumper(Obj, Writer, Result);
   if (Obj->isMachO())
     return createMachODumper(Obj, Writer, Result);
+  if (Obj->isWasm())
+    return createWasmDumper(Obj, Writer, Result);
 
   return readobj_error::unsupported_obj_file_format;
 }

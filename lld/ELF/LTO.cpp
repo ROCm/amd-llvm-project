@@ -12,11 +12,11 @@
 #include "Error.h"
 #include "InputFiles.h"
 #include "Symbols.h"
+#include "lld/Core/TargetOptionsCommandFlags.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
-#include "llvm/CodeGen/CommandFlags.h"
 #include "llvm/IR/DiagnosticPrinter.h"
 #include "llvm/LTO/Config.h"
 #include "llvm/LTO/LTO.h"
@@ -46,7 +46,7 @@ static void saveBuffer(StringRef Buffer, const Twine &Path) {
   std::error_code EC;
   raw_fd_ostream OS(Path.str(), EC, sys::fs::OpenFlags::F_None);
   if (EC)
-    error(EC, "cannot create " + Path);
+    error("cannot create " + Path + ": " + EC.message());
   OS << Buffer;
 }
 
@@ -72,7 +72,7 @@ static std::unique_ptr<lto::LTO> createLTO() {
   Conf.Options = InitTargetOptionsFromCodeGenFlags();
   Conf.Options.RelaxELFRelocations = true;
 
-  Conf.RelocModel = Config->Pic ? Reloc::PIC_ : Reloc::Static;
+  Conf.RelocModel = Config->pic() ? Reloc::PIC_ : Reloc::Static;
   Conf.DisableVerify = Config->DisableVerify;
   Conf.DiagHandler = diagnosticHandler;
   Conf.OptLevel = Config->LTOO;
@@ -80,6 +80,10 @@ static std::unique_ptr<lto::LTO> createLTO() {
   // Set up a custom pipeline if we've been asked to.
   Conf.OptPipeline = Config->LTONewPmPasses;
   Conf.AAPipeline = Config->LTOAAPipeline;
+
+  // Set up optimization remarks if we've been asked to.
+  Conf.RemarksFilename = Config->OptRemarksFilename;
+  Conf.RemarksWithHotness = Config->OptRemarksWithHotness;
 
   if (Config->SaveTemps)
     checkError(Conf.addSaveTemps(std::string(Config->OutputFile) + ".",
@@ -147,7 +151,7 @@ std::vector<InputFile *> BitcodeCompiler::compile() {
     if (Buff[I].empty())
       continue;
     if (Config->SaveTemps) {
-      if (MaxTasks == 1)
+      if (I == 0)
         saveBuffer(Buff[I], Config->OutputFile + ".lto.o");
       else
         saveBuffer(Buff[I], Config->OutputFile + Twine(I) + ".lto.o");

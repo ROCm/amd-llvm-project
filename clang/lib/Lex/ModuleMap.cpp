@@ -91,6 +91,7 @@ ModuleMap::ModuleMap(SourceManager &SourceMgr, DiagnosticsEngine &Diags,
       HeaderInfo(HeaderInfo), BuiltinIncludeDir(nullptr),
       SourceModule(nullptr), NumCreatedModules(0) {
   MMapLangOpts.LineComment = true;
+  MMapLangOpts.ModularCodegen = LangOpts.ModularCodegen;
 }
 
 ModuleMap::~ModuleMap() {
@@ -144,7 +145,7 @@ static StringRef sanitizeFilenameAsIdentifier(StringRef Name,
 /// \brief Determine whether the given file name is the name of a builtin
 /// header, supplied by Clang to replace, override, or augment existing system
 /// headers.
-static bool isBuiltinHeader(StringRef FileName) {
+bool ModuleMap::isBuiltinHeader(StringRef FileName) {
   return llvm::StringSwitch<bool>(FileName)
            .Case("float.h", true)
            .Case("iso646.h", true)
@@ -165,7 +166,7 @@ ModuleMap::findKnownHeader(const FileEntry *File) {
   HeadersMap::iterator Known = Headers.find(File);
   if (HeaderInfo.getHeaderSearchOpts().ImplicitModuleMaps &&
       Known == Headers.end() && File->getDir() == BuiltinIncludeDir &&
-      isBuiltinHeader(llvm::sys::path::filename(File->getName()))) {
+      ModuleMap::isBuiltinHeader(llvm::sys::path::filename(File->getName()))) {
     HeaderInfo.loadTopLevelSystemModules();
     return Headers.find(File);
   }
@@ -446,9 +447,19 @@ ModuleMap::isHeaderUnavailableInModule(const FileEntry *Header,
              I = Known->second.begin(),
              E = Known->second.end();
          I != E; ++I) {
-      if (I->isAvailable() && (!RequestingModule ||
-                               I->getModule()->isSubModuleOf(RequestingModule)))
+
+      if (I->isAvailable() &&
+          (!RequestingModule ||
+           I->getModule()->isSubModuleOf(RequestingModule))) {
+        // When no requesting module is available, the caller is looking if a
+        // header is part a module by only looking into the module map. This is
+        // done by warn_uncovered_module_header checks; don't consider textual
+        // headers part of it in this mode, otherwise we get misleading warnings
+        // that a umbrella header is not including a textual header.
+        if (!RequestingModule && I->getRole() == ModuleMap::TextualHeader)
+          continue;
         return false;
+      }
     }
     return true;
   }
@@ -544,16 +555,17 @@ Module *ModuleMap::lookupModuleQualified(StringRef Name, Module *Context) const{
   return Context->findSubmodule(Name);
 }
 
-std::pair<Module *, bool> 
-ModuleMap::findOrCreateModule(StringRef Name, Module *Parent, bool IsFramework,
-                              bool IsExplicit) {
+std::pair<Module *, bool> ModuleMap::findOrCreateModule(StringRef Name,
+                                                        Module *Parent,
+                                                        bool IsFramework,
+                                                        bool IsExplicit) {
   // Try to find an existing module with this name.
   if (Module *Sub = lookupModuleQualified(Name, Parent))
     return std::make_pair(Sub, false);
   
   // Create a new module with this name.
-  Module *Result = new Module(Name, SourceLocation(), Parent,
-                              IsFramework, IsExplicit, NumCreatedModules++);
+  Module *Result = new Module(Name, SourceLocation(), Parent, IsFramework,
+                              IsExplicit, NumCreatedModules++);
   if (!Parent) {
     if (LangOpts.CurrentModule == Name)
       SourceModule = Result;
@@ -827,7 +839,7 @@ void ModuleMap::addHeader(Module *Mod, Module::Header Header,
       return;
 
   HeaderList.push_back(KH);
-  Mod->Headers[headerRoleToKind(Role)].push_back(std::move(Header));
+  Mod->Headers[headerRoleToKind(Role)].push_back(Header);
 
   bool isCompilingModuleHeader =
       LangOpts.isCompilingModule() && Mod->getTopLevelModule() == SourceModule;
@@ -1879,7 +1891,7 @@ void ModuleMapParser::parseHeaderDecl(MMToken::TokenKind LeadingToken,
       // supplied by Clang. Find that builtin header.
       if (ActiveModule->IsSystem && LeadingToken != MMToken::UmbrellaKeyword &&
           BuiltinIncludeDir && BuiltinIncludeDir != Directory &&
-          isBuiltinHeader(Header.FileName)) {
+          ModuleMap::isBuiltinHeader(Header.FileName)) {
         SmallString<128> BuiltinPathName(BuiltinIncludeDir->getName());
         llvm::sys::path::append(BuiltinPathName, Header.FileName);
         BuiltinFile = SourceMgr.getFileManager().getFile(BuiltinPathName);

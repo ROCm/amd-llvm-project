@@ -60,7 +60,7 @@ public:
   /// otherwise easily derivable from the IR text.
   ///
   enum CommentFlag {
-    ReloadReuse = 0x1
+    ReloadReuse = 0x1 // higher bits are reserved for target dep comments.
   };
 
   enum MIFlag {
@@ -143,8 +143,8 @@ public:
   }
 
   /// Set a flag for the AsmPrinter.
-  void setAsmPrinterFlag(CommentFlag Flag) {
-    AsmPrinterFlags |= (uint8_t)Flag;
+  void setAsmPrinterFlag(uint8_t Flag) {
+    AsmPrinterFlags |= Flag;
   }
 
   /// Clear specific AsmPrinter flags.
@@ -1146,14 +1146,21 @@ public:
   /// instruction to this instruction.
   void copyImplicitOps(MachineFunction &MF, const MachineInstr &MI);
 
-  //
-  // Debugging support
-  //
-  void print(raw_ostream &OS, bool SkipOpers = false,
+  /// Debugging support
+  /// @{
+  /// Print this MI to \p OS.
+  /// Only print the defs and the opcode if \p SkipOpers is true.
+  /// Otherwise, also print operands if \p SkipDebugLoc is true.
+  /// Otherwise, also print the debug loc, with a terminating newline.
+  /// \p TII is used to print the opcode name.  If it's not present, but the
+  /// MI is in a function, the opcode will be printed using the function's TII.
+  void print(raw_ostream &OS, bool SkipOpers = false, bool SkipDebugLoc = false,
              const TargetInstrInfo *TII = nullptr) const;
   void print(raw_ostream &OS, ModuleSlotTracker &MST, bool SkipOpers = false,
+             bool SkipDebugLoc = false,
              const TargetInstrInfo *TII = nullptr) const;
-  void dump(const TargetInstrInfo *TII = nullptr) const;
+  void dump() const;
+  /// @}
 
   //===--------------------------------------------------------------------===//
   // Accessors used to build up machine instructions.

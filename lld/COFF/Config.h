@@ -80,8 +80,10 @@ struct Configuration {
   SymbolBody *Entry = nullptr;
   bool NoEntry = false;
   std::string OutputFile;
+  bool ColorDiagnostics;
   bool DoGC = true;
   bool DoICF = true;
+  uint64_t ErrorLimit = 20;
   bool Relocatable = true;
   bool Force = false;
   bool Debug = false;
@@ -103,6 +105,8 @@ struct Configuration {
   std::map<std::string, int> DLLOrder;
   SymbolBody *DelayLoadHelper = nullptr;
 
+  bool SaveTemps = false;
+
   // Used for SafeSEH.
   Symbol *SEHTable = nullptr;
   Symbol *SEHCount = nullptr;
@@ -112,6 +116,8 @@ struct Configuration {
 
   // Used for /opt:lldltojobs=N
   unsigned LTOJobs = 1;
+  // Used for /opt:lldltopartitions=N
+  unsigned LTOPartitions = 1;
 
   // Used for /merge:from=to (e.g. /merge:.rdata=.text)
   std::map<StringRef, StringRef> Merge;
@@ -134,6 +140,9 @@ struct Configuration {
 
   // Used for /alternatename.
   std::map<StringRef, StringRef> AlternateNames;
+
+  // Used for /lldmap.
+  std::string MapFile;
 
   uint64_t ImageBase = -1;
   uint64_t StackReserve = 1024 * 1024;

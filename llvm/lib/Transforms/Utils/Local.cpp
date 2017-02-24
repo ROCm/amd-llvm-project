@@ -1112,9 +1112,10 @@ void llvm::ConvertDebugDeclareToDebugValue(DbgDeclareInst *DDI,
     unsigned FragmentOffset = 0;
     // If this already is a bit fragment, we drop the bit fragment from the
     // expression and record the offset.
-    if (DIExpr->isFragment()) {
+    auto Fragment = DIExpr->getFragmentInfo();
+    if (Fragment) {
       Ops.append(DIExpr->elements_begin(), DIExpr->elements_end()-3);
-      FragmentOffset = DIExpr->getFragmentOffsetInBits();
+      FragmentOffset = Fragment->OffsetInBits;
     } else {
       Ops.append(DIExpr->elements_begin(), DIExpr->elements_end());
     }
@@ -2067,7 +2068,7 @@ bool llvm::recognizeBSwapOrBitReverseIdiom(
 void llvm::maybeMarkSanitizerLibraryCallNoBuiltin(
     CallInst *CI, const TargetLibraryInfo *TLI) {
   Function *F = CI->getCalledFunction();
-  LibFunc::Func Func;
+  LibFunc Func;
   if (F && !F->hasLocalLinkage() && F->hasName() &&
       TLI->getLibFunc(F->getName(), Func) && TLI->hasOptimizedCodeGen(Func) &&
       !F->doesNotAccessMemory())
