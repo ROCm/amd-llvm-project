@@ -9062,6 +9062,12 @@ void ASTReader::diagnoseOdrViolations() {
         StaticAssertMessage,
         StaticAssertOnlyMessage,
         FieldName,
+        FieldTypeName,
+        FieldSingleBitField,
+        FieldDifferentWidthBitField,
+        FieldSingleMutable,
+        FieldSingleInitializer,
+        FieldDifferentInitializers,
       };
 
       // These lambdas have the common portions of the ODR diagnostics.  This
@@ -9083,6 +9089,12 @@ void ASTReader::diagnoseOdrViolations() {
         assert(S);
         Hash.clear();
         Hash.AddStmt(S);
+        return Hash.CalculateHash();
+      };
+
+      auto ComputeDeclNameODRHash = [&Hash](const DeclarationName Name) {
+        Hash.clear();
+        Hash.AddDeclarationName(Name);
         return Hash.CalculateHash();
       };
 
@@ -9166,6 +9178,114 @@ void ASTReader::diagnoseOdrViolations() {
           Diagnosed = true;
           break;
         }
+
+        assert(
+            Context.hasSameType(FirstField->getType(), SecondField->getType()));
+
+        QualType FirstType = FirstField->getType();
+        QualType SecondType = SecondField->getType();
+        const TypedefType *FirstTypedef = dyn_cast<TypedefType>(FirstType);
+        const TypedefType *SecondTypedef = dyn_cast<TypedefType>(SecondType);
+
+        if ((FirstTypedef && !SecondTypedef) ||
+            (!FirstTypedef && SecondTypedef)) {
+          ODRDiagError(FirstField->getLocation(), FirstField->getSourceRange(),
+                       FieldTypeName)
+              << FirstII << FirstType;
+          ODRDiagNote(SecondField->getLocation(), SecondField->getSourceRange(),
+                      FieldTypeName)
+              << SecondII << SecondType;
+
+          Diagnosed = true;
+          break;
+        }
+
+        if (FirstTypedef && SecondTypedef) {
+          unsigned FirstHash = ComputeDeclNameODRHash(
+              FirstTypedef->getDecl()->getDeclName());
+          unsigned SecondHash = ComputeDeclNameODRHash(
+              SecondTypedef->getDecl()->getDeclName());
+          if (FirstHash != SecondHash) {
+            ODRDiagError(FirstField->getLocation(),
+                         FirstField->getSourceRange(), FieldTypeName)
+                << FirstII << FirstType;
+            ODRDiagNote(SecondField->getLocation(),
+                        SecondField->getSourceRange(), FieldTypeName)
+                << SecondII << SecondType;
+
+            Diagnosed = true;
+            break;
+          }
+        }
+
+        const bool IsFirstBitField = FirstField->isBitField();
+        const bool IsSecondBitField = SecondField->isBitField();
+        if (IsFirstBitField != IsSecondBitField) {
+          ODRDiagError(FirstField->getLocation(), FirstField->getSourceRange(),
+                       FieldSingleBitField)
+              << FirstII << IsFirstBitField;
+          ODRDiagNote(SecondField->getLocation(), SecondField->getSourceRange(),
+                      FieldSingleBitField)
+              << SecondII << IsSecondBitField;
+          Diagnosed = true;
+          break;
+        }
+
+        if (IsFirstBitField && IsSecondBitField) {
+          ODRDiagError(FirstField->getLocation(), FirstField->getSourceRange(),
+                       FieldDifferentWidthBitField)
+              << FirstII << FirstField->getBitWidth()->getSourceRange();
+          ODRDiagNote(SecondField->getLocation(), SecondField->getSourceRange(),
+                      FieldDifferentWidthBitField)
+              << SecondII << SecondField->getBitWidth()->getSourceRange();
+          Diagnosed = true;
+          break;
+        }
+
+        const bool IsFirstMutable = FirstField->isMutable();
+        const bool IsSecondMutable = SecondField->isMutable();
+        if (IsFirstMutable != IsSecondMutable) {
+          ODRDiagError(FirstField->getLocation(), FirstField->getSourceRange(),
+                       FieldSingleMutable)
+              << FirstII << IsFirstMutable;
+          ODRDiagNote(SecondField->getLocation(), SecondField->getSourceRange(),
+                      FieldSingleMutable)
+              << SecondII << IsSecondMutable;
+          Diagnosed = true;
+          break;
+        }
+
+        const Expr *FirstInitializer = FirstField->getInClassInitializer();
+        const Expr *SecondInitializer = SecondField->getInClassInitializer();
+        if ((!FirstInitializer && SecondInitializer) ||
+            (FirstInitializer && !SecondInitializer)) {
+          ODRDiagError(FirstField->getLocation(), FirstField->getSourceRange(),
+                       FieldSingleInitializer)
+              << FirstII << (FirstInitializer != nullptr);
+          ODRDiagNote(SecondField->getLocation(), SecondField->getSourceRange(),
+                      FieldSingleInitializer)
+              << SecondII << (SecondInitializer != nullptr);
+          Diagnosed = true;
+          break;
+        }
+
+        if (FirstInitializer && SecondInitializer) {
+          unsigned FirstInitHash = ComputeODRHash(FirstInitializer);
+          unsigned SecondInitHash = ComputeODRHash(SecondInitializer);
+          if (FirstInitHash != SecondInitHash) {
+            ODRDiagError(FirstField->getLocation(),
+                         FirstField->getSourceRange(),
+                         FieldDifferentInitializers)
+                << FirstII << FirstInitializer->getSourceRange();
+            ODRDiagNote(SecondField->getLocation(),
+                        SecondField->getSourceRange(),
+                        FieldDifferentInitializers)
+                << SecondII << SecondInitializer->getSourceRange();
+            Diagnosed = true;
+            break;
+          }
+        }
+
         break;
       }
       }

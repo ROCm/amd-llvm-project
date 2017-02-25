@@ -2006,24 +2006,34 @@ unsigned X86TargetLowering::getAddressSpace() const {
 }
 
 static bool hasStackGuardSlotTLS(const Triple &TargetTriple) {
-  return TargetTriple.isOSGlibc() ||
+  return TargetTriple.isOSGlibc() || TargetTriple.isOSFuchsia() ||
          (TargetTriple.isAndroid() && !TargetTriple.isAndroidVersionLT(17));
 }
 
-Value *X86TargetLowering::getIRStackGuard(IRBuilder<> &IRB) const {
-  // glibc and bionic have a special slot for the stack guard in tcbhead_t, use
-  // it instead of the usual global variable (see
-  // sysdeps/{i386,x86_64}/nptl/tls.h)
-  if (!hasStackGuardSlotTLS(Subtarget.getTargetTriple()))
-    return TargetLowering::getIRStackGuard(IRB);
-
-  // %fs:0x28, unless we're using a Kernel code model, in which case it's %gs:
-  // %gs:0x14 on i386
-  unsigned Offset = (Subtarget.is64Bit()) ? 0x28 : 0x14;
-  unsigned AddressSpace = getAddressSpace();
+static Constant* SegmentOffset(IRBuilder<> &IRB,
+                               unsigned Offset, unsigned AddressSpace) {
   return ConstantExpr::getIntToPtr(
       ConstantInt::get(Type::getInt32Ty(IRB.getContext()), Offset),
       Type::getInt8PtrTy(IRB.getContext())->getPointerTo(AddressSpace));
+}
+
+Value *X86TargetLowering::getIRStackGuard(IRBuilder<> &IRB) const {
+  // glibc, bionic, and Fuchsia have a special slot for the stack guard in
+  // tcbhead_t; use it instead of the usual global variable (see
+  // sysdeps/{i386,x86_64}/nptl/tls.h)
+  if (hasStackGuardSlotTLS(Subtarget.getTargetTriple())) {
+    if (Subtarget.isTargetFuchsia()) {
+      // <magenta/tls.h> defines MX_TLS_STACK_GUARD_OFFSET with this value.
+      return SegmentOffset(IRB, 0x10, 257);
+    } else {
+      // %fs:0x28, unless we're using a Kernel code model, in which case
+      // it's %gs:0x28.  gs:0x14 on i386.
+      unsigned Offset = (Subtarget.is64Bit()) ? 0x28 : 0x14;
+      return SegmentOffset(IRB, Offset, getAddressSpace());
+    }
+  }
+
+  return TargetLowering::getIRStackGuard(IRB);
 }
 
 void X86TargetLowering::insertSSPDeclarations(Module &M) const {
@@ -2042,7 +2052,7 @@ void X86TargetLowering::insertSSPDeclarations(Module &M) const {
     SecurityCheckCookie->addAttribute(1, Attribute::AttrKind::InReg);
     return;
   }
-  // glibc and bionic have a special slot for the stack guard.
+  // glibc, bionic, and Fuchsia have a special slot for the stack guard.
   if (hasStackGuardSlotTLS(Subtarget.getTargetTriple()))
     return;
   TargetLowering::insertSSPDeclarations(M);
@@ -2066,21 +2076,23 @@ Value *X86TargetLowering::getSafeStackPointerLocation(IRBuilder<> &IRB) const {
   if (Subtarget.getTargetTriple().isOSContiki())
     return getDefaultSafeStackPointerLocation(IRB, false);
 
-  if (!Subtarget.isTargetAndroid())
-    return TargetLowering::getSafeStackPointerLocation(IRB);
-
   // Android provides a fixed TLS slot for the SafeStack pointer. See the
   // definition of TLS_SLOT_SAFESTACK in
   // https://android.googlesource.com/platform/bionic/+/master/libc/private/bionic_tls.h
-  unsigned AddressSpace, Offset;
+  if (Subtarget.isTargetAndroid()) {
+    // %fs:0x48, unless we're using a Kernel code model, in which case it's %gs:
+    // %gs:0x24 on i386
+    unsigned Offset = (Subtarget.is64Bit()) ? 0x48 : 0x24;
+    return SegmentOffset(IRB, Offset, getAddressSpace());
+  }
 
-  // %fs:0x48, unless we're using a Kernel code model, in which case it's %gs:
-  // %gs:0x24 on i386
-  Offset = (Subtarget.is64Bit()) ? 0x48 : 0x24;
-  AddressSpace = getAddressSpace();
-  return ConstantExpr::getIntToPtr(
-      ConstantInt::get(Type::getInt32Ty(IRB.getContext()), Offset),
-      Type::getInt8PtrTy(IRB.getContext())->getPointerTo(AddressSpace));
+  // Fuchsia is similar.
+  if (Subtarget.isTargetFuchsia()) {
+    // <magenta/tls.h> defines MX_TLS_UNSAFE_SP_OFFSET with this value.
+    return SegmentOffset(IRB, 0x18, 257);
+  }
+
+  return TargetLowering::getSafeStackPointerLocation(IRB);
 }
 
 bool X86TargetLowering::isNoopAddrSpaceCast(unsigned SrcAS,
@@ -5224,8 +5236,7 @@ static bool getTargetConstantBitsFromNode(SDValue Op, unsigned EltSizeInBits,
       return false;
     unsigned CstSizeInBits = Cst->getType()->getPrimitiveSizeInBits();
     if (isa<UndefValue>(Cst)) {
-      unsigned HiBits = BitOffset + CstSizeInBits;
-      Undefs |= APInt::getBitsSet(SizeInBits, BitOffset, HiBits);
+      Undefs.setBits(BitOffset, BitOffset + CstSizeInBits);
       return true;
     }
     if (auto *CInt = dyn_cast<ConstantInt>(Cst)) {
@@ -5246,8 +5257,7 @@ static bool getTargetConstantBitsFromNode(SDValue Op, unsigned EltSizeInBits,
       const SDValue &Src = Op.getOperand(i);
       unsigned BitOffset = i * SrcEltSizeInBits;
       if (Src.isUndef()) {
-        unsigned HiBits = BitOffset + SrcEltSizeInBits;
-        UndefBits |= APInt::getBitsSet(SizeInBits, BitOffset, HiBits);
+        UndefBits.setBits(BitOffset, BitOffset + SrcEltSizeInBits);
         continue;
       }
       auto *Cst = cast<ConstantSDNode>(Src);
@@ -5816,7 +5826,7 @@ static bool getFauxShuffleMask(SDValue N, SmallVectorImpl<int> &Mask,
 static void resolveTargetShuffleInputsAndMask(SmallVectorImpl<SDValue> &Inputs,
                                               SmallVectorImpl<int> &Mask) {
   int MaskWidth = Mask.size();
-  SmallVector<SDValue, 8> UsedInputs;
+  SmallVector<SDValue, 16> UsedInputs;
   for (int i = 0, e = Inputs.size(); i < e; ++i) {
     int lo = UsedInputs.size() * MaskWidth;
     int hi = lo + MaskWidth;
@@ -8366,8 +8376,7 @@ static SDValue lowerVectorShuffleAsBitMask(const SDLoc &DL, MVT VT, SDValue V1,
   assert(!VT.isFloatingPoint() && "Floating point types are not supported");
   MVT EltVT = VT.getVectorElementType();
   SDValue Zero = DAG.getConstant(0, DL, EltVT);
-  SDValue AllOnes =
-      DAG.getConstant(APInt::getAllOnesValue(EltVT.getSizeInBits()), DL, EltVT);
+  SDValue AllOnes = DAG.getAllOnesConstant(DL, EltVT);
   SmallVector<SDValue, 16> VMaskOps(Mask.size(), Zero);
   SDValue V;
   for (int i = 0, Size = Mask.size(); i < Size; ++i) {
@@ -8399,10 +8408,8 @@ static SDValue lowerVectorShuffleAsBitBlend(const SDLoc &DL, MVT VT, SDValue V1,
                                             SelectionDAG &DAG) {
   assert(VT.isInteger() && "Only supports integer vector types!");
   MVT EltVT = VT.getVectorElementType();
-  int NumEltBits = EltVT.getSizeInBits();
   SDValue Zero = DAG.getConstant(0, DL, EltVT);
-  SDValue AllOnes = DAG.getConstant(APInt::getAllOnesValue(NumEltBits), DL,
-                                    EltVT);
+  SDValue AllOnes = DAG.getAllOnesConstant(DL, EltVT);
   SmallVector<SDValue, 16> MaskOps;
   for (int i = 0, Size = Mask.size(); i < Size; ++i) {
     if (Mask[i] >= 0 && Mask[i] != i && Mask[i] != i + Size)
@@ -23924,9 +23931,11 @@ const char *X86TargetLowering::getTargetNodeName(unsigned Opcode) const {
   case X86ISD::FMAX:               return "X86ISD::FMAX";
   case X86ISD::FMAXS:              return "X86ISD::FMAXS";
   case X86ISD::FMAX_RND:           return "X86ISD::FMAX_RND";
+  case X86ISD::FMAXS_RND:          return "X86ISD::FMAX_RND";
   case X86ISD::FMIN:               return "X86ISD::FMIN";
   case X86ISD::FMINS:              return "X86ISD::FMINS";
   case X86ISD::FMIN_RND:           return "X86ISD::FMIN_RND";
+  case X86ISD::FMINS_RND:          return "X86ISD::FMINS_RND";
   case X86ISD::FMAXC:              return "X86ISD::FMAXC";
   case X86ISD::FMINC:              return "X86ISD::FMINC";
   case X86ISD::FRSQRT:             return "X86ISD::FRSQRT";
@@ -24119,9 +24128,13 @@ const char *X86TargetLowering::getTargetNodeName(unsigned Opcode) const {
   case X86ISD::RSQRT28:            return "X86ISD::RSQRT28";
   case X86ISD::RSQRT28S:           return "X86ISD::RSQRT28S";
   case X86ISD::FADD_RND:           return "X86ISD::FADD_RND";
+  case X86ISD::FADDS_RND:          return "X86ISD::FADDS_RND";
   case X86ISD::FSUB_RND:           return "X86ISD::FSUB_RND";
+  case X86ISD::FSUBS_RND:          return "X86ISD::FSUBS_RND";
   case X86ISD::FMUL_RND:           return "X86ISD::FMUL_RND";
+  case X86ISD::FMULS_RND:          return "X86ISD::FMULS_RND";
   case X86ISD::FDIV_RND:           return "X86ISD::FDIV_RND";
+  case X86ISD::FDIVS_RND:          return "X86ISD::FDIVS_RND";
   case X86ISD::FSQRT_RND:          return "X86ISD::FSQRT_RND";
   case X86ISD::FSQRTS_RND:         return "X86ISD::FSQRTS_RND";
   case X86ISD::FGETEXP_RND:        return "X86ISD::FGETEXP_RND";
@@ -26335,11 +26348,11 @@ void X86TargetLowering::computeKnownBitsForTargetNode(const SDValue Op,
       break;
     LLVM_FALLTHROUGH;
   case X86ISD::SETCC:
-    KnownZero |= APInt::getHighBitsSet(BitWidth, BitWidth - 1);
+    KnownZero.setBits(1, BitWidth);
     break;
   case X86ISD::MOVMSK: {
     unsigned NumLoBits = Op.getOperand(0).getValueType().getVectorNumElements();
-    KnownZero = APInt::getHighBitsSet(BitWidth, BitWidth - NumLoBits);
+    KnownZero.setBits(NumLoBits, BitWidth);
     break;
   }
   case X86ISD::VZEXT: {
@@ -26356,7 +26369,7 @@ void X86TargetLowering::computeKnownBitsForTargetNode(const SDValue Op,
     DAG.computeKnownBits(N0, KnownZero, KnownOne, DemandedSrcElts, Depth + 1);
     KnownOne = KnownOne.zext(BitWidth);
     KnownZero = KnownZero.zext(BitWidth);
-    KnownZero |= APInt::getHighBitsSet(BitWidth, BitWidth - InBitWidth);
+    KnownZero.setBits(InBitWidth, BitWidth);
     break;
   }
   }
@@ -27381,8 +27394,8 @@ static bool combineX86ShufflesConstants(const SmallVectorImpl<SDValue> &Ops,
 
   // Extract constant bits from each source op.
   bool OneUseConstantOp = false;
-  SmallVector<SmallBitVector, 4> UndefEltsOps(NumOps);
-  SmallVector<SmallVector<APInt, 8>, 4> RawBitsOps(NumOps);
+  SmallVector<SmallBitVector, 16> UndefEltsOps(NumOps);
+  SmallVector<SmallVector<APInt, 16>, 16> RawBitsOps(NumOps);
   for (unsigned i = 0; i != NumOps; ++i) {
     SDValue SrcOp = Ops[i];
     OneUseConstantOp |= SrcOp.hasOneUse();
@@ -27517,7 +27530,7 @@ static bool combineX86ShufflesRecursively(ArrayRef<SDValue> SrcOps,
   SDValue Input1 = (OpInputs.size() > 1 ? OpInputs[1] : SDValue());
 
   // Add the inputs to the Ops list, avoiding duplicates.
-  SmallVector<SDValue, 8> Ops(SrcOps.begin(), SrcOps.end());
+  SmallVector<SDValue, 16> Ops(SrcOps.begin(), SrcOps.end());
 
   int InputIdx0 = -1, InputIdx1 = -1;
   for (int i = 0, e = Ops.size(); i < e; ++i) {
@@ -27621,8 +27634,8 @@ static bool combineX86ShufflesRecursively(ArrayRef<SDValue> SrcOps,
   HasVariableMask |= isTargetShuffleVariableMask(Op.getOpcode());
 
   // Update the list of shuffle nodes that have been combined so far.
-  SmallVector<const SDNode *, 8> CombinedNodes(SrcNodes.begin(),
-                                               SrcNodes.end());
+  SmallVector<const SDNode *, 16> CombinedNodes(SrcNodes.begin(),
+                                                SrcNodes.end());
   CombinedNodes.push_back(Op.getNode());
 
   // See if we can recurse into each shuffle source op (if it's a target
@@ -28795,16 +28808,14 @@ static SDValue combineHorizontalPredicateResult(SDNode *Extract,
     // Perform the select as i32/i64 and then truncate to avoid partial register
     // stalls.
     unsigned ResWidth = std::max(BitWidth, 32u);
-    APInt ResOnes = APInt::getAllOnesValue(ResWidth);
-    APInt ResZero = APInt::getNullValue(ResWidth);
     EVT ResVT = EVT::getIntegerVT(*DAG.getContext(), ResWidth);
-
     SDLoc DL(Extract);
+    SDValue Zero = DAG.getConstant(0, DL, ResVT);
+    SDValue Ones = DAG.getAllOnesConstant(DL, ResVT);
     SDValue Res = DAG.getBitcast(MaskVT, Match);
     Res = DAG.getNode(X86ISD::MOVMSK, DL, MVT::i32, Res);
     Res = DAG.getSelectCC(DL, Res, DAG.getConstant(CompareBits, DL, MVT::i32),
-                          DAG.getConstant(ResOnes, DL, ResVT),
-                          DAG.getConstant(ResZero, DL, ResVT), CondCode);
+                          Ones, Zero, CondCode);
     return DAG.getSExtOrTrunc(Res, DL, ExtractVT);
   }
 
@@ -29046,12 +29057,11 @@ combineVSelectWithAllOnesOrZeros(SDNode *N, SelectionDAG &DAG,
   // This situation only applies to avx512.
   if (FValIsAllZeros  && Subtarget.hasAVX512() && Cond.hasOneUse() &&
       CondVT.getVectorElementType() == MVT::i1) {
-      //Invert the cond to not(cond) : xor(op,allones)=not(op)
-      SDValue CondNew = DAG.getNode(ISD::XOR, DL, Cond.getValueType(), Cond,
-        DAG.getConstant(APInt::getAllOnesValue(CondVT.getScalarSizeInBits()),
-                        DL, CondVT));
-      //Vselect cond, op1, op2 = Vselect not(cond), op2, op1
-      return DAG.getNode(ISD::VSELECT, DL, VT, CondNew, RHS, LHS);
+    // Invert the cond to not(cond) : xor(op,allones)=not(op)
+    SDValue CondNew = DAG.getNode(ISD::XOR, DL, Cond.getValueType(), Cond,
+                                  DAG.getAllOnesConstant(DL, CondVT));
+    // Vselect cond, op1, op2 = Vselect not(cond), op2, op1
+    return DAG.getNode(ISD::VSELECT, DL, VT, CondNew, RHS, LHS);
   }
 
   // To use the condition operand as a bitwise mask, it must have elements that
@@ -33476,8 +33486,7 @@ static SDValue combineSext(SDNode *N, SelectionDAG &DAG,
   if (!DCI.isBeforeLegalizeOps()) {
     if (InVT == MVT::i1) {
       SDValue Zero = DAG.getConstant(0, DL, VT);
-      SDValue AllOnes =
-          DAG.getConstant(APInt::getAllOnesValue(VT.getSizeInBits()), DL, VT);
+      SDValue AllOnes = DAG.getAllOnesConstant(DL, VT);
       return DAG.getNode(ISD::SELECT, DL, VT, N0, AllOnes, Zero);
     }
     return SDValue();
