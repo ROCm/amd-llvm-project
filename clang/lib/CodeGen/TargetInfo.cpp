@@ -8420,7 +8420,7 @@ static bool getTypeString(SmallStringEnc &Enc, const Decl *D,
 //===----------------------------------------------------------------------===//
 
 bool CodeGenModule::supportsCOMDAT() const {
-  return getTriple().supportsCOMDAT();
+  return (!getLangOpts().CPlusPlusAMP && getTriple().supportsCOMDAT());
 }
 
 const TargetCodeGenInfo &CodeGenModule::getTargetCodeGenInfo() {

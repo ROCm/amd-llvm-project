@@ -3542,8 +3542,7 @@ static StructorCodegen getCodegenToUse(CodeGenModule &CGM,
 
   if (llvm::GlobalValue::isWeakForLinker(Linkage)) {
     // Only ELF and wasm support COMDATs with arbitrary names (C5/D5).
-    if (CGM.getTarget().getTriple().isOSBinFormatELF() ||
-        CGM.getTarget().getTriple().isOSBinFormatWasm())
+    if (CGM.supportsCOMDAT())
       return StructorCodegen::COMDAT;
     return StructorCodegen::Emit;
   }
