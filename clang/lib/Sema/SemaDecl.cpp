@@ -12827,23 +12827,25 @@ void TrackMemoryOperator(const Stmt *S, std::vector <Expr*>& FoundVec) {
     for (DeclStmt::const_decl_iterator I = DS->decl_begin(),E = DS->decl_end();
         I != E; ++I) {
       VarDecl* VD = dyn_cast<VarDecl>(*I);
-      if(Expr* EP = const_cast<Expr*>(VD->getAnyInitializer())) {
-        if(CXXNewExpr* NE = dyn_cast<CXXNewExpr>(EP))
-          FoundVec.push_back(NE);
-        if(CXXDeleteExpr* DE = dyn_cast<CXXDeleteExpr>(EP))
-          FoundVec.push_back(DE);
-        // CStyle
-        if(CStyleCastExpr* CStyleCE = dyn_cast<CStyleCastExpr>(EP)) {
-          if(CallExpr* CE = dyn_cast<CallExpr>(CStyleCE->getSubExpr())) {
-            if(CE->getDirectCallee() &&
-                 CE->getDirectCallee()->getNameInfo().getAsString()== std::string("malloc"))
-                 FoundVec.push_back(CE);
-            }
-        }
-        if(CallExpr* CE = dyn_cast<CallExpr>(EP)) {
-           if(CE->getDirectCallee() &&
-                 CE->getDirectCallee()->getNameInfo().getAsString() == std::string("malloc"))
-              FoundVec.push_back(CE);
+      if (VD) {
+        if(Expr* EP = const_cast<Expr*>(VD->getAnyInitializer())) {
+          if(CXXNewExpr* NE = dyn_cast<CXXNewExpr>(EP))
+            FoundVec.push_back(NE);
+          if(CXXDeleteExpr* DE = dyn_cast<CXXDeleteExpr>(EP))
+            FoundVec.push_back(DE);
+          // CStyle
+          if(CStyleCastExpr* CStyleCE = dyn_cast<CStyleCastExpr>(EP)) {
+            if(CallExpr* CE = dyn_cast<CallExpr>(CStyleCE->getSubExpr())) {
+              if(CE->getDirectCallee() &&
+                   CE->getDirectCallee()->getNameInfo().getAsString()== std::string("malloc"))
+                   FoundVec.push_back(CE);
+              }
+          }
+          if(CallExpr* CE = dyn_cast<CallExpr>(EP)) {
+             if(CE->getDirectCallee() &&
+                   CE->getDirectCallee()->getNameInfo().getAsString() == std::string("malloc"))
+                FoundVec.push_back(CE);
+          }
         }
       }
     }
