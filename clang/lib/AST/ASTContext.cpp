@@ -9567,6 +9567,10 @@ unsigned ASTContext::getTargetAddressSpaceForAutoVar() const {
   return 0;
 }
 
+unsigned ASTContext::getTargetConstantAddressSpace() const {
+  return getTargetInfo().getConstantAddressSpace();
+}
+
 unsigned ASTContext::getTargetAddressSpace(Qualifiers Q) const {
   return getTargetAddressSpace(Q.getAddressSpace());
 }

@@ -307,6 +307,10 @@ public:
     return 0;
   }
 
+  virtual unsigned getConstantAddressSpace() const {
+    return 0;
+  }
+
   /// \brief Return the size of '_Bool' and C++ 'bool' for this target, in bits.
   unsigned getBoolWidth() const { return BoolWidth; }
 
