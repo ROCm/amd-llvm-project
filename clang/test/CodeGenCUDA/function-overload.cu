@@ -1,5 +1,6 @@
 // REQUIRES: x86-registered-target
 // REQUIRES: nvptx-registered-target
+// REQUIRES: amdgcn-registered-target
 
 // Make sure we handle target overloads correctly.  Most of this is checked in
 // sema, but special functions like constructors and destructors are here.
@@ -7,6 +8,8 @@
 // RUN: %clang_cc1 -triple x86_64-unknown-linux-gnu -emit-llvm -o - %s \
 // RUN:     | FileCheck -check-prefix=CHECK-BOTH -check-prefix=CHECK-HOST %s
 // RUN: %clang_cc1 -triple nvptx64-nvidia-cuda -fcuda-is-device -emit-llvm -o - %s \
+// RUN:     | FileCheck -check-prefix=CHECK-BOTH -check-prefix=CHECK-DEVICE %s
+// RUN: %clang_cc1 -triple amdgcn -fcuda-is-device -emit-llvm -o - %s \
 // RUN:     | FileCheck -check-prefix=CHECK-BOTH -check-prefix=CHECK-DEVICE %s
 
 #include "Inputs/cuda.h"
