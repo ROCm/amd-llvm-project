@@ -1,8 +1,11 @@
 // RUN: %clang_cc1 --std=c++11 -triple x86_64-unknown-linux-gnu -emit-llvm -o - %s | \
-// RUN:  FileCheck -check-prefix HOST -check-prefix CHECK %s
+// RUN:  FileCheck -check-prefixes=HOST,CHECK %s
 
 // RUN: %clang_cc1 --std=c++11 -fcuda-is-device -triple nvptx64-nvidia-cuda \
-// RUN:   -emit-llvm -o - %s | FileCheck -check-prefix DEVICE -check-prefix CHECK %s
+// RUN:   -emit-llvm -o - %s | FileCheck -check-prefixes=DEVICE,CHECK,NVPTX %s
+
+// RUN: %clang_cc1 --std=c++11 -fcuda-is-device -triple amdgcn-amd-amdhsa \
+// RUN:   -emit-llvm -o - %s -DAMDGCN| FileCheck -check-prefixes=DEVICE,CHECK,AMDGCN %s
 
 #include "Inputs/cuda.h"
 
@@ -18,9 +21,17 @@ struct S {
 
 // Clang should generate a packed LLVM struct for S (denoted by the <>s),
 // otherwise this test isn't interesting.
-// CHECK: %struct.S = type <{ i32*, i8, %struct.U, [5 x i8] }>
+// HOST: %struct.S = type <{ i32*, i8, %struct.U, [5 x i8] }>
+// NVPTX: %struct.S = type <{ i32*, i8, %struct.U, [5 x i8] }>
+// ToDo: Fix padding on amdgcn target to be the same as host
+// AMDGCN: %struct.S = type <{ i32 addrspace(4)*, i8, %struct.U, i8 }>
 
+// ToDo: Fix struct padding on amdgcn so that alignof(S) == 8
+#ifdef AMDGCN
+static_assert(alignof(S) == 4, "Unexpected alignment.");
+#else
 static_assert(alignof(S) == 8, "Unexpected alignment.");
+#endif
 
 // HOST-LABEL: @_Z6kernelc1SPi
 // Marshalled kernel args should be:
@@ -32,5 +43,7 @@ static_assert(alignof(S) == 8, "Unexpected alignment.");
 // HOST: call i32 @cudaSetupArgument({{[^,]*}}, i64 8, i64 24)
 
 // DEVICE-LABEL: @_Z6kernelc1SPi
-// DEVICE-SAME: i8{{[^,]*}}, %struct.S* byval align 8{{[^,]*}}, i32*
+// NVPTX-SAME: i8{{[^,]*}}, %struct.S* byval align 8{{[^,]*}}, i32*
+// ToDo: Fix amdgcn so that align of struct.S is 8
+// AMDGCN-SAME: i8{{[^,]*}}, %struct.S* byval align 4{{[^,]*}}, i32 addrspace(4)*
 __global__ void kernel(char a, S s, int *b) {}
