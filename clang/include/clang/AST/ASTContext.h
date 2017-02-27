@@ -2316,6 +2316,8 @@ public:
   /// constant folding.
   uint64_t getTargetNullPointerValue(QualType QT) const;
 
+  unsigned getTargetConstantAddressSpace() const;
+
   bool addressSpaceMapManglingFor(unsigned AS) const {
     return AddrSpaceMapMangling || 
            AS < LangAS::Offset || 
