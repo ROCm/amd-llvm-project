@@ -1,6 +1,5 @@
 // REQUIRES: x86-registered-target
 // REQUIRES: nvptx-registered-target
-// REQUIRES: amdgcn-registered-target
 
 // Make sure we handle target overloads correctly.  Most of this is checked in
 // sema, but special functions like constructors and destructors are here.
