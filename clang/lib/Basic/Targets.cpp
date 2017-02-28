@@ -2265,6 +2265,10 @@ public:
     }
   }
 
+  unsigned getConstantAddressSpace() const override {
+    return AS_Constant;
+  }
+
   LangAS::ID getOpenCLImageAddrSpace() const override {
     return LangAS::opencl_constant;
   }

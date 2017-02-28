@@ -2930,7 +2930,9 @@ Address CodeGenFunction::EmitArrayToPointerDecay(const Expr *E,
   }
 
   QualType EltType = E->getType()->castAsArrayTypeUnsafe()->getElementType();
-  return Builder.CreateElementBitCast(Addr, ConvertTypeForMem(EltType));
+  return Builder.CreatePointerBitCastOrAddrSpaceCast(Addr,
+      ConvertTypeForMem(EltType)->getPointerTo(getContext().
+          getTargetAddressSpace(E->getType())));
 }
 
 /// isSimpleArrayDecayOperand - If the specified expr is a simple decay from an
