@@ -9148,6 +9148,11 @@ void gnutools::Linker::ConstructLinkerJob(Compilation &C, const JobAction &JA,
     }
   }
 
+  // HCC: Add compiler-rt library to get the half fp builtins 
+  if (Driver::IsCXXAMP(C.getArgs())) {
+    CmdArgs.push_back("-lclang_rt.builtins-x86_64");
+  }
+
   // Add OpenMP offloading linker script args if required.
   AddOpenMPLinkerScript(getToolChain(), C, Output, Inputs, Args, CmdArgs, JA);
 }
