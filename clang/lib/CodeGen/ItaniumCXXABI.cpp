@@ -1223,7 +1223,8 @@ llvm::Value *ItaniumCXXABI::EmitTypeid(CodeGenFunction &CGF,
   auto *ClassDecl =
       cast<CXXRecordDecl>(SrcRecordTy->getAs<RecordType>()->getDecl());
   llvm::Value *Value =
-      CGF.GetVTablePtr(ThisPtr, StdTypeInfoPtrTy->getPointerTo(), ClassDecl);
+      CGF.GetVTablePtr(ThisPtr, CGF.getTypes().getDefaultPointerTo(
+          StdTypeInfoPtrTy), ClassDecl);
 
   // Load the type info.
   Value = CGF.Builder.CreateConstInBoundsGEP1_64(Value, -1ULL);
@@ -1992,7 +1993,8 @@ void ItaniumCXXABI::EmitGuardedInit(CodeGenFunction &CGF,
                              CGM.getDataLayout().getABITypeAlignment(guardTy));
     }
   }
-  llvm::PointerType *guardPtrTy = guardTy->getPointerTo();
+  llvm::PointerType *guardPtrTy = guardTy->getPointerTo(
+      getContext().getTargetDefaultAddressSpace());
 
   // Create the guard variable if we don't already have it (as we
   // might if we're double-emitting this function body).
@@ -2010,7 +2012,10 @@ void ItaniumCXXABI::EmitGuardedInit(CodeGenFunction &CGF,
     guard = new llvm::GlobalVariable(CGM.getModule(), guardTy,
                                      false, var->getLinkage(),
                                      llvm::ConstantInt::get(guardTy, 0),
-                                     guardName.str());
+                                     guardName.str(),
+                                     /* InsertBefore */ nullptr,
+                                     llvm::GlobalValue::NotThreadLocal,
+                                     getContext().getTargetGlobalAddressSpace());
     guard->setVisibility(var->getVisibility());
     // If the variable is thread-local, so is its guard variable.
     guard->setThreadLocalMode(var->getThreadLocalMode());
@@ -2172,7 +2177,7 @@ static void emitGlobalDtorWithCXAAtExit(CodeGenFunction &CGF,
   llvm::Value *args[] = {
     llvm::ConstantExpr::getBitCast(dtor, dtorTy),
     llvm::ConstantExpr::getPointerCast(addr, CGF.Int8PtrTy),
-    handle
+    llvm::ConstantExpr::getPointerCast(handle, CGF.Int8PtrTy)
   };
   CGF.EmitNounwindRuntimeCall(atexit, args);
 }

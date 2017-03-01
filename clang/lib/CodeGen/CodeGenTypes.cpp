@@ -375,6 +375,14 @@ llvm::Type *CodeGenTypes::ConvertFunctionType(QualType QFT,
   return ResultType;
 }
 
+llvm::PointerType *CodeGenTypes::getPointerTypeTo(QualType T) {
+  return ConvertType(T)->getPointerTo(Context.getTargetAddressSpace(T));
+}
+
+llvm::PointerType *CodeGenTypes::getDefaultPointerTo(llvm::Type *T) {
+  return T->getPointerTo(Context.getTargetDefaultAddressSpace());
+}
+
 /// ConvertType - Convert the specified type to its LLVM form.
 llvm::Type *CodeGenTypes::ConvertType(QualType T) {
   T = Context.getCanonicalType(T);

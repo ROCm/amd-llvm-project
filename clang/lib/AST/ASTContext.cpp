@@ -9571,6 +9571,19 @@ unsigned ASTContext::getTargetConstantAddressSpace() const {
   return getTargetInfo().getConstantAddressSpace();
 }
 
+unsigned ASTContext::getTargetGlobalAddressSpace() const {
+  return getTargetInfo().getGlobalAddressSpace();
+}
+
+unsigned ASTContext::getTargetAddressSpace(QualType T) const {
+  if (T.isNull())
+    return getTargetDefaultAddressSpace();
+  if (T->isFunctionType() &&
+      !T.getQualifiers().hasAddressSpace())
+    return 0;
+  return getTargetAddressSpace(T.getQualifiers());
+}
+
 unsigned ASTContext::getTargetAddressSpace(Qualifiers Q) const {
   return getTargetAddressSpace(Q.getAddressSpace());
 }
