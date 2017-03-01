@@ -307,7 +307,15 @@ public:
     return 0;
   }
 
+  /// The target address space corresponding to OpenCL constant address space
+  /// CUDA constant specifier.
   virtual unsigned getConstantAddressSpace() const {
+    return 0;
+  }
+
+  /// The target address space corresponding to OpenCL global address space
+  /// or CUDA device specifier.
+  virtual unsigned getGlobalAddressSpace() const {
     return 0;
   }
 

@@ -2269,6 +2269,10 @@ public:
     return AS_Constant;
   }
 
+  unsigned getGlobalAddressSpace() const override {
+    return AS_Global;
+  }
+
   LangAS::ID getOpenCLImageAddrSpace() const override {
     return LangAS::opencl_constant;
   }

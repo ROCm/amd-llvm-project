@@ -23,15 +23,9 @@ struct S {
 // otherwise this test isn't interesting.
 // HOST: %struct.S = type <{ i32*, i8, %struct.U, [5 x i8] }>
 // NVPTX: %struct.S = type <{ i32*, i8, %struct.U, [5 x i8] }>
-// ToDo: Fix padding on amdgcn target to be the same as host
-// AMDGCN: %struct.S = type <{ i32 addrspace(4)*, i8, %struct.U, i8 }>
+// AMDGCN: %struct.S = type <{ i32 addrspace(4)*, i8, %struct.U, [5 x i8] }>
 
-// ToDo: Fix struct padding on amdgcn so that alignof(S) == 8
-#ifdef AMDGCN
-static_assert(alignof(S) == 4, "Unexpected alignment.");
-#else
 static_assert(alignof(S) == 8, "Unexpected alignment.");
-#endif
 
 // HOST-LABEL: @_Z6kernelc1SPi
 // Marshalled kernel args should be:
@@ -44,6 +38,5 @@ static_assert(alignof(S) == 8, "Unexpected alignment.");
 
 // DEVICE-LABEL: @_Z6kernelc1SPi
 // NVPTX-SAME: i8{{[^,]*}}, %struct.S* byval align 8{{[^,]*}}, i32*
-// ToDo: Fix amdgcn so that align of struct.S is 8
-// AMDGCN-SAME: i8{{[^,]*}}, %struct.S* byval align 4{{[^,]*}}, i32 addrspace(4)*
+// AMDGCN-SAME: i8{{[^,]*}}, %struct.S* byval align 8{{[^,]*}}, i32 addrspace(4)*
 __global__ void kernel(char a, S s, int *b) {}
