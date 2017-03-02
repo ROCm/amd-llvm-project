@@ -1684,6 +1684,12 @@ void SelectionDAGISel::SelectAllBasicBlocks(const Function &Fn) {
       // block.
       bool HadTailCall;
       SelectBasicBlock(Begin, BI, HadTailCall);
+
+      // But if FastISel was run, we already selected some of the block.
+      // If we emitted a tail-call, we need to delete any previously emitted
+      // instruction that follows it.
+      if (HadTailCall && FuncInfo->InsertPt != FuncInfo->MBB->end())
+        FastIS->removeDeadCode(FuncInfo->InsertPt, FuncInfo->MBB->end());
     }
 
     FinishBasicBlock();
@@ -3345,7 +3351,7 @@ void SelectionDAGISel::SelectCodeCommon(SDNode *NodeToMatch,
       // a single use.
       bool HasMultipleUses = false;
       for (unsigned i = 1, e = NodeStack.size()-1; i != e; ++i)
-        if (!NodeStack[i].hasOneUse()) {
+        if (!NodeStack[i].getNode()->hasOneUse()) {
           HasMultipleUses = true;
           break;
         }

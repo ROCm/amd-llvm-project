@@ -162,8 +162,8 @@ static bool isEligible(InputSection *S) {
   // .init and .fini contains instructions that must be executed to
   // initialize and finalize the process. They cannot and should not
   // be merged.
-  return S->Live && (S->Flags & SHF_ALLOC) && !(S->Flags & SHF_WRITE) &&
-         S->Name != ".init" && S->Name != ".fini";
+  return S->Live && (S->Flags & SHF_ALLOC) && (S->Flags & SHF_EXECINSTR) &&
+         !(S->Flags & SHF_WRITE) && S->Name != ".init" && S->Name != ".fini";
 }
 
 // Split an equivalence class into smaller classes.
@@ -244,8 +244,8 @@ bool ICF<ELFT>::variableEq(const InputSection *A, ArrayRef<RelTy> RelsA,
     if (&SA == &SB)
       return true;
 
-    auto *DA = dyn_cast<DefinedRegular<ELFT>>(&SA);
-    auto *DB = dyn_cast<DefinedRegular<ELFT>>(&SB);
+    auto *DA = dyn_cast<DefinedRegular>(&SA);
+    auto *DB = dyn_cast<DefinedRegular>(&SB);
     if (!DA || !DB)
       return false;
     if (DA->Value != DB->Value)

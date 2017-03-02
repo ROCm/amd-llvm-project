@@ -12,7 +12,7 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/DebugInfo/MSF/BinaryStream.h"
-#include "llvm/DebugInfo/MSF/MSFError.h"
+#include "llvm/DebugInfo/MSF/BinaryStreamError.h"
 #include "llvm/Support/Error.h"
 #include <algorithm>
 #include <cstdint>
@@ -65,6 +65,14 @@ public:
   }
 
 protected:
+  Error checkOffset(uint32_t Offset, uint32_t DataSize) const {
+    if (Offset > getLength())
+      return make_error<BinaryStreamError>(stream_error_code::invalid_offset);
+    if (getLength() < DataSize + Offset)
+      return make_error<BinaryStreamError>(stream_error_code::stream_too_short);
+    return Error::success();
+  }
+
   StreamType *Stream;
   uint32_t ViewOffset;
   uint32_t Length;
@@ -98,12 +106,9 @@ public:
   /// the data, and an appropriate error code otherwise.
   Error readBytes(uint32_t Offset, uint32_t Size,
                   ArrayRef<uint8_t> &Buffer) const {
-    if (ViewOffset + Offset < Offset)
-      return make_error<msf::MSFError>(
-          msf::msf_error_code::insufficient_buffer);
-    if (Size + Offset > Length)
-      return make_error<msf::MSFError>(
-          msf::msf_error_code::insufficient_buffer);
+    if (auto EC = checkOffset(Offset, Size))
+      return EC;
+
     return Stream->readBytes(ViewOffset + Offset, Size, Buffer);
   }
 
@@ -114,11 +119,11 @@ public:
   /// and an appropriate error code otherwise.
   Error readLongestContiguousChunk(uint32_t Offset,
                                    ArrayRef<uint8_t> &Buffer) const {
-    if (Offset >= Length)
-      return make_error<msf::MSFError>(
-          msf::msf_error_code::insufficient_buffer);
+    if (auto EC = checkOffset(Offset, 1))
+      return EC;
 
-    if (auto EC = Stream->readLongestContiguousChunk(Offset, Buffer))
+    if (auto EC =
+            Stream->readLongestContiguousChunk(ViewOffset + Offset, Buffer))
       return EC;
     // This StreamRef might refer to a smaller window over a larger stream.  In
     // that case we will have read out more bytes than we should return, because
@@ -152,9 +157,9 @@ public:
   /// stream at the specified location and the implementation could write the
   /// data, and an appropriate error code otherwise.
   Error writeBytes(uint32_t Offset, ArrayRef<uint8_t> Data) const {
-    if (Data.size() + Offset > Length)
-      return make_error<msf::MSFError>(
-          msf::msf_error_code::insufficient_buffer);
+    if (auto EC = checkOffset(Offset, Data.size()))
+      return EC;
+
     return Stream->writeBytes(ViewOffset + Offset, Data);
   }
 

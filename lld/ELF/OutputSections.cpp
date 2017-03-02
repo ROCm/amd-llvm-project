@@ -66,42 +66,8 @@ void OutputSection::writeHeaderTo(typename ELFT::Shdr *Shdr) {
   Shdr->sh_name = ShName;
 }
 
-template <class ELFT> static uint64_t getEntsize(uint32_t Type) {
-  switch (Type) {
-  case SHT_RELA:
-    return sizeof(typename ELFT::Rela);
-  case SHT_REL:
-    return sizeof(typename ELFT::Rel);
-  case SHT_MIPS_REGINFO:
-    return sizeof(Elf_Mips_RegInfo<ELFT>);
-  case SHT_MIPS_OPTIONS:
-    return sizeof(Elf_Mips_Options<ELFT>) + sizeof(Elf_Mips_RegInfo<ELFT>);
-  case SHT_MIPS_ABIFLAGS:
-    return sizeof(Elf_Mips_ABIFlags<ELFT>);
-  default:
-    return 0;
-  }
-}
-
 OutputSection::OutputSection(StringRef Name, uint32_t Type, uint64_t Flags)
-    : Name(Name), Addralign(1), Flags(Flags), Type(Type) {
-  switch (Config->EKind) {
-  case ELFNoneKind:
-    llvm_unreachable("unknown kind");
-  case ELF32LEKind:
-    this->Entsize = getEntsize<ELF32LE>(Type);
-    break;
-  case ELF32BEKind:
-    this->Entsize = getEntsize<ELF32BE>(Type);
-    break;
-  case ELF64LEKind:
-    this->Entsize = getEntsize<ELF64LE>(Type);
-    break;
-  case ELF64BEKind:
-    this->Entsize = getEntsize<ELF64BE>(Type);
-    break;
-  }
-}
+    : Name(Name), Addralign(1), Flags(Flags), Type(Type) {}
 
 template <typename ELFT>
 static bool compareByFilePosition(InputSection *A, InputSection *B) {
@@ -121,7 +87,6 @@ static bool compareByFilePosition(InputSection *A, InputSection *B) {
 template <class ELFT> void OutputSection::finalize() {
   if ((this->Flags & SHF_LINK_ORDER) && !this->Sections.empty()) {
     std::sort(Sections.begin(), Sections.end(), compareByFilePosition<ELFT>);
-    Size = 0;
     assignOffsets<ELFT>();
 
     // We must preserve the link order dependency of sections with the
@@ -153,16 +118,21 @@ void OutputSection::addSection(InputSectionBase *C) {
   Sections.push_back(S);
   S->OutSec = this;
   this->updateAlignment(S->Alignment);
-  // Keep sh_entsize value of the input section to be able to perform merging
-  // later during a final linking using the generated relocatable object.
-  if (Config->Relocatable && (S->Flags & SHF_MERGE))
-    this->Entsize = S->Entsize;
+
+  // If this section contains a table of fixed-size entries, sh_entsize
+  // holds the element size. Consequently, if this contains two or more
+  // input sections, all of them must have the same sh_entsize. However,
+  // you can put different types of input sections into one output
+  // sectin by using linker scripts. I don't know what to do here.
+  // Probably we sholuld handle that as an error. But for now we just
+  // pick the largest sh_entsize.
+  this->Entsize = std::max(this->Entsize, S->Entsize);
 }
 
 // This function is called after we sort input sections
 // and scan relocations to setup sections' offsets.
 template <class ELFT> void OutputSection::assignOffsets() {
-  uint64_t Off = this->Size;
+  uint64_t Off = 0;
   for (InputSection *S : Sections) {
     Off = alignTo(Off, S->Alignment);
     S->OutSecOff = Off;
