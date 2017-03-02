@@ -1914,7 +1914,9 @@ bool CodeGenModule::shouldEmitFunction(GlobalDecl GD) {
   return !isTriviallyRecursive(F);
 }
 
-static bool isWhiteListForHCC(const ValueDecl* D) {
+static bool isWhiteListForHCC(CodeGenModule &CGM, GlobalDecl GD) {
+  const auto *D = cast<ValueDecl>(GD.getDecl());
+
   // let kernels and functions marked with restrict(amp) to pass
   if (D->hasAttr<CXXAMPRestrictAMPAttr>() ||
       D->hasAttr<HCGridLaunchAttr>())
@@ -1929,15 +1931,18 @@ static bool isWhiteListForHCC(const ValueDecl* D) {
 
   // C++11 atomic functions are allowed to pass
   // C++11 functional operators are allowed to pass
+  // PSTL operators are allowed to pass
   const CXXMethodDecl* MethodD = dyn_cast<CXXMethodDecl>(D);
   if (MethodD) {
     StringRef ClassName = MethodD->getParent()->getName();
+    StringRef MangledName = CGM.getMangledName(GD);
     if (ClassName.find("__atomic_base") != StringRef::npos ||
         ClassName.find("plus") != StringRef::npos ||
         ClassName.find("logical_or") != StringRef::npos ||
         ClassName.find("logical_and") != StringRef::npos ||
         ClassName.find("unique_ptr") != StringRef::npos ||
-        ClassName.find("compressed_pair") != StringRef::npos) {
+        ClassName.find("compressed_pair") != StringRef::npos ||
+        MangledName.find("experimental8parallel") != StringRef::npos) {
       return true;
     }
   }
@@ -1964,7 +1969,7 @@ void CodeGenModule::EmitGlobalDefinition(GlobalDecl GD, llvm::GlobalValue *GV) {
   if (LangOpts.CPlusPlusAMP && !CodeGenOpts.AMPCPU) {
     if (CodeGenOpts.AMPIsDevice) {
       // If -famp-is-device switch is on, we are in GPU build path.
-      if (!isWhiteListForHCC(D))
+      if (!isWhiteListForHCC(*this, GD))
         return;
     } else {
       if (D->hasAttr<CXXAMPRestrictAMPAttr>()&&
