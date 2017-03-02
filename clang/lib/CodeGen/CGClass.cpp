@@ -2359,12 +2359,16 @@ void CodeGenFunction::InitializeVTablePointer(const VPtr &Vptr) {
 
   // Finally, store the address point. Use the same LLVM types as the field to
   // support optimization.
+  auto DefAddr = CGM.getTarget().getDefaultTargetAddressSpace(
+      CGM.getLangOpts());
   llvm::Type *VTablePtrTy =
       llvm::FunctionType::get(CGM.Int32Ty, /*isVarArg=*/true)
-          ->getPointerTo()
-          ->getPointerTo();
-  VTableField = Builder.CreateBitCast(VTableField, VTablePtrTy->getPointerTo());
-  VTableAddressPoint = Builder.CreateBitCast(VTableAddressPoint, VTablePtrTy);
+          ->getPointerTo(DefAddr)
+          ->getPointerTo(DefAddr);
+  VTableField = Builder.CreatePointerBitCastOrAddrSpaceCast(VTableField,
+      VTablePtrTy->getPointerTo(DefAddr));
+  VTableAddressPoint = Builder.CreatePointerBitCastOrAddrSpaceCast(
+      VTableAddressPoint, VTablePtrTy);
 
   llvm::StoreInst *Store = Builder.CreateStore(VTableAddressPoint, VTableField);
   CGM.DecorateInstructionWithTBAA(Store, CGM.getTBAAInfoForVTablePtr());

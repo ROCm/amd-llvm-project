@@ -2300,11 +2300,7 @@ public:
   QualType getFloatingTypeOfSizeWithinDomain(QualType typeSize,
                                              QualType typeDomain) const;
 
-  unsigned getTargetAddressSpace(QualType T) const {
-    if (T->isFunctionType() && !T.getQualifiers().hasAddressSpace())
-      return 0;
-    return getTargetAddressSpace(T.getQualifiers());
-  }
+  unsigned getTargetAddressSpace(QualType T) const;
 
   unsigned getTargetAddressSpace(Qualifiers Q) const;
 
@@ -2318,6 +2314,16 @@ public:
   /// Get target-dependent integer value for null pointer which is used for
   /// constant folding.
   uint64_t getTargetNullPointerValue(QualType QT) const;
+
+  unsigned getTargetDefaultAddressSpace() const;
+
+  /// The target address space corresponding to OpenCL constant address space
+  // CUDA constant specifier.
+  unsigned getTargetConstantAddressSpace() const;
+
+  /// The target address space corresponding to OpenCL global address space
+  /// or CUDA device specifier.
+  unsigned getTargetGlobalAddressSpace() const;
 
   bool addressSpaceMapManglingFor(unsigned AS) const {
     return AddrSpaceMapMangling || 

@@ -302,8 +302,20 @@ public:
   }
 
   /// \brief Get integer value for null pointer.
-  /// \param AddrSpace address space of pointee in source language.
+  /// \param AddrSpace target address space of pointee in source language.
   virtual uint64_t getNullPointerValue(unsigned AddrSpace) const {
+    return 0;
+  }
+
+  /// The target address space corresponding to OpenCL constant address space
+  /// CUDA constant specifier.
+  virtual unsigned getConstantAddressSpace() const {
+    return 0;
+  }
+
+  /// The target address space corresponding to OpenCL global address space
+  /// or CUDA device specifier.
+  virtual unsigned getGlobalAddressSpace() const {
     return 0;
   }
 

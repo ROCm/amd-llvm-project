@@ -182,6 +182,13 @@ public:
   /// ConvertType - Convert type T into a llvm::Type.
   llvm::Type *ConvertType(QualType T);
 
+  /// Get a pointer type pointing to the given QualType \p T.
+  llvm::PointerType *getPointerTypeTo(QualType T = QualType());
+
+  /// Get a pointer type pointing to the given llvm::Type \p T in the default
+  /// target address space.
+  llvm::PointerType *getDefaultPointerTo(llvm::Type *T);
+
   /// \brief Converts the GlobalDecl into an llvm::Type. This should be used
   /// when we know the target of the function we want to convert.  This is
   /// because some functions (explicitly, those with pass_object_size

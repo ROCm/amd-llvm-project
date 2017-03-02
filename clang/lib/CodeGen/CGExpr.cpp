@@ -382,9 +382,8 @@ EmitMaterializeTemporaryExpr(const MaterializeTemporaryExpr *M) {
       ownership != Qualifiers::OCL_ExplicitNone) {
     Address Object = createReferenceTemporary(*this, M, E);
     if (auto *Var = dyn_cast<llvm::GlobalVariable>(Object.getPointer())) {
-      Object = Address(llvm::ConstantExpr::getBitCast(Var,
-                           ConvertTypeForMem(E->getType())
-                             ->getPointerTo(Object.getAddressSpace())),
+      Object = Address(llvm::ConstantExpr::getPointerCast(
+          Var, getTypes().getPointerTypeTo(E->getType())),
                        Object.getAlignment());
 
       // createReferenceTemporary will promote the temporary to a global with a
@@ -2908,7 +2907,9 @@ Address CodeGenFunction::EmitArrayToPointerDecay(const Expr *E,
   }
 
   QualType EltType = E->getType()->castAsArrayTypeUnsafe()->getElementType();
-  return Builder.CreateElementBitCast(Addr, ConvertTypeForMem(EltType));
+  return Builder.CreatePointerBitCastOrAddrSpaceCast(Addr,
+      ConvertTypeForMem(EltType)->getPointerTo(getContext().
+          getTargetAddressSpace(E->getType())));
 }
 
 /// isSimpleArrayDecayOperand - If the specified expr is a simple decay from an
