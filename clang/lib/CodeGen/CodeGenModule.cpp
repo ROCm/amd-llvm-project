@@ -1929,13 +1929,15 @@ static bool isWhiteListForHCC(CodeGenModule &CGM, GlobalDecl GD) {
   // the remaining ones must be functions
   // be selective about functions to pass
 
+  StringRef MangledName = CGM.getMangledName(GD);
+
   // C++11 atomic functions are allowed to pass
   // C++11 functional operators are allowed to pass
+  // C++11 swap functions are allowed to pass
   // PSTL operators are allowed to pass
   const CXXMethodDecl* MethodD = dyn_cast<CXXMethodDecl>(D);
   if (MethodD) {
     StringRef ClassName = MethodD->getParent()->getName();
-    StringRef MangledName = CGM.getMangledName(GD);
     if (ClassName.find("__atomic_base") != StringRef::npos ||
         ClassName.find("plus") != StringRef::npos ||
         ClassName.find("logical_or") != StringRef::npos ||
@@ -1943,6 +1945,15 @@ static bool isWhiteListForHCC(CodeGenModule &CGM, GlobalDecl GD) {
         ClassName.find("unique_ptr") != StringRef::npos ||
         ClassName.find("compressed_pair") != StringRef::npos ||
         MangledName.find("experimental8parallel") != StringRef::npos) {
+      return true;
+    }
+  }
+
+  // C++11 swap/move functions are allowed to pass
+  const FunctionDecl* FuncD = dyn_cast<FunctionDecl>(D);
+  if (FuncD) {
+    if (MangledName.find("4swap") != StringRef::npos  ||
+        MangledName.find("4move") != StringRef::npos) {
       return true;
     }
   }
