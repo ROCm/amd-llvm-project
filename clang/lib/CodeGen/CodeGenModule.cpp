@@ -1934,6 +1934,7 @@ static bool isWhiteListForHCC(CodeGenModule &CGM, GlobalDecl GD) {
   // C++11 atomic functions are allowed to pass
   // C++11 functional operators are allowed to pass
   // C++11 swap functions are allowed to pass
+  // C++11 numeric limits are allowed to pass
   // PSTL operators are allowed to pass
   const CXXMethodDecl* MethodD = dyn_cast<CXXMethodDecl>(D);
   if (MethodD) {
@@ -1944,6 +1945,7 @@ static bool isWhiteListForHCC(CodeGenModule &CGM, GlobalDecl GD) {
         ClassName.find("logical_and") != StringRef::npos ||
         ClassName.find("unique_ptr") != StringRef::npos ||
         ClassName.find("compressed_pair") != StringRef::npos ||
+        ClassName.find("numeric_limits") != StringRef::npos ||
         MangledName.find("experimental8parallel") != StringRef::npos) {
       return true;
     }
