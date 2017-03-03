@@ -19,7 +19,6 @@ set(CMAKE_MODULE_PATH
   ${CMAKE_MODULE_PATH}
   )
 
-
 if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   project(libcxx CXX C)
 
@@ -157,6 +156,16 @@ endif()
 option(LIBCXX_ENABLE_ABI_LINKER_SCRIPT
       "Use and install a linker script for the given ABI library"
       ${ENABLE_LINKER_SCRIPT_DEFAULT_VALUE})
+
+set(ENABLE_NEW_DELETE_DEFAULT ON)
+if (LIBCXXABI_ENABLE_NEW_DELETE_DEFINITIONS)
+  set(ENABLE_NEW_DELETE_DEFAULT OFF)
+endif()
+
+option(LIBCXX_ENABLE_NEW_DELETE_DEFINITIONS
+    "Build libc++ with definitions for operator new/delete. This option can
+    be used to disable the definitions when libc++abi is expected to provide
+    them" ${ENABLE_NEW_DELETE_DEFAULT})
 
 # Build libc++abi with libunwind. We need this option to determine whether to
 # link with libunwind or libgcc_s while running the test cases.
@@ -434,6 +443,10 @@ add_compile_flags_if_supported(-fvisibility-inlines-hidden)
 # library.
 add_definitions(-D_LIBCPP_BUILDING_LIBRARY)
 
+if (NOT LIBCXX_ENABLE_NEW_DELETE_DEFINITIONS)
+  add_definitions(-D_LIBCPP_DISABLE_NEW_DELETE_DEFINITIONS)
+endif()
+
 # Warning flags ===============================================================
 add_definitions(-D_LIBCPP_HAS_NO_PRAGMA_SYSTEM_HEADER)
 add_compile_flags_if_supported(
@@ -600,10 +613,15 @@ add_subdirectory(lib)
 if (LIBCXX_INCLUDE_BENCHMARKS)
   add_subdirectory(benchmarks)
 endif()
+
+# Create the lit.site.cfg file even when LIBCXX_INCLUDE_TESTS is OFF or
+# LLVM_FOUND is OFF. This allows users to run the tests manually using
+# LIT without requiring a full LLVM checkout.
+add_subdirectory(test)
 if (LIBCXX_INCLUDE_TESTS)
-  add_subdirectory(test)
   add_subdirectory(lib/abi)
 endif()
+
 if (LIBCXX_INCLUDE_DOCS)
   add_subdirectory(docs)
 endif()
