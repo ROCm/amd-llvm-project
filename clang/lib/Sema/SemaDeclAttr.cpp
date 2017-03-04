@@ -3922,12 +3922,6 @@ static void handleHCCTileStaticAttr(Sema &S, Decl *D, const AttributeList &Attr)
       Attr.getRange(), S.Context, Attr.getAttributeSpellingListIndex()));
 }
 
-static void handleHCCGlobalAttr(Sema &S, Decl *D, const AttributeList &Attr) {
-  // FIXME mode checkings to follow
-  D->addAttr(::new (S.Context) HCCGlobalAttr(
-      Attr.getRange(), S.Context, Attr.getAttributeSpellingListIndex()));
-}
-
 static void handleGlobalAttr(Sema &S, Decl *D, const AttributeList &Attr) {
   if (checkAttrMutualExclusion<CUDADeviceAttr>(S, D, Attr.getRange(),
                                                Attr.getName()) ||
@@ -6139,9 +6133,6 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
     break;
   case AttributeList::AT_HCCTileStatic:
     handleHCCTileStaticAttr(S, D, Attr);
-    break;
-  case AttributeList::AT_HCCGlobal:
-    handleHCCGlobalAttr(S, D, Attr);
     break;
   case AttributeList::AT_VecReturn:
     handleVecReturnAttr(S, D, Attr);

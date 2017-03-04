@@ -614,7 +614,7 @@ def Const : InheritableAttr {
 
 def HC_HC : InheritableAttr {
   let Spellings = [CXX11<"","hc", 201511>];
-  let Subjects = SubjectList<[Function], ErrorDiag>;
+  let Subjects = SubjectList<[Var, Function], ErrorDiag>;
   let Documentation = [Undocumented];
 }
 
@@ -2558,11 +2558,3 @@ def HCCTileStatic : InheritableAttr {
   let LangOpts = [CPlusPlusAMP];
   let Documentation = [Undocumented];
 }
-
-def HCCGlobal : InheritableAttr {
-  let Spellings = [GNU<"agent_allocated">];
-  let Subjects = SubjectList<[Var]>;
-  let LangOpts = [CPlusPlusAMP];
-  let Documentation = [Undocumented];
-}
-

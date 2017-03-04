@@ -1673,8 +1673,13 @@ void CodeGenModule::EmitGlobal(GlobalDecl GD) {
          Global->hasAttr<CXXAMPRestrictCPUAttr>())
         return;
     } else {
-      if (Global->hasAttr<CXXAMPRestrictAMPAttr>() &&
-         !Global->hasAttr<CXXAMPRestrictCPUAttr>())
+      // In host path:
+      // let file-scope global variables be emitted
+      // let functions qualifired with restrict(amp) or [[hc]],
+      // but not with restrict(cpu) or [[cpu]] not be emitted
+      if (!isa<VarDecl>(Global) &&
+          Global->hasAttr<CXXAMPRestrictAMPAttr>() &&
+          !Global->hasAttr<CXXAMPRestrictCPUAttr>())
         return;
     }
   }
@@ -1917,13 +1922,10 @@ bool CodeGenModule::shouldEmitFunction(GlobalDecl GD) {
 static bool isWhiteListForHCC(CodeGenModule &CGM, GlobalDecl GD) {
   const auto *D = cast<ValueDecl>(GD.getDecl());
 
-  // let kernels and functions marked with restrict(amp) to pass
+  // let variables, kernels and functions marked with restrict(amp) to pass
   if (D->hasAttr<CXXAMPRestrictAMPAttr>() ||
+      // let hc_grid_launch kernel functions to pass
       D->hasAttr<HCGridLaunchAttr>())
-    return true;
-
-  // let __device global variables to pass
-  if (isa<VarDecl>(D) && D->hasAttr<HCCGlobalAttr>())
     return true;
 
   // the remaining ones must be functions
@@ -1985,7 +1987,12 @@ void CodeGenModule::EmitGlobalDefinition(GlobalDecl GD, llvm::GlobalValue *GV) {
       if (!isWhiteListForHCC(*this, GD))
         return;
     } else {
-      if (D->hasAttr<CXXAMPRestrictAMPAttr>()&&
+      // In host path:
+      // let file-scope global variables be emitted
+      // let functions qualifired with restrict(amp) or [[hc]],
+      // but not with restrict(cpu) or [[cpu]] not be emitted
+      if (!isa<VarDecl>(D) &&
+          D->hasAttr<CXXAMPRestrictAMPAttr>()&&
          !D->hasAttr<CXXAMPRestrictCPUAttr>())
         return;
     }
