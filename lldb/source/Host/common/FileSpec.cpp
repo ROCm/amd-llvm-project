@@ -26,12 +26,12 @@
 #endif
 
 #include "lldb/Core/ArchSpec.h"
-#include "lldb/Core/DataBufferHeap.h"
 #include "lldb/Host/File.h"
 #include "lldb/Host/FileSpec.h"
 #include "lldb/Host/FileSystem.h"
 #include "lldb/Host/Host.h"
 #include "lldb/Utility/CleanUp.h"
+#include "lldb/Utility/DataBufferHeap.h"
 #include "lldb/Utility/RegularExpression.h"
 #include "lldb/Utility/Stream.h"
 #include "lldb/Utility/StreamString.h"
@@ -904,21 +904,6 @@ DataBufferSP FileSpec::ReadFileContentsAsCString(Error *error_ptr) {
   if (error_ptr)
     *error_ptr = error;
   return data_sp;
-}
-
-size_t FileSpec::ReadFileLines(STLStringArray &lines) {
-  lines.clear();
-  char path[PATH_MAX];
-  if (GetPath(path, sizeof(path))) {
-    std::ifstream file_stream(path);
-
-    if (file_stream) {
-      std::string line;
-      while (getline(file_stream, line))
-        lines.push_back(line);
-    }
-  }
-  return lines.size();
 }
 
 FileSpec::EnumerateDirectoryResult

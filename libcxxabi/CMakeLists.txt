@@ -141,9 +141,13 @@ option(LIBCXXABI_HAS_EXTERNAL_THREAD_API
 option(LIBCXXABI_BUILD_EXTERNAL_THREAD_LIBRARY
   "Build libc++abi with an externalized threading library.
    This option may only be set to ON when LIBCXXABI_ENABLE_THREADS=ON" OFF)
+
+# FIXME: This option should default to off. Unfortunatly GCC 4.9 fails to link
+# programs to due undefined references to new/delete in libc++abi. Once this
+# has been fixed or worked around the default value should be changed.
 option(LIBCXXABI_ENABLE_NEW_DELETE_DEFINITIONS
     "Build libc++abi with definitions for operator new/delete. Normally libc++
-    provides these definitions" OFF)
+    provides these definitions" ON)
 option(LIBCXXABI_BUILD_32_BITS "Build 32 bit libc++abi." ${LLVM_BUILD_32_BITS})
 option(LIBCXXABI_INCLUDE_TESTS "Generate build targets for the libc++abi unit tests." ${LLVM_INCLUDE_TESTS})
 set(LIBCXXABI_TARGET_TRIPLE "" CACHE STRING "Target triple for cross compiling.")
@@ -318,7 +322,7 @@ append_if(LIBCXXABI_COMPILE_FLAGS LIBCXXABI_HAS_WCONVERSION_FLAG -Wconversion)
 append_if(LIBCXXABI_COMPILE_FLAGS LIBCXXABI_HAS_WMISMATCHED_TAGS_FLAG -Wmismatched-tags)
 append_if(LIBCXXABI_COMPILE_FLAGS LIBCXXABI_HAS_WMISSING_BRACES_FLAG -Wmissing-braces)
 append_if(LIBCXXABI_COMPILE_FLAGS LIBCXXABI_HAS_WNEWLINE_EOF_FLAG -Wnewline-eof)
-append_if(LIBCXXABI_COMPILE_FLAGS LIBCXXABI_HAS_WNO_UNUSED_FUNCTION_FLAG -Wno-unused-function)
+append_if(LIBCXXABI_COMPILE_FLAGS LIBCXXABI_HAS_WUNUSED_FUNCTION_FLAG -Wunused-function)
 append_if(LIBCXXABI_COMPILE_FLAGS LIBCXXABI_HAS_WSHADOW_FLAG -Wshadow)
 append_if(LIBCXXABI_COMPILE_FLAGS LIBCXXABI_HAS_WSHORTEN_64_TO_32_FLAG -Wshorten-64-to-32)
 append_if(LIBCXXABI_COMPILE_FLAGS LIBCXXABI_HAS_WSIGN_COMPARE_FLAG -Wsign-compare)
@@ -412,13 +416,16 @@ if (LIBCXXABI_HAS_EXTERNAL_THREAD_API)
   endif()
 endif()
 
-set(LIBCXXABI_HAS_UNDEFINED_SYMBOLS ((NOT LIBCXXABI_ENABLE_NEW_DELETE_DEFINITIONS)
-    OR (LIBCXXABI_BUILD_EXTERNAL_THREAD_LIBRARY AND LIBCXXABI_ENABLE_SHARED)))
+set(LIBCXXABI_HAS_UNDEFINED_SYMBOLS OFF)
+if ((NOT LIBCXXABI_ENABLE_NEW_DELETE_DEFINITIONS)
+    OR (LIBCXXABI_BUILD_EXTERNAL_THREAD_LIBRARY AND LIBCXXABI_ENABLE_SHARED))
+  set(LIBCXXABI_HAS_UNDEFINED_SYMBOLS ON)
+endif()
 
 if (LIBCXXABI_HAS_UNDEFINED_SYMBOLS)
   # Need to allow unresolved symbols if this is to work with shared library builds
   if (APPLE)
-    add_link_flags("-undefined dynamic_lookup")
+    list(APPEND LIBCXXABI_LINK_FLAGS "-undefined dynamic_lookup")
   else()
     # Relax this restriction from HandleLLVMOptions
     string(REPLACE "-Wl,-z,defs" "" CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS}")
