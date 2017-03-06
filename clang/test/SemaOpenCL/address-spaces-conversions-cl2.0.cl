@@ -70,7 +70,7 @@ void test_conversion(global int *arg_glob, local int *arg_loc,
 
   AS int *var_init4 = arg_priv;
 #ifndef GENERIC
-// expected-error-re@-2{{initializing '__{{global|constant}} int *' with an expression of type 'int *' changes address space of pointer}}
+// expected-error-re@-2{{initializing '__{{global|constant}} int *' with an expression of type '__private int *' changes address space of pointer}}
 #endif
 
   AS int *var_init5 = arg_gen;
@@ -95,7 +95,7 @@ void test_conversion(global int *arg_glob, local int *arg_loc,
 
   AS int *var_cast4 = (AS int *)arg_priv;
 #ifndef GENERIC
-// expected-error-re@-2{{casting 'int *' to type '__{{global|constant}} int *' changes address space of pointer}}
+// expected-error-re@-2{{casting '__private int *' to type '__{{global|constant}} int *' changes address space of pointer}}
 #endif
 
   AS int *var_cast5 = (AS int *)arg_gen;
@@ -121,7 +121,7 @@ void test_conversion(global int *arg_glob, local int *arg_loc,
 
   var_impl = arg_priv;
 #ifndef GENERIC
-// expected-error-re@-2{{assigning 'int *' to '__{{global|constant}} int *' changes address space of pointer}}
+// expected-error-re@-2{{assigning '__private int *' to '__{{global|constant}} int *' changes address space of pointer}}
 #endif
 
   var_impl = arg_gen;
@@ -146,7 +146,7 @@ void test_conversion(global int *arg_glob, local int *arg_loc,
 
   var_cast4 = (AS int *)arg_priv;
 #ifndef GENERIC
-// expected-error-re@-2{{casting 'int *' to type '__{{global|constant}} int *' changes address space of pointer}}
+// expected-error-re@-2{{casting '__private int *' to type '__{{global|constant}} int *' changes address space of pointer}}
 #endif
 
   var_cast5 = (AS int *)arg_gen;
@@ -172,7 +172,7 @@ void test_conversion(global int *arg_glob, local int *arg_loc,
 
   b = var_cmp <= arg_priv;
 #ifndef GENERIC
-// expected-error-re@-2{{comparison between  ('__{{global|constant}} int *' and 'int *') which are pointers to non-overlapping address spaces}}
+// expected-error-re@-2{{comparison between  ('__{{global|constant}} int *' and '__private int *') which are pointers to non-overlapping address spaces}}
 #endif
 
   b = var_cmp >= arg_gen;
@@ -198,7 +198,7 @@ void test_conversion(global int *arg_glob, local int *arg_loc,
 
   b = var_sub - arg_priv;
 #ifndef GENERIC
-// expected-error-re@-2{{arithmetic operation with operands of type  ('__{{global|constant}} int *' and 'int *') which are pointers to non-overlapping address spaces}}
+// expected-error-re@-2{{arithmetic operation with operands of type  ('__{{global|constant}} int *' and '__private int *') which are pointers to non-overlapping address spaces}}
 #endif
 
   b = var_sub - arg_gen;
@@ -218,7 +218,7 @@ void test_conversion(global int *arg_glob, local int *arg_loc,
 // expected-error-re@-2{{passing '__{{global|generic}} int *' to parameter of type '__constant int *' changes address space of pointer}}
 #endif
 
-  f_priv(var_sub); // expected-error-re{{passing '__{{global|constant|generic}} int *' to parameter of type 'int *' changes address space of pointer}}
+  f_priv(var_sub); // expected-error-re{{passing '__{{global|constant|generic}} int *' to parameter of type '__private int *' changes address space of pointer}}
 
   f_gen(var_sub);
 #ifdef CONSTANT
@@ -250,7 +250,7 @@ void test_ternary() {
   private int *var_priv;
   var_gen = 0 ? var_cond : var_priv;
 #ifndef GENERIC
-// expected-error-re@-2{{conditional operator with the second and third operands of type  ('__{{global|constant}} int *' and 'int *') which are pointers to non-overlapping address spaces}}
+// expected-error-re@-2{{conditional operator with the second and third operands of type  ('__{{global|constant}} int *' and '__private int *') which are pointers to non-overlapping address spaces}}
 #endif
 
   var_gen = 0 ? var_cond : var_gen;
@@ -281,7 +281,7 @@ void test_ternary() {
   private char *var_priv_ch;
   var_void_gen = 0 ? var_cond : var_priv_ch;
 #ifndef GENERIC
-// expected-error-re@-2{{conditional operator with the second and third operands of type  ('__{{global|constant}} int *' and 'char *') which are pointers to non-overlapping address spaces}}
+// expected-error-re@-2{{conditional operator with the second and third operands of type  ('__{{global|constant}} int *' and '__private char *') which are pointers to non-overlapping address spaces}}
 #endif
 
   generic char *var_gen_ch;

@@ -2057,6 +2057,14 @@ public:
       hasFMAF(false),
       hasLDEXPF(false),
       hasFullSpeedFP32Denorms(false){
+    const bool Is32Bit = GPU <= GK_CAYMAN;
+    LongWidth = LongAlign = PointerWidth = PointerAlign = Is32Bit ? 32 : 64;
+    SizeType    = Is32Bit ? UnsignedInt      : UnsignedLong;
+    PtrDiffType = Is32Bit ? SignedInt        : SignedLong;
+    IntPtrType  = Is32Bit ? SignedInt        : SignedLong;
+    IntMaxType  = Is32Bit ? SignedLongLong   : SignedLong;
+    Int64Type   = Is32Bit ? SignedLongLong   : SignedLong;
+
     if (getTriple().getArch() == llvm::Triple::amdgcn) {
       hasFP64 = true;
       hasFMAF = true;
@@ -2077,11 +2085,14 @@ public:
     switch(AddrSpace) {
       default:
         return 64;
-      case 0:
-      case 3:
-      case 5:
+      case AS_Private:
+      case AS_Local:
         return 32;
     }
+  }
+
+  uint64_t getPointerAlignV(unsigned AddrSpace) const override {
+    return getPointerWidthV(AddrSpace);
   }
 
   uint64_t getMaxPointerWidth() const override {
@@ -2273,12 +2284,6 @@ public:
   // value ~0.
   uint64_t getNullPointerValue(unsigned AS) const override {
     return AS != LangAS::opencl_local && AS != 0 ? 0 : ~0;
-  }
-
-  unsigned getTargetAddressSpace(LangOptions &Opt, unsigned AS) const override {
-    if (Opt.OpenCL && AS == 0)
-      return AS_Private;
-    return TargetInfo::getTargetAddressSpace(Opt, AS);
   }
 
 };
