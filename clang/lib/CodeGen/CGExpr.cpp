@@ -64,7 +64,15 @@ Address CodeGenFunction::CreateTempAlloca(llvm::Type *Ty, CharUnits Align,
                                           const Twine &Name) {
   auto Alloca = CreateTempAlloca(Ty, Name);
   Alloca->setAlignment(Align.getQuantity());
-  return Address(Alloca, Align);
+  llvm::Value *Cast = Alloca;
+  if (getLangOpts().OpenCL) {
+    auto PrivAddr = getContext().getTargetAddressSpace(
+        LangAS::opencl_private);
+    if (PrivAddr != 0)
+      Cast = llvm::CastInst::CreatePointerCast(Alloca, Ty->getPointerTo(
+          PrivAddr), "", AllocaInsertPt);
+  }
+  return Address(Cast, Align);
 }
 
 /// CreateTempAlloca - This creates a alloca and inserts it into the entry

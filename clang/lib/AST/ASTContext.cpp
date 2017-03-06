@@ -706,6 +706,7 @@ static const LangAS::Map *getAddressSpaceMap(const TargetInfo &T,
       1, // opencl_global
       3, // opencl_local
       2, // opencl_constant
+      0, // opencl_private
       4, // opencl_generic
       5, // cuda_device
       6, // cuda_constant
@@ -9536,6 +9537,17 @@ uint64_t ASTContext::getTargetNullPointerValue(QualType QT) const {
     AS = QT->getPointeeType().getAddressSpace();
 
   return getTargetInfo().getNullPointerValue(AS);
+}
+
+unsigned ASTContext::getTargetAddressSpace(unsigned AS) const {
+  // For OpenCL 1.2 and below, address space 0 should be mapped the same
+  // way as  private address space.
+  if (LangOpts.OpenCL && AS == 0)
+    return (*AddrSpaceMap)[LangAS::opencl_private - LangAS::Offset];
+  if (AS < LangAS::Offset || AS >= LangAS::Offset + LangAS::Count) 
+    return AS;
+  else
+    return (*AddrSpaceMap)[AS - LangAS::Offset];
 }
 
 // Explicitly instantiate this in case a Redeclarable<T> is used from a TU that

@@ -1037,6 +1037,13 @@ public:
     return true;
   }
 
+  virtual unsigned getTargetAddressSpace(LangOptions &Opt, unsigned AS) const {
+    if (AS < LangAS::Offset || AS >= LangAS::Offset + LangAS::Count)
+      return AS;
+    else
+      return (*AddrSpaceMap)[AS - LangAS::Offset];
+  }
+
 protected:
   virtual uint64_t getPointerWidthV(unsigned AddrSpace) const {
     return PointerWidth;

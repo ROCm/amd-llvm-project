@@ -1747,6 +1747,7 @@ static const unsigned NVPTXAddrSpaceMap[] = {
     1, // opencl_global
     3, // opencl_local
     4, // opencl_constant
+    0, // opencl_private
     // FIXME: generic has to be added to the target
     0, // opencl_generic
     1, // cuda_device
@@ -1997,16 +1998,6 @@ ArrayRef<const char *> NVPTXTargetInfo::getGCCRegNames() const {
   return llvm::makeArrayRef(GCCRegNames);
 }
 
-static const unsigned AMDGPUAddrSpaceMap[] = {
-  1,    // opencl_global
-  3,    // opencl_local
-  2,    // opencl_constant
-  4,    // opencl_generic
-  1,    // cuda_device
-  2,    // cuda_constant
-  3     // cuda_shared
-};
-
 // If you edit the description strings, make sure you update
 // getPointerWidthV().
 
@@ -2015,13 +2006,22 @@ static const char *const DataLayoutStringR600 =
   "-v192:256-v256:256-v512:512-v1024:1024-v2048:2048-n32:64";
 
 static const char *const DataLayoutStringSI =
-  "e-p:32:32-p1:64:64-p2:64:64-p3:32:32-p4:64:64-p5:32:32"
+  "e-p:64:64-p1:64:64-p3:32:32-p4:64:64-p5:32:32"
   "-i64:64-v16:16-v24:32-v32:32-v48:64-v96:128"
   "-v192:256-v256:256-v512:512-v1024:1024-v2048:2048-n32:64";
 
 class AMDGPUTargetInfo final : public TargetInfo {
+  static const unsigned AddrSpaceMap_[LangAS::Count];
   static const Builtin::Info BuiltinInfo[];
   static const char * const GCCRegNames[];
+
+  enum AddrSpaceKind {
+    AS_Generic = 0,
+    AS_Global = 1,
+    AS_Local = 3,
+    AS_Constant = 4,
+    AS_Private = 5
+  };
 
   /// \brief The GPU profiles supported by the AMDGPU target.
   enum GPUKind {
@@ -2066,7 +2066,7 @@ public:
     resetDataLayout(getTriple().getArch() == llvm::Triple::amdgcn ?
                     DataLayoutStringSI : DataLayoutStringR600);
 
-    AddrSpaceMap = &AMDGPUAddrSpaceMap;
+    AddrSpaceMap = &AddrSpaceMap_;
     UseAddrSpaceMapMangling = true;
   }
 
@@ -2274,6 +2274,24 @@ public:
   uint64_t getNullPointerValue(unsigned AS) const override {
     return AS != LangAS::opencl_local && AS != 0 ? 0 : ~0;
   }
+
+  unsigned getTargetAddressSpace(LangOptions &Opt, unsigned AS) const override {
+    if (Opt.OpenCL && AS == 0)
+      return AS_Private;
+    return TargetInfo::getTargetAddressSpace(Opt, AS);
+  }
+
+};
+
+const unsigned AMDGPUTargetInfo::AddrSpaceMap_[] = {
+    AS_Global,   // opencl_global
+    AS_Local,    // opencl_local
+    AS_Constant, // opencl_constant
+    AS_Private,  // opencl_private
+    AS_Generic,  // opencl_generic
+    AS_Global,   // cuda_device
+    AS_Constant, // cuda_constant
+    AS_Local     // cuda_shared
 };
 
 const Builtin::Info AMDGPUTargetInfo::BuiltinInfo[] = {
@@ -7308,6 +7326,7 @@ static const unsigned TCEOpenCLAddrSpaceMap[] = {
     3, // opencl_global
     4, // opencl_local
     5, // opencl_constant
+    0, // opencl_private
     // FIXME: generic has to be added to the target
     0, // opencl_generic
     0, // cuda_device
@@ -8270,6 +8289,7 @@ static const unsigned SPIRAddrSpaceMap[] = {
     1, // opencl_global
     3, // opencl_local
     2, // opencl_constant
+    0, // opencl_private
     4, // opencl_generic
     0, // cuda_device
     0, // cuda_constant
