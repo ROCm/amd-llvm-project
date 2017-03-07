@@ -3,7 +3,7 @@
 
 // Checking for null instead of @__NSConcreteGlobalBlock symbol
 // COMMON: @__block_literal_global = internal addrspace(1) constant { i8**, i32, i32, i8*, %struct.__block_descriptor addrspace(2)* } { i8** null
-// AMD: @__block_literal_global = internal addrspace(1) constant { i8**, i32, i32, i8*, %struct.__block_descriptor addrspace(2)* } { i8** addrspacecast (i8* addrspace(4)* null to i8**)
+// AMD: @__block_literal_global = internal addrspace(1) constant { i8**, i32, i32, i8*, %struct.__block_descriptor addrspace(4)* } { i8** null
 void (^block_A)(local void *) = ^(local void *a) {
   return;
 };
@@ -12,7 +12,7 @@ void foo(){
   int i;
 // Checking for null instead of @_NSConcreteStackBlock symbol
 // COMMON: store i8* null, i8** %block.isa
-// AMD: store i8* addrspacecast (i8 addrspace(4)* null to i8*), i8** %block.isa,
+// AMD: store i8* null, i8* addrspace(5)* %block.isa,
   int (^ block_B)(void) = ^{
     return i;
   };
