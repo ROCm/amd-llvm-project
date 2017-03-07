@@ -1225,7 +1225,7 @@ void CodeGenFunction::EmitAutoVarInit(const AutoVarEmission &emission) {
 
   llvm::Type *BP = Int8PtrTy;
   if (Loc.getType() != BP)
-    Loc = Builder.CreateBitCast(Loc, BP);
+    Loc = Builder.CreatePointerBitCastOrAddrSpaceCast(Loc, BP);
 
   // If the initializer is all or mostly zeros, codegen with memset then do
   // a few stores afterward.
@@ -1235,7 +1235,8 @@ void CodeGenFunction::EmitAutoVarInit(const AutoVarEmission &emission) {
                          isVolatile);
     // Zero and undef don't require a stores.
     if (!constant->isNullValue() && !isa<llvm::UndefValue>(constant)) {
-      Loc = Builder.CreateBitCast(Loc, constant->getType()->getPointerTo());
+      Loc = Builder.CreatePointerBitCastOrAddrSpaceCast(Loc,
+          constant->getType()->getPointerTo());
       emitStoresForInitAfterMemset(constant, Loc.getPointer(),
                                    isVolatile, Builder);
     }
