@@ -302,7 +302,7 @@ public:
   }
 
   /// \brief Get integer value for null pointer.
-  /// \param AddrSpace address space of pointee in source language.
+  /// \param AddrSpace target address space of pointee.
   virtual uint64_t getNullPointerValue(unsigned AddrSpace) const {
     return 0;
   }

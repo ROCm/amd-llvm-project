@@ -9536,7 +9536,7 @@ uint64_t ASTContext::getTargetNullPointerValue(QualType QT) const {
   else
     AS = QT->getPointeeType().getAddressSpace();
 
-  return getTargetInfo().getNullPointerValue(AS);
+  return getTargetInfo().getNullPointerValue(getTargetAddressSpace(AS));
 }
 
 unsigned ASTContext::getTargetAddressSpace(unsigned AS) const {
