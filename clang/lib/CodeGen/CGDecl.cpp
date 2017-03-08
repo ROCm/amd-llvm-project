@@ -1074,7 +1074,16 @@ CodeGenFunction::EmitAutoVarAlloca(const VarDecl &D) {
     // Allocate memory for the array.
     llvm::AllocaInst *vla = Builder.CreateAlloca(llvmTy, elementCount, "vla");
     vla->setAlignment(alignment.getQuantity());
-    address = Address(vla, alignment);
+
+    llvm::Value *V = vla;
+    auto Addr = getContext().getTargetAddressSpaceForAutoVar();
+    if (Addr != V->getType()->getPointerAddressSpace()) {
+      auto *DestTy =
+          llvm::PointerType::get(vla->getType()->getElementType(), Addr);
+      V = Builder.CreateAddrSpaceCast(vla, DestTy);
+    }
+
+    address = Address(V, alignment);
   }
 
   setAddrOfLocalVar(&D, address);

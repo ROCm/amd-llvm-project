@@ -2304,11 +2304,11 @@ public:
     return getTargetAddressSpace(T.getQualifiers());
   }
 
-  unsigned getTargetAddressSpace(Qualifiers Q) const {
-    return getTargetAddressSpace(Q.getAddressSpace());
-  }
+  unsigned getTargetAddressSpace(Qualifiers Q) const;
 
   unsigned getTargetAddressSpace(unsigned AS) const;
+
+  unsigned getTargetAddressSpaceForAutoVar() const;
 
   /// Get target-dependent integer value for null pointer which is used for
   /// constant folding.
@@ -2323,6 +2323,8 @@ public:
 private:
   // Helper for integer ordering
   unsigned getIntegerRank(const Type *T) const;
+
+  unsigned getMappedAddressSpace(unsigned AS) const;
 
 public:
   //===--------------------------------------------------------------------===//
