@@ -7641,7 +7641,11 @@ public:
 
   void setN64ABITypes() {
     setN32N64ABITypes();
-    Int64Type = SignedLong;
+    if (getTriple().getOS() == llvm::Triple::OpenBSD) {
+      Int64Type = SignedLongLong;
+    } else {
+      Int64Type = SignedLong;
+    }
     IntMaxType = Int64Type;
     LongWidth = LongAlign = 64;
     PointerWidth = PointerAlign = 64;

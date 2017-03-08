@@ -890,6 +890,26 @@ define void @test_insertvalue(%struct.nested* %addr, i32 %val) {
   ret void
 }
 
+define [1 x i64] @test_trivial_insert([1 x i64] %s, i64 %val) {
+; CHECK-LABEL: name: test_trivial_insert
+; CHECK: [[STRUCT:%[0-9]+]](s64) = COPY %x0
+; CHECK: [[VAL:%[0-9]+]](s64) = COPY %x1
+; CHECK: [[RES:%[0-9]+]](s64) = COPY [[VAL]](s64)
+; CHECK: %x0 = COPY [[RES]]
+  %res = insertvalue [1 x i64] %s, i64 %val, 0
+  ret [1 x i64] %res
+}
+
+define [1 x i8*] @test_trivial_insert_ptr([1 x i8*] %s, i8* %val) {
+; CHECK-LABEL: name: test_trivial_insert_ptr
+; CHECK: [[STRUCT:%[0-9]+]](s64) = COPY %x0
+; CHECK: [[VAL:%[0-9]+]](p0) = COPY %x1
+; CHECK: [[RES:%[0-9]+]](s64) = G_PTRTOINT [[VAL]](p0)
+; CHECK: %x0 = COPY [[RES]]
+  %res = insertvalue [1 x i8*] %s, i8* %val, 0
+  ret [1 x i8*] %res
+}
+
 ; CHECK-LABEL: name: test_insertvalue_agg
 ; CHECK: [[SMALLSTRUCT:%[0-9]+]](s64) = G_LOAD
 ; CHECK: [[STRUCT:%[0-9]+]](s128) = G_LOAD
@@ -923,6 +943,30 @@ define i32 @test_select(i1 %tst, i32 %lhs, i32 %rhs) {
 define i8* @test_select_ptr(i1 %tst, i8* %lhs, i8* %rhs) {
   %res = select i1 %tst, i8* %lhs, i8* %rhs
   ret i8* %res
+}
+
+; CHECK-LABEL: name: test_select_vec
+; CHECK: [[TST:%[0-9]+]](s1) = COPY %w0
+; CHECK: [[LHS:%[0-9]+]](<4 x s32>) = COPY %q0
+; CHECK: [[RHS:%[0-9]+]](<4 x s32>) = COPY %q1
+; CHECK: [[RES:%[0-9]+]](<4 x s32>) = G_SELECT [[TST]](s1), [[LHS]], [[RHS]]
+; CHECK: %q0 = COPY [[RES]]
+define <4 x i32> @test_select_vec(i1 %tst, <4 x i32> %lhs, <4 x i32> %rhs) {
+  %res = select i1 %tst, <4 x i32> %lhs, <4 x i32> %rhs
+  ret <4 x i32> %res
+}
+
+; CHECK-LABEL: name: test_vselect_vec
+; CHECK: [[TST32:%[0-9]+]](<4 x s32>) = COPY %q0
+; CHECK: [[LHS:%[0-9]+]](<4 x s32>) = COPY %q1
+; CHECK: [[RHS:%[0-9]+]](<4 x s32>) = COPY %q2
+; CHECK: [[TST:%[0-9]+]](<4 x s1>) = G_TRUNC [[TST32]](<4 x s32>)
+; CHECK: [[RES:%[0-9]+]](<4 x s32>) = G_SELECT [[TST]](<4 x s1>), [[LHS]], [[RHS]]
+; CHECK: %q0 = COPY [[RES]]
+define <4 x i32> @test_vselect_vec(<4 x i32> %tst32, <4 x i32> %lhs, <4 x i32> %rhs) {
+  %tst = trunc <4 x i32> %tst32 to <4 x i1>
+  %res = select <4 x i1> %tst, <4 x i32> %lhs, <4 x i32> %rhs
+  ret <4 x i32> %res
 }
 
 ; CHECK-LABEL: name: test_fptosi
@@ -1188,4 +1232,22 @@ define void @test_load_store_atomics(i8* %addr) {
   store atomic i8 %v2, i8* %addr singlethread monotonic, align 1
 
   ret void
+}
+
+define float @test_fneg_f32(float %x) {
+; CHECK-LABEL: name: test_fneg_f32
+; CHECK: [[ARG:%[0-9]+]](s32) = COPY %s0
+; CHECK: [[RES:%[0-9]+]](s32) = G_FNEG [[ARG]]
+; CHECK: %s0 = COPY [[RES]](s32)
+  %neg = fsub float -0.000000e+00, %x
+  ret float %neg
+}
+
+define double @test_fneg_f64(double %x) {
+; CHECK-LABEL: name: test_fneg_f64
+; CHECK: [[ARG:%[0-9]+]](s64) = COPY %d0
+; CHECK: [[RES:%[0-9]+]](s64) = G_FNEG [[ARG]]
+; CHECK: %d0 = COPY [[RES]](s64)
+  %neg = fsub double -0.000000e+00, %x
+  ret double %neg
 }

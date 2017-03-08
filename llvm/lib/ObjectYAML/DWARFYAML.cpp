@@ -54,6 +54,8 @@ void MappingTraits<DWARFYAML::AttributeAbbrev>::mapping(
     IO &IO, DWARFYAML::AttributeAbbrev &AttAbbrev) {
   IO.mapRequired("Attribute", AttAbbrev.Attribute);
   IO.mapRequired("Form", AttAbbrev.Form);
+  if(AttAbbrev.Form == dwarf::DW_FORM_implicit_const)
+    IO.mapRequired("Value", AttAbbrev.Value);
 }
 
 void MappingTraits<DWARFYAML::ARangeDescriptor>::mapping(
@@ -97,6 +99,8 @@ void MappingTraits<DWARFYAML::PubSection>::mapping(
 void MappingTraits<DWARFYAML::Unit>::mapping(IO &IO, DWARFYAML::Unit &Unit) {
   IO.mapRequired("Length", Unit.Length);
   IO.mapRequired("Version", Unit.Version);
+  if (Unit.Version >= 5)
+    IO.mapRequired("UnitType", Unit.Type);
   IO.mapRequired("AbbrOffset", Unit.AbbrOffset);
   IO.mapRequired("AddrSize", Unit.AddrSize);
   IO.mapOptional("Entries", Unit.Entries);
