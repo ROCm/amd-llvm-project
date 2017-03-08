@@ -377,7 +377,7 @@ public:
   };
 
   /// i32s containing the indexes of the cleanup destinations.
-  llvm::AllocaInst *NormalCleanupDest;
+  llvm::Instruction *NormalCleanupDest;
 
   unsigned NextCleanupDestIndex;
 
@@ -392,8 +392,8 @@ public:
   llvm::Value *ExceptionSlot;
 
   /// The selector slot.  Under the MandatoryCleanup model, all landing pads
-  /// write the current selector value into this alloca.
-  llvm::AllocaInst *EHSelectorSlot;
+  /// write the current selector value into this instruction.
+  llvm::Instruction *EHSelectorSlot;
 
   /// A stack of exception code slots. Entering an __except block pushes a slot
   /// on the stack and leaving pops one. The __exception_code() intrinsic loads
@@ -428,11 +428,11 @@ public:
 
     /// An i1 variable indicating whether or not the @finally is
     /// running for an exception.
-    llvm::AllocaInst *ForEHVar;
+    llvm::Instruction *ForEHVar;
 
     /// An i8* variable into which the exception pointer to rethrow
     /// has been saved.
-    llvm::AllocaInst *SavedExnVar;
+    llvm::Instruction *SavedExnVar;
 
   public:
     void enter(CodeGenFunction &CGF, const Stmt *Finally,
@@ -1858,13 +1858,23 @@ public:
                             AlignmentSource *Source = nullptr);
   LValue EmitLoadOfPointerLValue(Address Ptr, const PointerType *PtrTy);
 
+  /// Create an alloca instruction. If the target address space for auto var
+  /// for the specific language does no match the address space of alloca,
+  /// insert addrspacecast instruction which casts the alloca instruction to
+  /// the expected address space.
+  llvm::Instruction *CreateAlloca(llvm::Type *Ty, const Twine &Name = "tmp",
+                                  llvm::Instruction *InsertPos = nullptr);
   /// CreateTempAlloca - This creates a alloca and inserts it into the entry
   /// block. The caller is responsible for setting an appropriate alignment on
-  /// the alloca.
-  llvm::AllocaInst *CreateTempAlloca(llvm::Type *Ty,
-                                     const Twine &Name = "tmp");
+  /// the alloca. If the default address space is not 0, insert addrspacecast.
+  llvm::Instruction *CreateTempAlloca(llvm::Type *Ty,
+                                      const Twine &Name = "tmp");
   Address CreateTempAlloca(llvm::Type *Ty, CharUnits align,
                            const Twine &Name = "tmp");
+
+  /// Get alloca instruction operand of an addrspacecast instruction.
+  /// If \p Inst is alloca instruction, returns \p Inst;
+  llvm::AllocaInst *getAddrSpaceCastedAlloca(llvm::Instruction *Inst) const;
 
   /// CreateDefaultAlignedTempAlloca - This creates an alloca with the
   /// default ABI alignment of the given LLVM type.
