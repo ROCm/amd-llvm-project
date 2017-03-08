@@ -2913,6 +2913,17 @@ extern bool IsCXXAMPBackendJobAction(const JobAction* A);
 extern bool IsHCHostBackendJobAction(const JobAction* A);
 extern bool IsCXXAMPCPUBackendJobAction(const JobAction* A);
 
+static bool IsHCAcceleratorPreprocessJobActionWithInputType(const JobAction* A, types::ID typesID) {
+  bool ret = false;
+  if (isa<PreprocessJobAction>(A)) {
+    const ActionList& al = dyn_cast<PreprocessJobAction>(A)->getInputs();
+    if ((al.size() == 1) && (al[0]->getType() == typesID)) {
+      ret = true;
+    }
+  }
+  return ret;
+}
+
 void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                          const InputInfo &Output, const InputInfoList &Inputs,
                          const ArgList &Args, const char *LinkingOutput) const {
@@ -2976,7 +2987,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   // C++ AMP-specific
-  if (IsCXXAMPBackendJobAction(&JA)) {
+  if (IsCXXAMPBackendJobAction(&JA) ||
+      IsHCAcceleratorPreprocessJobActionWithInputType(&JA, types::TY_HC_KERNEL) ||
+      IsHCAcceleratorPreprocessJobActionWithInputType(&JA, types::TY_CXX_AMP)) {
     // path to compile kernel codes on GPU
     CmdArgs.push_back("-D__GPU__=1");
     CmdArgs.push_back("-D__KALMAR_ACCELERATOR__=1");
@@ -2986,7 +2999,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-fno-common");
     //CmdArgs.push_back("-m32"); // added below using -triple
     CmdArgs.push_back("-O2");
-  } else if(IsCXXAMPCPUBackendJobAction(&JA)){
+  } else if(IsCXXAMPCPUBackendJobAction(&JA) ||
+    IsHCAcceleratorPreprocessJobActionWithInputType(&JA, types::TY_CXX_AMP_CPU)){
     // path to compile kernel codes on CPU
     CmdArgs.push_back("-famp-is-device");
     CmdArgs.push_back("-famp-cpu");
@@ -5414,6 +5428,18 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   if (Output.getType() == types::TY_Dependencies) {
     // Handled with other dependency code.
+  } else if (Output.isFilename() &&
+             (IsHCAcceleratorPreprocessJobActionWithInputType(&JA, types::TY_HC_KERNEL) ||
+              IsHCAcceleratorPreprocessJobActionWithInputType(&JA, types::TY_CXX_AMP) ||
+              IsHCAcceleratorPreprocessJobActionWithInputType(&JA, types::TY_CXX_AMP_CPU))) { 
+    CmdArgs.push_back("-o");
+    SmallString<128> KernelPreprocessFile(Output.getFilename());
+    if (IsHCAcceleratorPreprocessJobActionWithInputType(&JA, types::TY_CXX_AMP_CPU)) {
+      llvm::sys::path::replace_extension(KernelPreprocessFile, ".amp_cpu.i");
+    } else {
+      llvm::sys::path::replace_extension(KernelPreprocessFile, ".gpu.i");
+    }
+    CmdArgs.push_back(Args.MakeArgString(KernelPreprocessFile));
   } else if (Output.isFilename()) {
     CmdArgs.push_back("-o");
     CmdArgs.push_back(Output.getFilename());
