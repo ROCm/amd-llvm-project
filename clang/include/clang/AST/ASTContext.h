@@ -2312,8 +2312,6 @@ public:
   /// constant folding.
   uint64_t getTargetNullPointerValue(QualType QT) const;
 
-  unsigned getTargetDefaultAddressSpace() const;
-
   /// The target address space corresponding to OpenCL constant address space
   /// CUDA constant specifier.
   unsigned getTargetConstantAddressSpace() const;
