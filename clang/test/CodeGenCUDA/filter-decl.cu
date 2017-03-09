@@ -12,7 +12,7 @@ __asm__("file scope asm is host only");
 
 // CHECK-HOST: constantdata = internal global
 // ITANIUM: constantdata = externally_initialized global
-// AMDGCN: constantdata = addrspace(2) externally_initialized global
+// AMDGCN: constantdata = addrspace(4) externally_initialized global
 __constant__ char constantdata[256];
 
 // CHECK-HOST: devicedata = internal global

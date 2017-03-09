@@ -15,9 +15,7 @@ extern "C" __device__ int vprintf(const char*, const char*);
 // CHECK: [[SIMPLE_PRINTF_TY:%[a-zA-Z0-9_]+]] = type { i32, i64, double }
 // CHECK-LABEL: define i32 @_Z11CheckSimplev()
 __device__ int CheckSimple() {
-  // NVPTX: [[BUF:%[a-zA-Z0-9_]+]] = alloca [[SIMPLE_PRINTF_TY]]
-  // AMDGCN: [[ALLOCA:%[a-zA-Z0-9_]+]] = alloca [[SIMPLE_PRINTF_TY]]
-  // AMDGCN: [[BUF:%[a-zA-Z0-9_]+]] = addrspacecast %printf_args* [[ALLOCA]] to %printf_args addrspace(4)*
+  // CHECK: [[BUF:%[a-zA-Z0-9_]+]] = alloca [[SIMPLE_PRINTF_TY]]
   // CHECK: [[FMT:%[0-9]+]] = load{{.*}}%fmt
   const char* fmt = "%d %lld %f";
   // CHECK: [[PTR0:%[0-9]+]] = getelementptr inbounds [[SIMPLE_PRINTF_TY]], [[SIMPLE_PRINTF_TY]]{{.*}}* [[BUF]], i32 0, i32 0
