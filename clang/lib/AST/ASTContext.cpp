@@ -9577,7 +9577,7 @@ unsigned ASTContext::getTargetGlobalAddressSpace() const {
 
 unsigned ASTContext::getTargetAddressSpace(QualType T) const {
   if (T.isNull())
-    return getTargetDefaultAddressSpace();
+    return 0;
   if (T->isFunctionType() &&
       !T.getQualifiers().hasAddressSpace())
     return 0;
