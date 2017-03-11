@@ -63,21 +63,10 @@ template <class ELFT> static SymbolBody *addRegular(SymbolAssignment *Cmd) {
       Cmd->Name, /*Type*/ 0, Visibility, /*CanOmitFromDynSym*/ false,
       /*File*/ nullptr);
   Sym->Binding = STB_GLOBAL;
+  SectionBase *Sec =
+      Cmd->Expression.IsAbsolute() ? nullptr : Cmd->Expression.Section();
   replaceBody<DefinedRegular>(Sym, Cmd->Name, /*IsLocal=*/false, Visibility,
-                              STT_NOTYPE, 0, 0, nullptr, nullptr);
-  return Sym->body();
-}
-
-template <class ELFT> static SymbolBody *addSynthetic(SymbolAssignment *Cmd) {
-  Symbol *Sym;
-  uint8_t Visibility = Cmd->Hidden ? STV_HIDDEN : STV_DEFAULT;
-  const OutputSection *Sec =
-      ScriptConfig->HasSections ? nullptr : Cmd->Expression.Section();
-  std::tie(Sym, std::ignore) = Symtab<ELFT>::X->insert(
-      Cmd->Name, /*Type*/ 0, Visibility, /*CanOmitFromDynSym*/ false,
-      /*File*/ nullptr);
-  Sym->Binding = STB_GLOBAL;
-  replaceBody<DefinedSynthetic>(Sym, Cmd->Name, 0, Sec);
+                              STT_NOTYPE, 0, 0, Sec, nullptr);
   return Sym->body();
 }
 
@@ -92,7 +81,7 @@ static bool isUnderSysroot(StringRef Path) {
 
 template <class ELFT>
 void LinkerScript<ELFT>::setDot(Expr E, const Twine &Loc, bool InSec) {
-  uintX_t Val = E(Dot);
+  uintX_t Val = E();
   if (Val < Dot) {
     if (InSec)
       error(Loc + ": unable to move location counter backward for: " +
@@ -119,18 +108,14 @@ void LinkerScript<ELFT>::assignSymbol(SymbolAssignment *Cmd, bool InSec) {
   if (!Cmd->Sym)
     return;
 
-  if (auto *Body = dyn_cast<DefinedSynthetic>(Cmd->Sym)) {
-    Body->Section = Cmd->Expression.Section();
-    if (Body->Section) {
-      uint64_t VA = 0;
-      if (Body->Section->Flags & SHF_ALLOC)
-        VA = Body->Section->Addr;
-      Body->Value = Cmd->Expression(Dot) - VA;
-    }
-    return;
+  auto *Sym = cast<DefinedRegular>(Cmd->Sym);
+  Sym->Value = Cmd->Expression();
+  if (!Cmd->Expression.IsAbsolute()) {
+    Sym->Section = Cmd->Expression.Section();
+    if (auto *Sec = dyn_cast_or_null<OutputSection>(Sym->Section))
+      if (Sec->Flags & SHF_ALLOC)
+        Sym->Value -= Sec->Addr;
   }
-
-  cast<DefinedRegular>(Cmd->Sym)->Value = Cmd->Expression(Dot);
 }
 
 template <class ELFT>
@@ -144,12 +129,7 @@ void LinkerScript<ELFT>::addSymbol(SymbolAssignment *Cmd) {
   if (Cmd->Provide && (!B || B->isDefined()))
     return;
 
-  // Otherwise, create a new symbol if one does not exist or an
-  // undefined one does exist.
-  if (Cmd->Expression.IsAbsolute())
-    Cmd->Sym = addRegular<ELFT>(Cmd);
-  else
-    Cmd->Sym = addSynthetic<ELFT>(Cmd);
+  Cmd->Sym = addRegular<ELFT>(Cmd);
 
   // If there are sections, then let the value be assigned later in
   // `assignAddresses`.
@@ -321,6 +301,19 @@ LinkerScript<ELFT>::createInputSectionList(OutputSectionCommand &OutCmd) {
 
 template <class ELFT>
 void LinkerScript<ELFT>::processCommands(OutputSectionFactory &Factory) {
+  // A symbol can be assigned before any section is mentioned in the linker
+  // script. In an DSO, the symbol values are addresses, so the only important
+  // section values are:
+  // * SHN_UNDEF
+  // * SHN_ABS
+  // * Any value meaning a regular section.
+  // To handle that, create a dummy aether section that fills the void before
+  // the linker scripts switches to another section. It has an index of one
+  // which will map to whatever the first actual section is.
+  Aether = make<OutputSection>("", 0, SHF_ALLOC);
+  Aether->SectionIndex = 1;
+  CurOutSec = Aether;
+
   for (unsigned I = 0; I < Opt.Commands.size(); ++I) {
     auto Iter = Opt.Commands.begin() + I;
     const std::unique_ptr<BaseCommand> &Base1 = *Iter;
@@ -336,7 +329,7 @@ void LinkerScript<ELFT>::processCommands(OutputSectionFactory &Factory) {
       // created by Writer<ELFT>. The LinkerScript<ELFT>::assignAddresses
       // will not be called, so ASSERT should be evaluated now.
       if (!Opt.HasSections)
-        Cmd->Expression(0);
+        Cmd->Expression();
       continue;
     }
 
@@ -375,7 +368,7 @@ void LinkerScript<ELFT>::processCommands(OutputSectionFactory &Factory) {
       // is given, input sections are aligned to that value, whether the
       // given value is larger or smaller than the original section alignment.
       if (Cmd->SubalignExpr) {
-        uint32_t Subalign = Cmd->SubalignExpr(0);
+        uint32_t Subalign = Cmd->SubalignExpr();
         for (InputSectionBase *S : V)
           S->Alignment = Subalign;
       }
@@ -385,6 +378,7 @@ void LinkerScript<ELFT>::processCommands(OutputSectionFactory &Factory) {
         Factory.addInputSec<ELFT>(S, Cmd->Name);
     }
   }
+  CurOutSec = nullptr;
 }
 
 // Add sections that didn't match any sections command.
@@ -407,7 +401,7 @@ template <class ELFT> void LinkerScript<ELFT>::output(InputSection *S) {
   uintX_t Pos = IsTbss ? Dot + ThreadBssOffset : Dot;
   Pos = alignTo(Pos, S->Alignment);
   S->OutSecOff = Pos - CurOutSec->Addr;
-  Pos += S->template getSize<ELFT>();
+  Pos += S->getSize();
 
   // Update output section size after adding each section. This is so that
   // SIZEOF works correctly in the case below:
@@ -476,7 +470,7 @@ template <class ELFT> void LinkerScript<ELFT>::process(BaseCommand &Base) {
   }
 
   if (auto *AssertCmd = dyn_cast<AssertCommand>(&Base)) {
-    AssertCmd->Expression(Dot);
+    AssertCmd->Expression();
     return;
   }
 
@@ -555,7 +549,7 @@ template <class ELFT>
 void LinkerScript<ELFT>::assignOffsets(OutputSectionCommand *Cmd) {
   if (Cmd->LMAExpr) {
     uintX_t D = Dot;
-    LMAOffset = [=] { return Cmd->LMAExpr(D) - D; };
+    LMAOffset = [=] { return Cmd->LMAExpr() - D; };
   }
   OutputSection *Sec = findSection<ELFT>(Cmd->Name, *OutputSections);
   if (!Sec)
@@ -566,7 +560,7 @@ void LinkerScript<ELFT>::assignOffsets(OutputSectionCommand *Cmd) {
 
   // Handle align (e.g. ".foo : ALIGN(16) { ... }").
   if (Cmd->AlignExpr)
-    Sec->updateAlignment(Cmd->AlignExpr(0));
+    Sec->updateAlignment(Cmd->AlignExpr());
 
   // Try and find an appropriate memory region to assign offsets in.
   CurMemRegion = findMemoryRegion(Cmd, Sec);
@@ -772,18 +766,6 @@ template <class ELFT>
 void LinkerScript<ELFT>::assignAddresses(std::vector<PhdrEntry> &Phdrs) {
   // Assign addresses as instructed by linker script SECTIONS sub-commands.
   Dot = 0;
-
-  // A symbol can be assigned before any section is mentioned in the linker
-  // script. In an DSO, the symbol values are addresses, so the only important
-  // section values are:
-  // * SHN_UNDEF
-  // * SHN_ABS
-  // * Any value meaning a regular section.
-  // To handle that, create a dummy aether section that fills the void before
-  // the linker scripts switches to another section. It has an index of one
-  // which will map to whatever the first actual section is.
-  auto *Aether = make<OutputSection>("", 0, SHF_ALLOC);
-  Aether->SectionIndex = 1;
   switchTo(Aether);
 
   for (const std::unique_ptr<BaseCommand> &Base : Opt.Commands) {
@@ -793,7 +775,7 @@ void LinkerScript<ELFT>::assignAddresses(std::vector<PhdrEntry> &Phdrs) {
     }
 
     if (auto *Cmd = dyn_cast<AssertCommand>(Base.get())) {
-      Cmd->Expression(Dot);
+      Cmd->Expression();
       continue;
     }
 
@@ -828,7 +810,7 @@ template <class ELFT> std::vector<PhdrEntry> LinkerScript<ELFT>::createPhdrs() {
       Phdr.add(Out::ProgramHeaders);
 
     if (Cmd.LMAExpr) {
-      Phdr.p_paddr = Cmd.LMAExpr(0);
+      Phdr.p_paddr = Cmd.LMAExpr();
       Phdr.HasLMA = true;
     }
   }
@@ -896,7 +878,7 @@ void LinkerScript<ELFT>::writeDataBytes(StringRef Name, uint8_t *Buf) {
   auto *Cmd = dyn_cast<OutputSectionCommand>(Opt.Commands[I].get());
   for (const std::unique_ptr<BaseCommand> &Base : Cmd->Commands)
     if (auto *Data = dyn_cast<BytesDataCommand>(Base.get()))
-      writeInt<ELFT>(Buf + Data->Offset, Data->Expression(0), Data->Size);
+      writeInt<ELFT>(Buf + Data->Offset, Data->Expression(), Data->Size);
 }
 
 template <class ELFT> bool LinkerScript<ELFT>::hasLMA(StringRef Name) {
@@ -924,8 +906,8 @@ template <class ELFT> bool LinkerScript<ELFT>::hasPhdrsCommands() {
 }
 
 template <class ELFT>
-const OutputSection *LinkerScript<ELFT>::getOutputSection(const Twine &Loc,
-                                                          StringRef Name) {
+OutputSection *LinkerScript<ELFT>::getOutputSection(const Twine &Loc,
+                                                    StringRef Name) {
   static OutputSection FakeSec("", 0, 0);
 
   for (OutputSection *Sec : *OutputSections)
@@ -956,6 +938,8 @@ template <class ELFT> uint64_t LinkerScript<ELFT>::getHeaderSize() {
 
 template <class ELFT>
 uint64_t LinkerScript<ELFT>::getSymbolValue(const Twine &Loc, StringRef S) {
+  if (S == ".")
+    return Dot;
   if (SymbolBody *B = Symtab<ELFT>::X->find(S))
     return B->getVA<ELFT>();
   error(Loc + ": symbol not found: " + S);
@@ -967,6 +951,8 @@ template <class ELFT> bool LinkerScript<ELFT>::isDefined(StringRef S) {
 }
 
 template <class ELFT> bool LinkerScript<ELFT>::isAbsolute(StringRef S) {
+  if (S == ".")
+    return false;
   SymbolBody *Sym = Symtab<ELFT>::X->find(S);
   auto *DR = dyn_cast_or_null<DefinedRegular>(Sym);
   return DR && !DR->Section;
@@ -976,7 +962,7 @@ template <class ELFT> bool LinkerScript<ELFT>::isAbsolute(StringRef S) {
 // specific section but isn't absolute at the same time, so we try
 // to find suitable section for it as well.
 template <class ELFT>
-const OutputSection *LinkerScript<ELFT>::getSymbolSection(StringRef S) {
+OutputSection *LinkerScript<ELFT>::getSymbolSection(StringRef S) {
   if (SymbolBody *Sym = Symtab<ELFT>::X->find(S))
     return Sym->getOutputSection<ELFT>();
   return CurOutSec;
@@ -1073,8 +1059,9 @@ private:
   std::vector<SymbolVersion> readVersionExtern();
   void readAnonymousDeclaration();
   void readVersionDeclaration(StringRef VerStr);
-  std::vector<SymbolVersion> readSymbols();
-  void readLocals();
+
+  std::pair<std::vector<SymbolVersion>, std::vector<SymbolVersion>>
+  readSymbols();
 
   ScriptConfiguration &Opt = *ScriptConfig;
   bool IsUnderSysroot;
@@ -1296,7 +1283,7 @@ void ScriptParser::readPhdrs() {
         expect("(");
         // Passing 0 for the value of dot is a bit of a hack. It means that
         // we accept expressions like ".|1".
-        PhdrCmd.Flags = readExpr()(0);
+        PhdrCmd.Flags = readExpr()();
         expect(")");
       } else
         setError("unexpected header attribute: " + Tok);
@@ -1461,10 +1448,10 @@ Expr ScriptParser::readAssert() {
   expect(",");
   StringRef Msg = unquote(next());
   expect(")");
-  return [=](uint64_t Dot) {
-    if (!E(Dot))
+  return [=] {
+    if (!E())
       error(Msg);
-    return Dot;
+    return ScriptBase->getDot();
   };
 }
 
@@ -1588,18 +1575,6 @@ SymbolAssignment *ScriptParser::readProvideOrAssignment(StringRef Tok) {
   return Cmd;
 }
 
-static uint64_t getSymbolValue(const Twine &Loc, StringRef S, uint64_t Dot) {
-  if (S == ".")
-    return Dot;
-  return ScriptBase->getSymbolValue(Loc, S);
-}
-
-static bool isAbsolute(StringRef S) {
-  if (S == ".")
-    return false;
-  return ScriptBase->isAbsolute(S);
-}
-
 SymbolAssignment *ScriptParser::readAssignment(StringRef Name) {
   StringRef Op = next();
   Expr E;
@@ -1612,9 +1587,7 @@ SymbolAssignment *ScriptParser::readAssignment(StringRef Name) {
   }
   if (Op == "+=") {
     std::string Loc = getCurrentLocation();
-    E = [=](uint64_t Dot) {
-      return getSymbolValue(Loc, Name, Dot) + E(Dot);
-    };
+    E = [=] { return ScriptBase->getSymbolValue(Loc, Name) + E(); };
   }
   return new SymbolAssignment(Name, E, getCurrentLocation());
 }
@@ -1634,46 +1607,46 @@ Expr ScriptParser::readExpr() {
 static Expr combine(StringRef Op, Expr L, Expr R) {
   auto IsAbs = [=] { return L.IsAbsolute() && R.IsAbsolute(); };
   auto GetOutSec = [=] {
-    const OutputSection *S = L.Section();
+    SectionBase *S = L.Section();
     return S ? S : R.Section();
   };
 
   if (Op == "*")
-    return [=](uint64_t Dot) { return L(Dot) * R(Dot); };
+    return [=] { return L() * R(); };
   if (Op == "/") {
-    return [=](uint64_t Dot) -> uint64_t {
-      uint64_t RHS = R(Dot);
+    return [=]() -> uint64_t {
+      uint64_t RHS = R();
       if (RHS == 0) {
         error("division by zero");
         return 0;
       }
-      return L(Dot) / RHS;
+      return L() / RHS;
     };
   }
   if (Op == "+")
-    return {[=](uint64_t Dot) { return L(Dot) + R(Dot); }, IsAbs, GetOutSec};
+    return {[=] { return L() + R(); }, IsAbs, GetOutSec};
   if (Op == "-")
-    return {[=](uint64_t Dot) { return L(Dot) - R(Dot); }, IsAbs, GetOutSec};
+    return {[=] { return L() - R(); }, IsAbs, GetOutSec};
   if (Op == "<<")
-    return [=](uint64_t Dot) { return L(Dot) << R(Dot); };
+    return [=] { return L() << R(); };
   if (Op == ">>")
-    return [=](uint64_t Dot) { return L(Dot) >> R(Dot); };
+    return [=] { return L() >> R(); };
   if (Op == "<")
-    return [=](uint64_t Dot) { return L(Dot) < R(Dot); };
+    return [=] { return L() < R(); };
   if (Op == ">")
-    return [=](uint64_t Dot) { return L(Dot) > R(Dot); };
+    return [=] { return L() > R(); };
   if (Op == ">=")
-    return [=](uint64_t Dot) { return L(Dot) >= R(Dot); };
+    return [=] { return L() >= R(); };
   if (Op == "<=")
-    return [=](uint64_t Dot) { return L(Dot) <= R(Dot); };
+    return [=] { return L() <= R(); };
   if (Op == "==")
-    return [=](uint64_t Dot) { return L(Dot) == R(Dot); };
+    return [=] { return L() == R(); };
   if (Op == "!=")
-    return [=](uint64_t Dot) { return L(Dot) != R(Dot); };
+    return [=] { return L() != R(); };
   if (Op == "&")
-    return [=](uint64_t Dot) { return L(Dot) & R(Dot); };
+    return [=] { return L() & R(); };
   if (Op == "|")
-    return [=](uint64_t Dot) { return L(Dot) | R(Dot); };
+    return [=] { return L() | R(); };
   llvm_unreachable("invalid operator");
 }
 
@@ -1778,28 +1751,25 @@ Expr ScriptParser::readPrimary() {
 
   if (Tok == "~") {
     Expr E = readPrimary();
-    return [=](uint64_t Dot) { return ~E(Dot); };
+    return [=] { return ~E(); };
   }
   if (Tok == "-") {
     Expr E = readPrimary();
-    return [=](uint64_t Dot) { return -E(Dot); };
+    return [=] { return -E(); };
   }
 
   // Built-in functions are parsed here.
   // https://sourceware.org/binutils/docs/ld/Builtin-Functions.html.
   if (Tok == "ADDR") {
     StringRef Name = readParenLiteral();
-    return {[=](uint64_t Dot) {
-              return ScriptBase->getOutputSection(Location, Name)->Addr;
-            },
+    return {[=] { return ScriptBase->getOutputSection(Location, Name)->Addr; },
             [=] { return false; },
             [=] { return ScriptBase->getOutputSection(Location, Name); }};
   }
   if (Tok == "LOADADDR") {
     StringRef Name = readParenLiteral();
-    return [=](uint64_t Dot) {
-      return ScriptBase->getOutputSection(Location, Name)->getLMA();
-    };
+    return
+        [=] { return ScriptBase->getOutputSection(Location, Name)->getLMA(); };
   }
   if (Tok == "ASSERT")
     return readAssert();
@@ -1809,18 +1779,18 @@ Expr ScriptParser::readPrimary() {
     if (consume(",")) {
       Expr E2 = readExpr();
       expect(")");
-      return [=](uint64_t Dot) { return alignTo(E(Dot), E2(Dot)); };
+      return [=] { return alignTo(E(), E2()); };
     }
     expect(")");
-    return [=](uint64_t Dot) { return alignTo(Dot, E(Dot)); };
+    return [=] { return alignTo(ScriptBase->getDot(), E()); };
   }
   if (Tok == "CONSTANT") {
     StringRef Name = readParenLiteral();
-    return [=](uint64_t Dot) { return getConstant(Name); };
+    return [=] { return getConstant(Name); };
   }
   if (Tok == "DEFINED") {
     StringRef Name = readParenLiteral();
-    return [=](uint64_t Dot) { return ScriptBase->isDefined(Name) ? 1 : 0; };
+    return [=] { return ScriptBase->isDefined(Name) ? 1 : 0; };
   }
   if (Tok == "SEGMENT_START") {
     expect("(");
@@ -1828,7 +1798,7 @@ Expr ScriptParser::readPrimary() {
     expect(",");
     Expr E = readExpr();
     expect(")");
-    return [=](uint64_t Dot) { return E(Dot); };
+    return [=] { return E(); };
   }
   if (Tok == "DATA_SEGMENT_ALIGN") {
     expect("(");
@@ -1836,13 +1806,13 @@ Expr ScriptParser::readPrimary() {
     expect(",");
     readExpr();
     expect(")");
-    return [=](uint64_t Dot) { return alignTo(Dot, E(Dot)); };
+    return [=] { return alignTo(ScriptBase->getDot(), E()); };
   }
   if (Tok == "DATA_SEGMENT_END") {
     expect("(");
     expect(".");
     expect(")");
-    return [](uint64_t Dot) { return Dot; };
+    return []() { return ScriptBase->getDot(); };
   }
   // GNU linkers implements more complicated logic to handle
   // DATA_SEGMENT_RELRO_END. We instead ignore the arguments and just align to
@@ -1853,31 +1823,30 @@ Expr ScriptParser::readPrimary() {
     expect(",");
     readExpr();
     expect(")");
-    return [](uint64_t Dot) { return alignTo(Dot, Target->PageSize); };
+    return []() { return alignTo(ScriptBase->getDot(), Target->PageSize); };
   }
   if (Tok == "SIZEOF") {
     StringRef Name = readParenLiteral();
-    return [=](uint64_t Dot) { return ScriptBase->getOutputSectionSize(Name); };
+    return [=] { return ScriptBase->getOutputSectionSize(Name); };
   }
   if (Tok == "ALIGNOF") {
     StringRef Name = readParenLiteral();
-    return [=](uint64_t Dot) {
-      return ScriptBase->getOutputSection(Location, Name)->Alignment;
-    };
+    return
+        [=] { return ScriptBase->getOutputSection(Location, Name)->Alignment; };
   }
   if (Tok == "SIZEOF_HEADERS")
-    return [=](uint64_t Dot) { return ScriptBase->getHeaderSize(); };
+    return [=] { return ScriptBase->getHeaderSize(); };
 
   // Tok is a literal number.
   uint64_t V;
   if (readInteger(Tok, V))
-    return [=](uint64_t Dot) { return V; };
+    return [=] { return V; };
 
   // Tok is a symbol name.
   if (Tok != "." && !isValidCIdentifier(Tok))
     setError("malformed number: " + Tok);
-  return {[=](uint64_t Dot) { return getSymbolValue(Location, Tok, Dot); },
-          [=] { return isAbsolute(Tok); },
+  return {[=] { return ScriptBase->getSymbolValue(Location, Tok); },
+          [=] { return ScriptBase->isAbsolute(Tok); },
           [=] { return ScriptBase->getSymbolSection(Tok); }};
 }
 
@@ -1885,7 +1854,7 @@ Expr ScriptParser::readTernary(Expr Cond) {
   Expr L = readExpr();
   expect(":");
   Expr R = readExpr();
-  return [=](uint64_t Dot) { return Cond(Dot) ? L(Dot) : R(Dot); };
+  return [=] { return Cond() ? L() : R(); };
 }
 
 Expr ScriptParser::readParenExpr() {
@@ -1936,50 +1905,49 @@ unsigned ScriptParser::readPhdrType() {
   return Ret;
 }
 
-// Reads a list of symbols, e.g. "{ global: foo; bar; local: *; };".
+// Reads an anonymous version declaration.
 void ScriptParser::readAnonymousDeclaration() {
-  // Read global symbols first. "global:" is default, so if there's
-  // no label, we assume global symbols.
-  if (peek() != "local") {
-    if (consume("global"))
-      expect(":");
-    for (SymbolVersion V : readSymbols())
-      Config->VersionScriptGlobals.push_back(V);
+  std::vector<SymbolVersion> Locals;
+  std::vector<SymbolVersion> Globals;
+  std::tie(Locals, Globals) = readSymbols();
+
+  for (SymbolVersion V : Locals) {
+    if (V.Name == "*")
+      Config->DefaultSymbolVersion = VER_NDX_LOCAL;
+    else
+      Config->VersionScriptLocals.push_back(V);
   }
-  readLocals();
-  expect("}");
+
+  for (SymbolVersion V : Globals)
+    Config->VersionScriptGlobals.push_back(V);
+
   expect(";");
 }
 
-void ScriptParser::readLocals() {
-  if (!consume("local"))
-    return;
-  expect(":");
-  std::vector<SymbolVersion> Locals = readSymbols();
-  for (SymbolVersion V : Locals) {
-    if (V.Name == "*") {
-      Config->DefaultSymbolVersion = VER_NDX_LOCAL;
-      continue;
-    }
-    Config->VersionScriptLocals.push_back(V);
-  }
-}
-
-// Reads a list of symbols, e.g. "VerStr { global: foo; bar; local: *; };".
+// Reads a non-anonymous version definition,
+// e.g. "VerStr { global: foo; bar; local: *; };".
 void ScriptParser::readVersionDeclaration(StringRef VerStr) {
-  // Identifiers start at 2 because 0 and 1 are reserved
-  // for VER_NDX_LOCAL and VER_NDX_GLOBAL constants.
-  uint16_t VersionId = Config->VersionDefinitions.size() + 2;
-  Config->VersionDefinitions.push_back({VerStr, VersionId});
+  // Read a symbol list.
+  std::vector<SymbolVersion> Locals;
+  std::vector<SymbolVersion> Globals;
+  std::tie(Locals, Globals) = readSymbols();
 
-  // Read global symbols.
-  if (peek() != "local") {
-    if (consume("global"))
-      expect(":");
-    Config->VersionDefinitions.back().Globals = readSymbols();
+  for (SymbolVersion V : Locals) {
+    if (V.Name == "*")
+      Config->DefaultSymbolVersion = VER_NDX_LOCAL;
+    else
+      Config->VersionScriptLocals.push_back(V);
   }
-  readLocals();
-  expect("}");
+
+  // Create a new version definition and add that to the global symbols.
+  VersionDefinition Ver;
+  Ver.Name = VerStr;
+  Ver.Globals = Globals;
+
+  // User-defined version number starts from 2 because 0 and 1 are
+  // reserved for VER_NDX_LOCAL and VER_NDX_GLOBAL, respectively.
+  Ver.Id = Config->VersionDefinitions.size() + 2;
+  Config->VersionDefinitions.push_back(Ver);
 
   // Each version may have a parent version. For example, "Ver2"
   // defined as "Ver2 { global: foo; local: *; } Ver1;" has "Ver1"
@@ -1991,23 +1959,35 @@ void ScriptParser::readVersionDeclaration(StringRef VerStr) {
   expect(";");
 }
 
-// Reads a list of symbols for a versions cript.
-std::vector<SymbolVersion> ScriptParser::readSymbols() {
-  std::vector<SymbolVersion> Ret;
-  for (;;) {
-    if (consume("extern")) {
-      for (SymbolVersion V : readVersionExtern())
-        Ret.push_back(V);
+// Reads a list of symbols, e.g. "{ global: foo; bar; local: *; };".
+std::pair<std::vector<SymbolVersion>, std::vector<SymbolVersion>>
+ScriptParser::readSymbols() {
+  std::vector<SymbolVersion> Locals;
+  std::vector<SymbolVersion> Globals;
+  std::vector<SymbolVersion> *V = &Globals;
+
+  while (!Error) {
+    if (consume("}"))
+      break;
+    if (consumeLabel("local")) {
+      V = &Locals;
+      continue;
+    }
+    if (consumeLabel("global")) {
+      V = &Globals;
       continue;
     }
 
-    if (peek() == "}" || (peek() == "local" && peek(1) == ":") || Error)
-      break;
-    StringRef Tok = next();
-    Ret.push_back({unquote(Tok), false, hasWildcard(Tok)});
+    if (consume("extern")) {
+      std::vector<SymbolVersion> Ext = readVersionExtern();
+      V->insert(V->end(), Ext.begin(), Ext.end());
+    } else {
+      StringRef Tok = next();
+      V->push_back({unquote(Tok), false, hasWildcard(Tok)});
+    }
     expect(";");
   }
-  return Ret;
+  return {Locals, Globals};
 }
 
 // Reads an "extern C++" directive, e.g.,
@@ -2028,7 +2008,6 @@ std::vector<SymbolVersion> ScriptParser::readVersionExtern() {
   }
 
   expect("}");
-  expect(";");
   return Ret;
 }
 

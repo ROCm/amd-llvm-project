@@ -36,24 +36,25 @@ class InputSection;
 class OutputSection;
 class OutputSectionFactory;
 class InputSectionBase;
+class SectionBase;
 
 // This represents an expression in the linker script.
 // ScriptParser::readExpr reads an expression and returns an Expr.
 // Later, we evaluate the expression by calling the function
 // with the value of special context variable ".".
 struct Expr {
-  std::function<uint64_t(uint64_t)> Val;
+  std::function<uint64_t()> Val;
   std::function<bool()> IsAbsolute;
 
   // If expression is section-relative the function below is used
   // to get the output section pointer.
-  std::function<const OutputSection *()> Section;
+  std::function<SectionBase *()> Section;
 
-  uint64_t operator()(uint64_t Dot) const { return Val(Dot); }
+  uint64_t operator()() const { return Val(); }
   operator bool() const { return (bool)Val; }
 
-  Expr(std::function<uint64_t(uint64_t)> Val, std::function<bool()> IsAbsolute,
-       std::function<const OutputSection *()> Section)
+  Expr(std::function<uint64_t()> Val, std::function<bool()> IsAbsolute,
+       std::function<SectionBase *()> Section)
       : Val(Val), IsAbsolute(IsAbsolute), Section(Section) {}
   template <typename T>
   Expr(T V) : Expr(V, [] { return true; }, [] { return nullptr; }) {}
@@ -207,15 +208,16 @@ struct MemoryRegion {
 class LinkerScriptBase {
 protected:
   ~LinkerScriptBase() = default;
+  OutputSection *Aether;
 
 public:
   virtual uint64_t getHeaderSize() = 0;
   virtual uint64_t getSymbolValue(const Twine &Loc, StringRef S) = 0;
+  uint64_t getDot() { return getSymbolValue("", "."); }
   virtual bool isDefined(StringRef S) = 0;
   virtual bool isAbsolute(StringRef S) = 0;
-  virtual const OutputSection *getSymbolSection(StringRef S) = 0;
-  virtual const OutputSection *getOutputSection(const Twine &Loc,
-                                                StringRef S) = 0;
+  virtual OutputSection *getSymbolSection(StringRef S) = 0;
+  virtual OutputSection *getOutputSection(const Twine &Loc, StringRef S) = 0;
   virtual uint64_t getOutputSectionSize(StringRef S) = 0;
 };
 
@@ -268,8 +270,8 @@ public:
   uint64_t getSymbolValue(const Twine &Loc, StringRef S) override;
   bool isDefined(StringRef S) override;
   bool isAbsolute(StringRef S) override;
-  const OutputSection *getSymbolSection(StringRef S) override;
-  const OutputSection *getOutputSection(const Twine &Loc, StringRef S) override;
+  OutputSection *getSymbolSection(StringRef S) override;
+  OutputSection *getOutputSection(const Twine &Loc, StringRef S) override;
   uint64_t getOutputSectionSize(StringRef S) override;
 
   std::vector<OutputSection *> *OutputSections;

@@ -53,6 +53,7 @@
 #include "polly/Support/ScopLocation.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/Analysis/Loads.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/RegionIterator.h"
 #include "llvm/Analysis/ScalarEvolution.h"
@@ -343,6 +344,8 @@ bool ScopDetection::addOverApproximatedRegion(Region *AR,
 bool ScopDetection::onlyValidRequiredInvariantLoads(
     InvariantLoadsSetTy &RequiredILS, DetectionContext &Context) const {
   Region &CurRegion = Context.CurRegion;
+  const DataLayout &DL =
+      CurRegion.getEntry()->getParent()->getParent()->getDataLayout();
 
   if (!PollyInvariantLoadHoisting && !RequiredILS.empty())
     return false;
@@ -351,10 +354,16 @@ bool ScopDetection::onlyValidRequiredInvariantLoads(
     if (!isHoistableLoad(Load, CurRegion, *LI, *SE, *DT))
       return false;
 
-    for (auto NonAffineRegion : Context.NonAffineSubRegionSet)
+    for (auto NonAffineRegion : Context.NonAffineSubRegionSet) {
+
+      if (isSafeToLoadUnconditionally(Load->getPointerOperand(),
+                                      Load->getAlignment(), DL))
+        continue;
+
       if (NonAffineRegion->contains(Load) &&
           Load->getParent() != NonAffineRegion->getEntry())
         return false;
+    }
   }
 
   Context.RequiredILS.insert(RequiredILS.begin(), RequiredILS.end());
@@ -659,23 +668,7 @@ bool ScopDetection::isInvariant(Value &Val, const Region &Reg,
     return true;
   }
 
-  if (I->mayHaveSideEffects())
-    return false;
-
-  if (isa<SelectInst>(I))
-    return false;
-
-  // When Val is a Phi node, it is likely not invariant. We do not check whether
-  // Phi nodes are actually invariant, we assume that Phi nodes are usually not
-  // invariant.
-  if (isa<PHINode>(*I))
-    return false;
-
-  for (const Use &Operand : I->operands())
-    if (!isInvariant(*Operand, Reg, Ctx))
-      return false;
-
-  return true;
+  return false;
 }
 
 /// Remove smax of smax(0, size) expressions from a SCEV expression and

@@ -66,7 +66,7 @@ template <class ELFT> static std::string getErrorLoc(uint8_t *Loc) {
       continue;
 
     uint8_t *ISLoc = cast<OutputSection>(IS->OutSec)->Loc + IS->OutSecOff;
-    if (ISLoc <= Loc && Loc < ISLoc + IS->template getSize<ELFT>())
+    if (ISLoc <= Loc && Loc < ISLoc + IS->getSize())
       return IS->template getLocation<ELFT>(Loc - ISLoc) + ": ";
   }
   return "";
@@ -1320,6 +1320,8 @@ RelExpr AArch64TargetInfo::getRelExpr(uint32_t Type,
   case R_AARCH64_ADR_GOT_PAGE:
   case R_AARCH64_TLSIE_ADR_GOTTPREL_PAGE21:
     return R_GOT_PAGE_PC;
+  case R_AARCH64_NONE:
+    return R_NONE;
   }
 }
 
