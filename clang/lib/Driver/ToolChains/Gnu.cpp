@@ -9,6 +9,7 @@
 
 #include "Gnu.h"
 #include "Linux.h"
+#include "Hcc.h"
 #include "Arch/ARM.h"
 #include "Arch/Mips.h"
 #include "Arch/Sparc.h"
@@ -405,7 +406,8 @@ static const char *getLDMOption(const llvm::Triple &T, const ArgList &Args) {
   }
 }
 
-void gnutools::Linker::ConstructLinkerJob(Compilation &C, const JobAction &JA,
+void tools::gnutools::Linker::ConstructLinkerJob(Compilation &C, 
+                                    const JobAction &JA,
                                     const InputInfo &Output,
                                     const InputInfoList &Inputs,
                                     const ArgList &Args,
@@ -672,7 +674,7 @@ void gnutools::Linker::ConstructLinkerJob(Compilation &C, const JobAction &JA,
   AddOpenMPLinkerScript(getToolChain(), C, Output, Inputs, Args, CmdArgs, JA);
 }
 
-void gnutools::Linker::ConstructJob(Compilation &C,
+void tools::gnutools::Linker::ConstructJob(Compilation &C,
                                     const JobAction &JA,
                                     const InputInfo &Output,
                                     const InputInfoList &Inputs,

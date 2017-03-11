@@ -7,6 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Hcc.h"
 #include "InputInfo.h"
 #include "clang/Basic/VirtualFileSystem.h"
 #include "clang/Driver/Compilation.h"

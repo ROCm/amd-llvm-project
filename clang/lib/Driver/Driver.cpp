@@ -23,6 +23,7 @@
 #include "ToolChains/Fuchsia.h"
 #include "ToolChains/Gnu.h"
 #include "ToolChains/Haiku.h"
+#include "ToolChains/Hcc.h"
 #include "ToolChains/Hexagon.h"
 #include "ToolChains/Lanai.h"
 #include "ToolChains/Linux.h"

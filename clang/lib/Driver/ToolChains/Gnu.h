@@ -78,7 +78,7 @@ protected:
                                   const InputInfoList &Inputs,
                                   const llvm::opt::ArgList &Args,
                                   const char *LinkingOutput,
-                                  ArgStringList &CmdArgs) const; 
+                                  llvm::opt::ArgStringList &CmdArgs) const; 
 };
 } // end namespace gnutools
 

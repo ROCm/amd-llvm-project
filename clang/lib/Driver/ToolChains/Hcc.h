@@ -17,6 +17,7 @@
 #include "clang/Driver/Tool.h"
 #include "llvm/Support/Compiler.h"
 #include "Gnu.h"
+#include "Linux.h"
 #include <set>
 #include <vector>
 
