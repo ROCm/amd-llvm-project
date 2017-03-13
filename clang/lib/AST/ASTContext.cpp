@@ -9544,7 +9544,7 @@ ASTContext::ObjCMethodsAreEqual(const ObjCMethodDecl *MethodDecl,
 uint64_t ASTContext::getTargetNullPointerValue(QualType QT) const {
   unsigned AS;
   if (QT->getUnqualifiedDesugaredType()->isNullPtrType())
-    AS = getTargetInfo().getDefaultTargetAddressSpace(LangOpts);
+    AS = 0;
   else
     AS = getTargetAddressSpace(QT->getPointeeType());
 
@@ -9591,33 +9591,6 @@ unsigned ASTContext::getTargetAddressSpace(QualType T) const {
 
 unsigned ASTContext::getTargetAddressSpace(Qualifiers Q) const {
   return getTargetAddressSpace(Q.getAddressSpace());
-}
-
-unsigned ASTContext::getTargetDefaultAddressSpace() const {
-  return getTargetInfo().getDefaultTargetAddressSpace(LangOpts);
-}
-
-unsigned ASTContext::getTargetConstantAddressSpace() const {
-  return getTargetInfo().getConstantAddressSpace();
-}
-
-unsigned ASTContext::getTargetGlobalAddressSpace() const {
-  return getTargetInfo().getGlobalAddressSpace();
-}
-
-unsigned ASTContext::getTargetAddressSpace(QualType T) const {
-  if (T.isNull())
-    return getTargetDefaultAddressSpace();
-  if (T->isFunctionType() &&
-      !T.getQualifiers().hasAddressSpace())
-    return 0;
-  return getTargetAddressSpace(T.getQualifiers());
-}
-
-unsigned ASTContext::getTargetAddressSpace(Qualifiers Q) const {
-  return Q.hasAddressSpace()
-             ? getTargetAddressSpace(Q.getAddressSpace())
-             : getTargetDefaultAddressSpace();
 }
 
 // Explicitly instantiate this in case a Redeclarable<T> is used from a TU that

@@ -2009,7 +2009,7 @@ static const char *const DataLayoutStringR600 =
   "-v192:256-v256:256-v512:512-v1024:1024-v2048:2048-n32:64";
 
 static const char *const DataLayoutStringSI =
-  "e-p:64:64-p1:64:64-p3:32:32-p4:64:64-p5:32:32"
+  "e-p:64:64-p1:64:64-p2:64:64-p3:32:32-p4:64:64-p5:32:32"
   "-i64:64-v16:16-v24:32-v32:32-v48:64-v96:128"
   "-v192:256-v256:256-v512:512-v1024:1024-v2048:2048-n32:64";
 
@@ -2388,20 +2388,10 @@ public:
 };
 
 const unsigned AMDGPUTargetInfo::AddrSpaceMap_[] = {
-    AS_Global,   // opencl_global
-    AS_Local,    // opencl_local
-    AS_Constant, // opencl_constant
-    AS_Private,  // opencl_private
-    AS_Generic,  // opencl_generic
-    AS_Global,   // cuda_device
-    AS_Constant, // cuda_constant
-    AS_Local     // cuda_shared
-};
-
-const unsigned AMDGPUTargetInfo::AddrSpaceMap_[] = {
   AS_Global,   // opencl_global
   AS_Local,    // opencl_local
   AS_Constant, // opencl_constant
+  AS_Private,  // opencl_private
   AS_Generic,  // opencl_generic
   AS_Global,   // cuda_device
   AS_Constant, // cuda_constant

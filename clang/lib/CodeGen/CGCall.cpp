@@ -1588,8 +1588,7 @@ CodeGenTypes::GetFunctionType(const CGFunctionInfo &FI) {
       assert(NumIRArgs == 1);
       // indirect arguments are always on the stack, which is addr space #0.
       llvm::Type *LTy = ConvertTypeForMem(it->type);
-      unsigned DefaultAddr = CGM.getTarget().getDefaultTargetAddressSpace(CGM.getLangOpts());
-      ArgTypes[FirstIRArg] = LTy->getPointerTo(DefaultAddr);
+      ArgTypes[FirstIRArg] = LTy->getPointerTo();
       break;
     }
 

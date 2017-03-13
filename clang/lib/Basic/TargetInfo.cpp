@@ -333,13 +333,6 @@ void TargetInfo::adjust(const LangOptions &Opts) {
 
   if (Opts.NewAlignOverride)
     NewAlign = Opts.NewAlignOverride * getCharWidth();
-
-  if (getTriple().getArch() == llvm::Triple::amdgcn) {
-    auto DefAddr = getDefaultTargetAddressSpace(Opts);
-    // AMDGPUTargetInfo only implements getPointerWidthV and assumes
-    // pointers are self-aligned.
-    PointerWidth = PointerAlign = getPointerWidthV(DefAddr);
-  }
 }
 
 bool TargetInfo::initFeatureMap(

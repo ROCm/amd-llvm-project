@@ -1993,8 +1993,7 @@ void ItaniumCXXABI::EmitGuardedInit(CodeGenFunction &CGF,
                              CGM.getDataLayout().getABITypeAlignment(guardTy));
     }
   }
-  llvm::PointerType *guardPtrTy = guardTy->getPointerTo(
-      getContext().getTargetDefaultAddressSpace());
+  llvm::PointerType *guardPtrTy = guardTy->getPointerTo();
 
   // Create the guard variable if we don't already have it (as we
   // might if we're double-emitting this function body).
