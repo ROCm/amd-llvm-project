@@ -2,6 +2,9 @@
 // REQUIRES: nvptx-registered-target
 
 // RUN: %clang_cc1 -fcuda-is-device -triple nvptx-nvidia-cuda -emit-llvm \
+// RUN:   -disable-llvm-passes -o - %s -DNVPTX | FileCheck -check-prefixes=DEVICE,NVPTX %s
+
+// RUN: %clang_cc1 -fcuda-is-device -triple amdgcn -emit-llvm \
 // RUN:   -disable-llvm-passes -o - %s | FileCheck -check-prefix DEVICE %s
 
 // RUN: %clang_cc1 -triple x86_64-unknown-linux-gnu -emit-llvm \
@@ -25,9 +28,11 @@ __host__ __device__ void baz();
 __host__ __device__ void bar() {
   // DEVICE: call void @_Z3bazv() [[CALL_ATTR:#[0-9]+]]
   baz();
-  // DEVICE: call i32 asm "trap;", "=l"() [[ASM_ATTR:#[0-9]+]]
+  #ifdef NVPTX
+  // NVPTX: call i32 asm "trap;", "=l"() [[ASM_ATTR:#[0-9]+]]
   int x;
   asm ("trap;" : "=l"(x));
+  #endif
   // DEVICE: call void asm sideeffect "trap;", ""() [[ASM_ATTR:#[0-9]+]]
   asm volatile ("trap;");
 }

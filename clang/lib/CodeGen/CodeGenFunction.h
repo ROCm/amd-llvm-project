@@ -417,7 +417,7 @@ public:
   llvm::Value *ExceptionSlot;
 
   /// The selector slot.  Under the MandatoryCleanup model, all landing pads
-  /// write the current selector value into this alloca.
+  /// write the current selector value into this instruction.
   llvm::Instruction *EHSelectorSlot;
 
   /// A stack of exception code slots. Entering an __except block pushes a slot
@@ -1887,12 +1887,12 @@ public:
                             AlignmentSource *Source = nullptr);
   LValue EmitLoadOfPointerLValue(Address Ptr, const PointerType *PtrTy);
 
-  /// Create an alloca instruction. If the default address space is no 0,
-  /// insert addrspace cast instruction which casts the alloca instruction
-  /// the the default address space.
+  /// Create an alloca instruction. If the target address space for auto var
+  /// for the specific language does no match the address space of alloca,
+  /// insert addrspacecast instruction which casts the alloca instruction to
+  /// the expected address space.
   llvm::Instruction *CreateAlloca(llvm::Type *Ty, const Twine &Name = "tmp",
                                   llvm::Instruction *InsertPos = nullptr);
-
   /// CreateTempAlloca - This creates a alloca and inserts it into the entry
   /// block. The caller is responsible for setting an appropriate alignment on
   /// the alloca. If the default address space is not 0, insert addrspacecast.

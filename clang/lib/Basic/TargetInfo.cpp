@@ -303,6 +303,9 @@ void TargetInfo::adjust(const LangOptions &Opts) {
     LongLongWidth = LongLongAlign = 128;
     HalfWidth = HalfAlign = 16;
     FloatWidth = FloatAlign = 32;
+    auto PrivAddr = (*AddrSpaceMap)[LangAS::opencl_private - LangAS::Offset];
+    PointerWidth = getPointerWidthV(PrivAddr);
+    PointerAlign = getPointerAlignV(PrivAddr);
 
     // Embedded 32-bit targets (OpenCL EP) might have double C type
     // defined as float. Let's not override this as it might lead

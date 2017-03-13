@@ -2,6 +2,7 @@
 // RUN: %clang_cc1 -verify -fopenmp -x c++ -triple powerpc64le-unknown-unknown -fopenmp-targets=nvptx64-nvidia-cuda -emit-llvm-bc %s -o %t-ppc-host.bc
 // RUN: %clang_cc1 -verify -fopenmp -x c++ -triple nvptx64-unknown-unknown -fopenmp-targets=nvptx64-nvidia-cuda -emit-llvm %s -fopenmp-is-device -fopenmp-host-ir-file-path %t-ppc-host.bc -o - | FileCheck %s --check-prefix CHECK --check-prefix CHECK-64
 // RUN: %clang_cc1 -verify -fopenmp -x c++ -triple i386-unknown-unknown -fopenmp-targets=nvptx-nvidia-cuda -emit-llvm-bc %s -o %t-x86-host.bc
+// RUN: %clang_cc1 -verify -fopenmp -x c++ -triple i386-unknown-unknown -fopenmp-targets=amdgcn -emit-llvm-bc %s -o %t-x86-host.bc
 // RUN: %clang_cc1 -verify -fopenmp -x c++ -triple nvptx-unknown-unknown -fopenmp-targets=nvptx-nvidia-cuda -emit-llvm %s -fopenmp-is-device -fopenmp-host-ir-file-path %t-x86-host.bc -o - | FileCheck %s --check-prefix CHECK --check-prefix CHECK-32
 // RUN: %clang_cc1 -verify -fopenmp -fexceptions -fcxx-exceptions -x c++ -triple nvptx-unknown-unknown -fopenmp-targets=nvptx-nvidia-cuda -emit-llvm %s -fopenmp-is-device -fopenmp-host-ir-file-path %t-x86-host.bc -o - | FileCheck %s --check-prefix CHECK --check-prefix CHECK-32
 // expected-no-diagnostics
@@ -62,14 +63,14 @@ int bar(int n){
   return a;
 }
 
-  // CHECK-NOT: define {{.*}}void {{@__omp_offloading_.+template.+l17}}_worker()
+  // CHECK-NOT: define {{.*}}void {{@__omp_offloading_.+template.+l18}}_worker()
 
 
 
 
 
 
-  // CHECK-LABEL: define {{.*}}void {{@__omp_offloading_.+template.+l26}}_worker()
+  // CHECK-LABEL: define {{.*}}void {{@__omp_offloading_.+template.+l27}}_worker()
   // CHECK-DAG: [[OMP_EXEC_STATUS:%.+]] = alloca i8,
   // CHECK-DAG: [[OMP_WORK_FN:%.+]] = alloca i8*,
   // CHECK: store i8* null, i8** [[OMP_WORK_FN]],
@@ -122,7 +123,7 @@ int bar(int n){
   // CHECK: [[EXIT]]
   // CHECK: ret void
 
-  // CHECK: define {{.*}}void [[T6:@__omp_offloading_.+template.+l26]](i[[SZ:32|64]]
+  // CHECK: define {{.*}}void [[T6:@__omp_offloading_.+template.+l27]](i[[SZ:32|64]]
   // Create local storage for each capture.
   // CHECK:  [[LOCAL_A:%.+]] = alloca i[[SZ]],
   // CHECK-DAG:  store i[[SZ]] [[ARG_A:%.+]], i[[SZ]]* [[LOCAL_A]]
@@ -194,7 +195,7 @@ int bar(int n){
 
 
 
-  // CHECK-LABEL: define {{.*}}void {{@__omp_offloading_.+template.+l43}}_worker()
+  // CHECK-LABEL: define {{.*}}void {{@__omp_offloading_.+template.+l44}}_worker()
   // CHECK-DAG: [[OMP_EXEC_STATUS:%.+]] = alloca i8,
   // CHECK-DAG: [[OMP_WORK_FN:%.+]] = alloca i8*,
   // CHECK: store i8* null, i8** [[OMP_WORK_FN]],
@@ -238,7 +239,7 @@ int bar(int n){
   // CHECK: [[EXIT]]
   // CHECK: ret void
 
-  // CHECK: define {{.*}}void [[T6:@__omp_offloading_.+template.+l43]](i[[SZ:32|64]]
+  // CHECK: define {{.*}}void [[T6:@__omp_offloading_.+template.+l44]](i[[SZ:32|64]]
   // Create local storage for each capture.
   // CHECK:  [[LOCAL_N:%.+]] = alloca i[[SZ]],
   // CHECK:  [[LOCAL_A:%.+]] = alloca i[[SZ]],

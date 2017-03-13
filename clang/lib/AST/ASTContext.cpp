@@ -706,6 +706,7 @@ static const LangAS::Map *getAddressSpaceMap(const TargetInfo &T,
       1, // opencl_global
       3, // opencl_local
       2, // opencl_constant
+      0, // opencl_private
       4, // opencl_generic
       5, // cuda_device
       6, // cuda_constant
@@ -9547,7 +9548,49 @@ uint64_t ASTContext::getTargetNullPointerValue(QualType QT) const {
   else
     AS = getTargetAddressSpace(QT->getPointeeType());
 
-  return getTargetInfo().getNullPointerValue(AS);
+  return getTargetInfo().getNullPointerValue(getTargetAddressSpace(AS));
+}
+
+unsigned ASTContext::getMappedAddressSpace(unsigned AS) const {
+  return (*AddrSpaceMap)[AS - LangAS::Offset];
+}
+
+unsigned ASTContext::getTargetAddressSpace(unsigned AS) const {
+  // For OpenCL 1.2 and below, address space 0 should be mapped the same
+  // way as  private address space.
+  if (LangOpts.OpenCL && AS == 0)
+    return getTargetAddressSpaceForAutoVar();
+  if (AS < LangAS::Offset || AS >= LangAS::Offset + LangAS::Count)
+    return AS;
+  else
+    return getMappedAddressSpace(AS);
+}
+
+unsigned ASTContext::getTargetAddressSpaceForAutoVar() const {
+  if (LangOpts.OpenCL)
+    return getMappedAddressSpace(LangAS::opencl_private);
+  return 0;
+}
+
+unsigned ASTContext::getTargetConstantAddressSpace() const {
+  return getTargetInfo().getConstantAddressSpace();
+}
+
+unsigned ASTContext::getTargetGlobalAddressSpace() const {
+  return getTargetInfo().getGlobalAddressSpace();
+}
+
+unsigned ASTContext::getTargetAddressSpace(QualType T) const {
+  if (T.isNull())
+    return 0;
+  if (T->isFunctionType() &&
+      !T.getQualifiers().hasAddressSpace())
+    return 0;
+  return getTargetAddressSpace(T.getQualifiers());
+}
+
+unsigned ASTContext::getTargetAddressSpace(Qualifiers Q) const {
+  return getTargetAddressSpace(Q.getAddressSpace());
 }
 
 unsigned ASTContext::getTargetDefaultAddressSpace() const {

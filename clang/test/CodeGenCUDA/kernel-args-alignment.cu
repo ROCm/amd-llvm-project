@@ -1,8 +1,11 @@
 // RUN: %clang_cc1 --std=c++11 -triple x86_64-unknown-linux-gnu -emit-llvm -o - %s | \
-// RUN:  FileCheck -check-prefix HOST -check-prefix CHECK %s
+// RUN:  FileCheck -check-prefixes=HOST,CHECK %s
 
 // RUN: %clang_cc1 --std=c++11 -fcuda-is-device -triple nvptx64-nvidia-cuda \
-// RUN:   -emit-llvm -o - %s | FileCheck -check-prefix DEVICE -check-prefix CHECK %s
+// RUN:   -emit-llvm -o - %s | FileCheck -check-prefixes=DEVICE,CHECK,NVPTX %s
+
+// RUN: %clang_cc1 --std=c++11 -fcuda-is-device -triple amdgcn-amd-amdhsa \
+// RUN:   -emit-llvm -o - %s -DAMDGCN| FileCheck -check-prefixes=DEVICE,CHECK,AMDGCN %s
 
 #include "Inputs/cuda.h"
 
@@ -18,7 +21,8 @@ struct S {
 
 // Clang should generate a packed LLVM struct for S (denoted by the <>s),
 // otherwise this test isn't interesting.
-// CHECK: %struct.S = type <{ i32*, i8, %struct.U, [5 x i8] }>
+// HOST: %struct.S = type <{ i32*, i8, %struct.U, [5 x i8] }>
+// DEVICE: %struct.S = type <{ i32*, i8, %struct.U, [5 x i8] }>
 
 static_assert(alignof(S) == 8, "Unexpected alignment.");
 

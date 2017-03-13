@@ -1,5 +1,6 @@
 // RUN: %clang_cc1 -triple %itanium_abi_triple -emit-llvm %s -o - | FileCheck -check-prefix=CHECK-HOST %s
-// RUN: %clang_cc1 -triple %itanium_abi_triple -emit-llvm %s -o - -fcuda-is-device | FileCheck -check-prefix=CHECK-DEVICE %s
+// RUN: %clang_cc1 -triple %itanium_abi_triple -emit-llvm %s -o - -fcuda-is-device | FileCheck -check-prefixes=CHECK-DEVICE,ITANIUM %s
+// RUN: %clang_cc1 -triple amdgcn -emit-llvm %s -o - -fcuda-is-device | FileCheck -check-prefixes=CHECK-DEVICE,AMDGCN %s
 
 #include "Inputs/cuda.h"
 
@@ -10,15 +11,18 @@
 __asm__("file scope asm is host only");
 
 // CHECK-HOST: constantdata = internal global
-// CHECK-DEVICE: constantdata = externally_initialized global
+// ITANIUM: constantdata = externally_initialized global
+// AMDGCN: constantdata = addrspace(4) externally_initialized global
 __constant__ char constantdata[256];
 
 // CHECK-HOST: devicedata = internal global
-// CHECK-DEVICE: devicedata = externally_initialized global
+// ITANIUM: devicedata = externally_initialized global
+// AMDGCN: devicedata = addrspace(1) externally_initialized global
 __device__ char devicedata[256];
 
 // CHECK-HOST: shareddata = internal global
-// CHECK-DEVICE: shareddata = global
+// ITANIUM: shareddata = global
+// AMDGCN: shareddata = addrspace(3) global
 __shared__ char shareddata[256];
 
 // CHECK-HOST: hostdata = global

@@ -8377,6 +8377,7 @@ static OpenCLParamType getOpenCLKernelParameterType(Sema &S, QualType PT) {
     if (PointeeType->isPointerType())
       return PtrPtrKernelParam;
     if (PointeeType.getAddressSpace() == LangAS::opencl_generic ||
+        PointeeType.getAddressSpace() == LangAS::opencl_private ||
         PointeeType.getAddressSpace() == 0)
       return InvalidAddrSpacePtrKernelParam;
     return PtrKernelParam;

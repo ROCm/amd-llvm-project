@@ -1747,6 +1747,7 @@ static const unsigned NVPTXAddrSpaceMap[] = {
     1, // opencl_global
     3, // opencl_local
     4, // opencl_constant
+    0, // opencl_private
     // FIXME: generic has to be added to the target
     0, // opencl_generic
     1, // cuda_device
@@ -2000,16 +2001,6 @@ ArrayRef<const char *> NVPTXTargetInfo::getGCCRegNames() const {
   return llvm::makeArrayRef(GCCRegNames);
 }
 
-static const unsigned AMDGPUAddrSpaceMap[] = {
-  1,    // opencl_global
-  3,    // opencl_local
-  2,    // opencl_constant
-  4,    // opencl_generic
-  1,    // cuda_device
-  2,    // cuda_constant
-  3     // cuda_shared
-};
-
 // If you edit the description strings, make sure you update
 // getPointerWidthV().
 
@@ -2018,21 +2009,21 @@ static const char *const DataLayoutStringR600 =
   "-v192:256-v256:256-v512:512-v1024:1024-v2048:2048-n32:64";
 
 static const char *const DataLayoutStringSI =
-  "e-p:32:32-p1:64:64-p2:64:64-p3:32:32-p4:64:64-p5:32:32"
+  "e-p:64:64-p1:64:64-p3:32:32-p4:64:64-p5:32:32"
   "-i64:64-v16:16-v24:32-v32:32-v48:64-v96:128"
   "-v192:256-v256:256-v512:512-v1024:1024-v2048:2048-n32:64";
 
 class AMDGPUTargetInfo final : public TargetInfo {
-  static const unsigned AddrSpaceMap_[10];
+  static const unsigned AddrSpaceMap_[LangAS::Count];
   static const Builtin::Info BuiltinInfo[];
   static const char * const GCCRegNames[];
 
   enum AddrSpaceKind {
-    AS_Private  = 0,
-    AS_Global   = 1,
-    AS_Constant = 2,
-    AS_Local    = 3,
-    AS_Generic  = 4
+    AS_Generic = 0,
+    AS_Global = 1,
+    AS_Local = 3,
+    AS_Constant = 4,
+    AS_Private = 5
   };
 
   /// \brief The GPU profiles supported by the AMDGPU target.
@@ -2069,6 +2060,14 @@ public:
       hasFMAF(false),
       hasLDEXPF(false),
       hasFullSpeedFP32Denorms(false){
+    const bool Is32Bit = GPU <= GK_CAYMAN;
+    LongWidth = LongAlign = PointerWidth = PointerAlign = Is32Bit ? 32 : 64;
+    SizeType    = Is32Bit ? UnsignedInt      : UnsignedLong;
+    PtrDiffType = Is32Bit ? SignedInt        : SignedLong;
+    IntPtrType  = Is32Bit ? SignedInt        : SignedLong;
+    IntMaxType  = Is32Bit ? SignedLongLong   : SignedLong;
+    Int64Type   = Is32Bit ? SignedLongLong   : SignedLong;
+
     if (getTriple().getArch() == llvm::Triple::amdgcn) {
       hasFP64 = true;
       hasFMAF = true;
@@ -2152,11 +2151,14 @@ public:
     switch(AddrSpace) {
       default:
         return 64;
-      case 0:
-      case 3:
-      case 5:
+      case AS_Private:
+      case AS_Local:
         return 32;
     }
+  }
+
+  uint64_t getPointerAlignV(unsigned AddrSpace) const override {
+    return getPointerWidthV(AddrSpace);
   }
 
   uint64_t getMaxPointerWidth() const override {
@@ -2329,14 +2331,6 @@ public:
     }
   }
 
-  unsigned getDefaultTargetAddressSpace(const LangOptions &Opts) const override {
-    // OpenCL sets address space explicitly in AST. The default (type
-    // qualifier containing on address space) represents private address space.
-    if (Opts.OpenCL)
-      return AS_Private;
-    return AS_Generic;
-  }
-
   unsigned getConstantAddressSpace() const override {
     return AS_Constant;
   }
@@ -2388,8 +2382,20 @@ public:
   // In amdgcn target the null pointer in local and private address spaces has
   // value ~0 and in other address spaces has value 0
   uint64_t getNullPointerValue(unsigned AS) const override {
-    return AS != AS_Local && AS != 0 ? 0 : ~0;
+    return AS != AS_Local && AS != AS_Private ? 0 : ~0;
   }
+
+};
+
+const unsigned AMDGPUTargetInfo::AddrSpaceMap_[] = {
+    AS_Global,   // opencl_global
+    AS_Local,    // opencl_local
+    AS_Constant, // opencl_constant
+    AS_Private,  // opencl_private
+    AS_Generic,  // opencl_generic
+    AS_Global,   // cuda_device
+    AS_Constant, // cuda_constant
+    AS_Local     // cuda_shared
 };
 
 const unsigned AMDGPUTargetInfo::AddrSpaceMap_[] = {
@@ -7438,6 +7444,7 @@ static const unsigned TCEOpenCLAddrSpaceMap[] = {
     3, // opencl_global
     4, // opencl_local
     5, // opencl_constant
+    0, // opencl_private
     // FIXME: generic has to be added to the target
     0, // opencl_generic
     0, // cuda_device
@@ -8407,6 +8414,7 @@ static const unsigned SPIRAddrSpaceMap[] = {
     1, // opencl_global
     3, // opencl_local
     2, // opencl_constant
+    0, // opencl_private
     4, // opencl_generic
     0, // cuda_device
     0, // cuda_constant

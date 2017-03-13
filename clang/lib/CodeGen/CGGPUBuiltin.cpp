@@ -70,8 +70,8 @@ RValue
 CodeGenFunction::EmitNVPTXDevicePrintfCallExpr(const CallExpr *E,
                                                ReturnValueSlot ReturnValue) {
   assert(getTarget().getTriple().isNVPTX() ||
-         (getTarget().getTriple().getArch() == llvm::Triple::amdgcn &&
-          getLangOpts().CUDA));
+        (getTarget().getTriple().getArch() == llvm::Triple::amdgcn &&
+         getLangOpts().CUDA));
   assert(E->getBuiltinCallee() == Builtin::BIprintf);
   assert(E->getNumArgs() >= 1); // printf always has at least one arg.
 

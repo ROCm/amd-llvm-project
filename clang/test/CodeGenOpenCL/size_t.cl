@@ -4,8 +4,10 @@
 
 //SZ32: define{{.*}} i32 @test_ptrtoint_private(i8* %x)
 //SZ32: ptrtoint i8* %{{.*}} to i32
-//SZ64: define{{.*}} i64 @test_ptrtoint_private(i8* %x)
-//SZ64: ptrtoint i8* %{{.*}} to i64
+//SZ64ONLY: define{{.*}} i64 @test_ptrtoint_private(i8* %x)
+//AMDONLY: define{{.*}} i64 @test_ptrtoint_private(i8 addrspace(5)* %x)
+//SZ64ONLY: ptrtoint i8* %{{.*}} to i64
+//AMDONLY: ptrtoint i8 addrspace(5)* %{{.*}} to i64
 size_t test_ptrtoint_private(private char* x) {
   return (size_t)x;
 }
@@ -20,8 +22,8 @@ intptr_t test_ptrtoint_global(global char* x) {
 
 //SZ32: define{{.*}} i32 @test_ptrtoint_constant(i8 addrspace(2)* %x)
 //SZ32: ptrtoint i8 addrspace(2)* %{{.*}} to i32
-//SZ64: define{{.*}} i64 @test_ptrtoint_constant(i8 addrspace(2)* %x)
-//SZ64: ptrtoint i8 addrspace(2)* %{{.*}} to i64
+//SZ64: define{{.*}} i64 @test_ptrtoint_constant(i8 addrspace({{2|4}})* %x)
+//SZ64: ptrtoint i8 addrspace({{2|4}})* %{{.*}} to i64
 uintptr_t test_ptrtoint_constant(constant char* x) {
   return (uintptr_t)x;
 }
@@ -36,17 +38,20 @@ size_t test_ptrtoint_local(local char* x) {
 
 //SZ32: define{{.*}} i32 @test_ptrtoint_generic(i8 addrspace(4)* %x)
 //SZ32: ptrtoint i8 addrspace(4)* %{{.*}} to i32
-//SZ64: define{{.*}} i64 @test_ptrtoint_generic(i8 addrspace(4)* %x)
-//SZ64: ptrtoint i8 addrspace(4)* %{{.*}} to i64
+//SZ64ONLY: define{{.*}} i64 @test_ptrtoint_generic(i8 addrspace(4)* %x)
+//AMDONLY: define{{.*}} i64 @test_ptrtoint_generic(i8* %x)
+//SZ64ONLY: ptrtoint i8 addrspace(4)* %{{.*}} to i64
+//AMDONLY: ptrtoint i8* %{{.*}} to i64
 size_t test_ptrtoint_generic(generic char* x) {
   return (size_t)x;
 }
 
 //SZ32: define{{.*}} i8* @test_inttoptr_private(i32 %x)
 //SZ32: inttoptr i32 %{{.*}} to i8*
-//SZ64: define{{.*}} i8* @test_inttoptr_private(i64 %x)
+//SZ64ONLY: define{{.*}} i8* @test_inttoptr_private(i64 %x)
+//AMDONLY: define{{.*}} i8 addrspace(5)* @test_inttoptr_private(i64 %x)
 //AMDONLY: trunc i64 %{{.*}} to i32
-//AMDONLY: inttoptr i32 %{{.*}} to i8*
+//AMDONLY: inttoptr i32 %{{.*}} to i8 addrspace(5)*
 //SZ64ONLY: inttoptr i64 %{{.*}} to i8*
 private char* test_inttoptr_private(size_t x) {
   return (private char*)x;
@@ -91,9 +96,9 @@ ptrdiff_t test_sub_local(local char* x, local char *y) {
 //SZ32: define{{.*}} i32 @test_sub_private(i8* %x, i8* %y)
 //SZ32: ptrtoint i8* %{{.*}} to i32
 //SZ32: ptrtoint i8* %{{.*}} to i32
-//SZ64: define{{.*}} i64 @test_sub_private(i8* %x, i8* %y)
-//SZ64: ptrtoint i8* %{{.*}} to i64
-//SZ64: ptrtoint i8* %{{.*}} to i64
+//SZ64: define{{.*}} i64 @test_sub_private(i8{{.*}}* %x, i8{{.*}}* %y)
+//SZ64: ptrtoint i8{{.*}}* %{{.*}} to i64
+//SZ64: ptrtoint i8{{.*}}* %{{.*}} to i64
 ptrdiff_t test_sub_private(private char* x, private char *y) {
   return x - y;
 }
@@ -101,9 +106,12 @@ ptrdiff_t test_sub_private(private char* x, private char *y) {
 //SZ32: define{{.*}} i32 @test_sub_mix(i8* %x, i8 addrspace(4)* %y)
 //SZ32: ptrtoint i8* %{{.*}} to i32
 //SZ32: ptrtoint i8 addrspace(4)* %{{.*}} to i32
-//SZ64: define{{.*}} i64 @test_sub_mix(i8* %x, i8 addrspace(4)* %y)
-//SZ64: ptrtoint i8* %{{.*}} to i64
-//SZ64: ptrtoint i8 addrspace(4)* %{{.*}} to i64
+//SZ64ONLY: define{{.*}} i64 @test_sub_mix(i8* %x, i8 addrspace(4)* %y)
+//AMDONLY: define{{.*}} i64 @test_sub_mix(i8 addrspace(5)* %x, i8* %y)
+//SZ64ONLY: ptrtoint i8* %{{.*}} to i64
+//AMDONLY: ptrtoint i8 addrspace(5)* %{{.*}} to i64
+//SZ64ONLY: ptrtoint i8 addrspace(4)* %{{.*}} to i64
+//AMDONLY: ptrtoint i8* %{{.*}} to i64
 ptrdiff_t test_sub_mix(private char* x, generic char *y) {
   return x - y;
 }

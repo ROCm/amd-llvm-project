@@ -380,7 +380,7 @@ llvm::PointerType *CodeGenTypes::getPointerTypeTo(QualType T) {
 }
 
 llvm::PointerType *CodeGenTypes::getDefaultPointerTo(llvm::Type *T) {
-  return T->getPointerTo(Context.getTargetDefaultAddressSpace());
+  return T->getPointerTo();
 }
 
 /// ConvertType - Convert the specified type to its LLVM form.

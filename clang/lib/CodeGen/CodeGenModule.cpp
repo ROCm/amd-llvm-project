@@ -3920,6 +3920,9 @@ void CodeGenModule::EmitDeclContext(const DeclContext *DC) {
 
 /// EmitTopLevelDecl - Emit code for a single top level declaration.
 void CodeGenModule::EmitTopLevelDecl(Decl *D) {
+  if (getenv("DBG_CG_DECL")) {
+    llvm::errs() << "decl: "; D->dump();
+  }
   // Ignore dependent declarations.
   if (D->getDeclContext() && D->getDeclContext()->isDependentContext())
     return;

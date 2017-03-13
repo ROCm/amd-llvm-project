@@ -910,7 +910,7 @@ llvm::Value *CodeGenFunction::EmitLifetimeStart(uint64_t Size,
     return nullptr;
 
   llvm::Value *SizeV = llvm::ConstantInt::get(Int64Ty, Size);
-  Addr = Builder.CreateBitCast(Addr, Int8PtrTy);
+  Addr = Builder.CreatePointerCast(Addr, Int8PtrTy);
   llvm::CallInst *C =
       Builder.CreateCall(CGM.getLLVMLifetimeStartFn(), {SizeV, Addr});
   C->setDoesNotThrow();
@@ -918,7 +918,7 @@ llvm::Value *CodeGenFunction::EmitLifetimeStart(uint64_t Size,
 }
 
 void CodeGenFunction::EmitLifetimeEnd(llvm::Value *Size, llvm::Value *Addr) {
-  Addr = Builder.CreateBitCast(Addr, Int8PtrTy);
+  Addr = Builder.CreatePointerCast(Addr, Int8PtrTy);
   llvm::CallInst *C =
       Builder.CreateCall(CGM.getLLVMLifetimeEndFn(), {Size, Addr});
   C->setDoesNotThrow();
@@ -1086,10 +1086,10 @@ CodeGenFunction::EmitAutoVarAlloca(const VarDecl &D) {
     vla->setAlignment(alignment.getQuantity());
 
     llvm::Value *V = vla;
-    auto DefaultAddr = getTarget().getDefaultTargetAddressSpace(getLangOpts());
-    if (DefaultAddr != 0) {
+    auto Addr = getContext().getTargetAddressSpaceForAutoVar();
+    if (Addr != V->getType()->getPointerAddressSpace()) {
       auto *DestTy =
-        llvm::PointerType::get(vla->getType()->getElementType(), DefaultAddr);
+          llvm::PointerType::get(vla->getType()->getElementType(), Addr);
       V = Builder.CreateAddrSpaceCast(vla, DestTy);
     }
 
@@ -1244,7 +1244,7 @@ void CodeGenFunction::EmitAutoVarInit(const AutoVarEmission &emission) {
 
   llvm::Type *BP = Int8PtrTy;
   if (Loc.getType() != BP)
-    Loc = Builder.CreateBitCast(Loc, BP);
+    Loc = Builder.CreatePointerBitCastOrAddrSpaceCast(Loc, BP);
 
   // If the initializer is all or mostly zeros, codegen with memset then do
   // a few stores afterward.
@@ -1254,7 +1254,8 @@ void CodeGenFunction::EmitAutoVarInit(const AutoVarEmission &emission) {
                          isVolatile);
     // Zero and undef don't require a stores.
     if (!constant->isNullValue() && !isa<llvm::UndefValue>(constant)) {
-      Loc = Builder.CreateBitCast(Loc, constant->getType()->getPointerTo());
+      Loc = Builder.CreatePointerBitCastOrAddrSpaceCast(Loc,
+          constant->getType()->getPointerTo());
       emitStoresForInitAfterMemset(constant, Loc.getPointer(),
                                    isVolatile, Builder);
     }

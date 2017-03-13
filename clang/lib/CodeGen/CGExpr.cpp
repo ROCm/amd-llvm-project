@@ -65,7 +65,15 @@ Address CodeGenFunction::CreateTempAlloca(llvm::Type *Ty, CharUnits Align,
   auto CastedAlloca = CreateTempAlloca(Ty, Name);
   auto *Alloca = getAddrSpaceCastedAlloca(CastedAlloca);
   Alloca->setAlignment(Align.getQuantity());
-  return Address(CastedAlloca, Align);
+  llvm::Value *Cast = Alloca;
+  if (getLangOpts().OpenCL) {
+    auto PrivAddr = getContext().getTargetAddressSpace(
+        LangAS::opencl_private);
+    if (PrivAddr != 0)
+      Cast = llvm::CastInst::CreatePointerCast(Alloca, Ty->getPointerTo(
+          PrivAddr), "", AllocaInsertPt);
+  }
+  return Address(Cast, Align);
 }
 
 /// CreateTempAlloca - This creates a alloca and inserts it into the entry
@@ -79,10 +87,10 @@ llvm::Instruction *CodeGenFunction::CreateAlloca(llvm::Type *Ty,
                                                  const Twine &Name,
                                                  llvm::Instruction *InsertPos) {
   llvm::Instruction *V = new llvm::AllocaInst(Ty, nullptr, Name, InsertPos);
-  auto DefaultAddr = getTarget().getDefaultTargetAddressSpace(getLangOpts());
-  if (DefaultAddr != 0) {
+  auto Addr = getContext().getTargetAddressSpaceForAutoVar();
+  if (Addr != V->getType()->getPointerAddressSpace()) {
     auto *DestTy = llvm::PointerType::get(V->getType()->getPointerElementType(),
-                                          DefaultAddr);
+                                          Addr);
     V = new llvm::AddrSpaceCastInst(V, DestTy, "", InsertPos);
   }
   return V;
@@ -436,8 +444,8 @@ EmitMaterializeTemporaryExpr(const MaterializeTemporaryExpr *M) {
   // Create and initialize the reference temporary.
   Address Object = createReferenceTemporary(*this, M, E);
   if (auto *Var = dyn_cast<llvm::GlobalVariable>(Object.getPointer())) {
-    Object = Address(llvm::ConstantExpr::getBitCast(
-        Var, ConvertTypeForMem(E->getType())->getPointerTo()),
+    Object = Address(llvm::ConstantExpr::getPointerCast(
+        Var, getTypes().getPointerTypeTo(E->getType())),
                      Object.getAlignment());
     // If the temporary is a global and has a constant initializer or is a
     // constant temporary that we promoted to a global, we may have already

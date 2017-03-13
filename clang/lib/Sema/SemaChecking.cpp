@@ -718,6 +718,9 @@ static bool SemaOpenCLBuiltinToAddr(Sema &S, unsigned BuiltinID,
   case Builtin::BIto_local:
     Qual.setAddressSpace(LangAS::opencl_local);
     break;
+  case Builtin::BIto_private:
+    Qual.setAddressSpace(LangAS::opencl_private);
+    break;
   default:
     Qual.removeAddressSpace();
   }
