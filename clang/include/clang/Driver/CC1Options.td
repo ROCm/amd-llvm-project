@@ -475,6 +475,8 @@ def ast_list : Flag<["-"], "ast-list">,
   HelpText<"Build ASTs and print the list of declaration node qualified names">;
 def ast_dump : Flag<["-"], "ast-dump">,
   HelpText<"Build ASTs and then debug dump them">;
+def ast_dump_all : Flag<["-"], "ast-dump-all">,
+  HelpText<"Build ASTs and then debug dump them, forcing deserialization">;
 def ast_dump_lookups : Flag<["-"], "ast-dump-lookups">,
   HelpText<"Build ASTs and then debug dump their name lookup tables">;
 def ast_view : Flag<["-"], "ast-view">,
@@ -588,6 +590,8 @@ def pic_is_pie : Flag<["-"], "pic-is-pie">,
   HelpText<"File is for a position independent executable">;
 def fno_validate_pch : Flag<["-"], "fno-validate-pch">,
   HelpText<"Disable validation of precompiled headers">;
+def fallow_pch_with_errors : Flag<["-"], "fallow-pch-with-compiler-errors">,
+  HelpText<"Accept a PCH file that was created with compiler errors">;
 def dump_deserialized_pch_decls : Flag<["-"], "dump-deserialized-decls">,
   HelpText<"Dump declarations that are deserialized from PCH, for testing">;
 def error_on_deserialized_pch_decl : Separate<["-"], "error-on-deserialized-decl">,

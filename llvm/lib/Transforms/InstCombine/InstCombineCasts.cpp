@@ -463,6 +463,56 @@ Instruction *InstCombiner::shrinkBitwiseLogic(TruncInst &Trunc) {
   return BinaryOperator::Create(LogicOp->getOpcode(), NarrowOp0, NarrowC);
 }
 
+/// Try to narrow the width of a splat shuffle. This could be generalized to any
+/// shuffle with a constant operand, but we limit the transform to avoid
+/// creating a shuffle type that targets may not be able to lower effectively.
+static Instruction *shrinkSplatShuffle(TruncInst &Trunc,
+                                       InstCombiner::BuilderTy &Builder) {
+  auto *Shuf = dyn_cast<ShuffleVectorInst>(Trunc.getOperand(0));
+  if (Shuf && Shuf->hasOneUse() && isa<UndefValue>(Shuf->getOperand(1)) &&
+      Shuf->getMask()->getSplatValue() &&
+      Shuf->getType() == Shuf->getOperand(0)->getType()) {
+    // trunc (shuf X, Undef, SplatMask) --> shuf (trunc X), Undef, SplatMask
+    Constant *NarrowUndef = UndefValue::get(Trunc.getType());
+    Value *NarrowOp = Builder.CreateTrunc(Shuf->getOperand(0), Trunc.getType());
+    return new ShuffleVectorInst(NarrowOp, NarrowUndef, Shuf->getMask());
+  }
+
+  return nullptr;
+}
+
+/// Try to narrow the width of an insert element. This could be generalized for
+/// any vector constant, but we limit the transform to insertion into undef to
+/// avoid potential backend problems from unsupported insertion widths. This
+/// could also be extended to handle the case of inserting a scalar constant
+/// into a vector variable.
+static Instruction *shrinkInsertElt(CastInst &Trunc,
+                                    InstCombiner::BuilderTy &Builder) {
+  Instruction::CastOps Opcode = Trunc.getOpcode();
+  assert((Opcode == Instruction::Trunc || Opcode == Instruction::FPTrunc) &&
+         "Unexpected instruction for shrinking");
+
+  auto *InsElt = dyn_cast<InsertElementInst>(Trunc.getOperand(0));
+  if (!InsElt || !InsElt->hasOneUse())
+    return nullptr;
+
+  Type *DestTy = Trunc.getType();
+  Type *DestScalarTy = DestTy->getScalarType();
+  Value *VecOp = InsElt->getOperand(0);
+  Value *ScalarOp = InsElt->getOperand(1);
+  Value *Index = InsElt->getOperand(2);
+
+  if (isa<UndefValue>(VecOp)) {
+    // trunc   (inselt undef, X, Index) --> inselt undef,   (trunc X), Index
+    // fptrunc (inselt undef, X, Index) --> inselt undef, (fptrunc X), Index
+    UndefValue *NarrowUndef = UndefValue::get(DestTy);
+    Value *NarrowOp = Builder.CreateCast(Opcode, ScalarOp, DestScalarTy);
+    return InsertElementInst::Create(NarrowUndef, NarrowOp, Index);
+  }
+
+  return nullptr;
+}
+
 Instruction *InstCombiner::visitTrunc(TruncInst &CI) {
   if (Instruction *Result = commonCastTransforms(CI))
     return Result;
@@ -552,6 +602,12 @@ Instruction *InstCombiner::visitTrunc(TruncInst &CI) {
   }
 
   if (Instruction *I = shrinkBitwiseLogic(CI))
+    return I;
+
+  if (Instruction *I = shrinkSplatShuffle(CI, *Builder))
+    return I;
+
+  if (Instruction *I = shrinkInsertElt(CI, *Builder))
     return I;
 
   if (Src->hasOneUse() && isa<IntegerType>(SrcTy) &&
@@ -838,11 +894,6 @@ Instruction *InstCombiner::visitZExt(ZExtInst &CI) {
   if (Instruction *Result = commonCastTransforms(CI))
     return Result;
 
-  // See if we can simplify any instructions used by the input whose sole
-  // purpose is to compute bits we don't care about.
-  if (SimplifyDemandedInstructionBits(CI))
-    return &CI;
-
   Value *Src = CI.getOperand(0);
   Type *SrcTy = Src->getType(), *DestTy = CI.getType();
 
@@ -1123,11 +1174,6 @@ Instruction *InstCombiner::visitSExt(SExtInst &CI) {
 
   if (Instruction *I = commonCastTransforms(CI))
     return I;
-
-  // See if we can simplify any instructions used by the input whose sole
-  // purpose is to compute bits we don't care about.
-  if (SimplifyDemandedInstructionBits(CI))
-    return &CI;
 
   Value *Src = CI.getOperand(0);
   Type *SrcTy = Src->getType(), *DestTy = CI.getType();
@@ -1415,6 +1461,9 @@ Instruction *InstCombiner::visitFPTrunc(FPTruncInst &CI) {
     }
     }
   }
+
+  if (Instruction *I = shrinkInsertElt(CI, *Builder))
+    return I;
 
   return nullptr;
 }

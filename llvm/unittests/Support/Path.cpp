@@ -444,31 +444,6 @@ protected:
   }
 
   void TearDown() override { ASSERT_NO_ERROR(fs::remove(TestDirectory.str())); }
-
-  SmallVector<Triple::ArchType, 4> UnsupportedArchs;
-  SmallVector<Triple::OSType, 4> UnsupportedOSs;
-  SmallVector<Triple::EnvironmentType, 1> UnsupportedEnvironments;
-
-  bool isUnsupportedOSOrEnvironment() {
-    Triple Host(Triple::normalize(sys::getProcessTriple()));
-
-    if (find(UnsupportedEnvironments, Host.getEnvironment()) !=
-        UnsupportedEnvironments.end())
-      return true;
-
-    if (is_contained(UnsupportedOSs, Host.getOS()))
-      return true;
-
-    if (is_contained(UnsupportedArchs, Host.getArch()))
-      return true;
-
-    return false;
-  }
-
-  FileSystemTest() {
-    UnsupportedArchs.push_back(Triple::mips);
-    UnsupportedArchs.push_back(Triple::mipsel);
-  }
 };
 
 TEST_F(FileSystemTest, Unique) {
@@ -522,6 +497,41 @@ TEST_F(FileSystemTest, Unique) {
   ASSERT_NO_ERROR(fs::remove(Dir2));
   ASSERT_NO_ERROR(fs::remove(TempPath2));
   ASSERT_NO_ERROR(fs::remove(TempPath));
+}
+
+TEST_F(FileSystemTest, RealPath) {
+  ASSERT_NO_ERROR(
+      fs::create_directories(Twine(TestDirectory) + "/test1/test2/test3"));
+  ASSERT_TRUE(fs::exists(Twine(TestDirectory) + "/test1/test2/test3"));
+
+  SmallString<64> RealBase;
+  SmallString<64> Expected;
+  SmallString<64> Actual;
+
+  // TestDirectory itself might be under a symlink or have been specified with
+  // a different case than the existing temp directory.  In such cases real_path
+  // on the concatenated path will differ in the TestDirectory portion from
+  // how we specified it.  Make sure to compare against the real_path of the
+  // TestDirectory, and not just the value of TestDirectory.
+  ASSERT_NO_ERROR(fs::real_path(TestDirectory, RealBase));
+  path::native(Twine(RealBase) + "/test1/test2", Expected);
+
+  ASSERT_NO_ERROR(fs::real_path(
+      Twine(TestDirectory) + "/././test1/../test1/test2/./test3/..", Actual));
+
+  EXPECT_EQ(Expected, Actual);
+
+  SmallString<64> HomeDir;
+  bool Result = llvm::sys::path::home_directory(HomeDir);
+  if (Result) {
+    ASSERT_NO_ERROR(fs::real_path(HomeDir, Expected));
+    ASSERT_NO_ERROR(fs::real_path("~", Actual, true));
+    EXPECT_EQ(Expected, Actual);
+    ASSERT_NO_ERROR(fs::real_path("~/", Actual, true));
+    EXPECT_EQ(Expected, Actual);
+  }
+
+  ASSERT_NO_ERROR(fs::remove_directories(Twine(TestDirectory) + "/test1"));
 }
 
 TEST_F(FileSystemTest, TempFiles) {
@@ -768,6 +778,39 @@ TEST_F(FileSystemTest, DirectoryIteration) {
   ASSERT_NO_ERROR(fs::remove(Twine(TestDirectory) + "/reclevel"));
 }
 
+TEST_F(FileSystemTest, Remove) {
+  SmallString<64> BaseDir;
+  SmallString<64> Paths[4];
+  int fds[4];
+  ASSERT_NO_ERROR(fs::createUniqueDirectory("fs_remove", BaseDir));
+
+  ASSERT_NO_ERROR(fs::create_directories(Twine(BaseDir) + "/foo/bar/baz"));
+  ASSERT_NO_ERROR(fs::create_directories(Twine(BaseDir) + "/foo/bar/buzz"));
+  ASSERT_NO_ERROR(fs::createUniqueFile(
+      Twine(BaseDir) + "/foo/bar/baz/%%%%%%.tmp", fds[0], Paths[0]));
+  ASSERT_NO_ERROR(fs::createUniqueFile(
+      Twine(BaseDir) + "/foo/bar/baz/%%%%%%.tmp", fds[1], Paths[1]));
+  ASSERT_NO_ERROR(fs::createUniqueFile(
+      Twine(BaseDir) + "/foo/bar/buzz/%%%%%%.tmp", fds[2], Paths[2]));
+  ASSERT_NO_ERROR(fs::createUniqueFile(
+      Twine(BaseDir) + "/foo/bar/buzz/%%%%%%.tmp", fds[3], Paths[3]));
+
+  for (int fd : fds)
+    ::close(fd);
+
+  EXPECT_TRUE(fs::exists(Twine(BaseDir) + "/foo/bar/baz"));
+  EXPECT_TRUE(fs::exists(Twine(BaseDir) + "/foo/bar/buzz"));
+  EXPECT_TRUE(fs::exists(Paths[0]));
+  EXPECT_TRUE(fs::exists(Paths[1]));
+  EXPECT_TRUE(fs::exists(Paths[2]));
+  EXPECT_TRUE(fs::exists(Paths[3]));
+
+  ASSERT_NO_ERROR(fs::remove_directories("D:/footest"));
+
+  ASSERT_NO_ERROR(fs::remove_directories(BaseDir));
+  ASSERT_FALSE(fs::exists(BaseDir));
+}
+
 const char archive[] = "!<arch>\x0A";
 const char bitcode[] = "\xde\xc0\x17\x0b";
 const char coff_object[] = "\x00\x00......";
@@ -968,6 +1011,33 @@ TEST(Support, NormalizePath) {
   EXPECT_PATH_IS(Path6, "a\\", "a/");
 
 #undef EXPECT_PATH_IS
+
+#if defined(LLVM_ON_WIN32)
+  SmallString<64> PathHome;
+  path::home_directory(PathHome);
+
+  const char *Path7a = "~/aaa";
+  SmallString<64> Path7(Path7a);
+  path::native(Path7);
+  EXPECT_TRUE(Path7.endswith("\\aaa"));
+  EXPECT_TRUE(Path7.startswith(PathHome));
+  EXPECT_EQ(Path7.size(), PathHome.size() + strlen(Path7a + 1));
+
+  const char *Path8a = "~";
+  SmallString<64> Path8(Path8a);
+  path::native(Path8);
+  EXPECT_EQ(Path8, PathHome);
+
+  const char *Path9a = "~aaa";
+  SmallString<64> Path9(Path9a);
+  path::native(Path9);
+  EXPECT_EQ(Path9, "~aaa");
+
+  const char *Path10a = "aaa/~/b";
+  SmallString<64> Path10(Path10a);
+  path::native(Path10);
+  EXPECT_EQ(Path10, "aaa\\~\\b");
+#endif
 }
 
 TEST(Support, RemoveLeadingDotSlash) {
@@ -1162,36 +1232,6 @@ TEST_F(FileSystemTest, OpenFileForRead) {
   }
 
   ::close(FileDescriptor);
-}
-
-#define CHECK_UNSUPPORTED() \
-  do { \
-    if (isUnsupportedOSOrEnvironment()) \
-      return; \
-  } while (0); \
-
-TEST_F(FileSystemTest, is_local) {
-  CHECK_UNSUPPORTED();
-
-  SmallString<128> CurrentPath;
-  ASSERT_NO_ERROR(fs::current_path(CurrentPath));
-
-  bool Result;
-  ASSERT_NO_ERROR(fs::is_local(CurrentPath, Result));
-  EXPECT_TRUE(Result);
-  EXPECT_TRUE(fs::is_local(CurrentPath));
-
-  int FD;
-  SmallString<64> TempPath;
-  ASSERT_NO_ERROR(fs::createTemporaryFile("prefix", "temp", FD, TempPath));
-  FileRemover Cleanup(TempPath);
-
-  // Make sure it exists.
-  ASSERT_TRUE(sys::fs::exists(Twine(TempPath)));
-
-  ASSERT_NO_ERROR(fs::is_local(FD, Result));
-  EXPECT_TRUE(Result);
-  EXPECT_TRUE(fs::is_local(FD));
 }
 
 TEST_F(FileSystemTest, set_current_path) {

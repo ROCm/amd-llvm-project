@@ -13,8 +13,6 @@
 // Project includes
 #include "CommandObjectLog.h"
 #include "lldb/Core/Debugger.h"
-#include "lldb/Core/Debugger.h"
-#include "lldb/Core/Log.h"
 #include "lldb/Core/Module.h"
 #include "lldb/Core/StreamFile.h"
 #include "lldb/Core/Timer.h"
@@ -30,6 +28,7 @@
 #include "lldb/Symbol/SymbolVendor.h"
 #include "lldb/Target/Process.h"
 #include "lldb/Target/Target.h"
+#include "lldb/Utility/Log.h"
 #include "lldb/Utility/RegularExpression.h"
 #include "lldb/Utility/Stream.h"
 
@@ -172,8 +171,8 @@ protected:
     else
       log_file[0] = '\0';
     bool success = m_interpreter.GetDebugger().EnableLog(
-        channel.c_str(), args.GetConstArgumentVector(), log_file,
-        m_options.log_options, result.GetErrorStream());
+        channel, args.GetArgumentArrayRef(), log_file, m_options.log_options,
+        result.GetErrorStream());
     if (success)
       result.SetStatus(eReturnStatusSuccessFinishNoResult);
     else
@@ -233,7 +232,7 @@ protected:
       Log::DisableAllLogChannels(&result.GetErrorStream());
       result.SetStatus(eReturnStatusSuccessFinishNoResult);
     } else {
-      if (Log::DisableLogChannel(channel, args.GetConstArgumentVector(),
+      if (Log::DisableLogChannel(channel, args.GetArgumentArrayRef(),
                                  result.GetErrorStream()))
         result.SetStatus(eReturnStatusSuccessFinishNoResult);
     }

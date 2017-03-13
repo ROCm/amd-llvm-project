@@ -203,6 +203,11 @@ public:
   SourceLocation getLocStart() const LLVM_READONLY { return Range.getBegin(); }
   SourceLocation getLocEnd() const LLVM_READONLY { return Range.getEnd(); }
 
+  /// \brief Get the location at which the base class type was written.
+  SourceLocation getBaseTypeLoc() const LLVM_READONLY {
+    return BaseTypeInfo->getTypeLoc().getLocStart();
+  }
+
   /// \brief Determines whether the base class is a virtual base class (or not).
   bool isVirtual() const { return Virtual; }
 
@@ -436,9 +441,10 @@ class CXXRecordDecl : public RecordDecl {
     /// either by the user or implicitly.
     unsigned DeclaredSpecialMembers : 6;
 
-    /// \brief Whether an implicit copy constructor would have a const-qualified
-    /// parameter.
-    unsigned ImplicitCopyConstructorHasConstParam : 1;
+    /// \brief Whether an implicit copy constructor could have a const-qualified
+    /// parameter, for initializing virtual bases and for other subobjects.
+    unsigned ImplicitCopyConstructorCanHaveConstParamForVBase : 1;
+    unsigned ImplicitCopyConstructorCanHaveConstParamForNonVBase : 1;
 
     /// \brief Whether an implicit copy assignment operator would have a
     /// const-qualified parameter.
@@ -886,7 +892,9 @@ public:
   /// \brief Determine whether an implicit copy constructor for this type
   /// would have a parameter with a const-qualified reference type.
   bool implicitCopyConstructorHasConstParam() const {
-    return data().ImplicitCopyConstructorHasConstParam;
+    return data().ImplicitCopyConstructorCanHaveConstParamForNonVBase &&
+           (isAbstract() ||
+            data().ImplicitCopyConstructorCanHaveConstParamForVBase);
   }
 
   /// \brief Determine whether this class has a copy constructor with

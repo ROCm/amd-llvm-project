@@ -1138,7 +1138,6 @@ void ASTDeclReader::VisitObjCImplDecl(ObjCImplDecl *D) {
 
 void ASTDeclReader::VisitObjCCategoryImplDecl(ObjCCategoryImplDecl *D) {
   VisitObjCImplDecl(D);
-  D->setIdentifier(Record.getIdentifierInfo());
   D->CategoryNameLoc = ReadSourceLocation();
 }
 
@@ -1524,7 +1523,8 @@ void ASTDeclReader::ReadCXXDefinitionData(
   Data.ComputedVisibleConversions = Record.readInt();
   Data.UserProvidedDefaultConstructor = Record.readInt();
   Data.DeclaredSpecialMembers = Record.readInt();
-  Data.ImplicitCopyConstructorHasConstParam = Record.readInt();
+  Data.ImplicitCopyConstructorCanHaveConstParamForVBase = Record.readInt();
+  Data.ImplicitCopyConstructorCanHaveConstParamForNonVBase = Record.readInt();
   Data.ImplicitCopyAssignmentHasConstParam = Record.readInt();
   Data.HasDeclaredCopyConstructorWithConstParam = Record.readInt();
   Data.HasDeclaredCopyAssignmentWithConstParam = Record.readInt();
@@ -1654,7 +1654,8 @@ void ASTDeclReader::MergeDefinitionData(
   // ComputedVisibleConversions is handled below.
   MATCH_FIELD(UserProvidedDefaultConstructor)
   OR_FIELD(DeclaredSpecialMembers)
-  MATCH_FIELD(ImplicitCopyConstructorHasConstParam)
+  MATCH_FIELD(ImplicitCopyConstructorCanHaveConstParamForVBase)
+  MATCH_FIELD(ImplicitCopyConstructorCanHaveConstParamForNonVBase)
   MATCH_FIELD(ImplicitCopyAssignmentHasConstParam)
   OR_FIELD(HasDeclaredCopyConstructorWithConstParam)
   OR_FIELD(HasDeclaredCopyAssignmentWithConstParam)
@@ -2528,8 +2529,8 @@ static bool isConsumerInterestedIn(ASTContext &Ctx, Decl *D, bool HasBody) {
 
   // An ImportDecl or VarDecl imported from a module will get emitted when
   // we import the relevant module.
-  if ((isa<ImportDecl>(D) || isa<VarDecl>(D)) && Ctx.DeclMustBeEmitted(D) &&
-      D->getImportedOwningModule())
+  if ((isa<ImportDecl>(D) || isa<VarDecl>(D)) && D->getImportedOwningModule() &&
+      Ctx.DeclMustBeEmitted(D))
     return false;
 
   if (isa<FileScopeAsmDecl>(D) || 
@@ -2664,9 +2665,12 @@ static bool isSameTemplateParameterList(const TemplateParameterList *X,
 }
 
 /// Determine whether the attributes we can overload on are identical for A and
-/// B. Expects A and B to (otherwise) have the same type.
+/// B. Will ignore any overloadable attrs represented in the type of A and B.
 static bool hasSameOverloadableAttrs(const FunctionDecl *A,
                                      const FunctionDecl *B) {
+  // Note that pass_object_size attributes are represented in the function's
+  // ExtParameterInfo, so we don't need to check them here.
+
   SmallVector<const EnableIfAttr *, 4> AEnableIfs;
   // Since this is an equality check, we can ignore that enable_if attrs show up
   // in reverse order.
@@ -2696,8 +2700,6 @@ static bool hasSameOverloadableAttrs(const FunctionDecl *A,
       return false;
   }
 
-  // FIXME: This doesn't currently consider pass_object_size attributes, since
-  // we aren't guaranteed that A and B have valid parameter lists yet.
   return true;
 }
 
@@ -2756,9 +2758,23 @@ static bool isSameEntity(NamedDecl *X, NamedDecl *Y) {
                         CtorY->getInheritedConstructor().getConstructor()))
         return false;
     }
+    ASTContext &C = FuncX->getASTContext();
+    if (!C.hasSameType(FuncX->getType(), FuncY->getType())) {
+      // We can get functions with different types on the redecl chain in C++17
+      // if they have differing exception specifications and at least one of
+      // the excpetion specs is unresolved.
+      // FIXME: Do we need to check for C++14 deduced return types here too?
+      auto *XFPT = FuncX->getType()->getAs<FunctionProtoType>();
+      auto *YFPT = FuncY->getType()->getAs<FunctionProtoType>();
+      if (C.getLangOpts().CPlusPlus1z && XFPT && YFPT &&
+          (isUnresolvedExceptionSpec(XFPT->getExceptionSpecType()) ||
+           isUnresolvedExceptionSpec(YFPT->getExceptionSpecType())) &&
+          C.hasSameFunctionTypeIgnoringExceptionSpec(FuncX->getType(),
+                                                     FuncY->getType()))
+        return true;
+      return false;
+    }
     return FuncX->getLinkageInternal() == FuncY->getLinkageInternal() &&
-           FuncX->getASTContext().hasSameType(FuncX->getType(),
-                                              FuncY->getType()) &&
            hasSameOverloadableAttrs(FuncX, FuncY);
   }
 

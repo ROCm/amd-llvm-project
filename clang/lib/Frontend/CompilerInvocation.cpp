@@ -1135,6 +1135,7 @@ static InputKind ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
     case OPT_ast_list:
       Opts.ProgramAction = frontend::ASTDeclList; break;
     case OPT_ast_dump:
+    case OPT_ast_dump_all:
     case OPT_ast_dump_lookups:
       Opts.ProgramAction = frontend::ASTDump; break;
     case OPT_ast_print:
@@ -1253,6 +1254,7 @@ static InputKind ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
   Opts.FixAndRecompile = Args.hasArg(OPT_fixit_recompile);
   Opts.FixToTemporaries = Args.hasArg(OPT_fixit_to_temp);
   Opts.ASTDumpDecls = Args.hasArg(OPT_ast_dump);
+  Opts.ASTDumpAll = Args.hasArg(OPT_ast_dump_all);
   Opts.ASTDumpFilter = Args.getLastArgValue(OPT_ast_dump_filter);
   Opts.ASTDumpLookups = Args.hasArg(OPT_ast_dump_lookups);
   Opts.UseGlobalModuleIndex = !Args.hasArg(OPT_fno_modules_global_index);
@@ -1589,7 +1591,11 @@ void CompilerInvocation::setLangDefaults(LangOptions &Opts, InputKind IK,
     case IK_PreprocessedCXX:
     case IK_ObjCXX:
     case IK_PreprocessedObjCXX:
-      LangStd = LangStandard::lang_gnucxx98;
+      // The PS4 uses C++11 as the default C++ standard.
+      if (T.isPS4())
+        LangStd = LangStandard::lang_gnucxx11;
+      else
+        LangStd = LangStandard::lang_gnucxx98;
       break;
     case IK_RenderScript:
       LangStd = LangStandard::lang_c99;
@@ -2322,6 +2328,7 @@ static void ParsePreprocessorArgs(PreprocessorOptions &Opts, ArgList &Args,
   Opts.UsePredefines = !Args.hasArg(OPT_undef);
   Opts.DetailedRecord = Args.hasArg(OPT_detailed_preprocessing_record);
   Opts.DisablePCHValidation = Args.hasArg(OPT_fno_validate_pch);
+  Opts.AllowPCHWithCompilerErrors = Args.hasArg(OPT_fallow_pch_with_errors);
 
   Opts.DumpDeserializedPCHDecls = Args.hasArg(OPT_dump_deserialized_pch_decls);
   for (const Arg *A : Args.filtered(OPT_error_on_deserialized_pch_decl))

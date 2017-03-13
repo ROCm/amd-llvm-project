@@ -77,7 +77,6 @@
 #include "Config.h"
 #include "SymbolTable.h"
 #include "Threads.h"
-
 #include "llvm/ADT/Hashing.h"
 #include "llvm/Object/ELF.h"
 #include "llvm/Support/ELF.h"
@@ -155,16 +154,16 @@ private:
 // Returns a hash value for S. Note that the information about
 // relocation targets is not included in the hash value.
 template <class ELFT> static uint32_t getHash(InputSection *S) {
-  return hash_combine(S->Flags, S->template getSize<ELFT>(), S->NumRelocations);
+  return hash_combine(S->Flags, S->getSize(), S->NumRelocations);
 }
 
 // Returns true if section S is subject of ICF.
-template <class ELFT> static bool isEligible(InputSection *S) {
+static bool isEligible(InputSection *S) {
   // .init and .fini contains instructions that must be executed to
   // initialize and finalize the process. They cannot and should not
   // be merged.
-  return S->Live && (S->Flags & SHF_ALLOC) && !(S->Flags & SHF_WRITE) &&
-         S->Name != ".init" && S->Name != ".fini";
+  return S->Live && (S->Flags & SHF_ALLOC) && (S->Flags & SHF_EXECINSTR) &&
+         !(S->Flags & SHF_WRITE) && S->Name != ".init" && S->Name != ".fini";
 }
 
 // Split an equivalence class into smaller classes.
@@ -210,7 +209,7 @@ template <class RelTy>
 bool ICF<ELFT>::constantEq(ArrayRef<RelTy> RelsA, ArrayRef<RelTy> RelsB) {
   auto Eq = [](const RelTy &A, const RelTy &B) {
     return A.r_offset == B.r_offset &&
-           A.getType(Config->Mips64EL) == B.getType(Config->Mips64EL) &&
+           A.getType(Config->isMips64EL()) == B.getType(Config->isMips64EL()) &&
            getAddend<ELFT>(A) == getAddend<ELFT>(B);
   };
 
@@ -223,8 +222,7 @@ bool ICF<ELFT>::constantEq(ArrayRef<RelTy> RelsA, ArrayRef<RelTy> RelsB) {
 template <class ELFT>
 bool ICF<ELFT>::equalsConstant(const InputSection *A, const InputSection *B) {
   if (A->NumRelocations != B->NumRelocations || A->Flags != B->Flags ||
-      A->template getSize<ELFT>() != B->template getSize<ELFT>() ||
-      A->Data != B->Data)
+      A->getSize() != B->getSize() || A->Data != B->Data)
     return false;
 
   if (A->AreRelocsRela)
@@ -245,8 +243,8 @@ bool ICF<ELFT>::variableEq(const InputSection *A, ArrayRef<RelTy> RelsA,
     if (&SA == &SB)
       return true;
 
-    auto *DA = dyn_cast<DefinedRegular<ELFT>>(&SA);
-    auto *DB = dyn_cast<DefinedRegular<ELFT>>(&SB);
+    auto *DA = dyn_cast<DefinedRegular>(&SA);
+    auto *DB = dyn_cast<DefinedRegular>(&SB);
     if (!DA || !DB)
       return false;
     if (DA->Value != DB->Value)
@@ -336,9 +334,9 @@ void ICF<ELFT>::forEachClass(std::function<void(size_t, size_t)> Fn) {
 // The main function of ICF.
 template <class ELFT> void ICF<ELFT>::run() {
   // Collect sections to merge.
-  for (InputSectionBase *Sec : Symtab<ELFT>::X->Sections)
+  for (InputSectionBase *Sec : InputSections)
     if (auto *S = dyn_cast<InputSection>(Sec))
-      if (isEligible<ELFT>(S))
+      if (isEligible(S))
         Sections.push_back(S);
 
   // Initially, we use hash values to partition sections.

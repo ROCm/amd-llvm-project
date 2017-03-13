@@ -5677,6 +5677,8 @@ static CharUnits GetAlignOfType(EvalInfo &Info, QualType T) {
     T = Ref->getPointeeType();
 
   // __alignof is defined to return the preferred alignment.
+  if (T.getQualifiers().hasUnaligned())
+    return CharUnits::One();
   return Info.Ctx.toCharUnitsFromBits(
     Info.Ctx.getPreferredTypeAlign(T.getTypePtr()));
 }
@@ -10216,6 +10218,7 @@ static ICEDiag CheckICE(const Expr* E, const ASTContext &Ctx) {
   case Expr::LambdaExprClass:
   case Expr::CXXFoldExprClass:
   case Expr::CoawaitExprClass:
+  case Expr::DependentCoawaitExprClass:
   case Expr::CoyieldExprClass:
     return ICEDiag(IK_NotICE, E->getLocStart());
 

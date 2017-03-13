@@ -56,9 +56,6 @@
 
 #include "lldb/Core/ArchSpec.h"
 #include "lldb/Core/Communication.h"
-#include "lldb/Core/DataBufferHeap.h"
-#include "lldb/Core/DataExtractor.h"
-#include "lldb/Core/Log.h"
 #include "lldb/Core/Module.h"
 #include "lldb/Core/ModuleSpec.h"
 #include "lldb/Core/StreamFile.h"
@@ -71,9 +68,14 @@
 #include "lldb/Target/Platform.h"
 #include "lldb/Target/Process.h"
 #include "lldb/Utility/CleanUp.h"
+#include "lldb/Utility/DataBufferHeap.h"
+#include "lldb/Utility/DataExtractor.h"
 #include "lldb/Utility/Endian.h"
+#include "lldb/Utility/Log.h"
 #include "lldb/Utility/NameMatches.h"
 #include "lldb/Utility/StreamString.h"
+
+#include "llvm/Support/FileSystem.h"
 
 #include "cfcpp/CFCBundle.h"
 #include "cfcpp/CFCMutableArray.h"
@@ -101,7 +103,7 @@ using namespace lldb_private;
 bool Host::GetBundleDirectory(const FileSpec &file,
                               FileSpec &bundle_directory) {
 #if defined(__APPLE__)
-  if (file.GetFileType() == FileSpec::eFileTypeDirectory) {
+  if (llvm::sys::fs::is_directory(file.GetPath())) {
     char path[PATH_MAX];
     if (file.GetPath(path, sizeof(path))) {
       CFCBundle bundle(path);
@@ -118,7 +120,7 @@ bool Host::GetBundleDirectory(const FileSpec &file,
 
 bool Host::ResolveExecutableInBundle(FileSpec &file) {
 #if defined(__APPLE__)
-  if (file.GetFileType() == FileSpec::eFileTypeDirectory) {
+  if (llvm::sys::fs::is_directory(file.GetPath())) {
     char path[PATH_MAX];
     if (file.GetPath(path, sizeof(path))) {
       CFCBundle bundle(path);
@@ -1184,8 +1186,8 @@ Error Host::LaunchProcess(ProcessLaunchInfo &launch_info) {
   ModuleSpec exe_module_spec(launch_info.GetExecutableFile(),
                              launch_info.GetArchitecture());
 
-  FileSpec::FileType file_type = exe_module_spec.GetFileSpec().GetFileType();
-  if (file_type != FileSpec::eFileTypeRegular) {
+  if (!llvm::sys::fs::is_regular_file(
+          exe_module_spec.GetFileSpec().GetPath())) {
     lldb::ModuleSP exe_module_sp;
     error = host_platform_sp->ResolveExecutable(exe_module_spec, exe_module_sp,
                                                 NULL);

@@ -71,6 +71,13 @@ protected:
   void verifyFormat(llvm::StringRef Code,
                     const FormatStyle &Style = getLLVMStyle()) {
     EXPECT_EQ(Code.str(), format(test::messUp(Code), Style));
+    if (Style.Language == FormatStyle::LK_Cpp) {
+      // Objective-C++ is a superset of C++, so everything checked for C++
+      // needs to be checked for Objective-C++ as well.
+      FormatStyle ObjCStyle = Style;
+      ObjCStyle.Language = FormatStyle::LK_ObjC;
+      EXPECT_EQ(Code.str(), format(test::messUp(Code), ObjCStyle));
+    }
   }
 
   void verifyIncompleteFormat(llvm::StringRef Code,
@@ -263,6 +270,15 @@ TEST_F(FormatTest, RemovesEmptyLines) {
                    "}"));
 
   // FIXME: This is slightly inconsistent.
+  FormatStyle LLVMWithNoNamespaceFix = getLLVMStyle();
+  LLVMWithNoNamespaceFix.FixNamespaceComments = false;
+  EXPECT_EQ("namespace {\n"
+            "int i;\n"
+            "}",
+            format("namespace {\n"
+                   "int i;\n"
+                   "\n"
+                   "}", LLVMWithNoNamespaceFix));
   EXPECT_EQ("namespace {\n"
             "int i;\n"
             "}",
@@ -1013,6 +1029,17 @@ TEST_F(FormatTest, FormatsClasses) {
   verifyFormat("class ::A::B {};");
 }
 
+TEST_F(FormatTest, BreakBeforeInheritanceComma) {
+  FormatStyle StyleWithInheritanceBreak = getLLVMStyle();
+  StyleWithInheritanceBreak.BreakBeforeInheritanceComma = true;
+
+  verifyFormat("class MyClass : public X {};", StyleWithInheritanceBreak);
+  verifyFormat("class MyClass\n"
+               "    : public X\n"
+               "    , public Y {};",
+               StyleWithInheritanceBreak);
+}
+
 TEST_F(FormatTest, FormatsVariableDeclarationsAfterStructOrClass) {
   verifyFormat("class A {\n} a, b;");
   verifyFormat("struct A {\n} a, b;");
@@ -1190,33 +1217,43 @@ TEST_F(FormatTest, FormatsBitfields) {
 }
 
 TEST_F(FormatTest, FormatsNamespaces) {
+  FormatStyle LLVMWithNoNamespaceFix = getLLVMStyle();
+  LLVMWithNoNamespaceFix.FixNamespaceComments = false;
+
   verifyFormat("namespace some_namespace {\n"
                "class A {};\n"
                "void f() { f(); }\n"
-               "}");
+               "}",
+               LLVMWithNoNamespaceFix);
   verifyFormat("namespace {\n"
                "class A {};\n"
                "void f() { f(); }\n"
-               "}");
+               "}",
+               LLVMWithNoNamespaceFix);
   verifyFormat("inline namespace X {\n"
                "class A {};\n"
                "void f() { f(); }\n"
-               "}");
+               "}",
+               LLVMWithNoNamespaceFix);
   verifyFormat("using namespace some_namespace;\n"
                "class A {};\n"
-               "void f() { f(); }");
+               "void f() { f(); }",
+               LLVMWithNoNamespaceFix);
 
   // This code is more common than we thought; if we
   // layout this correctly the semicolon will go into
   // its own line, which is undesirable.
-  verifyFormat("namespace {};");
+  verifyFormat("namespace {};",
+               LLVMWithNoNamespaceFix);
   verifyFormat("namespace {\n"
                "class A {};\n"
-               "};");
+               "};",
+               LLVMWithNoNamespaceFix);
 
   verifyFormat("namespace {\n"
                "int SomeVariable = 0; // comment\n"
-               "} // namespace");
+               "} // namespace",
+               LLVMWithNoNamespaceFix);
   EXPECT_EQ("#ifndef HEADER_GUARD\n"
             "#define HEADER_GUARD\n"
             "namespace my_namespace {\n"
@@ -1228,14 +1265,16 @@ TEST_F(FormatTest, FormatsNamespaces) {
                    "   namespace my_namespace {\n"
                    "int i;\n"
                    "}    // my_namespace\n"
-                   "#endif    // HEADER_GUARD"));
+                   "#endif    // HEADER_GUARD",
+                   LLVMWithNoNamespaceFix));
 
   EXPECT_EQ("namespace A::B {\n"
             "class C {};\n"
             "}",
             format("namespace A::B {\n"
                    "class C {};\n"
-                   "}"));
+                   "}",
+                   LLVMWithNoNamespaceFix));
 
   FormatStyle Style = getLLVMStyle();
   Style.NamespaceIndentation = FormatStyle::NI_All;
@@ -1243,14 +1282,14 @@ TEST_F(FormatTest, FormatsNamespaces) {
             "  int i;\n"
             "  namespace in {\n"
             "    int i;\n"
-            "  } // namespace\n"
-            "} // namespace",
+            "  } // namespace in\n"
+            "} // namespace out",
             format("namespace out {\n"
                    "int i;\n"
                    "namespace in {\n"
                    "int i;\n"
-                   "} // namespace\n"
-                   "} // namespace",
+                   "} // namespace in\n"
+                   "} // namespace out",
                    Style));
 
   Style.NamespaceIndentation = FormatStyle::NI_Inner;
@@ -1258,14 +1297,14 @@ TEST_F(FormatTest, FormatsNamespaces) {
             "int i;\n"
             "namespace in {\n"
             "  int i;\n"
-            "} // namespace\n"
-            "} // namespace",
+            "} // namespace in\n"
+            "} // namespace out",
             format("namespace out {\n"
                    "int i;\n"
                    "namespace in {\n"
                    "int i;\n"
-                   "} // namespace\n"
-                   "} // namespace",
+                   "} // namespace in\n"
+                   "} // namespace out",
                    Style));
 }
 
@@ -1769,11 +1808,11 @@ TEST_F(FormatTest, MacrosWithoutTrailingSemicolon) {
   EXPECT_EQ("SOME_MACRO\n"
             "namespace {\n"
             "void f();\n"
-            "}",
+            "} // namespace",
             format("SOME_MACRO\n"
                    "  namespace    {\n"
                    "void   f(  );\n"
-                   "}"));
+                   "} // namespace"));
   // Only if the identifier contains at least 5 characters.
   EXPECT_EQ("HTTP f();", format("HTTP\nf();"));
   EXPECT_EQ("MACRO\nf();", format("MACRO\nf();"));
@@ -4937,6 +4976,7 @@ TEST_F(FormatTest, UnderstandsUsesOfStarAndAmp) {
   verifyIndependentOfContext("MACRO(int *i);");
   verifyIndependentOfContext("MACRO(auto *a);");
   verifyIndependentOfContext("MACRO(const A *a);");
+  verifyIndependentOfContext("MACRO(A *const a);");
   verifyIndependentOfContext("MACRO('0' <= c && c <= '9');");
   verifyFormat("void f() { f(float{1}, a * a); }");
   // FIXME: Is there a way to make this work?
@@ -5297,6 +5337,11 @@ TEST_F(FormatTest, BreaksLongDeclarations) {
                "    vector<aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<\n"
                "        aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa>>\n"
                "        aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa);");
+
+  verifyFormat("template <typename T> // Templates on own line.\n"
+               "static int            // Some comment.\n"
+               "MyFunction(int a);",
+               getLLVMStyle());
 }
 
 TEST_F(FormatTest, FormatsArrays) {
@@ -5431,7 +5476,7 @@ TEST_F(FormatTest, IncorrectCodeMissingSemicolon) {
   EXPECT_EQ("namespace N {\n"
             "void f() {}\n"
             "void g()\n"
-            "}",
+            "} // namespace N",
             format("namespace N  { void f( ) { } void g( ) }"));
 }
 
@@ -5491,7 +5536,7 @@ TEST_F(FormatTest, DoesNotTouchUnwrappedLinesWithErrors) {
   verifyIncompleteFormat("namespace {\n"
                          "class Foo { Foo (\n"
                          "};\n"
-                         "} // comment");
+                         "} // namespace");
 }
 
 TEST_F(FormatTest, IncorrectCodeErrorDetection) {
@@ -6111,8 +6156,8 @@ TEST_F(FormatTest, FormatStarDependingOnContext) {
                "  void f() {}\n"
                "  int *a;\n"
                "};\n"
-               "}\n"
-               "}");
+               "} // namespace b\n"
+               "} // namespace a");
 }
 
 TEST_F(FormatTest, SpecialTokensAtEndOfLine) {
@@ -6437,8 +6482,9 @@ TEST_F(FormatTest, BreaksStringLiteralsWithin_TMacro) {
       "_T(\"aaaaaaaaaaaaaa\")\n"
       "_T(\"aaaaaaaaaaaa\")",
       format("  _T(\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\")", Style));
-  EXPECT_EQ("f(x, _T(\"aaaaaaaaa\")\n"
-            "     _T(\"aaaaaa\"),\n"
+  EXPECT_EQ("f(x,\n"
+            "  _T(\"aaaaaaaaaaaa\")\n"
+            "  _T(\"aaa\"),\n"
             "  z);",
             format("f(x, _T(\"aaaaaaaaaaaaaaa\"), z);", Style));
 
@@ -6468,6 +6514,90 @@ TEST_F(FormatTest, BreaksStringLiteralsWithin_TMacro) {
             format("f(\n"
                    "\n"
                    "_T(\"XXXXXXXXXXXXXXXXXXXXXXXXXXXXXn\"));"));
+}
+
+TEST_F(FormatTest, BreaksStringLiteralOperands) {
+  // In a function call with two operands, the second can be broken with no line
+  // break before it.
+  EXPECT_EQ("func(a, \"long long \"\n"
+            "        \"long long\");",
+            format("func(a, \"long long long long\");",
+                   getLLVMStyleWithColumns(24)));
+  // In a function call with three operands, the second must be broken with a
+  // line break before it.
+  EXPECT_EQ("func(a,\n"
+            "     \"long long long \"\n"
+            "     \"long\",\n"
+            "     c);",
+            format("func(a, \"long long long long\", c);",
+                   getLLVMStyleWithColumns(24)));
+  // In a function call with three operands, the third must be broken with a
+  // line break before it.
+  EXPECT_EQ("func(a, b,\n"
+            "     \"long long long \"\n"
+            "     \"long\");",
+            format("func(a, b, \"long long long long\");",
+                   getLLVMStyleWithColumns(24)));
+  // In a function call with three operands, both the second and the third must
+  // be broken with a line break before them.
+  EXPECT_EQ("func(a,\n"
+            "     \"long long long \"\n"
+            "     \"long\",\n"
+            "     \"long long long \"\n"
+            "     \"long\");",
+            format("func(a, \"long long long long\", \"long long long long\");",
+                   getLLVMStyleWithColumns(24)));
+  // In a chain of << with two operands, the second can be broken with no line
+  // break before it.
+  EXPECT_EQ("a << \"line line \"\n"
+            "     \"line\";",
+            format("a << \"line line line\";",
+                   getLLVMStyleWithColumns(20)));
+  // In a chain of << with three operands, the second can be broken with no line
+  // break before it.
+  EXPECT_EQ("abcde << \"line \"\n"
+            "         \"line line\"\n"
+            "      << c;",
+            format("abcde << \"line line line\" << c;",
+                   getLLVMStyleWithColumns(20)));
+  // In a chain of << with three operands, the third must be broken with a line
+  // break before it.
+  EXPECT_EQ("a << b\n"
+            "  << \"line line \"\n"
+            "     \"line\";",
+            format("a << b << \"line line line\";",
+                   getLLVMStyleWithColumns(20)));
+  // In a chain of << with three operands, the second can be broken with no line
+  // break before it and the third must be broken with a line break before it.
+  EXPECT_EQ("abcd << \"line line \"\n"
+            "        \"line\"\n"
+            "     << \"line line \"\n"
+            "        \"line\";",
+            format("abcd << \"line line line\" << \"line line line\";",
+                   getLLVMStyleWithColumns(20)));
+  // In a chain of binary operators with two operands, the second can be broken
+  // with no line break before it.
+  EXPECT_EQ("abcd + \"line line \"\n"
+            "       \"line line\";",
+            format("abcd + \"line line line line\";",
+                   getLLVMStyleWithColumns(20)));
+  // In a chain of binary operators with three operands, the second must be
+  // broken with a line break before it.
+  EXPECT_EQ("abcd +\n"
+            "    \"line line \"\n"
+            "    \"line line\" +\n"
+            "    e;",
+            format("abcd + \"line line line line\" + e;",
+                   getLLVMStyleWithColumns(20)));
+  // In a function call with two operands, with AlignAfterOpenBracket enabled,
+  // the first must be broken with a line break before it.
+  FormatStyle Style = getLLVMStyleWithColumns(25);
+  Style.AlignAfterOpenBracket = FormatStyle::BAS_AlwaysBreak;
+  EXPECT_EQ("someFunction(\n"
+            "    \"long long long \"\n"
+            "    \"long\",\n"
+            "    a);",
+            format("someFunction(\"long long long long\", a);", Style));
 }
 
 TEST_F(FormatTest, DontSplitStringLiteralsWithEscapedNewlines) {
@@ -7846,6 +7976,7 @@ TEST_F(FormatTest, LinuxBraceBreaking) {
 TEST_F(FormatTest, MozillaBraceBreaking) {
   FormatStyle MozillaBraceStyle = getLLVMStyle();
   MozillaBraceStyle.BreakBeforeBraces = FormatStyle::BS_Mozilla;
+  MozillaBraceStyle.FixNamespaceComments = false;
   verifyFormat("namespace a {\n"
                "class A\n"
                "{\n"
@@ -7904,7 +8035,7 @@ TEST_F(FormatTest, StroustrupBraceBreaking) {
                "struct B {\n"
                "  int x;\n"
                "};\n"
-               "}\n",
+               "} // namespace a\n",
                StroustrupBraceStyle);
 
   verifyFormat("void foo()\n"
@@ -8262,6 +8393,7 @@ TEST_F(FormatTest, GNUBraceBreaking) {
 TEST_F(FormatTest, WebKitBraceBreaking) {
   FormatStyle WebKitBraceStyle = getLLVMStyle();
   WebKitBraceStyle.BreakBeforeBraces = FormatStyle::BS_WebKit;
+  WebKitBraceStyle.FixNamespaceComments = false;
   verifyFormat("namespace a {\n"
                "class A {\n"
                "  void f()\n"
@@ -8461,6 +8593,7 @@ TEST_F(FormatTest, ParsesConfigurationBools) {
   CHECK_PARSE_BOOL(BreakBeforeTernaryOperators);
   CHECK_PARSE_BOOL(BreakConstructorInitializersBeforeComma);
   CHECK_PARSE_BOOL(BreakStringLiterals);
+  CHECK_PARSE_BOOL(BreakBeforeInheritanceComma)
   CHECK_PARSE_BOOL(ConstructorInitializerAllOnOneLineOrOnePerLine);
   CHECK_PARSE_BOOL(DerivePointerAlignment);
   CHECK_PARSE_BOOL_FIELD(DerivePointerAlignment, "DerivePointerBinding");

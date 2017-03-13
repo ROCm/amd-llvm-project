@@ -76,27 +76,6 @@ static Type *getPromotedType(Type *Ty) {
   return Ty;
 }
 
-/// Given an aggregate type which ultimately holds a single scalar element,
-/// like {{{type}}} or [1 x type], return type.
-static Type *reduceToSingleValueType(Type *T) {
-  while (!T->isSingleValueType()) {
-    if (StructType *STy = dyn_cast<StructType>(T)) {
-      if (STy->getNumElements() == 1)
-        T = STy->getElementType(0);
-      else
-        break;
-    } else if (ArrayType *ATy = dyn_cast<ArrayType>(T)) {
-      if (ATy->getNumElements() == 1)
-        T = ATy->getElementType();
-      else
-        break;
-    } else
-      break;
-  }
-
-  return T;
-}
-
 /// Return a constant boolean vector that has true elements in all positions
 /// where the input constant data vector has an element with the sign bit set.
 static Constant *getNegativeIsTrueBoolVec(ConstantDataVector *V) {
@@ -222,41 +201,19 @@ Instruction *InstCombiner::SimplifyMemTransfer(MemIntrinsic *MI) {
   Type *NewSrcPtrTy = PointerType::get(IntType, SrcAddrSp);
   Type *NewDstPtrTy = PointerType::get(IntType, DstAddrSp);
 
-  // Memcpy forces the use of i8* for the source and destination.  That means
-  // that if you're using memcpy to move one double around, you'll get a cast
-  // from double* to i8*.  We'd much rather use a double load+store rather than
-  // an i64 load+store, here because this improves the odds that the source or
-  // dest address will be promotable.  See if we can find a better type than the
-  // integer datatype.
-  Value *StrippedDest = MI->getArgOperand(0)->stripPointerCasts();
+  // If the memcpy has metadata describing the members, see if we can get the
+  // TBAA tag describing our copy.
   MDNode *CopyMD = nullptr;
-  if (StrippedDest != MI->getArgOperand(0)) {
-    Type *SrcETy = cast<PointerType>(StrippedDest->getType())
-                                    ->getElementType();
-    if (SrcETy->isSized() && DL.getTypeStoreSize(SrcETy) == Size) {
-      // The SrcETy might be something like {{{double}}} or [1 x double].  Rip
-      // down through these levels if so.
-      SrcETy = reduceToSingleValueType(SrcETy);
-
-      if (SrcETy->isSingleValueType()) {
-        NewSrcPtrTy = PointerType::get(SrcETy, SrcAddrSp);
-        NewDstPtrTy = PointerType::get(SrcETy, DstAddrSp);
-
-        // If the memcpy has metadata describing the members, see if we can
-        // get the TBAA tag describing our copy.
-        if (MDNode *M = MI->getMetadata(LLVMContext::MD_tbaa_struct)) {
-          if (M->getNumOperands() == 3 && M->getOperand(0) &&
-              mdconst::hasa<ConstantInt>(M->getOperand(0)) &&
-              mdconst::extract<ConstantInt>(M->getOperand(0))->isNullValue() &&
-              M->getOperand(1) &&
-              mdconst::hasa<ConstantInt>(M->getOperand(1)) &&
-              mdconst::extract<ConstantInt>(M->getOperand(1))->getValue() ==
-                  Size &&
-              M->getOperand(2) && isa<MDNode>(M->getOperand(2)))
-            CopyMD = cast<MDNode>(M->getOperand(2));
-        }
-      }
-    }
+  if (MDNode *M = MI->getMetadata(LLVMContext::MD_tbaa_struct)) {
+    if (M->getNumOperands() == 3 && M->getOperand(0) &&
+        mdconst::hasa<ConstantInt>(M->getOperand(0)) &&
+        mdconst::extract<ConstantInt>(M->getOperand(0))->isNullValue() &&
+        M->getOperand(1) &&
+        mdconst::hasa<ConstantInt>(M->getOperand(1)) &&
+        mdconst::extract<ConstantInt>(M->getOperand(1))->getValue() ==
+        Size &&
+        M->getOperand(2) && isa<MDNode>(M->getOperand(2)))
+      CopyMD = cast<MDNode>(M->getOperand(2));
   }
 
   // If the memcpy/memmove provides better alignment info than we can
@@ -1531,6 +1488,27 @@ static bool simplifyX86MaskedStore(IntrinsicInst &II, InstCombiner &IC) {
   // 'Replace uses' doesn't work for stores. Erase the original masked store.
   IC.eraseInstFromFunction(II);
   return true;
+}
+
+// Constant fold llvm.amdgcn.fmed3 intrinsics for standard inputs.
+//
+// A single NaN input is folded to minnum, so we rely on that folding for
+// handling NaNs.
+static APFloat fmed3AMDGCN(const APFloat &Src0, const APFloat &Src1,
+                           const APFloat &Src2) {
+  APFloat Max3 = maxnum(maxnum(Src0, Src1), Src2);
+
+  APFloat::cmpResult Cmp0 = Max3.compare(Src0);
+  assert(Cmp0 != APFloat::cmpUnordered && "nans handled separately");
+  if (Cmp0 == APFloat::cmpEqual)
+    return maxnum(Src1, Src2);
+
+  APFloat::cmpResult Cmp1 = Max3.compare(Src1);
+  assert(Cmp1 != APFloat::cmpUnordered && "nans handled separately");
+  if (Cmp1 == APFloat::cmpEqual)
+    return maxnum(Src0, Src2);
+
+  return maxnum(Src0, Src1);
 }
 
 // Returns true iff the 2 intrinsics have the same operands, limiting the
@@ -3329,6 +3307,61 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
 
     if (Changed)
       return II;
+
+    break;
+
+  }
+  case Intrinsic::amdgcn_fmed3: {
+    // Note this does not preserve proper sNaN behavior if IEEE-mode is enabled
+    // for the shader.
+
+    Value *Src0 = II->getArgOperand(0);
+    Value *Src1 = II->getArgOperand(1);
+    Value *Src2 = II->getArgOperand(2);
+
+    bool Swap = false;
+    // Canonicalize constants to RHS operands.
+    //
+    // fmed3(c0, x, c1) -> fmed3(x, c0, c1)
+    if (isa<Constant>(Src0) && !isa<Constant>(Src1)) {
+      std::swap(Src0, Src1);
+      Swap = true;
+    }
+
+    if (isa<Constant>(Src1) && !isa<Constant>(Src2)) {
+      std::swap(Src1, Src2);
+      Swap = true;
+    }
+
+    if (isa<Constant>(Src0) && !isa<Constant>(Src1)) {
+      std::swap(Src0, Src1);
+      Swap = true;
+    }
+
+    if (Swap) {
+      II->setArgOperand(0, Src0);
+      II->setArgOperand(1, Src1);
+      II->setArgOperand(2, Src2);
+      return II;
+    }
+
+    if (match(Src2, m_NaN()) || isa<UndefValue>(Src2)) {
+      CallInst *NewCall = Builder->CreateMinNum(Src0, Src1);
+      NewCall->copyFastMathFlags(II);
+      NewCall->takeName(II);
+      return replaceInstUsesWith(*II, NewCall);
+    }
+
+    if (const ConstantFP *C0 = dyn_cast<ConstantFP>(Src0)) {
+      if (const ConstantFP *C1 = dyn_cast<ConstantFP>(Src1)) {
+        if (const ConstantFP *C2 = dyn_cast<ConstantFP>(Src2)) {
+          APFloat Result = fmed3AMDGCN(C0->getValueAPF(), C1->getValueAPF(),
+                                       C2->getValueAPF());
+          return replaceInstUsesWith(*II,
+            ConstantFP::get(Builder->getContext(), Result));
+        }
+      }
+    }
 
     break;
   }

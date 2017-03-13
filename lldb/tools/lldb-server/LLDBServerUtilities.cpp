@@ -9,9 +9,9 @@
 
 #include "LLDBServerUtilities.h"
 
-#include "lldb/Core/Log.h"
 #include "lldb/Core/StreamFile.h"
 #include "lldb/Interpreter/Args.h"
+#include "lldb/Utility/Log.h"
 #include "lldb/Utility/StreamString.h"
 
 #include "llvm/ADT/SmallVector.h"
@@ -52,8 +52,8 @@ bool LLDBServerUtilities::SetupLogging(const std::string &log_file,
     channel_then_categories.Shift(); // Shift off the channel
 
     bool success = Log::EnableLogChannel(
-        log_stream_sp, log_options, channel.c_str(),
-        channel_then_categories.GetConstArgumentVector(), error_stream);
+        log_stream_sp, log_options, channel,
+        channel_then_categories.GetArgumentArrayRef(), error_stream);
     if (!success) {
       fprintf(stderr, "Unable to open log file '%s' for channel \"%s\"\n",
               log_file.c_str(), channel_with_categories.str().c_str());

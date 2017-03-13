@@ -26,6 +26,7 @@
 #include "clang/AST/MangleNumberingContext.h"
 #include "clang/AST/NSAPI.h"
 #include "clang/AST/PrettyPrinter.h"
+#include "clang/AST/StmtCXX.h"
 #include "clang/AST/TypeLoc.h"
 #include "clang/AST/TypeOrdering.h"
 #include "clang/Basic/ExpressionTraits.h"
@@ -101,6 +102,7 @@ namespace clang {
   class CodeCompletionAllocator;
   class CodeCompletionTUInfo;
   class CodeCompletionResult;
+  class CoroutineBodyStmt;
   class Decl;
   class DeclAccessPair;
   class DeclContext;
@@ -931,7 +933,7 @@ public:
   ///
   /// This is basically a wrapper around PointerIntPair. The lowest bits of the
   /// integer are used to determine whether overload resolution succeeded.
-  class SpecialMemberOverloadResult : public llvm::FastFoldingSetNode {
+  class SpecialMemberOverloadResult {
   public:
     enum Kind {
       NoMemberOrDeleted,
@@ -943,9 +945,9 @@ public:
     llvm::PointerIntPair<CXXMethodDecl*, 2> Pair;
 
   public:
-    SpecialMemberOverloadResult(const llvm::FoldingSetNodeID &ID)
-      : FastFoldingSetNode(ID)
-    {}
+    SpecialMemberOverloadResult() : Pair() {}
+    SpecialMemberOverloadResult(CXXMethodDecl *MD)
+        : Pair(MD, MD->isDeleted() ? NoMemberOrDeleted : Success) {}
 
     CXXMethodDecl *getMethod() const { return Pair.getPointer(); }
     void setMethod(CXXMethodDecl *MD) { Pair.setPointer(MD); }
@@ -954,9 +956,18 @@ public:
     void setKind(Kind K) { Pair.setInt(K); }
   };
 
+  class SpecialMemberOverloadResultEntry
+      : public llvm::FastFoldingSetNode,
+        public SpecialMemberOverloadResult {
+  public:
+    SpecialMemberOverloadResultEntry(const llvm::FoldingSetNodeID &ID)
+      : FastFoldingSetNode(ID)
+    {}
+  };
+
   /// \brief A cache of special member function overload resolution results
   /// for C++ records.
-  llvm::FoldingSet<SpecialMemberOverloadResult> SpecialMemberCache;
+  llvm::FoldingSet<SpecialMemberOverloadResultEntry> SpecialMemberCache;
 
   /// \brief A cache of the flags available in enumerations with the flag_bits
   /// attribute.
@@ -1235,9 +1246,11 @@ public:
   sema::BlockScopeInfo *getCurBlock();
 
   /// Retrieve the current lambda scope info, if any.
-  /// \param IgnoreCapturedRegions true if should find the top-most lambda scope
-  /// info ignoring all inner captured regions scope infos.
-  sema::LambdaScopeInfo *getCurLambda(bool IgnoreCapturedRegions = false);
+  /// \param IgnoreNonLambdaCapturingScope true if should find the top-most
+  /// lambda scope info ignoring all inner capturing scopes that are not
+  /// lambda scopes.
+  sema::LambdaScopeInfo *
+  getCurLambda(bool IgnoreNonLambdaCapturingScope = false);
 
   /// \brief Retrieve the current generic lambda info, if any.
   sema::LambdaScopeInfo *getCurGenericLambda();
@@ -2917,13 +2930,13 @@ public:
     LOLR_StringTemplate
   };
 
-  SpecialMemberOverloadResult *LookupSpecialMember(CXXRecordDecl *D,
-                                                   CXXSpecialMember SM,
-                                                   bool ConstArg,
-                                                   bool VolatileArg,
-                                                   bool RValueThis,
-                                                   bool ConstThis,
-                                                   bool VolatileThis);
+  SpecialMemberOverloadResult LookupSpecialMember(CXXRecordDecl *D,
+                                                  CXXSpecialMember SM,
+                                                  bool ConstArg,
+                                                  bool VolatileArg,
+                                                  bool RValueThis,
+                                                  bool ConstThis,
+                                                  bool VolatileThis);
 
   typedef std::function<void(const TypoCorrection &)> TypoDiagnosticGenerator;
   typedef std::function<ExprResult(Sema &, TypoExpr *, TypoCorrection)>
@@ -3149,6 +3162,8 @@ public:
   void ProcessPragmaWeak(Scope *S, Decl *D);
   // Decl attributes - this routine is the top level dispatcher.
   void ProcessDeclAttributes(Scope *S, Decl *D, const Declarator &PD);
+  // Helper for delayed proccessing of attributes.
+  void ProcessDeclAttributeDelayed(Decl *D, const AttributeList *AttrList);
   void ProcessDeclAttributeList(Scope *S, Decl *D, const AttributeList *AL,
                                 bool IncludeCXX11Attributes = true);
   bool ProcessAccessDeclAttributeList(AccessSpecDecl *ASDecl,
@@ -5395,6 +5410,9 @@ public:
   /// was successfully completed.
   ExprResult ActOnLambdaExpr(SourceLocation StartLoc, Stmt *Body,
                              Scope *CurScope);
+
+  /// \brief Does copying/destroying the captured variable have side effects?
+  bool CaptureHasSideEffects(const sema::LambdaScopeInfo::Capture &From);
 
   /// \brief Diagnose if an explicit lambda capture is unused.
   void DiagnoseUnusedLambdaCapture(const sema::LambdaScopeInfo::Capture &From);
@@ -8260,12 +8278,17 @@ public:
   //
   ExprResult ActOnCoawaitExpr(Scope *S, SourceLocation KwLoc, Expr *E);
   ExprResult ActOnCoyieldExpr(Scope *S, SourceLocation KwLoc, Expr *E);
-  StmtResult ActOnCoreturnStmt(SourceLocation KwLoc, Expr *E);
+  StmtResult ActOnCoreturnStmt(Scope *S, SourceLocation KwLoc, Expr *E);
 
-  ExprResult BuildCoawaitExpr(SourceLocation KwLoc, Expr *E);
+  ExprResult BuildResolvedCoawaitExpr(SourceLocation KwLoc, Expr *E,
+                                      bool IsImplicit = false);
+  ExprResult BuildUnresolvedCoawaitExpr(SourceLocation KwLoc, Expr *E,
+                                        UnresolvedLookupExpr* Lookup);
   ExprResult BuildCoyieldExpr(SourceLocation KwLoc, Expr *E);
-  StmtResult BuildCoreturnStmt(SourceLocation KwLoc, Expr *E);
-
+  StmtResult BuildCoreturnStmt(SourceLocation KwLoc, Expr *E,
+                               bool IsImplicit = false);
+  StmtResult BuildCoroutineBodyStmt(CoroutineBodyStmt::CtorArgs);
+  VarDecl *buildCoroutinePromise(SourceLocation Loc);
   void CheckCompletedCoroutineBody(FunctionDecl *FD, Stmt *&Body);
 
   //===--------------------------------------------------------------------===//

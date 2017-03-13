@@ -644,12 +644,17 @@ bool AMDGPUTargetLowering::isCheapToSpeculateCtlz() const {
 
 bool AMDGPUTargetLowering::isFAbsFree(EVT VT) const {
   assert(VT.isFloatingPoint());
-  return VT == MVT::f32 || VT == MVT::f64 || (Subtarget->has16BitInsts() &&
-                                              VT == MVT::f16);
+
+  // Packed operations do not have a fabs modifier.
+  return VT == MVT::f32 || VT == MVT::f64 ||
+         (Subtarget->has16BitInsts() && VT == MVT::f16);
 }
 
 bool AMDGPUTargetLowering::isFNegFree(EVT VT) const {
-  return isFAbsFree(VT);
+  assert(VT.isFloatingPoint());
+  return VT == MVT::f32 || VT == MVT::f64 ||
+         (Subtarget->has16BitInsts() && VT == MVT::f16) ||
+         (Subtarget->hasVOP3PInsts() && VT == MVT::v2f16);
 }
 
 bool AMDGPUTargetLowering:: storeOfVectorConstantIsCheap(EVT MemVT,
@@ -1290,7 +1295,10 @@ SDValue AMDGPUTargetLowering::LowerDIVREM24(SDValue Op, SelectionDAG &DAG,
   SDValue fqneg = DAG.getNode(ISD::FNEG, DL, FltVT, fq);
 
   // float fr = mad(fqneg, fb, fa);
-  SDValue fr = DAG.getNode(ISD::FMAD, DL, FltVT, fqneg, fb, fa);
+  unsigned OpCode = Subtarget->hasFP32Denormals() ?
+                    (unsigned)AMDGPUISD::FMAD_FTZ :
+                    (unsigned)ISD::FMAD;
+  SDValue fr = DAG.getNode(OpCode, DL, FltVT, fqneg, fb, fa);
 
   // int iq = (int)fq;
   SDValue iq = DAG.getNode(ToInt, DL, IntVT, fq);
@@ -3343,6 +3351,16 @@ SDValue AMDGPUTargetLowering::PerformDAGCombine(SDNode *N,
     return performStoreCombine(N, DCI);
   case AMDGPUISD::CLAMP:
     return performClampCombine(N, DCI);
+  case AMDGPUISD::RCP: {
+    if (const auto *CFP = dyn_cast<ConstantFPSDNode>(N->getOperand(0))) {
+      // XXX - Should this flush denormals?
+      const APFloat &Val = CFP->getValueAPF();
+      APFloat One(Val.getSemantics(), "1.0");
+      return DAG.getConstantFP(One / Val, SDLoc(N), N->getValueType(0));
+    }
+
+    break;
+  }
   }
   return SDValue();
 }
@@ -3416,6 +3434,7 @@ const char* AMDGPUTargetLowering::getTargetNodeName(unsigned Opcode) const {
   NODE_NAME_CASE(DIV_SCALE)
   NODE_NAME_CASE(DIV_FMAS)
   NODE_NAME_CASE(DIV_FIXUP)
+  NODE_NAME_CASE(FMAD_FTZ)
   NODE_NAME_CASE(TRIG_PREOP)
   NODE_NAME_CASE(RCP)
   NODE_NAME_CASE(RSQ)

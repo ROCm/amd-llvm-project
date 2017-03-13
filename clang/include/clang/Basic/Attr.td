@@ -451,6 +451,15 @@ def XRayInstrument : InheritableAttr {
   let Documentation = [XRayDocs];
 }
 
+def XRayLogArgs : InheritableAttr {
+  let Spellings = [GNU<"xray_log_args">, CXX11<"clang", "xray_log_args">];
+  let Subjects = SubjectList<
+      [CXXMethod, ObjCMethod, Function], WarnDiag, "ExpectedFunctionOrMethod"
+  >;
+  let Args = [UnsignedArgument<"ArgumentCount">];
+  let Documentation = [XRayDocs];
+}
+
 def TLSModel : InheritableAttr {
   let Spellings = [GCC<"tls_model">];
   let Subjects = SubjectList<[TLSVar], ErrorDiag, "ExpectedTLSVar">;
@@ -526,6 +535,17 @@ def Availability : InheritableAttr {
   let DuplicatesAllowedWhileMerging = 1;
 //  let Subjects = SubjectList<[Named]>;
   let Documentation = [AvailabilityDocs];
+}
+
+def ExternalSourceSymbol : InheritableAttr {
+  let Spellings = [GNU<"external_source_symbol">,
+                   CXX11<"clang", "external_source_symbol">];
+  let Args = [StringArgument<"language", 1>,
+              StringArgument<"definedIn", 1>,
+              BoolArgument<"generatedDeclaration", 1>];
+  let HasCustomParsing = 1;
+//  let Subjects = SubjectList<[Named]>;
+  let Documentation = [ExternalSourceSymbolDocs];
 }
 
 def Blocks : InheritableAttr {

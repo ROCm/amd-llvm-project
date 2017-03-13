@@ -6523,12 +6523,6 @@ Decl *ASTReader::GetExternalDecl(uint32_t ID) {
   return GetDecl(ID);
 }
 
-template<typename TemplateSpecializationDecl>
-static void completeRedeclChainForTemplateSpecialization(Decl *D) {
-  if (auto *TSD = dyn_cast<TemplateSpecializationDecl>(D))
-    TSD->getSpecializedTemplate()->LoadLazySpecializations();
-}
-
 void ASTReader::CompleteRedeclChain(const Decl *D) {
   if (NumCurrentElementsDeserializing) {
     // We arrange to not care about the complete redeclaration chain while we're
@@ -6817,6 +6811,9 @@ Stmt *ASTReader::GetExternalDeclStmt(uint64_t Offset) {
   // Offset here is a global offset across the entire chain.
   RecordLocation Loc = getLocalBitOffset(Offset);
   Loc.F->DeclsCursor.JumpToBit(Loc.Offset);
+  assert(NumCurrentElementsDeserializing == 0 &&
+         "should not be called while already deserializing");
+  Deserializing D(this);
   return ReadStmtFromStream(*Loc.F);
 }
 
@@ -7151,7 +7148,7 @@ void ASTReader::PrintStats() {
 }
 
 template<typename Key, typename ModuleFile, unsigned InitialCapacity>
-static void
+LLVM_DUMP_METHOD static void
 dumpModuleIDMap(StringRef Name,
                 const ContinuousRangeMap<Key, ModuleFile *,
                                          InitialCapacity> &Map) {
@@ -7928,7 +7925,8 @@ ASTReader::getSourceDescriptor(unsigned ID) {
 
   // If there is only a single PCH, return it instead.
   // Chained PCH are not suported.
-  if (ModuleMgr.size() == 1) {
+  const auto &PCHChain = ModuleMgr.pch_modules();
+  if (std::distance(std::begin(PCHChain), std::end(PCHChain))) {
     ModuleFile &MF = ModuleMgr.getPrimaryModule();
     StringRef ModuleName = llvm::sys::path::filename(MF.OriginalSourceFileName);
     StringRef FileName = llvm::sys::path::filename(MF.FileName);
@@ -8957,6 +8955,7 @@ void ASTReader::diagnoseOdrViolations() {
         ProtectedSpecifer,
         StaticAssert,
         Field,
+        CXXMethod,
         Other
       } FirstDiffType = Other,
         SecondDiffType = Other;
@@ -8982,6 +8981,8 @@ void ASTReader::diagnoseOdrViolations() {
           return StaticAssert;
         case Decl::Field:
           return Field;
+        case Decl::CXXMethod:
+          return CXXMethod;
         }
       };
 
@@ -9062,6 +9063,19 @@ void ASTReader::diagnoseOdrViolations() {
         StaticAssertMessage,
         StaticAssertOnlyMessage,
         FieldName,
+        FieldTypeName,
+        FieldSingleBitField,
+        FieldDifferentWidthBitField,
+        FieldSingleMutable,
+        FieldSingleInitializer,
+        FieldDifferentInitializers,
+        MethodName,
+        MethodDeleted,
+        MethodVirtual,
+        MethodStatic,
+        MethodVolatile,
+        MethodConst,
+        MethodInline,
       };
 
       // These lambdas have the common portions of the ODR diagnostics.  This
@@ -9083,6 +9097,12 @@ void ASTReader::diagnoseOdrViolations() {
         assert(S);
         Hash.clear();
         Hash.AddStmt(S);
+        return Hash.CalculateHash();
+      };
+
+      auto ComputeDeclNameODRHash = [&Hash](const DeclarationName Name) {
+        Hash.clear();
+        Hash.AddDeclarationName(Name);
         return Hash.CalculateHash();
       };
 
@@ -9166,6 +9186,220 @@ void ASTReader::diagnoseOdrViolations() {
           Diagnosed = true;
           break;
         }
+
+        assert(
+            Context.hasSameType(FirstField->getType(), SecondField->getType()));
+
+        QualType FirstType = FirstField->getType();
+        QualType SecondType = SecondField->getType();
+        const TypedefType *FirstTypedef = dyn_cast<TypedefType>(FirstType);
+        const TypedefType *SecondTypedef = dyn_cast<TypedefType>(SecondType);
+
+        if ((FirstTypedef && !SecondTypedef) ||
+            (!FirstTypedef && SecondTypedef)) {
+          ODRDiagError(FirstField->getLocation(), FirstField->getSourceRange(),
+                       FieldTypeName)
+              << FirstII << FirstType;
+          ODRDiagNote(SecondField->getLocation(), SecondField->getSourceRange(),
+                      FieldTypeName)
+              << SecondII << SecondType;
+
+          Diagnosed = true;
+          break;
+        }
+
+        if (FirstTypedef && SecondTypedef) {
+          unsigned FirstHash = ComputeDeclNameODRHash(
+              FirstTypedef->getDecl()->getDeclName());
+          unsigned SecondHash = ComputeDeclNameODRHash(
+              SecondTypedef->getDecl()->getDeclName());
+          if (FirstHash != SecondHash) {
+            ODRDiagError(FirstField->getLocation(),
+                         FirstField->getSourceRange(), FieldTypeName)
+                << FirstII << FirstType;
+            ODRDiagNote(SecondField->getLocation(),
+                        SecondField->getSourceRange(), FieldTypeName)
+                << SecondII << SecondType;
+
+            Diagnosed = true;
+            break;
+          }
+        }
+
+        const bool IsFirstBitField = FirstField->isBitField();
+        const bool IsSecondBitField = SecondField->isBitField();
+        if (IsFirstBitField != IsSecondBitField) {
+          ODRDiagError(FirstField->getLocation(), FirstField->getSourceRange(),
+                       FieldSingleBitField)
+              << FirstII << IsFirstBitField;
+          ODRDiagNote(SecondField->getLocation(), SecondField->getSourceRange(),
+                      FieldSingleBitField)
+              << SecondII << IsSecondBitField;
+          Diagnosed = true;
+          break;
+        }
+
+        if (IsFirstBitField && IsSecondBitField) {
+          ODRDiagError(FirstField->getLocation(), FirstField->getSourceRange(),
+                       FieldDifferentWidthBitField)
+              << FirstII << FirstField->getBitWidth()->getSourceRange();
+          ODRDiagNote(SecondField->getLocation(), SecondField->getSourceRange(),
+                      FieldDifferentWidthBitField)
+              << SecondII << SecondField->getBitWidth()->getSourceRange();
+          Diagnosed = true;
+          break;
+        }
+
+        const bool IsFirstMutable = FirstField->isMutable();
+        const bool IsSecondMutable = SecondField->isMutable();
+        if (IsFirstMutable != IsSecondMutable) {
+          ODRDiagError(FirstField->getLocation(), FirstField->getSourceRange(),
+                       FieldSingleMutable)
+              << FirstII << IsFirstMutable;
+          ODRDiagNote(SecondField->getLocation(), SecondField->getSourceRange(),
+                      FieldSingleMutable)
+              << SecondII << IsSecondMutable;
+          Diagnosed = true;
+          break;
+        }
+
+        const Expr *FirstInitializer = FirstField->getInClassInitializer();
+        const Expr *SecondInitializer = SecondField->getInClassInitializer();
+        if ((!FirstInitializer && SecondInitializer) ||
+            (FirstInitializer && !SecondInitializer)) {
+          ODRDiagError(FirstField->getLocation(), FirstField->getSourceRange(),
+                       FieldSingleInitializer)
+              << FirstII << (FirstInitializer != nullptr);
+          ODRDiagNote(SecondField->getLocation(), SecondField->getSourceRange(),
+                      FieldSingleInitializer)
+              << SecondII << (SecondInitializer != nullptr);
+          Diagnosed = true;
+          break;
+        }
+
+        if (FirstInitializer && SecondInitializer) {
+          unsigned FirstInitHash = ComputeODRHash(FirstInitializer);
+          unsigned SecondInitHash = ComputeODRHash(SecondInitializer);
+          if (FirstInitHash != SecondInitHash) {
+            ODRDiagError(FirstField->getLocation(),
+                         FirstField->getSourceRange(),
+                         FieldDifferentInitializers)
+                << FirstII << FirstInitializer->getSourceRange();
+            ODRDiagNote(SecondField->getLocation(),
+                        SecondField->getSourceRange(),
+                        FieldDifferentInitializers)
+                << SecondII << SecondInitializer->getSourceRange();
+            Diagnosed = true;
+            break;
+          }
+        }
+
+        break;
+      }
+      case CXXMethod: {
+        const CXXMethodDecl *FirstMethod = cast<CXXMethodDecl>(FirstDecl);
+        const CXXMethodDecl *SecondMethod = cast<CXXMethodDecl>(SecondDecl);
+        auto FirstName = FirstMethod->getDeclName();
+        auto SecondName = SecondMethod->getDeclName();
+        if (FirstName != SecondName) {
+          ODRDiagError(FirstMethod->getLocation(),
+                       FirstMethod->getSourceRange(), MethodName)
+              << FirstName;
+          ODRDiagNote(SecondMethod->getLocation(),
+                      SecondMethod->getSourceRange(), MethodName)
+              << SecondName;
+
+          Diagnosed = true;
+          break;
+        }
+
+        const bool FirstDeleted = FirstMethod->isDeleted();
+        const bool SecondDeleted = SecondMethod->isDeleted();
+        if (FirstDeleted != SecondDeleted) {
+          ODRDiagError(FirstMethod->getLocation(),
+                       FirstMethod->getSourceRange(), MethodDeleted)
+              << FirstName << FirstDeleted;
+
+          ODRDiagNote(SecondMethod->getLocation(),
+                      SecondMethod->getSourceRange(), MethodDeleted)
+              << SecondName << SecondDeleted;
+          Diagnosed = true;
+          break;
+        }
+
+        const bool FirstVirtual = FirstMethod->isVirtualAsWritten();
+        const bool SecondVirtual = SecondMethod->isVirtualAsWritten();
+        const bool FirstPure = FirstMethod->isPure();
+        const bool SecondPure = SecondMethod->isPure();
+        if ((FirstVirtual || SecondVirtual) &&
+            (FirstVirtual != SecondVirtual || FirstPure != SecondPure)) {
+          ODRDiagError(FirstMethod->getLocation(),
+                       FirstMethod->getSourceRange(), MethodVirtual)
+              << FirstName << FirstPure << FirstVirtual;
+          ODRDiagNote(SecondMethod->getLocation(),
+                      SecondMethod->getSourceRange(), MethodVirtual)
+              << SecondName << SecondPure << SecondVirtual;
+          Diagnosed = true;
+          break;
+        }
+
+        // CXXMethodDecl::isStatic uses the canonical Decl.  With Decl merging,
+        // FirstDecl is the canonical Decl of SecondDecl, so the storage
+        // class needs to be checked instead.
+        const auto FirstStorage = FirstMethod->getStorageClass();
+        const auto SecondStorage = SecondMethod->getStorageClass();
+        const bool FirstStatic = FirstStorage == SC_Static;
+        const bool SecondStatic = SecondStorage == SC_Static;
+        if (FirstStatic != SecondStatic) {
+          ODRDiagError(FirstMethod->getLocation(),
+                       FirstMethod->getSourceRange(), MethodStatic)
+              << FirstName << FirstStatic;
+          ODRDiagNote(SecondMethod->getLocation(),
+                      SecondMethod->getSourceRange(), MethodStatic)
+              << SecondName << SecondStatic;
+          Diagnosed = true;
+          break;
+        }
+
+        const bool FirstVolatile = FirstMethod->isVolatile();
+        const bool SecondVolatile = SecondMethod->isVolatile();
+        if (FirstVolatile != SecondVolatile) {
+          ODRDiagError(FirstMethod->getLocation(),
+                       FirstMethod->getSourceRange(), MethodVolatile)
+              << FirstName << FirstVolatile;
+          ODRDiagNote(SecondMethod->getLocation(),
+                      SecondMethod->getSourceRange(), MethodVolatile)
+              << SecondName << SecondVolatile;
+          Diagnosed = true;
+          break;
+        }
+
+        const bool FirstConst = FirstMethod->isConst();
+        const bool SecondConst = SecondMethod->isConst();
+        if (FirstConst != SecondConst) {
+          ODRDiagError(FirstMethod->getLocation(),
+                       FirstMethod->getSourceRange(), MethodConst)
+              << FirstName << FirstConst;
+          ODRDiagNote(SecondMethod->getLocation(),
+                      SecondMethod->getSourceRange(), MethodConst)
+              << SecondName << SecondConst;
+          Diagnosed = true;
+          break;
+        }
+
+        const bool FirstInline = FirstMethod->isInlineSpecified();
+        const bool SecondInline = SecondMethod->isInlineSpecified();
+        if (FirstInline != SecondInline) {
+          ODRDiagError(FirstMethod->getLocation(),
+                       FirstMethod->getSourceRange(), MethodInline)
+              << FirstName << FirstInline;
+          ODRDiagNote(SecondMethod->getLocation(),
+                      SecondMethod->getSourceRange(), MethodInline)
+              << SecondName << SecondInline;
+          Diagnosed = true;
+          break;
+        }
+
         break;
       }
       }

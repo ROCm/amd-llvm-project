@@ -24,8 +24,6 @@
 #include "llvm/Support/Threading.h"
 
 // Project includes
-#include "lldb/Core/FastDemangle.h"
-#include "lldb/Core/Log.h"
 #include "lldb/Core/PluginManager.h"
 #include "lldb/Core/UniqueCStringMap.h"
 #include "lldb/DataFormatters/CXXFunctionPointer.h"
@@ -33,6 +31,8 @@
 #include "lldb/DataFormatters/FormattersHelpers.h"
 #include "lldb/DataFormatters/VectorType.h"
 #include "lldb/Utility/ConstString.h"
+#include "lldb/Utility/FastDemangle.h"
+#include "lldb/Utility/Log.h"
 #include "lldb/Utility/RegularExpression.h"
 
 #include "BlockPointer.h"
@@ -624,14 +624,14 @@ static void LoadLibCxxFormatters(lldb::TypeCategoryImplSP cpp_category_sp) {
       lldb_private::formatters::LibcxxVectorBoolSyntheticFrontEndCreator,
       "libc++ std::vector<bool> synthetic children",
       ConstString("std::__(ndk)?1::vector<std::__(ndk)?1::allocator<bool> >"),
-      stl_synth_flags);
+      stl_synth_flags, true);
   AddCXXSynthetic(
       cpp_category_sp,
       lldb_private::formatters::LibcxxVectorBoolSyntheticFrontEndCreator,
       "libc++ std::vector<bool> synthetic children",
       ConstString(
           "std::__(ndk)?1::vector<bool, std::__(ndk)?1::allocator<bool> >"),
-      stl_synth_flags);
+      stl_synth_flags, true);
   AddCXXSynthetic(
       cpp_category_sp,
       lldb_private::formatters::LibcxxStdMapSyntheticFrontEndCreator,
@@ -765,7 +765,7 @@ static void LoadLibCxxFormatters(lldb::TypeCategoryImplSP cpp_category_sp) {
       "libc++ std::vector<bool> summary provider",
       ConstString(
           "std::__(ndk)?1::vector<bool, std::__(ndk)?1::allocator<bool> >"),
-      stl_summary_flags);
+      stl_summary_flags, true);
   AddCXXSynthetic(
       cpp_category_sp,
       lldb_private::formatters::LibCxxMapIteratorSyntheticFrontEndCreator,

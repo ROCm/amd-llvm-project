@@ -49,6 +49,7 @@
 #include "ProcFileReader.h"
 #include "Procfs.h"
 
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Threading.h"
 
 #include <linux/unistd.h>
@@ -224,9 +225,8 @@ Error NativeProcessProtocol::Launch(
 
   // Verify the working directory is valid if one was specified.
   FileSpec working_dir{launch_info.GetWorkingDirectory()};
-  if (working_dir &&
-      (!working_dir.ResolvePath() ||
-       working_dir.GetFileType() != FileSpec::eFileTypeDirectory)) {
+  if (working_dir && (!working_dir.ResolvePath() ||
+                      !llvm::sys::fs::is_directory(working_dir.GetPath()))) {
     error.SetErrorStringWithFormat("No such file or directory: %s",
                                    working_dir.GetCString());
     return error;
@@ -870,6 +870,19 @@ void NativeProcessLinux::MonitorSIGTRAP(const siginfo_t &info,
       break;
     }
 
+    // If a breakpoint was hit, report it
+    uint32_t bp_index;
+    error = thread.GetRegisterContext()->GetHardwareBreakHitIndex(
+        bp_index, (uintptr_t)info.si_addr);
+    if (error.Fail())
+      LLDB_LOG(log, "received error while checking for hardware "
+                    "breakpoint hits, pid = {0}, error = {1}",
+               thread.GetID(), error);
+    if (bp_index != LLDB_INVALID_INDEX32) {
+      MonitorBreakpoint(thread);
+      break;
+    }
+
     // Otherwise, report step over
     MonitorTrace(thread);
     break;
@@ -1035,6 +1048,13 @@ void NativeProcessLinux::MonitorSignal(const siginfo_t &info,
 
     // Done handling.
     return;
+  }
+
+  // Check if debugger should stop at this signal or just ignore it
+  // and resume the inferior.
+  if (m_signals_to_ignore.find(signo) != m_signals_to_ignore.end()) {
+     ResumeThread(thread, thread.GetState(), signo);
+     return;
   }
 
   // This thread is stopped.
@@ -1719,9 +1739,16 @@ Error NativeProcessLinux::GetSoftwareBreakpointPCOffset(
 Error NativeProcessLinux::SetBreakpoint(lldb::addr_t addr, uint32_t size,
                                         bool hardware) {
   if (hardware)
-    return Error("NativeProcessLinux does not support hardware breakpoints");
+    return SetHardwareBreakpoint(addr, size);
   else
     return SetSoftwareBreakpoint(addr, size);
+}
+
+Error NativeProcessLinux::RemoveBreakpoint(lldb::addr_t addr, bool hardware) {
+  if (hardware)
+    return RemoveHardwareBreakpoint(addr);
+  else
+    return NativeProcessProtocol::RemoveBreakpoint(addr);
 }
 
 Error NativeProcessLinux::GetSoftwareBreakpointTrapOpcode(

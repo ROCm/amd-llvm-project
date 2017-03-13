@@ -148,6 +148,9 @@ def no_define_common: F<"no-define-common">,
 def no_demangle: F<"no-demangle">,
   HelpText<"Do not demangle symbol names">;
 
+def no_dynamic_linker: F<"no-dynamic-linker">,
+  HelpText<"Inhibit output of .interp section">;
+
 def no_export_dynamic: F<"no-export-dynamic">;
 def no_fatal_warnings: F<"no-fatal-warnings">;
 
@@ -182,7 +185,7 @@ def o: JoinedOrSeparate<["-"], "o">, MetaVarName<"<path>">,
 def oformat: Separate<["--"], "oformat">, MetaVarName<"<format>">,
   HelpText<"Specify the binary format for the output object file">;
 
-def omagic: F<"omagic">, MetaVarName<"<magic>">,
+def omagic: Flag<["--"], "omagic">, MetaVarName<"<magic>">,
   HelpText<"Set the text and data sections to be readable and writable">;
 
 def pie: F<"pie">, HelpText<"Create a position independent executable">;
@@ -357,7 +360,6 @@ def no_add_needed: F<"no-add-needed">;
 def no_allow_shlib_undefined: F<"no-allow-shlib-undefined">;
 def no_copy_dt_needed_entries: F<"no-copy-dt-needed-entries">,
   Alias<no_add_needed>;
-def no_dynamic_linker: F<"no-dynamic-linker">;
 def no_mmap_output_file: F<"no-mmap-output-file">;
 def no_warn_common: F<"no-warn-common">;
 def no_warn_mismatch: F<"no-warn-mismatch">;
@@ -385,9 +387,11 @@ def lto_partitions: J<"lto-partitions=">,
   HelpText<"Number of LTO codegen partitions">;
 def disable_verify: F<"disable-verify">;
 def mllvm: S<"mllvm">;
-def opt_remarks_filename: S<"opt-remarks-filename">,
+def opt_remarks_filename: Separate<["--"], "opt-remarks-filename">,
   HelpText<"YAML output file for optimization remarks">;
-def opt_remarks_with_hotness: F<"opt-remarks-with-hotness">,
+def opt_remarks_with_hotness: Flag<["--"], "opt-remarks-with-hotness">,
   HelpText<"Include hotness informations in the optimization remarks file">;
 def save_temps: F<"save-temps">;
+def thinlto_cache_dir: J<"thinlto-cache-dir=">,
+  HelpText<"Path to ThinLTO cached object file directory">;
 def thinlto_jobs: J<"thinlto-jobs=">, HelpText<"Number of ThinLTO jobs">;

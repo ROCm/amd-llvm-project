@@ -45,7 +45,7 @@ public:
     ExynosM1,
     Falkor,
     Kryo,
-    Vulcan,
+    ThunderX2T99,
     ThunderX,
     ThunderXT81,
     ThunderXT83,
@@ -236,6 +236,7 @@ public:
   bool isTargetLinux() const { return TargetTriple.isOSLinux(); }
   bool isTargetWindows() const { return TargetTriple.isOSWindows(); }
   bool isTargetAndroid() const { return TargetTriple.isAndroid(); }
+  bool isTargetFuchsia() const { return TargetTriple.isOSFuchsia(); }
 
   bool isTargetCOFF() const { return TargetTriple.isOSBinFormatCOFF(); }
   bool isTargetELF() const { return TargetTriple.isOSBinFormatELF(); }

@@ -24,7 +24,6 @@
 #include "lldb/Breakpoint/Watchpoint.h"
 #include "lldb/Core/Debugger.h"
 #include "lldb/Core/Event.h"
-#include "lldb/Core/Log.h"
 #include "lldb/Core/Module.h"
 #include "lldb/Core/ModuleSpec.h"
 #include "lldb/Core/Section.h"
@@ -57,6 +56,7 @@
 #include "lldb/Target/Thread.h"
 #include "lldb/Target/ThreadSpec.h"
 #include "lldb/Utility/LLDBAssert.h"
+#include "lldb/Utility/Log.h"
 #include "lldb/Utility/StreamString.h"
 
 using namespace lldb;
@@ -2173,7 +2173,7 @@ lldb::ExpressionVariableSP
 Target::GetPersistentVariable(const ConstString &name) {
   lldb::ExpressionVariableSP variable_sp;
   m_scratch_type_system_map.ForEach(
-      [this, name, &variable_sp](TypeSystem *type_system) -> bool {
+      [name, &variable_sp](TypeSystem *type_system) -> bool {
         if (PersistentExpressionState *persistent_state =
                 type_system->GetPersistentExpressionState()) {
           variable_sp = persistent_state->GetVariable(name);
@@ -2190,7 +2190,7 @@ lldb::addr_t Target::GetPersistentSymbol(const ConstString &name) {
   lldb::addr_t address = LLDB_INVALID_ADDRESS;
 
   m_scratch_type_system_map.ForEach(
-      [this, name, &address](TypeSystem *type_system) -> bool {
+      [name, &address](TypeSystem *type_system) -> bool {
         if (PersistentExpressionState *persistent_state =
                 type_system->GetPersistentExpressionState()) {
           address = persistent_state->LookupSymbol(name);

@@ -60,13 +60,13 @@ static void or32le(uint8_t *P, int32_t V) { write32le(P, read32le(P) | V); }
 static void or32be(uint8_t *P, int32_t V) { write32be(P, read32be(P) | V); }
 
 template <class ELFT> static std::string getErrorLoc(uint8_t *Loc) {
-  for (InputSectionBase *D : Symtab<ELFT>::X->Sections) {
+  for (InputSectionBase *D : InputSections) {
     auto *IS = dyn_cast_or_null<InputSection>(D);
     if (!IS || !IS->OutSec)
       continue;
 
-    uint8_t *ISLoc = cast<OutputSection<ELFT>>(IS->OutSec)->Loc + IS->OutSecOff;
-    if (ISLoc <= Loc && Loc < ISLoc + IS->template getSize<ELFT>())
+    uint8_t *ISLoc = cast<OutputSection>(IS->OutSec)->Loc + IS->OutSecOff;
+    if (ISLoc <= Loc && Loc < ISLoc + IS->getSize())
       return IS->template getLocation<ELFT>(Loc - ISLoc) + ": ";
   }
   return "";
@@ -1320,6 +1320,8 @@ RelExpr AArch64TargetInfo::getRelExpr(uint32_t Type,
   case R_AARCH64_ADR_GOT_PAGE:
   case R_AARCH64_TLSIE_ADR_GOTTPREL_PAGE21:
     return R_GOT_PAGE_PC;
+  case R_AARCH64_NONE:
+    return R_NONE;
   }
 }
 
@@ -2086,7 +2088,7 @@ RelExpr MipsTargetInfo<ELFT>::getRelExpr(uint32_t Type,
     // offset between start of function and 'gp' value which by default
     // equal to the start of .got section. In that case we consider these
     // relocations as relative.
-    if (&S == ElfSym<ELFT>::MipsGpDisp)
+    if (&S == ElfSym::MipsGpDisp)
       return R_PC;
     return R_ABS;
   case R_MIPS_PC32:
@@ -2245,10 +2247,10 @@ bool MipsTargetInfo<ELFT>::needsThunk(RelExpr Expr, uint32_t Type,
   // If current file has PIC code, LA25 stub is not required.
   if (F->getObj().getHeader()->e_flags & EF_MIPS_PIC)
     return false;
-  auto *D = dyn_cast<DefinedRegular<ELFT>>(&S);
+  auto *D = dyn_cast<DefinedRegular>(&S);
   // LA25 is required if target file has PIC code
   // or target symbol is a PIC symbol.
-  return D && D->isMipsPIC();
+  return D && D->isMipsPIC<ELFT>();
 }
 
 template <class ELFT>

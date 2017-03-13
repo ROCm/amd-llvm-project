@@ -1,4 +1,4 @@
-//===-- llvm/CodeGen/TargetLoweringObjectFileImpl.cpp - Object File Info --===//
+//===- llvm/CodeGen/TargetLoweringObjectFileImpl.cpp - Object File Info ---===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -12,18 +12,27 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
 #include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Triple.h"
+#include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/CodeGen/MachineModuleInfoImpls.h"
+#include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
+#include "llvm/IR/Comdat.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/GlobalAlias.h"
+#include "llvm/IR/GlobalObject.h"
+#include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/Mangler.h"
+#include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/Type.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCExpr.h"
@@ -32,18 +41,23 @@
 #include "llvm/MC/MCSectionMachO.h"
 #include "llvm/MC/MCSectionWasm.h"
 #include "llvm/MC/MCStreamer.h"
+#include "llvm/MC/MCSymbol.h"
 #include "llvm/MC/MCSymbolELF.h"
-#include "llvm/MC/MCSymbolWasm.h"
 #include "llvm/MC/MCValue.h"
+#include "llvm/MC/SectionKind.h"
 #include "llvm/ProfileData/InstrProf.h"
+#include "llvm/Support/Casting.h"
+#include "llvm/Support/CodeGen.h"
 #include "llvm/Support/COFF.h"
 #include "llvm/Support/Dwarf.h"
 #include "llvm/Support/ELF.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/MachO.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Target/TargetLowering.h"
 #include "llvm/Target/TargetMachine.h"
-#include "llvm/Target/TargetSubtargetInfo.h"
+#include <cassert>
+#include <string>
+
 using namespace llvm;
 using namespace dwarf;
 
@@ -55,10 +69,10 @@ MCSymbol *TargetLoweringObjectFileELF::getCFIPersonalitySymbol(
     const GlobalValue *GV, const TargetMachine &TM,
     MachineModuleInfo *MMI) const {
   unsigned Encoding = getPersonalityEncoding();
-  if ((Encoding & 0x80) == dwarf::DW_EH_PE_indirect)
+  if ((Encoding & 0x80) == DW_EH_PE_indirect)
     return getContext().getOrCreateSymbol(StringRef("DW.ref.") +
                                           TM.getSymbol(GV)->getName());
-  if ((Encoding & 0x70) == dwarf::DW_EH_PE_absptr)
+  if ((Encoding & 0x70) == DW_EH_PE_absptr)
     return TM.getSymbol(GV);
   report_fatal_error("We do not support this DWARF encoding yet!");
 }
@@ -88,8 +102,7 @@ void TargetLoweringObjectFileELF::emitPersonalityValue(
 const MCExpr *TargetLoweringObjectFileELF::getTTypeGlobalReference(
     const GlobalValue *GV, unsigned Encoding, const TargetMachine &TM,
     MachineModuleInfo *MMI, MCStreamer &Streamer) const {
-
-  if (Encoding & dwarf::DW_EH_PE_indirect) {
+  if (Encoding & DW_EH_PE_indirect) {
     MachineModuleInfoELF &ELFMMI = MMI->getObjFileInfo<MachineModuleInfoELF>();
 
     MCSymbol *SSym = getSymbolWithGlobalValueBase(GV, ".DW.stub", TM);
@@ -104,7 +117,7 @@ const MCExpr *TargetLoweringObjectFileELF::getTTypeGlobalReference(
 
     return TargetLoweringObjectFile::
       getTTypeReference(MCSymbolRefExpr::create(SSym, getContext()),
-                        Encoding & ~dwarf::DW_EH_PE_indirect, Streamer);
+                        Encoding & ~DW_EH_PE_indirect, Streamer);
   }
 
   return TargetLoweringObjectFile::getTTypeGlobalReference(GV, Encoding, TM,
@@ -150,7 +163,6 @@ getELFKindForNamedSection(StringRef Name, SectionKind K) {
 
   return K;
 }
-
 
 static unsigned getELFSectionType(StringRef Name, SectionKind K) {
   // Use SHT_NOTE for section whose name starts with ".note" to allow
@@ -725,7 +737,7 @@ const MCExpr *TargetLoweringObjectFileMachO::getTTypeGlobalReference(
 
     return TargetLoweringObjectFile::
       getTTypeReference(MCSymbolRefExpr::create(SSym, getContext()),
-                        Encoding & ~dwarf::DW_EH_PE_indirect, Streamer);
+                        Encoding & ~DW_EH_PE_indirect, Streamer);
   }
 
   return TargetLoweringObjectFile::getTTypeGlobalReference(GV, Encoding, TM,
@@ -1162,18 +1174,73 @@ void TargetLoweringObjectFileCOFF::emitLinkerFlagsForGlobal(
 //                                  Wasm
 //===----------------------------------------------------------------------===//
 
+static const Comdat *getWasmComdat(const GlobalValue *GV) {
+  const Comdat *C = GV->getComdat();
+  if (!C)
+    return nullptr;
+
+  if (C->getSelectionKind() != Comdat::Any)
+    report_fatal_error("Wasm COMDATs only support SelectionKind::Any, '" +
+                       C->getName() + "' cannot be lowered.");
+
+  return C;
+}
+
 MCSection *TargetLoweringObjectFileWasm::getExplicitSectionGlobal(
     const GlobalObject *GO, SectionKind Kind, const TargetMachine &TM) const {
   llvm_unreachable("getExplicitSectionGlobal not yet implemented");
   return nullptr;
 }
 
+static MCSectionWasm *
+selectWasmSectionForGlobal(MCContext &Ctx, const GlobalObject *GO,
+                           SectionKind Kind, Mangler &Mang,
+                           const TargetMachine &TM, bool EmitUniqueSection,
+                           unsigned Flags, unsigned *NextUniqueID) {
+  StringRef Group = "";
+  if (getWasmComdat(GO))
+    llvm_unreachable("comdat not yet supported for wasm");
+
+  bool UniqueSectionNames = TM.getUniqueSectionNames();
+  SmallString<128> Name = getSectionPrefixForGlobal(Kind);
+
+  if (const auto *F = dyn_cast<Function>(GO)) {
+    const auto &OptionalPrefix = F->getSectionPrefix();
+    if (OptionalPrefix)
+      Name += *OptionalPrefix;
+  }
+
+  if (EmitUniqueSection && UniqueSectionNames) {
+    Name.push_back('.');
+    TM.getNameWithPrefix(Name, GO, Mang, true);
+  }
+  unsigned UniqueID = MCContext::GenericSectionID;
+  if (EmitUniqueSection && !UniqueSectionNames) {
+    UniqueID = *NextUniqueID;
+    (*NextUniqueID)++;
+  }
+  return Ctx.getWasmSection(Name, /*Type=*/0, Flags,
+                            Group, UniqueID);
+}
+
 MCSection *TargetLoweringObjectFileWasm::SelectSectionForGlobal(
     const GlobalObject *GO, SectionKind Kind, const TargetMachine &TM) const {
+
+  if (Kind.isCommon())
+    report_fatal_error("mergable sections not supported yet on wasm");
+
+  // If we have -ffunction-section or -fdata-section then we should emit the
+  // global value to a uniqued section specifically for it.
+  bool EmitUniqueSection = false;
   if (Kind.isText())
-    return TextSection;
-  assert(!Kind.isMetadata() && "metadata sections not yet implemented");
-  return DataSection;
+    EmitUniqueSection = TM.getFunctionSections();
+  else
+    EmitUniqueSection = TM.getDataSections();
+  EmitUniqueSection |= GO->hasComdat();
+
+  return selectWasmSectionForGlobal(getContext(), GO, Kind, getMangler(), TM,
+                                    EmitUniqueSection, /*Flags=*/0,
+                                    &NextUniqueID);
 }
 
 bool TargetLoweringObjectFileWasm::shouldPutJumpTableInFunctionSection(

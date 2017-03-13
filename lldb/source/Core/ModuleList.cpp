@@ -16,7 +16,6 @@
 
 // Other libraries and framework includes
 // Project includes
-#include "lldb/Core/Log.h"
 #include "lldb/Core/Module.h"
 #include "lldb/Core/ModuleSpec.h"
 #include "lldb/Host/FileSystem.h"
@@ -25,7 +24,9 @@
 #include "lldb/Symbol/ObjectFile.h"
 #include "lldb/Symbol/SymbolFile.h"
 #include "lldb/Symbol/VariableList.h"
+#include "lldb/Utility/Log.h"
 
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Threading.h"
 
 using namespace lldb;
@@ -766,7 +767,8 @@ Error ModuleList::GetSharedModule(const ModuleSpec &module_spec,
       auto search_path_spec = module_search_paths_ptr->GetFileSpecAtIndex(idx);
       if (!search_path_spec.ResolvePath())
         continue;
-      if (!search_path_spec.Exists() || !search_path_spec.IsDirectory())
+      namespace fs = llvm::sys::fs;
+      if (!fs::is_directory(search_path_spec.GetPath()))
         continue;
       search_path_spec.AppendPathComponent(
           module_spec.GetFileSpec().GetFilename().AsCString());

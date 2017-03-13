@@ -2349,6 +2349,32 @@ public:
     return LangAS::opencl_constant;
   }
 
+  /// \returns Target specific vtbl ptr address space.
+  unsigned getVtblPtrAddressSpace() const override {
+    // \todo: We currently have address spaces defined in AMDGPU Backend. It
+    // would be nice if we could use it here instead of using bare numbers (same
+    // applies to getDWARFAddressSpace).
+    return 2; // constant.
+  }
+
+  /// \returns If a target requires an address within a target specific address
+  /// space \p AddressSpace to be converted in order to be used, then return the
+  /// corresponding target specific DWARF address space.
+  ///
+  /// \returns Otherwise return None and no conversion will be emitted in the
+  /// DWARF.
+  Optional<unsigned> getDWARFAddressSpace(
+      unsigned AddressSpace) const override {
+    switch (AddressSpace) {
+    case 0: // LLVM Private.
+      return 1; // DWARF Private.
+    case 3: // LLVM Local.
+      return 2; // DWARF Local.
+    default:
+      return None;
+    }
+  }
+
   CallingConvCheckResult checkCallingConvention(CallingConv CC) const override {
     switch (CC) {
       default:
@@ -2464,6 +2490,7 @@ bool AMDGPUTargetInfo::initFeatureMap(
     case GK_GFX8:
       Features["s-memrealtime"] = true;
       Features["16-bit-insts"] = true;
+      Features["dpp"] = true;
       break;
 
     case GK_NONE:
@@ -5269,6 +5296,8 @@ public:
       default:
         if (Triple.getOS() == llvm::Triple::NetBSD)
           setABI("apcs-gnu");
+        else if (Triple.getOS() == llvm::Triple::OpenBSD)
+          setABI("aapcs-linux");
         else
           setABI("aapcs");
         break;
@@ -6086,8 +6115,9 @@ public:
     // AArch64 targets default to using the ARM C++ ABI.
     TheCXXABI.set(TargetCXXABI::GenericAArch64);
 
-    if (Triple.getOS() == llvm::Triple::Linux ||
-        Triple.getOS() == llvm::Triple::UnknownOS)
+    if (Triple.getOS() == llvm::Triple::Linux)
+      this->MCountName = "\01_mcount";
+    else if (Triple.getOS() == llvm::Triple::UnknownOS)
       this->MCountName = Opts.EABIVersion == "gnu" ? "\01_mcount" : "mcount";
   }
 
@@ -7681,7 +7711,11 @@ public:
 
   void setN64ABITypes() {
     setN32N64ABITypes();
-    Int64Type = SignedLong;
+    if (getTriple().getOS() == llvm::Triple::OpenBSD) {
+      Int64Type = SignedLongLong;
+    } else {
+      Int64Type = SignedLong;
+    }
     IntMaxType = Int64Type;
     LongWidth = LongAlign = 64;
     PointerWidth = PointerAlign = 64;

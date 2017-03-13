@@ -19,10 +19,10 @@
 
 // C++ includes
 // LLDB includes
-#include "lldb/Core/Log.h"
 #include "lldb/Core/State.h"
 #include "lldb/Host/PseudoTerminal.h"
 #include "lldb/Target/ProcessLaunchInfo.h"
+#include "lldb/Utility/Log.h"
 #include "lldb/Utility/StreamString.h"
 
 #include "CFBundle.h"
@@ -30,6 +30,8 @@
 #include "DarwinProcessLauncher.h"
 
 #include "MachException.h"
+
+#include "llvm/Support/FileSystem.h"
 
 using namespace lldb;
 using namespace lldb_private;
@@ -63,7 +65,7 @@ Error NativeProcessProtocol::Launch(
   FileSpec working_dir(launch_info.GetWorkingDirectory());
   if (working_dir &&
       (!working_dir.ResolvePath() ||
-       working_dir.GetFileType() != FileSpec::eFileTypeDirectory)) {
+       !llvm::sys::fs::is_directory(working_dir.GetPath())) {
     error.SetErrorStringWithFormat("No such file or directory: %s",
                                    working_dir.GetCString());
     return error;

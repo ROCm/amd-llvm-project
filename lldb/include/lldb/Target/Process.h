@@ -505,6 +505,7 @@ class Process : public std::enable_shared_from_this<Process>,
                 public PluginInterface {
   friend class FunctionCaller; // For WaitForStateChangeEventsPrivate
   friend class Debugger; // For PopProcessIOHandler and ProcessIOHandlerIsActive
+  friend class DynamicLoader; // For LoadOperatingSystemPlugin
   friend class ProcessEventData;
   friend class StopInfo;
   friend class Target;
@@ -2606,7 +2607,7 @@ public:
   bool RunPreResumeActions();
 
   void ClearPreResumeActions();
-  
+
   void ClearPreResumeAction(PreResumeActionCallback callback, void *baton);
 
   ProcessRunLock &GetRunLock();
@@ -3143,6 +3144,8 @@ protected:
   }
 
   Error StopForDestroyOrDetach(lldb::EventSP &exit_event_sp);
+
+  virtual Error UpdateAutomaticSignalFiltering();
 
   bool StateChangedIsExternallyHijacked();
 

@@ -12,6 +12,7 @@
 // C Includes
 // C++ Includes
 // Other libraries and framework includes
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Signals.h"
 #include "llvm/Support/raw_os_ostream.h"
 
@@ -19,9 +20,6 @@
 #include "Plugins/Language/CPlusPlus/CPlusPlusLanguage.h"
 #include "Plugins/Language/ObjC/ObjCLanguage.h"
 #include "lldb/Core/AddressResolverFileLine.h"
-#include "lldb/Core/DataBuffer.h"
-#include "lldb/Core/DataBufferHeap.h"
-#include "lldb/Core/Log.h"
 #include "lldb/Core/ModuleList.h"
 #include "lldb/Core/ModuleSpec.h"
 #include "lldb/Core/PluginManager.h"
@@ -43,7 +41,10 @@
 #include "lldb/Target/Process.h"
 #include "lldb/Target/SectionLoadList.h"
 #include "lldb/Target/Target.h"
+#include "lldb/Utility/DataBuffer.h"
+#include "lldb/Utility/DataBufferHeap.h"
 #include "lldb/Utility/Error.h"
+#include "lldb/Utility/Log.h"
 #include "lldb/Utility/RegularExpression.h"
 #include "lldb/Utility/StreamString.h"
 
@@ -1439,7 +1440,7 @@ void Module::SetSymbolFileFileSpec(const FileSpec &file) {
         // ("/tmp/a.out.dSYM/Contents/Resources/DWARF/a.out"). So we need to
         // check this
 
-        if (file.IsDirectory()) {
+        if (llvm::sys::fs::is_directory(file.GetPath())) {
           std::string new_path(file.GetPath());
           std::string old_path(obj_file->GetFileSpec().GetPath());
           if (old_path.find(new_path) == 0) {

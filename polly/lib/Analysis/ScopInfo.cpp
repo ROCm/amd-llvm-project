@@ -137,6 +137,16 @@ static cl::opt<bool> UnprofitableScalarAccs(
     cl::desc("Count statements with scalar accesses as not optimizable"),
     cl::Hidden, cl::init(true), cl::cat(PollyCategory));
 
+static cl::opt<bool> PollyPreciseInbounds(
+    "polly-precise-inbounds",
+    cl::desc("Take more precise inbounds assumptions (do not scale well)"),
+    cl::Hidden, cl::init(false), cl::cat(PollyCategory));
+
+static cl::opt<bool> PollyPreciseFoldAccesses(
+    "polly-precise-fold-accesses",
+    cl::desc("Fold memory accesses to modele more possible delinearizations "
+             "(do not scale well)"),
+    cl::Hidden, cl::init(false), cl::cat(PollyCategory));
 //===----------------------------------------------------------------------===//
 
 // Create a sequence of two schedules. Either argument may be null and is
@@ -703,6 +713,8 @@ void MemoryAccess::assumeNoOutOfBound() {
   const auto &Loc = getAccessInstruction()
                         ? getAccessInstruction()->getDebugLoc()
                         : DebugLoc();
+  if (!PollyPreciseInbounds)
+    Outside = isl_set_gist(Outside, isl_set_params(Statement->getDomain()));
   Statement->getParent()->recordAssumption(INBOUNDS, Outside, Loc,
                                            AS_ASSUMPTION);
   isl_space_free(Space);
@@ -783,6 +795,8 @@ void MemoryAccess::foldAccessRelation() {
 
   int Size = Subscripts.size();
 
+  isl_map *OldAccessRelation = isl_map_copy(AccessRelation);
+
   for (int i = Size - 2; i >= 0; --i) {
     isl_space *Space;
     isl_map *MapOne, *MapTwo;
@@ -834,6 +848,18 @@ void MemoryAccess::foldAccessRelation() {
   AccessRelation =
       isl_map_set_tuple_id(AccessRelation, isl_dim_out, BaseAddrId);
   AccessRelation = isl_map_gist_domain(AccessRelation, Statement->getDomain());
+
+  // Access dimension folding might in certain cases increase the number of
+  // disjuncts in the memory access, which can possibly complicate the generated
+  // run-time checks and can lead to costly compilation.
+  if (!PollyPreciseFoldAccesses && isl_map_n_basic_map(AccessRelation) >
+                                       isl_map_n_basic_map(OldAccessRelation)) {
+    isl_map_free(AccessRelation);
+    AccessRelation = OldAccessRelation;
+  } else {
+    isl_map_free(OldAccessRelation);
+  }
+
   isl_space_free(Space);
 }
 
@@ -1793,6 +1819,19 @@ void ScopStmt::removeMemoryAccess(MemoryAccess *MA) {
   InstructionToAccess.erase(MA->getAccessInstruction());
 }
 
+void ScopStmt::removeSingleMemoryAccess(MemoryAccess *MA) {
+  auto MAIt = std::find(MemAccs.begin(), MemAccs.end(), MA);
+  assert(MAIt != MemAccs.end());
+  MemAccs.erase(MAIt);
+
+  auto It = InstructionToAccess.find(MA->getAccessInstruction());
+  if (It != InstructionToAccess.end()) {
+    It->second.remove(MA);
+    if (It->second.empty())
+      InstructionToAccess.erase(MA->getAccessInstruction());
+  }
+}
+
 //===----------------------------------------------------------------------===//
 /// Scop class implement
 
@@ -2248,14 +2287,60 @@ getRegionNodeSuccessor(RegionNode *RN, TerminatorInst *TI, unsigned idx) {
 
 /// Return the smallest loop surrounding @p RN.
 static inline Loop *getRegionNodeLoop(RegionNode *RN, LoopInfo &LI) {
-  if (!RN->isSubRegion())
-    return LI.getLoopFor(RN->getNodeAs<BasicBlock>());
+  if (!RN->isSubRegion()) {
+    BasicBlock *BB = RN->getNodeAs<BasicBlock>();
+    Loop *L = LI.getLoopFor(BB);
+
+    // Unreachable statements are not considered to belong to a LLVM loop, as
+    // they are not part of an actual loop in the control flow graph.
+    // Nevertheless, we handle certain unreachable statements that are common
+    // when modeling run-time bounds checks as being part of the loop to be
+    // able to model them and to later eliminate the run-time bounds checks.
+    //
+    // Specifically, for basic blocks that terminate in an unreachable and
+    // where the immeditate predecessor is part of a loop, we assume these
+    // basic blocks belong to the loop the predecessor belongs to. This
+    // allows us to model the following code.
+    //
+    // for (i = 0; i < N; i++) {
+    //   if (i > 1024)
+    //     abort();            <- this abort might be translated to an
+    //                            unreachable
+    //
+    //   A[i] = ...
+    // }
+    if (!L && isa<UnreachableInst>(BB->getTerminator()) && BB->getPrevNode())
+      L = LI.getLoopFor(BB->getPrevNode());
+    return L;
+  }
 
   Region *NonAffineSubRegion = RN->getNodeAs<Region>();
   Loop *L = LI.getLoopFor(NonAffineSubRegion->getEntry());
   while (L && NonAffineSubRegion->contains(L))
     L = L->getParentLoop();
   return L;
+}
+
+/// Get the number of blocks in @p L.
+///
+/// The number of blocks in a loop are the number of basic blocks actually
+/// belonging to the loop, as well as all single basic blocks that the loop
+/// exits to and which terminate in an unreachable instruction. We do not
+/// allow such basic blocks in the exit of a scop, hence they belong to the
+/// scop and represent run-time conditions which we want to model and
+/// subsequently speculate away.
+///
+/// @see getRegionNodeLoop for additional details.
+long getNumBlocksInLoop(Loop *L) {
+  long NumBlocks = L->getNumBlocks();
+  SmallVector<llvm::BasicBlock *, 4> ExitBlocks;
+  L->getExitBlocks(ExitBlocks);
+
+  for (auto ExitBlock : ExitBlocks) {
+    if (isa<UnreachableInst>(ExitBlock->getTerminator()))
+      NumBlocks++;
+  }
+  return NumBlocks;
 }
 
 static inline unsigned getNumBlocksInRegionNode(RegionNode *RN) {
@@ -3647,6 +3732,11 @@ __isl_give isl_set *Scop::getNonHoistableCtx(MemoryAccess *Access,
   if (hasNonHoistableBasePtrInScop(Access, Writes))
     return nullptr;
 
+  auto &DL = getFunction().getParent()->getDataLayout();
+  if (isSafeToLoadUnconditionally(LI->getPointerOperand(), LI->getAlignment(),
+                                  DL))
+    return isl_set_empty(getParamSpace());
+
   // Skip accesses in non-affine subregions as they might not be executed
   // under the same condition as the entry of the non-affine subregion.
   if (BB != LI->getParent())
@@ -4485,7 +4575,7 @@ void Scop::buildSchedule(RegionNode *RN, LoopStackTy &LoopStack, LoopInfo &LI) {
   // Then continue to check surrounding loops, which might also have been
   // completed by this node.
   while (LoopData.L &&
-         LoopData.NumBlocksProcessed == LoopData.L->getNumBlocks()) {
+         LoopData.NumBlocksProcessed == getNumBlocksInLoop(LoopData.L)) {
     auto *Schedule = LoopData.Schedule;
     auto NumBlocksProcessed = LoopData.NumBlocksProcessed;
 

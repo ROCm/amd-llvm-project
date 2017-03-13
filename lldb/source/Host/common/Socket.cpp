@@ -9,13 +9,13 @@
 
 #include "lldb/Host/Socket.h"
 
-#include "lldb/Core/Log.h"
 #include "lldb/Host/Config.h"
 #include "lldb/Host/Host.h"
 #include "lldb/Host/SocketAddress.h"
 #include "lldb/Host/StringConvert.h"
 #include "lldb/Host/common/TCPSocket.h"
 #include "lldb/Host/common/UDPSocket.h"
+#include "lldb/Utility/Log.h"
 #include "lldb/Utility/RegularExpression.h"
 
 #ifndef LLDB_DISABLE_POSIX
@@ -443,11 +443,7 @@ NativeSocket Socket::AcceptSocket(NativeSocket sockfd, struct sockaddr *addr,
   if (!child_processes_inherit) {
     flags |= SOCK_CLOEXEC;
   }
-#if defined(__NetBSD__)
-  NativeSocket fd = ::paccept(sockfd, addr, addrlen, nullptr, flags);
-#else
   NativeSocket fd = ::accept4(sockfd, addr, addrlen, flags);
-#endif
 #else
   NativeSocket fd = ::accept(sockfd, addr, addrlen);
 #endif

@@ -14,7 +14,7 @@
 #include "CGCXXABI.h"
 #include "CodeGenFunction.h"
 #include "CodeGenModule.h"
-#include "ConstantBuilder.h"
+#include "clang/CodeGen/ConstantInitBuilder.h"
 #include "clang/AST/CXXInheritance.h"
 #include "clang/AST/RecordLayout.h"
 #include "clang/CodeGen/CGFunctionInfo.h"
@@ -284,7 +284,9 @@ void CodeGenFunction::EmitCallAndReturnForThunk(llvm::Constant *CalleePtr,
   if (isa<CXXDestructorDecl>(MD))
     CGM.getCXXABI().adjustCallArgsForDestructorThunk(*this, CurGD, CallArgs);
 
+#ifndef NDEBUG
   unsigned PrefixArgs = CallArgs.size() - 1;
+#endif
   // Add the rest of the arguments.
   for (const ParmVarDecl *PD : MD->parameters())
     EmitDelegateCallArg(CallArgs, PD, SourceLocation());

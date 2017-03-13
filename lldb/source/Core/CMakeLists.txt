@@ -5,28 +5,20 @@ add_lldb_library(lldbCore
   AddressResolverFileLine.cpp
   AddressResolverName.cpp
   ArchSpec.cpp
-  Baton.cpp
   Broadcaster.cpp
   Communication.cpp
   Connection.cpp
-  DataBufferHeap.cpp
-  DataBufferMemoryMap.cpp
-  DataEncoder.cpp
-  DataExtractor.cpp
   Debugger.cpp
   Disassembler.cpp
+  DumpDataExtractor.cpp
   DynamicLoader.cpp
   EmulateInstruction.cpp
   Event.cpp
-  FastDemangle.cpp
   FileLineResolver.cpp
   FileSpecList.cpp
   FormatEntity.cpp
-  History.cpp
   IOHandler.cpp
   Listener.cpp
-  Log.cpp
-  Logging.cpp
   Mangled.cpp
   Module.cpp
   ModuleChild.cpp
@@ -40,15 +32,11 @@ add_lldb_library(lldbCore
   SourceManager.cpp
   State.cpp
   StreamAsynchronousIO.cpp
-  StreamCallback.cpp
   StreamFile.cpp
-  StreamGDBRemote.cpp
   StringList.cpp
   StructuredData.cpp
   Timer.cpp
-  UserID.cpp
   UserSettingsController.cpp
-  UUID.cpp
   Value.cpp
   ValueObject.cpp
   ValueObjectCast.cpp
@@ -63,7 +51,6 @@ add_lldb_library(lldbCore
   ValueObjectRegister.cpp
   ValueObjectSyntheticFilter.cpp
   ValueObjectVariable.cpp
-  VMRange.cpp
 
   LINK_LIBS
     lldbBreakpoint
@@ -87,4 +74,4 @@ add_lldb_library(lldbCore
 
 # Needed to properly resolve references in a debug build.
 # TODO: Remove once we have better layering
-set_target_properties(lldbCore PROPERTIES LINK_INTERFACE_MULTIPLICITY 3)
+set_target_properties(lldbCore PROPERTIES LINK_INTERFACE_MULTIPLICITY 4)

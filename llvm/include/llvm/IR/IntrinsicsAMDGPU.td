@@ -125,7 +125,8 @@ def int_amdgcn_s_barrier : GCCBuiltin<"__builtin_amdgcn_s_barrier">,
 def int_amdgcn_wave_barrier : GCCBuiltin<"__builtin_amdgcn_wave_barrier">,
   Intrinsic<[], [], [IntrConvergent]>;
 
-def int_amdgcn_s_waitcnt : Intrinsic<[], [llvm_i32_ty], []>;
+def int_amdgcn_s_waitcnt : GCCBuiltin<"__builtin_amdgcn_s_waitcnt">,
+  Intrinsic<[], [llvm_i32_ty], []>;
 
 def int_amdgcn_div_scale : Intrinsic<
   // 1st parameter: Numerator
@@ -665,10 +666,12 @@ def int_amdgcn_s_memrealtime :
 
 // llvm.amdgcn.ds.permute <index> <src>
 def int_amdgcn_ds_permute :
+  GCCBuiltin<"__builtin_amdgcn_ds_permute">,
   Intrinsic<[llvm_i32_ty], [llvm_i32_ty, llvm_i32_ty], [IntrNoMem, IntrConvergent]>;
 
 // llvm.amdgcn.ds.bpermute <index> <src>
 def int_amdgcn_ds_bpermute :
+  GCCBuiltin<"__builtin_amdgcn_ds_bpermute">,
   Intrinsic<[llvm_i32_ty], [llvm_i32_ty, llvm_i32_ty], [IntrNoMem, IntrConvergent]>;
 
 }

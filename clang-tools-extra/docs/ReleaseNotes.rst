@@ -62,10 +62,19 @@ Improvements to clang-tidy
 
   Finds modification of the ``std`` or ``posix`` namespace.
 
+- Improved `cppcoreguidelines-no-malloc 
+  <http://clang.llvm.org/extra/clang-tidy/checks/cppcoreguidelines-no-malloc.html>`_ check
+
+  Allow custom memory management functions to be considered as well.
+
 - New `readability-misleading-indentation
   <http://clang.llvm.org/extra/clang-tidy/checks/readability-misleading-indentation.html>`_ check
 
   Finds misleading indentation where braces should be introduced or the code should be reformatted.
+
+- Added `ParameterThreshold` to `readability-function-size`.
+
+  Finds functions that have more then `ParameterThreshold` parameters and emits a warning.
 
 - New `safety-no-assembler
   <http://clang.llvm.org/extra/clang-tidy/checks/safety-no-assembler.html>`_ check
@@ -77,6 +86,9 @@ Improvements to clang-tidy
 
   Finds and replaces explicit calls to the constructor in a return statement by
   a braced initializer list so that the return type is not needlessly repeated.
+
+- Support clang-formatting of the code around applied fixes (``-format-style``
+  command-line option).
 
 Improvements to include-fixer
 -----------------------------

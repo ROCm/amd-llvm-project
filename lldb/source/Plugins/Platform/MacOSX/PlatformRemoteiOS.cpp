@@ -15,7 +15,6 @@
 // Project includes
 #include "lldb/Breakpoint/BreakpointLocation.h"
 #include "lldb/Core/ArchSpec.h"
-#include "lldb/Core/Log.h"
 #include "lldb/Core/Module.h"
 #include "lldb/Core/ModuleList.h"
 #include "lldb/Core/ModuleSpec.h"
@@ -25,6 +24,7 @@
 #include "lldb/Target/Process.h"
 #include "lldb/Target/Target.h"
 #include "lldb/Utility/Error.h"
+#include "lldb/Utility/Log.h"
 #include "lldb/Utility/StreamString.h"
 
 using namespace lldb;
@@ -255,7 +255,7 @@ Error PlatformRemoteiOS::ResolveExecutable(
 
 FileSpec::EnumerateDirectoryResult
 PlatformRemoteiOS::GetContainedFilesIntoVectorOfStringsCallback(
-    void *baton, FileSpec::FileType file_type, const FileSpec &file_spec) {
+    void *baton, llvm::sys::fs::file_type ft, const FileSpec &file_spec) {
   ((PlatformRemoteiOS::SDKDirectoryInfoCollection *)baton)
       ->push_back(PlatformRemoteiOS::SDKDirectoryInfo(file_spec));
   return FileSpec::eEnumerateDirectoryResultNext;

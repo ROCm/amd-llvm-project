@@ -28,23 +28,24 @@ using namespace llvm::ELF;
 using namespace lld;
 using namespace lld::elf;
 
+DefinedRegular *ElfSym::Etext;
+DefinedRegular *ElfSym::Etext2;
+DefinedRegular *ElfSym::Edata;
+DefinedRegular *ElfSym::Edata2;
+DefinedRegular *ElfSym::End;
+DefinedRegular *ElfSym::End2;
+DefinedRegular *ElfSym::MipsGpDisp;
+DefinedRegular *ElfSym::MipsLocalGp;
+DefinedRegular *ElfSym::MipsGp;
+
 template <class ELFT>
 static typename ELFT::uint getSymVA(const SymbolBody &Body, int64_t &Addend) {
-  typedef typename ELFT::uint uintX_t;
-
   switch (Body.kind()) {
-  case SymbolBody::DefinedSyntheticKind: {
-    auto &D = cast<DefinedSynthetic>(Body);
-    const OutputSectionBase *Sec = D.Section;
-    if (!Sec)
-      return D.Value;
-    if (D.Value == uintX_t(-1))
-      return Sec->Addr + Sec->Size;
-    return Sec->Addr + D.Value;
-  }
   case SymbolBody::DefinedRegularKind: {
-    auto &D = cast<DefinedRegular<ELFT>>(Body);
-    InputSectionBase *IS = D.Section;
+    auto &D = cast<DefinedRegular>(Body);
+    SectionBase *IS = D.Section;
+    if (auto *ISB = dyn_cast_or_null<InputSectionBase>(IS))
+      IS = ISB->Repl;
 
     // According to the ELF spec reference to a local symbol from outside
     // the group are not allowed. Unfortunately .eh_frame breaks that rule
@@ -57,18 +58,43 @@ static typename ELFT::uint getSymVA(const SymbolBody &Body, int64_t &Addend) {
     if (!IS)
       return D.Value;
 
-    uintX_t Offset = D.Value;
+    uint64_t Offset = D.Value;
+
+    // An object in an SHF_MERGE section might be referenced via a
+    // section symbol (as a hack for reducing the number of local
+    // symbols).
+    // Depending on the addend, the reference via a section symbol
+    // refers to a different object in the merge section.
+    // Since the objects in the merge section are not necessarily
+    // contiguous in the output, the addend can thus affect the final
+    // VA in a non-linear way.
+    // To make this work, we incorporate the addend into the section
+    // offset (and zero out the addend for later processing) so that
+    // we find the right object in the section.
     if (D.isSection()) {
       Offset += Addend;
       Addend = 0;
     }
-    const OutputSectionBase *OutSec = IS->getOutputSection<ELFT>();
-    uintX_t VA = (OutSec ? OutSec->Addr : 0) + IS->getOffset<ELFT>(Offset);
+
+    const OutputSection *OutSec = IS->getOutputSection();
+
+    // In the typical case, this is actually very simple and boils
+    // down to adding together 3 numbers:
+    // 1. The address of the output section.
+    // 2. The offset of the input section within the output section.
+    // 3. The offset within the input section (this addition happens
+    //    inside InputSection::getOffset).
+    //
+    // If you understand the data structures involved with this next
+    // line (and how they get built), then you have a pretty good
+    // understanding of the linker.
+    uint64_t VA = (OutSec ? OutSec->Addr : 0) + IS->getOffset(Offset);
+
     if (D.isTls() && !Config->Relocatable) {
-      if (!Out<ELFT>::TlsPhdr)
+      if (!Out::TlsPhdr)
         fatal(toString(D.File) +
               " has a STT_TLS symbol but doesn't have a PT_TLS section");
-      return VA - Out<ELFT>::TlsPhdr->p_vaddr;
+      return VA - Out::TlsPhdr->p_vaddr;
     }
     return VA;
   }
@@ -78,7 +104,7 @@ static typename ELFT::uint getSymVA(const SymbolBody &Body, int64_t &Addend) {
     return In<ELFT>::Common->OutSec->Addr + In<ELFT>::Common->OutSecOff +
            cast<DefinedCommon>(Body).Offset;
   case SymbolBody::SharedKind: {
-    auto &SS = cast<SharedSymbol<ELFT>>(Body);
+    auto &SS = cast<SharedSymbol>(Body);
     if (SS.NeedsCopy)
       return SS.Section->OutSec->Addr + SS.Section->OutSecOff;
     if (SS.NeedsPltAddr)
@@ -165,11 +191,33 @@ template <class ELFT> typename ELFT::uint SymbolBody::getPltVA() const {
 template <class ELFT> typename ELFT::uint SymbolBody::getSize() const {
   if (const auto *C = dyn_cast<DefinedCommon>(this))
     return C->Size;
-  if (const auto *DR = dyn_cast<DefinedRegular<ELFT>>(this))
+  if (const auto *DR = dyn_cast<DefinedRegular>(this))
     return DR->Size;
-  if (const auto *S = dyn_cast<SharedSymbol<ELFT>>(this))
-    return S->Sym.st_size;
+  if (const auto *S = dyn_cast<SharedSymbol>(this))
+    return S->getSize<ELFT>();
   return 0;
+}
+
+template <class ELFT> OutputSection *SymbolBody::getOutputSection() const {
+  if (auto *S = dyn_cast<DefinedRegular>(this)) {
+    if (S->Section)
+      return S->Section->getOutputSection();
+    return nullptr;
+  }
+
+  if (auto *S = dyn_cast<SharedSymbol>(this)) {
+    if (S->NeedsCopy)
+      return S->Section->OutSec;
+    return nullptr;
+  }
+
+  if (isa<DefinedCommon>(this)) {
+    if (Config->DefineCommon)
+      return In<ELFT>::Common->OutSec;
+    return nullptr;
+  }
+
+  return nullptr;
 }
 
 // If a symbol name contains '@', the characters after that is
@@ -215,11 +263,15 @@ Defined::Defined(Kind K, StringRefZ Name, bool IsLocal, uint8_t StOther,
                  uint8_t Type)
     : SymbolBody(K, Name, IsLocal, StOther, Type) {}
 
-template <class ELFT> bool DefinedRegular<ELFT>::isMipsPIC() const {
+template <class ELFT> bool DefinedRegular::isMipsPIC() const {
   if (!Section || !isFunc())
     return false;
   return (this->StOther & STO_MIPS_MIPS16) == STO_MIPS_PIC ||
-         (Section->getFile<ELFT>()->getObj().getHeader()->e_flags &
+         (cast<InputSectionBase>(Section)
+              ->template getFile<ELFT>()
+              ->getObj()
+              .getHeader()
+              ->e_flags &
           EF_MIPS_PIC);
 }
 
@@ -229,12 +281,23 @@ Undefined::Undefined(StringRefZ Name, bool IsLocal, uint8_t StOther,
   this->File = File;
 }
 
-DefinedCommon::DefinedCommon(StringRef Name, uint64_t Size, uint64_t Alignment,
+DefinedCommon::DefinedCommon(StringRef Name, uint64_t Size, uint32_t Alignment,
                              uint8_t StOther, uint8_t Type, InputFile *File)
     : Defined(SymbolBody::DefinedCommonKind, Name, /*IsLocal=*/false, StOther,
               Type),
       Alignment(Alignment), Size(Size) {
   this->File = File;
+}
+
+// If a shared symbol is referred via a copy relocation, its alignment
+// becomes part of the ABI. This function returns a symbol alignment.
+// Because symbols don't have alignment attributes, we need to infer that.
+template <class ELFT> uint32_t SharedSymbol::getAlignment() const {
+  auto *File = cast<SharedFile<ELFT>>(this->File);
+  uint32_t SecAlign = File->getSection(getSym<ELFT>())->sh_addralign;
+  uint64_t SymValue = getSym<ELFT>().st_value;
+  uint32_t SymAlign = uint32_t(1) << countTrailingZeros(SymValue);
+  return std::min(SecAlign, SymAlign);
 }
 
 InputFile *Lazy::fetch() {
@@ -348,12 +411,17 @@ template uint32_t SymbolBody::template getSize<ELF32BE>() const;
 template uint64_t SymbolBody::template getSize<ELF64LE>() const;
 template uint64_t SymbolBody::template getSize<ELF64BE>() const;
 
-template class elf::SharedSymbol<ELF32LE>;
-template class elf::SharedSymbol<ELF32BE>;
-template class elf::SharedSymbol<ELF64LE>;
-template class elf::SharedSymbol<ELF64BE>;
+template OutputSection *SymbolBody::template getOutputSection<ELF32LE>() const;
+template OutputSection *SymbolBody::template getOutputSection<ELF32BE>() const;
+template OutputSection *SymbolBody::template getOutputSection<ELF64LE>() const;
+template OutputSection *SymbolBody::template getOutputSection<ELF64BE>() const;
 
-template class elf::DefinedRegular<ELF32LE>;
-template class elf::DefinedRegular<ELF32BE>;
-template class elf::DefinedRegular<ELF64LE>;
-template class elf::DefinedRegular<ELF64BE>;
+template bool DefinedRegular::template isMipsPIC<ELF32LE>() const;
+template bool DefinedRegular::template isMipsPIC<ELF32BE>() const;
+template bool DefinedRegular::template isMipsPIC<ELF64LE>() const;
+template bool DefinedRegular::template isMipsPIC<ELF64BE>() const;
+
+template uint32_t SharedSymbol::template getAlignment<ELF32LE>() const;
+template uint32_t SharedSymbol::template getAlignment<ELF32BE>() const;
+template uint32_t SharedSymbol::template getAlignment<ELF64LE>() const;
+template uint32_t SharedSymbol::template getAlignment<ELF64BE>() const;

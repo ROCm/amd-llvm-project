@@ -12,7 +12,7 @@
 
 // Project includes
 #include "lldb/Core/PluginInterface.h"
-#include "lldb/Core/UUID.h"
+#include "lldb/Utility/UUID.h"
 #include "lldb/Utility/Error.h"
 #include "lldb/lldb-private.h"
 
@@ -331,6 +331,10 @@ protected:
   // Read a pointer from memory at the given addr.
   // Return LLDB_INVALID_ADDRESS if the read fails.
   lldb::addr_t ReadPointer(lldb::addr_t addr);
+  
+  // Calls into the Process protected method LoadOperatingSystemPlugin:
+  void LoadOperatingSystemPlugin(bool flush);
+
 
   //------------------------------------------------------------------
   // Member variables.

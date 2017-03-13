@@ -428,6 +428,8 @@ void UnwrappedLineParser::parseBlock(bool MustBeDeclaration, bool AddLevel,
     parseParens();
 
   addUnwrappedLine();
+  size_t OpeningLineIndex =
+      Lines.empty() ? (UnwrappedLine::kInvalidIndex) : (Lines.size() - 1);
 
   ScopedDeclarationState DeclarationState(*Line, DeclarationScopeStack,
                                           MustBeDeclaration);
@@ -453,6 +455,7 @@ void UnwrappedLineParser::parseBlock(bool MustBeDeclaration, bool AddLevel,
   if (MunchSemi && FormatTok->Tok.is(tok::semi))
     nextToken();
   Line->Level = InitialLevel;
+  Line->MatchingOpeningBlockLineIndex = OpeningLineIndex;
 }
 
 static bool isGoogScope(const UnwrappedLine &Line) {
@@ -586,13 +589,14 @@ void UnwrappedLineParser::conditionalCompilationEnd() {
 }
 
 void UnwrappedLineParser::parsePPIf(bool IfDef) {
+  bool IfNDef = FormatTok->is(tok::pp_ifndef);
   nextToken();
-  bool IsLiteralFalse = (FormatTok->Tok.isLiteral() &&
-                         FormatTok->Tok.getLiteralData() != nullptr &&
-                         StringRef(FormatTok->Tok.getLiteralData(),
-                                   FormatTok->Tok.getLength()) == "0") ||
-                        FormatTok->Tok.is(tok::kw_false);
-  conditionalCompilationStart(!IfDef && IsLiteralFalse);
+  bool Unreachable = false;
+  if (!IfDef && (FormatTok->is(tok::kw_false) || FormatTok->TokenText == "0"))
+    Unreachable = true;
+  if (IfDef && !IfNDef && FormatTok->TokenText == "SWIG")
+    Unreachable = true;
+  conditionalCompilationStart(Unreachable);
   parsePPUnknown();
 }
 
@@ -946,7 +950,7 @@ void UnwrappedLineParser::parseStructuralElement() {
       if (!parseEnum())
         break;
       // This only applies for C++.
-      if (Style.Language != FormatStyle::LK_Cpp) {
+      if (!Style.IsCpp()) {
         addUnwrappedLine();
         return;
       }
@@ -1127,7 +1131,7 @@ void UnwrappedLineParser::parseStructuralElement() {
 }
 
 bool UnwrappedLineParser::tryToParseLambda() {
-  if (Style.Language != FormatStyle::LK_Cpp) {
+  if (!Style.IsCpp()) {
     nextToken();
     return false;
   }
@@ -1737,8 +1741,7 @@ bool UnwrappedLineParser::parseEnum() {
       nextToken();
       // If there are two identifiers in a row, this is likely an elaborate
       // return type. In Java, this can be "implements", etc.
-      if (Style.Language == FormatStyle::LK_Cpp &&
-          FormatTok->is(tok::identifier))
+      if (Style.IsCpp() && FormatTok->is(tok::identifier))
         return false;
     }
   }
@@ -2045,6 +2048,7 @@ void UnwrappedLineParser::addUnwrappedLine() {
   });
   CurrentLines->push_back(std::move(*Line));
   Line->Tokens.clear();
+  Line->MatchingOpeningBlockLineIndex = UnwrappedLine::kInvalidIndex;
   if (CurrentLines == &Lines && !PreprocessorDirectives.empty()) {
     CurrentLines->append(
         std::make_move_iterator(PreprocessorDirectives.begin()),
@@ -2151,7 +2155,7 @@ static bool continuesLineComment(const FormatToken &FormatTok,
   // Scan for '{//'. If found, use the column of '{' as a min column for line
   // comment section continuation.
   const FormatToken *PreviousToken = nullptr;
-  for (const UnwrappedLineNode Node : Line.Tokens) {
+  for (const UnwrappedLineNode &Node : Line.Tokens) {
     if (PreviousToken && PreviousToken->is(tok::l_brace) &&
         isLineComment(*Node.Tok)) {
       MinColumnToken = PreviousToken;

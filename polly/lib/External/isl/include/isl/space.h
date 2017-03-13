@@ -80,10 +80,11 @@ __isl_give isl_space *isl_space_set_dim_name(__isl_take isl_space *dim,
 __isl_keep const char *isl_space_get_dim_name(__isl_keep isl_space *dim,
 				 enum isl_dim_type type, unsigned pos);
 
+ISL_DEPRECATED
 __isl_give isl_space *isl_space_extend(__isl_take isl_space *dim,
 			unsigned nparam, unsigned n_in, unsigned n_out);
-__isl_give isl_space *isl_space_add_dims(__isl_take isl_space *dim, enum isl_dim_type type,
-		unsigned n);
+__isl_give isl_space *isl_space_add_dims(__isl_take isl_space *space,
+	enum isl_dim_type type, unsigned n);
 __isl_give isl_space *isl_space_move_dims(__isl_take isl_space *dim,
 	enum isl_dim_type dst_type, unsigned dst_pos,
 	enum isl_dim_type src_type, unsigned src_pos, unsigned n);
@@ -163,9 +164,6 @@ isl_bool isl_space_match(__isl_keep isl_space *space1, enum isl_dim_type type1,
 ISL_DEPRECATED
 int isl_space_tuple_match(__isl_keep isl_space *space1, enum isl_dim_type type1,
 	__isl_keep isl_space *space2, enum isl_dim_type type2);
-ISL_DEPRECATED
-int isl_space_compatible(__isl_keep isl_space *dim1,
-	__isl_keep isl_space *dim2);
 unsigned isl_space_dim(__isl_keep isl_space *dim, enum isl_dim_type type);
 
 __isl_give char *isl_space_to_str(__isl_keep isl_space *space);

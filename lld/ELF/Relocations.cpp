@@ -245,7 +245,7 @@ template <endianness E> static int16_t readSignedLo16(const uint8_t *Loc) {
 
 template <class RelTy>
 static uint32_t getMipsPairType(const RelTy *Rel, const SymbolBody &Sym) {
-  switch (Rel->getType(Config->Mips64EL)) {
+  switch (Rel->getType(Config->isMips64EL())) {
   case R_MIPS_HI16:
     return R_MIPS_LO16;
   case R_MIPS_GOT16:
@@ -263,7 +263,7 @@ template <class ELFT, class RelTy>
 static int32_t findMipsPairedAddend(const uint8_t *Buf, const uint8_t *BufLoc,
                                     SymbolBody &Sym, const RelTy *Rel,
                                     const RelTy *End) {
-  uint32_t SymIndex = Rel->getSymbol(Config->Mips64EL);
+  uint32_t SymIndex = Rel->getSymbol(Config->isMips64EL());
   uint32_t Type = getMipsPairType(Rel, Sym);
 
   // Some MIPS relocations use addend calculated from addend of the relocation
@@ -274,16 +274,16 @@ static int32_t findMipsPairedAddend(const uint8_t *Buf, const uint8_t *BufLoc,
     return 0;
 
   for (const RelTy *RI = Rel; RI != End; ++RI) {
-    if (RI->getType(Config->Mips64EL) != Type)
+    if (RI->getType(Config->isMips64EL()) != Type)
       continue;
-    if (RI->getSymbol(Config->Mips64EL) != SymIndex)
+    if (RI->getSymbol(Config->isMips64EL()) != SymIndex)
       continue;
     const endianness E = ELFT::TargetEndianness;
     return ((read32<E>(BufLoc) & 0xffff) << 16) +
            readSignedLo16<E>(Buf + RI->r_offset);
   }
   warn("can't find matching " + toString(Type) + " relocation for " +
-       toString(Rel->getType(Config->Mips64EL)));
+       toString(Rel->getType(Config->isMips64EL())));
   return 0;
 }
 
@@ -292,7 +292,7 @@ static int32_t findMipsPairedAddend(const uint8_t *Buf, const uint8_t *BufLoc,
 template <class ELFT> static bool isAbsolute(const SymbolBody &Body) {
   if (Body.isUndefined())
     return !Body.isLocal() && Body.symbol()->isWeak();
-  if (const auto *DR = dyn_cast<DefinedRegular<ELFT>>(&Body))
+  if (const auto *DR = dyn_cast<DefinedRegular>(&Body))
     return DR->Section == nullptr; // Absolute symbol.
   return false;
 }
@@ -352,7 +352,7 @@ isStaticLinkTimeConstant(RelExpr E, uint32_t Type, const SymbolBody &Body,
   if (AbsVal && RelE) {
     if (Body.isUndefined() && !Body.isLocal() && Body.symbol()->isWeak())
       return true;
-    if (&Body == ElfSym<ELFT>::MipsGpDisp)
+    if (&Body == ElfSym::MipsGpDisp)
       return true;
     error(S.getLocation<ELFT>(RelOff) + ": relocation " + toString(Type) +
           " cannot refer to absolute symbol '" + toString(Body) +
@@ -387,23 +387,13 @@ static RelExpr fromPlt(RelExpr Expr) {
   return Expr;
 }
 
-template <class ELFT> static uint32_t getAlignment(SharedSymbol<ELFT> *SS) {
-  typedef typename ELFT::uint uintX_t;
-
-  uintX_t SecAlign = SS->file()->getSection(SS->Sym)->sh_addralign;
-  uintX_t SymValue = SS->Sym.st_value;
-  int TrailingZeros =
-      std::min(countTrailingZeros(SecAlign), countTrailingZeros(SymValue));
-  return 1 << TrailingZeros;
-}
-
-template <class ELFT> static bool isReadOnly(SharedSymbol<ELFT> *SS) {
-  typedef typename ELFT::uint uintX_t;
+template <class ELFT> static bool isReadOnly(SharedSymbol *SS) {
   typedef typename ELFT::Phdr Elf_Phdr;
+  uint64_t Value = SS->getValue<ELFT>();
 
   // Determine if the symbol is read-only by scanning the DSO's program headers.
-  uintX_t Value = SS->Sym.st_value;
-  for (const Elf_Phdr &Phdr : check(SS->file()->getObj().program_headers()))
+  auto *File = cast<SharedFile<ELFT>>(SS->File);
+  for (const Elf_Phdr &Phdr : check(File->getObj().program_headers()))
     if ((Phdr.p_type == ELF::PT_LOAD || Phdr.p_type == ELF::PT_GNU_RELRO) &&
         !(Phdr.p_flags & ELF::PF_W) && Value >= Phdr.p_vaddr &&
         Value < Phdr.p_vaddr + Phdr.p_memsz)
@@ -417,16 +407,20 @@ template <class ELFT> static bool isReadOnly(SharedSymbol<ELFT> *SS) {
 // them are copied by a copy relocation, all of them need to be copied.
 // Otherwise, they would refer different places at runtime.
 template <class ELFT>
-static std::vector<SharedSymbol<ELFT> *> getSymbolsAt(SharedSymbol<ELFT> *SS) {
+static std::vector<SharedSymbol *> getSymbolsAt(SharedSymbol *SS) {
   typedef typename ELFT::Sym Elf_Sym;
 
-  std::vector<SharedSymbol<ELFT> *> Ret;
-  for (const Elf_Sym &S : SS->file()->getGlobalSymbols()) {
-    if (S.st_shndx != SS->Sym.st_shndx || S.st_value != SS->Sym.st_value)
+  auto *File = cast<SharedFile<ELFT>>(SS->File);
+  uint64_t Shndx = SS->getShndx<ELFT>();
+  uint64_t Value = SS->getValue<ELFT>();
+
+  std::vector<SharedSymbol *> Ret;
+  for (const Elf_Sym &S : File->getGlobalSymbols()) {
+    if (S.st_shndx != Shndx || S.st_value != Value)
       continue;
-    StringRef Name = check(S.getName(SS->file()->getStringTable()));
+    StringRef Name = check(S.getName(File->getStringTable()));
     SymbolBody *Sym = Symtab<ELFT>::X->find(Name);
-    if (auto *Alias = dyn_cast_or_null<SharedSymbol<ELFT>>(Sym))
+    if (auto *Alias = dyn_cast_or_null<SharedSymbol>(Sym))
       Ret.push_back(Alias);
   }
   return Ret;
@@ -474,7 +468,7 @@ static std::vector<SharedSymbol<ELFT> *> getSymbolsAt(SharedSymbol<ELFT> *SS) {
 // to the variable in .bss. This kind of issue is sometimes very hard to
 // debug. What's a solution? Instead of exporting a varaible V from a DSO,
 // define an accessor getV().
-template <class ELFT> static void addCopyRelSymbol(SharedSymbol<ELFT> *SS) {
+template <class ELFT> static void addCopyRelSymbol(SharedSymbol *SS) {
   typedef typename ELFT::uint uintX_t;
 
   // Copy relocation against zero-sized symbol doesn't make sense.
@@ -484,18 +478,18 @@ template <class ELFT> static void addCopyRelSymbol(SharedSymbol<ELFT> *SS) {
 
   // See if this symbol is in a read-only segment. If so, preserve the symbol's
   // memory protection by reserving space in the .bss.rel.ro section.
-  bool IsReadOnly = isReadOnly(SS);
-  OutputSection<ELFT> *OSec = IsReadOnly ? Out<ELFT>::BssRelRo : Out<ELFT>::Bss;
+  bool IsReadOnly = isReadOnly<ELFT>(SS);
+  OutputSection *OSec = IsReadOnly ? Out::BssRelRo : Out::Bss;
 
   // Create a SyntheticSection in Out to hold the .bss and the Copy Reloc.
   auto *ISec =
-      make<CopyRelSection<ELFT>>(IsReadOnly, getAlignment(SS), SymSize);
+      make<CopyRelSection<ELFT>>(IsReadOnly, SS->getAlignment<ELFT>(), SymSize);
   OSec->addSection(ISec);
 
   // Look through the DSO's dynamic symbol table for aliases and create a
   // dynamic symbol for each one. This causes the copy relocation to correctly
   // interpose any aliases.
-  for (SharedSymbol<ELFT> *Sym : getSymbolsAt(SS)) {
+  for (SharedSymbol *Sym : getSymbolsAt<ELFT>(SS)) {
     Sym->NeedsCopy = true;
     Sym->Section = ISec;
     Sym->symbol()->IsUsedInRegularObj = true;
@@ -526,11 +520,12 @@ static RelExpr adjustExpr(const elf::ObjectFile<ELFT> &File, SymbolBody &Body,
   // only memory. We can hack around it if we are producing an executable and
   // the refered symbol can be preemepted to refer to the executable.
   if (Config->Shared || (Config->pic() && !isRelExpr(Expr))) {
-    error(S.getLocation<ELFT>(RelOff) + ": can't create dynamic relocation " +
-          toString(Type) + " against " +
-          (Body.getName().empty() ? "local symbol in readonly segment"
-                                  : "symbol '" + toString(Body) + "'") +
-          " defined in " + toString(Body.File));
+    if (Config->ZText)
+      error(S.getLocation<ELFT>(RelOff) + ": can't create dynamic relocation " +
+            toString(Type) + " against " +
+            (Body.getName().empty() ? "local symbol in readonly segment"
+                                    : "symbol '" + toString(Body) + "'") +
+            " defined in " + toString(Body.File));
     return Expr;
   }
   if (Body.getVisibility() != STV_DEFAULT) {
@@ -540,14 +535,14 @@ static RelExpr adjustExpr(const elf::ObjectFile<ELFT> &File, SymbolBody &Body,
   }
   if (Body.isObject()) {
     // Produce a copy relocation.
-    auto *B = cast<SharedSymbol<ELFT>>(&Body);
+    auto *B = cast<SharedSymbol>(&Body);
     if (!B->NeedsCopy) {
       if (Config->ZNocopyreloc)
         error(S.getLocation<ELFT>(RelOff) + ": unresolvable relocation " +
               toString(Type) + " against symbol '" + toString(*B) +
               "'; recompile with -fPIC or remove '-z nocopyreloc'");
 
-      addCopyRelSymbol(B);
+      addCopyRelSymbol<ELFT>(B);
     }
     return Expr;
   }
@@ -585,7 +580,7 @@ template <class ELFT, class RelTy>
 static int64_t computeAddend(const elf::ObjectFile<ELFT> &File,
                              const uint8_t *SectionData, const RelTy *End,
                              const RelTy &RI, RelExpr Expr, SymbolBody &Body) {
-  uint32_t Type = RI.getType(Config->Mips64EL);
+  uint32_t Type = RI.getType(Config->isMips64EL());
   int64_t Addend = getAddend<ELFT>(RI);
   const uint8_t *BufLoc = SectionData + RI.r_offset;
   if (!RelTy::IsRela)
@@ -637,7 +632,7 @@ mergeMipsN32RelTypes(uint32_t Type, uint32_t Offset, RelTy *I, RelTy *E) {
   uint32_t Processed = 0;
   for (; I != E && Offset == I->r_offset; ++I) {
     ++Processed;
-    Type |= I->getType(Config->Mips64EL) << (8 * Processed);
+    Type |= I->getType(Config->isMips64EL()) << (8 * Processed);
   }
   return std::make_pair(Type, Processed);
 }
@@ -670,7 +665,7 @@ static void scanRelocs(InputSectionBase &C, ArrayRef<RelTy> Rels) {
   const uint8_t *Buf = SectionData.begin();
 
   ArrayRef<EhSectionPiece> Pieces;
-  if (auto *Eh = dyn_cast<EhInputSection<ELFT>>(&C))
+  if (auto *Eh = dyn_cast<EhInputSection>(&C))
     Pieces = Eh->Pieces;
 
   ArrayRef<EhSectionPiece>::iterator PieceI = Pieces.begin();
@@ -679,7 +674,7 @@ static void scanRelocs(InputSectionBase &C, ArrayRef<RelTy> Rels) {
   for (auto I = Rels.begin(), E = Rels.end(); I != E; ++I) {
     const RelTy &RI = *I;
     SymbolBody &Body = File->getRelocTargetSym(RI);
-    uint32_t Type = RI.getType(Config->Mips64EL);
+    uint32_t Type = RI.getType(Config->isMips64EL());
 
     if (Config->MipsN32Abi) {
       uint32_t Processed;
@@ -866,7 +861,7 @@ template <class ELFT> void scanRelocations(InputSectionBase &S) {
 // offsets.
 // This may invalidate any output section offsets stored outside of InputSection
 template <class ELFT>
-static void mergeThunks(OutputSection<ELFT> *OS,
+static void mergeThunks(OutputSection *OS,
                         std::vector<ThunkSection<ELFT> *> &Thunks) {
   // Order Thunks in ascending OutSecOff
   auto ThunkCmp = [](const ThunkSection<ELFT> *A, const ThunkSection<ELFT> *B) {
@@ -892,8 +887,7 @@ static void mergeThunks(OutputSection<ELFT> *OS,
   std::merge(OS->Sections.begin(), OS->Sections.end(), Thunks.begin(),
              Thunks.end(), std::back_inserter(Tmp), MergeCmp);
   OS->Sections = std::move(Tmp);
-  OS->Size = 0;
-  OS->assignOffsets();
+  OS->assignOffsets<ELFT>();
 }
 
 // Process all relocations from the InputSections that have been assigned
@@ -907,14 +901,13 @@ static void mergeThunks(OutputSection<ELFT> *OS,
 // FIXME: All Thunks are assumed to be in range of the relocation. Range
 // extension Thunks are not yet supported.
 template <class ELFT>
-void createThunks(ArrayRef<OutputSectionBase *> OutputSections) {
+bool createThunks(ArrayRef<OutputSection *> OutputSections) {
   // Track Symbols that already have a Thunk
   DenseMap<SymbolBody *, Thunk<ELFT> *> ThunkedSymbols;
   // Track InputSections that have a ThunkSection placed in front
   DenseMap<InputSection *, ThunkSection<ELFT> *> ThunkedSections;
   // Track the ThunksSections that need to be inserted into an OutputSection
-  std::map<OutputSection<ELFT> *, std::vector<ThunkSection<ELFT> *>>
-      ThunkSections;
+  std::map<OutputSection *, std::vector<ThunkSection<ELFT> *>> ThunkSections;
 
   // Find or create a Thunk for Body for relocation Type
   auto GetThunk = [&](SymbolBody &Body, uint32_t Type) {
@@ -925,23 +918,23 @@ void createThunks(ArrayRef<OutputSectionBase *> OutputSections) {
   };
 
   // Find or create a ThunkSection to be placed immediately before IS
-  auto GetISThunkSec = [&](InputSection *IS, OutputSection<ELFT> *OS) {
+  auto GetISThunkSec = [&](InputSection *IS, OutputSection *OS) {
     ThunkSection<ELFT> *TS = ThunkedSections.lookup(IS);
     if (TS)
       return TS;
-    auto *TOS = cast<OutputSection<ELFT>>(IS->OutSec);
+    auto *TOS = cast<OutputSection>(IS->OutSec);
     TS = make<ThunkSection<ELFT>>(TOS, IS->OutSecOff);
-    ThunkSections[OS].push_back(TS);
+    ThunkSections[TOS].push_back(TS);
     ThunkedSections[IS] = TS;
     return TS;
   };
   // Find or create a ThunkSection to be placed as last executable section in
   // OS.
-  auto GetOSThunkSec = [&](ThunkSection<ELFT> *&TS, OutputSection<ELFT> *OS) {
+  auto GetOSThunkSec = [&](ThunkSection<ELFT> *&TS, OutputSection *OS) {
     if (TS == nullptr) {
       uint32_t Off = 0;
       for (auto *IS : OS->Sections) {
-        Off = IS->OutSecOff + IS->template getSize<ELFT>();
+        Off = IS->OutSecOff + IS->getSize();
         if ((IS->Flags & SHF_EXECINSTR) == 0)
           break;
       }
@@ -956,8 +949,8 @@ void createThunks(ArrayRef<OutputSectionBase *> OutputSections) {
   // We separate the creation of ThunkSections from the insertion of the
   // ThunkSections back into the OutputSection as ThunkSections are not always
   // inserted into the same OutputSection as the caller.
-  for (OutputSectionBase *Base : OutputSections) {
-    auto *OS = dyn_cast<OutputSection<ELFT>>(Base);
+  for (OutputSection *Base : OutputSections) {
+    auto *OS = dyn_cast<OutputSection>(Base);
     if (OS == nullptr)
       continue;
 
@@ -990,6 +983,7 @@ void createThunks(ArrayRef<OutputSectionBase *> OutputSections) {
   // Merge all created synthetic ThunkSections back into OutputSection
   for (auto &KV : ThunkSections)
     mergeThunks<ELFT>(KV.first, KV.second);
+  return !ThunkSections.empty();
 }
 
 template void scanRelocations<ELF32LE>(InputSectionBase &);
@@ -997,9 +991,9 @@ template void scanRelocations<ELF32BE>(InputSectionBase &);
 template void scanRelocations<ELF64LE>(InputSectionBase &);
 template void scanRelocations<ELF64BE>(InputSectionBase &);
 
-template void createThunks<ELF32LE>(ArrayRef<OutputSectionBase *>);
-template void createThunks<ELF32BE>(ArrayRef<OutputSectionBase *>);
-template void createThunks<ELF64LE>(ArrayRef<OutputSectionBase *>);
-template void createThunks<ELF64BE>(ArrayRef<OutputSectionBase *>);
+template bool createThunks<ELF32LE>(ArrayRef<OutputSection *>);
+template bool createThunks<ELF32BE>(ArrayRef<OutputSection *>);
+template bool createThunks<ELF64LE>(ArrayRef<OutputSection *>);
+template bool createThunks<ELF64BE>(ArrayRef<OutputSection *>);
 }
 }

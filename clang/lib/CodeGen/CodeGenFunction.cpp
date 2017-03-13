@@ -154,6 +154,8 @@ CharUnits CodeGenFunction::getNaturalTypeAlignment(QualType T,
       Alignment = CGM.getClassPointerAlignment(RD);
     } else {
       Alignment = getContext().getTypeAlignInChars(T);
+      if (T.getQualifiers().hasUnaligned())
+        Alignment = CharUnits::One();
     }
 
     // Cap to the global maximum type alignment unless the alignment
@@ -803,6 +805,10 @@ void CodeGenFunction::StartFunction(GlobalDecl GD,
         Fn->addFnAttr("function-instrument", "xray-always");
       if (XRayAttr->neverXRayInstrument())
         Fn->addFnAttr("function-instrument", "xray-never");
+      if (const auto *LogArgs = D->getAttr<XRayLogArgsAttr>()) {
+        Fn->addFnAttr("xray-log-args",
+                      llvm::utostr(LogArgs->getArgumentCount()));
+      }
     } else {
       Fn->addFnAttr(
           "xray-instruction-threshold",

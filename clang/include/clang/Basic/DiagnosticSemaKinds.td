@@ -2039,6 +2039,9 @@ def override_keyword_hides_virtual_member_function : Error<
   "%select{function|functions}1">;
 def err_function_marked_override_not_overriding : Error<
   "%0 marked 'override' but does not override any member functions">;
+def warn_destructor_marked_not_override_overriding : Warning <
+  "%0 overrides a destructor but is not marked 'override'">,
+  InGroup<CXX11WarnOverrideDestructor>, DefaultIgnore;
 def warn_function_marked_not_override_overriding : Warning <
   "%0 overrides a member function but is not marked 'override'">,
   InGroup<CXX11WarnOverrideMethod>;
@@ -2753,7 +2756,8 @@ def warn_attribute_wrong_decl_type : Warning<
   "|functions, methods, enums, and classes"
   "|structs, classes, variables, functions, and inline namespaces"
   "|variables, functions, methods, types, enumerations, enumerators, labels, and non-static data members"
-  "|classes and enumerations}1">,
+  "|classes and enumerations"
+  "|named declarations}1">,
   InGroup<IgnoredAttributes>;
 def err_attribute_wrong_decl_type : Error<warn_attribute_wrong_decl_type.Text>;
 def warn_type_attribute_wrong_type : Warning<
@@ -6014,6 +6018,12 @@ def warn_objc_circular_container : Warning<
   "adding '%0' to '%1' might cause circular dependency in container">,
   InGroup<DiagGroup<"objc-circular-container">>;
 def note_objc_circular_container_declared_here : Note<"'%0' declared here">;
+def warn_objc_unsafe_perform_selector : Warning<
+  "%0 is incompatible with selectors that return a "
+  "%select{struct|union|vector}1 type">,
+  InGroup<DiagGroup<"objc-unsafe-perform-selector">>;
+def note_objc_unsafe_perform_selector_method_declared_here :  Note<
+  "method %0 that returns %1 declared here">;
 
 def warn_setter_getter_impl_required : Warning<
   "property %0 requires method %1 to be defined - "
@@ -8890,8 +8900,7 @@ let CategoryName = "Coroutines Issue" in {
 def err_return_in_coroutine : Error<
   "return statement not allowed in coroutine; did you mean 'co_return'?">;
 def note_declared_coroutine_here : Note<
-  "function is a coroutine due to use of "
-  "'%select{co_await|co_yield|co_return}0' here">;
+  "function is a coroutine due to use of '%0' here">;
 def err_coroutine_objc_method : Error<
   "Objective-C methods as coroutines are not yet supported">;
 def err_coroutine_unevaluated_context : Error<
@@ -8903,15 +8912,22 @@ def err_coroutine_invalid_func_context : Error<
   "|a copy assignment operator|a move assignment operator|the 'main' function"
   "|a constexpr function|a function with a deduced return type"
   "|a varargs function}0">;
-def err_implied_std_coroutine_traits_not_found : Error<
-  "you need to include <experimental/coroutine> before defining a coroutine">;
+def err_implied_coroutine_type_not_found : Error<
+  "%0 type was not found; include <experimental/coroutine> before defining "
+  "a coroutine">;
+def err_malformed_std_coroutine_handle : Error<
+  "std::experimental::coroutine_handle must be a class template">;
+def err_coroutine_handle_missing_member : Error<
+  "std::experimental::coroutine_handle missing a member named '%0'">;
 def err_malformed_std_coroutine_traits : Error<
   "'std::experimental::coroutine_traits' must be a class template">;
 def err_implied_std_coroutine_traits_promise_type_not_found : Error<
   "this function cannot be a coroutine: %q0 has no member named 'promise_type'">;
 def err_implied_std_coroutine_traits_promise_type_not_class : Error<
   "this function cannot be a coroutine: %0 is not a class">;
-def err_coroutine_traits_missing_specialization : Error<
+def err_coroutine_promise_type_incomplete : Error<
+  "this function cannot be a coroutine: %0 is an incomplete type">;
+def err_coroutine_type_missing_specialization : Error<
   "this function cannot be a coroutine: missing definition of "
   "specialization %q0">;
 def err_implied_std_current_exception_not_found : Error<
@@ -8921,6 +8937,11 @@ def err_malformed_std_current_exception : Error<
   "'std::current_exception' must be a function">;
 def err_coroutine_promise_return_ill_formed : Error<
   "%0 declares both 'return_value' and 'return_void'">;
+def note_coroutine_promise_implicit_await_transform_required_here : Note<
+  "call to 'await_transform' implicitly required by 'co_await' here">;
+def note_coroutine_promise_call_implicitly_required : Note<
+  "call to '%select{initial_suspend|final_suspend}0' implicitly "
+  "required by the %select{initial suspend point|final suspend point}0">;
 }
 
 let CategoryName = "Documentation Issue" in {

@@ -311,14 +311,13 @@ private:
     // In C++, this can happen either in array of templates (foo<int>[10])
     // or when array is a nested template type (unique_ptr<type1<type2>[]>).
     bool CppArrayTemplates =
-        Style.Language == FormatStyle::LK_Cpp && Parent &&
+        Style.IsCpp() && Parent &&
         Parent->is(TT_TemplateCloser) &&
         (Contexts.back().CanBeExpression || Contexts.back().IsExpression ||
          Contexts.back().InTemplateArgument);
 
     bool StartsObjCMethodExpr =
-        !CppArrayTemplates && (Style.Language == FormatStyle::LK_Cpp ||
-                               Style.Language == FormatStyle::LK_ObjC) &&
+        !CppArrayTemplates && Style.IsCpp() &&
         Contexts.back().CanBeExpression && Left->isNot(TT_LambdaLSquare) &&
         CurrentToken->isNot(tok::l_brace) &&
         (!Parent ||
@@ -436,9 +435,7 @@ private:
         if (CurrentToken->isOneOf(tok::colon, tok::l_brace)) {
           FormatToken *Previous = CurrentToken->getPreviousNonComment();
           if (((CurrentToken->is(tok::colon) &&
-                (!Contexts.back().ColonIsDictLiteral ||
-                 (Style.Language != FormatStyle::LK_Cpp &&
-                  Style.Language != FormatStyle::LK_ObjC))) ||
+                (!Contexts.back().ColonIsDictLiteral || !Style.IsCpp())) ||
                Style.Language == FormatStyle::LK_Proto) &&
               (Previous->Tok.getIdentifierInfo() ||
                Previous->is(tok::string_literal)))
@@ -679,6 +676,8 @@ private:
     case tok::comma:
       if (Contexts.back().InCtorInitializer)
         Tok->Type = TT_CtorInitializerComma;
+      else if (Contexts.back().InInheritanceList)
+        Tok->Type = TT_InheritanceComma;
       else if (Contexts.back().FirstStartOfName &&
                (Contexts.size() == 1 || Line.startsWith(tok::kw_for))) {
         Contexts.back().FirstStartOfName->PartOfMultiVariableDeclStmt = true;
@@ -948,6 +947,7 @@ private:
     bool CanBeExpression = true;
     bool InTemplateArgument = false;
     bool InCtorInitializer = false;
+    bool InInheritanceList = false;
     bool CaretFound = false;
     bool IsForEachMacro = false;
   };
@@ -1007,6 +1007,9 @@ private:
                Current.Previous->is(TT_CtorInitializerColon)) {
       Contexts.back().IsExpression = true;
       Contexts.back().InCtorInitializer = true;
+    } else if (Current.Previous &&
+               Current.Previous->is(TT_InheritanceColon)) {
+      Contexts.back().InInheritanceList = true;
     } else if (Current.isOneOf(tok::r_paren, tok::greater, tok::comma)) {
       for (FormatToken *Previous = Current.Previous;
            Previous && Previous->isOneOf(tok::star, tok::amp);
@@ -1086,7 +1089,8 @@ private:
       if (Current.MatchingParen && Current.Next &&
           !Current.Next->isBinaryOperator() &&
           !Current.Next->isOneOf(tok::semi, tok::colon, tok::l_brace,
-                                 tok::period, tok::arrow, tok::coloncolon))
+                                 tok::comma, tok::period, tok::arrow,
+                                 tok::coloncolon))
         if (FormatToken *AfterParen = Current.MatchingParen->Next) {
           // Make sure this isn't the return type of an Obj-C block declaration
           if (AfterParen->Tok.isNot(tok::caret)) {
@@ -1160,16 +1164,17 @@ private:
     if (Tok.isNot(tok::identifier) || !Tok.Previous)
       return false;
 
-    if (Tok.Previous->isOneOf(TT_LeadingJavaAnnotation, Keywords.kw_instanceof))
+    if (Tok.Previous->isOneOf(TT_LeadingJavaAnnotation, Keywords.kw_instanceof,
+                              Keywords.kw_as))
       return false;
     if (Style.Language == FormatStyle::LK_JavaScript &&
         Tok.Previous->is(Keywords.kw_in))
       return false;
 
     // Skip "const" as it does not have an influence on whether this is a name.
-    FormatToken *PreviousNotConst = Tok.Previous;
+    FormatToken *PreviousNotConst = Tok.getPreviousNonComment();
     while (PreviousNotConst && PreviousNotConst->is(tok::kw_const))
-      PreviousNotConst = PreviousNotConst->Previous;
+      PreviousNotConst = PreviousNotConst->getPreviousNonComment();
 
     if (!PreviousNotConst)
       return false;
@@ -1198,9 +1203,7 @@ private:
   /// \brief Determine whether ')' is ending a cast.
   bool rParenEndsCast(const FormatToken &Tok) {
     // C-style casts are only used in C++ and Java.
-    if (Style.Language != FormatStyle::LK_Cpp &&
-        Style.Language != FormatStyle::LK_ObjC &&
-        Style.Language != FormatStyle::LK_Java)
+    if (!Style.IsCpp() && Style.Language != FormatStyle::LK_Java)
       return false;
 
     // Empty parens aren't casts and there are no casts at the end of the line.
@@ -1305,7 +1308,8 @@ private:
       return TT_UnaryOperator;
 
     const FormatToken *NextToken = Tok.getNextNonComment();
-    if (!NextToken || NextToken->isOneOf(tok::arrow, tok::equal) ||
+    if (!NextToken ||
+        NextToken->isOneOf(tok::arrow, tok::equal, tok::kw_const) ||
         (NextToken->is(tok::l_brace) && !NextToken->getNextNonComment()))
       return TT_PointerOrReference;
 
@@ -1520,13 +1524,14 @@ private:
         return prec::Conditional;
       if (NextNonComment && NextNonComment->is(tok::colon) &&
           NextNonComment->is(TT_DictLiteral))
-        return prec::Comma;
+        return prec::Assignment;
+      if (Current->is(TT_JsComputedPropertyName))
+        return prec::Assignment;
       if (Current->is(TT_LambdaArrow))
         return prec::Comma;
       if (Current->is(TT_JsFatArrow))
         return prec::Assignment;
-      if (Current->isOneOf(tok::semi, TT_InlineASMColon, TT_SelectorName,
-                           TT_JsComputedPropertyName) ||
+      if (Current->isOneOf(tok::semi, TT_InlineASMColon, TT_SelectorName) ||
           (Current->is(tok::comment) && NextNonComment &&
            NextNonComment->is(TT_SelectorName)))
         return 0;
@@ -1537,7 +1542,7 @@ private:
           Current->is(Keywords.kw_instanceof))
         return prec::Relational;
       if (Style.Language == FormatStyle::LK_JavaScript &&
-          Current->is(Keywords.kw_in))
+          Current->isOneOf(Keywords.kw_in, Keywords.kw_as))
         return prec::Relational;
       if (Current->is(TT_BinaryOperator) || Current->is(tok::comma))
         return Current->getPrecedence();
@@ -2211,7 +2216,7 @@ bool TokenAnnotator::spaceRequiredBefore(const AnnotatedLine &Line,
   const FormatToken &Left = *Right.Previous;
   if (Right.Tok.getIdentifierInfo() && Left.Tok.getIdentifierInfo())
     return true; // Never ever merge two identifiers.
-  if (Style.Language == FormatStyle::LK_Cpp) {
+  if (Style.IsCpp()) {
     if (Left.is(tok::kw_operator))
       return Right.is(tok::coloncolon);
   } else if (Style.Language == FormatStyle::LK_Proto) {
@@ -2225,6 +2230,14 @@ bool TokenAnnotator::spaceRequiredBefore(const AnnotatedLine &Line,
   } else if (Style.Language == FormatStyle::LK_JavaScript) {
     if (Left.is(TT_JsFatArrow))
       return true;
+    if (Left.is(Keywords.kw_async) && Right.is(tok::l_paren) &&
+        Right.MatchingParen) {
+      const FormatToken *Next = Right.MatchingParen->getNextNonComment();
+      // An async arrow function, for example: `x = async () => foo();`,
+      // as opposed to calling a function called async: `x = async();`
+      if (Next && Next->is(TT_JsFatArrow))
+        return true;
+    }
     if ((Left.is(TT_TemplateString) && Left.TokenText.endswith("${")) ||
         (Right.is(TT_TemplateString) && Right.TokenText.startswith("}")))
       return false;
@@ -2467,6 +2480,10 @@ bool TokenAnnotator::mustBreakBefore(const AnnotatedLine &Line,
       Style.BreakConstructorInitializersBeforeComma &&
       !Style.ConstructorInitializerAllOnOneLineOrOnePerLine)
     return true;
+  // Break only if we have multiple inheritance.
+  if (Style.BreakBeforeInheritanceComma &&
+      Right.is(TT_InheritanceComma))
+   return true;
   if (Right.is(tok::string_literal) && Right.TokenText.startswith("R\""))
     // Raw string literals are special wrt. line breaks. The author has made a
     // deliberate choice and might have aligned the contents of the string
@@ -2527,6 +2544,8 @@ bool TokenAnnotator::canBreakBefore(const AnnotatedLine &Line,
       return Style.BreakBeforeBinaryOperators != FormatStyle::BOS_None;
     if (Right.is(Keywords.kw_as))
       return false; // must not break before as in 'x as type' casts
+    if (Left.is(Keywords.kw_as))
+      return true;
     if (Left.is(Keywords.kw_declare) &&
         Right.isOneOf(Keywords.kw_module, tok::kw_namespace,
                       Keywords.kw_function, tok::kw_class, tok::kw_enum,
@@ -2643,6 +2662,10 @@ bool TokenAnnotator::canBreakBefore(const AnnotatedLine &Line,
     return false;
   if (Right.is(TT_CtorInitializerComma) &&
       Style.BreakConstructorInitializersBeforeComma)
+    return true;
+  if (Left.is(TT_InheritanceComma) && Style.BreakBeforeInheritanceComma)
+    return false;
+  if (Right.is(TT_InheritanceComma) && Style.BreakBeforeInheritanceComma)
     return true;
   if ((Left.is(tok::greater) && Right.is(tok::greater)) ||
       (Left.is(tok::less) && Right.is(tok::less)))

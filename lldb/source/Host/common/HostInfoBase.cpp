@@ -10,11 +10,11 @@
 #include "lldb/Host/Config.h"
 
 #include "lldb/Core/ArchSpec.h"
-#include "lldb/Core/Log.h"
 #include "lldb/Host/FileSystem.h"
 #include "lldb/Host/Host.h"
 #include "lldb/Host/HostInfo.h"
 #include "lldb/Host/HostInfoBase.h"
+#include "lldb/Utility/Log.h"
 #include "lldb/Utility/StreamString.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -46,7 +46,7 @@ struct HostInfoBaseFields {
       // Remove the LLDB temporary directory if we have one. Set "recurse" to
       // true to all files that were created for the LLDB process can be cleaned
       // up.
-      FileSystem::DeleteDirectory(m_lldb_process_tmp_dir, true);
+      llvm::sys::fs::remove_directories(m_lldb_process_tmp_dir.GetPath());
     }
   }
 

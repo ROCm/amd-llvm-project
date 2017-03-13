@@ -20,19 +20,20 @@
 #include "clang/Parse/Parser.h"
 #include "clang/Sema/Lookup.h"
 #include "clang/Serialization/ASTReader.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Threading.h"
 
 // Project includes
 #include "ClangModulesDeclVendor.h"
 
-#include "lldb/Core/Log.h"
 #include "lldb/Host/FileSpec.h"
 #include "lldb/Host/Host.h"
 #include "lldb/Host/HostInfo.h"
 #include "lldb/Symbol/CompileUnit.h"
 #include "lldb/Target/Target.h"
 #include "lldb/Utility/LLDBAssert.h"
+#include "lldb/Utility/Log.h"
 #include "lldb/Utility/StreamString.h"
 
 using namespace lldb_private;
@@ -606,7 +607,7 @@ ClangModulesDeclVendor::Create(Target &target) {
   {
     FileSpec clang_resource_dir = GetResourceDir();
 
-    if (clang_resource_dir.IsDirectory()) {
+    if (llvm::sys::fs::is_directory(clang_resource_dir.GetPath())) {
       compiler_invocation_arguments.push_back("-resource-dir");
       compiler_invocation_arguments.push_back(clang_resource_dir.GetPath());
     }
