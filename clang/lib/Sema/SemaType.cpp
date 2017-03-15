@@ -6975,12 +6975,17 @@ static void processTypeAttrs(TypeProcessingState &state, QualType &type,
       type = state.getSema().Context.getAddrSpaceQualType(
           type, LangAS::opencl_generic);
     } else if (state.getCurrentChunkIndex() == 0 &&
-               D.getContext() == Declarator::FileContext &&
                !D.isFunctionDeclarator() && !D.isFunctionDefinition() &&
                D.getDeclSpec().getStorageClassSpec() != DeclSpec::SCS_typedef &&
-               !type->isSamplerT())
-      type = state.getSema().Context.getAddrSpaceQualType(
+               !type->isSamplerT()) {
+      if (D.getContext() == Declarator::FileContext) {
+        type = state.getSema().Context.getAddrSpaceQualType(
           type, LangAS::opencl_global);
+      } else if (D.getContext() == Declarator::BlockContext) {
+        type = state.getSema().Context.getAddrSpaceQualType(
+          type, LangAS::opencl_private);
+      }
+    }
     else if (state.getCurrentChunkIndex() == 0 &&
              D.getContext() == Declarator::BlockContext &&
              D.getDeclSpec().getStorageClassSpec() == DeclSpec::SCS_static)
