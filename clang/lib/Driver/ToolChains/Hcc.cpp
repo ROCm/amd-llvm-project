@@ -182,11 +182,13 @@ void HCC::CXXAMPLink::ConstructJob(Compilation &C,
       if (std::search(AMDGPUTarget.cbegin(), AMDGPUTarget.cend(), gfx_ip.cbegin(), gfx_ip.cend()) != AMDGPUTarget.cend()) {
         std::string t{prefix};
         switch (std::atoi(AMDGPUTarget.data() + discard_sz)) {
-        case 700: t += "kaveri";  break;
-        case 701: t += "hawaii";  break;
-        case 801: t += "carrizo"; break;
-        case 802: t += "tonga";   break;
-        case 803: t += "fiji";    break;
+        case 700: t += "gfx700";  break;
+        case 701: t += "gfx701";  break;
+        case 801: t += "gfx801"; break;
+        case 802: t += "gfx802";   break;
+        case 803: t += "gfx803";    break;
+        case 900: t += "gfx900";  break;
+        case 901: t += "gfx901";  break;
         default:
           C.getDriver().Diag(diag::warn_amdgpu_target_invalid) << AMDGPUTarget;
         break;
