@@ -294,6 +294,8 @@ void test_ternary() {
   var_void_gen = 0 ? var_cond : var_priv_ch;
 #ifndef GENERIC
 // expected-error-re@-2{{conditional operator with the second and third operands of type  ('__{{global|constant}} int *' and '__private char *') which are pointers to non-overlapping address spaces}}
+#else
+// expected-warning@-4{{pointer type mismatch ('__generic int *' and 'char *')}}
 #endif
 
   generic char *var_gen_ch;
