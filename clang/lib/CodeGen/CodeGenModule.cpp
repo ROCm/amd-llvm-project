@@ -1953,10 +1953,12 @@ static bool isWhiteListForHCC(CodeGenModule &CGM, GlobalDecl GD) {
   }
 
   // C++11 swap/move functions are allowed to pass
+  // Eigen internal functions are allowed to pass
   const FunctionDecl* FuncD = dyn_cast<FunctionDecl>(D);
   if (FuncD) {
-    if (MangledName.find("4swap") != StringRef::npos  ||
-        MangledName.find("4move") != StringRef::npos) {
+    if (MangledName.find("4swap") != StringRef::npos ||
+        MangledName.find("4move") != StringRef::npos ||
+        MangledName.find("Eigen8internal") != StringRef::npos) {
       return true;
     }
   }
