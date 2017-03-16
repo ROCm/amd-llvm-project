@@ -1958,6 +1958,7 @@ static bool isWhiteListForHCC(CodeGenModule &CGM, GlobalDecl GD) {
   if (FuncD) {
     if (MangledName.find("4swap") != StringRef::npos ||
         MangledName.find("4move") != StringRef::npos ||
+        MangledName.find("16grid_launch_parm10KernelArgsIT2_EENKUlvE_clEv") != StringRef::npos ||
         MangledName.find("Eigen8internal") != StringRef::npos) {
       return true;
     }
