@@ -172,6 +172,11 @@ InputSectionBase *InputSectionBase::getLinkOrderDep() const {
 // Returns a source location string. Used to construct an error message.
 template <class ELFT>
 std::string InputSectionBase::getLocation(uint64_t Offset) {
+  // We don't have file for synthetic sections.
+  if (getFile<ELFT>() == nullptr)
+    return (Config->OutputFile + ":(" + Name + "+0x" + utohexstr(Offset) + ")")
+        .str();
+
   // First check if we can get desired values from debugging information.
   std::string LineInfo = getFile<ELFT>()->getLineInfo(this, Offset);
   if (!LineInfo.empty())
@@ -234,13 +239,13 @@ void InputSection::copyRelocations(uint8_t *Buf, ArrayRef<RelTy> Rels) {
   // That happens because getSymbolIndex(...) call below performs
   // simple linear search.
   for (const RelTy &Rel : Rels) {
-    uint32_t Type = Rel.getType(Config->isMips64EL());
+    uint32_t Type = Rel.getType(Config->IsMips64EL);
     SymbolBody &Body = this->getFile<ELFT>()->getRelocTargetSym(Rel);
 
     auto *P = reinterpret_cast<typename ELFT::Rela *>(Buf);
     Buf += sizeof(RelTy);
 
-    if (Config->isRela())
+    if (Config->IsRela)
       P->r_addend = getAddend<ELFT>(Rel);
 
     // Output section VA is zero for -r, so r_offset is an offset within the
@@ -248,7 +253,7 @@ void InputSection::copyRelocations(uint8_t *Buf, ArrayRef<RelTy> Rels) {
     P->r_offset = RelocatedSection->OutSec->Addr +
                   RelocatedSection->getOffset(Rel.r_offset);
     P->setSymbolAndType(In<ELFT>::SymTab->getSymbolIndex(&Body), Type,
-                        Config->isMips64EL());
+                        Config->IsMips64EL);
 
     if (Body.Type == STT_SECTION) {
       // We combine multiple section symbols into only one per
@@ -266,8 +271,8 @@ void InputSection::copyRelocations(uint8_t *Buf, ArrayRef<RelTy> Rels) {
         continue;
       }
 
-      if (Config->isRela()) {
-        P->r_addend += Body.getVA<ELFT>() - Section->getOutputSection()->Addr;
+      if (Config->IsRela) {
+        P->r_addend += Body.getVA() - Section->getOutputSection()->Addr;
       } else if (Config->Relocatable) {
         const uint8_t *BufLoc = RelocatedSection->Data.begin() + Rel.r_offset;
         RelocatedSection->Relocations.push_back(
@@ -339,20 +344,19 @@ getRelocTargetVA(uint32_t Type, int64_t A, typename ELFT::uint P,
     return getAArch64Page(In<ELFT>::Got->getGlobalDynAddr(Body) + A) -
            getAArch64Page(P);
   case R_PLT:
-    return Body.getPltVA<ELFT>() + A;
+    return Body.getPltVA() + A;
   case R_PLT_PC:
   case R_PPC_PLT_OPD:
-    return Body.getPltVA<ELFT>() + A - P;
+    return Body.getPltVA() + A - P;
   case R_SIZE:
     return Body.getSize<ELFT>() + A;
   case R_GOTREL:
-    return Body.getVA<ELFT>(A) - In<ELFT>::Got->getVA();
+    return Body.getVA(A) - In<ELFT>::Got->getVA();
   case R_GOTREL_FROM_END:
-    return Body.getVA<ELFT>(A) - In<ELFT>::Got->getVA() -
-           In<ELFT>::Got->getSize();
+    return Body.getVA(A) - In<ELFT>::Got->getVA() - In<ELFT>::Got->getSize();
   case R_RELAX_TLS_GD_TO_IE_END:
   case R_GOT_FROM_END:
-    return Body.getGotOffset<ELFT>() + A - In<ELFT>::Got->getSize();
+    return Body.getGotOffset() + A - In<ELFT>::Got->getSize();
   case R_RELAX_TLS_GD_TO_IE_ABS:
   case R_GOT:
     return Body.getGotVA<ELFT>() + A;
@@ -379,17 +383,16 @@ getRelocTargetVA(uint32_t Type, int64_t A, typename ELFT::uint P,
         Body.symbol()->isWeak())
       return 0;
     if (Target->TcbSize)
-      return Body.getVA<ELFT>(A) +
-             alignTo(Target->TcbSize, Out::TlsPhdr->p_align);
-    return Body.getVA<ELFT>(A) - Out::TlsPhdr->p_memsz;
+      return Body.getVA(A) + alignTo(Target->TcbSize, Out::TlsPhdr->p_align);
+    return Body.getVA(A) - Out::TlsPhdr->p_memsz;
   case R_RELAX_TLS_GD_TO_LE_NEG:
   case R_NEG_TLS:
-    return Out::TlsPhdr->p_memsz - Body.getVA<ELFT>(A);
+    return Out::TlsPhdr->p_memsz - Body.getVA(A);
   case R_ABS:
   case R_RELAX_GOT_PC_NOPIC:
-    return Body.getVA<ELFT>(A);
+    return Body.getVA(A);
   case R_GOT_OFF:
-    return Body.getGotOffset<ELFT>() + A;
+    return Body.getGotOffset() + A;
   case R_MIPS_GOT_LOCAL_PAGE:
     // If relocation against MIPS local symbol requires GOT entry, this entry
     // should be initialized by 'page address'. This address is high 16-bits
@@ -406,7 +409,7 @@ getRelocTargetVA(uint32_t Type, int64_t A, typename ELFT::uint P,
            In<ELFT>::MipsGot->getBodyEntryOffset(Body, A) -
            In<ELFT>::MipsGot->getGp();
   case R_MIPS_GOTREL:
-    return Body.getVA<ELFT>(A) - In<ELFT>::MipsGot->getGp();
+    return Body.getVA(A) - In<ELFT>::MipsGot->getGp();
   case R_MIPS_TLSGD:
     return In<ELFT>::MipsGot->getVA() + In<ELFT>::MipsGot->getTlsOffset() +
            In<ELFT>::MipsGot->getGlobalDynOffset(Body) -
@@ -415,7 +418,7 @@ getRelocTargetVA(uint32_t Type, int64_t A, typename ELFT::uint P,
     return In<ELFT>::MipsGot->getVA() + In<ELFT>::MipsGot->getTlsOffset() +
            In<ELFT>::MipsGot->getTlsIndexOff() - In<ELFT>::MipsGot->getGp();
   case R_PPC_OPD: {
-    uint64_t SymVA = Body.getVA<ELFT>(A);
+    uint64_t SymVA = Body.getVA(A);
     // If we have an undefined weak symbol, we might get here with a symbol
     // address of zero. That could overflow, but the code must be unreachable,
     // so don't bother doing anything at all.
@@ -442,12 +445,12 @@ getRelocTargetVA(uint32_t Type, int64_t A, typename ELFT::uint P,
         return getAArch64UndefinedRelativeWeakVA(Type, A, P);
     }
   case R_RELAX_GOT_PC:
-    return Body.getVA<ELFT>(A) - P;
+    return Body.getVA(A) - P;
   case R_PLT_PAGE_PC:
   case R_PAGE_PC:
     if (Body.isUndefined() && !Body.isLocal() && Body.symbol()->isWeak())
       return getAArch64Page(A);
-    return getAArch64Page(Body.getVA<ELFT>(A)) - getAArch64Page(P);
+    return getAArch64Page(Body.getVA(A)) - getAArch64Page(P);
   }
   llvm_unreachable("Invalid expression");
 }
@@ -463,7 +466,7 @@ template <class ELFT, class RelTy>
 void InputSection::relocateNonAlloc(uint8_t *Buf, ArrayRef<RelTy> Rels) {
   typedef typename ELFT::uint uintX_t;
   for (const RelTy &Rel : Rels) {
-    uint32_t Type = Rel.getType(Config->isMips64EL());
+    uint32_t Type = Rel.getType(Config->IsMips64EL);
     uint64_t Offset = getOffset(Rel.r_offset);
     uint8_t *BufLoc = Buf + Offset;
     int64_t Addend = getAddend<ELFT>(Rel);

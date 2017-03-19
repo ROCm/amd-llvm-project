@@ -48,20 +48,20 @@ class DISubprogram;
 
 class Function : public GlobalObject, public ilist_node<Function> {
 public:
-  typedef SymbolTableList<Argument> ArgumentListType;
   typedef SymbolTableList<BasicBlock> BasicBlockListType;
 
   // BasicBlock iterators...
   typedef BasicBlockListType::iterator iterator;
   typedef BasicBlockListType::const_iterator const_iterator;
 
-  typedef ArgumentListType::iterator arg_iterator;
-  typedef ArgumentListType::const_iterator const_arg_iterator;
+  typedef Argument *arg_iterator;
+  typedef const Argument *const_arg_iterator;
 
 private:
   // Important things that make up a function!
   BasicBlockListType  BasicBlocks;        ///< The basic blocks
-  mutable ArgumentListType ArgumentList;  ///< The formal arguments
+  mutable Argument *Arguments;            ///< The formal arguments
+  size_t NumArgs;
   std::unique_ptr<ValueSymbolTable>
       SymTab;                             ///< Symbol table of args/instructions
   AttributeSet AttributeSets;             ///< Parameter attributes
@@ -103,6 +103,8 @@ private:
 
   void BuildLazyArguments() const;
 
+  void clearArguments();
+
   /// Function ctor - If the (optional) Module argument is specified, the
   /// function is automatically inserted into the end of the function list for
   /// the module.
@@ -122,10 +124,12 @@ public:
 
   // Provide fast operand accessors.
   DECLARE_TRANSPARENT_OPERAND_ACCESSORS(Value);
-  /// Returns the type of the ret val.
-  Type *getReturnType() const;
   /// Returns the FunctionType for me.
-  FunctionType *getFunctionType() const;
+  FunctionType *getFunctionType() const {
+    return cast<FunctionType>(getValueType());
+  }
+  /// Returns the type of the ret val.
+  Type *getReturnType() const { return getFunctionType()->getReturnType(); }
 
   /// getContext - Return a reference to the LLVMContext associated with this
   /// function.
@@ -133,10 +137,16 @@ public:
 
   /// isVarArg - Return true if this function takes a variable number of
   /// arguments.
-  bool isVarArg() const;
+  bool isVarArg() const { return getFunctionType()->isVarArg(); }
 
-  bool isMaterializable() const;
-  void setIsMaterializable(bool V);
+  bool isMaterializable() const {
+    return getGlobalObjectSubClassData() & (1 << IsMaterializableBit);
+  }
+  void setIsMaterializable(bool V) {
+    unsigned Mask = 1 << IsMaterializableBit;
+    setGlobalObjectSubClassData((~Mask & getGlobalObjectSubClassData()) |
+                                (V ? Mask : 0u));
+  }
 
   /// getIntrinsicID - This method returns the ID number of the specified
   /// function, or Intrinsic::not_intrinsic if the function is not an
@@ -504,19 +514,6 @@ public:
   /// Get the underlying elements of the Function... the basic block list is
   /// empty for external functions.
   ///
-  const ArgumentListType &getArgumentList() const {
-    CheckLazyArguments();
-    return ArgumentList;
-  }
-  ArgumentListType &getArgumentList() {
-    CheckLazyArguments();
-    return ArgumentList;
-  }
-
-  static ArgumentListType Function::*getSublistAccess(Argument*) {
-    return &Function::ArgumentList;
-  }
-
   const BasicBlockListType &getBasicBlockList() const { return BasicBlocks; }
         BasicBlockListType &getBasicBlockList()       { return BasicBlocks; }
 
@@ -557,20 +554,20 @@ public:
 
   arg_iterator arg_begin() {
     CheckLazyArguments();
-    return ArgumentList.begin();
+    return Arguments;
   }
   const_arg_iterator arg_begin() const {
     CheckLazyArguments();
-    return ArgumentList.begin();
+    return Arguments;
   }
 
   arg_iterator arg_end() {
     CheckLazyArguments();
-    return ArgumentList.end();
+    return Arguments + NumArgs;
   }
   const_arg_iterator arg_end() const {
     CheckLazyArguments();
-    return ArgumentList.end();
+    return Arguments + NumArgs;
   }
 
   iterator_range<arg_iterator> args() {
@@ -582,8 +579,8 @@ public:
 
 /// @}
 
-  size_t arg_size() const;
-  bool arg_empty() const;
+  size_t arg_size() const { return NumArgs; }
+  bool arg_empty() const { return arg_size() == 0; }
 
   /// \brief Check whether this function has a personality function.
   bool hasPersonalityFn() const {

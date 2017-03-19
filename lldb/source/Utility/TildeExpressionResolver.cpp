@@ -13,6 +13,10 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
 
+#if !defined(LLVM_ON_WIN32)
+#include <pwd.h>
+#endif
+
 using namespace lldb_private;
 using namespace llvm;
 
@@ -24,9 +28,8 @@ TildeExpressionResolver::~TildeExpressionResolver() {}
 bool StandardTildeExpressionResolver::ResolveExact(
     StringRef Expr, SmallVectorImpl<char> &Output) {
   // We expect the tilde expression to be ONLY the expression itself, and
-  // contain
-  // no separators.
-  assert(!llvm::any_of(Expr, path::is_separator));
+  // contain no separators.
+  assert(!llvm::any_of(Expr, [](char c) { return path::is_separator(c); }));
   assert(Expr.empty() || Expr[0] == '~');
 
   return !fs::real_path(Expr, Output, true);
@@ -36,17 +39,17 @@ bool StandardTildeExpressionResolver::ResolvePartial(StringRef Expr,
                                                      StringSet<> &Output) {
   // We expect the tilde expression to be ONLY the expression itself, and
   // contain no separators.
-  assert(!llvm::any_of(Expr, path::is_separator));
+  assert(!llvm::any_of(Expr, [](char c) { return path::is_separator(c); }));
   assert(Expr.empty() || Expr[0] == '~');
 
   Output.clear();
-#if defined(LLVM_ON_WIN32)
+#if defined(LLVM_ON_WIN32) || defined(__ANDROID__)
   return false;
 #else
   if (Expr.empty())
     return false;
 
-  SmallString<32> Buffer = "~";
+  SmallString<32> Buffer("~");
   setpwent();
   struct passwd *user_entry;
   Expr = Expr.drop_front();
@@ -58,7 +61,8 @@ bool StandardTildeExpressionResolver::ResolvePartial(StringRef Expr,
 
     Buffer.resize(1);
     Buffer.append(ThisName);
-    Buffer.append(path::get_separator()) Output.insert(Buffer);
+    Buffer.append(path::get_separator());
+    Output.insert(Buffer);
   }
 
   return true;

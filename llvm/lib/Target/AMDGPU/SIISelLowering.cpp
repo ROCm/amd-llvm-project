@@ -19,6 +19,7 @@
 
 #include "AMDGPU.h"
 #include "AMDGPUIntrinsicInfo.h"
+#include "AMDGPUTargetMachine.h"
 #include "AMDGPUSubtarget.h"
 #include "SIDefines.h"
 #include "SIISelLowering.h"
@@ -60,6 +61,7 @@
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Type.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/CodeGen.h"
@@ -68,7 +70,6 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Target/TargetCallingConv.h"
-#include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/Target/TargetRegisterInfo.h"
 #include <cassert>
@@ -505,6 +506,13 @@ const SISubtarget *SITargetLowering::getSubtarget() const {
 // TargetLowering queries
 //===----------------------------------------------------------------------===//
 
+bool SITargetLowering::isShuffleMaskLegal(const SmallVectorImpl<int> &,
+                                          EVT) const {
+  // SI has some legal vector types, but no legal vector operations. Say no
+  // shuffles are legal in order to prefer scalarizing some vector operations.
+  return false;
+}
+
 bool SITargetLowering::getTgtMemIntrinsic(IntrinsicInfo &Info,
                                           const CallInst &CI,
                                           unsigned IntrID) const {
@@ -524,11 +532,20 @@ bool SITargetLowering::getTgtMemIntrinsic(IntrinsicInfo &Info,
   }
 }
 
-bool SITargetLowering::isShuffleMaskLegal(const SmallVectorImpl<int> &,
-                                          EVT) const {
-  // SI has some legal vector types, but no legal vector operations. Say no
-  // shuffles are legal in order to prefer scalarizing some vector operations.
-  return false;
+bool SITargetLowering::getAddrModeArguments(IntrinsicInst *II,
+                                            SmallVectorImpl<Value*> &Ops,
+                                            Type *&AccessTy) const {
+  switch (II->getIntrinsicID()) {
+  case Intrinsic::amdgcn_atomic_inc:
+  case Intrinsic::amdgcn_atomic_dec: {
+    Value *Ptr = II->getArgOperand(0);
+    AccessTy = II->getType();
+    Ops.push_back(Ptr);
+    return true;
+  }
+  default:
+    return false;
+  }
 }
 
 bool SITargetLowering::isLegalFlatAddressingMode(const AddrMode &AM) const {
@@ -2139,31 +2156,25 @@ static SDNode *findUser(SDValue Value, unsigned Opcode) {
   return nullptr;
 }
 
-bool SITargetLowering::isCFIntrinsic(const SDNode *Intr) const {
+unsigned SITargetLowering::isCFIntrinsic(const SDNode *Intr) const {
   if (Intr->getOpcode() == ISD::INTRINSIC_W_CHAIN) {
     switch (cast<ConstantSDNode>(Intr->getOperand(1))->getZExtValue()) {
-    case AMDGPUIntrinsic::amdgcn_if:
-    case AMDGPUIntrinsic::amdgcn_else:
-    case AMDGPUIntrinsic::amdgcn_end_cf:
-    case AMDGPUIntrinsic::amdgcn_loop:
-      return true;
+    case Intrinsic::amdgcn_if:
+      return AMDGPUISD::IF;
+    case Intrinsic::amdgcn_else:
+      return AMDGPUISD::ELSE;
+    case Intrinsic::amdgcn_loop:
+      return AMDGPUISD::LOOP;
+    case Intrinsic::amdgcn_end_cf:
+      llvm_unreachable("should not occur");
     default:
-      return false;
+      return 0;
     }
   }
 
-  if (Intr->getOpcode() == ISD::INTRINSIC_WO_CHAIN) {
-    switch (cast<ConstantSDNode>(Intr->getOperand(0))->getZExtValue()) {
-    case AMDGPUIntrinsic::amdgcn_break:
-    case AMDGPUIntrinsic::amdgcn_if_break:
-    case AMDGPUIntrinsic::amdgcn_else_break:
-      return true;
-    default:
-      return false;
-    }
-  }
-
-  return false;
+  // break, if_break, else_break are all only used as inputs to loop, not
+  // directly as branch conditions.
+  return 0;
 }
 
 void SITargetLowering::createDebuggerPrologueStackObjects(
@@ -2238,7 +2249,8 @@ SDValue SITargetLowering::LowerBRCOND(SDValue BRCOND,
   // eg: i1,ch = llvm.amdgcn.loop t0, TargetConstant:i32<6271>, t3
   // =>     t9: ch = llvm.amdgcn.loop t0, TargetConstant:i32<6271>, t3, BasicBlock:ch<bb1 0x7fee5286d088>
 
-  if (!isCFIntrinsic(Intr)) {
+  unsigned CFNode = isCFIntrinsic(Intr);
+  if (CFNode == 0) {
     // This is a uniform branch so we don't need to legalize.
     return BRCOND;
   }
@@ -2256,15 +2268,13 @@ SDValue SITargetLowering::LowerBRCOND(SDValue BRCOND,
   if (HaveChain)
     Ops.push_back(BRCOND.getOperand(0));
 
-  Ops.append(Intr->op_begin() + (HaveChain ?  1 : 0), Intr->op_end());
+  Ops.append(Intr->op_begin() + (HaveChain ?  2 : 1), Intr->op_end());
   Ops.push_back(Target);
 
   ArrayRef<EVT> Res(Intr->value_begin() + 1, Intr->value_end());
 
   // build the new intrinsic call
-  SDNode *Result = DAG.getNode(
-    Res.size() > 1 ? ISD::INTRINSIC_W_CHAIN : ISD::INTRINSIC_VOID, DL,
-    DAG.getVTList(Res), Ops).getNode();
+  SDNode *Result = DAG.getNode(CFNode, DL, DAG.getVTList(Res), Ops).getNode();
 
   if (!HaveChain) {
     SDValue Ops[] =  {
@@ -2380,15 +2390,17 @@ SDValue SITargetLowering::lowerADDRSPACECAST(SDValue Op,
   const AddrSpaceCastSDNode *ASC = cast<AddrSpaceCastSDNode>(Op);
 
   SDValue Src = ASC->getOperand(0);
-
-  // FIXME: Really support non-0 null pointers.
-  SDValue SegmentNullPtr = DAG.getConstant(-1, SL, MVT::i32);
   SDValue FlatNullPtr = DAG.getConstant(0, SL, MVT::i64);
+
+  const AMDGPUTargetMachine &TM =
+    static_cast<const AMDGPUTargetMachine &>(getTargetMachine());
 
   // flat -> local/private
   if (ASC->getSrcAddressSpace() == AMDGPUAS::FLAT_ADDRESS) {
-    if (ASC->getDestAddressSpace() == AMDGPUAS::LOCAL_ADDRESS ||
-        ASC->getDestAddressSpace() == AMDGPUAS::PRIVATE_ADDRESS) {
+    unsigned DestAS = ASC->getDestAddressSpace();
+    if (DestAS == AMDGPUAS::LOCAL_ADDRESS || DestAS == AMDGPUAS::PRIVATE_ADDRESS) {
+      unsigned NullVal = TM.getNullPointerValue(DestAS);
+      SDValue SegmentNullPtr = DAG.getConstant(NullVal, SL, MVT::i32);
       SDValue NonNull = DAG.getSetCC(SL, MVT::i1, Src, FlatNullPtr, ISD::SETNE);
       SDValue Ptr = DAG.getNode(ISD::TRUNCATE, SL, MVT::i32, Src);
 
@@ -2399,8 +2411,11 @@ SDValue SITargetLowering::lowerADDRSPACECAST(SDValue Op,
 
   // local/private -> flat
   if (ASC->getDestAddressSpace() == AMDGPUAS::FLAT_ADDRESS) {
-    if (ASC->getSrcAddressSpace() == AMDGPUAS::LOCAL_ADDRESS ||
-        ASC->getSrcAddressSpace() == AMDGPUAS::PRIVATE_ADDRESS) {
+    unsigned SrcAS = ASC->getSrcAddressSpace();
+    if (SrcAS == AMDGPUAS::LOCAL_ADDRESS || SrcAS == AMDGPUAS::PRIVATE_ADDRESS) {
+      unsigned NullVal = TM.getNullPointerValue(SrcAS);
+      SDValue SegmentNullPtr = DAG.getConstant(NullVal, SL, MVT::i32);
+
       SDValue NonNull
         = DAG.getSetCC(SL, MVT::i1, Src, SegmentNullPtr, ISD::SETNE);
 
@@ -2788,7 +2803,7 @@ SDValue SITargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
     return DAG.getMemIntrinsicNode(AMDGPUISD::LOAD_CONSTANT, DL,
                                    Op->getVTList(), Ops, VT, MMO);
   }
-  case AMDGPUIntrinsic::amdgcn_fdiv_fast:
+  case Intrinsic::amdgcn_fdiv_fast:
     return lowerFDIV_FAST(Op, DAG);
   case AMDGPUIntrinsic::SI_vs_load_input:
     return DAG.getNode(AMDGPUISD::LOAD_INPUT, DL, VT,

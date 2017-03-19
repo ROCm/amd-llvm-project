@@ -53,6 +53,9 @@ TEST(is_separator, Works) {
   EXPECT_FALSE(path::is_separator('-'));
   EXPECT_FALSE(path::is_separator(' '));
 
+  EXPECT_TRUE(path::is_separator('\\', path::Style::windows));
+  EXPECT_FALSE(path::is_separator('\\', path::Style::posix));
+
 #ifdef LLVM_ON_WIN32
   EXPECT_TRUE(path::is_separator('\\'));
 #else
@@ -252,7 +255,6 @@ TEST(Support, AbsolutePathDotIterator) {
   }
 }
 
-#ifdef LLVM_ON_WIN32
 TEST(Support, AbsolutePathIteratorWin32) {
   SmallString<64> Path(StringRef("c:\\c\\e\\foo.txt"));
   typedef SmallVector<StringRef, 4> PathComponents;
@@ -265,8 +267,9 @@ TEST(Support, AbsolutePathIteratorWin32) {
   // when iterating.
   ExpectedPathComponents.insert(ExpectedPathComponents.begin()+1, "\\");
 
-  for (path::const_iterator I = path::begin(Path), E = path::end(Path); I != E;
-       ++I) {
+  for (path::const_iterator I = path::begin(Path, path::Style::windows),
+                            E = path::end(Path);
+       I != E; ++I) {
     ActualPathComponents.push_back(*I);
   }
 
@@ -276,34 +279,29 @@ TEST(Support, AbsolutePathIteratorWin32) {
     EXPECT_EQ(ExpectedPathComponents[i].str(), ActualPathComponents[i].str());
   }
 }
-#endif // LLVM_ON_WIN32
 
 TEST(Support, AbsolutePathIteratorEnd) {
   // Trailing slashes are converted to '.' unless they are part of the root path.
-  SmallVector<StringRef, 4> Paths;
-  Paths.push_back("/foo/");
-  Paths.push_back("/foo//");
-  Paths.push_back("//net//");
-#ifdef LLVM_ON_WIN32
-  Paths.push_back("c:\\\\");
-#endif
+  SmallVector<std::pair<StringRef, path::Style>, 4> Paths;
+  Paths.emplace_back("/foo/", path::Style::native);
+  Paths.emplace_back("/foo//", path::Style::native);
+  Paths.emplace_back("//net//", path::Style::native);
+  Paths.emplace_back("c:\\\\", path::Style::windows);
 
-  for (StringRef Path : Paths) {
-    StringRef LastComponent = *path::rbegin(Path);
+  for (auto &Path : Paths) {
+    StringRef LastComponent = *path::rbegin(Path.first, Path.second);
     EXPECT_EQ(".", LastComponent);
   }
 
-  SmallVector<StringRef, 3> RootPaths;
-  RootPaths.push_back("/");
-  RootPaths.push_back("//net/");
-#ifdef LLVM_ON_WIN32
-  RootPaths.push_back("c:\\");
-#endif
+  SmallVector<std::pair<StringRef, path::Style>, 3> RootPaths;
+  RootPaths.emplace_back("/", path::Style::native);
+  RootPaths.emplace_back("//net/", path::Style::native);
+  RootPaths.emplace_back("c:\\", path::Style::windows);
 
-  for (StringRef Path : RootPaths) {
-    StringRef LastComponent = *path::rbegin(Path);
+  for (auto &Path : RootPaths) {
+    StringRef LastComponent = *path::rbegin(Path.first, Path.second);
     EXPECT_EQ(1u, LastComponent.size());
-    EXPECT_TRUE(path::is_separator(LastComponent[0]));
+    EXPECT_TRUE(path::is_separator(LastComponent[0], Path.second));
   }
 }
 
@@ -778,6 +776,85 @@ TEST_F(FileSystemTest, DirectoryIteration) {
   ASSERT_NO_ERROR(fs::remove(Twine(TestDirectory) + "/reclevel"));
 }
 
+#ifdef LLVM_ON_UNIX
+TEST_F(FileSystemTest, BrokenSymlinkDirectoryIteration) {
+  // Create a known hierarchy to recurse over.
+  ASSERT_NO_ERROR(fs::create_directories(Twine(TestDirectory) + "/symlink"));
+  ASSERT_NO_ERROR(
+      fs::create_link("no_such_file", Twine(TestDirectory) + "/symlink/a"));
+  ASSERT_NO_ERROR(
+      fs::create_directories(Twine(TestDirectory) + "/symlink/b/bb"));
+  ASSERT_NO_ERROR(
+      fs::create_link("no_such_file", Twine(TestDirectory) + "/symlink/b/ba"));
+  ASSERT_NO_ERROR(
+      fs::create_link("no_such_file", Twine(TestDirectory) + "/symlink/b/bc"));
+  ASSERT_NO_ERROR(
+      fs::create_link("no_such_file", Twine(TestDirectory) + "/symlink/c"));
+  ASSERT_NO_ERROR(
+      fs::create_directories(Twine(TestDirectory) + "/symlink/d/dd/ddd"));
+  ASSERT_NO_ERROR(fs::create_link(Twine(TestDirectory) + "/symlink/d/dd",
+                                  Twine(TestDirectory) + "/symlink/d/da"));
+  ASSERT_NO_ERROR(
+      fs::create_link("no_such_file", Twine(TestDirectory) + "/symlink/e"));
+
+  typedef std::vector<std::string> v_t;
+  v_t visited;
+
+  // The directory iterator doesn't stat the file, so we should be able to
+  // iterate over the whole directory.
+  std::error_code ec;
+  for (fs::directory_iterator i(Twine(TestDirectory) + "/symlink", ec), e;
+       i != e; i.increment(ec)) {
+    ASSERT_NO_ERROR(ec);
+    visited.push_back(path::filename(i->path()));
+  }
+  std::sort(visited.begin(), visited.end());
+  v_t expected = {"a", "b", "c", "d", "e"};
+  ASSERT_TRUE(visited.size() == expected.size());
+  ASSERT_TRUE(std::equal(visited.begin(), visited.end(), expected.begin()));
+  visited.clear();
+
+  // The recursive directory iterator has to stat the file, so we need to skip
+  // the broken symlinks.
+  for (fs::recursive_directory_iterator
+           i(Twine(TestDirectory) + "/symlink", ec),
+       e;
+       i != e; i.increment(ec)) {
+    ASSERT_NO_ERROR(ec);
+
+    fs::file_status status;
+    if (i->status(status) ==
+        std::make_error_code(std::errc::no_such_file_or_directory)) {
+      i.no_push();
+      continue;
+    }
+
+    visited.push_back(path::filename(i->path()));
+  }
+  std::sort(visited.begin(), visited.end());
+  expected = {"b", "bb", "d", "da", "dd", "ddd", "ddd"};
+  ASSERT_TRUE(visited.size() == expected.size());
+  ASSERT_TRUE(std::equal(visited.begin(), visited.end(), expected.begin()));
+  visited.clear();
+
+  // This recursive directory iterator doesn't follow symlinks, so we don't need
+  // to skip them.
+  for (fs::recursive_directory_iterator
+           i(Twine(TestDirectory) + "/symlink", ec, /*follow_symlinks=*/false),
+       e;
+       i != e; i.increment(ec)) {
+    ASSERT_NO_ERROR(ec);
+    visited.push_back(path::filename(i->path()));
+  }
+  std::sort(visited.begin(), visited.end());
+  expected = {"a", "b", "ba", "bb", "bc", "c", "d", "da", "dd", "ddd", "e"};
+  ASSERT_TRUE(visited.size() == expected.size());
+  ASSERT_TRUE(std::equal(visited.begin(), visited.end(), expected.begin()));
+
+  ASSERT_NO_ERROR(fs::remove_directories(Twine(TestDirectory) + "/symlink"));
+}
+#endif
+
 TEST_F(FileSystemTest, Remove) {
   SmallString<64> BaseDir;
   SmallString<64> Paths[4];
@@ -977,40 +1054,23 @@ TEST_F(FileSystemTest, FileMapping) {
 }
 
 TEST(Support, NormalizePath) {
-#if defined(LLVM_ON_WIN32)
-#define EXPECT_PATH_IS(path__, windows__, not_windows__)                        \
-  EXPECT_EQ(path__, windows__);
-#else
-#define EXPECT_PATH_IS(path__, windows__, not_windows__)                        \
-  EXPECT_EQ(path__, not_windows__);
-#endif
+  using TestTuple = std::tuple<const char *, const char *, const char *>;
+  std::vector<TestTuple> Tests;
+  Tests.emplace_back("a", "a", "a");
+  Tests.emplace_back("a/b", "a\\b", "a/b");
+  Tests.emplace_back("a\\b", "a\\b", "a/b");
+  Tests.emplace_back("a\\\\b", "a\\\\b", "a\\\\b");
+  Tests.emplace_back("\\a", "\\a", "/a");
+  Tests.emplace_back("a\\", "a\\", "a/");
 
-  SmallString<64> Path1("a");
-  SmallString<64> Path2("a/b");
-  SmallString<64> Path3("a\\b");
-  SmallString<64> Path4("a\\\\b");
-  SmallString<64> Path5("\\a");
-  SmallString<64> Path6("a\\");
-
-  path::native(Path1);
-  EXPECT_PATH_IS(Path1, "a", "a");
-
-  path::native(Path2);
-  EXPECT_PATH_IS(Path2, "a\\b", "a/b");
-
-  path::native(Path3);
-  EXPECT_PATH_IS(Path3, "a\\b", "a/b");
-
-  path::native(Path4);
-  EXPECT_PATH_IS(Path4, "a\\\\b", "a\\\\b");
-
-  path::native(Path5);
-  EXPECT_PATH_IS(Path5, "\\a", "/a");
-
-  path::native(Path6);
-  EXPECT_PATH_IS(Path6, "a\\", "a/");
-
-#undef EXPECT_PATH_IS
+  for (auto &T : Tests) {
+    SmallString<64> Win(std::get<0>(T));
+    SmallString<64> Posix(Win);
+    path::native(Win, path::Style::windows);
+    path::native(Posix, path::Style::posix);
+    EXPECT_EQ(std::get<1>(T), Win);
+    EXPECT_EQ(std::get<2>(T), Posix);
+  }
 
 #if defined(LLVM_ON_WIN32)
   SmallString<64> PathHome;
@@ -1050,43 +1110,48 @@ TEST(Support, RemoveLeadingDotSlash) {
   EXPECT_EQ(Path2, "");
 }
 
-static std::string remove_dots(StringRef path,
-    bool remove_dot_dot) {
+static std::string remove_dots(StringRef path, bool remove_dot_dot,
+                               path::Style style) {
   SmallString<256> buffer(path);
-  path::remove_dots(buffer, remove_dot_dot);
+  path::remove_dots(buffer, remove_dot_dot, style);
   return buffer.str();
 }
 
 TEST(Support, RemoveDots) {
-#if defined(LLVM_ON_WIN32)
-  EXPECT_EQ("foolz\\wat", remove_dots(".\\.\\\\foolz\\wat", false));
-  EXPECT_EQ("", remove_dots(".\\\\\\\\\\", false));
+  EXPECT_EQ("foolz\\wat",
+            remove_dots(".\\.\\\\foolz\\wat", false, path::Style::windows));
+  EXPECT_EQ("", remove_dots(".\\\\\\\\\\", false, path::Style::windows));
 
-  EXPECT_EQ("a\\..\\b\\c", remove_dots(".\\a\\..\\b\\c", false));
-  EXPECT_EQ("b\\c", remove_dots(".\\a\\..\\b\\c", true));
-  EXPECT_EQ("c", remove_dots(".\\.\\c", true));
-  EXPECT_EQ("..\\a\\c", remove_dots("..\\a\\b\\..\\c", true));
-  EXPECT_EQ("..\\..\\a\\c", remove_dots("..\\..\\a\\b\\..\\c", true));
+  EXPECT_EQ("a\\..\\b\\c",
+            remove_dots(".\\a\\..\\b\\c", false, path::Style::windows));
+  EXPECT_EQ("b\\c", remove_dots(".\\a\\..\\b\\c", true, path::Style::windows));
+  EXPECT_EQ("c", remove_dots(".\\.\\c", true, path::Style::windows));
+  EXPECT_EQ("..\\a\\c",
+            remove_dots("..\\a\\b\\..\\c", true, path::Style::windows));
+  EXPECT_EQ("..\\..\\a\\c",
+            remove_dots("..\\..\\a\\b\\..\\c", true, path::Style::windows));
 
   SmallString<64> Path1(".\\.\\c");
-  EXPECT_TRUE(path::remove_dots(Path1, true));
+  EXPECT_TRUE(path::remove_dots(Path1, true, path::Style::windows));
   EXPECT_EQ("c", Path1);
-#else
-  EXPECT_EQ("foolz/wat", remove_dots("././/foolz/wat", false));
-  EXPECT_EQ("", remove_dots("./////", false));
 
-  EXPECT_EQ("a/../b/c", remove_dots("./a/../b/c", false));
-  EXPECT_EQ("b/c", remove_dots("./a/../b/c", true));
-  EXPECT_EQ("c", remove_dots("././c", true));
-  EXPECT_EQ("../a/c", remove_dots("../a/b/../c", true));
-  EXPECT_EQ("../../a/c", remove_dots("../../a/b/../c", true));
-  EXPECT_EQ("/a/c", remove_dots("/../../a/c", true));
-  EXPECT_EQ("/a/c", remove_dots("/../a/b//../././/c", true));
+  EXPECT_EQ("foolz/wat",
+            remove_dots("././/foolz/wat", false, path::Style::posix));
+  EXPECT_EQ("", remove_dots("./////", false, path::Style::posix));
 
-  SmallString<64> Path1("././c");
-  EXPECT_TRUE(path::remove_dots(Path1, true));
-  EXPECT_EQ("c", Path1);
-#endif
+  EXPECT_EQ("a/../b/c", remove_dots("./a/../b/c", false, path::Style::posix));
+  EXPECT_EQ("b/c", remove_dots("./a/../b/c", true, path::Style::posix));
+  EXPECT_EQ("c", remove_dots("././c", true, path::Style::posix));
+  EXPECT_EQ("../a/c", remove_dots("../a/b/../c", true, path::Style::posix));
+  EXPECT_EQ("../../a/c",
+            remove_dots("../../a/b/../c", true, path::Style::posix));
+  EXPECT_EQ("/a/c", remove_dots("/../../a/c", true, path::Style::posix));
+  EXPECT_EQ("/a/c",
+            remove_dots("/../a/b//../././/c", true, path::Style::posix));
+
+  SmallString<64> Path2("././c");
+  EXPECT_TRUE(path::remove_dots(Path2, true, path::Style::posix));
+  EXPECT_EQ("c", Path2);
 }
 
 TEST(Support, ReplacePathPrefix) {
@@ -1254,6 +1319,177 @@ TEST_F(FileSystemTest, set_current_path) {
   ASSERT_NO_ERROR(fs::getUniqueID(TestDirectory, D1));
   ASSERT_NO_ERROR(fs::getUniqueID(path, D2));
   ASSERT_EQ(D1, D2) << "D1: " << TestDirectory << "\nD2: " << path;
+}
+
+TEST_F(FileSystemTest, permissions) {
+  int FD;
+  SmallString<64> TempPath;
+  ASSERT_NO_ERROR(fs::createTemporaryFile("prefix", "temp", FD, TempPath));
+  FileRemover Cleanup(TempPath);
+
+  // Make sure it exists.
+  ASSERT_TRUE(fs::exists(Twine(TempPath)));
+
+  auto CheckPermissions = [&](fs::perms Expected) {
+    ErrorOr<fs::perms> Actual = fs::getPermissions(TempPath);
+    return Actual && *Actual == Expected;
+  };
+
+  std::error_code NoError;
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::all_all), NoError);
+  EXPECT_TRUE(CheckPermissions(fs::all_all));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::all_read | fs::all_exe), NoError);
+  EXPECT_TRUE(CheckPermissions(fs::all_read | fs::all_exe));
+
+#if defined(LLVM_ON_WIN32)
+  fs::perms ReadOnly = fs::all_read | fs::all_exe;
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::no_perms), NoError);
+  EXPECT_TRUE(CheckPermissions(ReadOnly));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::owner_read), NoError);
+  EXPECT_TRUE(CheckPermissions(ReadOnly));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::owner_write), NoError);
+  EXPECT_TRUE(CheckPermissions(fs::all_all));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::owner_exe), NoError);
+  EXPECT_TRUE(CheckPermissions(ReadOnly));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::owner_all), NoError);
+  EXPECT_TRUE(CheckPermissions(fs::all_all));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::group_read), NoError);
+  EXPECT_TRUE(CheckPermissions(ReadOnly));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::group_write), NoError);
+  EXPECT_TRUE(CheckPermissions(fs::all_all));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::group_exe), NoError);
+  EXPECT_TRUE(CheckPermissions(ReadOnly));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::group_all), NoError);
+  EXPECT_TRUE(CheckPermissions(fs::all_all));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::others_read), NoError);
+  EXPECT_TRUE(CheckPermissions(ReadOnly));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::others_write), NoError);
+  EXPECT_TRUE(CheckPermissions(fs::all_all));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::others_exe), NoError);
+  EXPECT_TRUE(CheckPermissions(ReadOnly));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::others_all), NoError);
+  EXPECT_TRUE(CheckPermissions(fs::all_all));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::all_read), NoError);
+  EXPECT_TRUE(CheckPermissions(ReadOnly));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::all_write), NoError);
+  EXPECT_TRUE(CheckPermissions(fs::all_all));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::all_exe), NoError);
+  EXPECT_TRUE(CheckPermissions(ReadOnly));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::set_uid_on_exe), NoError);
+  EXPECT_TRUE(CheckPermissions(ReadOnly));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::set_gid_on_exe), NoError);
+  EXPECT_TRUE(CheckPermissions(ReadOnly));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::sticky_bit), NoError);
+  EXPECT_TRUE(CheckPermissions(ReadOnly));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::set_uid_on_exe |
+                                             fs::set_gid_on_exe |
+                                             fs::sticky_bit),
+            NoError);
+  EXPECT_TRUE(CheckPermissions(ReadOnly));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, ReadOnly | fs::set_uid_on_exe |
+                                             fs::set_gid_on_exe |
+                                             fs::sticky_bit),
+            NoError);
+  EXPECT_TRUE(CheckPermissions(ReadOnly));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::all_perms), NoError);
+  EXPECT_TRUE(CheckPermissions(fs::all_all));
+#else
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::no_perms), NoError);
+  EXPECT_TRUE(CheckPermissions(fs::no_perms));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::owner_read), NoError);
+  EXPECT_TRUE(CheckPermissions(fs::owner_read));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::owner_write), NoError);
+  EXPECT_TRUE(CheckPermissions(fs::owner_write));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::owner_exe), NoError);
+  EXPECT_TRUE(CheckPermissions(fs::owner_exe));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::owner_all), NoError);
+  EXPECT_TRUE(CheckPermissions(fs::owner_all));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::group_read), NoError);
+  EXPECT_TRUE(CheckPermissions(fs::group_read));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::group_write), NoError);
+  EXPECT_TRUE(CheckPermissions(fs::group_write));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::group_exe), NoError);
+  EXPECT_TRUE(CheckPermissions(fs::group_exe));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::group_all), NoError);
+  EXPECT_TRUE(CheckPermissions(fs::group_all));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::others_read), NoError);
+  EXPECT_TRUE(CheckPermissions(fs::others_read));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::others_write), NoError);
+  EXPECT_TRUE(CheckPermissions(fs::others_write));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::others_exe), NoError);
+  EXPECT_TRUE(CheckPermissions(fs::others_exe));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::others_all), NoError);
+  EXPECT_TRUE(CheckPermissions(fs::others_all));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::all_read), NoError);
+  EXPECT_TRUE(CheckPermissions(fs::all_read));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::all_write), NoError);
+  EXPECT_TRUE(CheckPermissions(fs::all_write));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::all_exe), NoError);
+  EXPECT_TRUE(CheckPermissions(fs::all_exe));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::set_uid_on_exe), NoError);
+  EXPECT_TRUE(CheckPermissions(fs::set_uid_on_exe));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::set_gid_on_exe), NoError);
+  EXPECT_TRUE(CheckPermissions(fs::set_gid_on_exe));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::sticky_bit), NoError);
+  EXPECT_TRUE(CheckPermissions(fs::sticky_bit));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::set_uid_on_exe |
+                                             fs::set_gid_on_exe |
+                                             fs::sticky_bit),
+            NoError);
+  EXPECT_TRUE(CheckPermissions(fs::set_uid_on_exe | fs::set_gid_on_exe |
+                               fs::sticky_bit));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::all_read | fs::set_uid_on_exe |
+                                             fs::set_gid_on_exe |
+                                             fs::sticky_bit),
+            NoError);
+  EXPECT_TRUE(CheckPermissions(fs::all_read | fs::set_uid_on_exe |
+                               fs::set_gid_on_exe | fs::sticky_bit));
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::all_perms), NoError);
+  EXPECT_TRUE(CheckPermissions(fs::all_perms));
+#endif
 }
 
 } // anonymous namespace

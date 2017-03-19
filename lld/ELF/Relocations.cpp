@@ -101,7 +101,7 @@ handleNoRelaxTlsRelocation(GOT *Got, uint32_t Type, SymbolBody &Body,
     // if we know that we are linking an executable. For ARM we resolve the
     // relocation when writing the Got. MIPS has a custom Got implementation
     // that writes the Module index in directly.
-    if (!Body.isPreemptible() && !Config->pic() && Config->EMachine == EM_ARM)
+    if (!Body.isPreemptible() && !Config->Pic && Config->EMachine == EM_ARM)
       Got->Relocations.push_back(
           {R_ABS, Target->TlsModuleIndexRel, Off, 0, &Body});
     else {
@@ -111,7 +111,7 @@ handleNoRelaxTlsRelocation(GOT *Got, uint32_t Type, SymbolBody &Body,
     }
   };
   if (isRelExprOneOf<R_MIPS_TLSLD, R_TLSLD_PC>(Expr)) {
-    if (Got->addTlsIndex() && (Config->pic() || Config->EMachine == EM_ARM))
+    if (Got->addTlsIndex() && (Config->Pic || Config->EMachine == EM_ARM))
       addModuleReloc(Body, Got, Got->getTlsIndexOff(), true);
     C.Relocations.push_back({Expr, Type, Offset, Addend, &Body});
     return 1;
@@ -218,8 +218,7 @@ handleTlsRelocation(uint32_t Type, SymbolBody &Body, InputSectionBase &C,
       if (!Body.isInGot()) {
         In<ELFT>::Got->addEntry(Body);
         In<ELFT>::RelaDyn->addReloc({Target->TlsGotRel, In<ELFT>::Got,
-                                     Body.getGotOffset<ELFT>(), false, &Body,
-                                     0});
+                                     Body.getGotOffset(), false, &Body, 0});
       }
       return Target->TlsGdRelaxSkip;
     }
@@ -245,7 +244,7 @@ template <endianness E> static int16_t readSignedLo16(const uint8_t *Loc) {
 
 template <class RelTy>
 static uint32_t getMipsPairType(const RelTy *Rel, const SymbolBody &Sym) {
-  switch (Rel->getType(Config->isMips64EL())) {
+  switch (Rel->getType(Config->IsMips64EL)) {
   case R_MIPS_HI16:
     return R_MIPS_LO16;
   case R_MIPS_GOT16:
@@ -263,7 +262,7 @@ template <class ELFT, class RelTy>
 static int32_t findMipsPairedAddend(const uint8_t *Buf, const uint8_t *BufLoc,
                                     SymbolBody &Sym, const RelTy *Rel,
                                     const RelTy *End) {
-  uint32_t SymIndex = Rel->getSymbol(Config->isMips64EL());
+  uint32_t SymIndex = Rel->getSymbol(Config->IsMips64EL);
   uint32_t Type = getMipsPairType(Rel, Sym);
 
   // Some MIPS relocations use addend calculated from addend of the relocation
@@ -274,16 +273,16 @@ static int32_t findMipsPairedAddend(const uint8_t *Buf, const uint8_t *BufLoc,
     return 0;
 
   for (const RelTy *RI = Rel; RI != End; ++RI) {
-    if (RI->getType(Config->isMips64EL()) != Type)
+    if (RI->getType(Config->IsMips64EL) != Type)
       continue;
-    if (RI->getSymbol(Config->isMips64EL()) != SymIndex)
+    if (RI->getSymbol(Config->IsMips64EL) != SymIndex)
       continue;
     const endianness E = ELFT::TargetEndianness;
     return ((read32<E>(BufLoc) & 0xffff) << 16) +
            readSignedLo16<E>(Buf + RI->r_offset);
   }
   warn("can't find matching " + toString(Type) + " relocation for " +
-       toString(Rel->getType(Config->isMips64EL())));
+       toString(Rel->getType(Config->IsMips64EL)));
   return 0;
 }
 
@@ -326,12 +325,12 @@ isStaticLinkTimeConstant(RelExpr E, uint32_t Type, const SymbolBody &Body,
   // These never do, except if the entire file is position dependent or if
   // only the low bits are used.
   if (E == R_GOT || E == R_PLT || E == R_TLSDESC)
-    return Target->usesOnlyLowPageBits(Type) || !Config->pic();
+    return Target->usesOnlyLowPageBits(Type) || !Config->Pic;
 
   if (isPreemptible(Body, Type))
     return false;
 
-  if (!Config->pic())
+  if (!Config->Pic)
     return true;
 
   bool AbsVal = isAbsoluteValue<ELFT>(Body);
@@ -479,23 +478,20 @@ template <class ELFT> static void addCopyRelSymbol(SharedSymbol *SS) {
   // See if this symbol is in a read-only segment. If so, preserve the symbol's
   // memory protection by reserving space in the .bss.rel.ro section.
   bool IsReadOnly = isReadOnly<ELFT>(SS);
-  OutputSection *OSec = IsReadOnly ? Out::BssRelRo : Out::Bss;
-
-  // Create a SyntheticSection in Out to hold the .bss and the Copy Reloc.
-  auto *ISec =
-      make<CopyRelSection<ELFT>>(IsReadOnly, SS->getAlignment<ELFT>(), SymSize);
-  OSec->addSection(ISec);
+  BssSection *Sec = IsReadOnly ? In<ELFT>::BssRelRo : In<ELFT>::Bss;
+  uintX_t Off = Sec->reserveSpace(SS->getAlignment<ELFT>(), SymSize);
 
   // Look through the DSO's dynamic symbol table for aliases and create a
   // dynamic symbol for each one. This causes the copy relocation to correctly
   // interpose any aliases.
   for (SharedSymbol *Sym : getSymbolsAt<ELFT>(SS)) {
     Sym->NeedsCopy = true;
-    Sym->Section = ISec;
+    Sym->CopyRelSec = Sec;
+    Sym->CopyRelSecOff = Off;
     Sym->symbol()->IsUsedInRegularObj = true;
   }
 
-  In<ELFT>::RelaDyn->addReloc({Target->CopyRel, ISec, 0, false, SS, 0});
+  In<ELFT>::RelaDyn->addReloc({Target->CopyRel, Sec, Off, false, SS, 0});
 }
 
 template <class ELFT>
@@ -519,13 +515,12 @@ static RelExpr adjustExpr(const elf::ObjectFile<ELFT> &File, SymbolBody &Body,
   // This relocation would require the dynamic linker to write a value to read
   // only memory. We can hack around it if we are producing an executable and
   // the refered symbol can be preemepted to refer to the executable.
-  if (Config->Shared || (Config->pic() && !isRelExpr(Expr))) {
-    if (Config->ZText)
-      error(S.getLocation<ELFT>(RelOff) + ": can't create dynamic relocation " +
-            toString(Type) + " against " +
-            (Body.getName().empty() ? "local symbol in readonly segment"
-                                    : "symbol '" + toString(Body) + "'") +
-            " defined in " + toString(Body.File));
+  if (Config->Shared || (Config->Pic && !isRelExpr(Expr))) {
+    error(S.getLocation<ELFT>(RelOff) + ": can't create dynamic relocation " +
+          toString(Type) + " against " +
+          (Body.getName().empty() ? "local symbol in readonly segment"
+                                  : "symbol '" + toString(Body) + "'") +
+          " defined in " + toString(Body.File));
     return Expr;
   }
   if (Body.getVisibility() != STV_DEFAULT) {
@@ -580,7 +575,7 @@ template <class ELFT, class RelTy>
 static int64_t computeAddend(const elf::ObjectFile<ELFT> &File,
                              const uint8_t *SectionData, const RelTy *End,
                              const RelTy &RI, RelExpr Expr, SymbolBody &Body) {
-  uint32_t Type = RI.getType(Config->isMips64EL());
+  uint32_t Type = RI.getType(Config->IsMips64EL);
   int64_t Addend = getAddend<ELFT>(RI);
   const uint8_t *BufLoc = SectionData + RI.r_offset;
   if (!RelTy::IsRela)
@@ -597,7 +592,7 @@ static int64_t computeAddend(const elf::ObjectFile<ELFT> &File,
     if (Expr == R_MIPS_GOTREL && Body.isLocal())
       Addend += File.MipsGp0;
   }
-  if (Config->pic() && Config->EMachine == EM_PPC64 && Type == R_PPC64_TOC)
+  if (Config->Pic && Config->EMachine == EM_PPC64 && Type == R_PPC64_TOC)
     Addend += getPPC64TocBase();
   return Addend;
 }
@@ -615,10 +610,21 @@ static void reportUndefined(SymbolBody &Sym, InputSectionBase &S,
                     toString(Sym) + "'";
 
   if (Config->UnresolvedSymbols == UnresolvedPolicy::WarnAll ||
-      (Config->UnresolvedSymbols == UnresolvedPolicy::Warn && CanBeExternal))
+      (Config->UnresolvedSymbols == UnresolvedPolicy::Warn && CanBeExternal)) {
     warn(Msg);
-  else
+  } else {
     error(Msg);
+    if (Config->ArchiveWithoutSymbolsSeen) {
+      message("At least one archive listed no symbols in its index."
+              " This can happen when creating archives with a version"
+              " of ar that does not understand the object files in"
+              " the archive. For example, if you are using LLVM"
+              " bitcode objects (such as created by -flto), you may"
+              " need to use llvm-ar or GNU ar with a plugin.");
+      // Reset to false so that we print the message only once.
+      Config->ArchiveWithoutSymbolsSeen = false;
+    }
+  }
 }
 
 template <class RelTy>
@@ -632,7 +638,7 @@ mergeMipsN32RelTypes(uint32_t Type, uint32_t Offset, RelTy *I, RelTy *E) {
   uint32_t Processed = 0;
   for (; I != E && Offset == I->r_offset; ++I) {
     ++Processed;
-    Type |= I->getType(Config->isMips64EL()) << (8 * Processed);
+    Type |= I->getType(Config->IsMips64EL) << (8 * Processed);
   }
   return std::make_pair(Type, Processed);
 }
@@ -655,8 +661,10 @@ static void scanRelocs(InputSectionBase &C, ArrayRef<RelTy> Rels) {
   typedef typename ELFT::uint uintX_t;
 
   bool IsWrite = C.Flags & SHF_WRITE;
+  if (!Config->ZText)
+    IsWrite = true;
 
-  auto AddDyn = [=](const DynamicReloc<ELFT> &Reloc) {
+  auto AddDyn = [=](const DynamicReloc &Reloc) {
     In<ELFT>::RelaDyn->addReloc(Reloc);
   };
 
@@ -674,7 +682,7 @@ static void scanRelocs(InputSectionBase &C, ArrayRef<RelTy> Rels) {
   for (auto I = Rels.begin(), E = Rels.end(); I != E; ++I) {
     const RelTy &RI = *I;
     SymbolBody &Body = File->getRelocTargetSym(RI);
-    uint32_t Type = RI.getType(Config->isMips64EL());
+    uint32_t Type = RI.getType(Config->IsMips64EL);
 
     if (Config->MipsN32Abi) {
       uint32_t Processed;
@@ -791,16 +799,16 @@ static void scanRelocs(InputSectionBase &C, ArrayRef<RelTy> Rels) {
         continue;
 
       if (Body.isGnuIFunc() && !Preemptible) {
-        In<ELFT>::Iplt->addEntry(Body);
+        InX::Iplt->addEntry<ELFT>(Body);
         In<ELFT>::IgotPlt->addEntry(Body);
         In<ELFT>::RelaIplt->addReloc({Target->IRelativeRel, In<ELFT>::IgotPlt,
-                                      Body.getGotPltOffset<ELFT>(),
-                                      !Preemptible, &Body, 0});
+                                      Body.getGotPltOffset(), !Preemptible,
+                                      &Body, 0});
       } else {
-        In<ELFT>::Plt->addEntry(Body);
+        InX::Plt->addEntry<ELFT>(Body);
         In<ELFT>::GotPlt->addEntry(Body);
         In<ELFT>::RelaPlt->addReloc({Target->PltRel, In<ELFT>::GotPlt,
-                                     Body.getGotPltOffset<ELFT>(), !Preemptible,
+                                     Body.getGotPltOffset(), !Preemptible,
                                      &Body, 0});
       }
       continue;
@@ -817,8 +825,8 @@ static void scanRelocs(InputSectionBase &C, ArrayRef<RelTy> Rels) {
         // ftp://www.linux-mips.org/pub/linux/mips/doc/ABI/mipsabi.pdf
         In<ELFT>::MipsGot->addEntry(Body, Addend, Expr);
         if (Body.isTls() && Body.isPreemptible())
-          AddDyn({Target->TlsGotRel, In<ELFT>::MipsGot,
-                  Body.getGotOffset<ELFT>(), false, &Body, 0});
+          AddDyn({Target->TlsGotRel, In<ELFT>::MipsGot, Body.getGotOffset(),
+                  false, &Body, 0});
         continue;
       }
 
@@ -826,20 +834,19 @@ static void scanRelocs(InputSectionBase &C, ArrayRef<RelTy> Rels) {
         continue;
 
       In<ELFT>::Got->addEntry(Body);
-      uintX_t Off = Body.getGotOffset<ELFT>();
+      uintX_t Off = Body.getGotOffset();
       uint32_t DynType;
       RelExpr GotRE = R_ABS;
       if (Body.isTls()) {
         DynType = Target->TlsGotRel;
         GotRE = R_TLS;
-      } else if (!Preemptible && Config->pic() && !isAbsolute<ELFT>(Body))
+      } else if (!Preemptible && Config->Pic && !isAbsolute<ELFT>(Body))
         DynType = Target->RelativeRel;
       else
         DynType = Target->GotRel;
 
       // FIXME: this logic is almost duplicated above.
-      bool Constant =
-          !Preemptible && !(Config->pic() && !isAbsolute<ELFT>(Body));
+      bool Constant = !Preemptible && !(Config->Pic && !isAbsolute<ELFT>(Body));
       if (!Constant)
         AddDyn({DynType, In<ELFT>::Got, Off, !Preemptible, &Body, 0});
       if (Constant || (!RelTy::IsRela && !Preemptible))
@@ -860,11 +867,10 @@ template <class ELFT> void scanRelocations(InputSectionBase &S) {
 // in the Sections vector, and recalculate the InputSection output section
 // offsets.
 // This may invalidate any output section offsets stored outside of InputSection
-template <class ELFT>
 static void mergeThunks(OutputSection *OS,
-                        std::vector<ThunkSection<ELFT> *> &Thunks) {
+                        std::vector<ThunkSection *> &Thunks) {
   // Order Thunks in ascending OutSecOff
-  auto ThunkCmp = [](const ThunkSection<ELFT> *A, const ThunkSection<ELFT> *B) {
+  auto ThunkCmp = [](const ThunkSection *A, const ThunkSection *B) {
     return A->OutSecOff < B->OutSecOff;
   };
   std::stable_sort(Thunks.begin(), Thunks.end(), ThunkCmp);
@@ -879,7 +885,7 @@ static void mergeThunks(OutputSection *OS,
     if (A->OutSecOff == B->OutSecOff)
       // Check if Thunk is immediately before any specific Target InputSection
       // for example Mips LA25 Thunks.
-      if (auto *TA = dyn_cast<ThunkSection<ELFT>>(A))
+      if (auto *TA = dyn_cast<ThunkSection>(A))
         if (TA && TA->getTargetInputSection() == B)
           return true;
     return false;
@@ -887,7 +893,7 @@ static void mergeThunks(OutputSection *OS,
   std::merge(OS->Sections.begin(), OS->Sections.end(), Thunks.begin(),
              Thunks.end(), std::back_inserter(Tmp), MergeCmp);
   OS->Sections = std::move(Tmp);
-  OS->assignOffsets<ELFT>();
+  OS->assignOffsets();
 }
 
 // Process all relocations from the InputSections that have been assigned
@@ -903,11 +909,11 @@ static void mergeThunks(OutputSection *OS,
 template <class ELFT>
 bool createThunks(ArrayRef<OutputSection *> OutputSections) {
   // Track Symbols that already have a Thunk
-  DenseMap<SymbolBody *, Thunk<ELFT> *> ThunkedSymbols;
+  DenseMap<SymbolBody *, Thunk *> ThunkedSymbols;
   // Track InputSections that have a ThunkSection placed in front
-  DenseMap<InputSection *, ThunkSection<ELFT> *> ThunkedSections;
+  DenseMap<InputSection *, ThunkSection *> ThunkedSections;
   // Track the ThunksSections that need to be inserted into an OutputSection
-  std::map<OutputSection *, std::vector<ThunkSection<ELFT> *>> ThunkSections;
+  std::map<OutputSection *, std::vector<ThunkSection *>> ThunkSections;
 
   // Find or create a Thunk for Body for relocation Type
   auto GetThunk = [&](SymbolBody &Body, uint32_t Type) {
@@ -919,18 +925,18 @@ bool createThunks(ArrayRef<OutputSection *> OutputSections) {
 
   // Find or create a ThunkSection to be placed immediately before IS
   auto GetISThunkSec = [&](InputSection *IS, OutputSection *OS) {
-    ThunkSection<ELFT> *TS = ThunkedSections.lookup(IS);
+    ThunkSection *TS = ThunkedSections.lookup(IS);
     if (TS)
       return TS;
     auto *TOS = cast<OutputSection>(IS->OutSec);
-    TS = make<ThunkSection<ELFT>>(TOS, IS->OutSecOff);
+    TS = make<ThunkSection>(TOS, IS->OutSecOff);
     ThunkSections[TOS].push_back(TS);
     ThunkedSections[IS] = TS;
     return TS;
   };
   // Find or create a ThunkSection to be placed as last executable section in
   // OS.
-  auto GetOSThunkSec = [&](ThunkSection<ELFT> *&TS, OutputSection *OS) {
+  auto GetOSThunkSec = [&](ThunkSection *&TS, OutputSection *OS) {
     if (TS == nullptr) {
       uint32_t Off = 0;
       for (auto *IS : OS->Sections) {
@@ -938,7 +944,7 @@ bool createThunks(ArrayRef<OutputSection *> OutputSections) {
         if ((IS->Flags & SHF_EXECINSTR) == 0)
           break;
       }
-      TS = make<ThunkSection<ELFT>>(OS, Off);
+      TS = make<ThunkSection>(OS, Off);
       ThunkSections[OS].push_back(TS);
     }
     return TS;
@@ -954,18 +960,17 @@ bool createThunks(ArrayRef<OutputSection *> OutputSections) {
     if (OS == nullptr)
       continue;
 
-    ThunkSection<ELFT> *OSTS = nullptr;
+    ThunkSection *OSTS = nullptr;
     for (InputSection *IS : OS->Sections) {
       for (Relocation &Rel : IS->Relocations) {
         SymbolBody &Body = *Rel.Sym;
-        if (Target->needsThunk(Rel.Expr, Rel.Type, IS->template getFile<ELFT>(),
-                               Body)) {
-          Thunk<ELFT> *T;
+        if (Target->needsThunk(Rel.Expr, Rel.Type, IS->File, Body)) {
+          Thunk *T;
           bool IsNew;
           std::tie(T, IsNew) = GetThunk(Body, Rel.Type);
           if (IsNew) {
             // Find or create a ThunkSection for the new Thunk
-            ThunkSection<ELFT> *TS;
+            ThunkSection *TS;
             if (auto *TIS = T->getTargetInputSection())
               TS = GetISThunkSec(TIS, OS);
             else
@@ -982,7 +987,7 @@ bool createThunks(ArrayRef<OutputSection *> OutputSections) {
 
   // Merge all created synthetic ThunkSections back into OutputSection
   for (auto &KV : ThunkSections)
-    mergeThunks<ELFT>(KV.first, KV.second);
+    mergeThunks(KV.first, KV.second);
   return !ThunkSections.empty();
 }
 

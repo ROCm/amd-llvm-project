@@ -42,6 +42,7 @@
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Object/Decompressor.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/FileOutputBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/TarWriter.h"
 #include "llvm/Support/TargetSelect.h"
@@ -63,6 +64,8 @@ LinkerDriver *elf::Driver;
 BumpPtrAllocator elf::BAlloc;
 StringSaver elf::Saver{BAlloc};
 std::vector<SpecificAllocBase *> elf::SpecificAllocBase::Instances;
+
+static void setConfigs();
 
 bool elf::link(ArrayRef<const char *> Args, bool CanExitEarly,
                raw_ostream &Error) {
@@ -326,6 +329,7 @@ void LinkerDriver::main(ArrayRef<const char *> ArgsArr, bool CanExitEarly) {
   initLLVM(Args);
   createFiles(Args);
   inferMachineType();
+  setConfigs();
   checkOptions(Args);
   if (ErrorCount)
     return;
@@ -584,6 +588,9 @@ void LinkerDriver::readConfigs(opt::InputArgList &Args) {
   Config->Target1Rel = getArg(Args, OPT_target1_rel, OPT_target1_abs, false);
   Config->Target2 = getTarget2(Args);
   Config->ThinLTOCacheDir = getString(Args, OPT_thinlto_cache_dir);
+  Config->ThinLTOCachePolicy =
+      check(parseCachePruningPolicy(getString(Args, OPT_thinlto_cache_policy)),
+            "--thinlto-cache-policy: invalid cache policy");
   Config->ThinLTOJobs = getInteger(Args, OPT_thinlto_jobs, -1u);
   Config->Threads = getArg(Args, OPT_threads, OPT_no_threads, true);
   Config->Trace = Args.hasArg(OPT_trace);
@@ -630,7 +637,9 @@ void LinkerDriver::readConfigs(opt::InputArgList &Args) {
 
   std::tie(Config->SysvHash, Config->GnuHash) = getHashStyle(Args);
 
-  // Parse --build-id or --build-id=<style>.
+  // Parse --build-id or --build-id=<style>. We handle "tree" as a
+  // synonym for "sha1" because all of our hash functions including
+  // -build-id=sha1 are tree hashes for performance reasons.
   if (Args.hasArg(OPT_build_id))
     Config->BuildId = BuildIdKind::Fast;
   if (auto *Arg = Args.getLastArg(OPT_build_id_eq)) {
@@ -688,6 +697,27 @@ void LinkerDriver::readConfigs(opt::InputArgList &Args) {
   if (auto *Arg = Args.getLastArg(OPT_version_script))
     if (Optional<MemoryBufferRef> Buffer = readFile(Arg->getValue()))
       readVersionScript(*Buffer);
+}
+
+// Some Config members do not directly correspond to any particular
+// command line options, but computed based on other Config values.
+// This function initialize such members. See Config.h for the details
+// of these values.
+static void setConfigs() {
+  ELFKind Kind = Config->EKind;
+  uint16_t Machine = Config->EMachine;
+  bool Is64 = (Kind == ELF64LEKind || Kind == ELF64BEKind);
+
+  // There is an ILP32 ABI for x86-64, although it's not very popular.
+  // It is called the x32 ABI.
+  bool IsX32 = (Kind == ELF32LEKind && Machine == EM_X86_64);
+
+  Config->CopyRelocs = (Config->Relocatable || Config->EmitRelocs);
+  Config->IsLE = (Kind == ELF32LEKind || Kind == ELF64LEKind);
+  Config->IsMips64EL = (Kind == ELF64LEKind && Machine == EM_MIPS);
+  Config->IsRela = Is64 || IsX32 || Config->MipsN32Abi;
+  Config->Pic = Config->Pie || Config->Shared;
+  Config->Wordsize = Is64 ? 8 : 4;
 }
 
 // Returns a value of "-format" option.
@@ -783,7 +813,7 @@ static uint64_t getImageBase(opt::InputArgList &Args) {
   // has to be called after the variable is initialized.
   auto *Arg = Args.getLastArg(OPT_image_base);
   if (!Arg)
-    return Config->pic() ? 0 : Target->DefaultImageBase;
+    return Config->Pic ? 0 : Target->DefaultImageBase;
 
   StringRef S = Arg->getValue();
   uint64_t V;
@@ -794,6 +824,26 @@ static uint64_t getImageBase(opt::InputArgList &Args) {
   if ((V % Config->MaxPageSize) != 0)
     warn("-image-base: address isn't multiple of page size: " + S);
   return V;
+}
+
+// Returns true if a given file seems to be writable.
+//
+// Determining whether a file is writable or not is amazingly hard,
+// and after all the only reliable way of doing that is to actually
+// create a file. But we don't want to do that in this function
+// because LLD shouldn't update any file if it will end in a failure.
+// We also don't want to reimplement heuristics. So we'll let
+// FileOutputBuffer do the work.
+//
+// FileOutputBuffer doesn't touch a desitnation file until commit()
+// is called. We use that class without calling commit() to predict
+// if the given file is writable.
+static bool isWritable(StringRef Path) {
+  if (auto EC = FileOutputBuffer::create(Path, 1).getError()) {
+    error("cannot open output file " + Path + ": " + EC.message());
+    return false;
+  }
+  return true;
 }
 
 // Do actual linking. Note that when this function is called,
@@ -810,6 +860,12 @@ template <class ELFT> void LinkerDriver::link(opt::InputArgList &Args) {
   // Default output filename is "a.out" by the Unix tradition.
   if (Config->OutputFile.empty())
     Config->OutputFile = "a.out";
+
+  // Fail early if the output file is not writable. If a user has a long link,
+  // e.g. due to a large LTO link, they do not wish to run it and find that it
+  // failed because there was a mistake in their command-line.
+  if (!isWritable(Config->OutputFile))
+    return;
 
   // Use default entry point name if no name was given via the command
   // line nor linker scripts. For some reason, MIPS entry point name is
