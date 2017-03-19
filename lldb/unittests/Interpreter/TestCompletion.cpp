@@ -64,7 +64,8 @@ public:
   bool ResolveExact(StringRef Expr, SmallVectorImpl<char> &Output) override {
     Output.clear();
 
-    assert(!llvm::any_of(Expr, llvm::sys::path::is_separator));
+    assert(!llvm::any_of(
+        Expr, [](char c) { return llvm::sys::path::is_separator(c); }));
     assert(Expr.empty() || Expr[0] == '~');
     Expr = Expr.drop_front();
     if (Expr.empty()) {
@@ -85,7 +86,8 @@ public:
   bool ResolvePartial(StringRef Expr, StringSet<> &Output) override {
     Output.clear();
 
-    assert(!llvm::any_of(Expr, llvm::sys::path::is_separator));
+    assert(!llvm::any_of(
+        Expr, [](char c) { return llvm::sys::path::is_separator(c); }));
     assert(Expr.empty() || Expr[0] == '~');
     Expr = Expr.drop_front();
 
@@ -127,8 +129,8 @@ protected:
     ASSERT_NO_ERROR(fs::createUniqueDirectory("FsCompletion", BaseDir));
     const char *DirNames[] = {"foo", "fooa", "foob",       "fooc",
                               "bar", "baz",  "test_folder"};
-    const char *FileNames[] = {"aa%%%%.tmp",  "ab%%%%.tmp",  "ac%%%%.tmp",
-                               "foo%%%%.tmp", "bar%%%%.tmp", "baz%%%%.tmp"};
+    const char *FileNames[] = {"aa1234.tmp",  "ab1234.tmp",  "ac1234.tmp",
+                               "foo1234.tmp", "bar1234.tmp", "baz1234.tmp"};
     SmallString<128> *Dirs[] = {&DirFoo, &DirFooA, &DirFooB,      &DirFooC,
                                 &DirBar, &DirBaz,  &DirTestFolder};
     for (auto Dir : llvm::zip(DirNames, Dirs)) {

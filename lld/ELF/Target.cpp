@@ -415,12 +415,12 @@ void X86TargetInfo::writeGotPltHeader(uint8_t *Buf) const {
 void X86TargetInfo::writeGotPlt(uint8_t *Buf, const SymbolBody &S) const {
   // Entries in .got.plt initially points back to the corresponding
   // PLT entries with a fixed offset to skip the first instruction.
-  write32le(Buf, S.getPltVA<ELF32LE>() + 6);
+  write32le(Buf, S.getPltVA() + 6);
 }
 
 void X86TargetInfo::writeIgotPlt(uint8_t *Buf, const SymbolBody &S) const {
   // An x86 entry is the address of the ifunc resolver function.
-  write32le(Buf, S.getVA<ELF32LE>());
+  write32le(Buf, S.getVA());
 }
 
 uint32_t X86TargetInfo::getDynRel(uint32_t Type) const {
@@ -446,7 +446,7 @@ bool X86TargetInfo::isTlsInitialExecRel(uint32_t Type) const {
 void X86TargetInfo::writePltHeader(uint8_t *Buf) const {
   // Executable files and shared object files have
   // separate procedure linkage tables.
-  if (Config->pic()) {
+  if (Config->Pic) {
     const uint8_t V[] = {
         0xff, 0xb3, 0x04, 0x00, 0x00, 0x00, // pushl 4(%ebx)
         0xff, 0xa3, 0x08, 0x00, 0x00, 0x00, // jmp   *8(%ebx)
@@ -478,7 +478,7 @@ void X86TargetInfo::writePlt(uint8_t *Buf, uint64_t GotEntryAddr,
   memcpy(Buf, Inst, sizeof(Inst));
 
   // jmp *foo@GOT(%ebx) or jmp *foo_in_GOT
-  Buf[1] = Config->pic() ? 0xa3 : 0x25;
+  Buf[1] = Config->Pic ? 0xa3 : 0x25;
   uint32_t Got = In<ELF32LE>::GotPlt->getVA();
   write32le(Buf + 2, Config->Shared ? GotEntryAddr - Got : GotEntryAddr);
   write32le(Buf + 7, RelOff);
@@ -704,7 +704,7 @@ template <class ELFT>
 void X86_64TargetInfo<ELFT>::writeGotPlt(uint8_t *Buf,
                                          const SymbolBody &S) const {
   // See comments in X86TargetInfo::writeGotPlt.
-  write32le(Buf, S.getPltVA<ELFT>() + 6);
+  write32le(Buf, S.getPltVA() + 6);
 }
 
 template <class ELFT>
@@ -944,7 +944,7 @@ RelExpr X86_64TargetInfo<ELFT>::adjustRelaxExpr(uint32_t Type,
   // We also don't relax test/binop instructions without REX byte,
   // they are 32bit operations and not common to have.
   assert(Type == R_X86_64_REX_GOTPCRELX);
-  return Config->pic() ? RelExpr : R_RELAX_GOT_PC_NOPIC;
+  return Config->Pic ? RelExpr : R_RELAX_GOT_PC_NOPIC;
 }
 
 // A subset of relaxations can only be applied for no-PIC. This method
@@ -1031,7 +1031,7 @@ void X86_64TargetInfo<ELFT>::relaxGot(uint8_t *Loc, uint64_t Val) const {
   if (Op != 0xff) {
     // We are relaxing a rip relative to an absolute, so compensate
     // for the old -4 addend.
-    assert(!Config->pic());
+    assert(!Config->Pic);
     relaxGotNoPic(Loc, Val + 4, Op, ModRm);
     return;
   }
@@ -1743,7 +1743,7 @@ void ARMTargetInfo::writeGotPlt(uint8_t *Buf, const SymbolBody &) const {
 
 void ARMTargetInfo::writeIgotPlt(uint8_t *Buf, const SymbolBody &S) const {
   // An ARM entry is the address of the ifunc resolver function.
-  write32le(Buf, S.getVA<ELF32LE>());
+  write32le(Buf, S.getVA());
 }
 
 void ARMTargetInfo::writePltHeader(uint8_t *Buf) const {
@@ -1807,14 +1807,14 @@ bool ARMTargetInfo::needsThunk(RelExpr Expr, uint32_t RelocType,
   case R_ARM_JUMP24:
     // Source is ARM, all PLT entries are ARM so no interworking required.
     // Otherwise we need to interwork if Symbol has bit 0 set (Thumb).
-    if (Expr == R_PC && ((S.getVA<ELF32LE>() & 1) == 1))
+    if (Expr == R_PC && ((S.getVA() & 1) == 1))
       return true;
     break;
   case R_ARM_THM_JUMP19:
   case R_ARM_THM_JUMP24:
     // Source is Thumb, all PLT entries are ARM so interworking is required.
     // Otherwise we need to interwork if Symbol has bit 0 clear (ARM).
-    if (Expr == R_PLT_PC || ((S.getVA<ELF32LE>() & 1) == 0))
+    if (Expr == R_PLT_PC || ((S.getVA() & 1) == 0))
       return true;
     break;
   }

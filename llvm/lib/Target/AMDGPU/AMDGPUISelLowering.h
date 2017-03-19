@@ -235,6 +235,12 @@ enum NodeType : unsigned {
   UMUL,        // 32bit unsigned multiplication
   BRANCH_COND,
   // End AMDIL ISD Opcodes
+
+  // Masked control flow nodes.
+  IF,
+  ELSE,
+  LOOP,
+
   ENDPGM,
   RETURN,
   DWORDADDR,
@@ -325,6 +331,10 @@ enum NodeType : unsigned {
   // Convert two float 32 numbers into a single register holding two packed f16
   // with round to zero.
   CVT_PKRTZ_F16_F32,
+
+  // Same as the standard node, except the high bits of the resulting integer
+  // are known 0.
+  FP_TO_FP16,
 
   /// This node is for VLIW targets and it is used to represent a vector
   /// that is stored in consecutive registers with the same channel.
