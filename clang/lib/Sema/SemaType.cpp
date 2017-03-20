@@ -6991,8 +6991,13 @@ static void processTypeAttrs(TypeProcessingState &state, QualType &type,
         type = state.getSema().Context.getAddrSpaceQualType(
           type, LangAS::opencl_global);
       } else if (D.getContext() == Declarator::BlockContext) {
-        type = state.getSema().Context.getAddrSpaceQualType(
-          type, LangAS::opencl_private);
+        if (D.getDeclSpec().getStorageClassSpec() != DeclSpec::SCS_static) {
+          type = state.getSema().Context.getAddrSpaceQualType(
+              type, LangAS::opencl_private);
+        } else {
+          type = state.getSema().Context.getAddrSpaceQualType(
+              type, LangAS::opencl_global);
+        }
       }
     }
     else if (state.getCurrentChunkIndex() == 0 &&
