@@ -2060,14 +2060,7 @@ public:
       hasFMAF(false),
       hasLDEXPF(false),
       hasFullSpeedFP32Denorms(false){
-    const bool Is32Bit = GPU <= GK_CAYMAN;
-    LongWidth = LongAlign = PointerWidth = PointerAlign = Is32Bit ? 32 : 64;
-    SizeType    = Is32Bit ? UnsignedInt      : UnsignedLong;
-    PtrDiffType = Is32Bit ? SignedInt        : SignedLong;
-    IntPtrType  = Is32Bit ? SignedInt        : SignedLong;
-    IntMaxType  = Is32Bit ? SignedLongLong   : SignedLong;
-    Int64Type   = Is32Bit ? SignedLongLong   : SignedLong;
-
+    setTypes();
     if (getTriple().getArch() == llvm::Triple::amdgcn) {
       hasFP64 = true;
       hasFMAF = true;
@@ -2142,6 +2135,16 @@ public:
     //   correctly be different on host/device, e.g. if host has wider vector
     //   types than device.
     // - LongDoubleWidth, LongDoubleAlign: TBD
+  }
+
+  void setTypes() {
+    const bool Is32Bit = GPU <= GK_CAYMAN;
+    LongWidth = LongAlign = PointerWidth = PointerAlign = Is32Bit ? 32 : 64;
+    SizeType    = Is32Bit ? UnsignedInt      : UnsignedLong;
+    PtrDiffType = Is32Bit ? SignedInt        : SignedLong;
+    IntPtrType  = Is32Bit ? SignedInt        : SignedLong;
+    IntMaxType  = Is32Bit ? SignedLongLong   : SignedLong;
+    Int64Type   = Is32Bit ? SignedLongLong   : SignedLong;
   }
 
   uint64_t getPointerWidthV(unsigned AddrSpace) const override {
@@ -2302,6 +2305,8 @@ public:
     else
       GPU = parseR600Name(Name);
 
+    if (GPU != GK_NONE)
+      setTypes();
     return GPU != GK_NONE;
   }
 
