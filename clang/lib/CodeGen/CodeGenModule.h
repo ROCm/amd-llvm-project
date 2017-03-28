@@ -919,14 +919,13 @@ public:
   /// Create a new runtime function with the specified type and name.
   llvm::Constant *
   CreateRuntimeFunction(llvm::FunctionType *Ty, StringRef Name,
-                        llvm::AttributeSet ExtraAttrs = llvm::AttributeSet(),
+                        llvm::AttributeList ExtraAttrs = llvm::AttributeList(),
                         bool Local = false);
 
   /// Create a new compiler builtin function with the specified type and name.
-  llvm::Constant *CreateBuiltinFunction(llvm::FunctionType *Ty,
-                                        StringRef Name,
-                                        llvm::AttributeSet ExtraAttrs =
-                                          llvm::AttributeSet());
+  llvm::Constant *
+  CreateBuiltinFunction(llvm::FunctionType *Ty, StringRef Name,
+                        llvm::AttributeList ExtraAttrs = llvm::AttributeList());
   /// Create a new runtime global variable with the specified type and name.
   llvm::Constant *CreateRuntimeVariable(llvm::Type *Ty,
                                         StringRef Name);
@@ -1222,12 +1221,11 @@ public:
   llvm::Constant *getNullPointer(llvm::PointerType *T, QualType QT);
 
 private:
-  llvm::Constant *
-  GetOrCreateLLVMFunction(StringRef MangledName, llvm::Type *Ty, GlobalDecl D,
-                          bool ForVTable, bool DontDefer = false,
-                          bool IsThunk = false,
-                          llvm::AttributeSet ExtraAttrs = llvm::AttributeSet(),
-                          ForDefinition_t IsForDefinition = NotForDefinition);
+  llvm::Constant *GetOrCreateLLVMFunction(
+      StringRef MangledName, llvm::Type *Ty, GlobalDecl D, bool ForVTable,
+      bool DontDefer = false, bool IsThunk = false,
+      llvm::AttributeList ExtraAttrs = llvm::AttributeList(),
+      ForDefinition_t IsForDefinition = NotForDefinition);
 
   llvm::Constant *GetOrCreateLLVMGlobal(StringRef MangledName,
                                         llvm::PointerType *PTy,
@@ -1296,6 +1294,10 @@ private:
 
   /// Emit any vtables which we deferred and still have a use for.
   void EmitDeferredVTables();
+
+  /// Emit a dummy function that reference a CoreFoundation symbol when
+  /// @available is used on Darwin.
+  void emitAtAvailableLinkGuard();
 
   /// Emit the llvm.used and llvm.compiler.used metadata.
   void emitLLVMUsed();

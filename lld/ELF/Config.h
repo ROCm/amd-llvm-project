@@ -16,6 +16,7 @@
 #include "llvm/Support/CachePruning.h"
 #include "llvm/Support/CodeGen.h"
 #include "llvm/Support/ELF.h"
+#include "llvm/Support/Endian.h"
 
 #include <vector>
 
@@ -141,6 +142,7 @@ struct Configuration {
   bool ZExecstack;
   bool ZNocopyreloc;
   bool ZNodelete;
+  bool ZNodlopen;
   bool ZNow;
   bool ZOrigin;
   bool ZRelro;
@@ -172,8 +174,14 @@ struct Configuration {
   // output file. Usually false because we consume relocations.
   bool CopyRelocs;
 
-  // True if the target is little-endian. False if the target is big-endian.
+  // True if the target is ELF64. False if ELF32.
+  bool Is64;
+
+  // True if the target is little-endian. False if big-endian.
   bool IsLE;
+
+  // endianness::little if IsLE is true. endianness::big otherwise.
+  llvm::support::endianness Endianness;
 
   // True if the target is the little-endian MIPS64.
   //

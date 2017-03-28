@@ -54,10 +54,7 @@ std::string AMDGPUIntrinsicInfo::getName(unsigned IntrID, Type **Tys,
 FunctionType *AMDGPUIntrinsicInfo::getType(LLVMContext &Context, unsigned ID,
                                            ArrayRef<Type*> Tys) const {
   // FIXME: Re-use Intrinsic::getType machinery
-  switch (ID) {
-  default:
-    llvm_unreachable("unhandled intrinsic");
-  }
+  llvm_unreachable("unhandled intrinsic");
 }
 
 unsigned AMDGPUIntrinsicInfo::lookupName(const char *NameData,
@@ -93,8 +90,8 @@ Function *AMDGPUIntrinsicInfo::getDeclaration(Module *M, unsigned IntrID,
   Function *F
     = cast<Function>(M->getOrInsertFunction(getName(IntrID, Tys), FTy));
 
-  AttributeSet AS = getAttributes(M->getContext(),
-                                  static_cast<AMDGPUIntrinsic::ID>(IntrID));
+  AttributeList AS =
+      getAttributes(M->getContext(), static_cast<AMDGPUIntrinsic::ID>(IntrID));
   F->setAttributes(AS);
   return F;
 }

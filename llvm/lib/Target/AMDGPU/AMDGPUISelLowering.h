@@ -47,7 +47,7 @@ protected:
   SDValue LowerFRINT(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerFNEARBYINT(SDValue Op, SelectionDAG &DAG) const;
 
-  SDValue LowerFROUND32(SDValue Op, SelectionDAG &DAG) const;
+  SDValue LowerFROUND32_16(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerFROUND64(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerFROUND(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerFFLOOR(SDValue Op, SelectionDAG &DAG) const;
@@ -231,18 +231,27 @@ namespace AMDGPUISD {
 enum NodeType : unsigned {
   // AMDIL ISD Opcodes
   FIRST_NUMBER = ISD::BUILTIN_OP_END,
-  CALL,        // Function call based on a single integer
   UMUL,        // 32bit unsigned multiplication
   BRANCH_COND,
   // End AMDIL ISD Opcodes
+
+  // Function call.
+  CALL,
 
   // Masked control flow nodes.
   IF,
   ELSE,
   LOOP,
 
+  // A uniform kernel return that terminates the wavefront.
   ENDPGM,
-  RETURN,
+
+  // Return to a shader part's epilog code.
+  RETURN_TO_EPILOG,
+
+  // Return with values from a non-entry function.
+  RET_FLAG,
+
   DWORDADDR,
   FRACT,
 

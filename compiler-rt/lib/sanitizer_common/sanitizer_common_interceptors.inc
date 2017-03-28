@@ -24,7 +24,8 @@
 //   COMMON_INTERCEPTOR_SET_THREAD_NAME
 //   COMMON_INTERCEPTOR_ON_DLOPEN
 //   COMMON_INTERCEPTOR_ON_EXIT
-//   COMMON_INTERCEPTOR_MUTEX_LOCK
+//   COMMON_INTERCEPTOR_MUTEX_PRE_LOCK
+//   COMMON_INTERCEPTOR_MUTEX_POST_LOCK
 //   COMMON_INTERCEPTOR_MUTEX_UNLOCK
 //   COMMON_INTERCEPTOR_MUTEX_REPAIR
 //   COMMON_INTERCEPTOR_SET_PTHREAD_NAME
@@ -89,8 +90,12 @@ bool PlatformHasDifferentMemcpyAndMemmove();
 #define COMMON_INTERCEPTOR_FD_ACCESS(ctx, fd) {}
 #endif
 
-#ifndef COMMON_INTERCEPTOR_MUTEX_LOCK
-#define COMMON_INTERCEPTOR_MUTEX_LOCK(ctx, m) {}
+#ifndef COMMON_INTERCEPTOR_MUTEX_PRE_LOCK
+#define COMMON_INTERCEPTOR_MUTEX_PRE_LOCK(ctx, m) {}
+#endif
+
+#ifndef COMMON_INTERCEPTOR_MUTEX_POST_LOCK
+#define COMMON_INTERCEPTOR_MUTEX_POST_LOCK(ctx, m) {}
 #endif
 
 #ifndef COMMON_INTERCEPTOR_MUTEX_UNLOCK
@@ -493,6 +498,52 @@ INTERCEPTOR(char*, strcasestr, const char *s1, const char *s2) {
 #define INIT_STRCASESTR COMMON_INTERCEPT_FUNCTION(strcasestr);
 #else
 #define INIT_STRCASESTR
+#endif
+
+#if SANITIZER_INTERCEPT_STRTOK
+
+INTERCEPTOR(char*, strtok, char *str, const char *delimiters) {
+  void *ctx;
+  COMMON_INTERCEPTOR_ENTER(ctx, strtok, str, delimiters);
+  if (!common_flags()->intercept_strtok) {
+    return REAL(strtok)(str, delimiters);
+  }
+  if (common_flags()->strict_string_checks) {
+    // If strict_string_checks is enabled, we check the whole first argument
+    // string on the first call (strtok saves this string in a static buffer
+    // for subsequent calls). We do not need to check strtok's result.
+    // As the delimiters can change, we check them every call.
+    if (str != nullptr) {
+      COMMON_INTERCEPTOR_READ_RANGE(ctx, str, REAL(strlen)(str) + 1);
+    }
+    COMMON_INTERCEPTOR_READ_RANGE(ctx, delimiters,
+                                  REAL(strlen)(delimiters) + 1);
+    return REAL(strtok)(str, delimiters);
+  } else {
+    // However, when strict_string_checks is disabled we cannot check the
+    // whole string on the first call. Instead, we check the result string
+    // which is guaranteed to be a NULL-terminated substring of the first
+    // argument. We also conservatively check one character of str and the
+    // delimiters.
+    if (str != nullptr) {
+      COMMON_INTERCEPTOR_READ_STRING(ctx, str, 1);
+    }
+    COMMON_INTERCEPTOR_READ_RANGE(ctx, delimiters, 1);
+    char *result = REAL(strtok)(str, delimiters);
+    if (result != nullptr) {
+      COMMON_INTERCEPTOR_READ_RANGE(ctx, result, REAL(strlen)(result) + 1);
+    } else if (str != nullptr) {
+      // No delimiter were found, it's safe to assume that the entire str was
+      // scanned.
+      COMMON_INTERCEPTOR_READ_RANGE(ctx, str, REAL(strlen)(str) + 1);
+    }
+    return result;
+  }
+}
+
+#define INIT_STRTOK COMMON_INTERCEPT_FUNCTION(strtok)
+#else
+#define INIT_STRTOK
 #endif
 
 #if SANITIZER_INTERCEPT_MEMMEM
@@ -3675,11 +3726,12 @@ INTERCEPTOR(void, _exit, int status) {
 INTERCEPTOR(int, pthread_mutex_lock, void *m) {
   void *ctx;
   COMMON_INTERCEPTOR_ENTER(ctx, pthread_mutex_lock, m);
+  COMMON_INTERCEPTOR_MUTEX_PRE_LOCK(ctx, m);
   int res = REAL(pthread_mutex_lock)(m);
   if (res == errno_EOWNERDEAD)
     COMMON_INTERCEPTOR_MUTEX_REPAIR(ctx, m);
   if (res == 0 || res == errno_EOWNERDEAD)
-    COMMON_INTERCEPTOR_MUTEX_LOCK(ctx, m);
+    COMMON_INTERCEPTOR_MUTEX_POST_LOCK(ctx, m);
   if (res == errno_EINVAL)
     COMMON_INTERCEPTOR_MUTEX_INVALID(ctx, m);
   return res;
@@ -6079,6 +6131,7 @@ static void InitializeCommonInterceptors() {
   INIT_STRCHRNUL;
   INIT_STRRCHR;
   INIT_STRSPN;
+  INIT_STRTOK;
   INIT_STRPBRK;
   INIT_MEMSET;
   INIT_MEMMOVE;

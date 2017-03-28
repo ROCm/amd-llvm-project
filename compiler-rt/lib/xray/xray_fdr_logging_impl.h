@@ -20,9 +20,11 @@
 #include <cassert>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <string>
 #include <sys/syscall.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "sanitizer_common/sanitizer_common.h"
@@ -91,12 +93,12 @@ static void writeTSCWrapMetadata(uint64_t TSC);
 /// walk backward through its buffer and erase trivial functions to avoid
 /// polluting the log and may use the buffer queue to obtain or release a
 /// buffer.
-static void
-processFunctionHook(int32_t FuncId, XRayEntryType Entry, uint64_t TSC,
-                    unsigned char CPU,
-                    int (*wall_clock_reader)(clockid_t, struct timespec *),
-                    const std::atomic<XRayLogInitStatus> &LoggingStatus,
-                    const std::shared_ptr<BufferQueue> &BQ);
+static void processFunctionHook(int32_t FuncId, XRayEntryType Entry,
+                                uint64_t TSC, unsigned char CPU,
+                                int (*wall_clock_reader)(clockid_t,
+                                                         struct timespec *),
+                                __sanitizer::atomic_sint32_t &LoggingStatus,
+                                const std::shared_ptr<BufferQueue> &BQ);
 
 //-----------------------------------------------------------------------------|
 // The rest of the file is implementation.                                     |
@@ -133,9 +135,10 @@ public:
            static_cast<ptrdiff_t>(MetadataRecSize));
     if (auto BQ = Buffers.lock()) {
       writeEOBMetadata();
-      if (auto EC = BQ->releaseBuffer(Buffer))
+      auto EC = BQ->releaseBuffer(Buffer);
+      if (EC != BufferQueue::ErrorCode::Ok)
         Report("Failed to release buffer at %p; error=%s\n", Buffer.Buffer,
-               EC.message().c_str());
+               BufferQueue::getErrorString(EC));
       return;
     }
   }
@@ -165,12 +168,13 @@ public:
 };
 
 static inline bool loggingInitialized(
-    const std::atomic<XRayLogInitStatus> &LoggingStatus) XRAY_NEVER_INSTRUMENT {
-  return LoggingStatus.load(std::memory_order_acquire) ==
+    const __sanitizer::atomic_sint32_t &LoggingStatus) XRAY_NEVER_INSTRUMENT {
+  return __sanitizer::atomic_load(&LoggingStatus,
+                                  __sanitizer::memory_order_acquire) ==
          XRayLogInitStatus::XRAY_LOG_INITIALIZED;
 }
 
-} // namespace anonymous
+} // namespace
 
 static inline void writeNewBufferPreamble(pid_t Tid, timespec TS,
                                           char *&MemPtr) XRAY_NEVER_INSTRUMENT {
@@ -304,10 +308,11 @@ static inline void writeFunctionRecord(int FuncId, uint32_t TSCDelta,
 static inline void processFunctionHook(
     int32_t FuncId, XRayEntryType Entry, uint64_t TSC, unsigned char CPU,
     int (*wall_clock_reader)(clockid_t, struct timespec *),
-    const std::atomic<XRayLogInitStatus> &LoggingStatus,
+    __sanitizer::atomic_sint32_t &LoggingStatus,
     const std::shared_ptr<BufferQueue> &BQ) XRAY_NEVER_INSTRUMENT {
   // Bail out right away if logging is not initialized yet.
-  if (LoggingStatus.load(std::memory_order_acquire) !=
+  if (__sanitizer::atomic_load(&LoggingStatus,
+                               __sanitizer::memory_order_acquire) !=
       XRayLogInitStatus::XRAY_LOG_INITIALIZED)
     return;
 
@@ -339,20 +344,24 @@ static inline void processFunctionHook(
 
   if (!loggingInitialized(LoggingStatus) || LocalBQ->finalizing()) {
     writeEOBMetadata();
-    if (auto EC = BQ->releaseBuffer(Buffer)) {
+    auto EC = BQ->releaseBuffer(Buffer);
+    if (EC != BufferQueue::ErrorCode::Ok) {
       Report("Failed to release buffer at %p; error=%s\n", Buffer.Buffer,
-             EC.message().c_str());
+             BufferQueue::getErrorString(EC));
       return;
     }
     RecordPtr = nullptr;
   }
 
   if (Buffer.Buffer == nullptr) {
-    if (auto EC = LocalBQ->getBuffer(Buffer)) {
-      auto LS = LoggingStatus.load(std::memory_order_acquire);
+    auto EC = LocalBQ->getBuffer(Buffer);
+    if (EC != BufferQueue::ErrorCode::Ok) {
+      auto LS = __sanitizer::atomic_load(&LoggingStatus,
+                                         __sanitizer::memory_order_acquire);
       if (LS != XRayLogInitStatus::XRAY_LOG_FINALIZING &&
           LS != XRayLogInitStatus::XRAY_LOG_FINALIZED)
-        Report("Failed to acquire a buffer; error=%s\n", EC.message().c_str());
+        Report("Failed to acquire a buffer; error=%s\n",
+               BufferQueue::getErrorString(EC));
       return;
     }
 
@@ -406,13 +415,16 @@ static inline void processFunctionHook(
   if ((RecordPtr + (MetadataRecSize + FunctionRecSize)) - BufferStart <
       static_cast<ptrdiff_t>(MetadataRecSize)) {
     writeEOBMetadata();
-    if (auto EC = LocalBQ->releaseBuffer(Buffer)) {
+    auto EC = LocalBQ->releaseBuffer(Buffer);
+    if (EC != BufferQueue::ErrorCode::Ok) {
       Report("Failed to release buffer at %p; error=%s\n", Buffer.Buffer,
-             EC.message().c_str());
+             BufferQueue::getErrorString(EC));
       return;
     }
-    if (auto EC = LocalBQ->getBuffer(Buffer)) {
-      Report("Failed to acquire a buffer; error=%s\n", EC.message().c_str());
+    EC = LocalBQ->getBuffer(Buffer);
+    if (EC != BufferQueue::ErrorCode::Ok) {
+      Report("Failed to acquire a buffer; error=%s\n",
+             BufferQueue::getErrorString(EC));
       return;
     }
     setupNewBuffer(Buffer, wall_clock_reader);
@@ -471,9 +483,10 @@ static inline void processFunctionHook(
   // make sure that other threads may start using this buffer.
   if ((RecordPtr + MetadataRecSize) - BufferStart == MetadataRecSize) {
     writeEOBMetadata();
-    if (auto EC = LocalBQ->releaseBuffer(Buffer)) {
+    auto EC = LocalBQ->releaseBuffer(Buffer);
+    if (EC != BufferQueue::ErrorCode::Ok) {
       Report("Failed releasing buffer at %p; error=%s\n", Buffer.Buffer,
-             EC.message().c_str());
+             BufferQueue::getErrorString(EC));
       return;
     }
     RecordPtr = nullptr;
