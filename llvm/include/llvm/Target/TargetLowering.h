@@ -284,9 +284,7 @@ public:
   /// several shifts, adds, and multiplies for this target.
   /// The definition of "cheaper" may depend on whether we're optimizing
   /// for speed or for size.
-  virtual bool isIntDivCheap(EVT VT, AttributeSet Attr) const {
-    return false;
-  }
+  virtual bool isIntDivCheap(EVT VT, AttributeList Attr) const { return false; }
 
   /// Return true if the target can handle a standalone remainder operation.
   virtual bool hasStandaloneRem(EVT VT) const {
@@ -437,6 +435,15 @@ public:
   /// \endcode
   virtual bool isMaskAndCmp0FoldingBeneficial(const Instruction &AndI) const {
     return false;
+  }
+
+  /// Return the preferred operand type if the target has a quick way to compare
+  /// integer values of the given size. Assume that any legal integer type can
+  /// be compared efficiently. Targets may override this to allow illegal wide
+  /// types to return a vector type if there is support to compare that type.
+  virtual MVT hasFastEqualityCompare(unsigned NumBits) const {
+    MVT VT = MVT::getIntegerVT(NumBits);
+    return isTypeLegal(VT) ? VT : MVT::INVALID_SIMPLE_VALUE_TYPE;
   }
 
   /// Return true if the target should transform:
@@ -3217,7 +3224,7 @@ private:
 /// Given an LLVM IR type and return type attributes, compute the return value
 /// EVTs and flags, and optionally also the offsets, if the return value is
 /// being lowered to memory.
-void GetReturnInfo(Type *ReturnType, AttributeSet attr,
+void GetReturnInfo(Type *ReturnType, AttributeList attr,
                    SmallVectorImpl<ISD::OutputArg> &Outs,
                    const TargetLowering &TLI, const DataLayout &DL);
 

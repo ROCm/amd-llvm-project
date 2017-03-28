@@ -76,6 +76,7 @@ set(Tests
   AbsNegAndConstantTest
   AbsNegAndConstant64Test
   AccumulateAllocationsTest
+  BadStrcmpTest
   BogusInitializeTest
   BufferOverflowOnInput
   CallerCalleeTest
@@ -123,6 +124,7 @@ set(Tests
   SwapCmpTest
   SwitchTest
   Switch2Test
+  TableLookupTest
   ThreadedLeakTest
   ThreadedTest
   TimeoutTest

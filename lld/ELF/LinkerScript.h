@@ -217,14 +217,13 @@ struct ScriptConfiguration {
 
   // A map from memory region name to a memory region descriptor.
   llvm::DenseMap<llvm::StringRef, MemoryRegion> MemoryRegions;
+
+  // A list of undefined symbols referenced by the script.
+  std::vector<llvm::StringRef> UndefinedSymbols;
 };
 
-extern ScriptConfiguration *ScriptConfig;
-
-class LinkerScriptBase {
+class LinkerScript {
 protected:
-  ~LinkerScriptBase() = default;
-
   void assignSymbol(SymbolAssignment *Cmd, bool InSec = false);
   void computeInputSections(InputSectionDescription *);
   void setDot(Expr E, const Twine &Loc, bool InSec = false);
@@ -245,9 +244,6 @@ protected:
   OutputSection *Aether;
   bool ErrorOnMissingSection = false;
 
-  // "ScriptConfig" is a bit too long, so define a short name for it.
-  ScriptConfiguration &Opt = *ScriptConfig;
-
   uint64_t Dot;
   uint64_t ThreadBssOffset = 0;
 
@@ -265,8 +261,8 @@ public:
   uint64_t getOutputSectionSize(StringRef S);
   void discard(ArrayRef<InputSectionBase *> V);
 
-  virtual ExprValue getSymbolValue(const Twine &Loc, StringRef S) = 0;
-  virtual bool isDefined(StringRef S) = 0;
+  ExprValue getSymbolValue(const Twine &Loc, StringRef S);
+  bool isDefined(StringRef S);
 
   std::vector<OutputSection *> *OutputSections;
   void addOrphanSections(OutputSectionFactory &Factory);
@@ -285,28 +281,16 @@ public:
   void processNonSectionCommands();
   void assignAddresses(std::vector<PhdrEntry> &Phdrs);
   int getSectionIndex(StringRef Name);
-};
-
-// This is a runner of the linker script.
-template <class ELFT> class LinkerScript final : public LinkerScriptBase {
-public:
-  LinkerScript();
-  ~LinkerScript();
 
   void writeDataBytes(StringRef Name, uint8_t *Buf);
   void addSymbol(SymbolAssignment *Cmd);
   void processCommands(OutputSectionFactory &Factory);
 
-  ExprValue getSymbolValue(const Twine &Loc, StringRef S) override;
-  bool isDefined(StringRef S) override;
+  // Parsed linker script configurations are set to this struct.
+  ScriptConfiguration Opt;
 };
 
-// Variable template is a C++14 feature, so we can't template
-// a global variable. Use a struct to workaround.
-template <class ELFT> struct Script { static LinkerScript<ELFT> *X; };
-template <class ELFT> LinkerScript<ELFT> *Script<ELFT>::X;
-
-extern LinkerScriptBase *ScriptBase;
+extern LinkerScript *Script;
 
 } // end namespace elf
 } // end namespace lld

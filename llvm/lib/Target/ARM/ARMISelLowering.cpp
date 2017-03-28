@@ -3063,7 +3063,8 @@ static SDValue promoteToConstantPool(const GlobalValue *GV, SelectionDAG &DAG,
   unsigned RequiredPadding = 4 - (Size % 4);
   bool PaddingPossible =
     RequiredPadding == 4 || (CDAInit && CDAInit->isString());
-  if (!PaddingPossible || Align > 4 || Size > ConstpoolPromotionMaxSize)
+  if (!PaddingPossible || Align > 4 || Size > ConstpoolPromotionMaxSize ||
+      Size == 0)
     return SDValue();
 
   unsigned PaddedSize = Size + ((RequiredPadding == 4) ? 0 : RequiredPadding);
@@ -9516,19 +9517,19 @@ static SDValue AddCombineTo64BitSMLAL16(SDNode *AddcNode, SDNode *AddeNode,
   // be sign extended somehow or SRA'd into 32-bit values
   // (addc (adde (mul 16bit, 16bit), lo), hi)
   SDValue Mul = AddcNode->getOperand(0);
-  SDValue Hi = AddcNode->getOperand(1);
+  SDValue Lo = AddcNode->getOperand(1);
   if (Mul.getOpcode() != ISD::MUL) {
-    Hi = AddcNode->getOperand(0);
+    Lo = AddcNode->getOperand(0);
     Mul = AddcNode->getOperand(1);
     if (Mul.getOpcode() != ISD::MUL)
       return SDValue();
   }
 
   SDValue SRA = AddeNode->getOperand(0);
-  SDValue Lo = AddeNode->getOperand(1);
+  SDValue Hi = AddeNode->getOperand(1);
   if (SRA.getOpcode() != ISD::SRA) {
     SRA = AddeNode->getOperand(1);
-    Lo = AddeNode->getOperand(0);
+    Hi = AddeNode->getOperand(0);
     if (SRA.getOpcode() != ISD::SRA)
       return SDValue();
   }
@@ -9788,8 +9789,8 @@ static SDValue PerformAddcSubcCombine(SDNode *N, SelectionDAG &DAG,
   if (Subtarget->isThumb1Only()) {
     SDValue RHS = N->getOperand(1);
     if (ConstantSDNode *C = dyn_cast<ConstantSDNode>(RHS)) {
-      int64_t imm = C->getSExtValue();
-      if (imm < 0) {
+      int32_t imm = C->getSExtValue();
+      if (imm < 0 && imm > INT_MIN) {
         SDLoc DL(N);
         RHS = DAG.getConstant(-imm, DL, MVT::i32);
         unsigned Opcode = (N->getOpcode() == ARMISD::ADDC) ? ARMISD::SUBC
@@ -11694,8 +11695,8 @@ static void computeKnownBits(SelectionDAG &DAG, SDValue Op, APInt &KnownZero,
   if (Op.getOpcode() == ARMISD::CMOV) {
     APInt KZ2(KnownZero.getBitWidth(), 0);
     APInt KO2(KnownOne.getBitWidth(), 0);
-    computeKnownBits(DAG, Op.getOperand(1), KnownZero, KnownOne);
-    computeKnownBits(DAG, Op.getOperand(2), KZ2, KO2);
+    computeKnownBits(DAG, Op.getOperand(0), KnownZero, KnownOne);
+    computeKnownBits(DAG, Op.getOperand(1), KZ2, KO2);
 
     KnownZero &= KZ2;
     KnownOne &= KO2;

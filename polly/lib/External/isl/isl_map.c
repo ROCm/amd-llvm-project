@@ -3938,12 +3938,20 @@ __isl_give isl_basic_map *isl_basic_map_project_out(
 		__isl_take isl_basic_map *bmap,
 		enum isl_dim_type type, unsigned first, unsigned n)
 {
+	isl_bool empty;
+
 	if (n == 0)
 		return basic_map_space_reset(bmap, type);
 	if (type == isl_dim_div)
 		isl_die(isl_basic_map_get_ctx(bmap), isl_error_invalid,
 			"cannot project out existentially quantified variables",
 			return isl_basic_map_free(bmap));
+
+	empty = isl_basic_map_plain_is_empty(bmap);
+	if (empty < 0)
+		return isl_basic_map_free(bmap);
+	if (empty)
+		bmap = isl_basic_map_set_to_empty(bmap);
 
 	bmap = drop_irrelevant_constraints(bmap, type, first, n);
 	if (!bmap)
@@ -8485,7 +8493,7 @@ __isl_give isl_basic_map *isl_basic_map_align_divs(
 	return dst;
 }
 
-struct isl_map *isl_map_align_divs(struct isl_map *map)
+__isl_give isl_map *isl_map_align_divs_internal(__isl_take isl_map *map)
 {
 	int i;
 
@@ -8510,9 +8518,14 @@ struct isl_map *isl_map_align_divs(struct isl_map *map)
 	return map;
 }
 
+__isl_give isl_map *isl_map_align_divs(__isl_take isl_map *map)
+{
+	return isl_map_align_divs_internal(map);
+}
+
 struct isl_set *isl_set_align_divs(struct isl_set *set)
 {
-	return set_from_map(isl_map_align_divs(set_to_map(set)));
+	return set_from_map(isl_map_align_divs_internal(set_to_map(set)));
 }
 
 /* Align the divs of the basic maps in "map" to those
@@ -8542,7 +8555,7 @@ __isl_give isl_map *isl_map_align_divs_to_basic_map_list(
 	if (!map->p[0])
 		return isl_map_free(map);
 
-	return isl_map_align_divs(map);
+	return isl_map_align_divs_internal(map);
 }
 
 /* Align the divs of each element of "list" to those of "bmap".
@@ -10041,7 +10054,7 @@ __isl_give isl_set *isl_set_lift(__isl_take isl_set *set)
 	isl_space *dim;
 	unsigned n_div;
 
-	set = isl_set_align_divs(set);
+	set = set_from_map(isl_map_align_divs_internal(set_to_map(set)));
 
 	if (!set)
 		return NULL;

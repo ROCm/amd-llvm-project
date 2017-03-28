@@ -76,6 +76,7 @@ inline static unsigned getDigit(char cdigit, uint8_t radix) {
 
 
 void APInt::initSlowCase(uint64_t val, bool isSigned) {
+  VAL = 0;
   pVal = getClearedMemory(getNumWords());
   pVal[0] = val;
   if (isSigned && int64_t(val) < 0)
@@ -85,6 +86,7 @@ void APInt::initSlowCase(uint64_t val, bool isSigned) {
 }
 
 void APInt::initSlowCase(const APInt& that) {
+  VAL = 0;
   pVal = getMemory(getNumWords());
   memcpy(pVal, that.pVal, getNumWords() * APINT_WORD_SIZE);
 }
@@ -96,6 +98,7 @@ void APInt::initFromArray(ArrayRef<uint64_t> bigVal) {
     VAL = bigVal[0];
   else {
     // Get memory, cleared to 0
+    VAL = 0;
     pVal = getClearedMemory(getNumWords());
     // Calculate the number of words to copy
     unsigned words = std::min<unsigned>(bigVal.size(), getNumWords());
@@ -107,12 +110,12 @@ void APInt::initFromArray(ArrayRef<uint64_t> bigVal) {
 }
 
 APInt::APInt(unsigned numBits, ArrayRef<uint64_t> bigVal)
-  : BitWidth(numBits), VAL(0) {
+  : BitWidth(numBits) {
   initFromArray(bigVal);
 }
 
 APInt::APInt(unsigned numBits, unsigned numWords, const uint64_t bigVal[])
-  : BitWidth(numBits), VAL(0) {
+  : BitWidth(numBits) {
   initFromArray(makeArrayRef(bigVal, numWords));
 }
 
@@ -151,16 +154,6 @@ APInt& APInt::AssignSlowCase(const APInt& RHS) {
     memcpy(pVal, RHS.pVal, RHS.getNumWords() * APINT_WORD_SIZE);
   }
   BitWidth = RHS.BitWidth;
-  return clearUnusedBits();
-}
-
-APInt& APInt::operator=(uint64_t RHS) {
-  if (isSingleWord())
-    VAL = RHS;
-  else {
-    pVal[0] = RHS;
-    memset(pVal+1, 0, (getNumWords() - 1) * APINT_WORD_SIZE);
-  }
   return clearUnusedBits();
 }
 
@@ -425,18 +418,6 @@ APInt& APInt::operator&=(const APInt& RHS) {
   return *this;
 }
 
-APInt &APInt::operator&=(uint64_t RHS) {
-  if (isSingleWord()) {
-    VAL &= RHS;
-    return *this;
-  }
-  pVal[0] &= RHS;
-  unsigned numWords = getNumWords();
-  for (unsigned i = 1; i < numWords; ++i)
-    pVal[i] = 0;
-  return *this;
-}
-
 APInt& APInt::operator|=(const APInt& RHS) {
   assert(BitWidth == RHS.BitWidth && "Bit widths must be the same");
   if (isSingleWord()) {
@@ -578,6 +559,11 @@ void APInt::clearBit(unsigned bitPosition) {
 }
 
 /// @brief Toggle every bit to its opposite value.
+void APInt::flipAllBitsSlowCase() {
+  for (unsigned i = 0; i < getNumWords(); ++i)
+    pVal[i] ^= UINT64_MAX;
+  clearUnusedBits();
+}
 
 /// Toggle a given bit to its opposite value whose position is given
 /// as "bitPosition".

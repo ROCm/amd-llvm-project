@@ -929,12 +929,14 @@ RelExpr X86_64TargetInfo<ELFT>::adjustRelaxExpr(uint32_t Type,
     return RelExpr;
   const uint8_t Op = Data[-2];
   const uint8_t ModRm = Data[-1];
+
   // FIXME: When PIC is disabled and foo is defined locally in the
   // lower 32 bit address space, memory operand in mov can be converted into
   // immediate operand. Otherwise, mov must be changed to lea. We support only
   // latter relaxation at this moment.
   if (Op == 0x8b)
     return R_RELAX_GOT_PC;
+
   // Relax call and jmp.
   if (Op == 0xff && (ModRm == 0x15 || ModRm == 0x25))
     return R_RELAX_GOT_PC;
@@ -2083,13 +2085,16 @@ RelExpr MipsTargetInfo<ELFT>::getRelExpr(uint32_t Type,
     return R_PLT;
   case R_MIPS_HI16:
   case R_MIPS_LO16:
-  case R_MIPS_GOT_OFST:
     // R_MIPS_HI16/R_MIPS_LO16 relocations against _gp_disp calculate
     // offset between start of function and 'gp' value which by default
     // equal to the start of .got section. In that case we consider these
     // relocations as relative.
     if (&S == ElfSym::MipsGpDisp)
-      return R_PC;
+      return R_MIPS_GOT_GP_PC;
+    if (&S == ElfSym::MipsLocalGp)
+      return R_MIPS_GOT_GP;
+    // fallthrough
+  case R_MIPS_GOT_OFST:
     return R_ABS;
   case R_MIPS_PC32:
   case R_MIPS_PC16:

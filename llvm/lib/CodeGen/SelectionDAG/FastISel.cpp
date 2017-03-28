@@ -40,7 +40,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/ADT/APFloat.h"
-#include "llvm/ADT/APInt.h"
+#include "llvm/ADT/APSInt.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -257,17 +257,13 @@ unsigned FastISel::materializeConstant(const Value *V, MVT VT) {
       // Try to emit the constant by using an integer constant with a cast.
       const APFloat &Flt = CF->getValueAPF();
       EVT IntVT = TLI.getPointerTy(DL);
-
-      uint64_t x[2];
       uint32_t IntBitWidth = IntVT.getSizeInBits();
+      APSInt SIntVal(IntBitWidth, /*isUnsigned=*/false);
       bool isExact;
-      (void)Flt.convertToInteger(x, IntBitWidth, /*isSigned=*/true,
-                                 APFloat::rmTowardZero, &isExact);
+      (void)Flt.convertToInteger(SIntVal, APFloat::rmTowardZero, &isExact);
       if (isExact) {
-        APInt IntVal(IntBitWidth, x);
-
         unsigned IntegerReg =
-            getRegForValue(ConstantInt::get(V->getContext(), IntVal));
+            getRegForValue(ConstantInt::get(V->getContext(), SIntVal));
         if (IntegerReg != 0)
           Reg = fastEmit_r(IntVT.getSimpleVT(), VT, ISD::SINT_TO_FP, IntegerReg,
                            /*Kill=*/false);
@@ -867,9 +863,9 @@ bool FastISel::selectPatchpoint(const CallInst *I) {
   return true;
 }
 
-/// Returns an AttributeSet representing the attributes applied to the return
+/// Returns an AttributeList representing the attributes applied to the return
 /// value of the given call.
-static AttributeSet getReturnAttrs(FastISel::CallLoweringInfo &CLI) {
+static AttributeList getReturnAttrs(FastISel::CallLoweringInfo &CLI) {
   SmallVector<Attribute::AttrKind, 2> Attrs;
   if (CLI.RetSExt)
     Attrs.push_back(Attribute::SExt);
@@ -878,8 +874,8 @@ static AttributeSet getReturnAttrs(FastISel::CallLoweringInfo &CLI) {
   if (CLI.IsInReg)
     Attrs.push_back(Attribute::InReg);
 
-  return AttributeSet::get(CLI.RetTy->getContext(), AttributeSet::ReturnIndex,
-                           Attrs);
+  return AttributeList::get(CLI.RetTy->getContext(), AttributeList::ReturnIndex,
+                            Attrs);
 }
 
 bool FastISel::lowerCallTo(const CallInst *CI, const char *SymName,
