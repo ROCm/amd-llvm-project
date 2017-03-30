@@ -444,10 +444,8 @@ static std::vector<SharedSymbol *> getSymbolsAt(SharedSymbol *SS) {
 // debug. What's a solution? Instead of exporting a varaible V from a DSO,
 // define an accessor getV().
 template <class ELFT> static void addCopyRelSymbol(SharedSymbol *SS) {
-  typedef typename ELFT::uint uintX_t;
-
   // Copy relocation against zero-sized symbol doesn't make sense.
-  uintX_t SymSize = SS->template getSize<ELFT>();
+  uint64_t SymSize = SS->template getSize<ELFT>();
   if (SymSize == 0)
     fatal("cannot create a copy relocation for symbol " + toString(*SS));
 
@@ -455,7 +453,7 @@ template <class ELFT> static void addCopyRelSymbol(SharedSymbol *SS) {
   // memory protection by reserving space in the .bss.rel.ro section.
   bool IsReadOnly = isReadOnly<ELFT>(SS);
   BssSection *Sec = IsReadOnly ? In<ELFT>::BssRelRo : In<ELFT>::Bss;
-  uintX_t Off = Sec->reserveSpace(SS->getAlignment<ELFT>(), SymSize);
+  uint64_t Off = Sec->reserveSpace(SymSize, SS->getAlignment<ELFT>());
 
   // Look through the DSO's dynamic symbol table for aliases and create a
   // dynamic symbol for each one. This causes the copy relocation to correctly
@@ -688,10 +686,8 @@ public:
     if (I == Size)
       return Off;
 
-    if (Off < P[I].InputOff) {
-      error("relocation not in any piece");
-      return -1;
-    }
+    // P must be contiguous, so there must be no holes in between.
+    assert(P[I].InputOff <= Off && "Relocation not in any piece");
 
     // Offset -1 means that the piece is dead (i.e. garbage collected).
     if (P[I].OutputOff == -1)

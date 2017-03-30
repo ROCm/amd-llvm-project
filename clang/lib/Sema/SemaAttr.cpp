@@ -450,13 +450,16 @@ void Sema::ActOnPragmaVisibility(const IdentifierInfo* VisType,
 void Sema::ActOnPragmaFPContract(tok::OnOffSwitch OOS) {
   switch (OOS) {
   case tok::OOS_ON:
-    FPFeatures.fp_contract = 1;
+    FPFeatures.setAllowFPContractWithinStatement();
     break;
   case tok::OOS_OFF:
-    FPFeatures.fp_contract = 0; 
+    FPFeatures.setDisallowFPContract();
     break;
   case tok::OOS_DEFAULT:
-    FPFeatures.fp_contract = getLangOpts().DefaultFPContract;
+    if (getLangOpts().getDefaultFPContractMode() == LangOptions::FPC_On)
+      FPFeatures.setAllowFPContractWithinStatement();
+    else
+      FPFeatures.setDisallowFPContract();
     break;
   }
 }

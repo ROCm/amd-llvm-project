@@ -908,7 +908,11 @@ Instruction *InstCombiner::FoldOpIntoPhi(Instruction &I) {
       // Beware of ConstantExpr:  it may eventually evaluate to getNullValue,
       // even if currently isNullValue gives false.
       Constant *InC = dyn_cast<Constant>(PN->getIncomingValue(i));
-      if (InC && !isa<ConstantExpr>(InC))
+      // For vector constants, we cannot use isNullValue to fold into
+      // FalseVInPred versus TrueVInPred. When we have individual nonzero
+      // elements in the vector, we will incorrectly fold InC to
+      // `TrueVInPred`.
+      if (InC && !isa<ConstantExpr>(InC) && isa<ConstantInt>(InC))
         InV = InC->isNullValue() ? FalseVInPred : TrueVInPred;
       else
         InV = Builder->CreateSelect(PN->getIncomingValue(i),
@@ -1651,13 +1655,13 @@ Instruction *InstCombiner::visitGetElementPtrInst(GetElementPtrInst &GEP) {
     }
   }
 
+  // We do not handle pointer-vector geps here.
+  if (GEP.getType()->isVectorTy())
+    return nullptr;
+
   // Handle gep(bitcast x) and gep(gep x, 0, 0, 0).
   Value *StrippedPtr = PtrOp->stripPointerCasts();
-  PointerType *StrippedPtrTy = dyn_cast<PointerType>(StrippedPtr->getType());
-
-  // We do not handle pointer-vector geps here.
-  if (!StrippedPtrTy)
-    return nullptr;
+  PointerType *StrippedPtrTy = cast<PointerType>(StrippedPtr->getType());
 
   if (StrippedPtr != PtrOp) {
     bool HasZeroPointerIndex = false;

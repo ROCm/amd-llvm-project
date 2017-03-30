@@ -59,6 +59,7 @@ EVT AMDGPUTargetLowering::getEquivalentMemType(LLVMContext &Ctx, EVT VT) {
 AMDGPUTargetLowering::AMDGPUTargetLowering(const TargetMachine &TM,
                                            const AMDGPUSubtarget &STI)
     : TargetLowering(TM), Subtarget(&STI) {
+  AMDGPUASI = AMDGPU::getAMDGPUAS(TM);
   // Lower floating point store/load to integer store/load to reduce the number
   // of patterns in tablegen.
   setOperationAction(ISD::LOAD, MVT::f32, Promote);
@@ -967,19 +968,16 @@ SDValue AMDGPUTargetLowering::LowerGlobalAddress(AMDGPUMachineFunction* MFI,
   GlobalAddressSDNode *G = cast<GlobalAddressSDNode>(Op);
   const GlobalValue *GV = G->getGlobal();
 
-  switch (G->getAddressSpace()) {
-  case AMDGPUAS::LOCAL_ADDRESS: {
+  if  (G->getAddressSpace() == AMDGPUASI.LOCAL_ADDRESS) {
     // XXX: What does the value of G->getOffset() mean?
     assert(G->getOffset() == 0 &&
          "Do not know what to do with an non-zero offset");
 
     // TODO: We could emit code to handle the initialization somewhere.
-    if (hasDefinedInitializer(GV))
-      break;
-
-    unsigned Offset = MFI->allocateLDSGlobal(DL, *GV);
-    return DAG.getConstant(Offset, SDLoc(Op), Op.getValueType());
-  }
+    if (!hasDefinedInitializer(GV)) {
+      unsigned Offset = MFI->allocateLDSGlobal(DL, *GV);
+      return DAG.getConstant(Offset, SDLoc(Op), Op.getValueType());
+    }
   }
 
   const Function &Fn = *DAG.getMachineFunction().getFunction();
@@ -3557,13 +3555,11 @@ SDValue AMDGPUTargetLowering::getRecipEstimate(SDValue Operand,
 }
 
 void AMDGPUTargetLowering::computeKnownBitsForTargetNode(
-  const SDValue Op,
-  APInt &KnownZero,
-  APInt &KnownOne,
-  const SelectionDAG &DAG,
-  unsigned Depth) const {
+    const SDValue Op, APInt &KnownZero, APInt &KnownOne,
+    const SelectionDAG &DAG, unsigned Depth) const {
 
-  KnownZero = KnownOne = APInt(KnownOne.getBitWidth(), 0); // Don't know anything.
+  unsigned BitWidth = KnownZero.getBitWidth();
+  KnownZero = KnownOne = APInt(BitWidth, 0); // Don't know anything.
 
   APInt KnownZero2;
   APInt KnownOne2;
@@ -3584,17 +3580,14 @@ void AMDGPUTargetLowering::computeKnownBitsForTargetNode(
     if (!CWidth)
       return;
 
-    unsigned BitWidth = 32;
     uint32_t Width = CWidth->getZExtValue() & 0x1f;
 
     if (Opc == AMDGPUISD::BFE_U32)
-      KnownZero = APInt::getHighBitsSet(BitWidth, BitWidth - Width);
+      KnownZero = APInt::getHighBitsSet(32, 32 - Width);
 
     break;
   }
   case AMDGPUISD::FP_TO_FP16: {
-    unsigned BitWidth = KnownZero.getBitWidth();
-
     // High bits are zero.
     KnownZero = APInt::getHighBitsSet(BitWidth, BitWidth - 16);
     break;
@@ -3603,9 +3596,7 @@ void AMDGPUTargetLowering::computeKnownBitsForTargetNode(
 }
 
 unsigned AMDGPUTargetLowering::ComputeNumSignBitsForTargetNode(
-  SDValue Op,
-  const SelectionDAG &DAG,
-  unsigned Depth) const {
+    SDValue Op, const SelectionDAG &DAG, unsigned Depth) const {
   switch (Op.getOpcode()) {
   case AMDGPUISD::BFE_I32: {
     ConstantSDNode *Width = dyn_cast<ConstantSDNode>(Op.getOperand(2));

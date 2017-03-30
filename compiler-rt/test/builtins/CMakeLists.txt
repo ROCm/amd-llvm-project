@@ -13,10 +13,17 @@ configure_lit_site_cfg(
 
 include(builtin-config-ix)
 
+#TODO: Add support for Apple.
+if (NOT APPLE)
 foreach(arch ${BUILTIN_SUPPORTED_ARCH})
   set(BUILTINS_TEST_TARGET_ARCH ${arch})
   string(TOLOWER "-${arch}-${OS_NAME}" BUILTINS_TEST_CONFIG_SUFFIX)
   get_test_cc_for_arch(${arch} BUILTINS_TEST_TARGET_CC BUILTINS_TEST_TARGET_CFLAGS)
+  if (${arch} STREQUAL "armhf")
+    list(APPEND BUILTINS_TEST_TARGET_CFLAGS -fomit-frame-pointer -DCOMPILER_RT_ARMHF_TARGET)
+    string(REPLACE ";" " " BUILTINS_TEST_TARGET_CFLAGS "${BUILTINS_TEST_TARGET_CFLAGS}")
+  endif()
+
   string(TOUPPER ${arch} ARCH_UPPER_CASE)
   set(CONFIG_NAME ${ARCH_UPPER_CASE}${OS_NAME}Config)
   configure_lit_site_cfg(
@@ -25,6 +32,7 @@ foreach(arch ${BUILTIN_SUPPORTED_ARCH})
     )
   list(APPEND BUILTINS_TESTSUITES ${CMAKE_CURRENT_BINARY_DIR}/Unit/${CONFIG_NAME})
 endforeach()
+endif()
 
 add_lit_testsuite(check-builtins "Running the Builtins tests"
   ${BUILTINS_TESTSUITES}

@@ -973,6 +973,15 @@ def fxray_instruction_threshold_ :
   JoinedOrSeparate<["-"], "fxray-instruction-threshold">,
   Group<f_Group>, Flags<[CC1Option]>;
 
+def fxray_always_instrument :
+  JoinedOrSeparate<["-"], "fxray-always-instrument=">,
+  Group<f_Group>, Flags<[CC1Option]>,
+  HelpText<"Filename defining the whitelist for imbuing the 'always instrument' XRay attribute.">;
+def fxray_never_instrument :
+  JoinedOrSeparate<["-"], "fxray-never-instrument=">,
+  Group<f_Group>, Flags<[CC1Option]>,
+  HelpText<"Filename defining the whitelist for imbuing the 'never instrument' XRay attribute.">;
+
 def flat__namespace : Flag<["-"], "flat_namespace">;
 def flax_vector_conversions : Flag<["-"], "flax-vector-conversions">, Group<f_Group>;
 def flimited_precision_EQ : Joined<["-"], "flimited-precision=">, Group<f_Group>;
@@ -1771,6 +1780,8 @@ def mcrc : Flag<["-"], "mcrc">, Group<m_arm_Features_Group>,
   HelpText<"Allow use of CRC instructions (ARM only)">;
 def mnocrc : Flag<["-"], "mnocrc">, Group<m_arm_Features_Group>,
   HelpText<"Disallow use of CRC instructions (ARM only)">;
+def mno_neg_immediates: Flag<["-"], "mno-neg-immediates">, Group<m_arm_Features_Group>,
+  HelpText<"Disallow converting instructions with negative immediates to their negation or inversion.">;
 
 def mgeneral_regs_only : Flag<["-"], "mgeneral-regs-only">, Group<m_aarch64_Features_Group>,
   HelpText<"Generate code which only uses the general purpose registers (AArch64 only)">;
