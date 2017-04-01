@@ -1575,6 +1575,31 @@ TEST(APIntTest, isMask) {
   }
 }
 
+TEST(APIntTest, isShiftedMask) {
+  EXPECT_FALSE(APIntOps::isShiftedMask(32, APInt(32, 0x01010101)));
+  EXPECT_TRUE(APIntOps::isShiftedMask(32, APInt(32, 0xf0000000)));
+  EXPECT_TRUE(APIntOps::isShiftedMask(32, APInt(32, 0xffff0000)));
+  EXPECT_FALSE(APIntOps::isShiftedMask(32, APInt(32, 0xff << 1))); // BUG
+
+  for (int N : { 1, 2, 3, 4, 7, 8, 16, 32, 64, 127, 128, 129, 256 }) {
+    EXPECT_TRUE(APIntOps::isShiftedMask(N, APInt(N, 0))); // BUG
+
+    APInt One(N, 1);
+    for (int I = 1; I < N; ++I) {
+      APInt MaskVal = One.shl(I) - 1;
+      EXPECT_FALSE(APIntOps::isShiftedMask(N, MaskVal)); // BUG
+    }
+    for (int I = 1; I < N - 1; ++I) {
+      APInt MaskVal = One.shl(I);
+      EXPECT_FALSE(APIntOps::isShiftedMask(N, MaskVal)); // BUG
+    }
+    for (int I = 1; I < N; ++I) {
+      APInt MaskVal = APInt::getHighBitsSet(N, I);
+      EXPECT_TRUE(APIntOps::isShiftedMask(N, MaskVal));
+    }
+  }
+}
+
 #if defined(__clang__)
 // Disable the pragma warning from versions of Clang without -Wself-move
 #pragma clang diagnostic push
@@ -1894,4 +1919,42 @@ TEST(APIntTest, setBitsFrom) {
   EXPECT_EQ(63u, i64from63.countTrailingZeros());
   EXPECT_EQ(0u, i64from63.countTrailingOnes());
   EXPECT_EQ(1u, i64from63.countPopulation());
+}
+
+TEST(APIntTest, setAllBits) {
+  APInt i32(32, 0);
+  i32.setAllBits();
+  EXPECT_EQ(32u, i32.countLeadingOnes());
+  EXPECT_EQ(0u, i32.countLeadingZeros());
+  EXPECT_EQ(32u, i32.getActiveBits());
+  EXPECT_EQ(0u, i32.countTrailingZeros());
+  EXPECT_EQ(32u, i32.countTrailingOnes());
+  EXPECT_EQ(32u, i32.countPopulation());
+
+  APInt i64(64, 0);
+  i64.setAllBits();
+  EXPECT_EQ(64u, i64.countLeadingOnes());
+  EXPECT_EQ(0u, i64.countLeadingZeros());
+  EXPECT_EQ(64u, i64.getActiveBits());
+  EXPECT_EQ(0u, i64.countTrailingZeros());
+  EXPECT_EQ(64u, i64.countTrailingOnes());
+  EXPECT_EQ(64u, i64.countPopulation());
+
+  APInt i96(96, 0);
+  i96.setAllBits();
+  EXPECT_EQ(96u, i96.countLeadingOnes());
+  EXPECT_EQ(0u, i96.countLeadingZeros());
+  EXPECT_EQ(96u, i96.getActiveBits());
+  EXPECT_EQ(0u, i96.countTrailingZeros());
+  EXPECT_EQ(96u, i96.countTrailingOnes());
+  EXPECT_EQ(96u, i96.countPopulation());
+
+  APInt i128(128, 0);
+  i128.setAllBits();
+  EXPECT_EQ(128u, i128.countLeadingOnes());
+  EXPECT_EQ(0u, i128.countLeadingZeros());
+  EXPECT_EQ(128u, i128.getActiveBits());
+  EXPECT_EQ(0u, i128.countTrailingZeros());
+  EXPECT_EQ(128u, i128.countTrailingOnes());
+  EXPECT_EQ(128u, i128.countPopulation());
 }

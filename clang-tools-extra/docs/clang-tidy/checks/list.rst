@@ -53,6 +53,19 @@ Clang-Tidy Checks
    google-runtime-memset
    google-runtime-operator
    google-runtime-references
+   hicpp-explicit-conversions
+   hicpp-function-size
+   hicpp-invalid-access-moved
+   hicpp-member-init
+   hicpp-named-parameter
+   hicpp-new-delete-operators
+   hicpp-no-assembler
+   hicpp-noexcept-move
+   hicpp-special-member-functions
+   hicpp-undelegated-constructor
+   hicpp-use-equals-default
+   hicpp-use-equals-delete
+   hicpp-use-override
    llvm-header-guard
    llvm-include-order
    llvm-namespace-comment
@@ -155,4 +168,3 @@ Clang-Tidy Checks
    readability-simplify-boolean-expr
    readability-static-definition-in-anonymous-namespace
    readability-uniqueptr-delete-release
-   safety-no-assembler

@@ -350,6 +350,7 @@ TEST(VirtualFileSystemTest, BasicRealFSIteration) {
   EXPECT_EQ(vfs::directory_iterator(), I);
 }
 
+#ifdef LLVM_ON_UNIX
 TEST(VirtualFileSystemTest, BrokenSymlinkRealFSIteration) {
   ScopedDir TestDirectory("virtual-file-system-test", /*Unique*/ true);
   IntrusiveRefCntPtr<vfs::FileSystem> FS = vfs::getRealFileSystem();
@@ -359,25 +360,31 @@ TEST(VirtualFileSystemTest, BrokenSymlinkRealFSIteration) {
   ScopedLink _c("no_such_file", TestDirectory + "/c");
 
   std::error_code EC;
-  vfs::directory_iterator I = FS->dir_begin(Twine(TestDirectory), EC);
-  EXPECT_TRUE(EC);
-  EXPECT_NE(vfs::directory_iterator(), I);
-  EC = std::error_code();
-  EXPECT_TRUE(I->getName() == _a);
-  I.increment(EC);
-  EXPECT_FALSE(EC);
-  EXPECT_NE(vfs::directory_iterator(), I);
-  EXPECT_TRUE(I->getName() == _b);
-  I.increment(EC);
-  EXPECT_TRUE(EC);
-  EXPECT_NE(vfs::directory_iterator(), I);
-  EC = std::error_code();
-  EXPECT_NE(vfs::directory_iterator(), I);
-  EXPECT_TRUE(I->getName() == _c);
-  I.increment(EC);
-  EXPECT_FALSE(EC);
-  EXPECT_EQ(vfs::directory_iterator(), I);
+  for (vfs::directory_iterator I = FS->dir_begin(Twine(TestDirectory), EC), E;
+       I != E; I.increment(EC)) {
+    // Skip broken symlinks.
+    auto EC2 = std::make_error_code(std::errc::no_such_file_or_directory);
+    if (EC == EC2) {
+      EC.clear();
+      continue;
+    }
+    // For bot debugging.
+    if (EC) {
+      outs() << "Error code found:\n"
+             << "EC value: " << EC.value() << "\n"
+             << "EC category: " << EC.category().name()
+             << "EC message: " << EC.message() << "\n";
+
+      outs() << "Error code tested for:\n"
+             << "EC value: " << EC2.value() << "\n"
+             << "EC category: " << EC2.category().name()
+             << "EC message: " << EC2.message() << "\n";
+    }
+    ASSERT_FALSE(EC);
+    EXPECT_TRUE(I->getName() == _b);
+  }
 }
+#endif
 
 TEST(VirtualFileSystemTest, BasicRealFSRecursiveIteration) {
   ScopedDir TestDirectory("virtual-file-system-test", /*Unique*/true);
@@ -418,6 +425,7 @@ TEST(VirtualFileSystemTest, BasicRealFSRecursiveIteration) {
   EXPECT_EQ(1, Counts[3]); // d
 }
 
+#ifdef LLVM_ON_UNIX
 TEST(VirtualFileSystemTest, BrokenSymlinkRealFSRecursiveIteration) {
   ScopedDir TestDirectory("virtual-file-system-test", /*Unique*/ true);
   IntrusiveRefCntPtr<vfs::FileSystem> FS = vfs::getRealFileSystem();
@@ -432,29 +440,40 @@ TEST(VirtualFileSystemTest, BrokenSymlinkRealFSRecursiveIteration) {
   ScopedDir _dd(TestDirectory + "/d/d");
   ScopedDir _ddd(TestDirectory + "/d/d/d");
   ScopedLink _e("no_such_file", TestDirectory + "/e");
+  std::vector<StringRef> Expected = {_b, _bb, _d, _dd, _ddd};
 
   std::vector<std::string> Contents;
   std::error_code EC;
   for (vfs::recursive_directory_iterator I(*FS, Twine(TestDirectory), EC), E;
        I != E; I.increment(EC)) {
     // Skip broken symlinks.
-    if (EC == std::errc::no_such_file_or_directory) {
-      EC = std::error_code();
+    auto EC2 = std::make_error_code(std::errc::no_such_file_or_directory);
+    if (EC == EC2) {
+      EC.clear();
       continue;
-    } else if (EC) {
-      break;
     }
+    // For bot debugging.
+    if (EC) {
+      outs() << "Error code found:\n"
+             << "EC value: " << EC.value() << "\n"
+             << "EC category: " << EC.category().name()
+             << "EC message: " << EC.message() << "\n";
+
+      outs() << "Error code tested for:\n"
+             << "EC value: " << EC2.value() << "\n"
+             << "EC category: " << EC2.category().name()
+             << "EC message: " << EC2.message() << "\n";
+    }
+    ASSERT_FALSE(EC);
     Contents.push_back(I->getName());
   }
 
-  // Check contents.
-  EXPECT_EQ(5U, Contents.size());
-  EXPECT_TRUE(Contents[0] == _b);
-  EXPECT_TRUE(Contents[1] == _bb);
-  EXPECT_TRUE(Contents[2] == _d);
-  EXPECT_TRUE(Contents[3] == _dd);
-  EXPECT_TRUE(Contents[4] == _ddd);
+  // Check sorted contents.
+  std::sort(Contents.begin(), Contents.end());
+  EXPECT_EQ(Expected.size(), Contents.size());
+  EXPECT_TRUE(std::equal(Contents.begin(), Contents.end(), Expected.begin()));
 }
+#endif
 
 template <typename DirIter>
 static void checkContents(DirIter I, ArrayRef<StringRef> ExpectedOut) {

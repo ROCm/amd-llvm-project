@@ -6857,7 +6857,7 @@ TreeTransform<Derived>::TransformCoroutineBodyStmt(CoroutineBodyStmt *S) {
          ScopeInfo->NeedsCoroutineSuspends &&
          ScopeInfo->CoroutineSuspends.first == nullptr &&
          ScopeInfo->CoroutineSuspends.second == nullptr &&
-         ScopeInfo->CoroutineStmts.empty() && "expected clean scope info");
+         "expected clean scope info");
 
   // Set that we have (possibly-invalid) suspend points before we do anything
   // that may fail.
@@ -9146,7 +9146,7 @@ TreeTransform<Derived>::TransformBinaryOperator(BinaryOperator *E) {
     return E;
 
   Sema::FPContractStateRAII FPContractState(getSema());
-  getSema().FPFeatures.fp_contract = E->isFPContractable();
+  getSema().FPFeatures = E->getFPFeatures();
 
   return getDerived().RebuildBinaryOperator(E->getOperatorLoc(), E->getOpcode(),
                                             LHS.get(), RHS.get());
@@ -9626,7 +9626,7 @@ TreeTransform<Derived>::TransformCXXOperatorCallExpr(CXXOperatorCallExpr *E) {
     return SemaRef.MaybeBindToTemporary(E);
 
   Sema::FPContractStateRAII FPContractState(getSema());
-  getSema().FPFeatures.fp_contract = E->isFPContractable();
+  getSema().FPFeatures = E->getFPFeatures();
 
   return getDerived().RebuildCXXOperatorCallExpr(E->getOperator(),
                                                  E->getOperatorLoc(),

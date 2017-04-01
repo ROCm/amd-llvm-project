@@ -5,14 +5,6 @@
 /// Presburger formula. On top of this, isl provides various tools for
 /// Polyhedral compilation ranging from dependence analysis over scheduling
 /// to AST generation.
-///
-///
-/// WARNING: Even though these bindings have been throughly tested and the
-///          design has been reviewed by various members of the isl community,
-///          we do not yet provide any stability guarantees for this interface.
-///          We do not expect any larger changes to the interface, but want to
-///          reserve the freedom to improve the bindings based on insights that
-///          only become visible after shipping these bindings with isl itself.
 
 #ifndef ISL_CPP_NOEXCEPTIONS
 #define ISL_CPP_NOEXCEPTIONS
@@ -81,7 +73,7 @@ class val;
 
 class boolean {
 private:
-  friend boolean manage(isl_bool val);
+  friend isl::boolean manage(isl_bool val);
 
   isl_bool val;
 
@@ -110,15 +102,15 @@ public:
   }
 };
 
-inline boolean manage(isl_bool val) {
-  return boolean(val);
+inline isl::boolean manage(isl_bool val) {
+  return isl::boolean(val);
 }
 
 class ctx {
   isl_ctx *ptr;
 
 public:
-  ctx(isl_ctx *ctx)
+  /* implicit */ ctx(isl_ctx *ctx)
       : ptr(ctx) {}
   isl_ctx *release() {
     auto tmp = ptr;
@@ -146,12 +138,12 @@ enum class dim {
 };
 
 // declarations for isl::aff
-inline aff manage(__isl_take isl_aff *ptr);
+inline isl::aff manage(__isl_take isl_aff *ptr);
 
-inline aff give(__isl_take isl_aff *ptr);
+inline isl::aff give(__isl_take isl_aff *ptr);
 
 class aff {
-  friend inline aff manage(__isl_take isl_aff *ptr);
+  friend inline isl::aff manage(__isl_take isl_aff *ptr);
 
   isl_aff *ptr = nullptr;
 
@@ -159,12 +151,12 @@ class aff {
 
 public:
   inline /* implicit */ aff();
-  inline /* implicit */ aff(const aff &obj);
+  inline /* implicit */ aff(const isl::aff &obj);
   inline /* implicit */ aff(std::nullptr_t);
   inline explicit aff(isl::local_space ls);
   inline explicit aff(isl::local_space ls, isl::val val);
-  inline explicit aff(ctx ctx, const std::string &str);
-  inline aff &operator=(aff obj);
+  inline explicit aff(isl::ctx ctx, const std::string &str);
+  inline isl::aff &operator=(isl::aff obj);
   inline ~aff();
   inline __isl_give isl_aff *copy() const &;
   inline __isl_give isl_aff *copy() && = delete;
@@ -173,7 +165,7 @@ public:
   inline __isl_keep isl_aff *keep() const;
   inline __isl_give isl_aff *take();
   inline explicit operator bool() const;
-  inline ctx get_ctx() const;
+  inline isl::ctx get_ctx() const;
   inline bool is_null() const;
   inline std::string to_str() const;
   inline isl::aff add(isl::aff aff2) const;
@@ -183,12 +175,12 @@ public:
 };
 
 // declarations for isl::ast_build
-inline ast_build manage(__isl_take isl_ast_build *ptr);
+inline isl::ast_build manage(__isl_take isl_ast_build *ptr);
 
-inline ast_build give(__isl_take isl_ast_build *ptr);
+inline isl::ast_build give(__isl_take isl_ast_build *ptr);
 
 class ast_build {
-  friend inline ast_build manage(__isl_take isl_ast_build *ptr);
+  friend inline isl::ast_build manage(__isl_take isl_ast_build *ptr);
 
   isl_ast_build *ptr = nullptr;
 
@@ -196,10 +188,10 @@ class ast_build {
 
 public:
   inline /* implicit */ ast_build();
-  inline /* implicit */ ast_build(const ast_build &obj);
+  inline /* implicit */ ast_build(const isl::ast_build &obj);
   inline /* implicit */ ast_build(std::nullptr_t);
-  inline explicit ast_build(ctx ctx);
-  inline ast_build &operator=(ast_build obj);
+  inline explicit ast_build(isl::ctx ctx);
+  inline isl::ast_build &operator=(isl::ast_build obj);
   inline ~ast_build();
   inline __isl_give isl_ast_build *copy() const &;
   inline __isl_give isl_ast_build *copy() && = delete;
@@ -208,7 +200,7 @@ public:
   inline __isl_keep isl_ast_build *keep() const;
   inline __isl_give isl_ast_build *take();
   inline explicit operator bool() const;
-  inline ctx get_ctx() const;
+  inline isl::ctx get_ctx() const;
   inline bool is_null() const;
   inline isl::ast_expr access_from(isl::pw_multi_aff pma) const;
   inline isl::ast_expr access_from(isl::multi_pw_aff mpa) const;
@@ -221,12 +213,12 @@ public:
 };
 
 // declarations for isl::ast_expr
-inline ast_expr manage(__isl_take isl_ast_expr *ptr);
+inline isl::ast_expr manage(__isl_take isl_ast_expr *ptr);
 
-inline ast_expr give(__isl_take isl_ast_expr *ptr);
+inline isl::ast_expr give(__isl_take isl_ast_expr *ptr);
 
 class ast_expr {
-  friend inline ast_expr manage(__isl_take isl_ast_expr *ptr);
+  friend inline isl::ast_expr manage(__isl_take isl_ast_expr *ptr);
 
   isl_ast_expr *ptr = nullptr;
 
@@ -234,9 +226,9 @@ class ast_expr {
 
 public:
   inline /* implicit */ ast_expr();
-  inline /* implicit */ ast_expr(const ast_expr &obj);
+  inline /* implicit */ ast_expr(const isl::ast_expr &obj);
   inline /* implicit */ ast_expr(std::nullptr_t);
-  inline ast_expr &operator=(ast_expr obj);
+  inline isl::ast_expr &operator=(isl::ast_expr obj);
   inline ~ast_expr();
   inline __isl_give isl_ast_expr *copy() const &;
   inline __isl_give isl_ast_expr *copy() && = delete;
@@ -245,19 +237,19 @@ public:
   inline __isl_keep isl_ast_expr *keep() const;
   inline __isl_give isl_ast_expr *take();
   inline explicit operator bool() const;
-  inline ctx get_ctx() const;
+  inline isl::ctx get_ctx() const;
   inline bool is_null() const;
   inline std::string to_str() const;
   inline std::string to_C_str() const;
 };
 
 // declarations for isl::ast_node
-inline ast_node manage(__isl_take isl_ast_node *ptr);
+inline isl::ast_node manage(__isl_take isl_ast_node *ptr);
 
-inline ast_node give(__isl_take isl_ast_node *ptr);
+inline isl::ast_node give(__isl_take isl_ast_node *ptr);
 
 class ast_node {
-  friend inline ast_node manage(__isl_take isl_ast_node *ptr);
+  friend inline isl::ast_node manage(__isl_take isl_ast_node *ptr);
 
   isl_ast_node *ptr = nullptr;
 
@@ -265,9 +257,9 @@ class ast_node {
 
 public:
   inline /* implicit */ ast_node();
-  inline /* implicit */ ast_node(const ast_node &obj);
+  inline /* implicit */ ast_node(const isl::ast_node &obj);
   inline /* implicit */ ast_node(std::nullptr_t);
-  inline ast_node &operator=(ast_node obj);
+  inline isl::ast_node &operator=(isl::ast_node obj);
   inline ~ast_node();
   inline __isl_give isl_ast_node *copy() const &;
   inline __isl_give isl_ast_node *copy() && = delete;
@@ -276,19 +268,19 @@ public:
   inline __isl_keep isl_ast_node *keep() const;
   inline __isl_give isl_ast_node *take();
   inline explicit operator bool() const;
-  inline ctx get_ctx() const;
+  inline isl::ctx get_ctx() const;
   inline bool is_null() const;
   inline std::string to_str() const;
   inline std::string to_C_str() const;
 };
 
 // declarations for isl::basic_map
-inline basic_map manage(__isl_take isl_basic_map *ptr);
+inline isl::basic_map manage(__isl_take isl_basic_map *ptr);
 
-inline basic_map give(__isl_take isl_basic_map *ptr);
+inline isl::basic_map give(__isl_take isl_basic_map *ptr);
 
 class basic_map {
-  friend inline basic_map manage(__isl_take isl_basic_map *ptr);
+  friend inline isl::basic_map manage(__isl_take isl_basic_map *ptr);
 
   isl_basic_map *ptr = nullptr;
 
@@ -296,10 +288,10 @@ class basic_map {
 
 public:
   inline /* implicit */ basic_map();
-  inline /* implicit */ basic_map(const basic_map &obj);
+  inline /* implicit */ basic_map(const isl::basic_map &obj);
   inline /* implicit */ basic_map(std::nullptr_t);
-  inline explicit basic_map(ctx ctx, const std::string &str);
-  inline basic_map &operator=(basic_map obj);
+  inline explicit basic_map(isl::ctx ctx, const std::string &str);
+  inline isl::basic_map &operator=(isl::basic_map obj);
   inline ~basic_map();
   inline __isl_give isl_basic_map *copy() const &;
   inline __isl_give isl_basic_map *copy() && = delete;
@@ -308,7 +300,7 @@ public:
   inline __isl_keep isl_basic_map *keep() const;
   inline __isl_give isl_basic_map *take();
   inline explicit operator bool() const;
-  inline ctx get_ctx() const;
+  inline isl::ctx get_ctx() const;
   inline bool is_null() const;
   inline std::string to_str() const;
   inline isl::basic_map affine_hull() const;
@@ -338,12 +330,12 @@ public:
 };
 
 // declarations for isl::basic_set
-inline basic_set manage(__isl_take isl_basic_set *ptr);
+inline isl::basic_set manage(__isl_take isl_basic_set *ptr);
 
-inline basic_set give(__isl_take isl_basic_set *ptr);
+inline isl::basic_set give(__isl_take isl_basic_set *ptr);
 
 class basic_set {
-  friend inline basic_set manage(__isl_take isl_basic_set *ptr);
+  friend inline isl::basic_set manage(__isl_take isl_basic_set *ptr);
 
   isl_basic_set *ptr = nullptr;
 
@@ -351,11 +343,11 @@ class basic_set {
 
 public:
   inline /* implicit */ basic_set();
-  inline /* implicit */ basic_set(const basic_set &obj);
+  inline /* implicit */ basic_set(const isl::basic_set &obj);
   inline /* implicit */ basic_set(std::nullptr_t);
-  inline explicit basic_set(ctx ctx, const std::string &str);
+  inline explicit basic_set(isl::ctx ctx, const std::string &str);
   inline /* implicit */ basic_set(isl::point pnt);
-  inline basic_set &operator=(basic_set obj);
+  inline isl::basic_set &operator=(isl::basic_set obj);
   inline ~basic_set();
   inline __isl_give isl_basic_set *copy() const &;
   inline __isl_give isl_basic_set *copy() && = delete;
@@ -364,7 +356,7 @@ public:
   inline __isl_keep isl_basic_set *keep() const;
   inline __isl_give isl_basic_set *take();
   inline explicit operator bool() const;
-  inline ctx get_ctx() const;
+  inline isl::ctx get_ctx() const;
   inline bool is_null() const;
   inline std::string to_str() const;
   inline isl::basic_set affine_hull() const;
@@ -388,12 +380,12 @@ public:
 };
 
 // declarations for isl::id
-inline id manage(__isl_take isl_id *ptr);
+inline isl::id manage(__isl_take isl_id *ptr);
 
-inline id give(__isl_take isl_id *ptr);
+inline isl::id give(__isl_take isl_id *ptr);
 
 class id {
-  friend inline id manage(__isl_take isl_id *ptr);
+  friend inline isl::id manage(__isl_take isl_id *ptr);
 
   isl_id *ptr = nullptr;
 
@@ -401,9 +393,9 @@ class id {
 
 public:
   inline /* implicit */ id();
-  inline /* implicit */ id(const id &obj);
+  inline /* implicit */ id(const isl::id &obj);
   inline /* implicit */ id(std::nullptr_t);
-  inline id &operator=(id obj);
+  inline isl::id &operator=(isl::id obj);
   inline ~id();
   inline __isl_give isl_id *copy() const &;
   inline __isl_give isl_id *copy() && = delete;
@@ -412,18 +404,18 @@ public:
   inline __isl_keep isl_id *keep() const;
   inline __isl_give isl_id *take();
   inline explicit operator bool() const;
-  inline ctx get_ctx() const;
+  inline isl::ctx get_ctx() const;
   inline bool is_null() const;
   inline std::string to_str() const;
 };
 
 // declarations for isl::local_space
-inline local_space manage(__isl_take isl_local_space *ptr);
+inline isl::local_space manage(__isl_take isl_local_space *ptr);
 
-inline local_space give(__isl_take isl_local_space *ptr);
+inline isl::local_space give(__isl_take isl_local_space *ptr);
 
 class local_space {
-  friend inline local_space manage(__isl_take isl_local_space *ptr);
+  friend inline isl::local_space manage(__isl_take isl_local_space *ptr);
 
   isl_local_space *ptr = nullptr;
 
@@ -431,10 +423,10 @@ class local_space {
 
 public:
   inline /* implicit */ local_space();
-  inline /* implicit */ local_space(const local_space &obj);
+  inline /* implicit */ local_space(const isl::local_space &obj);
   inline /* implicit */ local_space(std::nullptr_t);
   inline explicit local_space(isl::space dim);
-  inline local_space &operator=(local_space obj);
+  inline isl::local_space &operator=(isl::local_space obj);
   inline ~local_space();
   inline __isl_give isl_local_space *copy() const &;
   inline __isl_give isl_local_space *copy() && = delete;
@@ -443,17 +435,17 @@ public:
   inline __isl_keep isl_local_space *keep() const;
   inline __isl_give isl_local_space *take();
   inline explicit operator bool() const;
-  inline ctx get_ctx() const;
+  inline isl::ctx get_ctx() const;
   inline bool is_null() const;
 };
 
 // declarations for isl::map
-inline map manage(__isl_take isl_map *ptr);
+inline isl::map manage(__isl_take isl_map *ptr);
 
-inline map give(__isl_take isl_map *ptr);
+inline isl::map give(__isl_take isl_map *ptr);
 
 class map {
-  friend inline map manage(__isl_take isl_map *ptr);
+  friend inline isl::map manage(__isl_take isl_map *ptr);
 
   isl_map *ptr = nullptr;
 
@@ -461,11 +453,11 @@ class map {
 
 public:
   inline /* implicit */ map();
-  inline /* implicit */ map(const map &obj);
+  inline /* implicit */ map(const isl::map &obj);
   inline /* implicit */ map(std::nullptr_t);
-  inline explicit map(ctx ctx, const std::string &str);
+  inline explicit map(isl::ctx ctx, const std::string &str);
   inline /* implicit */ map(isl::basic_map bmap);
-  inline map &operator=(map obj);
+  inline isl::map &operator=(isl::map obj);
   inline ~map();
   inline __isl_give isl_map *copy() const &;
   inline __isl_give isl_map *copy() && = delete;
@@ -474,7 +466,7 @@ public:
   inline __isl_keep isl_map *keep() const;
   inline __isl_give isl_map *take();
   inline explicit operator bool() const;
-  inline ctx get_ctx() const;
+  inline isl::ctx get_ctx() const;
   inline bool is_null() const;
   inline std::string to_str() const;
   inline isl::basic_map affine_hull() const;
@@ -518,12 +510,12 @@ public:
 };
 
 // declarations for isl::multi_aff
-inline multi_aff manage(__isl_take isl_multi_aff *ptr);
+inline isl::multi_aff manage(__isl_take isl_multi_aff *ptr);
 
-inline multi_aff give(__isl_take isl_multi_aff *ptr);
+inline isl::multi_aff give(__isl_take isl_multi_aff *ptr);
 
 class multi_aff {
-  friend inline multi_aff manage(__isl_take isl_multi_aff *ptr);
+  friend inline isl::multi_aff manage(__isl_take isl_multi_aff *ptr);
 
   isl_multi_aff *ptr = nullptr;
 
@@ -531,11 +523,11 @@ class multi_aff {
 
 public:
   inline /* implicit */ multi_aff();
-  inline /* implicit */ multi_aff(const multi_aff &obj);
+  inline /* implicit */ multi_aff(const isl::multi_aff &obj);
   inline /* implicit */ multi_aff(std::nullptr_t);
   inline /* implicit */ multi_aff(isl::aff aff);
-  inline explicit multi_aff(ctx ctx, const std::string &str);
-  inline multi_aff &operator=(multi_aff obj);
+  inline explicit multi_aff(isl::ctx ctx, const std::string &str);
+  inline isl::multi_aff &operator=(isl::multi_aff obj);
   inline ~multi_aff();
   inline __isl_give isl_multi_aff *copy() const &;
   inline __isl_give isl_multi_aff *copy() && = delete;
@@ -544,7 +536,7 @@ public:
   inline __isl_keep isl_multi_aff *keep() const;
   inline __isl_give isl_multi_aff *take();
   inline explicit operator bool() const;
-  inline ctx get_ctx() const;
+  inline isl::ctx get_ctx() const;
   inline bool is_null() const;
   inline std::string to_str() const;
   inline isl::multi_aff add(isl::multi_aff multi2) const;
@@ -556,12 +548,12 @@ public:
 };
 
 // declarations for isl::multi_pw_aff
-inline multi_pw_aff manage(__isl_take isl_multi_pw_aff *ptr);
+inline isl::multi_pw_aff manage(__isl_take isl_multi_pw_aff *ptr);
 
-inline multi_pw_aff give(__isl_take isl_multi_pw_aff *ptr);
+inline isl::multi_pw_aff give(__isl_take isl_multi_pw_aff *ptr);
 
 class multi_pw_aff {
-  friend inline multi_pw_aff manage(__isl_take isl_multi_pw_aff *ptr);
+  friend inline isl::multi_pw_aff manage(__isl_take isl_multi_pw_aff *ptr);
 
   isl_multi_pw_aff *ptr = nullptr;
 
@@ -569,13 +561,13 @@ class multi_pw_aff {
 
 public:
   inline /* implicit */ multi_pw_aff();
-  inline /* implicit */ multi_pw_aff(const multi_pw_aff &obj);
+  inline /* implicit */ multi_pw_aff(const isl::multi_pw_aff &obj);
   inline /* implicit */ multi_pw_aff(std::nullptr_t);
   inline /* implicit */ multi_pw_aff(isl::multi_aff ma);
   inline /* implicit */ multi_pw_aff(isl::pw_aff pa);
   inline /* implicit */ multi_pw_aff(isl::pw_multi_aff pma);
-  inline explicit multi_pw_aff(ctx ctx, const std::string &str);
-  inline multi_pw_aff &operator=(multi_pw_aff obj);
+  inline explicit multi_pw_aff(isl::ctx ctx, const std::string &str);
+  inline isl::multi_pw_aff &operator=(isl::multi_pw_aff obj);
   inline ~multi_pw_aff();
   inline __isl_give isl_multi_pw_aff *copy() const &;
   inline __isl_give isl_multi_pw_aff *copy() && = delete;
@@ -584,7 +576,7 @@ public:
   inline __isl_keep isl_multi_pw_aff *keep() const;
   inline __isl_give isl_multi_pw_aff *take();
   inline explicit operator bool() const;
-  inline ctx get_ctx() const;
+  inline isl::ctx get_ctx() const;
   inline bool is_null() const;
   inline std::string to_str() const;
   inline isl::multi_pw_aff add(isl::multi_pw_aff multi2) const;
@@ -598,12 +590,12 @@ public:
 };
 
 // declarations for isl::multi_union_pw_aff
-inline multi_union_pw_aff manage(__isl_take isl_multi_union_pw_aff *ptr);
+inline isl::multi_union_pw_aff manage(__isl_take isl_multi_union_pw_aff *ptr);
 
-inline multi_union_pw_aff give(__isl_take isl_multi_union_pw_aff *ptr);
+inline isl::multi_union_pw_aff give(__isl_take isl_multi_union_pw_aff *ptr);
 
 class multi_union_pw_aff {
-  friend inline multi_union_pw_aff manage(__isl_take isl_multi_union_pw_aff *ptr);
+  friend inline isl::multi_union_pw_aff manage(__isl_take isl_multi_union_pw_aff *ptr);
 
   isl_multi_union_pw_aff *ptr = nullptr;
 
@@ -611,13 +603,13 @@ class multi_union_pw_aff {
 
 public:
   inline /* implicit */ multi_union_pw_aff();
-  inline /* implicit */ multi_union_pw_aff(const multi_union_pw_aff &obj);
+  inline /* implicit */ multi_union_pw_aff(const isl::multi_union_pw_aff &obj);
   inline /* implicit */ multi_union_pw_aff(std::nullptr_t);
   inline /* implicit */ multi_union_pw_aff(isl::union_pw_aff upa);
   inline /* implicit */ multi_union_pw_aff(isl::multi_pw_aff mpa);
   inline explicit multi_union_pw_aff(isl::union_pw_multi_aff upma);
-  inline explicit multi_union_pw_aff(ctx ctx, const std::string &str);
-  inline multi_union_pw_aff &operator=(multi_union_pw_aff obj);
+  inline explicit multi_union_pw_aff(isl::ctx ctx, const std::string &str);
+  inline isl::multi_union_pw_aff &operator=(isl::multi_union_pw_aff obj);
   inline ~multi_union_pw_aff();
   inline __isl_give isl_multi_union_pw_aff *copy() const &;
   inline __isl_give isl_multi_union_pw_aff *copy() && = delete;
@@ -626,7 +618,7 @@ public:
   inline __isl_keep isl_multi_union_pw_aff *keep() const;
   inline __isl_give isl_multi_union_pw_aff *take();
   inline explicit operator bool() const;
-  inline ctx get_ctx() const;
+  inline isl::ctx get_ctx() const;
   inline bool is_null() const;
   inline std::string to_str() const;
   inline isl::multi_union_pw_aff add(isl::multi_union_pw_aff multi2) const;
@@ -638,12 +630,12 @@ public:
 };
 
 // declarations for isl::multi_val
-inline multi_val manage(__isl_take isl_multi_val *ptr);
+inline isl::multi_val manage(__isl_take isl_multi_val *ptr);
 
-inline multi_val give(__isl_take isl_multi_val *ptr);
+inline isl::multi_val give(__isl_take isl_multi_val *ptr);
 
 class multi_val {
-  friend inline multi_val manage(__isl_take isl_multi_val *ptr);
+  friend inline isl::multi_val manage(__isl_take isl_multi_val *ptr);
 
   isl_multi_val *ptr = nullptr;
 
@@ -651,9 +643,9 @@ class multi_val {
 
 public:
   inline /* implicit */ multi_val();
-  inline /* implicit */ multi_val(const multi_val &obj);
+  inline /* implicit */ multi_val(const isl::multi_val &obj);
   inline /* implicit */ multi_val(std::nullptr_t);
-  inline multi_val &operator=(multi_val obj);
+  inline isl::multi_val &operator=(isl::multi_val obj);
   inline ~multi_val();
   inline __isl_give isl_multi_val *copy() const &;
   inline __isl_give isl_multi_val *copy() && = delete;
@@ -662,7 +654,7 @@ public:
   inline __isl_keep isl_multi_val *keep() const;
   inline __isl_give isl_multi_val *take();
   inline explicit operator bool() const;
-  inline ctx get_ctx() const;
+  inline isl::ctx get_ctx() const;
   inline bool is_null() const;
   inline std::string to_str() const;
   inline isl::multi_val add(isl::multi_val multi2) const;
@@ -673,12 +665,12 @@ public:
 };
 
 // declarations for isl::point
-inline point manage(__isl_take isl_point *ptr);
+inline isl::point manage(__isl_take isl_point *ptr);
 
-inline point give(__isl_take isl_point *ptr);
+inline isl::point give(__isl_take isl_point *ptr);
 
 class point {
-  friend inline point manage(__isl_take isl_point *ptr);
+  friend inline isl::point manage(__isl_take isl_point *ptr);
 
   isl_point *ptr = nullptr;
 
@@ -686,10 +678,10 @@ class point {
 
 public:
   inline /* implicit */ point();
-  inline /* implicit */ point(const point &obj);
+  inline /* implicit */ point(const isl::point &obj);
   inline /* implicit */ point(std::nullptr_t);
   inline explicit point(isl::space dim);
-  inline point &operator=(point obj);
+  inline isl::point &operator=(isl::point obj);
   inline ~point();
   inline __isl_give isl_point *copy() const &;
   inline __isl_give isl_point *copy() && = delete;
@@ -698,18 +690,18 @@ public:
   inline __isl_keep isl_point *keep() const;
   inline __isl_give isl_point *take();
   inline explicit operator bool() const;
-  inline ctx get_ctx() const;
+  inline isl::ctx get_ctx() const;
   inline bool is_null() const;
   inline std::string to_str() const;
 };
 
 // declarations for isl::pw_aff
-inline pw_aff manage(__isl_take isl_pw_aff *ptr);
+inline isl::pw_aff manage(__isl_take isl_pw_aff *ptr);
 
-inline pw_aff give(__isl_take isl_pw_aff *ptr);
+inline isl::pw_aff give(__isl_take isl_pw_aff *ptr);
 
 class pw_aff {
-  friend inline pw_aff manage(__isl_take isl_pw_aff *ptr);
+  friend inline isl::pw_aff manage(__isl_take isl_pw_aff *ptr);
 
   isl_pw_aff *ptr = nullptr;
 
@@ -717,13 +709,13 @@ class pw_aff {
 
 public:
   inline /* implicit */ pw_aff();
-  inline /* implicit */ pw_aff(const pw_aff &obj);
+  inline /* implicit */ pw_aff(const isl::pw_aff &obj);
   inline /* implicit */ pw_aff(std::nullptr_t);
   inline /* implicit */ pw_aff(isl::aff aff);
   inline explicit pw_aff(isl::local_space ls);
   inline explicit pw_aff(isl::set domain, isl::val v);
-  inline explicit pw_aff(ctx ctx, const std::string &str);
-  inline pw_aff &operator=(pw_aff obj);
+  inline explicit pw_aff(isl::ctx ctx, const std::string &str);
+  inline isl::pw_aff &operator=(isl::pw_aff obj);
   inline ~pw_aff();
   inline __isl_give isl_pw_aff *copy() const &;
   inline __isl_give isl_pw_aff *copy() && = delete;
@@ -732,7 +724,7 @@ public:
   inline __isl_keep isl_pw_aff *keep() const;
   inline __isl_give isl_pw_aff *take();
   inline explicit operator bool() const;
-  inline ctx get_ctx() const;
+  inline isl::ctx get_ctx() const;
   inline bool is_null() const;
   inline std::string to_str() const;
   inline isl::pw_aff add(isl::pw_aff pwaff2) const;
@@ -749,12 +741,12 @@ public:
 };
 
 // declarations for isl::pw_multi_aff
-inline pw_multi_aff manage(__isl_take isl_pw_multi_aff *ptr);
+inline isl::pw_multi_aff manage(__isl_take isl_pw_multi_aff *ptr);
 
-inline pw_multi_aff give(__isl_take isl_pw_multi_aff *ptr);
+inline isl::pw_multi_aff give(__isl_take isl_pw_multi_aff *ptr);
 
 class pw_multi_aff {
-  friend inline pw_multi_aff manage(__isl_take isl_pw_multi_aff *ptr);
+  friend inline isl::pw_multi_aff manage(__isl_take isl_pw_multi_aff *ptr);
 
   isl_pw_multi_aff *ptr = nullptr;
 
@@ -762,12 +754,12 @@ class pw_multi_aff {
 
 public:
   inline /* implicit */ pw_multi_aff();
-  inline /* implicit */ pw_multi_aff(const pw_multi_aff &obj);
+  inline /* implicit */ pw_multi_aff(const isl::pw_multi_aff &obj);
   inline /* implicit */ pw_multi_aff(std::nullptr_t);
-  inline explicit pw_multi_aff(ctx ctx, const std::string &str);
+  inline explicit pw_multi_aff(isl::ctx ctx, const std::string &str);
   inline /* implicit */ pw_multi_aff(isl::multi_aff ma);
   inline /* implicit */ pw_multi_aff(isl::pw_aff pa);
-  inline pw_multi_aff &operator=(pw_multi_aff obj);
+  inline isl::pw_multi_aff &operator=(isl::pw_multi_aff obj);
   inline ~pw_multi_aff();
   inline __isl_give isl_pw_multi_aff *copy() const &;
   inline __isl_give isl_pw_multi_aff *copy() && = delete;
@@ -776,7 +768,7 @@ public:
   inline __isl_keep isl_pw_multi_aff *keep() const;
   inline __isl_give isl_pw_multi_aff *take();
   inline explicit operator bool() const;
-  inline ctx get_ctx() const;
+  inline isl::ctx get_ctx() const;
   inline bool is_null() const;
   inline std::string to_str() const;
   inline isl::pw_multi_aff add(isl::pw_multi_aff pma2) const;
@@ -789,12 +781,12 @@ public:
 };
 
 // declarations for isl::schedule
-inline schedule manage(__isl_take isl_schedule *ptr);
+inline isl::schedule manage(__isl_take isl_schedule *ptr);
 
-inline schedule give(__isl_take isl_schedule *ptr);
+inline isl::schedule give(__isl_take isl_schedule *ptr);
 
 class schedule {
-  friend inline schedule manage(__isl_take isl_schedule *ptr);
+  friend inline isl::schedule manage(__isl_take isl_schedule *ptr);
 
   isl_schedule *ptr = nullptr;
 
@@ -802,10 +794,10 @@ class schedule {
 
 public:
   inline /* implicit */ schedule();
-  inline /* implicit */ schedule(const schedule &obj);
+  inline /* implicit */ schedule(const isl::schedule &obj);
   inline /* implicit */ schedule(std::nullptr_t);
-  inline explicit schedule(ctx ctx, const std::string &str);
-  inline schedule &operator=(schedule obj);
+  inline explicit schedule(isl::ctx ctx, const std::string &str);
+  inline isl::schedule &operator=(isl::schedule obj);
   inline ~schedule();
   inline __isl_give isl_schedule *copy() const &;
   inline __isl_give isl_schedule *copy() && = delete;
@@ -814,7 +806,7 @@ public:
   inline __isl_keep isl_schedule *keep() const;
   inline __isl_give isl_schedule *take();
   inline explicit operator bool() const;
-  inline ctx get_ctx() const;
+  inline isl::ctx get_ctx() const;
   inline bool is_null() const;
   inline std::string to_str() const;
   inline isl::union_map get_map() const;
@@ -823,12 +815,12 @@ public:
 };
 
 // declarations for isl::schedule_constraints
-inline schedule_constraints manage(__isl_take isl_schedule_constraints *ptr);
+inline isl::schedule_constraints manage(__isl_take isl_schedule_constraints *ptr);
 
-inline schedule_constraints give(__isl_take isl_schedule_constraints *ptr);
+inline isl::schedule_constraints give(__isl_take isl_schedule_constraints *ptr);
 
 class schedule_constraints {
-  friend inline schedule_constraints manage(__isl_take isl_schedule_constraints *ptr);
+  friend inline isl::schedule_constraints manage(__isl_take isl_schedule_constraints *ptr);
 
   isl_schedule_constraints *ptr = nullptr;
 
@@ -836,10 +828,10 @@ class schedule_constraints {
 
 public:
   inline /* implicit */ schedule_constraints();
-  inline /* implicit */ schedule_constraints(const schedule_constraints &obj);
+  inline /* implicit */ schedule_constraints(const isl::schedule_constraints &obj);
   inline /* implicit */ schedule_constraints(std::nullptr_t);
-  inline explicit schedule_constraints(ctx ctx, const std::string &str);
-  inline schedule_constraints &operator=(schedule_constraints obj);
+  inline explicit schedule_constraints(isl::ctx ctx, const std::string &str);
+  inline isl::schedule_constraints &operator=(isl::schedule_constraints obj);
   inline ~schedule_constraints();
   inline __isl_give isl_schedule_constraints *copy() const &;
   inline __isl_give isl_schedule_constraints *copy() && = delete;
@@ -848,7 +840,7 @@ public:
   inline __isl_keep isl_schedule_constraints *keep() const;
   inline __isl_give isl_schedule_constraints *take();
   inline explicit operator bool() const;
-  inline ctx get_ctx() const;
+  inline isl::ctx get_ctx() const;
   inline bool is_null() const;
   inline std::string to_str() const;
   inline isl::union_map get_coincidence() const;
@@ -861,12 +853,12 @@ public:
 };
 
 // declarations for isl::schedule_node
-inline schedule_node manage(__isl_take isl_schedule_node *ptr);
+inline isl::schedule_node manage(__isl_take isl_schedule_node *ptr);
 
-inline schedule_node give(__isl_take isl_schedule_node *ptr);
+inline isl::schedule_node give(__isl_take isl_schedule_node *ptr);
 
 class schedule_node {
-  friend inline schedule_node manage(__isl_take isl_schedule_node *ptr);
+  friend inline isl::schedule_node manage(__isl_take isl_schedule_node *ptr);
 
   isl_schedule_node *ptr = nullptr;
 
@@ -874,9 +866,9 @@ class schedule_node {
 
 public:
   inline /* implicit */ schedule_node();
-  inline /* implicit */ schedule_node(const schedule_node &obj);
+  inline /* implicit */ schedule_node(const isl::schedule_node &obj);
   inline /* implicit */ schedule_node(std::nullptr_t);
-  inline schedule_node &operator=(schedule_node obj);
+  inline isl::schedule_node &operator=(isl::schedule_node obj);
   inline ~schedule_node();
   inline __isl_give isl_schedule_node *copy() const &;
   inline __isl_give isl_schedule_node *copy() && = delete;
@@ -885,7 +877,7 @@ public:
   inline __isl_keep isl_schedule_node *keep() const;
   inline __isl_give isl_schedule_node *take();
   inline explicit operator bool() const;
-  inline ctx get_ctx() const;
+  inline isl::ctx get_ctx() const;
   inline bool is_null() const;
   inline std::string to_str() const;
   inline isl::boolean band_member_get_coincident(int pos) const;
@@ -899,12 +891,12 @@ public:
 };
 
 // declarations for isl::set
-inline set manage(__isl_take isl_set *ptr);
+inline isl::set manage(__isl_take isl_set *ptr);
 
-inline set give(__isl_take isl_set *ptr);
+inline isl::set give(__isl_take isl_set *ptr);
 
 class set {
-  friend inline set manage(__isl_take isl_set *ptr);
+  friend inline isl::set manage(__isl_take isl_set *ptr);
 
   isl_set *ptr = nullptr;
 
@@ -912,13 +904,13 @@ class set {
 
 public:
   inline /* implicit */ set();
-  inline /* implicit */ set(const set &obj);
+  inline /* implicit */ set(const isl::set &obj);
   inline /* implicit */ set(std::nullptr_t);
   inline explicit set(isl::union_set uset);
-  inline explicit set(ctx ctx, const std::string &str);
+  inline explicit set(isl::ctx ctx, const std::string &str);
   inline /* implicit */ set(isl::basic_set bset);
   inline /* implicit */ set(isl::point pnt);
-  inline set &operator=(set obj);
+  inline isl::set &operator=(isl::set obj);
   inline ~set();
   inline __isl_give isl_set *copy() const &;
   inline __isl_give isl_set *copy() && = delete;
@@ -927,7 +919,7 @@ public:
   inline __isl_keep isl_set *keep() const;
   inline __isl_give isl_set *take();
   inline explicit operator bool() const;
-  inline ctx get_ctx() const;
+  inline isl::ctx get_ctx() const;
   inline bool is_null() const;
   inline std::string to_str() const;
   inline isl::set add_dims(isl::dim type, unsigned int n) const;
@@ -967,12 +959,12 @@ public:
 };
 
 // declarations for isl::space
-inline space manage(__isl_take isl_space *ptr);
+inline isl::space manage(__isl_take isl_space *ptr);
 
-inline space give(__isl_take isl_space *ptr);
+inline isl::space give(__isl_take isl_space *ptr);
 
 class space {
-  friend inline space manage(__isl_take isl_space *ptr);
+  friend inline isl::space manage(__isl_take isl_space *ptr);
 
   isl_space *ptr = nullptr;
 
@@ -980,11 +972,11 @@ class space {
 
 public:
   inline /* implicit */ space();
-  inline /* implicit */ space(const space &obj);
+  inline /* implicit */ space(const isl::space &obj);
   inline /* implicit */ space(std::nullptr_t);
-  inline explicit space(ctx ctx, unsigned int nparam, unsigned int n_in, unsigned int n_out);
-  inline explicit space(ctx ctx, unsigned int nparam, unsigned int dim);
-  inline space &operator=(space obj);
+  inline explicit space(isl::ctx ctx, unsigned int nparam, unsigned int n_in, unsigned int n_out);
+  inline explicit space(isl::ctx ctx, unsigned int nparam, unsigned int dim);
+  inline isl::space &operator=(isl::space obj);
   inline ~space();
   inline __isl_give isl_space *copy() const &;
   inline __isl_give isl_space *copy() && = delete;
@@ -993,7 +985,7 @@ public:
   inline __isl_keep isl_space *keep() const;
   inline __isl_give isl_space *take();
   inline explicit operator bool() const;
-  inline ctx get_ctx() const;
+  inline isl::ctx get_ctx() const;
   inline bool is_null() const;
   inline std::string to_str() const;
   inline isl::space domain() const;
@@ -1003,12 +995,12 @@ public:
 };
 
 // declarations for isl::union_access_info
-inline union_access_info manage(__isl_take isl_union_access_info *ptr);
+inline isl::union_access_info manage(__isl_take isl_union_access_info *ptr);
 
-inline union_access_info give(__isl_take isl_union_access_info *ptr);
+inline isl::union_access_info give(__isl_take isl_union_access_info *ptr);
 
 class union_access_info {
-  friend inline union_access_info manage(__isl_take isl_union_access_info *ptr);
+  friend inline isl::union_access_info manage(__isl_take isl_union_access_info *ptr);
 
   isl_union_access_info *ptr = nullptr;
 
@@ -1016,10 +1008,10 @@ class union_access_info {
 
 public:
   inline /* implicit */ union_access_info();
-  inline /* implicit */ union_access_info(const union_access_info &obj);
+  inline /* implicit */ union_access_info(const isl::union_access_info &obj);
   inline /* implicit */ union_access_info(std::nullptr_t);
   inline explicit union_access_info(isl::union_map sink);
-  inline union_access_info &operator=(union_access_info obj);
+  inline isl::union_access_info &operator=(isl::union_access_info obj);
   inline ~union_access_info();
   inline __isl_give isl_union_access_info *copy() const &;
   inline __isl_give isl_union_access_info *copy() && = delete;
@@ -1028,7 +1020,7 @@ public:
   inline __isl_keep isl_union_access_info *keep() const;
   inline __isl_give isl_union_access_info *take();
   inline explicit operator bool() const;
-  inline ctx get_ctx() const;
+  inline isl::ctx get_ctx() const;
   inline bool is_null() const;
   inline std::string to_str() const;
   inline isl::union_flow compute_flow() const;
@@ -1039,12 +1031,12 @@ public:
 };
 
 // declarations for isl::union_flow
-inline union_flow manage(__isl_take isl_union_flow *ptr);
+inline isl::union_flow manage(__isl_take isl_union_flow *ptr);
 
-inline union_flow give(__isl_take isl_union_flow *ptr);
+inline isl::union_flow give(__isl_take isl_union_flow *ptr);
 
 class union_flow {
-  friend inline union_flow manage(__isl_take isl_union_flow *ptr);
+  friend inline isl::union_flow manage(__isl_take isl_union_flow *ptr);
 
   isl_union_flow *ptr = nullptr;
 
@@ -1052,9 +1044,9 @@ class union_flow {
 
 public:
   inline /* implicit */ union_flow();
-  inline /* implicit */ union_flow(const union_flow &obj);
+  inline /* implicit */ union_flow(const isl::union_flow &obj);
   inline /* implicit */ union_flow(std::nullptr_t);
-  inline union_flow &operator=(union_flow obj);
+  inline isl::union_flow &operator=(isl::union_flow obj);
   inline ~union_flow();
   inline __isl_give isl_union_flow *copy() const &;
   inline __isl_give isl_union_flow *copy() && = delete;
@@ -1063,7 +1055,7 @@ public:
   inline __isl_keep isl_union_flow *keep() const;
   inline __isl_give isl_union_flow *take();
   inline explicit operator bool() const;
-  inline ctx get_ctx() const;
+  inline isl::ctx get_ctx() const;
   inline bool is_null() const;
   inline std::string to_str() const;
   inline isl::union_map get_full_may_dependence() const;
@@ -1075,12 +1067,12 @@ public:
 };
 
 // declarations for isl::union_map
-inline union_map manage(__isl_take isl_union_map *ptr);
+inline isl::union_map manage(__isl_take isl_union_map *ptr);
 
-inline union_map give(__isl_take isl_union_map *ptr);
+inline isl::union_map give(__isl_take isl_union_map *ptr);
 
 class union_map {
-  friend inline union_map manage(__isl_take isl_union_map *ptr);
+  friend inline isl::union_map manage(__isl_take isl_union_map *ptr);
 
   isl_union_map *ptr = nullptr;
 
@@ -1088,13 +1080,13 @@ class union_map {
 
 public:
   inline /* implicit */ union_map();
-  inline /* implicit */ union_map(const union_map &obj);
+  inline /* implicit */ union_map(const isl::union_map &obj);
   inline /* implicit */ union_map(std::nullptr_t);
   inline explicit union_map(isl::union_pw_aff upa);
   inline /* implicit */ union_map(isl::basic_map bmap);
   inline /* implicit */ union_map(isl::map map);
-  inline explicit union_map(ctx ctx, const std::string &str);
-  inline union_map &operator=(union_map obj);
+  inline explicit union_map(isl::ctx ctx, const std::string &str);
+  inline isl::union_map &operator=(isl::union_map obj);
   inline ~union_map();
   inline __isl_give isl_union_map *copy() const &;
   inline __isl_give isl_union_map *copy() && = delete;
@@ -1103,7 +1095,7 @@ public:
   inline __isl_keep isl_union_map *keep() const;
   inline __isl_give isl_union_map *take();
   inline explicit operator bool() const;
-  inline ctx get_ctx() const;
+  inline isl::ctx get_ctx() const;
   inline bool is_null() const;
   inline std::string to_str() const;
   inline isl::union_map add_map(isl::map map) const;
@@ -1164,12 +1156,12 @@ public:
 };
 
 // declarations for isl::union_pw_aff
-inline union_pw_aff manage(__isl_take isl_union_pw_aff *ptr);
+inline isl::union_pw_aff manage(__isl_take isl_union_pw_aff *ptr);
 
-inline union_pw_aff give(__isl_take isl_union_pw_aff *ptr);
+inline isl::union_pw_aff give(__isl_take isl_union_pw_aff *ptr);
 
 class union_pw_aff {
-  friend inline union_pw_aff manage(__isl_take isl_union_pw_aff *ptr);
+  friend inline isl::union_pw_aff manage(__isl_take isl_union_pw_aff *ptr);
 
   isl_union_pw_aff *ptr = nullptr;
 
@@ -1177,12 +1169,12 @@ class union_pw_aff {
 
 public:
   inline /* implicit */ union_pw_aff();
-  inline /* implicit */ union_pw_aff(const union_pw_aff &obj);
+  inline /* implicit */ union_pw_aff(const isl::union_pw_aff &obj);
   inline /* implicit */ union_pw_aff(std::nullptr_t);
   inline /* implicit */ union_pw_aff(isl::pw_aff pa);
   inline explicit union_pw_aff(isl::union_set domain, isl::val v);
-  inline explicit union_pw_aff(ctx ctx, const std::string &str);
-  inline union_pw_aff &operator=(union_pw_aff obj);
+  inline explicit union_pw_aff(isl::ctx ctx, const std::string &str);
+  inline isl::union_pw_aff &operator=(isl::union_pw_aff obj);
   inline ~union_pw_aff();
   inline __isl_give isl_union_pw_aff *copy() const &;
   inline __isl_give isl_union_pw_aff *copy() && = delete;
@@ -1191,7 +1183,7 @@ public:
   inline __isl_keep isl_union_pw_aff *keep() const;
   inline __isl_give isl_union_pw_aff *take();
   inline explicit operator bool() const;
-  inline ctx get_ctx() const;
+  inline isl::ctx get_ctx() const;
   inline bool is_null() const;
   inline std::string to_str() const;
   inline isl::union_pw_aff add(isl::union_pw_aff upa2) const;
@@ -1204,12 +1196,12 @@ public:
 };
 
 // declarations for isl::union_pw_multi_aff
-inline union_pw_multi_aff manage(__isl_take isl_union_pw_multi_aff *ptr);
+inline isl::union_pw_multi_aff manage(__isl_take isl_union_pw_multi_aff *ptr);
 
-inline union_pw_multi_aff give(__isl_take isl_union_pw_multi_aff *ptr);
+inline isl::union_pw_multi_aff give(__isl_take isl_union_pw_multi_aff *ptr);
 
 class union_pw_multi_aff {
-  friend inline union_pw_multi_aff manage(__isl_take isl_union_pw_multi_aff *ptr);
+  friend inline isl::union_pw_multi_aff manage(__isl_take isl_union_pw_multi_aff *ptr);
 
   isl_union_pw_multi_aff *ptr = nullptr;
 
@@ -1217,14 +1209,14 @@ class union_pw_multi_aff {
 
 public:
   inline /* implicit */ union_pw_multi_aff();
-  inline /* implicit */ union_pw_multi_aff(const union_pw_multi_aff &obj);
+  inline /* implicit */ union_pw_multi_aff(const isl::union_pw_multi_aff &obj);
   inline /* implicit */ union_pw_multi_aff(std::nullptr_t);
   inline /* implicit */ union_pw_multi_aff(isl::pw_multi_aff pma);
   inline explicit union_pw_multi_aff(isl::union_set uset);
   inline explicit union_pw_multi_aff(isl::union_map umap);
-  inline explicit union_pw_multi_aff(ctx ctx, const std::string &str);
+  inline explicit union_pw_multi_aff(isl::ctx ctx, const std::string &str);
   inline /* implicit */ union_pw_multi_aff(isl::union_pw_aff upa);
-  inline union_pw_multi_aff &operator=(union_pw_multi_aff obj);
+  inline isl::union_pw_multi_aff &operator=(isl::union_pw_multi_aff obj);
   inline ~union_pw_multi_aff();
   inline __isl_give isl_union_pw_multi_aff *copy() const &;
   inline __isl_give isl_union_pw_multi_aff *copy() && = delete;
@@ -1233,7 +1225,7 @@ public:
   inline __isl_keep isl_union_pw_multi_aff *keep() const;
   inline __isl_give isl_union_pw_multi_aff *take();
   inline explicit operator bool() const;
-  inline ctx get_ctx() const;
+  inline isl::ctx get_ctx() const;
   inline bool is_null() const;
   inline std::string to_str() const;
   inline isl::union_pw_multi_aff add(isl::union_pw_multi_aff upma2) const;
@@ -1243,12 +1235,12 @@ public:
 };
 
 // declarations for isl::union_set
-inline union_set manage(__isl_take isl_union_set *ptr);
+inline isl::union_set manage(__isl_take isl_union_set *ptr);
 
-inline union_set give(__isl_take isl_union_set *ptr);
+inline isl::union_set give(__isl_take isl_union_set *ptr);
 
 class union_set {
-  friend inline union_set manage(__isl_take isl_union_set *ptr);
+  friend inline isl::union_set manage(__isl_take isl_union_set *ptr);
 
   isl_union_set *ptr = nullptr;
 
@@ -1256,13 +1248,13 @@ class union_set {
 
 public:
   inline /* implicit */ union_set();
-  inline /* implicit */ union_set(const union_set &obj);
+  inline /* implicit */ union_set(const isl::union_set &obj);
   inline /* implicit */ union_set(std::nullptr_t);
   inline /* implicit */ union_set(isl::basic_set bset);
   inline /* implicit */ union_set(isl::set set);
   inline /* implicit */ union_set(isl::point pnt);
-  inline explicit union_set(ctx ctx, const std::string &str);
-  inline union_set &operator=(union_set obj);
+  inline explicit union_set(isl::ctx ctx, const std::string &str);
+  inline isl::union_set &operator=(isl::union_set obj);
   inline ~union_set();
   inline __isl_give isl_union_set *copy() const &;
   inline __isl_give isl_union_set *copy() && = delete;
@@ -1271,7 +1263,7 @@ public:
   inline __isl_keep isl_union_set *keep() const;
   inline __isl_give isl_union_set *take();
   inline explicit operator bool() const;
-  inline ctx get_ctx() const;
+  inline isl::ctx get_ctx() const;
   inline bool is_null() const;
   inline std::string to_str() const;
   inline isl::union_set affine_hull() const;
@@ -1300,12 +1292,12 @@ public:
 };
 
 // declarations for isl::val
-inline val manage(__isl_take isl_val *ptr);
+inline isl::val manage(__isl_take isl_val *ptr);
 
-inline val give(__isl_take isl_val *ptr);
+inline isl::val give(__isl_take isl_val *ptr);
 
 class val {
-  friend inline val manage(__isl_take isl_val *ptr);
+  friend inline isl::val manage(__isl_take isl_val *ptr);
 
   isl_val *ptr = nullptr;
 
@@ -1313,11 +1305,11 @@ class val {
 
 public:
   inline /* implicit */ val();
-  inline /* implicit */ val(const val &obj);
+  inline /* implicit */ val(const isl::val &obj);
   inline /* implicit */ val(std::nullptr_t);
-  inline explicit val(ctx ctx, long i);
-  inline explicit val(ctx ctx, const std::string &str);
-  inline val &operator=(val obj);
+  inline explicit val(isl::ctx ctx, long i);
+  inline explicit val(isl::ctx ctx, const std::string &str);
+  inline isl::val &operator=(isl::val obj);
   inline ~val();
   inline __isl_give isl_val *copy() const &;
   inline __isl_give isl_val *copy() && = delete;
@@ -1326,7 +1318,7 @@ public:
   inline __isl_keep isl_val *keep() const;
   inline __isl_give isl_val *take();
   inline explicit operator bool() const;
-  inline ctx get_ctx() const;
+  inline isl::ctx get_ctx() const;
   inline bool is_null() const;
   inline std::string to_str() const;
   inline isl::val two_exp() const;
@@ -1342,7 +1334,7 @@ public:
   inline isl::val gcd(isl::val v2) const;
   inline isl::boolean ge(const isl::val &v2) const;
   inline isl::boolean gt(const isl::val &v2) const;
-  static inline isl::val infty(ctx ctx);
+  static inline isl::val infty(isl::ctx ctx);
   inline isl::val inv() const;
   inline isl::boolean is_divisible_by(const isl::val &v2) const;
   inline isl::boolean is_infty() const;
@@ -1363,32 +1355,32 @@ public:
   inline isl::val min(isl::val v2) const;
   inline isl::val mod(isl::val v2) const;
   inline isl::val mul(isl::val v2) const;
-  static inline isl::val nan(ctx ctx);
+  static inline isl::val nan(isl::ctx ctx);
   inline isl::boolean ne(const isl::val &v2) const;
   inline isl::val neg() const;
-  static inline isl::val neginfty(ctx ctx);
-  static inline isl::val negone(ctx ctx);
-  static inline isl::val one(ctx ctx);
+  static inline isl::val neginfty(isl::ctx ctx);
+  static inline isl::val negone(isl::ctx ctx);
+  static inline isl::val one(isl::ctx ctx);
   inline int sgn() const;
   inline isl::val sub(isl::val v2) const;
   inline isl::val sub_ui(unsigned long v2) const;
   inline isl::val trunc() const;
-  static inline isl::val zero(ctx ctx);
+  static inline isl::val zero(isl::ctx ctx);
 };
 
 // implementations for isl::aff
-aff manage(__isl_take isl_aff *ptr) {
+isl::aff manage(__isl_take isl_aff *ptr) {
   return aff(ptr);
 }
 
-aff give(__isl_take isl_aff *ptr) {
+isl::aff give(__isl_take isl_aff *ptr) {
   return manage(ptr);
 }
 
 aff::aff()
     : ptr(nullptr) {}
 
-aff::aff(const aff &obj)
+aff::aff(const isl::aff &obj)
     : ptr(obj.copy()) {}
 
 aff::aff(std::nullptr_t)
@@ -1407,12 +1399,12 @@ aff::aff(isl::local_space ls, isl::val val) {
   ptr = res;
 }
 
-aff::aff(ctx ctx, const std::string &str) {
+aff::aff(isl::ctx ctx, const std::string &str) {
   auto res = isl_aff_read_from_str(ctx.release(), str.c_str());
   ptr = res;
 }
 
-aff &aff::operator=(aff obj) {
+aff &aff::operator=(isl::aff obj) {
   std::swap(this->ptr, obj.ptr);
   return *this;
 }
@@ -1448,8 +1440,8 @@ aff::operator bool() const {
   return !is_null();
 }
 
-ctx aff::get_ctx() const {
-  return ctx(isl_aff_get_ctx(ptr));
+isl::ctx aff::get_ctx() const {
+  return isl::ctx(isl_aff_get_ctx(ptr));
 }
 
 bool aff::is_null() const {
@@ -1492,18 +1484,18 @@ isl::aff aff::pullback(isl::multi_aff ma) const {
 }
 
 // implementations for isl::ast_build
-ast_build manage(__isl_take isl_ast_build *ptr) {
+isl::ast_build manage(__isl_take isl_ast_build *ptr) {
   return ast_build(ptr);
 }
 
-ast_build give(__isl_take isl_ast_build *ptr) {
+isl::ast_build give(__isl_take isl_ast_build *ptr) {
   return manage(ptr);
 }
 
 ast_build::ast_build()
     : ptr(nullptr) {}
 
-ast_build::ast_build(const ast_build &obj)
+ast_build::ast_build(const isl::ast_build &obj)
     : ptr(obj.copy()) {}
 
 ast_build::ast_build(std::nullptr_t)
@@ -1512,12 +1504,12 @@ ast_build::ast_build(std::nullptr_t)
 ast_build::ast_build(__isl_take isl_ast_build *ptr)
     : ptr(ptr) {}
 
-ast_build::ast_build(ctx ctx) {
+ast_build::ast_build(isl::ctx ctx) {
   auto res = isl_ast_build_alloc(ctx.release());
   ptr = res;
 }
 
-ast_build &ast_build::operator=(ast_build obj) {
+ast_build &ast_build::operator=(isl::ast_build obj) {
   std::swap(this->ptr, obj.ptr);
   return *this;
 }
@@ -1553,8 +1545,8 @@ ast_build::operator bool() const {
   return !is_null();
 }
 
-ctx ast_build::get_ctx() const {
-  return ctx(isl_ast_build_get_ctx(ptr));
+isl::ctx ast_build::get_ctx() const {
+  return isl::ctx(isl_ast_build_get_ctx(ptr));
 }
 
 bool ast_build::is_null() const {
@@ -1602,18 +1594,18 @@ isl::ast_node ast_build::node_from_schedule_map(isl::union_map schedule) const {
 }
 
 // implementations for isl::ast_expr
-ast_expr manage(__isl_take isl_ast_expr *ptr) {
+isl::ast_expr manage(__isl_take isl_ast_expr *ptr) {
   return ast_expr(ptr);
 }
 
-ast_expr give(__isl_take isl_ast_expr *ptr) {
+isl::ast_expr give(__isl_take isl_ast_expr *ptr) {
   return manage(ptr);
 }
 
 ast_expr::ast_expr()
     : ptr(nullptr) {}
 
-ast_expr::ast_expr(const ast_expr &obj)
+ast_expr::ast_expr(const isl::ast_expr &obj)
     : ptr(obj.copy()) {}
 
 ast_expr::ast_expr(std::nullptr_t)
@@ -1622,7 +1614,7 @@ ast_expr::ast_expr(std::nullptr_t)
 ast_expr::ast_expr(__isl_take isl_ast_expr *ptr)
     : ptr(ptr) {}
 
-ast_expr &ast_expr::operator=(ast_expr obj) {
+ast_expr &ast_expr::operator=(isl::ast_expr obj) {
   std::swap(this->ptr, obj.ptr);
   return *this;
 }
@@ -1658,8 +1650,8 @@ ast_expr::operator bool() const {
   return !is_null();
 }
 
-ctx ast_expr::get_ctx() const {
-  return ctx(isl_ast_expr_get_ctx(ptr));
+isl::ctx ast_expr::get_ctx() const {
+  return isl::ctx(isl_ast_expr_get_ctx(ptr));
 }
 
 bool ast_expr::is_null() const {
@@ -1689,18 +1681,18 @@ std::string ast_expr::to_C_str() const {
 }
 
 // implementations for isl::ast_node
-ast_node manage(__isl_take isl_ast_node *ptr) {
+isl::ast_node manage(__isl_take isl_ast_node *ptr) {
   return ast_node(ptr);
 }
 
-ast_node give(__isl_take isl_ast_node *ptr) {
+isl::ast_node give(__isl_take isl_ast_node *ptr) {
   return manage(ptr);
 }
 
 ast_node::ast_node()
     : ptr(nullptr) {}
 
-ast_node::ast_node(const ast_node &obj)
+ast_node::ast_node(const isl::ast_node &obj)
     : ptr(obj.copy()) {}
 
 ast_node::ast_node(std::nullptr_t)
@@ -1709,7 +1701,7 @@ ast_node::ast_node(std::nullptr_t)
 ast_node::ast_node(__isl_take isl_ast_node *ptr)
     : ptr(ptr) {}
 
-ast_node &ast_node::operator=(ast_node obj) {
+ast_node &ast_node::operator=(isl::ast_node obj) {
   std::swap(this->ptr, obj.ptr);
   return *this;
 }
@@ -1745,8 +1737,8 @@ ast_node::operator bool() const {
   return !is_null();
 }
 
-ctx ast_node::get_ctx() const {
-  return ctx(isl_ast_node_get_ctx(ptr));
+isl::ctx ast_node::get_ctx() const {
+  return isl::ctx(isl_ast_node_get_ctx(ptr));
 }
 
 bool ast_node::is_null() const {
@@ -1776,18 +1768,18 @@ std::string ast_node::to_C_str() const {
 }
 
 // implementations for isl::basic_map
-basic_map manage(__isl_take isl_basic_map *ptr) {
+isl::basic_map manage(__isl_take isl_basic_map *ptr) {
   return basic_map(ptr);
 }
 
-basic_map give(__isl_take isl_basic_map *ptr) {
+isl::basic_map give(__isl_take isl_basic_map *ptr) {
   return manage(ptr);
 }
 
 basic_map::basic_map()
     : ptr(nullptr) {}
 
-basic_map::basic_map(const basic_map &obj)
+basic_map::basic_map(const isl::basic_map &obj)
     : ptr(obj.copy()) {}
 
 basic_map::basic_map(std::nullptr_t)
@@ -1796,12 +1788,12 @@ basic_map::basic_map(std::nullptr_t)
 basic_map::basic_map(__isl_take isl_basic_map *ptr)
     : ptr(ptr) {}
 
-basic_map::basic_map(ctx ctx, const std::string &str) {
+basic_map::basic_map(isl::ctx ctx, const std::string &str) {
   auto res = isl_basic_map_read_from_str(ctx.release(), str.c_str());
   ptr = res;
 }
 
-basic_map &basic_map::operator=(basic_map obj) {
+basic_map &basic_map::operator=(isl::basic_map obj) {
   std::swap(this->ptr, obj.ptr);
   return *this;
 }
@@ -1837,8 +1829,8 @@ basic_map::operator bool() const {
   return !is_null();
 }
 
-ctx basic_map::get_ctx() const {
-  return ctx(isl_basic_map_get_ctx(ptr));
+isl::ctx basic_map::get_ctx() const {
+  return isl::ctx(isl_basic_map_get_ctx(ptr));
 }
 
 bool basic_map::is_null() const {
@@ -1981,18 +1973,18 @@ isl::basic_map basic_map::universe(isl::space dim) {
 }
 
 // implementations for isl::basic_set
-basic_set manage(__isl_take isl_basic_set *ptr) {
+isl::basic_set manage(__isl_take isl_basic_set *ptr) {
   return basic_set(ptr);
 }
 
-basic_set give(__isl_take isl_basic_set *ptr) {
+isl::basic_set give(__isl_take isl_basic_set *ptr) {
   return manage(ptr);
 }
 
 basic_set::basic_set()
     : ptr(nullptr) {}
 
-basic_set::basic_set(const basic_set &obj)
+basic_set::basic_set(const isl::basic_set &obj)
     : ptr(obj.copy()) {}
 
 basic_set::basic_set(std::nullptr_t)
@@ -2001,7 +1993,7 @@ basic_set::basic_set(std::nullptr_t)
 basic_set::basic_set(__isl_take isl_basic_set *ptr)
     : ptr(ptr) {}
 
-basic_set::basic_set(ctx ctx, const std::string &str) {
+basic_set::basic_set(isl::ctx ctx, const std::string &str) {
   auto res = isl_basic_set_read_from_str(ctx.release(), str.c_str());
   ptr = res;
 }
@@ -2011,7 +2003,7 @@ basic_set::basic_set(isl::point pnt) {
   ptr = res;
 }
 
-basic_set &basic_set::operator=(basic_set obj) {
+basic_set &basic_set::operator=(isl::basic_set obj) {
   std::swap(this->ptr, obj.ptr);
   return *this;
 }
@@ -2047,8 +2039,8 @@ basic_set::operator bool() const {
   return !is_null();
 }
 
-ctx basic_set::get_ctx() const {
-  return ctx(isl_basic_set_get_ctx(ptr));
+isl::ctx basic_set::get_ctx() const {
+  return isl::ctx(isl_basic_set_get_ctx(ptr));
 }
 
 bool basic_set::is_null() const {
@@ -2161,18 +2153,18 @@ isl::set basic_set::unite(isl::basic_set bset2) const {
 }
 
 // implementations for isl::id
-id manage(__isl_take isl_id *ptr) {
+isl::id manage(__isl_take isl_id *ptr) {
   return id(ptr);
 }
 
-id give(__isl_take isl_id *ptr) {
+isl::id give(__isl_take isl_id *ptr) {
   return manage(ptr);
 }
 
 id::id()
     : ptr(nullptr) {}
 
-id::id(const id &obj)
+id::id(const isl::id &obj)
     : ptr(obj.copy()) {}
 
 id::id(std::nullptr_t)
@@ -2181,7 +2173,7 @@ id::id(std::nullptr_t)
 id::id(__isl_take isl_id *ptr)
     : ptr(ptr) {}
 
-id &id::operator=(id obj) {
+id &id::operator=(isl::id obj) {
   std::swap(this->ptr, obj.ptr);
   return *this;
 }
@@ -2217,8 +2209,8 @@ id::operator bool() const {
   return !is_null();
 }
 
-ctx id::get_ctx() const {
-  return ctx(isl_id_get_ctx(ptr));
+isl::ctx id::get_ctx() const {
+  return isl::ctx(isl_id_get_ctx(ptr));
 }
 
 bool id::is_null() const {
@@ -2241,18 +2233,18 @@ inline llvm::raw_ostream &operator<<(llvm::raw_ostream &OS,
 }
 
 // implementations for isl::local_space
-local_space manage(__isl_take isl_local_space *ptr) {
+isl::local_space manage(__isl_take isl_local_space *ptr) {
   return local_space(ptr);
 }
 
-local_space give(__isl_take isl_local_space *ptr) {
+isl::local_space give(__isl_take isl_local_space *ptr) {
   return manage(ptr);
 }
 
 local_space::local_space()
     : ptr(nullptr) {}
 
-local_space::local_space(const local_space &obj)
+local_space::local_space(const isl::local_space &obj)
     : ptr(obj.copy()) {}
 
 local_space::local_space(std::nullptr_t)
@@ -2266,7 +2258,7 @@ local_space::local_space(isl::space dim) {
   ptr = res;
 }
 
-local_space &local_space::operator=(local_space obj) {
+local_space &local_space::operator=(isl::local_space obj) {
   std::swap(this->ptr, obj.ptr);
   return *this;
 }
@@ -2302,8 +2294,8 @@ local_space::operator bool() const {
   return !is_null();
 }
 
-ctx local_space::get_ctx() const {
-  return ctx(isl_local_space_get_ctx(ptr));
+isl::ctx local_space::get_ctx() const {
+  return isl::ctx(isl_local_space_get_ctx(ptr));
 }
 
 bool local_space::is_null() const {
@@ -2311,18 +2303,18 @@ bool local_space::is_null() const {
 }
 
 // implementations for isl::map
-map manage(__isl_take isl_map *ptr) {
+isl::map manage(__isl_take isl_map *ptr) {
   return map(ptr);
 }
 
-map give(__isl_take isl_map *ptr) {
+isl::map give(__isl_take isl_map *ptr) {
   return manage(ptr);
 }
 
 map::map()
     : ptr(nullptr) {}
 
-map::map(const map &obj)
+map::map(const isl::map &obj)
     : ptr(obj.copy()) {}
 
 map::map(std::nullptr_t)
@@ -2331,7 +2323,7 @@ map::map(std::nullptr_t)
 map::map(__isl_take isl_map *ptr)
     : ptr(ptr) {}
 
-map::map(ctx ctx, const std::string &str) {
+map::map(isl::ctx ctx, const std::string &str) {
   auto res = isl_map_read_from_str(ctx.release(), str.c_str());
   ptr = res;
 }
@@ -2341,7 +2333,7 @@ map::map(isl::basic_map bmap) {
   ptr = res;
 }
 
-map &map::operator=(map obj) {
+map &map::operator=(isl::map obj) {
   std::swap(this->ptr, obj.ptr);
   return *this;
 }
@@ -2377,8 +2369,8 @@ map::operator bool() const {
   return !is_null();
 }
 
-ctx map::get_ctx() const {
-  return ctx(isl_map_get_ctx(ptr));
+isl::ctx map::get_ctx() const {
+  return isl::ctx(isl_map_get_ctx(ptr));
 }
 
 bool map::is_null() const {
@@ -2468,7 +2460,7 @@ isl::map map::flatten_range() const {
 isl::stat map::foreach_basic_map(std::function<isl::stat(isl::basic_map)> &&fn) const {
   auto fn_lambda = [](isl_basic_map *arg_0, void *arg_1) -> isl_stat {
     auto *func = (std::function<isl::stat(isl::basic_map)> *)arg_1;
-    stat ret = (*func)(isl::manage(arg_0));
+    isl::stat ret = (*func)(isl::manage(arg_0));
     return isl_stat(ret);
   };
   auto res = isl_map_foreach_basic_map(get(), fn_lambda, &fn);
@@ -2596,18 +2588,18 @@ isl::basic_map map::unshifted_simple_hull() const {
 }
 
 // implementations for isl::multi_aff
-multi_aff manage(__isl_take isl_multi_aff *ptr) {
+isl::multi_aff manage(__isl_take isl_multi_aff *ptr) {
   return multi_aff(ptr);
 }
 
-multi_aff give(__isl_take isl_multi_aff *ptr) {
+isl::multi_aff give(__isl_take isl_multi_aff *ptr) {
   return manage(ptr);
 }
 
 multi_aff::multi_aff()
     : ptr(nullptr) {}
 
-multi_aff::multi_aff(const multi_aff &obj)
+multi_aff::multi_aff(const isl::multi_aff &obj)
     : ptr(obj.copy()) {}
 
 multi_aff::multi_aff(std::nullptr_t)
@@ -2621,12 +2613,12 @@ multi_aff::multi_aff(isl::aff aff) {
   ptr = res;
 }
 
-multi_aff::multi_aff(ctx ctx, const std::string &str) {
+multi_aff::multi_aff(isl::ctx ctx, const std::string &str) {
   auto res = isl_multi_aff_read_from_str(ctx.release(), str.c_str());
   ptr = res;
 }
 
-multi_aff &multi_aff::operator=(multi_aff obj) {
+multi_aff &multi_aff::operator=(isl::multi_aff obj) {
   std::swap(this->ptr, obj.ptr);
   return *this;
 }
@@ -2662,8 +2654,8 @@ multi_aff::operator bool() const {
   return !is_null();
 }
 
-ctx multi_aff::get_ctx() const {
-  return ctx(isl_multi_aff_get_ctx(ptr));
+isl::ctx multi_aff::get_ctx() const {
+  return isl::ctx(isl_multi_aff_get_ctx(ptr));
 }
 
 bool multi_aff::is_null() const {
@@ -2716,18 +2708,18 @@ isl::multi_aff multi_aff::range_product(isl::multi_aff multi2) const {
 }
 
 // implementations for isl::multi_pw_aff
-multi_pw_aff manage(__isl_take isl_multi_pw_aff *ptr) {
+isl::multi_pw_aff manage(__isl_take isl_multi_pw_aff *ptr) {
   return multi_pw_aff(ptr);
 }
 
-multi_pw_aff give(__isl_take isl_multi_pw_aff *ptr) {
+isl::multi_pw_aff give(__isl_take isl_multi_pw_aff *ptr) {
   return manage(ptr);
 }
 
 multi_pw_aff::multi_pw_aff()
     : ptr(nullptr) {}
 
-multi_pw_aff::multi_pw_aff(const multi_pw_aff &obj)
+multi_pw_aff::multi_pw_aff(const isl::multi_pw_aff &obj)
     : ptr(obj.copy()) {}
 
 multi_pw_aff::multi_pw_aff(std::nullptr_t)
@@ -2751,12 +2743,12 @@ multi_pw_aff::multi_pw_aff(isl::pw_multi_aff pma) {
   ptr = res;
 }
 
-multi_pw_aff::multi_pw_aff(ctx ctx, const std::string &str) {
+multi_pw_aff::multi_pw_aff(isl::ctx ctx, const std::string &str) {
   auto res = isl_multi_pw_aff_read_from_str(ctx.release(), str.c_str());
   ptr = res;
 }
 
-multi_pw_aff &multi_pw_aff::operator=(multi_pw_aff obj) {
+multi_pw_aff &multi_pw_aff::operator=(isl::multi_pw_aff obj) {
   std::swap(this->ptr, obj.ptr);
   return *this;
 }
@@ -2792,8 +2784,8 @@ multi_pw_aff::operator bool() const {
   return !is_null();
 }
 
-ctx multi_pw_aff::get_ctx() const {
-  return ctx(isl_multi_pw_aff_get_ctx(ptr));
+isl::ctx multi_pw_aff::get_ctx() const {
+  return isl::ctx(isl_multi_pw_aff_get_ctx(ptr));
 }
 
 bool multi_pw_aff::is_null() const {
@@ -2856,18 +2848,18 @@ isl::multi_pw_aff multi_pw_aff::range_product(isl::multi_pw_aff multi2) const {
 }
 
 // implementations for isl::multi_union_pw_aff
-multi_union_pw_aff manage(__isl_take isl_multi_union_pw_aff *ptr) {
+isl::multi_union_pw_aff manage(__isl_take isl_multi_union_pw_aff *ptr) {
   return multi_union_pw_aff(ptr);
 }
 
-multi_union_pw_aff give(__isl_take isl_multi_union_pw_aff *ptr) {
+isl::multi_union_pw_aff give(__isl_take isl_multi_union_pw_aff *ptr) {
   return manage(ptr);
 }
 
 multi_union_pw_aff::multi_union_pw_aff()
     : ptr(nullptr) {}
 
-multi_union_pw_aff::multi_union_pw_aff(const multi_union_pw_aff &obj)
+multi_union_pw_aff::multi_union_pw_aff(const isl::multi_union_pw_aff &obj)
     : ptr(obj.copy()) {}
 
 multi_union_pw_aff::multi_union_pw_aff(std::nullptr_t)
@@ -2891,12 +2883,12 @@ multi_union_pw_aff::multi_union_pw_aff(isl::union_pw_multi_aff upma) {
   ptr = res;
 }
 
-multi_union_pw_aff::multi_union_pw_aff(ctx ctx, const std::string &str) {
+multi_union_pw_aff::multi_union_pw_aff(isl::ctx ctx, const std::string &str) {
   auto res = isl_multi_union_pw_aff_read_from_str(ctx.release(), str.c_str());
   ptr = res;
 }
 
-multi_union_pw_aff &multi_union_pw_aff::operator=(multi_union_pw_aff obj) {
+multi_union_pw_aff &multi_union_pw_aff::operator=(isl::multi_union_pw_aff obj) {
   std::swap(this->ptr, obj.ptr);
   return *this;
 }
@@ -2932,8 +2924,8 @@ multi_union_pw_aff::operator bool() const {
   return !is_null();
 }
 
-ctx multi_union_pw_aff::get_ctx() const {
-  return ctx(isl_multi_union_pw_aff_get_ctx(ptr));
+isl::ctx multi_union_pw_aff::get_ctx() const {
+  return isl::ctx(isl_multi_union_pw_aff_get_ctx(ptr));
 }
 
 bool multi_union_pw_aff::is_null() const {
@@ -2986,18 +2978,18 @@ isl::multi_union_pw_aff multi_union_pw_aff::union_add(isl::multi_union_pw_aff mu
 }
 
 // implementations for isl::multi_val
-multi_val manage(__isl_take isl_multi_val *ptr) {
+isl::multi_val manage(__isl_take isl_multi_val *ptr) {
   return multi_val(ptr);
 }
 
-multi_val give(__isl_take isl_multi_val *ptr) {
+isl::multi_val give(__isl_take isl_multi_val *ptr) {
   return manage(ptr);
 }
 
 multi_val::multi_val()
     : ptr(nullptr) {}
 
-multi_val::multi_val(const multi_val &obj)
+multi_val::multi_val(const isl::multi_val &obj)
     : ptr(obj.copy()) {}
 
 multi_val::multi_val(std::nullptr_t)
@@ -3006,7 +2998,7 @@ multi_val::multi_val(std::nullptr_t)
 multi_val::multi_val(__isl_take isl_multi_val *ptr)
     : ptr(ptr) {}
 
-multi_val &multi_val::operator=(multi_val obj) {
+multi_val &multi_val::operator=(isl::multi_val obj) {
   std::swap(this->ptr, obj.ptr);
   return *this;
 }
@@ -3042,8 +3034,8 @@ multi_val::operator bool() const {
   return !is_null();
 }
 
-ctx multi_val::get_ctx() const {
-  return ctx(isl_multi_val_get_ctx(ptr));
+isl::ctx multi_val::get_ctx() const {
+  return isl::ctx(isl_multi_val_get_ctx(ptr));
 }
 
 bool multi_val::is_null() const {
@@ -3091,18 +3083,18 @@ isl::multi_val multi_val::range_product(isl::multi_val multi2) const {
 }
 
 // implementations for isl::point
-point manage(__isl_take isl_point *ptr) {
+isl::point manage(__isl_take isl_point *ptr) {
   return point(ptr);
 }
 
-point give(__isl_take isl_point *ptr) {
+isl::point give(__isl_take isl_point *ptr) {
   return manage(ptr);
 }
 
 point::point()
     : ptr(nullptr) {}
 
-point::point(const point &obj)
+point::point(const isl::point &obj)
     : ptr(obj.copy()) {}
 
 point::point(std::nullptr_t)
@@ -3116,7 +3108,7 @@ point::point(isl::space dim) {
   ptr = res;
 }
 
-point &point::operator=(point obj) {
+point &point::operator=(isl::point obj) {
   std::swap(this->ptr, obj.ptr);
   return *this;
 }
@@ -3152,8 +3144,8 @@ point::operator bool() const {
   return !is_null();
 }
 
-ctx point::get_ctx() const {
-  return ctx(isl_point_get_ctx(ptr));
+isl::ctx point::get_ctx() const {
+  return isl::ctx(isl_point_get_ctx(ptr));
 }
 
 bool point::is_null() const {
@@ -3176,18 +3168,18 @@ inline llvm::raw_ostream &operator<<(llvm::raw_ostream &OS,
 }
 
 // implementations for isl::pw_aff
-pw_aff manage(__isl_take isl_pw_aff *ptr) {
+isl::pw_aff manage(__isl_take isl_pw_aff *ptr) {
   return pw_aff(ptr);
 }
 
-pw_aff give(__isl_take isl_pw_aff *ptr) {
+isl::pw_aff give(__isl_take isl_pw_aff *ptr) {
   return manage(ptr);
 }
 
 pw_aff::pw_aff()
     : ptr(nullptr) {}
 
-pw_aff::pw_aff(const pw_aff &obj)
+pw_aff::pw_aff(const isl::pw_aff &obj)
     : ptr(obj.copy()) {}
 
 pw_aff::pw_aff(std::nullptr_t)
@@ -3211,12 +3203,12 @@ pw_aff::pw_aff(isl::set domain, isl::val v) {
   ptr = res;
 }
 
-pw_aff::pw_aff(ctx ctx, const std::string &str) {
+pw_aff::pw_aff(isl::ctx ctx, const std::string &str) {
   auto res = isl_pw_aff_read_from_str(ctx.release(), str.c_str());
   ptr = res;
 }
 
-pw_aff &pw_aff::operator=(pw_aff obj) {
+pw_aff &pw_aff::operator=(isl::pw_aff obj) {
   std::swap(this->ptr, obj.ptr);
   return *this;
 }
@@ -3252,8 +3244,8 @@ pw_aff::operator bool() const {
   return !is_null();
 }
 
-ctx pw_aff::get_ctx() const {
-  return ctx(isl_pw_aff_get_ctx(ptr));
+isl::ctx pw_aff::get_ctx() const {
+  return isl::ctx(isl_pw_aff_get_ctx(ptr));
 }
 
 bool pw_aff::is_null() const {
@@ -3283,7 +3275,7 @@ isl::pw_aff pw_aff::add(isl::pw_aff pwaff2) const {
 isl::stat pw_aff::foreach_piece(std::function<isl::stat(isl::set, isl::aff)> &&fn) const {
   auto fn_lambda = [](isl_set *arg_0, isl_aff *arg_1, void *arg_2) -> isl_stat {
     auto *func = (std::function<isl::stat(isl::set, isl::aff)> *)arg_2;
-    stat ret = (*func)(isl::manage(arg_0), isl::manage(arg_1));
+    isl::stat ret = (*func)(isl::manage(arg_0), isl::manage(arg_1));
     return isl_stat(ret);
   };
   auto res = isl_pw_aff_foreach_piece(get(), fn_lambda, &fn);
@@ -3336,18 +3328,18 @@ isl::pw_aff pw_aff::union_add(isl::pw_aff pwaff2) const {
 }
 
 // implementations for isl::pw_multi_aff
-pw_multi_aff manage(__isl_take isl_pw_multi_aff *ptr) {
+isl::pw_multi_aff manage(__isl_take isl_pw_multi_aff *ptr) {
   return pw_multi_aff(ptr);
 }
 
-pw_multi_aff give(__isl_take isl_pw_multi_aff *ptr) {
+isl::pw_multi_aff give(__isl_take isl_pw_multi_aff *ptr) {
   return manage(ptr);
 }
 
 pw_multi_aff::pw_multi_aff()
     : ptr(nullptr) {}
 
-pw_multi_aff::pw_multi_aff(const pw_multi_aff &obj)
+pw_multi_aff::pw_multi_aff(const isl::pw_multi_aff &obj)
     : ptr(obj.copy()) {}
 
 pw_multi_aff::pw_multi_aff(std::nullptr_t)
@@ -3356,7 +3348,7 @@ pw_multi_aff::pw_multi_aff(std::nullptr_t)
 pw_multi_aff::pw_multi_aff(__isl_take isl_pw_multi_aff *ptr)
     : ptr(ptr) {}
 
-pw_multi_aff::pw_multi_aff(ctx ctx, const std::string &str) {
+pw_multi_aff::pw_multi_aff(isl::ctx ctx, const std::string &str) {
   auto res = isl_pw_multi_aff_read_from_str(ctx.release(), str.c_str());
   ptr = res;
 }
@@ -3371,7 +3363,7 @@ pw_multi_aff::pw_multi_aff(isl::pw_aff pa) {
   ptr = res;
 }
 
-pw_multi_aff &pw_multi_aff::operator=(pw_multi_aff obj) {
+pw_multi_aff &pw_multi_aff::operator=(isl::pw_multi_aff obj) {
   std::swap(this->ptr, obj.ptr);
   return *this;
 }
@@ -3407,8 +3399,8 @@ pw_multi_aff::operator bool() const {
   return !is_null();
 }
 
-ctx pw_multi_aff::get_ctx() const {
-  return ctx(isl_pw_multi_aff_get_ctx(ptr));
+isl::ctx pw_multi_aff::get_ctx() const {
+  return isl::ctx(isl_pw_multi_aff_get_ctx(ptr));
 }
 
 bool pw_multi_aff::is_null() const {
@@ -3466,18 +3458,18 @@ isl::pw_multi_aff pw_multi_aff::union_add(isl::pw_multi_aff pma2) const {
 }
 
 // implementations for isl::schedule
-schedule manage(__isl_take isl_schedule *ptr) {
+isl::schedule manage(__isl_take isl_schedule *ptr) {
   return schedule(ptr);
 }
 
-schedule give(__isl_take isl_schedule *ptr) {
+isl::schedule give(__isl_take isl_schedule *ptr) {
   return manage(ptr);
 }
 
 schedule::schedule()
     : ptr(nullptr) {}
 
-schedule::schedule(const schedule &obj)
+schedule::schedule(const isl::schedule &obj)
     : ptr(obj.copy()) {}
 
 schedule::schedule(std::nullptr_t)
@@ -3486,12 +3478,12 @@ schedule::schedule(std::nullptr_t)
 schedule::schedule(__isl_take isl_schedule *ptr)
     : ptr(ptr) {}
 
-schedule::schedule(ctx ctx, const std::string &str) {
+schedule::schedule(isl::ctx ctx, const std::string &str) {
   auto res = isl_schedule_read_from_str(ctx.release(), str.c_str());
   ptr = res;
 }
 
-schedule &schedule::operator=(schedule obj) {
+schedule &schedule::operator=(isl::schedule obj) {
   std::swap(this->ptr, obj.ptr);
   return *this;
 }
@@ -3527,8 +3519,8 @@ schedule::operator bool() const {
   return !is_null();
 }
 
-ctx schedule::get_ctx() const {
-  return ctx(isl_schedule_get_ctx(ptr));
+isl::ctx schedule::get_ctx() const {
+  return isl::ctx(isl_schedule_get_ctx(ptr));
 }
 
 bool schedule::is_null() const {
@@ -3566,18 +3558,18 @@ isl::schedule schedule::pullback(isl::union_pw_multi_aff upma) const {
 }
 
 // implementations for isl::schedule_constraints
-schedule_constraints manage(__isl_take isl_schedule_constraints *ptr) {
+isl::schedule_constraints manage(__isl_take isl_schedule_constraints *ptr) {
   return schedule_constraints(ptr);
 }
 
-schedule_constraints give(__isl_take isl_schedule_constraints *ptr) {
+isl::schedule_constraints give(__isl_take isl_schedule_constraints *ptr) {
   return manage(ptr);
 }
 
 schedule_constraints::schedule_constraints()
     : ptr(nullptr) {}
 
-schedule_constraints::schedule_constraints(const schedule_constraints &obj)
+schedule_constraints::schedule_constraints(const isl::schedule_constraints &obj)
     : ptr(obj.copy()) {}
 
 schedule_constraints::schedule_constraints(std::nullptr_t)
@@ -3586,12 +3578,12 @@ schedule_constraints::schedule_constraints(std::nullptr_t)
 schedule_constraints::schedule_constraints(__isl_take isl_schedule_constraints *ptr)
     : ptr(ptr) {}
 
-schedule_constraints::schedule_constraints(ctx ctx, const std::string &str) {
+schedule_constraints::schedule_constraints(isl::ctx ctx, const std::string &str) {
   auto res = isl_schedule_constraints_read_from_str(ctx.release(), str.c_str());
   ptr = res;
 }
 
-schedule_constraints &schedule_constraints::operator=(schedule_constraints obj) {
+schedule_constraints &schedule_constraints::operator=(isl::schedule_constraints obj) {
   std::swap(this->ptr, obj.ptr);
   return *this;
 }
@@ -3627,8 +3619,8 @@ schedule_constraints::operator bool() const {
   return !is_null();
 }
 
-ctx schedule_constraints::get_ctx() const {
-  return ctx(isl_schedule_constraints_get_ctx(ptr));
+isl::ctx schedule_constraints::get_ctx() const {
+  return isl::ctx(isl_schedule_constraints_get_ctx(ptr));
 }
 
 bool schedule_constraints::is_null() const {
@@ -3686,18 +3678,18 @@ isl::union_map schedule_constraints::get_validity() const {
 }
 
 // implementations for isl::schedule_node
-schedule_node manage(__isl_take isl_schedule_node *ptr) {
+isl::schedule_node manage(__isl_take isl_schedule_node *ptr) {
   return schedule_node(ptr);
 }
 
-schedule_node give(__isl_take isl_schedule_node *ptr) {
+isl::schedule_node give(__isl_take isl_schedule_node *ptr) {
   return manage(ptr);
 }
 
 schedule_node::schedule_node()
     : ptr(nullptr) {}
 
-schedule_node::schedule_node(const schedule_node &obj)
+schedule_node::schedule_node(const isl::schedule_node &obj)
     : ptr(obj.copy()) {}
 
 schedule_node::schedule_node(std::nullptr_t)
@@ -3706,7 +3698,7 @@ schedule_node::schedule_node(std::nullptr_t)
 schedule_node::schedule_node(__isl_take isl_schedule_node *ptr)
     : ptr(ptr) {}
 
-schedule_node &schedule_node::operator=(schedule_node obj) {
+schedule_node &schedule_node::operator=(isl::schedule_node obj) {
   std::swap(this->ptr, obj.ptr);
   return *this;
 }
@@ -3742,8 +3734,8 @@ schedule_node::operator bool() const {
   return !is_null();
 }
 
-ctx schedule_node::get_ctx() const {
-  return ctx(isl_schedule_node_get_ctx(ptr));
+isl::ctx schedule_node::get_ctx() const {
+  return isl::ctx(isl_schedule_node_get_ctx(ptr));
 }
 
 bool schedule_node::is_null() const {
@@ -3806,18 +3798,18 @@ isl::schedule_node schedule_node::parent() const {
 }
 
 // implementations for isl::set
-set manage(__isl_take isl_set *ptr) {
+isl::set manage(__isl_take isl_set *ptr) {
   return set(ptr);
 }
 
-set give(__isl_take isl_set *ptr) {
+isl::set give(__isl_take isl_set *ptr) {
   return manage(ptr);
 }
 
 set::set()
     : ptr(nullptr) {}
 
-set::set(const set &obj)
+set::set(const isl::set &obj)
     : ptr(obj.copy()) {}
 
 set::set(std::nullptr_t)
@@ -3831,7 +3823,7 @@ set::set(isl::union_set uset) {
   ptr = res;
 }
 
-set::set(ctx ctx, const std::string &str) {
+set::set(isl::ctx ctx, const std::string &str) {
   auto res = isl_set_read_from_str(ctx.release(), str.c_str());
   ptr = res;
 }
@@ -3846,7 +3838,7 @@ set::set(isl::point pnt) {
   ptr = res;
 }
 
-set &set::operator=(set obj) {
+set &set::operator=(isl::set obj) {
   std::swap(this->ptr, obj.ptr);
   return *this;
 }
@@ -3882,8 +3874,8 @@ set::operator bool() const {
   return !is_null();
 }
 
-ctx set::get_ctx() const {
-  return ctx(isl_set_get_ctx(ptr));
+isl::ctx set::get_ctx() const {
+  return isl::ctx(isl_set_get_ctx(ptr));
 }
 
 bool set::is_null() const {
@@ -3958,7 +3950,7 @@ isl::set set::flatten() const {
 isl::stat set::foreach_basic_set(std::function<isl::stat(isl::basic_set)> &&fn) const {
   auto fn_lambda = [](isl_basic_set *arg_0, void *arg_1) -> isl_stat {
     auto *func = (std::function<isl::stat(isl::basic_set)> *)arg_1;
-    stat ret = (*func)(isl::manage(arg_0));
+    isl::stat ret = (*func)(isl::manage(arg_0));
     return isl_stat(ret);
   };
   auto res = isl_set_foreach_basic_set(get(), fn_lambda, &fn);
@@ -4081,18 +4073,18 @@ isl::basic_set set::unshifted_simple_hull() const {
 }
 
 // implementations for isl::space
-space manage(__isl_take isl_space *ptr) {
+isl::space manage(__isl_take isl_space *ptr) {
   return space(ptr);
 }
 
-space give(__isl_take isl_space *ptr) {
+isl::space give(__isl_take isl_space *ptr) {
   return manage(ptr);
 }
 
 space::space()
     : ptr(nullptr) {}
 
-space::space(const space &obj)
+space::space(const isl::space &obj)
     : ptr(obj.copy()) {}
 
 space::space(std::nullptr_t)
@@ -4101,17 +4093,17 @@ space::space(std::nullptr_t)
 space::space(__isl_take isl_space *ptr)
     : ptr(ptr) {}
 
-space::space(ctx ctx, unsigned int nparam, unsigned int n_in, unsigned int n_out) {
+space::space(isl::ctx ctx, unsigned int nparam, unsigned int n_in, unsigned int n_out) {
   auto res = isl_space_alloc(ctx.release(), nparam, n_in, n_out);
   ptr = res;
 }
 
-space::space(ctx ctx, unsigned int nparam, unsigned int dim) {
+space::space(isl::ctx ctx, unsigned int nparam, unsigned int dim) {
   auto res = isl_space_set_alloc(ctx.release(), nparam, dim);
   ptr = res;
 }
 
-space &space::operator=(space obj) {
+space &space::operator=(isl::space obj) {
   std::swap(this->ptr, obj.ptr);
   return *this;
 }
@@ -4147,8 +4139,8 @@ space::operator bool() const {
   return !is_null();
 }
 
-ctx space::get_ctx() const {
-  return ctx(isl_space_get_ctx(ptr));
+isl::ctx space::get_ctx() const {
+  return isl::ctx(isl_space_get_ctx(ptr));
 }
 
 bool space::is_null() const {
@@ -4191,18 +4183,18 @@ isl::space space::set_from_params() const {
 }
 
 // implementations for isl::union_access_info
-union_access_info manage(__isl_take isl_union_access_info *ptr) {
+isl::union_access_info manage(__isl_take isl_union_access_info *ptr) {
   return union_access_info(ptr);
 }
 
-union_access_info give(__isl_take isl_union_access_info *ptr) {
+isl::union_access_info give(__isl_take isl_union_access_info *ptr) {
   return manage(ptr);
 }
 
 union_access_info::union_access_info()
     : ptr(nullptr) {}
 
-union_access_info::union_access_info(const union_access_info &obj)
+union_access_info::union_access_info(const isl::union_access_info &obj)
     : ptr(obj.copy()) {}
 
 union_access_info::union_access_info(std::nullptr_t)
@@ -4216,7 +4208,7 @@ union_access_info::union_access_info(isl::union_map sink) {
   ptr = res;
 }
 
-union_access_info &union_access_info::operator=(union_access_info obj) {
+union_access_info &union_access_info::operator=(isl::union_access_info obj) {
   std::swap(this->ptr, obj.ptr);
   return *this;
 }
@@ -4252,8 +4244,8 @@ union_access_info::operator bool() const {
   return !is_null();
 }
 
-ctx union_access_info::get_ctx() const {
-  return ctx(isl_union_access_info_get_ctx(ptr));
+isl::ctx union_access_info::get_ctx() const {
+  return isl::ctx(isl_union_access_info_get_ctx(ptr));
 }
 
 bool union_access_info::is_null() const {
@@ -4301,18 +4293,18 @@ isl::union_access_info union_access_info::set_schedule_map(isl::union_map schedu
 }
 
 // implementations for isl::union_flow
-union_flow manage(__isl_take isl_union_flow *ptr) {
+isl::union_flow manage(__isl_take isl_union_flow *ptr) {
   return union_flow(ptr);
 }
 
-union_flow give(__isl_take isl_union_flow *ptr) {
+isl::union_flow give(__isl_take isl_union_flow *ptr) {
   return manage(ptr);
 }
 
 union_flow::union_flow()
     : ptr(nullptr) {}
 
-union_flow::union_flow(const union_flow &obj)
+union_flow::union_flow(const isl::union_flow &obj)
     : ptr(obj.copy()) {}
 
 union_flow::union_flow(std::nullptr_t)
@@ -4321,7 +4313,7 @@ union_flow::union_flow(std::nullptr_t)
 union_flow::union_flow(__isl_take isl_union_flow *ptr)
     : ptr(ptr) {}
 
-union_flow &union_flow::operator=(union_flow obj) {
+union_flow &union_flow::operator=(isl::union_flow obj) {
   std::swap(this->ptr, obj.ptr);
   return *this;
 }
@@ -4357,8 +4349,8 @@ union_flow::operator bool() const {
   return !is_null();
 }
 
-ctx union_flow::get_ctx() const {
-  return ctx(isl_union_flow_get_ctx(ptr));
+isl::ctx union_flow::get_ctx() const {
+  return isl::ctx(isl_union_flow_get_ctx(ptr));
 }
 
 bool union_flow::is_null() const {
@@ -4411,18 +4403,18 @@ isl::union_map union_flow::get_must_no_source() const {
 }
 
 // implementations for isl::union_map
-union_map manage(__isl_take isl_union_map *ptr) {
+isl::union_map manage(__isl_take isl_union_map *ptr) {
   return union_map(ptr);
 }
 
-union_map give(__isl_take isl_union_map *ptr) {
+isl::union_map give(__isl_take isl_union_map *ptr) {
   return manage(ptr);
 }
 
 union_map::union_map()
     : ptr(nullptr) {}
 
-union_map::union_map(const union_map &obj)
+union_map::union_map(const isl::union_map &obj)
     : ptr(obj.copy()) {}
 
 union_map::union_map(std::nullptr_t)
@@ -4446,12 +4438,12 @@ union_map::union_map(isl::map map) {
   ptr = res;
 }
 
-union_map::union_map(ctx ctx, const std::string &str) {
+union_map::union_map(isl::ctx ctx, const std::string &str) {
   auto res = isl_union_map_read_from_str(ctx.release(), str.c_str());
   ptr = res;
 }
 
-union_map &union_map::operator=(union_map obj) {
+union_map &union_map::operator=(isl::union_map obj) {
   std::swap(this->ptr, obj.ptr);
   return *this;
 }
@@ -4487,8 +4479,8 @@ union_map::operator bool() const {
   return !is_null();
 }
 
-ctx union_map::get_ctx() const {
-  return ctx(isl_union_map_get_ctx(ptr));
+isl::ctx union_map::get_ctx() const {
+  return isl::ctx(isl_union_map_get_ctx(ptr));
 }
 
 bool union_map::is_null() const {
@@ -4608,7 +4600,7 @@ isl::union_map union_map::flat_range_product(isl::union_map umap2) const {
 isl::stat union_map::foreach_map(std::function<isl::stat(isl::map)> &&fn) const {
   auto fn_lambda = [](isl_map *arg_0, void *arg_1) -> isl_stat {
     auto *func = (std::function<isl::stat(isl::map)> *)arg_1;
-    stat ret = (*func)(isl::manage(arg_0));
+    isl::stat ret = (*func)(isl::manage(arg_0));
     return isl_stat(ret);
   };
   auto res = isl_union_map_foreach_map(get(), fn_lambda, &fn);
@@ -4791,18 +4783,18 @@ isl::union_map union_map::zip() const {
 }
 
 // implementations for isl::union_pw_aff
-union_pw_aff manage(__isl_take isl_union_pw_aff *ptr) {
+isl::union_pw_aff manage(__isl_take isl_union_pw_aff *ptr) {
   return union_pw_aff(ptr);
 }
 
-union_pw_aff give(__isl_take isl_union_pw_aff *ptr) {
+isl::union_pw_aff give(__isl_take isl_union_pw_aff *ptr) {
   return manage(ptr);
 }
 
 union_pw_aff::union_pw_aff()
     : ptr(nullptr) {}
 
-union_pw_aff::union_pw_aff(const union_pw_aff &obj)
+union_pw_aff::union_pw_aff(const isl::union_pw_aff &obj)
     : ptr(obj.copy()) {}
 
 union_pw_aff::union_pw_aff(std::nullptr_t)
@@ -4821,12 +4813,12 @@ union_pw_aff::union_pw_aff(isl::union_set domain, isl::val v) {
   ptr = res;
 }
 
-union_pw_aff::union_pw_aff(ctx ctx, const std::string &str) {
+union_pw_aff::union_pw_aff(isl::ctx ctx, const std::string &str) {
   auto res = isl_union_pw_aff_read_from_str(ctx.release(), str.c_str());
   ptr = res;
 }
 
-union_pw_aff &union_pw_aff::operator=(union_pw_aff obj) {
+union_pw_aff &union_pw_aff::operator=(isl::union_pw_aff obj) {
   std::swap(this->ptr, obj.ptr);
   return *this;
 }
@@ -4862,8 +4854,8 @@ union_pw_aff::operator bool() const {
   return !is_null();
 }
 
-ctx union_pw_aff::get_ctx() const {
-  return ctx(isl_union_pw_aff_get_ctx(ptr));
+isl::ctx union_pw_aff::get_ctx() const {
+  return isl::ctx(isl_union_pw_aff_get_ctx(ptr));
 }
 
 bool union_pw_aff::is_null() const {
@@ -4898,7 +4890,7 @@ isl::union_pw_aff union_pw_aff::empty(isl::space space) {
 isl::stat union_pw_aff::foreach_pw_aff(std::function<isl::stat(isl::pw_aff)> &&fn) const {
   auto fn_lambda = [](isl_pw_aff *arg_0, void *arg_1) -> isl_stat {
     auto *func = (std::function<isl::stat(isl::pw_aff)> *)arg_1;
-    stat ret = (*func)(isl::manage(arg_0));
+    isl::stat ret = (*func)(isl::manage(arg_0));
     return isl_stat(ret);
   };
   auto res = isl_union_pw_aff_foreach_pw_aff(get(), fn_lambda, &fn);
@@ -4926,18 +4918,18 @@ isl::union_pw_aff union_pw_aff::union_add(isl::union_pw_aff upa2) const {
 }
 
 // implementations for isl::union_pw_multi_aff
-union_pw_multi_aff manage(__isl_take isl_union_pw_multi_aff *ptr) {
+isl::union_pw_multi_aff manage(__isl_take isl_union_pw_multi_aff *ptr) {
   return union_pw_multi_aff(ptr);
 }
 
-union_pw_multi_aff give(__isl_take isl_union_pw_multi_aff *ptr) {
+isl::union_pw_multi_aff give(__isl_take isl_union_pw_multi_aff *ptr) {
   return manage(ptr);
 }
 
 union_pw_multi_aff::union_pw_multi_aff()
     : ptr(nullptr) {}
 
-union_pw_multi_aff::union_pw_multi_aff(const union_pw_multi_aff &obj)
+union_pw_multi_aff::union_pw_multi_aff(const isl::union_pw_multi_aff &obj)
     : ptr(obj.copy()) {}
 
 union_pw_multi_aff::union_pw_multi_aff(std::nullptr_t)
@@ -4961,7 +4953,7 @@ union_pw_multi_aff::union_pw_multi_aff(isl::union_map umap) {
   ptr = res;
 }
 
-union_pw_multi_aff::union_pw_multi_aff(ctx ctx, const std::string &str) {
+union_pw_multi_aff::union_pw_multi_aff(isl::ctx ctx, const std::string &str) {
   auto res = isl_union_pw_multi_aff_read_from_str(ctx.release(), str.c_str());
   ptr = res;
 }
@@ -4971,7 +4963,7 @@ union_pw_multi_aff::union_pw_multi_aff(isl::union_pw_aff upa) {
   ptr = res;
 }
 
-union_pw_multi_aff &union_pw_multi_aff::operator=(union_pw_multi_aff obj) {
+union_pw_multi_aff &union_pw_multi_aff::operator=(isl::union_pw_multi_aff obj) {
   std::swap(this->ptr, obj.ptr);
   return *this;
 }
@@ -5007,8 +4999,8 @@ union_pw_multi_aff::operator bool() const {
   return !is_null();
 }
 
-ctx union_pw_multi_aff::get_ctx() const {
-  return ctx(isl_union_pw_multi_aff_get_ctx(ptr));
+isl::ctx union_pw_multi_aff::get_ctx() const {
+  return isl::ctx(isl_union_pw_multi_aff_get_ctx(ptr));
 }
 
 bool union_pw_multi_aff::is_null() const {
@@ -5051,18 +5043,18 @@ isl::union_pw_multi_aff union_pw_multi_aff::union_add(isl::union_pw_multi_aff up
 }
 
 // implementations for isl::union_set
-union_set manage(__isl_take isl_union_set *ptr) {
+isl::union_set manage(__isl_take isl_union_set *ptr) {
   return union_set(ptr);
 }
 
-union_set give(__isl_take isl_union_set *ptr) {
+isl::union_set give(__isl_take isl_union_set *ptr) {
   return manage(ptr);
 }
 
 union_set::union_set()
     : ptr(nullptr) {}
 
-union_set::union_set(const union_set &obj)
+union_set::union_set(const isl::union_set &obj)
     : ptr(obj.copy()) {}
 
 union_set::union_set(std::nullptr_t)
@@ -5086,12 +5078,12 @@ union_set::union_set(isl::point pnt) {
   ptr = res;
 }
 
-union_set::union_set(ctx ctx, const std::string &str) {
+union_set::union_set(isl::ctx ctx, const std::string &str) {
   auto res = isl_union_set_read_from_str(ctx.release(), str.c_str());
   ptr = res;
 }
 
-union_set &union_set::operator=(union_set obj) {
+union_set &union_set::operator=(isl::union_set obj) {
   std::swap(this->ptr, obj.ptr);
   return *this;
 }
@@ -5127,8 +5119,8 @@ union_set::operator bool() const {
   return !is_null();
 }
 
-ctx union_set::get_ctx() const {
-  return ctx(isl_union_set_get_ctx(ptr));
+isl::ctx union_set::get_ctx() const {
+  return isl::ctx(isl_union_set_get_ctx(ptr));
 }
 
 bool union_set::is_null() const {
@@ -5178,7 +5170,7 @@ isl::union_set union_set::detect_equalities() const {
 isl::stat union_set::foreach_point(std::function<isl::stat(isl::point)> &&fn) const {
   auto fn_lambda = [](isl_point *arg_0, void *arg_1) -> isl_stat {
     auto *func = (std::function<isl::stat(isl::point)> *)arg_1;
-    stat ret = (*func)(isl::manage(arg_0));
+    isl::stat ret = (*func)(isl::manage(arg_0));
     return isl_stat(ret);
   };
   auto res = isl_union_set_foreach_point(get(), fn_lambda, &fn);
@@ -5188,7 +5180,7 @@ isl::stat union_set::foreach_point(std::function<isl::stat(isl::point)> &&fn) co
 isl::stat union_set::foreach_set(std::function<isl::stat(isl::set)> &&fn) const {
   auto fn_lambda = [](isl_set *arg_0, void *arg_1) -> isl_stat {
     auto *func = (std::function<isl::stat(isl::set)> *)arg_1;
-    stat ret = (*func)(isl::manage(arg_0));
+    isl::stat ret = (*func)(isl::manage(arg_0));
     return isl_stat(ret);
   };
   auto res = isl_union_set_foreach_set(get(), fn_lambda, &fn);
@@ -5276,18 +5268,18 @@ isl::union_map union_set::unwrap() const {
 }
 
 // implementations for isl::val
-val manage(__isl_take isl_val *ptr) {
+isl::val manage(__isl_take isl_val *ptr) {
   return val(ptr);
 }
 
-val give(__isl_take isl_val *ptr) {
+isl::val give(__isl_take isl_val *ptr) {
   return manage(ptr);
 }
 
 val::val()
     : ptr(nullptr) {}
 
-val::val(const val &obj)
+val::val(const isl::val &obj)
     : ptr(obj.copy()) {}
 
 val::val(std::nullptr_t)
@@ -5296,17 +5288,17 @@ val::val(std::nullptr_t)
 val::val(__isl_take isl_val *ptr)
     : ptr(ptr) {}
 
-val::val(ctx ctx, long i) {
+val::val(isl::ctx ctx, long i) {
   auto res = isl_val_int_from_si(ctx.release(), i);
   ptr = res;
 }
 
-val::val(ctx ctx, const std::string &str) {
+val::val(isl::ctx ctx, const std::string &str) {
   auto res = isl_val_read_from_str(ctx.release(), str.c_str());
   ptr = res;
 }
 
-val &val::operator=(val obj) {
+val &val::operator=(isl::val obj) {
   std::swap(this->ptr, obj.ptr);
   return *this;
 }
@@ -5342,8 +5334,8 @@ val::operator bool() const {
   return !is_null();
 }
 
-ctx val::get_ctx() const {
-  return ctx(isl_val_get_ctx(ptr));
+isl::ctx val::get_ctx() const {
+  return isl::ctx(isl_val_get_ctx(ptr));
 }
 
 bool val::is_null() const {
@@ -5430,7 +5422,7 @@ isl::boolean val::gt(const isl::val &v2) const {
   return res;
 }
 
-isl::val val::infty(ctx ctx) {
+isl::val val::infty(isl::ctx ctx) {
   auto res = isl_val_infty(ctx.release());
   return manage(res);
 }
@@ -5535,7 +5527,7 @@ isl::val val::mul(isl::val v2) const {
   return manage(res);
 }
 
-isl::val val::nan(ctx ctx) {
+isl::val val::nan(isl::ctx ctx) {
   auto res = isl_val_nan(ctx.release());
   return manage(res);
 }
@@ -5550,17 +5542,17 @@ isl::val val::neg() const {
   return manage(res);
 }
 
-isl::val val::neginfty(ctx ctx) {
+isl::val val::neginfty(isl::ctx ctx) {
   auto res = isl_val_neginfty(ctx.release());
   return manage(res);
 }
 
-isl::val val::negone(ctx ctx) {
+isl::val val::negone(isl::ctx ctx) {
   auto res = isl_val_negone(ctx.release());
   return manage(res);
 }
 
-isl::val val::one(ctx ctx) {
+isl::val val::one(isl::ctx ctx) {
   auto res = isl_val_one(ctx.release());
   return manage(res);
 }
@@ -5585,10 +5577,11 @@ isl::val val::trunc() const {
   return manage(res);
 }
 
-isl::val val::zero(ctx ctx) {
+isl::val val::zero(isl::ctx ctx) {
   auto res = isl_val_zero(ctx.release());
   return manage(res);
 }
+
 } // namespace noexceptions
 } // namespace isl
 

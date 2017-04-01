@@ -24,7 +24,6 @@
 // Project includes
 #include "Plugins/Process/Utility/ARMDefines.h"
 #include "Plugins/Process/Utility/InstructionUtils.h"
-#include "lldb/Core/StringList.h"
 #include "lldb/Host/HostInfo.h"
 #include "lldb/Target/Platform.h"
 #include "lldb/Target/Process.h"
@@ -34,6 +33,7 @@
 #include "lldb/Utility/NameMatches.h"
 #include "lldb/Utility/RegularExpression.h"
 #include "lldb/Utility/SafeMachO.h"
+#include "lldb/Utility/StringList.h"
 
 using namespace lldb;
 using namespace lldb_private;
@@ -1380,7 +1380,7 @@ static bool cores_match(const ArchSpec::Core core1, const ArchSpec::Core core2,
       if (core2 >= ArchSpec::kCore_mips32el_first &&
           core2 <= ArchSpec::kCore_mips32el_last)
         return true;
-      try_inverse = false;
+      try_inverse = true;
     }
     break;
 

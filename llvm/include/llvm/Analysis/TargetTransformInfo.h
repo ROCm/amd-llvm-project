@@ -44,23 +44,26 @@ class Value;
 
 /// \brief Information about a load/store intrinsic defined by the target.
 struct MemIntrinsicInfo {
-  MemIntrinsicInfo()
-      : ReadMem(false), WriteMem(false), IsSimple(false), MatchingId(0),
-        NumMemRefs(0), PtrVal(nullptr) {}
-  bool ReadMem;
-  bool WriteMem;
-  /// True only if this memory operation is non-volatile, non-atomic, and
-  /// unordered.  (See LoadInst/StoreInst for details on each)
-  bool IsSimple;
-  // Same Id is set by the target for corresponding load/store intrinsics.
-  unsigned short MatchingId;
-  int NumMemRefs;
-
   /// This is the pointer that the intrinsic is loading from or storing to.
   /// If this is non-null, then analysis/optimization passes can assume that
   /// this intrinsic is functionally equivalent to a load/store from this
   /// pointer.
-  Value *PtrVal;
+  Value *PtrVal = nullptr;
+
+  // Ordering for atomic operations.
+  AtomicOrdering Ordering = AtomicOrdering::NotAtomic;
+
+  // Same Id is set by the target for corresponding load/store intrinsics.
+  unsigned short MatchingId = 0;
+
+  bool ReadMem = false;
+  bool WriteMem = false;
+  bool IsVolatile = false;
+
+  bool isUnordered() const {
+    return (Ordering == AtomicOrdering::NotAtomic ||
+            Ordering == AtomicOrdering::Unordered) && !IsVolatile;
+  }
 };
 
 /// \brief This pass provides access to the codegen interfaces that are needed
@@ -628,13 +631,19 @@ public:
   ///  ((v0+v2), (v1+v3), undef, undef)
   int getReductionCost(unsigned Opcode, Type *Ty, bool IsPairwiseForm) const;
 
-  /// \returns The cost of Intrinsic instructions. Types analysis only.
-  int getIntrinsicInstrCost(Intrinsic::ID ID, Type *RetTy,
-                            ArrayRef<Type *> Tys, FastMathFlags FMF) const;
-
   /// \returns The cost of Intrinsic instructions. Analyses the real arguments.
+  /// Three cases are handled: 1. scalar instruction 2. vector instruction
+  /// 3. scalar instruction which is to be vectorized with VF.
   int getIntrinsicInstrCost(Intrinsic::ID ID, Type *RetTy,
-                            ArrayRef<Value *> Args, FastMathFlags FMF) const;
+                            ArrayRef<Value *> Args, FastMathFlags FMF,
+                            unsigned VF = 1) const;
+
+  /// \returns The cost of Intrinsic instructions. Types analysis only.
+  /// If ScalarizationCostPassed is UINT_MAX, the cost of scalarizing the
+  /// arguments and the return value will be computed based on types.
+  int getIntrinsicInstrCost(Intrinsic::ID ID, Type *RetTy,
+                            ArrayRef<Type *> Tys, FastMathFlags FMF,
+                            unsigned ScalarizationCostPassed = UINT_MAX) const;
 
   /// \returns The cost of Call instructions.
   int getCallInstrCost(Function *F, Type *RetTy, ArrayRef<Type *> Tys) const;
@@ -828,11 +837,10 @@ public:
   virtual int getReductionCost(unsigned Opcode, Type *Ty,
                                bool IsPairwiseForm) = 0;
   virtual int getIntrinsicInstrCost(Intrinsic::ID ID, Type *RetTy,
-                                    ArrayRef<Type *> Tys,
-                                    FastMathFlags FMF) = 0;
+                      ArrayRef<Type *> Tys, FastMathFlags FMF,
+                      unsigned ScalarizationCostPassed) = 0;
   virtual int getIntrinsicInstrCost(Intrinsic::ID ID, Type *RetTy,
-                                    ArrayRef<Value *> Args,
-                                    FastMathFlags FMF) = 0;
+         ArrayRef<Value *> Args, FastMathFlags FMF, unsigned VF) = 0;
   virtual int getCallInstrCost(Function *F, Type *RetTy,
                                ArrayRef<Type *> Tys) = 0;
   virtual unsigned getNumberOfParts(Type *Tp) = 0;
@@ -1086,13 +1094,13 @@ public:
     return Impl.getReductionCost(Opcode, Ty, IsPairwiseForm);
   }
   int getIntrinsicInstrCost(Intrinsic::ID ID, Type *RetTy, ArrayRef<Type *> Tys,
-                            FastMathFlags FMF) override {
-    return Impl.getIntrinsicInstrCost(ID, RetTy, Tys, FMF);
+               FastMathFlags FMF, unsigned ScalarizationCostPassed) override {
+    return Impl.getIntrinsicInstrCost(ID, RetTy, Tys, FMF,
+                                      ScalarizationCostPassed);
   }
   int getIntrinsicInstrCost(Intrinsic::ID ID, Type *RetTy,
-                            ArrayRef<Value *> Args,
-                            FastMathFlags FMF) override {
-    return Impl.getIntrinsicInstrCost(ID, RetTy, Args, FMF);
+       ArrayRef<Value *> Args, FastMathFlags FMF, unsigned VF) override {
+    return Impl.getIntrinsicInstrCost(ID, RetTy, Args, FMF, VF);
   }
   int getCallInstrCost(Function *F, Type *RetTy,
                        ArrayRef<Type *> Tys) override {

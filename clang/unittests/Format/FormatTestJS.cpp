@@ -167,6 +167,8 @@ TEST_F(FormatTestJS, ReservedWordsMethods) {
 TEST_F(FormatTestJS, CppKeywords) {
   // Make sure we don't mess stuff up because of C++ keywords.
   verifyFormat("return operator && (aa);");
+  // .. or QT ones.
+  verifyFormat("slots: Slot[];");
 }
 
 TEST_F(FormatTestJS, ES6DestructuringAssignment) {
@@ -1228,6 +1230,20 @@ TEST_F(FormatTestJS, TypeAliases) {
                "class C {}");
 }
 
+TEST_F(FormatTestJS, TypeInterfaceLineWrapping) {
+  const FormatStyle &Style = getGoogleJSStyleWithColumns(20);
+  verifyFormat("type LongTypeIsReallyUnreasonablyLong =\n"
+               "    string;\n",
+               "type LongTypeIsReallyUnreasonablyLong = string;\n",
+               Style);
+  verifyFormat(
+      "interface AbstractStrategyFactoryProvider {\n"
+      "  a: number\n"
+      "}\n",
+      "interface AbstractStrategyFactoryProvider { a: number }\n",
+      Style);
+}
+
 TEST_F(FormatTestJS, Modules) {
   verifyFormat("import SomeThing from 'some/module.js';");
   verifyFormat("import {X, Y} from 'some/module.js';");
@@ -1597,6 +1613,13 @@ TEST_F(FormatTestJS, JSDocAnnotations) {
                " * @param {this.is.a.long.path.to.a.Type}\n"
                " */",
                getGoogleJSStyleWithColumns(20));
+  verifyFormat("/**\n"
+               " * @see http://very/very/long/url/is/long\n"
+               " */",
+               "/**\n"
+               " * @see http://very/very/long/url/is/long\n"
+               " */",
+               getGoogleJSStyleWithColumns(20));
   verifyFormat(
       "/**\n"
       " * @param This is a\n"
@@ -1700,6 +1723,12 @@ TEST_F(FormatTestJS, NonNullAssertionOperator) {
   verifyFormat("let x = (foo)!;\n");
   verifyFormat("let x = foo! - 1;\n");
   verifyFormat("let x = {foo: 1}!;\n");
+  verifyFormat(
+      "let x = hello.foo()!\n"
+      "            .foo()!\n"
+      "            .foo()!\n"
+      "            .foo()!;\n",
+      getGoogleJSStyleWithColumns(20));
 }
 
 TEST_F(FormatTestJS, Conditional) {
