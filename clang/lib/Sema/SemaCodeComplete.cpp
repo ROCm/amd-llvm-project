@@ -2288,6 +2288,15 @@ static std::string FormatFunctionParameter(const PrintingPolicy &Policy,
   FunctionProtoTypeLoc BlockProto;
   findTypeLocationForBlockDecl(Param->getTypeSourceInfo(), Block, BlockProto,
                                SuppressBlock);
+  // Try to retrieve the block type information from the property if this is a
+  // parameter in a setter.
+  if (!Block && ObjCMethodParam &&
+      cast<ObjCMethodDecl>(Param->getDeclContext())->isPropertyAccessor()) {
+    if (const auto *PD = cast<ObjCMethodDecl>(Param->getDeclContext())
+                             ->findPropertyDecl(/*CheckOverrides=*/false))
+      findTypeLocationForBlockDecl(PD->getTypeSourceInfo(), Block, BlockProto,
+                                   SuppressBlock);
+  }
 
   if (!Block) {
     // We were unable to find a FunctionProtoTypeLoc with parameter names
@@ -4309,7 +4318,10 @@ void Sema::CodeCompleteCall(Scope *S, Expr *Fn, ArrayRef<Expr *> Args) {
       UME->copyTemplateArgumentsInto(TemplateArgsBuffer);
       TemplateArgs = &TemplateArgsBuffer;
     }
-    SmallVector<Expr *, 12> ArgExprs(1, UME->getBase());
+
+    // Add the base as first argument (use a nullptr if the base is implicit).
+    SmallVector<Expr *, 12> ArgExprs(
+        1, UME->isImplicitAccess() ? nullptr : UME->getBase());
     ArgExprs.append(Args.begin(), Args.end());
     UnresolvedSet<8> Decls;
     Decls.append(UME->decls_begin(), UME->decls_end());

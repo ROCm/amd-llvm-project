@@ -810,9 +810,10 @@ void CodeGenFunction::StartFunction(GlobalDecl GD,
                       llvm::utostr(LogArgs->getArgumentCount()));
       }
     } else {
-      Fn->addFnAttr(
-          "xray-instruction-threshold",
-          llvm::itostr(CGM.getCodeGenOpts().XRayInstructionThreshold));
+      if (!CGM.imbueXRayAttrs(Fn, Loc))
+        Fn->addFnAttr(
+            "xray-instruction-threshold",
+            llvm::itostr(CGM.getCodeGenOpts().XRayInstructionThreshold));
     }
   }
 
@@ -859,6 +860,18 @@ void CodeGenFunction::StartFunction(GlobalDecl GD,
             llvm::ConstantStruct::getAnon(PrologueStructElems, /*Packed=*/true);
         Fn->setPrologueData(PrologueStructConst);
       }
+    }
+  }
+
+  // If we're checking nullability, we need to know whether we can check the
+  // return value. Initialize the flag to 'true' and refine it in EmitParmDecl.
+  if (SanOpts.has(SanitizerKind::NullabilityReturn)) {
+    auto Nullability = FnRetTy->getNullability(getContext());
+    if (Nullability && *Nullability == NullabilityKind::NonNull) {
+      if (!(SanOpts.has(SanitizerKind::ReturnsNonnullAttribute) &&
+            CurCodeDecl && CurCodeDecl->getAttr<ReturnsNonNullAttr>()))
+        RetValNullabilityPrecondition =
+            llvm::ConstantInt::getTrue(getLLVMContext());
     }
   }
 

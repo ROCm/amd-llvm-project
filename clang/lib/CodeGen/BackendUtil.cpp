@@ -341,8 +341,13 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
                                      !CodeGenOpts.DisableLifetimeMarkers);
     PMBuilder.Inliner = createAlwaysInlinerLegacyPass(InsertLifetimeIntrinsics);
   } else {
+    // We do not want to inline hot callsites for SamplePGO module-summary build
+    // because profile annotation will happen again in ThinLTO backend, and we
+    // want the IR of the hot path to match the profile.
     PMBuilder.Inliner = createFunctionInliningPass(
-        CodeGenOpts.OptimizationLevel, CodeGenOpts.OptimizeSize);
+        CodeGenOpts.OptimizationLevel, CodeGenOpts.OptimizeSize,
+        (!CodeGenOpts.SampleProfileFile.empty() &&
+         CodeGenOpts.EmitSummaryIndex));
   }
 
   PMBuilder.OptLevel = CodeGenOpts.OptimizationLevel;
@@ -595,14 +600,14 @@ void EmitAssemblyHelper::CreateTargetMachine(bool MustCreateTM) {
           .Default(llvm::FloatABI::Default);
 
   // Set FP fusion mode.
-  switch (CodeGenOpts.getFPContractMode()) {
-  case CodeGenOptions::FPC_Off:
+  switch (LangOpts.getDefaultFPContractMode()) {
+  case LangOptions::FPC_Off:
     Options.AllowFPOpFusion = llvm::FPOpFusion::Strict;
     break;
-  case CodeGenOptions::FPC_On:
+  case LangOptions::FPC_On:
     Options.AllowFPOpFusion = llvm::FPOpFusion::Standard;
     break;
-  case CodeGenOptions::FPC_Fast:
+  case LangOptions::FPC_Fast:
     Options.AllowFPOpFusion = llvm::FPOpFusion::Fast;
     break;
   }
@@ -622,7 +627,6 @@ void EmitAssemblyHelper::CreateTargetMachine(bool MustCreateTM) {
   if (LangOpts.SjLjExceptions)
     Options.ExceptionModel = llvm::ExceptionHandling::SjLj;
 
-  Options.LessPreciseFPMADOption = CodeGenOpts.LessPreciseFPMAD;
   Options.NoInfsFPMath = CodeGenOpts.NoInfsFPMath;
   Options.NoNaNsFPMath = CodeGenOpts.NoNaNsFPMath;
   Options.NoZerosInBSS = CodeGenOpts.NoZeroInitializedInBSS;
@@ -723,13 +727,28 @@ void EmitAssemblyHelper::EmitAssembly(BackendAction Action,
   CodeGenPasses.add(
       createTargetTransformInfoWrapperPass(getTargetIRAnalysis()));
 
+  std::unique_ptr<raw_fd_ostream> ThinLinkOS;
+
   switch (Action) {
   case Backend_EmitNothing:
     break;
 
   case Backend_EmitBC:
-    if (CodeGenOpts.EmitSummaryIndex)
-      PerModulePasses.add(createWriteThinLTOBitcodePass(*OS));
+    if (CodeGenOpts.EmitSummaryIndex) {
+      if (!CodeGenOpts.ThinLinkBitcodeFile.empty()) {
+        std::error_code EC;
+        ThinLinkOS.reset(new llvm::raw_fd_ostream(
+            CodeGenOpts.ThinLinkBitcodeFile, EC,
+            llvm::sys::fs::F_None));
+        if (EC) {
+          Diags.Report(diag::err_fe_unable_to_open_output) << CodeGenOpts.ThinLinkBitcodeFile
+                                                           << EC.message();
+          return;
+        }
+      }
+      PerModulePasses.add(
+          createWriteThinLTOBitcodePass(*OS, ThinLinkOS.get()));
+    }
     else
       PerModulePasses.add(
           createBitcodeWriterPass(*OS, CodeGenOpts.EmitLLVMUseLists));
@@ -1007,7 +1026,7 @@ static void runThinLTOBackend(ModuleSummaryIndex *CombinedIndex, Module *M,
     return llvm::make_unique<lto::NativeObjectStream>(std::move(OS));
   };
   lto::Config Conf;
-  Conf.SampleProfile = SampleProfile;
+  Conf.SampleProfile = std::move(SampleProfile);
   if (Error E = thinBackend(
           Conf, 0, AddStream, *M, *CombinedIndex, ImportList,
           ModuleToDefinedGVSummaries[M->getModuleIdentifier()], ModuleMap)) {

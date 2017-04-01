@@ -149,8 +149,7 @@ namespace llvm {
       WrapperRIP,
 
       /// Copies a 64-bit value from the low word of an XMM vector
-      /// to an MMX vector.  If you think this is too close to the previous
-      /// mnemonic, so do I; blame Intel.
+      /// to an MMX vector.
       MOVDQ2Q,
 
       /// Copies a 32-bit value from the low word of a MMX
@@ -238,9 +237,6 @@ namespace llvm {
       /// Floating point horizontal add/sub.
       FHADD,
       FHSUB,
-
-      // Integer absolute value
-      ABS,
 
       // Detect Conflicts Within a Vector
       CONFLICT,
@@ -691,6 +687,9 @@ namespace llvm {
     unsigned getJumpTableEncoding() const override;
     bool useSoftFloat() const override;
 
+    void markLibCallAttributes(MachineFunction *MF, unsigned CC,
+                               ArgListTy &Args) const override;
+
     MVT getScalarShiftAmountTy(const DataLayout &, EVT) const override {
       return MVT::i8;
     }
@@ -814,6 +813,9 @@ namespace llvm {
     bool isMaskAndCmp0FoldingBeneficial(const Instruction &AndI) const override;
 
     bool hasAndNotCompare(SDValue Y) const override;
+
+    /// Vector-sized comparisons are fast using PCMPEQ + PMOVMSK or PTEST.
+    MVT hasFastEqualityCompare(unsigned NumBits) const override;
 
     /// Return the value type to use for ISD::SETCC.
     EVT getSetCCResultType(const DataLayout &DL, LLVMContext &Context,
@@ -1046,7 +1048,7 @@ namespace llvm {
     /// \brief Customize the preferred legalization strategy for certain types.
     LegalizeTypeAction getPreferredVectorAction(EVT VT) const override;
 
-    bool isIntDivCheap(EVT VT, AttributeSet Attr) const override;
+    bool isIntDivCheap(EVT VT, AttributeList Attr) const override;
 
     bool supportSwiftError() const override;
 
@@ -1087,7 +1089,8 @@ namespace llvm {
                             CallingConv::ID CallConv, bool isVarArg,
                             const SmallVectorImpl<ISD::InputArg> &Ins,
                             const SDLoc &dl, SelectionDAG &DAG,
-                            SmallVectorImpl<SDValue> &InVals) const;
+                            SmallVectorImpl<SDValue> &InVals,
+                            uint32_t *RegMask) const;
     SDValue LowerMemArgument(SDValue Chain, CallingConv::ID CallConv,
                              const SmallVectorImpl<ISD::InputArg> &ArgInfo,
                              const SDLoc &dl, SelectionDAG &DAG,
@@ -1149,8 +1152,7 @@ namespace llvm {
     SDValue LowerUINT_TO_FP_i32(SDValue Op, SelectionDAG &DAG) const;
     SDValue lowerUINT_TO_FP_vec(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerTRUNCATE(SDValue Op, SelectionDAG &DAG) const;
-    SDValue LowerFP_TO_INT(SDValue Op, const X86Subtarget &Subtarget,
-                           SelectionDAG &DAG) const;
+    SDValue LowerFP_TO_INT(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerToBT(SDValue And, ISD::CondCode CC, const SDLoc &dl,
                       SelectionDAG &DAG) const;
     SDValue LowerSETCC(SDValue Op, SelectionDAG &DAG) const;

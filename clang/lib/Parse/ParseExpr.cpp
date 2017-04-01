@@ -21,10 +21,10 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#include "RAIIObjectsForParser.h"
+#include "clang/Parse/Parser.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/Basic/PrettyStackTrace.h"
-#include "clang/Parse/Parser.h"
+#include "clang/Parse/RAIIObjectsForParser.h"
 #include "clang/Sema/DeclSpec.h"
 #include "clang/Sema/ParsedTemplate.h"
 #include "clang/Sema/Scope.h"
@@ -493,12 +493,14 @@ Parser::ParseRHSOfBinaryExpression(ExprResult LHS, prec::Level MinPrec) {
 ///
 ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
                                        bool isAddressOfOperand,
-                                       TypeCastState isTypeCast) {
+                                       TypeCastState isTypeCast,
+                                       bool isVectorLiteral) {
   bool NotCastExpr;
   ExprResult Res = ParseCastExpression(isUnaryExpression,
                                        isAddressOfOperand,
                                        NotCastExpr,
-                                       isTypeCast);
+                                       isTypeCast,
+                                       isVectorLiteral);
   if (NotCastExpr)
     Diag(Tok, diag::err_expected_expression);
   return Res;
@@ -714,7 +716,8 @@ class CastExpressionIdValidator : public CorrectionCandidateCallback {
 ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
                                        bool isAddressOfOperand,
                                        bool &NotCastExpr,
-                                       TypeCastState isTypeCast) {
+                                       TypeCastState isTypeCast,
+                                       bool isVectorLiteral) {
   ExprResult Res;
   tok::TokenKind SavedKind = Tok.getKind();
   NotCastExpr = false;
@@ -741,6 +744,9 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
     SourceLocation RParenLoc;
     Res = ParseParenExpression(ParenExprType, false/*stopIfCastExr*/,
                                isTypeCast == IsTypeCast, CastTy, RParenLoc);
+
+    if (isVectorLiteral)
+        return Res;
 
     switch (ParenExprType) {
     case SimpleExpr:   break;    // Nothing else to do.
@@ -2381,6 +2387,48 @@ Parser::ParseParenExpression(ParenParseOption &ExprType, bool stopIfCastExpr,
           Ty = Actions.ActOnTypeName(getCurScope(), DeclaratorInfo);
         }
         return ParseCompoundLiteralExpression(Ty.get(), OpenLoc, RParenLoc);
+      }
+
+      if (Tok.is(tok::l_paren)) {
+        // This could be OpenCL vector Literals
+        if (getLangOpts().OpenCL)
+        {
+          TypeResult Ty;
+          {
+            InMessageExpressionRAIIObject InMessage(*this, false);
+            Ty = Actions.ActOnTypeName(getCurScope(), DeclaratorInfo);
+          }
+          if(Ty.isInvalid())
+          {
+             return ExprError();
+          }
+          QualType QT = Ty.get().get().getCanonicalType();
+          if (QT->isVectorType())
+          {
+            // We parsed '(' vector-type-name ')' followed by '('
+
+            // Parse the cast-expression that follows it next.
+            // isVectorLiteral = true will make sure we don't parse any
+            // Postfix expression yet
+            Result = ParseCastExpression(/*isUnaryExpression=*/false,
+                                         /*isAddressOfOperand=*/false,
+                                         /*isTypeCast=*/IsTypeCast,
+                                         /*isVectorLiteral=*/true);
+
+            if (!Result.isInvalid()) {
+              Result = Actions.ActOnCastExpr(getCurScope(), OpenLoc,
+                                             DeclaratorInfo, CastTy,
+                                             RParenLoc, Result.get());
+            }
+
+            // After we performed the cast we can check for postfix-expr pieces.
+            if (!Result.isInvalid()) {
+              Result = ParsePostfixExpressionSuffix(Result);
+            }
+
+            return Result;
+          }
+        }
       }
 
       if (ExprType == CastExpr) {

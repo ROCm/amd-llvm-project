@@ -337,8 +337,9 @@ void *ManyThreadsWorker(void *a) {
   return 0;
 }
 
-#if !defined(__aarch64__)
+#if !defined(__aarch64__) && !defined(__powerpc64__)
 // FIXME: Infinite loop in AArch64 (PR24389).
+// FIXME: Also occasional hang on powerpc.  Maybe same problem as on AArch64?
 TEST(AddressSanitizer, ManyThreadsTest) {
   const size_t kNumThreads =
       (SANITIZER_WORDSIZE == 32 || ASAN_AVOID_EXPENSIVE_TESTS) ? 30 : 1000;
@@ -945,7 +946,7 @@ TEST(AddressSanitizer, ShadowGapTest) {
   char *addr = (char*)0x0000100000080000;
 # endif
 #endif
-  EXPECT_DEATH(*addr = 1, "AddressSanitizer: SEGV on unknown");
+  EXPECT_DEATH(*addr = 1, "AddressSanitizer: (SEGV|BUS) on unknown");
 }
 #endif  // ASAN_NEEDS_SEGV
 

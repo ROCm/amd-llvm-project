@@ -10303,7 +10303,7 @@ namespace {
       InitFieldIndex.pop_back();
     }
 
-    // Returns true if MemberExpr is checked and no futher checking is needed.
+    // Returns true if MemberExpr is checked and no further checking is needed.
     // Returns false if additional checking is required.
     bool CheckInitListMemberExpr(MemberExpr *E, bool CheckReference) {
       llvm::SmallVector<FieldDecl*, 4> Fields;
@@ -10901,18 +10901,6 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init, bool DirectInit) {
   // Perform the initialization.
   ParenListExpr *CXXDirectInit = dyn_cast<ParenListExpr>(Init);
   if (!VDecl->isInvalidDecl()) {
-    // Handle errors like: int a({0})
-    if (CXXDirectInit && CXXDirectInit->getNumExprs() == 1 &&
-        !canInitializeWithParenthesizedList(VDecl->getType()))
-      if (auto IList = dyn_cast<InitListExpr>(CXXDirectInit->getExpr(0))) {
-        Diag(VDecl->getLocation(), diag::err_list_init_in_parens)
-            << VDecl->getType() << CXXDirectInit->getSourceRange()
-            << FixItHint::CreateRemoval(CXXDirectInit->getLocStart())
-            << FixItHint::CreateRemoval(CXXDirectInit->getLocEnd());
-        Init = IList;
-        CXXDirectInit = nullptr;
-      }
-
     InitializedEntity Entity = InitializedEntity::InitializeVariable(VDecl);
     InitializationKind Kind = InitializationKind::CreateForInit(
         VDecl->getLocation(), DirectInit, Init);
@@ -10978,7 +10966,8 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init, bool DirectInit) {
     // we do not warn to warn spuriously when 'x' and 'y' are on separate
     // paths through the function. This should be revisited if
     // -Wrepeated-use-of-weak is made flow-sensitive.
-    if (VDecl->getType().getObjCLifetime() == Qualifiers::OCL_Strong &&
+    if ((VDecl->getType().getObjCLifetime() == Qualifiers::OCL_Strong ||
+         VDecl->getType().isNonWeakInMRRWithObjCWeak(Context)) &&
         !Diags.isIgnored(diag::warn_arc_repeated_use_of_weak,
                          Init->getLocStart()))
       getCurFunction()->markSafeWeakUse(Init);
@@ -11042,7 +11031,7 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init, bool DirectInit) {
     // C++11 [class.static.data]p3:
     //   If a non-volatile non-inline const static data member is of integral
     //   or enumeration type, its declaration in the class definition can
-    //   specify a brace-or-equal-initializer in which every initalizer-clause
+    //   specify a brace-or-equal-initializer in which every initializer-clause
     //   that is an assignment-expression is a constant expression. A static
     //   data member of literal type can be declared in the class definition
     //   with the constexpr specifier; if so, its declaration shall specify a
@@ -11210,18 +11199,6 @@ void Sema::ActOnInitializerError(Decl *D) {
 
   // Don't bother complaining about constructors or destructors,
   // though.
-}
-
-/// Checks if an object of the given type can be initialized with parenthesized
-/// init-list.
-///
-/// \param TargetType Type of object being initialized.
-///
-/// The function is used to detect wrong initializations, such as 'int({0})'.
-///
-bool Sema::canInitializeWithParenthesizedList(QualType TargetType) {
-  return TargetType->isDependentType() || TargetType->isRecordType() ||
-         TargetType->getContainedAutoType();
 }
 
 void Sema::ActOnUninitializedDecl(Decl *RealDecl) {
@@ -15405,7 +15382,7 @@ void Sema::ActOnFields(Scope *S, SourceLocation RecLoc, Decl *EnclosingDecl,
   // Verify that all the fields are okay.
   SmallVector<FieldDecl*, 32> RecFields;
 
-  bool ARCErrReported = false;
+  bool ObjCFieldLifetimeErrReported = false;
   for (ArrayRef<Decl *>::iterator i = Fields.begin(), end = Fields.end();
        i != end; ++i) {
     FieldDecl *FD = cast<FieldDecl>(*i);
@@ -15540,16 +15517,16 @@ void Sema::ActOnFields(Scope *S, SourceLocation RecLoc, Decl *EnclosingDecl,
         << FixItHint::CreateInsertion(FD->getLocation(), "*");
       QualType T = Context.getObjCObjectPointerType(FD->getType());
       FD->setType(T);
-    } else if (getLangOpts().ObjCAutoRefCount && Record && !ARCErrReported &&
+    } else if (getLangOpts().allowsNonTrivialObjCLifetimeQualifiers() &&
+               Record && !ObjCFieldLifetimeErrReported &&
                (!getLangOpts().CPlusPlus || Record->isUnion())) {
-      // It's an error in ARC if a field has lifetime.
+      // It's an error in ARC or Weak if a field has lifetime.
       // We don't want to report this in a system header, though,
       // so we just make the field unavailable.
       // FIXME: that's really not sufficient; we need to make the type
       // itself invalid to, say, initialize or copy.
       QualType T = FD->getType();
-      Qualifiers::ObjCLifetime lifetime = T.getObjCLifetime();
-      if (lifetime && lifetime != Qualifiers::OCL_ExplicitNone) {
+      if (T.hasNonTrivialObjCLifetime()) {
         SourceLocation loc = FD->getLocation();
         if (getSourceManager().isInSystemHeader(loc)) {
           if (!FD->hasAttr<UnavailableAttr>()) {
@@ -15560,7 +15537,7 @@ void Sema::ActOnFields(Scope *S, SourceLocation RecLoc, Decl *EnclosingDecl,
           Diag(FD->getLocation(), diag::err_arc_objc_object_in_tag)
             << T->isBlockPointerType() << Record->getTagKind();
         }
-        ARCErrReported = true;
+        ObjCFieldLifetimeErrReported = true;
       }
     } else if (getLangOpts().ObjC1 &&
                getLangOpts().getGC() != LangOptions::NonGC &&
@@ -16290,7 +16267,7 @@ static void CheckForDuplicateEnumValues(Sema &S, ArrayRef<Decl *> Elements,
 
 bool Sema::IsValueInFlagEnum(const EnumDecl *ED, const llvm::APInt &Val,
                              bool AllowMask) const {
-  assert(ED->hasAttr<FlagEnumAttr>() && "looking for value in non-flag enum");
+  assert(ED->isClosedFlag() && "looking for value in non-flag or open enum");
   assert(ED->isCompleteDefinition() && "expected enum definition");
 
   auto R = FlagBitsCache.insert(std::make_pair(ED, llvm::APInt()));
@@ -16535,7 +16512,7 @@ void Sema::ActOnEnumBody(SourceLocation EnumLoc, SourceRange BraceRange,
 
   CheckForDuplicateEnumValues(*this, Elements, Enum, EnumType);
 
-  if (Enum->hasAttr<FlagEnumAttr>()) {
+  if (Enum->isClosedFlag()) {
     for (Decl *D : Elements) {
       EnumConstantDecl *ECD = cast_or_null<EnumConstantDecl>(D);
       if (!ECD) continue;  // Already issued a diagnostic.

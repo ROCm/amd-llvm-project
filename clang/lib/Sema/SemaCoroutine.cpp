@@ -658,34 +658,6 @@ StmtResult Sema::BuildCoreturnStmt(SourceLocation Loc, Expr *E,
   return Res;
 }
 
-static ExprResult buildStdCurrentExceptionCall(Sema &S, SourceLocation Loc) {
-  NamespaceDecl *Std = S.getStdNamespace();
-  if (!Std) {
-    S.Diag(Loc, diag::err_implied_std_current_exception_not_found);
-    return ExprError();
-  }
-  LookupResult Result(S, &S.PP.getIdentifierTable().get("current_exception"),
-                      Loc, Sema::LookupOrdinaryName);
-  if (!S.LookupQualifiedName(Result, Std)) {
-    S.Diag(Loc, diag::err_implied_std_current_exception_not_found);
-    return ExprError();
-  }
-
-  // FIXME The STL is free to provide more than one overload.
-  FunctionDecl *FD = Result.getAsSingle<FunctionDecl>();
-  if (!FD) {
-    S.Diag(Loc, diag::err_malformed_std_current_exception);
-    return ExprError();
-  }
-  ExprResult Res = S.BuildDeclRefExpr(FD, FD->getType(), VK_LValue, Loc);
-  Res = S.ActOnCallExpr(/*Scope*/ nullptr, Res.get(), Loc, None, Loc);
-  if (Res.isInvalid()) {
-    S.Diag(Loc, diag::err_malformed_std_current_exception);
-    return ExprError();
-  }
-  return Res;
-}
-
 // Find an appropriate delete for the promise.
 static FunctionDecl *findDeleteForPromise(Sema &S, SourceLocation Loc,
                                           QualType PromiseType) {
@@ -736,8 +708,8 @@ public:
     }
     this->IsValid = makePromiseStmt() && makeInitialAndFinalSuspend() &&
                     makeOnException() && makeOnFallthrough() &&
-                    makeNewAndDeleteExpr() && makeReturnObject() &&
-                    makeParamMoves();
+                    makeReturnOnAllocFailure() && makeNewAndDeleteExpr() &&
+                    makeReturnObject() && makeParamMoves();
   }
 
   bool isInvalid() const { return !this->IsValid; }
@@ -748,6 +720,7 @@ public:
   bool makeOnFallthrough();
   bool makeOnException();
   bool makeReturnObject();
+  bool makeReturnOnAllocFailure();
   bool makeParamMoves();
 };
 }
@@ -805,6 +778,71 @@ bool SubStmtBuilder::makeInitialAndFinalSuspend() {
   return true;
 }
 
+static bool diagReturnOnAllocFailure(Sema &S, Expr *E,
+                                     CXXRecordDecl *PromiseRecordDecl,
+                                     FunctionScopeInfo &Fn) {
+  auto Loc = E->getExprLoc();
+  if (auto *DeclRef = dyn_cast_or_null<DeclRefExpr>(E)) {
+    auto *Decl = DeclRef->getDecl();
+    if (CXXMethodDecl *Method = dyn_cast_or_null<CXXMethodDecl>(Decl)) {
+      if (Method->isStatic())
+        return true;
+      else
+        Loc = Decl->getLocation();
+    }
+  }
+
+  S.Diag(
+      Loc,
+      diag::err_coroutine_promise_get_return_object_on_allocation_failure)
+      << PromiseRecordDecl;
+  S.Diag(Fn.FirstCoroutineStmtLoc, diag::note_declared_coroutine_here)
+      << Fn.getFirstCoroutineStmtKeyword();
+  return false;
+}
+
+bool SubStmtBuilder::makeReturnOnAllocFailure() {
+  if (!PromiseRecordDecl) return true;
+
+  // [dcl.fct.def.coroutine]/8
+  // The unqualified-id get_return_object_on_allocation_failure is looked up in
+  // the scope of class P by class member access lookup (3.4.5). ...
+  // If an allocation function returns nullptr, ... the coroutine return value
+  // is obtained by a call to ... get_return_object_on_allocation_failure().
+
+  DeclarationName DN =
+      S.PP.getIdentifierInfo("get_return_object_on_allocation_failure");
+  LookupResult Found(S, DN, Loc, Sema::LookupMemberName);
+  // Suppress diagnostics when a private member is selected. The same warnings
+  // will be produced again when building the call.
+  Found.suppressDiagnostics();
+  if (!S.LookupQualifiedName(Found, PromiseRecordDecl)) return true;
+
+  CXXScopeSpec SS;
+  ExprResult DeclNameExpr =
+      S.BuildDeclarationNameExpr(SS, Found, /*NeedsADL=*/false);
+  if (DeclNameExpr.isInvalid()) return false;
+
+  if (!diagReturnOnAllocFailure(S, DeclNameExpr.get(), PromiseRecordDecl, Fn))
+    return false;
+
+  ExprResult ReturnObjectOnAllocationFailure =
+      S.ActOnCallExpr(nullptr, DeclNameExpr.get(), Loc, {}, Loc);
+  if (ReturnObjectOnAllocationFailure.isInvalid()) return false;
+
+  // FIXME: ActOnReturnStmt expects a scope that is inside of the function, due
+  //   to CheckJumpOutOfSEHFinally(*this, ReturnLoc, *CurScope->getFnParent());
+  //   S.getCurScope()->getFnParent() == nullptr at ActOnFinishFunctionBody when
+  //   CoroutineBodyStmt is built. Figure it out and fix it.
+  //   Use BuildReturnStmt here to unbreak sanitized tests. (Gor:3/27/2017)
+  StmtResult ReturnStmt =
+      S.BuildReturnStmt(Loc, ReturnObjectOnAllocationFailure.get());
+  if (ReturnStmt.isInvalid()) return false;
+
+  this->ReturnStmtOnAllocFailure = ReturnStmt.get();
+  return true;
+}
+
 bool SubStmtBuilder::makeNewAndDeleteExpr() {
   // Form and check allocation and deallocation calls.
   QualType PromiseType = Fn.CoroutinePromise->getType();
@@ -814,7 +852,8 @@ bool SubStmtBuilder::makeNewAndDeleteExpr() {
   if (S.RequireCompleteType(Loc, PromiseType, diag::err_incomplete_type))
     return false;
 
-  // FIXME: Add support for get_return_object_on_allocation failure.
+  // FIXME: Add nothrow_t placement arg for global alloc
+  //        if ReturnStmtOnAllocFailure != nullptr.
   // FIXME: Add support for stateful allocators.
 
   FunctionDecl *OperatorNew = nullptr;
@@ -913,36 +952,34 @@ bool SubStmtBuilder::makeOnFallthrough() {
 }
 
 bool SubStmtBuilder::makeOnException() {
-  // Try to form 'p.set_exception(std::current_exception());' to handle
-  // uncaught exceptions.
-  // TODO: Post WG21 Issaquah 2016 renamed set_exception to unhandled_exception
-  // TODO: and dropped exception_ptr parameter. Make it so.
+  // Try to form 'p.unhandled_exception();'
 
   if (!PromiseRecordDecl)
     return true;
+
+  const bool RequireUnhandledException = S.getLangOpts().CXXExceptions;
+
+  if (!lookupMember(S, "unhandled_exception", PromiseRecordDecl, Loc)) {
+    auto DiagID =
+        RequireUnhandledException
+            ? diag::err_coroutine_promise_unhandled_exception_required
+            : diag::
+                  warn_coroutine_promise_unhandled_exception_required_with_exceptions;
+    S.Diag(Loc, DiagID) << PromiseRecordDecl;
+    return !RequireUnhandledException;
+  }
 
   // If exceptions are disabled, don't try to build OnException.
   if (!S.getLangOpts().CXXExceptions)
     return true;
 
-  ExprResult SetException;
+  ExprResult UnhandledException = buildPromiseCall(S, Fn.CoroutinePromise, Loc,
+                                                   "unhandled_exception", None);
+  UnhandledException = S.ActOnFinishFullExpr(UnhandledException.get(), Loc);
+  if (UnhandledException.isInvalid())
+    return false;
 
-  // [dcl.fct.def.coroutine]/3
-  // The unqualified-id set_exception is found in the scope of P by class
-  // member access lookup (3.4.5).
-  if (lookupMember(S, "set_exception", PromiseRecordDecl, Loc)) {
-    // Form the call 'p.set_exception(std::current_exception())'
-    SetException = buildStdCurrentExceptionCall(S, Loc);
-    if (SetException.isInvalid())
-      return false;
-    Expr *E = SetException.get();
-    SetException = buildPromiseCall(S, Fn.CoroutinePromise, Loc, "set_exception", E);
-    SetException = S.ActOnFinishFullExpr(SetException.get(), Loc);
-    if (SetException.isInvalid())
-      return false;
-  }
-
-  this->OnException = SetException.get();
+  this->OnException = UnhandledException.get();
   return true;
 }
 

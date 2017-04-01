@@ -1456,10 +1456,12 @@ private:
   ExprResult ParseCastExpression(bool isUnaryExpression,
                                  bool isAddressOfOperand,
                                  bool &NotCastExpr,
-                                 TypeCastState isTypeCast);
+                                 TypeCastState isTypeCast,
+                                 bool isVectorLiteral = false);
   ExprResult ParseCastExpression(bool isUnaryExpression,
                                  bool isAddressOfOperand = false,
-                                 TypeCastState isTypeCast = NotTypeCast);
+                                 TypeCastState isTypeCast = NotTypeCast,
+                                 bool isVectorLiteral = false);
 
   /// Returns true if the next token cannot start an expression.
   bool isNotExpressionStart();
@@ -1541,7 +1543,8 @@ private:
                                       bool EnteringContext,
                                       bool *MayBePseudoDestructor = nullptr,
                                       bool IsTypename = false,
-                                      IdentifierInfo **LastII = nullptr);
+                                      IdentifierInfo **LastII = nullptr,
+                                      bool OnlyNamespace = false);
 
   //===--------------------------------------------------------------------===//
   // C++0x 5.1.2: Lambda expressions
@@ -1694,7 +1697,7 @@ private:
 
   StmtResult ParseStatement(SourceLocation *TrailingElseLoc = nullptr,
                             bool AllowOpenMPStandalone = false);
-  enum AllowedContsructsKind {
+  enum AllowedConstructsKind {
     /// \brief Allow any declarations, statements, OpenMP directives.
     ACK_Any,
     /// \brief Allow only statements and non-standalone OpenMP directives.
@@ -1703,11 +1706,11 @@ private:
     ACK_StatementsOpenMPAnyExecutable
   };
   StmtResult
-  ParseStatementOrDeclaration(StmtVector &Stmts, AllowedContsructsKind Allowed,
+  ParseStatementOrDeclaration(StmtVector &Stmts, AllowedConstructsKind Allowed,
                               SourceLocation *TrailingElseLoc = nullptr);
   StmtResult ParseStatementOrDeclarationAfterAttributes(
                                          StmtVector &Stmts,
-                                         AllowedContsructsKind Allowed,
+                                         AllowedConstructsKind Allowed,
                                          SourceLocation *TrailingElseLoc,
                                          ParsedAttributesWithRange &Attrs);
   StmtResult ParseExprStatement();
@@ -1736,7 +1739,7 @@ private:
   StmtResult ParseAsmStatement(bool &msAsm);
   StmtResult ParseMicrosoftAsmStatement(SourceLocation AsmLoc);
   StmtResult ParsePragmaLoopHint(StmtVector &Stmts,
-                                 AllowedContsructsKind Allowed,
+                                 AllowedConstructsKind Allowed,
                                  SourceLocation *TrailingElseLoc,
                                  ParsedAttributesWithRange &Attrs);
 
@@ -2601,7 +2604,7 @@ private:
   /// executable directives are allowed.
   ///
   StmtResult
-  ParseOpenMPDeclarativeOrExecutableDirective(AllowedContsructsKind Allowed);
+  ParseOpenMPDeclarativeOrExecutableDirective(AllowedConstructsKind Allowed);
   /// \brief Parses clause of kind \a CKind for directive of a kind \a Kind.
   ///
   /// \param DKind Kind of current directive.
