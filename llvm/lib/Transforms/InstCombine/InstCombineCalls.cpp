@@ -3623,7 +3623,7 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
               m_Intrinsic<Intrinsic::experimental_guard>(m_Value(NextCond)))) {
       Value *CurrCond = II->getArgOperand(0);
 
-      // Remove a guard that it is immediately preceeded by an identical guard.
+      // Remove a guard that it is immediately preceded by an identical guard.
       if (CurrCond == NextCond)
         return eraseInstFromFunction(*NextInst);
 
@@ -4143,6 +4143,12 @@ bool InstCombiner::transformConstExprCastCall(CallSite CS) {
     CallInst *CI = cast<CallInst>(Caller);
     NC = Builder->CreateCall(Callee, Args, OpBundles);
     NC->takeName(CI);
+    // Preserve the weight metadata for the new call instruction. The metadata
+    // is used by SamplePGO to check callsite's hotness.
+    uint64_t W;
+    if (CI->extractProfTotalWeight(W))
+      NC->setProfWeight(W);
+
     cast<CallInst>(NC)->setTailCallKind(CI->getTailCallKind());
     cast<CallInst>(NC)->setCallingConv(CI->getCallingConv());
     cast<CallInst>(NC)->setAttributes(NewCallerPAL);
