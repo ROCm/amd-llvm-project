@@ -296,14 +296,33 @@ public:
     return AddrSpace == 0 ? PointerAlign : getPointerAlignV(AddrSpace);
   }
 
+  /// \brief Return the "preferred" width of pointers on this target, for the
+  /// specified address space.  This can be different from "getPointerWidth" in
+  /// cases where the final address space is not yet known.
+  virtual uint64_t getPreferredPointerWidth(unsigned AddrSpace) const {
+    return getPointerWidth(AddrSpace);
+  }
+
   /// \brief Return the maximum width of pointers on this target.
   virtual uint64_t getMaxPointerWidth() const {
     return PointerWidth;
   }
 
   /// \brief Get integer value for null pointer.
-  /// \param AddrSpace address space of pointee in source language.
+  /// \param AddrSpace target address space of pointee.
   virtual uint64_t getNullPointerValue(unsigned AddrSpace) const {
+    return 0;
+  }
+
+  /// The target address space corresponding to OpenCL constant address space
+  /// CUDA constant specifier.
+  virtual unsigned getConstantAddressSpace() const {
+    return 0;
+  }
+
+  /// The target address space corresponding to OpenCL global address space
+  /// or CUDA device specifier.
+  virtual unsigned getGlobalAddressSpace() const {
     return 0;
   }
 

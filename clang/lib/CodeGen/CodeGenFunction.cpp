@@ -55,6 +55,10 @@ static bool shouldEmitLifetimeMarkers(const CodeGenOptions &CGOpts,
   if (LangOpts.Sanitize.has(SanitizerKind::Memory))
     return false;
 
+  // Disable lifetime markers in HCC kernel build
+  if (LangOpts.CPlusPlusAMP && CGOpts.AMPIsDevice)
+    return false;
+
   // For now, only in optimized builds.
   return CGOpts.OptimizationLevel != 0;
 }
@@ -445,7 +449,7 @@ void CodeGenFunction::EmitFunctionInstrumentation(const char *Fn) {
     "callsite");
 
   llvm::Value *args[] = {
-    llvm::ConstantExpr::getBitCast(CurFn, PointerTy),
+    llvm::ConstantExpr::getPointerCast(CurFn, PointerTy),
     CallSite
   };
 
@@ -1693,7 +1697,7 @@ CodeGenFunction::EmitNullInitialization(Address DestPtr, QualType Ty) {
                                NullConstant, Twine());
     CharUnits NullAlign = DestPtr.getAlignment();
     NullVariable->setAlignment(NullAlign.getQuantity());
-    Address SrcPtr(Builder.CreateBitCast(NullVariable, Builder.getInt8PtrTy()),
+    Address SrcPtr(Builder.CreateBitCast(NullVariable, Builder.getInt8PtrTy(4)),
                    NullAlign);
 
     if (vla) return emitNonZeroVLAInit(*this, Ty, DestPtr, SrcPtr, SizeVal);

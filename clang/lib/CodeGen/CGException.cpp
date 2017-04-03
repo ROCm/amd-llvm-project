@@ -237,7 +237,7 @@ static llvm::Constant *getPersonalityFn(CodeGenModule &CGM,
 static llvm::Constant *getOpaquePersonalityFn(CodeGenModule &CGM,
                                         const EHPersonality &Personality) {
   llvm::Constant *Fn = getPersonalityFn(CGM, Personality);
-  return llvm::ConstantExpr::getBitCast(Fn, CGM.Int8PtrTy);
+  return llvm::ConstantExpr::getPointerCast(Fn, CGM.Int8PtrTy);
 }
 
 /// Check whether a landingpad instruction only uses C++ features.
@@ -1520,7 +1520,7 @@ Address CodeGenFunction::recoverAddrOfEscapedLocal(CodeGenFunction &ParentCGF,
     llvm::Function *FrameRecoverFn = llvm::Intrinsic::getDeclaration(
         &CGM.getModule(), llvm::Intrinsic::localrecover);
     llvm::Constant *ParentI8Fn =
-        llvm::ConstantExpr::getBitCast(ParentCGF.CurFn, Int8PtrTy);
+        llvm::ConstantExpr::getPointerCast(ParentCGF.CurFn, Int8PtrTy);
     RecoverCall = Builder.CreateCall(
         FrameRecoverFn, {ParentI8Fn, ParentFP,
                          llvm::ConstantInt::get(Int32Ty, FrameEscapeIdx)});
@@ -1585,7 +1585,7 @@ void CodeGenFunction::EmitCapturedLocals(CodeGenFunction &ParentCGF,
     llvm::Function *RecoverFPIntrin =
         CGM.getIntrinsic(llvm::Intrinsic::x86_seh_recoverfp);
     llvm::Constant *ParentI8Fn =
-        llvm::ConstantExpr::getBitCast(ParentCGF.CurFn, Int8PtrTy);
+        llvm::ConstantExpr::getPointerCast(ParentCGF.CurFn, Int8PtrTy);
     ParentFP = Builder.CreateCall(RecoverFPIntrin, {ParentI8Fn, EntryFP});
   }
 
@@ -1812,7 +1812,7 @@ void CodeGenFunction::EnterSEHTryStmt(const SEHTryStmt &S) {
   llvm::Function *FilterFunc =
       HelperCGF.GenerateSEHFilterFunction(*this, *Except);
   llvm::Constant *OpaqueFunc =
-      llvm::ConstantExpr::getBitCast(FilterFunc, Int8PtrTy);
+      llvm::ConstantExpr::getPointerCast(FilterFunc, Int8PtrTy);
   CatchScope->setHandler(0, OpaqueFunc, createBasicBlock("__except.ret"));
 }
 

@@ -11,31 +11,31 @@ constant sampler_t glb_smp = CLK_ADDRESS_CLAMP_TO_EDGE|CLK_NORMALIZED_COORDS_TRU
 
 void fnc1(image1d_t img) {}
 // CHECK-SPIR: @fnc1(%opencl.image1d_ro_t addrspace(1)*
-// CHECK-AMDGCN: @fnc1(%opencl.image1d_ro_t addrspace(2)*
+// CHECK-AMDGCN: @fnc1(%opencl.image1d_ro_t addrspace(4)*
 
 void fnc1arr(image1d_array_t img) {}
 // CHECK-SPIR: @fnc1arr(%opencl.image1d_array_ro_t addrspace(1)*
-// CHECK-AMDGCN: @fnc1arr(%opencl.image1d_array_ro_t addrspace(2)*
+// CHECK-AMDGCN: @fnc1arr(%opencl.image1d_array_ro_t addrspace(4)*
 
 void fnc1buff(image1d_buffer_t img) {}
 // CHECK-SPIR: @fnc1buff(%opencl.image1d_buffer_ro_t addrspace(1)*
-// CHECK-AMDGCN: @fnc1buff(%opencl.image1d_buffer_ro_t addrspace(2)*
+// CHECK-AMDGCN: @fnc1buff(%opencl.image1d_buffer_ro_t addrspace(4)*
 
 void fnc2(image2d_t img) {}
 // CHECK-SPIR: @fnc2(%opencl.image2d_ro_t addrspace(1)*
-// CHECK-AMDGCN: @fnc2(%opencl.image2d_ro_t addrspace(2)*
+// CHECK-AMDGCN: @fnc2(%opencl.image2d_ro_t addrspace(4)*
 
 void fnc2arr(image2d_array_t img) {}
 // CHECK-SPIR: @fnc2arr(%opencl.image2d_array_ro_t addrspace(1)*
-// CHECK-AMDGCN: @fnc2arr(%opencl.image2d_array_ro_t addrspace(2)*
+// CHECK-AMDGCN: @fnc2arr(%opencl.image2d_array_ro_t addrspace(4)*
 
 void fnc3(image3d_t img) {}
 // CHECK-SPIR: @fnc3(%opencl.image3d_ro_t addrspace(1)*
-// CHECK-AMDGCN: @fnc3(%opencl.image3d_ro_t addrspace(2)*
+// CHECK-AMDGCN: @fnc3(%opencl.image3d_ro_t addrspace(4)*
 
 void fnc4smp(sampler_t s) {}
 // CHECK-SPIR-LABEL: define {{.*}}void @fnc4smp(%opencl.sampler_t addrspace(2)*
-// CHECK-AMDGCN-LABEL: define {{.*}}void @fnc4smp(%opencl.sampler_t addrspace(2)*
+// CHECK-AMDGCN-LABEL: define {{.*}}void @fnc4smp(%opencl.sampler_t addrspace(4)*
 
 kernel void foo(image1d_t img) {
   sampler_t smp = CLK_ADDRESS_CLAMP_TO_EDGE|CLK_NORMALIZED_COORDS_TRUE|CLK_FILTER_LINEAR;
@@ -51,4 +51,4 @@ kernel void foo(image1d_t img) {
 
 void __attribute__((overloadable)) bad1(image1d_t b, image2d_t c, image2d_t d) {}
 // CHECK-SPIR-LABEL: @{{_Z4bad114ocl_image1d_ro14ocl_image2d_roS0_|"\\01\?bad1@@\$\$J0YAXPAUocl_image1d_ro@@PAUocl_image2d_ro@@1@Z"}}
-// CHECK-AMDGCN-LABEL: @{{_Z4bad114ocl_image1d_ro14ocl_image2d_roS0_|"\\01\?bad1@@\$\$J0YAXPAUocl_image1d_ro@@PAUocl_image2d_ro@@1@Z"}}(%opencl.image1d_ro_t addrspace(2)*{{.*}}%opencl.image2d_ro_t addrspace(2)*{{.*}}%opencl.image2d_ro_t addrspace(2)*{{.*}})
+// CHECK-AMDGCN-LABEL: @{{_Z4bad114ocl_image1d_ro14ocl_image2d_roS0_|"\\01\?bad1@@\$\$J0YAXPAUocl_image1d_ro@@PAUocl_image2d_ro@@1@Z"}}(%opencl.image1d_ro_t addrspace(4)*{{.*}}%opencl.image2d_ro_t addrspace(4)*{{.*}}%opencl.image2d_ro_t addrspace(4)*{{.*}})

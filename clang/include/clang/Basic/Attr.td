@@ -248,6 +248,7 @@ def COnly : LangOpt<"CPlusPlus", 1>;
 def CPlusPlus : LangOpt<"CPlusPlus">;
 def OpenCL : LangOpt<"OpenCL">;
 def RenderScript : LangOpt<"RenderScript">;
+def CPlusPlusAMP : LangOpt<"CPlusPlusAMP">;
 
 // Defines targets for target-specific attributes. The list of strings should
 // specify architectures for which the target applies, based off the ArchType
@@ -637,7 +638,7 @@ def Const : InheritableAttr {
 
 def HC_HC : InheritableAttr {
   let Spellings = [CXX11<"","hc", 201511>];
-  let Subjects = SubjectList<[Function], ErrorDiag>;
+  let Subjects = SubjectList<[Var, Function], ErrorDiag>;
   let Documentation = [Undocumented];
 }
 
@@ -2588,5 +2589,12 @@ def CXXAMPRestrictCPU : InheritableAttr {
 def HCGridLaunch : InheritableAttr {
   let Spellings = [GNU<"hc_grid_launch">, CXX11<"", "hc_grid_launch", 201511>];
   let Subjects = SubjectList<[Function]>;
+  let Documentation = [Undocumented];
+}
+
+def HCCTileStatic : InheritableAttr {
+  let Spellings = [GNU<"tile_static">];
+  let Subjects = SubjectList<[Var]>;
+  let LangOpts = [CPlusPlusAMP];
   let Documentation = [Undocumented];
 }

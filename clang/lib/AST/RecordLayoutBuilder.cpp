@@ -18,6 +18,7 @@
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Sema/SemaDiagnostic.h"
 #include "llvm/ADT/SmallSet.h"
+#include "llvm/ADT/Triple.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/MathExtras.h"
 
@@ -1720,6 +1721,7 @@ void ItaniumRecordLayoutBuilder::LayoutField(const FieldDecl *D,
   CharUnits FieldSize;
   CharUnits FieldAlign;
 
+  const ReferenceType *RT = D->getType()->getAs<ReferenceType>();
   if (D->getType()->isIncompleteArrayType()) {
     // This is a flexible array member; we can't directly
     // query getTypeInfo about these, so we figure it out here.
@@ -1728,8 +1730,11 @@ void ItaniumRecordLayoutBuilder::LayoutField(const FieldDecl *D,
     FieldSize = CharUnits::Zero();
     const ArrayType* ATy = Context.getAsArrayType(D->getType());
     FieldAlign = Context.getTypeAlignInChars(ATy->getElementType());
-  } else if (const ReferenceType *RT = D->getType()->getAs<ReferenceType>()) {
-    unsigned AS = RT->getPointeeType().getAddressSpace();
+  } else if (RT || D->getType()->isAnyPointerType()) {
+    unsigned AS = RT ?
+      RT->getPointeeType().getAddressSpace() :
+      D->getType().getAddressSpace();
+    // Get pointer width and align from target info
     FieldSize = 
       Context.toCharUnitsFromBits(Context.getTargetInfo().getPointerWidth(AS));
     FieldAlign = 

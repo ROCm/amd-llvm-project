@@ -62,16 +62,45 @@ llvm::Value *CodeGenFunction::EmitCastToVoidPtr(llvm::Value *value) {
 /// block.
 Address CodeGenFunction::CreateTempAlloca(llvm::Type *Ty, CharUnits Align,
                                           const Twine &Name) {
-  auto Alloca = CreateTempAlloca(Ty, Name);
+  auto CastedAlloca = CreateTempAlloca(Ty, Name);
+  auto *Alloca = getAddrSpaceCastedAlloca(CastedAlloca);
   Alloca->setAlignment(Align.getQuantity());
-  return Address(Alloca, Align);
+  llvm::Value *Cast = Alloca;
+  if (getLangOpts().OpenCL) {
+    auto PrivAddr = getContext().getTargetAddressSpace(
+        LangAS::opencl_private);
+    if (PrivAddr != 0)
+      Cast = llvm::CastInst::CreatePointerCast(Alloca, Ty->getPointerTo(
+          PrivAddr), "", AllocaInsertPt);
+  }
+  return Address(Cast, Align);
 }
 
 /// CreateTempAlloca - This creates a alloca and inserts it into the entry
 /// block.
-llvm::AllocaInst *CodeGenFunction::CreateTempAlloca(llvm::Type *Ty,
-                                                    const Twine &Name) {
-  return new llvm::AllocaInst(Ty, nullptr, Name, AllocaInsertPt);
+llvm::Instruction *CodeGenFunction::CreateTempAlloca(llvm::Type *Ty,
+                                                     const Twine &Name) {
+  return CreateAlloca(Ty, Name, AllocaInsertPt);
+}
+
+llvm::Instruction *CodeGenFunction::CreateAlloca(llvm::Type *Ty,
+                                                 const Twine &Name,
+                                                 llvm::Instruction *InsertPos) {
+  llvm::Instruction *V = new llvm::AllocaInst(Ty, nullptr, Name, InsertPos);
+  auto Addr = getContext().getTargetAddressSpaceForAutoVar();
+  if (Addr != V->getType()->getPointerAddressSpace()) {
+    auto *DestTy = llvm::PointerType::get(V->getType()->getPointerElementType(),
+                                          Addr);
+    V = new llvm::AddrSpaceCastInst(V, DestTy, "", InsertPos);
+  }
+  return V;
+}
+
+llvm::AllocaInst *
+CodeGenFunction::getAddrSpaceCastedAlloca(llvm::Instruction *V) const {
+  if (auto *Cast = dyn_cast<llvm::AddrSpaceCastInst>(V))
+    return cast<llvm::AllocaInst>(Cast->getOperand(0));
+  return cast<llvm::AllocaInst>(V);
 }
 
 /// CreateDefaultAlignTempAlloca - This creates an alloca with the
@@ -361,9 +390,8 @@ EmitMaterializeTemporaryExpr(const MaterializeTemporaryExpr *M) {
       ownership != Qualifiers::OCL_ExplicitNone) {
     Address Object = createReferenceTemporary(*this, M, E);
     if (auto *Var = dyn_cast<llvm::GlobalVariable>(Object.getPointer())) {
-      Object = Address(llvm::ConstantExpr::getBitCast(Var,
-                           ConvertTypeForMem(E->getType())
-                             ->getPointerTo(Object.getAddressSpace())),
+      Object = Address(llvm::ConstantExpr::getPointerCast(
+          Var, getTypes().getPointerTypeTo(E->getType())),
                        Object.getAlignment());
 
       // createReferenceTemporary will promote the temporary to a global with a
@@ -416,8 +444,8 @@ EmitMaterializeTemporaryExpr(const MaterializeTemporaryExpr *M) {
   // Create and initialize the reference temporary.
   Address Object = createReferenceTemporary(*this, M, E);
   if (auto *Var = dyn_cast<llvm::GlobalVariable>(Object.getPointer())) {
-    Object = Address(llvm::ConstantExpr::getBitCast(
-        Var, ConvertTypeForMem(E->getType())->getPointerTo()),
+    Object = Address(llvm::ConstantExpr::getPointerCast(
+        Var, getTypes().getPointerTypeTo(E->getType())),
                      Object.getAlignment());
     // If the temporary is a global and has a constant initializer or is a
     // constant temporary that we promoted to a global, we may have already
@@ -2922,7 +2950,9 @@ Address CodeGenFunction::EmitArrayToPointerDecay(const Expr *E,
   }
 
   QualType EltType = E->getType()->castAsArrayTypeUnsafe()->getElementType();
-  return Builder.CreateElementBitCast(Addr, ConvertTypeForMem(EltType));
+  return Builder.CreatePointerBitCastOrAddrSpaceCast(Addr,
+      ConvertTypeForMem(EltType)->getPointerTo(getContext().
+          getTargetAddressSpace(E->getType())));
 }
 
 /// isSimpleArrayDecayOperand - If the specified expr is a simple decay from an

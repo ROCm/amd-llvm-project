@@ -763,7 +763,7 @@ QualType Sema::buildLambdaInitCaptureInitialization(SourceLocation Loc,
   // call-operator.
   Result = ActOnFinishFullExpr(Init, Loc, /*DiscardedValue*/ false,
                                /*IsConstexpr*/ false,
-                               /*IsLambdaInitCaptureInitalizer*/ true);
+                               /*IsLambdaInitCaptureInitializer*/ true);
   if (Result.isInvalid())
     return QualType();
 
@@ -1568,11 +1568,10 @@ ExprResult Sema::BuildLambdaExpr(SourceLocation StartLoc, SourceLocation EndLoc,
         }
 
         if(From.getCaptureType()->isClassType() && From.isCopyCapture()) {
-          std::string Info = QualType::getAsString(From.getCaptureType().split());
-          // Add the skipped type here
-          if(Info.find("::array")!=std::string::npos &&
-            Info.find("::array_view")==std::string::npos)
+          // hc::array and Concurrency::array can't be captured by copy
+          if (From.getCaptureType()->isGPUArrayType()) {
             FoundVec.push_back(std::make_pair(From, (unsigned)diag::err_amp_captured_variable_type));
+          }
         }
         // Handle [This], [&]
         if(From.isReferenceCapture() || From.isThisCapture()) {

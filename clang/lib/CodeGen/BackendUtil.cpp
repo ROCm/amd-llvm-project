@@ -324,14 +324,6 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
   if (CodeGenOpts.DisableLLVMPasses)
     return;
 
-  unsigned OptLevel = CodeGenOpts.OptimizationLevel;
-
-  // Control HCC kernel path module level optimization passes
-  unsigned ModuleOptLevel = OptLevel;
-  if (LangOpts.CPlusPlusAMP && CodeGenOpts.AMPIsDevice) {
-    ModuleOptLevel = CodeGenOpts.KernelPathOptimizationLevel;
-  }
-
   PassManagerBuilderWrapper PMBuilder(CodeGenOpts, LangOpts);
 
   // Figure out TargetLibraryInfo.  This needs to be added to MPM and FPM
@@ -498,13 +490,6 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
     PMBuilder.PGOSampleUse = CodeGenOpts.SampleProfileFile;
 
   PMBuilder.populateFunctionPassManager(FPM);
-
-  // Control HCC kernel path module level optimization passes
-  // override module-level optimization level for HCC kernel path
-  if (LangOpts.CPlusPlusAMP && CodeGenOpts.AMPIsDevice) {
-    PMBuilder.OptLevel = ModuleOptLevel; 
-  }
-
   PMBuilder.populateModulePassManager(MPM);
 }
 

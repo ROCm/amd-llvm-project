@@ -5415,14 +5415,8 @@ bool Sema::IsCXXAMPTileStatic(Declarator &D) {
  if (D.getDeclSpec().hasAttributes()) {
     AttributeList *attr = D.getDeclSpec().getAttributes().getList();
     while (attr) {
-      if (attr->getName()->isStr("section")) {
-        for (unsigned i = 0; i < attr->getNumArgs(); ++i) {
-          StringLiteral *s = dyn_cast_or_null<StringLiteral>(attr->getArgAsExpr(i));
-          if (s && s->getString() == "clamp_opencl_local") {
-            return true;
-          }
-        }
-      }
+      if (attr->getKind() == AttributeList::AT_HCCTileStatic)
+        return true;
       attr = attr->getNext();
     }
   }
@@ -7092,6 +7086,13 @@ NamedDecl *Sema::ActOnVariableDeclarator(
     }
   }
 
+  if (getLangOpts().CPlusPlusAMP) {
+    if (SC == SC_None && S->getFnParent() != nullptr &&
+        (NewVD->hasAttr<HCCTileStaticAttr>())) {
+      NewVD->setStorageClass(SC_Static);
+    }
+  }
+
   // Ensure that dllimport globals without explicit storage class are treated as
   // extern. The storage class is set above using parsed attributes. Now we can
   // check the VarDecl itself.
@@ -8376,6 +8377,7 @@ static OpenCLParamType getOpenCLKernelParameterType(Sema &S, QualType PT) {
     if (PointeeType->isPointerType())
       return PtrPtrKernelParam;
     if (PointeeType.getAddressSpace() == LangAS::opencl_generic ||
+        PointeeType.getAddressSpace() == LangAS::opencl_private ||
         PointeeType.getAddressSpace() == 0)
       return InvalidAddrSpacePtrKernelParam;
     return PtrKernelParam;
@@ -9187,12 +9189,8 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
   }
 
   // C++AMP
-  if(getLangOpts().CPlusPlusAMP && NewFD->hasAttr<SectionAttr>()) {
-   const SectionAttr *SA = NewFD->getAttr<SectionAttr>();
-    // Ugly codes
-    if(SA->getName() == StringRef("clamp_opencl_local")) {
-      Diag(D.getIdentifierLoc(), diag::err_amp_tile_static_on_function_return_result);
-    }
+  if(getLangOpts().CPlusPlusAMP && (NewFD->getType().getAddressSpace() == LangAS::hcc_tilestatic)) {
+    Diag(D.getIdentifierLoc(), diag::err_amp_tile_static_on_function_return_result);
   }
   if (getLangOpts().CPlusPlusAMP && NewFD->hasAttr<CXXAMPRestrictAMPAttr>()) {
     DeclaratorChunk::FunctionTypeInfo &FTI = D.getFunctionTypeInfo();
@@ -10305,7 +10303,7 @@ namespace {
       InitFieldIndex.pop_back();
     }
 
-    // Returns true if MemberExpr is checked and no futher checking is needed.
+    // Returns true if MemberExpr is checked and no further checking is needed.
     // Returns false if additional checking is required.
     bool CheckInitListMemberExpr(MemberExpr *E, bool CheckReference) {
       llvm::SmallVector<FieldDecl*, 4> Fields;
@@ -11033,7 +11031,7 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init, bool DirectInit) {
     // C++11 [class.static.data]p3:
     //   If a non-volatile non-inline const static data member is of integral
     //   or enumeration type, its declaration in the class definition can
-    //   specify a brace-or-equal-initializer in which every initalizer-clause
+    //   specify a brace-or-equal-initializer in which every initializer-clause
     //   that is an assignment-expression is a constant expression. A static
     //   data member of literal type can be declared in the class definition
     //   with the constexpr specifier; if so, its declaration shall specify a

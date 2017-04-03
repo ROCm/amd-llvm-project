@@ -440,10 +440,6 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
   }
   Opts.OptimizationLevel = OptimizationLevel;
 
-  // Fetch HCC kernel path optimization flag
-  unsigned KernelPathOptimizationLevel = getLastArgIntValue(Args, OPT_KO_flag, 2, Diags);
-  Opts.KernelPathOptimizationLevel = KernelPathOptimizationLevel;
-
   // At O0 we want to fully disable inlining outside of cases marked with
   // 'alwaysinline' that are required for correctness.
   Opts.setInlining((Opts.OptimizationLevel == 0)

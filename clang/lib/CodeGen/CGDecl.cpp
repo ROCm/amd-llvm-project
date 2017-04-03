@@ -221,8 +221,10 @@ llvm::Constant *CodeGenModule::getOrCreateStaticVarDecl(
       GetGlobalVarAddressSpace(&D, getContext().getTargetAddressSpace(Ty));
 
   // Local address space cannot have an initializer.
+  // HCC tile_static variables cannot have an initializer.
   llvm::Constant *Init = nullptr;
-  if (Ty.getAddressSpace() != LangAS::opencl_local)
+  if (Ty.getAddressSpace() != LangAS::opencl_local &&
+      !D.hasAttr<HCCTileStaticAttr>())
     Init = EmitNullConstant(Ty);
   else
     Init = llvm::UndefValue::get(LTy);
@@ -251,6 +253,12 @@ llvm::Constant *CodeGenModule::getOrCreateStaticVarDecl(
 
   // Make sure the result is of the correct type.
   unsigned ExpectedAddrSpace = getContext().getTargetAddressSpace(Ty);
+
+  // HCC tile_static pointer would be in generic address space
+  if (D.hasAttr<HCCTileStaticAttr>()) {
+    ExpectedAddrSpace = getContext().getTargetAddressSpace(LangAS::hcc_generic);
+  }
+
   llvm::Constant *Addr = GV;
   if (AddrSpace != ExpectedAddrSpace) {
     llvm::PointerType *PTy = llvm::PointerType::get(LTy, ExpectedAddrSpace);
@@ -393,8 +401,10 @@ void CodeGenFunction::EmitStaticVarDecl(const VarDecl &D,
   // a no-op and should not be emitted.
   bool isCudaSharedVar = getLangOpts().CUDA && getLangOpts().CUDAIsDevice &&
                          D.hasAttr<CUDASharedAttr>();
+  bool isHCCTileStaticVar = getLangOpts().CPlusPlusAMP && getLangOpts().DevicePath &&
+                            D.hasAttr<HCCTileStaticAttr>();
   // If this value has an initializer, emit it.
-  if (D.getInit() && !isCudaSharedVar)
+  if (D.getInit() && !isCudaSharedVar && !isHCCTileStaticVar)
     var = AddInitializerToStaticVarDecl(D, var);
 
   var->setAlignment(alignment.getQuantity());
@@ -924,7 +934,7 @@ llvm::Value *CodeGenFunction::EmitLifetimeStart(uint64_t Size,
     return nullptr;
 
   llvm::Value *SizeV = llvm::ConstantInt::get(Int64Ty, Size);
-  Addr = Builder.CreateBitCast(Addr, Int8PtrTy);
+  Addr = Builder.CreatePointerCast(Addr, Int8PtrTy);
   llvm::CallInst *C =
       Builder.CreateCall(CGM.getLLVMLifetimeStartFn(), {SizeV, Addr});
   C->setDoesNotThrow();
@@ -932,7 +942,7 @@ llvm::Value *CodeGenFunction::EmitLifetimeStart(uint64_t Size,
 }
 
 void CodeGenFunction::EmitLifetimeEnd(llvm::Value *Size, llvm::Value *Addr) {
-  Addr = Builder.CreateBitCast(Addr, Int8PtrTy);
+  Addr = Builder.CreatePointerCast(Addr, Int8PtrTy);
   llvm::CallInst *C =
       Builder.CreateCall(CGM.getLLVMLifetimeEndFn(), {Size, Addr});
   C->setDoesNotThrow();
@@ -1099,7 +1109,15 @@ CodeGenFunction::EmitAutoVarAlloca(const VarDecl &D) {
     llvm::AllocaInst *vla = Builder.CreateAlloca(llvmTy, elementCount, "vla");
     vla->setAlignment(alignment.getQuantity());
 
-    address = Address(vla, alignment);
+    llvm::Value *V = vla;
+    auto Addr = getContext().getTargetAddressSpaceForAutoVar();
+    if (Addr != V->getType()->getPointerAddressSpace()) {
+      auto *DestTy =
+          llvm::PointerType::get(vla->getType()->getElementType(), Addr);
+      V = Builder.CreateAddrSpaceCast(vla, DestTy);
+    }
+
+    address = Address(V, alignment);
   }
 
   setAddrOfLocalVar(&D, address);
@@ -1250,7 +1268,7 @@ void CodeGenFunction::EmitAutoVarInit(const AutoVarEmission &emission) {
 
   llvm::Type *BP = Int8PtrTy;
   if (Loc.getType() != BP)
-    Loc = Builder.CreateBitCast(Loc, BP);
+    Loc = Builder.CreatePointerBitCastOrAddrSpaceCast(Loc, BP);
 
   // If the initializer is all or mostly zeros, codegen with memset then do
   // a few stores afterward.
@@ -1260,7 +1278,8 @@ void CodeGenFunction::EmitAutoVarInit(const AutoVarEmission &emission) {
                          isVolatile);
     // Zero and undef don't require a stores.
     if (!constant->isNullValue() && !isa<llvm::UndefValue>(constant)) {
-      Loc = Builder.CreateBitCast(Loc, constant->getType()->getPointerTo());
+      Loc = Builder.CreatePointerBitCastOrAddrSpaceCast(Loc,
+          constant->getType()->getPointerTo());
       emitStoresForInitAfterMemset(constant, Loc.getPointer(),
                                    isVolatile, Builder);
     }
@@ -1268,8 +1287,8 @@ void CodeGenFunction::EmitAutoVarInit(const AutoVarEmission &emission) {
     // Otherwise, create a temporary global with the initializer then
     // memcpy from the global to the alloca.
     std::string Name = getStaticDeclName(CGM, D);
-    unsigned AS = 0;
-    if (getLangOpts().OpenCL) {
+    unsigned AS = CGM.getContext().getTargetConstantAddressSpace();
+    if (getLangOpts().OpenCL || getLangOpts().CPlusPlusAMP) {
       AS = CGM.getContext().getTargetAddressSpace(LangAS::opencl_constant);
       BP = llvm::PointerType::getInt8PtrTy(getLLVMContext(), AS);
     }

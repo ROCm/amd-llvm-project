@@ -5554,7 +5554,7 @@ static void HandleAddressSpaceTypeAttribute(QualType &Type,
       ASIdx = LangAS::opencl_generic; break;
     default:
       assert(Attr.getKind() == AttributeList::AT_OpenCLPrivateAddressSpace);
-      ASIdx = 0; break;
+      ASIdx = LangAS::opencl_private; break;
     }
   }
   
@@ -6944,6 +6944,25 @@ static void processTypeAttrs(TypeProcessingState &state, QualType &type,
     }
   }
 
+  #if 0
+  // OpenCL v1.2 s6.5:
+  // The generic address space name for arguments to a function in a program,
+  // or local variables of a function is __private. All function arguments
+  // shall be in the __private address space.
+  if (state.getSema().getLangOpts().OpenCL &&
+      state.getSema().getLangOpts().OpenCLVersion <= 120 &&
+      !hasOpenCLAddressSpace && type.getAddressSpace() == 0 &&
+      (TAL == TAL_DeclSpec || TAL == TAL_DeclChunk)) {
+    Declarator &D = state.getDeclarator();
+    if (state.getCurrentChunkIndex() > 0 &&
+        (D.getTypeObject(state.getCurrentChunkIndex() - 1).Kind ==
+             DeclaratorChunk::Pointer)) {
+      type = state.getSema().Context.getAddrSpaceQualType(
+          type, LangAS::opencl_private);
+    }
+  }
+  #endif
+
   // If address space is not set, OpenCL 2.0 defines non private default
   // address spaces for some cases:
   // OpenCL 2.0, section 6.5:
@@ -6965,12 +6984,22 @@ static void processTypeAttrs(TypeProcessingState &state, QualType &type,
       type = state.getSema().Context.getAddrSpaceQualType(
           type, LangAS::opencl_generic);
     } else if (state.getCurrentChunkIndex() == 0 &&
-               D.getContext() == Declarator::FileContext &&
                !D.isFunctionDeclarator() && !D.isFunctionDefinition() &&
                D.getDeclSpec().getStorageClassSpec() != DeclSpec::SCS_typedef &&
-               !type->isSamplerT())
-      type = state.getSema().Context.getAddrSpaceQualType(
+               !type->isSamplerT()) {
+      if (D.getContext() == Declarator::FileContext) {
+        type = state.getSema().Context.getAddrSpaceQualType(
           type, LangAS::opencl_global);
+      } else if (D.getContext() == Declarator::BlockContext) {
+        if (D.getDeclSpec().getStorageClassSpec() != DeclSpec::SCS_static) {
+          type = state.getSema().Context.getAddrSpaceQualType(
+              type, LangAS::opencl_private);
+        } else {
+          type = state.getSema().Context.getAddrSpaceQualType(
+              type, LangAS::opencl_global);
+        }
+      }
+    }
     else if (state.getCurrentChunkIndex() == 0 &&
              D.getContext() == Declarator::BlockContext &&
              D.getDeclSpec().getStorageClassSpec() == DeclSpec::SCS_static)

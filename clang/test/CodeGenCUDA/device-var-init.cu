@@ -4,7 +4,10 @@
 // variables, but accept empty constructors allowed by CUDA.
 
 // RUN: %clang_cc1 -triple nvptx64-nvidia-cuda -fcuda-is-device -std=c++11 \
-// RUN:     -fno-threadsafe-statics -emit-llvm -o - %s | FileCheck %s
+// RUN:     -fno-threadsafe-statics -emit-llvm -o - %s | FileCheck --check-prefixes=CHECK,NVPTX %s
+
+// RUN: %clang_cc1 -triple amdgcn -fcuda-is-device -std=c++11 \
+// RUN:     -fno-threadsafe-statics -emit-llvm -o - %s | FileCheck --check-prefixes=CHECK,AMDGCN %s
 
 #ifdef __clang__
 #include "Inputs/cuda.h"

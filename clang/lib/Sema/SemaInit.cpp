@@ -5768,20 +5768,6 @@ static bool TryOCLZeroEventInitialization(Sema &S,
   return true;
 }
 
-// Check if a given InitializedEntity is a tile_static variable
-// Currently tile_static is a macro which expands to:
-//   static __attribute__((section("clamp_opencl_local")))
-// We check if the InitializedEntity has such function attribute.
-static bool IsTileStatic(const InitializedEntity &Entity) {
-  if (Entity.getDecl() && Entity.getDecl()->hasAttr<SectionAttr>()) {
-    SectionAttr *sa = Entity.getDecl()->getAttr<SectionAttr>();
-    if (sa && sa->getName() == "clamp_opencl_local") {
-      return true;
-    }
-  }
-  return false;
-}
-
 static bool TryOCLZeroQueueInitialization(Sema &S,
                                           InitializationSequence &Sequence,
                                           QualType DestType,
@@ -5950,10 +5936,10 @@ void InitializationSequence::InitializeFrom(Sema &S,
   if (Kind.getKind() == InitializationKind::IK_Default) {
     // C++ AMP specific
     // Prevent tile_static variables being initialized
-    if (S.getLangOpts().CPlusPlusAMP) {
-      if (IsTileStatic(Entity))
+    if (S.getLangOpts().CPlusPlusAMP &&
+        Entity.getDecl() &&
+        Entity.getDecl()->hasAttr<HCCTileStaticAttr>())
         return;
-    }
 
     TryDefaultInitialization(S, Entity, Kind, *this);
     return;

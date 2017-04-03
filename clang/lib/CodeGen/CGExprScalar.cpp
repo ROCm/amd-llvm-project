@@ -257,8 +257,15 @@ public:
   //===--------------------------------------------------------------------===//
 
   Value *Visit(Expr *E) {
+    if (getenv("DBG_CG_SCALAR_EXPR")) {
+      llvm::errs() << "Expr: "; E->dump();
+    }
     ApplyDebugLocation DL(CGF, E);
-    return StmtVisitor<ScalarExprEmitter, Value*>::Visit(E);
+    auto Res = StmtVisitor<ScalarExprEmitter, Value*>::Visit(E);
+    if (getenv("DBG_CG_SCALAR_EXPR")) {
+      llvm::errs() << " => " << *Res << '\n';
+    }
+    return Res;
   }
 
   Value *VisitStmt(Stmt *S) {

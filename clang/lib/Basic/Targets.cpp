@@ -1780,11 +1780,15 @@ static const unsigned NVPTXAddrSpaceMap[] = {
     1, // opencl_global
     3, // opencl_local
     4, // opencl_constant
+    0, // opencl_private
     // FIXME: generic has to be added to the target
     0, // opencl_generic
     1, // cuda_device
     4, // cuda_constant
     3, // cuda_shared
+    3, // hcc_tilestatic
+    0, // hcc_generic
+    1, // hcc_global
 };
 
 class NVPTXTargetInfo : public TargetInfo {
@@ -2034,19 +2038,27 @@ static const LangAS::Map AMDGPUPrivateIsZeroMap = {
     1,  // opencl_global
     3,  // opencl_local
     2,  // opencl_constant
+    0,  // opencl_private
     4,  // opencl_generic
     1,  // cuda_device
     2,  // cuda_constant
-    3   // cuda_shared
+    3,  // cuda_shared
+    3,  // hcc_tilestatic
+    4,  // hcc_generic
+    1,  // hcc_global
 };
 static const LangAS::Map AMDGPUGenericIsZeroMap = {
     1,  // opencl_global
     3,  // opencl_local
     4,  // opencl_constant
+    5,  // opencl_private
     0,  // opencl_generic
     1,  // cuda_device
     4,  // cuda_constant
-    3   // cuda_shared
+    3,  // cuda_shared
+    3,  // hcc_tilestatic
+    0,  // hcc_generic
+    1,  // hcc_global
 };
 
 // If you edit the description strings, make sure you update
@@ -2118,7 +2130,8 @@ class AMDGPUTargetInfo final : public TargetInfo {
 
   static bool isGenericZero(const llvm::Triple &TT) {
     return TT.getEnvironmentName() == "amdgiz" ||
-        TT.getEnvironmentName() == "amdgizcl";
+        TT.getEnvironmentName() == "amdgizcl" ||
+        TT.getEnvironment() == llvm::Triple::HCC;
   }
 public:
   AMDGPUTargetInfo(const llvm::Triple &Triple, const TargetOptions &Opts)
@@ -2129,6 +2142,7 @@ public:
       hasLDEXPF(false),
       hasFullSpeedFP32Denorms(false),
       AS(isGenericZero(Triple)){
+    setTypes();
     if (getTriple().getArch() == llvm::Triple::amdgcn) {
       hasFP64 = true;
       hasFMAF = true;
@@ -2208,6 +2222,16 @@ public:
     // - LongDoubleWidth, LongDoubleAlign: TBD
   }
 
+  void setTypes() {
+    const bool Is32Bit = GPU <= GK_CAYMAN;
+    LongWidth = LongAlign = PointerWidth = PointerAlign = Is32Bit ? 32 : 64;
+    SizeType    = Is32Bit ? UnsignedInt      : UnsignedLong;
+    PtrDiffType = Is32Bit ? SignedInt        : SignedLong;
+    IntPtrType  = Is32Bit ? SignedInt        : SignedLong;
+    IntMaxType  = Is32Bit ? SignedLongLong   : SignedLong;
+    Int64Type   = Is32Bit ? SignedLongLong   : SignedLong;
+  }
+
   uint64_t getPointerWidthV(unsigned AddrSpace) const override {
     if (GPU <= GK_CAYMAN)
       return 32;
@@ -2215,6 +2239,14 @@ public:
     if (AddrSpace == AS.Private || AddrSpace == AS.Local) {
       return 32;
     }
+    return 64;
+  }
+
+  uint64_t getPointerAlignV(unsigned AddrSpace) const override {
+    return getPointerWidthV(AddrSpace);
+  }
+
+  uint64_t getPreferredPointerWidth(unsigned AddrSpace) const override {
     return 64;
   }
 
@@ -2359,6 +2391,8 @@ public:
     else
       GPU = parseR600Name(Name);
 
+    if (GPU != GK_NONE)
+      setTypes();
     return GPU != GK_NONE;
   }
 
@@ -2386,6 +2420,14 @@ public:
       Opts.support("cl_amd_media_ops");
       Opts.support("cl_amd_media_ops2");
     }
+  }
+
+  unsigned getConstantAddressSpace() const override {
+    return AS.Constant;
+  }
+
+  unsigned getGlobalAddressSpace() const override {
+    return AS.Global;
   }
 
   LangAS::ID getOpenCLImageAddrSpace() const override {
@@ -2429,12 +2471,12 @@ public:
     }
   }
 
-  // In amdgcn target the null pointer in global, constant, and generic
-  // address space has value 0 but in private and local address space has
-  // value ~0.
-  uint64_t getNullPointerValue(unsigned AS) const override {
-    return AS == LangAS::opencl_local ? ~0 : 0;
+  // In amdgcn target the null pointer in local and private address spaces has
+  // value ~0 and in other address spaces has value 0
+  uint64_t getNullPointerValue(unsigned AddrSpace) const override {
+    return AddrSpace != AS.Local && AddrSpace != AS.Private ? 0 : ~0;
   }
+
 };
 
 const Builtin::Info AMDGPUTargetInfo::BuiltinInfo[] = {
@@ -7474,11 +7516,15 @@ static const unsigned TCEOpenCLAddrSpaceMap[] = {
     3, // opencl_global
     4, // opencl_local
     5, // opencl_constant
+    0, // opencl_private
     // FIXME: generic has to be added to the target
     0, // opencl_generic
     0, // cuda_device
     0, // cuda_constant
-    0  // cuda_shared
+    0, // cuda_shared
+    4, // hcc_tilestatic
+    0, // hcc_generic
+    3, // hcc_global
 };
 
 class TCETargetInfo : public TargetInfo {
@@ -8440,10 +8486,14 @@ static const unsigned SPIRAddrSpaceMap[] = {
     1, // opencl_global
     3, // opencl_local
     2, // opencl_constant
+    0, // opencl_private
     4, // opencl_generic
     0, // cuda_device
     0, // cuda_constant
-    0  // cuda_shared
+    0, // cuda_shared
+    3, // hcc_tilestatic
+    4, // hcc_generic
+    1, // hcc_global
 };
 class SPIRTargetInfo : public TargetInfo {
 public:

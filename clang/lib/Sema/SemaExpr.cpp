@@ -8284,7 +8284,7 @@ QualType Sema::CheckVectorOperands(ExprResult &LHS, ExprResult &RHS,
       return RHSType;
   }
 
-  // FIXME: The code below also handles convertion between vectors and
+  // FIXME: The code below also handles conversion between vectors and
   // non-scalars, we should break this down into fine grained specific checks
   // and emit proper diagnostics.
   QualType VecType = LHSVecType ? LHSType : RHSType;
@@ -9429,11 +9429,8 @@ void Sema::DiagnoseCXXAMPExpr(Expr* Stripped, ExprResult &HS, bool DiagnoseWhenS
     if (DeclRefExpr* DRL = dyn_cast<DeclRefExpr>(Stripped))
       if (VarDecl *var = dyn_cast<VarDecl>(DRL->getDecl())) {
         QualType Type = var->getType();
-        // FIXME: Need a common routine to detect a type is a tile_static or not
         if(!var->hasLocalStorage() || var->isStaticDataMember()) {
-          if (var->hasAttr<SectionAttr>() && var->getAttr<SectionAttr>() &&
-             var->getAttr<SectionAttr>()->getName() == "clamp_opencl_local"
-             ) {
+          if (var->hasAttr<HCCTileStaticAttr>()) {
              // Skip tile_static
           } else if(Type.isConstQualified() /*&& LHS.get()->isRValue()*/) {
             // Skip a static const type and global const type that is rvalue
@@ -9639,7 +9636,10 @@ QualType Sema::CheckCompareOperands(ExprResult &LHS, ExprResult &RHS,
     //   If both operands are pointers, [...] bring them to their composite
     //   pointer type.
     if ((int)LHSType->isPointerType() + (int)RHSType->isPointerType() >=
-        (IsRelational ? 2 : 1)) {
+            (IsRelational ? 2 : 1) &&
+        (!LangOpts.ObjCAutoRefCount ||
+         !(LHSType->isObjCObjectPointerType() ||
+           RHSType->isObjCObjectPointerType()))) {
       if (convertPointersToCompositeType(*this, Loc, LHS, RHS))
         return QualType();
       else

@@ -315,7 +315,7 @@ static bool SemaOpenCLBuiltinKernelWorkGroupSize(Sema &S, CallExpr *TheCall) {
   return checkOpenCLBlockArgs(S, BlockArg);
 }
 
-/// Diagnose integer type and any valid implicit convertion to it.
+/// Diagnose integer type and any valid implicit conversion to it.
 static bool checkOpenCLEnqueueIntType(Sema &S, Expr *E,
                                       const QualType &IntType);
 
@@ -717,6 +717,9 @@ static bool SemaOpenCLBuiltinToAddr(Sema &S, unsigned BuiltinID,
     break;
   case Builtin::BIto_local:
     Qual.setAddressSpace(LangAS::opencl_local);
+    break;
+  case Builtin::BIto_private:
+    Qual.setAddressSpace(LangAS::opencl_private);
     break;
   default:
     Qual.removeAddressSpace();

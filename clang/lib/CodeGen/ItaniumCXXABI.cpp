@@ -1108,7 +1108,7 @@ void ItaniumCXXABI::emitThrow(CodeGenFunction &CGF, const CXXThrowExpr *E) {
     if (!Record->hasTrivialDestructor()) {
       CXXDestructorDecl *DtorD = Record->getDestructor();
       Dtor = CGM.getAddrOfCXXStructor(DtorD, StructorType::Complete);
-      Dtor = llvm::ConstantExpr::getBitCast(Dtor, CGM.Int8PtrTy);
+      Dtor = llvm::ConstantExpr::getPointerCast(Dtor, CGM.Int8PtrTy);
     }
   }
   if (!Dtor) Dtor = llvm::Constant::getNullValue(CGM.Int8PtrTy);
@@ -1223,7 +1223,8 @@ llvm::Value *ItaniumCXXABI::EmitTypeid(CodeGenFunction &CGF,
   auto *ClassDecl =
       cast<CXXRecordDecl>(SrcRecordTy->getAs<RecordType>()->getDecl());
   llvm::Value *Value =
-      CGF.GetVTablePtr(ThisPtr, StdTypeInfoPtrTy->getPointerTo(), ClassDecl);
+      CGF.GetVTablePtr(ThisPtr, CGF.getTypes().getDefaultPointerTo(
+          StdTypeInfoPtrTy), ClassDecl);
 
   // Load the type info.
   Value = CGF.Builder.CreateConstInBoundsGEP1_64(Value, -1ULL);
@@ -2013,7 +2014,10 @@ void ItaniumCXXABI::EmitGuardedInit(CodeGenFunction &CGF,
     guard = new llvm::GlobalVariable(CGM.getModule(), guardTy,
                                      false, var->getLinkage(),
                                      llvm::ConstantInt::get(guardTy, 0),
-                                     guardName.str());
+                                     guardName.str(),
+                                     /* InsertBefore */ nullptr,
+                                     llvm::GlobalValue::NotThreadLocal,
+                                     getContext().getTargetGlobalAddressSpace());
     guard->setVisibility(var->getVisibility());
     // If the variable is thread-local, so is its guard variable.
     guard->setThreadLocalMode(var->getThreadLocalMode());
@@ -2174,8 +2178,8 @@ static void emitGlobalDtorWithCXAAtExit(CodeGenFunction &CGF,
 
   llvm::Value *args[] = {
     llvm::ConstantExpr::getBitCast(dtor, dtorTy),
-    llvm::ConstantExpr::getBitCast(addr, CGF.Int8PtrTy),
-    handle
+    llvm::ConstantExpr::getPointerCast(addr, CGF.Int8PtrTy),
+    llvm::ConstantExpr::getPointerCast(handle, CGF.Int8PtrTy)
   };
   CGF.EmitNounwindRuntimeCall(atexit, args);
 }
@@ -2587,7 +2591,7 @@ ItaniumRTTIBuilder::GetAddrOfExternalRTTIDescriptor(QualType Ty) {
     }
   }
 
-  return llvm::ConstantExpr::getBitCast(GV, CGM.Int8PtrTy);
+  return llvm::ConstantExpr::getPointerCast(GV, CGM.Int8PtrTy);
 }
 
 /// TypeInfoIsInStandardLibrary - Given a builtin type, returns whether the type
@@ -2916,7 +2920,7 @@ void ItaniumRTTIBuilder::BuildVTablePointer(const Type *Ty) {
   llvm::Constant *Two = llvm::ConstantInt::get(PtrDiffTy, 2);
   VTable =
       llvm::ConstantExpr::getInBoundsGetElementPtr(CGM.Int8PtrTy, VTable, Two);
-  VTable = llvm::ConstantExpr::getBitCast(VTable, CGM.Int8PtrTy);
+  VTable = llvm::ConstantExpr::getPointerCast(VTable, CGM.Int8PtrTy);
 
   Fields.push_back(VTable);
 }
@@ -2989,7 +2993,7 @@ llvm::Constant *ItaniumRTTIBuilder::BuildTypeInfo(QualType Ty, bool Force,
     assert(!OldGV->hasAvailableExternallyLinkage() &&
            "available_externally typeinfos not yet implemented");
 
-    return llvm::ConstantExpr::getBitCast(OldGV, CGM.Int8PtrTy);
+    return llvm::ConstantExpr::getPointerCast(OldGV, CGM.Int8PtrTy);
   }
 
   // Check if there is already an external RTTI descriptor for this type.
@@ -3025,7 +3029,7 @@ llvm::Constant *ItaniumRTTIBuilder::BuildTypeInfo(QualType Ty, bool Force,
     TypeNameField =
         llvm::ConstantExpr::getIntToPtr(TypeNameField, CGM.Int8PtrTy);
   } else {
-    TypeNameField = llvm::ConstantExpr::getBitCast(TypeName, CGM.Int8PtrTy);
+    TypeNameField = llvm::ConstantExpr::getPointerCast(TypeName, CGM.Int8PtrTy);
   }
   Fields.push_back(TypeNameField);
 
@@ -3180,7 +3184,7 @@ llvm::Constant *ItaniumRTTIBuilder::BuildTypeInfo(QualType Ty, bool Force,
     }
   }
 
-  return llvm::ConstantExpr::getBitCast(GV, CGM.Int8PtrTy);
+  return llvm::ConstantExpr::getPointerCast(GV, CGM.Int8PtrTy);
 }
 
 /// BuildObjCObjectTypeInfo - Build the appropriate kind of type_info
@@ -3545,8 +3549,7 @@ static StructorCodegen getCodegenToUse(CodeGenModule &CGM,
 
   if (llvm::GlobalValue::isWeakForLinker(Linkage)) {
     // Only ELF and wasm support COMDATs with arbitrary names (C5/D5).
-    if (CGM.getTarget().getTriple().isOSBinFormatELF() ||
-        CGM.getTarget().getTriple().isOSBinFormatWasm())
+    if (CGM.supportsCOMDAT())
       return StructorCodegen::COMDAT;
     return StructorCodegen::Emit;
   }

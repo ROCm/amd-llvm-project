@@ -3712,18 +3712,19 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
   if (llvm::StructType *ArgStruct = CallInfo.getArgStruct()) {
     ArgMemoryLayout = CGM.getDataLayout().getStructLayout(ArgStruct);
     llvm::Instruction *IP = CallArgs.getStackBase();
-    llvm::AllocaInst *AI;
+    llvm::Instruction *CastedAI;
     if (IP) {
       IP = IP->getNextNode();
-      AI = new llvm::AllocaInst(ArgStruct, "argmem", IP);
+      CastedAI = CreateAlloca(ArgStruct, "argmem", IP);
     } else {
-      AI = CreateTempAlloca(ArgStruct, "argmem");
+      CastedAI = CreateTempAlloca(ArgStruct, "argmem");
     }
     auto Align = CallInfo.getArgStructAlignment();
+    auto *AI = getAddrSpaceCastedAlloca(CastedAI);
     AI->setAlignment(Align.getQuantity());
     AI->setUsedWithInAlloca(true);
     assert(AI->isUsedWithInAlloca() && !AI->isStaticAlloca());
-    ArgMemory = Address(AI, Align);
+    ArgMemory = Address(CastedAI, Align);
   }
 
   // Helper function to drill into the inalloca allocation.

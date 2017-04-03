@@ -7388,7 +7388,7 @@ llvm::Constant *AMDGPUTargetCodeGenInfo::getNullPointer(
   auto &Ctx = CGM.getContext();
   auto NPT = llvm::PointerType::get(PT->getElementType(),
       Ctx.getTargetAddressSpace(LangAS::opencl_generic));
-  return llvm::ConstantExpr::getAddrSpaceCast(
+  return llvm::ConstantExpr::getPointerCast(
       llvm::ConstantPointerNull::get(NPT), PT);
 }
 
@@ -8420,7 +8420,7 @@ static bool getTypeString(SmallStringEnc &Enc, const Decl *D,
 //===----------------------------------------------------------------------===//
 
 bool CodeGenModule::supportsCOMDAT() const {
-  return getTriple().supportsCOMDAT();
+  return (!getLangOpts().CPlusPlusAMP && getTriple().supportsCOMDAT());
 }
 
 const TargetCodeGenInfo &CodeGenModule::getTargetCodeGenInfo() {

@@ -30,11 +30,16 @@ enum ID {
   opencl_global = Offset,
   opencl_local,
   opencl_constant,
+  opencl_private,
   opencl_generic,
 
   cuda_device,
   cuda_constant,
   cuda_shared,
+
+  hcc_tilestatic,
+  hcc_generic,
+  hcc_global,
 
   Last,
   Count = Last-Offset

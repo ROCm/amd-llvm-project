@@ -437,7 +437,11 @@ public:
         // Otherwise in OpenCLC v2.0 s6.5.5: every address space except
         // for __constant can be used as __generic.
         (getAddressSpace() == LangAS::opencl_generic &&
-         other.getAddressSpace() != LangAS::opencl_constant);
+         other.getAddressSpace() != LangAS::opencl_constant) ||
+        // HCC
+        // default address space is superset of tile_static address space
+        ((getAddressSpace() == 0) &&
+         (other.getAddressSpace() == LangAS::hcc_tilestatic));
   }
 
   /// Determines if these qualifiers compatibly include another set.
@@ -2082,7 +2086,7 @@ public:
     : Type(Builtin, QualType(), /*Dependent=*/(K == Dependent),
            /*InstantiationDependent=*/(K == Dependent),
            /*VariablyModified=*/false,
-           /*Unexpanded paramter pack=*/false) {
+           /*Unexpanded parameter pack=*/false) {
     BuiltinTypeBits.Kind = K;
   }
 

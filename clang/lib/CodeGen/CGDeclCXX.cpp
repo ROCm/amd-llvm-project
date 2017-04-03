@@ -103,8 +103,8 @@ static void EmitDeclDestroy(CodeGenFunction &CGF, const VarDecl &D,
     CXXDestructorDecl *dtor = Record->getDestructor();
 
     function = CGM.getAddrOfCXXStructor(dtor, StructorType::Complete);
-    argument = llvm::ConstantExpr::getBitCast(
-        addr.getPointer(), CGF.getTypes().ConvertType(type)->getPointerTo());
+    argument = llvm::ConstantExpr::getPointerCast(
+        addr.getPointer(), CGF.getTypes().getPointerTypeTo(type));
 
   // Otherwise, the standard logic requires a helper function.
   } else {
@@ -135,7 +135,7 @@ static void EmitDeclInvariant(CodeGenFunction &CGF, const VarDecl &D,
   CharUnits WidthChars = CGF.getContext().getTypeSizeInChars(D.getType());
   uint64_t Width = WidthChars.getQuantity();
   llvm::Value *Args[2] = { llvm::ConstantInt::getSigned(CGF.Int64Ty, Width),
-                           llvm::ConstantExpr::getBitCast(Addr, CGF.Int8PtrTy)};
+                           llvm::ConstantExpr::getPointerCast(Addr, CGF.Int8PtrTy)};
   CGF.Builder.CreateCall(InvariantStart, Args);
 }
 
@@ -324,6 +324,10 @@ CodeGenModule::EmitCXXGlobalVarDeclInitFunc(const VarDecl *D,
   if (getLangOpts().CUDA && getLangOpts().CUDAIsDevice &&
       (D->hasAttr<CUDADeviceAttr>() || D->hasAttr<CUDAConstantAttr>() ||
        D->hasAttr<CUDASharedAttr>()))
+    return;
+
+  if (getLangOpts().CPlusPlusAMP && getLangOpts().DevicePath &&
+      D->hasAttr<HCCTileStaticAttr>())
     return;
 
   // Check if we've already initialized this decl.
