@@ -11360,7 +11360,7 @@ ExprResult Sema::CreateBuiltinBinOp(SourceLocation OpLoc,
     if (LHSTy->isAtomicType() || RHSTy->isAtomicType()) {
       SourceRange SR(LHSExpr->getLocStart(), RHSExpr->getLocEnd());
       if (BO_Assign == Opc)
-        Diag(OpLoc, diag::err_atomic_init_constant) << SR;
+        Diag(OpLoc, diag::err_opencl_atomic_init) << 0 << SR;
       else
         ResultTy = InvalidOperands(OpLoc, LHS, RHS);
       return ExprError();

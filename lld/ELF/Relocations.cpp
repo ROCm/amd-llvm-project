@@ -63,6 +63,22 @@ using namespace llvm::support::endian;
 using namespace lld;
 using namespace lld::elf;
 
+// Construct a message in the following format.
+//
+// >>> defined in /home/alice/src/foo.o
+// >>> referenced by bar.c:12 (/home/alice/src/bar.c:12)
+// >>>               /home/alice/src/bar.o:(.text+0x1)
+template <class ELFT>
+static std::string getLocation(InputSectionBase &S, const SymbolBody &Sym,
+                               uint64_t Off) {
+  std::string Msg =
+      "\n>>> defined in " + toString(Sym.File) + "\n>>> referenced by ";
+  std::string Src = S.getSrcMsg<ELFT>(Off);
+  if (!Src.empty())
+    Msg += Src + "\n>>>               ";
+  return Msg + S.getObjMsg<ELFT>(Off);
+}
+
 static bool refersToGotEntry(RelExpr Expr) {
   return isRelExprOneOf<R_GOT, R_GOT_OFF, R_MIPS_GOT_LOCAL_PAGE, R_MIPS_GOT_OFF,
                         R_MIPS_GOT_OFF32, R_MIPS_TLSGD, R_MIPS_TLSLD,
@@ -331,9 +347,8 @@ static bool isStaticLinkTimeConstant(RelExpr E, uint32_t Type,
   if (Body.isUndefined() && !Body.isLocal() && Body.symbol()->isWeak())
     return true;
 
-  error(S.getLocation<ELFT>(RelOff) + ": relocation " + toString(Type) +
-        " cannot refer to absolute symbol '" + toString(Body) +
-        "' defined in " + toString(Body.File));
+  error("relocation " + toString(Type) + " cannot refer to absolute symbol: " +
+        toString(Body) + getLocation<ELFT>(S, Body, RelOff));
   return true;
 }
 
@@ -489,17 +504,16 @@ static RelExpr adjustExpr(SymbolBody &Body, RelExpr Expr, uint32_t Type,
   // only memory. We can hack around it if we are producing an executable and
   // the refered symbol can be preemepted to refer to the executable.
   if (Config->Shared || (Config->Pic && !isRelExpr(Expr))) {
-    error(S.getLocation<ELFT>(RelOff) + ": can't create dynamic relocation " +
-          toString(Type) + " against " +
+    error("can't create dynamic relocation " + toString(Type) + " against " +
           (Body.getName().empty() ? "local symbol in readonly segment"
-                                  : "symbol '" + toString(Body) + "'") +
-          " defined in " + toString(Body.File));
+                                  : "symbol: " + toString(Body)) +
+          getLocation<ELFT>(S, Body, RelOff));
     return Expr;
   }
 
   if (Body.getVisibility() != STV_DEFAULT) {
-    error(S.getLocation<ELFT>(RelOff) + ": cannot preempt symbol '" +
-          toString(Body) + "' defined in " + toString(Body.File));
+    error("cannot preempt symbol: " + toString(Body) +
+          getLocation<ELFT>(S, Body, RelOff));
     return Expr;
   }
 
@@ -508,9 +522,10 @@ static RelExpr adjustExpr(SymbolBody &Body, RelExpr Expr, uint32_t Type,
     auto *B = cast<SharedSymbol>(&Body);
     if (!B->NeedsCopy) {
       if (Config->ZNocopyreloc)
-        error(S.getLocation<ELFT>(RelOff) + ": unresolvable relocation " +
-              toString(Type) + " against symbol '" + toString(*B) +
-              "'; recompile with -fPIC or remove '-z nocopyreloc'");
+        error("unresolvable relocation " + toString(Type) +
+              " against symbol '" + toString(*B) +
+              "'; recompile with -fPIC or remove '-z nocopyreloc'" +
+              getLocation<ELFT>(S, Body, RelOff));
 
       addCopyRelSymbol<ELFT>(B);
     }
@@ -543,7 +558,7 @@ static RelExpr adjustExpr(SymbolBody &Body, RelExpr Expr, uint32_t Type,
   }
 
   error("symbol '" + toString(Body) + "' defined in " + toString(Body.File) +
-        " is missing type");
+        " has no type");
   return Expr;
 }
 
@@ -820,8 +835,10 @@ static void scanRelocs(InputSectionBase &Sec, ArrayRef<RelTy> Rels) {
       // We don't know anything about the finaly symbol. Just ask the dynamic
       // linker to handle the relocation for us.
       if (!Target->isPicRel(Type))
-        error(Sec.getLocation<ELFT>(Offset) + ": relocation " + toString(Type) +
-              " cannot be used against shared object; recompile with -fPIC.");
+        error("relocation " + toString(Type) +
+              " cannot be used against shared object; recompile with -fPIC" +
+              getLocation<ELFT>(Sec, Body, Offset));
+
       In<ELFT>::RelaDyn->addReloc(
           {Target->getDynRel(Type), &Sec, Offset, false, &Body, Addend});
 
@@ -915,8 +932,9 @@ template <class ELFT> void elf::scanRelocations(InputSectionBase &S) {
 // in the Sections vector, and recalculate the InputSection output section
 // offsets.
 // This may invalidate any output section offsets stored outside of InputSection
-static void mergeThunks(OutputSection *OS,
-                        std::vector<ThunkSection *> &Thunks) {
+template <class ELFT>
+void ThunkCreator<ELFT>::mergeThunks(OutputSection *OS,
+                                     std::vector<ThunkSection *> &Thunks) {
   // Order Thunks in ascending OutSecOff
   auto ThunkCmp = [](const ThunkSection *A, const ThunkSection *B) {
     return A->OutSecOff < B->OutSecOff;
@@ -944,6 +962,44 @@ static void mergeThunks(OutputSection *OS,
   OS->assignOffsets();
 }
 
+template <class ELFT>
+ThunkSection *ThunkCreator<ELFT>::getOSThunkSec(ThunkSection *&TS,
+                                                OutputSection *OS) {
+  if (TS == nullptr) {
+    uint32_t Off = 0;
+    for (auto *IS : OS->Sections) {
+      Off = IS->OutSecOff + IS->getSize();
+      if ((IS->Flags & SHF_EXECINSTR) == 0)
+        break;
+    }
+    TS = make<ThunkSection>(OS, Off);
+    ThunkSections[OS].push_back(TS);
+  }
+  return TS;
+}
+
+template <class ELFT>
+ThunkSection *ThunkCreator<ELFT>::getISThunkSec(InputSection *IS,
+                                                OutputSection *OS) {
+  ThunkSection *TS = ThunkedSections.lookup(IS);
+  if (TS)
+    return TS;
+  auto *TOS = cast<OutputSection>(IS->OutSec);
+  TS = make<ThunkSection>(TOS, IS->OutSecOff);
+  ThunkSections[TOS].push_back(TS);
+  ThunkedSections[IS] = TS;
+  return TS;
+}
+
+template <class ELFT>
+std::pair<Thunk *, bool> ThunkCreator<ELFT>::getThunk(SymbolBody &Body,
+                                                      uint32_t Type) {
+  auto res = ThunkedSymbols.insert({&Body, nullptr});
+  if (res.second)
+    res.first->second = addThunk<ELFT>(Type, Body);
+  return std::make_pair(res.first->second, res.second);
+}
+
 // Process all relocations from the InputSections that have been assigned
 // to OutputSections and redirect through Thunks if needed.
 //
@@ -955,48 +1011,8 @@ static void mergeThunks(OutputSection *OS,
 // FIXME: All Thunks are assumed to be in range of the relocation. Range
 // extension Thunks are not yet supported.
 template <class ELFT>
-bool elf::createThunks(ArrayRef<OutputSection *> OutputSections) {
-  // Track Symbols that already have a Thunk
-  DenseMap<SymbolBody *, Thunk *> ThunkedSymbols;
-  // Track InputSections that have a ThunkSection placed in front
-  DenseMap<InputSection *, ThunkSection *> ThunkedSections;
-  // Track the ThunksSections that need to be inserted into an OutputSection
-  std::map<OutputSection *, std::vector<ThunkSection *>> ThunkSections;
-
-  // Find or create a Thunk for Body for relocation Type
-  auto GetThunk = [&](SymbolBody &Body, uint32_t Type) {
-    auto res = ThunkedSymbols.insert({&Body, nullptr});
-    if (res.second == true)
-      res.first->second = addThunk<ELFT>(Type, Body);
-    return std::make_pair(res.first->second, res.second);
-  };
-
-  // Find or create a ThunkSection to be placed immediately before IS
-  auto GetISThunkSec = [&](InputSection *IS, OutputSection *OS) {
-    ThunkSection *TS = ThunkedSections.lookup(IS);
-    if (TS)
-      return TS;
-    auto *TOS = cast<OutputSection>(IS->OutSec);
-    TS = make<ThunkSection>(TOS, IS->OutSecOff);
-    ThunkSections[TOS].push_back(TS);
-    ThunkedSections[IS] = TS;
-    return TS;
-  };
-  // Find or create a ThunkSection to be placed as last executable section in
-  // OS.
-  auto GetOSThunkSec = [&](ThunkSection *&TS, OutputSection *OS) {
-    if (TS == nullptr) {
-      uint32_t Off = 0;
-      for (auto *IS : OS->Sections) {
-        Off = IS->OutSecOff + IS->getSize();
-        if ((IS->Flags & SHF_EXECINSTR) == 0)
-          break;
-      }
-      TS = make<ThunkSection>(OS, Off);
-      ThunkSections[OS].push_back(TS);
-    }
-    return TS;
-  };
+bool ThunkCreator<ELFT>::createThunks(
+    ArrayRef<OutputSection *> OutputSections) {
   // Create all the Thunks and insert them into synthetic ThunkSections. The
   // ThunkSections are later inserted back into the OutputSection.
 
@@ -1008,23 +1024,23 @@ bool elf::createThunks(ArrayRef<OutputSection *> OutputSections) {
     for (InputSection *IS : OS->Sections) {
       for (Relocation &Rel : IS->Relocations) {
         SymbolBody &Body = *Rel.Sym;
-        if (Target->needsThunk(Rel.Expr, Rel.Type, IS->File, Body)) {
-          Thunk *T;
-          bool IsNew;
-          std::tie(T, IsNew) = GetThunk(Body, Rel.Type);
-          if (IsNew) {
-            // Find or create a ThunkSection for the new Thunk
-            ThunkSection *TS;
-            if (auto *TIS = T->getTargetInputSection())
-              TS = GetISThunkSec(TIS, OS);
-            else
-              TS = GetOSThunkSec(OSTS, OS);
-            TS->addThunk(T);
-          }
-          // Redirect relocation to Thunk, we never go via the PLT to a Thunk
-          Rel.Sym = T->ThunkSym;
-          Rel.Expr = fromPlt(Rel.Expr);
+        if (!Target->needsThunk(Rel.Expr, Rel.Type, IS->File, Body))
+          continue;
+        Thunk *T;
+        bool IsNew;
+        std::tie(T, IsNew) = getThunk(Body, Rel.Type);
+        if (IsNew) {
+          // Find or create a ThunkSection for the new Thunk
+          ThunkSection *TS;
+          if (auto *TIS = T->getTargetInputSection())
+            TS = getISThunkSec(TIS, OS);
+          else
+            TS = getOSThunkSec(OSTS, OS);
+          TS->addThunk(T);
         }
+        // Redirect relocation to Thunk, we never go via the PLT to a Thunk
+        Rel.Sym = T->ThunkSym;
+        Rel.Expr = fromPlt(Rel.Expr);
       }
     }
   }
@@ -1040,7 +1056,7 @@ template void elf::scanRelocations<ELF32BE>(InputSectionBase &);
 template void elf::scanRelocations<ELF64LE>(InputSectionBase &);
 template void elf::scanRelocations<ELF64BE>(InputSectionBase &);
 
-template bool elf::createThunks<ELF32LE>(ArrayRef<OutputSection *>);
-template bool elf::createThunks<ELF32BE>(ArrayRef<OutputSection *>);
-template bool elf::createThunks<ELF64LE>(ArrayRef<OutputSection *>);
-template bool elf::createThunks<ELF64BE>(ArrayRef<OutputSection *>);
+template class elf::ThunkCreator<ELF32LE>;
+template class elf::ThunkCreator<ELF32BE>;
+template class elf::ThunkCreator<ELF64LE>;
+template class elf::ThunkCreator<ELF64BE>;

@@ -189,12 +189,16 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::v4i16, Custom);
   setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::Other, Custom);
 
+  setOperationAction(ISD::INTRINSIC_WO_CHAIN, MVT::Other, Custom);
   setOperationAction(ISD::INTRINSIC_WO_CHAIN, MVT::f32, Custom);
   setOperationAction(ISD::INTRINSIC_WO_CHAIN, MVT::v4f32, Custom);
+  setOperationAction(ISD::INTRINSIC_WO_CHAIN, MVT::v2f16, Custom);
+
   setOperationAction(ISD::INTRINSIC_W_CHAIN, MVT::Other, Custom);
+
+  setOperationAction(ISD::INTRINSIC_VOID, MVT::Other, Custom);
   setOperationAction(ISD::INTRINSIC_VOID, MVT::v2i16, Custom);
   setOperationAction(ISD::INTRINSIC_VOID, MVT::v2f16, Custom);
-  setOperationAction(ISD::INTRINSIC_WO_CHAIN, MVT::v2f16, Custom);
 
   setOperationAction(ISD::BRCOND, MVT::Other, Custom);
   setOperationAction(ISD::BR_CC, MVT::i1, Expand);
@@ -2810,11 +2814,6 @@ SDValue SITargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
   }
   case Intrinsic::amdgcn_fdiv_fast:
     return lowerFDIV_FAST(Op, DAG);
-  case AMDGPUIntrinsic::SI_vs_load_input:
-    return DAG.getNode(AMDGPUISD::LOAD_INPUT, DL, VT,
-                       Op.getOperand(1),
-                       Op.getOperand(2),
-                       Op.getOperand(3));
   case Intrinsic::amdgcn_interp_mov: {
     SDValue M0 = copyToM0(DAG, DAG.getEntryNode(), DL, Op.getOperand(4));
     SDValue Glue = M0.getValue(1);
@@ -2945,7 +2944,7 @@ SDValue SITargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
     return DAG.getNode(ISD::BITCAST, DL, VT, Node);
   }
   default:
-    return AMDGPUTargetLowering::LowerOperation(Op, DAG);
+    return Op;
   }
 }
 
@@ -3160,31 +3159,8 @@ SDValue SITargetLowering::LowerINTRINSIC_VOID(SDValue Op,
     SDValue Cast = DAG.getNode(ISD::BITCAST, DL, MVT::i32, Src);
     return DAG.getNode(AMDGPUISD::KILL, DL, MVT::Other, Chain, Cast);
   }
-  case AMDGPUIntrinsic::SI_export: { // Legacy intrinsic.
-    const ConstantSDNode *En = cast<ConstantSDNode>(Op.getOperand(2));
-    const ConstantSDNode *VM = cast<ConstantSDNode>(Op.getOperand(3));
-    const ConstantSDNode *Done = cast<ConstantSDNode>(Op.getOperand(4));
-    const ConstantSDNode *Tgt = cast<ConstantSDNode>(Op.getOperand(5));
-    const ConstantSDNode *Compr = cast<ConstantSDNode>(Op.getOperand(6));
-
-    const SDValue Ops[] = {
-      Chain,
-      DAG.getTargetConstant(Tgt->getZExtValue(), DL, MVT::i8),
-      DAG.getTargetConstant(En->getZExtValue(), DL, MVT::i8),
-      Op.getOperand(7),  // src0
-      Op.getOperand(8),  // src1
-      Op.getOperand(9),  // src2
-      Op.getOperand(10), // src3
-      DAG.getTargetConstant(Compr->getZExtValue(), DL, MVT::i1),
-      DAG.getTargetConstant(VM->getZExtValue(), DL, MVT::i1)
-    };
-
-    unsigned Opc = Done->isNullValue() ?
-      AMDGPUISD::EXPORT : AMDGPUISD::EXPORT_DONE;
-    return DAG.getNode(Opc, DL, Op->getVTList(), Ops);
-  }
   default:
-    return SDValue();
+    return Op;
   }
 }
 
