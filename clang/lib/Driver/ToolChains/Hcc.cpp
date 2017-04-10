@@ -16,7 +16,14 @@
 #include "clang/Driver/Options.h"
 #include "llvm/Option/ArgList.h"
 #include "llvm/Support/Path.h"
+
+#include <array>
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
+#include <memory>
 #include <system_error>
+#include <utility>
 
 using namespace clang::driver;
 using namespace clang::driver::toolchains;
@@ -24,9 +31,9 @@ using namespace clang::driver::tools;
 using namespace clang;
 using namespace llvm::opt;
 
-static void HCPassOptions(const ArgList &Args, ArgStringList &CmdArgs) {
-
-  for(auto A : Args) {
+static void HCPassOptions(const ArgList &Args, ArgStringList &CmdArgs)
+{
+  for(auto&& A : Args) {
     Option ArgOpt = A->getOption();
     // Avoid passing options that have already been processed by the compilation stage or will be used for the linking stage
     bool hasOpts = ArgOpt.hasFlag(options::LinkerInput) || // omit linking options
@@ -52,11 +59,14 @@ static void HCPassOptions(const ArgList &Args, ArgStringList &CmdArgs) {
   }
 }
 
-void HCC::HCKernelAssemble::ConstructJob(Compilation &C, const JobAction &JA,
-                                    const InputInfo &Output,
-                                    const InputInfoList &Inputs,
-                                    const ArgList &Args,
-                                    const char *LinkingOutput) const {
+void HCC::HCKernelAssemble::ConstructJob(
+    Compilation &C,
+    const JobAction &JA,
+    const InputInfo &Output,
+    const InputInfoList &Inputs,
+    const ArgList &Args,
+    const char *LinkingOutput) const
+{
   assert(Inputs.size() == 1 && "Unable to handle multiple inputs.");
 
   ArgStringList CmdArgs;
@@ -80,11 +90,14 @@ void HCC::HCKernelAssemble::ConstructJob(Compilation &C, const JobAction &JA,
   C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
 }
 
-void HCC::HCHostAssemble::ConstructJob(Compilation &C, const JobAction &JA,
-                                  const InputInfo &Output,
-                                  const InputInfoList &Inputs,
-                                  const ArgList &Args,
-                                  const char *LinkingOutput) const {
+void HCC::HCHostAssemble::ConstructJob(
+    Compilation &C,
+    const JobAction &JA,
+    const InputInfo &Output,
+    const InputInfoList &Inputs,
+    const ArgList &Args,
+    const char *LinkingOutput) const
+{
   assert(Inputs.size() == 1 && "Unable to handle multiple inputs.");
 
   ArgStringList CmdArgs;
@@ -110,11 +123,14 @@ void HCC::HCHostAssemble::ConstructJob(Compilation &C, const JobAction &JA,
   C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
 }
 
-void HCC::CXXAMPAssemble::ConstructJob(Compilation &C, const JobAction &JA,
-                                  const InputInfo &Output,
-                                  const InputInfoList &Inputs,
-                                  const ArgList &Args,
-                                  const char *LinkingOutput) const {
+void HCC::CXXAMPAssemble::ConstructJob(
+    Compilation &C,
+    const JobAction &JA,
+    const InputInfo &Output,
+    const InputInfoList &Inputs,
+    const ArgList &Args,
+    const char *LinkingOutput) const
+{
   assert(Inputs.size() == 1 && "Unable to handle multiple inputs.");
 
   ArgStringList CmdArgs;
@@ -137,25 +153,100 @@ void HCC::CXXAMPAssemble::ConstructJob(Compilation &C, const JobAction &JA,
   C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
 }
 
-std::string temporaryReplaceLongFormGFXIp(const Compilation& C, std::string l)
-{ // Precondition: l = "AMD:AMDGPU:\d:\d:\d"
-  // TODO: this should be removed once we have transitioned all users to using
-  //       the short form. It is purposefully inefficient.
-  const auto t = l;
+namespace
+{
+    std::string temporaryReplaceLongFormGFXIp(
+        const Compilation& C, std::string l)
+    { // Precondition: l = "AMD:AMDGPU:\d:\d:\d"
+        // TODO: this should be removed once we have transitioned all users to
+        //       the short form. It is purposefully inefficient.
+        const auto t = l;
 
-  l.replace(0u, 3u, {'g', 'f', 'x'});
-  l.erase(std::copy_if(l.begin() + 3u, l.end(), l.begin() + 3u, isdigit), l.end());
-  C.getDriver().Diag(diag::warn_drv_deprecated_arg) << t << l;
+        l.replace(0u, 3u, {'g', 'f', 'x'});
+        l.erase(std::copy_if(
+            l.begin() + 3u, l.end(), l.begin() + 3u, isdigit), l.end());
+        C.getDriver().Diag(diag::warn_drv_deprecated_arg) << t << l;
 
-  return l;
+        return l;
+    }
+
+    std::pair<std::vector<std::string>, int> detect_gfxip(
+        const Compilation& C, const ToolChain& TC)
+    {
+        std::vector<std::string> agents;
+
+        const auto e = C.getSysRoot() + "/opt/rocm/bin/rocm_agent_enumerator";
+
+        if (!TC.getVFS().exists(e)) return {agents, EXIT_FAILURE};
+
+        std::unique_ptr<std::FILE, decltype(pclose)*> pipe{
+            popen((e.str() + " --type GPU").c_str(), "r"), pclose};
+
+        if (!pipe) { return {agents, EXIT_FAILURE}; }
+
+        static constexpr std::size_t buf_sz = 16u;
+        std::array<char, buf_sz> buf;
+        while (std::fgets(buf.data(), buf.size(), pipe.get())) {
+            agents.emplace_back(buf.data());
+        }
+        for (auto&& x : agents) { // fgets copies the newline.
+            x.erase(std::remove(x.begin(), x.end(), '\n'), x.end());
+        }
+
+        if (agents.size() > 1) {
+            std::sort(agents.rbegin(), agents.rend());
+            agents.pop_back(); // Remove null-agent.
+        }
+
+
+        return {std::move(agents), EXIT_SUCCESS};
+    }
+
+    bool is_valid(const std::string& gfxip)
+    {
+        static constexpr std::array<const char*, 7u> valid = {
+            { "gfx700", "gfx701", "gfx801", "gfx802", "gfx803", "gfx900",
+              "gfx901" }};
+
+        return std::find(valid.cbegin(), valid.cend(), gfxip) != valid.cend();
+    }
+
+    bool is_deprecated(const std::string& gfxip)
+    {
+        static constexpr std::array<const char*, 1u> deprecated = {{"gfx700"}};
+
+        return std::find(
+            deprecated.cbegin(), deprecated.cend(), gfxip) != deprecated.cend();
+    }
+
+    void validate_and_add_to_command(
+        const std::string& gfxip,
+        const Compilation& c,
+        const ArgList& args,
+        ArgStringList& cmd_args)
+    {
+        static constexpr const char prefix[] = "--amdgpu-target=";
+
+        if (!is_valid(gfxip)) {
+            c.getDriver().Diag(diag::warn_amdgpu_target_invalid) << gfxip;
+            return;
+        }
+
+        if (is_deprecated(gfxip)) {
+            c.getDriver().Diag(diag::warn_amdgpu_target_deprecated) << gfxip;
+        }
+        cmd_args.push_back(args.MakeArgString(prefix + gfxip));
+    }
 }
 
-void HCC::CXXAMPLink::ConstructJob(Compilation &C,
-                                   const JobAction &JA,
-                                   const InputInfo &Output,
-                                   const InputInfoList &Inputs,
-                                   const ArgList &Args,
-                                   const char *LinkingOutput) const {
+void HCC::CXXAMPLink::ConstructJob(
+    Compilation &C,
+    const JobAction &JA,
+    const InputInfo &Output,
+    const InputInfoList &Inputs,
+    const ArgList &Args,
+    const char *LinkingOutput) const
+{
   ArgStringList CmdArgs;
 
   // add verbose flag to linker script if clang++ is invoked with --verbose flag
@@ -163,48 +254,50 @@ void HCC::CXXAMPLink::ConstructJob(Compilation &C,
     CmdArgs.push_back("--verbose");
 
   // specify AMDGPU target
+
   if (Args.hasArg(options::OPT_amdgpu_target_EQ)) {
-    auto AMDGPUTargetVector = Args.getAllArgValues(options::OPT_amdgpu_target_EQ);
+    auto AMDGPUTargetVector =
+        Args.getAllArgValues(options::OPT_amdgpu_target_EQ);
 
     for (auto&& AMDGPUTarget : AMDGPUTargetVector) {
       // TODO: the known GFXip list should probably reside in a constant
       //       global variable so as to allow easy extension in the future.
-      static constexpr const char prefix[] = "--amdgpu-target=";
-      static constexpr unsigned int discard_sz = 3u;
-      static const std::string gfx_ip{"gfx"};
       static const std::string long_gfx_ip_prefix{"AMD:AMDGPU:"}; // Temporary.
 
       // TODO: this is temporary.
-      if (std::search(AMDGPUTarget.cbegin(), AMDGPUTarget.cend(), long_gfx_ip_prefix.cbegin(), long_gfx_ip_prefix.cend()) != AMDGPUTarget.cend()) {
+      if (std::search(
+              AMDGPUTarget.cbegin(),
+              AMDGPUTarget.cend(),
+              long_gfx_ip_prefix.cbegin(),
+              long_gfx_ip_prefix.cend()) != AMDGPUTarget.cend()) {
           AMDGPUTarget = temporaryReplaceLongFormGFXIp(C, AMDGPUTarget);
       }
 
-      if (std::search(AMDGPUTarget.cbegin(), AMDGPUTarget.cend(), gfx_ip.cbegin(), gfx_ip.cend()) != AMDGPUTarget.cend()) {
-        std::string t{prefix};
-        switch (std::atoi(AMDGPUTarget.data() + discard_sz)) {
-        case 700: t += "gfx700";  break;
-        case 701: t += "gfx701";  break;
-        case 801: t += "gfx801"; break;
-        case 802: t += "gfx802";   break;
-        case 803: t += "gfx803";    break;
-        case 900: t += "gfx900";  break;
-        case 901: t += "gfx901";  break;
-        default:
-          C.getDriver().Diag(diag::warn_amdgpu_target_invalid) << AMDGPUTarget;
-        break;
-        }
-        CmdArgs.push_back(Args.MakeArgString(t));
+      validate_and_add_to_command(AMDGPUTarget, C, Args, CmdArgs);
+    }
+  }
+  else {
+      constexpr const char null_agent[] = "gfx000";
+      const auto detected_targets = detect_gfxip(C, getToolChain());
+      if (detected_targets.second != EXIT_SUCCESS) {
+          C.getDriver().Diag(diag::warn_amdgpu_agent_detector_failed);
+      }
+      else if (detected_targets.first[0] == null_agent) {
+          C.getDriver().Diag(diag::err_amdgpu_no_agent_available);
       }
       else {
-        C.getDriver().Diag(diag::warn_amdgpu_target_invalid) << AMDGPUTarget;
+          for (auto&& x : detected_targets.first) {
+              validate_and_add_to_command(x, C, Args, CmdArgs);
+          }
       }
-    }
   }
 
   // pass inputs to gnu ld for initial processing
-  Linker::ConstructLinkerJob(C, JA, Output, Inputs, Args, LinkingOutput, CmdArgs);
+  Linker::ConstructLinkerJob(
+      C, JA, Output, Inputs, Args, LinkingOutput, CmdArgs);
 
-  const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("clamp-link"));
+  const char *Exec =
+      Args.MakeArgString(getToolChain().GetProgramPath("clamp-link"));
 
   C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
 }
@@ -219,25 +312,28 @@ void HCC::CXXAMPLink::ConstructJob(Compilation &C,
 ///   - use hc-host-assemble as assembler for host path
 ///   - use clamp-link as linker
 
-HCCToolChain::HCCToolChain(const Driver &D, const llvm::Triple &Triple,
-                           const ArgList &Args)
-    : Linux(D, Triple, Args) {
+HCCToolChain::HCCToolChain(
+    const Driver &D, const llvm::Triple &Triple, const ArgList &Args)
+    : Linux(D, Triple, Args)
+{
   llvm::Triple defaultTriple(llvm::sys::getDefaultTargetTriple());
   GCCInstallation.init(defaultTriple, Args);
 }
 
-void
-HCCToolChain::addClangTargetOptions(const llvm::opt::ArgList &DriverArgs,
-                                    llvm::opt::ArgStringList &CC1Args) const {
+void HCCToolChain::addClangTargetOptions(
+    const llvm::opt::ArgList &DriverArgs,
+    llvm::opt::ArgStringList &CC1Args) const
+{
   Linux::addClangTargetOptions(DriverArgs, CC1Args);
 
   // TBD, depends on mode set correct arguments
 }
 
-llvm::opt::DerivedArgList *
-HCCToolChain::TranslateArgs(const llvm::opt::DerivedArgList &Args,
-                            StringRef BoundArch,
-                            Action::OffloadKind DeviceOffloadKind) const {
+llvm::opt::DerivedArgList* HCCToolChain::TranslateArgs(
+    const llvm::opt::DerivedArgList &Args,
+    StringRef BoundArch,
+    Action::OffloadKind DeviceOffloadKind) const
+{
   // TBD look into what should be properly implemented
   DerivedArgList *DAL = new DerivedArgList(Args.getBaseArgs());
   const OptTable &Opts = getDriver().getOpts();
@@ -286,7 +382,8 @@ extern bool IsHCKernelAssembleJobAction(const JobAction* A);
 extern bool IsCXXAMPAssembleJobAction(const JobAction* A);
 extern bool IsCXXAMPCPUAssembleJobAction(const JobAction* A);
 
-Tool *HCCToolChain::SelectTool(const JobAction &JA) const {
+Tool *HCCToolChain::SelectTool(const JobAction &JA) const
+{
   Action::ActionClass AC = JA.getKind();
 
   if (AC == Action::AssembleJobClass) {
@@ -310,6 +407,7 @@ Tool *HCCToolChain::SelectTool(const JobAction &JA) const {
   return ToolChain::SelectTool(JA);
 }
 
-Tool *HCCToolChain::buildLinker() const {
+Tool *HCCToolChain::buildLinker() const
+{
   return new tools::HCC::CXXAMPLink(*this);
 }
