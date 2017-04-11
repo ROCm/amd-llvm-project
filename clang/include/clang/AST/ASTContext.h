@@ -2313,7 +2313,12 @@ public:
 
   unsigned getTargetAddressSpace(Qualifiers Q) const;
 
-  unsigned getTargetAddressSpace(unsigned AS) const;
+  unsigned getTargetAddressSpace(unsigned AS) const {
+    if (AS < LangAS::Offset || AS >= LangAS::Offset + LangAS::Count)
+      return AS;
+    else
+      return (*AddrSpaceMap)[AS - LangAS::Offset];
+  }
 
   unsigned getTargetAddressSpaceForAutoVar() const;
 
@@ -2331,8 +2336,7 @@ public:
 
   bool addressSpaceMapManglingFor(unsigned AS) const {
     return AddrSpaceMapMangling ||
-           AS < LangAS::Offset ||
-           AS >= LangAS::Offset + LangAS::Count;
+           AS >= LangAS::Count;
   }
 
 private:

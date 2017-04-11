@@ -9854,7 +9854,8 @@ static void DiagnoseBadConversion(Sema &S, OverloadCandidate *Cand,
         << (unsigned) FnKind << FnDesc
         << (FromExpr ? FromExpr->getSourceRange() : SourceRange())
         << FromTy
-        << FromQs.getAddressSpace() << ToQs.getAddressSpace()
+        << FromQs.getAddressSpaceAttributePrintValue()
+        << ToQs.getAddressSpaceAttributePrintValue()
         << (unsigned) isObjectArgument << I+1;
       MaybeEmitInheritedConstructorNote(S, Cand->FoundDecl);
       return;
