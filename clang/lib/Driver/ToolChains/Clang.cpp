@@ -2781,8 +2781,10 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       DebugInfoKind = codegenoptions::LimitedDebugInfo;
   }
 
-  // disable debug output for HCC kernel path
-  if (!IsHCCKernelPath) {
+  // Only allow debug lines output for HCC kernel path,
+  // disable other debug info until it's fully supported
+  if (!IsHCCKernelPath ||
+       DebugInfoKind == codegenoptions::DebugLineTablesOnly) {
 
   // If a debugger tuning argument appeared, remember it.
   if (Arg *A = Args.getLastArg(options::OPT_gTune_Group,
