@@ -165,11 +165,20 @@ def err_drv_omp_host_target_not_supported : Error<
 def err_drv_expecting_fopenmp_with_fopenmp_targets : Error<
   "The option -fopenmp-targets must be used in conjunction with a -fopenmp option compatible with offloading, please use -fopenmp=libomp or -fopenmp=libiomp5.">;
 def warn_drv_omp_offload_target_duplicate : Warning<
-  "The OpenMP offloading target '%0' is similar to target '%1' already specified - will be ignored.">, 
+  "The OpenMP offloading target '%0' is similar to target '%1' already specified - will be ignored.">,
   InGroup<OpenMPTarget>;
 def err_drv_bitcode_unsupported_on_toolchain : Error<
   "-fembed-bitcode is not supported on versions of iOS prior to 6.0">;
 
+def warn_amdgpu_agent_detector_failed: Warning<
+    "ROCm agent detector failed to execute correctly; using default "
+    "-amdgpu-target instead">, InGroup<Fallback>;
+def warn_amdgpu_target_deprecated: Warning<
+    "-amdgpu-target argument '%0' identifies an architecture for which support "
+    "is deprecated; please consider upgrading">, InGroup<Deprecated>;
+def err_amdgpu_no_agent_available : Error<
+    "ROCm agent detector could not identify any valid targets; please specify "
+    "the target explicitly by passing a valid value to -amdgpu-target">;
 def warn_amdgpu_target_invalid : Warning<"-amdgpu-target argument '%0' is not recognized; using gfx803 instead">, InGroup<InvalidCommandLineArgument>;
 def warn_drv_O0_ignored_for_GPU : Warning<"-O0 is ignored in GPU compilation path">, InGroup<InvalidCommandLineArgument>;
 def warn_drv_O1_ignored_for_GPU : Warning<"-O1 is ignored in GPU compilation path">, InGroup<InvalidCommandLineArgument>;

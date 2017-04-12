@@ -155,9 +155,9 @@ void HCC::CXXAMPAssemble::ConstructJob(
 
 namespace
 {
-    std::string temporaryReplaceLongFormGFXIp(
+    std::string temporary_replace_long_form_GFXIp(
         const Compilation& C, std::string l)
-    { // Precondition: l = "AMD:AMDGPU:\d:\d:\d"
+    {   // Precondition: l = "AMD:AMDGPU:\d:\d:\d"
         // TODO: this should be removed once we have transitioned all users to
         //       the short form. It is purposefully inefficient.
         const auto t = l;
@@ -175,7 +175,11 @@ namespace
     {
         std::vector<std::string> agents;
 
-        const auto e = C.getSysRoot() + "/opt/rocm/bin/rocm_agent_enumerator";
+        const char* tmp = std::getenv("ROCM_ROOT");
+        const char* rocm = tmp ? tmp : "/opt/rocm";
+
+        const auto e =
+            C.getSysRoot() + rocm + "/bin/rocm_agent_enumerator";
 
         if (!TC.getVFS().exists(e)) return {agents, EXIT_FAILURE};
 
@@ -270,7 +274,7 @@ void HCC::CXXAMPLink::ConstructJob(
               AMDGPUTarget.cend(),
               long_gfx_ip_prefix.cbegin(),
               long_gfx_ip_prefix.cend()) != AMDGPUTarget.cend()) {
-          AMDGPUTarget = temporaryReplaceLongFormGFXIp(C, AMDGPUTarget);
+          AMDGPUTarget = temporary_replace_long_form_GFXIp(C, AMDGPUTarget);
       }
 
       validate_and_add_to_command(AMDGPUTarget, C, Args, CmdArgs);
