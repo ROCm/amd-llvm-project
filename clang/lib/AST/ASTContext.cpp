@@ -9555,25 +9555,16 @@ uint64_t ASTContext::getTargetNullPointerValue(QualType QT) const {
   return getTargetInfo().getNullPointerValue(getTargetAddressSpace(AS));
 }
 
-unsigned ASTContext::getMappedAddressSpace(unsigned AS) const {
-  return (*AddrSpaceMap)[AS - LangAS::Offset];
-}
-
 unsigned ASTContext::getTargetAddressSpace(unsigned AS) const {
-  // For OpenCL 1.2 and below, address space 0 should be mapped the same
-  // way as  private address space.
-  if (LangOpts.OpenCL && AS == 0)
-    return getTargetAddressSpaceForAutoVar();
-  if (AS < LangAS::Offset || AS >= LangAS::Offset + LangAS::Count)
-    return AS;
+  // For OpenCL, only function local variables are not explicitly marked with
+  // an address space in the AST, and these need to be the address space of
+  // alloca.
+  if (!AS && LangOpts.OpenCL)
+    return getTargetInfo().getDataLayout().getAllocaAddrSpace();
+  if (AS >= LangAS::Count)
+    return AS - LangAS::Count;
   else
-    return getMappedAddressSpace(AS);
-}
-
-unsigned ASTContext::getTargetAddressSpaceForAutoVar() const {
-  if (LangOpts.OpenCL)
-    return getMappedAddressSpace(LangAS::opencl_private);
-  return 0;
+    return (*AddrSpaceMap)[AS];
 }
 
 unsigned ASTContext::getTargetConstantAddressSpace() const {
@@ -9595,18 +9586,6 @@ unsigned ASTContext::getTargetAddressSpace(QualType T) const {
 
 unsigned ASTContext::getTargetAddressSpace(Qualifiers Q) const {
   return getTargetAddressSpace(Q.getAddressSpace());
-}
-
-unsigned ASTContext::getTargetAddressSpace(unsigned AS) const {
-  // For OpenCL, only function local variables are not explicitly marked with
-  // an address space in the AST, and these need to be the address space of
-  // alloca.
-  if (!AS && LangOpts.OpenCL)
-    return getTargetInfo().getDataLayout().getAllocaAddrSpace();
-  if (AS >= LangAS::Count)
-    return AS - LangAS::Count;
-  else
-    return (*AddrSpaceMap)[AS];
 }
 
 // Explicitly instantiate this in case a Redeclarable<T> is used from a TU that

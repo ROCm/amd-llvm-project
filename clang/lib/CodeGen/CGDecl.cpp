@@ -1110,7 +1110,7 @@ CodeGenFunction::EmitAutoVarAlloca(const VarDecl &D) {
     vla->setAlignment(alignment.getQuantity());
 
     llvm::Value *V = vla;
-    auto Addr = getContext().getTargetAddressSpaceForAutoVar();
+    auto Addr = CGM.getModule().getDataLayout().getAllocaAddrSpace();
     if (Addr != V->getType()->getPointerAddressSpace()) {
       auto *DestTy =
           llvm::PointerType::get(vla->getType()->getElementType(), Addr);

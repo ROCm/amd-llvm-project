@@ -86,15 +86,8 @@ llvm::Instruction *CodeGenFunction::CreateTempAlloca(llvm::Type *Ty,
 llvm::Instruction *CodeGenFunction::CreateAlloca(llvm::Type *Ty,
                                                  const Twine &Name,
                                                  llvm::Instruction *InsertPos) {
-  llvm::Instruction *V = new llvm::AllocaInst(Ty,
+  return new llvm::AllocaInst(Ty,
       CGM.getDataLayout().getAllocaAddrSpace(), nullptr, Name, InsertPos);
-  auto Addr = getContext().getTargetAddressSpaceForAutoVar();
-  if (Addr != V->getType()->getPointerAddressSpace()) {
-    auto *DestTy = llvm::PointerType::get(V->getType()->getPointerElementType(),
-                                          Addr);
-    V = new llvm::AddrSpaceCastInst(V, DestTy, "", InsertPos);
-  }
-  return V;
 }
 
 llvm::AllocaInst *

@@ -2313,14 +2313,7 @@ public:
 
   unsigned getTargetAddressSpace(Qualifiers Q) const;
 
-  unsigned getTargetAddressSpace(unsigned AS) const {
-    if (AS < LangAS::Offset || AS >= LangAS::Offset + LangAS::Count)
-      return AS;
-    else
-      return (*AddrSpaceMap)[AS - LangAS::Offset];
-  }
-
-  unsigned getTargetAddressSpaceForAutoVar() const;
+  unsigned getTargetAddressSpace(unsigned AS) const;
 
   /// Get target-dependent integer value for null pointer which is used for
   /// constant folding.
@@ -2342,8 +2335,6 @@ public:
 private:
   // Helper for integer ordering
   unsigned getIntegerRank(const Type *T) const;
-
-  unsigned getMappedAddressSpace(unsigned AS) const;
 
 public:
   //===--------------------------------------------------------------------===//
