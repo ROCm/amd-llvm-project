@@ -1983,12 +1983,14 @@ static bool isWhiteListForHCC(CodeGenModule &CGM, GlobalDecl GD) {
   }
 
   // C++11 swap/move functions are allowed to pass
+  // C++11 memory_order modifiers are allowed to pass
   // Eigen internal functions are allowed to pass
   const FunctionDecl* FuncD = dyn_cast<FunctionDecl>(D);
   if (FuncD) {
     if (MangledName.find("4swap") != StringRef::npos ||
         MangledName.find("4move") != StringRef::npos ||
         MangledName.find("16grid_launch_parm10KernelArgsIT2_EENKUlvE_clEv") != StringRef::npos ||
+        MangledName.find("St12memory_order") != StringRef::npos ||
         MangledName.find("Eigen8internal") != StringRef::npos) {
       return true;
     }
