@@ -172,8 +172,15 @@ namespace
 
     std::pair<std::vector<std::string>, int> detect_gfxip(
         const Compilation& C, const ToolChain& TC)
-    {
-        std::vector<std::string> agents;
+    {   // Invariant: rocm_agent_enumerator returns EXIT_SUCCESS iff it executes
+        //            correctly.
+        // Invariant: iff it executes correctly, rocm_agent_enumerator returns
+        //            at least gfx000; returning only gfx000 signals the absence
+        //            of valid GPU agents.
+        // Invariant: iff it executes correctly, and iff there are valid GPU
+        //            agents present rocm_agent_enumerator returns the set
+        //            formed from their union, including gfx000.
+        std::pair<std::vector<std::string>, int> r{{}, EXIT_FAILURE};
 
         const char* tmp = std::getenv("ROCM_ROOT");
         const char* rocm = tmp ? tmp : "/opt/rocm";
@@ -181,29 +188,28 @@ namespace
         const auto e =
             C.getSysRoot() + rocm + "/bin/rocm_agent_enumerator";
 
-        if (!TC.getVFS().exists(e)) return {agents, EXIT_FAILURE};
+        if (!TC.getVFS().exists(e)) return r;
 
         std::unique_ptr<std::FILE, decltype(pclose)*> pipe{
             popen((e.str() + " --type GPU").c_str(), "r"), pclose};
 
-        if (!pipe) { return {agents, EXIT_FAILURE}; }
+        if (!pipe) return r;
 
         static constexpr std::size_t buf_sz = 16u;
         std::array<char, buf_sz> buf;
         while (std::fgets(buf.data(), buf.size(), pipe.get())) {
-            agents.emplace_back(buf.data());
+            r.first.emplace_back(buf.data());
         }
-        for (auto&& x : agents) { // fgets copies the newline.
+        for (auto&& x : r.first) { // fgets copies the newline.
             x.erase(std::remove(x.begin(), x.end(), '\n'), x.end());
         }
 
-        if (agents.size() > 1) {
-            std::sort(agents.rbegin(), agents.rend());
-            agents.pop_back(); // Remove null-agent.
+        if (r.first.size() > 1) {
+            std::sort(r.first.rbegin(), r.first.rend());
+            r.first.pop_back(); // Remove null-agent.
         }
 
-
-        return {std::move(agents), EXIT_SUCCESS};
+        return r;
     }
 
     bool is_valid(const std::string& gfxip)
