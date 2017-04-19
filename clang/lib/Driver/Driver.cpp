@@ -2863,7 +2863,7 @@ void Driver::BuildJobs(Compilation &C) const {
         LinkingOutput = getDefaultImageName();
     }
 
-    JobAction *JA = cast<JobAction>(A);
+    JobAction *JA = dyn_cast<JobAction>(A);
     // UPGRADE_TBD: FIXME This is hack. Need to find a cleaner way
     // The line is added so clang -emit-llvm would pick correct toolchain for HCC inputs
     if (JA && IsCXXAMPBackendJobAction(JA)) {
