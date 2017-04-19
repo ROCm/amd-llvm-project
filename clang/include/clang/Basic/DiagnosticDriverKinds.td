@@ -170,12 +170,16 @@ def warn_drv_omp_offload_target_duplicate : Warning<
 def err_drv_bitcode_unsupported_on_toolchain : Error<
   "-fembed-bitcode is not supported on versions of iOS prior to 6.0">;
 
-def warn_amdgpu_agent_detector_failed: Warning<
+def warn_amdgpu_agent_detector_failed : Warning<
     "ROCm agent detector failed to execute correctly; using default "
     "-amdgpu-target instead">, InGroup<Fallback>;
-def warn_amdgpu_target_deprecated: Warning<
+def warn_amdgpu_target_deprecated : Warning<
     "-amdgpu-target argument '%0' identifies an architecture for which support "
     "is deprecated; please consider upgrading">, InGroup<Deprecated>;
+def warn_amdgpu_target_auto_nonsingular : Warning<
+    "using auto as argument to -amdgpu-target in conjunction with other "
+    "arguments is disallowed; ignoring auto and using explicit targets "
+    "instead">, InGroup<Fallback>;
 def err_amdgpu_no_agent_available : Error<
     "ROCm agent detector could not identify any valid targets; please specify "
     "the target explicitly by passing a valid value to -amdgpu-target">;
