@@ -2265,8 +2265,8 @@ void CodeGenFunction::EmitFunctionProlog(const CGFunctionInfo &FI,
           // copy.
           CharUnits Size = getContext().getTypeSizeInChars(Ty);
           auto SizeVal = llvm::ConstantInt::get(IntPtrTy, Size.getQuantity());
-          Address Dst = Builder.CreateBitCast(AlignedTemp, Int8PtrTy);
-          Address Src = Builder.CreateBitCast(ParamAddr, Int8PtrTy);
+          Address Dst = Builder.CreateBitCast(AlignedTemp, AllocaInt8PtrTy);
+          Address Src = Builder.CreateBitCast(ParamAddr, AllocaInt8PtrTy);
           Builder.CreateMemCpy(Dst, Src, SizeVal, false);
           V = AlignedTemp;
         }
@@ -3816,7 +3816,8 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
       assert(NumIRArgs == 1);
       if (RV.isScalar() || RV.isComplex()) {
         // Make a temporary alloca to pass the argument.
-        Address Addr = CreateMemTemp(I->Ty, ArgInfo.getIndirectAlign());
+        Address Addr = CreateMemTemp(I->Ty, ArgInfo.getIndirectAlign(), "tmp",
+            false);
         IRCallArgs[FirstIRArg] = Addr.getPointer();
 
         LValue argLV = MakeAddrLValue(Addr, I->Ty);
@@ -3845,12 +3846,18 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
                < Align.getQuantity()) ||
             (ArgInfo.getIndirectByVal() && (RVAddrSpace != ArgAddrSpace))) {
           // Create an aligned temporary, and copy to it.
-          Address AI = CreateMemTemp(I->Ty, ArgInfo.getIndirectAlign());
+          Address AI = CreateMemTemp(I->Ty, ArgInfo.getIndirectAlign(), "tmp",
+              false);
           IRCallArgs[FirstIRArg] = AI.getPointer();
           EmitAggregateCopy(AI, Addr, I->Ty, RV.isVolatileQualified());
         } else {
+          auto Arg = Addr.getPointer();
+          if (RVAddrSpace != ArgAddrSpace)
+            Arg = Builder.CreateAddrSpaceCast(Arg,
+                Arg->getType()->getPointerElementType()->getPointerTo(
+                    ArgAddrSpace));
           // Skip the extra memcpy call.
-          IRCallArgs[FirstIRArg] = Addr.getPointer();
+          IRCallArgs[FirstIRArg] = Arg;
         }
       }
       break;

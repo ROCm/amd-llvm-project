@@ -116,19 +116,38 @@ void CodeGenFunction::InitTempAlloca(Address Var, llvm::Value *Init) {
   Block->getInstList().insertAfter(AllocaInsertPt->getIterator(), Store);
 }
 
-Address CodeGenFunction::CreateIRTemp(QualType Ty, const Twine &Name) {
-  CharUnits Align = getContext().getTypeAlignInChars(Ty);
-  return CreateTempAlloca(ConvertType(Ty), Align, Name);
+Address CodeGenFunction::CastToAddrSpace(Address A, QualType Ty) {
+  auto AddrSpace = getContext().getTargetAddressSpace(Ty);
+  if (AddrSpace != CGM.getDataLayout().getAllocaAddrSpace()) {
+    A = Address(Builder.CreateAddrSpaceCast(A.getPointer(),
+      A.getPointer()->getType()->getPointerElementType()->getPointerTo(
+      AddrSpace)), A.getAlignment());
+  }
+  return A;
 }
 
-Address CodeGenFunction::CreateMemTemp(QualType Ty, const Twine &Name) {
+Address CodeGenFunction::CreateIRTemp(QualType Ty, const Twine &Name,
+    bool KeepAddrSpace) {
+  CharUnits Align = getContext().getTypeAlignInChars(Ty);
+  auto A = CreateTempAlloca(ConvertType(Ty), Align, Name);
+  if (KeepAddrSpace)
+    return CastToAddrSpace(A, Ty);
+  return A;
+}
+
+Address CodeGenFunction::CreateMemTemp(QualType Ty, const Twine &Name,
+    bool KeepAddrSpace) {
   // FIXME: Should we prefer the preferred type alignment here?
-  return CreateMemTemp(Ty, getContext().getTypeAlignInChars(Ty), Name);
+  return CreateMemTemp(Ty, getContext().getTypeAlignInChars(Ty), Name,
+      KeepAddrSpace);
 }
 
 Address CodeGenFunction::CreateMemTemp(QualType Ty, CharUnits Align,
-                                       const Twine &Name) {
-  return CreateTempAlloca(ConvertTypeForMem(Ty), Align, Name);
+                                       const Twine &Name, bool KeepAddrSpace) {
+  auto A = CreateTempAlloca(ConvertTypeForMem(Ty), Align, Name);
+  if (KeepAddrSpace)
+    return CastToAddrSpace(A, Ty);
+  return A;
 }
 
 /// EvaluateExprAsBool - Perform the usual unary conversions on the specified
@@ -3396,7 +3415,7 @@ EmitExtVectorElementExpr(const ExtVectorElementExpr *E) {
     Address VecMem = CreateMemTemp(E->getBase()->getType());
     Builder.CreateStore(Vec, VecMem);
     Base = MakeAddrLValue(VecMem, E->getBase()->getType(),
-                          AlignmentSource::Decl);
+        AlignmentSource::Decl);
   }
 
   QualType type =

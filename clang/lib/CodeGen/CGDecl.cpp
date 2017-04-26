@@ -1120,6 +1120,22 @@ CodeGenFunction::EmitAutoVarAlloca(const VarDecl &D) {
     address = Address(V, alignment);
   }
 
+  // Alloca always returns a pointer in alloca address space, which may
+  // be different from the type defined by the language. For example,
+  // in C++ the auto variables are in the default address space. Therefore
+  // cast alloca to the expected address space when necessary.
+  auto Addr = address.getPointer();
+  auto AddrTy = cast<llvm::PointerType>(Addr->getType());
+  auto ExpectedAddrSpace = CGM.getTypes().getVariableType(D)->getAddressSpace();
+  // OpenCL automatic variable in constant address space is emitted in
+  // alloca address space, which cannot be casted to constant address space.
+  if (AddrTy->getAddressSpace() != ExpectedAddrSpace &&
+      Ty.getAddressSpace() != LangAS::opencl_constant) {
+    address = Address(Builder.CreateAddrSpaceCast(Addr,
+        AddrTy->getElementType()->getPointerTo(ExpectedAddrSpace)),
+        address.getAlignment());
+  }
+
   setAddrOfLocalVar(&D, address);
   emission.Addr = address;
 

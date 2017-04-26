@@ -1950,12 +1950,16 @@ public:
   ///
   /// That is, this is exactly equivalent to CreateMemTemp, but calling
   /// ConvertType instead of ConvertTypeForMem.
-  Address CreateIRTemp(QualType T, const Twine &Name = "tmp");
+  Address CreateIRTemp(QualType T, const Twine &Name = "tmp",
+      bool KeepAddrSpace = true);
 
   /// CreateMemTemp - Create a temporary memory object of the given type, with
-  /// appropriate alignment.
-  Address CreateMemTemp(QualType T, const Twine &Name = "tmp");
-  Address CreateMemTemp(QualType T, CharUnits Align, const Twine &Name = "tmp");
+  /// appropriate alignment. If \p KeepAddrSpace is true, insert address space
+  /// cast so that the pointer has the same address space as \p T.
+  Address CreateMemTemp(QualType T, const Twine &Name = "tmp",
+      bool KeepAddrSpace = true);
+  Address CreateMemTemp(QualType T, CharUnits Align, const Twine &Name = "tmp",
+      bool KeepAddrSpace = true);
 
   /// CreateAggTemp - Create a temporary memory object for the given
   /// aggregate type.
@@ -1966,6 +1970,9 @@ public:
                                  AggValueSlot::DoesNotNeedGCBarriers,
                                  AggValueSlot::IsNotAliased);
   }
+
+  /// Cast an address to the same address space of the given type.
+  Address CastToAddrSpace(Address A, QualType T);
 
   /// Emit a cast to void* in the appropriate address space.
   llvm::Value *EmitCastToVoidPtr(llvm::Value *value);

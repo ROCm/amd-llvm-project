@@ -40,8 +40,10 @@ typedef struct {
 } MyStruct;
 
 // CHECK-LABEL: define void @test4(
-// CHECK: call void @llvm.memcpy.p0i8.p2i8
-// CHECK: call void @llvm.memcpy.p2i8.p0i8
+// GIZ: call void @llvm.memcpy.p0i8.p2i8
+// GIZ: call void @llvm.memcpy.p2i8.p0i8
+// PIZ: call void @llvm.memcpy.p4i8.p2i8
+// PIZ: call void @llvm.memcpy.p2i8.p4i8
 void test4(MyStruct __attribute__((address_space(2))) *pPtr) {
   MyStruct s = pPtr[0];
   pPtr[0] = s;

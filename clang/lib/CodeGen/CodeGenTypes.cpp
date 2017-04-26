@@ -92,6 +92,11 @@ llvm::Type *CodeGenTypes::ConvertTypeForMem(QualType T) {
                                 (unsigned)Context.getTypeSize(T));
 }
 
+llvm::PointerType *CodeGenTypes::getVariableType(VarDecl D) {
+  auto Ty = D.getType();
+  return ConvertTypeForMem(Ty)->getPointerTo(
+      getContext().getTargetAddressSpace(Ty));
+}
 
 /// isRecordLayoutComplete - Return true if the specified type is already
 /// completely laid out.
