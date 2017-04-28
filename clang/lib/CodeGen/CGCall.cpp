@@ -2391,8 +2391,12 @@ void CodeGenFunction::EmitFunctionProlog(const CGFunctionInfo &FI,
         // type in the function type. Since we are codegening the callee
         // in here, add a cast to the argument type.
         llvm::Type *LTy = ConvertType(Arg->getType());
-        if (V->getType() != LTy)
-          V = Builder.CreateBitCast(V, LTy);
+        if (V->getType() != LTy) {
+          if (V->getType()->isIntegerTy(1))
+            V = Builder.CreateZExt(V, LTy);
+          else
+            V = Builder.CreateBitCast(V, LTy);
+        }
 
         ArgVals.push_back(ParamValue::forDirect(V));
         break;
@@ -3905,7 +3909,8 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
 
         // If the argument doesn't match, perform a bitcast or an addrspacecast
         // to coerce it.  This can happen due to trivial type mismatches.
-        if (FirstIRArg < IRFuncTy->getNumParams() &&
+        if (V->getType()->isPointerTy() &&
+            FirstIRArg < IRFuncTy->getNumParams() &&
             V->getType() != IRFuncTy->getParamType(FirstIRArg))
           V = Builder.CreatePointerBitCastOrAddrSpaceCast(V, IRFuncTy->getParamType(FirstIRArg));
 
@@ -4113,8 +4118,14 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
     if (IRFunctionArgs.hasInallocaArg() &&
         i == IRFunctionArgs.getInallocaArgNo())
       continue;
-    if (i < IRFuncTy->getNumParams())
-      assert(IRCallArgs[i]->getType() == IRFuncTy->getParamType(i));
+    if (i < IRFuncTy->getNumParams()) {
+      if (IRCallArgs[i]->getType() != IRFuncTy->getParamType(i)) {
+        llvm::errs() << *CalleePtr << " arg" << i << ": "
+            << *IRCallArgs[i] << " => " << *IRFuncTy->getParamType(i)
+            << '\n';
+       }
+       assert(IRCallArgs[i]->getType() == IRFuncTy->getParamType(i));
+    }
   }
 #endif
 
