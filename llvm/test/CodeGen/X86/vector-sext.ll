@@ -1207,10 +1207,10 @@ define <2 x i64> @load_sext_2i1_to_2i64(<2 x i1> *%ptr) {
 ; SSE-NEXT:    movq %rax, %rcx
 ; SSE-NEXT:    shlq $62, %rcx
 ; SSE-NEXT:    sarq $63, %rcx
-; SSE-NEXT:    movd %rcx, %xmm1
+; SSE-NEXT:    movq %rcx, %xmm1
 ; SSE-NEXT:    shlq $63, %rax
 ; SSE-NEXT:    sarq $63, %rax
-; SSE-NEXT:    movd %rax, %xmm0
+; SSE-NEXT:    movq %rax, %xmm0
 ; SSE-NEXT:    punpcklqdq {{.*#+}} xmm0 = xmm0[0],xmm1[0]
 ; SSE-NEXT:    retq
 ;
@@ -1263,13 +1263,14 @@ define <2 x i64> @load_sext_2i1_to_2i64(<2 x i1> *%ptr) {
 ; X32-SSE41-NEXT:    movl {{[0-9]+}}(%esp), %eax
 ; X32-SSE41-NEXT:    movzbl (%eax), %eax
 ; X32-SSE41-NEXT:    movl %eax, %ecx
-; X32-SSE41-NEXT:    shll $30, %ecx
+; X32-SSE41-NEXT:    shll $31, %ecx
 ; X32-SSE41-NEXT:    sarl $31, %ecx
-; X32-SSE41-NEXT:    shll $31, %eax
+; X32-SSE41-NEXT:    movd %ecx, %xmm0
+; X32-SSE41-NEXT:    pinsrd $1, %ecx, %xmm0
+; X32-SSE41-NEXT:    shll $30, %eax
 ; X32-SSE41-NEXT:    sarl $31, %eax
-; X32-SSE41-NEXT:    movd %eax, %xmm0
-; X32-SSE41-NEXT:    pinsrd $2, %ecx, %xmm0
-; X32-SSE41-NEXT:    pshufd {{.*#+}} xmm0 = xmm0[0,0,2,2]
+; X32-SSE41-NEXT:    pinsrd $2, %eax, %xmm0
+; X32-SSE41-NEXT:    pinsrd $3, %eax, %xmm0
 ; X32-SSE41-NEXT:    retl
 entry:
  %X = load <2 x i1>, <2 x i1>* %ptr
@@ -1686,28 +1687,28 @@ define <4 x i64> @load_sext_4i8_to_4i64(<4 x i8> *%ptr) {
 ; SSE2-LABEL: load_sext_4i8_to_4i64:
 ; SSE2:       # BB#0: # %entry
 ; SSE2-NEXT:    movsbq 1(%rdi), %rax
-; SSE2-NEXT:    movd %rax, %xmm1
+; SSE2-NEXT:    movq %rax, %xmm1
 ; SSE2-NEXT:    movsbq (%rdi), %rax
-; SSE2-NEXT:    movd %rax, %xmm0
+; SSE2-NEXT:    movq %rax, %xmm0
 ; SSE2-NEXT:    punpcklqdq {{.*#+}} xmm0 = xmm0[0],xmm1[0]
 ; SSE2-NEXT:    movsbq 3(%rdi), %rax
-; SSE2-NEXT:    movd %rax, %xmm2
+; SSE2-NEXT:    movq %rax, %xmm2
 ; SSE2-NEXT:    movsbq 2(%rdi), %rax
-; SSE2-NEXT:    movd %rax, %xmm1
+; SSE2-NEXT:    movq %rax, %xmm1
 ; SSE2-NEXT:    punpcklqdq {{.*#+}} xmm1 = xmm1[0],xmm2[0]
 ; SSE2-NEXT:    retq
 ;
 ; SSSE3-LABEL: load_sext_4i8_to_4i64:
 ; SSSE3:       # BB#0: # %entry
 ; SSSE3-NEXT:    movsbq 1(%rdi), %rax
-; SSSE3-NEXT:    movd %rax, %xmm1
+; SSSE3-NEXT:    movq %rax, %xmm1
 ; SSSE3-NEXT:    movsbq (%rdi), %rax
-; SSSE3-NEXT:    movd %rax, %xmm0
+; SSSE3-NEXT:    movq %rax, %xmm0
 ; SSSE3-NEXT:    punpcklqdq {{.*#+}} xmm0 = xmm0[0],xmm1[0]
 ; SSSE3-NEXT:    movsbq 3(%rdi), %rax
-; SSSE3-NEXT:    movd %rax, %xmm2
+; SSSE3-NEXT:    movq %rax, %xmm2
 ; SSSE3-NEXT:    movsbq 2(%rdi), %rax
-; SSSE3-NEXT:    movd %rax, %xmm1
+; SSSE3-NEXT:    movq %rax, %xmm1
 ; SSSE3-NEXT:    punpcklqdq {{.*#+}} xmm1 = xmm1[0],xmm2[0]
 ; SSSE3-NEXT:    retq
 ;
@@ -2037,48 +2038,48 @@ define <8 x i64> @load_sext_8i8_to_8i64(<8 x i8> *%ptr) {
 ; SSE2-LABEL: load_sext_8i8_to_8i64:
 ; SSE2:       # BB#0: # %entry
 ; SSE2-NEXT:    movsbq 1(%rdi), %rax
-; SSE2-NEXT:    movd %rax, %xmm1
+; SSE2-NEXT:    movq %rax, %xmm1
 ; SSE2-NEXT:    movsbq (%rdi), %rax
-; SSE2-NEXT:    movd %rax, %xmm0
+; SSE2-NEXT:    movq %rax, %xmm0
 ; SSE2-NEXT:    punpcklqdq {{.*#+}} xmm0 = xmm0[0],xmm1[0]
 ; SSE2-NEXT:    movsbq 3(%rdi), %rax
-; SSE2-NEXT:    movd %rax, %xmm2
+; SSE2-NEXT:    movq %rax, %xmm2
 ; SSE2-NEXT:    movsbq 2(%rdi), %rax
-; SSE2-NEXT:    movd %rax, %xmm1
+; SSE2-NEXT:    movq %rax, %xmm1
 ; SSE2-NEXT:    punpcklqdq {{.*#+}} xmm1 = xmm1[0],xmm2[0]
 ; SSE2-NEXT:    movsbq 5(%rdi), %rax
-; SSE2-NEXT:    movd %rax, %xmm3
+; SSE2-NEXT:    movq %rax, %xmm3
 ; SSE2-NEXT:    movsbq 4(%rdi), %rax
-; SSE2-NEXT:    movd %rax, %xmm2
+; SSE2-NEXT:    movq %rax, %xmm2
 ; SSE2-NEXT:    punpcklqdq {{.*#+}} xmm2 = xmm2[0],xmm3[0]
 ; SSE2-NEXT:    movsbq 7(%rdi), %rax
-; SSE2-NEXT:    movd %rax, %xmm4
+; SSE2-NEXT:    movq %rax, %xmm4
 ; SSE2-NEXT:    movsbq 6(%rdi), %rax
-; SSE2-NEXT:    movd %rax, %xmm3
+; SSE2-NEXT:    movq %rax, %xmm3
 ; SSE2-NEXT:    punpcklqdq {{.*#+}} xmm3 = xmm3[0],xmm4[0]
 ; SSE2-NEXT:    retq
 ;
 ; SSSE3-LABEL: load_sext_8i8_to_8i64:
 ; SSSE3:       # BB#0: # %entry
 ; SSSE3-NEXT:    movsbq 1(%rdi), %rax
-; SSSE3-NEXT:    movd %rax, %xmm1
+; SSSE3-NEXT:    movq %rax, %xmm1
 ; SSSE3-NEXT:    movsbq (%rdi), %rax
-; SSSE3-NEXT:    movd %rax, %xmm0
+; SSSE3-NEXT:    movq %rax, %xmm0
 ; SSSE3-NEXT:    punpcklqdq {{.*#+}} xmm0 = xmm0[0],xmm1[0]
 ; SSSE3-NEXT:    movsbq 3(%rdi), %rax
-; SSSE3-NEXT:    movd %rax, %xmm2
+; SSSE3-NEXT:    movq %rax, %xmm2
 ; SSSE3-NEXT:    movsbq 2(%rdi), %rax
-; SSSE3-NEXT:    movd %rax, %xmm1
+; SSSE3-NEXT:    movq %rax, %xmm1
 ; SSSE3-NEXT:    punpcklqdq {{.*#+}} xmm1 = xmm1[0],xmm2[0]
 ; SSSE3-NEXT:    movsbq 5(%rdi), %rax
-; SSSE3-NEXT:    movd %rax, %xmm3
+; SSSE3-NEXT:    movq %rax, %xmm3
 ; SSSE3-NEXT:    movsbq 4(%rdi), %rax
-; SSSE3-NEXT:    movd %rax, %xmm2
+; SSSE3-NEXT:    movq %rax, %xmm2
 ; SSSE3-NEXT:    punpcklqdq {{.*#+}} xmm2 = xmm2[0],xmm3[0]
 ; SSSE3-NEXT:    movsbq 7(%rdi), %rax
-; SSSE3-NEXT:    movd %rax, %xmm4
+; SSSE3-NEXT:    movq %rax, %xmm4
 ; SSSE3-NEXT:    movsbq 6(%rdi), %rax
-; SSSE3-NEXT:    movd %rax, %xmm3
+; SSSE3-NEXT:    movq %rax, %xmm3
 ; SSSE3-NEXT:    punpcklqdq {{.*#+}} xmm3 = xmm3[0],xmm4[0]
 ; SSSE3-NEXT:    retq
 ;
@@ -4541,28 +4542,28 @@ define <4 x i64> @load_sext_4i16_to_4i64(<4 x i16> *%ptr) {
 ; SSE2-LABEL: load_sext_4i16_to_4i64:
 ; SSE2:       # BB#0: # %entry
 ; SSE2-NEXT:    movswq 2(%rdi), %rax
-; SSE2-NEXT:    movd %rax, %xmm1
+; SSE2-NEXT:    movq %rax, %xmm1
 ; SSE2-NEXT:    movswq (%rdi), %rax
-; SSE2-NEXT:    movd %rax, %xmm0
+; SSE2-NEXT:    movq %rax, %xmm0
 ; SSE2-NEXT:    punpcklqdq {{.*#+}} xmm0 = xmm0[0],xmm1[0]
 ; SSE2-NEXT:    movswq 6(%rdi), %rax
-; SSE2-NEXT:    movd %rax, %xmm2
+; SSE2-NEXT:    movq %rax, %xmm2
 ; SSE2-NEXT:    movswq 4(%rdi), %rax
-; SSE2-NEXT:    movd %rax, %xmm1
+; SSE2-NEXT:    movq %rax, %xmm1
 ; SSE2-NEXT:    punpcklqdq {{.*#+}} xmm1 = xmm1[0],xmm2[0]
 ; SSE2-NEXT:    retq
 ;
 ; SSSE3-LABEL: load_sext_4i16_to_4i64:
 ; SSSE3:       # BB#0: # %entry
 ; SSSE3-NEXT:    movswq 2(%rdi), %rax
-; SSSE3-NEXT:    movd %rax, %xmm1
+; SSSE3-NEXT:    movq %rax, %xmm1
 ; SSSE3-NEXT:    movswq (%rdi), %rax
-; SSSE3-NEXT:    movd %rax, %xmm0
+; SSSE3-NEXT:    movq %rax, %xmm0
 ; SSSE3-NEXT:    punpcklqdq {{.*#+}} xmm0 = xmm0[0],xmm1[0]
 ; SSSE3-NEXT:    movswq 6(%rdi), %rax
-; SSSE3-NEXT:    movd %rax, %xmm2
+; SSSE3-NEXT:    movq %rax, %xmm2
 ; SSSE3-NEXT:    movswq 4(%rdi), %rax
-; SSSE3-NEXT:    movd %rax, %xmm1
+; SSSE3-NEXT:    movq %rax, %xmm1
 ; SSSE3-NEXT:    punpcklqdq {{.*#+}} xmm1 = xmm1[0],xmm2[0]
 ; SSSE3-NEXT:    retq
 ;

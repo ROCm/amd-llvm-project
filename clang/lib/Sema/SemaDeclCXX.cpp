@@ -8748,6 +8748,7 @@ Decl *Sema::ActOnStartNamespaceDef(Scope *NamespcScope,
     Namespc->setInvalidDecl();
   
   ProcessDeclAttributeList(DeclRegionScope, Namespc, AttrList);
+  AddPragmaAttributes(DeclRegionScope, Namespc);
 
   // FIXME: Should we be merging attributes?
   if (const VisibilityAttr *Attr = Namespc->getAttr<VisibilityAttr>())
@@ -10234,6 +10235,7 @@ Decl *Sema::ActOnAliasDeclaration(Scope *S,
     NewTD->setInvalidDecl();
 
   ProcessDeclAttributeList(S, NewTD, AttrList);
+  AddPragmaAttributes(S, NewTD);
 
   CheckTypedefForVariablyModifiedType(S, NewTD);
   Invalid |= NewTD->isInvalidDecl();

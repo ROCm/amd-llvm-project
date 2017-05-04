@@ -30,24 +30,25 @@ FormatStyle getGoogleStyle() { return getGoogleStyle(FormatStyle::LK_Cpp); }
 
 class FormatTest : public ::testing::Test {
 protected:
-  enum IncompleteCheck {
-    IC_ExpectComplete,
-    IC_ExpectIncomplete,
-    IC_DoNotCheck
+  enum StatusCheck {
+    SC_ExpectComplete,
+    SC_ExpectIncomplete,
+    SC_DoNotCheck
   };
 
   std::string format(llvm::StringRef Code,
                      const FormatStyle &Style = getLLVMStyle(),
-                     IncompleteCheck CheckIncomplete = IC_ExpectComplete) {
+                     StatusCheck CheckComplete = SC_ExpectComplete) {
     DEBUG(llvm::errs() << "---\n");
     DEBUG(llvm::errs() << Code << "\n\n");
     std::vector<tooling::Range> Ranges(1, tooling::Range(0, Code.size()));
-    bool IncompleteFormat = false;
+    FormattingAttemptStatus Status;
     tooling::Replacements Replaces =
-        reformat(Style, Code, Ranges, "<stdin>", &IncompleteFormat);
-    if (CheckIncomplete != IC_DoNotCheck) {
-      bool ExpectedIncompleteFormat = CheckIncomplete == IC_ExpectIncomplete;
-      EXPECT_EQ(ExpectedIncompleteFormat, IncompleteFormat) << Code << "\n\n";
+        reformat(Style, Code, Ranges, "<stdin>", &Status);
+    if (CheckComplete != SC_DoNotCheck) {
+      bool ExpectedCompleteFormat = CheckComplete == SC_ExpectComplete;
+      EXPECT_EQ(ExpectedCompleteFormat, Status.FormatComplete)
+          << Code << "\n\n";
     }
     ReplacementCount = Replaces.size();
     auto Result = applyAllReplacements(Code, Replaces);
@@ -83,7 +84,7 @@ protected:
   void verifyIncompleteFormat(llvm::StringRef Code,
                               const FormatStyle &Style = getLLVMStyle()) {
     EXPECT_EQ(Code.str(),
-              format(test::messUp(Code), Style, IC_ExpectIncomplete));
+              format(test::messUp(Code), Style, SC_ExpectIncomplete));
   }
 
   void verifyGoogleFormat(llvm::StringRef Code) {
@@ -98,7 +99,7 @@ protected:
   /// \brief Verify that clang-format does not crash on the given input.
   void verifyNoCrash(llvm::StringRef Code,
                      const FormatStyle &Style = getLLVMStyle()) {
-    format(Code, Style, IC_DoNotCheck);
+    format(Code, Style, SC_DoNotCheck);
   }
 
   int ReplacementCount;
@@ -4090,9 +4091,9 @@ TEST_F(FormatTest, AlwaysBreakBeforeMultilineStrings) {
                    "c\";",
                    Break));
 
-  // Exempt ObjC strings for now.
-  EXPECT_EQ("NSString *const kString = @\"aaaa\"\n"
-            "                          @\"bbbb\";",
+  EXPECT_EQ("NSString *const kString =\n"
+            "    @\"aaaa\"\n"
+            "    @\"bbbb\";",
             format("NSString *const kString = @\"aaaa\"\n"
                    "@\"bbbb\";",
                    Break));
@@ -5220,6 +5221,12 @@ TEST_F(FormatTest, FormatsFunctionTypes) {
   verifyFormat("void f() { function(*some_pointer_var)[0] = 10; }");
   verifyFormat("int x = f(&h)();");
   verifyFormat("returnsFunction(&param1, &param2)(param);");
+  verifyFormat("std::function<\n"
+               "    LooooooooooongTemplatedType<\n"
+               "        SomeType>*(\n"
+               "        LooooooooooooooooongType type)>\n"
+               "    function;",
+               getGoogleStyleWithColumns(40));
 }
 
 TEST_F(FormatTest, FormatsPointersToArrayTypes) {
@@ -6189,7 +6196,7 @@ TEST_F(FormatTest, SkipsDeeplyNestedLines) {
   // Deeply nested part is untouched, rest is formatted.
   EXPECT_EQ(std::string("int i;\n") + Code + "int j;\n",
             format(std::string("int    i;\n") + Code + "int    j;\n",
-                   getLLVMStyle(), IC_ExpectIncomplete));
+                   getLLVMStyle(), SC_ExpectIncomplete));
 }
 
 //===----------------------------------------------------------------------===//
@@ -6460,6 +6467,7 @@ TEST_F(FormatTest, BreaksWideAndNSStringLiterals) {
   EXPECT_EQ("@\"NSString \"\n"
             "@\"literal\";",
             format("@\"NSString literal\";", getGoogleStyleWithColumns(19)));
+  verifyFormat(R"(NSString *s = @"那那那那";)", getLLVMStyleWithColumns(26));
 
   // This input makes clang-format try to split the incomplete unicode escape
   // sequence, which used to lead to a crasher.
@@ -8301,7 +8309,14 @@ TEST_F(FormatTest, AllmanBraceBreaking) {
   // .. or dict literals.
   verifyFormat("void f()\n"
                "{\n"
-               "  [object someMethod:@{ @\"a\" : @\"b\" }];\n"
+               "  // ...\n"
+               "  [object someMethod:@{@\"a\" : @\"b\"}];\n"
+               "}",
+               AllmanBraceStyle);
+  verifyFormat("void f()\n"
+               "{\n"
+               "  // ...\n"
+               "  [object someMethod:@{a : @\"b\"}];\n"
                "}",
                AllmanBraceStyle);
   verifyFormat("int f()\n"
@@ -10193,6 +10208,19 @@ TEST_F(ReplacementTest, SortIncludesAfterReplacement) {
   auto Result = applyAllReplacements(Code, *FormattedReplaces);
   EXPECT_TRUE(static_cast<bool>(Result));
   EXPECT_EQ(Expected, *Result);
+}
+
+TEST_F(FormatTest, UTF8CharacterLiteralCpp03) {
+  format::FormatStyle Style = format::getLLVMStyle();
+  Style.Standard = FormatStyle::LS_Cpp03;
+  // cpp03 recognize this string as identifier u8 and literal character 'a'
+  EXPECT_EQ("auto c = u8 'a';", format("auto c = u8'a';", Style));
+}
+
+TEST_F(FormatTest, UTF8CharacterLiteralCpp11) {
+  // u8'a' is a C++17 feature, utf8 literal character, LS_Cpp11 covers
+  // all modes, including C++11, C++14 and C++17
+  EXPECT_EQ("auto c = u8'a';", format("auto c = u8'a';"));
 }
 
 } // end namespace

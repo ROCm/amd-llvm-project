@@ -64,8 +64,12 @@ option(LIBCXX_ENABLE_ASSERTIONS "Enable assertions independent of build mode." O
 option(LIBCXX_ENABLE_SHARED "Build libc++ as a shared library." ON)
 option(LIBCXX_ENABLE_STATIC "Build libc++ as a static library." ON)
 option(LIBCXX_ENABLE_EXPERIMENTAL_LIBRARY "Build libc++experimental.a" ON)
-option(LIBCXX_ENABLE_FILESYSTEM
-        "Build filesystem as part of libc++experimental.a" ${LIBCXX_ENABLE_EXPERIMENTAL_LIBRARY})
+set(ENABLE_FILESYSTEM_DEFAULT ${LIBCXX_ENABLE_EXPERIMENTAL_LIBRARY})
+if (WIN32)
+  set(ENABLE_FILESYSTEM_DEFAULT OFF)
+endif()
+option(LIBCXX_ENABLE_FILESYSTEM "Build filesystem as part of libc++experimental.a"
+    ${ENABLE_FILESYSTEM_DEFAULT})
 option(LIBCXX_INCLUDE_TESTS "Build the libc++ tests." ${LLVM_INCLUDE_TESTS})
 
 # Benchmark options -----------------------------------------------------------
@@ -116,21 +120,19 @@ if (LIBCXX_CXX_ABI STREQUAL "default")
           ${LLVM_MAIN_SRC_DIR}/runtimes/libcxxabi/include
     NO_DEFAULT_PATH
   )
-  if ((NOT LIBCXX_STANDALONE_BUILD OR HAVE_LIBCXXABI) AND
-      IS_DIRECTORY "${LIBCXX_LIBCXXABI_INCLUDES_INTERNAL}")
+  if (LIBCXX_TARGETING_MSVC)
+    # FIXME: Figure out how to configure the ABI library on Windows.
+    set(LIBCXX_CXX_ABI_LIBNAME "vcruntime")
+  elseif ((NOT LIBCXX_STANDALONE_BUILD OR HAVE_LIBCXXABI) AND
+          IS_DIRECTORY "${LIBCXX_LIBCXXABI_INCLUDES_INTERNAL}")
     set(LIBCXX_CXX_ABI_LIBNAME "libcxxabi")
     set(LIBCXX_CXX_ABI_INCLUDE_PATHS "${LIBCXX_LIBCXXABI_INCLUDES_INTERNAL}")
     set(LIBCXX_CXX_ABI_INTREE 1)
+  elseif (APPLE)
+    set(LIBCXX_CXX_ABI_LIBNAME "libcxxabi")
+    set(LIBCXX_CXX_ABI_SYSTEM 1)
   else()
-    if (LIBCXX_TARGETING_MSVC)
-      # FIXME: Figure out how to configure the ABI library on Windows.
-      set(LIBCXX_CXX_ABI_LIBNAME "vcruntime")
-    elseif(APPLE)
-      set(LIBCXX_CXX_ABI_LIBNAME "libcxxabi")
-      set(LIBCXX_CXX_ABI_SYSTEM 1)
-    else()
-      set(LIBCXX_CXX_ABI_LIBNAME "default")
-    endif()
+    set(LIBCXX_CXX_ABI_LIBNAME "default")
   endif()
 else()
   set(LIBCXX_CXX_ABI_LIBNAME "${LIBCXX_CXX_ABI}")
@@ -347,6 +349,7 @@ file(MAKE_DIRECTORY "${LIBCXX_BINARY_INCLUDE_DIR}")
 
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${LIBCXX_LIBRARY_DIR})
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${LIBCXX_LIBRARY_DIR})
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${LIBCXX_LIBRARY_DIR})
 
 # Declare libc++ configuration variables.
 # They are intended for use as follows:
@@ -369,9 +372,9 @@ include(HandleLibcxxFlags)
 # 'config-ix' use them during feature checks. It also adds them to both
 # 'LIBCXX_COMPILE_FLAGS' and 'LIBCXX_LINK_FLAGS'
 add_target_flags_if(LIBCXX_BUILD_32_BITS "-m32")
-add_target_flags_if(LIBCXX_TARGET_TRIPLE "-target ${LIBCXX_TARGET_TRIPLE}")
+add_target_flags_if(LIBCXX_TARGET_TRIPLE "--target=${LIBCXX_TARGET_TRIPLE}")
 add_target_flags_if(LIBCXX_SYSROOT "--sysroot=${LIBCXX_SYSROOT}")
-add_target_flags_if(LIBCXX_GCC_TOOLCHAIN "-gcc-toolchain ${LIBCXX_GCC_TOOLCHAIN}")
+add_target_flags_if(LIBCXX_GCC_TOOLCHAIN "--gcc-toolchain=${LIBCXX_GCC_TOOLCHAIN}")
 if (LIBCXX_TARGET_TRIPLE)
   set(TARGET_TRIPLE "${LIBCXX_TARGET_TRIPLE}")
 endif()
@@ -624,7 +627,12 @@ endif()
 # Create the lit.site.cfg file even when LIBCXX_INCLUDE_TESTS is OFF or
 # LLVM_FOUND is OFF. This allows users to run the tests manually using
 # LIT without requiring a full LLVM checkout.
-add_subdirectory(test)
+#
+# However, since some submission systems strip test/ subdirectories, check for
+# it before adding it.
+if(IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/test")
+  add_subdirectory(test)
+endif()
 if (LIBCXX_INCLUDE_TESTS)
   add_subdirectory(lib/abi)
 endif()

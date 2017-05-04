@@ -77,6 +77,7 @@ Clang-Tidy Checks
    misc-definitions-in-headers
    misc-fold-init-type
    misc-forward-declaration-namespace
+   misc-forwarding-reference-overload
    misc-inaccurate-erase
    misc-incorrect-roundings
    misc-inefficient-algorithm
@@ -123,6 +124,7 @@ Clang-Tidy Checks
    modernize-raw-string-literal
    modernize-redundant-void-arg
    modernize-replace-auto-ptr
+   modernize-replace-random-shuffle
    modernize-return-braced-init-list
    modernize-shrink-to-fit
    modernize-use-auto
@@ -141,6 +143,7 @@ Clang-Tidy Checks
    performance-for-range-copy
    performance-implicit-cast-in-loop
    performance-inefficient-string-concatenation
+   performance-inefficient-vector-operation
    performance-type-promotion-in-math-fn
    performance-unnecessary-copy-initialization
    performance-unnecessary-value-param

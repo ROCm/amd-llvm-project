@@ -1901,10 +1901,7 @@ void X86_32TargetCodeGenInfo::setTargetAttributes(const Decl *D,
       // Now add the 'alignstack' attribute with a value of 16.
       llvm::AttrBuilder B;
       B.addStackAlignmentAttr(16);
-      Fn->addAttributes(
-          llvm::AttributeList::FunctionIndex,
-          llvm::AttributeList::get(CGM.getLLVMContext(),
-                                   llvm::AttributeList::FunctionIndex, B));
+      Fn->addAttributes(llvm::AttributeList::FunctionIndex, B);
     }
     if (FD->hasAttr<AnyX86InterruptAttr>()) {
       llvm::Function *Fn = cast<llvm::Function>(GV);
@@ -5449,10 +5446,7 @@ public:
     // the backend to perform a realignment as part of the function prologue.
     llvm::AttrBuilder B;
     B.addStackAlignmentAttr(8);
-    Fn->addAttributes(
-        llvm::AttributeList::FunctionIndex,
-        llvm::AttributeList::get(CGM.getLLVMContext(),
-                                 llvm::AttributeList::FunctionIndex, B));
+    Fn->addAttributes(llvm::AttributeList::FunctionIndex, B);
   }
 };
 
@@ -7303,9 +7297,14 @@ void AMDGPUTargetCodeGenInfo::setTargetAttributes(
   auto GPU = M.getTarget().getTargetOpts().CPU;
   llvm::Function *F = cast<llvm::Function>(GV);
 
-  if (const auto *Attr = FD->getAttr<AMDGPUFlatWorkGroupSizeAttr>()) {
-    unsigned Min = Attr->getMin();
-    unsigned Max = Attr->getMax();
+  const auto *ReqdWGS = M.getLangOpts().OpenCL ?
+    FD->getAttr<ReqdWorkGroupSizeAttr>() : nullptr;
+  const auto *FlatWGS = FD->getAttr<AMDGPUFlatWorkGroupSizeAttr>();
+  if (ReqdWGS || FlatWGS) {
+    unsigned Min = FlatWGS ? FlatWGS->getMin() : 0;
+    unsigned Max = FlatWGS ? FlatWGS->getMax() : 0;
+    if (ReqdWGS && Min == 0 && Max == 0)
+      Min = Max = ReqdWGS->getXDim() * ReqdWGS->getYDim() * ReqdWGS->getZDim();
 
     if (Min != 0) {
       std::string AttrVal = llvm::utostr(Min);

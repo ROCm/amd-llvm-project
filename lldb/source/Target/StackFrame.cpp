@@ -17,6 +17,7 @@
 #include "lldb/Core/FormatEntity.h"
 #include "lldb/Core/Mangled.h"
 #include "lldb/Core/Module.h"
+#include "lldb/Core/RegisterValue.h"
 #include "lldb/Core/Value.h"
 #include "lldb/Core/ValueObjectConstResult.h"
 #include "lldb/Core/ValueObjectMemory.h"
@@ -1211,9 +1212,14 @@ lldb::LanguageType StackFrame::GuessLanguage() {
   LanguageType lang_type = GetLanguage();
 
   if (lang_type == eLanguageTypeUnknown) {
-    Function *f = GetSymbolContext(eSymbolContextFunction).function;
-    if (f) {
-      lang_type = f->GetMangled().GuessLanguage();
+    SymbolContext sc = GetSymbolContext(eSymbolContextFunction 
+                                        | eSymbolContextSymbol);
+    if (sc.function) {
+      lang_type = sc.function->GetMangled().GuessLanguage();
+    }
+    else if (sc.symbol)
+    {
+      lang_type = sc.symbol->GetMangled().GuessLanguage();
     }
   }
 

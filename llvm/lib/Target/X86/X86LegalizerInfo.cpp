@@ -44,9 +44,11 @@ void X86LegalizerInfo::setLegalizerInfo32bit() {
     return;
 
   const LLT p0 = LLT::pointer(0, 32);
+  const LLT s1 = LLT::scalar(1);
   const LLT s8 = LLT::scalar(8);
   const LLT s16 = LLT::scalar(16);
   const LLT s32 = LLT::scalar(32);
+  const LLT s64 = LLT::scalar(64);
 
   for (unsigned BinOp : {G_ADD, G_SUB})
     for (auto Ty : {s8, s16, s32})
@@ -62,6 +64,22 @@ void X86LegalizerInfo::setLegalizerInfo32bit() {
 
   // Pointer-handling
   setAction({G_FRAME_INDEX, p0}, Legal);
+
+  // Constants
+  for (auto Ty : {s8, s16, s32, p0})
+    setAction({TargetOpcode::G_CONSTANT, Ty}, Legal);
+
+  setAction({TargetOpcode::G_CONSTANT, s1}, WidenScalar);
+  setAction({TargetOpcode::G_CONSTANT, s64}, NarrowScalar);
+
+  // Extensions
+  setAction({G_ZEXT, s32}, Legal);
+  setAction({G_SEXT, s32}, Legal);
+
+  for (auto Ty : {s8, s16}) {
+    setAction({G_ZEXT, 1, Ty}, Legal);
+    setAction({G_SEXT, 1, Ty}, Legal);
+  }
 }
 
 void X86LegalizerInfo::setLegalizerInfo64bit() {
@@ -70,6 +88,7 @@ void X86LegalizerInfo::setLegalizerInfo64bit() {
     return;
 
   const LLT p0 = LLT::pointer(0, TM.getPointerSize() * 8);
+  const LLT s1 = LLT::scalar(1);
   const LLT s8 = LLT::scalar(8);
   const LLT s16 = LLT::scalar(16);
   const LLT s32 = LLT::scalar(32);
@@ -89,6 +108,23 @@ void X86LegalizerInfo::setLegalizerInfo64bit() {
 
   // Pointer-handling
   setAction({G_FRAME_INDEX, p0}, Legal);
+
+  // Constants
+  for (auto Ty : {s8, s16, s32, s64, p0})
+    setAction({TargetOpcode::G_CONSTANT, Ty}, Legal);
+
+  setAction({TargetOpcode::G_CONSTANT, s1}, WidenScalar);
+
+  // Extensions
+  for (auto Ty : {s32, s64}) {
+    setAction({G_ZEXT, Ty}, Legal);
+    setAction({G_SEXT, Ty}, Legal);
+  }
+
+  for (auto Ty : {s8, s16, s32}) {
+    setAction({G_ZEXT, 1, Ty}, Legal);
+    setAction({G_SEXT, 1, Ty}, Legal);
+  }
 }
 
 void X86LegalizerInfo::setLegalizerInfoSSE1() {

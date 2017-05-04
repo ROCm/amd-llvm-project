@@ -158,6 +158,12 @@ static cl::opt<bool> PollyPreciseFoldAccesses(
     cl::desc("Fold memory accesses to model more possible delinearizations "
              "(does not scale well)"),
     cl::Hidden, cl::init(false), cl::cat(PollyCategory));
+
+static cl::opt<bool> UseInstructionNames(
+    "polly-use-llvm-names",
+    cl::desc("Use LLVM-IR names when deriving statement names"), cl::Hidden,
+    cl::init(false), cl::ZeroOrMore, cl::cat(PollyCategory));
+
 //===----------------------------------------------------------------------===//
 
 // Create a sequence of two schedules. Either argument may be null and is
@@ -240,8 +246,9 @@ ScopArrayInfo::ScopArrayInfo(Value *BasePtr, Type *ElementType, isl_ctx *Ctx,
     : BasePtr(BasePtr), ElementType(ElementType), Kind(Kind), DL(DL), S(*S) {
   std::string BasePtrName =
       BaseName ? BaseName
-               : getIslCompatibleName("MemRef_", BasePtr,
-                                      Kind == MemoryKind::PHI ? "__phi" : "");
+               : getIslCompatibleName("MemRef", BasePtr, S->getNextArrayIdx(),
+                                      Kind == MemoryKind::PHI ? "__phi" : "",
+                                      UseInstructionNames);
   Id = isl_id_alloc(Ctx, BasePtrName.c_str(), this);
 
   updateSizes(Sizes);
@@ -961,18 +968,17 @@ MemoryAccess::MemoryAccess(ScopStmt *Stmt, Instruction *AccessInst,
                            Type *ElementType, bool Affine,
                            ArrayRef<const SCEV *> Subscripts,
                            ArrayRef<const SCEV *> Sizes, Value *AccessValue,
-                           MemoryKind Kind, StringRef BaseName)
+                           MemoryKind Kind)
     : Kind(Kind), AccType(AccType), RedType(RT_NONE), Statement(Stmt),
-      InvalidDomain(nullptr), BaseAddr(BaseAddress), BaseName(BaseName),
-      ElementType(ElementType), Sizes(Sizes.begin(), Sizes.end()),
-      AccessInstruction(AccessInst), AccessValue(AccessValue), IsAffine(Affine),
+      InvalidDomain(nullptr), BaseAddr(BaseAddress), ElementType(ElementType),
+      Sizes(Sizes.begin(), Sizes.end()), AccessInstruction(AccessInst),
+      AccessValue(AccessValue), IsAffine(Affine),
       Subscripts(Subscripts.begin(), Subscripts.end()), AccessRelation(nullptr),
       NewAccessRelation(nullptr) {
   static const std::string TypeStrings[] = {"", "_Read", "_Write", "_MayWrite"};
-  const std::string Access = TypeStrings[AccType] + utostr(Stmt->size()) + "_";
+  const std::string Access = TypeStrings[AccType] + utostr(Stmt->size());
 
-  std::string IdName =
-      getIslCompatibleName(Stmt->getBaseName(), Access, BaseName);
+  std::string IdName = Stmt->getBaseName() + Access;
   Id = isl_id_alloc(Stmt->getParent()->getIslCtx(), IdName.c_str(), this);
 }
 
@@ -988,12 +994,10 @@ MemoryAccess::MemoryAccess(ScopStmt *Stmt, AccessType AccType,
     Sizes.push_back(SAI->getDimensionSize(i));
   ElementType = SAI->getElementType();
   BaseAddr = SAI->getBasePtr();
-  BaseName = SAI->getName();
   static const std::string TypeStrings[] = {"", "_Read", "_Write", "_MayWrite"};
-  const std::string Access = TypeStrings[AccType] + utostr(Stmt->size()) + "_";
+  const std::string Access = TypeStrings[AccType] + utostr(Stmt->size());
 
-  std::string IdName =
-      getIslCompatibleName(Stmt->getBaseName(), Access, BaseName);
+  std::string IdName = Stmt->getBaseName() + Access;
   Id = isl_id_alloc(Stmt->getParent()->getIslCtx(), IdName.c_str(), this);
 }
 
@@ -1577,14 +1581,16 @@ ScopStmt::ScopStmt(Scop &parent, Region &R, Loop *SurroundingLoop)
     : Parent(parent), InvalidDomain(nullptr), Domain(nullptr), BB(nullptr),
       R(&R), Build(nullptr), SurroundingLoop(SurroundingLoop) {
 
-  BaseName = getIslCompatibleName("Stmt_", R.getNameStr(), "");
+  BaseName = getIslCompatibleName(
+      "Stmt", R.getNameStr(), parent.getNextStmtIdx(), "", UseInstructionNames);
 }
 
 ScopStmt::ScopStmt(Scop &parent, BasicBlock &bb, Loop *SurroundingLoop)
     : Parent(parent), InvalidDomain(nullptr), Domain(nullptr), BB(&bb),
       R(nullptr), Build(nullptr), SurroundingLoop(SurroundingLoop) {
 
-  BaseName = getIslCompatibleName("Stmt_", &bb, "");
+  BaseName = getIslCompatibleName("Stmt", &bb, parent.getNextStmtIdx(), "",
+                                  UseInstructionNames);
 }
 
 ScopStmt::ScopStmt(Scop &parent, __isl_take isl_map *SourceRel,
@@ -1894,25 +1900,27 @@ void Scop::createParameterId(const SCEV *Parameter) {
 
   std::string ParameterName = "p_" + std::to_string(getNumParams() - 1);
 
-  if (const SCEVUnknown *ValueParameter = dyn_cast<SCEVUnknown>(Parameter)) {
-    Value *Val = ValueParameter->getValue();
+  if (UseInstructionNames) {
+    if (const SCEVUnknown *ValueParameter = dyn_cast<SCEVUnknown>(Parameter)) {
+      Value *Val = ValueParameter->getValue();
 
-    // If this parameter references a specific Value and this value has a name
-    // we use this name as it is likely to be unique and more useful than just
-    // a number.
-    if (Val->hasName())
-      ParameterName = Val->getName();
-    else if (LoadInst *LI = dyn_cast<LoadInst>(Val)) {
-      auto *LoadOrigin = LI->getPointerOperand()->stripInBoundsOffsets();
-      if (LoadOrigin->hasName()) {
-        ParameterName += "_loaded_from_";
-        ParameterName +=
-            LI->getPointerOperand()->stripInBoundsOffsets()->getName();
+      // If this parameter references a specific Value and this value has a name
+      // we use this name as it is likely to be unique and more useful than just
+      // a number.
+      if (Val->hasName())
+        ParameterName = Val->getName();
+      else if (LoadInst *LI = dyn_cast<LoadInst>(Val)) {
+        auto *LoadOrigin = LI->getPointerOperand()->stripInBoundsOffsets();
+        if (LoadOrigin->hasName()) {
+          ParameterName += "_loaded_from_";
+          ParameterName +=
+              LI->getPointerOperand()->stripInBoundsOffsets()->getName();
+        }
       }
     }
-  }
 
-  ParameterName = getIslCompatibleName("", ParameterName, "");
+    ParameterName = getIslCompatibleName("", ParameterName, "");
+  }
 
   auto *Id = isl_id_alloc(getIslCtx(), ParameterName.c_str(),
                           const_cast<void *>((const void *)Parameter));
@@ -3737,16 +3745,6 @@ __isl_give isl_set *Scop::getNonHoistableCtx(MemoryAccess *Access,
   if (hasNonHoistableBasePtrInScop(Access, Writes))
     return nullptr;
 
-  auto &DL = getFunction().getParent()->getDataLayout();
-  if (isSafeToLoadUnconditionally(LI->getPointerOperand(), LI->getAlignment(),
-                                  DL))
-    return isl_set_empty(getParamSpace());
-
-  // Skip accesses in non-affine subregions as they might not be executed
-  // under the same condition as the entry of the non-affine subregion.
-  if (BB != LI->getParent())
-    return nullptr;
-
   isl_map *AccessRelation = Access->getAccessRelation();
   assert(!isl_map_is_empty(AccessRelation));
 
@@ -3757,10 +3755,25 @@ __isl_give isl_set *Scop::getNonHoistableCtx(MemoryAccess *Access,
   }
 
   AccessRelation = isl_map_intersect_domain(AccessRelation, Stmt.getDomain());
-  isl_set *AccessRange = isl_map_range(AccessRelation);
+  isl_set *SafeToLoad;
+
+  auto &DL = getFunction().getParent()->getDataLayout();
+  if (isSafeToLoadUnconditionally(LI->getPointerOperand(), LI->getAlignment(),
+                                  DL)) {
+    SafeToLoad =
+        isl_set_universe(isl_space_range(isl_map_get_space(AccessRelation)));
+    isl_map_free(AccessRelation);
+  } else if (BB != LI->getParent()) {
+    // Skip accesses in non-affine subregions as they might not be executed
+    // under the same condition as the entry of the non-affine subregion.
+    isl_map_free(AccessRelation);
+    return nullptr;
+  } else {
+    SafeToLoad = isl_map_range(AccessRelation);
+  }
 
   isl_union_map *Written = isl_union_map_intersect_range(
-      isl_union_map_copy(Writes), isl_union_set_from_set(AccessRange));
+      isl_union_map_copy(Writes), isl_union_set_from_set(SafeToLoad));
   auto *WrittenCtx = isl_union_map_params(Written);
   bool IsWritten = !isl_set_is_empty(WrittenCtx);
 

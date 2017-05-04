@@ -763,6 +763,17 @@ bool AArch64InstrInfo::isAsCheapAsAMove(const MachineInstr &MI) const {
   llvm_unreachable("Unknown opcode to check as cheap as a move!");
 }
 
+bool AArch64InstrInfo::isFalkorLSLFast(const MachineInstr &MI) const {
+  if (MI.getNumOperands() < 4)
+    return false;
+  unsigned ShOpVal = MI.getOperand(3).getImm();
+  unsigned ShImm = AArch64_AM::getShiftValue(ShOpVal);
+  if (AArch64_AM::getShiftType(ShOpVal) == AArch64_AM::LSL &&
+       ShImm < 4)
+    return true;
+  return false;
+}
+
 bool AArch64InstrInfo::isCoalescableExtInstr(const MachineInstr &MI,
                                              unsigned &SrcReg, unsigned &DstReg,
                                              unsigned &SubIdx) const {
@@ -2309,7 +2320,7 @@ void AArch64InstrInfo::storeRegToStackSlot(
       PtrInfo, MachineMemOperand::MOStore, MFI.getObjectSize(FI), Align);
   unsigned Opc = 0;
   bool Offset = true;
-  switch (RC->getSize()) {
+  switch (TRI->getSpillSize(*RC)) {
   case 1:
     if (AArch64::FPR8RegClass.hasSubClassEq(RC))
       Opc = AArch64::STRBui;
@@ -2413,7 +2424,7 @@ void AArch64InstrInfo::loadRegFromStackSlot(
 
   unsigned Opc = 0;
   bool Offset = true;
-  switch (RC->getSize()) {
+  switch (TRI->getSpillSize(*RC)) {
   case 1:
     if (AArch64::FPR8RegClass.hasSubClassEq(RC))
       Opc = AArch64::LDRBui;
@@ -2638,7 +2649,8 @@ MachineInstr *AArch64InstrInfo::foldMemoryOperandImpl(
     };
 
     if (DstMO.getSubReg() == 0 && SrcMO.getSubReg() == 0) {
-      assert(getRegClass(DstReg)->getSize() == getRegClass(SrcReg)->getSize() &&
+      assert(TRI.getRegSizeInBits(*getRegClass(DstReg)) ==
+             TRI.getRegSizeInBits(*getRegClass(SrcReg)) &&
              "Mismatched register size in non subreg COPY");
       if (IsSpill)
         storeRegToStackSlot(MBB, InsertPt, SrcReg, SrcMO.isKill(), FrameIndex,
@@ -2724,7 +2736,8 @@ MachineInstr *AArch64InstrInfo::foldMemoryOperandImpl(
       }
 
       if (FillRC) {
-        assert(getRegClass(SrcReg)->getSize() == FillRC->getSize() &&
+        assert(TRI.getRegSizeInBits(*getRegClass(SrcReg)) ==
+                   TRI.getRegSizeInBits(*FillRC) &&
                "Mismatched regclass size on folded subreg COPY");
         loadRegFromStackSlot(MBB, InsertPt, DstReg, FrameIndex, FillRC, &TRI);
         MachineInstr &LoadMI = *--InsertPt;
@@ -3014,7 +3027,7 @@ bool llvm::rewriteAArch64FrameIndex(MachineInstr &MI, unsigned FrameRegIdx,
   return false;
 }
 
-void AArch64InstrInfo::getNoopForMachoTarget(MCInst &NopInst) const {
+void AArch64InstrInfo::getNoop(MCInst &NopInst) const {
   NopInst.setOpcode(AArch64::HINT);
   NopInst.addOperand(MCOperand::createImm(0));
 }

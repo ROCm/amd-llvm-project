@@ -983,57 +983,6 @@ static const EnumEntry<unsigned> AMDGPUSymbolTypes[] = {
   { "AMDGPU_HSA_METADATA",          ELF::STT_AMDGPU_HSA_METADATA }
 };
 
-static const char *getElfSectionType(unsigned Arch, unsigned Type) {
-  switch (Arch) {
-  case ELF::EM_ARM:
-    switch (Type) {
-    LLVM_READOBJ_ENUM_CASE(ELF, SHT_ARM_EXIDX);
-    LLVM_READOBJ_ENUM_CASE(ELF, SHT_ARM_PREEMPTMAP);
-    LLVM_READOBJ_ENUM_CASE(ELF, SHT_ARM_ATTRIBUTES);
-    LLVM_READOBJ_ENUM_CASE(ELF, SHT_ARM_DEBUGOVERLAY);
-    LLVM_READOBJ_ENUM_CASE(ELF, SHT_ARM_OVERLAYSECTION);
-    }
-  case ELF::EM_HEXAGON:
-    switch (Type) { LLVM_READOBJ_ENUM_CASE(ELF, SHT_HEX_ORDERED); }
-  case ELF::EM_X86_64:
-    switch (Type) { LLVM_READOBJ_ENUM_CASE(ELF, SHT_X86_64_UNWIND); }
-  case ELF::EM_MIPS:
-  case ELF::EM_MIPS_RS3_LE:
-    switch (Type) {
-    LLVM_READOBJ_ENUM_CASE(ELF, SHT_MIPS_REGINFO);
-    LLVM_READOBJ_ENUM_CASE(ELF, SHT_MIPS_OPTIONS);
-    LLVM_READOBJ_ENUM_CASE(ELF, SHT_MIPS_ABIFLAGS);
-    LLVM_READOBJ_ENUM_CASE(ELF, SHT_MIPS_DWARF);
-    }
-  }
-
-  switch (Type) {
-  LLVM_READOBJ_ENUM_CASE(ELF, SHT_NULL              );
-  LLVM_READOBJ_ENUM_CASE(ELF, SHT_PROGBITS          );
-  LLVM_READOBJ_ENUM_CASE(ELF, SHT_SYMTAB            );
-  LLVM_READOBJ_ENUM_CASE(ELF, SHT_STRTAB            );
-  LLVM_READOBJ_ENUM_CASE(ELF, SHT_RELA              );
-  LLVM_READOBJ_ENUM_CASE(ELF, SHT_HASH              );
-  LLVM_READOBJ_ENUM_CASE(ELF, SHT_DYNAMIC           );
-  LLVM_READOBJ_ENUM_CASE(ELF, SHT_NOTE              );
-  LLVM_READOBJ_ENUM_CASE(ELF, SHT_NOBITS            );
-  LLVM_READOBJ_ENUM_CASE(ELF, SHT_REL               );
-  LLVM_READOBJ_ENUM_CASE(ELF, SHT_SHLIB             );
-  LLVM_READOBJ_ENUM_CASE(ELF, SHT_DYNSYM            );
-  LLVM_READOBJ_ENUM_CASE(ELF, SHT_INIT_ARRAY        );
-  LLVM_READOBJ_ENUM_CASE(ELF, SHT_FINI_ARRAY        );
-  LLVM_READOBJ_ENUM_CASE(ELF, SHT_PREINIT_ARRAY     );
-  LLVM_READOBJ_ENUM_CASE(ELF, SHT_GROUP             );
-  LLVM_READOBJ_ENUM_CASE(ELF, SHT_SYMTAB_SHNDX      );
-  LLVM_READOBJ_ENUM_CASE(ELF, SHT_GNU_ATTRIBUTES    );
-  LLVM_READOBJ_ENUM_CASE(ELF, SHT_GNU_HASH          );
-  LLVM_READOBJ_ENUM_CASE(ELF, SHT_GNU_verdef        );
-  LLVM_READOBJ_ENUM_CASE(ELF, SHT_GNU_verneed       );
-  LLVM_READOBJ_ENUM_CASE(ELF, SHT_GNU_versym        );
-  default: return "";
-  }
-}
-
 static const char *getGroupType(uint32_t Flag) {
   if (Flag & ELF::GRP_COMDAT)
     return "COMDAT";
@@ -3370,7 +3319,8 @@ static std::string getFreeBSDNoteTypeName(const uint32_t NT) {
 
 template <typename ELFT>
 static void printGNUNote(raw_ostream &OS, uint32_t NoteType,
-                         ArrayRef<typename ELFFile<ELFT>::Elf_Word> Words) {
+                         ArrayRef<typename ELFFile<ELFT>::Elf_Word> Words,
+                         size_t Size) {
   switch (NoteType) {
   default:
     return;
@@ -3393,16 +3343,14 @@ static void printGNUNote(raw_ostream &OS, uint32_t NoteType,
   }
   case ELF::NT_GNU_BUILD_ID: {
     OS << "    Build ID: ";
-    ArrayRef<uint8_t> ID(reinterpret_cast<const uint8_t *>(Words.data()),
-                         Words.size() * 4);
+    ArrayRef<uint8_t> ID(reinterpret_cast<const uint8_t *>(Words.data()), Size);
     for (const auto &B : ID)
       OS << format_hex_no_prefix(B, 2);
     break;
   }
   case ELF::NT_GNU_GOLD_VERSION:
     OS << "    Version: "
-       << StringRef(reinterpret_cast<const char *>(Words.data()),
-                    Words.size() * 4);
+       << StringRef(reinterpret_cast<const char *>(Words.data()), Size);
     break;
   }
 
@@ -3446,7 +3394,7 @@ void GNUStyle<ELFT>::printNotes(const ELFFile<ELFT> *Obj) {
 
       if (Name == "GNU") {
         OS << getGNUNoteTypeName(Type) << '\n';
-        printGNUNote<ELFT>(OS, Type, Descriptor);
+        printGNUNote<ELFT>(OS, Type, Descriptor, DescriptorSize);
       } else if (Name == "FreeBSD") {
         OS << getFreeBSDNoteTypeName(Type) << '\n';
       } else {
@@ -3636,9 +3584,10 @@ template <class ELFT> void LLVMStyle<ELFT>::printSections(const ELFO *Obj) {
     DictScope SectionD(W, "Section");
     W.printNumber("Index", SectionIndex);
     W.printNumber("Name", Name, Sec.sh_name);
-    W.printHex("Type",
-               getElfSectionType(Obj->getHeader()->e_machine, Sec.sh_type),
-               Sec.sh_type);
+    W.printHex(
+        "Type",
+        object::getELFSectionTypeName(Obj->getHeader()->e_machine, Sec.sh_type),
+        Sec.sh_type);
     std::vector<EnumEntry<unsigned>> SectionFlags(std::begin(ElfSectionFlags),
                                                   std::end(ElfSectionFlags));
     switch (Obj->getHeader()->e_machine) {

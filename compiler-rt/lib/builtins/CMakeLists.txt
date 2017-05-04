@@ -71,6 +71,7 @@ set(GENERIC_SOURCES
   extendsfdf2.c
   extendhfsf2.c
   ffsdi2.c
+  ffssi2.c
   ffsti2.c
   fixdfdi.c
   fixdfsi.c
@@ -163,7 +164,8 @@ set(GENERIC_SOURCES
   udivti3.c
   umoddi3.c
   umodsi3.c
-  umodti3.c)
+  umodti3.c
+  emutls.c)
 
 option(COMPILER_RT_EXCLUDE_ATOMIC_BUILTIN
   "Skip the atomic builtin (this may be needed if system headers are unavailable)"
@@ -175,15 +177,6 @@ if(COMPILER_RT_HAS_ATOMIC_KEYWORD AND NOT COMPILER_RT_EXCLUDE_ATOMIC_BUILTIN)
     atomic.c)
 endif()
 
-set(MSVC_SOURCES
- divsc3.c
- divdc3.c
- divxc3.c
- mulsc3.c
- muldc3.c
- mulxc3.c)
-
-
 if(APPLE)
   set(GENERIC_SOURCES
     ${GENERIC_SOURCES}
@@ -193,12 +186,6 @@ if(APPLE)
     atomic_flag_test_and_set_explicit.c
     atomic_signal_fence.c
     atomic_thread_fence.c)
-endif()
-
-if(NOT WIN32 OR MINGW)
-  set(GENERIC_SOURCES
-      ${GENERIC_SOURCES}
-      emutls.c)
 endif()
 
 if (HAVE_UNWIND_H)
@@ -263,9 +250,9 @@ else () # MSVC
       x86_64/floatdidf.c
       x86_64/floatdisf.c
       x86_64/floatdixf.c
-      ${MSVC_SOURCES})
+      ${GENERIC_SOURCES})
   set(x86_64h_SOURCES ${x86_64_SOURCES})
-  set(i386_SOURCES ${MSVC_SOURCES})
+  set(i386_SOURCES ${GENERIC_SOURCES})
   set(i686_SOURCES ${i386_SOURCES})
 endif () # if (NOT MSVC)
 

@@ -616,7 +616,7 @@ bool Sema::isMicrosoftMissingTypename(const CXXScopeSpec *SS, Scope *S) {
 
     CXXRecordDecl *RD = cast<CXXRecordDecl>(CurContext);
     for (const auto &Base : RD->bases())
-      if (Context.hasSameUnqualifiedType(QualType(Ty, 1), Base.getType()))
+      if (Ty && Context.hasSameUnqualifiedType(QualType(Ty, 1), Base.getType()))
         return true;
     return S->isFunctionPrototypeScope();
   }
@@ -629,6 +629,9 @@ void Sema::DiagnoseUnknownTypeName(IdentifierInfo *&II,
                                    CXXScopeSpec *SS,
                                    ParsedType &SuggestedType,
                                    bool AllowClassTemplates) {
+  // Don't report typename errors for editor placeholders.
+  if (II->isEditorPlaceholder())
+    return;
   // We don't have anything to suggest (yet).
   SuggestedType = nullptr;
 
@@ -2949,12 +2952,27 @@ bool Sema::MergeFunctionDecl(FunctionDecl *New, NamedDecl *&OldD,
   // Merge ns_returns_retained attribute.
   if (OldTypeInfo.getProducesResult() != NewTypeInfo.getProducesResult()) {
     if (NewTypeInfo.getProducesResult()) {
-      Diag(New->getLocation(), diag::err_returns_retained_mismatch);
+      Diag(New->getLocation(), diag::err_function_attribute_mismatch)
+          << "'ns_returns_retained'";
       Diag(OldLocation, diag::note_previous_declaration);
       return true;
     }
 
     NewTypeInfo = NewTypeInfo.withProducesResult(true);
+    RequiresAdjustment = true;
+  }
+
+  if (OldTypeInfo.getNoCallerSavedRegs() !=
+      NewTypeInfo.getNoCallerSavedRegs()) {
+    if (NewTypeInfo.getNoCallerSavedRegs()) {
+      AnyX86NoCallerSavedRegistersAttr *Attr = 
+        New->getAttr<AnyX86NoCallerSavedRegistersAttr>();
+      Diag(New->getLocation(), diag::err_function_attribute_mismatch) << Attr;
+      Diag(OldLocation, diag::note_previous_declaration);
+      return true;
+    }
+
+    NewTypeInfo = NewTypeInfo.withNoCallerSavedRegs(true);
     RequiresAdjustment = true;
   }
 
@@ -8054,6 +8072,10 @@ class DifferentNameValidatorCCC : public CorrectionCandidateCallback {
 
 } // end anonymous namespace
 
+void Sema::MarkTypoCorrectedFunctionDefinition(const NamedDecl *F) {
+  TypoCorrectedFunctionDefinitions.insert(F);
+}
+
 /// \brief Generate diagnostics for an invalid function redeclaration.
 ///
 /// This routine handles generating the diagnostic messages for an invalid
@@ -8158,6 +8180,8 @@ static NamedDecl *DiagnoseInvalidRedeclaration(
         if ((*I)->getCanonicalDecl() == Canonical)
           Correction.setCorrectionDecl(*I);
 
+      // Let Sema know about the correction.
+      SemaRef.MarkTypoCorrectedFunctionDefinition(Result);
       SemaRef.diagnoseTypo(
           Correction,
           SemaRef.PDiag(IsLocalFriend
@@ -9786,14 +9810,10 @@ bool Sema::CheckFunctionDeclaration(Scope *S, FunctionDecl *NewFD,
         // with that name must be marked "overloadable".
         Diag(NewFD->getLocation(), diag::err_attribute_overloadable_missing)
           << Redeclaration << NewFD;
-        NamedDecl *OverloadedDecl = nullptr;
-        if (Redeclaration)
-          OverloadedDecl = OldDecl;
-        else if (!Previous.empty())
-          OverloadedDecl = Previous.getRepresentativeDecl();
-        if (OverloadedDecl)
-          Diag(OverloadedDecl->getLocation(),
-               diag::note_attribute_overloadable_prev_overload);
+        NamedDecl *OverloadedDecl =
+            Redeclaration ? OldDecl : Previous.getRepresentativeDecl();
+        Diag(OverloadedDecl->getLocation(),
+             diag::note_attribute_overloadable_prev_overload);
         NewFD->addAttr(OverloadableAttr::CreateImplicit(Context));
       }
     }
@@ -12547,6 +12567,11 @@ Sema::CheckForFunctionRedefinition(FunctionDecl *FD,
   if (canRedefineFunction(Definition, getLangOpts()))
     return;
 
+  // Don't emit an error when this is redifinition of a typo-corrected
+  // definition.
+  if (TypoCorrectedFunctionDefinitions.count(Definition))
+    return;
+
   // If we don't have a visible definition of the function, and it's inline or
   // a template, skip the new definition.
   if (SkipBody && !hasVisibleDefinition(Definition) &&
@@ -14438,7 +14463,8 @@ CreateNewDecl:
     // If this is an undefined enum, warn.
     if (TUK != TUK_Definition && !Invalid) {
       TagDecl *Def;
-      if ((getLangOpts().CPlusPlus11 || getLangOpts().ObjC2) &&
+      if (!EnumUnderlyingIsImplicit &&
+          (getLangOpts().CPlusPlus11 || getLangOpts().ObjC2) &&
           cast<EnumDecl>(New)->isFixed()) {
         // C++0x: 7.2p2: opaque-enum-declaration.
         // Conflicts are diagnosed above. Do nothing.
@@ -14592,6 +14618,7 @@ CreateNewDecl:
 
   if (Attr)
     ProcessDeclAttributeList(S, New, Attr);
+  AddPragmaAttributes(S, New);
 
   // If this has an identifier, add it to the scope stack.
   if (TUK == TUK_Friend) {
@@ -14715,10 +14742,8 @@ void Sema::ActOnTagFinishDefinition(Scope *S, Decl *TagD,
       RD->completeDefinition();
   }
 
-  if (auto *RD = dyn_cast<CXXRecordDecl>(Tag)) {
+  if (isa<CXXRecordDecl>(Tag)) {
     FieldCollector->FinishClass();
-    if (Context.getLangOpts().Modules)
-      RD->computeODRHash();
   }
 
   // Exit this scope of this tag's definition.
@@ -16123,6 +16148,7 @@ Decl *Sema::ActOnEnumConstant(Scope *S, Decl *theEnumDecl, Decl *lastEnumConst,
 
   // Process attributes.
   if (Attr) ProcessDeclAttributeList(S, New, Attr);
+  AddPragmaAttributes(S, New);
 
   // Register this decl in the current scope stack.
   New->setAccess(TheEnumDecl->getAccess());
@@ -16620,30 +16646,41 @@ static void checkModuleImportContext(Sema &S, Module *M,
   }
 }
 
-Sema::DeclGroupPtrTy Sema::ActOnModuleDecl(SourceLocation ModuleLoc,
+Sema::DeclGroupPtrTy Sema::ActOnModuleDecl(SourceLocation StartLoc,
+                                           SourceLocation ModuleLoc,
                                            ModuleDeclKind MDK,
                                            ModuleIdPath Path) {
-  // 'module implementation' requires that we are not compiling a module of any
-  // kind. 'module' and 'module partition' require that we are compiling a
-  // module inteface (not a module map).
-  auto CMK = getLangOpts().getCompilingModule();
-  if (MDK == ModuleDeclKind::Implementation
-          ? CMK != LangOptions::CMK_None
-          : CMK != LangOptions::CMK_ModuleInterface) {
+  // A module implementation unit requires that we are not compiling a module
+  // of any kind. A module interface unit requires that we are not compiling a
+  // module map.
+  switch (getLangOpts().getCompilingModule()) {
+  case LangOptions::CMK_None:
+    // It's OK to compile a module interface as a normal translation unit.
+    break;
+
+  case LangOptions::CMK_ModuleInterface:
+    if (MDK != ModuleDeclKind::Implementation)
+      break;
+
+    // We were asked to compile a module interface unit but this is a module
+    // implementation unit. That indicates the 'export' is missing.
     Diag(ModuleLoc, diag::err_module_interface_implementation_mismatch)
-      << (unsigned)MDK;
+      << FixItHint::CreateInsertion(ModuleLoc, "export ");
+    break;
+
+  case LangOptions::CMK_ModuleMap:
+    Diag(ModuleLoc, diag::err_module_decl_in_module_map_module);
     return nullptr;
   }
 
   // FIXME: Create a ModuleDecl and return it.
 
   // FIXME: Most of this work should be done by the preprocessor rather than
-  // here, in case we look ahead across something where the current
-  // module matters (eg a #include).
+  // here, in order to support macro import.
 
-  // The dots in a module name in the Modules TS are a lie. Unlike Clang's
-  // hierarchical module map modules, the dots here are just another character
-  // that can appear in a module name. Flatten down to the actual module name.
+  // Flatten the dots in a module name. Unlike Clang's hierarchical module map
+  // modules, the dots here are just another character that can appear in a
+  // module name.
   std::string ModuleName;
   for (auto &Piece : Path) {
     if (!ModuleName.empty())
@@ -16668,8 +16705,8 @@ Sema::DeclGroupPtrTy Sema::ActOnModuleDecl(SourceLocation ModuleLoc,
   case ModuleDeclKind::Module: {
     // FIXME: Check we're not in a submodule.
 
-    // We can't have imported a definition of this module or parsed a module
-    // map defining it already.
+    // We can't have parsed or imported a definition of this module or parsed a
+    // module map defining it already.
     if (auto *M = Map.findModule(ModuleName)) {
       Diag(Path[0].second, diag::err_module_redefinition) << ModuleName;
       if (M->DefinitionLoc.isValid())
@@ -16843,6 +16880,12 @@ Decl *Sema::ActOnStartExportDecl(Scope *S, SourceLocation ExportLoc,
   ExportDecl *D = ExportDecl::Create(Context, CurContext, ExportLoc);
 
   // C++ Modules TS draft:
+  //   An export-declaration shall appear in the purview of a module other than
+  //   the global module.
+  if (ModuleScopes.empty() || !ModuleScopes.back().Module ||
+      ModuleScopes.back().Module->Kind != Module::ModuleInterfaceUnit)
+    Diag(ExportLoc, diag::err_export_not_in_module_interface);
+
   //   An export-declaration [...] shall not contain more than one
   //   export keyword.
   //
