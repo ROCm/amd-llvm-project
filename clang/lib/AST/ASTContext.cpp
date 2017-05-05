@@ -9585,18 +9585,6 @@ unsigned ASTContext::getTargetAddressSpace(Qualifiers Q) const {
   return getTargetAddressSpace(Q.getAddressSpace());
 }
 
-unsigned ASTContext::getTargetAddressSpace(unsigned AS) const {
-  // For OpenCL, only function local variables are not explicitly marked with
-  // an address space in the AST, and these need to be the address space of
-  // alloca.
-  if (!AS && LangOpts.OpenCL)
-    return getTargetInfo().getDataLayout().getAllocaAddrSpace();
-  if (AS >= LangAS::Count)
-    return AS - LangAS::Count;
-  else
-    return (*AddrSpaceMap)[AS];
-}
-
 // Explicitly instantiate this in case a Redeclarable<T> is used from a TU that
 // doesn't include ASTContext.h
 template

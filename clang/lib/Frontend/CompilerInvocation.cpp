@@ -1369,7 +1369,7 @@ static InputKind ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
       .Case("c++amp-kernel", InputKind::CXXAMP) // C++ AMP support
       .Case("hc-kernel", InputKind::CXXAMP) // HC support
       .Case("hc-host", InputKind::CXXAMP) // HC support
-      .Case("c++amp-kernel-cpu", IK_CXXAMP) // C++ AMP support
+      .Case("c++amp-kernel-cpu", InputKind::CXXAMP) // C++ AMP support
                 .Case("objective-c", InputKind::ObjC)
                 .Case("objective-c++", InputKind::ObjCXX)
                 .Case("renderscript", InputKind::RenderScript)
@@ -1748,12 +1748,18 @@ static bool IsInputCompatibleWithStandard(InputKind IK,
 
   case InputKind::CXX:
   case InputKind::ObjCXX:
-    return S.getLanguage() == InputKind::CXX;
+    return S.getLanguage() == InputKind::CXX ||
+           S.getLanguage() == InputKind::CXXAMP;
+
+  case InputKind::CXXAMP:
+    return S.getLanguage() == InputKind::CXXAMP ||
+           S.getLanguage() == InputKind::CXX;
 
   case InputKind::CUDA:
     // FIXME: What -std= values should be permitted for CUDA compilations?
     return S.getLanguage() == InputKind::CUDA ||
-           S.getLanguage() == InputKind::CXX;
+           S.getLanguage() == InputKind::CXX ||
+           S.getLanguage() == InputKind::CXXAMP;
 
   case InputKind::Asm:
     // Accept (and ignore) all -std= values.
@@ -1778,6 +1784,8 @@ static const StringRef GetInputKindName(InputKind IK) {
     return "Objective-C++";
   case InputKind::OpenCL:
     return "OpenCL";
+  case InputKind::CXXAMP:
+    return "C++AMP";
   case InputKind::CUDA:
     return "CUDA";
   case InputKind::RenderScript:

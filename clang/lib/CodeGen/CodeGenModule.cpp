@@ -866,9 +866,7 @@ void CodeGenModule::SetLLVMFunctionAttributes(const Decl *D,
       B.addAttribute("hc_grid_launch");
       B.addAttribute(llvm::Attribute::NoInline);
     }
-    F->addAttributes(llvm::AttributeList::FunctionIndex,
-                     llvm::AttributeList::get(
-                         F->getContext(), llvm::AttributeList::FunctionIndex, B));
+    F->addAttributes(llvm::AttributeList::FunctionIndex, B);
   }
 }
 

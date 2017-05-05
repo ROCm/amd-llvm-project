@@ -145,7 +145,7 @@ LANGSTANDARD(cuda, "cuda", CUDA, "NVIDIA CUDA(tm)",
              LineComment | CPlusPlus | Digraphs)
 
 // C++AMP
-LANGSTANDARD(cxxamp, "c++amp",
+LANGSTANDARD(cxxamp, "c++amp", CXXAMP,
              "ECMA C++AMP Standard",
              LineComment | CPlusPlus | CPlusPlus11 | CPlusPlusAMP | Digraphs)
 
