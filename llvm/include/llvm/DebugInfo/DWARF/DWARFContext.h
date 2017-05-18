@@ -43,13 +43,6 @@ namespace llvm {
 class MemoryBuffer;
 class raw_ostream;
 
-// In place of applying the relocations to the data we've read from disk we use
-// a separate mapping table to the side and checking that at locations in the
-// dwarf where we expect relocated values. This adds a bit of complexity to the
-// dwarf parsing/extraction at the benefit of not allocating memory for the
-// entire size of the debug info sections.
-typedef DenseMap<uint64_t, std::pair<uint8_t, int64_t>> RelocAddrMap;
-
 /// Reads a value from data extractor and applies a relocation to the result if
 /// one exists for the given offset.
 uint64_t getRelocatedValue(const DataExtractor &Data, uint32_t Size,
@@ -309,6 +302,11 @@ class DWARFContextInMemory : public DWARFContext {
   SmallVector<SmallString<32>, 4> UncompressedSections;
 
   StringRef *MapSectionToMember(StringRef Name);
+
+  /// If Sec is compressed section, decompresses and updates its contents
+  /// provided by Data. Otherwise leaves it unchanged.
+  Error maybeDecompress(const object::SectionRef &Sec, StringRef Name,
+                        StringRef &Data);
 
 public:
   DWARFContextInMemory(const object::ObjectFile &Obj,

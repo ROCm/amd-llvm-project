@@ -204,6 +204,11 @@ TYPED_TEST(BitVectorTest, FindOperations) {
   EXPECT_EQ(75, A.find_next(13));
   EXPECT_EQ(-1, A.find_next(75));
 
+  EXPECT_EQ(-1, A.find_prev(12));
+  EXPECT_EQ(12, A.find_prev(13));
+  EXPECT_EQ(13, A.find_prev(75));
+  EXPECT_EQ(75, A.find_prev(90));
+
   EXPECT_EQ(0, A.find_first_unset());
   EXPECT_EQ(99, A.find_last_unset());
   EXPECT_EQ(14, A.find_next_unset(11));
@@ -227,6 +232,30 @@ TYPED_TEST(BitVectorTest, FindOperations) {
   EXPECT_EQ(-1, A.find_last());
   EXPECT_EQ(0, A.find_first_unset());
   EXPECT_EQ(99, A.find_last_unset());
+
+  // Also test with a vector that is small enough to fit in 1 word.
+  A.resize(20);
+  A.set(3);
+  A.set(4);
+  A.set(16);
+  EXPECT_EQ(16, A.find_last());
+  EXPECT_EQ(3, A.find_first());
+  EXPECT_EQ(3, A.find_next(1));
+  EXPECT_EQ(4, A.find_next(3));
+  EXPECT_EQ(16, A.find_next(4));
+  EXPECT_EQ(-1, A.find_next(16));
+
+  EXPECT_EQ(-1, A.find_prev(3));
+  EXPECT_EQ(3, A.find_prev(4));
+  EXPECT_EQ(4, A.find_prev(16));
+  EXPECT_EQ(16, A.find_prev(18));
+
+  EXPECT_EQ(0, A.find_first_unset());
+  EXPECT_EQ(19, A.find_last_unset());
+  EXPECT_EQ(5, A.find_next_unset(3));
+  EXPECT_EQ(5, A.find_next_unset(4));
+  EXPECT_EQ(13, A.find_next_unset(12));
+  EXPECT_EQ(17, A.find_next_unset(15));
 }
 
 TYPED_TEST(BitVectorTest, CompoundAssignment) {
@@ -631,5 +660,34 @@ TYPED_TEST(BitVectorTest, EmptyVector) {
   testEmpty(E);
 }
 
+TYPED_TEST(BitVectorTest, Iterators) {
+  TypeParam Filled(10, true);
+  EXPECT_NE(Filled.set_bits_begin(), Filled.set_bits_end());
+  unsigned Counter = 0;
+  for (unsigned Bit : Filled.set_bits())
+    EXPECT_EQ(Bit, Counter++);
+
+  TypeParam Empty;
+  EXPECT_EQ(Empty.set_bits_begin(), Empty.set_bits_end());
+  for (unsigned Bit : Empty.set_bits()) {
+    (void)Bit;
+    EXPECT_TRUE(false);
+  }
+
+  TypeParam ToFill(100, false);
+  ToFill.set(0);
+  EXPECT_NE(ToFill.set_bits_begin(), ToFill.set_bits_end());
+  EXPECT_EQ(++ToFill.set_bits_begin(), ToFill.set_bits_end());
+  EXPECT_EQ(*ToFill.set_bits_begin(), 0U);
+  ToFill.reset(0);
+  EXPECT_EQ(ToFill.set_bits_begin(), ToFill.set_bits_end());
+
+  const unsigned List[] = {1, 10, 25, 99};
+  for (unsigned Num : List)
+    ToFill.set(Num);
+  unsigned i = 0;
+  for (unsigned Bit : ToFill.set_bits())
+    EXPECT_EQ(List[i++], Bit);
+}
 }
 #endif

@@ -17,13 +17,13 @@
 #include "PDB.h"
 #include "SymbolTable.h"
 #include "Symbols.h"
-#include "lld/Core/Parallel.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/FileOutputBuffer.h"
+#include "llvm/Support/Parallel.h"
 #include "llvm/Support/RandomNumberGenerator.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
@@ -376,18 +376,24 @@ void Writer::createImportTables() {
   OutputSection *Text = createSection(".text");
   for (ImportFile *File : Symtab->ImportFiles) {
     if (DefinedImportThunk *Thunk = File->ThunkSym)
-      Text->addChunk(Thunk->getChunk());
+      if (Thunk->Live)
+        Text->addChunk(Thunk->getChunk());
+
     if (Config->DelayLoads.count(StringRef(File->DLLName).lower())) {
-      DelayIdata.add(File->ImpSym);
+      if (File->ImpSym->Live)
+        DelayIdata.add(File->ImpSym);
     } else {
-      Idata.add(File->ImpSym);
+      if (File->ImpSym->Live)
+        Idata.add(File->ImpSym);
     }
   }
+
   if (!Idata.empty()) {
     OutputSection *Sec = createSection(".idata");
     for (Chunk *C : Idata.getChunks())
       Sec->addChunk(C);
   }
+
   if (!DelayIdata.empty()) {
     Defined *Helper = cast<Defined>(Config->DelayLoadHelper);
     DelayIdata.create(Helper);
@@ -745,8 +751,8 @@ void Writer::writeSections() {
     // ADD instructions).
     if (Sec->getPermissions() & IMAGE_SCN_CNT_CODE)
       memset(SecBuf, 0xCC, Sec->getRawSize());
-    parallel_for_each(Sec->getChunks().begin(), Sec->getChunks().end(),
-                      [&](Chunk *C) { C->writeTo(SecBuf); });
+    for_each(parallel::par, Sec->getChunks().begin(), Sec->getChunks().end(),
+             [&](Chunk *C) { C->writeTo(SecBuf); });
   }
 }
 
@@ -760,16 +766,14 @@ void Writer::sortExceptionTable() {
   uint8_t *End = Begin + Sec->getVirtualSize();
   if (Config->Machine == AMD64) {
     struct Entry { ulittle32_t Begin, End, Unwind; };
-    parallel_sort(
-        (Entry *)Begin, (Entry *)End,
-        [](const Entry &A, const Entry &B) { return A.Begin < B.Begin; });
+    sort(parallel::par, (Entry *)Begin, (Entry *)End,
+         [](const Entry &A, const Entry &B) { return A.Begin < B.Begin; });
     return;
   }
   if (Config->Machine == ARMNT) {
     struct Entry { ulittle32_t Begin, Unwind; };
-    parallel_sort(
-        (Entry *)Begin, (Entry *)End,
-        [](const Entry &A, const Entry &B) { return A.Begin < B.Begin; });
+    sort(parallel::par, (Entry *)Begin, (Entry *)End,
+         [](const Entry &A, const Entry &B) { return A.Begin < B.Begin; });
     return;
   }
   errs() << "warning: don't know how to handle .pdata.\n";

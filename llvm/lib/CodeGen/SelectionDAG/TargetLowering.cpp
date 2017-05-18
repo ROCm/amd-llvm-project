@@ -417,11 +417,10 @@ bool TargetLowering::ShrinkDemandedOp(SDValue Op, unsigned BitWidth,
     if (TLI.isTruncateFree(Op.getValueType(), SmallVT) &&
         TLI.isZExtFree(SmallVT, Op.getValueType())) {
       // We found a type with free casts.
-      SDValue X = DAG.getNode(Op.getOpcode(), dl, SmallVT,
-                              DAG.getNode(ISD::TRUNCATE, dl, SmallVT,
-                                          Op.getNode()->getOperand(0)),
-                              DAG.getNode(ISD::TRUNCATE, dl, SmallVT,
-                                          Op.getNode()->getOperand(1)));
+      SDValue X = DAG.getNode(
+          Op.getOpcode(), dl, SmallVT,
+          DAG.getNode(ISD::TRUNCATE, dl, SmallVT, Op.getOperand(0)),
+          DAG.getNode(ISD::TRUNCATE, dl, SmallVT, Op.getOperand(1)));
       bool NeedZext = DemandedSize > SmallVTBits;
       SDValue Z = DAG.getNode(NeedZext ? ISD::ZERO_EXTEND : ISD::ANY_EXTEND,
                               dl, Op.getValueType(), X);
@@ -817,7 +816,7 @@ bool TargetLowering::SimplifyDemandedBits(SDValue Op,
       // Convert (shl (anyext x, c)) to (anyext (shl x, c)) if the high bits
       // are not demanded. This will likely allow the anyext to be folded away.
       if (InOp.getNode()->getOpcode() == ISD::ANY_EXTEND) {
-        SDValue InnerOp = InOp.getNode()->getOperand(0);
+        SDValue InnerOp = InOp.getOperand(0);
         EVT InnerVT = InnerOp.getValueType();
         unsigned InnerBits = InnerVT.getSizeInBits();
         if (ShAmt < InnerBits && NewMask.getActiveBits() <= InnerBits &&
@@ -1303,7 +1302,7 @@ void TargetLowering::computeKnownBitsForTargetNode(const SDValue Op,
           Op.getOpcode() == ISD::INTRINSIC_VOID) &&
          "Should use MaskedValueIsZero if you don't know whether Op"
          " is a target node!");
-  Known.Zero.clearAllBits(); Known.One.clearAllBits();
+  Known.resetAll();
 }
 
 /// This method can be implemented by targets that want to expose additional

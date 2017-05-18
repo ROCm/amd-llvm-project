@@ -120,8 +120,7 @@ Value *InstCombiner::SimplifyDemandedUseBits(Value *V, APInt DemandedMask,
     return nullptr;
   }
 
-  Known.Zero.clearAllBits();
-  Known.One.clearAllBits();
+  Known.resetAll();
   if (DemandedMask == 0)     // Not demanding any bits from V.
     return UndefValue::get(VTy);
 
@@ -612,7 +611,7 @@ Value *InstCombiner::SimplifyDemandedUseBits(Value *V, APInt DemandedMask,
         SimplifyDemandedBits(I, 1, AllOnes, Known2, Depth + 1))
       return I;
 
-    unsigned Leaders = Known2.Zero.countLeadingOnes();
+    unsigned Leaders = Known2.countMinLeadingZeros();
     Known.Zero = APInt::getHighBitsSet(BitWidth, Leaders) & DemandedMask;
     break;
   }

@@ -84,7 +84,8 @@ def SDTLockBinaryArithWithFlags : SDTypeProfile<1, 2, [SDTCisVT<0, i32>,
 
 def SDTX86Ret     : SDTypeProfile<0, -1, [SDTCisVT<0, i32>]>;
 
-def SDT_X86CallSeqStart : SDCallSeqStart<[SDTCisVT<0, i32>]>;
+def SDT_X86CallSeqStart : SDCallSeqStart<[SDTCisVT<0, i32>,
+                                          SDTCisVT<1, i32>]>;
 def SDT_X86CallSeqEnd   : SDCallSeqEnd<[SDTCisVT<0, i32>,
                                         SDTCisVT<1, i32>]>;
 
@@ -1995,11 +1996,11 @@ def REX64_PREFIX : I<0x48, RawFrm, (outs),  (ins), "rex64", []>,
                      Requires<[In64BitMode]>;
 
 // Data16 instruction prefix
-def DATA16_PREFIX : I<0x66, RawFrm, (outs),  (ins), "data16", []>, 
+def DATA16_PREFIX : I<0x66, RawFrm, (outs),  (ins), "data16", []>,
                      Requires<[Not16BitMode]>;
 
 // Data instruction prefix
-def DATA32_PREFIX : I<0x66, RawFrm, (outs),  (ins), "data32", []>, 
+def DATA32_PREFIX : I<0x66, RawFrm, (outs),  (ins), "data32", []>,
                      Requires<[In16BitMode]>;
 
 // Repeat string operation instruction prefixes
@@ -2351,6 +2352,38 @@ let Predicates = [HasBMI2] in {
   def : Pat<(and (loadi64 addr:$src), (add (shl 1, GR8:$lz), -1)),
             (BZHI64rm addr:$src,
               (INSERT_SUBREG (i64 (IMPLICIT_DEF)), GR8:$lz, sub_8bit))>;
+
+  // x & (-1 >> (32 - y))
+  def : Pat<(and GR32:$src, (srl -1, (i8 (trunc (sub 32, GR32:$lz))))),
+            (BZHI32rr GR32:$src, GR32:$lz)>;
+  def : Pat<(and (loadi32 addr:$src), (srl -1, (i8 (trunc (sub 32, GR32:$lz))))),
+            (BZHI32rm addr:$src, GR32:$lz)>;
+
+  // x & (-1 >> (64 - y))
+  def : Pat<(and GR64:$src, (srl -1, (i8 (trunc (sub 64, GR32:$lz))))),
+            (BZHI64rr GR64:$src,
+              (INSERT_SUBREG (i64 (IMPLICIT_DEF)), GR32:$lz, sub_32bit))>;
+  def : Pat<(and (loadi64 addr:$src), (srl -1, (i8 (trunc (sub 64, GR32:$lz))))),
+            (BZHI64rm addr:$src,
+              (INSERT_SUBREG (i64 (IMPLICIT_DEF)), GR32:$lz, sub_32bit))>;
+
+  // x << (32 - y) >> (32 - y)
+  def : Pat<(srl (shl GR32:$src, (i8 (trunc (sub 32, GR32:$lz)))),
+                 (i8 (trunc (sub 32, GR32:$lz)))),
+            (BZHI32rr GR32:$src, GR32:$lz)>;
+  def : Pat<(srl (shl (loadi32 addr:$src), (i8 (trunc (sub 32, GR32:$lz)))),
+                 (i8 (trunc (sub 32, GR32:$lz)))),
+            (BZHI32rm addr:$src, GR32:$lz)>;
+
+  // x << (64 - y) >> (64 - y)
+  def : Pat<(srl (shl GR64:$src, (i8 (trunc (sub 64, GR32:$lz)))),
+                 (i8 (trunc (sub 64, GR32:$lz)))),
+            (BZHI64rr GR64:$src,
+              (INSERT_SUBREG (i64 (IMPLICIT_DEF)), GR32:$lz, sub_32bit))>;
+  def : Pat<(srl (shl (loadi64 addr:$src), (i8 (trunc (sub 64, GR32:$lz)))),
+                 (i8 (trunc (sub 64, GR32:$lz)))),
+            (BZHI64rm addr:$src,
+              (INSERT_SUBREG (i64 (IMPLICIT_DEF)), GR32:$lz, sub_32bit))>;
 } // HasBMI2
 
 let Predicates = [HasBMI] in {
@@ -2518,7 +2551,7 @@ let SchedRW = [ WriteSystem ] in {
   }
 
   let Uses = [ ECX, EAX, EBX ] in {
-    def MWAITXrrr : I<0x01, MRM_FB, (outs), (ins), "mwaitx", 
+    def MWAITXrrr : I<0x01, MRM_FB, (outs), (ins), "mwaitx",
                     [(int_x86_mwaitx ECX, EAX, EBX)], IIC_SSE_MWAITX>,
                     TB, Requires<[ HasMWAITX ]>;
   }

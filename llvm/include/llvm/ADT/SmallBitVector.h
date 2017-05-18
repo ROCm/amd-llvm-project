@@ -134,6 +134,19 @@ private:
   }
 
 public:
+  typedef const_set_bits_iterator_impl<SmallBitVector> const_set_bits_iterator;
+  typedef const_set_bits_iterator set_iterator;
+
+  const_set_bits_iterator set_bits_begin() const {
+    return const_set_bits_iterator(*this);
+  }
+  const_set_bits_iterator set_bits_end() const {
+    return const_set_bits_iterator(*this, -1);
+  }
+  iterator_range<const_set_bits_iterator> set_bits() const {
+    return make_range(set_bits_begin(), set_bits_end());
+  }
+
   /// Creates an empty bitvector.
   SmallBitVector() : X(1) {}
 
@@ -276,6 +289,24 @@ public:
       return countTrailingOnes(Bits);
     }
     return getPointer()->find_next_unset(Prev);
+  }
+
+  /// find_prev - Returns the index of the first set bit that precedes the
+  /// the bit at \p PriorTo.  Returns -1 if all previous bits are unset.
+  int find_prev(unsigned PriorTo) const {
+    if (isSmall()) {
+      if (PriorTo == 0)
+        return -1;
+
+      --PriorTo;
+      uintptr_t Bits = getSmallBits();
+      Bits &= maskTrailingOnes<uintptr_t>(PriorTo + 1);
+      if (Bits == 0)
+        return -1;
+
+      return NumBaseBits - countLeadingZeros(Bits) - 1;
+    }
+    return getPointer()->find_prev(PriorTo);
   }
 
   /// Clear all bits.

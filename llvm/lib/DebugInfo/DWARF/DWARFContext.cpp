@@ -66,7 +66,7 @@ uint64_t llvm::getRelocatedValue(const DataExtractor &Data, uint32_t Size,
   RelocAddrMap::const_iterator AI = Relocs->find(*Off);
   if (AI == Relocs->end())
     return Data.getUnsigned(Off, Size);
-  return Data.getUnsigned(Off, Size) + AI->second.second;
+  return Data.getUnsigned(Off, Size) + AI->second.Value;
 }
 
 static void dumpAccelSection(raw_ostream &OS, StringRef Name,
@@ -692,6 +692,10 @@ DWARFContext::getLineTableForUnit(DWARFUnit *U) {
   if (const DWARFLineTable *lt = Line->getLineTable(stmtOffset))
     return lt;
 
+  // Make sure the offset is good before we try to parse.
+  if (stmtOffset >= U->getLineSection().size())
+    return nullptr;  
+
   // We have to parse it first.
   DataExtractor lineData(U->getLineSection(), isLittleEndian(),
                          U->getAddressByteSize());
@@ -901,16 +905,23 @@ static Error createError(const Twine &Reason, llvm::Error E) {
 /// Returns the address of symbol relocation used against. Used for futher
 /// relocations computation. Symbol's section load address is taken in account if
 /// LoadedObjectInfo interface is provided.
-static Expected<uint64_t> getSymbolAddress(const object::ObjectFile &Obj,
-                                           const RelocationRef &Reloc,
-                                           const LoadedObjectInfo *L) {
+static Expected<uint64_t>
+getSymbolAddress(const object::ObjectFile &Obj, const RelocationRef &Reloc,
+                 const LoadedObjectInfo *L,
+                 std::map<SymbolRef, uint64_t> &Cache) {
   uint64_t Ret = 0;
   object::section_iterator RSec = Obj.section_end();
   object::symbol_iterator Sym = Reloc.getSymbol();
 
+  std::map<SymbolRef, uint64_t>::iterator CacheIt = Cache.end();
   // First calculate the address of the symbol or section as it appears
   // in the object file
   if (Sym != Obj.symbol_end()) {
+    bool New;
+    std::tie(CacheIt, New) = Cache.insert({*Sym, 0});
+    if (!New)
+      return CacheIt->second;
+
     Expected<uint64_t> SymAddrOrErr = Sym->getAddress();
     if (!SymAddrOrErr)
       return createError("error: failed to compute symbol address: ",
@@ -939,6 +950,10 @@ static Expected<uint64_t> getSymbolAddress(const object::ObjectFile &Obj,
   if (L && RSec != Obj.section_end())
     if (uint64_t SectionLoadAddress = L->getSectionLoadAddress(*RSec))
       Ret += SectionLoadAddress - RSec->getAddress();
+
+  if (CacheIt != Cache.end())
+    CacheIt->second = Ret;
+
   return Ret;
 }
 
@@ -951,6 +966,26 @@ static bool isRelocScattered(const object::ObjectFile &Obj,
   // scattered relocations.
   auto RelocInfo = MachObj->getRelocation(Reloc.getRawDataRefImpl());
   return MachObj->isRelocationScattered(RelocInfo);
+}
+
+Error DWARFContextInMemory::maybeDecompress(const SectionRef &Sec,
+                                            StringRef Name, StringRef &Data) {
+  if (!Decompressor::isCompressed(Sec))
+    return Error::success();
+
+  Expected<Decompressor> Decompressor =
+      Decompressor::create(Name, Data, IsLittleEndian, AddressSize == 8);
+  if (!Decompressor)
+    return Decompressor.takeError();
+
+  SmallString<32> Out;
+  if (auto Err = Decompressor->decompress(Out))
+    return Err;
+
+  UncompressedSections.emplace_back(std::move(Out));
+  Data = UncompressedSections.back();
+
+  return Error::success();
 }
 
 DWARFContextInMemory::DWARFContextInMemory(const object::ObjectFile &Obj,
@@ -976,16 +1011,11 @@ DWARFContextInMemory::DWARFContextInMemory(const object::ObjectFile &Obj,
     if (!L || !L->getLoadedSectionContents(*RelocatedSection,data))
       Section.getContents(data);
 
-    if (Decompressor::isCompressed(Section)) {
-      Expected<Decompressor> Decompressor =
-          Decompressor::create(name, data, IsLittleEndian, AddressSize == 8);
-      if (!Decompressor)
-        continue;
-      SmallString<32> Out;
-      if (auto Err = Decompressor->decompress(Out))
-        continue;
-      UncompressedSections.emplace_back(std::move(Out));
-      data = UncompressedSections.back();
+    if (auto Err = maybeDecompress(Section, name, data)) {
+      errs() << "error: failed to decompress '" + name + "', " +
+                    toString(std::move(Err))
+             << '\n';
+      continue;
     }
 
     // Compressed sections names in GNU style starts from ".z",
@@ -1056,6 +1086,7 @@ DWARFContextInMemory::DWARFContextInMemory(const object::ObjectFile &Obj,
         continue;
     }
 
+    std::map<SymbolRef, uint64_t> AddrCache;
     if (Section.relocation_begin() != Section.relocation_end()) {
       uint64_t SectionSize = RelocatedSection->getSize();
       for (const RelocationRef &Reloc : Section.relocations()) {
@@ -1064,7 +1095,8 @@ DWARFContextInMemory::DWARFContextInMemory(const object::ObjectFile &Obj,
         if (isRelocScattered(Obj, Reloc))
           continue;
 
-        Expected<uint64_t> SymAddrOrErr = getSymbolAddress(Obj, Reloc, L);
+        Expected<uint64_t> SymAddrOrErr =
+            getSymbolAddress(Obj, Reloc, L, AddrCache);
         if (!SymAddrOrErr) {
           errs() << toString(SymAddrOrErr.takeError()) << '\n';
           continue;
@@ -1095,7 +1127,7 @@ DWARFContextInMemory::DWARFContextInMemory(const object::ObjectFile &Obj,
                      << " at " << format("%p", Address)
                      << " with width " << format("%d", R.Width)
                      << "\n");
-        Map->insert(std::make_pair(Address, std::make_pair(R.Width, R.Value)));
+        Map->insert({Address, {(uint8_t)R.Width, R.Value}});
       }
     }
   }

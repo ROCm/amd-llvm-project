@@ -15,6 +15,7 @@
 #define LLVM_ADT_BITVECTOR_H
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/iterator_range.h"
 #include "llvm/Support/MathExtras.h"
 #include <algorithm>
 #include <cassert>
@@ -25,6 +26,50 @@
 #include <utility>
 
 namespace llvm {
+
+/// ForwardIterator for the bits that are set.
+/// Iterators get invalidated when resize / reserve is called.
+template <typename BitVectorT> class const_set_bits_iterator_impl {
+  const BitVectorT &Parent;
+  int Current = 0;
+
+  void advance() {
+    assert(Current != -1 && "Trying to advance past end.");
+    Current = Parent.find_next(Current);
+  }
+
+public:
+  const_set_bits_iterator_impl(const BitVectorT &Parent, int Current)
+      : Parent(Parent), Current(Current) {}
+  explicit const_set_bits_iterator_impl(const BitVectorT &Parent)
+      : const_set_bits_iterator_impl(Parent, Parent.find_first()) {}
+  const_set_bits_iterator_impl(const const_set_bits_iterator_impl &) = default;
+
+  const_set_bits_iterator_impl operator++(int) {
+    auto Prev = *this;
+    advance();
+    return Prev;
+  }
+
+  const_set_bits_iterator_impl &operator++() {
+    advance();
+    return *this;
+  }
+
+  unsigned operator*() const { return Current; }
+
+  bool operator==(const const_set_bits_iterator_impl &Other) const {
+    assert(&Parent == &Other.Parent &&
+           "Comparing iterators from different BitVectors");
+    return Current == Other.Current;
+  }
+
+  bool operator!=(const const_set_bits_iterator_impl &Other) const {
+    assert(&Parent == &Other.Parent &&
+           "Comparing iterators from different BitVectors");
+    return Current != Other.Current;
+  }
+};
 
 class BitVector {
   typedef unsigned long BitWord;
@@ -73,6 +118,18 @@ public:
     }
   };
 
+  typedef const_set_bits_iterator_impl<BitVector> const_set_bits_iterator;
+  typedef const_set_bits_iterator set_iterator;
+
+  const_set_bits_iterator set_bits_begin() const {
+    return const_set_bits_iterator(*this);
+  }
+  const_set_bits_iterator set_bits_end() const {
+    return const_set_bits_iterator(*this, -1);
+  }
+  iterator_range<const_set_bits_iterator> set_bits() const {
+    return make_range(set_bits_begin(), set_bits_end());
+  }
 
   /// BitVector default ctor - Creates an empty bitvector.
   BitVector() : Size(0) {}
@@ -217,7 +274,7 @@ public:
     unsigned BitPos = Prev % BITWORD_SIZE;
     BitWord Copy = Bits[WordPos];
     // Mask off previous bits.
-    Copy &= ~0UL << BitPos;
+    Copy &= maskTrailingZeros<BitWord>(BitPos);
 
     if (Copy != 0)
       return WordPos * BITWORD_SIZE + countTrailingZeros(Copy);
@@ -229,7 +286,7 @@ public:
     return -1;
   }
 
-  /// find_next_unset - Returns the index of the next usnet bit following the
+  /// find_next_unset - Returns the index of the next unset bit following the
   /// "Prev" bit.  Returns -1 if all remaining bits are set.
   int find_next_unset(unsigned Prev) const {
     ++Prev;
@@ -253,7 +310,34 @@ public:
     return -1;
   }
 
-  /// clear - Clear all bits.
+  /// find_prev - Returns the index of the first set bit that precedes the
+  /// the bit at \p PriorTo.  Returns -1 if all previous bits are unset.
+  int find_prev(unsigned PriorTo) const {
+    if (PriorTo == 0)
+      return -1;
+
+    --PriorTo;
+
+    unsigned WordPos = PriorTo / BITWORD_SIZE;
+    unsigned BitPos = PriorTo % BITWORD_SIZE;
+    BitWord Copy = Bits[WordPos];
+    // Mask off next bits.
+    Copy &= maskTrailingOnes<BitWord>(BitPos + 1);
+
+    if (Copy != 0)
+      return (WordPos + 1) * BITWORD_SIZE - countLeadingZeros(Copy) - 1;
+
+    // Check previous words.
+    for (unsigned i = 1; i <= WordPos; ++i) {
+      unsigned Index = WordPos - i;
+      if (Bits[Index] == 0)
+        continue;
+      return (Index + 1) * BITWORD_SIZE - countLeadingZeros(Bits[Index]) - 1;
+    }
+    return -1;
+  }
+
+  /// clear - Removes all bits from the bitvector. Does not change capacity.
   void clear() {
     Size = 0;
   }
