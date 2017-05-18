@@ -33,6 +33,7 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
@@ -452,6 +453,45 @@ public:
                           bool isVolatile = false, MDNode *TBAATag = nullptr,
                           MDNode *ScopeTag = nullptr,
                           MDNode *NoAliasTag = nullptr);
+
+  /// \brief Create a vector fadd reduction intrinsic of the source vector.
+  /// The first parameter is a scalar accumulator value for ordered reductions.
+  CallInst *CreateFAddReduce(Value *Acc, Value *Src);
+
+  /// \brief Create a vector fmul reduction intrinsic of the source vector.
+  /// The first parameter is a scalar accumulator value for ordered reductions.
+  CallInst *CreateFMulReduce(Value *Acc, Value *Src);
+
+  /// \brief Create a vector int add reduction intrinsic of the source vector.
+  CallInst *CreateAddReduce(Value *Src);
+
+  /// \brief Create a vector int mul reduction intrinsic of the source vector.
+  CallInst *CreateMulReduce(Value *Src);
+
+  /// \brief Create a vector int AND reduction intrinsic of the source vector.
+  CallInst *CreateAndReduce(Value *Src);
+
+  /// \brief Create a vector int OR reduction intrinsic of the source vector.
+  CallInst *CreateOrReduce(Value *Src);
+
+  /// \brief Create a vector int XOR reduction intrinsic of the source vector.
+  CallInst *CreateXorReduce(Value *Src);
+
+  /// \brief Create a vector integer max reduction intrinsic of the source
+  /// vector.
+  CallInst *CreateIntMaxReduce(Value *Src, bool IsSigned = false);
+
+  /// \brief Create a vector integer min reduction intrinsic of the source
+  /// vector.
+  CallInst *CreateIntMinReduce(Value *Src, bool IsSigned = false);
+
+  /// \brief Create a vector float max reduction intrinsic of the source
+  /// vector.
+  CallInst *CreateFPMaxReduce(Value *Src, bool NoNaN = false);
+
+  /// \brief Create a vector float min reduction intrinsic of the source
+  /// vector.
+  CallInst *CreateFPMinReduce(Value *Src, bool NoNaN = false);
 
   /// \brief Create a lifetime.start intrinsic.
   ///
@@ -1089,9 +1129,15 @@ public:
   // Instruction creation methods: Memory Instructions
   //===--------------------------------------------------------------------===//
 
+  AllocaInst *CreateAlloca(Type *Ty, unsigned AddrSpace,
+                           Value *ArraySize = nullptr, const Twine &Name = "") {
+    return Insert(new AllocaInst(Ty, AddrSpace, ArraySize), Name);
+  }
+
   AllocaInst *CreateAlloca(Type *Ty, Value *ArraySize = nullptr,
                            const Twine &Name = "") {
-    return Insert(new AllocaInst(Ty, ArraySize), Name);
+    const DataLayout &DL = BB->getParent()->getParent()->getDataLayout();
+    return Insert(new AllocaInst(Ty, DL.getAllocaAddrSpace(), ArraySize), Name);
   }
   // \brief Provided to resolve 'CreateLoad(Ptr, "...")' correctly, instead of
   // converting the string to 'bool' for the isVolatile parameter.

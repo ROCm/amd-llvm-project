@@ -17,6 +17,21 @@
 using namespace clang;
 using namespace index;
 
+static bool isGeneratedDecl(const Decl *D) {
+  if (auto *attr = D->getAttr<ExternalSourceSymbolAttr>()) {
+    return attr->getGeneratedDeclaration();
+  }
+  return false;
+}
+
+bool IndexingContext::shouldIndex(const Decl *D) {
+  return !isGeneratedDecl(D);
+}
+
+const LangOptions &IndexingContext::getLangOpts() const {
+  return Ctx->getLangOpts();
+}
+
 bool IndexingContext::shouldIndexFunctionLocalSymbols() const {
   return IndexOpts.IndexFunctionLocals;
 }
@@ -109,6 +124,10 @@ bool IndexingContext::isTemplateImplicitInstantiation(const Decl *D) {
     TKind = FD->getTemplateSpecializationKind();
   } else if (auto *VD = dyn_cast<VarDecl>(D)) {
     TKind = VD->getTemplateSpecializationKind();
+  } else if (isa<FieldDecl>(D)) {
+    if (const auto *Parent =
+            dyn_cast<ClassTemplateSpecializationDecl>(D->getDeclContext()))
+      TKind = Parent->getSpecializationKind();
   }
   switch (TKind) {
     case TSK_Undeclared:
@@ -144,6 +163,17 @@ static const Decl *adjustTemplateImplicitInstantiation(const Decl *D) {
     return FD->getTemplateInstantiationPattern();
   } else if (auto *VD = dyn_cast<VarDecl>(D)) {
     return VD->getTemplateInstantiationPattern();
+  } else if (const auto *FD = dyn_cast<FieldDecl>(D)) {
+    if (const auto *Parent =
+            dyn_cast<ClassTemplateSpecializationDecl>(D->getDeclContext())) {
+      const CXXRecordDecl *Pattern = Parent->getTemplateInstantiationPattern();
+      for (const NamedDecl *ND : Pattern->lookup(FD->getDeclName())) {
+        if (ND->isImplicit())
+          continue;
+        if (isa<FieldDecl>(ND))
+          return ND;
+      }
+    }
   }
   return nullptr;
 }
@@ -233,6 +263,7 @@ static bool shouldReportOccurrenceForSystemDeclOnlyMode(
       case SymbolRole::RelationReceivedBy:
       case SymbolRole::RelationCalledBy:
       case SymbolRole::RelationContainedBy:
+      case SymbolRole::RelationSpecializationOf:
         return true;
       }
       llvm_unreachable("Unsupported SymbolRole value!");

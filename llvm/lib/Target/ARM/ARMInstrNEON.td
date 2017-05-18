@@ -587,6 +587,14 @@ def SDTARMVMULL   : SDTypeProfile<1, 2, [SDTCisInt<0>, SDTCisInt<1>,
 def NEONvmulls    : SDNode<"ARMISD::VMULLs", SDTARMVMULL>;
 def NEONvmullu    : SDNode<"ARMISD::VMULLu", SDTARMVMULL>;
 
+def SDTARMVTBL1   : SDTypeProfile<1, 2, [SDTCisVT<0, v8i8>, SDTCisVT<1, v8i8>,
+                                         SDTCisVT<2, v8i8>]>;
+def SDTARMVTBL2   : SDTypeProfile<1, 3, [SDTCisVT<0, v8i8>, SDTCisVT<1, v8i8>,
+                                         SDTCisVT<2, v8i8>, SDTCisVT<3, v8i8>]>;
+def NEONvtbl1     : SDNode<"ARMISD::VTBL1", SDTARMVTBL1>;
+def NEONvtbl2     : SDNode<"ARMISD::VTBL2", SDTARMVTBL2>;
+
+
 def NEONimmAllZerosV: PatLeaf<(NEONvmovImm (i32 timm)), [{
   ConstantSDNode *ConstVal = cast<ConstantSDNode>(N->getOperand(0));
   unsigned EltBits = 0;
@@ -5550,8 +5558,7 @@ defm VSRI     : N2VShInsR_QHSD<1, 1, 0b0100, 1, "vsri">;
 
 //   VABS     : Vector Absolute Value
 defm VABS     : N2VInt_QHS<0b11, 0b11, 0b01, 0b00110, 0,
-                           IIC_VUNAiD, IIC_VUNAiQ, "vabs", "s",
-                           int_arm_neon_vabs>;
+                           IIC_VUNAiD, IIC_VUNAiQ, "vabs", "s", abs>;
 def  VABSfd   : N2VD<0b11, 0b11, 0b10, 0b01, 0b01110, 0,
                      "vabs", "f32",
                      v2f32, v2f32, fabs>;
@@ -5566,29 +5573,6 @@ def  VABShq   : N2VQ<0b11, 0b11, 0b01, 0b01, 0b01110, 0,
                      "vabs", "f16",
                       v8f16, v8f16, fabs>,
                 Requires<[HasNEON, HasFullFP16]>;
-
-def : Pat<(xor (v2i32 (bitconvert (v8i8 (NEONvshrs DPR:$src, (i32 7))))),
-               (v2i32 (bitconvert (v8i8 (add DPR:$src,
-                                             (NEONvshrs DPR:$src, (i32 7))))))),
-          (VABSv8i8 DPR:$src)>;
-def : Pat<(xor (v2i32 (bitconvert (v4i16 (NEONvshrs DPR:$src, (i32 15))))),
-               (v2i32 (bitconvert (v4i16 (add DPR:$src,
-                                            (NEONvshrs DPR:$src, (i32 15))))))),
-          (VABSv4i16 DPR:$src)>;
-def : Pat<(xor (v2i32 (NEONvshrs DPR:$src, (i32 31))),
-               (v2i32 (add DPR:$src, (NEONvshrs DPR:$src, (i32 31))))),
-          (VABSv2i32 DPR:$src)>;
-def : Pat<(xor (v4i32 (bitconvert (v16i8 (NEONvshrs QPR:$src, (i32 7))))),
-               (v4i32 (bitconvert (v16i8 (add QPR:$src,
-                                             (NEONvshrs QPR:$src, (i32 7))))))),
-          (VABSv16i8 QPR:$src)>;
-def : Pat<(xor (v4i32 (bitconvert (v8i16 (NEONvshrs QPR:$src, (i32 15))))),
-               (v4i32 (bitconvert (v8i16 (add QPR:$src,
-                                            (NEONvshrs QPR:$src, (i32 15))))))),
-          (VABSv8i16 QPR:$src)>;
-def : Pat<(xor (v4i32 (NEONvshrs QPR:$src, (i32 31))),
-               (v4i32 (add QPR:$src, (NEONvshrs QPR:$src, (i32 31))))),
-          (VABSv4i32 QPR:$src)>;
 
 //   VQABS    : Vector Saturating Absolute Value
 defm VQABS    : N2VInt_QHS<0b11, 0b11, 0b00, 0b01110, 0,
@@ -6443,7 +6427,8 @@ def  VTBL1
   : N3V<1,1,0b11,0b1000,0,0, (outs DPR:$Vd),
         (ins VecListOneD:$Vn, DPR:$Vm), NVTBLFrm, IIC_VTB1,
         "vtbl", "8", "$Vd, $Vn, $Vm", "",
-        [(set DPR:$Vd, (v8i8 (int_arm_neon_vtbl1 VecListOneD:$Vn, DPR:$Vm)))]>;
+        [(set DPR:$Vd, (v8i8 (NEONvtbl1 VecListOneD:$Vn, DPR:$Vm)))]>;
+
 let hasExtraSrcRegAllocReq = 1 in {
 def  VTBL2
   : N3V<1,1,0b11,0b1001,0,0, (outs DPR:$Vd),
@@ -6497,6 +6482,49 @@ def  VTBX4Pseudo
   : PseudoNeonI<(outs DPR:$dst), (ins DPR:$orig, QQPR:$tbl, DPR:$src),
                 IIC_VTBX4, "$orig = $dst", []>;
 } // DecoderMethod = "DecodeTBLInstruction"
+
+def : Pat<(v8i8 (NEONvtbl2 v8i8:$Vn0, v8i8:$Vn1, v8i8:$Vm)),
+          (v8i8 (VTBL2 (REG_SEQUENCE DPair, v8i8:$Vn0, dsub_0,
+                                            v8i8:$Vn1, dsub_1),
+                       v8i8:$Vm))>;
+def : Pat<(v8i8 (int_arm_neon_vtbx2 v8i8:$orig, v8i8:$Vn0, v8i8:$Vn1,
+                                    v8i8:$Vm)),
+          (v8i8 (VTBX2 v8i8:$orig,
+                       (REG_SEQUENCE DPair, v8i8:$Vn0, dsub_0,
+                                            v8i8:$Vn1, dsub_1),
+                       v8i8:$Vm))>;
+
+def : Pat<(v8i8 (int_arm_neon_vtbl3 v8i8:$Vn0, v8i8:$Vn1,
+                                    v8i8:$Vn2, v8i8:$Vm)),
+          (v8i8 (VTBL3Pseudo (REG_SEQUENCE QQPR, v8i8:$Vn0, dsub_0,
+                                                 v8i8:$Vn1, dsub_1,
+                                                 v8i8:$Vn2, dsub_2,
+                                                 (v8i8 (IMPLICIT_DEF)), dsub_3),
+                             v8i8:$Vm))>;
+def : Pat<(v8i8 (int_arm_neon_vtbx3 v8i8:$orig, v8i8:$Vn0, v8i8:$Vn1,
+                                    v8i8:$Vn2, v8i8:$Vm)),
+          (v8i8 (VTBX3Pseudo v8i8:$orig,
+                             (REG_SEQUENCE QQPR, v8i8:$Vn0, dsub_0,
+                                                 v8i8:$Vn1, dsub_1,
+                                                 v8i8:$Vn2, dsub_2,
+                                                 (v8i8 (IMPLICIT_DEF)), dsub_3),
+                             v8i8:$Vm))>;
+
+def : Pat<(v8i8 (int_arm_neon_vtbl4 v8i8:$Vn0, v8i8:$Vn1,
+                                    v8i8:$Vn2, v8i8:$Vn3, v8i8:$Vm)),
+          (v8i8 (VTBL4Pseudo (REG_SEQUENCE QQPR, v8i8:$Vn0, dsub_0,
+                                                 v8i8:$Vn1, dsub_1,
+                                                 v8i8:$Vn2, dsub_2,
+                                                 v8i8:$Vn3, dsub_3),
+                             v8i8:$Vm))>;
+def : Pat<(v8i8 (int_arm_neon_vtbx4 v8i8:$orig, v8i8:$Vn0, v8i8:$Vn1,
+                                    v8i8:$Vn2, v8i8:$Vn3, v8i8:$Vm)),
+          (v8i8 (VTBX4Pseudo v8i8:$orig,
+                             (REG_SEQUENCE QQPR, v8i8:$Vn0, dsub_0,
+                                                 v8i8:$Vn1, dsub_1,
+                                                 v8i8:$Vn2, dsub_2,
+                                                 v8i8:$Vn3, dsub_3),
+                             v8i8:$Vm))>;
 
 // VRINT      : Vector Rounding
 multiclass VRINT_FPI<string op, bits<3> op9_7, SDPatternOperator Int> {

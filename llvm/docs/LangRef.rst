@@ -641,8 +641,9 @@ assume that the globals are densely packed in their section and try to
 iterate over them as an array, alignment padding would break this
 iteration. The maximum alignment is ``1 << 29``.
 
-Globals can also have a :ref:`DLL storage class <dllstorageclass>` and
-an optional list of attached :ref:`metadata <metadata>`,
+Globals can also have a :ref:`DLL storage class <dllstorageclass>`,
+an optional :ref:`global attributes <glattrs>` and
+an optional list of attached :ref:`metadata <metadata>`.
 
 Variables and aliases can have a
 :ref:`Thread Local Storage Model <tls_model>`.
@@ -1535,6 +1536,17 @@ example:
 ``sanitize_thread``
     This attribute indicates that ThreadSanitizer checks
     (dynamic thread safety analysis) are enabled for this function.
+``speculatable``
+    This function attribute indicates that the function does not have any
+    effects besides calculating its result and does not have undefined behavior.
+    Note that ``speculatable`` is not enough to conclude that along any
+    particular execution path the number of calls to this function will not be
+    externally observable. This attribute is only valid on functions
+    and declarations, not on individual call sites. If a function is
+    incorrectly marked as speculatable and really does exhibit
+    undefined behavior, the undefined behavior may be observed even
+    if the call site is dead code.
+
 ``ssp``
     This attribute indicates that the function should emit a stack
     smashing protector. It is in the form of a "canary" --- a random value
@@ -1613,6 +1625,14 @@ example:
     the ELF x86-64 abi, but it can be disabled for some compilation
     units.
 
+.. _glattrs:
+
+Global Attributes
+-----------------
+
+Attributes may be set to communicate additional information about a global variable.
+Unlike :ref:`function attributes <fnattrs>`, attributes on a global variable
+are grouped into a single :ref:`attribute group <attrgrp>`.
 
 .. _opbundles:
 
@@ -1812,6 +1832,9 @@ as follows:
     must be a multiple of 8-bits. If omitted, the natural stack
     alignment defaults to "unspecified", which does not prevent any
     alignment promotions.
+``A<address space>``
+    Specifies the address space of  objects created by '``alloca``'.
+    Defaults to the default address space of 0.
 ``p[n]:<size>:<abi>:<pref>``
     This specifies the *size* of a pointer and its ``<abi>`` and
     ``<pref>``\erred alignments for address space ``n``. All sizes are in
@@ -3650,6 +3673,9 @@ Sparc:
 
 - ``I``: An immediate 13-bit signed integer.
 - ``r``: A 32-bit integer register.
+- ``f``: Any floating-point register on SparcV8, or a floating point
+  register in the "low" half of the registers on SparcV9.
+- ``e``: Any floating point register. (Same as ``f`` on SparcV8.)
 
 SystemZ:
 
@@ -4377,7 +4403,7 @@ referenced LLVM variable relates to the source language variable.
 
 The current supported vocabulary is limited:
 
-- ``DW_OP_deref`` dereferences the working expression.
+- ``DW_OP_deref`` dereferences the top of the expression stack.
 - ``DW_OP_plus, 93`` adds ``93`` to the working expression.
 - ``DW_OP_LLVM_fragment, 16, 8`` specifies the offset and size (``16`` and ``8``
   here, respectively) of the variable fragment from the working expression. Note
@@ -4393,12 +4419,17 @@ DIExpression nodes that contain a ``DW_OP_stack_value`` operator are standalone
 location descriptions that describe constant values. This form is used to
 describe global constants that have been optimized away. All other expressions
 are modifiers to another location: A debug intrinsic ties a location and a
-DIExpression together. Contrary to DWARF expressions, a DIExpression always
-describes the *value* of a source variable and never its *address*. In DWARF
-terminology, a DIExpression can always be considered an implicit location
-description regardless whether it contains a ``DW_OP_stack_value`` or not.
+DIExpression together.
 
-.. code-block:: text
+DWARF specifies three kinds of simple location descriptions: Register, memory,
+and implicit location descriptions. Register and memory location descriptions
+describe the *location* of a source variable (in the sense that a debugger might
+modify its value), whereas implicit locations describe merely the *value* of a
+source variable. DIExpressions also follow this model: A DIExpression that
+doesn't have a trailing ``DW_OP_stack_value`` will describe an *address* when
+combined with a concrete location.
+
+.. code-block:: llvm
 
     !0 = !DIExpression(DW_OP_deref)
     !1 = !DIExpression(DW_OP_plus, 3)
@@ -5118,6 +5149,17 @@ Examples:
    !0 = !{!"magic ptr"}
    !1 = !{!"other ptr"}
 
+The invariant.group metadata must be dropped when replacing one pointer by
+another based on aliasing information. This is because invariant.group is tied
+to the SSA value of the pointer operand.
+
+.. code-block:: llvm
+  
+  %v = load i8, i8* %x, !invariant.group !0
+  ; if %x mustalias %y then we can replace the above instruction with
+  %v = load i8, i8* %y
+
+
 '``type``' Metadata
 ^^^^^^^^^^^^^^^^^^^
 
@@ -5798,9 +5840,7 @@ This instruction requires several arguments:
 #. '``exception label``': the label reached when a callee returns via
    the :ref:`resume <i_resume>` instruction or other exception handling
    mechanism.
-#. The optional :ref:`function attributes <fnattrs>` list. Only
-   '``noreturn``', '``nounwind``', '``readonly``' and '``readnone``'
-   attributes are valid here.
+#. The optional :ref:`function attributes <fnattrs>` list.
 #. The optional :ref:`operand bundles <opbundles>` list.
 
 Semantics:
@@ -7057,9 +7097,10 @@ Semantics:
 The elements of the two input vectors are numbered from left to right
 across both of the vectors. The shuffle mask operand specifies, for each
 element of the result vector, which element of the two input vectors the
-result element gets. The element selector may be undef (meaning "don't
-care") and the second operand may be undef if performing a shuffle from
-only one vector.
+result element gets. If the shuffle mask is undef, the result vector is
+undef. If any element of the mask operand is undef, that element of the
+result is undef. If the shuffle mask selects an undef element from one
+of the input vectors, the resulting element is undef.
 
 Example:
 """"""""
@@ -7192,7 +7233,7 @@ Syntax:
 
 ::
 
-      <result> = alloca [inalloca] <type> [, <ty> <NumElements>] [, align <alignment>]     ; yields type*:result
+      <result> = alloca [inalloca] <type> [, <ty> <NumElements>] [, align <alignment>] [, addrspace(<num>)]     ; yields type addrspace(num)*:result
 
 Overview:
 """""""""
@@ -7200,7 +7241,7 @@ Overview:
 The '``alloca``' instruction allocates memory on the stack frame of the
 currently executing function, to be automatically released when this
 function returns to its caller. The object is always allocated in the
-default address space (address space zero).
+address space for allocas indicated in the datalayout.
 
 Arguments:
 """"""""""
@@ -7886,7 +7927,7 @@ makes sense:
     ; get pointers for 8 elements from array B
     %ptrs = getelementptr double, double* %B, <8 x i32> %C
     ; load 8 elements from array B into A
-    %A = call <8 x double> @llvm.masked.gather.v8f64(<8 x double*> %ptrs,
+    %A = call <8 x double> @llvm.masked.gather.v8f64.v8p0f64(<8 x double*> %ptrs,
          i32 8, <8 x i1> %mask, <8 x double> %passthru)
 
 Conversion Operations
@@ -8858,9 +8899,7 @@ This instruction requires several arguments:
    be of :ref:`first class <t_firstclass>` type. If the function signature
    indicates the function accepts a variable number of arguments, the
    extra arguments can be specified.
-#. The optional :ref:`function attributes <fnattrs>` list. Only
-   '``noreturn``', '``nounwind``', '``readonly``' , '``readnone``',
-   and '``convergent``' attributes are valid here.
+#. The optional :ref:`function attributes <fnattrs>` list.
 #. The optional :ref:`operand bundles <opbundles>` list.
 
 Semantics:
@@ -10272,21 +10311,20 @@ all types however.
 Overview:
 """""""""
 
-The '``llvm.sqrt``' intrinsics return the sqrt of the specified operand,
+The '``llvm.sqrt``' intrinsics return the square root of the specified value,
 returning the same value as the libm '``sqrt``' functions would, but without
 trapping or setting ``errno``.
 
 Arguments:
 """"""""""
 
-The argument and return value are floating point numbers of the same
-type.
+The argument and return value are floating point numbers of the same type.
 
 Semantics:
 """"""""""
 
-This function returns the sqrt of the specified operand if it is a
-nonnegative floating point number.
+This function returns the square root of the operand if it is a nonnegative
+floating point number.
 
 '``llvm.powi.*``' Intrinsic
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -10352,8 +10390,7 @@ The '``llvm.sin.*``' intrinsics return the sine of the operand.
 Arguments:
 """"""""""
 
-The argument and return value are floating point numbers of the same
-type.
+The argument and return value are floating point numbers of the same type.
 
 Semantics:
 """"""""""
@@ -10388,8 +10425,7 @@ The '``llvm.cos.*``' intrinsics return the cosine of the operand.
 Arguments:
 """"""""""
 
-The argument and return value are floating point numbers of the same
-type.
+The argument and return value are floating point numbers of the same type.
 
 Semantics:
 """"""""""
@@ -10456,13 +10492,13 @@ all types however.
 Overview:
 """""""""
 
-The '``llvm.exp.*``' intrinsics perform the exp function.
+The '``llvm.exp.*``' intrinsics compute the base-e exponential of the specified
+value.
 
 Arguments:
 """"""""""
 
-The argument and return value are floating point numbers of the same
-type.
+The argument and return value are floating point numbers of the same type.
 
 Semantics:
 """"""""""
@@ -10491,13 +10527,13 @@ all types however.
 Overview:
 """""""""
 
-The '``llvm.exp2.*``' intrinsics perform the exp2 function.
+The '``llvm.exp2.*``' intrinsics compute the base-2 exponential of the
+specified value.
 
 Arguments:
 """"""""""
 
-The argument and return value are floating point numbers of the same
-type.
+The argument and return value are floating point numbers of the same type.
 
 Semantics:
 """"""""""
@@ -10526,13 +10562,13 @@ all types however.
 Overview:
 """""""""
 
-The '``llvm.log.*``' intrinsics perform the log function.
+The '``llvm.log.*``' intrinsics compute the base-e logarithm of the specified
+value.
 
 Arguments:
 """"""""""
 
-The argument and return value are floating point numbers of the same
-type.
+The argument and return value are floating point numbers of the same type.
 
 Semantics:
 """"""""""
@@ -10561,13 +10597,13 @@ all types however.
 Overview:
 """""""""
 
-The '``llvm.log10.*``' intrinsics perform the log10 function.
+The '``llvm.log10.*``' intrinsics compute the base-10 logarithm of the
+specified value.
 
 Arguments:
 """"""""""
 
-The argument and return value are floating point numbers of the same
-type.
+The argument and return value are floating point numbers of the same type.
 
 Semantics:
 """"""""""
@@ -10596,13 +10632,13 @@ all types however.
 Overview:
 """""""""
 
-The '``llvm.log2.*``' intrinsics perform the log2 function.
+The '``llvm.log2.*``' intrinsics compute the base-2 logarithm of the specified
+value.
 
 Arguments:
 """"""""""
 
-The argument and return value are floating point numbers of the same
-type.
+The argument and return value are floating point numbers of the same type.
 
 Semantics:
 """"""""""
@@ -11663,6 +11699,338 @@ Examples:
 
       %r2 = call float @llvm.fmuladd.f32(float %a, float %b, float %c) ; yields float:r2 = (a * b) + c
 
+
+Experimental Vector Reduction Intrinsics
+----------------------------------------
+
+Horizontal reductions of vectors can be expressed using the following
+intrinsics. Each one takes a vector operand as an input and applies its
+respective operation across all elements of the vector, returning a single
+scalar result of the same element type.
+
+
+'``llvm.experimental.vector.reduce.add.*``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+::
+
+      declare i32 @llvm.experimental.vector.reduce.add.i32.v4i32(<4 x i32> %a)
+      declare i64 @llvm.experimental.vector.reduce.add.i64.v2i64(<2 x i64> %a)
+
+Overview:
+"""""""""
+
+The '``llvm.experimental.vector.reduce.add.*``' intrinsics do an integer ``ADD``
+reduction of a vector, returning the result as a scalar. The return type matches
+the element-type of the vector input.
+
+Arguments:
+""""""""""
+The argument to this intrinsic must be a vector of integer values.
+
+'``llvm.experimental.vector.reduce.fadd.*``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+::
+
+      declare float @llvm.experimental.vector.reduce.fadd.f32.v4f32(float %acc, <4 x float> %a)
+      declare double @llvm.experimental.vector.reduce.fadd.f64.v2f64(double %acc, <2 x double> %a)
+
+Overview:
+"""""""""
+
+The '``llvm.experimental.vector.reduce.fadd.*``' intrinsics do a floating point
+``ADD`` reduction of a vector, returning the result as a scalar. The return type
+matches the element-type of the vector input.
+
+If the intrinsic call has fast-math flags, then the reduction will not preserve
+the associativity of an equivalent scalarized counterpart. If it does not have
+fast-math flags, then the reduction will be *ordered*, implying that the
+operation respects the associativity of a scalarized reduction.
+
+
+Arguments:
+""""""""""
+The first argument to this intrinsic is a scalar accumulator value, which is
+only used when there are no fast-math flags attached. This argument may be undef
+when fast-math flags are used.
+
+The second argument must be a vector of floating point values.
+
+Examples:
+"""""""""
+
+.. code-block:: llvm
+
+      %fast = call fast float @llvm.experimental.vector.reduce.fadd.f32.v4f32(float undef, <4 x float> %input) ; fast reduction
+      %ord = call float @llvm.experimental.vector.reduce.fadd.f32.v4f32(float %acc, <4 x float> %input) ; ordered reduction
+
+
+'``llvm.experimental.vector.reduce.mul.*``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+::
+
+      declare i32 @llvm.experimental.vector.reduce.mul.i32.v4i32(<4 x i32> %a)
+      declare i64 @llvm.experimental.vector.reduce.mul.i64.v2i64(<2 x i64> %a)
+
+Overview:
+"""""""""
+
+The '``llvm.experimental.vector.reduce.mul.*``' intrinsics do an integer ``MUL``
+reduction of a vector, returning the result as a scalar. The return type matches
+the element-type of the vector input.
+
+Arguments:
+""""""""""
+The argument to this intrinsic must be a vector of integer values.
+
+'``llvm.experimental.vector.reduce.fmul.*``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+::
+
+      declare float @llvm.experimental.vector.reduce.fmul.f32.v4f32(float %acc, <4 x float> %a)
+      declare double @llvm.experimental.vector.reduce.fmul.f64.v2f64(double %acc, <2 x double> %a)
+
+Overview:
+"""""""""
+
+The '``llvm.experimental.vector.reduce.fmul.*``' intrinsics do a floating point
+``MUL`` reduction of a vector, returning the result as a scalar. The return type
+matches the element-type of the vector input.
+
+If the intrinsic call has fast-math flags, then the reduction will not preserve
+the associativity of an equivalent scalarized counterpart. If it does not have
+fast-math flags, then the reduction will be *ordered*, implying that the
+operation respects the associativity of a scalarized reduction.
+
+
+Arguments:
+""""""""""
+The first argument to this intrinsic is a scalar accumulator value, which is
+only used when there are no fast-math flags attached. This argument may be undef
+when fast-math flags are used.
+
+The second argument must be a vector of floating point values.
+
+Examples:
+"""""""""
+
+.. code-block:: llvm
+
+      %fast = call fast float @llvm.experimental.vector.reduce.fmul.f32.v4f32(float undef, <4 x float> %input) ; fast reduction
+      %ord = call float @llvm.experimental.vector.reduce.fmul.f32.v4f32(float %acc, <4 x float> %input) ; ordered reduction
+
+'``llvm.experimental.vector.reduce.and.*``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+::
+
+      declare i32 @llvm.experimental.vector.reduce.and.i32.v4i32(<4 x i32> %a)
+
+Overview:
+"""""""""
+
+The '``llvm.experimental.vector.reduce.and.*``' intrinsics do a bitwise ``AND``
+reduction of a vector, returning the result as a scalar. The return type matches
+the element-type of the vector input.
+
+Arguments:
+""""""""""
+The argument to this intrinsic must be a vector of integer values.
+
+'``llvm.experimental.vector.reduce.or.*``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+::
+
+      declare i32 @llvm.experimental.vector.reduce.or.i32.v4i32(<4 x i32> %a)
+
+Overview:
+"""""""""
+
+The '``llvm.experimental.vector.reduce.or.*``' intrinsics do a bitwise ``OR`` reduction
+of a vector, returning the result as a scalar. The return type matches the
+element-type of the vector input.
+
+Arguments:
+""""""""""
+The argument to this intrinsic must be a vector of integer values.
+
+'``llvm.experimental.vector.reduce.xor.*``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+::
+
+      declare i32 @llvm.experimental.vector.reduce.xor.i32.v4i32(<4 x i32> %a)
+
+Overview:
+"""""""""
+
+The '``llvm.experimental.vector.reduce.xor.*``' intrinsics do a bitwise ``XOR``
+reduction of a vector, returning the result as a scalar. The return type matches
+the element-type of the vector input.
+
+Arguments:
+""""""""""
+The argument to this intrinsic must be a vector of integer values.
+
+'``llvm.experimental.vector.reduce.smax.*``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+::
+
+      declare i32 @llvm.experimental.vector.reduce.smax.i32.v4i32(<4 x i32> %a)
+
+Overview:
+"""""""""
+
+The '``llvm.experimental.vector.reduce.smax.*``' intrinsics do a signed integer
+``MAX`` reduction of a vector, returning the result as a scalar. The return type
+matches the element-type of the vector input.
+
+Arguments:
+""""""""""
+The argument to this intrinsic must be a vector of integer values.
+
+'``llvm.experimental.vector.reduce.smin.*``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+::
+
+      declare i32 @llvm.experimental.vector.reduce.smin.i32.v4i32(<4 x i32> %a)
+
+Overview:
+"""""""""
+
+The '``llvm.experimental.vector.reduce.smin.*``' intrinsics do a signed integer
+``MIN`` reduction of a vector, returning the result as a scalar. The return type
+matches the element-type of the vector input.
+
+Arguments:
+""""""""""
+The argument to this intrinsic must be a vector of integer values.
+
+'``llvm.experimental.vector.reduce.umax.*``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+::
+
+      declare i32 @llvm.experimental.vector.reduce.umax.i32.v4i32(<4 x i32> %a)
+
+Overview:
+"""""""""
+
+The '``llvm.experimental.vector.reduce.umax.*``' intrinsics do an unsigned
+integer ``MAX`` reduction of a vector, returning the result as a scalar. The
+return type matches the element-type of the vector input.
+
+Arguments:
+""""""""""
+The argument to this intrinsic must be a vector of integer values.
+
+'``llvm.experimental.vector.reduce.umin.*``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+::
+
+      declare i32 @llvm.experimental.vector.reduce.umin.i32.v4i32(<4 x i32> %a)
+
+Overview:
+"""""""""
+
+The '``llvm.experimental.vector.reduce.umin.*``' intrinsics do an unsigned
+integer ``MIN`` reduction of a vector, returning the result as a scalar. The
+return type matches the element-type of the vector input.
+
+Arguments:
+""""""""""
+The argument to this intrinsic must be a vector of integer values.
+
+'``llvm.experimental.vector.reduce.fmax.*``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+::
+
+      declare float @llvm.experimental.vector.reduce.fmax.f32.v4f32(<4 x float> %a)
+      declare double @llvm.experimental.vector.reduce.fmax.f64.v2f64(<2 x double> %a)
+
+Overview:
+"""""""""
+
+The '``llvm.experimental.vector.reduce.fmax.*``' intrinsics do a floating point
+``MAX`` reduction of a vector, returning the result as a scalar. The return type
+matches the element-type of the vector input.
+
+If the intrinsic call has the ``nnan`` fast-math flag then the operation can
+assume that NaNs are not present in the input vector.
+
+Arguments:
+""""""""""
+The argument to this intrinsic must be a vector of floating point values.
+
+'``llvm.experimental.vector.reduce.fmin.*``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+::
+
+      declare float @llvm.experimental.vector.reduce.fmin.f32.v4f32(<4 x float> %a)
+      declare double @llvm.experimental.vector.reduce.fmin.f64.v2f64(<2 x double> %a)
+
+Overview:
+"""""""""
+
+The '``llvm.experimental.vector.reduce.fmin.*``' intrinsics do a floating point
+``MIN`` reduction of a vector, returning the result as a scalar. The return type
+matches the element-type of the vector input.
+
+If the intrinsic call has the ``nnan`` fast-math flag then the operation can
+assume that NaNs are not present in the input vector.
+
+Arguments:
+""""""""""
+The argument to this intrinsic must be a vector of floating point values.
+
 Half Precision Floating Point Intrinsics
 ----------------------------------------
 
@@ -12000,9 +12368,9 @@ This is an overloaded intrinsic. The loaded data are multiple scalar values of a
 
 ::
 
-      declare <16 x float> @llvm.masked.gather.v16f32   (<16 x float*> <ptrs>, i32 <alignment>, <16 x i1> <mask>, <16 x float> <passthru>)
-      declare <2 x double> @llvm.masked.gather.v2f64    (<2 x double*> <ptrs>, i32 <alignment>, <2 x i1>  <mask>, <2 x double> <passthru>)
-      declare <8 x float*> @llvm.masked.gather.v8p0f32  (<8 x float**> <ptrs>, i32 <alignment>, <8 x i1>  <mask>, <8 x float*> <passthru>)
+      declare <16 x float> @llvm.masked.gather.v16f32.v16p0f32   (<16 x float*> <ptrs>, i32 <alignment>, <16 x i1> <mask>, <16 x float> <passthru>)
+      declare <2 x double> @llvm.masked.gather.v2f64.v2p1f64     (<2 x double addrspace(1)*> <ptrs>, i32 <alignment>, <2 x i1>  <mask>, <2 x double> <passthru>)
+      declare <8 x float*> @llvm.masked.gather.v8p0f32.v8p0p0f32 (<8 x float**> <ptrs>, i32 <alignment>, <8 x i1>  <mask>, <8 x float*> <passthru>)
 
 Overview:
 """""""""
@@ -12025,7 +12393,7 @@ The semantics of this operation are equivalent to a sequence of conditional scal
 
 ::
 
-       %res = call <4 x double> @llvm.masked.gather.v4f64 (<4 x double*> %ptrs, i32 8, <4 x i1> <i1 true, i1 true, i1 true, i1 true>, <4 x double> undef)
+       %res = call <4 x double> @llvm.masked.gather.v4f64.v4p0f64 (<4 x double*> %ptrs, i32 8, <4 x i1> <i1 true, i1 true, i1 true, i1 true>, <4 x double> undef)
 
        ;; The gather with all-true mask is equivalent to the following instruction sequence
        %ptr0 = extractelement <4 x double*> %ptrs, i32 0
@@ -12054,9 +12422,9 @@ This is an overloaded intrinsic. The data stored in memory is a vector of any in
 
 ::
 
-       declare void @llvm.masked.scatter.v8i32   (<8 x i32>     <value>, <8 x i32*>     <ptrs>, i32 <alignment>, <8 x i1>  <mask>)
-       declare void @llvm.masked.scatter.v16f32  (<16 x float>  <value>, <16 x float*>  <ptrs>, i32 <alignment>, <16 x i1> <mask>)
-       declare void @llvm.masked.scatter.v4p0f64 (<4 x double*> <value>, <4 x double**> <ptrs>, i32 <alignment>, <4 x i1>  <mask>)
+       declare void @llvm.masked.scatter.v8i32.v8p0i32     (<8 x i32>     <value>, <8 x i32*>     <ptrs>, i32 <alignment>, <8 x i1>  <mask>)
+       declare void @llvm.masked.scatter.v16f32.v16p1f32   (<16 x float>  <value>, <16 x float addrspace(1)*>  <ptrs>, i32 <alignment>, <16 x i1> <mask>)
+       declare void @llvm.masked.scatter.v4p0f64.v4p0p0f64 (<4 x double*> <value>, <4 x double**> <ptrs>, i32 <alignment>, <4 x i1>  <mask>)
 
 Overview:
 """""""""
@@ -12077,7 +12445,7 @@ The '``llvm.masked.scatter``' intrinsics is designed for writing selected vector
 ::
 
        ;; This instruction unconditionally stores data vector in multiple addresses
-       call @llvm.masked.scatter.v8i32 (<8 x i32> %value, <8 x i32*> %ptrs, i32 4,  <8 x i1>  <true, true, .. true>)
+       call @llvm.masked.scatter.v8i32.v8p0i32 (<8 x i32> %value, <8 x i32*> %ptrs, i32 4,  <8 x i1>  <true, true, .. true>)
 
        ;; It is equivalent to a list of scalar stores
        %val0 = extractelement <8 x i32> %value, i32 0
@@ -12277,6 +12645,7 @@ The third argument is a metadata argument specifying the rounding mode to be
 assumed. This argument must be one of the following strings:
 
 ::
+
       "round.dynamic"
       "round.tonearest"
       "round.downward"
@@ -12308,6 +12677,7 @@ required exception behavior.  This argument must be one of the following
 strings:
 
 ::
+
       "fpexcept.ignore"
       "fpexcept.maytrap"
       "fpexcept.strict"

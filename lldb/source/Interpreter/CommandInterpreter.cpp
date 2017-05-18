@@ -169,7 +169,8 @@ bool CommandInterpreter::GetSpaceReplPrompts() const {
 }
 
 void CommandInterpreter::Initialize() {
-  Timer scoped_timer(LLVM_PRETTY_FUNCTION, LLVM_PRETTY_FUNCTION);
+  static Timer::Category func_cat(LLVM_PRETTY_FUNCTION);
+  Timer scoped_timer(func_cat, LLVM_PRETTY_FUNCTION);
 
   CommandReturnObject result;
 
@@ -391,7 +392,8 @@ const char *CommandInterpreter::ProcessEmbeddedScriptCommands(const char *arg) {
 }
 
 void CommandInterpreter::LoadCommandDictionary() {
-  Timer scoped_timer(LLVM_PRETTY_FUNCTION, LLVM_PRETTY_FUNCTION);
+  static Timer::Category func_cat(LLVM_PRETTY_FUNCTION);
+  Timer scoped_timer(func_cat, LLVM_PRETTY_FUNCTION);
 
   lldb::ScriptLanguage script_language = m_debugger.GetScriptLanguage();
 
@@ -645,8 +647,8 @@ void CommandInterpreter::LoadCommandDictionary() {
           "gdb-remote [<hostname>:]<portnum>", 2, 0, false));
   if (connect_gdb_remote_cmd_ap.get()) {
     if (connect_gdb_remote_cmd_ap->AddRegexCommand(
-            "^([^:]+:[[:digit:]]+)$",
-            "process connect --plugin gdb-remote connect://%1") &&
+            "^([^:]+|\\[[0-9a-fA-F:]+.*\\]):([0-9]+)$",
+            "process connect --plugin gdb-remote connect://%1:%2") &&
         connect_gdb_remote_cmd_ap->AddRegexCommand(
             "^([[:digit:]]+)$",
             "process connect --plugin gdb-remote connect://localhost:%1")) {
@@ -1373,7 +1375,7 @@ CommandObject *CommandInterpreter::BuildAliasResult(
   return alias_cmd_obj;
 }
 
-Error CommandInterpreter::PreprocessCommand(std::string &command) {
+Status CommandInterpreter::PreprocessCommand(std::string &command) {
   // The command preprocessor needs to do things to the command
   // line before any parsing of arguments or anything else is done.
   // The only current stuff that gets preprocessed is anything enclosed
@@ -1381,7 +1383,7 @@ Error CommandInterpreter::PreprocessCommand(std::string &command) {
   // the result of the expression must be a scalar that can be substituted
   // into the command. An example would be:
   // (lldb) memory read `$rsp + 20`
-  Error error; // Error for any expressions that might not evaluate
+  Status error; // Status for any expressions that might not evaluate
   size_t start_backtick;
   size_t pos = 0;
   while ((start_backtick = command.find('`', pos)) != std::string::npos) {
@@ -1533,8 +1535,8 @@ bool CommandInterpreter::HandleCommand(const char *command_line,
   if (log)
     log->Printf("Processing command: %s", command_line);
 
-  Timer scoped_timer(LLVM_PRETTY_FUNCTION, "Handling command: %s.",
-                     command_line);
+  static Timer::Category func_cat(LLVM_PRETTY_FUNCTION);
+  Timer scoped_timer(func_cat, "Handling command: %s.", command_line);
 
   if (!no_context_switching)
     UpdateExecutionContext(override_context);
@@ -1601,7 +1603,7 @@ bool CommandInterpreter::HandleCommand(const char *command_line,
     return true;
   }
 
-  Error error(PreprocessCommand(command_string));
+  Status error(PreprocessCommand(command_string));
 
   if (error.Fail()) {
     result.AppendError(error.AsCString());
@@ -2355,8 +2357,8 @@ void CommandInterpreter::HandleCommandsFromFile(
     StreamFileSP input_file_sp(new StreamFile());
 
     std::string cmd_file_path = cmd_file.GetPath();
-    Error error = input_file_sp->GetFile().Open(cmd_file_path.c_str(),
-                                                File::eOpenOptionRead);
+    Status error = input_file_sp->GetFile().Open(cmd_file_path.c_str(),
+                                                 File::eOpenOptionRead);
 
     if (error.Success()) {
       Debugger &debugger = GetDebugger();
@@ -2542,14 +2544,6 @@ void CommandInterpreter::OutputFormattedHelpText(Stream &strm,
   OutputFormattedHelpText(strm, prefix_stream.GetString(), help_text);
 }
 
-LLVM_ATTRIBUTE_ALWAYS_INLINE
-static size_t nextWordLength(llvm::StringRef S) {
-  size_t pos = S.find_first_of(' ');
-  if (pos == llvm::StringRef::npos)
-    return S.size();
-  return pos;
-}
-
 void CommandInterpreter::OutputHelpText(Stream &strm, llvm::StringRef word_text,
                                         llvm::StringRef separator,
                                         llvm::StringRef help_text,
@@ -2567,6 +2561,11 @@ void CommandInterpreter::OutputHelpText(Stream &strm, llvm::StringRef word_text,
   llvm::StringRef text = text_strm.GetString();
 
   uint32_t chars_left = max_columns;
+
+  auto nextWordLength = [](llvm::StringRef S) {
+    size_t pos = S.find_first_of(' ');
+    return pos == llvm::StringRef::npos ? S.size() : pos;
+  };
 
   while (!text.empty()) {
     if (text.front() == '\n' ||
@@ -2656,7 +2655,7 @@ size_t CommandInterpreter::GetProcessOutput() {
   char stdio_buffer[1024];
   size_t len;
   size_t total_bytes = 0;
-  Error error;
+  Status error;
   TargetSP target_sp(m_debugger.GetTargetList().GetSelectedTarget());
   if (target_sp) {
     ProcessSP process_sp(target_sp->GetProcessSP());

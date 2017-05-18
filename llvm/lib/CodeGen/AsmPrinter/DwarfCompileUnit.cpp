@@ -440,7 +440,7 @@ DIE *DwarfCompileUnit::constructInlinedScopeDIE(LexicalScope *Scope) {
   auto *InlinedSP = getDISubprogram(DS);
   // Find the subprogram's DwarfCompileUnit in the SPMap in case the subprogram
   // was inlined from another compile unit.
-  DIE *OriginDIE = DU->getAbstractSPDies()[InlinedSP];
+  DIE *OriginDIE = getAbstractSPDies()[InlinedSP];
   assert(OriginDIE && "Unable to find original DIE for an inlined subprogram.");
 
   auto ScopeDIE = DIE::get(DIEValueAllocator, dwarf::DW_TAG_inlined_subroutine);
@@ -547,18 +547,19 @@ DIE *DwarfCompileUnit::constructVariableDIEImpl(const DbgVariable &DV,
   DIEDwarfExpression DwarfExpr(*Asm, *this, *Loc);
   for (auto &Fragment : DV.getFrameIndexExprs()) {
     unsigned FrameReg = 0;
+    const DIExpression *Expr = Fragment.Expr;
     const TargetFrameLowering *TFI = Asm->MF->getSubtarget().getFrameLowering();
     int Offset = TFI->getFrameIndexReference(*Asm->MF, Fragment.FI, FrameReg);
-    DwarfExpr.addFragmentOffset(Fragment.Expr);
+    DwarfExpr.addFragmentOffset(Expr);
     SmallVector<uint64_t, 8> Ops;
     Ops.push_back(dwarf::DW_OP_plus);
     Ops.push_back(Offset);
-    Ops.push_back(dwarf::DW_OP_deref);
-    Ops.append(Fragment.Expr->elements_begin(), Fragment.Expr->elements_end());
-    DIExpressionCursor Expr(Ops);
+    Ops.append(Expr->elements_begin(), Expr->elements_end());
+    DIExpressionCursor Cursor(Ops);
+    DwarfExpr.setMemoryLocationKind();
     DwarfExpr.addMachineRegExpression(
-        *Asm->MF->getSubtarget().getRegisterInfo(), Expr, FrameReg);
-    DwarfExpr.addExpression(std::move(Expr));
+        *Asm->MF->getSubtarget().getRegisterInfo(), Cursor, FrameReg);
+    DwarfExpr.addExpression(std::move(Cursor));
   }
   addBlock(*VariableDie, dwarf::DW_AT_location, DwarfExpr.finalize());
 
@@ -633,7 +634,7 @@ DIE *DwarfCompileUnit::createAndAddScopeChildren(LexicalScope *Scope,
 
 void DwarfCompileUnit::constructAbstractSubprogramScopeDIE(
     LexicalScope *Scope) {
-  DIE *&AbsDef = DU->getAbstractSPDies()[Scope->getScopeNode()];
+  DIE *&AbsDef = getAbstractSPDies()[Scope->getScopeNode()];
   if (AbsDef)
     return;
 
@@ -695,7 +696,7 @@ DIE *DwarfCompileUnit::constructImportedEntityDIE(
 
 void DwarfCompileUnit::finishSubprogramDefinition(const DISubprogram *SP) {
   DIE *D = getDIE(SP);
-  if (DIE *AbsSPDIE = DU->getAbstractSPDies().lookup(SP)) {
+  if (DIE *AbsSPDIE = getAbstractSPDies().lookup(SP)) {
     if (D)
       // If this subprogram has an abstract definition, reference that
       addDIEEntry(*D, dwarf::DW_AT_abstract_origin, *AbsSPDIE);
@@ -705,6 +706,42 @@ void DwarfCompileUnit::finishSubprogramDefinition(const DISubprogram *SP) {
       // And attach the attributes
       applySubprogramAttributesToDefinition(SP, *D);
   }
+}
+
+void DwarfCompileUnit::finishVariableDefinition(const DbgVariable &Var) {
+  DbgVariable *AbsVar = getExistingAbstractVariable(
+      InlinedVariable(Var.getVariable(), Var.getInlinedAt()));
+  auto *VariableDie = Var.getDIE();
+  if (AbsVar && AbsVar->getDIE()) {
+    addDIEEntry(*VariableDie, dwarf::DW_AT_abstract_origin,
+                      *AbsVar->getDIE());
+  } else
+    applyVariableAttributes(Var, *VariableDie);
+}
+
+DbgVariable *DwarfCompileUnit::getExistingAbstractVariable(InlinedVariable IV) {
+  const DILocalVariable *Cleansed;
+  return getExistingAbstractVariable(IV, Cleansed);
+}
+
+// Find abstract variable, if any, associated with Var.
+DbgVariable *DwarfCompileUnit::getExistingAbstractVariable(
+    InlinedVariable IV, const DILocalVariable *&Cleansed) {
+  // More then one inlined variable corresponds to one abstract variable.
+  Cleansed = IV.first;
+  auto &AbstractVariables = getAbstractVariables();
+  auto I = AbstractVariables.find(Cleansed);
+  if (I != AbstractVariables.end())
+    return I->second.get();
+  return nullptr;
+}
+
+void DwarfCompileUnit::createAbstractVariable(const DILocalVariable *Var,
+                                        LexicalScope *Scope) {
+  assert(Scope && Scope->isAbstractScope());
+  auto AbsDbgVariable = make_unique<DbgVariable>(Var, /* IA */ nullptr);
+  DU->addScopeVariable(Scope, AbsDbgVariable.get());
+  getAbstractVariables()[Var] = std::move(AbsDbgVariable);
 }
 
 void DwarfCompileUnit::emitHeader(bool UseOffsets) {
@@ -779,12 +816,13 @@ void DwarfCompileUnit::addAddress(DIE &Die, dwarf::Attribute Attribute,
                                   const MachineLocation &Location) {
   DIELoc *Loc = new (DIEValueAllocator) DIELoc;
   DIEDwarfExpression DwarfExpr(*Asm, *this, *Loc);
+  if (Location.isIndirect())
+    DwarfExpr.setMemoryLocationKind();
 
   SmallVector<uint64_t, 8> Ops;
-  if (Location.isIndirect()) {
+  if (Location.isIndirect() && Location.getOffset()) {
     Ops.push_back(dwarf::DW_OP_plus);
     Ops.push_back(Location.getOffset());
-    Ops.push_back(dwarf::DW_OP_deref);
   }
   DIExpressionCursor Cursor(Ops);
   const TargetRegisterInfo &TRI = *Asm->MF->getSubtarget().getRegisterInfo();
@@ -807,12 +845,13 @@ void DwarfCompileUnit::addComplexAddress(const DbgVariable &DV, DIE &Die,
   DIEDwarfExpression DwarfExpr(*Asm, *this, *Loc);
   const DIExpression *DIExpr = DV.getSingleExpression();
   DwarfExpr.addFragmentOffset(DIExpr);
+  if (Location.isIndirect())
+    DwarfExpr.setMemoryLocationKind();
 
   SmallVector<uint64_t, 8> Ops;
-  if (Location.isIndirect()) {
+  if (Location.isIndirect() && Location.getOffset()) {
     Ops.push_back(dwarf::DW_OP_plus);
     Ops.push_back(Location.getOffset());
-    Ops.push_back(dwarf::DW_OP_deref);
   }
   Ops.append(DIExpr->elements_begin(), DIExpr->elements_end());
   DIExpressionCursor Cursor(Ops);

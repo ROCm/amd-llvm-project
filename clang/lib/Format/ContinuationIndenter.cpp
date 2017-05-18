@@ -674,16 +674,18 @@ unsigned ContinuationIndenter::getNewLineColumn(const LineState &State) {
       return State.Stack[State.Stack.size() - 2].LastSpace;
     return State.FirstIndent;
   }
+  if (Current.is(tok::r_paren) && State.Stack.size() > 1)
+    return State.Stack[State.Stack.size() - 2].LastSpace;
   if (NextNonComment->is(TT_TemplateString) && NextNonComment->closesScope())
     return State.Stack[State.Stack.size() - 2].LastSpace;
   if (Current.is(tok::identifier) && Current.Next &&
       Current.Next->is(TT_DictLiteral))
     return State.Stack.back().Indent;
-  if (NextNonComment->isStringLiteral() && State.StartOfStringLiteral != 0)
-    return State.StartOfStringLiteral;
   if (NextNonComment->is(TT_ObjCStringLiteral) &&
       State.StartOfStringLiteral != 0)
     return State.StartOfStringLiteral - 1;
+  if (NextNonComment->isStringLiteral() && State.StartOfStringLiteral != 0)
+    return State.StartOfStringLiteral;
   if (NextNonComment->is(tok::lessless) &&
       State.Stack.back().FirstLessLess != 0)
     return State.Stack.back().FirstLessLess;
@@ -792,7 +794,8 @@ unsigned ContinuationIndenter::moveStateToNextToken(LineState &State,
     if (Previous && Previous->is(tok::question))
       State.Stack.back().QuestionColumn = State.Column;
   }
-  if (!Current.opensScope() && !Current.closesScope())
+  if (!Current.opensScope() && !Current.closesScope() &&
+      !Current.is(TT_PointerOrReference))
     State.LowestLevelOnLine =
         std::min(State.LowestLevelOnLine, Current.NestingLevel);
   if (Current.isMemberAccess())
@@ -864,10 +867,10 @@ unsigned ContinuationIndenter::moveStateToNextToken(LineState &State,
   moveStatePastScopeOpener(State, Newline);
   moveStatePastFakeRParens(State);
 
-  if (Current.isStringLiteral() && State.StartOfStringLiteral == 0)
-    State.StartOfStringLiteral = State.Column;
   if (Current.is(TT_ObjCStringLiteral) && State.StartOfStringLiteral == 0)
     State.StartOfStringLiteral = State.Column + 1;
+  else if (Current.isStringLiteral() && State.StartOfStringLiteral == 0)
+    State.StartOfStringLiteral = State.Column;
   else if (!Current.isOneOf(tok::comment, tok::identifier, tok::hash) &&
            !Current.isStringLiteral())
     State.StartOfStringLiteral = 0;
@@ -918,6 +921,10 @@ void ContinuationIndenter::moveStatePastFakeLParens(LineState &State,
     NewParenState.LastOperatorWrapped = true;
     NewParenState.NoLineBreak =
         NewParenState.NoLineBreak || State.Stack.back().NoLineBreakInOperand;
+
+    // Don't propagate AvoidBinPacking into subexpressions of arg/param lists.
+    if (*I > prec::Comma)
+      NewParenState.AvoidBinPacking = false;
 
     // Indent from 'LastSpace' unless these are fake parentheses encapsulating
     // a builder type call after 'return' or, if the alignment after opening
@@ -1033,13 +1040,20 @@ void ContinuationIndenter::moveStatePastScopeOpener(LineState &State,
       NestedBlockIndent = Column;
     }
 
+    bool EndsInComma =
+        Current.MatchingParen &&
+        Current.MatchingParen->getPreviousNonComment() &&
+        Current.MatchingParen->getPreviousNonComment()->is(tok::comma);
+
     AvoidBinPacking =
+        (Style.Language == FormatStyle::LK_JavaScript && EndsInComma) ||
         (State.Line->MustBeDeclaration && !Style.BinPackParameters) ||
         (!State.Line->MustBeDeclaration && !Style.BinPackArguments) ||
         (Style.ExperimentalAutoDetectBinPacking &&
          (Current.PackingKind == PPK_OnePerLine ||
           (!BinPackInconclusiveFunctions &&
            Current.PackingKind == PPK_Inconclusive)));
+
     if (Current.is(TT_ObjCMethodExpr) && Current.MatchingParen) {
       if (Style.ColumnLimit) {
         // If this '[' opens an ObjC call, determine whether all parameters fit
@@ -1060,6 +1074,9 @@ void ContinuationIndenter::moveStatePastScopeOpener(LineState &State,
         }
       }
     }
+
+    if (Style.Language == FormatStyle::LK_JavaScript && EndsInComma)
+      BreakBeforeParameter = true;
   }
   // Generally inherit NoLineBreak from the current scope to nested scope.
   // However, don't do this for non-empty nested blocks, dict literals and
@@ -1175,18 +1192,12 @@ unsigned ContinuationIndenter::breakProtrudingToken(const FormatToken &Current,
     StringRef Text = Current.TokenText;
     StringRef Prefix;
     StringRef Postfix;
-    bool IsNSStringLiteral = false;
     // FIXME: Handle whitespace between '_T', '(', '"..."', and ')'.
     // FIXME: Store Prefix and Suffix (or PrefixLength and SuffixLength to
     // reduce the overhead) for each FormatToken, which is a string, so that we
     // don't run multiple checks here on the hot path.
-    if (Text.startswith("\"") && Current.Previous &&
-        Current.Previous->is(tok::at)) {
-      IsNSStringLiteral = true;
-      Prefix = "@\"";
-    }
     if ((Text.endswith(Postfix = "\"") &&
-         (IsNSStringLiteral || Text.startswith(Prefix = "\"") ||
+         (Text.startswith(Prefix = "@\"") || Text.startswith(Prefix = "\"") ||
           Text.startswith(Prefix = "u\"") || Text.startswith(Prefix = "U\"") ||
           Text.startswith(Prefix = "u8\"") ||
           Text.startswith(Prefix = "L\""))) ||

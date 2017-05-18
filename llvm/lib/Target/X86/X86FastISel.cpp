@@ -180,44 +180,6 @@ private:
 
 } // end anonymous namespace.
 
-static std::pair<X86::CondCode, bool>
-getX86ConditionCode(CmpInst::Predicate Predicate) {
-  X86::CondCode CC = X86::COND_INVALID;
-  bool NeedSwap = false;
-  switch (Predicate) {
-  default: break;
-  // Floating-point Predicates
-  case CmpInst::FCMP_UEQ: CC = X86::COND_E;       break;
-  case CmpInst::FCMP_OLT: NeedSwap = true;        LLVM_FALLTHROUGH;
-  case CmpInst::FCMP_OGT: CC = X86::COND_A;       break;
-  case CmpInst::FCMP_OLE: NeedSwap = true;        LLVM_FALLTHROUGH;
-  case CmpInst::FCMP_OGE: CC = X86::COND_AE;      break;
-  case CmpInst::FCMP_UGT: NeedSwap = true;        LLVM_FALLTHROUGH;
-  case CmpInst::FCMP_ULT: CC = X86::COND_B;       break;
-  case CmpInst::FCMP_UGE: NeedSwap = true;        LLVM_FALLTHROUGH;
-  case CmpInst::FCMP_ULE: CC = X86::COND_BE;      break;
-  case CmpInst::FCMP_ONE: CC = X86::COND_NE;      break;
-  case CmpInst::FCMP_UNO: CC = X86::COND_P;       break;
-  case CmpInst::FCMP_ORD: CC = X86::COND_NP;      break;
-  case CmpInst::FCMP_OEQ:                         LLVM_FALLTHROUGH;
-  case CmpInst::FCMP_UNE: CC = X86::COND_INVALID; break;
-
-  // Integer Predicates
-  case CmpInst::ICMP_EQ:  CC = X86::COND_E;       break;
-  case CmpInst::ICMP_NE:  CC = X86::COND_NE;      break;
-  case CmpInst::ICMP_UGT: CC = X86::COND_A;       break;
-  case CmpInst::ICMP_UGE: CC = X86::COND_AE;      break;
-  case CmpInst::ICMP_ULT: CC = X86::COND_B;       break;
-  case CmpInst::ICMP_ULE: CC = X86::COND_BE;      break;
-  case CmpInst::ICMP_SGT: CC = X86::COND_G;       break;
-  case CmpInst::ICMP_SGE: CC = X86::COND_GE;      break;
-  case CmpInst::ICMP_SLT: CC = X86::COND_L;       break;
-  case CmpInst::ICMP_SLE: CC = X86::COND_LE;      break;
-  }
-
-  return std::make_pair(CC, NeedSwap);
-}
-
 static std::pair<unsigned, bool>
 getX86SSEConditionCode(CmpInst::Predicate Predicate) {
   unsigned CC;
@@ -528,6 +490,7 @@ bool X86FastISel::X86FastEmitLoad(EVT VT, X86AddressMode &AM,
 bool X86FastISel::X86FastEmitStore(EVT VT, unsigned ValReg, bool ValIsKill,
                                    X86AddressMode &AM,
                                    MachineMemOperand *MMO, bool Aligned) {
+  bool HasSSE1 = Subtarget->hasSSE1();
   bool HasSSE2 = Subtarget->hasSSE2();
   bool HasSSE4A = Subtarget->hasSSE4A();
   bool HasAVX = Subtarget->hasAVX();
@@ -587,6 +550,9 @@ bool X86FastISel::X86FastEmitStore(EVT VT, unsigned ValReg, bool ValIsKill,
               HasAVX ? X86::VMOVSDmr : X86::MOVSDmr;
     } else
       Opc = X86::ST_Fp64m;
+    break;
+  case MVT::x86mmx:
+    Opc = (IsNonTemporal && HasSSE1) ? X86::MMX_MOVNTQmr : X86::MMX_MOVQ64mr;
     break;
   case MVT::v4f32:
     if (Aligned) {
@@ -1555,7 +1521,7 @@ bool X86FastISel::X86SelectCmp(const Instruction *I) {
 
   X86::CondCode CC;
   bool SwapArgs;
-  std::tie(CC, SwapArgs) = getX86ConditionCode(Predicate);
+  std::tie(CC, SwapArgs) = X86::getX86ConditionCode(Predicate);
   assert(CC <= X86::LAST_VALID_COND && "Unexpected condition code.");
   unsigned Opc = X86::getSETFromCond(CC);
 
@@ -1693,7 +1659,7 @@ bool X86FastISel::X86SelectBranch(const Instruction *I) {
 
       bool SwapArgs;
       unsigned BranchOpc;
-      std::tie(CC, SwapArgs) = getX86ConditionCode(Predicate);
+      std::tie(CC, SwapArgs) = X86::getX86ConditionCode(Predicate);
       assert(CC <= X86::LAST_VALID_COND && "Unexpected condition code.");
 
       BranchOpc = X86::GetCondBranchFromCond(CC);
@@ -2066,7 +2032,7 @@ bool X86FastISel::X86FastEmitCMoveSelect(MVT RetVT, const Instruction *I) {
     }
 
     bool NeedSwap;
-    std::tie(CC, NeedSwap) = getX86ConditionCode(Predicate);
+    std::tie(CC, NeedSwap) = X86::getX86ConditionCode(Predicate);
     assert(CC <= X86::LAST_VALID_COND && "Unexpected condition code.");
 
     const Value *CmpLHS = CI->getOperand(0);
@@ -2145,7 +2111,8 @@ bool X86FastISel::X86FastEmitCMoveSelect(MVT RetVT, const Instruction *I) {
   if (!LHSReg || !RHSReg)
     return false;
 
-  unsigned Opc = X86::getCMovFromCond(CC, RC->getSize());
+  const TargetRegisterInfo &TRI = *Subtarget->getRegisterInfo();
+  unsigned Opc = X86::getCMovFromCond(CC, TRI.getRegSizeInBits(*RC)/8);
   unsigned ResultReg = fastEmitInst_rr(Opc, RC, RHSReg, RHSIsKill,
                                        LHSReg, LHSIsKill);
   updateValueMap(I, ResultReg);
@@ -2314,7 +2281,7 @@ bool X86FastISel::X86FastEmitPseudoSelect(MVT RetVT, const Instruction *I) {
   const auto *CI = dyn_cast<CmpInst>(Cond);
   if (CI && (CI->getParent() == I->getParent())) {
     bool NeedSwap;
-    std::tie(CC, NeedSwap) = getX86ConditionCode(CI->getPredicate());
+    std::tie(CC, NeedSwap) = X86::getX86ConditionCode(CI->getPredicate());
     if (CC > X86::LAST_VALID_COND)
       return false;
 
@@ -3069,16 +3036,13 @@ bool X86FastISel::fastLowerArguments() {
   // Only handle simple cases. i.e. Up to 6 i32/i64 scalar arguments.
   unsigned GPRCnt = 0;
   unsigned FPRCnt = 0;
-  unsigned Idx = 0;
   for (auto const &Arg : F->args()) {
-    // The first argument is at index 1.
-    ++Idx;
-    if (F->getAttributes().hasAttribute(Idx, Attribute::ByVal) ||
-        F->getAttributes().hasAttribute(Idx, Attribute::InReg) ||
-        F->getAttributes().hasAttribute(Idx, Attribute::StructRet) ||
-        F->getAttributes().hasAttribute(Idx, Attribute::SwiftSelf) ||
-        F->getAttributes().hasAttribute(Idx, Attribute::SwiftError) ||
-        F->getAttributes().hasAttribute(Idx, Attribute::Nest))
+    if (Arg.hasAttribute(Attribute::ByVal) ||
+        Arg.hasAttribute(Attribute::InReg) ||
+        Arg.hasAttribute(Attribute::StructRet) ||
+        Arg.hasAttribute(Attribute::SwiftSelf) ||
+        Arg.hasAttribute(Attribute::SwiftError) ||
+        Arg.hasAttribute(Attribute::Nest))
       return false;
 
     Type *ArgTy = Arg.getType();
@@ -3157,8 +3121,8 @@ static unsigned computeBytesPoppedByCalleeForSRet(const X86Subtarget *Subtarget,
     return 0;
 
   if (CS)
-    if (CS->arg_empty() || !CS->paramHasAttr(1, Attribute::StructRet) ||
-        CS->paramHasAttr(1, Attribute::InReg) || Subtarget->isTargetMCU())
+    if (CS->arg_empty() || !CS->paramHasAttr(0, Attribute::StructRet) ||
+        CS->paramHasAttr(0, Attribute::InReg) || Subtarget->isTargetMCU())
       return 0;
 
   return 4;
@@ -3178,6 +3142,15 @@ bool X86FastISel::fastLowerCall(CallLoweringInfo &CLI) {
 
   bool Is64Bit        = Subtarget->is64Bit();
   bool IsWin64        = Subtarget->isCallingConvWin64(CC);
+
+  const CallInst *CI =
+      CLI.CS ? dyn_cast<CallInst>(CLI.CS->getInstruction()) : nullptr;
+  const Function *CalledFn = CI ? CI->getCalledFunction() : nullptr;
+
+  // Functions with no_caller_saved_registers that need special handling.
+  if ((CI && CI->hasFnAttr("no_caller_saved_registers")) ||
+      (CalledFn && CalledFn->hasFnAttribute("no_caller_saved_registers")))
+    return false;
 
   // Handle only C, fastcc, and webkit_js calling conventions for now.
   switch (CC) {
@@ -3282,7 +3255,7 @@ bool X86FastISel::fastLowerCall(CallLoweringInfo &CLI) {
   // Issue CALLSEQ_START
   unsigned AdjStackDown = TII.getCallFrameSetupOpcode();
   BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DbgLoc, TII.get(AdjStackDown))
-    .addImm(NumBytes).addImm(0);
+    .addImm(NumBytes).addImm(0).addImm(0);
 
   // Walk the register/memloc assignments, inserting copies/loads.
   const X86RegisterInfo *RegInfo = Subtarget->getRegisterInfo();

@@ -576,9 +576,12 @@ private:
       }
       break;
     case tok::kw_for:
-      if (Style.Language == FormatStyle::LK_JavaScript && Tok->Previous &&
-          Tok->Previous->is(tok::period))
-        break;
+      if (Style.Language == FormatStyle::LK_JavaScript)
+        if (Tok->Previous && Tok->Previous->is(tok::period))
+          break;
+        // JS' for async ( ...
+        if (CurrentToken->is(Keywords.kw_async))
+          next();
       Contexts.back().ColonIsForRangeExpr = true;
       next();
       if (!parseParens())
@@ -796,10 +799,11 @@ private:
     while (CurrentToken) {
       FormatToken *Tok = CurrentToken;
       next();
-      if (Tok->isOneOf(Keywords.kw___has_include,
-                       Keywords.kw___has_include_next)) {
+      if (Tok->is(tok::l_paren))
+        parseParens();
+      else if (Tok->isOneOf(Keywords.kw___has_include,
+                       Keywords.kw___has_include_next))
         parseHasInclude();
-      }
     }
     return Type;
   }
@@ -907,7 +911,7 @@ private:
                                TT_FunctionLBrace, TT_ImplicitStringLiteral,
                                TT_InlineASMBrace, TT_JsFatArrow, TT_LambdaArrow,
                                TT_OverloadedOperator, TT_RegexLiteral,
-                               TT_TemplateString))
+                               TT_TemplateString, TT_ObjCStringLiteral))
       CurrentToken->Type = TT_Unknown;
     CurrentToken->Role.reset();
     CurrentToken->MatchingParen = nullptr;
@@ -1033,8 +1037,9 @@ private:
     if (Style.Language == FormatStyle::LK_JavaScript) {
       if (Current.is(tok::exclaim)) {
         if (Current.Previous &&
-            (Current.Previous->isOneOf(tok::identifier, tok::r_paren,
-                                       tok::r_square, tok::r_brace) ||
+            (Current.Previous->isOneOf(tok::identifier, tok::kw_namespace,
+                                       tok::r_paren, tok::r_square,
+                                       tok::r_brace) ||
              Current.Previous->Tok.isLiteral())) {
           Current.Type = TT_JsNonNullAssertion;
           return;
@@ -1119,22 +1124,22 @@ private:
                 Current.Type = TT_FunctionAnnotationRParen;
           }
         }
-    } else if (Current.is(tok::at) && Current.Next) {
-      if (Current.Next->isStringLiteral()) {
-        Current.Type = TT_ObjCStringLiteral;
-      } else {
-        switch (Current.Next->Tok.getObjCKeywordID()) {
-        case tok::objc_interface:
-        case tok::objc_implementation:
-        case tok::objc_protocol:
-          Current.Type = TT_ObjCDecl;
-          break;
-        case tok::objc_property:
-          Current.Type = TT_ObjCProperty;
-          break;
-        default:
-          break;
-        }
+    } else if (Current.is(tok::at) && Current.Next &&
+               Style.Language != FormatStyle::LK_JavaScript &&
+               Style.Language != FormatStyle::LK_Java) {
+      // In Java & JavaScript, "@..." is a decorator or annotation. In ObjC, it
+      // marks declarations and properties that need special formatting.
+      switch (Current.Next->Tok.getObjCKeywordID()) {
+      case tok::objc_interface:
+      case tok::objc_implementation:
+      case tok::objc_protocol:
+        Current.Type = TT_ObjCDecl;
+        break;
+      case tok::objc_property:
+        Current.Type = TT_ObjCProperty;
+        break;
+      default:
+        break;
       }
     } else if (Current.is(tok::period)) {
       FormatToken *PreviousNoComment = Current.getPreviousNonComment();
@@ -2247,6 +2252,10 @@ bool TokenAnnotator::spaceRequiredBefore(const AnnotatedLine &Line,
   } else if (Style.Language == FormatStyle::LK_JavaScript) {
     if (Left.is(TT_JsFatArrow))
       return true;
+    // for async ( ...
+    if (Right.is(tok::l_paren) && Left.is(Keywords.kw_async) &&
+        Left.Previous && Left.Previous->is(tok::kw_for))
+      return true;
     if (Left.is(Keywords.kw_async) && Right.is(tok::l_paren) &&
         Right.MatchingParen) {
       const FormatToken *Next = Right.MatchingParen->getNextNonComment();
@@ -2457,21 +2466,24 @@ bool TokenAnnotator::mustBreakBefore(const AnnotatedLine &Line,
   } else if (Style.Language == FormatStyle::LK_Cpp ||
              Style.Language == FormatStyle::LK_ObjC ||
              Style.Language == FormatStyle::LK_Proto) {
-    if (Left.isStringLiteral() &&
-        (Right.isStringLiteral() || Right.is(TT_ObjCStringLiteral)))
+    if (Left.isStringLiteral() && Right.isStringLiteral())
       return true;
   }
 
-  // If the last token before a '}' is a comma or a trailing comment, the
-  // intention is to insert a line break after it in order to make shuffling
-  // around entries easier.
+  // If the last token before a '}', ']', or ')' is a comma or a trailing
+  // comment, the intention is to insert a line break after it in order to make
+  // shuffling around entries easier.
   const FormatToken *BeforeClosingBrace = nullptr;
-  if (Left.isOneOf(tok::l_brace, TT_ArrayInitializerLSquare) &&
+  if ((Left.isOneOf(tok::l_brace, TT_ArrayInitializerLSquare) ||
+       (Style.Language == FormatStyle::LK_JavaScript &&
+        Left.is(tok::l_paren))) &&
       Left.BlockKind != BK_Block && Left.MatchingParen)
     BeforeClosingBrace = Left.MatchingParen->Previous;
   else if (Right.MatchingParen &&
-           Right.MatchingParen->isOneOf(tok::l_brace,
-                                        TT_ArrayInitializerLSquare))
+           (Right.MatchingParen->isOneOf(tok::l_brace,
+                                         TT_ArrayInitializerLSquare) ||
+            (Style.Language == FormatStyle::LK_JavaScript &&
+             Right.MatchingParen->is(tok::l_paren))))
     BeforeClosingBrace = &Left;
   if (BeforeClosingBrace && (BeforeClosingBrace->is(tok::comma) ||
                              BeforeClosingBrace->isTrailingComment()))
@@ -2545,9 +2557,11 @@ bool TokenAnnotator::canBreakBefore(const AnnotatedLine &Line,
   } else if (Style.Language == FormatStyle::LK_JavaScript) {
     const FormatToken *NonComment = Right.getPreviousNonComment();
     if (NonComment &&
-        NonComment->isOneOf(tok::kw_return, tok::kw_continue, tok::kw_break,
-                            tok::kw_throw, Keywords.kw_interface,
-                            Keywords.kw_type))
+        NonComment->isOneOf(
+            tok::kw_return, tok::kw_continue, tok::kw_break, tok::kw_throw,
+            Keywords.kw_interface, Keywords.kw_type, tok::kw_static,
+            tok::kw_public, tok::kw_private, tok::kw_protected,
+            Keywords.kw_abstract, Keywords.kw_get, Keywords.kw_set))
       return false; // Otherwise a semicolon is inserted.
     if (Left.is(TT_JsFatArrow) && Right.is(tok::l_brace))
       return false;

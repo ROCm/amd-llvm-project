@@ -1047,7 +1047,7 @@ TEST_F(FileSystemTest, MD5) {
   SmallString<64> TempPath;
   ASSERT_NO_ERROR(fs::createTemporaryFile("prefix", "temp", FD, TempPath));
   StringRef Data("abcdefghijklmnopqrstuvwxyz");
-  write(FD, Data.data(), Data.size());
+  ASSERT_EQ(write(FD, Data.data(), Data.size()), static_cast<ssize_t>(Data.size()));
   lseek(FD, 0, SEEK_SET);
   auto Hash = fs::md5_contents(FD);
   ::close(FD);
@@ -1515,6 +1515,8 @@ TEST_F(FileSystemTest, permissions) {
   EXPECT_EQ(fs::setPermissions(TempPath, fs::set_gid_on_exe), NoError);
   EXPECT_TRUE(CheckPermissions(fs::set_gid_on_exe));
 
+  // Modern BSDs require root to set the sticky bit on files.
+#if !defined(__FreeBSD__) && !defined(__NetBSD__) && !defined(__OpenBSD__)
   EXPECT_EQ(fs::setPermissions(TempPath, fs::sticky_bit), NoError);
   EXPECT_TRUE(CheckPermissions(fs::sticky_bit));
 
@@ -1534,6 +1536,11 @@ TEST_F(FileSystemTest, permissions) {
 
   EXPECT_EQ(fs::setPermissions(TempPath, fs::all_perms), NoError);
   EXPECT_TRUE(CheckPermissions(fs::all_perms));
+#endif // !FreeBSD && !NetBSD && !OpenBSD
+
+  EXPECT_EQ(fs::setPermissions(TempPath, fs::all_perms & ~fs::sticky_bit),
+                               NoError);
+  EXPECT_TRUE(CheckPermissions(fs::all_perms & ~fs::sticky_bit));
 #endif
 }
 

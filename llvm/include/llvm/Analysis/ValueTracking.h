@@ -29,6 +29,7 @@ template <typename T> class ArrayRef;
   class DominatorTree;
   class GEPOperator;
   class Instruction;
+  struct KnownBits;
   class Loop;
   class LoopInfo;
   class OptimizationRemarkEmitter;
@@ -49,31 +50,28 @@ template <typename T> class ArrayRef;
   /// where V is a vector, the known zero and known one values are the
   /// same width as the vector element, and the bit is set only if it is true
   /// for all of the elements in the vector.
-  void computeKnownBits(const Value *V, APInt &KnownZero, APInt &KnownOne,
+  void computeKnownBits(const Value *V, KnownBits &Known,
                         const DataLayout &DL, unsigned Depth = 0,
                         AssumptionCache *AC = nullptr,
                         const Instruction *CxtI = nullptr,
                         const DominatorTree *DT = nullptr,
                         OptimizationRemarkEmitter *ORE = nullptr);
+  /// Returns the known bits rather than passing by reference.
+  KnownBits computeKnownBits(const Value *V, const DataLayout &DL,
+                             unsigned Depth = 0, AssumptionCache *AC = nullptr,
+                             const Instruction *CxtI = nullptr,
+                             const DominatorTree *DT = nullptr);
   /// Compute known bits from the range metadata.
   /// \p KnownZero the set of bits that are known to be zero
   /// \p KnownOne the set of bits that are known to be one
   void computeKnownBitsFromRangeMetadata(const MDNode &Ranges,
-                                         APInt &KnownZero, APInt &KnownOne);
+                                         KnownBits &Known);
   /// Return true if LHS and RHS have no common bits set.
   bool haveNoCommonBitsSet(const Value *LHS, const Value *RHS,
                            const DataLayout &DL,
                            AssumptionCache *AC = nullptr,
                            const Instruction *CxtI = nullptr,
                            const DominatorTree *DT = nullptr);
-
-  /// Determine whether the sign bit is known to be zero or one. Convenience
-  /// wrapper around computeKnownBits.
-  void ComputeSignBit(const Value *V, bool &KnownZero, bool &KnownOne,
-                      const DataLayout &DL, unsigned Depth = 0,
-                      AssumptionCache *AC = nullptr,
-                      const Instruction *CxtI = nullptr,
-                      const DominatorTree *DT = nullptr);
 
   /// Return true if the given value is known to have exactly one bit set when
   /// defined. For vectors return true if every element is known to be a power
@@ -416,7 +414,7 @@ template <typename T> class ArrayRef;
   ///
   /// Note that this currently only considers the basic block that is
   /// the parent of I.
-  bool isKnownNotFullPoison(const Instruction *PoisonI);
+  bool programUndefinedIfFullPoison(const Instruction *PoisonI);
 
   /// \brief Specific patterns of select instructions we can match.
   enum SelectPatternFlavor {

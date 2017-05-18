@@ -30,24 +30,25 @@ FormatStyle getGoogleStyle() { return getGoogleStyle(FormatStyle::LK_Cpp); }
 
 class FormatTest : public ::testing::Test {
 protected:
-  enum IncompleteCheck {
-    IC_ExpectComplete,
-    IC_ExpectIncomplete,
-    IC_DoNotCheck
+  enum StatusCheck {
+    SC_ExpectComplete,
+    SC_ExpectIncomplete,
+    SC_DoNotCheck
   };
 
   std::string format(llvm::StringRef Code,
                      const FormatStyle &Style = getLLVMStyle(),
-                     IncompleteCheck CheckIncomplete = IC_ExpectComplete) {
+                     StatusCheck CheckComplete = SC_ExpectComplete) {
     DEBUG(llvm::errs() << "---\n");
     DEBUG(llvm::errs() << Code << "\n\n");
     std::vector<tooling::Range> Ranges(1, tooling::Range(0, Code.size()));
-    bool IncompleteFormat = false;
+    FormattingAttemptStatus Status;
     tooling::Replacements Replaces =
-        reformat(Style, Code, Ranges, "<stdin>", &IncompleteFormat);
-    if (CheckIncomplete != IC_DoNotCheck) {
-      bool ExpectedIncompleteFormat = CheckIncomplete == IC_ExpectIncomplete;
-      EXPECT_EQ(ExpectedIncompleteFormat, IncompleteFormat) << Code << "\n\n";
+        reformat(Style, Code, Ranges, "<stdin>", &Status);
+    if (CheckComplete != SC_DoNotCheck) {
+      bool ExpectedCompleteFormat = CheckComplete == SC_ExpectComplete;
+      EXPECT_EQ(ExpectedCompleteFormat, Status.FormatComplete)
+          << Code << "\n\n";
     }
     ReplacementCount = Replaces.size();
     auto Result = applyAllReplacements(Code, Replaces);
@@ -83,7 +84,7 @@ protected:
   void verifyIncompleteFormat(llvm::StringRef Code,
                               const FormatStyle &Style = getLLVMStyle()) {
     EXPECT_EQ(Code.str(),
-              format(test::messUp(Code), Style, IC_ExpectIncomplete));
+              format(test::messUp(Code), Style, SC_ExpectIncomplete));
   }
 
   void verifyGoogleFormat(llvm::StringRef Code) {
@@ -98,7 +99,7 @@ protected:
   /// \brief Verify that clang-format does not crash on the given input.
   void verifyNoCrash(llvm::StringRef Code,
                      const FormatStyle &Style = getLLVMStyle()) {
-    format(Code, Style, IC_DoNotCheck);
+    format(Code, Style, SC_DoNotCheck);
   }
 
   int ReplacementCount;
@@ -341,7 +342,7 @@ TEST_F(FormatTest, FormatIfWithoutCompoundStatement) {
   verifyFormat("if (a)\n  if (b) {\n    f();\n  }\ng();");
 
   FormatStyle AllowsMergedIf = getLLVMStyle();
-  AllowsMergedIf.AlignEscapedNewlinesLeft = true;
+  AllowsMergedIf.AlignEscapedNewlines = FormatStyle::ENAS_Left;
   AllowsMergedIf.AllowShortIfStatementsOnASingleLine = true;
   verifyFormat("if (a)\n"
                "  // comment\n"
@@ -2105,7 +2106,7 @@ TEST_F(FormatTest, LayoutStatementsAroundPreprocessorDirectives) {
 
   verifyIncompleteFormat("void f(\n"
                          "#if A\n"
-                         "    );\n"
+                         ");\n"
                          "#else\n"
                          "#endif");
 }
@@ -2587,6 +2588,60 @@ TEST_F(FormatTest, BreakingBeforeNonAssigmentOperators) {
   verifyFormat("int aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa =\n"
                "    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
                "    + bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;",
+               Style);
+}
+
+TEST_F(FormatTest, AllowBinPackingInsideArguments) {
+  FormatStyle Style = getLLVMStyle();
+  Style.BreakBeforeBinaryOperators = FormatStyle::BOS_NonAssignment;
+  Style.BinPackArguments = false;
+  Style.ColumnLimit = 40;
+  verifyFormat("void test() {\n"
+               "  someFunction(\n"
+               "      this + argument + is + quite\n"
+               "      + long + so + it + gets + wrapped\n"
+               "      + but + remains + bin - packed);\n"
+               "}",
+               Style);
+  verifyFormat("void test() {\n"
+               "  someFunction(arg1,\n"
+               "               this + argument + is\n"
+               "                   + quite + long + so\n"
+               "                   + it + gets + wrapped\n"
+               "                   + but + remains + bin\n"
+               "                   - packed,\n"
+               "               arg3);\n"
+               "}",
+               Style);
+  verifyFormat("void test() {\n"
+               "  someFunction(\n"
+               "      arg1,\n"
+               "      this + argument + has\n"
+               "          + anotherFunc(nested,\n"
+               "                        calls + whose\n"
+               "                            + arguments\n"
+               "                            + are + also\n"
+               "                            + wrapped,\n"
+               "                        in + addition)\n"
+               "          + to + being + bin - packed,\n"
+               "      arg3);\n"
+               "}",
+               Style);
+
+  Style.BreakBeforeBinaryOperators = FormatStyle::BOS_None;
+  verifyFormat("void test() {\n"
+               "  someFunction(\n"
+               "      arg1,\n"
+               "      this + argument + has +\n"
+               "          anotherFunc(nested,\n"
+               "                      calls + whose +\n"
+               "                          arguments +\n"
+               "                          are + also +\n"
+               "                          wrapped,\n"
+               "                      in + addition) +\n"
+               "          to + being + bin - packed,\n"
+               "      arg3);\n"
+               "}",
                Style);
 }
 
@@ -4090,9 +4145,9 @@ TEST_F(FormatTest, AlwaysBreakBeforeMultilineStrings) {
                    "c\";",
                    Break));
 
-  // Exempt ObjC strings for now.
-  EXPECT_EQ("NSString *const kString = @\"aaaa\"\n"
-            "                          @\"bbbb\";",
+  EXPECT_EQ("NSString *const kString =\n"
+            "    @\"aaaa\"\n"
+            "    @\"bbbb\";",
             format("NSString *const kString = @\"aaaa\"\n"
                    "@\"bbbb\";",
                    Break));
@@ -4420,7 +4475,7 @@ TEST_F(FormatTest, WrapsTemplateDeclarations) {
   EXPECT_EQ("static_cast<A< //\n"
             "    B> *>(\n"
             "\n"
-            "    );",
+            ");",
             format("static_cast<A<//\n"
                    "    B>*>(\n"
                    "\n"
@@ -5220,6 +5275,12 @@ TEST_F(FormatTest, FormatsFunctionTypes) {
   verifyFormat("void f() { function(*some_pointer_var)[0] = 10; }");
   verifyFormat("int x = f(&h)();");
   verifyFormat("returnsFunction(&param1, &param2)(param);");
+  verifyFormat("std::function<\n"
+               "    LooooooooooongTemplatedType<\n"
+               "        SomeType>*(\n"
+               "        LooooooooooooooooongType type)>\n"
+               "    function;",
+               getGoogleStyleWithColumns(40));
 }
 
 TEST_F(FormatTest, FormatsPointersToArrayTypes) {
@@ -6189,7 +6250,7 @@ TEST_F(FormatTest, SkipsDeeplyNestedLines) {
   // Deeply nested part is untouched, rest is formatted.
   EXPECT_EQ(std::string("int i;\n") + Code + "int j;\n",
             format(std::string("int    i;\n") + Code + "int    j;\n",
-                   getLLVMStyle(), IC_ExpectIncomplete));
+                   getLLVMStyle(), SC_ExpectIncomplete));
 }
 
 //===----------------------------------------------------------------------===//
@@ -6416,7 +6477,7 @@ TEST_F(FormatTest, BreaksStringLiterals) {
   EXPECT_EQ("\"some text other\";", format("\"some text other\";", Style));
 
   FormatStyle AlignLeft = getLLVMStyleWithColumns(12);
-  AlignLeft.AlignEscapedNewlinesLeft = true;
+  AlignLeft.AlignEscapedNewlines = FormatStyle::ENAS_Left;
   EXPECT_EQ("#define A \\\n"
             "  \"some \" \\\n"
             "  \"text \" \\\n"
@@ -6460,6 +6521,7 @@ TEST_F(FormatTest, BreaksWideAndNSStringLiterals) {
   EXPECT_EQ("@\"NSString \"\n"
             "@\"literal\";",
             format("@\"NSString literal\";", getGoogleStyleWithColumns(19)));
+  verifyFormat(R"(NSString *s = @"那那那那";)", getLLVMStyleWithColumns(26));
 
   // This input makes clang-format try to split the incomplete unicode escape
   // sequence, which used to lead to a crasher.
@@ -6505,7 +6567,7 @@ TEST_F(FormatTest, BreaksStringLiteralsWithin_TMacro) {
             "#if !TEST\n"
             "    _T(\"XXXXXXXXXXXXXXXXXXXXXXXXXXXXXn\")\n"
             "#endif\n"
-            "    );",
+            ");",
             format("f(\n"
                    "#if !TEST\n"
                    "_T(\"XXXXXXXXXXXXXXXXXXXXXXXXXXXXXn\")\n"
@@ -6816,7 +6878,7 @@ TEST_F(FormatTest, ConfigurableUseOfTab) {
   FormatStyle Tab = getLLVMStyleWithColumns(42);
   Tab.IndentWidth = 8;
   Tab.UseTab = FormatStyle::UT_Always;
-  Tab.AlignEscapedNewlinesLeft = true;
+  Tab.AlignEscapedNewlines = FormatStyle::ENAS_Left;
 
   EXPECT_EQ("if (aaaaaaaa && // q\n"
             "    bb)\t\t// w\n"
@@ -7597,14 +7659,21 @@ TEST_F(FormatTest, AlignConsecutiveAssignments) {
                    "int oneTwoThree = 123;\n"
                    "int oneTwo = 12;",
                    Alignment));
-  Alignment.AlignEscapedNewlinesLeft = true;
+  Alignment.AlignEscapedNewlines = FormatStyle::ENAS_DontAlign;
+  verifyFormat("#define A \\\n"
+               "  int aaaa       = 12; \\\n"
+               "  int b          = 23; \\\n"
+               "  int ccc        = 234; \\\n"
+               "  int dddddddddd = 2345;",
+               Alignment);
+  Alignment.AlignEscapedNewlines = FormatStyle::ENAS_Left;
   verifyFormat("#define A               \\\n"
                "  int aaaa       = 12;  \\\n"
                "  int b          = 23;  \\\n"
                "  int ccc        = 234; \\\n"
                "  int dddddddddd = 2345;",
                Alignment);
-  Alignment.AlignEscapedNewlinesLeft = false;
+  Alignment.AlignEscapedNewlines = FormatStyle::ENAS_Right;
   verifyFormat("#define A                                                      "
                "                \\\n"
                "  int aaaa       = 12;                                         "
@@ -7871,14 +7940,21 @@ TEST_F(FormatTest, AlignConsecutiveDeclarations) {
                    "}",
                    Alignment));
   Alignment.AlignConsecutiveAssignments = false;
-  Alignment.AlignEscapedNewlinesLeft = true;
+  Alignment.AlignEscapedNewlines = FormatStyle::ENAS_DontAlign;
+  verifyFormat("#define A \\\n"
+               "  int       aaaa = 12; \\\n"
+               "  float     b = 23; \\\n"
+               "  const int ccc = 234; \\\n"
+               "  unsigned  dddddddddd = 2345;",
+               Alignment);
+  Alignment.AlignEscapedNewlines = FormatStyle::ENAS_Left;
   verifyFormat("#define A              \\\n"
                "  int       aaaa = 12; \\\n"
                "  float     b = 23;    \\\n"
                "  const int ccc = 234; \\\n"
                "  unsigned  dddddddddd = 2345;",
                Alignment);
-  Alignment.AlignEscapedNewlinesLeft = false;
+  Alignment.AlignEscapedNewlines = FormatStyle::ENAS_Right;
   Alignment.ColumnLimit = 30;
   verifyFormat("#define A                    \\\n"
                "  int       aaaa = 12;       \\\n"
@@ -8301,7 +8377,14 @@ TEST_F(FormatTest, AllmanBraceBreaking) {
   // .. or dict literals.
   verifyFormat("void f()\n"
                "{\n"
-               "  [object someMethod:@{ @\"a\" : @\"b\" }];\n"
+               "  // ...\n"
+               "  [object someMethod:@{@\"a\" : @\"b\"}];\n"
+               "}",
+               AllmanBraceStyle);
+  verifyFormat("void f()\n"
+               "{\n"
+               "  // ...\n"
+               "  [object someMethod:@{a : @\"b\"}];\n"
                "}",
                AllmanBraceStyle);
   verifyFormat("int f()\n"
@@ -8656,7 +8739,6 @@ TEST_F(FormatTest, GetsCorrectBasedOnStyle) {
 TEST_F(FormatTest, ParsesConfigurationBools) {
   FormatStyle Style = {};
   Style.Language = FormatStyle::LK_Cpp;
-  CHECK_PARSE_BOOL(AlignEscapedNewlinesLeft);
   CHECK_PARSE_BOOL(AlignOperands);
   CHECK_PARSE_BOOL(AlignTrailingComments);
   CHECK_PARSE_BOOL(AlignConsecutiveAssignments);
@@ -8778,6 +8860,19 @@ TEST_F(FormatTest, ParsesConfiguration) {
               FormatStyle::BAS_DontAlign);
   CHECK_PARSE("AlignAfterOpenBracket: true", AlignAfterOpenBracket,
               FormatStyle::BAS_Align);
+
+  Style.AlignEscapedNewlines = FormatStyle::ENAS_Left;
+  CHECK_PARSE("AlignEscapedNewlines: DontAlign", AlignEscapedNewlines,
+              FormatStyle::ENAS_DontAlign);
+  CHECK_PARSE("AlignEscapedNewlines: Left", AlignEscapedNewlines,
+              FormatStyle::ENAS_Left);
+  CHECK_PARSE("AlignEscapedNewlines: Right", AlignEscapedNewlines,
+              FormatStyle::ENAS_Right);
+  // For backward compatibility:
+  CHECK_PARSE("AlignEscapedNewlinesLeft: true", AlignEscapedNewlines,
+              FormatStyle::ENAS_Left);
+  CHECK_PARSE("AlignEscapedNewlinesLeft: false", AlignEscapedNewlines,
+              FormatStyle::ENAS_Right);
 
   Style.UseTab = FormatStyle::UT_ForIndentation;
   CHECK_PARSE("UseTab: Never", UseTab, FormatStyle::UT_Never);
@@ -9544,7 +9639,7 @@ TEST_F(FormatTest, FormatsLambdas) {
   // Other corner cases.
   verifyFormat("void f() {\n"
                "  bar([]() {} // Did not respect SpacesBeforeTrailingComments\n"
-               "      );\n"
+               "  );\n"
                "}");
 
   // Lambdas created through weird macros.
@@ -10193,6 +10288,19 @@ TEST_F(ReplacementTest, SortIncludesAfterReplacement) {
   auto Result = applyAllReplacements(Code, *FormattedReplaces);
   EXPECT_TRUE(static_cast<bool>(Result));
   EXPECT_EQ(Expected, *Result);
+}
+
+TEST_F(FormatTest, UTF8CharacterLiteralCpp03) {
+  format::FormatStyle Style = format::getLLVMStyle();
+  Style.Standard = FormatStyle::LS_Cpp03;
+  // cpp03 recognize this string as identifier u8 and literal character 'a'
+  EXPECT_EQ("auto c = u8 'a';", format("auto c = u8'a';", Style));
+}
+
+TEST_F(FormatTest, UTF8CharacterLiteralCpp11) {
+  // u8'a' is a C++17 feature, utf8 literal character, LS_Cpp11 covers
+  // all modes, including C++11, C++14 and C++17
+  EXPECT_EQ("auto c = u8'a';", format("auto c = u8'a';"));
 }
 
 } // end namespace

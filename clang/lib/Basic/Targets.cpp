@@ -117,6 +117,7 @@ static void getDarwinDefines(MacroBuilder &Builder, const LangOptions &Opts,
                              VersionTuple &PlatformMinVersion) {
   Builder.defineMacro("__APPLE_CC__", "6000");
   Builder.defineMacro("__APPLE__");
+  Builder.defineMacro("__STDC_NO_THREADS__");
   Builder.defineMacro("OBJC_NEW_PROPERTIES");
   // AddressSanitizer doesn't play well with source fortification, which is on
   // by default on Darwin.
@@ -1548,28 +1549,30 @@ bool PPCTargetInfo::hasFeature(StringRef Feature) const {
 
 void PPCTargetInfo::setFeatureEnabled(llvm::StringMap<bool> &Features,
                                       StringRef Name, bool Enabled) const {
-  // If we're enabling direct-move or power8-vector go ahead and enable vsx
-  // as well. Do the inverse if we're disabling vsx. We'll diagnose any user
-  // incompatible options.
   if (Enabled) {
-    if (Name == "direct-move" ||
-        Name == "power8-vector" ||
-        Name == "float128" ||
-        Name == "power9-vector") {
-      // power9-vector is really a superset of power8-vector so encode that.
-      Features[Name] = Features["vsx"] = true;
-      if (Name == "power9-vector")
-        Features["power8-vector"] = true;
-    } else {
-      Features[Name] = true;
-    }
+    // If we're enabling any of the vsx based features then enable vsx and
+    // altivec. We'll diagnose any problems later.
+    bool FeatureHasVSX = llvm::StringSwitch<bool>(Name)
+                             .Case("vsx", true)
+                             .Case("direct-move", true)
+                             .Case("power8-vector", true)
+                             .Case("power9-vector", true)
+                             .Case("float128", true)
+                             .Default(false);
+    if (FeatureHasVSX)
+      Features["vsx"] = Features["altivec"] = true;
+    if (Name == "power9-vector")
+      Features["power8-vector"] = true;
+    Features[Name] = true;
   } else {
-    if (Name == "vsx") {
-      Features[Name] = Features["direct-move"] = Features["power8-vector"] =
+    // If we're disabling altivec or vsx go ahead and disable all of the vsx
+    // features.
+    if ((Name == "altivec") || (Name == "vsx"))
+      Features["vsx"] = Features["direct-move"] = Features["power8-vector"] =
           Features["float128"] = Features["power9-vector"] = false;
-    } else {
-      Features[Name] = false;
-    }
+    if (Name == "power8-vector")
+      Features["power9-vector"] = false;
+    Features[Name] = false;
   }
 }
 
@@ -1777,6 +1780,7 @@ public:
 };
 
 static const unsigned NVPTXAddrSpaceMap[] = {
+    0, // Default
     1, // opencl_global
     3, // opencl_local
     4, // opencl_constant
@@ -2035,6 +2039,7 @@ ArrayRef<const char *> NVPTXTargetInfo::getGCCRegNames() const {
 }
 
 static const LangAS::Map AMDGPUPrivateIsZeroMap = {
+    4,  // Default
     1,  // opencl_global
     3,  // opencl_local
     2,  // opencl_constant
@@ -2048,13 +2053,14 @@ static const LangAS::Map AMDGPUPrivateIsZeroMap = {
     1,  // hcc_global
 };
 static const LangAS::Map AMDGPUGenericIsZeroMap = {
+    0,  // Default
     1,  // opencl_global
     3,  // opencl_local
-    4,  // opencl_constant
+    2,  // opencl_constant
     5,  // opencl_private
     0,  // opencl_generic
     1,  // cuda_device
-    4,  // cuda_constant
+    2,  // cuda_constant
     3,  // cuda_shared
     3,  // hcc_tilestatic
     0,  // hcc_generic
@@ -2074,9 +2080,9 @@ static const char *const DataLayoutStringSIPrivateIsZero =
   "-v192:256-v256:256-v512:512-v1024:1024-v2048:2048-n32:64";
 
 static const char *const DataLayoutStringSIGenericIsZero =
-  "e-p:64:64-p1:64:64-p2:64:64-p3:32:32-p4:64:64-p5:32:32"
+  "e-p:64:64-p1:64:64-p2:64:64-p3:32:32-p4:32:32-p5:32:32"
   "-i64:64-v16:16-v24:32-v32:32-v48:64-v96:128"
-  "-v192:256-v256:256-v512:512-v1024:1024-v2048:2048-n32:64";
+  "-v192:256-v256:256-v512:512-v1024:1024-v2048:2048-n32:64-A5";
 
 class AMDGPUTargetInfo final : public TargetInfo {
   static const Builtin::Info BuiltinInfo[];
@@ -2089,7 +2095,7 @@ class AMDGPUTargetInfo final : public TargetInfo {
         Generic   = 0;
         Global    = 1;
         Local     = 3;
-        Constant  = 4;
+        Constant  = 2;
         Private   = 5;
       } else {
         Generic   = 4;
@@ -2121,8 +2127,11 @@ class AMDGPUTargetInfo final : public TargetInfo {
   bool hasFP64:1;
   bool hasFMAF:1;
   bool hasLDEXPF:1;
-  bool hasFullSpeedFP32Denorms:1;
   const AddrSpace AS;
+
+  static bool hasFullSpeedFMAF32(StringRef GPUName) {
+    return parseAMDGCNName(GPUName) >= GK_GFX9;
+  }
 
   static bool isAMDGCN(const llvm::Triple &TT) {
     return TT.getArch() == llvm::Triple::amdgcn;
@@ -2140,7 +2149,6 @@ public:
       hasFP64(false),
       hasFMAF(false),
       hasLDEXPF(false),
-      hasFullSpeedFP32Denorms(false),
       AS(isGenericZero(Triple)){
     setTypes();
     if (getTriple().getArch() == llvm::Triple::amdgcn) {
@@ -2153,6 +2161,7 @@ public:
                     (IsGenericZero ? DataLayoutStringSIGenericIsZero :
                         DataLayoutStringSIPrivateIsZero)
                     : DataLayoutStringR600);
+    assert(DataLayout->getAllocaAddrSpace() == AS.Private);
 
     AddrSpaceMap = IsGenericZero ? &AMDGPUGenericIsZeroMap :
         &AMDGPUPrivateIsZeroMap;
@@ -2291,7 +2300,8 @@ public:
         hasFP64Denormals = true;
     }
     if (!hasFP32Denormals)
-      TargetOpts.Features.push_back((Twine(hasFullSpeedFP32Denorms &&
+      TargetOpts.Features.push_back(
+          (Twine(hasFullSpeedFMAF32(TargetOpts.CPU) &&
           !CGOpts.FlushDenorm ? '+' : '-') + Twine("fp32-denormals")).str());
     // Always do not flush fp64 or fp16 denorms.
     if (!hasFP64Denormals && hasFP64)
@@ -2686,6 +2696,7 @@ class X86TargetInfo : public TargetInfo {
   bool HasRDSEED = false;
   bool HasADX = false;
   bool HasTBM = false;
+  bool HasLWP = false;
   bool HasFMA = false;
   bool HasF16C = false;
   bool HasAVX512CD = false;
@@ -3458,6 +3469,7 @@ bool X86TargetInfo::initFeatureMap(
   case CK_BDVER1:
     // xop implies avx, sse4a and fma4.
     setFeatureEnabledImpl(Features, "xop", true);
+    setFeatureEnabledImpl(Features, "lwp", true);
     setFeatureEnabledImpl(Features, "lzcnt", true);
     setFeatureEnabledImpl(Features, "aes", true);
     setFeatureEnabledImpl(Features, "pclmul", true);
@@ -3729,6 +3741,8 @@ bool X86TargetInfo::handleTargetFeatures(std::vector<std::string> &Features,
       HasADX = true;
     } else if (Feature == "+tbm") {
       HasTBM = true;
+    } else if (Feature == "+lwp") {
+      HasLWP = true;
     } else if (Feature == "+fma") {
       HasFMA = true;
     } else if (Feature == "+f16c") {
@@ -4044,6 +4058,9 @@ void X86TargetInfo::getTargetDefines(const LangOptions &Opts,
   if (HasTBM)
     Builder.defineMacro("__TBM__");
 
+  if (HasLWP)
+    Builder.defineMacro("__LWP__");
+
   if (HasMWAITX)
     Builder.defineMacro("__MWAITX__");
 
@@ -4227,6 +4244,7 @@ bool X86TargetInfo::hasFeature(StringRef Feature) const {
       .Case("sse4.2", SSELevel >= SSE42)
       .Case("sse4a", XOPLevel >= SSE4A)
       .Case("tbm", HasTBM)
+      .Case("lwp", HasLWP)
       .Case("x86", true)
       .Case("x86_32", getTriple().getArch() == llvm::Triple::x86)
       .Case("x86_64", getTriple().getArch() == llvm::Triple::x86_64)
@@ -5538,6 +5556,7 @@ public:
         .Case("softfloat", SoftFloat)
         .Case("thumb", isThumb())
         .Case("neon", (FPU & NeonFPU) && !SoftFloat)
+        .Case("vfp", FPU && !SoftFloat)
         .Case("hwdiv", HWDiv & HWDivThumb)
         .Case("hwdiv-arm", HWDiv & HWDivARM)
         .Default(false);
@@ -5563,8 +5582,10 @@ public:
     Builder.defineMacro("__arm__");
     // For bare-metal none-eabi.
     if (getTriple().getOS() == llvm::Triple::UnknownOS &&
-        getTriple().getEnvironment() == llvm::Triple::EABI)
+        (getTriple().getEnvironment() == llvm::Triple::EABI ||
+         getTriple().getEnvironment() == llvm::Triple::EABIHF))
       Builder.defineMacro("__ELF__");
+
 
     // Target properties.
     Builder.defineMacro("__REGISTER_PREFIX__", "");
@@ -6214,6 +6235,11 @@ public:
                         MacroBuilder &Builder) const override {
     // Target identification.
     Builder.defineMacro("__aarch64__");
+    // For bare-metal none-eabi.
+    if (getTriple().getOS() == llvm::Triple::UnknownOS &&
+        (getTriple().getEnvironment() == llvm::Triple::EABI ||
+         getTriple().getEnvironment() == llvm::Triple::EABIHF))
+      Builder.defineMacro("__ELF__");
 
     // Target properties.
     Builder.defineMacro("_LP64");
@@ -6941,6 +6967,11 @@ public:
     case 'N': // Same as 'K' but zext (required for SIMode)
     case 'O': // The constant 4096
       return true;
+
+    case 'f':
+    case 'e':
+      info.setAllowsRegister();
+      return true;
     }
     return false;
   }
@@ -7513,6 +7544,7 @@ ArrayRef<const char *> MSP430TargetInfo::getGCCRegNames() const {
 // publicly available in http://tce.cs.tut.fi
 
 static const unsigned TCEOpenCLAddrSpaceMap[] = {
+    0, // Default
     3, // opencl_global
     4, // opencl_local
     5, // opencl_constant
@@ -8483,6 +8515,7 @@ const Builtin::Info Le64TargetInfo::BuiltinInfo[] = {
 };
 
 static const unsigned SPIRAddrSpaceMap[] = {
+    0, // Default
     1, // opencl_global
     3, // opencl_local
     2, // opencl_constant

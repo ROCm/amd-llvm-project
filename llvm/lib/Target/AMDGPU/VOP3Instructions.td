@@ -232,7 +232,6 @@ def V_ASHRREV_I64 : VOP3Inst <"v_ashrrev_i64", VOP3_Profile<VOP_I64_I32_I64>>;
 
 let SubtargetPredicate = isCIVI in {
 
-def V_MQSAD_U16_U8 : VOP3Inst <"v_mqsad_u16_u8", VOP3_Profile<VOP_I32_I32_I32>>;
 def V_QSAD_PK_U16_U8 : VOP3Inst <"v_qsad_pk_u16_u8", VOP3_Profile<VOP_I64_I64_I32_I64>, int_amdgcn_qsad_pk_u16_u8>;
 def V_MQSAD_U32_U8 : VOP3Inst <"v_mqsad_u32_u8", VOP3_Profile<VOP_V4I32_I64_I32_V4I32>, int_amdgcn_mqsad_u32_u8>;
 
@@ -259,6 +258,8 @@ def V_MAD_U16 : VOP3Inst <"v_mad_u16", VOP3_Profile<VOP_I16_I16_I16_I16>>;
 def V_MAD_I16 : VOP3Inst <"v_mad_i16", VOP3_Profile<VOP_I16_I16_I16_I16>>;
 
 }  // End isCommutable = 1
+
+def V_PERM_B32 : VOP3Inst <"v_perm_b32", VOP3_Profile<VOP_I32_I32_I32_I32>>;
 
 } // End SubtargetPredicate = isVI
 
@@ -400,9 +401,8 @@ multiclass VOP3be_Real_ci<bits<9> op> {
   }
 }
 
-defm V_MQSAD_U16_U8     : VOP3_Real_ci <0x172>;
 defm V_QSAD_PK_U16_U8   : VOP3_Real_ci <0x172>;
-defm V_MQSAD_U32_U8     : VOP3_Real_ci <0x174>;
+defm V_MQSAD_U32_U8     : VOP3_Real_ci <0x175>;
 defm V_MAD_U64_U32      : VOP3be_Real_ci <0x176>;
 defm V_MAD_I64_I32      : VOP3be_Real_ci <0x177>;
 
@@ -424,7 +424,6 @@ multiclass VOP3be_Real_vi<bits<10> op> {
 
 } // End AssemblerPredicates = [isVI], DecoderNamespace = "VI"
 
-defm V_MQSAD_U16_U8     : VOP3_Real_vi <0x172>;
 defm V_MAD_U64_U32      : VOP3be_Real_vi <0x1E8>;
 defm V_MAD_I64_I32      : VOP3be_Real_vi <0x1E9>;
 
@@ -472,6 +471,8 @@ defm V_MQSAD_U32_U8     : VOP3_Real_vi <0x1e7>;
 defm V_MAD_F16          : VOP3_Real_vi <0x1ea>;
 defm V_MAD_U16          : VOP3_Real_vi <0x1eb>;
 defm V_MAD_I16          : VOP3_Real_vi <0x1ec>;
+
+defm V_PERM_B32         : VOP3_Real_vi <0x1ed>;
 
 defm V_FMA_F16          : VOP3_Real_vi <0x1ee>;
 defm V_DIV_FIXUP_F16    : VOP3_Real_vi <0x1ef>;

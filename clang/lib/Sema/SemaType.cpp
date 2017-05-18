@@ -119,8 +119,9 @@ static void diagnoseBadTypeAttribute(Sema &S, const AttributeList &attr,
 
 // Function type attributes.
 #define FUNCTION_TYPE_ATTRS_CASELIST \
-    case AttributeList::AT_NoReturn: \
-    case AttributeList::AT_Regparm: \
+  case AttributeList::AT_NoReturn: \
+  case AttributeList::AT_Regparm: \
+  case AttributeList::AT_AnyX86NoCallerSavedRegisters: \
     CALLING_CONV_ATTRS_CASELIST
 
 // Microsoft-specific type qualifiers.
@@ -2284,8 +2285,9 @@ bool Sema::CheckFunctionReturnType(QualType T, SourceLocation Loc) {
   // Methods cannot return interface types. All ObjC objects are
   // passed by reference.
   if (T->isObjCObjectType()) {
-    Diag(Loc, diag::err_object_cannot_be_passed_returned_by_value) << 0 << T;
-    return 0;
+    Diag(Loc, diag::err_object_cannot_be_passed_returned_by_value)
+        << 0 << T << FixItHint::CreateInsertion(Loc, "*");
+    return true;
   }
 
   return false;
@@ -5533,14 +5535,14 @@ static void HandleAddressSpaceTypeAttribute(QualType &Type,
       addrSpace.setIsSigned(false);
     }
     llvm::APSInt max(addrSpace.getBitWidth());
-    max = Qualifiers::MaxAddressSpace;
+    max = Qualifiers::MaxAddressSpace - LangAS::Count;
     if (addrSpace > max) {
       S.Diag(Attr.getLoc(), diag::err_attribute_address_space_too_high)
-        << int(Qualifiers::MaxAddressSpace) << ASArgExpr->getSourceRange();
+        << (unsigned)max.getZExtValue() << ASArgExpr->getSourceRange();
       Attr.setInvalid();
       return;
     }
-    ASIdx = static_cast<unsigned>(addrSpace.getZExtValue());
+    ASIdx = static_cast<unsigned>(addrSpace.getZExtValue()) + LangAS::Count;
   } else {
     // The keyword-based type attributes imply which address space to use.
     switch (Attr.getKind()) {
@@ -6371,6 +6373,20 @@ static bool handleFunctionTypeAttr(TypeProcessingState &state,
 
     FunctionType::ExtInfo EI
       = unwrapped.get()->getExtInfo().withProducesResult(true);
+    type = unwrapped.wrap(S, S.Context.adjustFunctionType(unwrapped.get(), EI));
+    return true;
+  }
+
+  if (attr.getKind() == AttributeList::AT_AnyX86NoCallerSavedRegisters) {
+    if (S.CheckNoCallerSavedRegsAttr(attr))
+      return true;
+
+    // Delay if this is not a function type.
+    if (!unwrapped.isFunctionType())
+      return false;
+
+    FunctionType::ExtInfo EI =
+        unwrapped.get()->getExtInfo().withNoCallerSavedRegs(true);
     type = unwrapped.wrap(S, S.Context.adjustFunctionType(unwrapped.get(), EI));
     return true;
   }

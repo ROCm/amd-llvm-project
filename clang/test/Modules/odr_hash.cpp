@@ -275,6 +275,33 @@ S11 s11;
 // expected-note@first.h:* {{but in 'FirstModule' found field 'x' with a different initializer}}
 #endif
 
+#if defined(FIRST)
+struct S12 {
+  unsigned x[5];
+};
+#elif defined(SECOND)
+struct S12 {
+  unsigned x[7];
+};
+#else
+S12 s12;
+// expected-error@first.h:* {{'Field::S12::x' from module 'FirstModule' is not present in definition of 'Field::S12' in module 'SecondModule'}}
+// expected-note@second.h:* {{declaration of 'x' does not match}}
+#endif
+
+#if defined(FIRST)
+struct S13 {
+  unsigned x[7];
+};
+#elif defined(SECOND)
+struct S13 {
+  double x[7];
+};
+#else
+S13 s13;
+// expected-error@first.h:* {{'Field::S13::x' from module 'FirstModule' is not present in definition of 'Field::S13' in module 'SecondModule'}}
+// expected-note@second.h:* {{declaration of 'x' does not match}}
+#endif
 }  // namespace Field
 
 namespace Method {
@@ -403,6 +430,91 @@ S8 s8;
 // expected-note@first.h:* {{but in 'FirstModule' found method 'A' is const}}
 #endif
 
+#if defined(FIRST)
+struct S9 {
+  void A(int x) {}
+  void A(int x, int y) {}
+};
+#elif defined(SECOND)
+struct S9 {
+  void A(int x, int y) {}
+  void A(int x) {}
+};
+#else
+S9 s9;
+// expected-error@second.h:* {{'Method::S9' has different definitions in different modules; first difference is definition in module 'SecondModule' found method 'A' that has 2 parameters}}
+// expected-note@first.h:* {{but in 'FirstModule' found method 'A' that has 1 parameter}}
+#endif
+
+#if defined(FIRST)
+struct S10 {
+  void A(int x) {}
+  void A(float x) {}
+};
+#elif defined(SECOND)
+struct S10 {
+  void A(float x) {}
+  void A(int x) {}
+};
+#else
+S10 s10;
+// expected-error@second.h:* {{'Method::S10' has different definitions in different modules; first difference is definition in module 'SecondModule' found method 'A' with 1st parameter of type 'float'}}
+// expected-note@first.h:* {{but in 'FirstModule' found method 'A' with 1st parameter of type 'int'}}
+#endif
+
+#if defined(FIRST)
+struct S11 {
+  void A(int x) {}
+};
+#elif defined(SECOND)
+struct S11 {
+  void A(int y) {}
+};
+#else
+S11 s11;
+// expected-error@second.h:* {{'Method::S11' has different definitions in different modules; first difference is definition in module 'SecondModule' found method 'A' with 1st parameter named 'y'}}
+// expected-note@first.h:* {{but in 'FirstModule' found method 'A' with 1st parameter named 'x'}}
+#endif
+
+#if defined(FIRST)
+struct S12 {
+  void A(int x) {}
+};
+#elif defined(SECOND)
+struct S12 {
+  void A(int x = 1) {}
+};
+#else
+S12 s12;
+// TODO: This should produce an error.
+#endif
+
+#if defined(FIRST)
+struct S13 {
+  void A(int x = 1 + 0) {}
+};
+#elif defined(SECOND)
+struct S13 {
+  void A(int x = 1) {}
+};
+#else
+S13 s13;
+// TODO: This should produce an error.
+#endif
+
+#if defined(FIRST)
+struct S14 {
+  void A(int x[2]) {}
+};
+#elif defined(SECOND)
+struct S14 {
+  void A(int x[3]) {}
+};
+#else
+S14 s14;
+// expected-error@second.h:* {{'Method::S14' has different definitions in different modules; first difference is definition in module 'SecondModule' found method 'A' with 1st parameter of type 'int *' decayed from 'int [3]'}}
+// expected-note@first.h:* {{but in 'FirstModule' found method 'A' with 1st parameter of type 'int *' decayed from 'int [2]'}}
+#endif
 }  // namespace Method
 
 // Naive parsing of AST can lead to cycles in processing.  Ensure
@@ -522,142 +634,292 @@ S3 s3;
 #endif
 }  // namespace Using
 
+namespace RecordType {
+#if defined(FIRST)
+struct B1 {};
+struct S1 {
+  B1 x;
+};
+#elif defined(SECOND)
+struct A1 {};
+struct S1 {
+  A1 x;
+};
+#else
+S1 s1;
+// expected-error@first.h:* {{'RecordType::S1::x' from module 'FirstModule' is not present in definition of 'RecordType::S1' in module 'SecondModule'}}
+// expected-note@second.h:* {{declaration of 'x' does not match}}
+#endif
+}
+
+namespace DependentType {
+#if defined(FIRST)
+template <class T>
+class S1 {
+  typename T::typeA x;
+};
+#elif defined(SECOND)
+template <class T>
+class S1 {
+  typename T::typeB x;
+};
+#else
+template<class T>
+using U1 = S1<T>;
+// expected-error@first.h:* {{'DependentType::S1::x' from module 'FirstModule' is not present in definition of 'S1<T>' in module 'SecondModule'}}
+// expected-note@second.h:* {{declaration of 'x' does not match}}
+#endif
+}
+
+namespace ElaboratedType {
+#if defined(FIRST)
+namespace N1 { using type = double; }
+struct S1 {
+  N1::type x;
+};
+#elif defined(SECOND)
+namespace N1 { using type = int; }
+struct S1 {
+  N1::type x;
+};
+#else
+S1 s1;
+// expected-error@first.h:* {{'ElaboratedType::S1::x' from module 'FirstModule' is not present in definition of 'ElaboratedType::S1' in module 'SecondModule'}}
+// expected-note@second.h:* {{declaration of 'x' does not match}}
+#endif
+}
+
+namespace Enum {
+#if defined(FIRST)
+enum A1 {};
+struct S1 {
+  A1 x;
+};
+#elif defined(SECOND)
+enum A2 {};
+struct S1 {
+  A2 x;
+};
+#else
+S1 s1;
+// expected-error@first.h:* {{'Enum::S1::x' from module 'FirstModule' is not present in definition of 'Enum::S1' in module 'SecondModule'}}
+// expected-note@second.h:* {{declaration of 'x' does not match}}
+#endif
+}
+
+namespace NestedNamespaceSpecifier {
+#if defined(FIRST)
+namespace LevelA1 {
+using Type = int;
+}
+
+struct S1 {
+  LevelA1::Type x;
+};
+# elif defined(SECOND)
+namespace LevelB1 {
+namespace LevelC1 {
+using Type = int;
+}
+}
+
+struct S1 {
+  LevelB1::LevelC1::Type x;
+};
+#else
+S1 s1;
+// expected-error@second.h:* {{'NestedNamespaceSpecifier::S1' has different definitions in different modules; first difference is definition in module 'SecondModule' found field 'x' with type 'LevelB1::LevelC1::Type' (aka 'int')}}
+// expected-note@first.h:* {{but in 'FirstModule' found field 'x' with type 'LevelA1::Type' (aka 'int')}}
+#endif
+
+#if defined(FIRST)
+namespace LevelA2 { using Type = int; }
+struct S2 {
+  LevelA2::Type x;
+};
+# elif defined(SECOND)
+struct S2 {
+  int x;
+};
+#else
+S2 s2;
+// expected-error@second.h:* {{'NestedNamespaceSpecifier::S2' has different definitions in different modules; first difference is definition in module 'SecondModule' found field 'x' with type 'int'}}
+// expected-note@first.h:* {{but in 'FirstModule' found field 'x' with type 'LevelA2::Type' (aka 'int')}}
+#endif
+
+namespace LevelA3 { using Type = int; }
+namespace LevelB3 { using Type = int; }
+#if defined(FIRST)
+struct S3 {
+  LevelA3::Type x;
+};
+# elif defined(SECOND)
+struct S3 {
+  LevelB3::Type x;
+};
+#else
+S3 s3;
+// expected-error@second.h:* {{'NestedNamespaceSpecifier::S3' has different definitions in different modules; first difference is definition in module 'SecondModule' found field 'x' with type 'LevelB3::Type' (aka 'int')}}
+// expected-note@first.h:* {{but in 'FirstModule' found field 'x' with type 'LevelA3::Type' (aka 'int')}}
+#endif
+
+#if defined(FIRST)
+struct TA4 { using Type = int; };
+struct S4 {
+  TA4::Type x;
+};
+# elif defined(SECOND)
+struct TB4 { using Type = int; };
+struct S4 {
+  TB4::Type x;
+};
+#else
+S4 s4;
+// expected-error@second.h:* {{'NestedNamespaceSpecifier::S4' has different definitions in different modules; first difference is definition in module 'SecondModule' found field 'x' with type 'TB4::Type' (aka 'int')}}
+// expected-note@first.h:* {{but in 'FirstModule' found field 'x' with type 'TA4::Type' (aka 'int')}}
+#endif
+
+#if defined(FIRST)
+struct T5 { using Type = int; };
+struct S5 {
+  T5::Type x;
+};
+# elif defined(SECOND)
+namespace T5 { using Type = int; };
+struct S5 {
+  T5::Type x;
+};
+#else
+S5 s5;
+// expected-error@second.h:* {{'NestedNamespaceSpecifier::S5' has different definitions in different modules; first difference is definition in module 'SecondModule' found field 'x' with type 'T5::Type' (aka 'int')}}
+// expected-note@first.h:* {{but in 'FirstModule' found field 'x' with type 'T5::Type' (aka 'int')}}
+#endif
+
+#if defined(FIRST)
+namespace N6 {using I = int;}
+struct S6 {
+  NestedNamespaceSpecifier::N6::I x;
+};
+# elif defined(SECOND)
+using I = int;
+struct S6 {
+  ::NestedNamespaceSpecifier::I x;
+};
+#else
+S6 s6;
+// expected-error@second.h:* {{'NestedNamespaceSpecifier::S6' has different definitions in different modules; first difference is definition in module 'SecondModule' found field 'x' with type '::NestedNamespaceSpecifier::I' (aka 'int')}}
+// expected-note@first.h:* {{but in 'FirstModule' found field 'x' with type 'NestedNamespaceSpecifier::N6::I' (aka 'int')}}
+#endif
+
+#if defined(FIRST)
+template <class T, class U>
+class S7 {
+  typename T::type *x = {};
+  int z = x->T::foo();
+};
+#elif defined(SECOND)
+template <class T, class U>
+class S7 {
+  typename T::type *x = {};
+  int z = x->U::foo();
+};
+#else
+template <class T, class U>
+using U7 = S7<T, U>;
+// expected-error@second.h:* {{'NestedNamespaceSpecifier::S7' has different definitions in different modules; first difference is definition in module 'SecondModule' found field 'z' with an initializer}}
+// expected-note@first.h:* {{but in 'FirstModule' found field 'z' with a different initializer}}
+#endif
+
+#if defined(FIRST)
+template <class T>
+class S8 {
+  int x = T::template X<int>::value;
+};
+#elif defined(SECOND)
+template <class T>
+class S8 {
+  int x = T::template Y<int>::value;
+};
+#else
+template <class T>
+using U8 = S8<T>;
+// expected-error@second.h:* {{'NestedNamespaceSpecifier::S8' has different definitions in different modules; first difference is definition in module 'SecondModule' found field 'x' with an initializer}}
+// expected-note@first.h:* {{but in 'FirstModule' found field 'x' with a different initializer}}
+#endif
+
+#if defined(FIRST)
+namespace N9 { using I = int; }
+namespace O9 = N9;
+struct S9 {
+  O9::I x;
+};
+#elif defined(SECOND)
+namespace N9 { using I = int; }
+namespace P9 = N9;
+struct S9 {
+  P9::I x;
+};
+#else
+S9 s9;
+// expected-error@second.h:* {{'NestedNamespaceSpecifier::S9' has different definitions in different modules; first difference is definition in module 'SecondModule' found field 'x' with type 'P9::I' (aka 'int')}}
+// expected-note@first.h:* {{but in 'FirstModule' found field 'x' with type 'O9::I' (aka 'int')}}
+#endif
+}
 
 // Interesting cases that should not cause errors.  struct S should not error
 // while struct T should error at the access specifier mismatch at the end.
 namespace AllDecls {
+#define CREATE_ALL_DECL_STRUCT(NAME, ACCESS)               \
+  typedef int INT;                                         \
+  struct NAME {                                            \
+  public:                                                  \
+  private:                                                 \
+  protected:                                               \
+    static_assert(1 == 1, "Message");                      \
+    static_assert(2 == 2);                                 \
+                                                           \
+    int x;                                                 \
+    double y;                                              \
+                                                           \
+    INT z;                                                 \
+                                                           \
+    unsigned a : 1;                                        \
+    unsigned b : 2 * 2 + 5 / 2;                            \
+                                                           \
+    mutable int c = sizeof(x + y);                         \
+                                                           \
+    void method() {}                                       \
+    static void static_method() {}                         \
+    virtual void virtual_method() {}                       \
+    virtual void pure_virtual_method() = 0;                \
+    inline void inline_method() {}                         \
+    void volatile_method() volatile {}                     \
+    void const_method() const {}                           \
+                                                           \
+    typedef int typedef_int;                               \
+    using using_int = int;                                 \
+                                                           \
+    void method_one_arg(int x) {}                          \
+    void method_one_arg_default_argument(int x = 5 + 5) {} \
+    void method_decayed_type(int x[5]) {}                  \
+                                                           \
+    int constant_arr[5];                                   \
+                                                           \
+    ACCESS:                                                \
+  };
+
 #if defined(FIRST)
-typedef int INT;
-struct S {
-  public:
-  private:
-  protected:
-
-  static_assert(1 == 1, "Message");
-  static_assert(2 == 2);
-
-  int x;
-  double y;
-
-  INT z;
-
-  unsigned a : 1;
-  unsigned b : 2*2 + 5/2;
-
-  mutable int c = sizeof(x + y);
-
-  void method() {}
-  static void static_method() {}
-  virtual void virtual_method() {}
-  virtual void pure_virtual_method() = 0;
-  inline void inline_method() {}
-  void volatile_method() volatile {}
-  void const_method() const {}
-
-  typedef int typedef_int;
-  using using_int = int;
-};
+CREATE_ALL_DECL_STRUCT(S, public)
 #elif defined(SECOND)
-typedef int INT;
-struct S {
-  public:
-  private:
-  protected:
-
-  static_assert(1 == 1, "Message");
-  static_assert(2 == 2);
-
-  int x;
-  double y;
-
-  INT z;
-
-  unsigned a : 1;
-  unsigned b : 2 * 2 + 5 / 2;
-
-  mutable int c = sizeof(x + y);
-
-  void method() {}
-  static void static_method() {}
-  virtual void virtual_method() {}
-  virtual void pure_virtual_method() = 0;
-  inline void inline_method() {}
-  void volatile_method() volatile {}
-  void const_method() const {}
-
-  typedef int typedef_int;
-  using using_int = int;
-};
+CREATE_ALL_DECL_STRUCT(S, public)
 #else
 S *s;
 #endif
 
 #if defined(FIRST)
-typedef int INT;
-struct T {
-  public:
-  private:
-  protected:
-
-  static_assert(1 == 1, "Message");
-  static_assert(2 == 2);
-
-  int x;
-  double y;
-
-  INT z;
-
-  unsigned a : 1;
-  unsigned b : 2 * 2 + 5 / 2;
-
-  mutable int c = sizeof(x + y);
-
-  void method() {}
-  static void static_method() {}
-  virtual void virtual_method() {}
-  virtual void pure_virtual_method() = 0;
-  inline void inline_method() {}
-  void volatile_method() volatile {}
-  void const_method() const {}
-
-  typedef int typedef_int;
-  using using_int = int;
-
-  private:
-};
+CREATE_ALL_DECL_STRUCT(T, private)
 #elif defined(SECOND)
-typedef int INT;
-struct T {
-  public:
-  private:
-  protected:
-
-  static_assert(1 == 1, "Message");
-  static_assert(2 == 2);
-
-  int x;
-  double y;
-
-  INT z;
-
-  unsigned a : 1;
-  unsigned b : 2 * 2 + 5 / 2;
-
-  mutable int c = sizeof(x + y);
-
-  void method() {}
-  static void static_method() {}
-  virtual void virtual_method() {}
-  virtual void pure_virtual_method() = 0;
-  inline void inline_method() {}
-  void volatile_method() volatile {}
-  void const_method() const {}
-
-  typedef int typedef_int;
-  using using_int = int;
-
-  public:
-};
+CREATE_ALL_DECL_STRUCT(T, public)
 #else
 T *t;
 // expected-error@second.h:* {{'AllDecls::T' has different definitions in different modules; first difference is definition in module 'SecondModule' found public access specifier}}
@@ -943,6 +1205,143 @@ T t;
 // expected-note@first.h:* {{but in 'FirstModule' found public access specifier}}
 #endif
 }  // namespace StructWithForwardDeclarationNoDefinition
+
+namespace LateParsedDefaultArgument {
+#if defined(FIRST)
+template <typename T>
+struct S {
+  struct R {
+    void foo(T x = 0) {}
+  };
+};
+#elif defined(SECOND)
+#else
+void run() {
+  S<int>::R().foo();
+}
+#endif
+}
+
+namespace LateParsedDefaultArgument {
+#if defined(FIRST)
+template <typename alpha> struct Bravo {
+  void charlie(bool delta = false) {}
+};
+typedef Bravo<char> echo;
+echo foxtrot;
+
+Bravo<char> golf;
+#elif defined(SECOND)
+#else
+#endif
+}
+
+namespace DifferentParameterNameInTemplate {
+#if defined(FIRST) || defined(SECOND)
+template <typename T>
+struct S {
+  typedef T Type;
+
+  static void Run(const Type *name_one);
+};
+
+template <typename T>
+void S<T>::Run(const T *name_two) {}
+
+template <typename T>
+struct Foo {
+  ~Foo() { Handler::Run(nullptr); }
+  Foo() {}
+
+  class Handler : public S<T> {};
+
+  void Get(typename Handler::Type *x = nullptr) {}
+  void Add() { Handler::Run(nullptr); }
+};
+#endif
+
+#if defined(FIRST)
+struct Beta;
+
+struct Alpha {
+  Alpha();
+  void Go() { betas.Get(); }
+  Foo<Beta> betas;
+};
+
+#elif defined(SECOND)
+struct Beta {};
+
+struct BetaHelper {
+  void add_Beta() { betas.Add(); }
+  Foo<Beta> betas;
+};
+
+#else
+Alpha::Alpha() {}
+#endif
+}
+
+namespace ParameterTest {
+#if defined(FIRST)
+class X {};
+template <typename G>
+class S {
+  public:
+   typedef G Type;
+   static inline G *Foo(const G *a, int * = nullptr);
+};
+
+template<typename G>
+G* S<G>::Foo(const G* aaaa, int*) {}
+#elif defined(SECOND)
+template <typename G>
+class S {
+  public:
+   typedef G Type;
+   static inline G *Foo(const G *a, int * = nullptr);
+};
+
+template<typename G>
+G* S<G>::Foo(const G* asdf, int*) {}
+#else
+S<X> s;
+#endif
+}
+
+namespace MultipleTypedefs {
+#if defined(FIRST)
+typedef int B1;
+typedef B1 A1;
+struct S1 {
+  A1 x;
+};
+#elif defined(SECOND)
+typedef int A1;
+struct S1 {
+  A1 x;
+};
+#else
+S1 s1;
+#endif
+
+#if defined(FIRST)
+struct T2 { int x; };
+typedef T2 B2;
+typedef B2 A2;
+struct S2 {
+  T2 x;
+};
+#elif defined(SECOND)
+struct T2 { int x; };
+typedef T2 A2;
+struct S2 {
+  T2 x;
+};
+#else
+S2 s2;
+#endif
+}
 
 // Keep macros contained to one file.
 #ifdef FIRST

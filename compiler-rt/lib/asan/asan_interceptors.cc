@@ -37,11 +37,18 @@
 namespace __asan {
 
 // Return true if we can quickly decide that the region is unpoisoned.
+// We assume that a redzone is at least 16 bytes.
 static inline bool QuickCheckForUnpoisonedRegion(uptr beg, uptr size) {
   if (size == 0) return true;
   if (size <= 32)
     return !AddressIsPoisoned(beg) &&
            !AddressIsPoisoned(beg + size - 1) &&
+           !AddressIsPoisoned(beg + size / 2);
+  if (size <= 64)
+    return !AddressIsPoisoned(beg) &&
+           !AddressIsPoisoned(beg + size / 4) &&
+           !AddressIsPoisoned(beg + size - 1) &&
+           !AddressIsPoisoned(beg + 3 * size / 4) &&
            !AddressIsPoisoned(beg + size / 2);
   return false;
 }
@@ -436,6 +443,13 @@ INTERCEPTOR(void, _longjmp, void *env, int val) {
 }
 #endif
 
+#if ASAN_INTERCEPT___LONGJMP_CHK
+INTERCEPTOR(void, __longjmp_chk, void *env, int val) {
+  __asan_handle_no_return();
+  REAL(__longjmp_chk)(env, val);
+}
+#endif
+
 #if ASAN_INTERCEPT_SIGLONGJMP
 INTERCEPTOR(void, siglongjmp, void *env, int val) {
   __asan_handle_no_return();
@@ -750,6 +764,9 @@ void InitializeAsanInterceptors() {
 #endif
 #if ASAN_INTERCEPT__LONGJMP
   ASAN_INTERCEPT_FUNC(_longjmp);
+#endif
+#if ASAN_INTERCEPT___LONGJMP_CHK
+  ASAN_INTERCEPT_FUNC(__longjmp_chk);
 #endif
 #if ASAN_INTERCEPT_SIGLONGJMP
   ASAN_INTERCEPT_FUNC(siglongjmp);

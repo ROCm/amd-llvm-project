@@ -763,6 +763,17 @@ bool AArch64InstrInfo::isAsCheapAsAMove(const MachineInstr &MI) const {
   llvm_unreachable("Unknown opcode to check as cheap as a move!");
 }
 
+bool AArch64InstrInfo::isFalkorLSLFast(const MachineInstr &MI) const {
+  if (MI.getNumOperands() < 4)
+    return false;
+  unsigned ShOpVal = MI.getOperand(3).getImm();
+  unsigned ShImm = AArch64_AM::getShiftValue(ShOpVal);
+  if (AArch64_AM::getShiftType(ShOpVal) == AArch64_AM::LSL &&
+       ShImm < 4)
+    return true;
+  return false;
+}
+
 bool AArch64InstrInfo::isCoalescableExtInstr(const MachineInstr &MI,
                                              unsigned &SrcReg, unsigned &DstReg,
                                              unsigned &SubIdx) const {
@@ -2309,7 +2320,7 @@ void AArch64InstrInfo::storeRegToStackSlot(
       PtrInfo, MachineMemOperand::MOStore, MFI.getObjectSize(FI), Align);
   unsigned Opc = 0;
   bool Offset = true;
-  switch (RC->getSize()) {
+  switch (TRI->getSpillSize(*RC)) {
   case 1:
     if (AArch64::FPR8RegClass.hasSubClassEq(RC))
       Opc = AArch64::STRBui;
@@ -2413,7 +2424,7 @@ void AArch64InstrInfo::loadRegFromStackSlot(
 
   unsigned Opc = 0;
   bool Offset = true;
-  switch (RC->getSize()) {
+  switch (TRI->getSpillSize(*RC)) {
   case 1:
     if (AArch64::FPR8RegClass.hasSubClassEq(RC))
       Opc = AArch64::LDRBui;
@@ -2638,7 +2649,8 @@ MachineInstr *AArch64InstrInfo::foldMemoryOperandImpl(
     };
 
     if (DstMO.getSubReg() == 0 && SrcMO.getSubReg() == 0) {
-      assert(getRegClass(DstReg)->getSize() == getRegClass(SrcReg)->getSize() &&
+      assert(TRI.getRegSizeInBits(*getRegClass(DstReg)) ==
+             TRI.getRegSizeInBits(*getRegClass(SrcReg)) &&
              "Mismatched register size in non subreg COPY");
       if (IsSpill)
         storeRegToStackSlot(MBB, InsertPt, SrcReg, SrcMO.isKill(), FrameIndex,
@@ -2724,7 +2736,8 @@ MachineInstr *AArch64InstrInfo::foldMemoryOperandImpl(
       }
 
       if (FillRC) {
-        assert(getRegClass(SrcReg)->getSize() == FillRC->getSize() &&
+        assert(TRI.getRegSizeInBits(*getRegClass(SrcReg)) ==
+                   TRI.getRegSizeInBits(*FillRC) &&
                "Mismatched regclass size on folded subreg COPY");
         loadRegFromStackSlot(MBB, InsertPt, DstReg, FrameIndex, FillRC, &TRI);
         MachineInstr &LoadMI = *--InsertPt;
@@ -3014,7 +3027,7 @@ bool llvm::rewriteAArch64FrameIndex(MachineInstr &MI, unsigned FrameRegIdx,
   return false;
 }
 
-void AArch64InstrInfo::getNoopForMachoTarget(MCInst &NopInst) const {
+void AArch64InstrInfo::getNoop(MCInst &NopInst) const {
   NopInst.setOpcode(AArch64::HINT);
   NopInst.addOperand(MCOperand::createImm(0));
 }
@@ -3414,6 +3427,10 @@ static bool getFMAPatterns(MachineInstr &Root,
       Patterns.push_back(MachineCombinerPattern::FMLSv1i32_indexed_OP2);
       Found = true;
     }
+    if (canCombineWithFMUL(MBB, Root.getOperand(1), AArch64::FNMULSrr)) {
+      Patterns.push_back(MachineCombinerPattern::FNMULSUBS_OP1);
+      Found = true;
+    }
     break;
   case AArch64::FSUBDrr:
     if (canCombineWithFMUL(MBB, Root.getOperand(1), AArch64::FMULDrr)) {
@@ -3426,6 +3443,10 @@ static bool getFMAPatterns(MachineInstr &Root,
     } else if (canCombineWithFMUL(MBB, Root.getOperand(2),
                                   AArch64::FMULv1i64_indexed)) {
       Patterns.push_back(MachineCombinerPattern::FMLSv1i64_indexed_OP2);
+      Found = true;
+    }
+    if (canCombineWithFMUL(MBB, Root.getOperand(1), AArch64::FNMULDrr)) {
+      Patterns.push_back(MachineCombinerPattern::FNMULSUBD_OP1);
       Found = true;
     }
     break;
@@ -3482,6 +3503,8 @@ AArch64InstrInfo::isThroughputPattern(MachineCombinerPattern Pattern) const {
   case MachineCombinerPattern::FMULADDD_OP2:
   case MachineCombinerPattern::FMULSUBD_OP1:
   case MachineCombinerPattern::FMULSUBD_OP2:
+  case MachineCombinerPattern::FNMULSUBS_OP1:
+  case MachineCombinerPattern::FNMULSUBD_OP1:
   case MachineCombinerPattern::FMLAv1i32_indexed_OP1:
   case MachineCombinerPattern::FMLAv1i32_indexed_OP2:
   case MachineCombinerPattern::FMLAv1i64_indexed_OP1:
@@ -3983,6 +4006,24 @@ void AArch64InstrInfo::genAlternativeCodeSequence(
     MUL = genFusedMultiply(MF, MRI, TII, Root, InsInstrs, 1, Opc, RC);
     break;
   }
+
+  case MachineCombinerPattern::FNMULSUBS_OP1:
+  case MachineCombinerPattern::FNMULSUBD_OP1: {
+    // FNMUL I=A,B,0
+    // FSUB R,I,C
+    // ==> FNMADD R,A,B,C // = -A*B - C
+    // --- Create(FNMADD);
+    if (Pattern == MachineCombinerPattern::FNMULSUBS_OP1) {
+      Opc = AArch64::FNMADDSrrr;
+      RC = &AArch64::FPR32RegClass;
+    } else {
+      Opc = AArch64::FNMADDDrrr;
+      RC = &AArch64::FPR64RegClass;
+    }
+    MUL = genFusedMultiply(MF, MRI, TII, Root, InsInstrs, 1, Opc, RC);
+    break;
+  }
+
   case MachineCombinerPattern::FMULSUBS_OP2:
   case MachineCombinerPattern::FMULSUBD_OP2: {
     // FMUL I=A,B,0
@@ -3998,6 +4039,7 @@ void AArch64InstrInfo::genAlternativeCodeSequence(
     }
     MUL = genFusedMultiply(MF, MRI, TII, Root, InsInstrs, 2, Opc, RC);
     break;
+  }
 
   case MachineCombinerPattern::FMLSv1i32_indexed_OP2:
     Opc = AArch64::FMLSv1i32_indexed;
@@ -4054,7 +4096,6 @@ void AArch64InstrInfo::genAlternativeCodeSequence(
                              FMAInstKind::Accumulator);
     }
     break;
-  }
   } // end switch (Pattern)
   // Record MUL and ADD/SUB for deletion
   DelInstrs.push_back(MUL);

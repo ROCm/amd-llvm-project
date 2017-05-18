@@ -270,9 +270,9 @@ define <4 x float> @merge_4f32_f32_012u(float* %ptr) nounwind uwtable noinline s
 ; SSE2:       # BB#0:
 ; SSE2-NEXT:    movss {{.*#+}} xmm1 = mem[0],zero,zero,zero
 ; SSE2-NEXT:    movss {{.*#+}} xmm0 = mem[0],zero,zero,zero
-; SSE2-NEXT:    movss {{.*#+}} xmm2 = mem[0],zero,zero,zero
 ; SSE2-NEXT:    unpcklps {{.*#+}} xmm0 = xmm0[0],xmm1[0],xmm0[1],xmm1[1]
-; SSE2-NEXT:    unpcklps {{.*#+}} xmm0 = xmm0[0],xmm2[0],xmm0[1],xmm2[1]
+; SSE2-NEXT:    movss {{.*#+}} xmm1 = mem[0],zero,zero,zero
+; SSE2-NEXT:    unpcklps {{.*#+}} xmm0 = xmm0[0],xmm1[0],xmm0[1],xmm1[1]
 ; SSE2-NEXT:    retq
 ;
 ; SSE41-LABEL: merge_4f32_f32_012u:
@@ -292,9 +292,9 @@ define <4 x float> @merge_4f32_f32_012u(float* %ptr) nounwind uwtable noinline s
 ; X32-SSE1-NEXT:    movl {{[0-9]+}}(%esp), %eax
 ; X32-SSE1-NEXT:    movss {{.*#+}} xmm1 = mem[0],zero,zero,zero
 ; X32-SSE1-NEXT:    movss {{.*#+}} xmm0 = mem[0],zero,zero,zero
-; X32-SSE1-NEXT:    movss {{.*#+}} xmm2 = mem[0],zero,zero,zero
 ; X32-SSE1-NEXT:    unpcklps {{.*#+}} xmm0 = xmm0[0],xmm1[0],xmm0[1],xmm1[1]
-; X32-SSE1-NEXT:    unpcklps {{.*#+}} xmm0 = xmm0[0],xmm2[0],xmm0[1],xmm2[1]
+; X32-SSE1-NEXT:    movss {{.*#+}} xmm1 = mem[0],zero,zero,zero
+; X32-SSE1-NEXT:    unpcklps {{.*#+}} xmm0 = xmm0[0],xmm1[0],xmm0[1],xmm1[1]
 ; X32-SSE1-NEXT:    retl
 ;
 ; X32-SSE41-LABEL: merge_4f32_f32_012u:
@@ -321,9 +321,9 @@ define <4 x float> @merge_4f32_f32_019u(float* %ptr) nounwind uwtable noinline s
 ; SSE2:       # BB#0:
 ; SSE2-NEXT:    movss {{.*#+}} xmm1 = mem[0],zero,zero,zero
 ; SSE2-NEXT:    movss {{.*#+}} xmm0 = mem[0],zero,zero,zero
-; SSE2-NEXT:    movss {{.*#+}} xmm2 = mem[0],zero,zero,zero
 ; SSE2-NEXT:    unpcklps {{.*#+}} xmm0 = xmm0[0],xmm1[0],xmm0[1],xmm1[1]
-; SSE2-NEXT:    unpcklps {{.*#+}} xmm0 = xmm0[0],xmm2[0],xmm0[1],xmm2[1]
+; SSE2-NEXT:    movss {{.*#+}} xmm1 = mem[0],zero,zero,zero
+; SSE2-NEXT:    unpcklps {{.*#+}} xmm0 = xmm0[0],xmm1[0],xmm0[1],xmm1[1]
 ; SSE2-NEXT:    retq
 ;
 ; SSE41-LABEL: merge_4f32_f32_019u:
@@ -343,9 +343,9 @@ define <4 x float> @merge_4f32_f32_019u(float* %ptr) nounwind uwtable noinline s
 ; X32-SSE1-NEXT:    movl {{[0-9]+}}(%esp), %eax
 ; X32-SSE1-NEXT:    movss {{.*#+}} xmm1 = mem[0],zero,zero,zero
 ; X32-SSE1-NEXT:    movss {{.*#+}} xmm0 = mem[0],zero,zero,zero
-; X32-SSE1-NEXT:    movss {{.*#+}} xmm2 = mem[0],zero,zero,zero
 ; X32-SSE1-NEXT:    unpcklps {{.*#+}} xmm0 = xmm0[0],xmm1[0],xmm0[1],xmm1[1]
-; X32-SSE1-NEXT:    unpcklps {{.*#+}} xmm0 = xmm0[0],xmm2[0],xmm0[1],xmm2[1]
+; X32-SSE1-NEXT:    movss {{.*#+}} xmm1 = mem[0],zero,zero,zero
+; X32-SSE1-NEXT:    unpcklps {{.*#+}} xmm0 = xmm0[0],xmm1[0],xmm0[1],xmm1[1]
 ; X32-SSE1-NEXT:    retl
 ;
 ; X32-SSE41-LABEL: merge_4f32_f32_019u:
@@ -1102,44 +1102,28 @@ define <4 x float> @merge_4f32_f32_2345_volatile(float* %ptr) nounwind uwtable n
 ;
 
 define <4 x float> @merge_4f32_f32_X0YY(float* %ptr0, float* %ptr1) nounwind uwtable noinline ssp {
-; SSE2-LABEL: merge_4f32_f32_X0YY:
-; SSE2:       # BB#0:
-; SSE2-NEXT:    movss {{.*#+}} xmm1 = mem[0],zero,zero,zero
-; SSE2-NEXT:    movss {{.*#+}} xmm0 = mem[0],zero,zero,zero
-; SSE2-NEXT:    shufps {{.*#+}} xmm0 = xmm0[0,1],xmm1[0,0]
-; SSE2-NEXT:    retq
-;
-; SSE41-LABEL: merge_4f32_f32_X0YY:
-; SSE41:       # BB#0:
-; SSE41-NEXT:    movss {{.*#+}} xmm0 = mem[0],zero,zero,zero
-; SSE41-NEXT:    insertps {{.*#+}} xmm0 = xmm0[0],zero,mem[0],zero
-; SSE41-NEXT:    shufps {{.*#+}} xmm0 = xmm0[0,1,2,2]
-; SSE41-NEXT:    retq
+; SSE-LABEL: merge_4f32_f32_X0YY:
+; SSE:       # BB#0:
+; SSE-NEXT:    movss {{.*#+}} xmm1 = mem[0],zero,zero,zero
+; SSE-NEXT:    movss {{.*#+}} xmm0 = mem[0],zero,zero,zero
+; SSE-NEXT:    shufps {{.*#+}} xmm0 = xmm0[0,1],xmm1[0,0]
+; SSE-NEXT:    retq
 ;
 ; AVX-LABEL: merge_4f32_f32_X0YY:
 ; AVX:       # BB#0:
 ; AVX-NEXT:    vmovss {{.*#+}} xmm0 = mem[0],zero,zero,zero
-; AVX-NEXT:    vinsertps {{.*#+}} xmm0 = xmm0[0],zero,mem[0],zero
-; AVX-NEXT:    vpermilps {{.*#+}} xmm0 = xmm0[0,1,2,2]
+; AVX-NEXT:    vmovss {{.*#+}} xmm1 = mem[0],zero,zero,zero
+; AVX-NEXT:    vshufps {{.*#+}} xmm0 = xmm1[0,1],xmm0[0,0]
 ; AVX-NEXT:    retq
 ;
-; X32-SSE1-LABEL: merge_4f32_f32_X0YY:
-; X32-SSE1:       # BB#0:
-; X32-SSE1-NEXT:    movl {{[0-9]+}}(%esp), %eax
-; X32-SSE1-NEXT:    movl {{[0-9]+}}(%esp), %ecx
-; X32-SSE1-NEXT:    movss {{.*#+}} xmm1 = mem[0],zero,zero,zero
-; X32-SSE1-NEXT:    movss {{.*#+}} xmm0 = mem[0],zero,zero,zero
-; X32-SSE1-NEXT:    shufps {{.*#+}} xmm0 = xmm0[0,1],xmm1[0,0]
-; X32-SSE1-NEXT:    retl
-;
-; X32-SSE41-LABEL: merge_4f32_f32_X0YY:
-; X32-SSE41:       # BB#0:
-; X32-SSE41-NEXT:    movl {{[0-9]+}}(%esp), %eax
-; X32-SSE41-NEXT:    movl {{[0-9]+}}(%esp), %ecx
-; X32-SSE41-NEXT:    movss {{.*#+}} xmm0 = mem[0],zero,zero,zero
-; X32-SSE41-NEXT:    insertps {{.*#+}} xmm0 = xmm0[0],zero,mem[0],zero
-; X32-SSE41-NEXT:    shufps {{.*#+}} xmm0 = xmm0[0,1,2,2]
-; X32-SSE41-NEXT:    retl
+; X32-SSE-LABEL: merge_4f32_f32_X0YY:
+; X32-SSE:       # BB#0:
+; X32-SSE-NEXT:    movl {{[0-9]+}}(%esp), %eax
+; X32-SSE-NEXT:    movl {{[0-9]+}}(%esp), %ecx
+; X32-SSE-NEXT:    movss {{.*#+}} xmm1 = mem[0],zero,zero,zero
+; X32-SSE-NEXT:    movss {{.*#+}} xmm0 = mem[0],zero,zero,zero
+; X32-SSE-NEXT:    shufps {{.*#+}} xmm0 = xmm0[0,1],xmm1[0,0]
+; X32-SSE-NEXT:    retl
   %val0 = load float, float* %ptr0, align 4
   %val1 = load float, float* %ptr1, align 4
   %res0 = insertelement <4 x float> undef, float %val0, i32 0

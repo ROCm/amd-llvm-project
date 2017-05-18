@@ -152,6 +152,42 @@ public:
   unsigned getCallFrameSetupOpcode() const { return CallFrameSetupOpcode; }
   unsigned getCallFrameDestroyOpcode() const { return CallFrameDestroyOpcode; }
 
+  /// Returns true if the argument is a frame pseudo instruction.
+  bool isFrameInstr(const MachineInstr &I) const {
+    return I.getOpcode() == getCallFrameSetupOpcode() ||
+      I.getOpcode() == getCallFrameDestroyOpcode();
+  }
+
+  /// Returns true if the argument is a frame setup pseudo instruction.
+  bool isFrameSetup(const MachineInstr &I) const {
+    return I.getOpcode() == getCallFrameSetupOpcode();
+  }
+
+  /// Returns size of the frame associated with the given frame instruction.
+  /// For frame setup instruction this is frame that is set up space set up
+  /// after the instruction. For frame destroy instruction this is the frame
+  /// freed by the caller.
+  /// Note, in some cases a call frame (or a part of it) may be prepared prior
+  /// to the frame setup instruction. It occurs in the calls that involve
+  /// inalloca arguments. This function reports only the size of the frame part
+  /// that is set up between the frame setup and destroy pseudo instructions.
+  int64_t getFrameSize(const MachineInstr &I) const {
+    assert(isFrameInstr(I) && "Not a frame instruction");
+    assert(I.getOperand(0).getImm() >= 0);
+    return I.getOperand(0).getImm();
+  }
+
+  /// Returns the total frame size, which is made up of the space set up inside
+  /// the pair of frame start-stop instructions and the space that is set up
+  /// prior to the pair.
+  int64_t getFrameTotalSize(const MachineInstr &I) const {
+    if (isFrameSetup(I)) {
+      assert(I.getOperand(1).getImm() >= 0 && "Frame size must not be negative");
+      return getFrameSize(I) + I.getOperand(1).getImm();
+    }
+    return getFrameSize(I);
+  }
+
   unsigned getCatchReturnOpcode() const { return CatchRetOpcode; }
   unsigned getReturnOpcode() const { return ReturnOpcode; }
 
@@ -1083,7 +1119,7 @@ public:
 
 
   /// Return the noop instruction to use for a noop.
-  virtual void getNoopForMachoTarget(MCInst &NopInst) const;
+  virtual void getNoop(MCInst &NopInst) const;
 
   /// Return true for post-incremented instructions.
   virtual bool isPostIncrement(const MachineInstr &MI) const {

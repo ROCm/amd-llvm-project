@@ -171,6 +171,18 @@ template <> struct ScalarEnumerationTraits<FormatStyle::BracketAlignmentStyle> {
   }
 };
 
+template <> struct ScalarEnumerationTraits<FormatStyle::EscapedNewlineAlignmentStyle> {
+  static void enumeration(IO &IO, FormatStyle::EscapedNewlineAlignmentStyle &Value) {
+    IO.enumCase(Value, "DontAlign", FormatStyle::ENAS_DontAlign);
+    IO.enumCase(Value, "Left", FormatStyle::ENAS_Left);
+    IO.enumCase(Value, "Right", FormatStyle::ENAS_Right);
+
+    // For backward compatibility.
+    IO.enumCase(Value, "true", FormatStyle::ENAS_Left);
+    IO.enumCase(Value, "false", FormatStyle::ENAS_Right);
+  }
+};
+
 template <> struct ScalarEnumerationTraits<FormatStyle::PointerAlignmentStyle> {
   static void enumeration(IO &IO, FormatStyle::PointerAlignmentStyle &Value) {
     IO.enumCase(Value, "Middle", FormatStyle::PAS_Middle);
@@ -233,6 +245,7 @@ template <> struct MappingTraits<FormatStyle> {
 
     // For backward compatibility.
     if (!IO.outputting()) {
+      IO.mapOptional("AlignEscapedNewlinesLeft", Style.AlignEscapedNewlines);
       IO.mapOptional("DerivePointerBinding", Style.DerivePointerAlignment);
       IO.mapOptional("IndentFunctionDeclarationAfterType",
                      Style.IndentWrappedFunctionNames);
@@ -247,7 +260,7 @@ template <> struct MappingTraits<FormatStyle> {
                    Style.AlignConsecutiveAssignments);
     IO.mapOptional("AlignConsecutiveDeclarations",
                    Style.AlignConsecutiveDeclarations);
-    IO.mapOptional("AlignEscapedNewlinesLeft", Style.AlignEscapedNewlinesLeft);
+    IO.mapOptional("AlignEscapedNewlines", Style.AlignEscapedNewlines);
     IO.mapOptional("AlignOperands", Style.AlignOperands);
     IO.mapOptional("AlignTrailingComments", Style.AlignTrailingComments);
     IO.mapOptional("AllowAllParametersOfDeclarationOnNextLine",
@@ -498,7 +511,7 @@ FormatStyle getLLVMStyle() {
   FormatStyle LLVMStyle;
   LLVMStyle.Language = FormatStyle::LK_Cpp;
   LLVMStyle.AccessModifierOffset = -2;
-  LLVMStyle.AlignEscapedNewlinesLeft = false;
+  LLVMStyle.AlignEscapedNewlines = FormatStyle::ENAS_Right;
   LLVMStyle.AlignAfterOpenBracket = FormatStyle::BAS_Align;
   LLVMStyle.AlignOperands = true;
   LLVMStyle.AlignTrailingComments = true;
@@ -587,7 +600,7 @@ FormatStyle getGoogleStyle(FormatStyle::LanguageKind Language) {
   GoogleStyle.Language = Language;
 
   GoogleStyle.AccessModifierOffset = -1;
-  GoogleStyle.AlignEscapedNewlinesLeft = true;
+  GoogleStyle.AlignEscapedNewlines = FormatStyle::ENAS_Left;
   GoogleStyle.AllowShortIfStatementsOnASingleLine = true;
   GoogleStyle.AllowShortLoopsOnASingleLine = true;
   GoogleStyle.AlwaysBreakBeforeMultilineStrings = true;
@@ -624,9 +637,10 @@ FormatStyle getGoogleStyle(FormatStyle::LanguageKind Language) {
     GoogleStyle.AllowShortFunctionsOnASingleLine = FormatStyle::SFS_Empty;
     GoogleStyle.AlwaysBreakBeforeMultilineStrings = false;
     GoogleStyle.BreakBeforeTernaryOperators = false;
-    // taze:, @tag followed by { for a lot of JSDoc tags, and @see, which is
-    // commonly followed by overlong URLs.
-    GoogleStyle.CommentPragmas = "(taze:|(@[A-Za-z_0-9-]+[ \\t]*{)|@see)";
+    // taze:, triple slash directives (`/// <...`), @tag followed by { for a lot
+    // of JSDoc tags, and @see, which is commonly followed by overlong URLs.
+    GoogleStyle.CommentPragmas =
+        "(taze:|^/[ \t]*<|(@[A-Za-z_0-9-]+[ \\t]*{)|@see)";
     GoogleStyle.MaxEmptyLinesToKeep = 3;
     GoogleStyle.NamespaceIndentation = FormatStyle::NI_All;
     GoogleStyle.SpacesInContainerLiterals = false;
@@ -908,8 +922,8 @@ private:
 class Formatter : public TokenAnalyzer {
 public:
   Formatter(const Environment &Env, const FormatStyle &Style,
-            bool *IncompleteFormat)
-      : TokenAnalyzer(Env, Style), IncompleteFormat(IncompleteFormat) {}
+            FormattingAttemptStatus *Status)
+      : TokenAnalyzer(Env, Style), Status(Status) {}
 
   tooling::Replacements
   analyze(TokenAnnotator &Annotator,
@@ -931,7 +945,7 @@ public:
                                   Env.getSourceManager(), Whitespaces, Encoding,
                                   BinPackInconclusiveFunctions);
     UnwrappedLineFormatter(&Indenter, &Whitespaces, Style, Tokens.getKeywords(),
-                           IncompleteFormat)
+                           Env.getSourceManager(), Status)
         .format(AnnotatedLines);
     for (const auto &R : Whitespaces.generateReplacements())
       if (Result.add(R))
@@ -1013,7 +1027,7 @@ private:
   }
 
   bool BinPackInconclusiveFunctions;
-  bool *IncompleteFormat;
+  FormattingAttemptStatus *Status;
 };
 
 // This class clean up the erroneous/redundant code around the given ranges in
@@ -1830,7 +1844,8 @@ cleanupAroundReplacements(StringRef Code, const tooling::Replacements &Replaces,
 
 tooling::Replacements reformat(const FormatStyle &Style, StringRef Code,
                                ArrayRef<tooling::Range> Ranges,
-                               StringRef FileName, bool *IncompleteFormat) {
+                               StringRef FileName,
+                               FormattingAttemptStatus *Status) {
   FormatStyle Expanded = expandPresets(Style);
   if (Expanded.DisableFormat)
     return tooling::Replacements();
@@ -1846,11 +1861,11 @@ tooling::Replacements reformat(const FormatStyle &Style, StringRef Code,
         auto NewEnv = Environment::CreateVirtualEnvironment(
             *NewCode, FileName,
             tooling::calculateRangesAfterReplacements(Fixes, Ranges));
-        Formatter Format(*NewEnv, Expanded, IncompleteFormat);
+        Formatter Format(*NewEnv, Expanded, Status);
         return Fixes.merge(Format.process());
       }
     }
-    Formatter Format(*Env, Expanded, IncompleteFormat);
+    Formatter Format(*Env, Expanded, Status);
     return Format.process();
   };
 
@@ -1866,7 +1881,7 @@ tooling::Replacements reformat(const FormatStyle &Style, StringRef Code,
     return reformatAfterApplying(Requoter);
   }
 
-  Formatter Format(*Env, Expanded, IncompleteFormat);
+  Formatter Format(*Env, Expanded, Status);
   return Format.process();
 }
 
@@ -1877,6 +1892,16 @@ tooling::Replacements cleanup(const FormatStyle &Style, StringRef Code,
       Environment::CreateVirtualEnvironment(Code, FileName, Ranges);
   Cleaner Clean(*Env, Style);
   return Clean.process();
+}
+
+tooling::Replacements reformat(const FormatStyle &Style, StringRef Code,
+                               ArrayRef<tooling::Range> Ranges,
+                               StringRef FileName, bool *IncompleteFormat) {
+  FormattingAttemptStatus Status;
+  auto Result = reformat(Style, Code, Ranges, FileName, &Status);
+  if (!Status.FormatComplete)
+    *IncompleteFormat = true;
+  return Result;
 }
 
 tooling::Replacements fixNamespaceEndComments(const FormatStyle &Style,
@@ -1894,6 +1919,7 @@ LangOptions getFormattingLangOpts(const FormatStyle &Style) {
   LangOpts.CPlusPlus = 1;
   LangOpts.CPlusPlus11 = Style.Standard == FormatStyle::LS_Cpp03 ? 0 : 1;
   LangOpts.CPlusPlus14 = Style.Standard == FormatStyle::LS_Cpp03 ? 0 : 1;
+  LangOpts.CPlusPlus1z = Style.Standard == FormatStyle::LS_Cpp03 ? 0 : 1;
   LangOpts.LineComment = 1;
   bool AlternativeOperators = Style.isCpp();
   LangOpts.CXXOperatorNames = AlternativeOperators ? 1 : 0;

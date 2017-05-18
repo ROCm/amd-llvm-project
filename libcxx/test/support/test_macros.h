@@ -52,10 +52,12 @@
 #define TEST_HAS_BUILTIN_IDENTIFIER(X) 0
 #endif
 
-#if defined(__clang__)
-#define TEST_COMPILER_CLANG
+#if defined(__EDG__)
+# define TEST_COMPILER_EDG
+#elif defined(__clang__)
+# define TEST_COMPILER_CLANG
 # if defined(__apple_build_version__)
-#   define TEST_COMPILER_APPLE_CLANG
+#  define TEST_COMPILER_APPLE_CLANG
 # endif
 #elif defined(_MSC_VER)
 # define TEST_COMPILER_C1XX
@@ -106,6 +108,7 @@
 #define TEST_ALIGNAS(...) alignas(__VA_ARGS__)
 #define TEST_CONSTEXPR constexpr
 #define TEST_NOEXCEPT noexcept
+#define TEST_NOEXCEPT_FALSE noexcept(false)
 #define TEST_NOEXCEPT_COND(...) noexcept(__VA_ARGS__)
 # if TEST_STD_VER >= 14
 #   define TEST_CONSTEXPR_CXX14 constexpr
@@ -123,6 +126,7 @@
 #define TEST_CONSTEXPR
 #define TEST_CONSTEXPR_CXX14
 #define TEST_NOEXCEPT throw()
+#define TEST_NOEXCEPT_FALSE
 #define TEST_NOEXCEPT_COND(...)
 #define TEST_THROW_SPEC(...) throw(__VA_ARGS__)
 #endif
@@ -184,7 +188,7 @@ struct is_same<T, T> { enum {value = 1}; };
 } // namespace test_macros_detail
 
 #define ASSERT_SAME_TYPE(...) \
-    static_assert(test_macros_detail::is_same<__VA_ARGS__>::value, \
+    static_assert((test_macros_detail::is_same<__VA_ARGS__>::value), \
                  "Types differ uexpectedly")
 
 #ifndef TEST_HAS_NO_EXCEPTIONS
@@ -207,7 +211,8 @@ inline void DoNotOptimize(Tp const& value) {
 #include <intrin.h>
 template <class Tp>
 inline void DoNotOptimize(Tp const& value) {
-  const volatile void* volatile = __builtin_addressof(value);
+  const volatile void* volatile unused = __builtin_addressof(value);
+  static_cast<void>(unused);
   _ReadWriteBarrier();
 }
 #endif

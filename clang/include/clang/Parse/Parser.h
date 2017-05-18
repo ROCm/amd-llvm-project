@@ -184,6 +184,7 @@ class Parser : public CodeCompletionHandler {
   std::unique_ptr<PragmaHandler> UnrollHintHandler;
   std::unique_ptr<PragmaHandler> NoUnrollHintHandler;
   std::unique_ptr<PragmaHandler> FPHandler;
+  std::unique_ptr<PragmaHandler> AttributePragmaHandler;
 
   std::unique_ptr<CommentHandler> CommentSemaHandler;
 
@@ -565,6 +566,12 @@ private:
   /// #pragma clang loop and #pragma unroll.
   bool HandlePragmaLoopHint(LoopHint &Hint);
 
+  bool ParsePragmaAttributeSubjectMatchRuleSet(
+      attr::ParsedSubjectMatchRuleSet &SubjectMatchRules,
+      SourceLocation &AnyLoc, SourceLocation &LastMatchRuleEndLoc);
+
+  void HandlePragmaAttribute();
+
   /// GetLookAheadToken - This peeks ahead N tokens and returns that token
   /// without consuming any tokens.  LookAhead(0) returns 'Tok', LookAhead(1)
   /// returns the token after Tok, etc.
@@ -803,6 +810,14 @@ private:
 
   /// \brief Consume any extra semi-colons until the end of the line.
   void ConsumeExtraSemi(ExtraSemiKind Kind, unsigned TST = TST_unspecified);
+
+  /// Return false if the next token is an identifier. An 'expected identifier'
+  /// error is emitted otherwise.
+  ///
+  /// The parser tries to recover from the error by checking if the next token
+  /// is a C++ keyword when parsing Objective-C++. Return false if the recovery
+  /// was successful.
+  bool expectIdentifier();
 
 public:
   //===--------------------------------------------------------------------===//
@@ -1479,6 +1494,8 @@ private:
             K == tok::period || K == tok::arrow ||
             K == tok::plusplus || K == tok::minusminus);
   }
+
+  bool diagnoseUnknownTemplateId(ExprResult TemplateName, SourceLocation Less);
 
   ExprResult ParsePostfixExpressionSuffix(ExprResult LHS);
   ExprResult ParseUnaryExprOrTypeTraitExpression();
@@ -2722,10 +2739,7 @@ private:
   bool ParseGreaterThanInTemplateList(SourceLocation &RAngleLoc,
                                       bool ConsumeLastToken,
                                       bool ObjCGenericList);
-  bool ParseTemplateIdAfterTemplateName(TemplateTy Template,
-                                        SourceLocation TemplateNameLoc,
-                                        const CXXScopeSpec &SS,
-                                        bool ConsumeLastToken,
+  bool ParseTemplateIdAfterTemplateName(bool ConsumeLastToken,
                                         SourceLocation &LAngleLoc,
                                         TemplateArgList &TemplateArgs,
                                         SourceLocation &RAngleLoc);

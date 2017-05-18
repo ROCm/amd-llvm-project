@@ -703,6 +703,7 @@ static const LangAS::Map *getAddressSpaceMap(const TargetInfo &T,
     // The fake address space map must have a distinct entry for each
     // language-specific address space.
     static const unsigned FakeAddrSpaceMap[] = {
+      0, // Default
       1, // opencl_global
       3, // opencl_local
       2, // opencl_constant
@@ -7922,6 +7923,8 @@ QualType ASTContext::mergeFunctionTypes(QualType lhs, QualType rhs,
 
   if (lbaseInfo.getProducesResult() != rbaseInfo.getProducesResult())
     return QualType();
+  if (lbaseInfo.getNoCallerSavedRegs() != rbaseInfo.getNoCallerSavedRegs())
+    return QualType();
 
   // FIXME: some uses, e.g. conditional exprs, really want this to be 'both'.
   bool NoReturn = lbaseInfo.getNoReturn() || rbaseInfo.getNoReturn();
@@ -8732,7 +8735,8 @@ static QualType DecodeTypeFromStr(const char *&Str, const ASTContext &Context,
       char *End;
       unsigned AddrSpace = strtoul(Str, &End, 10);
       if (End != Str && AddrSpace != 0) {
-        Type = Context.getAddrSpaceQualType(Type, AddrSpace);
+        Type = Context.getAddrSpaceQualType(Type, AddrSpace +
+            LangAS::Count);
         Str = End;
       }
       if (c == '*')
@@ -8902,7 +8906,7 @@ GVALinkage ASTContext::GetGVALinkageForFunction(const FunctionDecl *FD) const {
       *this, basicGVALinkageForFunction(*this, FD), FD);
   auto EK = ExternalASTSource::EK_ReplyHazy;
   if (auto *Ext = getExternalSource())
-    EK = Ext->hasExternalDefinitions(FD->getOwningModuleID());
+    EK = Ext->hasExternalDefinitions(FD);
   switch (EK) {
   case ExternalASTSource::EK_Never:
     if (L == GVA_DiscardableODR)
@@ -8998,7 +9002,7 @@ GVALinkage ASTContext::GetGVALinkageForVariable(const VarDecl *VD) {
       *this, basicGVALinkageForVariable(*this, VD), VD);
 }
 
-bool ASTContext::DeclMustBeEmitted(const Decl *D, bool ForModularCodegen) {
+bool ASTContext::DeclMustBeEmitted(const Decl *D) {
   if (const VarDecl *VD = dyn_cast<VarDecl>(D)) {
     if (!VD->isFileVarDecl())
       return false;
@@ -9063,9 +9067,6 @@ bool ASTContext::DeclMustBeEmitted(const Decl *D, bool ForModularCodegen) {
     }
 
     GVALinkage Linkage = GetGVALinkageForFunction(FD);
-
-    if (Linkage == GVA_DiscardableODR && ForModularCodegen)
-      return true;
 
     // static, static inline, always_inline, and extern inline functions can
     // always be deferred.  Normal inline functions can be deferred in C99/C++.
@@ -9422,10 +9423,8 @@ createDynTypedNode(const NestedNameSpecifierLoc &Node) {
           if (!NodeOrVector.template is<ASTContext::ParentVector *>()) {
             auto *Vector = new ASTContext::ParentVector(
                 1, getSingleDynTypedNodeFromParentMap(NodeOrVector));
-            if (auto *Node =
-                    NodeOrVector
-                        .template dyn_cast<ast_type_traits::DynTypedNode *>())
-              delete Node;
+            delete NodeOrVector
+                    .template dyn_cast<ast_type_traits::DynTypedNode *>();
             NodeOrVector = Vector;
           }
 
@@ -9553,25 +9552,16 @@ uint64_t ASTContext::getTargetNullPointerValue(QualType QT) const {
   return getTargetInfo().getNullPointerValue(getTargetAddressSpace(AS));
 }
 
-unsigned ASTContext::getMappedAddressSpace(unsigned AS) const {
-  return (*AddrSpaceMap)[AS - LangAS::Offset];
-}
-
 unsigned ASTContext::getTargetAddressSpace(unsigned AS) const {
-  // For OpenCL 1.2 and below, address space 0 should be mapped the same
-  // way as  private address space.
-  if (LangOpts.OpenCL && AS == 0)
-    return getTargetAddressSpaceForAutoVar();
-  if (AS < LangAS::Offset || AS >= LangAS::Offset + LangAS::Count)
-    return AS;
+  // For OpenCL, only function local variables are not explicitly marked with
+  // an address space in the AST, and these need to be the address space of
+  // alloca.
+  if (!AS && LangOpts.OpenCL)
+    return getTargetInfo().getDataLayout().getAllocaAddrSpace();
+  if (AS >= LangAS::Count)
+    return AS - LangAS::Count;
   else
-    return getMappedAddressSpace(AS);
-}
-
-unsigned ASTContext::getTargetAddressSpaceForAutoVar() const {
-  if (LangOpts.OpenCL)
-    return getMappedAddressSpace(LangAS::opencl_private);
-  return 0;
+    return (*AddrSpaceMap)[AS];
 }
 
 unsigned ASTContext::getTargetConstantAddressSpace() const {

@@ -27,6 +27,7 @@
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/MC/MachineLocation.h"
+#include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCDwarf.h"
 #include "llvm/MC/MCSection.h"
 #include "llvm/MC/MCStreamer.h"
@@ -73,8 +74,8 @@ bool DIEDwarfExpression::isFrameRegister(const TargetRegisterInfo &TRI,
 
 DwarfUnit::DwarfUnit(dwarf::Tag UnitTag, const DICompileUnit *Node,
                      AsmPrinter *A, DwarfDebug *DW, DwarfFile *DWU)
-    : DIEUnit(A->getDwarfVersion(), A->getPointerSize(), UnitTag), CUNode(Node),
-      Asm(A), DD(DW), DU(DWU), IndexTyDie(nullptr) {
+    : DIEUnit(A->getDwarfVersion(), A->MAI->getCodePointerSize(), UnitTag),
+      CUNode(Node), Asm(A), DD(DW), DU(DWU), IndexTyDie(nullptr) {
 }
 
 DwarfTypeUnit::DwarfTypeUnit(DwarfCompileUnit &CU, AsmPrinter *A,
@@ -172,7 +173,7 @@ int64_t DwarfUnit::getDefaultLowerBound() const {
 }
 
 /// Check whether the DIE for this MDNode can be shared across CUs.
-static bool isShareableAcrossCUs(const DINode *D) {
+bool DwarfUnit::isShareableAcrossCUs(const DINode *D) const {
   // When the MDNode can be part of the type system, the DIE can be shared
   // across CUs.
   // Combining type units and cross-CU DIE sharing is lower value (since
@@ -180,6 +181,8 @@ static bool isShareableAcrossCUs(const DINode *D) {
   // level already) but may be implementable for some value in projects
   // building multiple independent libraries with LTO and then linking those
   // together.
+  if (isDwoUnit() && !DD->shareAcrossDWOCUs())
+    return false;
   return (isa<DIType>(D) ||
           (isa<DISubprogram>(D) && !cast<DISubprogram>(D)->isDefinition())) &&
          !GenerateDwarfTypeUnits;
@@ -374,10 +377,6 @@ void DwarfUnit::addSourceLine(DIE &Die, const DIObjCProperty *Ty) {
   addSourceLine(Die, Ty->getLine(), Ty->getFilename(), Ty->getDirectory());
 }
 
-void DwarfUnit::addSourceLine(DIE &Die, const DINamespace *NS) {
-  addSourceLine(Die, NS->getLine(), NS->getFilename(), NS->getDirectory());
-}
-
 /* Byref variables, in Blocks, are declared by the programmer as "SomeType
    VarName;", but the compiler creates a __Block_byref_x_VarName struct, and
    gives the variable VarName either the struct, or a pointer to the struct, as
@@ -471,12 +470,13 @@ void DwarfUnit::addBlockByrefAddress(const DbgVariable &DV, DIE &Die,
   // variable's location.
   DIELoc *Loc = new (DIEValueAllocator) DIELoc;
   DIEDwarfExpression DwarfExpr(*Asm, *this, *Loc);
+  if (Location.isIndirect())
+    DwarfExpr.setMemoryLocationKind();
 
   SmallVector<uint64_t, 9> Ops;
-  if (Location.isIndirect()) {
+  if (Location.isIndirect() && Location.getOffset()) {
     Ops.push_back(dwarf::DW_OP_plus);
     Ops.push_back(Location.getOffset());
-    Ops.push_back(dwarf::DW_OP_deref);
   }
   // If we started with a pointer to the __Block_byref... struct, then
   // the first thing we need to do is dereference the pointer (DW_OP_deref).
@@ -647,7 +647,7 @@ void DwarfUnit::addLinkageName(DIE &Die, StringRef LinkageName) {
     addString(Die,
               DD->getDwarfVersion() >= 4 ? dwarf::DW_AT_linkage_name
                                          : dwarf::DW_AT_MIPS_linkage_name,
-              GlobalValue::getRealLinkageName(LinkageName));
+              GlobalValue::dropLLVMManglingEscape(LinkageName));
 }
 
 void DwarfUnit::addTemplateParams(DIE &Buffer, DINodeArray TParams) {
@@ -657,6 +657,14 @@ void DwarfUnit::addTemplateParams(DIE &Buffer, DINodeArray TParams) {
       constructTemplateTypeParameterDIE(Buffer, TTP);
     else if (auto *TVP = dyn_cast<DITemplateValueParameter>(Element))
       constructTemplateValueParameterDIE(Buffer, TVP);
+  }
+}
+
+/// Add thrown types.
+void DwarfUnit::addThrownTypes(DIE &Die, DINodeArray ThrownTypes) {
+  for (const auto *Ty : ThrownTypes) {
+    DIE &TT = createAndAddDIE(dwarf::DW_TAG_thrown_type, Die);
+    addType(TT, cast<DIType>(Ty));
   }
 }
 
@@ -1075,7 +1083,6 @@ DIE *DwarfUnit::getOrCreateNameSpace(const DINamespace *NS) {
     Name = "(anonymous namespace)";
   DD->addAccelNamespace(Name, NDie);
   addGlobalName(Name, NDie, NS->getScope());
-  addSourceLine(NDie, NS);
   if (NS->getExportSymbols())
     addFlag(NDie, dwarf::DW_AT_export_symbols);
   return &NDie;
@@ -1246,6 +1253,8 @@ void DwarfUnit::applySubprogramAttributes(const DISubprogram *SP, DIE &SPDie,
     // be handled while processing variables.
     constructSubprogramArguments(SPDie, Args);
   }
+
+  addThrownTypes(SPDie, SP->getThrownTypes());
 
   if (SP->isArtificial())
     addFlag(SPDie, dwarf::DW_AT_artificial);
@@ -1546,7 +1555,7 @@ void DwarfUnit::emitCommonHeader(bool UseOffsets, dwarf::UnitType UT) {
     Asm->OutStreamer->AddComment("DWARF Unit Type");
     Asm->EmitInt8(UT);
     Asm->OutStreamer->AddComment("Address Size (in bytes)");
-    Asm->EmitInt8(Asm->getDataLayout().getPointerSize());
+    Asm->EmitInt8(Asm->MAI->getCodePointerSize());
   }
 
   // We share one abbreviations table across all units so it's always at the
@@ -1562,7 +1571,7 @@ void DwarfUnit::emitCommonHeader(bool UseOffsets, dwarf::UnitType UT) {
 
   if (Version <= 4) {
     Asm->OutStreamer->AddComment("Address Size (in bytes)");
-    Asm->EmitInt8(Asm->getDataLayout().getPointerSize());
+    Asm->EmitInt8(Asm->MAI->getCodePointerSize());
   }
 }
 
@@ -1592,4 +1601,12 @@ void DwarfTypeUnit::addGlobalName(StringRef Name, const DIE &Die,
 void DwarfTypeUnit::addGlobalType(const DIType *Ty, const DIE &Die,
                                   const DIScope *Context) {
   getCU().addGlobalTypeUnitType(Ty, Context);
+}
+
+const MCSymbol *DwarfUnit::getCrossSectionRelativeBaseAddress() const {
+  if (!Asm->MAI->doesDwarfUseRelocationsAcrossSections())
+    return nullptr;
+  if (isDwoUnit())
+    return nullptr;
+  return getSection()->getBeginSymbol();
 }

@@ -68,6 +68,10 @@ namespace llvm {
   /// matching during instruction selection.
   FunctionPass *createCodeGenPreparePass(const TargetMachine *TM = nullptr);
 
+  /// createScalarizeMaskedMemIntrinPass - Replace masked load, store, gather
+  /// and scatter intrinsics with scalar code when target doesn't support them.
+  FunctionPass *createScalarizeMaskedMemIntrinPass();
+
   /// AtomicExpandID -- Lowers atomic operations in terms of either cmpxchg
   /// load-linked/store-conditional loops.
   extern char &AtomicExpandID;
@@ -80,6 +84,9 @@ namespace llvm {
 
 /// MachineDominanaceFrontier - This pass is a machine dominators analysis pass.
   extern char &MachineDominanceFrontierID;
+
+  /// MachineRegionInfo - This pass computes SESE regions for machine functions.
+  extern char &MachineRegionInfoPassID;
 
   /// EdgeBundles analysis - Bundle machine CFG edges.
   extern char &EdgeBundlesID;
@@ -125,6 +132,10 @@ namespace llvm {
   /// ShrinkWrap pass. Look for the best place to insert save and restore
   // instruction and update the MachineFunctionInfo with that information.
   extern char &ShrinkWrapID;
+
+  /// LiveRangeShrink pass. Move instruction close to its definition to shrink
+  /// the definition's live range.
+  extern char &LiveRangeShrinkID;
 
   /// Greedy register allocator.
   extern char &RAGreedyID;
@@ -401,6 +412,10 @@ namespace llvm {
   /// This pass performs outlining on machine instructions directly before
   /// printing assembly.
   ModulePass *createMachineOutlinerPass();
+
+  /// This pass expands the experimental reduction intrinsics into sequences of
+  /// shuffles.
+  FunctionPass *createExpandReductionsPass();
 
 } // End llvm namespace
 

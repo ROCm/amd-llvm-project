@@ -1274,36 +1274,6 @@ __isl_give isl_aff *isl_aff_remove_unused_divs(__isl_take isl_aff *aff)
 	return aff;
 }
 
-/* Given two affine expressions "p" of length p_len (including the
- * denominator and the constant term) and "subs" of length subs_len,
- * plug in "subs" for the variable at position "pos".
- * The variables of "subs" and "p" are assumed to match up to subs_len,
- * but "p" may have additional variables.
- * "v" is an initialized isl_int that can be used internally.
- *
- * In particular, if "p" represents the expression
- *
- *	(a i + g)/m
- *
- * with i the variable at position "pos" and "subs" represents the expression
- *
- *	f/d
- *
- * then the result represents the expression
- *
- *	(a f + d g)/(m d)
- *
- */
-void isl_seq_substitute(isl_int *p, int pos, isl_int *subs,
-	int p_len, int subs_len, isl_int v)
-{
-	isl_int_set(v, p[1 + pos]);
-	isl_int_set_si(p[1 + pos], 0);
-	isl_seq_combine(p + 1, subs[0], p + 1, v, subs + 1, subs_len - 1);
-	isl_seq_scale(p + subs_len, p + subs_len, subs[0], p_len - subs_len);
-	isl_int_mul(p[0], p[0], subs[0]);
-}
-
 /* Look for any divs in the aff->ls with a denominator equal to one
  * and plug them into the affine expression and any subsequent divs
  * that may reference the div.
@@ -7091,7 +7061,7 @@ __isl_give isl_map *isl_multi_pw_aff_eq_map(__isl_take isl_multi_pw_aff *mpa1,
  * pairwise equal.
  */
 static __isl_give isl_map *isl_multi_pw_aff_lex_map_on_space(
-	__isl_take isl_multi_pw_aff *mpa1, __isl_take isl_multi_pw_aff *mpa2,
+	__isl_keep isl_multi_pw_aff *mpa1, __isl_keep isl_multi_pw_aff *mpa2,
 	__isl_give isl_map *(*base)(__isl_take isl_pw_aff *pa1,
 		__isl_take isl_pw_aff *pa2),
 	__isl_take isl_space *space)
@@ -7136,7 +7106,7 @@ static __isl_give isl_map *isl_multi_pw_aff_lex_map_on_space(
  * pairwise equal.
  */
 __isl_give isl_map *isl_multi_pw_aff_lex_lt_map_on_space(
-	__isl_take isl_multi_pw_aff *mpa1, __isl_take isl_multi_pw_aff *mpa2,
+	__isl_keep isl_multi_pw_aff *mpa1, __isl_keep isl_multi_pw_aff *mpa2,
 	__isl_take isl_space *space)
 {
 	return isl_multi_pw_aff_lex_map_on_space(mpa1, mpa2,
@@ -7164,7 +7134,7 @@ __isl_give isl_map *isl_multi_pw_aff_lex_lt_map(
  * pairwise equal.
  */
 __isl_give isl_map *isl_multi_pw_aff_lex_gt_map_on_space(
-	__isl_take isl_multi_pw_aff *mpa1, __isl_take isl_multi_pw_aff *mpa2,
+	__isl_keep isl_multi_pw_aff *mpa1, __isl_keep isl_multi_pw_aff *mpa2,
 	__isl_take isl_space *space)
 {
 	return isl_multi_pw_aff_lex_map_on_space(mpa1, mpa2,

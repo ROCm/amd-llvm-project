@@ -83,7 +83,12 @@ add_library_flags_if(LIBCXX_HAS_PTHREAD_LIB pthread)
 add_library_flags_if(LIBCXX_HAS_C_LIB c)
 add_library_flags_if(LIBCXX_HAS_M_LIB m)
 add_library_flags_if(LIBCXX_HAS_RT_LIB rt)
-add_library_flags_if(LIBCXX_HAS_GCC_S_LIB gcc_s)
+if (LIBCXX_USE_COMPILER_RT)
+  find_compiler_rt_library(builtins LIBCXX_BUILTINS_LIBRARY)
+  add_library_flags_if(LIBCXX_BUILTINS_LIBRARY "${LIBCXX_BUILTINS_LIBRARY}")
+else()
+  add_library_flags_if(LIBCXX_HAS_GCC_S_LIB gcc_s)
+endif()
 add_library_flags_if(LIBCXX_HAVE_CXX_ATOMICS_WITH_LIB atomic)
 
 # Add the unwinder library.
@@ -116,6 +121,7 @@ if (LIBCXX_TARGETING_MSVC)
   add_library_flags(ucrt${LIB_SUFFIX}) # Universal C runtime
   add_library_flags(vcruntime${LIB_SUFFIX}) # C++ runtime
   add_library_flags(msvcrt${LIB_SUFFIX}) # C runtime startup files
+  add_library_flags(msvcprt${LIB_SUFFIX}) # C++ standard library. Required for exception_ptr internals.
   # Required for standards-complaint wide character formatting functions
   # (e.g. `printfw`/`scanfw`)
   add_library_flags(iso_stdio_wide_specifiers)
@@ -150,11 +156,7 @@ if (LIBCXX_OSX_REEXPORT_SYSTEM_ABI_LIBRARY)
       "-Wl,-unexported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/libc++unexp.exp"
       "/usr/lib/libSystem.B.dylib")
   else()
-    if (LIBCXX_ENABLE_NEW_DELETE_DEFINITIONS)
-        # We can't use the "-reexported_symbols_list" when we build the
-        # new/delete operators as part of the dylib: the linker would fail.
-        set(OSX_RE_EXPORT_LINE "-Wl,-reexport_library,${CMAKE_OSX_SYSROOT}/usr/lib/libc++abi.dylib")
-	elseif (DEFINED CMAKE_OSX_SYSROOT AND NOT CMAKE_OSX_SYSROOT STREQUAL "")
+	  if (DEFINED CMAKE_OSX_SYSROOT AND NOT CMAKE_OSX_SYSROOT STREQUAL "")
       list(FIND CMAKE_OSX_ARCHITECTURES "armv7" OSX_HAS_ARMV7)
       if (NOT OSX_HAS_ARMV7 EQUAL -1)
         set(OSX_RE_EXPORT_LINE
@@ -166,8 +168,10 @@ if (LIBCXX_OSX_REEXPORT_SYSTEM_ABI_LIBRARY)
       endif()
     else()
       set(OSX_RE_EXPORT_LINE "/usr/lib/libc++abi.dylib -Wl,-reexported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/libc++abi${LIBCXX_LIBCPPABI_VERSION}.exp")
+      if (NOT LIBCXX_ENABLE_NEW_DELETE_DEFINITIONS)
+        add_link_flags("/usr/lib/libc++abi.dylib -Wl,-reexported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/libc++abi-new-delete.exp")
+      endif()
     endif()
-
     add_link_flags(
       "-compatibility_version 1"
       "-install_name /usr/lib/libc++.1.dylib"
@@ -238,11 +242,16 @@ endif()
 if (LIBCXX_ENABLE_STATIC)
   add_library(cxx_static STATIC $<TARGET_OBJECTS:cxx_objects>)
   target_link_libraries(cxx_static ${LIBCXX_LIBRARIES})
+  set(STATIC_OUTPUT_NAME "c++")
+  if (WIN32)
+    set(STATIC_OUTPUT_NAME "libc++")
+  endif()
   set_target_properties(cxx_static
     PROPERTIES
       LINK_FLAGS    "${LIBCXX_LINK_FLAGS}"
-      OUTPUT_NAME   "c++"
+      OUTPUT_NAME   "${STATIC_OUTPUT_NAME}"
   )
+
   list(APPEND LIBCXX_TARGETS "cxx_static")
   # Attempt to merge the libc++.a archive and the ABI library archive into one.
   if (LIBCXX_ENABLE_STATIC_ABI_LIBRARY)

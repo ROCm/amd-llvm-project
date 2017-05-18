@@ -18,6 +18,7 @@
 
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/iterator_range.h"
+#include "llvm/Analysis/MemorySSA.h"
 #include "llvm/IR/Constant.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Value.h"
@@ -26,7 +27,6 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Transforms/Utils/MemorySSA.h"
 #include <algorithm>
 #include <cassert>
 #include <iterator>
@@ -74,6 +74,7 @@ public:
     if (getOpcode() == getEmptyKey() || getOpcode() == getTombstoneKey())
       return true;
     // Compare the expression type for anything but load and store.
+    // For load and store we set the opcode to zero to make them equal.
     if (getExpressionType() != ET_Load && getExpressionType() != ET_Store &&
         getExpressionType() != Other.getExpressionType())
       return false;

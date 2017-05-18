@@ -39,9 +39,7 @@ std::vector<InputSectionBase *> elf::InputSections;
 
 // Returns a string to construct an error message.
 std::string lld::toString(const InputSectionBase *Sec) {
-  // File can be absent if section is synthetic.
-  std::string FileName = Sec->File ? Sec->File->getName() : "<internal>";
-  return (FileName + ":(" + Sec->Name + ")").str();
+  return (toString(Sec->File) + ":(" + Sec->Name + ")").str();
 }
 
 template <class ELFT>
@@ -326,7 +324,7 @@ void InputSection::copyRelocations(uint8_t *Buf, ArrayRef<RelTy> Rels) {
     // section, but for --emit-relocs it is an virtual address.
     P->r_offset = RelocatedSection->OutSec->Addr +
                   RelocatedSection->getOffset(Rel.r_offset);
-    P->setSymbolAndType(In<ELFT>::SymTab->getSymbolIndex(&Body), Type,
+    P->setSymbolAndType(InX::SymTab->getSymbolIndex(&Body), Type,
                         Config->IsMips64EL);
 
     if (Body.Type == STT_SECTION) {
@@ -402,40 +400,40 @@ getRelocTargetVA(uint32_t Type, int64_t A, typename ELFT::uint P,
     return Body.getVA(A);
   case R_GOT:
   case R_RELAX_TLS_GD_TO_IE_ABS:
-    return Body.getGotVA<ELFT>() + A;
+    return Body.getGotVA() + A;
   case R_GOTONLY_PC:
-    return In<ELFT>::Got->getVA() + A - P;
+    return InX::Got->getVA() + A - P;
   case R_GOTONLY_PC_FROM_END:
-    return In<ELFT>::Got->getVA() + A - P + In<ELFT>::Got->getSize();
+    return InX::Got->getVA() + A - P + InX::Got->getSize();
   case R_GOTREL:
-    return Body.getVA(A) - In<ELFT>::Got->getVA();
+    return Body.getVA(A) - InX::Got->getVA();
   case R_GOTREL_FROM_END:
-    return Body.getVA(A) - In<ELFT>::Got->getVA() - In<ELFT>::Got->getSize();
+    return Body.getVA(A) - InX::Got->getVA() - InX::Got->getSize();
   case R_GOT_FROM_END:
   case R_RELAX_TLS_GD_TO_IE_END:
-    return Body.getGotOffset() + A - In<ELFT>::Got->getSize();
+    return Body.getGotOffset() + A - InX::Got->getSize();
   case R_GOT_OFF:
     return Body.getGotOffset() + A;
   case R_GOT_PAGE_PC:
   case R_RELAX_TLS_GD_TO_IE_PAGE_PC:
-    return getAArch64Page(Body.getGotVA<ELFT>() + A) - getAArch64Page(P);
+    return getAArch64Page(Body.getGotVA() + A) - getAArch64Page(P);
   case R_GOT_PC:
   case R_RELAX_TLS_GD_TO_IE:
-    return Body.getGotVA<ELFT>() + A - P;
+    return Body.getGotVA() + A - P;
   case R_HINT:
   case R_NONE:
   case R_TLSDESC_CALL:
     llvm_unreachable("cannot relocate hint relocs");
   case R_MIPS_GOTREL:
-    return Body.getVA(A) - In<ELFT>::MipsGot->getGp();
+    return Body.getVA(A) - InX::MipsGot->getGp();
   case R_MIPS_GOT_GP:
-    return In<ELFT>::MipsGot->getGp() + A;
+    return InX::MipsGot->getGp() + A;
   case R_MIPS_GOT_GP_PC: {
     // R_MIPS_LO16 expression has R_MIPS_GOT_GP_PC type iif the target
     // is _gp_disp symbol. In that case we should use the following
     // formula for calculation "AHL + GP - P + 4". For details see p. 4-19 at
     // ftp://www.linux-mips.org/pub/linux/mips/doc/ABI/mipsabi.pdf
-    uint64_t V = In<ELFT>::MipsGot->getGp() + A - P;
+    uint64_t V = InX::MipsGot->getGp() + A - P;
     if (Type == R_MIPS_LO16)
       V += 4;
     return V;
@@ -444,24 +442,21 @@ getRelocTargetVA(uint32_t Type, int64_t A, typename ELFT::uint P,
     // If relocation against MIPS local symbol requires GOT entry, this entry
     // should be initialized by 'page address'. This address is high 16-bits
     // of sum the symbol's value and the addend.
-    return In<ELFT>::MipsGot->getVA() +
-           In<ELFT>::MipsGot->getPageEntryOffset(Body, A) -
-           In<ELFT>::MipsGot->getGp();
+    return InX::MipsGot->getVA() + InX::MipsGot->getPageEntryOffset(Body, A) -
+           InX::MipsGot->getGp();
   case R_MIPS_GOT_OFF:
   case R_MIPS_GOT_OFF32:
     // In case of MIPS if a GOT relocation has non-zero addend this addend
     // should be applied to the GOT entry content not to the GOT entry offset.
     // That is why we use separate expression type.
-    return In<ELFT>::MipsGot->getVA() +
-           In<ELFT>::MipsGot->getBodyEntryOffset(Body, A) -
-           In<ELFT>::MipsGot->getGp();
+    return InX::MipsGot->getVA() + InX::MipsGot->getBodyEntryOffset(Body, A) -
+           InX::MipsGot->getGp();
   case R_MIPS_TLSGD:
-    return In<ELFT>::MipsGot->getVA() + In<ELFT>::MipsGot->getTlsOffset() +
-           In<ELFT>::MipsGot->getGlobalDynOffset(Body) -
-           In<ELFT>::MipsGot->getGp();
+    return InX::MipsGot->getVA() + InX::MipsGot->getTlsOffset() +
+           InX::MipsGot->getGlobalDynOffset(Body) - InX::MipsGot->getGp();
   case R_MIPS_TLSLD:
-    return In<ELFT>::MipsGot->getVA() + In<ELFT>::MipsGot->getTlsOffset() +
-           In<ELFT>::MipsGot->getTlsIndexOff() - In<ELFT>::MipsGot->getGp();
+    return InX::MipsGot->getVA() + InX::MipsGot->getTlsOffset() +
+           InX::MipsGot->getTlsIndexOff() - InX::MipsGot->getGp();
   case R_PAGE_PC:
   case R_PLT_PAGE_PC:
     if (Body.isUndefined() && !Body.isLocal() && Body.symbol()->isWeak())
@@ -525,19 +520,18 @@ getRelocTargetVA(uint32_t Type, int64_t A, typename ELFT::uint P,
   case R_SIZE:
     return Body.getSize<ELFT>() + A;
   case R_TLSDESC:
-    return In<ELFT>::Got->getGlobalDynAddr(Body) + A;
+    return InX::Got->getGlobalDynAddr(Body) + A;
   case R_TLSDESC_PAGE:
-    return getAArch64Page(In<ELFT>::Got->getGlobalDynAddr(Body) + A) -
+    return getAArch64Page(InX::Got->getGlobalDynAddr(Body) + A) -
            getAArch64Page(P);
   case R_TLSGD:
-    return In<ELFT>::Got->getGlobalDynOffset(Body) + A -
-           In<ELFT>::Got->getSize();
+    return InX::Got->getGlobalDynOffset(Body) + A - InX::Got->getSize();
   case R_TLSGD_PC:
-    return In<ELFT>::Got->getGlobalDynAddr(Body) + A - P;
+    return InX::Got->getGlobalDynAddr(Body) + A - P;
   case R_TLSLD:
-    return In<ELFT>::Got->getTlsIndexOff() + A - In<ELFT>::Got->getSize();
+    return InX::Got->getTlsIndexOff() + A - InX::Got->getSize();
   case R_TLSLD_PC:
-    return In<ELFT>::Got->getTlsIndexVA() + A - P;
+    return InX::Got->getTlsIndexVA() + A - P;
   }
   llvm_unreachable("Invalid expression");
 }
@@ -551,7 +545,6 @@ getRelocTargetVA(uint32_t Type, int64_t A, typename ELFT::uint P,
 // function as a performance optimization.
 template <class ELFT, class RelTy>
 void InputSection::relocateNonAlloc(uint8_t *Buf, ArrayRef<RelTy> Rels) {
-  typedef typename ELFT::uint uintX_t;
   for (const RelTy &Rel : Rels) {
     uint32_t Type = Rel.getType(Config->IsMips64EL);
     uint64_t Offset = getOffset(Rel.r_offset);
@@ -561,7 +554,7 @@ void InputSection::relocateNonAlloc(uint8_t *Buf, ArrayRef<RelTy> Rels) {
       Addend += Target->getImplicitAddend(BufLoc, Type);
 
     SymbolBody &Sym = this->getFile<ELFT>()->getRelocTargetSym(Rel);
-    RelExpr Expr = Target->getRelExpr(Type, Sym);
+    RelExpr Expr = Target->getRelExpr(Type, Sym, BufLoc);
     if (Expr == R_NONE)
       continue;
     if (Expr != R_ABS) {
@@ -569,10 +562,10 @@ void InputSection::relocateNonAlloc(uint8_t *Buf, ArrayRef<RelTy> Rels) {
       return;
     }
 
-    uintX_t AddrLoc = this->OutSec->Addr + Offset;
+    uint64_t AddrLoc = this->OutSec->Addr + Offset;
     uint64_t SymVA = 0;
     if (!Sym.isTls() || Out::TlsPhdr)
-      SymVA = SignExtend64<sizeof(uintX_t) * 8>(
+      SymVA = SignExtend64<sizeof(typename ELFT::uint) * 8>(
           getRelocTargetVA<ELFT>(Type, Addend, AddrLoc, Sym, R_ABS));
     Target->relocateOne(BufLoc, Type, SymVA);
   }
@@ -596,14 +589,13 @@ void InputSectionBase::relocate(uint8_t *Buf, uint8_t *BufEnd) {
     return;
   }
 
-  typedef typename ELFT::uint uintX_t;
-  const unsigned Bits = sizeof(uintX_t) * 8;
+  const unsigned Bits = sizeof(typename ELFT::uint) * 8;
   for (const Relocation &Rel : Relocations) {
     uint64_t Offset = getOffset(Rel.Offset);
     uint8_t *BufLoc = Buf + Offset;
     uint32_t Type = Rel.Type;
 
-    uintX_t AddrLoc = getOutputSection()->Addr + Offset;
+    uint64_t AddrLoc = getOutputSection()->Addr + Offset;
     RelExpr Expr = Rel.Expr;
     uint64_t TargetVA = SignExtend64<Bits>(
         getRelocTargetVA<ELFT>(Type, Rel.Addend, AddrLoc, *Rel.Sym, Expr));
@@ -663,11 +655,9 @@ template <class ELFT> void InputSection::writeTo(uint8_t *Buf) {
     return;
   }
 
-  // Copy section contents from source object file to output file.
-  ArrayRef<uint8_t> Data = this->Data;
+  // Copy section contents from source object file to output file
+  // and then apply relocations.
   memcpy(Buf + OutSecOff, Data.data(), Data.size());
-
-  // Iterate over all relocation sections that apply to this section.
   uint8_t *BufEnd = Buf + OutSecOff + Data.size();
   this->relocate<ELFT>(Buf, BufEnd);
 }

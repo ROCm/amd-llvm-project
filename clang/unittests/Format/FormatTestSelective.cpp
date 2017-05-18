@@ -24,10 +24,10 @@ protected:
     DEBUG(llvm::errs() << "---\n");
     DEBUG(llvm::errs() << Code << "\n\n");
     std::vector<tooling::Range> Ranges(1, tooling::Range(Offset, Length));
-    bool IncompleteFormat = false;
+    FormattingAttemptStatus Status;
     tooling::Replacements Replaces =
-        reformat(Style, Code, Ranges, "<stdin>", &IncompleteFormat);
-    EXPECT_FALSE(IncompleteFormat) << Code << "\n\n";
+        reformat(Style, Code, Ranges, "<stdin>", &Status);
+    EXPECT_TRUE(Status.FormatComplete) << Code << "\n\n";
     auto Result = applyAllReplacements(Code, Replaces);
     EXPECT_TRUE(static_cast<bool>(Result));
     DEBUG(llvm::errs() << "\n" << *Result << "\n\n");
@@ -325,7 +325,7 @@ TEST_F(FormatTestSelective, WrongIndent) {
 }
 
 TEST_F(FormatTestSelective, AlwaysFormatsEntireMacroDefinitions) {
-  Style.AlignEscapedNewlinesLeft = true;
+  Style.AlignEscapedNewlines = FormatStyle::ENAS_Left;
   EXPECT_EQ("int  i;\n"
             "#define A \\\n"
             "  int i;  \\\n"
@@ -467,7 +467,7 @@ TEST_F(FormatTestSelective, ReformatRegionAdjustsIndent) {
 TEST_F(FormatTestSelective, UnderstandsTabs) {
   Style.IndentWidth = 8;
   Style.UseTab = FormatStyle::UT_Always;
-  Style.AlignEscapedNewlinesLeft = true;
+  Style.AlignEscapedNewlines = FormatStyle::ENAS_Left;
   EXPECT_EQ("void f() {\n"
             "\tf();\n"
             "\tg();\n"

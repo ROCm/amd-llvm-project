@@ -112,6 +112,19 @@ static cl::opt<bool> EnableAMDGPUAliasAnalysis("enable-amdgpu-aa", cl::Hidden,
   cl::desc("Enable AMDGPU Alias Analysis"),
   cl::init(true));
 
+// Option to enable new waitcnt insertion pass.
+static cl::opt<bool> EnableSIInsertWaitcntsPass(
+  "enable-si-insert-waitcnts",
+  cl::desc("Use new waitcnt insertion pass"),
+  cl::init(false));
+
+// Option to run late CFG structurizer
+static cl::opt<bool> LateCFGStructurize(
+  "amdgpu-late-structurize",
+  cl::desc("Enable late CFG structurization"),
+  cl::init(false),
+  cl::Hidden);
+
 extern "C" void LLVMInitializeAMDGPUTarget() {
   // Register the target
   RegisterTargetMachine<R600TargetMachine> X(getTheAMDGPUTarget());
@@ -134,6 +147,7 @@ extern "C" void LLVMInitializeAMDGPUTarget() {
   initializeAMDGPUUnifyMetadataPass(*PR);
   initializeSIAnnotateControlFlowPass(*PR);
   initializeSIInsertWaitsPass(*PR);
+  initializeSIInsertWaitcntsPass(*PR);
   initializeSIWholeQuadModePass(*PR);
   initializeSILowerControlFlowPass(*PR);
   initializeSIInsertSkipsPass(*PR);
@@ -212,9 +226,9 @@ static StringRef computeDataLayout(const Triple &TT) {
   // flat.
   if (TT.getEnvironmentName() == "amdgiz" ||
       TT.getEnvironmentName() == "amdgizcl")
-    return "e-p:64:64-p1:64:64-p2:64:64-p3:32:32-p4:64:64-p5:32:32"
+    return "e-p:64:64-p1:64:64-p2:64:64-p3:32:32-p4:32:32-p5:32:32"
          "-i64:64-v16:16-v24:32-v32:32-v48:64-v96:128"
-         "-v192:256-v256:256-v512:512-v1024:1024-v2048:2048-n32:64";
+         "-v192:256-v256:256-v512:512-v1024:1024-v2048:2048-n32:64-A5";
   return "e-p:32:32-p1:64:64-p2:64:64-p3:32:32-p4:64:64-p5:32:32"
       "-i64:64-v16:16-v24:32-v32:32-v48:64-v96:128"
       "-v192:256-v256:256-v512:512-v1024:1024-v2048:2048-n32:64";
@@ -302,6 +316,7 @@ void AMDGPUTargetMachine::adjustPassManager(PassManagerBuilder &Builder) {
             default:
               return false;
             case CallingConv::AMDGPU_VS:
+            case CallingConv::AMDGPU_HS:
             case CallingConv::AMDGPU_GS:
             case CallingConv::AMDGPU_PS:
             case CallingConv::AMDGPU_CS:
@@ -548,12 +563,14 @@ void AMDGPUPassConfig::addStraightLineScalarOptimizationPasses() {
 }
 
 void AMDGPUPassConfig::addIRPasses() {
+  const AMDGPUTargetMachine &TM = getAMDGPUTargetMachine();
+
   // There is no reason to run these.
   disablePass(&StackMapLivenessID);
   disablePass(&FuncletLayoutID);
   disablePass(&PatchableFunctionID);
 
-  addPass(createAMDGPULowerIntrinsicsPass());
+  addPass(createAMDGPULowerIntrinsicsPass(&TM));
 
   // Function calls are not supported, so make sure we inline everything.
   addPass(createAMDGPUAlwaysInlinePass());
@@ -564,8 +581,6 @@ void AMDGPUPassConfig::addIRPasses() {
   // functions, then we will generate code for the first function
   // without ever running any passes on the second.
   addPass(createBarrierNoopPass());
-
-  const AMDGPUTargetMachine &TM = getAMDGPUTargetMachine();
 
   if (TM.getTargetTriple().getArch() == Triple::amdgcn) {
     // TODO: May want to move later or split into an early and late one.
@@ -694,11 +709,15 @@ bool GCNPassConfig::addPreISel() {
   // Merge divergent exit nodes. StructurizeCFG won't recognize the multi-exit
   // regions formed by them.
   addPass(&AMDGPUUnifyDivergentExitNodesID);
-  addPass(createStructurizeCFGPass(true)); // true -> SkipUniformRegions
+  if (!LateCFGStructurize) {
+    addPass(createStructurizeCFGPass(true)); // true -> SkipUniformRegions
+  }
   addPass(createSinkingPass());
   addPass(createSITypeRewriter());
   addPass(createAMDGPUAnnotateUniformValues());
-  addPass(createSIAnnotateControlFlowPass());
+  if (!LateCFGStructurize) {
+    addPass(createSIAnnotateControlFlowPass());
+  }
 
   return false;
 }
@@ -716,6 +735,11 @@ void GCNPassConfig::addMachineSSAOptimization() {
   addPass(&SIFoldOperandsID);
   addPass(&DeadMachineInstructionElimID);
   addPass(&SILoadStoreOptimizerID);
+  addPass(createSIShrinkInstructionsPass());
+  if (EnableSDWAPeephole) {
+    addPass(&SIPeepholeSDWAID);
+    addPass(&DeadMachineInstructionElimID);
+  }
 }
 
 bool GCNPassConfig::addILPOpts() {
@@ -757,10 +781,8 @@ bool GCNPassConfig::addGlobalInstructionSelect() {
 #endif
 
 void GCNPassConfig::addPreRegAlloc() {
-  addPass(createSIShrinkInstructionsPass());
-  if (EnableSDWAPeephole) {
-    addPass(&SIPeepholeSDWAID);
-    addPass(&DeadMachineInstructionElimID);
+  if (LateCFGStructurize) {
+    addPass(createAMDGPUMachineCFGStructurizerPass());
   }
   addPass(createSIWholeQuadModePass());
 }
@@ -810,7 +832,10 @@ void GCNPassConfig::addPreEmitPass() {
   // cases.
   addPass(&PostRAHazardRecognizerID);
 
-  addPass(createSIInsertWaitsPass());
+  if (EnableSIInsertWaitcntsPass)
+    addPass(createSIInsertWaitcntsPass());
+  else
+    addPass(createSIInsertWaitsPass());
   addPass(createSIShrinkInstructionsPass());
   addPass(&SIInsertSkipsPassID);
   addPass(createSIDebuggerInsertNopsPass());

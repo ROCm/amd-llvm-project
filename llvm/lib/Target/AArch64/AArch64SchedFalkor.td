@@ -17,7 +17,7 @@
 // instruction cost model.
 
 def FalkorModel : SchedMachineModel {
-  let IssueWidth = 4;          // 4-wide issue for expanded uops.
+  let IssueWidth = 8;          // 8 uops are dispatched per cycle.
   let MicroOpBufferSize = 128; // Out-of-order with temporary unified issue buffer.
   let LoopMicroOpBufferSize = 16;
   let LoadLatency = 3;         // Optimistic load latency.
@@ -71,22 +71,22 @@ def : WriteRes<WriteExtr,  [FalkorUnitXYZ, FalkorUnitXYZ]>
       { let Latency = 2; let NumMicroOps = 2; }
 def : WriteRes<WriteIS,    [FalkorUnitXYZ]> { let Latency = 1; }
 def : WriteRes<WriteID32,  [FalkorUnitX, FalkorUnitZ]>
-      { let Latency = 8; let NumMicroOps = 1; } // Fragent -1
+      { let Latency = 8; let NumMicroOps = 2; }
 def : WriteRes<WriteID64,  [FalkorUnitX, FalkorUnitZ]>
-      { let Latency = 8; let NumMicroOps = 1; } // Fragent -1
+      { let Latency = 16; let NumMicroOps = 2; }
 def : WriteRes<WriteIM32,  [FalkorUnitX]> { let Latency = 4; }
-def : WriteRes<WriteIM64,  [FalkorUnitX]> { let Latency = 4; }
+def : WriteRes<WriteIM64,  [FalkorUnitX]> { let Latency = 5; }
 def : WriteRes<WriteBr,    [FalkorUnitB]> { let Latency = 1; }
 def : WriteRes<WriteBrReg, [FalkorUnitB]> { let Latency = 1; }
 def : WriteRes<WriteLD,    [FalkorUnitLD]> { let Latency = 3; }
-def : WriteRes<WriteST,    [FalkorUnitLD, FalkorUnitST, FalkorUnitSD]>
-      { let Latency = 3; let NumMicroOps = 3; }
+def : WriteRes<WriteST,    [FalkorUnitST, FalkorUnitSD]>
+      { let Latency = 0; let NumMicroOps = 2; }
 def : WriteRes<WriteSTP,   [FalkorUnitST, FalkorUnitSD]>
       { let Latency = 0; let NumMicroOps = 2; }
-def : WriteRes<WriteAdr,   [FalkorUnitXYZ]> { let Latency = 5; }
+def : WriteRes<WriteAdr,   [FalkorUnitXYZ]> { let Latency = 1; }
 def : WriteRes<WriteLDIdx, [FalkorUnitLD]> { let Latency = 5; }
-def : WriteRes<WriteSTIdx, [FalkorUnitLD, FalkorUnitST, FalkorUnitSD]>
-      { let Latency = 4; let NumMicroOps = 3; }
+def : WriteRes<WriteSTIdx, [FalkorUnitST, FalkorUnitSD]>
+      { let Latency = 0; let NumMicroOps = 2; }
 def : WriteRes<WriteF,     [FalkorUnitVXVY, FalkorUnitVXVY]>
       { let Latency = 3; let NumMicroOps = 2; }
 def : WriteRes<WriteFCmp,  [FalkorUnitVXVY]> { let Latency = 2; }

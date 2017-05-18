@@ -86,14 +86,8 @@ llvm::Instruction *CodeGenFunction::CreateTempAlloca(llvm::Type *Ty,
 llvm::Instruction *CodeGenFunction::CreateAlloca(llvm::Type *Ty,
                                                  const Twine &Name,
                                                  llvm::Instruction *InsertPos) {
-  llvm::Instruction *V = new llvm::AllocaInst(Ty, nullptr, Name, InsertPos);
-  auto Addr = getContext().getTargetAddressSpaceForAutoVar();
-  if (Addr != V->getType()->getPointerAddressSpace()) {
-    auto *DestTy = llvm::PointerType::get(V->getType()->getPointerElementType(),
-                                          Addr);
-    V = new llvm::AddrSpaceCastInst(V, DestTy, "", InsertPos);
-  }
-  return V;
+  return new llvm::AllocaInst(Ty,
+      CGM.getDataLayout().getAllocaAddrSpace(), nullptr, Name, InsertPos);
 }
 
 llvm::AllocaInst *
@@ -122,19 +116,38 @@ void CodeGenFunction::InitTempAlloca(Address Var, llvm::Value *Init) {
   Block->getInstList().insertAfter(AllocaInsertPt->getIterator(), Store);
 }
 
-Address CodeGenFunction::CreateIRTemp(QualType Ty, const Twine &Name) {
-  CharUnits Align = getContext().getTypeAlignInChars(Ty);
-  return CreateTempAlloca(ConvertType(Ty), Align, Name);
+Address CodeGenFunction::CastToAddrSpace(Address A, QualType Ty) {
+  auto AddrSpace = getContext().getTargetAddressSpace(Ty);
+  if (AddrSpace != CGM.getDataLayout().getAllocaAddrSpace()) {
+    A = Address(Builder.CreateAddrSpaceCast(A.getPointer(),
+      A.getPointer()->getType()->getPointerElementType()->getPointerTo(
+      AddrSpace)), A.getAlignment());
+  }
+  return A;
 }
 
-Address CodeGenFunction::CreateMemTemp(QualType Ty, const Twine &Name) {
+Address CodeGenFunction::CreateIRTemp(QualType Ty, const Twine &Name,
+    bool KeepAddrSpace) {
+  CharUnits Align = getContext().getTypeAlignInChars(Ty);
+  auto A = CreateTempAlloca(ConvertType(Ty), Align, Name);
+  if (KeepAddrSpace)
+    return CastToAddrSpace(A, Ty);
+  return A;
+}
+
+Address CodeGenFunction::CreateMemTemp(QualType Ty, const Twine &Name,
+    bool KeepAddrSpace) {
   // FIXME: Should we prefer the preferred type alignment here?
-  return CreateMemTemp(Ty, getContext().getTypeAlignInChars(Ty), Name);
+  return CreateMemTemp(Ty, getContext().getTypeAlignInChars(Ty), Name,
+      KeepAddrSpace);
 }
 
 Address CodeGenFunction::CreateMemTemp(QualType Ty, CharUnits Align,
-                                       const Twine &Name) {
-  return CreateTempAlloca(ConvertTypeForMem(Ty), Align, Name);
+                                       const Twine &Name, bool KeepAddrSpace) {
+  auto A = CreateTempAlloca(ConvertTypeForMem(Ty), Align, Name);
+  if (KeepAddrSpace)
+    return CastToAddrSpace(A, Ty);
+  return A;
 }
 
 /// EvaluateExprAsBool - Perform the usual unary conversions on the specified
@@ -578,22 +591,36 @@ void CodeGenFunction::EmitTypeCheck(TypeCheckKind TCK, SourceLocation Loc,
   SmallVector<std::pair<llvm::Value *, SanitizerMask>, 3> Checks;
   llvm::BasicBlock *Done = nullptr;
 
+  // Quickly determine whether we have a pointer to an alloca. It's possible
+  // to skip null checks, and some alignment checks, for these pointers. This
+  // can reduce compile-time significantly.
+  auto PtrToAlloca =
+      dyn_cast<llvm::AllocaInst>(Ptr->stripPointerCastsNoFollowAliases());
+
   bool AllowNullPointers = TCK == TCK_DowncastPointer || TCK == TCK_Upcast ||
                            TCK == TCK_UpcastToVirtualBase;
   if ((SanOpts.has(SanitizerKind::Null) || AllowNullPointers) &&
-      !SkippedChecks.has(SanitizerKind::Null)) {
+      !SkippedChecks.has(SanitizerKind::Null) && !PtrToAlloca) {
     // The glvalue must not be an empty glvalue.
     llvm::Value *IsNonNull = Builder.CreateIsNotNull(Ptr);
 
-    if (AllowNullPointers) {
-      // When performing pointer casts, it's OK if the value is null.
-      // Skip the remaining checks in that case.
-      Done = createBasicBlock("null");
-      llvm::BasicBlock *Rest = createBasicBlock("not.null");
-      Builder.CreateCondBr(IsNonNull, Rest, Done);
-      EmitBlock(Rest);
-    } else {
-      Checks.push_back(std::make_pair(IsNonNull, SanitizerKind::Null));
+    // The IR builder can constant-fold the null check if the pointer points to
+    // a constant.
+    bool PtrIsNonNull =
+        IsNonNull == llvm::ConstantInt::getTrue(getLLVMContext());
+
+    // Skip the null check if the pointer is known to be non-null.
+    if (!PtrIsNonNull) {
+      if (AllowNullPointers) {
+        // When performing pointer casts, it's OK if the value is null.
+        // Skip the remaining checks in that case.
+        Done = createBasicBlock("null");
+        llvm::BasicBlock *Rest = createBasicBlock("not.null");
+        Builder.CreateCondBr(IsNonNull, Rest, Done);
+        EmitBlock(Rest);
+      } else {
+        Checks.push_back(std::make_pair(IsNonNull, SanitizerKind::Null));
+      }
     }
   }
 
@@ -626,7 +653,8 @@ void CodeGenFunction::EmitTypeCheck(TypeCheckKind TCK, SourceLocation Loc,
       AlignVal = getContext().getTypeAlignInChars(Ty).getQuantity();
 
     // The glvalue must be suitably aligned.
-    if (AlignVal) {
+    if (AlignVal > 1 &&
+        (!PtrToAlloca || PtrToAlloca->getAlignment() < AlignVal)) {
       llvm::Value *Align =
           Builder.CreateAnd(Builder.CreatePtrToInt(Ptr, IntPtrTy),
                             llvm::ConstantInt::get(IntPtrTy, AlignVal - 1));
@@ -981,10 +1009,7 @@ LValue CodeGenFunction::EmitUnsupportedLValue(const Expr *E,
                         E->getType());
 }
 
-bool CodeGenFunction::IsDeclRefOrWrappedCXXThis(const Expr *Obj) {
-  if (isa<DeclRefExpr>(Obj))
-    return true;
-
+bool CodeGenFunction::IsWrappedCXXThis(const Expr *Obj) {
   const Expr *Base = Obj;
   while (!isa<CXXThisExpr>(Base)) {
     // The result of a dynamic_cast can be null.
@@ -1015,9 +1040,13 @@ LValue CodeGenFunction::EmitCheckedLValue(const Expr *E, TypeCheckKind TCK) {
     LV = EmitLValue(E);
   if (!isa<DeclRefExpr>(E) && !LV.isBitField() && LV.isSimple()) {
     SanitizerSet SkippedChecks;
-    if (const auto *ME = dyn_cast<MemberExpr>(E))
-      if (IsDeclRefOrWrappedCXXThis(ME->getBase()))
+    if (const auto *ME = dyn_cast<MemberExpr>(E)) {
+      bool IsBaseCXXThis = IsWrappedCXXThis(ME->getBase());
+      if (IsBaseCXXThis)
+        SkippedChecks.set(SanitizerKind::Alignment, true);
+      if (IsBaseCXXThis || isa<DeclRefExpr>(ME->getBase()))
         SkippedChecks.set(SanitizerKind::Null, true);
+    }
     EmitTypeCheck(TCK, E->getExprLoc(), LV.getPointer(),
                   E->getType(), LV.getAlignment(), SkippedChecks);
   }
@@ -2811,6 +2840,24 @@ void CodeGenFunction::EmitCfiSlowPathCheck(
   EmitBlock(Cont);
 }
 
+// Emit a stub for __cfi_check function so that the linker knows about this
+// symbol in LTO mode.
+void CodeGenFunction::EmitCfiCheckStub() {
+  llvm::Module *M = &CGM.getModule();
+  auto &Ctx = M->getContext();
+  llvm::Function *F = llvm::Function::Create(
+      llvm::FunctionType::get(VoidTy, {Int64Ty, Int8PtrTy, Int8PtrTy}, false),
+      llvm::GlobalValue::WeakAnyLinkage, "__cfi_check", M);
+  llvm::BasicBlock *BB = llvm::BasicBlock::Create(Ctx, "entry", F);
+  // FIXME: consider emitting an intrinsic call like
+  // call void @llvm.cfi_check(i64 %0, i8* %1, i8* %2)
+  // which can be lowered in CrossDSOCFI pass to the actual contents of
+  // __cfi_check. This would allow inlining of __cfi_check calls.
+  llvm::CallInst::Create(
+      llvm::Intrinsic::getDeclaration(M, llvm::Intrinsic::trap), "", BB);
+  llvm::ReturnInst::Create(Ctx, nullptr, BB);
+}
+
 // This function is basically a switch over the CFI failure kind, which is
 // extracted from CFICheckFailData (1st function argument). Each case is either
 // llvm.trap or a call to one of the two runtime handlers, based on
@@ -2852,9 +2899,9 @@ void CodeGenFunction::EmitCfiCheckFail() {
   EmitTrapCheck(DataIsNotNullPtr);
 
   llvm::StructType *SourceLocationTy =
-      llvm::StructType::get(VoidPtrTy, Int32Ty, Int32Ty, nullptr);
+      llvm::StructType::get(VoidPtrTy, Int32Ty, Int32Ty);
   llvm::StructType *CfiCheckFailDataTy =
-      llvm::StructType::get(Int8Ty, SourceLocationTy, VoidPtrTy, nullptr);
+      llvm::StructType::get(Int8Ty, SourceLocationTy, VoidPtrTy);
 
   llvm::Value *V = Builder.CreateConstGEP2_32(
       CfiCheckFailDataTy,
@@ -3402,7 +3449,7 @@ EmitExtVectorElementExpr(const ExtVectorElementExpr *E) {
     Address VecMem = CreateMemTemp(E->getBase()->getType());
     Builder.CreateStore(Vec, VecMem);
     Base = MakeAddrLValue(VecMem, E->getBase()->getType(),
-                          AlignmentSource::Decl);
+        AlignmentSource::Decl);
   }
 
   QualType type =
@@ -3440,7 +3487,10 @@ LValue CodeGenFunction::EmitMemberExpr(const MemberExpr *E) {
     Address Addr = EmitPointerWithAlignment(BaseExpr, &AlignSource);
     QualType PtrTy = BaseExpr->getType()->getPointeeType();
     SanitizerSet SkippedChecks;
-    if (IsDeclRefOrWrappedCXXThis(BaseExpr))
+    bool IsBaseCXXThis = IsWrappedCXXThis(BaseExpr);
+    if (IsBaseCXXThis)
+      SkippedChecks.set(SanitizerKind::Alignment, true);
+    if (IsBaseCXXThis || isa<DeclRefExpr>(BaseExpr))
       SkippedChecks.set(SanitizerKind::Null, true);
     EmitTypeCheck(TCK_MemberAccess, E->getExprLoc(), Addr.getPointer(), PtrTy,
                   /*Alignment=*/CharUnits::Zero(), SkippedChecks);
@@ -4057,6 +4107,8 @@ LValue CodeGenFunction::EmitBinaryOperatorLValue(const BinaryOperator *E) {
 
     RValue RV = EmitAnyExpr(E->getRHS());
     LValue LV = EmitCheckedLValue(E->getLHS(), TCK_Store);
+    if (RV.isScalar())
+      EmitNullabilityCheck(LV, RV.getScalarVal(), E->getExprLoc());
     EmitStoreThroughLValue(RV, LV);
     return LV;
   }

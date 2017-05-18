@@ -568,27 +568,16 @@ private:
       Predicates.insert(P);
     }
 
-    /*implicit*/ ExitLimit(const SCEV *E)
-        : ExactNotTaken(E), MaxNotTaken(E), MaxOrZero(false) {}
+    /*implicit*/ ExitLimit(const SCEV *E);
 
     ExitLimit(
         const SCEV *E, const SCEV *M, bool MaxOrZero,
-        ArrayRef<const SmallPtrSetImpl<const SCEVPredicate *> *> PredSetList)
-        : ExactNotTaken(E), MaxNotTaken(M), MaxOrZero(MaxOrZero) {
-      assert((isa<SCEVCouldNotCompute>(ExactNotTaken) ||
-              !isa<SCEVCouldNotCompute>(MaxNotTaken)) &&
-             "Exact is not allowed to be less precise than Max");
-      for (auto *PredSet : PredSetList)
-        for (auto *P : *PredSet)
-          addPredicate(P);
-    }
+        ArrayRef<const SmallPtrSetImpl<const SCEVPredicate *> *> PredSetList);
 
     ExitLimit(const SCEV *E, const SCEV *M, bool MaxOrZero,
-              const SmallPtrSetImpl<const SCEVPredicate *> &PredSet)
-        : ExitLimit(E, M, MaxOrZero, {&PredSet}) {}
+              const SmallPtrSetImpl<const SCEVPredicate *> &PredSet);
 
-    ExitLimit(const SCEV *E, const SCEV *M, bool MaxOrZero)
-        : ExitLimit(E, M, MaxOrZero, None) {}
+    ExitLimit(const SCEV *E, const SCEV *M, bool MaxOrZero);
 
     /// Test whether this ExitLimit contains any computed information, or
     /// whether it's all SCEVCouldNotCompute values.
@@ -782,13 +771,13 @@ private:
 
   /// Set the memoized range for the given SCEV.
   const ConstantRange &setRange(const SCEV *S, RangeSignHint Hint,
-                                const ConstantRange &CR) {
+                                ConstantRange CR) {
     DenseMap<const SCEV *, ConstantRange> &Cache =
         Hint == HINT_RANGE_UNSIGNED ? UnsignedRanges : SignedRanges;
 
-    auto Pair = Cache.insert({S, CR});
+    auto Pair = Cache.try_emplace(S, std::move(CR));
     if (!Pair.second)
-      Pair.first->second = CR;
+      Pair.first->second = std::move(CR);
     return Pair.first->second;
   }
 
@@ -815,6 +804,10 @@ private:
 
   /// Helper function called from createNodeForPHI.
   const SCEV *createAddRecFromPHI(PHINode *PN);
+
+  /// A helper function for createAddRecFromPHI to handle simple cases.
+  const SCEV *createSimpleAffineAddRec(PHINode *PN, Value *BEValueV,
+                                            Value *StartValueV);
 
   /// Helper function called from createNodeForPHI.
   const SCEV *createNodeFromSelectLikePHI(PHINode *PN);
@@ -876,6 +869,47 @@ private:
                                      BasicBlock *TBB, BasicBlock *FBB,
                                      bool ControlsExit,
                                      bool AllowPredicates = false);
+
+  // Helper functions for computeExitLimitFromCond to avoid exponential time
+  // complexity.
+
+  class ExitLimitCache {
+    // It may look like we need key on the whole (L, TBB, FBB, ControlsExit,
+    // AllowPredicates) tuple, but recursive calls to
+    // computeExitLimitFromCondCached from computeExitLimitFromCondImpl only
+    // vary the in \c ExitCond and \c ControlsExit parameters.  We remember the
+    // initial values of the other values to assert our assumption.
+    SmallDenseMap<PointerIntPair<Value *, 1>, ExitLimit> TripCountMap;
+
+    const Loop *L;
+    BasicBlock *TBB;
+    BasicBlock *FBB;
+    bool AllowPredicates;
+
+  public:
+    ExitLimitCache(const Loop *L, BasicBlock *TBB, BasicBlock *FBB,
+                   bool AllowPredicates)
+        : L(L), TBB(TBB), FBB(FBB), AllowPredicates(AllowPredicates) {}
+
+    Optional<ExitLimit> find(const Loop *L, Value *ExitCond, BasicBlock *TBB,
+                             BasicBlock *FBB, bool ControlsExit,
+                             bool AllowPredicates);
+
+    void insert(const Loop *L, Value *ExitCond, BasicBlock *TBB,
+                BasicBlock *FBB, bool ControlsExit, bool AllowPredicates,
+                const ExitLimit &EL);
+  };
+
+  typedef ExitLimitCache ExitLimitCacheTy;
+  ExitLimit computeExitLimitFromCondCached(ExitLimitCacheTy &Cache,
+                                           const Loop *L, Value *ExitCond,
+                                           BasicBlock *TBB, BasicBlock *FBB,
+                                           bool ControlsExit,
+                                           bool AllowPredicates);
+  ExitLimit computeExitLimitFromCondImpl(ExitLimitCacheTy &Cache, const Loop *L,
+                                         Value *ExitCond, BasicBlock *TBB,
+                                         BasicBlock *FBB, bool ControlsExit,
+                                         bool AllowPredicates);
 
   /// Compute the number of times the backedge of the specified loop will
   /// execute if its exit condition were a conditional branch of the ICmpInst
@@ -1159,8 +1193,20 @@ public:
   const SCEV *getConstant(const APInt &Val);
   const SCEV *getConstant(Type *Ty, uint64_t V, bool isSigned = false);
   const SCEV *getTruncateExpr(const SCEV *Op, Type *Ty);
+
+  typedef SmallDenseMap<std::pair<const SCEV *, Type *>, const SCEV *, 8>
+      ExtendCacheTy;
   const SCEV *getZeroExtendExpr(const SCEV *Op, Type *Ty);
+  const SCEV *getZeroExtendExprCached(const SCEV *Op, Type *Ty,
+                                      ExtendCacheTy &Cache);
+  const SCEV *getZeroExtendExprImpl(const SCEV *Op, Type *Ty,
+                                    ExtendCacheTy &Cache);
+
   const SCEV *getSignExtendExpr(const SCEV *Op, Type *Ty);
+  const SCEV *getSignExtendExprCached(const SCEV *Op, Type *Ty,
+                                      ExtendCacheTy &Cache);
+  const SCEV *getSignExtendExprImpl(const SCEV *Op, Type *Ty,
+                                    ExtendCacheTy &Cache);
   const SCEV *getAnyExtendExpr(const SCEV *Op, Type *Ty);
   const SCEV *getAddExpr(SmallVectorImpl<const SCEV *> &Ops,
                          SCEV::NoWrapFlags Flags = SCEV::FlagAnyWrap,
@@ -1512,7 +1558,7 @@ public:
   /// delinearization).
   void findArrayDimensions(SmallVectorImpl<const SCEV *> &Terms,
                            SmallVectorImpl<const SCEV *> &Sizes,
-                           const SCEV *ElementSize) const;
+                           const SCEV *ElementSize);
 
   void print(raw_ostream &OS) const;
   void verify() const;

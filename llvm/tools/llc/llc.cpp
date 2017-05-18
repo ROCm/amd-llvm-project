@@ -90,6 +90,11 @@ OptLevel("O",
 static cl::opt<std::string>
 TargetTriple("mtriple", cl::desc("Override target triple for module"));
 
+static cl::opt<std::string> SplitDwarfFile(
+    "split-dwarf-file",
+    cl::desc(
+        "Specify the name of the .dwo file to encode in the DWARF output"));
+
 static cl::opt<bool> NoVerify("disable-verify", cl::Hidden,
                               cl::desc("Do not verify input module"));
 
@@ -296,6 +301,8 @@ int main(int argc, char **argv) {
   initializeConstantHoistingLegacyPassPass(*Registry);
   initializeScalarOpts(*Registry);
   initializeVectorization(*Registry);
+  initializeScalarizeMaskedMemIntrinPass(*Registry);
+  initializeExpandReductionsPass(*Registry);
 
   // Register the target printer for --version.
   cl::AddExtraVersionPrinter(TargetRegistry::printRegisteredTargetsForVersion);
@@ -450,6 +457,7 @@ static int compileModule(char **argv, LLVMContext &Context) {
   Options.MCOptions.AsmVerbose = AsmVerbose;
   Options.MCOptions.PreserveAsmComments = PreserveComments;
   Options.MCOptions.IASSearchPaths = IncludeDirs;
+  Options.MCOptions.SplitDwarfFile = SplitDwarfFile;
 
   std::unique_ptr<TargetMachine> Target(
       TheTarget->createTargetMachine(TheTriple.getTriple(), CPUStr, FeaturesStr,

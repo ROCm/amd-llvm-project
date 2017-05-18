@@ -227,6 +227,7 @@ std::string SDNode::getOperationName(const SelectionDAG *G) const {
   case ISD::CARRY_FALSE:                return "carry_false";
   case ISD::ADDC:                       return "addc";
   case ISD::ADDE:                       return "adde";
+  case ISD::ADDCARRY:                   return "addcarry";
   case ISD::SADDO:                      return "saddo";
   case ISD::UADDO:                      return "uaddo";
   case ISD::SSUBO:                      return "ssubo";
@@ -235,6 +236,7 @@ std::string SDNode::getOperationName(const SelectionDAG *G) const {
   case ISD::UMULO:                      return "umulo";
   case ISD::SUBC:                       return "subc";
   case ISD::SUBE:                       return "sube";
+  case ISD::SUBCARRY:                   return "subcarry";
   case ISD::SHL_PARTS:                  return "shl_parts";
   case ISD::SRA_PARTS:                  return "sra_parts";
   case ISD::SRL_PARTS:                  return "srl_parts";
@@ -344,6 +346,19 @@ std::string SDNode::getOperationName(const SelectionDAG *G) const {
     case ISD::SETFALSE:                 return "setfalse";
     case ISD::SETFALSE2:                return "setfalse2";
     }
+  case ISD::VECREDUCE_FADD:             return "vecreduce_fadd";
+  case ISD::VECREDUCE_FMUL:             return "vecreduce_fmul";
+  case ISD::VECREDUCE_ADD:              return "vecreduce_add";
+  case ISD::VECREDUCE_MUL:              return "vecreduce_mul";
+  case ISD::VECREDUCE_AND:              return "vecreduce_and";
+  case ISD::VECREDUCE_OR:               return "vecreduce_or";
+  case ISD::VECREDUCE_XOR:              return "vecreduce_xor";
+  case ISD::VECREDUCE_SMAX:             return "vecreduce_smax";
+  case ISD::VECREDUCE_SMIN:             return "vecreduce_smin";
+  case ISD::VECREDUCE_UMAX:             return "vecreduce_umax";
+  case ISD::VECREDUCE_UMIN:             return "vecreduce_umin";
+  case ISD::VECREDUCE_FMAX:             return "vecreduce_fmax";
+  case ISD::VECREDUCE_FMIN:             return "vecreduce_fmin";
   }
 }
 

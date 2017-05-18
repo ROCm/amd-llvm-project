@@ -1,6 +1,11 @@
 add_clang_executable(clangd
-  ASTManager.cpp
-  ClangDMain.cpp
+  ClangdLSPServer.cpp
+  ClangdMain.cpp
+  ClangdServer.cpp
+  ClangdUnit.cpp
+  ClangdUnitStore.cpp
+  DraftStore.cpp
+  GlobalCompilationDatabase.cpp
   JSONRPCDispatcher.cpp
   Protocol.cpp
   ProtocolHandlers.cpp

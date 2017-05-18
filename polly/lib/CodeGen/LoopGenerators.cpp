@@ -49,6 +49,9 @@ static cl::opt<int>
 // contains the loop iv 'polly.indvar', the incremented loop iv
 // 'polly.indvar_next' as well as the condition to check if we execute another
 // iteration of the loop. After the loop has finished, we branch to ExitBB.
+// We expect the type of UB, LB, UB+Stride to be large enough for values that
+// UB may take throughout the execution of the loop, including the computation
+// of indvar + Stride before the final abort.
 Value *polly::createLoop(Value *LB, Value *UB, Value *Stride,
                          PollyIRBuilder &Builder, LoopInfo &LI,
                          DominatorTree &DT, BasicBlock *&ExitBB,
@@ -123,10 +126,8 @@ Value *polly::createLoop(Value *LB, Value *UB, Value *Stride,
   IV->addIncoming(LB, PreHeaderBB);
   Stride = Builder.CreateZExtOrBitCast(Stride, LoopIVType);
   Value *IncrementedIV = Builder.CreateNSWAdd(IV, Stride, "polly.indvar_next");
-  Value *LoopCondition;
-  UB = Builder.CreateSub(UB, Stride, "polly.adjust_ub");
-  LoopCondition = Builder.CreateICmp(Predicate, IV, UB);
-  LoopCondition->setName("polly.loop_cond");
+  Value *LoopCondition =
+      Builder.CreateICmp(Predicate, IncrementedIV, UB, "polly.loop_cond");
 
   // Create the loop latch and annotate it as such.
   BranchInst *B = Builder.CreateCondBr(LoopCondition, HeaderBB, ExitBB);
@@ -281,13 +282,16 @@ ParallelLoopGenerator::storeValuesIntoStruct(SetVector<Value *> &Values) {
   for (Value *V : Values)
     Members.push_back(V->getType());
 
+  const DataLayout &DL = Builder.GetInsertBlock()->getModule()->getDataLayout();
+
   // We do not want to allocate the alloca inside any loop, thus we allocate it
   // in the entry block of the function and use annotations to denote the actual
   // live span (similar to clang).
   BasicBlock &EntryBB = Builder.GetInsertBlock()->getParent()->getEntryBlock();
   Instruction *IP = &*EntryBB.getFirstInsertionPt();
   StructType *Ty = StructType::get(Builder.getContext(), Members);
-  AllocaInst *Struct = new AllocaInst(Ty, nullptr, "polly.par.userContext", IP);
+  AllocaInst *Struct = new AllocaInst(Ty, DL.getAllocaAddrSpace(), nullptr,
+                                      "polly.par.userContext", IP);
 
   for (unsigned i = 0; i < Values.size(); i++) {
     Value *Address = Builder.CreateStructGEP(Ty, Struct, i);

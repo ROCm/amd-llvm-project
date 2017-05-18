@@ -30,7 +30,7 @@
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
-#include <cstdarg>
+
 using namespace llvm;
 
 //===----------------------------------------------------------------------===//
@@ -518,27 +518,19 @@ ConstantInt *ConstantInt::getFalse(LLVMContext &Context) {
 }
 
 Constant *ConstantInt::getTrue(Type *Ty) {
-  VectorType *VTy = dyn_cast<VectorType>(Ty);
-  if (!VTy) {
-    assert(Ty->isIntegerTy(1) && "True must be i1 or vector of i1.");
-    return ConstantInt::getTrue(Ty->getContext());
-  }
-  assert(VTy->getElementType()->isIntegerTy(1) &&
-         "True must be vector of i1 or i1.");
-  return ConstantVector::getSplat(VTy->getNumElements(),
-                                  ConstantInt::getTrue(Ty->getContext()));
+  assert(Ty->getScalarType()->isIntegerTy(1) && "Type not i1 or vector of i1.");
+  ConstantInt *TrueC = ConstantInt::getTrue(Ty->getContext());
+  if (auto *VTy = dyn_cast<VectorType>(Ty))
+    return ConstantVector::getSplat(VTy->getNumElements(), TrueC);
+  return TrueC;
 }
 
 Constant *ConstantInt::getFalse(Type *Ty) {
-  VectorType *VTy = dyn_cast<VectorType>(Ty);
-  if (!VTy) {
-    assert(Ty->isIntegerTy(1) && "False must be i1 or vector of i1.");
-    return ConstantInt::getFalse(Ty->getContext());
-  }
-  assert(VTy->getElementType()->isIntegerTy(1) &&
-         "False must be vector of i1 or i1.");
-  return ConstantVector::getSplat(VTy->getNumElements(),
-                                  ConstantInt::getFalse(Ty->getContext()));
+  assert(Ty->getScalarType()->isIntegerTy(1) && "Type not i1 or vector of i1.");
+  ConstantInt *FalseC = ConstantInt::getFalse(Ty->getContext());
+  if (auto *VTy = dyn_cast<VectorType>(Ty))
+    return ConstantVector::getSplat(VTy->getNumElements(), FalseC);
+  return FalseC;
 }
 
 // Get a ConstantInt from an APInt.
@@ -974,16 +966,6 @@ Constant *ConstantStruct::get(StructType *ST, ArrayRef<Constant*> V) {
   return ST->getContext().pImpl->StructConstants.getOrCreate(ST, V);
 }
 
-Constant *ConstantStruct::get(StructType *T, ...) {
-  va_list ap;
-  SmallVector<Constant*, 8> Values;
-  va_start(ap, T);
-  while (Constant *Val = va_arg(ap, llvm::Constant*))
-    Values.push_back(Val);
-  va_end(ap);
-  return get(T, Values);
-}
-
 ConstantVector::ConstantVector(VectorType *T, ArrayRef<Constant *> V)
     : ConstantAggregate(T, ConstantVectorVal, V) {
   assert(V.size() == T->getNumElements() &&
@@ -1027,7 +1009,7 @@ Constant *ConstantVector::getImpl(ArrayRef<Constant*> V) {
     return getSequenceIfElementsMatch<ConstantDataVector>(C, V);
 
   // Otherwise, the element type isn't compatible with ConstantDataVector, or
-  // the operand list constants a ConstantExpr or something else strange.
+  // the operand list contains a ConstantExpr or something else strange.
   return nullptr;
 }
 
@@ -1818,8 +1800,7 @@ Constant *ConstantExpr::getSizeOf(Type* Ty) {
 Constant *ConstantExpr::getAlignOf(Type* Ty) {
   // alignof is implemented as: (i64) gep ({i1,Ty}*)null, 0, 1
   // Note that a non-inbounds gep is used, as null isn't within any object.
-  Type *AligningTy = 
-    StructType::get(Type::getInt1Ty(Ty->getContext()), Ty, nullptr);
+  Type *AligningTy = StructType::get(Type::getInt1Ty(Ty->getContext()), Ty);
   Constant *NullPtr = Constant::getNullValue(AligningTy->getPointerTo(0));
   Constant *Zero = ConstantInt::get(Type::getInt64Ty(Ty->getContext()), 0);
   Constant *One = ConstantInt::get(Type::getInt32Ty(Ty->getContext()), 1);

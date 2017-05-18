@@ -17,13 +17,13 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/CFG.h"
 #include "llvm/Analysis/CaptureTracking.h"
 #include "llvm/Analysis/InstructionSimplify.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/MemoryBuiltins.h"
 #include "llvm/Analysis/ValueTracking.h"
-#include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -36,6 +36,7 @@
 #include "llvm/IR/Operator.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/KnownBits.h"
 #include <algorithm>
 
 #define DEBUG_TYPE "basicaa"
@@ -637,7 +638,7 @@ FunctionModRefBehavior BasicAAResult::getModRefBehavior(const Function *F) {
 /// Returns true if this is a writeonly (i.e Mod only) parameter.
 static bool isWriteOnlyParam(ImmutableCallSite CS, unsigned ArgIdx,
                              const TargetLibraryInfo &TLI) {
-  if (CS.paramHasAttr(ArgIdx + 1, Attribute::WriteOnly))
+  if (CS.paramHasAttr(ArgIdx, Attribute::WriteOnly))
     return true;
 
   // We can bound the aliasing properties of memset_pattern16 just as we can
@@ -666,10 +667,10 @@ ModRefInfo BasicAAResult::getArgModRefInfo(ImmutableCallSite CS,
   if (isWriteOnlyParam(CS, ArgIdx, TLI))
     return MRI_Mod;
 
-  if (CS.paramHasAttr(ArgIdx + 1, Attribute::ReadOnly))
+  if (CS.paramHasAttr(ArgIdx, Attribute::ReadOnly))
     return MRI_Ref;
 
-  if (CS.paramHasAttr(ArgIdx + 1, Attribute::ReadNone))
+  if (CS.paramHasAttr(ArgIdx, Attribute::ReadNone))
     return MRI_NoModRef;
 
   return AAResultBase::getArgModRefInfo(CS, ArgIdx);
@@ -808,7 +809,7 @@ ModRefInfo BasicAAResult::getModRefInfo(ImmutableCallSite CS,
   // well.  Or alternatively, replace all of this with inaccessiblememonly once
   // that's implemented fully. 
   auto *Inst = CS.getInstruction();
-  if (isMallocLikeFn(Inst, &TLI) || isCallocLikeFn(Inst, &TLI)) {
+  if (isMallocOrCallocLikeFn(Inst, &TLI)) {
     // Be conservative if the accessed pointer may alias the allocation -
     // fallback to the generic handling below.
     if (getBestAAResults().alias(MemoryLocation(Inst), Loc) == NoAlias)
@@ -924,10 +925,9 @@ static AliasResult aliasSameBasePointerGEPs(const GEPOperator *GEP1,
                                             uint64_t V2Size,
                                             const DataLayout &DL) {
 
-  assert(GEP1->getPointerOperand()->stripPointerCasts() ==
-         GEP2->getPointerOperand()->stripPointerCasts() &&
-         GEP1->getPointerOperand()->getType() ==
-         GEP2->getPointerOperand()->getType() &&
+  assert(GEP1->getPointerOperand()->stripPointerCastsAndBarriers() ==
+             GEP2->getPointerOperand()->stripPointerCastsAndBarriers() &&
+         GEP1->getPointerOperandType() == GEP2->getPointerOperandType() &&
          "Expected GEPs with the same pointer operand");
 
   // Try to determine whether GEP1 and GEP2 index through arrays, into structs,
@@ -1185,10 +1185,9 @@ AliasResult BasicAAResult::aliasGEP(const GEPOperator *GEP1, uint64_t V1Size,
     // If we know the two GEPs are based off of the exact same pointer (and not
     // just the same underlying object), see if that tells us anything about
     // the resulting pointers.
-    if (GEP1->getPointerOperand()->stripPointerCasts() ==
-        GEP2->getPointerOperand()->stripPointerCasts() &&
-        GEP1->getPointerOperand()->getType() ==
-        GEP2->getPointerOperand()->getType()) {
+    if (GEP1->getPointerOperand()->stripPointerCastsAndBarriers() ==
+            GEP2->getPointerOperand()->stripPointerCastsAndBarriers() &&
+        GEP1->getPointerOperandType() == GEP2->getPointerOperandType()) {
       AliasResult R = aliasSameBasePointerGEPs(GEP1, V1Size, GEP2, V2Size, DL);
       // If we couldn't find anything interesting, don't abandon just yet.
       if (R != MayAlias)
@@ -1285,9 +1284,9 @@ AliasResult BasicAAResult::aliasGEP(const GEPOperator *GEP1, uint64_t V1Size,
         // give up if we can't determine conditions that hold for every cycle:
         const Value *V = DecompGEP1.VarIndices[i].V;
 
-        bool SignKnownZero, SignKnownOne;
-        ComputeSignBit(const_cast<Value *>(V), SignKnownZero, SignKnownOne, DL,
-                       0, &AC, nullptr, DT);
+        KnownBits Known = computeKnownBits(V, DL, 0, &AC, nullptr, DT);
+        bool SignKnownZero = Known.isNonNegative();
+        bool SignKnownOne = Known.isNegative();
 
         // Zero-extension widens the variable, and so forces the sign
         // bit to zero.
@@ -1502,8 +1501,8 @@ AliasResult BasicAAResult::aliasCheck(const Value *V1, uint64_t V1Size,
     return NoAlias;
 
   // Strip off any casts if they exist.
-  V1 = V1->stripPointerCasts();
-  V2 = V2->stripPointerCasts();
+  V1 = V1->stripPointerCastsAndBarriers();
+  V2 = V2->stripPointerCastsAndBarriers();
 
   // If V1 or V2 is undef, the result is NoAlias because we can always pick a
   // value for undef that aliases nothing in the program.

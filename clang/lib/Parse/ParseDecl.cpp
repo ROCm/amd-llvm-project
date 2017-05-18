@@ -2623,9 +2623,9 @@ bool Parser::ParseImplicitInt(DeclSpec &DS, CXXScopeSpec *SS,
   // and attempt to recover.
   ParsedType T;
   IdentifierInfo *II = Tok.getIdentifierInfo();
+  bool IsTemplateName = getLangOpts().CPlusPlus && NextToken().is(tok::less);
   Actions.DiagnoseUnknownTypeName(II, Loc, getCurScope(), SS, T,
-                                  getLangOpts().CPlusPlus &&
-                                      NextToken().is(tok::less));
+                                  IsTemplateName);
   if (T) {
     // The action has suggested that the type T could be used. Set that as
     // the type in the declaration specifiers, consume the would-be type
@@ -2649,6 +2649,13 @@ bool Parser::ParseImplicitInt(DeclSpec &DS, CXXScopeSpec *SS,
   DS.SetTypeSpecError();
   DS.SetRangeEnd(Tok.getLocation());
   ConsumeToken();
+
+  // Eat any following template arguments.
+  if (IsTemplateName) {
+    SourceLocation LAngle, RAngle;
+    TemplateArgList Args;
+    ParseTemplateIdAfterTemplateName(true, LAngle, Args, RAngle);
+  }
 
   // TODO: Could inject an invalid typedef decl in an enclosing scope to
   // avoid rippling error messages on subsequent uses of the same type,
@@ -5634,6 +5641,21 @@ void Parser::ParseDirectDeclarator(Declarator &D) {
     if (Tok.is(tok::l_square))
       return ParseMisplacedBracketDeclarator(D);
     if (D.getContext() == Declarator::MemberContext) {
+      // Objective-C++: Detect C++ keywords and try to prevent further errors by
+      // treating these keyword as valid member names.
+      if (getLangOpts().ObjC1 && getLangOpts().CPlusPlus &&
+          Tok.getIdentifierInfo() &&
+          Tok.getIdentifierInfo()->isCPlusPlusKeyword(getLangOpts())) {
+        Diag(getMissingDeclaratorIdLoc(D, Tok.getLocation()),
+             diag::err_expected_member_name_or_semi_objcxx_keyword)
+            << Tok.getIdentifierInfo()
+            << (D.getDeclSpec().isEmpty() ? SourceRange()
+                                          : D.getDeclSpec().getSourceRange());
+        D.SetIdentifier(Tok.getIdentifierInfo(), Tok.getLocation());
+        D.SetRangeEnd(Tok.getLocation());
+        ConsumeToken();
+        goto PastIdentifier;
+      }
       Diag(getMissingDeclaratorIdLoc(D, Tok.getLocation()),
            diag::err_expected_member_name_or_semi)
           << (D.getDeclSpec().isEmpty() ? SourceRange()

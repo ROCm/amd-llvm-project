@@ -92,6 +92,11 @@ llvm::Type *CodeGenTypes::ConvertTypeForMem(QualType T) {
                                 (unsigned)Context.getTypeSize(T));
 }
 
+llvm::PointerType *CodeGenTypes::getVariableType(VarDecl D) {
+  auto Ty = D.getType();
+  return ConvertTypeForMem(Ty)->getPointerTo(
+      getContext().getTargetAddressSpace(Ty));
+}
 
 /// isRecordLayoutComplete - Return true if the specified type is already
 /// completely laid out.
@@ -498,7 +503,7 @@ llvm::Type *CodeGenTypes::ConvertType(QualType T) {
     llvm_unreachable("Unexpected undeduced type!");
   case Type::Complex: {
     llvm::Type *EltTy = ConvertType(cast<ComplexType>(Ty)->getElementType());
-    ResultType = llvm::StructType::get(EltTy, EltTy, nullptr);
+    ResultType = llvm::StructType::get(EltTy, EltTy);
     break;
   }
   case Type::LValueReference:

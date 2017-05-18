@@ -8,6 +8,13 @@ if(POLICY CMP0042)
   cmake_policy(SET CMP0042 NEW) # Set MACOSX_RPATH=YES by default
 endif()
 
+# Add path for custom modules
+set(CMAKE_MODULE_PATH
+  "${CMAKE_CURRENT_SOURCE_DIR}/cmake"
+  "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Modules"
+  ${CMAKE_MODULE_PATH}
+  )
+
 if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   project(libcxxabi)
 
@@ -124,6 +131,7 @@ endif()
 #===============================================================================
 # Setup CMake Options
 #===============================================================================
+include(HandleCompilerRT)
 
 # Define options.
 option(LIBCXXABI_ENABLE_EXCEPTIONS "Use exceptions." ON)
@@ -231,7 +239,11 @@ set(CMAKE_MODULE_PATH
 set(LIBCXXABI_COMPILER    ${CMAKE_CXX_COMPILER})
 set(LIBCXXABI_SOURCE_DIR  ${CMAKE_CURRENT_SOURCE_DIR})
 set(LIBCXXABI_BINARY_DIR  ${CMAKE_CURRENT_BINARY_DIR})
-set(LIBCXXABI_LIBRARY_DIR ${CMAKE_BINARY_DIR}/lib${LIBCXXABI_LIBDIR_SUFFIX})
+if (LLVM_LIBRARY_OUTPUT_INTDIR)
+  set(LIBCXXABI_LIBRARY_DIR ${LLVM_LIBRARY_OUTPUT_INTDIR})
+else()
+  set(LIBCXXABI_LIBRARY_DIR ${CMAKE_BINARY_DIR}/lib${LIBCXXABI_LIBDIR_SUFFIX})
+endif()
 
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${LIBCXXABI_LIBRARY_DIR})
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${LIBCXXABI_LIBRARY_DIR})
@@ -267,6 +279,7 @@ macro(add_target_flags_if condition var)
   if (${condition})
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${var}")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${var}")
+    list(APPEND LIBCXXABI_COMPILE_FLAGS ${var})
     list(APPEND LIBCXXABI_LINK_FLAGS ${var})
   endif()
 endmacro()
@@ -279,9 +292,9 @@ set(LIBCXXABI_LINK_FLAGS "")
 # Configure target flags
 add_target_flags_if(LIBCXXABI_BUILD_32_BITS "-m32")
 add_target_flags_if(LIBCXXABI_TARGET_TRIPLE
-          "-target ${LIBCXXABI_TARGET_TRIPLE}")
+          "--target=${LIBCXXABI_TARGET_TRIPLE}")
 add_target_flags_if(LIBCXXABI_GCC_TOOLCHAIN
-         "-gcc-toolchain ${LIBCXXABI_GCC_TOOLCHAIN}")
+         "--gcc-toolchain=${LIBCXXABI_GCC_TOOLCHAIN}")
 add_target_flags_if(LIBCXXABI_SYSROOT
           "--sysroot=${LIBCXXABI_SYSROOT}")
 
@@ -418,7 +431,8 @@ endif()
 
 set(LIBCXXABI_HAS_UNDEFINED_SYMBOLS OFF)
 if ((NOT LIBCXXABI_ENABLE_NEW_DELETE_DEFINITIONS)
-    OR (LIBCXXABI_BUILD_EXTERNAL_THREAD_LIBRARY AND LIBCXXABI_ENABLE_SHARED))
+    OR (LIBCXXABI_BUILD_EXTERNAL_THREAD_LIBRARY AND LIBCXXABI_ENABLE_SHARED)
+    OR MINGW)
   set(LIBCXXABI_HAS_UNDEFINED_SYMBOLS ON)
 endif()
 
@@ -443,6 +457,9 @@ endif()
 if (LIBCXXABI_BUILD_EXTERNAL_THREAD_LIBRARY)
   add_definitions(-D_LIBCPP_HAS_THREAD_LIBRARY_EXTERNAL)
 endif()
+
+# Prevent libc++abi from having library dependencies on libc++
+add_definitions(-D_LIBCPP_DISABLE_EXTERN_TEMPLATE)
 
 if (MSVC)
   add_definitions(-D_CRT_SECURE_NO_WARNINGS)

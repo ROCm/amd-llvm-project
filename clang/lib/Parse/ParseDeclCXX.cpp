@@ -1138,8 +1138,8 @@ TypeResult Parser::ParseBaseTypeSpecifier(SourceLocation &BaseLoc,
     if (!Template) {
       TemplateArgList TemplateArgs;
       SourceLocation LAngleLoc, RAngleLoc;
-      ParseTemplateIdAfterTemplateName(nullptr, IdLoc, SS, true, LAngleLoc,
-                                       TemplateArgs, RAngleLoc);
+      ParseTemplateIdAfterTemplateName(true, LAngleLoc, TemplateArgs,
+                                       RAngleLoc);
       return true;
     }
 
@@ -1407,6 +1407,7 @@ void Parser::ParseClassSpecifier(tok::TokenKind TagTokKind,
       !Tok.isAnnotation() &&
       Tok.getIdentifierInfo() &&
       Tok.isOneOf(tok::kw___is_abstract,
+                  tok::kw___is_aggregate,
                   tok::kw___is_arithmetic,
                   tok::kw___is_array,
                   tok::kw___is_assignable,
@@ -1530,8 +1531,8 @@ void Parser::ParseClassSpecifier(tok::TokenKind TagTokKind,
       // a class (or template thereof).
       TemplateArgList TemplateArgs;
       SourceLocation LAngleLoc, RAngleLoc;
-      if (ParseTemplateIdAfterTemplateName(
-              nullptr, NameLoc, SS, true, LAngleLoc, TemplateArgs, RAngleLoc)) {
+      if (ParseTemplateIdAfterTemplateName(true, LAngleLoc, TemplateArgs,
+                                           RAngleLoc)) {
         // We couldn't parse the template argument list at all, so don't
         // try to give any location information for the list.
         LAngleLoc = RAngleLoc = SourceLocation();
@@ -4151,8 +4152,6 @@ void Parser::ParseMicrosoftUuidAttributeArgs(ParsedAttributes &Attrs) {
   }
 
   if (!T.consumeClose()) {
-    // FIXME: Warn that this syntax is deprecated, with a Fix-It suggesting
-    // using __declspec(uuid()) instead.
     Attrs.addNew(UuidIdent, SourceRange(UuidLoc, T.getCloseLocation()), nullptr,
                  SourceLocation(), ArgExprs.data(), ArgExprs.size(),
                  AttributeList::AS_Microsoft);

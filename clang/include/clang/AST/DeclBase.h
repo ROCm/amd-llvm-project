@@ -616,6 +616,14 @@ public:
   getAvailability(std::string *Message = nullptr,
                   VersionTuple EnclosingVersion = VersionTuple()) const;
 
+  /// \brief Retrieve the version of the target platform in which this
+  /// declaration was introduced.
+  ///
+  /// \returns An empty version tuple if this declaration has no 'introduced'
+  /// availability attributes, or the version tuple that's specified in the
+  /// attribute otherwise.
+  VersionTuple getVersionIntroduced() const;
+
   /// \brief Determine whether this declaration is marked 'deprecated'.
   ///
   /// \param Message If non-NULL and the declaration is deprecated,
@@ -696,6 +704,20 @@ public:
     assert(!isFromASTFile() && Hidden && hasLocalOwningModuleStorage() &&
            "should not have a cached owning module");
     reinterpret_cast<Module **>(this)[-1] = M;
+  }
+
+  Module *getOwningModule() const {
+    return isFromASTFile() ? getImportedOwningModule() : getLocalOwningModule();
+  }
+
+  /// \brief Determine whether this declaration is hidden from name lookup.
+  bool isHidden() const { return Hidden; }
+
+  /// \brief Set whether this declaration is hidden from name lookup.
+  void setHidden(bool Hide) {
+    assert((!Hide || isFromASTFile() || hasLocalOwningModuleStorage()) &&
+           "declaration with no owning module can't be hidden");
+    Hidden = Hide;
   }
 
   unsigned getIdentifierNamespace() const {

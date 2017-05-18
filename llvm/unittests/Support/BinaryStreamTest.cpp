@@ -16,6 +16,7 @@
 #include "gtest/gtest.h"
 
 #include <unordered_map>
+#include <utility>
 
 using namespace llvm;
 using namespace llvm::support;
@@ -117,7 +118,7 @@ private:
 
   // Buffer is organized like this:
   // -------------------------------------------------
-  // | N/2 | N/2+1 | ... | N-1 | 0 | 1 | ... | N-2-1 |
+  // | N/2 | N/2+1 | ... | N-1 | 0 | 1 | ... | N/2-1 |
   // -------------------------------------------------
   // So reads from the beginning actually come from the middle.
   MutableArrayRef<uint8_t> Data;
@@ -348,6 +349,30 @@ TEST_F(BinaryStreamTest, FixedStreamArray) {
   }
 }
 
+// Ensure FixedStreamArrayIterator::operator-> works.
+// Added for coverage of r302257.
+TEST_F(BinaryStreamTest, FixedStreamArrayIteratorArrow) {
+  std::vector<std::pair<uint32_t, uint32_t>> Pairs = {{867, 5309}, {555, 1212}};
+  ArrayRef<uint8_t> PairBytes(reinterpret_cast<uint8_t *>(Pairs.data()),
+    Pairs.size() * sizeof(Pairs[0]));
+
+  initializeInput(PairBytes, alignof(uint32_t));
+
+  for (auto &Stream : Streams) {
+    ASSERT_EQ(InputData.size(), Stream.Input->getLength());
+
+    const FixedStreamArray<std::pair<uint32_t, uint32_t>> Array(*Stream.Input);
+    auto Iter = Array.begin();
+    ASSERT_EQ(Pairs[0].first, Iter->first);
+    ASSERT_EQ(Pairs[0].second, Iter->second);
+    ++Iter;
+    ASSERT_EQ(Pairs[1].first, Iter->first);
+    ASSERT_EQ(Pairs[1].second, Iter->second);
+    ++Iter;
+    ASSERT_EQ(Array.end(), Iter);
+  }
+}
+
 // Test that VarStreamArray works correctly.
 TEST_F(BinaryStreamTest, VarStreamArray) {
   StringLiteral Strings("1. Test2. Longer Test3. Really Long Test4. Super "
@@ -358,7 +383,9 @@ TEST_F(BinaryStreamTest, VarStreamArray) {
 
   struct StringExtractor {
   public:
-    Error operator()(BinaryStreamRef Stream, uint32_t &Len, StringRef &Item) {
+    typedef uint32_t &ContextType;
+    static Error extract(BinaryStreamRef Stream, uint32_t &Len, StringRef &Item,
+                         uint32_t &Index) {
       if (Index == 0)
         Len = strlen("1. Test");
       else if (Index == 1)
@@ -375,13 +402,11 @@ TEST_F(BinaryStreamTest, VarStreamArray) {
       ++Index;
       return Error::success();
     }
-
-  private:
-    uint32_t Index = 0;
   };
 
   for (auto &Stream : Streams) {
-    VarStreamArray<StringRef, StringExtractor> Array(*Stream.Input);
+    uint32_t Context = 0;
+    VarStreamArray<StringRef, StringExtractor> Array(*Stream.Input, Context);
     auto Iter = Array.begin();
     ASSERT_EQ("1. Test", *Iter++);
     ASSERT_EQ("2. Longer Test", *Iter++);
@@ -686,7 +711,7 @@ TEST_F(BinaryStreamTest, BinaryItemStream) {
   std::vector<Foo> Foos = {{1, 1.0}, {2, 2.0}, {3, 3.0}};
   BumpPtrAllocator Allocator;
   for (const auto &F : Foos) {
-    uint8_t *Ptr = static_cast<uint8_t *>(Allocator.Allocate(sizeof(Foo), 
+    uint8_t *Ptr = static_cast<uint8_t *>(Allocator.Allocate(sizeof(Foo),
                                                              alignof(Foo)));
     MutableArrayRef<uint8_t> Buffer(Ptr, sizeof(Foo));
     MutableBinaryByteStream Stream(Buffer, llvm::support::big);

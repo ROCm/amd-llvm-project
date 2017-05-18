@@ -10,22 +10,29 @@
 #ifndef liblldb_StructuredData_h_
 #define liblldb_StructuredData_h_
 
-// C Includes
-// C++ Includes
+#include "llvm/ADT/StringRef.h"
+
+#include "lldb/Utility/ConstString.h"
+#include "lldb/Utility/FileSpec.h" // for FileSpec
+
 #include <functional>
 #include <map>
 #include <memory>
 #include <string>
+#include <type_traits> // for move
 #include <utility>
 #include <vector>
 
-// Other libraries and framework includes
-#include "llvm/ADT/StringRef.h"
+#include <assert.h> // for assert
+#include <stddef.h> // for size_t
+#include <stdint.h> // for uint64_t
 
-// Project includes
-#include "lldb/Utility/ConstString.h"
-#include "lldb/Utility/Stream.h"
-#include "lldb/lldb-defines.h"
+namespace lldb_private {
+class Status;
+}
+namespace lldb_private {
+class Stream;
+}
 
 namespace lldb_private {
 
@@ -136,15 +143,12 @@ public:
                                             : nullptr);
     }
 
-    std::string GetStringValue(const char *fail_value = nullptr) {
+    llvm::StringRef GetStringValue(const char *fail_value = nullptr) {
       String *s = GetAsString();
       if (s)
         return s->GetValue();
 
-      if (fail_value && fail_value[0])
-        return std::string(fail_value);
-
-      return std::string();
+      return fail_value;
     }
 
     Generic *GetAsGeneric() {
@@ -213,7 +217,7 @@ public:
       return success;
     }
 
-    bool GetItemAtIndexAsString(size_t idx, std::string &result) const {
+    bool GetItemAtIndexAsString(size_t idx, llvm::StringRef &result) const {
       ObjectSP value_sp = GetItemAtIndex(idx);
       if (value_sp.get()) {
         if (auto string_value = value_sp->GetAsString()) {
@@ -224,8 +228,8 @@ public:
       return false;
     }
 
-    bool GetItemAtIndexAsString(size_t idx, std::string &result,
-                                const std::string &default_val) const {
+    bool GetItemAtIndexAsString(size_t idx, llvm::StringRef &result,
+                                llvm::StringRef default_val) const {
       bool success = GetItemAtIndexAsString(idx, result);
       if (!success)
         result = default_val;
@@ -332,18 +336,13 @@ public:
 
   class String : public Object {
   public:
-    String(const char *cstr = nullptr) : Object(Type::eTypeString), m_value() {
-      if (cstr)
-        m_value = cstr;
-    }
+    String() : Object(Type::eTypeString) {}
+    explicit String(llvm::StringRef S)
+        : Object(Type::eTypeString), m_value(S) {}
 
-    String(const std::string &s) : Object(Type::eTypeString), m_value(s) {}
+    void SetValue(llvm::StringRef S) { m_value = S; }
 
-    String(const std::string &&s) : Object(Type::eTypeString), m_value(s) {}
-
-    void SetValue(const std::string &string) { m_value = string; }
-
-    const std::string &GetValue() { return m_value; }
+    llvm::StringRef GetValue() { return m_value; }
 
     void Dump(Stream &s, bool pretty_print = true) const override;
 
@@ -368,13 +367,12 @@ public:
     }
 
     ObjectSP GetKeys() const {
-      ObjectSP object_sp(new Array());
-      Array *array = object_sp->GetAsArray();
+      auto object_sp = std::make_shared<Array>();
       collection::const_iterator iter;
       for (iter = m_dict.begin(); iter != m_dict.end(); ++iter) {
-        ObjectSP key_object_sp(new String());
-        key_object_sp->GetAsString()->SetValue(iter->first.AsCString());
-        array->Push(key_object_sp);
+        auto key_object_sp = std::make_shared<String>();
+        key_object_sp->SetValue(iter->first.AsCString());
+        object_sp->Push(key_object_sp);
       }
       return object_sp;
     }
@@ -424,7 +422,7 @@ public:
     }
 
     bool GetValueForKeyAsString(llvm::StringRef key,
-                                std::string &result) const {
+                                llvm::StringRef &result) const {
       ObjectSP value_sp = GetValueForKey(key);
       if (value_sp.get()) {
         if (auto string_value = value_sp->GetAsString()) {
@@ -435,14 +433,14 @@ public:
       return false;
     }
 
-    bool GetValueForKeyAsString(llvm::StringRef key, std::string &result,
+    bool GetValueForKeyAsString(llvm::StringRef key, llvm::StringRef &result,
                                 const char *default_val) const {
       bool success = GetValueForKeyAsString(key, result);
       if (!success) {
         if (default_val)
           result = default_val;
         else
-          result.clear();
+          result = llvm::StringRef();
       }
       return success;
     }
@@ -500,19 +498,19 @@ public:
     }
 
     void AddIntegerItem(llvm::StringRef key, uint64_t value) {
-      AddItem(key, ObjectSP(new Integer(value)));
+      AddItem(key, std::make_shared<Integer>(value));
     }
 
     void AddFloatItem(llvm::StringRef key, double value) {
-      AddItem(key, ObjectSP(new Float(value)));
+      AddItem(key, std::make_shared<Float>(value));
     }
 
-    void AddStringItem(llvm::StringRef key, std::string value) {
-      AddItem(key, ObjectSP(new String(std::move(value))));
+    void AddStringItem(llvm::StringRef key, llvm::StringRef value) {
+      AddItem(key, std::make_shared<String>(std::move(value)));
     }
 
     void AddBooleanItem(llvm::StringRef key, bool value) {
-      AddItem(key, ObjectSP(new Boolean(value)));
+      AddItem(key, std::make_shared<Boolean>(value));
     }
 
     void Dump(Stream &s, bool pretty_print = true) const override;
@@ -552,7 +550,7 @@ public:
 
   static ObjectSP ParseJSON(std::string json_text);
 
-  static ObjectSP ParseJSONFromFile(const FileSpec &file, Error &error);
+  static ObjectSP ParseJSONFromFile(const FileSpec &file, Status &error);
 };
 
 } // namespace lldb_private

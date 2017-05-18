@@ -105,10 +105,6 @@ public:
   // Return whether the target has an explicit NOP encoding.
   bool hasNOP() const;
 
-  virtual void getNoopForElfTarget(MCInst &NopInst) const {
-    getNoopForMachoTarget(NopInst);
-  }
-
   // Return the non-pre/post incrementing version of 'Opc'. Return 0
   // if there is not such an opcode.
   virtual unsigned getUnindexedOpcode(unsigned Opc) const = 0;
@@ -404,6 +400,19 @@ public:
   /// Returns true if the instruction has a shift by immediate that can be
   /// executed in one cycle less.
   bool isSwiftFastImmShift(const MachineInstr *MI) const;
+
+  /// Returns predicate register associated with the given frame instruction.
+  unsigned getFramePred(const MachineInstr &MI) const {
+    assert(isFrameInstr(MI));
+    // Operands of ADJCALLSTACKDOWN/ADJCALLSTACKUP:
+    // - argument declared in the pattern:
+    // 0 - frame size
+    // 1 - arg of CALLSEQ_START/CALLSEQ_END
+    // 2 - predicate code (like ARMCC::AL)
+    // - added by predOps:
+    // 3 - predicate reg
+    return MI.getOperand(3).getReg();
+  }
 };
 
 /// Get the operands corresponding to the given \p Pred value. By default, the
