@@ -7918,7 +7918,8 @@ void Sema::CheckVariableDeclarationType(VarDecl *NewVD) {
           NewVD->setInvalidDecl();
           return;
         }
-      } else if (T.getAddressSpace() != LangAS::Default) {
+      } else if (T.getAddressSpace() != LangAS::opencl_private &&
+                 T.getAddressSpace() != LangAS::Default) {
         // Do not allow other address spaces on automatic variable.
         Diag(NewVD->getLocation(), diag::err_as_qualified_auto_decl) << 1;
         NewVD->setInvalidDecl();

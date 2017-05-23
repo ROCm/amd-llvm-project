@@ -1145,7 +1145,8 @@ CodeGenFunction::EmitAutoVarAlloca(const VarDecl &D) {
   // in C++ the auto variables are in the default address space. Therefore
   // cast alloca to the expected address space when necessary.
   auto T = D.getType();
-  assert(T.getAddressSpace() == LangAS::Default);
+  assert(T.getAddressSpace() == LangAS::Default ||
+         T.getAddressSpace() == LangAS::opencl_private);
   if (getASTAllocaAddressSpace() != LangAS::Default) {
     auto *Addr = getTargetHooks().performAddrSpaceCast(
         *this, address.getPointer(), getASTAllocaAddressSpace(),
