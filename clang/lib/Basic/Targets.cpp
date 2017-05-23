@@ -2038,33 +2038,61 @@ ArrayRef<const char *> NVPTXTargetInfo::getGCCRegNames() const {
   return llvm::makeArrayRef(GCCRegNames);
 }
 
-static const LangAS::Map AMDGPUPrivateIsZeroMap = {
-    4,  // Default
-    1,  // opencl_global
-    3,  // opencl_local
-    2,  // opencl_constant
-    0,  // opencl_private
-    4,  // opencl_generic
-    1,  // cuda_device
-    2,  // cuda_constant
-    3,  // cuda_shared
-    3,  // hcc_tilestatic
-    4,  // hcc_generic
-    1,  // hcc_global
+static const LangAS::Map AMDGPUNonOpenCLPrivateIsZeroMap = {
+    4, // Default
+    1, // opencl_global
+    3, // opencl_local
+    2, // opencl_constant
+    0, // opencl_private
+    4, // opencl_generic
+    1, // cuda_device
+    2, // cuda_constant
+    3, // cuda_shared
+    3, // hcc_tilestatic
+    4, // hcc_generic
+    1, // hcc_global
 };
-static const LangAS::Map AMDGPUGenericIsZeroMap = {
-    0,  // Default
-    1,  // opencl_global
-    3,  // opencl_local
-    2,  // opencl_constant
-    5,  // opencl_private
-    0,  // opencl_generic
-    1,  // cuda_device
-    2,  // cuda_constant
-    3,  // cuda_shared
-    3,  // hcc_tilestatic
-    0,  // hcc_generic
-    1,  // hcc_global
+static const LangAS::Map AMDGPUNonOpenCLGenericIsZeroMap = {
+    0, // Default
+    1, // opencl_global
+    3, // opencl_local
+    2, // opencl_constant
+    5, // opencl_private
+    0, // opencl_generic
+    1, // cuda_device
+    2, // cuda_constant
+    3, // cuda_shared
+    3, // hcc_tilestatic
+    0, // hcc_generic
+    1, // hcc_global
+};
+static const LangAS::Map AMDGPUOpenCLPrivateIsZeroMap = {
+    0, // Default
+    1, // opencl_global
+    3, // opencl_local
+    2, // opencl_constant
+    0, // opencl_private
+    4, // opencl_generic
+    1, // cuda_device
+    2, // cuda_constant
+    3, // cuda_shared
+    3, // hcc_tilestatic
+    4, // hcc_generic
+    1, // hcc_global
+};
+static const LangAS::Map AMDGPUOpenCLGenericIsZeroMap = {
+    5, // Default
+    1, // opencl_global
+    3, // opencl_local
+    2, // opencl_constant
+    5, // opencl_private
+    0, // opencl_generic
+    1, // cuda_device
+    2, // cuda_constant
+    3, // cuda_shared
+    3, // hcc_tilestatic
+    0, // hcc_generic
+    1, // hcc_global
 };
 
 // If you edit the description strings, make sure you update
@@ -2163,8 +2191,12 @@ public:
                     : DataLayoutStringR600);
     assert(DataLayout->getAllocaAddrSpace() == AS.Private);
 
-    AddrSpaceMap = IsGenericZero ? &AMDGPUGenericIsZeroMap :
-        &AMDGPUPrivateIsZeroMap;
+    AddrSpaceMap =
+        llvm::StringSwitch<const LangAS::Map *>(Triple.getEnvironmentName())
+            .Case("opencl", &AMDGPUOpenCLPrivateIsZeroMap)
+            .Case("amdgiz", &AMDGPUNonOpenCLGenericIsZeroMap)
+            .Case("amdgizcl", &AMDGPUOpenCLGenericIsZeroMap)
+            .Default(&AMDGPUNonOpenCLPrivateIsZeroMap);
     UseAddrSpaceMapMangling = true;
 
     // If possible, get a TargetInfo for our host triple, so we can match its

@@ -20,10 +20,10 @@ void func2(void) {
 
   // CHECK: %[[r0:.*]] = addrspacecast i32 addrspace(5)* %lv1 to i32*
   // CHECK: store i32 1, i32* %[[r0]]
-  // CHECK: %[[r1:.*]] = addrspacecast i32 addrspace(5)* %lv2 to i32*
-  // CHECK: store i32 2, i32* %[[r1]]
   int lv1;
   lv1 = 1;
+  // CHECK: %[[r1:.*]] = addrspacecast i32 addrspace(5)* %lv2 to i32*
+  // CHECK: store i32 2, i32* %[[r1]]
   int lv2 = 2;
 
   // CHECK: %[[r2:.*]] = addrspacecast [100 x i32] addrspace(5)* %la to [100 x i32]*
@@ -49,4 +49,24 @@ void func2(void) {
   // CHECK: store i32 4, i32* %[[r0]]
   const int lvc = 4;
   lv1 = lvc;
+}
+
+void destroy(int x);
+
+class A {
+int x;
+public:
+  A():x(0) {}
+  ~A() {
+   destroy(x);
+  }
+};
+
+// CHECK-LABEL: define void @_Z5func3v
+void func3() {
+  // CHECK: %[[a:.*]] = alloca %class.A, align 4, addrspace(5)
+  // CHECK: %[[r0:.*]] = addrspacecast %class.A addrspace(5)* %[[a]] to %class.A*
+  // CHECK: call void @_ZN1AC1Ev(%class.A* %[[r0]])
+  // CHECK: call void @_ZN1AD1Ev(%class.A* %[[r0]])
+  A a;
 }

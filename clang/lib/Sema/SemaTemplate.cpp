@@ -7965,6 +7965,7 @@ bool Sema::CheckFunctionTemplateSpecialization(
   TemplateSpecializationKind TSK = SpecInfo->getTemplateSpecializationKind();
   if (TSK == TSK_Undeclared || TSK == TSK_ImplicitInstantiation) {
     Specialization->setLocation(FD->getLocation());
+    Specialization->setLexicalDeclContext(FD->getLexicalDeclContext());
     // C++11 [dcl.constexpr]p1: An explicit specialization of a constexpr
     // function can differ from the template declaration with respect to
     // the constexpr specifier.
@@ -8025,6 +8026,7 @@ bool Sema::CheckFunctionTemplateSpecialization(
       // FIXME: We need an update record for this AST mutation.
       Specialization->setDeletedAsWritten(false);
     }
+    // FIXME: We need an update record for this AST mutation.
     SpecInfo->setTemplateSpecializationKind(TSK_ExplicitSpecialization);
     MarkUnusedFileScopedDecl(Specialization);
   }
@@ -9825,7 +9827,7 @@ private:
       IsHiddenExplicitSpecialization =
           Spec->getMemberSpecializationInfo()
               ? !S.hasVisibleMemberSpecialization(Spec, &Modules)
-              : !S.hasVisibleDeclaration(Spec);
+              : !S.hasVisibleExplicitSpecialization(Spec, &Modules);
     } else {
       checkInstantiated(Spec);
     }
