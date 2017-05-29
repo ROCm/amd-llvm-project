@@ -408,8 +408,11 @@ void CodeGenModule::Release() {
   }
   if (OpenMPRuntime)
     if (llvm::Function *OpenMPRegistrationFunction =
-            OpenMPRuntime->emitRegistrationFunction())
-      AddGlobalCtor(OpenMPRegistrationFunction, 0);
+            OpenMPRuntime->emitRegistrationFunction()) {
+      auto ComdatKey = OpenMPRegistrationFunction->hasComdat() ?
+        OpenMPRegistrationFunction : nullptr;
+      AddGlobalCtor(OpenMPRegistrationFunction, 0, ComdatKey);
+    }
   if (PGOReader) {
     getModule().setProfileSummary(PGOReader->getSummary().getMD(VMContext));
     if (PGOStats.hasDiagnostics())
@@ -927,7 +930,16 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
     return;
   }
 
-  if (D->hasAttr<OptimizeNoneAttr>()) {
+  // Track whether we need to add the optnone LLVM attribute,
+  // starting with the default for this optimization level.
+  bool ShouldAddOptNone =
+      !CodeGenOpts.DisableO0ImplyOptNone && CodeGenOpts.OptimizationLevel == 0;
+  // We can't add optnone in the following cases, it won't pass the verifier.
+  ShouldAddOptNone &= !D->hasAttr<MinSizeAttr>();
+  ShouldAddOptNone &= !F->hasFnAttribute(llvm::Attribute::AlwaysInline);
+  ShouldAddOptNone &= !D->hasAttr<AlwaysInlineAttr>();
+
+  if (ShouldAddOptNone || D->hasAttr<OptimizeNoneAttr>()) {
     B.addAttribute(llvm::Attribute::OptimizeNone);
 
     // OptimizeNone implies noinline; we should not be inlining such functions.
@@ -981,7 +993,8 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
   // function.
   if (!D->hasAttr<OptimizeNoneAttr>()) {
     if (D->hasAttr<ColdAttr>()) {
-      B.addAttribute(llvm::Attribute::OptimizeForSize);
+      if (!ShouldAddOptNone)
+        B.addAttribute(llvm::Attribute::OptimizeForSize);
       B.addAttribute(llvm::Attribute::Cold);
     }
 
@@ -1545,6 +1558,10 @@ bool CodeGenModule::imbueXRayAttrs(llvm::Function *Fn, SourceLocation Loc,
     return false;
   case ImbueAttr::ALWAYS:
     Fn->addFnAttr("function-instrument", "xray-always");
+    break;
+  case ImbueAttr::ALWAYS_ARG1:
+    Fn->addFnAttr("function-instrument", "xray-always");
+    Fn->addFnAttr("xray-log-args", "1");
     break;
   case ImbueAttr::NEVER:
     Fn->addFnAttr("function-instrument", "xray-never");

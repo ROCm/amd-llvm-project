@@ -365,6 +365,9 @@ void Writer::createImportTables() {
   // the same order as in the command line. (That affects DLL
   // initialization order, and this ordering is MSVC-compatible.)
   for (ImportFile *File : Symtab->ImportFiles) {
+    if (!File->Live)
+      continue;
+
     std::string DLL = StringRef(File->DLLName).lower();
     if (Config->DLLOrder.count(DLL) == 0)
       Config->DLLOrder[DLL] = Config->DLLOrder.size();
@@ -372,16 +375,19 @@ void Writer::createImportTables() {
 
   OutputSection *Text = createSection(".text");
   for (ImportFile *File : Symtab->ImportFiles) {
+    if (!File->Live)
+      continue;
+
     if (DefinedImportThunk *Thunk = File->ThunkSym)
-      if (Thunk->Live)
-        Text->addChunk(Thunk->getChunk());
+      Text->addChunk(Thunk->getChunk());
 
     if (Config->DelayLoads.count(StringRef(File->DLLName).lower())) {
-      if (File->ImpSym->Live)
-        DelayIdata.add(File->ImpSym);
+      if (!File->ThunkSym)
+        fatal("cannot delay-load " + toString(File) +
+              " due to import of data: " + toString(*File->ImpSym));
+      DelayIdata.add(File->ImpSym);
     } else {
-      if (File->ImpSym->Live)
-        Idata.add(File->ImpSym);
+      Idata.add(File->ImpSym);
     }
   }
 
@@ -443,6 +449,14 @@ Optional<coff_symbol16> Writer::createSymbol(Defined *Def) {
     if (!D->getChunk()->isLive())
       return None;
 
+  if (auto *Sym = dyn_cast<DefinedImportData>(Def))
+    if (!Sym->File->Live)
+      return None;
+
+  if (auto *Sym = dyn_cast<DefinedImportThunk>(Def))
+    if (!Sym->WrappedSym->File->Live)
+      return None;
+
   coff_symbol16 Sym;
   StringRef Name = Def->getName();
   if (Name.size() > COFF::NameSize) {
@@ -502,15 +516,8 @@ void Writer::createSymbolAndStringTable() {
       auto *D = dyn_cast<Defined>(B);
       if (!D || D->WrittenToSymtab)
         continue;
-
-      if (auto *S = dyn_cast<DefinedImportData>(D))
-        if (!S->Live)
-          continue;
-      if (auto *S = dyn_cast<DefinedImportThunk>(D))
-        if (!S->Live)
-          continue;
-
       D->WrittenToSymtab = true;
+
       if (Optional<coff_symbol16> Sym = createSymbol(D))
         OutputSymtab.push_back(*Sym);
     }
@@ -798,19 +805,15 @@ void Writer::writeBuildId() {
   if (BuildId == nullptr)
     return;
 
-  MD5 Hash;
-  MD5::MD5Result Res;
-
-  Hash.update(ArrayRef<uint8_t>{Buffer->getBufferStart(),
-                                Buffer->getBufferEnd()});
-  Hash.final(Res);
-
   assert(BuildId->DI->Signature.CVSignature == OMF::Signature::PDB70 &&
          "only PDB 7.0 is supported");
-  assert(sizeof(Res) == sizeof(BuildId->DI->PDB70.Signature) &&
+  assert(sizeof(BuildId->DI->PDB70.Signature) == 16 &&
          "signature size mismatch");
-  memcpy(BuildId->DI->PDB70.Signature, Res.Bytes.data(),
-         sizeof(codeview::PDB70DebugInfo::Signature));
+
+  // Compute an MD5 hash.
+  ArrayRef<uint8_t> Buf(Buffer->getBufferStart(), Buffer->getBufferEnd());
+  memcpy(BuildId->DI->PDB70.Signature, MD5::hash(Buf).data(), 16);
+
   // TODO(compnerd) track the Age
   BuildId->DI->PDB70.Age = 1;
 }
