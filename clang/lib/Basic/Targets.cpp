@@ -2278,17 +2278,6 @@ public:
     }
   }
 
-  void adjust(LangOptions &Opts) override {
-    TargetInfo::adjust(Opts);
-    if (isGenericZero(getTriple())) {
-      AddrSpaceMap = Opts.OpenCL ? &AMDGPUOpenCLGenericIsZeroMap
-                                 : &AMDGPUNonOpenCLGenericIsZeroMap;
-    } else {
-      AddrSpaceMap = Opts.OpenCL ? &AMDGPUOpenCLPrivateIsZeroMap
-                                 : &AMDGPUNonOpenCLPrivateIsZeroMap;
-    }
-  }
-
   uint64_t getPointerWidthV(unsigned AddrSpace) const override {
     if (GPU <= GK_CAYMAN)
       return 32;
