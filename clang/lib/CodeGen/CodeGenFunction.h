@@ -1921,14 +1921,27 @@ public:
   /// the expected address space.
   llvm::Instruction *CreateAlloca(llvm::Type *Ty, const Twine &Name = "tmp",
                                   llvm::Instruction *InsertPos = nullptr);
-  /// CreateTempAlloca - This creates a alloca and inserts it into the entry
-  /// block. The caller is responsible for setting an appropriate alignment on
-  /// the alloca. If the default address space is not 0, insert addrspacecast.
-  llvm::Instruction *CreateTempAlloca(llvm::Type *Ty,
-                                      const Twine &Name = "tmp");
-  Address CreateTempAlloca(llvm::Type *Ty, CharUnits align,
-                           const Twine &Name = "tmp");
 
+  /// CreateTempAlloca - This creates an alloca and inserts it into the entry
+  /// block if \p ArraySize is nullptr, otherwise inserts it at the current
+  /// insertion point of the builder. The caller is responsible for setting an
+  /// appropriate alignment on
+  /// the alloca.
+  ///
+  /// \p ArraySize is the number of array elements to be allocated if it
+  ///    is not nullptr.
+  ///
+  /// For certain targets the alloca address space may be different from the
+  /// default address space expected by the language. E.g. C++ expects a
+  /// temporary variable in default address space. If \p DoCast is true,
+  /// alloca will be casted to the address space expected by the language,
+  /// otherwise it stays in the alloca address space.
+  llvm::AllocaInst *CreateTempAlloca(llvm::Type *Ty, const Twine &Name = "tmp",
+                                     llvm::Value *ArraySize = nullptr);
+  Address CreateTempAlloca(llvm::Type *Ty, CharUnits align,
+                           const Twine &Name = "tmp",
+                           llvm::Value *ArraySize = nullptr,
+                           bool DoCast = true);
   /// Get alloca instruction operand of an addrspacecast instruction.
   /// If \p Inst is alloca instruction, returns \p Inst;
   llvm::AllocaInst *getAddrSpaceCastedAlloca(llvm::Instruction *Inst) const;
@@ -1963,16 +1976,15 @@ public:
   ///
   /// That is, this is exactly equivalent to CreateMemTemp, but calling
   /// ConvertType instead of ConvertTypeForMem.
-  Address CreateIRTemp(QualType T, const Twine &Name = "tmp",
-      bool KeepAddrSpace = true);
+  Address CreateIRTemp(QualType T, const Twine &Name = "tmp");
 
   /// CreateMemTemp - Create a temporary memory object of the given type, with
-  /// appropriate alignment. If \p KeepAddrSpace is true, insert address space
-  /// cast so that the pointer has the same address space as \p T.
+  /// appropriate alignment. Cast it to the expected address space if \p DoCast
+  /// is true.
   Address CreateMemTemp(QualType T, const Twine &Name = "tmp",
-      bool KeepAddrSpace = true);
+                        bool DoCast = true);
   Address CreateMemTemp(QualType T, CharUnits Align, const Twine &Name = "tmp",
-      bool KeepAddrSpace = true);
+                        bool DoCast = true);
 
   /// CreateAggTemp - Create a temporary memory object for the given
   /// aggregate type.
@@ -1983,9 +1995,6 @@ public:
                                  AggValueSlot::DoesNotNeedGCBarriers,
                                  AggValueSlot::IsNotAliased);
   }
-
-  /// Cast an address to the same address space of the given type.
-  Address CastToAddrSpace(Address A, QualType T);
 
   /// Emit a cast to void* in the appropriate address space.
   llvm::Value *EmitCastToVoidPtr(llvm::Value *value);

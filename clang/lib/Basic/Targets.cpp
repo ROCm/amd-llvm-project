@@ -2192,6 +2192,12 @@ public:
     assert(DataLayout->getAllocaAddrSpace() == AS.Private);
 
     UseAddrSpaceMapMangling = true;
+    if (getMaxPointerWidth() == 64) {
+      LongWidth = LongAlign = 64;
+      SizeType = UnsignedLong;
+      PtrDiffType = SignedLong;
+      IntPtrType = SignedLong;
+    }
 
     // If possible, get a TargetInfo for our host triple, so we can match its
     // types.
@@ -2276,6 +2282,9 @@ public:
       AddrSpaceMap = Opts.OpenCL ? &AMDGPUOpenCLPrivateIsZeroMap
                                  : &AMDGPUNonOpenCLPrivateIsZeroMap;
     }
+    // Set default pointer width and alignment.
+    PointerWidth = getPointerWidthV(Opts.OpenCL ? AS.Private : AS.Generic);
+    PointerAlign = PointerWidth;
   }
 
   uint64_t getPointerWidthV(unsigned AddrSpace) const override {

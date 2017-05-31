@@ -7413,7 +7413,6 @@ void AMDGPUTargetCodeGenInfo::setTargetAttributes(
     }
   }
 
-  // Append OpenCL-specific metadata only for OpenCL inputs
   if (M.getLangOpts().OpenCL) {
     appendOpenCLVersionMD(M);
   }
