@@ -1049,8 +1049,7 @@ CodeGenFunction::EmitAutoVarAlloca(const VarDecl &D) {
       // Create the alloca.  Note that we set the name separately from
       // building the instruction so that it's there even in no-asserts
       // builds.
-      address = CreateTempAlloca(allocaTy, allocaAlignment);
-      address.getPointer()->setName(D.getName());
+      address = CreateTempAlloca(allocaTy, allocaAlignment, D.getName());
 
       // Don't emit lifetime markers for MSVC catch parameters. The lifetime of
       // the catch parameter starts in the catchpad instruction, and we can't
@@ -1110,40 +1109,9 @@ CodeGenFunction::EmitAutoVarAlloca(const VarDecl &D) {
     llvm::Type *llvmTy = ConvertTypeForMem(elementType);
 
     // Allocate memory for the array.
-    llvm::AllocaInst *vla = Builder.CreateAlloca(llvmTy, elementCount, "vla");
-    vla->setAlignment(alignment.getQuantity());
-
-    llvm::Value *V = vla;
-    auto Addr = CGM.getModule().getDataLayout().getAllocaAddrSpace();
-    if (Addr != V->getType()->getPointerAddressSpace()) {
-      auto *DestTy =
-          llvm::PointerType::get(vla->getType()->getElementType(), Addr);
-      V = Builder.CreateAddrSpaceCast(vla, DestTy);
-    }
-
-    address = Address(V, alignment);
+    address = CreateTempAlloca(llvmTy, alignment, "vla", elementCount);
   }
 
-  // Alloca always returns a pointer in alloca address space, which may
-  // be different from the type defined by the language. For example,
-  // in C++ the auto variables are in the default address space. Therefore
-  // cast alloca to the expected address space when necessary.
-  auto Addr = address.getPointer();
-  auto AddrTy = cast<llvm::PointerType>(Addr->getType());
-  auto ExpectedAddrSpace = CGM.getTypes().getVariableType(D)->getAddressSpace();
-  // OpenCL automatic variable in constant address space is emitted in
-  // alloca address space, which cannot be casted to constant address space.
-  if (AddrTy->getAddressSpace() != ExpectedAddrSpace &&
-      Ty.getAddressSpace() != LangAS::opencl_constant) {
-    address = Address(Builder.CreateAddrSpaceCast(Addr,
-        AddrTy->getElementType()->getPointerTo(ExpectedAddrSpace)),
-        address.getAlignment());
-  }
-
-  // Alloca always returns a pointer in alloca address space, which may
-  // be different from the type defined by the language. For example,
-  // in C++ the auto variables are in the default address space. Therefore
-  // cast alloca to the expected address space when necessary.
   auto T = D.getType();
   assert(T.getAddressSpace() == LangAS::Default ||
          T.getAddressSpace() == LangAS::opencl_private);

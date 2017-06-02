@@ -100,7 +100,7 @@ getSymbolStrings(ArrayRef<DefinedRegular *> Syms) {
 }
 
 template <class ELFT>
-void elf::writeMapFile(llvm::ArrayRef<BaseCommand *> Script) {
+void elf::writeMapFile(llvm::ArrayRef<OutputSectionCommand *> Script) {
   if (Config->MapFile.empty())
     return;
 
@@ -123,26 +123,28 @@ void elf::writeMapFile(llvm::ArrayRef<BaseCommand *> Script) {
      << " Align Out     In      Symbol\n";
 
   // Print out file contents.
-  for (BaseCommand *Base : Script) {
-    auto *Cmd = dyn_cast<OutputSectionCommand>(Base);
-    if (!Cmd)
-      continue;
+  for (OutputSectionCommand *Cmd : Script) {
     OutputSection *OSec = Cmd->Sec;
     writeHeader<ELFT>(OS, OSec->Addr, OSec->Size, OSec->Alignment);
     OS << OSec->Name << '\n';
 
     // Dump symbols for each input section.
-    for (InputSection *IS : OSec->Sections) {
-      writeHeader<ELFT>(OS, OSec->Addr + IS->OutSecOff, IS->getSize(),
-                        IS->Alignment);
-      OS << indent(1) << toString(IS) << '\n';
-      for (DefinedRegular *Sym : SectionSyms[IS])
-        OS << SymStr[Sym] << '\n';
+    for (BaseCommand *Base : Cmd->Commands) {
+      auto *ISD = dyn_cast<InputSectionDescription>(Base);
+      if (!ISD)
+        continue;
+      for (InputSection *IS : ISD->Sections) {
+        writeHeader<ELFT>(OS, OSec->Addr + IS->OutSecOff, IS->getSize(),
+                          IS->Alignment);
+        OS << indent(1) << toString(IS) << '\n';
+        for (DefinedRegular *Sym : SectionSyms[IS])
+          OS << SymStr[Sym] << '\n';
+      }
     }
   }
 }
 
-template void elf::writeMapFile<ELF32LE>(ArrayRef<BaseCommand *>);
-template void elf::writeMapFile<ELF32BE>(ArrayRef<BaseCommand *>);
-template void elf::writeMapFile<ELF64LE>(ArrayRef<BaseCommand *>);
-template void elf::writeMapFile<ELF64BE>(ArrayRef<BaseCommand *>);
+template void elf::writeMapFile<ELF32LE>(ArrayRef<OutputSectionCommand *>);
+template void elf::writeMapFile<ELF32BE>(ArrayRef<OutputSectionCommand *>);
+template void elf::writeMapFile<ELF64LE>(ArrayRef<OutputSectionCommand *>);
+template void elf::writeMapFile<ELF64BE>(ArrayRef<OutputSectionCommand *>);

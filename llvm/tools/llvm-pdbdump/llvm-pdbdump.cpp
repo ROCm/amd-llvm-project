@@ -31,10 +31,10 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Config/config.h"
+#include "llvm/DebugInfo/CodeView/DebugChecksumsSubsection.h"
+#include "llvm/DebugInfo/CodeView/DebugInlineeLinesSubsection.h"
+#include "llvm/DebugInfo/CodeView/DebugLinesSubsection.h"
 #include "llvm/DebugInfo/CodeView/LazyRandomTypeCollection.h"
-#include "llvm/DebugInfo/CodeView/ModuleDebugFileChecksumFragment.h"
-#include "llvm/DebugInfo/CodeView/ModuleDebugInlineeLinesFragment.h"
-#include "llvm/DebugInfo/CodeView/ModuleDebugLineFragment.h"
 #include "llvm/DebugInfo/CodeView/TypeStreamMerger.h"
 #include "llvm/DebugInfo/CodeView/TypeTableBuilder.h"
 #include "llvm/DebugInfo/MSF/MSFBuilder.h"
@@ -378,6 +378,9 @@ cl::opt<std::string> InputFilename(cl::Positional,
 }
 
 namespace pdb2yaml {
+cl::opt<bool> All("all",
+                  cl::desc("Dump everything we know how to dump."),
+                  cl::sub(PdbToYamlSubcommand), cl::init(false));
 cl::opt<bool>
     NoFileHeaders("no-file-headers",
                   cl::desc("Do not dump MSF file headers (you will not be able "
@@ -473,6 +476,7 @@ static void yamlToPdb(StringRef Path) {
   std::unique_ptr<MemoryBuffer> &Buffer = ErrorOrBuffer.get();
 
   llvm::yaml::Input In(Buffer->getBuffer());
+  In.setContext(&Allocator);
   pdb::yaml::PdbObject YamlObj(Allocator);
   In >> YamlObj;
 
@@ -500,6 +504,7 @@ static void yamlToPdb(StringRef Path) {
   pdb::yaml::PdbInfoStream DefaultInfoStream;
   pdb::yaml::PdbDbiStream DefaultDbiStream;
   pdb::yaml::PdbTpiStream DefaultTpiStream;
+  pdb::yaml::PdbTpiStream DefaultIpiStream;
 
   const auto &Info = YamlObj.PdbStream.getValueOr(DefaultInfoStream);
 
@@ -524,14 +529,14 @@ static void yamlToPdb(StringRef Path) {
   DbiBuilder.setVersionHeader(Dbi.VerHeader);
   for (const auto &MI : Dbi.ModInfos) {
     auto &ModiBuilder = ExitOnErr(DbiBuilder.addModuleInfo(MI.Mod));
+    ModiBuilder.setObjFileName(MI.Obj);
 
     for (auto S : MI.SourceFiles)
       ExitOnErr(DbiBuilder.addModuleSourceFile(MI.Mod, S));
     if (MI.Modi.hasValue()) {
       const auto &ModiStream = *MI.Modi;
-      ModiBuilder.setObjFileName(MI.Obj);
       for (auto Symbol : ModiStream.Symbols)
-        ModiBuilder.addSymbol(Symbol.Record);
+        ModiBuilder.addSymbol(Symbol.toCodeViewSymbol(Allocator));
     }
     if (MI.FileLineInfo.hasValue()) {
       const auto &FLI = *MI.FileLineInfo;
@@ -539,8 +544,7 @@ static void yamlToPdb(StringRef Path) {
       // File Checksums must be emitted before line information, because line
       // info records use offsets into the checksum buffer to reference a file's
       // source file name.
-      auto Checksums =
-          llvm::make_unique<ModuleDebugFileChecksumFragment>(Strings);
+      auto Checksums = llvm::make_unique<DebugChecksumsSubsection>(Strings);
       auto &ChecksumRef = *Checksums;
       if (!FLI.FileChecksums.empty()) {
         for (auto &FC : FLI.FileChecksums)
@@ -550,7 +554,7 @@ static void yamlToPdb(StringRef Path) {
 
       for (const auto &Fragment : FLI.LineFragments) {
         auto Lines =
-            llvm::make_unique<ModuleDebugLineFragment>(ChecksumRef, Strings);
+            llvm::make_unique<DebugLinesSubsection>(ChecksumRef, Strings);
         Lines->setCodeSize(Fragment.CodeSize);
         Lines->setRelocationAddress(Fragment.RelocSegment,
                                     Fragment.RelocOffset);
@@ -578,10 +582,10 @@ static void yamlToPdb(StringRef Path) {
       }
 
       for (const auto &Inlinee : FLI.Inlinees) {
-        auto Inlinees = llvm::make_unique<ModuleDebugInlineeLineFragment>(
+        auto Inlinees = llvm::make_unique<DebugInlineeLinesSubsection>(
             ChecksumRef, Inlinee.HasExtraFiles);
         for (const auto &Site : Inlinee.Sites) {
-          Inlinees->addInlineSite(Site.Inlinee, Site.FileName,
+          Inlinees->addInlineSite(TypeIndex(Site.Inlinee), Site.FileName,
                                   Site.SourceLineNum);
           if (!Inlinee.HasExtraFiles)
             continue;
@@ -598,14 +602,18 @@ static void yamlToPdb(StringRef Path) {
   auto &TpiBuilder = Builder.getTpiBuilder();
   const auto &Tpi = YamlObj.TpiStream.getValueOr(DefaultTpiStream);
   TpiBuilder.setVersionHeader(Tpi.Version);
-  for (const auto &R : Tpi.Records)
-    TpiBuilder.addTypeRecord(R.Record.data(), R.Record.Hash);
+  for (const auto &R : Tpi.Records) {
+    CVType Type = R.toCodeViewRecord(Allocator);
+    TpiBuilder.addTypeRecord(Type.RecordData, None);
+  }
 
-  const auto &Ipi = YamlObj.IpiStream.getValueOr(DefaultTpiStream);
+  const auto &Ipi = YamlObj.IpiStream.getValueOr(DefaultIpiStream);
   auto &IpiBuilder = Builder.getIpiBuilder();
   IpiBuilder.setVersionHeader(Ipi.Version);
-  for (const auto &R : Ipi.Records)
-    TpiBuilder.addTypeRecord(R.Record.data(), R.Record.Hash);
+  for (const auto &R : Ipi.Records) {
+    CVType Type = R.toCodeViewRecord(Allocator);
+    IpiBuilder.addTypeRecord(Type.RecordData, None);
+  }
 
   ExitOnErr(Builder.commit(opts::yaml2pdb::YamlPdbOutputFile));
 }
@@ -852,18 +860,17 @@ static void mergePdbs() {
   for (const auto &Path : opts::merge::InputFilenames) {
     std::unique_ptr<IPDBSession> Session;
     auto &File = loadPDB(Path, Session);
-    SmallVector<TypeIndex, 128> SourceToDest;
+    SmallVector<TypeIndex, 128> TypeMap;
+    SmallVector<TypeIndex, 128> IdMap;
     if (File.hasPDBTpiStream()) {
-      SourceToDest.clear();
       auto &Tpi = ExitOnErr(File.getPDBTpiStream());
-      ExitOnErr(codeview::mergeTypeStreams(MergedIpi, MergedTpi, SourceToDest,
-                                           nullptr, Tpi.typeArray()));
+      ExitOnErr(codeview::mergeTypeRecords(MergedTpi, TypeMap, nullptr,
+                                           Tpi.typeArray()));
     }
     if (File.hasPDBIpiStream()) {
-      SourceToDest.clear();
       auto &Ipi = ExitOnErr(File.getPDBIpiStream());
-      ExitOnErr(codeview::mergeTypeStreams(MergedIpi, MergedTpi, SourceToDest,
-                                           nullptr, Ipi.typeArray()));
+      ExitOnErr(codeview::mergeIdRecords(MergedIpi, TypeMap, IdMap,
+                                         Ipi.typeArray()));
     }
   }
 
@@ -877,14 +884,12 @@ static void mergePdbs() {
 
   auto &DestTpi = Builder.getTpiBuilder();
   auto &DestIpi = Builder.getIpiBuilder();
-  MergedTpi.ForEachRecord(
-      [&DestTpi](TypeIndex TI, MutableArrayRef<uint8_t> Data) {
-        DestTpi.addTypeRecord(Data, None);
-      });
-  MergedIpi.ForEachRecord(
-      [&DestIpi](TypeIndex TI, MutableArrayRef<uint8_t> Data) {
-        DestIpi.addTypeRecord(Data, None);
-      });
+  MergedTpi.ForEachRecord([&DestTpi](TypeIndex TI, ArrayRef<uint8_t> Data) {
+    DestTpi.addTypeRecord(Data, None);
+  });
+  MergedIpi.ForEachRecord([&DestIpi](TypeIndex TI, ArrayRef<uint8_t> Data) {
+    DestIpi.addTypeRecord(Data, None);
+  });
 
   SmallString<64> OutFile(opts::merge::PdbOutputFile);
   if (OutFile.empty()) {

@@ -405,7 +405,9 @@ public:
   }
 
   /// Returns if it's reasonable to merge stores to MemVT size.
-  virtual bool canMergeStoresTo(EVT MemVT) const { return true; }
+  virtual bool canMergeStoresTo(unsigned AddressSpace, EVT MemVT) const {
+    return true;
+  }
 
   /// \brief Return true if it is cheap to speculate a call to intrinsic cttz.
   virtual bool isCheapToSpeculateCttz() const {
@@ -736,7 +738,7 @@ public:
     if (VT.isExtended()) return Expand;
     // If a target-specific SDNode requires legalization, require the target
     // to provide custom legalization for it.
-    if (Op > array_lengthof(OpActions[0])) return Custom;
+    if (Op >= array_lengthof(OpActions[0])) return Custom;
     return OpActions[(unsigned)VT.getSimpleVT().SimpleTy][Op];
   }
 
@@ -1139,6 +1141,16 @@ public:
   /// return the limit for functions that have OptSize attribute.
   unsigned getMaxStoresPerMemcpy(bool OptSize) const {
     return OptSize ? MaxStoresPerMemcpyOptSize : MaxStoresPerMemcpy;
+  }
+
+  /// Get maximum # of load operations permitted for memcmp
+  ///
+  /// This function returns the maximum number of load operations permitted
+  /// to replace a call to memcmp. The value is set by the target at the
+  /// performance threshold for such a replacement. If OptSize is true,
+  /// return the limit for functions that have OptSize attribute.
+  unsigned getMaxExpandSizeMemcmp(bool OptSize) const {
+    return OptSize ? MaxLoadsPerMemcmpOptSize : MaxLoadsPerMemcmp;
   }
 
   /// \brief Get maximum # of store operations permitted for llvm.memmove
@@ -2328,6 +2340,8 @@ protected:
   /// Maximum number of store operations that may be substituted for a call to
   /// memcpy, used for functions with OptSize attribute.
   unsigned MaxStoresPerMemcpyOptSize;
+  unsigned MaxLoadsPerMemcmp;
+  unsigned MaxLoadsPerMemcmpOptSize;
 
   /// \brief Specify maximum bytes of store instructions per memmove call.
   ///

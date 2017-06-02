@@ -1043,6 +1043,10 @@ public:
   /// Set the updated access relation read from JSCOP file.
   void setNewAccessRelation(__isl_take isl_map *NewAccessRelation);
 
+  /// Return whether the MemoryyAccess is a partial access. That is, the access
+  /// is not executed in some instances of the parent statement's domain.
+  bool isLatestPartialAccess() const;
+
   /// Mark this a reduction like access
   void markAsReductionLike(ReductionType RT) { RedType = RT; }
 
@@ -1137,7 +1141,8 @@ public:
   const ScopStmt &operator=(const ScopStmt &) = delete;
 
   /// Create the ScopStmt from a BasicBlock.
-  ScopStmt(Scop &parent, BasicBlock &bb, Loop *SurroundingLoop);
+  ScopStmt(Scop &parent, BasicBlock &bb, Loop *SurroundingLoop,
+           std::vector<Instruction *> Instructions);
 
   /// Create an overapproximating ScopStmt for the region @p R.
   ScopStmt(Scop &parent, Region &R, Loop *SurroundingLoop);
@@ -1243,6 +1248,9 @@ private:
 
   /// The closest loop that contains this statement.
   Loop *SurroundingLoop;
+
+  /// Vector for Instructions in a BB.
+  std::vector<Instruction *> Instructions;
 
   /// Build the statement.
   //@{
@@ -1528,6 +1536,10 @@ public:
   ///
   /// @param OS The output stream the ScopStmt is printed to.
   void print(raw_ostream &OS) const;
+
+  /// Print the instructions in ScopStmt.
+  ///
+  void printInstructions(raw_ostream &OS) const;
 
   /// Print the ScopStmt to stderr.
   void dump() const;
@@ -2015,7 +2027,9 @@ private:
   ///
   /// @param BB              The basic block we build the statement for.
   /// @param SurroundingLoop The loop the created statement is contained in.
-  void addScopStmt(BasicBlock *BB, Loop *SurroundingLoop);
+  /// @param Instructions    The instructions in the basic block.
+  void addScopStmt(BasicBlock *BB, Loop *SurroundingLoop,
+                   std::vector<Instruction *> Instructions);
 
   /// Create a new SCoP statement for @p R.
   ///

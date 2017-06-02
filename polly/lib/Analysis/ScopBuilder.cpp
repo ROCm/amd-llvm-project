@@ -407,6 +407,13 @@ bool ScopBuilder::buildAccessMultiDimParam(MemAccInst Inst, ScopStmt *Stmt) {
 
   Sizes.insert(Sizes.end(), AccItr->second.Shape->DelinearizedSizes.begin(),
                AccItr->second.Shape->DelinearizedSizes.end());
+
+  // In case only the element size is contained in the 'Sizes' array, the
+  // access does not access a real multi-dimensional array. Hence, we allow
+  // the normal single-dimensional access construction to handle this.
+  if (Sizes.size() == 1)
+    return false;
+
   // Remove the element size. This information is already provided by the
   // ElementSize parameter. In case the element size of this access and the
   // element size used for delinearization differs the delinearization is
@@ -632,8 +639,15 @@ void ScopBuilder::buildStmts(Region &SR) {
     if (I->isSubRegion())
       buildStmts(*I->getNodeAs<Region>());
     else {
+      std::vector<Instruction *> Instructions;
+      for (Instruction &Inst : *I->getNodeAs<BasicBlock>()) {
+        Loop *L = LI.getLoopFor(Inst.getParent());
+        if (!isa<TerminatorInst>(&Inst) && !canSynthesize(&Inst, *scop, &SE, L))
+          Instructions.push_back(&Inst);
+      }
       Loop *SurroundingLoop = LI.getLoopFor(I->getNodeAs<BasicBlock>());
-      scop->addScopStmt(I->getNodeAs<BasicBlock>(), SurroundingLoop);
+      scop->addScopStmt(I->getNodeAs<BasicBlock>(), SurroundingLoop,
+                        Instructions);
     }
 }
 
@@ -894,12 +908,14 @@ static void verifyUses(Scop *S, LoopInfo &LI, DominatorTree &DT) {
     return;
 
   // PHINodes in the SCoP region's exit block are also uses to be checked.
-  for (auto &Inst : *S->getRegion().getExit()) {
-    if (!isa<PHINode>(Inst))
-      break;
+  if (!S->getRegion().isTopLevelRegion()) {
+    for (auto &Inst : *S->getRegion().getExit()) {
+      if (!isa<PHINode>(Inst))
+        break;
 
-    for (auto &Op : Inst.operands())
-      verifyUse(S, Op, LI);
+      for (auto &Op : Inst.operands())
+        verifyUse(S, Op, LI);
+    }
   }
 }
 #endif
@@ -917,7 +933,7 @@ void ScopBuilder::buildScop(Region &R, AssumptionCache &AC) {
   // To handle these PHI nodes later we will now model their operands as scalar
   // accesses. Note that we do not model anything in the exit block if we have
   // an exiting block in the region, as there will not be any splitting later.
-  if (!scop->hasSingleExitEdge())
+  if (!R.isTopLevelRegion() && !scop->hasSingleExitEdge())
     buildAccessFunctions(*R.getExit(), nullptr,
                          /* IsExitBlock */ true);
 

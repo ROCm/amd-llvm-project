@@ -398,7 +398,17 @@ TargetCodeGenInfo::getDependentLibraryOption(llvm::StringRef Lib,
 }
 
 unsigned TargetCodeGenInfo::getOpenCLKernelCallingConv() const {
-  return llvm::CallingConv::C;
+  // OpenCL kernels are called via an explicit runtime API with arguments
+  // set with clSetKernelArg(), not as normal sub-functions.
+  // Return SPIR_KERNEL by default as the kernel calling convention to
+  // ensure the fingerprint is fixed such way that each OpenCL argument
+  // gets one matching argument in the produced kernel function argument
+  // list to enable feasible implementation of clSetKernelArg() with
+  // aggregates etc. In case we would use the default C calling conv here,
+  // clSetKernelArg() might break depending on the target-specific
+  // conventions; different targets might split structs passed as values
+  // to multiple function arguments etc.
+  return llvm::CallingConv::SPIR_KERNEL;
 }
 
 llvm::Constant *TargetCodeGenInfo::getNullPointer(const CodeGen::CodeGenModule &CGM,
@@ -4821,6 +4831,9 @@ private:
   bool isSwiftErrorInRegister() const override {
     return true;
   }
+
+  bool isLegalVectorTypeForSwift(CharUnits totalSize, llvm::Type *eltTy,
+                                 unsigned elts) const override;
 };
 
 class AArch64TargetCodeGenInfo : public TargetCodeGenInfo {
@@ -4992,6 +5005,17 @@ bool AArch64ABIInfo::isIllegalVectorType(QualType Ty) const {
     return Size != 64 && (Size != 128 || NumElements == 1);
   }
   return false;
+}
+
+bool AArch64ABIInfo::isLegalVectorTypeForSwift(CharUnits totalSize,
+                                               llvm::Type *eltTy,
+                                               unsigned elts) const {
+  if (!llvm::isPowerOf2_32(elts))
+    return false;
+  if (totalSize.getQuantity() != 8 &&
+      (totalSize.getQuantity() != 16 || elts == 1))
+    return false;
+  return true;
 }
 
 bool AArch64ABIInfo::isHomogeneousAggregateBaseType(QualType Ty) const {
@@ -5382,6 +5406,8 @@ private:
   bool isSwiftErrorInRegister() const override {
     return true;
   }
+  bool isLegalVectorTypeForSwift(CharUnits totalSize, llvm::Type *eltTy,
+                                 unsigned elts) const override;
 };
 
 class ARMTargetCodeGenInfo : public TargetCodeGenInfo {
@@ -5892,6 +5918,20 @@ bool ARMABIInfo::isIllegalVectorType(QualType Ty) const {
     }
   }
   return false;
+}
+
+bool ARMABIInfo::isLegalVectorTypeForSwift(CharUnits vectorSize,
+                                           llvm::Type *eltTy,
+                                           unsigned numElts) const {
+  if (!llvm::isPowerOf2_32(numElts))
+    return false;
+  unsigned size = getDataLayout().getTypeStoreSizeInBits(eltTy);
+  if (size > 64)
+    return false;
+  if (vectorSize.getQuantity() != 8 &&
+      (vectorSize.getQuantity() != 16 || numElts == 1))
+    return false;
+  return true;
 }
 
 bool ARMABIInfo::isHomogeneousAggregateBaseType(QualType Ty) const {
@@ -6556,6 +6596,11 @@ public:
     else if (FD->hasAttr<NoMips16Attr>()) {
       Fn->addFnAttr("nomips16");
     }
+
+    if (FD->hasAttr<MicroMipsAttr>())
+      Fn->addFnAttr("micromips");
+    else if (FD->hasAttr<NoMicroMipsAttr>())
+      Fn->addFnAttr("nomicromips");
 
     const MipsInterruptAttr *Attr = FD->getAttr<MipsInterruptAttr>();
     if (!Attr)
@@ -7378,7 +7423,6 @@ void AMDGPUTargetCodeGenInfo::setTargetAttributes(
     }
   }
 
-  // Append OpenCL-specific metadata only for OpenCL inputs
   if (M.getLangOpts().OpenCL) {
     appendOpenCLVersionMD(M);
   }
@@ -8056,7 +8100,17 @@ public:
                     CodeGen::CodeGenModule &M) const override;
   unsigned getOpenCLKernelCallingConv() const override;
 };
+
 } // End anonymous namespace.
+
+namespace clang {
+namespace CodeGen {
+void computeSPIRKernelABIInfo(CodeGenModule &CGM, CGFunctionInfo &FI) {
+  DefaultABIInfo SPIRABI(CGM.getTypes());
+  SPIRABI.computeInfo(FI);
+}
+}
+}
 
 /// Emit SPIR specific metadata: OpenCL and SPIR version.
 void SPIRTargetCodeGenInfo::emitTargetMD(const Decl *D, llvm::GlobalValue *GV,

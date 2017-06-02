@@ -393,7 +393,17 @@ void CallInst::addAttribute(unsigned i, Attribute Attr) {
 }
 
 void CallInst::addParamAttr(unsigned ArgNo, Attribute::AttrKind Kind) {
-  addAttribute(ArgNo + AttributeList::FirstArgIndex, Kind);
+  assert(ArgNo < getNumArgOperands() && "Out of bounds");
+  AttributeList PAL = getAttributes();
+  PAL = PAL.addParamAttribute(getContext(), ArgNo, Kind);
+  setAttributes(PAL);
+}
+
+void CallInst::addParamAttr(unsigned ArgNo, Attribute Attr) {
+  assert(ArgNo < getNumArgOperands() && "Out of bounds");
+  AttributeList PAL = getAttributes();
+  PAL = PAL.addParamAttribute(getContext(), ArgNo, Attr);
+  setAttributes(PAL);
 }
 
 void CallInst::removeAttribute(unsigned i, Attribute::AttrKind Kind) {
@@ -409,7 +419,17 @@ void CallInst::removeAttribute(unsigned i, StringRef Kind) {
 }
 
 void CallInst::removeParamAttr(unsigned ArgNo, Attribute::AttrKind Kind) {
-  removeAttribute(ArgNo + AttributeList::FirstArgIndex, Kind);
+  assert(ArgNo < getNumArgOperands() && "Out of bounds");
+  AttributeList PAL = getAttributes();
+  PAL = PAL.removeParamAttribute(getContext(), ArgNo, Kind);
+  setAttributes(PAL);
+}
+
+void CallInst::removeParamAttr(unsigned ArgNo, StringRef Kind) {
+  assert(ArgNo < getNumArgOperands() && "Out of bounds");
+  AttributeList PAL = getAttributes();
+  PAL = PAL.removeParamAttribute(getContext(), ArgNo, Kind);
+  setAttributes(PAL);
 }
 
 void CallInst::addDereferenceableAttr(unsigned i, uint64_t Bytes) {
@@ -453,6 +473,9 @@ bool CallInst::dataOperandHasImpliedAttr(unsigned i,
   // The attribute A can either be directly specified, if the operand in
   // question is a call argument; or be indirectly implied by the kind of its
   // containing operand bundle, if the operand is a bundle operand.
+
+  if (i == AttributeList::ReturnIndex)
+    return hasRetAttr(Kind);
 
   // FIXME: Avoid these i - 1 calculations and update the API to use zero-based
   // indices.
@@ -779,6 +802,9 @@ bool InvokeInst::dataOperandHasImpliedAttr(unsigned i,
   // question is an invoke argument; or be indirectly implied by the kind of its
   // containing operand bundle, if the operand is a bundle operand.
 
+  if (i == AttributeList::ReturnIndex)
+    return hasRetAttr(Kind);
+
   // FIXME: Avoid these i - 1 calculations and update the API to use zero-based
   // indices.
   if (i < (getNumArgOperands() + 1))
@@ -802,7 +828,9 @@ void InvokeInst::addAttribute(unsigned i, Attribute Attr) {
 }
 
 void InvokeInst::addParamAttr(unsigned ArgNo, Attribute::AttrKind Kind) {
-  addAttribute(ArgNo + AttributeList::FirstArgIndex, Kind);
+  AttributeList PAL = getAttributes();
+  PAL = PAL.addParamAttribute(getContext(), ArgNo, Kind);
+  setAttributes(PAL);
 }
 
 void InvokeInst::removeAttribute(unsigned i, Attribute::AttrKind Kind) {
@@ -818,7 +846,9 @@ void InvokeInst::removeAttribute(unsigned i, StringRef Kind) {
 }
 
 void InvokeInst::removeParamAttr(unsigned ArgNo, Attribute::AttrKind Kind) {
-  removeAttribute(ArgNo + AttributeList::FirstArgIndex, Kind);
+  AttributeList PAL = getAttributes();
+  PAL = PAL.removeParamAttribute(getContext(), ArgNo, Kind);
+  setAttributes(PAL);
 }
 
 void InvokeInst::addDereferenceableAttr(unsigned i, uint64_t Bytes) {

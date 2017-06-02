@@ -658,11 +658,13 @@ void* align(size_t alignment, size_t size, void*& ptr, size_t& space);
 #  include <atomic>
 #endif
 
-#include <__undef_min_max>
-
 #if !defined(_LIBCPP_HAS_NO_PRAGMA_SYSTEM_HEADER)
 #pragma GCC system_header
 #endif
+
+_LIBCPP_PUSH_MACROS
+#include <__undef_macros>
+
 
 _LIBCPP_BEGIN_NAMESPACE_STD
 
@@ -1541,7 +1543,7 @@ struct _LIBCPP_TEMPLATE_VIS allocator_traits
         {return __a.allocate(__n);}
     _LIBCPP_INLINE_VISIBILITY
     static pointer allocate(allocator_type& __a, size_type __n, const_void_pointer __hint)
-        {return allocate(__a, __n, __hint,
+        {return __allocate(__a, __n, __hint,
             __has_allocate_hint<allocator_type, size_type, const_void_pointer>());}
 
     _LIBCPP_INLINE_VISIBILITY
@@ -1595,7 +1597,7 @@ struct _LIBCPP_TEMPLATE_VIS allocator_traits
     _LIBCPP_INLINE_VISIBILITY
     static allocator_type
         select_on_container_copy_construction(const allocator_type& __a)
-            {return select_on_container_copy_construction(
+            {return __select_on_container_copy_construction(
                 __has_select_on_container_copy_construction<const allocator_type>(),
                 __a);}
 
@@ -1694,11 +1696,11 @@ struct _LIBCPP_TEMPLATE_VIS allocator_traits
 private:
 
     _LIBCPP_INLINE_VISIBILITY
-    static pointer allocate(allocator_type& __a, size_type __n,
+    static pointer __allocate(allocator_type& __a, size_type __n,
         const_void_pointer __hint, true_type)
         {return __a.allocate(__n, __hint);}
     _LIBCPP_INLINE_VISIBILITY
-    static pointer allocate(allocator_type& __a, size_type __n,
+    static pointer __allocate(allocator_type& __a, size_type __n,
         const_void_pointer, false_type)
         {return __a.allocate(__n);}
 
@@ -1735,11 +1737,11 @@ private:
 
     _LIBCPP_INLINE_VISIBILITY
     static allocator_type
-        select_on_container_copy_construction(true_type, const allocator_type& __a)
+        __select_on_container_copy_construction(true_type, const allocator_type& __a)
             {return __a.select_on_container_copy_construction();}
     _LIBCPP_INLINE_VISIBILITY
     static allocator_type
-        select_on_container_copy_construction(false_type, const allocator_type& __a)
+        __select_on_container_copy_construction(false_type, const allocator_type& __a)
             {return __a;}
 };
 
@@ -2251,6 +2253,8 @@ void swap(__compressed_pair<_T1, _T2>& __x, __compressed_pair<_T1, _T2>& __y)
 
 template <class _Tp>
 struct _LIBCPP_TEMPLATE_VIS default_delete {
+    static_assert(!is_function<_Tp>::value,
+                  "default_delete cannot be instantiated for function types");
 #ifndef _LIBCPP_CXX03_LANG
   _LIBCPP_INLINE_VISIBILITY constexpr default_delete() noexcept = default;
 #else
@@ -3099,28 +3103,28 @@ struct _LIBCPP_TEMPLATE_VIS hash<__enable_hash_helper<
 struct __destruct_n
 {
 private:
-    size_t size;
+    size_t __size_;
 
     template <class _Tp>
     _LIBCPP_INLINE_VISIBILITY void __process(_Tp* __p, false_type) _NOEXCEPT
-        {for (size_t __i = 0; __i < size; ++__i, ++__p) __p->~_Tp();}
+        {for (size_t __i = 0; __i < __size_; ++__i, ++__p) __p->~_Tp();}
 
     template <class _Tp>
     _LIBCPP_INLINE_VISIBILITY void __process(_Tp*, true_type) _NOEXCEPT
         {}
 
     _LIBCPP_INLINE_VISIBILITY void __incr(false_type) _NOEXCEPT
-        {++size;}
+        {++__size_;}
     _LIBCPP_INLINE_VISIBILITY void __incr(true_type) _NOEXCEPT
         {}
 
     _LIBCPP_INLINE_VISIBILITY void __set(size_t __s, false_type) _NOEXCEPT
-        {size = __s;}
+        {__size_ = __s;}
     _LIBCPP_INLINE_VISIBILITY void __set(size_t, true_type) _NOEXCEPT
         {}
 public:
     _LIBCPP_INLINE_VISIBILITY explicit __destruct_n(size_t __s) _NOEXCEPT
-        : size(__s) {}
+        : __size_(__s) {}
 
     template <class _Tp>
     _LIBCPP_INLINE_VISIBILITY void __incr(_Tp*) _NOEXCEPT
@@ -3653,6 +3657,18 @@ __shared_ptr_emplace<_Tp, _Alloc>::__on_zero_shared_weak() _NOEXCEPT
     __a.deallocate(_PTraits::pointer_to(*this), 1);
 }
 
+struct __shared_ptr_dummy_rebind_allocator_type;
+template <>
+class _LIBCPP_TEMPLATE_VIS allocator<__shared_ptr_dummy_rebind_allocator_type>
+{
+public:
+    template <class _Other>
+    struct rebind
+    {
+        typedef allocator<_Other> other;
+    };
+};
+
 template<class _Tp> class _LIBCPP_TEMPLATE_VIS enable_shared_from_this;
 
 template<class _Tp>
@@ -3921,6 +3937,17 @@ public:
 #endif  // _LIBCPP_HAS_NO_VARIADICS
 
 private:
+    template <class _Yp, bool = is_function<_Yp>::value>
+        struct __shared_ptr_default_allocator
+        {
+            typedef allocator<_Yp> type;
+        };
+
+    template <class _Yp>
+        struct __shared_ptr_default_allocator<_Yp, true>
+        {
+            typedef allocator<__shared_ptr_dummy_rebind_allocator_type> type;
+        };
 
     template <class _Yp, class _OrigPtr>
         _LIBCPP_INLINE_VISIBILITY
@@ -3939,8 +3966,7 @@ private:
             }
         }
 
-    _LIBCPP_INLINE_VISIBILITY
-    void __enable_weak_this(const volatile void*, const volatile void*) _NOEXCEPT {}
+    _LIBCPP_INLINE_VISIBILITY void __enable_weak_this(...) _NOEXCEPT {}
 
     template <class _Up> friend class _LIBCPP_TEMPLATE_VIS shared_ptr;
     template <class _Up> friend class _LIBCPP_TEMPLATE_VIS weak_ptr;
@@ -3972,8 +3998,9 @@ shared_ptr<_Tp>::shared_ptr(_Yp* __p,
     : __ptr_(__p)
 {
     unique_ptr<_Yp> __hold(__p);
-    typedef __shared_ptr_pointer<_Yp*, default_delete<_Yp>, allocator<_Yp> > _CntrlBlk;
-    __cntrl_ = new _CntrlBlk(__p, default_delete<_Yp>(), allocator<_Yp>());
+    typedef typename __shared_ptr_default_allocator<_Yp>::type _AllocT;
+    typedef __shared_ptr_pointer<_Yp*, default_delete<_Yp>, _AllocT > _CntrlBlk;
+    __cntrl_ = new _CntrlBlk(__p, default_delete<_Yp>(), _AllocT());
     __hold.release();
     __enable_weak_this(__p, __p);
 }
@@ -3988,8 +4015,9 @@ shared_ptr<_Tp>::shared_ptr(_Yp* __p, _Dp __d,
     try
     {
 #endif  // _LIBCPP_NO_EXCEPTIONS
-        typedef __shared_ptr_pointer<_Yp*, _Dp, allocator<_Yp> > _CntrlBlk;
-        __cntrl_ = new _CntrlBlk(__p, __d, allocator<_Yp>());
+        typedef typename __shared_ptr_default_allocator<_Yp>::type _AllocT;
+        typedef __shared_ptr_pointer<_Yp*, _Dp, _AllocT > _CntrlBlk;
+        __cntrl_ = new _CntrlBlk(__p, __d, _AllocT());
         __enable_weak_this(__p, __p);
 #ifndef _LIBCPP_NO_EXCEPTIONS
     }
@@ -4010,8 +4038,9 @@ shared_ptr<_Tp>::shared_ptr(nullptr_t __p, _Dp __d)
     try
     {
 #endif  // _LIBCPP_NO_EXCEPTIONS
-        typedef __shared_ptr_pointer<nullptr_t, _Dp, allocator<_Tp> > _CntrlBlk;
-        __cntrl_ = new _CntrlBlk(__p, __d, allocator<_Tp>());
+        typedef typename __shared_ptr_default_allocator<_Tp>::type _AllocT;
+        typedef __shared_ptr_pointer<nullptr_t, _Dp, _AllocT > _CntrlBlk;
+        __cntrl_ = new _CntrlBlk(__p, __d, _AllocT());
 #ifndef _LIBCPP_NO_EXCEPTIONS
     }
     catch (...)
@@ -4179,8 +4208,9 @@ shared_ptr<_Tp>::shared_ptr(unique_ptr<_Yp, _Dp> __r,
     else
 #endif
     {
-        typedef __shared_ptr_pointer<_Yp*, _Dp, allocator<_Yp> > _CntrlBlk;
-        __cntrl_ = new _CntrlBlk(__r.get(), __r.get_deleter(), allocator<_Yp>());
+        typedef typename __shared_ptr_default_allocator<_Yp>::type _AllocT;
+        typedef __shared_ptr_pointer<_Yp*, _Dp, _AllocT > _CntrlBlk;
+        __cntrl_ = new _CntrlBlk(__r.get(), __r.get_deleter(), _AllocT());
         __enable_weak_this(__r.get(), __r.get());
     }
     __r.release();
@@ -4208,10 +4238,11 @@ shared_ptr<_Tp>::shared_ptr(unique_ptr<_Yp, _Dp> __r,
     else
 #endif
     {
+        typedef typename __shared_ptr_default_allocator<_Yp>::type _AllocT;
         typedef __shared_ptr_pointer<_Yp*,
                                      reference_wrapper<typename remove_reference<_Dp>::type>,
-                                     allocator<_Yp> > _CntrlBlk;
-        __cntrl_ = new _CntrlBlk(__r.get(), ref(__r.get_deleter()), allocator<_Yp>());
+                                     _AllocT > _CntrlBlk;
+        __cntrl_ = new _CntrlBlk(__r.get(), ref(__r.get_deleter()), _AllocT());
         __enable_weak_this(__r.get(), __r.get());
     }
     __r.release();
@@ -5544,5 +5575,7 @@ struct __temp_value {
 #endif
 
 _LIBCPP_END_NAMESPACE_STD
+
+_LIBCPP_POP_MACROS
 
 #endif  // _LIBCPP_MEMORY

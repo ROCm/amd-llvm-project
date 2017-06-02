@@ -149,8 +149,10 @@ static KnownBits computeKnownBits(const Value *V, unsigned Depth,
 KnownBits llvm::computeKnownBits(const Value *V, const DataLayout &DL,
                                  unsigned Depth, AssumptionCache *AC,
                                  const Instruction *CxtI,
-                                 const DominatorTree *DT) {
-  return ::computeKnownBits(V, Depth, Query(DL, AC, safeCxtI(V, CxtI), DT));
+                                 const DominatorTree *DT,
+                                 OptimizationRemarkEmitter *ORE) {
+  return ::computeKnownBits(V, Depth,
+                            Query(DL, AC, safeCxtI(V, CxtI), DT, ORE));
 }
 
 bool llvm::haveNoCommonBitsSet(const Value *LHS, const Value *RHS,
@@ -169,6 +171,18 @@ bool llvm::haveNoCommonBitsSet(const Value *LHS, const Value *RHS,
   return (LHSKnown.Zero | RHSKnown.Zero).isAllOnesValue();
 }
 
+
+bool llvm::isOnlyUsedInZeroEqualityComparison(const Instruction *CxtI) {
+  for (const User *U : CxtI->users()) {
+    if (const ICmpInst *IC = dyn_cast<ICmpInst>(U))
+      if (IC->isEquality())
+        if (Constant *C = dyn_cast<Constant>(IC->getOperand(1)))
+          if (C->isNullValue())
+            continue;
+    return false;
+  }
+  return true;
+}
 
 static bool isKnownToBeAPowerOfTwo(const Value *V, bool OrZero, unsigned Depth,
                                    const Query &Q);
@@ -2325,6 +2339,7 @@ bool llvm::ComputeMultiple(Value *V, unsigned Base, Value *&Multiple,
   case Instruction::SExt:
     if (!LookThroughSExt) return false;
     // otherwise fall through to ZExt
+    LLVM_FALLTHROUGH;
   case Instruction::ZExt:
     return ComputeMultiple(I->getOperand(0), Base, Multiple,
                            LookThroughSExt, Depth+1);

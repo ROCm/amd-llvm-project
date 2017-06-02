@@ -61,26 +61,35 @@ llvm::Value *CodeGenFunction::EmitCastToVoidPtr(llvm::Value *value) {
 /// CreateTempAlloca - This creates a alloca and inserts it into the entry
 /// block.
 Address CodeGenFunction::CreateTempAlloca(llvm::Type *Ty, CharUnits Align,
-                                          const Twine &Name) {
-  auto CastedAlloca = CreateTempAlloca(Ty, Name);
-  auto *Alloca = getAddrSpaceCastedAlloca(CastedAlloca);
+                                          const Twine &Name,
+                                          llvm::Value *ArraySize, bool DoCast) {
+  auto Alloca = CreateTempAlloca(Ty, Name, ArraySize);
   Alloca->setAlignment(Align.getQuantity());
-  llvm::Value *Cast = Alloca;
-  if (getLangOpts().OpenCL) {
-    auto PrivAddr = getContext().getTargetAddressSpace(
-        LangAS::opencl_private);
-    if (PrivAddr != 0)
-      Cast = llvm::CastInst::CreatePointerCast(Alloca, Ty->getPointerTo(
-          PrivAddr), "", AllocaInsertPt);
+  llvm::Value *V = Alloca;
+  // Alloca always returns a pointer in alloca address space, which may
+  // be different from the type defined by the language. For example,
+  // in C++ the auto variables are in the default address space. Therefore
+  // cast alloca to the expected address space when necessary.
+  if (DoCast && getASTAllocaAddressSpace() != LangAS::Default) {
+    auto DestAddrSpace = getContext().getTargetAddressSpace(LangAS::Default);
+    V = getTargetHooks().performAddrSpaceCast(
+        *this, V, getASTAllocaAddressSpace(), DestAddrSpace,
+        Ty->getPointerTo(DestAddrSpace), /*non-null*/ true);
   }
-  return Address(Cast, Align);
+
+  return Address(V, Align);
 }
 
-/// CreateTempAlloca - This creates a alloca and inserts it into the entry
-/// block.
-llvm::Instruction *CodeGenFunction::CreateTempAlloca(llvm::Type *Ty,
-                                                     const Twine &Name) {
-  return CreateAlloca(Ty, Name, AllocaInsertPt);
+/// CreateTempAlloca - This creates an alloca and inserts it into the entry
+/// block if \p ArraySize is nullptr, otherwise inserts it at the current
+/// insertion point of the builder.
+llvm::AllocaInst *CodeGenFunction::CreateTempAlloca(llvm::Type *Ty,
+                                                    const Twine &Name,
+                                                    llvm::Value *ArraySize) {
+  if (ArraySize)
+    return Builder.CreateAlloca(Ty, ArraySize, Name);
+  return new llvm::AllocaInst(Ty, CGM.getDataLayout().getAllocaAddrSpace(),
+                              ArraySize, Name, AllocaInsertPt);
 }
 
 llvm::Instruction *CodeGenFunction::CreateAlloca(llvm::Type *Ty,
@@ -116,38 +125,20 @@ void CodeGenFunction::InitTempAlloca(Address Var, llvm::Value *Init) {
   Block->getInstList().insertAfter(AllocaInsertPt->getIterator(), Store);
 }
 
-Address CodeGenFunction::CastToAddrSpace(Address A, QualType Ty) {
-  auto AddrSpace = getContext().getTargetAddressSpace(Ty);
-  if (AddrSpace != CGM.getDataLayout().getAllocaAddrSpace()) {
-    A = Address(Builder.CreateAddrSpaceCast(A.getPointer(),
-      A.getPointer()->getType()->getPointerElementType()->getPointerTo(
-      AddrSpace)), A.getAlignment());
-  }
-  return A;
-}
-
-Address CodeGenFunction::CreateIRTemp(QualType Ty, const Twine &Name,
-    bool KeepAddrSpace) {
+Address CodeGenFunction::CreateIRTemp(QualType Ty, const Twine &Name) {
   CharUnits Align = getContext().getTypeAlignInChars(Ty);
-  auto A = CreateTempAlloca(ConvertType(Ty), Align, Name);
-  if (KeepAddrSpace)
-    return CastToAddrSpace(A, Ty);
-  return A;
+  return CreateTempAlloca(ConvertType(Ty), Align, Name);
 }
 
 Address CodeGenFunction::CreateMemTemp(QualType Ty, const Twine &Name,
-    bool KeepAddrSpace) {
+                                       bool DoCast) {
   // FIXME: Should we prefer the preferred type alignment here?
-  return CreateMemTemp(Ty, getContext().getTypeAlignInChars(Ty), Name,
-      KeepAddrSpace);
+  return CreateMemTemp(Ty, getContext().getTypeAlignInChars(Ty), Name, DoCast);
 }
 
 Address CodeGenFunction::CreateMemTemp(QualType Ty, CharUnits Align,
-                                       const Twine &Name, bool KeepAddrSpace) {
-  auto A = CreateTempAlloca(ConvertTypeForMem(Ty), Align, Name);
-  if (KeepAddrSpace)
-    return CastToAddrSpace(A, Ty);
-  return A;
+                                       const Twine &Name, bool DoCast) {
+  return CreateTempAlloca(ConvertTypeForMem(Ty), Align, Name, nullptr, DoCast);
 }
 
 /// EvaluateExprAsBool - Perform the usual unary conversions on the specified
@@ -372,9 +363,15 @@ createReferenceTemporary(CodeGenFunction &CGF,
         (Ty->isArrayType() || Ty->isRecordType()) &&
         CGF.CGM.isTypeConstant(Ty, true))
       if (llvm::Constant *Init = CGF.CGM.EmitConstantExpr(Inner, Ty, &CGF)) {
+        unsigned AddrSpace = 0;
+        if (CGF.CGM.getTriple().getArch() == llvm::Triple::amdgcn) {
+          AddrSpace =
+              CGF.getContext().getTargetAddressSpace(LangAS::opencl_constant);
+        }
         auto *GV = new llvm::GlobalVariable(
             CGF.CGM.getModule(), Init->getType(), /*isConstant=*/true,
-            llvm::GlobalValue::PrivateLinkage, Init, ".ref.tmp");
+            llvm::GlobalValue::PrivateLinkage, Init, ".ref.tmp", nullptr,
+            llvm::GlobalValue::NotThreadLocal, AddrSpace);
         CharUnits alignment = CGF.getContext().getTypeAlignInChars(Ty);
         GV->setAlignment(alignment.getQuantity());
         // FIXME: Should we put the new global into a COMDAT?
@@ -460,7 +457,7 @@ EmitMaterializeTemporaryExpr(const MaterializeTemporaryExpr *M) {
   Address Object = createReferenceTemporary(*this, M, E);
   if (auto *Var = dyn_cast<llvm::GlobalVariable>(Object.getPointer())) {
     Object = Address(llvm::ConstantExpr::getPointerCast(
-        Var, getTypes().getPointerTypeTo(E->getType())),
+                         Var, ConvertTypeForMem(E->getType())->getPointerTo()),
                      Object.getAlignment());
     // If the temporary is a global and has a constant initializer or is a
     // constant temporary that we promoted to a global, we may have already
@@ -1472,11 +1469,12 @@ llvm::Value *CodeGenFunction::EmitLoadOfScalar(Address Addr, bool Volatile,
     Load->setMetadata(CGM.getModule().getMDKindID("nontemporal"), Node);
   }
   if (TBAAInfo) {
-    llvm::MDNode *TBAAPath = CGM.getTBAAStructTagInfo(TBAABaseType, TBAAInfo,
-                                                      TBAAOffset);
-    if (TBAAPath)
-      CGM.DecorateInstructionWithTBAA(Load, TBAAPath,
-                                      false /*ConvertTypeToTag*/);
+    bool MayAlias = BaseInfo.getMayAlias();
+    llvm::MDNode *TBAA = MayAlias
+        ? CGM.getTBAAInfo(getContext().CharTy)
+        : CGM.getTBAAStructTagInfo(TBAABaseType, TBAAInfo, TBAAOffset);
+    if (TBAA)
+      CGM.DecorateInstructionWithTBAA(Load, TBAA, MayAlias);
   }
 
   if (EmitScalarRangeCheck(Load, Ty, Loc)) {
@@ -1562,11 +1560,12 @@ void CodeGenFunction::EmitStoreOfScalar(llvm::Value *Value, Address Addr,
     Store->setMetadata(CGM.getModule().getMDKindID("nontemporal"), Node);
   }
   if (TBAAInfo) {
-    llvm::MDNode *TBAAPath = CGM.getTBAAStructTagInfo(TBAABaseType, TBAAInfo,
-                                                      TBAAOffset);
-    if (TBAAPath)
-      CGM.DecorateInstructionWithTBAA(Store, TBAAPath,
-                                      false /*ConvertTypeToTag*/);
+    bool MayAlias = BaseInfo.getMayAlias();
+    llvm::MDNode *TBAA = MayAlias
+        ? CGM.getTBAAInfo(getContext().CharTy)
+        : CGM.getTBAAStructTagInfo(TBAABaseType, TBAAInfo, TBAAOffset);
+    if (TBAA)
+      CGM.DecorateInstructionWithTBAA(Store, TBAA, MayAlias);
   }
 }
 
@@ -3577,6 +3576,11 @@ LValue CodeGenFunction::EmitLValueForField(LValue base,
     getFieldAlignmentSource(BaseInfo.getAlignmentSource());
   LValueBaseInfo FieldBaseInfo(fieldAlignSource, BaseInfo.getMayAlias());
 
+  const RecordDecl *rec = field->getParent();
+  if (rec->isUnion() || rec->hasAttr<MayAliasAttr>())
+    FieldBaseInfo.setMayAlias(true);
+  bool mayAlias = FieldBaseInfo.getMayAlias();
+
   if (field->isBitField()) {
     const CGRecordLayout &RL =
       CGM.getTypes().getCGRecordLayout(field->getParent());
@@ -3598,11 +3602,7 @@ LValue CodeGenFunction::EmitLValueForField(LValue base,
     return LValue::MakeBitfield(Addr, Info, fieldType, FieldBaseInfo);
   }
 
-  const RecordDecl *rec = field->getParent();
   QualType type = field->getType();
-
-  bool mayAlias = rec->hasAttr<MayAliasAttr>();
-
   Address addr = base.getAddress();
   unsigned cvr = base.getVRQualifiers();
   bool TBAAPath = CGM.getCodeGenOpts().StructPathTBAA;

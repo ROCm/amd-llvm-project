@@ -687,11 +687,8 @@ Constant *SymbolicallyEvaluateBinop(unsigned Opc, Constant *Op0, Constant *Op1,
   // bits.
 
   if (Opc == Instruction::And) {
-    unsigned BitWidth = DL.getTypeSizeInBits(Op0->getType()->getScalarType());
-    KnownBits Known0(BitWidth);
-    KnownBits Known1(BitWidth);
-    computeKnownBits(Op0, Known0, DL);
-    computeKnownBits(Op1, Known1, DL);
+    KnownBits Known0 = computeKnownBits(Op0, DL);
+    KnownBits Known1 = computeKnownBits(Op1, DL);
     if ((Known1.One | Known0.Zero).isAllOnesValue()) {
       // All the bits of Op0 that the 'and' could be masking are already zero.
       return Op0;
@@ -1742,6 +1739,7 @@ Constant *ConstantFoldScalarCall(StringRef Name, unsigned IntrinsicID, Type *Ty,
         if ((Name == "round" && TLI->has(LibFunc_round)) ||
             (Name == "roundf" && TLI->has(LibFunc_roundf)))
           return ConstantFoldFP(round, V, Ty);
+        break;
       case 's':
         if ((Name == "sin" && TLI->has(LibFunc_sin)) ||
             (Name == "sinf" && TLI->has(LibFunc_sinf)))
@@ -1810,6 +1808,7 @@ Constant *ConstantFoldScalarCall(StringRef Name, unsigned IntrinsicID, Type *Ty,
                 dyn_cast_or_null<ConstantFP>(Op->getAggregateElement(0U)))
           return ConstantFoldSSEConvertToInt(FPOp->getValueAPF(),
                                              /*roundTowardZero=*/false, Ty);
+        LLVM_FALLTHROUGH;
       case Intrinsic::x86_sse_cvttss2si:
       case Intrinsic::x86_sse_cvttss2si64:
       case Intrinsic::x86_sse2_cvttsd2si:
