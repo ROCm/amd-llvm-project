@@ -378,18 +378,10 @@ private:
            ModuleToSummariesForIndex->count(ModulePath);
   }
 
-  bool hasValueId(GlobalValue::GUID ValGUID) {
-    const auto &VMI = GUIDToValueIdMap.find(ValGUID);
-    return VMI != GUIDToValueIdMap.end();
-  }
-  void assignValueId(GlobalValue::GUID ValGUID) {
-    unsigned &ValueId = GUIDToValueIdMap[ValGUID];
-    if (ValueId == 0)
-      ValueId = ++GlobalValueId;
-  }
-  unsigned getValueId(GlobalValue::GUID ValGUID) {
+  Optional<unsigned> getValueId(GlobalValue::GUID ValGUID) {
     auto VMI = GUIDToValueIdMap.find(ValGUID);
-    assert(VMI != GUIDToValueIdMap.end());
+    if (VMI == GUIDToValueIdMap.end())
+      return None;
     return VMI->second;
   }
   std::map<GlobalValue::GUID, unsigned> &valueIds() { return GUIDToValueIdMap; }
@@ -660,10 +652,12 @@ void ModuleBitcodeWriter::writeAttributeTable() {
 
   SmallVector<uint64_t, 64> Record;
   for (unsigned i = 0, e = Attrs.size(); i != e; ++i) {
-    const AttributeList &A = Attrs[i];
-    for (unsigned i = 0, e = A.getNumSlots(); i != e; ++i)
-      Record.push_back(
-          VE.getAttributeGroupID({A.getSlotIndex(i), A.getSlotAttributes(i)}));
+    AttributeList AL = Attrs[i];
+    for (unsigned i = AL.index_begin(), e = AL.index_end(); i != e; ++i) {
+      AttributeSet AS = AL.getAttributes(i);
+      if (AS.hasAttributes())
+        Record.push_back(VE.getAttributeGroupID({i, AS}));
+    }
 
     Stream.EmitRecord(bitc::PARAMATTR_CODE_ENTRY, Record);
     Record.clear();
@@ -3411,34 +3405,6 @@ void IndexBitcodeWriter::writeCombinedGlobalValueSummary() {
   Stream.EnterSubblock(bitc::GLOBALVAL_SUMMARY_BLOCK_ID, 3);
   Stream.EmitRecord(bitc::FS_VERSION, ArrayRef<uint64_t>{INDEX_VERSION});
 
-  // Create value IDs for undefined references.
-  forEachSummary([&](GVInfo I) {
-    if (auto *VS = dyn_cast<GlobalVarSummary>(I.second)) {
-      for (auto &RI : VS->refs())
-        assignValueId(RI.getGUID());
-      return;
-    }
-
-    auto *FS = dyn_cast<FunctionSummary>(I.second);
-    if (!FS)
-      return;
-    for (auto &RI : FS->refs())
-      assignValueId(RI.getGUID());
-
-    for (auto &EI : FS->calls()) {
-      GlobalValue::GUID GUID = EI.first.getGUID();
-      if (!hasValueId(GUID)) {
-        // For SamplePGO, the indirect call targets for local functions will
-        // have its original name annotated in profile. We try to find the
-        // corresponding PGOFuncName as the GUID.
-        GUID = Index.getGUIDFromOriginalID(GUID);
-        if (GUID == 0 || !hasValueId(GUID))
-          continue;
-      }
-      assignValueId(GUID);
-    }
-  });
-
   for (const auto &GVI : valueIds()) {
     Stream.EmitRecord(bitc::FS_VALUE_GUID,
                       ArrayRef<uint64_t>{GVI.second, GVI.first});
@@ -3512,9 +3478,9 @@ void IndexBitcodeWriter::writeCombinedGlobalValueSummary() {
     GlobalValueSummary *S = I.second;
     assert(S);
 
-    assert(hasValueId(I.first));
-    unsigned ValueId = getValueId(I.first);
-    SummaryToValueIdMap[S] = ValueId;
+    auto ValueId = getValueId(I.first);
+    assert(ValueId);
+    SummaryToValueIdMap[S] = *ValueId;
 
     if (auto *AS = dyn_cast<AliasSummary>(S)) {
       // Will process aliases as a post-pass because the reader wants all
@@ -3524,11 +3490,14 @@ void IndexBitcodeWriter::writeCombinedGlobalValueSummary() {
     }
 
     if (auto *VS = dyn_cast<GlobalVarSummary>(S)) {
-      NameVals.push_back(ValueId);
+      NameVals.push_back(*ValueId);
       NameVals.push_back(Index.getModuleId(VS->modulePath()));
       NameVals.push_back(getEncodedGVSummaryFlags(VS->flags()));
       for (auto &RI : VS->refs()) {
-        NameVals.push_back(getValueId(RI.getGUID()));
+        auto RefValueId = getValueId(RI.getGUID());
+        if (!RefValueId)
+          continue;
+        NameVals.push_back(*RefValueId);
       }
 
       // Emit the finished record.
@@ -3542,15 +3511,22 @@ void IndexBitcodeWriter::writeCombinedGlobalValueSummary() {
     auto *FS = cast<FunctionSummary>(S);
     writeFunctionTypeMetadataRecords(Stream, FS);
 
-    NameVals.push_back(ValueId);
+    NameVals.push_back(*ValueId);
     NameVals.push_back(Index.getModuleId(FS->modulePath()));
     NameVals.push_back(getEncodedGVSummaryFlags(FS->flags()));
     NameVals.push_back(FS->instCount());
-    NameVals.push_back(FS->refs().size());
+    // Fill in below
+    NameVals.push_back(0);
 
+    unsigned Count = 0;
     for (auto &RI : FS->refs()) {
-      NameVals.push_back(getValueId(RI.getGUID()));
+      auto RefValueId = getValueId(RI.getGUID());
+      if (!RefValueId)
+        continue;
+      NameVals.push_back(*RefValueId);
+      Count++;
     }
+    NameVals[4] = Count;
 
     bool HasProfileData = false;
     for (auto &EI : FS->calls()) {
@@ -3563,15 +3539,19 @@ void IndexBitcodeWriter::writeCombinedGlobalValueSummary() {
       // If this GUID doesn't have a value id, it doesn't have a function
       // summary and we don't need to record any calls to it.
       GlobalValue::GUID GUID = EI.first.getGUID();
-      if (!hasValueId(GUID)) {
+      auto CallValueId = getValueId(GUID);
+      if (!CallValueId) {
         // For SamplePGO, the indirect call targets for local functions will
         // have its original name annotated in profile. We try to find the
         // corresponding PGOFuncName as the GUID.
         GUID = Index.getGUIDFromOriginalID(GUID);
-        if (GUID == 0 || !hasValueId(GUID))
+        if (GUID == 0)
+          continue;
+        CallValueId = getValueId(GUID);
+        if (!CallValueId)
           continue;
       }
-      NameVals.push_back(getValueId(GUID));
+      NameVals.push_back(*CallValueId);
       if (HasProfileData)
         NameVals.push_back(static_cast<uint8_t>(EI.second.Hotness));
     }

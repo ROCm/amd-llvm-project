@@ -578,7 +578,7 @@ bool ScopDetection::isValidCFG(BasicBlock &BB, bool IsLoopBranch,
     return true;
 
   // Return instructions are only valid if the region is the top level region.
-  if (isa<ReturnInst>(TI) && !CurRegion.getExit() && TI->getNumOperands() == 0)
+  if (isa<ReturnInst>(TI) && CurRegion.isTopLevelRegion())
     return true;
 
   Value *Condition = getConditionFromTerminator(TI);
@@ -823,6 +823,15 @@ bool ScopDetection::hasValidArraySizes(DetectionContext &Context,
                                        SmallVectorImpl<const SCEV *> &Sizes,
                                        const SCEVUnknown *BasePointer,
                                        Loop *Scope) const {
+  // If no sizes were found, all sizes are trivially valid. We allow this case
+  // to make it possible to pass known-affine accesses to the delinearization to
+  // try to recover some interesting multi-dimensional accesses, but to still
+  // allow the already known to be affine access in case the delinearization
+  // fails. In such situations, the delinearization will just return a Sizes
+  // array of size zero.
+  if (Sizes.size() == 0)
+    return true;
+
   Value *BaseValue = BasePointer->getValue();
   Region &CurRegion = Context.CurRegion;
   for (const SCEV *DelinearizedSize : Sizes) {
@@ -893,10 +902,14 @@ bool ScopDetection::computeAccessFunctions(
       else
         IsNonAffine = true;
     } else {
-      SE.computeAccessFunctions(AF, Acc->DelinearizedSubscripts,
-                                Shape->DelinearizedSizes);
-      if (Acc->DelinearizedSubscripts.size() == 0)
-        IsNonAffine = true;
+      if (Shape->DelinearizedSizes.size() == 0) {
+        Acc->DelinearizedSubscripts.push_back(AF);
+      } else {
+        SE.computeAccessFunctions(AF, Acc->DelinearizedSubscripts,
+                                  Shape->DelinearizedSizes);
+        if (Acc->DelinearizedSubscripts.size() == 0)
+          IsNonAffine = true;
+      }
       for (const SCEV *S : Acc->DelinearizedSubscripts)
         if (!isAffine(S, Scope, Context))
           IsNonAffine = true;
@@ -1013,7 +1026,7 @@ bool ScopDetection::isValidAccess(Instruction *Inst, const SCEV *AF,
   } else if (PollyDelinearize && !IsVariantInNonAffineLoop) {
     Context.Accesses[BP].push_back({Inst, AF});
 
-    if (!IsAffine)
+    if (!IsAffine || hasIVParams(AF))
       Context.NonAffineAccesses.insert(
           std::make_pair(BP, LI.getLoopFor(Inst->getParent())));
   } else if (!AllowNonAffine && !IsAffine) {
@@ -1485,13 +1498,14 @@ bool ScopDetection::isValidRegion(DetectionContext &Context) const {
 
   DEBUG(dbgs() << "Checking region: " << CurRegion.getNameStr() << "\n\t");
 
-  if (CurRegion.isTopLevelRegion()) {
+  if (!AllowFullFunction && CurRegion.isTopLevelRegion()) {
     DEBUG(dbgs() << "Top level region is invalid\n");
     return false;
   }
 
   DebugLoc DbgLoc;
-  if (isa<UnreachableInst>(CurRegion.getExit()->getTerminator())) {
+  if (CurRegion.getExit() &&
+      isa<UnreachableInst>(CurRegion.getExit()->getTerminator())) {
     DEBUG(dbgs() << "Unreachable in exit\n");
     return invalid<ReportUnreachableInExit>(Context, /*Assert=*/true,
                                             CurRegion.getExit(), DbgLoc);

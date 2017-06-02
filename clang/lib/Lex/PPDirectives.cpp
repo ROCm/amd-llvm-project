@@ -1171,18 +1171,26 @@ void Preprocessor::HandleLineDirective() {
     CheckEndOfDirective("line", true);
   }
 
-  SourceMgr.AddLineNote(DigitTok.getLocation(), LineNo, FilenameID);
+  // Take the file kind of the file containing the #line directive. #line
+  // directives are often used for generated sources from the same codebase, so
+  // the new file should generally be classified the same way as the current
+  // file. This is visible in GCC's pre-processed output, which rewrites #line
+  // to GNU line markers.
+  SrcMgr::CharacteristicKind FileKind =
+      SourceMgr.getFileCharacteristic(DigitTok.getLocation());
+
+  SourceMgr.AddLineNote(DigitTok.getLocation(), LineNo, FilenameID, false,
+                        false, FileKind);
 
   if (Callbacks)
     Callbacks->FileChanged(CurPPLexer->getSourceLocation(),
-                           PPCallbacks::RenameFile,
-                           SrcMgr::C_User);
+                           PPCallbacks::RenameFile, FileKind);
 }
 
 /// ReadLineMarkerFlags - Parse and validate any flags at the end of a GNU line
 /// marker directive.
 static bool ReadLineMarkerFlags(bool &IsFileEntry, bool &IsFileExit,
-                                bool &IsSystemHeader, bool &IsExternCHeader,
+                                SrcMgr::CharacteristicKind &FileKind,
                                 Preprocessor &PP) {
   unsigned FlagVal;
   Token FlagTok;
@@ -1233,7 +1241,7 @@ static bool ReadLineMarkerFlags(bool &IsFileEntry, bool &IsFileExit,
     return true;
   }
 
-  IsSystemHeader = true;
+  FileKind = SrcMgr::C_System;
 
   PP.Lex(FlagTok);
   if (FlagTok.is(tok::eod)) return false;
@@ -1247,7 +1255,7 @@ static bool ReadLineMarkerFlags(bool &IsFileEntry, bool &IsFileExit,
     return true;
   }
 
-  IsExternCHeader = true;
+  FileKind = SrcMgr::C_ExternCSystem;
 
   PP.Lex(FlagTok);
   if (FlagTok.is(tok::eod)) return false;
@@ -1277,14 +1285,15 @@ void Preprocessor::HandleDigitDirective(Token &DigitTok) {
   Lex(StrTok);
 
   bool IsFileEntry = false, IsFileExit = false;
-  bool IsSystemHeader = false, IsExternCHeader = false;
   int FilenameID = -1;
+  SrcMgr::CharacteristicKind FileKind = SrcMgr::C_User;
 
   // If the StrTok is "eod", then it wasn't present.  Otherwise, it must be a
   // string followed by eod.
-  if (StrTok.is(tok::eod))
-    ; // ok
-  else if (StrTok.isNot(tok::string_literal)) {
+  if (StrTok.is(tok::eod)) {
+    // Treat this like "#line NN", which doesn't change file characteristics.
+    FileKind = SourceMgr.getFileCharacteristic(DigitTok.getLocation());
+  } else if (StrTok.isNot(tok::string_literal)) {
     Diag(StrTok, diag::err_pp_linemarker_invalid_filename);
     return DiscardUntilEndOfDirective();
   } else if (StrTok.hasUDSuffix()) {
@@ -1303,15 +1312,13 @@ void Preprocessor::HandleDigitDirective(Token &DigitTok) {
     FilenameID = SourceMgr.getLineTableFilenameID(Literal.GetString());
 
     // If a filename was present, read any flags that are present.
-    if (ReadLineMarkerFlags(IsFileEntry, IsFileExit,
-                            IsSystemHeader, IsExternCHeader, *this))
+    if (ReadLineMarkerFlags(IsFileEntry, IsFileExit, FileKind, *this))
       return;
   }
 
   // Create a line note with this information.
-  SourceMgr.AddLineNote(DigitTok.getLocation(), LineNo, FilenameID,
-                        IsFileEntry, IsFileExit,
-                        IsSystemHeader, IsExternCHeader);
+  SourceMgr.AddLineNote(DigitTok.getLocation(), LineNo, FilenameID, IsFileEntry,
+                        IsFileExit, FileKind);
 
   // If the preprocessor has callbacks installed, notify them of the #line
   // change.  This is used so that the line marker comes out in -E mode for
@@ -1322,11 +1329,6 @@ void Preprocessor::HandleDigitDirective(Token &DigitTok) {
       Reason = PPCallbacks::EnterFile;
     else if (IsFileExit)
       Reason = PPCallbacks::ExitFile;
-    SrcMgr::CharacteristicKind FileKind = SrcMgr::C_User;
-    if (IsExternCHeader)
-      FileKind = SrcMgr::C_ExternCSystem;
-    else if (IsSystemHeader)
-      FileKind = SrcMgr::C_System;
 
     Callbacks->FileChanged(CurPPLexer->getSourceLocation(), Reason, FileKind);
   }
@@ -1904,6 +1906,25 @@ void Preprocessor::HandleIncludeDirective(SourceLocation HashLoc,
     }
   }
 
+  // The #included file will be considered to be a system header if either it is
+  // in a system include directory, or if the #includer is a system include
+  // header.
+  SrcMgr::CharacteristicKind FileCharacter =
+      SourceMgr.getFileCharacteristic(FilenameTok.getLocation());
+  if (File)
+    FileCharacter = std::max(HeaderInfo.getFileDirFlavor(File), FileCharacter);
+
+  // Ask HeaderInfo if we should enter this #include file.  If not, #including
+  // this file will have no effect.
+  bool SkipHeader = false;
+  if (ShouldEnter && File &&
+      !HeaderInfo.ShouldEnterIncludeFile(*this, File, isImport,
+                                         getLangOpts().Modules,
+                                         SuggestedModule.getModule())) {
+    ShouldEnter = false;
+    SkipHeader = true;
+  }
+
   if (Callbacks) {
     // Notify the callback object that we've seen an inclusion directive.
     Callbacks->InclusionDirective(
@@ -1911,17 +1932,12 @@ void Preprocessor::HandleIncludeDirective(SourceLocation HashLoc,
         LangOpts.MSVCCompat ? NormalizedPath.c_str() : Filename, isAngled,
         FilenameRange, File, SearchPath, RelativePath,
         ShouldEnter ? nullptr : SuggestedModule.getModule());
+    if (SkipHeader && !SuggestedModule.getModule())
+      Callbacks->FileSkipped(*File, FilenameTok, FileCharacter);
   }
 
   if (!File)
     return;
-
-  // The #included file will be considered to be a system header if either it is
-  // in a system include directory, or if the #includer is a system include
-  // header.
-  SrcMgr::CharacteristicKind FileCharacter =
-    std::max(HeaderInfo.getFileDirFlavor(File),
-             SourceMgr.getFileCharacteristic(FilenameTok.getLocation()));
 
   // FIXME: If we have a suggested module, and we've already visited this file,
   // don't bother entering it again. We know it has no further effect.
@@ -1960,19 +1976,6 @@ void Preprocessor::HandleIncludeDirective(SourceLocation HashLoc,
       Diag(FilenameTok, DiagId) << Path <<
         FixItHint::CreateReplacement(Range, Path);
     }
-  }
-
-  // Ask HeaderInfo if we should enter this #include file.  If not, #including
-  // this file will have no effect.
-  bool SkipHeader = false;
-  if (ShouldEnter &&
-      !HeaderInfo.ShouldEnterIncludeFile(*this, File, isImport,
-                                         getLangOpts().Modules,
-                                         SuggestedModule.getModule())) {
-    ShouldEnter = false;
-    SkipHeader = true;
-    if (Callbacks)
-      Callbacks->FileSkipped(*File, FilenameTok, FileCharacter);
   }
 
   // If we don't need to enter the file, stop now.

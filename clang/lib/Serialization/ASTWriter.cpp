@@ -1093,6 +1093,7 @@ void ASTWriter::WriteBlockInfoBlock() {
   RECORD(UNUSED_LOCAL_TYPEDEF_NAME_CANDIDATES);
   RECORD(DELETE_EXPRS_TO_ANALYZE);
   RECORD(CUDA_PRAGMA_FORCE_HOST_DEVICE_DEPTH);
+  RECORD(PP_CONDITIONAL_STACK);
 
   // SourceManager Block.
   BLOCK(SOURCE_MANAGER_BLOCK);
@@ -1421,8 +1422,8 @@ void ASTWriter::WriteControlBlock(Preprocessor &PP, ASTContext &Context,
     Stream.EmitRecordWithBlob(MetadataAbbrevCode, Record,
                               getClangFullRepositoryVersion());
   }
-  if (WritingModule) {
 
+  if (WritingModule) {
     // Module name
     auto Abbrev = std::make_shared<BitCodeAbbrev>();
     Abbrev->Add(BitCodeAbbrevOp(MODULE_NAME));
@@ -1465,9 +1466,10 @@ void ASTWriter::WriteControlBlock(Preprocessor &PP, ASTContext &Context,
     Record.clear();
 
     auto &Map = PP.getHeaderSearchInfo().getModuleMap();
-
-    // Primary module map file.
-    AddPath(Map.getModuleMapFileForUniquing(WritingModule)->getName(), Record);
+    AddPath(WritingModule->PresumedModuleMapFile.empty()
+                ? Map.getModuleMapFileForUniquing(WritingModule)->getName()
+                : StringRef(WritingModule->PresumedModuleMapFile),
+            Record);
 
     // Additional module map files.
     if (auto *AdditionalModMaps =
@@ -2300,6 +2302,18 @@ void ASTWriter::WritePreprocessor(const Preprocessor &PP, bool IsModule) {
   if (PP.getCounterValue() != 0) {
     RecordData::value_type Record[] = {PP.getCounterValue()};
     Stream.EmitRecord(PP_COUNTER_VALUE, Record);
+  }
+
+  if (PP.isRecordingPreamble() && PP.hasRecordedPreamble()) {
+    assert(!IsModule);
+    for (const auto &Cond : PP.getPreambleConditionalStack()) {
+      AddSourceLocation(Cond.IfLoc, Record);
+      Record.push_back(Cond.WasSkipping);
+      Record.push_back(Cond.FoundNonSkip);
+      Record.push_back(Cond.FoundElse);
+    }
+    Stream.EmitRecord(PP_CONDITIONAL_STACK, Record);
+    Record.clear();
   }
 
   // Enter the preprocessor block.

@@ -142,6 +142,7 @@ class Configuration(object):
         self.configure_sanitizer()
         self.configure_coverage()
         self.configure_modules()
+        self.configure_coroutines()
         self.configure_substitutions()
         self.configure_features()
 
@@ -483,9 +484,13 @@ class Configuration(object):
         # Configure extra flags
         compile_flags_str = self.get_lit_conf('compile_flags', '')
         self.cxx.compile_flags += shlex.split(compile_flags_str)
-        # FIXME: Can we remove this?
         if self.is_windows:
+            # FIXME: Can we remove this?
             self.cxx.compile_flags += ['-D_CRT_SECURE_NO_WARNINGS']
+            # Required so that tests using min/max don't fail on Windows,
+            # and so that those tests don't have to be changed to tolerate
+            # this insanity.
+            self.cxx.compile_flags += ['-DNOMINMAX']
 
     def configure_default_compile_flags(self):
         # Try and get the std version from the command line. Fall back to
@@ -953,6 +958,18 @@ class Configuration(object):
         if self.generate_coverage:
             self.cxx.flags += ['-g', '--coverage']
             self.cxx.compile_flags += ['-O0']
+
+    def configure_coroutines(self):
+        if self.cxx.hasCompileFlag('-fcoroutines-ts'):
+            macros = self.cxx.dumpMacros(flags=['-fcoroutines-ts'])
+            if '__cpp_coroutines' not in macros:
+                self.lit_config.warning('-fcoroutines-ts is supported but '
+                    '__cpp_coroutines is not defined')
+            # Consider coroutines supported only when the feature test macro
+            # reflects a recent value.
+            val = macros['__cpp_coroutines'].replace('L', '')
+            if int(val) >= 201703:
+                self.config.available_features.add('fcoroutines-ts')
 
     def configure_modules(self):
         modules_flags = ['-fmodules']
