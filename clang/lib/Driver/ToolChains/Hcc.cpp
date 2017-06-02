@@ -204,9 +204,18 @@ void HCC::CXXAMPLink::ConstructJob(Compilation &C,
   // pass inputs to gnu ld for initial processing
   Linker::ConstructLinkerJob(C, JA, Output, Inputs, Args, LinkingOutput, CmdArgs);
 
+  auto ClampArgs = CmdArgs;
+  if (Args.hasArg(options::OPT_hcc_extra_libs_EQ)) {
+    auto HccExtraLibs = Args.getAllArgValues(options::OPT_hcc_extra_libs_EQ);
+    std::string prefix{"--hcc-extra-libs="};
+    for(auto&& Lib:HccExtraLibs) {
+      ClampArgs.push_back(Args.MakeArgString(prefix + Lib));
+    }
+  }
+
   const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("clamp-link"));
 
-  C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
+  C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, ClampArgs, Inputs));
 }
 
 /// HCC toolchain.
