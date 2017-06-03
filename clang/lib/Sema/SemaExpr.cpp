@@ -13941,12 +13941,16 @@ void Sema::MarkFunctionReferenced(SourceLocation Loc, FunctionDecl *Func,
          MethodFunName == "__cxxamp_trampoline_name") {
       DefineAMPTrampoline(Loc, MethodDecl);
     } else if (MethodDecl->isOverloadedOperator()) {
-      if (is_hip_functor(MethodDecl)) {
-        add_callee_attributes_to_functor(
-            cast<CallExpr>(
-                cast<CompoundStmt>(MethodDecl->getBody())->body_front())
-                ->getDirectCallee(),
-            MethodDecl);
+      if (is_hip_functor(MethodDecl)) { // TODO: temporary.
+        const auto b = cast<CompoundStmt>(MethodDecl->getBody());
+        auto p = std::find_if(
+            b->body_begin(),
+            b->body_end(),
+            [](Stmt* x) { return isa<CallExpr>(x); });
+        if (p != b->body_end()) {
+            add_callee_attributes_to_functor(
+                cast<CallExpr>(*p)->getDirectCallee(), MethodDecl);
+        }
       }
       else if (MethodDecl->getOverloadedOperator() == OO_Equal) {
         MethodDecl = cast<CXXMethodDecl>(MethodDecl->getFirstDecl());
