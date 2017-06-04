@@ -840,14 +840,7 @@ void CodeGenFunction::StartFunction(GlobalDecl GD,
     // Add kernel function signatures into a metadata
     if (const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(D)) {
       // FIXME: abolish use of OpenCLKernelAttr for HCC programs
-      bool is_hip_global = FD->hasAttr<AnnotateAttr>() &&
-          FD->getAttr<AnnotateAttr>()->getAnnotation() == "hip__global__";
-
-      if (FD->hasAttr<OpenCLKernelAttr>() || is_hip_global) {
-        if (is_hip_global) {
-          Fn->setCallingConv(llvm::CallingConv::AMDGPU_KERNEL);
-        }
-
+      if (FD->hasAttr<OpenCLKernelAttr>()) {
         SmallVector<llvm::Metadata *, 5> kernelMDArgs;
         kernelMDArgs.push_back(llvm::ConstantAsMetadata::get(Fn));
 
