@@ -5777,7 +5777,7 @@ Sema::BuildCompoundLiteralExpr(SourceLocation LParenLoc, TypeSourceInfo *TInfo,
   InitializedEntity Entity
     = InitializedEntity::InitializeCompoundLiteralInit(TInfo);
   InitializationKind Kind
-    = InitializationKind::CreateCStyleCast(LParenLoc,
+    = InitializationKind::CreateCStyleCast(LParenLoc, 
                                            SourceRange(LParenLoc, RParenLoc),
                                            /*InitList=*/true);
   InitializationSequence InitSeq(*this, Entity, Kind, LiteralExpr);
@@ -6056,7 +6056,7 @@ static bool breakDownVectorType(QualType type, uint64_t &len,
     assert(eltType->isScalarType());
     return true;
   }
-
+  
   // We allow lax conversion to and from non-vector types, but only if
   // they're real types (i.e. non-complex, non-pointer scalar types).
   if (!type->isRealType()) return false;

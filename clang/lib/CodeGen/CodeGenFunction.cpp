@@ -843,7 +843,7 @@ void CodeGenFunction::StartFunction(GlobalDecl GD,
       if (FD->hasAttr<OpenCLKernelAttr>()) {
         SmallVector<llvm::Metadata *, 5> kernelMDArgs;
         kernelMDArgs.push_back(llvm::ConstantAsMetadata::get(Fn));
-
+  
         llvm::MDNode *kernelMDNode = llvm::MDNode::get(getLLVMContext(), kernelMDArgs);
         llvm::NamedMDNode *HCCKernelMetadata =
           CGM.getModule().getOrInsertNamedMetadata("hcc.kernels");
