@@ -13809,6 +13809,27 @@ static bool isImplicitlyDefinableConstexprFunction(FunctionDecl *Func) {
          (Func->isImplicitlyInstantiable() || (MD && !MD->isUserProvided()));
 }
 
+namespace
+{   // TODO: potentially temporary.
+  inline
+  bool is_hip_functor(const CXXMethodDecl* f)
+  {
+    static constexpr const char prefix[] = "HIP_kernel_functor_name_begin";
+
+    return f->getOverloadedOperator() == OO_Call &&
+    f->getParent()->getName().find(prefix) != StringRef::npos;
+  }
+
+  inline
+  void add_callee_attributes_to_functor(
+    const FunctionDecl* callee, FunctionDecl* functor_call_operator)
+  {
+    functor_call_operator->dropAttrs();
+    functor_call_operator->setAttrs(callee->getAttrs());
+    functor_call_operator->dropAttr<AnnotateAttr>();
+  }
+}
+
 /// \brief Mark a function referenced, and check whether it is odr-used
 /// (C++ [basic.def.odr]p2, C99 6.9p3)
 void Sema::MarkFunctionReferenced(SourceLocation Loc, FunctionDecl *Func,
@@ -13919,14 +13940,26 @@ void Sema::MarkFunctionReferenced(SourceLocation Loc, FunctionDecl *Func,
     } else if (MethodFunName == "__cxxamp_trampoline"||
          MethodFunName == "__cxxamp_trampoline_name") {
       DefineAMPTrampoline(Loc, MethodDecl);
-    } else if (MethodDecl->isOverloadedOperator() &&
-               MethodDecl->getOverloadedOperator() == OO_Equal) {
-      MethodDecl = cast<CXXMethodDecl>(MethodDecl->getFirstDecl());
-      if (MethodDecl->isDefaulted() && !MethodDecl->isDeleted()) {
-        if (MethodDecl->isCopyAssignmentOperator())
-          DefineImplicitCopyAssignment(Loc, MethodDecl);
-        else if (MethodDecl->isMoveAssignmentOperator())
-          DefineImplicitMoveAssignment(Loc, MethodDecl);
+    } else if (MethodDecl->isOverloadedOperator()) {
+      if (is_hip_functor(MethodDecl)) { // TODO: temporary.
+        const auto b = cast<CompoundStmt>(MethodDecl->getBody());
+        auto p = std::find_if(
+            b->body_begin(),
+            b->body_end(),
+            [](Stmt* x) { return isa<CallExpr>(x); });
+        if (p != b->body_end()) {
+            add_callee_attributes_to_functor(
+                cast<CallExpr>(*p)->getDirectCallee(), MethodDecl);
+        }
+      }
+      else if (MethodDecl->getOverloadedOperator() == OO_Equal) {
+        MethodDecl = cast<CXXMethodDecl>(MethodDecl->getFirstDecl());
+        if (MethodDecl->isDefaulted() && !MethodDecl->isDeleted()) {
+          if (MethodDecl->isCopyAssignmentOperator())
+            DefineImplicitCopyAssignment(Loc, MethodDecl);
+          else if (MethodDecl->isMoveAssignmentOperator())
+            DefineImplicitMoveAssignment(Loc, MethodDecl);
+        }
       }
     } else if (isa<CXXConversionDecl>(MethodDecl) &&
                MethodDecl->getParent()->isLambda()) {
