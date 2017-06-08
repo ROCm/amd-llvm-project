@@ -25,6 +25,8 @@
 #include <system_error>
 #include <utility>
 
+#include <iostream>
+
 using namespace clang::driver;
 using namespace clang::driver::toolchains;
 using namespace clang::driver::tools;
@@ -172,23 +174,20 @@ namespace
         }
     };
 
-    std::pair<std::vector<std::string>, int> detect_gfxip(
+    std::vector<std::string> detect_gfxip(
         const Compilation& c, const ToolChain& tc)
-    {   // Invariant: rocm_agent_enumerator returns EXIT_SUCCESS iff it executes
-        //            correctly.
-        // Invariant: iff it executes correctly, rocm_agent_enumerator returns
+    {   // Invariant: iff it executes correctly, rocm_agent_enumerator returns
         //            at least gfx000; returning only gfx000 signals the absence
         //            of valid GPU agents.
         // Invariant: iff it executes correctly, and iff there are valid GPU
         //            agents present rocm_agent_enumerator returns the set
         //            formed from their union, including gfx000.
-        std::pair<std::vector<std::string>, int> r{{}, EXIT_FAILURE};
+        std::vector<std::string> r;
 
         const char* tmp = std::getenv("ROCM_ROOT");
         const char* rocm = tmp ? tmp : "/opt/rocm";
 
-        const auto e =
-            c.getSysRoot() + rocm + "/bin/rocm_agent_enumerator";
+        const auto e = c.getSysRoot() + rocm + "/bin/rocm_agent_enumerator";
 
         if (!tc.getVFS().exists(e)) return r;
 
@@ -199,23 +198,19 @@ namespace
         if (!pipe) return r;
 
         static constexpr std::size_t buf_sz = 16u;
-        std::array<char, buf_sz> buf;
+        std::array<char, buf_sz> buf = {{}};
         while (std::fgets(buf.data(), buf.size(), pipe.get())) {
-            r.first.emplace_back(buf.data());
+            r.emplace_back(buf.data());
         }
-        pipe.reset(nullptr);
-
-        if (d.status != EXIT_SUCCESS) return r;
-
-        for (auto&& x : r.first) { // fgets copies the newline.
+        
+        for (auto&& x : r) { // fgets copies the newline.
             x.erase(std::remove(x.begin(), x.end(), '\n'), x.end());
         }
 
-        if (r.first.size() > 1) {
-            std::sort(r.first.rbegin(), r.first.rend());
-            r.first.pop_back(); // Remove null-agent.
+        if (r.size() > 1) {
+            std::sort(r.rbegin(), r.rend());
+            r.pop_back(); // Remove null-agent.
         }
-        r.second = EXIT_SUCCESS;
 
         return r;
     }
@@ -226,14 +221,14 @@ namespace
         constexpr const char null_agent[] = "gfx000";
 
         const auto detected_targets = detect_gfxip(c, tc);
-        if (detected_targets.second != EXIT_SUCCESS) {
+        if (detected_targets.empty()) {
             c.getDriver().Diag(diag::warn_amdgpu_agent_detector_failed);
         }
-        else if (detected_targets.first[0] == null_agent) {
+        else if (detected_targets[0] == null_agent) {
             c.getDriver().Diag(diag::err_amdgpu_no_agent_available);
         }
 
-        return detected_targets.first;
+        return detected_targets;
     }
 
     bool is_valid(const std::string& gfxip)
