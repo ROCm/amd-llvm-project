@@ -12,6 +12,7 @@
 
 #include "OutputStyle.h"
 
+#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/DebugInfo/CodeView/TypeDatabase.h"
 #include "llvm/Support/ScopedPrinter.h"
@@ -20,6 +21,11 @@
 
 namespace llvm {
 class BitVector;
+
+namespace codeview {
+class LazyRandomTypeCollection;
+}
+
 namespace pdb {
 class LLVMOutputStyle : public OutputStyle {
 public:
@@ -28,6 +34,9 @@ public:
   Error dump() override;
 
 private:
+  Expected<codeview::LazyRandomTypeCollection &>
+  initializeTypeDatabase(uint32_t SN);
+
   Error dumpFileHeaders();
   Error dumpStreamSummary();
   Error dumpFreePageMap();
@@ -51,8 +60,8 @@ private:
 
   PDBFile &File;
   ScopedPrinter P;
-  codeview::TypeDatabase TypeDB;
-  codeview::TypeDatabase ItemDB;
+  std::unique_ptr<codeview::LazyRandomTypeCollection> TpiTypes;
+  std::unique_ptr<codeview::LazyRandomTypeCollection> IpiTypes;
   SmallVector<std::string, 32> StreamPurposes;
 };
 }

@@ -606,7 +606,7 @@ public:
   template <typename T>
   void bitSetCase(T &Val, const char* Str, const T ConstVal) {
     if ( bitSetMatch(Str, outputting() && (Val & ConstVal) == ConstVal) ) {
-      Val = Val | ConstVal;
+      Val = static_cast<T>(Val | ConstVal);
     }
   }
 
@@ -614,7 +614,7 @@ public:
   template <typename T>
   void bitSetCase(T &Val, const char* Str, const uint32_t ConstVal) {
     if ( bitSetMatch(Str, outputting() && (Val & ConstVal) == ConstVal) ) {
-      Val = Val | ConstVal;
+      Val = static_cast<T>(Val | ConstVal);
     }
   }
 
@@ -1602,6 +1602,44 @@ template <typename T> struct StdMapStringCustomMappingTraitsImpl {
   struct SequenceTraits<std::vector<_type, Allocator>>                         \
       : public SequenceTraitsImpl<std::vector<_type, Allocator>> {             \
     static const bool flow = true;                                             \
+  };                                                                           \
+  }                                                                            \
+  }
+
+#define LLVM_YAML_DECLARE_MAPPING_TRAITS(Type)                                 \
+  namespace llvm {                                                             \
+  namespace yaml {                                                             \
+  template <> struct MappingTraits<Type> {                                     \
+    static void mapping(IO &IO, Type &Obj);                                    \
+  };                                                                           \
+  }                                                                            \
+  }
+
+#define LLVM_YAML_DECLARE_ENUM_TRAITS(Type)                                    \
+  namespace llvm {                                                             \
+  namespace yaml {                                                             \
+  template <> struct ScalarEnumerationTraits<Type> {                           \
+    static void enumeration(IO &io, Type &Value);                              \
+  };                                                                           \
+  }                                                                            \
+  }
+
+#define LLVM_YAML_DECLARE_BITSET_TRAITS(Type)                                  \
+  namespace llvm {                                                             \
+  namespace yaml {                                                             \
+  template <> struct ScalarBitSetTraits<Type> {                                \
+    static void bitset(IO &IO, Type &Options);                                 \
+  };                                                                           \
+  }                                                                            \
+  }
+
+#define LLVM_YAML_DECLARE_SCALAR_TRAITS(Type, MustQuote)                       \
+  namespace llvm {                                                             \
+  namespace yaml {                                                             \
+  template <> struct ScalarTraits<Type> {                                      \
+    static void output(const Type &Value, void *ctx, llvm::raw_ostream &Out);  \
+    static StringRef input(StringRef Scalar, void *ctxt, Type &Value);         \
+    static bool mustQuote(StringRef) { return MustQuote; }                     \
   };                                                                           \
   }                                                                            \
   }

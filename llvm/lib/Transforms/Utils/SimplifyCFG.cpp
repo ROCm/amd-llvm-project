@@ -60,6 +60,7 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/KnownBits.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
@@ -595,7 +596,7 @@ private:
       Span = Span.inverse();
 
     // If there are a ton of values, we don't want to make a ginormous switch.
-    if (Span.getSetSize().ugt(8) || Span.isEmptySet()) {
+    if (Span.isSizeLargerThan(8) || Span.isEmptySet()) {
       return false;
     }
 
@@ -714,10 +715,9 @@ BasicBlock *SimplifyCFGOpt::GetValueEqualityComparisonCases(
     TerminatorInst *TI, std::vector<ValueEqualityComparisonCase> &Cases) {
   if (SwitchInst *SI = dyn_cast<SwitchInst>(TI)) {
     Cases.reserve(SI->getNumCases());
-    for (SwitchInst::CaseIt i = SI->case_begin(), e = SI->case_end(); i != e;
-         ++i)
-      Cases.push_back(
-          ValueEqualityComparisonCase(i.getCaseValue(), i.getCaseSuccessor()));
+    for (auto Case : SI->cases())
+      Cases.push_back(ValueEqualityComparisonCase(Case.getCaseValue(),
+                                                  Case.getCaseSuccessor()));
     return SI->getDefaultDest();
   }
 
@@ -850,12 +850,12 @@ bool SimplifyCFGOpt::SimplifyEqualityComparisonWithOnlyPredecessor(
       }
     for (SwitchInst::CaseIt i = SI->case_end(), e = SI->case_begin(); i != e;) {
       --i;
-      if (DeadCases.count(i.getCaseValue())) {
+      if (DeadCases.count(i->getCaseValue())) {
         if (HasWeight) {
-          std::swap(Weights[i.getCaseIndex() + 1], Weights.back());
+          std::swap(Weights[i->getCaseIndex() + 1], Weights.back());
           Weights.pop_back();
         }
-        i.getCaseSuccessor()->removePredecessor(TI->getParent());
+        i->getCaseSuccessor()->removePredecessor(TI->getParent());
         SI->removeCase(i);
       }
     }
@@ -1374,53 +1374,6 @@ HoistTerminator:
 
   EraseTerminatorInstAndDCECond(BI);
   return true;
-}
-
-// Is it legal to place a variable in operand \c OpIdx of \c I?
-// FIXME: This should be promoted to Instruction.
-static bool canReplaceOperandWithVariable(const Instruction *I,
-                                          unsigned OpIdx) {
-  // We can't have a PHI with a metadata type.
-  if (I->getOperand(OpIdx)->getType()->isMetadataTy())
-    return false;
-
-  // Early exit.
-  if (!isa<Constant>(I->getOperand(OpIdx)))
-    return true;
-
-  switch (I->getOpcode()) {
-  default:
-    return true;
-  case Instruction::Call:
-  case Instruction::Invoke:
-    // FIXME: many arithmetic intrinsics have no issue taking a
-    // variable, however it's hard to distingish these from
-    // specials such as @llvm.frameaddress that require a constant.
-    if (isa<IntrinsicInst>(I))
-      return false;
-
-    // Constant bundle operands may need to retain their constant-ness for
-    // correctness.
-    if (ImmutableCallSite(I).isBundleOperand(OpIdx))
-      return false;
-
-    return true;
-
-  case Instruction::ShuffleVector:
-    // Shufflevector masks are constant.
-    return OpIdx != 2;
-  case Instruction::ExtractValue:
-  case Instruction::InsertValue:
-    // All operands apart from the first are constant.
-    return OpIdx == 0;
-  case Instruction::Alloca:
-    return false;
-  case Instruction::GetElementPtr:
-    if (OpIdx == 0)
-      return true;
-    gep_type_iterator It = std::next(gep_type_begin(I), OpIdx - 1);
-    return It.isSequential();
-  }
 }
 
 // All instructions in Insts belong to different blocks that all unconditionally
@@ -2231,11 +2184,11 @@ static bool FoldCondBranchOnPHI(BranchInst *BI, const DataLayout &DL,
       }
 
       // Check for trivial simplification.
-      if (Value *V = SimplifyInstruction(N, DL)) {
+      if (Value *V = SimplifyInstruction(N, {DL, nullptr, nullptr, AC})) {
         if (!BBI->use_empty())
           TranslateMap[&*BBI] = V;
         if (!N->mayHaveSideEffects()) {
-          delete N; // Instruction folded away, don't need actual inst
+          N->deleteValue(); // Instruction folded away, don't need actual inst
           N = nullptr;
         }
       } else {
@@ -2307,7 +2260,7 @@ static bool FoldTwoEntryPHINode(PHINode *PN, const TargetTransformInfo &TTI,
 
   for (BasicBlock::iterator II = BB->begin(); isa<PHINode>(II);) {
     PHINode *PN = cast<PHINode>(II++);
-    if (Value *V = SimplifyInstruction(PN, DL)) {
+    if (Value *V = SimplifyInstruction(PN, {DL, PN})) {
       PN->replaceAllUsesWith(V);
       PN->eraseFromParent();
       continue;
@@ -3056,6 +3009,15 @@ static bool mergeConditionalStores(BranchInst *PBI, BranchInst *QBI) {
   BasicBlock *QFB = QBI->getSuccessor(1);
   BasicBlock *PostBB = QFB->getSingleSuccessor();
 
+  // Make sure we have a good guess for PostBB. If QTB's only successor is
+  // QFB, then QFB is a better PostBB.
+  if (QTB->getSingleSuccessor() == QFB)
+    PostBB = QFB;
+
+  // If we couldn't find a good PostBB, stop.
+  if (!PostBB)
+    return false;
+
   bool InvertPCond = false, InvertQCond = false;
   // Canonicalize fallthroughs to the true branches.
   if (PFB == QBI->getParent()) {
@@ -3080,14 +3042,13 @@ static bool mergeConditionalStores(BranchInst *PBI, BranchInst *QBI) {
   auto HasOnePredAndOneSucc = [](BasicBlock *BB, BasicBlock *P, BasicBlock *S) {
     return BB->getSinglePredecessor() == P && BB->getSingleSuccessor() == S;
   };
-  if (!PostBB ||
-      !HasOnePredAndOneSucc(PFB, PBI->getParent(), QBI->getParent()) ||
+  if (!HasOnePredAndOneSucc(PFB, PBI->getParent(), QBI->getParent()) ||
       !HasOnePredAndOneSucc(QFB, QBI->getParent(), PostBB))
     return false;
   if ((PTB && !HasOnePredAndOneSucc(PTB, PBI->getParent(), QBI->getParent())) ||
       (QTB && !HasOnePredAndOneSucc(QTB, QBI->getParent(), PostBB)))
     return false;
-  if (PostBB->getNumUses() != 2 || QBI->getParent()->getNumUses() != 2)
+  if (!PostBB->hasNUses(2) || !QBI->getParent()->hasNUses(2))
     return false;
 
   // OK, this is a sequence of two diamonds or triangles.
@@ -3444,8 +3405,8 @@ static bool SimplifySwitchOnSelect(SwitchInst *SI, SelectInst *Select) {
 
   // Find the relevant condition and destinations.
   Value *Condition = Select->getCondition();
-  BasicBlock *TrueBB = SI->findCaseValue(TrueVal).getCaseSuccessor();
-  BasicBlock *FalseBB = SI->findCaseValue(FalseVal).getCaseSuccessor();
+  BasicBlock *TrueBB = SI->findCaseValue(TrueVal)->getCaseSuccessor();
+  BasicBlock *FalseBB = SI->findCaseValue(FalseVal)->getCaseSuccessor();
 
   // Get weight for TrueBB and FalseBB.
   uint32_t TrueWeight = 0, FalseWeight = 0;
@@ -3455,9 +3416,9 @@ static bool SimplifySwitchOnSelect(SwitchInst *SI, SelectInst *Select) {
     GetBranchWeights(SI, Weights);
     if (Weights.size() == 1 + SI->getNumCases()) {
       TrueWeight =
-          (uint32_t)Weights[SI->findCaseValue(TrueVal).getSuccessorIndex()];
+          (uint32_t)Weights[SI->findCaseValue(TrueVal)->getSuccessorIndex()];
       FalseWeight =
-          (uint32_t)Weights[SI->findCaseValue(FalseVal).getSuccessorIndex()];
+          (uint32_t)Weights[SI->findCaseValue(FalseVal)->getSuccessorIndex()];
     }
   }
 
@@ -3537,7 +3498,7 @@ static bool TryToSimplifyUncondBranchWithICmpInIt(
     assert(VVal && "Should have a unique destination value");
     ICI->setOperand(0, VVal);
 
-    if (Value *V = SimplifyInstruction(ICI, DL)) {
+    if (Value *V = SimplifyInstruction(ICI, {DL, ICI})) {
       ICI->replaceAllUsesWith(V);
       ICI->eraseFromParent();
     }
@@ -3747,7 +3708,7 @@ bool SimplifyCFGOpt::SimplifyCommonResume(ResumeInst *RI) {
     if (!isa<DbgInfoIntrinsic>(I))
       return false;
 
-  SmallSet<BasicBlock *, 4> TrivialUnwindBlocks;
+  SmallSetVector<BasicBlock *, 4> TrivialUnwindBlocks;
   auto *PhiLPInst = cast<PHINode>(RI->getValue());
 
   // Check incoming blocks to see if any of them are trivial.
@@ -4160,7 +4121,7 @@ bool SimplifyCFGOpt::SimplifyUnreachable(UnreachableInst *UI) {
       }
     } else if (auto *SI = dyn_cast<SwitchInst>(TI)) {
       for (auto i = SI->case_begin(), e = SI->case_end(); i != e;) {
-        if (i.getCaseSuccessor() != BB) {
+        if (i->getCaseSuccessor() != BB) {
           ++i;
           continue;
         }
@@ -4251,18 +4212,18 @@ static bool TurnSwitchRangeIntoICmp(SwitchInst *SI, IRBuilder<> &Builder) {
   SmallVector<ConstantInt *, 16> CasesA;
   SmallVector<ConstantInt *, 16> CasesB;
 
-  for (SwitchInst::CaseIt I : SI->cases()) {
-    BasicBlock *Dest = I.getCaseSuccessor();
+  for (auto Case : SI->cases()) {
+    BasicBlock *Dest = Case.getCaseSuccessor();
     if (!DestA)
       DestA = Dest;
     if (Dest == DestA) {
-      CasesA.push_back(I.getCaseValue());
+      CasesA.push_back(Case.getCaseValue());
       continue;
     }
     if (!DestB)
       DestB = Dest;
     if (Dest == DestB) {
-      CasesB.push_back(I.getCaseValue());
+      CasesB.push_back(Case.getCaseValue());
       continue;
     }
     return false; // More than two destinations.
@@ -4360,8 +4321,7 @@ static bool EliminateDeadSwitchCases(SwitchInst *SI, AssumptionCache *AC,
                                      const DataLayout &DL) {
   Value *Cond = SI->getCondition();
   unsigned Bits = Cond->getType()->getIntegerBitWidth();
-  APInt KnownZero(Bits, 0), KnownOne(Bits, 0);
-  computeKnownBits(Cond, KnownZero, KnownOne, DL, 0, AC, SI);
+  KnownBits Known = computeKnownBits(Cond, DL, 0, AC, SI);
 
   // We can also eliminate cases by determining that their values are outside of
   // the limited range of the condition based on how many significant (non-sign)
@@ -4372,8 +4332,8 @@ static bool EliminateDeadSwitchCases(SwitchInst *SI, AssumptionCache *AC,
   // Gather dead cases.
   SmallVector<ConstantInt *, 8> DeadCases;
   for (auto &Case : SI->cases()) {
-    APInt CaseVal = Case.getCaseValue()->getValue();
-    if ((CaseVal & KnownZero) != 0 || (CaseVal & KnownOne) != KnownOne ||
+    const APInt &CaseVal = Case.getCaseValue()->getValue();
+    if (Known.Zero.intersects(CaseVal) || !Known.One.isSubsetOf(CaseVal) ||
         (CaseVal.getMinSignedBits() > MaxSignificantBitsInCond)) {
       DeadCases.push_back(Case.getCaseValue());
       DEBUG(dbgs() << "SimplifyCFG: switch case " << CaseVal << " is dead.\n");
@@ -4387,7 +4347,7 @@ static bool EliminateDeadSwitchCases(SwitchInst *SI, AssumptionCache *AC,
   bool HasDefault =
       !isa<UnreachableInst>(SI->getDefaultDest()->getFirstNonPHIOrDbg());
   const unsigned NumUnknownBits =
-      Bits - (KnownZero | KnownOne).countPopulation();
+      Bits - (Known.Zero | Known.One).countPopulation();
   assert(NumUnknownBits <= Bits);
   if (HasDefault && DeadCases.empty() &&
       NumUnknownBits < 64 /* avoid overflow */ &&
@@ -4412,17 +4372,17 @@ static bool EliminateDeadSwitchCases(SwitchInst *SI, AssumptionCache *AC,
 
   // Remove dead cases from the switch.
   for (ConstantInt *DeadCase : DeadCases) {
-    SwitchInst::CaseIt Case = SI->findCaseValue(DeadCase);
-    assert(Case != SI->case_default() &&
+    SwitchInst::CaseIt CaseI = SI->findCaseValue(DeadCase);
+    assert(CaseI != SI->case_default() &&
            "Case was not found. Probably mistake in DeadCases forming.");
     if (HasWeight) {
-      std::swap(Weights[Case.getCaseIndex() + 1], Weights.back());
+      std::swap(Weights[CaseI->getCaseIndex() + 1], Weights.back());
       Weights.pop_back();
     }
 
     // Prune unused values from PHI nodes.
-    Case.getCaseSuccessor()->removePredecessor(SI->getParent());
-    SI->removeCase(Case);
+    CaseI->getCaseSuccessor()->removePredecessor(SI->getParent());
+    SI->removeCase(CaseI);
   }
   if (HasWeight && Weights.size() >= 2) {
     SmallVector<uint32_t, 8> MDWeights(Weights.begin(), Weights.end());
@@ -4476,10 +4436,9 @@ static bool ForwardSwitchConditionToPHI(SwitchInst *SI) {
   typedef DenseMap<PHINode *, SmallVector<int, 4>> ForwardingNodesMap;
   ForwardingNodesMap ForwardingNodes;
 
-  for (SwitchInst::CaseIt I = SI->case_begin(), E = SI->case_end(); I != E;
-       ++I) {
-    ConstantInt *CaseValue = I.getCaseValue();
-    BasicBlock *CaseDest = I.getCaseSuccessor();
+  for (auto Case : SI->cases()) {
+    ConstantInt *CaseValue = Case.getCaseValue();
+    BasicBlock *CaseDest = Case.getCaseSuccessor();
 
     int PhiIndex;
     PHINode *PHI =
@@ -4939,7 +4898,7 @@ SwitchLookupTable::SwitchLookupTable(
         LinearMappingPossible = false;
         break;
       }
-      APInt Val = ConstVal->getValue();
+      const APInt &Val = ConstVal->getValue();
       if (I != 0) {
         APInt Dist = Val - PrevVal;
         if (I == 1) {
@@ -5214,8 +5173,8 @@ static bool SwitchToLookupTable(SwitchInst *SI, IRBuilder<> &Builder,
   // common destination, as well as the min and max case values.
   assert(SI->case_begin() != SI->case_end());
   SwitchInst::CaseIt CI = SI->case_begin();
-  ConstantInt *MinCaseVal = CI.getCaseValue();
-  ConstantInt *MaxCaseVal = CI.getCaseValue();
+  ConstantInt *MinCaseVal = CI->getCaseValue();
+  ConstantInt *MaxCaseVal = CI->getCaseValue();
 
   BasicBlock *CommonDest = nullptr;
   typedef SmallVector<std::pair<ConstantInt *, Constant *>, 4> ResultListTy;
@@ -5225,7 +5184,7 @@ static bool SwitchToLookupTable(SwitchInst *SI, IRBuilder<> &Builder,
   SmallVector<PHINode *, 4> PHIs;
 
   for (SwitchInst::CaseIt E = SI->case_end(); CI != E; ++CI) {
-    ConstantInt *CaseVal = CI.getCaseValue();
+    ConstantInt *CaseVal = CI->getCaseValue();
     if (CaseVal->getValue().slt(MinCaseVal->getValue()))
       MinCaseVal = CaseVal;
     if (CaseVal->getValue().sgt(MaxCaseVal->getValue()))
@@ -5234,7 +5193,7 @@ static bool SwitchToLookupTable(SwitchInst *SI, IRBuilder<> &Builder,
     // Resulting value at phi nodes for this case value.
     typedef SmallVector<std::pair<PHINode *, Constant *>, 4> ResultsTy;
     ResultsTy Results;
-    if (!GetCaseResults(SI, CaseVal, CI.getCaseSuccessor(), &CommonDest,
+    if (!GetCaseResults(SI, CaseVal, CI->getCaseSuccessor(), &CommonDest,
                         Results, DL, TTI))
       return false;
 
@@ -5515,11 +5474,10 @@ static bool ReduceSwitchRange(SwitchInst *SI, IRBuilder<> &Builder,
   auto *Rot = Builder.CreateOr(LShr, Shl);
   SI->replaceUsesOfWith(SI->getCondition(), Rot);
 
-  for (SwitchInst::CaseIt C = SI->case_begin(), E = SI->case_end(); C != E;
-       ++C) {
-    auto *Orig = C.getCaseValue();
+  for (auto Case : SI->cases()) {
+    auto *Orig = Case.getCaseValue();
     auto Sub = Orig->getValue() - APInt(Ty->getBitWidth(), Base);
-    C.setValue(
+    Case.setValue(
         cast<ConstantInt>(ConstantInt::get(Ty, Sub.lshr(ShiftC->getValue()))));
   }
   return true;

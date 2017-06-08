@@ -38,6 +38,7 @@
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineMemOperand.h"
+#include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/CodeGen/MachineOperand.h"
 #include "llvm/CodeGen/MachinePassRegistry.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
@@ -73,6 +74,7 @@
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/KnownBits.h"
 #include "llvm/Support/Timer.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetInstrInfo.h"
@@ -298,7 +300,7 @@ SelectionDAGISel::SelectionDAGISel(TargetMachine &tm,
   FuncInfo(new FunctionLoweringInfo()),
   CurDAG(new SelectionDAG(tm, OL)),
   SDB(new SelectionDAGBuilder(*CurDAG, *FuncInfo, OL)),
-  GFI(),
+  AA(), GFI(),
   OptLevel(OL),
   DAGSize(0) {
     initializeGCModuleInfoPass(*PassRegistry::getPassRegistry());
@@ -316,7 +318,8 @@ SelectionDAGISel::~SelectionDAGISel() {
 }
 
 void SelectionDAGISel::getAnalysisUsage(AnalysisUsage &AU) const {
-  AU.addRequired<AAResultsWrapperPass>();
+  if (OptLevel != CodeGenOpt::None)
+    AU.addRequired<AAResultsWrapperPass>();
   AU.addRequired<GCModuleInfo>();
   AU.addRequired<StackProtector>();
   AU.addPreserved<StackProtector>();
@@ -393,7 +396,6 @@ bool SelectionDAGISel::runOnMachineFunction(MachineFunction &mf) {
   TII = MF->getSubtarget().getInstrInfo();
   TLI = MF->getSubtarget().getTargetLowering();
   RegInfo = &MF->getRegInfo();
-  AA = &getAnalysis<AAResultsWrapperPass>().getAAResults();
   LibInfo = &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
   GFI = Fn.hasGC() ? &getAnalysis<GCModuleInfo>().getFunctionInfo(Fn) : nullptr;
   ORE = make_unique<OptimizationRemarkEmitter>(&Fn);
@@ -405,12 +407,22 @@ bool SelectionDAGISel::runOnMachineFunction(MachineFunction &mf) {
   CurDAG->init(*MF, *ORE);
   FuncInfo->set(Fn, *MF, CurDAG);
 
+  // Now get the optional analyzes if we want to.
+  // This is based on the possibly changed OptLevel (after optnone is taken
+  // into account).  That's unfortunate but OK because it just means we won't
+  // ask for passes that have been required anyway.
+
   if (UseMBPI && OptLevel != CodeGenOpt::None)
     FuncInfo->BPI = &getAnalysis<BranchProbabilityInfoWrapperPass>().getBPI();
   else
     FuncInfo->BPI = nullptr;
 
-  SDB->init(GFI, *AA, LibInfo);
+  if (OptLevel != CodeGenOpt::None)
+    AA = &getAnalysis<AAResultsWrapperPass>().getAAResults();
+  else
+    AA = nullptr;
+
+  SDB->init(GFI, AA, LibInfo);
 
   MF->setHasInlineAsm(false);
 
@@ -592,13 +604,7 @@ bool SelectionDAGISel::runOnMachineFunction(MachineFunction &mf) {
     MRI.replaceRegWith(From, To);
   }
 
-  if (TLI->hasCopyImplyingStackAdjustment(MF))
-    MFI.setHasCopyImplyingStackAdjustment(true);
-
-  // Freeze the set of reserved registers now that MachineFrameInfo has been
-  // set up. All the information required by getReservedRegs() should be
-  // available now.
-  MRI.freezeReservedRegs(*MF);
+  TLI->finalizeLowering(*MF);
 
   // Release function-specific state. SDB and CurDAG are already cleared
   // at this point.
@@ -650,8 +656,7 @@ void SelectionDAGISel::ComputeLiveOutVRegInfo() {
 
   Worklist.push_back(CurDAG->getRoot().getNode());
 
-  APInt KnownZero;
-  APInt KnownOne;
+  KnownBits Known;
 
   do {
     SDNode *N = Worklist.pop_back_val();
@@ -680,8 +685,8 @@ void SelectionDAGISel::ComputeLiveOutVRegInfo() {
       continue;
 
     unsigned NumSignBits = CurDAG->ComputeNumSignBits(Src);
-    CurDAG->computeKnownBits(Src, KnownZero, KnownOne);
-    FuncInfo->AddLiveOutRegInfo(DestReg, NumSignBits, KnownZero, KnownOne);
+    CurDAG->computeKnownBits(Src, Known);
+    FuncInfo->AddLiveOutRegInfo(DestReg, NumSignBits, Known);
   } while (!Worklist.empty());
 }
 
@@ -721,7 +726,7 @@ void SelectionDAGISel::CodeGenAndEmitDAG() {
   {
     NamedRegionTimer T("combine1", "DAG Combining 1", GroupName,
                        GroupDescription, TimePassesIsEnabled);
-    CurDAG->Combine(BeforeLegalizeTypes, *AA, OptLevel);
+    CurDAG->Combine(BeforeLegalizeTypes, AA, OptLevel);
   }
 
   DEBUG(dbgs() << "Optimized lowered selection DAG: BB#" << BlockNumber
@@ -753,7 +758,7 @@ void SelectionDAGISel::CodeGenAndEmitDAG() {
     {
       NamedRegionTimer T("combine_lt", "DAG Combining after legalize types",
                          GroupName, GroupDescription, TimePassesIsEnabled);
-      CurDAG->Combine(AfterLegalizeTypes, *AA, OptLevel);
+      CurDAG->Combine(AfterLegalizeTypes, AA, OptLevel);
     }
 
     DEBUG(dbgs() << "Optimized type-legalized selection DAG: BB#" << BlockNumber
@@ -787,7 +792,7 @@ void SelectionDAGISel::CodeGenAndEmitDAG() {
     {
       NamedRegionTimer T("combine_lv", "DAG Combining after legalize vectors",
                          GroupName, GroupDescription, TimePassesIsEnabled);
-      CurDAG->Combine(AfterLegalizeVectorOps, *AA, OptLevel);
+      CurDAG->Combine(AfterLegalizeVectorOps, AA, OptLevel);
     }
 
     DEBUG(dbgs() << "Optimized vector-legalized selection DAG: BB#"
@@ -813,7 +818,7 @@ void SelectionDAGISel::CodeGenAndEmitDAG() {
   {
     NamedRegionTimer T("combine2", "DAG Combining 2", GroupName,
                        GroupDescription, TimePassesIsEnabled);
-    CurDAG->Combine(AfterLegalizeDAG, *AA, OptLevel);
+    CurDAG->Combine(AfterLegalizeDAG, AA, OptLevel);
   }
 
   DEBUG(dbgs() << "Optimized legalized selection DAG: BB#" << BlockNumber
@@ -900,50 +905,6 @@ public:
 
 } // end anonymous namespace
 
-static bool isStrictFPOp(SDNode *Node, unsigned &NewOpc) {
-  unsigned OrigOpc = Node->getOpcode();
-  switch (OrigOpc) {
-    case ISD::STRICT_FADD: NewOpc = ISD::FADD; return true;
-    case ISD::STRICT_FSUB: NewOpc = ISD::FSUB; return true;
-    case ISD::STRICT_FMUL: NewOpc = ISD::FMUL; return true;
-    case ISD::STRICT_FDIV: NewOpc = ISD::FDIV; return true;
-    case ISD::STRICT_FREM: NewOpc = ISD::FREM; return true;
-    default: return false;
-  }
-}
-
-SDNode* SelectionDAGISel::MutateStrictFPToFP(SDNode *Node, unsigned NewOpc) {
-  assert(((Node->getOpcode() == ISD::STRICT_FADD && NewOpc == ISD::FADD) ||
-          (Node->getOpcode() == ISD::STRICT_FSUB && NewOpc == ISD::FSUB) ||
-          (Node->getOpcode() == ISD::STRICT_FMUL && NewOpc == ISD::FMUL) ||
-          (Node->getOpcode() == ISD::STRICT_FDIV && NewOpc == ISD::FDIV) ||
-          (Node->getOpcode() == ISD::STRICT_FREM && NewOpc == ISD::FREM)) &&
-          "Unexpected StrictFP opcode!");
-
-  // We're taking this node out of the chain, so we need to re-link things.
-  SDValue InputChain = Node->getOperand(0);
-  SDValue OutputChain = SDValue(Node, 1);
-  CurDAG->ReplaceAllUsesOfValueWith(OutputChain, InputChain);
-
-  SDVTList VTs = CurDAG->getVTList(Node->getOperand(1).getValueType());
-  SDValue Ops[2] = { Node->getOperand(1), Node->getOperand(2) };
-  SDNode *Res = CurDAG->MorphNodeTo(Node, NewOpc, VTs, Ops);
-  
-  // MorphNodeTo can operate in two ways: if an existing node with the
-  // specified operands exists, it can just return it.  Otherwise, it
-  // updates the node in place to have the requested operands.
-  if (Res == Node) {
-    // If we updated the node in place, reset the node ID.  To the isel,
-    // this should be just like a newly allocated machine node.
-    Res->setNodeId(-1);
-  } else {
-    CurDAG->ReplaceAllUsesWith(Node, Res);
-    CurDAG->RemoveDeadNode(Node);
-  }
-
-  return Res; 
-}
-
 void SelectionDAGISel::DoInstructionSelection() {
   DEBUG(dbgs() << "===== Instruction selection begins: BB#"
         << FuncInfo->MBB->getNumber()
@@ -987,15 +948,12 @@ void SelectionDAGISel::DoInstructionSelection() {
       // If the current node is a strict FP pseudo-op, the isStrictFPOp()
       // function will provide the corresponding normal FP opcode to which the
       // node should be mutated.
-      unsigned NormalFPOpc = ISD::UNDEF;
-      bool IsStrictFPOp = isStrictFPOp(Node, NormalFPOpc);
-      if (IsStrictFPOp)
-        Node = MutateStrictFPToFP(Node, NormalFPOpc);
+      //
+      // FIXME: The backends need a way to handle FP constraints.
+      if (Node->isStrictFPOpcode())
+        Node = CurDAG->mutateStrictFPToFP(Node);
 
       Select(Node);
-
-      // FIXME: Add code here to attach an implicit def and use of
-      // target-specific FP environment registers.
     }
 
     CurDAG->setRoot(Dummy.getValue());
@@ -1148,6 +1106,51 @@ static void createSwiftErrorEntriesInEntryBlock(FunctionLoweringInfo *FuncInfo,
       FastIS->setLastLocalValue(&*std::prev(FuncInfo->InsertPt));
 
     FuncInfo->setCurrentSwiftErrorVReg(FuncInfo->MBB, SwiftErrorVal, VReg);
+  }
+}
+
+/// Collect llvm.dbg.declare information. This is done after argument lowering
+/// in case the declarations refer to arguments.
+static void processDbgDeclares(FunctionLoweringInfo *FuncInfo) {
+  MachineFunction *MF = FuncInfo->MF;
+  const DataLayout &DL = MF->getDataLayout();
+  for (const BasicBlock &BB : *FuncInfo->Fn) {
+    for (const Instruction &I : BB) {
+      const DbgDeclareInst *DI = dyn_cast<DbgDeclareInst>(&I);
+      if (!DI)
+        continue;
+
+      assert(DI->getVariable() && "Missing variable");
+      assert(DI->getDebugLoc() && "Missing location");
+      const Value *Address = DI->getAddress();
+      if (!Address)
+        continue;
+
+      // Look through casts and constant offset GEPs. These mostly come from
+      // inalloca.
+      APInt Offset(DL.getPointerSizeInBits(0), 0);
+      Address = Address->stripAndAccumulateInBoundsConstantOffsets(DL, Offset);
+
+      // Check if the variable is a static alloca or a byval or inalloca
+      // argument passed in memory. If it is not, then we will ignore this
+      // intrinsic and handle this during isel like dbg.value.
+      int FI = INT_MAX;
+      if (const auto *AI = dyn_cast<AllocaInst>(Address)) {
+        auto SI = FuncInfo->StaticAllocaMap.find(AI);
+        if (SI != FuncInfo->StaticAllocaMap.end())
+          FI = SI->second;
+      } else if (const auto *Arg = dyn_cast<Argument>(Address))
+        FI = FuncInfo->getArgumentFrameIndex(Arg);
+
+      if (FI == INT_MAX)
+        continue;
+
+      DIExpression *Expr = DI->getExpression();
+      if (Offset.getBoolValue())
+        Expr = DIExpression::prepend(Expr, DIExpression::NoDeref,
+                                     Offset.getZExtValue());
+      MF->setVariableDbgInfo(DI->getVariable(), Expr, FI, DI->getDebugLoc());
+    }
   }
 }
 
@@ -1322,6 +1325,8 @@ void SelectionDAGISel::SelectAllBasicBlocks(const Function &Fn) {
       FastIS->setLastLocalValue(nullptr);
   }
   createSwiftErrorEntriesInEntryBlock(FuncInfo, FastIS, TLI, TII, SDB);
+
+  processDbgDeclares(FuncInfo);
 
   // Iterate over all basic blocks in the function.
   for (const BasicBlock *LLVMBB : RPOT) {
@@ -1930,11 +1935,11 @@ bool SelectionDAGISel::CheckOrMask(SDValue LHS, ConstantSDNode *RHS,
   // either already zero or is not demanded.  Check for known zero input bits.
   APInt NeededMask = DesiredMask & ~ActualMask;
 
-  APInt KnownZero, KnownOne;
-  CurDAG->computeKnownBits(LHS, KnownZero, KnownOne);
+  KnownBits Known;
+  CurDAG->computeKnownBits(LHS, Known);
 
   // If all the missing bits in the or are already known to be set, match!
-  if ((NeededMask & KnownOne) == NeededMask)
+  if (NeededMask.isSubsetOf(Known.One))
     return true;
 
   // TODO: check to see if missing bits are just not demanded.

@@ -44,7 +44,8 @@ Instruction *InstCombiner::commonShiftTransforms(BinaryOperator &I) {
   Value *A;
   Constant *C;
   if (match(Op0, m_Constant()) && match(Op1, m_Add(m_Value(A), m_Constant(C))))
-    if (isKnownNonNegative(A, DL) && isKnownNonNegative(C, DL))
+    if (isKnownNonNegative(A, DL, 0, &AC, &I, &DT) &&
+        isKnownNonNegative(C, DL, 0, &AC, &I, &DT))
       return BinaryOperator::Create(
           I.getOpcode(), Builder->CreateBinOp(I.getOpcode(), Op0, C), A);
 
@@ -370,7 +371,7 @@ Instruction *InstCombiner::FoldShiftByConstant(Value *Op0, Constant *Op1,
         MaskV <<= Op1C->getZExtValue();
       else {
         assert(I.getOpcode() == Instruction::LShr && "Unknown logical shift");
-        MaskV = MaskV.lshr(Op1C->getZExtValue());
+        MaskV.lshrInPlace(Op1C->getZExtValue());
       }
 
       // shift1 & 0x00FF
@@ -520,7 +521,7 @@ Instruction *InstCombiner::visitShl(BinaryOperator &I) {
 
   Value *Op0 = I.getOperand(0), *Op1 = I.getOperand(1);
   if (Value *V = SimplifyShlInst(Op0, Op1, I.hasNoSignedWrap(),
-                                 I.hasNoUnsignedWrap(), DL, &TLI, &DT, &AC))
+                                 I.hasNoUnsignedWrap(), SQ))
     return replaceInstUsesWith(I, V);
 
   if (Instruction *V = commonShiftTransforms(I))
@@ -618,7 +619,7 @@ Instruction *InstCombiner::visitLShr(BinaryOperator &I) {
     return replaceInstUsesWith(I, V);
 
   Value *Op0 = I.getOperand(0), *Op1 = I.getOperand(1);
-  if (Value *V = SimplifyLShrInst(Op0, Op1, I.isExact(), DL, &TLI, &DT, &AC))
+  if (Value *V = SimplifyLShrInst(Op0, Op1, I.isExact(), SQ))
     return replaceInstUsesWith(I, V);
 
   if (Instruction *R = commonShiftTransforms(I))
@@ -702,7 +703,7 @@ Instruction *InstCombiner::visitAShr(BinaryOperator &I) {
     return replaceInstUsesWith(I, V);
 
   Value *Op0 = I.getOperand(0), *Op1 = I.getOperand(1);
-  if (Value *V = SimplifyAShrInst(Op0, Op1, I.isExact(), DL, &TLI, &DT, &AC))
+  if (Value *V = SimplifyAShrInst(Op0, Op1, I.isExact(), SQ))
     return replaceInstUsesWith(I, V);
 
   if (Instruction *R = commonShiftTransforms(I))
@@ -760,7 +761,7 @@ Instruction *InstCombiner::visitAShr(BinaryOperator &I) {
   }
 
   // See if we can turn a signed shr into an unsigned shr.
-  if (MaskedValueIsZero(Op0, APInt::getSignBit(BitWidth), 0, &I))
+  if (MaskedValueIsZero(Op0, APInt::getSignMask(BitWidth), 0, &I))
     return BinaryOperator::CreateLShr(Op0, Op1);
 
   return nullptr;

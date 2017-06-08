@@ -20,6 +20,11 @@ if (NOT DEFINED LLVM_MAIN_SRC_DIR)
   # Add the llvm header path.
   include_directories(${LLVM_INSTALL_ROOT}/include/)
 
+  # Get LLVM's own libraries.
+  execute_process(COMMAND "${LLVM_INSTALL_ROOT}/bin/llvm-config" --libs
+                  OUTPUT_VARIABLE LLVM_LIBS
+                  OUTPUT_STRIP_TRAILING_WHITESPACE)
+
   # Get the system librarys that will link into LLVM.
   execute_process(COMMAND "${LLVM_INSTALL_ROOT}/bin/llvm-config" --system-libs
                   OUTPUT_VARIABLE LLVM_SYSTEM_LIBS
@@ -99,7 +104,7 @@ if (NOT DEFINED LLVM_MAIN_SRC_DIR)
       "${UNITTEST_DIR}/googletest"
       "${UNITTEST_DIR}/googlemock"
     )
-    target_link_libraries(gtest ${LLVM_SYSTEM_LIBS})
+    target_link_libraries(gtest -lpthread)
 
     add_library(gtest_main ${UNITTEST_DIR}/UnitTestMain/TestMain.cpp)
     target_link_libraries(gtest_main gtest)
@@ -109,6 +114,9 @@ if (NOT DEFINED LLVM_MAIN_SRC_DIR)
 
   # Make sure the isl c files are built as fPIC
   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC")
+
+  # Set directory for polly-isl-test.
+  set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin")
 else ()
   set(LLVM_SOURCE_ROOT "${LLVM_MAIN_SRC_DIR}")
   set(POLLY_GTEST_AVAIL 1)
@@ -144,9 +152,10 @@ SET(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
 option(POLLY_ENABLE_GPGPU_CODEGEN "Enable GPGPU code generation feature" OFF)
 if (POLLY_ENABLE_GPGPU_CODEGEN)
-  # Do not require CUDA, as GPU code generation test cases can be run without
-  # a cuda library.
+  # Do not require CUDA/OpenCL, as GPU code generation test cases can be run
+  # without a CUDA/OpenCL library.
   FIND_PACKAGE(CUDA)
+  FIND_PACKAGE(OpenCL)
   set(GPU_CODEGEN TRUE)
 else(POLLY_ENABLE_GPGPU_CODEGEN)
   set(GPU_CODEGEN FALSE)
@@ -155,8 +164,13 @@ endif(POLLY_ENABLE_GPGPU_CODEGEN)
 
 # Support GPGPU code generation if the library is available.
 if (CUDALIB_FOUND)
+  add_definitions(-DHAS_LIBCUDART)
   INCLUDE_DIRECTORIES( ${CUDALIB_INCLUDE_DIR} )
 endif(CUDALIB_FOUND)
+if (OpenCL_FOUND)
+  add_definitions(-DHAS_LIBOPENCL)
+  INCLUDE_DIRECTORIES( ${OpenCL_INCLUDE_DIR} )
+endif(OpenCL_FOUND)
 
 option(POLLY_BUNDLED_ISL "Use the bundled version of libisl included in Polly" ON)
 if (NOT POLLY_BUNDLED_ISL)
@@ -171,11 +185,25 @@ else()
   set(ISL_TARGET PollyISL)
 endif()
 
+option(POLLY_BUNDLED_JSONCPP "Use the bundled version of jsoncpp included in Polly" ON)
+if (POLLY_BUNDLED_JSONCPP)
+  set(JSONCPP_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/lib/External/JSON/include")
+  set(JSONCPP_LIBRARIES)
+  set(POLLY_JSON_FILES
+    External/JSON/json_reader.cpp
+    External/JSON/json_value.cpp
+    External/JSON/json_writer.cpp
+  )
+else ()
+  find_package(Jsoncpp REQUIRED)
+  set(POLLY_JSON_FILES)
+endif ()
+
 include_directories(
   BEFORE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
   ${ISL_INCLUDE_DIRS}
-  ${CMAKE_CURRENT_SOURCE_DIR}/lib/External/JSON/include
+  ${JSONCPP_INCLUDE_DIRS}
   ${CMAKE_CURRENT_SOURCE_DIR}/lib/External/pet/include
   ${CMAKE_CURRENT_SOURCE_DIR}/lib/External
   ${CMAKE_CURRENT_BINARY_DIR}/include
@@ -216,7 +244,7 @@ configure_file( ${CMAKE_CURRENT_SOURCE_DIR}/include/polly/Config/config.h.cmake
 
 # Add target to check formatting of polly files
 file( GLOB_RECURSE files *.h lib/*.cpp lib/*.c tools/*.cpp tools/*.c tools/*.h unittests/*.cpp)
-file( GLOB_RECURSE external lib/External/*.h lib/External/*.c lib/External/*.cpp)
+file( GLOB_RECURSE external lib/External/*.h lib/External/*.c lib/External/*.cpp isl_config.h)
 list( REMOVE_ITEM files ${external})
 
 set(check_format_depends)

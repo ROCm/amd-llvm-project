@@ -62,10 +62,9 @@ void RegScavenger::init(MachineBasicBlock &MBB) {
   }
   this->MBB = &MBB;
 
-  for (SmallVectorImpl<ScavengedInfo>::iterator I = Scavenged.begin(),
-         IE = Scavenged.end(); I != IE; ++I) {
-    I->Reg = 0;
-    I->Restore = nullptr;
+  for (ScavengedInfo &SI : Scavenged) {
+    SI.Reg = 0;
+    SI.Restore = nullptr;
   }
 
   Tracking = false;
@@ -395,8 +394,8 @@ unsigned RegScavenger::scavengeRegister(const TargetRegisterClass *RC,
   // Find an available scavenging slot with size and alignment matching
   // the requirements of the class RC.
   const MachineFrameInfo &MFI = MF.getFrameInfo();
-  unsigned NeedSize = RC->getSize();
-  unsigned NeedAlign = RC->getAlignment();
+  unsigned NeedSize = TRI->getSpillSize(*RC);
+  unsigned NeedAlign = TRI->getSpillAlignment(*RC);
 
   unsigned SI = Scavenged.size(), Diff = std::numeric_limits<unsigned>::max();
   int FIB = MFI.getObjectIndexBegin(), FIE = MFI.getObjectIndexEnd();

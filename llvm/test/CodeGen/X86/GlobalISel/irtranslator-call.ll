@@ -5,7 +5,6 @@ define void @test_void_return() {
 ; CHECK-LABEL: name:            test_void_return
 ; CHECK:      alignment:       4
 ; CHECK-NEXT: exposesReturnsTwice: false
-; CHECK-NEXT: noVRegs:         false
 ; CHECK-NEXT: legalized:       false
 ; CHECK-NEXT: regBankSelected: false
 ; CHECK-NEXT: selected:        false
@@ -20,7 +19,6 @@ define void @test_void_return() {
 ; CHECK-NEXT:   maxAlignment:    0
 ; CHECK-NEXT:   adjustsStack:    false
 ; CHECK-NEXT:   hasCalls:        false
-; CHECK-NEXT:   maxCallFrameSize: 0
 ; CHECK-NEXT:   hasOpaqueSPAdjustment: false
 ; CHECK-NEXT:   hasVAStart:      false
 ; CHECK-NEXT:   hasMustTailInVarArgFunc: false

@@ -320,6 +320,20 @@ int ExtractRecvmsgFDs(void *msgp, int *fds, int nfd) {
   return res;
 }
 
+void ImitateTlsWrite(ThreadState *thr, uptr tls_addr, uptr tls_size) {
+  // Check that the thr object is in tls;
+  const uptr thr_beg = (uptr)thr;
+  const uptr thr_end = (uptr)thr + sizeof(*thr);
+  CHECK_GE(thr_beg, tls_addr);
+  CHECK_LE(thr_beg, tls_addr + tls_size);
+  CHECK_GE(thr_end, tls_addr);
+  CHECK_LE(thr_end, tls_addr + tls_size);
+  // Since the thr object is huge, skip it.
+  MemoryRangeImitateWrite(thr, /*pc=*/2, tls_addr, thr_beg - tls_addr);
+  MemoryRangeImitateWrite(thr, /*pc=*/2, thr_end,
+                          tls_addr + tls_size - thr_end);
+}
+
 // Note: this function runs with async signals enabled,
 // so it must not touch any tsan state.
 int call_pthread_cancel_with_cleanup(int(*fn)(void *c, void *m,
@@ -341,36 +355,22 @@ void ReplaceSystemMalloc() { }
 
 #if !SANITIZER_GO
 #if SANITIZER_ANDROID
-
-#if defined(__aarch64__)
-# define __get_tls() \
-    ({ void** __val; __asm__("mrs %0, tpidr_el0" : "=r"(__val)); __val; })
-#elif defined(__x86_64__)
-# define __get_tls() \
-    ({ void** __val; __asm__("mov %%fs:0, %0" : "=r"(__val)); __val; })
-#else
-#error unsupported architecture
-#endif
-
-// On Android, __thread is not supported. So we store the pointer to ThreadState
-// in TLS_SLOT_TSAN, which is the tls slot allocated by Android bionic for tsan.
-static const int TLS_SLOT_TSAN = 8;
 // On Android, one thread can call intercepted functions after
 // DestroyThreadState(), so add a fake thread state for "dead" threads.
 static ThreadState *dead_thread_state = nullptr;
 
 ThreadState *cur_thread() {
-  ThreadState* thr = (ThreadState*)__get_tls()[TLS_SLOT_TSAN];
+  ThreadState* thr = reinterpret_cast<ThreadState*>(*get_android_tls_ptr());
   if (thr == nullptr) {
     __sanitizer_sigset_t emptyset;
     internal_sigfillset(&emptyset);
     __sanitizer_sigset_t oldset;
     CHECK_EQ(0, internal_sigprocmask(SIG_SETMASK, &emptyset, &oldset));
-    thr = reinterpret_cast<ThreadState*>(__get_tls()[TLS_SLOT_TSAN]);
+    thr = reinterpret_cast<ThreadState*>(*get_android_tls_ptr());
     if (thr == nullptr) {
       thr = reinterpret_cast<ThreadState*>(MmapOrDie(sizeof(ThreadState),
                                                      "ThreadState"));
-      __get_tls()[TLS_SLOT_TSAN] = thr;
+      *get_android_tls_ptr() = reinterpret_cast<uptr>(thr);
       if (dead_thread_state == nullptr) {
         dead_thread_state = reinterpret_cast<ThreadState*>(
             MmapOrDie(sizeof(ThreadState), "ThreadState"));
@@ -392,9 +392,9 @@ void cur_thread_finalize() {
   internal_sigfillset(&emptyset);
   __sanitizer_sigset_t oldset;
   CHECK_EQ(0, internal_sigprocmask(SIG_SETMASK, &emptyset, &oldset));
-  ThreadState* thr = (ThreadState*)__get_tls()[TLS_SLOT_TSAN];
+  ThreadState* thr = reinterpret_cast<ThreadState*>(*get_android_tls_ptr());
   if (thr != dead_thread_state) {
-    __get_tls()[TLS_SLOT_TSAN] = dead_thread_state;
+    *get_android_tls_ptr() = reinterpret_cast<uptr>(dead_thread_state);
     UnmapOrDie(thr, sizeof(ThreadState));
   }
   CHECK_EQ(0, internal_sigprocmask(SIG_SETMASK, &oldset, nullptr));

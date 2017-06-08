@@ -279,20 +279,20 @@ static void AddOpenMPLinkerScript(const ToolChain &TC, Compilation &C,
 
   LksStream << "SECTIONS\n";
   LksStream << "{\n";
-  LksStream << "  .omp_offloading :\n";
-  LksStream << "  ALIGN(0x10)\n";
-  LksStream << "  {\n";
 
-  for (auto &BI : InputBinaryInfo) {
-    LksStream << "    . = ALIGN(0x10);\n";
+  // Put each target binary into a separate section.
+  for (const auto &BI : InputBinaryInfo) {
+    LksStream << "  .omp_offloading." << BI.first << " :\n";
+    LksStream << "  ALIGN(0x10)\n";
+    LksStream << "  {\n";
     LksStream << "    PROVIDE_HIDDEN(.omp_offloading.img_start." << BI.first
               << " = .);\n";
     LksStream << "    " << BI.second << "\n";
     LksStream << "    PROVIDE_HIDDEN(.omp_offloading.img_end." << BI.first
               << " = .);\n";
+    LksStream << "  }\n";
   }
 
-  LksStream << "  }\n";
   // Add commands to define host entries begin and end. We use 1-byte subalign
   // so that the linker does not add any padding and the elements in this
   // section form an array.
@@ -587,36 +587,14 @@ void tools::gnutools::Linker::ConstructLinkerJob(Compilation &C,
       bool WantPthread = Args.hasArg(options::OPT_pthread) ||
                          Args.hasArg(options::OPT_pthreads);
 
-      if (Args.hasFlag(options::OPT_fopenmp, options::OPT_fopenmp_EQ,
-                       options::OPT_fno_openmp, false)) {
+      // FIXME: Only pass GompNeedsRT = true for platforms with libgomp that
+      // require librt. Most modern Linux platforms do, but some may not.
+      if (addOpenMPRuntime(CmdArgs, ToolChain, Args,
+                           JA.isHostOffloading(Action::OFK_OpenMP),
+                           /* GompNeedsRT= */ true))
         // OpenMP runtimes implies pthreads when using the GNU toolchain.
         // FIXME: Does this really make sense for all GNU toolchains?
         WantPthread = true;
-
-        // Also link the particular OpenMP runtimes.
-        switch (ToolChain.getDriver().getOpenMPRuntime(Args)) {
-        case Driver::OMPRT_OMP:
-          CmdArgs.push_back("-lomp");
-          break;
-        case Driver::OMPRT_GOMP:
-          CmdArgs.push_back("-lgomp");
-
-          // FIXME: Exclude this for platforms with libgomp that don't require
-          // librt. Most modern Linux platforms require it, but some may not.
-          CmdArgs.push_back("-lrt");
-          break;
-        case Driver::OMPRT_IOMP5:
-          CmdArgs.push_back("-liomp5");
-          break;
-        case Driver::OMPRT_Unknown:
-          // Already diagnosed.
-          break;
-        }
-        if (JA.isHostOffloading(Action::OFK_OpenMP))
-          CmdArgs.push_back("-lomptarget");
-
-        addArchSpecificRPath(ToolChain, Args, CmdArgs);
-      }
 
       AddRunTimeLibs(ToolChain, D, CmdArgs, Args);
 
@@ -797,6 +775,12 @@ void tools::gnutools::Assembler::ConstructJob(Compilation &C,
     Args.AddLastArg(CmdArgs, options::OPT_mfpu_EQ);
     break;
   }
+  case llvm::Triple::aarch64:
+  case llvm::Triple::aarch64_be: {
+    Args.AddLastArg(CmdArgs, options::OPT_march_EQ);
+    Args.AddLastArg(CmdArgs, options::OPT_mcpu_EQ);
+    break;
+  }
   case llvm::Triple::mips:
   case llvm::Triple::mipsel:
   case llvm::Triple::mips64:
@@ -936,6 +920,8 @@ static bool isSoftFloatABI(const ArgList &Args) {
           A->getValue() == StringRef("soft"));
 }
 
+/// \p Flag must be a flag accepted by the driver with its leading '-' removed,
+//     otherwise '-print-multi-lib' will not emit them correctly.
 static void addMultilibFlag(bool Enabled, const char *const Flag,
                             std::vector<std::string> &Flags) {
   if (Enabled)
@@ -1480,17 +1466,17 @@ static void findAndroidArmMultilibs(const Driver &D,
   // Find multilibs with subdirectories like armv7-a, thumb, armv7-a/thumb.
   FilterNonExistent NonExistent(Path, "/crtbegin.o", D.getVFS());
   Multilib ArmV7Multilib = makeMultilib("/armv7-a")
-                               .flag("+armv7")
-                               .flag("-thumb");
+                               .flag("+march=armv7-a")
+                               .flag("-mthumb");
   Multilib ThumbMultilib = makeMultilib("/thumb")
-                               .flag("-armv7")
-                               .flag("+thumb");
+                               .flag("-march=armv7-a")
+                               .flag("+mthumb");
   Multilib ArmV7ThumbMultilib = makeMultilib("/armv7-a/thumb")
-                               .flag("+armv7")
-                               .flag("+thumb");
+                               .flag("+march=armv7-a")
+                               .flag("+mthumb");
   Multilib DefaultMultilib = makeMultilib("")
-                               .flag("-armv7")
-                               .flag("-thumb");
+                               .flag("-march=armv7-a")
+                               .flag("-mthumb");
   MultilibSet AndroidArmMultilibs =
       MultilibSet()
           .Either(ThumbMultilib, ArmV7Multilib,
@@ -1508,8 +1494,8 @@ static void findAndroidArmMultilibs(const Driver &D,
   bool IsArmV7Mode = (IsArmArch || IsThumbArch) &&
       (llvm::ARM::parseArchVersion(Arch) == 7 ||
        (IsArmArch && Arch == "" && IsV7SubArch));
-  addMultilibFlag(IsArmV7Mode, "armv7", Flags);
-  addMultilibFlag(IsThumbMode, "thumb", Flags);
+  addMultilibFlag(IsArmV7Mode, "march=armv7-a", Flags);
+  addMultilibFlag(IsThumbMode, "mthumb", Flags);
 
   if (AndroidArmMultilibs.select(Flags, Result.SelectedMultilib))
     Result.Multilibs = AndroidArmMultilibs;
@@ -1637,6 +1623,49 @@ bool Generic_GCC::GCCVersion::isOlderThan(int RHSMajor, int RHSMinor,
 
   // The versions are equal.
   return false;
+}
+
+/// \brief Parse a GCCVersion object out of a string of text.
+///
+/// This is the primary means of forming GCCVersion objects.
+/*static*/
+Generic_GCC::GCCVersion Generic_GCC::GCCVersion::Parse(StringRef VersionText) {
+  const GCCVersion BadVersion = {VersionText.str(), -1, -1, -1, "", "", ""};
+  std::pair<StringRef, StringRef> First = VersionText.split('.');
+  std::pair<StringRef, StringRef> Second = First.second.split('.');
+
+  GCCVersion GoodVersion = {VersionText.str(), -1, -1, -1, "", "", ""};
+  if (First.first.getAsInteger(10, GoodVersion.Major) || GoodVersion.Major < 0)
+    return BadVersion;
+  GoodVersion.MajorStr = First.first.str();
+  if (First.second.empty())
+    return GoodVersion;
+  if (Second.first.getAsInteger(10, GoodVersion.Minor) || GoodVersion.Minor < 0)
+    return BadVersion;
+  GoodVersion.MinorStr = Second.first.str();
+
+  // First look for a number prefix and parse that if present. Otherwise just
+  // stash the entire patch string in the suffix, and leave the number
+  // unspecified. This covers versions strings such as:
+  //   5        (handled above)
+  //   4.4
+  //   4.4.0
+  //   4.4.x
+  //   4.4.2-rc4
+  //   4.4.x-patched
+  // And retains any patch number it finds.
+  StringRef PatchText = GoodVersion.PatchSuffix = Second.second.str();
+  if (!PatchText.empty()) {
+    if (size_t EndNumber = PatchText.find_first_not_of("0123456789")) {
+      // Try to parse the number and any suffix.
+      if (PatchText.slice(0, EndNumber).getAsInteger(10, GoodVersion.Patch) ||
+          GoodVersion.Patch < 0)
+        return BadVersion;
+      GoodVersion.PatchSuffix = PatchText.substr(EndNumber);
+    }
+  }
+
+  return GoodVersion;
 }
 
 static llvm::StringRef getGCCToolchainDir(const ArgList &Args) {
@@ -1790,7 +1819,9 @@ bool Generic_GCC::GCCInstallationDetector::getBiarchSibling(Multilib &M) const {
   static const char *const ARMTriples[] = {"arm-linux-gnueabi",
                                            "arm-linux-androideabi"};
   static const char *const ARMHFTriples[] = {"arm-linux-gnueabihf",
-                                             "armv7hl-redhat-linux-gnueabi"};
+                                             "armv7hl-redhat-linux-gnueabi",
+                                             "armv6hl-suse-linux-gnueabi",
+                                             "armv7hl-suse-linux-gnueabi"};
   static const char *const ARMebLibDirs[] = {"/lib"};
   static const char *const ARMebTriples[] = {"armeb-linux-gnueabi",
                                              "armeb-linux-androideabi"};
@@ -2200,6 +2231,7 @@ bool Generic_GCC::GCCInstallationDetector::ScanGentooGccConfig(
     SmallVector<StringRef, 2> Lines;
     File.get()->getBuffer().split(Lines, "\n");
     for (StringRef Line : Lines) {
+      Line = Line.trim();
       // CURRENT=triple-version
       if (Line.consume_front("CURRENT=")) {
         const std::pair<StringRef, StringRef> ActiveVersion =

@@ -24,6 +24,8 @@ namespace wasm {
 const char WasmMagic[] = {'\0', 'a', 's', 'm'};
 // Wasm binary format version
 const uint32_t WasmVersion = 0x1;
+// Wasm uses a 64k page size
+const uint32_t WasmPageSize = 65536;
 
 struct WasmObjectHeader {
   StringRef Magic;
@@ -33,17 +35,6 @@ struct WasmObjectHeader {
 struct WasmSignature {
   std::vector<int32_t> ParamTypes;
   int32_t ReturnType;
-};
-
-struct WasmImport {
-  StringRef Module;
-  StringRef Field;
-  uint32_t Kind;
-  union {
-    uint32_t SigIndex;
-    int32_t GlobalType;
-  };
-  bool GlobalMutable;
 };
 
 struct WasmExport {
@@ -80,6 +71,18 @@ struct WasmGlobal {
   WasmInitExpr InitExpr;
 };
 
+struct WasmImport {
+  StringRef Module;
+  StringRef Field;
+  uint32_t Kind;
+  union {
+    uint32_t SigIndex;
+    WasmGlobal Global;
+    WasmTable Table;
+    WasmLimits Memory;
+  };
+};
+
 struct WasmLocalDecl {
   int32_t Type;
   uint32_t Count;
@@ -106,7 +109,7 @@ struct WasmRelocation {
   uint32_t Type;         // The type of the relocation.
   int32_t Index;         // Index into function to global index space.
   uint64_t Offset;       // Offset from the start of the section.
-  uint64_t Addend;       // A value to add to the symbol.
+  int64_t Addend;        // A value to add to the symbol.
 };
 
 enum : unsigned {

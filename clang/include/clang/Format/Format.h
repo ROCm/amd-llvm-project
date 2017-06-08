@@ -98,22 +98,39 @@ struct FormatStyle {
   /// \endcode
   bool AlignConsecutiveDeclarations;
 
-  /// \brief If ``true``, aligns escaped newlines as far left as possible.
-  /// Otherwise puts them into the right-most column.
-  /// \code
-  ///   true:
-  ///   #define A   \
-  ///     int aaaa; \
-  ///     int b;    \
-  ///     int dddddddddd;
-  ///
-  ///   false:
-  ///   #define A                                                                      \
-  ///     int aaaa;                                                                    \
-  ///     int b;                                                                       \
-  ///     int dddddddddd;
-  /// \endcode
-  bool AlignEscapedNewlinesLeft;
+  /// \brief Different styles for aligning escaped newlines.
+  enum EscapedNewlineAlignmentStyle {
+    /// \brief Don't align escaped newlines.
+    /// \code
+    ///   #define A \
+    ///     int aaaa; \
+    ///     int b; \
+    ///     int dddddddddd;
+    /// \endcode
+    ENAS_DontAlign,
+    /// \brief Align escaped newlines as far left as possible.
+    /// \code
+    ///   true:
+    ///   #define A   \
+    ///     int aaaa; \
+    ///     int b;    \
+    ///     int dddddddddd;
+    ///
+    ///   false:
+    /// \endcode
+    ENAS_Left,
+    /// \brief Align escaped newlines in the right-most column.
+    /// \code
+    ///   #define A                                                                      \
+    ///     int aaaa;                                                                    \
+    ///     int b;                                                                       \
+    ///     int dddddddddd;
+    /// \endcode
+    ENAS_Right,
+  };
+
+  /// \brief Options for aligning backslashes in escaped newlines.
+  EscapedNewlineAlignmentStyle AlignEscapedNewlines;
 
   /// \brief If ``true``, horizontally align operands of binary and ternary
   /// expressions.
@@ -177,14 +194,14 @@ struct FormatStyle {
     SFS_Empty,
     /// \brief Only merge functions defined inside a class. Implies "empty".
     /// \code
-    ///   class {
+    ///   class Foo {
     ///     void f() { foo(); }
     ///   };
     /// \endcode
     SFS_Inline,
     /// \brief Merge all functions fitting on a single line.
     /// \code
-    ///   class {
+    ///   class Foo {
     ///     void f() { foo(); }
     ///   };
     ///   void f() { bar(); }
@@ -693,18 +710,43 @@ struct FormatStyle {
   /// \endcode
   bool BreakBeforeTernaryOperators;
 
-  /// \brief Always break constructor initializers before commas and align
-  /// the commas with the colon.
-  /// \code
-  ///    true:                                  false:
-  ///    SomeClass::Constructor()       vs.     SomeClass::Constructor() : a(a),
-  ///        : a(a)                                                   b(b),
-  ///        , b(b)                                                   c(c) {}
-  ///        , c(c) {}
-  /// \endcode
-  bool BreakConstructorInitializersBeforeComma;
+  /// \brief Different ways to break initializers.
+  enum BreakConstructorInitializersStyle
+  {
+    /// Break constructor initializers before the colon and after the commas.
+    /// \code
+    /// Constructor()
+    ///     : initializer1(),
+    ///       initializer2()
+    /// \endcode
+    BCIS_BeforeColon,
+    /// Break constructor initializers before the colon and commas, and align
+    /// the commas with the colon.
+    /// \code
+    /// Constructor()
+    ///     : initializer1()
+    ///     , initializer2()
+    /// \endcode
+    BCIS_BeforeComma,
+    /// Break constructor initializers after the colon and commas.
+    /// \code
+    /// Constructor() :
+    ///     initializer1(),
+    ///     initializer2()
+    /// \endcode
+    BCIS_AfterColon
+  };
+
+  /// \brief The constructor initializers style to use..
+  BreakConstructorInitializersStyle BreakConstructorInitializers;
 
   /// \brief Break after each annotation on a field in Java files.
+  /// \code{.java}
+  ///    true:                                  false:
+  ///    @Partial                       vs.     @Partial @Mock DataLoad loader;
+  ///    @Mock
+  ///    DataLoad loader;
+  /// \endcode
   bool BreakAfterJavaFieldAnnotations;
 
   /// \brief Allow breaking string literals when formatting.
@@ -720,7 +762,7 @@ struct FormatStyle {
   /// \brief A regular expression that describes comments with special meaning,
   /// which should not be split into lines or otherwise changed.
   /// \code
-  ///    CommentPragmas: '^ FOOBAR pragma:'
+  ///    // CommentPragmas: '^ FOOBAR pragma:'
   ///    // Will leave the following line unaffected
   ///    #include <vector> // FOOBAR pragma: keep
   /// \endcode
@@ -760,6 +802,13 @@ struct FormatStyle {
   unsigned ConstructorInitializerIndentWidth;
 
   /// \brief Indent width for line continuations.
+  /// \code
+  ///    ContinuationIndentWidth: 2
+  ///
+  ///    int i =         //  VeryVeryVeryVeryVeryLongComment
+  ///      longFunction( // Again a long comment
+  ///        arg);
+  /// \endcode
   unsigned ContinuationIndentWidth;
 
   /// \brief If ``true``, format braced lists as best suited for C++11 braced
@@ -775,11 +824,20 @@ struct FormatStyle {
   /// (e.g. a type or variable name), clang-format formats as if the ``{}`` were
   /// the parentheses of a function call with that name. If there is no name,
   /// a zero-length name is assumed.
+  /// \code
+  ///    true:                                  false:
+  ///    vector<int> x{1, 2, 3, 4};     vs.     vector<int> x{ 1, 2, 3, 4 };
+  ///    vector<T> x{{}, {}, {}, {}};           vector<T> x{ {}, {}, {}, {} };
+  ///    f(MyMap[{composite, key}]);            f(MyMap[{ composite, key }]);
+  ///    new int[3]{1, 2, 3};                   new int[3]{ 1, 2, 3 };
+  /// \endcode
   bool Cpp11BracedListStyle;
 
   /// \brief If ``true``, analyze the formatted file for the most common
-  /// alignment of ``&`` and ``*``. ``PointerAlignment`` is then used only as
-  /// fallback.
+  /// alignment of ``&`` and ``*``.
+  /// Pointer and reference alignment styles are going to be updated according
+  /// to the preferences found in the file.
+  /// ``PointerAlignment`` is then used only as fallback.
   bool DerivePointerAlignment;
 
   /// \brief Disables formatting completely.
@@ -880,11 +938,22 @@ struct FormatStyle {
   ///
   /// When ``false``, use the same indentation level as for the switch statement.
   /// Switch statement body is always indented one level more than case labels.
+  /// \code
+  ///    false:                                 true:
+  ///    switch (fool) {                vs.     switch (fool) {
+  ///    case 1:                                  case 1:
+  ///      bar();                                   bar();
+  ///      break;                                   break;
+  ///    default:                                 default:
+  ///      plop();                                  plop();
+  ///    }                                      }
+  /// \endcode
   bool IndentCaseLabels;
 
   /// \brief The number of columns to use for indentation.
   /// \code
   ///    IndentWidth: 3
+  ///
   ///    void f() {
   ///       someFunction();
   ///       if (true, false) {
@@ -896,6 +965,15 @@ struct FormatStyle {
 
   /// \brief Indent if a function definition or declaration is wrapped after the
   /// type.
+  /// \code
+  ///    true:
+  ///    LoooooooooooooooooooooooooooooooooooooooongReturnType
+  ///        LoooooooooooooooooooooooooooooooongFunctionDeclaration();
+  ///
+  ///    false:
+  ///    LoooooooooooooooooooooooooooooooooooooooongReturnType
+  ///    LoooooooooooooooooooooooooooooooongFunctionDeclaration();
+  /// \endcode
   bool IndentWrappedFunctionNames;
 
   /// \brief Quotation styles for JavaScript strings. Does not affect template
@@ -938,7 +1016,14 @@ struct FormatStyle {
   /// \endcode
   bool JavaScriptWrapImports;
 
-  /// \brief If true, empty lines at the start of blocks are kept.
+  /// \brief If true, the empty line at the start of blocks is kept.
+  /// \code
+  ///    true:                                  false:
+  ///    if (foo) {                     vs.     if (foo) {
+  ///                                             bar();
+  ///      bar();                               }
+  ///    }
+  /// \endcode
   bool KeepEmptyLinesAtTheStartOfBlocks;
 
   /// \brief Supported languages.
@@ -1050,6 +1135,13 @@ struct FormatStyle {
   NamespaceIndentationKind NamespaceIndentation;
 
   /// \brief The number of characters to use for indentation of ObjC blocks.
+  /// \code{.objc}
+  ///    ObjCBlockIndentWidth: 4
+  ///
+  ///    [operation setCompletionBlock:^{
+  ///        [self onOperationDone];
+  ///    }];
+  /// \endcode
   unsigned ObjCBlockIndentWidth;
 
   /// \brief Add a space after ``@property`` in Objective-C, i.e. use
@@ -1059,6 +1151,9 @@ struct FormatStyle {
   /// \brief Add a space in front of an Objective-C protocol list, i.e. use
   /// ``Foo <Protocol>`` instead of ``Foo<Protocol>``.
   bool ObjCSpaceBeforeProtocolList;
+
+  /// \brief The penalty for breaking around an assignment operator.
+  unsigned PenaltyBreakAssignment;
 
   /// \brief The penalty for breaking a function call after ``call(``.
   unsigned PenaltyBreakBeforeFirstCallParameter;
@@ -1256,7 +1351,8 @@ struct FormatStyle {
   enum LanguageStandard {
     /// Use C++03-compatible syntax.
     LS_Cpp03,
-    /// Use features of C++11 (e.g. ``A<A<int>>`` instead of ``A<A<int> >``).
+    /// Use features of C++11, C++14 and C++1z (e.g. ``A<A<int>>`` instead of
+    /// ``A<A<int> >``).
     LS_Cpp11,
     /// Automatic detection based on the input.
     LS_Auto
@@ -1290,7 +1386,7 @@ struct FormatStyle {
            AlignAfterOpenBracket == R.AlignAfterOpenBracket &&
            AlignConsecutiveAssignments == R.AlignConsecutiveAssignments &&
            AlignConsecutiveDeclarations == R.AlignConsecutiveDeclarations &&
-           AlignEscapedNewlinesLeft == R.AlignEscapedNewlinesLeft &&
+           AlignEscapedNewlines == R.AlignEscapedNewlines &&
            AlignOperands == R.AlignOperands &&
            AlignTrailingComments == R.AlignTrailingComments &&
            AllowAllParametersOfDeclarationOnNextLine ==
@@ -1313,8 +1409,7 @@ struct FormatStyle {
            BreakBeforeBinaryOperators == R.BreakBeforeBinaryOperators &&
            BreakBeforeBraces == R.BreakBeforeBraces &&
            BreakBeforeTernaryOperators == R.BreakBeforeTernaryOperators &&
-           BreakConstructorInitializersBeforeComma ==
-               R.BreakConstructorInitializersBeforeComma &&
+           BreakConstructorInitializers == R.BreakConstructorInitializers &&
            BreakAfterJavaFieldAnnotations == R.BreakAfterJavaFieldAnnotations &&
            BreakStringLiterals == R.BreakStringLiterals &&
            ColumnLimit == R.ColumnLimit && CommentPragmas == R.CommentPragmas &&
@@ -1346,6 +1441,8 @@ struct FormatStyle {
            ObjCBlockIndentWidth == R.ObjCBlockIndentWidth &&
            ObjCSpaceAfterProperty == R.ObjCSpaceAfterProperty &&
            ObjCSpaceBeforeProtocolList == R.ObjCSpaceBeforeProtocolList &&
+           PenaltyBreakAssignment ==
+               R.PenaltyBreakAssignment &&
            PenaltyBreakBeforeFirstCallParameter ==
                R.PenaltyBreakBeforeFirstCallParameter &&
            PenaltyBreakComment == R.PenaltyBreakComment &&
@@ -1455,6 +1552,18 @@ llvm::Expected<tooling::Replacements>
 cleanupAroundReplacements(StringRef Code, const tooling::Replacements &Replaces,
                           const FormatStyle &Style);
 
+/// \brief Represents the status of a formatting attempt.
+struct FormattingAttemptStatus {
+  /// \brief A value of ``false`` means that any of the affected ranges were not
+  /// formatted due to a non-recoverable syntax error.
+  bool FormatComplete = true;
+
+  /// \brief If ``FormatComplete`` is false, ``Line`` records a one-based
+  /// original line number at which a syntax error might have occurred. This is
+  /// based on a best-effort analysis and could be imprecise.
+  unsigned Line = 0;
+};
+
 /// \brief Reformats the given \p Ranges in \p Code.
 ///
 /// Each range is extended on either end to its next bigger logic unit, i.e.
@@ -1464,13 +1573,20 @@ cleanupAroundReplacements(StringRef Code, const tooling::Replacements &Replaces,
 /// Returns the ``Replacements`` necessary to make all \p Ranges comply with
 /// \p Style.
 ///
-/// If ``IncompleteFormat`` is non-null, its value will be set to true if any
-/// of the affected ranges were not formatted due to a non-recoverable syntax
-/// error.
+/// If ``Status`` is non-null, its value will be populated with the status of
+/// this formatting attempt. See \c FormattingAttemptStatus.
 tooling::Replacements reformat(const FormatStyle &Style, StringRef Code,
                                ArrayRef<tooling::Range> Ranges,
                                StringRef FileName = "<stdin>",
-                               bool *IncompleteFormat = nullptr);
+                               FormattingAttemptStatus *Status = nullptr);
+
+/// \brief Same as above, except if ``IncompleteFormat`` is non-null, its value
+/// will be set to true if any of the affected ranges were not formatted due to
+/// a non-recoverable syntax error.
+tooling::Replacements reformat(const FormatStyle &Style, StringRef Code,
+                               ArrayRef<tooling::Range> Ranges,
+                               StringRef FileName,
+                               bool *IncompleteFormat);
 
 /// \brief Clean up any erroneous/redundant code in the given \p Ranges in \p
 /// Code.

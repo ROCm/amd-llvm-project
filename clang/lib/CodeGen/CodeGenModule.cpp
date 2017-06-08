@@ -46,6 +46,7 @@
 #include "clang/Frontend/CodeGenOptions.h"
 #include "clang/Sema/SemaDiagnostic.h"
 #include "llvm/ADT/Triple.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/IR/CallSite.h"
 #include "llvm/IR/CallingConv.h"
 #include "llvm/IR/Constants.h"
@@ -113,6 +114,9 @@ CodeGenModule::CodeGenModule(ASTContext &C, const HeaderSearchOptions &HSO,
     C.getTargetInfo().getMaxPointerWidth());
   Int8PtrTy = Int8Ty->getPointerTo(0);
   Int8PtrPtrTy = Int8PtrTy->getPointerTo(0);
+  AllocaInt8PtrTy = Int8Ty->getPointerTo(
+      M.getDataLayout().getAllocaAddrSpace());
+  ASTAllocaAddressSpace = getTargetCodeGenInfo().getASTAllocaAddressSpace();
 
   RuntimeCC = getTargetCodeGenInfo().getABIInfo().getRuntimeCC();
   BuiltinCC = getTargetCodeGenInfo().getABIInfo().getBuiltinCC();
@@ -375,13 +379,18 @@ void InstrProfStats::reportDiagnostics(DiagnosticsEngine &Diags,
     if (MainFile.empty())
       MainFile = "<stdin>";
     Diags.Report(diag::warn_profile_data_unprofiled) << MainFile;
-  } else
-    Diags.Report(diag::warn_profile_data_out_of_date) << Visited << Missing
-                                                      << Mismatched;
+  } else {
+    if (Mismatched > 0)
+      Diags.Report(diag::warn_profile_data_out_of_date) << Visited << Mismatched;
+
+    if (Missing > 0)
+      Diags.Report(diag::warn_profile_data_missing) << Visited << Missing;
+  }
 }
 
 void CodeGenModule::Release() {
   EmitDeferred();
+  EmitVTablesOpportunistically();
   applyGlobalValReplacements();
   applyReplacements();
   checkAliases();
@@ -400,8 +409,11 @@ void CodeGenModule::Release() {
   }
   if (OpenMPRuntime)
     if (llvm::Function *OpenMPRegistrationFunction =
-            OpenMPRuntime->emitRegistrationFunction())
-      AddGlobalCtor(OpenMPRegistrationFunction, 0);
+            OpenMPRuntime->emitRegistrationFunction()) {
+      auto ComdatKey = OpenMPRegistrationFunction->hasComdat() ?
+        OpenMPRegistrationFunction : nullptr;
+      AddGlobalCtor(OpenMPRegistrationFunction, 0, ComdatKey);
+    }
   if (PGOReader) {
     getModule().setProfileSummary(PGOReader->getSummary().getMD(VMContext));
     if (PGOStats.hasDiagnostics())
@@ -418,8 +430,10 @@ void CodeGenModule::Release() {
   EmitDeferredUnusedCoverageMappings();
   if (CoverageMapping)
     CoverageMapping->emit();
-  if (CodeGenOpts.SanitizeCfiCrossDso)
+  if (CodeGenOpts.SanitizeCfiCrossDso) {
     CodeGenFunction(*this).EmitCfiCheckFail();
+    CodeGenFunction(*this).EmitCfiCheckStub();
+  }
   emitAtAvailableLinkGuard();
   emitLLVMUsed();
   if (SanStats)
@@ -468,18 +482,24 @@ void CodeGenModule::Release() {
     getModule().addModuleFlag(llvm::Module::Warning, "Debug Info Version",
                               llvm::DEBUG_METADATA_VERSION);
 
+  // Width of wchar_t in bytes
+  uint64_t WCharWidth =
+      Context.getTypeSizeInChars(Context.getWideCharType()).getQuantity();
+  assert((LangOpts.ShortWChar ||
+          llvm::TargetLibraryInfoImpl::getTargetWCharSize(Target.getTriple()) ==
+              Target.getWCharWidth() / 8) &&
+         "LLVM wchar_t size out of sync");
+
   // We need to record the widths of enums and wchar_t, so that we can generate
-  // the correct build attributes in the ARM backend.
+  // the correct build attributes in the ARM backend. wchar_size is also used by
+  // TargetLibraryInfo.
+  getModule().addModuleFlag(llvm::Module::Error, "wchar_size", WCharWidth);
+
   llvm::Triple::ArchType Arch = Context.getTargetInfo().getTriple().getArch();
   if (   Arch == llvm::Triple::arm
       || Arch == llvm::Triple::armeb
       || Arch == llvm::Triple::thumb
       || Arch == llvm::Triple::thumbeb) {
-    // Width of wchar_t in bytes
-    uint64_t WCharWidth =
-        Context.getTypeSizeInChars(Context.getWideCharType()).getQuantity();
-    getModule().addModuleFlag(llvm::Module::Error, "wchar_size", WCharWidth);
-
     // The minimum width of an enum in bytes
     uint64_t EnumWidth = Context.getLangOpts().ShortEnums ? 1 : 4;
     getModule().addModuleFlag(llvm::Module::Error, "min_enum_size", EnumWidth);
@@ -573,12 +593,8 @@ void CodeGenModule::DecorateInstructionWithTBAA(llvm::Instruction *Inst,
 
 void CodeGenModule::DecorateInstructionWithInvariantGroup(
     llvm::Instruction *I, const CXXRecordDecl *RD) {
-  llvm::Metadata *MD = CreateMetadataIdentifierForType(QualType(RD->getTypeForDecl(), 0));
-  auto *MetaDataNode = dyn_cast<llvm::MDNode>(MD);
-  // Check if we have to wrap MDString in MDNode.
-  if (!MetaDataNode)
-    MetaDataNode = llvm::MDNode::get(getLLVMContext(), MD);
-  I->setMetadata(llvm::LLVMContext::MD_invariant_group, MetaDataNode);
+  I->setMetadata(llvm::LLVMContext::MD_invariant_group,
+                 llvm::MDNode::get(getLLVMContext(), {}));
 }
 
 void CodeGenModule::Error(SourceLocation loc, StringRef message) {
@@ -759,7 +775,7 @@ void CodeGenModule::EmitCtorList(CtorList &Fns, const char *GlobalName) {
 
   // Get the type of a ctor entry, { i32, void ()*, i8* }.
   llvm::StructType *CtorStructTy = llvm::StructType::get(
-      Int32Ty, llvm::PointerType::getUnqual(CtorFTy), VoidPtrTy, nullptr);
+      Int32Ty, llvm::PointerType::getUnqual(CtorFTy), VoidPtrTy);
 
   // Construct the constructor and destructor arrays.
   ConstantInitBuilder builder(*this);
@@ -849,10 +865,9 @@ void CodeGenModule::SetLLVMFunctionAttributes(const Decl *D,
                                               const CGFunctionInfo &Info,
                                               llvm::Function *F) {
   unsigned CallingConv;
-  AttributeListType AttributeList;
-  ConstructAttributeList(F->getName(), Info, D, AttributeList, CallingConv,
-                         false);
-  F->setAttributes(llvm::AttributeList::get(getLLVMContext(), AttributeList));
+  llvm::AttributeList PAL;
+  ConstructAttributeList(F->getName(), Info, D, PAL, CallingConv, false);
+  F->setAttributes(PAL);
   F->setCallingConv(static_cast<llvm::CallingConv::ID>(CallingConv));
 
   // HCC-specific
@@ -863,9 +878,7 @@ void CodeGenModule::SetLLVMFunctionAttributes(const Decl *D,
       B.addAttribute("hc_grid_launch");
       B.addAttribute(llvm::Attribute::NoInline);
     }
-    F->addAttributes(llvm::AttributeList::FunctionIndex,
-                     llvm::AttributeList::get(
-                         F->getContext(), llvm::AttributeList::FunctionIndex, B));
+    F->addAttributes(llvm::AttributeList::FunctionIndex, B);
   }
 }
 
@@ -914,14 +927,20 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
         CodeGenOpts.getInlining() == CodeGenOptions::OnlyAlwaysInlining)
       B.addAttribute(llvm::Attribute::NoInline);
 
-    F->addAttributes(
-        llvm::AttributeList::FunctionIndex,
-        llvm::AttributeList::get(F->getContext(),
-                                 llvm::AttributeList::FunctionIndex, B));
+    F->addAttributes(llvm::AttributeList::FunctionIndex, B);
     return;
   }
 
-  if (D->hasAttr<OptimizeNoneAttr>()) {
+  // Track whether we need to add the optnone LLVM attribute,
+  // starting with the default for this optimization level.
+  bool ShouldAddOptNone =
+      !CodeGenOpts.DisableO0ImplyOptNone && CodeGenOpts.OptimizationLevel == 0;
+  // We can't add optnone in the following cases, it won't pass the verifier.
+  ShouldAddOptNone &= !D->hasAttr<MinSizeAttr>();
+  ShouldAddOptNone &= !F->hasFnAttribute(llvm::Attribute::AlwaysInline);
+  ShouldAddOptNone &= !D->hasAttr<AlwaysInlineAttr>();
+
+  if (ShouldAddOptNone || D->hasAttr<OptimizeNoneAttr>()) {
     B.addAttribute(llvm::Attribute::OptimizeNone);
 
     // OptimizeNone implies noinline; we should not be inlining such functions.
@@ -975,7 +994,8 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
   // function.
   if (!D->hasAttr<OptimizeNoneAttr>()) {
     if (D->hasAttr<ColdAttr>()) {
-      B.addAttribute(llvm::Attribute::OptimizeForSize);
+      if (!ShouldAddOptNone)
+        B.addAttribute(llvm::Attribute::OptimizeForSize);
       B.addAttribute(llvm::Attribute::Cold);
     }
 
@@ -983,9 +1003,7 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
       B.addAttribute(llvm::Attribute::MinSize);
   }
 
-  F->addAttributes(llvm::AttributeList::FunctionIndex,
-                   llvm::AttributeList::get(
-                       F->getContext(), llvm::AttributeList::FunctionIndex, B));
+  F->addAttributes(llvm::AttributeList::FunctionIndex, B);
 
   unsigned alignment = D->getMaxAlignment() / Context.getCharWidth();
   if (alignment)
@@ -1188,7 +1206,7 @@ void CodeGenModule::addCompilerUsedGlobal(llvm::GlobalValue *GV) {
 }
 
 static void emitUsed(CodeGenModule &CGM, StringRef Name,
-                     std::vector<llvm::WeakVH> &List) {
+                     std::vector<llvm::WeakTrackingVH> &List) {
   // Don't create llvm.used if there is no need.
   if (List.empty())
     return;
@@ -1362,13 +1380,10 @@ void CodeGenModule::EmitDeferred() {
 
   // Grab the list of decls to emit. If EmitGlobalDefinition schedules more
   // work, it will not interfere with this.
-  std::vector<DeferredGlobal> CurDeclsToEmit;
+  std::vector<GlobalDecl> CurDeclsToEmit;
   CurDeclsToEmit.swap(DeferredDeclsToEmit);
 
-  for (DeferredGlobal &G : CurDeclsToEmit) {
-    GlobalDecl D = G.GD;
-    G.GV = nullptr;
-
+  for (GlobalDecl &D : CurDeclsToEmit) {
     // We should call GetAddrOfGlobal with IsForDefinition set to true in order
     // to get GlobalValue with exactly the type we need, not something that
     // might had been created for another decl with the same mangled name but
@@ -1405,6 +1420,24 @@ void CodeGenModule::EmitDeferred() {
       assert(DeferredVTables.empty() && DeferredDeclsToEmit.empty());
     }
   }
+}
+
+void CodeGenModule::EmitVTablesOpportunistically() {
+  // Try to emit external vtables as available_externally if they have emitted
+  // all inlined virtual functions.  It runs after EmitDeferred() and therefore
+  // is not allowed to create new references to things that need to be emitted
+  // lazily. Note that it also uses fact that we eagerly emitting RTTI.
+
+  assert((OpportunisticVTables.empty() || shouldOpportunisticallyEmitVTables())
+         && "Only emit opportunistic vtables with optimizations");
+
+  for (const CXXRecordDecl *RD : OpportunisticVTables) {
+    assert(getVTables().isVTableExternal(RD) &&
+           "This queue should only contain external vtables");
+    if (getCXXABI().canSpeculativelyEmitVTable(RD))
+      VTables.GenerateClassData(RD);
+  }
+  OpportunisticVTables.clear();
 }
 
 void CodeGenModule::EmitGlobalAnnotations() {
@@ -1544,6 +1577,10 @@ bool CodeGenModule::imbueXRayAttrs(llvm::Function *Fn, SourceLocation Loc,
     return false;
   case ImbueAttr::ALWAYS:
     Fn->addFnAttr("function-instrument", "xray-always");
+    break;
+  case ImbueAttr::ALWAYS_ARG1:
+    Fn->addFnAttr("function-instrument", "xray-always");
+    Fn->addFnAttr("xray-log-args", "1");
     break;
   case ImbueAttr::NEVER:
     Fn->addFnAttr("function-instrument", "xray-never");
@@ -1770,13 +1807,13 @@ void CodeGenModule::EmitGlobal(GlobalDecl GD) {
   }
 
   StringRef MangledName = getMangledName(GD);
-  if (llvm::GlobalValue *GV = GetGlobalValue(MangledName)) {
+  if (GetGlobalValue(MangledName) != nullptr) {
     // The value has already been used and should therefore be emitted.
-    addDeferredDeclToEmit(GV, GD);
+    addDeferredDeclToEmit(GD);
   } else if (MustBeEmitted(Global)) {
     // The value must be emitted, but cannot be emitted eagerly.
     assert(!MayBeEmittedEagerly(Global));
-    addDeferredDeclToEmit(/*GV=*/nullptr, GD);
+    addDeferredDeclToEmit(GD);
   } else {
     // Otherwise, remember that we saw a deferred decl with this name.  The
     // first use of the mangled name will cause it to move into
@@ -1948,6 +1985,10 @@ bool CodeGenModule::shouldEmitFunction(GlobalDecl GD) {
   return !isTriviallyRecursive(F);
 }
 
+bool CodeGenModule::shouldOpportunisticallyEmitVTables() {
+  return CodeGenOpts.OptimizationLevel > 0;
+}
+
 static bool isWhiteListForHCC(CodeGenModule &CGM, GlobalDecl GD) {
   const auto *D = cast<ValueDecl>(GD.getDecl());
 
@@ -1983,12 +2024,16 @@ static bool isWhiteListForHCC(CodeGenModule &CGM, GlobalDecl GD) {
   }
 
   // C++11 swap/move functions are allowed to pass
+  // C++11 memory_order modifiers are allowed to pass
   // Eigen internal functions are allowed to pass
   const FunctionDecl* FuncD = dyn_cast<FunctionDecl>(D);
   if (FuncD) {
     if (MangledName.find("4swap") != StringRef::npos ||
         MangledName.find("4move") != StringRef::npos ||
         MangledName.find("16grid_launch_parm10KernelArgsIT2_EENKUlvE_clEv") != StringRef::npos ||
+        MangledName.find("St12memory_order") != StringRef::npos ||
+        MangledName.find("Kokkos4Impl") != StringRef::npos ||
+        MangledName.find("St16initializer_list") != StringRef::npos ||
         MangledName.find("Eigen8internal") != StringRef::npos) {
       return true;
     }
@@ -2176,9 +2221,7 @@ llvm::Constant *CodeGenModule::GetOrCreateLLVMFunction(
     SetFunctionAttributes(GD, F, IsIncompleteFunction, IsThunk);
   if (ExtraAttrs.hasAttributes(llvm::AttributeList::FunctionIndex)) {
     llvm::AttrBuilder B(ExtraAttrs, llvm::AttributeList::FunctionIndex);
-    F->addAttributes(llvm::AttributeList::FunctionIndex,
-                     llvm::AttributeList::get(
-                         VMContext, llvm::AttributeList::FunctionIndex, B));
+    F->addAttributes(llvm::AttributeList::FunctionIndex, B);
   }
 
   if (!DontDefer) {
@@ -2188,7 +2231,7 @@ llvm::Constant *CodeGenModule::GetOrCreateLLVMFunction(
     if (D && isa<CXXDestructorDecl>(D) &&
         getCXXABI().useThunkForDtorVariant(cast<CXXDestructorDecl>(D),
                                            GD.getDtorType()))
-      addDeferredDeclToEmit(F, GD);
+      addDeferredDeclToEmit(GD);
 
     // This is the first use or definition of a mangled name.  If there is a
     // deferred decl with this name, remember that we need to emit it at the end
@@ -2198,7 +2241,7 @@ llvm::Constant *CodeGenModule::GetOrCreateLLVMFunction(
       // Move the potentially referenced deferred decl to the
       // DeferredDeclsToEmit list, and remove it from DeferredDecls (since we
       // don't need it anymore).
-      addDeferredDeclToEmit(F, DDI->second);
+      addDeferredDeclToEmit(DDI->second);
       DeferredDecls.erase(DDI);
 
       // Otherwise, there are cases we have to worry about where we're
@@ -2218,7 +2261,7 @@ llvm::Constant *CodeGenModule::GetOrCreateLLVMFunction(
            FD = FD->getPreviousDecl()) {
         if (isa<CXXRecordDecl>(FD->getLexicalDeclContext())) {
           if (FD->doesThisDeclarationHaveABody()) {
-            addDeferredDeclToEmit(F, GD.getWithDecl(FD));
+            addDeferredDeclToEmit(GD.getWithDecl(FD));
             break;
           }
         }
@@ -2442,7 +2485,7 @@ CodeGenModule::GetOrCreateLLVMGlobal(StringRef MangledName,
   if (DDI != DeferredDecls.end()) {
     // Move the potentially referenced deferred decl to the DeferredDeclsToEmit
     // list, and remove it from DeferredDecls (since we don't need it anymore).
-    addDeferredDeclToEmit(GV, DDI->second);
+    addDeferredDeclToEmit(DDI->second);
     DeferredDecls.erase(DDI);
   }
 
@@ -2612,21 +2655,36 @@ CharUnits CodeGenModule::GetTargetTypeStoreSize(llvm::Type *Ty) const {
 
 unsigned CodeGenModule::GetGlobalVarAddressSpace(const VarDecl *D,
                                                  unsigned AddrSpace) {
-  if (D && LangOpts.CUDA && LangOpts.CUDAIsDevice) {
-    if (D->hasAttr<CUDAConstantAttr>())
-      AddrSpace = getContext().getTargetAddressSpace(LangAS::cuda_constant);
-    else if (D->hasAttr<CUDASharedAttr>())
-      AddrSpace = getContext().getTargetAddressSpace(LangAS::cuda_shared);
-    else
-      AddrSpace = getContext().getTargetAddressSpace(LangAS::cuda_device);
-  } else if (getTriple().getArch() == llvm::Triple::amdgcn &&
-      (LangOpts.CPlusPlus || LangOpts.OpenMP)) {
-    if (D && D->getType().isConstant(getContext()))
-      AddrSpace = getContext().getTargetAddressSpace(LangAS::opencl_constant);
-    else
-      AddrSpace = getContext().getTargetAddressSpace(LangAS::opencl_global);
+  if (D) {
+    if (LangOpts.CUDA && LangOpts.CUDAIsDevice) {
+      if (D->hasAttr<CUDAConstantAttr>())
+        AddrSpace = getContext().getTargetAddressSpace(LangAS::cuda_constant);
+      else if (D->hasAttr<CUDASharedAttr>())
+        AddrSpace = getContext().getTargetAddressSpace(LangAS::cuda_shared);
+      else
+        AddrSpace = getContext().getTargetAddressSpace(LangAS::cuda_device);
+    } else if (getTriple().getArch() == llvm::Triple::amdgcn) {
+      auto LangAddr = D->getType().getAddressSpace();
+      if (LangOpts.OpenCL) {
+        assert(LangAddr == LangAS::opencl_global ||
+               LangAddr == LangAS::opencl_constant ||
+               LangAddr == LangAS::opencl_local ||
+               LangAddr >= LangAS::FirstTargetAddressSpace);
+      } else {
+        assert(LangAddr == LangAS::Default ||
+               LangAddr >= LangAS::FirstTargetAddressSpace);
+      }
+      if (!LangOpts.OpenCL && LangAddr == LangAS::Default) {
+        if (isTypeConstant(D->getType(), false)) {
+          LangAddr = LangAS::opencl_constant;
+        } else {
+          LangAddr = LangAS::opencl_global;
+        }
+        AddrSpace = getContext().getTargetAddressSpace(LangAddr);
+      }
+    }
   }
-
+  
   if (D && LangOpts.CPlusPlusAMP && LangOpts.DevicePath) {
     if (D->hasAttr<HCCTileStaticAttr>())
       AddrSpace = getContext().getTargetAddressSpace(LangAS::hcc_tilestatic);
@@ -3091,13 +3149,8 @@ static void replaceUsesOfNonProtoConstant(llvm::Constant *old,
       continue;
 
     // Get the call site's attribute list.
-    SmallVector<llvm::AttributeList, 8> newAttrs;
+    SmallVector<llvm::AttributeSet, 8> newArgAttrs;
     llvm::AttributeList oldAttrs = callSite.getAttributes();
-
-    // Collect any return attributes from the call.
-    if (oldAttrs.hasAttributes(llvm::AttributeList::ReturnIndex))
-      newAttrs.push_back(llvm::AttributeList::get(newFn->getContext(),
-                                                  oldAttrs.getRetAttributes()));
 
     // If the function was passed too few arguments, don't transform.
     unsigned newNumArgs = newFn->arg_size();
@@ -3107,24 +3160,18 @@ static void replaceUsesOfNonProtoConstant(llvm::Constant *old,
     // If any of the types mismatch, we don't transform.
     unsigned argNo = 0;
     bool dontTransform = false;
-    for (llvm::Function::arg_iterator ai = newFn->arg_begin(),
-           ae = newFn->arg_end(); ai != ae; ++ai, ++argNo) {
-      if (callSite.getArgument(argNo)->getType() != ai->getType()) {
+    for (llvm::Argument &A : newFn->args()) {
+      if (callSite.getArgument(argNo)->getType() != A.getType()) {
         dontTransform = true;
         break;
       }
 
       // Add any parameter attributes.
-      if (oldAttrs.hasAttributes(argNo + 1))
-        newAttrs.push_back(llvm::AttributeList::get(
-            newFn->getContext(), oldAttrs.getParamAttributes(argNo + 1)));
+      newArgAttrs.push_back(oldAttrs.getParamAttributes(argNo));
+      argNo++;
     }
     if (dontTransform)
       continue;
-
-    if (oldAttrs.hasAttributes(llvm::AttributeList::FunctionIndex))
-      newAttrs.push_back(llvm::AttributeList::get(newFn->getContext(),
-                                                  oldAttrs.getFnAttributes()));
 
     // Okay, we can transform this.  Create the new call instruction and copy
     // over the required information.
@@ -3149,8 +3196,9 @@ static void replaceUsesOfNonProtoConstant(llvm::Constant *old,
 
     if (!newCall->getType()->isVoidTy())
       newCall->takeName(callSite.getInstruction());
-    newCall.setAttributes(
-        llvm::AttributeList::get(newFn->getContext(), newAttrs));
+    newCall.setAttributes(llvm::AttributeList::get(
+        newFn->getContext(), oldAttrs.getFnAttributes(),
+        oldAttrs.getRetAttributes(), newArgAttrs));
     newCall.setCallingConv(callSite.getCallingConv());
 
     // Finally, remove the old call, replacing any uses with the new one.
@@ -3966,6 +4014,10 @@ void CodeGenModule::EmitTopLevelDecl(Decl *D) {
     AddDeferredUnusedCoverageMapping(D);
     break;
 
+  case Decl::CXXDeductionGuide:
+    // Function-like, but does not result in code emission.
+    break;
+
   case Decl::Var:
   case Decl::Decomposition:
     // Skip variable templates
@@ -3989,6 +4041,11 @@ void CodeGenModule::EmitTopLevelDecl(Decl *D) {
     EmitDeclContext(cast<NamespaceDecl>(D));
     break;
   case Decl::CXXRecord:
+    if (DebugInfo) {
+      if (auto *ES = D->getASTContext().getExternalSource())
+        if (ES->hasExternalDefinitions(D) == ExternalASTSource::EK_Never)
+          DebugInfo->completeUnusedClass(cast<CXXRecordDecl>(*D));
+    }
     // Emit any static data members, they may be definitions.
     for (auto *I : cast<CXXRecordDecl>(D)->decls())
       if (isa<VarDecl>(I) || isa<CXXRecordDecl>(I))

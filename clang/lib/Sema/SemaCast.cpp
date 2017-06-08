@@ -1894,7 +1894,8 @@ static bool fixOverloadedReinterpretCastExpr(Sema &Self, QualType DestType,
   // No guarantees that ResolveAndFixSingleFunctionTemplateSpecialization
   // preserves Result.
   Result = E;
-  if (!Self.resolveAndFixAddressOfOnlyViableOverloadCandidate(Result))
+  if (!Self.resolveAndFixAddressOfOnlyViableOverloadCandidate(
+          Result, /*DoFunctionPointerConversion=*/true))
     return false;
   return Result.isUsable();
 }

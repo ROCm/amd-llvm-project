@@ -654,8 +654,24 @@ static void addDashXForInput(const ArgList &Args, const InputInfo &Input,
   CmdArgs.push_back("-x");
   if (Args.hasArg(options::OPT_rewrite_objc))
     CmdArgs.push_back(types::getTypeName(types::TY_PP_ObjCXX));
-  else
-    CmdArgs.push_back(types::getTypeName(Input.getType()));
+  else {
+    // Map the driver type to the frontend type. This is mostly an identity
+    // mapping, except that the distinction between module interface units
+    // and other source files does not exist at the frontend layer.
+    const char *ClangType;
+    switch (Input.getType()) {
+    case types::TY_CXXModule:
+      ClangType = "c++";
+      break;
+    case types::TY_PP_CXXModule:
+      ClangType = "c++-cpp-output";
+      break;
+    default:
+      ClangType = types::getTypeName(Input.getType());
+      break;
+    }
+    CmdArgs.push_back(ClangType);
+  }
 }
 
 static void appendUserToPath(SmallVectorImpl<char> &Result) {
@@ -2368,6 +2384,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   if (!Args.hasFlag(options::OPT_fstrict_return, options::OPT_fno_strict_return,
                     true))
     CmdArgs.push_back("-fno-strict-return");
+  if (Args.hasFlag(options::OPT_fallow_editor_placeholders,
+                   options::OPT_fno_allow_editor_placeholders, false))
+    CmdArgs.push_back("-fallow-editor-placeholders");
   if (Args.hasFlag(options::OPT_fstrict_vtable_pointers,
                    options::OPT_fno_strict_vtable_pointers,
                    false))
@@ -2781,8 +2800,10 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       DebugInfoKind = codegenoptions::LimitedDebugInfo;
   }
 
-  // disable debug output for HCC kernel path
-  if (!IsHCCKernelPath) {
+  // Only allow debug lines output for HCC kernel path,
+  // disable other debug info until it's fully supported
+  if (!IsHCCKernelPath ||
+       DebugInfoKind == codegenoptions::DebugLineTablesOnly) {
 
   // If a debugger tuning argument appeared, remember it.
   if (Arg *A = Args.getLastArg(options::OPT_gTune_Group,
@@ -2835,13 +2856,14 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // -gsplit-dwarf should turn on -g and enable the backend dwarf
   // splitting and extraction.
   // FIXME: Currently only works on Linux.
-  if (getToolChain().getTriple().isOSLinux() && SplitDwarfArg) {
+  if (getToolChain().getTriple().isOSLinux()) {
     if (!splitDwarfInlining)
       CmdArgs.push_back("-fno-split-dwarf-inlining");
-    if (DebugInfoKind == codegenoptions::NoDebugInfo)
-      DebugInfoKind = codegenoptions::LimitedDebugInfo;
-    CmdArgs.push_back("-backend-option");
-    CmdArgs.push_back("-split-dwarf=Enable");
+    if (SplitDwarfArg) {
+      if (DebugInfoKind == codegenoptions::NoDebugInfo)
+        DebugInfoKind = codegenoptions::LimitedDebugInfo;
+      CmdArgs.push_back("-enable-split-dwarf");
+    }
   }
 
   // After we've dealt with all combinations of things that could
@@ -4063,9 +4085,30 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                                           << value;
   }
 
+  bool CaretDefault = true;
+  bool ColumnDefault = true;
+  if (Arg *DiagArg = Args.getLastArg(options::OPT__SLASH_diagnostics_classic,
+                                     options::OPT__SLASH_diagnostics_column,
+                                     options::OPT__SLASH_diagnostics_caret)) {
+    switch (DiagArg->getOption().getID()) {
+    case options::OPT__SLASH_diagnostics_caret:
+      CaretDefault = true;
+      ColumnDefault = true;
+      break;
+    case options::OPT__SLASH_diagnostics_column:
+      CaretDefault = false;
+      ColumnDefault = true;
+      break;
+    case options::OPT__SLASH_diagnostics_classic:
+      CaretDefault = false;
+      ColumnDefault = false;
+      break;
+    }
+  }
+
   // -fcaret-diagnostics is default.
   if (!Args.hasFlag(options::OPT_fcaret_diagnostics,
-                    options::OPT_fno_caret_diagnostics, true))
+                    options::OPT_fno_caret_diagnostics, CaretDefault))
     CmdArgs.push_back("-fno-caret-diagnostics");
 
   // -fdiagnostics-fixit-info is default, only pass non-default.
@@ -4137,7 +4180,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-fdiagnostics-absolute-paths");
 
   if (!Args.hasFlag(options::OPT_fshow_column, options::OPT_fno_show_column,
-                    true))
+                    ColumnDefault))
     CmdArgs.push_back("-fno-show-column");
 
   if (!Args.hasFlag(options::OPT_fspell_checking,
@@ -4881,14 +4924,36 @@ void Clang::AddClangCLArgs(const ArgList &Args, types::ID InputType,
       CmdArgs.push_back("-fms-memptr-rep=virtual");
   }
 
-  if (Args.getLastArg(options::OPT__SLASH_Gd))
-     CmdArgs.push_back("-fdefault-calling-conv=cdecl");
-  else if (Args.getLastArg(options::OPT__SLASH_Gr))
-     CmdArgs.push_back("-fdefault-calling-conv=fastcall");
-  else if (Args.getLastArg(options::OPT__SLASH_Gz))
-     CmdArgs.push_back("-fdefault-calling-conv=stdcall");
-  else if (Args.getLastArg(options::OPT__SLASH_Gv))
-     CmdArgs.push_back("-fdefault-calling-conv=vectorcall");
+  // Parse the default calling convention options.
+  if (Arg *CCArg =
+          Args.getLastArg(options::OPT__SLASH_Gd, options::OPT__SLASH_Gr,
+                          options::OPT__SLASH_Gz, options::OPT__SLASH_Gv)) {
+    unsigned DCCOptId = CCArg->getOption().getID();
+    const char *DCCFlag = nullptr;
+    bool ArchSupported = true;
+    llvm::Triple::ArchType Arch = getToolChain().getArch();
+    switch (DCCOptId) {
+    case options::OPT__SLASH_Gd:
+      DCCFlag = "-fdefault-calling-conv=cdecl";
+      break;
+    case options::OPT__SLASH_Gr:
+      ArchSupported = Arch == llvm::Triple::x86;
+      DCCFlag = "-fdefault-calling-conv=fastcall";
+      break;
+    case options::OPT__SLASH_Gz:
+      ArchSupported = Arch == llvm::Triple::x86;
+      DCCFlag = "-fdefault-calling-conv=stdcall";
+      break;
+    case options::OPT__SLASH_Gv:
+      ArchSupported = Arch == llvm::Triple::x86 || Arch == llvm::Triple::x86_64;
+      DCCFlag = "-fdefault-calling-conv=vectorcall";
+      break;
+    }
+
+    // MSVC doesn't warn if /Gr or /Gz is used on x64, so we don't either.
+    if (ArchSupported && DCCFlag)
+      CmdArgs.push_back(DCCFlag);
+  }
 
   if (Arg *A = Args.getLastArg(options::OPT_vtordisp_mode_EQ))
     A->render(Args, CmdArgs);
@@ -5115,6 +5180,19 @@ void ClangAs::ConstructJob(Compilation &C, const JobAction &JA,
   case llvm::Triple::x86:
   case llvm::Triple::x86_64:
     AddX86TargetArgs(Args, CmdArgs);
+    break;
+
+  case llvm::Triple::arm:
+  case llvm::Triple::armeb:
+  case llvm::Triple::thumb:
+  case llvm::Triple::thumbeb:
+    // This isn't in AddARMTargetArgs because we want to do this for assembly
+    // only, not C/C++.
+    if (Args.hasFlag(options::OPT_mdefault_build_attributes,
+                     options::OPT_mno_default_build_attributes, true)) {
+        CmdArgs.push_back("-mllvm");
+        CmdArgs.push_back("-arm-add-build-attributes");
+    }
     break;
   }
 

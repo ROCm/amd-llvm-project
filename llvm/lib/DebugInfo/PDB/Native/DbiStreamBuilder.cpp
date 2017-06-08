@@ -12,8 +12,8 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/DebugInfo/MSF/MSFBuilder.h"
 #include "llvm/DebugInfo/MSF/MappedBlockStream.h"
+#include "llvm/DebugInfo/PDB/Native/DbiModuleDescriptorBuilder.h"
 #include "llvm/DebugInfo/PDB/Native/DbiStream.h"
-#include "llvm/DebugInfo/PDB/Native/ModInfoBuilder.h"
 #include "llvm/DebugInfo/PDB/Native/RawError.h"
 #include "llvm/Object/COFF.h"
 #include "llvm/Support/BinaryStreamWriter.h"
@@ -74,10 +74,11 @@ uint32_t DbiStreamBuilder::calculateSerializedLength() const {
          calculateSectionMapStreamSize() + calculateDbgStreamsSize();
 }
 
-Expected<ModInfoBuilder &>
+Expected<DbiModuleDescriptorBuilder &>
 DbiStreamBuilder::addModuleInfo(StringRef ModuleName) {
   uint32_t Index = ModiList.size();
-  auto MIB = llvm::make_unique<ModInfoBuilder>(ModuleName, Index, Msf);
+  auto MIB =
+      llvm::make_unique<DbiModuleDescriptorBuilder>(ModuleName, Index, Msf);
   auto M = MIB.get();
   auto Result = ModiMap.insert(std::make_pair(ModuleName, std::move(MIB)));
 
@@ -100,6 +101,14 @@ Error DbiStreamBuilder::addModuleSourceFile(StringRef Module, StringRef File) {
   return Error::success();
 }
 
+Expected<uint32_t> DbiStreamBuilder::getSourceFileNameIndex(StringRef File) {
+  auto NameIter = SourceFileNames.find(File);
+  if (NameIter == SourceFileNames.end())
+    return make_error<RawError>(raw_error_code::no_entry,
+                                "The specified source file was not found");
+  return NameIter->getValue();
+}
+
 uint32_t DbiStreamBuilder::calculateModiSubstreamSize() const {
   uint32_t Size = 0;
   for (const auto &M : ModiList)
@@ -120,16 +129,21 @@ uint32_t DbiStreamBuilder::calculateSectionMapStreamSize() const {
   return sizeof(SecMapHeader) + sizeof(SecMapEntry) * SectionMap.size();
 }
 
-uint32_t DbiStreamBuilder::calculateFileInfoSubstreamSize() const {
-  uint32_t Size = 0;
-  Size += sizeof(ulittle16_t);                         // NumModules
-  Size += sizeof(ulittle16_t);                         // NumSourceFiles
-  Size += ModiList.size() * sizeof(ulittle16_t);       // ModIndices
-  Size += ModiList.size() * sizeof(ulittle16_t);       // ModFileCounts
+uint32_t DbiStreamBuilder::calculateNamesOffset() const {
+  uint32_t Offset = 0;
+  Offset += sizeof(ulittle16_t);                         // NumModules
+  Offset += sizeof(ulittle16_t);                         // NumSourceFiles
+  Offset += ModiList.size() * sizeof(ulittle16_t);       // ModIndices
+  Offset += ModiList.size() * sizeof(ulittle16_t);       // ModFileCounts
   uint32_t NumFileInfos = 0;
   for (const auto &M : ModiList)
     NumFileInfos += M->source_files().size();
-  Size += NumFileInfos * sizeof(ulittle32_t); // FileNameOffsets
+  Offset += NumFileInfos * sizeof(ulittle32_t); // FileNameOffsets
+  return Offset;
+}
+
+uint32_t DbiStreamBuilder::calculateFileInfoSubstreamSize() const {
+  uint32_t Size = calculateNamesOffset();
   Size += calculateNamesBufferSize();
   return alignTo(Size, sizeof(uint32_t));
 }
@@ -148,9 +162,8 @@ uint32_t DbiStreamBuilder::calculateDbgStreamsSize() const {
 
 Error DbiStreamBuilder::generateFileInfoSubstream() {
   uint32_t Size = calculateFileInfoSubstreamSize();
-  uint32_t NameSize = calculateNamesBufferSize();
   auto Data = Allocator.Allocate<uint8_t>(Size);
-  uint32_t NamesOffset = Size - NameSize;
+  uint32_t NamesOffset = calculateNamesOffset();
 
   FileInfoBuffer = MutableBinaryByteStream(MutableArrayRef<uint8_t>(Data, Size),
                                            llvm::support::little);
@@ -197,6 +210,9 @@ Error DbiStreamBuilder::generateFileInfoSubstream() {
         return EC;
     }
   }
+
+  if (auto EC = NameBufferWriter.padToAlignment(sizeof(uint32_t)))
+    return EC;
 
   if (NameBufferWriter.bytesRemaining() > 0)
     return make_error<RawError>(raw_error_code::invalid_format,

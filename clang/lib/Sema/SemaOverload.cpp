@@ -960,40 +960,39 @@ void Sema::DiagnoseCXXAMPDtorOverload(FunctionDecl *New,
   }
 }
 
-// IsOverload - Determine whether the given New declaration is an
-// overload of the declarations in Old. This routine returns false if
-// New and Old cannot be overloaded, e.g., if New has the same
-// signature as some function in Old (C++ 1.3.10) or if the Old
-// declarations aren't functions (or function templates) at all. When
-// it does return false, MatchedDecl will point to the decl that New
-// cannot be overloaded with.  This decl may be a UsingShadowDecl on
-// top of the underlying declaration.
-//
-// Example: Given the following input:
-//
-//   void f(int, float); // #1
-//   void f(int, int); // #2
-//   int f(int, int); // #3
-//
-// When we process #1, there is no previous declaration of "f",
-// so IsOverload will not be used.
-//
-// When we process #2, Old contains only the FunctionDecl for #1.  By
-// comparing the parameter types, we see that #1 and #2 are overloaded
-// (since they have different signatures), so this routine returns
-// false; MatchedDecl is unchanged.
-//
-// When we process #3, Old is an overload set containing #1 and #2. We
-// compare the signatures of #3 to #1 (they're overloaded, so we do
-// nothing) and then #3 to #2. Since the signatures of #3 and #2 are
-// identical (return types of functions are not part of the
-// signature), IsOverload returns false and MatchedDecl will be set to
-// point to the FunctionDecl for #2.
-//
-// 'NewIsUsingShadowDecl' indicates that 'New' is being introduced
-// into a class by a using declaration.  The rules for whether to hide
-// shadow declarations ignore some properties which otherwise figure
-// into a function template's signature.
+/// Determine whether the given New declaration is an overload of the
+/// declarations in Old. This routine returns Ovl_Match or Ovl_NonFunction if
+/// New and Old cannot be overloaded, e.g., if New has the same signature as
+/// some function in Old (C++ 1.3.10) or if the Old declarations aren't
+/// functions (or function templates) at all. When it does return Ovl_Match or
+/// Ovl_NonFunction, MatchedDecl will point to the decl that New cannot be
+/// overloaded with. This decl may be a UsingShadowDecl on top of the underlying
+/// declaration.
+///
+/// Example: Given the following input:
+///
+///   void f(int, float); // #1
+///   void f(int, int); // #2
+///   int f(int, int); // #3
+///
+/// When we process #1, there is no previous declaration of "f", so IsOverload
+/// will not be used.
+///
+/// When we process #2, Old contains only the FunctionDecl for #1. By comparing
+/// the parameter types, we see that #1 and #2 are overloaded (since they have
+/// different signatures), so this routine returns Ovl_Overload; MatchedDecl is
+/// unchanged.
+///
+/// When we process #3, Old is an overload set containing #1 and #2. We compare
+/// the signatures of #3 to #1 (they're overloaded, so we do nothing) and then
+/// #3 to #2. Since the signatures of #3 and #2 are identical (return types of
+/// functions are not part of the signature), IsOverload returns Ovl_Match and
+/// MatchedDecl will be set to point to the FunctionDecl for #2.
+///
+/// 'NewIsUsingShadowDecl' indicates that 'New' is being introduced into a class
+/// by a using declaration. The rules for whether to hide shadow declarations
+/// ignore some properties which otherwise figure into a function template's
+/// signature.
 Sema::OverloadKind
 Sema::CheckOverload(Scope *S, FunctionDecl *New, const LookupResult &Old,
                     NamedDecl *&Match, bool NewIsUsingDecl) {
@@ -4115,7 +4114,7 @@ CompareDerivedToBaseConversions(Sema &S, SourceLocation Loc,
         = S.Context.canAssignObjCInterfaces(ToPtr1, ToPtr2);
       bool ToAssignRight
         = S.Context.canAssignObjCInterfaces(ToPtr2, ToPtr1);
-      
+
       // A conversion to an a non-id object pointer type or qualified 'id' 
       // type is better than a conversion to 'id'.
       if (ToPtr1->isObjCIdType() &&
@@ -4149,11 +4148,25 @@ CompareDerivedToBaseConversions(Sema &S, SourceLocation Loc,
         return ImplicitConversionSequence::Better;
 
       //   -- "conversion of C* to B* is better than conversion of C* to A*,"
-      if (S.Context.hasSameType(FromType1, FromType2) && 
+      if (S.Context.hasSameType(FromType1, FromType2) &&
           !FromPtr1->isObjCIdType() && !FromPtr1->isObjCClassType() &&
-          (ToAssignLeft != ToAssignRight))
+          (ToAssignLeft != ToAssignRight)) {
+        if (FromPtr1->isSpecialized()) {
+          // "conversion of B<A> * to B * is better than conversion of B * to
+          // C *.
+          bool IsFirstSame =
+              FromPtr1->getInterfaceDecl() == ToPtr1->getInterfaceDecl();
+          bool IsSecondSame =
+              FromPtr1->getInterfaceDecl() == ToPtr2->getInterfaceDecl();
+          if (IsFirstSame) {
+            if (!IsSecondSame)
+              return ImplicitConversionSequence::Better;
+          } else if (IsSecondSame)
+            return ImplicitConversionSequence::Worse;
+        }
         return ToAssignLeft? ImplicitConversionSequence::Worse
                            : ImplicitConversionSequence::Better;
+      }
 
       //   -- "conversion of B* to A* is better than conversion of C* to A*,"
       if (S.Context.hasSameUnqualifiedType(ToType1, ToType2) &&
@@ -6296,11 +6309,11 @@ EnableIfAttr *Sema::CheckEnableIf(FunctionDecl *Function, ArrayRef<Expr *> Args,
 }
 
 template <typename CheckFn>
-static bool diagnoseDiagnoseIfAttrsWith(Sema &S, const FunctionDecl *FD,
+static bool diagnoseDiagnoseIfAttrsWith(Sema &S, const NamedDecl *ND,
                                         bool ArgDependent, SourceLocation Loc,
                                         CheckFn &&IsSuccessful) {
   SmallVector<const DiagnoseIfAttr *, 8> Attrs;
-  for (const auto *DIA : FD->specific_attrs<DiagnoseIfAttr>()) {
+  for (const auto *DIA : ND->specific_attrs<DiagnoseIfAttr>()) {
     if (ArgDependent == DIA->getArgDependent())
       Attrs.push_back(DIA);
   }
@@ -6347,16 +6360,16 @@ bool Sema::diagnoseArgDependentDiagnoseIfAttrs(const FunctionDecl *Function,
         // EvaluateWithSubstitution only cares about the position of each
         // argument in the arg list, not the ParmVarDecl* it maps to.
         if (!DIA->getCond()->EvaluateWithSubstitution(
-                Result, Context, DIA->getParent(), Args, ThisArg))
+                Result, Context, cast<FunctionDecl>(DIA->getParent()), Args, ThisArg))
           return false;
         return Result.isInt() && Result.getInt().getBoolValue();
       });
 }
 
-bool Sema::diagnoseArgIndependentDiagnoseIfAttrs(const FunctionDecl *Function,
+bool Sema::diagnoseArgIndependentDiagnoseIfAttrs(const NamedDecl *ND,
                                                  SourceLocation Loc) {
   return diagnoseDiagnoseIfAttrsWith(
-      *this, Function, /*ArgDependent=*/false, Loc,
+      *this, ND, /*ArgDependent=*/false, Loc,
       [&](const DiagnoseIfAttr *DIA) {
         bool Result;
         return DIA->getCond()->EvaluateAsBooleanCondition(Result, Context) &&
@@ -9854,7 +9867,8 @@ static void DiagnoseBadConversion(Sema &S, OverloadCandidate *Cand,
         << (unsigned) FnKind << FnDesc
         << (FromExpr ? FromExpr->getSourceRange() : SourceRange())
         << FromTy
-        << FromQs.getAddressSpace() << ToQs.getAddressSpace()
+        << FromQs.getAddressSpaceAttributePrintValue()
+        << ToQs.getAddressSpaceAttributePrintValue()
         << (unsigned) isObjectArgument << I+1;
       MaybeEmitInheritedConstructorNote(S, Cand->FoundDecl);
       return;
@@ -11598,12 +11612,12 @@ Sema::resolveAddressOfOnlyViableOverloadCandidate(Expr *E,
 /// \brief Given an overloaded function, tries to turn it into a non-overloaded
 /// function reference using resolveAddressOfOnlyViableOverloadCandidate. This
 /// will perform access checks, diagnose the use of the resultant decl, and, if
-/// necessary, perform a function-to-pointer decay.
+/// requested, potentially perform a function-to-pointer decay.
 ///
 /// Returns false if resolveAddressOfOnlyViableOverloadCandidate fails.
 /// Otherwise, returns true. This may emit diagnostics and return true.
 bool Sema::resolveAndFixAddressOfOnlyViableOverloadCandidate(
-    ExprResult &SrcExpr) {
+    ExprResult &SrcExpr, bool DoFunctionPointerConverion) {
   Expr *E = SrcExpr.get();
   assert(E->getType() == Context.OverloadTy && "SrcExpr must be an overload");
 
@@ -11618,7 +11632,7 @@ bool Sema::resolveAndFixAddressOfOnlyViableOverloadCandidate(
   DiagnoseUseOfDecl(Found, E->getExprLoc());
   CheckAddressOfMemberAccess(E, DAP);
   Expr *Fixed = FixOverloadedFunctionReference(E, DAP, Found);
-  if (Fixed->getType()->isFunctionType())
+  if (DoFunctionPointerConverion && Fixed->getType()->isFunctionType())
     SrcExpr = DefaultFunctionArrayConversion(Fixed, /*Diagnose=*/false);
   else
     SrcExpr = Fixed;
@@ -11814,6 +11828,10 @@ static void AddOverloadedCallCandidate(Sema &S,
       assert(!KnownValid && "Explicit template arguments?");
       return;
     }
+    // Prevent ill-formed function decls to be added as overload candidates.
+    if (!dyn_cast<FunctionProtoType>(Func->getType()->getAs<FunctionType>()))
+      return;
+
     S.AddOverloadCandidate(Func, FoundDecl, Args, CandidateSet,
                            /*SuppressUsedConversions=*/false,
                            PartialOverloading);

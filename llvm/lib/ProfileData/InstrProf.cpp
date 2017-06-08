@@ -136,7 +136,48 @@ const std::error_category &llvm::instrprof_category() {
   return *ErrorCategory;
 }
 
+namespace {
+
+const char *InstrProfSectNameCommon[] = {
+#define INSTR_PROF_SECT_ENTRY(Kind, SectNameCommon, SectNameCoff, Prefix)      \
+  SectNameCommon,
+#include "llvm/ProfileData/InstrProfData.inc"
+};
+
+const char *InstrProfSectNameCoff[] = {
+#define INSTR_PROF_SECT_ENTRY(Kind, SectNameCommon, SectNameCoff, Prefix)      \
+  SectNameCoff,
+#include "llvm/ProfileData/InstrProfData.inc"
+};
+
+const char *InstrProfSectNamePrefix[] = {
+#define INSTR_PROF_SECT_ENTRY(Kind, SectNameCommon, SectNameCoff, Prefix)      \
+  Prefix,
+#include "llvm/ProfileData/InstrProfData.inc"
+};
+
+} // namespace
+
 namespace llvm {
+
+std::string getInstrProfSectionName(InstrProfSectKind IPSK,
+                                    Triple::ObjectFormatType OF,
+                                    bool AddSegmentInfo) {
+  std::string SectName;
+
+  if (OF == Triple::MachO && AddSegmentInfo)
+    SectName = InstrProfSectNamePrefix[IPSK];
+
+  if (OF == Triple::COFF)
+    SectName += InstrProfSectNameCoff[IPSK];
+  else
+    SectName += InstrProfSectNameCommon[IPSK];
+
+  if (OF == Triple::MachO && IPSK == IPSK_data && AddSegmentInfo)
+    SectName += ",regular,live_support";
+
+  return SectName;
+}
 
 void SoftInstrProfErrors::addError(instrprof_error IE) {
   if (IE == instrprof_error::success)
@@ -314,7 +355,7 @@ void InstrProfSymtab::create(Module &M, bool InLTO) {
   finalizeSymtab();
 }
 
-Error collectPGOFuncNameStrings(const std::vector<std::string> &NameStrs,
+Error collectPGOFuncNameStrings(ArrayRef<std::string> NameStrs,
                                 bool doCompression, std::string &Result) {
   assert(!NameStrs.empty() && "No name data to emit");
 
@@ -362,7 +403,7 @@ StringRef getPGOFuncNameVarInitializer(GlobalVariable *NameVar) {
   return NameStr;
 }
 
-Error collectPGOFuncNameStrings(const std::vector<GlobalVariable *> &NameVars,
+Error collectPGOFuncNameStrings(ArrayRef<GlobalVariable *> NameVars,
                                 std::string &Result, bool doCompression) {
   std::vector<std::string> NameStrs;
   for (auto *NameVar : NameVars) {
@@ -937,22 +978,22 @@ bool canRenameComdatFunc(const Function &F, bool CheckAddressTaken) {
 }
 
 // Parse the value profile options.
-void getMemOPSizeRangeFromOption(std::string MemOPSizeRange,
-                                 int64_t &RangeStart, int64_t &RangeLast) {
+void getMemOPSizeRangeFromOption(StringRef MemOPSizeRange, int64_t &RangeStart,
+                                 int64_t &RangeLast) {
   static const int64_t DefaultMemOPSizeRangeStart = 0;
   static const int64_t DefaultMemOPSizeRangeLast = 8;
   RangeStart = DefaultMemOPSizeRangeStart;
   RangeLast = DefaultMemOPSizeRangeLast;
 
   if (!MemOPSizeRange.empty()) {
-    auto Pos = MemOPSizeRange.find(":");
+    auto Pos = MemOPSizeRange.find(':');
     if (Pos != std::string::npos) {
       if (Pos > 0)
-        RangeStart = atoi(MemOPSizeRange.substr(0, Pos).c_str());
+        MemOPSizeRange.substr(0, Pos).getAsInteger(10, RangeStart);
       if (Pos < MemOPSizeRange.size() - 1)
-        RangeLast = atoi(MemOPSizeRange.substr(Pos + 1).c_str());
+        MemOPSizeRange.substr(Pos + 1).getAsInteger(10, RangeLast);
     } else
-      RangeLast = atoi(MemOPSizeRange.c_str());
+      MemOPSizeRange.getAsInteger(10, RangeLast);
   }
   assert(RangeLast >= RangeStart);
 }

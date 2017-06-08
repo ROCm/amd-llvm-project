@@ -257,6 +257,23 @@ private:
   /// resolved.
   Module *resolveModuleId(const ModuleId &Id, Module *Mod, bool Complain) const;
 
+  /// Resolve the given header directive to an actual header file.
+  ///
+  /// \param M The module in which we're resolving the header directive.
+  /// \param Header The header directive to resolve.
+  /// \param RelativePathName Filled in with the relative path name from the
+  ///        module to the resolved header.
+  /// \return The resolved file, if any.
+  const FileEntry *resolveHeader(Module *M,
+                                 Module::UnresolvedHeaderDirective Header,
+                                 SmallVectorImpl<char> &RelativePathName);
+
+  /// Attempt to resolve the specified header directive as naming a builtin
+  /// header.
+  const FileEntry *
+  resolveAsBuiltinHeader(Module *M, Module::UnresolvedHeaderDirective Header,
+                         SmallVectorImpl<char> &BuiltinPathName);
+
   /// \brief Looks up the modules that \p File corresponds to.
   ///
   /// If \p File represents a builtin header within Clang's builtin include
@@ -507,16 +524,6 @@ public:
   /// false otherwise.
   bool resolveConflicts(Module *Mod, bool Complain);
 
-  /// \brief Infers the (sub)module based on the given source location and
-  /// source manager.
-  ///
-  /// \param Loc The location within the source that we are querying, along
-  /// with its source manager.
-  ///
-  /// \returns The module that owns this source location, or null if no
-  /// module owns this source location.
-  Module *inferModuleFromLocation(FullSourceLoc Loc);
-  
   /// \brief Sets the umbrella header of the given module to the given
   /// header.
   void setUmbrellaHeader(Module *Mod, const FileEntry *UmbrellaHeader,
@@ -546,14 +553,20 @@ public:
   /// \param HomeDir The directory in which relative paths within this module
   ///        map file will be resolved.
   ///
+  /// \param ID The FileID of the file to process, if we've already entered it.
+  ///
+  /// \param Offset [inout] On input the offset at which to start parsing. On
+  ///        output, the offset at which the module map terminated.
+  ///
   /// \param ExternModuleLoc The location of the "extern module" declaration
   ///        that caused us to load this module map file, if any.
   ///
   /// \returns true if an error occurred, false otherwise.
   bool parseModuleMapFile(const FileEntry *File, bool IsSystem,
-                          const DirectoryEntry *HomeDir,
+                          const DirectoryEntry *HomeDir, FileID ID = FileID(),
+                          unsigned *Offset = nullptr,
                           SourceLocation ExternModuleLoc = SourceLocation());
-    
+
   /// \brief Dump the contents of the module map, for debugging purposes.
   void dump();
   

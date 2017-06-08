@@ -12,6 +12,9 @@
 
 #include "lldb/Host/common/NativeThreadProtocol.h"
 
+#include <map>
+#include <string>
+
 namespace lldb_private {
 namespace process_netbsd {
 
@@ -35,14 +38,14 @@ public:
 
   NativeRegisterContextSP GetRegisterContext() override;
 
-  Error SetWatchpoint(lldb::addr_t addr, size_t size, uint32_t watch_flags,
-                      bool hardware) override;
+  Status SetWatchpoint(lldb::addr_t addr, size_t size, uint32_t watch_flags,
+                       bool hardware) override;
 
-  Error RemoveWatchpoint(lldb::addr_t addr) override;
+  Status RemoveWatchpoint(lldb::addr_t addr) override;
 
-  Error SetHardwareBreakpoint(lldb::addr_t addr, size_t size) override;
+  Status SetHardwareBreakpoint(lldb::addr_t addr, size_t size) override;
 
-  Error RemoveHardwareBreakpoint(lldb::addr_t addr) override;
+  Status RemoveHardwareBreakpoint(lldb::addr_t addr) override;
 
 private:
   // ---------------------------------------------------------------------
@@ -53,6 +56,7 @@ private:
   void SetStoppedByBreakpoint();
   void SetStoppedByTrace();
   void SetStoppedByExec();
+  void SetStoppedByWatchpoint(uint32_t wp_index);
   void SetStopped();
   void SetRunning();
   void SetStepping();
@@ -64,6 +68,9 @@ private:
   ThreadStopInfo m_stop_info;
   NativeRegisterContextSP m_reg_context_sp;
   std::string m_stop_description;
+  using WatchpointIndexMap = std::map<lldb::addr_t, uint32_t>;
+  WatchpointIndexMap m_watchpoint_index_map;
+  WatchpointIndexMap m_hw_break_index_map;
 };
 
 typedef std::shared_ptr<NativeThreadNetBSD> NativeThreadNetBSDSP;

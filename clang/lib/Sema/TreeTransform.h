@@ -2220,6 +2220,9 @@ public:
     Base = BaseResult.get();
     QualType BaseType = Base->getType();
 
+    if (isArrow && !BaseType->isPointerType())
+      return ExprError();
+
     // FIXME: this involves duplicating earlier analysis in a lot of
     // cases; we should avoid this when possible.
     LookupResult R(getSema(), MemberNameInfo, Sema::LookupMemberName);
@@ -6942,6 +6945,19 @@ TreeTransform<Derived>::TransformCoroutineBodyStmt(CoroutineBodyStmt *S) {
     if (DeallocRes.isInvalid())
       return StmtError();
     Builder.Deallocate = DeallocRes.get();
+
+    assert(S->getResultDecl() && "ResultDecl must already be built");
+    StmtResult ResultDecl = getDerived().TransformStmt(S->getResultDecl());
+    if (ResultDecl.isInvalid())
+      return StmtError();
+    Builder.ResultDecl = ResultDecl.get();
+
+    if (auto *ReturnStmt = S->getReturnStmt()) {
+      StmtResult Res = getDerived().TransformStmt(ReturnStmt);
+      if (Res.isInvalid())
+        return StmtError();
+      Builder.ReturnStmt = Res.get();
+    }
   }
 
   return getDerived().RebuildCoroutineBodyStmt(Builder);

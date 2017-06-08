@@ -3,21 +3,22 @@ set(LLVM_LINK_COMPONENTS
   DebugInfoMSF
   DebugInfoPDB
   Object
+  ObjectYAML
   Support
   )
 
 add_llvm_tool(llvm-pdbdump
   Analyze.cpp
-  Diff.cpp
+  C13DebugFragmentVisitor.cpp
   CompactTypeDumpVisitor.cpp
+  Diff.cpp
   llvm-pdbdump.cpp
-  YamlSymbolDumper.cpp
-  YamlTypeDumper.cpp
   LinePrinter.cpp
   LLVMOutputStyle.cpp
   PdbYaml.cpp
   PrettyBuiltinDumper.cpp
   PrettyClassDefinitionDumper.cpp
+  PrettyClassLayoutGraphicalDumper.cpp
   PrettyCompilandDumper.cpp
   PrettyEnumDumper.cpp
   PrettyExternalSymbolDumper.cpp

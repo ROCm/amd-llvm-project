@@ -28,24 +28,31 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Config/config.h"
+#include "llvm/DebugInfo/CodeView/DebugChecksumsSubsection.h"
+#include "llvm/DebugInfo/CodeView/DebugInlineeLinesSubsection.h"
+#include "llvm/DebugInfo/CodeView/DebugLinesSubsection.h"
+#include "llvm/DebugInfo/CodeView/LazyRandomTypeCollection.h"
+#include "llvm/DebugInfo/CodeView/TypeStreamMerger.h"
+#include "llvm/DebugInfo/CodeView/TypeTableBuilder.h"
 #include "llvm/DebugInfo/MSF/MSFBuilder.h"
 #include "llvm/DebugInfo/PDB/GenericError.h"
 #include "llvm/DebugInfo/PDB/IPDBEnumChildren.h"
 #include "llvm/DebugInfo/PDB/IPDBRawSymbol.h"
 #include "llvm/DebugInfo/PDB/IPDBSession.h"
+#include "llvm/DebugInfo/PDB/Native/DbiModuleDescriptorBuilder.h"
 #include "llvm/DebugInfo/PDB/Native/DbiStream.h"
 #include "llvm/DebugInfo/PDB/Native/DbiStreamBuilder.h"
 #include "llvm/DebugInfo/PDB/Native/InfoStream.h"
 #include "llvm/DebugInfo/PDB/Native/InfoStreamBuilder.h"
-#include "llvm/DebugInfo/PDB/Native/ModInfoBuilder.h"
 #include "llvm/DebugInfo/PDB/Native/NativeSession.h"
 #include "llvm/DebugInfo/PDB/Native/PDBFile.h"
 #include "llvm/DebugInfo/PDB/Native/PDBFileBuilder.h"
+#include "llvm/DebugInfo/PDB/Native/PDBStringTableBuilder.h"
 #include "llvm/DebugInfo/PDB/Native/RawConstants.h"
 #include "llvm/DebugInfo/PDB/Native/RawError.h"
-#include "llvm/DebugInfo/PDB/Native/StringTableBuilder.h"
 #include "llvm/DebugInfo/PDB/Native/TpiStream.h"
 #include "llvm/DebugInfo/PDB/Native/TpiStreamBuilder.h"
 #include "llvm/DebugInfo/PDB/PDB.h"
@@ -63,6 +70,7 @@
 #include "llvm/Support/Format.h"
 #include "llvm/Support/ManagedStatic.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/PrettyStackTrace.h"
 #include "llvm/Support/Process.h"
 #include "llvm/Support/Regex.h"
@@ -95,8 +103,11 @@ cl::SubCommand
     AnalyzeSubcommand("analyze",
                       "Analyze various aspects of a PDB's structure");
 
+cl::SubCommand MergeSubcommand("merge",
+                               "Merge multiple PDBs into a single PDB");
+
 cl::OptionCategory TypeCategory("Symbol Type Options");
-cl::OptionCategory FilterCategory("Filtering Options");
+cl::OptionCategory FilterCategory("Filtering and Sorting Options");
 cl::OptionCategory OtherOptions("Other Options");
 
 namespace pretty {
@@ -106,14 +117,76 @@ cl::list<std::string> InputFilenames(cl::Positional,
 
 cl::opt<bool> Compilands("compilands", cl::desc("Display compilands"),
                          cl::cat(TypeCategory), cl::sub(PrettySubcommand));
-cl::opt<bool> Symbols("symbols", cl::desc("Display symbols for each compiland"),
+cl::opt<bool> Symbols("module-syms",
+                      cl::desc("Display symbols for each compiland"),
                       cl::cat(TypeCategory), cl::sub(PrettySubcommand));
 cl::opt<bool> Globals("globals", cl::desc("Dump global symbols"),
                       cl::cat(TypeCategory), cl::sub(PrettySubcommand));
 cl::opt<bool> Externals("externals", cl::desc("Dump external symbols"),
                         cl::cat(TypeCategory), cl::sub(PrettySubcommand));
-cl::opt<bool> Types("types", cl::desc("Display types"), cl::cat(TypeCategory),
-                    cl::sub(PrettySubcommand));
+cl::list<SymLevel> SymTypes(
+    "sym-types", cl::desc("Type of symbols to dump (default all)"),
+    cl::cat(TypeCategory), cl::sub(PrettySubcommand), cl::ZeroOrMore,
+    cl::values(
+        clEnumValN(SymLevel::Thunks, "thunks", "Display thunk symbols"),
+        clEnumValN(SymLevel::Data, "data", "Display data symbols"),
+        clEnumValN(SymLevel::Functions, "funcs", "Display function symbols"),
+        clEnumValN(SymLevel::All, "all", "Display all symbols (default)")));
+
+cl::opt<bool>
+    Types("types",
+          cl::desc("Display all types (implies -classes, -enums, -typedefs)"),
+          cl::cat(TypeCategory), cl::sub(PrettySubcommand));
+cl::opt<bool> Classes("classes", cl::desc("Display class types"),
+                      cl::cat(TypeCategory), cl::sub(PrettySubcommand));
+cl::opt<bool> Enums("enums", cl::desc("Display enum types"),
+                    cl::cat(TypeCategory), cl::sub(PrettySubcommand));
+cl::opt<bool> Typedefs("typedefs", cl::desc("Display typedef types"),
+                       cl::cat(TypeCategory), cl::sub(PrettySubcommand));
+cl::opt<SymbolSortMode> SymbolOrder(
+    "symbol-order", cl::desc("symbol sort order"),
+    cl::init(SymbolSortMode::None),
+    cl::values(clEnumValN(SymbolSortMode::None, "none",
+                          "Undefined / no particular sort order"),
+               clEnumValN(SymbolSortMode::Name, "name", "Sort symbols by name"),
+               clEnumValN(SymbolSortMode::Size, "size",
+                          "Sort symbols by size")),
+    cl::cat(TypeCategory), cl::sub(PrettySubcommand));
+
+cl::opt<ClassSortMode> ClassOrder(
+    "class-order", cl::desc("Class sort order"), cl::init(ClassSortMode::None),
+    cl::values(
+        clEnumValN(ClassSortMode::None, "none",
+                   "Undefined / no particular sort order"),
+        clEnumValN(ClassSortMode::Name, "name", "Sort classes by name"),
+        clEnumValN(ClassSortMode::Size, "size", "Sort classes by size"),
+        clEnumValN(ClassSortMode::Padding, "padding",
+                   "Sort classes by amount of padding"),
+        clEnumValN(ClassSortMode::PaddingPct, "padding-pct",
+                   "Sort classes by percentage of space consumed by padding"),
+        clEnumValN(ClassSortMode::PaddingImmediate, "padding-imm",
+                   "Sort classes by amount of immediate padding"),
+        clEnumValN(ClassSortMode::PaddingPctImmediate, "padding-pct-imm",
+                   "Sort classes by percentage of space consumed by immediate "
+                   "padding")),
+    cl::cat(TypeCategory), cl::sub(PrettySubcommand));
+
+cl::opt<ClassDefinitionFormat> ClassFormat(
+    "class-definitions", cl::desc("Class definition format"),
+    cl::init(ClassDefinitionFormat::All),
+    cl::values(
+        clEnumValN(ClassDefinitionFormat::All, "all",
+                   "Display all class members including data, constants, "
+                   "typedefs, functions, etc"),
+        clEnumValN(ClassDefinitionFormat::Layout, "layout",
+                   "Only display members that contribute to class size."),
+        clEnumValN(ClassDefinitionFormat::None, "none",
+                   "Don't display class definitions")),
+    cl::cat(TypeCategory), cl::sub(PrettySubcommand));
+cl::opt<uint32_t> ClassRecursionDepth(
+    "class-recurse-depth", cl::desc("Class recursion depth (0=no limit)"),
+    cl::init(0), cl::cat(TypeCategory), cl::sub(PrettySubcommand));
+
 cl::opt<bool> Lines("lines", cl::desc("Line tables"), cl::cat(TypeCategory),
                     cl::sub(PrettySubcommand));
 cl::opt<bool>
@@ -152,6 +225,20 @@ cl::list<std::string> IncludeCompilands(
     "include-compilands",
     cl::desc("Include only compilands those which match a regular expression"),
     cl::ZeroOrMore, cl::cat(FilterCategory), cl::sub(PrettySubcommand));
+cl::opt<uint32_t> SizeThreshold(
+    "min-type-size", cl::desc("Displays only those types which are greater "
+                              "than or equal to the specified size."),
+    cl::init(0), cl::cat(FilterCategory), cl::sub(PrettySubcommand));
+cl::opt<uint32_t> PaddingThreshold(
+    "min-class-padding", cl::desc("Displays only those classes which have at "
+                                  "least the specified amount of padding."),
+    cl::init(0), cl::cat(FilterCategory), cl::sub(PrettySubcommand));
+cl::opt<uint32_t> ImmediatePaddingThreshold(
+    "min-class-padding-imm",
+    cl::desc("Displays only those classes which have at least the specified "
+             "amount of immediate padding, ignoring padding internal to bases "
+             "and aggregates."),
+    cl::init(0), cl::cat(FilterCategory), cl::sub(PrettySubcommand));
 
 cl::opt<bool> ExcludeCompilerGenerated(
     "no-compiler-generated",
@@ -161,9 +248,7 @@ cl::opt<bool>
     ExcludeSystemLibraries("no-system-libs",
                            cl::desc("Don't show symbols from system libraries"),
                            cl::cat(FilterCategory), cl::sub(PrettySubcommand));
-cl::opt<bool> NoClassDefs("no-class-definitions",
-                          cl::desc("Don't display full class definitions"),
-                          cl::cat(FilterCategory), cl::sub(PrettySubcommand));
+
 cl::opt<bool> NoEnumDefs("no-enum-definitions",
                          cl::desc("Don't display full enum definitions"),
                          cl::cat(FilterCategory), cl::sub(PrettySubcommand));
@@ -207,9 +292,10 @@ cl::opt<std::string>
                       cl::cat(MsfOptions), cl::sub(RawSubcommand));
 llvm::Optional<BlockRange> DumpBlockRange;
 
-cl::list<uint32_t>
+cl::list<std::string>
     DumpStreamData("stream-data", cl::CommaSeparated, cl::ZeroOrMore,
-                   cl::desc("Dump binary data from specified streams."),
+                   cl::desc("Dump binary data from specified streams.  Format "
+                            "is SN[:Start][@Size]"),
                    cl::cat(MsfOptions), cl::sub(RawSubcommand));
 
 // TYPE OPTIONS
@@ -286,12 +372,15 @@ cl::opt<std::string>
     YamlPdbOutputFile("pdb", cl::desc("the name of the PDB file to write"),
                       cl::sub(YamlToPdbSubcommand));
 
-cl::list<std::string> InputFilename(cl::Positional,
-                                    cl::desc("<input YAML file>"), cl::Required,
-                                    cl::sub(YamlToPdbSubcommand));
+cl::opt<std::string> InputFilename(cl::Positional,
+                                   cl::desc("<input YAML file>"), cl::Required,
+                                   cl::sub(YamlToPdbSubcommand));
 }
 
 namespace pdb2yaml {
+cl::opt<bool> All("all",
+                  cl::desc("Dump everything we know how to dump."),
+                  cl::sub(PdbToYamlSubcommand), cl::init(false));
 cl::opt<bool>
     NoFileHeaders("no-file-headers",
                   cl::desc("Do not dump MSF file headers (you will not be able "
@@ -332,8 +421,14 @@ cl::opt<bool> DbiModuleSyms(
 cl::opt<bool> DbiModuleSourceFileInfo(
     "dbi-module-source-info",
     cl::desc(
-        "Dump DBI Module Source File Information (implies -dbi-module-info"),
+        "Dump DBI Module Source File Information (implies -dbi-module-info)"),
     cl::sub(PdbToYamlSubcommand), cl::init(false));
+
+cl::opt<bool>
+    DbiModuleSourceLineInfo("dbi-module-lines",
+                            cl::desc("Dump DBI Module Source Line Information "
+                                     "(implies -dbi-module-source-info)"),
+                            cl::sub(PdbToYamlSubcommand), cl::init(false));
 
 cl::opt<bool> TpiStream("tpi-stream",
                         cl::desc("Dump the TPI Stream (Stream 3)"),
@@ -355,6 +450,15 @@ cl::list<std::string> InputFilename(cl::Positional,
                                     cl::desc("<input PDB file>"), cl::Required,
                                     cl::sub(AnalyzeSubcommand));
 }
+
+namespace merge {
+cl::list<std::string> InputFilenames(cl::Positional,
+                                     cl::desc("<input PDB files>"),
+                                     cl::OneOrMore, cl::sub(MergeSubcommand));
+cl::opt<std::string>
+    PdbOutputFile("pdb", cl::desc("the name of the PDB file to write"),
+                  cl::sub(MergeSubcommand));
+}
 }
 
 static ExitOnError ExitOnErr;
@@ -372,6 +476,7 @@ static void yamlToPdb(StringRef Path) {
   std::unique_ptr<MemoryBuffer> &Buffer = ErrorOrBuffer.get();
 
   llvm::yaml::Input In(Buffer->getBuffer());
+  In.setContext(&Allocator);
   pdb::yaml::PdbObject YamlObj(Allocator);
   In >> YamlObj;
 
@@ -399,6 +504,7 @@ static void yamlToPdb(StringRef Path) {
   pdb::yaml::PdbInfoStream DefaultInfoStream;
   pdb::yaml::PdbDbiStream DefaultDbiStream;
   pdb::yaml::PdbTpiStream DefaultTpiStream;
+  pdb::yaml::PdbTpiStream DefaultIpiStream;
 
   const auto &Info = YamlObj.PdbStream.getValueOr(DefaultInfoStream);
 
@@ -409,6 +515,8 @@ static void yamlToPdb(StringRef Path) {
   InfoBuilder.setVersion(Info.Version);
   for (auto F : Info.Features)
     InfoBuilder.addFeature(F);
+
+  auto &Strings = Builder.getStringTableBuilder().getStrings();
 
   const auto &Dbi = YamlObj.DbiStream.getValueOr(DefaultDbiStream);
   auto &DbiBuilder = Builder.getDbiBuilder();
@@ -421,28 +529,91 @@ static void yamlToPdb(StringRef Path) {
   DbiBuilder.setVersionHeader(Dbi.VerHeader);
   for (const auto &MI : Dbi.ModInfos) {
     auto &ModiBuilder = ExitOnErr(DbiBuilder.addModuleInfo(MI.Mod));
+    ModiBuilder.setObjFileName(MI.Obj);
 
     for (auto S : MI.SourceFiles)
       ExitOnErr(DbiBuilder.addModuleSourceFile(MI.Mod, S));
     if (MI.Modi.hasValue()) {
       const auto &ModiStream = *MI.Modi;
-      ModiBuilder.setObjFileName(MI.Obj);
       for (auto Symbol : ModiStream.Symbols)
-        ModiBuilder.addSymbol(Symbol.Record);
+        ModiBuilder.addSymbol(Symbol.toCodeViewSymbol(Allocator));
+    }
+    if (MI.FileLineInfo.hasValue()) {
+      const auto &FLI = *MI.FileLineInfo;
+
+      // File Checksums must be emitted before line information, because line
+      // info records use offsets into the checksum buffer to reference a file's
+      // source file name.
+      auto Checksums = llvm::make_unique<DebugChecksumsSubsection>(Strings);
+      auto &ChecksumRef = *Checksums;
+      if (!FLI.FileChecksums.empty()) {
+        for (auto &FC : FLI.FileChecksums)
+          Checksums->addChecksum(FC.FileName, FC.Kind, FC.ChecksumBytes.Bytes);
+      }
+      ModiBuilder.setC13FileChecksums(std::move(Checksums));
+
+      for (const auto &Fragment : FLI.LineFragments) {
+        auto Lines =
+            llvm::make_unique<DebugLinesSubsection>(ChecksumRef, Strings);
+        Lines->setCodeSize(Fragment.CodeSize);
+        Lines->setRelocationAddress(Fragment.RelocSegment,
+                                    Fragment.RelocOffset);
+        Lines->setFlags(Fragment.Flags);
+        for (const auto &LC : Fragment.Blocks) {
+          Lines->createBlock(LC.FileName);
+          if (Lines->hasColumnInfo()) {
+            for (const auto &Item : zip(LC.Lines, LC.Columns)) {
+              auto &L = std::get<0>(Item);
+              auto &C = std::get<1>(Item);
+              uint32_t LE = L.LineStart + L.EndDelta;
+              Lines->addLineAndColumnInfo(
+                  L.Offset, LineInfo(L.LineStart, LE, L.IsStatement),
+                  C.StartColumn, C.EndColumn);
+            }
+          } else {
+            for (const auto &L : LC.Lines) {
+              uint32_t LE = L.LineStart + L.EndDelta;
+              Lines->addLineInfo(L.Offset,
+                                 LineInfo(L.LineStart, LE, L.IsStatement));
+            }
+          }
+        }
+        ModiBuilder.addC13Fragment(std::move(Lines));
+      }
+
+      for (const auto &Inlinee : FLI.Inlinees) {
+        auto Inlinees = llvm::make_unique<DebugInlineeLinesSubsection>(
+            ChecksumRef, Inlinee.HasExtraFiles);
+        for (const auto &Site : Inlinee.Sites) {
+          Inlinees->addInlineSite(TypeIndex(Site.Inlinee), Site.FileName,
+                                  Site.SourceLineNum);
+          if (!Inlinee.HasExtraFiles)
+            continue;
+
+          for (auto EF : Site.ExtraFiles) {
+            Inlinees->addExtraFile(EF);
+          }
+        }
+        ModiBuilder.addC13Fragment(std::move(Inlinees));
+      }
     }
   }
 
   auto &TpiBuilder = Builder.getTpiBuilder();
   const auto &Tpi = YamlObj.TpiStream.getValueOr(DefaultTpiStream);
   TpiBuilder.setVersionHeader(Tpi.Version);
-  for (const auto &R : Tpi.Records)
-    TpiBuilder.addTypeRecord(R.Record.data(), R.Record.Hash);
+  for (const auto &R : Tpi.Records) {
+    CVType Type = R.toCodeViewRecord(Allocator);
+    TpiBuilder.addTypeRecord(Type.RecordData, None);
+  }
 
-  const auto &Ipi = YamlObj.IpiStream.getValueOr(DefaultTpiStream);
+  const auto &Ipi = YamlObj.IpiStream.getValueOr(DefaultIpiStream);
   auto &IpiBuilder = Builder.getIpiBuilder();
   IpiBuilder.setVersionHeader(Ipi.Version);
-  for (const auto &R : Ipi.Records)
-    TpiBuilder.addTypeRecord(R.Record.data(), R.Record.Hash);
+  for (const auto &R : Ipi.Records) {
+    CVType Type = R.toCodeViewRecord(Allocator);
+    IpiBuilder.addTypeRecord(Type.RecordData, None);
+  }
 
   ExitOnErr(Builder.commit(opts::yaml2pdb::YamlPdbOutputFile));
 }
@@ -491,6 +662,49 @@ static void diff(StringRef Path1, StringRef Path2) {
   auto O = llvm::make_unique<DiffStyle>(File1, File2);
 
   ExitOnErr(O->dump());
+}
+
+bool opts::pretty::shouldDumpSymLevel(SymLevel Search) {
+  if (SymTypes.empty())
+    return true;
+  if (llvm::find(SymTypes, Search) != SymTypes.end())
+    return true;
+  if (llvm::find(SymTypes, SymLevel::All) != SymTypes.end())
+    return true;
+  return false;
+}
+
+uint32_t llvm::pdb::getTypeLength(const PDBSymbolData &Symbol) {
+  auto SymbolType = Symbol.getType();
+  const IPDBRawSymbol &RawType = SymbolType->getRawSymbol();
+
+  return RawType.getLength();
+}
+
+bool opts::pretty::compareFunctionSymbols(
+    const std::unique_ptr<PDBSymbolFunc> &F1,
+    const std::unique_ptr<PDBSymbolFunc> &F2) {
+  assert(opts::pretty::SymbolOrder != opts::pretty::SymbolSortMode::None);
+
+  if (opts::pretty::SymbolOrder == opts::pretty::SymbolSortMode::Name)
+    return F1->getName() < F2->getName();
+
+  // Note that we intentionally sort in descending order on length, since
+  // long functions are more interesting than short functions.
+  return F1->getLength() > F2->getLength();
+}
+
+bool opts::pretty::compareDataSymbols(
+    const std::unique_ptr<PDBSymbolData> &F1,
+    const std::unique_ptr<PDBSymbolData> &F2) {
+  assert(opts::pretty::SymbolOrder != opts::pretty::SymbolSortMode::None);
+
+  if (opts::pretty::SymbolOrder == opts::pretty::SymbolSortMode::Name)
+    return F1->getName() < F2->getName();
+
+  // Note that we intentionally sort in descending order on length, since
+  // large types are more interesting than short ones.
+  return getTypeLength(*F1) > getTypeLength(*F2);
 }
 
 static void dumpPretty(StringRef Path) {
@@ -557,7 +771,7 @@ static void dumpPretty(StringRef Path) {
     Printer.Unindent();
   }
 
-  if (opts::pretty::Types) {
+  if (opts::pretty::Classes || opts::pretty::Enums || opts::pretty::Typedefs) {
     Printer.NewLine();
     WithColor(Printer, PDB_ColorItem::SectionHeader).get() << "---TYPES---";
     Printer.Indent();
@@ -581,21 +795,42 @@ static void dumpPretty(StringRef Path) {
     Printer.NewLine();
     WithColor(Printer, PDB_ColorItem::SectionHeader).get() << "---GLOBALS---";
     Printer.Indent();
-    {
+    if (shouldDumpSymLevel(opts::pretty::SymLevel::Functions)) {
       FunctionDumper Dumper(Printer);
       auto Functions = GlobalScope->findAllChildren<PDBSymbolFunc>();
-      while (auto Function = Functions->getNext()) {
-        Printer.NewLine();
-        Dumper.start(*Function, FunctionDumper::PointerType::None);
+      if (opts::pretty::SymbolOrder == opts::pretty::SymbolSortMode::None) {
+        while (auto Function = Functions->getNext()) {
+          Printer.NewLine();
+          Dumper.start(*Function, FunctionDumper::PointerType::None);
+        }
+      } else {
+        std::vector<std::unique_ptr<PDBSymbolFunc>> Funcs;
+        while (auto Func = Functions->getNext())
+          Funcs.push_back(std::move(Func));
+        std::sort(Funcs.begin(), Funcs.end(),
+                  opts::pretty::compareFunctionSymbols);
+        for (const auto &Func : Funcs) {
+          Printer.NewLine();
+          Dumper.start(*Func, FunctionDumper::PointerType::None);
+        }
       }
     }
-    {
+    if (shouldDumpSymLevel(opts::pretty::SymLevel::Data)) {
       auto Vars = GlobalScope->findAllChildren<PDBSymbolData>();
       VariableDumper Dumper(Printer);
-      while (auto Var = Vars->getNext())
-        Dumper.start(*Var);
+      if (opts::pretty::SymbolOrder == opts::pretty::SymbolSortMode::None) {
+        while (auto Var = Vars->getNext())
+          Dumper.start(*Var);
+      } else {
+        std::vector<std::unique_ptr<PDBSymbolData>> Datas;
+        while (auto Var = Vars->getNext())
+          Datas.push_back(std::move(Var));
+        std::sort(Datas.begin(), Datas.end(), opts::pretty::compareDataSymbols);
+        for (const auto &Var : Datas)
+          Dumper.start(*Var);
+      }
     }
-    {
+    if (shouldDumpSymLevel(opts::pretty::SymLevel::Thunks)) {
       auto Thunks = GlobalScope->findAllChildren<PDBSymbolThunk>();
       CompilandDumper Dumper(Printer);
       while (auto Thunk = Thunks->getNext())
@@ -614,6 +849,54 @@ static void dumpPretty(StringRef Path) {
     Printer.NewLine();
   }
   outs().flush();
+}
+
+static void mergePdbs() {
+  BumpPtrAllocator Allocator;
+  TypeTableBuilder MergedTpi(Allocator);
+  TypeTableBuilder MergedIpi(Allocator);
+
+  // Create a Tpi and Ipi type table with all types from all input files.
+  for (const auto &Path : opts::merge::InputFilenames) {
+    std::unique_ptr<IPDBSession> Session;
+    auto &File = loadPDB(Path, Session);
+    SmallVector<TypeIndex, 128> TypeMap;
+    SmallVector<TypeIndex, 128> IdMap;
+    if (File.hasPDBTpiStream()) {
+      auto &Tpi = ExitOnErr(File.getPDBTpiStream());
+      ExitOnErr(codeview::mergeTypeRecords(MergedTpi, TypeMap, nullptr,
+                                           Tpi.typeArray()));
+    }
+    if (File.hasPDBIpiStream()) {
+      auto &Ipi = ExitOnErr(File.getPDBIpiStream());
+      ExitOnErr(codeview::mergeIdRecords(MergedIpi, TypeMap, IdMap,
+                                         Ipi.typeArray()));
+    }
+  }
+
+  // Then write the PDB.
+  PDBFileBuilder Builder(Allocator);
+  ExitOnErr(Builder.initialize(4096));
+  // Add each of the reserved streams.  We might not put any data in them,
+  // but at least they have to be present.
+  for (uint32_t I = 0; I < kSpecialStreamCount; ++I)
+    ExitOnErr(Builder.getMsfBuilder().addStream(0));
+
+  auto &DestTpi = Builder.getTpiBuilder();
+  auto &DestIpi = Builder.getIpiBuilder();
+  MergedTpi.ForEachRecord([&DestTpi](TypeIndex TI, ArrayRef<uint8_t> Data) {
+    DestTpi.addTypeRecord(Data, None);
+  });
+  MergedIpi.ForEachRecord([&DestIpi](TypeIndex TI, ArrayRef<uint8_t> Data) {
+    DestIpi.addTypeRecord(Data, None);
+  });
+
+  SmallString<64> OutFile(opts::merge::PdbOutputFile);
+  if (OutFile.empty()) {
+    OutFile = opts::merge::InputFilenames[0];
+    llvm::sys::path::replace_extension(OutFile, "merged.pdb");
+  }
+  ExitOnErr(Builder.commit(OutFile));
 }
 
 int main(int argc_, const char *argv_[]) {
@@ -683,7 +966,12 @@ int main(int argc_, const char *argv_[]) {
   if (opts::PdbToYamlSubcommand) {
     pdb2Yaml(opts::pdb2yaml::InputFilename.front());
   } else if (opts::YamlToPdbSubcommand) {
-    yamlToPdb(opts::yaml2pdb::InputFilename.front());
+    if (opts::yaml2pdb::YamlPdbOutputFile.empty()) {
+      SmallString<16> OutputFilename(opts::yaml2pdb::InputFilename.getValue());
+      sys::path::replace_extension(OutputFilename, ".pdb");
+      opts::yaml2pdb::YamlPdbOutputFile = OutputFilename.str();
+    }
+    yamlToPdb(opts::yaml2pdb::InputFilename);
   } else if (opts::AnalyzeSubcommand) {
     dumpAnalysis(opts::analyze::InputFilename.front());
   } else if (opts::PrettySubcommand) {
@@ -697,6 +985,12 @@ int main(int argc_, const char *argv_[]) {
       opts::pretty::Types = true;
       opts::pretty::Externals = true;
       opts::pretty::Lines = true;
+    }
+
+    if (opts::pretty::Types) {
+      opts::pretty::Classes = true;
+      opts::pretty::Typedefs = true;
+      opts::pretty::Enums = true;
     }
 
     // When adding filters for excluded compilands and types, we need to
@@ -726,6 +1020,12 @@ int main(int argc_, const char *argv_[]) {
       exit(1);
     }
     diff(opts::diff::InputFilenames[0], opts::diff::InputFilenames[1]);
+  } else if (opts::MergeSubcommand) {
+    if (opts::merge::InputFilenames.size() < 2) {
+      errs() << "merge subcommand requires at least 2 input files.\n";
+      exit(1);
+    }
+    mergePdbs();
   }
 
   outs().flush();

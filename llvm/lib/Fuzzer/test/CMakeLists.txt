@@ -80,6 +80,7 @@ set(Tests
   BogusInitializeTest
   BufferOverflowOnInput
   CallerCalleeTest
+  CleanseTest
   CounterTest
   CustomCrossOverAndMutateTest
   CustomCrossOverTest
@@ -103,6 +104,7 @@ set(Tests
   OneHugeAllocTest
   OutOfMemoryTest
   OutOfMemorySingleLargeMallocTest
+  OverwriteInputTest
   RepeatedMemcmp
   RepeatedBytesTest
   SimpleCmpTest

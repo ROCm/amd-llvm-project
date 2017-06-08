@@ -667,13 +667,40 @@ void IslNodeBuilder::createForParallel(__isl_take isl_ast_node *For) {
   isl_id_free(IteratorID);
 }
 
+/// Return whether any of @p Node's statements contain partial accesses.
+///
+/// Partial accesses are not supported by Polly's vector code generator.
+static bool hasPartialAccesses(__isl_take isl_ast_node *Node) {
+  return isl_ast_node_foreach_descendant_top_down(
+             Node,
+             [](isl_ast_node *Node, void *User) -> isl_bool {
+               if (isl_ast_node_get_type(Node) != isl_ast_node_user)
+                 return isl_bool_true;
+
+               isl::ast_expr Expr = give(isl_ast_node_user_get_expr(Node));
+               isl::ast_expr StmtExpr =
+                   give(isl_ast_expr_get_op_arg(Expr.keep(), 0));
+               isl::id Id = give(isl_ast_expr_get_id(StmtExpr.keep()));
+
+               ScopStmt *Stmt =
+                   static_cast<ScopStmt *>(isl_id_get_user(Id.keep()));
+               isl::set StmtDom = give(Stmt->getDomain());
+               for (auto *MA : *Stmt) {
+                 if (MA->isLatestPartialAccess())
+                   return isl_bool_error;
+               }
+               return isl_bool_true;
+             },
+             nullptr) == isl_stat_error;
+}
+
 void IslNodeBuilder::createFor(__isl_take isl_ast_node *For) {
   bool Vector = PollyVectorizerChoice == VECTORIZER_POLLY;
 
   if (Vector && IslAstInfo::isInnermostParallel(For) &&
       !IslAstInfo::isReductionParallel(For)) {
     int VectorWidth = getNumberOfIterations(For);
-    if (1 < VectorWidth && VectorWidth <= 16) {
+    if (1 < VectorWidth && VectorWidth <= 16 && !hasPartialAccesses(For)) {
       createForVector(For, VectorWidth);
       return;
     }
@@ -765,23 +792,33 @@ IslNodeBuilder::createNewAccesses(ScopStmt *Stmt,
     auto Schedule = isl_ast_build_get_schedule(Build);
 
 #ifndef NDEBUG
-    auto Dom = Stmt->getDomain();
-    auto SchedDom = isl_set_from_union_set(
-        isl_union_map_domain(isl_union_map_copy(Schedule)));
-    auto AccDom = isl_map_domain(MA->getAccessRelation());
-    Dom = isl_set_intersect_params(Dom, Stmt->getParent()->getContext());
-    SchedDom =
-        isl_set_intersect_params(SchedDom, Stmt->getParent()->getContext());
-    assert(isl_set_is_subset(SchedDom, AccDom) &&
-           "Access relation not defined on full schedule domain");
-    assert(isl_set_is_subset(Dom, AccDom) &&
-           "Access relation not defined on full domain");
-    isl_set_free(AccDom);
-    isl_set_free(SchedDom);
-    isl_set_free(Dom);
+    if (MA->isRead()) {
+      auto Dom = Stmt->getDomain();
+      auto SchedDom = isl_set_from_union_set(
+          isl_union_map_domain(isl_union_map_copy(Schedule)));
+      auto AccDom = isl_map_domain(MA->getAccessRelation());
+      Dom = isl_set_intersect_params(Dom, Stmt->getParent()->getContext());
+      SchedDom =
+          isl_set_intersect_params(SchedDom, Stmt->getParent()->getContext());
+      assert(isl_set_is_subset(SchedDom, AccDom) &&
+             "Access relation not defined on full schedule domain");
+      assert(isl_set_is_subset(Dom, AccDom) &&
+             "Access relation not defined on full domain");
+      isl_set_free(AccDom);
+      isl_set_free(SchedDom);
+      isl_set_free(Dom);
+    }
 #endif
 
     auto PWAccRel = MA->applyScheduleToAccessRelation(Schedule);
+
+    // isl cannot generate an index expression for access-nothing accesses.
+    isl::set AccDomain =
+        give(isl_pw_multi_aff_domain(isl_pw_multi_aff_copy(PWAccRel)));
+    if (isl_set_is_empty(AccDomain.keep()) == isl_bool_true) {
+      isl_pw_multi_aff_free(PWAccRel);
+      continue;
+    }
 
     auto AccessExpr = isl_ast_build_access_from_pw_multi_aff(Build, PWAccRel);
     NewAccesses = isl_id_to_ast_expr_set(NewAccesses, MA->getId(), AccessExpr);
@@ -995,6 +1032,92 @@ bool IslNodeBuilder::materializeParameters() {
   return true;
 }
 
+/// Generate the computation of the size of the outermost dimension from the
+/// Fortran array descriptor (in this case, `@g_arr`). The final `%size`
+/// contains the size of the array.
+///
+/// %arrty = type { i8*, i64, i64, [3 x %desc.dimensionty] }
+/// %desc.dimensionty = type { i64, i64, i64 }
+/// @g_arr = global %arrty zeroinitializer, align 32
+/// ...
+/// %0 = load i64, i64* getelementptr inbounds
+///                       (%arrty, %arrty* @g_arr, i64 0, i32 3, i64 0, i32 2)
+/// %1 = load i64, i64* getelementptr inbounds
+///                      (%arrty, %arrty* @g_arr, i64 0, i32 3, i64 0, i32 1)
+/// %2 = sub nsw i64 %0, %1
+/// %size = add nsw i64 %2, 1
+static Value *buildFADOutermostDimensionLoad(Value *GlobalDescriptor,
+                                             PollyIRBuilder &Builder,
+                                             std::string ArrayName) {
+  assert(GlobalDescriptor && "invalid global descriptor given");
+
+  Value *endIdx[4] = {Builder.getInt64(0), Builder.getInt32(3),
+                      Builder.getInt64(0), Builder.getInt32(2)};
+  Value *endPtr = Builder.CreateInBoundsGEP(GlobalDescriptor, endIdx,
+                                            ArrayName + "_end_ptr");
+  Value *end = Builder.CreateLoad(endPtr, ArrayName + "_end");
+
+  Value *beginIdx[4] = {Builder.getInt64(0), Builder.getInt32(3),
+                        Builder.getInt64(0), Builder.getInt32(1)};
+  Value *beginPtr = Builder.CreateInBoundsGEP(GlobalDescriptor, beginIdx,
+                                              ArrayName + "_begin_ptr");
+  Value *begin = Builder.CreateLoad(beginPtr, ArrayName + "_begin");
+
+  Value *size =
+      Builder.CreateNSWSub(end, begin, ArrayName + "_end_begin_delta");
+  Type *endType = dyn_cast<IntegerType>(end->getType());
+  assert(endType && "expected type of end to be integral");
+
+  size = Builder.CreateNSWAdd(end,
+                              ConstantInt::get(endType, 1, /* signed = */ true),
+                              ArrayName + "_size");
+
+  return size;
+}
+
+bool IslNodeBuilder::materializeFortranArrayOutermostDimension() {
+  for (const ScopStmt &Stmt : S) {
+    for (const MemoryAccess *Access : Stmt) {
+      if (!Access->isArrayKind())
+        continue;
+
+      const ScopArrayInfo *Array = Access->getScopArrayInfo();
+      if (!Array)
+        continue;
+
+      if (Array->getNumberOfDimensions() == 0)
+        continue;
+
+      Value *FAD = Access->getFortranArrayDescriptor();
+      if (!FAD)
+        continue;
+
+      isl_pw_aff *ParametricPwAff = Array->getDimensionSizePw(0);
+      assert(ParametricPwAff && "parameteric pw_aff corresponding "
+                                "to outermost dimension does not "
+                                "exist");
+
+      isl_id *Id = isl_pw_aff_get_dim_id(ParametricPwAff, isl_dim_param, 0);
+      isl_pw_aff_free(ParametricPwAff);
+
+      assert(Id && "pw_aff is not parametric");
+
+      if (IDToValue.count(Id)) {
+        isl_id_free(Id);
+        continue;
+      }
+
+      Value *FinalValue =
+          buildFADOutermostDimensionLoad(FAD, Builder, Array->getName());
+      assert(FinalValue && "unable to build Fortran array "
+                           "descriptor load of outermost dimension");
+      IDToValue[Id] = FinalValue;
+      isl_id_free(Id);
+    }
+  }
+  return true;
+}
+
 /// Add the number of dimensions in @p BS to @p U.
 static isl_stat countTotalDims(__isl_take isl_basic_set *BS, void *U) {
   unsigned *NumTotalDim = static_cast<unsigned *>(U);
@@ -1028,7 +1151,8 @@ Value *IslNodeBuilder::preloadUnconditionally(isl_set *AccessRange,
 
   auto *Ptr = AddressValue;
   auto Name = Ptr->getName();
-  Ptr = Builder.CreatePointerCast(Ptr, Ty->getPointerTo(), Name + ".cast");
+  auto AS = Ptr->getType()->getPointerAddressSpace();
+  Ptr = Builder.CreatePointerCast(Ptr, Ty->getPointerTo(AS), Name + ".cast");
   PreloadVal = Builder.CreateLoad(Ptr, Name + ".load");
   if (LoadInst *PreloadInst = dyn_cast<LoadInst>(PreloadVal))
     PreloadInst->setAlignment(dyn_cast<LoadInst>(AccInst)->getAlignment());
@@ -1212,7 +1336,8 @@ bool IslNodeBuilder::preloadInvariantEquivClass(
   }
 
   BasicBlock *EntryBB = &Builder.GetInsertBlock()->getParent()->getEntryBlock();
-  auto *Alloca = new AllocaInst(AccInstTy, AccInst->getName() + ".preload.s2a");
+  auto *Alloca = new AllocaInst(AccInstTy, DL.getAllocaAddrSpace(),
+                                AccInst->getName() + ".preload.s2a");
   Alloca->insertBefore(&*EntryBB->getFirstInsertionPt());
   Builder.CreateStore(PreloadVal, Alloca);
   ValueMapT PreloadedPointer;
@@ -1227,7 +1352,7 @@ bool IslNodeBuilder::preloadInvariantEquivClass(
       // current SAI could be the base pointer of the derived SAI, however we
       // should only change the base pointer of the derived SAI if we actually
       // preloaded it.
-      if (BasePtr == MA->getBaseAddr()) {
+      if (BasePtr == MA->getOriginalBaseAddr()) {
         assert(BasePtr->getType() == PreloadVal->getType());
         DerivedSAI->setBasePtr(PreloadVal);
       }
@@ -1282,7 +1407,8 @@ void IslNodeBuilder::allocateNewArrays() {
 
     auto InstIt =
         Builder.GetInsertBlock()->getParent()->getEntryBlock().getTerminator();
-    auto *CreatedArray = new AllocaInst(NewArrayType, SAI->getName(), &*InstIt);
+    auto *CreatedArray = new AllocaInst(NewArrayType, DL.getAllocaAddrSpace(),
+                                        SAI->getName(), &*InstIt);
     CreatedArray->setAlignment(PollyTargetFirstLevelCacheLineSize);
     SAI->setBasePtr(CreatedArray);
   }
@@ -1309,6 +1435,12 @@ bool IslNodeBuilder::preloadInvariantLoads() {
 void IslNodeBuilder::addParameters(__isl_take isl_set *Context) {
   // Materialize values for the parameters of the SCoP.
   materializeParameters();
+
+  // materialize the outermost dimension parameters for a Fortran array.
+  // NOTE: materializeParameters() does not work since it looks through
+  // the SCEVs. We don't have a corresponding SCEV for the array size
+  // parameter
+  materializeFortranArrayOutermostDimension();
 
   // Generate values for the current loop iteration for all surrounding loops.
   //

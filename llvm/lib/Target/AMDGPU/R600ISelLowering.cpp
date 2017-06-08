@@ -1547,7 +1547,7 @@ SDValue R600TargetLowering::LowerFormalArguments(
   SmallVector<ISD::InputArg, 8> LocalIns;
 
   if (AMDGPU::isShader(CallConv)) {
-    AnalyzeFormalArguments(CCInfo, Ins);
+    CCInfo.AnalyzeFormalArguments(Ins, CCAssignFnForCall(CallConv, isVarArg));
   } else {
     analyzeFormalArgumentsCompute(CCInfo, Ins);
   }
@@ -1616,6 +1616,14 @@ EVT R600TargetLowering::getSetCCResultType(const DataLayout &DL, LLVMContext &,
    if (!VT.isVector())
      return MVT::i32;
    return VT.changeVectorElementTypeToInteger();
+}
+
+bool R600TargetLowering::canMergeStoresTo(unsigned AS, EVT MemVT) const {
+  // Local and Private addresses do not handle vectors. Limit to i32
+  if ((AS == AMDGPUASI.LOCAL_ADDRESS || AS == AMDGPUASI.PRIVATE_ADDRESS)) {
+    return (MemVT.getSizeInBits() <= 32);
+  }
+  return true;
 }
 
 bool R600TargetLowering::allowsMisalignedMemoryAccesses(EVT VT,

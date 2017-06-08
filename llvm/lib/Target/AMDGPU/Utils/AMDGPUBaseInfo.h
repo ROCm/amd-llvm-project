@@ -21,10 +21,6 @@
 #include <cstdint>
 #include <utility>
 
-#define GET_INSTRINFO_OPERAND_ENUM
-#include "AMDGPUGenInstrInfo.inc"
-#undef GET_INSTRINFO_OPERAND_ENUM
-
 namespace llvm {
 
 class FeatureBitset;
@@ -253,12 +249,34 @@ unsigned encodeWaitcnt(const IsaInfo::IsaVersion &Version,
 
 unsigned getInitialPSInputAddr(const Function &F);
 
-bool isShader(CallingConv::ID cc);
-bool isCompute(CallingConv::ID cc);
+LLVM_READNONE
+bool isShader(CallingConv::ID CC);
+
+LLVM_READNONE
+bool isCompute(CallingConv::ID CC);
+
+LLVM_READNONE
+bool isEntryFunctionCC(CallingConv::ID CC);
+
+// FIXME: Remove this when calling conventions cleaned up
+LLVM_READNONE
+inline bool isKernel(CallingConv::ID CC) {
+  switch (CC) {
+  case CallingConv::AMDGPU_KERNEL:
+  case CallingConv::SPIR_KERNEL:
+    return true;
+  default:
+    return false;
+  }
+}
 
 bool isSI(const MCSubtargetInfo &STI);
 bool isCI(const MCSubtargetInfo &STI);
 bool isVI(const MCSubtargetInfo &STI);
+bool isGFX9(const MCSubtargetInfo &STI);
+
+/// \brief Is Reg - scalar register
+bool isSGPR(unsigned Reg, const MCRegisterInfo* TRI);
 
 /// If \p Reg is a pseudo reg, return the correct hardware register given
 /// \p STI otherwise return \p Reg.

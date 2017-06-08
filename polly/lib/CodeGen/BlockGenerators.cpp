@@ -22,6 +22,7 @@
 #include "polly/Support/GICHelper.h"
 #include "polly/Support/SCEVValidator.h"
 #include "polly/Support/ScopHelper.h"
+#include "polly/Support/VirtualInstruction.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/RegionInfo.h"
 #include "llvm/Analysis/ScalarEvolution.h"
@@ -93,46 +94,119 @@ Value *BlockGenerator::trySynthesizeNewValue(ScopStmt &Stmt, Value *Old,
 
 Value *BlockGenerator::getNewValue(ScopStmt &Stmt, Value *Old, ValueMapT &BBMap,
                                    LoopToScevMapT &LTS, Loop *L) const {
-  // Constants that do not reference any named value can always remain
-  // unchanged. Handle them early to avoid expensive map lookups. We do not take
-  // the fast-path for external constants which are referenced through globals
-  // as these may need to be rewritten when distributing code accross different
-  // LLVM modules.
-  if (isa<Constant>(Old) && !isa<GlobalValue>(Old))
-    return Old;
 
-  // Inline asm is like a constant to us.
-  if (isa<InlineAsm>(Old))
-    return Old;
+  auto lookupGlobally = [this](Value *Old) -> Value * {
+    Value *New = GlobalMap.lookup(Old);
+    if (!New)
+      return nullptr;
 
-  if (Value *New = GlobalMap.lookup(Old)) {
+    // Required by:
+    // * Isl/CodeGen/OpenMP/invariant_base_pointer_preloaded.ll
+    // * Isl/CodeGen/OpenMP/invariant_base_pointer_preloaded_different_bb.ll
+    // * Isl/CodeGen/OpenMP/invariant_base_pointer_preloaded_pass_only_needed.ll
+    // * Isl/CodeGen/OpenMP/invariant_base_pointers_preloaded.ll
+    // * Isl/CodeGen/OpenMP/loop-body-references-outer-values-3.ll
+    // * Isl/CodeGen/OpenMP/single_loop_with_loop_invariant_baseptr.ll
+    // GlobalMap should be a mapping from (value in original SCoP) to (copied
+    // value in generated SCoP), without intermediate mappings, which might
+    // easily require transitiveness as well.
     if (Value *NewRemapped = GlobalMap.lookup(New))
       New = NewRemapped;
+
+    // No test case for this code.
     if (Old->getType()->getScalarSizeInBits() <
         New->getType()->getScalarSizeInBits())
       New = Builder.CreateTruncOrBitCast(New, Old->getType());
 
     return New;
+  };
+
+  Value *New = nullptr;
+  auto VUse = VirtualUse::create(&Stmt, L, Old, true);
+  switch (VUse.getKind()) {
+  case VirtualUse::Block:
+    // BasicBlock are constants, but the BlockGenerator copies them.
+    New = BBMap.lookup(Old);
+    break;
+
+  case VirtualUse::Constant:
+    // Used by:
+    // * Isl/CodeGen/OpenMP/reference-argument-from-non-affine-region.ll
+    // Constants should not be redefined. In this case, the GlobalMap just
+    // contains a mapping to the same constant, which is unnecessary, but
+    // harmless.
+    if ((New = lookupGlobally(Old)))
+      break;
+
+    assert(!BBMap.count(Old));
+    New = Old;
+    break;
+
+  case VirtualUse::ReadOnly:
+    assert(!GlobalMap.count(Old));
+
+    // Required for:
+    // * Isl/CodeGen/MemAccess/create_arrays.ll
+    // * Isl/CodeGen/read-only-scalars.ll
+    // * ScheduleOptimizer/pattern-matching-based-opts_10.ll
+    // For some reason these reload a read-only value. The reloaded value ends
+    // up in BBMap, buts its value should be identical.
+    //
+    // Required for:
+    // * Isl/CodeGen/OpenMP/single_loop_with_param.ll
+    // The parallel subfunctions need to reference the read-only value from the
+    // parent function, this is done by reloading them locally.
+    if ((New = BBMap.lookup(Old)))
+      break;
+
+    New = Old;
+    break;
+
+  case VirtualUse::Synthesizable:
+    // Used by:
+    // * Isl/CodeGen/OpenMP/loop-body-references-outer-values-3.ll
+    // * Isl/CodeGen/OpenMP/recomputed-srem.ll
+    // * Isl/CodeGen/OpenMP/reference-other-bb.ll
+    // * Isl/CodeGen/OpenMP/two-parallel-loops-reference-outer-indvar.ll
+    // For some reason synthesizable values end up in GlobalMap. Their values
+    // are the same as trySynthesizeNewValue would return. The legacy
+    // implementation prioritized GlobalMap, so this is what we do here as well.
+    // Ideally, synthesizable values should not end up in GlobalMap.
+    if ((New = lookupGlobally(Old)))
+      break;
+
+    // Required for:
+    // * Isl/CodeGen/RuntimeDebugBuilder/combine_different_values.ll
+    // * Isl/CodeGen/getNumberOfIterations.ll
+    // * Isl/CodeGen/non_affine_float_compare.ll
+    // * ScheduleOptimizer/pattern-matching-based-opts_10.ll
+    // Ideally, synthesizable values are synthesized by trySynthesizeNewValue,
+    // not precomputed (SCEVExpander has its own caching mechanism).
+    // These tests fail without this, but I think trySynthesizeNewValue would
+    // just re-synthesize the same instructions.
+    if ((New = BBMap.lookup(Old)))
+      break;
+
+    New = trySynthesizeNewValue(Stmt, Old, BBMap, LTS, L);
+    break;
+
+  case VirtualUse::Hoisted:
+    // TODO: Hoisted invariant loads should be found in GlobalMap only, but not
+    // redefined locally (which will be ignored anyway). That is, the following
+    // assertion should apply: assert(!BBMap.count(Old))
+
+    New = lookupGlobally(Old);
+    break;
+
+  case VirtualUse::Intra:
+  case VirtualUse::Inter:
+    assert(!GlobalMap.count(Old) &&
+           "Intra and inter-stmt values are never global");
+    New = BBMap.lookup(Old);
+    break;
   }
-
-  if (Value *New = BBMap.lookup(Old))
-    return New;
-
-  if (Value *New = trySynthesizeNewValue(Stmt, Old, BBMap, LTS, L))
-    return New;
-
-  // A scop-constant value defined by a global or a function parameter.
-  if (isa<GlobalValue>(Old) || isa<Argument>(Old))
-    return Old;
-
-  // A scop-constant value defined by an instruction executed outside the scop.
-  if (const Instruction *Inst = dyn_cast<Instruction>(Old))
-    if (!Stmt.getParent()->contains(Inst->getParent()))
-      return Old;
-
-  // The scalar dependence is neither available nor SCEVCodegenable.
-  llvm_unreachable("Unexpected scalar dependence in region!");
-  return nullptr;
+  assert(New && "Unexpected scalar dependence in region!");
+  return New;
 }
 
 void BlockGenerator::copyInstScalar(ScopStmt &Stmt, Instruction *Inst,
@@ -153,7 +227,7 @@ void BlockGenerator::copyInstScalar(ScopStmt &Stmt, Instruction *Inst,
     if (!NewOperand) {
       assert(!isa<StoreInst>(NewInst) &&
              "Store instructions are always needed!");
-      delete NewInst;
+      NewInst->deleteValue();
       return;
     }
 
@@ -244,16 +318,22 @@ Value *BlockGenerator::generateArrayLoad(ScopStmt &Stmt, LoadInst *Load,
 void BlockGenerator::generateArrayStore(ScopStmt &Stmt, StoreInst *Store,
                                         ValueMapT &BBMap, LoopToScevMapT &LTS,
                                         isl_id_to_ast_expr *NewAccesses) {
-  Value *NewPointer =
-      generateLocationAccessed(Stmt, Store, BBMap, LTS, NewAccesses);
-  Value *ValueOperand = getNewValue(Stmt, Store->getValueOperand(), BBMap, LTS,
-                                    getLoopForStmt(Stmt));
+  MemoryAccess &MA = Stmt.getArrayAccessFor(Store);
+  isl::set AccDom = give(isl_map_domain(MA.getAccessRelation()));
+  const char *Subject = isl_id_get_name(give(MA.getId()).keep());
 
-  if (PollyDebugPrinting)
-    RuntimeDebugBuilder::createCPUPrinter(Builder, "Store to  ", NewPointer,
-                                          ": ", ValueOperand, "\n");
+  generateConditionalExecution(Stmt, AccDom, Subject, [&, this]() {
+    Value *NewPointer =
+        generateLocationAccessed(Stmt, Store, BBMap, LTS, NewAccesses);
+    Value *ValueOperand = getNewValue(Stmt, Store->getValueOperand(), BBMap,
+                                      LTS, getLoopForStmt(Stmt));
 
-  Builder.CreateAlignedStore(ValueOperand, NewPointer, Store->getAlignment());
+    if (PollyDebugPrinting)
+      RuntimeDebugBuilder::createCPUPrinter(Builder, "Store to  ", NewPointer,
+                                            ": ", ValueOperand, "\n");
+
+    Builder.CreateAlignedStore(ValueOperand, NewPointer, Store->getAlignment());
+  });
 }
 
 bool BlockGenerator::canSyntheziseInStmt(ScopStmt &Stmt, Instruction *Inst) {
@@ -408,7 +488,10 @@ Value *BlockGenerator::getOrCreateAlloca(const ScopArrayInfo *Array) {
   else
     NameExt = ".s2a";
 
-  Addr = new AllocaInst(Ty, ScalarBase->getName() + NameExt);
+  const DataLayout &DL = Builder.GetInsertBlock()->getModule()->getDataLayout();
+
+  Addr = new AllocaInst(Ty, DL.getAllocaAddrSpace(),
+                        ScalarBase->getName() + NameExt);
   EntryBB = &Builder.GetInsertBlock()->getParent()->getEntryBlock();
   Addr->insertBefore(&*EntryBB->getFirstInsertionPt());
 
@@ -476,6 +559,75 @@ void BlockGenerator::generateScalarLoads(
   }
 }
 
+Value *BlockGenerator::buildContainsCondition(ScopStmt &Stmt,
+                                              const isl::set &Subdomain) {
+  isl::ast_build AstBuild = give(isl_ast_build_copy(Stmt.getAstBuild()));
+  isl::set Domain = give(Stmt.getDomain());
+
+  isl::union_map USchedule = AstBuild.get_schedule();
+  USchedule = USchedule.intersect_domain(Domain);
+
+  assert(!USchedule.is_empty());
+  isl::map Schedule = isl::map::from_union_map(USchedule);
+
+  isl::set ScheduledDomain = Schedule.range();
+  isl::set ScheduledSet = Subdomain.apply(Schedule);
+
+  isl::ast_build RestrictedBuild = AstBuild.restrict(ScheduledDomain);
+
+  isl::ast_expr IsInSet = RestrictedBuild.expr_from(ScheduledSet);
+  Value *IsInSetExpr = ExprBuilder->create(IsInSet.copy());
+  IsInSetExpr = Builder.CreateICmpNE(
+      IsInSetExpr, ConstantInt::get(IsInSetExpr->getType(), 0));
+
+  return IsInSetExpr;
+}
+
+void BlockGenerator::generateConditionalExecution(
+    ScopStmt &Stmt, const isl::set &Subdomain, StringRef Subject,
+    const std::function<void()> &GenThenFunc) {
+  isl::set StmtDom = give(Stmt.getDomain());
+
+  // Don't call GenThenFunc if it is never executed. An ast index expression
+  // might not be defined in this case.
+  if (Subdomain.is_empty())
+    return;
+
+  // If the condition is a tautology, don't generate a condition around the
+  // code.
+  bool IsPartialWrite =
+      !StmtDom.intersect_params(give(Stmt.getParent()->getContext()))
+           .is_subset(Subdomain);
+  if (!IsPartialWrite) {
+    GenThenFunc();
+    return;
+  }
+
+  // Generate the condition.
+  Value *Cond = buildContainsCondition(Stmt, Subdomain);
+  BasicBlock *HeadBlock = Builder.GetInsertBlock();
+  StringRef BlockName = HeadBlock->getName();
+
+  // Generate the conditional block.
+  SplitBlockAndInsertIfThen(Cond, &*Builder.GetInsertPoint(), false, nullptr,
+                            &DT, &LI);
+  BranchInst *Branch = cast<BranchInst>(HeadBlock->getTerminator());
+  BasicBlock *ThenBlock = Branch->getSuccessor(0);
+  BasicBlock *TailBlock = Branch->getSuccessor(1);
+
+  // Assign descriptive names.
+  if (auto *CondInst = dyn_cast<Instruction>(Cond))
+    CondInst->setName("polly." + Subject + ".cond");
+  ThenBlock->setName(BlockName + "." + Subject + ".partial");
+  TailBlock->setName(BlockName + ".cont");
+
+  // Put the client code into the conditional block and continue in the merge
+  // block afterwards.
+  Builder.SetInsertPoint(ThenBlock, ThenBlock->getFirstInsertionPt());
+  GenThenFunc();
+  Builder.SetInsertPoint(TailBlock, TailBlock->getFirstInsertionPt());
+}
+
 void BlockGenerator::generateScalarStores(
     ScopStmt &Stmt, LoopToScevMapT &LTS, ValueMapT &BBMap,
     __isl_keep isl_id_to_ast_expr *NewAccesses) {
@@ -489,40 +641,38 @@ void BlockGenerator::generateScalarStores(
     if (MA->isOriginalArrayKind() || MA->isRead())
       continue;
 
-#ifndef NDEBUG
-    auto *StmtDom = Stmt.getDomain();
-    auto *AccDom = isl_map_domain(MA->getAccessRelation());
-    assert(isl_set_is_subset(StmtDom, AccDom) &&
-           "Scalar must be stored in all statement instances");
-    isl_set_free(StmtDom);
-    isl_set_free(AccDom);
-#endif
+    isl::set AccDom = give(isl_map_domain(MA->getAccessRelation()));
+    const char *Subject = isl_id_get_name(give(MA->getId()).keep());
 
-    Value *Val = MA->getAccessValue();
-    if (MA->isAnyPHIKind()) {
-      assert(MA->getIncoming().size() >= 1 &&
-             "Block statements have exactly one exiting block, or multiple but "
-             "with same incoming block and value");
-      assert(std::all_of(MA->getIncoming().begin(), MA->getIncoming().end(),
-                         [&](std::pair<BasicBlock *, Value *> p) -> bool {
-                           return p.first == Stmt.getBasicBlock();
-                         }) &&
-             "Incoming block must be statement's block");
-      Val = MA->getIncoming()[0].second;
-    }
-    auto Address =
-        getImplicitAddress(*MA, getLoopForStmt(Stmt), LTS, BBMap, NewAccesses);
+    generateConditionalExecution(Stmt, AccDom, Subject, [&, this, MA]() {
+      Value *Val = MA->getAccessValue();
+      if (MA->isAnyPHIKind()) {
+        assert(
+            MA->getIncoming().size() >= 1 &&
+            "Block statements have exactly one exiting block, or multiple but "
+            "with same incoming block and value");
+        assert(std::all_of(MA->getIncoming().begin(), MA->getIncoming().end(),
+                           [&](std::pair<BasicBlock *, Value *> p) -> bool {
+                             return p.first == Stmt.getBasicBlock();
+                           }) &&
+               "Incoming block must be statement's block");
+        Val = MA->getIncoming()[0].second;
+      }
+      auto Address = getImplicitAddress(*MA, getLoopForStmt(Stmt), LTS, BBMap,
+                                        NewAccesses);
 
-    Val = getNewValue(Stmt, Val, BBMap, LTS, L);
-    assert((!isa<Instruction>(Val) ||
-            DT.dominates(cast<Instruction>(Val)->getParent(),
-                         Builder.GetInsertBlock())) &&
-           "Domination violation");
-    assert((!isa<Instruction>(Address) ||
-            DT.dominates(cast<Instruction>(Address)->getParent(),
-                         Builder.GetInsertBlock())) &&
-           "Domination violation");
-    Builder.CreateStore(Val, Address);
+      Val = getNewValue(Stmt, Val, BBMap, LTS, L);
+      assert((!isa<Instruction>(Val) ||
+              DT.dominates(cast<Instruction>(Val)->getParent(),
+                           Builder.GetInsertBlock())) &&
+             "Domination violation");
+      assert((!isa<Instruction>(Address) ||
+              DT.dominates(cast<Instruction>(Address)->getParent(),
+                           Builder.GetInsertBlock())) &&
+             "Domination violation");
+      Builder.CreateStore(Val, Address);
+
+    });
   }
 }
 
@@ -704,6 +854,18 @@ void BlockGenerator::invalidateScalarEvolution(Scop &S) {
           SE.forgetValue(&Inst);
     else
       llvm_unreachable("Unexpected statement type found");
+
+  // Invalidate SCEV of loops surrounding the EscapeUsers.
+  for (const auto &EscapeMapping : EscapeMap) {
+    const EscapeUserVectorTy &EscapeUsers = EscapeMapping.second.second;
+    for (Instruction *EUser : EscapeUsers) {
+      if (Loop *L = LI.getLoopFor(EUser->getParent()))
+        while (L) {
+          SE.forgetLoop(L);
+          L = L->getParentLoop();
+        }
+    }
+  }
 }
 
 void BlockGenerator::finalizeSCoP(Scop &S) {
@@ -1393,18 +1555,23 @@ void RegionGenerator::generateScalarStores(
     if (MA->isOriginalArrayKind() || MA->isRead())
       continue;
 
-    Value *NewVal = getExitScalar(MA, LTS, BBMap);
-    Value *Address =
-        getImplicitAddress(*MA, getLoopForStmt(Stmt), LTS, BBMap, NewAccesses);
-    assert((!isa<Instruction>(NewVal) ||
-            DT.dominates(cast<Instruction>(NewVal)->getParent(),
-                         Builder.GetInsertBlock())) &&
-           "Domination violation");
-    assert((!isa<Instruction>(Address) ||
-            DT.dominates(cast<Instruction>(Address)->getParent(),
-                         Builder.GetInsertBlock())) &&
-           "Domination violation");
-    Builder.CreateStore(NewVal, Address);
+    isl::set AccDom = give(isl_map_domain(MA->getAccessRelation()));
+    const char *Subject = isl_id_get_name(give(MA->getId()).keep());
+    generateConditionalExecution(Stmt, AccDom, Subject, [&, this, MA]() {
+
+      Value *NewVal = getExitScalar(MA, LTS, BBMap);
+      Value *Address = getImplicitAddress(*MA, getLoopForStmt(Stmt), LTS, BBMap,
+                                          NewAccesses);
+      assert((!isa<Instruction>(NewVal) ||
+              DT.dominates(cast<Instruction>(NewVal)->getParent(),
+                           Builder.GetInsertBlock())) &&
+             "Domination violation");
+      assert((!isa<Instruction>(Address) ||
+              DT.dominates(cast<Instruction>(Address)->getParent(),
+                           Builder.GetInsertBlock())) &&
+             "Domination violation");
+      Builder.CreateStore(NewVal, Address);
+    });
   }
 }
 

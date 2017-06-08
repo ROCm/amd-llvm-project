@@ -9,22 +9,19 @@
 
 #include "PdbYaml.h"
 
-#include "YamlSerializationContext.h"
-#include "YamlSymbolDumper.h"
-#include "YamlTypeDumper.h"
-
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/DebugInfo/CodeView/CVSymbolVisitor.h"
 #include "llvm/DebugInfo/CodeView/CVTypeVisitor.h"
 #include "llvm/DebugInfo/CodeView/SymbolDeserializer.h"
-#include "llvm/DebugInfo/CodeView/SymbolSerializer.h"
 #include "llvm/DebugInfo/CodeView/SymbolVisitorCallbackPipeline.h"
-#include "llvm/DebugInfo/CodeView/TypeDeserializer.h"
 #include "llvm/DebugInfo/CodeView/TypeSerializer.h"
 #include "llvm/DebugInfo/CodeView/TypeVisitorCallbackPipeline.h"
 #include "llvm/DebugInfo/PDB/Native/PDBFile.h"
+#include "llvm/DebugInfo/PDB/Native/RawTypes.h"
 #include "llvm/DebugInfo/PDB/Native/TpiHashing.h"
 #include "llvm/DebugInfo/PDB/PDBExtras.h"
 #include "llvm/DebugInfo/PDB/PDBTypes.h"
+#include "llvm/ObjectYAML/CodeViewYAMLTypes.h"
 
 using namespace llvm;
 using namespace llvm::pdb;
@@ -35,8 +32,6 @@ LLVM_YAML_IS_FLOW_SEQUENCE_VECTOR(uint32_t)
 LLVM_YAML_IS_SEQUENCE_VECTOR(llvm::StringRef)
 LLVM_YAML_IS_SEQUENCE_VECTOR(llvm::pdb::yaml::NamedStreamMapping)
 LLVM_YAML_IS_SEQUENCE_VECTOR(llvm::pdb::yaml::PdbDbiModuleInfo)
-LLVM_YAML_IS_SEQUENCE_VECTOR(llvm::pdb::yaml::PdbSymbolRecord)
-LLVM_YAML_IS_SEQUENCE_VECTOR(llvm::pdb::yaml::PdbTpiRecord)
 LLVM_YAML_IS_SEQUENCE_VECTOR(llvm::pdb::yaml::StreamBlockList)
 LLVM_YAML_IS_FLOW_SEQUENCE_VECTOR(llvm::pdb::PdbRaw_FeatureSig)
 
@@ -149,23 +144,14 @@ template <> struct ScalarEnumerationTraits<llvm::pdb::PdbRaw_FeatureSig> {
 }
 
 void MappingTraits<PdbObject>::mapping(IO &IO, PdbObject &Obj) {
-  // Create a single serialization context that will be passed through the
-  // entire process of serializing / deserializing a Tpi Stream.  This is
-  // especially important when we are going from Pdb -> Yaml because we need
-  // to maintain state in a TypeTableBuilder across mappings, and at the end of
-  // the entire process, we need to have one TypeTableBuilder that has every
-  // record.
-  pdb::yaml::SerializationContext Context(IO, Obj.Allocator);
-
-
   IO.mapOptional("MSF", Obj.Headers);
   IO.mapOptional("StreamSizes", Obj.StreamSizes);
   IO.mapOptional("StreamMap", Obj.StreamMap);
   IO.mapOptional("StringTable", Obj.StringTable);
   IO.mapOptional("PdbStream", Obj.PdbStream);
-  IO.mapOptionalWithContext("DbiStream", Obj.DbiStream, Context);
-  IO.mapOptionalWithContext("TpiStream", Obj.TpiStream, Context);
-  IO.mapOptionalWithContext("IpiStream", Obj.IpiStream, Context);
+  IO.mapOptional("DbiStream", Obj.DbiStream);
+  IO.mapOptional("TpiStream", Obj.TpiStream);
+  IO.mapOptional("IpiStream", Obj.IpiStream);
 }
 
 void MappingTraits<MSFHeaders>::mapping(IO &IO, MSFHeaders &Obj) {
@@ -202,7 +188,7 @@ void MappingTraits<PdbInfoStream>::mapping(IO &IO, PdbInfoStream &Obj) {
   IO.mapOptional("Version", Obj.Version, PdbImplVC70);
 }
 
-void MappingContextTraits<PdbDbiStream, pdb::yaml::SerializationContext>::mapping(IO &IO, PdbDbiStream &Obj, pdb::yaml::SerializationContext &Context) {
+void MappingTraits<PdbDbiStream>::mapping(IO &IO, PdbDbiStream &Obj) {
   IO.mapOptional("VerHeader", Obj.VerHeader, PdbDbiV70);
   IO.mapOptional("Age", Obj.Age, 1U);
   IO.mapOptional("BuildNumber", Obj.BuildNumber, uint16_t(0U));
@@ -210,13 +196,13 @@ void MappingContextTraits<PdbDbiStream, pdb::yaml::SerializationContext>::mappin
   IO.mapOptional("PdbDllRbld", Obj.PdbDllRbld, uint16_t(0U));
   IO.mapOptional("Flags", Obj.Flags, uint16_t(1U));
   IO.mapOptional("MachineType", Obj.MachineType, PDB_Machine::x86);
-  IO.mapOptionalWithContext("Modules", Obj.ModInfos, Context);
+  IO.mapOptional("Modules", Obj.ModInfos);
 }
 
-void MappingContextTraits<PdbTpiStream, pdb::yaml::SerializationContext>::mapping(
-    IO &IO, pdb::yaml::PdbTpiStream &Obj, pdb::yaml::SerializationContext &Context) {
+void MappingTraits<PdbTpiStream>::mapping(IO &IO,
+                                          pdb::yaml::PdbTpiStream &Obj) {
   IO.mapOptional("Version", Obj.Version, PdbTpiV80);
-  IO.mapRequired("Records", Obj.Records, Context);
+  IO.mapRequired("Records", Obj.Records);
 }
 
 void MappingTraits<NamedStreamMapping>::mapping(IO &IO,
@@ -225,65 +211,15 @@ void MappingTraits<NamedStreamMapping>::mapping(IO &IO,
   IO.mapRequired("StreamNum", Obj.StreamNumber);
 }
 
-void MappingContextTraits<PdbSymbolRecord, pdb::yaml::SerializationContext>::mapping(IO &IO, PdbSymbolRecord &Obj, pdb::yaml::SerializationContext &Context) {
-  codeview::SymbolVisitorCallbackPipeline Pipeline;
-  codeview::SymbolSerializer Serializer(Context.Allocator);
-  codeview::SymbolDeserializer Deserializer(nullptr);
-  codeview::yaml::YamlSymbolDumper Dumper(IO);
-
-  if (IO.outputting()) {
-    // For PDB to Yaml, deserialize into a high level record type, then dump it.
-    Pipeline.addCallbackToPipeline(Deserializer);
-    Pipeline.addCallbackToPipeline(Dumper);
-  } else {
-    // For the other way around, dump it into a concrete structure, and then
-    // serialize it into the CVRecord.
-    Pipeline.addCallbackToPipeline(Dumper);
-    Pipeline.addCallbackToPipeline(Serializer);
-  }
-
-  codeview::CVSymbolVisitor Visitor(Pipeline);
-  consumeError(Visitor.visitSymbolRecord(Obj.Record));
-}
-
-void MappingContextTraits<PdbModiStream, pdb::yaml::SerializationContext>::mapping(IO &IO, PdbModiStream &Obj, pdb::yaml::SerializationContext &Context) {
+void MappingTraits<PdbModiStream>::mapping(IO &IO, PdbModiStream &Obj) {
   IO.mapOptional("Signature", Obj.Signature, 4U);
-  IO.mapRequired("Records", Obj.Symbols, Context);
+  IO.mapRequired("Records", Obj.Symbols);
 }
 
-void MappingContextTraits<PdbDbiModuleInfo, pdb::yaml::SerializationContext>::mapping(IO &IO, PdbDbiModuleInfo &Obj, pdb::yaml::SerializationContext &Context) {
+void MappingTraits<PdbDbiModuleInfo>::mapping(IO &IO, PdbDbiModuleInfo &Obj) {
   IO.mapRequired("Module", Obj.Mod);
   IO.mapOptional("ObjFile", Obj.Obj, Obj.Mod);
   IO.mapOptional("SourceFiles", Obj.SourceFiles);
-  IO.mapOptionalWithContext("Modi", Obj.Modi, Context);
-}
-
-void MappingContextTraits<PdbTpiRecord, pdb::yaml::SerializationContext>::
-    mapping(IO &IO, pdb::yaml::PdbTpiRecord &Obj,
-            pdb::yaml::SerializationContext &Context) {
-  codeview::TypeVisitorCallbackPipeline Pipeline;
-  codeview::TypeDeserializer Deserializer;
-  codeview::TypeSerializer Serializer(Context.Allocator);
-  pdb::TpiHashUpdater Hasher;
-
-  if (IO.outputting()) {
-    // For PDB to Yaml, deserialize into a high level record type, then dump it.
-    Pipeline.addCallbackToPipeline(Deserializer);
-    Pipeline.addCallbackToPipeline(Context.Dumper);
-  } else {
-    // For Yaml to PDB, extract from the high level record type, then write it
-    // to bytes.
-
-    // This might be interpreted as a hack, but serializing FieldList
-    // sub-records requires having access to the same serializer being used by
-    // the FieldList itself.
-    Context.ActiveSerializer = &Serializer;
-    Pipeline.addCallbackToPipeline(Context.Dumper);
-    Pipeline.addCallbackToPipeline(Serializer);
-    Pipeline.addCallbackToPipeline(Hasher);
-  }
-
-  codeview::CVTypeVisitor Visitor(Pipeline);
-  consumeError(Visitor.visitTypeRecord(Obj.Record));
-  Context.ActiveSerializer = nullptr;
+  IO.mapOptional("LineInfo", Obj.FileLineInfo);
+  IO.mapOptional("Modi", Obj.Modi);
 }

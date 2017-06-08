@@ -45,6 +45,7 @@
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Object/Decompressor.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/Compression.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/TarWriter.h"
 #include "llvm/Support/TargetSelect.h"
@@ -122,13 +123,13 @@ static std::tuple<ELFKind, uint16_t, uint8_t> parseEmulation(StringRef Emul) {
 
 // Returns slices of MB by parsing MB as an archive file.
 // Each slice consists of a member file in the archive.
-std::vector<MemoryBufferRef>
-LinkerDriver::getArchiveMembers(MemoryBufferRef MB) {
+std::vector<std::pair<MemoryBufferRef, uint64_t>> static getArchiveMembers(
+    MemoryBufferRef MB) {
   std::unique_ptr<Archive> File =
       check(Archive::create(MB),
             MB.getBufferIdentifier() + ": failed to parse archive");
 
-  std::vector<MemoryBufferRef> V;
+  std::vector<std::pair<MemoryBufferRef, uint64_t>> V;
   Error Err = Error::success();
   for (const ErrorOr<Archive::Child> &COrErr : File->children(Err)) {
     Archive::Child C =
@@ -138,7 +139,7 @@ LinkerDriver::getArchiveMembers(MemoryBufferRef MB) {
         check(C.getMemoryBufferRef(),
               MB.getBufferIdentifier() +
                   ": could not get the buffer for a child of the archive");
-    V.push_back(MBRef);
+    V.push_back(std::make_pair(MBRef, C.getChildOffset()));
   }
   if (Err)
     fatal(MB.getBufferIdentifier() + ": Archive::children failed: " +
@@ -151,9 +152,8 @@ LinkerDriver::getArchiveMembers(MemoryBufferRef MB) {
   return V;
 }
 
-// Opens and parses a file. Path has to be resolved already.
-// Newly created memory buffers are owned by this driver.
-void LinkerDriver::addFile(StringRef Path) {
+// Opens a file and create a file object. Path has to be resolved already.
+void LinkerDriver::addFile(StringRef Path, bool WithLOption) {
   using namespace sys::fs;
 
   Optional<MemoryBufferRef> Buffer = readFile(Path);
@@ -170,24 +170,52 @@ void LinkerDriver::addFile(StringRef Path) {
   case file_magic::unknown:
     readLinkerScript(MBRef);
     return;
-  case file_magic::archive:
+  case file_magic::archive: {
+    // Handle -whole-archive.
     if (InWholeArchive) {
-      for (MemoryBufferRef MB : getArchiveMembers(MBRef))
-        Files.push_back(createObjectFile(MB, Path));
+      for (const auto &P : getArchiveMembers(MBRef))
+        Files.push_back(createObjectFile(P.first, Path, P.second));
       return;
     }
-    Files.push_back(make<ArchiveFile>(MBRef));
+
+    std::unique_ptr<Archive> File =
+        check(Archive::create(MBRef), Path + ": failed to parse archive");
+
+    // If an archive file has no symbol table, it is likely that a user
+    // is attempting LTO and using a default ar command that doesn't
+    // understand the LLVM bitcode file. It is a pretty common error, so
+    // we'll handle it as if it had a symbol table.
+    if (!File->hasSymbolTable()) {
+      for (const auto &P : getArchiveMembers(MBRef))
+        Files.push_back(make<LazyObjectFile>(P.first, Path, P.second));
+      return;
+    }
+
+    // Handle the regular case.
+    Files.push_back(make<ArchiveFile>(std::move(File)));
     return;
+  }
   case file_magic::elf_shared_object:
     if (Config->Relocatable) {
       error("attempted static link of dynamic object " + Path);
       return;
     }
-    Files.push_back(createSharedFile(MBRef));
+    // DSOs usually have DT_SONAME tags in their ELF headers, and the
+    // sonames are used to identify DSOs. But if they are missing,
+    // they are identified by filenames. We don't know whether the new
+    // file has a DT_SONAME or not because we haven't parsed it yet.
+    // Here, we set the default soname for the file because we might
+    // need it later.
+    //
+    // If a file was specified by -lfoo, the directory part is not
+    // significant, as a user did not specify it. This behavior is
+    // compatible with GNU.
+    Files.push_back(createSharedFile(
+        MBRef, WithLOption ? sys::path::filename(Path) : Path));
     return;
   default:
     if (InLib)
-      Files.push_back(make<LazyObjectFile>(MBRef));
+      Files.push_back(make<LazyObjectFile>(MBRef, "", 0));
     else
       Files.push_back(createObjectFile(MBRef));
   }
@@ -196,7 +224,7 @@ void LinkerDriver::addFile(StringRef Path) {
 // Add a given library by searching it from input search paths.
 void LinkerDriver::addLibrary(StringRef Name) {
   if (Optional<std::string> Path = searchLibrary(Name))
-    addFile(*Path);
+    addFile(*Path, /*WithLOption=*/true);
   else
     error("unable to find library -l" + Name);
 }
@@ -230,6 +258,9 @@ static void checkOptions(opt::InputArgList &Args) {
   if (Config->Pie && Config->Shared)
     error("-shared and -pie may not be used together");
 
+  if (!Config->Shared && !Config->AuxiliaryList.empty())
+    error("-f may not be used without -shared");
+
   if (Config->Relocatable) {
     if (Config->Shared)
       error("-r and -shared may not be used together");
@@ -253,7 +284,7 @@ static int getInteger(opt::InputArgList &Args, unsigned Key, int Default) {
   int V = Default;
   if (auto *Arg = Args.getLastArg(Key)) {
     StringRef S = Arg->getValue();
-    if (S.getAsInteger(10, V))
+    if (!to_integer(S, V, 10))
       error(Arg->getSpelling() + ": number expected, but got " + S);
   }
   return V;
@@ -280,7 +311,7 @@ static uint64_t getZOptionValue(opt::InputArgList &Args, StringRef Key,
     if (Pos != StringRef::npos && Key == Value.substr(0, Pos)) {
       Value = Value.substr(Pos + 1);
       uint64_t Result;
-      if (Value.getAsInteger(0, Result))
+      if (!to_integer(Value, Result))
         error("invalid " + Key + ": " + Value);
       return Result;
     }
@@ -384,7 +415,7 @@ static std::vector<StringRef> getArgs(opt::InputArgList &Args, int Id) {
   return V;
 }
 
-static std::string getRPath(opt::InputArgList &Args) {
+static std::string getRpath(opt::InputArgList &Args) {
   std::vector<StringRef> V = getArgs(Args, OPT_rpath);
   return llvm::join(V.begin(), V.end(), ":");
 }
@@ -432,16 +463,14 @@ static UnresolvedPolicy getUnresolvedSymbolPolicy(opt::InputArgList &Args) {
 }
 
 static Target2Policy getTarget2(opt::InputArgList &Args) {
-  if (auto *Arg = Args.getLastArg(OPT_target2)) {
-    StringRef S = Arg->getValue();
-    if (S == "rel")
-      return Target2Policy::Rel;
-    if (S == "abs")
-      return Target2Policy::Abs;
-    if (S == "got-rel")
-      return Target2Policy::GotRel;
-    error("unknown --target2 option: " + S);
-  }
+  StringRef S = getString(Args, OPT_target2, "got-rel");
+  if (S == "rel")
+    return Target2Policy::Rel;
+  if (S == "abs")
+    return Target2Policy::Abs;
+  if (S == "got-rel")
+    return Target2Policy::GotRel;
+  error("unknown --target2 option: " + S);
   return Target2Policy::GotRel;
 }
 
@@ -493,7 +522,7 @@ static uint64_t parseSectionAddress(StringRef S, opt::Arg *Arg) {
   uint64_t VA = 0;
   if (S.startswith("0x"))
     S = S.drop_front(2);
-  if (S.getAsInteger(16, VA))
+  if (!to_integer(S, VA, 16))
     error("invalid argument: " + toString(Arg));
   return VA;
 }
@@ -538,6 +567,33 @@ static std::pair<bool, bool> getHashStyle(opt::InputArgList &Args) {
   return {true, true};
 }
 
+// Parse --build-id or --build-id=<style>. We handle "tree" as a
+// synonym for "sha1" because all our hash functions including
+// -build-id=sha1 are actually tree hashes for performance reasons.
+static std::pair<BuildIdKind, std::vector<uint8_t>>
+getBuildId(opt::InputArgList &Args) {
+  auto *Arg = Args.getLastArg(OPT_build_id, OPT_build_id_eq);
+  if (!Arg)
+    return {BuildIdKind::None, {}};
+
+  if (Arg->getOption().getID() == OPT_build_id)
+    return {BuildIdKind::Fast, {}};
+
+  StringRef S = Arg->getValue();
+  if (S == "md5")
+    return {BuildIdKind::Md5, {}};
+  if (S == "sha1" || S == "tree")
+    return {BuildIdKind::Sha1, {}};
+  if (S == "uuid")
+    return {BuildIdKind::Uuid, {}};
+  if (S.startswith("0x"))
+    return {BuildIdKind::Hexstring, parseHex(S.substr(2))};
+
+  if (S != "none")
+    error("unknown --build-id style: " + S);
+  return {BuildIdKind::None, {}};
+}
+
 static std::vector<StringRef> getLines(MemoryBufferRef MB) {
   SmallVector<StringRef, 0> Arr;
   MB.getBuffer().split(Arr, '\n');
@@ -551,12 +607,24 @@ static std::vector<StringRef> getLines(MemoryBufferRef MB) {
   return Ret;
 }
 
+static bool getCompressDebugSections(opt::InputArgList &Args) {
+  StringRef S = getString(Args, OPT_compress_debug_sections, "none");
+  if (S == "none")
+    return false;
+  if (S != "zlib")
+    error("unknown --compress-debug-sections value: " + S);
+  if (!zlib::isAvailable())
+    error("--compress-debug-sections: zlib is not available");
+  return true;
+}
+
 // Initializes Config members by the command line options.
 void LinkerDriver::readConfigs(opt::InputArgList &Args) {
   Config->AllowMultipleDefinition = Args.hasArg(OPT_allow_multiple_definition);
   Config->AuxiliaryList = getArgs(Args, OPT_auxiliary);
   Config->Bsymbolic = Args.hasArg(OPT_Bsymbolic);
   Config->BsymbolicFunctions = Args.hasArg(OPT_Bsymbolic_functions);
+  Config->CompressDebugSections = getCompressDebugSections(Args);
   Config->DefineCommon = getArg(Args, OPT_define_common, OPT_no_define_common,
                                 !Args.hasArg(OPT_relocatable));
   Config->Demangle = getArg(Args, OPT_demangle, OPT_no_demangle, true);
@@ -592,7 +660,7 @@ void LinkerDriver::readConfigs(opt::InputArgList &Args) {
   Config->OutputFile = getString(Args, OPT_o);
   Config->Pie = getArg(Args, OPT_pie, OPT_nopie, false);
   Config->PrintGcSections = Args.hasArg(OPT_print_gc_sections);
-  Config->RPath = getRPath(Args);
+  Config->Rpath = getRpath(Args);
   Config->Relocatable = Args.hasArg(OPT_relocatable);
   Config->SaveTemps = Args.hasArg(OPT_save_temps);
   Config->SearchPaths = getArgs(Args, OPT_L);
@@ -624,6 +692,7 @@ void LinkerDriver::readConfigs(opt::InputArgList &Args) {
   Config->ZNow = hasZOption(Args, "now");
   Config->ZOrigin = hasZOption(Args, "origin");
   Config->ZRelro = !hasZOption(Args, "norelro");
+  Config->ZRodynamic = hasZOption(Args, "rodynamic");
   Config->ZStackSize = getZOptionValue(Args, "stack-size", 0);
   Config->ZText = !hasZOption(Args, "notext");
   Config->ZWxneeded = hasZOption(Args, "wxneeded");
@@ -655,36 +724,7 @@ void LinkerDriver::readConfigs(opt::InputArgList &Args) {
     Config->ZRelro = false;
 
   std::tie(Config->SysvHash, Config->GnuHash) = getHashStyle(Args);
-
-  // Parse --build-id or --build-id=<style>. We handle "tree" as a
-  // synonym for "sha1" because all of our hash functions including
-  // -build-id=sha1 are tree hashes for performance reasons.
-  if (Args.hasArg(OPT_build_id))
-    Config->BuildId = BuildIdKind::Fast;
-  if (auto *Arg = Args.getLastArg(OPT_build_id_eq)) {
-    StringRef S = Arg->getValue();
-    if (S == "md5") {
-      Config->BuildId = BuildIdKind::Md5;
-    } else if (S == "sha1" || S == "tree") {
-      Config->BuildId = BuildIdKind::Sha1;
-    } else if (S == "uuid") {
-      Config->BuildId = BuildIdKind::Uuid;
-    } else if (S == "none") {
-      Config->BuildId = BuildIdKind::None;
-    } else if (S.startswith("0x")) {
-      Config->BuildId = BuildIdKind::Hexstring;
-      Config->BuildIdVector = parseHex(S.substr(2));
-    } else {
-      error("unknown --build-id style: " + S);
-    }
-  }
-
-  if (!Config->Shared && !Config->AuxiliaryList.empty())
-    error("-f may not be used without -shared");
-
-  for (auto *Arg : Args.filtered(OPT_dynamic_list))
-    if (Optional<MemoryBufferRef> Buffer = readFile(Arg->getValue()))
-      readDynamicList(*Buffer);
+  std::tie(Config->BuildId, Config->BuildIdVector) = getBuildId(Args);
 
   if (auto *Arg = Args.getLastArg(OPT_symbol_ordering_file))
     if (Optional<MemoryBufferRef> Buffer = readFile(Arg->getValue()))
@@ -700,17 +740,30 @@ void LinkerDriver::readConfigs(opt::InputArgList &Args) {
             {S, /*IsExternCpp*/ false, /*HasWildcard*/ false});
   }
 
-  for (auto *Arg : Args.filtered(OPT_export_dynamic_symbol))
-    Config->VersionScriptGlobals.push_back(
-        {Arg->getValue(), /*IsExternCpp*/ false, /*HasWildcard*/ false});
+  bool HasExportDynamic =
+      getArg(Args, OPT_export_dynamic, OPT_no_export_dynamic, false);
 
-  // Dynamic lists are a simplified linker script that doesn't need the
-  // "global:" and implicitly ends with a "local:*". Set the variables needed to
-  // simulate that.
-  if (Args.hasArg(OPT_dynamic_list) || Args.hasArg(OPT_export_dynamic_symbol)) {
-    Config->ExportDynamic = true;
-    if (!Config->Shared)
-      Config->DefaultSymbolVersion = VER_NDX_LOCAL;
+  // Parses -dynamic-list and -export-dynamic-symbol. They make some
+  // symbols private. Note that -export-dynamic takes precedence over them
+  // as it says all symbols should be exported.
+  if (!HasExportDynamic) {
+    for (auto *Arg : Args.filtered(OPT_dynamic_list))
+      if (Optional<MemoryBufferRef> Buffer = readFile(Arg->getValue()))
+        readDynamicList(*Buffer);
+
+    for (auto *Arg : Args.filtered(OPT_export_dynamic_symbol))
+      Config->VersionScriptGlobals.push_back(
+          {Arg->getValue(), /*IsExternCpp*/ false, /*HasWildcard*/ false});
+
+    // Dynamic lists are a simplified linker script that doesn't need the
+    // "global:" and implicitly ends with a "local:*". Set the variables
+    // needed to simulate that.
+    if (Args.hasArg(OPT_dynamic_list) ||
+        Args.hasArg(OPT_export_dynamic_symbol)) {
+      Config->ExportDynamic = true;
+      if (!Config->Shared)
+        Config->DefaultSymbolVersion = VER_NDX_LOCAL;
+    }
   }
 
   if (auto *Arg = Args.getLastArg(OPT_version_script))
@@ -759,7 +812,7 @@ void LinkerDriver::createFiles(opt::InputArgList &Args) {
       addLibrary(Arg->getValue());
       break;
     case OPT_INPUT:
-      addFile(Arg->getValue());
+      addFile(Arg->getValue(), /*WithLOption=*/false);
       break;
     case OPT_alias_script_T:
     case OPT_script:
@@ -838,13 +891,28 @@ static uint64_t getImageBase(opt::InputArgList &Args) {
 
   StringRef S = Arg->getValue();
   uint64_t V;
-  if (S.getAsInteger(0, V)) {
+  if (!to_integer(S, V)) {
     error("-image-base: number expected, but got " + S);
     return 0;
   }
   if ((V % Config->MaxPageSize) != 0)
     warn("-image-base: address isn't multiple of page size: " + S);
   return V;
+}
+
+// Parses --defsym=alias option.
+static std::vector<std::pair<StringRef, StringRef>>
+getDefsym(opt::InputArgList &Args) {
+  std::vector<std::pair<StringRef, StringRef>> Ret;
+  for (auto *Arg : Args.filtered(OPT_defsym)) {
+    StringRef From;
+    StringRef To;
+    std::tie(From, To) = StringRef(Arg->getValue()).split('=');
+    if (!isValidCIdentifier(To))
+      error("--defsym: symbol name expected, but got " + To);
+    Ret.push_back({From, To});
+  }
+  return Ret;
 }
 
 // Do actual linking. Note that when this function is called,
@@ -864,9 +932,11 @@ template <class ELFT> void LinkerDriver::link(opt::InputArgList &Args) {
   // Fail early if the output file or map file is not writable. If a user has a
   // long link, e.g. due to a large LTO link, they do not wish to run it and
   // find that it failed because there was a mistake in their command-line.
-  if (!isFileWritable(Config->OutputFile, "output file"))
-    return;
-  if (!isFileWritable(Config->MapFile, "map file"))
+  if (auto E = tryCreateFile(Config->OutputFile))
+    error("cannot open output file " + Config->OutputFile + ": " + E.message());
+  if (auto E = tryCreateFile(Config->MapFile))
+    error("cannot open map file " + Config->MapFile + ": " + E.message());
+  if (ErrorCount)
     return;
 
   // Use default entry point name if no name was given via the command
@@ -906,11 +976,15 @@ template <class ELFT> void LinkerDriver::link(opt::InputArgList &Args) {
 
   // Some symbols (such as __ehdr_start) are defined lazily only when there
   // are undefined symbols for them, so we add these to trigger that logic.
-  for (StringRef Sym : Script->Opt.UndefinedSymbols)
+  for (StringRef Sym : Script->Opt.ReferencedSymbols)
     Symtab.addUndefined(Sym);
 
   for (auto *Arg : Args.filtered(OPT_wrap))
     Symtab.wrap(Arg->getValue());
+
+  // Handle --defsym=sym=alias option.
+  for (std::pair<StringRef, StringRef> &Def : getDefsym(Args))
+    Symtab.alias(Def.first, Def.second);
 
   // Now that we have a complete list of input files.
   // Beyond this point, no new files are added.

@@ -29,15 +29,15 @@ using namespace lld;
 using namespace lld::elf;
 
 DefinedRegular *ElfSym::Bss;
-DefinedRegular *ElfSym::Etext;
+DefinedRegular *ElfSym::Etext1;
 DefinedRegular *ElfSym::Etext2;
-DefinedRegular *ElfSym::Edata;
+DefinedRegular *ElfSym::Edata1;
 DefinedRegular *ElfSym::Edata2;
-DefinedRegular *ElfSym::End;
+DefinedRegular *ElfSym::End1;
 DefinedRegular *ElfSym::End2;
+DefinedRegular *ElfSym::MipsGp;
 DefinedRegular *ElfSym::MipsGpDisp;
 DefinedRegular *ElfSym::MipsLocalGp;
-DefinedRegular *ElfSym::MipsGp;
 
 static uint64_t getSymVA(const SymbolBody &Body, int64_t &Addend) {
   switch (Body.kind()) {
@@ -101,12 +101,12 @@ static uint64_t getSymVA(const SymbolBody &Body, int64_t &Addend) {
   case SymbolBody::DefinedCommonKind:
     if (!Config->DefineCommon)
       return 0;
-    return InX::Common->OutSec->Addr + InX::Common->OutSecOff +
+    return InX::Common->getParent()->Addr + InX::Common->OutSecOff +
            cast<DefinedCommon>(Body).Offset;
   case SymbolBody::SharedKind: {
     auto &SS = cast<SharedSymbol>(Body);
     if (SS.NeedsCopy)
-      return SS.CopyRelSec->OutSec->Addr + SS.CopyRelSec->OutSecOff +
+      return SS.CopyRelSec->getParent()->Addr + SS.CopyRelSec->OutSecOff +
              SS.CopyRelSecOff;
     if (SS.NeedsPltAddr)
       return Body.getPltVA();
@@ -163,8 +163,8 @@ uint64_t SymbolBody::getVA(int64_t Addend) const {
   return OutVA + Addend;
 }
 
-template <class ELFT> typename ELFT::uint SymbolBody::getGotVA() const {
-  return In<ELFT>::Got->getVA() + getGotOffset();
+uint64_t SymbolBody::getGotVA() const {
+  return InX::Got->getVA() + getGotOffset();
 }
 
 uint64_t SymbolBody::getGotOffset() const {
@@ -207,13 +207,13 @@ OutputSection *SymbolBody::getOutputSection() const {
 
   if (auto *S = dyn_cast<SharedSymbol>(this)) {
     if (S->NeedsCopy)
-      return S->CopyRelSec->OutSec;
+      return S->CopyRelSec->getParent();
     return nullptr;
   }
 
   if (isa<DefinedCommon>(this)) {
     if (Config->DefineCommon)
-      return InX::Common->OutSec;
+      return InX::Common->getParent();
     return nullptr;
   }
 
@@ -327,20 +327,14 @@ InputFile *LazyArchive::fetch() {
   return createObjectFile(MBInfo.first, file()->getName(), MBInfo.second);
 }
 
-InputFile *LazyObject::fetch() {
-  MemoryBufferRef MBRef = file()->getBuffer();
-  if (MBRef.getBuffer().empty())
-    return nullptr;
-  return createObjectFile(MBRef);
-}
+InputFile *LazyObject::fetch() { return file()->fetch(); }
 
 uint8_t Symbol::computeBinding() const {
   if (Config->Relocatable)
     return Binding;
   if (Visibility != STV_DEFAULT && Visibility != STV_PROTECTED)
     return STB_LOCAL;
-  const SymbolBody *Body = body();
-  if (VersionId == VER_NDX_LOCAL && Body->isInCurrentDSO())
+  if (VersionId == VER_NDX_LOCAL && body()->isInCurrentDSO())
     return STB_LOCAL;
   if (Config->NoGnuUnique && Binding == STB_GNU_UNIQUE)
     return STB_GLOBAL;
@@ -375,11 +369,6 @@ std::string lld::toString(const SymbolBody &B) {
       return *S;
   return B.getName();
 }
-
-template uint32_t SymbolBody::template getGotVA<ELF32LE>() const;
-template uint32_t SymbolBody::template getGotVA<ELF32BE>() const;
-template uint64_t SymbolBody::template getGotVA<ELF64LE>() const;
-template uint64_t SymbolBody::template getGotVA<ELF64BE>() const;
 
 template uint32_t SymbolBody::template getSize<ELF32LE>() const;
 template uint32_t SymbolBody::template getSize<ELF32BE>() const;

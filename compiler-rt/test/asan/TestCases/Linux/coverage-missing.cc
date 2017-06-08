@@ -1,7 +1,7 @@
 // Test for "sancov.py missing ...".
 
 // First case: coverage from executable. main() is called on every code path.
-// RUN: %clangxx_asan -fsanitize-coverage=func %s -o %t -DFOOBAR -DMAIN
+// RUN: %clangxx_asan -fsanitize-coverage=func,trace-pc-guard %s -o %t -DFOOBAR -DMAIN
 // RUN: rm -rf %T/coverage-missing
 // RUN: mkdir -p %T/coverage-missing
 // RUN: cd %T/coverage-missing
@@ -27,19 +27,18 @@
 
 // Second case: coverage from DSO.
 // cd %T
-// RUN: %clangxx_asan -fsanitize-coverage=func %s -o %dynamiclib -DFOOBAR -shared -fPIC
-// RUN: %clangxx_asan -fsanitize-coverage=func %s %dynamiclib -o %t -DMAIN
-// RUN: export LIBNAME=`basename %dynamiclib`
+// RUN: %clangxx_asan -fsanitize-coverage=func,trace-pc-guard %s -o %dynamiclib -DFOOBAR -shared -fPIC
+// RUN: %clangxx_asan -fsanitize-coverage=func,trace-pc-guard %s %dynamiclib -o %t -DMAIN
 // RUN: cd ..
 // RUN: rm -rf %T/coverage-missing
 // RUN: mkdir -p %T/coverage-missing
 // RUN: cd %T/coverage-missing
 // RUN: %env_asan_opts=coverage=1:coverage_dir=%T/coverage-missing %run %t x
-// RUN: %sancov print $LIBNAME.*.sancov > foo.txt
+// RUN: %sancov print %xdynamiclib_filename.*.sancov > foo.txt
 // RUN: rm *.sancov
 // RUN: count 2 < foo.txt
 // RUN: %env_asan_opts=coverage=1:coverage_dir=%T/coverage-missing %run %t x x
-// RUN: %sancov print $LIBNAME.*.sancov > bar.txt
+// RUN: %sancov print %xdynamiclib_filename.*.sancov > bar.txt
 // RUN: rm *.sancov
 // RUN: count 3 < bar.txt
 // RUN: %sancov missing %dynamiclib < foo.txt > foo-missing.txt

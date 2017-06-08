@@ -60,6 +60,10 @@ struct HostDataToTargetTy {
   HostDataToTargetTy(uintptr_t BP, uintptr_t B, uintptr_t E, uintptr_t TB)
       : HstPtrBase(BP), HstPtrBegin(B), HstPtrEnd(E),
         TgtPtrBegin(TB), RefCount(1) {}
+  HostDataToTargetTy(uintptr_t BP, uintptr_t B, uintptr_t E, uintptr_t TB,
+      long RF)
+      : HstPtrBase(BP), HstPtrBegin(B), HstPtrEnd(E),
+        TgtPtrBegin(TB), RefCount(RF) {}
 };
 
 typedef std::list<HostDataToTargetTy> HostDataToTargetListTy;
@@ -158,10 +162,11 @@ struct DeviceTy {
   int32_t data_submit(void *TgtPtrBegin, void *HstPtrBegin, int64_t Size);
   int32_t data_retrieve(void *HstPtrBegin, void *TgtPtrBegin, int64_t Size);
 
-  int32_t run_region(void *TgtEntryPtr, void **TgtVarsPtr, int32_t TgtVarsSize);
+  int32_t run_region(void *TgtEntryPtr, void **TgtVarsPtr,
+      ptrdiff_t *TgtOffsets, int32_t TgtVarsSize);
   int32_t run_team_region(void *TgtEntryPtr, void **TgtVarsPtr,
-      int32_t TgtVarsSize, int32_t NumTeams, int32_t ThreadLimit,
-      uint64_t LoopTripCount);
+      ptrdiff_t *TgtOffsets, int32_t TgtVarsSize, int32_t NumTeams,
+      int32_t ThreadLimit, uint64_t LoopTripCount);
 
 private:
   // Call to RTL
@@ -177,13 +182,14 @@ struct RTLInfoTy {
   typedef int32_t(number_of_devices_ty)();
   typedef int32_t(init_device_ty)(int32_t);
   typedef __tgt_target_table *(load_binary_ty)(int32_t, void *);
-  typedef void *(data_alloc_ty)(int32_t, int64_t);
+  typedef void *(data_alloc_ty)(int32_t, int64_t, void *);
   typedef int32_t(data_submit_ty)(int32_t, void *, void *, int64_t);
   typedef int32_t(data_retrieve_ty)(int32_t, void *, void *, int64_t);
   typedef int32_t(data_delete_ty)(int32_t, void *);
-  typedef int32_t(run_region_ty)(int32_t, void *, void **, int32_t);
-  typedef int32_t(run_team_region_ty)(int32_t, void *, void **, int32_t,
-                                      int32_t, int32_t, uint64_t);
+  typedef int32_t(run_region_ty)(int32_t, void *, void **, ptrdiff_t *,
+                                 int32_t);
+  typedef int32_t(run_team_region_ty)(int32_t, void *, void **, ptrdiff_t *,
+                                      int32_t, int32_t, int32_t, uint64_t);
 
   int32_t Idx;                     // RTL index, index is the number of devices
                                    // of other RTLs that were registered before,
@@ -467,7 +473,7 @@ EXTERN void *omp_target_alloc(size_t size, int device_num) {
   }
 
   DeviceTy &Device = Devices[device_num];
-  rc = Device.RTL->data_alloc(Device.RTLDeviceID, size);
+  rc = Device.RTL->data_alloc(Device.RTLDeviceID, size, NULL);
   DP("omp_target_alloc returns device ptr " DPxMOD "\n", DPxPTR(rc));
   return rc;
 }
@@ -857,7 +863,7 @@ void *DeviceTy::getOrAllocTgtPtr(void *HstPtrBegin, void *HstPtrBase,
   } else if (Size) {
     // If it is not contained and Size > 0 we should create a new entry for it.
     IsNew = true;
-    uintptr_t tp = (uintptr_t)RTL->data_alloc(RTLDeviceID, Size);
+    uintptr_t tp = (uintptr_t)RTL->data_alloc(RTLDeviceID, Size, HstPtrBegin);
     DP("Creating new map entry: HstBase=" DPxMOD ", HstBegin=" DPxMOD ", "
         "HstEnd=" DPxMOD ", TgtBegin=" DPxMOD "\n", DPxPTR(HstPtrBase),
         DPxPTR(HstPtrBegin), DPxPTR((uintptr_t)HstPtrBegin + Size), DPxPTR(tp));
@@ -902,7 +908,7 @@ void *DeviceTy::getTgtPtrBegin(void *HstPtrBegin, int64_t Size, bool &IsLast,
 }
 
 // Return the target pointer begin (where the data will be moved).
-// Lock-free version called from within assertions.
+// Lock-free version called when loading global symbols from the fat binary.
 void *DeviceTy::getTgtPtrBegin(void *HstPtrBegin, int64_t Size) {
   uintptr_t hp = (uintptr_t)HstPtrBegin;
   LookupResult lr = lookupMapping(HstPtrBegin, Size);
@@ -991,16 +997,17 @@ int32_t DeviceTy::data_retrieve(void *HstPtrBegin, void *TgtPtrBegin,
 
 // Run region on device
 int32_t DeviceTy::run_region(void *TgtEntryPtr, void **TgtVarsPtr,
-    int32_t TgtVarsSize) {
-  return RTL->run_region(RTLDeviceID, TgtEntryPtr, TgtVarsPtr, TgtVarsSize);
+    ptrdiff_t *TgtOffsets, int32_t TgtVarsSize) {
+  return RTL->run_region(RTLDeviceID, TgtEntryPtr, TgtVarsPtr, TgtOffsets,
+      TgtVarsSize);
 }
 
 // Run team region on device.
 int32_t DeviceTy::run_team_region(void *TgtEntryPtr, void **TgtVarsPtr,
-    int32_t TgtVarsSize, int32_t NumTeams, int32_t ThreadLimit,
-    uint64_t LoopTripCount) {
-  return RTL->run_team_region(RTLDeviceID, TgtEntryPtr, TgtVarsPtr, TgtVarsSize,
-      NumTeams, ThreadLimit, LoopTripCount);
+    ptrdiff_t *TgtOffsets, int32_t TgtVarsSize, int32_t NumTeams,
+    int32_t ThreadLimit, uint64_t LoopTripCount) {
+  return RTL->run_team_region(RTLDeviceID, TgtEntryPtr, TgtVarsPtr, TgtOffsets,
+      TgtVarsSize, NumTeams, ThreadLimit, LoopTripCount);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1303,6 +1310,7 @@ static int InitLibrary(DeviceTy& Device) {
     }
 
     // process global data that needs to be mapped.
+    Device.DataMapMtx.lock();
     __tgt_target_table *HostTable = &TransTable->HostTable;
     for (__tgt_offload_entry *CurrDeviceEntry = TargetTable->EntriesBegin,
                              *CurrHostEntry = HostTable->EntriesBegin,
@@ -1318,15 +1326,20 @@ static int InitLibrary(DeviceTy& Device) {
         // therefore we must allow for multiple weak symbols to be loaded from
         // the fat binary. Treat these mappings as any other "regular" mapping.
         // Add entry to map.
+        if (Device.getTgtPtrBegin(CurrHostEntry->addr, CurrHostEntry->size))
+          continue;
         DP("Add mapping from host " DPxMOD " to device " DPxMOD " with size %zu"
             "\n", DPxPTR(CurrHostEntry->addr), DPxPTR(CurrDeviceEntry->addr),
             CurrDeviceEntry->size);
-        bool IsNew; //unused
-        Device.getOrAllocTgtPtr(CurrHostEntry->addr /*HstPtrBegin*/,
-            CurrHostEntry->addr /*HstPtrBase*/, CurrHostEntry->size /*Size*/,
-            IsNew, false /*IsImplicit*/, true /*UpdateRefCount*/);
+        Device.HostDataToTargetMap.push_front(HostDataToTargetTy(
+            (uintptr_t)CurrHostEntry->addr /*HstPtrBase*/,
+            (uintptr_t)CurrHostEntry->addr /*HstPtrBegin*/,
+            (uintptr_t)CurrHostEntry->addr + CurrHostEntry->size /*HstPtrEnd*/,
+            (uintptr_t)CurrDeviceEntry->addr /*TgtPtrBegin*/,
+            INF_REF_CNT /*RefCount*/));
       }
     }
+    Device.DataMapMtx.unlock();
   }
   TrlTblMtx.unlock();
 
@@ -2098,6 +2111,7 @@ static int target(int32_t device_id, void *host_ptr, int32_t arg_num,
   }
 
   std::vector<void *> tgt_args;
+  std::vector<ptrdiff_t> tgt_offsets;
 
   // List of (first-)private arrays allocated for this target region
   std::vector<void *> fpArrays;
@@ -2109,16 +2123,18 @@ static int target(int32_t device_id, void *host_ptr, int32_t arg_num,
     }
     void *HstPtrBegin = args[i];
     void *HstPtrBase = args_base[i];
-    void *TgtPtrBase;
+    void *TgtPtrBegin;
+    ptrdiff_t TgtBaseOffset;
     bool IsLast; // unused.
     if (arg_types[i] & OMP_TGT_MAPTYPE_LITERAL) {
       DP("Forwarding first-private value " DPxMOD " to the target construct\n",
           DPxPTR(HstPtrBase));
-      TgtPtrBase = HstPtrBase;
+      TgtPtrBegin = HstPtrBase;
+      TgtBaseOffset = 0;
     } else if (arg_types[i] & OMP_TGT_MAPTYPE_PRIVATE) {
       // Allocate memory for (first-)private array
-      void *TgtPtrBegin = Device.RTL->data_alloc(Device.RTLDeviceID,
-          arg_sizes[i]);
+      TgtPtrBegin = Device.RTL->data_alloc(Device.RTLDeviceID,
+          arg_sizes[i], HstPtrBegin);
       if (!TgtPtrBegin) {
         DP ("Data allocation for %sprivate array " DPxMOD " failed\n",
             (arg_types[i] & OMP_TGT_MAPTYPE_TO ? "first-" : ""),
@@ -2127,8 +2143,8 @@ static int target(int32_t device_id, void *host_ptr, int32_t arg_num,
         break;
       } else {
         fpArrays.push_back(TgtPtrBegin);
-        uint64_t PtrDelta = (uint64_t)HstPtrBegin - (uint64_t)HstPtrBase;
-        TgtPtrBase = (void *)((uint64_t)TgtPtrBegin - PtrDelta);
+        TgtBaseOffset = (intptr_t)HstPtrBase - (intptr_t)HstPtrBegin;
+        void *TgtPtrBase = (void *)((intptr_t)TgtPtrBegin + TgtBaseOffset);
         DP("Allocated %" PRId64 " bytes of target memory at " DPxMOD " for "
             "%sprivate array " DPxMOD " - pushing target argument " DPxMOD "\n",
             arg_sizes[i], DPxPTR(TgtPtrBegin),
@@ -2145,24 +2161,29 @@ static int target(int32_t device_id, void *host_ptr, int32_t arg_num,
         }
       }
     } else if (arg_types[i] & OMP_TGT_MAPTYPE_PTR_AND_OBJ) {
-      void *TgtPtrBegin = Device.getTgtPtrBegin(HstPtrBase, sizeof(void *),
-          IsLast, false);
-      TgtPtrBase = TgtPtrBegin; // no offset for ptrs.
+      TgtPtrBegin = Device.getTgtPtrBegin(HstPtrBase, sizeof(void *), IsLast,
+          false);
+      TgtBaseOffset = 0; // no offset for ptrs.
       DP("Obtained target argument " DPxMOD " from host pointer " DPxMOD " to "
          "object " DPxMOD "\n", DPxPTR(TgtPtrBegin), DPxPTR(HstPtrBase),
          DPxPTR(HstPtrBase));
     } else {
-      void *TgtPtrBegin = Device.getTgtPtrBegin(HstPtrBegin, arg_sizes[i],
-          IsLast, false);
-      uint64_t PtrDelta = (uint64_t)HstPtrBegin - (uint64_t)HstPtrBase;
-      TgtPtrBase = (void *)((uint64_t)TgtPtrBegin - PtrDelta);
+      TgtPtrBegin = Device.getTgtPtrBegin(HstPtrBegin, arg_sizes[i], IsLast,
+          false);
+      TgtBaseOffset = (intptr_t)HstPtrBase - (intptr_t)HstPtrBegin;
+      void *TgtPtrBase = (void *)((intptr_t)TgtPtrBegin + TgtBaseOffset);
       DP("Obtained target argument " DPxMOD " from host pointer " DPxMOD "\n",
           DPxPTR(TgtPtrBase), DPxPTR(HstPtrBegin));
     }
-    tgt_args.push_back(TgtPtrBase);
+    tgt_args.push_back(TgtPtrBegin);
+    tgt_offsets.push_back(TgtBaseOffset);
   }
   // Push omp handle.
   tgt_args.push_back((void *)0);
+  tgt_offsets.push_back(0);
+
+  assert(tgt_args.size() == tgt_offsets.size() &&
+      "Size mismatch in arguments and offsets");
 
   // Pop loop trip count
   uint64_t ltc = Device.loopTripCnt;
@@ -2175,10 +2196,11 @@ static int target(int32_t device_id, void *host_ptr, int32_t arg_num,
         DPxPTR(TargetTable->EntriesBegin[TM->Index].addr), TM->Index);
     if (IsTeamConstruct) {
       rc = Device.run_team_region(TargetTable->EntriesBegin[TM->Index].addr,
-          &tgt_args[0], tgt_args.size(), team_num, thread_limit, ltc);
+          &tgt_args[0], &tgt_offsets[0], tgt_args.size(), team_num,
+          thread_limit, ltc);
     } else {
       rc = Device.run_region(TargetTable->EntriesBegin[TM->Index].addr,
-          &tgt_args[0], tgt_args.size());
+          &tgt_args[0], &tgt_offsets[0], tgt_args.size());
     }
   } else {
     DP("Errors occurred while obtaining target arguments, skipping kernel "
@@ -2208,13 +2230,6 @@ static int target(int32_t device_id, void *host_ptr, int32_t arg_num,
 
 EXTERN int __tgt_target(int32_t device_id, void *host_ptr, int32_t arg_num,
     void **args_base, void **args, int64_t *arg_sizes, int32_t *arg_types) {
-  if (device_id == OFFLOAD_DEVICE_CONSTRUCTOR ||
-      device_id == OFFLOAD_DEVICE_DESTRUCTOR) {
-    // Return immediately for the time being, target calls with device_id
-    // -2 or -3 will be removed from the compiler in the future.
-    return OFFLOAD_SUCCESS;
-  }
-
   DP("Entering target region with entry point " DPxMOD " and device Id %d\n",
      DPxPTR(host_ptr), device_id);
 
@@ -2262,13 +2277,6 @@ EXTERN int __tgt_target_nowait(int32_t device_id, void *host_ptr,
 EXTERN int __tgt_target_teams(int32_t device_id, void *host_ptr,
     int32_t arg_num, void **args_base, void **args, int64_t *arg_sizes,
     int32_t *arg_types, int32_t team_num, int32_t thread_limit) {
-  if (device_id == OFFLOAD_DEVICE_CONSTRUCTOR ||
-      device_id == OFFLOAD_DEVICE_DESTRUCTOR) {
-    // Return immediately for the time being, target calls with device_id
-    // -2 or -3 will be removed from the compiler in the future.
-    return OFFLOAD_SUCCESS;
-  }
-
   DP("Entering target region with entry point " DPxMOD " and device Id %d\n",
      DPxPTR(host_ptr), device_id);
 

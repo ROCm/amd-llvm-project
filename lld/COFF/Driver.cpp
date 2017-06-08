@@ -18,8 +18,9 @@
 #include "lld/Driver/Driver.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/StringSwitch.h"
-#include "llvm/LibDriver/LibDriver.h"
 #include "llvm/Object/ArchiveWriter.h"
+#include "llvm/Object/COFFImportFile.h"
+#include "llvm/Object/COFFModuleDefinition.h"
 #include "llvm/Option/Arg.h"
 #include "llvm/Option/ArgList.h"
 #include "llvm/Option/Option.h"
@@ -29,12 +30,14 @@
 #include "llvm/Support/TarWriter.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/ToolDrivers/llvm-lib/LibDriver.h"
 #include <algorithm>
 #include <memory>
 
 #include <future>
 
 using namespace llvm;
+using namespace llvm::object;
 using namespace llvm::COFF;
 using llvm::sys::Process;
 using llvm::sys::fs::file_magic;
@@ -97,12 +100,11 @@ static std::future<MBErrPair> createFutureForFile(std::string Path) {
 
 MemoryBufferRef LinkerDriver::takeBuffer(std::unique_ptr<MemoryBuffer> MB) {
   MemoryBufferRef MBRef = *MB;
-  OwningMBs.push_back(std::move(MB));
+  make<std::unique_ptr<MemoryBuffer>>(std::move(MB)); // take ownership
 
   if (Driver->Tar)
     Driver->Tar->append(relativeToRoot(MBRef.getBufferIdentifier()),
                         MBRef.getBuffer());
-
   return MBRef;
 }
 
@@ -420,6 +422,84 @@ static std::string getMapFile(const opt::InputArgList &Args) {
   return (OutFile.substr(0, OutFile.rfind('.')) + ".map").str();
 }
 
+static std::string getImplibPath() {
+  if (!Config->Implib.empty())
+    return Config->Implib;
+  SmallString<128> Out = StringRef(Config->OutputFile);
+  sys::path::replace_extension(Out, ".lib");
+  return Out.str();
+}
+
+std::vector<COFFShortExport> createCOFFShortExportFromConfig() {
+  std::vector<COFFShortExport> Exports;
+  for (Export &E1 : Config->Exports) {
+    COFFShortExport E2;
+    E2.Name = E1.Name;
+    E2.ExtName = E1.ExtName;
+    E2.Ordinal = E1.Ordinal;
+    E2.Noname = E1.Noname;
+    E2.Data = E1.Data;
+    E2.Private = E1.Private;
+    E2.Constant = E1.Constant;
+    Exports.push_back(E2);
+  }
+  return Exports;
+}
+
+static void createImportLibrary() {
+  std::vector<COFFShortExport> Exports = createCOFFShortExportFromConfig();
+  std::string DLLName = sys::path::filename(Config->OutputFile);
+  std::string Path = getImplibPath();
+  writeImportLibrary(DLLName, Path, Exports, Config->Machine);
+}
+
+static void parseModuleDefs(StringRef Path) {
+  std::unique_ptr<MemoryBuffer> MB = check(
+    MemoryBuffer::getFile(Path, -1, false, true), "could not open " + Path);
+  MemoryBufferRef MBRef = MB->getMemBufferRef();
+
+  Expected<COFFModuleDefinition> Def =
+      parseCOFFModuleDefinition(MBRef, Config->Machine);
+  if (!Def)
+    fatal(errorToErrorCode(Def.takeError()).message());
+
+  COFFModuleDefinition &M = *Def;
+  if (Config->OutputFile.empty())
+    Config->OutputFile = Saver.save(M.OutputFile);
+
+  if (M.ImageBase)
+    Config->ImageBase = M.ImageBase;
+  if (M.StackReserve)
+    Config->StackReserve = M.StackReserve;
+  if (M.StackCommit)
+    Config->StackCommit = M.StackCommit;
+  if (M.HeapReserve)
+    Config->HeapReserve = M.HeapReserve;
+  if (M.HeapCommit)
+    Config->HeapCommit = M.HeapCommit;
+  if (M.MajorImageVersion)
+    Config->MajorImageVersion = M.MajorImageVersion;
+  if (M.MinorImageVersion)
+    Config->MinorImageVersion = M.MinorImageVersion;
+  if (M.MajorOSVersion)
+    Config->MajorOSVersion = M.MajorOSVersion;
+  if (M.MinorOSVersion)
+    Config->MinorOSVersion = M.MinorOSVersion;
+
+  for (COFFShortExport E1 : M.Exports) {
+    Export E2;
+    E2.Name = Saver.save(E1.Name);
+    if (E1.isWeak())
+      E2.ExtName = Saver.save(E1.ExtName);
+    E2.Ordinal = E1.Ordinal;
+    E2.Noname = E1.Noname;
+    E2.Data = E1.Data;
+    E2.Private = E1.Private;
+    E2.Constant = E1.Constant;
+    Config->Exports.push_back(E2);
+  }
+}
+
 std::vector<MemoryBufferRef> getArchiveMembers(Archive *File) {
   std::vector<MemoryBufferRef> V;
   Error Err = Error::success();
@@ -509,8 +589,25 @@ filterBitcodeFiles(StringRef Path, std::vector<std::string> &TemporaryFiles) {
 
 // Create response file contents and invoke the MSVC linker.
 void LinkerDriver::invokeMSVC(opt::InputArgList &Args) {
-  std::string Rsp = "/nologo ";
+  std::string Rsp = "/nologo\n";
   std::vector<std::string> Temps;
+
+  // Write out archive members that we used in symbol resolution and pass these
+  // to MSVC before any archives, so that MSVC uses the same objects to satisfy
+  // references.
+  for (const auto *O : Symtab.ObjectFiles) {
+    if (O->ParentName.empty())
+      continue;
+    SmallString<128> S;
+    int Fd;
+    if (auto EC = sys::fs::createTemporaryFile(
+            "lld-" + sys::path::filename(O->ParentName), ".obj", Fd, S))
+      fatal(EC, "cannot create a temporary file");
+    raw_fd_ostream OS(Fd, /*shouldClose*/ true);
+    OS << O->MB.getBuffer();
+    Temps.push_back(S.str());
+    Rsp += quote(S) + "\n";
+  }
 
   for (auto *Arg : Args) {
     switch (Arg->getOption().getID()) {
@@ -528,14 +625,14 @@ void LinkerDriver::invokeMSVC(opt::InputArgList &Args) {
     case OPT_INPUT: {
       if (Optional<StringRef> Path = doFindFile(Arg->getValue())) {
         if (Optional<std::string> S = filterBitcodeFiles(*Path, Temps))
-          Rsp += quote(*S) + " ";
+          Rsp += quote(*S) + "\n";
         continue;
       }
-      Rsp += quote(Arg->getValue()) + " ";
+      Rsp += quote(Arg->getValue()) + "\n";
       break;
     }
     default:
-      Rsp += toString(Arg) + " ";
+      Rsp += toString(Arg) + "\n";
     }
   }
 
@@ -616,7 +713,7 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
     }
   }
 
-  if (Args.filtered_begin(OPT_INPUT) == Args.filtered_end())
+  if (!Args.hasArgNoClaim(OPT_INPUT))
     fatal("no input files");
 
   // Construct search path list.
@@ -673,6 +770,9 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
       Config->DynamicBase = false;
     }
   }
+
+  if (Args.hasArg(OPT_appcontainer))
+    Config->AppContainer = true;
 
   // Handle /machine
   if (auto *Arg = Args.getLastArg(OPT_machine))
@@ -801,8 +901,6 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
     Config->ManifestInput.push_back(Arg->getValue());
 
   // Handle miscellaneous boolean flags.
-  if (Args.hasArg(OPT_allowbind_no))
-    Config->AllowBind = false;
   if (Args.hasArg(OPT_allowisolation_no))
     Config->AllowIsolation = false;
   if (Args.hasArg(OPT_dynamicbase_no))
@@ -814,7 +912,6 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
   if (Args.hasArg(OPT_nosymtab))
     Config->WriteSymtab = false;
   Config->DumpPdb = Args.hasArg(OPT_dumppdb);
-  Config->DebugPdb = Args.hasArg(OPT_debugpdb);
 
   Config->MapFile = getMapFile(Args);
 
@@ -896,9 +993,7 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
   // Handle /def
   if (auto *Arg = Args.getLastArg(OPT_deffile)) {
     // parseModuleDefs mutates Config object.
-    parseModuleDefs(
-        takeBuffer(check(MemoryBuffer::getFile(Arg->getValue()),
-                         Twine("could not open ") + Arg->getValue())));
+    parseModuleDefs(Arg->getValue());
   }
 
   // Handle /delayload
@@ -914,7 +1009,7 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
   // Set default image name if neither /out or /def set it.
   if (Config->OutputFile.empty()) {
     Config->OutputFile =
-        getOutputPath((*Args.filtered_begin(OPT_INPUT))->getValue());
+        getOutputPath((*Args.filtered(OPT_INPUT).begin())->getValue());
   }
 
   // Put the PDB next to the image if no /pdb flag was passed.
@@ -1018,7 +1113,7 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
   // need to create a .lib file.
   if (!Config->Exports.empty() || Config->DLL) {
     fixupExports();
-    writeImportLibrary();
+    createImportLibrary();
     assignExportOrdinals();
   }
 

@@ -197,6 +197,7 @@ bool Sema::CodeSynthesisContext::isInstantiationRecord() const {
 
   case DefaultTemplateArgumentChecking:
   case DeclaringSpecialMember:
+  case DefiningSynthesizedFunction:
     return false;
   }
 
@@ -624,6 +625,17 @@ void Sema::PrintInstantiationStack() {
                    diag::note_in_declaration_of_implicit_special_member)
         << cast<CXXRecordDecl>(Active->Entity) << Active->SpecialMember;
       break;
+
+    case CodeSynthesisContext::DefiningSynthesizedFunction:
+      // FIXME: For synthesized members other than special members, produce a note.
+      auto *MD = dyn_cast<CXXMethodDecl>(Active->Entity);
+      auto CSM = MD ? getSpecialMember(MD) : CXXInvalid;
+      if (CSM != CXXInvalid) {
+        Diags.Report(Active->PointOfInstantiation,
+                     diag::note_member_synthesized_at)
+          << CSM << Context.getTagDeclType(MD->getParent());
+      }
+      break;
     }
   }
 }
@@ -666,6 +678,7 @@ Optional<TemplateDeductionInfo *> Sema::isSFINAEContext() const {
       return Active->DeductionInfo;
 
     case CodeSynthesisContext::DeclaringSpecialMember:
+    case CodeSynthesisContext::DefiningSynthesizedFunction:
       // This happens in a context unrelated to template instantiation, so
       // there is no SFINAE.
       return None;
@@ -2605,10 +2618,11 @@ Sema::InstantiateClassMembers(SourceLocation PointOfInstantiation,
                                                 == TSK_ExplicitSpecialization)
         continue;
 
-      if (Context.getTargetInfo().getCXXABI().isMicrosoft() &&
+      if ((Context.getTargetInfo().getCXXABI().isMicrosoft() ||
+           Context.getTargetInfo().getTriple().isWindowsItaniumEnvironment()) &&
           TSK == TSK_ExplicitInstantiationDeclaration) {
-        // In MSVC mode, explicit instantiation decl of the outer class doesn't
-        // affect the inner class.
+        // In MSVC and Windows Itanium mode, explicit instantiation decl of the
+        // outer class doesn't affect the inner class.
         continue;
       }
 

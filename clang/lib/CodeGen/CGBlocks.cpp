@@ -619,7 +619,17 @@ static void enterBlockScope(CodeGenFunction &CGF, BlockDecl *block) {
 
     // Block captures count as local values and have imprecise semantics.
     // They also can't be arrays, so need to worry about that.
-    if (dtorKind == QualType::DK_objc_strong_lifetime) {
+    //
+    // For const-qualified captures, emit clang.arc.use to ensure the captured
+    // object doesn't get released while we are still depending on its validity
+    // within the block.
+    if (VT.isConstQualified() &&
+        VT.getObjCLifetime() == Qualifiers::OCL_Strong &&
+        CGF.CGM.getCodeGenOpts().OptimizationLevel != 0) {
+      assert(CGF.CGM.getLangOpts().ObjCAutoRefCount &&
+             "expected ObjC ARC to be enabled");
+      destroyer = CodeGenFunction::emitARCIntrinsicUse;
+    } else if (dtorKind == QualType::DK_objc_strong_lifetime) {
       destroyer = CodeGenFunction::destroyARCStrongImprecise;
     } else {
       destroyer = CGF.getDestroyer(dtorKind);
@@ -866,6 +876,13 @@ llvm::Value *CodeGenFunction::EmitBlockLiteral(const CGBlockInfo &blockInfo) {
     } else if (type->isReferenceType()) {
       Builder.CreateStore(src.getPointer(), blockField);
 
+    // If type is const-qualified, copy the value into the block field.
+    } else if (type.isConstQualified() &&
+               type.getObjCLifetime() == Qualifiers::OCL_Strong &&
+               CGM.getCodeGenOpts().OptimizationLevel != 0) {
+      llvm::Value *value = Builder.CreateLoad(src, "captured");
+      Builder.CreateStore(value, blockField);
+
     // If this is an ARC __strong block-pointer variable, don't do a
     // block copy.
     //
@@ -901,8 +918,9 @@ llvm::Value *CodeGenFunction::EmitBlockLiteral(const CGBlockInfo &blockInfo) {
       // FIXME: Pass a specific location for the expr init so that the store is
       // attributed to a reasonable location - otherwise it may be attributed to
       // locations of subexpressions in the initialization.
+      LValueBaseInfo BaseInfo(AlignmentSource::Decl, false);
       EmitExprAsInit(&l2r, &blockFieldPseudoVar,
-                     MakeAddrLValue(blockField, type, AlignmentSource::Decl),
+                     MakeAddrLValue(blockField, type, BaseInfo),
                      /*captured by init*/ false);
     }
 
@@ -944,9 +962,8 @@ llvm::Type *CodeGenModule::getBlockDescriptorType() {
   //   const char *signature;   // the block signature
   //   const char *layout;      // reserved
   // };
-  BlockDescriptorType =
-    llvm::StructType::create("struct.__block_descriptor",
-                             UnsignedLongTy, UnsignedLongTy, nullptr);
+  BlockDescriptorType = llvm::StructType::create(
+      "struct.__block_descriptor", UnsignedLongTy, UnsignedLongTy);
 
   // Now form a pointer to that.
   unsigned AddrSpace = 0;
@@ -970,9 +987,8 @@ llvm::Type *CodeGenModule::getGenericBlockLiteralType() {
   //   struct __block_descriptor *__descriptor;
   // };
   GenericBlockLiteralType =
-    llvm::StructType::create("struct.__block_literal_generic",
-                             VoidPtrTy, IntTy, IntTy, VoidPtrTy,
-                             BlockDescPtrTy, nullptr);
+      llvm::StructType::create("struct.__block_literal_generic", VoidPtrTy,
+                               IntTy, IntTy, VoidPtrTy, BlockDescPtrTy);
 
   return GenericBlockLiteralType;
 }

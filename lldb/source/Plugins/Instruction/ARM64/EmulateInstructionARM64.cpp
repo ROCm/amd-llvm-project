@@ -14,6 +14,7 @@
 #include "lldb/Core/Address.h"
 #include "lldb/Core/ArchSpec.h"
 #include "lldb/Core/PluginManager.h"
+#include "lldb/Core/RegisterValue.h"
 #include "lldb/Symbol/UnwindPlan.h"
 #include "lldb/Utility/ConstString.h"
 #include "lldb/Utility/Stream.h"
@@ -845,7 +846,7 @@ bool EmulateInstructionARM64::EmulateLDPSTP(const uint32_t opcode) {
   Context context_t2;
 
   uint8_t buffer[RegisterValue::kMaxRegisterByteSize];
-  Error error;
+  Status error;
 
   switch (memop) {
   case MemOp_STORE: {
@@ -991,7 +992,7 @@ bool EmulateInstructionARM64::EmulateLDRSTRImm(const uint32_t opcode) {
       return false;
   }
 
-  Error error;
+  Status error;
   bool success = false;
   uint64_t address;
   uint8_t buffer[RegisterValue::kMaxRegisterByteSize];

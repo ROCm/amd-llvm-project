@@ -935,7 +935,7 @@ public:
 
   /// \brief Get the additional modules in which the definition \p Def has
   /// been merged.
-  ArrayRef<Module*> getModulesWithMergedDefinition(NamedDecl *Def) {
+  ArrayRef<Module*> getModulesWithMergedDefinition(const NamedDecl *Def) {
     auto MergedIt = MergedDefModules.find(Def);
     if (MergedIt == MergedDefModules.end())
       return None;
@@ -2315,8 +2315,6 @@ public:
 
   unsigned getTargetAddressSpace(unsigned AS) const;
 
-  unsigned getTargetAddressSpaceForAutoVar() const;
-
   /// Get target-dependent integer value for null pointer which is used for
   /// constant folding.
   uint64_t getTargetNullPointerValue(QualType QT) const;
@@ -2330,16 +2328,12 @@ public:
   unsigned getTargetGlobalAddressSpace() const;
 
   bool addressSpaceMapManglingFor(unsigned AS) const {
-    return AddrSpaceMapMangling ||
-           AS < LangAS::Offset ||
-           AS >= LangAS::Offset + LangAS::Count;
+    return AddrSpaceMapMangling || AS >= LangAS::FirstTargetAddressSpace;
   }
 
 private:
   // Helper for integer ordering
   unsigned getIntegerRank(const Type *T) const;
-
-  unsigned getMappedAddressSpace(unsigned AS) const;
 
 public:
   //===--------------------------------------------------------------------===//
@@ -2519,7 +2513,7 @@ public:
   ///
   /// \returns true if the function/var must be CodeGen'ed/deserialized even if
   /// it is not used.
-  bool DeclMustBeEmitted(const Decl *D, bool ForModularCodegen = false);
+  bool DeclMustBeEmitted(const Decl *D);
 
   const CXXConstructorDecl *
   getCopyConstructorForExceptionObject(CXXRecordDecl *RD);

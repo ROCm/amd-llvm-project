@@ -192,12 +192,18 @@ void CGAMPRuntime::EmitTrampolineBody(CodeGenFunction &CGF,
       DeserializeConstructor, StructorType::Complete);
     const FunctionProtoType *FPT = 
       DeserializeConstructor->getType()->castAs<FunctionProtoType>();
-    RequiredArgs required = RequiredArgs::forPrototypePlus(FPT,
-      DeserializerArgs.size(), nullptr);
-
     const CGFunctionInfo &DesFnInfo =
-      CGM.getTypes().arrangeCXXMethodCall(
-	  DeserializerArgs, FPT, required, 0);
+      CGM.getTypes().arrangeCXXStructorDeclaration(
+          DeserializeConstructor, StructorType::Complete);
+    for (unsigned I = 1, E = DeserializerArgs.size(); I != E; ++I) {
+      auto T = FPT->getParamType(I-1);
+      // EmitFromMemory is necessary in case function has bool parameter.
+      if (T->isBooleanType()) {
+        DeserializerArgs[I] = CallArg(RValue::get(
+            CGF.EmitFromMemory(DeserializerArgs[I].RV.getScalarVal(), T)),
+            T, false);
+      }
+    }
     CGF.EmitCall(DesFnInfo, CGCallee::forDirect(Callee), ReturnValueSlot(), DeserializerArgs);
   }
   // Locate the type of Concurrency::index<1>

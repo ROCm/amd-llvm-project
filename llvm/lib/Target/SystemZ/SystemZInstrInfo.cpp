@@ -104,8 +104,9 @@ void SystemZInstrInfo::splitMove(MachineBasicBlock::iterator MI,
   MachineOperand &LowOffsetOp = MI->getOperand(2);
   LowOffsetOp.setImm(LowOffsetOp.getImm() + 8);
 
-  // Clear the kill flags for the base and index registers in the first
-  // instruction.
+  // Clear the kill flags on the registers in the first instruction.
+  if (EarlierMI->getOperand(0).isReg() && EarlierMI->getOperand(0).isUse())
+    EarlierMI->getOperand(0).setIsKill(false);
   EarlierMI->getOperand(1).setIsKill(false);
   EarlierMI->getOperand(3).setIsKill(false);
 
@@ -235,32 +236,30 @@ void SystemZInstrInfo::expandZExtPseudo(MachineInstr &MI, unsigned LowOpcode,
 void SystemZInstrInfo::expandLoadStackGuard(MachineInstr *MI) const {
   MachineBasicBlock *MBB = MI->getParent();
   MachineFunction &MF = *MBB->getParent();
-  const unsigned Reg = MI->getOperand(0).getReg();
+  const unsigned Reg64 = MI->getOperand(0).getReg();
+  const unsigned Reg32 = RI.getSubReg(Reg64, SystemZ::subreg_l32);
 
-  // Conveniently, all 4 instructions are cloned from LOAD_STACK_GUARD,
-  // so they already have operand 0 set to reg.
+  // EAR can only load the low subregister so us a shift for %a0 to produce
+  // the GR containing %a0 and %a1.
 
   // ear <reg>, %a0
-  MachineInstr *Ear1MI = MF.CloneMachineInstr(MI);
-  MBB->insert(MI, Ear1MI);
-  Ear1MI->setDesc(get(SystemZ::EAR));
-  MachineInstrBuilder(MF, Ear1MI).addReg(SystemZ::A0);
+  BuildMI(*MBB, MI, MI->getDebugLoc(), get(SystemZ::EAR), Reg32)
+    .addReg(SystemZ::A0)
+    .addReg(Reg64, RegState::ImplicitDefine);
 
   // sllg <reg>, <reg>, 32
-  MachineInstr *SllgMI = MF.CloneMachineInstr(MI);
-  MBB->insert(MI, SllgMI);
-  SllgMI->setDesc(get(SystemZ::SLLG));
-  MachineInstrBuilder(MF, SllgMI).addReg(Reg).addReg(0).addImm(32);
+  BuildMI(*MBB, MI, MI->getDebugLoc(), get(SystemZ::SLLG), Reg64)
+    .addReg(Reg64)
+    .addReg(0)
+    .addImm(32);
 
   // ear <reg>, %a1
-  MachineInstr *Ear2MI = MF.CloneMachineInstr(MI);
-  MBB->insert(MI, Ear2MI);
-  Ear2MI->setDesc(get(SystemZ::EAR));
-  MachineInstrBuilder(MF, Ear2MI).addReg(SystemZ::A1);
+  BuildMI(*MBB, MI, MI->getDebugLoc(), get(SystemZ::EAR), Reg32)
+    .addReg(SystemZ::A1);
 
   // lg <reg>, 40(<reg>)
   MI->setDesc(get(SystemZ::LG));
-  MachineInstrBuilder(MF, MI).addReg(Reg).addImm(40).addReg(0);
+  MachineInstrBuilder(MF, MI).addReg(Reg64).addImm(40).addReg(0);
 }
 
 // Emit a zero-extending move from 32-bit GPR SrcReg to 32-bit GPR
@@ -849,12 +848,18 @@ void SystemZInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
                                    MachineBasicBlock::iterator MBBI,
                                    const DebugLoc &DL, unsigned DestReg,
                                    unsigned SrcReg, bool KillSrc) const {
-  // Split 128-bit GPR moves into two 64-bit moves.  This handles ADDR128 too.
+  // Split 128-bit GPR moves into two 64-bit moves. Add implicit uses of the
+  // super register in case one of the subregs is undefined.
+  // This handles ADDR128 too.
   if (SystemZ::GR128BitRegClass.contains(DestReg, SrcReg)) {
     copyPhysReg(MBB, MBBI, DL, RI.getSubReg(DestReg, SystemZ::subreg_h64),
                 RI.getSubReg(SrcReg, SystemZ::subreg_h64), KillSrc);
+    MachineInstrBuilder(*MBB.getParent(), std::prev(MBBI))
+      .addReg(SrcReg, RegState::Implicit);
     copyPhysReg(MBB, MBBI, DL, RI.getSubReg(DestReg, SystemZ::subreg_l64),
                 RI.getSubReg(SrcReg, SystemZ::subreg_l64), KillSrc);
+    MachineInstrBuilder(*MBB.getParent(), std::prev(MBBI))
+      .addReg(SrcReg, (getKillRegState(KillSrc) | RegState::Implicit));
     return;
   }
 
@@ -1114,10 +1119,9 @@ MachineInstr *SystemZInstrInfo::foldMemoryOperandImpl(
     return nullptr;
 
   unsigned OpNum = Ops[0];
-  assert(Size ==
-             MF.getRegInfo()
-                 .getRegClass(MI.getOperand(OpNum).getReg())
-                 ->getSize() &&
+  assert(Size * 8 ==
+           TRI->getRegSizeInBits(*MF.getRegInfo()
+                               .getRegClass(MI.getOperand(OpNum).getReg())) &&
          "Invalid size combination");
 
   if ((Opcode == SystemZ::AHI || Opcode == SystemZ::AGHI) && OpNum == 0 &&

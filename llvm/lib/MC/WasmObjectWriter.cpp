@@ -422,6 +422,7 @@ static void ApplyRelocations(
                       RelEntry.Offset;
     switch (RelEntry.Type) {
     case wasm::R_WEBASSEMBLY_FUNCTION_INDEX_LEB: {
+      assert(SymbolIndices.count(RelEntry.Symbol));
       uint32_t Index = SymbolIndices[RelEntry.Symbol];
       assert(RelEntry.Addend == 0);
 
@@ -429,6 +430,7 @@ static void ApplyRelocations(
       break;
     }
     case wasm::R_WEBASSEMBLY_TABLE_INDEX_SLEB: {
+      assert(SymbolIndices.count(RelEntry.Symbol));
       uint32_t Index = SymbolIndices[RelEntry.Symbol];
       assert(RelEntry.Addend == 0);
 
@@ -448,6 +450,7 @@ static void ApplyRelocations(
       break;
     }
     case wasm::R_WEBASSEMBLY_TABLE_INDEX_I32: {
+      assert(SymbolIndices.count(RelEntry.Symbol));
       uint32_t Index = SymbolIndices[RelEntry.Symbol];
       assert(RelEntry.Addend == 0);
 
@@ -468,16 +471,17 @@ static void ApplyRelocations(
 
 // Write out the portions of the relocation records that the linker will
 // need to handle.
-static void WriteRelocations(
-    ArrayRef<WasmRelocationEntry> Relocations,
-    raw_pwrite_stream &Stream,
-    DenseMap<const MCSymbolWasm *, uint32_t> &SymbolIndices)
-{
+static void
+WriteRelocations(ArrayRef<WasmRelocationEntry> Relocations,
+                 raw_pwrite_stream &Stream,
+                 DenseMap<const MCSymbolWasm *, uint32_t> &SymbolIndices,
+                 uint64_t HeaderSize) {
   for (const WasmRelocationEntry RelEntry : Relocations) {
     encodeULEB128(RelEntry.Type, Stream);
 
     uint64_t Offset = RelEntry.Offset +
-                      RelEntry.FixupSection->getSectionOffset();
+                      RelEntry.FixupSection->getSectionOffset() + HeaderSize;
+    assert(SymbolIndices.count(RelEntry.Symbol));
     uint32_t Index = SymbolIndices[RelEntry.Symbol];
     int64_t Addend = RelEntry.Addend;
 
@@ -726,10 +730,6 @@ void WasmObjectWriter::writeObject(MCAssembler &Asm,
       if (IsAddressTaken.count(&WS))
         TableElems.push_back(Index);
     } else {
-      // For now, ignore temporary non-function symbols.
-      if (S.isTemporary())
-        continue;
-
       if (WS.getOffset() != 0)
         report_fatal_error("data sections must contain one variable each");
       if (!WS.getSize())
@@ -777,20 +777,18 @@ void WasmObjectWriter::writeObject(MCAssembler &Asm,
           }
         }
 
-        // For each external global, prepare a corresponding wasm global
-        // holding its address.
-        if (WS.isExternal()) {
-          Index = NumGlobalImports + Globals.size();
+        // For each global, prepare a corresponding wasm global holding its
+        // address.  For externals these will also be named exports.
+        Index = NumGlobalImports + Globals.size();
 
-          WasmGlobal Global;
-          Global.Type = PtrType;
-          Global.IsMutable = false;
-          Global.HasImport = false;
-          Global.InitialValue = DataSection.getSectionOffset();
-          Global.ImportIndex = 0;
-          SymbolIndices[&WS] = Index;
-          Globals.push_back(Global);
-        }
+        WasmGlobal Global;
+        Global.Type = PtrType;
+        Global.IsMutable = false;
+        Global.HasImport = false;
+        Global.InitialValue = DataSection.getSectionOffset();
+        Global.ImportIndex = 0;
+        SymbolIndices[&WS] = Index;
+        Globals.push_back(Global);
       }
     }
 
@@ -913,12 +911,14 @@ void WasmObjectWriter::writeObject(MCAssembler &Asm,
   // For now, always emit the memory section, since loads and stores are not
   // valid without it. In the future, we could perhaps be more clever and omit
   // it if there are no loads or stores.
-  startSection(Section, wasm::WASM_SEC_MEMORY);
+  uint32_t NumPages =
+      (DataBytes.size() + wasm::WasmPageSize - 1) / wasm::WasmPageSize;
 
+  startSection(Section, wasm::WASM_SEC_MEMORY);
   encodeULEB128(1, getStream()); // number of memory spaces
 
   encodeULEB128(0, getStream()); // flags
-  encodeULEB128(DataBytes.size(), getStream()); // initial
+  encodeULEB128(NumPages, getStream()); // initial
 
   endSection(Section);
 
@@ -1050,6 +1050,7 @@ void WasmObjectWriter::writeObject(MCAssembler &Asm,
   }
 
   // === Data Section ==========================================================
+  uint32_t DataSectionHeaderSize = 0;
   if (!DataBytes.empty()) {
     startSection(Section, wasm::WASM_SEC_DATA);
 
@@ -1059,11 +1060,12 @@ void WasmObjectWriter::writeObject(MCAssembler &Asm,
     encodeSLEB128(0, getStream()); // offset
     write8(wasm::WASM_OPCODE_END);
     encodeULEB128(DataBytes.size(), getStream()); // size
+    DataSectionHeaderSize = getStream().tell() - Section.ContentsOffset;
     writeBytes(DataBytes); // data
 
     // Apply fixups.
     ApplyRelocations(DataRelocations, getStream(), SymbolIndices,
-                     Section.ContentsOffset);
+                     Section.ContentsOffset + DataSectionHeaderSize);
 
     endSection(Section);
   }
@@ -1105,9 +1107,9 @@ void WasmObjectWriter::writeObject(MCAssembler &Asm,
 
     encodeULEB128(wasm::WASM_SEC_CODE, getStream());
 
-    encodeULEB128(CodeRelocations.size(), getStream());
+    encodeULEB128(CodeRelocations.size() + TypeIndexFixups.size(), getStream());
 
-    WriteRelocations(CodeRelocations, getStream(), SymbolIndices);
+    WriteRelocations(CodeRelocations, getStream(), SymbolIndices, 0);
     WriteTypeRelocations(TypeIndexFixups, TypeIndexFixupTypes, getStream());
 
     endSection(Section);
@@ -1121,7 +1123,8 @@ void WasmObjectWriter::writeObject(MCAssembler &Asm,
 
     encodeULEB128(DataRelocations.size(), getStream());
 
-    WriteRelocations(DataRelocations, getStream(), SymbolIndices);
+    WriteRelocations(DataRelocations, getStream(), SymbolIndices,
+                     DataSectionHeaderSize);
 
     endSection(Section);
   }

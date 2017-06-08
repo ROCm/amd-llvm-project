@@ -116,7 +116,9 @@ inline perms &operator&=(perms &l, perms r) {
   return l;
 }
 inline perms operator~(perms x) {
-  return static_cast<perms>(~static_cast<unsigned short>(x));
+  // Avoid UB by explicitly truncating the (unsigned) ~ result.
+  return static_cast<perms>(
+      static_cast<unsigned short>(~static_cast<unsigned short>(x)));
 }
 
 class UniqueID {
@@ -259,7 +261,7 @@ struct file_magic {
     coff_object,              ///< COFF object file
     coff_import_library,      ///< COFF import library
     pecoff_executable,        ///< PECOFF executable file
-    windows_resource,         ///< Windows compiled resource file (.rc)
+    windows_resource,         ///< Windows compiled resource file (.res)
     wasm_object               ///< WebAssembly Object file
   };
 

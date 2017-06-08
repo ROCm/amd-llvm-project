@@ -42,7 +42,7 @@ extern template void Calculate<Function, Inverse<BasicBlock *>>(
     DominatorTreeBaseByGraphTraits<GraphTraits<Inverse<BasicBlock *>>> &DT,
     Function &F);
 
-typedef DomTreeNodeBase<BasicBlock> DomTreeNode;
+using DomTreeNode = DomTreeNodeBase<BasicBlock>;
 
 class BasicBlockEdge {
   const BasicBlock *Start;
@@ -70,7 +70,7 @@ public:
 };
 
 template <> struct DenseMapInfo<BasicBlockEdge> {
-  typedef DenseMapInfo<const BasicBlock *> BBInfo;
+  using BBInfo = DenseMapInfo<const BasicBlock *>;
 
   static unsigned getHashValue(const BasicBlockEdge *V);
 
@@ -113,7 +113,7 @@ template <> struct DenseMapInfo<BasicBlockEdge> {
 /// preceding statements; this is stated only to assist human understanding.
 class DominatorTree : public DominatorTreeBase<BasicBlock> {
 public:
-  typedef DominatorTreeBase<BasicBlock> Base;
+  using Base = DominatorTreeBase<BasicBlock>;
 
   DominatorTree() : DominatorTreeBase<BasicBlock>(false) {}
   explicit DominatorTree(Function &F) : DominatorTreeBase<BasicBlock>(false) {
@@ -129,14 +129,8 @@ public:
   inline bool compare(const DominatorTree &Other) const {
     const DomTreeNode *R = getRootNode();
     const DomTreeNode *OtherR = Other.getRootNode();
-
-    if (!R || !OtherR || R->getBlock() != OtherR->getBlock())
-      return true;
-
-    if (Base::compare(Other))
-      return true;
-
-    return false;
+    return !R || !OtherR || R->getBlock() != OtherR->getBlock() ||
+           Base::compare(Other);
   }
 
   // Ensure base-class overloads are visible.
@@ -163,6 +157,10 @@ public:
   /// This should only be used for debugging as it aborts the program if the
   /// verification fails.
   void verifyDomTree() const;
+
+  // Pop up a GraphViz/gv window with the Dominator Tree rendered using `dot`.
+  void viewGraph(const Twine &Name, const Twine &Title);
+  void viewGraph();
 };
 
 //===-------------------------------------
@@ -170,9 +168,9 @@ public:
 // iterable by generic graph iterators.
 
 template <class Node, class ChildIterator> struct DomTreeGraphTraitsBase {
-  typedef Node *NodeRef;
-  typedef ChildIterator ChildIteratorType;
-  typedef df_iterator<Node *, df_iterator_default_set<Node*>> nodes_iterator;
+  using NodeRef = Node *;
+  using ChildIteratorType = ChildIterator;
+  using nodes_iterator = df_iterator<Node *, df_iterator_default_set<Node*>>;
 
   static NodeRef getEntryNode(NodeRef N) { return N; }
   static ChildIteratorType child_begin(NodeRef N) { return N->begin(); }
@@ -214,7 +212,7 @@ class DominatorTreeAnalysis : public AnalysisInfoMixin<DominatorTreeAnalysis> {
 
 public:
   /// \brief Provide the result typedef for this analysis pass.
-  typedef DominatorTree Result;
+  using Result = DominatorTree;
 
   /// \brief Run the analysis pass over a function and produce a dominator tree.
   DominatorTree run(Function &F, FunctionAnalysisManager &);

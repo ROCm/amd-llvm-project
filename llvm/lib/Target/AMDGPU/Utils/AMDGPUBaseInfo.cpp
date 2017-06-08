@@ -36,19 +36,12 @@
 #include <cstring>
 #include <utility>
 
-#define GET_SUBTARGETINFO_ENUM
-#include "AMDGPUGenSubtargetInfo.inc"
-#undef GET_SUBTARGETINFO_ENUM
+#include "MCTargetDesc/AMDGPUMCTargetDesc.h"
 
-#define GET_REGINFO_ENUM
-#include "AMDGPUGenRegisterInfo.inc"
-#undef GET_REGINFO_ENUM
 
 #define GET_INSTRINFO_NAMED_OPS
-#define GET_INSTRINFO_ENUM
 #include "AMDGPUGenInstrInfo.inc"
 #undef GET_INSTRINFO_NAMED_OPS
-#undef GET_INSTRINFO_ENUM
 
 namespace {
 
@@ -100,6 +93,12 @@ unsigned getVmcntBitWidthHi() { return 2; }
 } // end namespace anonymous
 
 namespace llvm {
+
+static cl::opt<bool> EnablePackedInlinableLiterals(
+    "enable-packed-inlinable-literals",
+    cl::desc("Enable packed inlinable literals (v2f16, v2i16)"),
+    cl::init(false));
+
 namespace AMDGPU {
 
 namespace IsaInfo {
@@ -504,6 +503,7 @@ unsigned getInitialPSInputAddr(const Function &F) {
 bool isShader(CallingConv::ID cc) {
   switch(cc) {
     case CallingConv::AMDGPU_VS:
+    case CallingConv::AMDGPU_HS:
     case CallingConv::AMDGPU_GS:
     case CallingConv::AMDGPU_PS:
     case CallingConv::AMDGPU_CS:
@@ -517,6 +517,21 @@ bool isCompute(CallingConv::ID cc) {
   return !isShader(cc) || cc == CallingConv::AMDGPU_CS;
 }
 
+bool isEntryFunctionCC(CallingConv::ID CC) {
+  switch (CC) {
+  case CallingConv::AMDGPU_KERNEL:
+  case CallingConv::SPIR_KERNEL:
+  case CallingConv::AMDGPU_VS:
+  case CallingConv::AMDGPU_GS:
+  case CallingConv::AMDGPU_PS:
+  case CallingConv::AMDGPU_CS:
+  case CallingConv::AMDGPU_HS:
+    return true;
+  default:
+    return false;
+  }
+}
+
 bool isSI(const MCSubtargetInfo &STI) {
   return STI.getFeatureBits()[AMDGPU::FeatureSouthernIslands];
 }
@@ -527,6 +542,17 @@ bool isCI(const MCSubtargetInfo &STI) {
 
 bool isVI(const MCSubtargetInfo &STI) {
   return STI.getFeatureBits()[AMDGPU::FeatureVolcanicIslands];
+}
+
+bool isGFX9(const MCSubtargetInfo &STI) {
+  return STI.getFeatureBits()[AMDGPU::FeatureGFX9];
+}
+
+bool isSGPR(unsigned Reg, const MCRegisterInfo* TRI) {
+  const MCRegisterClass SGPRClass = TRI->getRegClass(AMDGPU::SReg_32RegClassID);
+  const unsigned FirstSubReg = TRI->getSubReg(Reg, 1);
+  return SGPRClass.contains(FirstSubReg != 0 ? FirstSubReg : Reg) ||
+    Reg == AMDGPU::SCC;
 }
 
 unsigned getMCReg(unsigned Reg, const MCSubtargetInfo &STI) {
@@ -706,6 +732,9 @@ bool isInlinableLiteral16(int16_t Literal, bool HasInv2Pi) {
 bool isInlinableLiteralV216(int32_t Literal, bool HasInv2Pi) {
   assert(HasInv2Pi);
 
+  if (!EnablePackedInlinableLiterals)
+    return false;
+
   int16_t Lo16 = static_cast<int16_t>(Literal);
   int16_t Hi16 = static_cast<int16_t>(Literal >> 16);
   return Lo16 == Hi16 && isInlinableLiteral16(Lo16, HasInv2Pi);
@@ -772,13 +801,11 @@ AMDGPUAS getAMDGPUAS(Triple T) {
   AMDGPUAS AS;
   if (Env == "amdgiz" || Env == "amdgizcl") {
     AS.FLAT_ADDRESS     = 0;
-    AS.CONSTANT_ADDRESS = 4;
     AS.PRIVATE_ADDRESS  = 5;
-    AS.REGION_ADDRESS   = 2;
+    AS.REGION_ADDRESS   = 4;
   }
   else {
     AS.FLAT_ADDRESS     = 4;
-    AS.CONSTANT_ADDRESS = 2;
     AS.PRIVATE_ADDRESS  = 0;
     AS.REGION_ADDRESS   = 5;
    }

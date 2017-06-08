@@ -8,6 +8,10 @@
 //===----------------------------------------------------------------------===//
 
 // UNSUPPORTED: libcpp-no-exceptions
+
+// This test fails due to a stack overflow
+// XFAIL: LIBCXX-WINDOWS-FIXME
+
 // <exception>
 
 // class nested_exception;
@@ -43,7 +47,7 @@ class C
 {
 public:
 	virtual ~C() {}
-	C * operator&() const { assert(false); } // should not be called
+	C * operator&() const { assert(false); return nullptr; } // should not be called
 };
 
 class D : private std::nested_exception {};

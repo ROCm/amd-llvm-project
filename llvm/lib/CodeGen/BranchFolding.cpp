@@ -44,7 +44,7 @@
 #include <algorithm>
 using namespace llvm;
 
-#define DEBUG_TYPE "branchfolding"
+#define DEBUG_TYPE "branch-folder"
 
 STATISTIC(NumDeadBlocks, "Number of dead blocks removed");
 STATISTIC(NumBranchOpts, "Number of branches optimized");
@@ -89,7 +89,7 @@ namespace {
 char BranchFolderPass::ID = 0;
 char &llvm::BranchFolderPassID = BranchFolderPass::ID;
 
-INITIALIZE_PASS(BranchFolderPass, "branch-folder",
+INITIALIZE_PASS(BranchFolderPass, DEBUG_TYPE,
                 "Control Flow Optimizer", false, false)
 
 bool BranchFolderPass::runOnMachineFunction(MachineFunction &MF) {
@@ -153,13 +153,14 @@ bool BranchFolder::OptimizeFunction(MachineFunction &MF,
 
   TriedMerging.clear();
 
+  MachineRegisterInfo &MRI = MF.getRegInfo();
   AfterBlockPlacement = AfterPlacement;
   TII = tii;
   TRI = tri;
   MMI = mmi;
   MLI = mli;
+  this->MRI = &MRI;
 
-  MachineRegisterInfo &MRI = MF.getRegInfo();
   UpdateLiveIns = MRI.tracksLiveness() && TRI->trackLivenessAfterRegAlloc(MF);
   if (!UpdateLiveIns)
     MRI.invalidateLiveness();
@@ -351,7 +352,7 @@ void BranchFolder::ReplaceTailWithBranchTo(MachineBasicBlock::iterator OldInst,
 
   if (UpdateLiveIns) {
     NewDest->clearLiveIns();
-    computeLiveIns(LiveRegs, *TRI, *NewDest);
+    computeLiveIns(LiveRegs, *MRI, *NewDest);
   }
 
   ++NumTailMerge;
@@ -388,7 +389,7 @@ MachineBasicBlock *BranchFolder::SplitMBBAt(MachineBasicBlock &CurMBB,
   MBBFreqInfo.setBlockFreq(NewMBB, MBBFreqInfo.getBlockFreq(&CurMBB));
 
   if (UpdateLiveIns)
-    computeLiveIns(LiveRegs, *TRI, *NewMBB);
+    computeLiveIns(LiveRegs, *MRI, *NewMBB);
 
   // Add the new block to the funclet.
   const auto &FuncletI = FuncletMembership.find(&CurMBB);
@@ -599,6 +600,22 @@ ProfitableToMerge(MachineBasicBlock *MBB1, MachineBasicBlock *MBB2,
     return true;
   if (MBB2->isLayoutSuccessor(MBB1) && I1 == MBB1->begin())
     return true;
+
+  // If both blocks are identical and end in a branch, merge them unless they
+  // both have a fallthrough predecessor and successor.
+  // We can only do this after block placement because it depends on whether
+  // there are fallthroughs, and we don't know until after layout.
+  if (AfterPlacement && I1 == MBB1->begin() && I2 == MBB2->begin()) {
+    auto BothFallThrough = [](MachineBasicBlock *MBB) {
+      if (MBB->succ_size() != 0 && !MBB->canFallThrough())
+        return false;
+      MachineFunction::iterator I(MBB);
+      MachineFunction *MF = MBB->getParent();
+      return (MBB != &*MF->begin()) && std::prev(I)->canFallThrough();
+    };
+    if (!BothFallThrough(MBB1) || !BothFallThrough(MBB2))
+      return true;
+  }
 
   // If both blocks have an unconditional branch temporarily stripped out,
   // count that as an additional common instruction for the following
@@ -1834,8 +1851,8 @@ bool BranchFolder::HoistCommonCodeInSuccs(MachineBasicBlock *MBB) {
     return false;
 
   bool HasDups = false;
-  SmallVector<unsigned, 4> LocalDefs;
-  SmallSet<unsigned, 4> LocalDefsSet;
+  SmallVector<unsigned, 4> LocalDefs, LocalKills;
+  SmallSet<unsigned, 4> ActiveDefsSet, AllDefsSet;
   MachineBasicBlock::iterator TIB = TBB->begin();
   MachineBasicBlock::iterator FIB = FBB->begin();
   MachineBasicBlock::iterator TIE = TBB->end();
@@ -1889,7 +1906,7 @@ bool BranchFolder::HoistCommonCodeInSuccs(MachineBasicBlock *MBB) {
           IsSafe = false;
           break;
         }
-      } else if (!LocalDefsSet.count(Reg)) {
+      } else if (!ActiveDefsSet.count(Reg)) {
         if (Defs.count(Reg)) {
           // Use is defined by the instruction at the point of insertion.
           IsSafe = false;
@@ -1909,18 +1926,22 @@ bool BranchFolder::HoistCommonCodeInSuccs(MachineBasicBlock *MBB) {
     if (!TIB->isSafeToMove(nullptr, DontMoveAcrossStore))
       break;
 
-    // Remove kills from LocalDefsSet, these registers had short live ranges.
+    // Remove kills from ActiveDefsSet, these registers had short live ranges.
     for (const MachineOperand &MO : TIB->operands()) {
       if (!MO.isReg() || !MO.isUse() || !MO.isKill())
         continue;
       unsigned Reg = MO.getReg();
-      if (!Reg || !LocalDefsSet.count(Reg))
+      if (!Reg)
         continue;
+      if (!AllDefsSet.count(Reg)) {
+        LocalKills.push_back(Reg);
+        continue;
+      }
       if (TargetRegisterInfo::isPhysicalRegister(Reg)) {
         for (MCRegAliasIterator AI(Reg, TRI, true); AI.isValid(); ++AI)
-          LocalDefsSet.erase(*AI);
+          ActiveDefsSet.erase(*AI);
       } else {
-        LocalDefsSet.erase(Reg);
+        ActiveDefsSet.erase(Reg);
       }
     }
 
@@ -1932,7 +1953,8 @@ bool BranchFolder::HoistCommonCodeInSuccs(MachineBasicBlock *MBB) {
       if (!Reg || TargetRegisterInfo::isVirtualRegister(Reg))
         continue;
       LocalDefs.push_back(Reg);
-      addRegAndItsAliases(Reg, TRI, LocalDefsSet);
+      addRegAndItsAliases(Reg, TRI, ActiveDefsSet);
+      addRegAndItsAliases(Reg, TRI, AllDefsSet);
     }
 
     HasDups = true;
@@ -1947,17 +1969,22 @@ bool BranchFolder::HoistCommonCodeInSuccs(MachineBasicBlock *MBB) {
   FBB->erase(FBB->begin(), FIB);
 
   // Update livein's.
-  bool AddedLiveIns = false;
+  bool ChangedLiveIns = false;
   for (unsigned i = 0, e = LocalDefs.size(); i != e; ++i) {
     unsigned Def = LocalDefs[i];
-    if (LocalDefsSet.count(Def)) {
+    if (ActiveDefsSet.count(Def)) {
       TBB->addLiveIn(Def);
       FBB->addLiveIn(Def);
-      AddedLiveIns = true;
+      ChangedLiveIns = true;
     }
   }
+  for (unsigned K : LocalKills) {
+    TBB->removeLiveIn(K);
+    FBB->removeLiveIn(K);
+    ChangedLiveIns = true;
+  }
 
-  if (AddedLiveIns) {
+  if (ChangedLiveIns) {
     TBB->sortUniqueLiveIns();
     FBB->sortUniqueLiveIns();
   }

@@ -53,6 +53,7 @@
 #include "polly/Options.h"
 #include "polly/ScopInfo.h"
 #include "polly/Support/GICHelper.h"
+#include "polly/Support/ISLOStream.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/Support/Debug.h"
 #include "isl/aff.h"
@@ -1014,6 +1015,14 @@ getMacroKernelParams(const MicroKernelParamsTy &MicroKernelParams,
   int Car = floor(
       (FirstCacheLevelAssociativity - 1) /
       (1 + static_cast<double>(MicroKernelParams.Nr) / MicroKernelParams.Mr));
+
+  // Car can be computed to be zero since it is floor to int.
+  // On Mac OS, division by 0 does not raise a signal. This causes negative
+  // tile sizes to be computed. Prevent division by 0 Cac by early returning
+  // if this happens.
+  if (Car == 0)
+    return {1, 1, 1};
+
   auto ElementSize = getMatMulAlignTypeSize(MMI);
   assert(ElementSize > 0 && "The element size of the matrix multiplication "
                             "operands should be greater than zero.");
@@ -1024,6 +1033,9 @@ getMacroKernelParams(const MicroKernelParamsTy &MicroKernelParams,
       SecondCacheLevelSize;
   int Mc = floor((SecondCacheLevelAssociativity - 2) / Cac);
   int Nc = PollyPatternMatchingNcQuotient * MicroKernelParams.Nr;
+
+  assert(Mc > 0 && Nc > 0 && Kc > 0 &&
+         "Matrix block sizes should be  greater than zero");
   return {Mc, Nc, Kc};
 }
 
@@ -1257,20 +1269,54 @@ static isl_schedule_node *markInterIterationAliasFree(isl_schedule_node *Node,
   return isl_schedule_node_child(isl_schedule_node_insert_mark(Node, Id), 0);
 }
 
+/// Restore the initial ordering of dimensions of the band node
+///
+/// In case the band node represents all the dimensions of the iteration
+/// domain, recreate the band node to restore the initial ordering of the
+/// dimensions.
+///
+/// @param Node The band node to be modified.
+/// @return The modified schedule node.
+namespace {
+isl::schedule_node getBandNodeWithOriginDimOrder(isl::schedule_node Node) {
+  assert(isl_schedule_node_get_type(Node.keep()) == isl_schedule_node_band);
+  if (isl_schedule_node_get_type(Node.child(0).keep()) !=
+      isl_schedule_node_leaf)
+    return Node;
+  auto Domain = isl::manage(isl_schedule_node_get_universe_domain(Node.keep()));
+  assert(isl_union_set_n_set(Domain.keep()) == 1);
+  if (isl_schedule_node_get_schedule_depth(Node.keep()) != 0 ||
+      (isl::set(isl::manage(Domain.copy())).dim(isl::dim::set) !=
+       isl_schedule_node_band_n_member(Node.keep())))
+    return Node;
+  Node = isl::manage(isl_schedule_node_delete(Node.take()));
+  auto PartialSchedulePwAff =
+      isl::manage(isl_union_set_identity_union_pw_multi_aff(Domain.take()));
+  auto PartialScheduleMultiPwAff =
+      isl::multi_union_pw_aff(PartialSchedulePwAff);
+  PartialScheduleMultiPwAff = isl::manage(isl_multi_union_pw_aff_reset_tuple_id(
+      PartialScheduleMultiPwAff.take(), isl_dim_set));
+  return isl::manage(isl_schedule_node_insert_partial_schedule(
+      Node.take(), PartialScheduleMultiPwAff.take()));
+}
+} // namespace
+
 __isl_give isl_schedule_node *ScheduleTreeOptimizer::optimizeMatMulPattern(
     __isl_take isl_schedule_node *Node, const llvm::TargetTransformInfo *TTI,
     MatMulInfoTy &MMI) {
   assert(TTI && "The target transform info should be provided.");
-  Node = markInterIterationAliasFree(Node, MMI.WriteToC->getLatestBaseAddr());
+  Node = markInterIterationAliasFree(
+      Node, MMI.WriteToC->getLatestScopArrayInfo()->getBasePtr());
   int DimOutNum = isl_schedule_node_band_n_member(Node);
   assert(DimOutNum > 2 && "In case of the matrix multiplication the loop nest "
                           "and, consequently, the corresponding scheduling "
                           "functions have at least three dimensions.");
+  Node = getBandNodeWithOriginDimOrder(isl::manage(Node)).take();
   Node = permuteBandNodeDimensions(Node, MMI.i, DimOutNum - 3);
   int NewJ = MMI.j == DimOutNum - 3 ? MMI.i : MMI.j;
   int NewK = MMI.k == DimOutNum - 3 ? MMI.i : MMI.k;
   Node = permuteBandNodeDimensions(Node, NewJ, DimOutNum - 2);
-  NewK = MMI.k == DimOutNum - 2 ? MMI.j : MMI.k;
+  NewK = NewK == DimOutNum - 2 ? NewJ : NewK;
   Node = permuteBandNodeDimensions(Node, NewK, DimOutNum - 1);
   auto MicroKernelParams = getMicroKernelParams(TTI, MMI);
   auto MacroKernelParams = getMacroKernelParams(MicroKernelParams, MMI);
@@ -1293,7 +1339,12 @@ bool ScheduleTreeOptimizer::isMatrMultPattern(
     MatMulInfoTy &MMI) {
   auto *PartialSchedule =
       isl_schedule_node_band_get_partial_schedule_union_map(Node);
-  if (isl_schedule_node_band_n_member(Node) < 3 ||
+  Node = isl_schedule_node_child(Node, 0);
+  auto LeafType = isl_schedule_node_get_type(Node);
+  Node = isl_schedule_node_parent(Node);
+  if (LeafType != isl_schedule_node_leaf ||
+      isl_schedule_node_band_n_member(Node) < 3 ||
+      isl_schedule_node_get_schedule_depth(Node) != 0 ||
       isl_union_map_n_map(PartialSchedule) != 1) {
     isl_union_map_free(PartialSchedule);
     return false;
@@ -1431,13 +1482,13 @@ bool IslScheduleOptimizer::runOnScop(Scop &S) {
         Dependences::TYPE_RAW | Dependences::TYPE_WAR | Dependences::TYPE_WAW;
   }
 
-  isl_union_set *Domain = S.getDomains();
+  isl::union_set Domain = give(S.getDomains());
 
   if (!Domain)
     return false;
 
-  isl_union_map *Validity = D.getDependences(ValidityKinds);
-  isl_union_map *Proximity = D.getDependences(ProximityKinds);
+  isl::union_map Validity = give(D.getDependences(ValidityKinds));
+  isl::union_map Proximity = give(D.getDependences(ProximityKinds));
 
   // Simplify the dependences by removing the constraints introduced by the
   // domains. This can speed up the scheduling time significantly, as large
@@ -1447,20 +1498,19 @@ bool IslScheduleOptimizer::runOnScop(Scop &S) {
   // interesting anyway. In some cases this option may stop the scheduler to
   // find any schedule.
   if (SimplifyDeps == "yes") {
-    Validity = isl_union_map_gist_domain(Validity, isl_union_set_copy(Domain));
-    Validity = isl_union_map_gist_range(Validity, isl_union_set_copy(Domain));
-    Proximity =
-        isl_union_map_gist_domain(Proximity, isl_union_set_copy(Domain));
-    Proximity = isl_union_map_gist_range(Proximity, isl_union_set_copy(Domain));
+    Validity = Validity.gist_domain(Domain);
+    Validity = Validity.gist_range(Domain);
+    Proximity = Proximity.gist_domain(Domain);
+    Proximity = Proximity.gist_range(Domain);
   } else if (SimplifyDeps != "no") {
     errs() << "warning: Option -polly-opt-simplify-deps should either be 'yes' "
               "or 'no'. Falling back to default: 'yes'\n";
   }
 
   DEBUG(dbgs() << "\n\nCompute schedule from: ");
-  DEBUG(dbgs() << "Domain := " << stringFromIslObj(Domain) << ";\n");
-  DEBUG(dbgs() << "Proximity := " << stringFromIslObj(Proximity) << ";\n");
-  DEBUG(dbgs() << "Validity := " << stringFromIslObj(Validity) << ";\n");
+  DEBUG(dbgs() << "Domain := " << Domain << ";\n");
+  DEBUG(dbgs() << "Proximity := " << Proximity << ";\n");
+  DEBUG(dbgs() << "Validity := " << Validity << ";\n");
 
   unsigned IslSerializeSCCs;
 
@@ -1510,16 +1560,12 @@ bool IslScheduleOptimizer::runOnScop(Scop &S) {
   auto OnErrorStatus = isl_options_get_on_error(Ctx);
   isl_options_set_on_error(Ctx, ISL_ON_ERROR_CONTINUE);
 
-  isl_schedule_constraints *ScheduleConstraints;
-  ScheduleConstraints = isl_schedule_constraints_on_domain(Domain);
-  ScheduleConstraints =
-      isl_schedule_constraints_set_proximity(ScheduleConstraints, Proximity);
-  ScheduleConstraints = isl_schedule_constraints_set_validity(
-      ScheduleConstraints, isl_union_map_copy(Validity));
-  ScheduleConstraints =
-      isl_schedule_constraints_set_coincidence(ScheduleConstraints, Validity);
+  auto SC = isl::schedule_constraints::on_domain(Domain);
+  SC = SC.set_proximity(Proximity);
+  SC = SC.set_validity(Validity);
+  SC = SC.set_coincidence(Validity);
   isl_schedule *Schedule;
-  Schedule = isl_schedule_constraints_compute_schedule(ScheduleConstraints);
+  Schedule = SC.compute_schedule().release();
   isl_options_set_on_error(Ctx, OnErrorStatus);
 
   // In cases the scheduler is not able to optimize the code, we just do not

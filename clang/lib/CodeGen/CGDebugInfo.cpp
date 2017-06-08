@@ -209,7 +209,7 @@ llvm::DIScope *CGDebugInfo::getContextDescriptor(const Decl *Context,
 
   // Check namespace.
   if (const auto *NSDecl = dyn_cast<NamespaceDecl>(Context))
-    return getOrCreateNameSpace(NSDecl);
+    return getOrCreateNamespace(NSDecl);
 
   if (const auto *RDecl = dyn_cast<RecordDecl>(Context))
     if (!RDecl->isDependentType())
@@ -528,12 +528,14 @@ void CGDebugInfo::CreateCompileUnit() {
   // Create new compile unit.
   // FIXME - Eliminate TheCU.
   TheCU = DBuilder.createCompileUnit(
-      LangTag, DBuilder.createFile(remapDIPath(MainFileName),
-                                   remapDIPath(getCurrentDirname()), CSKind,
-                                   Checksum),
+      LangTag,
+      DBuilder.createFile(remapDIPath(MainFileName),
+                          remapDIPath(getCurrentDirname()), CSKind, Checksum),
       Producer, LO.Optimize, CGM.getCodeGenOpts().DwarfDebugFlags, RuntimeVers,
-      CGM.getCodeGenOpts().SplitDwarfFile, EmissionKind, 0 /* DWOid */,
-      CGM.getCodeGenOpts().SplitDwarfInlining,
+      CGM.getCodeGenOpts().EnableSplitDwarf
+          ? ""
+          : CGM.getCodeGenOpts().SplitDwarfFile,
+      EmissionKind, 0 /* DWOid */, CGM.getCodeGenOpts().SplitDwarfInlining,
       CGM.getCodeGenOpts().DebugInfoForProfiling);
 }
 
@@ -1820,6 +1822,10 @@ static bool shouldOmitDefinition(codegenoptions::DebugInfoKind DebugKind,
   if (DebugTypeExtRefs && isDefinedInClangModule(RD->getDefinition()))
     return true;
 
+  if (auto *ES = RD->getASTContext().getExternalSource())
+    if (ES->hasExternalDefinitions(RD) == ExternalASTSource::EK_Always)
+      return true;
+
   if (DebugKind > codegenoptions::LimitedDebugInfo)
     return false;
 
@@ -2552,11 +2558,17 @@ void CGDebugInfo::completeTemplateDefinition(
     const ClassTemplateSpecializationDecl &SD) {
   if (DebugKind <= codegenoptions::DebugLineTablesOnly)
     return;
+  completeUnusedClass(SD);
+}
 
-  completeClassData(&SD);
+void CGDebugInfo::completeUnusedClass(const CXXRecordDecl &D) {
+  if (DebugKind <= codegenoptions::DebugLineTablesOnly)
+    return;
+
+  completeClassData(&D);
   // In case this type has no member function definitions being emitted, ensure
   // it is retained
-  RetainedTypes.push_back(CGM.getContext().getRecordType(&SD).getAsOpaquePtr());
+  RetainedTypes.push_back(CGM.getContext().getRecordType(&D).getAsOpaquePtr());
 }
 
 llvm::DIType *CGDebugInfo::getOrCreateType(QualType Ty, llvm::DIFile *Unit) {
@@ -2601,7 +2613,7 @@ llvm::DIModule *CGDebugInfo::getParentModuleOrNull(const Decl *D) {
     // best to make this behavior a command line or debugger tuning
     // option.
     FullSourceLoc Loc(D->getLocation(), CGM.getContext().getSourceManager());
-    if (Module *M = ClangModuleMap->inferModuleFromLocation(Loc)) {
+    if (Module *M = D->getOwningModule()) {
       // This is a (sub-)module.
       auto Info = ExternalASTSource::ASTSourceDescriptor(*M);
       return getOrCreateModuleRef(Info, /*SkeletonCU=*/false);
@@ -2849,7 +2861,7 @@ void CGDebugInfo::collectFunctionDeclProps(GlobalDecl GD, llvm::DIFile *Unit,
   if (DebugKind >= codegenoptions::LimitedDebugInfo) {
     if (const NamespaceDecl *NSDecl =
         dyn_cast_or_null<NamespaceDecl>(FD->getDeclContext()))
-      FDContext = getOrCreateNameSpace(NSDecl);
+      FDContext = getOrCreateNamespace(NSDecl);
     else if (const RecordDecl *RDecl =
              dyn_cast_or_null<RecordDecl>(FD->getDeclContext())) {
       llvm::DIScope *Mod = getParentModuleOrNull(RDecl);
@@ -3456,17 +3468,17 @@ void CGDebugInfo::EmitDeclare(const VarDecl *VD, llvm::Value *Storage,
   // functions there won't be an implicit param at arg1 and
   // otherwise it is 'self' or 'this'.
   if (isa<ImplicitParamDecl>(VD) && ArgNo && *ArgNo == 1)
-    Flags |= llvm::DINode::FlagObjectPointer;
-  if (auto *Arg = dyn_cast<llvm::Argument>(Storage))
-    if (Arg->getType()->isPointerTy() && !Arg->hasByValAttr() &&
-        !VD->getType()->isPointerType())
-      Expr.push_back(llvm::dwarf::DW_OP_deref);
+  Flags |= llvm::DINode::FlagObjectPointer;
 
+  // Note: Older versions of clang used to emit byval references with an extra
+  // DW_OP_deref, because they referenced the IR arg directly instead of
+  // referencing an alloca. Newer versions of LLVM don't treat allocas
+  // differently from other function arguments when used in a dbg.declare.
   auto *Scope = cast<llvm::DIScope>(LexicalBlockStack.back());
-
   StringRef Name = VD->getName();
   if (!Name.empty()) {
     if (VD->hasAttr<BlocksAttr>()) {
+      // Here, we need an offset *into* the alloca.
       CharUnits offset = CharUnits::fromQuantity(32);
       Expr.push_back(llvm::dwarf::DW_OP_plus);
       // offset of __forwarding field
@@ -3478,22 +3490,7 @@ void CGDebugInfo::EmitDeclare(const VarDecl *VD, llvm::Value *Storage,
       // offset of x field
       offset = CGM.getContext().toCharUnitsFromBits(XOffset);
       Expr.push_back(offset.getQuantity());
-
-      // Create the descriptor for the variable.
-      auto *D = ArgNo
-                    ? DBuilder.createParameterVariable(Scope, VD->getName(),
-                                                       *ArgNo, Unit, Line, Ty)
-                    : DBuilder.createAutoVariable(Scope, VD->getName(), Unit,
-                                                  Line, Ty, Align);
-
-      // Insert an llvm.dbg.declare into the current block.
-      DBuilder.insertDeclare(
-          Storage, D, DBuilder.createExpression(Expr),
-          llvm::DebugLoc::get(Line, Column, Scope, CurInlinedAt),
-          Builder.GetInsertBlock());
-      return;
-    } else if (isa<VariableArrayType>(VD->getType()))
-      Expr.push_back(llvm::dwarf::DW_OP_deref);
+    }
   } else if (const auto *RT = dyn_cast<RecordType>(VD->getType())) {
     // If VD is an anonymous union then Storage represents value for
     // all union fields.
@@ -3596,8 +3593,7 @@ void CGDebugInfo::EmitDeclareOfBlockDeclRefVariable(
           ->getElementOffset(blockInfo.getCapture(VD).getIndex()));
 
   SmallVector<int64_t, 9> addr;
-  if (isa<llvm::AllocaInst>(Storage))
-    addr.push_back(llvm::dwarf::DW_OP_deref);
+  addr.push_back(llvm::dwarf::DW_OP_deref);
   addr.push_back(llvm::dwarf::DW_OP_plus);
   addr.push_back(offset.getQuantity());
   if (isByRef) {
@@ -3623,12 +3619,11 @@ void CGDebugInfo::EmitDeclareOfBlockDeclRefVariable(
   // Insert an llvm.dbg.declare into the current block.
   auto DL =
       llvm::DebugLoc::get(Line, Column, LexicalBlockStack.back(), CurInlinedAt);
+  auto *Expr = DBuilder.createExpression(addr);
   if (InsertPoint)
-    DBuilder.insertDeclare(Storage, D, DBuilder.createExpression(addr), DL,
-                           InsertPoint);
+    DBuilder.insertDeclare(Storage, D, Expr, DL, InsertPoint);
   else
-    DBuilder.insertDeclare(Storage, D, DBuilder.createExpression(addr), DL,
-                           Builder.GetInsertBlock());
+    DBuilder.insertDeclare(Storage, D, Expr, DL, Builder.GetInsertBlock());
 }
 
 void CGDebugInfo::EmitDeclareOfArgVariable(const VarDecl *VD, llvm::Value *AI,
@@ -3966,7 +3961,7 @@ void CGDebugInfo::EmitUsingDirective(const UsingDirectiveDecl &UD) {
       CGM.getCodeGenOpts().DebugExplicitImport) {
     DBuilder.createImportedModule(
         getCurrentContextDescriptor(cast<Decl>(UD.getDeclContext())),
-        getOrCreateNameSpace(NSDecl),
+        getOrCreateNamespace(NSDecl),
         getLineNumber(UD.getLocation()));
   }
 }
@@ -4026,25 +4021,26 @@ CGDebugInfo::EmitNamespaceAlias(const NamespaceAliasDecl &NA) {
   else
     R = DBuilder.createImportedDeclaration(
         getCurrentContextDescriptor(cast<Decl>(NA.getDeclContext())),
-        getOrCreateNameSpace(cast<NamespaceDecl>(NA.getAliasedNamespace())),
+        getOrCreateNamespace(cast<NamespaceDecl>(NA.getAliasedNamespace())),
         getLineNumber(NA.getLocation()), NA.getName());
   VH.reset(R);
   return R;
 }
 
 llvm::DINamespace *
-CGDebugInfo::getOrCreateNameSpace(const NamespaceDecl *NSDecl) {
-  NSDecl = NSDecl->getCanonicalDecl();
-  auto I = NameSpaceCache.find(NSDecl);
-  if (I != NameSpaceCache.end())
+CGDebugInfo::getOrCreateNamespace(const NamespaceDecl *NSDecl) {
+  // Don't canonicalize the NamespaceDecl here: The DINamespace will be uniqued
+  // if necessary, and this way multiple declarations of the same namespace in
+  // different parent modules stay distinct.
+  auto I = NamespaceCache.find(NSDecl);
+  if (I != NamespaceCache.end())
     return cast<llvm::DINamespace>(I->second);
 
-  unsigned LineNo = getLineNumber(NSDecl->getLocation());
-  llvm::DIFile *FileD = getOrCreateFile(NSDecl->getLocation());
   llvm::DIScope *Context = getDeclContextDescriptor(NSDecl);
-  llvm::DINamespace *NS = DBuilder.createNameSpace(
-      Context, NSDecl->getName(), FileD, LineNo, NSDecl->isInline());
-  NameSpaceCache[NSDecl].reset(NS);
+  // Don't trust the context if it is a DIModule (see comment above).
+  llvm::DINamespace *NS =
+      DBuilder.createNameSpace(Context, NSDecl->getName(), NSDecl->isInline());
+  NamespaceCache[NSDecl].reset(NS);
   return NS;
 }
 

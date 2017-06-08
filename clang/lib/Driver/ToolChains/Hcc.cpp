@@ -31,9 +31,9 @@ using namespace clang::driver::tools;
 using namespace clang;
 using namespace llvm::opt;
 
-static void HCPassOptions(const ArgList &Args, ArgStringList &CmdArgs)
-{
-  for(auto&& A : Args) {
+static void HCPassOptions(const ArgList &Args, ArgStringList &CmdArgs) {
+
+  for(auto A : Args) {
     Option ArgOpt = A->getOption();
     // Avoid passing options that have already been processed by the compilation stage or will be used for the linking stage
     bool hasOpts = ArgOpt.hasFlag(options::LinkerInput) || // omit linking options
@@ -59,14 +59,11 @@ static void HCPassOptions(const ArgList &Args, ArgStringList &CmdArgs)
   }
 }
 
-void HCC::HCKernelAssemble::ConstructJob(
-    Compilation &C,
-    const JobAction &JA,
-    const InputInfo &Output,
-    const InputInfoList &Inputs,
-    const ArgList &Args,
-    const char *LinkingOutput) const
-{
+void HCC::HCKernelAssemble::ConstructJob(Compilation &C, const JobAction &JA,
+                                    const InputInfo &Output,
+                                    const InputInfoList &Inputs,
+                                    const ArgList &Args,
+                                    const char *LinkingOutput) const {
   assert(Inputs.size() == 1 && "Unable to handle multiple inputs.");
 
   ArgStringList CmdArgs;
@@ -90,14 +87,11 @@ void HCC::HCKernelAssemble::ConstructJob(
   C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
 }
 
-void HCC::HCHostAssemble::ConstructJob(
-    Compilation &C,
-    const JobAction &JA,
-    const InputInfo &Output,
-    const InputInfoList &Inputs,
-    const ArgList &Args,
-    const char *LinkingOutput) const
-{
+void HCC::HCHostAssemble::ConstructJob(Compilation &C, const JobAction &JA,
+                                  const InputInfo &Output,
+                                  const InputInfoList &Inputs,
+                                  const ArgList &Args,
+                                  const char *LinkingOutput) const {
   assert(Inputs.size() == 1 && "Unable to handle multiple inputs.");
 
   ArgStringList CmdArgs;
@@ -123,14 +117,11 @@ void HCC::HCHostAssemble::ConstructJob(
   C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
 }
 
-void HCC::CXXAMPAssemble::ConstructJob(
-    Compilation &C,
-    const JobAction &JA,
-    const InputInfo &Output,
-    const InputInfoList &Inputs,
-    const ArgList &Args,
-    const char *LinkingOutput) const
-{
+void HCC::CXXAMPAssemble::ConstructJob(Compilation &C, const JobAction &JA,
+                                  const InputInfo &Output,
+                                  const InputInfoList &Inputs,
+                                  const ArgList &Args,
+                                  const char *LinkingOutput) const {
   assert(Inputs.size() == 1 && "Unable to handle multiple inputs.");
 
   ArgStringList CmdArgs;
@@ -213,7 +204,6 @@ namespace
             r.first.emplace_back(buf.data());
         }
         pipe.reset(nullptr);
-        pipe.release();
 
         if (d.status != EXIT_SUCCESS) return r;
 
@@ -334,10 +324,18 @@ void HCC::CXXAMPLink::ConstructJob(
     Linker::ConstructLinkerJob(
         C, JA, Output, Inputs, Args, LinkingOutput, CmdArgs);
 
-    const char *Exec =
-        Args.MakeArgString(getToolChain().GetProgramPath("clamp-link"));
+    auto ClampArgs = CmdArgs;
+    if (Args.hasArg(options::OPT_hcc_extra_libs_EQ)) {
+      auto HccExtraLibs = Args.getAllArgValues(options::OPT_hcc_extra_libs_EQ);
+      std::string prefix{"--hcc-extra-libs="};
+      for(auto&& Lib:HccExtraLibs) {
+        ClampArgs.push_back(Args.MakeArgString(prefix + Lib));
+      }
+    }
 
-    C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
+  const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("clamp-link"));
+
+  C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, ClampArgs, Inputs));
 }
 
 /// HCC toolchain.
@@ -350,28 +348,25 @@ void HCC::CXXAMPLink::ConstructJob(
 ///   - use hc-host-assemble as assembler for host path
 ///   - use clamp-link as linker
 
-HCCToolChain::HCCToolChain(
-    const Driver &D, const llvm::Triple &Triple, const ArgList &Args)
-    : Linux(D, Triple, Args)
-{
+HCCToolChain::HCCToolChain(const Driver &D, const llvm::Triple &Triple,
+                           const ArgList &Args)
+    : Linux(D, Triple, Args) {
   llvm::Triple defaultTriple(llvm::sys::getDefaultTargetTriple());
   GCCInstallation.init(defaultTriple, Args);
 }
 
-void HCCToolChain::addClangTargetOptions(
-    const llvm::opt::ArgList &DriverArgs,
-    llvm::opt::ArgStringList &CC1Args) const
-{
+void
+HCCToolChain::addClangTargetOptions(const llvm::opt::ArgList &DriverArgs,
+                                    llvm::opt::ArgStringList &CC1Args) const {
   Linux::addClangTargetOptions(DriverArgs, CC1Args);
 
   // TBD, depends on mode set correct arguments
 }
 
-llvm::opt::DerivedArgList* HCCToolChain::TranslateArgs(
-    const llvm::opt::DerivedArgList &Args,
-    StringRef BoundArch,
-    Action::OffloadKind DeviceOffloadKind) const
-{
+llvm::opt::DerivedArgList *
+HCCToolChain::TranslateArgs(const llvm::opt::DerivedArgList &Args,
+                            StringRef BoundArch,
+                            Action::OffloadKind DeviceOffloadKind) const {
   // TBD look into what should be properly implemented
   DerivedArgList *DAL = new DerivedArgList(Args.getBaseArgs());
   const OptTable &Opts = getDriver().getOpts();
@@ -420,8 +415,7 @@ extern bool IsHCKernelAssembleJobAction(const JobAction* A);
 extern bool IsCXXAMPAssembleJobAction(const JobAction* A);
 extern bool IsCXXAMPCPUAssembleJobAction(const JobAction* A);
 
-Tool *HCCToolChain::SelectTool(const JobAction &JA) const
-{
+Tool *HCCToolChain::SelectTool(const JobAction &JA) const {
   Action::ActionClass AC = JA.getKind();
 
   if (AC == Action::AssembleJobClass) {
@@ -445,7 +439,6 @@ Tool *HCCToolChain::SelectTool(const JobAction &JA) const
   return ToolChain::SelectTool(JA);
 }
 
-Tool *HCCToolChain::buildLinker() const
-{
+Tool *HCCToolChain::buildLinker() const {
   return new tools::HCC::CXXAMPLink(*this);
 }

@@ -12,6 +12,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "polly/CodeGen/PPCGCodeGeneration.h"
 #include "polly/CodeGen/IslAst.h"
 #include "polly/CodeGen/IslNodeBuilder.h"
 #include "polly/CodeGen/Utils.h"
@@ -86,6 +87,13 @@ static cl::opt<bool> PrivateMemory("polly-acc-use-private",
                                    cl::init(false), cl::ZeroOrMore,
                                    cl::cat(PollyCategory));
 
+static cl::opt<bool> ManagedMemory("polly-acc-codegen-managed-memory",
+                                   cl::desc("Generate Host kernel code assuming"
+                                            " that all memory has been"
+                                            " declared as managed memory"),
+                                   cl::Hidden, cl::init(false), cl::ZeroOrMore,
+                                   cl::cat(PollyCategory));
+
 static cl::opt<std::string>
     CudaVersion("polly-acc-cuda-version",
                 cl::desc("The CUDA version to compile for"), cl::Hidden,
@@ -134,6 +142,14 @@ static __isl_give isl_id_to_ast_expr *pollyBuildAstExprForStmt(
   return RefToExpr;
 }
 
+/// Given a LLVM Type, compute its size in bytes,
+static int computeSizeInBytes(const Type *T) {
+  int bytes = T->getPrimitiveSizeInBits() / 8;
+  if (bytes == 0)
+    bytes = T->getScalarSizeInBits() / 8;
+  return bytes;
+}
+
 /// Generate code for a GPU specific isl AST.
 ///
 /// The GPUNodeBuilder augments the general existing IslNodeBuilder, which
@@ -146,9 +162,9 @@ public:
   GPUNodeBuilder(PollyIRBuilder &Builder, ScopAnnotator &Annotator,
                  const DataLayout &DL, LoopInfo &LI, ScalarEvolution &SE,
                  DominatorTree &DT, Scop &S, BasicBlock *StartBlock,
-                 gpu_prog *Prog)
+                 gpu_prog *Prog, GPURuntime Runtime, GPUArch Arch)
       : IslNodeBuilder(Builder, Annotator, DL, LI, SE, DT, S, StartBlock),
-        Prog(Prog) {
+        Prog(Prog), Runtime(Runtime), Arch(Arch) {
     getExprBuilder().setIDToSAI(&IDToSAI);
   }
 
@@ -193,6 +209,12 @@ private:
 
   /// The GPU program we generate code for.
   gpu_prog *Prog;
+
+  /// The GPU Runtime implementation to use (OpenCL or CUDA).
+  GPURuntime Runtime;
+
+  /// The GPU Architecture to target.
+  GPUArch Arch;
 
   /// Class to free isl_ids.
   class IslIdDeleter {
@@ -243,12 +265,30 @@ private:
   /// @returns A tuple with grid sizes for X and Y dimension
   std::tuple<Value *, Value *> getGridSizes(ppcg_kernel *Kernel);
 
+  /// Creates a array that can be sent to the kernel on the device using a
+  /// host pointer. This is required for managed memory, when we directly send
+  /// host pointers to the device.
+  /// \note
+  /// This is to be used only with managed memory
+  Value *getOrCreateManagedDeviceArray(gpu_array_info *Array,
+                                       ScopArrayInfo *ArrayInfo);
+
   /// Compute the sizes of the thread blocks for a given kernel.
   ///
   /// @param Kernel The kernel to compute thread block sizes for.
   ///
   /// @returns A tuple with thread block sizes for X, Y, and Z dimensions.
   std::tuple<Value *, Value *, Value *> getBlockSizes(ppcg_kernel *Kernel);
+
+  /// Store a specific kernel launch parameter in the array of kernel launch
+  /// parameters.
+  ///
+  /// @param Parameters The list of parameters in which to store.
+  /// @param Param      The kernel launch parameter to store.
+  /// @param Index      The index in the parameter list, at which to store the
+  ///                   parameter.
+  void insertStoreParameter(Instruction *Parameters, Instruction *Param,
+                            int Index);
 
   /// Create kernel launch parameters.
   ///
@@ -449,6 +489,11 @@ private:
   void createCallCopyFromDeviceToHost(Value *DevicePtr, Value *HostPtr,
                                       Value *Size);
 
+  /// Create a call to synchronize Host & Device.
+  /// \note
+  /// This is to be used only with managed memory.
+  void createCallSynchronizeDevice();
+
   /// Create a call to get a kernel from an assembly string.
   ///
   /// @param Buffer The string describing the kernel.
@@ -485,16 +530,22 @@ void GPUNodeBuilder::initializeAfterRTH() {
   Builder.SetInsertPoint(&NewBB->front());
 
   GPUContext = createCallInitContext();
-  allocateDeviceArrays();
+
+  if (!ManagedMemory)
+    allocateDeviceArrays();
 }
 
 void GPUNodeBuilder::finalize() {
-  freeDeviceArrays();
+  if (!ManagedMemory)
+    freeDeviceArrays();
+
   createCallFreeContext(GPUContext);
   IslNodeBuilder::finalize();
 }
 
 void GPUNodeBuilder::allocateDeviceArrays() {
+  assert(!ManagedMemory && "Managed memory will directly send host pointers "
+                           "to the kernel. There is no need for device arrays");
   isl_ast_build *Build = isl_ast_build_from_context(S.getContext());
 
   for (int i = 0; i < Prog->n_array; ++i) {
@@ -540,6 +591,7 @@ void GPUNodeBuilder::addCUDAAnnotations(Module *M, Value *BlockDimX,
 }
 
 void GPUNodeBuilder::freeDeviceArrays() {
+  assert(!ManagedMemory && "Managed memory does not use device arrays");
   for (auto &Array : DeviceAllocations)
     createCallFreeDeviceMemory(Array.second);
 }
@@ -624,6 +676,8 @@ void GPUNodeBuilder::createCallFreeKernel(Value *GPUKernel) {
 }
 
 void GPUNodeBuilder::createCallFreeDeviceMemory(Value *Array) {
+  assert(!ManagedMemory && "Managed memory does not allocate or free memory "
+                           "for device");
   const char *Name = "polly_freeDeviceMemory";
   Module *M = Builder.GetInsertBlock()->getParent()->getParent();
   Function *F = M->getFunction(Name);
@@ -641,6 +695,8 @@ void GPUNodeBuilder::createCallFreeDeviceMemory(Value *Array) {
 }
 
 Value *GPUNodeBuilder::createCallAllocateMemoryForDevice(Value *Size) {
+  assert(!ManagedMemory && "Managed memory does not allocate or free memory "
+                           "for device");
   const char *Name = "polly_allocateMemoryForDevice";
   Module *M = Builder.GetInsertBlock()->getParent()->getParent();
   Function *F = M->getFunction(Name);
@@ -660,6 +716,8 @@ Value *GPUNodeBuilder::createCallAllocateMemoryForDevice(Value *Size) {
 void GPUNodeBuilder::createCallCopyFromHostToDevice(Value *HostData,
                                                     Value *DeviceData,
                                                     Value *Size) {
+  assert(!ManagedMemory && "Managed memory does not transfer memory between "
+                           "device and host");
   const char *Name = "polly_copyFromHostToDevice";
   Module *M = Builder.GetInsertBlock()->getParent()->getParent();
   Function *F = M->getFunction(Name);
@@ -681,6 +739,8 @@ void GPUNodeBuilder::createCallCopyFromHostToDevice(Value *HostData,
 void GPUNodeBuilder::createCallCopyFromDeviceToHost(Value *DeviceData,
                                                     Value *HostData,
                                                     Value *Size) {
+  assert(!ManagedMemory && "Managed memory does not transfer memory between "
+                           "device and host");
   const char *Name = "polly_copyFromDeviceToHost";
   Module *M = Builder.GetInsertBlock()->getParent()->getParent();
   Function *F = M->getFunction(Name);
@@ -699,8 +759,35 @@ void GPUNodeBuilder::createCallCopyFromDeviceToHost(Value *DeviceData,
   Builder.CreateCall(F, {DeviceData, HostData, Size});
 }
 
+void GPUNodeBuilder::createCallSynchronizeDevice() {
+  assert(ManagedMemory && "explicit synchronization is only necessary for "
+                          "managed memory");
+  const char *Name = "polly_synchronizeDevice";
+  Module *M = Builder.GetInsertBlock()->getParent()->getParent();
+  Function *F = M->getFunction(Name);
+
+  // If F is not available, declare it.
+  if (!F) {
+    GlobalValue::LinkageTypes Linkage = Function::ExternalLinkage;
+    FunctionType *Ty = FunctionType::get(Builder.getVoidTy(), false);
+    F = Function::Create(Ty, Linkage, Name, M);
+  }
+
+  Builder.CreateCall(F);
+}
+
 Value *GPUNodeBuilder::createCallInitContext() {
-  const char *Name = "polly_initContext";
+  const char *Name;
+
+  switch (Runtime) {
+  case GPURuntime::CUDA:
+    Name = "polly_initContextCUDA";
+    break;
+  case GPURuntime::OpenCL:
+    Name = "polly_initContextCL";
+    break;
+  }
+
   Module *M = Builder.GetInsertBlock()->getParent()->getParent();
   Function *F = M->getFunction(Name);
 
@@ -805,8 +892,39 @@ Value *GPUNodeBuilder::getArrayOffset(gpu_array_info *Array) {
   return ResultValue;
 }
 
+Value *GPUNodeBuilder::getOrCreateManagedDeviceArray(gpu_array_info *Array,
+                                                     ScopArrayInfo *ArrayInfo) {
+
+  assert(ManagedMemory && "Only used when you wish to get a host "
+                          "pointer for sending data to the kernel, "
+                          "with managed memory");
+  std::map<ScopArrayInfo *, Value *>::iterator it;
+  if ((it = DeviceAllocations.find(ArrayInfo)) != DeviceAllocations.end()) {
+    return it->second;
+  } else {
+    Value *HostPtr;
+
+    if (gpu_array_is_scalar(Array))
+      HostPtr = BlockGen.getOrCreateAlloca(ArrayInfo);
+    else
+      HostPtr = ArrayInfo->getBasePtr();
+
+    Value *Offset = getArrayOffset(Array);
+    if (Offset) {
+      HostPtr = Builder.CreatePointerCast(
+          HostPtr, ArrayInfo->getElementType()->getPointerTo());
+      HostPtr = Builder.CreateGEP(HostPtr, Offset);
+    }
+
+    HostPtr = Builder.CreatePointerCast(HostPtr, Builder.getInt8PtrTy());
+    DeviceAllocations[ArrayInfo] = HostPtr;
+    return HostPtr;
+  }
+}
+
 void GPUNodeBuilder::createDataTransfer(__isl_take isl_ast_node *TransferStmt,
                                         enum DataDirection Direction) {
+  assert(!ManagedMemory && "Managed memory needs no data transfers");
   isl_ast_expr *Expr = isl_ast_node_user_get_expr(TransferStmt);
   isl_ast_expr *Arg = isl_ast_expr_get_op_arg(Expr, 0);
   isl_id *Id = isl_ast_expr_get_id(Arg);
@@ -864,13 +982,22 @@ void GPUNodeBuilder::createUser(__isl_take isl_ast_node *UserStmt) {
   }
 
   if (isPrefix(Str, "to_device")) {
-    createDataTransfer(UserStmt, HOST_TO_DEVICE);
+    if (!ManagedMemory)
+      createDataTransfer(UserStmt, HOST_TO_DEVICE);
+    else
+      isl_ast_node_free(UserStmt);
+
     isl_ast_expr_free(Expr);
     return;
   }
 
   if (isPrefix(Str, "from_device")) {
-    createDataTransfer(UserStmt, DEVICE_TO_HOST);
+    if (!ManagedMemory) {
+      createDataTransfer(UserStmt, DEVICE_TO_HOST);
+    } else {
+      createCallSynchronizeDevice();
+      isl_ast_node_free(UserStmt);
+    }
     isl_ast_expr_free(Expr);
     return;
   }
@@ -936,7 +1063,15 @@ void GPUNodeBuilder::createScopStmt(isl_ast_expr *Expr,
 
 void GPUNodeBuilder::createKernelSync() {
   Module *M = Builder.GetInsertBlock()->getParent()->getParent();
-  auto *Sync = Intrinsic::getDeclaration(M, Intrinsic::nvvm_barrier0);
+
+  Function *Sync;
+
+  switch (Arch) {
+  case GPUArch::NVPTX64:
+    Sync = Intrinsic::getDeclaration(M, Intrinsic::nvvm_barrier0);
+    break;
+  }
+
   Builder.CreateCall(Sync, {});
 }
 
@@ -1075,17 +1210,28 @@ GPUNodeBuilder::getBlockSizes(ppcg_kernel *Kernel) {
   return std::make_tuple(Sizes[0], Sizes[1], Sizes[2]);
 }
 
+void GPUNodeBuilder::insertStoreParameter(Instruction *Parameters,
+                                          Instruction *Param, int Index) {
+  Value *Slot = Builder.CreateGEP(
+      Parameters, {Builder.getInt64(0), Builder.getInt64(Index)});
+  Value *ParamTyped = Builder.CreatePointerCast(Param, Builder.getInt8PtrTy());
+  Builder.CreateStore(ParamTyped, Slot);
+}
+
 Value *
 GPUNodeBuilder::createLaunchParameters(ppcg_kernel *Kernel, Function *F,
                                        SetVector<Value *> SubtreeValues) {
-  Type *ArrayTy = ArrayType::get(Builder.getInt8PtrTy(),
-                                 std::distance(F->arg_begin(), F->arg_end()));
+  const int NumArgs = F->arg_size();
+  std::vector<int> ArgSizes(NumArgs);
+
+  Type *ArrayTy = ArrayType::get(Builder.getInt8PtrTy(), 2 * NumArgs);
 
   BasicBlock *EntryBlock =
       &Builder.GetInsertBlock()->getParent()->getEntryBlock();
+  auto AddressSpace = F->getParent()->getDataLayout().getAllocaAddrSpace();
   std::string Launch = "polly_launch_" + std::to_string(Kernel->id);
-  Instruction *Parameters =
-      new AllocaInst(ArrayTy, Launch + "_params", EntryBlock->getTerminator());
+  Instruction *Parameters = new AllocaInst(
+      ArrayTy, AddressSpace, Launch + "_params", EntryBlock->getTerminator());
 
   int Index = 0;
   for (long i = 0; i < Prog->n_array; i++) {
@@ -1095,9 +1241,18 @@ GPUNodeBuilder::createLaunchParameters(ppcg_kernel *Kernel, Function *F,
     isl_id *Id = isl_space_get_tuple_id(Prog->array[i].space, isl_dim_set);
     const ScopArrayInfo *SAI = ScopArrayInfo::getFromId(Id);
 
-    Value *DevArray = DeviceAllocations[const_cast<ScopArrayInfo *>(SAI)];
-    DevArray = createCallGetDevicePtr(DevArray);
+    ArgSizes[Index] = SAI->getElemSizeInBytes();
 
+    Value *DevArray = nullptr;
+    if (ManagedMemory) {
+      DevArray = getOrCreateManagedDeviceArray(
+          &Prog->array[i], const_cast<ScopArrayInfo *>(SAI));
+    } else {
+      DevArray = DeviceAllocations[const_cast<ScopArrayInfo *>(SAI)];
+      DevArray = createCallGetDevicePtr(DevArray);
+    }
+    assert(DevArray != nullptr && "Array to be offloaded to device not "
+                                  "initialized");
     Value *Offset = getArrayOffset(&Prog->array[i]);
 
     if (Offset) {
@@ -1110,14 +1265,22 @@ GPUNodeBuilder::createLaunchParameters(ppcg_kernel *Kernel, Function *F,
         Parameters, {Builder.getInt64(0), Builder.getInt64(Index)});
 
     if (gpu_array_is_read_only_scalar(&Prog->array[i])) {
-      Value *ValPtr = BlockGen.getOrCreateAlloca(SAI);
+      Value *ValPtr = nullptr;
+      if (ManagedMemory)
+        ValPtr = DevArray;
+      else
+        ValPtr = BlockGen.getOrCreateAlloca(SAI);
+
+      assert(ValPtr != nullptr && "ValPtr that should point to a valid object"
+                                  " to be stored into Parameters");
       Value *ValPtrCast =
           Builder.CreatePointerCast(ValPtr, Builder.getInt8PtrTy());
       Builder.CreateStore(ValPtrCast, Slot);
     } else {
-      Instruction *Param = new AllocaInst(
-          Builder.getInt8PtrTy(), Launch + "_param_" + std::to_string(Index),
-          EntryBlock->getTerminator());
+      Instruction *Param =
+          new AllocaInst(Builder.getInt8PtrTy(), AddressSpace,
+                         Launch + "_param_" + std::to_string(Index),
+                         EntryBlock->getTerminator());
       Builder.CreateStore(DevArray, Param);
       Value *ParamTyped =
           Builder.CreatePointerCast(Param, Builder.getInt8PtrTy());
@@ -1132,15 +1295,15 @@ GPUNodeBuilder::createLaunchParameters(ppcg_kernel *Kernel, Function *F,
     isl_id *Id = isl_space_get_dim_id(Kernel->space, isl_dim_set, i);
     Value *Val = IDToValue[Id];
     isl_id_free(Id);
-    Instruction *Param = new AllocaInst(
-        Val->getType(), Launch + "_param_" + std::to_string(Index),
-        EntryBlock->getTerminator());
+
+    ArgSizes[Index] = computeSizeInBytes(Val->getType());
+
+    Instruction *Param =
+        new AllocaInst(Val->getType(), AddressSpace,
+                       Launch + "_param_" + std::to_string(Index),
+                       EntryBlock->getTerminator());
     Builder.CreateStore(Val, Param);
-    Value *Slot = Builder.CreateGEP(
-        Parameters, {Builder.getInt64(0), Builder.getInt64(Index)});
-    Value *ParamTyped =
-        Builder.CreatePointerCast(Param, Builder.getInt8PtrTy());
-    Builder.CreateStore(ParamTyped, Slot);
+    insertStoreParameter(Parameters, Param, Index);
     Index++;
   }
 
@@ -1150,28 +1313,38 @@ GPUNodeBuilder::createLaunchParameters(ppcg_kernel *Kernel, Function *F,
     isl_id *Id = isl_space_get_dim_id(Kernel->space, isl_dim_param, i);
     Value *Val = IDToValue[Id];
     isl_id_free(Id);
-    Instruction *Param = new AllocaInst(
-        Val->getType(), Launch + "_param_" + std::to_string(Index),
-        EntryBlock->getTerminator());
+
+    ArgSizes[Index] = computeSizeInBytes(Val->getType());
+
+    Instruction *Param =
+        new AllocaInst(Val->getType(), AddressSpace,
+                       Launch + "_param_" + std::to_string(Index),
+                       EntryBlock->getTerminator());
     Builder.CreateStore(Val, Param);
-    Value *Slot = Builder.CreateGEP(
-        Parameters, {Builder.getInt64(0), Builder.getInt64(Index)});
-    Value *ParamTyped =
-        Builder.CreatePointerCast(Param, Builder.getInt8PtrTy());
-    Builder.CreateStore(ParamTyped, Slot);
+    insertStoreParameter(Parameters, Param, Index);
     Index++;
   }
 
   for (auto Val : SubtreeValues) {
-    Instruction *Param = new AllocaInst(
-        Val->getType(), Launch + "_param_" + std::to_string(Index),
-        EntryBlock->getTerminator());
+    ArgSizes[Index] = computeSizeInBytes(Val->getType());
+
+    Instruction *Param =
+        new AllocaInst(Val->getType(), AddressSpace,
+                       Launch + "_param_" + std::to_string(Index),
+                       EntryBlock->getTerminator());
     Builder.CreateStore(Val, Param);
-    Value *Slot = Builder.CreateGEP(
-        Parameters, {Builder.getInt64(0), Builder.getInt64(Index)});
-    Value *ParamTyped =
-        Builder.CreatePointerCast(Param, Builder.getInt8PtrTy());
-    Builder.CreateStore(ParamTyped, Slot);
+    insertStoreParameter(Parameters, Param, Index);
+    Index++;
+  }
+
+  for (int i = 0; i < NumArgs; i++) {
+    Value *Val = ConstantInt::get(Builder.getInt32Ty(), ArgSizes[i]);
+    Instruction *Param =
+        new AllocaInst(Builder.getInt32Ty(), AddressSpace,
+                       Launch + "_param_size_" + std::to_string(i),
+                       EntryBlock->getTerminator());
+    Builder.CreateStore(Val, Param);
+    insertStoreParameter(Parameters, Param, Index);
     Index++;
   }
 
@@ -1268,12 +1441,17 @@ void GPUNodeBuilder::createKernel(__isl_take isl_ast_node *KernelStmt) {
 ///
 /// @param is64Bit Are we looking for a 64 bit architecture?
 static std::string computeNVPTXDataLayout(bool is64Bit) {
-  std::string Ret = "e";
+  std::string Ret = "";
 
-  if (!is64Bit)
-    Ret += "-p:32:32";
-
-  Ret += "-i64:64-v16:16-v32:32-n16:32:64";
+  if (!is64Bit) {
+    Ret += "e-p:32:32:32-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:"
+           "64-f32:32:32-f64:64:64-v16:16:16-v32:32:32-v64:64:"
+           "64-v128:128:128-n16:32:64";
+  } else {
+    Ret += "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:"
+           "64-f32:32:32-f64:64:64-v16:16:16-v32:32:32-v64:64:"
+           "64-v128:128:128-n16:32:64";
+  }
 
   return Ret;
 }
@@ -1293,7 +1471,8 @@ GPUNodeBuilder::createKernelFunctionDecl(ppcg_kernel *Kernel,
       const ScopArrayInfo *SAI = ScopArrayInfo::getFromId(Id);
       Args.push_back(SAI->getElementType());
     } else {
-      Args.push_back(Builder.getInt8PtrTy());
+      static const int UseGlobalMemory = 1;
+      Args.push_back(Builder.getInt8PtrTy(UseGlobalMemory));
     }
   }
 
@@ -1317,7 +1496,12 @@ GPUNodeBuilder::createKernelFunctionDecl(ppcg_kernel *Kernel,
   auto *FT = FunctionType::get(Builder.getVoidTy(), Args, false);
   auto *FN = Function::Create(FT, Function::ExternalLinkage, Identifier,
                               GPUModule.get());
-  FN->setCallingConv(CallingConv::PTX_Kernel);
+
+  switch (Arch) {
+  case GPUArch::NVPTX64:
+    FN->setCallingConv(CallingConv::PTX_Kernel);
+    break;
+  }
 
   auto Arg = FN->arg_begin();
   for (long i = 0; i < Kernel->n_array; i++) {
@@ -1378,12 +1562,19 @@ GPUNodeBuilder::createKernelFunctionDecl(ppcg_kernel *Kernel,
 }
 
 void GPUNodeBuilder::insertKernelIntrinsics(ppcg_kernel *Kernel) {
-  Intrinsic::ID IntrinsicsBID[] = {Intrinsic::nvvm_read_ptx_sreg_ctaid_x,
-                                   Intrinsic::nvvm_read_ptx_sreg_ctaid_y};
+  Intrinsic::ID IntrinsicsBID[2];
+  Intrinsic::ID IntrinsicsTID[3];
 
-  Intrinsic::ID IntrinsicsTID[] = {Intrinsic::nvvm_read_ptx_sreg_tid_x,
-                                   Intrinsic::nvvm_read_ptx_sreg_tid_y,
-                                   Intrinsic::nvvm_read_ptx_sreg_tid_z};
+  switch (Arch) {
+  case GPUArch::NVPTX64:
+    IntrinsicsBID[0] = Intrinsic::nvvm_read_ptx_sreg_ctaid_x;
+    IntrinsicsBID[1] = Intrinsic::nvvm_read_ptx_sreg_ctaid_y;
+
+    IntrinsicsTID[0] = Intrinsic::nvvm_read_ptx_sreg_tid_x;
+    IntrinsicsTID[1] = Intrinsic::nvvm_read_ptx_sreg_tid_y;
+    IntrinsicsTID[2] = Intrinsic::nvvm_read_ptx_sreg_tid_z;
+    break;
+  }
 
   auto addId = [this](__isl_take isl_id *Id, Intrinsic::ID Intr) mutable {
     std::string Name = isl_id_get_name(Id);
@@ -1532,11 +1723,18 @@ void GPUNodeBuilder::createKernelVariables(ppcg_kernel *Kernel, Function *FN) {
 
 void GPUNodeBuilder::createKernelFunction(ppcg_kernel *Kernel,
                                           SetVector<Value *> &SubtreeValues) {
-
   std::string Identifier = "kernel_" + std::to_string(Kernel->id);
   GPUModule.reset(new Module(Identifier, Builder.getContext()));
-  GPUModule->setTargetTriple(Triple::normalize("nvptx64-nvidia-cuda"));
-  GPUModule->setDataLayout(computeNVPTXDataLayout(true /* is64Bit */));
+
+  switch (Arch) {
+  case GPUArch::NVPTX64:
+    if (Runtime == GPURuntime::CUDA)
+      GPUModule->setTargetTriple(Triple::normalize("nvptx64-nvidia-cuda"));
+    else if (Runtime == GPURuntime::OpenCL)
+      GPUModule->setTargetTriple(Triple::normalize("nvptx64-nvidia-nvcl"));
+    GPUModule->setDataLayout(computeNVPTXDataLayout(true /* is64Bit */));
+    break;
+  }
 
   Function *FN = createKernelFunctionDecl(Kernel, SubtreeValues);
 
@@ -1557,7 +1755,21 @@ void GPUNodeBuilder::createKernelFunction(ppcg_kernel *Kernel,
 }
 
 std::string GPUNodeBuilder::createKernelASM() {
-  llvm::Triple GPUTriple(Triple::normalize("nvptx64-nvidia-cuda"));
+  llvm::Triple GPUTriple;
+
+  switch (Arch) {
+  case GPUArch::NVPTX64:
+    switch (Runtime) {
+    case GPURuntime::CUDA:
+      GPUTriple = llvm::Triple(Triple::normalize("nvptx64-nvidia-cuda"));
+      break;
+    case GPURuntime::OpenCL:
+      GPUTriple = llvm::Triple(Triple::normalize("nvptx64-nvidia-nvcl"));
+      break;
+    }
+    break;
+  }
+
   std::string ErrMsg;
   auto GPUTarget = TargetRegistry::lookupTarget(GPUTriple.getTriple(), ErrMsg);
 
@@ -1568,9 +1780,17 @@ std::string GPUNodeBuilder::createKernelASM() {
 
   TargetOptions Options;
   Options.UnsafeFPMath = FastMath;
-  std::unique_ptr<TargetMachine> TargetM(
-      GPUTarget->createTargetMachine(GPUTriple.getTriple(), CudaVersion, "",
-                                     Options, Optional<Reloc::Model>()));
+
+  std::string subtarget;
+
+  switch (Arch) {
+  case GPUArch::NVPTX64:
+    subtarget = CudaVersion;
+    break;
+  }
+
+  std::unique_ptr<TargetMachine> TargetM(GPUTarget->createTargetMachine(
+      GPUTriple.getTriple(), subtarget, "", Options, Optional<Reloc::Model>()));
 
   SmallString<0> ASMString;
   raw_svector_ostream ASMStream(ASMString);
@@ -1621,6 +1841,10 @@ namespace {
 class PPCGCodeGeneration : public ScopPass {
 public:
   static char ID;
+
+  GPURuntime Runtime = GPURuntime::CUDA;
+
+  GPUArch Architecture = GPUArch::NVPTX64;
 
   /// The scop that is currently processed.
   Scop *S;
@@ -1939,9 +2163,17 @@ public:
     for (unsigned i = 1; i < NumDims; ++i)
       Extent = isl_set_lower_bound_si(Extent, isl_dim_set, i, 0);
 
-    for (unsigned i = 1; i < NumDims; ++i) {
+    for (unsigned i = 0; i < NumDims; ++i) {
       isl_pw_aff *PwAff =
           const_cast<isl_pw_aff *>(Array->getDimensionSizePw(i));
+
+      // isl_pw_aff can be NULL for zero dimension. Only in the case of a
+      // Fortran array will we have a legitimate dimension.
+      if (!PwAff) {
+        assert(i == 0 && "invalid dimension isl_pw_aff for nonzero dimension");
+        continue;
+      }
+
       isl_pw_aff *Val = isl_pw_aff_from_aff(isl_aff_var_on_domain(
           isl_local_space_from_space(Array->getSpace()), isl_dim_set, i));
       PwAff = isl_pw_aff_add_dims(PwAff, isl_dim_in,
@@ -2405,7 +2637,7 @@ public:
         executeScopConditionally(*S, Builder.getTrue(), *DT, *RI, *LI);
 
     GPUNodeBuilder NodeBuilder(Builder, Annotator, *DL, *LI, *SE, *DT, *S,
-                               StartBlock, Prog);
+                               StartBlock, Prog, Runtime, Architecture);
 
     // TODO: Handle LICM
     auto SplitBlock = StartBlock->getSinglePredecessor();
@@ -2413,7 +2645,7 @@ public:
     NodeBuilder.addParameters(S->getContext());
 
     isl_ast_build *Build = isl_ast_build_alloc(S->getIslCtx());
-    isl_ast_expr *Condition = IslAst::buildRunCondition(S, Build);
+    isl_ast_expr *Condition = IslAst::buildRunCondition(*S, Build);
     isl_ast_expr *SufficientCompute = createSufficientComputeCheck(*S, Build);
     Condition = isl_ast_expr_and(Condition, SufficientCompute);
     isl_ast_build_free(Build);
@@ -2442,7 +2674,7 @@ public:
     LI = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
     DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
     SE = &getAnalysis<ScalarEvolutionWrapperPass>().getSE();
-    DL = &S->getRegion().getEntry()->getParent()->getParent()->getDataLayout();
+    DL = &S->getRegion().getEntry()->getModule()->getDataLayout();
     RI = &getAnalysis<RegionInfoPass>().getRegionInfo();
 
     // We currently do not support scops with invariant loads.
@@ -2470,7 +2702,7 @@ public:
     AU.addRequired<DominatorTreeWrapperPass>();
     AU.addRequired<RegionInfoPass>();
     AU.addRequired<ScalarEvolutionWrapperPass>();
-    AU.addRequired<ScopDetection>();
+    AU.addRequired<ScopDetectionWrapperPass>();
     AU.addRequired<ScopInfoRegionPass>();
     AU.addRequired<LoopInfoWrapperPass>();
 
@@ -2479,7 +2711,7 @@ public:
     AU.addPreserved<LoopInfoWrapperPass>();
     AU.addPreserved<DominatorTreeWrapperPass>();
     AU.addPreserved<GlobalsAAWrapperPass>();
-    AU.addPreserved<ScopDetection>();
+    AU.addPreserved<ScopDetectionWrapperPass>();
     AU.addPreserved<ScalarEvolutionWrapperPass>();
     AU.addPreserved<SCEVAAWrapperPass>();
 
@@ -2493,7 +2725,12 @@ public:
 
 char PPCGCodeGeneration::ID = 1;
 
-Pass *polly::createPPCGCodeGenerationPass() { return new PPCGCodeGeneration(); }
+Pass *polly::createPPCGCodeGenerationPass(GPUArch Arch, GPURuntime Runtime) {
+  PPCGCodeGeneration *generator = new PPCGCodeGeneration();
+  generator->Runtime = Runtime;
+  generator->Architecture = Arch;
+  return generator;
+}
 
 INITIALIZE_PASS_BEGIN(PPCGCodeGeneration, "polly-codegen-ppcg",
                       "Polly - Apply PPCG translation to SCOP", false, false)
@@ -2502,6 +2739,6 @@ INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass);
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass);
 INITIALIZE_PASS_DEPENDENCY(RegionInfoPass);
 INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass);
-INITIALIZE_PASS_DEPENDENCY(ScopDetection);
+INITIALIZE_PASS_DEPENDENCY(ScopDetectionWrapperPass);
 INITIALIZE_PASS_END(PPCGCodeGeneration, "polly-codegen-ppcg",
                     "Polly - Apply PPCG translation to SCOP", false, false)
