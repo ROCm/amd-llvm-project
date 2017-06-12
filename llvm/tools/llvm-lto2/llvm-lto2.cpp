@@ -99,6 +99,11 @@ static cl::opt<bool> OptRemarksWithHotness(
     cl::desc("Whether to include hotness informations in the remarks.\n"
              "Has effect only if -pass-remarks-output is specified."));
 
+static cl::opt<bool>
+    UseNewPM("use-new-pm",
+             cl::desc("Run LTO passes using the new pass manager"),
+             cl::init(false), cl::Hidden);
+
 static void check(Error E, std::string Msg) {
   if (!E)
     return;
@@ -126,12 +131,12 @@ template <typename T> static T check(ErrorOr<T> E, std::string Msg) {
   return T();
 }
 
-int main(int argc, char **argv) {
-  InitializeAllTargets();
-  InitializeAllTargetMCs();
-  InitializeAllAsmPrinters();
-  InitializeAllAsmParsers();
+static int usage() {
+  errs() << "Available subcommands: dump-symtab run\n";
+  return 1;
+}
 
+static int run(int argc, char **argv) {
   cl::ParseCommandLineOptions(argc, argv, "Resolution-based LTO test harness");
 
   // FIXME: Workaround PR30396 which means that a symbol can appear
@@ -157,6 +162,8 @@ int main(int argc, char **argv) {
         Res.FinalDefinitionInLinkageUnit = true;
       else if (C == 'x')
         Res.VisibleToRegularObj = true;
+      else if (C == 'r')
+        Res.LinkerRedefined = true;
       else {
         llvm::errs() << "invalid character " << C << " in resolution: " << R
                      << '\n';
@@ -196,6 +203,7 @@ int main(int argc, char **argv) {
   Conf.AAPipeline = AAPipeline;
 
   Conf.OptLevel = OptLevel - '0';
+  Conf.UseNewPM = UseNewPM;
   switch (CGOptLevel) {
   case '0':
     Conf.CGOptLevel = CodeGenOpt::None;
@@ -284,4 +292,83 @@ int main(int argc, char **argv) {
     Cache = check(localCache(CacheDir, AddBuffer), "failed to create cache");
 
   check(Lto.run(AddStream, Cache), "LTO::run failed");
+  return 0;
+}
+
+static int dumpSymtab(int argc, char **argv) {
+  for (StringRef F : make_range(argv + 1, argv + argc)) {
+    std::unique_ptr<MemoryBuffer> MB = check(MemoryBuffer::getFile(F), F);
+    std::unique_ptr<InputFile> Input =
+        check(InputFile::create(MB->getMemBufferRef()), F);
+
+    outs() << "target triple: " << Input->getTargetTriple() << '\n';
+    Triple TT(Input->getTargetTriple());
+
+    outs() << "source filename: " << Input->getSourceFileName() << '\n';
+
+    if (TT.isOSBinFormatCOFF())
+      outs() << "linker opts: " << Input->getCOFFLinkerOpts() << '\n';
+
+    std::vector<StringRef> ComdatTable = Input->getComdatTable();
+    for (const InputFile::Symbol &Sym : Input->symbols()) {
+      switch (Sym.getVisibility()) {
+      case GlobalValue::HiddenVisibility:
+        outs() << 'H';
+        break;
+      case GlobalValue::ProtectedVisibility:
+        outs() << 'P';
+        break;
+      case GlobalValue::DefaultVisibility:
+        outs() << 'D';
+        break;
+      }
+
+      auto PrintBool = [&](char C, bool B) { outs() << (B ? C : '-'); };
+      PrintBool('U', Sym.isUndefined());
+      PrintBool('C', Sym.isCommon());
+      PrintBool('W', Sym.isWeak());
+      PrintBool('I', Sym.isIndirect());
+      PrintBool('O', Sym.canBeOmittedFromSymbolTable());
+      PrintBool('T', Sym.isTLS());
+      PrintBool('X', Sym.isExecutable());
+      outs() << ' ' << Sym.getName() << '\n';
+
+      if (Sym.isCommon())
+        outs() << "         size " << Sym.getCommonSize() << " align "
+               << Sym.getCommonAlignment() << '\n';
+
+      int Comdat = Sym.getComdatIndex();
+      if (Comdat != -1)
+        outs() << "         comdat " << ComdatTable[Comdat] << '\n';
+
+      if (TT.isOSBinFormatCOFF() && Sym.isWeak() && Sym.isIndirect())
+        outs() << "         fallback " << Sym.getCOFFWeakExternalFallback() << '\n';
+    }
+
+    outs() << '\n';
+  }
+
+  return 0;
+}
+
+int main(int argc, char **argv) {
+  InitializeAllTargets();
+  InitializeAllTargetMCs();
+  InitializeAllAsmPrinters();
+  InitializeAllAsmParsers();
+
+  // FIXME: This should use llvm::cl subcommands, but it isn't currently
+  // possible to pass an argument not associated with a subcommand to a
+  // subcommand (e.g. -use-new-pm).
+  if (argc < 2)
+    return usage();
+
+  StringRef Subcommand = argv[1];
+  // Ensure that argv[0] is correct after adjusting argv/argc.
+  argv[1] = argv[0];
+  if (Subcommand == "dump-symtab")
+    return dumpSymtab(argc - 1, argv + 1);
+  if (Subcommand == "run")
+    return run(argc - 1, argv + 1);
+  return usage();
 }

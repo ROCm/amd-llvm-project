@@ -838,9 +838,7 @@ static bool LookupDirect(Sema &S, LookupResult &R, const DeclContext *DC) {
 
   // Perform lookup into this declaration context.
   DeclContext::lookup_result DR = DC->lookup(R.getLookupName());
-  for (DeclContext::lookup_iterator I = DR.begin(), E = DR.end(); I != E;
-       ++I) {
-    NamedDecl *D = *I;
+  for (NamedDecl *D : DR) {
     if ((D = R.getAcceptableDecl(D))) {
       R.addDecl(D);
       Found = true;
@@ -1328,70 +1326,8 @@ bool Sema::CppLookupName(LookupResult &R, Scope *S) {
   return !R.empty();
 }
 
-/// \brief Find the declaration that a class temploid member specialization was
-/// instantiated from, or the member itself if it is an explicit specialization.
-static Decl *getInstantiatedFrom(Decl *D, MemberSpecializationInfo *MSInfo) {
-  return MSInfo->isExplicitSpecialization() ? D : MSInfo->getInstantiatedFrom();
-}
-
-Module *Sema::getOwningModule(Decl *Entity) {
-  // If it's imported, grab its owning module.
-  Module *M = Entity->getImportedOwningModule();
-  if (M || !isa<NamedDecl>(Entity) || !cast<NamedDecl>(Entity)->isHidden())
-    return M;
-  assert(!Entity->isFromASTFile() &&
-         "hidden entity from AST file has no owning module");
-
-  if (!getLangOpts().ModulesLocalVisibility) {
-    // If we're not tracking visibility locally, the only way a declaration
-    // can be hidden and local is if it's hidden because it's parent is (for
-    // instance, maybe this is a lazily-declared special member of an imported
-    // class).
-    auto *Parent = cast<NamedDecl>(Entity->getDeclContext());
-    assert(Parent->isHidden() && "unexpectedly hidden decl");
-    return getOwningModule(Parent);
-  }
-
-  // It's local and hidden; grab or compute its owning module.
-  M = Entity->getLocalOwningModule();
-  if (M)
-    return M;
-
-  if (auto *Containing =
-          PP.getModuleContainingLocation(Entity->getLocation())) {
-    M = Containing;
-  } else if (Entity->isInvalidDecl() || Entity->getLocation().isInvalid()) {
-    // Don't bother tracking visibility for invalid declarations with broken
-    // locations.
-    cast<NamedDecl>(Entity)->setHidden(false);
-  } else {
-    // We need to assign a module to an entity that exists outside of any
-    // module, so that we can hide it from modules that we textually enter.
-    // Invent a fake module for all such entities.
-    if (!CachedFakeTopLevelModule) {
-      CachedFakeTopLevelModule =
-          PP.getHeaderSearchInfo().getModuleMap().findOrCreateModule(
-              "<top-level>", nullptr, false, false).first;
-
-      auto &SrcMgr = PP.getSourceManager();
-      SourceLocation StartLoc =
-          SrcMgr.getLocForStartOfFile(SrcMgr.getMainFileID());
-      auto &TopLevel = ModuleScopes.empty()
-                           ? VisibleModules
-                           : ModuleScopes[0].OuterVisibleModules;
-      TopLevel.setVisible(CachedFakeTopLevelModule, StartLoc);
-    }
-
-    M = CachedFakeTopLevelModule;
-  }
-
-  if (M)
-    Entity->setLocalOwningModule(M);
-  return M;
-}
-
-void Sema::makeMergedDefinitionVisible(NamedDecl *ND, SourceLocation Loc) {
-  if (auto *M = PP.getModuleContainingLocation(Loc))
+void Sema::makeMergedDefinitionVisible(NamedDecl *ND) {
+  if (auto *M = getCurrentModule())
     Context.mergeDefinitionIntoModule(ND, M);
   else
     // We're not building a module; just make the definition visible.
@@ -1401,7 +1337,7 @@ void Sema::makeMergedDefinitionVisible(NamedDecl *ND, SourceLocation Loc) {
   // visible too. They're not (necessarily) within a mergeable DeclContext.
   if (auto *TD = dyn_cast<TemplateDecl>(ND))
     for (auto *Param : *TD->getTemplateParameters())
-      makeMergedDefinitionVisible(Param, Loc);
+      makeMergedDefinitionVisible(Param);
 }
 
 /// \brief Find the module in which the given declaration was defined.
@@ -1415,12 +1351,11 @@ static Module *getDefiningModule(Sema &S, Decl *Entity) {
     if (CXXRecordDecl *Pattern = RD->getTemplateInstantiationPattern())
       Entity = Pattern;
   } else if (EnumDecl *ED = dyn_cast<EnumDecl>(Entity)) {
-    if (MemberSpecializationInfo *MSInfo = ED->getMemberSpecializationInfo())
-      Entity = getInstantiatedFrom(ED, MSInfo);
+    if (auto *Pattern = ED->getTemplateInstantiationPattern())
+      Entity = Pattern;
   } else if (VarDecl *VD = dyn_cast<VarDecl>(Entity)) {
-    // FIXME: Map from variable template specializations back to the template.
-    if (MemberSpecializationInfo *MSInfo = VD->getMemberSpecializationInfo())
-      Entity = getInstantiatedFrom(VD, MSInfo);
+    if (VarDecl *Pattern = VD->getTemplateInstantiationPattern())
+      Entity = Pattern;
   }
 
   // Walk up to the containing context. That might also have been instantiated
@@ -1485,11 +1420,46 @@ bool Sema::hasVisibleDefaultArgument(const NamedDecl *D,
                                      Modules);
 }
 
+template<typename Filter>
+static bool hasVisibleDeclarationImpl(Sema &S, const NamedDecl *D,
+                                      llvm::SmallVectorImpl<Module *> *Modules,
+                                      Filter F) {
+  for (auto *Redecl : D->redecls()) {
+    auto *R = cast<NamedDecl>(Redecl);
+    if (!F(R))
+      continue;
+
+    if (S.isVisible(R))
+      return true;
+
+    if (Modules) {
+      Modules->push_back(R->getOwningModule());
+      const auto &Merged = S.Context.getModulesWithMergedDefinition(R);
+      Modules->insert(Modules->end(), Merged.begin(), Merged.end());
+    }
+  }
+
+  return false;
+}
+
+bool Sema::hasVisibleExplicitSpecialization(
+    const NamedDecl *D, llvm::SmallVectorImpl<Module *> *Modules) {
+  return hasVisibleDeclarationImpl(*this, D, Modules, [](const NamedDecl *D) {
+    if (auto *RD = dyn_cast<CXXRecordDecl>(D))
+      return RD->getTemplateSpecializationKind() == TSK_ExplicitSpecialization;
+    if (auto *FD = dyn_cast<FunctionDecl>(D))
+      return FD->getTemplateSpecializationKind() == TSK_ExplicitSpecialization;
+    if (auto *VD = dyn_cast<VarDecl>(D))
+      return VD->getTemplateSpecializationKind() == TSK_ExplicitSpecialization;
+    llvm_unreachable("unknown explicit specialization kind");
+  });
+}
+
 bool Sema::hasVisibleMemberSpecialization(
     const NamedDecl *D, llvm::SmallVectorImpl<Module *> *Modules) {
   assert(isa<CXXRecordDecl>(D->getDeclContext()) &&
          "not a member specialization");
-  for (auto *Redecl : D->redecls()) {
+  return hasVisibleDeclarationImpl(*this, D, Modules, [](const NamedDecl *D) {
     // If the specialization is declared at namespace scope, then it's a member
     // specialization declaration. If it's lexically inside the class
     // definition then it was instantiated.
@@ -1497,19 +1467,8 @@ bool Sema::hasVisibleMemberSpecialization(
     // FIXME: This is a hack. There should be a better way to determine this.
     // FIXME: What about MS-style explicit specializations declared within a
     //        class definition?
-    if (Redecl->getLexicalDeclContext()->isFileContext()) {
-      auto *NonConstR = const_cast<NamedDecl*>(cast<NamedDecl>(Redecl));
-
-      if (isVisible(NonConstR))
-        return true;
-
-      if (Modules) {
-        Modules->push_back(getOwningModule(NonConstR));
-        const auto &Merged = Context.getModulesWithMergedDefinition(NonConstR);
-        Modules->insert(Modules->end(), Merged.begin(), Merged.end());
-      }
-    }
-  }
+    return D->getLexicalDeclContext()->isFileContext();
+  });
 
   return false;
 }
@@ -1524,24 +1483,19 @@ bool Sema::hasVisibleMemberSpecialization(
 /// your module can see, including those later on in your module).
 bool LookupResult::isVisibleSlow(Sema &SemaRef, NamedDecl *D) {
   assert(D->isHidden() && "should not call this: not in slow case");
-  Module *DeclModule = nullptr;
-  
-  if (SemaRef.getLangOpts().ModulesLocalVisibility) {
-    DeclModule = SemaRef.getOwningModule(D);
-    if (!DeclModule) {
-      // getOwningModule() may have decided the declaration should not be hidden.
-      assert(!D->isHidden() && "hidden decl not from a module");
-      return true;
-    }
 
-    // If the owning module is visible, and the decl is not module private,
-    // then the decl is visible too. (Module private is ignored within the same
-    // top-level module.)
-    if ((!D->isFromASTFile() || !D->isModulePrivate()) &&
-        (SemaRef.isModuleVisible(DeclModule) ||
-         SemaRef.hasVisibleMergedDefinition(D)))
-      return true;
-  }
+  Module *DeclModule = SemaRef.getOwningModule(D);
+  assert(DeclModule && "hidden decl not from a module");
+
+  // If the owning module is visible, and the decl is not module private,
+  // then the decl is visible too. (Module private is ignored within the same
+  // top-level module.)
+  // FIXME: Check the owning module for module-private declarations rather than
+  // assuming "same AST file" is the same thing as "same module".
+  if ((!D->isFromASTFile() || !D->isModulePrivate()) &&
+      (SemaRef.isModuleVisible(DeclModule) ||
+       SemaRef.hasVisibleMergedDefinition(D)))
+    return true;
 
   // If this declaration is not at namespace scope nor module-private,
   // then it is visible if its lexical parent has a visible definition.
@@ -1637,20 +1591,8 @@ static NamedDecl *findAcceptableDecl(Sema &SemaRef, NamedDecl *D) {
 bool Sema::hasVisibleDeclarationSlow(const NamedDecl *D,
                                      llvm::SmallVectorImpl<Module *> *Modules) {
   assert(!isVisible(D) && "not in slow case");
-
-  for (auto *Redecl : D->redecls()) {
-    auto *NonConstR = const_cast<NamedDecl*>(cast<NamedDecl>(Redecl));
-    if (isVisible(NonConstR))
-      return true;
-
-    if (Modules) {
-      Modules->push_back(getOwningModule(NonConstR));
-      const auto &Merged = Context.getModulesWithMergedDefinition(NonConstR);
-      Modules->insert(Modules->end(), Merged.begin(), Merged.end());
-    }
-  }
-
-  return false;
+  return hasVisibleDeclarationImpl(*this, D, Modules,
+                                   [](const NamedDecl *) { return true; });
 }
 
 NamedDecl *LookupResult::getAcceptableDeclSlow(NamedDecl *D) const {
@@ -2652,6 +2594,7 @@ addAssociatedClassesAndNamespaces(AssociatedLookup &Result, QualType Ty) {
       for (const auto &Arg : Proto->param_types())
         Queue.push_back(Arg.getTypePtr());
       // fallthrough
+      LLVM_FALLTHROUGH;
     }
     case Type::FunctionNoProto: {
       const FunctionType *FnType = cast<FunctionType>(T);
@@ -3454,7 +3397,8 @@ static void LookupVisibleDecls(DeclContext *Ctx, LookupResult &Result,
                                bool QualifiedNameLookup,
                                bool InBaseClass,
                                VisibleDeclConsumer &Consumer,
-                               VisibleDeclsRecord &Visited) {
+                               VisibleDeclsRecord &Visited,
+                               bool IncludeDependentBases = false) {
   if (!Ctx)
     return;
 
@@ -3510,7 +3454,8 @@ static void LookupVisibleDecls(DeclContext *Ctx, LookupResult &Result,
     ShadowContextRAII Shadow(Visited);
     for (auto I : Ctx->using_directives()) {
       LookupVisibleDecls(I->getNominatedNamespace(), Result,
-                         QualifiedNameLookup, InBaseClass, Consumer, Visited);
+                         QualifiedNameLookup, InBaseClass, Consumer, Visited,
+                         IncludeDependentBases);
     }
   }
 
@@ -3522,14 +3467,28 @@ static void LookupVisibleDecls(DeclContext *Ctx, LookupResult &Result,
     for (const auto &B : Record->bases()) {
       QualType BaseType = B.getType();
 
-      // Don't look into dependent bases, because name lookup can't look
-      // there anyway.
-      if (BaseType->isDependentType())
-        continue;
-
-      const RecordType *Record = BaseType->getAs<RecordType>();
-      if (!Record)
-        continue;
+      RecordDecl *RD;
+      if (BaseType->isDependentType()) {
+        if (!IncludeDependentBases) {
+          // Don't look into dependent bases, because name lookup can't look
+          // there anyway.
+          continue;
+        }
+        const auto *TST = BaseType->getAs<TemplateSpecializationType>();
+        if (!TST)
+          continue;
+        TemplateName TN = TST->getTemplateName();
+        const auto *TD =
+            dyn_cast_or_null<ClassTemplateDecl>(TN.getAsTemplateDecl());
+        if (!TD)
+          continue;
+        RD = TD->getTemplatedDecl();
+      } else {
+        const auto *Record = BaseType->getAs<RecordType>();
+        if (!Record)
+          continue;
+        RD = Record->getDecl();
+      }
 
       // FIXME: It would be nice to be able to determine whether referencing
       // a particular member would be ambiguous. For example, given
@@ -3552,8 +3511,8 @@ static void LookupVisibleDecls(DeclContext *Ctx, LookupResult &Result,
 
       // Find results in this base class (and its bases).
       ShadowContextRAII Shadow(Visited);
-      LookupVisibleDecls(Record->getDecl(), Result, QualifiedNameLookup,
-                         true, Consumer, Visited);
+      LookupVisibleDecls(RD, Result, QualifiedNameLookup, true, Consumer,
+                         Visited, IncludeDependentBases);
     }
   }
 
@@ -3722,7 +3681,8 @@ void Sema::LookupVisibleDecls(Scope *S, LookupNameKind Kind,
 
 void Sema::LookupVisibleDecls(DeclContext *Ctx, LookupNameKind Kind,
                               VisibleDeclConsumer &Consumer,
-                              bool IncludeGlobalScope) {
+                              bool IncludeGlobalScope,
+                              bool IncludeDependentBases) {
   LookupResult Result(*this, DeclarationName(), SourceLocation(), Kind);
   Result.setAllowHidden(Consumer.includeHiddenDecls());
   VisibleDeclsRecord Visited;
@@ -3730,7 +3690,8 @@ void Sema::LookupVisibleDecls(DeclContext *Ctx, LookupNameKind Kind,
     Visited.visitedContext(Context.getTranslationUnitDecl());
   ShadowContextRAII Shadow(Visited);
   ::LookupVisibleDecls(Ctx, Result, /*QualifiedNameLookup=*/true,
-                       /*InBaseClass=*/false, Consumer, Visited);
+                       /*InBaseClass=*/false, Consumer, Visited,
+                       IncludeDependentBases);
 }
 
 /// LookupOrCreateLabel - Do a name lookup of a label with the specified name.
@@ -3786,20 +3747,19 @@ static void LookupPotentialTypoResult(Sema &SemaRef,
                                       bool FindHidden);
 
 /// \brief Check whether the declarations found for a typo correction are
-/// visible, and if none of them are, convert the correction to an 'import
-/// a module' correction.
+/// visible. Set the correction's RequiresImport flag to true if none of the
+/// declarations are visible, false otherwise.
 static void checkCorrectionVisibility(Sema &SemaRef, TypoCorrection &TC) {
-  if (TC.begin() == TC.end())
-    return;
-
   TypoCorrection::decl_iterator DI = TC.begin(), DE = TC.end();
 
   for (/**/; DI != DE; ++DI)
     if (!LookupResult::isVisible(SemaRef, *DI))
       break;
-  // Nothing to do if all decls are visible.
-  if (DI == DE)
+  // No filtering needed if all decls are visible.
+  if (DI == DE) {
+    TC.setRequiresImport(false);
     return;
+  }
 
   llvm::SmallVector<NamedDecl*, 4> NewDecls(TC.begin(), DI);
   bool AnyVisibleDecls = !NewDecls.empty();
@@ -4969,8 +4929,6 @@ static NamedDecl *getDefinitionToImport(NamedDecl *D) {
 
 void Sema::diagnoseMissingImport(SourceLocation Loc, NamedDecl *Decl,
                                  MissingImportKind MIK, bool Recover) {
-  assert(!isVisible(Decl) && "missing import for non-hidden decl?");
-
   // Suggest importing a module providing the definition of this entity, if
   // possible.
   NamedDecl *Def = getDefinitionToImport(Decl);
@@ -5005,6 +4963,14 @@ void Sema::diagnoseMissingImport(SourceLocation UseLoc, NamedDecl *Decl,
                                  MissingImportKind MIK, bool Recover) {
   assert(!Modules.empty());
 
+  // Weed out duplicates from module list.
+  llvm::SmallVector<Module*, 8> UniqueModules;
+  llvm::SmallDenseSet<Module*, 8> UniqueModuleSet;
+  for (auto *M : Modules)
+    if (UniqueModuleSet.insert(M).second)
+      UniqueModules.push_back(M);
+  Modules = UniqueModules;
+
   if (Modules.size() > 1) {
     std::string ModuleList;
     unsigned N = 0;
@@ -5019,8 +4985,8 @@ void Sema::diagnoseMissingImport(SourceLocation UseLoc, NamedDecl *Decl,
 
     Diag(UseLoc, diag::err_module_unimported_use_multiple)
       << (int)MIK << Decl << ModuleList;
-  } else if (const FileEntry *E =
-                 PP.getModuleHeaderToIncludeForDiagnostics(UseLoc, DeclLoc)) {
+  } else if (const FileEntry *E = PP.getModuleHeaderToIncludeForDiagnostics(
+                 UseLoc, Modules[0], DeclLoc)) {
     // The right way to make the declaration visible is to include a header;
     // suggest doing so.
     //

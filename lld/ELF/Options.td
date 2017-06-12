@@ -22,6 +22,11 @@ def build_id: F<"build-id">, HelpText<"Generate build ID note">;
 
 def build_id_eq: J<"build-id=">, HelpText<"Generate build ID note">;
 
+def compress_debug_sections : J<"compress-debug-sections=">,
+  HelpText<"Compress DWARF debug sections">;
+
+def defsym: J<"defsym=">, HelpText<"Define a symbol alias">;
+
 def L: JoinedOrSeparate<["-"], "L">, MetaVarName<"<dir>">,
   HelpText<"Add a directory to the library search path">;
 
@@ -285,6 +290,7 @@ def alias_L__library_path: J<"library-path=">, Alias<L>;
 def alias_define_common_d: Flag<["-"], "d">, Alias<define_common>;
 def alias_define_common_dc: F<"dc">, Alias<define_common>;
 def alias_define_common_dp: F<"dp">, Alias<define_common>;
+def alias_defsym: S<"defsym">, Alias<defsym>;
 def alias_discard_all_x: Flag<["-"], "x">, Alias<discard_all>;
 def alias_discard_locals_X: Flag<["-"], "X">, Alias<discard_locals>;
 def alias_dynamic_list: J<"dynamic-list=">, Alias<dynamic_list>;
@@ -307,6 +313,7 @@ def alias_o_output2 : Separate<["--"], "output">, Alias<o>;
 def alias_pie_pic_executable: F<"pic-executable">, Alias<pie>;
 def alias_print_map_M: Flag<["-"], "M">, Alias<print_map>;
 def alias_relocatable_r: Flag<["-"], "r">, Alias<relocatable>;
+def alias_reproduce_eq: J<"reproduce=">, Alias<reproduce>;
 def alias_retain_symbols_file: S<"retain-symbols-file">, Alias<retain_symbols_file>;
 def alias_rpath_R: JoinedOrSeparate<["-"], "R">, Alias<rpath>;
 def alias_rpath_rpath: J<"rpath=">, Alias<rpath>;
@@ -339,6 +346,26 @@ def end_group_paren: Flag<["-"], ")">;
 def start_group: F<"start-group">;
 def start_group_paren: Flag<["-"], "(">;
 
+// LTO-related options.
+def lto_aa_pipeline: J<"lto-aa-pipeline=">,
+  HelpText<"AA pipeline to run during LTO. Used in conjunction with -lto-newpm-passes">;
+def lto_newpm_passes: J<"lto-newpm-passes=">,
+  HelpText<"Passes to run during LTO">;
+def lto_partitions: J<"lto-partitions=">,
+  HelpText<"Number of LTO codegen partitions">;
+def disable_verify: F<"disable-verify">;
+def mllvm: S<"mllvm">;
+def opt_remarks_filename: Separate<["--"], "opt-remarks-filename">,
+  HelpText<"YAML output file for optimization remarks">;
+def opt_remarks_with_hotness: Flag<["--"], "opt-remarks-with-hotness">,
+  HelpText<"Include hotness informations in the optimization remarks file">;
+def save_temps: F<"save-temps">;
+def thinlto_cache_dir: J<"thinlto-cache-dir=">,
+  HelpText<"Path to ThinLTO cached object file directory">;
+def thinlto_cache_policy: S<"thinlto-cache-policy">,
+  HelpText<"Pruning policy for the ThinLTO cache">;
+def thinlto_jobs: J<"thinlto-jobs=">, HelpText<"Number of ThinLTO jobs">;
+
 // Ignore LTO plugin-related options.
 // clang -flto passes -plugin and -plugin-opt to the linker. This is required
 // for ld.gold and ld.bfd to get LTO working. But it's not for lld which doesn't
@@ -360,6 +387,7 @@ def no_add_needed: F<"no-add-needed">;
 def no_allow_shlib_undefined: F<"no-allow-shlib-undefined">;
 def no_copy_dt_needed_entries: F<"no-copy-dt-needed-entries">,
   Alias<no_add_needed>;
+def no_keep_memory: F<"no-keep-memory">;
 def no_mmap_output_file: F<"no-mmap-output-file">;
 def no_warn_common: F<"no-warn-common">;
 def no_warn_mismatch: F<"no-warn-mismatch">;
@@ -377,23 +405,3 @@ def Qy : F<"Qy">;
 // Aliases for ignored options
 def alias_version_script_version_script: J<"version-script=">,
   Alias<version_script>;
-
-// LTO-related options.
-def lto_aa_pipeline: J<"lto-aa-pipeline=">,
-  HelpText<"AA pipeline to run during LTO. Used in conjunction with -lto-newpm-passes">;
-def lto_newpm_passes: J<"lto-newpm-passes=">,
-  HelpText<"Passes to run during LTO">;
-def lto_partitions: J<"lto-partitions=">,
-  HelpText<"Number of LTO codegen partitions">;
-def disable_verify: F<"disable-verify">;
-def mllvm: S<"mllvm">;
-def opt_remarks_filename: Separate<["--"], "opt-remarks-filename">,
-  HelpText<"YAML output file for optimization remarks">;
-def opt_remarks_with_hotness: Flag<["--"], "opt-remarks-with-hotness">,
-  HelpText<"Include hotness informations in the optimization remarks file">;
-def save_temps: F<"save-temps">;
-def thinlto_cache_dir: J<"thinlto-cache-dir=">,
-  HelpText<"Path to ThinLTO cached object file directory">;
-def thinlto_cache_policy: S<"thinlto-cache-policy">,
-  HelpText<"Pruning policy for the ThinLTO cache">;
-def thinlto_jobs: J<"thinlto-jobs=">, HelpText<"Number of ThinLTO jobs">;

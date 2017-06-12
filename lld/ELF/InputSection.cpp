@@ -20,9 +20,11 @@
 #include "Target.h"
 #include "Thunks.h"
 #include "llvm/Object/Decompressor.h"
+#include "llvm/Support/Compiler.h"
 #include "llvm/Support/Compression.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/Path.h"
+#include "llvm/Support/Threading.h"
 #include <mutex>
 
 using namespace llvm;
@@ -39,9 +41,7 @@ std::vector<InputSectionBase *> elf::InputSections;
 
 // Returns a string to construct an error message.
 std::string lld::toString(const InputSectionBase *Sec) {
-  // File can be absent if section is synthetic.
-  std::string FileName = Sec->File ? Sec->File->getName() : "<internal>";
-  return (FileName + ":(" + Sec->Name + ")").str();
+  return (toString(Sec->File) + ":(" + Sec->Name + ")").str();
 }
 
 template <class ELFT>
@@ -140,21 +140,24 @@ uint64_t SectionBase::getOffset(uint64_t Offset) const {
     return Offset;
   case Merge:
     const MergeInputSection *MS = cast<MergeInputSection>(this);
-    if (MS->MergeSec)
-      return MS->MergeSec->OutSecOff + MS->getOffset(Offset);
+    if (InputSection *IS = MS->getParent())
+      return IS->OutSecOff + MS->getOffset(Offset);
     return MS->getOffset(Offset);
   }
   llvm_unreachable("invalid section kind");
 }
 
 OutputSection *SectionBase::getOutputSection() {
+  InputSection *Sec;
   if (auto *IS = dyn_cast<InputSection>(this))
-    return IS->OutSec;
-  if (auto *MS = dyn_cast<MergeInputSection>(this))
-    return MS->MergeSec ? MS->MergeSec->OutSec : nullptr;
-  if (auto *EH = dyn_cast<EhInputSection>(this))
-    return EH->EHSec->OutSec;
-  return cast<OutputSection>(this);
+    Sec = IS;
+  else if (auto *MS = dyn_cast<MergeInputSection>(this))
+    Sec = MS->getParent();
+  else if (auto *EH = dyn_cast<EhInputSection>(this))
+    Sec = EH->getParent();
+  else
+    return cast<OutputSection>(this);
+  return Sec ? Sec->getParent() : nullptr;
 }
 
 // Uncompress section contents. Note that this function is called
@@ -174,16 +177,23 @@ void InputSectionBase::uncompress() {
   if (Error E = Dec.decompress({OutputBuf, Size}))
     fatal(toString(this) +
           ": decompress failed: " + llvm::toString(std::move(E)));
-  Data = ArrayRef<uint8_t>((uint8_t *)OutputBuf, Size);
+  this->Data = ArrayRef<uint8_t>((uint8_t *)OutputBuf, Size);
+  this->Flags &= ~(uint64_t)SHF_COMPRESSED;
 }
 
 uint64_t SectionBase::getOffset(const DefinedRegular &Sym) const {
   return getOffset(Sym.Value);
 }
 
-InputSectionBase *InputSectionBase::getLinkOrderDep() const {
-  if ((Flags & SHF_LINK_ORDER) && Link != 0)
-    return File->getSections()[Link];
+InputSection *InputSectionBase::getLinkOrderDep() const {
+  if ((Flags & SHF_LINK_ORDER) && Link != 0) {
+    InputSectionBase *L = File->getSections()[Link];
+    if (auto *IS = dyn_cast<InputSection>(L))
+      return IS;
+    error(
+        "Merge and .eh_frame sections are not supported with SHF_LINK_ORDER " +
+        toString(L));
+  }
   return nullptr;
 }
 
@@ -295,6 +305,27 @@ bool InputSectionBase::classof(const SectionBase *S) {
   return S->kind() != Output;
 }
 
+OutputSection *InputSection::getParent() const {
+  return cast_or_null<OutputSection>(Parent);
+}
+
+// Copy SHT_GROUP section contents. Used only for the -r option.
+template <class ELFT> void InputSection::copyShtGroup(uint8_t *Buf) {
+  // ELFT::Word is the 32-bit integral type in the target endianness.
+  typedef typename ELFT::Word u32;
+  ArrayRef<u32> From = getDataAs<u32>();
+  auto *To = reinterpret_cast<u32 *>(Buf);
+
+  // The first entry is not a section number but a flag.
+  *To++ = From[0];
+
+  // Adjust section numbers because section numbers in an input object
+  // files are different in the output.
+  ArrayRef<InputSectionBase *> Sections = this->File->getSections();
+  for (uint32_t Idx : From.slice(1))
+    *To++ = Sections[Idx]->getOutputSection()->SectionIndex;
+}
+
 InputSectionBase *InputSection::getRelocatedSection() {
   assert(this->Type == SHT_RELA || this->Type == SHT_REL);
   ArrayRef<InputSectionBase *> Sections = this->File->getSections();
@@ -324,9 +355,9 @@ void InputSection::copyRelocations(uint8_t *Buf, ArrayRef<RelTy> Rels) {
 
     // Output section VA is zero for -r, so r_offset is an offset within the
     // section, but for --emit-relocs it is an virtual address.
-    P->r_offset = RelocatedSection->OutSec->Addr +
+    P->r_offset = RelocatedSection->getOutputSection()->Addr +
                   RelocatedSection->getOffset(Rel.r_offset);
-    P->setSymbolAndType(In<ELFT>::SymTab->getSymbolIndex(&Body), Type,
+    P->setSymbolAndType(InX::SymTab->getSymbolIndex(&Body), Type,
                         Config->IsMips64EL);
 
     if (Body.Type == STT_SECTION) {
@@ -392,50 +423,64 @@ static uint64_t getAArch64UndefinedRelativeWeakVA(uint64_t Type, uint64_t A,
   }
 }
 
-template <class ELFT>
-static typename ELFT::uint
-getRelocTargetVA(uint32_t Type, int64_t A, typename ELFT::uint P,
-                 const SymbolBody &Body, RelExpr Expr) {
+// ARM SBREL relocations are of the form S + A - B where B is the static base
+// The ARM ABI defines base to be "addressing origin of the output segment
+// defining the symbol S". We defined the "addressing origin"/static base to be
+// the base of the PT_LOAD segment containing the Body.
+// The procedure call standard only defines a Read Write Position Independent
+// RWPI variant so in practice we should expect the static base to be the base
+// of the RW segment.
+static uint64_t getARMStaticBase(const SymbolBody &Body) {
+  OutputSection *OS = Body.getOutputSection();
+  if (!OS || !OS->FirstInPtLoad)
+    fatal("SBREL relocation to " + Body.getName() + " without static base\n");
+  return OS->FirstInPtLoad->Addr;
+}
+
+static uint64_t getRelocTargetVA(uint32_t Type, int64_t A, uint64_t P,
+                                 const SymbolBody &Body, RelExpr Expr) {
   switch (Expr) {
   case R_ABS:
   case R_RELAX_GOT_PC_NOPIC:
     return Body.getVA(A);
+  case R_ARM_SBREL:
+    return Body.getVA(A) - getARMStaticBase(Body);
   case R_GOT:
   case R_RELAX_TLS_GD_TO_IE_ABS:
-    return Body.getGotVA<ELFT>() + A;
+    return Body.getGotVA() + A;
   case R_GOTONLY_PC:
-    return In<ELFT>::Got->getVA() + A - P;
+    return InX::Got->getVA() + A - P;
   case R_GOTONLY_PC_FROM_END:
-    return In<ELFT>::Got->getVA() + A - P + In<ELFT>::Got->getSize();
+    return InX::Got->getVA() + A - P + InX::Got->getSize();
   case R_GOTREL:
-    return Body.getVA(A) - In<ELFT>::Got->getVA();
+    return Body.getVA(A) - InX::Got->getVA();
   case R_GOTREL_FROM_END:
-    return Body.getVA(A) - In<ELFT>::Got->getVA() - In<ELFT>::Got->getSize();
+    return Body.getVA(A) - InX::Got->getVA() - InX::Got->getSize();
   case R_GOT_FROM_END:
   case R_RELAX_TLS_GD_TO_IE_END:
-    return Body.getGotOffset() + A - In<ELFT>::Got->getSize();
+    return Body.getGotOffset() + A - InX::Got->getSize();
   case R_GOT_OFF:
     return Body.getGotOffset() + A;
   case R_GOT_PAGE_PC:
   case R_RELAX_TLS_GD_TO_IE_PAGE_PC:
-    return getAArch64Page(Body.getGotVA<ELFT>() + A) - getAArch64Page(P);
+    return getAArch64Page(Body.getGotVA() + A) - getAArch64Page(P);
   case R_GOT_PC:
   case R_RELAX_TLS_GD_TO_IE:
-    return Body.getGotVA<ELFT>() + A - P;
+    return Body.getGotVA() + A - P;
   case R_HINT:
   case R_NONE:
   case R_TLSDESC_CALL:
     llvm_unreachable("cannot relocate hint relocs");
   case R_MIPS_GOTREL:
-    return Body.getVA(A) - In<ELFT>::MipsGot->getGp();
+    return Body.getVA(A) - InX::MipsGot->getGp();
   case R_MIPS_GOT_GP:
-    return In<ELFT>::MipsGot->getGp() + A;
+    return InX::MipsGot->getGp() + A;
   case R_MIPS_GOT_GP_PC: {
     // R_MIPS_LO16 expression has R_MIPS_GOT_GP_PC type iif the target
     // is _gp_disp symbol. In that case we should use the following
     // formula for calculation "AHL + GP - P + 4". For details see p. 4-19 at
     // ftp://www.linux-mips.org/pub/linux/mips/doc/ABI/mipsabi.pdf
-    uint64_t V = In<ELFT>::MipsGot->getGp() + A - P;
+    uint64_t V = InX::MipsGot->getGp() + A - P;
     if (Type == R_MIPS_LO16)
       V += 4;
     return V;
@@ -444,24 +489,21 @@ getRelocTargetVA(uint32_t Type, int64_t A, typename ELFT::uint P,
     // If relocation against MIPS local symbol requires GOT entry, this entry
     // should be initialized by 'page address'. This address is high 16-bits
     // of sum the symbol's value and the addend.
-    return In<ELFT>::MipsGot->getVA() +
-           In<ELFT>::MipsGot->getPageEntryOffset(Body, A) -
-           In<ELFT>::MipsGot->getGp();
+    return InX::MipsGot->getVA() + InX::MipsGot->getPageEntryOffset(Body, A) -
+           InX::MipsGot->getGp();
   case R_MIPS_GOT_OFF:
   case R_MIPS_GOT_OFF32:
     // In case of MIPS if a GOT relocation has non-zero addend this addend
     // should be applied to the GOT entry content not to the GOT entry offset.
     // That is why we use separate expression type.
-    return In<ELFT>::MipsGot->getVA() +
-           In<ELFT>::MipsGot->getBodyEntryOffset(Body, A) -
-           In<ELFT>::MipsGot->getGp();
+    return InX::MipsGot->getVA() + InX::MipsGot->getBodyEntryOffset(Body, A) -
+           InX::MipsGot->getGp();
   case R_MIPS_TLSGD:
-    return In<ELFT>::MipsGot->getVA() + In<ELFT>::MipsGot->getTlsOffset() +
-           In<ELFT>::MipsGot->getGlobalDynOffset(Body) -
-           In<ELFT>::MipsGot->getGp();
+    return InX::MipsGot->getVA() + InX::MipsGot->getTlsOffset() +
+           InX::MipsGot->getGlobalDynOffset(Body) - InX::MipsGot->getGp();
   case R_MIPS_TLSLD:
-    return In<ELFT>::MipsGot->getVA() + In<ELFT>::MipsGot->getTlsOffset() +
-           In<ELFT>::MipsGot->getTlsIndexOff() - In<ELFT>::MipsGot->getGp();
+    return InX::MipsGot->getVA() + InX::MipsGot->getTlsOffset() +
+           InX::MipsGot->getTlsIndexOff() - InX::MipsGot->getGp();
   case R_PAGE_PC:
   case R_PLT_PAGE_PC:
     if (Body.isUndefined() && !Body.isLocal() && Body.symbol()->isWeak())
@@ -523,21 +565,20 @@ getRelocTargetVA(uint32_t Type, int64_t A, typename ELFT::uint P,
   case R_NEG_TLS:
     return Out::TlsPhdr->p_memsz - Body.getVA(A);
   case R_SIZE:
-    return Body.getSize<ELFT>() + A;
+    return A; // Body.getSize was already folded into the addend.
   case R_TLSDESC:
-    return In<ELFT>::Got->getGlobalDynAddr(Body) + A;
+    return InX::Got->getGlobalDynAddr(Body) + A;
   case R_TLSDESC_PAGE:
-    return getAArch64Page(In<ELFT>::Got->getGlobalDynAddr(Body) + A) -
+    return getAArch64Page(InX::Got->getGlobalDynAddr(Body) + A) -
            getAArch64Page(P);
   case R_TLSGD:
-    return In<ELFT>::Got->getGlobalDynOffset(Body) + A -
-           In<ELFT>::Got->getSize();
+    return InX::Got->getGlobalDynOffset(Body) + A - InX::Got->getSize();
   case R_TLSGD_PC:
-    return In<ELFT>::Got->getGlobalDynAddr(Body) + A - P;
+    return InX::Got->getGlobalDynAddr(Body) + A - P;
   case R_TLSLD:
-    return In<ELFT>::Got->getTlsIndexOff() + A - In<ELFT>::Got->getSize();
+    return InX::Got->getTlsIndexOff() + A - InX::Got->getSize();
   case R_TLSLD_PC:
-    return In<ELFT>::Got->getTlsIndexVA() + A - P;
+    return InX::Got->getTlsIndexVA() + A - P;
   }
   llvm_unreachable("Invalid expression");
 }
@@ -551,7 +592,6 @@ getRelocTargetVA(uint32_t Type, int64_t A, typename ELFT::uint P,
 // function as a performance optimization.
 template <class ELFT, class RelTy>
 void InputSection::relocateNonAlloc(uint8_t *Buf, ArrayRef<RelTy> Rels) {
-  typedef typename ELFT::uint uintX_t;
   for (const RelTy &Rel : Rels) {
     uint32_t Type = Rel.getType(Config->IsMips64EL);
     uint64_t Offset = getOffset(Rel.r_offset);
@@ -561,7 +601,7 @@ void InputSection::relocateNonAlloc(uint8_t *Buf, ArrayRef<RelTy> Rels) {
       Addend += Target->getImplicitAddend(BufLoc, Type);
 
     SymbolBody &Sym = this->getFile<ELFT>()->getRelocTargetSym(Rel);
-    RelExpr Expr = Target->getRelExpr(Type, Sym);
+    RelExpr Expr = Target->getRelExpr(Type, Sym, BufLoc);
     if (Expr == R_NONE)
       continue;
     if (Expr != R_ABS) {
@@ -569,11 +609,11 @@ void InputSection::relocateNonAlloc(uint8_t *Buf, ArrayRef<RelTy> Rels) {
       return;
     }
 
-    uintX_t AddrLoc = this->OutSec->Addr + Offset;
+    uint64_t AddrLoc = getParent()->Addr + Offset;
     uint64_t SymVA = 0;
     if (!Sym.isTls() || Out::TlsPhdr)
-      SymVA = SignExtend64<sizeof(uintX_t) * 8>(
-          getRelocTargetVA<ELFT>(Type, Addend, AddrLoc, Sym, R_ABS));
+      SymVA = SignExtend64<sizeof(typename ELFT::uint) * 8>(
+          getRelocTargetVA(Type, Addend, AddrLoc, Sym, R_ABS));
     Target->relocateOne(BufLoc, Type, SymVA);
   }
 }
@@ -584,29 +624,37 @@ template <class ELFT> elf::ObjectFile<ELFT> *InputSectionBase::getFile() const {
 
 template <class ELFT>
 void InputSectionBase::relocate(uint8_t *Buf, uint8_t *BufEnd) {
+  if (Flags & SHF_ALLOC)
+    relocateAlloc(Buf, BufEnd);
+  else
+    relocateNonAlloc<ELFT>(Buf, BufEnd);
+}
+
+template <class ELFT>
+void InputSectionBase::relocateNonAlloc(uint8_t *Buf, uint8_t *BufEnd) {
   // scanReloc function in Writer.cpp constructs Relocations
   // vector only for SHF_ALLOC'ed sections. For other sections,
   // we handle relocations directly here.
-  auto *IS = dyn_cast<InputSection>(this);
-  if (IS && !(IS->Flags & SHF_ALLOC)) {
-    if (IS->AreRelocsRela)
-      IS->relocateNonAlloc<ELFT>(Buf, IS->template relas<ELFT>());
-    else
-      IS->relocateNonAlloc<ELFT>(Buf, IS->template rels<ELFT>());
-    return;
-  }
+  auto *IS = cast<InputSection>(this);
+  assert(!(IS->Flags & SHF_ALLOC));
+  if (IS->AreRelocsRela)
+    IS->relocateNonAlloc<ELFT>(Buf, IS->template relas<ELFT>());
+  else
+    IS->relocateNonAlloc<ELFT>(Buf, IS->template rels<ELFT>());
+}
 
-  typedef typename ELFT::uint uintX_t;
-  const unsigned Bits = sizeof(uintX_t) * 8;
+void InputSectionBase::relocateAlloc(uint8_t *Buf, uint8_t *BufEnd) {
+  assert(Flags & SHF_ALLOC);
+  const unsigned Bits = Config->Wordsize * 8;
   for (const Relocation &Rel : Relocations) {
     uint64_t Offset = getOffset(Rel.Offset);
     uint8_t *BufLoc = Buf + Offset;
     uint32_t Type = Rel.Type;
 
-    uintX_t AddrLoc = getOutputSection()->Addr + Offset;
+    uint64_t AddrLoc = getOutputSection()->Addr + Offset;
     RelExpr Expr = Rel.Expr;
-    uint64_t TargetVA = SignExtend64<Bits>(
-        getRelocTargetVA<ELFT>(Type, Rel.Addend, AddrLoc, *Rel.Sym, Expr));
+    uint64_t TargetVA = SignExtend64(
+        getRelocTargetVA(Type, Rel.Addend, AddrLoc, *Rel.Sym, Expr), Bits);
 
     switch (Expr) {
     case R_RELAX_GOT_PC:
@@ -633,7 +681,7 @@ void InputSectionBase::relocate(uint8_t *Buf, uint8_t *BufEnd) {
       // Patch a nop (0x60000000) to a ld.
       if (BufLoc + 8 <= BufEnd && read32be(BufLoc + 4) == 0x60000000)
         write32be(BufLoc + 4, 0xe8410028); // ld %r2, 40(%r1)
-    // fallthrough
+      LLVM_FALLTHROUGH;
     default:
       Target->relocateOne(BufLoc, Type, TargetVA);
       break;
@@ -663,11 +711,15 @@ template <class ELFT> void InputSection::writeTo(uint8_t *Buf) {
     return;
   }
 
-  // Copy section contents from source object file to output file.
-  ArrayRef<uint8_t> Data = this->Data;
-  memcpy(Buf + OutSecOff, Data.data(), Data.size());
+  // If -r is given, we may have a SHT_GROUP section.
+  if (this->Type == SHT_GROUP) {
+    copyShtGroup<ELFT>(Buf + OutSecOff);
+    return;
+  }
 
-  // Iterate over all relocation sections that apply to this section.
+  // Copy section contents from source object file to output file
+  // and then apply relocations.
+  memcpy(Buf + OutSecOff, Data.data(), Data.size());
   uint8_t *BufEnd = Buf + OutSecOff + Data.size();
   this->relocate<ELFT>(Buf, BufEnd);
 }
@@ -687,6 +739,10 @@ EhInputSection::EhInputSection(elf::ObjectFile<ELFT> *F,
   // usually no relocations that point to .eh_frames. Otherwise,
   // the garbage collector would drop all .eh_frame sections.
   this->Live = true;
+}
+
+SyntheticSection *EhInputSection::getParent() const {
+  return cast_or_null<SyntheticSection>(Parent);
 }
 
 bool EhInputSection::classof(const SectionBase *S) {
@@ -755,6 +811,10 @@ static size_t findNull(ArrayRef<uint8_t> A, size_t EntSize) {
       return I;
   }
   return StringRef::npos;
+}
+
+SyntheticSection *MergeInputSection::getParent() const {
+  return cast_or_null<SyntheticSection>(Parent);
 }
 
 // Split SHF_STRINGS section. Such section is a sequence of
@@ -853,7 +913,7 @@ const SectionPiece *MergeInputSection::getSectionPiece(uint64_t Offset) const {
 // it is not just an addition to a base output offset.
 uint64_t MergeInputSection::getOffset(uint64_t Offset) const {
   // Initialize OffsetMap lazily.
-  std::call_once(InitOffsetMap, [&] {
+  llvm::call_once(InitOffsetMap, [&] {
     OffsetMap.reserve(Pieces.size());
     for (const SectionPiece &Piece : Pieces)
       OffsetMap[Piece.InputOff] = Piece.OutputOff;

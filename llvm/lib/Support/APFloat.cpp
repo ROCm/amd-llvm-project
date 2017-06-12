@@ -37,6 +37,10 @@
 
 using namespace llvm;
 
+// TODO: Remove these and use APInt qualified types directly.
+typedef APInt::WordType integerPart;
+const unsigned int integerPartWidth = APInt::APINT_BITS_PER_WORD;
+
 /// A macro used to combine two fcCategory enums into one key which can be used
 /// in a switch statement to classify how the interaction of two APFloat's
 /// categories affects an operation.
@@ -1555,11 +1559,13 @@ IEEEFloat::opStatus IEEEFloat::divideSpecials(const IEEEFloat &rhs) {
   case PackCategoriesIntoKey(fcInfinity, fcNaN):
     category = fcNaN;
     copySignificand(rhs);
+    LLVM_FALLTHROUGH;
   case PackCategoriesIntoKey(fcNaN, fcZero):
   case PackCategoriesIntoKey(fcNaN, fcNormal):
   case PackCategoriesIntoKey(fcNaN, fcInfinity):
   case PackCategoriesIntoKey(fcNaN, fcNaN):
     sign = false;
+    LLVM_FALLTHROUGH;
   case PackCategoriesIntoKey(fcInfinity, fcZero):
   case PackCategoriesIntoKey(fcInfinity, fcNormal):
   case PackCategoriesIntoKey(fcZero, fcInfinity):
@@ -1740,44 +1746,20 @@ IEEEFloat::opStatus IEEEFloat::remainder(const IEEEFloat &rhs) {
   return fs;
 }
 
-/* Normalized llvm frem (C fmod).
-   This is not currently correct in all cases.  */
+/* Normalized llvm frem (C fmod). */
 IEEEFloat::opStatus IEEEFloat::mod(const IEEEFloat &rhs) {
   opStatus fs;
   fs = modSpecials(rhs);
 
-  if (isFiniteNonZero() && rhs.isFiniteNonZero()) {
-    IEEEFloat V = *this;
-    unsigned int origSign = sign;
-
-    fs = V.divide(rhs, rmNearestTiesToEven);
-    if (fs == opDivByZero)
-      return fs;
-
-    int parts = partCount();
-    integerPart *x = new integerPart[parts];
-    bool ignored;
-    fs = V.convertToInteger(makeMutableArrayRef(x, parts),
-                            parts * integerPartWidth, true, rmTowardZero,
-                            &ignored);
-    if (fs == opInvalidOp) {
-      delete[] x;
-      return fs;
-    }
-
-    fs = V.convertFromZeroExtendedInteger(x, parts * integerPartWidth, true,
-                                          rmNearestTiesToEven);
-    assert(fs==opOK);   // should always work
-
-    fs = V.multiply(rhs, rmNearestTiesToEven);
-    assert(fs==opOK || fs==opInexact);   // should not overflow or underflow
-
+  while (isFiniteNonZero() && rhs.isFiniteNonZero() &&
+         compareAbsoluteValue(rhs) != cmpLessThan) {
+    IEEEFloat V = scalbn(rhs, ilogb(*this) - ilogb(rhs), rmNearestTiesToEven);
+    if (compareAbsoluteValue(V) == cmpLessThan)
+      V = scalbn(V, -1, rmNearestTiesToEven);
+    V.sign = sign;
+  
     fs = subtract(V, rmNearestTiesToEven);
-    assert(fs==opOK || fs==opInexact);   // likewise
-
-    if (isZero())
-      sign = origSign;    // IEEE754 requires this
-    delete[] x;
+    assert(fs==opOK);
   }
   return fs;
 }
@@ -3413,7 +3395,7 @@ namespace {
 }
 
 void IEEEFloat::toString(SmallVectorImpl<char> &Str, unsigned FormatPrecision,
-                         unsigned FormatMaxPadding) const {
+                         unsigned FormatMaxPadding, bool TruncateZero) const {
   switch (category) {
   case fcInfinity:
     if (isNegative())
@@ -3427,9 +3409,16 @@ void IEEEFloat::toString(SmallVectorImpl<char> &Str, unsigned FormatPrecision,
     if (isNegative())
       Str.push_back('-');
 
-    if (!FormatMaxPadding)
-      append(Str, "0.0E+0");
-    else
+    if (!FormatMaxPadding) {
+      if (TruncateZero)
+        append(Str, "0.0E+0");
+      else {
+        append(Str, "0.0");
+        if (FormatPrecision > 1)
+          Str.append(FormatPrecision - 1, '0');
+        append(Str, "e+00");
+      }
+    } else
       Str.push_back('0');
     return;
 
@@ -3462,7 +3451,7 @@ void IEEEFloat::toString(SmallVectorImpl<char> &Str, unsigned FormatPrecision,
   // Ignore trailing binary zeros.
   int trailingZeros = significand.countTrailingZeros();
   exp += trailingZeros;
-  significand = significand.lshr(trailingZeros);
+  significand.lshrInPlace(trailingZeros);
 
   // Change the exponent from 2^e to 10^e.
   if (exp == 0) {
@@ -3563,12 +3552,16 @@ void IEEEFloat::toString(SmallVectorImpl<char> &Str, unsigned FormatPrecision,
 
     Str.push_back(buffer[NDigits-1]);
     Str.push_back('.');
-    if (NDigits == 1)
+    if (NDigits == 1 && TruncateZero)
       Str.push_back('0');
     else
       for (unsigned I = 1; I != NDigits; ++I)
         Str.push_back(buffer[NDigits-1-I]);
-    Str.push_back('E');
+    // Fill with zeros up to FormatPrecision.
+    if (!TruncateZero && FormatPrecision > NDigits - 1)
+      Str.append(FormatPrecision - NDigits + 1, '0');
+    // For !TruncateZero we use lower 'e'.
+    Str.push_back(TruncateZero ? 'E' : 'e');
 
     Str.push_back(exp >= 0 ? '+' : '-');
     if (exp < 0) exp = -exp;
@@ -3577,6 +3570,9 @@ void IEEEFloat::toString(SmallVectorImpl<char> &Str, unsigned FormatPrecision,
       expbuf.push_back((char) ('0' + (exp % 10)));
       exp /= 10;
     } while (exp);
+    // Exponent always at least two digits if we do not truncate zeros.
+    if (!TruncateZero && expbuf.size() < 2)
+      expbuf.push_back('0');
     for (unsigned I = 0, E = expbuf.size(); I != E; ++I)
       Str.push_back(expbuf[E-1-I]);
     return;
@@ -4382,10 +4378,11 @@ bool DoubleAPFloat::isInteger() const {
 
 void DoubleAPFloat::toString(SmallVectorImpl<char> &Str,
                              unsigned FormatPrecision,
-                             unsigned FormatMaxPadding) const {
+                             unsigned FormatMaxPadding,
+                             bool TruncateZero) const {
   assert(Semantics == &semPPCDoubleDouble && "Unexpected Semantics");
   APFloat(semPPCDoubleDoubleLegacy, bitcastToAPInt())
-      .toString(Str, FormatPrecision, FormatMaxPadding);
+      .toString(Str, FormatPrecision, FormatMaxPadding, TruncateZero);
 }
 
 bool DoubleAPFloat::getExactInverse(APFloat *inv) const {

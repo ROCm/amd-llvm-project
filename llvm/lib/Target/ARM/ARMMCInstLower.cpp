@@ -25,9 +25,9 @@
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/MachineOperand.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
-#include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCInstBuilder.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -211,11 +211,9 @@ void ARMAsmPrinter::EmitSled(const MachineInstr &MI, SledKind Kind)
     .addImm(ARMCC::AL).addReg(0));
 
   MCInst Noop;
-  Subtarget->getInstrInfo()->getNoopForElfTarget(Noop);
+  Subtarget->getInstrInfo()->getNoop(Noop);
   for (int8_t I = 0; I < NoopsInSledCount; I++)
-  {
     OutStreamer->EmitInstruction(Noop, getSubtargetInfo());
-  }
 
   OutStreamer->EmitLabel(Target);
   recordSled(CurSled, MI, Kind);

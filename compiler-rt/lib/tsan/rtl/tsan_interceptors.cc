@@ -18,6 +18,7 @@
 #include "sanitizer_common/sanitizer_linux.h"
 #include "sanitizer_common/sanitizer_platform_limits_posix.h"
 #include "sanitizer_common/sanitizer_placement_new.h"
+#include "sanitizer_common/sanitizer_posix.h"
 #include "sanitizer_common/sanitizer_stacktrace.h"
 #include "sanitizer_common/sanitizer_tls_get_addr.h"
 #include "interception/interception.h"
@@ -29,9 +30,6 @@
 #include "tsan_mman.h"
 #include "tsan_fd.h"
 
-#if SANITIZER_POSIX
-#include "sanitizer_common/sanitizer_posix.h"
-#endif
 
 using namespace __tsan;  // NOLINT
 
@@ -45,13 +43,6 @@ using namespace __tsan;  // NOLINT
 #define __errno_location __errno
 #define mallopt(a, b)
 #endif
-
-#if SANITIZER_LINUX || SANITIZER_FREEBSD
-#define PTHREAD_CREATE_DETACHED 1
-#elif SANITIZER_MAC
-#define PTHREAD_CREATE_DETACHED 2
-#endif
-
 
 #ifdef __mips__
 const int kSigCount = 129;
@@ -219,7 +210,7 @@ struct ThreadSignalContext {
 // The object is 64-byte aligned, because we want hot data to be located in
 // a single cache line if possible (it's accessed in every interceptor).
 static ALIGNED(64) char libignore_placeholder[sizeof(LibIgnore)];
-static LibIgnore *libignore() {
+LibIgnore *libignore() {
   return reinterpret_cast<LibIgnore*>(&libignore_placeholder[0]);
 }
 
@@ -278,6 +269,7 @@ ScopedInterceptor::~ScopedInterceptor() {
 void ScopedInterceptor::EnableIgnores() {
   if (ignoring_) {
     ThreadIgnoreBegin(thr_, pc_, false);
+    if (flags()->ignore_noninstrumented_modules) thr_->suppress_reports++;
     if (in_ignored_lib_) {
       DCHECK(!thr_->in_ignored_lib);
       thr_->in_ignored_lib = true;
@@ -288,6 +280,7 @@ void ScopedInterceptor::EnableIgnores() {
 void ScopedInterceptor::DisableIgnores() {
   if (ignoring_) {
     ThreadIgnoreEnd(thr_, pc_);
+    if (flags()->ignore_noninstrumented_modules) thr_->suppress_reports--;
     if (in_ignored_lib_) {
       DCHECK(thr_->in_ignored_lib);
       thr_->in_ignored_lib = false;
@@ -928,8 +921,7 @@ TSAN_INTERCEPTOR(int, pthread_create,
     ThreadIgnoreEnd(thr, pc);
   }
   if (res == 0) {
-    int tid = ThreadCreate(thr, pc, *(uptr*)th,
-                           detached == PTHREAD_CREATE_DETACHED);
+    int tid = ThreadCreate(thr, pc, *(uptr*)th, IsStateDetached(detached));
     CHECK_NE(tid, 0);
     // Synchronization on p.tid serves two purposes:
     // 1. ThreadCreate must finish before the new thread starts.

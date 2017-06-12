@@ -20,11 +20,11 @@
 #include "llvm/ExecutionEngine/ExecutionEngine.h"
 #include "llvm/ExecutionEngine/GenericValue.h"
 #include "llvm/ExecutionEngine/JITSymbol.h"
-#include "llvm/ExecutionEngine/RuntimeDyld.h"
 #include "llvm/ExecutionEngine/Orc/CompileUtils.h"
 #include "llvm/ExecutionEngine/Orc/IRCompileLayer.h"
 #include "llvm/ExecutionEngine/Orc/LazyEmittingLayer.h"
 #include "llvm/ExecutionEngine/Orc/RTDyldObjectLinkingLayer.h"
+#include "llvm/ExecutionEngine/RuntimeDyld.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Mangler.h"
 #include "llvm/Object/Archive.h"
@@ -34,10 +34,10 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
+#include <algorithm>
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
-#include <algorithm>
 #include <map>
 #include <memory>
 #include <set>
@@ -94,9 +94,8 @@ class OrcMCJITReplacement : public ExecutionEngine {
       return ClientMM->registerEHFrames(Addr, LoadAddr, Size);
     }
 
-    void deregisterEHFrames(uint8_t *Addr, uint64_t LoadAddr,
-                            size_t Size) override {
-      return ClientMM->deregisterEHFrames(Addr, LoadAddr, Size);
+    void deregisterEHFrames() override {
+      return ClientMM->deregisterEHFrames();
     }
 
     void notifyObjectLoaded(RuntimeDyld &RTDyld,

@@ -104,6 +104,10 @@ private:
   void addUSRsOfCtorDtors(const CXXRecordDecl *RecordDecl) {
     RecordDecl = RecordDecl->getDefinition();
 
+    // Skip if the CXXRecordDecl doesn't have definition.
+    if (!RecordDecl)
+      return;
+
     for (const auto *CtorDecl : RecordDecl->ctors())
       USRSet.insert(getUSRForDecl(CtorDecl));
 
@@ -141,9 +145,9 @@ public:
                            ArrayRef<std::string> QualifiedNames,
                            std::vector<std::string> &SpellingNames,
                            std::vector<std::vector<std::string>> &USRList,
-                           bool &ErrorOccurred)
+                           bool Force, bool &ErrorOccurred)
       : SymbolOffsets(SymbolOffsets), QualifiedNames(QualifiedNames),
-        SpellingNames(SpellingNames), USRList(USRList),
+        SpellingNames(SpellingNames), USRList(USRList), Force(Force),
         ErrorOccurred(ErrorOccurred) {}
 
 private:
@@ -178,6 +182,10 @@ private:
         ErrorOccurred = true;
         return false;
       }
+
+      if (Force)
+        return true;
+
       unsigned CouldNotFindSymbolNamed = Engine.getCustomDiagID(
           DiagnosticsEngine::Error, "clang-rename could not find symbol %0");
       Engine.Report(CouldNotFindSymbolNamed) << QualifiedName;
@@ -214,12 +222,14 @@ private:
   ArrayRef<std::string> QualifiedNames;
   std::vector<std::string> &SpellingNames;
   std::vector<std::vector<std::string>> &USRList;
+  bool Force;
   bool &ErrorOccurred;
 };
 
 std::unique_ptr<ASTConsumer> USRFindingAction::newASTConsumer() {
   return llvm::make_unique<NamedDeclFindingConsumer>(
-      SymbolOffsets, QualifiedNames, SpellingNames, USRList, ErrorOccurred);
+      SymbolOffsets, QualifiedNames, SpellingNames, USRList, Force,
+      ErrorOccurred);
 }
 
 } // namespace rename

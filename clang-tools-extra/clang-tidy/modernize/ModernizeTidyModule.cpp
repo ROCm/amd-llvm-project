@@ -19,6 +19,7 @@
 #include "RawStringLiteralCheck.h"
 #include "RedundantVoidArgCheck.h"
 #include "ReplaceAutoPtrCheck.h"
+#include "ReplaceRandomShuffleCheck.h"
 #include "ReturnBracedInitListCheck.h"
 #include "ShrinkToFitCheck.h"
 #include "UseAutoCheck.h"
@@ -27,6 +28,7 @@
 #include "UseEmplaceCheck.h"
 #include "UseEqualsDefaultCheck.h"
 #include "UseEqualsDeleteCheck.h"
+#include "UseNoexceptCheck.h"
 #include "UseNullptrCheck.h"
 #include "UseOverrideCheck.h"
 #include "UseTransparentFunctorsCheck.h"
@@ -54,6 +56,8 @@ public:
         "modernize-redundant-void-arg");
     CheckFactories.registerCheck<ReplaceAutoPtrCheck>(
         "modernize-replace-auto-ptr");
+    CheckFactories.registerCheck<ReplaceRandomShuffleCheck>(
+        "modernize-replace-random-shuffle");
     CheckFactories.registerCheck<ReturnBracedInitListCheck>(
         "modernize-return-braced-init-list");
     CheckFactories.registerCheck<ShrinkToFitCheck>("modernize-shrink-to-fit");
@@ -66,6 +70,7 @@ public:
     CheckFactories.registerCheck<UseEqualsDefaultCheck>("modernize-use-equals-default");
     CheckFactories.registerCheck<UseEqualsDeleteCheck>(
         "modernize-use-equals-delete");
+    CheckFactories.registerCheck<UseNoexceptCheck>("modernize-use-noexcept");
     CheckFactories.registerCheck<UseNullptrCheck>("modernize-use-nullptr");
     CheckFactories.registerCheck<UseOverrideCheck>("modernize-use-override");
     CheckFactories.registerCheck<UseTransparentFunctorsCheck>(

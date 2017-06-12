@@ -12,11 +12,12 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/Transforms/Scalar/MemCpyOptimizer.h"
 #include "llvm/ADT/DenseSet.h"
-#include "llvm/ADT/iterator_range.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
-#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/iterator_range.h"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/GlobalsModRef.h"
 #include "llvm/Analysis/MemoryDependenceAnalysis.h"
@@ -31,12 +32,12 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GetElementPtrTypeIterator.h"
 #include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Intrinsics.h"
-#include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
@@ -49,7 +50,6 @@
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Scalar.h"
-#include "llvm/Transforms/Scalar/MemCpyOptimizer.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include <algorithm>
 #include <cassert>
@@ -1323,7 +1323,7 @@ bool MemCpyOptPass::processByValArgument(CallSite CS, unsigned ArgNo) {
 
   // Get the alignment of the byval.  If the call doesn't specify the alignment,
   // then it is some target specific value that we can't know.
-  unsigned ByValAlign = CS.getParamAlignment(ArgNo+1);
+  unsigned ByValAlign = CS.getParamAlignment(ArgNo);
   if (ByValAlign == 0) return false;
 
   // If it is greater than the memcpy, then we check to see if we can force the
@@ -1333,6 +1333,11 @@ bool MemCpyOptPass::processByValArgument(CallSite CS, unsigned ArgNo) {
   if (MDep->getAlignment() < ByValAlign &&
       getOrEnforceKnownAlignment(MDep->getSource(), ByValAlign, DL,
                                  CS.getInstruction(), &AC, &DT) < ByValAlign)
+    return false;
+
+  // The address space of the memcpy source must match the byval argument
+  if (MDep->getSource()->getType()->getPointerAddressSpace() !=
+      ByValArg->getType()->getPointerAddressSpace())
     return false;
 
   // Verify that the copied-from memory doesn't change in between the memcpy and

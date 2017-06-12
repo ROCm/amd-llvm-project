@@ -149,18 +149,28 @@ StringRef sys::detail::getHostCPUNameForARM(
   // The cpuid register on arm is not accessible from user space. On Linux,
   // it is exposed through the /proc/cpuinfo file.
 
-  // Read 1024 bytes from /proc/cpuinfo, which should contain the CPU part line
+  // Read 32 lines from /proc/cpuinfo, which should contain the CPU part line
   // in all cases.
   SmallVector<StringRef, 32> Lines;
   ProcCpuinfoContent.split(Lines, "\n");
 
   // Look for the CPU implementer line.
   StringRef Implementer;
-  for (unsigned I = 0, E = Lines.size(); I != E; ++I)
+  StringRef Hardware;
+  for (unsigned I = 0, E = Lines.size(); I != E; ++I) {
     if (Lines[I].startswith("CPU implementer"))
       Implementer = Lines[I].substr(15).ltrim("\t :");
+    if (Lines[I].startswith("Hardware"))
+      Hardware = Lines[I].substr(8).ltrim("\t :");
+  }
 
-  if (Implementer == "0x41") // ARM Ltd.
+  if (Implementer == "0x41") { // ARM Ltd.
+    // MSM8992/8994 may give cpu part for the core that the kernel is running on,
+    // which is undeterministic and wrong. Always return cortex-a53 for these SoC.
+    if (Hardware.endswith("MSM8994") || Hardware.endswith("MSM8996"))
+      return "cortex-a53";
+
+
     // Look for the CPU part line.
     for (unsigned I = 0, E = Lines.size(); I != E; ++I)
       if (Lines[I].startswith("CPU part"))
@@ -179,7 +189,13 @@ StringRef sys::detail::getHostCPUNameForARM(
             .Case("0xc20", "cortex-m0")
             .Case("0xc23", "cortex-m3")
             .Case("0xc24", "cortex-m4")
+            .Case("0xd04", "cortex-a35")
+            .Case("0xd03", "cortex-a53")
+            .Case("0xd07", "cortex-a57")
+            .Case("0xd08", "cortex-a72")
+            .Case("0xd09", "cortex-a73")
             .Default("generic");
+  }
 
   if (Implementer == "0x51") // Qualcomm Technologies, Inc.
     // Look for the CPU part line.
@@ -190,6 +206,8 @@ StringRef sys::detail::getHostCPUNameForARM(
         // contents are specified in the various processor manuals.
         return StringSwitch<const char *>(Lines[I].substr(8).ltrim("\t :"))
             .Case("0x06f", "krait") // APQ8064
+            .Case("0x201", "kryo")
+            .Case("0x205", "kryo")
             .Default("generic");
 
   return "generic";
@@ -1199,7 +1217,7 @@ StringRef sys::getHostCPUName() {
   const StringRef& Content = P ? P->getBuffer() : "";
   return detail::getHostCPUNameForPowerPC(Content);
 }
-#elif defined(__linux__) && defined(__arm__)
+#elif defined(__linux__) && (defined(__arm__) || defined(__aarch64__))
 StringRef sys::getHostCPUName() {
   std::unique_ptr<llvm::MemoryBuffer> P = getProcCpuinfoContent();
   const StringRef& Content = P ? P->getBuffer() : "";
@@ -1227,6 +1245,7 @@ static int computeHostNumPhysicalCores() {
   if (std::error_code EC = Text.getError()) {
     llvm::errs() << "Can't read "
                  << "/proc/cpuinfo: " << EC.message() << "\n";
+    return -1;
   }
   SmallVector<StringRef, 8> strs;
   (*Text)->getBuffer().split(strs, "\n", /*MaxSplit=*/-1,
@@ -1344,6 +1363,7 @@ bool sys::getHostCPUFeatures(StringMap<bool> &Features) {
   Features["sse4a"] = HasExtLeaf1 && ((ECX >> 6) & 1);
   Features["prfchw"] = HasExtLeaf1 && ((ECX >> 8) & 1);
   Features["xop"] = HasExtLeaf1 && ((ECX >> 11) & 1) && HasAVXSave;
+  Features["lwp"] = HasExtLeaf1 && ((ECX >> 15) & 1);
   Features["fma4"] = HasExtLeaf1 && ((ECX >> 16) & 1) && HasAVXSave;
   Features["tbm"] = HasExtLeaf1 && ((ECX >> 21) & 1);
   Features["mwaitx"] = HasExtLeaf1 && ((ECX >> 29) & 1);
@@ -1381,6 +1401,7 @@ bool sys::getHostCPUFeatures(StringMap<bool> &Features) {
 
   Features["prefetchwt1"] = HasLeaf7 && (ECX & 1);
   Features["avx512vbmi"] = HasLeaf7 && ((ECX >> 1) & 1) && HasAVX512Save;
+  Features["avx512vpopcntdq"] = HasLeaf7 && ((ECX >> 14) & 1) && HasAVX512Save;  
   // Enable protection keys
   Features["pku"] = HasLeaf7 && ((ECX >> 4) & 1);
 

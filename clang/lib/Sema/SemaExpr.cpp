@@ -171,9 +171,14 @@ DiagnoseAvailabilityOfDecl(Sema &S, NamedDecl *D, SourceLocation Loc,
   if (AvailabilityResult Result =
           S.ShouldDiagnoseAvailabilityOfDecl(D, &Message)) {
 
-    if (Result == AR_NotYetIntroduced && S.getCurFunctionOrMethodDecl()) {
-      S.getEnclosingFunction()->HasPotentialAvailabilityViolations = true;
-      return;
+    if (Result == AR_NotYetIntroduced) {
+      if (S.getCurFunctionOrMethodDecl()) {
+        S.getEnclosingFunction()->HasPotentialAvailabilityViolations = true;
+        return;
+      } else if (S.getCurBlock() || S.getCurLambda()) {
+        S.getCurFunction()->HasPotentialAvailabilityViolations = true;
+        return;
+      }
     }
 
     const ObjCPropertyDecl *ObjCPDecl = nullptr;
@@ -361,8 +366,18 @@ bool Sema::DiagnoseUseOfDecl(NamedDecl *D, SourceLocation Loc,
 
     if (getLangOpts().CUDA && !CheckCUDACall(Loc, FD))
       return true;
+  }
 
-    if (diagnoseArgIndependentDiagnoseIfAttrs(FD, Loc))
+  auto getReferencedObjCProp = [](const NamedDecl *D) ->
+                                      const ObjCPropertyDecl * {
+    if (const auto *MD = dyn_cast<ObjCMethodDecl>(D))
+      return MD->findPropertyDecl();
+    return nullptr;
+  };
+  if (const ObjCPropertyDecl *ObjCPDecl = getReferencedObjCProp(D)) {
+    if (diagnoseArgIndependentDiagnoseIfAttrs(ObjCPDecl, Loc))
+      return true;
+  } else if (diagnoseArgIndependentDiagnoseIfAttrs(D, Loc)) {
       return true;
   }
 
@@ -1431,7 +1446,8 @@ Sema::CreateGenericSelectionExpr(SourceLocation KeyLoc,
   // Decay and strip qualifiers for the controlling expression type, and handle
   // placeholder type replacement. See committee discussion from WG14 DR423.
   {
-    EnterExpressionEvaluationContext Unevaluated(*this, Sema::Unevaluated);
+    EnterExpressionEvaluationContext Unevaluated(
+        *this, Sema::ExpressionEvaluationContext::Unevaluated);
     ExprResult R = DefaultFunctionArrayLvalueConversion(ControllingExpr);
     if (R.isInvalid())
       return ExprError();
@@ -1771,7 +1787,10 @@ Sema::BuildDeclRefExpr(ValueDecl *D, QualType Ty, ExprValueKind VK,
       !Diags.isIgnored(diag::warn_arc_repeated_use_of_weak, E->getLocStart()))
       recordUseOfEvaluatedWeak(E);
 
-  if (FieldDecl *FD = dyn_cast<FieldDecl>(D)) {
+  FieldDecl *FD = dyn_cast<FieldDecl>(D);
+  if (IndirectFieldDecl *IFD = dyn_cast<IndirectFieldDecl>(D))
+    FD = IFD->getAnonField();
+  if (FD) {
     UnusedPrivateFields.remove(FD);
     // Just in case we're building an illegal pointer-to-member.
     if (FD->isBitField())
@@ -2124,6 +2143,12 @@ Sema::ActOnIdExpression(Scope *S, CXXScopeSpec &SS,
   DeclarationName Name = NameInfo.getName();
   IdentifierInfo *II = Name.getAsIdentifierInfo();
   SourceLocation NameLoc = NameInfo.getLoc();
+
+  if (II && II->isEditorPlaceholder()) {
+    // FIXME: When typed placeholders are supported we can create a typed
+    // placeholder expression node.
+    return ExprError();
+  }
 
   // C++ [temp.dep.expr]p3:
   //   An id-expression is type-dependent if it contains:
@@ -4555,8 +4580,8 @@ bool Sema::CheckCXXDefaultArgExpr(SourceLocation CallLoc, FunctionDecl *FD,
   if (Param->hasUninstantiatedDefaultArg()) {
     Expr *UninstExpr = Param->getUninstantiatedDefaultArg();
 
-    EnterExpressionEvaluationContext EvalContext(*this, PotentiallyEvaluated,
-                                                 Param);
+    EnterExpressionEvaluationContext EvalContext(
+        *this, ExpressionEvaluationContext::PotentiallyEvaluated, Param);
 
     // Instantiate the expression.
     MultiLevelTemplateArgumentList MutiLevelArgList
@@ -5260,9 +5285,11 @@ ExprResult Sema::ActOnCallExpr(Scope *Scope, Expr *Fn, SourceLocation LParenLoc,
   if (Fn->getType() == Context.OverloadTy) {
     OverloadExpr::FindResult find = OverloadExpr::find(Fn);
 
-    // We aren't supposed to apply this logic for if there'Scope an '&'
-    // involved.
+    // We aren't supposed to apply this logic if there's an '&' involved.
     if (!find.HasFormOfMemberPointer) {
+      if (Expr::hasAnyTypeDependentArguments(ArgExprs))
+        return new (Context) CallExpr(
+            Context, Fn, ArgExprs, Context.DependentTy, VK_RValue, RParenLoc);
       OverloadExpr *ovl = find.Expression;
       if (UnresolvedLookupExpr *ULE = dyn_cast<UnresolvedLookupExpr>(ovl))
         return BuildOverloadedCallExpr(
@@ -5385,9 +5412,11 @@ Sema::BuildResolvedCallExpr(Expr *Fn, NamedDecl *NDecl,
   // that the callee might not preserve them. This is easy to diagnose here,
   // but can be very challenging to debug.
   if (auto *Caller = getCurFunctionDecl())
-    if (Caller->hasAttr<ARMInterruptAttr>())
-      if (!FDecl || !FDecl->hasAttr<ARMInterruptAttr>())
+    if (Caller->hasAttr<ARMInterruptAttr>()) {
+      bool VFP = Context.getTargetInfo().hasFeature("vfp");
+      if (VFP && (!FDecl || !FDecl->hasAttr<ARMInterruptAttr>()))
         Diag(Fn->getExprLoc(), diag::warn_arm_interrupt_calling_convention);
+    }
 
   // Promote the function operand.
   // We special-case function promotion here because we only allow promoting
@@ -6417,14 +6446,13 @@ static QualType checkConditionalPointerCompatibility(Sema &S, ExprResult &LHS,
       return S.Context
           .getQualifiedType(CompositeTy.getUnqualifiedType(), CompositeQuals)
           .withCVRQualifiers(MergedCVRQual);
-    } else
-      return CompositeTy.withCVRQualifiers(MergedCVRQual);
+    }
+    return CompositeTy.withCVRQualifiers(MergedCVRQual);
   }();
   if (IsBlockPointer)
     ResultTy = S.Context.getBlockPointerType(ResultTy);
-  else {
+  else
     ResultTy = S.Context.getPointerType(ResultTy);
-  }
 
   LHS = S.ImpCastExprToType(LHS.get(), ResultTy, LHSCastKind);
   RHS = S.ImpCastExprToType(RHS.get(), ResultTy, RHSCastKind);
@@ -8013,34 +8041,71 @@ QualType Sema::InvalidOperands(SourceLocation Loc, ExprResult &LHS,
   return QualType();
 }
 
+// Diagnose cases where a scalar was implicitly converted to a vector and
+// diagnose the underlying types. Otherwise, diagnose the error
+// as invalid vector logical operands for non-C++ cases.
+QualType Sema::InvalidLogicalVectorOperands(SourceLocation Loc, ExprResult &LHS,
+                                            ExprResult &RHS) {
+  QualType LHSType = LHS.get()->IgnoreImpCasts()->getType();
+  QualType RHSType = RHS.get()->IgnoreImpCasts()->getType();
+
+  bool LHSNatVec = LHSType->isVectorType();
+  bool RHSNatVec = RHSType->isVectorType();
+
+  if (!(LHSNatVec && RHSNatVec)) {
+    Expr *Vector = LHSNatVec ? LHS.get() : RHS.get();
+    Expr *NonVector = !LHSNatVec ? LHS.get() : RHS.get();
+    Diag(Loc, diag::err_typecheck_logical_vector_expr_gnu_cpp_restrict)
+        << 0 << Vector->getType() << NonVector->IgnoreImpCasts()->getType()
+        << Vector->getSourceRange();
+    return QualType();
+  }
+
+  Diag(Loc, diag::err_typecheck_logical_vector_expr_gnu_cpp_restrict)
+      << 1 << LHSType << RHSType << LHS.get()->getSourceRange()
+      << RHS.get()->getSourceRange();
+
+  return QualType();
+}
+
 /// Try to convert a value of non-vector type to a vector type by converting
 /// the type to the element type of the vector and then performing a splat.
 /// If the language is OpenCL, we only use conversions that promote scalar
 /// rank; for C, Obj-C, and C++ we allow any real scalar conversion except
 /// for float->int.
 ///
+/// OpenCL V2.0 6.2.6.p2:
+/// An error shall occur if any scalar operand type has greater rank
+/// than the type of the vector element.
+///
 /// \param scalar - if non-null, actually perform the conversions
 /// \return true if the operation fails (but without diagnosing the failure)
 static bool tryVectorConvertAndSplat(Sema &S, ExprResult *scalar,
                                      QualType scalarTy,
                                      QualType vectorEltTy,
-                                     QualType vectorTy) {
+                                     QualType vectorTy,
+                                     unsigned &DiagID) {
   // The conversion to apply to the scalar before splatting it,
   // if necessary.
   CastKind scalarCast = CK_Invalid;
   
   if (vectorEltTy->isIntegralType(S.Context)) {
-    if (!scalarTy->isIntegralType(S.Context))
+    if (S.getLangOpts().OpenCL && (scalarTy->isRealFloatingType() ||
+        (scalarTy->isIntegerType() &&
+         S.Context.getIntegerTypeOrder(vectorEltTy, scalarTy) < 0))) {
+      DiagID = diag::err_opencl_scalar_type_rank_greater_than_vector_type;
       return true;
-    if (S.getLangOpts().OpenCL &&
-        S.Context.getIntegerTypeOrder(vectorEltTy, scalarTy) < 0)
+    }
+    if (!scalarTy->isIntegralType(S.Context))
       return true;
     scalarCast = CK_IntegralCast;
   } else if (vectorEltTy->isRealFloatingType()) {
     if (scalarTy->isRealFloatingType()) {
       if (S.getLangOpts().OpenCL &&
-          S.Context.getFloatingTypeOrder(vectorEltTy, scalarTy) < 0)
+          S.Context.getFloatingTypeOrder(vectorEltTy, scalarTy) < 0) {
+        DiagID = diag::err_opencl_scalar_type_rank_greater_than_vector_type;
         return true;
+      }
       scalarCast = CK_FloatingCast;
     }
     else if (scalarTy->isIntegralType(S.Context))
@@ -8056,6 +8121,162 @@ static bool tryVectorConvertAndSplat(Sema &S, ExprResult *scalar,
     if (scalarCast != CK_Invalid)
       *scalar = S.ImpCastExprToType(scalar->get(), vectorEltTy, scalarCast);
     *scalar = S.ImpCastExprToType(scalar->get(), vectorTy, CK_VectorSplat);
+  }
+  return false;
+}
+
+/// Test if a (constant) integer Int can be casted to another integer type
+/// IntTy without losing precision.
+static bool canConvertIntToOtherIntTy(Sema &S, ExprResult *Int,
+                                      QualType OtherIntTy) {
+  QualType IntTy = Int->get()->getType().getUnqualifiedType();
+
+  // Reject cases where the value of the Int is unknown as that would
+  // possibly cause truncation, but accept cases where the scalar can be
+  // demoted without loss of precision.
+  llvm::APSInt Result;
+  bool CstInt = Int->get()->EvaluateAsInt(Result, S.Context);
+  int Order = S.Context.getIntegerTypeOrder(OtherIntTy, IntTy);
+  bool IntSigned = IntTy->hasSignedIntegerRepresentation();
+  bool OtherIntSigned = OtherIntTy->hasSignedIntegerRepresentation();
+
+  if (CstInt) {
+    // If the scalar is constant and is of a higher order and has more active
+    // bits that the vector element type, reject it.
+    unsigned NumBits = IntSigned
+                           ? (Result.isNegative() ? Result.getMinSignedBits()
+                                                  : Result.getActiveBits())
+                           : Result.getActiveBits();
+    if (Order < 0 && S.Context.getIntWidth(OtherIntTy) < NumBits)
+      return true;
+
+    // If the signedness of the scalar type and the vector element type
+    // differs and the number of bits is greater than that of the vector
+    // element reject it.
+    return (IntSigned != OtherIntSigned &&
+            NumBits > S.Context.getIntWidth(OtherIntTy));
+  }
+
+  // Reject cases where the value of the scalar is not constant and it's
+  // order is greater than that of the vector element type.
+  return (Order < 0);
+}
+
+/// Test if a (constant) integer Int can be casted to floating point type
+/// FloatTy without losing precision.
+static bool canConvertIntTyToFloatTy(Sema &S, ExprResult *Int,
+                                     QualType FloatTy) {
+  QualType IntTy = Int->get()->getType().getUnqualifiedType();
+
+  // Determine if the integer constant can be expressed as a floating point
+  // number of the appropiate type.
+  llvm::APSInt Result;
+  bool CstInt = Int->get()->EvaluateAsInt(Result, S.Context);
+  uint64_t Bits = 0;
+  if (CstInt) {
+    // Reject constants that would be truncated if they were converted to
+    // the floating point type. Test by simple to/from conversion.
+    // FIXME: Ideally the conversion to an APFloat and from an APFloat
+    //        could be avoided if there was a convertFromAPInt method
+    //        which could signal back if implicit truncation occurred.
+    llvm::APFloat Float(S.Context.getFloatTypeSemantics(FloatTy));
+    Float.convertFromAPInt(Result, IntTy->hasSignedIntegerRepresentation(),
+                           llvm::APFloat::rmTowardZero);
+    llvm::APSInt ConvertBack(S.Context.getIntWidth(IntTy),
+                             !IntTy->hasSignedIntegerRepresentation());
+    bool Ignored = false;
+    Float.convertToInteger(ConvertBack, llvm::APFloat::rmNearestTiesToEven,
+                           &Ignored);
+    if (Result != ConvertBack)
+      return true;
+  } else {
+    // Reject types that cannot be fully encoded into the mantissa of
+    // the float.
+    Bits = S.Context.getTypeSize(IntTy);
+    unsigned FloatPrec = llvm::APFloat::semanticsPrecision(
+        S.Context.getFloatTypeSemantics(FloatTy));
+    if (Bits > FloatPrec)
+      return true;
+  }
+
+  return false;
+}
+
+/// Attempt to convert and splat Scalar into a vector whose types matches
+/// Vector following GCC conversion rules. The rule is that implicit
+/// conversion can occur when Scalar can be casted to match Vector's element
+/// type without causing truncation of Scalar.
+static bool tryGCCVectorConvertAndSplat(Sema &S, ExprResult *Scalar,
+                                        ExprResult *Vector) {
+  QualType ScalarTy = Scalar->get()->getType().getUnqualifiedType();
+  QualType VectorTy = Vector->get()->getType().getUnqualifiedType();
+  const VectorType *VT = VectorTy->getAs<VectorType>();
+
+  assert(!isa<ExtVectorType>(VT) &&
+         "ExtVectorTypes should not be handled here!");
+
+  QualType VectorEltTy = VT->getElementType();
+
+  // Reject cases where the vector element type or the scalar element type are
+  // not integral or floating point types.
+  if (!VectorEltTy->isArithmeticType() || !ScalarTy->isArithmeticType())
+    return true;
+
+  // The conversion to apply to the scalar before splatting it,
+  // if necessary.
+  CastKind ScalarCast = CK_NoOp;
+
+  // Accept cases where the vector elements are integers and the scalar is
+  // an integer.
+  // FIXME: Notionally if the scalar was a floating point value with a precise
+  //        integral representation, we could cast it to an appropriate integer
+  //        type and then perform the rest of the checks here. GCC will perform
+  //        this conversion in some cases as determined by the input language.
+  //        We should accept it on a language independent basis.
+  if (VectorEltTy->isIntegralType(S.Context) &&
+      ScalarTy->isIntegralType(S.Context) &&
+      S.Context.getIntegerTypeOrder(VectorEltTy, ScalarTy)) {
+
+    if (canConvertIntToOtherIntTy(S, Scalar, VectorEltTy))
+      return true;
+
+    ScalarCast = CK_IntegralCast;
+  } else if (VectorEltTy->isRealFloatingType()) {
+    if (ScalarTy->isRealFloatingType()) {
+
+      // Reject cases where the scalar type is not a constant and has a higher
+      // Order than the vector element type.
+      llvm::APFloat Result(0.0);
+      bool CstScalar = Scalar->get()->EvaluateAsFloat(Result, S.Context);
+      int Order = S.Context.getFloatingTypeOrder(VectorEltTy, ScalarTy);
+      if (!CstScalar && Order < 0)
+        return true;
+
+      // If the scalar cannot be safely casted to the vector element type,
+      // reject it.
+      if (CstScalar) {
+        bool Truncated = false;
+        Result.convert(S.Context.getFloatTypeSemantics(VectorEltTy),
+                       llvm::APFloat::rmNearestTiesToEven, &Truncated);
+        if (Truncated)
+          return true;
+      }
+
+      ScalarCast = CK_FloatingCast;
+    } else if (ScalarTy->isIntegralType(S.Context)) {
+      if (canConvertIntTyToFloatTy(S, Scalar, VectorEltTy))
+        return true;
+
+      ScalarCast = CK_IntegralToFloating;
+    } else
+      return true;
+  }
+
+  // Adjust scalar if desired.
+  if (Scalar) {
+    if (ScalarCast != CK_NoOp)
+      *Scalar = S.ImpCastExprToType(Scalar->get(), VectorEltTy, ScalarCast);
+    *Scalar = S.ImpCastExprToType(Scalar->get(), VectorTy, CK_VectorSplat);
   }
   return false;
 }
@@ -8128,19 +8349,31 @@ QualType Sema::CheckVectorOperands(ExprResult &LHS, ExprResult &RHS,
     }
   }
 
-  // If there's an ext-vector type and a scalar, try to convert the scalar to
+  // If there's a vector type and a scalar, try to convert the scalar to
   // the vector element type and splat.
-  // FIXME: this should also work for regular vector types as supported in GCC.
-  if (!RHSVecType && isa<ExtVectorType>(LHSVecType)) {
-    if (!tryVectorConvertAndSplat(*this, &RHS, RHSType,
-                                  LHSVecType->getElementType(), LHSType))
-      return LHSType;
+  unsigned DiagID = diag::err_typecheck_vector_not_convertable;
+  if (!RHSVecType) {
+    if (isa<ExtVectorType>(LHSVecType)) {
+      if (!tryVectorConvertAndSplat(*this, &RHS, RHSType,
+                                    LHSVecType->getElementType(), LHSType,
+                                    DiagID))
+        return LHSType;
+    } else {
+      if (!tryGCCVectorConvertAndSplat(*this, &RHS, &LHS))
+        return LHSType;
+    }
   }
-  if (!LHSVecType && isa<ExtVectorType>(RHSVecType)) {
-    if (!tryVectorConvertAndSplat(*this, (IsCompAssign ? nullptr : &LHS),
-                                  LHSType, RHSVecType->getElementType(),
-                                  RHSType))
-      return RHSType;
+  if (!LHSVecType) {
+    if (isa<ExtVectorType>(RHSVecType)) {
+      if (!tryVectorConvertAndSplat(*this, (IsCompAssign ? nullptr : &LHS),
+                                    LHSType, RHSVecType->getElementType(),
+                                    RHSType, DiagID))
+        return RHSType;
+    } else {
+      if (LHS.get()->getValueKind() == VK_LValue ||
+          !tryGCCVectorConvertAndSplat(*this, &LHS, &RHS))
+        return RHSType;
+    }
   }
 
   // FIXME: The code below also handles conversion between vectors and
@@ -8193,8 +8426,24 @@ QualType Sema::CheckVectorOperands(ExprResult &LHS, ExprResult &RHS,
     return QualType();
   }
 
+
+  // If there is a vector type that is not a ExtVector and a scalar, we reach
+  // this point if scalar could not be converted to the vector's element type
+  // without truncation.
+  if ((RHSVecType && !isa<ExtVectorType>(RHSVecType)) ||
+      (LHSVecType && !isa<ExtVectorType>(LHSVecType))) {
+    QualType Scalar = LHSVecType ? RHSType : LHSType;
+    QualType Vector = LHSVecType ? LHSType : RHSType;
+    unsigned ScalarOrVector = LHSVecType && RHSVecType ? 1 : 0;
+    Diag(Loc,
+         diag::err_typecheck_vector_not_convertable_implict_truncation)
+        << ScalarOrVector << Scalar << Vector;
+
+    return QualType();
+  }
+
   // Otherwise, use the generic diagnostic.
-  Diag(Loc, diag::err_typecheck_vector_not_convertable)
+  Diag(Loc, DiagID)
     << LHSType << RHSType
     << LHS.get()->getSourceRange() << RHS.get()->getSourceRange();
   return QualType();
@@ -9710,24 +9959,45 @@ QualType Sema::CheckCompareOperands(ExprResult &LHS, ExprResult &RHS,
   return InvalidOperands(Loc, LHS, RHS);
 }
 
-
-// Return a signed type that is of identical size and number of elements.
-// For floating point vectors, return an integer type of identical size 
-// and number of elements.
+// Return a signed ext_vector_type that is of identical size and number of
+// elements. For floating point vectors, return an integer type of identical
+// size and number of elements. In the non ext_vector_type case, search from
+// the largest type to the smallest type to avoid cases where long long == long,
+// where long gets picked over long long.
 QualType Sema::GetSignedVectorType(QualType V) {
   const VectorType *VTy = V->getAs<VectorType>();
   unsigned TypeSize = Context.getTypeSize(VTy->getElementType());
-  if (TypeSize == Context.getTypeSize(Context.CharTy))
-    return Context.getExtVectorType(Context.CharTy, VTy->getNumElements());
-  else if (TypeSize == Context.getTypeSize(Context.ShortTy))
-    return Context.getExtVectorType(Context.ShortTy, VTy->getNumElements());
-  else if (TypeSize == Context.getTypeSize(Context.IntTy))
-    return Context.getExtVectorType(Context.IntTy, VTy->getNumElements());
+
+  if (isa<ExtVectorType>(VTy)) {
+    if (TypeSize == Context.getTypeSize(Context.CharTy))
+      return Context.getExtVectorType(Context.CharTy, VTy->getNumElements());
+    else if (TypeSize == Context.getTypeSize(Context.ShortTy))
+      return Context.getExtVectorType(Context.ShortTy, VTy->getNumElements());
+    else if (TypeSize == Context.getTypeSize(Context.IntTy))
+      return Context.getExtVectorType(Context.IntTy, VTy->getNumElements());
+    else if (TypeSize == Context.getTypeSize(Context.LongTy))
+      return Context.getExtVectorType(Context.LongTy, VTy->getNumElements());
+    assert(TypeSize == Context.getTypeSize(Context.LongLongTy) &&
+           "Unhandled vector element size in vector compare");
+    return Context.getExtVectorType(Context.LongLongTy, VTy->getNumElements());
+  }
+
+  if (TypeSize == Context.getTypeSize(Context.LongLongTy))
+    return Context.getVectorType(Context.LongLongTy, VTy->getNumElements(),
+                                 VectorType::GenericVector);
   else if (TypeSize == Context.getTypeSize(Context.LongTy))
-    return Context.getExtVectorType(Context.LongTy, VTy->getNumElements());
-  assert(TypeSize == Context.getTypeSize(Context.LongLongTy) &&
+    return Context.getVectorType(Context.LongTy, VTy->getNumElements(),
+                                 VectorType::GenericVector);
+  else if (TypeSize == Context.getTypeSize(Context.IntTy))
+    return Context.getVectorType(Context.IntTy, VTy->getNumElements(),
+                                 VectorType::GenericVector);
+  else if (TypeSize == Context.getTypeSize(Context.ShortTy))
+    return Context.getVectorType(Context.ShortTy, VTy->getNumElements(),
+                                 VectorType::GenericVector);
+  assert(TypeSize == Context.getTypeSize(Context.CharTy) &&
          "Unhandled vector element size in vector compare");
-  return Context.getExtVectorType(Context.LongLongTy, VTy->getNumElements());
+  return Context.getVectorType(Context.CharTy, VTy->getNumElements(),
+                               VectorType::GenericVector);
 }
 
 /// CheckVectorCompareOperands - vector comparisons are a clang extension that
@@ -9774,7 +10044,7 @@ QualType Sema::CheckVectorCompareOperands(ExprResult &LHS, ExprResult &RHS,
     assert (RHS.get()->getType()->hasFloatingRepresentation());
     CheckFloatComparison(Loc, LHS.get(), RHS.get());
   }
-  
+
   // Return a signed type for the vector.
   return GetSignedVectorType(vType);
 }
@@ -9791,7 +10061,13 @@ QualType Sema::CheckVectorLogicalOperands(ExprResult &LHS, ExprResult &RHS,
   if (getLangOpts().OpenCL && getLangOpts().OpenCLVersion < 120 &&
       vType->hasFloatingRepresentation())
     return InvalidOperands(Loc, LHS, RHS);
-  
+  // FIXME: The check for C++ here is for GCC compatibility. GCC rejects the
+  //        usage of the logical operators && and || with vectors in C. This
+  //        check could be notionally dropped.
+  if (!getLangOpts().CPlusPlus &&
+      !(isa<ExtVectorType>(vType->getAs<VectorType>())))
+    return InvalidLogicalVectorOperands(Loc, LHS, RHS);
+
   return GetSignedVectorType(LHS.get()->getType());
 }
 
@@ -11120,7 +11396,7 @@ ExprResult Sema::CreateBuiltinBinOp(SourceLocation OpLoc,
     if (LHSTy->isAtomicType() || RHSTy->isAtomicType()) {
       SourceRange SR(LHSExpr->getLocStart(), RHSExpr->getLocEnd());
       if (BO_Assign == Opc)
-        Diag(OpLoc, diag::err_atomic_init_constant) << SR;
+        Diag(OpLoc, diag::err_opencl_atomic_init) << 0 << SR;
       else
         ResultTy = InvalidOperands(OpLoc, LHS, RHS);
       return ExprError();
@@ -11186,6 +11462,7 @@ ExprResult Sema::CreateBuiltinBinOp(SourceLocation OpLoc,
     break;
   case BO_And:
     checkObjCPointerIntrospection(*this, LHS, RHS, OpLoc);
+    LLVM_FALLTHROUGH;
   case BO_Xor:
   case BO_Or:
     ResultTy = CheckBitwiseOperands(LHS, RHS, OpLoc, Opc);
@@ -11228,6 +11505,7 @@ ExprResult Sema::CreateBuiltinBinOp(SourceLocation OpLoc,
   case BO_AndAssign:
   case BO_OrAssign: // fallthrough
     DiagnoseSelfAssignment(*this, LHS.get(), RHS.get(), OpLoc);
+    LLVM_FALLTHROUGH;
   case BO_XorAssign:
     CompResultTy = CheckBitwiseOperands(LHS, RHS, OpLoc, Opc);
     CompLHSTy = CompResultTy;
@@ -11550,6 +11828,28 @@ ExprResult Sema::BuildBinOp(Scope *S, SourceLocation OpLoc,
           RHSExpr->getType()->isOverloadableType())
         return BuildOverloadedBinOp(*this, S, OpLoc, Opc, LHSExpr, RHSExpr);
     }
+
+    // If we're instantiating "a.x < b" or "A::x < b" and 'x' names a function
+    // template, diagnose the missing 'template' keyword instead of diagnosing
+    // an invalid use of a bound member function.
+    //
+    // Note that "A::x < b" might be valid if 'b' has an overloadable type due
+    // to C++1z [over.over]/1.4, but we already checked for that case above.
+    if (Opc == BO_LT && inTemplateInstantiation() &&
+        (pty->getKind() == BuiltinType::BoundMember ||
+         pty->getKind() == BuiltinType::Overload)) {
+      auto *OE = dyn_cast<OverloadExpr>(LHSExpr);
+      if (OE && !OE->hasTemplateKeyword() && !OE->hasExplicitTemplateArgs() &&
+          std::any_of(OE->decls_begin(), OE->decls_end(), [](NamedDecl *ND) {
+            return isa<FunctionTemplateDecl>(ND);
+          })) {
+        Diag(OE->getQualifier() ? OE->getQualifierLoc().getBeginLoc()
+                                : OE->getNameLoc(),
+             diag::err_template_kw_missing)
+          << OE->getName().getAsString() << "";
+        return ExprError();
+      }
+    }
         
     ExprResult LHS = CheckPlaceholderExpr(LHSExpr);
     if (LHS.isInvalid()) return ExprError();
@@ -11675,16 +11975,13 @@ ExprResult Sema::CreateBuiltinUnaryOp(SourceLocation OpLoc,
           << resultType << Input.get()->getSourceRange();
     else if (resultType->hasIntegerRepresentation())
       break;
-    else if (resultType->isExtVectorType()) {
-      if (Context.getLangOpts().OpenCL) {
-        // OpenCL v1.1 s6.3.f: The bitwise operator not (~) does not operate
-        // on vector float types.
-        QualType T = resultType->getAs<ExtVectorType>()->getElementType();
-        if (!T->isIntegerType())
-          return ExprError(Diag(OpLoc, diag::err_typecheck_unary_expr)
-                           << resultType << Input.get()->getSourceRange());
-      }
-      break;
+    else if (resultType->isExtVectorType() && Context.getLangOpts().OpenCL) {
+      // OpenCL v1.1 s6.3.f: The bitwise operator not (~) does not operate
+      // on vector float types.
+      QualType T = resultType->getAs<ExtVectorType>()->getElementType();
+      if (!T->isIntegerType())
+        return ExprError(Diag(OpLoc, diag::err_typecheck_unary_expr)
+                          << resultType << Input.get()->getSourceRange());
     } else {
       return ExprError(Diag(OpLoc, diag::err_typecheck_unary_expr)
                        << resultType << Input.get()->getSourceRange());
@@ -11734,6 +12031,8 @@ ExprResult Sema::CreateBuiltinUnaryOp(SourceLocation OpLoc,
       resultType = GetSignedVectorType(resultType);
       break;
     } else {
+      // FIXME: GCC's vector extension permits the usage of '!' with a vector
+      //        type in C++. We should allow that here too.
       return ExprError(Diag(OpLoc, diag::err_typecheck_unary_expr)
         << resultType << Input.get()->getSourceRange());
     }
@@ -12250,7 +12549,8 @@ void Sema::ActOnBlockStart(SourceLocation CaretLoc, Scope *CurScope) {
 
   // Enter a new evaluation context to insulate the block from any
   // cleanups from the enclosing full-expression.
-  PushExpressionEvaluationContext(PotentiallyEvaluated);  
+  PushExpressionEvaluationContext(
+      ExpressionEvaluationContext::PotentiallyEvaluated);
 }
 
 void Sema::ActOnBlockArguments(SourceLocation CaretLoc, Declarator &ParamInfo,
@@ -12465,6 +12765,9 @@ ExprResult Sema::ActOnBlockStmtExpr(SourceLocation CaretLoc,
     DiagnoseInvalidJumps(cast<CompoundStmt>(Body));
 
   BSI->TheDecl->setBody(cast<CompoundStmt>(Body));
+
+  if (Body && getCurFunction()->HasPotentialAvailabilityViolations)
+    DiagnoseUnguardedAvailabilityViolations(BSI->TheDecl);
 
   // Try to apply the named return value optimization. We have to check again
   // if we can do this, though, because blocks keep return statements around
@@ -13143,7 +13446,7 @@ void Sema::PopExpressionEvaluationContext() {
   unsigned NumTypos = Rec.NumTypos;
 
   if (!Rec.Lambdas.empty()) {
-    if (Rec.isUnevaluated() || Rec.Context == ConstantEvaluated) {
+    if (Rec.isUnevaluated() || Rec.isConstantEvaluated()) {
       unsigned D;
       if (Rec.isUnevaluated()) {
         // C++11 [expr.prim.lambda]p2:
@@ -13164,7 +13467,7 @@ void Sema::PopExpressionEvaluationContext() {
       // are part of function-signatures.  Be mindful that P0315 (Lambdas in
       // unevaluated contexts) might lift some of these restrictions in a 
       // future version.
-      if (Rec.Context != ConstantEvaluated || !getLangOpts().CPlusPlus1z)
+      if (!Rec.isConstantEvaluated() || !getLangOpts().CPlusPlus1z)
         for (const auto *L : Rec.Lambdas)
           Diag(L->getLocStart(), D);
     } else {
@@ -13181,7 +13484,7 @@ void Sema::PopExpressionEvaluationContext() {
   // temporaries that we may have created as part of the evaluation of
   // the expression in that context: they aren't relevant because they
   // will never be constructed.
-  if (Rec.isUnevaluated() || Rec.Context == ConstantEvaluated) {
+  if (Rec.isUnevaluated() || Rec.isConstantEvaluated()) {
     ExprCleanupObjects.erase(ExprCleanupObjects.begin() + Rec.NumCleanupObjects,
                              ExprCleanupObjects.end());
     Cleanup = Rec.ParentCleanup;
@@ -13223,19 +13526,19 @@ ExprResult Sema::HandleExprEvaluationContextForTypeof(Expr *E) {
 /// captured by C++'s idea of an "unevaluated context".
 static bool isEvaluatableContext(Sema &SemaRef) {
   switch (SemaRef.ExprEvalContexts.back().Context) {
-    case Sema::Unevaluated:
-    case Sema::UnevaluatedAbstract:
-    case Sema::DiscardedStatement:
+    case Sema::ExpressionEvaluationContext::Unevaluated:
+    case Sema::ExpressionEvaluationContext::UnevaluatedAbstract:
+    case Sema::ExpressionEvaluationContext::DiscardedStatement:
       // Expressions in this context are never evaluated.
       return false;
 
-    case Sema::UnevaluatedList:
-    case Sema::ConstantEvaluated:
-    case Sema::PotentiallyEvaluated:
+    case Sema::ExpressionEvaluationContext::UnevaluatedList:
+    case Sema::ExpressionEvaluationContext::ConstantEvaluated:
+    case Sema::ExpressionEvaluationContext::PotentiallyEvaluated:
       // Expressions in this context could be evaluated.
       return true;
 
-    case Sema::PotentiallyEvaluatedIfUsed:
+    case Sema::ExpressionEvaluationContext::PotentiallyEvaluatedIfUsed:
       // Referenced declarations will only be used if the construct in the
       // containing expression is used, at which point we'll be given another
       // turn to mark them.
@@ -13253,17 +13556,17 @@ static bool isOdrUseContext(Sema &SemaRef, bool SkipDependentUses = true) {
     return false;
 
   switch (SemaRef.ExprEvalContexts.back().Context) {
-    case Sema::Unevaluated:
-    case Sema::UnevaluatedList:
-    case Sema::UnevaluatedAbstract:
-    case Sema::DiscardedStatement:
+    case Sema::ExpressionEvaluationContext::Unevaluated:
+    case Sema::ExpressionEvaluationContext::UnevaluatedList:
+    case Sema::ExpressionEvaluationContext::UnevaluatedAbstract:
+    case Sema::ExpressionEvaluationContext::DiscardedStatement:
       return false;
 
-    case Sema::ConstantEvaluated:
-    case Sema::PotentiallyEvaluated:
+    case Sema::ExpressionEvaluationContext::ConstantEvaluated:
+    case Sema::ExpressionEvaluationContext::PotentiallyEvaluated:
       return true;
 
-    case Sema::PotentiallyEvaluatedIfUsed:
+    case Sema::ExpressionEvaluationContext::PotentiallyEvaluatedIfUsed:
       return false;
   }
   llvm_unreachable("Invalid context");
@@ -13718,7 +14021,8 @@ static bool captureInBlock(BlockScopeInfo *BSI, VarDecl *Var,
 
         // Enter a new evaluation context to insulate the copy
         // full-expression.
-        EnterExpressionEvaluationContext scope(S, S.PotentiallyEvaluated);
+        EnterExpressionEvaluationContext scope(
+            S, Sema::ExpressionEvaluationContext::PotentiallyEvaluated);
 
         // According to the blocks spec, the capture of a variable from
         // the stack requires a const copy constructor.  This is not true
@@ -14469,7 +14773,8 @@ bool MarkReferencedDecls::TraverseTemplateArgument(
     const TemplateArgument &Arg) {
   {
     // A non-type template argument is a constant-evaluated context.
-    EnterExpressionEvaluationContext Evaluated(S, Sema::ConstantEvaluated);
+    EnterExpressionEvaluationContext Evaluated(
+        S, Sema::ExpressionEvaluationContext::ConstantEvaluated);
     if (Arg.getKind() == TemplateArgument::Declaration) {
       if (Decl *D = Arg.getAsDecl())
         S.MarkAnyDeclReferenced(Loc, D, true);
@@ -14589,19 +14894,19 @@ void Sema::MarkDeclarationsReferencedInExpr(Expr *E,
 bool Sema::DiagRuntimeBehavior(SourceLocation Loc, const Stmt *Statement,
                                const PartialDiagnostic &PD) {
   switch (ExprEvalContexts.back().Context) {
-  case Unevaluated:
-  case UnevaluatedList:
-  case UnevaluatedAbstract:
-  case DiscardedStatement:
+  case ExpressionEvaluationContext::Unevaluated:
+  case ExpressionEvaluationContext::UnevaluatedList:
+  case ExpressionEvaluationContext::UnevaluatedAbstract:
+  case ExpressionEvaluationContext::DiscardedStatement:
     // The argument will never be evaluated, so don't complain.
     break;
 
-  case ConstantEvaluated:
+  case ExpressionEvaluationContext::ConstantEvaluated:
     // Relevant diagnostics should be produced by constant evaluation.
     break;
 
-  case PotentiallyEvaluated:
-  case PotentiallyEvaluatedIfUsed:
+  case ExpressionEvaluationContext::PotentiallyEvaluated:
+  case ExpressionEvaluationContext::PotentiallyEvaluatedIfUsed:
     if (Statement && getCurFunctionOrMethodDecl()) {
       FunctionScopes.back()->PossiblyUnreachableDiags.
         push_back(sema::PossiblyUnreachableDiag(PD, Loc, Statement));
@@ -15332,7 +15637,7 @@ static ExprResult diagnoseUnknownAnyExpr(Sema &S, Expr *E) {
 }
 
 /// Check for operands with placeholder types and complain if found.
-/// Returns true if there was an error and no recovery was possible.
+/// Returns ExprError() if there was an error and no recovery was possible.
 ExprResult Sema::CheckPlaceholderExpr(Expr *E) {
   if (!getLangOpts().CPlusPlus) {
     // C cannot handle TypoExpr nodes on either side of a binop because it
@@ -15479,6 +15784,13 @@ ExprResult Sema::ActOnObjCAvailabilityCheckExpr(
   VersionTuple Version;
   if (Spec != AvailSpecs.end())
     Version = Spec->getVersion();
+
+  // The use of `@available` in the enclosing function should be analyzed to
+  // warn when it's used inappropriately (i.e. not if(@available)).
+  if (getCurFunctionOrMethodDecl())
+    getEnclosingFunction()->HasPotentialAvailabilityViolations = true;
+  else if (getCurBlock() || getCurLambda())
+    getCurFunction()->HasPotentialAvailabilityViolations = true;
 
   return new (Context)
       ObjCAvailabilityCheckExpr(Version, AtLoc, RParen, Context.BoolTy);

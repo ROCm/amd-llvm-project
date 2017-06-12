@@ -16,8 +16,8 @@
 #ifndef LLVM_OBJECTYAML_WASMYAML_H
 #define LLVM_OBJECTYAML_WASMYAML_H
 
+#include "llvm/BinaryFormat/Wasm.h"
 #include "llvm/ObjectYAML/YAML.h"
-#include "llvm/Support/Wasm.h"
 
 namespace llvm {
 namespace WasmYAML {
@@ -32,17 +32,6 @@ LLVM_YAML_STRONG_TYPEDEF(uint32_t, RelocType)
 
 struct FileHeader {
   yaml::Hex32 Version;
-};
-
-struct Import {
-  StringRef Module;
-  StringRef Field;
-  ExportKind Kind;
-  union {
-    uint32_t SigIndex;
-    ValueType GlobalType;
-  };
-  bool GlobalMutable;
 };
 
 struct Limits {
@@ -74,6 +63,18 @@ struct Global {
   wasm::WasmInitExpr InitExpr;
 };
 
+struct Import {
+  StringRef Module;
+  StringRef Field;
+  ExportKind Kind;
+  union {
+    uint32_t SigIndex;
+    Global GlobalImport;
+    Table TableImport;
+    Limits Memory;
+  };
+};
+
 struct LocalDecl {
   ValueType Type;
   uint32_t Count;
@@ -88,13 +89,18 @@ struct Relocation {
   RelocType Type;
   uint32_t Index;
   yaml::Hex32 Offset;
-  yaml::Hex32 Addend;
+  int32_t Addend;
 };
 
 struct DataSegment {
   uint32_t Index;
   wasm::WasmInitExpr Offset;
   yaml::BinaryRef Content;
+};
+
+struct NameEntry {
+  uint32_t Index;
+  StringRef Name;
 };
 
 struct Signature {
@@ -108,6 +114,7 @@ struct Signature {
 
 struct Section {
   Section(SectionType SecType) : Type(SecType) {}
+  virtual ~Section();
 
   SectionType Type;
   std::vector<Relocation> Relocations;
@@ -121,6 +128,11 @@ struct CustomSection : Section {
 
   StringRef Name;
   yaml::BinaryRef Payload;
+
+  // The follow is used by the "name" custom section.
+  // TODO(sbc): Add support for more then just functions names.  The wasm
+  // name section can support multiple sub-sections.
+  std::vector<NameEntry> FunctionNames;
 };
 
 struct TypeSection : Section {
@@ -243,7 +255,8 @@ LLVM_YAML_IS_SEQUENCE_VECTOR(llvm::WasmYAML::Global)
 LLVM_YAML_IS_SEQUENCE_VECTOR(llvm::WasmYAML::Function)
 LLVM_YAML_IS_SEQUENCE_VECTOR(llvm::WasmYAML::LocalDecl)
 LLVM_YAML_IS_SEQUENCE_VECTOR(llvm::WasmYAML::Relocation)
-LLVM_YAML_IS_SEQUENCE_VECTOR(uint32_t)
+LLVM_YAML_IS_SEQUENCE_VECTOR(llvm::WasmYAML::NameEntry)
+LLVM_YAML_IS_FLOW_SEQUENCE_VECTOR(uint32_t)
 
 namespace llvm {
 namespace yaml {
@@ -294,6 +307,10 @@ template <> struct MappingTraits<WasmYAML::Function> {
 
 template <> struct MappingTraits<WasmYAML::Relocation> {
   static void mapping(IO &IO, WasmYAML::Relocation &Relocation);
+};
+
+template <> struct MappingTraits<WasmYAML::NameEntry> {
+  static void mapping(IO &IO, WasmYAML::NameEntry &NameEntry);
 };
 
 template <> struct MappingTraits<WasmYAML::LocalDecl> {

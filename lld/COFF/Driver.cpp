@@ -18,8 +18,10 @@
 #include "lld/Driver/Driver.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/StringSwitch.h"
-#include "llvm/LibDriver/LibDriver.h"
+#include "llvm/BinaryFormat/Magic.h"
 #include "llvm/Object/ArchiveWriter.h"
+#include "llvm/Object/COFFImportFile.h"
+#include "llvm/Object/COFFModuleDefinition.h"
 #include "llvm/Option/Arg.h"
 #include "llvm/Option/ArgList.h"
 #include "llvm/Option/Option.h"
@@ -29,16 +31,16 @@
 #include "llvm/Support/TarWriter.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/ToolDrivers/llvm-lib/LibDriver.h"
 #include <algorithm>
 #include <memory>
 
 #include <future>
 
 using namespace llvm;
+using namespace llvm::object;
 using namespace llvm::COFF;
 using llvm::sys::Process;
-using llvm::sys::fs::file_magic;
-using llvm::sys::fs::identify_magic;
 
 namespace lld {
 namespace coff {
@@ -59,7 +61,7 @@ bool link(ArrayRef<const char *> Args, raw_ostream &Diag) {
       (ErrorOS == &llvm::errs() && Process::StandardErrHasColors());
   Driver = make<LinkerDriver>();
   Driver->link(Args);
-  return true;
+  return !ErrorCount;
 }
 
 // Drop directory components and replace extension with ".exe" or ".dll".
@@ -97,12 +99,11 @@ static std::future<MBErrPair> createFutureForFile(std::string Path) {
 
 MemoryBufferRef LinkerDriver::takeBuffer(std::unique_ptr<MemoryBuffer> MB) {
   MemoryBufferRef MBRef = *MB;
-  OwningMBs.push_back(std::move(MB));
+  make<std::unique_ptr<MemoryBuffer>>(std::move(MB)); // take ownership
 
   if (Driver->Tar)
     Driver->Tar->append(relativeToRoot(MBRef.getBufferIdentifier()),
                         MBRef.getBuffer());
-
   return MBRef;
 }
 
@@ -121,10 +122,12 @@ void LinkerDriver::addBuffer(std::unique_ptr<MemoryBuffer> MB) {
     return Symtab.addFile(make<ArchiveFile>(MBRef));
   if (Magic == file_magic::bitcode)
     return Symtab.addFile(make<BitcodeFile>(MBRef));
+
   if (Magic == file_magic::coff_cl_gl_object)
-    fatal(MBRef.getBufferIdentifier() + ": is not a native COFF file. "
+    error(MBRef.getBufferIdentifier() + ": is not a native COFF file. "
           "Recompile without /GL");
-  Symtab.addFile(make<ObjectFile>(MBRef));
+  else
+    Symtab.addFile(make<ObjectFile>(MBRef));
 }
 
 void LinkerDriver::enqueuePath(StringRef Path) {
@@ -134,8 +137,9 @@ void LinkerDriver::enqueuePath(StringRef Path) {
   enqueueTask([=]() {
     auto MBOrErr = Future->get();
     if (MBOrErr.second)
-      fatal(MBOrErr.second, "could not open " + PathStr);
-    Driver->addBuffer(std::move(MBOrErr.first));
+      error("could not open " + PathStr + ": " + MBOrErr.second.message());
+    else
+      Driver->addBuffer(std::move(MBOrErr.first));
   });
 }
 
@@ -148,12 +152,14 @@ void LinkerDriver::addArchiveBuffer(MemoryBufferRef MB, StringRef SymName,
   }
 
   InputFile *Obj;
-  if (Magic == file_magic::coff_object)
+  if (Magic == file_magic::coff_object) {
     Obj = make<ObjectFile>(MB);
-  else if (Magic == file_magic::bitcode)
+  } else if (Magic == file_magic::bitcode) {
     Obj = make<BitcodeFile>(MB);
-  else
-    fatal("unknown file type: " + MB.getBufferIdentifier());
+  } else {
+    error("unknown file type: " + MB.getBufferIdentifier());
+    return;
+  }
 
   Obj->ParentName = ParentName;
   Symtab.addFile(Obj);
@@ -230,7 +236,7 @@ void LinkerDriver::parseDirectives(StringRef S) {
     case OPT_throwingnew:
       break;
     default:
-      fatal(Arg->getSpelling() + " is not allowed in .drectve");
+      error(Arg->getSpelling() + " is not allowed in .drectve");
     }
   }
 }
@@ -415,6 +421,79 @@ static std::string getMapFile(const opt::InputArgList &Args) {
   return (OutFile.substr(0, OutFile.rfind('.')) + ".map").str();
 }
 
+static std::string getImplibPath() {
+  if (!Config->Implib.empty())
+    return Config->Implib;
+  SmallString<128> Out = StringRef(Config->OutputFile);
+  sys::path::replace_extension(Out, ".lib");
+  return Out.str();
+}
+
+std::vector<COFFShortExport> createCOFFShortExportFromConfig() {
+  std::vector<COFFShortExport> Exports;
+  for (Export &E1 : Config->Exports) {
+    COFFShortExport E2;
+    // Use SymbolName, which will have any stdcall or fastcall qualifiers.
+    E2.Name = E1.SymbolName;
+    E2.ExtName = E1.ExtName;
+    E2.Ordinal = E1.Ordinal;
+    E2.Noname = E1.Noname;
+    E2.Data = E1.Data;
+    E2.Private = E1.Private;
+    E2.Constant = E1.Constant;
+    Exports.push_back(E2);
+  }
+  return Exports;
+}
+
+static void createImportLibrary() {
+  std::vector<COFFShortExport> Exports = createCOFFShortExportFromConfig();
+  std::string DLLName = sys::path::filename(Config->OutputFile);
+  std::string Path = getImplibPath();
+  writeImportLibrary(DLLName, Path, Exports, Config->Machine);
+}
+
+static void parseModuleDefs(StringRef Path) {
+  std::unique_ptr<MemoryBuffer> MB = check(
+    MemoryBuffer::getFile(Path, -1, false, true), "could not open " + Path);
+  COFFModuleDefinition M =
+      check(parseCOFFModuleDefinition(MB->getMemBufferRef(), Config->Machine));
+
+  if (Config->OutputFile.empty())
+    Config->OutputFile = Saver.save(M.OutputFile);
+  if (M.ImageBase)
+    Config->ImageBase = M.ImageBase;
+  if (M.StackReserve)
+    Config->StackReserve = M.StackReserve;
+  if (M.StackCommit)
+    Config->StackCommit = M.StackCommit;
+  if (M.HeapReserve)
+    Config->HeapReserve = M.HeapReserve;
+  if (M.HeapCommit)
+    Config->HeapCommit = M.HeapCommit;
+  if (M.MajorImageVersion)
+    Config->MajorImageVersion = M.MajorImageVersion;
+  if (M.MinorImageVersion)
+    Config->MinorImageVersion = M.MinorImageVersion;
+  if (M.MajorOSVersion)
+    Config->MajorOSVersion = M.MajorOSVersion;
+  if (M.MinorOSVersion)
+    Config->MinorOSVersion = M.MinorOSVersion;
+
+  for (COFFShortExport E1 : M.Exports) {
+    Export E2;
+    E2.Name = Saver.save(E1.Name);
+    if (E1.isWeak())
+      E2.ExtName = Saver.save(E1.ExtName);
+    E2.Ordinal = E1.Ordinal;
+    E2.Noname = E1.Noname;
+    E2.Data = E1.Data;
+    E2.Private = E1.Private;
+    E2.Constant = E1.Constant;
+    Config->Exports.push_back(E2);
+  }
+}
+
 std::vector<MemoryBufferRef> getArchiveMembers(Archive *File) {
   std::vector<MemoryBufferRef> V;
   Error Err = Error::success();
@@ -504,8 +583,25 @@ filterBitcodeFiles(StringRef Path, std::vector<std::string> &TemporaryFiles) {
 
 // Create response file contents and invoke the MSVC linker.
 void LinkerDriver::invokeMSVC(opt::InputArgList &Args) {
-  std::string Rsp = "/nologo ";
+  std::string Rsp = "/nologo\n";
   std::vector<std::string> Temps;
+
+  // Write out archive members that we used in symbol resolution and pass these
+  // to MSVC before any archives, so that MSVC uses the same objects to satisfy
+  // references.
+  for (const auto *O : Symtab.ObjectFiles) {
+    if (O->ParentName.empty())
+      continue;
+    SmallString<128> S;
+    int Fd;
+    if (auto EC = sys::fs::createTemporaryFile(
+            "lld-" + sys::path::filename(O->ParentName), ".obj", Fd, S))
+      fatal(EC, "cannot create a temporary file");
+    raw_fd_ostream OS(Fd, /*shouldClose*/ true);
+    OS << O->MB.getBuffer();
+    Temps.push_back(S.str());
+    Rsp += quote(S) + "\n";
+  }
 
   for (auto *Arg : Args) {
     switch (Arg->getOption().getID()) {
@@ -523,14 +619,14 @@ void LinkerDriver::invokeMSVC(opt::InputArgList &Args) {
     case OPT_INPUT: {
       if (Optional<StringRef> Path = doFindFile(Arg->getValue())) {
         if (Optional<std::string> S = filterBitcodeFiles(*Path, Temps))
-          Rsp += quote(*S) + " ";
+          Rsp += quote(*S) + "\n";
         continue;
       }
-      Rsp += quote(Arg->getValue()) + " ";
+      Rsp += quote(Arg->getValue()) + "\n";
       break;
     }
     default:
-      Rsp += toString(Arg) + " ";
+      Rsp += toString(Arg) + "\n";
     }
   }
 
@@ -581,6 +677,15 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
     V.push_back(Arg->getValue());
   cl::ParseCommandLineOptions(V.size(), V.data());
 
+  // Handle /errorlimit early, because error() depends on it.
+  if (auto *Arg = Args.getLastArg(OPT_errorlimit)) {
+    int N = 20;
+    StringRef S = Arg->getValue();
+    if (S.getAsInteger(10, N))
+      error(Arg->getSpelling() + " number expected, but got " + S);
+    Config->ErrorLimit = N;
+  }
+
   // Handle /help
   if (Args.hasArg(OPT_help)) {
     printHelp(ArgsArr[0]);
@@ -602,7 +707,7 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
     }
   }
 
-  if (Args.filtered_begin(OPT_INPUT) == Args.filtered_end())
+  if (!Args.hasArgNoClaim(OPT_INPUT))
     fatal("no input files");
 
   // Construct search path list.
@@ -638,9 +743,10 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
 
   // Handle /noentry
   if (Args.hasArg(OPT_noentry)) {
-    if (!Args.hasArg(OPT_dll))
-      fatal("/noentry must be specified with /dll");
-    Config->NoEntry = true;
+    if (Args.hasArg(OPT_dll))
+      Config->NoEntry = true;
+    else
+      error("/noentry must be specified with /dll");
   }
 
   // Handle /dll
@@ -651,11 +757,16 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
 
   // Handle /fixed
   if (Args.hasArg(OPT_fixed)) {
-    if (Args.hasArg(OPT_dynamicbase))
-      fatal("/fixed must not be specified with /dynamicbase");
-    Config->Relocatable = false;
-    Config->DynamicBase = false;
+    if (Args.hasArg(OPT_dynamicbase)) {
+      error("/fixed must not be specified with /dynamicbase");
+    } else {
+      Config->Relocatable = false;
+      Config->DynamicBase = false;
+    }
   }
+
+  if (Args.hasArg(OPT_appcontainer))
+    Config->AppContainer = true;
 
   // Handle /machine
   if (auto *Arg = Args.getLastArg(OPT_machine))
@@ -726,24 +837,24 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
         StringRef OptLevel = StringRef(S).substr(7);
         if (OptLevel.getAsInteger(10, Config->LTOOptLevel) ||
             Config->LTOOptLevel > 3)
-          fatal("/opt:lldlto: invalid optimization level: " + OptLevel);
+          error("/opt:lldlto: invalid optimization level: " + OptLevel);
         continue;
       }
       if (StringRef(S).startswith("lldltojobs=")) {
         StringRef Jobs = StringRef(S).substr(11);
         if (Jobs.getAsInteger(10, Config->LTOJobs) || Config->LTOJobs == 0)
-          fatal("/opt:lldltojobs: invalid job count: " + Jobs);
+          error("/opt:lldltojobs: invalid job count: " + Jobs);
         continue;
       }
       if (StringRef(S).startswith("lldltopartitions=")) {
         StringRef N = StringRef(S).substr(17);
         if (N.getAsInteger(10, Config->LTOPartitions) ||
             Config->LTOPartitions == 0)
-          fatal("/opt:lldltopartitions: invalid partition count: " + N);
+          error("/opt:lldltopartitions: invalid partition count: " + N);
         continue;
       }
       if (S != "ref" && S != "lbr" && S != "nolbr")
-        fatal("/opt: unknown option: " + S);
+        error("/opt: unknown option: " + S);
     }
   }
 
@@ -784,8 +895,6 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
     Config->ManifestInput.push_back(Arg->getValue());
 
   // Handle miscellaneous boolean flags.
-  if (Args.hasArg(OPT_allowbind_no))
-    Config->AllowBind = false;
   if (Args.hasArg(OPT_allowisolation_no))
     Config->AllowIsolation = false;
   if (Args.hasArg(OPT_dynamicbase_no))
@@ -797,9 +906,11 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
   if (Args.hasArg(OPT_nosymtab))
     Config->WriteSymtab = false;
   Config->DumpPdb = Args.hasArg(OPT_dumppdb);
-  Config->DebugPdb = Args.hasArg(OPT_debugpdb);
 
   Config->MapFile = getMapFile(Args);
+
+  if (ErrorCount)
+    return;
 
   // Create a list of input files. Files can be given as arguments
   // for /defaultlib option.
@@ -876,9 +987,7 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
   // Handle /def
   if (auto *Arg = Args.getLastArg(OPT_deffile)) {
     // parseModuleDefs mutates Config object.
-    parseModuleDefs(
-        takeBuffer(check(MemoryBuffer::getFile(Arg->getValue()),
-                         Twine("could not open ") + Arg->getValue())));
+    parseModuleDefs(Arg->getValue());
   }
 
   // Handle /delayload
@@ -894,7 +1003,7 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
   // Set default image name if neither /out or /def set it.
   if (Config->OutputFile.empty()) {
     Config->OutputFile =
-        getOutputPath((*Args.filtered_begin(OPT_INPUT))->getValue());
+        getOutputPath((*Args.filtered(OPT_INPUT).begin())->getValue());
   }
 
   // Put the PDB next to the image if no /pdb flag was passed.
@@ -959,6 +1068,9 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
       addUndefined(mangle("_load_config_used"));
   } while (run());
 
+  if (ErrorCount)
+    return;
+
   // If /msvclto is given, we use the MSVC linker to link LTO output files.
   // This is useful because MSVC link.exe can generate complete PDBs.
   if (Args.hasArg(OPT_msvclto)) {
@@ -983,16 +1095,19 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
   }
 
   // Handle /safeseh.
-  if (Args.hasArg(OPT_safeseh))
+  if (Args.hasArg(OPT_safeseh)) {
     for (ObjectFile *File : Symtab.ObjectFiles)
       if (!File->SEHCompat)
-        fatal("/safeseh: " + File->getName() + " is not compatible with SEH");
+        error("/safeseh: " + File->getName() + " is not compatible with SEH");
+    if (ErrorCount)
+      return;
+  }
 
   // Windows specific -- when we are creating a .dll file, we also
   // need to create a .lib file.
   if (!Config->Exports.empty() || Config->DLL) {
     fixupExports();
-    writeImportLibrary();
+    createImportLibrary();
     assignExportOrdinals();
   }
 

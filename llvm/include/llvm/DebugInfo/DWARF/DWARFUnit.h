@@ -10,11 +10,12 @@
 #ifndef LLVM_DEBUGINFO_DWARF_DWARFUNIT_H
 #define LLVM_DEBUGINFO_DWARF_DWARFUNIT_H
 
-#include "llvm/ADT/iterator_range.h"
 #include "llvm/ADT/Optional.h"
-#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/iterator_range.h"
+#include "llvm/BinaryFormat/Dwarf.h"
 #include "llvm/DebugInfo/DWARF/DWARFDebugInfoEntry.h"
 #include "llvm/DebugInfo/DWARF/DWARFDebugRangeList.h"
 #include "llvm/DebugInfo/DWARF/DWARFDie.h"
@@ -24,11 +25,11 @@
 #include "llvm/Object/Binary.h"
 #include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/DataExtractor.h"
-#include "llvm/Support/Dwarf.h"
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <vector>
 
@@ -55,8 +56,9 @@ protected:
   ~DWARFUnitSectionBase() = default;
 
   virtual void parseImpl(DWARFContext &Context, const DWARFSection &Section,
-                         const DWARFDebugAbbrev *DA, StringRef RS, StringRef SS,
-                         StringRef SOS, StringRef AOS, StringRef LS,
+                         const DWARFDebugAbbrev *DA, const DWARFSection *RS,
+                         StringRef SS, const DWARFSection &SOS,
+                         const DWARFSection *AOS, StringRef LS,
                          bool isLittleEndian, bool isDWO) = 0;
 };
 
@@ -87,9 +89,9 @@ public:
 
 private:
   void parseImpl(DWARFContext &Context, const DWARFSection &Section,
-                 const DWARFDebugAbbrev *DA, StringRef RS, StringRef SS,
-                 StringRef SOS, StringRef AOS, StringRef LS, bool LE,
-                 bool IsDWO) override {
+                 const DWARFDebugAbbrev *DA, const DWARFSection *RS,
+                 StringRef SS, const DWARFSection &SOS, const DWARFSection *AOS,
+                 StringRef LS, bool LE, bool IsDWO) override {
     if (Parsed)
       return;
     const auto &Index = getDWARFUnitIndex(Context, UnitType::Section);
@@ -110,16 +112,17 @@ private:
 
 class DWARFUnit {
   DWARFContext &Context;
-  // Section containing this DWARFUnit.
+  /// Section containing this DWARFUnit.
   const DWARFSection &InfoSection;
 
   const DWARFDebugAbbrev *Abbrev;
-  StringRef RangeSection;
+  const DWARFSection *RangeSection;
   uint32_t RangeSectionBase;
   StringRef LineSection;
   StringRef StringSection;
-  StringRef StringOffsetSection;
-  StringRef AddrOffsetSection;
+  const DWARFSection &StringOffsetSection;
+  uint64_t StringOffsetSectionBase = 0;
+  const DWARFSection *AddrOffsetSection;
   uint32_t AddrOffsetSectionBase;
   bool isLittleEndian;
   bool isDWO;
@@ -132,22 +135,17 @@ class DWARFUnit {
   uint8_t UnitType;
   uint8_t AddrSize;
   uint64_t BaseAddr;
-  // The compile unit debug information entry items.
+  /// The compile unit debug information entry items.
   std::vector<DWARFDebugInfoEntry> DieArray;
+
+  /// Map from range's start address to end address and corresponding DIE.
+  /// IntervalMap does not support range removal, as a result, we use the
+  /// std::map::upper_bound for address range lookup.
+  std::map<uint64_t, std::pair<uint64_t, DWARFDie>> AddrDieMap;
   typedef iterator_range<std::vector<DWARFDebugInfoEntry>::iterator>
       die_iterator_range;
 
-  class DWOHolder {
-    object::OwningBinary<object::ObjectFile> DWOFile;
-    std::unique_ptr<DWARFContext> DWOContext;
-    DWARFUnit *DWOU = nullptr;
-
-  public:
-    DWOHolder(StringRef DWOPath);
-
-    DWARFUnit *getUnit() const { return DWOU; }
-  };
-  std::unique_ptr<DWOHolder> DWO;
+  std::shared_ptr<DWARFUnit> DWO;
 
   const DWARFUnitIndex::Entry *IndexEntry;
 
@@ -165,9 +163,9 @@ protected:
 
 public:
   DWARFUnit(DWARFContext &Context, const DWARFSection &Section,
-            const DWARFDebugAbbrev *DA, StringRef RS, StringRef SS,
-            StringRef SOS, StringRef AOS, StringRef LS, bool LE, bool IsDWO,
-            const DWARFUnitSectionBase &UnitSection,
+            const DWARFDebugAbbrev *DA, const DWARFSection *RS, StringRef SS,
+            const DWARFSection &SOS, const DWARFSection *AOS, StringRef LS,
+            bool LE, bool IsDWO, const DWARFUnitSectionBase &UnitSection,
             const DWARFUnitIndex::Entry *IndexEntry = nullptr);
 
   virtual ~DWARFUnit();
@@ -176,21 +174,27 @@ public:
 
   StringRef getLineSection() const { return LineSection; }
   StringRef getStringSection() const { return StringSection; }
-  StringRef getStringOffsetSection() const { return StringOffsetSection; }
+  const DWARFSection &getStringOffsetSection() const {
+    return StringOffsetSection;
+  }
 
-  void setAddrOffsetSection(StringRef AOS, uint32_t Base) {
+  void setAddrOffsetSection(const DWARFSection *AOS, uint32_t Base) {
     AddrOffsetSection = AOS;
     AddrOffsetSectionBase = Base;
   }
 
-  void setRangesSection(StringRef RS, uint32_t Base) {
+  /// Recursively update address to Die map.
+  void updateAddressDieMap(DWARFDie Die);
+
+  void setRangesSection(const DWARFSection *RS, uint32_t Base) {
     RangeSection = RS;
     RangeSectionBase = Base;
   }
 
   bool getAddrOffsetSectionItem(uint32_t Index, uint64_t &Result) const;
   // FIXME: Result should be uint64_t in DWARF64.
-  bool getStringOffsetSectionItem(uint32_t Index, uint32_t &Result) const;
+  bool getStringOffsetSectionItem(uint32_t Index, uint64_t &Result) const;
+  uint64_t getStringOffsetSectionRelocation(uint32_t Index) const;
 
   DataExtractor getDebugInfoExtractor() const {
     return DataExtractor(InfoSection.Data, isLittleEndian, AddrSize);
@@ -201,6 +205,9 @@ public:
   }
 
   const RelocAddrMap *getRelocMap() const { return &InfoSection.Relocs; }
+  const RelocAddrMap &getStringOffsetsRelocMap() const {
+    return StringOffsetSection.Relocs;
+  }
 
   bool extract(DataExtractor debug_info, uint32_t* offset_ptr);
 
@@ -303,9 +310,9 @@ public:
         [](const DWARFDebugInfoEntry &LHS, uint32_t Offset) {
           return LHS.getOffset() < Offset;
         });
-    if (it == DieArray.end())
-      return DWARFDie();
-    return DWARFDie(this, &*it);
+    if (it != DieArray.end() && it->getOffset() == Offset)
+      return DWARFDie(this, &*it);
+    return DWARFDie();
   }
 
   uint32_t getLineTableOffset() const {
@@ -339,10 +346,10 @@ private:
   /// it was actually constructed.
   bool parseDWO();
 
-  /// getSubprogramForAddress - Returns subprogram DIE with address range
+  /// getSubroutineForAddress - Returns subprogram DIE with address range
   /// encompassing the provided address. The pointer is alive as long as parsed
   /// compile unit DIEs are not cleared.
-  DWARFDie getSubprogramForAddress(uint64_t Address);
+  DWARFDie getSubroutineForAddress(uint64_t Address);
 };
 
 } // end namespace llvm

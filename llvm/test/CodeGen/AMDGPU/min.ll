@@ -1,7 +1,7 @@
 ; RUN: llc -march=amdgcn -verify-machineinstrs < %s | FileCheck -check-prefix=GCN -check-prefix=SI -check-prefix=FUNC %s
 ; RUN: llc -march=amdgcn -mcpu=tonga -mattr=-flat-for-global -verify-machineinstrs < %s | FileCheck -check-prefix=GCN -check-prefix=VI -check-prefix=GFX89 -check-prefix=FUNC %s
 ; RUN: llc -march=amdgcn -mcpu=gfx901 -mattr=-flat-for-global -verify-machineinstrs < %s | FileCheck -check-prefix=GCN -check-prefix=GFX9 -check-prefix=GFX89 -check-prefix=FUNC %s
-; RUN: llc -march=r600 -mcpu=cypress < %s | FileCheck -check-prefix=EG -check-prefix=FUNC %s
+; RUN: llc -march=r600 -mcpu=cypress -verify-machineinstrs < %s | FileCheck -check-prefix=EG -check-prefix=FUNC %s
 
 ; FUNC-LABEL: {{^}}v_test_imin_sle_i32:
 ; GCN: v_min_i32_e32
@@ -289,7 +289,7 @@ define amdgpu_kernel void @v_test_umin_ule_v3i32(<3 x i32> addrspace(1)* %out, <
 ; SI-NOT: v_min_u32_e32
 
 ; VI: v_min_u16_e32
-; VI: v_min_u16_e32
+; VI: v_min_u16_sdwa
 ; VI: v_min_u16_e32
 ; VI-NOT: v_min_u16_e32
 

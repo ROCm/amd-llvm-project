@@ -72,7 +72,7 @@ INLINE uptr GetPageSizeCached() {
 uptr GetMmapGranularity();
 uptr GetMaxVirtualAddress();
 // Threads
-uptr GetTid();
+tid_t GetTid();
 uptr GetThreadSelf();
 void GetThreadStackTopAndBottom(bool at_initialization, uptr *stack_top,
                                 uptr *stack_bottom);
@@ -317,15 +317,9 @@ bool AddressSpaceIsUnlimited();
 void SetAddressSpaceUnlimited();
 void AdjustStackSize(void *attr);
 void PrepareForSandboxing(__sanitizer_sandbox_arguments *args);
-void CovPrepareForSandboxing(__sanitizer_sandbox_arguments *args);
 void SetSandboxingCallback(void (*f)());
 
-void CoverageUpdateMapping();
-void CovBeforeFork();
-void CovAfterFork(int child_pid);
-
 void InitializeCoverage(bool enabled, const char *coverage_dir);
-void ReInitializeCoverage(bool enabled, const char *coverage_dir);
 
 void InitTlsSize();
 uptr GetTlsSize();
@@ -380,7 +374,7 @@ void SetSoftRssLimitExceededCallback(void (*Callback)(bool exceeded));
 
 // Functions related to signal handling.
 typedef void (*SignalHandlerType)(int, void *, void *);
-bool IsHandledDeadlySignal(int signum);
+HandleSignalMode GetHandleSignalMode(int signum);
 void InstallDeadlySignalHandlers(SignalHandlerType handler);
 const char *DescribeSignalOrException(int signo);
 // Alternative signal stack (POSIX-only).
@@ -392,12 +386,16 @@ const int kMaxSummaryLength = 1024;
 // Construct a one-line string:
 //   SUMMARY: SanitizerToolName: error_message
 // and pass it to __sanitizer_report_error_summary.
-void ReportErrorSummary(const char *error_message);
+// If alt_tool_name is provided, it's used in place of SanitizerToolName.
+void ReportErrorSummary(const char *error_message,
+                        const char *alt_tool_name = nullptr);
 // Same as above, but construct error_message as:
 //   error_type file:line[:column][ function]
-void ReportErrorSummary(const char *error_type, const AddressInfo &info);
+void ReportErrorSummary(const char *error_type, const AddressInfo &info,
+                        const char *alt_tool_name = nullptr);
 // Same as above, but obtains AddressInfo by symbolizing top stack trace frame.
-void ReportErrorSummary(const char *error_type, const StackTrace *trace);
+void ReportErrorSummary(const char *error_type, const StackTrace *trace,
+                        const char *alt_tool_name = nullptr);
 
 // Math
 #if SANITIZER_WINDOWS && !defined(__clang__) && !defined(__GNUC__)
@@ -713,7 +711,7 @@ class LoadedModule {
   void set(const char *module_name, uptr base_address, ModuleArch arch,
            u8 uuid[kModuleUUIDSize], bool instrumented);
   void clear();
-  void addAddressRange(uptr beg, uptr end, bool executable);
+  void addAddressRange(uptr beg, uptr end, bool executable, bool writable);
   bool containsAddress(uptr address) const;
 
   const char *full_name() const { return full_name_; }
@@ -728,9 +726,14 @@ class LoadedModule {
     uptr beg;
     uptr end;
     bool executable;
+    bool writable;
 
-    AddressRange(uptr beg, uptr end, bool executable)
-        : next(nullptr), beg(beg), end(end), executable(executable) {}
+    AddressRange(uptr beg, uptr end, bool executable, bool writable)
+        : next(nullptr),
+          beg(beg),
+          end(end),
+          executable(executable),
+          writable(writable) {}
   };
 
   const IntrusiveList<AddressRange> &ranges() const { return ranges_; }

@@ -13,6 +13,7 @@ add_clang_library(clangTidyModernizeModule
   RawStringLiteralCheck.cpp
   RedundantVoidArgCheck.cpp
   ReplaceAutoPtrCheck.cpp
+  ReplaceRandomShuffleCheck.cpp
   ReturnBracedInitListCheck.cpp
   ShrinkToFitCheck.cpp
   UseAutoCheck.cpp
@@ -21,6 +22,7 @@ add_clang_library(clangTidyModernizeModule
   UseEmplaceCheck.cpp
   UseEqualsDefaultCheck.cpp
   UseEqualsDeleteCheck.cpp
+  UseNoexceptCheck.cpp
   UseNullptrCheck.cpp
   UseOverrideCheck.cpp
   UseTransparentFunctorsCheck.cpp

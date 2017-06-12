@@ -14,8 +14,8 @@
 #ifndef LLVM_MC_MCSECTION_H
 #define LLVM_MC_MCSECTION_H
 
-#include "llvm/ADT/ilist.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/ilist.h"
 #include "llvm/MC/MCFragment.h"
 #include "llvm/MC/SectionKind.h"
 #include <cassert>
@@ -47,13 +47,13 @@ public:
     BundleLockedAlignToEnd
   };
 
-  typedef iplist<MCFragment> FragmentListType;
+  using FragmentListType = iplist<MCFragment>;
 
-  typedef FragmentListType::const_iterator const_iterator;
-  typedef FragmentListType::iterator iterator;
+  using const_iterator = FragmentListType::const_iterator;
+  using iterator = FragmentListType::iterator;
 
-  typedef FragmentListType::const_reverse_iterator const_reverse_iterator;
-  typedef FragmentListType::reverse_iterator reverse_iterator;
+  using const_reverse_iterator = FragmentListType::const_reverse_iterator;
+  using reverse_iterator = FragmentListType::reverse_iterator;
 
 private:
   MCSymbol *Begin;

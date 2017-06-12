@@ -1,4 +1,4 @@
-//===- IRSymtab.cpp - implementation of IR symbol tables --------*- C++ -*-===//
+//===- IRSymtab.cpp - implementation of IR symbol tables ------------------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -8,13 +8,35 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Object/IRSymtab.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/Triple.h"
 #include "llvm/Analysis/ObjectUtils.h"
+#include "llvm/IR/Comdat.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/GlobalAlias.h"
+#include "llvm/IR/GlobalObject.h"
 #include "llvm/IR/Mangler.h"
+#include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
+#include "llvm/Bitcode/BitcodeReader.h"
 #include "llvm/MC/StringTableBuilder.h"
+#include "llvm/Object/IRObjectFile.h"
 #include "llvm/Object/ModuleSymbolTable.h"
+#include "llvm/Object/SymbolicFile.h"
 #include "llvm/Support/Allocator.h"
+#include "llvm/Support/Casting.h"
+#include "llvm/Support/Error.h"
 #include "llvm/Support/StringSaver.h"
+#include "llvm/Support/raw_ostream.h"
+#include <cassert>
+#include <string>
+#include <utility>
+#include <vector>
 
 using namespace llvm;
 using namespace irsymtab;
@@ -25,17 +47,16 @@ namespace {
 struct Builder {
   SmallVector<char, 0> &Symtab;
   SmallVector<char, 0> &Strtab;
+
   Builder(SmallVector<char, 0> &Symtab, SmallVector<char, 0> &Strtab)
       : Symtab(Symtab), Strtab(Strtab) {}
 
-  StringTableBuilder StrtabBuilder{StringTableBuilder::ELF};
+  StringTableBuilder StrtabBuilder{StringTableBuilder::RAW};
 
   BumpPtrAllocator Alloc;
   StringSaver Saver{Alloc};
 
   DenseMap<const Comdat *, unsigned> ComdatMap;
-  ModuleSymbolTable Msymtab;
-  SmallPtrSet<GlobalValue *, 8> Used;
   Mangler Mang;
   Triple TT;
 
@@ -49,7 +70,9 @@ struct Builder {
 
   void setStr(storage::Str &S, StringRef Value) {
     S.Offset = StrtabBuilder.add(Value);
+    S.Size = Value.size();
   }
+
   template <typename T>
   void writeRange(storage::Range<T> &R, const std::vector<T> &Objs) {
     R.Offset = Symtab.size();
@@ -59,18 +82,28 @@ struct Builder {
   }
 
   Error addModule(Module *M);
-  Error addSymbol(ModuleSymbolTable::Symbol Sym);
+  Error addSymbol(const ModuleSymbolTable &Msymtab,
+                  const SmallPtrSet<GlobalValue *, 8> &Used,
+                  ModuleSymbolTable::Symbol Sym);
 
   Error build(ArrayRef<Module *> Mods);
 };
 
 Error Builder::addModule(Module *M) {
+  if (M->getDataLayoutStr().empty())
+    return make_error<StringError>("input module has no datalayout",
+                                   inconvertibleErrorCode());
+
+  SmallPtrSet<GlobalValue *, 8> Used;
   collectUsedGlobalVariables(*M, Used, /*CompilerUsed*/ false);
 
-  storage::Module Mod;
-  Mod.Begin = Msymtab.symbols().size();
+  ModuleSymbolTable Msymtab;
   Msymtab.addModule(M);
-  Mod.End = Msymtab.symbols().size();
+
+  storage::Module Mod;
+  Mod.Begin = Syms.size();
+  Mod.End = Syms.size() + Msymtab.symbols().size();
+  Mod.UncBegin = Uncommons.size();
   Mods.push_back(Mod);
 
   if (TT.isOSBinFormatCOFF()) {
@@ -84,20 +117,25 @@ Error Builder::addModule(Module *M) {
     }
   }
 
+  for (ModuleSymbolTable::Symbol Msym : Msymtab.symbols())
+    if (Error Err = addSymbol(Msymtab, Used, Msym))
+      return Err;
+
   return Error::success();
 }
 
-Error Builder::addSymbol(ModuleSymbolTable::Symbol Msym) {
+Error Builder::addSymbol(const ModuleSymbolTable &Msymtab,
+                         const SmallPtrSet<GlobalValue *, 8> &Used,
+                         ModuleSymbolTable::Symbol Msym) {
   Syms.emplace_back();
   storage::Symbol &Sym = Syms.back();
   Sym = {};
 
-  Sym.UncommonIndex = -1;
   storage::Uncommon *Unc = nullptr;
   auto Uncommon = [&]() -> storage::Uncommon & {
     if (Unc)
       return *Unc;
-    Sym.UncommonIndex = Uncommons.size();
+    Sym.Flags |= 1 << storage::Symbol::FB_has_uncommon;
     Uncommons.emplace_back();
     Unc = &Uncommons.back();
     *Unc = {};
@@ -125,10 +163,15 @@ Error Builder::addSymbol(ModuleSymbolTable::Symbol Msym) {
     Sym.Flags |= 1 << storage::Symbol::FB_global;
   if (Flags & object::BasicSymbolRef::SF_FormatSpecific)
     Sym.Flags |= 1 << storage::Symbol::FB_format_specific;
+  if (Flags & object::BasicSymbolRef::SF_Executable)
+    Sym.Flags |= 1 << storage::Symbol::FB_executable;
 
   Sym.ComdatIndex = -1;
   auto *GV = Msym.dyn_cast<GlobalValue *>();
   if (!GV) {
+    // Undefined module asm symbols act as GC roots and are implicitly used.
+    if (Flags & object::BasicSymbolRef::SF_Undefined)
+      Sym.Flags |= 1 << storage::Symbol::FB_used;
     setStr(Sym.IRName, "");
     return Error::success();
   }
@@ -188,16 +231,12 @@ Error Builder::build(ArrayRef<Module *> IRMods) {
   storage::Header Hdr;
 
   assert(!IRMods.empty());
+  setStr(Hdr.TargetTriple, IRMods[0]->getTargetTriple());
   setStr(Hdr.SourceFileName, IRMods[0]->getSourceFileName());
   TT = Triple(IRMods[0]->getTargetTriple());
 
-  // This adds the symbols for each module to Msymtab.
   for (auto *M : IRMods)
     if (Error Err = addModule(M))
-      return Err;
-
-  for (ModuleSymbolTable::Symbol Msym : Msymtab.symbols())
-    if (Error Err = addSymbol(Msym))
       return Err;
 
   COFFLinkerOptsOS.flush();
@@ -220,9 +259,46 @@ Error Builder::build(ArrayRef<Module *> IRMods) {
   return Error::success();
 }
 
-} // anonymous namespace
+} // end anonymous namespace
 
 Error irsymtab::build(ArrayRef<Module *> Mods, SmallVector<char, 0> &Symtab,
                       SmallVector<char, 0> &Strtab) {
   return Builder(Symtab, Strtab).build(Mods);
+}
+
+// Upgrade a vector of bitcode modules created by an old version of LLVM by
+// creating an irsymtab for them in the current format.
+static Expected<FileContents> upgrade(ArrayRef<BitcodeModule> BMs) {
+  FileContents FC;
+
+  LLVMContext Ctx;
+  std::vector<Module *> Mods;
+  std::vector<std::unique_ptr<Module>> OwnedMods;
+  for (auto BM : BMs) {
+    Expected<std::unique_ptr<Module>> MOrErr =
+        BM.getLazyModule(Ctx, /*ShouldLazyLoadMetadata*/ true,
+                         /*IsImporting*/ false);
+    if (!MOrErr)
+      return MOrErr.takeError();
+
+    Mods.push_back(MOrErr->get());
+    OwnedMods.push_back(std::move(*MOrErr));
+  }
+
+  if (Error E = build(Mods, FC.Symtab, FC.Strtab))
+    return std::move(E);
+
+  FC.TheReader = {{FC.Symtab.data(), FC.Symtab.size()},
+                  {FC.Strtab.data(), FC.Strtab.size()}};
+  return std::move(FC);
+}
+
+Expected<FileContents> irsymtab::readBitcode(const BitcodeFileContents &BFC) {
+  if (BFC.Mods.empty())
+    return make_error<StringError>("Bitcode file does not contain any modules",
+                                   inconvertibleErrorCode());
+
+  // Right now we have no on-disk representation of symbol tables, so we always
+  // upgrade.
+  return upgrade(BFC.Mods);
 }

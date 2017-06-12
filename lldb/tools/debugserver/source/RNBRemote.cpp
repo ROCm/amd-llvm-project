@@ -1628,7 +1628,7 @@ rnb_err_t RNBRemote::HandlePacket_H(const char *p) {
 }
 
 rnb_err_t RNBRemote::HandlePacket_qLaunchSuccess(const char *p) {
-  if (m_ctx.HasValidProcessID() || m_ctx.LaunchStatus().Error() == 0)
+  if (m_ctx.HasValidProcessID() || m_ctx.LaunchStatus().Status() == 0)
     return SendPacket("OK");
   std::ostringstream ret_str;
   std::string status_str;
@@ -3614,7 +3614,7 @@ rnb_err_t RNBRemote::HandlePacket_qSupported(const char *p) {
   bool enable_compression = false;
   (void)enable_compression;
 
-#if (defined (TARGET_OS_WATCH) && TARGET_OS_WATCHOS == 1) || (defined (TARGET_OS_IOS) && TARGET_OS_IOS == 1) || (defined (TARGET_OS_TVOS) && TARGET_OS_TVOS == 1)
+#if (defined (TARGET_OS_WATCH) && TARGET_OS_WATCH == 1) || (defined (TARGET_OS_IOS) && TARGET_OS_IOS == 1) || (defined (TARGET_OS_TV) && TARGET_OS_TV == 1)
   enable_compression = true;
 #endif
 

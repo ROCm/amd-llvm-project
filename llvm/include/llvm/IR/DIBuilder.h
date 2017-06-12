@@ -86,6 +86,10 @@ namespace llvm {
     /// Construct any deferred debug info descriptors.
     void finalize();
 
+    /// Finalize a specific subprogram - no new variables may be added to this
+    /// subprogram afterwards.
+    void finalizeSubprogram(DISubprogram *SP);
+
     /// A CompileUnit provides an anchor for all debugging
     /// information generated during this instance of compilation.
     /// \param Lang          Source programming language, eg. dwarf::DW_LANG_C99
@@ -577,15 +581,14 @@ namespace llvm {
     ///                      These flags are used to emit dwarf attributes.
     /// \param isOptimized   True if optimization is ON.
     /// \param TParams       Function template parameters.
-    DISubprogram *createFunction(DIScope *Scope, StringRef Name,
-                                 StringRef LinkageName, DIFile *File,
-                                 unsigned LineNo, DISubroutineType *Ty,
-                                 bool isLocalToUnit, bool isDefinition,
-                                 unsigned ScopeLine,
-                                 DINode::DIFlags Flags = DINode::FlagZero,
-                                 bool isOptimized = false,
-                                 DITemplateParameterArray TParams = nullptr,
-                                 DISubprogram *Decl = nullptr);
+    /// \param ThrownTypes   Exception types this function may throw.
+    DISubprogram *createFunction(
+        DIScope *Scope, StringRef Name, StringRef LinkageName, DIFile *File,
+        unsigned LineNo, DISubroutineType *Ty, bool isLocalToUnit,
+        bool isDefinition, unsigned ScopeLine,
+        DINode::DIFlags Flags = DINode::FlagZero, bool isOptimized = false,
+        DITemplateParameterArray TParams = nullptr,
+        DISubprogram *Decl = nullptr, DITypeArray ThrownTypes = nullptr);
 
     /// Identical to createFunction,
     /// except that the resulting DbgNode is meant to be RAUWed.
@@ -595,7 +598,7 @@ namespace llvm {
         bool isDefinition, unsigned ScopeLine,
         DINode::DIFlags Flags = DINode::FlagZero, bool isOptimized = false,
         DITemplateParameterArray TParams = nullptr,
-        DISubprogram *Decl = nullptr);
+        DISubprogram *Decl = nullptr, DITypeArray ThrownTypes = nullptr);
 
     /// Create a new descriptor for the specified C++ method.
     /// See comments in \a DISubprogram* for descriptions of these fields.
@@ -619,23 +622,23 @@ namespace llvm {
     ///                      This flags are used to emit dwarf attributes.
     /// \param isOptimized   True if optimization is ON.
     /// \param TParams       Function template parameters.
+    /// \param ThrownTypes   Exception types this function may throw.
     DISubprogram *createMethod(
         DIScope *Scope, StringRef Name, StringRef LinkageName, DIFile *File,
         unsigned LineNo, DISubroutineType *Ty, bool isLocalToUnit,
         bool isDefinition, unsigned Virtuality = 0, unsigned VTableIndex = 0,
         int ThisAdjustment = 0, DIType *VTableHolder = nullptr,
         DINode::DIFlags Flags = DINode::FlagZero, bool isOptimized = false,
-        DITemplateParameterArray TParams = nullptr);
+        DITemplateParameterArray TParams = nullptr,
+        DITypeArray ThrownTypes = nullptr);
 
     /// This creates new descriptor for a namespace with the specified
     /// parent scope.
     /// \param Scope       Namespace scope
     /// \param Name        Name of this namespace
-    /// \param File        Source file
-    /// \param LineNo      Line number
     /// \param ExportSymbols True for C++ inline namespaces.
-    DINamespace *createNameSpace(DIScope *Scope, StringRef Name, DIFile *File,
-                                 unsigned LineNo, bool ExportSymbols);
+    DINamespace *createNameSpace(DIScope *Scope, StringRef Name,
+                                 bool ExportSymbols);
 
     /// This creates new descriptor for a module with the specified
     /// parent scope.
@@ -777,6 +780,9 @@ namespace llvm {
       return Replacement;
     }
   };
+
+  // Create wrappers for C Binding types (see CBindingWrapping.h).
+  DEFINE_ISA_CONVERSION_FUNCTIONS(DIBuilder, LLVMDIBuilderRef)
 
 } // end namespace llvm
 

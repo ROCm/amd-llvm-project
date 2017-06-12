@@ -17,13 +17,13 @@
 
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
+#include "llvm/Analysis/VectorUtils.h"
 #include "llvm/IR/CallSite.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GetElementPtrTypeIterator.h"
 #include "llvm/IR/Operator.h"
 #include "llvm/IR/Type.h"
-#include "llvm/Analysis/VectorUtils.h"
 
 namespace llvm {
 
@@ -112,6 +112,12 @@ public:
         return TTI::TCC_Basic;
 
     return TTI::TCC_Free;
+  }
+
+  unsigned getEstimatedNumberOfCaseClusters(const SwitchInst &SI,
+                                            unsigned &JTSize) {
+    JTSize = 0;
+    return SI.getNumCases();
   }
 
   unsigned getCallCost(FunctionType *FTy, int NumArgs) {
@@ -223,6 +229,13 @@ public:
     return !BaseGV && BaseOffset == 0 && (Scale == 0 || Scale == 1);
   }
 
+  bool isLSRCostLess(TTI::LSRCost &C1, TTI::LSRCost &C2) {
+    return std::tie(C1.NumRegs, C1.AddRecCost, C1.NumIVMuls, C1.NumBaseAdds,
+                    C1.ScaleCost, C1.ImmCost, C1.SetupCost) <
+           std::tie(C2.NumRegs, C2.AddRecCost, C2.NumIVMuls, C2.NumBaseAdds,
+                    C2.ScaleCost, C2.ImmCost, C2.SetupCost);
+  }
+
   bool isLegalMaskedStore(Type *DataType) { return false; }
 
   bool isLegalMaskedLoad(Type *DataType) { return false; }
@@ -230,6 +243,8 @@ public:
   bool isLegalMaskedScatter(Type *DataType) { return false; }
 
   bool isLegalMaskedGather(Type *DataType) { return false; }
+
+  bool prefersVectorizedAddressing() { return true; }
 
   int getScalingFactorCost(Type *Ty, GlobalValue *BaseGV, int64_t BaseOffset,
                            bool HasBaseReg, int64_t Scale, unsigned AddrSpace) {
@@ -262,7 +277,11 @@ public:
   unsigned getOperandsScalarizationOverhead(ArrayRef<const Value *> Args,
                                             unsigned VF) { return 0; }
 
+  bool supportsEfficientVectorElementLoadStore() { return false; }
+
   bool enableAggressiveInterleaving(bool LoopHasReductions) { return false; }
+
+  bool expandMemCmp(Instruction *I, unsigned &MaxLoadSize) { return false; }
 
   bool enableInterleavedAccessVectorization() { return false; }
 
@@ -303,6 +322,15 @@ public:
 
   unsigned getRegisterBitWidth(bool Vector) { return 32; }
 
+  unsigned getMinVectorRegisterBitWidth() { return 128; }
+
+  bool
+  shouldConsiderAddressTypePromotion(const Instruction &I,
+                                     bool &AllowPromotionWithoutCommonHeader) {
+    AllowPromotionWithoutCommonHeader = false;
+    return false;
+  }
+
   unsigned getCacheLineSize() { return 0; }
 
   unsigned getPrefetchDistance() { return 0; }
@@ -327,7 +355,8 @@ public:
     return 1;
   }
 
-  unsigned getCastInstrCost(unsigned Opcode, Type *Dst, Type *Src) { return 1; }
+  unsigned getCastInstrCost(unsigned Opcode, Type *Dst, Type *Src,
+                            const Instruction *I) { return 1; }
 
   unsigned getExtractWithExtendCost(unsigned Opcode, Type *Dst,
                                     VectorType *VecTy, unsigned Index) {
@@ -336,7 +365,8 @@ public:
 
   unsigned getCFInstrCost(unsigned Opcode) { return 1; }
 
-  unsigned getCmpSelInstrCost(unsigned Opcode, Type *ValTy, Type *CondTy) {
+  unsigned getCmpSelInstrCost(unsigned Opcode, Type *ValTy, Type *CondTy,
+                              const Instruction *I) {
     return 1;
   }
 
@@ -345,7 +375,7 @@ public:
   }
 
   unsigned getMemoryOpCost(unsigned Opcode, Type *Src, unsigned Alignment,
-                           unsigned AddressSpace) {
+                           unsigned AddressSpace, const Instruction *I) {
     return 1;
   }
 
@@ -397,6 +427,15 @@ public:
     return false;
   }
 
+  unsigned getAtomicMemIntrinsicMaxElementSize() const {
+    // Note for overrides: You must ensure for all element unordered-atomic
+    // memory intrinsics that all power-of-2 element sizes up to, and
+    // including, the return value of this method have a corresponding
+    // runtime lib call. These runtime lib call definitions can be found
+    // in RuntimeLibcalls.h
+    return 0;
+  }
+
   Value *getOrCreateResultFromMemIntrinsic(IntrinsicInst *Inst,
                                            Type *ExpectedType) {
     return nullptr;
@@ -439,6 +478,16 @@ public:
                                 VectorType *VecTy) const {
     return VF;
   }
+
+  bool useReductionIntrinsic(unsigned Opcode, Type *Ty,
+                             TTI::ReductionFlags Flags) const {
+    return false;
+  }
+
+  bool shouldExpandReduction(const IntrinsicInst *II) const {
+    return true;
+  }
+
 protected:
   // Obtain the minimum required size to hold the value (without the sign)
   // In case of a vector it returns the min required size for one element.

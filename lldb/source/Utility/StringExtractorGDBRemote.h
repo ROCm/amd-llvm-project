@@ -10,12 +10,13 @@
 #ifndef utility_StringExtractorGDBRemote_h_
 #define utility_StringExtractorGDBRemote_h_
 
-// C Includes
-// C++ Includes
-#include <string>
-// Other libraries and framework includes
-// Project includes
 #include "lldb/Utility/StringExtractor.h"
+#include "llvm/ADT/StringRef.h" // for StringRef
+
+#include <string>
+
+#include <stddef.h> // for size_t
+#include <stdint.h> // for uint8_t
 
 class StringExtractorGDBRemote : public StringExtractor {
 public:
@@ -163,6 +164,12 @@ public:
     eServerPacketType__M,
     eServerPacketType__m,
     eServerPacketType_notify, // '%' notification
+
+    eServerPacketType_jTraceStart,
+    eServerPacketType_jTraceBufferRead,
+    eServerPacketType_jTraceMetaRead,
+    eServerPacketType_jTraceStop,
+    eServerPacketType_jTraceConfigRead,
   };
 
   ServerPacketType GetServerPacketType() const;

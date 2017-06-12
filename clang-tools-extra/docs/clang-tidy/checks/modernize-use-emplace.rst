@@ -36,8 +36,13 @@ After:
 
     std::vector<std::pair<int, int>> w;
     w.emplace_back(21, 37);
-    // This will be fixed to w.emplace_back(21L, 37L); in next version
-    w.emplace_back(std::make_pair(21L, 37L);
+    w.emplace_back(21L, 37L);
+
+By default, the check is able to remove unnecessary ``std::make_pair`` and
+``std::make_tuple`` calls from ``push_back`` calls on containers of
+``std::pair`` and ``std::tuple``. Custom tuple-like types can be modified by
+the :option:`TupleTypes` option; custom make functions can be modified by the
+:option:`TupleMakeFunctions` option.
 
 The other situation is when we pass arguments that will be converted to a type
 inside a container.
@@ -100,3 +105,31 @@ Options
 .. option:: SmartPointers
 
    Semicolon-separated list of class names of custom smart pointers.
+
+.. option:: TupleTypes
+
+    Semicolon-separated list of ``std::tuple``-like class names.
+
+.. option:: TupleMakeFunctions
+
+    Semicolon-separated list of ``std::make_tuple``-like function names. Those
+    function calls will be removed from ``push_back`` calls and turned into
+    ``emplace_back``.
+
+Example
+^^^^^^^
+
+.. code-block:: c++
+
+  std::vector<MyTuple<int, bool, char>> x;
+  x.push_back(MakeMyTuple(1, false, 'x'));
+
+transforms to:
+
+.. code-block:: c++
+
+  std::vector<MyTuple<int, bool, char>> x;
+  x.emplace_back(1, false, 'x');
+
+when :option:`TupleTypes` is set to ``MyTuple`` and :option:`TupleMakeFunctions`
+is set to ``MakeMyTuple``.

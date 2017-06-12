@@ -127,6 +127,9 @@ def FeatureERI      : SubtargetFeature<"avx512er", "HasERI", "true",
 def FeatureCDI      : SubtargetFeature<"avx512cd", "HasCDI", "true",
                       "Enable AVX-512 Conflict Detection Instructions",
                                       [FeatureAVX512]>;
+def FeatureVPOPCNTDQ : SubtargetFeature<"avx512vpopcntdq", "HasVPOPCNTDQ",
+                       "true", "Enable AVX-512 Population Count Instructions",
+                                      [FeatureAVX512]>;
 def FeaturePFI      : SubtargetFeature<"avx512pf", "HasPFI", "true",
                       "Enable AVX-512 PreFetch Instructions",
                                       [FeatureAVX512]>;
@@ -170,6 +173,8 @@ def FeatureAES     : SubtargetFeature<"aes", "HasAES", "true",
                                       [FeatureSSE2]>;
 def FeatureTBM     : SubtargetFeature<"tbm", "HasTBM", "true",
                                       "Enable TBM instructions">;
+def FeatureLWP     : SubtargetFeature<"lwp", "HasLWP", "true",
+                                      "Enable LWP instructions">;
 def FeatureMOVBE   : SubtargetFeature<"movbe", "HasMOVBE", "true",
                                       "Support MOVBE instruction">;
 def FeatureRDRAND  : SubtargetFeature<"rdrnd", "HasRDRAND", "true",
@@ -233,6 +238,8 @@ def FeatureLEAUsesAG : SubtargetFeature<"lea-uses-ag", "LEAUsesAG", "true",
                                    "LEA instruction needs inputs at AG stage">;
 def FeatureSlowLEA : SubtargetFeature<"slow-lea", "SlowLEA", "true",
                                    "LEA instruction with certain arguments is slow">;
+def FeatureSlow3OpsLEA : SubtargetFeature<"slow-3ops-lea", "Slow3OpsLEA", "true",
+                                   "LEA instruction with 3 ops or certain registers is slow">;
 def FeatureSlowIncDec : SubtargetFeature<"slow-incdec", "SlowIncDec", "true",
                                    "INC and DEC instructions are slower than ADD and SUB">;
 def FeatureSoftFloat
@@ -272,6 +279,16 @@ def FeatureFastSHLDRotate
     : SubtargetFeature<
           "fast-shld-rotate", "HasFastSHLDRotate", "true",
           "SHLD can be used as a faster rotate">;
+
+// Ivy Bridge and newer processors have enhanced REP MOVSB and STOSB (aka
+// "string operations"). See "REP String Enhancement" in the Intel Software
+// Development Manual. This feature essentially means that REP MOVSB will copy
+// using the largest available size instead of copying bytes one by one, making
+// it at least as fast as REPMOVS{W,D,Q}.
+def FeatureERMSB
+    : SubtargetFeature<
+          "ermsb", "HasERMSB", "true",
+          "REP MOVS/STOS are fast">;
 
 //===----------------------------------------------------------------------===//
 // X86 processors supported.
@@ -468,6 +485,7 @@ def SNBFeatures : ProcessorFeatures<[], [
   FeatureXSAVE,
   FeatureXSAVEOPT,
   FeatureLAHFSAHF,
+  FeatureSlow3OpsLEA,
   FeatureFastScalarFSQRT,
   FeatureFastSHLDRotate
 ]>;
@@ -498,6 +516,7 @@ def HSWFeatures : ProcessorFeatures<IVBFeatures.Value, [
   FeatureAVX2,
   FeatureBMI,
   FeatureBMI2,
+  FeatureERMSB,
   FeatureFMA,
   FeatureLZCNT,
   FeatureMOVBE,
@@ -680,6 +699,7 @@ def : Proc<"bdver1", [
   FeatureLZCNT,
   FeaturePOPCNT,
   FeatureXSAVE,
+  FeatureLWP,
   FeatureSlowSHLD,
   FeatureLAHFSAHF
 ]>;
@@ -702,6 +722,7 @@ def : Proc<"bdver2", [
   FeatureXSAVE,
   FeatureBMI,
   FeatureTBM,
+  FeatureLWP,
   FeatureFMA,
   FeatureSlowSHLD,
   FeatureLAHFSAHF
@@ -726,6 +747,7 @@ def : Proc<"bdver3", [
   FeatureXSAVE,
   FeatureBMI,
   FeatureTBM,
+  FeatureLWP,
   FeatureFMA,
   FeatureXSAVEOPT,
   FeatureSlowSHLD,
@@ -752,6 +774,7 @@ def : Proc<"bdver4", [
   FeatureBMI,
   FeatureBMI2,
   FeatureTBM,
+  FeatureLWP,
   FeatureFMA,
   FeatureXSAVEOPT,
   FeatureSlowSHLD,

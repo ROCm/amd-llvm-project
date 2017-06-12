@@ -14,8 +14,8 @@
 #ifndef LLVM_ANALYSIS_INLINECOST_H
 #define LLVM_ANALYSIS_INLINECOST_H
 
-#include "llvm/Analysis/CallGraphSCCPass.h"
 #include "llvm/Analysis/AssumptionCache.h"
+#include "llvm/Analysis/CallGraphSCCPass.h"
 #include <cassert>
 #include <climits>
 
@@ -159,6 +159,10 @@ InlineParams getInlineParams(int Threshold);
 /// \p SizeOptLevel of 1 corresponds to the the -Os flag and 2 corresponds to
 /// the -Oz flag.
 InlineParams getInlineParams(unsigned OptLevel, unsigned SizeOptLevel);
+
+/// Return the cost associated with a callsite, including paramater passing
+/// and the call/return instruction.
+int getCallsiteCost(CallSite CS, const DataLayout &DL);
 
 /// \brief Get an InlineCost object representing the cost of inlining this
 /// callsite.

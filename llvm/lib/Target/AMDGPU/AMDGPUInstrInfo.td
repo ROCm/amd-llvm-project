@@ -78,6 +78,11 @@ def AMDGPUif : SDNode<"AMDGPUISD::IF", AMDGPUIfOp, [SDNPHasChain]>;
 def AMDGPUelse : SDNode<"AMDGPUISD::ELSE", AMDGPUElseOp, [SDNPHasChain]>;
 def AMDGPUloop : SDNode<"AMDGPUISD::LOOP", AMDGPULoopOp, [SDNPHasChain]>;
 
+def AMDGPUtrap : SDNode<"AMDGPUISD::TRAP",
+  SDTypeProfile<0, -1, [SDTCisVT<0, i16>]>,
+    [SDNPHasChain, SDNPVariadic, SDNPSideEffect, SDNPInGlue]
+>;
+
 def AMDGPUconstdata_ptr : SDNode<
   "AMDGPUISD::CONST_DATA_PTR", SDTypeProfile <1, 1, [SDTCisVT<0, iPTR>,
                                                      SDTCisVT<0, iPTR>]>
@@ -112,6 +117,7 @@ def AMDGPUldexp : SDNode<"AMDGPUISD::LDEXP", AMDGPULdExpOp>;
 
 def AMDGPUpkrtz_f16_f32 : SDNode<"AMDGPUISD::CVT_PKRTZ_F16_F32", AMDGPUFPPackOp>;
 def AMDGPUfp_to_f16 : SDNode<"AMDGPUISD::FP_TO_FP16" , SDTFPToIntOp>;
+def AMDGPUfp16_zext : SDNode<"AMDGPUISD::FP16_ZEXT" , SDTFPToIntOp>;
 
 
 def AMDGPUfp_class : SDNode<"AMDGPUISD::FP_CLASS", AMDGPUFPClassOp>;
@@ -293,6 +299,15 @@ def AMDGPUumed3 : SDNode<"AMDGPUISD::UMED3", AMDGPUDTIntTernaryOp,
 
 def AMDGPUfmed3 : SDNode<"AMDGPUISD::FMED3", SDTFPTernaryOp, []>;
 
+def AMDGPUinit_exec : SDNode<"AMDGPUISD::INIT_EXEC",
+                      SDTypeProfile<0, 1, [SDTCisInt<0>]>,
+                      [SDNPHasChain, SDNPInGlue]>;
+
+def AMDGPUinit_exec_from_input : SDNode<"AMDGPUISD::INIT_EXEC_FROM_INPUT",
+                                 SDTypeProfile<0, 2,
+                                 [SDTCisInt<0>, SDTCisInt<1>]>,
+                                 [SDNPHasChain, SDNPInGlue]>;
+
 def AMDGPUsendmsg : SDNode<"AMDGPUISD::SENDMSG",
                     SDTypeProfile<0, 1, [SDTCisInt<0>]>,
                     [SDNPHasChain, SDNPInGlue]>;
@@ -365,6 +380,6 @@ def AMDGPUendpgm : SDNode<"AMDGPUISD::ENDPGM", SDTNone,
 def AMDGPUreturn_to_epilog : SDNode<"AMDGPUISD::RETURN_TO_EPILOG", SDTNone,
     [SDNPHasChain, SDNPOptInGlue, SDNPVariadic]>;
 
-def AMDGPUret_flag : SDNode<"AMDGPUISD::RET_FLAG", SDTNone,
+def AMDGPUret_flag : SDNode<"AMDGPUISD::RET_FLAG", SDTypeProfile<0, 1, [SDTCisPtrTy<0>]>,
   [SDNPHasChain, SDNPOptInGlue, SDNPVariadic]
 >;

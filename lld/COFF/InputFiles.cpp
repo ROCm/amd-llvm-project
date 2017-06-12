@@ -19,10 +19,9 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Triple.h"
 #include "llvm/ADT/Twine.h"
-#include "llvm/Bitcode/BitcodeReader.h"
+#include "llvm/BinaryFormat/COFF.h"
 #include "llvm/Object/Binary.h"
 #include "llvm/Object/COFF.h"
-#include "llvm/Support/COFF.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/Error.h"
@@ -49,13 +48,11 @@ namespace coff {
 /// alias to Target.
 static void checkAndSetWeakAlias(SymbolTable *Symtab, InputFile *F,
                                  SymbolBody *Source, SymbolBody *Target) {
-  auto *U = dyn_cast<Undefined>(Source);
-  if (!U)
-    return;
-  else if (!U->WeakAlias)
+  if (auto *U = dyn_cast<Undefined>(Source)) {
+    if (U->WeakAlias && U->WeakAlias != Target)
+      Symtab->reportDuplicate(Source->symbol(), F);
     U->WeakAlias = Target;
-  else if (U->WeakAlias != Target)
-    Symtab->reportDuplicate(Source->symbol(), F);
+  }
 }
 
 ArchiveFile::ArchiveFile(MemoryBufferRef M) : InputFile(ArchiveKind, M) {}
@@ -138,13 +135,13 @@ void ObjectFile::initializeChunks() {
     // CodeView sections are stored to a different vector because they are
     // not linked in the regular manner.
     if (Name == ".debug" || Name.startswith(".debug$")) {
-      DebugChunks.push_back(new (Alloc) SectionChunk(this, Sec));
+      DebugChunks.push_back(make<SectionChunk>(this, Sec));
       continue;
     }
 
     if (Sec->Characteristics & llvm::COFF::IMAGE_SCN_LNK_REMOVE)
       continue;
-    auto *C = new (Alloc) SectionChunk(this, Sec);
+    auto *C = make<SectionChunk>(this, Sec);
     Chunks.push_back(C);
     SparseChunks[I] = C;
   }
@@ -154,8 +151,10 @@ void ObjectFile::initializeSymbols() {
   uint32_t NumSymbols = COFFObj->getNumberOfSymbols();
   SymbolBodies.reserve(NumSymbols);
   SparseSymbolBodies.resize(NumSymbols);
+
   SmallVector<std::pair<SymbolBody *, uint32_t>, 8> WeakAliases;
   int32_t LastSectionNumber = 0;
+
   for (uint32_t I = 0; I < NumSymbols; ++I) {
     // Get a COFFSymbolRef object.
     ErrorOr<COFFSymbolRef> SymOrErr = COFFObj->getSymbol(I);
@@ -186,9 +185,12 @@ void ObjectFile::initializeSymbols() {
     I += Sym.getNumberOfAuxSymbols();
     LastSectionNumber = Sym.getSectionNumber();
   }
-  for (auto WeakAlias : WeakAliases)
-    checkAndSetWeakAlias(Symtab, this, WeakAlias.first,
-                         SparseSymbolBodies[WeakAlias.second]);
+
+  for (auto &KV : WeakAliases) {
+    SymbolBody *Sym = KV.first;
+    uint32_t Idx = KV.second;
+    checkAndSetWeakAlias(Symtab, this, Sym, SparseSymbolBodies[Idx]);
+  }
 }
 
 SymbolBody *ObjectFile::createUndefined(COFFSymbolRef Sym) {
@@ -201,7 +203,7 @@ SymbolBody *ObjectFile::createDefined(COFFSymbolRef Sym, const void *AuxP,
                                       bool IsFirst) {
   StringRef Name;
   if (Sym.isCommon()) {
-    auto *C = new (Alloc) CommonChunk(Sym);
+    auto *C = make<CommonChunk>(Sym);
     Chunks.push_back(C);
     COFFObj->getSymbolName(Sym, Name);
     Symbol *S =
@@ -222,7 +224,7 @@ SymbolBody *ObjectFile::createDefined(COFFSymbolRef Sym, const void *AuxP,
     if (Sym.isExternal())
       return Symtab->addAbsolute(Name, Sym)->body();
     else
-      return new (Alloc) DefinedAbsolute(Name, Sym);
+      return make<DefinedAbsolute>(Name, Sym);
   }
   int32_t SectionNumber = Sym.getSectionNumber();
   if (SectionNumber == llvm::COFF::IMAGE_SYM_DEBUG)
@@ -259,8 +261,8 @@ SymbolBody *ObjectFile::createDefined(COFFSymbolRef Sym, const void *AuxP,
         Symtab->addRegular(this, Name, SC->isCOMDAT(), Sym.getGeneric(), SC);
     B = cast<DefinedRegular>(S->body());
   } else
-    B = new (Alloc) DefinedRegular(this, /*Name*/ "", SC->isCOMDAT(),
-                                   /*IsExternal*/ false, Sym.getGeneric(), SC);
+    B = make<DefinedRegular>(this, /*Name*/ "", SC->isCOMDAT(),
+                             /*IsExternal*/ false, Sym.getGeneric(), SC);
   if (SC->isCOMDAT() && Sym.getValue() == 0 && !AuxP)
     SC->setSymbol(B);
 
@@ -302,8 +304,8 @@ void ImportFile::parse() {
     fatal("broken import library");
 
   // Read names and create an __imp_ symbol.
-  StringRef Name = StringAlloc.save(StringRef(Buf + sizeof(*Hdr)));
-  StringRef ImpName = StringAlloc.save("__imp_" + Name);
+  StringRef Name = Saver.save(StringRef(Buf + sizeof(*Hdr)));
+  StringRef ImpName = Saver.save("__imp_" + Name);
   const char *NameStart = Buf + sizeof(coff_import_header) + Name.size() + 1;
   DLLName = StringRef(NameStart);
   StringRef ExtName;
@@ -328,6 +330,9 @@ void ImportFile::parse() {
 
   ImpSym = cast<DefinedImportData>(
       Symtab->addImportData(ImpName, this)->body());
+  if (Hdr->getType() == llvm::COFF::IMPORT_CONST)
+    ConstSym =
+        cast<DefinedImportData>(Symtab->addImportData(Name, this)->body());
 
   // If type is function, we need to create a thunk which jump to an
   // address pointed by the __imp_ symbol. (This allows you to call
@@ -364,10 +369,7 @@ void BitcodeFile::parse() {
 }
 
 MachineTypes BitcodeFile::getMachineType() {
-  Expected<std::string> ET = getBitcodeTargetTriple(MB);
-  if (!ET)
-    return IMAGE_FILE_MACHINE_UNKNOWN;
-  switch (Triple(*ET).getArch()) {
+  switch (Triple(Obj->getTargetTriple()).getArch()) {
   case Triple::x86_64:
     return AMD64;
   case Triple::x86:

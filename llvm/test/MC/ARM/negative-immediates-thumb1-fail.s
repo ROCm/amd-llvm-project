@@ -6,10 +6,15 @@ ADDs r1, r0, #0xFFFFFFF5
 # CHECK: error: instruction requires: arm-mode
 
 ADDs r0, #0xFFFFFEFF
-# CHECK: error: invalid operand for instruction
+# CHECK: error: immediate operand must be in the range [0,255]
 
 SUBs r1, r0, #0xFFFFFFF5
 # CHECK: error: instruction requires: arm-mode
 
 SUBs r0, #0xFFFFFEFF
-# CHECK: error: invalid operand for instruction
+# CHECK: error: immediate operand must be in the range [0,255]
+
+ORRs r0, r1, #0xFFFFFF00
+# CHECK: error: instruction requires: thumb2
+ORNs r0, r1, #0xFFFFFF00
+# CHECK: error: instruction requires: thumb2

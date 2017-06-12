@@ -4,16 +4,12 @@ FileHeader:
   Version:         0x00000001
 Sections:
   - Type:            FUNCTION
-    FunctionTypes:   
-      - 1
-      - 0
+    FunctionTypes: [ 1, 0 ]
 ...
 # CHECK: --- !WASM
 # CHECK: FileHeader:
 # CHECK:   Version:           0x00000001
 # CHECK: Sections:
 # CHECK:   - Type:            FUNCTION
-# CHECK:     FunctionTypes:   
-# CHECK:       - 1
-# CHECK:       - 0
+# CHECK:     FunctionTypes: [ 1, 0 ]
 # CHECK: ...

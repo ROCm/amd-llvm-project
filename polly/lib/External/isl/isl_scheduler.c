@@ -3,6 +3,7 @@
  * Copyright 2012-2014 Ecole Normale Superieure
  * Copyright 2015-2016 Sven Verdoolaege
  * Copyright 2016      INRIA Paris
+ * Copyright 2017      Sven Verdoolaege
  *
  * Use of this software is governed by the MIT license
  *
@@ -47,7 +48,8 @@
 
 /* Internal information about a node that is used during the construction
  * of a schedule.
- * space represents the space in which the domain lives
+ * space represents the original space in which the domain lives;
+ *	that is, the space is not affected by compression
  * sched is a matrix representation of the schedule being constructed
  *	for this node; if compressed is set, then this schedule is
  *	defined over the compressed domain space
@@ -117,12 +119,12 @@ struct isl_sched_node {
 	isl_vec *max;
 };
 
-static int node_has_space(const void *entry, const void *val)
+static int node_has_tuples(const void *entry, const void *val)
 {
 	struct isl_sched_node *node = (struct isl_sched_node *)entry;
-	isl_space *dim = (isl_space *)val;
+	isl_space *space = (isl_space *) val;
 
-	return isl_space_is_equal(node->space, dim);
+	return isl_space_has_equal_tuples(node->space, space);
 }
 
 static int node_scc_exactly(struct isl_sched_node *node, int scc)
@@ -317,7 +319,7 @@ static int is_conditional_validity(struct isl_sched_edge *edge)
  *	a single edge between a given pair of source and sink space
  *	in the entire graph
  *
- * node_table contains pointers into the node array, hashed on the space
+ * node_table contains pointers into the node array, hashed on the space tuples
  *
  * region contains a list of variable sequences that should be non-trivial
  *
@@ -382,9 +384,9 @@ static int graph_init_table(isl_ctx *ctx, struct isl_sched_graph *graph)
 		struct isl_hash_table_entry *entry;
 		uint32_t hash;
 
-		hash = isl_space_get_hash(graph->node[i].space);
+		hash = isl_space_get_tuple_hash(graph->node[i].space);
 		entry = isl_hash_table_find(ctx, graph->node_table, hash,
-					    &node_has_space,
+					    &node_has_tuples,
 					    graph->node[i].space, 1);
 		if (!entry)
 			return -1;
@@ -398,14 +400,14 @@ static int graph_init_table(isl_ctx *ctx, struct isl_sched_graph *graph)
  * or NULL if there is no such node.
  */
 static struct isl_sched_node *graph_find_node(isl_ctx *ctx,
-	struct isl_sched_graph *graph, __isl_keep isl_space *dim)
+	struct isl_sched_graph *graph, __isl_keep isl_space *space)
 {
 	struct isl_hash_table_entry *entry;
 	uint32_t hash;
 
-	hash = isl_space_get_hash(dim);
+	hash = isl_space_get_tuple_hash(space);
 	entry = isl_hash_table_find(ctx, graph->node_table, hash,
-				    &node_has_space, dim, 0);
+				    &node_has_tuples, space, 0);
 
 	return entry ? entry->data : NULL;
 }
@@ -957,16 +959,56 @@ static isl_stat add_node(struct isl_sched_graph *graph,
 	return isl_stat_ok;
 }
 
+/* Construct an identifier for node "node", which will represent "set".
+ * The name of the identifier is either "compressed" or
+ * "compressed_<name>", with <name> the name of the space of "set".
+ * The user pointer of the identifier points to "node".
+ */
+static __isl_give isl_id *construct_compressed_id(__isl_keep isl_set *set,
+	struct isl_sched_node *node)
+{
+	isl_bool has_name;
+	isl_ctx *ctx;
+	isl_id *id;
+	isl_printer *p;
+	const char *name;
+	char *id_name;
+
+	has_name = isl_set_has_tuple_name(set);
+	if (has_name < 0)
+		return NULL;
+
+	ctx = isl_set_get_ctx(set);
+	if (!has_name)
+		return isl_id_alloc(ctx, "compressed", node);
+
+	p = isl_printer_to_str(ctx);
+	name = isl_set_get_tuple_name(set);
+	p = isl_printer_print_str(p, "compressed_");
+	p = isl_printer_print_str(p, name);
+	id_name = isl_printer_get_str(p);
+	isl_printer_free(p);
+
+	id = isl_id_alloc(ctx, id_name, node);
+	free(id_name);
+
+	return id;
+}
+
 /* Add a new node to the graph representing the given set.
  *
  * If any of the set variables is defined by an equality, then
  * we perform variable compression such that we can perform
  * the scheduling on the compressed domain.
+ * In this case, an identifier is used that references the new node
+ * such that each compressed space is unique and
+ * such that the node can be recovered from the compressed space.
  */
 static isl_stat extract_node(__isl_take isl_set *set, void *user)
 {
 	int nvar;
 	isl_bool has_equality;
+	isl_id *id;
 	isl_basic_set *hull;
 	isl_set *hull_set;
 	isl_morph *morph;
@@ -985,7 +1027,10 @@ static isl_stat extract_node(__isl_take isl_set *set, void *user)
 		return add_node(graph, set, nvar, 0, NULL, NULL, NULL);
 	}
 
-	morph = isl_basic_set_variable_compression(hull, isl_dim_set);
+	id = construct_compressed_id(set, &graph->node[graph->n]);
+	morph = isl_basic_set_variable_compression_with_id(hull,
+							    isl_dim_set, id);
+	isl_id_free(id);
 	nvar = isl_morph_ran_dim(morph, isl_dim_set);
 	compress = isl_morph_get_var_multi_aff(morph);
 	morph = isl_morph_inverse(morph);
@@ -1542,6 +1587,9 @@ static __isl_give isl_dim_map *intra_dim_map(isl_ctx *ctx,
 	unsigned total;
 	isl_dim_map *dim_map;
 
+	if (!node)
+		return NULL;
+
 	total = isl_basic_set_total_dim(graph->lp);
 	pos = node_var_coef_offset(node);
 	dim_map = isl_dim_map_alloc(ctx, total);
@@ -1562,9 +1610,9 @@ static __isl_give isl_dim_map *intra_dim_map(isl_ctx *ctx,
  * (c_0, c_n, c_x, c_y).
  * The mapping produced by this function essentially plugs in
  * (c_j_0 - c_i_0, c_j_n - c_i_n,
- *  c_j_x^+ - c_j_x^-, -(c_i_x^+ - c_i_x^-)) if s = 1 and
+ *  -(c_i_x^+ - c_i_x^-), c_j_x^+ - c_j_x^-) if s = 1 and
  * (-c_j_0 + c_i_0, -c_j_n + c_i_n,
- *  - (c_j_x^+ - c_j_x^-), c_i_x^+ - c_i_x^-) if s = -1.
+ *  c_i_x^+ - c_i_x^-, -(c_j_x^+ - c_j_x^-)) if s = -1.
  * In graph->lp, the c_*^- appear before their c_*^+ counterpart.
  *
  * The caller can further extend the mapping.
@@ -1576,6 +1624,9 @@ static __isl_give isl_dim_map *inter_dim_map(isl_ctx *ctx,
 	int pos;
 	unsigned total;
 	isl_dim_map *dim_map;
+
+	if (!src || !dst)
+		return NULL;
 
 	total = isl_basic_set_total_dim(graph->lp);
 	dim_map = isl_dim_map_alloc(ctx, total);
@@ -1595,6 +1646,22 @@ static __isl_give isl_dim_map *inter_dim_map(isl_ctx *ctx,
 	isl_dim_map_range(dim_map, pos + 1, 2, offset, 1, src->nvar, -s);
 
 	return dim_map;
+}
+
+/* Add the constraints from "src" to "dst" using "dim_map",
+ * after making sure there is enough room in "dst" for the extra constraints.
+ */
+static __isl_give isl_basic_set *add_constraints_dim_map(
+	__isl_take isl_basic_set *dst, __isl_take isl_basic_set *src,
+	__isl_take isl_dim_map *dim_map)
+{
+	int n_eq, n_ineq;
+
+	n_eq = isl_basic_set_n_equality(src);
+	n_ineq = isl_basic_set_n_inequality(src);
+	dst = isl_basic_set_extend_constraints(dst, n_eq, n_ineq);
+	dst = isl_basic_set_add_constraints_dim_map(dst, src, dim_map);
+	return dst;
 }
 
 /* Add constraints to graph->lp that force validity for the given
@@ -1634,10 +1701,7 @@ static isl_stat add_intra_validity_constraints(struct isl_sched_graph *graph,
 		return isl_stat_error;
 
 	dim_map = intra_dim_map(ctx, graph, node, offset, 1);
-	graph->lp = isl_basic_set_extend_constraints(graph->lp,
-			coef->n_eq, coef->n_ineq);
-	graph->lp = isl_basic_set_add_constraints_dim_map(graph->lp,
-							   coef, dim_map);
+	graph->lp = add_constraints_dim_map(graph->lp, coef, dim_map);
 
 	return isl_stat_ok;
 }
@@ -1651,7 +1715,7 @@ static isl_stat add_intra_validity_constraints(struct isl_sched_graph *graph,
  * for each (x,y) in R.
  * We obtain general constraints on coefficients (c_0, c_n, c_x, c_y)
  * of valid constraints for R and then plug in
- * (c_j_0 - c_i_0, c_j_n - c_i_n, c_j_x^+ - c_j_x^- - (c_i_x^+ - c_i_x^-)),
+ * (c_j_0 - c_i_0, c_j_n - c_i_n, -(c_i_x^+ - c_i_x^-), c_j_x^+ - c_j_x^-),
  * where c_* = c_*^+ - c_*^-, with c_*^+ and c_*^- non-negative.
  * In graph->lp, the c_*^- appear before their c_*^+ counterpart.
  *
@@ -1663,13 +1727,18 @@ static isl_stat add_inter_validity_constraints(struct isl_sched_graph *graph,
 	struct isl_sched_edge *edge)
 {
 	int offset;
-	isl_map *map = isl_map_copy(edge->map);
-	isl_ctx *ctx = isl_map_get_ctx(map);
+	isl_map *map;
+	isl_ctx *ctx;
 	isl_dim_map *dim_map;
 	isl_basic_set *coef;
 	struct isl_sched_node *src = edge->src;
 	struct isl_sched_node *dst = edge->dst;
 
+	if (!graph->lp)
+		return isl_stat_error;
+
+	map = isl_map_copy(edge->map);
+	ctx = isl_map_get_ctx(map);
 	coef = inter_coefficients(graph, edge, map);
 
 	offset = coef_var_offset(coef);
@@ -1684,10 +1753,7 @@ static isl_stat add_inter_validity_constraints(struct isl_sched_graph *graph,
 	dim_map = inter_dim_map(ctx, graph, src, dst, offset, 1);
 
 	edge->start = graph->lp->n_ineq;
-	graph->lp = isl_basic_set_extend_constraints(graph->lp,
-			coef->n_eq, coef->n_ineq);
-	graph->lp = isl_basic_set_add_constraints_dim_map(graph->lp,
-							   coef, dim_map);
+	graph->lp = add_constraints_dim_map(graph->lp, coef, dim_map);
 	if (!graph->lp)
 		return isl_stat_error;
 	edge->end = graph->lp->n_ineq;
@@ -1767,10 +1833,7 @@ static isl_stat add_intra_proximity_constraints(struct isl_sched_graph *graph,
 		isl_dim_map_range(dim_map, 4, 2, 1, 1, nparam, -1);
 		isl_dim_map_range(dim_map, 5, 2, 1, 1, nparam, 1);
 	}
-	graph->lp = isl_basic_set_extend_constraints(graph->lp,
-			coef->n_eq, coef->n_ineq);
-	graph->lp = isl_basic_set_add_constraints_dim_map(graph->lp,
-							   coef, dim_map);
+	graph->lp = add_constraints_dim_map(graph->lp, coef, dim_map);
 
 	return isl_stat_ok;
 }
@@ -1802,7 +1865,7 @@ static isl_stat add_intra_proximity_constraints(struct isl_sched_graph *graph,
  * We obtain general constraints on coefficients (c_0, c_n, c_x, c_y)
  * of valid constraints for R and then plug in
  * (m_0 - s*c_j_0 + s*c_i_0, m_n - s*c_j_n + s*c_i_n,
- *  -s*c_j_x+s*c_i_x)
+ *  s*c_i_x, -s*c_j_x)
  * with each coefficient (except m_0, c_*_0 and c_*_n)
  * represented as a pair of non-negative coefficients.
  *
@@ -1811,17 +1874,17 @@ static isl_stat add_intra_proximity_constraints(struct isl_sched_graph *graph,
  * of the columns in node->cmap.
  *
  *
- * If "local" is set, then we add constraints
+ * If "local" is set (and s = 1), then we add constraints
  *
  *	(c_j_0 + c_j_n n + c_j_x y) - (c_i_0 + c_i_n n + c_i_x x) <= 0
  *
  * or
  *
- *	-((c_j_0 + c_j_n n + c_j_x y) - (c_i_0 + c_i_n n + c_i_x x)) <= 0
+ *	-((c_j_0 + c_j_n n + c_j_x y) + (c_i_0 + c_i_n n + c_i_x x)) >= 0
  *
  * instead, forcing the dependence distance to be (less than or) equal to 0.
  * That is, we plug in
- * (-s*c_j_0 + s*c_i_0, -s*c_j_n + s*c_i_n, -s*c_j_x+s*c_i_x).
+ * (-s*c_j_0 + s*c_i_0, -s*c_j_n + s*c_i_n, s*c_i_x, -s*c_j_x).
  * Note that dependences marked local are treated as validity constraints
  * by add_all_validity_constraints and therefore also have
  * their distances bounded by 0 from below.
@@ -1858,10 +1921,7 @@ static isl_stat add_inter_proximity_constraints(struct isl_sched_graph *graph,
 		isl_dim_map_range(dim_map, 5, 2, 1, 1, nparam, 1);
 	}
 
-	graph->lp = isl_basic_set_extend_constraints(graph->lp,
-			coef->n_eq, coef->n_ineq);
-	graph->lp = isl_basic_set_add_constraints_dim_map(graph->lp,
-							   coef, dim_map);
+	graph->lp = add_constraints_dim_map(graph->lp, coef, dim_map);
 
 	return isl_stat_ok;
 }
@@ -1882,7 +1942,7 @@ static int add_all_validity_constraints(struct isl_sched_graph *graph,
 	int i;
 
 	for (i = 0; i < graph->n_edge; ++i) {
-		struct isl_sched_edge *edge= &graph->edge[i];
+		struct isl_sched_edge *edge = &graph->edge[i];
 		int local;
 
 		local = is_local(edge) ||
@@ -1930,7 +1990,7 @@ static int add_all_proximity_constraints(struct isl_sched_graph *graph,
 	int i;
 
 	for (i = 0; i < graph->n_edge; ++i) {
-		struct isl_sched_edge *edge= &graph->edge[i];
+		struct isl_sched_edge *edge = &graph->edge[i];
 		int local;
 
 		local = is_local(edge) ||
@@ -2008,11 +2068,7 @@ static int is_any_validity(struct isl_sched_edge *edge)
 
 /* How many times should we count the constraints in "edge"?
  *
- * If carry is set, then we are counting the number of
- * (validity or conditional validity) constraints that will be added
- * in setup_carry_lp and we count each edge exactly once.
- *
- * Otherwise, we count as follows
+ * We count as follows
  * validity		-> 1 (>= 0)
  * validity+proximity	-> 2 (>= 0 and upper bound)
  * proximity		-> 2 (lower and upper bound)
@@ -2024,11 +2080,8 @@ static int is_any_validity(struct isl_sched_edge *edge)
  * If "use_coincidence" is set, then we treat coincidence edges as local edges.
  * Otherwise, we ignore them.
  */
-static int edge_multiplicity(struct isl_sched_edge *edge, int carry,
-	int use_coincidence)
+static int edge_multiplicity(struct isl_sched_edge *edge, int use_coincidence)
 {
-	if (carry)
-		return 1;
 	if (is_proximity(edge) || is_local(edge))
 		return 2;
 	if (use_coincidence && is_coincidence(edge))
@@ -2045,10 +2098,10 @@ static int edge_multiplicity(struct isl_sched_edge *edge, int carry,
  */
 static isl_stat count_map_constraints(struct isl_sched_graph *graph,
 	struct isl_sched_edge *edge, __isl_take isl_map *map,
-	int *n_eq, int *n_ineq, int carry, int use_coincidence)
+	int *n_eq, int *n_ineq, int use_coincidence)
 {
 	isl_basic_set *coef;
-	int f = edge_multiplicity(edge, carry, use_coincidence);
+	int f = edge_multiplicity(edge, use_coincidence);
 
 	if (f == 0) {
 		isl_map_free(map);
@@ -2061,8 +2114,8 @@ static isl_stat count_map_constraints(struct isl_sched_graph *graph,
 		coef = inter_coefficients(graph, edge, map);
 	if (!coef)
 		return isl_stat_error;
-	*n_eq += f * coef->n_eq;
-	*n_ineq += f * coef->n_ineq;
+	*n_eq += f * isl_basic_set_n_equality(coef);
+	*n_ineq += f * isl_basic_set_n_inequality(coef);
 	isl_basic_set_free(coef);
 
 	return isl_stat_ok;
@@ -2086,11 +2139,11 @@ static int count_constraints(struct isl_sched_graph *graph,
 
 	*n_eq = *n_ineq = 0;
 	for (i = 0; i < graph->n_edge; ++i) {
-		struct isl_sched_edge *edge= &graph->edge[i];
+		struct isl_sched_edge *edge = &graph->edge[i];
 		isl_map *map = isl_map_copy(edge->map);
 
 		if (count_map_constraints(graph, edge, map, n_eq, n_ineq,
-					    0, use_coincidence) < 0)
+					    use_coincidence) < 0)
 			return -1;
 	}
 
@@ -2143,7 +2196,7 @@ static isl_stat add_bound_constant_constraints(isl_ctx *ctx,
 		k = isl_basic_set_alloc_inequality(graph->lp);
 		if (k < 0)
 			return isl_stat_error;
-		isl_seq_clr(graph->lp->ineq[k], 1 +  total);
+		isl_seq_clr(graph->lp->ineq[k], 1 + total);
 		isl_int_set_si(graph->lp->ineq[k][1 + node->start], -1);
 		isl_int_set_si(graph->lp->ineq[k][0], max);
 	}
@@ -2307,7 +2360,7 @@ static isl_stat add_sum_constraint(struct isl_sched_graph *graph,
 	k = isl_basic_set_alloc_equality(graph->lp);
 	if (k < 0)
 		return isl_stat_error;
-	isl_seq_clr(graph->lp->eq[k], 1 +  total);
+	isl_seq_clr(graph->lp->eq[k], 1 + total);
 	isl_int_set_si(graph->lp->eq[k][1 + sum_pos], -1);
 	for (i = 0; i < n; ++i)
 		isl_int_set_si(graph->lp->eq[k][1 + first + i], 1);
@@ -2334,7 +2387,7 @@ static isl_stat add_param_sum_constraint(struct isl_sched_graph *graph,
 	k = isl_basic_set_alloc_equality(graph->lp);
 	if (k < 0)
 		return isl_stat_error;
-	isl_seq_clr(graph->lp->eq[k], 1 +  total);
+	isl_seq_clr(graph->lp->eq[k], 1 + total);
 	isl_int_set_si(graph->lp->eq[k][1 + sum_pos], -1);
 	for (i = 0; i < graph->n; ++i) {
 		int pos = 1 + graph->node[i].start + 1;
@@ -2365,7 +2418,7 @@ static isl_stat add_var_sum_constraint(struct isl_sched_graph *graph,
 	k = isl_basic_set_alloc_equality(graph->lp);
 	if (k < 0)
 		return isl_stat_error;
-	isl_seq_clr(graph->lp->eq[k], 1 +  total);
+	isl_seq_clr(graph->lp->eq[k], 1 + total);
 	isl_int_set_si(graph->lp->eq[k][1 + sum_pos], -1);
 	for (i = 0; i < graph->n; ++i) {
 		struct isl_sched_node *node = &graph->node[i];
@@ -3468,116 +3521,235 @@ static __isl_give isl_schedule_node *compute_next_band(
 	return node;
 }
 
-/* Add constraints to graph->lp that force the dependence "map" (which
- * is part of the dependence relation of "edge")
- * to be respected and attempt to carry it, where the edge is one from
- * a node j to itself.  "pos" is the sequence number of the given map.
- * That is, add constraints that enforce
+/* Add the constraints "coef" derived from an edge from "node" to itself
+ * to graph->lp in order to respect the dependences and to try and carry them.
+ * "pos" is the sequence number of the edge that needs to be carried.
+ * "coef" represents general constraints on coefficients (c_0, c_n, c_x)
+ * of valid constraints for (y - x) with x and y instances of the node.
+ *
+ * The constraints added to graph->lp need to enforce
  *
  *	(c_j_0 + c_j_n n + c_j_x y) - (c_j_0 + c_j_n n + c_j_x x)
  *	= c_j_x (y - x) >= e_i
  *
- * for each (x,y) in R.
- * We obtain general constraints on coefficients (c_0, c_n, c_x)
- * of valid constraints for (y - x) and then plug in (-e_i, 0, c_j_x),
- * with each coefficient in c_j_x represented as a pair of non-negative
- * coefficients.
+ * for each (x,y) in the dependence relation of the edge.
+ * That is, (-e_i, 0, c_j_x) needs to be plugged in for (c_0, c_n, c_x),
+ * taking into account that each coefficient in c_j_x is represented
+ * as a pair of non-negative coefficients.
  */
-static int add_intra_constraints(struct isl_sched_graph *graph,
-	struct isl_sched_edge *edge, __isl_take isl_map *map, int pos)
+static isl_stat add_intra_constraints(struct isl_sched_graph *graph,
+	struct isl_sched_node *node, __isl_take isl_basic_set *coef, int pos)
 {
 	int offset;
-	isl_ctx *ctx = isl_map_get_ctx(map);
+	isl_ctx *ctx;
 	isl_dim_map *dim_map;
-	isl_basic_set *coef;
-	struct isl_sched_node *node = edge->src;
 
-	coef = intra_coefficients(graph, node, map);
 	if (!coef)
-		return -1;
+		return isl_stat_error;
 
+	ctx = isl_basic_set_get_ctx(coef);
 	offset = coef_var_offset(coef);
 	dim_map = intra_dim_map(ctx, graph, node, offset, 1);
 	isl_dim_map_range(dim_map, 3 + pos, 0, 0, 0, 1, -1);
-	graph->lp = isl_basic_set_extend_constraints(graph->lp,
-			coef->n_eq, coef->n_ineq);
-	graph->lp = isl_basic_set_add_constraints_dim_map(graph->lp,
-							   coef, dim_map);
+	graph->lp = add_constraints_dim_map(graph->lp, coef, dim_map);
 
-	return 0;
+	return isl_stat_ok;
 }
 
-/* Add constraints to graph->lp that force the dependence "map" (which
- * is part of the dependence relation of "edge")
- * to be respected and attempt to carry it, where the edge is one from
- * node j to node k.  "pos" is the sequence number of the given map.
- * That is, add constraints that enforce
+/* Add the constraints "coef" derived from an edge from "src" to "dst"
+ * to graph->lp in order to respect the dependences and to try and carry them.
+ * "pos" is the sequence number of the edge that needs to be carried.
+ * "coef" represents general constraints on coefficients (c_0, c_n, c_x, c_y)
+ * of valid constraints for (x, y) with x and y instances of "src" and "dst".
+ *
+ * The constraints added to graph->lp need to enforce
  *
  *	(c_k_0 + c_k_n n + c_k_x y) - (c_j_0 + c_j_n n + c_j_x x) >= e_i
  *
- * for each (x,y) in R.
- * We obtain general constraints on coefficients (c_0, c_n, c_x)
- * of valid constraints for R and then plug in
- * (-e_i + c_k_0 - c_j_0, c_k_n - c_j_n, c_k_x - c_j_x)
- * with each coefficient (except e_i, c_*_0 and c_*_n)
- * represented as a pair of non-negative coefficients.
+ * for each (x,y) in the dependence relation of the edge.
+ * That is,
+ * (-e_i + c_k_0 - c_j_0, c_k_n - c_j_n, -c_j_x, c_k_x)
+ * needs to be plugged in for (c_0, c_n, c_x, c_y),
+ * taking into account that each coefficient in c_j_x and c_k_x is represented
+ * as a pair of non-negative coefficients.
  */
-static int add_inter_constraints(struct isl_sched_graph *graph,
-	struct isl_sched_edge *edge, __isl_take isl_map *map, int pos)
+static isl_stat add_inter_constraints(struct isl_sched_graph *graph,
+	struct isl_sched_node *src, struct isl_sched_node *dst,
+	__isl_take isl_basic_set *coef, int pos)
 {
 	int offset;
-	isl_ctx *ctx = isl_map_get_ctx(map);
+	isl_ctx *ctx;
 	isl_dim_map *dim_map;
-	isl_basic_set *coef;
-	struct isl_sched_node *src = edge->src;
-	struct isl_sched_node *dst = edge->dst;
 
-	coef = inter_coefficients(graph, edge, map);
 	if (!coef)
-		return -1;
+		return isl_stat_error;
 
+	ctx = isl_basic_set_get_ctx(coef);
 	offset = coef_var_offset(coef);
 	dim_map = inter_dim_map(ctx, graph, src, dst, offset, 1);
 	isl_dim_map_range(dim_map, 3 + pos, 0, 0, 0, 1, -1);
-	graph->lp = isl_basic_set_extend_constraints(graph->lp,
-			coef->n_eq, coef->n_ineq);
-	graph->lp = isl_basic_set_add_constraints_dim_map(graph->lp,
-							   coef, dim_map);
+	graph->lp = add_constraints_dim_map(graph->lp, coef, dim_map);
 
-	return 0;
+	return isl_stat_ok;
+}
+
+/* Data structure collecting information used during the construction
+ * of an LP for carrying dependences.
+ *
+ * "intra" is a sequence of coefficient constraints for intra-node edges.
+ * "inter" is a sequence of coefficient constraints for inter-node edges.
+ */
+struct isl_carry {
+	isl_basic_set_list *intra;
+	isl_basic_set_list *inter;
+};
+
+/* Free all the data stored in "carry".
+ */
+static void isl_carry_clear(struct isl_carry *carry)
+{
+	isl_basic_set_list_free(carry->intra);
+	isl_basic_set_list_free(carry->inter);
+}
+
+/* Return a pointer to the node in "graph" that lives in "space".
+ * If the requested node has been compressed, then "space"
+ * corresponds to the compressed space.
+ *
+ * First try and see if "space" is the space of an uncompressed node.
+ * If so, return that node.
+ * Otherwise, "space" was constructed by construct_compressed_id and
+ * contains a user pointer pointing to the node in the tuple id.
+ */
+static struct isl_sched_node *graph_find_compressed_node(isl_ctx *ctx,
+	struct isl_sched_graph *graph, __isl_keep isl_space *space)
+{
+	isl_id *id;
+	struct isl_sched_node *node;
+
+	if (!space)
+		return NULL;
+
+	node = graph_find_node(ctx, graph, space);
+	if (node)
+		return node;
+
+	id = isl_space_get_tuple_id(space, isl_dim_set);
+	node = isl_id_get_user(id);
+	isl_id_free(id);
+
+	if (!node)
+		return NULL;
+
+	if (!(node >= &graph->node[0] && node < &graph->node[graph->n]))
+		isl_die(ctx, isl_error_internal,
+			"space points to invalid node", return NULL);
+
+	return node;
+}
+
+/* Internal data structure for add_all_constraints.
+ *
+ * "graph" is the schedule constraint graph for which an LP problem
+ * is being constructed.
+ * "pos" is the position of the next edge that needs to be carried.
+ */
+struct isl_add_all_constraints_data {
+	isl_ctx *ctx;
+	struct isl_sched_graph *graph;
+	int pos;
+};
+
+/* Add the constraints "coef" derived from an edge from a node to itself
+ * to data->graph->lp in order to respect the dependences and
+ * to try and carry them.
+ *
+ * The space of "coef" is of the form
+ *
+ *	coefficients[[c_cst, c_n] -> S[c_x]]
+ *
+ * with S[c_x] the (compressed) space of the node.
+ * Extract the node from the space and call add_intra_constraints.
+ */
+static isl_stat lp_add_intra(__isl_take isl_basic_set *coef, void *user)
+{
+	struct isl_add_all_constraints_data *data = user;
+	isl_space *space;
+	struct isl_sched_node *node;
+
+	space = isl_basic_set_get_space(coef);
+	space = isl_space_range(isl_space_unwrap(space));
+	node = graph_find_compressed_node(data->ctx, data->graph, space);
+	isl_space_free(space);
+	return add_intra_constraints(data->graph, node, coef, data->pos++);
+}
+
+/* Add the constraints "coef" derived from an edge from a node j
+ * to a node k to data->graph->lp in order to respect the dependences and
+ * to try and carry them.
+ *
+ * The space of "coef" is of the form
+ *
+ *	coefficients[[c_cst, c_n] -> [S_j[c_x] -> S_k[c_y]]]
+ *
+ * with S_j[c_x] and S_k[c_y] the (compressed) spaces of the nodes.
+ * Extract the nodes from the space and call add_inter_constraints.
+ */
+static isl_stat lp_add_inter(__isl_take isl_basic_set *coef, void *user)
+{
+	struct isl_add_all_constraints_data *data = user;
+	isl_space *space, *dom;
+	struct isl_sched_node *src, *dst;
+
+	space = isl_basic_set_get_space(coef);
+	space = isl_space_unwrap(isl_space_range(isl_space_unwrap(space)));
+	dom = isl_space_domain(isl_space_copy(space));
+	src = graph_find_compressed_node(data->ctx, data->graph, dom);
+	isl_space_free(dom);
+	space = isl_space_range(space);
+	dst = graph_find_compressed_node(data->ctx, data->graph, space);
+	isl_space_free(space);
+
+	return add_inter_constraints(data->graph, src, dst, coef, data->pos++);
 }
 
 /* Add constraints to graph->lp that force all (conditional) validity
  * dependences to be respected and attempt to carry them.
+ * "intra" is the sequence of coefficient constraints for intra-node edges.
+ * "inter" is the sequence of coefficient constraints for inter-node edges.
  */
-static isl_stat add_all_constraints(struct isl_sched_graph *graph)
+static isl_stat add_all_constraints(isl_ctx *ctx, struct isl_sched_graph *graph,
+	__isl_keep isl_basic_set_list *intra,
+	__isl_keep isl_basic_set_list *inter)
 {
-	int i, j;
-	int pos;
+	struct isl_add_all_constraints_data data = { ctx, graph };
 
-	pos = 0;
-	for (i = 0; i < graph->n_edge; ++i) {
-		struct isl_sched_edge *edge= &graph->edge[i];
+	data.pos = 0;
+	if (isl_basic_set_list_foreach(intra, &lp_add_intra, &data) < 0)
+		return isl_stat_error;
+	if (isl_basic_set_list_foreach(inter, &lp_add_inter, &data) < 0)
+		return isl_stat_error;
+	return isl_stat_ok;
+}
 
-		if (!is_any_validity(edge))
-			continue;
+/* Internal data structure for count_all_constraints
+ * for keeping track of the number of equality and inequality constraints.
+ */
+struct isl_sched_count {
+	int n_eq;
+	int n_ineq;
+};
 
-		for (j = 0; j < edge->map->n; ++j) {
-			isl_basic_map *bmap;
-			isl_map *map;
+/* Add the number of equality and inequality constraints of "bset"
+ * to data->n_eq and data->n_ineq.
+ */
+static isl_stat bset_update_count(__isl_take isl_basic_set *bset, void *user)
+{
+	struct isl_sched_count *data = user;
 
-			bmap = isl_basic_map_copy(edge->map->p[j]);
-			map = isl_map_from_basic_map(bmap);
-
-			if (edge->src == edge->dst &&
-			    add_intra_constraints(graph, edge, map, pos) < 0)
-				return isl_stat_error;
-			if (edge->src != edge->dst &&
-			    add_inter_constraints(graph, edge, map, pos) < 0)
-				return isl_stat_error;
-			++pos;
-		}
-	}
+	data->n_eq += isl_basic_set_n_equality(bset);
+	data->n_ineq += isl_basic_set_n_inequality(bset);
+	isl_basic_set_free(bset);
 
 	return isl_stat_ok;
 }
@@ -3585,54 +3757,24 @@ static isl_stat add_all_constraints(struct isl_sched_graph *graph)
 /* Count the number of equality and inequality constraints
  * that will be added to the carry_lp problem.
  * We count each edge exactly once.
+ * "intra" is the sequence of coefficient constraints for intra-node edges.
+ * "inter" is the sequence of coefficient constraints for inter-node edges.
  */
-static isl_stat count_all_constraints(struct isl_sched_graph *graph,
-	int *n_eq, int *n_ineq)
+static isl_stat count_all_constraints(__isl_keep isl_basic_set_list *intra,
+	__isl_keep isl_basic_set_list *inter, int *n_eq, int *n_ineq)
 {
-	int i, j;
+	struct isl_sched_count data;
 
-	*n_eq = *n_ineq = 0;
-	for (i = 0; i < graph->n_edge; ++i) {
-		struct isl_sched_edge *edge= &graph->edge[i];
+	data.n_eq = data.n_ineq = 0;
+	if (isl_basic_set_list_foreach(inter, &bset_update_count, &data) < 0)
+		return isl_stat_error;
+	if (isl_basic_set_list_foreach(intra, &bset_update_count, &data) < 0)
+		return isl_stat_error;
 
-		if (!is_any_validity(edge))
-			continue;
-
-		for (j = 0; j < edge->map->n; ++j) {
-			isl_basic_map *bmap;
-			isl_map *map;
-
-			bmap = isl_basic_map_copy(edge->map->p[j]);
-			map = isl_map_from_basic_map(bmap);
-
-			if (count_map_constraints(graph, edge, map,
-						  n_eq, n_ineq, 1, 0) < 0)
-				    return isl_stat_error;
-		}
-	}
+	*n_eq = data.n_eq;
+	*n_ineq = data.n_ineq;
 
 	return isl_stat_ok;
-}
-
-/* Return the total number of (validity) edges that carry_dependences will
- * attempt to carry.
- */
-static int count_carry_edges(struct isl_sched_graph *graph)
-{
-	int i;
-	int n_edge;
-
-	n_edge = 0;
-	for (i = 0; i < graph->n_edge; ++i) {
-		struct isl_sched_edge *edge = &graph->edge[i];
-
-		if (!is_any_validity(edge))
-			continue;
-
-		n_edge += isl_map_n_basic_map(edge->map);
-	}
-
-	return n_edge;
 }
 
 /* Construct an LP problem for finding schedule coefficients
@@ -3641,12 +3783,9 @@ static int count_carry_edges(struct isl_sched_graph *graph)
  * from below by e_i, with 0 <= e_i <= 1 and then maximize the sum
  * of all e_i's.  Dependences with e_i = 0 in the solution are simply
  * respected, while those with e_i > 0 (in practice e_i = 1) are carried.
- * Note that if the dependence relation is a union of basic maps,
- * then we have to consider each basic map individually as it may only
- * be possible to carry the dependences expressed by some of those
- * basic maps and not all of them.
- * Below, we consider each of those basic maps as a separate "edge".
- * "n_edge" is the number of these edges.
+ * "intra" is the sequence of coefficient constraints for intra-node edges.
+ * "inter" is the sequence of coefficient constraints for inter-node edges.
+ * "n_edge" is the total number of edges.
  *
  * All variables of the LP are non-negative.  The actual coefficients
  * may be negative, so each coefficient is represented as the difference
@@ -3669,7 +3808,8 @@ static int count_carry_edges(struct isl_sched_graph *graph)
  * to express the sums and n_edge inequalities to express e_i <= 1.
  */
 static isl_stat setup_carry_lp(isl_ctx *ctx, struct isl_sched_graph *graph,
-	int n_edge)
+	int n_edge, __isl_keep isl_basic_set_list *intra,
+	__isl_keep isl_basic_set_list *inter)
 {
 	int i;
 	int k;
@@ -3684,7 +3824,7 @@ static isl_stat setup_carry_lp(isl_ctx *ctx, struct isl_sched_graph *graph,
 		total += 1 + node->nparam + 2 * node->nvar;
 	}
 
-	if (count_all_constraints(graph, &n_eq, &n_ineq) < 0)
+	if (count_all_constraints(intra, inter, &n_eq, &n_ineq) < 0)
 		return isl_stat_error;
 
 	dim = isl_space_set_alloc(ctx, 0, total);
@@ -3697,7 +3837,7 @@ static isl_stat setup_carry_lp(isl_ctx *ctx, struct isl_sched_graph *graph,
 	k = isl_basic_set_alloc_equality(graph->lp);
 	if (k < 0)
 		return isl_stat_error;
-	isl_seq_clr(graph->lp->eq[k], 1 +  total);
+	isl_seq_clr(graph->lp->eq[k], 1 + total);
 	isl_int_set_si(graph->lp->eq[k][0], -n_edge);
 	isl_int_set_si(graph->lp->eq[k][1], 1);
 	for (i = 0; i < n_edge; ++i)
@@ -3712,12 +3852,12 @@ static isl_stat setup_carry_lp(isl_ctx *ctx, struct isl_sched_graph *graph,
 		k = isl_basic_set_alloc_inequality(graph->lp);
 		if (k < 0)
 			return isl_stat_error;
-		isl_seq_clr(graph->lp->ineq[k], 1 +  total);
+		isl_seq_clr(graph->lp->ineq[k], 1 + total);
 		isl_int_set_si(graph->lp->ineq[k][4 + i], -1);
 		isl_int_set_si(graph->lp->ineq[k][0], 1);
 	}
 
-	if (add_all_constraints(graph) < 0)
+	if (add_all_constraints(ctx, graph, intra, inter) < 0)
 		return isl_stat_error;
 
 	return isl_stat_ok;
@@ -3849,7 +3989,7 @@ error:
 }
 
 /* Is the schedule row "sol" trivial on node "node"?
- * That is, is the solution zero on the dimensions orthogonal to
+ * That is, is the solution zero on the dimensions linearly independent of
  * the previously found solutions?
  * Return 1 if the solution is trivial, 0 if it is not and -1 on error.
  *
@@ -4045,12 +4185,15 @@ static int carries_dependences(__isl_keep isl_vec *sol, int n_edge)
 /* Return the lexicographically smallest rational point in "lp",
  * assuming that all variables are non-negative and performing some
  * additional sanity checks.
+ * If "want_integral" is set, then compute the lexicographically smallest
+ * integer point instead.
  * In particular, "lp" should not be empty by construction.
  * Double check that this is the case.
- * Also, check that dependences are carried for at least one of
- * the "n_edge" edges.
+ * If dependences are not carried for any of the "n_edge" edges,
+ * then return an empty vector.
  *
- * If the computed schedule performs loop coalescing on a given node,
+ * If the schedule_treat_coalescing option is set and
+ * if the computed schedule performs loop coalescing on a given node,
  * i.e., if it is of the form
  *
  *	c_i i + c_j j + ...
@@ -4059,11 +4202,22 @@ static int carries_dependences(__isl_keep isl_vec *sol, int n_edge)
  * to cut out this solution.  Repeat this process until no more loop
  * coalescing occurs or until no more dependences can be carried.
  * In the latter case, revert to the previously computed solution.
+ *
+ * If the caller requests an integral solution and if coalescing should
+ * be treated, then perform the coalescing treatment first as
+ * an integral solution computed before coalescing treatment
+ * would carry the same number of edges and would therefore probably
+ * also be coalescing.
+ *
+ * To allow the coalescing treatment to be performed first,
+ * the initial solution is allowed to be rational and it is only
+ * cut out (if needed) in the next iteration, if no coalescing measures
+ * were taken.
  */
 static __isl_give isl_vec *non_neg_lexmin(struct isl_sched_graph *graph,
-	__isl_take isl_basic_set *lp, int n_edge)
+	__isl_take isl_basic_set *lp, int n_edge, int want_integral)
 {
-	int i, pos;
+	int i, pos, cut;
 	isl_ctx *ctx;
 	isl_tab_lexmin *tl;
 	isl_vec *sol, *prev = NULL;
@@ -4075,23 +4229,30 @@ static __isl_give isl_vec *non_neg_lexmin(struct isl_sched_graph *graph,
 	treat_coalescing = isl_options_get_schedule_treat_coalescing(ctx);
 	tl = isl_tab_lexmin_from_basic_set(lp);
 
+	cut = 0;
 	do {
+		int integral;
+
+		if (cut)
+			tl = isl_tab_lexmin_cut_to_integer(tl);
 		sol = non_empty_solution(tl);
 		if (!sol)
 			goto error;
 
+		integral = isl_int_is_one(sol->el[0]);
 		if (!carries_dependences(sol, n_edge)) {
 			if (!prev)
-				isl_die(ctx, isl_error_unknown,
-					"unable to carry dependences",
-					goto error);
+				prev = isl_vec_alloc(ctx, 0);
 			isl_vec_free(sol);
 			sol = prev;
 			break;
 		}
 		prev = isl_vec_free(prev);
+		cut = want_integral && !integral;
+		if (cut)
+			prev = sol;
 		if (!treat_coalescing)
-			break;
+			continue;
 		for (i = 0; i < graph->n; ++i) {
 			struct isl_sched_node *node = &graph->node[i];
 
@@ -4104,8 +4265,9 @@ static __isl_give isl_vec *non_neg_lexmin(struct isl_sched_graph *graph,
 		if (i < graph->n) {
 			prev = sol;
 			tl = zero_out_node_coef(tl, &graph->node[i], pos);
+			cut = 0;
 		}
-	} while (i < graph->n);
+	} while (prev);
 
 	isl_tab_lexmin_free(tl);
 
@@ -4117,13 +4279,227 @@ error:
 	return NULL;
 }
 
+/* If "edge" is an edge from a node to itself, then add the corresponding
+ * dependence relation to "umap".
+ * If "node" has been compressed, then the dependence relation
+ * is also compressed first.
+ */
+static __isl_give isl_union_map *add_intra(__isl_take isl_union_map *umap,
+	struct isl_sched_edge *edge)
+{
+	isl_map *map;
+	struct isl_sched_node *node = edge->src;
+
+	if (edge->src != edge->dst)
+		return umap;
+
+	map = isl_map_copy(edge->map);
+	if (node->compressed) {
+		map = isl_map_preimage_domain_multi_aff(map,
+				    isl_multi_aff_copy(node->decompress));
+		map = isl_map_preimage_range_multi_aff(map,
+				    isl_multi_aff_copy(node->decompress));
+	}
+	umap = isl_union_map_add_map(umap, map);
+	return umap;
+}
+
+/* If "edge" is an edge from a node to another node, then add the corresponding
+ * dependence relation to "umap".
+ * If the source or destination nodes of "edge" have been compressed,
+ * then the dependence relation is also compressed first.
+ */
+static __isl_give isl_union_map *add_inter(__isl_take isl_union_map *umap,
+	struct isl_sched_edge *edge)
+{
+	isl_map *map;
+
+	if (edge->src == edge->dst)
+		return umap;
+
+	map = isl_map_copy(edge->map);
+	if (edge->src->compressed)
+		map = isl_map_preimage_domain_multi_aff(map,
+				    isl_multi_aff_copy(edge->src->decompress));
+	if (edge->dst->compressed)
+		map = isl_map_preimage_range_multi_aff(map,
+				    isl_multi_aff_copy(edge->dst->decompress));
+	umap = isl_union_map_add_map(umap, map);
+	return umap;
+}
+
+/* For each (conditional) validity edge in "graph",
+ * add the corresponding dependence relation using "add"
+ * to a collection of dependence relations and return the result.
+ * If "coincidence" is set, then coincidence edges are considered as well.
+ */
+static __isl_give isl_union_map *collect_validity(struct isl_sched_graph *graph,
+	__isl_give isl_union_map *(*add)(__isl_take isl_union_map *umap,
+		struct isl_sched_edge *edge), int coincidence)
+{
+	int i;
+	isl_space *space;
+	isl_union_map *umap;
+
+	space = isl_space_copy(graph->node[0].space);
+	umap = isl_union_map_empty(space);
+
+	for (i = 0; i < graph->n_edge; ++i) {
+		struct isl_sched_edge *edge = &graph->edge[i];
+
+		if (!is_any_validity(edge) &&
+		    (!coincidence || !is_coincidence(edge)))
+			continue;
+
+		umap = add(umap, edge);
+	}
+
+	return umap;
+}
+
+/* For each dependence relation on a (conditional) validity edge
+ * from a node to itself,
+ * construct the set of coefficients of valid constraints for elements
+ * in that dependence relation and collect the results.
+ * If "coincidence" is set, then coincidence edges are considered as well.
+ *
+ * In particular, for each dependence relation R, constraints
+ * on coefficients (c_0, c_n, c_x) are constructed such that
+ *
+ *	c_0 + c_n n + c_x d >= 0 for each d in delta R = { y - x | (x,y) in R }
+ *
+ * This computation is essentially the same as that performed
+ * by intra_coefficients, except that it operates on multiple
+ * edges together.
+ *
+ * Note that if a dependence relation is a union of basic maps,
+ * then each basic map needs to be treated individually as it may only
+ * be possible to carry the dependences expressed by some of those
+ * basic maps and not all of them.
+ * The collected validity constraints are therefore not coalesced and
+ * it is assumed that they are not coalesced automatically.
+ * Duplicate basic maps can be removed, however.
+ * In particular, if the same basic map appears as a disjunct
+ * in multiple edges, then it only needs to be carried once.
+ */
+static __isl_give isl_basic_set_list *collect_intra_validity(
+	struct isl_sched_graph *graph, int coincidence)
+{
+	isl_union_map *intra;
+	isl_union_set *delta;
+	isl_basic_set_list *list;
+
+	intra = collect_validity(graph, &add_intra, coincidence);
+	delta = isl_union_map_deltas(intra);
+	delta = isl_union_set_remove_divs(delta);
+	list = isl_union_set_get_basic_set_list(delta);
+	isl_union_set_free(delta);
+
+	return isl_basic_set_list_coefficients(list);
+}
+
+/* For each dependence relation on a (conditional) validity edge
+ * from a node to some other node,
+ * construct the set of coefficients of valid constraints for elements
+ * in that dependence relation and collect the results.
+ * If "coincidence" is set, then coincidence edges are considered as well.
+ *
+ * In particular, for each dependence relation R, constraints
+ * on coefficients (c_0, c_n, c_x, c_y) are constructed such that
+ *
+ *	c_0 + c_n n + c_x x + c_y y >= 0 for each (x,y) in R
+ *
+ * This computation is essentially the same as that performed
+ * by inter_coefficients, except that it operates on multiple
+ * edges together.
+ *
+ * Note that if a dependence relation is a union of basic maps,
+ * then each basic map needs to be treated individually as it may only
+ * be possible to carry the dependences expressed by some of those
+ * basic maps and not all of them.
+ * The collected validity constraints are therefore not coalesced and
+ * it is assumed that they are not coalesced automatically.
+ * Duplicate basic maps can be removed, however.
+ * In particular, if the same basic map appears as a disjunct
+ * in multiple edges, then it only needs to be carried once.
+ */
+static __isl_give isl_basic_set_list *collect_inter_validity(
+	struct isl_sched_graph *graph, int coincidence)
+{
+	isl_union_map *inter;
+	isl_union_set *wrap;
+	isl_basic_set_list *list;
+
+	inter = collect_validity(graph, &add_inter, coincidence);
+	inter = isl_union_map_remove_divs(inter);
+	wrap = isl_union_map_wrap(inter);
+	list = isl_union_set_get_basic_set_list(wrap);
+	isl_union_set_free(wrap);
+	return isl_basic_set_list_coefficients(list);
+}
+
+/* Construct an LP problem for finding schedule coefficients
+ * such that the schedule carries as many of the validity dependences
+ * as possible and
+ * return the lexicographically smallest non-trivial solution.
+ * If "fallback" is set, then the carrying is performed as a fallback
+ * for the Pluto-like scheduler.
+ * If "coincidence" is set, then try and carry coincidence edges as well.
+ *
+ * The variable "n_edge" stores the number of groups that should be carried.
+ * If none of the "n_edge" groups can be carried
+ * then return an empty vector.
+ * If, moreover, "n_edge" is zero, then the LP problem does not even
+ * need to be constructed.
+ *
+ * If a fallback solution is being computed, then compute an integral solution
+ * for the coefficients rather than using the numerators
+ * of a rational solution.
+ */
+static __isl_give isl_vec *compute_carrying_sol(isl_ctx *ctx,
+	struct isl_sched_graph *graph, int fallback, int coincidence)
+{
+	int n_intra, n_inter;
+	int n_edge;
+	isl_basic_set *lp;
+	struct isl_carry carry = { 0 };
+
+	carry.intra = collect_intra_validity(graph, coincidence);
+	carry.inter = collect_inter_validity(graph, coincidence);
+	if (!carry.intra || !carry.inter)
+		goto error;
+	n_intra = isl_basic_set_list_n_basic_set(carry.intra);
+	n_inter = isl_basic_set_list_n_basic_set(carry.inter);
+	n_edge = n_intra + n_inter;
+	if (n_edge == 0) {
+		isl_carry_clear(&carry);
+		return isl_vec_alloc(ctx, 0);
+	}
+
+	if (setup_carry_lp(ctx, graph, n_edge, carry.intra, carry.inter) < 0)
+		goto error;
+
+	isl_carry_clear(&carry);
+	lp = isl_basic_set_copy(graph->lp);
+	return non_neg_lexmin(graph, lp, n_edge, fallback);
+error:
+	isl_carry_clear(&carry);
+	return NULL;
+}
+
 /* Construct a schedule row for each node such that as many validity dependences
  * as possible are carried and then continue with the next band.
+ * If "fallback" is set, then the carrying is performed as a fallback
+ * for the Pluto-like scheduler.
+ * If "coincidence" is set, then try and carry coincidence edges as well.
  *
  * If there are no validity dependences, then no dependence can be carried and
  * the procedure is guaranteed to fail.  If there is more than one component,
  * then try computing a schedule on each component separately
  * to prevent or at least postpone this failure.
+ *
+ * If a schedule row is computed, then check that dependences are carried
+ * for at least one of the edges.
  *
  * If the computed schedule row turns out to be trivial on one or
  * more nodes where it should not be trivial, then we throw it away
@@ -4142,30 +4518,27 @@ error:
  * This insertion and the continued construction is performed by split_scaled
  * after optionally checking for non-trivial common divisors.
  */
-static __isl_give isl_schedule_node *carry_dependences(
-	__isl_take isl_schedule_node *node, struct isl_sched_graph *graph)
+static __isl_give isl_schedule_node *carry(__isl_take isl_schedule_node *node,
+	struct isl_sched_graph *graph, int fallback, int coincidence)
 {
-	int n_edge;
 	int trivial;
 	isl_ctx *ctx;
 	isl_vec *sol;
-	isl_basic_set *lp;
 
 	if (!node)
 		return NULL;
 
-	n_edge = count_carry_edges(graph);
-	if (n_edge == 0 && graph->scc > 1)
-		return compute_component_schedule(node, graph, 1);
-
 	ctx = isl_schedule_node_get_ctx(node);
-	if (setup_carry_lp(ctx, graph, n_edge) < 0)
-		return isl_schedule_node_free(node);
-
-	lp = isl_basic_set_copy(graph->lp);
-	sol = non_neg_lexmin(graph, lp, n_edge);
+	sol = compute_carrying_sol(ctx, graph, fallback, coincidence);
 	if (!sol)
 		return isl_schedule_node_free(node);
+	if (sol->size == 0) {
+		isl_vec_free(sol);
+		if (graph->scc > 1)
+			return compute_component_schedule(node, graph, 1);
+		isl_die(ctx, isl_error_unknown, "unable to carry dependences",
+			return isl_schedule_node_free(node));
+	}
 
 	trivial = is_any_trivial(graph, sol);
 	if (trivial < 0) {
@@ -4181,6 +4554,50 @@ static __isl_give isl_schedule_node *carry_dependences(
 		graph->n_row--;
 
 	return split_scaled(node, graph);
+}
+
+/* Construct a schedule row for each node such that as many validity dependences
+ * as possible are carried and then continue with the next band.
+ * Do so as a fallback for the Pluto-like scheduler.
+ * If "coincidence" is set, then try and carry coincidence edges as well.
+ */
+static __isl_give isl_schedule_node *carry_fallback(
+	__isl_take isl_schedule_node *node, struct isl_sched_graph *graph,
+	int coincidence)
+{
+	return carry(node, graph, 1, coincidence);
+}
+
+/* Construct a schedule row for each node such that as many validity dependences
+ * as possible are carried and then continue with the next band.
+ * Do so for the case where the Feautrier scheduler was selected
+ * by the user.
+ */
+static __isl_give isl_schedule_node *carry_feautrier(
+	__isl_take isl_schedule_node *node, struct isl_sched_graph *graph)
+{
+	return carry(node, graph, 0, 0);
+}
+
+/* Construct a schedule row for each node such that as many validity dependences
+ * as possible are carried and then continue with the next band.
+ * Do so as a fallback for the Pluto-like scheduler.
+ */
+static __isl_give isl_schedule_node *carry_dependences(
+	__isl_take isl_schedule_node *node, struct isl_sched_graph *graph)
+{
+	return carry_fallback(node, graph, 0);
+}
+
+/* Construct a schedule row for each node such that as many validity or
+ * coincidence dependences as possible are carried and
+ * then continue with the next band.
+ * Do so as a fallback for the Pluto-like scheduler.
+ */
+static __isl_give isl_schedule_node *carry_coincidence(
+	__isl_take isl_schedule_node *node, struct isl_sched_graph *graph)
+{
+	return carry_fallback(node, graph, 1);
 }
 
 /* Topologically sort statements mapped to the same schedule iteration
@@ -4283,7 +4700,7 @@ static int need_feautrier_step(isl_ctx *ctx, struct isl_sched_graph *graph)
 static __isl_give isl_schedule_node *compute_schedule_wcc_feautrier(
 	isl_schedule_node *node, struct isl_sched_graph *graph)
 {
-	return carry_dependences(node, graph);
+	return carry_feautrier(node, graph);
 }
 
 /* Turn off the "local" bit on all (condition) edges.
@@ -4333,14 +4750,12 @@ static int has_any_coincidence(struct isl_sched_graph *graph)
  */
 static __isl_give isl_map *final_row(struct isl_sched_node *node)
 {
-	isl_local_space *ls;
-	isl_aff *aff;
+	isl_multi_aff *ma;
 	int row;
 
 	row = isl_mat_rows(node->sched) - 1;
-	ls = isl_local_space_from_space(isl_space_copy(node->space));
-	aff = extract_schedule_row(ls, node, row);
-	return isl_map_from_aff(aff);
+	ma = node_extract_partial_schedule_multi_aff(node, row, 1);
+	return isl_map_from_multi_aff(ma);
 }
 
 /* Is the conditional validity dependence in the edge with index "edge_index"
@@ -4494,8 +4909,11 @@ error:
  *	pair of SCCs between which to split)
  * - continue with the next band (assuming the current band has at least
  *	one row)
- * - try to carry as many dependences as possible and continue with the next
- *	band
+ * - if outer coincidence needs to be enforced, then try to carry as many
+ *	validity or coincidence dependences as possible and
+ *	continue with the next band
+ * - try to carry as many validity dependences as possible and
+ *	continue with the next band
  * In each case, we first insert a band node in the schedule tree
  * if any rows have been computed.
  *
@@ -4525,6 +4943,8 @@ static __isl_give isl_schedule_node *compute_schedule_finish_band(
 			return compute_next_band(node, graph, 1);
 		if (!initialized && compute_maxvar(graph) < 0)
 			return isl_schedule_node_free(node);
+		if (isl_options_get_schedule_outer_coincidence(ctx))
+			return carry_coincidence(node, graph);
 		return carry_dependences(node, graph);
 	}
 
@@ -4753,6 +5173,15 @@ static int bad_cluster(struct isl_sched_graph *graph)
 		graph->n_total_row == graph->band_start;
 }
 
+/* Is "edge" a proximity edge with a non-empty dependence relation?
+ */
+static isl_bool is_non_empty_proximity(struct isl_sched_edge *edge)
+{
+	if (!is_proximity(edge))
+		return isl_bool_false;
+	return isl_bool_not(isl_map_plain_is_empty(edge->map));
+}
+
 /* Return the index of an edge in "graph" that can be used to merge
  * two clusters in "c".
  * Return graph->n_edge if no such edge can be found.
@@ -4776,8 +5205,12 @@ static int find_proximity(struct isl_sched_graph *graph,
 	for (i = 0; i < graph->n_edge; ++i) {
 		struct isl_sched_edge *edge = &graph->edge[i];
 		int dist, weight;
+		isl_bool prox;
 
-		if (!is_proximity(edge))
+		prox = is_non_empty_proximity(edge);
+		if (prox < 0)
+			return -1;
+		if (!prox)
 			continue;
 		if (edge->no_merge)
 			continue;
@@ -6019,9 +6452,13 @@ static isl_stat compute_weights(struct isl_sched_graph *graph,
 		struct isl_sched_node *src = edge->src;
 		struct isl_sched_node *dst = edge->dst;
 		isl_basic_map *hull;
+		isl_bool prox;
 		int n_in, n_out;
 
-		if (!is_proximity(edge))
+		prox = is_non_empty_proximity(edge);
+		if (prox < 0)
+			return isl_stat_error;
+		if (!prox)
 			continue;
 		if (bad_cluster(&c->scc[edge->src->scc]) ||
 		    bad_cluster(&c->scc[edge->dst->scc]))
@@ -6048,7 +6485,7 @@ static isl_stat compute_weights(struct isl_sched_graph *graph,
 							isl_dim_out, 0, n_out);
 		if (!hull)
 			return isl_stat_error;
-		edge->weight = hull->n_eq;
+		edge->weight = isl_basic_map_n_equality(hull);
 		isl_basic_map_free(hull);
 
 		if (edge->weight > graph->max_weight)

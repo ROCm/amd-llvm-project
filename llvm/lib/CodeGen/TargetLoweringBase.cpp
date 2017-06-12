@@ -11,7 +11,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/Target/TargetLowering.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
@@ -21,6 +20,7 @@
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineJumpTableInfo.h"
+#include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/StackMaps.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -33,6 +33,7 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
+#include "llvm/Target/TargetLowering.h"
 #include "llvm/Target/TargetLoweringObjectFile.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetRegisterInfo.h"
@@ -52,6 +53,18 @@ static cl::opt<unsigned> MinimumJumpTableEntries
 static cl::opt<unsigned> MaximumJumpTableSize
   ("max-jump-table-size", cl::init(0), cl::Hidden,
    cl::desc("Set maximum size of jump tables; zero for no limit."));
+
+/// Minimum jump table density for normal functions.
+static cl::opt<unsigned>
+    JumpTableDensity("jump-table-density", cl::init(10), cl::Hidden,
+                     cl::desc("Minimum density for building a jump table in "
+                              "a normal function"));
+
+/// Minimum jump table density for -Os or -Oz functions.
+static cl::opt<unsigned> OptsizeJumpTableDensity(
+    "optsize-jump-table-density", cl::init(40), cl::Hidden,
+    cl::desc("Minimum density for building a jump table in "
+             "an optsize function"));
 
 // Although this default value is arbitrary, it is not random. It is assumed
 // that a condition that evaluates the same way by a higher percentage than this
@@ -829,9 +842,10 @@ TargetLoweringBase::TargetLoweringBase(const TargetMachine &tm) : TM(tm) {
   initActions();
 
   // Perform these initializations only once.
-  MaxStoresPerMemset = MaxStoresPerMemcpy = MaxStoresPerMemmove = 8;
-  MaxStoresPerMemsetOptSize = MaxStoresPerMemcpyOptSize
-    = MaxStoresPerMemmoveOptSize = 4;
+  MaxStoresPerMemset = MaxStoresPerMemcpy = MaxStoresPerMemmove =
+      MaxLoadsPerMemcmp = 8;
+  MaxStoresPerMemsetOptSize = MaxStoresPerMemcpyOptSize =
+      MaxStoresPerMemmoveOptSize = MaxLoadsPerMemcmpOptSize = 4;
   UseUnderscoreSetJmp = false;
   UseUnderscoreLongJmp = false;
   HasMultipleConditionRegisters = false;
@@ -910,6 +924,11 @@ void TargetLoweringBase::initActions() {
     setOperationAction(ISD::SMULO, VT, Expand);
     setOperationAction(ISD::UMULO, VT, Expand);
 
+    // ADDCARRY operations default to expand
+    setOperationAction(ISD::ADDCARRY, VT, Expand);
+    setOperationAction(ISD::SUBCARRY, VT, Expand);
+    setOperationAction(ISD::SETCCCARRY, VT, Expand);
+
     // These default to Expand so they will be expanded to CTLZ/CTTZ by default.
     setOperationAction(ISD::CTLZ_ZERO_UNDEF, VT, Expand);
     setOperationAction(ISD::CTTZ_ZERO_UNDEF, VT, Expand);
@@ -918,6 +937,7 @@ void TargetLoweringBase::initActions() {
     
     // These library functions default to expand.
     setOperationAction(ISD::FROUND, VT, Expand);
+    setOperationAction(ISD::FPOWI, VT, Expand);
 
     // These operations default to expand for vector types.
     if (VT.isVector()) {
@@ -1184,12 +1204,11 @@ static unsigned getVectorTypeBreakdownMVT(MVT VT, MVT &IntermediateVT,
 
 /// isLegalRC - Return true if the value types that can be represented by the
 /// specified register class are all legal.
-bool TargetLoweringBase::isLegalRC(const TargetRegisterClass *RC) const {
-  for (TargetRegisterClass::vt_iterator I = RC->vt_begin(), E = RC->vt_end();
-       I != E; ++I) {
+bool TargetLoweringBase::isLegalRC(const TargetRegisterInfo &TRI,
+                                   const TargetRegisterClass &RC) const {
+  for (auto I = TRI.legalclasstypes_begin(RC); *I != MVT::Other; ++I)
     if (isTypeLegal(*I))
       return true;
-  }
   return false;
 }
 
@@ -1296,12 +1315,12 @@ TargetLoweringBase::findRepresentativeClass(const TargetRegisterInfo *TRI,
 
   // Find the first legal register class with the largest spill size.
   const TargetRegisterClass *BestRC = RC;
-  for (int i = SuperRegRC.find_first(); i >= 0; i = SuperRegRC.find_next(i)) {
+  for (unsigned i : SuperRegRC.set_bits()) {
     const TargetRegisterClass *SuperRC = TRI->getRegClass(i);
     // We want the largest possible spill size.
-    if (SuperRC->getSize() <= BestRC->getSize())
+    if (TRI->getSpillSize(*SuperRC) <= TRI->getSpillSize(*BestRC))
       continue;
-    if (!isLegalRC(SuperRC))
+    if (!isLegalRC(*TRI, *SuperRC))
       continue;
     BestRC = SuperRC;
   }
@@ -1437,6 +1456,7 @@ void TargetLoweringBase::computeRegisterProperties(
       }
       if (IsLegalWiderType)
         break;
+      LLVM_FALLTHROUGH;
     }
     case TypeWidenVector: {
       // Try to widen the vector.
@@ -1454,6 +1474,7 @@ void TargetLoweringBase::computeRegisterProperties(
       }
       if (IsLegalWiderType)
         break;
+      LLVM_FALLTHROUGH;
     }
     case TypeSplitVector:
     case TypeScalarizeVector: {
@@ -1616,8 +1637,10 @@ void llvm::GetReturnInfo(Type *ReturnType, AttributeList attr,
         VT = MinVT;
     }
 
-    unsigned NumParts = TLI.getNumRegisters(ReturnType->getContext(), VT);
-    MVT PartVT = TLI.getRegisterType(ReturnType->getContext(), VT);
+    unsigned NumParts =
+        TLI.getNumRegistersForCallingConv(ReturnType->getContext(), VT);
+    MVT PartVT =
+        TLI.getRegisterTypeForCallingConv(ReturnType->getContext(), VT);
 
     // 'inreg' on function refers to return value
     ISD::ArgFlagsTy Flags = ISD::ArgFlagsTy();
@@ -1818,7 +1841,7 @@ Value *TargetLoweringBase::getSafeStackPointerLocation(IRBuilder<> &IRB) const {
   Module *M = IRB.GetInsertBlock()->getParent()->getParent();
   Type *StackPtrTy = Type::getInt8PtrTy(M->getContext());
   Value *Fn = M->getOrInsertFunction("__safestack_pointer_address",
-                                     StackPtrTy->getPointerTo(0), nullptr);
+                                     StackPtrTy->getPointerTo(0));
   return IRB.CreateCall(Fn);
 }
 
@@ -1900,6 +1923,10 @@ unsigned TargetLoweringBase::getMinimumJumpTableEntries() const {
 
 void TargetLoweringBase::setMinimumJumpTableEntries(unsigned Val) {
   MinimumJumpTableEntries = Val;
+}
+
+unsigned TargetLoweringBase::getMinimumJumpTableDensity(bool OptForSize) const {
+  return OptForSize ? OptsizeJumpTableDensity : JumpTableDensity;
 }
 
 unsigned TargetLoweringBase::getMaximumJumpTableSize() const {
@@ -2092,4 +2119,8 @@ int TargetLoweringBase::getSqrtRefinementSteps(EVT VT,
 int TargetLoweringBase::getDivRefinementSteps(EVT VT,
                                               MachineFunction &MF) const {
   return getOpRefinementSteps(false, VT, getRecipEstimateForFunc(MF));
+}
+
+void TargetLoweringBase::finalizeLowering(MachineFunction &MF) const {
+  MF.getRegInfo().freezeReservedRegs(MF);
 }

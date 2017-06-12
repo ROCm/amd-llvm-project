@@ -34,6 +34,7 @@ Compilation database setup:
 http://clang.llvm.org/docs/HowToSetupToolingForLLVM.html
 """
 
+from __future__ import print_function
 import argparse
 import json
 import multiprocessing
@@ -45,6 +46,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import traceback
 
 
 def find_compilation_database(path):
@@ -52,7 +54,7 @@ def find_compilation_database(path):
   result = './'
   while not os.path.isfile(os.path.join(result, path)):
     if os.path.realpath(result) == '/':
-      print 'Error: could not find compilation database.'
+      print('Error: could not find compilation database.')
       sys.exit(1)
     result += '../'
   return os.path.realpath(result)
@@ -87,14 +89,26 @@ def get_tidy_invocation(f, clang_tidy_binary, checks, tmpdir, build_path,
   return start
 
 
+def check_clang_apply_replacements_binary(args):
+  """Checks if invoking supplied clang-apply-replacements binary works."""
+  try:
+    subprocess.check_call([args.clang_apply_replacements_binary, '--version'])
+  except:
+    print('Unable to run clang-apply-replacements. Is clang-apply-replacements '
+          'binary correctly specified?', file=sys.stderr)
+    traceback.print_exc()
+    sys.exit(1)
+
+
 def apply_fixes(args, tmpdir):
   """Calls clang-apply-fixes on a given directory. Deletes the dir when done."""
   invocation = [args.clang_apply_replacements_binary]
   if args.format:
     invocation.append('-format')
+  if args.style:
+    invocation.append('-style=' + args.style)
   invocation.append(tmpdir)
   subprocess.call(invocation)
-  shutil.rmtree(tmpdir)
 
 
 def run_tidy(args, tmpdir, build_path, queue):
@@ -136,6 +150,8 @@ def main():
   parser.add_argument('-fix', action='store_true', help='apply fix-its')
   parser.add_argument('-format', action='store_true', help='Reformat code '
                       'after applying fixes')
+  parser.add_argument('-style', default='file', help='The style of reformat '
+                      'code after applying fixes')
   parser.add_argument('-p', dest='build_path',
                       help='Path used to read a compile command database.')
   parser.add_argument('-extra-arg', dest='extra_arg',
@@ -164,9 +180,9 @@ def main():
     if args.checks:
       invocation.append('-checks=' + args.checks)
     invocation.append('-')
-    print subprocess.check_output(invocation)
+    print(subprocess.check_output(invocation))
   except:
-    print >>sys.stderr, "Unable to run clang-tidy."
+    print("Unable to run clang-tidy.", file=sys.stderr)
     sys.exit(1)
 
   # Load the database and extract all files.
@@ -179,6 +195,7 @@ def main():
 
   tmpdir = None
   if args.fix:
+    check_clang_apply_replacements_binary(args)
     tmpdir = tempfile.mkdtemp()
 
   # Build up a big regexy filter from all command line arguments.
@@ -204,14 +221,25 @@ def main():
   except KeyboardInterrupt:
     # This is a sad hack. Unfortunately subprocess goes
     # bonkers with ctrl-c and we start forking merrily.
-    print '\nCtrl-C detected, goodbye.'
+    print('\nCtrl-C detected, goodbye.')
     if args.fix:
       shutil.rmtree(tmpdir)
     os.kill(0, 9)
 
   if args.fix:
-    print 'Applying fixes ...'
-    apply_fixes(args, tmpdir)
+    print('Applying fixes ...')
+    successfully_applied = False
+
+    try:
+      apply_fixes(args, tmpdir)
+      successfully_applied = True
+    except:
+      print('Error applying fixes.\n', file=sys.stderr)
+      traceback.print_exc()
+
+    shutil.rmtree(tmpdir)
+    if not successfully_applied:
+      sys.exit(1)
 
 if __name__ == '__main__':
   main()

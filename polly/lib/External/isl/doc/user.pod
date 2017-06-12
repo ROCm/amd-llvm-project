@@ -1492,7 +1492,8 @@ using the following functions.
 	isl_bool isl_space_has_tuple_name(
 		__isl_keep isl_space *space,
 		enum isl_dim_type type);
-	const char *isl_space_get_tuple_name(__isl_keep isl_space *space,
+	__isl_keep const char *isl_space_get_tuple_name(
+		__isl_keep isl_space *space,
 		enum isl_dim_type type);
 
 	#include <isl/local_space.h>
@@ -2115,14 +2116,25 @@ has a unique value when the values of the other variables are known.
 Alternatively, the existentially quantified variables can be removed
 using the following functions, which compute an overapproximation.
 
+	#include <isl/set.h>
 	__isl_give isl_basic_set *isl_basic_set_remove_divs(
 		__isl_take isl_basic_set *bset);
-	__isl_give isl_basic_map *isl_basic_map_remove_divs(
-		__isl_take isl_basic_map *bmap);
 	__isl_give isl_set *isl_set_remove_divs(
 		__isl_take isl_set *set);
+
+	#include <isl/map.h>
+	__isl_give isl_basic_map *isl_basic_map_remove_divs(
+		__isl_take isl_basic_map *bmap);
 	__isl_give isl_map *isl_map_remove_divs(
 		__isl_take isl_map *map);
+
+	#include <isl/union_set.h>
+	__isl_give isl_union_set *isl_union_set_remove_divs(
+		__isl_take isl_union_set *bset);
+
+	#include <isl/union_map.h>
+	__isl_give isl_union_map *isl_union_map_remove_divs(
+		__isl_take isl_union_map *bmap);
 
 It is also possible to only remove those divs that are defined
 in terms of a given range of dimensions or only those for which
@@ -2220,10 +2232,16 @@ from
 	int isl_map_n_basic_map(__isl_keep isl_map *map);
 
 It is also possible to obtain a list of basic sets from a set
+or union set
 
 	#include <isl/set.h>
 	__isl_give isl_basic_set_list *isl_set_get_basic_set_list(
 		__isl_keep isl_set *set);
+
+	#include <isl/union_set.h>
+	__isl_give isl_basic_set_list *
+	isl_union_set_get_basic_set_list(
+		__isl_keep isl_union_set *uset);
 
 The returned list can be manipulated using the functions in L<"Lists">.
 
@@ -3965,7 +3983,7 @@ To check whether a set is a parameter domain, use this function:
 =item * Wrapping
 
 The following functions check whether the space of the given
-(basic) set or relation range is a wrapped relation.
+(basic) set or relation domain and/or range is a wrapped relation.
 
 	#include <isl/space.h>
 	isl_bool isl_space_is_wrapping(
@@ -3973,6 +3991,8 @@ The following functions check whether the space of the given
 	isl_bool isl_space_domain_is_wrapping(
 		__isl_keep isl_space *space);
 	isl_bool isl_space_range_is_wrapping(
+		__isl_keep isl_space *space);
+	isl_bool isl_space_is_product(
 		__isl_keep isl_space *space);
 
 	#include <isl/set.h>
@@ -3985,6 +4005,7 @@ The following functions check whether the space of the given
 		__isl_keep isl_map *map);
 	isl_bool isl_map_range_is_wrapping(
 		__isl_keep isl_map *map);
+	isl_bool isl_map_is_product(__isl_keep isl_map *map);
 
 	#include <isl/val.h>
 	isl_bool isl_multi_val_range_is_wrapping(
@@ -4002,6 +4023,10 @@ The input to C<isl_space_is_wrapping> should
 be the space of a set, while that of
 C<isl_space_domain_is_wrapping> and
 C<isl_space_range_is_wrapping> should be the space of a relation.
+The input to C<isl_space_is_product> can be either the space
+of a set or that of a binary relation.
+In case the input is the space of a binary relation, it checks
+whether both domain and range are wrapping.
 
 =item * Internal Product
 
@@ -5140,8 +5165,12 @@ Fourier-Motzkin elimination, but this may change or be made optional
 in future.  In particular, future implementations may use different
 dualization algorithms or skip the elimination step.
 
+	#include <isl/set.h>
 	__isl_give isl_basic_set *isl_basic_set_coefficients(
 		__isl_take isl_basic_set *bset);
+	__isl_give isl_basic_set_list *
+	isl_basic_set_list_coefficients(
+		__isl_take isl_basic_set_list *list);
 	__isl_give isl_basic_set *isl_set_coefficients(
 		__isl_take isl_set *set);
 	__isl_give isl_union_set *isl_union_set_coefficients(
@@ -7452,6 +7481,11 @@ Lists can be created, copied, modified and freed using the following functions.
 	__isl_give isl_set_list *isl_set_list_concat(
 		__isl_take isl_set_list *list1,
 		__isl_take isl_set_list *list2);
+	__isl_give isl_set_list *isl_set_list_map(
+		__isl_take isl_set_list *list,
+		__isl_give isl_set *(*fn)(__isl_take isl_set *el,
+			void *user),
+		void *user);
 	__isl_give isl_set_list *isl_set_list_sort(
 		__isl_take isl_set_list *list,
 		int (*cmp)(__isl_keep isl_set *a,
@@ -9342,7 +9376,7 @@ and C<ISL_SCHEDULE_ALGORITHM_FEAUTRIER>.
 
 If this option is set, then we try to construct schedules in which the
 constant term is split off from the linear part if the linear parts of
-the scheduling rows for all nodes in the graphs have a common non-trivial
+the scheduling rows for all nodes in the graph have a common non-trivial
 divisor.
 The constant term is then placed in a separate band and the linear
 part is reduced.

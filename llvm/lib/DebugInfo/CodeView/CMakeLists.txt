@@ -2,13 +2,23 @@ add_llvm_library(LLVMDebugInfoCodeView
   CodeViewError.cpp
   CodeViewRecordIO.cpp
   CVSymbolVisitor.cpp
-  CVTypeDumper.cpp
   CVTypeVisitor.cpp
+  DebugChecksumsSubsection.cpp
+  DebugCrossExSubsection.cpp
+  DebugCrossImpSubsection.cpp
+  DebugFrameDataSubsection.cpp
+  DebugInlineeLinesSubsection.cpp
+  DebugLinesSubsection.cpp
+  DebugStringTableSubsection.cpp
+  DebugSubsection.cpp
+  DebugSubsectionRecord.cpp
+  DebugSubsectionVisitor.cpp
+  DebugSymbolRVASubsection.cpp
+  DebugSymbolsSubsection.cpp
   EnumTables.cpp
   Formatters.cpp
+  LazyRandomTypeCollection.cpp
   Line.cpp
-  ModuleSubstream.cpp
-  ModuleSubstreamVisitor.cpp
   RecordSerialization.cpp
   SymbolRecordMapping.cpp
   SymbolDumper.cpp
@@ -16,10 +26,13 @@ add_llvm_library(LLVMDebugInfoCodeView
   TypeDatabase.cpp
   TypeDatabaseVisitor.cpp
   TypeDumpVisitor.cpp
+  TypeIndex.cpp
+  TypeIndexDiscovery.cpp
   TypeRecordMapping.cpp
   TypeSerializer.cpp
   TypeStreamMerger.cpp
-
+  TypeTableCollection.cpp
+  
   ADDITIONAL_HEADER_DIRS
   ${LLVM_MAIN_INCLUDE_DIR}/llvm/DebugInfo/CodeView
   )

@@ -186,6 +186,8 @@ if (LIBXML2_FOUND)
   set(CLANG_HAVE_LIBXML 1)
 endif()
 
+find_package(Z3 4.5)
+
 include(CheckIncludeFile)
 check_include_file(sys/resource.h CLANG_HAVE_RLIMITS)
 
@@ -330,10 +332,6 @@ if (APPLE)
   endif()
 endif()
 
-configure_file(
-  ${CLANG_SOURCE_DIR}/include/clang/Config/config.h.cmake
-  ${CLANG_BINARY_DIR}/include/clang/Config/config.h)
-
 include(CMakeParseArguments)
 include(AddClang)
 
@@ -361,6 +359,10 @@ if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY)
     PATTERN "*.inc"
     PATTERN "*.h"
     )
+
+  install(PROGRAMS utils/bash-autocomplete.sh
+    DESTINATION share/clang
+    )
 endif()
 
 add_definitions( -D_GNU_SOURCE )
@@ -371,8 +373,19 @@ option(CLANG_BUILD_TOOLS
 option(CLANG_ENABLE_ARCMT "Build ARCMT." ON)
 option(CLANG_ENABLE_STATIC_ANALYZER "Build static analyzer." ON)
 
-if (NOT CLANG_ENABLE_STATIC_ANALYZER AND CLANG_ENABLE_ARCMT)
-  message(FATAL_ERROR "Cannot disable static analyzer while enabling ARCMT")
+option(CLANG_ANALYZER_BUILD_Z3
+  "Build the static analyzer with the Z3 constraint manager." OFF)
+
+if(NOT CLANG_ENABLE_STATIC_ANALYZER AND (CLANG_ENABLE_ARCMT OR CLANG_ANALYZER_BUILD_Z3))
+  message(FATAL_ERROR "Cannot disable static analyzer while enabling ARCMT or Z3")
+endif()
+
+if(CLANG_ANALYZER_BUILD_Z3)
+  if(Z3_FOUND)
+    set(CLANG_ANALYZER_WITH_Z3 1)
+  else()
+    message(FATAL_ERROR "Cannot find Z3 header file or shared library")
+  endif()
 endif()
 
 if(CLANG_ENABLE_ARCMT)
@@ -570,10 +583,17 @@ if (CLANG_ENABLE_BOOTSTRAP)
     add_dependencies(clang-bootstrap-deps compiler-rt)
   endif()
 
+  set(C_COMPILER "clang")
+  set(CXX_COMPILER "clang++")
+  if(WIN32)
+    set(C_COMPILER "clang-cl.exe")
+    set(CXX_COMPILER "clang-cl.exe")
+  endif()
+
   set(COMPILER_OPTIONS
-    -DCMAKE_CXX_COMPILER=${LLVM_RUNTIME_OUTPUT_INTDIR}/clang++
-    -DCMAKE_C_COMPILER=${LLVM_RUNTIME_OUTPUT_INTDIR}/clang
-    -DCMAKE_ASM_COMPILER=${LLVM_RUNTIME_OUTPUT_INTDIR}/clang)
+    -DCMAKE_CXX_COMPILER=${LLVM_RUNTIME_OUTPUT_INTDIR}/${CXX_COMPILER}
+    -DCMAKE_C_COMPILER=${LLVM_RUNTIME_OUTPUT_INTDIR}/${C_COMPILER}
+    -DCMAKE_ASM_COMPILER=${LLVM_RUNTIME_OUTPUT_INTDIR}/${C_COMPILER})
 
   if(BOOTSTRAP_LLVM_BUILD_INSTRUMENTED)
     add_dependencies(clang-bootstrap-deps llvm-profdata)
@@ -687,3 +707,7 @@ endif()
 if (LLVM_ADD_NATIVE_VISUALIZERS_TO_SOLUTION)
   add_subdirectory(utils/ClangVisualizers)
 endif()
+
+configure_file(
+  ${CLANG_SOURCE_DIR}/include/clang/Config/config.h.cmake
+  ${CLANG_BINARY_DIR}/include/clang/Config/config.h)

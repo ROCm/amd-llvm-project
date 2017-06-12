@@ -186,7 +186,7 @@
 // CHECK-NO-SLP-VECTORIZE-AGG-NOT: "-vectorize-slp-aggressive"
 
 // RUN: %clang -### -S -fextended-identifiers %s 2>&1 | FileCheck -check-prefix=CHECK-EXTENDED-IDENTIFIERS %s
-// RUN: %clang -### -S -fno-extended-identifiers %s 2>&1 | FileCheck -check-prefix=CHECK-NO-EXTENDED-IDENTIFIERS %s
+// RUN: not %clang -### -S -fno-extended-identifiers %s 2>&1 | FileCheck -check-prefix=CHECK-NO-EXTENDED-IDENTIFIERS %s
 // CHECK-EXTENDED-IDENTIFIERS: "-cc1"
 // CHECK-EXTENDED-IDENTIFIERS-NOT: "-fextended-identifiers"
 // CHECK-NO-EXTENDED-IDENTIFIERS: error: unsupported option '-fno-extended-identifiers'
@@ -494,3 +494,8 @@
 // RUN: %clang -### -S -fdebug-info-for-profiling -fno-debug-info-for-profiling %s 2>&1 | FileCheck -check-prefix=CHECK-NO-PROFILE-DEBUG %s
 // CHECK-PROFILE-DEBUG: -fdebug-info-for-profiling
 // CHECK-NO-PROFILE-DEBUG-NOT: -fdebug-info-for-profiling
+
+// RUN: %clang -### -S -fallow-editor-placeholders %s 2>&1 | FileCheck -check-prefix=CHECK-ALLOW-PLACEHOLDERS %s
+// RUN: %clang -### -S -fno-allow-editor-placeholders %s 2>&1 | FileCheck -check-prefix=CHECK-NO-ALLOW-PLACEHOLDERS %s
+// CHECK-ALLOW-PLACEHOLDERS: -fallow-editor-placeholders
+// CHECK-NO-ALLOW-PLACEHOLDERS-NOT: -fallow-editor-placeholders

@@ -17,8 +17,8 @@
 #include "MCTargetDesc/AArch64AddressingModes.h"
 #include "Utils/AArch64BaseInfo.h"
 #include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
@@ -761,6 +761,128 @@ bool AArch64InstrInfo::isAsCheapAsAMove(const MachineInstr &MI) const {
   }
 
   llvm_unreachable("Unknown opcode to check as cheap as a move!");
+}
+
+bool AArch64InstrInfo::isFalkorShiftExtFast(const MachineInstr &MI) const {
+  switch (MI.getOpcode()) {
+  default:
+    return false;
+
+  case AArch64::ADDWrs:
+  case AArch64::ADDXrs:
+  case AArch64::ADDSWrs:
+  case AArch64::ADDSXrs: {
+    unsigned Imm = MI.getOperand(3).getImm();
+    unsigned ShiftVal = AArch64_AM::getShiftValue(Imm);
+    if (ShiftVal == 0)
+      return true;
+    return AArch64_AM::getShiftType(Imm) == AArch64_AM::LSL && ShiftVal <= 5;
+  }
+
+  case AArch64::ADDWrx:
+  case AArch64::ADDXrx:
+  case AArch64::ADDXrx64:
+  case AArch64::ADDSWrx:
+  case AArch64::ADDSXrx:
+  case AArch64::ADDSXrx64: {
+    unsigned Imm = MI.getOperand(3).getImm();
+    switch (AArch64_AM::getArithExtendType(Imm)) {
+    default:
+      return false;
+    case AArch64_AM::UXTB:
+    case AArch64_AM::UXTH:
+    case AArch64_AM::UXTW:
+    case AArch64_AM::UXTX:
+      return AArch64_AM::getArithShiftValue(Imm) <= 4;
+    }
+  }
+
+  case AArch64::SUBWrs:
+  case AArch64::SUBSWrs: {
+    unsigned Imm = MI.getOperand(3).getImm();
+    unsigned ShiftVal = AArch64_AM::getShiftValue(Imm);
+    return ShiftVal == 0 ||
+           (AArch64_AM::getShiftType(Imm) == AArch64_AM::ASR && ShiftVal == 31);
+  }
+
+  case AArch64::SUBXrs:
+  case AArch64::SUBSXrs: {
+    unsigned Imm = MI.getOperand(3).getImm();
+    unsigned ShiftVal = AArch64_AM::getShiftValue(Imm);
+    return ShiftVal == 0 ||
+           (AArch64_AM::getShiftType(Imm) == AArch64_AM::ASR && ShiftVal == 63);
+  }
+
+  case AArch64::SUBWrx:
+  case AArch64::SUBXrx:
+  case AArch64::SUBXrx64:
+  case AArch64::SUBSWrx:
+  case AArch64::SUBSXrx:
+  case AArch64::SUBSXrx64: {
+    unsigned Imm = MI.getOperand(3).getImm();
+    switch (AArch64_AM::getArithExtendType(Imm)) {
+    default:
+      return false;
+    case AArch64_AM::UXTB:
+    case AArch64_AM::UXTH:
+    case AArch64_AM::UXTW:
+    case AArch64_AM::UXTX:
+      return AArch64_AM::getArithShiftValue(Imm) == 0;
+    }
+  }
+
+  case AArch64::LDRBBroW:
+  case AArch64::LDRBBroX:
+  case AArch64::LDRBroW:
+  case AArch64::LDRBroX:
+  case AArch64::LDRDroW:
+  case AArch64::LDRDroX:
+  case AArch64::LDRHHroW:
+  case AArch64::LDRHHroX:
+  case AArch64::LDRHroW:
+  case AArch64::LDRHroX:
+  case AArch64::LDRQroW:
+  case AArch64::LDRQroX:
+  case AArch64::LDRSBWroW:
+  case AArch64::LDRSBWroX:
+  case AArch64::LDRSBXroW:
+  case AArch64::LDRSBXroX:
+  case AArch64::LDRSHWroW:
+  case AArch64::LDRSHWroX:
+  case AArch64::LDRSHXroW:
+  case AArch64::LDRSHXroX:
+  case AArch64::LDRSWroW:
+  case AArch64::LDRSWroX:
+  case AArch64::LDRSroW:
+  case AArch64::LDRSroX:
+  case AArch64::LDRWroW:
+  case AArch64::LDRWroX:
+  case AArch64::LDRXroW:
+  case AArch64::LDRXroX:
+  case AArch64::PRFMroW:
+  case AArch64::PRFMroX:
+  case AArch64::STRBBroW:
+  case AArch64::STRBBroX:
+  case AArch64::STRBroW:
+  case AArch64::STRBroX:
+  case AArch64::STRDroW:
+  case AArch64::STRDroX:
+  case AArch64::STRHHroW:
+  case AArch64::STRHHroX:
+  case AArch64::STRHroW:
+  case AArch64::STRHroX:
+  case AArch64::STRQroW:
+  case AArch64::STRQroX:
+  case AArch64::STRSroW:
+  case AArch64::STRSroX:
+  case AArch64::STRWroW:
+  case AArch64::STRWroX:
+  case AArch64::STRXroW:
+  case AArch64::STRXroX: {
+    unsigned IsSigned = MI.getOperand(3).getImm();
+    return !IsSigned;
+  }
+  }
 }
 
 bool AArch64InstrInfo::isCoalescableExtInstr(const MachineInstr &MI,
@@ -2309,7 +2431,7 @@ void AArch64InstrInfo::storeRegToStackSlot(
       PtrInfo, MachineMemOperand::MOStore, MFI.getObjectSize(FI), Align);
   unsigned Opc = 0;
   bool Offset = true;
-  switch (RC->getSize()) {
+  switch (TRI->getSpillSize(*RC)) {
   case 1:
     if (AArch64::FPR8RegClass.hasSubClassEq(RC))
       Opc = AArch64::STRBui;
@@ -2413,7 +2535,7 @@ void AArch64InstrInfo::loadRegFromStackSlot(
 
   unsigned Opc = 0;
   bool Offset = true;
-  switch (RC->getSize()) {
+  switch (TRI->getSpillSize(*RC)) {
   case 1:
     if (AArch64::FPR8RegClass.hasSubClassEq(RC))
       Opc = AArch64::LDRBui;
@@ -2638,7 +2760,8 @@ MachineInstr *AArch64InstrInfo::foldMemoryOperandImpl(
     };
 
     if (DstMO.getSubReg() == 0 && SrcMO.getSubReg() == 0) {
-      assert(getRegClass(DstReg)->getSize() == getRegClass(SrcReg)->getSize() &&
+      assert(TRI.getRegSizeInBits(*getRegClass(DstReg)) ==
+             TRI.getRegSizeInBits(*getRegClass(SrcReg)) &&
              "Mismatched register size in non subreg COPY");
       if (IsSpill)
         storeRegToStackSlot(MBB, InsertPt, SrcReg, SrcMO.isKill(), FrameIndex,
@@ -2724,7 +2847,8 @@ MachineInstr *AArch64InstrInfo::foldMemoryOperandImpl(
       }
 
       if (FillRC) {
-        assert(getRegClass(SrcReg)->getSize() == FillRC->getSize() &&
+        assert(TRI.getRegSizeInBits(*getRegClass(SrcReg)) ==
+                   TRI.getRegSizeInBits(*FillRC) &&
                "Mismatched regclass size on folded subreg COPY");
         loadRegFromStackSlot(MBB, InsertPt, DstReg, FrameIndex, FillRC, &TRI);
         MachineInstr &LoadMI = *--InsertPt;
@@ -3014,7 +3138,7 @@ bool llvm::rewriteAArch64FrameIndex(MachineInstr &MI, unsigned FrameRegIdx,
   return false;
 }
 
-void AArch64InstrInfo::getNoopForMachoTarget(MCInst &NopInst) const {
+void AArch64InstrInfo::getNoop(MCInst &NopInst) const {
   NopInst.setOpcode(AArch64::HINT);
   NopInst.addOperand(MCOperand::createImm(0));
 }
@@ -3414,6 +3538,10 @@ static bool getFMAPatterns(MachineInstr &Root,
       Patterns.push_back(MachineCombinerPattern::FMLSv1i32_indexed_OP2);
       Found = true;
     }
+    if (canCombineWithFMUL(MBB, Root.getOperand(1), AArch64::FNMULSrr)) {
+      Patterns.push_back(MachineCombinerPattern::FNMULSUBS_OP1);
+      Found = true;
+    }
     break;
   case AArch64::FSUBDrr:
     if (canCombineWithFMUL(MBB, Root.getOperand(1), AArch64::FMULDrr)) {
@@ -3426,6 +3554,10 @@ static bool getFMAPatterns(MachineInstr &Root,
     } else if (canCombineWithFMUL(MBB, Root.getOperand(2),
                                   AArch64::FMULv1i64_indexed)) {
       Patterns.push_back(MachineCombinerPattern::FMLSv1i64_indexed_OP2);
+      Found = true;
+    }
+    if (canCombineWithFMUL(MBB, Root.getOperand(1), AArch64::FNMULDrr)) {
+      Patterns.push_back(MachineCombinerPattern::FNMULSUBD_OP1);
       Found = true;
     }
     break;
@@ -3482,6 +3614,8 @@ AArch64InstrInfo::isThroughputPattern(MachineCombinerPattern Pattern) const {
   case MachineCombinerPattern::FMULADDD_OP2:
   case MachineCombinerPattern::FMULSUBD_OP1:
   case MachineCombinerPattern::FMULSUBD_OP2:
+  case MachineCombinerPattern::FNMULSUBS_OP1:
+  case MachineCombinerPattern::FNMULSUBD_OP1:
   case MachineCombinerPattern::FMLAv1i32_indexed_OP1:
   case MachineCombinerPattern::FMLAv1i32_indexed_OP2:
   case MachineCombinerPattern::FMLAv1i64_indexed_OP1:
@@ -3983,6 +4117,24 @@ void AArch64InstrInfo::genAlternativeCodeSequence(
     MUL = genFusedMultiply(MF, MRI, TII, Root, InsInstrs, 1, Opc, RC);
     break;
   }
+
+  case MachineCombinerPattern::FNMULSUBS_OP1:
+  case MachineCombinerPattern::FNMULSUBD_OP1: {
+    // FNMUL I=A,B,0
+    // FSUB R,I,C
+    // ==> FNMADD R,A,B,C // = -A*B - C
+    // --- Create(FNMADD);
+    if (Pattern == MachineCombinerPattern::FNMULSUBS_OP1) {
+      Opc = AArch64::FNMADDSrrr;
+      RC = &AArch64::FPR32RegClass;
+    } else {
+      Opc = AArch64::FNMADDDrrr;
+      RC = &AArch64::FPR64RegClass;
+    }
+    MUL = genFusedMultiply(MF, MRI, TII, Root, InsInstrs, 1, Opc, RC);
+    break;
+  }
+
   case MachineCombinerPattern::FMULSUBS_OP2:
   case MachineCombinerPattern::FMULSUBD_OP2: {
     // FMUL I=A,B,0
@@ -3998,6 +4150,7 @@ void AArch64InstrInfo::genAlternativeCodeSequence(
     }
     MUL = genFusedMultiply(MF, MRI, TII, Root, InsInstrs, 2, Opc, RC);
     break;
+  }
 
   case MachineCombinerPattern::FMLSv1i32_indexed_OP2:
     Opc = AArch64::FMLSv1i32_indexed;
@@ -4054,7 +4207,6 @@ void AArch64InstrInfo::genAlternativeCodeSequence(
                              FMAInstKind::Accumulator);
     }
     break;
-  }
   } // end switch (Pattern)
   // Record MUL and ADD/SUB for deletion
   DelInstrs.push_back(MUL);

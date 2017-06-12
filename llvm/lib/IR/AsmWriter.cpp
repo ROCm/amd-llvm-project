@@ -20,7 +20,9 @@
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/BinaryFormat/Dwarf.h"
 #include "llvm/IR/AssemblyAnnotationWriter.h"
+#include "llvm/IR/Attributes.h"
 #include "llvm/IR/CFG.h"
 #include "llvm/IR/CallingConv.h"
 #include "llvm/IR/Constants.h"
@@ -38,7 +40,6 @@
 #include "llvm/IR/UseListOrder.h"
 #include "llvm/IR/ValueSymbolTable.h"
 #include "llvm/Support/Debug.h"
-#include "llvm/Support/Dwarf.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/FormattedStream.h"
@@ -331,6 +332,7 @@ static void PrintCallingConv(unsigned cc, raw_ostream &Out) {
   case CallingConv::HHVM:          Out << "hhvmcc"; break;
   case CallingConv::HHVM_C:        Out << "hhvm_ccc"; break;
   case CallingConv::AMDGPU_VS:     Out << "amdgpu_vs"; break;
+  case CallingConv::AMDGPU_HS:     Out << "amdgpu_hs"; break;
   case CallingConv::AMDGPU_GS:     Out << "amdgpu_gs"; break;
   case CallingConv::AMDGPU_PS:     Out << "amdgpu_ps"; break;
   case CallingConv::AMDGPU_CS:     Out << "amdgpu_cs"; break;
@@ -604,7 +606,7 @@ private:
   unsigned mdnNext;
 
   /// asMap - The slot map for attribute sets.
-  DenseMap<AttributeList, unsigned> asMap;
+  DenseMap<AttributeSet, unsigned> asMap;
   unsigned asNext;
 public:
   /// Construct from a module.
@@ -627,7 +629,7 @@ public:
   int getLocalSlot(const Value *V);
   int getGlobalSlot(const GlobalValue *V);
   int getMetadataSlot(const MDNode *N);
-  int getAttributeGroupSlot(AttributeList AS);
+  int getAttributeGroupSlot(AttributeSet AS);
 
   /// If you'd like to deal with a function instead of just a module, use
   /// this method to get its data into the SlotTracker.
@@ -650,8 +652,8 @@ public:
   unsigned mdn_size() const { return mdnMap.size(); }
   bool mdn_empty() const { return mdnMap.empty(); }
 
-  /// AttributeList map iterators.
-  typedef DenseMap<AttributeList, unsigned>::iterator as_iterator;
+  /// AttributeSet map iterators.
+  typedef DenseMap<AttributeSet, unsigned>::iterator as_iterator;
   as_iterator as_begin()   { return asMap.begin(); }
   as_iterator as_end()     { return asMap.end(); }
   unsigned as_size() const { return asMap.size(); }
@@ -671,8 +673,8 @@ private:
   /// CreateFunctionSlot - Insert the specified Value* into the slot table.
   void CreateFunctionSlot(const Value *V);
 
-  /// \brief Insert the specified AttributeList into the slot table.
-  void CreateAttributeSetSlot(AttributeList AS);
+  /// \brief Insert the specified AttributeSet into the slot table.
+  void CreateAttributeSetSlot(AttributeSet AS);
 
   /// Add all of the module level global variables (and their initializers)
   /// and function declarations, but not the contents of those functions.
@@ -803,6 +805,9 @@ void SlotTracker::processModule() {
     if (!Var.hasName())
       CreateModuleSlot(&Var);
     processGlobalObjectMetadata(Var);
+    auto Attrs = Var.getAttributes();
+    if (Attrs.hasAttributes())
+      CreateAttributeSetSlot(Attrs);
   }
 
   for (const GlobalAlias &A : TheModule->aliases()) {
@@ -831,8 +836,8 @@ void SlotTracker::processModule() {
 
     // Add all the function attributes to the table.
     // FIXME: Add attributes of other objects?
-    AttributeList FnAttrs = F.getAttributes().getFnAttributes();
-    if (FnAttrs.hasAttributes(AttributeList::FunctionIndex))
+    AttributeSet FnAttrs = F.getAttributes().getFnAttributes();
+    if (FnAttrs.hasAttributes())
       CreateAttributeSetSlot(FnAttrs);
   }
 
@@ -867,15 +872,10 @@ void SlotTracker::processFunction() {
 
       // We allow direct calls to any llvm.foo function here, because the
       // target may not be linked into the optimizer.
-      if (const CallInst *CI = dyn_cast<CallInst>(&I)) {
+      if (auto CS = ImmutableCallSite(&I)) {
         // Add all the call attributes to the table.
-        AttributeList Attrs = CI->getAttributes().getFnAttributes();
-        if (Attrs.hasAttributes(AttributeList::FunctionIndex))
-          CreateAttributeSetSlot(Attrs);
-      } else if (const InvokeInst *II = dyn_cast<InvokeInst>(&I)) {
-        // Add all the call attributes to the table.
-        AttributeList Attrs = II->getAttributes().getFnAttributes();
-        if (Attrs.hasAttributes(AttributeList::FunctionIndex))
+        AttributeSet Attrs = CS.getAttributes().getFnAttributes();
+        if (Attrs.hasAttributes())
           CreateAttributeSetSlot(Attrs);
       }
     }
@@ -961,11 +961,11 @@ int SlotTracker::getLocalSlot(const Value *V) {
   return FI == fMap.end() ? -1 : (int)FI->second;
 }
 
-int SlotTracker::getAttributeGroupSlot(AttributeList AS) {
+int SlotTracker::getAttributeGroupSlot(AttributeSet AS) {
   // Check for uninitialized state and do lazy initialization.
   initialize();
 
-  // Find the AttributeList in the module map.
+  // Find the AttributeSet in the module map.
   as_iterator AI = asMap.find(AS);
   return AI == asMap.end() ? -1 : (int)AI->second;
 }
@@ -1015,9 +1015,8 @@ void SlotTracker::CreateMetadataSlot(const MDNode *N) {
       CreateMetadataSlot(Op);
 }
 
-void SlotTracker::CreateAttributeSetSlot(AttributeList AS) {
-  assert(AS.hasAttributes(AttributeList::FunctionIndex) &&
-         "Doesn't need a slot!");
+void SlotTracker::CreateAttributeSetSlot(AttributeSet AS) {
+  assert(AS.hasAttributes() && "Doesn't need a slot!");
 
   as_iterator I = asMap.find(AS);
   if (I != asMap.end())
@@ -1108,35 +1107,34 @@ static void WriteConstantInternal(raw_ostream &Out, const Constant *CV,
   }
 
   if (const ConstantFP *CFP = dyn_cast<ConstantFP>(CV)) {
-    if (&CFP->getValueAPF().getSemantics() == &APFloat::IEEEsingle() ||
-        &CFP->getValueAPF().getSemantics() == &APFloat::IEEEdouble()) {
+    const APFloat &APF = CFP->getValueAPF();
+    if (&APF.getSemantics() == &APFloat::IEEEsingle() ||
+        &APF.getSemantics() == &APFloat::IEEEdouble()) {
       // We would like to output the FP constant value in exponential notation,
       // but we cannot do this if doing so will lose precision.  Check here to
       // make sure that we only output it in exponential format if we can parse
       // the value back and get the same value.
       //
       bool ignored;
-      bool isDouble = &CFP->getValueAPF().getSemantics()==&APFloat::IEEEdouble();
-      bool isInf = CFP->getValueAPF().isInfinity();
-      bool isNaN = CFP->getValueAPF().isNaN();
+      bool isDouble = &APF.getSemantics() == &APFloat::IEEEdouble();
+      bool isInf = APF.isInfinity();
+      bool isNaN = APF.isNaN();
       if (!isInf && !isNaN) {
-        double Val = isDouble ? CFP->getValueAPF().convertToDouble() :
-                                CFP->getValueAPF().convertToFloat();
+        double Val = isDouble ? APF.convertToDouble() : APF.convertToFloat();
         SmallString<128> StrVal;
-        raw_svector_ostream(StrVal) << Val;
-
+        APF.toString(StrVal, 6, 0, false);
         // Check to make sure that the stringized number is not some string like
         // "Inf" or NaN, that atof will accept, but the lexer will not.  Check
         // that the string matches the "[-+]?[0-9]" regex.
         //
-        if ((StrVal[0] >= '0' && StrVal[0] <= '9') ||
-            ((StrVal[0] == '-' || StrVal[0] == '+') &&
-             (StrVal[1] >= '0' && StrVal[1] <= '9'))) {
-          // Reparse stringized version!
-          if (APFloat(APFloat::IEEEdouble(), StrVal).convertToDouble() == Val) {
-            Out << StrVal;
-            return;
-          }
+        assert(((StrVal[0] >= '0' && StrVal[0] <= '9') ||
+                ((StrVal[0] == '-' || StrVal[0] == '+') &&
+                 (StrVal[1] >= '0' && StrVal[1] <= '9'))) &&
+               "[-+]?[0-9] regex does not match!");
+        // Reparse stringized version!
+        if (APFloat(APFloat::IEEEdouble(), StrVal).convertToDouble() == Val) {
+          Out << StrVal;
+          return;
         }
       }
       // Otherwise we could not reparse it to exactly the same value, so we must
@@ -1145,7 +1143,7 @@ static void WriteConstantInternal(raw_ostream &Out, const Constant *CV,
       // x86, so we must not use these types.
       static_assert(sizeof(double) == sizeof(uint64_t),
                     "assuming that double is 64 bits!");
-      APFloat apf = CFP->getValueAPF();
+      APFloat apf = APF;
       // Floats are represented in ASCII IR as double, convert.
       if (!isDouble)
         apf.convert(APFloat::IEEEdouble(), APFloat::rmNearestTiesToEven,
@@ -1158,27 +1156,27 @@ static void WriteConstantInternal(raw_ostream &Out, const Constant *CV,
     // These appear as a magic letter identifying the type, then a
     // fixed number of hex digits.
     Out << "0x";
-    APInt API = CFP->getValueAPF().bitcastToAPInt();
-    if (&CFP->getValueAPF().getSemantics() == &APFloat::x87DoubleExtended()) {
+    APInt API = APF.bitcastToAPInt();
+    if (&APF.getSemantics() == &APFloat::x87DoubleExtended()) {
       Out << 'K';
       Out << format_hex_no_prefix(API.getHiBits(16).getZExtValue(), 4,
                                   /*Upper=*/true);
       Out << format_hex_no_prefix(API.getLoBits(64).getZExtValue(), 16,
                                   /*Upper=*/true);
       return;
-    } else if (&CFP->getValueAPF().getSemantics() == &APFloat::IEEEquad()) {
+    } else if (&APF.getSemantics() == &APFloat::IEEEquad()) {
       Out << 'L';
       Out << format_hex_no_prefix(API.getLoBits(64).getZExtValue(), 16,
                                   /*Upper=*/true);
       Out << format_hex_no_prefix(API.getHiBits(64).getZExtValue(), 16,
                                   /*Upper=*/true);
-    } else if (&CFP->getValueAPF().getSemantics() == &APFloat::PPCDoubleDouble()) {
+    } else if (&APF.getSemantics() == &APFloat::PPCDoubleDouble()) {
       Out << 'M';
       Out << format_hex_no_prefix(API.getLoBits(64).getZExtValue(), 16,
                                   /*Upper=*/true);
       Out << format_hex_no_prefix(API.getHiBits(64).getZExtValue(), 16,
                                   /*Upper=*/true);
-    } else if (&CFP->getValueAPF().getSemantics() == &APFloat::IEEEhalf()) {
+    } else if (&APF.getSemantics() == &APFloat::IEEEhalf()) {
       Out << 'H';
       Out << format_hex_no_prefix(API.getZExtValue(), 4,
                                   /*Upper=*/true);
@@ -1725,6 +1723,7 @@ static void writeDISubprogram(raw_ostream &Out, const DISubprogram *N,
   Printer.printMetadata("templateParams", N->getRawTemplateParams());
   Printer.printMetadata("declaration", N->getRawDeclaration());
   Printer.printMetadata("variables", N->getRawVariables());
+  Printer.printMetadata("thrownTypes", N->getRawThrownTypes());
   Out << ")";
 }
 
@@ -1761,8 +1760,6 @@ static void writeDINamespace(raw_ostream &Out, const DINamespace *N,
   MDFieldPrinter Printer(Out, TypePrinter, Machine, Context);
   Printer.printString("name", N->getName());
   Printer.printMetadata("scope", N->getRawScope(), /* ShouldSkipNull */ false);
-  Printer.printMetadata("file", N->getRawFile());
-  Printer.printInt("line", N->getLine());
   Printer.printBool("exportSymbols", N->getExportSymbols(), false);
   Out << ")";
 }
@@ -2090,8 +2087,7 @@ public:
   void printModule(const Module *M);
 
   void writeOperand(const Value *Op, bool PrintType);
-  void writeParamOperand(const Value *Operand, AttributeList Attrs,
-                         unsigned Idx);
+  void writeParamOperand(const Value *Operand, AttributeSet Attrs);
   void writeOperandBundles(ImmutableCallSite CS);
   void writeAtomic(AtomicOrdering Ordering, SynchronizationScope SynchScope);
   void writeAtomicCmpXchg(AtomicOrdering SuccessOrdering,
@@ -2107,7 +2103,7 @@ public:
   void printIndirectSymbol(const GlobalIndirectSymbol *GIS);
   void printComdat(const Comdat *C);
   void printFunction(const Function *F);
-  void printArgument(const Argument *FA, AttributeList Attrs, unsigned Idx);
+  void printArgument(const Argument *FA, AttributeSet Attrs);
   void printBasicBlock(const BasicBlock *BB);
   void printInstructionLine(const Instruction &I);
   void printInstruction(const Instruction &I);
@@ -2186,7 +2182,7 @@ void AssemblyWriter::writeAtomicCmpXchg(AtomicOrdering SuccessOrdering,
 }
 
 void AssemblyWriter::writeParamOperand(const Value *Operand,
-                                       AttributeList Attrs, unsigned Idx) {
+                                       AttributeSet Attrs) {
   if (!Operand) {
     Out << "<null operand!>";
     return;
@@ -2195,8 +2191,8 @@ void AssemblyWriter::writeParamOperand(const Value *Operand,
   // Print the type
   TypePrinter.print(Operand->getType(), Out);
   // Print parameter attributes list
-  if (Attrs.hasAttributes(Idx))
-    Out << ' ' << Attrs.getAsString(Idx);
+  if (Attrs.hasAttributes())
+    Out << ' ' << Attrs.getAsString();
   Out << ' ';
   // Print the operand
   WriteAsOperandInternal(Out, Operand, &TypePrinter, &Machine, TheModule);
@@ -2509,6 +2505,10 @@ void AssemblyWriter::printGlobal(const GlobalVariable *GV) {
   GV->getAllMetadata(MDs);
   printMetadataAttachments(MDs, ", ");
 
+  auto Attrs = GV->getAttributes();
+  if (Attrs.hasAttributes())
+    Out << " #" << Machine.getAttributeGroupSlot(Attrs);
+
   printInfoComment(*GV);
 }
 
@@ -2606,17 +2606,10 @@ void AssemblyWriter::printFunction(const Function *F) {
 
   const AttributeList &Attrs = F->getAttributes();
   if (Attrs.hasAttributes(AttributeList::FunctionIndex)) {
-    AttributeList AS = Attrs.getFnAttributes();
+    AttributeSet AS = Attrs.getFnAttributes();
     std::string AttrStr;
 
-    unsigned Idx = 0;
-    for (unsigned E = AS.getNumSlots(); Idx != E; ++Idx)
-      if (AS.getSlotIndex(Idx) == AttributeList::FunctionIndex)
-        break;
-
-    for (AttributeList::iterator I = AS.begin(Idx), E = AS.end(Idx); I != E;
-         ++I) {
-      Attribute Attr = *I;
+    for (const Attribute &Attr : AS) {
       if (!Attr.isStringAttribute()) {
         if (!AttrStr.empty()) AttrStr += ' ';
         AttrStr += Attr.getAsString();
@@ -2666,17 +2659,17 @@ void AssemblyWriter::printFunction(const Function *F) {
       // Output type...
       TypePrinter.print(FT->getParamType(I), Out);
 
-      if (Attrs.hasAttributes(I + 1))
-        Out << ' ' << Attrs.getAsString(I + 1);
+      AttributeSet ArgAttrs = Attrs.getParamAttributes(I);
+      if (ArgAttrs.hasAttributes())
+        Out << ' ' << ArgAttrs.getAsString();
     }
   } else {
     // The arguments are meaningful here, print them in detail.
-    unsigned Idx = 1;
     for (const Argument &Arg : F->args()) {
       // Insert commas as we go... the first arg doesn't get a comma
-      if (Idx != 1)
+      if (Arg.getArgNo() != 0)
         Out << ", ";
-      printArgument(&Arg, Attrs, Idx++);
+      printArgument(&Arg, Attrs.getParamAttributes(Arg.getArgNo()));
     }
   }
 
@@ -2738,14 +2731,13 @@ void AssemblyWriter::printFunction(const Function *F) {
 /// printArgument - This member is called for every argument that is passed into
 /// the function.  Simply print it out
 ///
-void AssemblyWriter::printArgument(const Argument *Arg, AttributeList Attrs,
-                                   unsigned Idx) {
+void AssemblyWriter::printArgument(const Argument *Arg, AttributeSet Attrs) {
   // Output type...
   TypePrinter.print(Arg->getType(), Out);
 
   // Output parameter attributes list
-  if (Attrs.hasAttributes(Idx))
-    Out << ' ' << Attrs.getAsString(Idx);
+  if (Attrs.hasAttributes())
+    Out << ' ' << Attrs.getAsString();
 
   // Output name, if available...
   if (Arg->hasName()) {
@@ -2909,12 +2901,11 @@ void AssemblyWriter::printInstruction(const Instruction &I) {
     Out << ", ";
     writeOperand(SI.getDefaultDest(), true);
     Out << " [";
-    for (SwitchInst::ConstCaseIt i = SI.case_begin(), e = SI.case_end();
-         i != e; ++i) {
+    for (auto Case : SI.cases()) {
       Out << "\n    ";
-      writeOperand(i.getCaseValue(), true);
+      writeOperand(Case.getCaseValue(), true);
       Out << ", ";
-      writeOperand(i.getCaseSuccessor(), true);
+      writeOperand(Case.getCaseSuccessor(), true);
     }
     Out << "\n  ]";
   } else if (isa<IndirectBrInst>(I)) {
@@ -3040,7 +3031,7 @@ void AssemblyWriter::printInstruction(const Instruction &I) {
     for (unsigned op = 0, Eop = CI->getNumArgOperands(); op < Eop; ++op) {
       if (op > 0)
         Out << ", ";
-      writeParamOperand(CI->getArgOperand(op), PAL, op + 1);
+      writeParamOperand(CI->getArgOperand(op), PAL.getParamAttributes(op));
     }
 
     // Emit an ellipsis if this is a musttail call in a vararg function.  This
@@ -3083,7 +3074,7 @@ void AssemblyWriter::printInstruction(const Instruction &I) {
     for (unsigned op = 0, Eop = II->getNumArgOperands(); op < Eop; ++op) {
       if (op)
         Out << ", ";
-      writeParamOperand(II->getArgOperand(op), PAL, op + 1);
+      writeParamOperand(II->getArgOperand(op), PAL.getParamAttributes(op));
     }
 
     Out << ')';
@@ -3117,6 +3108,12 @@ void AssemblyWriter::printInstruction(const Instruction &I) {
     if (AI->getAlignment()) {
       Out << ", align " << AI->getAlignment();
     }
+
+    unsigned AddrSpace = AI->getType()->getAddressSpace();
+    if (AddrSpace != 0) {
+      Out << ", addrspace(" << AddrSpace << ')';
+    }
+
   } else if (isa<CastInst>(I)) {
     if (Operand) {
       Out << ' ';
@@ -3250,7 +3247,7 @@ void AssemblyWriter::printMDNodeBody(const MDNode *Node) {
 }
 
 void AssemblyWriter::writeAllAttributeGroups() {
-  std::vector<std::pair<AttributeList, unsigned>> asVec;
+  std::vector<std::pair<AttributeSet, unsigned>> asVec;
   asVec.resize(Machine.as_size());
 
   for (SlotTracker::as_iterator I = Machine.as_begin(), E = Machine.as_end();
@@ -3259,7 +3256,7 @@ void AssemblyWriter::writeAllAttributeGroups() {
 
   for (const auto &I : asVec)
     Out << "attributes #" << I.second << " = { "
-        << I.first.getAsString(AttributeList::FunctionIndex, true) << " }\n";
+        << I.first.getAsString(true) << " }\n";
 }
 
 void AssemblyWriter::printUseListOrder(const UseListOrder &Order) {

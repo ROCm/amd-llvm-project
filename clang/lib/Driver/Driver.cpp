@@ -22,6 +22,7 @@
 #include "ToolChains/FreeBSD.h"
 #include "ToolChains/Fuchsia.h"
 #include "ToolChains/Gnu.h"
+#include "ToolChains/BareMetal.h"
 #include "ToolChains/Haiku.h"
 #include "ToolChains/Hexagon.h"
 #include "ToolChains/Lanai.h"
@@ -67,6 +68,7 @@
 #include "llvm/Support/PrettyStackTrace.h"
 #include "llvm/Support/Process.h"
 #include "llvm/Support/Program.h"
+#include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/raw_ostream.h"
 #include <map>
 #include <memory>
@@ -91,7 +93,7 @@ Driver::Driver(StringRef ClangExecutable, StringRef DefaultTargetTriple,
       CCCPrintBindings(false), CCPrintHeaders(false), CCLogDiagnostics(false),
       CCGenDiagnostics(false), DefaultTargetTriple(DefaultTargetTriple),
       CCCGenericGCCName(""), CheckInputsExist(true), CCCUsePCH(true),
-      SuppressMissingInputWarning(false) {
+      GenReproducer(false), SuppressMissingInputWarning(false) {
 
   // Provide a sane fallback if no VFS is specified.
   if (!this->VFS)
@@ -598,6 +600,8 @@ Compilation *Driver::BuildCompilation(ArrayRef<const char *> ArgList) {
   bool CCCPrintPhases;
 
   InputArgList Args = ParseArgStrings(ArgList.slice(1));
+  if (Diags.hasErrorOccurred())
+    return nullptr;
 
   // Silence driver warnings if requested
   Diags.setIgnoreAllWarnings(Args.hasArg(options::OPT_w));
@@ -620,6 +624,9 @@ Compilation *Driver::BuildCompilation(ArrayRef<const char *> ArgList) {
     CCCGenericGCCName = A->getValue();
   CCCUsePCH =
       Args.hasFlag(options::OPT_ccc_pch_is_pch, options::OPT_ccc_pch_is_pth);
+  GenReproducer = Args.hasFlag(options::OPT_gen_reproducer,
+                               options::OPT_fno_crash_diagnostics,
+                               !!::getenv("FORCE_CLANG_DIAGNOSTICS_CRASH"));
   // FIXME: DefaultTargetTriple is used by the target-prefixed calls to as/ld
   // and getToolChain is const.
   if (IsCLMode()) {
@@ -1155,6 +1162,10 @@ bool Driver::HandleImmediateArgs(const Compilation &C) {
   if (C.getArgs().hasArg(options::OPT__version)) {
     // Follow gcc behavior and use stdout for --version and stderr for -v.
     PrintVersion(C, llvm::outs());
+
+    // Print registered targets.
+    llvm::outs() << '\n';
+    llvm::TargetRegistry::printRegisteredTargetsForVersion(llvm::outs());
     return false;
   }
 
@@ -1168,6 +1179,11 @@ bool Driver::HandleImmediateArgs(const Compilation &C) {
 
   if (C.getArgs().hasArg(options::OPT_v))
     TC.printVerboseInfo(llvm::errs());
+
+  if (C.getArgs().hasArg(options::OPT_print_resource_dir)) {
+    llvm::outs() << ResourceDir << '\n';
+    return false;
+  }
 
   if (C.getArgs().hasArg(options::OPT_print_search_dirs)) {
     llvm::outs() << "programs: =";
@@ -1205,6 +1221,13 @@ bool Driver::HandleImmediateArgs(const Compilation &C) {
 
   if (Arg *A = C.getArgs().getLastArg(options::OPT_print_prog_name_EQ)) {
     llvm::outs() << GetProgramPath(A->getValue(), TC) << "\n";
+    return false;
+  }
+
+  if (Arg *A = C.getArgs().getLastArg(options::OPT_autocomplete)) {
+    // Print out all options that start with a given argument. This is used for
+    // shell autocompletion.
+    llvm::outs() << llvm::join(Opts->findByPrefix(A->getValue()), " ") << '\n';
     return false;
   }
 
@@ -2649,6 +2672,8 @@ Action *Driver::ConstructPhaseAction(Compilation &C, const ArgList &Args,
       OutputTy = Input->getType();
       if (!Args.hasFlag(options::OPT_frewrite_includes,
                         options::OPT_fno_rewrite_includes, false) &&
+          !Args.hasFlag(options::OPT_frewrite_imports,
+                        options::OPT_fno_rewrite_imports, false) &&
           !CCGenDiagnostics)
         OutputTy = types::getPreprocessedType(OutputTy);
       assert(OutputTy != types::TY_INVALID &&
@@ -3811,6 +3836,8 @@ const ToolChain &Driver::getToolChain(const ArgList &Args,
         if (Target.getVendor() == llvm::Triple::Myriad)
           TC = llvm::make_unique<toolchains::MyriadToolChain>(*this, Target,
                                                               Args);
+        else if (toolchains::BareMetal::handlesTarget(Target))
+          TC = llvm::make_unique<toolchains::BareMetal>(*this, Target, Args);
         else if (Target.isOSBinFormatELF())
           TC = llvm::make_unique<toolchains::Generic_ELF>(*this, Target, Args);
         else if (Target.isOSBinFormatMachO())

@@ -10,4 +10,9 @@ ADC r0, r1, #0xFFFFFE02
 # CHECK: error: invalid operand for instruction
 
 ADD.W r0, r0, #0xFF01FF01
-# CHECK: error: invalid operand for instruction
+# CHECK: error: immediate operand must be in the range [0,7]
+
+ORR r0, r1, #0xFFFFFF00
+# CHECK: error: instruction requires: thumb2
+ORN r0, r1, #0xFFFFFF00
+# CHECK: error: instruction requires: thumb2
