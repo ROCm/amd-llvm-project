@@ -160,8 +160,16 @@ static cl::opt<bool>
               cl::Hidden, cl::ZeroOrMore,
               cl::desc("Run NewGVN instead of GVN"));
 
+static cl::opt<bool> EnableEarlyCSEMemSSA(
+    "enable-npm-earlycse-memssa", cl::init(false), cl::Hidden,
+    cl::desc("Enable the EarlyCSE w/ MemorySSA pass for the new PM (default = off)"));
+
 static cl::opt<bool> EnableGVNHoist(
     "enable-npm-gvn-hoist", cl::init(false), cl::Hidden,
+    cl::desc("Enable the GVN hoisting pass for the new PM (default = off)"));
+
+static cl::opt<bool> EnableGVNSink(
+    "enable-npm-gvn-sink", cl::init(false), cl::Hidden,
     cl::desc("Enable the GVN hoisting pass for the new PM (default = off)"));
 
 static Regex DefaultAliasRegex(
@@ -308,7 +316,17 @@ PassBuilder::buildFunctionSimplificationPipeline(OptimizationLevel Level,
   FPM.addPass(SROA());
 
   // Catch trivial redundancies
-  FPM.addPass(EarlyCSEPass());
+  FPM.addPass(EarlyCSEPass(EnableEarlyCSEMemSSA));
+
+  // Hoisting of scalars and load expressions.
+  if (EnableGVNHoist)
+    FPM.addPass(GVNHoistPass());
+
+  // Global value numbering based sinking.
+  if (EnableGVNSink) {
+    FPM.addPass(GVNSinkPass());
+    FPM.addPass(SimplifyCFGPass());
+  }
 
   // Speculative execution if the target has divergent branches; otherwise nop.
   FPM.addPass(SpeculativeExecutionPass());
@@ -473,8 +491,6 @@ PassBuilder::buildModuleSimplificationPipeline(OptimizationLevel Level,
   EarlyFPM.addPass(SROA());
   EarlyFPM.addPass(EarlyCSEPass());
   EarlyFPM.addPass(LowerExpectIntrinsicPass());
-  if (EnableGVNHoist)
-    EarlyFPM.addPass(GVNHoistPass());
   MPM.addPass(createModuleToFunctionPassAdaptor(std::move(EarlyFPM)));
 
   // Interprocedural constant propagation now that basic cleanup has occured
