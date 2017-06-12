@@ -15,6 +15,7 @@
 #ifndef POLLY_LINKALLPASSES_H
 #define POLLY_LINKALLPASSES_H
 
+#include "polly/CodeGen/PPCGCodeGeneration.h"
 #include "polly/Config/config.h"
 #include "polly/PruneUnprofitable.h"
 #include "polly/Simplify.h"
@@ -42,13 +43,14 @@ llvm::Pass *createJSONExporterPass();
 llvm::Pass *createJSONImporterPass();
 llvm::Pass *createPollyCanonicalizePass();
 llvm::Pass *createPolyhedralInfoPass();
-llvm::Pass *createScopDetectionPass();
+llvm::Pass *createScopDetectionWrapperPassPass();
 llvm::Pass *createScopInfoRegionPassPass();
 llvm::Pass *createScopInfoWrapperPassPass();
-llvm::Pass *createIslAstInfoPass();
+llvm::Pass *createIslAstInfoWrapperPassPass();
 llvm::Pass *createCodeGenerationPass();
 #ifdef GPU_CODEGEN
-llvm::Pass *createPPCGCodeGenerationPass();
+llvm::Pass *createPPCGCodeGenerationPass(GPUArch Arch = GPUArch::NVPTX64,
+                                         GPURuntime Runtime = GPURuntime::CUDA);
 #endif
 llvm::Pass *createIslScheduleOptimizerPass();
 llvm::Pass *createFlattenSchedulePass();
@@ -76,11 +78,11 @@ struct PollyForcePassLinking {
     polly::createDOTViewerPass();
     polly::createJSONExporterPass();
     polly::createJSONImporterPass();
-    polly::createScopDetectionPass();
+    polly::createScopDetectionWrapperPassPass();
     polly::createScopInfoRegionPassPass();
     polly::createPollyCanonicalizePass();
     polly::createPolyhedralInfoPass();
-    polly::createIslAstInfoPass();
+    polly::createIslAstInfoWrapperPassPass();
     polly::createCodeGenerationPass();
 #ifdef GPU_CODEGEN
     polly::createPPCGCodeGenerationPass();
@@ -101,7 +103,7 @@ void initializeCodePreparationPass(llvm::PassRegistry &);
 void initializeDeadCodeElimPass(llvm::PassRegistry &);
 void initializeJSONExporterPass(llvm::PassRegistry &);
 void initializeJSONImporterPass(llvm::PassRegistry &);
-void initializeIslAstInfoPass(llvm::PassRegistry &);
+void initializeIslAstInfoWrapperPassPass(llvm::PassRegistry &);
 void initializeCodeGenerationPass(llvm::PassRegistry &);
 #ifdef GPU_CODEGEN
 void initializePPCGCodeGenerationPass(llvm::PassRegistry &);

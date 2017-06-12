@@ -16,6 +16,8 @@
 /* Define to 1 if you have the `backtrace' function. */
 #cmakedefine HAVE_BACKTRACE ${HAVE_BACKTRACE}
 
+#define BACKTRACE_HEADER <${BACKTRACE_HEADER}>
+
 /* Define to 1 if you have the <CrashReporterClient.h> header file. */
 #cmakedefine HAVE_CRASHREPORTERCLIENT_H
 
@@ -56,9 +58,6 @@
 
 /* Define to 1 if you have the <errno.h> header file. */
 #cmakedefine HAVE_ERRNO_H ${HAVE_ERRNO_H}
-
-/* Define to 1 if you have the <execinfo.h> header file. */
-#cmakedefine HAVE_EXECINFO_H ${HAVE_EXECINFO_H}
 
 /* Define to 1 if you have the <fcntl.h> header file. */
 #cmakedefine HAVE_FCNTL_H ${HAVE_FCNTL_H}
@@ -351,27 +350,6 @@
 /* Host triple LLVM will be executed on */
 #cmakedefine LLVM_HOST_TRIPLE "${LLVM_HOST_TRIPLE}"
 
-/* LLVM architecture name for the native architecture, if available */
-#cmakedefine LLVM_NATIVE_ARCH ${LLVM_NATIVE_ARCH}
-
-/* LLVM name for the native AsmParser init function, if available */
-#cmakedefine LLVM_NATIVE_ASMPARSER LLVMInitialize${LLVM_NATIVE_ARCH}AsmParser
-
-/* LLVM name for the native AsmPrinter init function, if available */
-#cmakedefine LLVM_NATIVE_ASMPRINTER LLVMInitialize${LLVM_NATIVE_ARCH}AsmPrinter
-
-/* LLVM name for the native Disassembler init function, if available */
-#cmakedefine LLVM_NATIVE_DISASSEMBLER LLVMInitialize${LLVM_NATIVE_ARCH}Disassembler
-
-/* LLVM name for the native Target init function, if available */
-#cmakedefine LLVM_NATIVE_TARGET LLVMInitialize${LLVM_NATIVE_ARCH}Target
-
-/* LLVM name for the native TargetInfo init function, if available */
-#cmakedefine LLVM_NATIVE_TARGETINFO LLVMInitialize${LLVM_NATIVE_ARCH}TargetInfo
-
-/* LLVM name for the native target MC init function, if available */
-#cmakedefine LLVM_NATIVE_TARGETMC LLVMInitialize${LLVM_NATIVE_ARCH}TargetMC
-
 /* Define if this is Unixish platform */
 #cmakedefine LLVM_ON_UNIX ${LLVM_ON_UNIX}
 
@@ -386,6 +364,9 @@
 
 /* LLVM version information */
 #cmakedefine LLVM_VERSION_INFO "${LLVM_VERSION_INFO}"
+
+/* Whether tools show host and target info when invoked with --version */
+#cmakedefine01 LLVM_VERSION_PRINTER_SHOW_HOST_TARGET_INFO
 
 /* Major version of the LLVM API */
 #define LLVM_VERSION_MAJOR ${LLVM_VERSION_MAJOR}

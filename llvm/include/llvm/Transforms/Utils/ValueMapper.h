@@ -16,14 +16,14 @@
 #define LLVM_TRANSFORMS_UTILS_VALUEMAPPER_H
 
 #include "llvm/ADT/ArrayRef.h"
-#include "llvm/IR/ValueMap.h"
 #include "llvm/IR/ValueHandle.h"
+#include "llvm/IR/ValueMap.h"
 
 namespace llvm {
 
 class Value;
 class Instruction;
-typedef ValueMap<const Value *, WeakVH> ValueToValueMapTy;
+typedef ValueMap<const Value *, WeakTrackingVH> ValueToValueMapTy;
 
 /// This is a class that can be implemented by clients to remap types when
 /// cloning constants and instructions.

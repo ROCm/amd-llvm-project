@@ -214,6 +214,10 @@ namespace opts {
   COFFDebugDirectory("coff-debug-directory",
                      cl::desc("Display the PE/COFF debug directory"));
 
+  // -coff-resources
+  cl::opt<bool> COFFResources("coff-resources",
+                              cl::desc("Display the PE/COFF .rsrc section"));
+
   // -macho-data-in-code
   cl::opt<bool>
   MachODataInCode("macho-data-in-code",
@@ -305,13 +309,6 @@ static void reportError(StringRef Input, std::error_code EC) {
     Input = "<stdin>";
 
   reportError(Twine(Input) + ": " + EC.message());
-}
-
-static void reportError(StringRef Input, StringRef Message) {
-  if (Input == "-")
-    Input = "<stdin>";
-
-  reportError(Twine(Input) + ": " + Message);
 }
 
 static void reportError(StringRef Input, Error Err) {
@@ -445,6 +442,8 @@ static void dumpObject(const ObjectFile *Obj) {
       Dumper->printCOFFBaseReloc();
     if (opts::COFFDebugDirectory)
       Dumper->printCOFFDebugDirectory();
+    if (opts::COFFResources)
+      Dumper->printCOFFResources();
     if (opts::CodeView)
       Dumper->printCodeViewDebugInfo();
     if (opts::CodeViewMergedTypes)
@@ -475,11 +474,7 @@ static void dumpArchive(const Archive *Arc) {
     Expected<std::unique_ptr<Binary>> ChildOrErr = Child.getAsBinary();
     if (!ChildOrErr) {
       if (auto E = isNotObjectErrorInvalidFileType(ChildOrErr.takeError())) {
-        std::string Buf;
-        raw_string_ostream OS(Buf);
-        logAllUnhandledErrors(ChildOrErr.takeError(), OS, "");
-        OS.flush();
-        reportError(Arc->getFileName(), Buf);
+        reportError(Arc->getFileName(), ChildOrErr.takeError());
       }
       continue;
     }
@@ -501,11 +496,7 @@ static void dumpMachOUniversalBinary(const MachOUniversalBinary *UBinary) {
     if (ObjOrErr)
       dumpObject(&*ObjOrErr.get());
     else if (auto E = isNotObjectErrorInvalidFileType(ObjOrErr.takeError())) {
-      std::string Buf;
-      raw_string_ostream OS(Buf);
-      logAllUnhandledErrors(ObjOrErr.takeError(), OS, "");
-      OS.flush();
-      reportError(UBinary->getFileName(), Buf);
+      reportError(UBinary->getFileName(), ObjOrErr.takeError());
     }
     else if (Expected<std::unique_ptr<Archive>> AOrErr = Obj.getAsArchive())
       dumpArchive(&*AOrErr.get());
@@ -518,7 +509,7 @@ static void dumpInput(StringRef File) {
   // Attempt to open the binary.
   Expected<OwningBinary<Binary>> BinaryOrErr = createBinary(File);
   if (!BinaryOrErr)
-    reportError(File, errorToErrorCode(BinaryOrErr.takeError()));
+    reportError(File, BinaryOrErr.takeError());
   Binary &Binary = *BinaryOrErr.get().getBinary();
 
   if (Archive *Arc = dyn_cast<Archive>(&Binary))

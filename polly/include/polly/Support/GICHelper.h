@@ -114,7 +114,7 @@ inline isl::val valFromAPInt(isl_ctx *Ctx, const llvm::APInt Int,
 /// As the input isl_val may be negative, the APInt that this function returns
 /// must always be interpreted as signed two's complement value. The bitwidth of
 /// the generated APInt is always the minimal bitwidth necessary to model the
-/// provided integer when interpreting the bitpattern as signed value.
+/// provided integer when interpreting the bit pattern as signed value.
 ///
 /// Some example conversions are:
 ///
@@ -143,7 +143,7 @@ llvm::APInt APIntFromVal(__isl_take isl_val *Val);
 /// As the input isl::val may be negative, the APInt that this function returns
 /// must always be interpreted as signed two's complement value. The bitwidth of
 /// the generated APInt is always the minimal bitwidth necessary to model the
-/// provided integer when interpreting the bitpattern as signed value.
+/// provided integer when interpreting the bit pattern as signed value.
 ///
 /// Some example conversions are:
 ///
@@ -235,10 +235,43 @@ inline llvm::raw_ostream &operator<<(llvm::raw_ostream &OS,
   return OS;
 }
 
-/// Return @p Prefix + @p Val->getName() + @p Suffix but Isl compatible.
+/// Combine Prefix, Val (or Number) and Suffix to an isl-compatible name.
+///
+/// In case @p UseInstructionNames is set, this function returns:
+///
+/// @p Prefix + "_" + @p Val->getName() + @p Suffix
+///
+/// otherwise
+///
+/// @p Prefix + to_string(Number) + @p Suffix
+///
+/// We ignore the value names by default, as they may change between release
+/// and debug mode and can consequently not be used when aiming for reproducible
+/// builds. However, for debugging named statements are often helpful, hence
+/// we allow their optional use.
 std::string getIslCompatibleName(const std::string &Prefix,
-                                 const llvm::Value *Val,
-                                 const std::string &Suffix);
+                                 const llvm::Value *Val, long Number,
+                                 const std::string &Suffix,
+                                 bool UseInstructionNames);
+
+/// Combine Prefix, Name (or Number) and Suffix to an isl-compatible name.
+///
+/// In case @p UseInstructionNames is set, this function returns:
+///
+/// @p Prefix + "_" + Name + @p Suffix
+///
+/// otherwise
+///
+/// @p Prefix + to_string(Number) + @p Suffix
+///
+/// We ignore @p Name by default, as they may change between release
+/// and debug mode and can consequently not be used when aiming for reproducible
+/// builds. However, for debugging named statements are often helpful, hence
+/// we allow their optional use.
+std::string getIslCompatibleName(const std::string &Prefix,
+                                 const std::string &Middle, long Number,
+                                 const std::string &Suffix,
+                                 bool UseInstructionNames);
 
 std::string getIslCompatibleName(const std::string &Prefix,
                                  const std::string &Middle,
@@ -255,88 +288,6 @@ operator<<(llvm::DiagnosticInfoOptimizationBase &OS,
   OS << Obj.to_str();
   return OS;
 }
-
-/// Enumerate all isl_basic_maps of an isl_map.
-///
-/// This basically wraps isl_map_foreach_basic_map() and allows to call back
-/// C++11 closures.
-void foreachElt(const isl::map &Map,
-                const std::function<void(isl::basic_map)> &F);
-
-/// Enumerate all isl_basic_sets of an isl_set.
-///
-/// This basically wraps isl_set_foreach_basic_set() and allows to call back
-/// C++11 closures.
-void foreachElt(const isl::set &Set,
-                const std::function<void(isl::basic_set)> &F);
-
-/// Enumerate all isl_maps of an isl_union_map.
-///
-/// This basically wraps isl_union_map_foreach_map() and allows to call back
-/// C++11 closures.
-void foreachElt(const isl::union_map &UMap,
-                const std::function<void(isl::map Map)> &F);
-
-/// Enumerate all isl_sets of an isl_union_set.
-///
-/// This basically wraps isl_union_set_foreach_set() and allows to call back
-/// C++11 closures.
-void foreachElt(const isl::union_set &USet,
-                const std::function<void(isl::set Set)> &F);
-
-/// Enumerate all isl_pw_aff of an isl_union_pw_aff.
-///
-/// This basically wraps isl_union_pw_aff(), but also allows to call back C++11
-/// closures.
-void foreachElt(const isl::union_pw_aff &UPwAff,
-                const std::function<void(isl::pw_aff)> &F);
-
-/// Enumerate all polyhedra of an isl_map.
-///
-/// This is a wrapper for isl_map_foreach_basic_map() that allows to call back
-/// C++ closures. The callback has the possibility to interrupt (break) the
-/// enumeration by returning isl_stat_error. A return value of isl_stat_ok will
-/// continue enumerations, if any more elements are left.
-///
-/// @param UMap Collection to enumerate.
-/// @param F    The callback function, lambda or closure.
-///
-/// @return The isl_stat returned by the last callback invocation; isl_stat_ok
-///         if the collection was empty.
-isl_stat foreachEltWithBreak(const isl::map &Map,
-                             const std::function<isl_stat(isl::basic_map)> &F);
-
-/// Enumerate all isl_maps of an isl_union_map.
-///
-/// This is a wrapper for isl_union_map_foreach_map() that allows to call back
-/// C++ closures. In contrast to the variant without "_with_break", the callback
-/// has the possibility to interrupt (break) the enumeration by returning
-/// isl_stat_error. A return value of isl_stat_ok will continue enumerations, if
-/// any more elements are left.
-///
-/// @param UMap Collection to enumerate.
-/// @param F    The callback function, lambda or closure.
-///
-/// @return The isl_stat returned by the last callback invocation; isl_stat_ok
-///         if the collection was initially empty.
-isl_stat foreachEltWithBreak(const isl::union_map &UMap,
-                             const std::function<isl_stat(isl::map Map)> &F);
-
-/// Enumerate all pieces of an isl_pw_aff.
-///
-/// This is a wrapper around isl_pw_aff_foreach_piece() that allows to call back
-/// C++11 closures. The callback has the possibility to interrupt (break) the
-/// enumeration by returning isl_stat_error. A return value of isl_stat_ok will
-/// continue enumerations, if any more elements are left.
-///
-/// @param UMap Collection to enumerate.
-/// @param F    The callback function, lambda or closure.
-///
-/// @return The isl_stat returned by the last callback invocation; isl_stat_ok
-///         if the collection was initially empty.
-isl_stat
-foreachPieceWithBreak(const isl::pw_aff &PwAff,
-                      const std::function<isl_stat(isl::set, isl::aff)> &F);
 
 /// Scoped limit of ISL operations.
 ///

@@ -65,9 +65,9 @@
 #include "HexagonInstrInfo.h"
 #include "HexagonSubtarget.h"
 #include "llvm/ADT/DenseSet.h"
-#include "llvm/ADT/iterator_range.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/iterator_range.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineBranchProbabilityInfo.h"
 #include "llvm/CodeGen/MachineDominators.h"
@@ -537,18 +537,16 @@ bool HexagonEarlyIfConversion::isProfitable(const FlowPattern &FP) const {
   // the code size. If the predicated blocks are smaller than a packet size,
   // approximate the spare room in the packet that could be filled with the
   // predicated/speculated instructions.
-  unsigned TS = 0, FS = 0, Spare = 0;
-  if (FP.TrueB) {
-    TS = std::distance(FP.TrueB->begin(), FP.TrueB->getFirstTerminator());
-    if (TS < HEXAGON_PACKET_SIZE)
-      Spare += HEXAGON_PACKET_SIZE-TS;
-  }
-  if (FP.FalseB) {
-    FS = std::distance(FP.FalseB->begin(), FP.FalseB->getFirstTerminator());
-    if (FS < HEXAGON_PACKET_SIZE)
-      Spare += HEXAGON_PACKET_SIZE-TS;
-  }
-  unsigned TotalIn = TS+FS;
+  auto TotalCount = [] (const MachineBasicBlock *B, unsigned &Spare) {
+    if (!B)
+      return 0u;
+    unsigned T = std::distance(B->begin(), B->getFirstTerminator());
+    if (T < HEXAGON_PACKET_SIZE)
+      Spare += HEXAGON_PACKET_SIZE-T;
+    return T;
+  };
+  unsigned Spare = 0;
+  unsigned TotalIn = TotalCount(FP.TrueB, Spare) + TotalCount(FP.FalseB, Spare);
   DEBUG(dbgs() << "Total number of instructions to be predicated/speculated: "
                << TotalIn << ", spare room: " << Spare << "\n");
   if (TotalIn >= SizeLimit+Spare)

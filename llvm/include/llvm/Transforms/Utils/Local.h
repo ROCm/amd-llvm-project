@@ -15,13 +15,13 @@
 #ifndef LLVM_TRANSFORMS_UTILS_LOCAL_H
 #define LLVM_TRANSFORMS_UTILS_LOCAL_H
 
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/GetElementPtrTypeIterator.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Operator.h"
-#include "llvm/ADT/SmallPtrSet.h"
 
 namespace llvm {
 
@@ -286,9 +286,6 @@ DbgDeclareInst *FindAllocaDbgDeclare(Value *V);
 /// Finds the llvm.dbg.value intrinsics describing a value.
 void findDbgValues(SmallVectorImpl<DbgValueInst *> &DbgValues, Value *V);
 
-/// Constants for \p replaceDbgDeclare and friends.
-enum { NoDeref = false, WithDeref = true };
-
 /// Replaces llvm.dbg.declare instruction when the address it describes
 /// is replaced with a new value. If Deref is true, an additional DW_OP_deref is
 /// prepended to the expression. If Offset is non-zero, a constant displacement
@@ -359,6 +356,10 @@ void combineMetadata(Instruction *K, const Instruction *J, ArrayRef<unsigned> Kn
 /// Unknown metadata is removed.
 void combineMetadataForCSE(Instruction *K, const Instruction *J);
 
+// Replace each use of 'From' with 'To', if that use does not belong to basic
+// block where 'From' is defined. Returns the number of replacements made.
+unsigned replaceNonLocalUsesWith(Instruction *From, Value *To);
+
 /// Replace each use of 'From' with 'To' if that use is dominated by
 /// the given edge.  Returns the number of replacements made.
 unsigned replaceDominatedUsesWith(Value *From, Value *To, DominatorTree &DT,
@@ -408,6 +409,14 @@ bool recognizeBSwapOrBitReverseIdiom(
 /// specific instructions.
 void maybeMarkSanitizerLibraryCallNoBuiltin(CallInst *CI,
                                             const TargetLibraryInfo *TLI);
+
+//===----------------------------------------------------------------------===//
+//  Transform predicates
+//
+
+/// Given an instruction, is it legal to set operand OpIdx to a non-constant
+/// value?
+bool canReplaceOperandWithVariable(const Instruction *I, unsigned OpIdx);
 
 } // End llvm namespace
 

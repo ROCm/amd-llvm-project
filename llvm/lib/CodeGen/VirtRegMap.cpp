@@ -72,9 +72,21 @@ void VirtRegMap::grow() {
   Virt2SplitMap.resize(NumRegs);
 }
 
+void VirtRegMap::assignVirt2Phys(unsigned virtReg, MCPhysReg physReg) {
+  assert(TargetRegisterInfo::isVirtualRegister(virtReg) &&
+         TargetRegisterInfo::isPhysicalRegister(physReg));
+  assert(Virt2PhysMap[virtReg] == NO_PHYS_REG &&
+         "attempt to assign physical register to already mapped "
+         "virtual register");
+  assert(!getRegInfo().isReserved(physReg) &&
+         "Attempt to map virtReg to a reserved physReg");
+  Virt2PhysMap[virtReg] = physReg;
+}
+
 unsigned VirtRegMap::createSpillSlot(const TargetRegisterClass *RC) {
-  int SS = MF->getFrameInfo().CreateSpillStackObject(RC->getSize(),
-                                                     RC->getAlignment());
+  unsigned Size = TRI->getSpillSize(*RC);
+  unsigned Align = TRI->getSpillAlignment(*RC);
+  int SS = MF->getFrameInfo().CreateSpillStackObject(Size, Align);
   ++NumSpillSlots;
   return SS;
 }

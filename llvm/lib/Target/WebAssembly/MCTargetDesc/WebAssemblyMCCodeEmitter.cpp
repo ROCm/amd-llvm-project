@@ -12,8 +12,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#include "MCTargetDesc/WebAssemblyMCTargetDesc.h"
 #include "MCTargetDesc/WebAssemblyFixupKinds.h"
+#include "MCTargetDesc/WebAssemblyMCTargetDesc.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/MC/MCCodeEmitter.h"
@@ -94,6 +94,8 @@ void WebAssemblyMCCodeEmitter::encodeInstruction(
               MCFixupKind(WebAssembly::fixup_code_global_index), MI.getLoc()));
           ++MCNumFixups;
           encodeULEB128(uint64_t(MO.getImm()), OS);
+        } else if (Info.OperandType == WebAssembly::OPERAND_SIGNATURE) {
+          encodeSLEB128(int64_t(MO.getImm()), OS);
         } else {
           encodeULEB128(uint64_t(MO.getImm()), OS);
         }

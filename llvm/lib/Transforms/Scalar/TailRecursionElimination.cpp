@@ -51,13 +51,12 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Transforms/Scalar/TailRecursionElimination.h"
-#include "llvm/Transforms/Scalar.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/Statistic.h"
-#include "llvm/Analysis/GlobalsModRef.h"
 #include "llvm/Analysis/CFG.h"
 #include "llvm/Analysis/CaptureTracking.h"
+#include "llvm/Analysis/GlobalsModRef.h"
 #include "llvm/Analysis/InlineCost.h"
 #include "llvm/Analysis/InstructionSimplify.h"
 #include "llvm/Analysis/Loads.h"
@@ -76,6 +75,7 @@
 #include "llvm/Pass.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Local.h"
 using namespace llvm;
@@ -492,11 +492,10 @@ static CallInst *findTRECandidate(Instruction *TI,
   return CI;
 }
 
-static bool eliminateRecursiveTailCall(CallInst *CI, ReturnInst *Ret,
-                                       BasicBlock *&OldEntry,
-                                       bool &TailCallsAreMarkedTail,
-                                       SmallVectorImpl<PHINode *> &ArgumentPHIs,
-                                       bool CannotTailCallElimCallsMarkedTail) {
+static bool
+eliminateRecursiveTailCall(CallInst *CI, ReturnInst *Ret, BasicBlock *&OldEntry,
+                           bool &TailCallsAreMarkedTail,
+                           SmallVectorImpl<PHINode *> &ArgumentPHIs) {
   // If we are introducing accumulator recursion to eliminate operations after
   // the call instruction that are both associative and commutative, the initial
   // value for the accumulator is placed in this variable.  If this value is set
@@ -707,8 +706,7 @@ static bool foldReturnAndProcessPred(BasicBlock *BB, ReturnInst *Ret,
         BB->eraseFromParent();
 
       eliminateRecursiveTailCall(CI, RI, OldEntry, TailCallsAreMarkedTail,
-                                 ArgumentPHIs,
-                                 CannotTailCallElimCallsMarkedTail);
+                                 ArgumentPHIs);
       ++NumRetDuped;
       Change = true;
     }
@@ -727,8 +725,7 @@ static bool processReturningBlock(ReturnInst *Ret, BasicBlock *&OldEntry,
     return false;
 
   return eliminateRecursiveTailCall(CI, Ret, OldEntry, TailCallsAreMarkedTail,
-                                    ArgumentPHIs,
-                                    CannotTailCallElimCallsMarkedTail);
+                                    ArgumentPHIs);
 }
 
 static bool eliminateTailRecursion(Function &F, const TargetTransformInfo *TTI) {

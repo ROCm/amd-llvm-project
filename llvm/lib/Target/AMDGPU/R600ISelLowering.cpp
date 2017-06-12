@@ -226,6 +226,10 @@ R600TargetLowering::R600TargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::ATOMIC_LOAD, MVT::i32, Expand);
   setOperationAction(ISD::ATOMIC_STORE, MVT::i32, Expand);
 
+  // We need to custom lower some of the intrinsics
+  setOperationAction(ISD::INTRINSIC_VOID, MVT::Other, Custom);
+  setOperationAction(ISD::INTRINSIC_WO_CHAIN, MVT::Other, Custom);
+
   setSchedulingPreference(Sched::Source);
 
   setTargetDAGCombine(ISD::FP_ROUND);
@@ -495,8 +499,7 @@ SDValue R600TargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const 
                          cast<ConstantSDNode>(Op.getOperand(0))->getZExtValue();
     EVT VT = Op.getValueType();
     SDLoc DL(Op);
-    switch(IntrinsicID) {
-    default: return AMDGPUTargetLowering::LowerOperation(Op, DAG);
+    switch (IntrinsicID) {
     case AMDGPUIntrinsic::r600_tex:
     case AMDGPUIntrinsic::r600_texc: {
       unsigned TextureOp;
@@ -604,6 +607,8 @@ SDValue R600TargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const 
 
     case Intrinsic::r600_recipsqrt_clamped:
       return DAG.getNode(AMDGPUISD::RSQ_CLAMP, DL, VT, Op.getOperand(1));
+    default:
+      return Op;
     }
 
     // break out of case ISD::INTRINSIC_WO_CHAIN in switch(Op.getOpcode())
@@ -1115,7 +1120,7 @@ SDValue R600TargetLowering::lowerPrivateTruncStore(StoreSDNode *Store,
     Mask = DAG.getConstant(0xff, DL, MVT::i32);
   } else if (Store->getMemoryVT() == MVT::i16) {
     assert(Store->getAlignment() >= 2);
-    Mask = DAG.getConstant(0xffff, DL, MVT::i32);;
+    Mask = DAG.getConstant(0xffff, DL, MVT::i32);
   } else {
     llvm_unreachable("Unsupported private trunc store");
   }
@@ -1542,7 +1547,7 @@ SDValue R600TargetLowering::LowerFormalArguments(
   SmallVector<ISD::InputArg, 8> LocalIns;
 
   if (AMDGPU::isShader(CallConv)) {
-    AnalyzeFormalArguments(CCInfo, Ins);
+    CCInfo.AnalyzeFormalArguments(Ins, CCAssignFnForCall(CallConv, isVarArg));
   } else {
     analyzeFormalArgumentsCompute(CCInfo, Ins);
   }
@@ -1611,6 +1616,14 @@ EVT R600TargetLowering::getSetCCResultType(const DataLayout &DL, LLVMContext &,
    if (!VT.isVector())
      return MVT::i32;
    return VT.changeVectorElementTypeToInteger();
+}
+
+bool R600TargetLowering::canMergeStoresTo(unsigned AS, EVT MemVT) const {
+  // Local and Private addresses do not handle vectors. Limit to i32
+  if ((AS == AMDGPUASI.LOCAL_ADDRESS || AS == AMDGPUASI.PRIVATE_ADDRESS)) {
+    return (MemVT.getSizeInBits() <= 32);
+  }
+  return true;
 }
 
 bool R600TargetLowering::allowsMisalignedMemoryAccesses(EVT VT,

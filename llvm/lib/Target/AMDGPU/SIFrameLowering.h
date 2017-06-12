@@ -26,6 +26,8 @@ public:
     AMDGPUFrameLowering(D, StackAl, LAO, TransAl) {}
   ~SIFrameLowering() override = default;
 
+  void emitEntryFunctionPrologue(MachineFunction &MF,
+                                 MachineBasicBlock &MBB) const;
   void emitPrologue(MachineFunction &MF,
                     MachineBasicBlock &MBB) const override;
   void emitEpilogue(MachineFunction &MF,
@@ -49,7 +51,7 @@ private:
     SIMachineFunctionInfo *MFI,
     MachineFunction &MF) const;
 
-  unsigned getReservedPrivateSegmentWaveByteOffsetReg(
+  std::pair<unsigned, unsigned> getReservedPrivateSegmentWaveByteOffsetReg(
     const SISubtarget &ST,
     const SIInstrInfo *TII,
     const SIRegisterInfo *TRI,

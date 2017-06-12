@@ -48,6 +48,7 @@ add_llvm_target(AMDGPUCodeGen
   AMDGPUISelDAGToDAG.cpp
   AMDGPULowerIntrinsics.cpp
   AMDGPUMCInstLower.cpp
+  AMDGPUMachineCFGStructurizer.cpp
   AMDGPUMachineFunction.cpp
   AMDGPUUnifyMetadata.cpp
   AMDGPUOpenCLImageTypeLoweringPass.cpp
@@ -57,6 +58,7 @@ add_llvm_target(AMDGPUCodeGen
   AMDGPUISelLowering.cpp
   AMDGPUInstrInfo.cpp
   AMDGPUPromoteAlloca.cpp
+  AMDGPURegAsmNames.inc.cpp
   AMDGPURegisterInfo.cpp
   AMDGPUUnifyDivergentExitNodes.cpp
   GCNHazardRecognizer.cpp
@@ -82,6 +84,7 @@ add_llvm_target(AMDGPUCodeGen
   SIFrameLowering.cpp
   SIInsertSkips.cpp
   SIInsertWaits.cpp
+  SIInsertWaitcnts.cpp
   SIInstrInfo.cpp
   SIISelLowering.cpp
   SILoadStoreOptimizer.cpp

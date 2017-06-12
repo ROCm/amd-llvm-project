@@ -23,7 +23,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/Transforms/Scalar.h"
 #include "PPC.h"
 #include "PPCTargetMachine.h"
 #include "llvm/ADT/STLExtras.h"
@@ -43,6 +42,7 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Transforms/Utils/LoopUtils.h"
@@ -298,15 +298,17 @@ bool PPCCTRLoops::mightUseCTR(const Triple &TT, BasicBlock *BB) {
               return true;
             else
               continue; // ISD::FCOPYSIGN is never a library call.
-          case Intrinsic::sqrt:      Opcode = ISD::FSQRT;      break;
-          case Intrinsic::floor:     Opcode = ISD::FFLOOR;     break;
-          case Intrinsic::ceil:      Opcode = ISD::FCEIL;      break;
-          case Intrinsic::trunc:     Opcode = ISD::FTRUNC;     break;
-          case Intrinsic::rint:      Opcode = ISD::FRINT;      break;
-          case Intrinsic::nearbyint: Opcode = ISD::FNEARBYINT; break;
-          case Intrinsic::round:     Opcode = ISD::FROUND;     break;
-          case Intrinsic::minnum:    Opcode = ISD::FMINNUM;    break;
-          case Intrinsic::maxnum:    Opcode = ISD::FMAXNUM;    break;
+          case Intrinsic::sqrt:               Opcode = ISD::FSQRT;      break;
+          case Intrinsic::floor:              Opcode = ISD::FFLOOR;     break;
+          case Intrinsic::ceil:               Opcode = ISD::FCEIL;      break;
+          case Intrinsic::trunc:              Opcode = ISD::FTRUNC;     break;
+          case Intrinsic::rint:               Opcode = ISD::FRINT;      break;
+          case Intrinsic::nearbyint:          Opcode = ISD::FNEARBYINT; break;
+          case Intrinsic::round:              Opcode = ISD::FROUND;     break;
+          case Intrinsic::minnum:             Opcode = ISD::FMINNUM;    break;
+          case Intrinsic::maxnum:             Opcode = ISD::FMAXNUM;    break;
+          case Intrinsic::umul_with_overflow: Opcode = ISD::UMULO;      break;
+          case Intrinsic::smul_with_overflow: Opcode = ISD::SMULO;      break;
           }
         }
 

@@ -20,8 +20,9 @@
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
-#include "llvm/Support/CommandLine.h"
 #include "llvm/IR/Intrinsics.h"
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Support/KnownBits.h"
 #include <cctype>
 
 using namespace llvm;
@@ -347,9 +348,13 @@ SystemZTargetLowering::SystemZTargetLowering(const TargetMachine &TM,
     // There should be no need to check for float types other than v2f64
     // since <2 x f32> isn't a legal type.
     setOperationAction(ISD::FP_TO_SINT, MVT::v2i64, Legal);
+    setOperationAction(ISD::FP_TO_SINT, MVT::v2f64, Legal);
     setOperationAction(ISD::FP_TO_UINT, MVT::v2i64, Legal);
+    setOperationAction(ISD::FP_TO_UINT, MVT::v2f64, Legal);
     setOperationAction(ISD::SINT_TO_FP, MVT::v2i64, Legal);
+    setOperationAction(ISD::SINT_TO_FP, MVT::v2f64, Legal);
     setOperationAction(ISD::UINT_TO_FP, MVT::v2i64, Legal);
+    setOperationAction(ISD::UINT_TO_FP, MVT::v2f64, Legal);
   }
 
   // Handle floating-point types.
@@ -825,7 +830,7 @@ bool SystemZTargetLowering::allowTruncateForTailCall(Type *FromType,
   return isTruncateFree(FromType, ToType);
 }
 
-bool SystemZTargetLowering::mayBeEmittedAsTailCall(CallInst *CI) const {
+bool SystemZTargetLowering::mayBeEmittedAsTailCall(const CallInst *CI) const {
   return CI->isTailCall();
 }
 
@@ -1105,9 +1110,7 @@ SystemZTargetLowering::LowerCall(CallLoweringInfo &CLI,
 
   // Mark the start of the call.
   if (!IsTailCall)
-    Chain = DAG.getCALLSEQ_START(Chain,
-                                 DAG.getConstant(NumBytes, DL, PtrVT, true),
-                                 DL);
+    Chain = DAG.getCALLSEQ_START(Chain, NumBytes, 0, DL);
 
   // Copy argument values to their designated locations.
   SmallVector<std::pair<unsigned, SDValue>, 9> RegsToPass;
@@ -2792,8 +2795,9 @@ SDValue SystemZTargetLowering::lowerBITCAST(SDValue Op,
   // but we need this case for bitcasts that are created during lowering
   // and which are then lowered themselves.
   if (auto *LoadN = dyn_cast<LoadSDNode>(In))
-    return DAG.getLoad(ResVT, DL, LoadN->getChain(), LoadN->getBasePtr(),
-                       LoadN->getMemOperand());
+    if (ISD::isNormalLoad(LoadN))
+      return DAG.getLoad(ResVT, DL, LoadN->getChain(), LoadN->getBasePtr(),
+                         LoadN->getMemOperand());
 
   if (InVT == MVT::i32 && ResVT == MVT::f32) {
     SDValue In64;
@@ -3061,14 +3065,14 @@ SDValue SystemZTargetLowering::lowerOR(SDValue Op, SelectionDAG &DAG) const {
 
   // Get the known-zero masks for each operand.
   SDValue Ops[] = { Op.getOperand(0), Op.getOperand(1) };
-  APInt KnownZero[2], KnownOne[2];
-  DAG.computeKnownBits(Ops[0], KnownZero[0], KnownOne[0]);
-  DAG.computeKnownBits(Ops[1], KnownZero[1], KnownOne[1]);
+  KnownBits Known[2];
+  DAG.computeKnownBits(Ops[0], Known[0]);
+  DAG.computeKnownBits(Ops[1], Known[1]);
 
   // See if the upper 32 bits of one operand and the lower 32 bits of the
   // other are known zero.  They are the low and high operands respectively.
-  uint64_t Masks[] = { KnownZero[0].getZExtValue(),
-                       KnownZero[1].getZExtValue() };
+  uint64_t Masks[] = { Known[0].Zero.getZExtValue(),
+                       Known[1].Zero.getZExtValue() };
   unsigned High, Low;
   if ((Masks[0] >> 32) == 0xffffffff && uint32_t(Masks[1]) == 0xffffffff)
     High = 1, Low = 0;
@@ -3153,9 +3157,9 @@ SDValue SystemZTargetLowering::lowerCTPOP(SDValue Op,
   }
 
   // Get the known-zero mask for the operand.
-  APInt KnownZero, KnownOne;
-  DAG.computeKnownBits(Op, KnownZero, KnownOne);
-  unsigned NumSignificantBits = (~KnownZero).getActiveBits();
+  KnownBits Known;
+  DAG.computeKnownBits(Op, Known);
+  unsigned NumSignificantBits = (~Known.Zero).getActiveBits();
   if (NumSignificantBits == 0)
     return DAG.getConstant(0, DL, VT);
 
@@ -4185,12 +4189,20 @@ static SDValue buildVector(SelectionDAG &DAG, const SDLoc &DL, EVT VT,
   if (Single.getNode() && (Count > 1 || Single.getOpcode() == ISD::LOAD))
     return DAG.getNode(SystemZISD::REPLICATE, DL, VT, Single);
 
+  // If all elements are loads, use VLREP/VLEs (below).
+  bool AllLoads = true;
+  for (auto Elem : Elems)
+    if (Elem.getOpcode() != ISD::LOAD || cast<LoadSDNode>(Elem)->isIndexed()) {
+      AllLoads = false;
+      break;
+    }
+
   // The best way of building a v2i64 from two i64s is to use VLVGP.
-  if (VT == MVT::v2i64)
+  if (VT == MVT::v2i64 && !AllLoads)
     return joinDwords(DAG, DL, Elems[0], Elems[1]);
 
   // Use a 64-bit merge high to combine two doubles.
-  if (VT == MVT::v2f64)
+  if (VT == MVT::v2f64 && !AllLoads)
     return buildMergeScalars(DAG, DL, VT, Elems[0], Elems[1]);
 
   // Build v4f32 values directly from the FPRs:
@@ -4200,7 +4212,7 @@ static SDValue buildVector(SelectionDAG &DAG, const SDLoc &DL, EVT VT,
   //      <ABxx>         <CDxx>
   //                V                 VMRHG
   //              <ABCD>
-  if (VT == MVT::v4f32) {
+  if (VT == MVT::v4f32 && !AllLoads) {
     SDValue Op01 = buildMergeScalars(DAG, DL, VT, Elems[0], Elems[1]);
     SDValue Op23 = buildMergeScalars(DAG, DL, VT, Elems[2], Elems[3]);
     // Avoid unnecessary undefs by reusing the other operand.
@@ -4242,23 +4254,37 @@ static SDValue buildVector(SelectionDAG &DAG, const SDLoc &DL, EVT VT,
         Constants[I] = DAG.getUNDEF(Elems[I].getValueType());
     Result = DAG.getBuildVector(VT, DL, Constants);
   } else {
-    // Otherwise try to use VLVGP to start the sequence in order to
+    // Otherwise try to use VLREP or VLVGP to start the sequence in order to
     // avoid a false dependency on any previous contents of the vector
-    // register.  This only makes sense if one of the associated elements
-    // is defined.
-    unsigned I1 = NumElements / 2 - 1;
-    unsigned I2 = NumElements - 1;
-    bool Def1 = !Elems[I1].isUndef();
-    bool Def2 = !Elems[I2].isUndef();
-    if (Def1 || Def2) {
-      SDValue Elem1 = Elems[Def1 ? I1 : I2];
-      SDValue Elem2 = Elems[Def2 ? I2 : I1];
-      Result = DAG.getNode(ISD::BITCAST, DL, VT,
-                           joinDwords(DAG, DL, Elem1, Elem2));
-      Done[I1] = true;
-      Done[I2] = true;
-    } else
-      Result = DAG.getUNDEF(VT);
+    // register.
+
+    // Use a VLREP if at least one element is a load.
+    unsigned LoadElIdx = UINT_MAX;
+    for (unsigned I = 0; I < NumElements; ++I)
+      if (Elems[I].getOpcode() == ISD::LOAD &&
+          cast<LoadSDNode>(Elems[I])->isUnindexed()) {
+        LoadElIdx = I;
+        break;
+      }
+    if (LoadElIdx != UINT_MAX) {
+      Result = DAG.getNode(SystemZISD::REPLICATE, DL, VT, Elems[LoadElIdx]);
+      Done[LoadElIdx] = true;
+    } else {
+      // Try to use VLVGP.
+      unsigned I1 = NumElements / 2 - 1;
+      unsigned I2 = NumElements - 1;
+      bool Def1 = !Elems[I1].isUndef();
+      bool Def2 = !Elems[I2].isUndef();
+      if (Def1 || Def2) {
+        SDValue Elem1 = Elems[Def1 ? I1 : I2];
+        SDValue Elem2 = Elems[Def2 ? I2 : I1];
+        Result = DAG.getNode(ISD::BITCAST, DL, VT,
+                             joinDwords(DAG, DL, Elem1, Elem2));
+        Done[I1] = true;
+        Done[I2] = true;
+      } else
+        Result = DAG.getUNDEF(VT);
+    }
   }
 
   // Use VLVGx to insert the other elements.
@@ -4735,8 +4761,11 @@ const char *SystemZTargetLowering::getTargetNodeName(unsigned Opcode) const {
 }
 
 // Return true if VT is a vector whose elements are a whole number of bytes
-// in width.
-static bool canTreatAsByteVector(EVT VT) {
+// in width. Also check for presence of vector support.
+bool SystemZTargetLowering::canTreatAsByteVector(EVT VT) const {
+  if (!Subtarget.hasVector())
+    return false;
+
   return VT.isVector() && VT.getScalarSizeInBits() % 8 == 0 && VT.isSimple();
 }
 
@@ -5000,8 +5029,6 @@ SDValue SystemZTargetLowering::combineSTORE(
 SDValue SystemZTargetLowering::combineEXTRACT_VECTOR_ELT(
     SDNode *N, DAGCombinerInfo &DCI) const {
 
-  // <1 x ..> vectors may be present in the function even without vector
-  // support, which will be handled during legalization.
   if (!Subtarget.hasVector())
     return SDValue();
 
@@ -5340,12 +5367,24 @@ MachineBasicBlock *SystemZTargetLowering::emitCondStore(MachineInstr &MI,
   if (STOCOpcode && !IndexReg && Subtarget.hasLoadStoreOnCond()) {
     if (Invert)
       CCMask ^= CCValid;
+
+    // ISel pattern matching also adds a load memory operand of the same
+    // address, so take special care to find the storing memory operand.
+    MachineMemOperand *MMO = nullptr;
+    for (auto *I : MI.memoperands())
+      if (I->isStore()) {
+          MMO = I;
+          break;
+        }
+
     BuildMI(*MBB, MI, DL, TII->get(STOCOpcode))
-        .addReg(SrcReg)
-        .add(Base)
-        .addImm(Disp)
-        .addImm(CCValid)
-        .addImm(CCMask);
+      .addReg(SrcReg)
+      .add(Base)
+      .addImm(Disp)
+      .addImm(CCValid)
+      .addImm(CCMask)
+      .addMemOperand(MMO);
+
     MI.eraseFromParent();
     return MBB;
   }
@@ -5923,7 +5962,8 @@ MachineBasicBlock *SystemZTargetLowering::emitMemMemWrapper(
         .addImm(DestDisp)
         .addImm(ThisLength)
         .add(SrcBase)
-        .addImm(SrcDisp);
+        .addImm(SrcDisp)
+        ->setMemRefs(MI.memoperands_begin(), MI.memoperands_end());
     DestDisp += ThisLength;
     SrcDisp += ThisLength;
     Length -= ThisLength;
@@ -6346,4 +6386,13 @@ MachineBasicBlock *SystemZTargetLowering::EmitInstrWithCustomInserter(
   default:
     llvm_unreachable("Unexpected instr type to insert");
   }
+}
+
+// This is only used by the isel schedulers, and is needed only to prevent
+// compiler from crashing when list-ilp is used.
+const TargetRegisterClass *
+SystemZTargetLowering::getRepRegClassFor(MVT VT) const {
+  if (VT == MVT::Untyped)
+    return &SystemZ::ADDR128BitRegClass;
+  return TargetLowering::getRepRegClassFor(VT);
 }

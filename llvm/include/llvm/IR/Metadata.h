@@ -19,16 +19,17 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseMapInfo.h"
-#include "llvm/ADT/ilist_node.h"
-#include "llvm/ADT/iterator_range.h"
 #include "llvm/ADT/None.h"
 #include "llvm/ADT/PointerUnion.h"
-#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/ilist_node.h"
+#include "llvm/ADT/iterator_range.h"
 #include "llvm/IR/Constant.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Value.h"
+#include "llvm/Support/CBindingWrapping.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
 #include <cassert>
@@ -78,7 +79,7 @@ public:
 protected:
   Metadata(unsigned ID, StorageType Storage)
       : SubclassID(ID), Storage(Storage), SubclassData16(0), SubclassData32(0) {
-    static_assert(sizeof(*this) == 8, "Metdata fields poorly packed");
+    static_assert(sizeof(*this) == 8, "Metadata fields poorly packed");
   }
 
   ~Metadata() = default;
@@ -133,6 +134,14 @@ public:
   /// @}
 };
 
+// Create wrappers for C Binding types (see CBindingWrapping.h).
+DEFINE_ISA_CONVERSION_FUNCTIONS(Metadata, LLVMMetadataRef)
+
+// Specialized opaque metadata conversions.
+inline Metadata **unwrap(LLVMMetadataRef *MDs) {
+  return reinterpret_cast<Metadata**>(MDs);
+}
+
 #define HANDLE_METADATA(CLASS) class CLASS;
 #include "llvm/IR/Metadata.def"
 
@@ -165,12 +174,13 @@ class MetadataAsValue : public Value {
   Metadata *MD;
 
   MetadataAsValue(Type *Ty, Metadata *MD);
-  ~MetadataAsValue() override;
 
   /// \brief Drop use of metadata (during teardown).
   void dropUse() { MD = nullptr; }
 
 public:
+  ~MetadataAsValue();
+
   static MetadataAsValue *get(LLVMContext &Context, Metadata *MD);
   static MetadataAsValue *getIfExists(LLVMContext &Context, Metadata *MD);
   Metadata *getMetadata() const { return MD; }
@@ -1213,6 +1223,7 @@ public:
 
   // FIXME: Fix callers and remove condition on N.
   unsigned size() const { return N ? N->getNumOperands() : 0u; }
+  bool empty() const { return N ? N->getNumOperands() == 0 : true; }
   T *operator[](unsigned I) const { return cast_or_null<T>(N->getOperand(I)); }
 
   // FIXME: Fix callers and remove condition on N.

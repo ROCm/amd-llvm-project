@@ -29,8 +29,8 @@
 #include "llvm/IR/Function.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCSymbol.h"
-#include "llvm/Target/TargetOptions.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Target/TargetOptions.h"
 #include <cstdlib>
 
 using namespace llvm;
@@ -988,6 +988,16 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
         .getValueAsString()
         .getAsInteger(0, StackProbeSize);
 
+  // Re-align the stack on 64-bit if the x86-interrupt calling convention is
+  // used and an error code was pushed, since the x86-64 ABI requires a 16-byte
+  // stack alignment.
+  if (Fn->getCallingConv() == CallingConv::X86_INTR && Is64Bit &&
+      Fn->arg_size() == 2) {
+    StackSize += 8;
+    MFI.setStackSize(StackSize);
+    emitSPUpdate(MBB, MBBI, -8, /*InEpilogue=*/false);
+  }
+
   // If this is x86-64 and the Red Zone is not disabled, if we are a leaf
   // function, and use up to 128 bytes of stack space, don't have a frame
   // pointer, calls, or dynamic alloca then we do not need to adjust the
@@ -1052,6 +1062,8 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
   }
 
   if (HasFP) {
+    assert(MF.getRegInfo().isReserved(MachineFramePtr) && "FP reserved");
+
     // Calculate required stack adjustment.
     uint64_t FrameSize = StackSize - SlotSize;
     // If required, include space for extra hidden slot for stashing base pointer.
@@ -1113,13 +1125,6 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
         BuildCFI(MBB, MBBI, DL, MCCFIInstruction::createDefCfaRegister(
                                     nullptr, DwarfFramePtr));
       }
-    }
-
-    // Mark the FramePtr as live-in in every block. Don't do this again for
-    // funclet prologues.
-    if (!IsFunclet) {
-      for (MachineBasicBlock &EveryMBB : MF)
-        EveryMBB.addLiveIn(MachineFramePtr);
     }
   } else {
     assert(!IsFunclet && "funclets without FPs not yet implemented");
@@ -1688,21 +1693,18 @@ void X86FrameLowering::emitEpilogue(MachineFunction &MF,
   }
 }
 
-// NOTE: this only has a subset of the full frame index logic. In
-// particular, the FI < 0 and AfterFPPop logic is handled in
-// X86RegisterInfo::eliminateFrameIndex, but not here. Possibly
-// (probably?) it should be moved into here.
 int X86FrameLowering::getFrameIndexReference(const MachineFunction &MF, int FI,
                                              unsigned &FrameReg) const {
   const MachineFrameInfo &MFI = MF.getFrameInfo();
 
+  bool IsFixed = MFI.isFixedObjectIndex(FI);
   // We can't calculate offset from frame pointer if the stack is realigned,
   // so enforce usage of stack/base pointer.  The base pointer is used when we
   // have dynamic allocas in addition to dynamic realignment.
   if (TRI->hasBasePointer(MF))
-    FrameReg = TRI->getBaseRegister();
+    FrameReg = IsFixed ? TRI->getFramePtr() : TRI->getBaseRegister();
   else if (TRI->needsStackRealignment(MF))
-    FrameReg = TRI->getStackRegister();
+    FrameReg = IsFixed ? TRI->getFramePtr() : TRI->getStackRegister();
   else
     FrameReg = TRI->getFrameRegister(MF);
 
@@ -1776,6 +1778,14 @@ int X86FrameLowering::getFrameIndexReference(const MachineFunction &MF, int FI,
   return Offset + FPDelta;
 }
 
+int X86FrameLowering::getFrameIndexReferenceSP(const MachineFunction &MF,
+                                               int FI, unsigned &FrameReg,
+                                               int Adjustment) const {
+  const MachineFrameInfo &MFI = MF.getFrameInfo();
+  FrameReg = TRI->getStackRegister();
+  return MFI.getObjectOffset(FI) - getOffsetOfLocalArea() + Adjustment;
+}
+
 int
 X86FrameLowering::getFrameIndexReferencePreferSP(const MachineFunction &MF,
                                                  int FI, unsigned &FrameReg,
@@ -1832,9 +1842,6 @@ X86FrameLowering::getFrameIndexReferencePreferSP(const MachineFunction &MF,
   assert(MF.getInfo<X86MachineFunctionInfo>()->getTCReturnAddrDelta() >= 0 &&
          "we don't handle this case!");
 
-  // Fill in FrameReg output argument.
-  FrameReg = TRI->getStackRegister();
-
   // This is how the math works out:
   //
   //  %rsp grows (i.e. gets lower) left to right. Each box below is
@@ -1859,12 +1866,8 @@ X86FrameLowering::getFrameIndexReferencePreferSP(const MachineFunction &MF,
   // (C - E) == (C - A) - (B - A) + (B - E)
   //            { Using [1], [2] and [3] above }
   //         == getObjectOffset - LocalAreaOffset + StackSize
-  //
 
-  // Get the Offset from the StackPointer
-  int Offset = MFI.getObjectOffset(FI) - getOffsetOfLocalArea();
-
-  return Offset + StackSize;
+  return getFrameIndexReferenceSP(MF, FI, FrameReg, StackSize);
 }
 
 bool X86FrameLowering::assignCalleeSavedSpillSlots(
@@ -1916,14 +1919,15 @@ bool X86FrameLowering::assignCalleeSavedSpillSlots(
       continue;
 
     const TargetRegisterClass *RC = TRI->getMinimalPhysRegClass(Reg);
+    unsigned Size = TRI->getSpillSize(*RC);
+    unsigned Align = TRI->getSpillAlignment(*RC);
     // ensure alignment
-    SpillSlotOffset -= std::abs(SpillSlotOffset) % RC->getAlignment();
+    SpillSlotOffset -= std::abs(SpillSlotOffset) % Align;
     // spill into slot
-    SpillSlotOffset -= RC->getSize();
-    int SlotIndex =
-        MFI.CreateFixedSpillStackObject(RC->getSize(), SpillSlotOffset);
+    SpillSlotOffset -= Size;
+    int SlotIndex = MFI.CreateFixedSpillStackObject(Size, SpillSlotOffset);
     CSI[i - 1].setFrameIdx(SlotIndex);
-    MFI.ensureMaxAlignment(RC->getAlignment());
+    MFI.ensureMaxAlignment(Align);
   }
 
   return true;
@@ -2616,8 +2620,8 @@ eliminateCallFramePseudoInstr(MachineFunction &MF, MachineBasicBlock &MBB,
   unsigned Opcode = I->getOpcode();
   bool isDestroy = Opcode == TII.getCallFrameDestroyOpcode();
   DebugLoc DL = I->getDebugLoc();
-  uint64_t Amount = !reserveCallFrame ? I->getOperand(0).getImm() : 0;
-  uint64_t InternalAmt = (isDestroy || Amount) ? I->getOperand(1).getImm() : 0;
+  uint64_t Amount = !reserveCallFrame ? TII.getFrameSize(*I) : 0;
+  uint64_t InternalAmt = (isDestroy || Amount) ? TII.getFrameAdjustment(*I) : 0;
   I = MBB.erase(I);
   auto InsertPos = skipDebugInstructionsForward(I, MBB.end());
 
@@ -2981,6 +2985,10 @@ unsigned X86FrameLowering::getWinEHParentFrameOffset(const MachineFunction &MF) 
 
 void X86FrameLowering::processFunctionBeforeFrameFinalized(
     MachineFunction &MF, RegScavenger *RS) const {
+  // Mark the function as not having WinCFI. We will set it back to true in
+  // emitPrologue if it gets called and emits CFI.
+  MF.setHasWinCFI(false);
+
   // If this function isn't doing Win64-style C++ EH, we don't need to do
   // anything.
   const Function *Fn = MF.getFunction();

@@ -29,7 +29,6 @@ namespace lld {
 namespace elf {
 
 class DefinedCommon;
-class ScriptParser;
 class SymbolBody;
 class InputSectionBase;
 class InputSection;
@@ -42,11 +41,15 @@ struct ExprValue {
   SectionBase *Sec;
   uint64_t Val;
   bool ForceAbsolute;
+  uint64_t Alignment = 1;
+  std::string Loc;
 
-  ExprValue(SectionBase *Sec, bool ForceAbsolute, uint64_t Val)
-      : Sec(Sec), Val(Val), ForceAbsolute(ForceAbsolute) {}
-  ExprValue(SectionBase *Sec, uint64_t Val) : ExprValue(Sec, false, Val) {}
-  ExprValue(uint64_t Val) : ExprValue(nullptr, Val) {}
+  ExprValue(SectionBase *Sec, bool ForceAbsolute, uint64_t Val,
+            const Twine &Loc)
+      : Sec(Sec), Val(Val), ForceAbsolute(ForceAbsolute), Loc(Loc.str()) {}
+  ExprValue(SectionBase *Sec, uint64_t Val, const Twine &Loc)
+      : ExprValue(Sec, false, Val, Loc) {}
+  ExprValue(uint64_t Val) : ExprValue(nullptr, Val, "") {}
   bool isAbsolute() const { return ForceAbsolute || Sec == nullptr; }
   uint64_t getValue() const;
   uint64_t getSecAddr() const;
@@ -56,15 +59,6 @@ struct ExprValue {
 // ScriptParser::readExpr reads an expression and returns an Expr.
 // Later, we evaluate the expression by calling the function.
 typedef std::function<ExprValue()> Expr;
-
-// Parses a linker script. Calling this function updates
-// Config and ScriptConfig.
-void readLinkerScript(MemoryBufferRef MB);
-
-// Parses a version script.
-void readVersionScript(MemoryBufferRef MB);
-
-void readDynamicList(MemoryBufferRef MB);
 
 // This enum is used to implement linker script SECTIONS command.
 // https://sourceware.org/binutils/docs/ld/SECTIONS.html#SECTIONS
@@ -78,9 +72,6 @@ enum SectionsCommandKind {
 
 struct BaseCommand {
   BaseCommand(int K) : Kind(K) {}
-
-  virtual ~BaseCommand() = default;
-
   int Kind;
 };
 
@@ -112,23 +103,43 @@ struct SymbolAssignment : BaseCommand {
 // with ONLY_IF_RW is created if all input sections are RW.
 enum class ConstraintKind { NoConstraint, ReadOnly, ReadWrite };
 
+// This struct is used to represent the location and size of regions of
+// target memory. Instances of the struct are created by parsing the
+// MEMORY command.
+struct MemoryRegion {
+  std::string Name;
+  uint64_t Origin;
+  uint64_t Length;
+  uint64_t Offset;
+  uint32_t Flags;
+  uint32_t NegFlags;
+};
+
 struct OutputSectionCommand : BaseCommand {
   OutputSectionCommand(StringRef Name)
       : BaseCommand(OutputSectionKind), Name(Name) {}
 
   static bool classof(const BaseCommand *C);
 
+  OutputSection *Sec = nullptr;
+  MemoryRegion *MemRegion = nullptr;
   StringRef Name;
   Expr AddrExpr;
   Expr AlignExpr;
   Expr LMAExpr;
   Expr SubalignExpr;
-  std::vector<std::unique_ptr<BaseCommand>> Commands;
+  std::vector<BaseCommand *> Commands;
   std::vector<StringRef> Phdrs;
-  uint32_t Filler = 0;
+  llvm::Optional<uint32_t> Filler;
   ConstraintKind Constraint = ConstraintKind::NoConstraint;
   std::string Location;
   std::string MemoryRegionName;
+  bool Noload = false;
+
+  template <class ELFT> void finalize();
+  template <class ELFT> void writeTo(uint8_t *Buf);
+  template <class ELFT> void maybeCompress();
+  uint32_t getFiller();
 };
 
 // This struct represents one section match pattern in SECTIONS() command.
@@ -156,7 +167,7 @@ struct InputSectionDescription : BaseCommand {
   // will be associated with this InputSectionDescription.
   std::vector<SectionPattern> SectionPatterns;
 
-  std::vector<InputSectionBase *> Sections;
+  std::vector<InputSection *> Sections;
 };
 
 // Represents an ASSERT().
@@ -189,22 +200,10 @@ struct PhdrsCommand {
   Expr LMAExpr;
 };
 
-// This struct is used to represent the location and size of regions of
-// target memory. Instances of the struct are created by parsing the
-// MEMORY command.
-struct MemoryRegion {
-  std::string Name;
-  uint64_t Origin;
-  uint64_t Length;
-  uint64_t Offset;
-  uint32_t Flags;
-  uint32_t NegFlags;
-};
-
 // ScriptConfiguration holds linker script parse results.
 struct ScriptConfiguration {
   // Used to assign addresses to sections.
-  std::vector<std::unique_ptr<BaseCommand>> Commands;
+  std::vector<BaseCommand *> Commands;
 
   // Used to assign sections to headers.
   std::vector<PhdrsCommand> PhdrsCommands;
@@ -218,31 +217,34 @@ struct ScriptConfiguration {
   // A map from memory region name to a memory region descriptor.
   llvm::DenseMap<llvm::StringRef, MemoryRegion> MemoryRegions;
 
-  // A list of undefined symbols referenced by the script.
-  std::vector<llvm::StringRef> UndefinedSymbols;
+  // A list of symbols referenced by the script.
+  std::vector<llvm::StringRef> ReferencedSymbols;
 };
 
-class LinkerScript {
-protected:
-  void assignSymbol(SymbolAssignment *Cmd, bool InSec = false);
-  void computeInputSections(InputSectionDescription *);
-  void setDot(Expr E, const Twine &Loc, bool InSec = false);
+class LinkerScript final {
+  llvm::DenseMap<OutputSection *, OutputSectionCommand *> SecToCommand;
+  llvm::DenseMap<StringRef, OutputSectionCommand *> NameToOutputSectionCommand;
+
+  void assignSymbol(SymbolAssignment *Cmd, bool InSec);
+  void setDot(Expr E, const Twine &Loc, bool InSec);
+
+  std::vector<InputSection *>
+  computeInputSections(const InputSectionDescription *);
 
   std::vector<InputSectionBase *>
   createInputSectionList(OutputSectionCommand &Cmd);
 
-  std::vector<size_t> getPhdrIndices(StringRef SectionName);
+  std::vector<size_t> getPhdrIndices(OutputSection *Sec);
   size_t getPhdrIndex(const Twine &Loc, StringRef PhdrName);
 
-  MemoryRegion *findMemoryRegion(OutputSectionCommand *Cmd, OutputSection *Sec);
+  MemoryRegion *findMemoryRegion(OutputSectionCommand *Cmd);
 
   void switchTo(OutputSection *Sec);
-  void flush();
+  uint64_t advance(uint64_t Size, unsigned Align);
   void output(InputSection *Sec);
   void process(BaseCommand &Base);
 
   OutputSection *Aether;
-  bool ErrorOnMissingSection = false;
 
   uint64_t Dot;
   uint64_t ThreadBssOffset = 0;
@@ -251,20 +253,22 @@ protected:
   OutputSection *CurOutSec = nullptr;
   MemoryRegion *CurMemRegion = nullptr;
 
-  llvm::DenseSet<OutputSection *> AlreadyOutputOS;
-  llvm::DenseSet<InputSectionBase *> AlreadyOutputIS;
-
 public:
+  bool ErrorOnMissingSection = false;
+  OutputSectionCommand *createOutputSectionCommand(StringRef Name,
+                                                   StringRef Location);
+  OutputSectionCommand *getOrCreateOutputSectionCommand(StringRef Name);
+
+  OutputSectionCommand *getCmd(OutputSection *Sec) const;
   bool hasPhdrsCommands() { return !Opt.PhdrsCommands.empty(); }
   uint64_t getDot() { return Dot; }
-  OutputSection *getOutputSection(const Twine &Loc, StringRef S);
-  uint64_t getOutputSectionSize(StringRef S);
   void discard(ArrayRef<InputSectionBase *> V);
 
   ExprValue getSymbolValue(const Twine &Loc, StringRef S);
   bool isDefined(StringRef S);
 
   std::vector<OutputSection *> *OutputSections;
+  void fabricateDefaultCommands();
   void addOrphanSections(OutputSectionFactory &Factory);
   void removeEmptyCommands();
   void adjustSectionsBeforeSorting();
@@ -273,16 +277,14 @@ public:
   std::vector<PhdrEntry> createPhdrs();
   bool ignoreInterpSection();
 
-  uint32_t getFiller(StringRef Name);
-  bool hasLMA(StringRef Name);
+  bool hasLMA(OutputSection *Sec);
   bool shouldKeep(InputSectionBase *S);
   void assignOffsets(OutputSectionCommand *Cmd);
   void placeOrphanSections();
   void processNonSectionCommands();
-  void assignAddresses(std::vector<PhdrEntry> &Phdrs);
-  int getSectionIndex(StringRef Name);
+  void assignAddresses(std::vector<PhdrEntry> &Phdrs,
+                       ArrayRef<OutputSectionCommand *> OutputSectionCommands);
 
-  void writeDataBytes(StringRef Name, uint8_t *Buf);
   void addSymbol(SymbolAssignment *Cmd);
   void processCommands(OutputSectionFactory &Factory);
 

@@ -10,26 +10,20 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "AArch64.h"
-#include "AArch64CallLowering.h"
-#include "AArch64InstructionSelector.h"
-#include "AArch64LegalizerInfo.h"
-#include "AArch64MacroFusion.h"
-#ifdef LLVM_BUILD_GLOBAL_ISEL
-#include "AArch64RegisterBankInfo.h"
-#endif
-#include "AArch64Subtarget.h"
 #include "AArch64TargetMachine.h"
+#include "AArch64.h"
+#include "AArch64MacroFusion.h"
+#include "AArch64Subtarget.h"
 #include "AArch64TargetObjectFile.h"
 #include "AArch64TargetTransformInfo.h"
 #include "MCTargetDesc/AArch64MCTargetDesc.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Triple.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
-#include "llvm/CodeGen/GlobalISel/GISelAccessor.h"
 #include "llvm/CodeGen/GlobalISel/IRTranslator.h"
 #include "llvm/CodeGen/GlobalISel/InstructionSelect.h"
 #include "llvm/CodeGen/GlobalISel/Legalizer.h"
+#include "llvm/CodeGen/GlobalISel/Localizer.h"
 #include "llvm/CodeGen/GlobalISel/RegBankSelect.h"
 #include "llvm/CodeGen/MachineScheduler.h"
 #include "llvm/CodeGen/Passes.h"
@@ -116,11 +110,6 @@ EnableA53Fix835769("aarch64-fix-cortex-a53-835769", cl::Hidden,
                 cl::init(false));
 
 static cl::opt<bool>
-    EnableAddressTypePromotion("aarch64-enable-type-promotion", cl::Hidden,
-                               cl::desc("Enable the type promotion pass"),
-                               cl::init(true));
-
-static cl::opt<bool>
     EnableGEPOpt("aarch64-enable-gep-opt", cl::Hidden,
                  cl::desc("Enable optimizations on complex GEPs"),
                  cl::init(false));
@@ -153,7 +142,6 @@ extern "C" void LLVMInitializeAArch64Target() {
   initializeGlobalISel(*PR);
   initializeAArch64A53Fix835769Pass(*PR);
   initializeAArch64A57FPLoadBalancingPass(*PR);
-  initializeAArch64AddressTypePromotionPass(*PR);
   initializeAArch64AdvSIMDScalarPass(*PR);
   initializeAArch64CollectLOHPass(*PR);
   initializeAArch64ConditionalComparesPass(*PR);
@@ -223,35 +211,6 @@ AArch64TargetMachine::AArch64TargetMachine(
 
 AArch64TargetMachine::~AArch64TargetMachine() = default;
 
-#ifdef LLVM_BUILD_GLOBAL_ISEL
-namespace {
-
-struct AArch64GISelActualAccessor : public GISelAccessor {
-  std::unique_ptr<CallLowering> CallLoweringInfo;
-  std::unique_ptr<InstructionSelector> InstSelector;
-  std::unique_ptr<LegalizerInfo> Legalizer;
-  std::unique_ptr<RegisterBankInfo> RegBankInfo;
-
-  const CallLowering *getCallLowering() const override {
-    return CallLoweringInfo.get();
-  }
-
-  const InstructionSelector *getInstructionSelector() const override {
-    return InstSelector.get();
-  }
-
-  const LegalizerInfo *getLegalizerInfo() const override {
-    return Legalizer.get();
-  }
-
-  const RegisterBankInfo *getRegBankInfo() const override {
-    return RegBankInfo.get();
-  }
-};
-
-} // end anonymous namespace
-#endif
-
 const AArch64Subtarget *
 AArch64TargetMachine::getSubtargetImpl(const Function &F) const {
   Attribute CPUAttr = F.getFnAttribute("target-cpu");
@@ -272,25 +231,6 @@ AArch64TargetMachine::getSubtargetImpl(const Function &F) const {
     resetTargetOptions(F);
     I = llvm::make_unique<AArch64Subtarget>(TargetTriple, CPU, FS, *this,
                                             isLittle);
-#ifndef LLVM_BUILD_GLOBAL_ISEL
-    GISelAccessor *GISel = new GISelAccessor();
-#else
-    AArch64GISelActualAccessor *GISel =
-        new AArch64GISelActualAccessor();
-    GISel->CallLoweringInfo.reset(
-        new AArch64CallLowering(*I->getTargetLowering()));
-    GISel->Legalizer.reset(new AArch64LegalizerInfo());
-
-    auto *RBI = new AArch64RegisterBankInfo(*I->getRegisterInfo());
-
-    // FIXME: At this point, we can't rely on Subtarget having RBI.
-    // It's awkward to mix passing RBI and the Subtarget; should we pass
-    // TII/TRI as well?
-    GISel->InstSelector.reset(new AArch64InstructionSelector(*this, *I, *RBI));
-
-    GISel->RegBankInfo.reset(RBI);
-#endif
-    I->setGISelAccessor(*GISel);
   }
   return I.get();
 }
@@ -316,9 +256,9 @@ namespace {
 /// AArch64 Code Generator Pass Configuration Options.
 class AArch64PassConfig : public TargetPassConfig {
 public:
-  AArch64PassConfig(AArch64TargetMachine *TM, PassManagerBase &PM)
+  AArch64PassConfig(AArch64TargetMachine &TM, PassManagerBase &PM)
       : TargetPassConfig(TM, PM) {
-    if (TM->getOptLevel() != CodeGenOpt::None)
+    if (TM.getOptLevel() != CodeGenOpt::None)
       substitutePass(&PostRASchedulerID, &PostMachineSchedulerID);
   }
 
@@ -338,7 +278,7 @@ public:
   ScheduleDAGInstrs *
   createPostMachineScheduler(MachineSchedContext *C) const override {
     const AArch64Subtarget &ST = C->MF->getSubtarget<AArch64Subtarget>();
-    if (ST.hasFuseLiterals()) {
+    if (ST.hasFuseAES() || ST.hasFuseLiterals()) {
       // Run the Macro Fusion after RA again since literals are expanded from
       // pseudos then (v. addPreSched2()).
       ScheduleDAGMI *DAG = createGenericSchedPostRA(C);
@@ -356,6 +296,7 @@ public:
   bool addIRTranslator() override;
   bool addLegalizeMachineIR() override;
   bool addRegBankSelect() override;
+  void addPreGlobalInstructionSelect() override;
   bool addGlobalInstructionSelect() override;
 #endif
   bool addILPOpts() override;
@@ -376,13 +317,13 @@ TargetIRAnalysis AArch64TargetMachine::getTargetIRAnalysis() {
 }
 
 TargetPassConfig *AArch64TargetMachine::createPassConfig(PassManagerBase &PM) {
-  return new AArch64PassConfig(this, PM);
+  return new AArch64PassConfig(*this, PM);
 }
 
 void AArch64PassConfig::addIRPasses() {
   // Always expand atomic operations, we don't deal with atomicrmw or cmpxchg
   // ourselves.
-  addPass(createAtomicExpandPass(TM));
+  addPass(createAtomicExpandPass());
 
   // Cmpxchg instructions are often used with a subsequent comparison to
   // determine whether it succeeded. We can exploit existing control-flow in
@@ -401,7 +342,7 @@ void AArch64PassConfig::addIRPasses() {
 
   // Match interleaved memory accesses to ldN/stN intrinsics.
   if (TM->getOptLevel() != CodeGenOpt::None)
-    addPass(createInterleavedAccessPass(TM));
+    addPass(createInterleavedAccessPass());
 
   if (TM->getOptLevel() == CodeGenOpt::Aggressive && EnableGEPOpt) {
     // Call SeparateConstOffsetFromGEP pass to extract constants within indices
@@ -434,9 +375,6 @@ bool AArch64PassConfig::addPreISel() {
     addPass(createGlobalMergePass(TM, 4095, OnlyOptimizeForSize));
   }
 
-  if (TM->getOptLevel() != CodeGenOpt::None && EnableAddressTypePromotion)
-    addPass(createAArch64AddressTypePromotionPass());
-
   return false;
 }
 
@@ -466,6 +404,12 @@ bool AArch64PassConfig::addLegalizeMachineIR() {
 bool AArch64PassConfig::addRegBankSelect() {
   addPass(new RegBankSelect());
   return false;
+}
+
+void AArch64PassConfig::addPreGlobalInstructionSelect() {
+  // Workaround the deficiency of the fast register allocator.
+  if (TM->getOptLevel() == CodeGenOpt::None)
+    addPass(new Localizer());
 }
 
 bool AArch64PassConfig::addGlobalInstructionSelect() {

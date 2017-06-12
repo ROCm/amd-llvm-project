@@ -91,6 +91,7 @@ public:
 private:
   void AlarmCallback();
   void CrashCallback();
+  void CrashOnOverwrittenData();
   void InterruptCallback();
   void MutateAndTestOne();
   void ReportNewCoverage(InputInfo *II, const Unit &U);
@@ -145,6 +146,6 @@ private:
   static thread_local bool IsMyThread;
 };
 
-}; // namespace fuzzer
+} // namespace fuzzer
 
 #endif // LLVM_FUZZER_INTERNAL_H

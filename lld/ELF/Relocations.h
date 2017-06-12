@@ -11,6 +11,9 @@
 #define LLD_ELF_RELOCATIONS_H
 
 #include "lld/Core/LLVM.h"
+#include "llvm/ADT/DenseMap.h"
+#include <map>
+#include <vector>
 
 namespace lld {
 namespace elf {
@@ -18,12 +21,14 @@ class SymbolBody;
 class InputSection;
 class InputSectionBase;
 class OutputSection;
+struct OutputSectionCommand;
 
 // List of target-independent relocation types. Relocations read
 // from files are converted to these types so that the main code
 // doesn't have to know about architecture-specific details.
 enum RelExpr {
   R_ABS,
+  R_ARM_SBREL,
   R_GOT,
   R_GOTONLY_PC,
   R_GOTONLY_PC_FROM_END,
@@ -113,8 +118,39 @@ struct Relocation {
 
 template <class ELFT> void scanRelocations(InputSectionBase &);
 
-template <class ELFT>
-bool createThunks(ArrayRef<OutputSection *> OutputSections);
+class ThunkSection;
+class Thunk;
+
+class ThunkCreator {
+public:
+  // Return true if Thunks have been added to OutputSections
+  bool createThunks(ArrayRef<OutputSectionCommand *> OutputSections);
+
+private:
+  void mergeThunks();
+  ThunkSection *getOSThunkSec(OutputSection *OS,
+                              std::vector<InputSection *> *ISR);
+  ThunkSection *getISThunkSec(InputSection *IS, OutputSection *OS);
+  void forEachExecInputSection(
+      ArrayRef<OutputSectionCommand *> OutputSections,
+      std::function<void(OutputSection *, std::vector<InputSection *> *,
+                         InputSection *)>
+          Fn);
+  std::pair<Thunk *, bool> getThunk(SymbolBody &Body, uint32_t Type);
+
+  // Track Symbols that already have a Thunk
+  llvm::DenseMap<SymbolBody *, Thunk *> ThunkedSymbols;
+
+  // Track InputSections that have a ThunkSection placed in front
+  llvm::DenseMap<InputSection *, ThunkSection *> ThunkedSections;
+
+  // Track the ThunksSections that need to be inserted into an OutputSection
+  std::map<std::vector<InputSection *> *, std::vector<ThunkSection *>>
+      ThunkSections;
+
+  // The ThunkSection for this vector of InputSections
+  ThunkSection *CurTS;
+};
 
 // Return a int64_t to make sure we get the sign extension out of the way as
 // early as possible.

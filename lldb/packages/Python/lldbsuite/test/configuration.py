@@ -44,7 +44,7 @@ def setupCrashInfoHook():
             if not os.path.isfile(dylib_dst) or os.path.getmtime(
                     dylib_dst) < os.path.getmtime(dylib_src):
                 # we need to compile
-                cmd = "SDKROOT= xcrun clang %s -o %s -framework Python -Xlinker -dylib -iframework /System/Library/Frameworks/ -Xlinker -F /System/Library/Frameworks/" % (
+                cmd = "SDKROOT= xcrun clang %s -o %s -framework Python -Xlinker -dylib" % (
                     dylib_src, dylib_dst)
                 if subprocess.call(
                         cmd, shell=True) != 0 or not os.path.isfile(dylib_dst):
@@ -66,7 +66,7 @@ categoriesList = None
 # set to true if we are going to use categories for cherry-picking test cases
 useCategories = False
 # Categories we want to skip
-skipCategories = []
+skipCategories = ["darwin-log"]
 # use this to track per-category failures
 failuresPerCategory = {}
 

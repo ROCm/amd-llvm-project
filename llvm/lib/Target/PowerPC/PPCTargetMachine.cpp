@@ -11,11 +11,11 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "PPCTargetMachine.h"
 #include "MCTargetDesc/PPCMCTargetDesc.h"
 #include "PPC.h"
 #include "PPCSubtarget.h"
 #include "PPCTargetObjectFile.h"
-#include "PPCTargetMachine.h"
 #include "PPCTargetTransformInfo.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/STLExtras.h"
@@ -218,9 +218,7 @@ PPCTargetMachine::PPCTargetMachine(const Target &T, const Triple &TT,
                         computeFSAdditions(FS, OL, TT), Options,
                         getEffectiveRelocModel(TT, RM), CM, OL),
       TLOF(createTLOF(getTargetTriple())),
-      TargetABI(computeTargetABI(TT, Options)),
-      Subtarget(TargetTriple, CPU, computeFSAdditions(FS, OL, TT), *this) {
-
+      TargetABI(computeTargetABI(TT, Options)) {
   initAsmInfo();
 }
 
@@ -298,7 +296,7 @@ namespace {
 /// PPC Code Generator Pass Configuration Options.
 class PPCPassConfig : public TargetPassConfig {
 public:
-  PPCPassConfig(PPCTargetMachine *TM, PassManagerBase &PM)
+  PPCPassConfig(PPCTargetMachine &TM, PassManagerBase &PM)
     : TargetPassConfig(TM, PM) {}
 
   PPCTargetMachine &getPPCTargetMachine() const {
@@ -318,13 +316,13 @@ public:
 } // end anonymous namespace
 
 TargetPassConfig *PPCTargetMachine::createPassConfig(PassManagerBase &PM) {
-  return new PPCPassConfig(this, PM);
+  return new PPCPassConfig(*this, PM);
 }
 
 void PPCPassConfig::addIRPasses() {
   if (TM->getOptLevel() != CodeGenOpt::None)
     addPass(createPPCBoolRetToIntPass());
-  addPass(createAtomicExpandPass(&getPPCTargetMachine()));
+  addPass(createAtomicExpandPass());
 
   // For the BG/Q (or if explicitly requested), add explicit data prefetch
   // intrinsics.

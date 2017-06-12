@@ -13,6 +13,7 @@
 #include "llvm/ADT/Optional.h"
 #include "llvm/DebugInfo/CodeView/TypeRecord.h"
 #include "llvm/DebugInfo/PDB/Native/RawConstants.h"
+#include "llvm/DebugInfo/PDB/Native/RawTypes.h"
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/BinaryByteStream.h"
 #include "llvm/Support/BinaryItemStream.h"
@@ -53,7 +54,7 @@ public:
   TpiStreamBuilder &operator=(const TpiStreamBuilder &) = delete;
 
   void setVersionHeader(PdbRaw_TpiVer Version);
-  void addTypeRecord(const codeview::CVType &Record);
+  void addTypeRecord(ArrayRef<uint8_t> Type, Optional<uint32_t> Hash);
 
   Error finalizeMsfLayout();
 
@@ -63,14 +64,18 @@ public:
 
 private:
   uint32_t calculateHashBufferSize() const;
+  uint32_t calculateIndexOffsetSize() const;
   Error finalize();
 
   msf::MSFBuilder &Msf;
   BumpPtrAllocator &Allocator;
 
-  Optional<PdbRaw_TpiVer> VerHeader;
-  std::vector<codeview::CVType> TypeRecords;
-  BinaryItemStream<codeview::CVType> TypeRecordStream;
+  size_t TypeRecordBytes = 0;
+
+  PdbRaw_TpiVer VerHeader = PdbRaw_TpiVer::PdbTpiV80;
+  std::vector<ArrayRef<uint8_t>> TypeRecords;
+  std::vector<uint32_t> TypeHashes;
+  std::vector<codeview::TypeIndexOffset> TypeIndexOffsets;
   uint32_t HashStreamIndex = kInvalidStreamIndex;
   std::unique_ptr<BinaryByteStream> HashValueStream;
 

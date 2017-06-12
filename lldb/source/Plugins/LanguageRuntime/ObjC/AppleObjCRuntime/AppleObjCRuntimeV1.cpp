@@ -28,8 +28,8 @@
 #include "lldb/Target/Target.h"
 #include "lldb/Target/Thread.h"
 #include "lldb/Utility/ConstString.h"
-#include "lldb/Utility/Error.h"
 #include "lldb/Utility/Log.h"
+#include "lldb/Utility/Status.h"
 #include "lldb/Utility/StreamString.h"
 
 #include <vector>
@@ -171,8 +171,9 @@ UtilityFunction *AppleObjCRuntimeV1::CreateObjectChecker(const char *name) {
                   "           \n",
                   name);
   assert(strformatsize < (int)sizeof(buf->contents));
+  (void)strformatsize;
 
-  Error error;
+  Status error;
   return GetTargetRef().GetUtilityFunctionForLanguage(
       buf->contents, eLanguageTypeObjC, name, error);
 }
@@ -196,7 +197,7 @@ void AppleObjCRuntimeV1::ClassDescriptorV1::Initialize(
 
   m_valid = true;
 
-  Error error;
+  Status error;
 
   m_isa = process_sp->ReadPointerFromMemory(isa, error);
 
@@ -302,7 +303,7 @@ lldb::addr_t AppleObjCRuntimeV1::GetISAHashTablePointer() {
             symbol->GetAddressRef().GetLoadAddress(&process->GetTarget());
 
         if (objc_debug_class_hash_addr != LLDB_INVALID_ADDRESS) {
-          Error error;
+          Status error;
           lldb::addr_t objc_debug_class_hash_ptr =
               process->ReadPointerFromMemory(objc_debug_class_hash_addr, error);
           if (objc_debug_class_hash_ptr != 0 &&
@@ -348,7 +349,7 @@ void AppleObjCRuntimeV1::UpdateISAToDescriptorMapIfNeeded() {
       //     const void *info;
       // } NXHashTable;
 
-      Error error;
+      Status error;
       DataBufferHeap buffer(1024, 0);
       if (process->ReadMemory(hash_table_ptr, buffer.GetBytes(), 20, error) ==
           20) {

@@ -75,8 +75,10 @@ uint64_t getTSCFrequency() XRAY_NEVER_INSTRUMENT {
 static constexpr uint8_t CallOpCode = 0xe8;
 static constexpr uint16_t MovR10Seq = 0xba41;
 static constexpr uint16_t Jmp9Seq = 0x09eb;
+static constexpr uint16_t Jmp20Seq = 0x14eb;
 static constexpr uint8_t JmpOpCode = 0xe9;
 static constexpr uint8_t RetOpCode = 0xc3;
+static constexpr uint16_t NopwSeq = 0x9066;
 
 static constexpr int64_t MinOffset{std::numeric_limits<int32_t>::min()};
 static constexpr int64_t MaxOffset{std::numeric_limits<int32_t>::max()};
@@ -201,6 +203,40 @@ bool patchFunctionTailExit(const bool Enable, const uint32_t FuncId,
   return true;
 }
 
+bool patchCustomEvent(const bool Enable, const uint32_t FuncId,
+                      const XRaySledEntry &Sled) XRAY_NEVER_INSTRUMENT {
+  // Here we do the dance of replacing the following sled:
+  //
+  // xray_sled_n:
+  //   jmp +19          // 2 bytes
+  //   ...
+  //
+  // With the following:
+  //
+  //   nopw             // 2 bytes*
+  //   ...
+  //
+  // We need to do this in the following order:
+  //
+  // 1. Overwrite the 5-byte nop with the call (relative), where (relative) is
+  //    the relative offset to the __xray_CustomEvent trampoline.
+  // 2. Do a two-byte atomic write over the 'jmp +24' to turn it into a 'nopw'.
+  //    This allows us to "enable" this code once the changes have committed.
+  //
+  // The "unpatch" should just turn the 'nopw' back to a 'jmp +24'.
+  //
+  if (Enable) {
+    std::atomic_store_explicit(
+        reinterpret_cast<std::atomic<uint16_t> *>(Sled.Address), NopwSeq,
+        std::memory_order_release);
+  } else {
+    std::atomic_store_explicit(
+        reinterpret_cast<std::atomic<uint16_t> *>(Sled.Address), Jmp20Seq,
+        std::memory_order_release);
+  }
+  return false;
+}
+
 // We determine whether the CPU we're running on has the correct features we
 // need. In x86_64 this will be rdtscp support.
 bool probeRequiredCPUFeatures() XRAY_NEVER_INSTRUMENT {
@@ -212,6 +248,12 @@ bool probeRequiredCPUFeatures() XRAY_NEVER_INSTRUMENT {
   __get_cpuid(0x80000001, &EAX, &EBX, &ECX, &EDX);
   if (!(EDX & (1u << 26))) {
     Report("Missing rdtscp support.\n");
+    return false;
+  }
+  // Also check whether we can determine the CPU frequency, since if we cannot,
+  // we should use the emulated TSC instead.
+  if (!getTSCFrequency()) {
+    Report("Unable to determine CPU frequency.\n");
     return false;
   }
   return true;

@@ -1257,7 +1257,7 @@ define <4 x i32> @trunc_sub_const_v4i64_v4i32(<4 x i64> %a0) nounwind {
 ; SSE-LABEL: trunc_sub_const_v4i64_v4i32:
 ; SSE:       # BB#0:
 ; SSE-NEXT:    movl $1, %eax
-; SSE-NEXT:    movd %rax, %xmm2
+; SSE-NEXT:    movq %rax, %xmm2
 ; SSE-NEXT:    pslldq {{.*#+}} xmm2 = zero,zero,zero,zero,zero,zero,zero,zero,xmm2[0,1,2,3,4,5,6,7]
 ; SSE-NEXT:    psubq %xmm2, %xmm0
 ; SSE-NEXT:    psubq {{.*}}(%rip), %xmm1
@@ -1301,7 +1301,7 @@ define <8 x i16> @trunc_sub_const_v8i64_v8i16(<8 x i64> %a0) nounwind {
 ; SSE-LABEL: trunc_sub_const_v8i64_v8i16:
 ; SSE:       # BB#0:
 ; SSE-NEXT:    movl $1, %eax
-; SSE-NEXT:    movd %rax, %xmm4
+; SSE-NEXT:    movq %rax, %xmm4
 ; SSE-NEXT:    pslldq {{.*#+}} xmm4 = zero,zero,zero,zero,zero,zero,zero,zero,xmm4[0,1,2,3,4,5,6,7]
 ; SSE-NEXT:    psubq %xmm4, %xmm0
 ; SSE-NEXT:    psubq {{.*}}(%rip), %xmm1
@@ -1418,7 +1418,7 @@ define <16 x i8> @trunc_sub_const_v16i64_v16i8(<16 x i64> %a0) nounwind {
 ; SSE-LABEL: trunc_sub_const_v16i64_v16i8:
 ; SSE:       # BB#0:
 ; SSE-NEXT:    movl $1, %eax
-; SSE-NEXT:    movd %rax, %xmm8
+; SSE-NEXT:    movq %rax, %xmm8
 ; SSE-NEXT:    pslldq {{.*#+}} xmm8 = zero,zero,zero,zero,zero,zero,zero,zero,xmm8[0,1,2,3,4,5,6,7]
 ; SSE-NEXT:    psubq %xmm8, %xmm0
 ; SSE-NEXT:    psubq {{.*}}(%rip), %xmm1
@@ -2411,7 +2411,7 @@ define <4 x i32> @trunc_mul_const_v4i64_v4i32(<4 x i64> %a0) nounwind {
 ; SSE-NEXT:    psllq $32, %xmm1
 ; SSE-NEXT:    paddq %xmm3, %xmm1
 ; SSE-NEXT:    movl $1, %eax
-; SSE-NEXT:    movd %rax, %xmm2
+; SSE-NEXT:    movq %rax, %xmm2
 ; SSE-NEXT:    pslldq {{.*#+}} xmm2 = zero,zero,zero,zero,zero,zero,zero,zero,xmm2[0,1,2,3,4,5,6,7]
 ; SSE-NEXT:    movdqa %xmm0, %xmm3
 ; SSE-NEXT:    pmuludq %xmm2, %xmm3
@@ -2554,7 +2554,7 @@ define <16 x i8> @trunc_mul_const_v16i64_v16i8(<16 x i64> %a0) nounwind {
 ; SSE-LABEL: trunc_mul_const_v16i64_v16i8:
 ; SSE:       # BB#0:
 ; SSE-NEXT:    movl $1, %eax
-; SSE-NEXT:    movd %rax, %xmm8
+; SSE-NEXT:    movq %rax, %xmm8
 ; SSE-NEXT:    pslldq {{.*#+}} xmm8 = zero,zero,zero,zero,zero,zero,zero,zero,xmm8[0,1,2,3,4,5,6,7]
 ; SSE-NEXT:    movdqa %xmm0, %xmm9
 ; SSE-NEXT:    pmuludq %xmm8, %xmm9
@@ -3030,10 +3030,10 @@ define <8 x i16> @trunc_and_v8i64_v8i16(<8 x i64> %a0, <8 x i64> %a1) nounwind {
 define <8 x i16> @trunc_and_v8i32_v8i16(<8 x i32> %a0, <8 x i32> %a1) nounwind {
 ; SSE-LABEL: trunc_and_v8i32_v8i16:
 ; SSE:       # BB#0:
-; SSE-NEXT:    pand %xmm2, %xmm0
 ; SSE-NEXT:    pand %xmm3, %xmm1
 ; SSE-NEXT:    pslld $16, %xmm1
 ; SSE-NEXT:    psrad $16, %xmm1
+; SSE-NEXT:    pand %xmm2, %xmm0
 ; SSE-NEXT:    pslld $16, %xmm0
 ; SSE-NEXT:    psrad $16, %xmm0
 ; SSE-NEXT:    packssdw %xmm1, %xmm0
@@ -3786,10 +3786,10 @@ define <8 x i16> @trunc_xor_v8i64_v8i16(<8 x i64> %a0, <8 x i64> %a1) nounwind {
 define <8 x i16> @trunc_xor_v8i32_v8i16(<8 x i32> %a0, <8 x i32> %a1) nounwind {
 ; SSE-LABEL: trunc_xor_v8i32_v8i16:
 ; SSE:       # BB#0:
-; SSE-NEXT:    pxor %xmm2, %xmm0
 ; SSE-NEXT:    pxor %xmm3, %xmm1
 ; SSE-NEXT:    pslld $16, %xmm1
 ; SSE-NEXT:    psrad $16, %xmm1
+; SSE-NEXT:    pxor %xmm2, %xmm0
 ; SSE-NEXT:    pslld $16, %xmm0
 ; SSE-NEXT:    psrad $16, %xmm0
 ; SSE-NEXT:    packssdw %xmm1, %xmm0
@@ -4542,10 +4542,10 @@ define <8 x i16> @trunc_or_v8i64_v8i16(<8 x i64> %a0, <8 x i64> %a1) nounwind {
 define <8 x i16> @trunc_or_v8i32_v8i16(<8 x i32> %a0, <8 x i32> %a1) nounwind {
 ; SSE-LABEL: trunc_or_v8i32_v8i16:
 ; SSE:       # BB#0:
-; SSE-NEXT:    por %xmm2, %xmm0
 ; SSE-NEXT:    por %xmm3, %xmm1
 ; SSE-NEXT:    pslld $16, %xmm1
 ; SSE-NEXT:    psrad $16, %xmm1
+; SSE-NEXT:    por %xmm2, %xmm0
 ; SSE-NEXT:    pslld $16, %xmm0
 ; SSE-NEXT:    psrad $16, %xmm0
 ; SSE-NEXT:    packssdw %xmm1, %xmm0

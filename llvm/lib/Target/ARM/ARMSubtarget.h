@@ -64,6 +64,7 @@ protected:
     CortexR7,
     ExynosM1,
     Krait,
+    Kryo,
     Swift
   };
   enum ARMProcClassEnum {
@@ -207,8 +208,8 @@ protected:
   /// FP registers for VFPv3.
   bool HasD16 = false;
 
-  /// HasHardwareDivide - True if subtarget supports [su]div
-  bool HasHardwareDivide = false;
+  /// HasHardwareDivide - True if subtarget supports [su]div in Thumb mode
+  bool HasHardwareDivideInThumb = false;
 
   /// HasHardwareDivideInARM - True if subtarget supports [su]div in ARM mode
   bool HasHardwareDivideInARM = false;
@@ -232,6 +233,10 @@ protected:
   /// that partially update CPSR and add false dependency on the previous
   /// CPSR setting instruction.
   bool AvoidCPSRPartialUpdate = false;
+
+  /// CheapPredicableCPSRDef - If true, disable +1 predication cost
+  /// for instructions updating CPSR. Enabled for Cortex-A57.
+  bool CheapPredicableCPSRDef = false;
 
   /// AvoidMOVsShifterOperand - If true, codegen should avoid using flag setting
   /// movs with shifter operand (i.e. asr, lsl, lsr).
@@ -506,7 +511,7 @@ public:
     return hasNEON() && UseNEONForSinglePrecisionFP;
   }
 
-  bool hasDivide() const { return HasHardwareDivide; }
+  bool hasDivideInThumbMode() const { return HasHardwareDivideInThumb; }
   bool hasDivideInARMMode() const { return HasHardwareDivideInARM; }
   bool hasDataBarrier() const { return HasDataBarrier; }
   bool hasV7Clrex() const { return HasV7Clrex; }
@@ -542,6 +547,7 @@ public:
   bool nonpipelinedVFP() const { return NonpipelinedVFP; }
   bool prefers32BitThumb() const { return Pref32BitThumb; }
   bool avoidCPSRPartialUpdate() const { return AvoidCPSRPartialUpdate; }
+  bool cheapPredicableCPSRDef() const { return CheapPredicableCPSRDef; }
   bool avoidMOVsShifterOperand() const { return AvoidMOVsShifterOperand; }
   bool hasRetAddrStack() const { return HasRetAddrStack; }
   bool hasMPExtension() const { return HasMPExtension; }

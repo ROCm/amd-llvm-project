@@ -24,6 +24,7 @@ add_lld_library(lldELF
   OutputSections.cpp
   Relocations.cpp
   ScriptLexer.cpp
+  ScriptParser.cpp
   Strings.cpp
   SymbolTable.cpp
   Symbols.cpp
@@ -35,6 +36,7 @@ add_lld_library(lldELF
   LINK_COMPONENTS
   ${LLVM_TARGETS_TO_BUILD}
   Analysis
+  BinaryFormat
   BitReader
   BitWriter
   Codegen

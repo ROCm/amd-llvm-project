@@ -478,10 +478,18 @@ private:
   /// in the chain.
   DeclUpdateOffsetsMap DeclUpdateOffsets;
 
+  struct PendingUpdateRecord {
+    Decl *D;
+    serialization::GlobalDeclID ID;
+    // Whether the declaration was just deserialized.
+    bool JustLoaded;
+    PendingUpdateRecord(serialization::GlobalDeclID ID, Decl *D,
+                        bool JustLoaded)
+        : D(D), ID(ID), JustLoaded(JustLoaded) {}
+  };
   /// \brief Declaration updates for already-loaded declarations that we need
   /// to apply once we finish processing an import.
-  llvm::SmallVector<std::pair<serialization::GlobalDeclID, Decl*>, 16>
-      PendingUpdateRecords;
+  llvm::SmallVector<PendingUpdateRecord, 16> PendingUpdateRecords;
 
   enum class PendingFakeDefinitionKind { NotFake, Fake, FakeLoaded };
 
@@ -984,14 +992,26 @@ private:
   /// \brief The generation number of each identifier, which keeps track of
   /// the last time we loaded information about this identifier.
   llvm::DenseMap<IdentifierInfo *, unsigned> IdentifierGeneration;
-  
-  /// \brief Contains declarations and definitions that will be
+
+  class InterestingDecl {
+    Decl *D;
+    bool DeclHasPendingBody;
+
+  public:
+    InterestingDecl(Decl *D, bool HasBody)
+        : D(D), DeclHasPendingBody(HasBody) {}
+    Decl *getDecl() { return D; }
+    /// Whether the declaration has a pending body.
+    bool hasPendingBody() { return DeclHasPendingBody; }
+  };
+
+  /// \brief Contains declarations and definitions that could be
   /// "interesting" to the ASTConsumer, when we get that AST consumer.
   ///
   /// "Interesting" declarations are those that have data that may
   /// need to be emitted, such as inline function definitions or
   /// Objective-C protocols.
-  std::deque<Decl *> InterestingDecls;
+  std::deque<InterestingDecl> PotentiallyInterestingDecls;
 
   /// \brief The list of redeclaration chains that still need to be 
   /// reconstructed, and the local offset to the corresponding list
@@ -1114,6 +1134,8 @@ private:
   /// there are differences that the PCH reader can work around, this
   /// predefines buffer may contain additional definitions.
   std::string SuggestedPredefines;
+
+  llvm::DenseMap<const Decl *, bool> BodySource;
 
   /// \brief Reads a statement from the specified cursor.
   Stmt *ReadStmtFromStream(ModuleFile &F);
@@ -1265,7 +1287,7 @@ private:
 
   RecordLocation DeclCursorForID(serialization::DeclID ID,
                                  SourceLocation &Location);
-  void loadDeclUpdateRecords(serialization::DeclID ID, Decl *D);
+  void loadDeclUpdateRecords(PendingUpdateRecord &Record);
   void loadPendingDeclChain(Decl *D, uint64_t LocalOffset);
   void loadObjCCategories(serialization::GlobalDeclID ID, ObjCInterfaceDecl *D,
                           unsigned PreviousGeneration = 0);
@@ -1997,7 +2019,7 @@ public:
   /// \brief Return a descriptor for the corresponding module.
   llvm::Optional<ASTSourceDescriptor> getSourceDescriptor(unsigned ID) override;
 
-  ExtKind hasExternalDefinitions(unsigned ID) override;
+  ExtKind hasExternalDefinitions(const Decl *D) override;
 
   /// \brief Retrieve a selector from the given module with its local ID
   /// number.

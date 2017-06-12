@@ -180,7 +180,15 @@ static cl::opt<bool>
 static cl::opt<bool>
     PGOInstrMemOP("pgo-instr-memop", cl::init(true), cl::Hidden,
                   cl::desc("Use this option to turn on/off "
-                           "memory instrinsic size profiling."));
+                           "memory intrinsic size profiling."));
+
+// Emit branch probability as optimization remarks.
+static cl::opt<bool>
+    EmitBranchProbability("pgo-emit-branch-prob", cl::init(false), cl::Hidden,
+                          cl::desc("When this option is on, the annotated "
+                                   "branch probability will be emitted as "
+                                   " optimization remarks: -Rpass-analysis="
+                                   "pgo-instr-use"));
 
 // Command line option to turn on CFG dot dump after profile annotation.
 // Defined in Analysis/BlockFrequencyInfo.cpp:  -pgo-view-counts
@@ -191,6 +199,39 @@ extern cl::opt<bool> PGOViewCounts;
 extern cl::opt<std::string> ViewBlockFreqFuncName;
 
 namespace {
+
+// Return a string describing the branch condition that can be
+// used in static branch probability heuristics:
+std::string getBranchCondString(Instruction *TI) {
+  BranchInst *BI = dyn_cast<BranchInst>(TI);
+  if (!BI || !BI->isConditional())
+    return std::string();
+
+  Value *Cond = BI->getCondition();
+  ICmpInst *CI = dyn_cast<ICmpInst>(Cond);
+  if (!CI)
+    return std::string();
+
+  std::string result;
+  raw_string_ostream OS(result);
+  OS << CmpInst::getPredicateName(CI->getPredicate()) << "_";
+  CI->getOperand(0)->getType()->print(OS, true);
+
+  Value *RHS = CI->getOperand(1);
+  ConstantInt *CV = dyn_cast<ConstantInt>(RHS);
+  if (CV) {
+    if (CV->isZero())
+      OS << "_Zero";
+    else if (CV->isOne())
+      OS << "_One";
+    else if (CV->isAllOnesValue())
+      OS << "_MinusOne";
+    else
+      OS << "_Const";
+  }
+  OS.flush();
+  return result;
+}
 
 /// The select instruction visitor plays three roles specified
 /// by the mode. In \c VM_counting mode, it simply counts the number of
@@ -1038,21 +1079,6 @@ void PGOUseFunc::populateCounters() {
   DEBUG(FuncInfo.dumpInfo("after reading profile."));
 }
 
-static void setProfMetadata(Module *M, Instruction *TI,
-                            ArrayRef<uint64_t> EdgeCounts, uint64_t MaxCount) {
-  MDBuilder MDB(M->getContext());
-  assert(MaxCount > 0 && "Bad max count");
-  uint64_t Scale = calculateCountScale(MaxCount);
-  SmallVector<unsigned, 4> Weights;
-  for (const auto &ECI : EdgeCounts)
-    Weights.push_back(scaleBranchCount(ECI, Scale));
-
-  DEBUG(dbgs() << "Weight is: ";
-        for (const auto &W : Weights) { dbgs() << W << " "; }
-        dbgs() << "\n";);
-  TI->setMetadata(llvm::LLVMContext::MD_prof, MDB.createBranchWeights(Weights));
-}
-
 // Assign the scaled count values to the BB with multiple out edges.
 void PGOUseFunc::setBranchWeights() {
   // Generate MD_prof metadata for every branch instruction.
@@ -1426,6 +1452,44 @@ bool PGOInstrumentationUseLegacyPass::runOnModule(Module &M) {
 }
 
 namespace llvm {
+void setProfMetadata(Module *M, Instruction *TI, ArrayRef<uint64_t> EdgeCounts,
+                     uint64_t MaxCount) {
+  MDBuilder MDB(M->getContext());
+  assert(MaxCount > 0 && "Bad max count");
+  uint64_t Scale = calculateCountScale(MaxCount);
+  SmallVector<unsigned, 4> Weights;
+  for (const auto &ECI : EdgeCounts)
+    Weights.push_back(scaleBranchCount(ECI, Scale));
+
+  DEBUG(dbgs() << "Weight is: ";
+        for (const auto &W : Weights) { dbgs() << W << " "; }
+        dbgs() << "\n";);
+  TI->setMetadata(llvm::LLVMContext::MD_prof, MDB.createBranchWeights(Weights));
+  if (EmitBranchProbability) {
+    std::string BrCondStr = getBranchCondString(TI);
+    if (BrCondStr.empty())
+      return;
+
+    unsigned WSum =
+        std::accumulate(Weights.begin(), Weights.end(), 0,
+                        [](unsigned w1, unsigned w2) { return w1 + w2; });
+    uint64_t TotalCount =
+        std::accumulate(EdgeCounts.begin(), EdgeCounts.end(), 0,
+                        [](uint64_t c1, uint64_t c2) { return c1 + c2; });
+    BranchProbability BP(Weights[0], WSum);
+    std::string BranchProbStr;
+    raw_string_ostream OS(BranchProbStr);
+    OS << BP;
+    OS << " (total count : " << TotalCount << ")";
+    OS.flush();
+    Function *F = TI->getParent()->getParent();
+    emitOptimizationRemarkAnalysis(
+        F->getContext(), "pgo-use-annot", *F, TI->getDebugLoc(),
+        Twine(BrCondStr) +
+            " is true with probability : " + Twine(BranchProbStr));
+  }
+}
+
 template <> struct GraphTraits<PGOUseFunc *> {
   typedef const BasicBlock *NodeRef;
   typedef succ_const_iterator ChildIteratorType;

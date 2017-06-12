@@ -502,7 +502,7 @@ inlineCallsImpl(CallGraphSCC &SCC, CallGraph &CG,
         std::swap(CallSites[i--], CallSites[--FirstCallInSCC]);
 
   InlinedArrayAllocasTy InlinedArrayAllocas;
-  InlineFunctionInfo InlineInfo(&CG, &GetAssumptionCache);
+  InlineFunctionInfo InlineInfo(&CG, &GetAssumptionCache, PSI);
 
   // Now that we have all of the call sites, loop over them and inline them if
   // it looks profitable to do so.
@@ -519,6 +519,10 @@ inlineCallsImpl(CallGraphSCC &SCC, CallGraph &CG,
       Function *Caller = CS.getCaller();
       Function *Callee = CS.getCalledFunction();
 
+      // We can only inline direct calls to non-declarations.
+      if (!Callee || Callee->isDeclaration())
+        continue;
+
       // If this call site is dead and it is to a readonly function, we should
       // just delete the call instead of trying to inline it, regardless of
       // size.  This happens because IPSCCP propagates the result out of the
@@ -531,10 +535,6 @@ inlineCallsImpl(CallGraphSCC &SCC, CallGraph &CG,
         CS.getInstruction()->eraseFromParent();
         ++NumCallsDeleted;
       } else {
-        // We can only inline direct calls to non-declarations.
-        if (!Callee || Callee->isDeclaration())
-          continue;
-
         // If this call site was obtained by inlining another function, verify
         // that the include path for the function did not include the callee
         // itself.  If so, we'd be recursively inlining the same function,
@@ -872,7 +872,7 @@ PreservedAnalyses InlinerPass::run(LazyCallGraph::SCC &InitialC,
       // Setup the data structure used to plumb customization into the
       // `InlineFunction` routine.
       InlineFunctionInfo IFI(
-          /*cg=*/nullptr, &GetAssumptionCache,
+          /*cg=*/nullptr, &GetAssumptionCache, PSI,
           &FAM.getResult<BlockFrequencyAnalysis>(*(CS.getCaller())),
           &FAM.getResult<BlockFrequencyAnalysis>(Callee));
 

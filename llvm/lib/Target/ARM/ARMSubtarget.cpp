@@ -28,10 +28,10 @@
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCTargetOptions.h"
-#include "llvm/Support/CommandLine.h"
-#include "llvm/Target/TargetOptions.h"
 #include "llvm/Support/CodeGen.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/TargetParser.h"
+#include "llvm/Target/TargetOptions.h"
 #include <cassert>
 #include <string>
 
@@ -276,6 +276,7 @@ void ARMSubtarget::initSubtargetFeatures(StringRef CPU, StringRef FS) {
   case CortexM3:
   case ExynosM1:
   case CortexR52:
+  case Kryo:
     break;
   case Krait:
     PreISelOperandLatencyAdjustment = 1;

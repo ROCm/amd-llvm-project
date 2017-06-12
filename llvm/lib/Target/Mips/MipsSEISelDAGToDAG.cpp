@@ -24,11 +24,11 @@
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/SelectionDAGNodes.h"
 #include "llvm/IR/CFG.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Type.h"
-#include "llvm/IR/Dominators.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
@@ -692,7 +692,7 @@ bool MipsSEDAGToDAGISel::selectVSplatMaskL(SDValue N, SDValue &Imm) const {
     // as the original value.
     if (ImmValue == ~(~ImmValue & ~(~ImmValue + 1))) {
 
-      Imm = CurDAG->getTargetConstant(ImmValue.countPopulation(), SDLoc(N),
+      Imm = CurDAG->getTargetConstant(ImmValue.countPopulation() - 1, SDLoc(N),
                                       EltTy);
       return true;
     }
@@ -724,7 +724,7 @@ bool MipsSEDAGToDAGISel::selectVSplatMaskR(SDValue N, SDValue &Imm) const {
     // Extract the run of set bits starting with bit zero, and test that the
     // result is the same as the original value
     if (ImmValue == (ImmValue & ~(ImmValue + 1))) {
-      Imm = CurDAG->getTargetConstant(ImmValue.countPopulation(), SDLoc(N),
+      Imm = CurDAG->getTargetConstant(ImmValue.countPopulation() - 1, SDLoc(N),
                                       EltTy);
       return true;
     }

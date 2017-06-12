@@ -703,6 +703,7 @@ static const LangAS::Map *getAddressSpaceMap(const TargetInfo &T,
     // The fake address space map must have a distinct entry for each
     // language-specific address space.
     static const unsigned FakeAddrSpaceMap[] = {
+      0, // Default
       1, // opencl_global
       3, // opencl_local
       2, // opencl_constant
@@ -1938,9 +1939,8 @@ TypeInfo ASTContext::getTypeInfoImpl(const Type *T) const {
   break;
 
   case Type::Pipe: {
-    TypeInfo Info = getTypeInfo(cast<PipeType>(T)->getElementType());
-    Width = Info.Width;
-    Align = Info.Align;
+    Width = Target->getPointerWidth(getTargetAddressSpace(LangAS::opencl_global));
+    Align = Target->getPointerAlign(getTargetAddressSpace(LangAS::opencl_global));
   }
 
   }
@@ -6239,6 +6239,8 @@ void ASTContext::getObjCEncodingForTypeImpl(QualType T, std::string& S,
       S += "{objc_class=}";
       return;
     }
+    // TODO: Double check to make sure this intentially falls through.
+    LLVM_FALLTHROUGH;
   }
   
   case Type::ObjCInterface: {
@@ -7917,6 +7919,8 @@ QualType ASTContext::mergeFunctionTypes(QualType lhs, QualType rhs,
 
   if (lbaseInfo.getProducesResult() != rbaseInfo.getProducesResult())
     return QualType();
+  if (lbaseInfo.getNoCallerSavedRegs() != rbaseInfo.getNoCallerSavedRegs())
+    return QualType();
 
   // FIXME: some uses, e.g. conditional exprs, really want this to be 'both'.
   bool NoReturn = lbaseInfo.getNoReturn() || rbaseInfo.getNoReturn();
@@ -8727,7 +8731,8 @@ static QualType DecodeTypeFromStr(const char *&Str, const ASTContext &Context,
       char *End;
       unsigned AddrSpace = strtoul(Str, &End, 10);
       if (End != Str && AddrSpace != 0) {
-        Type = Context.getAddrSpaceQualType(Type, AddrSpace);
+        Type = Context.getAddrSpaceQualType(
+            Type, AddrSpace + LangAS::FirstTargetAddressSpace);
         Str = End;
       }
       if (c == '*')
@@ -8895,7 +8900,7 @@ GVALinkage ASTContext::GetGVALinkageForFunction(const FunctionDecl *FD) const {
       *this, basicGVALinkageForFunction(*this, FD), FD);
   auto EK = ExternalASTSource::EK_ReplyHazy;
   if (auto *Ext = getExternalSource())
-    EK = Ext->hasExternalDefinitions(FD->getOwningModuleID());
+    EK = Ext->hasExternalDefinitions(FD);
   switch (EK) {
   case ExternalASTSource::EK_Never:
     if (L == GVA_DiscardableODR)
@@ -8991,7 +8996,7 @@ GVALinkage ASTContext::GetGVALinkageForVariable(const VarDecl *VD) {
       *this, basicGVALinkageForVariable(*this, VD), VD);
 }
 
-bool ASTContext::DeclMustBeEmitted(const Decl *D, bool ForModularCodegen) {
+bool ASTContext::DeclMustBeEmitted(const Decl *D) {
   if (const VarDecl *VD = dyn_cast<VarDecl>(D)) {
     if (!VD->isFileVarDecl())
       return false;
@@ -9056,9 +9061,6 @@ bool ASTContext::DeclMustBeEmitted(const Decl *D, bool ForModularCodegen) {
     }
 
     GVALinkage Linkage = GetGVALinkageForFunction(FD);
-
-    if (Linkage == GVA_DiscardableODR && ForModularCodegen)
-      return true;
 
     // static, static inline, always_inline, and extern inline functions can
     // always be deferred.  Normal inline functions can be deferred in C99/C++.
@@ -9415,10 +9417,8 @@ createDynTypedNode(const NestedNameSpecifierLoc &Node) {
           if (!NodeOrVector.template is<ASTContext::ParentVector *>()) {
             auto *Vector = new ASTContext::ParentVector(
                 1, getSingleDynTypedNodeFromParentMap(NodeOrVector));
-            if (auto *Node =
-                    NodeOrVector
-                        .template dyn_cast<ast_type_traits::DynTypedNode *>())
-              delete Node;
+            delete NodeOrVector
+                    .template dyn_cast<ast_type_traits::DynTypedNode *>();
             NodeOrVector = Vector;
           }
 
@@ -9544,6 +9544,13 @@ uint64_t ASTContext::getTargetNullPointerValue(QualType QT) const {
     AS = QT->getPointeeType().getAddressSpace();
 
   return getTargetInfo().getNullPointerValue(AS);
+}
+
+unsigned ASTContext::getTargetAddressSpace(unsigned AS) const {
+  if (AS >= LangAS::FirstTargetAddressSpace)
+    return AS - LangAS::FirstTargetAddressSpace;
+  else
+    return (*AddrSpaceMap)[AS];
 }
 
 // Explicitly instantiate this in case a Redeclarable<T> is used from a TU that

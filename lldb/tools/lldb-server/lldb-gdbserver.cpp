@@ -21,8 +21,6 @@
 
 // C++ Includes
 
-// Other libraries and framework includes
-#include "llvm/ADT/StringRef.h"
 
 #include "Acceptor.h"
 #include "LLDBServerUtilities.h"
@@ -35,7 +33,9 @@
 #include "lldb/Host/Pipe.h"
 #include "lldb/Host/Socket.h"
 #include "lldb/Host/StringConvert.h"
-#include "lldb/Utility/Error.h"
+#include "lldb/Utility/Status.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/Support/Errno.h"
 
 #ifndef LLGS_PROGRAM_NAME
 #define LLGS_PROGRAM_NAME "lldb-server"
@@ -112,7 +112,7 @@ static void display_usage(const char *progname, const char *subcommand) {
 
 void handle_attach_to_pid(GDBRemoteCommunicationServerLLGS &gdb_server,
                           lldb::pid_t pid) {
-  Error error = gdb_server.AttachToProcess(pid);
+  Status error = gdb_server.AttachToProcess(pid);
   if (error.Fail()) {
     fprintf(stderr, "error: failed to attach to pid %" PRIu64 ": %s\n", pid,
             error.AsCString());
@@ -145,7 +145,7 @@ void handle_attach(GDBRemoteCommunicationServerLLGS &gdb_server,
 
 void handle_launch(GDBRemoteCommunicationServerLLGS &gdb_server, int argc,
                    const char *const argv[]) {
-  Error error;
+  Status error;
   error = gdb_server.SetLaunchArguments(argv, argc);
   if (error.Fail()) {
     fprintf(stderr, "error: failed to set launch args for '%s': %s\n", argv[0],
@@ -170,15 +170,15 @@ void handle_launch(GDBRemoteCommunicationServerLLGS &gdb_server, int argc,
   }
 }
 
-Error writeSocketIdToPipe(Pipe &port_pipe, const std::string &socket_id) {
+Status writeSocketIdToPipe(Pipe &port_pipe, const std::string &socket_id) {
   size_t bytes_written = 0;
   // Write the port number as a C string with the NULL terminator.
   return port_pipe.Write(socket_id.c_str(), socket_id.size() + 1,
                          bytes_written);
 }
 
-Error writeSocketIdToPipe(const char *const named_pipe_path,
-                          const std::string &socket_id) {
+Status writeSocketIdToPipe(const char *const named_pipe_path,
+                           const std::string &socket_id) {
   Pipe port_name_pipe;
   // Wait for 10 seconds for pipe to be opened.
   auto error = port_name_pipe.OpenAsWriterWithTimeout(named_pipe_path, false,
@@ -188,9 +188,9 @@ Error writeSocketIdToPipe(const char *const named_pipe_path,
   return writeSocketIdToPipe(port_name_pipe, socket_id);
 }
 
-Error writeSocketIdToPipe(int unnamed_pipe_fd, const std::string &socket_id) {
+Status writeSocketIdToPipe(int unnamed_pipe_fd, const std::string &socket_id) {
 #if defined(_WIN32)
-  return Error("Unnamed pipes are not supported on Windows.");
+  return Status("Unnamed pipes are not supported on Windows.");
 #else
   Pipe port_pipe{Pipe::kInvalidDescriptor, unnamed_pipe_fd};
   return writeSocketIdToPipe(port_pipe, socket_id);
@@ -202,7 +202,7 @@ void ConnectToRemote(MainLoop &mainloop,
                      bool reverse_connect, const char *const host_and_port,
                      const char *const progname, const char *const subcommand,
                      const char *const named_pipe_path, int unnamed_pipe_fd) {
-  Error error;
+  Status error;
 
   if (host_and_port && host_and_port[0]) {
     // Parse out host and port.
@@ -311,7 +311,7 @@ void ConnectToRemote(MainLoop &mainloop,
 // main
 //----------------------------------------------------------------------
 int main_gdbserver(int argc, char *argv[]) {
-  Error error;
+  Status error;
   MainLoop mainloop;
 #ifndef _WIN32
   // Setup signal handlers first thing.
@@ -398,10 +398,9 @@ int main_gdbserver(int argc, char *argv[]) {
       {
         const ::pid_t new_sid = setsid();
         if (new_sid == -1) {
-          const char *errno_str = strerror(errno);
-          fprintf(stderr, "failed to set new session id for %s (%s)\n",
-                  LLGS_PROGRAM_NAME,
-                  errno_str ? errno_str : "<no error string>");
+          llvm::errs() << llvm::formatv(
+              "failed to set new session id for {0} ({1})\n", LLGS_PROGRAM_NAME,
+              llvm::sys::StrError());
         }
       }
       break;

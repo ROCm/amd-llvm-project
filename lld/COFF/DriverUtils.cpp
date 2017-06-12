@@ -43,7 +43,7 @@ namespace {
 
 class Executor {
 public:
-  explicit Executor(StringRef S) : Saver(Alloc), Prog(Saver.save(S)) {}
+  explicit Executor(StringRef S) : Prog(Saver.save(S)) {}
   void add(StringRef S) { Args.push_back(Saver.save(S)); }
   void add(std::string &S) { Args.push_back(Saver.save(S)); }
   void add(Twine S) { Args.push_back(Saver.save(S)); }
@@ -67,8 +67,6 @@ public:
   }
 
 private:
-  BumpPtrAllocator Alloc;
-  StringSaver Saver;
   StringRef Prog;
   std::vector<StringRef> Args;
 };
@@ -479,6 +477,10 @@ Export parseExport(StringRef Arg) {
       E.Data = true;
       continue;
     }
+    if (Tok.equals_lower("constant")) {
+      E.Constant = true;
+      continue;
+    }
     if (Tok.equals_lower("private")) {
       E.Private = true;
       continue;
@@ -634,7 +636,7 @@ void runMSVCLinker(std::string Rsp, ArrayRef<StringRef> Objects) {
   std::vector<TemporaryFile> Temps;
   for (StringRef S : Objects) {
     Temps.emplace_back("lto", "obj", S);
-    Rsp += quote(Temps.back().Path) + " ";
+    Rsp += quote(Temps.back().Path) + "\n";
   }
 
   log("link.exe " + Rsp);
@@ -695,17 +697,20 @@ opt::InputArgList ArgParser::parse(ArrayRef<const char *> ArgsArr) {
   return Args;
 }
 
-// link.exe has an interesting feature. If LINK environment exists,
-// its contents are handled as a command line string. So you can pass
-// extra arguments using the environment variable.
-opt::InputArgList ArgParser::parseLINK(ArrayRef<const char *> Args) {
+// link.exe has an interesting feature. If LINK or _LINK_ environment
+// variables exist, their contents are handled as command line strings.
+// So you can pass extra arguments using them.
+opt::InputArgList ArgParser::parseLINK(std::vector<const char *> Args) {
   // Concatenate LINK env and command line arguments, and then parse them.
-  Optional<std::string> Env = Process::GetEnv("LINK");
-  if (!Env)
-    return parse(Args);
-  std::vector<const char *> V = tokenize(*Env);
-  V.insert(V.end(), Args.begin(), Args.end());
-  return parse(V);
+  if (Optional<std::string> S = Process::GetEnv("LINK")) {
+    std::vector<const char *> V = tokenize(*S);
+    Args.insert(Args.begin(), V.begin(), V.end());
+  }
+  if (Optional<std::string> S = Process::GetEnv("_LINK_")) {
+    std::vector<const char *> V = tokenize(*S);
+    Args.insert(Args.begin(), V.begin(), V.end());
+  }
+  return parse(Args);
 }
 
 std::vector<const char *> ArgParser::tokenize(StringRef S) {

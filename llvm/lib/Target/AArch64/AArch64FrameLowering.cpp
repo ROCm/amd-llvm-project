@@ -137,6 +137,34 @@ static cl::opt<bool> EnableRedZone("aarch64-redzone",
 
 STATISTIC(NumRedZoneFunctions, "Number of functions using red zone");
 
+/// Look at each instruction that references stack frames and return the stack
+/// size limit beyond which some of these instructions will require a scratch
+/// register during their expansion later.
+static unsigned estimateRSStackSizeLimit(MachineFunction &MF) {
+  // FIXME: For now, just conservatively guestimate based on unscaled indexing
+  // range. We'll end up allocating an unnecessary spill slot a lot, but
+  // realistically that's not a big deal at this stage of the game.
+  for (MachineBasicBlock &MBB : MF) {
+    for (MachineInstr &MI : MBB) {
+      if (MI.isDebugValue() || MI.isPseudo() ||
+          MI.getOpcode() == AArch64::ADDXri ||
+          MI.getOpcode() == AArch64::ADDSXri)
+        continue;
+
+      for (unsigned i = 0, e = MI.getNumOperands(); i != e; ++i) {
+        if (!MI.getOperand(i).isFI())
+          continue;
+
+        int Offset = 0;
+        if (isAArch64FrameOffsetLegal(MI, Offset, nullptr, nullptr, nullptr) ==
+            AArch64FrameOffsetCannotUpdate)
+          return 0;
+      }
+    }
+  }
+  return 255;
+}
+
 bool AArch64FrameLowering::canUseRedZone(const MachineFunction &MF) const {
   if (!EnableRedZone)
     return false;
@@ -266,14 +294,13 @@ static unsigned findScratchNonCalleeSaveRegister(MachineBasicBlock *MBB) {
   if (&MF->front() == MBB)
     return AArch64::X9;
 
-  const TargetRegisterInfo &TRI = *MF->getSubtarget().getRegisterInfo();
-  LivePhysRegs LiveRegs(&TRI);
+  const AArch64Subtarget &Subtarget = MF->getSubtarget<AArch64Subtarget>();
+  const AArch64RegisterInfo &TRI = *Subtarget.getRegisterInfo();
+  LivePhysRegs LiveRegs(TRI);
   LiveRegs.addLiveIns(*MBB);
 
   // Mark callee saved registers as used so we will not choose them.
-  const AArch64Subtarget &Subtarget = MF->getSubtarget<AArch64Subtarget>();
-  const AArch64RegisterInfo *RegInfo = Subtarget.getRegisterInfo();
-  const MCPhysReg *CSRegs = RegInfo->getCalleeSavedRegs(MF);
+  const MCPhysReg *CSRegs = TRI.getCalleeSavedRegs(MF);
   for (unsigned i = 0; CSRegs[i]; ++i)
     LiveRegs.addReg(CSRegs[i]);
 
@@ -992,6 +1019,7 @@ bool AArch64FrameLowering::spillCalleeSavedRegisters(
   SmallVector<RegPairInfo, 8> RegPairs;
 
   computeCalleeSaveRegisterPairs(MF, CSI, TRI, RegPairs);
+  const MachineRegisterInfo &MRI = MF.getRegInfo();
 
   for (auto RPII = RegPairs.rbegin(), RPIE = RegPairs.rend(); RPII != RPIE;
        ++RPII) {
@@ -1023,9 +1051,11 @@ bool AArch64FrameLowering::spillCalleeSavedRegisters(
           dbgs() << ")\n");
 
     MachineInstrBuilder MIB = BuildMI(MBB, MI, DL, TII.get(StrOpc));
-    MBB.addLiveIn(Reg1);
+    if (!MRI.isReserved(Reg1))
+      MBB.addLiveIn(Reg1);
     if (RPI.isPaired()) {
-      MBB.addLiveIn(Reg2);
+      if (!MRI.isReserved(Reg2))
+        MBB.addLiveIn(Reg2);
       MIB.addReg(Reg2, getPrologueDeath(MF, Reg2));
       MIB.addMemOperand(MF.getMachineMemOperand(
           MachinePointerInfo::getFixedStack(MF, RPI.FrameIdx + 1),
@@ -1126,7 +1156,7 @@ void AArch64FrameLowering::determineCalleeSaves(MachineFunction &MF,
   if (RegInfo->hasBasePointer(MF))
     BasePointerReg = RegInfo->getBaseRegister();
 
-  bool ExtraCSSpill = false;
+  unsigned ExtraCSSpill = 0;
   const MCPhysReg *CSRegs = RegInfo->getCalleeSavedRegs(&MF);
   // Figure out which callee-saved registers to save/restore.
   for (unsigned i = 0; CSRegs[i]; ++i) {
@@ -1154,13 +1184,12 @@ void AArch64FrameLowering::determineCalleeSaves(MachineFunction &MF,
       SavedRegs.set(PairedReg);
       if (AArch64::GPR64RegClass.contains(PairedReg) &&
           !RegInfo->isReservedReg(MF, PairedReg))
-        ExtraCSSpill = true;
+        ExtraCSSpill = PairedReg;
     }
   }
 
   DEBUG(dbgs() << "*** determineCalleeSaves\nUsed CSRs:";
-        for (int Reg = SavedRegs.find_first(); Reg != -1;
-             Reg = SavedRegs.find_next(Reg))
+        for (unsigned Reg : SavedRegs.set_bits())
           dbgs() << ' ' << PrintReg(Reg, RegInfo);
         dbgs() << "\n";);
 
@@ -1168,16 +1197,13 @@ void AArch64FrameLowering::determineCalleeSaves(MachineFunction &MF,
   unsigned NumRegsSpilled = SavedRegs.count();
   bool CanEliminateFrame = NumRegsSpilled == 0;
 
-  // FIXME: Set BigStack if any stack slot references may be out of range.
-  // For now, just conservatively guestimate based on unscaled indexing
-  // range. We'll end up allocating an unnecessary spill slot a lot, but
-  // realistically that's not a big deal at this stage of the game.
   // The CSR spill slots have not been allocated yet, so estimateStackSize
   // won't include them.
   MachineFrameInfo &MFI = MF.getFrameInfo();
   unsigned CFSize = MFI.estimateStackSize(MF) + 8 * NumRegsSpilled;
   DEBUG(dbgs() << "Estimated stack frame size: " << CFSize << " bytes.\n");
-  bool BigStack = (CFSize >= 256);
+  unsigned EstimatedStackSizeLimit = estimateRSStackSizeLimit(MF);
+  bool BigStack = (CFSize > EstimatedStackSizeLimit);
   if (BigStack || !CanEliminateFrame || RegInfo->cannotEliminateFrame(MF))
     AFI->setHasStackFrame(true);
 
@@ -1187,8 +1213,8 @@ void AArch64FrameLowering::determineCalleeSaves(MachineFunction &MF,
   // register scavenging. If we already spilled an extra callee-saved register
   // above to keep the number of spills even, we don't need to do anything else
   // here.
-  if (BigStack && !ExtraCSSpill) {
-    if (UnspilledCSGPR != AArch64::NoRegister) {
+  if (BigStack) {
+    if (!ExtraCSSpill && UnspilledCSGPR != AArch64::NoRegister) {
       DEBUG(dbgs() << "Spilling " << PrintReg(UnspilledCSGPR, RegInfo)
             << " to get a scratch register.\n");
       SavedRegs.set(UnspilledCSGPR);
@@ -1197,15 +1223,18 @@ void AArch64FrameLowering::determineCalleeSaves(MachineFunction &MF,
       // store the pair.
       if (produceCompactUnwindFrame(MF))
         SavedRegs.set(UnspilledCSGPRPaired);
-      ExtraCSSpill = true;
+      ExtraCSSpill = UnspilledCSGPRPaired;
       NumRegsSpilled = SavedRegs.count();
     }
 
     // If we didn't find an extra callee-saved register to spill, create
     // an emergency spill slot.
-    if (!ExtraCSSpill) {
-      const TargetRegisterClass *RC = &AArch64::GPR64RegClass;
-      int FI = MFI.CreateStackObject(RC->getSize(), RC->getAlignment(), false);
+    if (!ExtraCSSpill || MF.getRegInfo().isPhysRegUsed(ExtraCSSpill)) {
+      const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
+      const TargetRegisterClass &RC = AArch64::GPR64RegClass;
+      unsigned Size = TRI->getSpillSize(RC);
+      unsigned Align = TRI->getSpillAlignment(RC);
+      int FI = MFI.CreateStackObject(Size, Align, false);
       RS->addScavengingFrameIndex(FI);
       DEBUG(dbgs() << "No available CS registers, allocated fi#" << FI
                    << " as the emergency spill slot.\n");

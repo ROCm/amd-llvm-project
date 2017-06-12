@@ -23,10 +23,11 @@
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/PatternMatch.h"
+#include "llvm/Support/Debug.h"
+#include "llvm/Support/KnownBits.h"
+#include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Utils/Local.h"
-#include "llvm/Support/Debug.h"
-#include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
 #include <array>
@@ -57,6 +58,9 @@ static cl::opt<bool> OnlyNonNestedMemmove("only-nonnested-memmove-idiom",
 cl::opt<bool> HexagonVolatileMemcpy("disable-hexagon-volatile-memcpy",
   cl::Hidden, cl::init(false),
   cl::desc("Enable Hexagon-specific memcpy for volatile destination."));
+
+static cl::opt<unsigned> SimplifyLimit("hlir-simplify-limit", cl::init(10000),
+  cl::Hidden, cl::desc("Maximum number of simplification steps in HLIR"));
 
 static const char *HexagonVolatileMemcpyName
   = "hexagon_memcpy_forward_vp4cp4n2";
@@ -398,7 +402,7 @@ void Simplifier::Context::cleanup() {
   for (Value *V : Clones) {
     Instruction *U = cast<Instruction>(V);
     if (!U->getParent())
-      delete U;
+      U->deleteValue();
   }
 }
 
@@ -476,7 +480,7 @@ Value *Simplifier::simplify(Context &C) {
   WorkListType Q;
   Q.push_back(C.Root);
   unsigned Count = 0;
-  const unsigned Limit = 100000;
+  const unsigned Limit = SimplifyLimit;
 
   while (!Q.empty()) {
     if (Count++ >= Limit)
@@ -500,8 +504,7 @@ Value *Simplifier::simplify(Context &C) {
         Q.push_back(Op);
     }
   }
-  assert(Count < Limit && "Infinite loop in HLIR/simplify?");
-  return C.Root;
+  return Count < Limit ? C.Root : nullptr;
 }
 
 
@@ -1206,10 +1209,9 @@ bool PolynomialMultiplyRecognize::highBitsAreZero(Value *V,
   if (!T)
     return false;
 
-  unsigned BW = T->getBitWidth();
-  APInt K0(BW, 0), K1(BW, 0);
-  computeKnownBits(V, K0, K1, DL);
-  return K0.countLeadingOnes() >= IterCount;
+  KnownBits Known(T->getBitWidth());
+  computeKnownBits(V, Known, DL);
+  return Known.countMinLeadingZeros() >= IterCount;
 }
 
 
@@ -1420,7 +1422,7 @@ bool PolynomialMultiplyRecognize::convertShiftsToLeft(BasicBlock *LoopB,
 
 void PolynomialMultiplyRecognize::cleanupLoopBody(BasicBlock *LoopB) {
   for (auto &I : *LoopB)
-    if (Value *SV = SimplifyInstruction(&I, DL, &TLI, &DT))
+    if (Value *SV = SimplifyInstruction(&I, {DL, &TLI, &DT}))
       I.replaceAllUsesWith(SV);
 
   for (auto I = LoopB->begin(), N = I; I != LoopB->end(); I = N) {
@@ -2044,7 +2046,7 @@ CleanupAndExit:
                                SCEV::FlagNUW);
   Value *NumBytes = Expander.expandCodeFor(NumBytesS, IntPtrTy, ExpPt);
   if (Instruction *In = dyn_cast<Instruction>(NumBytes))
-    if (Value *Simp = SimplifyInstruction(In, *DL, TLI, DT))
+    if (Value *Simp = SimplifyInstruction(In, {*DL, TLI, DT}))
       NumBytes = Simp;
 
   CallInst *NewCall;
@@ -2146,8 +2148,7 @@ CleanupAndExit:
       Type *VoidTy = Type::getVoidTy(Ctx);
       Module *M = Func->getParent();
       Constant *CF = M->getOrInsertFunction(HexagonVolatileMemcpyName, VoidTy,
-                                            Int32PtrTy, Int32PtrTy, Int32Ty,
-                                            nullptr);
+                                            Int32PtrTy, Int32PtrTy, Int32Ty);
       Function *Fn = cast<Function>(CF);
       Fn->setLinkage(Function::ExternalLinkage);
 
@@ -2157,7 +2158,7 @@ CleanupAndExit:
       Value *NumWords = Expander.expandCodeFor(NumWordsS, Int32Ty,
                                                MemmoveB->getTerminator());
       if (Instruction *In = dyn_cast<Instruction>(NumWords))
-        if (Value *Simp = SimplifyInstruction(In, *DL, TLI, DT))
+        if (Value *Simp = SimplifyInstruction(In, {*DL, TLI, DT}))
           NumWords = Simp;
 
       Value *Op0 = (StoreBasePtr->getType() == Int32PtrTy)

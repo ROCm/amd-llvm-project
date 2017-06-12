@@ -282,8 +282,7 @@ define <16 x i32> @shuffle_v16i32_0_1_2_19_u_u_u_u_u_u_u_u_u_u_u_u(<16 x i32> %a
 define <8 x float> @shuffle_v16f32_extract_256(float* %RET, float* %a) {
 ; ALL-LABEL: shuffle_v16f32_extract_256:
 ; ALL:       # BB#0:
-; ALL-NEXT:    vmovups (%rsi), %zmm0
-; ALL-NEXT:    vextractf32x8 $1, %zmm0, %ymm0
+; ALL-NEXT:    vmovups 32(%rsi), %ymm0
 ; ALL-NEXT:    retq
   %ptr_a = bitcast float* %a to <16 x float>*
   %v_a = load <16 x float>, <16 x float>* %ptr_a, align 4
@@ -402,6 +401,16 @@ define <16 x i32> @shuffle_v8i32_17_16_01_00_21_20_05_04_25_24_09_08_29_28_13_12
 ; ALL-NEXT:    retq
   %shuffle = shufflevector <16 x i32> %a, <16 x i32> %b, <16 x i32> <i32 17, i32 16, i32 01, i32 00, i32 21, i32 20, i32 05, i32 04, i32 25, i32 24, i32 09, i32 08, i32 29, i32 28, i32 13, i32 12>
   ret <16 x i32> %shuffle
+}
+
+define <16 x float> @shuffle_v8f32_v16f32_04_04_04_04_04_04_04_04_04_04_04_04_04_04_04_04(<8 x float> %a) {
+; ALL-LABEL: shuffle_v8f32_v16f32_04_04_04_04_04_04_04_04_04_04_04_04_04_04_04_04:
+; ALL:       # BB#0:
+; ALL-NEXT:    vextractf128 $1, %ymm0, %xmm0
+; ALL-NEXT:    vbroadcastss %xmm0, %zmm0
+; ALL-NEXT:    retq
+  %shuffle = shufflevector <8 x float> %a, <8 x float> undef, <16 x i32> <i32 4, i32 4, i32 4, i32 4, i32 4, i32 4, i32 4, i32 4, i32 4, i32 4, i32 4, i32 4, i32 4, i32 4, i32 4, i32 4>
+  ret <16 x float> %shuffle
 }
 
 define <16 x i32> @mask_shuffle_v16i32_02_03_04_05_06_07_08_09_10_11_12_13_14_15_00_01(<16 x i32> %a, <16 x i32> %passthru, i16 %mask) {

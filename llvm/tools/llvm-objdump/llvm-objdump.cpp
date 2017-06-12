@@ -485,10 +485,13 @@ void SourcePrinter::printSourceLine(raw_ostream &OS, uint64_t Address,
     auto FileBuffer = SourceCache.find(LineInfo.FileName);
     if (FileBuffer != SourceCache.end()) {
       auto LineBuffer = LineCache.find(LineInfo.FileName);
-      if (LineBuffer != LineCache.end())
+      if (LineBuffer != LineCache.end()) {
+        if (LineInfo.Line > LineBuffer->second.size())
+          return;
         // Vector begins at 0, line numbers are non-zero
         OS << Delimiter << LineBuffer->second[LineInfo.Line - 1].ltrim()
            << "\n";
+      }
     }
   }
   OldLineInfo = LineInfo;
@@ -2061,7 +2064,10 @@ static void DumpObject(ObjectFile *o, const Archive *a = nullptr) {
   if (DwarfDumpType != DIDT_Null) {
     std::unique_ptr<DIContext> DICtx(new DWARFContextInMemory(*o));
     // Dump the complete DWARF structure.
-    DICtx->dump(outs(), DwarfDumpType, true /* DumpEH */);
+    DIDumpOptions DumpOpts;
+    DumpOpts.DumpType = DwarfDumpType;
+    DumpOpts.DumpEH = true;
+    DICtx->dump(outs(), DumpOpts);
   }
 }
 

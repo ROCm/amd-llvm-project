@@ -6,15 +6,15 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#include "DebugMap.h"
 #include "BinaryHolder.h"
 #include "DebugMap.h"
-#include "dsymutil.h"
 #include "MachOUtils.h"
 #include "NonRelocatableStringpool.h"
+#include "dsymutil.h"
 #include "llvm/ADT/IntervalMap.h"
-#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringMap.h"
+#include "llvm/BinaryFormat/Dwarf.h"
 #include "llvm/CodeGen/AsmPrinter.h"
 #include "llvm/CodeGen/DIE.h"
 #include "llvm/Config/config.h"
@@ -23,8 +23,8 @@
 #include "llvm/DebugInfo/DWARF/DWARFFormValue.h"
 #include "llvm/MC/MCAsmBackend.h"
 #include "llvm/MC/MCAsmInfo.h"
-#include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCCodeEmitter.h"
+#include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCDwarf.h"
 #include "llvm/MC/MCInstrInfo.h"
 #include "llvm/MC/MCObjectFileInfo.h"
@@ -33,7 +33,6 @@
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/MCTargetOptionsCommandFlags.h"
 #include "llvm/Object/MachO.h"
-#include "llvm/Support/Dwarf.h"
 #include "llvm/Support/LEB128.h"
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Target/TargetMachine.h"
@@ -223,7 +222,7 @@ public:
 
   DIE *getOutputUnitDIE() const {
     if (NewUnit)
-      return &const_cast<DIEUnit &>(*NewUnit).getUnitDie();
+      return &const_cast<BasicDIEUnit &>(*NewUnit).getUnitDie();
     return nullptr;
   }
 
@@ -333,7 +332,7 @@ private:
   DWARFUnit &OrigUnit;
   unsigned ID;
   std::vector<DIEInfo> Info; ///< DIE info indexed by DIE index.
-  Optional<DIEUnit> NewUnit;
+  Optional<BasicDIEUnit> NewUnit;
 
   uint64_t StartOffset;
   uint64_t NextUnitOffset;
@@ -522,7 +521,8 @@ public:
 
   /// \brief Emit the abbreviation table \p Abbrevs to the
   /// debug_abbrev section.
-  void emitAbbrevs(const std::vector<std::unique_ptr<DIEAbbrev>> &Abbrevs);
+  void emitAbbrevs(const std::vector<std::unique_ptr<DIEAbbrev>> &Abbrevs,
+                   unsigned DwarfVersion);
 
   /// \brief Emit the string table described by \p Pool.
   void emitStrings(const NonRelocatableStringpool &Pool);
@@ -690,8 +690,10 @@ void DwarfStreamer::emitCompileUnitHeader(CompileUnit &Unit) {
 /// \brief Emit the \p Abbrevs array as the shared abbreviation table
 /// for the linked Dwarf file.
 void DwarfStreamer::emitAbbrevs(
-    const std::vector<std::unique_ptr<DIEAbbrev>> &Abbrevs) {
+    const std::vector<std::unique_ptr<DIEAbbrev>> &Abbrevs,
+    unsigned DwarfVersion) {
   MS->SwitchSection(MOFI->getDwarfAbbrevSection());
+  MC->setDwarfVersion(DwarfVersion);
   Asm->emitDwarfAbbrevs(Abbrevs);
 }
 
@@ -1129,6 +1131,12 @@ private:
   /// \brief Called at the end of a debug object link.
   void endDebugObject();
 
+  /// Remembers the newest DWARF version we've seen in a unit.
+  void maybeUpdateMaxDwarfVersion(unsigned Version) {
+    if (MaxDwarfVersion < Version)
+      MaxDwarfVersion = Version;
+  }
+
   /// Keeps track of relocations.
   class RelocationManager {
     struct ValidReloc {
@@ -1430,6 +1438,7 @@ private:
   std::unique_ptr<DwarfStreamer> Streamer;
   uint64_t OutputDebugInfoSize;
   unsigned UnitID; ///< A unique ID that identifies each compile unit.
+  unsigned MaxDwarfVersion = 0;
 
   /// The units of the current debug map object.
   std::vector<std::unique_ptr<CompileUnit>> Units;
@@ -2859,7 +2868,7 @@ void DwarfLinker::patchRangesForUnit(const CompileUnit &Unit,
   DWARFDebugRangeList RangeList;
   const auto &FunctionRanges = Unit.getFunctionRanges();
   unsigned AddressSize = Unit.getOrigUnit().getAddressByteSize();
-  DataExtractor RangeExtractor(OrigDwarf.getRangeSection(),
+  DataExtractor RangeExtractor(OrigDwarf.getRangeSection().Data,
                                OrigDwarf.isLittleEndian(), AddressSize);
   auto InvalidRange = FunctionRanges.end(), CurrRange = InvalidRange;
   DWARFUnit &OrigUnit = Unit.getOrigUnit();
@@ -2874,7 +2883,7 @@ void DwarfLinker::patchRangesForUnit(const CompileUnit &Unit,
   for (const auto &RangeAttribute : Unit.getRangesAttributes()) {
     uint32_t Offset = RangeAttribute.get();
     RangeAttribute.set(Streamer->getRangesSectionSize());
-    RangeList.extract(RangeExtractor, &Offset);
+    RangeList.extract(RangeExtractor, &Offset, OrigDwarf.getRangeSection().Relocs);
     const auto &Entries = RangeList.getEntries();
     if (!Entries.empty()) {
       const DWARFDebugRangeList::RangeListEntry &First = Entries.front();
@@ -3435,9 +3444,11 @@ bool DwarfLinker::link(const DebugMap &Map) {
         CUDie.dump(outs(), 0);
       }
 
-      if (!registerModuleReference(CUDie, *CU, ModuleMap))
+      if (!registerModuleReference(CUDie, *CU, ModuleMap)) {
         Units.push_back(llvm::make_unique<CompileUnit>(*CU, UnitID++,
                                                        !Options.NoODR, ""));
+        maybeUpdateMaxDwarfVersion(CU->getVersion());
+      }
     }
 
     // Now build the DIE parent links that we will use during the next phase.
@@ -3471,7 +3482,7 @@ bool DwarfLinker::link(const DebugMap &Map) {
 
   // Emit everything that's global.
   if (!Options.NoOutput) {
-    Streamer->emitAbbrevs(Abbreviations);
+    Streamer->emitAbbrevs(Abbreviations, MaxDwarfVersion);
     Streamer->emitStrings(StringPool);
   }
 

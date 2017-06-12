@@ -16,11 +16,11 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "PPC.h"
-#include "PPCInstrInfo.h"
 #include "InstPrinter/PPCInstPrinter.h"
 #include "MCTargetDesc/PPCMCExpr.h"
 #include "MCTargetDesc/PPCMCTargetDesc.h"
+#include "PPC.h"
+#include "PPCInstrInfo.h"
 #include "PPCMachineFunctionInfo.h"
 #include "PPCSubtarget.h"
 #include "PPCTargetMachine.h"
@@ -29,6 +29,8 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Triple.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/BinaryFormat/ELF.h"
+#include "llvm/BinaryFormat/MachO.h"
 #include "llvm/CodeGen/AsmPrinter.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineFunction.h"
@@ -55,11 +57,9 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/CodeGen.h"
 #include "llvm/Support/Debug.h"
-#include "llvm/Support/ELF.h"
 #include "llvm/Support/ErrorHandling.h"
-#include "llvm/Support/MachO.h"
-#include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/TargetRegistry.h"
+#include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
 #include <algorithm>
 #include <cassert>
@@ -405,7 +405,7 @@ void PPCAsmPrinter::LowerPATCHPOINT(StackMaps &SM, const MachineInstr &MI) {
                                       .addImm(CallTarget & 0xFFFF));
 
       // Save the current TOC pointer before the remote call.
-      int TOCSaveOffset = Subtarget->isELFv2ABI() ? 24 : 40;
+      int TOCSaveOffset = Subtarget->getFrameLowering()->getTOCSaveOffset();
       EmitToStreamer(*OutStreamer, MCInstBuilder(PPC::STD)
                                       .addReg(PPC::X2)
                                       .addImm(TOCSaveOffset)

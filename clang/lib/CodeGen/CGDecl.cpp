@@ -11,14 +11,15 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "CodeGenFunction.h"
 #include "CGBlocks.h"
 #include "CGCXXABI.h"
 #include "CGCleanup.h"
 #include "CGDebugInfo.h"
 #include "CGOpenCLRuntime.h"
 #include "CGOpenMPRuntime.h"
+#include "CodeGenFunction.h"
 #include "CodeGenModule.h"
+#include "TargetInfo.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/CharUnits.h"
 #include "clang/AST/Decl.h"
@@ -152,7 +153,14 @@ void CodeGenFunction::EmitDecl(const Decl &D) {
 /// EmitVarDecl - This method handles emission of any variable declaration
 /// inside a function, including static vars etc.
 void CodeGenFunction::EmitVarDecl(const VarDecl &D) {
-  if (D.isStaticLocal()) {
+  if (D.hasExternalStorage())
+    // Don't emit it now, allow it to be emitted lazily on its first use.
+    return;
+
+  // Some function-scope variable does not have static storage but still
+  // needs to be emitted like a static variable, e.g. a function-scope
+  // variable in constant address space in OpenCL.
+  if (D.getStorageDuration() != SD_Automatic) {
     llvm::GlobalValue::LinkageTypes Linkage =
         CGM.getLLVMLinkageVarDefinition(&D, /*isConstant=*/false);
 
@@ -162,10 +170,6 @@ void CodeGenFunction::EmitVarDecl(const VarDecl &D) {
 
     return EmitStaticVarDecl(D, Linkage);
   }
-
-  if (D.hasExternalStorage())
-    // Don't emit it now, allow it to be emitted lazily on its first use.
-    return;
 
   if (D.getType().getAddressSpace() == LangAS::opencl_local)
     return CGM.getOpenCLRuntime().EmitWorkGroupLocalVarDecl(*this, D);
@@ -401,6 +405,13 @@ void CodeGenFunction::EmitStaticVarDecl(const VarDecl &D,
 
   if (D.hasAttr<AnnotateAttr>())
     CGM.AddGlobalAnnotations(&D, var);
+
+  if (auto *SA = D.getAttr<PragmaClangBSSSectionAttr>())
+    var->addAttribute("bss-section", SA->getName());
+  if (auto *SA = D.getAttr<PragmaClangDataSectionAttr>())
+    var->addAttribute("data-section", SA->getName());
+  if (auto *SA = D.getAttr<PragmaClangRodataSectionAttr>())
+    var->addAttribute("rodata-section", SA->getName());
 
   if (const SectionAttr *SA = D.getAttr<SectionAttr>())
     var->setSection(SA->getName());
@@ -924,7 +935,7 @@ llvm::Value *CodeGenFunction::EmitLifetimeStart(uint64_t Size,
     return nullptr;
 
   llvm::Value *SizeV = llvm::ConstantInt::get(Int64Ty, Size);
-  Addr = Builder.CreateBitCast(Addr, Int8PtrTy);
+  Addr = Builder.CreateBitCast(Addr, AllocaInt8PtrTy);
   llvm::CallInst *C =
       Builder.CreateCall(CGM.getLLVMLifetimeStartFn(), {SizeV, Addr});
   C->setDoesNotThrow();
@@ -932,7 +943,7 @@ llvm::Value *CodeGenFunction::EmitLifetimeStart(uint64_t Size,
 }
 
 void CodeGenFunction::EmitLifetimeEnd(llvm::Value *Size, llvm::Value *Addr) {
-  Addr = Builder.CreateBitCast(Addr, Int8PtrTy);
+  Addr = Builder.CreateBitCast(Addr, AllocaInt8PtrTy);
   llvm::CallInst *C =
       Builder.CreateCall(CGM.getLLVMLifetimeEndFn(), {Size, Addr});
   C->setDoesNotThrow();
@@ -1102,6 +1113,21 @@ CodeGenFunction::EmitAutoVarAlloca(const VarDecl &D) {
     address = Address(vla, alignment);
   }
 
+  // Alloca always returns a pointer in alloca address space, which may
+  // be different from the type defined by the language. For example,
+  // in C++ the auto variables are in the default address space. Therefore
+  // cast alloca to the expected address space when necessary.
+  auto T = D.getType();
+  assert(T.getAddressSpace() == LangAS::Default);
+  if (getASTAllocaAddressSpace() != LangAS::Default) {
+    auto *Addr = getTargetHooks().performAddrSpaceCast(
+        *this, address.getPointer(), getASTAllocaAddressSpace(),
+        T.getAddressSpace(),
+        address.getElementType()->getPointerTo(
+            getContext().getTargetAddressSpace(T.getAddressSpace())),
+        /*non-null*/ true);
+    address = Address(Addr, address.getAlignment());
+  }
   setAddrOfLocalVar(&D, address);
   emission.Addr = address;
 
@@ -1117,6 +1143,12 @@ CodeGenFunction::EmitAutoVarAlloca(const VarDecl &D) {
 
   if (D.hasAttr<AnnotateAttr>())
     EmitVarAnnotations(&D, address.getPointer());
+
+  // Make sure we call @llvm.lifetime.end.
+  if (emission.useLifetimeMarkers())
+    EHStack.pushCleanup<CallLifetimeEnd>(NormalEHLifetimeMarker,
+                                         emission.getAllocatedAddress(),
+                                         emission.getSizeForLifetimeMarkers());
 
   return emission;
 }
@@ -1407,13 +1439,6 @@ void CodeGenFunction::EmitAutoVarCleanups(const AutoVarEmission &emission) {
   if (!HaveInsertPoint()) return;
 
   const VarDecl &D = *emission.Variable;
-
-  // Make sure we call @llvm.lifetime.end.  This needs to happen
-  // *last*, so the cleanup needs to be pushed *first*.
-  if (emission.useLifetimeMarkers())
-    EHStack.pushCleanup<CallLifetimeEnd>(NormalEHLifetimeMarker,
-                                         emission.getAllocatedAddress(),
-                                         emission.getSizeForLifetimeMarkers());
 
   // Check the type for a cleanup.
   if (QualType::DestructionKind dtorKind = D.getType().isDestructedType())
@@ -1726,17 +1751,19 @@ void CodeGenFunction::pushRegularPartialArrayCleanup(llvm::Value *arrayBegin,
 
 /// Lazily declare the @llvm.lifetime.start intrinsic.
 llvm::Constant *CodeGenModule::getLLVMLifetimeStartFn() {
-  if (LifetimeStartFn) return LifetimeStartFn;
+  if (LifetimeStartFn)
+    return LifetimeStartFn;
   LifetimeStartFn = llvm::Intrinsic::getDeclaration(&getModule(),
-                                            llvm::Intrinsic::lifetime_start);
+    llvm::Intrinsic::lifetime_start, AllocaInt8PtrTy);
   return LifetimeStartFn;
 }
 
 /// Lazily declare the @llvm.lifetime.end intrinsic.
 llvm::Constant *CodeGenModule::getLLVMLifetimeEndFn() {
-  if (LifetimeEndFn) return LifetimeEndFn;
+  if (LifetimeEndFn)
+    return LifetimeEndFn;
   LifetimeEndFn = llvm::Intrinsic::getDeclaration(&getModule(),
-                                              llvm::Intrinsic::lifetime_end);
+    llvm::Intrinsic::lifetime_end, AllocaInt8PtrTy);
   return LifetimeEndFn;
 }
 
