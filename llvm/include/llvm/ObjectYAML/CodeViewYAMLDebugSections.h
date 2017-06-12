@@ -17,13 +17,40 @@
 
 #include "llvm/DebugInfo/CodeView/CodeView.h"
 #include "llvm/DebugInfo/CodeView/DebugSubsection.h"
+#include "llvm/DebugInfo/CodeView/DebugSubsectionRecord.h"
 #include "llvm/ObjectYAML/YAML.h"
 
 namespace llvm {
-namespace CodeViewYAML {
-namespace detail {
-struct C13FragmentBase;
+
+namespace codeview {
+class DebugStringTableSubsection;
+class DebugStringTableSubsectionRef;
+class DebugChecksumsSubsectionRef;
+class DebugStringTableSubsection;
+class DebugChecksumsSubsection;
 }
+namespace CodeViewYAML {
+
+namespace detail {
+struct YAMLSubsectionBase;
+}
+
+struct YAMLFrameData {
+  uint32_t RvaStart;
+  uint32_t CodeSize;
+  uint32_t LocalSize;
+  uint32_t ParamsSize;
+  uint32_t MaxStackSize;
+  StringRef FrameFunc;
+  uint32_t PrologSize;
+  uint32_t SavedRegsSize;
+  uint32_t Flags;
+};
+
+struct YAMLCrossModuleImport {
+  StringRef ModuleName;
+  std::vector<uint32_t> ImportIds;
+};
 
 struct SourceLineEntry {
   uint32_t Offset;
@@ -74,18 +101,33 @@ struct InlineeInfo {
   std::vector<InlineeSite> Sites;
 };
 
-struct SourceFileInfo {
-  std::vector<SourceFileChecksumEntry> FileChecksums;
-  std::vector<SourceLineInfo> LineFragments;
-  std::vector<InlineeInfo> Inlinees;
+struct YAMLDebugSubsection {
+  static Expected<YAMLDebugSubsection>
+  fromCodeViewSubection(const codeview::DebugStringTableSubsectionRef &Strings,
+                        const codeview::DebugChecksumsSubsectionRef &Checksums,
+                        const codeview::DebugSubsectionRecord &SS);
+
+  std::shared_ptr<detail::YAMLSubsectionBase> Subsection;
 };
 
-struct C13DebugSection {
-  std::vector<detail::C13FragmentBase> Fragments;
-};
+Expected<std::vector<std::unique_ptr<codeview::DebugSubsection>>>
+toCodeViewSubsectionList(BumpPtrAllocator &Allocator,
+                         ArrayRef<YAMLDebugSubsection> Subsections,
+                         codeview::DebugStringTableSubsection &Strings);
+Expected<std::vector<std::unique_ptr<codeview::DebugSubsection>>>
+toCodeViewSubsectionList(
+    BumpPtrAllocator &Allocator, ArrayRef<YAMLDebugSubsection> Subsections,
+    std::unique_ptr<codeview::DebugStringTableSubsection> &TakeStrings,
+    codeview::DebugStringTableSubsection *StringsRef);
+
+std::unique_ptr<codeview::DebugStringTableSubsection>
+findStringTable(ArrayRef<YAMLDebugSubsection> Sections);
+
 } // namespace CodeViewYAML
 } // namespace llvm
 
-LLVM_YAML_DECLARE_MAPPING_TRAITS(CodeViewYAML::SourceFileInfo)
+LLVM_YAML_DECLARE_MAPPING_TRAITS(CodeViewYAML::YAMLDebugSubsection)
+
+LLVM_YAML_IS_SEQUENCE_VECTOR(CodeViewYAML::YAMLDebugSubsection)
 
 #endif

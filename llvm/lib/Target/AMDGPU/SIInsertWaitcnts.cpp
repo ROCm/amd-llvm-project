@@ -229,7 +229,7 @@ public:
                      MachineInstr &MI);
 
   BlockWaitcntBrackets()
-      : WaitAtBeginning(false), ValidLoop(false), MixedExpTypes(false),
+      : WaitAtBeginning(false), RevisitLoop(false), ValidLoop(false), MixedExpTypes(false),
         LoopRegion(NULL), PostOrder(0), Waitcnt(NULL), VgprUB(0), SgprUB(0) {
     for (enum InstCounterType T = VM_CNT; T < NUM_INST_CNTS;
          T = (enum InstCounterType)(T + 1)) {
@@ -1009,7 +1009,8 @@ MachineInstr *SIInsertWaitcnts::generateSWaitCntInstBefore(
   // occurs before the instruction. Doing it here prevents any additional
   // S_WAITCNTs from being emitted if the instruction was marked as
   // requiring a WAITCNT beforehand.
-  if (MI.getOpcode() == AMDGPU::S_BARRIER && ST->needWaitcntBeforeBarrier()) {
+  if (MI.getOpcode() == AMDGPU::S_BARRIER &&
+      !ST->hasAutoWaitcntBeforeBarrier()) {
     EmitSwaitcnt |=
         ScoreBrackets->updateByWait(VM_CNT, ScoreBrackets->getScoreUB(VM_CNT));
     EmitSwaitcnt |= ScoreBrackets->updateByWait(

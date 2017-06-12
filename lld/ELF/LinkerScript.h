@@ -42,15 +42,14 @@ struct ExprValue {
   uint64_t Val;
   bool ForceAbsolute;
   uint64_t Alignment = 1;
+  std::string Loc;
 
   ExprValue(SectionBase *Sec, bool ForceAbsolute, uint64_t Val,
-            uint64_t Alignment)
-      : Sec(Sec), Val(Val), ForceAbsolute(ForceAbsolute), Alignment(Alignment) {
-  }
-  ExprValue(SectionBase *Sec, bool ForceAbsolute, uint64_t Val)
-      : Sec(Sec), Val(Val), ForceAbsolute(ForceAbsolute) {}
-  ExprValue(SectionBase *Sec, uint64_t Val) : ExprValue(Sec, false, Val) {}
-  ExprValue(uint64_t Val) : ExprValue(nullptr, Val) {}
+            const Twine &Loc)
+      : Sec(Sec), Val(Val), ForceAbsolute(ForceAbsolute), Loc(Loc.str()) {}
+  ExprValue(SectionBase *Sec, uint64_t Val, const Twine &Loc)
+      : ExprValue(Sec, false, Val, Loc) {}
+  ExprValue(uint64_t Val) : ExprValue(nullptr, Val, "") {}
   bool isAbsolute() const { return ForceAbsolute || Sec == nullptr; }
   uint64_t getValue() const;
   uint64_t getSecAddr() const;
@@ -135,8 +134,11 @@ struct OutputSectionCommand : BaseCommand {
   ConstraintKind Constraint = ConstraintKind::NoConstraint;
   std::string Location;
   std::string MemoryRegionName;
+  bool Noload = false;
 
+  template <class ELFT> void finalize();
   template <class ELFT> void writeTo(uint8_t *Buf);
+  template <class ELFT> void maybeCompress();
   uint32_t getFiller();
 };
 
@@ -272,7 +274,8 @@ public:
   void adjustSectionsBeforeSorting();
   void adjustSectionsAfterSorting();
 
-  std::vector<PhdrEntry> createPhdrs();
+  std::vector<PhdrEntry>
+  createPhdrs(ArrayRef<OutputSectionCommand *> OutputSectionCommands);
   bool ignoreInterpSection();
 
   bool hasLMA(OutputSection *Sec);
@@ -280,8 +283,8 @@ public:
   void assignOffsets(OutputSectionCommand *Cmd);
   void placeOrphanSections();
   void processNonSectionCommands();
-  void synchronize();
-  void assignAddresses(std::vector<PhdrEntry> &Phdrs);
+  void assignAddresses(std::vector<PhdrEntry> &Phdrs,
+                       ArrayRef<OutputSectionCommand *> OutputSectionCommands);
 
   void addSymbol(SymbolAssignment *Cmd);
   void processCommands(OutputSectionFactory &Factory);

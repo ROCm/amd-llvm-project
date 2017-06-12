@@ -4586,7 +4586,7 @@ def warn_missing_prototype : Warning<
 def note_declaration_not_a_prototype : Note<
   "this declaration is not a prototype; add 'void' to make it a prototype for a zero-parameter function">; 
 def warn_strict_prototypes : Warning<
-  "this %select{function declaration is not|"
+  "this %select{function declaration is not|block declaration is not|"
   "old-style function definition is not preceded by}0 a prototype">,
   InGroup<DiagGroup<"strict-prototypes">>, DefaultIgnore;
 def warn_missing_variable_declarations : Warning<
@@ -5614,6 +5614,11 @@ def err_enumerator_does_not_exist : Error<
   "enumerator %0 does not exist in instantiation of %1">;
 def note_enum_specialized_here : Note<
   "enum %0 was explicitly specialized here">;
+
+def err_specialization_not_primary_template : Error<
+  "cannot reference member of primary template because deduced class "
+  "template specialization %0 is %select{instantiated from a partial|"
+  "an explicit}1 specialization">;
 
 def err_member_redeclared : Error<"class member cannot be redeclared">;
 def ext_member_redeclared : ExtWarn<"class member cannot be redeclared">,
@@ -7270,7 +7275,7 @@ def err_invalid_conversion_between_vector_and_integer : Error<
   "invalid conversion between vector type %0 and integer type %1 "
   "of different size">;
 
-def err_opencl_function_pointer_variable : Error<
+def err_opencl_function_pointer : Error<
   "pointers to functions are not allowed">;
 
 def err_opencl_taking_function_address : Error<
