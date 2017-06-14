@@ -47,6 +47,18 @@ LLVM_YAML_DECLARE_ENUM_TRAITS(RegisterId)
 LLVM_YAML_DECLARE_ENUM_TRAITS(TrampolineType)
 LLVM_YAML_DECLARE_ENUM_TRAITS(ThunkOrdinal)
 
+LLVM_YAML_STRONG_TYPEDEF(llvm::StringRef, TypeName)
+
+LLVM_YAML_DECLARE_SCALAR_TRAITS(TypeName, true)
+
+StringRef ScalarTraits<TypeName>::input(StringRef S, void *V, TypeName &T) {
+  return ScalarTraits<StringRef>::input(S, V, T.value);
+}
+void ScalarTraits<TypeName>::output(const TypeName &T, void *V,
+                                    llvm::raw_ostream &R) {
+  ScalarTraits<StringRef>::output(T.value, V, R);
+}
+
 void ScalarEnumerationTraits<SymbolKind>::enumeration(IO &io,
                                                       SymbolKind &Value) {
   auto SymbolNames = getSymbolTypeNames();
@@ -148,7 +160,8 @@ struct SymbolRecordBase {
   virtual ~SymbolRecordBase() {}
   virtual void map(yaml::IO &io) = 0;
   virtual codeview::CVSymbol
-  toCodeViewSymbol(BumpPtrAllocator &Allocator) const = 0;
+  toCodeViewSymbol(BumpPtrAllocator &Allocator,
+                   CodeViewContainer Container) const = 0;
   virtual Error fromCodeViewSymbol(codeview::CVSymbol Type) = 0;
 };
 
@@ -159,8 +172,9 @@ template <typename T> struct SymbolRecordImpl : public SymbolRecordBase {
   void map(yaml::IO &io) override;
 
   codeview::CVSymbol
-  toCodeViewSymbol(BumpPtrAllocator &Allocator) const override {
-    return SymbolSerializer::writeOneSymbol(Symbol, Allocator);
+  toCodeViewSymbol(BumpPtrAllocator &Allocator,
+                   CodeViewContainer Container) const override {
+    return SymbolSerializer::writeOneSymbol(Symbol, Allocator, Container);
   }
   Error fromCodeViewSymbol(codeview::CVSymbol CVS) override {
     return SymbolDeserializer::deserializeAs<T>(CVS, Symbol);
@@ -262,6 +276,7 @@ template <> void SymbolRecordImpl<InlineSiteSym>::map(IO &IO) {
 template <> void SymbolRecordImpl<LocalSym>::map(IO &IO) {
   IO.mapRequired("Type", Symbol.Type);
   IO.mapRequired("Flags", Symbol.Flags);
+
   IO.mapRequired("VarName", Symbol.Name);
 }
 
@@ -429,8 +444,8 @@ template <> void SymbolRecordImpl<ThreadLocalDataSym>::map(IO &IO) {
 }
 
 CVSymbol CodeViewYAML::SymbolRecord::toCodeViewSymbol(
-    BumpPtrAllocator &Allocator) const {
-  return Symbol->toCodeViewSymbol(Allocator);
+    BumpPtrAllocator &Allocator, CodeViewContainer Container) const {
+  return Symbol->toCodeViewSymbol(Allocator, Container);
 }
 
 namespace llvm {

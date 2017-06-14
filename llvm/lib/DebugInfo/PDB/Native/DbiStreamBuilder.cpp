@@ -10,6 +10,7 @@
 #include "llvm/DebugInfo/PDB/Native/DbiStreamBuilder.h"
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/BinaryFormat/COFF.h"
 #include "llvm/DebugInfo/MSF/MSFBuilder.h"
 #include "llvm/DebugInfo/MSF/MappedBlockStream.h"
 #include "llvm/DebugInfo/PDB/Native/DbiModuleDescriptorBuilder.h"
@@ -17,7 +18,6 @@
 #include "llvm/DebugInfo/PDB/Native/RawError.h"
 #include "llvm/Object/COFF.h"
 #include "llvm/Support/BinaryStreamWriter.h"
-#include "llvm/Support/COFF.h"
 
 using namespace llvm;
 using namespace llvm::codeview;
@@ -357,8 +357,8 @@ Error DbiStreamBuilder::commit(const msf::MSFLayout &Layout,
   if (auto EC = finalize())
     return EC;
 
-  auto DbiS = WritableMappedBlockStream::createIndexedStream(Layout, MsfBuffer,
-                                                             StreamDBI);
+  auto DbiS = WritableMappedBlockStream::createIndexedStream(
+      Layout, MsfBuffer, StreamDBI, Allocator);
 
   BinaryStreamWriter Writer(*DbiS);
   if (auto EC = Writer.writeObject(*Header))
@@ -396,7 +396,7 @@ Error DbiStreamBuilder::commit(const msf::MSFLayout &Layout,
     if (Stream.StreamNumber == kInvalidStreamIndex)
       continue;
     auto WritableStream = WritableMappedBlockStream::createIndexedStream(
-        Layout, MsfBuffer, Stream.StreamNumber);
+        Layout, MsfBuffer, Stream.StreamNumber, Allocator);
     BinaryStreamWriter DbgStreamWriter(*WritableStream);
     if (auto EC = DbgStreamWriter.writeArray(Stream.Data))
       return EC;
