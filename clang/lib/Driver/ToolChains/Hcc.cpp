@@ -16,7 +16,16 @@
 #include "clang/Driver/Options.h"
 #include "llvm/Option/ArgList.h"
 #include "llvm/Support/Path.h"
+
+#include <array>
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
+#include <memory>
 #include <system_error>
+#include <utility>
+
+#include <iostream>
 
 using namespace clang::driver;
 using namespace clang::driver::toolchains;
@@ -137,81 +146,187 @@ void HCC::CXXAMPAssemble::ConstructJob(Compilation &C, const JobAction &JA,
   C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
 }
 
-std::string temporaryReplaceLongFormGFXIp(const Compilation& C, std::string l)
-{ // Precondition: l = "AMD:AMDGPU:\d:\d:\d"
-  // TODO: this should be removed once we have transitioned all users to using
-  //       the short form. It is purposefully inefficient.
-  const auto t = l;
+namespace
+{
+    std::string temporary_replace_long_form_GFXIp(
+        const Compilation& c, std::string l)
+    {   // Precondition: l = "AMD:AMDGPU:\d:\d:\d"
+        // TODO: this should be removed once we have transitioned all users to
+        //       the short form. It is purposefully inefficient.
+        const auto t = l;
 
-  l.replace(0u, 3u, {'g', 'f', 'x'});
-  l.erase(std::copy_if(l.begin() + 3u, l.end(), l.begin() + 3u, isdigit), l.end());
-  C.getDriver().Diag(diag::warn_drv_deprecated_arg) << t << l;
+        l.replace(0u, 3u, {'g', 'f', 'x'});
+        l.erase(std::copy_if(
+            l.begin() + 3u, l.end(), l.begin() + 3u, isdigit), l.end());
+        c.getDriver().Diag(diag::warn_drv_deprecated_arg) << t << l;
 
-  return l;
+        return l;
+    }
+
+    struct Process_deleter {
+        int status = EXIT_FAILURE;
+        void operator()(std::FILE* p)
+        {
+            if (p) {
+                status = pclose(p);
+                status = WIFEXITED(status) ? WEXITSTATUS(status) : status;
+            }
+        }
+    };
+
+    std::vector<std::string> detect_gfxip(
+        const Compilation& c, const ToolChain& tc)
+    {   // Invariant: iff it executes correctly, rocm_agent_enumerator returns
+        //            at least gfx000; returning only gfx000 signals the absence
+        //            of valid GPU agents.
+        // Invariant: iff it executes correctly, and iff there are valid GPU
+        //            agents present rocm_agent_enumerator returns the set
+        //            formed from their union, including gfx000.
+        std::vector<std::string> r;
+
+        const char* tmp = std::getenv("ROCM_ROOT");
+        const char* rocm = tmp ? tmp : "/opt/rocm";
+
+        const auto e = c.getSysRoot() + rocm + "/bin/rocm_agent_enumerator";
+
+        if (!tc.getVFS().exists(e)) return r;
+
+        Process_deleter d;
+        std::unique_ptr<std::FILE, Process_deleter> pipe{
+            popen((e.str() + " --type GPU").c_str(), "r"), d};
+
+        if (!pipe) return r;
+
+        static constexpr std::size_t buf_sz = 16u;
+        std::array<char, buf_sz> buf = {{}};
+        while (std::fgets(buf.data(), buf.size(), pipe.get())) {
+            r.emplace_back(buf.data());
+        }
+        
+        for (auto&& x : r) { // fgets copies the newline.
+            x.erase(std::remove(x.begin(), x.end(), '\n'), x.end());
+        }
+
+        if (r.size() > 1) {
+            std::sort(r.rbegin(), r.rend());
+            r.pop_back(); // Remove null-agent.
+        }
+
+        return r;
+    }
+
+    std::vector<std::string> detect_and_add_targets(
+        const Compilation& c, const ToolChain& tc)
+    {
+        constexpr const char null_agent[] = "gfx000";
+
+        const auto detected_targets = detect_gfxip(c, tc);
+        if (detected_targets.empty()) {
+            c.getDriver().Diag(diag::warn_amdgpu_agent_detector_failed);
+        }
+        else if (detected_targets[0] == null_agent) {
+            c.getDriver().Diag(diag::err_amdgpu_no_agent_available);
+        }
+
+        return detected_targets;
+    }
+
+    bool is_valid(const std::string& gfxip)
+    {
+        static constexpr std::array<const char*, 7u> valid = {
+            { "gfx700", "gfx701", "gfx801", "gfx802", "gfx803", "gfx900",
+              "gfx901" }};
+
+        return std::find(valid.cbegin(), valid.cend(), gfxip) != valid.cend();
+    }
+
+    bool is_deprecated(const std::string& gfxip)
+    {
+        static constexpr std::array<const char*, 1u> deprecated = {{"gfx700"}};
+
+        return std::find(
+            deprecated.cbegin(), deprecated.cend(), gfxip) != deprecated.cend();
+    }
+
+    void validate_and_add_to_command(
+        const std::string& gfxip,
+        const Compilation& c,
+        const ArgList& args,
+        ArgStringList& cmd_args)
+    {
+        static constexpr const char prefix[] = "--amdgpu-target=";
+
+        if (!is_valid(gfxip)) {
+            c.getDriver().Diag(diag::warn_amdgpu_target_invalid) << gfxip;
+            return;
+        }
+
+        if (is_deprecated(gfxip)) {
+            c.getDriver().Diag(diag::warn_amdgpu_target_deprecated) << gfxip;
+        }
+        cmd_args.push_back(args.MakeArgString(prefix + gfxip));
+    }
 }
 
-void HCC::CXXAMPLink::ConstructJob(Compilation &C,
-                                   const JobAction &JA,
-                                   const InputInfo &Output,
-                                   const InputInfoList &Inputs,
-                                   const ArgList &Args,
-                                   const char *LinkingOutput) const {
-  ArgStringList CmdArgs;
+void HCC::CXXAMPLink::ConstructJob(
+    Compilation &C,
+    const JobAction &JA,
+    const InputInfo &Output,
+    const InputInfoList &Inputs,
+    const ArgList &Args,
+    const char *LinkingOutput) const
+{
+    ArgStringList CmdArgs;
 
-  // add verbose flag to linker script if clang++ is invoked with --verbose flag
-  if (Args.hasArg(options::OPT_v))
-    CmdArgs.push_back("--verbose");
+    // add verbose flag to linker script if clang++ is invoked with --verbose flag
+    if (Args.hasArg(options::OPT_v)) CmdArgs.push_back("--verbose");
 
-  // specify AMDGPU target
-  if (Args.hasArg(options::OPT_amdgpu_target_EQ)) {
-    auto AMDGPUTargetVector = Args.getAllArgValues(options::OPT_amdgpu_target_EQ);
+    // specify AMDGPU target
 
-    for (auto&& AMDGPUTarget : AMDGPUTargetVector) {
-      // TODO: the known GFXip list should probably reside in a constant
-      //       global variable so as to allow easy extension in the future.
-      static constexpr const char prefix[] = "--amdgpu-target=";
-      static constexpr unsigned int discard_sz = 3u;
-      static const std::string gfx_ip{"gfx"};
-      static const std::string long_gfx_ip_prefix{"AMD:AMDGPU:"}; // Temporary.
+    if (Args.hasArg(options::OPT_amdgpu_target_EQ)) {
+        auto AMDGPUTargetVector =
+            Args.getAllArgValues(options::OPT_amdgpu_target_EQ);
 
-      // TODO: this is temporary.
-      if (std::search(AMDGPUTarget.cbegin(), AMDGPUTarget.cend(), long_gfx_ip_prefix.cbegin(), long_gfx_ip_prefix.cend()) != AMDGPUTarget.cend()) {
-          AMDGPUTarget = temporaryReplaceLongFormGFXIp(C, AMDGPUTarget);
-      }
-
-      if (std::search(AMDGPUTarget.cbegin(), AMDGPUTarget.cend(), gfx_ip.cbegin(), gfx_ip.cend()) != AMDGPUTarget.cend()) {
-        std::string t{prefix};
-        switch (std::atoi(AMDGPUTarget.data() + discard_sz)) {
-        case 700: t += "gfx700";  break;
-        case 701: t += "gfx701";  break;
-        case 801: t += "gfx801"; break;
-        case 802: t += "gfx802";   break;
-        case 803: t += "gfx803";    break;
-        case 900: t += "gfx900";  break;
-        case 901: t += "gfx901";  break;
-        default:
-          C.getDriver().Diag(diag::warn_amdgpu_target_invalid) << AMDGPUTarget;
-        break;
+        constexpr const char auto_tgt[] = "auto";
+        if (AMDGPUTargetVector.size() == 1u &&
+            AMDGPUTargetVector[0] == auto_tgt) {
+            AMDGPUTargetVector = detect_and_add_targets(C, getToolChain());
         }
-        CmdArgs.push_back(Args.MakeArgString(t));
-      }
-      else {
-        C.getDriver().Diag(diag::warn_amdgpu_target_invalid) << AMDGPUTarget;
+        else {
+            const auto it = std::remove(
+                AMDGPUTargetVector.begin(), AMDGPUTargetVector.end(), auto_tgt);
+            if (it != AMDGPUTargetVector.end()) {
+                C.getDriver().Diag(diag::warn_amdgpu_target_auto_nonsingular);
+                AMDGPUTargetVector.erase(it, AMDGPUTargetVector.end());
+            }
+        }
+        for (auto&& AMDGPUTarget : AMDGPUTargetVector) {
+            // TODO: this is Temporary.
+            static const std::string long_gfx_ip_prefix{"AMD:AMDGPU:"};
+            if (std::search(
+                AMDGPUTarget.cbegin(),
+                AMDGPUTarget.cend(),
+                long_gfx_ip_prefix.cbegin(),
+                long_gfx_ip_prefix.cend()) != AMDGPUTarget.cend()) {
+                AMDGPUTarget =
+                    temporary_replace_long_form_GFXIp(C, AMDGPUTarget);
+            }
+            validate_and_add_to_command(AMDGPUTarget, C, Args, CmdArgs);
+        }
+    }
+
+    // pass inputs to gnu ld for initial processing
+    Linker::ConstructLinkerJob(
+        C, JA, Output, Inputs, Args, LinkingOutput, CmdArgs);
+
+    auto ClampArgs = CmdArgs;
+    if (Args.hasArg(options::OPT_hcc_extra_libs_EQ)) {
+      auto HccExtraLibs = Args.getAllArgValues(options::OPT_hcc_extra_libs_EQ);
+      std::string prefix{"--hcc-extra-libs="};
+      for(auto&& Lib:HccExtraLibs) {
+        ClampArgs.push_back(Args.MakeArgString(prefix + Lib));
       }
     }
-  }
-
-  // pass inputs to gnu ld for initial processing
-  Linker::ConstructLinkerJob(C, JA, Output, Inputs, Args, LinkingOutput, CmdArgs);
-
-  auto ClampArgs = CmdArgs;
-  if (Args.hasArg(options::OPT_hcc_extra_libs_EQ)) {
-    auto HccExtraLibs = Args.getAllArgValues(options::OPT_hcc_extra_libs_EQ);
-    std::string prefix{"--hcc-extra-libs="};
-    for(auto&& Lib:HccExtraLibs) {
-      ClampArgs.push_back(Args.MakeArgString(prefix + Lib));
-    }
-  }
 
   const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("clamp-link"));
 
