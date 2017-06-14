@@ -2217,7 +2217,8 @@ SDValue DAGCombiner::visitADDCARRYLike(SDValue N0, SDValue N1, SDValue CarryIn,
                                        SDNode *N) {
   // Iff the flag result is dead:
   // (addcarry (add|uaddo X, Y), 0, Carry) -> (addcarry X, Y, Carry)
-  if ((N0.getOpcode() == ISD::ADD || N0.getOpcode() == ISD::UADDO) &&
+  if ((N0.getOpcode() == ISD::ADD ||
+       (N0.getOpcode() == ISD::UADDO && N0.getResNo() == 0)) &&
       isNullConstant(N1) && !N->hasAnyUseOfValue(1))
     return DAG.getNode(ISD::ADDCARRY, SDLoc(N), N->getVTList(),
                        N0.getOperand(0), N0.getOperand(1), CarryIn);
@@ -14692,21 +14693,7 @@ static SDValue narrowExtractedVectorLoad(SDNode *Extract, SelectionDAG &DAG) {
   MachineMemOperand *MMO = MF.getMachineMemOperand(Ld->getMemOperand(), Offset,
                                                    VT.getStoreSize());
   SDValue NewLd = DAG.getLoad(VT, DL, Ld->getChain(), NewAddr, MMO);
-
-  // The new load must have the same position as the old load in terms of memory
-  // dependency. Create a TokenFactor for Ld and NewLd and update uses of Ld's
-  // output chain to use that TokenFactor.
-  // TODO: This code is based on a similar sequence in x86 lowering. It should
-  // be moved to a helper function, so it can be shared and reused.
-  if (Ld->hasAnyUseOfValue(1)) {
-    SDValue OldChain = SDValue(Ld, 1);
-    SDValue NewChain = SDValue(NewLd.getNode(), 1);
-    SDValue TokenFactor = DAG.getNode(ISD::TokenFactor, DL, MVT::Other,
-                                      OldChain, NewChain);
-    DAG.ReplaceAllUsesOfValueWith(OldChain, TokenFactor);
-    DAG.UpdateNodeOperands(TokenFactor.getNode(), OldChain, NewChain);
-  }
-
+  DAG.makeEquivalentMemoryOrdering(Ld, NewLd);
   return NewLd;
 }
 

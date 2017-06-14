@@ -678,8 +678,13 @@ bool DWARFContext::verify(raw_ostream &OS, DIDumpType DumpType) {
     if (!verifier.handleDebugLine())
       Success = false;
   }
+  if (DumpType == DIDT_All || DumpType == DIDT_AppleNames) {
+    if (!verifier.handleAppleNames())
+      Success = false;
+  }
   return Success;
 }
+
 const DWARFUnitIndex &DWARFContext::getCUIndex() {
   if (CUIndex)
     return *CUIndex;
@@ -1250,7 +1255,7 @@ DWARFContextInMemory::DWARFContextInMemory(const object::ObjectFile &Obj,
       continue;
 
     RelSecName = RelSecName.substr(
-        RelSecName.find_first_not_of("._")); // Skip . and _ prefixes.
+        RelSecName.find_first_not_of("._z")); // Skip . and _ prefixes.
 
     // TODO: Add support for relocations in other sections as needed.
     // Record relocations for the debug_info and debug_line sections.

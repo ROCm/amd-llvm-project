@@ -73,6 +73,16 @@ InputSectionBase::InputSectionBase(InputFile *File, uint64_t Flags,
   this->Alignment = V;
 }
 
+// Drop SHF_GROUP bit unless we are producing a re-linkable object file.
+// SHF_GROUP is a marker that a section belongs to some comdat group.
+// That flag doesn't make sense in an executable.
+static uint64_t getFlags(uint64_t Flags) {
+  Flags &= ~(uint64_t)SHF_INFO_LINK;
+  if (!Config->Relocatable)
+    Flags &= ~(uint64_t)SHF_GROUP;
+  return Flags;
+}
+
 // GNU assembler 2.24 and LLVM 4.0.0's MC (the newest release as of
 // March 2017) fail to infer section types for sections starting with
 // ".init_array." or ".fini_array.". They set SHT_PROGBITS instead of
@@ -95,7 +105,7 @@ template <class ELFT>
 InputSectionBase::InputSectionBase(elf::ObjectFile<ELFT> *File,
                                    const typename ELFT::Shdr *Hdr,
                                    StringRef Name, Kind SectionKind)
-    : InputSectionBase(File, Hdr->sh_flags & ~SHF_INFO_LINK,
+    : InputSectionBase(File, getFlags(Hdr->sh_flags),
                        getType(Hdr->sh_type, Name), Hdr->sh_entsize,
                        Hdr->sh_link, Hdr->sh_info, Hdr->sh_addralign,
                        getSectionContents(File, Hdr), Name, SectionKind) {
@@ -393,7 +403,7 @@ static uint32_t getARMUndefinedRelativeWeakVA(uint32_t Type, uint32_t A,
                                               uint32_t P) {
   switch (Type) {
   case R_ARM_THM_JUMP11:
-    return P + 2;
+    return P + 2 + A;
   case R_ARM_CALL:
   case R_ARM_JUMP24:
   case R_ARM_PC24:
@@ -401,12 +411,12 @@ static uint32_t getARMUndefinedRelativeWeakVA(uint32_t Type, uint32_t A,
   case R_ARM_PREL31:
   case R_ARM_THM_JUMP19:
   case R_ARM_THM_JUMP24:
-    return P + 4;
+    return P + 4 + A;
   case R_ARM_THM_CALL:
     // We don't want an interworking BLX to ARM
-    return P + 5;
+    return P + 5 + A;
   default:
-    return A;
+    return P + A;
   }
 }
 
@@ -417,9 +427,9 @@ static uint64_t getAArch64UndefinedRelativeWeakVA(uint64_t Type, uint64_t A,
   case R_AARCH64_CONDBR19:
   case R_AARCH64_JUMP26:
   case R_AARCH64_TSTBR14:
-    return P + 4;
+    return P + 4 + A;
   default:
-    return A;
+    return P + A;
   }
 }
 
@@ -505,20 +515,30 @@ static uint64_t getRelocTargetVA(uint32_t Type, int64_t A, uint64_t P,
     return InX::MipsGot->getVA() + InX::MipsGot->getTlsOffset() +
            InX::MipsGot->getTlsIndexOff() - InX::MipsGot->getGp();
   case R_PAGE_PC:
-  case R_PLT_PAGE_PC:
+  case R_PLT_PAGE_PC: {
+    uint64_t Dest;
     if (Body.isUndefined() && !Body.isLocal() && Body.symbol()->isWeak())
-      return getAArch64Page(A);
-    return getAArch64Page(Body.getVA(A)) - getAArch64Page(P);
-  case R_PC:
+      Dest = getAArch64Page(A);
+    else
+      Dest = getAArch64Page(Body.getVA(A));
+    return Dest - getAArch64Page(P);
+  }
+  case R_PC: {
+    uint64_t Dest;
     if (Body.isUndefined() && !Body.isLocal() && Body.symbol()->isWeak()) {
       // On ARM and AArch64 a branch to an undefined weak resolves to the
       // next instruction, otherwise the place.
       if (Config->EMachine == EM_ARM)
-        return getARMUndefinedRelativeWeakVA(Type, A, P);
-      if (Config->EMachine == EM_AARCH64)
-        return getAArch64UndefinedRelativeWeakVA(Type, A, P);
+        Dest = getARMUndefinedRelativeWeakVA(Type, A, P);
+      else if (Config->EMachine == EM_AARCH64)
+        Dest = getAArch64UndefinedRelativeWeakVA(Type, A, P);
+      else
+        Dest = Body.getVA(A);
+    } else {
+      Dest = Body.getVA(A);
     }
-    return Body.getVA(A) - P;
+    return Dest - P;
+  }
   case R_PLT:
     return Body.getPltVA() + A;
   case R_PLT_PC:

@@ -267,7 +267,6 @@ public:
   ExprValue getSymbolValue(const Twine &Loc, StringRef S);
   bool isDefined(StringRef S);
 
-  std::vector<OutputSection *> *OutputSections;
   void fabricateDefaultCommands();
   void addOrphanSections(OutputSectionFactory &Factory);
   void removeEmptyCommands();
@@ -282,8 +281,7 @@ public:
   void assignOffsets(OutputSectionCommand *Cmd);
   void placeOrphanSections();
   void processNonSectionCommands();
-  void assignAddresses(std::vector<PhdrEntry> &Phdrs,
-                       ArrayRef<OutputSectionCommand *> OutputSectionCommands);
+  void assignAddresses(std::vector<PhdrEntry> &Phdrs);
 
   void addSymbol(SymbolAssignment *Cmd);
   void processCommands(OutputSectionFactory &Factory);
