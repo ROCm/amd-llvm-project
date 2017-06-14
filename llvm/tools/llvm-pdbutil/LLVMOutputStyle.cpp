@@ -28,6 +28,7 @@
 #include "llvm/DebugInfo/CodeView/EnumTables.h"
 #include "llvm/DebugInfo/CodeView/LazyRandomTypeCollection.h"
 #include "llvm/DebugInfo/CodeView/Line.h"
+#include "llvm/DebugInfo/CodeView/StringsAndChecksums.h"
 #include "llvm/DebugInfo/CodeView/SymbolDumper.h"
 #include "llvm/DebugInfo/CodeView/TypeDatabaseVisitor.h"
 #include "llvm/DebugInfo/CodeView/TypeDumpVisitor.h"
@@ -89,7 +90,7 @@ struct PageStats {
 class C13RawVisitor : public DebugSubsectionVisitor {
 public:
   C13RawVisitor(ScopedPrinter &P, LazyRandomTypeCollection &TPI,
-                LazyRandomTypeCollection &IPI)
+                LazyRandomTypeCollection *IPI)
       : P(P), TPI(TPI), IPI(IPI) {}
 
   Error visitUnknown(DebugUnknownSubsectionRef &Unknown) override {
@@ -105,7 +106,7 @@ public:
   }
 
   Error visitLines(DebugLinesSubsectionRef &Lines,
-                   const DebugSubsectionState &State) override {
+                   const StringsAndChecksumsRef &State) override {
     if (!opts::checkModuleSubsection(opts::ModuleSubsection::Lines))
       return Error::success();
 
@@ -146,7 +147,7 @@ public:
   }
 
   Error visitFileChecksums(DebugChecksumsSubsectionRef &Checksums,
-                           const DebugSubsectionState &State) override {
+                           const StringsAndChecksumsRef &State) override {
     if (!opts::checkModuleSubsection(opts::ModuleSubsection::FileChecksums))
       return Error::success();
 
@@ -164,7 +165,7 @@ public:
   }
 
   Error visitInlineeLines(DebugInlineeLinesSubsectionRef &Inlinees,
-                          const DebugSubsectionState &State) override {
+                          const StringsAndChecksumsRef &State) override {
     if (!opts::checkModuleSubsection(opts::ModuleSubsection::InlineeLines))
       return Error::success();
 
@@ -191,7 +192,7 @@ public:
   }
 
   Error visitCrossModuleExports(DebugCrossModuleExportsSubsectionRef &CSE,
-                                const DebugSubsectionState &State) override {
+                                const StringsAndChecksumsRef &State) override {
     if (!opts::checkModuleSubsection(opts::ModuleSubsection::CrossScopeExports))
       return Error::success();
 
@@ -205,7 +206,7 @@ public:
   }
 
   Error visitCrossModuleImports(DebugCrossModuleImportsSubsectionRef &CSI,
-                                const DebugSubsectionState &State) override {
+                                const StringsAndChecksumsRef &State) override {
     if (!opts::checkModuleSubsection(opts::ModuleSubsection::CrossScopeImports))
       return Error::success();
 
@@ -222,7 +223,7 @@ public:
   }
 
   Error visitFrameData(DebugFrameDataSubsectionRef &FD,
-                       const DebugSubsectionState &State) override {
+                       const StringsAndChecksumsRef &State) override {
     if (!opts::checkModuleSubsection(opts::ModuleSubsection::FrameData))
       return Error::success();
 
@@ -248,7 +249,7 @@ public:
   }
 
   Error visitSymbols(DebugSymbolsSubsectionRef &Symbols,
-                     const DebugSubsectionState &State) override {
+                     const StringsAndChecksumsRef &State) override {
     if (!opts::checkModuleSubsection(opts::ModuleSubsection::Symbols))
       return Error::success();
     ListScope L(P, "Symbols");
@@ -270,7 +271,7 @@ public:
   }
 
   Error visitStringTable(DebugStringTableSubsectionRef &Strings,
-                         const DebugSubsectionState &State) override {
+                         const StringsAndChecksumsRef &State) override {
     if (!opts::checkModuleSubsection(opts::ModuleSubsection::StringTable))
       return Error::success();
 
@@ -288,7 +289,7 @@ public:
   }
 
   Error visitCOFFSymbolRVAs(DebugSymbolRVASubsectionRef &RVAs,
-                            const DebugSubsectionState &State) override {
+                            const StringsAndChecksumsRef &State) override {
     if (!opts::checkModuleSubsection(opts::ModuleSubsection::CoffSymbolRVAs))
       return Error::success();
 
@@ -299,13 +300,18 @@ public:
 
 private:
   Error dumpTypeRecord(StringRef Label, TypeIndex Index) {
-    CompactTypeDumpVisitor CTDV(IPI, Index, &P);
+    bool Success = false;
     DictScope D(P, Label);
-    if (IPI.contains(Index)) {
-      CVType Type = IPI.getType(Index);
-      if (auto EC = codeview::visitTypeRecord(Type, CTDV))
-        return EC;
-    } else {
+    if (IPI) {
+      CompactTypeDumpVisitor CTDV(*IPI, Index, &P);
+      if (IPI->contains(Index)) {
+        CVType Type = IPI->getType(Index);
+        if (auto EC = codeview::visitTypeRecord(Type, CTDV))
+          return EC;
+      }
+    }
+
+    if (!Success) {
       P.printString(
           llvm::formatv("Index: {0:x} (unknown function)", Index.getIndex())
               .str());
@@ -313,7 +319,7 @@ private:
     return Error::success();
   }
   Error printFileName(StringRef Label, uint32_t Offset,
-                      const DebugSubsectionState &State) {
+                      const StringsAndChecksumsRef &State) {
     if (auto Result = getNameFromChecksumsBuffer(Offset, State)) {
       P.printString(Label, *Result);
       return Error::success();
@@ -322,13 +328,13 @@ private:
   }
 
   Expected<StringRef>
-  getNameFromStringTable(uint32_t Offset, const DebugSubsectionState &State) {
+  getNameFromStringTable(uint32_t Offset, const StringsAndChecksumsRef &State) {
     return State.strings().getString(Offset);
   }
 
   Expected<StringRef>
   getNameFromChecksumsBuffer(uint32_t Offset,
-                             const DebugSubsectionState &State) {
+                             const StringsAndChecksumsRef &State) {
     auto Array = State.checksums().getArray();
     auto ChecksumIter = Array.at(Offset);
     if (ChecksumIter == Array.end())
@@ -339,7 +345,7 @@ private:
 
   ScopedPrinter &P;
   LazyRandomTypeCollection &TPI;
-  LazyRandomTypeCollection &IPI;
+  LazyRandomTypeCollection *IPI;
 };
 }
 
@@ -739,10 +745,12 @@ Error LLVMOutputStyle::dumpTpiStream(uint32_t StreamIdx) {
     Label = "Type Info Stream (TPI)";
     VerLabel = "TPI Version";
   } else if (StreamIdx == StreamIPI) {
-    if (!File.hasPDBIpiStream()) {
-      P.printString("Type Info Stream (IPI) not present");
+    auto InfoS = File.getPDBInfoStream();
+    if (!InfoS)
+      return InfoS.takeError();
+
+    if (!File.hasPDBIpiStream() || !InfoS->containsIdStream())
       return Error::success();
-    }
     DumpRecordBytes = opts::raw::DumpIpiRecordBytes;
     DumpRecords = opts::raw::DumpIpiRecords;
     Label = "Type Info Stream (IPI)";
@@ -879,6 +887,8 @@ Error LLVMOutputStyle::dumpDbiStream() {
     return Error::success();
   }
 
+  ExitOnError Err("Error while processing DBI Stream");
+
   auto DS = File.getPDBDbiStream();
   if (!DS)
     return DS.takeError();
@@ -970,10 +980,10 @@ Error LLVMOutputStyle::dumpDbiStream() {
         }
         if (!opts::shared::DumpModuleSubsections.empty()) {
           ListScope SS(P, "Subsections");
-          auto ExpectedIpi = initializeTypeDatabase(StreamIPI);
-          if (!ExpectedIpi)
-            return ExpectedIpi.takeError();
-          auto &Ipi = *ExpectedIpi;
+          auto &InfoS = Err(File.getPDBInfoStream());
+          LazyRandomTypeCollection *Ipi = nullptr;
+          if (InfoS.containsIdStream())
+            Ipi = &Err(initializeTypeDatabase(StreamIPI));
           auto ExpectedStrings = File.getStringTable();
           if (!ExpectedStrings)
             return joinErrors(

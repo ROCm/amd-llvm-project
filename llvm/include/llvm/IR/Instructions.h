@@ -337,8 +337,6 @@ public:
     return User::operator new(s, 2);
   }
 
-  void *operator new(size_t, unsigned) = delete;
-
   /// Return true if this is a store to a volatile memory location.
   bool isVolatile() const { return getSubclassDataFromInstruction() & 1; }
 
@@ -460,8 +458,6 @@ public:
     return User::operator new(s, 0);
   }
 
-  void *operator new(size_t, unsigned) = delete;
-
   /// Returns the ordering effect of this fence.
   AtomicOrdering getOrdering() const {
     return AtomicOrdering(getSubclassDataFromInstruction() >> 1);
@@ -537,8 +533,6 @@ public:
   void *operator new(size_t s) {
     return User::operator new(s, 3);
   }
-
-  void *operator new(size_t, unsigned) = delete;
 
   /// Return true if this is a cmpxchg from a volatile memory
   /// location.
@@ -727,8 +721,6 @@ public:
   void *operator new(size_t s) {
     return User::operator new(s, 2);
   }
-
-  void *operator new(size_t, unsigned) = delete;
 
   BinOp getOperation() const {
     return static_cast<BinOp>(getSubclassDataFromInstruction() >> 5);
@@ -2331,9 +2323,6 @@ class ExtractValueInst : public UnaryInstruction {
                           ArrayRef<unsigned> Idxs,
                           const Twine &NameStr, BasicBlock *InsertAtEnd);
 
-  // allocate space for exactly one operand
-  void *operator new(size_t s) { return User::operator new(s, 1); }
-
   void init(ArrayRef<unsigned> Idxs, const Twine &NameStr);
 
 protected:
@@ -2468,8 +2457,6 @@ public:
     return User::operator new(s, 2);
   }
 
-  void *operator new(size_t, unsigned) = delete;
-
   static InsertValueInst *Create(Value *Agg, Value *Val,
                                  ArrayRef<unsigned> Idxs,
                                  const Twine &NameStr = "",
@@ -2579,7 +2566,6 @@ class PHINode : public Instruction {
   unsigned ReservedSpace;
 
   PHINode(const PHINode &PN);
-  // allocate space for exactly zero operands
 
   explicit PHINode(Type *Ty, unsigned NumReservedValues,
                    const Twine &NameStr = "",
@@ -2598,10 +2584,6 @@ class PHINode : public Instruction {
     allocHungoffUses(ReservedSpace);
   }
 
-  void *operator new(size_t s) {
-    return User::operator new(s);
-  }
-
 protected:
   // Note: Instruction needs to be a friend here to call cloneImpl.
   friend class Instruction;
@@ -2616,8 +2598,6 @@ protected:
   }
 
 public:
-  void *operator new(size_t, unsigned) = delete;
-
   /// Constructors - NumReservedValues is a hint for the number of incoming
   /// edges that this phi node will have (use 0 if you really have no idea).
   static PHINode *Create(Type *Ty, unsigned NumReservedValues,
@@ -2835,8 +2815,6 @@ protected:
   LandingPadInst *cloneImpl() const;
 
 public:
-  void *operator new(size_t, unsigned) = delete;
-
   /// Constructors - NumReservedClauses is a hint for the number of incoming
   /// clauses that this landingpad will have (use 0 if you really have no idea).
   static LandingPadInst *Create(Type *RetTy, unsigned NumReservedClauses,
@@ -3135,8 +3113,6 @@ protected:
   SwitchInst *cloneImpl() const;
 
 public:
-  void *operator new(size_t, unsigned) = delete;
-
   // -2
   static const unsigned DefaultPseudoIndex = static_cast<unsigned>(~0L-1);
 
@@ -3490,8 +3466,6 @@ protected:
   IndirectBrInst *cloneImpl() const;
 
 public:
-  void *operator new(size_t, unsigned) = delete;
-
   static IndirectBrInst *Create(Value *Address, unsigned NumDests,
                                 Instruction *InsertBefore = nullptr) {
     return new IndirectBrInst(Address, NumDests, InsertBefore);
@@ -4174,8 +4148,6 @@ protected:
   CatchSwitchInst *cloneImpl() const;
 
 public:
-  void *operator new(size_t, unsigned) = delete;
-
   static CatchSwitchInst *Create(Value *ParentPad, BasicBlock *UnwindDest,
                                  unsigned NumHandlers,
                                  const Twine &NameStr = "",
@@ -4609,8 +4581,6 @@ public:
   void *operator new(size_t s) {
     return User::operator new(s, 0);
   }
-
-  void *operator new(size_t, unsigned) = delete;
 
   unsigned getNumSuccessors() const { return 0; }
 

@@ -41,6 +41,9 @@ OutputSection *Out::PreinitArray;
 OutputSection *Out::InitArray;
 OutputSection *Out::FiniArray;
 
+std::vector<OutputSection *> elf::OutputSections;
+std::vector<OutputSectionCommand *> elf::OutputSectionCommands;
+
 uint32_t OutputSection::getPhdrFlags() const {
   uint32_t Ret = PF_R;
   if (Flags & SHF_WRITE)
@@ -313,10 +316,6 @@ void OutputSectionFactory::addInputSec(InputSectionBase *IS,
     return;
   }
 
-  uint64_t Flags = IS->Flags;
-  if (!Config->Relocatable)
-    Flags &= ~(uint64_t)SHF_GROUP;
-
   if (Sec) {
     if (getIncompatibleFlags(Sec->Flags) != getIncompatibleFlags(IS->Flags))
       error("incompatible section flags for " + Sec->Name +
@@ -333,9 +332,9 @@ void OutputSectionFactory::addInputSec(InputSectionBase *IS,
               "\n>>> output section " + Sec->Name + ": " +
               getELFSectionTypeName(Config->EMachine, Sec->Type));
     }
-    Sec->Flags |= Flags;
+    Sec->Flags |= IS->Flags;
   } else {
-    Sec = make<OutputSection>(OutsecName, IS->Type, Flags);
+    Sec = make<OutputSection>(OutsecName, IS->Type, IS->Flags);
     OutputSections.push_back(Sec);
   }
 
