@@ -202,7 +202,7 @@ namespace
         while (std::fgets(buf.data(), buf.size(), pipe.get())) {
             r.emplace_back(buf.data());
         }
-        
+
         for (auto&& x : r) { // fgets copies the newline.
             x.erase(std::remove(x.begin(), x.end(), '\n'), x.end());
         }
@@ -282,37 +282,43 @@ void HCC::CXXAMPLink::ConstructJob(
     if (Args.hasArg(options::OPT_v)) CmdArgs.push_back("--verbose");
 
     // specify AMDGPU target
+    constexpr const char auto_tgt[] = "auto";
 
-    if (Args.hasArg(options::OPT_amdgpu_target_EQ)) {
-        auto AMDGPUTargetVector =
-            Args.getAllArgValues(options::OPT_amdgpu_target_EQ);
+    #if !defined(HCC_AMDGPU_TARGET)
+        #define HCC_AMDGPU_TARGET auto_tgt
+    #endif
 
-        constexpr const char auto_tgt[] = "auto";
-        if (AMDGPUTargetVector.size() == 1u &&
-            AMDGPUTargetVector[0] == auto_tgt) {
-            AMDGPUTargetVector = detect_and_add_targets(C, getToolChain());
+    auto AMDGPUTargetVector =
+        Args.getAllArgValues(options::OPT_amdgpu_target_EQ);
+
+    if (AMDGPUTargetVector.empty()) {
+        AMDGPUTargetVector.push_back(HCC_AMDGPU_TARGET);
+    }
+
+    const auto cnt = std::count(
+        AMDGPUTargetVector.cbegin(), AMDGPUTargetVector.cend(), auto_tgt);
+
+    if (cnt > 1) C.getDriver().Diag(diag::warn_amdgpu_target_auto_nonsingular);
+    if (cnt == AMDGPUTargetVector.size()) {
+        AMDGPUTargetVector = detect_and_add_targets(C, getToolChain());
+    }
+    AMDGPUTargetVector.erase(
+        std::remove(
+            AMDGPUTargetVector.begin(), AMDGPUTargetVector.end(), auto_tgt),
+        AMDGPUTargetVector.end());
+
+    for (auto&& AMDGPUTarget : AMDGPUTargetVector) {
+        // TODO: this is Temporary.
+        static const std::string long_gfx_ip_prefix{"AMD:AMDGPU:"};
+        if (std::search(
+            AMDGPUTarget.cbegin(),
+            AMDGPUTarget.cend(),
+            long_gfx_ip_prefix.cbegin(),
+            long_gfx_ip_prefix.cend()) != AMDGPUTarget.cend()) {
+            AMDGPUTarget =
+                temporary_replace_long_form_GFXIp(C, AMDGPUTarget);
         }
-        else {
-            const auto it = std::remove(
-                AMDGPUTargetVector.begin(), AMDGPUTargetVector.end(), auto_tgt);
-            if (it != AMDGPUTargetVector.end()) {
-                C.getDriver().Diag(diag::warn_amdgpu_target_auto_nonsingular);
-                AMDGPUTargetVector.erase(it, AMDGPUTargetVector.end());
-            }
-        }
-        for (auto&& AMDGPUTarget : AMDGPUTargetVector) {
-            // TODO: this is Temporary.
-            static const std::string long_gfx_ip_prefix{"AMD:AMDGPU:"};
-            if (std::search(
-                AMDGPUTarget.cbegin(),
-                AMDGPUTarget.cend(),
-                long_gfx_ip_prefix.cbegin(),
-                long_gfx_ip_prefix.cend()) != AMDGPUTarget.cend()) {
-                AMDGPUTarget =
-                    temporary_replace_long_form_GFXIp(C, AMDGPUTarget);
-            }
-            validate_and_add_to_command(AMDGPUTarget, C, Args, CmdArgs);
-        }
+        validate_and_add_to_command(AMDGPUTarget, C, Args, CmdArgs);
     }
 
     // pass inputs to gnu ld for initial processing
