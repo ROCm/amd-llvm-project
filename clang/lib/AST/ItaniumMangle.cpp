@@ -4553,9 +4553,11 @@ CXXNameMangler::makeFunctionReturnTypeTags(const FunctionDecl *FD) {
 
   const FunctionProtoType *Proto =
       cast<FunctionProtoType>(FD->getType()->getAs<FunctionType>());
+  FunctionTypeDepthState saved = TrackReturnTypeTags.FunctionTypeDepth.push();
   TrackReturnTypeTags.FunctionTypeDepth.enterResultType();
   TrackReturnTypeTags.mangleType(Proto->getReturnType());
   TrackReturnTypeTags.FunctionTypeDepth.leaveResultType();
+  TrackReturnTypeTags.FunctionTypeDepth.pop(saved);
 
   return TrackReturnTypeTags.AbiTagsRoot.getSortedUniqueUsedAbiTags();
 }
