@@ -365,6 +365,7 @@ if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY)
 endif()
 
 add_definitions( -D_GNU_SOURCE )
+add_definitions(-DHCC_AMDGPU_TARGET="${AMDGPU_TARGET}")
 
 option(CLANG_BUILD_TOOLS
   "Build the Clang tools. If OFF, just generate build targets." ON)
@@ -511,8 +512,8 @@ if (CLANG_ENABLE_BOOTSTRAP)
     set(NEXT_CLANG_STAGE ${NEXT_CLANG_STAGE}-instrumented)
   endif()
   message(STATUS "Setting next clang stage to: ${NEXT_CLANG_STAGE}")
-  
-  
+
+
   set(STAMP_DIR ${CMAKE_CURRENT_BINARY_DIR}/${NEXT_CLANG_STAGE}-stamps/)
   set(BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/${NEXT_CLANG_STAGE}-bins/)
 
