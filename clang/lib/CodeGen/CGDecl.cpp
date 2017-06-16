@@ -1853,8 +1853,8 @@ void CodeGenFunction::EmitParmDecl(const VarDecl &D, ParamValue Arg,
     }
   } else {
     // Otherwise, create a temporary to hold the value.
-    DeclPtr = CreateMemTemp(Ty, getContext().getDeclAlign(&D),
-                            D.getName() + ".addr", false);
+    DeclPtr =
+        CreateMemTemp(Ty, getContext().getDeclAlign(&D), D.getName() + ".addr");
     DoStore = true;
   }
 
