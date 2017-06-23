@@ -649,7 +649,8 @@ ComplexPairTy ComplexExprEmitter::EmitBinMul(const BinOpInfo &Op) {
   Value *ResR, *ResI;
   llvm::MDBuilder MDHelper(CGF.getLLVMContext());
 
-  if (Op.LHS.first->getType()->isFloatingPointTy()) {
+  // XXX disable complex number builtin for now
+  if (false && Op.LHS.first->getType()->isFloatingPointTy()) {
     // The general formulation is:
     // (a + ib) * (c + id) = (a * c - b * d) + i(a * d + b * c)
     //
@@ -752,7 +753,8 @@ ComplexPairTy ComplexExprEmitter::EmitBinDiv(const BinOpInfo &Op) {
 
 
   llvm::Value *DSTr, *DSTi;
-  if (LHSr->getType()->isFloatingPointTy()) {
+  // XXX disable complex number builtin for now
+  if (false && LHSr->getType()->isFloatingPointTy()) {
     // If we have a complex operand on the RHS, we delegate to a libcall to
     // handle all of the complexities and minimize underflow/overflow cases.
     //
