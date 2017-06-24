@@ -62,18 +62,19 @@ llvm::Value *CodeGenFunction::EmitCastToVoidPtr(llvm::Value *value) {
 /// block.
 Address CodeGenFunction::CreateTempAlloca(llvm::Type *Ty, CharUnits Align,
                                           const Twine &Name,
-                                          llvm::Value *ArraySize, bool DoCast) {
+                                          llvm::Value *ArraySize,
+                                          bool CastToDefaultAddrSpace) {
   auto Alloca = CreateTempAlloca(Ty, Name, ArraySize);
   Alloca->setAlignment(Align.getQuantity());
   llvm::Value *V = Alloca;
   // Alloca always returns a pointer in alloca address space, which may
   // be different from the type defined by the language. For example,
   // in C++ the auto variables are in the default address space. Therefore
-  // cast alloca to the expected address space when necessary.
-  if (DoCast && getASTAllocaAddressSpace() != LangAS::Default) {
+  // cast alloca to the default address space when necessary.
+  if (CastToDefaultAddrSpace && getASTAllocaAddressSpace() != LangAS::Default) {
     auto DestAddrSpace = getContext().getTargetAddressSpace(LangAS::Default);
     V = getTargetHooks().performAddrSpaceCast(
-        *this, V, getASTAllocaAddressSpace(), DestAddrSpace,
+        *this, V, getASTAllocaAddressSpace(), LangAS::Default,
         Ty->getPointerTo(DestAddrSpace), /*non-null*/ true);
   }
 
@@ -131,14 +132,17 @@ Address CodeGenFunction::CreateIRTemp(QualType Ty, const Twine &Name) {
 }
 
 Address CodeGenFunction::CreateMemTemp(QualType Ty, const Twine &Name,
-                                       bool DoCast) {
+                                       bool CastToDefaultAddrSpace) {
   // FIXME: Should we prefer the preferred type alignment here?
-  return CreateMemTemp(Ty, getContext().getTypeAlignInChars(Ty), Name, DoCast);
+  return CreateMemTemp(Ty, getContext().getTypeAlignInChars(Ty), Name,
+                       CastToDefaultAddrSpace);
 }
 
 Address CodeGenFunction::CreateMemTemp(QualType Ty, CharUnits Align,
-                                       const Twine &Name, bool DoCast) {
-  return CreateTempAlloca(ConvertTypeForMem(Ty), Align, Name, nullptr, DoCast);
+                                       const Twine &Name,
+                                       bool CastToDefaultAddrSpace) {
+  return CreateTempAlloca(ConvertTypeForMem(Ty), Align, Name, nullptr,
+                          CastToDefaultAddrSpace);
 }
 
 /// EvaluateExprAsBool - Perform the usual unary conversions on the specified

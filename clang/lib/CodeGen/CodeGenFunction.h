@@ -1932,17 +1932,27 @@ public:
   /// \p ArraySize is the number of array elements to be allocated if it
   ///    is not nullptr.
   ///
-  /// For certain targets the alloca address space may be different from the
-  /// default address space expected by the language. E.g. C++ expects a
-  /// temporary variable in default address space. If \p DoCast is true,
-  /// alloca will be casted to the address space expected by the language,
-  /// otherwise it stays in the alloca address space.
+  /// LangAS::Default is the address space of pointers to local variables and
+  /// temporaries, as exposed in the source language. In certain
+  /// configurations, this is not the same as the alloca address space, and a
+  /// cast is needed to lift the pointer from the alloca AS into
+  /// LangAS::Default. This can happen when the target uses a restricted
+  /// address space for the stack but the source language requires
+  /// LangAS::Default to be a generic address space. The latter condition is
+  /// common for most programming languages; OpenCL is an exception in that
+  /// LangAS::Default is the private address space, which naturally maps
+  /// to the stack.
+  ///
+  /// Because the address of a temporary is often exposed to the program in
+  /// various ways, this function will perform the cast by default. The cast
+  /// may be avoided by passing false as \p CastToDefaultAddrSpace; this is
+  /// more efficient if the caller knows that the address will not be exposed.
   llvm::AllocaInst *CreateTempAlloca(llvm::Type *Ty, const Twine &Name = "tmp",
                                      llvm::Value *ArraySize = nullptr);
   Address CreateTempAlloca(llvm::Type *Ty, CharUnits align,
                            const Twine &Name = "tmp",
                            llvm::Value *ArraySize = nullptr,
-                           bool DoCast = true);
+                           bool CastToDefaultAddrSpace = true);
   /// Get alloca instruction operand of an addrspacecast instruction.
   /// If \p Inst is alloca instruction, returns \p Inst;
   llvm::AllocaInst *getAddrSpaceCastedAlloca(llvm::Instruction *Inst) const;
@@ -1980,12 +1990,12 @@ public:
   Address CreateIRTemp(QualType T, const Twine &Name = "tmp");
 
   /// CreateMemTemp - Create a temporary memory object of the given type, with
-  /// appropriate alignment. Cast it to the expected address space if \p DoCast
-  /// is true.
+  /// appropriate alignment. Cast it to the default address space if
+  /// \p CastToDefaultAddrSpace is true.
   Address CreateMemTemp(QualType T, const Twine &Name = "tmp",
-                        bool DoCast = true);
+                        bool CastToDefaultAddrSpace = true);
   Address CreateMemTemp(QualType T, CharUnits Align, const Twine &Name = "tmp",
-                        bool DoCast = true);
+                        bool CastToDefaultAddrSpace = true);
 
   /// CreateAggTemp - Create a temporary memory object for the given
   /// aggregate type.
