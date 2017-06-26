@@ -2027,6 +2027,8 @@ static bool isWhiteListForHCC(CodeGenModule &CGM, GlobalDecl GD) {
   // C++11 functional operators are allowed to pass
   // C++11 swap functions are allowed to pass
   // C++11 numeric limits are allowed to pass
+  // C++11 pair are allowed to pass
+  // C++11 complex are allowed to pass
   // PSTL operators are allowed to pass
   const CXXMethodDecl* MethodD = dyn_cast<CXXMethodDecl>(D);
   if (MethodD) {
@@ -2038,6 +2040,8 @@ static bool isWhiteListForHCC(CodeGenModule &CGM, GlobalDecl GD) {
         ClassName.find("unique_ptr") != StringRef::npos ||
         ClassName.find("compressed_pair") != StringRef::npos ||
         ClassName.find("numeric_limits") != StringRef::npos ||
+        ClassName.find("pair") != StringRef::npos ||
+        ClassName.find("complex") != StringRef::npos ||
         MangledName.find("experimental8parallel") != StringRef::npos) {
       return true;
     }
@@ -2045,6 +2049,8 @@ static bool isWhiteListForHCC(CodeGenModule &CGM, GlobalDecl GD) {
 
   // C++11 swap/move functions are allowed to pass
   // C++11 memory_order modifiers are allowed to pass
+  // C++11 complex operators are allowed to pass
+  // certain C++11 math functions are allowed to pass
   // Eigen internal functions are allowed to pass
   const FunctionDecl* FuncD = dyn_cast<FunctionDecl>(D);
   if (FuncD) {
@@ -2054,6 +2060,8 @@ static bool isWhiteListForHCC(CodeGenModule &CGM, GlobalDecl GD) {
         MangledName.find("St12memory_order") != StringRef::npos ||
         MangledName.find("Kokkos4Impl") != StringRef::npos ||
         MangledName.find("St16initializer_list") != StringRef::npos ||
+        MangledName.find("St7complex") != StringRef::npos ||
+        MangledName.find("5roundf") != StringRef::npos ||
         MangledName.find("Eigen8internal") != StringRef::npos) {
       return true;
     }
