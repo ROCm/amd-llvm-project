@@ -10889,9 +10889,10 @@ static SDValue lowerV8I16GeneralSingleInputVectorShuffle(
                  "We need to be changing the number of flipped inputs!");
           int PSHUFHalfMask[] = {0, 1, 2, 3};
           std::swap(PSHUFHalfMask[FixFreeIdx % 4], PSHUFHalfMask[FixIdx % 4]);
-          V = DAG.getNode(FixIdx < 4 ? X86ISD::PSHUFLW : X86ISD::PSHUFHW, DL,
-                          MVT::v8i16, V,
-                          getV4X86ShuffleImm8ForMask(PSHUFHalfMask, DL, DAG));
+          V = DAG.getNode(
+              FixIdx < 4 ? X86ISD::PSHUFLW : X86ISD::PSHUFHW, DL,
+              MVT::getVectorVT(MVT::i16, V.getValueSizeInBits() / 16), V,
+              getV4X86ShuffleImm8ForMask(PSHUFHalfMask, DL, DAG));
 
           for (int &M : Mask)
             if (M >= 0 && M == FixIdx)
@@ -19119,7 +19120,7 @@ static SDValue getScalarMaskingNode(SDValue Op, SDValue Mask,
 
   SDValue IMask = DAG.getNode(ISD::SCALAR_TO_VECTOR, dl, MVT::v1i1, Mask);
   if (Op.getOpcode() == X86ISD::FSETCCM ||
-      Op.getOpcode() == X86ISD::FSETCCM_RND) 
+      Op.getOpcode() == X86ISD::FSETCCM_RND)
     return DAG.getNode(ISD::AND, dl, VT, Op, IMask);
   if (Op.getOpcode() == X86ISD::VFPCLASSS)
     return DAG.getNode(ISD::OR, dl, VT, Op, IMask);
@@ -27970,28 +27971,45 @@ static bool combineX86ShufflesRecursively(ArrayRef<SDValue> SrcOps,
            OpMask.size() % RootMask.size() == 0) ||
           OpMask.size() == RootMask.size()) &&
          "The smaller number of elements must divide the larger.");
-  int MaskWidth = std::max<int>(OpMask.size(), RootMask.size());
-  int RootRatio = std::max<int>(1, OpMask.size() / RootMask.size());
-  int OpRatio = std::max<int>(1, RootMask.size() / OpMask.size());
-  assert(((RootRatio == 1 && OpRatio == 1) ||
-          (RootRatio == 1) != (OpRatio == 1)) &&
+
+  // This function can be performance-critical, so we rely on the power-of-2
+  // knowledge that we have about the mask sizes to replace div/rem ops with
+  // bit-masks and shifts.
+  assert(isPowerOf2_32(RootMask.size()) && "Non-power-of-2 shuffle mask sizes");
+  assert(isPowerOf2_32(OpMask.size()) && "Non-power-of-2 shuffle mask sizes");
+  unsigned RootMaskSizeLog2 = countTrailingZeros(RootMask.size());
+  unsigned OpMaskSizeLog2 = countTrailingZeros(OpMask.size());
+
+  unsigned MaskWidth = std::max<unsigned>(OpMask.size(), RootMask.size());
+  unsigned RootRatio = std::max<unsigned>(1, OpMask.size() >> RootMaskSizeLog2);
+  unsigned OpRatio = std::max<unsigned>(1, RootMask.size() >> OpMaskSizeLog2);
+  assert((RootRatio == 1 || OpRatio == 1) &&
          "Must not have a ratio for both incoming and op masks!");
 
-  SmallVector<int, 64> Mask((unsigned)MaskWidth, SM_SentinelUndef);
+  assert(isPowerOf2_32(MaskWidth) && "Non-power-of-2 shuffle mask sizes");
+  assert(isPowerOf2_32(RootRatio) && "Non-power-of-2 shuffle mask sizes");
+  assert(isPowerOf2_32(OpRatio) && "Non-power-of-2 shuffle mask sizes");
+  unsigned RootRatioLog2 = countTrailingZeros(RootRatio);
+  unsigned OpRatioLog2 = countTrailingZeros(OpRatio);
+
+  SmallVector<int, 64> Mask(MaskWidth, SM_SentinelUndef);
 
   // Merge this shuffle operation's mask into our accumulated mask. Note that
   // this shuffle's mask will be the first applied to the input, followed by the
   // root mask to get us all the way to the root value arrangement. The reason
   // for this order is that we are recursing up the operation chain.
-  for (int i = 0; i < MaskWidth; ++i) {
-    int RootIdx = i / RootRatio;
+  for (unsigned i = 0; i < MaskWidth; ++i) {
+    unsigned RootIdx = i >> RootRatioLog2;
     if (RootMask[RootIdx] < 0) {
       // This is a zero or undef lane, we're done.
       Mask[i] = RootMask[RootIdx];
       continue;
     }
 
-    int RootMaskedIdx = RootMask[RootIdx] * RootRatio + i % RootRatio;
+    unsigned RootMaskedIdx =
+        RootRatio == 1
+            ? RootMask[RootIdx]
+            : (RootMask[RootIdx] << RootRatioLog2) + (i & (RootRatio - 1));
 
     // Just insert the scaled root mask value if it references an input other
     // than the SrcOp we're currently inserting.
@@ -28001,9 +28019,8 @@ static bool combineX86ShufflesRecursively(ArrayRef<SDValue> SrcOps,
       continue;
     }
 
-    RootMaskedIdx %= MaskWidth;
-
-    int OpIdx = RootMaskedIdx / OpRatio;
+    RootMaskedIdx = RootMaskedIdx & (MaskWidth - 1);
+    unsigned OpIdx = RootMaskedIdx >> OpRatioLog2;
     if (OpMask[OpIdx] < 0) {
       // The incoming lanes are zero or undef, it doesn't matter which ones we
       // are using.
@@ -28012,9 +28029,12 @@ static bool combineX86ShufflesRecursively(ArrayRef<SDValue> SrcOps,
     }
 
     // Ok, we have non-zero lanes, map them through to one of the Op's inputs.
-    int OpMaskedIdx = OpMask[OpIdx] * OpRatio + RootMaskedIdx % OpRatio;
-    OpMaskedIdx %= MaskWidth;
+    unsigned OpMaskedIdx =
+        OpRatio == 1
+            ? OpMask[OpIdx]
+            : (OpMask[OpIdx] << OpRatioLog2) + (RootMaskedIdx & (OpRatio - 1));
 
+    OpMaskedIdx = OpMaskedIdx & (MaskWidth - 1);
     if (OpMask[OpIdx] < (int)OpMask.size()) {
       assert(0 <= InputIdx0 && "Unknown target shuffle input");
       OpMaskedIdx += InputIdx0 * MaskWidth;

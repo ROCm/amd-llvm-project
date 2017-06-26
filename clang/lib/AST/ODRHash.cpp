@@ -159,6 +159,10 @@ void ODRHash::AddTemplateArgument(TemplateArgument TA) {
       AddStmt(TA.getAsExpr());
       break;
     case TemplateArgument::Pack:
+      ID.AddInteger(TA.pack_size());
+      for (auto SubTA : TA.pack_elements()) {
+        AddTemplateArgument(SubTA);
+      }
       break;
   }
 }
@@ -248,6 +252,17 @@ public:
     Inherited::VisitValueDecl(D);
   }
 
+  void VisitVarDecl(const VarDecl *D) {
+    Hash.AddBoolean(D->isStaticLocal());
+    Hash.AddBoolean(D->isConstexpr());
+    const bool HasInit = D->hasInit();
+    Hash.AddBoolean(HasInit);
+    if (HasInit) {
+      AddStmt(D->getInit());
+    }
+    Inherited::VisitVarDecl(D);
+  }
+
   void VisitParmVarDecl(const ParmVarDecl *D) {
     // TODO: Handle default arguments.
     Inherited::VisitParmVarDecl(D);
@@ -332,6 +347,7 @@ bool ODRHash::isWhitelistedDecl(const Decl *D, const CXXRecordDecl *Parent) {
     case Decl::StaticAssert:
     case Decl::TypeAlias:
     case Decl::Typedef:
+    case Decl::Var:
       return true;
   }
 }
@@ -548,6 +564,13 @@ public:
     }
     Hash.AddTemplateName(T->getTemplateName());
     VisitType(T);
+  }
+
+  void VisitTemplateTypeParmType(const TemplateTypeParmType *T) {
+    ID.AddInteger(T->getDepth());
+    ID.AddInteger(T->getIndex());
+    Hash.AddBoolean(T->isParameterPack());
+    AddDecl(T->getDecl());
   }
 };
 

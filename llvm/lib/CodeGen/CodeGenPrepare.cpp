@@ -134,7 +134,7 @@ static cl::opt<bool> DisablePreheaderProtect(
     cl::desc("Disable protection against removing loop preheaders"));
 
 static cl::opt<bool> ProfileGuidedSectionPrefix(
-    "profile-guided-section-prefix", cl::Hidden, cl::init(true),
+    "profile-guided-section-prefix", cl::Hidden, cl::init(true), cl::ZeroOrMore,
     cl::desc("Use profile info to add section prefix for hot/cold functions"));
 
 static cl::opt<unsigned> FreqRatioToSkipMerge(
@@ -1851,9 +1851,19 @@ Value *MemCmpExpansion::getCompareLoadPairs(unsigned Index, unsigned Size,
                                   ConstantInt::get(LoadSizeType, GEPIndex));
     }
 
-    // Load LoadSizeType from the base address.
-    Value *LoadSrc1 = Builder.CreateLoad(LoadSizeType, Source1);
-    Value *LoadSrc2 = Builder.CreateLoad(LoadSizeType, Source2);
+    // Get a constant or load a value for each source address.
+    Value *LoadSrc1 = nullptr;
+    if (auto *Source1C = dyn_cast<Constant>(Source1))
+      LoadSrc1 = ConstantFoldLoadFromConstPtr(Source1C, LoadSizeType, DL);
+    if (!LoadSrc1)
+      LoadSrc1 = Builder.CreateLoad(LoadSizeType, Source1);
+
+    Value *LoadSrc2 = nullptr;
+    if (auto *Source2C = dyn_cast<Constant>(Source2))
+      LoadSrc2 = ConstantFoldLoadFromConstPtr(Source2C, LoadSizeType, DL);
+    if (!LoadSrc2)
+      LoadSrc2 = Builder.CreateLoad(LoadSizeType, Source2);
+
     if (NumLoads != 1) {
       if (LoadSizeType != MaxLoadType) {
         LoadSrc1 = Builder.CreateZExtOrTrunc(LoadSrc1, MaxLoadType);
