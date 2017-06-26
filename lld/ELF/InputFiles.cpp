@@ -632,8 +632,9 @@ ArchiveFile::ArchiveFile(std::unique_ptr<Archive> &&File)
       File(std::move(File)) {}
 
 template <class ELFT> void ArchiveFile::parse() {
+  Symbols.reserve(File->getNumberOfSymbols());
   for (const Archive::Symbol &Sym : File->symbols())
-    Symtab<ELFT>::X->addLazyArchive(this, Sym);
+    Symbols.push_back(Symtab<ELFT>::X->addLazyArchive(this, Sym));
 }
 
 // Returns a buffer pointing to a member file containing a given symbol.
@@ -821,6 +822,8 @@ static uint8_t getBitcodeMachineKind(StringRef Path, const Triple &T) {
   case Triple::arm:
   case Triple::thumb:
     return EM_ARM;
+  case Triple::avr:
+    return EM_AVR;
   case Triple::mips:
   case Triple::mipsel:
   case Triple::mips64:

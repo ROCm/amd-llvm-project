@@ -1468,6 +1468,19 @@ example:
     This attribute by itself does not imply restrictions on
     inter-procedural optimizations.  All of the semantic effects the
     patching may have to be separately conveyed via the linkage type.
+``"probe-stack"``
+    This attribute indicates that the function will trigger a guard region
+    in the end of the stack. It ensures that accesses to the stack must be
+    no further apart than the size of the guard region to a previous
+    access of the stack. It takes one required string value, the name of
+    the stack probing function that will be called.
+
+    If a function that has a ``"probe-stack"`` attribute is inlined into
+    a function with another ``"probe-stack"`` attribute, the resulting
+    function has the ``"probe-stack"`` attribute of the caller. If a
+    function that has a ``"probe-stack"`` attribute is inlined into a
+    function that has no ``"probe-stack"`` attribute at all, the resulting
+    function has the ``"probe-stack"`` attribute of the callee.
 ``readnone``
     On a function, this attribute indicates that the function computes its
     result (or decides to unwind an exception) based strictly on its arguments,
@@ -1498,6 +1511,21 @@ example:
     On an argument, this attribute indicates that the function does not write
     through this pointer argument, even though it may write to the memory that
     the pointer points to.
+``"stack-probe-size"``
+    This attribute controls the behavior of stack probes: either
+    the ``"probe-stack"`` attribute, or ABI-required stack probes, if any.
+    It defines the size of the guard region. It ensures that if the function
+    may use more stack space than the size of the guard region, stack probing
+    sequence will be emitted. It takes one required integer value, which
+    is 4096 by default.
+
+    If a function that has a ``"stack-probe-size"`` attribute is inlined into
+    a function with another ``"stack-probe-size"`` attribute, the resulting
+    function has the ``"stack-probe-size"`` attribute that has the lower
+    numeric value. If a function that has a ``"stack-probe-size"`` attribute is
+    inlined into a function that has no ``"stack-probe-size"`` attribute
+    at all, the resulting function has the ``"stack-probe-size"`` attribute
+    of the callee.
 ``writeonly``
     On a function, this attribute indicates that the function may write to but
     does not read from memory.
@@ -1989,7 +2017,7 @@ A pointer value is *based* on another pointer value according to the
 following rules:
 
 -  A pointer value formed from a ``getelementptr`` operation is *based*
-   on the first value operand of the ``getelementptr``.
+   on the second value operand of the ``getelementptr``.
 -  The result value of a ``bitcast`` is *based* on the operand of the
    ``bitcast``.
 -  A pointer value formed by an ``inttoptr`` is *based* on all pointer
@@ -3166,7 +3194,7 @@ The following is the syntax for constant expressions:
 ``getelementptr (TY, CSTPTR, IDX0, IDX1, ...)``, ``getelementptr inbounds (TY, CSTPTR, IDX0, IDX1, ...)``
     Perform the :ref:`getelementptr operation <i_getelementptr>` on
     constants. As with the :ref:`getelementptr <i_getelementptr>`
-    instruction, the index list may have zero or more indexes, which are
+    instruction, the index list may have one or more indexes, which are
     required to make sense for the type of "pointer to TY".
 ``select (COND, VAL1, VAL2)``
     Perform the :ref:`select operation <i_select>` on constants.
@@ -5191,6 +5219,72 @@ Example:
     @b = internal global i32 2, comdat $a, section "abc", !associated !0
     !0 = !{i32* @a}
 
+
+'``prof``' Metadata
+^^^^^^^^^^^^^^^^^^^
+
+The ``prof`` metadata is used to record profile data in the IR.
+The first operand of the metadata node indicates the profile metadata
+type. There are currently 3 types:
+:ref:`branch_weights<prof_node_branch_weights>`,
+:ref:`function_entry_count<prof_node_function_entry_count>`, and
+:ref:`VP<prof_node_VP>`.
+
+.. _prof_node_branch_weights:
+
+branch_weights
+""""""""""""""
+
+Branch weight metadata attached to a branch, select, switch or call instruction
+represents the likeliness of the associated branch being taken.
+For more information, see :doc:`BranchWeightMetadata`.
+
+.. _prof_node_function_entry_count:
+
+function_entry_count
+""""""""""""""""""""
+
+Function entry count metadata can be attached to function definitions
+to record the number of times the function is called. Used with BFI
+information, it is also used to derive the basic block profile count.
+For more information, see :doc:`BranchWeightMetadata`.
+
+.. _prof_node_VP:
+
+VP
+""
+
+VP (value profile) metadata can be attached to instructions that have
+value profile information. Currently this is indirect calls (where it
+records the hottest callees) and calls to memory intrinsics such as memcpy,
+memmove, and memset (where it records the hottest byte lengths).
+
+Each VP metadata node contains "VP" string, then a uint32_t value for the value
+profiling kind, a uint64_t value for the total number of times the instruction
+is executed, followed by uint64_t value and execution count pairs.
+The value profiling kind is 0 for indirect call targets and 1 for memory
+operations. For indirect call targets, each profile value is a hash
+of the callee function name, and for memory operations each value is the
+byte length.
+
+Note that the value counts do not need to add up to the total count
+listed in the third operand (in practice only the top hottest values
+are tracked and reported).
+
+Indirect call example:
+
+.. code-block:: llvm
+
+    call void %f(), !prof !1
+    !1 = !{!"VP", i32 0, i64 1600, i64 7651369219802541373, i64 1030, i64 -4377547752858689819, i64 410}
+
+Note that the VP type is 0 (the second operand), which indicates this is
+an indirect call value profile data. The third operand indicates that the
+indirect call executed 1600 times. The 4th and 6th operands give the
+hashes of the 2 hottest target functions' names (this is the same hash used
+to represent function names in the profile database), and the 5th and 7th
+operands give the execution count that each of the respective prior target
+functions was called.
 
 Module Flags Metadata
 =====================
@@ -7739,7 +7833,7 @@ base address to start from. The remaining arguments are indices
 that indicate which of the elements of the aggregate object are indexed.
 The interpretation of each index is dependent on the type being indexed
 into. The first index always indexes the pointer value given as the
-first argument, the second index indexes a value of the type pointed to
+second argument, the second index indexes a value of the type pointed to
 (not necessarily the value directly pointed to, since the first index
 can be non-zero), etc. The first type indexed into must be a pointer
 value, subsequent types can be arrays, vectors, and structs. Note that
@@ -14002,62 +14096,66 @@ Element Wise Atomic Memory Intrinsics
 These intrinsics are similar to the standard library memory intrinsics except
 that they perform memory transfer as a sequence of atomic memory accesses.
 
-.. _int_memcpy_element_atomic:
+.. _int_memcpy_element_unordered_atomic:
 
-'``llvm.memcpy.element.atomic``' Intrinsic
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+'``llvm.memcpy.element.unordered.atomic``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Syntax:
 """""""
 
-This is an overloaded intrinsic. You can use ``llvm.memcpy.element.atomic`` on
+This is an overloaded intrinsic. You can use ``llvm.memcpy.element.unordered.atomic`` on
 any integer bit width and for different address spaces. Not all targets
 support all bit widths however.
 
 ::
 
-      declare void @llvm.memcpy.element.atomic.p0i8.p0i8(i8* <dest>, i8* <src>,
-                                              i64 <num_elements>, i32 <element_size>)
+      declare void @llvm.memcpy.element.unordered.atomic.p0i8.p0i8.i32(i8* <dest>,
+                                                                       i8* <src>,
+                                                                       i32 <len>,
+                                                                       i32 <element_size>)
+      declare void @llvm.memcpy.element.unordered.atomic.p0i8.p0i8.i64(i8* <dest>,
+                                                                       i8* <src>,
+                                                                       i64 <len>,
+                                                                       i32 <element_size>)
 
 Overview:
 """""""""
 
-The '``llvm.memcpy.element.atomic.*``' intrinsic performs copy of a block of 
-memory from the source location to the destination location as a sequence of
-unordered atomic memory accesses where each access is a multiple of
-``element_size`` bytes wide and aligned at an element size boundary. For example
-each element is accessed atomically in source and destination buffers.
+The '``llvm.memcpy.element.unordered.atomic.*``' intrinsic is a specialization of the
+'``llvm.memcpy.*``' intrinsic. It differs in that the ``dest`` and ``src`` are treated
+as arrays with elements that are exactly ``element_size`` bytes, and the copy between
+buffers uses a sequence of :ref:`unordered atomic <ordering>` load/store operations
+that are a positive integer multiple of the ``element_size`` in size.
 
 Arguments:
 """"""""""
 
-The first argument is a pointer to the destination, the second is a
-pointer to the source. The third argument is an integer argument
-specifying the number of elements to copy, the fourth argument is size of
-the single element in bytes.
+The first three arguments are the same as they are in the :ref:`@llvm.memcpy <int_memcpy>`
+intrinsic, with the added constraint that ``len`` is required to be a positive integer
+multiple of the ``element_size``. If ``len`` is not a positive integer multiple of
+``element_size``, then the behaviour of the intrinsic is undefined.
 
-``element_size`` should be a power of two, greater than zero and less than
-a target-specific atomic access size limit.
+``element_size`` must be a compile-time constant positive power of two no greater than
+target-specific atomic access size limit.
 
-For each of the input pointers ``align`` parameter attribute must be specified.
-It must be a power of two and greater than or equal to the ``element_size``.
-Caller guarantees that both the source and destination pointers are aligned to
-that boundary.
+For each of the input pointers ``align`` parameter attribute must be specified. It
+must be a power of two no less than the ``element_size``. Caller guarantees that
+both the source and destination pointers are aligned to that boundary.
 
 Semantics:
 """"""""""
 
-The '``llvm.memcpy.element.atomic.*``' intrinsic copies
-'``num_elements`` * ``element_size``' bytes of memory from the source location to
-the destination location. These locations are not allowed to overlap. Memory copy
-is performed as a sequence of unordered atomic memory accesses where each access
-is guaranteed to be a multiple of ``element_size`` bytes wide and aligned at an
-element size boundary.
+The '``llvm.memcpy.element.unordered.atomic.*``' intrinsic copies ``len`` bytes of
+memory from the source location to the destination location. These locations are not
+allowed to overlap. The memory copy is performed as a sequence of load/store operations
+where each access is guaranteed to be a multiple of ``element_size`` bytes wide and
+aligned at an ``element_size`` boundary. 
 
 The order of the copy is unspecified. The same value may be read from the source
 buffer many times, but only one write is issued to the destination buffer per
-element. It is well defined to have concurrent reads and writes to both source
-and destination provided those reads and writes are at least unordered atomic.
+element. It is well defined to have concurrent reads and writes to both source and
+destination provided those reads and writes are unordered atomic when specified.
 
 This intrinsic does not provide any additional ordering guarantees over those
 provided by a set of unordered loads from the source location and stores to the
@@ -14066,8 +14164,8 @@ destination.
 Lowering:
 """""""""
 
-In the most general case call to the '``llvm.memcpy.element.atomic.*``' is lowered
-to a call to the symbol ``__llvm_memcpy_element_atomic_*``. Where '*' is replaced
-with an actual element size.
+In the most general case call to the '``llvm.memcpy.element.unordered.atomic.*``' is
+lowered to a call to the symbol ``__llvm_memcpy_element_unordered_atomic_*``. Where '*'
+is replaced with an actual element size.
 
-Optimizer is allowed to inline memory copy when it's profitable to do so.
+The optimizer is allowed to inline the memory copy when it's profitable to do so.

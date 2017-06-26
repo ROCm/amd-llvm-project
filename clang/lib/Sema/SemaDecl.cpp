@@ -7260,11 +7260,11 @@ void Sema::CheckVariableDeclarationType(VarDecl *NewVD) {
         NewVD->setInvalidDecl();
         return;
       }
-      // OpenCL v1.1 s6.5.2 and s6.5.3 no local or constant variables
-      // in functions.
       if (T.getAddressSpace() == LangAS::opencl_constant ||
           T.getAddressSpace() == LangAS::opencl_local) {
         FunctionDecl *FD = getCurFunctionDecl();
+        // OpenCL v1.1 s6.5.2 and s6.5.3: no local or constant variables
+        // in functions.
         if (FD && !FD->hasAttr<OpenCLKernelAttr>()) {
           if (T.getAddressSpace() == LangAS::opencl_constant)
             Diag(NewVD->getLocation(), diag::err_opencl_function_variable)
@@ -7274,6 +7274,20 @@ void Sema::CheckVariableDeclarationType(VarDecl *NewVD) {
                 << 0 /*non-kernel only*/ << "local";
           NewVD->setInvalidDecl();
           return;
+        }
+        // OpenCL v2.0 s6.5.2 and s6.5.3: local and constant variables must be
+        // in the outermost scope of a kernel function.
+        if (FD && FD->hasAttr<OpenCLKernelAttr>()) {
+          if (!getCurScope()->isFunctionScope()) {
+            if (T.getAddressSpace() == LangAS::opencl_constant)
+              Diag(NewVD->getLocation(), diag::err_opencl_addrspace_scope)
+                  << "constant";
+            else
+              Diag(NewVD->getLocation(), diag::err_opencl_addrspace_scope)
+                  << "local";
+            NewVD->setInvalidDecl();
+            return;
+          }
         }
       } else if (T.getAddressSpace() != LangAS::Default) {
         // Do not allow other address spaces on automatic variable.
@@ -12218,6 +12232,7 @@ Decl *Sema::ActOnFinishFunctionBody(Decl *dcl, Stmt *Body,
 
   if (FD) {
     FD->setBody(Body);
+    FD->setWillHaveBody(false);
 
     if (getLangOpts().CPlusPlus14) {
       if (!FD->isInvalidDecl() && Body && !FD->isDependentContext() &&
@@ -16089,7 +16104,10 @@ void Sema::ActOnModuleBegin(SourceLocation DirectiveLoc, Module *Mod) {
   // lexically within the module.
   if (getLangOpts().trackLocalOwningModule()) {
     for (auto *DC = CurContext; DC; DC = DC->getLexicalParent()) {
-      cast<Decl>(DC)->setHidden(true);
+      cast<Decl>(DC)->setModuleOwnershipKind(
+          getLangOpts().ModulesLocalVisibility
+              ? Decl::ModuleOwnershipKind::VisibleWhenImported
+              : Decl::ModuleOwnershipKind::Visible);
       cast<Decl>(DC)->setLocalOwningModule(Mod);
     }
   }
@@ -16129,7 +16147,8 @@ void Sema::ActOnModuleEnd(SourceLocation EomLoc, Module *Mod) {
     for (auto *DC = CurContext; DC; DC = DC->getLexicalParent()) {
       cast<Decl>(DC)->setLocalOwningModule(getCurrentModule());
       if (!getCurrentModule())
-        cast<Decl>(DC)->setHidden(false);
+        cast<Decl>(DC)->setModuleOwnershipKind(
+            Decl::ModuleOwnershipKind::Unowned);
     }
   }
 }
