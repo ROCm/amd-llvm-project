@@ -365,7 +365,7 @@ if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY)
 endif()
 
 add_definitions( -D_GNU_SOURCE )
-add_definitions(-DHCC_AMDGPU_TARGET="${AMDGPU_TARGET}")
+add_definitions(-DROCM_ROOT="${ROCM_ROOT}" -DHCC_AMDGPU_TARGET="${AMDGPU_TARGET}")
 
 option(CLANG_BUILD_TOOLS
   "Build the Clang tools. If OFF, just generate build targets." ON)

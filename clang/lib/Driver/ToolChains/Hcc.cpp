@@ -184,8 +184,11 @@ namespace
         //            formed from their union, including gfx000.
         std::vector<std::string> r;
 
-        const char* tmp = std::getenv("ROCM_ROOT");
-        const char* rocm = tmp ? tmp : "/opt/rocm";
+        #if !defined(ROCM_ROOT)
+            #define ROCM_ROOT "/opt/rocm"
+        #endif
+
+        constexpr const char rocm[] = ROCM_ROOT;
 
         const auto e = c.getSysRoot() + rocm + "/bin/rocm_agent_enumerator";
 
