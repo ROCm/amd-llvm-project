@@ -590,6 +590,11 @@ void CodeGenFunction::EmitTypeCheck(TypeCheckKind TCK, SourceLocation Loc,
   if (Ptr->getType()->getPointerAddressSpace())
     return;
 
+  // Don't check pointers to volatile data. The behavior here is implementation-
+  // defined.
+  if (Ty.isVolatileQualified())
+    return;
+
   SanitizerScope SanScope(this);
 
   SmallVector<std::pair<llvm::Value *, SanitizerMask>, 3> Checks;
@@ -1199,6 +1204,11 @@ LValue CodeGenFunction::EmitLValue(const Expr *E) {
 
   case Expr::MaterializeTemporaryExprClass:
     return EmitMaterializeTemporaryExpr(cast<MaterializeTemporaryExpr>(E));
+
+  case Expr::CoawaitExprClass:
+    return EmitCoawaitLValue(cast<CoawaitExpr>(E));
+  case Expr::CoyieldExprClass:
+    return EmitCoyieldLValue(cast<CoyieldExpr>(E));
   }
 }
 

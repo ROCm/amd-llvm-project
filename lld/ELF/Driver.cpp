@@ -301,7 +301,7 @@ static uint64_t getZOptionValue(opt::InputArgList &Args, StringRef Key,
   for (auto *Arg : Args.filtered(OPT_z)) {
     std::pair<StringRef, StringRef> KV = StringRef(Arg->getValue()).split('=');
     if (KV.first == Key) {
-      uint64_t Result;
+      uint64_t Result = Default;
       if (!to_integer(KV.second, Result))
         error("invalid " + Key + ": " + KV.second);
       return Result;
@@ -912,7 +912,7 @@ getDefsym(opt::InputArgList &Args) {
 template <class ELFT> void LinkerDriver::link(opt::InputArgList &Args) {
   SymbolTable<ELFT> Symtab;
   elf::Symtab<ELFT>::X = &Symtab;
-  Target = createTarget();
+  Target = getTarget();
 
   Config->MaxPageSize = getMaxPageSize(Args);
   Config->ImageBase = getImageBase(Args);

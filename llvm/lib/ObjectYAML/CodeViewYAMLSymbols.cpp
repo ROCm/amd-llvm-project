@@ -35,10 +35,12 @@ LLVM_YAML_DECLARE_SCALAR_TRAITS(APSInt, false)
 LLVM_YAML_DECLARE_SCALAR_TRAITS(TypeIndex, false)
 
 LLVM_YAML_DECLARE_ENUM_TRAITS(SymbolKind)
+LLVM_YAML_DECLARE_ENUM_TRAITS(FrameCookieKind)
 
 LLVM_YAML_DECLARE_BITSET_TRAITS(CompileSym2Flags)
 LLVM_YAML_DECLARE_BITSET_TRAITS(CompileSym3Flags)
 LLVM_YAML_DECLARE_BITSET_TRAITS(ExportFlags)
+LLVM_YAML_DECLARE_BITSET_TRAITS(PublicSymFlags)
 LLVM_YAML_DECLARE_BITSET_TRAITS(LocalSymFlags)
 LLVM_YAML_DECLARE_BITSET_TRAITS(ProcSymFlags)
 LLVM_YAML_DECLARE_BITSET_TRAITS(FrameProcedureOptions)
@@ -89,6 +91,14 @@ void ScalarBitSetTraits<ExportFlags>::bitset(IO &io, ExportFlags &Flags) {
   for (const auto &E : FlagNames) {
     io.bitSetCase(Flags, E.Name.str().c_str(),
                   static_cast<ExportFlags>(E.Value));
+  }
+}
+
+void ScalarBitSetTraits<PublicSymFlags>::bitset(IO &io, PublicSymFlags &Flags) {
+  auto FlagNames = getProcSymFlagNames();
+  for (const auto &E : FlagNames) {
+    io.bitSetCase(Flags, E.Name.str().c_str(),
+                  static_cast<PublicSymFlags>(E.Value));
   }
 }
 
@@ -146,6 +156,15 @@ void ScalarEnumerationTraits<ThunkOrdinal>::enumeration(IO &io,
   auto ThunkNames = getThunkOrdinalNames();
   for (const auto &E : ThunkNames) {
     io.enumCase(Ord, E.Name.str().c_str(), static_cast<ThunkOrdinal>(E.Value));
+  }
+}
+
+void ScalarEnumerationTraits<FrameCookieKind>::enumeration(
+    IO &io, FrameCookieKind &FC) {
+  auto ThunkNames = getFrameCookieKindNames();
+  for (const auto &E : ThunkNames) {
+    io.enumCase(FC, E.Name.str().c_str(),
+                static_cast<FrameCookieKind>(E.Value));
   }
 }
 
@@ -288,7 +307,7 @@ template <> void SymbolRecordImpl<RegisterSym>::map(IO &IO) {
 }
 
 template <> void SymbolRecordImpl<PublicSym32>::map(IO &IO) {
-  IO.mapRequired("Type", Symbol.Index);
+  IO.mapRequired("Flags", Symbol.Flags);
   IO.mapRequired("Seg", Symbol.Segment);
   IO.mapRequired("Off", Symbol.Offset);
   IO.mapRequired("Name", Symbol.Name);

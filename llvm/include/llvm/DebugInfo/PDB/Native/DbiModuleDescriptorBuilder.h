@@ -14,6 +14,7 @@
 #include "llvm/DebugInfo/CodeView/DebugChecksumsSubsection.h"
 #include "llvm/DebugInfo/CodeView/DebugInlineeLinesSubsection.h"
 #include "llvm/DebugInfo/CodeView/DebugLinesSubsection.h"
+#include "llvm/DebugInfo/CodeView/DebugSubsectionRecord.h"
 #include "llvm/DebugInfo/CodeView/SymbolRecord.h"
 #include "llvm/DebugInfo/PDB/Native/RawTypes.h"
 #include "llvm/Support/Error.h"
@@ -50,7 +51,10 @@ public:
   void addSymbol(codeview::CVSymbol Symbol);
 
   void
-  addDebugSubsection(std::unique_ptr<codeview::DebugSubsection> Subsection);
+  addDebugSubsection(std::shared_ptr<codeview::DebugSubsection> Subsection);
+
+  void
+  addDebugSubsection(const codeview::DebugSubsectionRecord &SubsectionContents);
 
   uint16_t getStreamIndex() const;
   StringRef getModuleName() const { return ModuleName; }
