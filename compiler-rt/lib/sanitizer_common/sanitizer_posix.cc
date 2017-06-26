@@ -22,6 +22,7 @@
 #include "sanitizer_procmaps.h"
 #include "sanitizer_stacktrace.h"
 
+#include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/mman.h>
@@ -145,14 +146,32 @@ void UnmapOrDie(void *addr, uptr size) {
   DecreaseTotalMmap(size);
 }
 
+void *MmapOrDieOnFatalError(uptr size, const char *mem_type) {
+  size = RoundUpTo(size, GetPageSizeCached());
+  uptr res = internal_mmap(nullptr, size,
+                           PROT_READ | PROT_WRITE,
+                           MAP_PRIVATE | MAP_ANON, -1, 0);
+  int reserrno;
+  if (internal_iserror(res, &reserrno)) {
+    if (reserrno == ENOMEM)
+      return nullptr;
+    ReportMmapFailureAndDie(size, mem_type, "allocate", reserrno);
+  }
+  IncreaseTotalMmap(size);
+  return (void *)res;
+}
+
 // We want to map a chunk of address space aligned to 'alignment'.
 // We do it by maping a bit more and then unmaping redundant pieces.
 // We probably can do it with fewer syscalls in some OS-dependent way.
-void *MmapAlignedOrDie(uptr size, uptr alignment, const char *mem_type) {
+void *MmapAlignedOrDieOnFatalError(uptr size, uptr alignment,
+                                   const char *mem_type) {
   CHECK(IsPowerOfTwo(size));
   CHECK(IsPowerOfTwo(alignment));
   uptr map_size = size + alignment;
-  uptr map_res = (uptr)MmapOrDie(map_size, mem_type);
+  uptr map_res = (uptr)MmapOrDieOnFatalError(map_size, mem_type);
+  if (!map_res)
+    return nullptr;
   uptr map_end = map_res + map_size;
   uptr res = map_res;
   if (res & (alignment - 1))  // Not aligned.
