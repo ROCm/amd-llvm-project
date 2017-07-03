@@ -68,8 +68,8 @@ DominatingValue<RValue>::saved_type::save(CodeGenFunction &CGF, RValue rv) {
     return saved_type(V.getPointer(), AggregateLiteral,
                       V.getAlignment().getQuantity());
 
-  Address addr =
-    CGF.CreateTempAlloca(V.getType(), CGF.getPointerAlign(), "saved-rvalue");
+  Address addr = CGF.CreateTempAlloca(
+    V.getType(), CGF.getPointerAlign(), "saved-rvalue", nullptr, false);
   CGF.Builder.CreateStore(V.getPointer(), addr);
   return saved_type(addr.getPointer(), AggregateAddress,
                     V.getAlignment().getQuantity());
@@ -284,7 +284,7 @@ void EHScopeStack::popNullFixups() {
 void CodeGenFunction::initFullExprCleanup() {
   // Create a variable to decide whether the cleanup needs to be run.
   Address active = CreateTempAlloca(Builder.getInt1Ty(), CharUnits::One(),
-                                    "cleanup.cond");
+                                    "cleanup.cond", nullptr, false);
 
   // Initialize it to false at a site that's guaranteed to be run
   // before each evaluation.
@@ -1193,7 +1193,7 @@ static void SetupCleanupBlockActivation(CodeGenFunction &CGF,
   Address var = Scope.getActiveFlag();
   if (!var.isValid()) {
     var = CGF.CreateTempAlloca(CGF.Builder.getInt1Ty(), CharUnits::One(),
-                               "cleanup.isactive");
+                               "cleanup.isactive", nullptr, false);
     Scope.setActiveFlag(var);
 
     assert(dominatingIP && "no existing variable and no dominating IP!");

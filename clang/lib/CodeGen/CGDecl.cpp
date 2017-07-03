@@ -405,10 +405,10 @@ void CodeGenFunction::EmitStaticVarDecl(const VarDecl &D,
   // a no-op and should not be emitted.
   bool isCudaSharedVar = getLangOpts().CUDA && getLangOpts().CUDAIsDevice &&
                          D.hasAttr<CUDASharedAttr>();
-  bool isHCCTileStaticVar = getLangOpts().CPlusPlusAMP && getLangOpts().DevicePath &&
-                            D.hasAttr<HCCTileStaticAttr>();
+  bool isHCCAcceleratorPath =
+      getLangOpts().CPlusPlusAMP && getLangOpts().DevicePath;
   // If this value has an initializer, emit it.
-  if (D.getInit() && !isCudaSharedVar && !isHCCTileStaticVar)
+  if (D.getInit() && !isCudaSharedVar && !isHCCAcceleratorPath)
     var = AddInitializerToStaticVarDecl(D, var);
 
   var->setAlignment(alignment.getQuantity());

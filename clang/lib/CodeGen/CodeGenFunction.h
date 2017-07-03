@@ -758,7 +758,7 @@ public:
         ForceCleanup();
     }
 
-    /// Checks if the global variable is captured in current function. 
+    /// Checks if the global variable is captured in current function.
     bool isGlobalVarCaptured(const VarDecl *VD) const {
       return !VD->isLocalVarDeclOrParm() && CGF.LocalDeclMap.count(VD) > 0;
     }
@@ -819,7 +819,7 @@ public:
   /// block through the normal cleanup handling code (if any) and then
   /// on to \arg Dest.
   void EmitBranchThroughCleanup(JumpDest Dest);
-  
+
   /// isObviouslyBranchWithoutCleanups - Return true if a branch to the
   /// specified destination obviously has no cleanups to run.  'false' is always
   /// a conservatively correct answer for this method.
@@ -1038,7 +1038,7 @@ public:
       if (Data.isValid()) Data.unbind(CGF);
     }
   };
-  
+
 private:
   CGDebugInfo *DebugInfo;
   bool DisableDebugInfo;
@@ -1416,7 +1416,7 @@ private:
 
   /// Add OpenCL kernel arg metadata and the kernel attribute meatadata to
   /// the function metadata.
-  void EmitOpenCLKernelMetadata(const FunctionDecl *FD, 
+  void EmitOpenCLKernelMetadata(const FunctionDecl *FD,
                                 llvm::Function *Fn);
 
 public:
@@ -1425,10 +1425,10 @@ public:
 
   CodeGenTypes &getTypes() const { return CGM.getTypes(); }
   ASTContext &getContext() const { return CGM.getContext(); }
-  CGDebugInfo *getDebugInfo() { 
-    if (DisableDebugInfo) 
+  CGDebugInfo *getDebugInfo() {
+    if (DisableDebugInfo)
       return nullptr;
-    return DebugInfo; 
+    return DebugInfo;
   }
   void disableDebugInfo() { DisableDebugInfo = true; }
   void enableDebugInfo() { DisableDebugInfo = false; }
@@ -2465,7 +2465,7 @@ public:
   };
   AutoVarEmission EmitAutoVarAlloca(const VarDecl &var);
   void EmitAutoVarInit(const AutoVarEmission &emission);
-  void EmitAutoVarCleanups(const AutoVarEmission &emission);  
+  void EmitAutoVarCleanups(const AutoVarEmission &emission);
   void emitAutoVarTypeCleanup(const AutoVarEmission &emission,
                               QualType::DestructionKind dtorKind);
 
@@ -2487,7 +2487,7 @@ public:
 
     bool isIndirect() const { return Alignment != 0; }
     llvm::Value *getAnyValue() const { return Value; }
-    
+
     llvm::Value *getDirectValue() const {
       assert(!isIndirect());
       return Value;
@@ -3119,7 +3119,7 @@ public:
   LValue EmitCastLValue(const CastExpr *E);
   LValue EmitMaterializeTemporaryExpr(const MaterializeTemporaryExpr *E);
   LValue EmitOpaqueValueLValue(const OpaqueValueExpr *e);
-  
+
   Address EmitExtVectorElementLValue(LValue V);
 
   RValue EmitRValueForField(LValue LV, const FieldDecl *FD, SourceLocation Loc);
@@ -3234,12 +3234,12 @@ public:
   void EmitNoreturnRuntimeCallOrInvoke(llvm::Value *callee,
                                        ArrayRef<llvm::Value*> args);
 
-  CGCallee BuildAppleKextVirtualCall(const CXXMethodDecl *MD, 
+  CGCallee BuildAppleKextVirtualCall(const CXXMethodDecl *MD,
                                      NestedNameSpecifier *Qual,
                                      llvm::Type *Ty);
-  
+
   CGCallee BuildAppleKextVirtualDestructorCall(const CXXDestructorDecl *DD,
-                                               CXXDtorType Type, 
+                                               CXXDtorType Type,
                                                const CXXRecordDecl *RD);
 
   RValue
@@ -3405,11 +3405,11 @@ public:
   static Destroyer destroyARCWeak;
   static Destroyer emitARCIntrinsicUse;
 
-  void EmitObjCAutoreleasePoolPop(llvm::Value *Ptr); 
+  void EmitObjCAutoreleasePoolPop(llvm::Value *Ptr);
   llvm::Value *EmitObjCAutoreleasePoolPush();
   llvm::Value *EmitObjCMRRAutoreleasePoolPush();
   void EmitObjCAutoreleasePoolCleanup(llvm::Value *Ptr);
-  void EmitObjCMRRAutoreleasePoolPop(llvm::Value *Ptr); 
+  void EmitObjCMRRAutoreleasePoolPop(llvm::Value *Ptr);
 
   /// \brief Emits a reference binding to the passed in expression.
   RValue EmitReferenceBindingToExpr(const Expr *E);
@@ -3516,7 +3516,7 @@ public:
                                         bool PerformInit);
 
   void EmitCXXConstructExpr(const CXXConstructExpr *E, AggValueSlot Dest);
-  
+
   void EmitSynthesizedCXXCopyCtor(Address Dest, Address Src, const Expr *Exp);
 
   void enterFullExpression(const ExprWithCleanups *E) {
@@ -3565,7 +3565,7 @@ public:
   /// Determine if the given statement might introduce a declaration into the
   /// current scope, by being a (possibly-labelled) DeclStmt.
   static bool mightAddDeclToScope(const Stmt *S);
-  
+
   /// ConstantFoldsToSimpleInteger - If the specified expression does not fold
   /// to a constant, or if it does but contains a label, return false.  If it
   /// constant folds return true and set the boolean result in Result.
@@ -3854,9 +3854,9 @@ struct DominatingLLVMValue {
 
     // Otherwise, we need an alloca.
     auto align = CharUnits::fromQuantity(
-              CGF.CGM.getDataLayout().getPrefTypeAlignment(value->getType()));
-    Address alloca =
-      CGF.CreateTempAlloca(value->getType(), align, "cond-cleanup.save");
+      CGF.CGM.getDataLayout().getPrefTypeAlignment(value->getType()));
+    Address alloca = CGF.CreateTempAlloca(
+      value->getType(), align, "cond-cleanup.save", nullptr, false);
     CGF.Builder.CreateStore(value, alloca);
 
     return saved_type(alloca.getPointer(), true);
