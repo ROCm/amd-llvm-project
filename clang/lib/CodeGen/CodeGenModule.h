@@ -1330,6 +1330,9 @@ private:
   /// Emits target specific Metadata for global declarations.
   void EmitTargetMetadata();
 
+  /// Emits OpenCL specific Metadata e.g. OpenCL version.
+  void EmitOpenCLMetadata();
+
   /// Emit the llvm.gcov metadata used to tell LLVM where to emit the .gcno and
   /// .gcda files in a way that persists in .bc files.
   void EmitCoverageFile();
