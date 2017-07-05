@@ -281,6 +281,9 @@ public:
   /// Return the base pointer.
   Value *getBasePtr() const { return BasePtr; }
 
+  // Set IsOnHeap to the value in parameter.
+  void setIsOnHeap(bool value) { IsOnHeap = value; }
+
   /// For indirect accesses return the origin SAI of the BP, else null.
   const ScopArrayInfo *getBasePtrOriginSAI() const { return BasePtrOriginSAI; }
 
@@ -355,6 +358,12 @@ public:
   /// Is this array info modeling an array?
   bool isArrayKind() const { return Kind == MemoryKind::Array; }
 
+  /// Is this array allocated on heap
+  ///
+  /// This property is only relevant if the array is allocated by Polly instead
+  /// of pre-existing. If false, it is allocated using alloca instead malloca.
+  bool isOnHeap() const { return IsOnHeap; }
+
   /// Dump a readable representation to stderr.
   void dump() const;
 
@@ -411,6 +420,9 @@ private:
 
   /// The isl id for the base pointer.
   isl_id *Id;
+
+  /// True if the newly allocated array is on heap.
+  bool IsOnHeap;
 
   /// The sizes of each dimension as SCEV*.
   SmallVector<const SCEV *, 4> DimensionSizes;
@@ -1528,14 +1540,6 @@ public:
   /// @param NewDomain The new statement domain.
   void restrictDomain(__isl_take isl_set *NewDomain);
 
-  /// Compute the isl representation for the SCEV @p E in this stmt.
-  ///
-  /// @param E           The SCEV that should be translated.
-  /// @param NonNegative Flag to indicate the @p E has to be non-negative.
-  ///
-  /// Note that this function will also adjust the invalid context accordingly.
-  __isl_give isl_pw_aff *getPwAff(const SCEV *E, bool NonNegative = false);
-
   /// Get the loop for a dimension.
   ///
   /// @param Dimension The dimension of the induction variable
@@ -1628,6 +1632,9 @@ private:
 
   /// Number of copy statements.
   unsigned CopyStmtsNum;
+
+  /// Flag to indicate if the Scop is to be skipped.
+  bool SkipScop;
 
   typedef std::list<ScopStmt> StmtSet;
   /// The statements in this Scop.
@@ -1825,14 +1832,17 @@ private:
   /// block in the @p FinishedExitBlocks set so we can later skip edges from
   /// within the region to that block.
   ///
-  /// @param BB The block for which the domain is currently propagated.
-  /// @param BBLoop The innermost affine loop surrounding @p BB.
+  /// @param BB                 The block for which the domain is currently
+  ///                           propagated.
+  /// @param BBLoop             The innermost affine loop surrounding @p BB.
   /// @param FinishedExitBlocks Set of region exits the domain was set for.
-  /// @param LI The LoopInfo for the current function.
-  ///
+  /// @param LI                 The LoopInfo for the current function.
+  /// @param InvalidDomainMap   BB to InvalidDomain map for the BB of current
+  ///                           region.
   void propagateDomainConstraintsToRegionExit(
       BasicBlock *BB, Loop *BBLoop,
-      SmallPtrSetImpl<BasicBlock *> &FinishedExitBlocks, LoopInfo &LI);
+      SmallPtrSetImpl<BasicBlock *> &FinishedExitBlocks, LoopInfo &LI,
+      DenseMap<BasicBlock *, __isl_keep isl_set *> &InvalidDomainMap);
 
   /// Compute the union of predecessor domains for @p BB.
   ///
@@ -1852,30 +1862,43 @@ private:
 
   /// Add loop carried constraints to the header block of the loop @p L.
   ///
-  /// @param L  The loop to process.
-  /// @param LI The LoopInfo for the current function.
+  /// @param L                The loop to process.
+  /// @param LI               The LoopInfo for the current function.
+  /// @param InvalidDomainMap BB to InvalidDomain map for the BB of current
+  ///                         region.
   ///
   /// @returns True if there was no problem and false otherwise.
-  bool addLoopBoundsToHeaderDomain(Loop *L, LoopInfo &LI);
+  bool addLoopBoundsToHeaderDomain(
+      Loop *L, LoopInfo &LI,
+      DenseMap<BasicBlock *, __isl_keep isl_set *> &InvalidDomainMap);
 
   /// Compute the branching constraints for each basic block in @p R.
   ///
-  /// @param R  The region we currently build branching conditions for.
-  /// @param DT The DominatorTree for the current function.
-  /// @param LI The LoopInfo for the current function.
+  /// @param R                The region we currently build branching conditions
+  ///                         for.
+  /// @param DT               The DominatorTree for the current function.
+  /// @param LI               The LoopInfo for the current function.
+  /// @param InvalidDomainMap BB to InvalidDomain map for the BB of current
+  ///                         region.
   ///
   /// @returns True if there was no problem and false otherwise.
-  bool buildDomainsWithBranchConstraints(Region *R, DominatorTree &DT,
-                                         LoopInfo &LI);
+  bool buildDomainsWithBranchConstraints(
+      Region *R, DominatorTree &DT, LoopInfo &LI,
+      DenseMap<BasicBlock *, __isl_keep isl_set *> &InvalidDomainMap);
 
   /// Propagate the domain constraints through the region @p R.
   ///
-  /// @param R  The region we currently build branching conditions for.
-  /// @param DT The DominatorTree for the current function.
-  /// @param LI The LoopInfo for the current function.
+  /// @param R                The region we currently build branching conditions
+  /// for.
+  /// @param DT               The DominatorTree for the current function.
+  /// @param LI               The LoopInfo for the current function.
+  /// @param InvalidDomainMap BB to InvalidDomain map for the BB of current
+  ///                         region.
   ///
   /// @returns True if there was no problem and false otherwise.
-  bool propagateDomainConstraints(Region *R, DominatorTree &DT, LoopInfo &LI);
+  bool propagateDomainConstraints(
+      Region *R, DominatorTree &DT, LoopInfo &LI,
+      DenseMap<BasicBlock *, __isl_keep isl_set *> &InvalidDomainMap);
 
   /// Propagate invalid domains of statements through @p R.
   ///
@@ -1884,21 +1907,29 @@ private:
   /// of error statements and those only reachable via error statements will be
   /// replaced by an empty set. Later those will be removed completely.
   ///
-  /// @param R  The currently traversed region.
-  /// @param DT The DominatorTree for the current function.
-  /// @param LI The LoopInfo for the current function.
-  ///
+  /// @param R                The currently traversed region.
+  /// @param DT               The DominatorTree for the current function.
+  /// @param LI               The LoopInfo for the current function.
+  /// @param InvalidDomainMap BB to InvalidDomain map for the BB of current
+  ///                         region.
+  //
   /// @returns True if there was no problem and false otherwise.
-  bool propagateInvalidStmtDomains(Region *R, DominatorTree &DT, LoopInfo &LI);
+  bool propagateInvalidStmtDomains(
+      Region *R, DominatorTree &DT, LoopInfo &LI,
+      DenseMap<BasicBlock *, __isl_keep isl_set *> &InvalidDomainMap);
 
   /// Compute the domain for each basic block in @p R.
   ///
-  /// @param R  The region we currently traverse.
-  /// @param DT The DominatorTree for the current function.
-  /// @param LI The LoopInfo for the current function.
+  /// @param R                The region we currently traverse.
+  /// @param DT               The DominatorTree for the current function.
+  /// @param LI               The LoopInfo for the current function.
+  /// @param InvalidDomainMap BB to InvalidDomain map for the BB of current
+  ///                         region.
   ///
   /// @returns True if there was no problem and false otherwise.
-  bool buildDomains(Region *R, DominatorTree &DT, LoopInfo &LI);
+  bool
+  buildDomains(Region *R, DominatorTree &DT, LoopInfo &LI,
+               DenseMap<BasicBlock *, __isl_keep isl_set *> &InvalidDomainMap);
 
   /// Add parameter constraints to @p C that imply a non-empty domain.
   __isl_give isl_set *addNonEmptyDomainConstraints(__isl_take isl_set *C) const;
@@ -2006,7 +2037,9 @@ private:
   void buildContext();
 
   /// Add user provided parameter constraints to context (source code).
-  void addUserAssumptions(AssumptionCache &AC, DominatorTree &DT, LoopInfo &LI);
+  void addUserAssumptions(
+      AssumptionCache &AC, DominatorTree &DT, LoopInfo &LI,
+      DenseMap<BasicBlock *, __isl_keep isl_set *> &InvalidDomainMap);
 
   /// Add user provided parameter constraints to context (command line).
   void addUserContext();
@@ -2336,6 +2369,12 @@ public:
   /// Check if the SCoP has been optimized by the scheduler.
   bool isOptimized() const { return IsOptimized; }
 
+  /// Mark the SCoP to be skipped by ScopPass passes.
+  void markAsToBeSkipped() { SkipScop = true; }
+
+  /// Check if the SCoP is to be skipped by ScopPass passes.
+  bool isToBeSkipped() const { return SkipScop; }
+
   /// Get the name of the entry and exit blocks of this Scop.
   ///
   /// These along with the function name can uniquely identify a Scop.
@@ -2593,20 +2632,19 @@ public:
   /// @param ElementType The type of the elements stored in this array.
   /// @param Kind        The kind of the array info object.
   /// @param BaseName    The optional name of this memory reference.
-  const ScopArrayInfo *getOrCreateScopArrayInfo(Value *BasePtr,
-                                                Type *ElementType,
-                                                ArrayRef<const SCEV *> Sizes,
-                                                MemoryKind Kind,
-                                                const char *BaseName = nullptr);
+  ScopArrayInfo *getOrCreateScopArrayInfo(Value *BasePtr, Type *ElementType,
+                                          ArrayRef<const SCEV *> Sizes,
+                                          MemoryKind Kind,
+                                          const char *BaseName = nullptr);
 
   /// Create an array and return the corresponding ScopArrayInfo object.
   ///
   /// @param ElementType The type of the elements stored in this array.
   /// @param BaseName    The name of this memory reference.
   /// @param Sizes       The sizes of dimensions.
-  const ScopArrayInfo *createScopArrayInfo(Type *ElementType,
-                                           const std::string &BaseName,
-                                           const std::vector<unsigned> &Sizes);
+  ScopArrayInfo *createScopArrayInfo(Type *ElementType,
+                                     const std::string &BaseName,
+                                     const std::vector<unsigned> &Sizes);
 
   /// Return the cached ScopArrayInfo object for @p BasePtr.
   ///

@@ -69,9 +69,9 @@ public:
   bool isLocal() const { return IsLocal; }
   bool isPreemptible() const;
   StringRef getName() const { return Name; }
-  void setName(StringRef S) { Name = S; }
   uint8_t getVisibility() const { return StOther & 0x3; }
   void parseSymbolVersion();
+  void copy(SymbolBody *Other);
 
   bool isInGot() const { return GotIndex != -1U; }
   bool isInPlt() const { return PltIndex != -1U; }
@@ -317,6 +317,11 @@ struct ElfSym {
   // end and _end
   static DefinedRegular *End1;
   static DefinedRegular *End2;
+
+  // The _GLOBAL_OFFSET_TABLE_ symbol is defined by target convention to
+  // be at some offset from the base of the .got section, usually 0 or
+  // the end of the .got.
+  static DefinedRegular *GlobalOffsetTable;
 
   // _gp, _gp_disp and __gnu_local_gp symbols. Only for MIPS.
   static DefinedRegular *MipsGp;

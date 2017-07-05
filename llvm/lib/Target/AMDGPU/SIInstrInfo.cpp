@@ -770,7 +770,7 @@ void SIInstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,
 
     if (ST.hasScalarStores()) {
       // m0 is used for offset to scalar stores if used to spill.
-      Spill.addReg(AMDGPU::M0, RegState::ImplicitDefine);
+      Spill.addReg(AMDGPU::M0, RegState::ImplicitDefine | RegState::Dead);
     }
 
     return;
@@ -871,7 +871,7 @@ void SIInstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
 
     if (ST.hasScalarStores()) {
       // m0 is used for offset to scalar stores if used to spill.
-      Spill.addReg(AMDGPU::M0, RegState::ImplicitDefine);
+      Spill.addReg(AMDGPU::M0, RegState::ImplicitDefine | RegState::Dead);
     }
 
     return;
@@ -2444,8 +2444,6 @@ bool SIInstrInfo::verifyInstruction(const MachineInstr &MI,
     }
 
     int DstIdx = AMDGPU::getNamedOperandIdx(Opcode, AMDGPU::OpName::vdst);
-    if ( DstIdx == -1)
-      DstIdx = AMDGPU::getNamedOperandIdx(Opcode, AMDGPU::OpName::sdst);
 
     const int OpIndicies[] = { DstIdx, Src0Idx, Src1Idx, Src2Idx };
 
@@ -2488,12 +2486,18 @@ bool SIInstrInfo::verifyInstruction(const MachineInstr &MI,
           ErrInfo = "Only VCC allowed as dst in SDWA instructions on VI";
           return false;
         }
-      } else if (!ST.hasSDWAClampVOPC()) {
+      } else if (!ST.hasSDWAOutModsVOPC()) {
         // No clamp allowed on GFX9 for VOPC
         const MachineOperand *Clamp = getNamedOperand(MI, AMDGPU::OpName::clamp);
-        if (Clamp != nullptr &&
-          (!Clamp->isImm() || Clamp->getImm() != 0)) {
+        if (Clamp && (!Clamp->isImm() || Clamp->getImm() != 0)) {
           ErrInfo = "Clamp not allowed in VOPC SDWA instructions on VI";
+          return false;
+        }
+
+        // No omod allowed on GFX9 for VOPC
+        const MachineOperand *OMod = getNamedOperand(MI, AMDGPU::OpName::omod);
+        if (OMod && (!OMod->isImm() || OMod->getImm() != 0)) {
+          ErrInfo = "OMod not allowed in VOPC SDWA instructions on VI";
           return false;
         }
       }
@@ -4314,6 +4318,24 @@ SIInstrInfo::CreateTargetPostRAHazardRecognizer(const InstrItineraryData *II,
 ScheduleHazardRecognizer *
 SIInstrInfo::CreateTargetPostRAHazardRecognizer(const MachineFunction &MF) const {
   return new GCNHazardRecognizer(MF);
+}
+
+std::pair<unsigned, unsigned>
+SIInstrInfo::decomposeMachineOperandsTargetFlags(unsigned TF) const {
+  return std::make_pair(TF & MO_MASK, TF & ~MO_MASK);
+}
+
+ArrayRef<std::pair<unsigned, const char *>>
+SIInstrInfo::getSerializableDirectMachineOperandTargetFlags() const {
+  static const std::pair<unsigned, const char *> TargetFlags[] = {
+    { MO_GOTPCREL, "amdgpu-gotprel" },
+    { MO_GOTPCREL32_LO, "amdgpu-gotprel32-lo" },
+    { MO_GOTPCREL32_HI, "amdgpu-gotprel32-hi" },
+    { MO_REL32_LO, "amdgpu-rel32-lo" },
+    { MO_REL32_HI, "amdgpu-rel32-hi" }
+  };
+
+  return makeArrayRef(TargetFlags);
 }
 
 bool SIInstrInfo::isBasicBlockPrologue(const MachineInstr &MI) const {

@@ -489,21 +489,7 @@ static LoadInst *combineLoadToNewType(InstCombiner &IC, LoadInst &LI, Type *NewT
       break;
 
     case LLVMContext::MD_nonnull:
-      // This only directly applies if the new type is also a pointer.
-      if (NewTy->isPointerTy()) {
-        NewLoad->setMetadata(ID, N);
-        break;
-      }
-      // If it's integral now, translate it to !range metadata.
-      if (NewTy->isIntegerTy()) {
-        auto *ITy = cast<IntegerType>(NewTy);
-        auto *NullInt = ConstantExpr::getPtrToInt(
-            ConstantPointerNull::get(cast<PointerType>(Ptr->getType())), ITy);
-        auto *NonNullInt =
-            ConstantExpr::getAdd(NullInt, ConstantInt::get(ITy, 1));
-        NewLoad->setMetadata(LLVMContext::MD_range,
-                             MDB.createRange(NonNullInt, NullInt));
-      }
+      copyNonnullMetadata(LI, N, *NewLoad);
       break;
     case LLVMContext::MD_align:
     case LLVMContext::MD_dereferenceable:
@@ -513,17 +499,7 @@ static LoadInst *combineLoadToNewType(InstCombiner &IC, LoadInst &LI, Type *NewT
         NewLoad->setMetadata(ID, N);
       break;
     case LLVMContext::MD_range:
-      // FIXME: It would be nice to propagate this in some way, but the type
-      // conversions make it hard.
-
-      // If it's a pointer now and the range does not contain 0, make it !nonnull.
-      if (NewTy->isPointerTy()) {
-        unsigned BitWidth = IC.getDataLayout().getTypeSizeInBits(NewTy);
-        if (!getConstantRangeFromMetadata(*N).contains(APInt(BitWidth, 0))) {
-          MDNode *NN = MDNode::get(LI.getContext(), None);
-          NewLoad->setMetadata(LLVMContext::MD_nonnull, NN);
-        }
-      }
+      copyRangeMetadata(IC.getDataLayout(), LI, N, *NewLoad);
       break;
     }
   }
@@ -685,6 +661,9 @@ static Instruction *unpackLoadToAggregate(InstCombiner &IC, LoadInst &LI) {
     if (NumElements == 1) {
       LoadInst *NewLoad = combineLoadToNewType(IC, LI, ST->getTypeAtIndex(0U),
                                                ".unpack");
+      AAMDNodes AAMD;
+      LI.getAAMetadata(AAMD);
+      NewLoad->setAAMetadata(AAMD);
       return IC.replaceInstUsesWith(LI, IC.Builder->CreateInsertValue(
         UndefValue::get(T), NewLoad, 0, Name));
     }
@@ -714,6 +693,10 @@ static Instruction *unpackLoadToAggregate(InstCombiner &IC, LoadInst &LI) {
                                                 Name + ".elt");
       auto EltAlign = MinAlign(Align, SL->getElementOffset(i));
       auto *L = IC.Builder->CreateAlignedLoad(Ptr, EltAlign, Name + ".unpack");
+      // Propagate AA metadata. It'll still be valid on the narrowed load.
+      AAMDNodes AAMD;
+      LI.getAAMetadata(AAMD);
+      L->setAAMetadata(AAMD);
       V = IC.Builder->CreateInsertValue(V, L, i);
     }
 
@@ -726,6 +709,9 @@ static Instruction *unpackLoadToAggregate(InstCombiner &IC, LoadInst &LI) {
     auto NumElements = AT->getNumElements();
     if (NumElements == 1) {
       LoadInst *NewLoad = combineLoadToNewType(IC, LI, ET, ".unpack");
+      AAMDNodes AAMD;
+      LI.getAAMetadata(AAMD);
+      NewLoad->setAAMetadata(AAMD);
       return IC.replaceInstUsesWith(LI, IC.Builder->CreateInsertValue(
         UndefValue::get(T), NewLoad, 0, Name));
     }
@@ -758,6 +744,9 @@ static Instruction *unpackLoadToAggregate(InstCombiner &IC, LoadInst &LI) {
                                                 Name + ".elt");
       auto *L = IC.Builder->CreateAlignedLoad(Ptr, MinAlign(Align, Offset),
                                               Name + ".unpack");
+      AAMDNodes AAMD;
+      LI.getAAMetadata(AAMD);
+      L->setAAMetadata(AAMD);
       V = IC.Builder->CreateInsertValue(V, L, i);
       Offset += EltSize;
     }
@@ -1216,7 +1205,11 @@ static bool unpackStoreToAggregate(InstCombiner &IC, StoreInst &SI) {
                                                 AddrName);
       auto *Val = IC.Builder->CreateExtractValue(V, i, EltName);
       auto EltAlign = MinAlign(Align, SL->getElementOffset(i));
-      IC.Builder->CreateAlignedStore(Val, Ptr, EltAlign);
+      llvm::Instruction *NS =
+          IC.Builder->CreateAlignedStore(Val, Ptr, EltAlign);
+      AAMDNodes AAMD;
+      SI.getAAMetadata(AAMD);
+      NS->setAAMetadata(AAMD);
     }
 
     return true;
@@ -1263,7 +1256,10 @@ static bool unpackStoreToAggregate(InstCombiner &IC, StoreInst &SI) {
                                                 AddrName);
       auto *Val = IC.Builder->CreateExtractValue(V, i, EltName);
       auto EltAlign = MinAlign(Align, Offset);
-      IC.Builder->CreateAlignedStore(Val, Ptr, EltAlign);
+      Instruction *NS = IC.Builder->CreateAlignedStore(Val, Ptr, EltAlign);
+      AAMDNodes AAMD;
+      SI.getAAMetadata(AAMD);
+      NS->setAAMetadata(AAMD);
       Offset += EltSize;
     }
 
