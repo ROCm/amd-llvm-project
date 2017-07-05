@@ -1743,7 +1743,7 @@ public:
 
   bool isConstant() const;
 
-  static inline bool classof(const SDNode *N) {
+  static bool classof(const SDNode *N) {
     return N->getOpcode() == ISD::BUILD_VECTOR;
   }
 };
@@ -2107,7 +2107,7 @@ class MaskedGatherScatterSDNode : public MemSDNode {
 public:
   friend class SelectionDAG;
 
-  MaskedGatherScatterSDNode(ISD::NodeType NodeTy, unsigned Order,
+  MaskedGatherScatterSDNode(unsigned NodeTy, unsigned Order,
                             const DebugLoc &dl, SDVTList VTs, EVT MemVT,
                             MachineMemOperand *MMO)
       : MemSDNode(NodeTy, Order, dl, VTs, MemVT, MMO) {}

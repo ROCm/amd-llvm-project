@@ -145,9 +145,12 @@ public:
   StringRef getSectionName() const override { return SectionName; }
   void getBaserels(std::vector<Baserel> *Res) override;
   bool isCOMDAT() const;
-  void applyRelX64(uint8_t *Off, uint16_t Type, Defined *Sym, uint64_t P) const;
-  void applyRelX86(uint8_t *Off, uint16_t Type, Defined *Sym, uint64_t P) const;
-  void applyRelARM(uint8_t *Off, uint16_t Type, Defined *Sym, uint64_t P) const;
+  void applyRelX64(uint8_t *Off, uint16_t Type, OutputSection *OS, uint64_t S,
+                   uint64_t P) const;
+  void applyRelX86(uint8_t *Off, uint16_t Type, OutputSection *OS, uint64_t S,
+                   uint64_t P) const;
+  void applyRelARM(uint8_t *Off, uint16_t Type, OutputSection *OS, uint64_t S,
+                   uint64_t P) const;
 
   // Called if the garbage collector decides to not include this chunk
   // in a final output. It's supposed to print out a log message to stdout.
@@ -176,6 +179,12 @@ public:
   // Used by the SymbolTable when discarding unused comdat sections. This is
   // redundant when GC is enabled, as all comdat sections will start out dead.
   void markDiscarded() { Discarded = true; }
+
+  // True if this is a codeview debug info chunk. These will not be laid out in
+  // the image. Instead they will end up in the PDB, if one is requested.
+  bool isCodeView() const {
+    return SectionName == ".debug" || SectionName.startswith(".debug$");
+  }
 
   // Allow iteration over the bodies of this chunk's relocated symbols.
   llvm::iterator_range<symbol_iterator> symbols() const {

@@ -1,6 +1,6 @@
-; RUN: llc -march=amdgcn -verify-machineinstrs < %s | FileCheck -check-prefix=GCN -check-prefix=SI -check-prefix=SIVI %s
-; RUN: llc -march=amdgcn -mcpu=fiji -mattr=-flat-for-global -verify-machineinstrs < %s | FileCheck -check-prefix=GCN -check-prefix=SIVI -check-prefix=VI -check-prefix=GFX89 %s
-; RUN: llc -march=amdgcn -mcpu=gfx900 -mattr=-flat-for-global -verify-machineinstrs < %s | FileCheck -check-prefix=GCN -check-prefix=GFX89 -check-prefix=GFX9 %s
+; RUN:  llc -amdgpu-scalarize-global-loads=false  -march=amdgcn -verify-machineinstrs < %s | FileCheck -check-prefix=GCN -check-prefix=SI -check-prefix=SIVI %s
+; RUN:  llc -amdgpu-scalarize-global-loads=false  -march=amdgcn -mcpu=fiji -mattr=-flat-for-global -verify-machineinstrs < %s | FileCheck -check-prefix=GCN -check-prefix=SIVI -check-prefix=VI -check-prefix=GFX89 %s
+; RUN:  llc -amdgpu-scalarize-global-loads=false  -march=amdgcn -mcpu=gfx900 -mattr=-flat-for-global -verify-machineinstrs < %s | FileCheck -check-prefix=GCN -check-prefix=GFX89 -check-prefix=GFX9 %s
 
 declare half @llvm.rint.f16(half %a)
 declare <2 x half> @llvm.rint.v2f16(<2 x half> %a)
@@ -42,13 +42,13 @@ entry:
 ; VI:     v_or_b32_e32 v[[R_V2_F16:[0-9]+]], v[[R_F16_1]], v[[R_F16_0]]
 
 ; GFX9: v_rndne_f16_e32 v[[R_F16_0:[0-9]+]], v[[A_V2_F16]]
-; GFX9: v_lshrrev_b32_e32 v[[A_F16_1:[0-9]+]], 16, v[[A_V2_F16]]
-; GFX9: v_rndne_f16_e32 v[[R_F16_1:[0-9]+]], v[[A_F16_1]]
+; GFX9: v_rndne_f16_sdwa v[[R_F16_1:[0-9]+]], v[[A_V2_F16]] dst_sel:DWORD dst_unused:UNUSED_PAD src0_sel:WORD_1
 ; GFX9: v_and_b32_e32 v[[R_F16_LO:[0-9]+]], 0xffff, v[[R_F16_0]]
 ; GFX9: v_lshl_or_b32 v[[R_V2_F16:[0-9]+]], v[[R_F16_1]], 16, v[[R_F16_LO]]
 
 ; GCN: buffer_store_dword v[[R_V2_F16]]
 ; GCN: s_endpgm
+
 define amdgpu_kernel void @rint_v2f16(
     <2 x half> addrspace(1)* %r,
     <2 x half> addrspace(1)* %a) {

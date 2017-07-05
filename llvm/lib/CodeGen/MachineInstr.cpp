@@ -21,6 +21,7 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/Analysis/Loads.h"
 #include "llvm/Analysis/MemoryLocation.h"
 #include "llvm/CodeGen/GlobalISel/RegisterBank.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
@@ -446,6 +447,14 @@ void MachineOperand::print(raw_ostream &OS, ModuleSlotTracker &MST,
       SmallString<16> Str;
       getFPImm()->getValueAPF().toString(Str);
       OS << "quad " << Str;
+    } else if (getFPImm()->getType()->isX86_FP80Ty()) {
+      APFloat APF = getFPImm()->getValueAPF();
+      OS << "x86_fp80 0xK";
+      APInt API = APF.bitcastToAPInt();
+      OS << format_hex_no_prefix(API.getHiBits(16).getZExtValue(), 4,
+                                 /*Upper=*/true);
+      OS << format_hex_no_prefix(API.getLoBits(64).getZExtValue(), 16,
+                                 /*Upper=*/true);
     } else {
       OS << getFPImm()->getValueAPF().convertToDouble();
     }
@@ -556,6 +565,23 @@ LLVM_DUMP_METHOD void MachineOperand::dump() const {
 unsigned MachinePointerInfo::getAddrSpace() const {
   if (V.isNull() || V.is<const PseudoSourceValue*>()) return 0;
   return cast<PointerType>(V.get<const Value*>()->getType())->getAddressSpace();
+}
+
+/// isDereferenceable - Return true if V is always dereferenceable for 
+/// Offset + Size byte.
+bool MachinePointerInfo::isDereferenceable(unsigned Size, LLVMContext &C,
+                                           const DataLayout &DL) const {
+  if (!V.is<const Value*>())
+    return false;
+
+  const Value *BasePtr = V.get<const Value*>();
+  if (BasePtr == nullptr)
+    return false;
+
+  return isDereferenceableAndAlignedPointer(BasePtr, 1,
+                                            APInt(DL.getPointerSize(),
+                                                  Offset + Size),
+                                            DL);
 }
 
 /// getConstantPool - Return a MachinePointerInfo record that refers to the

@@ -114,8 +114,8 @@ namespace {
     unsigned GlobalBaseReg;
 
   public:
-    explicit PPCDAGToDAGISel(PPCTargetMachine &tm)
-        : SelectionDAGISel(tm), TM(tm) {}
+    explicit PPCDAGToDAGISel(PPCTargetMachine &tm, CodeGenOpt::Level OptLevel)
+        : SelectionDAGISel(tm, OptLevel), TM(tm) {}
 
     bool runOnMachineFunction(MachineFunction &MF) override {
       // Make sure we re-emit a set of the global base reg if necessary
@@ -4034,11 +4034,13 @@ void PPCDAGToDAGISel::foldBoolExts(SDValue &Res, SDNode *&N) {
                                             O0.getNode(), O1.getNode());
     };
 
+    // FIXME: When the semantics of the interaction between select and undef
+    // are clearly defined, it may turn out to be unnecessary to break here.
     SDValue TrueRes = TryFold(ConstTrue);
-    if (!TrueRes)
+    if (!TrueRes || TrueRes.isUndef())
       break;
     SDValue FalseRes = TryFold(ConstFalse);
-    if (!FalseRes)
+    if (!FalseRes || FalseRes.isUndef())
       break;
 
     // For us to materialize these using one instruction, we must be able to
@@ -5116,6 +5118,7 @@ void PPCDAGToDAGISel::PeepholePPC64() {
 /// createPPCISelDag - This pass converts a legalized DAG into a
 /// PowerPC-specific DAG, ready for instruction scheduling.
 ///
-FunctionPass *llvm::createPPCISelDag(PPCTargetMachine &TM) {
-  return new PPCDAGToDAGISel(TM);
+FunctionPass *llvm::createPPCISelDag(PPCTargetMachine &TM,
+                                     CodeGenOpt::Level OptLevel) {
+  return new PPCDAGToDAGISel(TM, OptLevel);
 }

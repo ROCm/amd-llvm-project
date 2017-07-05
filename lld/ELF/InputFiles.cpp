@@ -79,9 +79,9 @@ template <class ELFT> void elf::ObjectFile<ELFT>::initializeDwarfLine() {
 
   ObjectInfo ObjInfo;
   DWARFContextInMemory Dwarf(*Obj, &ObjInfo);
-  DwarfLine.reset(new DWARFDebugLine(&Dwarf.getLineSection().Relocs));
-  DataExtractor LineData(Dwarf.getLineSection().Data, Config->IsLE,
-                         Config->Wordsize);
+  DwarfLine.reset(new DWARFDebugLine);
+  DWARFDataExtractor LineData(Dwarf.getLineSection(), Config->IsLE,
+                              Config->Wordsize);
 
   // The second parameter is offset in .debug_line section
   // for compilation unit (CU) of interest. We have only one
@@ -632,8 +632,9 @@ ArchiveFile::ArchiveFile(std::unique_ptr<Archive> &&File)
       File(std::move(File)) {}
 
 template <class ELFT> void ArchiveFile::parse() {
+  Symbols.reserve(File->getNumberOfSymbols());
   for (const Archive::Symbol &Sym : File->symbols())
-    Symtab<ELFT>::X->addLazyArchive(this, Sym);
+    Symbols.push_back(Symtab<ELFT>::X->addLazyArchive(this, Sym));
 }
 
 // Returns a buffer pointing to a member file containing a given symbol.

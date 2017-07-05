@@ -410,6 +410,10 @@ public:
     return false;
   }
 
+  /// Should we merge stores after Legalization (generally
+  /// better quality) or before (simpler)
+  virtual bool mergeStoresAfterLegalization() const { return false; }
+
   /// Returns if it's reasonable to merge stores to MemVT size.
   virtual bool canMergeStoresTo(unsigned AddressSpace, EVT MemVT) const {
     return true;
@@ -1370,6 +1374,12 @@ public:
   /// Returns the target-specific address of the unsafe stack pointer.
   virtual Value *getSafeStackPointerLocation(IRBuilder<> &IRB) const;
 
+  /// Returns the name of the symbol used to emit stack probes or the empty
+  /// string if not applicable.
+  virtual StringRef getStackProbeSymbolName(MachineFunction &MF) const {
+    return "";
+  }
+
   /// Returns true if a cast between SrcAS and DestAS is a noop.
   virtual bool isNoopAddrSpaceCast(unsigned SrcAS, unsigned DestAS) const {
     return false;
@@ -2041,7 +2051,7 @@ public:
   /// this information should not be provided because it will generate more
   /// loads.
   virtual bool hasPairedLoad(EVT /*LoadedType*/,
-                             unsigned & /*RequiredAligment*/) const {
+                             unsigned & /*RequiredAlignment*/) const {
     return false;
   }
 
@@ -2712,8 +2722,20 @@ public:
   //  This transformation may not be desirable if it disrupts a particularly
   //  auspicious target-specific tree (e.g. bitfield extraction in AArch64).
   //  By default, it returns true.
-  virtual bool isDesirableToCommuteWithShift(const SDNode *N /*Op*/) const {
+  virtual bool isDesirableToCommuteWithShift(const SDNode *N) const {
     return true;
+  }
+
+  // Return true if it is profitable to combine a BUILD_VECTOR to a TRUNCATE.
+  // Example of such a combine:
+  // v4i32 build_vector((extract_elt V, 0),
+  //                    (extract_elt V, 2),
+  //                    (extract_elt V, 4),
+  //                    (extract_elt V, 6))
+  //  -->
+  // v4i32 truncate (bitcast V to v4i64)
+  virtual bool isDesirableToCombineBuildVectorToTruncate() const {
+    return false;
   }
 
   /// Return true if the target has native support for the specified value type
