@@ -2308,9 +2308,6 @@ public:
   void adjust(LangOptions &Opts) override {
     TargetInfo::adjust(Opts);
     setAddressSpaceMap(Opts.OpenCL || !isAMDGCN(getTriple()));
-     // Set default pointer width and alignment.
-    PointerWidth = getPointerWidthV(Opts.OpenCL ? AS.Private : AS.Generic);
-    PointerAlign = PointerWidth;
   }
 
   uint64_t getPointerWidthV(unsigned AddrSpace) const override {
