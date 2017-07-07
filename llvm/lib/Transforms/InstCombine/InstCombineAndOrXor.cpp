@@ -80,44 +80,29 @@ static Value *getFCmpValue(unsigned Code, Value *LHS, Value *RHS,
 /// \return Pointer to node that must replace the original binary operator, or
 ///         null pointer if no transformation was made.
 Value *InstCombiner::SimplifyBSwap(BinaryOperator &I) {
-  IntegerType *ITy = dyn_cast<IntegerType>(I.getType());
+  assert(I.isBitwiseLogicOp() && "Unexpected opcode for bswap simplifying");
 
-  // Can't do vectors.
-  if (I.getType()->isVectorTy())
+  // TODO We should probably check for single use of the bswap.
+
+  Value *NewLHS;
+  if (!match(I.getOperand(0), m_BSwap(m_Value(NewLHS))))
     return nullptr;
 
-  // Can only do bitwise ops.
-  if (!I.isBitwiseLogicOp())
+  Value *NewRHS;
+  const APInt *C;
+
+  if (match(I.getOperand(1), m_BSwap(m_Value(NewRHS)))) {
+    // OP( BSWAP(x), BSWAP(y) ) -> BSWAP( OP(x, y) )
+    // NewRHS initialized by the matcher.
+  } else if (match(I.getOperand(1), m_APInt(C))) {
+    // OP( BSWAP(x), CONSTANT ) -> BSWAP( OP(x, BSWAP(CONSTANT) ) )
+    NewRHS = ConstantInt::get(I.getType(), C->byteSwap());
+  } else
     return nullptr;
-
-  Value *OldLHS = I.getOperand(0);
-  Value *OldRHS = I.getOperand(1);
-  ConstantInt *ConstLHS = dyn_cast<ConstantInt>(OldLHS);
-  ConstantInt *ConstRHS = dyn_cast<ConstantInt>(OldRHS);
-  IntrinsicInst *IntrLHS = dyn_cast<IntrinsicInst>(OldLHS);
-  IntrinsicInst *IntrRHS = dyn_cast<IntrinsicInst>(OldRHS);
-  bool IsBswapLHS = (IntrLHS && IntrLHS->getIntrinsicID() == Intrinsic::bswap);
-  bool IsBswapRHS = (IntrRHS && IntrRHS->getIntrinsicID() == Intrinsic::bswap);
-
-  if (!IsBswapLHS && !IsBswapRHS)
-    return nullptr;
-
-  if (!IsBswapLHS && !ConstLHS)
-    return nullptr;
-
-  if (!IsBswapRHS && !ConstRHS)
-    return nullptr;
-
-  /// OP( BSWAP(x), BSWAP(y) ) -> BSWAP( OP(x, y) )
-  /// OP( BSWAP(x), CONSTANT ) -> BSWAP( OP(x, BSWAP(CONSTANT) ) )
-  Value *NewLHS = IsBswapLHS ? IntrLHS->getOperand(0) :
-                  Builder->getInt(ConstLHS->getValue().byteSwap());
-
-  Value *NewRHS = IsBswapRHS ? IntrRHS->getOperand(0) :
-                  Builder->getInt(ConstRHS->getValue().byteSwap());
 
   Value *BinOp = Builder->CreateBinOp(I.getOpcode(), NewLHS, NewRHS);
-  Function *F = Intrinsic::getDeclaration(I.getModule(), Intrinsic::bswap, ITy);
+  Function *F = Intrinsic::getDeclaration(I.getModule(), Intrinsic::bswap,
+                                          I.getType());
   return Builder->CreateCall(F, BinOp);
 }
 
@@ -2276,7 +2261,8 @@ Instruction *InstCombiner::visitOr(BinaryOperator &I) {
 
 /// A ^ B can be specified using other logic ops in a variety of patterns. We
 /// can fold these early and efficiently by morphing an existing instruction.
-static Instruction *foldXorToXor(BinaryOperator &I) {
+static Instruction *foldXorToXor(BinaryOperator &I,
+                                 InstCombiner::BuilderTy &Builder) {
   assert(I.getOpcode() == Instruction::Xor);
   Value *Op0 = I.getOperand(0);
   Value *Op1 = I.getOperand(1);
@@ -2301,10 +2287,10 @@ static Instruction *foldXorToXor(BinaryOperator &I) {
   // (~B | A) ^ (~A | B) -> A ^ B
   // (~A | B) ^ (A | ~B) -> A ^ B
   // (B | ~A) ^ (A | ~B) -> A ^ B
-  if ((match(Op0, m_c_Or(m_Value(A), m_Not(m_Value(B)))) &&
-       match(Op1, m_Or(m_Not(m_Specific(A)), m_Specific(B)))) ||
-      (match(Op0, m_c_Or(m_Not(m_Value(A)), m_Value(B))) &&
-       match(Op1, m_Or(m_Specific(A), m_Not(m_Specific(B)))))) {
+  if ((match(Op0, m_Or(m_Value(A), m_Not(m_Value(B)))) &&
+       match(Op1, m_c_Or(m_Not(m_Specific(A)), m_Specific(B)))) ||
+      (match(Op0, m_Or(m_Not(m_Value(A)), m_Value(B))) &&
+       match(Op1, m_c_Or(m_Specific(A), m_Not(m_Specific(B)))))) {
     I.setOperand(0, A);
     I.setOperand(1, B);
     return &I;
@@ -2314,14 +2300,29 @@ static Instruction *foldXorToXor(BinaryOperator &I) {
   // (~B & A) ^ (~A & B) -> A ^ B
   // (~A & B) ^ (A & ~B) -> A ^ B
   // (B & ~A) ^ (A & ~B) -> A ^ B
-  if ((match(Op0, m_c_And(m_Value(A), m_Not(m_Value(B)))) &&
-       match(Op1, m_And(m_Not(m_Specific(A)), m_Specific(B)))) ||
-      (match(Op0, m_c_And(m_Not(m_Value(A)), m_Value(B))) &&
-       match(Op1, m_And(m_Specific(A), m_Not(m_Specific(B)))))) {
+  if ((match(Op0, m_And(m_Value(A), m_Not(m_Value(B)))) &&
+       match(Op1, m_c_And(m_Not(m_Specific(A)), m_Specific(B)))) ||
+      (match(Op0, m_And(m_Not(m_Value(A)), m_Value(B))) &&
+       match(Op1, m_c_And(m_Specific(A), m_Not(m_Specific(B)))))) {
     I.setOperand(0, A);
     I.setOperand(1, B);
     return &I;
   }
+
+  // For the remaining cases we need to get rid of one of the operands.
+  if (!Op0->hasOneUse() && !Op1->hasOneUse())
+    return nullptr;
+
+  // (A | B) ^ ~(A & B) -> ~(A ^ B)
+  // (A | B) ^ ~(B & A) -> ~(A ^ B)
+  // (A & B) ^ ~(A | B) -> ~(A ^ B)
+  // (A & B) ^ ~(B | A) -> ~(A ^ B)
+  // Complexity sorting ensures the not will be on the right side.
+  if ((match(Op0, m_Or(m_Value(A), m_Value(B))) &&
+       match(Op1, m_Not(m_c_And(m_Specific(A), m_Specific(B))))) ||
+      (match(Op0, m_And(m_Value(A), m_Value(B))) &&
+       match(Op1, m_Not(m_c_Or(m_Specific(A), m_Specific(B))))))
+    return BinaryOperator::CreateNot(Builder.CreateXor(A, B));
 
   return nullptr;
 }
@@ -2381,7 +2382,7 @@ Instruction *InstCombiner::visitXor(BinaryOperator &I) {
   if (Value *V = SimplifyXorInst(Op0, Op1, SQ.getWithInstruction(&I)))
     return replaceInstUsesWith(I, V);
 
-  if (Instruction *NewXor = foldXorToXor(I))
+  if (Instruction *NewXor = foldXorToXor(I, *Builder))
     return NewXor;
 
   // (A&B)^(A&C) -> A&(B^C) etc
@@ -2456,10 +2457,9 @@ Instruction *InstCombiner::visitXor(BinaryOperator &I) {
     }
   }
 
-  // xor (cmp A, B), true = not (cmp A, B) = !cmp A, B
+  // not (cmp A, B) = !cmp A, B
   ICmpInst::Predicate Pred;
-  if (match(Op0, m_OneUse(m_Cmp(Pred, m_Value(), m_Value()))) &&
-      match(Op1, m_AllOnes())) {
+  if (match(&I, m_Not(m_OneUse(m_Cmp(Pred, m_Value(), m_Value()))))) {
     cast<CmpInst>(Op0)->setPredicate(CmpInst::getInversePredicate(Pred));
     return replaceInstUsesWith(I, Op0);
   }

@@ -1029,6 +1029,8 @@ def warn_auto_synthesizing_protocol_property :Warning<
   "auto property synthesis will not synthesize property %0"
   " declared in protocol %1">,
   InGroup<DiagGroup<"objc-protocol-property-synthesis">>;
+def note_add_synthesize_directive : Note<
+  "add a '@synthesize' directive">;
 def warn_no_autosynthesis_shared_ivar_property : Warning <
   "auto property synthesis will not synthesize property "
   "%0 because it cannot share an ivar with another synthesized property">,
@@ -3294,13 +3296,15 @@ def warn_iboutletcollection_property_assign : Warning<
   "IBOutletCollection properties should be copy/strong and not assign">,
   InGroup<ObjCInvalidIBOutletProperty>;
   
-def err_attribute_overloadable_missing : Error<
-  "%select{overloaded function|redeclaration of}0 %1 must have the "
-  "'overloadable' attribute">;
+def err_attribute_overloadable_mismatch : Error<
+  "redeclaration of %0 must %select{not |}1have the 'overloadable' attribute">;
 def note_attribute_overloadable_prev_overload : Note<
-  "previous overload of function is here">;
+  "previous %select{unmarked |}0overload of function is here">;
 def err_attribute_overloadable_no_prototype : Error<
   "'overloadable' function %0 must have a prototype">;
+def err_attribute_overloadable_multiple_unmarked_overloads : Error<
+  "at most one overload for a given name may lack the 'overloadable' "
+  "attribute">;
 def warn_ns_attribute_wrong_return_type : Warning<
   "%0 attribute only applies to %select{functions|methods|properties}1 that "
   "return %select{an Objective-C object|a pointer|a non-retainable pointer}2">,
@@ -6405,6 +6409,12 @@ def warn_overaligned_type : Warning<
   "type %0 requires %1 bytes of alignment and the default allocator only "
   "guarantees %2 bytes">,
   InGroup<OveralignedType>, DefaultIgnore;
+def warn_aligned_allocation_unavailable :Warning<
+  "aligned %select{allocation|deallocation}0 function of type '%1' possibly "
+  "unavailable on %2">, InGroup<AlignedAllocationUnavailable>, DefaultError;
+def note_silence_unligned_allocation_unavailable : Note<
+  "if you supply your own aligned allocation functions, use "
+  "-Wno-aligned-allocation-unavailable to silence this diagnostic">;
 
 def err_conditional_void_nonvoid : Error<
   "%select{left|right}1 operand to ? is void, but %select{right|left}1 operand "
@@ -8402,7 +8412,7 @@ def warn_opencl_attr_deprecated_ignored : Warning <
 def err_opencl_variadic_function : Error<
   "invalid prototype, variadic arguments are not allowed in OpenCL">;
 def err_opencl_requires_extension : Error<
-  "use of %select{type |declaration}0%1 requires %2 extension to be enabled">;
+  "use of %select{type|declaration}0 %1 requires %2 extension to be enabled">;
 
 // OpenCL v2.0 s6.13.6 -- Builtin Pipe Functions
 def err_opencl_builtin_pipe_first_arg : Error<
@@ -8447,8 +8457,6 @@ def err_opencl_builtin_to_addr_invalid_arg : Error<
 // OpenCL v2.0 s6.13.17 Enqueue kernel restrictions.
 def err_opencl_enqueue_kernel_incorrect_args : Error<
   "illegal call to enqueue_kernel, incorrect argument types">;
-def err_opencl_enqueue_kernel_expected_type : Error<
-  "illegal call to enqueue_kernel, expected %0 argument type">;
 def err_opencl_enqueue_kernel_local_size_args : Error<
   "mismatch in number of block parameters and local size arguments passed">;
 def err_opencl_enqueue_kernel_invalid_local_size_type : Error<
@@ -8457,6 +8465,9 @@ def err_opencl_enqueue_kernel_blocks_non_local_void_args : Error<
   "blocks used in enqueue_kernel call are expected to have parameters of type 'local void*'">;
 def err_opencl_enqueue_kernel_blocks_no_args : Error<
   "blocks with parameters are not accepted in this prototype of enqueue_kernel call">;
+
+def err_opencl_builtin_expected_type : Error<
+  "illegal call to %0, expected %1 argument type">;
 
 // OpenCL v2.2 s2.1.2.3 - Vector Component Access
 def ext_opencl_ext_vector_type_rgba_selector: ExtWarn<
