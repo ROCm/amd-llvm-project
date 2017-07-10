@@ -228,7 +228,10 @@ namespace clang {
           Ctx.getDiagnosticHandler();
       void *OldDiagnosticContext = Ctx.getDiagnosticContext();
       Ctx.setDiagnosticHandler(DiagnosticHandler, this);
-      Ctx.setDiagnosticHotnessRequested(CodeGenOpts.DiagnosticsWithHotness);
+      Ctx.setDiagnosticsHotnessRequested(CodeGenOpts.DiagnosticsWithHotness);
+      if (CodeGenOpts.DiagnosticsHotnessThreshold != 0)
+        Ctx.setDiagnosticsHotnessThreshold(
+            CodeGenOpts.DiagnosticsHotnessThreshold);
 
       PerformPrelinkPasses(Diags, HeaderSearchOpts, CodeGenOpts, TargetOpts,
                            LangOpts, C.getTargetInfo().getDataLayout(),
@@ -250,7 +253,7 @@ namespace clang {
             llvm::make_unique<yaml::Output>(OptRecordFile->os()));
 
         if (CodeGenOpts.getProfileUse() != CodeGenOptions::ProfileNone)
-          Ctx.setDiagnosticHotnessRequested(true);
+          Ctx.setDiagnosticsHotnessRequested(true);
       }
 
       // Link each LinkModule into our module.

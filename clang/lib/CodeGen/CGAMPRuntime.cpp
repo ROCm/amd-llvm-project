@@ -50,9 +50,32 @@ static CXXMethodDecl *findValidIndexType(QualType IndexTy) {
 /// Invoke constructor of index
 /// Invoke constructor of the class
 /// Invoke operator(index)
+namespace
+{
+    inline
+    void addFunctorAttrToTrampoline(
+        const CXXMethodDecl* callOp, FunctionDecl* trampoline)
+    {
+        // TODO: this is an awful hack which should be removed once we move to pfe_v2.
+        if (callOp->hasAttr<AMDGPUFlatWorkGroupSizeAttr>()) {
+            trampoline->addAttr(callOp->getAttr<AMDGPUFlatWorkGroupSizeAttr>());
+        }
+        if (callOp->hasAttr<AMDGPUWavesPerEUAttr>()) {
+          trampoline->addAttr(callOp->getAttr<AMDGPUWavesPerEUAttr>());
+        }
+    }
+}
 void CGAMPRuntime::EmitTrampolineBody(CodeGenFunction &CGF,
   const FunctionDecl *Trampoline, FunctionArgList& Args) {
   const CXXRecordDecl *ClassDecl = dyn_cast<CXXMethodDecl>(Trampoline)->getParent();
+
+  for (auto&& x : ClassDecl->methods()) {
+    if (x->getOverloadedOperator() == OO_Call) {
+      addFunctorAttrToTrampoline(x, const_cast<FunctionDecl*>(Trampoline));
+      break;
+    }
+  }
+
   assert(ClassDecl);
   // Allocate "this"
   Address ai = CGF.CreateMemTemp(QualType(ClassDecl->getTypeForDecl(),0));
@@ -190,7 +213,7 @@ void CGAMPRuntime::EmitTrampolineBody(CodeGenFunction &CGF,
   {
     llvm::Constant *Callee = CGM.getAddrOfCXXStructor(
       DeserializeConstructor, StructorType::Complete);
-    const FunctionProtoType *FPT = 
+    const FunctionProtoType *FPT =
       DeserializeConstructor->getType()->castAs<FunctionProtoType>();
     const CGFunctionInfo &DesFnInfo =
       CGM.getTypes().arrangeCXXStructorDeclaration(
@@ -242,7 +265,7 @@ void CGAMPRuntime::EmitTrampolineBody(CodeGenFunction &CGF,
   Address index = CGF.CreateMemTemp(IndexTy);
 
   // Locate the constructor to call
-  CXXMethodDecl *IndexConstructor = findValidIndexType(IndexTy); 
+  CXXMethodDecl *IndexConstructor = findValidIndexType(IndexTy);
   assert(IndexConstructor);
   // Emit code to call the Concurrency::index<1>::__cxxamp_opencl_index()
   if (!CGF.getLangOpts().AMPCPU) {
@@ -293,7 +316,7 @@ void CGAMPRuntime::EmitTrampolineNameBody(CodeGenFunction &CGF,
   assert(ClassDecl);
   // Locate the trampoline
   // Locate the operator to call
-  CXXMethodDecl *TrampolineDecl = NULL; 
+  CXXMethodDecl *TrampolineDecl = NULL;
   for (CXXRecordDecl::method_iterator Method = ClassDecl->method_begin(),
       MethodEnd = ClassDecl->method_end();
       Method != MethodEnd; ++Method) {
@@ -311,7 +334,7 @@ void CGAMPRuntime::EmitTrampolineNameBody(CodeGenFunction &CGF,
   llvm::GlobalVariable *GV = new llvm::GlobalVariable(CGM.getModule(), S->getType(),
     true, llvm::GlobalValue::PrivateLinkage, S, "__cxxamp_trampoline.kernelname");
   GV->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
-  
+
   //Create GetElementPtr(0, 0)
   std::vector<llvm::Constant*> indices;
   llvm::ConstantInt *zero = llvm::ConstantInt::get(CGM.getLLVMContext(), llvm::APInt(32, StringRef("0"), 10));
