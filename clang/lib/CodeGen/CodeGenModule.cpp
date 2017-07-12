@@ -2144,6 +2144,13 @@ void CodeGenModule::EmitGlobalDefinition(GlobalDecl GD, llvm::GlobalValue *GV) {
       // If -famp-is-device switch is on, we are in GPU build path.
       if (!isWhiteListForHCC(*this, GD)) return;
     }
+    else {
+      if (!isa<VarDecl>(D) && // TODO: this should be re-assessed.
+          D->hasAttr<CXXAMPRestrictAMPAttr>() &&
+          !D->hasAttr<CXXAMPRestrictCPUAttr>()) {
+        return;
+      }
+    }
   }
 
   PrettyStackTraceDecl CrashInfo(const_cast<ValueDecl *>(D), D->getLocation(),
