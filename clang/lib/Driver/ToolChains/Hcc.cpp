@@ -281,6 +281,9 @@ void HCC::CXXAMPLink::ConstructJob(
     // add verbose flag to linker script if clang++ is invoked with --verbose flag
     if (Args.hasArg(options::OPT_v)) CmdArgs.push_back("--verbose");
 
+    // Reverse translate the -lstdc++ option
+    if (Args.hasArg(options::OPT_Z_reserved_lib_stdcxx)) CmdArgs.push_back("-lstdc++");
+
     // specify AMDGPU target
     constexpr const char auto_tgt[] = "auto";
 
