@@ -654,13 +654,12 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C,
                                     const InputInfoList &Inputs,
                                     const ArgList &Args,
                                     const char *LinkingOutput) const {
+  // ToDo: Find a better way to persist CXXAMPLink and construct the link
+  // job using it.
   if (Driver::IsCXXAMP(C.getArgs())) {
-    HCC::CXXAMPLink{getToolChain()}.ConstructJob(C,
-                                                 JA,
-                                                 Output,
-                                                 Inputs,
-                                                 Args,
-                                                 LinkingOutput);
+    if (!HCLinker)
+      HCLinker = std::unique_ptr<Linker>(new HCC::CXXAMPLink(getToolChain()));
+    HCLinker->ConstructJob(C, JA, Output, Inputs, Args, LinkingOutput);
   } else {
     ArgStringList CmdArgs;
 
