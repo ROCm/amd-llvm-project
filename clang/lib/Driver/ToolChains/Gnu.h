@@ -13,6 +13,7 @@
 #include "Cuda.h"
 #include "clang/Driver/Tool.h"
 #include "clang/Driver/ToolChain.h"
+#include <memory>
 #include <set>
 
 namespace clang {
@@ -61,6 +62,8 @@ public:
 };
 
 class LLVM_LIBRARY_VISIBILITY Linker : public GnuTool {
+  mutable std::unique_ptr<Linker> HCLinker;
+
 public:
   Linker(const ToolChain &TC) : GnuTool("GNU::Linker", "linker", TC) {}
   Linker(const ToolChain &TC, const char* Name) : GnuTool(Name, "linker", TC) {}
