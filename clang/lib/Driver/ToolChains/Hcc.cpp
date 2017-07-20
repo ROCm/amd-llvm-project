@@ -268,6 +268,10 @@ namespace
     }
 }
 
+#ifndef HCC_TOOLCHAIN_RHEL
+  #define HCC_TOOLCHAIN_RHEL false
+#endif
+
 void HCC::CXXAMPLink::ConstructJob(
     Compilation &C,
     const JobAction &JA,
@@ -282,7 +286,11 @@ void HCC::CXXAMPLink::ConstructJob(
     if (Args.hasArg(options::OPT_v)) CmdArgs.push_back("--verbose");
 
     // Reverse translate the -lstdc++ option
-    if (Args.hasArg(options::OPT_Z_reserved_lib_stdcxx)) CmdArgs.push_back("-lstdc++");
+    // Or add -lstdc++ when running on RHEL 7 or CentOS 7
+    if (Args.hasArg(options::OPT_Z_reserved_lib_stdcxx) ||
+        HCC_TOOLCHAIN_RHEL) {
+        CmdArgs.push_back("-lstdc++");
+    }
 
     // specify AMDGPU target
     constexpr const char auto_tgt[] = "auto";
