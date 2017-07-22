@@ -366,6 +366,11 @@ endif()
 
 add_definitions( -D_GNU_SOURCE )
 add_definitions(-DHCC_AMDGPU_TARGET="${AMDGPU_TARGET}")
+if (HCC_TOOLCHAIN_RHEL)
+ add_definitions(-DHCC_TOOLCHAIN_RHEL=true)
+else()
+ add_definitions(-DHCC_TOOLCHAIN_RHEL=false)
+endif()
 
 option(CLANG_BUILD_TOOLS
   "Build the Clang tools. If OFF, just generate build targets." ON)
