@@ -230,7 +230,10 @@ def warn_drv_enabling_rtti_with_exceptions : Warning<
   InGroup<DiagGroup<"rtti-for-exceptions">>;
 def warn_drv_disabling_vptr_no_rtti_default : Warning<
   "implicitly disabling vptr sanitizer because rtti wasn't enabled">,
-  InGroup<DiagGroup<"auto-disable-vptr-sanitizer">>;
+  InGroup<AutoDisableVptrSanitizer>;
+def warn_drv_disabling_vptr_no_null_check : Warning<
+  "implicitly disabling vptr sanitizer because null checking wasn't enabled">,
+  InGroup<AutoDisableVptrSanitizer>;
 def warn_drv_object_size_disabled_O0 : Warning<
   "the object size sanitizer has no effect at -O0, but is explicitly enabled: %0">,
   InGroup<InvalidCommandLineArgument>;
@@ -279,6 +282,10 @@ def warn_target_unsupported_nanlegacy : Warning<
 def warn_target_unsupported_compact_branches : Warning<
   "ignoring '-mcompact-branches=' option because the '%0' architecture does not"
   " support it">, InGroup<UnsupportedCB>;
+def warn_drv_unsupported_gpopt : Warning<
+  "ignoring '-mgpopt' option as it cannot be used with %select{|the implicit"
+  " usage of}0-mabicalls">,
+  InGroup<UnsupportedGPOpt>;
 
 def warn_drv_unable_to_find_directory_expected : Warning<
   "unable to find %0 directory, expected to be in '%1'">,

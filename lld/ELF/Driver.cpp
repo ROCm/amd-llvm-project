@@ -74,13 +74,13 @@ bool elf::link(ArrayRef<const char *> Args, bool CanExitEarly,
                raw_ostream &Error) {
   ErrorCount = 0;
   ErrorOS = &Error;
-  Argv0 = Args[0];
   InputSections.clear();
   Tar = nullptr;
 
   Config = make<Configuration>();
   Driver = make<LinkerDriver>();
   Script = make<LinkerScript>();
+  Config->Argv = {Args.begin(), Args.end()};
 
   Driver->main(Args, CanExitEarly);
   freeArena();
@@ -258,6 +258,9 @@ static void checkOptions(opt::InputArgList &Args) {
 
   if (Config->Pie && Config->Shared)
     error("-shared and -pie may not be used together");
+
+  if (!Config->Shared && !Config->FilterList.empty())
+    error("-F may not be used without -shared");
 
   if (!Config->Shared && !Config->AuxiliaryList.empty())
     error("-f may not be used without -shared");
@@ -616,6 +619,7 @@ void LinkerDriver::readConfigs(opt::InputArgList &Args) {
   Config->AuxiliaryList = getArgs(Args, OPT_auxiliary);
   Config->Bsymbolic = Args.hasArg(OPT_Bsymbolic);
   Config->BsymbolicFunctions = Args.hasArg(OPT_Bsymbolic_functions);
+  Config->Chroot = Args.getLastArgValue(OPT_chroot);
   Config->CompressDebugSections = getCompressDebugSections(Args);
   Config->DefineCommon = getArg(Args, OPT_define_common, OPT_no_define_common,
                                 !Args.hasArg(OPT_relocatable));
@@ -631,6 +635,7 @@ void LinkerDriver::readConfigs(opt::InputArgList &Args) {
       getArg(Args, OPT_export_dynamic, OPT_no_export_dynamic, false);
   Config->FatalWarnings =
       getArg(Args, OPT_fatal_warnings, OPT_no_fatal_warnings, false);
+  Config->FilterList = getArgs(Args, OPT_filter);
   Config->Fini = Args.getLastArgValue(OPT_fini, "_fini");
   Config->GcSections = getArg(Args, OPT_gc_sections, OPT_no_gc_sections, false);
   Config->GdbIndex = Args.hasArg(OPT_gdb_index);
@@ -655,7 +660,7 @@ void LinkerDriver::readConfigs(opt::InputArgList &Args) {
   Config->Rpath = getRpath(Args);
   Config->Relocatable = Args.hasArg(OPT_relocatable);
   Config->SaveTemps = Args.hasArg(OPT_save_temps);
-  Config->SearchPaths = getArgs(Args, OPT_L);
+  Config->SearchPaths = getArgs(Args, OPT_library_path);
   Config->SectionStartMap = getSectionStartMap(Args);
   Config->Shared = Args.hasArg(OPT_shared);
   Config->SingleRoRx = Args.hasArg(OPT_no_rosegment);
@@ -800,14 +805,13 @@ static bool getBinaryOption(StringRef S) {
 
 void LinkerDriver::createFiles(opt::InputArgList &Args) {
   for (auto *Arg : Args) {
-    switch (Arg->getOption().getID()) {
-    case OPT_l:
+    switch (Arg->getOption().getUnaliasedOption().getID()) {
+    case OPT_library:
       addLibrary(Arg->getValue());
       break;
     case OPT_INPUT:
       addFile(Arg->getValue(), /*WithLOption=*/false);
       break;
-    case OPT_alias_script_T:
     case OPT_script:
       if (Optional<MemoryBufferRef> MB = readFile(Arg->getValue()))
         readLinkerScript(*MB);

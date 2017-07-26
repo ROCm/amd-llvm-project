@@ -9,6 +9,15 @@
 // BLOCKS:#define __block __attribute__((__blocks__(byref)))
 //
 //
+// RUN: %clang_cc1 -x c++ -std=c++2a -E -dM < /dev/null | FileCheck -match-full-lines -check-prefix CXX2A %s
+//
+// CXX2A:#define __GNUG__ {{.*}}
+// CXX2A:#define __GXX_EXPERIMENTAL_CXX0X__ 1
+// CXX2A:#define __GXX_RTTI 1
+// CXX2A:#define __GXX_WEAK__ 1
+// CXX2A:#define __cplusplus 201707L
+// CXX2A:#define __private_extern__ extern
+//
 // RUN: %clang_cc1 -x c++ -std=c++1z -E -dM < /dev/null | FileCheck -match-full-lines -check-prefix CXX1Z %s
 //
 // CXX1Z:#define __GNUG__ {{.*}}
@@ -109,6 +118,13 @@
 //
 // RUN: %clang_cc1 -ffreestanding -E -dM < /dev/null | FileCheck -match-full-lines -check-prefix FREESTANDING %s
 // FREESTANDING:#define __STDC_HOSTED__ 0
+//
+// RUN: %clang_cc1 -x c++ -std=gnu++2a -E -dM < /dev/null | FileCheck -match-full-lines -check-prefix GXX2A %s
+//
+// GXX2A:#define __GNUG__ {{.*}}
+// GXX2A:#define __GXX_WEAK__ 1
+// GXX2A:#define __cplusplus 201707L
+// GXX2A:#define __private_extern__ extern
 //
 //
 // RUN: %clang_cc1 -x c++ -std=gnu++1z -E -dM < /dev/null | FileCheck -match-full-lines -check-prefix GXX1Z %s
@@ -2185,13 +2201,13 @@
 // ARMV6-CLOUDABI:#define __CloudABI__ 1
 // ARMV6-CLOUDABI:#define __arm__ 1
 
-// RUN: %clang_cc1 -E -dM -ffreestanding -triple=arm-netbsd-eabi < /dev/null | FileCheck -match-full-lines -check-prefix ARM-NETBSD %s
-//
+// RUN: %clang -E -dM -ffreestanding -target arm-netbsd-eabi %s -o - | FileCheck -match-full-lines -check-prefix ARM-NETBSD %s
+
 // ARM-NETBSD-NOT:#define _LP64
 // ARM-NETBSD:#define __APCS_32__ 1
 // ARM-NETBSD-NOT:#define __ARMEB__ 1
 // ARM-NETBSD:#define __ARMEL__ 1
-// ARM-NETBSD:#define __ARM_ARCH_4T__ 1
+// ARM-NETBSD:#define __ARM_ARCH_5TE__ 1
 // ARM-NETBSD:#define __ARM_DWARF_EH__ 1
 // ARM-NETBSD:#define __ARM_EABI__ 1
 // ARM-NETBSD-NOT:#define __ARM_BIG_ENDIAN 1
@@ -2333,6 +2349,7 @@
 // ARM-NETBSD:#define __SIZE_MAX__ 4294967295UL
 // ARM-NETBSD:#define __SIZE_TYPE__ long unsigned int
 // ARM-NETBSD:#define __SIZE_WIDTH__ 32
+// ARM-NETBSD:#define __SOFTFP__ 1
 // ARM-NETBSD:#define __UINT16_C_SUFFIX__
 // ARM-NETBSD:#define __UINT16_MAX__ 65535
 // ARM-NETBSD:#define __UINT16_TYPE__ unsigned short
@@ -2377,6 +2394,11 @@
 // ARM-NETBSD:#define __arm 1
 // ARM-NETBSD:#define __arm__ 1
 
+// RUN: %clang -E -dM -ffreestanding -target arm-netbsd-eabihf %s -o - | FileCheck -match-full-lines -check-prefix ARMHF-NETBSD %s
+// ARMHF-NETBSD:#define __SIZE_WIDTH__ 32
+// ARMHF-NETBSD-NOT:#define __SOFTFP__ 1
+// ARMHF-NETBSD:#define __UINT16_C_SUFFIX__
+
 // RUN: %clang_cc1 -E -dM -ffreestanding -triple=arm-none-eabi < /dev/null | FileCheck -match-full-lines -check-prefix ARM-NONE-EABI %s
 // RUN: %clang_cc1 -E -dM -ffreestanding -triple=arm-none-eabihf < /dev/null | FileCheck -match-full-lines -check-prefix ARM-NONE-EABI %s
 // RUN: %clang_cc1 -E -dM -ffreestanding -triple=aarch64-none-eabi < /dev/null | FileCheck -match-full-lines -check-prefix ARM-NONE-EABI %s
@@ -2390,13 +2412,6 @@
 // RUN: %clang -target x86_64-apple-darwin -arch armv7em -x c -E -dM %s -o - | FileCheck -match-full-lines --check-prefix=ARM-MACHO-NO-EABI %s
 // RUN: %clang -target x86_64-apple-darwin -arch armv7 -x c -E -dM %s -o - | FileCheck -match-full-lines --check-prefix=ARM-MACHO-NO-EABI %s
 // ARM-MACHO-NO-EABI-NOT: #define __ARM_EABI__ 1
-
-// RUN: %clang_cc1 -E -dM -ffreestanding -triple=armv7-bitrig-gnueabihf < /dev/null | FileCheck -match-full-lines -check-prefix ARM-BITRIG %s
-// ARM-BITRIG:#define __ARM_DWARF_EH__ 1
-// ARM-BITRIG:#define __SIZEOF_SIZE_T__ 4
-// ARM-BITRIG:#define __SIZE_MAX__ 4294967295UL
-// ARM-BITRIG:#define __SIZE_TYPE__ long unsigned int
-// ARM-BITRIG:#define __SIZE_WIDTH__ 32
 
 // Check that -mhwdiv works properly for targets which don't have the hwdiv feature enabled by default.
 

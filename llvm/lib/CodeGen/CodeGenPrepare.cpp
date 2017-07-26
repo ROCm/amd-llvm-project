@@ -4016,14 +4016,18 @@ static bool IsOperandAMemoryOperand(CallInst *CI, InlineAsm *IA, Value *OpVal,
   return true;
 }
 
+// Max number of memory uses to look at before aborting the search to conserve
+// compile time.
+static constexpr int MaxMemoryUsesToScan = 20;
+
 /// Recursively walk all the uses of I until we find a memory use.
 /// If we find an obviously non-foldable instruction, return true.
 /// Add the ultimately found memory instructions to MemoryUses.
 static bool FindAllMemoryUses(
     Instruction *I,
     SmallVectorImpl<std::pair<Instruction *, unsigned>> &MemoryUses,
-    SmallPtrSetImpl<Instruction *> &ConsideredInsts,
-    const TargetLowering &TLI, const TargetRegisterInfo &TRI) {
+    SmallPtrSetImpl<Instruction *> &ConsideredInsts, const TargetLowering &TLI,
+    const TargetRegisterInfo &TRI, int SeenInsts = 0) {
   // If we already considered this instruction, we're done.
   if (!ConsideredInsts.insert(I).second)
     return false;
@@ -4036,8 +4040,12 @@ static bool FindAllMemoryUses(
 
   // Loop over all the uses, recursively processing them.
   for (Use &U : I->uses()) {
-    Instruction *UserI = cast<Instruction>(U.getUser());
+    // Conservatively return true if we're seeing a large number or a deep chain
+    // of users. This avoids excessive compilation times in pathological cases.
+    if (SeenInsts++ >= MaxMemoryUsesToScan)
+      return true;
 
+    Instruction *UserI = cast<Instruction>(U.getUser());
     if (LoadInst *LI = dyn_cast<LoadInst>(UserI)) {
       MemoryUses.push_back(std::make_pair(LI, U.getOperandNo()));
       continue;
@@ -4082,7 +4090,8 @@ static bool FindAllMemoryUses(
       continue;
     }
 
-    if (FindAllMemoryUses(UserI, MemoryUses, ConsideredInsts, TLI, TRI))
+    if (FindAllMemoryUses(UserI, MemoryUses, ConsideredInsts, TLI, TRI,
+                          SeenInsts))
       return true;
   }
 
@@ -4267,9 +4276,8 @@ bool CodeGenPrepare::optimizeMemoryInst(Instruction *MemoryInst, Value *Addr,
   // Use a worklist to iteratively look through PHI nodes, and ensure that
   // the addressing mode obtained from the non-PHI roots of the graph
   // are equivalent.
-  Value *Consensus = nullptr;
-  unsigned NumUsesConsensus = 0;
-  bool IsNumUsesConsensusValid = false;
+  bool AddrModeFound = false;
+  bool PhiSeen = false;
   SmallVector<Instruction*, 16> AddrModeInsts;
   ExtAddrMode AddrMode;
   TypePromotionTransaction TPT(RemovedInsts);
@@ -4279,72 +4287,59 @@ bool CodeGenPrepare::optimizeMemoryInst(Instruction *MemoryInst, Value *Addr,
     Value *V = worklist.back();
     worklist.pop_back();
 
-    // Break use-def graph loops.
-    if (!Visited.insert(V).second) {
-      Consensus = nullptr;
-      break;
-    }
+    // We allow traversing cyclic Phi nodes.
+    // In case of success after this loop we ensure that traversing through
+    // Phi nodes ends up with all cases to compute address of the form
+    //    BaseGV + Base + Scale * Index + Offset
+    // where Scale and Offset are constans and BaseGV, Base and Index
+    // are exactly the same Values in all cases.
+    // It means that BaseGV, Scale and Offset dominate our memory instruction
+    // and have the same value as they had in address computation represented
+    // as Phi. So we can safely sink address computation to memory instruction.
+    if (!Visited.insert(V).second)
+      continue;
 
     // For a PHI node, push all of its incoming values.
     if (PHINode *P = dyn_cast<PHINode>(V)) {
       for (Value *IncValue : P->incoming_values())
         worklist.push_back(IncValue);
+      PhiSeen = true;
       continue;
     }
 
     // For non-PHIs, determine the addressing mode being computed.  Note that
     // the result may differ depending on what other uses our candidate
     // addressing instructions might have.
-    SmallVector<Instruction*, 16> NewAddrModeInsts;
+    AddrModeInsts.clear();
     ExtAddrMode NewAddrMode = AddressingModeMatcher::Match(
-      V, AccessTy, AddrSpace, MemoryInst, NewAddrModeInsts, *TLI, *TRI,
-      InsertedInsts, PromotedInsts, TPT);
+        V, AccessTy, AddrSpace, MemoryInst, AddrModeInsts, *TLI, *TRI,
+        InsertedInsts, PromotedInsts, TPT);
 
-    // This check is broken into two cases with very similar code to avoid using
-    // getNumUses() as much as possible. Some values have a lot of uses, so
-    // calling getNumUses() unconditionally caused a significant compile-time
-    // regression.
-    if (!Consensus) {
-      Consensus = V;
+    if (!AddrModeFound) {
+      AddrModeFound = true;
       AddrMode = NewAddrMode;
-      AddrModeInsts = NewAddrModeInsts;
-      continue;
-    } else if (NewAddrMode == AddrMode) {
-      if (!IsNumUsesConsensusValid) {
-        NumUsesConsensus = Consensus->getNumUses();
-        IsNumUsesConsensusValid = true;
-      }
-
-      // Ensure that the obtained addressing mode is equivalent to that obtained
-      // for all other roots of the PHI traversal.  Also, when choosing one
-      // such root as representative, select the one with the most uses in order
-      // to keep the cost modeling heuristics in AddressingModeMatcher
-      // applicable.
-      unsigned NumUses = V->getNumUses();
-      if (NumUses > NumUsesConsensus) {
-        Consensus = V;
-        NumUsesConsensus = NumUses;
-        AddrModeInsts = NewAddrModeInsts;
-      }
       continue;
     }
+    if (NewAddrMode == AddrMode)
+      continue;
 
-    Consensus = nullptr;
+    AddrModeFound = false;
     break;
   }
 
   // If the addressing mode couldn't be determined, or if multiple different
   // ones were determined, bail out now.
-  if (!Consensus) {
+  if (!AddrModeFound) {
     TPT.rollback(LastKnownGood);
     return false;
   }
   TPT.commit();
 
   // If all the instructions matched are already in this BB, don't do anything.
-  if (none_of(AddrModeInsts, [&](Value *V) {
+  // If we saw Phi node then it is not local definitely.
+  if (!PhiSeen && none_of(AddrModeInsts, [&](Value *V) {
         return IsNonLocalValue(V, MemoryInst->getParent());
-      })) {
+                  })) {
     DEBUG(dbgs() << "CGP: Found      local addrmode: " << AddrMode << "\n");
     return false;
   }
@@ -4388,6 +4383,20 @@ bool CodeGenPrepare::optimizeMemoryInst(Instruction *MemoryInst, Value *Addr,
 
       ResultPtr = AddrMode.ScaledReg;
       AddrMode.Scale = 0;
+    }
+
+    // It is only safe to sign extend the BaseReg if we know that the math
+    // required to create it did not overflow before we extend it. Since
+    // the original IR value was tossed in favor of a constant back when
+    // the AddrMode was created we need to bail out gracefully if widths
+    // do not match instead of extending it.
+    //
+    // (See below for code to add the scale.)
+    if (AddrMode.Scale) {
+      Type *ScaledRegTy = AddrMode.ScaledReg->getType();
+      if (cast<IntegerType>(IntPtrTy)->getBitWidth() >
+          cast<IntegerType>(ScaledRegTy)->getBitWidth())
+        return false;
     }
 
     if (AddrMode.BaseGV) {
@@ -4440,19 +4449,11 @@ bool CodeGenPrepare::optimizeMemoryInst(Instruction *MemoryInst, Value *Addr,
         Value *V = AddrMode.ScaledReg;
         if (V->getType() == IntPtrTy) {
           // done.
-        } else if (cast<IntegerType>(IntPtrTy)->getBitWidth() <
-                   cast<IntegerType>(V->getType())->getBitWidth()) {
-          V = Builder.CreateTrunc(V, IntPtrTy, "sunkaddr");
         } else {
-          // It is only safe to sign extend the BaseReg if we know that the math
-          // required to create it did not overflow before we extend it. Since
-          // the original IR value was tossed in favor of a constant back when
-          // the AddrMode was created we need to bail out gracefully if widths
-          // do not match instead of extending it.
-          Instruction *I = dyn_cast_or_null<Instruction>(ResultIndex);
-          if (I && (ResultIndex != AddrMode.BaseReg))
-            I->eraseFromParent();
-          return false;
+          assert(cast<IntegerType>(IntPtrTy)->getBitWidth() <
+                 cast<IntegerType>(V->getType())->getBitWidth() &&
+                 "We can't transform if ScaledReg is too narrow");
+          V = Builder.CreateTrunc(V, IntPtrTy, "sunkaddr");
         }
 
         if (AddrMode.Scale != 1)
@@ -4838,25 +4839,7 @@ bool CodeGenPrepare::canFormExtLd(
   if (!HasPromoted && LI->getParent() == Inst->getParent())
     return false;
 
-  EVT VT = TLI->getValueType(*DL, Inst->getType());
-  EVT LoadVT = TLI->getValueType(*DL, LI->getType());
-
-  // If the load has other users and the truncate is not free, this probably
-  // isn't worthwhile.
-  if (!LI->hasOneUse() && (TLI->isTypeLegal(LoadVT) || !TLI->isTypeLegal(VT)) &&
-      !TLI->isTruncateFree(Inst->getType(), LI->getType()))
-    return false;
-
-  // Check whether the target supports casts folded into loads.
-  unsigned LType;
-  if (isa<ZExtInst>(Inst))
-    LType = ISD::ZEXTLOAD;
-  else {
-    assert(isa<SExtInst>(Inst) && "Unexpected ext type!");
-    LType = ISD::SEXTLOAD;
-  }
-
-  return TLI->isLoadExtLegal(LType, VT, LoadVT);
+  return TLI->isExtLoad(LI, Inst, *DL);
 }
 
 /// Move a zext or sext fed by a load into the same basic block as the load,

@@ -36,3 +36,11 @@
 // MTHREADMODELALL: posix single
 // RUN: %clang --autocomplete=-mrelocation-model, | FileCheck %s -check-prefix=MRELOCMODELALL
 // MRELOCMODELALL: dynamic-no-pic pic ropi ropi-rwpi rwpi static
+// RUN: %clang --autocomplete=-mrelocation-mode | FileCheck %s -check-prefix=MRELOCMODEL_CLANG
+// MRELOCMODEL_CLANG-NOT: -mrelocation-model
+// RUN: %clang --autocomplete=#-mrelocation-mode | FileCheck %s -check-prefix=MRELOCMODEL_CC1
+// MRELOCMODEL_CC1: -mrelocation-model
+// RUN: %clang --autocomplete=-Wma | FileCheck %s -check-prefix=WARNING
+// WARNING: -Wmacro-redefined -Wmain -Wmain-return-type -Wmalformed-warning-check -Wmany-braces-around-scalar-init -Wmax-unsigned-zero
+// RUN: %clang --autocomplete=-Wno-invalid-pp- | FileCheck %s -check-prefix=NOWARNING
+// NOWARNING: -Wno-invalid-pp-token

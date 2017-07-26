@@ -49,6 +49,7 @@
 #include "llvm/DebugInfo/PDB/Native/ModuleDebugStream.h"
 #include "llvm/DebugInfo/PDB/Native/PDBFile.h"
 #include "llvm/DebugInfo/PDB/Native/PublicsStream.h"
+#include "llvm/DebugInfo/PDB/Native/SymbolStream.h"
 #include "llvm/DebugInfo/PDB/Native/RawError.h"
 #include "llvm/DebugInfo/PDB/Native/TpiHashing.h"
 #include "llvm/DebugInfo/PDB/Native/TpiStream.h"
@@ -126,6 +127,11 @@ Error DumpOutputStyle::dump() {
   if (opts::dump::DumpIds || !opts::dump::DumpIdIndex.empty() ||
       opts::dump::DumpIdExtras) {
     if (auto EC = dumpTpiStream(StreamIPI))
+      return EC;
+  }
+
+  if (opts::dump::DumpGlobals) {
+    if (auto EC = dumpGlobals())
       return EC;
   }
 
@@ -418,6 +424,13 @@ Error DumpOutputStyle::dumpModules() {
     P.formatLine("           debug stream: {0}, # files: {1}, has ec info: {2}",
                  Modi.getModuleStreamIndex(), Modi.getNumberOfFiles(),
                  Modi.hasECInfo());
+    StringRef PdbFilePath =
+        Err(Stream.getECName(Modi.getPdbFilePathNameIndex()));
+    StringRef SrcFilePath =
+        Err(Stream.getECName(Modi.getSourceFileNameIndex()));
+    P.formatLine("           pdb file ni: {0} `{1}`, src file ni: {2} `{3}`",
+                 Modi.getPdbFilePathNameIndex(), PdbFilePath,
+                 Modi.getSourceFileNameIndex(), SrcFilePath);
   }
   return Error::success();
 }
@@ -647,7 +660,7 @@ static void dumpFullTypeStream(LinePrinter &Printer,
       NumDigits(TypeIndex::FirstNonSimpleIndex + Stream.getNumTypeRecords());
 
   MinimalTypeDumpVisitor V(Printer, Width + 2, Bytes, Extras, Types,
-                           Stream.getHashValues());
+                           Stream.getNumHashBuckets(), Stream.getHashValues());
 
   if (auto EC = codeview::visitTypeStream(Types, V)) {
     Printer.formatLine("An error occurred dumping type records: {0}",
@@ -663,7 +676,7 @@ static void dumpPartialTypeStream(LinePrinter &Printer,
       NumDigits(TypeIndex::FirstNonSimpleIndex + Stream.getNumTypeRecords());
 
   MinimalTypeDumpVisitor V(Printer, Width + 2, Bytes, Extras, Types,
-                           Stream.getHashValues());
+                           Stream.getNumHashBuckets(), Stream.getHashValues());
 
   if (opts::dump::DumpTypeDependents) {
     // If we need to dump all dependents, then iterate each index and find
@@ -844,36 +857,112 @@ Error DumpOutputStyle::dumpModuleSyms() {
   return Error::success();
 }
 
+Error DumpOutputStyle::dumpGlobals() {
+  printHeader(P, "Global Symbols");
+  AutoIndent Indent(P);
+  if (!File.hasPDBGlobalsStream()) {
+    P.formatLine("Globals stream not present");
+    return Error::success();
+  }
+  ExitOnError Err("Error dumping globals stream");
+  auto &Globals = Err(File.getPDBGlobalsStream());
+
+  const GSIHashTable &Table = Globals.getGlobalsTable();
+  Err(dumpSymbolsFromGSI(Table, opts::dump::DumpGlobalExtras));
+  return Error::success();
+}
+
 Error DumpOutputStyle::dumpPublics() {
   printHeader(P, "Public Symbols");
-
   AutoIndent Indent(P);
   if (!File.hasPDBPublicsStream()) {
     P.formatLine("Publics stream not present");
     return Error::success();
   }
-
   ExitOnError Err("Error dumping publics stream");
-
-  auto &Types = Err(initializeTypes(StreamTPI));
   auto &Publics = Err(File.getPDBPublicsStream());
+
+  const GSIHashTable &PublicsTable = Publics.getPublicsTable();
+  Err(dumpSymbolsFromGSI(PublicsTable, opts::dump::DumpPublicExtras));
+
+  // Skip the rest if we aren't dumping extras.
+  if (!opts::dump::DumpPublicExtras)
+    return Error::success();
+
+  P.formatLine("Address Map");
+  {
+    // These are offsets into the publics stream sorted by secidx:secrel.
+    AutoIndent Indent2(P);
+    for (uint32_t Addr : Publics.getAddressMap())
+      P.formatLine("off = {0}", Addr);
+  }
+
+  // The thunk map is optional debug info used for ILT thunks.
+  if (!Publics.getThunkMap().empty()) {
+    P.formatLine("Thunk Map");
+    AutoIndent Indent2(P);
+    for (uint32_t Addr : Publics.getThunkMap())
+      P.formatLine("{0:x8}", Addr);
+  }
+
+  // The section offsets table appears to be empty when incremental linking
+  // isn't in use.
+  if (!Publics.getSectionOffsets().empty()) {
+    P.formatLine("Section Offsets");
+    AutoIndent Indent2(P);
+    for (const SectionOffset &SO : Publics.getSectionOffsets())
+      P.formatLine("{0:x4}:{1:x8}", uint16_t(SO.Isect), uint32_t(SO.Off));
+  }
+
+  return Error::success();
+}
+
+Error DumpOutputStyle::dumpSymbolsFromGSI(const GSIHashTable &Table,
+                                          bool HashExtras) {
+  auto ExpectedSyms = File.getPDBSymbolStream();
+  if (!ExpectedSyms)
+    return ExpectedSyms.takeError();
+  auto ExpectedTypes = initializeTypes(StreamTPI);
+  if (!ExpectedTypes)
+    return ExpectedTypes.takeError();
   SymbolVisitorCallbackPipeline Pipeline;
   SymbolDeserializer Deserializer(nullptr, CodeViewContainer::Pdb);
-  MinimalSymbolDumper Dumper(P, opts::dump::DumpSymRecordBytes, Types);
+  MinimalSymbolDumper Dumper(P, opts::dump::DumpSymRecordBytes, *ExpectedTypes);
 
   Pipeline.addCallbackToPipeline(Deserializer);
   Pipeline.addCallbackToPipeline(Dumper);
   CVSymbolVisitor Visitor(Pipeline);
 
-  auto ExpectedSymbols = Publics.getSymbolArray();
-  if (!ExpectedSymbols) {
-    P.formatLine("Could not read public symbol record stream");
-    return Error::success();
+  BinaryStreamRef SymStream =
+      ExpectedSyms->getSymbolArray().getUnderlyingStream();
+  for (uint32_t PubSymOff : Table) {
+    Expected<CVSymbol> Sym = readSymbolFromStream(SymStream, PubSymOff);
+    if (!Sym)
+      return Sym.takeError();
+    if (auto E = Visitor.visitSymbolRecord(*Sym, PubSymOff))
+      return E;
   }
 
-  if (auto EC = Visitor.visitSymbolStream(*ExpectedSymbols, 0))
-    P.formatLine("Error while processing public symbol records.  {0}",
-                 toString(std::move(EC)));
+  // Return early if we aren't dumping public hash table and address map info.
+  if (!HashExtras)
+    return Error::success();
+
+  P.formatLine("Hash Records");
+  {
+    AutoIndent Indent2(P);
+    for (const PSHashRecord &HR : Table.HashRecords)
+      P.formatLine("off = {0}, refcnt = {1}", uint32_t(HR.Off),
+                   uint32_t(HR.CRef));
+  }
+
+  // FIXME: Dump the bitmap.
+
+  P.formatLine("Hash Buckets");
+  {
+    AutoIndent Indent2(P);
+    for (uint32_t Hash : Table.HashBuckets)
+      P.formatLine("{0:x8}", Hash);
+  }
 
   return Error::success();
 }

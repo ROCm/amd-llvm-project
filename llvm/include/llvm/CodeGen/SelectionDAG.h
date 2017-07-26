@@ -927,7 +927,7 @@ public:
                            SDValue Cmp, SDValue Swp, MachinePointerInfo PtrInfo,
                            unsigned Alignment, AtomicOrdering SuccessOrdering,
                            AtomicOrdering FailureOrdering,
-                           SynchronizationScope SynchScope);
+                           SyncScope::ID SSID);
   SDValue getAtomicCmpSwap(unsigned Opcode, const SDLoc &dl, EVT MemVT,
                            SDVTList VTs, SDValue Chain, SDValue Ptr,
                            SDValue Cmp, SDValue Swp, MachineMemOperand *MMO);
@@ -937,7 +937,7 @@ public:
   SDValue getAtomic(unsigned Opcode, const SDLoc &dl, EVT MemVT, SDValue Chain,
                     SDValue Ptr, SDValue Val, const Value *PtrVal,
                     unsigned Alignment, AtomicOrdering Ordering,
-                    SynchronizationScope SynchScope);
+                    SyncScope::ID SSID);
   SDValue getAtomic(unsigned Opcode, const SDLoc &dl, EVT MemVT, SDValue Chain,
                     SDValue Ptr, SDValue Val, MachineMemOperand *MMO);
 
@@ -1306,6 +1306,14 @@ public:
   /// Constant fold a setcc to true or false.
   SDValue FoldSetCC(EVT VT, SDValue N1, SDValue N2, ISD::CondCode Cond,
                     const SDLoc &dl);
+
+  /// See if the specified operand can be simplified with the knowledge that only
+  /// the bits specified by Mask are used.  If so, return the simpler operand,
+  /// otherwise return a null SDValue.
+  ///
+  /// (This exists alongside SimplifyDemandedBits because GetDemandedBits can
+  /// simplify nodes with multiple uses more aggressively.)
+  SDValue GetDemandedBits(SDValue V, const APInt &Mask);
 
   /// Return true if the sign bit of Op is known to be zero.
   /// We use this predicate to simplify operations downstream.

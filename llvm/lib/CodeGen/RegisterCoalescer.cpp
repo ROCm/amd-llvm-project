@@ -1227,6 +1227,34 @@ bool RegisterCoalescer::reMaterializeTrivialDef(const CoalescerPair &CP,
         SR->createDeadDef(DefIndex, Alloc);
       }
     }
+
+    // Make sure that the subrange for resultant undef is removed
+    // For example:
+    //   vreg1:sub1<def,read-undef> = LOAD CONSTANT 1
+    //   vreg2<def> = COPY vreg1
+    // ==>
+    //   vreg2:sub1<def, read-undef> = LOAD CONSTANT 1
+    //     ; Correct but need to remove the subrange for vreg2:sub0
+    //     ; as it is now undef
+    if (NewIdx != 0 && DstInt.hasSubRanges()) {
+      // The affected subregister segments can be removed.
+      SlotIndex CurrIdx = LIS->getInstructionIndex(NewMI);
+      LaneBitmask DstMask = TRI->getSubRegIndexLaneMask(NewIdx);
+      bool UpdatedSubRanges = false;
+      for (LiveInterval::SubRange &SR : DstInt.subranges()) {
+        if ((SR.LaneMask & DstMask).none()) {
+          DEBUG(dbgs() << "Removing undefined SubRange "
+                << PrintLaneMask(SR.LaneMask) << " : " << SR << "\n");
+          // VNI is in ValNo - remove any segments in this SubRange that have this ValNo
+          if (VNInfo *RmValNo = SR.getVNInfoAt(CurrIdx.getRegSlot())) {
+            SR.removeValNo(RmValNo);
+            UpdatedSubRanges = true;
+          }
+        }
+      }
+      if (UpdatedSubRanges)
+        DstInt.removeEmptySubRanges();
+    }
   } else if (NewMI.getOperand(0).getReg() != CopyDstReg) {
     // The New instruction may be defining a sub-register of what's actually
     // been asked for. If so it must implicitly define the whole thing.
@@ -2211,7 +2239,7 @@ JoinVals::analyzeValue(unsigned ValNo, JoinVals &Other) {
   const MachineInstr *DefMI = nullptr;
   if (VNI->isPHIDef()) {
     // Conservatively assume that all lanes in a PHI are valid.
-    LaneBitmask Lanes = SubRangeJoin ? LaneBitmask(1)
+    LaneBitmask Lanes = SubRangeJoin ? LaneBitmask::getLane(0)
                                      : TRI->getSubRegIndexLaneMask(SubIdx);
     V.ValidLanes = V.WriteLanes = Lanes;
   } else {
@@ -2219,7 +2247,7 @@ JoinVals::analyzeValue(unsigned ValNo, JoinVals &Other) {
     assert(DefMI != nullptr);
     if (SubRangeJoin) {
       // We don't care about the lanes when joining subregister ranges.
-      V.WriteLanes = V.ValidLanes = LaneBitmask(1);
+      V.WriteLanes = V.ValidLanes = LaneBitmask::getLane(0);
       if (DefMI->isImplicitDef()) {
         V.ValidLanes = LaneBitmask::getNone();
         V.ErasableImplicitDef = true;

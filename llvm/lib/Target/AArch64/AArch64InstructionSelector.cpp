@@ -214,6 +214,7 @@ static unsigned selectBinaryOp(unsigned GenericOpc, unsigned RegBankID,
         return GenericOpc;
       }
     }
+    break;
   case AArch64::FPRRegBankID:
     switch (OpSize) {
     case 32:
@@ -245,7 +246,8 @@ static unsigned selectBinaryOp(unsigned GenericOpc, unsigned RegBankID,
         return GenericOpc;
       }
     }
-  };
+    break;
+  }
   return GenericOpc;
 }
 
@@ -269,6 +271,7 @@ static unsigned selectLoadStoreUIOp(unsigned GenericOpc, unsigned RegBankID,
     case 64:
       return isStore ? AArch64::STRXui : AArch64::LDRXui;
     }
+    break;
   case AArch64::FPRRegBankID:
     switch (OpSize) {
     case 8:
@@ -280,7 +283,8 @@ static unsigned selectLoadStoreUIOp(unsigned GenericOpc, unsigned RegBankID,
     case 64:
       return isStore ? AArch64::STRDui : AArch64::LDRDui;
     }
-  };
+    break;
+  }
   return GenericOpc;
 }
 
@@ -754,7 +758,55 @@ bool AArch64InstructionSelector::select(MachineInstr &I) const {
     constrainSelectedInstRegOperands(I, TII, TRI, RBI);
     return true;
   }
+  case TargetOpcode::G_EXTRACT: {
+    LLT SrcTy = MRI.getType(I.getOperand(1).getReg());
+    // Larger extracts are vectors, same-size extracts should be something else
+    // by now (either split up or simplified to a COPY).
+    if (SrcTy.getSizeInBits() > 64 || Ty.getSizeInBits() > 32)
+      return false;
 
+    I.setDesc(TII.get(AArch64::UBFMXri));
+    MachineInstrBuilder(MF, I).addImm(I.getOperand(2).getImm() +
+                                      Ty.getSizeInBits() - 1);
+
+    unsigned DstReg = MRI.createGenericVirtualRegister(LLT::scalar(64));
+    BuildMI(MBB, std::next(I.getIterator()), I.getDebugLoc(),
+            TII.get(AArch64::COPY))
+        .addDef(I.getOperand(0).getReg())
+        .addUse(DstReg, 0, AArch64::sub_32);
+    RBI.constrainGenericRegister(I.getOperand(0).getReg(),
+                                 AArch64::GPR32RegClass, MRI);
+    I.getOperand(0).setReg(DstReg);
+
+    return constrainSelectedInstRegOperands(I, TII, TRI, RBI);
+  }
+
+  case TargetOpcode::G_INSERT: {
+    LLT SrcTy = MRI.getType(I.getOperand(2).getReg());
+    // Larger inserts are vectors, same-size ones should be something else by
+    // now (split up or turned into COPYs).
+    if (Ty.getSizeInBits() > 64 || SrcTy.getSizeInBits() > 32)
+      return false;
+
+    I.setDesc(TII.get(AArch64::BFMXri));
+    unsigned LSB = I.getOperand(3).getImm();
+    unsigned Width = MRI.getType(I.getOperand(2).getReg()).getSizeInBits();
+    I.getOperand(3).setImm((64 - LSB) % 64);
+    MachineInstrBuilder(MF, I).addImm(Width - 1);
+
+    unsigned SrcReg = MRI.createGenericVirtualRegister(LLT::scalar(64));
+    BuildMI(MBB, I.getIterator(), I.getDebugLoc(),
+            TII.get(AArch64::SUBREG_TO_REG))
+        .addDef(SrcReg)
+        .addImm(0)
+        .addUse(I.getOperand(2).getReg())
+        .addImm(AArch64::sub_32);
+    RBI.constrainGenericRegister(I.getOperand(2).getReg(),
+                                 AArch64::GPR32RegClass, MRI);
+    I.getOperand(2).setReg(SrcReg);
+
+    return constrainSelectedInstRegOperands(I, TII, TRI, RBI);
+  }
   case TargetOpcode::G_FRAME_INDEX: {
     // allocas and G_FRAME_INDEX are only supported in addrspace(0).
     if (Ty != LLT::pointer(0, 64)) {
@@ -762,7 +814,6 @@ bool AArch64InstructionSelector::select(MachineInstr &I) const {
             << ", expected: " << LLT::pointer(0, 64) << '\n');
       return false;
     }
-
     I.setDesc(TII.get(AArch64::ADDXri));
 
     // MOs for a #0 shifted immediate.
@@ -1321,6 +1372,9 @@ bool AArch64InstructionSelector::select(MachineInstr &I) const {
   case TargetOpcode::G_VASTART:
     return STI.isTargetDarwin() ? selectVaStartDarwin(I, MF, MRI)
                                 : selectVaStartAAPCS(I, MF, MRI);
+  case TargetOpcode::G_IMPLICIT_DEF:
+    I.setDesc(TII.get(TargetOpcode::IMPLICIT_DEF));
+    return true;
   }
 
   return false;
