@@ -73,13 +73,12 @@ private:
 
   std::unique_ptr<FileOutputBuffer> Buffer;
 
-  OutputSectionFactory Factory{OutputSections};
+  OutputSectionFactory Factory;
 
   void addRelIpltSymbols();
   void addStartEndSymbols();
   void addStartStopSymbols(OutputSection *Sec);
   uint64_t getEntryAddr();
-  OutputSection *findSection(StringRef Name);
   OutputSection *findSectionInScript(StringRef Name);
   OutputSectionCommand *findSectionCommand(StringRef Name);
 
@@ -181,15 +180,13 @@ template <class ELFT> void Writer<ELFT>::run() {
     // Linker scripts may have left some input sections unassigned.
     // Assign such sections using the default rule.
     Script->addOrphanSections(Factory);
-    Script->createOrphanCommands();
   } else {
     // If linker script does not contain SECTIONS commands, create
     // output sections by default rules. We still need to give the
     // linker script a chance to run, because it might contain
     // non-SECTIONS commands such as ASSERT.
-    createSections();
     Script->processCommands(Factory);
-    Script->fabricateDefaultCommands();
+    createSections();
   }
   clearOutputSections();
 
@@ -259,7 +256,6 @@ template <class ELFT> void Writer<ELFT>::run() {
   writeBuildId();
   if (ErrorCount)
     return;
-
 
   // Handle -Map option.
   writeMapFile<ELFT>(OutputSectionCommands);
@@ -383,7 +379,7 @@ template <class ELFT> void Writer<ELFT>::createSyntheticSections() {
   Add(InX::IgotPlt);
 
   if (Config->GdbIndex) {
-    InX::GdbIndex = make<GdbIndexSection>();
+    InX::GdbIndex = createGdbIndex<ELFT>();
     Add(InX::GdbIndex);
   }
 
@@ -528,7 +524,7 @@ template <class ELFT> void Writer<ELFT>::addSectionSymbols() {
 //
 // This function returns true if a section needs to be put into a
 // PT_GNU_RELRO segment.
-bool elf::isRelroSection(const OutputSection *Sec) {
+static bool isRelroSection(const OutputSection *Sec) {
   if (!Config->ZRelro)
     return false;
 
@@ -871,20 +867,19 @@ template <class ELFT> void Writer<ELFT>::addReservedSymbols() {
 
 // Sort input sections by section name suffixes for
 // __attribute__((init_priority(N))).
-static void sortInitFini(OutputSection *S) {
-  if (S)
-    reinterpret_cast<OutputSection *>(S)->sortInitFini();
+static void sortInitFini(OutputSectionCommand *Cmd) {
+  if (Cmd)
+    Cmd->sortInitFini();
 }
 
 // Sort input sections by the special rule for .ctors and .dtors.
-static void sortCtorsDtors(OutputSection *S) {
-  if (S)
-    reinterpret_cast<OutputSection *>(S)->sortCtorsDtors();
+static void sortCtorsDtors(OutputSectionCommand *Cmd) {
+  if (Cmd)
+    Cmd->sortCtorsDtors();
 }
 
 // Sort input sections using the list provided by --symbol-ordering-file.
-template <class ELFT>
-static void sortBySymbolsOrder(ArrayRef<OutputSection *> OutputSections) {
+template <class ELFT> static void sortBySymbolsOrder() {
   if (Config->SymbolOrderingFile.empty())
     return;
 
@@ -909,9 +904,9 @@ static void sortBySymbolsOrder(ArrayRef<OutputSection *> OutputSections) {
   }
 
   // Sort sections by priority.
-  for (OutputSection *Base : OutputSections)
-    if (auto *Sec = dyn_cast<OutputSection>(Base))
-      Sec->sort([&](InputSectionBase *S) { return SectionOrder.lookup(S); });
+  for (BaseCommand *Base : Script->Opt.Commands)
+    if (auto *Cmd = dyn_cast<OutputSectionCommand>(Base))
+      Cmd->sort([&](InputSectionBase *S) { return SectionOrder.lookup(S); });
 }
 
 template <class ELFT>
@@ -941,11 +936,12 @@ template <class ELFT> void Writer<ELFT>::createSections() {
     if (IS)
       Factory.addInputSec(IS, getOutputSectionName(IS->Name));
 
-  sortBySymbolsOrder<ELFT>(OutputSections);
-  sortInitFini(findSection(".init_array"));
-  sortInitFini(findSection(".fini_array"));
-  sortCtorsDtors(findSection(".ctors"));
-  sortCtorsDtors(findSection(".dtors"));
+  Script->fabricateDefaultCommands();
+  sortBySymbolsOrder<ELFT>();
+  sortInitFini(findSectionCommand(".init_array"));
+  sortInitFini(findSectionCommand(".fini_array"));
+  sortCtorsDtors(findSectionCommand(".ctors"));
+  sortCtorsDtors(findSectionCommand(".dtors"));
 }
 
 // We want to find how similar two ranks are.
@@ -1287,12 +1283,6 @@ template <class ELFT> void Writer<ELFT>::finalizeSections() {
     Out::ProgramHeaders->Size = sizeof(Elf_Phdr) * Phdrs.size();
   }
 
-  // Compute the size of .rela.dyn and .rela.plt early since we need
-  // them to populate .dynamic.
-  for (SyntheticSection *SS : {In<ELFT>::RelaDyn, In<ELFT>::RelaPlt})
-    if (SS->getParent() && !SS->empty())
-      SS->getParent()->assignOffsets();
-
   // Dynamic section must be the last one in this list and dynamic
   // symbol table section (DynSymTab) must be the first one.
   applySynthetic({InX::DynSymTab,    InX::Bss,           InX::BssRelRo,
@@ -1316,6 +1306,7 @@ template <class ELFT> void Writer<ELFT>::finalizeSections() {
     // are out of range. This will need to turn into a loop that converges
     // when no more Thunks are added
     ThunkCreator TC;
+    Script->assignAddresses();
     if (TC.createThunks(OutputSectionCommands)) {
       applySynthetic({InX::MipsGot},
                      [](SyntheticSection *SS) { SS->updateAllocSize(); });
@@ -1339,7 +1330,7 @@ template <class ELFT> void Writer<ELFT>::addPredefinedSections() {
   // ARM ABI requires .ARM.exidx to be terminated by some piece of data.
   // We have the terminater synthetic section class. Add that at the end.
   OutputSectionCommand *Cmd = findSectionCommand(".ARM.exidx");
-  if (!Cmd || Cmd->Commands.empty() || Config->Relocatable)
+  if (!Cmd || !Cmd->Sec || Config->Relocatable)
     return;
 
   auto *Sentinel = make<ARMExidxSentinelSection>();
@@ -1400,16 +1391,10 @@ OutputSectionCommand *Writer<ELFT>::findSectionCommand(StringRef Name) {
   return nullptr;
 }
 
-template <class ELFT> OutputSection *Writer<ELFT>::findSectionInScript(StringRef Name) {
+template <class ELFT>
+OutputSection *Writer<ELFT>::findSectionInScript(StringRef Name) {
   if (OutputSectionCommand *Cmd = findSectionCommand(Name))
     return Cmd->Sec;
-  return nullptr;
-}
-
-template <class ELFT> OutputSection *Writer<ELFT>::findSection(StringRef Name) {
-  for (OutputSection *Sec : OutputSections)
-    if (Sec->Name == Name)
-      return Sec;
   return nullptr;
 }
 
@@ -1474,7 +1459,7 @@ template <class ELFT> std::vector<PhdrEntry> Writer<ELFT>::createPhdrs() {
     // different flags or is loaded at a discontiguous address using AT linker
     // script command.
     uint64_t NewFlags = computeFlags(Sec->getPhdrFlags());
-    if (Script->hasLMA(Sec) || Flags != NewFlags) {
+    if (Cmd->LMAExpr || Flags != NewFlags) {
       Load = AddHdr(PT_LOAD, NewFlags);
       Flags = NewFlags;
     }
@@ -1542,7 +1527,7 @@ template <class ELFT> std::vector<PhdrEntry> Writer<ELFT>::createPhdrs() {
   for (OutputSectionCommand *Cmd : OutputSectionCommands) {
     OutputSection *Sec = Cmd->Sec;
     if (Sec->Type == SHT_NOTE) {
-      if (!Note || Script->hasLMA(Sec))
+      if (!Note || Cmd->LMAExpr)
         Note = AddHdr(PT_NOTE, PF_R);
       Note->add(Sec);
     } else {
@@ -1615,7 +1600,8 @@ static uint64_t getFileAlignment(uint64_t Off, OutputSection *Sec) {
   // The first section in a PT_LOAD has to have congruent offset and address
   // module the page size.
   if (Sec == First)
-    return alignTo(Off, Config->MaxPageSize, Sec->Addr);
+    return alignTo(Off, std::max<uint64_t>(Sec->Alignment, Config->MaxPageSize),
+                   Sec->Addr);
 
   // If two sections share the same PT_LOAD the file offset is calculated
   // using this formula: Off2 = Off1 + (VA2 - VA1).
@@ -1674,7 +1660,7 @@ template <class ELFT> void Writer<ELFT>::setPhdrs() {
         P.p_paddr = First->getLMA();
     }
     if (P.p_type == PT_LOAD)
-      P.p_align = Config->MaxPageSize;
+      P.p_align = std::max<uint64_t>(P.p_align, Config->MaxPageSize);
     else if (P.p_type == PT_GNU_RELRO) {
       P.p_align = 1;
       // The glibc dynamic loader rounds the size down, so we need to round up

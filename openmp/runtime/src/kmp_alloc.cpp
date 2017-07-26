@@ -299,7 +299,7 @@ static void __kmp_bget_dequeue(kmp_info_t *th) {
     {
       volatile void *old_value = TCR_SYNC_PTR(th->th.th_local.bget_list);
       while (!KMP_COMPARE_AND_STORE_PTR(&th->th.th_local.bget_list,
-                                        CCAST(void *, old_value), NULL)) {
+                                        CCAST(void *, old_value), nullptr)) {
         KMP_CPU_PAUSE();
         old_value = TCR_SYNC_PTR(th->th.th_local.bget_list);
       }
@@ -794,7 +794,7 @@ static void brel(kmp_info_t *th, void *buf) {
        the length of this buffer to the previous free buffer. Note that we
        subtract the size in the buffer being released, since it's negative to
        indicate that the buffer is allocated. */
-    register bufsize size = b->bh.bb.bsize;
+    bufsize size = b->bh.bb.bsize;
 
     /* Make the previous buffer the one we're working on. */
     KMP_DEBUG_ASSERT(BH((char *)b - b->bh.bb.prevfree)->bb.bsize ==
@@ -1696,7 +1696,7 @@ void *___kmp_fast_allocate(kmp_info_t *this_thr, size_t size KMP_SRC_LOC_DECL) {
     // threads only)
     // pop the head of the sync free list, push NULL instead
     while (!KMP_COMPARE_AND_STORE_PTR(
-        &this_thr->th.th_free_lists[index].th_free_list_sync, ptr, NULL)) {
+        &this_thr->th.th_free_lists[index].th_free_list_sync, ptr, nullptr)) {
       KMP_CPU_PAUSE();
       ptr = TCR_SYNC_PTR(this_thr->th.th_free_lists[index].th_free_list_sync);
     }

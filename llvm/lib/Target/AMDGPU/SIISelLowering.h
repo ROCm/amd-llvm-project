@@ -140,8 +140,7 @@ public:
 
   const SISubtarget *getSubtarget() const;
 
-  bool isShuffleMaskLegal(const SmallVectorImpl<int> &/*Mask*/,
-                          EVT /*VT*/) const override;
+  bool isShuffleMaskLegal(ArrayRef<int> /*Mask*/, EVT /*VT*/) const override;
 
   bool getTgtMemIntrinsic(IntrinsicInfo &, const CallInst &,
                           unsigned IntrinsicID) const override;
@@ -151,9 +150,11 @@ public:
                             Type *&/*AccessTy*/) const override;
 
   bool isLegalAddressingMode(const DataLayout &DL, const AddrMode &AM, Type *Ty,
-                             unsigned AS) const override;
+                             unsigned AS,
+                             Instruction *I = nullptr) const override;
 
-  bool canMergeStoresTo(unsigned AS, EVT MemVT) const override;
+  bool canMergeStoresTo(unsigned AS, EVT MemVT,
+                        const SelectionDAG &DAG) const override;
 
   bool allowsMisalignedMemoryAccesses(EVT VT, unsigned AS,
                                       unsigned Align,
@@ -231,6 +232,8 @@ public:
   ConstraintType getConstraintType(StringRef Constraint) const override;
   SDValue copyToM0(SelectionDAG &DAG, SDValue Chain, const SDLoc &DL,
                    SDValue V) const;
+
+  void finalizeLowering(MachineFunction &MF) const override;
 };
 
 } // End namespace llvm

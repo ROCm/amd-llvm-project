@@ -106,10 +106,12 @@ llvm::createLibcall(MachineIRBuilder &MIRBuilder, RTLIB::Libcall Libcall,
   auto &CLI = *MIRBuilder.getMF().getSubtarget().getCallLowering();
   auto &TLI = *MIRBuilder.getMF().getSubtarget().getTargetLowering();
   const char *Name = TLI.getLibcallName(Libcall);
+
   MIRBuilder.getMF().getFrameInfo().setHasCalls(true);
   if (!CLI.lowerCall(MIRBuilder, TLI.getLibcallCallingConv(Libcall),
                      MachineOperand::CreateES(Name), Result, Args))
     return LegalizerHelper::UnableToLegalize;
+
   return LegalizerHelper::Legalized;
 }
 
@@ -431,9 +433,12 @@ LegalizerHelper::widenScalar(MachineInstr &MI, unsigned TypeIdx, LLT WideTy) {
   }
   case TargetOpcode::G_SDIV:
   case TargetOpcode::G_UDIV:
+  case TargetOpcode::G_SREM:
+  case TargetOpcode::G_UREM:
   case TargetOpcode::G_ASHR:
   case TargetOpcode::G_LSHR: {
     unsigned ExtOp = MI.getOpcode() == TargetOpcode::G_SDIV ||
+                             MI.getOpcode() == TargetOpcode::G_SREM ||
                              MI.getOpcode() == TargetOpcode::G_ASHR
                          ? TargetOpcode::G_SEXT
                          : TargetOpcode::G_ZEXT;

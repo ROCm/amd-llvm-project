@@ -1952,6 +1952,57 @@ SDValue SelectionDAG::FoldSetCC(EVT VT, SDValue N1, SDValue N2,
   return SDValue();
 }
 
+/// See if the specified operand can be simplified with the knowledge that only
+/// the bits specified by Mask are used.
+SDValue SelectionDAG::GetDemandedBits(SDValue V, const APInt &Mask) {
+  switch (V.getOpcode()) {
+  default:
+    break;
+  case ISD::Constant: {
+    const ConstantSDNode *CV = cast<ConstantSDNode>(V.getNode());
+    assert(CV && "Const value should be ConstSDNode.");
+    const APInt &CVal = CV->getAPIntValue();
+    APInt NewVal = CVal & Mask;
+    if (NewVal != CVal)
+      return getConstant(NewVal, SDLoc(V), V.getValueType());
+    break;
+  }
+  case ISD::OR:
+  case ISD::XOR:
+    // If the LHS or RHS don't contribute bits to the or, drop them.
+    if (MaskedValueIsZero(V.getOperand(0), Mask))
+      return V.getOperand(1);
+    if (MaskedValueIsZero(V.getOperand(1), Mask))
+      return V.getOperand(0);
+    break;
+  case ISD::SRL:
+    // Only look at single-use SRLs.
+    if (!V.getNode()->hasOneUse())
+      break;
+    if (ConstantSDNode *RHSC = dyn_cast<ConstantSDNode>(V.getOperand(1))) {
+      // See if we can recursively simplify the LHS.
+      unsigned Amt = RHSC->getZExtValue();
+
+      // Watch out for shift count overflow though.
+      if (Amt >= Mask.getBitWidth())
+        break;
+      APInt NewMask = Mask << Amt;
+      if (SDValue SimplifyLHS = GetDemandedBits(V.getOperand(0), NewMask))
+        return getNode(ISD::SRL, SDLoc(V), V.getValueType(), SimplifyLHS,
+                       V.getOperand(1));
+    }
+    break;
+  case ISD::AND: {
+    // X & -1 -> X (ignoring bits which aren't demanded).
+    ConstantSDNode *AndVal = isConstOrConstSplat(V.getOperand(1));
+    if (AndVal && Mask.isSubsetOf(AndVal->getAPIntValue()))
+      return V.getOperand(0);
+    break;
+  }
+  }
+  return SDValue();
+}
+
 /// SignBitIsZero - Return true if the sign bit of Op is known to be zero.  We
 /// use this predicate to simplify operations downstream.
 bool SelectionDAG::SignBitIsZero(SDValue Op, unsigned Depth) const {
@@ -5443,7 +5494,7 @@ SDValue SelectionDAG::getAtomicCmpSwap(
     unsigned Opcode, const SDLoc &dl, EVT MemVT, SDVTList VTs, SDValue Chain,
     SDValue Ptr, SDValue Cmp, SDValue Swp, MachinePointerInfo PtrInfo,
     unsigned Alignment, AtomicOrdering SuccessOrdering,
-    AtomicOrdering FailureOrdering, SynchronizationScope SynchScope) {
+    AtomicOrdering FailureOrdering, SyncScope::ID SSID) {
   assert(Opcode == ISD::ATOMIC_CMP_SWAP ||
          Opcode == ISD::ATOMIC_CMP_SWAP_WITH_SUCCESS);
   assert(Cmp.getValueType() == Swp.getValueType() && "Invalid Atomic Op Types");
@@ -5459,7 +5510,7 @@ SDValue SelectionDAG::getAtomicCmpSwap(
                MachineMemOperand::MOStore;
   MachineMemOperand *MMO =
     MF.getMachineMemOperand(PtrInfo, Flags, MemVT.getStoreSize(), Alignment,
-                            AAMDNodes(), nullptr, SynchScope, SuccessOrdering,
+                            AAMDNodes(), nullptr, SSID, SuccessOrdering,
                             FailureOrdering);
 
   return getAtomicCmpSwap(Opcode, dl, MemVT, VTs, Chain, Ptr, Cmp, Swp, MMO);
@@ -5481,7 +5532,7 @@ SDValue SelectionDAG::getAtomic(unsigned Opcode, const SDLoc &dl, EVT MemVT,
                                 SDValue Chain, SDValue Ptr, SDValue Val,
                                 const Value *PtrVal, unsigned Alignment,
                                 AtomicOrdering Ordering,
-                                SynchronizationScope SynchScope) {
+                                SyncScope::ID SSID) {
   if (Alignment == 0)  // Ensure that codegen never sees alignment 0
     Alignment = getEVTAlignment(MemVT);
 
@@ -5501,7 +5552,7 @@ SDValue SelectionDAG::getAtomic(unsigned Opcode, const SDLoc &dl, EVT MemVT,
   MachineMemOperand *MMO =
     MF.getMachineMemOperand(MachinePointerInfo(PtrVal), Flags,
                             MemVT.getStoreSize(), Alignment, AAMDNodes(),
-                            nullptr, SynchScope, Ordering);
+                            nullptr, SSID, Ordering);
 
   return getAtomic(Opcode, dl, MemVT, Chain, Ptr, Val, MMO);
 }
@@ -6578,7 +6629,7 @@ SDNode* SelectionDAG::mutateStrictFPToFP(SDNode *Node) {
   unsigned NewOpc;
   bool IsUnary = false;
   switch (OrigOpc) {
-  default: 
+  default:
     llvm_unreachable("mutateStrictFPToFP called with unexpected opcode!");
   case ISD::STRICT_FADD: NewOpc = ISD::FADD; break;
   case ISD::STRICT_FSUB: NewOpc = ISD::FSUB; break;
@@ -6614,7 +6665,7 @@ SDNode* SelectionDAG::mutateStrictFPToFP(SDNode *Node) {
   else
     Res = MorphNodeTo(Node, NewOpc, VTs, { Node->getOperand(1),
                                            Node->getOperand(2) });
-  
+
   // MorphNodeTo can operate in two ways: if an existing node with the
   // specified operands exists, it can just return it.  Otherwise, it
   // updates the node in place to have the requested operands.
@@ -6627,7 +6678,7 @@ SDNode* SelectionDAG::mutateStrictFPToFP(SDNode *Node) {
     RemoveDeadNode(Node);
   }
 
-  return Res; 
+  return Res;
 }
 
 /// getMachineNode - These are used for target selectors to create a new node

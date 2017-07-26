@@ -40,7 +40,8 @@ class TargetRegisterInfo;
 /// This is convenient because std::bitset does not have a constructor
 /// with an initializer list of set bits.
 ///
-/// Each InstructionSelector subclass should define a PredicateBitset class with:
+/// Each InstructionSelector subclass should define a PredicateBitset class
+/// with:
 ///   const unsigned MAX_SUBTARGET_PREDICATES = 192;
 ///   using PredicateBitset = PredicateBitsetImpl<MAX_SUBTARGET_PREDICATES>;
 /// and updating the constant to suit the target. Tablegen provides a suitable
@@ -62,6 +63,18 @@ public:
 };
 
 enum {
+  /// Begin a try-block to attempt a match and jump to OnFail if it is
+  /// unsuccessful.
+  /// - OnFail - The MatchTable entry at which to resume if the match fails.
+  ///
+  /// FIXME: This ought to take an argument indicating the number of try-blocks
+  ///        to exit on failure. It's usually one but the last match attempt of
+  ///        a block will need more. The (implemented) alternative is to tack a
+  ///        GIM_Reject on the end of each try-block which is simpler but
+  ///        requires an extra opcode and iteration in the interpreter on each
+  ///        failed match.
+  GIM_Try,
+
   /// Record the specified instruction
   /// - NewInsnID - Instruction ID to define
   /// - InsnID - Instruction ID
@@ -102,21 +115,33 @@ enum {
   /// - OpIdx - Operand index
   /// - Expected integer
   GIM_CheckConstantInt,
-  /// Check the operand is a specific literal integer (i.e. MO.isImm() or MO.isCImm() is true).
+  /// Check the operand is a specific literal integer (i.e. MO.isImm() or
+  /// MO.isCImm() is true).
   /// - InsnID - Instruction ID
   /// - OpIdx - Operand index
   /// - Expected integer
   GIM_CheckLiteralInt,
+  /// Check the operand is a specific intrinsic ID
+  /// - InsnID - Instruction ID
+  /// - OpIdx - Operand index
+  /// - Expected Intrinsic ID
+  GIM_CheckIntrinsicID,
   /// Check the specified operand is an MBB
   /// - InsnID - Instruction ID
   /// - OpIdx - Operand index
   GIM_CheckIsMBB,
 
-  /// A successful match
-  GIM_Accept,
-};
+  /// Check if the specified operand is safe to fold into the current
+  /// instruction.
+  /// - InsnID - Instruction ID
+  GIM_CheckIsSafeToFold,
 
-enum {
+  /// Fail the current try-block, or completely fail to match if there is no
+  /// current try-block.
+  GIM_Reject,
+
+  //=== Renderers ===
+
   /// Mutate an instruction
   /// - NewInsnID - Instruction ID to define
   /// - OldInsnID - Instruction ID to mutate
@@ -225,15 +250,12 @@ protected:
   template <class TgtInstructionSelector, class PredicateBitset,
             class ComplexMatcherMemFn>
   bool executeMatchTable(
-      TgtInstructionSelector &ISel, MatcherState &State,
+      TgtInstructionSelector &ISel, NewMIVector &OutMIs, MatcherState &State,
       const MatcherInfoTy<PredicateBitset, ComplexMatcherMemFn> &MatcherInfo,
-      const int64_t *MatchTable, MachineRegisterInfo &MRI,
-      const TargetRegisterInfo &TRI, const RegisterBankInfo &RBI,
+      const int64_t *MatchTable, const TargetInstrInfo &TII,
+      MachineRegisterInfo &MRI, const TargetRegisterInfo &TRI,
+      const RegisterBankInfo &RBI,
       const PredicateBitset &AvailableFeatures) const;
-  void executeEmitTable(NewMIVector &OutMIs, MatcherState &State,
-                        const int64_t *EmitTable, const TargetInstrInfo &TII,
-                        const TargetRegisterInfo &TRI,
-                        const RegisterBankInfo &RBI) const;
 
   /// Constrain a register operand of an instruction \p I to a specified
   /// register class. This could involve inserting COPYs before (for uses) or

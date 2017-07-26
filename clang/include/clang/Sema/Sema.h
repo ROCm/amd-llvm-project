@@ -208,6 +208,7 @@ namespace sema {
   class FunctionScopeInfo;
   class LambdaScopeInfo;
   class PossiblyUnreachableDiag;
+  class SemaPPCallbacks;
   class TemplateDeductionInfo;
 }
 
@@ -381,11 +382,12 @@ public:
       llvm::StringRef StackSlotLabel;
       ValueType Value;
       SourceLocation PragmaLocation;
-      Slot(llvm::StringRef StackSlotLabel,
-           ValueType Value,
-           SourceLocation PragmaLocation)
-        : StackSlotLabel(StackSlotLabel), Value(Value),
-          PragmaLocation(PragmaLocation) {}
+      SourceLocation PragmaPushLocation;
+      Slot(llvm::StringRef StackSlotLabel, ValueType Value,
+           SourceLocation PragmaLocation, SourceLocation PragmaPushLocation)
+          : StackSlotLabel(StackSlotLabel), Value(Value),
+            PragmaLocation(PragmaLocation),
+            PragmaPushLocation(PragmaPushLocation) {}
     };
     void Act(SourceLocation PragmaLocation,
              PragmaMsStackAction Action,
@@ -416,6 +418,8 @@ public:
     explicit PragmaStack(const ValueType &Default)
         : DefaultValue(Default), CurrentValue(Default) {}
 
+    bool hasValue() const { return CurrentValue != DefaultValue; }
+
     SmallVector<Slot, 2> Stack;
     ValueType DefaultValue; // Value used for PSK_Reset action.
     ValueType CurrentValue;
@@ -437,6 +441,13 @@ public:
   // Sentinel to represent when the stack is set to mac68k alignment.
   static const unsigned kMac68kAlignmentSentinel = ~0U;
   PragmaStack<unsigned> PackStack;
+  // The current #pragma pack values and locations at each #include.
+  struct PackIncludeState {
+    unsigned CurrentValue;
+    SourceLocation CurrentPragmaLocation;
+    bool HasNonDefaultValue, ShouldWarnOnInclude;
+  };
+  SmallVector<PackIncludeState, 8> PackIncludeStack;
   // Segment #pragmas.
   PragmaStack<StringLiteral *> DataSegStack;
   PragmaStack<StringLiteral *> BSSSegStack;
@@ -3307,7 +3318,7 @@ public:
                                       unsigned ArgNum, StringRef &Str,
                                       SourceLocation *ArgLocation = nullptr);
   bool checkSectionName(SourceLocation LiteralLoc, StringRef Str);
-  void checkTargetAttr(SourceLocation LiteralLoc, StringRef Str);
+  bool checkTargetAttr(SourceLocation LiteralLoc, StringRef Str);
   bool checkMSInheritanceAttrOnDefinition(
       CXXRecordDecl *RD, SourceRange Range, bool BestCase,
       MSInheritanceAttr::Spelling SemanticSpelling);
@@ -3917,11 +3928,10 @@ public:
 
   void redelayDiagnostics(sema::DelayedDiagnosticPool &pool);
 
-  void EmitAvailabilityWarning(AvailabilityResult AR, NamedDecl *D,
-                               StringRef Message, SourceLocation Loc,
-                               const ObjCInterfaceDecl *UnknownObjCClass,
-                               const ObjCPropertyDecl *ObjCProperty,
-                               bool ObjCPropertyAccess);
+  void DiagnoseAvailabilityOfDecl(NamedDecl *D, SourceLocation Loc,
+                                  const ObjCInterfaceDecl *UnknownObjCClass,
+                                  bool ObjCPropertyAccess,
+                                  bool AvoidPartialAvailabilityChecks = false);
 
   bool makeUnavailableInSystemHeader(SourceLocation loc,
                                      UnavailableAttr::ImplicitReason reason);
@@ -3934,8 +3944,9 @@ public:
 
   bool CanUseDecl(NamedDecl *D, bool TreatUnavailableAsInvalid);
   bool DiagnoseUseOfDecl(NamedDecl *D, SourceLocation Loc,
-                         const ObjCInterfaceDecl *UnknownObjCClass=nullptr,
-                         bool ObjCPropertyAccess=false);
+                         const ObjCInterfaceDecl *UnknownObjCClass = nullptr,
+                         bool ObjCPropertyAccess = false,
+                         bool AvoidPartialAvailabilityChecks = false);
   void NoteDeletedFunction(FunctionDecl *FD);
   void NoteDeletedInheritingConstructor(CXXConstructorDecl *CD);
   std::string getDeletedOrUnavailableSuffix(const FunctionDecl *FD);
@@ -3977,7 +3988,7 @@ public:
   void MarkFunctionReferenced(SourceLocation Loc, FunctionDecl *Func,
                               bool MightBeOdrUse = true);
   void MarkVariableReferenced(SourceLocation Loc, VarDecl *Var);
-  void MarkDeclRefReferenced(DeclRefExpr *E);
+  void MarkDeclRefReferenced(DeclRefExpr *E, const Expr *Base = nullptr);
   void MarkMemberReferenced(MemberExpr *E);
 
   void UpdateMarkingForLValueToRValue(Expr *E);
@@ -8270,6 +8281,15 @@ public:
   void ActOnPragmaPack(SourceLocation PragmaLoc, PragmaMsStackAction Action,
                        StringRef SlotLabel, Expr *Alignment);
 
+  enum class PragmaPackDiagnoseKind {
+    NonDefaultStateAtInclude,
+    ChangedStateAtExit
+  };
+
+  void DiagnoseNonDefaultPragmaPack(PragmaPackDiagnoseKind Kind,
+                                    SourceLocation IncludeLoc);
+  void DiagnoseUnterminatedPragmaPack();
+
   /// ActOnPragmaMSStruct - Called on well formed \#pragma ms_struct [on|off].
   void ActOnPragmaMSStruct(PragmaMSStructKind Kind);
 
@@ -8464,6 +8484,8 @@ public:
   void AddNSConsumedAttr(SourceRange AttrRange, Decl *D,
                          unsigned SpellingListIndex, bool isNSConsumed,
                          bool isTemplateInstantiation);
+
+  bool checkNSReturnsRetainedReturnType(SourceLocation loc, QualType type);
 
   //===--------------------------------------------------------------------===//
   // C++ Coroutines TS
@@ -8765,7 +8787,8 @@ public:
   StmtResult ActOnOpenMPTaskwaitDirective(SourceLocation StartLoc,
                                           SourceLocation EndLoc);
   /// \brief Called on well-formed '\#pragma omp taskgroup'.
-  StmtResult ActOnOpenMPTaskgroupDirective(Stmt *AStmt, SourceLocation StartLoc,
+  StmtResult ActOnOpenMPTaskgroupDirective(ArrayRef<OMPClause *> Clauses,
+                                           Stmt *AStmt, SourceLocation StartLoc,
                                            SourceLocation EndLoc);
   /// \brief Called on well-formed '\#pragma omp flush'.
   StmtResult ActOnOpenMPFlushDirective(ArrayRef<OMPClause *> Clauses,
@@ -9102,6 +9125,20 @@ public:
                                      SourceLocation EndLoc);
   /// \brief Called on well-formed 'reduction' clause.
   OMPClause *ActOnOpenMPReductionClause(
+      ArrayRef<Expr *> VarList, SourceLocation StartLoc,
+      SourceLocation LParenLoc, SourceLocation ColonLoc, SourceLocation EndLoc,
+      CXXScopeSpec &ReductionIdScopeSpec,
+      const DeclarationNameInfo &ReductionId,
+      ArrayRef<Expr *> UnresolvedReductions = llvm::None);
+  /// Called on well-formed 'task_reduction' clause.
+  OMPClause *ActOnOpenMPTaskReductionClause(
+      ArrayRef<Expr *> VarList, SourceLocation StartLoc,
+      SourceLocation LParenLoc, SourceLocation ColonLoc, SourceLocation EndLoc,
+      CXXScopeSpec &ReductionIdScopeSpec,
+      const DeclarationNameInfo &ReductionId,
+      ArrayRef<Expr *> UnresolvedReductions = llvm::None);
+  /// Called on well-formed 'in_reduction' clause.
+  OMPClause *ActOnOpenMPInReductionClause(
       ArrayRef<Expr *> VarList, SourceLocation StartLoc,
       SourceLocation LParenLoc, SourceLocation ColonLoc, SourceLocation EndLoc,
       CXXScopeSpec &ReductionIdScopeSpec,
@@ -10464,6 +10501,12 @@ private:
 
   IdentifierInfo *Ident_NSError = nullptr;
 
+  /// \brief The handler for the FileChanged preprocessor events.
+  ///
+  /// Used for diagnostics that implement custom semantic analysis for #include
+  /// directives, like -Wpragma-pack.
+  sema::SemaPPCallbacks *SemaPPCallbackHandler;
+
 protected:
   friend class Parser;
   friend class InitializationSequence;
@@ -10503,17 +10546,6 @@ public:
   DeclContext *getCurLexicalContext() const {
     return OriginalLexicalContext ? OriginalLexicalContext : CurContext;
   }
-
-  /// \brief The diagnostic we should emit for \c D, or \c AR_Available.
-  ///
-  /// \param D The declaration to check. Note that this may be altered to point
-  /// to another declaration that \c D gets it's availability from. i.e., we
-  /// walk the list of typedefs to find an availability attribute.
-  ///
-  /// \param Message If non-null, this will be populated with the message from
-  /// the availability attribute that is selected.
-  AvailabilityResult ShouldDiagnoseAvailabilityOfDecl(NamedDecl *&D,
-                                                      std::string *Message);
 
   const DeclContext *getCurObjCLexicalContext() const {
     const DeclContext *DC = getCurLexicalContext();

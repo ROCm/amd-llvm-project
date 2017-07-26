@@ -1130,7 +1130,7 @@ template <bool takeTime>
 __forceinline static int
 __kmp_acquire_queuing_lock_timed_template(kmp_queuing_lock_t *lck,
                                           kmp_int32 gtid) {
-  register kmp_info_t *this_thr = __kmp_thread_from_gtid(gtid);
+  kmp_info_t *this_thr = __kmp_thread_from_gtid(gtid);
   volatile kmp_int32 *head_id_p = &lck->lk.head_id;
   volatile kmp_int32 *tail_id_p = &lck->lk.tail_id;
   volatile kmp_uint32 *spin_here_p;
@@ -1401,7 +1401,7 @@ static int __kmp_test_queuing_lock_with_checks(kmp_queuing_lock_t *lck,
 }
 
 int __kmp_release_queuing_lock(kmp_queuing_lock_t *lck, kmp_int32 gtid) {
-  register kmp_info_t *this_thr;
+  kmp_info_t *this_thr;
   volatile kmp_int32 *head_id_p = &lck->lk.head_id;
   volatile kmp_int32 *tail_id_p = &lck->lk.tail_id;
 
@@ -1468,8 +1468,8 @@ int __kmp_release_queuing_lock(kmp_queuing_lock_t *lck, kmp_int32 gtid) {
 
         /* try (h,h)->(-1,0) */
         dequeued = KMP_COMPARE_AND_STORE_REL64(
-            RCAST(kmp_int64 *, CCAST(kmp_int32 *, tail_id_p)),
-            KMP_PACK_64(head, head), KMP_PACK_64(-1, 0));
+            RCAST(volatile kmp_int64 *, tail_id_p), KMP_PACK_64(head, head),
+            KMP_PACK_64(-1, 0));
 #ifdef DEBUG_QUEUING_LOCKS
         TRACE_LOCK(gtid + 1, "rel deq: (h,h)->(-1,0)");
 #endif
@@ -2289,8 +2289,8 @@ static inline bool __kmp_is_drdpa_lock_nestable(kmp_drdpa_lock_t *lck) {
 
 __forceinline static int
 __kmp_acquire_drdpa_lock_timed_template(kmp_drdpa_lock_t *lck, kmp_int32 gtid) {
-  kmp_uint64 ticket = KMP_TEST_THEN_INC64(
-      RCAST(kmp_int64 *, CCAST(kmp_uint64 *, &lck->lk.next_ticket)));
+  kmp_uint64 ticket =
+      KMP_TEST_THEN_INC64(RCAST(volatile kmp_int64 *, &lck->lk.next_ticket));
   kmp_uint64 mask = TCR_8(lck->lk.mask); // volatile load
   volatile struct kmp_base_drdpa_lock::kmp_lock_poll *polls = lck->lk.polls;
 

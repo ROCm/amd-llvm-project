@@ -546,9 +546,9 @@ void ToolChain::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
   // Each toolchain should provide the appropriate include flags.
 }
 
-void ToolChain::addClangTargetOptions(const ArgList &DriverArgs,
-                                      ArgStringList &CC1Args) const {
-}
+void ToolChain::addClangTargetOptions(
+    const ArgList &DriverArgs, ArgStringList &CC1Args,
+    Action::OffloadKind DeviceOffloadKind) const {}
 
 void ToolChain::addClangWarningOptions(ArgStringList &CC1Args) const {}
 
@@ -650,8 +650,16 @@ void ToolChain::AddClangCXXStdlibIncludeArgs(const ArgList &DriverArgs,
   DriverArgs.AddAllArgs(CC1Args, options::OPT_stdlib_EQ);
 }
 
+bool ToolChain::ShouldLinkCXXStdlib(const llvm::opt::ArgList &Args) const {
+  return getDriver().CCCIsCXX() &&
+         !Args.hasArg(options::OPT_nostdlib, options::OPT_nodefaultlibs,
+                      options::OPT_nostdlibxx);
+}
+
 void ToolChain::AddCXXStdlibLibArgs(const ArgList &Args,
                                     ArgStringList &CmdArgs) const {
+  assert(!Args.hasArg(options::OPT_nostdlibxx) &&
+         "should not have called this");
   CXXStdlibType Type = GetCXXStdlibType(Args);
 
   switch (Type) {

@@ -381,13 +381,11 @@ static std::string createManifestXml() {
 
 static std::unique_ptr<MemoryBuffer>
 createMemoryBufferForManifestRes(size_t ManifestSize) {
-  size_t ResSize = alignTo(object::WIN_RES_MAGIC_SIZE +
-                           object::WIN_RES_NULL_ENTRY_SIZE +
-                           sizeof(object::WinResHeaderPrefix) +
-                           sizeof(object::WinResIDs) +
-                           sizeof(object::WinResHeaderSuffix) +
-                           ManifestSize,
-                           object::WIN_RES_DATA_ALIGNMENT);
+  size_t ResSize = alignTo(
+      object::WIN_RES_MAGIC_SIZE + object::WIN_RES_NULL_ENTRY_SIZE +
+          sizeof(object::WinResHeaderPrefix) + sizeof(object::WinResIDs) +
+          sizeof(object::WinResHeaderSuffix) + ManifestSize,
+      object::WIN_RES_DATA_ALIGNMENT);
   return MemoryBuffer::getNewMemBuffer(ResSize);
 }
 
@@ -461,12 +459,12 @@ Export parseExport(StringRef Arg) {
   if (E.Name.empty())
     goto err;
 
-  if (E.Name.find('=') != StringRef::npos) {
+  if (E.Name.contains('=')) {
     StringRef X, Y;
     std::tie(X, Y) = E.Name.split("=");
 
     // If "<name>=<dllname>.<name>".
-    if (Y.find(".") != StringRef::npos) {
+    if (Y.contains(".")) {
       E.Name = X;
       E.ForwardTo = Y;
       return E;

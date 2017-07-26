@@ -561,13 +561,15 @@ void tools::gnutools::Linker::ConstructLinkerJob(Compilation &C,
 
   if (D.CCCIsCXX() &&
       !Args.hasArg(options::OPT_nostdlib, options::OPT_nodefaultlibs)) {
-    bool OnlyLibstdcxxStatic = Args.hasArg(options::OPT_static_libstdcxx) &&
-                               !Args.hasArg(options::OPT_static);
-    if (OnlyLibstdcxxStatic)
-      CmdArgs.push_back("-Bstatic");
-    ToolChain.AddCXXStdlibLibArgs(Args, CmdArgs);
-    if (OnlyLibstdcxxStatic)
-      CmdArgs.push_back("-Bdynamic");
+    if (ToolChain.ShouldLinkCXXStdlib(Args)) {
+      bool OnlyLibstdcxxStatic = Args.hasArg(options::OPT_static_libstdcxx) &&
+                                 !Args.hasArg(options::OPT_static);
+      if (OnlyLibstdcxxStatic)
+        CmdArgs.push_back("-Bstatic");
+      ToolChain.AddCXXStdlibLibArgs(Args, CmdArgs);
+      if (OnlyLibstdcxxStatic)
+        CmdArgs.push_back("-Bdynamic");
+    }
     CmdArgs.push_back("-lm");
   }
   // Silence warnings when linking C code with a C++ '-stdlib' argument.
@@ -2487,7 +2489,8 @@ Generic_GCC::TranslateArgs(const llvm::opt::DerivedArgList &Args, StringRef,
 void Generic_ELF::anchor() {}
 
 void Generic_ELF::addClangTargetOptions(const ArgList &DriverArgs,
-                                        ArgStringList &CC1Args) const {
+                                        ArgStringList &CC1Args,
+                                        Action::OffloadKind) const {
   const Generic_GCC::GCCVersion &V = GCCInstallation.getVersion();
   bool UseInitArrayDefault =
       getTriple().getArch() == llvm::Triple::aarch64 ||
@@ -2496,7 +2499,8 @@ void Generic_ELF::addClangTargetOptions(const ArgList &DriverArgs,
        (!V.isOlderThan(4, 7, 0) || getTriple().isAndroid())) ||
       getTriple().getOS() == llvm::Triple::NaCl ||
       (getTriple().getVendor() == llvm::Triple::MipsTechnologies &&
-       !getTriple().hasEnvironment());
+       !getTriple().hasEnvironment()) ||
+      getTriple().getOS() == llvm::Triple::Solaris;
 
   if (DriverArgs.hasFlag(options::OPT_fuse_init_array,
                          options::OPT_fno_use_init_array, UseInitArrayDefault))

@@ -1383,7 +1383,8 @@ private:
 
     if (PrevToken->isOneOf(tok::l_paren, tok::l_square, tok::l_brace,
                            tok::comma, tok::semi, tok::kw_return, tok::colon,
-                           tok::equal, tok::kw_delete, tok::kw_sizeof) ||
+                           tok::equal, tok::kw_delete, tok::kw_sizeof,
+                           tok::kw_throw) ||
         PrevToken->isOneOf(TT_BinaryOperator, TT_ConditionalExpr,
                            TT_UnaryOperator, TT_CastRParen))
       return TT_UnaryOperator;
@@ -1694,17 +1695,26 @@ void TokenAnnotator::setCommentLineLevels(
   for (SmallVectorImpl<AnnotatedLine *>::reverse_iterator I = Lines.rbegin(),
                                                           E = Lines.rend();
        I != E; ++I) {
-    bool CommentLine = (*I)->First;
+    bool CommentLine = true;
     for (const FormatToken *Tok = (*I)->First; Tok; Tok = Tok->Next) {
       if (!Tok->is(tok::comment)) {
         CommentLine = false;
         break;
       }
     }
-    if (NextNonCommentLine && CommentLine)
-      (*I)->Level = NextNonCommentLine->Level;
-    else
+
+    if (NextNonCommentLine && CommentLine) {
+      // If the comment is currently aligned with the line immediately following
+      // it, that's probably intentional and we should keep it.
+      bool AlignedWithNextLine =
+          NextNonCommentLine->First->NewlinesBefore <= 1 &&
+          NextNonCommentLine->First->OriginalColumn ==
+              (*I)->First->OriginalColumn;
+      if (AlignedWithNextLine)
+        (*I)->Level = NextNonCommentLine->Level;
+    } else {
       NextNonCommentLine = (*I)->First->isNot(tok::r_brace) ? (*I) : nullptr;
+    }
 
     setCommentLineLevels((*I)->Children);
   }
@@ -2301,6 +2311,8 @@ bool TokenAnnotator::spaceRequiredBefore(const AnnotatedLine &Line,
     if (Right.is(tok::l_paren) &&
         Left.isOneOf(Keywords.kw_returns, Keywords.kw_option))
       return true;
+    if (Right.isOneOf(tok::l_brace, tok::less) && Left.is(TT_SelectorName))
+      return true;
   } else if (Style.Language == FormatStyle::LK_JavaScript) {
     if (Left.is(TT_JsFatArrow))
       return true;
@@ -2627,11 +2639,12 @@ bool TokenAnnotator::canBreakBefore(const AnnotatedLine &Line,
   } else if (Style.Language == FormatStyle::LK_JavaScript) {
     const FormatToken *NonComment = Right.getPreviousNonComment();
     if (NonComment &&
-        NonComment->isOneOf(
-            tok::kw_return, tok::kw_continue, tok::kw_break, tok::kw_throw,
-            Keywords.kw_interface, Keywords.kw_type, tok::kw_static,
-            tok::kw_public, tok::kw_private, tok::kw_protected,
-            Keywords.kw_abstract, Keywords.kw_get, Keywords.kw_set))
+        NonComment->isOneOf(tok::kw_return, tok::kw_continue, tok::kw_break,
+                            tok::kw_throw, Keywords.kw_interface,
+                            Keywords.kw_type, tok::kw_static, tok::kw_public,
+                            tok::kw_private, tok::kw_protected,
+                            Keywords.kw_readonly, Keywords.kw_abstract,
+                            Keywords.kw_get, Keywords.kw_set))
       return false; // Otherwise automatic semicolon insertion would trigger.
     if (Left.is(TT_JsFatArrow) && Right.is(tok::l_brace))
       return false;
@@ -2807,7 +2820,7 @@ bool TokenAnnotator::canBreakBefore(const AnnotatedLine &Line,
 }
 
 void TokenAnnotator::printDebugInfo(const AnnotatedLine &Line) {
-  llvm::errs() << "AnnotatedTokens:\n";
+  llvm::errs() << "AnnotatedTokens(L=" << Line.Level << "):\n";
   const FormatToken *Tok = Line.First;
   while (Tok) {
     llvm::errs() << " M=" << Tok->MustBreakBefore

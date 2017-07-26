@@ -1040,7 +1040,11 @@ extern void __kmp_x86_cpuid(int mode, int mode2, struct kmp_cpuid *p);
 #if KMP_ARCH_X86
 extern void __kmp_x86_pause(void);
 #elif KMP_MIC
-static void __kmp_x86_pause(void) { _mm_delay_32(100); }
+// Performance testing on KNC (C0QS-7120 P/A/X/D, 61-core, 16 GB Memory) showed
+// regression after removal of extra PAUSE from KMP_YIELD_SPIN(). Changing
+// the delay from 100 to 300 showed even better performance than double PAUSE
+// on Spec OMP2001 and LCPC tasking tests, no regressions on EPCC.
+static void __kmp_x86_pause(void) { _mm_delay_32(300); }
 #else
 static void __kmp_x86_pause(void) { _mm_pause(); }
 #endif
@@ -1076,7 +1080,7 @@ static void __kmp_x86_pause(void) { _mm_pause(); }
     KMP_CPU_PAUSE();                                                           \
     (count) -= 2;                                                              \
     if (!(count)) {                                                            \
-      KMP_YIELD(cond);                                                         \
+      __kmp_yield(cond);                                                       \
       (count) = __kmp_yield_next;                                              \
     }                                                                          \
   }
@@ -1085,7 +1089,7 @@ static void __kmp_x86_pause(void) { _mm_pause(); }
     KMP_CPU_PAUSE();                                                           \
     (count) -= 2;                                                              \
     if (!(count)) {                                                            \
-      KMP_YIELD(1);                                                            \
+      __kmp_yield(1);                                                          \
       (count) = __kmp_yield_next;                                              \
     }                                                                          \
   }
@@ -2050,8 +2054,10 @@ extern kmp_int32 __kmp_default_device; // Set via OMP_DEFAULT_DEVICE if
 // specified, defaults to 0 otherwise
 #endif
 #if OMP_45_ENABLED
-extern kmp_int32 __kmp_max_task_priority; // Set via OMP_MAX_TASK_PRIORITY if
-// specified, defaults to 0 otherwise
+// Set via OMP_MAX_TASK_PRIORITY if specified, defaults to 0 otherwise
+extern kmp_int32 __kmp_max_task_priority;
+// Set via KMP_TASKLOOP_MIN_TASKS if specified, defaults to 0 otherwise
+extern kmp_uint64 __kmp_taskloop_min_tasks;
 #endif
 
 /* NOTE: kmp_taskdata_t and kmp_task_t structures allocated in single block with
@@ -2827,16 +2833,10 @@ extern int __kmp_stkpadding; /* Should we pad root thread(s) stack */
 
 extern size_t
     __kmp_malloc_pool_incr; /* incremental size of pool for kmp_malloc() */
-extern int __kmp_env_chunk; /* was KMP_CHUNK specified?     */
 extern int __kmp_env_stksize; /* was KMP_STACKSIZE specified? */
-extern int __kmp_env_omp_stksize; /* was OMP_STACKSIZE specified? */
-extern int __kmp_env_all_threads; /* was KMP_ALL_THREADS or KMP_MAX_THREADS
-                                     specified? */
-extern int __kmp_env_omp_all_threads; /* was OMP_THREAD_LIMIT specified? */
 extern int __kmp_env_blocktime; /* was KMP_BLOCKTIME specified? */
 extern int __kmp_env_checks; /* was KMP_CHECKS specified?    */
-extern int
-    __kmp_env_consistency_check; /* was KMP_CONSISTENCY_CHECK specified?    */
+extern int __kmp_env_consistency_check; // was KMP_CONSISTENCY_CHECK specified?
 extern int __kmp_generate_warnings; /* should we issue warnings? */
 extern int __kmp_reserve_warn; /* have we issued reserve_threads warning? */
 
