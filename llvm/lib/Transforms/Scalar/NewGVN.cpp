@@ -2423,8 +2423,7 @@ void NewGVN::addPhiOfOps(PHINode *Op, BasicBlock *BB,
   AllTempInstructions.insert(Op);
   PHIOfOpsPHIs[BB].push_back(Op);
   TempToBlock[Op] = BB;
-  if (ExistingValue)
-    RealToTemp[ExistingValue] = Op;
+  RealToTemp[ExistingValue] = Op;
 }
 
 static bool okayForPHIOfOps(const Instruction *I) {
@@ -3025,12 +3024,10 @@ void NewGVN::verifyStoreExpressions() const {
       // It's okay to have the same expression already in there if it is
       // identical in nature.
       // This can happen when the leader of the stored value changes over time.
-      if (!Okay) {
-        Okay = Okay && std::get<1>(Res.first->second) == KV.second;
-        Okay = Okay &&
-               lookupOperandLeader(std::get<2>(Res.first->second)) ==
-                   lookupOperandLeader(SE->getStoredValue());
-      }
+      if (!Okay)
+        Okay = (std::get<1>(Res.first->second) == KV.second) &&
+               (lookupOperandLeader(std::get<2>(Res.first->second)) ==
+                lookupOperandLeader(SE->getStoredValue()));
       assert(Okay && "Stored expression conflict exists in expression table");
       auto *ValueExpr = ValueToExpression.lookup(SE->getStoreInst());
       assert(ValueExpr && ValueExpr->equals(*SE) &&

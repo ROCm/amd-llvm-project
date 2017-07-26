@@ -113,6 +113,7 @@ namespace llvm {
   void initializeHexagonLoopIdiomRecognizePass(PassRegistry&);
   void initializeHexagonGenMuxPass(PassRegistry&);
   void initializeHexagonOptAddrModePass(PassRegistry&);
+  void initializeHexagonNewValueJumpPass(PassRegistry&);
   Pass *createHexagonLoopIdiomPass();
 
   FunctionPass *createHexagonBitSimplify();
@@ -158,6 +159,7 @@ extern "C" void LLVMInitializeHexagonTarget() {
   initializeHexagonLoopIdiomRecognizePass(PR);
   initializeHexagonGenMuxPass(PR);
   initializeHexagonOptAddrModePass(PR);
+  initializeHexagonNewValueJumpPass(PR);
 }
 
 HexagonTargetMachine::HexagonTargetMachine(const Target &T, const Triple &TT,
@@ -291,7 +293,6 @@ bool HexagonPassConfig::addInstSelector() {
     if (EnableBitSimplify)
       addPass(createHexagonBitSimplify());
     addPass(createHexagonPeephole());
-    printAndVerify("After hexagon peephole pass");
     // Constant propagation.
     if (!DisableHCP) {
       addPass(createHexagonConstPropagationPass());

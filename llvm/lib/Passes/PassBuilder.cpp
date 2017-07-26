@@ -161,8 +161,8 @@ static cl::opt<bool>
               cl::desc("Run NewGVN instead of GVN"));
 
 static cl::opt<bool> EnableEarlyCSEMemSSA(
-    "enable-npm-earlycse-memssa", cl::init(false), cl::Hidden,
-    cl::desc("Enable the EarlyCSE w/ MemorySSA pass for the new PM (default = off)"));
+    "enable-npm-earlycse-memssa", cl::init(true), cl::Hidden,
+    cl::desc("Enable the EarlyCSE w/ MemorySSA pass for the new PM (default = on)"));
 
 static cl::opt<bool> EnableGVNHoist(
     "enable-npm-gvn-hoist", cl::init(false), cl::Hidden,
@@ -464,15 +464,28 @@ static void addPGOInstrPasses(ModulePassManager &MPM, bool DebugLogging,
   if (RunProfileGen) {
     MPM.addPass(PGOInstrumentationGen());
 
+    FunctionPassManager FPM;
+    FPM.addPass(createFunctionToLoopPassAdaptor(LoopRotatePass()));
+    MPM.addPass(createModuleToFunctionPassAdaptor(std::move(FPM)));
+
     // Add the profile lowering pass.
     InstrProfOptions Options;
     if (!ProfileGenFile.empty())
       Options.InstrProfileOutput = ProfileGenFile;
+    Options.DoCounterPromotion = true;
     MPM.addPass(InstrProfiling(Options));
   }
 
   if (!ProfileUseFile.empty())
     MPM.addPass(PGOInstrumentationUse(ProfileUseFile));
+}
+
+static InlineParams
+getInlineParamsFromOptLevel(PassBuilder::OptimizationLevel Level) {
+  auto O3 = PassBuilder::O3;
+  unsigned OptLevel = Level > O3 ? 2 : Level;
+  unsigned SizeLevel = Level > O3 ? Level - O3 : 0;
+  return getInlineParams(OptLevel, SizeLevel);
 }
 
 ModulePassManager
@@ -522,13 +535,17 @@ PassBuilder::buildModuleSimplificationPipeline(OptimizationLevel Level,
 
   // Add all the requested passes for PGO, if requested.
   if (PGOOpt) {
-    assert(PGOOpt->RunProfileGen || PGOOpt->SamplePGO ||
+    assert(PGOOpt->RunProfileGen || !PGOOpt->SampleProfileFile.empty() ||
            !PGOOpt->ProfileUseFile.empty());
-    addPGOInstrPasses(MPM, DebugLogging, Level, PGOOpt->RunProfileGen,
-                      PGOOpt->ProfileGenFile, PGOOpt->ProfileUseFile);
+    if (PGOOpt->SampleProfileFile.empty())
+      addPGOInstrPasses(MPM, DebugLogging, Level, PGOOpt->RunProfileGen,
+                        PGOOpt->ProfileGenFile, PGOOpt->ProfileUseFile);
+    else
+      MPM.addPass(SampleProfileLoaderPass(PGOOpt->SampleProfileFile));
 
     // Indirect call promotion that promotes intra-module targes only.
-    MPM.addPass(PGOIndirectCallPromotion(false, PGOOpt && PGOOpt->SamplePGO));
+    MPM.addPass(PGOIndirectCallPromotion(
+        false, PGOOpt && !PGOOpt->SampleProfileFile.empty()));
   }
 
   // Require the GlobalsAA analysis for the module so we can query it within
@@ -553,8 +570,7 @@ PassBuilder::buildModuleSimplificationPipeline(OptimizationLevel Level,
   // Run the inliner first. The theory is that we are walking bottom-up and so
   // the callees have already been fully optimized, and we want to inline them
   // into the callers so that our optimizations can reflect that.
-  // FIXME; Customize the threshold based on optimization level.
-  MainCGPipeline.addPass(InlinerPass());
+  MainCGPipeline.addPass(InlinerPass(getInlineParamsFromOptLevel(Level)));
 
   // Now deduce any function attributes based in the current code.
   MainCGPipeline.addPass(PostOrderFunctionAttrsPass());
@@ -746,9 +762,6 @@ PassBuilder::buildThinLTOPreLinkDefaultPipeline(OptimizationLevel Level,
   // Reduce the size of the IR as much as possible.
   MPM.addPass(GlobalOptPass());
 
-  // Rename anon globals to be able to export them in the summary.
-  MPM.addPass(NameAnonGlobalPass());
-
   return MPM;
 }
 
@@ -767,9 +780,9 @@ PassBuilder::buildThinLTODefaultPipeline(OptimizationLevel Level,
   // During the ThinLTO backend phase we perform early indirect call promotion
   // here, before globalopt. Otherwise imported available_externally functions
   // look unreferenced and are removed.
-  MPM.addPass(PGOIndirectCallPromotion(true /* InLTO */,
-                                       PGOOpt && PGOOpt->SamplePGO &&
-                                           !PGOOpt->ProfileUseFile.empty()));
+  MPM.addPass(PGOIndirectCallPromotion(
+      true /* InLTO */, PGOOpt && !PGOOpt->SampleProfileFile.empty() &&
+                            !PGOOpt->ProfileUseFile.empty()));
 
   // Add the core simplification pipeline.
   MPM.addPass(buildModuleSimplificationPipeline(Level, DebugLogging));
@@ -809,8 +822,8 @@ ModulePassManager PassBuilder::buildLTODefaultPipeline(OptimizationLevel Level,
     // left by the earlier promotion pass that promotes intra-module targets.
     // This two-step promotion is to save the compile time. For LTO, it should
     // produce the same result as if we only do promotion here.
-    MPM.addPass(PGOIndirectCallPromotion(true /* InLTO */,
-                                         PGOOpt && PGOOpt->SamplePGO));
+    MPM.addPass(PGOIndirectCallPromotion(
+        true /* InLTO */, PGOOpt && !PGOOpt->SampleProfileFile.empty()));
 
     // Propagate constants at call sites into the functions they call.  This
     // opens opportunities for globalopt (and inlining) by substituting function
@@ -863,7 +876,8 @@ ModulePassManager PassBuilder::buildLTODefaultPipeline(OptimizationLevel Level,
   // valuable as the inliner doesn't currently care whether it is inlining an
   // invoke or a call.
   // Run the inliner now.
-  MPM.addPass(createModuleToPostOrderCGSCCPassAdaptor(InlinerPass()));
+  MPM.addPass(createModuleToPostOrderCGSCCPassAdaptor(
+      InlinerPass(getInlineParamsFromOptLevel(Level))));
 
   // Optimize globals again after we ran the inliner.
   MPM.addPass(GlobalOptPass());
@@ -922,9 +936,6 @@ ModulePassManager PassBuilder::buildLTODefaultPipeline(OptimizationLevel Level,
 #if 0
   MainFPM.add(AlignmentFromAssumptionsPass());
 #endif
-
-  // FIXME: Conditionally run LoadCombine here, after it's ported
-  // (in case we still have this pass, given its questionable usefulness).
 
   // FIXME: add peephole extensions to the PM here.
   MainFPM.addPass(InstCombinePass());

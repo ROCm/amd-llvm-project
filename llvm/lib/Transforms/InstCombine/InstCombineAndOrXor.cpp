@@ -80,44 +80,29 @@ static Value *getFCmpValue(unsigned Code, Value *LHS, Value *RHS,
 /// \return Pointer to node that must replace the original binary operator, or
 ///         null pointer if no transformation was made.
 Value *InstCombiner::SimplifyBSwap(BinaryOperator &I) {
-  IntegerType *ITy = dyn_cast<IntegerType>(I.getType());
+  assert(I.isBitwiseLogicOp() && "Unexpected opcode for bswap simplifying");
 
-  // Can't do vectors.
-  if (I.getType()->isVectorTy())
+  // TODO We should probably check for single use of the bswap.
+
+  Value *NewLHS;
+  if (!match(I.getOperand(0), m_BSwap(m_Value(NewLHS))))
     return nullptr;
 
-  // Can only do bitwise ops.
-  if (!I.isBitwiseLogicOp())
+  Value *NewRHS;
+  const APInt *C;
+
+  if (match(I.getOperand(1), m_BSwap(m_Value(NewRHS)))) {
+    // OP( BSWAP(x), BSWAP(y) ) -> BSWAP( OP(x, y) )
+    // NewRHS initialized by the matcher.
+  } else if (match(I.getOperand(1), m_APInt(C))) {
+    // OP( BSWAP(x), CONSTANT ) -> BSWAP( OP(x, BSWAP(CONSTANT) ) )
+    NewRHS = ConstantInt::get(I.getType(), C->byteSwap());
+  } else
     return nullptr;
-
-  Value *OldLHS = I.getOperand(0);
-  Value *OldRHS = I.getOperand(1);
-  ConstantInt *ConstLHS = dyn_cast<ConstantInt>(OldLHS);
-  ConstantInt *ConstRHS = dyn_cast<ConstantInt>(OldRHS);
-  IntrinsicInst *IntrLHS = dyn_cast<IntrinsicInst>(OldLHS);
-  IntrinsicInst *IntrRHS = dyn_cast<IntrinsicInst>(OldRHS);
-  bool IsBswapLHS = (IntrLHS && IntrLHS->getIntrinsicID() == Intrinsic::bswap);
-  bool IsBswapRHS = (IntrRHS && IntrRHS->getIntrinsicID() == Intrinsic::bswap);
-
-  if (!IsBswapLHS && !IsBswapRHS)
-    return nullptr;
-
-  if (!IsBswapLHS && !ConstLHS)
-    return nullptr;
-
-  if (!IsBswapRHS && !ConstRHS)
-    return nullptr;
-
-  /// OP( BSWAP(x), BSWAP(y) ) -> BSWAP( OP(x, y) )
-  /// OP( BSWAP(x), CONSTANT ) -> BSWAP( OP(x, BSWAP(CONSTANT) ) )
-  Value *NewLHS = IsBswapLHS ? IntrLHS->getOperand(0) :
-                  Builder->getInt(ConstLHS->getValue().byteSwap());
-
-  Value *NewRHS = IsBswapRHS ? IntrRHS->getOperand(0) :
-                  Builder->getInt(ConstRHS->getValue().byteSwap());
 
   Value *BinOp = Builder->CreateBinOp(I.getOpcode(), NewLHS, NewRHS);
-  Function *F = Intrinsic::getDeclaration(I.getModule(), Intrinsic::bswap, ITy);
+  Function *F = Intrinsic::getDeclaration(I.getModule(), Intrinsic::bswap,
+                                          I.getType());
   return Builder->CreateCall(F, BinOp);
 }
 
@@ -1097,20 +1082,11 @@ static Instruction *foldLogicCastConstant(BinaryOperator &Logic, CastInst *Cast,
   Type *DestTy = Logic.getType();
   Type *SrcTy = Cast->getSrcTy();
 
-  // If the first operand is bitcast, move the logic operation ahead of the
-  // bitcast (do the logic operation in the original type). This can eliminate
-  // bitcasts and allow combines that would otherwise be impeded by the bitcast.
+  // Move the logic operation ahead of a zext if the constant is unchanged in
+  // the smaller source type. Performing the logic in a smaller type may provide
+  // more information to later folds, and the smaller logic instruction may be
+  // cheaper (particularly in the case of vectors).
   Value *X;
-  if (match(Cast, m_BitCast(m_Value(X)))) {
-    Value *NewConstant = ConstantExpr::getBitCast(C, SrcTy);
-    Value *NewOp = Builder->CreateBinOp(LogicOpc, X, NewConstant);
-    return CastInst::CreateBitOrPointerCast(NewOp, DestTy);
-  }
-
-  // Similarly, move the logic operation ahead of a zext if the constant is
-  // unchanged in the smaller source type. Performing the logic in a smaller
-  // type may provide more information to later folds, and the smaller logic
-  // instruction may be cheaper (particularly in the case of vectors).
   if (match(Cast, m_OneUse(m_ZExt(m_Value(X))))) {
     Constant *TruncC = ConstantExpr::getTrunc(C, SrcTy);
     Constant *ZextTruncC = ConstantExpr::getZExt(TruncC, DestTy);
@@ -1239,9 +1215,10 @@ static Instruction *foldAndToXor(BinaryOperator &I,
   // (A | ~B) & (B | ~A) --> ~(A ^ B)
   // (~B | A) & (~A | B) --> ~(A ^ B)
   // (~B | A) & (B | ~A) --> ~(A ^ B)
-  if (match(Op0, m_c_Or(m_Value(A), m_Not(m_Value(B)))) &&
-      match(Op1, m_c_Or(m_Not(m_Specific(A)), m_Specific(B))))
-    return BinaryOperator::CreateNot(Builder.CreateXor(A, B));
+  if (Op0->hasOneUse() || Op1->hasOneUse())
+    if (match(Op0, m_c_Or(m_Value(A), m_Not(m_Value(B)))) &&
+        match(Op1, m_c_Or(m_Not(m_Specific(A)), m_Specific(B))))
+      return BinaryOperator::CreateNot(Builder.CreateXor(A, B));
 
   return nullptr;
 }
@@ -1256,9 +1233,10 @@ static Instruction *foldOrToXor(BinaryOperator &I,
   // Operand complexity canonicalization guarantees that the 'and' is Op0.
   // (A & B) | ~(A | B) --> ~(A ^ B)
   // (A & B) | ~(B | A) --> ~(A ^ B)
-  if (match(Op0, m_And(m_Value(A), m_Value(B))) &&
-      match(Op1, m_Not(m_c_Or(m_Specific(A), m_Specific(B)))))
-    return BinaryOperator::CreateNot(Builder.CreateXor(A, B));
+  if (Op0->hasOneUse() || Op1->hasOneUse())
+    if (match(Op0, m_And(m_Value(A), m_Value(B))) &&
+        match(Op1, m_Not(m_c_Or(m_Specific(A), m_Specific(B)))))
+      return BinaryOperator::CreateNot(Builder.CreateXor(A, B));
 
   // (A & ~B) | (~A & B) --> A ^ B
   // (A & ~B) | (B & ~A) --> A ^ B
@@ -1579,11 +1557,14 @@ static Value *getSelectCondition(Value *A, Value *B,
 
   // If A and B are sign-extended, look through the sexts to find the booleans.
   Value *Cond;
+  Value *NotB;
   if (match(A, m_SExt(m_Value(Cond))) &&
       Cond->getType()->getScalarType()->isIntegerTy(1) &&
-      match(B, m_CombineOr(m_Not(m_SExt(m_Specific(Cond))),
-                           m_SExt(m_Not(m_Specific(Cond))))))
-    return Cond;
+      match(B, m_OneUse(m_Not(m_Value(NotB))))) {
+    NotB = peekThroughBitcast(NotB, true);
+    if (match(NotB, m_SExt(m_Specific(Cond))))
+      return Cond;
+  }
 
   // All scalar (and most vector) possibilities should be handled now.
   // Try more matches that only apply to non-splat constant vectors.
@@ -1615,12 +1596,8 @@ static Value *matchSelectFromAndOr(Value *A, Value *C, Value *B, Value *D,
   // The potential condition of the select may be bitcasted. In that case, look
   // through its bitcast and the corresponding bitcast of the 'not' condition.
   Type *OrigType = A->getType();
-  Value *SrcA, *SrcB;
-  if (match(A, m_OneUse(m_BitCast(m_Value(SrcA)))) &&
-      match(B, m_OneUse(m_BitCast(m_Value(SrcB))))) {
-    A = SrcA;
-    B = SrcB;
-  }
+  A = peekThroughBitcast(A, true);
+  B = peekThroughBitcast(B, true);
 
   if (Value *Cond = getSelectCondition(A, B, Builder)) {
     // ((bc Cond) & C) | ((bc ~Cond) & D) --> bc (select Cond, (bc C), (bc D))
@@ -1922,8 +1899,9 @@ Value *InstCombiner::foldOrOfFCmps(FCmpInst *LHS, FCmpInst *RHS) {
 ///     (A & C1) | B
 ///
 /// when the XOR of the two constants is "all ones" (-1).
-Instruction *InstCombiner::FoldOrWithConstants(BinaryOperator &I, Value *Op,
-                                               Value *A, Value *B, Value *C) {
+static Instruction *FoldOrWithConstants(BinaryOperator &I, Value *Op,
+                                        Value *A, Value *B, Value *C,
+                                        InstCombiner::BuilderTy *Builder) {
   ConstantInt *CI1 = dyn_cast<ConstantInt>(C);
   if (!CI1) return nullptr;
 
@@ -1944,15 +1922,16 @@ Instruction *InstCombiner::FoldOrWithConstants(BinaryOperator &I, Value *Op,
 
 /// \brief This helper function folds:
 ///
-///     ((A | B) & C1) ^ (B & C2)
+///     ((A ^ B) & C1) | (B & C2)
 ///
 /// into:
 ///
 ///     (A & C1) ^ B
 ///
 /// when the XOR of the two constants is "all ones" (-1).
-Instruction *InstCombiner::FoldXorWithConstants(BinaryOperator &I, Value *Op,
-                                                Value *A, Value *B, Value *C) {
+static Instruction *FoldXorWithConstants(BinaryOperator &I, Value *Op,
+                                         Value *A, Value *B, Value *C,
+                                         InstCombiner::BuilderTy *Builder) {
   ConstantInt *CI1 = dyn_cast<ConstantInt>(C);
   if (!CI1)
     return nullptr;
@@ -2112,28 +2091,24 @@ Instruction *InstCombiner::visitOr(BinaryOperator &I) {
     }
 
     // ((A|B)&1)|(B&-2) -> (A&1) | B
-    if (match(A, m_Or(m_Value(V1), m_Specific(B))) ||
-        match(A, m_Or(m_Specific(B), m_Value(V1)))) {
-      Instruction *Ret = FoldOrWithConstants(I, Op1, V1, B, C);
-      if (Ret) return Ret;
+    if (match(A, m_c_Or(m_Value(V1), m_Specific(B)))) {
+      if (Instruction *Ret = FoldOrWithConstants(I, Op1, V1, B, C, Builder))
+        return Ret;
     }
     // (B&-2)|((A|B)&1) -> (A&1) | B
-    if (match(B, m_Or(m_Specific(A), m_Value(V1))) ||
-        match(B, m_Or(m_Value(V1), m_Specific(A)))) {
-      Instruction *Ret = FoldOrWithConstants(I, Op0, A, V1, D);
-      if (Ret) return Ret;
+    if (match(B, m_c_Or(m_Specific(A), m_Value(V1)))) {
+      if (Instruction *Ret = FoldOrWithConstants(I, Op0, A, V1, D, Builder))
+        return Ret;
     }
     // ((A^B)&1)|(B&-2) -> (A&1) ^ B
-    if (match(A, m_Xor(m_Value(V1), m_Specific(B))) ||
-        match(A, m_Xor(m_Specific(B), m_Value(V1)))) {
-      Instruction *Ret = FoldXorWithConstants(I, Op1, V1, B, C);
-      if (Ret) return Ret;
+    if (match(A, m_c_Xor(m_Value(V1), m_Specific(B)))) {
+      if (Instruction *Ret = FoldXorWithConstants(I, Op1, V1, B, C, Builder))
+        return Ret;
     }
     // (B&-2)|((A^B)&1) -> (A&1) ^ B
-    if (match(B, m_Xor(m_Specific(A), m_Value(V1))) ||
-        match(B, m_Xor(m_Value(V1), m_Specific(A)))) {
-      Instruction *Ret = FoldXorWithConstants(I, Op0, A, V1, D);
-      if (Ret) return Ret;
+    if (match(B, m_c_Xor(m_Specific(A), m_Value(V1)))) {
+      if (Instruction *Ret = FoldXorWithConstants(I, Op0, A, V1, D, Builder))
+        return Ret;
     }
   }
 
@@ -2286,7 +2261,8 @@ Instruction *InstCombiner::visitOr(BinaryOperator &I) {
 
 /// A ^ B can be specified using other logic ops in a variety of patterns. We
 /// can fold these early and efficiently by morphing an existing instruction.
-static Instruction *foldXorToXor(BinaryOperator &I) {
+static Instruction *foldXorToXor(BinaryOperator &I,
+                                 InstCombiner::BuilderTy &Builder) {
   assert(I.getOpcode() == Instruction::Xor);
   Value *Op0 = I.getOperand(0);
   Value *Op1 = I.getOperand(1);
@@ -2311,10 +2287,10 @@ static Instruction *foldXorToXor(BinaryOperator &I) {
   // (~B | A) ^ (~A | B) -> A ^ B
   // (~A | B) ^ (A | ~B) -> A ^ B
   // (B | ~A) ^ (A | ~B) -> A ^ B
-  if ((match(Op0, m_c_Or(m_Value(A), m_Not(m_Value(B)))) &&
-       match(Op1, m_Or(m_Not(m_Specific(A)), m_Specific(B)))) ||
-      (match(Op0, m_c_Or(m_Not(m_Value(A)), m_Value(B))) &&
-       match(Op1, m_Or(m_Specific(A), m_Not(m_Specific(B)))))) {
+  if ((match(Op0, m_Or(m_Value(A), m_Not(m_Value(B)))) &&
+       match(Op1, m_c_Or(m_Not(m_Specific(A)), m_Specific(B)))) ||
+      (match(Op0, m_Or(m_Not(m_Value(A)), m_Value(B))) &&
+       match(Op1, m_c_Or(m_Specific(A), m_Not(m_Specific(B)))))) {
     I.setOperand(0, A);
     I.setOperand(1, B);
     return &I;
@@ -2324,14 +2300,29 @@ static Instruction *foldXorToXor(BinaryOperator &I) {
   // (~B & A) ^ (~A & B) -> A ^ B
   // (~A & B) ^ (A & ~B) -> A ^ B
   // (B & ~A) ^ (A & ~B) -> A ^ B
-  if ((match(Op0, m_c_And(m_Value(A), m_Not(m_Value(B)))) &&
-       match(Op1, m_And(m_Not(m_Specific(A)), m_Specific(B)))) ||
-      (match(Op0, m_c_And(m_Not(m_Value(A)), m_Value(B))) &&
-       match(Op1, m_And(m_Specific(A), m_Not(m_Specific(B)))))) {
+  if ((match(Op0, m_And(m_Value(A), m_Not(m_Value(B)))) &&
+       match(Op1, m_c_And(m_Not(m_Specific(A)), m_Specific(B)))) ||
+      (match(Op0, m_And(m_Not(m_Value(A)), m_Value(B))) &&
+       match(Op1, m_c_And(m_Specific(A), m_Not(m_Specific(B)))))) {
     I.setOperand(0, A);
     I.setOperand(1, B);
     return &I;
   }
+
+  // For the remaining cases we need to get rid of one of the operands.
+  if (!Op0->hasOneUse() && !Op1->hasOneUse())
+    return nullptr;
+
+  // (A | B) ^ ~(A & B) -> ~(A ^ B)
+  // (A | B) ^ ~(B & A) -> ~(A ^ B)
+  // (A & B) ^ ~(A | B) -> ~(A ^ B)
+  // (A & B) ^ ~(B | A) -> ~(A ^ B)
+  // Complexity sorting ensures the not will be on the right side.
+  if ((match(Op0, m_Or(m_Value(A), m_Value(B))) &&
+       match(Op1, m_Not(m_c_And(m_Specific(A), m_Specific(B))))) ||
+      (match(Op0, m_And(m_Value(A), m_Value(B))) &&
+       match(Op1, m_Not(m_c_Or(m_Specific(A), m_Specific(B))))))
+    return BinaryOperator::CreateNot(Builder.CreateXor(A, B));
 
   return nullptr;
 }
@@ -2351,6 +2342,30 @@ Value *InstCombiner::foldXorOfICmps(ICmpInst *LHS, ICmpInst *RHS) {
     }
   }
 
+  // Instead of trying to imitate the folds for and/or, decompose this 'xor'
+  // into those logic ops. That is, try to turn this into an and-of-icmps
+  // because we have many folds for that pattern.
+  //
+  // This is based on a truth table definition of xor:
+  // X ^ Y --> (X | Y) & !(X & Y)
+  if (Value *OrICmp = SimplifyBinOp(Instruction::Or, LHS, RHS, SQ)) {
+    // TODO: If OrICmp is true, then the definition of xor simplifies to !(X&Y).
+    // TODO: If OrICmp is false, the whole thing is false (InstSimplify?).
+    if (Value *AndICmp = SimplifyBinOp(Instruction::And, LHS, RHS, SQ)) {
+      // TODO: Independently handle cases where the 'and' side is a constant.
+      if (OrICmp == LHS && AndICmp == RHS && RHS->hasOneUse()) {
+        // (LHS | RHS) & !(LHS & RHS) --> LHS & !RHS
+        RHS->setPredicate(RHS->getInversePredicate());
+        return Builder->CreateAnd(LHS, RHS);
+      }
+      if (OrICmp == RHS && AndICmp == LHS && LHS->hasOneUse()) {
+        // !(LHS & RHS) & (LHS | RHS) --> !LHS & RHS
+        LHS->setPredicate(LHS->getInversePredicate());
+        return Builder->CreateAnd(LHS, RHS);
+      }
+    }
+  }
+
   return nullptr;
 }
 
@@ -2367,7 +2382,7 @@ Instruction *InstCombiner::visitXor(BinaryOperator &I) {
   if (Value *V = SimplifyXorInst(Op0, Op1, SQ.getWithInstruction(&I)))
     return replaceInstUsesWith(I, V);
 
-  if (Instruction *NewXor = foldXorToXor(I))
+  if (Instruction *NewXor = foldXorToXor(I, *Builder))
     return NewXor;
 
   // (A&B)^(A&C) -> A&(B^C) etc
@@ -2442,10 +2457,9 @@ Instruction *InstCombiner::visitXor(BinaryOperator &I) {
     }
   }
 
-  // xor (cmp A, B), true = not (cmp A, B) = !cmp A, B
+  // not (cmp A, B) = !cmp A, B
   ICmpInst::Predicate Pred;
-  if (match(Op0, m_OneUse(m_Cmp(Pred, m_Value(), m_Value()))) &&
-      match(Op1, m_AllOnes())) {
+  if (match(&I, m_Not(m_OneUse(m_Cmp(Pred, m_Value(), m_Value()))))) {
     cast<CmpInst>(Op0)->setPredicate(CmpInst::getInversePredicate(Pred));
     return replaceInstUsesWith(I, Op0);
   }
