@@ -1462,7 +1462,7 @@ void ASTWriter::WriteControlBlock(Preprocessor &PP, ASTContext &Context,
   }
 
   // Module map file
-  if (WritingModule && WritingModule->Kind == Module::ModuleMapModule) {
+  if (WritingModule) {
     Record.clear();
 
     auto &Map = PP.getHeaderSearchInfo().getModuleMap();
@@ -1692,7 +1692,6 @@ namespace  {
     bool IsSystemFile;
     bool IsTransient;
     bool BufferOverridden;
-    bool IsTopLevelModuleMap;
   };
 
 } // end anonymous namespace
@@ -1711,7 +1710,6 @@ void ASTWriter::WriteInputFiles(SourceManager &SourceMgr,
   IFAbbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 32)); // Modification time
   IFAbbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1)); // Overridden
   IFAbbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1)); // Transient
-  IFAbbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1)); // Module map
   IFAbbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Blob)); // File name
   unsigned IFAbbrevCode = Stream.EmitAbbrev(std::move(IFAbbrev));
 
@@ -1726,8 +1724,7 @@ void ASTWriter::WriteInputFiles(SourceManager &SourceMgr,
     // We only care about file entries that were not overridden.
     if (!SLoc->isFile())
       continue;
-    const SrcMgr::FileInfo &File = SLoc->getFile();
-    const SrcMgr::ContentCache *Cache = File.getContentCache();
+    const SrcMgr::ContentCache *Cache = SLoc->getFile().getContentCache();
     if (!Cache->OrigEntry)
       continue;
 
@@ -1736,8 +1733,6 @@ void ASTWriter::WriteInputFiles(SourceManager &SourceMgr,
     Entry.IsSystemFile = Cache->IsSystemFile;
     Entry.IsTransient = Cache->IsTransient;
     Entry.BufferOverridden = Cache->BufferOverridden;
-    Entry.IsTopLevelModuleMap = isModuleMap(File.getFileCharacteristic()) &&
-                                File.getIncludeLoc().isInvalid();
     if (Cache->IsSystemFile)
       SortedFiles.push_back(Entry);
     else
@@ -1768,8 +1763,7 @@ void ASTWriter::WriteInputFiles(SourceManager &SourceMgr,
         (uint64_t)Entry.File->getSize(),
         (uint64_t)getTimestampForOutput(Entry.File),
         Entry.BufferOverridden,
-        Entry.IsTransient,
-        Entry.IsTopLevelModuleMap};
+        Entry.IsTransient};
 
     EmitRecordWithPath(IFAbbrevCode, Record, Entry.File->getName());
   }
@@ -1804,7 +1798,7 @@ static unsigned CreateSLocFileAbbrev(llvm::BitstreamWriter &Stream) {
   Abbrev->Add(BitCodeAbbrevOp(SM_SLOC_FILE_ENTRY));
   Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8)); // Offset
   Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8)); // Include location
-  Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 3)); // Characteristic
+  Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 2)); // Characteristic
   Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1)); // Line directives
   // FileEntry fields.
   Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6)); // Input File ID
@@ -1823,7 +1817,7 @@ static unsigned CreateSLocBufferAbbrev(llvm::BitstreamWriter &Stream) {
   Abbrev->Add(BitCodeAbbrevOp(SM_SLOC_BUFFER_ENTRY));
   Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8)); // Offset
   Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8)); // Include location
-  Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 3)); // Characteristic
+  Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 2)); // Characteristic
   Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1)); // Line directives
   Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Blob)); // Buffer name blob
   return Stream.EmitAbbrev(std::move(Abbrev));
@@ -1931,8 +1925,8 @@ namespace {
       endian::Writer<little> LE(Out);
       uint64_t Start = Out.tell(); (void)Start;
       
-      unsigned char Flags = (Data.HFI.isImport << 5)
-                          | (Data.HFI.isPragmaOnce << 4)
+      unsigned char Flags = (Data.HFI.isImport << 4)
+                          | (Data.HFI.isPragmaOnce << 3)
                           | (Data.HFI.DirInfo << 1)
                           | Data.HFI.IndexHeaderMapHeader;
       LE.write<uint8_t>(Flags);
@@ -5039,18 +5033,9 @@ void ASTWriter::WriteDeclUpdatesBlocks(RecordDataImpl &OffsetsRecord) {
       case UPD_CXX_ADDED_FUNCTION_DEFINITION:
         break;
 
-      case UPD_CXX_INSTANTIATED_STATIC_DATA_MEMBER: {
-        const VarDecl *VD = cast<VarDecl>(D);
+      case UPD_CXX_INSTANTIATED_STATIC_DATA_MEMBER:
         Record.AddSourceLocation(Update.getLoc());
-        if (VD->getInit()) {
-          Record.push_back(!VD->isInitKnownICE() ? 1
-                                                 : (VD->isInitICE() ? 3 : 2));
-          Record.AddStmt(const_cast<Expr*>(VD->getInit()));
-        } else {
-          Record.push_back(0);
-        }
         break;
-      }
 
       case UPD_CXX_INSTANTIATED_DEFAULT_ARGUMENT:
         Record.AddStmt(const_cast<Expr *>(

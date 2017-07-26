@@ -1622,7 +1622,6 @@ TEST_F(FormatTestJS, NestedTemplateStrings) {
 
 TEST_F(FormatTestJS, TaggedTemplateStrings) {
   verifyFormat("var x = html`<ul>`;");
-  verifyFormat("yield `hello`;");
 }
 
 TEST_F(FormatTestJS, CastSyntax) {

@@ -83,8 +83,6 @@ void wasm::Linker::ConstructJob(Compilation &C, const JobAction &JA,
     if (Args.hasArg(options::OPT_pthread))
       CmdArgs.push_back("-lpthread");
 
-    CmdArgs.push_back("-allow-undefined-file");
-    CmdArgs.push_back(Args.MakeArgString(ToolChain.GetFilePath("wasm.syms")));
     CmdArgs.push_back("-lc");
     CmdArgs.push_back("-lcompiler_rt");
   }
@@ -106,7 +104,8 @@ WebAssembly::WebAssembly(const Driver &D, const llvm::Triple &Triple,
 
   getProgramPaths().push_back(getDriver().getInstalledDir());
 
-  getFilePaths().push_back(getDriver().SysRoot + "/lib");
+  getFilePaths().push_back(
+      getDriver().SysRoot + "/lib" + (Triple.isArch32Bit() ? "32" : "64"));
 }
 
 bool WebAssembly::IsMathErrnoDefault() const { return false; }

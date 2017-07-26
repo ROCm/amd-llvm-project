@@ -13,11 +13,9 @@
 @implementation ClassB // expected-note {{implementation started here}}
 
 - (void) method:(ClassA *)mgr { // expected-note {{to match this '{'}}
-  [mgr fileExistsAtPath:0
+  mgr fileExistsAtPath:0
 } // expected-error {{expected ']'}}
 
-@interface ClassC //                   \
-  // expected-error {{missing '@end'}} \
-  // expected-error {{expected '}'}}
+@interface ClassC // expected-error {{missing '@end'}} // expected-error {{expected '}'}}
 
 @end

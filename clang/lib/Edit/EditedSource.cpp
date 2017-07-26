@@ -28,18 +28,13 @@ void EditedSource::deconstructMacroArgLoc(SourceLocation Loc,
                                           MacroArgUse &ArgUse) {
   assert(SourceMgr.isMacroArgExpansion(Loc));
   SourceLocation DefArgLoc = SourceMgr.getImmediateExpansionRange(Loc).first;
-  SourceLocation ImmediateExpansionLoc =
-      SourceMgr.getImmediateExpansionRange(DefArgLoc).first;
-  ExpansionLoc = ImmediateExpansionLoc;
-  while (SourceMgr.isMacroBodyExpansion(ExpansionLoc))
-    ExpansionLoc = SourceMgr.getImmediateExpansionRange(ExpansionLoc).first;
+  ExpansionLoc = SourceMgr.getImmediateExpansionRange(DefArgLoc).first;
   SmallString<20> Buf;
   StringRef ArgName = Lexer::getSpelling(SourceMgr.getSpellingLoc(DefArgLoc),
                                          Buf, SourceMgr, LangOpts);
-  ArgUse = MacroArgUse{nullptr, SourceLocation(), SourceLocation()};
+  ArgUse = {nullptr, SourceLocation()};
   if (!ArgName.empty())
-    ArgUse = {&IdentTable.get(ArgName), ImmediateExpansionLoc,
-              SourceMgr.getSpellingLoc(DefArgLoc)};
+    ArgUse = {&IdentTable.get(ArgName), SourceMgr.getSpellingLoc(DefArgLoc)};
 }
 
 void EditedSource::startingCommit() {}
@@ -74,11 +69,10 @@ bool EditedSource::canInsertInOffset(SourceLocation OrigLoc, FileOffset Offs) {
     deconstructMacroArgLoc(OrigLoc, ExpLoc, ArgUse);
     auto I = ExpansionToArgMap.find(ExpLoc.getRawEncoding());
     if (I != ExpansionToArgMap.end() &&
-        find_if(I->second, [&](const MacroArgUse &U) {
-          return ArgUse.Identifier == U.Identifier &&
-                 std::tie(ArgUse.ImmediateExpansionLoc, ArgUse.UseLoc) !=
-                     std::tie(U.ImmediateExpansionLoc, U.UseLoc);
-        }) != I->second.end()) {
+        std::find_if(
+            I->second.begin(), I->second.end(), [&](const MacroArgUse &U) {
+              return ArgUse.first == U.first && ArgUse.second != U.second;
+            }) != I->second.end()) {
       // Trying to write in a macro argument input that has already been
       // written by a previous commit for another expansion of the same macro
       // argument name. For example:
@@ -95,6 +89,7 @@ bool EditedSource::canInsertInOffset(SourceLocation OrigLoc, FileOffset Offs) {
       return false;
     }
   }
+
   return true;
 }
 
@@ -107,13 +102,13 @@ bool EditedSource::commitInsert(SourceLocation OrigLoc,
     return true;
 
   if (SourceMgr.isMacroArgExpansion(OrigLoc)) {
-    MacroArgUse ArgUse;
     SourceLocation ExpLoc;
+    MacroArgUse ArgUse;
     deconstructMacroArgLoc(OrigLoc, ExpLoc, ArgUse);
-    if (ArgUse.Identifier)
+    if (ArgUse.first)
       CurrCommitMacroArgExps.emplace_back(ExpLoc, ArgUse);
   }
-
+  
   FileEdit &FA = FileEdits[Offs];
   if (FA.Text.empty()) {
     FA.Text = copyString(text);

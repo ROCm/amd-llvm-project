@@ -200,12 +200,12 @@ FrontendAction::CreateWrappedASTConsumer(CompilerInstance &CI,
 ///
 /// \param CI The compiler instance.
 /// \param InputFile Populated with the filename from the line marker.
-/// \param IsModuleMap If \c true, add a line note corresponding to this line
-///        directive. (We need to do this because the directive will not be
-///        visited by the preprocessor.)
+/// \param AddLineNote If \c true, add a line note corresponding to this line
+///        directive. Only use this if the directive will not actually be
+///        visited by the preprocessor.
 static SourceLocation ReadOriginalFileName(CompilerInstance &CI,
                                            std::string &InputFile,
-                                           bool IsModuleMap = false) {
+                                           bool AddLineNote = false) {
   auto &SourceMgr = CI.getSourceManager();
   auto MainFileID = SourceMgr.getMainFileID();
 
@@ -231,7 +231,7 @@ static SourceLocation ReadOriginalFileName(CompilerInstance &CI,
 
   unsigned LineNo;
   SourceLocation LineNoLoc = T.getLocation();
-  if (IsModuleMap) {
+  if (AddLineNote) {
     llvm::SmallString<16> Buffer;
     if (Lexer::getSpelling(LineNoLoc, Buffer, SourceMgr, CI.getLangOpts())
             .getAsInteger(10, LineNo))
@@ -250,10 +250,10 @@ static SourceLocation ReadOriginalFileName(CompilerInstance &CI,
     return SourceLocation();
   InputFile = Literal.GetString().str();
 
-  if (IsModuleMap)
+  if (AddLineNote)
     CI.getSourceManager().AddLineNote(
         LineNoLoc, LineNo, SourceMgr.getLineTableFilenameID(InputFile), false,
-        false, SrcMgr::C_User_ModuleMap);
+        false, SrcMgr::C_User);
 
   return T.getLocation();
 }
@@ -403,7 +403,7 @@ static bool loadModuleMapForModuleBuild(CompilerInstance &CI, bool IsSystem,
   Offset = 0;
   if (IsPreprocessed) {
     SourceLocation EndOfLineMarker =
-        ReadOriginalFileName(CI, PresumedModuleMapFile, /*IsModuleMap*/ true);
+        ReadOriginalFileName(CI, PresumedModuleMapFile, /*AddLineNote*/true);
     if (EndOfLineMarker.isValid())
       Offset = CI.getSourceManager().getDecomposedLoc(EndOfLineMarker).second;
   }
@@ -536,8 +536,8 @@ bool FrontendAction::BeginSourceFile(CompilerInstance &CI,
     ASTDiags->setClient(Diags->getClient(), /*OwnsClient*/false);
 
     std::unique_ptr<ASTUnit> AST = ASTUnit::LoadFromASTFile(
-        InputFile, CI.getPCHContainerReader(), ASTUnit::LoadPreprocessorOnly,
-        ASTDiags, CI.getFileSystemOpts(), CI.getCodeGenOpts().DebugTypeExtRefs);
+        InputFile, CI.getPCHContainerReader(), ASTDiags, CI.getFileSystemOpts(),
+        CI.getCodeGenOpts().DebugTypeExtRefs);
     if (!AST)
       goto failure;
 
@@ -547,28 +547,21 @@ bool FrontendAction::BeginSourceFile(CompilerInstance &CI,
     CI.getPreprocessorOpts() = AST->getPreprocessorOpts();
     CI.getLangOpts() = AST->getLangOpts();
 
+    // Preload all the module files loaded transitively by the AST unit.
+    if (auto ASTReader = AST->getASTReader()) {
+      auto &MM = ASTReader->getModuleManager();
+      for (ModuleFile &MF : MM)
+        if (&MF != &MM.getPrimaryModule())
+          CI.getFrontendOpts().ModuleFiles.push_back(MF.FileName);
+    }
+    // FIXME: Preload module maps loaded by the AST unit.
+
     // Set the shared objects, these are reset when we finish processing the
     // file, otherwise the CompilerInstance will happily destroy them.
     CI.setFileManager(&AST->getFileManager());
     CI.createSourceManager(CI.getFileManager());
     CI.getSourceManager().initializeForReplay(AST->getSourceManager());
-
-    // Preload all the module files loaded transitively by the AST unit. Also
-    // load all module map files that were parsed as part of building the AST
-    // unit.
-    if (auto ASTReader = AST->getASTReader()) {
-      auto &MM = ASTReader->getModuleManager();
-      auto &PrimaryModule = MM.getPrimaryModule();
-
-      for (ModuleFile &MF : MM)
-        if (&MF != &PrimaryModule)
-          CI.getFrontendOpts().ModuleFiles.push_back(MF.FileName);
-
-      ASTReader->visitTopLevelModuleMaps(PrimaryModule,
-                                         [&](const FileEntry *FE) {
-        CI.getFrontendOpts().ModuleMapFiles.push_back(FE->getName());
-      });
-    }
+    CI.createPreprocessor(getTranslationUnitKind());
 
     // Set up the input file for replay purposes.
     auto Kind = AST->getInputKind();
@@ -576,7 +569,6 @@ bool FrontendAction::BeginSourceFile(CompilerInstance &CI,
       Module *ASTModule =
           AST->getPreprocessor().getHeaderSearchInfo().lookupModule(
               AST->getLangOpts().CurrentModule, /*AllowSearch*/ false);
-      assert(ASTModule && "module file does not define its own module");
       Input = FrontendInputFile(ASTModule->PresumedModuleMapFile, Kind);
     } else {
       auto &SM = CI.getSourceManager();
@@ -599,8 +591,8 @@ bool FrontendAction::BeginSourceFile(CompilerInstance &CI,
     IntrusiveRefCntPtr<DiagnosticsEngine> Diags(&CI.getDiagnostics());
 
     std::unique_ptr<ASTUnit> AST = ASTUnit::LoadFromASTFile(
-        InputFile, CI.getPCHContainerReader(), ASTUnit::LoadEverything, Diags,
-        CI.getFileSystemOpts(), CI.getCodeGenOpts().DebugTypeExtRefs);
+        InputFile, CI.getPCHContainerReader(), Diags, CI.getFileSystemOpts(),
+        CI.getCodeGenOpts().DebugTypeExtRefs);
 
     if (!AST)
       goto failure;

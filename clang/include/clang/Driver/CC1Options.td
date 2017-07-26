@@ -134,6 +134,7 @@ def migrator_no_finalize_removal : Flag<["-"], "no-finalize-removal">,
 //===----------------------------------------------------------------------===//
 
 let Flags = [CC1Option, CC1AsOption, NoDriverOption] in {
+
 def debug_info_kind_EQ : Joined<["-"], "debug-info-kind=">;
 def debug_info_macro : Flag<["-"], "debug-info-macro">,
   HelpText<"Emit macro debug information">;
@@ -143,22 +144,20 @@ def fdebug_compilation_dir : Separate<["-"], "fdebug-compilation-dir">,
   HelpText<"The compilation directory to embed in the debug info.">;
 def dwarf_debug_flags : Separate<["-"], "dwarf-debug-flags">,
   HelpText<"The string to embed in the Dwarf debug flags record.">;
-def compress_debug_sections : Flag<["-", "--"], "compress-debug-sections">,
-    HelpText<"DWARF debug sections compression">;
-def compress_debug_sections_EQ : Joined<["-"], "compress-debug-sections=">,
-    HelpText<"DWARF debug sections compression type">;
 def mno_exec_stack : Flag<["-"], "mnoexecstack">,
   HelpText<"Mark the file as not needing an executable stack">;
 def massembler_fatal_warnings : Flag<["-"], "massembler-fatal-warnings">,
   HelpText<"Make assembler warnings fatal">;
 def mrelax_relocations : Flag<["--"], "mrelax-relocations">,
     HelpText<"Use relaxable elf relocations">;
+def compress_debug_sections : Flag<["-"], "compress-debug-sections">,
+    HelpText<"Compress DWARF debug sections using zlib">;
 def msave_temp_labels : Flag<["-"], "msave-temp-labels">,
   HelpText<"Save temporary labels in the symbol table. "
            "Note this may change .s semantics and shouldn't generally be used "
            "on compiler-generated code.">;
 def mrelocation_model : Separate<["-"], "mrelocation-model">,
-  HelpText<"The relocation model to use">, Values<"static,pic,ropi,rwpi,ropi-rwpi,dynamic-no-pic">;
+  HelpText<"The relocation model to use">;
 def fno_math_builtin : Flag<["-"], "fno-math-builtin">,
   HelpText<"Disable implicit builtin knowledge of math functions">;
 }
@@ -229,7 +228,7 @@ def no_struct_path_tbaa : Flag<["-"], "no-struct-path-tbaa">,
 def masm_verbose : Flag<["-"], "masm-verbose">,
   HelpText<"Generate verbose assembly output">;
 def mcode_model : Separate<["-"], "mcode-model">,
-  HelpText<"The code model to use">, Values<"small,kernel,medium,large">;
+  HelpText<"The code model to use">;
 def mdebug_pass : Separate<["-"], "mdebug-pass">,
   HelpText<"Enable additional debug output">;
 def mdisable_fp_elim : Flag<["-"], "mdisable-fp-elim">,
@@ -268,6 +267,8 @@ def vectorize_loops : Flag<["-"], "vectorize-loops">,
   HelpText<"Run the Loop vectorization passes">;
 def vectorize_slp : Flag<["-"], "vectorize-slp">,
   HelpText<"Run the SLP vectorization passes">;
+def vectorize_slp_aggressive : Flag<["-"], "vectorize-slp-aggressive">,
+  HelpText<"Run the BB vectorization passes">;
 def dependent_lib : Joined<["--"], "dependent-lib=">,
   HelpText<"Add dependent library">;
 def linker_option : Joined<["--"], "linker-option=">,
@@ -306,7 +307,7 @@ def fsanitize_coverage_no_prune
       HelpText<"Disable coverage pruning (i.e. instrument all blocks/edges)">;
 def fprofile_instrument_EQ : Joined<["-"], "fprofile-instrument=">,
     HelpText<"Enable PGO instrumentation. The accepted value is clang, llvm, "
-             "or none">, Values<"none,clang,llvm">;
+             "or none">;
 def fprofile_instrument_path_EQ : Joined<["-"], "fprofile-instrument-path=">,
     HelpText<"Generate instrumented code to collect execution counts into "
              "<file> (overridden by LLVM_PROFILE_FILE env var)">;
@@ -321,10 +322,6 @@ def flto_unit: Flag<["-"], "flto-unit">,
 def fno_lto_unit: Flag<["-"], "fno-lto-unit">;
 def fthin_link_bitcode_EQ : Joined<["-"], "fthin-link-bitcode=">,
     HelpText<"Write minimized bitcode to <file> for the ThinLTO thin link only">;
-def fdebug_pass_manager : Flag<["-"], "fdebug-pass-manager">,
-    HelpText<"Prints debug information for the new pass manager">;
-def fno_debug_pass_manager : Flag<["-"], "fno-debug-pass-manager">,
-    HelpText<"Disables debug printing for the new pass manager">;
 
 //===----------------------------------------------------------------------===//
 // Dependency Output Options
@@ -350,9 +347,9 @@ def diagnostic_serialized_file : Separate<["-"], "serialize-diagnostic-file">,
   HelpText<"File for serializing diagnostics in a binary format">;
 
 def fdiagnostics_format : Separate<["-"], "fdiagnostics-format">,
-  HelpText<"Change diagnostic formatting to match IDE and command line tools">, Values<"clang,msvc,msvc-fallback,vi">;
+  HelpText<"Change diagnostic formatting to match IDE and command line tools">;
 def fdiagnostics_show_category : Separate<["-"], "fdiagnostics-show-category">,
-  HelpText<"Print diagnostic category">, Values<"none,id,name">;
+  HelpText<"Print diagnostic category">;
 def fno_diagnostics_use_presumed_location : Flag<["-"], "fno-diagnostics-use-presumed-location">,
   HelpText<"Ignore #line directives when displaying diagnostic locations">;
 def ftabstop : Separate<["-"], "ftabstop">, MetaVarName<"<N>">,
@@ -570,9 +567,6 @@ def find_pch_source_EQ : Joined<["-"], "find-pch-source=">,
 def fno_pch_timestamp : Flag<["-"], "fno-pch-timestamp">,
   HelpText<"Disable inclusion of timestamp in precompiled headers">;
   
-def aligned_alloc_unavailable : Flag<["-"], "faligned-alloc-unavailable">,
-  HelpText<"Aligned allocation/deallocation functions are unavailable">;
-
 //===----------------------------------------------------------------------===//
 // Language Options
 //===----------------------------------------------------------------------===//
@@ -600,11 +594,11 @@ def fconstant_string_class : Separate<["-"], "fconstant-string-class">,
   MetaVarName<"<class name>">,
   HelpText<"Specify the class to use for constant Objective-C string objects.">;
 def fobjc_arc_cxxlib_EQ : Joined<["-"], "fobjc-arc-cxxlib=">,
-  HelpText<"Objective-C++ Automatic Reference Counting standard library kind">, Values<"libc++,libstdc++,none">;
+  HelpText<"Objective-C++ Automatic Reference Counting standard library kind">;
 def fobjc_runtime_has_weak : Flag<["-"], "fobjc-runtime-has-weak">,
   HelpText<"The target Objective-C runtime supports ARC weak operations">;
 def fobjc_dispatch_method_EQ : Joined<["-"], "fobjc-dispatch-method=">,
-  HelpText<"Objective-C dispatch method to use">, Values<"legacy,non-legacy,mixed">;
+  HelpText<"Objective-C dispatch method to use">;
 def disable_objc_default_synthesize_properties : Flag<["-"], "disable-objc-default-synthesize-properties">,
   HelpText<"disable the default synthesis of Objective-C properties">;
 def fencode_extended_block_signature : Flag<["-"], "fencode-extended-block-signature">,
@@ -678,7 +672,7 @@ def fnative_half_arguments_and_returns : Flag<["-"], "fnative-half-arguments-and
 def fallow_half_arguments_and_returns : Flag<["-"], "fallow-half-arguments-and-returns">,
   HelpText<"Allow function arguments and returns of type half">;
 def fdefault_calling_conv_EQ : Joined<["-"], "fdefault-calling-conv=">,
-  HelpText<"Set default MS calling convention">, Values<"cdecl,fastcall,stdcall,vectorcall">;
+  HelpText<"Set default MS calling convention">;
 def finclude_default_header : Flag<["-"], "finclude-default-header">,
   HelpText<"Include the default header file for OpenCL">;
 def fpreserve_vec3_type : Flag<["-"], "fpreserve-vec3-type">,

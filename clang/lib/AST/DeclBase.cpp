@@ -278,15 +278,13 @@ void Decl::setLexicalDeclContext(DeclContext *DC) {
   // FIXME: We shouldn't be changing the lexical context of declarations
   // imported from AST files.
   if (!isFromASTFile()) {
-    setModuleOwnershipKind(getModuleOwnershipKindForChildOf(DC));
-    if (hasOwningModule())
+    Hidden = cast<Decl>(DC)->Hidden && hasLocalOwningModuleStorage();
+    if (Hidden)
       setLocalOwningModule(cast<Decl>(DC)->getOwningModule());
   }
 
-  assert(
-      (getModuleOwnershipKind() != ModuleOwnershipKind::VisibleWhenImported ||
-       getOwningModule()) &&
-      "hidden declaration has no owning module");
+  assert((!Hidden || getOwningModule()) &&
+         "hidden declaration has no owning module");
 }
 
 void Decl::setDeclContextsImpl(DeclContext *SemaDC, DeclContext *LexicalDC,
@@ -1354,7 +1352,7 @@ void DeclContext::removeDecl(Decl *D) {
     // Remove only decls that have a name
     if (!ND->getDeclName()) return;
 
-    auto *DC = D->getDeclContext();
+    auto *DC = this;
     do {
       StoredDeclsMap *Map = DC->getPrimaryContext()->LookupPtr;
       if (Map) {

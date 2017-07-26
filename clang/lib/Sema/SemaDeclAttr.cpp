@@ -6815,7 +6815,7 @@ void Sema::ProcessDeclAttributeList(Scope *S, Decl *D,
   }
 }
 
-// Helper for delayed processing TransparentUnion attribute.
+// Helper for delayed proccessing TransparentUnion attribute.
 void Sema::ProcessDeclAttributeDelayed(Decl *D, const AttributeList *AttrList) {
   for (const AttributeList *Attr = AttrList; Attr; Attr = Attr->getNext())
     if (Attr->getKind() == AttributeList::AT_TransparentUnion) {
@@ -7147,32 +7147,6 @@ static bool ShouldDiagnoseAvailabilityInContext(Sema &S, AvailabilityResult K,
   return true;
 }
 
-static bool
-shouldDiagnoseAvailabilityByDefault(const ASTContext &Context,
-                                    const VersionTuple &DeploymentVersion,
-                                    const VersionTuple &DeclVersion) {
-  const auto &Triple = Context.getTargetInfo().getTriple();
-  VersionTuple ForceAvailabilityFromVersion;
-  switch (Triple.getOS()) {
-  case llvm::Triple::IOS:
-  case llvm::Triple::TvOS:
-    ForceAvailabilityFromVersion = VersionTuple(/*Major=*/11);
-    break;
-  case llvm::Triple::WatchOS:
-    ForceAvailabilityFromVersion = VersionTuple(/*Major=*/4);
-    break;
-  case llvm::Triple::Darwin:
-  case llvm::Triple::MacOSX:
-    ForceAvailabilityFromVersion = VersionTuple(/*Major=*/10, /*Minor=*/13);
-    break;
-  default:
-    // New targets should always warn about availability.
-    return Triple.getVendor() == llvm::Triple::Apple;
-  }
-  return DeploymentVersion >= ForceAvailabilityFromVersion ||
-         DeclVersion >= ForceAvailabilityFromVersion;
-}
-
 static void DoEmitAvailabilityWarning(Sema &S, AvailabilityResult K,
                                       Decl *Ctx, const NamedDecl *D,
                                       StringRef Message, SourceLocation Loc,
@@ -7261,26 +7235,13 @@ static void DoEmitAvailabilityWarning(Sema &S, AvailabilityResult K,
     }
     break;
 
-  case AR_NotYetIntroduced: {
-    // We would like to emit the diagnostic even if -Wunguarded-availability is
-    // not specified for deployment targets >= to iOS 11 or equivalent or
-    // for declarations that were introduced in iOS 11 (macOS 10.13, ...) or
-    // later.
-    const AvailabilityAttr *AA = getAttrForPlatform(S.getASTContext(), D);
-    VersionTuple Introduced = AA->getIntroduced();
-    bool NewWarning = shouldDiagnoseAvailabilityByDefault(
-        S.Context, S.Context.getTargetInfo().getPlatformMinVersion(),
-        Introduced);
-    diag = NewWarning ? diag::warn_partial_availability_new
-                      : diag::warn_partial_availability;
-    diag_message = NewWarning ? diag::warn_partial_message_new
-                              : diag::warn_partial_message;
-    diag_fwdclass_message = NewWarning ? diag::warn_partial_fwdclass_message_new
-                                       : diag::warn_partial_fwdclass_message;
+  case AR_NotYetIntroduced:
+    diag = diag::warn_partial_availability;
+    diag_message = diag::warn_partial_message;
+    diag_fwdclass_message = diag::warn_partial_fwdclass_message;
     property_note_select = /* partial */ 2;
     available_here_select_kind = /* partial */ 3;
     break;
-  }
 
   case AR_Available:
     llvm_unreachable("Warning for availability of available declaration?");
@@ -7600,18 +7561,7 @@ void DiagnoseUnguardedAvailability::DiagnoseDeclAvailability(
     if (!ShouldDiagnoseAvailabilityInContext(SemaRef, Result, Introduced, Ctx))
       return;
 
-    // We would like to emit the diagnostic even if -Wunguarded-availability is
-    // not specified for deployment targets >= to iOS 11 or equivalent or
-    // for declarations that were introduced in iOS 11 (macOS 10.13, ...) or
-    // later.
-    unsigned DiagKind =
-        shouldDiagnoseAvailabilityByDefault(
-            SemaRef.Context,
-            SemaRef.Context.getTargetInfo().getPlatformMinVersion(), Introduced)
-            ? diag::warn_unguarded_availability_new
-            : diag::warn_unguarded_availability;
-
-    SemaRef.Diag(Range.getBegin(), DiagKind)
+    SemaRef.Diag(Range.getBegin(), diag::warn_unguarded_availability)
         << Range << D
         << AvailabilityAttr::getPrettyPlatformName(
                SemaRef.getASTContext().getTargetInfo().getPlatformName())

@@ -1,5 +1,4 @@
 // RUN: %clang_analyze_cc1 -triple x86_64-unknown-unknown -analyzer-checker=alpha.security.MallocOverflow,unix -verify %s
-// RUN: %clang_analyze_cc1 -triple x86_64-unknown-unknown -analyzer-checker=alpha.security.MallocOverflow,unix,optin.portability -DPORTABILITY -verify %s
 
 typedef __typeof__(sizeof(int)) size_t;
 extern void *malloc(size_t);
@@ -33,8 +32,5 @@ static int table_build_1(struct table *t) {
 }
 
 void *f(int n) {
-  return malloc(n * 0 * sizeof(int));
-#ifdef PORTABILITY
-  // expected-warning@-2{{Call to 'malloc' has an allocation size of 0 bytes}}
-#endif
+  return malloc(n * 0 * sizeof(int)); // expected-warning {{Call to 'malloc' has an allocation size of 0 bytes}}
 }

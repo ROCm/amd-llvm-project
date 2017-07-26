@@ -293,7 +293,7 @@ unsigned AnalyzerOptions::getMaxInlinableSize() {
         DefaultValue = 4;
         break;
       case UMK_Deep:
-        DefaultValue = 100;
+        DefaultValue = 50;
         break;
     }
 
@@ -332,7 +332,7 @@ unsigned AnalyzerOptions::getMaxNodesPerTopLevelFunction() {
         DefaultValue = 75000;
         break;
       case UMK_Deep:
-        DefaultValue = 225000;
+        DefaultValue = 150000;
         break;
     }
     MaxNodesPerTopLevelFunction = getOptionAsInteger("max-nodes", DefaultValue);

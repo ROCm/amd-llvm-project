@@ -174,7 +174,7 @@ tooling::Replacements NamespaceEndCommentsFixer::analyze(
         AllNamespaceNames = "::" + NamespaceName + AllNamespaceNames;
         continue;
       }
-      NamespaceName += AllNamespaceNames;
+      NamespaceName += std::move(AllNamespaceNames);
       CompactedNamespacesCount = 0;
       AllNamespaceNames = std::string();
     }

@@ -1429,8 +1429,11 @@ CXXDestructorDecl *CXXRecordDecl::getDestructor() const {
                                           Context.getCanonicalType(ClassType));
 
   DeclContext::lookup_result R = lookup(Name);
+  if (R.empty())
+    return nullptr;
 
-  return R.empty() ? nullptr : dyn_cast<CXXDestructorDecl>(R.front());
+  CXXDestructorDecl *Dtor = cast<CXXDestructorDecl>(R.front());
+  return Dtor;
 }
 
 bool CXXRecordDecl::isAnyDestructorNoReturn() const {

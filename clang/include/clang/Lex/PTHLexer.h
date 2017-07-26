@@ -36,7 +36,7 @@ class PTHLexer : public PreprocessorLexer {
   const unsigned char* LastHashTokPtr;
 
   /// PPCond - Pointer to a side table in the PTH file that provides a
-  ///  a concise summary of the preprocessor conditional block structure.
+  ///  a consise summary of the preproccessor conditional block structure.
   ///  This is used to perform quick skipping of conditional blocks.
   const unsigned char* PPCond;
 

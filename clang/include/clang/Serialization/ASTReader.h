@@ -400,7 +400,7 @@ private:
   Preprocessor &PP;
 
   /// \brief The AST context into which we'll read the AST files.
-  ASTContext *ContextObj = nullptr;
+  ASTContext &Context;
 
   /// \brief The AST consumer.
   ASTConsumer *Consumer = nullptr;
@@ -1146,7 +1146,6 @@ private:
     time_t StoredTime;
     bool Overridden;
     bool Transient;
-    bool TopLevelModuleMap;
   };
 
   /// \brief Reads the stored information about an input file.
@@ -1387,7 +1386,7 @@ public:
   /// precompiled header will be loaded.
   ///
   /// \param Context the AST context that this precompiled header will be
-  /// loaded into, if any.
+  /// loaded into.
   ///
   /// \param PCHContainerRdr the PCHContainerOperations to use for loading and
   /// creating modules.
@@ -1419,7 +1418,7 @@ public:
   ///
   /// \param ReadTimer If non-null, a timer used to track the time spent
   /// deserializing.
-  ASTReader(Preprocessor &PP, ASTContext *Context,
+  ASTReader(Preprocessor &PP, ASTContext &Context,
             const PCHContainerReader &PCHContainerRdr,
             ArrayRef<std::shared_ptr<ModuleFileExtension>> Extensions,
             StringRef isysroot = "", bool DisableValidation = false,
@@ -2208,10 +2207,7 @@ public:
   void completeVisibleDeclsMap(const DeclContext *DC) override;
 
   /// \brief Retrieve the AST context that this AST reader supplements.
-  ASTContext &getContext() {
-    assert(ContextObj && "requested AST context when not loading AST");
-    return *ContextObj;
-  }
+  ASTContext &getContext() { return Context; }
 
   // \brief Contains the IDs for declarations that were requested before we have
   // access to a Sema object.
@@ -2252,12 +2248,6 @@ public:
                        bool IncludeSystem, bool Complain,
           llvm::function_ref<void(const serialization::InputFile &IF,
                                   bool isSystem)> Visitor);
-
-  /// Visit all the top-level module maps loaded when building the given module
-  /// file.
-  void visitTopLevelModuleMaps(serialization::ModuleFile &MF,
-                               llvm::function_ref<
-                                   void(const FileEntry *)> Visitor);
 
   bool isProcessingUpdateRecords() { return ProcessingUpdateRecords; }
 };

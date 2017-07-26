@@ -41,4 +41,4 @@ import diag_flags;
 #else
 // expected-no-diagnostics
 #endif
-int arr[sizeof(Padded)];
+unsigned n = sizeof(Padded);

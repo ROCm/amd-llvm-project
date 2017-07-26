@@ -593,16 +593,6 @@ bool RecursiveASTVisitor<Derived>::PostVisitStmt(Stmt *S) {
 #define STMT(CLASS, PARENT)                                                    \
   case Stmt::CLASS##Class:                                                     \
     TRY_TO(WalkUpFrom##CLASS(static_cast<CLASS *>(S))); break;
-#define INITLISTEXPR(CLASS, PARENT)                                            \
-  case Stmt::CLASS##Class:                                                     \
-    {                                                                          \
-      auto ILE = static_cast<CLASS *>(S);                                      \
-      if (auto Syn = ILE->isSemanticForm() ? ILE->getSyntacticForm() : ILE)    \
-        TRY_TO(WalkUpFrom##CLASS(Syn));                                        \
-      if (auto Sem = ILE->isSemanticForm() ? ILE : ILE->getSemanticForm())     \
-        TRY_TO(WalkUpFrom##CLASS(Sem));                                        \
-      break;                                                                   \
-    }
 #include "clang/AST/StmtNodes.inc"
   }
 
@@ -2230,15 +2220,13 @@ bool RecursiveASTVisitor<Derived>::TraverseSynOrSemInitListExpr(
 // the syntactic and the semantic form.
 //
 // There is no guarantee about which form \p S takes when this method is called.
-template <typename Derived>
-bool RecursiveASTVisitor<Derived>::TraverseInitListExpr(
-    InitListExpr *S, DataRecursionQueue *Queue) {
+DEF_TRAVERSE_STMT(InitListExpr, {
   TRY_TO(TraverseSynOrSemInitListExpr(
       S->isSemanticForm() ? S->getSyntacticForm() : S, Queue));
   TRY_TO(TraverseSynOrSemInitListExpr(
       S->isSemanticForm() ? S : S->getSemanticForm(), Queue));
-  return true;
-}
+  ShouldVisitChildren = false;
+})
 
 // GenericSelectionExpr is a special case because the types and expressions
 // are interleaved.  We also need to watch out for null types (default

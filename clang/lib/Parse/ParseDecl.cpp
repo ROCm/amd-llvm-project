@@ -71,18 +71,11 @@ TypeResult Parser::ParseTypeName(SourceRange *Range,
   return Actions.ActOnTypeName(getCurScope(), DeclaratorInfo);
 }
 
-/// \brief Normalizes an attribute name by dropping prefixed and suffixed __.
-static StringRef normalizeAttrName(StringRef Name) {
-  if (Name.size() >= 4 && Name.startswith("__") && Name.endswith("__"))
-    return Name.drop_front(2).drop_back(2);
-  return Name;
-}
-
 /// isAttributeLateParsed - Return true if the attribute has arguments that
 /// require late parsing.
 static bool isAttributeLateParsed(const IdentifierInfo &II) {
 #define CLANG_ATTR_LATE_PARSED_LIST
-    return llvm::StringSwitch<bool>(normalizeAttrName(II.getName()))
+    return llvm::StringSwitch<bool>(II.getName())
 #include "clang/Parse/AttrParserStringSwitches.inc"
         .Default(false);
 #undef CLANG_ATTR_LATE_PARSED_LIST
@@ -205,6 +198,13 @@ void Parser::ParseGNUAttributes(ParsedAttributes &attrs,
     if (endLoc)
       *endLoc = Loc;
   }
+}
+
+/// \brief Normalizes an attribute name by dropping prefixed and suffixed __.
+static StringRef normalizeAttrName(StringRef Name) {
+  if (Name.size() >= 4 && Name.startswith("__") && Name.endswith("__"))
+    Name = Name.drop_front(2).drop_back(2);
+  return Name;
 }
 
 /// \brief Determine whether the given attribute has an identifier argument.
@@ -2675,8 +2675,6 @@ Parser::getDeclSpecContextFromDeclaratorContext(unsigned Context) {
     return DSC_class;
   if (Context == Declarator::FileContext)
     return DSC_top_level;
-  if (Context == Declarator::TemplateParamContext)
-    return DSC_template_param;
   if (Context == Declarator::TemplateTypeArgContext)
     return DSC_template_type_arg;
   if (Context == Declarator::TrailingReturnContext)
@@ -4316,9 +4314,7 @@ void Parser::ParseEnumSpecifier(SourceLocation StartLoc, DeclSpec &DS,
                                    AS, DS.getModulePrivateSpecLoc(), TParams,
                                    Owned, IsDependent, ScopedEnumKWLoc,
                                    IsScopedUsingClassTag, BaseType,
-                                   DSC == DSC_type_specifier,
-                                   DSC == DSC_template_param ||
-                                   DSC == DSC_template_type_arg, &SkipBody);
+                                   DSC == DSC_type_specifier, &SkipBody);
 
   if (SkipBody.ShouldSkip) {
     assert(TUK == Sema::TUK_Definition && "can only skip a definition");
@@ -4372,15 +4368,8 @@ void Parser::ParseEnumSpecifier(SourceLocation StartLoc, DeclSpec &DS,
     return;
   }
 
-  if (Tok.is(tok::l_brace) && TUK != Sema::TUK_Reference) {
-    Decl *D = SkipBody.CheckSameAsPrevious ? SkipBody.New : TagDecl;
-    ParseEnumBody(StartLoc, D);
-    if (SkipBody.CheckSameAsPrevious &&
-        !Actions.ActOnDuplicateDefinition(DS, TagDecl, SkipBody)) {
-      DS.SetTypeSpecError();
-      return;
-    }
-  }
+  if (Tok.is(tok::l_brace) && TUK != Sema::TUK_Reference)
+    ParseEnumBody(StartLoc, TagDecl);
 
   if (DS.SetTypeSpecType(DeclSpec::TST_enum, StartLoc,
                          NameLoc.isValid() ? NameLoc : StartLoc,
@@ -4452,9 +4441,11 @@ void Parser::ParseEnumBody(SourceLocation StartLoc, Decl *EnumDecl) {
     }
 
     // Install the enumerator constant into EnumDecl.
-    Decl *EnumConstDecl = Actions.ActOnEnumConstant(
-        getCurScope(), EnumDecl, LastEnumConstDecl, IdentLoc, Ident,
-        attrs.getList(), EqualLoc, AssignedVal.get());
+    Decl *EnumConstDecl = Actions.ActOnEnumConstant(getCurScope(), EnumDecl,
+                                                    LastEnumConstDecl,
+                                                    IdentLoc, Ident,
+                                                    attrs.getList(), EqualLoc,
+                                                    AssignedVal.get());
     EnumAvailabilityDiags.back().done();
 
     EnumConstantDecls.push_back(EnumConstDecl);
@@ -6781,7 +6772,7 @@ void Parser::ParseTypeofSpecifier(DeclSpec &DS) {
     return;
   }
 
-  // If we get here, the operand to the typeof was an expression.
+  // If we get here, the operand to the typeof was an expresion.
   if (Operand.isInvalid()) {
     DS.SetTypeSpecError();
     return;

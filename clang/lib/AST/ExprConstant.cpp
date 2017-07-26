@@ -6226,6 +6226,10 @@ bool RecordExprEvaluator::VisitInitListExpr(const InitListExpr *E) {
     // the initializer list.
     ImplicitValueInitExpr VIE(HaveInit ? Info.Ctx.IntTy : Field->getType());
     const Expr *Init = HaveInit ? E->getInit(ElementNo++) : &VIE;
+    if (Init->isValueDependent()) {
+      Success = false;
+      continue;
+    }
 
     // Temporarily override This, in case there's a CXXDefaultInitExpr in here.
     ThisOverrideRAII ThisOverride(*Info.CurrentCall, &This,
@@ -9508,7 +9512,7 @@ bool ComplexExprEvaluator::VisitBinaryOperator(const BinaryOperator *E) {
   case BO_Mul:
     if (Result.isComplexFloat()) {
       // This is an implementation of complex multiplication according to the
-      // constraints laid out in C11 Annex G. The implemention uses the
+      // constraints laid out in C11 Annex G. The implemantion uses the
       // following naming scheme:
       //   (a + ib) * (c + id)
       ComplexValue LHS = Result;
@@ -9589,7 +9593,7 @@ bool ComplexExprEvaluator::VisitBinaryOperator(const BinaryOperator *E) {
   case BO_Div:
     if (Result.isComplexFloat()) {
       // This is an implementation of complex division according to the
-      // constraints laid out in C11 Annex G. The implemention uses the
+      // constraints laid out in C11 Annex G. The implemantion uses the
       // following naming scheme:
       //   (a + ib) / (c + id)
       ComplexValue LHS = Result;
@@ -9936,7 +9940,8 @@ static bool EvaluateAsRValue(EvalInfo &Info, const Expr *E, APValue &Result) {
 }
 
 static bool FastEvaluateAsRValue(const Expr *Exp, Expr::EvalResult &Result,
-                                 const ASTContext &Ctx, bool &IsConst) {
+                                 const ASTContext &Ctx, bool &IsConst,
+                                 bool IsCheckingForOverflow) {
   // Fast-path evaluations of integer literals, since we sometimes see files
   // containing vast quantities of these.
   if (const IntegerLiteral *L = dyn_cast<IntegerLiteral>(Exp)) {
@@ -9957,7 +9962,7 @@ static bool FastEvaluateAsRValue(const Expr *Exp, Expr::EvalResult &Result,
   // performance problems. Only do so in C++11 for now.
   if (Exp->isRValue() && (Exp->getType()->isArrayType() ||
                           Exp->getType()->isRecordType()) &&
-      !Ctx.getLangOpts().CPlusPlus11) {
+      !Ctx.getLangOpts().CPlusPlus11 && !IsCheckingForOverflow) {
     IsConst = false;
     return true;
   }
@@ -9972,7 +9977,7 @@ static bool FastEvaluateAsRValue(const Expr *Exp, Expr::EvalResult &Result,
 /// will be applied to the result.
 bool Expr::EvaluateAsRValue(EvalResult &Result, const ASTContext &Ctx) const {
   bool IsConst;
-  if (FastEvaluateAsRValue(this, Result, Ctx, IsConst))
+  if (FastEvaluateAsRValue(this, Result, Ctx, IsConst, false))
     return IsConst;
   
   EvalInfo Info(Ctx, Result, EvalInfo::EM_IgnoreSideEffects);
@@ -10097,7 +10102,7 @@ APSInt Expr::EvaluateKnownConstInt(const ASTContext &Ctx,
 void Expr::EvaluateForOverflow(const ASTContext &Ctx) const {
   bool IsConst;
   EvalResult EvalResult;
-  if (!FastEvaluateAsRValue(this, EvalResult, Ctx, IsConst)) {
+  if (!FastEvaluateAsRValue(this, EvalResult, Ctx, IsConst, true)) {
     EvalInfo Info(Ctx, EvalResult, EvalInfo::EM_EvaluateForOverflow);
     (void)::EvaluateAsRValue(Info, this, EvalResult.Val);
   }

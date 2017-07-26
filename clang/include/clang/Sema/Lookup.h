@@ -18,8 +18,6 @@
 #include "clang/AST/DeclCXX.h"
 #include "clang/Sema/Sema.h"
 
-#include "llvm/ADT/Optional.h"
-
 namespace clang {
 
 /// @brief Represents the results of name lookup.
@@ -275,7 +273,7 @@ public:
   /// declarations, such as those in modules that have not yet been imported.
   bool isHiddenDeclarationVisible(NamedDecl *ND) const {
     return AllowHidden ||
-           (isForRedeclaration() && ND->hasExternalFormalLinkage());
+           (isForRedeclaration() && ND->isExternallyVisible());
   }
 
   /// Sets whether tag declarations should be hidden by non-tag
@@ -467,7 +465,7 @@ public:
         Paths = nullptr;
       }
     } else {
-      llvm::Optional<AmbiguityKind> SavedAK;
+      AmbiguityKind SavedAK;
       bool WasAmbiguous = false;
       if (ResultKind == Ambiguous) {
         SavedAK = Ambiguity;
@@ -481,7 +479,7 @@ public:
       if (ResultKind == Ambiguous) {
         (void)WasAmbiguous;
         assert(WasAmbiguous);
-        Ambiguity = SavedAK.getValue();
+        Ambiguity = SavedAK;
       } else if (Paths) {
         deletePaths(Paths);
         Paths = nullptr;

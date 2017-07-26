@@ -57,10 +57,6 @@ static CharUnits getTypeStoreSize(CodeGenModule &CGM, llvm::Type *type) {
   return CharUnits::fromQuantity(CGM.getDataLayout().getTypeStoreSize(type));
 }
 
-static CharUnits getTypeAllocSize(CodeGenModule &CGM, llvm::Type *type) {
-  return CharUnits::fromQuantity(CGM.getDataLayout().getTypeAllocSize(type));
-}
-
 void SwiftAggLowering::addTypedData(QualType type, CharUnits begin) {
   // Deal with various aggregate types as special cases:
 
@@ -546,9 +542,7 @@ SwiftAggLowering::getCoerceAndExpandTypes() const {
       packed = true;
 
     elts.push_back(entry.Type);
-
-    lastEnd = entry.Begin + getTypeAllocSize(CGM, entry.Type);
-    assert(entry.End <= lastEnd);
+    lastEnd = entry.End;
   }
 
   // We don't need to adjust 'packed' to deal with possible tail padding

@@ -93,8 +93,7 @@ private:
   void readTokenWithJavaScriptASI();
   void parseStructuralElement();
   bool tryToParseBracedList();
-  bool parseBracedList(bool ContinueOnSemicolons = false,
-                       tok::TokenKind ClosingBraceKind = tok::r_brace);
+  bool parseBracedList(bool ContinueOnSemicolons = false);
   void parseParens();
   void parseSquare();
   void parseIfThenElse();

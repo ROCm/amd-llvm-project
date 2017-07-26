@@ -137,7 +137,7 @@
 @end
  
 @implementation MyClass // expected-warning {{auto property synthesis will not synthesize property 'requiredString' declared in protocol 'MyProtocol'}}
-@end // expected-note {{add a '@synthesize' directive}}
+@end
 
 // rdar://18152478
 @protocol NSObject @end

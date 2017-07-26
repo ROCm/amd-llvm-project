@@ -54,7 +54,6 @@
 #include "llvm/Transforms/ObjCARC.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Scalar/GVN.h"
-#include "llvm/Transforms/Utils/NameAnonGlobals.h"
 #include "llvm/Transforms/Utils/SymbolRewriter.h"
 #include <memory>
 using namespace clang;
@@ -438,7 +437,11 @@ static void initTargetOptions(llvm::TargetOptions &Options,
   Options.RelaxELFRelocations = CodeGenOpts.RelaxELFRelocations;
 
   // Set EABI version.
-  Options.EABIVersion = TargetOpts.EABIVersion;
+  Options.EABIVersion = llvm::StringSwitch<llvm::EABI>(TargetOpts.EABIVersion)
+                            .Case("4", llvm::EABI::EABI4)
+                            .Case("5", llvm::EABI::EABI5)
+                            .Case("gnu", llvm::EABI::GNU)
+                            .Default(llvm::EABI::Default);
 
   if (LangOpts.SjLjExceptions)
     Options.ExceptionModel = llvm::ExceptionHandling::SjLj;
@@ -511,6 +514,7 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
 
   PMBuilder.OptLevel = CodeGenOpts.OptimizationLevel;
   PMBuilder.SizeLevel = CodeGenOpts.OptimizeSize;
+  PMBuilder.BBVectorize = CodeGenOpts.VectorizeBB;
   PMBuilder.SLPVectorize = CodeGenOpts.VectorizeSLP;
   PMBuilder.LoopVectorize = CodeGenOpts.VectorizeLoop;
 
@@ -913,15 +917,11 @@ void EmitAssemblyHelper::EmitAssemblyWithNewPassManager(
   if (CodeGenOpts.hasProfileIRUse())
     PGOOpt.ProfileUseFile = CodeGenOpts.ProfileInstrumentUsePath;
 
-  if (!CodeGenOpts.SampleProfileFile.empty())
-    PGOOpt.SampleProfileFile = CodeGenOpts.SampleProfileFile;
-
   // Only pass a PGO options struct if -fprofile-generate or
   // -fprofile-use were passed on the cmdline.
   PassBuilder PB(TM.get(),
     (PGOOpt.RunProfileGen ||
-      !PGOOpt.ProfileUseFile.empty() ||
-      !PGOOpt.SampleProfileFile.empty()) ?
+      !PGOOpt.ProfileUseFile.empty()) ?
         Optional<PGOOptions>(PGOOpt) : None);
 
   LoopAnalysisManager LAM;
@@ -939,34 +939,20 @@ void EmitAssemblyHelper::EmitAssemblyWithNewPassManager(
   PB.registerLoopAnalyses(LAM);
   PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
 
-  ModulePassManager MPM(CodeGenOpts.DebugPassManager);
+  ModulePassManager MPM;
 
   if (!CodeGenOpts.DisableLLVMPasses) {
-    bool IsThinLTO = CodeGenOpts.EmitSummaryIndex;
-    bool IsLTO = CodeGenOpts.PrepareForLTO;
-
     if (CodeGenOpts.OptimizationLevel == 0) {
       // Build a minimal pipeline based on the semantics required by Clang,
       // which is just that always inlining occurs.
       MPM.addPass(AlwaysInlinerPass());
-      if (IsThinLTO)
-        MPM.addPass(NameAnonGlobalPass());
     } else {
-      // Map our optimization levels into one of the distinct levels used to
-      // configure the pipeline.
+      // Otherwise, use the default pass pipeline. We also have to map our
+      // optimization levels into one of the distinct levels used to configure
+      // the pipeline.
       PassBuilder::OptimizationLevel Level = mapToLevel(CodeGenOpts);
 
-      if (IsThinLTO) {
-        MPM = PB.buildThinLTOPreLinkDefaultPipeline(
-            Level, CodeGenOpts.DebugPassManager);
-        MPM.addPass(NameAnonGlobalPass());
-      } else if (IsLTO) {
-        MPM = PB.buildLTOPreLinkDefaultPipeline(Level,
-                                                CodeGenOpts.DebugPassManager);
-      } else {
-        MPM = PB.buildPerModuleDefaultPipeline(Level,
-                                               CodeGenOpts.DebugPassManager);
-      }
+      MPM = PB.buildPerModuleDefaultPipeline(Level);
     }
   }
 

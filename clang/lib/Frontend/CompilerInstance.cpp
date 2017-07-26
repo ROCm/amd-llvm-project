@@ -517,7 +517,7 @@ IntrusiveRefCntPtr<ASTReader> CompilerInstance::createPCHExternalASTSource(
   HeaderSearchOptions &HSOpts = PP.getHeaderSearchInfo().getHeaderSearchOpts();
 
   IntrusiveRefCntPtr<ASTReader> Reader(new ASTReader(
-      PP, &Context, PCHContainerRdr, Extensions,
+      PP, Context, PCHContainerRdr, Extensions,
       Sysroot.empty() ? "" : Sysroot.data(), DisablePCHValidation,
       AllowPCHWithCompilerErrors, /*AllowConfigurationMismatch*/ false,
       HSOpts.ModulesValidateSystemHeaders, UseGlobalModuleIndex));
@@ -825,11 +825,8 @@ bool CompilerInstance::InitializeSourceManager(
     const FrontendInputFile &Input, DiagnosticsEngine &Diags,
     FileManager &FileMgr, SourceManager &SourceMgr, HeaderSearch *HS,
     DependencyOutputOptions &DepOpts, const FrontendOptions &Opts) {
-  SrcMgr::CharacteristicKind Kind =
-      Input.getKind().getFormat() == InputKind::ModuleMap
-          ? Input.isSystem() ? SrcMgr::C_System_ModuleMap
-                             : SrcMgr::C_User_ModuleMap
-          : Input.isSystem() ? SrcMgr::C_System : SrcMgr::C_User;
+  SrcMgr::CharacteristicKind
+    Kind = Input.isSystem() ? SrcMgr::C_System : SrcMgr::C_User;
 
   if (Input.isBuffer()) {
     SourceMgr.setMainFileID(SourceMgr.createFileID(
@@ -1472,7 +1469,7 @@ void CompilerInstance::createModuleManager() {
                                                  "Reading modules",
                                                  *FrontendTimerGroup);
     ModuleManager = new ASTReader(
-        getPreprocessor(), &getASTContext(), getPCHContainerReader(),
+        getPreprocessor(), getASTContext(), getPCHContainerReader(),
         getFrontendOpts().ModuleFileExtensions,
         Sysroot.empty() ? "" : Sysroot.c_str(), PPOpts.DisablePCHValidation,
         /*AllowASTWithCompilerErrors=*/false,

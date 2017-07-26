@@ -2736,9 +2736,7 @@ static bool ShouldUseExternalRTTIDescriptor(CodeGenModule &CGM,
     // function.
     bool IsDLLImport = RD->hasAttr<DLLImportAttr>();
     if (CGM.getVTables().isVTableExternal(RD))
-      return IsDLLImport && !CGM.getTriple().isWindowsItaniumEnvironment()
-                 ? false
-                 : true;
+      return IsDLLImport ? false : true;
 
     if (IsDLLImport)
       return true;
@@ -2974,8 +2972,7 @@ static llvm::GlobalVariable::LinkageTypes getTypeInfoLinkage(CodeGenModule &CGM,
       if (RD->hasAttr<WeakAttr>())
         return llvm::GlobalValue::WeakODRLinkage;
       if (CGM.getTriple().isWindowsItaniumEnvironment())
-        if (RD->hasAttr<DLLImportAttr>() &&
-            ShouldUseExternalRTTIDescriptor(CGM, Ty))
+        if (RD->hasAttr<DLLImportAttr>())
           return llvm::GlobalValue::ExternalLinkage;
       if (RD->isDynamicClass()) {
         llvm::GlobalValue::LinkageTypes LT = CGM.getVTableLinkage(RD);
@@ -3188,8 +3185,7 @@ llvm::Constant *ItaniumRTTIBuilder::BuildTypeInfo(QualType Ty, bool Force,
     if (DLLExport || (RD && RD->hasAttr<DLLExportAttr>())) {
       TypeName->setDLLStorageClass(llvm::GlobalValue::DLLExportStorageClass);
       GV->setDLLStorageClass(llvm::GlobalValue::DLLExportStorageClass);
-    } else if (RD && RD->hasAttr<DLLImportAttr>() &&
-               ShouldUseExternalRTTIDescriptor(CGM, Ty)) {
+    } else if (CGM.getLangOpts().RTTI && RD && RD->hasAttr<DLLImportAttr>()) {
       TypeName->setDLLStorageClass(llvm::GlobalValue::DLLImportStorageClass);
       GV->setDLLStorageClass(llvm::GlobalValue::DLLImportStorageClass);
 

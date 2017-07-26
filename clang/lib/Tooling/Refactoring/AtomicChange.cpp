@@ -12,6 +12,7 @@
 #include "llvm/Support/YAMLTraits.h"
 #include <string>
 
+LLVM_YAML_IS_FLOW_SEQUENCE_VECTOR(std::string)
 LLVM_YAML_IS_SEQUENCE_VECTOR(clang::tooling::AtomicChange)
 
 namespace {

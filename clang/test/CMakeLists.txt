@@ -47,7 +47,6 @@ list(APPEND CLANG_TEST_DEPS
   clang-tblgen
   clang-offload-bundler
   clang-import-test
-  clang-rename
   )
   
 if(CLANG_ENABLE_STATIC_ANALYZER)

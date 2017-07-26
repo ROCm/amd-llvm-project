@@ -217,7 +217,7 @@ static bool printSourceSymbolsFromModule(StringRef modulePath,
   IntrusiveRefCntPtr<DiagnosticsEngine> Diags =
       CompilerInstance::createDiagnostics(new DiagnosticOptions());
   std::unique_ptr<ASTUnit> AU = ASTUnit::LoadFromASTFile(
-      modulePath, *pchRdr, ASTUnit::LoadASTOnly, Diags,
+      modulePath, *pchRdr, Diags,
       FileSystemOpts, /*UseDebugInfo=*/false,
       /*OnlyLocalDecls=*/true, None,
       /*CaptureDiagnostics=*/false,

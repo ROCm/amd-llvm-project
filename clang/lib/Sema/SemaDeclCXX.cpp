@@ -3821,15 +3821,6 @@ Sema::BuildMemInitializer(Decl *ConstructorD,
           if (BaseType.isNull())
             return true;
 
-          TInfo = Context.CreateTypeSourceInfo(BaseType);
-          DependentNameTypeLoc TL =
-              TInfo->getTypeLoc().castAs<DependentNameTypeLoc>();
-          if (!TL.isNull()) {
-            TL.setNameLoc(IdLoc);
-            TL.setElaboratedKeywordLoc(SourceLocation());
-            TL.setQualifierLoc(SS.getWithLocInContext(Context));
-          }
-
           R.clear();
           R.setLookupName(MemberOrBase);
         }
@@ -14657,8 +14648,7 @@ Decl *Sema::ActOnTemplatedFriendTag(Scope *S, SourceLocation FriendLoc,
                       /*ScopedEnumKWLoc=*/SourceLocation(),
                       /*ScopedEnumUsesClassTag=*/false,
                       /*UnderlyingType=*/TypeResult(),
-                      /*IsTypeSpecifier=*/false,
-                      /*IsTemplateParamOrArg=*/false);
+                      /*IsTypeSpecifier=*/false);
     }
 
     NestedNameSpecifierLoc QualifierLoc = SS.getWithLocInContext(Context);
@@ -15141,9 +15131,6 @@ void Sema::SetDeclDeleted(Decl *Dcl, SourceLocation DelLoc) {
     Diag(DelLoc, diag::err_deleted_non_function);
     return;
   }
-
-  // Deleted function does not have a body.
-  Fn->setWillHaveBody(false);
 
   if (const FunctionDecl *Prev = Fn->getPreviousDecl()) {
     // Don't consider the implicit declaration we generate for explicit

@@ -23,11 +23,10 @@ using namespace clang;
 using namespace llvm::opt;
 
 Compilation::Compilation(const Driver &D, const ToolChain &_DefaultToolChain,
-                         InputArgList *_Args, DerivedArgList *_TranslatedArgs,
-                         bool ContainsError)
+                         InputArgList *_Args, DerivedArgList *_TranslatedArgs)
     : TheDriver(D), DefaultToolChain(_DefaultToolChain), ActiveOffloadMask(0u),
       Args(_Args), TranslatedArgs(_TranslatedArgs), Redirects(nullptr),
-      ForDiagnostics(false), ContainsError(ContainsError) {
+      ForDiagnostics(false) {
   // The offloading host toolchain is the default tool chain.
   OrderedOffloadingToolchains.insert(
       std::make_pair(Action::OFK_Host, &DefaultToolChain));

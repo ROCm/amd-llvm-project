@@ -1186,7 +1186,7 @@ class Predicate
 /// @brief A C++ wrapper class for providing threaded access to a value
 /// of type T.
 ///
-/// A template specialization class.
+/// A template specilization class.
 //----------------------------------------------------------------------
 template<> class Predicate<int, char>
 {

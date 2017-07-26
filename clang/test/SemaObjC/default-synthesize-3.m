@@ -173,13 +173,13 @@ typedef NSObject<Fooing> FooObject;
 @end
 
 @implementation Okay // expected-warning {{auto property synthesis will not synthesize property 'muahahaha' declared in protocol 'Fooing'}} expected-warning {{auto property synthesis will not synthesize property 'hoho' declared in protocol 'SubFooling'}}
-@end // expected-note 2 {{add a '@synthesize' directive}}
+@end
 
 @interface Fail : FooObject
 @end
 
 @implementation Fail // expected-warning {{auto property synthesis will not synthesize property 'muahahaha' declared in protocol 'Fooing'}} expected-warning {{auto property synthesis will not synthesize property 'hoho' declared in protocol 'SubFooling'}}
-@end // expected-note 2 {{add a '@synthesize' directive}}
+@end
 
 // rdar://16089191
 @class NSURL;

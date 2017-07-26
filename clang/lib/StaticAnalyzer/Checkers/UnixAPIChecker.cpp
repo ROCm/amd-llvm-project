@@ -45,8 +45,6 @@ class UnixAPIChecker : public Checker< check::PreStmt<CallExpr> > {
   mutable Optional<uint64_t> Val_O_CREAT;
 
 public:
-  DefaultBool CheckMisuse, CheckPortability;
-
   void checkPreStmt(const CallExpr *CE, CheckerContext &C) const;
 
   void CheckOpen(CheckerContext &C, const CallExpr *CE) const;
@@ -439,42 +437,29 @@ void UnixAPIChecker::checkPreStmt(const CallExpr *CE,
   if (FName.empty())
     return;
 
-  if (CheckMisuse) {
-    if (SubChecker SC =
-            llvm::StringSwitch<SubChecker>(FName)
-                .Case("open", &UnixAPIChecker::CheckOpen)
-                .Case("openat", &UnixAPIChecker::CheckOpenAt)
-                .Case("pthread_once", &UnixAPIChecker::CheckPthreadOnce)
-                .Default(nullptr)) {
-      (this->*SC)(C, CE);
-    }
-  }
-  if (CheckPortability) {
-    if (SubChecker SC =
-            llvm::StringSwitch<SubChecker>(FName)
-                .Case("calloc", &UnixAPIChecker::CheckCallocZero)
-                .Case("malloc", &UnixAPIChecker::CheckMallocZero)
-                .Case("realloc", &UnixAPIChecker::CheckReallocZero)
-                .Case("reallocf", &UnixAPIChecker::CheckReallocfZero)
-                .Cases("alloca", "__builtin_alloca",
-                       &UnixAPIChecker::CheckAllocaZero)
-                .Case("__builtin_alloca_with_align",
-                      &UnixAPIChecker::CheckAllocaWithAlignZero)
-                .Case("valloc", &UnixAPIChecker::CheckVallocZero)
-                .Default(nullptr)) {
-      (this->*SC)(C, CE);
-    }
-  }
+  SubChecker SC =
+    llvm::StringSwitch<SubChecker>(FName)
+      .Case("open", &UnixAPIChecker::CheckOpen)
+      .Case("openat", &UnixAPIChecker::CheckOpenAt)
+      .Case("pthread_once", &UnixAPIChecker::CheckPthreadOnce)
+      .Case("calloc", &UnixAPIChecker::CheckCallocZero)
+      .Case("malloc", &UnixAPIChecker::CheckMallocZero)
+      .Case("realloc", &UnixAPIChecker::CheckReallocZero)
+      .Case("reallocf", &UnixAPIChecker::CheckReallocfZero)
+      .Cases("alloca", "__builtin_alloca", &UnixAPIChecker::CheckAllocaZero)
+      .Case("__builtin_alloca_with_align",
+            &UnixAPIChecker::CheckAllocaWithAlignZero)
+      .Case("valloc", &UnixAPIChecker::CheckVallocZero)
+      .Default(nullptr);
+
+  if (SC)
+    (this->*SC)(C, CE);
 }
 
 //===----------------------------------------------------------------------===//
 // Registration.
 //===----------------------------------------------------------------------===//
 
-#define REGISTER_CHECKER(Name)                                                 \
-  void ento::registerUnixAPI##Name##Checker(CheckerManager &mgr) {             \
-    mgr.registerChecker<UnixAPIChecker>()->Check##Name = true;                 \
-  }
-
-REGISTER_CHECKER(Misuse)
-REGISTER_CHECKER(Portability)
+void ento::registerUnixAPIChecker(CheckerManager &mgr) {
+  mgr.registerChecker<UnixAPIChecker>();
+}

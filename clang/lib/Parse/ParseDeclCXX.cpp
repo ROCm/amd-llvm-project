@@ -1888,8 +1888,7 @@ void Parser::ParseClassSpecifier(tok::TokenKind TagTokKind,
                                        SourceLocation(), false,
                                        clang::TypeResult(),
                                        DSC == DSC_type_specifier,
-                                       DSC == DSC_template_param ||
-                                       DSC == DSC_template_type_arg, &SkipBody);
+                                       &SkipBody);
 
     // If ActOnTag said the type was dependent, try again with the
     // less common call.
@@ -1911,22 +1910,12 @@ void Parser::ParseClassSpecifier(tok::TokenKind TagTokKind,
     else if (getLangOpts().CPlusPlus)
       ParseCXXMemberSpecification(StartLoc, AttrFixitLoc, attrs, TagType,
                                   TagOrTempResult.get());
-    else {
-      Decl *D =
-          SkipBody.CheckSameAsPrevious ? SkipBody.New : TagOrTempResult.get();
-      // Parse the definition body.
-      ParseStructUnionBody(StartLoc, TagType, D);
-      if (SkipBody.CheckSameAsPrevious &&
-          !Actions.ActOnDuplicateDefinition(DS, TagOrTempResult.get(),
-                                            SkipBody)) {
-        DS.SetTypeSpecError();
-        return;
-      }
-    }
+    else
+      ParseStructUnionBody(StartLoc, TagType, TagOrTempResult.get());
   }
 
   if (!TagOrTempResult.isInvalid())
-    // Delayed processing of attributes.
+    // Delayed proccessing of attributes.
     Actions.ProcessDeclAttributeDelayed(TagOrTempResult.get(), attrs.getList());
 
   const char *PrevSpec = nullptr;
