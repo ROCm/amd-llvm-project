@@ -15,7 +15,8 @@ function(find_first_existing_file out_var)
 endfunction()
 
 macro(find_first_existing_vc_file out_var path)
-  set(git_path "${path}/.git")
+  #set(git_path "${path}/.git")
+  set(git_path "${path}/../../.git") ## workaround for HCC
 
   # Normally '.git' is a directory that contains a 'logs/HEAD' file that
   # is updated as modifications are made to the repository. In case the

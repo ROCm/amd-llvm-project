@@ -2328,14 +2328,6 @@ public:
   /// constant folding.
   uint64_t getTargetNullPointerValue(QualType QT) const;
 
-  /// The target address space corresponding to OpenCL constant address space
-  /// CUDA constant specifier.
-  unsigned getTargetConstantAddressSpace() const;
-
-  /// The target address space corresponding to OpenCL global address space
-  /// or CUDA device specifier.
-  unsigned getTargetGlobalAddressSpace() const;
-
   bool addressSpaceMapManglingFor(unsigned AS) const {
     return AddrSpaceMapMangling || AS >= LangAS::FirstTargetAddressSpace;
   }

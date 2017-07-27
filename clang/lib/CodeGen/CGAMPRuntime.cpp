@@ -307,7 +307,8 @@ void CGAMPRuntime::EmitTrampolineBody(CodeGenFunction &CGF,
 
   const CGFunctionInfo &FnInfo = CGM.getTypes().arrangeFreeFunctionCall(KArgs, MT, false);
   CGF.EmitCall(FnInfo, CGCallee::forDirect(fnAddr), ReturnValueSlot(), KArgs);
-  CGM.getTargetCodeGenInfo().setTargetAttributes(KernelDecl, CGF.CurFn, CGM);
+  CGM.getTargetCodeGenInfo().setTargetAttributes(KernelDecl, CGF.CurFn, CGM,
+                                                 ForDefinition);
 }
 
 void CGAMPRuntime::EmitTrampolineNameBody(CodeGenFunction &CGF,

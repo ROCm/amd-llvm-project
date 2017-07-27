@@ -329,18 +329,6 @@ public:
     return 0;
   }
 
-  /// The target address space corresponding to OpenCL constant address space
-  /// CUDA constant specifier.
-  virtual unsigned getConstantAddressSpace() const {
-    return 0;
-  }
-
-  /// The target address space corresponding to OpenCL global address space
-  /// or CUDA device specifier.
-  virtual unsigned getGlobalAddressSpace() const {
-    return 0;
-  }
-
   /// \brief Return the size of '_Bool' and C++ 'bool' for this target, in bits.
   unsigned getBoolWidth() const { return BoolWidth; }
 

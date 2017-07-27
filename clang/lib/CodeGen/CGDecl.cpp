@@ -257,7 +257,7 @@ llvm::Constant *CodeGenModule::getOrCreateStaticVarDecl(
 
   // HCC tile_static pointer would be in generic address space
   if (D.hasAttr<HCCTileStaticAttr>()) {
-    ExpectedAddrSpace = getContext().getTargetAddressSpace(LangAS::hcc_generic);
+    ExpectedAS = LangAS::hcc_generic;
   }
 
   llvm::Constant *Addr = GV;
@@ -1302,7 +1302,7 @@ void CodeGenFunction::EmitAutoVarInit(const AutoVarEmission &emission) {
     // Otherwise, create a temporary global with the initializer then
     // memcpy from the global to the alloca.
     std::string Name = getStaticDeclName(CGM, D);
-    unsigned AS = CGM.getContext().getTargetConstantAddressSpace();
+    unsigned AS = 0;
     if (getLangOpts().OpenCL || getLangOpts().CPlusPlusAMP) {
       AS = CGM.getContext().getTargetAddressSpace(LangAS::opencl_constant);
       BP = llvm::PointerType::getInt8PtrTy(getLLVMContext(), AS);

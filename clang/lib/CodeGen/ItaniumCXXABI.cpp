@@ -2029,13 +2029,12 @@ void ItaniumCXXABI::EmitGuardedInit(CodeGenFunction &CGF,
 
     // Create the guard variable with a zero-initializer.
     // Just absorb linkage and visibility from the guarded variable.
-    guard = new llvm::GlobalVariable(CGM.getModule(), guardTy,
-                                     false, var->getLinkage(),
-                                     llvm::ConstantInt::get(guardTy, 0),
-                                     guardName.str(),
-                                     /* InsertBefore */ nullptr,
-                                     llvm::GlobalValue::NotThreadLocal,
-                                     getContext().getTargetGlobalAddressSpace());
+    guard = new llvm::GlobalVariable(
+        CGM.getModule(), guardTy, false, var->getLinkage(),
+        llvm::ConstantInt::get(guardTy, 0), guardName.str(),
+        /* InsertBefore */ nullptr, llvm::GlobalValue::NotThreadLocal,
+        getContext().getTargetAddressSpace(
+            CGM.getTargetCodeGenInfo().getGlobalVarAddressSpace(CGM, nullptr)));
     guard->setVisibility(var->getVisibility());
     // If the variable is thread-local, so is its guard variable.
     guard->setThreadLocalMode(var->getThreadLocalMode());

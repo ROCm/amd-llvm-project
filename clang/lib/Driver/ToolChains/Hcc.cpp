@@ -367,10 +367,10 @@ HCCToolChain::HCCToolChain(const Driver &D, const llvm::Triple &Triple,
   GCCInstallation.init(defaultTriple, Args);
 }
 
-void
-HCCToolChain::addClangTargetOptions(const llvm::opt::ArgList &DriverArgs,
-                                    llvm::opt::ArgStringList &CC1Args) const {
-  Linux::addClangTargetOptions(DriverArgs, CC1Args);
+void HCCToolChain::addClangTargetOptions(
+    const llvm::opt::ArgList &DriverArgs, llvm::opt::ArgStringList &CC1Args,
+    Action::OffloadKind DeviceOffloadKind) const {
+  Linux::addClangTargetOptions(DriverArgs, CC1Args, DeviceOffloadKind);
 
   // TBD, depends on mode set correct arguments
 }

@@ -3742,9 +3742,13 @@ GenerateStringLiteral(llvm::Constant *C, llvm::GlobalValue::LinkageTypes LT,
                       CodeGenModule &CGM, StringRef GlobalName,
                       CharUnits Alignment) {
   // OpenCL v1.2 s6.5.3: a string literal is in the constant address space.
-  unsigned AddrSpace = CGM.getContext().getTargetConstantAddressSpace();
+  unsigned AddrSpace;
   if (CGM.getLangOpts().OpenCL)
-    AddrSpace = CGM.getContext().getTargetAddressSpace(LangAS::opencl_constant);
+    AddrSpace = LangAS::opencl_constant;
+  else
+    AddrSpace =
+        CGM.getTarget().getConstantAddressSpace().getValueOr(LangAS::Default);
+  AddrSpace = CGM.getContext().getTargetAddressSpace(AddrSpace);
 
   llvm::Module &M = CGM.getModule();
   // Create a global variable for this string

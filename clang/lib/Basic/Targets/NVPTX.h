@@ -28,11 +28,15 @@ static const unsigned NVPTXAddrSpaceMap[] = {
     1, // opencl_global
     3, // opencl_local
     4, // opencl_constant
+    0, // opencl_private
     // FIXME: generic has to be added to the target
     0, // opencl_generic
     1, // cuda_device
     4, // cuda_constant
     3, // cuda_shared
+    3, // hcc_tilestatic
+    0, // hcc_generic
+    1, // hcc_global
 };
 
 class LLVM_LIBRARY_VISIBILITY NVPTXTargetInfo : public TargetInfo {
