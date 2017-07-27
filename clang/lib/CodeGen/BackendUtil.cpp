@@ -415,11 +415,7 @@ static void initTargetOptions(llvm::TargetOptions &Options,
   Options.RelaxELFRelocations = CodeGenOpts.RelaxELFRelocations;
 
   // Set EABI version.
-  Options.EABIVersion = llvm::StringSwitch<llvm::EABI>(TargetOpts.EABIVersion)
-                            .Case("4", llvm::EABI::EABI4)
-                            .Case("5", llvm::EABI::EABI5)
-                            .Case("gnu", llvm::EABI::GNU)
-                            .Default(llvm::EABI::Default);
+  Options.EABIVersion = TargetOpts.EABIVersion;
 
   if (LangOpts.SjLjExceptions)
     Options.ExceptionModel = llvm::ExceptionHandling::SjLj;
@@ -875,6 +871,14 @@ void EmitAssemblyHelper::EmitAssemblyWithNewPassManager(
   // Register the AA manager first so that our version is the one used.
   FAM.registerPass([&] { return PB.buildDefaultAAPipeline(); });
 
+  // Register the target library analysis directly and give it a customized
+  // preset TLI.
+  Triple TargetTriple(TheModule->getTargetTriple());
+  std::unique_ptr<TargetLibraryInfoImpl> TLII(
+      createTLII(TargetTriple, CodeGenOpts));
+  FAM.registerPass([&] { return TargetLibraryAnalysis(*TLII); });
+  MAM.registerPass([&] { return TargetLibraryAnalysis(*TLII); });
+
   // Register all the basic analyses with the managers.
   PB.registerModuleAnalyses(MAM);
   PB.registerCGSCCAnalyses(CGAM);
@@ -1002,7 +1006,7 @@ static void runThinLTOBackend(ModuleSummaryIndex *CombinedIndex, Module *M,
                               std::unique_ptr<raw_pwrite_stream> OS,
                               std::string SampleProfile,
                               BackendAction Action) {
-  StringMap<std::map<GlobalValue::GUID, GlobalValueSummary *>>
+  StringMap<DenseMap<GlobalValue::GUID, GlobalValueSummary *>>
       ModuleToDefinedGVSummaries;
   CombinedIndex->collectDefinedGVSummariesPerModule(ModuleToDefinedGVSummaries);
 

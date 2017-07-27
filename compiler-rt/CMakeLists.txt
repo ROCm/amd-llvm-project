@@ -78,9 +78,10 @@ option(COMPILER_RT_EXTERNALIZE_DEBUGINFO
 # COMPILER_RT_DEBUG_PYBOOL is used by lit.common.configured.in.
 pythonize_bool(COMPILER_RT_DEBUG)
 
+include(HandleCompilerRT)
 include(config-ix)
 
-if(APPLE AND SANITIZER_MIN_OSX_VERSION VERSION_LESS "10.9")
+if(APPLE AND SANITIZER_MIN_OSX_VERSION AND SANITIZER_MIN_OSX_VERSION VERSION_LESS "10.9")
   # Mac OS X prior to 10.9 had problems with exporting symbols from
   # libc++/libc++abi.
   set(use_cxxabi_default OFF)
@@ -92,6 +93,8 @@ endif()
 
 option(SANITIZER_CAN_USE_CXXABI "Sanitizers can use cxxabi" ${use_cxxabi_default})
 pythonize_bool(SANITIZER_CAN_USE_CXXABI)
+
+option(SANITIZER_USE_COMPILER_RT "Use compiler-rt builtins instead of libgcc" OFF)
 
 #================================
 # Setup Compiler Flags
@@ -172,10 +175,16 @@ endif()
 
 append_list_if(COMPILER_RT_DEBUG -DSANITIZER_DEBUG=1 SANITIZER_COMMON_CFLAGS)
 
-# Build with optimization, unless we're in debug mode. If we're using MSVC,
+# If we're using MSVC,
 # always respect the optimization flags set by CMAKE_BUILD_TYPE instead.
-if(NOT COMPILER_RT_DEBUG AND NOT MSVC)
-  list(APPEND SANITIZER_COMMON_CFLAGS -O3)
+if (NOT MSVC)
+
+  # Build with optimization, unless we're in debug mode. 
+  if(COMPILER_RT_DEBUG)
+    list(APPEND SANITIZER_COMMON_CFLAGS -O0)
+  else()
+    list(APPEND SANITIZER_COMMON_CFLAGS -O3)
+  endif()
 endif()
 
 # Determine if we should restrict stack frame sizes.
@@ -221,6 +230,19 @@ append_list_if(COMPILER_RT_HAS_WD4291_FLAG /wd4291 SANITIZER_COMMON_CFLAGS)
 append_list_if(COMPILER_RT_HAS_WD4391_FLAG /wd4391 SANITIZER_COMMON_CFLAGS)
 append_list_if(COMPILER_RT_HAS_WD4722_FLAG /wd4722 SANITIZER_COMMON_CFLAGS)
 append_list_if(COMPILER_RT_HAS_WD4800_FLAG /wd4800 SANITIZER_COMMON_CFLAGS)
+
+# Set common link flags.
+append_list_if(COMPILER_RT_HAS_NODEFAULTLIBS_FLAG -nodefaultlibs SANITIZER_COMMON_LINK_FLAGS)
+
+if (SANITIZER_USE_COMPILER_RT)
+  list(APPEND SANITIZER_COMMON_LINK_FLAGS -rtlib=compiler-rt)
+  find_compiler_rt_library(builtins COMPILER_RT_BUILTINS_LIBRARY)
+  list(APPEND SANITIZER_COMMON_LINK_LIBS ${COMPILER_RT_BUILTINS_LIBRARY})
+else()
+  append_list_if(COMPILER_RT_HAS_GCC_S_LIB gcc_s SANITIZER_COMMON_LINK_LIBS)
+endif()
+
+append_list_if(COMPILER_RT_HAS_LIBC c SANITIZER_COMMON_LINK_LIBS)
 
 # Warnings to turn off for all libraries, not just sanitizers.
 append_string_if(COMPILER_RT_HAS_WUNUSED_PARAMETER_FLAG -Wno-unused-parameter CMAKE_C_FLAGS CMAKE_CXX_FLAGS)

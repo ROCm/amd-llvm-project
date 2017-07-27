@@ -73,7 +73,7 @@ public:
 
   void applyFixup(const MCAssembler &Asm, const MCFixup &Fixup,
                   const MCValue &Target, MutableArrayRef<char> Data,
-                  uint64_t Value, bool IsPCRel) const override;
+                  uint64_t Value, bool IsResolved) const override;
 
   bool mayNeedRelaxation(const MCInst &Inst) const override;
   bool fixupNeedsRelaxation(const MCFixup &Fixup, uint64_t Value,
@@ -88,6 +88,9 @@ public:
   unsigned getPointerSize() const { return 8; }
 
   unsigned getFixupKindContainereSizeInBytes(unsigned Kind) const;
+
+  bool shouldForceRelocation(const MCAssembler &Asm, const MCFixup &Fixup,
+                             const MCValue &Target) override;
 };
 
 } // end anonymous namespace
@@ -104,8 +107,9 @@ static unsigned getFixupKindNumBytes(unsigned Kind) {
   case FK_Data_1:
     return 1;
 
-  case FK_Data_2:
   case AArch64::fixup_aarch64_movw:
+  case FK_Data_2:
+  case FK_SecRel_2:
     return 2;
 
   case AArch64::fixup_aarch64_pcrel_branch14:
@@ -124,6 +128,7 @@ static unsigned getFixupKindNumBytes(unsigned Kind) {
   case AArch64::fixup_aarch64_pcrel_branch26:
   case AArch64::fixup_aarch64_pcrel_call26:
   case FK_Data_4:
+  case FK_SecRel_4:
     return 4;
 
   case FK_Data_8:
@@ -218,6 +223,8 @@ static uint64_t adjustFixupValue(const MCFixup &Fixup, uint64_t Value,
   case FK_Data_2:
   case FK_Data_4:
   case FK_Data_8:
+  case FK_SecRel_2:
+  case FK_SecRel_4:
     return Value;
   }
 }
@@ -264,7 +271,7 @@ unsigned AArch64AsmBackend::getFixupKindContainereSizeInBytes(unsigned Kind) con
 void AArch64AsmBackend::applyFixup(const MCAssembler &Asm, const MCFixup &Fixup,
                                    const MCValue &Target,
                                    MutableArrayRef<char> Data, uint64_t Value,
-                                   bool IsPCRel) const {
+                                   bool IsResolved) const {
   unsigned NumBytes = getFixupKindNumBytes(Fixup.getKind());
   if (!Value)
     return; // Doesn't change encoding.
@@ -332,6 +339,26 @@ bool AArch64AsmBackend::writeNopData(uint64_t Count, MCObjectWriter *OW) const {
   for (uint64_t i = 0; i != Count; ++i)
     OW->write32(0xd503201f);
   return true;
+}
+
+bool AArch64AsmBackend::shouldForceRelocation(const MCAssembler &Asm,
+                                              const MCFixup &Fixup,
+                                              const MCValue &Target) {
+  // The ADRP instruction adds some multiple of 0x1000 to the current PC &
+  // ~0xfff. This means that the required offset to reach a symbol can vary by
+  // up to one step depending on where the ADRP is in memory. For example:
+  //
+  //     ADRP x0, there
+  //  there:
+  //
+  // If the ADRP occurs at address 0xffc then "there" will be at 0x1000 and
+  // we'll need that as an offset. At any other address "there" will be in the
+  // same page as the ADRP and the instruction should encode 0x0. Assuming the
+  // section isn't 0x1000-aligned, we therefore need to delegate this decision
+  // to the linker -- a relocation!
+  if ((uint32_t)Fixup.getKind() == AArch64::fixup_aarch64_pcrel_adrp_imm21)
+    return true;
+  return false;
 }
 
 namespace {
@@ -540,30 +567,7 @@ public:
   MCObjectWriter *createObjectWriter(raw_pwrite_stream &OS) const override {
     return createAArch64ELFObjectWriter(OS, OSABI, IsLittleEndian, IsILP32);
   }
-
-  void processFixupValue(const MCAssembler &Asm, const MCFixup &Fixup,
-                         const MCValue &Target, bool &IsResolved) override;
 };
-
-void ELFAArch64AsmBackend::processFixupValue(const MCAssembler &Asm,
-                                             const MCFixup &Fixup,
-                                             const MCValue &Target,
-                                             bool &IsResolved) {
-  // The ADRP instruction adds some multiple of 0x1000 to the current PC &
-  // ~0xfff. This means that the required offset to reach a symbol can vary by
-  // up to one step depending on where the ADRP is in memory. For example:
-  //
-  //     ADRP x0, there
-  //  there:
-  //
-  // If the ADRP occurs at address 0xffc then "there" will be at 0x1000 and
-  // we'll need that as an offset. At any other address "there" will be in the
-  // same page as the ADRP and the instruction should encode 0x0. Assuming the
-  // section isn't 0x1000-aligned, we therefore need to delegate this decision
-  // to the linker -- a relocation!
-  if ((uint32_t)Fixup.getKind() == AArch64::fixup_aarch64_pcrel_adrp_imm21)
-    IsResolved = false;
-}
 
 }
 

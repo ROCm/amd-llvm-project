@@ -284,6 +284,14 @@ public:
     // linkage together with vtables when needed.
     if (ForVTable && !Thunk->hasLocalLinkage())
       Thunk->setLinkage(llvm::GlobalValue::AvailableExternallyLinkage);
+
+    // Propagate dllexport storage, to enable the linker to generate import
+    // thunks as necessary (e.g. when a parent class has a key function and a
+    // child class doesn't, and the construction vtable for the parent in the
+    // child needs to reference the parent's thunks).
+    const CXXMethodDecl *MD = cast<CXXMethodDecl>(GD.getDecl());
+    if (MD->hasAttr<DLLExportAttr>())
+      Thunk->setDLLStorageClass(llvm::GlobalValue::DLLExportStorageClass);
   }
 
   llvm::Value *performThisAdjustment(CodeGenFunction &CGF, Address This,
@@ -2732,7 +2740,9 @@ static bool ShouldUseExternalRTTIDescriptor(CodeGenModule &CGM,
     // function.
     bool IsDLLImport = RD->hasAttr<DLLImportAttr>();
     if (CGM.getVTables().isVTableExternal(RD))
-      return IsDLLImport ? false : true;
+      return IsDLLImport && !CGM.getTriple().isWindowsItaniumEnvironment()
+                 ? false
+                 : true;
 
     if (IsDLLImport)
       return true;
@@ -2957,6 +2967,8 @@ static llvm::GlobalVariable::LinkageTypes getTypeInfoLinkage(CodeGenModule &CGM,
     return llvm::GlobalValue::InternalLinkage;
 
   case VisibleNoLinkage:
+  case ModuleInternalLinkage:
+  case ModuleLinkage:
   case ExternalLinkage:
     // RTTI is not enabled, which means that this type info struct is going
     // to be used for exception handling. Give it linkonce_odr linkage.
@@ -2968,7 +2980,8 @@ static llvm::GlobalVariable::LinkageTypes getTypeInfoLinkage(CodeGenModule &CGM,
       if (RD->hasAttr<WeakAttr>())
         return llvm::GlobalValue::WeakODRLinkage;
       if (CGM.getTriple().isWindowsItaniumEnvironment())
-        if (RD->hasAttr<DLLImportAttr>())
+        if (RD->hasAttr<DLLImportAttr>() &&
+            ShouldUseExternalRTTIDescriptor(CGM, Ty))
           return llvm::GlobalValue::ExternalLinkage;
       if (RD->isDynamicClass()) {
         llvm::GlobalValue::LinkageTypes LT = CGM.getVTableLinkage(RD);
@@ -3181,7 +3194,8 @@ llvm::Constant *ItaniumRTTIBuilder::BuildTypeInfo(QualType Ty, bool Force,
     if (DLLExport || (RD && RD->hasAttr<DLLExportAttr>())) {
       TypeName->setDLLStorageClass(llvm::GlobalValue::DLLExportStorageClass);
       GV->setDLLStorageClass(llvm::GlobalValue::DLLExportStorageClass);
-    } else if (CGM.getLangOpts().RTTI && RD && RD->hasAttr<DLLImportAttr>()) {
+    } else if (RD && RD->hasAttr<DLLImportAttr>() &&
+               ShouldUseExternalRTTIDescriptor(CGM, Ty)) {
       TypeName->setDLLStorageClass(llvm::GlobalValue::DLLImportStorageClass);
       GV->setDLLStorageClass(llvm::GlobalValue::DLLImportStorageClass);
 

@@ -528,8 +528,9 @@ bool RecurrenceDescriptor::isReductionPHI(PHINode *Phi, Loop *TheLoop,
   return false;
 }
 
-bool RecurrenceDescriptor::isFirstOrderRecurrence(PHINode *Phi, Loop *TheLoop,
-                                                  DominatorTree *DT) {
+bool RecurrenceDescriptor::isFirstOrderRecurrence(
+    PHINode *Phi, Loop *TheLoop,
+    DenseMap<Instruction *, Instruction *> &SinkAfter, DominatorTree *DT) {
 
   // Ensure the phi node is in the loop header and has two incoming values.
   if (Phi->getParent() != TheLoop->getHeader() ||
@@ -551,12 +552,24 @@ bool RecurrenceDescriptor::isFirstOrderRecurrence(PHINode *Phi, Loop *TheLoop,
   // Get the previous value. The previous value comes from the latch edge while
   // the initial value comes form the preheader edge.
   auto *Previous = dyn_cast<Instruction>(Phi->getIncomingValueForBlock(Latch));
-  if (!Previous || !TheLoop->contains(Previous) || isa<PHINode>(Previous))
+  if (!Previous || !TheLoop->contains(Previous) || isa<PHINode>(Previous) ||
+      SinkAfter.count(Previous)) // Cannot rely on dominance due to motion.
     return false;
 
   // Ensure every user of the phi node is dominated by the previous value.
   // The dominance requirement ensures the loop vectorizer will not need to
   // vectorize the initial value prior to the first iteration of the loop.
+  // TODO: Consider extending this sinking to handle other kinds of instructions
+  // and expressions, beyond sinking a single cast past Previous.
+  if (Phi->hasOneUse()) {
+    auto *I = Phi->user_back();
+    if (I->isCast() && (I->getParent() == Phi->getParent()) && I->hasOneUse() &&
+        DT->dominates(Previous, I->user_back())) {
+      SinkAfter[I] = Previous;
+      return true;
+    }
+  }
+
   for (User *U : Phi->users())
     if (auto *I = dyn_cast<Instruction>(U)) {
       if (!DT->dominates(Previous, I))
@@ -1363,16 +1376,21 @@ Value *llvm::createTargetReduction(IRBuilder<> &Builder,
   }
 }
 
-void llvm::propagateIRFlags(Value *I, ArrayRef<Value *> VL) {
-  if (auto *VecOp = dyn_cast<Instruction>(I)) {
-    if (auto *I0 = dyn_cast<Instruction>(VL[0])) {
-      // VecOVp is initialized to the 0th scalar, so start counting from index
-      // '1'.
-      VecOp->copyIRFlags(I0);
-      for (int i = 1, e = VL.size(); i < e; ++i) {
-        if (auto *Scalar = dyn_cast<Instruction>(VL[i]))
-          VecOp->andIRFlags(Scalar);
-      }
-    }
+void llvm::propagateIRFlags(Value *I, ArrayRef<Value *> VL, Value *OpValue) {
+  auto *VecOp = dyn_cast<Instruction>(I);
+  if (!VecOp)
+    return;
+  auto *Intersection = (OpValue == nullptr) ? dyn_cast<Instruction>(VL[0])
+                                            : dyn_cast<Instruction>(OpValue);
+  if (!Intersection)
+    return;
+  const unsigned Opcode = Intersection->getOpcode();
+  VecOp->copyIRFlags(Intersection);
+  for (auto *V : VL) {
+    auto *Instr = dyn_cast<Instruction>(V);
+    if (!Instr)
+      continue;
+    if (OpValue == nullptr || Opcode == Instr->getOpcode())
+      VecOp->andIRFlags(V);
   }
 }

@@ -317,7 +317,8 @@ class InstrItineraryData;
     /// isLegalAddressingMode - Return true if the addressing mode represented
     /// by AM is legal for this target, for a load/store of the specified type.
     bool isLegalAddressingMode(const DataLayout &DL, const AddrMode &AM,
-                               Type *Ty, unsigned AS) const override;
+                               Type *Ty, unsigned AS,
+                               Instruction *I = nullptr) const override;
 
     /// getScalingFactorCost - Return the cost of the scaling used in
     /// addressing mode represented by AM.
@@ -510,7 +511,8 @@ class InstrItineraryData;
     bool canCombineStoreAndExtract(Type *VectorTy, Value *Idx,
                                    unsigned &Cost) const override;
 
-    bool canMergeStoresTo(unsigned AddressSpace, EVT MemVT) const override {
+    bool canMergeStoresTo(unsigned AddressSpace, EVT MemVT,
+                          const SelectionDAG &DAG) const override {
       // Do not merge to larger than i32.
       return (MemVT.getSizeInBits() <= 32);
     }
