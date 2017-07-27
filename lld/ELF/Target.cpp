@@ -77,6 +77,8 @@ TargetInfo *elf::getTarget() {
     return getPPCTargetInfo();
   case EM_PPC64:
     return getPPC64TargetInfo();
+  case EM_SPARCV9:
+    return getSPARCV9TargetInfo();
   case EM_X86_64:
     if (Config->EKind == ELF32LEKind)
       return getX32TargetInfo();
@@ -124,6 +126,11 @@ bool TargetInfo::usesOnlyLowPageBits(uint32_t Type) const { return false; }
 bool TargetInfo::needsThunk(RelExpr Expr, uint32_t RelocType,
                             const InputFile *File, const SymbolBody &S) const {
   return false;
+}
+
+bool TargetInfo::inBranchRange(uint32_t RelocType, uint64_t Src,
+                               uint64_t Dst) const {
+  return true;
 }
 
 void TargetInfo::writeIgotPlt(uint8_t *Buf, const SymbolBody &S) const {

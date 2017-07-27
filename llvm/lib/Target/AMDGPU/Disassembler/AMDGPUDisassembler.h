@@ -65,9 +65,12 @@ public:
                               uint64_t Inst,
                               uint64_t Address) const;
 
+  DecodeStatus convertSDWAInst(MCInst &MI) const;
+
   MCOperand decodeOperand_VGPR_32(unsigned Val) const;
   MCOperand decodeOperand_VS_32(unsigned Val) const;
   MCOperand decodeOperand_VS_64(unsigned Val) const;
+  MCOperand decodeOperand_VS_128(unsigned Val) const;
   MCOperand decodeOperand_VSrc16(unsigned Val) const;
   MCOperand decodeOperand_VSrcV216(unsigned Val) const;
 
@@ -77,6 +80,7 @@ public:
 
   MCOperand decodeOperand_SReg_32(unsigned Val) const;
   MCOperand decodeOperand_SReg_32_XM0_XEXEC(unsigned Val) const;
+  MCOperand decodeOperand_SReg_32_XEXEC_HI(unsigned Val) const;
   MCOperand decodeOperand_SReg_64(unsigned Val) const;
   MCOperand decodeOperand_SReg_64_XEXEC(unsigned Val) const;
   MCOperand decodeOperand_SReg_128(unsigned Val) const;
@@ -105,10 +109,10 @@ public:
   MCOperand decodeSpecialReg32(unsigned Val) const;
   MCOperand decodeSpecialReg64(unsigned Val) const;
 
-  MCOperand decodeSDWA9Src(const OpWidthTy Width, unsigned Val) const;
-  MCOperand decodeSDWA9Src16(unsigned Val) const;
-  MCOperand decodeSDWA9Src32(unsigned Val) const;
-  MCOperand decodeSDWA9VopcDst(unsigned Val) const;
+  MCOperand decodeSDWASrc(const OpWidthTy Width, unsigned Val) const;
+  MCOperand decodeSDWASrc16(unsigned Val) const;
+  MCOperand decodeSDWASrc32(unsigned Val) const;
+  MCOperand decodeSDWAVopcDst(unsigned Val) const;
 };
 
 //===----------------------------------------------------------------------===//

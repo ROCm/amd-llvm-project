@@ -97,7 +97,7 @@ class SIMachineFunctionInfo final : public AMDGPUMachineFunction {
   unsigned StackPtrOffsetReg;
 
   // Input registers for non-HSA ABI
-  unsigned PrivateMemoryPtrUserSGPR;
+  unsigned ImplicitBufferPtrUserSGPR;
 
   // Input registers setup for the HSA ABI.
   // User SGPRs in allocation order.
@@ -118,6 +118,11 @@ class SIMachineFunctionInfo final : public AMDGPUMachineFunction {
   unsigned WorkGroupIDZSystemSGPR;
   unsigned WorkGroupInfoSystemSGPR;
   unsigned PrivateSegmentWaveByteOffsetSystemSGPR;
+
+  // VGPR inputs. These are always v0, v1 and v2 for entry functions.
+  unsigned WorkItemIDXVGPR;
+  unsigned WorkItemIDYVGPR;
+  unsigned WorkItemIDZVGPR;
 
   // Graphics info.
   unsigned PSInputAddr;
@@ -179,7 +184,7 @@ private:
   // Private memory buffer
   // Compute directly in sgpr[0:1]
   // Other shaders indirect 64-bits at sgpr[0:1]
-  bool PrivateMemoryInputPtr : 1;
+  bool ImplicitBufferPtr : 1;
 
   MCPhysReg getNextUserSGPR() const {
     assert(NumSystemSGPRs == 0 && "System SGPRs must be added after user SGPRs");
@@ -236,7 +241,7 @@ public:
   unsigned addKernargSegmentPtr(const SIRegisterInfo &TRI);
   unsigned addDispatchID(const SIRegisterInfo &TRI);
   unsigned addFlatScratchInit(const SIRegisterInfo &TRI);
-  unsigned addPrivateMemoryPtr(const SIRegisterInfo &TRI);
+  unsigned addImplicitBufferPtr(const SIRegisterInfo &TRI);
 
   // Add system SGPRs.
   unsigned addWorkGroupIDX() {
@@ -341,8 +346,8 @@ public:
     return WorkItemIDZ;
   }
 
-  bool hasPrivateMemoryInputPtr() const {
-    return PrivateMemoryInputPtr;
+  bool hasImplicitBufferPtr() const {
+    return ImplicitBufferPtr;
   }
 
   unsigned getNumUserSGPRs() const {
@@ -377,10 +382,13 @@ public:
   }
 
   void setStackPtrOffsetReg(unsigned Reg) {
-    assert(Reg != AMDGPU::NoRegister && "Should never be unset");
     StackPtrOffsetReg = Reg;
   }
 
+  // Note the unset value for this is AMDGPU::SP_REG rather than
+  // NoRegister. This is mostly a workaround for MIR tests where state that
+  // can't be directly computed from the function is not preserved in serialized
+  // MIR.
   unsigned getStackPtrOffsetReg() const {
     return StackPtrOffsetReg;
   }
@@ -396,8 +404,8 @@ public:
     return QueuePtrUserSGPR;
   }
 
-  unsigned getPrivateMemoryPtrUserSGPR() const {
-    return PrivateMemoryPtrUserSGPR;
+  unsigned getImplicitBufferPtrUserSGPR() const {
+    return ImplicitBufferPtrUserSGPR;
   }
 
   bool hasSpilledSGPRs() const {

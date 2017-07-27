@@ -1,12 +1,12 @@
 ========================
-LLVM 5.0.0 Release Notes
+LLVM 6.0.0 Release Notes
 ========================
 
 .. contents::
     :local:
 
 .. warning::
-   These are in-progress notes for the upcoming LLVM 5 release.
+   These are in-progress notes for the upcoming LLVM 6 release.
    Release notes for previous releases can be found on
    `the Download Page <http://releases.llvm.org/download.html>`_.
 
@@ -40,22 +40,7 @@ Non-comprehensive list of changes in this release
    functionality, or simply have a lot to talk about), see the `NOTE` below
    for adding a new subsection.
 
-* LLVM's ``WeakVH`` has been renamed to ``WeakTrackingVH`` and a new ``WeakVH``
-  has been introduced.  The new ``WeakVH`` nulls itself out on deletion, but
-  does not track values across RAUW.
-  
-* A new library named ``BinaryFormat`` has been created which holds a collection
-  of code which previously lived in ``Support``.  This includes the
-  ``file_magic`` structure and ``identify_magic`` functions, as well as all the
-  structure and type definitions for DWARF, ELF, COFF, WASM, and MachO file
-  formats.
-  
-* The tool ``llvm-pdbdump`` has been renamed ``llvm-pdbutil`` to better reflect
-  its nature as a general purpose PDB manipulation / diagnostics tool that does
-  more than just dumping contents.
-  
-
-* ... next change ...
+* Note..
 
 .. NOTE
    If you would like to document a larger change, then you can add a
@@ -108,7 +93,13 @@ Changes to the OCaml bindings
  During this release ...
 
 
-External Open Source Projects Using LLVM 5
+Changes to the C API
+--------------------
+
+ During this release ...
+
+
+External Open Source Projects Using LLVM 6
 ==========================================
 
 * A project...

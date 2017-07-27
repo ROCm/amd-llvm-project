@@ -149,11 +149,17 @@ protected:
   bool HasScalarStores;
   bool HasInv2PiInlineImm;
   bool HasSDWA;
+  bool HasSDWAOmod;
+  bool HasSDWAScalar;
+  bool HasSDWASdst;
+  bool HasSDWAMac;
+  bool HasSDWAOutModsVOPC;
   bool HasDPP;
   bool FlatAddressSpace;
   bool FlatInstOffsets;
   bool FlatGlobalInsts;
   bool FlatScratchInsts;
+  bool AddNoCarryInsts;
   bool R600ALUInst;
   bool CaymanISA;
   bool CFALUBug;
@@ -354,6 +360,10 @@ public:
     return FP64FP16Denormals;
   }
 
+  bool supportsMinMaxDenormModes() const {
+    return getGeneration() >= AMDGPUSubtarget::GFX9;
+  }
+
   bool hasFPExceptions() const {
     return FPExceptions;
   }
@@ -410,6 +420,10 @@ public:
     return FlatScratchInsts;
   }
 
+  bool hasAddNoCarry() const {
+    return AddNoCarryInsts;
+  }
+
   bool isMesaKernel(const MachineFunction &MF) const {
     return isMesa3DOS() && !AMDGPU::isShader(MF.getFunction()->getCallingConv());
   }
@@ -429,6 +443,26 @@ public:
 
   bool hasSDWA() const {
     return HasSDWA;
+  }
+
+  bool hasSDWAOmod() const {
+    return HasSDWAOmod;
+  }
+
+  bool hasSDWAScalar() const {
+    return HasSDWAScalar;
+  }
+
+  bool hasSDWASdst() const {
+    return HasSDWASdst;
+  }
+
+  bool hasSDWAMac() const {
+    return HasSDWAMac;
+  }
+
+  bool hasSDWAOutModsVOPC() const {
+    return HasSDWAOutModsVOPC;
   }
 
   /// \brief Returns the offset in bytes from the start of the input buffer

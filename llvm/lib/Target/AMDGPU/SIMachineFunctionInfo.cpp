@@ -23,10 +23,10 @@ using namespace llvm;
 SIMachineFunctionInfo::SIMachineFunctionInfo(const MachineFunction &MF)
   : AMDGPUMachineFunction(MF),
     TIDReg(AMDGPU::NoRegister),
-    ScratchRSrcReg(AMDGPU::NoRegister),
-    ScratchWaveOffsetReg(AMDGPU::NoRegister),
-    FrameOffsetReg(AMDGPU::NoRegister),
-    StackPtrOffsetReg(AMDGPU::NoRegister),
+    ScratchRSrcReg(AMDGPU::PRIVATE_RSRC_REG),
+    ScratchWaveOffsetReg(AMDGPU::SCRATCH_WAVE_OFFSET_REG),
+    FrameOffsetReg(AMDGPU::FP_REG),
+    StackPtrOffsetReg(AMDGPU::SP_REG),
     PrivateSegmentBufferUserSGPR(AMDGPU::NoRegister),
     DispatchPtrUserSGPR(AMDGPU::NoRegister),
     QueuePtrUserSGPR(AMDGPU::NoRegister),
@@ -42,6 +42,9 @@ SIMachineFunctionInfo::SIMachineFunctionInfo(const MachineFunction &MF)
     WorkGroupIDZSystemSGPR(AMDGPU::NoRegister),
     WorkGroupInfoSystemSGPR(AMDGPU::NoRegister),
     PrivateSegmentWaveByteOffsetSystemSGPR(AMDGPU::NoRegister),
+    WorkItemIDXVGPR(AMDGPU::NoRegister),
+    WorkItemIDYVGPR(AMDGPU::NoRegister),
+    WorkItemIDZVGPR(AMDGPU::NoRegister),
     PSInputAddr(0),
     PSInputEnable(0),
     ReturnsVoid(true),
@@ -74,7 +77,7 @@ SIMachineFunctionInfo::SIMachineFunctionInfo(const MachineFunction &MF)
     WorkItemIDX(false),
     WorkItemIDY(false),
     WorkItemIDZ(false),
-    PrivateMemoryInputPtr(false) {
+    ImplicitBufferPtr(false) {
   const SISubtarget &ST = MF.getSubtarget<SISubtarget>();
   const Function *F = MF.getFunction();
   FlatWorkGroupSizes = ST.getFlatWorkGroupSizes(*F);
@@ -86,12 +89,15 @@ SIMachineFunctionInfo::SIMachineFunctionInfo(const MachineFunction &MF)
     ScratchRSrcReg = AMDGPU::SGPR0_SGPR1_SGPR2_SGPR3;
     ScratchWaveOffsetReg = AMDGPU::SGPR4;
     FrameOffsetReg = AMDGPU::SGPR5;
-    return;
+    StackPtrOffsetReg = AMDGPU::SGPR32;
+
+    // FIXME: Not really a system SGPR.
+    PrivateSegmentWaveByteOffsetSystemSGPR = ScratchWaveOffsetReg;
   }
 
   CallingConv::ID CC = F->getCallingConv();
   if (CC == CallingConv::AMDGPU_KERNEL || CC == CallingConv::SPIR_KERNEL) {
-    KernargSegmentPtr = true;
+    KernargSegmentPtr = !F->arg_empty();
     WorkGroupIDX = true;
     WorkItemIDX = true;
   } else if (CC == CallingConv::AMDGPU_PS) {
@@ -100,16 +106,24 @@ SIMachineFunctionInfo::SIMachineFunctionInfo(const MachineFunction &MF)
 
   if (ST.debuggerEmitPrologue()) {
     // Enable everything.
+    WorkGroupIDX = true;
     WorkGroupIDY = true;
     WorkGroupIDZ = true;
+    WorkItemIDX = true;
     WorkItemIDY = true;
     WorkItemIDZ = true;
   } else {
+    if (F->hasFnAttribute("amdgpu-work-group-id-x"))
+      WorkGroupIDX = true;
+
     if (F->hasFnAttribute("amdgpu-work-group-id-y"))
       WorkGroupIDY = true;
 
     if (F->hasFnAttribute("amdgpu-work-group-id-z"))
       WorkGroupIDZ = true;
+
+    if (F->hasFnAttribute("amdgpu-work-item-id-x"))
+      WorkItemIDX = true;
 
     if (F->hasFnAttribute("amdgpu-work-item-id-y"))
       WorkItemIDY = true;
@@ -118,25 +132,28 @@ SIMachineFunctionInfo::SIMachineFunctionInfo(const MachineFunction &MF)
       WorkItemIDZ = true;
   }
 
-  // X, XY, and XYZ are the only supported combinations, so make sure Y is
-  // enabled if Z is.
-  if (WorkItemIDZ)
-    WorkItemIDY = true;
-
   const MachineFrameInfo &FrameInfo = MF.getFrameInfo();
   bool MaySpill = ST.isVGPRSpillingEnabled(*F);
-  bool HasStackObjects = FrameInfo.hasStackObjects() || FrameInfo.hasCalls();
+  bool HasStackObjects = FrameInfo.hasStackObjects();
 
-  if (HasStackObjects || MaySpill) {
-    PrivateSegmentWaveByteOffset = true;
+  if (isEntryFunction()) {
+    // X, XY, and XYZ are the only supported combinations, so make sure Y is
+    // enabled if Z is.
+    if (WorkItemIDZ)
+      WorkItemIDY = true;
 
-    // HS and GS always have the scratch wave offset in SGPR5 on GFX9.
-    if (ST.getGeneration() >= AMDGPUSubtarget::GFX9 &&
-        (CC == CallingConv::AMDGPU_HS || CC == CallingConv::AMDGPU_GS))
-      PrivateSegmentWaveByteOffsetSystemSGPR = AMDGPU::SGPR5;
+    if (HasStackObjects || MaySpill) {
+      PrivateSegmentWaveByteOffset = true;
+
+      // HS and GS always have the scratch wave offset in SGPR5 on GFX9.
+      if (ST.getGeneration() >= AMDGPUSubtarget::GFX9 &&
+          (CC == CallingConv::AMDGPU_HS || CC == CallingConv::AMDGPU_GS))
+        PrivateSegmentWaveByteOffsetSystemSGPR = AMDGPU::SGPR5;
+    }
   }
 
-  if (ST.isAmdCodeObjectV2(MF)) {
+  bool IsCOV2 = ST.isAmdCodeObjectV2(MF);
+  if (IsCOV2) {
     if (HasStackObjects || MaySpill)
       PrivateSegmentBuffer = true;
 
@@ -150,14 +167,18 @@ SIMachineFunctionInfo::SIMachineFunctionInfo(const MachineFunction &MF)
       DispatchID = true;
   } else if (ST.isMesaGfxShader(MF)) {
     if (HasStackObjects || MaySpill)
-      PrivateMemoryInputPtr = true;
+      ImplicitBufferPtr = true;
   }
 
-  // We don't need to worry about accessing spills with flat instructions.
-  // TODO: On VI where we must use flat for global, we should be able to omit
-  // this if it is never used for generic access.
-  if (HasStackObjects && ST.hasFlatAddressSpace() && ST.isAmdHsaOS())
-    FlatScratchInit = true;
+  if (F->hasFnAttribute("amdgpu-kernarg-segment-ptr"))
+    KernargSegmentPtr = true;
+
+  if (ST.hasFlatAddressSpace() && isEntryFunction() && IsCOV2) {
+    // TODO: This could be refined a lot. The attribute is a poor way of
+    // detecting calls that may require it before argument lowering.
+    if (HasStackObjects || F->hasFnAttribute("amdgpu-flat-scratch"))
+      FlatScratchInit = true;
+  }
 }
 
 unsigned SIMachineFunctionInfo::addPrivateSegmentBuffer(
@@ -203,11 +224,11 @@ unsigned SIMachineFunctionInfo::addFlatScratchInit(const SIRegisterInfo &TRI) {
   return FlatScratchInitUserSGPR;
 }
 
-unsigned SIMachineFunctionInfo::addPrivateMemoryPtr(const SIRegisterInfo &TRI) {
-  PrivateMemoryPtrUserSGPR = TRI.getMatchingSuperReg(
+unsigned SIMachineFunctionInfo::addImplicitBufferPtr(const SIRegisterInfo &TRI) {
+  ImplicitBufferPtrUserSGPR = TRI.getMatchingSuperReg(
     getNextUserSGPR(), AMDGPU::sub0, &AMDGPU::SReg_64RegClass);
   NumUserSGPRs += 2;
-  return PrivateMemoryPtrUserSGPR;
+  return ImplicitBufferPtrUserSGPR;
 }
 
 /// Reserve a slice of a VGPR to support spilling for FrameIndex \p FI.

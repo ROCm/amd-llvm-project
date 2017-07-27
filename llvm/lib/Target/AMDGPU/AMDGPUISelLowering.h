@@ -76,6 +76,7 @@ protected:
   SDValue performLoadCombine(SDNode *N, DAGCombinerInfo &DCI) const;
   SDValue performStoreCombine(SDNode *N, DAGCombinerInfo &DCI) const;
   SDValue performClampCombine(SDNode *N, DAGCombinerInfo &DCI) const;
+  SDValue performAssertSZExtCombine(SDNode *N, DAGCombinerInfo &DCI) const;
 
   SDValue splitBinaryBitConstantOpImpl(DAGCombinerInfo &DCI, const SDLoc &SL,
                                        unsigned Opc, SDValue LHS,
@@ -403,6 +404,8 @@ enum NodeType : unsigned {
   STORE_MSKOR,
   LOAD_CONSTANT,
   TBUFFER_STORE_FORMAT,
+  TBUFFER_STORE_FORMAT_X3,
+  TBUFFER_LOAD_FORMAT,
   ATOMIC_CMP_SWAP,
   ATOMIC_INC,
   ATOMIC_DEC,

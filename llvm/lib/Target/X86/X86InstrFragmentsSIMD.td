@@ -641,7 +641,7 @@ def sdmem : Operand<v2f64> {
 // SSE pattern fragments
 //===----------------------------------------------------------------------===//
 
-// Vector load wrappers to prevent folding of non-temporal aligned loads on 
+// Vector load wrappers to prevent folding of non-temporal aligned loads on
 // supporting targets.
 def vec128load : PatFrag<(ops node:$ptr), (load node:$ptr), [{
   return !Subtarget->hasSSE41() || !cast<LoadSDNode>(N)->isNonTemporal() ||
@@ -698,17 +698,20 @@ def alignedstore512 : PatFrag<(ops node:$val, node:$ptr),
 
 // Like 'load', but always requires 128-bit vector alignment.
 def alignedload : PatFrag<(ops node:$ptr), (load node:$ptr), [{
-  return cast<LoadSDNode>(N)->getAlignment() >= 16;
+  return cast<LoadSDNode>(N)->getAlignment() >= 16 &&
+         (!Subtarget->hasSSE41() || !cast<LoadSDNode>(N)->isNonTemporal());
 }]>;
 
 // Like 'load', but always requires 256-bit vector alignment.
 def alignedload256 : PatFrag<(ops node:$ptr), (load node:$ptr), [{
-  return cast<LoadSDNode>(N)->getAlignment() >= 32;
+  return cast<LoadSDNode>(N)->getAlignment() >= 32 &&
+         (!Subtarget->hasAVX2() || !cast<LoadSDNode>(N)->isNonTemporal());
 }]>;
 
 // Like 'load', but always requires 512-bit vector alignment.
 def alignedload512 : PatFrag<(ops node:$ptr), (load node:$ptr), [{
-  return cast<LoadSDNode>(N)->getAlignment() >= 64;
+  return cast<LoadSDNode>(N)->getAlignment() >= 64 &&
+         (!Subtarget->hasAVX512() || !cast<LoadSDNode>(N)->isNonTemporal());
 }]>;
 
 // 128-bit aligned load pattern fragments
@@ -754,16 +757,6 @@ def memopv4f32 : PatFrag<(ops node:$ptr), (v4f32 (memop node:$ptr))>;
 def memopv2f64 : PatFrag<(ops node:$ptr), (v2f64 (memop node:$ptr))>;
 def memopv2i64 : PatFrag<(ops node:$ptr), (v2i64 (memop node:$ptr))>;
 
-// These are needed to match a scalar memop that is used in a vector-only
-// math instruction such as the FP logical ops: andps, andnps, orps, xorps.
-// The memory operand is required to be a 128-bit load, so it must be converted
-// from a vector to a scalar.
-def memopfsf32_128 : PatFrag<(ops node:$ptr),
-  (f32 (extractelt (memopv4f32 node:$ptr), (iPTR 0)))>;
-def memopfsf64_128 : PatFrag<(ops node:$ptr),
-  (f64 (extractelt (memopv2f64 node:$ptr), (iPTR 0)))>;
-
-
 // SSSE3 uses MMX registers for some instructions. They aren't aligned on a
 // 16-byte boundary.
 // FIXME: 8 byte alignment for mmx reads is not required
@@ -772,6 +765,9 @@ def memop64 : PatFrag<(ops node:$ptr), (load node:$ptr), [{
 }]>;
 
 def memopmmx  : PatFrag<(ops node:$ptr), (x86mmx  (memop64 node:$ptr))>;
+
+def X86masked_gather  : SDNode<"X86ISD::MGATHER",  SDTMaskedGather,
+                       [SDNPHasChain, SDNPMayLoad, SDNPMemOperand]>;
 
 def mgatherv4i32 : PatFrag<(ops node:$src1, node:$src2, node:$src3),
   (masked_gather node:$src1, node:$src2, node:$src3) , [{
@@ -794,6 +790,15 @@ def mgatherv2i64 : PatFrag<(ops node:$src1, node:$src2, node:$src3),
   if (MaskedGatherSDNode *Mgt = dyn_cast<MaskedGatherSDNode>(N))
     return (Mgt->getIndex().getValueType() == MVT::v2i64 ||
             Mgt->getBasePtr().getValueType() == MVT::v2i64);
+  return false;
+}]>;
+def X86mgatherv2i64 : PatFrag<(ops node:$src1, node:$src2, node:$src3),
+  (X86masked_gather node:$src1, node:$src2, node:$src3) , [{
+  if (X86MaskedGatherSDNode *Mgt = dyn_cast<X86MaskedGatherSDNode>(N))
+    return (Mgt->getIndex().getValueType() == MVT::v2i64 ||
+            Mgt->getBasePtr().getValueType() == MVT::v2i64) &&
+           (Mgt->getMemoryVT() == MVT::v2i32 ||
+            Mgt->getMemoryVT() == MVT::v2f32);
   return false;
 }]>;
 def mgatherv4i64 : PatFrag<(ops node:$src1, node:$src2, node:$src3),

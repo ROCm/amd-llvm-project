@@ -16,6 +16,7 @@
 #include <netinet/in.h>
 #include <sys/mman.h> // for mmap
 #include <sys/socket.h>
+#include <unistd.h>
 #endif
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -35,12 +36,12 @@
 #include "lldb/Core/PluginManager.h"
 #include "lldb/Core/State.h"
 #include "lldb/Core/StreamFile.h"
-#include "lldb/Core/Timer.h"
 #include "lldb/Core/Value.h"
 #include "lldb/DataFormatters/FormatManager.h"
 #include "lldb/Host/ConnectionFileDescriptor.h"
 #include "lldb/Host/FileSystem.h"
 #include "lldb/Host/HostThread.h"
+#include "lldb/Host/PosixApi.h"
 #include "lldb/Host/PseudoTerminal.h"
 #include "lldb/Host/StringConvert.h"
 #include "lldb/Host/Symbols.h"
@@ -66,6 +67,7 @@
 #include "lldb/Utility/CleanUp.h"
 #include "lldb/Utility/FileSpec.h"
 #include "lldb/Utility/StreamString.h"
+#include "lldb/Utility/Timer.h"
 
 // Project includes
 #include "GDBRemoteRegisterContext.h"
@@ -599,7 +601,7 @@ void ProcessGDBRemote::BuildDynamicRegisterInfo(bool force) {
         // gets called in DidAttach, when the target architecture (and
         // consequently the ABI we'll get from
         // the process) may be wrong.
-        ABISP abi_to_use = ABI::FindPlugin(arch_to_use);
+        ABISP abi_to_use = ABI::FindPlugin(shared_from_this(), arch_to_use);
 
         AugmentRegisterInfoViaABI(reg_info, reg_name, abi_to_use);
 
@@ -1031,6 +1033,7 @@ Status ProcessGDBRemote::ConnectToDebugserver(llvm::StringRef connect_url) {
   m_gdb_comm.GetHostInfo();
   m_gdb_comm.GetVContSupported('c');
   m_gdb_comm.GetVAttachOrWaitSupported();
+  m_gdb_comm.EnableErrorStringInPacket();
 
   // Ask the remote server for the default thread id
   if (GetTarget().GetNonStopModeEnabled())
@@ -4419,7 +4422,7 @@ bool ProcessGDBRemote::GetGDBServerRegisterInfo(ArchSpec &arch_to_use) {
       // that context we haven't
       // set the Target's architecture yet, so the ABI is also potentially
       // incorrect.
-      ABISP abi_to_use_sp = ABI::FindPlugin(arch_to_use);
+      ABISP abi_to_use_sp = ABI::FindPlugin(shared_from_this(), arch_to_use);
       if (feature_node) {
         ParseRegisters(feature_node, target_info, this->m_register_info,
                        abi_to_use_sp, cur_reg_num, reg_offset);

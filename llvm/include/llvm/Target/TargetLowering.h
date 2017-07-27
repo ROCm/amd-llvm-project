@@ -410,8 +410,13 @@ public:
     return false;
   }
 
+  /// Should we merge stores after Legalization (generally
+  /// better quality) or before (simpler)
+  virtual bool mergeStoresAfterLegalization() const { return false; }
+
   /// Returns if it's reasonable to merge stores to MemVT size.
-  virtual bool canMergeStoresTo(unsigned AddressSpace, EVT MemVT) const {
+  virtual bool canMergeStoresTo(unsigned AS, EVT MemVT,
+                                const SelectionDAG &DAG) const {
     return true;
   }
 
@@ -728,8 +733,7 @@ public:
   /// VECTOR_SHUFFLE operations, those with specific masks.  By default, if a
   /// target supports the VECTOR_SHUFFLE node, all mask values are assumed to be
   /// legal.
-  virtual bool isShuffleMaskLegal(const SmallVectorImpl<int> &/*Mask*/,
-                                  EVT /*VT*/) const {
+  virtual bool isShuffleMaskLegal(ArrayRef<int> /*Mask*/, EVT /*VT*/) const {
     return true;
   }
 
@@ -1370,6 +1374,12 @@ public:
   /// Returns the target-specific address of the unsafe stack pointer.
   virtual Value *getSafeStackPointerLocation(IRBuilder<> &IRB) const;
 
+  /// Returns the name of the symbol used to emit stack probes or the empty
+  /// string if not applicable.
+  virtual StringRef getStackProbeSymbolName(MachineFunction &MF) const {
+    return "";
+  }
+
   /// Returns true if a cast between SrcAS and DestAS is a noop.
   virtual bool isNoopAddrSpaceCast(unsigned SrcAS, unsigned DestAS) const {
     return false;
@@ -1876,7 +1886,8 @@ public:
   ///
   /// TODO: Remove default argument
   virtual bool isLegalAddressingMode(const DataLayout &DL, const AddrMode &AM,
-                                     Type *Ty, unsigned AddrSpace) const;
+                                     Type *Ty, unsigned AddrSpace,
+                                     Instruction *I = nullptr) const;
 
   /// \brief Return the cost of the scaling factor used in the addressing mode
   /// represented by AM for this target, for a load/store of the specified type.
@@ -2001,6 +2012,35 @@ public:
     return isExtFreeImpl(I);
   }
 
+  /// Return true if \p Load and \p Ext can form an ExtLoad.
+  /// For example, in AArch64
+  ///   %L = load i8, i8* %ptr
+  ///   %E = zext i8 %L to i32
+  /// can be lowered into one load instruction
+  ///   ldrb w0, [x0]
+  bool isExtLoad(const LoadInst *Load, const Instruction *Ext,
+                 const DataLayout &DL) const {
+    EVT VT = getValueType(DL, Ext->getType());
+    EVT LoadVT = getValueType(DL, Load->getType());
+
+    // If the load has other users and the truncate is not free, the ext
+    // probably isn't free.
+    if (!Load->hasOneUse() && (isTypeLegal(LoadVT) || !isTypeLegal(VT)) &&
+        !isTruncateFree(Ext->getType(), Load->getType()))
+      return false;
+
+    // Check whether the target supports casts folded into loads.
+    unsigned LType;
+    if (isa<ZExtInst>(Ext))
+      LType = ISD::ZEXTLOAD;
+    else {
+      assert(isa<SExtInst>(Ext) && "Unexpected ext type!");
+      LType = ISD::SEXTLOAD;
+    }
+
+    return isLoadExtLegal(LType, VT, LoadVT);
+  }
+
   /// Return true if any actual instruction that defines a value of type FromTy
   /// implicitly zero-extends the value to ToTy in the result register.
   ///
@@ -2041,7 +2081,7 @@ public:
   /// this information should not be provided because it will generate more
   /// loads.
   virtual bool hasPairedLoad(EVT /*LoadedType*/,
-                             unsigned & /*RequiredAligment*/) const {
+                             unsigned & /*RequiredAlignment*/) const {
     return false;
   }
 
@@ -2712,8 +2752,34 @@ public:
   //  This transformation may not be desirable if it disrupts a particularly
   //  auspicious target-specific tree (e.g. bitfield extraction in AArch64).
   //  By default, it returns true.
-  virtual bool isDesirableToCommuteWithShift(const SDNode *N /*Op*/) const {
+  virtual bool isDesirableToCommuteWithShift(const SDNode *N) const {
     return true;
+  }
+
+  // Return true if it is profitable to combine a BUILD_VECTOR to a TRUNCATE.
+  // Example of such a combine:
+  // v4i32 build_vector((extract_elt V, 0),
+  //                    (extract_elt V, 2),
+  //                    (extract_elt V, 4),
+  //                    (extract_elt V, 6))
+  //  -->
+  // v4i32 truncate (bitcast V to v4i64)
+  virtual bool isDesirableToCombineBuildVectorToTruncate() const {
+    return false;
+  }
+
+  // Return true if it is profitable to combine a BUILD_VECTOR with a stride-pattern
+  // to a shuffle and a truncate.
+  // Example of such a combine:
+  // v4i32 build_vector((extract_elt V, 1),
+  //                    (extract_elt V, 3),
+  //                    (extract_elt V, 5),
+  //                    (extract_elt V, 7))
+  //  -->
+  // v4i32 truncate (bitcast (shuffle<1,u,3,u,5,u,7,u> V, u) to v4i64)
+  virtual bool isDesirableToCombineBuildVectorToShuffleTruncate(
+      ArrayRef<int> ShuffleMask, EVT SrcVT, EVT TruncVT) const {
+    return false;
   }
 
   /// Return true if the target has native support for the specified value type
@@ -2804,6 +2870,9 @@ public:
     // IsTailCall should be modified by implementations of
     // TargetLowering::LowerCall that perform tail call conversions.
     bool IsTailCall = false;
+
+    // Is Call lowering done post SelectionDAG type legalization.
+    bool IsPostTypeLegalization = false;
 
     unsigned NumFixedArgs = -1;
     CallingConv::ID CallConv = CallingConv::C;
@@ -2927,6 +2996,11 @@ public:
       return *this;
     }
 
+    CallLoweringInfo &setIsPostTypeLegalization(bool Value=true) {
+      IsPostTypeLegalization = Value;
+      return *this;
+    }
+
     ArgListTy &getArgs() {
       return Args;
     }
@@ -3043,6 +3117,13 @@ public:
   virtual SDValue prepareVolatileOrAtomicLoad(SDValue Chain, const SDLoc &DL,
                                               SelectionDAG &DAG) const {
     return Chain;
+  }
+
+  /// This callback is used to inspect load/store instructions and add
+  /// target-specific MachineMemOperand flags to them.  The default
+  /// implementation does nothing.
+  virtual MachineMemOperand::Flags getMMOFlags(const Instruction &I) const {
+    return MachineMemOperand::MONone;
   }
 
   /// This callback is invoked by the type legalizer to legalize nodes with an

@@ -23,6 +23,7 @@
 #include "clang/Basic/VersionTuple.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/IntrusiveRefCntPtr.h"
+#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
@@ -225,6 +226,20 @@ protected:
 
 public:
   IntType getSizeType() const { return SizeType; }
+  IntType getSignedSizeType() const {
+    switch (SizeType) {
+    case UnsignedShort:
+      return SignedShort;
+    case UnsignedInt:
+      return SignedInt;
+    case UnsignedLong:
+      return SignedLong;
+    case UnsignedLongLong:
+      return SignedLongLong;
+    default:
+      llvm_unreachable("Invalid SizeType");
+    }
+  }
   IntType getIntMaxType() const { return IntMaxType; }
   IntType getUIntMaxType() const {
     return getCorrespondingUnsignedType(IntMaxType);
@@ -311,18 +326,6 @@ public:
   /// \brief Get integer value for null pointer.
   /// \param AddrSpace target address space of pointee.
   virtual uint64_t getNullPointerValue(unsigned AddrSpace) const {
-    return 0;
-  }
-
-  /// The target address space corresponding to OpenCL constant address space
-  /// CUDA constant specifier.
-  virtual unsigned getConstantAddressSpace() const {
-    return 0;
-  }
-
-  /// The target address space corresponding to OpenCL global address space
-  /// or CUDA device specifier.
-  virtual unsigned getGlobalAddressSpace() const {
     return 0;
   }
 
@@ -873,6 +876,11 @@ public:
     return false;
   }
 
+  /// brief Determine whether this TargetInfo supports the given CPU name.
+  virtual bool isValidCPUName(StringRef Name) const {
+    return false;
+  }
+
   /// \brief Use the specified ABI.
   ///
   /// \return False on error (invalid ABI name).
@@ -893,6 +901,11 @@ public:
                                  StringRef Name,
                                  bool Enabled) const {
     Features[Name] = Enabled;
+  }
+
+  /// \brief Determine whether this TargetInfo supports the given feature.
+  virtual bool isValidFeatureName(StringRef Feature) const {
+    return false;
   }
 
   /// \brief Perform initialization based on the user configured
@@ -971,6 +984,14 @@ public:
 
   const LangAS::Map &getAddressSpaceMap() const {
     return *AddrSpaceMap;
+  }
+
+  /// \brief Return an AST address space which can be used opportunistically
+  /// for constant global memory. It must be possible to convert pointers into
+  /// this address space to LangAS::Default. If no such address space exists,
+  /// this may return None, and such optimizations will be disabled.
+  virtual llvm::Optional<unsigned> getConstantAddressSpace() const {
+    return LangAS::Default;
   }
 
   /// \brief Retrieve the name of the platform as it is used in the

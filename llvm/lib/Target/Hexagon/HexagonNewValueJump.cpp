@@ -69,9 +69,7 @@ namespace {
   public:
     static char ID;
 
-    HexagonNewValueJump() : MachineFunctionPass(ID) {
-      initializeHexagonNewValueJumpPass(*PassRegistry::getPassRegistry());
-    }
+    HexagonNewValueJump() : MachineFunctionPass(ID) {}
 
     void getAnalysisUsage(AnalysisUsage &AU) const override {
       AU.addRequired<MachineBranchProbabilityInfo>();
@@ -175,7 +173,7 @@ static bool commonChecksToProhibitNewValueJump(bool afterRA,
                           MachineBasicBlock::iterator MII) {
 
   // If store in path, bail out.
-  if (MII->getDesc().mayStore())
+  if (MII->mayStore())
     return false;
 
   // if call in path, bail out.
@@ -229,10 +227,13 @@ static bool canCompareBeNewValueJump(const HexagonInstrInfo *QII,
 
     switch (MI.getOpcode()) {
       case Hexagon::C2_cmpeqi:
+      case Hexagon::C4_cmpneqi:
       case Hexagon::C2_cmpgti:
+      case Hexagon::C4_cmpltei:
         Valid = (isUInt<5>(v) || v == -1);
         break;
       case Hexagon::C2_cmpgtui:
+      case Hexagon::C4_cmplteui:
         Valid = isUInt<5>(v);
         break;
       case Hexagon::S2_tstbit_i:
@@ -330,6 +331,13 @@ static unsigned getNewValueJumpOpcode(MachineInstr *MI, int reg,
                      : Hexagon::J4_cmpeqn1_t_jumpnv_nt;
     }
 
+    case Hexagon::C4_cmpneqi:
+      if (reg >= 0)
+        return taken ? Hexagon::J4_cmpeqi_f_jumpnv_t
+                     : Hexagon::J4_cmpeqi_f_jumpnv_nt;
+      return taken ? Hexagon::J4_cmpeqn1_f_jumpnv_t :
+                     Hexagon::J4_cmpeqn1_f_jumpnv_nt;
+
     case Hexagon::C2_cmpgt: {
       if (secondRegNewified)
         return taken ? Hexagon::J4_cmplt_t_jumpnv_t
@@ -379,6 +387,17 @@ static unsigned getNewValueJumpOpcode(MachineInstr *MI, int reg,
       return taken ? Hexagon::J4_cmpgtu_f_jumpnv_t
                    : Hexagon::J4_cmpgtu_f_jumpnv_nt;
 
+    case Hexagon::C4_cmpltei:
+      if (reg >= 0)
+        return taken ? Hexagon::J4_cmpgti_f_jumpnv_t :
+                       Hexagon::J4_cmpgti_f_jumpnv_nt;
+      return taken ? Hexagon::J4_cmpgtn1_f_jumpnv_t :
+                     Hexagon::J4_cmpgtn1_f_jumpnv_nt;
+
+    case Hexagon::C4_cmplteui:
+      return taken ? Hexagon::J4_cmpgtui_f_jumpnv_t :
+                     Hexagon::J4_cmpgtui_f_jumpnv_nt;
+
     default:
        llvm_unreachable("Could not find matching New Value Jump instruction.");
   }
@@ -396,8 +415,11 @@ bool HexagonNewValueJump::isNewValueJumpCandidate(
   case Hexagon::C2_cmpgtu:
   case Hexagon::C2_cmpgtui:
   case Hexagon::C4_cmpneq:
+  case Hexagon::C4_cmpneqi:
   case Hexagon::C4_cmplte:
   case Hexagon::C4_cmplteu:
+  case Hexagon::C4_cmpltei:
+  case Hexagon::C4_cmplteui:
     return true;
 
   default:
@@ -445,8 +467,6 @@ bool HexagonNewValueJump::runOnMachineFunction(MachineFunction &MF) {
     unsigned predReg = 0; // predicate reg of the jump.
     unsigned cmpReg1 = 0;
     int cmpOp2 = 0;
-    bool MO1IsKill = false;
-    bool MO2IsKill = false;
     MachineBasicBlock::iterator jmpPos;
     MachineBasicBlock::iterator cmpPos;
     MachineInstr *cmpInstr = nullptr, *jmpInstr = nullptr;
@@ -548,14 +568,10 @@ bool HexagonNewValueJump::runOnMachineFunction(MachineFunction &MF) {
           // We need cmpReg1 and cmpOp2(imm or reg) while building
           // new value jump instruction.
           cmpReg1 = MI.getOperand(1).getReg();
-          if (MI.getOperand(1).isKill())
-            MO1IsKill = true;
 
-          if (isSecondOpReg) {
+          if (isSecondOpReg)
             cmpOp2 = MI.getOperand(2).getReg();
-            if (MI.getOperand(2).isKill())
-              MO2IsKill = true;
-          } else
+          else
             cmpOp2 = MI.getOperand(2).getImm();
           continue;
         }
@@ -605,11 +621,8 @@ bool HexagonNewValueJump::runOnMachineFunction(MachineFunction &MF) {
             if ((COp == Hexagon::C2_cmpeq || COp == Hexagon::C4_cmpneq) &&
                 (feederReg == (unsigned) cmpOp2)) {
               unsigned tmp = cmpReg1;
-              bool tmpIsKill = MO1IsKill;
               cmpReg1 = cmpOp2;
-              MO1IsKill = MO2IsKill;
               cmpOp2 = tmp;
-              MO2IsKill = tmpIsKill;
             }
 
             // Now we have swapped the operands, all we need to check is,
@@ -623,31 +636,33 @@ bool HexagonNewValueJump::runOnMachineFunction(MachineFunction &MF) {
           // make sure we are respecting the kill values of
           // the operands of the feeder.
 
-          bool updatedIsKill = false;
-          for (unsigned i = 0; i < MI.getNumOperands(); i++) {
-            MachineOperand &MO = MI.getOperand(i);
-            if (MO.isReg() && MO.isUse()) {
-              unsigned feederReg = MO.getReg();
-              for (MachineBasicBlock::iterator localII = feederPos,
-                   end = jmpPos; localII != end; localII++) {
-                MachineInstr &localMI = *localII;
-                for (unsigned j = 0; j < localMI.getNumOperands(); j++) {
-                  MachineOperand &localMO = localMI.getOperand(j);
-                  if (localMO.isReg() && localMO.isUse() &&
-                      localMO.isKill() && feederReg == localMO.getReg()) {
-                    // We found that there is kill of a use register
-                    // Set up a kill flag on the register
-                    localMO.setIsKill(false);
-                    MO.setIsKill();
-                    updatedIsKill = true;
-                    break;
-                  }
+          auto TransferKills = [jmpPos,cmpPos] (MachineInstr &MI) {
+            for (MachineOperand &MO : MI.operands()) {
+              if (!MO.isReg() || !MO.isUse())
+                continue;
+              unsigned UseR = MO.getReg();
+              for (auto I = std::next(MI.getIterator()); I != jmpPos; ++I) {
+                if (I == cmpPos)
+                  continue;
+                for (MachineOperand &Op : I->operands()) {
+                  if (!Op.isReg() || !Op.isUse() || !Op.isKill())
+                    continue;
+                  if (Op.getReg() != UseR)
+                    continue;
+                  // We found that there is kill of a use register
+                  // Set up a kill flag on the register
+                  Op.setIsKill(false);
+                  MO.setIsKill(true);
+                  return;
                 }
-                if (updatedIsKill) break;
               }
             }
-            if (updatedIsKill) break;
-          }
+          };
+
+          TransferKills(*feederPos);
+          TransferKills(*cmpPos);
+          bool MO1IsKill = cmpPos->killsRegister(cmpReg1, QRI);
+          bool MO2IsKill = isSecondOpReg && cmpPos->killsRegister(cmpOp2, QRI);
 
           MBB->splice(jmpPos, MI.getParent(), MI);
           MBB->splice(jmpPos, MI.getParent(), cmpInstr);

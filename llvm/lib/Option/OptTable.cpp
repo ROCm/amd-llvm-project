@@ -194,13 +194,50 @@ static unsigned matchOption(const OptTable::Info *I, StringRef Str,
   return 0;
 }
 
-std::vector<std::string> OptTable::findByPrefix(StringRef Cur) const {
+// Returns true if one of the Prefixes + In.Names matches Option
+static bool optionMatches(const OptTable::Info &In, StringRef Option) {
+  if (In.Values && In.Prefixes)
+    for (size_t I = 0; In.Prefixes[I]; I++)
+      if (Option == std::string(In.Prefixes[I]) + In.Name)
+        return true;
+  return false;
+}
+
+// This function is for flag value completion.
+// Eg. When "-stdlib=" and "l" was passed to this function, it will return
+// appropiriate values for stdlib, which starts with l.
+std::vector<std::string>
+OptTable::suggestValueCompletions(StringRef Option, StringRef Arg) const {
+  // Search all options and return possible values.
+  for (const Info &In : OptionInfos.slice(FirstSearchableIndex)) {
+    if (!optionMatches(In, Option))
+      continue;
+
+    SmallVector<StringRef, 8> Candidates;
+    StringRef(In.Values).split(Candidates, ",", -1, false);
+
+    std::vector<std::string> Result;
+    for (StringRef Val : Candidates)
+      if (Val.startswith(Arg))
+        Result.push_back(Val);
+    return Result;
+  }
+  return {};
+}
+
+std::vector<std::string>
+OptTable::findByPrefix(StringRef Cur, unsigned short DisableFlags) const {
   std::vector<std::string> Ret;
   for (const Info &In : OptionInfos.slice(FirstSearchableIndex)) {
-    if (!In.Prefixes)
+    if (!In.Prefixes || (!In.HelpText && !In.GroupID))
       continue;
+    if (In.Flags & DisableFlags)
+      continue;
+
     for (int I = 0; In.Prefixes[I]; I++) {
-      std::string S = std::string(In.Prefixes[I]) + std::string(In.Name);
+      std::string S = std::string(In.Prefixes[I]) + std::string(In.Name) + "\t";
+      if (In.HelpText)
+        S += In.HelpText;
       if (StringRef(S).startswith(Cur))
         Ret.push_back(S);
     }
@@ -336,6 +373,9 @@ static std::string getOptionHelpName(const OptTable &Opts, OptSpecifier Id) {
   case Option::FlagClass:
     break;
 
+  case Option::ValuesClass:
+    break;
+
   case Option::SeparateClass: case Option::JoinedOrSeparateClass:
   case Option::RemainingArgsClass: case Option::RemainingArgsJoinedClass:
     Name += ' ';
@@ -352,27 +392,29 @@ static std::string getOptionHelpName(const OptTable &Opts, OptSpecifier Id) {
   return Name;
 }
 
+namespace {
+struct OptionInfo {
+  std::string Name;
+  StringRef HelpText;
+};
+} // namespace
+
 static void PrintHelpOptionList(raw_ostream &OS, StringRef Title,
-                                std::vector<std::pair<std::string,
-                                const char*>> &OptionHelp) {
+                                std::vector<OptionInfo> &OptionHelp) {
   OS << Title << ":\n";
 
   // Find the maximum option length.
   unsigned OptionFieldWidth = 0;
   for (unsigned i = 0, e = OptionHelp.size(); i != e; ++i) {
-    // Skip titles.
-    if (!OptionHelp[i].second)
-      continue;
-
     // Limit the amount of padding we are willing to give up for alignment.
-    unsigned Length = OptionHelp[i].first.size();
+    unsigned Length = OptionHelp[i].Name.size();
     if (Length <= 23)
       OptionFieldWidth = std::max(OptionFieldWidth, Length);
   }
 
   const unsigned InitialPad = 2;
   for (unsigned i = 0, e = OptionHelp.size(); i != e; ++i) {
-    const std::string &Option = OptionHelp[i].first;
+    const std::string &Option = OptionHelp[i].Name;
     int Pad = OptionFieldWidth - int(Option.size());
     OS.indent(InitialPad) << Option;
 
@@ -381,7 +423,7 @@ static void PrintHelpOptionList(raw_ostream &OS, StringRef Title,
       OS << "\n";
       Pad = OptionFieldWidth + InitialPad;
     }
-    OS.indent(Pad + 1) << OptionHelp[i].second << '\n';
+    OS.indent(Pad + 1) << OptionHelp[i].HelpText << '\n';
   }
 }
 
@@ -404,15 +446,14 @@ static const char *getOptionHelpGroup(const OptTable &Opts, OptSpecifier Id) {
 }
 
 void OptTable::PrintHelp(raw_ostream &OS, const char *Name, const char *Title,
-                         bool ShowHidden) const {
+                         bool ShowHidden, bool ShowAllAliases) const {
   PrintHelp(OS, Name, Title, /*Include*/ 0, /*Exclude*/
-            (ShowHidden ? 0 : HelpHidden));
+            (ShowHidden ? 0 : HelpHidden), ShowAllAliases);
 }
 
-
 void OptTable::PrintHelp(raw_ostream &OS, const char *Name, const char *Title,
-                         unsigned FlagsToInclude,
-                         unsigned FlagsToExclude) const {
+                         unsigned FlagsToInclude, unsigned FlagsToExclude,
+                         bool ShowAllAliases) const {
   OS << "OVERVIEW: " << Title << "\n";
   OS << '\n';
   OS << "USAGE: " << Name << " [options] <inputs>\n";
@@ -420,8 +461,7 @@ void OptTable::PrintHelp(raw_ostream &OS, const char *Name, const char *Title,
 
   // Render help text into a map of group-name to a list of (option, help)
   // pairs.
-  using helpmap_ty =
-      std::map<std::string, std::vector<std::pair<std::string, const char*>>>;
+  using helpmap_ty = std::map<std::string, std::vector<OptionInfo>>;
   helpmap_ty GroupedOptionHelp;
 
   for (unsigned i = 0, e = getNumOptions(); i != e; ++i) {
@@ -437,10 +477,19 @@ void OptTable::PrintHelp(raw_ostream &OS, const char *Name, const char *Title,
     if (Flags & FlagsToExclude)
       continue;
 
-    if (const char *Text = getOptionHelpText(Id)) {
+    // If an alias doesn't have a help text, show a help text for the aliased
+    // option instead.
+    const char *HelpText = getOptionHelpText(Id);
+    if (!HelpText && ShowAllAliases) {
+      const Option Alias = getOption(Id).getAlias();
+      if (Alias.isValid())
+        HelpText = getOptionHelpText(Alias.getID());
+    }
+
+    if (HelpText) {
       const char *HelpGroup = getOptionHelpGroup(*this, Id);
       const std::string &OptName = getOptionHelpName(*this, Id);
-      GroupedOptionHelp[HelpGroup].push_back(std::make_pair(OptName, Text));
+      GroupedOptionHelp[HelpGroup].push_back({OptName, HelpText});
     }
   }
 

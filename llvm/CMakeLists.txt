@@ -20,7 +20,7 @@ if(POLICY CMP0057)
 endif()
 
 if(NOT DEFINED LLVM_VERSION_MAJOR)
-  set(LLVM_VERSION_MAJOR 5)
+  set(LLVM_VERSION_MAJOR 6)
 endif()
 if(NOT DEFINED LLVM_VERSION_MINOR)
   set(LLVM_VERSION_MINOR 0)
@@ -94,7 +94,7 @@ if(CMAKE_HOST_APPLE AND APPLE)
         set(LIBTOOL_NO_WARNING_FLAG "-no_warning_for_no_symbols")
       endif()
     endif()
-    
+
     foreach(lang ${languages})
       set(CMAKE_${lang}_CREATE_STATIC_LIBRARY
         "${CMAKE_LIBTOOL} -static ${LIBTOOL_NO_WARNING_FLAG} -o <TARGET> \
@@ -206,7 +206,7 @@ endif()
 include(VersionFromVCS)
 
 option(LLVM_APPEND_VC_REV
-  "Append the version control system revision id to LLVM version" OFF)
+  "Embed the version control system revision id in LLVM" ON)
 
 if( LLVM_APPEND_VC_REV )
   add_version_info_from_vcs(PACKAGE_VERSION)
@@ -288,6 +288,10 @@ set(LLVM_LIBDIR_SUFFIX "" CACHE STRING "Define suffix of library directory name 
 set(LLVM_TOOLS_INSTALL_DIR "bin" CACHE STRING "Path for binary subdirectory (defaults to 'bin')")
 mark_as_advanced(LLVM_TOOLS_INSTALL_DIR)
 
+set(LLVM_UTILS_INSTALL_DIR "bin" CACHE STRING
+    "Path to install LLVM utilities (enabled by LLVM_INSTALL_UTILS=ON) (defaults to LLVM_TOOLS_INSTALL_DIR)")
+mark_as_advanced(LLVM_TOOLS_INSTALL_DIR)
+
 # They are used as destination of target generators.
 set(LLVM_RUNTIME_OUTPUT_INTDIR ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_CFG_INTDIR}/bin)
 set(LLVM_LIBRARY_OUTPUT_INTDIR ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_CFG_INTDIR}/lib${LLVM_LIBDIR_SUFFIX})
@@ -358,6 +362,8 @@ set(LLVM_TARGET_ARCH "host"
   CACHE STRING "Set target to use for LLVM JIT or use \"host\" for automatic detection.")
 
 option(LLVM_ENABLE_TERMINFO "Use terminfo database if available." ON)
+
+option(LLVM_ENABLE_LIBXML2 "Use libxml2 if available." ON)
 
 option(LLVM_ENABLE_LIBEDIT "Use libedit if available." ON)
 
@@ -804,7 +810,8 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "(FreeBSD|DragonFly)")
 endif(${CMAKE_SYSTEM_NAME} MATCHES "(FreeBSD|DragonFly)")
 
 if( ${CMAKE_SYSTEM_NAME} MATCHES SunOS )
-   SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -include llvm/Support/Solaris.h")
+   # special hack for Solaris to handle crazy system sys/regset.h
+   include_directories("${LLVM_MAIN_INCLUDE_DIR}/llvm/Support/Solaris")
 endif( ${CMAKE_SYSTEM_NAME} MATCHES SunOS )
 
 # Make sure we don't get -rdynamic in every binary. For those that need it,
@@ -837,15 +844,6 @@ add_subdirectory(lib/Support)
 add_subdirectory(lib/TableGen)
 
 add_subdirectory(utils/TableGen)
-
-# Force target to be built as soon as possible. Clang modules builds depend
-# header-wise on it as they ship all headers from the umbrella folders. Building
-# an entire module might include header, which depends on intrinsics_gen. This
-# should be right after LLVMSupport and LLVMTableGen otherwise we introduce a
-# circular dependence.
-if (LLVM_ENABLE_MODULES)
-  list(APPEND LLVM_COMMON_DEPENDS intrinsics_gen)
-endif(LLVM_ENABLE_MODULES)
 
 add_subdirectory(include/llvm)
 

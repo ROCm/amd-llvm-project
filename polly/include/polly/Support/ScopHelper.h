@@ -409,7 +409,7 @@ bool canSynthesize(const llvm::Value *V, const Scop &S,
 /// operand must be defined (i.e. its definition dominates this block).
 /// Non-instructions do not use operands at a specific point such that in this
 /// case this function returns nullptr.
-llvm::BasicBlock *getUseBlock(llvm::Use &U);
+llvm::BasicBlock *getUseBlock(const llvm::Use &U);
 
 /// Derive the individual index expressions from a GEP instruction.
 ///
@@ -426,5 +426,24 @@ llvm::BasicBlock *getUseBlock(llvm::Use &U);
 std::tuple<std::vector<const llvm::SCEV *>, std::vector<int>>
 getIndexExpressionsFromGEP(llvm::GetElementPtrInst *GEP,
                            llvm::ScalarEvolution &SE);
+
+// If the loop is nonaffine/boxed, return the first non-boxed surrounding loop
+// for Polly. If the loop is affine, return the loop itself.
+//
+// @param L             Pointer to the Loop object to analyze.
+// @param LI            Reference to the LoopInfo.
+// @param BoxedLoops    Set of Boxed Loops we get from the SCoP.
+llvm::Loop *getFirstNonBoxedLoopFor(llvm::Loop *L, llvm::LoopInfo &LI,
+                                    const BoxedLoopsSetTy &BoxedLoops);
+
+// If the Basic Block belongs to a loop that is nonaffine/boxed, return the
+// first non-boxed surrounding loop for Polly. If the loop is affine, return
+// the loop itself.
+//
+// @param BB            Pointer to the Basic Block to analyze.
+// @param LI            Reference to the LoopInfo.
+// @param BoxedLoops    Set of Boxed Loops we get from the SCoP.
+llvm::Loop *getFirstNonBoxedLoopFor(llvm::BasicBlock *BB, llvm::LoopInfo &LI,
+                                    const BoxedLoopsSetTy &BoxedLoops);
 } // namespace polly
 #endif

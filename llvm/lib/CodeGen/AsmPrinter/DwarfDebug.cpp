@@ -548,7 +548,8 @@ void DwarfDebug::beginModule() {
   for (DICompileUnit *CUNode : M->debug_compile_units()) {
     if (CUNode->getEnumTypes().empty() && CUNode->getRetainedTypes().empty() &&
         CUNode->getGlobalVariables().empty() &&
-        CUNode->getImportedEntities().empty() && CUNode->getMacros().empty())
+        CUNode->getImportedEntities().empty() && CUNode->getMacros().empty() &&
+        !CUNode->getDWOId())
       continue;
 
     DwarfCompileUnit &CU = getOrCreateDwarfCompileUnit(CUNode);
@@ -778,6 +779,7 @@ void DwarfDebug::ensureAbstractVariableIsCreatedIfScoped(DwarfCompileUnit &CU,
 // Collect variable information from side table maintained by MF.
 void DwarfDebug::collectVariableInfoFromMFTable(
     DwarfCompileUnit &TheCU, DenseSet<InlinedVariable> &Processed) {
+  SmallDenseMap<InlinedVariable, DbgVariable *> MFVars;
   for (const auto &VI : Asm->MF->getVariableDbgInfo()) {
     if (!VI.Var)
       continue;
@@ -795,8 +797,12 @@ void DwarfDebug::collectVariableInfoFromMFTable(
     ensureAbstractVariableIsCreatedIfScoped(TheCU, Var, Scope->getScopeNode());
     auto RegVar = make_unique<DbgVariable>(Var.first, Var.second);
     RegVar->initializeMMI(VI.Expr, VI.Slot);
-    if (InfoHolder.addScopeVariable(Scope, RegVar.get()))
+    if (DbgVariable *DbgVar = MFVars.lookup(Var))
+      DbgVar->addMMIEntry(*RegVar);
+    else if (InfoHolder.addScopeVariable(Scope, RegVar.get())) {
+      MFVars.insert({Var, RegVar.get()});
       ConcreteVariables.push_back(std::move(RegVar));
+    }
   }
 }
 
@@ -1000,12 +1006,14 @@ static bool validThroughout(LexicalScopes &LScopes,
     if (Pred->getFlag(MachineInstr::FrameSetup))
       break;
     auto PredDL = Pred->getDebugLoc();
-    if (!PredDL || Pred->isDebugValue())
+    if (!PredDL || Pred->isMetaInstruction())
       continue;
     // Check whether the instruction preceding the DBG_VALUE is in the same
     // (sub)scope as the DBG_VALUE.
-    if (DL->getScope() == PredDL->getScope() ||
-        LScope->dominates(LScopes.findLexicalScope(PredDL)))
+    if (DL->getScope() == PredDL->getScope())
+      return false;
+    auto *PredScope = LScopes.findLexicalScope(PredDL);
+    if (!PredScope || LScope->dominates(PredScope))
       return false;
   }
 

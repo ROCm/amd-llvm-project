@@ -276,7 +276,7 @@ handleTlsRelocation(uint32_t Type, SymbolBody &Body, InputSectionBase &C,
     } else {
       C.Relocations.push_back(
           {Target->adjustRelaxExpr(Type, nullptr, R_RELAX_TLS_GD_TO_LE), Type,
-                Offset, Addend, &Body});
+           Offset, Addend, &Body});
     }
     return Target->TlsGdRelaxSkip;
   }
@@ -361,7 +361,7 @@ static bool isStaticLinkTimeConstant(RelExpr E, uint32_t Type,
   // These expressions always compute a constant
   if (isRelExprOneOf<R_SIZE, R_GOT_FROM_END, R_GOT_OFF, R_MIPS_GOT_LOCAL_PAGE,
                      R_MIPS_GOT_OFF, R_MIPS_GOT_OFF32, R_MIPS_GOT_GP_PC,
-                     R_MIPS_TLSGD, R_GOT_PAGE_PC, R_GOT_PC,
+                     R_MIPS_TLSGD, R_GOT_PAGE_PC, R_GOT_PC, R_GOTONLY_PC,
                      R_GOTONLY_PC_FROM_END, R_PLT_PC, R_TLSGD_PC, R_TLSGD,
                      R_PPC_PLT_OPD, R_TLSDESC_CALL, R_TLSDESC_PAGE, R_HINT>(E))
     return true;
@@ -535,6 +535,13 @@ template <class ELFT> static void addCopyRelSymbol(SharedSymbol *SS) {
   In<ELFT>::RelaDyn->addReloc({Target->CopyRel, Sec, Off, false, SS, 0});
 }
 
+static void errorOrWarn(const Twine &Msg) {
+  if (!Config->NoinhibitExec)
+    error(Msg);
+  else
+    warn(Msg);
+}
+
 template <class ELFT>
 static RelExpr adjustExpr(SymbolBody &Body, RelExpr Expr, uint32_t Type,
                           const uint8_t *Data, InputSectionBase &S,
@@ -557,9 +564,9 @@ static RelExpr adjustExpr(SymbolBody &Body, RelExpr Expr, uint32_t Type,
   // the refered symbol can be preemepted to refer to the executable.
   if (Config->Shared || (Config->Pic && !isRelExpr(Expr))) {
     error("can't create dynamic relocation " + toString(Type) + " against " +
-          (Body.getName().empty() ? "local symbol in readonly segment"
+          (Body.getName().empty() ? "local symbol"
                                   : "symbol: " + toString(Body)) +
-          getLocation<ELFT>(S, Body, RelOff));
+          " in readonly segment" + getLocation<ELFT>(S, Body, RelOff));
     return Expr;
   }
 
@@ -609,8 +616,8 @@ static RelExpr adjustExpr(SymbolBody &Body, RelExpr Expr, uint32_t Type,
     return toPlt(Expr);
   }
 
-  error("symbol '" + toString(Body) + "' defined in " + toString(Body.File) +
-        " has no type");
+  errorOrWarn("symbol '" + toString(Body) + "' defined in " +
+              toString(Body.File) + " has no type");
   return Expr;
 }
 
@@ -691,12 +698,10 @@ static void reportUndefined(SymbolBody &Sym, InputSectionBase &S,
     Msg += Src + "\n>>>               ";
   Msg += S.getObjMsg<ELFT>(Offset);
 
-  if (Config->UnresolvedSymbols == UnresolvedPolicy::WarnAll ||
-      (Config->UnresolvedSymbols == UnresolvedPolicy::Warn && CanBeExternal)) {
+  if (Config->UnresolvedSymbols == UnresolvedPolicy::Warn && CanBeExternal)
     warn(Msg);
-  } else {
-    error(Msg);
-  }
+  else
+    errorOrWarn(Msg);
 }
 
 template <class RelTy>
@@ -905,9 +910,10 @@ static void scanRelocs(InputSectionBase &Sec, ArrayRef<RelTy> Rels) {
       // We don't know anything about the finaly symbol. Just ask the dynamic
       // linker to handle the relocation for us.
       if (!Target->isPicRel(Type))
-        error("relocation " + toString(Type) +
-              " cannot be used against shared object; recompile with -fPIC" +
-              getLocation<ELFT>(Sec, Body, Offset));
+        errorOrWarn(
+            "relocation " + toString(Type) +
+            " cannot be used against shared object; recompile with -fPIC" +
+            getLocation<ELFT>(Sec, Body, Offset));
 
       In<ELFT>::RelaDyn->addReloc(
           {Target->getDynRel(Type), &Sec, Offset, false, &Body, Addend});
@@ -1000,16 +1006,20 @@ void ThunkCreator::mergeThunks() {
   }
 }
 
-ThunkSection *ThunkCreator::getOSThunkSec(OutputSection *OS,
+static uint32_t findEndOfFirstNonExec(OutputSectionCommand &Cmd) {
+  for (BaseCommand *Base : Cmd.Commands)
+    if (auto *ISD = dyn_cast<InputSectionDescription>(Base))
+      for (auto *IS : ISD->Sections)
+        if ((IS->Flags & SHF_EXECINSTR) == 0)
+          return IS->OutSecOff + IS->getSize();
+  return 0;
+}
+
+ThunkSection *ThunkCreator::getOSThunkSec(OutputSectionCommand *Cmd,
                                           std::vector<InputSection *> *ISR) {
   if (CurTS == nullptr) {
-    uint32_t Off = 0;
-    for (auto *IS : OS->Sections) {
-      Off = IS->OutSecOff + IS->getSize();
-      if ((IS->Flags & SHF_EXECINSTR) == 0)
-        break;
-    }
-    CurTS = addThunkSection(OS, ISR, Off);
+    uint32_t Off = findEndOfFirstNonExec(*Cmd);
+    CurTS = addThunkSection(Cmd->Sec, ISR, Off);
   }
   return CurTS;
 }
@@ -1024,7 +1034,7 @@ ThunkSection *ThunkCreator::getISThunkSec(InputSection *IS, OutputSection *OS) {
   OutputSectionCommand *C = Script->getCmd(TOS);
   std::vector<InputSection *> *Range = nullptr;
   for (BaseCommand *BC : C->Commands)
-    if (auto *ISD = dyn_cast<InputSectionDescription> (BC)) {
+    if (auto *ISD = dyn_cast<InputSectionDescription>(BC)) {
       InputSection *first = ISD->Sections.front();
       InputSection *last = ISD->Sections.back();
       if (IS->OutSecOff >= first->OutSecOff &&
@@ -1046,33 +1056,38 @@ ThunkSection *ThunkCreator::addThunkSection(OutputSection *OS,
   return TS;
 }
 
-
 std::pair<Thunk *, bool> ThunkCreator::getThunk(SymbolBody &Body,
                                                 uint32_t Type) {
-  auto res = ThunkedSymbols.insert({&Body, nullptr});
-  if (res.second)
-    res.first->second = addThunk(Type, Body);
-  return std::make_pair(res.first->second, res.second);
+  auto Res = ThunkedSymbols.insert({&Body, std::vector<Thunk *>()});
+  if (!Res.second) {
+    // Check existing Thunks for Body to see if they can be reused
+    for (Thunk *ET : Res.first->second)
+      if (ET->isCompatibleWith(Type))
+        return std::make_pair(ET, false);
+  }
+  // No existing compatible Thunk in range, create a new one
+  Thunk *T = addThunk(Type, Body);
+  Res.first->second.push_back(T);
+  return std::make_pair(T, true);
 }
 
 // Call Fn on every executable InputSection accessed via the linker script
 // InputSectionDescription::Sections.
 void ThunkCreator::forEachExecInputSection(
     ArrayRef<OutputSectionCommand *> OutputSections,
-    std::function<void(OutputSection *, std::vector<InputSection *> *,
+    std::function<void(OutputSectionCommand *, std::vector<InputSection *> *,
                        InputSection *)>
         Fn) {
   for (OutputSectionCommand *Cmd : OutputSections) {
     OutputSection *OS = Cmd->Sec;
     if (!(OS->Flags & SHF_ALLOC) || !(OS->Flags & SHF_EXECINSTR))
       continue;
-    if (OutputSectionCommand *C = Script->getCmd(OS))
-      for (BaseCommand *BC : C->Commands)
-        if (auto *ISD = dyn_cast<InputSectionDescription>(BC)) {
-          CurTS = nullptr;
-          for (InputSection* IS : ISD->Sections)
-            Fn(OS, &ISD->Sections, IS);
-        }
+    for (BaseCommand *BC : Cmd->Commands)
+      if (auto *ISD = dyn_cast<InputSectionDescription>(BC)) {
+        CurTS = nullptr;
+        for (InputSection *IS : ISD->Sections)
+          Fn(Cmd, &ISD->Sections, IS);
+      }
   }
 }
 
@@ -1097,32 +1112,32 @@ bool ThunkCreator::createThunks(
   // We separate the creation of ThunkSections from the insertion of the
   // ThunkSections back into the OutputSection as ThunkSections are not always
   // inserted into the same OutputSection as the caller.
-  forEachExecInputSection(
-      OutputSections, [&](OutputSection *OS,  std::vector<InputSection*> *ISR,
-                          InputSection *IS) {
-        for (Relocation &Rel : IS->Relocations) {
-          SymbolBody &Body = *Rel.Sym;
-          if (Thunks.find(&Body) != Thunks.end() ||
-              !Target->needsThunk(Rel.Expr, Rel.Type, IS->File, Body))
-            continue;
-          Thunk *T;
-          bool IsNew;
-          std::tie(T, IsNew) = getThunk(Body, Rel.Type);
-          if (IsNew) {
-            // Find or create a ThunkSection for the new Thunk
-            ThunkSection *TS;
-            if (auto *TIS = T->getTargetInputSection())
-              TS = getISThunkSec(TIS, OS);
-            else
-              TS = getOSThunkSec(OS, ISR);
-            TS->addThunk(T);
-            Thunks[T->ThunkSym] = T;
-          }
-          // Redirect relocation to Thunk, we never go via the PLT to a Thunk
-          Rel.Sym = T->ThunkSym;
-          Rel.Expr = fromPlt(Rel.Expr);
-        }
-      });
+  forEachExecInputSection(OutputSections, [&](OutputSectionCommand *Cmd,
+                                              std::vector<InputSection *> *ISR,
+                                              InputSection *IS) {
+    for (Relocation &Rel : IS->Relocations) {
+      SymbolBody &Body = *Rel.Sym;
+      if (Thunks.find(&Body) != Thunks.end() ||
+          !Target->needsThunk(Rel.Expr, Rel.Type, IS->File, Body))
+        continue;
+      Thunk *T;
+      bool IsNew;
+      std::tie(T, IsNew) = getThunk(Body, Rel.Type);
+      if (IsNew) {
+        // Find or create a ThunkSection for the new Thunk
+        ThunkSection *TS;
+        if (auto *TIS = T->getTargetInputSection())
+          TS = getISThunkSec(TIS, Cmd->Sec);
+        else
+          TS = getOSThunkSec(Cmd, ISR);
+        TS->addThunk(T);
+        Thunks[T->ThunkSym] = T;
+      }
+      // Redirect relocation to Thunk, we never go via the PLT to a Thunk
+      Rel.Sym = T->ThunkSym;
+      Rel.Expr = fromPlt(Rel.Expr);
+    }
+  });
   // Merge all created synthetic ThunkSections back into OutputSection
   mergeThunks();
   ++Pass;

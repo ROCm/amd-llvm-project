@@ -141,9 +141,9 @@ class ScopedInErrorReport {
 
       // Can't use Report() here because of potential deadlocks
       // in nested signal handlers.
-      const char msg[] = "AddressSanitizer: nested bug in the same thread, "
-                         "aborting.\n";
-      WriteToFile(kStderrFd, msg, sizeof(msg));
+      static const char msg[] =
+          "AddressSanitizer: nested bug in the same thread, aborting.\n";
+      CatastrophicErrorWrite(msg, sizeof(msg) - 1);
 
       internal__exit(common_flags()->exitcode);
     }
@@ -202,6 +202,14 @@ class ScopedInErrorReport {
 
     if (error_report_callback) {
       error_report_callback(buffer_copy.data());
+    }
+
+    if (halt_on_error_ && common_flags()->abort_on_error) {
+      // On Android the message is truncated to 512 characters.
+      // FIXME: implement "compact" error format, possibly without, or with
+      // highly compressed stack traces?
+      // FIXME: or just use the summary line as abort message?
+      SetAbortMessage(buffer_copy.data());
     }
 
     // In halt_on_error = false mode, reset the current error object (before

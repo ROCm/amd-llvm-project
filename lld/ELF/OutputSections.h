@@ -80,10 +80,6 @@ public:
   uint32_t ShName = 0;
 
   void addSection(InputSection *S);
-  void sort(std::function<int(InputSectionBase *S)> Order);
-  void sortInitFini();
-  void sortCtorsDtors();
-  void assignOffsets();
   std::vector<InputSection *> Sections;
 
   // Used for implementation of --compress-debug-sections option.
@@ -115,8 +111,8 @@ struct SectionKey {
   uint64_t Flags;
   uint32_t Alignment;
 };
-}
-}
+} // namespace elf
+} // namespace lld
 namespace llvm {
 template <> struct DenseMapInfo<lld::elf::SectionKey> {
   static lld::elf::SectionKey getEmptyKey();
@@ -125,7 +121,7 @@ template <> struct DenseMapInfo<lld::elf::SectionKey> {
   static bool isEqual(const lld::elf::SectionKey &LHS,
                       const lld::elf::SectionKey &RHS);
 };
-}
+} // namespace llvm
 namespace lld {
 namespace elf {
 
@@ -135,7 +131,7 @@ namespace elf {
 // linker scripts.
 class OutputSectionFactory {
 public:
-  OutputSectionFactory(std::vector<OutputSection *> &OutputSections);
+  OutputSectionFactory();
   ~OutputSectionFactory();
 
   void addInputSec(InputSectionBase *IS, StringRef OutsecName);
@@ -144,7 +140,6 @@ public:
 
 private:
   llvm::SmallDenseMap<SectionKey, OutputSection *> Map;
-  std::vector<OutputSection *> &OutputSections;
 };
 
 uint64_t getHeaderSize();
@@ -154,6 +149,5 @@ extern std::vector<OutputSection *> OutputSections;
 extern std::vector<OutputSectionCommand *> OutputSectionCommands;
 } // namespace elf
 } // namespace lld
-
 
 #endif

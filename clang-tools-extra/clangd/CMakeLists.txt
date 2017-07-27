@@ -18,7 +18,10 @@ add_clang_library(clangDaemon
   clangBasic
   clangFormat
   clangFrontend
+  clangIndex
+  clangLex
   clangSema
+  clangSerialization
   clangTooling
   clangToolingCore
   ${LLVM_PTHREAD_LIB}

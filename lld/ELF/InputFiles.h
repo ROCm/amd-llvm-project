@@ -11,8 +11,8 @@
 #define LLD_ELF_INPUT_FILES_H
 
 #include "Config.h"
-#include "InputSection.h"
 #include "Error.h"
+#include "InputSection.h"
 #include "Symbols.h"
 
 #include "lld/Core/LLVM.h"
@@ -24,6 +24,7 @@
 #include "llvm/Object/Archive.h"
 #include "llvm/Object/ELF.h"
 #include "llvm/Object/IRObjectFile.h"
+#include "llvm/Support/Threading.h"
 
 #include <map>
 
@@ -34,7 +35,7 @@ struct DILineInfo;
 namespace lto {
 class InputFile;
 }
-}
+} // namespace llvm
 
 namespace lld {
 namespace elf {
@@ -126,6 +127,7 @@ public:
   uint32_t getSectionIndex(const Elf_Sym &Sym) const;
 
   Elf_Sym_Range getGlobalSymbols();
+  Elf_Sym_Range getELFSymbols() const { return Symbols; }
 
 protected:
   ArrayRef<Elf_Sym> Symbols;
@@ -211,6 +213,7 @@ private:
   // single object file, so we cache debugging information in order to
   // parse it only once for each object file we link.
   std::unique_ptr<llvm::DWARFDebugLine> DwarfLine;
+  llvm::once_flag InitDwarfLine;
 };
 
 // LazyObjectFile is analogous to ArchiveFile in the sense that
@@ -251,6 +254,7 @@ public:
   explicit ArchiveFile(std::unique_ptr<Archive> &&File);
   static bool classof(const InputFile *F) { return F->kind() == ArchiveKind; }
   template <class ELFT> void parse();
+  ArrayRef<Symbol *> getSymbols() { return Symbols; }
 
   // Returns a memory buffer for a given symbol and the offset in the archive
   // for the member. An empty memory buffer and an offset of zero
@@ -261,6 +265,7 @@ public:
 private:
   std::unique_ptr<Archive> File;
   llvm::DenseSet<uint64_t> Seen;
+  std::vector<Symbol *> Symbols;
 };
 
 class BitcodeFile : public InputFile {

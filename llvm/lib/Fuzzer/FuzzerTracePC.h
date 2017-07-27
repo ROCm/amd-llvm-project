@@ -45,6 +45,28 @@ struct TableOfRecentCompares {
   Pair Table[kSize];
 };
 
+template <size_t kSizeT>
+struct MemMemTable {
+  static const size_t kSize = kSizeT;
+  Word MemMemWords[kSize];
+  Word EmptyWord;
+
+  void Add(const uint8_t *Data, size_t Size) {
+    if (Size <= 2) return;
+    Size = std::min(Size, Word::GetMaxSize());
+    size_t Idx = SimpleFastHash(Data, Size) % kSize;
+    MemMemWords[Idx].Set(Data, Size);
+  }
+  const Word &Get(size_t Idx) {
+    for (size_t i = 0; i < kSize; i++) {
+      const Word &W = MemMemWords[(Idx + i) % kSize];
+      if (W.size()) return W;
+    }
+    EmptyWord.Set(nullptr, 0);
+    return EmptyWord;
+  }
+};
+
 class TracePC {
  public:
   static const size_t kNumPCs = 1 << 21;
@@ -81,6 +103,7 @@ class TracePC {
   TableOfRecentCompares<uint32_t, 32> TORC4;
   TableOfRecentCompares<uint64_t, 32> TORC8;
   TableOfRecentCompares<Word, 32> TORCW;
+  MemMemTable<1024> MMT;
 
   void PrintNewPCs();
   void InitializePrintNewPCs();
@@ -91,6 +114,20 @@ class TracePC {
     assert(Idx < GetNumPCs());
     return PCs()[Idx];
   }
+
+  void RecordCurrentStack() {
+    uintptr_t Stack = GetCurrentStack();
+    if (Stack < LowestStack)
+      LowestStack = Stack;
+  }
+  void RecordInitialStack() {
+    InitialStack = GetCurrentStack();
+    LowestStack = InitialStack;
+  }
+  uintptr_t GetCurrentStack() const {
+    return reinterpret_cast<uintptr_t>(__builtin_frame_address(0));
+  }
+  uintptr_t GetMaxStackOffset() const { return InitialStack - LowestStack; }
 
 private:
   bool UseCounters = false;
@@ -115,6 +152,7 @@ private:
   std::set<uintptr_t> *PrintedPCs;
 
   ValueBitMap ValueProfileMap;
+  uintptr_t InitialStack, LowestStack;  // Assume stack grows down.
 };
 
 template <class Callback> // void Callback(size_t Idx, uint8_t Value);
@@ -144,7 +182,7 @@ void ForEachNonZeroByte(const uint8_t *Begin, const uint8_t *End,
 }
 
 template <class Callback>  // bool Callback(size_t Feature)
-ATTRIBUTE_NO_SANITIZE_ALL
+ATTRIBUTE_NO_SANITIZE_ADDRESS
 __attribute__((noinline))
 void TracePC::CollectFeatures(Callback HandleFeature) const {
   uint8_t *Counters = this->Counters();
@@ -173,11 +211,17 @@ void TracePC::CollectFeatures(Callback HandleFeature) const {
 
   ForEachNonZeroByte(ExtraCountersBegin(), ExtraCountersEnd(), FirstFeature,
                      Handle8bitCounter);
+  FirstFeature += (ExtraCountersEnd() - ExtraCountersBegin()) * 8;
 
-  if (UseValueProfile)
+  if (UseValueProfile) {
     ValueProfileMap.ForEach([&](size_t Idx) {
-      HandleFeature(N * 8 + Idx);
+      HandleFeature(FirstFeature + Idx);
     });
+    FirstFeature += ValueProfileMap.SizeInBits();
+  }
+
+  if (auto MaxStackOffset = GetMaxStackOffset())
+    HandleFeature(FirstFeature + MaxStackOffset);
 }
 
 extern TracePC TPC;
