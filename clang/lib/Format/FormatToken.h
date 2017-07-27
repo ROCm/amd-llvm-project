@@ -641,17 +641,11 @@ struct AdditionalKeywords {
     kw_is = &IdentTable.get("is");
     kw_let = &IdentTable.get("let");
     kw_module = &IdentTable.get("module");
+    kw_readonly = &IdentTable.get("readonly");
     kw_set = &IdentTable.get("set");
     kw_type = &IdentTable.get("type");
     kw_var = &IdentTable.get("var");
     kw_yield = &IdentTable.get("yield");
-
-    JsExtraKeywords = std::unordered_set<IdentifierInfo *>(
-        {kw_as, kw_async, kw_await, kw_declare, kw_finally, kw_from,
-         kw_function, kw_get, kw_import, kw_is, kw_let, kw_module, kw_set,
-         kw_type, kw_var, kw_yield,
-         // Keywords from the Java section.
-         kw_abstract, kw_extends, kw_implements, kw_instanceof, kw_interface});
 
     kw_abstract = &IdentTable.get("abstract");
     kw_assert = &IdentTable.get("assert");
@@ -680,6 +674,15 @@ struct AdditionalKeywords {
     kw_qsignals = &IdentTable.get("Q_SIGNALS");
     kw_slots = &IdentTable.get("slots");
     kw_qslots = &IdentTable.get("Q_SLOTS");
+
+    // Keep this at the end of the constructor to make sure everything here is
+    // already initialized.
+    JsExtraKeywords = std::unordered_set<IdentifierInfo *>(
+        {kw_as, kw_async, kw_await, kw_declare, kw_finally, kw_from,
+         kw_function, kw_get, kw_import, kw_is, kw_let, kw_module, kw_readonly,
+         kw_set, kw_type, kw_var, kw_yield,
+         // Keywords from the Java section.
+         kw_abstract, kw_extends, kw_implements, kw_instanceof, kw_interface});
   }
 
   // Context sensitive keywords.
@@ -708,6 +711,7 @@ struct AdditionalKeywords {
   IdentifierInfo *kw_is;
   IdentifierInfo *kw_let;
   IdentifierInfo *kw_module;
+  IdentifierInfo *kw_readonly;
   IdentifierInfo *kw_set;
   IdentifierInfo *kw_type;
   IdentifierInfo *kw_var;
