@@ -366,6 +366,11 @@ endif()
 
 add_definitions( -D_GNU_SOURCE )
 add_definitions(-DHCC_AMDGPU_TARGET="${AMDGPU_TARGET}")
+if (HCC_TOOLCHAIN_RHEL)
+ add_definitions(-DHCC_TOOLCHAIN_RHEL=true)
+else()
+ add_definitions(-DHCC_TOOLCHAIN_RHEL=false)
+endif()
 
 option(CLANG_BUILD_TOOLS
   "Build the Clang tools. If OFF, just generate build targets." ON)
@@ -389,11 +394,7 @@ if(CLANG_ANALYZER_BUILD_Z3)
 endif()
 
 if(CLANG_ENABLE_ARCMT)
-  add_definitions(-DCLANG_ENABLE_ARCMT)
-  add_definitions(-DCLANG_ENABLE_OBJC_REWRITER)
-endif()
-if(CLANG_ENABLE_STATIC_ANALYZER)
-  add_definitions(-DCLANG_ENABLE_STATIC_ANALYZER)
+  set(CLANG_ENABLE_OBJC_REWRITER ON)
 endif()
 
 # Clang version information
@@ -416,6 +417,13 @@ add_subdirectory(include)
 # All targets below may depend on all tablegen'd files.
 get_property(CLANG_TABLEGEN_TARGETS GLOBAL PROPERTY CLANG_TABLEGEN_TARGETS)
 list(APPEND LLVM_COMMON_DEPENDS ${CLANG_TABLEGEN_TARGETS})
+
+# Force target to be built as soon as possible. Clang modules builds depend
+# header-wise on it as they ship all headers from the umbrella folders. Building
+# an entire module might include header, which depends on intrinsics_gen.
+if(LLVM_ENABLE_MODULES AND NOT CLANG_BUILT_STANDALONE)
+  list(APPEND LLVM_COMMON_DEPENDS intrinsics_gen)
+endif()
 
 add_subdirectory(lib)
 add_subdirectory(tools)

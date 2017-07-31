@@ -1441,6 +1441,10 @@ public:
   /// The sizeof operator requires this (C99 6.5.3.4p4).
   CanQualType getSizeType() const;
 
+  /// \brief Return the unique signed counterpart of 
+  /// the integer type corresponding to size_t.
+  CanQualType getSignedSizeType() const;
+
   /// \brief Return the unique type for "intmax_t" (C99 7.18.1.5), defined in
   /// <stdint.h>.
   CanQualType getIntMaxType() const;
@@ -2323,14 +2327,6 @@ public:
   /// Get target-dependent integer value for null pointer which is used for
   /// constant folding.
   uint64_t getTargetNullPointerValue(QualType QT) const;
-
-  /// The target address space corresponding to OpenCL constant address space
-  /// CUDA constant specifier.
-  unsigned getTargetConstantAddressSpace() const;
-
-  /// The target address space corresponding to OpenCL global address space
-  /// or CUDA device specifier.
-  unsigned getTargetGlobalAddressSpace() const;
 
   bool addressSpaceMapManglingFor(unsigned AS) const {
     return AddrSpaceMapMangling || AS >= LangAS::FirstTargetAddressSpace;

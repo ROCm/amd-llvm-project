@@ -108,10 +108,9 @@ using namespace llvm;
 namespace llvm {
 namespace sys  {
 namespace fs {
-#if defined(__FreeBSD__) || defined (__NetBSD__) || defined(__Bitrig__) || \
-    defined(__OpenBSD__) || defined(__minix) || defined(__FreeBSD_kernel__) || \
-    defined(__linux__) || defined(__CYGWIN__) || defined(__DragonFly__) || \
-    defined(_AIX)
+#if defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__) ||     \
+    defined(__minix) || defined(__FreeBSD_kernel__) || defined(__linux__) ||   \
+    defined(__CYGWIN__) || defined(__DragonFly__) || defined(_AIX)
 static int
 test_dir(char ret[PATH_MAX], const char *dir, const char *bin)
 {
@@ -180,9 +179,9 @@ std::string getMainExecutable(const char *argv0, void *MainAddr) {
     if (realpath(exe_path, link_path))
       return link_path;
   }
-#elif defined(__FreeBSD__) || defined (__NetBSD__) || defined(__Bitrig__) || \
-      defined(__OpenBSD__) || defined(__minix) || defined(__DragonFly__) || \
-      defined(__FreeBSD_kernel__) || defined(_AIX)
+#elif defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__) ||   \
+    defined(__minix) || defined(__DragonFly__) ||                              \
+    defined(__FreeBSD_kernel__) || defined(_AIX)
   char exe_path[PATH_MAX];
 
   if (getprogpath(exe_path, argv0) != NULL)
@@ -737,10 +736,8 @@ std::error_code openFileForRead(const Twine &Name, int &ResultFD,
 #ifdef O_CLOEXEC
   OpenFlags |= O_CLOEXEC;
 #endif
-  while ((ResultFD = open(P.begin(), OpenFlags)) < 0) {
-    if (errno != EINTR)
-      return std::error_code(errno, std::generic_category());
-  }
+  if ((ResultFD = sys::RetryAfterSignal(-1, open, P.begin(), OpenFlags)) < 0)
+    return std::error_code(errno, std::generic_category());
 #ifndef O_CLOEXEC
   int r = fcntl(ResultFD, F_SETFD, FD_CLOEXEC);
   (void)r;
@@ -800,10 +797,8 @@ std::error_code openFileForWrite(const Twine &Name, int &ResultFD,
 
   SmallString<128> Storage;
   StringRef P = Name.toNullTerminatedStringRef(Storage);
-  while ((ResultFD = open(P.begin(), OpenFlags, Mode)) < 0) {
-    if (errno != EINTR)
-      return std::error_code(errno, std::generic_category());
-  }
+  if ((ResultFD = sys::RetryAfterSignal(-1, open, P.begin(), OpenFlags, Mode)) < 0)
+    return std::error_code(errno, std::generic_category());
 #ifndef O_CLOEXEC
   int r = fcntl(ResultFD, F_SETFD, FD_CLOEXEC);
   (void)r;

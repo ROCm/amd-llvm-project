@@ -55,8 +55,8 @@ std::vector<SpecificAllocBase *> SpecificAllocBase::Instances;
 bool link(ArrayRef<const char *> Args, raw_ostream &Diag) {
   ErrorCount = 0;
   ErrorOS = &Diag;
-  Argv0 = Args[0];
   Config = make<Configuration>();
+  Config->Argv = {Args.begin(), Args.end()};
   Config->ColorDiagnostics =
       (ErrorOS == &llvm::errs() && Process::StandardErrHasColors());
   Driver = make<LinkerDriver>();
@@ -201,7 +201,7 @@ void LinkerDriver::parseDirectives(StringRef S) {
   opt::InputArgList Args = Parser.parse(S);
 
   for (auto *Arg : Args) {
-    switch (Arg->getOption().getID()) {
+    switch (Arg->getOption().getUnaliasedOption().getID()) {
     case OPT_alternatename:
       parseAlternateName(Arg->getValue());
       break;
@@ -247,7 +247,7 @@ StringRef LinkerDriver::doFindFile(StringRef Filename) {
   bool HasPathSep = (Filename.find_first_of("/\\") != StringRef::npos);
   if (HasPathSep)
     return Filename;
-  bool HasExt = (Filename.find('.') != StringRef::npos);
+  bool HasExt = Filename.contains('.');
   for (StringRef Dir : SearchPaths) {
     SmallString<128> Path = Dir;
     sys::path::append(Path, Filename);
@@ -275,7 +275,7 @@ Optional<StringRef> LinkerDriver::findFile(StringRef Filename) {
 // Find library file from search path.
 StringRef LinkerDriver::doFindLib(StringRef Filename) {
   // Add ".lib" to Filename if that has no file extension.
-  bool HasExt = (Filename.find('.') != StringRef::npos);
+  bool HasExt = Filename.contains('.');
   if (!HasExt)
     Filename = Saver.save(Filename + ".lib");
   return doFindFile(Filename);
@@ -429,7 +429,32 @@ static std::string getImplibPath() {
   return Out.str();
 }
 
-static void createImportLibrary() {
+//
+// The import name is caculated as the following:
+//
+//        | LIBRARY w/ ext |   LIBRARY w/o ext   | no LIBRARY
+//   -----+----------------+---------------------+------------------
+//   LINK | {value}        | {value}.{.dll/.exe} | {output name}
+//    LIB | {value}        | {value}.dll         | {output name}.dll
+//
+static std::string getImportName(bool AsLib) {
+  SmallString<128> Out;
+
+  if (Config->ImportName.empty()) {
+    Out.assign(sys::path::filename(Config->OutputFile));
+    if (AsLib)
+      sys::path::replace_extension(Out, ".dll");
+  } else {
+    Out.assign(Config->ImportName);
+    if (!sys::path::has_extension(Out))
+      sys::path::replace_extension(Out,
+                                   (Config->DLL || AsLib) ? ".dll" : ".exe");
+  }
+
+  return Out.str();
+}
+
+static void createImportLibrary(bool AsLib) {
   std::vector<COFFShortExport> Exports;
   for (Export &E1 : Config->Exports) {
     COFFShortExport E2;
@@ -444,9 +469,8 @@ static void createImportLibrary() {
     Exports.push_back(E2);
   }
 
-  std::string DLLName = sys::path::filename(Config->OutputFile);
-  std::string Path = getImplibPath();
-  writeImportLibrary(DLLName, Path, Exports, Config->Machine);
+  writeImportLibrary(getImportName(AsLib), getImplibPath(), Exports,
+                     Config->Machine);
 }
 
 static void parseModuleDefs(StringRef Path) {
@@ -457,6 +481,7 @@ static void parseModuleDefs(StringRef Path) {
 
   if (Config->OutputFile.empty())
     Config->OutputFile = Saver.save(M.OutputFile);
+  Config->ImportName = Saver.save(M.ImportName);
   if (M.ImageBase)
     Config->ImageBase = M.ImageBase;
   if (M.StackReserve)
@@ -874,17 +899,24 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
   for (auto *Arg : Args.filtered(OPT_section))
     parseSection(Arg->getValue());
 
-  // Handle /manifest
-  if (auto *Arg = Args.getLastArg(OPT_manifest_colon))
-    parseManifest(Arg->getValue());
+  // Handle /manifestdependency. This enables /manifest unless /manifest:no is
+  // also passed.
+  if (auto *Arg = Args.getLastArg(OPT_manifestdependency)) {
+    Config->ManifestDependency = Arg->getValue();
+    Config->Manifest = Configuration::SideBySide;
+  }
+
+  // Handle /manifest and /manifest:
+  if (auto *Arg = Args.getLastArg(OPT_manifest, OPT_manifest_colon)) {
+    if (Arg->getOption().getID() == OPT_manifest)
+      Config->Manifest = Configuration::SideBySide;
+    else
+      parseManifest(Arg->getValue());
+  }
 
   // Handle /manifestuac
   if (auto *Arg = Args.getLastArg(OPT_manifestuac))
     parseManifestUAC(Arg->getValue());
-
-  // Handle /manifestdependency
-  if (auto *Arg = Args.getLastArg(OPT_manifestdependency))
-    Config->ManifestDependency = Arg->getValue();
 
   // Handle /manifestfile
   if (auto *Arg = Args.getLastArg(OPT_manifestfile))
@@ -893,6 +925,11 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
   // Handle /manifestinput
   for (auto *Arg : Args.filtered(OPT_manifestinput))
     Config->ManifestInput.push_back(Arg->getValue());
+
+  if (!Config->ManifestInput.empty() &&
+      Config->Manifest != Configuration::Embed) {
+    fatal("/MANIFESTINPUT: requires /MANIFEST:EMBED");
+  }
 
   // Handle miscellaneous boolean flags.
   if (Args.hasArg(OPT_allowisolation_no))
@@ -992,7 +1029,7 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
   // Handle generation of import library from a def file.
   if (!Args.hasArgNoClaim(OPT_INPUT)) {
     fixupExports();
-    createImportLibrary();
+    createImportLibrary(/*AsLib=*/true);
     exit(0);
   }
 
@@ -1026,17 +1063,21 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
   if (Config->ImageBase == uint64_t(-1))
     Config->ImageBase = getDefaultImageBase();
 
-  Symtab.addRelative(mangle("__ImageBase"), 0);
+  Symtab.addSynthetic(mangle("__ImageBase"), nullptr);
   if (Config->Machine == I386) {
-    Config->SEHTable = Symtab.addRelative("___safe_se_handler_table", 0);
-    Config->SEHCount = Symtab.addAbsolute("___safe_se_handler_count", 0);
+    Symtab.addAbsolute("___safe_se_handler_table", 0);
+    Symtab.addAbsolute("___safe_se_handler_count", 0);
   }
 
   // We do not support /guard:cf (control flow protection) yet.
   // Define CFG symbols anyway so that we can link MSVC 2015 CRT.
-  Symtab.addAbsolute(mangle("__guard_fids_table"), 0);
   Symtab.addAbsolute(mangle("__guard_fids_count"), 0);
+  Symtab.addAbsolute(mangle("__guard_fids_table"), 0);
   Symtab.addAbsolute(mangle("__guard_flags"), 0x100);
+  Symtab.addAbsolute(mangle("__guard_iat_count"), 0);
+  Symtab.addAbsolute(mangle("__guard_iat_table"), 0);
+  Symtab.addAbsolute(mangle("__guard_longjmp_count"), 0);
+  Symtab.addAbsolute(mangle("__guard_longjmp_table"), 0);
 
   // This code may add new undefined symbols to the link, which may enqueue more
   // symbol resolution tasks, so we need to continue executing tasks until we
@@ -1113,7 +1154,7 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
   // need to create a .lib file.
   if (!Config->Exports.empty() || Config->DLL) {
     fixupExports();
-    createImportLibrary();
+    createImportLibrary(/*AsLib=*/false);
     assignExportOrdinals();
   }
 

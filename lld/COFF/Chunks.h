@@ -112,7 +112,7 @@ protected:
 };
 
 // A chunk corresponding a section of an input file.
-class SectionChunk : public Chunk {
+class SectionChunk final : public Chunk {
   // Identical COMDAT Folding feature accesses section internal data.
   friend class ICF;
 
@@ -145,9 +145,14 @@ public:
   StringRef getSectionName() const override { return SectionName; }
   void getBaserels(std::vector<Baserel> *Res) override;
   bool isCOMDAT() const;
-  void applyRelX64(uint8_t *Off, uint16_t Type, Defined *Sym, uint64_t P) const;
-  void applyRelX86(uint8_t *Off, uint16_t Type, Defined *Sym, uint64_t P) const;
-  void applyRelARM(uint8_t *Off, uint16_t Type, Defined *Sym, uint64_t P) const;
+  void applyRelX64(uint8_t *Off, uint16_t Type, OutputSection *OS, uint64_t S,
+                   uint64_t P) const;
+  void applyRelX86(uint8_t *Off, uint16_t Type, OutputSection *OS, uint64_t S,
+                   uint64_t P) const;
+  void applyRelARM(uint8_t *Off, uint16_t Type, OutputSection *OS, uint64_t S,
+                   uint64_t P) const;
+  void applyRelARM64(uint8_t *Off, uint16_t Type, OutputSection *OS, uint64_t S,
+                     uint64_t P) const;
 
   // Called if the garbage collector decides to not include this chunk
   // in a final output. It's supposed to print out a log message to stdout.
@@ -176,6 +181,15 @@ public:
   // Used by the SymbolTable when discarding unused comdat sections. This is
   // redundant when GC is enabled, as all comdat sections will start out dead.
   void markDiscarded() { Discarded = true; }
+
+  // True if this is a codeview debug info chunk. These will not be laid out in
+  // the image. Instead they will end up in the PDB, if one is requested.
+  bool isCodeView() const {
+    return SectionName == ".debug" || SectionName.startswith(".debug$");
+  }
+
+  // True if this is a DWARF debug info chunk.
+  bool isDWARF() const { return SectionName.startswith(".debug_"); }
 
   // Allow iteration over the bodies of this chunk's relocated symbols.
   llvm::iterator_range<symbol_iterator> symbols() const {
@@ -255,6 +269,12 @@ static const uint8_t ImportThunkARM[] = {
     0xdc, 0xf8, 0x00, 0xf0, // ldr.w pc, [ip]
 };
 
+static const uint8_t ImportThunkARM64[] = {
+    0x10, 0x00, 0x00, 0x90, // adrp x16, #0
+    0x10, 0x02, 0x40, 0xf9, // ldr  x16, [x16]
+    0x00, 0x02, 0x1f, 0xd6, // br   x16
+};
+
 // Windows-specific.
 // A chunk for DLL import jump table entry. In a final output, it's
 // contents will be a JMP instruction to some __imp_ symbol.
@@ -284,6 +304,16 @@ public:
   explicit ImportThunkChunkARM(Defined *S) : ImpSymbol(S) {}
   size_t getSize() const override { return sizeof(ImportThunkARM); }
   void getBaserels(std::vector<Baserel> *Res) override;
+  void writeTo(uint8_t *Buf) const override;
+
+private:
+  Defined *ImpSymbol;
+};
+
+class ImportThunkChunkARM64 : public Chunk {
+public:
+  explicit ImportThunkChunkARM64(Defined *S) : ImpSymbol(S) {}
+  size_t getSize() const override { return sizeof(ImportThunkARM64); }
   void writeTo(uint8_t *Buf) const override;
 
 private:
@@ -338,6 +368,9 @@ public:
   uint32_t RVA;
   uint8_t Type;
 };
+
+void applyMOV32T(uint8_t *Off, uint32_t V);
+void applyBranch24T(uint8_t *Off, int32_t V);
 
 } // namespace coff
 } // namespace lld

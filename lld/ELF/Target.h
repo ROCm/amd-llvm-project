@@ -51,6 +51,9 @@ public:
   // targeting S.
   virtual bool needsThunk(RelExpr Expr, uint32_t RelocType,
                           const InputFile *File, const SymbolBody &S) const;
+  // Return true if we can reach Dst from Src with Relocation RelocType
+  virtual bool inBranchRange(uint32_t RelocType, uint64_t Src,
+                             uint64_t Dst) const;
   virtual RelExpr getRelExpr(uint32_t Type, const SymbolBody &S,
                              const uint8_t *Loc) const = 0;
   virtual void relocateOne(uint8_t *Loc, uint32_t Type, uint64_t Val) const = 0;
@@ -65,6 +68,10 @@ public:
   // installs that is 65536, so the first 15 pages cannot be used.
   // Given that, the smallest value that can be used in here is 0x10000.
   uint64_t DefaultImageBase = 0x10000;
+
+  // Offset of _GLOBAL_OFFSET_TABLE_ from base of .got section. Use -1 for
+  // end of .got
+  uint64_t GotBaseSymOff = 0;
 
   uint32_t CopyRel;
   uint32_t GotRel;
@@ -108,6 +115,7 @@ TargetInfo *getARMTargetInfo();
 TargetInfo *getAVRTargetInfo();
 TargetInfo *getPPC64TargetInfo();
 TargetInfo *getPPCTargetInfo();
+TargetInfo *getSPARCV9TargetInfo();
 TargetInfo *getX32TargetInfo();
 TargetInfo *getX86TargetInfo();
 TargetInfo *getX86_64TargetInfo();
@@ -149,6 +157,6 @@ static void checkAlignment(uint8_t *Loc, uint64_t V, uint32_t Type) {
           lld::toString(Type));
 }
 } // namespace elf
-}
+} // namespace lld
 
 #endif

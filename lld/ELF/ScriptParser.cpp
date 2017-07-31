@@ -113,6 +113,12 @@ private:
 };
 } // namespace
 
+static StringRef unquote(StringRef S) {
+  if (S.startswith("\""))
+    return S.substr(1, S.size() - 2);
+  return S;
+}
+
 static bool isUnderSysroot(StringRef Path) {
   if (Config->Sysroot == "")
     return false;
@@ -133,11 +139,13 @@ static void moveAbsRight(ExprValue &A, ExprValue &B) {
 
 static ExprValue add(ExprValue A, ExprValue B) {
   moveAbsRight(A, B);
-  return {A.Sec, A.ForceAbsolute, A.Val + B.getValue(), A.Loc};
+  uint64_t Val = alignTo(A.Val, A.Alignment) + B.getValue();
+  return {A.Sec, A.ForceAbsolute, Val, A.Loc};
 }
 
 static ExprValue sub(ExprValue A, ExprValue B) {
-  return {A.Sec, A.Val - B.getValue(), A.Loc};
+  uint64_t Val = alignTo(A.Val, A.Alignment) - B.getValue();
+  return {A.Sec, Val, A.Loc};
 }
 
 static ExprValue mul(ExprValue A, ExprValue B) {
@@ -250,7 +258,7 @@ void ScriptParser::addFile(StringRef S) {
     }
   }
 
-  if (sys::path::is_absolute(S)) {
+  if (S.startswith("/")) {
     Driver->addFile(S, /*WithLOption=*/false);
   } else if (S.startswith("=")) {
     if (Config->Sysroot.empty())
@@ -1103,6 +1111,10 @@ void ScriptParser::readVersionDeclaration(StringRef VerStr) {
   expect(";");
 }
 
+static bool hasWildcard(StringRef S) {
+  return S.find_first_of("?*[") != StringRef::npos;
+}
+
 // Reads a list of symbols, e.g. "{ global: foo; bar; local: *; };".
 std::pair<std::vector<SymbolVersion>, std::vector<SymbolVersion>>
 ScriptParser::readSymbols() {
@@ -1191,8 +1203,7 @@ void ScriptParser::readMemory() {
     if (It != Script->Opt.MemoryRegions.end())
       setError("region '" + Name + "' already defined");
     else
-      Script->Opt.MemoryRegions[Name] = {Name,   Origin, Length,
-                                         Origin, Flags,  NegFlags};
+      Script->Opt.MemoryRegions[Name] = {Name, Origin, Length, Flags, NegFlags};
   }
 }
 

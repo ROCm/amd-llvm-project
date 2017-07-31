@@ -292,6 +292,29 @@ unsigned PPCInstrInfo::isLoadFromStackSlot(const MachineInstr &MI,
   return 0;
 }
 
+// For opcodes with the ReMaterializable flag set, this function is called to
+// verify the instruction is really rematable.  
+bool PPCInstrInfo::isReallyTriviallyReMaterializable(const MachineInstr &MI,
+                                                     AliasAnalysis *AA) const {
+  switch (MI.getOpcode()) {
+  default: 
+    // This function should only be called for opcodes with the ReMaterializable
+    // flag set.
+    llvm_unreachable("Unknown rematerializable operation!");
+    break;
+  case PPC::LI:
+  case PPC::LI8:
+  case PPC::LIS:
+  case PPC::LIS8:
+  case PPC::QVGPCI:
+  case PPC::ADDIStocHA:
+  case PPC::ADDItocL:
+  case PPC::LOAD_STACK_GUARD:
+    return true;
+  }
+  return false;
+}
+
 unsigned PPCInstrInfo::isStoreToStackSlot(const MachineInstr &MI,
                                           int &FrameIndex) const {
   // Note: This list must be kept consistent with StoreRegToStackSlot.
@@ -1612,8 +1635,9 @@ bool PPCInstrInfo::optimizeCompareInstr(MachineInstr &CmpInstr, unsigned SrcReg,
   if (equalityOnly) {
     // We need to check the uses of the condition register in order to reject
     // non-equality comparisons.
-    for (MachineRegisterInfo::use_instr_iterator I =MRI->use_instr_begin(CRReg),
-         IE = MRI->use_instr_end(); I != IE; ++I) {
+    for (MachineRegisterInfo::use_instr_iterator
+         I = MRI->use_instr_begin(CRReg), IE = MRI->use_instr_end();
+         I != IE; ++I) {
       MachineInstr *UseMI = &*I;
       if (UseMI->getOpcode() == PPC::BCC) {
         unsigned Pred = UseMI->getOperand(0).getImm();
@@ -1635,8 +1659,9 @@ bool PPCInstrInfo::optimizeCompareInstr(MachineInstr &CmpInstr, unsigned SrcReg,
   for (MachineBasicBlock::iterator EL = CmpInstr.getParent()->end(); I != EL;
        ++I) {
     bool FoundUse = false;
-    for (MachineRegisterInfo::use_instr_iterator J =MRI->use_instr_begin(CRReg),
-         JE = MRI->use_instr_end(); J != JE; ++J)
+    for (MachineRegisterInfo::use_instr_iterator
+         J = MRI->use_instr_begin(CRReg), JE = MRI->use_instr_end();
+         J != JE; ++J)
       if (&*J == &*I) {
         FoundUse = true;
         break;

@@ -39,25 +39,14 @@ TarWriter *elf::Tar;
 
 InputFile::InputFile(Kind K, MemoryBufferRef M) : MB(M), FileKind(K) {}
 
-namespace {
-// In ELF object file all section addresses are zero. If we have multiple
-// .text sections (when using -ffunction-section or comdat group) then
-// LLVM DWARF parser will not be able to parse .debug_line correctly, unless
-// we assign each section some unique address. This callback method assigns
-// each section an address equal to its offset in ELF object file.
-class ObjectInfo : public LoadedObjectInfo {
-public:
-  uint64_t getSectionLoadAddress(const object::SectionRef &Sec) const override {
-    return static_cast<const ELFSectionRef &>(Sec).getOffset();
-  }
-  std::unique_ptr<LoadedObjectInfo> clone() const override {
-    return std::unique_ptr<LoadedObjectInfo>();
-  }
-};
-}
-
 Optional<MemoryBufferRef> elf::readFile(StringRef Path) {
+  // The --chroot option changes our virtual root directory.
+  // This is useful when you are dealing with files created by --reproduce.
+  if (!Config->Chroot.empty() && Path.startswith("/"))
+    Path = Saver.save(Config->Chroot + Path);
+
   log(Path);
+
   auto MBOrErr = MemoryBuffer::getFile(Path);
   if (auto EC = MBOrErr.getError()) {
     error("cannot open " + Path + ": " + EC.message());
@@ -74,14 +63,11 @@ Optional<MemoryBufferRef> elf::readFile(StringRef Path) {
 }
 
 template <class ELFT> void elf::ObjectFile<ELFT>::initializeDwarfLine() {
-  std::unique_ptr<object::ObjectFile> Obj =
-      check(object::ObjectFile::createObjectFile(this->MB), toString(this));
-
-  ObjectInfo ObjInfo;
-  DWARFContextInMemory Dwarf(*Obj, &ObjInfo);
-  DwarfLine.reset(new DWARFDebugLine(&Dwarf.getLineSection().Relocs));
-  DataExtractor LineData(Dwarf.getLineSection().Data, Config->IsLE,
-                         Config->Wordsize);
+  DWARFContext Dwarf(make_unique<LLDDwarfObj<ELFT>>(this));
+  const DWARFObject &Obj = Dwarf.getDWARFObj();
+  DwarfLine.reset(new DWARFDebugLine);
+  DWARFDataExtractor LineData(Obj, Obj.getLineSection(), Config->IsLE,
+                              Config->Wordsize);
 
   // The second parameter is offset in .debug_line section
   // for compilation unit (CU) of interest. We have only one
@@ -94,8 +80,7 @@ template <class ELFT> void elf::ObjectFile<ELFT>::initializeDwarfLine() {
 template <class ELFT>
 Optional<DILineInfo> elf::ObjectFile<ELFT>::getDILineInfo(InputSectionBase *S,
                                                           uint64_t Offset) {
-  if (!DwarfLine)
-    initializeDwarfLine();
+  llvm::call_once(InitDwarfLine, [this]() { initializeDwarfLine(); });
 
   // The offset to CU is 0.
   const DWARFDebugLine::LineTable *Tbl = DwarfLine->getLineTable(0);
@@ -509,9 +494,14 @@ elf::ObjectFile<ELFT>::createInputSection(const Elf_Shdr &Sec) {
   // If that's the case, we want to eliminate .debug_gnu_pub{names,types}
   // because they are redundant and can waste large amount of disk space
   // (for example, they are about 400 MiB in total for a clang debug build.)
+  // We still create the section and mark it dead so that the gdb index code
+  // can use the InputSection to access the data.
   if (Config->GdbIndex &&
-      (Name == ".debug_gnu_pubnames" || Name == ".debug_gnu_pubtypes"))
-    return &InputSection::Discarded;
+      (Name == ".debug_gnu_pubnames" || Name == ".debug_gnu_pubtypes")) {
+    auto *Ret = make<InputSection>(this, &Sec, Name);
+    Script->discard({Ret});
+    return Ret;
+  }
 
   // The linkonce feature is a sort of proto-comdat. Some glibc i386 object
   // files contain definitions of symbol "__x86.get_pc_thunk.bx" in linkonce
@@ -632,8 +622,9 @@ ArchiveFile::ArchiveFile(std::unique_ptr<Archive> &&File)
       File(std::move(File)) {}
 
 template <class ELFT> void ArchiveFile::parse() {
+  Symbols.reserve(File->getNumberOfSymbols());
   for (const Archive::Symbol &Sym : File->symbols())
-    Symtab<ELFT>::X->addLazyArchive(this, Sym);
+    Symbols.push_back(Symtab<ELFT>::X->addLazyArchive(this, Sym));
 }
 
 // Returns a buffer pointing to a member file containing a given symbol.

@@ -32,8 +32,8 @@ DefinitionsInHeadersCheck::DefinitionsInHeadersCheck(StringRef Name,
                                                      ClangTidyContext *Context)
     : ClangTidyCheck(Name, Context),
       UseHeaderFileExtension(Options.get("UseHeaderFileExtension", true)),
-      RawStringHeaderFileExtensions(
-          Options.getLocalOrGlobal("HeaderFileExtensions", ",h,hh,hpp,hxx")) {
+      RawStringHeaderFileExtensions(Options.getLocalOrGlobal(
+          "HeaderFileExtensions", utils::defaultHeaderFileExtensions())) {
   if (!utils::parseHeaderFileExtensions(RawStringHeaderFileExtensions,
                                         HeaderFileExtensions, ',')) {
     // FIXME: Find a more suitable way to handle invalid configuration
@@ -138,6 +138,9 @@ void DefinitionsInHeadersCheck::check(const MatchFinder::MatchResult &Result) {
       return;
     // Ignore variable definition within function scope.
     if (VD->hasLocalStorage() || VD->isStaticLocal())
+      return;
+    // Ignore inline variables.
+    if (VD->isInline())
       return;
 
     diag(VD->getLocation(),

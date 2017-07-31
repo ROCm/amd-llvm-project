@@ -414,16 +414,6 @@ lldb::SBProcess SBTarget::Attach(SBAttachInfo &sb_attach_info, SBError &error) {
   return sb_process;
 }
 
-#if defined(__APPLE__)
-
-lldb::SBProcess SBTarget::AttachToProcessWithID(SBListener &listener,
-                                                ::pid_t pid,
-                                                lldb::SBError &error) {
-  return AttachToProcessWithID(listener, (lldb::pid_t)pid, error);
-}
-
-#endif // #if defined(__APPLE__)
-
 lldb::SBProcess SBTarget::AttachToProcessWithID(
     SBListener &listener,
     lldb::pid_t pid, // The process ID to attach to
@@ -2170,7 +2160,7 @@ lldb::addr_t SBTarget::GetStackRedZoneSize() {
     if (process_sp)
       abi_sp = process_sp->GetABI();
     else
-      abi_sp = ABI::FindPlugin(target_sp->GetArchitecture());
+      abi_sp = ABI::FindPlugin(ProcessSP(), target_sp->GetArchitecture());
     if (abi_sp)
       return abi_sp->GetRedZoneSize();
   }

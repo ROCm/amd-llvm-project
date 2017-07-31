@@ -284,6 +284,14 @@ public:
     // linkage together with vtables when needed.
     if (ForVTable && !Thunk->hasLocalLinkage())
       Thunk->setLinkage(llvm::GlobalValue::AvailableExternallyLinkage);
+
+    // Propagate dllexport storage, to enable the linker to generate import
+    // thunks as necessary (e.g. when a parent class has a key function and a
+    // child class doesn't, and the construction vtable for the parent in the
+    // child needs to reference the parent's thunks).
+    const CXXMethodDecl *MD = cast<CXXMethodDecl>(GD.getDecl());
+    if (MD->hasAttr<DLLExportAttr>())
+      Thunk->setDLLStorageClass(llvm::GlobalValue::DLLExportStorageClass);
   }
 
   llvm::Value *performThisAdjustment(CodeGenFunction &CGF, Address This,
@@ -2021,13 +2029,12 @@ void ItaniumCXXABI::EmitGuardedInit(CodeGenFunction &CGF,
 
     // Create the guard variable with a zero-initializer.
     // Just absorb linkage and visibility from the guarded variable.
-    guard = new llvm::GlobalVariable(CGM.getModule(), guardTy,
-                                     false, var->getLinkage(),
-                                     llvm::ConstantInt::get(guardTy, 0),
-                                     guardName.str(),
-                                     /* InsertBefore */ nullptr,
-                                     llvm::GlobalValue::NotThreadLocal,
-                                     getContext().getTargetGlobalAddressSpace());
+    guard = new llvm::GlobalVariable(
+        CGM.getModule(), guardTy, false, var->getLinkage(),
+        llvm::ConstantInt::get(guardTy, 0), guardName.str(),
+        /* InsertBefore */ nullptr, llvm::GlobalValue::NotThreadLocal,
+        getContext().getTargetAddressSpace(
+            CGM.getTargetCodeGenInfo().getGlobalVarAddressSpace(CGM, nullptr)));
     guard->setVisibility(var->getVisibility());
     // If the variable is thread-local, so is its guard variable.
     guard->setThreadLocalMode(var->getThreadLocalMode());
@@ -2963,6 +2970,8 @@ static llvm::GlobalVariable::LinkageTypes getTypeInfoLinkage(CodeGenModule &CGM,
     return llvm::GlobalValue::InternalLinkage;
 
   case VisibleNoLinkage:
+  case ModuleInternalLinkage:
+  case ModuleLinkage:
   case ExternalLinkage:
     // RTTI is not enabled, which means that this type info struct is going
     // to be used for exception handling. Give it linkonce_odr linkage.

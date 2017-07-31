@@ -633,13 +633,13 @@ entry:
 define <8 x i32> @V111(<8 x i32> %in) nounwind uwtable readnone ssp {
 ; X32-AVX2-LABEL: V111:
 ; X32-AVX2:       ## BB#0: ## %entry
-; X32-AVX2-NEXT:    vpbroadcastd LCPI29_0, %ymm1
+; X32-AVX2-NEXT:    vpbroadcastd {{.*#+}} ymm1 = [2,2,2,2,2,2,2,2]
 ; X32-AVX2-NEXT:    vpaddd %ymm1, %ymm0, %ymm0
 ; X32-AVX2-NEXT:    retl
 ;
 ; X64-AVX2-LABEL: V111:
 ; X64-AVX2:       ## BB#0: ## %entry
-; X64-AVX2-NEXT:    vpbroadcastd {{.*}}(%rip), %ymm1
+; X64-AVX2-NEXT:    vpbroadcastd {{.*#+}} ymm1 = [2,2,2,2,2,2,2,2]
 ; X64-AVX2-NEXT:    vpaddd %ymm1, %ymm0, %ymm0
 ; X64-AVX2-NEXT:    retq
 ;
@@ -660,13 +660,13 @@ entry:
 define <8 x float> @V113(<8 x float> %in) nounwind uwtable readnone ssp {
 ; X32-AVX2-LABEL: V113:
 ; X32-AVX2:       ## BB#0: ## %entry
-; X32-AVX2-NEXT:    vbroadcastss LCPI30_0, %ymm1
+; X32-AVX2-NEXT:    vbroadcastss {{.*#+}} ymm1 = [-0.0078125,-0.0078125,-0.0078125,-0.0078125,-0.0078125,-0.0078125,-0.0078125,-0.0078125]
 ; X32-AVX2-NEXT:    vaddps %ymm1, %ymm0, %ymm0
 ; X32-AVX2-NEXT:    retl
 ;
 ; X64-AVX2-LABEL: V113:
 ; X64-AVX2:       ## BB#0: ## %entry
-; X64-AVX2-NEXT:    vbroadcastss {{.*}}(%rip), %ymm1
+; X64-AVX2-NEXT:    vbroadcastss {{.*#+}} ymm1 = [-0.0078125,-0.0078125,-0.0078125,-0.0078125,-0.0078125,-0.0078125,-0.0078125,-0.0078125]
 ; X64-AVX2-NEXT:    vaddps %ymm1, %ymm0, %ymm0
 ; X64-AVX2-NEXT:    retq
 ;
@@ -687,12 +687,12 @@ entry:
 define <4 x float> @_e2(float* %ptr) nounwind uwtable readnone ssp {
 ; X32-LABEL: _e2:
 ; X32:       ## BB#0:
-; X32-NEXT:    vbroadcastss LCPI31_0, %xmm0
+; X32-NEXT:    vbroadcastss {{.*#+}} xmm0 = [-0.0078125,-0.0078125,-0.0078125,-0.0078125]
 ; X32-NEXT:    retl
 ;
 ; X64-LABEL: _e2:
 ; X64:       ## BB#0:
-; X64-NEXT:    vbroadcastss {{.*}}(%rip), %xmm0
+; X64-NEXT:    vbroadcastss {{.*#+}} xmm0 = [-0.0078125,-0.0078125,-0.0078125,-0.0078125]
 ; X64-NEXT:    retq
   %vecinit.i = insertelement <4 x float> undef, float        0xbf80000000000000, i32 0
   %vecinit2.i = insertelement <4 x float> %vecinit.i, float  0xbf80000000000000, i32 1
@@ -734,6 +734,7 @@ define void @crash() nounwind alwaysinline {
 ; X32-NEXT:  LBB33_1: ## %footer349VF
 ; X32-NEXT:    ## =>This Inner Loop Header: Depth=1
 ; X32-NEXT:    jmp LBB33_1
+; X32-NEXT:    ## -- End function
 ;
 ; X64-LABEL: crash:
 ; X64:       ## BB#0: ## %WGLoopsEntry
@@ -746,6 +747,7 @@ define void @crash() nounwind alwaysinline {
 ; X64-NEXT:  LBB33_1: ## %footer349VF
 ; X64-NEXT:    ## =>This Inner Loop Header: Depth=1
 ; X64-NEXT:    jmp LBB33_1
+; X64-NEXT:    ## -- End function
 WGLoopsEntry:
   br i1 undef, label %ret, label %footer329VF
 

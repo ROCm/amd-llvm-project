@@ -1,4 +1,4 @@
-// RUN1: %clang_cc1 -std=c++11 -triple x86_64-none-linux-gnu -emit-llvm -o - %s | FileCheck -check-prefixes=X86,CHECK %s
+// RUN: %clang_cc1 -std=c++11 -triple x86_64-none-linux-gnu -emit-llvm -o - %s | FileCheck %s
 // RUN: %clang_cc1 -std=c++11 -triple amdgcn-amd-amdhsa-amdgiz -DNO_TLS -emit-llvm -o - %s | FileCheck -check-prefixes=AMD,CHECK %s
 
 namespace std {
@@ -55,13 +55,13 @@ std::initializer_list<int> globalInitList1 = {1, 2, 3};
 
 #ifndef NO_TLS
 namespace thread_local_global_array {
-  // FIXME: We should be able to constant-evaluate this even though the
-  // initializer is not a constant expression (pointers to thread_local
-  // objects aren't really a problem).
-  //
-  // X86: @_ZN25thread_local_global_array1xE = thread_local global
-  // X86: @_ZGRN25thread_local_global_array1xE_ = internal thread_local constant [4 x i32] [i32 1, i32 2, i32 3, i32 4]
-  std::initializer_list<int> thread_local x = { 1, 2, 3, 4 };
+// FIXME: We should be able to constant-evaluate this even though the
+// initializer is not a constant expression (pointers to thread_local
+// objects aren't really a problem).
+//
+// X86: @_ZN25thread_local_global_array1xE = thread_local global
+// X86: @_ZGRN25thread_local_global_array1xE_ = internal thread_local constant [4 x i32] [i32 1, i32 2, i32 3, i32 4]
+std::initializer_list<int> thread_local x = {1, 2, 3, 4};
 }
 #endif
 

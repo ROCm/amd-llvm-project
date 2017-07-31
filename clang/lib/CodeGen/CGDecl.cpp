@@ -221,8 +221,8 @@ llvm::Constant *CodeGenModule::getOrCreateStaticVarDecl(
     Name = getStaticDeclName(*this, D);
 
   llvm::Type *LTy = getTypes().ConvertTypeForMem(Ty);
-  unsigned AddrSpace =
-      GetGlobalVarAddressSpace(&D, getContext().getTargetAddressSpace(Ty));
+  unsigned AS = GetGlobalVarAddressSpace(&D);
+  unsigned TargetAS = getContext().getTargetAddressSpace(AS);
 
   // Local address space cannot have an initializer.
   // HCC tile_static variables cannot have an initializer.
@@ -233,12 +233,9 @@ llvm::Constant *CodeGenModule::getOrCreateStaticVarDecl(
   else
     Init = llvm::UndefValue::get(LTy);
 
-  llvm::GlobalVariable *GV =
-    new llvm::GlobalVariable(getModule(), LTy,
-                             Ty.isConstant(getContext()), Linkage,
-                             Init, Name, nullptr,
-                             llvm::GlobalVariable::NotThreadLocal,
-                             AddrSpace);
+  llvm::GlobalVariable *GV = new llvm::GlobalVariable(
+      getModule(), LTy, Ty.isConstant(getContext()), Linkage, Init, Name,
+      nullptr, llvm::GlobalVariable::NotThreadLocal, TargetAS);
   GV->setAlignment(getContext().getDeclAlign(&D).getQuantity());
   setGlobalVisibility(GV, &D);
 
@@ -256,17 +253,18 @@ llvm::Constant *CodeGenModule::getOrCreateStaticVarDecl(
   }
 
   // Make sure the result is of the correct type.
-  unsigned ExpectedAddrSpace = getContext().getTargetAddressSpace(Ty);
+  unsigned ExpectedAS = Ty.getAddressSpace();
 
   // HCC tile_static pointer would be in generic address space
   if (D.hasAttr<HCCTileStaticAttr>()) {
-    ExpectedAddrSpace = getContext().getTargetAddressSpace(LangAS::hcc_generic);
+    ExpectedAS = LangAS::hcc_generic;
   }
 
   llvm::Constant *Addr = GV;
-  if (AddrSpace != ExpectedAddrSpace) {
-    llvm::PointerType *PTy = llvm::PointerType::get(LTy, ExpectedAddrSpace);
-    Addr = llvm::ConstantExpr::getAddrSpaceCast(GV, PTy);
+  if (AS != ExpectedAS) {
+    Addr = getTargetCodeGenInfo().performAddrSpaceCast(
+        *this, GV, AS, ExpectedAS,
+        LTy->getPointerTo(getContext().getTargetAddressSpace(ExpectedAS)));
   }
 
   setStaticLocalDeclAddress(&D, Addr);
@@ -1304,7 +1302,7 @@ void CodeGenFunction::EmitAutoVarInit(const AutoVarEmission &emission) {
     // Otherwise, create a temporary global with the initializer then
     // memcpy from the global to the alloca.
     std::string Name = getStaticDeclName(CGM, D);
-    unsigned AS = CGM.getContext().getTargetConstantAddressSpace();
+    unsigned AS = 0;
     if (getLangOpts().OpenCL || getLangOpts().CPlusPlusAMP) {
       AS = CGM.getContext().getTargetAddressSpace(LangAS::opencl_constant);
       BP = llvm::PointerType::getInt8PtrTy(getLLVMContext(), AS);

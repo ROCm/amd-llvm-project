@@ -44,7 +44,7 @@ enum class DiscardPolicy { Default, All, Locals, None };
 enum class StripPolicy { None, All, Debug };
 
 // For --unresolved-symbols.
-enum class UnresolvedPolicy { ReportError, Warn, WarnAll, Ignore, IgnoreAll };
+enum class UnresolvedPolicy { ReportError, Warn, Ignore, IgnoreAll };
 
 // For --sort-section and linkerscript sorting rules.
 enum class SortSectionPolicy { Default, None, Alignment, Name, Priority };
@@ -70,7 +70,7 @@ struct VersionDefinition {
 // Structure for mapping renamed symbols
 struct RenamedSymbol {
   Symbol *Target;
-  uint8_t OrigBinding;
+  uint8_t OriginalBinding;
 };
 
 // This struct contains the global configuration for the linker.
@@ -82,6 +82,7 @@ struct Configuration {
   uint8_t OSABI = 0;
   llvm::CachePruningPolicy ThinLTOCachePolicy;
   llvm::StringMap<uint64_t> SectionStartMap;
+  llvm::StringRef Chroot;
   llvm::StringRef DynamicLinker;
   llvm::StringRef Entry;
   llvm::StringRef Emulation;
@@ -97,7 +98,9 @@ struct Configuration {
   llvm::StringRef ThinLTOCacheDir;
   std::string Rpath;
   std::vector<VersionDefinition> VersionDefinitions;
+  std::vector<llvm::StringRef> Argv;
   std::vector<llvm::StringRef> AuxiliaryList;
+  std::vector<llvm::StringRef> FilterList;
   std::vector<llvm::StringRef> SearchPaths;
   std::vector<llvm::StringRef> SymbolOrderingFile;
   std::vector<llvm::StringRef> Undefined;
@@ -125,6 +128,7 @@ struct Configuration {
   bool ICF;
   bool MipsN32Abi = false;
   bool NoGnuUnique;
+  bool NoinhibitExec;
   bool NoUndefinedVersion;
   bool Nostdlib;
   bool OFormatBinary;
