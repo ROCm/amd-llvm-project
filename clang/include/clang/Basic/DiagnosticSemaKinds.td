@@ -712,6 +712,19 @@ def err_pragma_options_align_mac68k_target_unsupported : Error<
 def warn_pragma_pack_invalid_alignment : Warning<
   "expected #pragma pack parameter to be '1', '2', '4', '8', or '16'">,
   InGroup<IgnoredPragmas>;
+def warn_pragma_pack_non_default_at_include : Warning<
+  "non-default #pragma pack value changes the alignment of struct or union "
+  "members in the included file">, InGroup<PragmaPackSuspiciousInclude>,
+  DefaultIgnore;
+def warn_pragma_pack_modified_after_include : Warning<
+  "the current #pragma pack aligment value is modified in the included "
+  "file">, InGroup<PragmaPack>;
+def warn_pragma_pack_no_pop_eof : Warning<"unterminated "
+  "'#pragma pack (push, ...)' at end of file">, InGroup<PragmaPack>;
+def note_pragma_pack_here : Note<
+  "previous '#pragma pack' directive that modifies alignment is here">;
+def note_pragma_pack_pop_instead_reset : Note<
+  "did you intend to use '#pragma pack (pop)' instead of '#pragma pack()'?">;
 // Follow the Microsoft implementation.
 def warn_pragma_pack_show : Warning<"value of #pragma pack(show) == %0">;
 def warn_pragma_pack_pop_identifer_and_alignment : Warning<
@@ -8519,6 +8532,8 @@ def err_omp_expected_var_name_member_expr : Error<
   "expected variable name%select{| or data member of current class}0">;
 def err_omp_expected_var_name_member_expr_or_array_item : Error<
   "expected variable name%select{|, data member of current class}0, array element or array section">;
+def err_omp_expected_addressable_lvalue_or_array_item : Error<
+  "expected addressable lvalue expression, array element or array section">;
 def err_omp_expected_named_var_member_or_array_expression: Error<
   "expected expression containing only member accesses and/or array sections based on named variables">;
 def err_omp_bit_fields_forbidden_in_clause : Error<
