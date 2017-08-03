@@ -7705,9 +7705,14 @@ bool X86InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
   case X86::FsFLD0SS:
   case X86::FsFLD0SD:
     return Expand2AddrUndef(MIB, get(HasAVX ? X86::VXORPSrr : X86::XORPSrr));
-  case X86::AVX_SET0:
+  case X86::AVX_SET0: {
     assert(HasAVX && "AVX not supported");
-    return Expand2AddrUndef(MIB, get(X86::VXORPSYrr));
+    const TargetRegisterInfo *TRI = &getRegisterInfo();
+    unsigned SrcReg = MIB->getOperand(0).getReg();
+    unsigned XReg = TRI->getSubReg(SrcReg, X86::sub_xmm);
+    MIB->getOperand(0).setReg(XReg);
+    return Expand2AddrUndef(MIB, get(X86::VXORPSrr));
+  }
   case X86::AVX512_128_SET0:
   case X86::AVX512_FsFLD0SS:
   case X86::AVX512_FsFLD0SD: {
@@ -7726,9 +7731,13 @@ bool X86InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
     bool HasVLX = Subtarget.hasVLX();
     unsigned SrcReg = MIB->getOperand(0).getReg();
     const TargetRegisterInfo *TRI = &getRegisterInfo();
-    if (HasVLX || TRI->getEncodingValue(SrcReg) < 16)
-      return Expand2AddrUndef(MIB,
-                              get(HasVLX ? X86::VPXORDZ256rr : X86::VXORPSYrr));
+    if (HasVLX)
+      return Expand2AddrUndef(MIB, get(X86::VPXORDZ256rr));
+    if (TRI->getEncodingValue(SrcReg) < 16) {
+      unsigned XReg = TRI->getSubReg(SrcReg, X86::sub_xmm);
+      MIB->getOperand(0).setReg(XReg);
+      return Expand2AddrUndef(MIB, get(X86::VXORPSrr));
+    }
     // Extended register without VLX. Use a larger XOR.
     SrcReg = TRI->getMatchingSuperReg(SrcReg, X86::sub_ymm, &X86::VR512RegClass);
     MIB->getOperand(0).setReg(SrcReg);
@@ -10528,25 +10537,31 @@ char LDTLSCleanup::ID = 0;
 FunctionPass*
 llvm::createCleanupLocalDynamicTLSPass() { return new LDTLSCleanup(); }
 
-unsigned X86InstrInfo::getOutliningBenefit(size_t SequenceSize,
-                                           size_t Occurrences,
-                                           bool CanBeTailCall) const {
-  unsigned NotOutlinedSize = SequenceSize * Occurrences;
-  unsigned OutlinedSize;
+// Constants defining how certain sequences should be outlined.
+const unsigned MachineOutlinerDefaultFn = 0;
+const unsigned MachineOutlinerTailCallFn = 1;
 
-  // Is it a tail call?
-  if (CanBeTailCall) {
-    // If yes, we don't have to include a return instruction-- it's already in
-    // our sequence. So we have one occurrence of the sequence + #Occurrences
-    // calls.
-    OutlinedSize = SequenceSize + Occurrences;
-  } else {
-    // If not, add one for the return instruction.
-    OutlinedSize = (SequenceSize + 1) + Occurrences;
-  }
+std::pair<size_t, unsigned> X86InstrInfo::getOutliningCallOverhead(
+    MachineBasicBlock::iterator &StartIt,
+    MachineBasicBlock::iterator &EndIt) const {
 
-  // Return the number of instructions saved by outlining this sequence.
-  return NotOutlinedSize > OutlinedSize ? NotOutlinedSize - OutlinedSize : 0;
+  // Is this a tail call? If it is, make note of it.
+  if (EndIt->isTerminator())
+    return std::make_pair(1, MachineOutlinerTailCallFn);
+
+  return std::make_pair(1, MachineOutlinerDefaultFn);
+}
+
+std::pair<size_t, unsigned> X86InstrInfo::getOutliningFrameOverhead(
+  std::vector<std::pair<MachineBasicBlock::iterator, 
+                        MachineBasicBlock::iterator>> &CandidateClass) const {
+  // Is this a tail-call?
+  // Is the last instruction in this class a terminator?
+  if (CandidateClass[0].second->isTerminator())
+    return std::make_pair(0, MachineOutlinerTailCallFn);
+
+  // No, so we have to add a return to the end.
+  return std::make_pair(1, MachineOutlinerDefaultFn);
 }
 
 bool X86InstrInfo::isFunctionSafeToOutlineFrom(MachineFunction &MF) const {
@@ -10610,10 +10625,10 @@ X86InstrInfo::getOutliningType(MachineInstr &MI) const {
 
 void X86InstrInfo::insertOutlinerEpilogue(MachineBasicBlock &MBB,
                                           MachineFunction &MF,
-                                          bool IsTailCall) const {
+                                          unsigned FrameClass) const {
 
   // If we're a tail call, we already have a return, so don't do anything.
-  if (IsTailCall)
+  if (FrameClass == MachineOutlinerTailCallFn)
     return;
 
   // We're a normal call, so our sequence doesn't have a return instruction.
@@ -10624,15 +10639,15 @@ void X86InstrInfo::insertOutlinerEpilogue(MachineBasicBlock &MBB,
 
 void X86InstrInfo::insertOutlinerPrologue(MachineBasicBlock &MBB,
                                           MachineFunction &MF,
-                                          bool IsTailCall) const {}
+                                          unsigned FrameClass) const {}
 
 MachineBasicBlock::iterator
 X86InstrInfo::insertOutlinedCall(Module &M, MachineBasicBlock &MBB,
                                  MachineBasicBlock::iterator &It,
                                  MachineFunction &MF,
-                                 bool IsTailCall) const {
+                                 unsigned CallClass) const {
   // Is it a tail call?
-  if (IsTailCall) {
+  if (CallClass == MachineOutlinerTailCallFn) {
     // Yes, just insert a JMP.
     It = MBB.insert(It,
                   BuildMI(MF, DebugLoc(), get(X86::JMP_1))

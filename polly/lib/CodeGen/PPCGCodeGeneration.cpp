@@ -31,6 +31,8 @@
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/IRReader/IRReader.h"
+#include "llvm/Linker/Linker.h"
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Target/TargetMachine.h"
@@ -101,6 +103,11 @@ static cl::opt<bool>
                                        " kernel module."),
                               cl::Hidden, cl::init(false), cl::ZeroOrMore,
                               cl::cat(PollyCategory));
+
+static cl::opt<std::string> CUDALibDevice(
+    "polly-acc-libdevice", cl::desc("Path to CUDA libdevice"), cl::Hidden,
+    cl::init("/usr/local/cuda/nvvm/libdevice/libdevice.compute_20.10.ll"),
+    cl::ZeroOrMore, cl::cat(PollyCategory));
 
 static cl::opt<std::string>
     CudaVersion("polly-acc-cuda-version",
@@ -604,6 +611,12 @@ private:
   ///
   /// @param F The function to remove references to.
   void clearLoops(Function *F);
+
+  /// Check if the scop requires to be linked with CUDA's libdevice.
+  bool requiresCUDALibDevice();
+
+  /// Link with the NVIDIA libdevice library (if needed and available).
+  void addCUDALibDevice();
 
   /// Finalize the generation of the kernel function.
   ///
@@ -1324,13 +1337,32 @@ isl_bool collectReferencesInGPUStmt(__isl_keep isl_ast_node *Node, void *User) {
   return isl_bool_true;
 }
 
+/// A list of functions that are available in NVIDIA's libdevice.
+const std::set<std::string> CUDALibDeviceFunctions = {
+    "exp",  "expf",  "expl",     "cos",       "cosf",
+    "sqrt", "sqrtf", "copysign", "copysignf", "copysignl"};
+
+/// Return the corresponding CUDA libdevice function name for @p F.
+///
+/// Return "" if we are not compiling for CUDA.
+std::string getCUDALibDeviceFuntion(Function *F) {
+  if (CUDALibDeviceFunctions.count(F->getName()))
+    return std::string("__nv_") + std::string(F->getName());
+
+  return "";
+}
+
 /// Check if F is a function that we can code-generate in a GPU kernel.
-static bool isValidFunctionInKernel(llvm::Function *F) {
+static bool isValidFunctionInKernel(llvm::Function *F, bool AllowLibDevice) {
   assert(F && "F is an invalid pointer");
   // We string compare against the name of the function to allow
   // all variants of the intrinsic "llvm.sqrt.*", "llvm.fabs", and
   // "llvm.copysign".
   const StringRef Name = F->getName();
+
+  if (AllowLibDevice && getCUDALibDeviceFuntion(F).length() > 0)
+    return true;
+
   return F->isIntrinsic() &&
          (Name.startswith("llvm.sqrt") || Name.startswith("llvm.fabs") ||
           Name.startswith("llvm.copysign"));
@@ -1346,14 +1378,16 @@ static bool isValidSubtreeValue(llvm::Value *V) { return !isa<Function>(V); }
 
 /// Return `Function`s from `RawSubtreeValues`.
 static SetVector<Function *>
-getFunctionsFromRawSubtreeValues(SetVector<Value *> RawSubtreeValues) {
+getFunctionsFromRawSubtreeValues(SetVector<Value *> RawSubtreeValues,
+                                 bool AllowCUDALibDevice) {
   SetVector<Function *> SubtreeFunctions;
   for (Value *It : RawSubtreeValues) {
     Function *F = dyn_cast<Function>(It);
     if (F) {
-      assert(isValidFunctionInKernel(F) && "Code should have bailed out by "
-                                           "this point if an invalid function "
-                                           "were present in a kernel.");
+      assert(isValidFunctionInKernel(F, AllowCUDALibDevice) &&
+             "Code should have bailed out by "
+             "this point if an invalid function "
+             "were present in a kernel.");
       SubtreeFunctions.insert(F);
     }
   }
@@ -1407,8 +1441,11 @@ GPUNodeBuilder::getReferencesInKernel(ppcg_kernel *Kernel) {
       make_filter_range(SubtreeValues, isValidSubtreeValue);
   SetVector<Value *> ValidSubtreeValues(ValidSubtreeValuesIt.begin(),
                                         ValidSubtreeValuesIt.end());
+
+  bool AllowCUDALibDevice = Arch == GPUArch::NVPTX64;
+
   SetVector<Function *> ValidSubtreeFunctions(
-      getFunctionsFromRawSubtreeValues(SubtreeValues));
+      getFunctionsFromRawSubtreeValues(SubtreeValues, AllowCUDALibDevice));
 
   // @see IslNodeBuilder::getReferencesInSubtree
   SetVector<Value *> ReplacedValues;
@@ -1739,11 +1776,11 @@ static std::string computeNVPTXDataLayout(bool is64Bit) {
 
   if (!is64Bit) {
     Ret += "e-p:32:32:32-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:"
-           "64-f32:32:32-f64:64:64-v16:16:16-v32:32:32-v64:64:"
+           "64-i128:128:128-f32:32:32-f64:64:64-v16:16:16-v32:32:32-v64:64:"
            "64-v128:128:128-n16:32:64";
   } else {
     Ret += "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:"
-           "64-f32:32:32-f64:64:64-v16:16:16-v32:32:32-v64:64:"
+           "64-i128:128:128-f32:32:32-f64:64:64-v16:16:16-v32:32:32-v64:64:"
            "64-v128:128:128-n16:32:64";
   }
 
@@ -1758,12 +1795,12 @@ static std::string computeSPIRDataLayout(bool is64Bit) {
 
   if (!is64Bit) {
     Ret += "e-p:32:32:32-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:"
-           "64-f32:32:32-f64:64:64-v16:16:16-v24:32:32-v32:32:"
+           "64-i128:128:128-f32:32:32-f64:64:64-v16:16:16-v24:32:32-v32:32:"
            "32-v48:64:64-v64:64:64-v96:128:128-v128:128:128-v192:"
            "256:256-v256:256:256-v512:512:512-v1024:1024:1024";
   } else {
     Ret += "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:"
-           "64-f32:32:32-f64:64:64-v16:16:16-v24:32:32-v32:32:"
+           "64-i128:128:128-f32:32:32-f64:64:64-v16:16:16-v24:32:32-v32:32:"
            "32-v48:64:64-v64:64:64-v96:128:128-v128:128:128-v192:"
            "256:256-v256:256:256-v512:512:512-v1024:1024:1024";
   }
@@ -2232,6 +2269,49 @@ std::string GPUNodeBuilder::createKernelASM() {
   return ASMStream.str();
 }
 
+bool GPUNodeBuilder::requiresCUDALibDevice() {
+  for (Function &F : GPUModule->functions()) {
+    if (!F.isDeclaration())
+      continue;
+
+    std::string CUDALibDeviceFunc = getCUDALibDeviceFuntion(&F);
+    if (CUDALibDeviceFunc.length() != 0) {
+      F.setName(CUDALibDeviceFunc);
+      return true;
+    }
+  }
+
+  return false;
+}
+
+void GPUNodeBuilder::addCUDALibDevice() {
+  if (Arch != GPUArch::NVPTX64)
+    return;
+
+  if (requiresCUDALibDevice()) {
+    SMDiagnostic Error;
+
+    errs() << CUDALibDevice << "\n";
+    auto LibDeviceModule =
+        parseIRFile(CUDALibDevice, Error, GPUModule->getContext());
+
+    if (!LibDeviceModule) {
+      BuildSuccessful = false;
+      report_fatal_error("Could not find or load libdevice. Skipping GPU "
+                         "kernel generation. Please set -polly-acc-libdevice "
+                         "accordingly.\n");
+      return;
+    }
+
+    Linker L(*GPUModule);
+
+    // Set an nvptx64 target triple to avoid linker warnings. The original
+    // triple of the libdevice files are nvptx-unknown-unknown.
+    LibDeviceModule->setTargetTriple(Triple::normalize("nvptx64-nvidia-cuda"));
+    L.linkInModule(std::move(LibDeviceModule), Linker::LinkOnlyNeeded);
+  }
+}
+
 std::string GPUNodeBuilder::finalizeKernelFunction() {
 
   if (verifyModule(*GPUModule)) {
@@ -2246,6 +2326,8 @@ std::string GPUNodeBuilder::finalizeKernelFunction() {
     BuildSuccessful = false;
     return "";
   }
+
+  addCUDALibDevice();
 
   if (DumpKernelIR)
     outs() << *GPUModule << "\n";
@@ -2424,10 +2506,9 @@ public:
         S->getIslCtx(),
         S->getNumParams() + std::distance(S->array_begin(), S->array_end()));
     auto *Zero = isl_ast_expr_from_val(isl_val_zero(S->getIslCtx()));
-    auto *Space = S->getParamSpace();
 
-    for (int I = 0, E = S->getNumParams(); I < E; ++I) {
-      isl_id *Id = isl_space_get_dim_id(Space, isl_dim_param, I);
+    for (const SCEV *P : S->parameters()) {
+      isl_id *Id = S->getIdForParam(P);
       Names = isl_id_to_ast_expr_set(Names, Id, isl_ast_expr_copy(Zero));
     }
 
@@ -2436,7 +2517,6 @@ public:
       Names = isl_id_to_ast_expr_set(Names, Id, isl_ast_expr_copy(Zero));
     }
 
-    isl_space_free(Space);
     isl_ast_expr_free(Zero);
 
     return Names;
@@ -3118,10 +3198,12 @@ public:
   ///
   /// If this basic block does something with a `Function` other than calling
   /// a function that we support in a kernel, return true.
-  bool containsInvalidKernelFunctionInBlock(const BasicBlock *BB) {
+  bool containsInvalidKernelFunctionInBlock(const BasicBlock *BB,
+                                            bool AllowCUDALibDevice) {
     for (const Instruction &Inst : *BB) {
       const CallInst *Call = dyn_cast<CallInst>(&Inst);
-      if (Call && isValidFunctionInKernel(Call->getCalledFunction())) {
+      if (Call && isValidFunctionInKernel(Call->getCalledFunction(),
+                                          AllowCUDALibDevice)) {
         continue;
       }
 
@@ -3137,16 +3219,17 @@ public:
   }
 
   /// Return whether the Scop S uses functions in a way that we do not support.
-  bool containsInvalidKernelFunction(const Scop &S) {
+  bool containsInvalidKernelFunction(const Scop &S, bool AllowCUDALibDevice) {
     for (auto &Stmt : S) {
       if (Stmt.isBlockStmt()) {
-        if (containsInvalidKernelFunctionInBlock(Stmt.getBasicBlock()))
+        if (containsInvalidKernelFunctionInBlock(Stmt.getBasicBlock(),
+                                                 AllowCUDALibDevice))
           return true;
       } else {
         assert(Stmt.isRegionStmt() &&
                "Stmt was neither block nor region statement");
         for (const BasicBlock *BB : Stmt.getRegion()->blocks())
-          if (containsInvalidKernelFunctionInBlock(BB))
+          if (containsInvalidKernelFunctionInBlock(BB, AllowCUDALibDevice))
             return true;
       }
     }
@@ -3199,7 +3282,10 @@ public:
 
     // preload invariant loads. Note: This should happen before the RTC
     // because the RTC may depend on values that are invariant load hoisted.
-    NodeBuilder.preloadInvariantLoads();
+    if (!NodeBuilder.preloadInvariantLoads())
+      report_fatal_error("preloading invariant loads failed in function: " +
+                         S->getFunction().getName() +
+                         " | Scop Region: " + S->getNameStr());
 
     Value *RTC = NodeBuilder.createRTC(Condition);
     Builder.GetInsertBlock()->getTerminator()->setOperand(0, RTC);
@@ -3231,7 +3317,8 @@ public:
     // kernel. This may lead to a kernel trying to call a function on the host.
     // This also allows us to prevent codegen from trying to take the
     // address of an intrinsic function to send to the kernel.
-    if (containsInvalidKernelFunction(CurrentScop)) {
+    if (containsInvalidKernelFunction(CurrentScop,
+                                      Architecture == GPUArch::NVPTX64)) {
       DEBUG(
           dbgs()
               << "Scop contains function which cannot be materialised in a GPU "
