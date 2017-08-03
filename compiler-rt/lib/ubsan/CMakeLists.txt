@@ -37,9 +37,11 @@ append_list_if(SANITIZER_CAN_USE_CXXABI -DUBSAN_CAN_USE_CXXABI UBSAN_CXXFLAGS)
 set(UBSAN_DYNAMIC_LIBS ${SANITIZER_COMMON_LINK_LIBS})
 
 append_list_if(COMPILER_RT_HAS_LIBDL dl UBSAN_DYNAMIC_LIBS)
+append_list_if(COMPILER_RT_HAS_LIBLOG log UBSAN_DYNAMIC_LIBS)
 append_list_if(COMPILER_RT_HAS_LIBRT rt UBSAN_DYNAMIC_LIBS)
 append_list_if(COMPILER_RT_HAS_LIBPTHREAD pthread UBSAN_DYNAMIC_LIBS)
-append_list_if(COMPILER_RT_HAS_LIBSTDCXX stdc++ UBSAN_DYNAMIC_LIBS)
+
+list(APPEND UBSAN_DYNAMIC_LIBS ${SANITIZER_CXX_ABI_LIBRARY})
 
 add_compiler_rt_component(ubsan)
 
@@ -132,7 +134,7 @@ else()
     add_compiler_rt_object_libraries(RTUbsan_standalone
       ARCHS ${UBSAN_SUPPORTED_ARCH}
       SOURCES ${UBSAN_STANDALONE_SOURCES} CFLAGS ${UBSAN_STANDALONE_CFLAGS})
-    
+
     # Standalone UBSan runtimes.
     add_compiler_rt_runtime(clang_rt.ubsan_standalone
       STATIC
@@ -143,7 +145,7 @@ else()
               RTUbsan_standalone
       CFLAGS ${UBSAN_CFLAGS}
       PARENT_TARGET ubsan)
-    
+
     add_compiler_rt_runtime(clang_rt.ubsan_standalone_cxx
       STATIC
       ARCHS ${UBSAN_SUPPORTED_ARCH}

@@ -1566,6 +1566,8 @@ public:
   /// Set the list of instructions for this statement. It replaces the current
   /// list.
   void setInstructions(ArrayRef<Instruction *> Range) {
+    assert(isBlockStmt() &&
+           "The instruction list only matters for block-statements");
     Instructions.assign(Range.begin(), Range.end());
   }
 
@@ -2972,6 +2974,9 @@ public:
   /// Return all MemoryAccesses for all incoming statements of a PHINode,
   /// represented by a ScopArrayInfo.
   ArrayRef<MemoryAccess *> getPHIIncomings(const ScopArrayInfo *SAI) const;
+
+  /// Return whether @p Inst has a use outside of this SCoP.
+  bool isEscaping(Instruction *Inst);
 };
 
 /// Print Scop scop to raw_ostream O.

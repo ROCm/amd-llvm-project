@@ -22,6 +22,7 @@ set(ASAN_SOURCES
   asan_posix.cc
   asan_report.cc
   asan_rtl.cc
+  asan_shadow_setup.cc
   asan_stack.cc
   asan_stats.cc
   asan_suppressions.cc
@@ -71,8 +72,9 @@ append_list_if(COMPILER_RT_HAS_LIBDL dl ASAN_DYNAMIC_LIBS)
 append_list_if(COMPILER_RT_HAS_LIBRT rt ASAN_DYNAMIC_LIBS)
 append_list_if(COMPILER_RT_HAS_LIBM m ASAN_DYNAMIC_LIBS)
 append_list_if(COMPILER_RT_HAS_LIBPTHREAD pthread ASAN_DYNAMIC_LIBS)
-append_list_if(COMPILER_RT_HAS_LIBSTDCXX stdc++ ASAN_DYNAMIC_LIBS)
 append_list_if(COMPILER_RT_HAS_LIBLOG log ASAN_DYNAMIC_LIBS)
+
+list(APPEND ASAN_DYNAMIC_LIBS ${SANITIZER_CXX_ABI_LIBRARY})
 
 # Compile ASan sources into an object library.
 
