@@ -714,7 +714,8 @@ def warn_pragma_pack_invalid_alignment : Warning<
   InGroup<IgnoredPragmas>;
 def warn_pragma_pack_non_default_at_include : Warning<
   "non-default #pragma pack value changes the alignment of struct or union "
-  "members in the included file">, InGroup<PragmaPack>;
+  "members in the included file">, InGroup<PragmaPackSuspiciousInclude>,
+  DefaultIgnore;
 def warn_pragma_pack_modified_after_include : Warning<
   "the current #pragma pack aligment value is modified in the included "
   "file">, InGroup<PragmaPack>;
@@ -8613,6 +8614,8 @@ def err_omp_expected_var_name_member_expr : Error<
   "expected variable name%select{| or data member of current class}0">;
 def err_omp_expected_var_name_member_expr_or_array_item : Error<
   "expected variable name%select{|, data member of current class}0, array element or array section">;
+def err_omp_expected_addressable_lvalue_or_array_item : Error<
+  "expected addressable lvalue expression, array element or array section">;
 def err_omp_expected_named_var_member_or_array_expression: Error<
   "expected expression containing only member accesses and/or array sections based on named variables">;
 def err_omp_bit_fields_forbidden_in_clause : Error<

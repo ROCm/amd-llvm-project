@@ -163,23 +163,12 @@ static bool isRoot(const Instruction *Inst) {
   return false;
 }
 
-/// Return true if @p ComputingInst is used after SCoP @p S. It must not be
-/// removed in order for its value to be available after the SCoP.
-static bool isEscaping(Scop *S, Instruction *ComputingInst) {
-  for (Use &Use : ComputingInst->uses()) {
-    Instruction *User = cast<Instruction>(Use.getUser());
-    if (!S->contains(User))
-      return true;
-  }
-  return false;
-}
-
 /// Return true for MemoryAccesses that cannot be removed because it represents
 /// an llvm::Value that is used after the SCoP.
 static bool isEscaping(MemoryAccess *MA) {
   assert(MA->isOriginalValueKind());
-  return isEscaping(MA->getStatement()->getParent(),
-                    cast<Instruction>(MA->getAccessValue()));
+  Scop *S = MA->getStatement()->getParent();
+  return S->isEscaping(cast<Instruction>(MA->getAccessValue()));
 }
 
 /// Add non-removable virtual instructions in @p Stmt to @p RootInsts.
@@ -192,6 +181,7 @@ addInstructionRoots(ScopStmt *Stmt,
     for (auto *BB : Stmt->getRegion()->blocks())
       for (Instruction &Inst : *BB)
         RootInsts.emplace_back(Stmt, &Inst);
+    return;
   }
 
   for (Instruction *Inst : Stmt->getInstructions())
@@ -365,7 +355,8 @@ static void walkReachable(Scop *S, LoopInfo *LI,
       continue;
 
     // Add all operands to the worklists.
-    if (PHINode *PHI = dyn_cast<PHINode>(Inst)) {
+    PHINode *PHI = dyn_cast<PHINode>(Inst);
+    if (PHI && PHI->getParent() == Stmt->getEntryBlock()) {
       if (MemoryAccess *PHIRead = Stmt->lookupPHIReadOf(PHI))
         WorklistAccs.push_back(PHIRead);
     } else {

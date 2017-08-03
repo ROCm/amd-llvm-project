@@ -1965,7 +1965,7 @@ void ScopStmt::print(raw_ostream &OS, bool PrintInstructions) const {
   for (MemoryAccess *Access : MemAccs)
     Access->print(OS);
 
-  if (PrintInstructions)
+  if (PrintInstructions && isBlockStmt())
     printInstructions(OS.indent(12));
 }
 
@@ -5136,6 +5136,25 @@ ArrayRef<MemoryAccess *> Scop::getPHIIncomings(const ScopArrayInfo *SAI) const {
   if (It == PHIIncomingAccs.end())
     return {};
   return It->second;
+}
+
+bool Scop::isEscaping(Instruction *Inst) {
+  assert(contains(Inst) && "The concept of escaping makes only sense for "
+                           "values defined inside the SCoP");
+
+  for (Use &Use : Inst->uses()) {
+    BasicBlock *UserBB = getUseBlock(Use);
+    if (!contains(UserBB))
+      return true;
+
+    // When the SCoP region exit needs to be simplified, PHIs in the region exit
+    // move to a new basic block such that its incoming blocks are not in the
+    // SCoP anymore.
+    if (hasSingleExitEdge() && isa<PHINode>(Use.getUser()) &&
+        isExit(cast<PHINode>(Use.getUser())->getParent()))
+      return true;
+  }
+  return false;
 }
 
 raw_ostream &polly::operator<<(raw_ostream &O, const Scop &scop) {
