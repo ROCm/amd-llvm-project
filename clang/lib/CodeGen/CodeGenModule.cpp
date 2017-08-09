@@ -2753,6 +2753,10 @@ unsigned CodeGenModule::GetGlobalVarAddressSpace(const VarDecl *D) {
       return LangAS::cuda_device;
   }
 
+  if (LangOpts.CPlusPlusAMP && LangOpts.DevicePath &&
+      D && D->hasAttr<HCCTileStaticAttr>())
+    return LangAS::hcc_tilestatic;
+
   return getTargetCodeGenInfo().getGlobalVarAddressSpace(*this, D);
 }
 
