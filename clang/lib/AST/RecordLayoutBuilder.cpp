@@ -633,6 +633,9 @@ protected:
   /// pointer, as opposed to inheriting one from a primary base class.
   bool HasOwnVFPtr;
 
+  /// \brief the flag of field offset changing due to packed attribute.
+  bool HasPackedField;
+
   typedef llvm::DenseMap<const CXXRecordDecl *, CharUnits> BaseOffsetsMapTy;
 
   /// Bases - base classes and their offsets in the record.
@@ -667,7 +670,7 @@ protected:
         NonVirtualSize(CharUnits::Zero()),
         NonVirtualAlignment(CharUnits::One()), PrimaryBase(nullptr),
         PrimaryBaseIsVirtual(false), HasOwnVFPtr(false),
-        FirstNearlyEmptyVBase(nullptr) {}
+        HasPackedField(false), FirstNearlyEmptyVBase(nullptr) {}
 
   void Layout(const RecordDecl *D);
   void Layout(const CXXRecordDecl *D);
@@ -1852,7 +1855,6 @@ void ItaniumRecordLayoutBuilder::FinishLayout(const NamedDecl *D) {
   uint64_t UnpaddedSize = getSizeInBits() - UnfilledBitsInLastUnit;
   uint64_t UnpackedSizeInBits =
       llvm::alignTo(getSizeInBits(), Context.toBits(UnpackedAlignment));
-  CharUnits UnpackedSize = Context.toCharUnitsFromBits(UnpackedSizeInBits);
   uint64_t RoundedSize =
       llvm::alignTo(getSizeInBits(), Context.toBits(Alignment));
 
@@ -1887,10 +1889,11 @@ void ItaniumRecordLayoutBuilder::FinishLayout(const NamedDecl *D) {
           << (InBits ? 1 : 0); // (byte|bit)
     }
 
-    // Warn if we packed it unnecessarily. If the alignment is 1 byte don't
-    // bother since there won't be alignment issues.
-    if (Packed && UnpackedAlignment > CharUnits::One() && 
-        getSize() == UnpackedSize)
+    // Warn if we packed it unnecessarily, when the unpacked alignment is not
+    // greater than the one after packing, the size in bits doesn't change and
+    // the offset of each field is identical.
+    if (Packed && UnpackedAlignment <= Alignment &&
+        UnpackedSizeInBits == getSizeInBits() && !HasPackedField)
       Diag(D->getLocation(), diag::warn_unnecessary_packed)
           << Context.getTypeDeclType(RD);
   }
@@ -1982,13 +1985,10 @@ void ItaniumRecordLayoutBuilder::CheckFieldPadding(
           << Context.getTypeDeclType(D->getParent())
           << PadSize
           << (InBits ? 1 : 0); // (byte|bit)
-  }
-
-  // Warn if we packed it unnecessarily. If the alignment is 1 byte don't
-  // bother since there won't be alignment issues.
-  if (isPacked && UnpackedAlign > CharBitNum && Offset == UnpackedOffset)
-    Diag(D->getLocation(), diag::warn_unnecessary_packed)
-        << D->getIdentifier();
+ }
+ if (isPacked && Offset != UnpackedOffset) {
+   HasPackedField = true;
+ }
 }
 
 static const CXXMethodDecl *computeKeyFunction(ASTContext &Context,

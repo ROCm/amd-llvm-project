@@ -407,6 +407,7 @@ AMDGPUTargetInfo::AMDGPUTargetInfo(const llvm::Triple &Triple,
   //   correctly be different on host/device, e.g. if host has wider vector
   //   types than device.
   // - LongDoubleWidth, LongDoubleAlign: TBD
+  MaxAtomicPromoteWidth = MaxAtomicInlineWidth = 64;
 }
 
 void AMDGPUTargetInfo::adjust(LangOptions &Opts) {
