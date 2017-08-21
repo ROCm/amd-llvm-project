@@ -5,7 +5,10 @@ Clang-Tidy Checks
 
 .. toctree::
    android-cloexec-creat
+   android-cloexec-dup
    android-cloexec-fopen
+   android-cloexec-inotify-init
+   android-cloexec-inotify-init1
    android-cloexec-memfd-create
    android-cloexec-open
    android-cloexec-socket
@@ -62,6 +65,8 @@ Clang-Tidy Checks
    google-runtime-member-string-references
    google-runtime-operator
    google-runtime-references
+   hicpp-braces-around-statements (redirects to readability-braces-around-statements) <hicpp-braces-around-statements>
+   hicpp-exception-baseclass
    hicpp-explicit-conversions (redirects to google-explicit-constructor) <hicpp-explicit-conversions>
    hicpp-function-size (redirects to readability-function-size) <hicpp-function-size>
    hicpp-invalid-access-moved (redirects to misc-use-after-move) <hicpp-invalid-access-moved>
