@@ -95,9 +95,18 @@ void CloexecCheck::insertStringFlag(
       ModeArg, *Result.SourceManager, Result.Context->getLangOpts(), Mode);
 
   diag(ModeArg->getLocStart(), "use %0 mode '%1' to set O_CLOEXEC")
-      << FD << Mode
+      << FD << std::string(1, Mode)
       << FixItHint::CreateReplacement(ModeArg->getSourceRange(),
                                       ReplacementText);
+}
+
+StringRef CloexecCheck::getSpellingArg(const MatchFinder::MatchResult &Result,
+                                       int N) const {
+  const auto *MatchedCall = Result.Nodes.getNodeAs<CallExpr>(FuncBindingStr);
+  const SourceManager &SM = *Result.SourceManager;
+  return Lexer::getSourceText(
+      CharSourceRange::getTokenRange(MatchedCall->getArg(N)->getSourceRange()),
+      SM, Result.Context->getLangOpts());
 }
 
 } // namespace android

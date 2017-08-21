@@ -52,7 +52,7 @@ protected:
   /// \param MacroFlag The macro name of the flag.
   /// \param ArgPos The 0-based position of the flag argument.
   void insertMacroFlag(const ast_matchers::MatchFinder::MatchResult &Result,
-                       StringRef MarcoFlag, int ArgPos);
+                       StringRef MacroFlag, int ArgPos);
 
   /// Type2 is to replace the API to another function that has required the
   /// ability. For example:
@@ -85,7 +85,11 @@ protected:
   /// \param Mode The required mode char.
   /// \param ArgPos The 0-based position of the flag argument.
   void insertStringFlag(const ast_matchers::MatchFinder::MatchResult &Result,
-                        char Mode, const int ArgPos);
+                        const char Mode, const int ArgPos);
+
+  /// Helper function to get the spelling of a particular argument.
+  StringRef getSpellingArg(const ast_matchers::MatchFinder::MatchResult &Result,
+                           int N) const;
 };
 
 } // namespace android

@@ -1644,6 +1644,12 @@ example:
     If a function that has an ``sspstrong`` attribute is inlined into a
     function that doesn't have an ``sspstrong`` attribute, then the
     resulting function will have an ``sspstrong`` attribute.
+``strictfp``
+    This attribute indicates that the function was called from a scope that
+    requires strict floating point semantics.  LLVM will not attempt any
+    optimizations that require assumptions about the floating point rounding
+    mode or that might alter the state of floating point status flags that
+    might otherwise be set or cleared by calling this function.
 ``"thunk"``
     This attribute indicates that the function will delegate to some other
     function with a tail call. The prototype of a thunk should not be used for
@@ -5371,6 +5377,10 @@ The following behaviors are supported:
            Appends the two values, which are required to be metadata
            nodes. However, duplicate entries in the second list are dropped
            during the append operation.
+
+   * - 7
+     - **Max**
+           Takes the max of the two values, which are required to be integers.
 
 It is an error for a particular unique flag ID to have multiple behaviors,
 except in the case of **Require** (which adds restrictions on another metadata
