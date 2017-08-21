@@ -1281,7 +1281,7 @@ private:
   /// The closest loop that contains this statement.
   Loop *SurroundingLoop;
 
-  /// Vector for Instructions in a BB.
+  /// Vector for Instructions in this statement.
   std::vector<Instruction *> Instructions;
 
   /// Build the statement.
@@ -2181,7 +2181,7 @@ private:
   ///
   /// @param BB              The basic block we build the statement for.
   /// @param SurroundingLoop The loop the created statement is contained in.
-  /// @param Instructions    The instructions in the basic block.
+  /// @param Instructions    The instructions in the statement.
   void addScopStmt(BasicBlock *BB, Loop *SurroundingLoop,
                    std::vector<Instruction *> Instructions);
 
@@ -2912,6 +2912,11 @@ public:
 
   /// Get a union map of all memory accesses performed in the SCoP.
   isl::union_map getAccesses();
+
+  /// Get a union map of all memory accesses performed in the SCoP.
+  ///
+  /// @param Array The array to which the accesses should belong.
+  isl::union_map getAccesses(ScopArrayInfo *Array);
 
   /// Get the schedule of all the statements in the SCoP.
   ///
