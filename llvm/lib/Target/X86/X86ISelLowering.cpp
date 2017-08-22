@@ -8782,7 +8782,8 @@ static bool matchVectorShuffleAsBlend(SDValue V1, SDValue V2,
   return true;
 }
 
-uint64_t scaleVectorShuffleBlendMask(uint64_t BlendMask, int Size, int Scale) {
+static uint64_t scaleVectorShuffleBlendMask(uint64_t BlendMask, int Size,
+                                            int Scale) {
   uint64_t ScaledMask = 0;
   for (int i = 0; i != Size; ++i)
     if (BlendMask & (1ull << i))
@@ -29566,8 +29567,9 @@ static bool detectZextAbsDiff(const SDValue &Select, SDValue &Op0,
   // In SetLT case, The second operand of the comparison can be either 1 or 0.
   APInt SplatVal;
   if ((CC == ISD::SETLT) &&
-      !((ISD::isConstantSplatVector(SetCC.getOperand(1).getNode(), SplatVal) &&
-         SplatVal == 1) ||
+      !((ISD::isConstantSplatVector(SetCC.getOperand(1).getNode(), SplatVal,
+                                    /*AllowShrink*/false) &&
+         SplatVal.isOneValue()) ||
         (ISD::isBuildVectorAllZeros(SetCC.getOperand(1).getNode()))))
     return false;
 
@@ -30731,12 +30733,7 @@ static SDValue combineSetCCAtomicArith(SDValue Cmp, X86::CondCode &CC,
   if (!CmpLHS.hasOneUse())
     return SDValue();
 
-  auto *CmpRHSC = dyn_cast<ConstantSDNode>(CmpRHS);
-  if (!CmpRHSC || CmpRHSC->getZExtValue() != 0)
-    return SDValue();
-
-  const unsigned Opc = CmpLHS.getOpcode();
-
+  unsigned Opc = CmpLHS.getOpcode();
   if (Opc != ISD::ATOMIC_LOAD_ADD && Opc != ISD::ATOMIC_LOAD_SUB)
     return SDValue();
 
@@ -30748,6 +30745,35 @@ static SDValue combineSetCCAtomicArith(SDValue Cmp, X86::CondCode &CC,
   APInt Addend = OpRHSC->getAPIntValue();
   if (Opc == ISD::ATOMIC_LOAD_SUB)
     Addend = -Addend;
+
+  auto *CmpRHSC = dyn_cast<ConstantSDNode>(CmpRHS);
+  if (!CmpRHSC)
+    return SDValue();
+
+  APInt Comparison = CmpRHSC->getAPIntValue();
+
+  // If the addend is the negation of the comparison value, then we can do
+  // a full comparison by emitting the atomic arithmetic is a locked sub.
+  if (Comparison == -Addend) {
+    // The CC is fine, but we need to rewrite the LHS of the comparison as an
+    // atomic sub.
+    auto *AN = cast<AtomicSDNode>(CmpLHS.getNode());
+    auto AtomicSub = DAG.getAtomic(
+        ISD::ATOMIC_LOAD_SUB, SDLoc(CmpLHS), CmpLHS.getValueType(),
+        /*Chain*/ CmpLHS.getOperand(0), /*LHS*/ CmpLHS.getOperand(1),
+        /*RHS*/ DAG.getConstant(-Addend, SDLoc(CmpRHS), CmpRHS.getValueType()),
+        AN->getMemOperand());
+    auto LockOp = lowerAtomicArithWithLOCK(AtomicSub, DAG);
+    DAG.ReplaceAllUsesOfValueWith(CmpLHS.getValue(0),
+                                  DAG.getUNDEF(CmpLHS.getValueType()));
+    DAG.ReplaceAllUsesOfValueWith(CmpLHS.getValue(1), LockOp.getValue(1));
+    return LockOp;
+  }
+
+  // We can handle comparisons with zero in a number of cases by manipulating
+  // the CC used.
+  if (!Comparison.isNullValue())
+    return SDValue();
 
   if (CC == X86::COND_S && Addend == 1)
     CC = X86::COND_LE;
@@ -32058,7 +32084,8 @@ static SDValue combineAndMaskToShift(SDNode *N, SelectionDAG &DAG,
     return SDValue();
 
   APInt SplatVal;
-  if (!ISD::isConstantSplatVector(Op1.getNode(), SplatVal) ||
+  if (!ISD::isConstantSplatVector(Op1.getNode(), SplatVal,
+                                  /*AllowShrink*/false) ||
       !SplatVal.isMask())
     return SDValue();
 
@@ -32642,7 +32669,8 @@ static SDValue detectUSatPattern(SDValue In, EVT VT) {
     "Unexpected types for truncate operation");
 
   APInt C;
-  if (ISD::isConstantSplatVector(In.getOperand(1).getNode(), C)) {
+  if (ISD::isConstantSplatVector(In.getOperand(1).getNode(), C,
+                                 /*AllowShrink*/false)) {
     // C should be equal to UINT32_MAX / UINT16_MAX / UINT8_MAX according
     // the element size of the destination type.
     return C.isMask(VT.getScalarSizeInBits()) ? In.getOperand(0) :
@@ -35349,7 +35377,8 @@ static SDValue combineIncDecVector(SDNode *N, SelectionDAG &DAG) {
 
   SDNode *N1 = N->getOperand(1).getNode();
   APInt SplatVal;
-  if (!ISD::isConstantSplatVector(N1, SplatVal) || !SplatVal.isOneValue())
+  if (!ISD::isConstantSplatVector(N1, SplatVal, /*AllowShrink*/false) ||
+      !SplatVal.isOneValue())
     return SDValue();
 
   SDValue AllOnesVec = getOnesVector(VT, DAG, SDLoc(N));
