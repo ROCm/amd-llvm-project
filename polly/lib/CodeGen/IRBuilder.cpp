@@ -114,15 +114,27 @@ void ScopAnnotator::popLoop(bool IsParallel) {
   ParallelLoops.pop_back();
 }
 
-void ScopAnnotator::annotateLoopLatch(BranchInst *B, Loop *L,
-                                      bool IsParallel) const {
-  if (!IsParallel)
-    return;
+void ScopAnnotator::annotateLoopLatch(BranchInst *B, Loop *L, bool IsParallel,
+                                      bool IsLoopVectorizerDisabled) const {
+  MDNode *MData = nullptr;
 
-  assert(!ParallelLoops.empty() && "Expected a parallel loop to annotate");
-  MDNode *Ids = ParallelLoops.back();
-  MDNode *Id = cast<MDNode>(Ids->getOperand(Ids->getNumOperands() - 1));
-  B->setMetadata("llvm.loop", Id);
+  if (IsLoopVectorizerDisabled) {
+    SmallVector<Metadata *, 3> Args;
+    LLVMContext &Ctx = SE->getContext();
+    Args.push_back(MDString::get(Ctx, "llvm.loop.vectorize.enable"));
+    auto *FalseValue = ConstantInt::get(Type::getInt1Ty(Ctx), 0);
+    Args.push_back(ValueAsMetadata::get(FalseValue));
+    MData = MDNode::concatenate(MData, getID(Ctx, MDNode::get(Ctx, Args)));
+  }
+
+  if (IsParallel) {
+    assert(!ParallelLoops.empty() && "Expected a parallel loop to annotate");
+    MDNode *Ids = ParallelLoops.back();
+    MDNode *Id = cast<MDNode>(Ids->getOperand(Ids->getNumOperands() - 1));
+    MData = MDNode::concatenate(MData, Id);
+  }
+
+  B->setMetadata("llvm.loop", MData);
 }
 
 /// Get the pointer operand
@@ -140,12 +152,14 @@ static llvm::Value *getMemAccInstPointerOperand(Instruction *Inst) {
 
 void ScopAnnotator::annotateSecondLevel(llvm::Instruction *Inst,
                                         llvm::Value *BasePtr) {
-  auto *Ptr = getMemAccInstPointerOperand(Inst);
-  if (!Ptr)
+  auto *PtrSCEV = SE->getSCEV(getMemAccInstPointerOperand(Inst));
+  auto *BasePtrSCEV = SE->getPointerBase(PtrSCEV);
+
+  if (!PtrSCEV)
     return;
-  auto SecondLevelAliasScope = SecondLevelAliasScopeMap.lookup(Ptr);
+  auto SecondLevelAliasScope = SecondLevelAliasScopeMap.lookup(PtrSCEV);
   auto SecondLevelOtherAliasScopeList =
-      SecondLevelOtherAliasScopeListMap.lookup(Ptr);
+      SecondLevelOtherAliasScopeListMap.lookup(PtrSCEV);
   if (!SecondLevelAliasScope) {
     auto AliasScope = AliasScopeMap.lookup(BasePtr);
     if (!AliasScope)
@@ -153,16 +167,16 @@ void ScopAnnotator::annotateSecondLevel(llvm::Instruction *Inst,
     LLVMContext &Ctx = SE->getContext();
     SecondLevelAliasScope = getID(
         Ctx, AliasScope, MDString::get(Ctx, "second level alias metadata"));
-    SecondLevelAliasScopeMap[Ptr] = SecondLevelAliasScope;
+    SecondLevelAliasScopeMap[PtrSCEV] = SecondLevelAliasScope;
     Metadata *Args = {SecondLevelAliasScope};
     auto SecondLevelBasePtrAliasScopeList =
-        SecondLevelAliasScopeMap.lookup(BasePtr);
-    SecondLevelAliasScopeMap[BasePtr] = MDNode::concatenate(
+        SecondLevelAliasScopeMap.lookup(BasePtrSCEV);
+    SecondLevelAliasScopeMap[BasePtrSCEV] = MDNode::concatenate(
         SecondLevelBasePtrAliasScopeList, MDNode::get(Ctx, Args));
     auto OtherAliasScopeList = OtherAliasScopeListMap.lookup(BasePtr);
     SecondLevelOtherAliasScopeList = MDNode::concatenate(
         OtherAliasScopeList, SecondLevelBasePtrAliasScopeList);
-    SecondLevelOtherAliasScopeListMap[Ptr] = SecondLevelOtherAliasScopeList;
+    SecondLevelOtherAliasScopeListMap[PtrSCEV] = SecondLevelOtherAliasScopeList;
   }
   Inst->setMetadata("alias.scope", SecondLevelAliasScope);
   Inst->setMetadata("noalias", SecondLevelOtherAliasScopeList);

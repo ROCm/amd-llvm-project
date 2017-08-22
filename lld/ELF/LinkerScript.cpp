@@ -49,19 +49,24 @@ using namespace lld::elf;
 
 LinkerScript *elf::Script;
 
+static uint64_t getOutputSectionVA(SectionBase *InputSec, StringRef Loc) {
+  if (OutputSection *OS = InputSec->getOutputSection())
+    return OS->Addr;
+  error(Loc + ": unable to evaluate expression: input section " +
+        InputSec->Name + " has no output section assigned");
+  return 0;
+}
+
 uint64_t ExprValue::getValue() const {
-  if (Sec) {
-    if (OutputSection *OS = Sec->getOutputSection())
-      return alignTo(Sec->getOffset(Val) + OS->Addr, Alignment);
-    error(Loc + ": unable to evaluate expression: input section " + Sec->Name +
-          " has no output section assigned");
-  }
+  if (Sec)
+    return alignTo(Sec->getOffset(Val) + getOutputSectionVA(Sec, Loc),
+                   Alignment);
   return alignTo(Val, Alignment);
 }
 
 uint64_t ExprValue::getSecAddr() const {
   if (Sec)
-    return Sec->getOffset(0) + Sec->getOutputSection()->Addr;
+    return Sec->getOffset(0) + getOutputSectionVA(Sec, Loc);
   return 0;
 }
 
@@ -79,8 +84,8 @@ static SymbolBody *addRegular(SymbolAssignment *Cmd) {
   // as variables in linker scripts. Doing so allows us to write expressions
   // like this: `alignment = 16; . = ALIGN(., alignment)`
   uint64_t SymValue = Value.isAbsolute() ? Value.getValue() : 0;
-  replaceBody<DefinedRegular>(Sym, Cmd->Name, /*IsLocal=*/false, Visibility,
-                              STT_NOTYPE, SymValue, 0, Sec, nullptr);
+  replaceBody<DefinedRegular>(Sym, nullptr, Cmd->Name, /*IsLocal=*/false,
+                              Visibility, STT_NOTYPE, SymValue, 0, Sec);
   return Sym->body();
 }
 
@@ -228,6 +233,29 @@ static void sortSections(InputSection **Begin, InputSection **End,
     std::stable_sort(Begin, End, getComparator(K));
 }
 
+static llvm::DenseMap<SectionBase *, int> getSectionOrder() {
+  switch (Config->EKind) {
+  case ELF32LEKind:
+    return buildSectionOrder<ELF32LE>();
+  case ELF32BEKind:
+    return buildSectionOrder<ELF32BE>();
+  case ELF64LEKind:
+    return buildSectionOrder<ELF64LE>();
+  case ELF64BEKind:
+    return buildSectionOrder<ELF64BE>();
+  default:
+    llvm_unreachable("unknown ELF type");
+  }
+}
+
+static void sortBySymbolOrder(InputSection **Begin, InputSection **End) {
+  if (Config->SymbolOrderingFile.empty())
+    return;
+  static llvm::DenseMap<SectionBase *, int> Order = getSectionOrder();
+  MutableArrayRef<InputSection *> In(Begin, End - Begin);
+  sortByOrder(In, [&](InputSectionBase *S) { return Order.lookup(S); });
+}
+
 // Compute and remember which sections the InputSectionDescription matches.
 std::vector<InputSection *>
 LinkerScript::computeInputSections(const InputSectionDescription *Cmd) {
@@ -273,8 +301,15 @@ LinkerScript::computeInputSections(const InputSectionDescription *Cmd) {
     //    --sort-section is handled as an inner SORT command.
     // 3. If one SORT command is given, and if it is SORT_NONE, don't sort.
     // 4. If no SORT command is given, sort according to --sort-section.
+    // 5. If no SORT commands are given and --sort-section is not specified,
+    //    apply sorting provided by --symbol-ordering-file if any exist.
     InputSection **Begin = Ret.data() + SizeBefore;
     InputSection **End = Ret.data() + Ret.size();
+    if (Pat.SortOuter == SortSectionPolicy::Default &&
+        Config->SortSection == SortSectionPolicy::Default) {
+      sortBySymbolOrder(Begin, End);
+      continue;
+    }
     if (Pat.SortOuter != SortSectionPolicy::None) {
       if (Pat.SortInner == SortSectionPolicy::Default)
         sortSections(Begin, End, Config->SortSection);
@@ -289,8 +324,8 @@ LinkerScript::computeInputSections(const InputSectionDescription *Cmd) {
 void LinkerScript::discard(ArrayRef<InputSectionBase *> V) {
   for (InputSectionBase *S : V) {
     S->Live = false;
-    if (S == InX::ShStrTab || S == InX::Dynamic || S == InX::DynSymTab ||
-        S == InX::DynStrTab)
+    if (S == InX::ShStrTab || S == InX::Common || S == InX::Dynamic ||
+        S == InX::DynSymTab || S == InX::DynStrTab)
       error("discarding " + S->Name + " section is not allowed");
     discard(S->DependentSections);
   }
@@ -812,8 +847,13 @@ bool LinkerScript::ignoreInterpSection() {
 }
 
 ExprValue LinkerScript::getSymbolValue(const Twine &Loc, StringRef S) {
-  if (S == ".")
-    return {CurAddressState->OutSec, Dot - CurAddressState->OutSec->Addr, Loc};
+  if (S == ".") {
+    if (CurAddressState)
+      return {CurAddressState->OutSec, Dot - CurAddressState->OutSec->Addr,
+              Loc};
+    error(Loc + ": unable to get location counter value");
+    return 0;
+  }
   if (SymbolBody *B = Symtab->find(S)) {
     if (auto *D = dyn_cast<DefinedRegular>(B))
       return {D->Section, D->Value, Loc};

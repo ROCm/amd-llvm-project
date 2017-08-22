@@ -63,9 +63,9 @@ llvm::Optional<MemoryBufferRef> readFile(StringRef Path);
 class InputFile {
 public:
   enum Kind {
-    ObjectKind,
+    ObjKind,
     SharedKind,
-    LazyObjectKind,
+    LazyObjKind,
     ArchiveKind,
     BitcodeKind,
     BinaryKind,
@@ -79,8 +79,16 @@ public:
   // Returns sections. It is a runtime error to call this function
   // on files that don't have the notion of sections.
   ArrayRef<InputSectionBase *> getSections() const {
-    assert(FileKind == ObjectKind || FileKind == BinaryKind);
+    assert(FileKind == ObjKind || FileKind == BinaryKind);
     return Sections;
+  }
+
+  // Returns object file symbols. It is a runtime error to call this
+  // function on files of other types.
+  ArrayRef<SymbolBody *> getSymbols() {
+    assert(FileKind == ObjKind || FileKind == BitcodeKind ||
+           FileKind == ArchiveKind);
+    return Symbols;
   }
 
   // Filename of .a which contained this file. If this file was
@@ -100,6 +108,7 @@ public:
 protected:
   InputFile(Kind K, MemoryBufferRef M);
   std::vector<InputSectionBase *> Sections;
+  std::vector<SymbolBody *> Symbols;
 
 private:
   const Kind FileKind;
@@ -115,7 +124,7 @@ public:
   ELFFileBase(Kind K, MemoryBufferRef M);
   static bool classof(const InputFile *F) {
     Kind K = F->kind();
-    return K == ObjectKind || K == SharedKind;
+    return K == ObjKind || K == SharedKind;
   }
 
   llvm::object::ELFFile<ELFT> getObj() const {
@@ -126,11 +135,11 @@ public:
 
   uint32_t getSectionIndex(const Elf_Sym &Sym) const;
 
-  Elf_Sym_Range getGlobalSymbols();
-  Elf_Sym_Range getELFSymbols() const { return Symbols; }
+  Elf_Sym_Range getGlobalELFSyms();
+  Elf_Sym_Range getELFSyms() const { return ELFSyms; }
 
 protected:
-  ArrayRef<Elf_Sym> Symbols;
+  ArrayRef<Elf_Sym> ELFSyms;
   uint32_t FirstNonLocal = 0;
   ArrayRef<Elf_Word> SymtabSHNDX;
   StringRef StringTable;
@@ -151,13 +160,10 @@ template <class ELFT> class ObjFile : public ELFFileBase<ELFT> {
   ArrayRef<Elf_Word> getShtGroupEntries(const Elf_Shdr &Sec);
 
 public:
-  static bool classof(const InputFile *F) {
-    return F->kind() == Base::ObjectKind;
-  }
+  static bool classof(const InputFile *F) { return F->kind() == Base::ObjKind; }
 
   static std::vector<ObjFile<ELFT> *> Instances;
 
-  ArrayRef<SymbolBody *> getSymbols();
   ArrayRef<SymbolBody *> getLocalSymbols();
 
   ObjFile(MemoryBufferRef M, StringRef ArchiveName);
@@ -166,9 +172,9 @@ public:
   InputSectionBase *getSection(const Elf_Sym &Sym) const;
 
   SymbolBody &getSymbolBody(uint32_t SymbolIndex) const {
-    if (SymbolIndex >= SymbolBodies.size())
+    if (SymbolIndex >= this->Symbols.size())
       fatal(toString(this) + ": invalid symbol index");
-    return *SymbolBodies[SymbolIndex];
+    return *this->Symbols[SymbolIndex];
   }
 
   template <typename RelT>
@@ -204,9 +210,6 @@ private:
   bool shouldMerge(const Elf_Shdr &Sec);
   SymbolBody *createSymbolBody(const Elf_Sym *Sym);
 
-  // List of all symbols referenced or defined by this file.
-  std::vector<SymbolBody *> SymbolBodies;
-
   // .shstrtab contents.
   StringRef SectionStringTable;
 
@@ -231,20 +234,18 @@ class LazyObjFile : public InputFile {
 public:
   LazyObjFile(MemoryBufferRef M, StringRef ArchiveName,
               uint64_t OffsetInArchive)
-      : InputFile(LazyObjectKind, M), OffsetInArchive(OffsetInArchive) {
+      : InputFile(LazyObjKind, M), OffsetInArchive(OffsetInArchive) {
     this->ArchiveName = ArchiveName;
   }
 
-  static bool classof(const InputFile *F) {
-    return F->kind() == LazyObjectKind;
-  }
+  static bool classof(const InputFile *F) { return F->kind() == LazyObjKind; }
 
   template <class ELFT> void parse();
   MemoryBufferRef getBuffer();
   InputFile *fetch();
 
 private:
-  std::vector<StringRef> getSymbols();
+  std::vector<StringRef> getSymbolNames();
   template <class ELFT> std::vector<StringRef> getElfSymbols();
   std::vector<StringRef> getBitcodeSymbols();
 
@@ -258,7 +259,6 @@ public:
   explicit ArchiveFile(std::unique_ptr<Archive> &&File);
   static bool classof(const InputFile *F) { return F->kind() == ArchiveKind; }
   template <class ELFT> void parse();
-  ArrayRef<Symbol *> getSymbols() { return Symbols; }
 
   // Returns a memory buffer for a given symbol and the offset in the archive
   // for the member. An empty memory buffer and an offset of zero
@@ -269,7 +269,6 @@ public:
 private:
   std::unique_ptr<Archive> File;
   llvm::DenseSet<uint64_t> Seen;
-  std::vector<Symbol *> Symbols;
 };
 
 class BitcodeFile : public InputFile {
@@ -279,12 +278,8 @@ public:
   static bool classof(const InputFile *F) { return F->kind() == BitcodeKind; }
   template <class ELFT>
   void parse(llvm::DenseSet<llvm::CachedHashStringRef> &ComdatGroups);
-  ArrayRef<Symbol *> getSymbols() { return Symbols; }
   std::unique_ptr<llvm::lto::InputFile> Obj;
   static std::vector<BitcodeFile *> Instances;
-
-private:
-  std::vector<Symbol *> Symbols;
 };
 
 // .so file.

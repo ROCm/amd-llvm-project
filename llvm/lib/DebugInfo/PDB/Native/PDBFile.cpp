@@ -85,6 +85,11 @@ uint32_t PDBFile::getNumStreams() const {
   return ContainerLayout.StreamSizes.size();
 }
 
+uint32_t PDBFile::getMaxStreamSize() const {
+  return *std::max_element(ContainerLayout.StreamSizes.begin(),
+                           ContainerLayout.StreamSizes.end());
+}
+
 uint32_t PDBFile::getStreamByteSize(uint32_t StreamIndex) const {
   return ContainerLayout.StreamSizes[StreamIndex];
 }
@@ -150,8 +155,7 @@ Error PDBFile::parseFileHeaders() {
       MappedBlockStream::createFpmStream(ContainerLayout, *Buffer, Allocator);
   BinaryStreamReader FpmReader(*FpmStream);
   ArrayRef<uint8_t> FpmBytes;
-  if (auto EC = FpmReader.readBytes(FpmBytes,
-                                    msf::getFullFpmByteSize(ContainerLayout)))
+  if (auto EC = FpmReader.readBytes(FpmBytes, FpmReader.bytesRemaining()))
     return EC;
   uint32_t BlocksRemaining = getBlockCount();
   uint32_t BI = 0;
@@ -230,12 +234,23 @@ ArrayRef<support::ulittle32_t> PDBFile::getDirectoryBlockArray() const {
   return ContainerLayout.DirectoryBlocks;
 }
 
+std::unique_ptr<MappedBlockStream> PDBFile::createIndexedStream(uint16_t SN) {
+  if (SN == kInvalidStreamIndex)
+    return nullptr;
+  return MappedBlockStream::createIndexedStream(ContainerLayout, *Buffer, SN,
+                                                Allocator);
+}
+
 MSFStreamLayout PDBFile::getStreamLayout(uint32_t StreamIdx) const {
   MSFStreamLayout Result;
   auto Blocks = getStreamBlockList(StreamIdx);
   Result.Blocks.assign(Blocks.begin(), Blocks.end());
   Result.Length = getStreamByteSize(StreamIdx);
   return Result;
+}
+
+msf::MSFStreamLayout PDBFile::getFpmStreamLayout() const {
+  return msf::getFpmStreamLayout(ContainerLayout);
 }
 
 Expected<GlobalsStream &> PDBFile::getPDBGlobalsStream() {

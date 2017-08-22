@@ -1193,28 +1193,6 @@ typedef struct kmp_cpuinfo {
 } kmp_cpuinfo_t;
 #endif
 
-#ifdef BUILD_TV
-
-struct tv_threadprivate {
-  /* Record type #1 */
-  void *global_addr;
-  void *thread_addr;
-};
-
-struct tv_data {
-  struct tv_data *next;
-  void *type;
-  union tv_union {
-    struct tv_threadprivate tp;
-  } u;
-};
-
-extern kmp_key_t __kmp_tv_key;
-
-#endif /* BUILD_TV */
-
-/* ------------------------------------------------------------------------ */
-
 #if USE_ITT_BUILD
 // We cannot include "kmp_itt.h" due to circular dependency. Declare the only
 // required type here. Later we will check the type meets requirements.
@@ -1960,10 +1938,6 @@ typedef struct kmp_local {
 #endif /* USE_LOCK_FOR_BGET */
 #endif /* ! USE_CMP_XCHG_FOR_BGET */
 #endif /* KMP_USE_BGET */
-
-#ifdef BUILD_TV
-  struct tv_data *tv_data;
-#endif
 
   PACKED_REDUCTION_METHOD_T
   packed_reduction_method; /* stored by __kmpc_reduce*(), used by
@@ -2868,6 +2842,7 @@ extern int __kmp_sys_max_nth; /* system-imposed maximum number of threads */
 extern int __kmp_max_nth;
 // maximum total number of concurrently-existing threads in a contention group
 extern int __kmp_cg_max_nth;
+extern int __kmp_teams_max_nth; // max threads used in a teams construct
 extern int __kmp_threads_capacity; /* capacity of the arrays __kmp_threads and
                                       __kmp_root */
 extern int __kmp_dflt_team_nth; /* default number of threads in a parallel
@@ -3054,11 +3029,6 @@ extern void __kmp_parallel_dxo(int *gtid_ref, int *cid_ref, ident_t *loc_ref);
 
 #ifdef USE_LOAD_BALANCE
 extern int __kmp_get_load_balance(int);
-#endif
-
-#ifdef BUILD_TV
-extern void __kmp_tv_threadprivate_store(kmp_info_t *th, void *global_addr,
-                                         void *thread_addr);
 #endif
 
 extern int __kmp_get_global_thread_id(void);

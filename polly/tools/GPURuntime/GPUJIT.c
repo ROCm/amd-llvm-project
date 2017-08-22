@@ -26,14 +26,17 @@
 #endif /* __APPLE__ */
 #endif /* HAS_LIBOPENCL */
 
+#include <assert.h>
 #include <dlfcn.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
 static int DebugMode;
 static int CacheMode;
+#define max(x, y) ((x) > (y) ? (x) : (y))
 
 static PollyGPURuntime Runtime = RUNTIME_NONE;
 
@@ -939,6 +942,10 @@ static void *HandleCudaRT;
 typedef CUresult CUDAAPI CuMemAllocFcnTy(CUdeviceptr *, size_t);
 static CuMemAllocFcnTy *CuMemAllocFcnPtr;
 
+typedef CUresult CUDAAPI CuMemAllocManagedFcnTy(CUdeviceptr *, size_t,
+                                                unsigned int);
+static CuMemAllocManagedFcnTy *CuMemAllocManagedFcnPtr;
+
 typedef CUresult CUDAAPI CuLaunchKernelFcnTy(
     CUfunction F, unsigned int GridDimX, unsigned int GridDimY,
     unsigned int gridDimZ, unsigned int blockDimX, unsigned int BlockDimY,
@@ -958,6 +965,9 @@ static CuMemFreeFcnTy *CuMemFreeFcnPtr;
 typedef CUresult CUDAAPI CuModuleUnloadFcnTy(CUmodule);
 static CuModuleUnloadFcnTy *CuModuleUnloadFcnPtr;
 
+typedef CUresult CUDAAPI CuProfilerStopFcnTy();
+static CuProfilerStopFcnTy *CuProfilerStopFcnPtr;
+
 typedef CUresult CUDAAPI CuCtxDestroyFcnTy(CUcontext);
 static CuCtxDestroyFcnTy *CuCtxDestroyFcnPtr;
 
@@ -969,6 +979,9 @@ static CuDeviceGetCountFcnTy *CuDeviceGetCountFcnPtr;
 
 typedef CUresult CUDAAPI CuCtxCreateFcnTy(CUcontext *, unsigned int, CUdevice);
 static CuCtxCreateFcnTy *CuCtxCreateFcnPtr;
+
+typedef CUresult CUDAAPI CuCtxGetCurrentFcnTy(CUcontext *);
+static CuCtxGetCurrentFcnTy *CuCtxGetCurrentFcnPtr;
 
 typedef CUresult CUDAAPI CuDeviceGetFcnTy(CUdevice *, int);
 static CuDeviceGetFcnTy *CuDeviceGetFcnPtr;
@@ -1073,6 +1086,9 @@ static int initialDeviceAPIsCUDA() {
   CuMemAllocFcnPtr =
       (CuMemAllocFcnTy *)getAPIHandleCUDA(HandleCuda, "cuMemAlloc_v2");
 
+  CuMemAllocManagedFcnPtr = (CuMemAllocManagedFcnTy *)getAPIHandleCUDA(
+      HandleCuda, "cuMemAllocManaged");
+
   CuMemFreeFcnPtr =
       (CuMemFreeFcnTy *)getAPIHandleCUDA(HandleCuda, "cuMemFree_v2");
 
@@ -1084,6 +1100,9 @@ static int initialDeviceAPIsCUDA() {
 
   CuModuleUnloadFcnPtr =
       (CuModuleUnloadFcnTy *)getAPIHandleCUDA(HandleCuda, "cuModuleUnload");
+
+  CuProfilerStopFcnPtr =
+      (CuProfilerStopFcnTy *)getAPIHandleCUDA(HandleCuda, "cuProfilerStop");
 
   CuCtxDestroyFcnPtr =
       (CuCtxDestroyFcnTy *)getAPIHandleCUDA(HandleCuda, "cuCtxDestroy");
@@ -1098,6 +1117,9 @@ static int initialDeviceAPIsCUDA() {
 
   CuCtxCreateFcnPtr =
       (CuCtxCreateFcnTy *)getAPIHandleCUDA(HandleCuda, "cuCtxCreate_v2");
+
+  CuCtxGetCurrentFcnPtr =
+      (CuCtxGetCurrentFcnTy *)getAPIHandleCUDA(HandleCuda, "cuCtxGetCurrent");
 
   CuModuleLoadDataExFcnPtr = (CuModuleLoadDataExFcnTy *)getAPIHandleCUDA(
       HandleCuda, "cuModuleLoadDataEx");
@@ -1188,7 +1210,33 @@ static PollyGPUContext *initContextCUDA() {
     fprintf(stderr, "Allocate memory for Polly CUDA context failed.\n");
     exit(-1);
   }
-  CuCtxCreateFcnPtr(&(((CUDAContext *)Context->Context)->Cuda), 0, Device);
+
+  // In cases where managed memory is used, it is quite likely that
+  // `cudaMallocManaged` / `polly_mallocManaged` was called before
+  // `polly_initContext` was called.
+  //
+  // If `polly_initContext` calls `CuCtxCreate` when there already was a
+  // pre-existing context created by the runtime API, this causes code running
+  // on P100 to hang. So, we query for a pre-existing context to try and use.
+  // If there is no pre-existing context, we create a new context
+
+  // The possible pre-existing context from previous runtime API calls.
+  CUcontext MaybeRuntimeAPIContext;
+  if (CuCtxGetCurrentFcnPtr(&MaybeRuntimeAPIContext) != CUDA_SUCCESS) {
+    fprintf(stderr, "cuCtxGetCurrent failed.\n");
+    exit(-1);
+  }
+
+  // There was no previous context, initialise it.
+  if (MaybeRuntimeAPIContext == NULL) {
+    if (CuCtxCreateFcnPtr(&(((CUDAContext *)Context->Context)->Cuda), 0,
+                          Device) != CUDA_SUCCESS) {
+      fprintf(stderr, "cuCtxCreateFcnPtr failed.\n");
+      exit(-1);
+    }
+  } else {
+    ((CUDAContext *)Context->Context)->Cuda = MaybeRuntimeAPIContext;
+  }
 
   if (CacheMode)
     CurrentContext = Context;
@@ -1371,6 +1419,86 @@ static void launchKernelCUDA(PollyGPUFunction *Kernel, unsigned int GridDimX,
   }
 }
 
+// Maximum number of managed memory pointers.
+#define DEFAULT_MAX_POINTERS 4000
+// For the rationale behing a list of free pointers, see `polly_freeManaged`.
+void **g_managedptrs;
+unsigned long long g_nmanagedptrs = 0;
+unsigned long long g_maxmanagedptrs = 0;
+
+__attribute__((constructor)) static void initManagedPtrsBuffer() {
+  g_maxmanagedptrs = DEFAULT_MAX_POINTERS;
+  const char *maxManagedPointersString = getenv("POLLY_MAX_MANAGED_POINTERS");
+  if (maxManagedPointersString)
+    g_maxmanagedptrs = atoll(maxManagedPointersString);
+
+  g_managedptrs = (void **)malloc(sizeof(void *) * g_maxmanagedptrs);
+}
+
+// Add a pointer as being allocated by cuMallocManaged
+void addManagedPtr(void *mem) {
+  assert(g_maxmanagedptrs > 0 && "g_maxmanagedptrs was set to 0!");
+  assert(g_nmanagedptrs < g_maxmanagedptrs &&
+         "We have hit the maximum number of "
+         "managed pointers allowed. Set the "
+         "POLLY_MAX_MANAGED_POINTERS environment variable. ");
+  g_managedptrs[g_nmanagedptrs++] = mem;
+}
+
+int isManagedPtr(void *mem) {
+  for (unsigned long long i = 0; i < g_nmanagedptrs; i++) {
+    if (g_managedptrs[i] == mem)
+      return 1;
+  }
+  return 0;
+}
+
+void polly_freeManaged(void *mem) {
+  dump_function();
+
+  // In a real-world program this was used (COSMO), there were more `free`
+  // calls in the original source than `malloc` calls. Hence, replacing all
+  // `free`s with `cudaFree` does not work, since we would try to free
+  // 'illegal' memory.
+  // As a quick fix, we keep a free list and check if `mem` is a managed memory
+  // pointer. If it is, we call `cudaFree`.
+  // If not, we pass it along to the underlying allocator.
+  // This is a hack, and can be removed if the underlying issue is fixed.
+  if (isManagedPtr(mem)) {
+    if (CuMemFreeFcnPtr((size_t)mem) != CUDA_SUCCESS) {
+      fprintf(stderr, "cudaFree failed.\n");
+      exit(-1);
+    }
+    return;
+  } else {
+    free(mem);
+  }
+}
+
+void *polly_mallocManaged(size_t size) {
+  // Note: [Size 0 allocations]
+  // Sometimes, some runtime computation of size could create a size of 0
+  // for an allocation. In these cases, we do not wish to fail.
+  // The CUDA API fails on size 0 allocations.
+  // So, we allocate size a minimum of size 1.
+  if (!size && DebugMode)
+    fprintf(stderr, "cudaMallocManaged called with size 0. "
+                    "Promoting to size 1");
+  size = max(size, 1);
+  PollyGPUContext *_ = polly_initContextCUDA();
+  assert(_ && "polly_initContextCUDA failed");
+
+  void *newMemPtr;
+  const CUresult Res = CuMemAllocManagedFcnPtr((CUdeviceptr *)&newMemPtr, size,
+                                               CU_MEM_ATTACH_GLOBAL);
+  if (Res != CUDA_SUCCESS) {
+    fprintf(stderr, "cudaMallocManaged failed for size: %zu\n", size);
+    exit(-1);
+  }
+  addManagedPtr(newMemPtr);
+  return newMemPtr;
+}
+
 static void freeDeviceMemoryCUDA(PollyGPUDevicePtr *Allocation) {
   dump_function();
   CUDADevicePtr *DevPtr = (CUDADevicePtr *)Allocation->DevicePtr;
@@ -1380,16 +1508,27 @@ static void freeDeviceMemoryCUDA(PollyGPUDevicePtr *Allocation) {
 }
 
 static PollyGPUDevicePtr *allocateMemoryForDeviceCUDA(long MemSize) {
+  if (!MemSize && DebugMode)
+    fprintf(stderr, "allocateMemoryForDeviceCUDA called with size 0. "
+                    "Promoting to size 1");
+  // see: [Size 0 allocations]
+  MemSize = max(MemSize, 1);
   dump_function();
 
   PollyGPUDevicePtr *DevData = malloc(sizeof(PollyGPUDevicePtr));
   if (DevData == 0) {
-    fprintf(stderr, "Allocate memory for GPU device memory pointer failed.\n");
+    fprintf(stderr,
+            "Allocate memory for GPU device memory pointer failed."
+            " Line: %d | Size: %ld\n",
+            __LINE__, MemSize);
     exit(-1);
   }
   DevData->DevicePtr = (CUDADevicePtr *)malloc(sizeof(CUDADevicePtr));
   if (DevData->DevicePtr == 0) {
-    fprintf(stderr, "Allocate memory for GPU device memory pointer failed.\n");
+    fprintf(stderr,
+            "Allocate memory for GPU device memory pointer failed."
+            " Line: %d | Size: %ld\n",
+            __LINE__, MemSize);
     exit(-1);
   }
 
@@ -1397,7 +1536,10 @@ static PollyGPUDevicePtr *allocateMemoryForDeviceCUDA(long MemSize) {
       CuMemAllocFcnPtr(&(((CUDADevicePtr *)DevData->DevicePtr)->Cuda), MemSize);
 
   if (Res != CUDA_SUCCESS) {
-    fprintf(stderr, "Allocate memory for GPU device memory pointer failed.\n");
+    fprintf(stderr,
+            "Allocate memory for GPU device memory pointer failed."
+            " Line: %d | Size: %ld\n",
+            __LINE__, MemSize);
     exit(-1);
   }
 
@@ -1416,6 +1558,7 @@ static void freeContextCUDA(PollyGPUContext *Context) {
 
   CUDAContext *Ctx = (CUDAContext *)Context->Context;
   if (Ctx->Cuda) {
+    CuProfilerStopFcnPtr();
     CuCtxDestroyFcnPtr(Ctx->Cuda);
     free(Ctx);
     free(Context);

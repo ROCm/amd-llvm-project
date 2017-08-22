@@ -129,6 +129,21 @@ selectCallee(const ModuleSummaryIndex &Index,
       CalleeSummaryList,
       [&](const std::unique_ptr<GlobalValueSummary> &SummaryPtr) {
         auto *GVSummary = SummaryPtr.get();
+        // For SamplePGO, in computeImportForFunction the OriginalId
+        // may have been used to locate the callee summary list (See
+        // comment there).
+        // The mapping from OriginalId to GUID may return a GUID
+        // that corresponds to a static variable. Filter it out here.
+        // This can happen when
+        // 1) There is a call to a library function which is not defined
+        // in the index.
+        // 2) There is a static variable with the  OriginalGUID identical
+        // to the GUID of the library function in 1);
+        // When this happens, the logic for SamplePGO kicks in and
+        // the static variable in 2) will be found, which needs to be
+        // filtered out.
+        if (GVSummary->getSummaryKind() == GlobalValueSummary::GlobalVarKind)
+          return false;
         if (GlobalValue::isInterposableLinkage(GVSummary->linkage()))
           // There is no point in importing these, we can't inline them
           return false;
@@ -309,7 +324,7 @@ static void ComputeImportForModule(
     if (!FuncSummary)
       // Skip import for global variables
       continue;
-    DEBUG(dbgs() << "Initalize import for " << GVSummary.first << "\n");
+    DEBUG(dbgs() << "Initialize import for " << GVSummary.first << "\n");
     computeImportForFunction(*FuncSummary, Index, ImportInstrLimit,
                              DefinedGVSummaries, Worklist, ImportList,
                              ExportLists);

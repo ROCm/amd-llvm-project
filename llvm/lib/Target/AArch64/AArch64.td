@@ -118,9 +118,16 @@ def FeatureDisableLatencySchedHeuristic : SubtargetFeature<
     "disable-latency-sched-heuristic", "DisableLatencySchedHeuristic", "true",
     "Disable latency scheduling heuristic">;
 
+def FeatureRCPC : SubtargetFeature<"rcpc", "HasRCPC", "true",
+                                   "Enable support for RCPC extension">;
+
 def FeatureUseRSqrt : SubtargetFeature<
     "use-reciprocal-square-root", "UseRSqrt", "true",
     "Use the reciprocal square root approximation">;
+
+def FeatureDotProd : SubtargetFeature<
+    "dotprod", "HasDotProd", "true",
+    "Enable dot product support">;
 
 def FeatureNoNegativeImmediates : SubtargetFeature<"no-neg-immediates",
                                         "NegativeImmediates", "false",
@@ -141,6 +148,9 @@ def HasV8_1aOps : SubtargetFeature<"v8.1a", "HasV8_1aOps", "true",
 
 def HasV8_2aOps : SubtargetFeature<"v8.2a", "HasV8_2aOps", "true",
   "Support ARM v8.2a instructions", [HasV8_1aOps, FeatureRAS]>;
+
+def HasV8_3aOps : SubtargetFeature<"v8.3a", "HasV8_3aOps", "true",
+  "Support ARM v8.3a instructions", [HasV8_2aOps, FeatureRCPC]>;
 
 //===----------------------------------------------------------------------===//
 // Register File Description
@@ -200,6 +210,18 @@ def ProcA53     : SubtargetFeature<"a53", "ARMProcFamily", "CortexA53",
                                    FeatureUseAA
                                    ]>;
 
+def ProcA55     : SubtargetFeature<"a55", "ARMProcFamily", "CortexA55",
+                                   "Cortex-A55 ARM processors", [
+                                   FeatureCrypto,
+                                   FeatureFPARMv8,
+                                   FeatureFuseAES,
+                                   FeatureNEON,
+                                   FeatureFullFP16,
+                                   FeatureDotProd,
+                                   FeatureRCPC,
+                                   FeaturePerfMon
+                                   ]>;
+
 def ProcA57     : SubtargetFeature<"a57", "ARMProcFamily", "CortexA57",
                                    "Cortex-A57 ARM processors", [
                                    FeatureBalanceFPOps,
@@ -232,6 +254,18 @@ def ProcA73     : SubtargetFeature<"a73", "ARMProcFamily", "CortexA73",
                                    FeatureFPARMv8,
                                    FeatureFuseAES,
                                    FeatureNEON,
+                                   FeaturePerfMon
+                                   ]>;
+
+def ProcA75     : SubtargetFeature<"a75", "ARMProcFamily", "CortexA75",
+                                   "Cortex-A75 ARM processors", [
+                                   FeatureCrypto,
+                                   FeatureFPARMv8,
+                                   FeatureFuseAES,
+                                   FeatureNEON,
+                                   FeatureFullFP16,
+                                   FeatureDotProd,
+                                   FeatureRCPC,
                                    FeaturePerfMon
                                    ]>;
 
@@ -372,13 +406,15 @@ def : ProcessorModel<"generic", NoSchedModel, [
                      FeaturePostRAScheduler
                      ]>;
 
-// FIXME: Cortex-A35 is currently modeled as a Cortex-A53.
+// FIXME: Cortex-A35 and Cortex-A55 are currently modeled as a Cortex-A53.
 def : ProcessorModel<"cortex-a35", CortexA53Model, [ProcA35]>;
 def : ProcessorModel<"cortex-a53", CortexA53Model, [ProcA53]>;
+def : ProcessorModel<"cortex-a55", CortexA53Model, [ProcA55]>;
 def : ProcessorModel<"cortex-a57", CortexA57Model, [ProcA57]>;
-// FIXME: Cortex-A72 and Cortex-A73 are currently modeled as a Cortex-A57.
+// FIXME: Cortex-A72, Cortex-A73 and Cortex-A75 are currently modeled as a Cortex-A57.
 def : ProcessorModel<"cortex-a72", CortexA57Model, [ProcA72]>;
 def : ProcessorModel<"cortex-a73", CortexA57Model, [ProcA73]>;
+def : ProcessorModel<"cortex-a75", CortexA57Model, [ProcA75]>;
 def : ProcessorModel<"cyclone", CycloneModel, [ProcCyclone]>;
 def : ProcessorModel<"exynos-m1", ExynosM1Model, [ProcExynosM1]>;
 def : ProcessorModel<"exynos-m2", ExynosM1Model, [ProcExynosM2]>;
