@@ -83,6 +83,8 @@ private:
                     MachineFunction &MF) const;
   bool selectExtract(MachineInstr &I, MachineRegisterInfo &MRI,
                      MachineFunction &MF) const;
+  bool selectCondBranch(MachineInstr &I, MachineRegisterInfo &MRI,
+                        MachineFunction &MF) const;
 
   // emit insert subreg instruction and insert it before MachineInstr &I
   bool emitInsertSubreg(unsigned DstReg, unsigned SrcReg, MachineInstr &I,
@@ -167,7 +169,7 @@ X86InstructionSelector::getRegClass(LLT Ty, unsigned Reg,
   return getRegClass(Ty, RegBank);
 }
 
-unsigned getSubRegIndex(const TargetRegisterClass *RC) {
+static unsigned getSubRegIndex(const TargetRegisterClass *RC) {
   unsigned SubIdx = X86::NoSubRegister;
   if (RC == &X86::GR32RegClass) {
     SubIdx = X86::sub_32bit;
@@ -180,7 +182,7 @@ unsigned getSubRegIndex(const TargetRegisterClass *RC) {
   return SubIdx;
 }
 
-const TargetRegisterClass *getRegClassFromGRPhysReg(unsigned Reg) {
+static const TargetRegisterClass *getRegClassFromGRPhysReg(unsigned Reg) {
   assert(TargetRegisterInfo::isPhysicalRegister(Reg));
   if (X86::GR64RegClass.contains(Reg))
     return &X86::GR64RegClass;
@@ -285,6 +287,11 @@ bool X86InstructionSelector::select(MachineInstr &I) const {
   if (!isPreISelGenericOpcode(Opcode)) {
     // Certain non-generic instructions also need some special handling.
 
+    if (Opcode == TargetOpcode::LOAD_STACK_GUARD)
+      return false;
+    if (Opcode == TargetOpcode::PHI)
+      return false;
+
     if (I.isCopy())
       return selectCopy(I, MRI);
 
@@ -324,6 +331,8 @@ bool X86InstructionSelector::select(MachineInstr &I) const {
   if (selectExtract(I, MRI, MF))
     return true;
   if (selectInsert(I, MRI, MF))
+    return true;
+  if (selectCondBranch(I, MRI, MF))
     return true;
 
   return false;
@@ -403,8 +412,9 @@ unsigned X86InstructionSelector::getLoadStoreOp(LLT &Ty, const RegisterBank &RB,
 }
 
 // Fill in an address from the given instruction.
-void X86SelectAddress(const MachineInstr &I, const MachineRegisterInfo &MRI,
-                      X86AddressMode &AM) {
+static void X86SelectAddress(const MachineInstr &I,
+                             const MachineRegisterInfo &MRI,
+                             X86AddressMode &AM) {
 
   assert(I.getOperand(0).isReg() && "unsupported opperand.");
   assert(MRI.getType(I.getOperand(0).getReg()).isPointer() &&
@@ -1095,6 +1105,29 @@ bool X86InstructionSelector::selectMergeValues(MachineInstr &I,
   I.eraseFromParent();
   return true;
 }
+
+bool X86InstructionSelector::selectCondBranch(MachineInstr &I,
+                                              MachineRegisterInfo &MRI,
+                                              MachineFunction &MF) const {
+  if (I.getOpcode() != TargetOpcode::G_BRCOND)
+    return false;
+
+  const unsigned CondReg = I.getOperand(0).getReg();
+  MachineBasicBlock *DestMBB = I.getOperand(1).getMBB();
+
+  MachineInstr &TestInst =
+      *BuildMI(*I.getParent(), I, I.getDebugLoc(), TII.get(X86::TEST8ri))
+           .addReg(CondReg)
+           .addImm(1);
+  BuildMI(*I.getParent(), I, I.getDebugLoc(), TII.get(X86::JNE_1))
+      .addMBB(DestMBB);
+
+  constrainSelectedInstRegOperands(TestInst, TII, TRI, RBI);
+
+  I.eraseFromParent();
+  return true;
+}
+
 InstructionSelector *
 llvm::createX86InstructionSelector(const X86TargetMachine &TM,
                                    X86Subtarget &Subtarget,
