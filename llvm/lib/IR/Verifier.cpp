@@ -736,7 +736,7 @@ void Verifier::visitNamedMDNode(const NamedMDNode &NMD) {
   // There used to be various other llvm.dbg.* nodes, but we don't support
   // upgrading them and we want to reserve the namespace for future uses.
   if (NMD.getName().startswith("llvm.dbg."))
-    AssertDI(NMD.getName() == "llvm.dbg.cu",
+    AssertDI(NMD.getName() == "llvm.dbg.cu" || NMD.getName() == "llvm.dbg.mir",
              "unrecognized named metadata node in the llvm.dbg namespace",
              &NMD);
   for (const MDNode *MD : NMD.operands()) {
@@ -1150,6 +1150,7 @@ void Verifier::visitDIGlobalVariable(const DIGlobalVariable &N) {
 
   AssertDI(N.getTag() == dwarf::DW_TAG_variable, "invalid tag", &N);
   AssertDI(!N.getName().empty(), "missing global variable name", &N);
+  AssertDI(N.getType(), "missing global variable type", &N);
   if (auto *Member = N.getRawStaticDataMemberDeclaration()) {
     AssertDI(isa<DIDerivedType>(Member),
              "invalid static data member declaration", &N, Member);
@@ -1172,8 +1173,6 @@ void Verifier::visitDIExpression(const DIExpression &N) {
 void Verifier::visitDIGlobalVariableExpression(
     const DIGlobalVariableExpression &GVE) {
   AssertDI(GVE.getVariable(), "missing variable");
-  if (auto *Var = GVE.getVariable())
-    visitDIGlobalVariable(*Var);
   if (auto *Expr = GVE.getExpression())
     visitDIExpression(*Expr);
 }
@@ -1377,6 +1376,7 @@ static bool isFuncOnlyAttr(Attribute::AttrKind Kind) {
   case Attribute::InaccessibleMemOrArgMemOnly:
   case Attribute::AllocSize:
   case Attribute::Speculatable:
+  case Attribute::StrictFP:
     return true;
   default:
     break;

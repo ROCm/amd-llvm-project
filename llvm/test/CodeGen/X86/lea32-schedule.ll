@@ -20,14 +20,14 @@ define i32 @test_lea_offset(i32) {
 ; ATOM-LABEL: test_lea_offset:
 ; ATOM:       # BB#0:
 ; ATOM-NEXT:    # kill: %EDI<def> %EDI<kill> %RDI<def>
-; ATOM-NEXT:    leal -24(%rdi), %eax
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    retq
+; ATOM-NEXT:    leal -24(%rdi), %eax # sched: [1:1.00]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    retq # sched: [79:39.50]
 ;
 ; SLM-LABEL: test_lea_offset:
 ; SLM:       # BB#0:
@@ -72,14 +72,14 @@ define i32 @test_lea_offset_big(i32) {
 ; ATOM-LABEL: test_lea_offset_big:
 ; ATOM:       # BB#0:
 ; ATOM-NEXT:    # kill: %EDI<def> %EDI<kill> %RDI<def>
-; ATOM-NEXT:    leal 1024(%rdi), %eax
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    retq
+; ATOM-NEXT:    leal 1024(%rdi), %eax # sched: [1:1.00]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    retq # sched: [79:39.50]
 ;
 ; SLM-LABEL: test_lea_offset_big:
 ; SLM:       # BB#0:
@@ -127,14 +127,14 @@ define i32 @test_lea_add(i32, i32) {
 ; ATOM:       # BB#0:
 ; ATOM-NEXT:    # kill: %ESI<def> %ESI<kill> %RSI<def>
 ; ATOM-NEXT:    # kill: %EDI<def> %EDI<kill> %RDI<def>
-; ATOM-NEXT:    leal (%rdi,%rsi), %eax
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    retq
+; ATOM-NEXT:    leal (%rdi,%rsi), %eax # sched: [1:1.00]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    retq # sched: [79:39.50]
 ;
 ; SLM-LABEL: test_lea_add:
 ; SLM:       # BB#0:
@@ -179,21 +179,22 @@ define i32 @test_lea_add_offset(i32, i32) {
 ; GENERIC:       # BB#0:
 ; GENERIC-NEXT:    # kill: %ESI<def> %ESI<kill> %RSI<def>
 ; GENERIC-NEXT:    # kill: %EDI<def> %EDI<kill> %RDI<def>
-; GENERIC-NEXT:    leal 16(%rdi,%rsi), %eax # sched: [1:0.50]
+; GENERIC-NEXT:    leal (%rdi,%rsi), %eax # sched: [1:0.50]
+; GENERIC-NEXT:    addl $16, %eax # sched: [1:0.33]
 ; GENERIC-NEXT:    retq # sched: [1:1.00]
 ;
 ; ATOM-LABEL: test_lea_add_offset:
 ; ATOM:       # BB#0:
 ; ATOM-NEXT:    # kill: %ESI<def> %ESI<kill> %RSI<def>
 ; ATOM-NEXT:    # kill: %EDI<def> %EDI<kill> %RDI<def>
-; ATOM-NEXT:    leal 16(%rdi,%rsi), %eax
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    retq
+; ATOM-NEXT:    leal 16(%rdi,%rsi), %eax # sched: [1:1.00]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    retq # sched: [79:39.50]
 ;
 ; SLM-LABEL: test_lea_add_offset:
 ; SLM:       # BB#0:
@@ -241,21 +242,23 @@ define i32 @test_lea_add_offset_big(i32, i32) {
 ; GENERIC:       # BB#0:
 ; GENERIC-NEXT:    # kill: %ESI<def> %ESI<kill> %RSI<def>
 ; GENERIC-NEXT:    # kill: %EDI<def> %EDI<kill> %RDI<def>
-; GENERIC-NEXT:    leal -4096(%rdi,%rsi), %eax # sched: [1:0.50]
+; GENERIC-NEXT:    leal (%rdi,%rsi), %eax # sched: [1:0.50]
+; GENERIC-NEXT:    addl $-4096, %eax # imm = 0xF000
+; GENERIC-NEXT:    # sched: [1:0.33]
 ; GENERIC-NEXT:    retq # sched: [1:1.00]
 ;
 ; ATOM-LABEL: test_lea_add_offset_big:
 ; ATOM:       # BB#0:
 ; ATOM-NEXT:    # kill: %ESI<def> %ESI<kill> %RSI<def>
 ; ATOM-NEXT:    # kill: %EDI<def> %EDI<kill> %RDI<def>
-; ATOM-NEXT:    leal -4096(%rdi,%rsi), %eax
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    retq
+; ATOM-NEXT:    leal -4096(%rdi,%rsi), %eax # sched: [1:1.00]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    retq # sched: [79:39.50]
 ;
 ; SLM-LABEL: test_lea_add_offset_big:
 ; SLM:       # BB#0:
@@ -310,14 +313,14 @@ define i32 @test_lea_mul(i32) {
 ; ATOM-LABEL: test_lea_mul:
 ; ATOM:       # BB#0:
 ; ATOM-NEXT:    # kill: %EDI<def> %EDI<kill> %RDI<def>
-; ATOM-NEXT:    leal (%rdi,%rdi,2), %eax
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    retq
+; ATOM-NEXT:    leal (%rdi,%rdi,2), %eax # sched: [1:1.00]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    retq # sched: [79:39.50]
 ;
 ; SLM-LABEL: test_lea_mul:
 ; SLM:       # BB#0:
@@ -356,20 +359,21 @@ define i32 @test_lea_mul_offset(i32) {
 ; GENERIC-LABEL: test_lea_mul_offset:
 ; GENERIC:       # BB#0:
 ; GENERIC-NEXT:    # kill: %EDI<def> %EDI<kill> %RDI<def>
-; GENERIC-NEXT:    leal -32(%rdi,%rdi,2), %eax # sched: [1:0.50]
+; GENERIC-NEXT:    leal (%rdi,%rdi,2), %eax # sched: [1:0.50]
+; GENERIC-NEXT:    addl $-32, %eax # sched: [1:0.33]
 ; GENERIC-NEXT:    retq # sched: [1:1.00]
 ;
 ; ATOM-LABEL: test_lea_mul_offset:
 ; ATOM:       # BB#0:
 ; ATOM-NEXT:    # kill: %EDI<def> %EDI<kill> %RDI<def>
-; ATOM-NEXT:    leal -32(%rdi,%rdi,2), %eax
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    retq
+; ATOM-NEXT:    leal -32(%rdi,%rdi,2), %eax # sched: [1:1.00]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    retq # sched: [79:39.50]
 ;
 ; SLM-LABEL: test_lea_mul_offset:
 ; SLM:       # BB#0:
@@ -411,20 +415,22 @@ define i32 @test_lea_mul_offset_big(i32) {
 ; GENERIC-LABEL: test_lea_mul_offset_big:
 ; GENERIC:       # BB#0:
 ; GENERIC-NEXT:    # kill: %EDI<def> %EDI<kill> %RDI<def>
-; GENERIC-NEXT:    leal 10000(%rdi,%rdi,8), %eax # sched: [1:0.50]
+; GENERIC-NEXT:    leal (%rdi,%rdi,8), %eax # sched: [1:0.50]
+; GENERIC-NEXT:    addl $10000, %eax # imm = 0x2710
+; GENERIC-NEXT:    # sched: [1:0.33]
 ; GENERIC-NEXT:    retq # sched: [1:1.00]
 ;
 ; ATOM-LABEL: test_lea_mul_offset_big:
 ; ATOM:       # BB#0:
 ; ATOM-NEXT:    # kill: %EDI<def> %EDI<kill> %RDI<def>
-; ATOM-NEXT:    leal 10000(%rdi,%rdi,8), %eax
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    retq
+; ATOM-NEXT:    leal 10000(%rdi,%rdi,8), %eax # sched: [1:1.00]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    retq # sched: [79:39.50]
 ;
 ; SLM-LABEL: test_lea_mul_offset_big:
 ; SLM:       # BB#0:
@@ -476,14 +482,14 @@ define i32 @test_lea_add_scale(i32, i32) {
 ; ATOM:       # BB#0:
 ; ATOM-NEXT:    # kill: %ESI<def> %ESI<kill> %RSI<def>
 ; ATOM-NEXT:    # kill: %EDI<def> %EDI<kill> %RDI<def>
-; ATOM-NEXT:    leal (%rdi,%rsi,2), %eax
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    retq
+; ATOM-NEXT:    leal (%rdi,%rsi,2), %eax # sched: [1:1.00]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    retq # sched: [79:39.50]
 ;
 ; SLM-LABEL: test_lea_add_scale:
 ; SLM:       # BB#0:
@@ -529,21 +535,22 @@ define i32 @test_lea_add_scale_offset(i32, i32) {
 ; GENERIC:       # BB#0:
 ; GENERIC-NEXT:    # kill: %ESI<def> %ESI<kill> %RSI<def>
 ; GENERIC-NEXT:    # kill: %EDI<def> %EDI<kill> %RDI<def>
-; GENERIC-NEXT:    leal 96(%rdi,%rsi,4), %eax # sched: [1:0.50]
+; GENERIC-NEXT:    leal (%rdi,%rsi,4), %eax # sched: [1:0.50]
+; GENERIC-NEXT:    addl $96, %eax # sched: [1:0.33]
 ; GENERIC-NEXT:    retq # sched: [1:1.00]
 ;
 ; ATOM-LABEL: test_lea_add_scale_offset:
 ; ATOM:       # BB#0:
 ; ATOM-NEXT:    # kill: %ESI<def> %ESI<kill> %RSI<def>
 ; ATOM-NEXT:    # kill: %EDI<def> %EDI<kill> %RDI<def>
-; ATOM-NEXT:    leal 96(%rdi,%rsi,4), %eax
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    retq
+; ATOM-NEXT:    leal 96(%rdi,%rsi,4), %eax # sched: [1:1.00]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    retq # sched: [79:39.50]
 ;
 ; SLM-LABEL: test_lea_add_scale_offset:
 ; SLM:       # BB#0:
@@ -592,21 +599,23 @@ define i32 @test_lea_add_scale_offset_big(i32, i32) {
 ; GENERIC:       # BB#0:
 ; GENERIC-NEXT:    # kill: %ESI<def> %ESI<kill> %RSI<def>
 ; GENERIC-NEXT:    # kill: %EDI<def> %EDI<kill> %RDI<def>
-; GENERIC-NEXT:    leal -1200(%rdi,%rsi,8), %eax # sched: [1:0.50]
+; GENERIC-NEXT:    leal (%rdi,%rsi,8), %eax # sched: [1:0.50]
+; GENERIC-NEXT:    addl $-1200, %eax # imm = 0xFB50
+; GENERIC-NEXT:    # sched: [1:0.33]
 ; GENERIC-NEXT:    retq # sched: [1:1.00]
 ;
 ; ATOM-LABEL: test_lea_add_scale_offset_big:
 ; ATOM:       # BB#0:
 ; ATOM-NEXT:    # kill: %ESI<def> %ESI<kill> %RSI<def>
 ; ATOM-NEXT:    # kill: %EDI<def> %EDI<kill> %RDI<def>
-; ATOM-NEXT:    leal -1200(%rdi,%rsi,8), %eax
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    nop
-; ATOM-NEXT:    retq
+; ATOM-NEXT:    leal -1200(%rdi,%rsi,8), %eax # sched: [1:1.00]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    nop # sched: [1:0.50]
+; ATOM-NEXT:    retq # sched: [79:39.50]
 ;
 ; SLM-LABEL: test_lea_add_scale_offset_big:
 ; SLM:       # BB#0:

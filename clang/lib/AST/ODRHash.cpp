@@ -199,6 +199,7 @@ unsigned ODRHash::CalculateHash() {
   return ID.ComputeHash();
 }
 
+namespace {
 // Process a Decl pointer.  Add* methods call back into ODRHash while Visit*
 // methods process the relevant parts of the Decl.
 class ODRDeclVisitor : public ConstDeclVisitor<ODRDeclVisitor> {
@@ -343,6 +344,7 @@ public:
     }
   }
 };
+} // namespace
 
 // Only allow a small portion of Decl's to be processed.  Remove this once
 // all Decl's can be handled.
@@ -378,8 +380,12 @@ void ODRHash::AddCXXRecordDecl(const CXXRecordDecl *Record) {
   assert(Record && Record->hasDefinition() &&
          "Expected non-null record to be a definition.");
 
-  if (isa<ClassTemplateSpecializationDecl>(Record)) {
-    return;
+  const DeclContext *DC = Record;
+  while (DC) {
+    if (isa<ClassTemplateSpecializationDecl>(DC)) {
+      return;
+    }
+    DC = DC->getParent();
   }
 
   AddDecl(Record);
@@ -416,6 +422,7 @@ void ODRHash::AddDecl(const Decl *D) {
   }
 }
 
+namespace {
 // Process a Type pointer.  Add* methods call back into ODRHash while Visit*
 // methods process the relevant parts of the Type.
 class ODRTypeVisitor : public TypeVisitor<ODRTypeVisitor> {
@@ -604,6 +611,7 @@ public:
     AddDecl(T->getDecl());
   }
 };
+} // namespace
 
 void ODRHash::AddType(const Type *T) {
   assert(T && "Expecting non-null pointer.");

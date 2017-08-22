@@ -1962,11 +1962,6 @@ std::unique_ptr<X86Operand> X86AsmParser::ParseIntelOperand() {
     return X86Operand::CreateImm(ImmExpr, Start, End);
   }
 
-  // Only positive immediates are valid.
-  if (Imm < 0)
-    return ErrorOperand(Start, "expected a positive immediate displacement "
-                               "before bracketed expr.");
-
   return ParseIntelBracExpression(/*SegReg=*/0, Start, Imm, isSymbol, Size);
 }
 
@@ -2089,14 +2084,20 @@ bool X86AsmParser::HandleAVX512Operand(OperandVector &Operands,
         // no errors.
         // Query for the need of further parsing for a {%k<NUM>} mark
         if (!Z || getLexer().is(AsmToken::LCurly)) {
-          const SMLoc StartLoc = Z ? consumeToken() : consumedToken;
+          SMLoc StartLoc = Z ? consumeToken() : consumedToken;
           // Parse an op-mask register mark ({%k<NUM>}), which is now to be
           // expected
-          if (std::unique_ptr<X86Operand> Op = ParseOperand()) {
+          unsigned RegNo;
+          SMLoc RegLoc;
+          if (!ParseRegister(RegNo, RegLoc, StartLoc) &&
+              X86MCRegisterClasses[X86::VK1RegClassID].contains(RegNo)) {
+            if (RegNo == X86::K0)
+              return Error(RegLoc, "Register k0 can't be used as write mask");
             if (!getLexer().is(AsmToken::RCurly))
               return Error(getLexer().getLoc(), "Expected } at this point");
             Operands.push_back(X86Operand::CreateToken("{", StartLoc));
-            Operands.push_back(std::move(Op));
+            Operands.push_back(
+                X86Operand::CreateReg(RegNo, StartLoc, StartLoc));
             Operands.push_back(X86Operand::CreateToken("}", consumeToken()));
           } else
             return Error(getLexer().getLoc(),
@@ -2106,7 +2107,8 @@ bool X86AsmParser::HandleAVX512Operand(OperandVector &Operands,
             // Have we've found a parsing error, or found no (expected) {z} mark
             // - report an error
             if (ParseZ(Z, consumeToken()) || !Z)
-              return true;
+              return Error(getLexer().getLoc(),
+                           "Expected a {z} mark at this point");
 
           }
           // '{z}' on its own is meaningless, hence should be ignored.
@@ -2455,11 +2457,21 @@ bool X86AsmParser::ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
   Operands.push_back(X86Operand::CreateToken(PatchedName, NameLoc));
 
   // Determine whether this is an instruction prefix.
-  bool isPrefix =
-    Name == "lock" || Name == "rep" ||
-    Name == "repe" || Name == "repz" ||
-    Name == "repne" || Name == "repnz" ||
-    Name == "rex64" || Name == "data16" || Name == "data32";
+  // FIXME:
+  // Enhace prefixes integrity robustness. for example, following forms
+  // are currently tolerated:
+  // repz repnz <insn>    ; GAS errors for the use of two similar prefixes
+  // lock addq %rax, %rbx ; Destination operand must be of memory type
+  // xacquire <insn>      ; xacquire must be accompanied by 'lock'
+  bool isPrefix = StringSwitch<bool>(Name)
+    .Cases("lock",
+           "rep",       "repe",
+           "repz",      "repne",
+           "repnz",     "rex64",
+           "data32",    "data16",   true)
+    .Cases("xacquire",  "xrelease", true)
+    .Cases("acquire",   "release",  isParsingIntelSyntax())
+    .Default(false);
 
   bool CurlyAsEndOfStatement = false;
   // This does the actual operand parsing.  Don't parse any more if we have a

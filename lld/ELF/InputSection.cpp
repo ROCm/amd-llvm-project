@@ -44,6 +44,29 @@ std::string lld::toString(const InputSectionBase *Sec) {
   return (toString(Sec->File) + ":(" + Sec->Name + ")").str();
 }
 
+template <class ELFT> DenseMap<SectionBase *, int> elf::buildSectionOrder() {
+  // Build a map from symbols to their priorities. Symbols that didn't
+  // appear in the symbol ordering file have the lowest priority 0.
+  // All explicitly mentioned symbols have negative (higher) priorities.
+  DenseMap<StringRef, int> SymbolOrder;
+  int Priority = -Config->SymbolOrderingFile.size();
+  for (StringRef S : Config->SymbolOrderingFile)
+    SymbolOrder.insert({S, Priority++});
+
+  // Build a map from sections to their priorities.
+  DenseMap<SectionBase *, int> SectionOrder;
+  for (ObjFile<ELFT> *File : ObjFile<ELFT>::Instances) {
+    for (SymbolBody *Body : File->getSymbols()) {
+      auto *D = dyn_cast<DefinedRegular>(Body);
+      if (!D || !D->Section)
+        continue;
+      int &Priority = SectionOrder[D->Section];
+      Priority = std::min(Priority, SymbolOrder.lookup(D->getName()));
+    }
+  }
+  return SectionOrder;
+}
+
 template <class ELFT>
 static ArrayRef<uint8_t> getSectionContents(ObjFile<ELFT> *File,
                                             const typename ELFT::Shdr *Hdr) {
@@ -177,17 +200,12 @@ void InputSectionBase::uncompress() {
                                                 Config->IsLE, Config->Is64));
 
   size_t Size = Dec.getDecompressedSize();
-  char *OutputBuf;
-  {
-    static std::mutex Mu;
-    std::lock_guard<std::mutex> Lock(Mu);
-    OutputBuf = BAlloc.Allocate<char>(Size);
-  }
-
-  if (Error E = Dec.decompress({OutputBuf, Size}))
+  UncompressBuf.reset(new std::vector<uint8_t>(Size));
+  if (Error E = Dec.decompress({(char *)UncompressBuf->data(), Size}))
     fatal(toString(this) +
           ": decompress failed: " + llvm::toString(std::move(E)));
-  this->Data = ArrayRef<uint8_t>((uint8_t *)OutputBuf, Size);
+
+  this->Data = *UncompressBuf;
   this->Flags &= ~(uint64_t)SHF_COMPRESSED;
 }
 
@@ -646,7 +664,7 @@ void InputSection::relocateNonAlloc(uint8_t *Buf, ArrayRef<RelTy> Rels) {
       Addend += Target->getImplicitAddend(BufLoc, Type);
 
     SymbolBody &Sym = this->getFile<ELFT>()->getRelocTargetSym(Rel);
-    RelExpr Expr = Target->getRelExpr(Type, Sym, BufLoc);
+    RelExpr Expr = Target->getRelExpr(Type, Sym, *File, BufLoc);
     if (Expr == R_NONE)
       continue;
     if (Expr != R_ABS) {
@@ -981,6 +999,11 @@ uint64_t MergeInputSection::getOffset(uint64_t Offset) const {
   uint64_t Addend = Offset - Piece.InputOff;
   return Piece.OutputOff + Addend;
 }
+
+template DenseMap<SectionBase *, int> elf::buildSectionOrder<ELF32LE>();
+template DenseMap<SectionBase *, int> elf::buildSectionOrder<ELF32BE>();
+template DenseMap<SectionBase *, int> elf::buildSectionOrder<ELF64LE>();
+template DenseMap<SectionBase *, int> elf::buildSectionOrder<ELF64BE>();
 
 template InputSection::InputSection(ObjFile<ELF32LE> *, const ELF32LE::Shdr *,
                                     StringRef);

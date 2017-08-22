@@ -948,6 +948,21 @@ static bool
 simplifyRelocatesOffABase(GCRelocateInst *RelocatedBase,
                           const SmallVectorImpl<GCRelocateInst *> &Targets) {
   bool MadeChange = false;
+  // We must ensure the relocation of derived pointer is defined after
+  // relocation of base pointer. If we find a relocation corresponding to base
+  // defined earlier than relocation of base then we move relocation of base
+  // right before found relocation. We consider only relocation in the same
+  // basic block as relocation of base. Relocations from other basic block will
+  // be skipped by optimization and we do not care about them.
+  for (auto R = RelocatedBase->getParent()->getFirstInsertionPt();
+       &*R != RelocatedBase; ++R)
+    if (auto RI = dyn_cast<GCRelocateInst>(R))
+      if (RI->getStatepoint() == RelocatedBase->getStatepoint())
+        if (RI->getBasePtrIndex() == RelocatedBase->getBasePtrIndex()) {
+          RelocatedBase->moveBefore(RI);
+          break;
+        }
+
   for (GCRelocateInst *ToReplace : Targets) {
     assert(ToReplace->getBasePtrIndex() == RelocatedBase->getBasePtrIndex() &&
            "Not relocating a derived object of the original base object");
@@ -1641,6 +1656,7 @@ static bool despeculateCountZeros(IntrinsicInst *CountZeros,
   return true;
 }
 
+namespace {
 // This class provides helper functions to expand a memcmp library call into an
 // inline expansion.
 class MemCmpExpansion {
@@ -1688,6 +1704,7 @@ public:
                   unsigned NumLoadsPerBlock, const DataLayout &DL);
   Value *getMemCmpExpansion(uint64_t Size);
 };
+} // namespace
 
 MemCmpExpansion::ResultBlock::ResultBlock()
     : BB(nullptr), PhiSrc1(nullptr), PhiSrc2(nullptr) {}
@@ -2117,13 +2134,25 @@ Value *MemCmpExpansion::getMemCmpOneBlock(unsigned Size) {
     LoadSrc2 = Builder.CreateCall(Bswap, LoadSrc2);
   }
 
-  // TODO: Instead of comparing ULT, just subtract and return the difference?
-  Value *CmpNE = Builder.CreateICmpNE(LoadSrc1, LoadSrc2);
+  if (Size < 4) {
+    // The i8 and i16 cases don't need compares. We zext the loaded values and
+    // subtract them to get the suitable negative, zero, or positive i32 result.
+    LoadSrc1 = Builder.CreateZExt(LoadSrc1, Builder.getInt32Ty());
+    LoadSrc2 = Builder.CreateZExt(LoadSrc2, Builder.getInt32Ty());
+    return Builder.CreateSub(LoadSrc1, LoadSrc2);
+  }
+
+  // The result of memcmp is negative, zero, or positive, so produce that by
+  // subtracting 2 extended compare bits: sub (ugt, ult).
+  // If a target prefers to use selects to get -1/0/1, they should be able
+  // to transform this later. The inverse transform (going from selects to math)
+  // may not be possible in the DAG because the selects got converted into
+  // branches before we got there.
+  Value *CmpUGT = Builder.CreateICmpUGT(LoadSrc1, LoadSrc2);
   Value *CmpULT = Builder.CreateICmpULT(LoadSrc1, LoadSrc2);
-  Type *I32 = Builder.getInt32Ty();
-  Value *Sel1 = Builder.CreateSelect(CmpULT, ConstantInt::get(I32, -1),
-                                             ConstantInt::get(I32, 1));
-  return Builder.CreateSelect(CmpNE, Sel1, ConstantInt::get(I32, 0));
+  Value *ZextUGT = Builder.CreateZExt(CmpUGT, Builder.getInt32Ty());
+  Value *ZextULT = Builder.CreateZExt(CmpULT, Builder.getInt32Ty());
+  return Builder.CreateSub(ZextUGT, ZextULT);
 }
 
 // This function expands the memcmp call into an inline expansion and returns
@@ -2259,8 +2288,12 @@ static bool expandMemCmp(CallInst *CI, const TargetTransformInfo *TTI,
     return false;
   }
 
-  // Early exit from expansion if size greater than max bytes to load.
+  // Scale the max size down if the target can load more bytes than we need.
   uint64_t SizeVal = SizeCast->getZExtValue();
+  if (MaxLoadSize > SizeVal)
+    MaxLoadSize = 1 << SizeCast->getValue().logBase2();
+
+  // Calculate how many load pairs are needed for the constant size.
   unsigned NumLoads = 0;
   unsigned RemainingSize = SizeVal;
   unsigned LoadSize = MaxLoadSize;
@@ -2270,6 +2303,7 @@ static bool expandMemCmp(CallInst *CI, const TargetTransformInfo *TTI,
     LoadSize = LoadSize / 2;
   }
 
+  // Don't expand if this will require more loads than desired by the target.
   if (NumLoads > TLI->getMaxExpandSizeMemcmp(CI->getFunction()->optForSize())) {
     NumMemCmpGreaterThanMax++;
     return false;

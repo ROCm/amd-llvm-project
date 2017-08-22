@@ -116,7 +116,40 @@ def V_CNDMASK_B64_PSEUDO : VOP3Common <(outs VReg_64:$vdst),
 // pass to enable folding of inline immediates.
 def V_MOV_B64_PSEUDO : VPseudoInstSI <(outs VReg_64:$vdst),
                                       (ins VSrc_b64:$src0)>;
+
+// Pseudoinstruction for @llvm.amdgcn.wqm. It is turned into a copy after the
+// WQM pass processes it.
+def WQM : PseudoInstSI <(outs unknown:$vdst), (ins unknown:$src0)>;
+
+// Pseudoinstruction for @llvm.amdgcn.wwm. It is turned into a copy post-RA, so
+// that the @earlyclobber is respected. The @earlyclobber is to make sure that
+// the instruction that defines $src0 (which is run in WWM) doesn't
+// accidentally clobber inactive channels of $vdst.
+let Constraints = "@earlyclobber $vdst" in {
+def WWM : PseudoInstSI <(outs unknown:$vdst), (ins unknown:$src0)>;
+}
+
 } // End let hasSideEffects = 0, mayLoad = 0, mayStore = 0, Uses = [EXEC]
+
+def EXIT_WWM : SPseudoInstSI <(outs SReg_64:$sdst), (ins SReg_64:$src0)> {
+  let hasSideEffects = 0;
+  let mayLoad = 0;
+  let mayStore = 0;
+}
+
+// Invert the exec mask and overwrite the inactive lanes of dst with inactive,
+// restoring it after we're done.
+def V_SET_INACTIVE_B32 : VPseudoInstSI <(outs VGPR_32:$vdst),
+  (ins VGPR_32: $src, VSrc_b32:$inactive),
+  [(set i32:$vdst, (int_amdgcn_set_inactive i32:$src, i32:$inactive))]> {
+  let Constraints = "$src = $vdst";
+}
+
+def V_SET_INACTIVE_B64 : VPseudoInstSI <(outs VReg_64:$vdst),
+  (ins VReg_64: $src, VSrc_b64:$inactive),
+  [(set i64:$vdst, (int_amdgcn_set_inactive i64:$src, i64:$inactive))]> {
+  let Constraints = "$src = $vdst";
+}
 
 let usesCustomInserter = 1, SALU = 1 in {
 def GET_GROUPSTATICSIZE : PseudoInstSI <(outs SReg_32:$sdst), (ins),
@@ -315,6 +348,82 @@ def SI_RETURN_TO_EPILOG : SPseudoInstSI <
   let isReturn = 1;
   let hasNoSchedulingInfo = 1;
   let DisableWQM = 1;
+}
+
+// Return for returning function calls.
+def SI_RETURN : SPseudoInstSI <
+  (outs), (ins), [],
+  "; return"> {
+  let isTerminator = 1;
+  let isBarrier = 1;
+  let isReturn = 1;
+  let SchedRW = [WriteBranch];
+}
+
+// Return for returning function calls without output register.
+//
+// This version is only needed so we can fill in the output regiter in
+// the custom inserter.
+def SI_CALL_ISEL : SPseudoInstSI <
+  (outs), (ins SSrc_b64:$src0), [(AMDGPUcall i64:$src0)]> {
+  let Size = 4;
+  let isCall = 1;
+  let SchedRW = [WriteBranch];
+  let usesCustomInserter = 1;
+}
+
+// Wrapper around s_swappc_b64 with extra $callee parameter to track
+// the called function after regalloc.
+def SI_CALL : SPseudoInstSI <
+  (outs SReg_64:$dst), (ins SSrc_b64:$src0, unknown:$callee)> {
+  let Size = 4;
+  let isCall = 1;
+  let UseNamedOperandTable = 1;
+  let SchedRW = [WriteBranch];
+}
+
+// Tail call handling pseudo
+def SI_TCRETURN_ISEL : SPseudoInstSI<(outs),
+  (ins SSrc_b64:$src0, i32imm:$fpdiff),
+  [(AMDGPUtc_return i64:$src0, i32:$fpdiff)]> {
+  let isCall = 1;
+  let isTerminator = 1;
+  let isReturn = 1;
+  let isBarrier = 1;
+  let SchedRW = [WriteBranch];
+  let usesCustomInserter = 1;
+}
+
+def SI_TCRETURN : SPseudoInstSI <
+  (outs),
+  (ins SSrc_b64:$src0, unknown:$callee, i32imm:$fpdiff)> {
+  let Size = 4;
+  let isCall = 1;
+  let isTerminator = 1;
+  let isReturn = 1;
+  let isBarrier = 1;
+  let UseNamedOperandTable = 1;
+  let SchedRW = [WriteBranch];
+}
+
+
+def ADJCALLSTACKUP : SPseudoInstSI<
+  (outs), (ins i32imm:$amt0, i32imm:$amt1),
+  [(callseq_start timm:$amt0, timm:$amt1)],
+  "; adjcallstackup $amt0 $amt1"> {
+  let Size = 8; // Worst case. (s_add_u32 + constant)
+  let FixedSize = 1;
+  let hasSideEffects = 1;
+  let usesCustomInserter = 1;
+}
+
+def ADJCALLSTACKDOWN : SPseudoInstSI<
+  (outs), (ins i32imm:$amt1, i32imm:$amt2),
+  [(callseq_end timm:$amt1, timm:$amt2)],
+  "; adjcallstackdown $amt1"> {
+  let Size = 8; // Worst case. (s_add_u32 + constant)
+  let hasSideEffects = 1;
+  let usesCustomInserter = 1;
 }
 
 let Defs = [M0, EXEC],
@@ -924,8 +1033,8 @@ def : Pat <
 // VOP3 Patterns
 //===----------------------------------------------------------------------===//
 
-def : IMad24Pat<V_MAD_I32_I24>;
-def : UMad24Pat<V_MAD_U32_U24>;
+def : IMad24Pat<V_MAD_I32_I24, 1>;
+def : UMad24Pat<V_MAD_U32_U24, 1>;
 
 defm : BFIPatterns <V_BFI_B32, S_MOV_B32, SReg_64>;
 def : ROTRPattern <V_ALIGNBIT_B32>;
@@ -974,7 +1083,7 @@ def : Pat <
   (add (sub_oneuse (umax i32:$src0, i32:$src1),
                    (umin i32:$src0, i32:$src1)),
        i32:$src2),
-  (V_SAD_U32 $src0, $src1, $src2)
+  (V_SAD_U32 $src0, $src1, $src2, (i1 0))
 >;
 
 def : Pat <
@@ -982,7 +1091,7 @@ def : Pat <
                       (sub i32:$src0, i32:$src1),
                       (sub i32:$src1, i32:$src0)),
        i32:$src2),
-  (V_SAD_U32 $src0, $src1, $src2)
+  (V_SAD_U32 $src0, $src1, $src2, (i1 0))
 >;
 
 //===----------------------------------------------------------------------===//
