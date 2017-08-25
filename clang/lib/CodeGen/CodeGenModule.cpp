@@ -2092,6 +2092,7 @@ static bool isWhiteListForHCC(CodeGenModule &CGM, GlobalDecl GD) {
   // C++11 swap/move functions are allowed to pass
   // C++11 memory_order modifiers are allowed to pass
   // C++11 complex operators are allowed to pass
+  // C++11 perfect forwarding functions are allowed to pass
   // certain C++11 math functions are allowed to pass
   // Eigen internal functions are allowed to pass
   const FunctionDecl* FuncD = dyn_cast<FunctionDecl>(D);
@@ -2102,6 +2103,7 @@ static bool isWhiteListForHCC(CodeGenModule &CGM, GlobalDecl GD) {
         MangledName.find("St12memory_order") != StringRef::npos ||
         MangledName.find("Kokkos4Impl") != StringRef::npos ||
         MangledName.find("St16initializer_list") != StringRef::npos ||
+        MangledName.find("St7complex") != StringRef::npos ||
         MangledName.find("St7complex") != StringRef::npos ||
         MangledName.find("5roundf") != StringRef::npos ||
         MangledName.find("Eigen8internal") != StringRef::npos) {
