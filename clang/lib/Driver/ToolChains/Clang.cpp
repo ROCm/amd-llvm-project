@@ -2852,7 +2852,7 @@ static void RenderDiagnosticsOptions(const Driver &D, const ArgList &Args,
 static void RenderDebugOptions(const ToolChain &TC, const Driver &D,
                                const llvm::Triple &T, const ArgList &Args,
                                bool EmitCodeView, bool IsWindowsMSVC,
-                               ArgStringList &CmdArgs,
+                               bool IsHCCKernelPath, ArgStringList &CmdArgs,
                                codegenoptions::DebugInfoKind &DebugInfoKind,
                                const Arg *&SplitDWARFArg) {
   bool IsPS4CPU = T.isPS4CPU();
@@ -2908,6 +2908,8 @@ static void RenderDebugOptions(const ToolChain &TC, const Driver &D,
     }
   }
 
+  if (!IsHCCKernelPath ||
+       DebugInfoKind == codegenoptions::DebugLineTablesOnly) {
   // If a debugger tuning argument appeared, remember it.
   if (const Arg *A =
           Args.getLastArg(options::OPT_gTune_Group, options::OPT_ggdbN_Group)) {
@@ -3009,6 +3011,8 @@ static void RenderDebugOptions(const ToolChain &TC, const Driver &D,
     CmdArgs.push_back("-backend-option");
     CmdArgs.push_back("-generate-type-units");
   }
+
+  } // if (!IsHCCKernelPath)
 
   RenderDebugInfoCompressionArgs(Args, CmdArgs, D);
 }
@@ -3536,7 +3540,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   const Arg *SplitDWARFArg = nullptr;
   RenderDebugOptions(getToolChain(), D, RawTriple, Args, EmitCodeView,
-                     IsWindowsMSVC, CmdArgs, DebugInfoKind, SplitDWARFArg);
+                     IsWindowsMSVC, IsHCCKernelPath, CmdArgs, DebugInfoKind, SplitDWARFArg);
 
   // Add the split debug info name to the command lines here so we
   // can propagate it to the backend.
