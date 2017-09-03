@@ -85,10 +85,7 @@ namespace ISD {
 
   /// If N is a BUILD_VECTOR node whose elements are all the same constant or
   /// undefined, return true and return the constant value in \p SplatValue.
-  /// This sets \p SplatValue to the smallest possible splat unless AllowShrink
-  /// is set to false.
-  bool isConstantSplatVector(const SDNode *N, APInt &SplatValue,
-                             bool AllowShrink = true);
+  bool isConstantSplatVector(const SDNode *N, APInt &SplatValue);
 
   /// Return true if the specified node is a BUILD_VECTOR where all of the
   /// elements are ~0 or undef.
@@ -626,13 +623,14 @@ public:
   /// Test if this node is a strict floating point pseudo-op.
   bool isStrictFPOpcode() {
     switch (NodeType) {
-      default: 
+      default:
         return false;
       case ISD::STRICT_FADD:
       case ISD::STRICT_FSUB:
       case ISD::STRICT_FMUL:
       case ISD::STRICT_FDIV:
       case ISD::STRICT_FREM:
+      case ISD::STRICT_FMA:
       case ISD::STRICT_FSQRT:
       case ISD::STRICT_FPOW:
       case ISD::STRICT_FPOWI:
@@ -801,7 +799,8 @@ public:
   /// if DAG changes.
   static bool hasPredecessorHelper(const SDNode *N,
                                    SmallPtrSetImpl<const SDNode *> &Visited,
-                                   SmallVectorImpl<const SDNode *> &Worklist) {
+                                   SmallVectorImpl<const SDNode *> &Worklist,
+                                   unsigned int MaxSteps = 0) {
     if (Visited.count(N))
       return true;
     while (!Worklist.empty()) {
@@ -816,6 +815,8 @@ public:
       }
       if (Found)
         return true;
+      if (MaxSteps != 0 && Visited.size() >= MaxSteps)
+        return false;
     }
     return false;
   }
