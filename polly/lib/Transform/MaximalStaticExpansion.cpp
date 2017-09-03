@@ -1,4 +1,4 @@
-//===----------------  MaximalStaticExpansion.cpp -------------------------===//
+//===- MaximalStaticExpansion.cpp -----------------------------------------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -13,14 +13,20 @@
 //===----------------------------------------------------------------------===//
 
 #include "polly/DependenceInfo.h"
-#include "polly/FlattenAlgo.h"
 #include "polly/LinkAllPasses.h"
-#include "polly/Options.h"
 #include "polly/ScopInfo.h"
+#include "polly/ScopPass.h"
 #include "polly/Support/GICHelper.h"
-#include "polly/Support/ISLOStream.h"
-#include "llvm/Analysis/TargetTransformInfo.h"
-#include "llvm/Support/Debug.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/Analysis/OptimizationDiagnosticInfo.h"
+#include "llvm/Pass.h"
+#include "isl/isl-noexceptions.h"
+#include "isl/union_map.h"
+#include <cassert>
+#include <limits>
+#include <string>
+#include <vector>
 
 using namespace llvm;
 using namespace polly;
@@ -28,12 +34,14 @@ using namespace polly;
 #define DEBUG_TYPE "polly-mse"
 
 namespace {
+
 class MaximalStaticExpander : public ScopPass {
 public:
   static char ID;
+
   explicit MaximalStaticExpander() : ScopPass(ID) {}
 
-  ~MaximalStaticExpander() {}
+  ~MaximalStaticExpander() override = default;
 
   /// Expand the accesses of the SCoP.
   ///
@@ -50,7 +58,7 @@ public:
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 
 private:
-  /// OptimizationRemarkEmitter object for displaying diagnostic remarks
+  /// OptimizationRemarkEmitter object for displaying diagnostic remarks.
   OptimizationRemarkEmitter *ORE;
 
   /// Emit remark
@@ -68,20 +76,11 @@ private:
                     SmallPtrSetImpl<MemoryAccess *> &Reads, Scop &S,
                     const isl::union_map &Dependences);
 
-  /// Expand a write memory access.
+  /// Expand the MemoryAccess according to its domain.
   ///
   /// @param S The SCop in which the memory access appears in.
   /// @param MA The memory access that need to be expanded.
-  ScopArrayInfo *expandWrite(Scop &S, MemoryAccess *MA);
-
-  /// Expand the read memory access.
-  ///
-  /// @param S The SCop in which the memory access appears in.
-  /// @param MA The memory access that need to be expanded.
-  /// @param Dependences The RAW dependences of the SCop.
-  /// @param ExpandedSAI The expanded SAI created during write expansion.
-  void expandRead(Scop &S, MemoryAccess *MA, const isl::union_map &Dependences,
-                  ScopArrayInfo *ExpandedSAI);
+  ScopArrayInfo *expandAccess(Scop &S, MemoryAccess *MA);
 
   /// Filter the dependences to have only one related to current memory access.
   ///
@@ -91,15 +90,36 @@ private:
   isl::union_map filterDependences(Scop &S,
                                    const isl::union_map &MapDependences,
                                    MemoryAccess *MA);
+
+  /// Expand the MemoryAccess according to Dependences and already expanded
+  /// MemoryAccesses.
+  ///
+  /// @param The SCop in which the memory access appears in.
+  /// @param The memory access that need to be expanded.
+  /// @param Dependences The RAW dependences of the SCop.
+  /// @param ExpandedSAI The expanded SAI created during write expansion.
+  /// @param Reverse if true, the Dependences union_map is reversed before
+  /// intersection.
+  void mapAccess(Scop &S, SmallPtrSetImpl<MemoryAccess *> &Accesses,
+                 const isl::union_map &Dependences, ScopArrayInfo *ExpandedSAI,
+                 bool Reverse);
+
+  /// Expand PHI memory accesses.
+  ///
+  /// @param The SCop in which the memory access appears in.
+  /// @param The ScopArrayInfo representing the PHI accesses to expand.
+  /// @param Dependences The RAW dependences of the SCop.
+  void expandPhi(Scop &S, const ScopArrayInfo *SAI,
+                 const isl::union_map &Dependences);
 };
+
 } // namespace
 
-namespace {
-
+#ifndef NDEBUG
 /// Whether a dimension of a set is bounded (lower and upper) by a constant,
 /// i.e. there are two constants Min and Max, such that every value x of the
 /// chosen dimensions is Min <= x <= Max.
-bool isDimBoundedByConstant(isl::set Set, unsigned dim) {
+static bool isDimBoundedByConstant(isl::set Set, unsigned dim) {
   auto ParamDims = Set.dim(isl::dim::param);
   Set = Set.project_out(isl::dim::param, 0, ParamDims);
   Set = Set.project_out(isl::dim::set, 0, dim);
@@ -107,11 +127,12 @@ bool isDimBoundedByConstant(isl::set Set, unsigned dim) {
   Set = Set.project_out(isl::dim::set, 1, SetDims - 1);
   return bool(Set.is_bounded());
 }
+#endif
 
 /// If @p PwAff maps to a constant, return said constant. If @p Max/@p Min, it
 /// can also be a piecewise constant and it would return the minimum/maximum
 /// value. Otherwise, return NaN.
-isl::val getConstant(isl::pw_aff PwAff, bool Max, bool Min) {
+static isl::val getConstant(isl::pw_aff PwAff, bool Max, bool Min) {
   assert(!Max || !Min);
   isl::val Result;
   PwAff.foreach_piece([=, &Result](isl::set Set, isl::aff Aff) -> isl::stat {
@@ -151,13 +172,10 @@ isl::val getConstant(isl::pw_aff PwAff, bool Max, bool Min) {
   return Result;
 }
 
-} // namespace
-
 char MaximalStaticExpander::ID = 0;
 
 isl::union_map MaximalStaticExpander::filterDependences(
     Scop &S, const isl::union_map &Dependences, MemoryAccess *MA) {
-
   auto SAI = MA->getLatestScopArrayInfo();
 
   auto AccessDomainSet = MA->getAccessRelation().domain();
@@ -165,8 +183,8 @@ isl::union_map MaximalStaticExpander::filterDependences(
 
   isl::union_map MapDependences = isl::union_map::empty(S.getParamSpace());
 
-  Dependences.reverse().foreach_map([&MapDependences, &AccessDomainId,
-                                     &SAI](isl::map Map) -> isl::stat {
+  Dependences.foreach_map([&MapDependences, &AccessDomainId,
+                           &SAI](isl::map Map) -> isl::stat {
 
     // Filter out Statement to Statement dependences.
     if (!Map.can_curry())
@@ -202,6 +220,44 @@ bool MaximalStaticExpander::isExpandable(
     const ScopArrayInfo *SAI, SmallPtrSetImpl<MemoryAccess *> &Writes,
     SmallPtrSetImpl<MemoryAccess *> &Reads, Scop &S,
     const isl::union_map &Dependences) {
+  if (SAI->isValueKind()) {
+    Writes.insert(S.getValueDef(SAI));
+    for (auto MA : S.getValueUses(SAI))
+      Reads.insert(MA);
+    return true;
+  } else if (SAI->isPHIKind()) {
+    auto Read = S.getPHIRead(SAI);
+
+    auto StmtDomain = isl::union_set(Read->getStatement()->getDomain());
+
+    auto Writes = S.getPHIIncomings(SAI);
+
+    // Get the domain where all the writes are writing to.
+    auto WriteDomain = isl::union_set::empty(S.getParamSpace());
+
+    for (auto Write : Writes) {
+      auto MapDeps = filterDependences(S, Dependences, Write);
+      MapDeps.foreach_map(
+          [&StmtDomain, &WriteDomain](isl::map Map) -> isl::stat {
+            WriteDomain = WriteDomain.add_set(Map.range());
+            return isl::stat::ok;
+          });
+    }
+
+    // For now, read from original scalar is not possible.
+    if (!StmtDomain.is_equal(WriteDomain)) {
+      emitRemark(SAI->getName() + " read from its original value.",
+                 Read->getAccessInstruction());
+      return false;
+    }
+
+    return true;
+  } else if (SAI->isExitPHIKind()) {
+    // For now, we are not able to expand ExitPhi.
+    emitRemark(SAI->getName() + " is a ExitPhi node.",
+               S.getEnteringBlock()->getFirstNonPHI());
+    return false;
+  }
 
   int NumberWrites = 0;
   for (ScopStmt &Stmt : S) {
@@ -209,17 +265,9 @@ bool MaximalStaticExpander::isExpandable(
     auto StmtWrites = isl::union_map::empty(S.getParamSpace());
 
     for (MemoryAccess *MA : Stmt) {
-
       // Check if the current MemoryAccess involved the current SAI.
       if (SAI != MA->getLatestScopArrayInfo())
         continue;
-
-      // For now, we are not able to expand Scalar.
-      if (MA->isLatestScalarKind()) {
-        emitRemark(SAI->getName() + " is a Scalar access.",
-                   MA->getAccessInstruction());
-        return false;
-      }
 
       // For now, we are not able to expand array where read come after write
       // (to the same location) in a same statement.
@@ -262,7 +310,6 @@ bool MaximalStaticExpander::isExpandable(
 
       // Check if it is possible to expand this read.
       if (MA->isRead()) {
-
         // Get the domain of the current ScopStmt.
         auto StmtDomain = Stmt.getDomain();
 
@@ -271,9 +318,17 @@ bool MaximalStaticExpander::isExpandable(
         auto ReadDomain = isl::union_set(ReadDomainSet);
 
         // Get the dependences relevant for this MA
-        auto MapDependences = filterDependences(S, Dependences, MA);
-        auto DepsDomain = MapDependences.domain();
+        auto MapDependences = filterDependences(S, Dependences.reverse(), MA);
         unsigned NumberElementMap = isl_union_map_n_map(MapDependences.get());
+
+        if (NumberElementMap == 0) {
+          emitRemark("The expansion of " + SAI->getName() +
+                         " would lead to a read from the original array.",
+                     MA->getAccessInstruction());
+          return false;
+        }
+
+        auto DepsDomain = MapDependences.domain();
 
         // If there are multiple maps in the Deps, we cannot handle this case
         // for now.
@@ -309,39 +364,46 @@ bool MaximalStaticExpander::isExpandable(
   return true;
 }
 
-void MaximalStaticExpander::expandRead(Scop &S, MemoryAccess *MA,
-                                       const isl::union_map &Dependences,
-                                       ScopArrayInfo *ExpandedSAI) {
+void MaximalStaticExpander::mapAccess(Scop &S,
+                                      SmallPtrSetImpl<MemoryAccess *> &Accesses,
+                                      const isl::union_map &Dependences,
+                                      ScopArrayInfo *ExpandedSAI,
+                                      bool Reverse) {
+  for (auto MA : Accesses) {
+    // Get the current AM.
+    auto CurrentAccessMap = MA->getAccessRelation();
 
-  // Get the current AM.
-  auto CurrentAccessMap = MA->getAccessRelation();
+    // Get RAW dependences for the current WA.
+    auto DomainSet = MA->getAccessRelation().domain();
+    auto Domain = isl::union_set(DomainSet);
 
-  // Get RAW dependences for the current WA.
-  auto WriteDomainSet = MA->getAccessRelation().domain();
-  auto WriteDomain = isl::union_set(WriteDomainSet);
+    // Get the dependences relevant for this MA.
+    isl::union_map MapDependences;
+    if (Reverse) {
+      MapDependences = filterDependences(S, Dependences.reverse(), MA);
+    } else {
+      MapDependences = filterDependences(S, Dependences, MA);
+    }
 
-  // Get the dependences relevant for this MA
-  auto MapDependences = filterDependences(S, Dependences, MA);
+    // If no dependences, no need to modify anything.
+    if (MapDependences.is_empty())
+      return;
 
-  // If no dependences, no need to modify anything.
-  if (MapDependences.is_empty())
-    return;
+    assert(isl_union_map_n_map(MapDependences.get()) == 1 &&
+           "There are more than one RAW dependencies in the union map.");
+    auto NewAccessMap = isl::map::from_union_map(MapDependences);
 
-  assert(isl_union_map_n_map(MapDependences.get()) == 1 &&
-         "There are more than one RAW dependencies in the union map.");
-  auto NewAccessMap = isl::map::from_union_map(MapDependences);
+    auto Id = ExpandedSAI->getBasePtrId();
 
-  auto Id = ExpandedSAI->getBasePtrId();
+    // Replace the out tuple id with the one of the access array.
+    NewAccessMap = NewAccessMap.set_tuple_id(isl::dim::out, Id);
 
-  // Replace the out tuple id with the one of the access array.
-  NewAccessMap = NewAccessMap.set_tuple_id(isl::dim::out, Id);
-
-  // Set the new access relation.
-  MA->setNewAccessRelation(NewAccessMap);
+    // Set the new access relation.
+    MA->setNewAccessRelation(NewAccessMap);
+  }
 }
 
-ScopArrayInfo *MaximalStaticExpander::expandWrite(Scop &S, MemoryAccess *MA) {
-
+ScopArrayInfo *MaximalStaticExpander::expandAccess(Scop &S, MemoryAccess *MA) {
   // Get the current AM.
   auto CurrentAccessMap = MA->getAccessRelation();
 
@@ -409,13 +471,23 @@ ScopArrayInfo *MaximalStaticExpander::expandWrite(Scop &S, MemoryAccess *MA) {
   return ExpandedSAI;
 }
 
+void MaximalStaticExpander::expandPhi(Scop &S, const ScopArrayInfo *SAI,
+                                      const isl::union_map &Dependences) {
+  SmallPtrSet<MemoryAccess *, 4> Writes;
+  for (auto MA : S.getPHIIncomings(SAI))
+    Writes.insert(MA);
+  auto Read = S.getPHIRead(SAI);
+  auto ExpandedSAI = expandAccess(S, Read);
+
+  mapAccess(S, Writes, Dependences, ExpandedSAI, false);
+}
+
 void MaximalStaticExpander::emitRemark(StringRef Msg, Instruction *Inst) {
   ORE->emit(OptimizationRemarkAnalysis(DEBUG_TYPE, "ExpansionRejection", Inst)
             << Msg);
 }
 
 bool MaximalStaticExpander::runOnScop(Scop &S) {
-
   // Get the ORE from OptimizationRemarkEmitterWrapperPass.
   ORE = &(getAnalysis<OptimizationRemarkEmitterWrapperPass>().getORE());
 
@@ -424,7 +496,7 @@ bool MaximalStaticExpander::runOnScop(Scop &S) {
   auto &D = DI.getDependences(Dependences::AL_Reference);
   auto Dependences = isl::give(D.getDependences(Dependences::TYPE_RAW));
 
-  SmallPtrSet<ScopArrayInfo *, 4> CurrentSAI(S.arrays().begin(),
+  SmallVector<ScopArrayInfo *, 4> CurrentSAI(S.arrays().begin(),
                                              S.arrays().end());
 
   for (auto SAI : CurrentSAI) {
@@ -433,13 +505,16 @@ bool MaximalStaticExpander::runOnScop(Scop &S) {
     if (!isExpandable(SAI, AllWrites, AllReads, S, Dependences))
       continue;
 
-    assert(AllWrites.size() == 1);
+    if (SAI->isValueKind() || SAI->isArrayKind()) {
+      assert(AllWrites.size() == 1 || SAI->isValueKind());
 
-    auto TheWrite = *(AllWrites.begin());
-    ScopArrayInfo *ExpandedArray = expandWrite(S, TheWrite);
+      auto TheWrite = *(AllWrites.begin());
+      ScopArrayInfo *ExpandedArray = expandAccess(S, TheWrite);
 
-    for (MemoryAccess *MA : AllReads)
-      expandRead(S, MA, Dependences, ExpandedArray);
+      mapAccess(S, AllReads, Dependences, ExpandedArray, true);
+    } else if (SAI->isPHIKind()) {
+      expandPhi(S, SAI, Dependences);
+    }
   }
 
   return false;

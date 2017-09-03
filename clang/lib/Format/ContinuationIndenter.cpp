@@ -93,6 +93,13 @@ LineState ContinuationIndenter::getInitialState(unsigned FirstIndent,
   LineState State;
   State.FirstIndent = FirstIndent;
   State.Column = FirstIndent;
+  // With preprocessor directive indentation, the line starts on column 0
+  // since it's indented after the hash, but FirstIndent is set to the
+  // preprocessor indent.
+  if (Style.IndentPPDirectives == FormatStyle::PPDIS_AfterHash &&
+      (Line->Type == LT_PreprocessorDirective ||
+       Line->Type == LT_ImportStatement))
+    State.Column = 0;
   State.Line = Line;
   State.NextToken = Line->First;
   State.Stack.push_back(ParenState(FirstIndent, FirstIndent,
@@ -376,9 +383,25 @@ void ContinuationIndenter::addTokenOnCurrentLine(LineState &State, bool DryRun,
 
   unsigned Spaces = Current.SpacesRequiredBefore + ExtraSpaces;
 
+  // Indent preprocessor directives after the hash if required.
+  int PPColumnCorrection = 0;
+  if (Style.IndentPPDirectives == FormatStyle::PPDIS_AfterHash &&
+      Previous.is(tok::hash) && State.FirstIndent > 0 &&
+      (State.Line->Type == LT_PreprocessorDirective ||
+       State.Line->Type == LT_ImportStatement)) {
+    Spaces += State.FirstIndent;
+
+    // For preprocessor indent with tabs, State.Column will be 1 because of the
+    // hash. This causes second-level indents onward to have an extra space
+    // after the tabs. We avoid this misalignment by subtracting 1 from the
+    // column value passed to replaceWhitespace().
+    if (Style.UseTab != FormatStyle::UT_Never)
+      PPColumnCorrection = -1;
+  }
+
   if (!DryRun)
     Whitespaces.replaceWhitespace(Current, /*Newlines=*/0, Spaces,
-                                  State.Column + Spaces);
+                                  State.Column + Spaces + PPColumnCorrection);
 
   // If "BreakBeforeInheritanceComma" mode, don't break within the inheritance
   // declaration unless there is multiple inheritance.
@@ -661,9 +684,7 @@ unsigned ContinuationIndenter::addTokenOnNewLine(LineState &State,
   // before the corresponding } or ].
   if (PreviousNonComment &&
       (PreviousNonComment->isOneOf(tok::l_brace, TT_ArrayInitializerLSquare) ||
-       opensProtoMessageField(*PreviousNonComment, Style) ||
-       (PreviousNonComment->is(TT_TemplateString) &&
-        PreviousNonComment->opensScope())))
+       opensProtoMessageField(*PreviousNonComment, Style)))
     State.Stack.back().BreakBeforeClosingBrace = true;
 
   if (State.Stack.back().AvoidBinPacking) {
@@ -925,11 +946,6 @@ unsigned ContinuationIndenter::moveStateToNextToken(LineState &State,
 
   moveStatePastFakeLParens(State, Newline);
   moveStatePastScopeCloser(State);
-  if (Current.is(TT_TemplateString) && Current.opensScope())
-    State.Stack.back().LastSpace =
-        (Current.IsMultiline ? Current.LastLineColumnWidth
-                             : State.Column + Current.ColumnWidth) -
-        strlen("${");
   bool CanBreakProtrudingToken = !State.Stack.back().NoLineBreak &&
                                  !State.Stack.back().NoLineBreakInOperand;
   moveStatePastScopeOpener(State, Newline);
@@ -1101,18 +1117,6 @@ void ContinuationIndenter::moveStatePastScopeOpener(LineState &State,
       LastSpace = std::max(LastSpace, State.Stack.back().Indent);
     }
 
-    // JavaScript template strings are special as we always want to indent
-    // nested expressions relative to the ${}. Otherwise, this can create quite
-    // a mess.
-    if (Current.is(TT_TemplateString)) {
-      unsigned Column = Current.IsMultiline
-                            ? Current.LastLineColumnWidth
-                            : State.Column + Current.ColumnWidth;
-      NewIndent = Column;
-      LastSpace = Column;
-      NestedBlockIndent = Column;
-    }
-
     bool EndsInComma =
         Current.MatchingParen &&
         Current.MatchingParen->getPreviousNonComment() &&
@@ -1282,7 +1286,7 @@ unsigned ContinuationIndenter::breakProtrudingToken(const FormatToken &Current,
       return 0;
     }
   } else if (Current.is(TT_BlockComment)) {
-    if (!Style.ReflowComments ||
+    if (!Current.isTrailingComment() || !Style.ReflowComments ||
         // If a comment token switches formatting, like
         // /* clang-format on */, we don't want to break it further,
         // but we may still want to adjust its indentation.

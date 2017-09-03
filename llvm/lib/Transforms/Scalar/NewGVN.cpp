@@ -938,8 +938,6 @@ const Expression *NewGVN::createBinaryExpression(unsigned Opcode, Type *T,
 // Take a Value returned by simplification of Expression E/Instruction
 // I, and see if it resulted in a simpler expression. If so, return
 // that expression.
-// TODO: Once finished, this should not take an Instruction, we only
-// use it for printing.
 const Expression *NewGVN::checkSimplificationResults(Expression *E,
                                                      Instruction *I,
                                                      Value *V) const {
@@ -963,22 +961,30 @@ const Expression *NewGVN::checkSimplificationResults(Expression *E,
   }
 
   CongruenceClass *CC = ValueToClass.lookup(V);
-  if (CC && CC->getDefiningExpr()) {
-    // If we simplified to something else, we need to communicate
-    // that we're users of the value we simplified to.
-    if (I != V) {
-      // Don't add temporary instructions to the user lists.
-      if (!AllTempInstructions.count(I))
-        addAdditionalUsers(V, I);
+  if (CC) {
+    if (CC->getLeader() && CC->getLeader() != I) {
+      addAdditionalUsers(V, I);
+      return createVariableOrConstant(CC->getLeader());
     }
 
-    if (I)
-      DEBUG(dbgs() << "Simplified " << *I << " to "
-                   << " expression " << *CC->getDefiningExpr() << "\n");
-    NumGVNOpsSimplified++;
-    deleteExpression(E);
-    return CC->getDefiningExpr();
+    if (CC->getDefiningExpr()) {
+      // If we simplified to something else, we need to communicate
+      // that we're users of the value we simplified to.
+      if (I != V) {
+        // Don't add temporary instructions to the user lists.
+        if (!AllTempInstructions.count(I))
+          addAdditionalUsers(V, I);
+      }
+
+      if (I)
+        DEBUG(dbgs() << "Simplified " << *I << " to "
+                     << " expression " << *CC->getDefiningExpr() << "\n");
+      NumGVNOpsSimplified++;
+      deleteExpression(E);
+      return CC->getDefiningExpr();
+    }
   }
+
   return nullptr;
 }
 
@@ -998,13 +1004,6 @@ const Expression *NewGVN::createExpression(Instruction *I) const {
   }
 
   // Perform simplification.
-  // TODO: Right now we only check to see if we get a constant result.
-  // We may get a less than constant, but still better, result for
-  // some operations.
-  // IE
-  //  add 0, x -> x
-  //  and x, x -> x
-  // We should handle this by simply rewriting the expression.
   if (auto *CI = dyn_cast<CmpInst>(I)) {
     // Sort the operand value numbers so x<y and y>x get the same value
     // number.
@@ -1025,7 +1024,7 @@ const Expression *NewGVN::createExpression(Instruction *I) const {
       return SimplifiedE;
   } else if (isa<SelectInst>(I)) {
     if (isa<Constant>(E->getOperand(0)) ||
-        E->getOperand(0) == E->getOperand(1)) {
+        E->getOperand(1) == E->getOperand(2)) {
       assert(E->getOperand(1)->getType() == I->getOperand(1)->getType() &&
              E->getOperand(2)->getType() == I->getOperand(2)->getType());
       Value *V = SimplifySelectInst(E->getOperand(0), E->getOperand(1),
@@ -1238,9 +1237,9 @@ const Expression *NewGVN::performSymbolicStoreEvaluation(Instruction *I) const {
   if (EnableStoreRefinement)
     StoreRHS = MSSAWalker->getClobberingMemoryAccess(StoreAccess);
   // If we bypassed the use-def chains, make sure we add a use.
+  StoreRHS = lookupMemoryLeader(StoreRHS);
   if (StoreRHS != StoreAccess->getDefiningAccess())
     addMemoryUsers(StoreRHS, StoreAccess);
-  StoreRHS = lookupMemoryLeader(StoreRHS);
   // If we are defined by ourselves, use the live on entry def.
   if (StoreRHS == StoreAccess)
     StoreRHS = MSSA->getLiveOnEntryDef();
@@ -1302,7 +1301,7 @@ NewGVN::performSymbolicLoadCoercion(Type *LoadType, Value *LoadPtr,
       }
     }
 
-  } else if (LoadInst *DepLI = dyn_cast<LoadInst>(DepInst)) {
+  } else if (auto *DepLI = dyn_cast<LoadInst>(DepInst)) {
     // Can't forward from non-atomic to atomic without violating memory model.
     if (LI->isAtomic() > DepLI->isAtomic())
       return nullptr;
@@ -1318,7 +1317,7 @@ NewGVN::performSymbolicLoadCoercion(Type *LoadType, Value *LoadPtr,
         }
     }
 
-  } else if (MemIntrinsic *DepMI = dyn_cast<MemIntrinsic>(DepInst)) {
+  } else if (auto *DepMI = dyn_cast<MemIntrinsic>(DepInst)) {
     int Offset = analyzeLoadFromClobberingMemInst(LoadType, LoadPtr, DepMI, DL);
     if (Offset >= 0) {
       if (auto *PossibleConstant =
@@ -1390,9 +1389,13 @@ const Expression *NewGVN::performSymbolicLoadEvaluation(Instruction *I) const {
     }
   }
 
-  const Expression *E = createLoadExpression(LI->getType(), LoadAddressLeader,
+  const auto *LE = createLoadExpression(LI->getType(), LoadAddressLeader,
                                              LI, DefiningAccess);
-  return E;
+  // If our MemoryLeader is not our defining access, add a use to the
+  // MemoryLeader, so that we get reprocessed when it changes.
+  if (LE->getMemoryLeader() != DefiningAccess)
+    addMemoryUsers(LE->getMemoryLeader(), OriginalAccess);
+  return LE;
 }
 
 const Expression *
@@ -1473,7 +1476,8 @@ NewGVN::performSymbolicPredicateInfoEvaluation(Instruction *I) const {
     if ((PBranch->TrueEdge && Predicate == CmpInst::ICMP_EQ) ||
         (!PBranch->TrueEdge && Predicate == CmpInst::ICMP_NE)) {
       addPredicateUsers(PI, I);
-      addAdditionalUsers(Cmp->getOperand(0), I);
+      addAdditionalUsers(SwappedOps ? Cmp->getOperand(1) : Cmp->getOperand(0),
+                         I);
       return createVariableOrConstant(FirstOp);
     }
     // Handle the special case of floating point.
@@ -1481,7 +1485,8 @@ NewGVN::performSymbolicPredicateInfoEvaluation(Instruction *I) const {
          (!PBranch->TrueEdge && Predicate == CmpInst::FCMP_UNE)) &&
         isa<ConstantFP>(FirstOp) && !cast<ConstantFP>(FirstOp)->isZero()) {
       addPredicateUsers(PI, I);
-      addAdditionalUsers(Cmp->getOperand(0), I);
+      addAdditionalUsers(SwappedOps ? Cmp->getOperand(1) : Cmp->getOperand(0),
+                         I);
       return createConstantExpression(cast<Constant>(FirstOp));
     }
   }
@@ -1777,10 +1782,15 @@ const Expression *NewGVN::performSymbolicCmpEvaluation(Instruction *I) const {
       if (PI == LastPredInfo)
         continue;
       LastPredInfo = PI;
-
-      // TODO: Along the false edge, we may know more things too, like icmp of
+      // In phi of ops cases, we may have predicate info that we are evaluating
+      // in a different context.
+      if (!DT->dominates(PBranch->To, getBlockForValue(I)))
+        continue;
+      // TODO: Along the false edge, we may know more things too, like
+      // icmp of
       // same operands is false.
-      // TODO: We only handle actual comparison conditions below, not and/or.
+      // TODO: We only handle actual comparison conditions below, not
+      // and/or.
       auto *BranchCond = dyn_cast<CmpInst>(PBranch->Condition);
       if (!BranchCond)
         continue;
@@ -2025,7 +2035,7 @@ T *NewGVN::getMinDFSOfRange(const Range &R) const {
 const MemoryAccess *NewGVN::getNextMemoryLeader(CongruenceClass *CC) const {
   // TODO: If this ends up to slow, we can maintain a next memory leader like we
   // do for regular leaders.
-  // Make sure there will be a leader to find
+  // Make sure there will be a leader to find.
   assert(!CC->definesNoMemory() && "Can't get next leader if there is none");
   if (CC->getStoreCount() > 0) {
     if (auto *NL = dyn_cast_or_null<StoreInst>(CC->getNextLeader().first))
@@ -2528,11 +2538,13 @@ NewGVN::makePossiblePhiOfOps(Instruction *I,
         // and make sure anything that tries to add it's DFS number is
         // redirected to the instruction we are making a phi of ops
         // for.
+        TempToBlock.insert({ValueOp, PredBB});
         InstrDFS.insert({ValueOp, IDFSNum});
         const Expression *E = performSymbolicEvaluation(ValueOp, Visited);
         InstrDFS.erase(ValueOp);
         AllTempInstructions.erase(ValueOp);
         ValueOp->deleteValue();
+        TempToBlock.erase(ValueOp);
         if (MemAccess)
           TempToMemory.erase(ValueOp);
         if (!E)
