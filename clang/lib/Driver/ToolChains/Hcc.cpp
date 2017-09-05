@@ -289,6 +289,13 @@ namespace
         split(gfx_list, delim, std::back_inserter(elems));
         return elems;
     }
+
+    template <typename T>
+    void remove_duplicate_targets(std::vector<T>& TargetVec)
+    {
+        std::sort(TargetVec.begin(), TargetVec.end());
+        TargetVec.erase(unique(TargetVec.begin(), TargetVec.end()), TargetVec.end());
+    }
 }
 
 #ifndef HCC_TOOLCHAIN_RHEL
@@ -341,6 +348,8 @@ void HCC::CXXAMPLink::ConstructJob(
         std::remove(
             AMDGPUTargetVector.begin(), AMDGPUTargetVector.end(), auto_tgt),
         AMDGPUTargetVector.end());
+
+    remove_duplicate_targets(AMDGPUTargetVector);
 
     for (auto&& AMDGPUTarget : AMDGPUTargetVector) {
         // TODO: this is Temporary.
