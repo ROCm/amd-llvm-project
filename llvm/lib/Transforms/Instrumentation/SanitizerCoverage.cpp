@@ -49,13 +49,13 @@ static const char *const SanCovTraceCmp1 = "__sanitizer_cov_trace_cmp1";
 static const char *const SanCovTraceCmp2 = "__sanitizer_cov_trace_cmp2";
 static const char *const SanCovTraceCmp4 = "__sanitizer_cov_trace_cmp4";
 static const char *const SanCovTraceCmp8 = "__sanitizer_cov_trace_cmp8";
-static const char *const SanCovTraceConstCmp1 = 
+static const char *const SanCovTraceConstCmp1 =
     "__sanitizer_cov_trace_const_cmp1";
-static const char *const SanCovTraceConstCmp2 = 
+static const char *const SanCovTraceConstCmp2 =
     "__sanitizer_cov_trace_const_cmp2";
-static const char *const SanCovTraceConstCmp4 = 
+static const char *const SanCovTraceConstCmp4 =
     "__sanitizer_cov_trace_const_cmp4";
-static const char *const SanCovTraceConstCmp8 = 
+static const char *const SanCovTraceConstCmp8 =
     "__sanitizer_cov_trace_const_cmp8";
 static const char *const SanCovTraceDiv4 = "__sanitizer_cov_trace_div4";
 static const char *const SanCovTraceDiv8 = "__sanitizer_cov_trace_div8";
@@ -77,8 +77,6 @@ static const char *const SanCovCountersSectionName = "sancov_cntrs";
 static const char *const SanCovPCsSectionName = "sancov_pcs";
 
 static const char *const SanCovLowestStackName = "__sancov_lowest_stack";
-static const char *const SanCovLowestStackTLSWrapperName =
-    "_ZTW21__sancov_lowest_stack";
 
 static cl::opt<int> ClCoverageLevel(
     "sanitizer-coverage-level",
@@ -206,8 +204,8 @@ private:
   GlobalVariable *CreateFunctionLocalArrayInSection(size_t NumElements,
                                                     Function &F, Type *Ty,
                                                     const char *Section);
+  GlobalVariable *CreatePCArray(Function &F, ArrayRef<BasicBlock *> AllBlocks);
   void CreateFunctionLocalArrays(Function &F, ArrayRef<BasicBlock *> AllBlocks);
-  void CreatePCArray(Function &F, ArrayRef<BasicBlock *> AllBlocks);
   void InjectCoverageAtBlock(Function &F, BasicBlock &BB, size_t Idx);
   Function *CreateInitCallsForSections(Module &M, const char *InitFunctionName,
                                        Type *Ty, const char *Section);
@@ -229,7 +227,6 @@ private:
   Function *SanCovTraceDivFunction[2];
   Function *SanCovTraceGepFunction;
   Function *SanCovTraceSwitchFunction;
-  Function *SanCovLowestStackTLSWrapper;
   GlobalVariable *SanCovLowestStack;
   InlineAsm *EmptyAsm;
   Type *IntptrTy, *IntptrPtrTy, *Int64Ty, *Int64PtrTy, *Int32Ty, *Int32PtrTy,
@@ -351,20 +348,11 @@ bool SanitizerCoverageModule::runOnModule(Module &M) {
 
   Constant *SanCovLowestStackConstant =
       M.getOrInsertGlobal(SanCovLowestStackName, IntptrTy);
-  SanCovLowestStackTLSWrapper =
-      checkSanitizerInterfaceFunction(M.getOrInsertFunction(
-          SanCovLowestStackTLSWrapperName, IntptrTy->getPointerTo()));
-  if (Options.StackDepth) {
-    assert(isa<GlobalVariable>(SanCovLowestStackConstant));
-    SanCovLowestStack = cast<GlobalVariable>(SanCovLowestStackConstant);
-    if (!SanCovLowestStack->isDeclaration()) {
-      // Check that the user has correctly defined:
-      //     thread_local uintptr_t __sancov_lowest_stack
-      // and initialize it.
-      assert(SanCovLowestStack->isThreadLocal());
-      SanCovLowestStack->setInitializer(Constant::getAllOnesValue(IntptrTy));
-    }
-  }
+  SanCovLowestStack = cast<GlobalVariable>(SanCovLowestStackConstant);
+  SanCovLowestStack->setThreadLocalMode(
+      GlobalValue::ThreadLocalMode::InitialExecTLSModel);
+  if (Options.StackDepth && !SanCovLowestStack->isDeclaration())
+    SanCovLowestStack->setInitializer(Constant::getAllOnesValue(IntptrTy));
 
   // Make sure smaller parameters are zero-extended to i64 as required by the
   // x86_64 ABI.
@@ -401,13 +389,13 @@ bool SanitizerCoverageModule::runOnModule(Module &M) {
     Ctor = CreateInitCallsForSections(M, SanCov8bitCountersInitName, Int8PtrTy,
                                       SanCovCountersSectionName);
   if (Ctor && Options.PCTable) {
-    auto SecStartEnd = CreateSecStartEnd(M, SanCovPCsSectionName, Int8PtrTy);
+    auto SecStartEnd = CreateSecStartEnd(M, SanCovPCsSectionName, IntptrPtrTy);
     Function *InitFunction = declareSanitizerInitFunction(
-        M, SanCovPCsInitName, {Int8PtrTy, Int8PtrTy});
+        M, SanCovPCsInitName, {IntptrPtrTy, IntptrPtrTy});
     IRBuilder<> IRBCtor(Ctor->getEntryBlock().getTerminator());
     IRBCtor.CreateCall(InitFunction,
-                       {IRB.CreatePointerCast(SecStartEnd.first, Int8PtrTy),
-                        IRB.CreatePointerCast(SecStartEnd.second, Int8PtrTy)});
+                       {IRB.CreatePointerCast(SecStartEnd.first, IntptrPtrTy),
+                        IRB.CreatePointerCast(SecStartEnd.second, IntptrPtrTy)});
   }
   return true;
 }
@@ -484,9 +472,6 @@ bool SanitizerCoverageModule::runOnFunction(Function &F) {
   if (F.getName() == "__local_stdio_printf_options" ||
       F.getName() == "__local_stdio_scanf_options")
     return false;
-  // Avoid infinite recursion by not instrumenting stack depth TLS wrapper
-  if (F.getName() == SanCovLowestStackTLSWrapperName)
-    return false;
   // Don't instrument functions using SEH for now. Splitting basic blocks like
   // we do for coverage breaks WinEHPrepare.
   // FIXME: Remove this when SEH no longer uses landingpad pattern matching.
@@ -556,34 +541,55 @@ GlobalVariable *SanitizerCoverageModule::CreateFunctionLocalArrayInSection(
   return Array;
 }
 
-void SanitizerCoverageModule::CreatePCArray(Function &F,
-                                            ArrayRef<BasicBlock *> AllBlocks) {
+GlobalVariable *
+SanitizerCoverageModule::CreatePCArray(Function &F,
+                                       ArrayRef<BasicBlock *> AllBlocks) {
   size_t N = AllBlocks.size();
   assert(N);
-  SmallVector<Constant *, 16> PCs;
+  SmallVector<Constant *, 32> PCs;
   IRBuilder<> IRB(&*F.getEntryBlock().getFirstInsertionPt());
-  for (size_t i = 0; i < N; i++)
-    if (&F.getEntryBlock() == AllBlocks[i])
-      PCs.push_back((Constant *)IRB.CreatePointerCast(&F, Int8PtrTy));
-    else
-      PCs.push_back(BlockAddress::get(AllBlocks[i]));
-  FunctionPCsArray =
-      CreateFunctionLocalArrayInSection(N, F, Int8PtrTy, SanCovPCsSectionName);
-  FunctionPCsArray->setInitializer(
-      ConstantArray::get(ArrayType::get(Int8PtrTy, N), PCs));
-  FunctionPCsArray->setConstant(true);
+  for (size_t i = 0; i < N; i++) {
+    if (&F.getEntryBlock() == AllBlocks[i]) {
+      PCs.push_back((Constant *)IRB.CreatePointerCast(&F, IntptrPtrTy));
+      PCs.push_back((Constant *)IRB.CreateIntToPtr(
+          ConstantInt::get(IntptrTy, 1), IntptrPtrTy));
+    } else {
+      PCs.push_back((Constant *)IRB.CreatePointerCast(
+          BlockAddress::get(AllBlocks[i]), IntptrPtrTy));
+      PCs.push_back((Constant *)IRB.CreateIntToPtr(
+          ConstantInt::get(IntptrTy, 0), IntptrPtrTy));
+    }
+  }
+  auto *PCArray = CreateFunctionLocalArrayInSection(N * 2, F, IntptrPtrTy,
+                                                    SanCovPCsSectionName);
+  PCArray->setInitializer(
+      ConstantArray::get(ArrayType::get(IntptrPtrTy, N * 2), PCs));
+  PCArray->setConstant(true);
+
+  return PCArray;
 }
 
 void SanitizerCoverageModule::CreateFunctionLocalArrays(
     Function &F, ArrayRef<BasicBlock *> AllBlocks) {
-  if (Options.TracePCGuard)
+  SmallVector<GlobalValue *, 3> LocalArrays;
+  if (Options.TracePCGuard) {
     FunctionGuardArray = CreateFunctionLocalArrayInSection(
         AllBlocks.size(), F, Int32Ty, SanCovGuardsSectionName);
-  if (Options.Inline8bitCounters)
+    LocalArrays.push_back(FunctionGuardArray);
+  }
+  if (Options.Inline8bitCounters) {
     Function8bitCounterArray = CreateFunctionLocalArrayInSection(
         AllBlocks.size(), F, Int8Ty, SanCovCountersSectionName);
-  if (Options.PCTable)
-    CreatePCArray(F, AllBlocks);
+    LocalArrays.push_back(Function8bitCounterArray);
+  }
+  if (Options.PCTable) {
+    FunctionPCsArray = CreatePCArray(F, AllBlocks);
+    LocalArrays.push_back(FunctionPCsArray);
+  }
+
+  // We don't reference these arrays directly in any of our runtime functions,
+  // so we need to prevent them from being dead stripped.
+  appendToUsed(*F.getParent(), LocalArrays);
 }
 
 bool SanitizerCoverageModule::InjectCoverage(Function &F,
@@ -713,12 +719,12 @@ void SanitizerCoverageModule::InjectTraceForCmp(
       // If only one is const, then make it the first callback argument.
       if (FirstIsConst || SecondIsConst) {
         CallbackFunc = SanCovTraceConstCmpFunction[CallbackIdx];
-        if (SecondIsConst) 
+        if (SecondIsConst)
           std::swap(A0, A1);
       }
 
       auto Ty = Type::getIntNTy(*C, TypeSize);
-      IRB.CreateCall(CallbackFunc, {IRB.CreateIntCast(A0, Ty, true), 
+      IRB.CreateCall(CallbackFunc, {IRB.CreateIntCast(A0, Ty, true),
               IRB.CreateIntCast(A1, Ty, true)});
     }
   }
@@ -771,12 +777,11 @@ void SanitizerCoverageModule::InjectCoverageAtBlock(Function &F, BasicBlock &BB,
     auto FrameAddrPtr =
         IRB.CreateCall(GetFrameAddr, {Constant::getNullValue(Int32Ty)});
     auto FrameAddrInt = IRB.CreatePtrToInt(FrameAddrPtr, IntptrTy);
-    auto LowestStackPtr = IRB.CreateCall(SanCovLowestStackTLSWrapper);
-    auto LowestStack = IRB.CreateLoad(LowestStackPtr);
+    auto LowestStack = IRB.CreateLoad(SanCovLowestStack);
     auto IsStackLower = IRB.CreateICmpULT(FrameAddrInt, LowestStack);
     auto ThenTerm = SplitBlockAndInsertIfThen(IsStackLower, &*IP, false);
     IRBuilder<> ThenIRB(ThenTerm);
-    ThenIRB.CreateStore(FrameAddrInt, LowestStackPtr);
+    ThenIRB.CreateStore(FrameAddrInt, SanCovLowestStack);
   }
 }
 

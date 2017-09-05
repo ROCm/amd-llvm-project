@@ -1131,7 +1131,7 @@ Value *GPUNodeBuilder::getArrayOffset(gpu_array_info *Array) {
 
   isl::set ZeroSet = isl::set::universe(Min.get_space());
 
-  for (long i = 0; i < Min.dim(isl::dim::set); i++)
+  for (long i = 0, n = Min.dim(isl::dim::set); i < n; i++)
     ZeroSet = ZeroSet.fix_si(isl::dim::set, i, 0);
 
   if (Min.is_subset(ZeroSet)) {
@@ -1140,7 +1140,7 @@ Value *GPUNodeBuilder::getArrayOffset(gpu_array_info *Array) {
 
   isl::ast_expr Result = isl::ast_expr::from_val(isl::val(Min.get_ctx(), 0));
 
-  for (long i = 0; i < Min.dim(isl::dim::set); i++) {
+  for (long i = 0, n = Min.dim(isl::dim::set); i < n; i++) {
     if (i > 0) {
       isl::pw_aff Bound_I =
           isl::manage(isl_multi_pw_aff_get_pw_aff(Array->bound, i - 1));
@@ -1473,7 +1473,7 @@ GPUNodeBuilder::getReferencesInKernel(ppcg_kernel *Kernel) {
     SubtreeValues.remove(SAI->getBasePtr());
 
   isl_space *Space = S.getParamSpace().release();
-  for (long i = 0; i < isl_space_dim(Space, isl_dim_param); i++) {
+  for (long i = 0, n = isl_space_dim(Space, isl_dim_param); i < n; i++) {
     isl_id *Id = isl_space_get_dim_id(Space, isl_dim_param, i);
     assert(IDToValue.count(Id));
     Value *Val = IDToValue[Id];
@@ -1482,7 +1482,7 @@ GPUNodeBuilder::getReferencesInKernel(ppcg_kernel *Kernel) {
   }
   isl_space_free(Space);
 
-  for (long i = 0; i < isl_space_dim(Kernel->space, isl_dim_set); i++) {
+  for (long i = 0, n = isl_space_dim(Kernel->space, isl_dim_set); i < n; i++) {
     isl_id *Id = isl_space_get_dim_id(Kernel->space, isl_dim_set, i);
     assert(IDToValue.count(Id));
     Value *Val = IDToValue[Id];
@@ -1991,7 +1991,7 @@ GPUNodeBuilder::createKernelFunctionDecl(ppcg_kernel *Kernel,
     isl_ast_build *Build =
         isl_ast_build_from_context(isl_set_copy(Prog->context));
     Sizes.push_back(nullptr);
-    for (long j = 1; j < Kernel->array[i].array->n_index; j++) {
+    for (long j = 1, n = Kernel->array[i].array->n_index; j < n; j++) {
       isl_ast_expr *DimSize = isl_ast_build_expr_from_pw_aff(
           Build, isl_multi_pw_aff_get_pw_aff(Kernel->array[i].array->bound, j));
       auto V = ExprBuilder.create(DimSize);
@@ -3246,7 +3246,7 @@ public:
     auto *Univ = isl_set_universe(Space);
     isl_pw_aff *OneAff = isl_pw_aff_val_on_domain(Univ, One);
 
-    for (long i = 0; i < isl_set_dim(Set, isl_dim_set); i++) {
+    for (long i = 0, n = isl_set_dim(Set, isl_dim_set); i < n; i++) {
       isl_pw_aff *Max = isl_set_dim_max(isl_set_copy(Set), i);
       isl_pw_aff *Min = isl_set_dim_min(isl_set_copy(Set), i);
       isl_pw_aff *DimSize = isl_pw_aff_sub(Max, Min);
@@ -3338,17 +3338,18 @@ public:
     for (const Instruction &Inst : *BB) {
       const CallInst *Call = dyn_cast<CallInst>(&Inst);
       if (Call && isValidFunctionInKernel(Call->getCalledFunction(),
-                                          AllowCUDALibDevice)) {
+                                          AllowCUDALibDevice))
         continue;
-      }
 
-      for (Value *SrcVal : Inst.operands()) {
-        PointerType *p = dyn_cast<PointerType>(SrcVal->getType());
-        if (!p)
-          continue;
-        if (isa<FunctionType>(p->getElementType()))
-          return true;
-      }
+      for (Value *Op : Inst.operands())
+        // Look for (<func-type>*) among operands of Inst
+        if (auto PtrTy = dyn_cast<PointerType>(Op->getType())) {
+          if (isa<FunctionType>(PtrTy->getElementType())) {
+            DEBUG(dbgs() << Inst
+                         << " has illegal use of function in kernel.\n");
+            return true;
+          }
+        }
     }
     return false;
   }
@@ -3519,6 +3520,8 @@ public:
   void printScop(raw_ostream &, Scop &) const override {}
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
+    ScopPass::getAnalysisUsage(AU);
+
     AU.addRequired<DominatorTreeWrapperPass>();
     AU.addRequired<RegionInfoPass>();
     AU.addRequired<ScalarEvolutionWrapperPass>();
@@ -3526,19 +3529,8 @@ public:
     AU.addRequired<ScopInfoRegionPass>();
     AU.addRequired<LoopInfoWrapperPass>();
 
-    AU.addPreserved<AAResultsWrapperPass>();
-    AU.addPreserved<BasicAAWrapperPass>();
-    AU.addPreserved<LoopInfoWrapperPass>();
-    AU.addPreserved<DominatorTreeWrapperPass>();
-    AU.addPreserved<GlobalsAAWrapperPass>();
-    AU.addPreserved<ScopDetectionWrapperPass>();
-    AU.addPreserved<ScalarEvolutionWrapperPass>();
-    AU.addPreserved<SCEVAAWrapperPass>();
-
     // FIXME: We do not yet add regions for the newly generated code to the
     //        region tree.
-    AU.addPreserved<RegionInfoPass>();
-    AU.addPreserved<ScopInfoRegionPass>();
   }
 };
 } // namespace

@@ -16,6 +16,7 @@
 
 #include "ARMBaseInstrInfo.h"
 #include "ARMBaseRegisterInfo.h"
+#include "ARMConstantPoolValue.h"
 #include "ARMFrameLowering.h"
 #include "ARMISelLowering.h"
 #include "ARMSelectionDAGInfo.h"
@@ -750,8 +751,22 @@ public:
   /// True if the GV will be accessed via an indirect symbol.
   bool isGVIndirectSymbol(const GlobalValue *GV) const;
 
+  /// Returns the constant pool modifier needed to access the GV.
+  ARMCP::ARMCPModifier getCPModifier(const GlobalValue *GV) const;
+
   /// True if fast-isel is used.
   bool useFastISel() const;
+
+  /// Returns the correct return opcode for the current feature set.
+  /// Use BX if available to allow mixing thumb/arm code, but fall back
+  /// to plain mov pc,lr on ARMv4.
+  unsigned getReturnOpcode() const {
+    if (isThumb())
+      return ARM::tBX_RET;
+    if (hasV4TOps())
+      return ARM::BX_RET;
+    return ARM::MOVPCLR;
+  }
 };
 
 } // end namespace llvm
