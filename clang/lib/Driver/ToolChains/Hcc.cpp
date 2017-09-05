@@ -29,6 +29,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <map>
 
 using namespace clang::driver;
 using namespace clang::driver::toolchains;
@@ -289,6 +290,16 @@ namespace
         split(gfx_list, delim, std::back_inserter(elems));
         return elems;
     }
+
+    template <typename T>
+    void remove_duplicate_targets(std::vector<T>& TargetVec)
+    {
+        std::map<T, int> m;
+        for(auto& t : TargetVec) m[t]++;
+        TargetVec.clear();
+        for(auto& i : m)
+            TargetVec.push_back(i.first);
+    }
 }
 
 #ifndef HCC_TOOLCHAIN_RHEL
@@ -341,6 +352,8 @@ void HCC::CXXAMPLink::ConstructJob(
         std::remove(
             AMDGPUTargetVector.begin(), AMDGPUTargetVector.end(), auto_tgt),
         AMDGPUTargetVector.end());
+
+    remove_duplicate_targets(AMDGPUTargetVector);
 
     for (auto&& AMDGPUTarget : AMDGPUTargetVector) {
         // TODO: this is Temporary.
