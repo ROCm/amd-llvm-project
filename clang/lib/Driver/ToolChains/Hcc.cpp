@@ -29,7 +29,6 @@
 #include <sstream>
 #include <string>
 #include <vector>
-#include <map>
 
 using namespace clang::driver;
 using namespace clang::driver::toolchains;
@@ -294,11 +293,8 @@ namespace
     template <typename T>
     void remove_duplicate_targets(std::vector<T>& TargetVec)
     {
-        std::map<T, int> m;
-        for(auto& t : TargetVec) m[t]++;
-        TargetVec.clear();
-        for(auto& i : m)
-            TargetVec.push_back(i.first);
+        std::sort(TargetVec.begin(), TargetVec.end());
+        TargetVec.erase(unique(TargetVec.begin(), TargetVec.end()), TargetVec.end());
     }
 }
 
