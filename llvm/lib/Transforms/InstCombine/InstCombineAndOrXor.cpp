@@ -299,8 +299,8 @@ static bool decomposeBitTestICmp(Value *LHS, Value *RHS, CmpInst::Predicate &Pre
   if (!llvm::decomposeBitTestICmp(LHS, RHS, Pred, X, Mask))
     return false;
 
-  Y = ConstantInt::get(LHS->getType(), Mask);
-  Z = ConstantInt::get(RHS->getType(), 0);
+  Y = ConstantInt::get(X->getType(), Mask);
+  Z = ConstantInt::get(X->getType(), 0);
   return true;
 }
 
@@ -312,10 +312,9 @@ static unsigned getMaskedTypeForICmpPair(Value *&A, Value *&B, Value *&C,
                                          ICmpInst *RHS,
                                          ICmpInst::Predicate &PredL,
                                          ICmpInst::Predicate &PredR) {
-  if (LHS->getOperand(0)->getType() != RHS->getOperand(0)->getType())
-    return 0;
   // vectors are not (yet?) supported. Don't support pointers either.
-  if (!LHS->getOperand(0)->getType()->isIntegerTy())
+  if (!LHS->getOperand(0)->getType()->isIntegerTy() ||
+      !RHS->getOperand(0)->getType()->isIntegerTy())
     return 0;
 
   // Here comes the tricky part:
@@ -990,12 +989,6 @@ bool InstCombiner::shouldOptimizeCast(CastInst *CI) {
   if (const auto *PrecedingCI = dyn_cast<CastInst>(CastSrc))
     if (isEliminableCastPair(PrecedingCI, CI))
       return false;
-
-  // If this is a vector sext from a compare, then we don't want to break the
-  // idiom where each element of the extended vector is either zero or all ones.
-  if (CI->getOpcode() == Instruction::SExt &&
-      isa<CmpInst>(CastSrc) && CI->getDestTy()->isVectorTy())
-    return false;
 
   return true;
 }

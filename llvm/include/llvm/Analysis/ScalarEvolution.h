@@ -1269,6 +1269,7 @@ public:
   }
   const SCEV *getUDivExpr(const SCEV *LHS, const SCEV *RHS);
   const SCEV *getUDivExactExpr(const SCEV *LHS, const SCEV *RHS);
+  const SCEV *getURemExpr(const SCEV *LHS, const SCEV *RHS);
   const SCEV *getAddRecExpr(const SCEV *Start, const SCEV *Step, const Loop *L,
                             SCEV::NoWrapFlags Flags);
   const SCEV *getAddRecExpr(SmallVectorImpl<const SCEV *> &Operands,
@@ -1285,7 +1286,7 @@ public:
   /// whether to actually add the predicates and carry out the rewrites).
   Optional<std::pair<const SCEV *, SmallVector<const SCEVPredicate *, 3>>>
   createAddRecFromPHIWithCasts(const SCEVUnknown *SymbolicPHI);
-  
+
   /// Returns an expression for a GEP
   ///
   /// \p GEP The GEP. The indices contained in the GEP itself are ignored,
@@ -1772,7 +1773,7 @@ private:
   DenseMap<std::pair<const SCEVUnknown *, const Loop *>,
            std::pair<const SCEV *, SmallVector<const SCEVPredicate *, 3>>>
       PredicatedSCEVRewrites;
-   
+
   /// The head of a linked list of all SCEVUnknown values that have been
   /// allocated. This is used by releaseMemory to locate them all and call
   /// their destructors.
