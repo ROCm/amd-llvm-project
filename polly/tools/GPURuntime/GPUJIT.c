@@ -30,6 +30,7 @@
 #include <dlfcn.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -1419,28 +1420,40 @@ static void launchKernelCUDA(PollyGPUFunction *Kernel, unsigned int GridDimX,
 }
 
 // Maximum number of managed memory pointers.
-#define MAX_POINTERS 4000
+#define DEFAULT_MAX_POINTERS 4000
 // For the rationale behing a list of free pointers, see `polly_freeManaged`.
-void *g_managedptrs[MAX_POINTERS];
-int g_nmanagedptrs = 0;
+void **g_managedptrs;
+unsigned long long g_nmanagedptrs = 0;
+unsigned long long g_maxmanagedptrs = 0;
+
+__attribute__((constructor)) static void initManagedPtrsBuffer() {
+  g_maxmanagedptrs = DEFAULT_MAX_POINTERS;
+  const char *maxManagedPointersString = getenv("POLLY_MAX_MANAGED_POINTERS");
+  if (maxManagedPointersString)
+    g_maxmanagedptrs = atoll(maxManagedPointersString);
+
+  g_managedptrs = (void **)malloc(sizeof(void *) * g_maxmanagedptrs);
+}
 
 // Add a pointer as being allocated by cuMallocManaged
 void addManagedPtr(void *mem) {
-  assert(g_nmanagedptrs < MAX_POINTERS && "We have hit the maximum number of "
-                                          "managed pointers allowed. Increase "
-                                          "MAX_POINTERS");
+  assert(g_maxmanagedptrs > 0 && "g_maxmanagedptrs was set to 0!");
+  assert(g_nmanagedptrs < g_maxmanagedptrs &&
+         "We have hit the maximum number of "
+         "managed pointers allowed. Set the "
+         "POLLY_MAX_MANAGED_POINTERS environment variable. ");
   g_managedptrs[g_nmanagedptrs++] = mem;
 }
 
 int isManagedPtr(void *mem) {
-  for (int i = 0; i < g_nmanagedptrs; i++) {
+  for (unsigned long long i = 0; i < g_nmanagedptrs; i++) {
     if (g_managedptrs[i] == mem)
       return 1;
   }
   return 0;
 }
 
-void polly_freeManaged(void *mem) {
+void freeManagedCUDA(void *mem) {
   dump_function();
 
   // In a real-world program this was used (COSMO), there were more `free`
@@ -1462,7 +1475,7 @@ void polly_freeManaged(void *mem) {
   }
 }
 
-void *polly_mallocManaged(size_t size) {
+void *mallocManagedCUDA(size_t size) {
   // Note: [Size 0 allocations]
   // Sometimes, some runtime computation of size could create a size of 0
   // for an allocation. In these cases, we do not wish to fail.
@@ -1797,6 +1810,28 @@ void polly_freeContext(PollyGPUContext *Context) {
   default:
     err_runtime();
   }
+}
+
+void polly_freeManaged(void *mem) {
+  dump_function();
+
+#ifdef HAS_LIBCUDART
+  freeManagedCUDA(mem);
+#else
+  fprintf(stderr, "No CUDA Runtime. Managed memory only supported by CUDA\n");
+  exit(-1);
+#endif
+}
+
+void *polly_mallocManaged(size_t size) {
+  dump_function();
+
+#ifdef HAS_LIBCUDART
+  return mallocManagedCUDA(size);
+#else
+  fprintf(stderr, "No CUDA Runtime. Managed memory only supported by CUDA\n");
+  exit(-1);
+#endif
 }
 
 /* Initialize GPUJIT with CUDA as runtime library. */

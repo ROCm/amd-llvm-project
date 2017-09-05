@@ -32,7 +32,8 @@ ATTRIBUTE_INTERFACE
 uintptr_t __sancov_trace_pc_pcs[fuzzer::TracePC::kNumPCs];
 
 // Used by -fsanitize-coverage=stack-depth to track stack depth
-ATTRIBUTE_INTERFACE thread_local uintptr_t __sancov_lowest_stack;
+ATTRIBUTE_INTERFACE __attribute__((tls_model("initial-exec")))
+thread_local uintptr_t __sancov_lowest_stack;
 
 namespace fuzzer {
 
@@ -69,9 +70,9 @@ void TracePC::HandleInline8bitCountersInit(uint8_t *Start, uint8_t *Stop) {
   NumInline8bitCounters += Stop - Start;
 }
 
-void TracePC::HandlePCsInit(const uint8_t *Start, const uint8_t *Stop) {
-  const uintptr_t *B = reinterpret_cast<const uintptr_t *>(Start);
-  const uintptr_t *E = reinterpret_cast<const uintptr_t *>(Stop);
+void TracePC::HandlePCsInit(const uintptr_t *Start, const uintptr_t *Stop) {
+  const PCTableEntry *B = reinterpret_cast<const PCTableEntry *>(Start);
+  const PCTableEntry *E = reinterpret_cast<const PCTableEntry *>(Stop);
   if (NumPCTables && ModulePCTable[NumPCTables - 1].Start == B) return;
   assert(NumPCTables < sizeof(ModulePCTable) / sizeof(ModulePCTable[0]));
   ModulePCTable[NumPCTables++] = {B, E};
@@ -142,11 +143,19 @@ void TracePC::HandleCallerCallee(uintptr_t Caller, uintptr_t Callee) {
 }
 
 void TracePC::UpdateObservedPCs() {
-  auto Observe = [&](uintptr_t PC) {
-    bool Inserted = ObservedPCs.insert(PC).second;
-    if (Inserted && DoPrintNewPCs)
+  Vector<uintptr_t> CoveredFuncs;
+  auto ObservePC = [&](uintptr_t PC) {
+    if (ObservedPCs.insert(PC).second && DoPrintNewPCs)
       PrintPC("\tNEW_PC: %p %F %L\n", "\tNEW_PC: %p\n", PC + 1);
   };
+
+  auto Observe = [&](const PCTableEntry &TE) {
+    if (TE.PCFlags & 1)
+      if (ObservedFuncs.insert(TE.PC).second && NumPrintNewFuncs)
+        CoveredFuncs.push_back(TE.PC);
+    ObservePC(TE.PC);
+  };
+
   if (NumPCsInPCTables) {
     if (NumInline8bitCounters == NumPCsInPCTables) {
       for (size_t i = 0; i < NumModulesWithInline8bitCounters; i++) {
@@ -176,7 +185,12 @@ void TracePC::UpdateObservedPCs() {
     auto P = ClangCountersBegin();
     for (size_t Idx = 0; Idx < NumClangCounters; Idx++)
       if (P[Idx])
-        Observe((uintptr_t)Idx);
+        ObservePC((uintptr_t)Idx);
+  }
+
+  for (size_t i = 0, N = Min(CoveredFuncs.size(), NumPrintNewFuncs); i < N; i++) {
+    Printf("\tNEW_FUNC[%zd/%zd]: ", i, CoveredFuncs.size());
+    PrintPC("%p %F %L\n", "%p\n", CoveredFuncs[i] + 1);
   }
 }
 
@@ -213,8 +227,8 @@ void TracePC::PrintCoverage() {
   Printf("COVERAGE:\n");
   std::string LastFunctionName = "";
   std::string LastFileStr = "";
-  std::set<size_t> UncoveredLines;
-  std::set<size_t> CoveredLines;
+  Set<size_t> UncoveredLines;
+  Set<size_t> CoveredLines;
 
   auto FunctionEndCallback = [&](const std::string &CurrentFunc,
                                  const std::string &CurrentFile) {
@@ -239,9 +253,9 @@ void TracePC::PrintCoverage() {
   for (size_t i = 0; i < NumPCTables; i++) {
     auto &M = ModulePCTable[i];
     assert(M.Start < M.Stop);
-    auto ModuleName = GetModuleName(*M.Start);
+    auto ModuleName = GetModuleName(M.Start->PC);
     for (auto Ptr = M.Start; Ptr < M.Stop; Ptr++) {
-      auto PC = *Ptr;
+      auto PC = Ptr->PC;
       auto VisualizePC = GetNextInstructionPc(PC);
       bool IsObserved = ObservedPCs.count(PC);
       std::string FileStr = DescribePC("%s", VisualizePC);
@@ -262,7 +276,7 @@ void TracePC::PrintCoverage() {
 
 void TracePC::DumpCoverage() {
   if (EF->__sanitizer_dump_coverage) {
-    std::vector<uintptr_t> PCsCopy(GetNumPCs());
+    Vector<uintptr_t> PCsCopy(GetNumPCs());
     for (size_t i = 0; i < GetNumPCs(); i++)
       PCsCopy[i] = PCs()[i] ? GetPreviousInstructionPc(PCs()[i]) : 0;
     EF->__sanitizer_dump_coverage(PCsCopy.data(), PCsCopy.size());
@@ -387,7 +401,8 @@ void __sanitizer_cov_8bit_counters_init(uint8_t *Start, uint8_t *Stop) {
 }
 
 ATTRIBUTE_INTERFACE
-void __sanitizer_cov_pcs_init(const uint8_t *pcs_beg, const uint8_t *pcs_end) {
+void __sanitizer_cov_pcs_init(const uintptr_t *pcs_beg,
+                              const uintptr_t *pcs_end) {
   fuzzer::TPC.HandlePCsInit(pcs_beg, pcs_end);
 }
 

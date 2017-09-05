@@ -128,7 +128,7 @@ static cl::opt<bool> EnableStoreRefinement("enable-store-refinement",
                                            cl::init(false), cl::Hidden);
 
 /// Currently, the generation "phi of ops" can result in correctness issues.
-static cl::opt<bool> EnablePhiOfOps("enable-phi-of-ops", cl::init(false),
+static cl::opt<bool> EnablePhiOfOps("enable-phi-of-ops", cl::init(true),
                                     cl::Hidden);
 
 //===----------------------------------------------------------------------===//
@@ -475,6 +475,7 @@ class NewGVN {
   // These mappings just store various data that would normally be part of the
   // IR.
   DenseSet<const Instruction *> PHINodeUses;
+  DenseMap<const Value *, bool> OpSafeForPHIOfOps;
   // Map a temporary instruction we created to a parent block.
   DenseMap<const Value *, BasicBlock *> TempToBlock;
   // Map between the already in-program instructions and the temporary phis we
@@ -643,6 +644,14 @@ private:
   void initializeCongruenceClasses(Function &F);
   const Expression *makePossiblePhiOfOps(Instruction *,
                                          SmallPtrSetImpl<Value *> &);
+  Value *findLeaderForInst(Instruction *ValueOp,
+                           SmallPtrSetImpl<Value *> &Visited,
+                           MemoryAccess *MemAccess, Instruction *OrigInst,
+                           BasicBlock *PredBB);
+
+  bool OpIsSafeForPHIOfOps(Value *Op, Instruction *OrigInst,
+                           const BasicBlock *PHIBlock,
+                           SmallPtrSetImpl<const Value *> &);
   void addPhiOfOps(PHINode *Op, BasicBlock *BB, Instruction *ExistingValue);
   void removePhiOfOps(Instruction *I, PHINode *PHITemp);
 
@@ -669,6 +678,7 @@ private:
   // Congruence finding.
   bool someEquivalentDominates(const Instruction *, const Instruction *) const;
   Value *lookupOperandLeader(Value *) const;
+  CongruenceClass *getClassForExpression(const Expression *E) const;
   void performCongruenceFinding(Instruction *, const Expression *);
   void moveValueToNewCongruenceClass(Instruction *, const Expression *,
                                      CongruenceClass *, CongruenceClass *);
@@ -703,8 +713,7 @@ private:
   void replaceInstruction(Instruction *, Value *);
   void markInstructionForDeletion(Instruction *);
   void deleteInstructionsInBlock(BasicBlock *);
-  Value *findPhiOfOpsLeader(const Expression *E, const BasicBlock *BB) const;
-
+  Value *findPHIOfOpsLeader(const Expression *E, const BasicBlock *BB) const;
   // New instruction creation.
   void handleNewInstruction(Instruction *){};
 
@@ -938,8 +947,6 @@ const Expression *NewGVN::createBinaryExpression(unsigned Opcode, Type *T,
 // Take a Value returned by simplification of Expression E/Instruction
 // I, and see if it resulted in a simpler expression. If so, return
 // that expression.
-// TODO: Once finished, this should not take an Instruction, we only
-// use it for printing.
 const Expression *NewGVN::checkSimplificationResults(Expression *E,
                                                      Instruction *I,
                                                      Value *V) const {
@@ -963,24 +970,37 @@ const Expression *NewGVN::checkSimplificationResults(Expression *E,
   }
 
   CongruenceClass *CC = ValueToClass.lookup(V);
-  if (CC && CC->getDefiningExpr()) {
-    // If we simplified to something else, we need to communicate
-    // that we're users of the value we simplified to.
-    if (I != V) {
+  if (CC) {
+    if (CC->getLeader() && CC->getLeader() != I) {
       // Don't add temporary instructions to the user lists.
       if (!AllTempInstructions.count(I))
         addAdditionalUsers(V, I);
+      return createVariableOrConstant(CC->getLeader());
     }
 
-    if (I)
-      DEBUG(dbgs() << "Simplified " << *I << " to "
-                   << " expression " << *CC->getDefiningExpr() << "\n");
-    NumGVNOpsSimplified++;
-    deleteExpression(E);
-    return CC->getDefiningExpr();
+    if (CC->getDefiningExpr()) {
+      // If we simplified to something else, we need to communicate
+      // that we're users of the value we simplified to.
+      if (I != V) {
+        // Don't add temporary instructions to the user lists.
+        if (!AllTempInstructions.count(I))
+          addAdditionalUsers(V, I);
+      }
+
+      if (I)
+        DEBUG(dbgs() << "Simplified " << *I << " to "
+                     << " expression " << *CC->getDefiningExpr() << "\n");
+      NumGVNOpsSimplified++;
+      deleteExpression(E);
+      return CC->getDefiningExpr();
+    }
   }
+
   return nullptr;
 }
+
+// Create a value expression from the instruction I, replacing operands with
+// their leaders.
 
 const Expression *NewGVN::createExpression(Instruction *I) const {
   auto *E = new (ExpressionAllocator) BasicExpression(I->getNumOperands());
@@ -996,15 +1016,7 @@ const Expression *NewGVN::createExpression(Instruction *I) const {
     if (shouldSwapOperands(E->getOperand(0), E->getOperand(1)))
       E->swapOperands(0, 1);
   }
-
   // Perform simplification.
-  // TODO: Right now we only check to see if we get a constant result.
-  // We may get a less than constant, but still better, result for
-  // some operations.
-  // IE
-  //  add 0, x -> x
-  //  and x, x -> x
-  // We should handle this by simply rewriting the expression.
   if (auto *CI = dyn_cast<CmpInst>(I)) {
     // Sort the operand value numbers so x<y and y>x get the same value
     // number.
@@ -1025,7 +1037,7 @@ const Expression *NewGVN::createExpression(Instruction *I) const {
       return SimplifiedE;
   } else if (isa<SelectInst>(I)) {
     if (isa<Constant>(E->getOperand(0)) ||
-        E->getOperand(0) == E->getOperand(1)) {
+        E->getOperand(1) == E->getOperand(2)) {
       assert(E->getOperand(1)->getType() == I->getOperand(1)->getType() &&
              E->getOperand(2)->getType() == I->getOperand(2)->getType());
       Value *V = SimplifySelectInst(E->getOperand(0), E->getOperand(1),
@@ -1238,9 +1250,9 @@ const Expression *NewGVN::performSymbolicStoreEvaluation(Instruction *I) const {
   if (EnableStoreRefinement)
     StoreRHS = MSSAWalker->getClobberingMemoryAccess(StoreAccess);
   // If we bypassed the use-def chains, make sure we add a use.
+  StoreRHS = lookupMemoryLeader(StoreRHS);
   if (StoreRHS != StoreAccess->getDefiningAccess())
     addMemoryUsers(StoreRHS, StoreAccess);
-  StoreRHS = lookupMemoryLeader(StoreRHS);
   // If we are defined by ourselves, use the live on entry def.
   if (StoreRHS == StoreAccess)
     StoreRHS = MSSA->getLiveOnEntryDef();
@@ -1302,7 +1314,7 @@ NewGVN::performSymbolicLoadCoercion(Type *LoadType, Value *LoadPtr,
       }
     }
 
-  } else if (LoadInst *DepLI = dyn_cast<LoadInst>(DepInst)) {
+  } else if (auto *DepLI = dyn_cast<LoadInst>(DepInst)) {
     // Can't forward from non-atomic to atomic without violating memory model.
     if (LI->isAtomic() > DepLI->isAtomic())
       return nullptr;
@@ -1318,7 +1330,7 @@ NewGVN::performSymbolicLoadCoercion(Type *LoadType, Value *LoadPtr,
         }
     }
 
-  } else if (MemIntrinsic *DepMI = dyn_cast<MemIntrinsic>(DepInst)) {
+  } else if (auto *DepMI = dyn_cast<MemIntrinsic>(DepInst)) {
     int Offset = analyzeLoadFromClobberingMemInst(LoadType, LoadPtr, DepMI, DL);
     if (Offset >= 0) {
       if (auto *PossibleConstant =
@@ -1390,9 +1402,13 @@ const Expression *NewGVN::performSymbolicLoadEvaluation(Instruction *I) const {
     }
   }
 
-  const Expression *E = createLoadExpression(LI->getType(), LoadAddressLeader,
-                                             LI, DefiningAccess);
-  return E;
+  const auto *LE = createLoadExpression(LI->getType(), LoadAddressLeader, LI,
+                                        DefiningAccess);
+  // If our MemoryLeader is not our defining access, add a use to the
+  // MemoryLeader, so that we get reprocessed when it changes.
+  if (LE->getMemoryLeader() != DefiningAccess)
+    addMemoryUsers(LE->getMemoryLeader(), OriginalAccess);
+  return LE;
 }
 
 const Expression *
@@ -1473,7 +1489,8 @@ NewGVN::performSymbolicPredicateInfoEvaluation(Instruction *I) const {
     if ((PBranch->TrueEdge && Predicate == CmpInst::ICMP_EQ) ||
         (!PBranch->TrueEdge && Predicate == CmpInst::ICMP_NE)) {
       addPredicateUsers(PI, I);
-      addAdditionalUsers(Cmp->getOperand(0), I);
+      addAdditionalUsers(SwappedOps ? Cmp->getOperand(1) : Cmp->getOperand(0),
+                         I);
       return createVariableOrConstant(FirstOp);
     }
     // Handle the special case of floating point.
@@ -1481,7 +1498,8 @@ NewGVN::performSymbolicPredicateInfoEvaluation(Instruction *I) const {
          (!PBranch->TrueEdge && Predicate == CmpInst::FCMP_UNE)) &&
         isa<ConstantFP>(FirstOp) && !cast<ConstantFP>(FirstOp)->isZero()) {
       addPredicateUsers(PI, I);
-      addAdditionalUsers(Cmp->getOperand(0), I);
+      addAdditionalUsers(SwappedOps ? Cmp->getOperand(1) : Cmp->getOperand(0),
+                         I);
       return createConstantExpression(cast<Constant>(FirstOp));
     }
   }
@@ -1777,10 +1795,15 @@ const Expression *NewGVN::performSymbolicCmpEvaluation(Instruction *I) const {
       if (PI == LastPredInfo)
         continue;
       LastPredInfo = PI;
-
-      // TODO: Along the false edge, we may know more things too, like icmp of
+      // In phi of ops cases, we may have predicate info that we are evaluating
+      // in a different context.
+      if (!DT->dominates(PBranch->To, getBlockForValue(I)))
+        continue;
+      // TODO: Along the false edge, we may know more things too, like
+      // icmp of
       // same operands is false.
-      // TODO: We only handle actual comparison conditions below, not and/or.
+      // TODO: We only handle actual comparison conditions below, not
+      // and/or.
       auto *BranchCond = dyn_cast<CmpInst>(PBranch->Condition);
       if (!BranchCond)
         continue;
@@ -2025,7 +2048,7 @@ T *NewGVN::getMinDFSOfRange(const Range &R) const {
 const MemoryAccess *NewGVN::getNextMemoryLeader(CongruenceClass *CC) const {
   // TODO: If this ends up to slow, we can maintain a next memory leader like we
   // do for regular leaders.
-  // Make sure there will be a leader to find
+  // Make sure there will be a leader to find.
   assert(!CC->definesNoMemory() && "Can't get next leader if there is none");
   if (CC->getStoreCount() > 0) {
     if (auto *NL = dyn_cast_or_null<StoreInst>(CC->getNextLeader().first))
@@ -2454,6 +2477,92 @@ static bool okayForPHIOfOps(const Instruction *I) {
          isa<LoadInst>(I);
 }
 
+// Return true if this operand will be safe to use for phi of ops.
+//
+// The reason some operands are unsafe is that we are not trying to recursively
+// translate everything back through phi nodes.  We actually expect some lookups
+// of expressions to fail.  In particular, a lookup where the expression cannot
+// exist in the predecessor.  This is true even if the expression, as shown, can
+// be determined to be constant.
+bool NewGVN::OpIsSafeForPHIOfOps(Value *V, Instruction *OrigInst,
+                                 const BasicBlock *PHIBlock,
+                                 SmallPtrSetImpl<const Value *> &Visited) {
+  if (!isa<Instruction>(V))
+    return true;
+  auto OISIt = OpSafeForPHIOfOps.find(V);
+  if (OISIt != OpSafeForPHIOfOps.end())
+    return OISIt->second;
+  // Keep walking until we either dominate the phi block, or hit a phi, or run
+  // out of things to check.
+  if (DT->properlyDominates(getBlockForValue(V), PHIBlock)) {
+    OpSafeForPHIOfOps.insert({V, true});
+    return true;
+  }
+  // PHI in the same block.
+  if (isa<PHINode>(V) && getBlockForValue(V) == PHIBlock) {
+    OpSafeForPHIOfOps.insert({V, false});
+    return false;
+  }
+  for (auto Op : cast<Instruction>(V)->operand_values()) {
+    if (!isa<Instruction>(Op))
+      continue;
+    // See if we already know the answer for this node.
+    auto OISIt = OpSafeForPHIOfOps.find(Op);
+    if (OISIt != OpSafeForPHIOfOps.end()) {
+      if (!OISIt->second) {
+        OpSafeForPHIOfOps.insert({V, false});
+        return false;
+      }
+    }
+    if (!Visited.insert(Op).second)
+      continue;
+    if (!OpIsSafeForPHIOfOps(Op, OrigInst, PHIBlock, Visited)) {
+      OpSafeForPHIOfOps.insert({V, false});
+      return false;
+    }
+  }
+  OpSafeForPHIOfOps.insert({V, true});
+  return true;
+}
+
+// Try to find a leader for instruction TransInst, which is a phi translated
+// version of something in our original program.  Visited is used to ensure we
+// don't infinite loop during translations of cycles.  OrigInst is the
+// instruction in the original program, and PredBB is the predecessor we
+// translated it through.
+Value *NewGVN::findLeaderForInst(Instruction *TransInst,
+                                 SmallPtrSetImpl<Value *> &Visited,
+                                 MemoryAccess *MemAccess, Instruction *OrigInst,
+                                 BasicBlock *PredBB) {
+  unsigned IDFSNum = InstrToDFSNum(OrigInst);
+  // Make sure it's marked as a temporary instruction.
+  AllTempInstructions.insert(TransInst);
+  // and make sure anything that tries to add it's DFS number is
+  // redirected to the instruction we are making a phi of ops
+  // for.
+  TempToBlock.insert({TransInst, PredBB});
+  InstrDFS.insert({TransInst, IDFSNum});
+
+  const Expression *E = performSymbolicEvaluation(TransInst, Visited);
+  InstrDFS.erase(TransInst);
+  AllTempInstructions.erase(TransInst);
+  TempToBlock.erase(TransInst);
+  if (MemAccess)
+    TempToMemory.erase(TransInst);
+  if (!E)
+    return nullptr;
+  auto *FoundVal = findPHIOfOpsLeader(E, PredBB);
+  if (!FoundVal || FoundVal == OrigInst) {
+    ExpressionToPhiOfOps[E].insert(OrigInst);
+    DEBUG(dbgs() << "Cannot find phi of ops operand for " << *TransInst
+                 << " in block " << getBlockName(PredBB) << "\n");
+    return nullptr;
+  }
+  if (auto *SI = dyn_cast<StoreInst>(FoundVal))
+    FoundVal = SI->getValueOperand();
+  return FoundVal;
+}
+
 // When we see an instruction that is an op of phis, generate the equivalent phi
 // of ops form.
 const Expression *
@@ -2471,7 +2580,6 @@ NewGVN::makePossiblePhiOfOps(Instruction *I,
   if (!isCycleFree(I))
     return nullptr;
 
-  unsigned IDFSNum = InstrToDFSNum(I);
   SmallPtrSet<const Value *, 8> ProcessedPHIs;
   // TODO: We don't do phi translation on memory accesses because it's
   // complicated. For a load, we'd need to be able to simulate a new memoryuse,
@@ -2484,18 +2592,9 @@ NewGVN::makePossiblePhiOfOps(Instruction *I,
       MemAccess->getDefiningAccess()->getBlock() == I->getParent())
     return nullptr;
 
+  SmallPtrSet<const Value *, 10> VisitedOps;
   // Convert op of phis to phi of ops
   for (auto &Op : I->operands()) {
-    // TODO: We can't handle expressions that must be recursively translated
-    // IE
-    // a = phi (b, c)
-    // f = use a
-    // g = f + phi of something
-    // To properly make a phi of ops for g, we'd have to properly translate and
-    // use the instruction for f.  We should add this by splitting out the
-    // instruction creation we do below.
-    if (isa<Instruction>(Op) && PHINodeUses.count(cast<Instruction>(Op)))
-      return nullptr;
     if (!isa<PHINode>(Op))
       continue;
     auto *OpPHI = cast<PHINode>(Op);
@@ -2516,34 +2615,30 @@ NewGVN::makePossiblePhiOfOps(Instruction *I,
         Instruction *ValueOp = I->clone();
         if (MemAccess)
           TempToMemory.insert({ValueOp, MemAccess});
-
+        bool SafeForPHIOfOps = true;
+        VisitedOps.clear();
         for (auto &Op : ValueOp->operands()) {
+          auto *OrigOp = &*Op;
           Op = Op->DoPHITranslation(PHIBlock, PredBB);
           // When this operand changes, it could change whether there is a
           // leader for us or not.
           addAdditionalUsers(Op, I);
+          // If we phi-translated the op, it must be safe.
+          SafeForPHIOfOps = SafeForPHIOfOps &&
+                            (Op != OrigOp ||
+                             OpIsSafeForPHIOfOps(Op, I, PHIBlock, VisitedOps));
         }
-        // Make sure it's marked as a temporary instruction.
-        AllTempInstructions.insert(ValueOp);
-        // and make sure anything that tries to add it's DFS number is
-        // redirected to the instruction we are making a phi of ops
-        // for.
-        InstrDFS.insert({ValueOp, IDFSNum});
-        const Expression *E = performSymbolicEvaluation(ValueOp, Visited);
-        InstrDFS.erase(ValueOp);
-        AllTempInstructions.erase(ValueOp);
+        // FIXME: For those things that are not safe We could generate
+        // expressions all the way down, and see if this comes out to a
+        // constant.  For anything where that is true, and unsafe, we should
+        // have made a phi-of-ops (or value numbered it equivalent to something)
+        // for the pieces already.
+        FoundVal = !SafeForPHIOfOps ? nullptr
+                                    : findLeaderForInst(ValueOp, Visited,
+                                                        MemAccess, I, PredBB);
         ValueOp->deleteValue();
-        if (MemAccess)
-          TempToMemory.erase(ValueOp);
-        if (!E)
+        if (!FoundVal)
           return nullptr;
-        FoundVal = findPhiOfOpsLeader(E, PredBB);
-        if (!FoundVal) {
-          ExpressionToPhiOfOps[E].insert(I);
-          return nullptr;
-        }
-        if (auto *SI = dyn_cast<StoreInst>(FoundVal))
-          FoundVal = SI->getValueOperand();
       } else {
         DEBUG(dbgs() << "Skipping phi of ops operand for incoming block "
                      << getBlockName(PredBB)
@@ -2558,7 +2653,8 @@ NewGVN::makePossiblePhiOfOps(Instruction *I,
     auto *ValuePHI = RealToTemp.lookup(I);
     bool NewPHI = false;
     if (!ValuePHI) {
-      ValuePHI = PHINode::Create(I->getType(), OpPHI->getNumOperands());
+      ValuePHI =
+          PHINode::Create(I->getType(), OpPHI->getNumOperands(), "phiofops");
       addPhiOfOps(ValuePHI, PHIBlock, I);
       NewPHI = true;
       NumGVNPHIOfOpsCreated++;
@@ -2683,6 +2779,8 @@ void NewGVN::cleanupTables() {
   TempToBlock.clear();
   TempToMemory.clear();
   PHIOfOpsPHIs.clear();
+  PHINodeUses.clear();
+  OpSafeForPHIOfOps.clear();
   ReachableBlocks.clear();
   ReachableEdges.clear();
 #ifndef NDEBUG
@@ -3512,17 +3610,29 @@ private:
 };
 }
 
+// Given an expression, get the congruence class for it.
+CongruenceClass *NewGVN::getClassForExpression(const Expression *E) const {
+  if (auto *VE = dyn_cast<VariableExpression>(E))
+    return ValueToClass.lookup(VE->getVariableValue());
+  else if (isa<DeadExpression>(E))
+    return TOPClass;
+  return ExpressionToClass.lookup(E);
+}
+
 // Given a value and a basic block we are trying to see if it is available in,
 // see if the value has a leader available in that block.
-Value *NewGVN::findPhiOfOpsLeader(const Expression *E,
+Value *NewGVN::findPHIOfOpsLeader(const Expression *E,
                                   const BasicBlock *BB) const {
   // It would already be constant if we could make it constant
   if (auto *CE = dyn_cast<ConstantExpression>(E))
     return CE->getConstantValue();
-  if (auto *VE = dyn_cast<VariableExpression>(E))
-    return VE->getVariableValue();
+  if (auto *VE = dyn_cast<VariableExpression>(E)) {
+    auto *V = VE->getVariableValue();
+    if (alwaysAvailable(V) || DT->dominates(getBlockForValue(V), BB))
+      return VE->getVariableValue();
+  }
 
-  auto *CC = ExpressionToClass.lookup(E);
+  auto *CC = getClassForExpression(E);
   if (!CC)
     return nullptr;
   if (alwaysAvailable(CC->getLeader()))
@@ -3533,12 +3643,8 @@ Value *NewGVN::findPhiOfOpsLeader(const Expression *E,
     // Anything that isn't an instruction is always available.
     if (!MemberInst)
       return Member;
-    // If we are looking for something in the same block as the member, it must
-    // be a leader because this function is looking for operands for a phi node.
-    if (MemberInst->getParent() == BB ||
-        DT->dominates(MemberInst->getParent(), BB)) {
+    if (DT->dominates(getBlockForValue(MemberInst), BB))
       return Member;
-    }
   }
   return nullptr;
 }

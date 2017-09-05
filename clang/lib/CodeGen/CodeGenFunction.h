@@ -709,6 +709,7 @@ public:
                llvm::function_ref<Address()> PrivateGen) {
       assert(PerformCleanup && "adding private to dead scope");
 
+      LocalVD = LocalVD->getCanonicalDecl();
       // Only save it once.
       if (SavedLocals.count(LocalVD)) return false;
 
@@ -761,6 +762,7 @@ public:
 
     /// Checks if the global variable is captured in current function. 
     bool isGlobalVarCaptured(const VarDecl *VD) const {
+      VD = VD->getCanonicalDecl();
       return !VD->isLocalVarDeclOrParm() && CGF.LocalDeclMap.count(VD) > 0;
     }
 
@@ -3169,6 +3171,7 @@ public:
   };
 
   ConstantEmission tryEmitAsConstant(DeclRefExpr *refExpr);
+  ConstantEmission tryEmitAsConstant(const MemberExpr *ME);
 
   RValue EmitPseudoObjectRValue(const PseudoObjectExpr *e,
                                 AggValueSlot slot = AggValueSlot::ignored());
@@ -3864,6 +3867,10 @@ private:
   void AddObjCARCExceptionMetadata(llvm::Instruction *Inst);
 
   llvm::Value *GetValueForARMHint(unsigned BuiltinID);
+  llvm::Value *EmitX86CpuIs(const CallExpr *E);
+  llvm::Value *EmitX86CpuIs(StringRef CPUStr);
+  llvm::Value *EmitX86CpuSupports(const CallExpr *E);
+  llvm::Value *EmitX86CpuSupports(ArrayRef<StringRef> FeatureStrs);
 };
 
 /// Helper class with most of the code for saving a value for a
