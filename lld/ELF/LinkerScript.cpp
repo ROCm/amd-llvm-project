@@ -174,17 +174,17 @@ bool BytesDataCommand::classof(const BaseCommand *C) {
   return C->Kind == BytesDataKind;
 }
 
-static std::string filename(InputSectionBase *S) {
-  if (!S->File)
+static std::string filename(InputFile *File) {
+  if (!File)
     return "";
-  if (S->File->ArchiveName.empty())
-    return S->File->getName();
-  return (S->File->ArchiveName + "(" + S->File->getName() + ")").str();
+  if (File->ArchiveName.empty())
+    return File->getName();
+  return (File->ArchiveName + "(" + File->getName() + ")").str();
 }
 
 bool LinkerScript::shouldKeep(InputSectionBase *S) {
   for (InputSectionDescription *ID : Opt.KeptSections) {
-    std::string Filename = filename(S);
+    std::string Filename = filename(S->File);
     if (ID->FilePat.match(Filename))
       for (SectionPattern &P : ID->SectionPatterns)
         if (P.SectionPat.match(S->Name))
@@ -284,7 +284,7 @@ LinkerScript::computeInputSections(const InputSectionDescription *Cmd) {
       if (Sec->Type == SHT_REL || Sec->Type == SHT_RELA)
         continue;
 
-      std::string Filename = filename(Sec);
+      std::string Filename = filename(Sec->File);
       if (!Cmd->FilePat.match(Filename) ||
           Pat.ExcludedFilePat.match(Filename) ||
           !Pat.SectionPat.match(Sec->Name))
@@ -328,8 +328,8 @@ LinkerScript::computeInputSections(const InputSectionDescription *Cmd) {
 void LinkerScript::discard(ArrayRef<InputSectionBase *> V) {
   for (InputSectionBase *S : V) {
     S->Live = false;
-    if (S == InX::ShStrTab || S == InX::Common || S == InX::Dynamic ||
-        S == InX::DynSymTab || S == InX::DynStrTab)
+    if (S == InX::ShStrTab || S == InX::Dynamic || S == InX::DynSymTab ||
+        S == InX::DynStrTab)
       error("discarding " + S->Name + " section is not allowed");
     discard(S->DependentSections);
   }
@@ -584,7 +584,7 @@ MemoryRegion *LinkerScript::findMemoryRegion(OutputSection *Sec) {
   if (!Sec->MemoryRegionName.empty()) {
     auto It = Opt.MemoryRegions.find(Sec->MemoryRegionName);
     if (It != Opt.MemoryRegions.end())
-      return &It->second;
+      return It->second;
     error("memory region '" + Sec->MemoryRegionName + "' not declared");
     return nullptr;
   }
@@ -597,9 +597,9 @@ MemoryRegion *LinkerScript::findMemoryRegion(OutputSection *Sec) {
 
   // See if a region can be found by matching section flags.
   for (auto &Pair : Opt.MemoryRegions) {
-    MemoryRegion &M = Pair.second;
-    if ((M.Flags & Sec->Flags) && (M.NegFlags & Sec->Flags) == 0)
-      return &M;
+    MemoryRegion *M = Pair.second;
+    if ((M->Flags & Sec->Flags) && (M->NegFlags & Sec->Flags) == 0)
+      return M;
   }
 
   // Otherwise, no suitable region was found.
@@ -616,14 +616,15 @@ void LinkerScript::assignOffsets(OutputSection *Sec) {
   else if (Sec->AddrExpr)
     setDot(Sec->AddrExpr, Sec->Location, false);
 
+  CurAddressState->MemRegion = Sec->MemRegion;
+  if (CurAddressState->MemRegion)
+    Dot = CurAddressState->MemRegionOffset[CurAddressState->MemRegion];
+
   if (Sec->LMAExpr) {
     uint64_t D = Dot;
     CurAddressState->LMAOffset = [=] { return Sec->LMAExpr().getValue() - D; };
   }
 
-  CurAddressState->MemRegion = Sec->MemRegion;
-  if (CurAddressState->MemRegion)
-    Dot = CurAddressState->MemRegionOffset[CurAddressState->MemRegion];
   switchTo(Sec);
 
   // We do not support custom layout for compressed debug sectons.
@@ -725,6 +726,13 @@ void LinkerScript::adjustSectionsAfterSorting() {
   removeEmptyCommands();
 }
 
+static OutputSection *findFirstSection(PhdrEntry *Load) {
+  for (OutputSection *Sec : OutputSections)
+    if (Sec->PtLoad == Load)
+      return Sec;
+  return nullptr;
+}
+
 // Try to find an address for the file and program headers output sections,
 // which were unconditionally added to the first PT_LOAD segment earlier.
 //
@@ -760,21 +768,9 @@ void LinkerScript::allocateHeaders(std::vector<PhdrEntry *> &Phdrs) {
     return;
   }
 
-  OutputSection *ActualFirst = nullptr;
-  for (OutputSection *Sec : OutputSections) {
-    if (Sec->FirstInPtLoad == Out::ElfHeader) {
-      ActualFirst = Sec;
-      break;
-    }
-  }
-  if (ActualFirst) {
-    for (OutputSection *Sec : OutputSections)
-      if (Sec->FirstInPtLoad == Out::ElfHeader)
-        Sec->FirstInPtLoad = ActualFirst;
-    FirstPTLoad->First = ActualFirst;
-  } else {
-    Phdrs.erase(It);
-  }
+  Out::ElfHeader->PtLoad = nullptr;
+  Out::ProgramHeaders->PtLoad = nullptr;
+  FirstPTLoad->FirstSec = findFirstSection(FirstPTLoad);
 
   llvm::erase_if(Phdrs,
                  [](const PhdrEntry *E) { return E->p_type == PT_PHDR; });
@@ -782,7 +778,7 @@ void LinkerScript::allocateHeaders(std::vector<PhdrEntry *> &Phdrs) {
 
 LinkerScript::AddressState::AddressState(const ScriptConfiguration &Opt) {
   for (auto &MRI : Opt.MemoryRegions) {
-    const MemoryRegion *MR = &MRI.second;
+    const MemoryRegion *MR = MRI.second;
     MemRegionOffset[MR] = MR->Origin;
   }
 }
@@ -872,7 +868,7 @@ ExprValue LinkerScript::getSymbolValue(const Twine &Loc, StringRef S) {
     if (auto *D = dyn_cast<DefinedRegular>(B))
       return {D->Section, D->Value, Loc};
     if (auto *C = dyn_cast<DefinedCommon>(B))
-      return {InX::Common, C->Offset, Loc};
+      return {C->Section, C->Offset, Loc};
   }
   error(Loc + ": symbol not found: " + S);
   return 0;

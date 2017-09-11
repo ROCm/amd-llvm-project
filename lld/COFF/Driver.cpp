@@ -202,6 +202,7 @@ static bool isDecorated(StringRef Sym) {
 // specified by /defaultlib.
 void LinkerDriver::parseDirectives(StringRef S) {
   ArgParser Parser;
+  // .drectve is always tokenized using Windows shell rules.
   opt::InputArgList Args = Parser.parse(S);
 
   for (auto *Arg : Args) {
@@ -522,25 +523,6 @@ static void parseModuleDefs(StringRef Path) {
   }
 }
 
-std::vector<MemoryBufferRef> getArchiveMembers(Archive *File) {
-  std::vector<MemoryBufferRef> V;
-  Error Err = Error::success();
-  for (const ErrorOr<Archive::Child> &COrErr : File->children(Err)) {
-    Archive::Child C =
-        check(COrErr,
-              File->getFileName() + ": could not get the child of the archive");
-    MemoryBufferRef MBRef =
-        check(C.getMemoryBufferRef(),
-              File->getFileName() +
-                  ": could not get the buffer for a child of the archive");
-    V.push_back(MBRef);
-  }
-  if (Err)
-    fatal(File->getFileName() +
-          ": Archive::children failed: " + toString(std::move(Err)));
-  return V;
-}
-
 // A helper function for filterBitcodeFiles.
 static bool needsRebuilding(MemoryBufferRef MB) {
   // The MSVC linker doesn't support thin archives, so if it's a thin
@@ -600,12 +582,12 @@ filterBitcodeFiles(StringRef Path, std::vector<std::string> &TemporaryFiles) {
   std::string Temp = S.str();
   TemporaryFiles.push_back(Temp);
 
-  std::pair<StringRef, std::error_code> Ret =
+  std::error_code EC =
       llvm::writeArchive(Temp, New, /*WriteSymtab=*/true, Archive::Kind::K_GNU,
                          /*Deterministics=*/true,
                          /*Thin=*/false);
-  if (Ret.second)
-    error("failed to create a new archive " + S.str() + ": " + Ret.first);
+  if (EC)
+    error("failed to create a new archive " + S.str() + ": " + EC.message());
   return Temp;
 }
 
@@ -858,7 +840,7 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
         Config->DoICF = false;
         continue;
       }
-      if (S == "icf" || StringRef(S).startswith("icf=")) {
+      if (S == "icf" || S.startswith("icf=")) {
         Config->DoICF = true;
         continue;
       }
@@ -866,21 +848,21 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
         Config->DoICF = false;
         continue;
       }
-      if (StringRef(S).startswith("lldlto=")) {
-        StringRef OptLevel = StringRef(S).substr(7);
+      if (S.startswith("lldlto=")) {
+        StringRef OptLevel = S.substr(7);
         if (OptLevel.getAsInteger(10, Config->LTOOptLevel) ||
             Config->LTOOptLevel > 3)
           error("/opt:lldlto: invalid optimization level: " + OptLevel);
         continue;
       }
-      if (StringRef(S).startswith("lldltojobs=")) {
-        StringRef Jobs = StringRef(S).substr(11);
+      if (S.startswith("lldltojobs=")) {
+        StringRef Jobs = S.substr(11);
         if (Jobs.getAsInteger(10, Config->LTOJobs) || Config->LTOJobs == 0)
           error("/opt:lldltojobs: invalid job count: " + Jobs);
         continue;
       }
-      if (StringRef(S).startswith("lldltopartitions=")) {
-        StringRef N = StringRef(S).substr(17);
+      if (S.startswith("lldltopartitions=")) {
+        StringRef N = S.substr(17);
         if (N.getAsInteger(10, Config->LTOPartitions) ||
             Config->LTOPartitions == 0)
           error("/opt:lldltopartitions: invalid partition count: " + N);
@@ -894,6 +876,16 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
   // Handle /lldsavetemps
   if (Args.hasArg(OPT_lldsavetemps))
     Config->SaveTemps = true;
+
+  // Handle /lldltocache
+  if (auto *Arg = Args.getLastArg(OPT_lldltocache))
+    Config->LTOCache = Arg->getValue();
+
+  // Handle /lldsavecachepolicy
+  if (auto *Arg = Args.getLastArg(OPT_lldltocachepolicy))
+    Config->LTOCachePolicy = check(
+        parseCachePruningPolicy(Arg->getValue()),
+        Twine("/lldltocachepolicy: invalid cache policy: ") + Arg->getValue());
 
   // Handle /failifmismatch
   for (auto *Arg : Args.filtered(OPT_failifmismatch))

@@ -3604,7 +3604,13 @@ void Scop::removeFromStmtMap(ScopStmt &Stmt) {
         InstStmtMap.erase(&Inst);
     }
   } else {
-    StmtMap.erase(Stmt.getBasicBlock());
+    auto StmtMapIt = StmtMap.find(Stmt.getBasicBlock());
+    if (StmtMapIt != StmtMap.end())
+      StmtMapIt->second.erase(std::remove(StmtMapIt->second.begin(),
+                                          StmtMapIt->second.end(), &Stmt),
+                              StmtMapIt->second.end());
+    for (Instruction *Inst : Stmt.getInstructions())
+      InstStmtMap.erase(Inst);
   }
 }
 
@@ -4693,8 +4699,17 @@ void Scop::addScopStmt(Region *R, Loop *SurroundingLoop,
   assert(R && "Unexpected nullptr!");
   Stmts.emplace_back(*this, *R, SurroundingLoop, Instructions);
   auto *Stmt = &Stmts.back();
+
+  for (Instruction *Inst : Instructions) {
+    assert(!InstStmtMap.count(Inst) &&
+           "Unexpected statement corresponding to the instruction.");
+    InstStmtMap[Inst] = Stmt;
+  }
+
   for (BasicBlock *BB : R->blocks()) {
     StmtMap[BB].push_back(Stmt);
+    if (BB == R->getEntry())
+      continue;
     for (Instruction &Inst : *BB) {
       assert(!InstStmtMap.count(&Inst) &&
              "Unexpected statement corresponding to the instruction.");

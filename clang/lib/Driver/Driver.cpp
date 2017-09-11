@@ -663,6 +663,7 @@ Compilation *Driver::BuildCompilation(ArrayRef<const char *> ArgList) {
     T.setOS(llvm::Triple::Win32);
     T.setVendor(llvm::Triple::PC);
     T.setEnvironment(llvm::Triple::MSVC);
+    T.setObjectFormat(llvm::Triple::COFF);
     DefaultTargetTriple = T.str();
   }
   if (const Arg *A = Args.getLastArg(options::OPT_target))
@@ -1164,12 +1165,10 @@ void Driver::handleAutocompletions(StringRef PassedFlags) const {
   unsigned short DisableFlags =
       options::NoDriverOption | options::Unsupported | options::Ignored;
   // We want to show cc1-only options only when clang is invoked as "clang
-  // -cc1".
-  // When clang is invoked as "clang -cc1", we add "#" to the beginning of an
-  // --autocomplete
-  // option so that the clang driver can distinguish whether it is requested to
-  // show cc1-only options or not.
-  if (PassedFlags[0] == '#') {
+  // -cc1". When clang is invoked as "clang -cc1", we add "#" to the beginning
+  // of an --autocomplete  option so that the clang driver can distinguish
+  // whether it is requested to show cc1-only options or not.
+  if (PassedFlags.size() > 0 && PassedFlags[0] == '#') {
     DisableFlags &= ~options::NoDriverOption;
     PassedFlags = PassedFlags.substr(1);
   }

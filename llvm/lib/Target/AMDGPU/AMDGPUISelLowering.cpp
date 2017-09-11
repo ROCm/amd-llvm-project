@@ -2708,11 +2708,21 @@ SDValue AMDGPUTargetLowering::performShlCombine(SDNode *N,
   case ISD::ZERO_EXTEND:
   case ISD::SIGN_EXTEND:
   case ISD::ANY_EXTEND: {
+    SDValue X = LHS->getOperand(0);
+
+    if (VT == MVT::i32 && RHSVal == 16 && X.getValueType() == MVT::i16 &&
+        isTypeLegal(MVT::v2i16)) {
+      // Prefer build_vector as the canonical form if packed types are legal.
+      // (shl ([asz]ext i16:x), 16 -> build_vector 0, x
+      SDValue Vec = DAG.getBuildVector(MVT::v2i16, SL,
+       { DAG.getConstant(0, SL, MVT::i16), LHS->getOperand(0) });
+      return DAG.getNode(ISD::BITCAST, SL, MVT::i32, Vec);
+    }
+
     // shl (ext x) => zext (shl x), if shift does not overflow int
     if (VT != MVT::i64)
       break;
     KnownBits Known;
-    SDValue X = LHS->getOperand(0);
     DAG.computeKnownBits(X, Known);
     unsigned LZ = Known.countMinLeadingZeros();
     if (LZ < RHSVal)
@@ -3876,8 +3886,8 @@ void AMDGPUTargetLowering::computeKnownBitsForTargetNode(
   case AMDGPUISD::MUL_U24:
   case AMDGPUISD::MUL_I24: {
     KnownBits LHSKnown, RHSKnown;
-    DAG.computeKnownBits(Op.getOperand(0), LHSKnown);
-    DAG.computeKnownBits(Op.getOperand(1), RHSKnown);
+    DAG.computeKnownBits(Op.getOperand(0), LHSKnown, Depth + 1);
+    DAG.computeKnownBits(Op.getOperand(1), RHSKnown, Depth + 1);
 
     unsigned TrailZ = LHSKnown.countMinTrailingZeros() +
                       RHSKnown.countMinTrailingZeros();

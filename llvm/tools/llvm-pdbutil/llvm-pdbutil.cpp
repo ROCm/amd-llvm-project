@@ -17,6 +17,7 @@
 #include "BytesOutputStyle.h"
 #include "Diff.h"
 #include "DumpOutputStyle.h"
+#include "InputFile.h"
 #include "LinePrinter.h"
 #include "OutputStyle.h"
 #include "PrettyCompilandDumper.h"
@@ -32,6 +33,7 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/BinaryFormat/Magic.h"
 #include "llvm/Config/config.h"
 #include "llvm/DebugInfo/CodeView/DebugChecksumsSubsection.h"
 #include "llvm/DebugInfo/CodeView/DebugInlineeLinesSubsection.h"
@@ -422,10 +424,15 @@ cl::opt<bool> DumpStreamBlocks(
     "stream-blocks",
     cl::desc("Add block information to the output of -streams"),
     cl::cat(MsfOptions), cl::sub(DumpSubcommand));
-cl::opt<bool>
-    DumpModuleStats("mod-stats",
-                    cl::desc("Dump a detailed size breakdown for each module"),
-                    cl::cat(MsfOptions), cl::sub(DumpSubcommand));
+cl::opt<bool> DumpSymbolStats(
+    "sym-stats",
+    cl::desc("Dump a detailed breakdown of symbol usage/size for each module"),
+    cl::cat(MsfOptions), cl::sub(DumpSubcommand));
+
+cl::opt<bool> DumpUdtStats(
+    "udt-stats",
+    cl::desc("Dump a detailed breakdown of S_UDT record usage / stats"),
+    cl::cat(MsfOptions), cl::sub(DumpSubcommand));
 
 // TYPE OPTIONS
 cl::opt<bool> DumpTypes("types",
@@ -697,7 +704,7 @@ static void yamlToPdb(StringRef Path) {
     ModiBuilder.setObjFileName(MI.Obj);
 
     for (auto S : MI.SourceFiles)
-      ExitOnErr(DbiBuilder.addModuleSourceFile(MI.Mod, S));
+      ExitOnErr(DbiBuilder.addModuleSourceFile(ModiBuilder, S));
     if (MI.Modi.hasValue()) {
       const auto &ModiStream = *MI.Modi;
       for (auto Symbol : ModiStream.Symbols) {
@@ -756,11 +763,10 @@ static void pdb2Yaml(StringRef Path) {
 }
 
 static void dumpRaw(StringRef Path) {
-  std::unique_ptr<IPDBSession> Session;
-  auto &File = loadPDB(Path, Session);
 
-  auto O = llvm::make_unique<DumpOutputStyle>(File);
+  InputFile IF = ExitOnErr(InputFile::open(Path));
 
+  auto O = llvm::make_unique<DumpOutputStyle>(IF);
   ExitOnErr(O->dump());
 }
 
@@ -1095,27 +1101,28 @@ int main(int argc_, const char *argv_[]) {
 
   if (opts::DumpSubcommand) {
     if (opts::dump::RawAll) {
-      opts::dump::DumpLines = true;
-      opts::dump::DumpInlineeLines = true;
-      opts::dump::DumpXme = true;
-      opts::dump::DumpXmi = true;
-      opts::dump::DumpIds = true;
       opts::dump::DumpGlobals = true;
+      opts::dump::DumpInlineeLines = true;
+      opts::dump::DumpIds = true;
+      opts::dump::DumpIdExtras = true;
+      opts::dump::DumpLines = true;
+      opts::dump::DumpModules = true;
+      opts::dump::DumpModuleFiles = true;
       opts::dump::DumpPublics = true;
       opts::dump::DumpSectionContribs = true;
+      opts::dump::DumpSectionHeaders = true;
       opts::dump::DumpSectionMap = true;
       opts::dump::DumpStreams = true;
       opts::dump::DumpStreamBlocks = true;
       opts::dump::DumpStringTable = true;
-      opts::dump::DumpSectionHeaders = true;
       opts::dump::DumpSummary = true;
       opts::dump::DumpSymbols = true;
-      opts::dump::DumpIds = true;
-      opts::dump::DumpIdExtras = true;
+      opts::dump::DumpSymbolStats = true;
       opts::dump::DumpTypes = true;
       opts::dump::DumpTypeExtras = true;
-      opts::dump::DumpModules = true;
-      opts::dump::DumpModuleFiles = true;
+      opts::dump::DumpUdtStats = true;
+      opts::dump::DumpXme = true;
+      opts::dump::DumpXmi = true;
     }
   }
   if (opts::PdbToYamlSubcommand) {
