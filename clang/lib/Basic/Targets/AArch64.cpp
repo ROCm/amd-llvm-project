@@ -90,8 +90,7 @@ bool AArch64TargetInfo::setABI(const std::string &Name) {
 
 bool AArch64TargetInfo::isValidCPUName(StringRef Name) const {
   return Name == "generic" ||
-         llvm::AArch64::parseCPUArch(Name) !=
-             static_cast<unsigned>(llvm::AArch64::ArchKind::AK_INVALID);
+         llvm::AArch64::parseCPUArch(Name) != llvm::AArch64::ArchKind::INVALID;
 }
 
 bool AArch64TargetInfo::setCPU(const std::string &Name) {
@@ -120,8 +119,10 @@ void AArch64TargetInfo::getTargetDefines(const LangOptions &Opts,
     Builder.defineMacro("__ELF__");
 
   // Target properties.
-  Builder.defineMacro("_LP64");
-  Builder.defineMacro("__LP64__");
+  if (!getTriple().isOSWindows()) {
+    Builder.defineMacro("_LP64");
+    Builder.defineMacro("__LP64__");
+  }
 
   // ACLE predefines. Many can only have one possible value on v8 AArch64.
   Builder.defineMacro("__ARM_ACLE", "200");
@@ -178,10 +179,10 @@ void AArch64TargetInfo::getTargetDefines(const LangOptions &Opts,
   switch (ArchKind) {
   default:
     break;
-  case llvm::AArch64::ArchKind::AK_ARMV8_1A:
+  case llvm::AArch64::ArchKind::ARMV8_1A:
     getTargetDefinesARMV81A(Opts, Builder);
     break;
-  case llvm::AArch64::ArchKind::AK_ARMV8_2A:
+  case llvm::AArch64::ArchKind::ARMV8_2A:
     getTargetDefinesARMV82A(Opts, Builder);
     break;
   }
@@ -211,7 +212,7 @@ bool AArch64TargetInfo::handleTargetFeatures(std::vector<std::string> &Features,
   Crypto = 0;
   Unaligned = 1;
   HasFullFP16 = 0;
-  ArchKind = llvm::AArch64::ArchKind::AK_ARMV8A;
+  ArchKind = llvm::AArch64::ArchKind::ARMV8A;
 
   for (const auto &Feature : Features) {
     if (Feature == "+neon")
@@ -225,9 +226,9 @@ bool AArch64TargetInfo::handleTargetFeatures(std::vector<std::string> &Features,
     if (Feature == "+strict-align")
       Unaligned = 0;
     if (Feature == "+v8.1a")
-      ArchKind = llvm::AArch64::ArchKind::AK_ARMV8_1A;
+      ArchKind = llvm::AArch64::ArchKind::ARMV8_1A;
     if (Feature == "+v8.2a")
-      ArchKind = llvm::AArch64::ArchKind::AK_ARMV8_2A;
+      ArchKind = llvm::AArch64::ArchKind::ARMV8_2A;
     if (Feature == "+fullfp16")
       HasFullFP16 = 1;
   }
@@ -413,8 +414,8 @@ void AArch64beTargetInfo::setDataLayout() {
   resetDataLayout("E-m:e-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128");
 }
 
-MicrosoftARM64TargetInfo::MicrosoftARM64TargetInfo(const llvm::Triple &Triple,
-                                                   const TargetOptions &Opts)
+WindowsARM64TargetInfo::WindowsARM64TargetInfo(const llvm::Triple &Triple,
+                                               const TargetOptions &Opts)
     : WindowsTargetInfo<AArch64leTargetInfo>(Triple, Opts), Triple(Triple) {
 
   // This is an LLP64 platform.
@@ -430,12 +431,38 @@ MicrosoftARM64TargetInfo::MicrosoftARM64TargetInfo(const llvm::Triple &Triple,
   SizeType = UnsignedLongLong;
   PtrDiffType = SignedLongLong;
   IntPtrType = SignedLongLong;
-
-  TheCXXABI.set(TargetCXXABI::Microsoft);
 }
 
-void MicrosoftARM64TargetInfo::setDataLayout() {
+void WindowsARM64TargetInfo::setDataLayout() {
   resetDataLayout("e-m:w-p:64:64-i32:32-i64:64-i128:128-n32:64-S128");
+}
+
+TargetInfo::BuiltinVaListKind
+WindowsARM64TargetInfo::getBuiltinVaListKind() const {
+  return TargetInfo::CharPtrBuiltinVaList;
+}
+
+TargetInfo::CallingConvCheckResult
+WindowsARM64TargetInfo::checkCallingConvention(CallingConv CC) const {
+  switch (CC) {
+  case CC_X86StdCall:
+  case CC_X86ThisCall:
+  case CC_X86FastCall:
+  case CC_X86VectorCall:
+    return CCCR_Ignore;
+  case CC_C:
+  case CC_OpenCLKernel:
+  case CC_Win64:
+    return CCCR_OK;
+  default:
+    return CCCR_Warning;
+  }
+}
+
+MicrosoftARM64TargetInfo::MicrosoftARM64TargetInfo(const llvm::Triple &Triple,
+                                                   const TargetOptions &Opts)
+    : WindowsARM64TargetInfo(Triple, Opts) {
+  TheCXXABI.set(TargetCXXABI::Microsoft);
 }
 
 void MicrosoftARM64TargetInfo::getVisualStudioDefines(
@@ -452,10 +479,22 @@ void MicrosoftARM64TargetInfo::getTargetDefines(const LangOptions &Opts,
   getVisualStudioDefines(Opts, Builder);
 }
 
-TargetInfo::BuiltinVaListKind
-MicrosoftARM64TargetInfo::getBuiltinVaListKind() const {
-  return TargetInfo::CharPtrBuiltinVaList;
+MinGWARM64TargetInfo::MinGWARM64TargetInfo(const llvm::Triple &Triple,
+                                           const TargetOptions &Opts)
+    : WindowsARM64TargetInfo(Triple, Opts) {
+  TheCXXABI.set(TargetCXXABI::GenericAArch64);
 }
+
+void MinGWARM64TargetInfo::getTargetDefines(const LangOptions &Opts,
+                                            MacroBuilder &Builder) const {
+  WindowsTargetInfo::getTargetDefines(Opts, Builder);
+  Builder.defineMacro("_WIN32", "1");
+  Builder.defineMacro("_WIN64", "1");
+  Builder.defineMacro("WIN32", "1");
+  Builder.defineMacro("WIN64", "1");
+  addMinGWDefines(Opts, Builder);
+}
+
 
 DarwinAArch64TargetInfo::DarwinAArch64TargetInfo(const llvm::Triple &Triple,
                                                  const TargetOptions &Opts)

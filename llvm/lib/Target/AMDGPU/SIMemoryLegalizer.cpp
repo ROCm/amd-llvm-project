@@ -1,4 +1,4 @@
-//===--- SIMemoryLegalizer.cpp ----------------------------------*- C++ -*-===//
+//===- SIMemoryLegalizer.cpp ----------------------------------------------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -11,17 +11,33 @@
 /// \brief Memory legalizer - implements memory model. More information can be
 /// found here:
 ///   http://llvm.org/docs/AMDGPUUsage.html#memory-model
-///
 //
 //===----------------------------------------------------------------------===//
 
 #include "AMDGPU.h"
 #include "AMDGPUMachineModuleInfo.h"
 #include "AMDGPUSubtarget.h"
+#include "SIDefines.h"
+#include "SIInstrInfo.h"
 #include "Utils/AMDGPUBaseInfo.h"
+#include "llvm/ADT/None.h"
+#include "llvm/ADT/Optional.h"
+#include "llvm/CodeGen/MachineBasicBlock.h"
+#include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
+#include "llvm/CodeGen/MachineMemOperand.h"
+#include "llvm/CodeGen/MachineModuleInfo.h"
+#include "llvm/CodeGen/MachineOperand.h"
+#include "llvm/IR/DebugLoc.h"
 #include "llvm/IR/DiagnosticInfo.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/MC/MCInstrDesc.h"
+#include "llvm/Pass.h"
+#include "llvm/Support/AtomicOrdering.h"
+#include <cassert>
+#include <list>
 
 using namespace llvm;
 using namespace llvm::AMDGPU;
@@ -33,21 +49,21 @@ namespace {
 
 class SIMemoryLegalizer final : public MachineFunctionPass {
 private:
-  struct AtomicInfo final {
+  struct MemOpInfo final {
     SyncScope::ID SSID = SyncScope::System;
     AtomicOrdering Ordering = AtomicOrdering::SequentiallyConsistent;
     AtomicOrdering FailureOrdering = AtomicOrdering::SequentiallyConsistent;
 
-    AtomicInfo() {}
+    MemOpInfo() = default;
 
-    AtomicInfo(SyncScope::ID SSID,
-               AtomicOrdering Ordering,
-               AtomicOrdering FailureOrdering)
+    MemOpInfo(SyncScope::ID SSID,
+              AtomicOrdering Ordering,
+              AtomicOrdering FailureOrdering)
         : SSID(SSID),
           Ordering(Ordering),
           FailureOrdering(FailureOrdering) {}
 
-    AtomicInfo(const MachineMemOperand *MMO)
+    MemOpInfo(const MachineMemOperand *MMO)
         : SSID(MMO->getSyncScopeID()),
           Ordering(MMO->getOrdering()),
           FailureOrdering(MMO->getFailureOrdering()) {}
@@ -55,13 +71,16 @@ private:
 
   /// \brief LLVM context.
   LLVMContext *CTX = nullptr;
+
   /// \brief Machine module info.
   const AMDGPUMachineModuleInfo *MMI = nullptr;
+
   /// \brief Instruction info.
   const SIInstrInfo *TII = nullptr;
 
   /// \brief Immediate for "vmcnt(0)".
   unsigned Vmcnt0Immediate = 0;
+
   /// \brief Opcode for cache invalidation instruction (L1).
   unsigned Wbinvl1Opcode = 0;
 
@@ -89,53 +108,46 @@ private:
   /// context.
   void reportUnknownSynchScope(const MachineBasicBlock::iterator &MI);
 
+  /// \returns Load info if \p MI is a load operation, "None" otherwise.
+  Optional<MemOpInfo> getLoadInfo(const MachineBasicBlock::iterator &MI) const;
+  /// \returns Store info if \p MI is a store operation, "None" otherwise.
+  Optional<MemOpInfo> getStoreInfo(const MachineBasicBlock::iterator &MI) const;
   /// \returns Atomic fence info if \p MI is an atomic fence operation,
   /// "None" otherwise.
-  Optional<AtomicInfo> getAtomicFenceInfo(
-      const MachineBasicBlock::iterator &MI) const;
-  /// \returns Atomic load info if \p MI is an atomic load operation,
-  /// "None" otherwise.
-  Optional<AtomicInfo> getAtomicLoadInfo(
-      const MachineBasicBlock::iterator &MI) const;
-  /// \returns Atomic store info if \p MI is an atomic store operation,
-  /// "None" otherwise.
-  Optional<AtomicInfo> getAtomicStoreInfo(
+  Optional<MemOpInfo> getAtomicFenceInfo(
       const MachineBasicBlock::iterator &MI) const;
   /// \returns Atomic cmpxchg info if \p MI is an atomic cmpxchg operation,
   /// "None" otherwise.
-  Optional<AtomicInfo> getAtomicCmpxchgInfo(
+  Optional<MemOpInfo> getAtomicCmpxchgInfo(
       const MachineBasicBlock::iterator &MI) const;
   /// \returns Atomic rmw info if \p MI is an atomic rmw operation,
   /// "None" otherwise.
-  Optional<AtomicInfo> getAtomicRmwInfo(
+  Optional<MemOpInfo> getAtomicRmwInfo(
       const MachineBasicBlock::iterator &MI) const;
 
+  /// \brief Expands load operation \p MI. Returns true if instructions are
+  /// added/deleted or \p MI is modified, false otherwise.
+  bool expandLoad(const MemOpInfo &MOI, MachineBasicBlock::iterator &MI);
+  /// \brief Expands store operation \p MI. Returns true if instructions are
+  /// added/deleted or \p MI is modified, false otherwise.
+  bool expandStore(const MemOpInfo &MOI, MachineBasicBlock::iterator &MI);
   /// \brief Expands atomic fence operation \p MI. Returns true if
   /// instructions are added/deleted or \p MI is modified, false otherwise.
-  bool expandAtomicFence(const AtomicInfo &AI,
-                         MachineBasicBlock::iterator &MI);
-  /// \brief Expands atomic load operation \p MI. Returns true if
-  /// instructions are added/deleted or \p MI is modified, false otherwise.
-  bool expandAtomicLoad(const AtomicInfo &AI,
-                        MachineBasicBlock::iterator &MI);
-  /// \brief Expands atomic store operation \p MI. Returns true if
-  /// instructions are added/deleted or \p MI is modified, false otherwise.
-  bool expandAtomicStore(const AtomicInfo &AI,
+  bool expandAtomicFence(const MemOpInfo &MOI,
                          MachineBasicBlock::iterator &MI);
   /// \brief Expands atomic cmpxchg operation \p MI. Returns true if
   /// instructions are added/deleted or \p MI is modified, false otherwise.
-  bool expandAtomicCmpxchg(const AtomicInfo &AI,
+  bool expandAtomicCmpxchg(const MemOpInfo &MOI,
                            MachineBasicBlock::iterator &MI);
   /// \brief Expands atomic rmw operation \p MI. Returns true if
   /// instructions are added/deleted or \p MI is modified, false otherwise.
-  bool expandAtomicRmw(const AtomicInfo &AI,
+  bool expandAtomicRmw(const MemOpInfo &MOI,
                        MachineBasicBlock::iterator &MI);
 
 public:
   static char ID;
 
-  SIMemoryLegalizer()
-      : MachineFunctionPass(ID) {}
+  SIMemoryLegalizer() : MachineFunctionPass(ID) {}
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.setPreservesCFG();
@@ -214,7 +226,39 @@ void SIMemoryLegalizer::reportUnknownSynchScope(
   CTX->diagnose(Diag);
 }
 
-Optional<SIMemoryLegalizer::AtomicInfo> SIMemoryLegalizer::getAtomicFenceInfo(
+Optional<SIMemoryLegalizer::MemOpInfo> SIMemoryLegalizer::getLoadInfo(
+    const MachineBasicBlock::iterator &MI) const {
+  assert(MI->getDesc().TSFlags & SIInstrFlags::maybeAtomic);
+
+  if (!(MI->mayLoad() && !MI->mayStore()))
+    return None;
+  if (!MI->hasOneMemOperand())
+    return MemOpInfo();
+
+  const MachineMemOperand *MMO = *MI->memoperands_begin();
+  if (!MMO->isAtomic())
+    return None;
+
+  return MemOpInfo(MMO);
+}
+
+Optional<SIMemoryLegalizer::MemOpInfo> SIMemoryLegalizer::getStoreInfo(
+    const MachineBasicBlock::iterator &MI) const {
+  assert(MI->getDesc().TSFlags & SIInstrFlags::maybeAtomic);
+
+  if (!(!MI->mayLoad() && MI->mayStore()))
+    return None;
+  if (!MI->hasOneMemOperand())
+    return MemOpInfo();
+
+  const MachineMemOperand *MMO = *MI->memoperands_begin();
+  if (!MMO->isAtomic())
+    return None;
+
+  return MemOpInfo(MMO);
+}
+
+Optional<SIMemoryLegalizer::MemOpInfo> SIMemoryLegalizer::getAtomicFenceInfo(
     const MachineBasicBlock::iterator &MI) const {
   assert(MI->getDesc().TSFlags & SIInstrFlags::maybeAtomic);
 
@@ -225,49 +269,17 @@ Optional<SIMemoryLegalizer::AtomicInfo> SIMemoryLegalizer::getAtomicFenceInfo(
       static_cast<SyncScope::ID>(MI->getOperand(1).getImm());
   AtomicOrdering Ordering =
       static_cast<AtomicOrdering>(MI->getOperand(0).getImm());
-  return AtomicInfo(SSID, Ordering, AtomicOrdering::NotAtomic);
+  return MemOpInfo(SSID, Ordering, AtomicOrdering::NotAtomic);
 }
 
-Optional<SIMemoryLegalizer::AtomicInfo> SIMemoryLegalizer::getAtomicLoadInfo(
-    const MachineBasicBlock::iterator &MI) const {
-  assert(MI->getDesc().TSFlags & SIInstrFlags::maybeAtomic);
-
-  if (!(MI->mayLoad() && !MI->mayStore()))
-    return None;
-  if (!MI->hasOneMemOperand())
-    return AtomicInfo();
-
-  const MachineMemOperand *MMO = *MI->memoperands_begin();
-  if (!MMO->isAtomic())
-    return None;
-
-  return AtomicInfo(MMO);
-}
-
-Optional<SIMemoryLegalizer::AtomicInfo> SIMemoryLegalizer::getAtomicStoreInfo(
-    const MachineBasicBlock::iterator &MI) const {
-  assert(MI->getDesc().TSFlags & SIInstrFlags::maybeAtomic);
-
-  if (!(!MI->mayLoad() && MI->mayStore()))
-    return None;
-  if (!MI->hasOneMemOperand())
-    return AtomicInfo();
-
-  const MachineMemOperand *MMO = *MI->memoperands_begin();
-  if (!MMO->isAtomic())
-    return None;
-
-  return AtomicInfo(MMO);
-}
-
-Optional<SIMemoryLegalizer::AtomicInfo> SIMemoryLegalizer::getAtomicCmpxchgInfo(
+Optional<SIMemoryLegalizer::MemOpInfo> SIMemoryLegalizer::getAtomicCmpxchgInfo(
     const MachineBasicBlock::iterator &MI) const {
   assert(MI->getDesc().TSFlags & SIInstrFlags::maybeAtomic);
 
   if (!(MI->mayLoad() && MI->mayStore()))
     return None;
   if (!MI->hasOneMemOperand())
-    return AtomicInfo();
+    return MemOpInfo();
 
   const MachineMemOperand *MMO = *MI->memoperands_begin();
   if (!MMO->isAtomic())
@@ -275,17 +287,17 @@ Optional<SIMemoryLegalizer::AtomicInfo> SIMemoryLegalizer::getAtomicCmpxchgInfo(
   if (MMO->getFailureOrdering() == AtomicOrdering::NotAtomic)
     return None;
 
-  return AtomicInfo(MMO);
+  return MemOpInfo(MMO);
 }
 
-Optional<SIMemoryLegalizer::AtomicInfo> SIMemoryLegalizer::getAtomicRmwInfo(
+Optional<SIMemoryLegalizer::MemOpInfo> SIMemoryLegalizer::getAtomicRmwInfo(
     const MachineBasicBlock::iterator &MI) const {
   assert(MI->getDesc().TSFlags & SIInstrFlags::maybeAtomic);
 
   if (!(MI->mayLoad() && MI->mayStore()))
     return None;
   if (!MI->hasOneMemOperand())
-    return AtomicInfo();
+    return MemOpInfo();
 
   const MachineMemOperand *MMO = *MI->memoperands_begin();
   if (!MMO->isAtomic())
@@ -293,32 +305,85 @@ Optional<SIMemoryLegalizer::AtomicInfo> SIMemoryLegalizer::getAtomicRmwInfo(
   if (MMO->getFailureOrdering() != AtomicOrdering::NotAtomic)
     return None;
 
-  return AtomicInfo(MMO);
+  return MemOpInfo(MMO);
 }
 
-bool SIMemoryLegalizer::expandAtomicFence(const AtomicInfo &AI,
+bool SIMemoryLegalizer::expandLoad(const MemOpInfo &MOI,
+                                   MachineBasicBlock::iterator &MI) {
+  assert(MI->mayLoad() && !MI->mayStore());
+
+  bool Changed = false;
+  if (MOI.SSID == SyncScope::System ||
+      MOI.SSID == MMI->getAgentSSID()) {
+    if (MOI.Ordering == AtomicOrdering::Acquire ||
+        MOI.Ordering == AtomicOrdering::SequentiallyConsistent)
+      Changed |= setGLC(MI);
+
+    if (MOI.Ordering == AtomicOrdering::SequentiallyConsistent)
+      Changed |= insertWaitcntVmcnt0(MI);
+
+    if (MOI.Ordering == AtomicOrdering::Acquire ||
+        MOI.Ordering == AtomicOrdering::SequentiallyConsistent) {
+      Changed |= insertWaitcntVmcnt0(MI, false);
+      Changed |= insertBufferWbinvl1Vol(MI, false);
+    }
+
+    return Changed;
+  } else if (MOI.SSID == SyncScope::SingleThread ||
+             MOI.SSID == MMI->getWorkgroupSSID() ||
+             MOI.SSID == MMI->getWavefrontSSID()) {
+    return Changed;
+  } else {
+    reportUnknownSynchScope(MI);
+    return Changed;
+  }
+}
+
+bool SIMemoryLegalizer::expandStore(const MemOpInfo &MOI,
+                                    MachineBasicBlock::iterator &MI) {
+  assert(!MI->mayLoad() && MI->mayStore());
+
+  bool Changed = false;
+  if (MOI.SSID == SyncScope::System ||
+      MOI.SSID == MMI->getAgentSSID()) {
+    if (MOI.Ordering == AtomicOrdering::Release ||
+        MOI.Ordering == AtomicOrdering::SequentiallyConsistent)
+      Changed |= insertWaitcntVmcnt0(MI);
+
+    return Changed;
+  } else if (MOI.SSID == SyncScope::SingleThread ||
+             MOI.SSID == MMI->getWorkgroupSSID() ||
+             MOI.SSID == MMI->getWavefrontSSID()) {
+    return Changed;
+  } else {
+    reportUnknownSynchScope(MI);
+    return Changed;
+  }
+}
+
+bool SIMemoryLegalizer::expandAtomicFence(const MemOpInfo &MOI,
                                           MachineBasicBlock::iterator &MI) {
   assert(MI->getOpcode() == AMDGPU::ATOMIC_FENCE);
 
   bool Changed = false;
-  if (AI.SSID == SyncScope::System ||
-      AI.SSID == MMI->getAgentSSID()) {
-    if (AI.Ordering == AtomicOrdering::Acquire ||
-        AI.Ordering == AtomicOrdering::Release ||
-        AI.Ordering == AtomicOrdering::AcquireRelease ||
-        AI.Ordering == AtomicOrdering::SequentiallyConsistent)
+  if (MOI.SSID == SyncScope::System ||
+      MOI.SSID == MMI->getAgentSSID()) {
+    if (MOI.Ordering == AtomicOrdering::Acquire ||
+        MOI.Ordering == AtomicOrdering::Release ||
+        MOI.Ordering == AtomicOrdering::AcquireRelease ||
+        MOI.Ordering == AtomicOrdering::SequentiallyConsistent)
       Changed |= insertWaitcntVmcnt0(MI);
 
-    if (AI.Ordering == AtomicOrdering::Acquire ||
-        AI.Ordering == AtomicOrdering::AcquireRelease ||
-        AI.Ordering == AtomicOrdering::SequentiallyConsistent)
+    if (MOI.Ordering == AtomicOrdering::Acquire ||
+        MOI.Ordering == AtomicOrdering::AcquireRelease ||
+        MOI.Ordering == AtomicOrdering::SequentiallyConsistent)
       Changed |= insertBufferWbinvl1Vol(MI);
 
     AtomicPseudoMIs.push_back(MI);
     return Changed;
-  } else if (AI.SSID == SyncScope::SingleThread ||
-             AI.SSID == MMI->getWorkgroupSSID() ||
-             AI.SSID == MMI->getWavefrontSSID()) {
+  } else if (MOI.SSID == SyncScope::SingleThread ||
+             MOI.SSID == MMI->getWorkgroupSSID() ||
+             MOI.SSID == MMI->getWavefrontSSID()) {
     AtomicPseudoMIs.push_back(MI);
     return Changed;
   } else {
@@ -327,85 +392,32 @@ bool SIMemoryLegalizer::expandAtomicFence(const AtomicInfo &AI,
   }
 }
 
-bool SIMemoryLegalizer::expandAtomicLoad(const AtomicInfo &AI,
-                                         MachineBasicBlock::iterator &MI) {
-  assert(MI->mayLoad() && !MI->mayStore());
-
-  bool Changed = false;
-  if (AI.SSID == SyncScope::System ||
-      AI.SSID == MMI->getAgentSSID()) {
-    if (AI.Ordering == AtomicOrdering::Acquire ||
-        AI.Ordering == AtomicOrdering::SequentiallyConsistent)
-      Changed |= setGLC(MI);
-
-    if (AI.Ordering == AtomicOrdering::SequentiallyConsistent)
-      Changed |= insertWaitcntVmcnt0(MI);
-
-    if (AI.Ordering == AtomicOrdering::Acquire ||
-        AI.Ordering == AtomicOrdering::SequentiallyConsistent) {
-      Changed |= insertWaitcntVmcnt0(MI, false);
-      Changed |= insertBufferWbinvl1Vol(MI, false);
-    }
-
-    return Changed;
-  } else if (AI.SSID == SyncScope::SingleThread ||
-             AI.SSID == MMI->getWorkgroupSSID() ||
-             AI.SSID == MMI->getWavefrontSSID()) {
-    return Changed;
-  } else {
-    reportUnknownSynchScope(MI);
-    return Changed;
-  }
-}
-
-bool SIMemoryLegalizer::expandAtomicStore(const AtomicInfo &AI,
-                                          MachineBasicBlock::iterator &MI) {
-  assert(!MI->mayLoad() && MI->mayStore());
-
-  bool Changed = false;
-  if (AI.SSID == SyncScope::System ||
-      AI.SSID == MMI->getAgentSSID()) {
-    if (AI.Ordering == AtomicOrdering::Release ||
-        AI.Ordering == AtomicOrdering::SequentiallyConsistent)
-      Changed |= insertWaitcntVmcnt0(MI);
-
-    return Changed;
-  } else if (AI.SSID == SyncScope::SingleThread ||
-             AI.SSID == MMI->getWorkgroupSSID() ||
-             AI.SSID == MMI->getWavefrontSSID()) {
-    return Changed;
-  } else {
-    reportUnknownSynchScope(MI);
-    return Changed;
-  }
-}
-
-bool SIMemoryLegalizer::expandAtomicCmpxchg(const AtomicInfo &AI,
+bool SIMemoryLegalizer::expandAtomicCmpxchg(const MemOpInfo &MOI,
                                             MachineBasicBlock::iterator &MI) {
   assert(MI->mayLoad() && MI->mayStore());
 
   bool Changed = false;
-  if (AI.SSID == SyncScope::System ||
-      AI.SSID == MMI->getAgentSSID()) {
-    if (AI.Ordering == AtomicOrdering::Release ||
-        AI.Ordering == AtomicOrdering::AcquireRelease ||
-        AI.Ordering == AtomicOrdering::SequentiallyConsistent ||
-        AI.FailureOrdering == AtomicOrdering::SequentiallyConsistent)
+  if (MOI.SSID == SyncScope::System ||
+      MOI.SSID == MMI->getAgentSSID()) {
+    if (MOI.Ordering == AtomicOrdering::Release ||
+        MOI.Ordering == AtomicOrdering::AcquireRelease ||
+        MOI.Ordering == AtomicOrdering::SequentiallyConsistent ||
+        MOI.FailureOrdering == AtomicOrdering::SequentiallyConsistent)
       Changed |= insertWaitcntVmcnt0(MI);
 
-    if (AI.Ordering == AtomicOrdering::Acquire ||
-        AI.Ordering == AtomicOrdering::AcquireRelease ||
-        AI.Ordering == AtomicOrdering::SequentiallyConsistent ||
-        AI.FailureOrdering == AtomicOrdering::Acquire ||
-        AI.FailureOrdering == AtomicOrdering::SequentiallyConsistent) {
+    if (MOI.Ordering == AtomicOrdering::Acquire ||
+        MOI.Ordering == AtomicOrdering::AcquireRelease ||
+        MOI.Ordering == AtomicOrdering::SequentiallyConsistent ||
+        MOI.FailureOrdering == AtomicOrdering::Acquire ||
+        MOI.FailureOrdering == AtomicOrdering::SequentiallyConsistent) {
       Changed |= insertWaitcntVmcnt0(MI, false);
       Changed |= insertBufferWbinvl1Vol(MI, false);
     }
 
     return Changed;
-  } else if (AI.SSID == SyncScope::SingleThread ||
-             AI.SSID == MMI->getWorkgroupSSID() ||
-             AI.SSID == MMI->getWavefrontSSID()) {
+  } else if (MOI.SSID == SyncScope::SingleThread ||
+             MOI.SSID == MMI->getWorkgroupSSID() ||
+             MOI.SSID == MMI->getWavefrontSSID()) {
     Changed |= setGLC(MI);
     return Changed;
   } else {
@@ -414,29 +426,29 @@ bool SIMemoryLegalizer::expandAtomicCmpxchg(const AtomicInfo &AI,
   }
 }
 
-bool SIMemoryLegalizer::expandAtomicRmw(const AtomicInfo &AI,
+bool SIMemoryLegalizer::expandAtomicRmw(const MemOpInfo &MOI,
                                         MachineBasicBlock::iterator &MI) {
   assert(MI->mayLoad() && MI->mayStore());
 
   bool Changed = false;
-  if (AI.SSID == SyncScope::System ||
-      AI.SSID == MMI->getAgentSSID()) {
-    if (AI.Ordering == AtomicOrdering::Release ||
-        AI.Ordering == AtomicOrdering::AcquireRelease ||
-        AI.Ordering == AtomicOrdering::SequentiallyConsistent)
+  if (MOI.SSID == SyncScope::System ||
+      MOI.SSID == MMI->getAgentSSID()) {
+    if (MOI.Ordering == AtomicOrdering::Release ||
+        MOI.Ordering == AtomicOrdering::AcquireRelease ||
+        MOI.Ordering == AtomicOrdering::SequentiallyConsistent)
       Changed |= insertWaitcntVmcnt0(MI);
 
-    if (AI.Ordering == AtomicOrdering::Acquire ||
-        AI.Ordering == AtomicOrdering::AcquireRelease ||
-        AI.Ordering == AtomicOrdering::SequentiallyConsistent) {
+    if (MOI.Ordering == AtomicOrdering::Acquire ||
+        MOI.Ordering == AtomicOrdering::AcquireRelease ||
+        MOI.Ordering == AtomicOrdering::SequentiallyConsistent) {
       Changed |= insertWaitcntVmcnt0(MI, false);
       Changed |= insertBufferWbinvl1Vol(MI, false);
     }
 
     return Changed;
-  } else if (AI.SSID == SyncScope::SingleThread ||
-             AI.SSID == MMI->getWorkgroupSSID() ||
-             AI.SSID == MMI->getWavefrontSSID()) {
+  } else if (MOI.SSID == SyncScope::SingleThread ||
+             MOI.SSID == MMI->getWorkgroupSSID() ||
+             MOI.SSID == MMI->getWavefrontSSID()) {
     Changed |= setGLC(MI);
     return Changed;
   } else {
@@ -464,16 +476,16 @@ bool SIMemoryLegalizer::runOnMachineFunction(MachineFunction &MF) {
       if (!(MI->getDesc().TSFlags & SIInstrFlags::maybeAtomic))
         continue;
 
-      if (const auto &AI = getAtomicFenceInfo(MI))
-        Changed |= expandAtomicFence(AI.getValue(), MI);
-      else if (const auto &AI = getAtomicLoadInfo(MI))
-        Changed |= expandAtomicLoad(AI.getValue(), MI);
-      else if (const auto &AI = getAtomicStoreInfo(MI))
-        Changed |= expandAtomicStore(AI.getValue(), MI);
-      else if (const auto &AI = getAtomicCmpxchgInfo(MI))
-        Changed |= expandAtomicCmpxchg(AI.getValue(), MI);
-      else if (const auto &AI = getAtomicRmwInfo(MI))
-        Changed |= expandAtomicRmw(AI.getValue(), MI);
+      if (const auto &MOI = getLoadInfo(MI))
+        Changed |= expandLoad(MOI.getValue(), MI);
+      else if (const auto &MOI = getStoreInfo(MI))
+        Changed |= expandStore(MOI.getValue(), MI);
+      else if (const auto &MOI = getAtomicFenceInfo(MI))
+        Changed |= expandAtomicFence(MOI.getValue(), MI);
+      else if (const auto &MOI = getAtomicCmpxchgInfo(MI))
+        Changed |= expandAtomicCmpxchg(MOI.getValue(), MI);
+      else if (const auto &MOI = getAtomicRmwInfo(MI))
+        Changed |= expandAtomicRmw(MOI.getValue(), MI);
     }
   }
 

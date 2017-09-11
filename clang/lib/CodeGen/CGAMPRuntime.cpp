@@ -50,32 +50,9 @@ static CXXMethodDecl *findValidIndexType(QualType IndexTy) {
 /// Invoke constructor of index
 /// Invoke constructor of the class
 /// Invoke operator(index)
-namespace
-{
-    inline
-    void addFunctorAttrToTrampoline(
-        const CXXMethodDecl* callOp, FunctionDecl* trampoline)
-    {
-        // TODO: this is an awful hack which should be removed once we move to pfe_v2.
-        if (callOp->hasAttr<AMDGPUFlatWorkGroupSizeAttr>()) {
-            trampoline->addAttr(callOp->getAttr<AMDGPUFlatWorkGroupSizeAttr>());
-        }
-        if (callOp->hasAttr<AMDGPUWavesPerEUAttr>()) {
-          trampoline->addAttr(callOp->getAttr<AMDGPUWavesPerEUAttr>());
-        }
-    }
-}
 void CGAMPRuntime::EmitTrampolineBody(CodeGenFunction &CGF,
   const FunctionDecl *Trampoline, FunctionArgList& Args) {
   const CXXRecordDecl *ClassDecl = dyn_cast<CXXMethodDecl>(Trampoline)->getParent();
-
-  for (auto&& x : ClassDecl->methods()) {
-    if (x->getOverloadedOperator() == OO_Call) {
-      addFunctorAttrToTrampoline(x, const_cast<FunctionDecl*>(Trampoline));
-      break;
-    }
-  }
-
   assert(ClassDecl);
   // Allocate "this"
   Address ai = CGF.CreateMemTemp(QualType(ClassDecl->getTypeForDecl(),0));

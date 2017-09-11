@@ -596,6 +596,10 @@ void OMPClauseProfiler::VisitOMPInReductionClause(
     if (E)
       Profiler->VisitStmt(E);
   }
+  for (auto *E : C->taskgroup_descriptors()) {
+    if (E)
+      Profiler->VisitStmt(E);
+  }
 }
 void OMPClauseProfiler::VisitOMPLinearClause(const OMPLinearClause *C) {
   VisitOMPClauseList(C);
@@ -1697,6 +1701,7 @@ void StmtProfiler::VisitCXXUnresolvedConstructExpr(
     const CXXUnresolvedConstructExpr *S) {
   VisitExpr(S);
   VisitType(S->getTypeAsWritten());
+  ID.AddInteger(S->isListInitialization());
 }
 
 void StmtProfiler::VisitCXXDependentScopeMemberExpr(

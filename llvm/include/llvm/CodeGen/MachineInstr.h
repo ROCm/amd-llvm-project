@@ -379,6 +379,9 @@ public:
     return NumMemRefs == 1;
   }
 
+  /// Return the number of memory operands.
+  unsigned getNumMemOperands() const { return NumMemRefs; }
+
   /// API for querying MachineInstr properties. They are the same as MCInstrDesc
   /// queries but they are bundle aware.
 
@@ -789,7 +792,10 @@ public:
       && getOperand(1).isImm();
   }
 
-  bool isPHI() const { return getOpcode() == TargetOpcode::PHI; }
+  bool isPHI() const {
+    return getOpcode() == TargetOpcode::PHI ||
+           getOpcode() == TargetOpcode::G_PHI;
+  }
   bool isKill() const { return getOpcode() == TargetOpcode::KILL; }
   bool isImplicitDef() const { return getOpcode()==TargetOpcode::IMPLICIT_DEF; }
   bool isInlineAsm() const { return getOpcode() == TargetOpcode::INLINEASM; }
@@ -866,6 +872,7 @@ public:
       return isMetaInstruction();
     // Copy-like instructions are usually eliminated during register allocation.
     case TargetOpcode::PHI:
+    case TargetOpcode::G_PHI:
     case TargetOpcode::COPY:
     case TargetOpcode::INSERT_SUBREG:
     case TargetOpcode::SUBREG_TO_REG:

@@ -490,6 +490,13 @@ let IntrProperties = [IntrInaccessibleMemOnly] in {
                                                       llvm_metadata_ty,
                                                       llvm_metadata_ty ]>;
 
+  def int_experimental_constrained_fma : Intrinsic<[ llvm_anyfloat_ty ],
+                                                    [ LLVMMatchType<0>,
+                                                      LLVMMatchType<0>,
+                                                      LLVMMatchType<0>,
+                                                      llvm_metadata_ty,
+                                                      llvm_metadata_ty ]>;
+
   // These intrinsics are sensitive to the rounding mode so we need constrained
   // versions of each of them.  When strict rounding and exception control are
   // not required the non-constrained versions of these intrinsics should be
@@ -579,7 +586,7 @@ let IntrProperties = [IntrNoMem, IntrSpeculatable] in {
                                        llvm_metadata_ty,
                                        llvm_metadata_ty]>;
   def int_dbg_value        : Intrinsic<[],
-                                       [llvm_metadata_ty, llvm_i64_ty,
+                                       [llvm_metadata_ty,
                                         llvm_metadata_ty,
                                         llvm_metadata_ty]>;
 }

@@ -908,7 +908,8 @@ bool LoopInterchangeLegality::currentLimitations() {
 
   bool FoundInduction = false;
   for (const Instruction &I : reverse(*InnerLoopLatch)) {
-    if (isa<BranchInst>(I) || isa<CmpInst>(I) || isa<TruncInst>(I))
+    if (isa<BranchInst>(I) || isa<CmpInst>(I) || isa<TruncInst>(I) ||
+        isa<ZExtInst>(I))
       continue;
 
     // We found an instruction. If this is not induction variable then it is not
@@ -957,6 +958,18 @@ bool LoopInterchangeLegality::canInterchangeLoops(unsigned InnerLoopId,
               << "Cannot interchange loops due to dependences.");
     return false;
   }
+
+  // Check if outer and inner loop contain legal instructions only.
+  for (auto *BB : OuterLoop->blocks())
+    for (Instruction &I : *BB)
+      if (CallInst *CI = dyn_cast<CallInst>(&I)) {
+        // readnone functions do not prevent interchanging.
+        if (CI->doesNotReadMemory())
+          continue;
+        DEBUG(dbgs() << "Loops with call instructions cannot be interchanged "
+                     << "safely.");
+        return false;
+      }
 
   // Create unique Preheaders if we already do not have one.
   BasicBlock *OuterLoopPreHeader = OuterLoop->getLoopPreheader();

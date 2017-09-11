@@ -73,7 +73,7 @@ template <class ELFT>
 static std::string getLocation(InputSectionBase &S, const SymbolBody &Sym,
                                uint64_t Off) {
   std::string Msg =
-      "\n>>> defined in " + toString(Sym.File) + "\n>>> referenced by ";
+      "\n>>> defined in " + toString(Sym.getFile()) + "\n>>> referenced by ";
   std::string Src = S.getSrcMsg<ELFT>(Off);
   if (!Src.empty())
     Msg += Src + "\n>>>               ";
@@ -149,7 +149,7 @@ static unsigned handleARMTlsRelocation(uint32_t Type, SymbolBody &Body,
                                        InputSectionBase &C, uint64_t Offset,
                                        int64_t Addend, RelExpr Expr) {
   // The Dynamic TLS Module Index Relocation for a symbol defined in an
-  // executable is always 1. If the target Symbol is not preemtible then
+  // executable is always 1. If the target Symbol is not preemptible then
   // we know the offset into the TLS block at static link time.
   bool NeedDynId = Body.isPreemptible() || Config->Shared;
   bool NeedDynOff = Body.isPreemptible();
@@ -434,7 +434,7 @@ template <class ELFT> static bool isReadOnly(SharedSymbol *SS) {
   uint64_t Value = SS->getValue<ELFT>();
 
   // Determine if the symbol is read-only by scanning the DSO's program headers.
-  auto *File = cast<SharedFile<ELFT>>(SS->File);
+  const SharedFile<ELFT> *File = SS->getFile<ELFT>();
   for (const Elf_Phdr &Phdr : check(File->getObj().program_headers()))
     if ((Phdr.p_type == ELF::PT_LOAD || Phdr.p_type == ELF::PT_GNU_RELRO) &&
         !(Phdr.p_flags & ELF::PF_W) && Value >= Phdr.p_vaddr &&
@@ -452,16 +452,16 @@ template <class ELFT>
 static std::vector<SharedSymbol *> getSymbolsAt(SharedSymbol *SS) {
   typedef typename ELFT::Sym Elf_Sym;
 
-  auto *File = cast<SharedFile<ELFT>>(SS->File);
+  SharedFile<ELFT> *File = SS->getFile<ELFT>();
   uint64_t Shndx = SS->getShndx<ELFT>();
   uint64_t Value = SS->getValue<ELFT>();
 
   std::vector<SharedSymbol *> Ret;
-  for (const Elf_Sym &S : File->getGlobalSymbols()) {
+  for (const Elf_Sym &S : File->getGlobalELFSyms()) {
     if (S.st_shndx != Shndx || S.st_value != Value)
       continue;
     StringRef Name = check(S.getName(File->getStringTable()));
-    SymbolBody *Sym = Symtab<ELFT>::X->find(Name);
+    SymbolBody *Sym = Symtab->find(Name);
     if (auto *Alias = dyn_cast_or_null<SharedSymbol>(Sym))
       Ret.push_back(Alias);
   }
@@ -526,8 +526,8 @@ template <class ELFT> static void addCopyRelSymbol(SharedSymbol *SS) {
   // dynamic symbol for each one. This causes the copy relocation to correctly
   // interpose any aliases.
   for (SharedSymbol *Sym : getSymbolsAt<ELFT>(SS)) {
-    Sym->NeedsCopy = true;
     Sym->CopyRelSec = Sec;
+    Sym->IsPreemptible = false;
     Sym->CopyRelSecOff = Off;
     Sym->symbol()->IsUsedInRegularObj = true;
   }
@@ -566,7 +566,8 @@ static RelExpr adjustExpr(SymbolBody &Body, RelExpr Expr, uint32_t Type,
     error("can't create dynamic relocation " + toString(Type) + " against " +
           (Body.getName().empty() ? "local symbol"
                                   : "symbol: " + toString(Body)) +
-          " in readonly segment" + getLocation<ELFT>(S, Body, RelOff));
+          " in readonly segment; recompile object files with -fPIC" +
+          getLocation<ELFT>(S, Body, RelOff));
     return Expr;
   }
 
@@ -579,7 +580,7 @@ static RelExpr adjustExpr(SymbolBody &Body, RelExpr Expr, uint32_t Type,
   if (Body.isObject()) {
     // Produce a copy relocation.
     auto *B = cast<SharedSymbol>(&Body);
-    if (!B->NeedsCopy) {
+    if (!B->CopyRelSec) {
       if (Config->ZNocopyreloc)
         error("unresolvable relocation " + toString(Type) +
               " against symbol '" + toString(*B) +
@@ -613,11 +614,12 @@ static RelExpr adjustExpr(SymbolBody &Body, RelExpr Expr, uint32_t Type,
     // plt. That is identified by special relocation types (R_X86_64_JUMP_SLOT,
     // R_386_JMP_SLOT, etc).
     Body.NeedsPltAddr = true;
+    Body.IsPreemptible = false;
     return toPlt(Expr);
   }
 
   errorOrWarn("symbol '" + toString(Body) + "' defined in " +
-              toString(Body.File) + " has no type");
+              toString(Body.getFile()) + " has no type");
   return Expr;
 }
 
@@ -668,10 +670,7 @@ static int64_t computeMipsAddend(const RelTy &Rel, InputSectionBase &Sec,
     if (RI->getSymbol(Config->IsMips64EL) != SymIndex)
       continue;
 
-    endianness E = Config->Endianness;
-    int32_t Hi = (read32(Buf + Rel.r_offset, E) & 0xffff) << 16;
-    int32_t Lo = SignExtend32<16>(read32(Buf + RI->r_offset, E));
-    return Hi + Lo;
+    return Target->getImplicitAddend(Buf + RI->r_offset, PairTy);
   }
 
   warn("can't find matching " + toString(PairTy) + " relocation for " +
@@ -845,8 +844,8 @@ static void scanRelocs(InputSectionBase &Sec, ArrayRef<RelTy> Rels) {
     if (!Body.isLocal() && Body.isUndefined() && !Body.symbol()->isWeak())
       reportUndefined<ELFT>(Body, Sec, Rel.r_offset);
 
-    RelExpr Expr =
-        Target->getRelExpr(Type, Body, Sec.Data.begin() + Rel.r_offset);
+    RelExpr Expr = Target->getRelExpr(Type, Body, *Sec.File,
+                                      Sec.Data.begin() + Rel.r_offset);
 
     // Ignore "hint" relocations because they are only markers for relaxation.
     if (isRelExprOneOf<R_HINT, R_NONE>(Expr))
@@ -1006,7 +1005,7 @@ void ThunkCreator::mergeThunks() {
   }
 }
 
-static uint32_t findEndOfFirstNonExec(OutputSectionCommand &Cmd) {
+static uint32_t findEndOfFirstNonExec(OutputSection &Cmd) {
   for (BaseCommand *Base : Cmd.Commands)
     if (auto *ISD = dyn_cast<InputSectionDescription>(Base))
       for (auto *IS : ISD->Sections)
@@ -1015,11 +1014,11 @@ static uint32_t findEndOfFirstNonExec(OutputSectionCommand &Cmd) {
   return 0;
 }
 
-ThunkSection *ThunkCreator::getOSThunkSec(OutputSectionCommand *Cmd,
+ThunkSection *ThunkCreator::getOSThunkSec(OutputSection *Cmd,
                                           std::vector<InputSection *> *ISR) {
   if (CurTS == nullptr) {
     uint32_t Off = findEndOfFirstNonExec(*Cmd);
-    CurTS = addThunkSection(Cmd->Sec, ISR, Off);
+    CurTS = addThunkSection(Cmd, ISR, Off);
   }
   return CurTS;
 }
@@ -1028,10 +1027,9 @@ ThunkSection *ThunkCreator::getISThunkSec(InputSection *IS, OutputSection *OS) {
   ThunkSection *TS = ThunkedSections.lookup(IS);
   if (TS)
     return TS;
-  auto *TOS = IS->getParent();
 
   // Find InputSectionRange within TOS that IS is in
-  OutputSectionCommand *C = Script->getCmd(TOS);
+  OutputSection *C = IS->getParent();
   std::vector<InputSection *> *Range = nullptr;
   for (BaseCommand *BC : C->Commands)
     if (auto *ISD = dyn_cast<InputSectionDescription>(BC)) {
@@ -1043,15 +1041,15 @@ ThunkSection *ThunkCreator::getISThunkSec(InputSection *IS, OutputSection *OS) {
         break;
       }
     }
-  TS = addThunkSection(TOS, Range, IS->OutSecOff);
+  TS = addThunkSection(C, Range, IS->OutSecOff);
   ThunkedSections[IS] = TS;
   return TS;
 }
 
-ThunkSection *ThunkCreator::addThunkSection(OutputSection *OS,
+ThunkSection *ThunkCreator::addThunkSection(OutputSection *Cmd,
                                             std::vector<InputSection *> *ISR,
                                             uint64_t Off) {
-  auto *TS = make<ThunkSection>(OS, Off);
+  auto *TS = make<ThunkSection>(Cmd, Off);
   ThunkSections[ISR].push_back(TS);
   return TS;
 }
@@ -1074,19 +1072,18 @@ std::pair<Thunk *, bool> ThunkCreator::getThunk(SymbolBody &Body,
 // Call Fn on every executable InputSection accessed via the linker script
 // InputSectionDescription::Sections.
 void ThunkCreator::forEachExecInputSection(
-    ArrayRef<OutputSectionCommand *> OutputSections,
-    std::function<void(OutputSectionCommand *, std::vector<InputSection *> *,
+    ArrayRef<OutputSection *> OutputSections,
+    std::function<void(OutputSection *, std::vector<InputSection *> *,
                        InputSection *)>
         Fn) {
-  for (OutputSectionCommand *Cmd : OutputSections) {
-    OutputSection *OS = Cmd->Sec;
+  for (OutputSection *OS : OutputSections) {
     if (!(OS->Flags & SHF_ALLOC) || !(OS->Flags & SHF_EXECINSTR))
       continue;
-    for (BaseCommand *BC : Cmd->Commands)
+    for (BaseCommand *BC : OS->Commands)
       if (auto *ISD = dyn_cast<InputSectionDescription>(BC)) {
         CurTS = nullptr;
         for (InputSection *IS : ISD->Sections)
-          Fn(Cmd, &ISD->Sections, IS);
+          Fn(OS, &ISD->Sections, IS);
       }
   }
 }
@@ -1101,8 +1098,7 @@ void ThunkCreator::forEachExecInputSection(
 //
 // FIXME: All Thunks are assumed to be in range of the relocation. Range
 // extension Thunks are not yet supported.
-bool ThunkCreator::createThunks(
-    ArrayRef<OutputSectionCommand *> OutputSections) {
+bool ThunkCreator::createThunks(ArrayRef<OutputSection *> OutputSections) {
   if (Pass > 0)
     ThunkSections.clear();
 
@@ -1112,7 +1108,7 @@ bool ThunkCreator::createThunks(
   // We separate the creation of ThunkSections from the insertion of the
   // ThunkSections back into the OutputSection as ThunkSections are not always
   // inserted into the same OutputSection as the caller.
-  forEachExecInputSection(OutputSections, [&](OutputSectionCommand *Cmd,
+  forEachExecInputSection(OutputSections, [&](OutputSection *Cmd,
                                               std::vector<InputSection *> *ISR,
                                               InputSection *IS) {
     for (Relocation &Rel : IS->Relocations) {
@@ -1127,7 +1123,7 @@ bool ThunkCreator::createThunks(
         // Find or create a ThunkSection for the new Thunk
         ThunkSection *TS;
         if (auto *TIS = T->getTargetInputSection())
-          TS = getISThunkSec(TIS, Cmd->Sec);
+          TS = getISThunkSec(TIS, Cmd);
         else
           TS = getOSThunkSec(Cmd, ISR);
         TS->addThunk(T);

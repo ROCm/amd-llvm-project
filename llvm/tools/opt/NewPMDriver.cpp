@@ -18,6 +18,7 @@
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/CGSCCPassManager.h"
 #include "llvm/Bitcode/BitcodeWriterPass.h"
+#include "llvm/Config/config.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRPrintingPasses.h"
 #include "llvm/IR/LLVMContext.h"
@@ -94,6 +95,9 @@ static cl::opt<PGOKind> PGOKindFlag(
                           "Use sampled profile to guide PGO.")));
 static cl::opt<std::string> ProfileFile(
     "profile-file", cl::desc("Path to the profile."), cl::Hidden);
+static cl::opt<bool> DebugInfoForProfiling(
+    "new-pm-debug-info-for-profiling", cl::init(false), cl::Hidden,
+    cl::desc("Emit special debug info to enable PGO profile generation."));
 /// @}}
 
 template <typename PassManagerT>
@@ -157,9 +161,16 @@ static void registerEPCallbacks(PassBuilder &PB, bool VerifyEachPass,
     });
 }
 
+#ifdef LINK_POLLY_INTO_TOOLS
+namespace polly {
+void RegisterPollyPasses(PassBuilder &);
+}
+#endif
+
 bool llvm::runPassPipeline(StringRef Arg0, Module &M, TargetMachine *TM,
                            tool_output_file *Out,
                            tool_output_file *ThinLTOLinkOut,
+                           tool_output_file *OptRemarkFile,
                            StringRef PassPipeline, OutputKind OK,
                            VerifierKind VK,
                            bool ShouldPreserveAssemblyUseListOrder,
@@ -179,10 +190,17 @@ bool llvm::runPassPipeline(StringRef Arg0, Module &M, TargetMachine *TM,
       P = PGOOptions("", "", ProfileFile, false);
       break;
     case NoPGO:
-      P = None;      
+      if (DebugInfoForProfiling)
+        P = PGOOptions("", "", "", false, true);
+      else
+        P = None;
   }
   PassBuilder PB(TM, P);
   registerEPCallbacks(PB, VerifyEachPass, DebugPM);
+
+#ifdef LINK_POLLY_INTO_TOOLS
+  polly::RegisterPollyPasses(PB);
+#endif
 
   // Specially handle the alias analysis manager so that we can register
   // a custom pipeline of AA passes with it.
@@ -249,5 +267,9 @@ bool llvm::runPassPipeline(StringRef Arg0, Module &M, TargetMachine *TM,
     if (OK == OK_OutputThinLTOBitcode && ThinLTOLinkOut)
       ThinLTOLinkOut->keep();
   }
+
+  if (OptRemarkFile)
+    OptRemarkFile->keep();
+
   return true;
 }

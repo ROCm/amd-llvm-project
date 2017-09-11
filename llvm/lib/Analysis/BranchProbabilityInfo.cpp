@@ -44,6 +44,15 @@ using namespace llvm;
 
 #define DEBUG_TYPE "branch-prob"
 
+static cl::opt<bool> PrintBranchProb(
+    "print-bpi", cl::init(false), cl::Hidden,
+    cl::desc("Print the branch probability info."));
+
+cl::opt<std::string> PrintBranchProbFuncName(
+    "print-bpi-func-name", cl::Hidden,
+    cl::desc("The option to specify the name of the function "
+             "whose branch probability info is printed."));
+
 INITIALIZE_PASS_BEGIN(BranchProbabilityInfoWrapperPass, "branch-prob",
                       "Branch Probability Analysis", false, true)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
@@ -237,7 +246,7 @@ bool BranchProbabilityInfo::calcUnreachableHeuristics(const BasicBlock *BB) {
 bool BranchProbabilityInfo::calcMetadataWeights(const BasicBlock *BB) {
   const TerminatorInst *TI = BB->getTerminator();
   assert(TI->getNumSuccessors() > 1 && "expected more than one successor!");
-  if (!isa<BranchInst>(TI) && !isa<SwitchInst>(TI))
+  if (!(isa<BranchInst>(TI) || isa<SwitchInst>(TI) || isa<IndirectBrInst>(TI)))
     return false;
 
   MDNode *WeightsNode = TI->getMetadata(LLVMContext::MD_prof);
@@ -496,7 +505,7 @@ bool BranchProbabilityInfo::calcZeroHeuristics(const BasicBlock *BB,
   if (Instruction *LHS = dyn_cast<Instruction>(CI->getOperand(0)))
     if (LHS->getOpcode() == Instruction::And)
       if (ConstantInt *AndRHS = dyn_cast<ConstantInt>(LHS->getOperand(1)))
-        if (AndRHS->getUniqueInteger().isPowerOf2())
+        if (AndRHS->getValue().isPowerOf2())
           return false;
 
   // Check if the LHS is the return value of a library function
@@ -790,6 +799,12 @@ void BranchProbabilityInfo::calculate(const Function &F, const LoopInfo &LI,
 
   PostDominatedByUnreachable.clear();
   PostDominatedByColdCall.clear();
+
+  if (PrintBranchProb &&
+      (PrintBranchProbFuncName.empty() ||
+       F.getName().equals(PrintBranchProbFuncName))) {
+    print(dbgs());
+  }
 }
 
 void BranchProbabilityInfoWrapperPass::getAnalysisUsage(

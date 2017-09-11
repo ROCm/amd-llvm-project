@@ -43,6 +43,10 @@ using llvm::support::ulittle32_t;
 namespace lld {
 namespace coff {
 
+std::vector<ObjFile *> ObjFile::Instances;
+std::vector<ImportFile *> ImportFile::Instances;
+std::vector<BitcodeFile *> BitcodeFile::Instances;
+
 /// Checks that Source is compatible with being a weak alias to Target.
 /// If Source is Undefined and has no weak alias set, makes it a weak
 /// alias to Target.
@@ -79,7 +83,26 @@ void ArchiveFile::addMember(const Archive::Symbol *Sym) {
   Driver->enqueueArchiveMember(C, Sym->getName(), getName());
 }
 
-void ObjectFile::parse() {
+std::vector<MemoryBufferRef> getArchiveMembers(Archive *File) {
+  std::vector<MemoryBufferRef> V;
+  Error Err = Error::success();
+  for (const ErrorOr<Archive::Child> &COrErr : File->children(Err)) {
+    Archive::Child C =
+        check(COrErr,
+              File->getFileName() + ": could not get the child of the archive");
+    MemoryBufferRef MBRef =
+        check(C.getMemoryBufferRef(),
+              File->getFileName() +
+                  ": could not get the buffer for a child of the archive");
+    V.push_back(MBRef);
+  }
+  if (Err)
+    fatal(File->getFileName() +
+          ": Archive::children failed: " + toString(std::move(Err)));
+  return V;
+}
+
+void ObjFile::parse() {
   // Parse a memory buffer as a COFF file.
   std::unique_ptr<Binary> Bin = check(createBinary(MB), toString(this));
 
@@ -96,7 +119,7 @@ void ObjectFile::parse() {
   initializeSEH();
 }
 
-void ObjectFile::initializeChunks() {
+void ObjFile::initializeChunks() {
   uint32_t NumSections = COFFObj->getNumberOfSections();
   Chunks.reserve(NumSections);
   SparseChunks.resize(NumSections + 1);
@@ -147,7 +170,7 @@ void ObjectFile::initializeChunks() {
   }
 }
 
-void ObjectFile::initializeSymbols() {
+void ObjFile::initializeSymbols() {
   uint32_t NumSymbols = COFFObj->getNumberOfSymbols();
   SymbolBodies.reserve(NumSymbols);
   SparseSymbolBodies.resize(NumSymbols);
@@ -193,14 +216,14 @@ void ObjectFile::initializeSymbols() {
   }
 }
 
-SymbolBody *ObjectFile::createUndefined(COFFSymbolRef Sym) {
+SymbolBody *ObjFile::createUndefined(COFFSymbolRef Sym) {
   StringRef Name;
   COFFObj->getSymbolName(Sym, Name);
   return Symtab->addUndefined(Name, this, Sym.isWeakExternal())->body();
 }
 
-SymbolBody *ObjectFile::createDefined(COFFSymbolRef Sym, const void *AuxP,
-                                      bool IsFirst) {
+SymbolBody *ObjFile::createDefined(COFFSymbolRef Sym, const void *AuxP,
+                                   bool IsFirst) {
   StringRef Name;
   if (Sym.isCommon()) {
     auto *C = make<CommonChunk>(Sym);
@@ -273,7 +296,7 @@ SymbolBody *ObjectFile::createDefined(COFFSymbolRef Sym, const void *AuxP,
   return B;
 }
 
-void ObjectFile::initializeSEH() {
+void ObjFile::initializeSEH() {
   if (!SEHCompat || !SXData)
     return;
   ArrayRef<uint8_t> A;
@@ -286,7 +309,7 @@ void ObjectFile::initializeSEH() {
     SEHandlers.insert(SparseSymbolBodies[*I]);
 }
 
-MachineTypes ObjectFile::getMachineType() {
+MachineTypes ObjFile::getMachineType() {
   if (COFFObj)
     return static_cast<MachineTypes>(COFFObj->getMachine());
   return IMAGE_FILE_MACHINE_UNKNOWN;
@@ -332,19 +355,16 @@ void ImportFile::parse() {
   this->Hdr = Hdr;
   ExternalName = ExtName;
 
-  ImpSym = cast<DefinedImportData>(
-      Symtab->addImportData(ImpName, this)->body());
+  ImpSym = Symtab->addImportData(ImpName, this);
+
   if (Hdr->getType() == llvm::COFF::IMPORT_CONST)
-    ConstSym =
-        cast<DefinedImportData>(Symtab->addImportData(Name, this)->body());
+    static_cast<void>(Symtab->addImportData(Name, this));
 
   // If type is function, we need to create a thunk which jump to an
   // address pointed by the __imp_ symbol. (This allows you to call
   // DLL functions just like regular non-DLL functions.)
-  if (Hdr->getType() != llvm::COFF::IMPORT_CODE)
-    return;
-  ThunkSym = cast<DefinedImportThunk>(
-      Symtab->addImportThunk(Name, ImpSym, Hdr->Machine)->body());
+  if (Hdr->getType() == llvm::COFF::IMPORT_CODE)
+    ThunkSym = Symtab->addImportThunk(Name, ImpSym, Hdr->Machine);
 }
 
 void BitcodeFile::parse() {

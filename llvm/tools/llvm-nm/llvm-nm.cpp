@@ -709,9 +709,13 @@ static void sortAndPrintSymbolList(SymbolicFile &Obj, bool printName,
     } else if (OutputFormat == bsd && MultipleFiles && printName) {
       outs() << "\n" << CurrentFilename << ":\n";
     } else if (OutputFormat == sysv) {
-      outs() << "\n\nSymbols from " << CurrentFilename << ":\n\n"
-             << "Name                  Value   Class        Type"
-             << "         Size   Line  Section\n";
+      outs() << "\n\nSymbols from " << CurrentFilename << ":\n\n";
+      if (isSymbolList64Bit(Obj))
+        outs() << "Name                  Value           Class        Type"
+               << "         Size             Line  Section\n";
+      else
+        outs() << "Name                  Value   Class        Type"
+               << "         Size     Line  Section\n";
     }
   }
 
@@ -1227,8 +1231,7 @@ dumpSymbolNamesFromObject(SymbolicFile &Obj, bool printName,
         HFlags & MachO::MH_NLIST_OUTOFSYNC_WITH_DYLDINFO) {
       unsigned ExportsAdded = 0;
       Error Err = Error::success();
-      for (const llvm::object::ExportEntry &Entry : MachO->exports(Err,
-                                                                   MachO)) {
+      for (const llvm::object::ExportEntry &Entry : MachO->exports(Err)) {
         bool found = false;
         bool ReExport = false;
         if (!DyldInfoOnly) {

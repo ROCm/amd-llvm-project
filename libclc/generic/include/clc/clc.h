@@ -8,6 +8,10 @@
 #pragma OPENCL EXTENSION cl_khr_fp64 : enable
 #endif
 
+#ifdef cl_khr_fp16
+#pragma OPENCL EXTENSION cl_khr_fp16 : enable
+#endif
+
 /* Function Attributes */
 #include <clc/clcfunc.h>
 
@@ -21,7 +25,7 @@
 #include <clc/as_type.h>
 
 /* 6.9 Preprocessor Directives and Macros */
-#include <clc/clcversion.h>
+#include <clc/clcmacros.h>
 
 /* 6.11.1 Work-Item Functions */
 #include <clc/workitem/get_global_size.h>
@@ -179,6 +183,9 @@
 #include <clc/synchronization/cl_mem_fence_flags.h>
 #include <clc/synchronization/barrier.h>
 
+/* 6.11.9 Explicit Memory Fence Functions */
+#include <clc/explicit_fence/explicit_memory_fence.h>
+
 /* 6.11.10 Async Copy and Prefetch Functions */
 #include <clc/async/async_work_group_copy.h>
 #include <clc/async/async_work_group_strided_copy.h>
@@ -229,6 +236,10 @@
 #include <clc/cl_khr_local_int32_extended_atomics/atom_xor.h>
 
 /* 6.11.13 Image Read and Write Functions */
+
+/* 6.12.12 Miscellaneous Vector Functions */
+#include <clc/misc/shuffle.h>
+#include <clc/misc/shuffle2.h>
 
 #include <clc/image/image_defines.h>
 #include <clc/image/image.h>

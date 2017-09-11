@@ -625,13 +625,22 @@ public:
   MachineInstr *CreateMachineInstr(const MCInstrDesc &MCID, const DebugLoc &DL,
                                    bool NoImp = false);
 
-  /// CloneMachineInstr - Create a new MachineInstr which is a copy of the
-  /// 'Orig' instruction, identical in all ways except the instruction
-  /// has no parent, prev, or next.
+  /// Create a new MachineInstr which is a copy of \p Orig, identical in all
+  /// ways except the instruction has no parent, prev, or next. Bundling flags
+  /// are reset.
   ///
-  /// See also TargetInstrInfo::duplicate() for target-specific fixes to cloned
-  /// instructions.
+  /// Note: Clones a single instruction, not whole instruction bundles.
+  /// Does not perform target specific adjustments; consider using
+  /// TargetInstrInfo::duplicate() instead.
   MachineInstr *CloneMachineInstr(const MachineInstr *Orig);
+
+  /// Clones instruction or the whole instruction bundle \p Orig and insert
+  /// into \p MBB before \p InsertBefore.
+  ///
+  /// Note: Does not perform target specific adjustments; consider using
+  /// TargetInstrInfo::duplicate() intead.
+  MachineInstr &CloneMachineInstrBundle(MachineBasicBlock &MBB,
+      MachineBasicBlock::iterator InsertBefore, const MachineInstr &Orig);
 
   /// DeleteMachineInstr - Delete the given MachineInstr.
   void DeleteMachineInstr(MachineInstr *MI);
@@ -660,6 +669,12 @@ public:
   /// explicitly deallocated.
   MachineMemOperand *getMachineMemOperand(const MachineMemOperand *MMO,
                                           int64_t Offset, uint64_t Size);
+
+  /// Allocate a new MachineMemOperand by copying an existing one,
+  /// replacing only AliasAnalysis information. MachineMemOperands are owned
+  /// by the MachineFunction and need not be explicitly deallocated.
+  MachineMemOperand *getMachineMemOperand(const MachineMemOperand *MMO,
+                                          const AAMDNodes &AAInfo);
 
   using OperandCapacity = ArrayRecycler<MachineOperand>::Capacity;
 

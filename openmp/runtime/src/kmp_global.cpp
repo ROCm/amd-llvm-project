@@ -135,6 +135,8 @@ int __kmp_avail_proc = 0;
 size_t __kmp_sys_min_stksize = KMP_MIN_STKSIZE;
 int __kmp_sys_max_nth = KMP_MAX_NTH;
 int __kmp_max_nth = 0;
+int __kmp_cg_max_nth = 0;
+int __kmp_teams_max_nth = 0;
 int __kmp_threads_capacity = 0;
 int __kmp_dflt_team_nth = 0;
 int __kmp_dflt_team_nth_ub = 0;
@@ -499,13 +501,6 @@ kmp_lock_t __kmp_debug_lock; /* Control I/O access for KMP_DEBUG */
    by Steve R., and will be available soon. */
 int __kmp_handle_signals = FALSE;
 #endif
-
-/* ----------------------------------------------- */
-#ifdef BUILD_TV
-kmp_key_t __kmp_tv_key = 0;
-#endif
-
-/* ------------------------------------------------------------------------ */
 
 #ifdef DEBUG_SUSPEND
 int get_suspend_count_(void) {
