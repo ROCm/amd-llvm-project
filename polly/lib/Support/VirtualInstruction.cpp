@@ -21,7 +21,12 @@ using namespace llvm;
 VirtualUse VirtualUse ::create(Scop *S, const Use &U, LoopInfo *LI,
                                bool Virtual) {
   auto *UserBB = getUseBlock(U);
-  auto *UserStmt = S->getStmtFor(UserBB);
+  Instruction *UI = dyn_cast<Instruction>(U.getUser());
+  ScopStmt *UserStmt = nullptr;
+  if (PHINode *PHI = dyn_cast<PHINode>(UI))
+    UserStmt = S->getLastStmtFor(PHI->getIncomingBlock(U));
+  else
+    UserStmt = S->getStmtFor(UI);
   auto *UserScope = LI->getLoopFor(UserBB);
   return create(S, UserStmt, UserScope, U.get(), Virtual);
 }
@@ -33,7 +38,7 @@ VirtualUse VirtualUse::create(Scop *S, ScopStmt *UserStmt, Loop *UserScope,
   if (isa<BasicBlock>(Val))
     return VirtualUse(UserStmt, Val, Block, nullptr, nullptr);
 
-  if (isa<llvm::Constant>(Val))
+  if (isa<llvm::Constant>(Val) || isa<MetadataAsValue>(Val))
     return VirtualUse(UserStmt, Val, Constant, nullptr, nullptr);
 
   // Is the value synthesizable? If the user has been pruned
@@ -73,7 +78,7 @@ VirtualUse VirtualUse::create(Scop *S, ScopStmt *UserStmt, Loop *UserScope,
   // A use is inter-statement if either it is defined in another statement, or
   // there is a MemoryAccess that reads its value that has been written by
   // another statement.
-  if (InputMA || (!Virtual && !UserStmt->represents(Inst->getParent())))
+  if (InputMA || (!Virtual && UserStmt != S->getStmtFor(Inst)))
     return VirtualUse(UserStmt, Val, Inter, nullptr, InputMA);
 
   return VirtualUse(UserStmt, Val, Intra, nullptr, nullptr);
@@ -163,35 +168,29 @@ static bool isRoot(const Instruction *Inst) {
   return false;
 }
 
-/// Return true if @p ComputingInst is used after SCoP @p S. It must not be
-/// removed in order for its value to be available after the SCoP.
-static bool isEscaping(Scop *S, Instruction *ComputingInst) {
-  for (Use &Use : ComputingInst->uses()) {
-    Instruction *User = cast<Instruction>(Use.getUser());
-    if (!S->contains(User))
-      return true;
-  }
-  return false;
-}
-
 /// Return true for MemoryAccesses that cannot be removed because it represents
 /// an llvm::Value that is used after the SCoP.
 static bool isEscaping(MemoryAccess *MA) {
   assert(MA->isOriginalValueKind());
-  return isEscaping(MA->getStatement()->getParent(),
-                    cast<Instruction>(MA->getAccessValue()));
+  Scop *S = MA->getStatement()->getParent();
+  return S->isEscaping(cast<Instruction>(MA->getAccessValue()));
 }
 
 /// Add non-removable virtual instructions in @p Stmt to @p RootInsts.
 static void
 addInstructionRoots(ScopStmt *Stmt,
                     SmallVectorImpl<VirtualInstruction> &RootInsts) {
-  // For region statements we must keep all instructions because we do not
-  // support removing instructions from region statements.
   if (!Stmt->isBlockStmt()) {
-    for (auto *BB : Stmt->getRegion()->blocks())
-      for (Instruction &Inst : *BB)
-        RootInsts.emplace_back(Stmt, &Inst);
+    // In region statements the terminator statement and all statements that
+    // are not in the entry block cannot be eliminated and consequently must
+    // be roots.
+    RootInsts.emplace_back(Stmt,
+                           Stmt->getRegion()->getEntry()->getTerminator());
+    for (BasicBlock *BB : Stmt->getRegion()->blocks())
+      if (Stmt->getRegion()->getEntry() != BB)
+        for (Instruction &Inst : *BB)
+          RootInsts.emplace_back(Stmt, &Inst);
+    return;
   }
 
   for (Instruction *Inst : Stmt->getInstructions())
@@ -365,7 +364,8 @@ static void walkReachable(Scop *S, LoopInfo *LI,
       continue;
 
     // Add all operands to the worklists.
-    if (PHINode *PHI = dyn_cast<PHINode>(Inst)) {
+    PHINode *PHI = dyn_cast<PHINode>(Inst);
+    if (PHI && PHI->getParent() == Stmt->getEntryBlock()) {
       if (MemoryAccess *PHIRead = Stmt->lookupPHIReadOf(PHI))
         WorklistAccs.push_back(PHIRead);
     } else {

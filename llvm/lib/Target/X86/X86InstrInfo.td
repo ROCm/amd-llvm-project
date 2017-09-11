@@ -844,6 +844,7 @@ def HasFMA       : Predicate<"Subtarget->hasFMA()">;
 def HasFMA4      : Predicate<"Subtarget->hasFMA4()">;
 def HasXOP       : Predicate<"Subtarget->hasXOP()">;
 def HasTBM       : Predicate<"Subtarget->hasTBM()">;
+def NoTBM        : Predicate<"!Subtarget->hasTBM()">;
 def HasLWP       : Predicate<"Subtarget->hasLWP()">;
 def HasMOVBE     : Predicate<"Subtarget->hasMOVBE()">;
 def HasRDRAND    : Predicate<"Subtarget->hasRDRAND()">;
@@ -853,6 +854,7 @@ def HasFSGSBase  : Predicate<"Subtarget->hasFSGSBase()">;
 def HasLZCNT     : Predicate<"Subtarget->hasLZCNT()">;
 def HasBMI       : Predicate<"Subtarget->hasBMI()">;
 def HasBMI2      : Predicate<"Subtarget->hasBMI2()">;
+def NoBMI2       : Predicate<"!Subtarget->hasBMI2()">;
 def HasVBMI      : Predicate<"Subtarget->hasVBMI()">,
                      AssemblerPredicate<"FeatureVBMI", "AVX-512 VBMI ISA">;
 def HasIFMA      : Predicate<"Subtarget->hasIFMA()">,
@@ -870,6 +872,7 @@ def FPStackf32   : Predicate<"!Subtarget->hasSSE1()">;
 def FPStackf64   : Predicate<"!Subtarget->hasSSE2()">;
 def HasMPX       : Predicate<"Subtarget->hasMPX()">;
 def HasCLFLUSHOPT : Predicate<"Subtarget->hasCLFLUSHOPT()">;
+def HasCLWB      : Predicate<"Subtarget->hasCLWB()">;
 def HasCmpxchg16b: Predicate<"Subtarget->hasCmpxchg16b()">;
 def Not64BitMode : Predicate<"!Subtarget->is64Bit()">,
                              AssemblerPredicate<"!Mode64Bit", "Not 64-bit mode">;
@@ -910,7 +913,7 @@ let RecomputePerFunction = 1 in {
 
 def FastBTMem    : Predicate<"!Subtarget->isBTMemSlow()">;
 def CallImmAddr  : Predicate<"Subtarget->isLegalToCallImmediateAddr()">;
-def FavorMemIndirectCall  : Predicate<"!Subtarget->callRegIndirect()">;
+def FavorMemIndirectCall  : Predicate<"!Subtarget->slowTwoMemOps()">;
 def NotSlowIncDec : Predicate<"!Subtarget->slowIncDec()">;
 def HasFastMem32 : Predicate<"!Subtarget->isUnalignedMem32Slow()">;
 def HasFastLZCNT : Predicate<"Subtarget->hasFastLZCNT()">;
@@ -1733,14 +1736,14 @@ def BT64mi8 : RIi8<0xBA, MRM4m, (outs), (ins i64mem:$src1, i64i8imm:$src2),
 } // SchedRW
 
 let hasSideEffects = 0 in {
-let SchedRW = [WriteALU] in {
-def BTC16rr : I<0xBB, MRMDestReg, (outs), (ins GR16:$src1, GR16:$src2),
+let SchedRW = [WriteALU], Constraints = "$src1 = $dst" in {
+def BTC16rr : I<0xBB, MRMDestReg, (outs GR16:$dst), (ins GR16:$src1, GR16:$src2),
                 "btc{w}\t{$src2, $src1|$src1, $src2}", [], IIC_BTX_RR>,
                 OpSize16, TB;
-def BTC32rr : I<0xBB, MRMDestReg, (outs), (ins GR32:$src1, GR32:$src2),
+def BTC32rr : I<0xBB, MRMDestReg, (outs GR32:$dst), (ins GR32:$src1, GR32:$src2),
                 "btc{l}\t{$src2, $src1|$src1, $src2}", [], IIC_BTX_RR>,
                 OpSize32, TB;
-def BTC64rr : RI<0xBB, MRMDestReg, (outs), (ins GR64:$src1, GR64:$src2),
+def BTC64rr : RI<0xBB, MRMDestReg, (outs GR64:$dst), (ins GR64:$src1, GR64:$src2),
                  "btc{q}\t{$src2, $src1|$src1, $src2}", [], IIC_BTX_RR>, TB;
 } // SchedRW
 
@@ -1755,14 +1758,14 @@ def BTC64mr : RI<0xBB, MRMDestMem, (outs), (ins i64mem:$src1, GR64:$src2),
                  "btc{q}\t{$src2, $src1|$src1, $src2}", [], IIC_BTX_MR>, TB;
 }
 
-let SchedRW = [WriteALU] in {
-def BTC16ri8 : Ii8<0xBA, MRM7r, (outs), (ins GR16:$src1, i16i8imm:$src2),
+let SchedRW = [WriteALU], Constraints = "$src1 = $dst" in {
+def BTC16ri8 : Ii8<0xBA, MRM7r, (outs GR16:$dst), (ins GR16:$src1, i16i8imm:$src2),
                     "btc{w}\t{$src2, $src1|$src1, $src2}", [], IIC_BTX_RI>,
                     OpSize16, TB;
-def BTC32ri8 : Ii8<0xBA, MRM7r, (outs), (ins GR32:$src1, i32i8imm:$src2),
+def BTC32ri8 : Ii8<0xBA, MRM7r, (outs GR32:$dst), (ins GR32:$src1, i32i8imm:$src2),
                     "btc{l}\t{$src2, $src1|$src1, $src2}", [], IIC_BTX_RI>,
                     OpSize32, TB;
-def BTC64ri8 : RIi8<0xBA, MRM7r, (outs), (ins GR64:$src1, i64i8imm:$src2),
+def BTC64ri8 : RIi8<0xBA, MRM7r, (outs GR64:$dst), (ins GR64:$src1, i64i8imm:$src2),
                     "btc{q}\t{$src2, $src1|$src1, $src2}", [], IIC_BTX_RI>, TB;
 } // SchedRW
 
@@ -1777,14 +1780,14 @@ def BTC64mi8 : RIi8<0xBA, MRM7m, (outs), (ins i64mem:$src1, i64i8imm:$src2),
                     "btc{q}\t{$src2, $src1|$src1, $src2}", [], IIC_BTX_MI>, TB;
 }
 
-let SchedRW = [WriteALU] in {
-def BTR16rr : I<0xB3, MRMDestReg, (outs), (ins GR16:$src1, GR16:$src2),
+let SchedRW = [WriteALU], Constraints = "$src1 = $dst" in {
+def BTR16rr : I<0xB3, MRMDestReg, (outs GR16:$dst), (ins GR16:$src1, GR16:$src2),
                 "btr{w}\t{$src2, $src1|$src1, $src2}", [], IIC_BTX_RR>,
                 OpSize16, TB;
-def BTR32rr : I<0xB3, MRMDestReg, (outs), (ins GR32:$src1, GR32:$src2),
+def BTR32rr : I<0xB3, MRMDestReg, (outs GR32:$dst), (ins GR32:$src1, GR32:$src2),
                 "btr{l}\t{$src2, $src1|$src1, $src2}", [], IIC_BTX_RR>,
                 OpSize32, TB;
-def BTR64rr : RI<0xB3, MRMDestReg, (outs), (ins GR64:$src1, GR64:$src2),
+def BTR64rr : RI<0xB3, MRMDestReg, (outs GR64:$dst), (ins GR64:$src1, GR64:$src2),
                  "btr{q}\t{$src2, $src1|$src1, $src2}", []>, TB;
 } // SchedRW
 
@@ -1799,14 +1802,14 @@ def BTR64mr : RI<0xB3, MRMDestMem, (outs), (ins i64mem:$src1, GR64:$src2),
                  "btr{q}\t{$src2, $src1|$src1, $src2}", [], IIC_BTX_MR>, TB;
 }
 
-let SchedRW = [WriteALU] in {
-def BTR16ri8 : Ii8<0xBA, MRM6r, (outs), (ins GR16:$src1, i16i8imm:$src2),
+let SchedRW = [WriteALU], Constraints = "$src1 = $dst" in {
+def BTR16ri8 : Ii8<0xBA, MRM6r, (outs GR16:$dst), (ins GR16:$src1, i16i8imm:$src2),
                     "btr{w}\t{$src2, $src1|$src1, $src2}", [], IIC_BTX_RI>,
                     OpSize16, TB;
-def BTR32ri8 : Ii8<0xBA, MRM6r, (outs), (ins GR32:$src1, i32i8imm:$src2),
+def BTR32ri8 : Ii8<0xBA, MRM6r, (outs GR32:$dst), (ins GR32:$src1, i32i8imm:$src2),
                     "btr{l}\t{$src2, $src1|$src1, $src2}", [], IIC_BTX_RI>,
                     OpSize32, TB;
-def BTR64ri8 : RIi8<0xBA, MRM6r, (outs), (ins GR64:$src1, i64i8imm:$src2),
+def BTR64ri8 : RIi8<0xBA, MRM6r, (outs GR64:$dst), (ins GR64:$src1, i64i8imm:$src2),
                     "btr{q}\t{$src2, $src1|$src1, $src2}", [], IIC_BTX_RI>, TB;
 } // SchedRW
 
@@ -1821,14 +1824,14 @@ def BTR64mi8 : RIi8<0xBA, MRM6m, (outs), (ins i64mem:$src1, i64i8imm:$src2),
                     "btr{q}\t{$src2, $src1|$src1, $src2}", [], IIC_BTX_MI>, TB;
 }
 
-let SchedRW = [WriteALU] in {
-def BTS16rr : I<0xAB, MRMDestReg, (outs), (ins GR16:$src1, GR16:$src2),
+let SchedRW = [WriteALU], Constraints = "$src1 = $dst" in {
+def BTS16rr : I<0xAB, MRMDestReg, (outs GR16:$dst), (ins GR16:$src1, GR16:$src2),
                 "bts{w}\t{$src2, $src1|$src1, $src2}", [], IIC_BTX_RR>,
                 OpSize16, TB;
-def BTS32rr : I<0xAB, MRMDestReg, (outs), (ins GR32:$src1, GR32:$src2),
+def BTS32rr : I<0xAB, MRMDestReg, (outs GR32:$dst), (ins GR32:$src1, GR32:$src2),
                 "bts{l}\t{$src2, $src1|$src1, $src2}", [], IIC_BTX_RR>,
               OpSize32, TB;
-def BTS64rr : RI<0xAB, MRMDestReg, (outs), (ins GR64:$src1, GR64:$src2),
+def BTS64rr : RI<0xAB, MRMDestReg, (outs GR64:$dst), (ins GR64:$src1, GR64:$src2),
                "bts{q}\t{$src2, $src1|$src1, $src2}", [], IIC_BTX_RR>, TB;
 } // SchedRW
 
@@ -1843,14 +1846,14 @@ def BTS64mr : RI<0xAB, MRMDestMem, (outs), (ins i64mem:$src1, GR64:$src2),
                  "bts{q}\t{$src2, $src1|$src1, $src2}", [], IIC_BTX_MR>, TB;
 }
 
-let SchedRW = [WriteALU] in {
-def BTS16ri8 : Ii8<0xBA, MRM5r, (outs), (ins GR16:$src1, i16i8imm:$src2),
+let SchedRW = [WriteALU], Constraints = "$src1 = $dst" in {
+def BTS16ri8 : Ii8<0xBA, MRM5r, (outs GR16:$dst), (ins GR16:$src1, i16i8imm:$src2),
                     "bts{w}\t{$src2, $src1|$src1, $src2}", [], IIC_BTX_RI>,
                     OpSize16, TB;
-def BTS32ri8 : Ii8<0xBA, MRM5r, (outs), (ins GR32:$src1, i32i8imm:$src2),
+def BTS32ri8 : Ii8<0xBA, MRM5r, (outs GR32:$dst), (ins GR32:$src1, i32i8imm:$src2),
                     "bts{l}\t{$src2, $src1|$src1, $src2}", [], IIC_BTX_RI>,
                     OpSize32, TB;
-def BTS64ri8 : RIi8<0xBA, MRM5r, (outs), (ins GR64:$src1, i64i8imm:$src2),
+def BTS64ri8 : RIi8<0xBA, MRM5r, (outs GR64:$dst), (ins GR64:$src1, i64i8imm:$src2),
                     "bts{q}\t{$src2, $src1|$src1, $src2}", [], IIC_BTX_RI>, TB;
 } // SchedRW
 
@@ -2352,16 +2355,40 @@ def CountTrailingOnes : SDNodeXForm<imm, [{
   return getI8Imm(countTrailingOnes(N->getZExtValue()), SDLoc(N));
 }]>;
 
-def BZHIMask : ImmLeaf<i64, [{
-  return isMask_64(Imm) && (countTrailingOnes<uint64_t>(Imm) > 32);
+def BEXTRMaskXForm : SDNodeXForm<imm, [{
+  unsigned Length = countTrailingOnes(N->getZExtValue());
+  return getI32Imm(Length << 8, SDLoc(N));
 }]>;
 
-let Predicates = [HasBMI2] in {
-  def : Pat<(and GR64:$src, BZHIMask:$mask),
+def AndMask64 : ImmLeaf<i64, [{
+  return isMask_64(Imm) && Imm > UINT32_MAX;
+}]>;
+
+// Use BEXTR for 64-bit 'and' with large immediate 'mask'.
+let Predicates = [HasBMI, NoBMI2, NoTBM] in {
+  def : Pat<(and GR64:$src, AndMask64:$mask),
+            (BEXTR64rr GR64:$src,
+              (SUBREG_TO_REG (i64 0),
+                             (MOV32ri (BEXTRMaskXForm imm:$mask)), sub_32bit))>;
+  def : Pat<(and (loadi64 addr:$src), AndMask64:$mask),
+            (BEXTR64rm addr:$src,
+              (SUBREG_TO_REG (i64 0),
+                             (MOV32ri (BEXTRMaskXForm imm:$mask)), sub_32bit))>;
+}
+
+// Use BZHI for 64-bit 'and' with large immediate 'mask'.
+let Predicates = [HasBMI2, NoTBM] in {
+  def : Pat<(and GR64:$src, AndMask64:$mask),
             (BZHI64rr GR64:$src,
               (INSERT_SUBREG (i64 (IMPLICIT_DEF)),
                              (MOV8ri (CountTrailingOnes imm:$mask)), sub_8bit))>;
+  def : Pat<(and (loadi64 addr:$src), AndMask64:$mask),
+            (BZHI64rm addr:$src,
+              (INSERT_SUBREG (i64 (IMPLICIT_DEF)),
+                             (MOV8ri (CountTrailingOnes imm:$mask)), sub_8bit))>;
+}
 
+let Predicates = [HasBMI2] in {
   def : Pat<(and GR32:$src, (add (shl 1, GR8:$lz), -1)),
             (BZHI32rr GR32:$src,
               (INSERT_SUBREG (i32 (IMPLICIT_DEF)), GR8:$lz, sub_8bit))>;
@@ -2506,6 +2533,15 @@ defm BLSIC   : tbm_binary_intr<0x01, "blsic", MRM6r, MRM6m>;
 defm T1MSKC  : tbm_binary_intr<0x01, "t1mskc", MRM7r, MRM7m>;
 defm TZMSK   : tbm_binary_intr<0x01, "tzmsk", MRM4r, MRM4m>;
 } // HasTBM, EFLAGS
+
+// Use BEXTRI for 64-bit 'and' with large immediate 'mask'.
+let Predicates = [HasTBM] in {
+  def : Pat<(and GR64:$src, AndMask64:$mask),
+            (BEXTRI64ri GR64:$src, (BEXTRMaskXForm imm:$mask))>;
+
+  def : Pat<(and (loadi64 addr:$src), AndMask64:$mask),
+            (BEXTRI64mi addr:$src, (BEXTRMaskXForm imm:$mask))>;
+}
 
 //===----------------------------------------------------------------------===//
 // Lightweight Profiling Instructions
@@ -2683,6 +2719,9 @@ let Predicates = [HasTBM] in {
 let Predicates = [HasCLFLUSHOPT] in
 def CLFLUSHOPT : I<0xAE, MRM7m, (outs), (ins i8mem:$src),
                    "clflushopt\t$src", [(int_x86_clflushopt addr:$src)]>, PD;
+
+// TODO: Add an instrincis for this.
+let Predicates = [HasCLWB] in
 def CLWB       : I<0xAE, MRM6m, (outs), (ins i8mem:$src), "clwb\t$src", []>, PD;
 
 
@@ -2812,6 +2851,10 @@ def : MnemonicAlias<"smovq", "movsq", "att">;
 
 def : MnemonicAlias<"ud2a",  "ud2",  "att">;
 def : MnemonicAlias<"verrw", "verr", "att">;
+
+// MS recognizes 'xacquire'/'xrelease' as 'acquire'/'release'
+def : MnemonicAlias<"acquire", "xacquire", "intel">;
+def : MnemonicAlias<"release", "xrelease", "intel">;
 
 // System instruction aliases.
 def : MnemonicAlias<"iret",    "iretw",    "att">, Requires<[In16BitMode]>;

@@ -264,6 +264,11 @@ class ARMAsmParser : public MCTargetAsmParser {
     return;
   }
 
+  // Return the low-subreg of a given Q register.
+  unsigned getDRegFromQReg(unsigned QReg) const {
+    return MRI->getSubReg(QReg, ARM::dsub_0);
+  }
+
   // Get the encoding of the IT mask, as it will appear in an IT instruction.
   unsigned getITMaskEncoding() {
     assert(inITBlock());
@@ -3334,25 +3339,7 @@ ARMAsmParser::parseITCondCode(OperandVector &Operands) {
   const AsmToken &Tok = Parser.getTok();
   if (!Tok.is(AsmToken::Identifier))
     return MatchOperand_NoMatch;
-  unsigned CC = StringSwitch<unsigned>(Tok.getString().lower())
-    .Case("eq", ARMCC::EQ)
-    .Case("ne", ARMCC::NE)
-    .Case("hs", ARMCC::HS)
-    .Case("cs", ARMCC::HS)
-    .Case("lo", ARMCC::LO)
-    .Case("cc", ARMCC::LO)
-    .Case("mi", ARMCC::MI)
-    .Case("pl", ARMCC::PL)
-    .Case("vs", ARMCC::VS)
-    .Case("vc", ARMCC::VC)
-    .Case("hi", ARMCC::HI)
-    .Case("ls", ARMCC::LS)
-    .Case("ge", ARMCC::GE)
-    .Case("lt", ARMCC::LT)
-    .Case("gt", ARMCC::GT)
-    .Case("le", ARMCC::LE)
-    .Case("al", ARMCC::AL)
-    .Default(~0U);
+  unsigned CC = ARMCondCodeFromString(Tok.getString());
   if (CC == ~0U)
     return MatchOperand_NoMatch;
   Parser.Lex(); // Eat the token.
@@ -3459,29 +3446,6 @@ static unsigned getNextRegister(unsigned Reg) {
   case ARM::R10: return ARM::R11; case ARM::R11: return ARM::R12;
   case ARM::R12: return ARM::SP;  case ARM::SP:  return ARM::LR;
   case ARM::LR:  return ARM::PC;  case ARM::PC:  return ARM::R0;
-  }
-}
-
-// Return the low-subreg of a given Q register.
-static unsigned getDRegFromQReg(unsigned QReg) {
-  switch (QReg) {
-  default: llvm_unreachable("expected a Q register!");
-  case ARM::Q0:  return ARM::D0;
-  case ARM::Q1:  return ARM::D2;
-  case ARM::Q2:  return ARM::D4;
-  case ARM::Q3:  return ARM::D6;
-  case ARM::Q4:  return ARM::D8;
-  case ARM::Q5:  return ARM::D10;
-  case ARM::Q6:  return ARM::D12;
-  case ARM::Q7:  return ARM::D14;
-  case ARM::Q8:  return ARM::D16;
-  case ARM::Q9:  return ARM::D18;
-  case ARM::Q10: return ARM::D20;
-  case ARM::Q11: return ARM::D22;
-  case ARM::Q12: return ARM::D24;
-  case ARM::Q13: return ARM::D26;
-  case ARM::Q14: return ARM::D28;
-  case ARM::Q15: return ARM::D30;
   }
 }
 
@@ -4175,46 +4139,10 @@ ARMAsmParser::parseBankedRegOperand(OperandVector &Operands) {
     return MatchOperand_NoMatch;
   StringRef RegName = Tok.getString();
 
-  // The values here come from B9.2.3 of the ARM ARM, where bits 4-0 are SysM
-  // and bit 5 is R.
-  unsigned Encoding = StringSwitch<unsigned>(RegName.lower())
-                          .Case("r8_usr", 0x00)
-                          .Case("r9_usr", 0x01)
-                          .Case("r10_usr", 0x02)
-                          .Case("r11_usr", 0x03)
-                          .Case("r12_usr", 0x04)
-                          .Case("sp_usr", 0x05)
-                          .Case("lr_usr", 0x06)
-                          .Case("r8_fiq", 0x08)
-                          .Case("r9_fiq", 0x09)
-                          .Case("r10_fiq", 0x0a)
-                          .Case("r11_fiq", 0x0b)
-                          .Case("r12_fiq", 0x0c)
-                          .Case("sp_fiq", 0x0d)
-                          .Case("lr_fiq", 0x0e)
-                          .Case("lr_irq", 0x10)
-                          .Case("sp_irq", 0x11)
-                          .Case("lr_svc", 0x12)
-                          .Case("sp_svc", 0x13)
-                          .Case("lr_abt", 0x14)
-                          .Case("sp_abt", 0x15)
-                          .Case("lr_und", 0x16)
-                          .Case("sp_und", 0x17)
-                          .Case("lr_mon", 0x1c)
-                          .Case("sp_mon", 0x1d)
-                          .Case("elr_hyp", 0x1e)
-                          .Case("sp_hyp", 0x1f)
-                          .Case("spsr_fiq", 0x2e)
-                          .Case("spsr_irq", 0x30)
-                          .Case("spsr_svc", 0x32)
-                          .Case("spsr_abt", 0x34)
-                          .Case("spsr_und", 0x36)
-                          .Case("spsr_mon", 0x3c)
-                          .Case("spsr_hyp", 0x3e)
-                          .Default(~0U);
-
-  if (Encoding == ~0U)
+  auto TheReg = ARMBankedReg::lookupBankedRegByName(RegName.lower());
+  if (!TheReg)
     return MatchOperand_NoMatch;
+  unsigned Encoding = TheReg->Encoding;
 
   Parser.Lex(); // Eat identifier token.
   Operands.push_back(ARMOperand::CreateBankedReg(Encoding, S));
@@ -5384,7 +5312,8 @@ StringRef ARMAsmParser::splitMnemonic(StringRef Mnemonic,
       Mnemonic == "vcvtm" || Mnemonic == "vrinta" || Mnemonic == "vrintn" ||
       Mnemonic == "vrintp" || Mnemonic == "vrintm" || Mnemonic == "hvc" ||
       Mnemonic.startswith("vsel") || Mnemonic == "vins" || Mnemonic == "vmovx" ||
-      Mnemonic == "bxns"  || Mnemonic == "blxns")
+      Mnemonic == "bxns"  || Mnemonic == "blxns" ||
+      Mnemonic == "vudot" || Mnemonic == "vsdot")
     return Mnemonic;
 
   // First, split out any predication code. Ignore mnemonics we know aren't
@@ -5393,25 +5322,7 @@ StringRef ARMAsmParser::splitMnemonic(StringRef Mnemonic,
       Mnemonic != "muls" && Mnemonic != "smlals" && Mnemonic != "smulls" &&
       Mnemonic != "umlals" && Mnemonic != "umulls" && Mnemonic != "lsls" &&
       Mnemonic != "sbcs" && Mnemonic != "rscs") {
-    unsigned CC = StringSwitch<unsigned>(Mnemonic.substr(Mnemonic.size()-2))
-      .Case("eq", ARMCC::EQ)
-      .Case("ne", ARMCC::NE)
-      .Case("hs", ARMCC::HS)
-      .Case("cs", ARMCC::HS)
-      .Case("lo", ARMCC::LO)
-      .Case("cc", ARMCC::LO)
-      .Case("mi", ARMCC::MI)
-      .Case("pl", ARMCC::PL)
-      .Case("vs", ARMCC::VS)
-      .Case("vc", ARMCC::VC)
-      .Case("hi", ARMCC::HI)
-      .Case("ls", ARMCC::LS)
-      .Case("ge", ARMCC::GE)
-      .Case("lt", ARMCC::LT)
-      .Case("gt", ARMCC::GT)
-      .Case("le", ARMCC::LE)
-      .Case("al", ARMCC::AL)
-      .Default(~0U);
+    unsigned CC = ARMCondCodeFromString(Mnemonic.substr(Mnemonic.size()-2));
     if (CC != ~0U) {
       Mnemonic = Mnemonic.slice(0, Mnemonic.size() - 2);
       PredicationCode = CC;
@@ -5490,7 +5401,8 @@ void ARMAsmParser::getMnemonicAcceptInfo(StringRef Mnemonic, StringRef FullInst,
       Mnemonic.startswith("aes") || Mnemonic == "hvc" || Mnemonic == "setpan" ||
       Mnemonic.startswith("sha1") || Mnemonic.startswith("sha256") ||
       (FullInst.startswith("vmull") && FullInst.endswith(".p64")) ||
-      Mnemonic == "vmovx" || Mnemonic == "vins") {
+      Mnemonic == "vmovx" || Mnemonic == "vins" ||
+      Mnemonic == "vudot" || Mnemonic == "vsdot") {
     // These mnemonics are never predicable
     CanAcceptPredicationCode = false;
   } else if (!isThumb()) {
@@ -9419,9 +9331,9 @@ void ARMAsmParser::FixModeAfterArchChange(bool WasThumb, SMLoc Loc) {
 ///  ::= .arch token
 bool ARMAsmParser::parseDirectiveArch(SMLoc L) {
   StringRef Arch = getParser().parseStringToEndOfStatement().trim();
-  unsigned ID = ARM::parseArch(Arch);
+  ARM::ArchKind ID = ARM::parseArch(Arch);
 
-  if (ID == ARM::AK_INVALID)
+  if (ID == ARM::ArchKind::INVALID)
     return Error(L, "Unknown arch name");
 
   bool WasThumb = isThumb();
@@ -10069,9 +9981,9 @@ bool ARMAsmParser::parseDirectiveObjectArch(SMLoc L) {
   SMLoc ArchLoc = Parser.getTok().getLoc();
   Lex();
 
-  unsigned ID = ARM::parseArch(Arch);
+  ARM::ArchKind ID = ARM::parseArch(Arch);
 
-  if (ID == ARM::AK_INVALID)
+  if (ID == ARM::ArchKind::INVALID)
     return Error(ArchLoc, "unknown architecture '" + Arch + "'");
   if (parseToken(AsmToken::EndOfStatement))
     return true;

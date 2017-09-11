@@ -1517,19 +1517,19 @@ define <4 x float> @test_v4f32_fneg_fmul(<4 x float> %x, <4 x float> %y) #0 {
 define <4 x double> @test_v4f64_fneg_fmul(<4 x double> %x, <4 x double> %y) #0 {
 ; FMA-LABEL: test_v4f64_fneg_fmul:
 ; FMA:       # BB#0:
-; FMA-NEXT:    vxorpd %ymm2, %ymm2, %ymm2
+; FMA-NEXT:    vxorpd %xmm2, %xmm2, %xmm2
 ; FMA-NEXT:    vfnmsub213pd %ymm2, %ymm1, %ymm0
 ; FMA-NEXT:    retq
 ;
 ; FMA4-LABEL: test_v4f64_fneg_fmul:
 ; FMA4:       # BB#0:
-; FMA4-NEXT:    vxorpd %ymm2, %ymm2, %ymm2
+; FMA4-NEXT:    vxorpd %xmm2, %xmm2, %xmm2
 ; FMA4-NEXT:    vfnmsubpd %ymm2, %ymm1, %ymm0, %ymm0
 ; FMA4-NEXT:    retq
 ;
 ; AVX512-LABEL: test_v4f64_fneg_fmul:
 ; AVX512:       # BB#0:
-; AVX512-NEXT:    vxorpd %ymm2, %ymm2, %ymm2
+; AVX512-NEXT:    vxorpd %xmm2, %xmm2, %xmm2
 ; AVX512-NEXT:    vfnmsub213pd %ymm2, %ymm1, %ymm0
 ; AVX512-NEXT:    retq
   %m = fmul nsz <4 x double> %x, %y

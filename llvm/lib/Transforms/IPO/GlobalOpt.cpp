@@ -27,6 +27,7 @@
 #include "llvm/IR/CallingConv.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
+#include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/GetElementPtrTypeIterator.h"
@@ -35,6 +36,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
 #include "llvm/IR/ValueHandle.h"
+#include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -402,11 +404,8 @@ static bool IsUserOfGlobalSafeForSRA(User *U, GlobalValue *GV) {
     }
   }
 
-  for (User *UU : U->users())
-    if (!isSafeSROAElementUse(UU))
-      return false;
-
-  return true;
+  return llvm::all_of(U->users(),
+                      [](User *UU) { return isSafeSROAElementUse(UU); });
 }
 
 /// Look at all uses of the global and decide whether it is safe for us to
@@ -417,6 +416,24 @@ static bool GlobalUsersSafeToSRA(GlobalValue *GV) {
       return false;
 
   return true;
+}
+
+/// Copy over the debug info for a variable to its SRA replacements.
+static void transferSRADebugInfo(GlobalVariable *GV, GlobalVariable *NGV,
+                                 uint64_t FragmentOffsetInBits,
+                                 uint64_t FragmentSizeInBits,
+                                 unsigned NumElements) {
+  SmallVector<DIGlobalVariableExpression *, 1> GVs;
+  GV->getDebugInfo(GVs);
+  for (auto *GVE : GVs) {
+    DIVariable *Var = GVE->getVariable();
+    DIExpression *Expr = GVE->getExpression();
+    if (NumElements > 1)
+      Expr = DIExpression::createFragmentExpression(Expr, FragmentOffsetInBits,
+                                                    FragmentSizeInBits);
+    auto *NGVE = DIGlobalVariableExpression::get(GVE->getContext(), Var, Expr);
+    NGV->addDebugInfo(NGVE);
+  }
 }
 
 
@@ -443,9 +460,11 @@ static GlobalVariable *SRAGlobal(GlobalVariable *GV, const DataLayout &DL) {
     StartAlignment = DL.getABITypeAlignment(GV->getType());
 
   if (StructType *STy = dyn_cast<StructType>(Ty)) {
-    NewGlobals.reserve(STy->getNumElements());
+    uint64_t FragmentOffset = 0;
+    unsigned NumElements = STy->getNumElements();
+    NewGlobals.reserve(NumElements);
     const StructLayout &Layout = *DL.getStructLayout(STy);
-    for (unsigned i = 0, e = STy->getNumElements(); i != e; ++i) {
+    for (unsigned i = 0, e = NumElements; i != e; ++i) {
       Constant *In = Init->getAggregateElement(i);
       assert(In && "Couldn't get element of initializer?");
       GlobalVariable *NGV = new GlobalVariable(STy->getElementType(i), false,
@@ -465,15 +484,22 @@ static GlobalVariable *SRAGlobal(GlobalVariable *GV, const DataLayout &DL) {
       unsigned NewAlign = (unsigned)MinAlign(StartAlignment, FieldOffset);
       if (NewAlign > DL.getABITypeAlignment(STy->getElementType(i)))
         NGV->setAlignment(NewAlign);
+
+      // Copy over the debug info for the variable.
+      FragmentOffset = alignTo(FragmentOffset, NewAlign);
+      uint64_t Size = DL.getTypeSizeInBits(NGV->getValueType());
+      transferSRADebugInfo(GV, NGV, FragmentOffset, Size, NumElements);
+      FragmentOffset += Size;
     }
   } else if (SequentialType *STy = dyn_cast<SequentialType>(Ty)) {
     unsigned NumElements = STy->getNumElements();
     if (NumElements > 16 && GV->hasNUsesOrMore(16))
       return nullptr; // It's not worth it.
     NewGlobals.reserve(NumElements);
-
-    uint64_t EltSize = DL.getTypeAllocSize(STy->getElementType());
-    unsigned EltAlign = DL.getABITypeAlignment(STy->getElementType());
+    auto ElTy = STy->getElementType();
+    uint64_t EltSize = DL.getTypeAllocSize(ElTy);
+    unsigned EltAlign = DL.getABITypeAlignment(ElTy);
+    uint64_t FragmentSizeInBits = DL.getTypeSizeInBits(ElTy);
     for (unsigned i = 0, e = NumElements; i != e; ++i) {
       Constant *In = Init->getAggregateElement(i);
       assert(In && "Couldn't get element of initializer?");
@@ -494,6 +520,8 @@ static GlobalVariable *SRAGlobal(GlobalVariable *GV, const DataLayout &DL) {
       unsigned NewAlign = (unsigned)MinAlign(StartAlignment, EltSize*i);
       if (NewAlign > EltAlign)
         NGV->setAlignment(NewAlign);
+      transferSRADebugInfo(GV, NGV, FragmentSizeInBits * i, FragmentSizeInBits,
+                           NumElements);
     }
   }
 
@@ -1576,11 +1604,46 @@ static bool TryToShrinkGlobalToBoolean(GlobalVariable *GV, Constant *OtherVal) {
   assert(InitVal->getType() != Type::getInt1Ty(GV->getContext()) &&
          "No reason to shrink to bool!");
 
+  SmallVector<DIGlobalVariableExpression *, 1> GVs;
+  GV->getDebugInfo(GVs);
+
   // If initialized to zero and storing one into the global, we can use a cast
   // instead of a select to synthesize the desired value.
   bool IsOneZero = false;
-  if (ConstantInt *CI = dyn_cast<ConstantInt>(OtherVal))
+  if (ConstantInt *CI = dyn_cast<ConstantInt>(OtherVal)){
     IsOneZero = InitVal->isNullValue() && CI->isOne();
+
+    ConstantInt *CIInit = dyn_cast<ConstantInt>(GV->getInitializer());
+    uint64_t ValInit = CIInit->getZExtValue();
+    uint64_t ValOther = CI->getZExtValue();
+    uint64_t ValMinus = ValOther - ValInit;
+
+    for(auto *GVe : GVs){
+      DIGlobalVariable *DGV = GVe->getVariable();
+      DIExpression *E = GVe->getExpression();
+
+      // val * (ValOther - ValInit) + ValInit:
+      // DW_OP_deref DW_OP_constu <ValMinus>
+      // DW_OP_mul DW_OP_constu <ValInit> DW_OP_plus DW_OP_stack_value
+      E = DIExpression::get(NewGV->getContext(),
+                           {dwarf::DW_OP_deref,
+                            dwarf::DW_OP_constu,
+                            ValMinus,
+                            dwarf::DW_OP_mul,
+                            dwarf::DW_OP_constu,
+                            ValInit,
+                            dwarf::DW_OP_plus,
+                            dwarf::DW_OP_stack_value});
+      DIGlobalVariableExpression *DGVE =
+        DIGlobalVariableExpression::get(NewGV->getContext(), DGV, E);
+      NewGV->addDebugInfo(DGVE);
+    }
+  } else {
+    // FIXME: This will only emit address for debugger on which will
+    // be written only 0 or 1.
+    for(auto *GV : GVs)
+      NewGV->addDebugInfo(GV);
+  }
 
   while (!GV->use_empty()) {
     Instruction *UI = cast<Instruction>(GV->user_back());

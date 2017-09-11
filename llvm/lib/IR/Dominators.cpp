@@ -64,12 +64,12 @@ template class llvm::DomTreeNodeBase<BasicBlock>;
 template class llvm::DominatorTreeBase<BasicBlock, false>; // DomTreeBase
 template class llvm::DominatorTreeBase<BasicBlock, true>; // PostDomTreeBase
 
-template void
-llvm::DomTreeBuilder::Calculate<DomTreeBuilder::BBDomTree, Function>(
-    DomTreeBuilder::BBDomTree &DT, Function &F);
-template void
-llvm::DomTreeBuilder::Calculate<DomTreeBuilder::BBPostDomTree, Function>(
-    DomTreeBuilder::BBPostDomTree &DT, Function &F);
+template struct llvm::DomTreeBuilder::Update<BasicBlock *>;
+
+template void llvm::DomTreeBuilder::Calculate<DomTreeBuilder::BBDomTree>(
+    DomTreeBuilder::BBDomTree &DT);
+template void llvm::DomTreeBuilder::Calculate<DomTreeBuilder::BBPostDomTree>(
+    DomTreeBuilder::BBPostDomTree &DT);
 
 template void llvm::DomTreeBuilder::InsertEdge<DomTreeBuilder::BBDomTree>(
     DomTreeBuilder::BBDomTree &DT, BasicBlock *From, BasicBlock *To);
@@ -80,6 +80,11 @@ template void llvm::DomTreeBuilder::DeleteEdge<DomTreeBuilder::BBDomTree>(
     DomTreeBuilder::BBDomTree &DT, BasicBlock *From, BasicBlock *To);
 template void llvm::DomTreeBuilder::DeleteEdge<DomTreeBuilder::BBPostDomTree>(
     DomTreeBuilder::BBPostDomTree &DT, BasicBlock *From, BasicBlock *To);
+
+template void llvm::DomTreeBuilder::ApplyUpdates<DomTreeBuilder::BBDomTree>(
+    DomTreeBuilder::BBDomTree &DT, DomTreeBuilder::BBUpdates);
+template void llvm::DomTreeBuilder::ApplyUpdates<DomTreeBuilder::BBPostDomTree>(
+    DomTreeBuilder::BBPostDomTree &DT, DomTreeBuilder::BBUpdates);
 
 template bool llvm::DomTreeBuilder::Verify<DomTreeBuilder::BBDomTree>(
     const DomTreeBuilder::BBDomTree &DT);
@@ -314,6 +319,9 @@ void DominatorTree::verifyDomTree() const {
     print(errs());
     errs() << "\nActual:\n";
     OtherDT.print(errs());
+    errs() << "\nCFG:\n";
+    F.print(errs());
+    errs().flush();
     abort();
   }
 }

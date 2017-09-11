@@ -47,6 +47,9 @@
 
 using namespace llvm;
 
+cl::opt<bool> EnableIPRA("enable-ipra", cl::init(false), cl::Hidden,
+                         cl::desc("Enable interprocedural register allocation "
+                                  "to reduce load/store at procedure calls."));
 static cl::opt<bool> DisablePostRASched("disable-post-ra", cl::Hidden,
     cl::desc("Disable Post Regalloc Scheduler"));
 static cl::opt<bool> DisableBranchFold("disable-branch-fold", cl::Hidden,
@@ -85,11 +88,17 @@ static cl::opt<bool> DisableCGP("disable-cgp", cl::Hidden,
     cl::desc("Disable Codegen Prepare"));
 static cl::opt<bool> DisableCopyProp("disable-copyprop", cl::Hidden,
     cl::desc("Disable Copy Propagation pass"));
+static cl::opt<bool> DisableCopyPropPreRegRewrite("disable-copyprop-prerewrite", cl::Hidden,
+    cl::desc("Disable Copy Propagation Pre-Register Re-write pass"));
 static cl::opt<bool> DisablePartialLibcallInlining("disable-partial-libcall-inlining",
     cl::Hidden, cl::desc("Disable Partial Libcall Inlining"));
 static cl::opt<bool> EnableImplicitNullChecks(
     "enable-implicit-null-checks",
     cl::desc("Fold null checks into faulting memory operations"),
+    cl::init(false));
+static cl::opt<bool> EnableMergeICmps(
+    "enable-mergeicmps",
+    cl::desc("Merge ICmp chains into a single memcmp"),
     cl::init(false));
 static cl::opt<bool> PrintLSR("print-lsr-output", cl::Hidden,
     cl::desc("Print LLVM IR produced by the loop-reduce pass"));
@@ -152,6 +161,34 @@ static cl::opt<CFLAAType> UseCFLAA(
                           "Enable inclusion-based CFL-AA"),
                clEnumValN(CFLAAType::Both, "both", 
                           "Enable both variants of CFL-AA")));
+
+/// Option names for limiting the codegen pipeline.
+/// Those are used in error reporting and we didn't want
+/// to duplicate their names all over the place.
+const char *StartAfterOptName = "start-after";
+const char *StartBeforeOptName = "start-before";
+const char *StopAfterOptName = "stop-after";
+const char *StopBeforeOptName = "stop-before";
+
+static cl::opt<std::string>
+    StartAfterOpt(StringRef(StartAfterOptName),
+                  cl::desc("Resume compilation after a specific pass"),
+                  cl::value_desc("pass-name"), cl::init(""));
+
+static cl::opt<std::string>
+    StartBeforeOpt(StringRef(StartBeforeOptName),
+                   cl::desc("Resume compilation before a specific pass"),
+                   cl::value_desc("pass-name"), cl::init(""));
+
+static cl::opt<std::string>
+    StopAfterOpt(StringRef(StopAfterOptName),
+                 cl::desc("Stop compilation after a specific pass"),
+                 cl::value_desc("pass-name"), cl::init(""));
+
+static cl::opt<std::string>
+    StopBeforeOpt(StringRef(StopBeforeOptName),
+                  cl::desc("Stop compilation before a specific pass"),
+                  cl::value_desc("pass-name"), cl::init(""));
 
 /// Allow standard passes to be disabled by command line options. This supports
 /// simple binary flags that either suppress the pass or do nothing.
@@ -216,6 +253,9 @@ static IdentifyingPassPtr overridePass(AnalysisID StandardID,
 
   if (StandardID == &MachineCopyPropagationID)
     return applyDisable(TargetID, DisableCopyProp);
+
+  if (StandardID == &MachineCopyPropagationPreRegRewriteID)
+    return applyDisable(TargetID, DisableCopyPropPreRegRewrite);
 
   return TargetID;
 }
@@ -282,6 +322,37 @@ TargetPassConfig::~TargetPassConfig() {
   delete Impl;
 }
 
+static const PassInfo *getPassInfo(StringRef PassName) {
+  if (PassName.empty())
+    return nullptr;
+
+  const PassRegistry &PR = *PassRegistry::getPassRegistry();
+  const PassInfo *PI = PR.getPassInfo(PassName);
+  if (!PI)
+    report_fatal_error(Twine('\"') + Twine(PassName) +
+                       Twine("\" pass is not registered."));
+  return PI;
+}
+
+static AnalysisID getPassIDFromName(StringRef PassName) {
+  const PassInfo *PI = getPassInfo(PassName);
+  return PI ? PI->getTypeInfo() : nullptr;
+}
+
+void TargetPassConfig::setStartStopPasses() {
+  StartBefore = getPassIDFromName(StartBeforeOpt);
+  StartAfter = getPassIDFromName(StartAfterOpt);
+  StopBefore = getPassIDFromName(StopBeforeOpt);
+  StopAfter = getPassIDFromName(StopAfterOpt);
+  if (StartBefore && StartAfter)
+    report_fatal_error(Twine(StartBeforeOptName) + Twine(" and ") +
+                       Twine(StartAfterOptName) + Twine(" specified!"));
+  if (StopBefore && StopAfter)
+    report_fatal_error(Twine(StopBeforeOptName) + Twine(" and ") +
+                       Twine(StopAfterOptName) + Twine(" specified!"));
+  Started = (StartAfter == nullptr) && (StartBefore == nullptr);
+}
+
 // Out of line constructor provides default values for pass options and
 // registers all common codegen passes.
 TargetPassConfig::TargetPassConfig(LLVMTargetMachine &TM, PassManagerBase &pm)
@@ -303,8 +374,17 @@ TargetPassConfig::TargetPassConfig(LLVMTargetMachine &TM, PassManagerBase &pm)
   if (StringRef(PrintMachineInstrs.getValue()).equals(""))
     TM.Options.PrintMachineCode = true;
 
+  if (EnableIPRA.getNumOccurrences())
+    TM.Options.EnableIPRA = EnableIPRA;
+  else {
+    // If not explicitly specified, use target default.
+    TM.Options.EnableIPRA = TM.useIPRA();
+  }
+
   if (TM.Options.EnableIPRA)
     setRequiresCodeGenSCCOrder();
+
+  setStartStopPasses();
 }
 
 CodeGenOpt::Level TargetPassConfig::getOptLevel() const {
@@ -337,6 +417,30 @@ TargetPassConfig::TargetPassConfig()
   report_fatal_error("Trying to construct TargetPassConfig without a target "
                      "machine. Scheduling a CodeGen pass without a target "
                      "triple set?");
+}
+
+bool TargetPassConfig::hasLimitedCodeGenPipeline() const {
+  return StartBefore || StartAfter || StopBefore || StopAfter;
+}
+
+std::string
+TargetPassConfig::getLimitedCodeGenPipelineReason(const char *Separator) const {
+  if (!hasLimitedCodeGenPipeline())
+    return std::string();
+  std::string Res;
+  static cl::opt<std::string> *PassNames[] = {&StartAfterOpt, &StartBeforeOpt,
+                                              &StopAfterOpt, &StopBeforeOpt};
+  static const char *OptNames[] = {StartAfterOptName, StartBeforeOptName,
+                                   StopAfterOptName, StopBeforeOptName};
+  bool IsFirst = true;
+  for (int Idx = 0; Idx < 4; ++Idx)
+    if (!PassNames[Idx]->empty()) {
+      if (!IsFirst)
+        Res += Separator;
+      IsFirst = false;
+      Res += OptNames[Idx];
+    }
+  return Res;
 }
 
 // Helper to verify the analysis is really immutable.
@@ -494,6 +598,10 @@ void TargetPassConfig::addIRPasses() {
     addPass(createLoopStrengthReducePass());
     if (PrintLSR)
       addPass(createPrintFunctionPass(dbgs(), "\n\n*** Code after LSR ***\n"));
+  }
+
+  if (getOptLevel() != CodeGenOpt::None && EnableMergeICmps) {
+    addPass(createMergeICmpsPass());
   }
 
   // Run GC lowering passes for builtin collectors
@@ -694,9 +802,6 @@ void TargetPassConfig::addMachinePasses() {
   // Print the instruction selected machine code...
   printAndVerify("After Instruction Selection");
 
-  if (TM->Options.EnableIPRA)
-    addPass(createRegUsageInfoPropPass());
-
   // Expand pseudo-instructions emitted by ISel.
   addPass(&ExpandISelPseudosID);
 
@@ -708,6 +813,9 @@ void TargetPassConfig::addMachinePasses() {
     // to one another and simplify frame index references where possible.
     addPass(&LocalStackSlotAllocationID, false);
   }
+
+  if (TM->Options.EnableIPRA)
+    addPass(createRegUsageInfoPropPass());
 
   // Run pre-ra passes.
   addPreRegAlloc();
@@ -963,6 +1071,10 @@ void TargetPassConfig::addOptimizedRegAlloc(FunctionPass *RegAllocPass) {
 
     // Allow targets to change the register assignments before rewriting.
     addPreRewrite();
+
+    // Copy propagate to forward register uses and try to eliminate COPYs that
+    // were not coalesced.
+    addPass(&MachineCopyPropagationPreRegRewriteID);
 
     // Finally rewrite virtual registers.
     addPass(&VirtRegRewriterID);

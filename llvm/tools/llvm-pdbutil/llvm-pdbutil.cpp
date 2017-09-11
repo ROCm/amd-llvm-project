@@ -17,6 +17,7 @@
 #include "BytesOutputStyle.h"
 #include "Diff.h"
 #include "DumpOutputStyle.h"
+#include "InputFile.h"
 #include "LinePrinter.h"
 #include "OutputStyle.h"
 #include "PrettyCompilandDumper.h"
@@ -29,8 +30,10 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/BinaryFormat/Magic.h"
 #include "llvm/Config/config.h"
 #include "llvm/DebugInfo/CodeView/DebugChecksumsSubsection.h"
 #include "llvm/DebugInfo/CodeView/DebugInlineeLinesSubsection.h"
@@ -70,6 +73,7 @@
 #include "llvm/Support/FileOutputBuffer.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Format.h"
+#include "llvm/Support/LineIterator.h"
 #include "llvm/Support/ManagedStatic.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
@@ -79,6 +83,8 @@
 #include "llvm/Support/ScopedPrinter.h"
 #include "llvm/Support/Signals.h"
 #include "llvm/Support/raw_ostream.h"
+
+#include <set>
 
 using namespace llvm;
 using namespace llvm::codeview;
@@ -293,6 +299,13 @@ cl::opt<bool>
                       cl::desc("Print a column with the result status"),
                       cl::Optional, cl::sub(DiffSubcommand));
 
+cl::list<std::string>
+    RawModiEquivalences("modi-equivalence", cl::ZeroOrMore,
+                        cl::value_desc("left,right"),
+                        cl::desc("Modules with the specified indices will be "
+                                 "treated as referring to the same module"),
+                        cl::sub(DiffSubcommand));
+
 cl::opt<std::string> LeftRoot(
     "left-bin-root", cl::Optional,
     cl::desc("Treats the specified path as the root of the tree containing "
@@ -310,6 +323,8 @@ cl::opt<std::string> Left(cl::Positional, cl::desc("<left>"),
                           cl::sub(DiffSubcommand));
 cl::opt<std::string> Right(cl::Positional, cl::desc("<right>"),
                            cl::sub(DiffSubcommand));
+
+llvm::DenseMap<uint32_t, uint32_t> Equivalences;
 }
 
 cl::OptionCategory FileOptions("Module & File Options");
@@ -342,6 +357,8 @@ cl::list<std::string>
 
 cl::opt<bool> NameMap("name-map", cl::desc("Dump bytes of PDB Name Map"),
                       cl::sub(BytesSubcommand), cl::cat(PdbBytes));
+cl::opt<bool> Fpm("fpm", cl::desc("Dump free page map"),
+                  cl::sub(BytesSubcommand), cl::cat(MsfBytes));
 
 cl::opt<bool> SectionContributions("sc", cl::desc("Dump section contributions"),
                                    cl::sub(BytesSubcommand), cl::cat(DbiBytes));
@@ -406,6 +423,15 @@ cl::opt<bool> DumpStreams("streams",
 cl::opt<bool> DumpStreamBlocks(
     "stream-blocks",
     cl::desc("Add block information to the output of -streams"),
+    cl::cat(MsfOptions), cl::sub(DumpSubcommand));
+cl::opt<bool> DumpSymbolStats(
+    "sym-stats",
+    cl::desc("Dump a detailed breakdown of symbol usage/size for each module"),
+    cl::cat(MsfOptions), cl::sub(DumpSubcommand));
+
+cl::opt<bool> DumpUdtStats(
+    "udt-stats",
+    cl::desc("Dump a detailed breakdown of S_UDT record usage / stats"),
     cl::cat(MsfOptions), cl::sub(DumpSubcommand));
 
 // TYPE OPTIONS
@@ -492,6 +518,14 @@ cl::opt<bool> DumpXme(
     cl::desc(
         "dump cross module exports (DEBUG_S_CROSSSCOPEEXPORTS subsection)"),
     cl::cat(FileOptions), cl::sub(DumpSubcommand));
+cl::opt<uint32_t> DumpModi("modi", cl::Optional,
+                           cl::desc("For all options that iterate over "
+                                    "modules, limit to the specified module"),
+                           cl::cat(FileOptions), cl::sub(DumpSubcommand));
+cl::opt<bool> JustMyCode("jmc", cl::Optional,
+                         cl::desc("For all options that iterate over modules, "
+                                  "ignore modules from system libraries"),
+                         cl::cat(FileOptions), cl::sub(DumpSubcommand));
 
 // MISCELLANEOUS OPTIONS
 cl::opt<bool> DumpStringTable("string-table", cl::desc("dump PDB String Table"),
@@ -503,6 +537,9 @@ cl::opt<bool> DumpSectionContribs("section-contribs",
                                   cl::sub(DumpSubcommand));
 cl::opt<bool> DumpSectionMap("section-map", cl::desc("dump section map"),
                              cl::cat(MiscOptions), cl::sub(DumpSubcommand));
+cl::opt<bool> DumpSectionHeaders("section-headers",
+                                 cl::desc("Dump image section headers"),
+                                 cl::cat(MiscOptions), cl::sub(DumpSubcommand));
 
 cl::opt<bool> RawAll("all", cl::desc("Implies most other options."),
                      cl::cat(MiscOptions), cl::sub(DumpSubcommand));
@@ -726,11 +763,10 @@ static void pdb2Yaml(StringRef Path) {
 }
 
 static void dumpRaw(StringRef Path) {
-  std::unique_ptr<IPDBSession> Session;
-  auto &File = loadPDB(Path, Session);
 
-  auto O = llvm::make_unique<DumpOutputStyle>(File);
+  InputFile IF = ExitOnErr(InputFile::open(Path));
 
+  auto O = llvm::make_unique<DumpOutputStyle>(IF);
   ExitOnErr(O->dump());
 }
 
@@ -1065,26 +1101,28 @@ int main(int argc_, const char *argv_[]) {
 
   if (opts::DumpSubcommand) {
     if (opts::dump::RawAll) {
-      opts::dump::DumpLines = true;
-      opts::dump::DumpInlineeLines = true;
-      opts::dump::DumpXme = true;
-      opts::dump::DumpXmi = true;
-      opts::dump::DumpIds = true;
       opts::dump::DumpGlobals = true;
+      opts::dump::DumpInlineeLines = true;
+      opts::dump::DumpIds = true;
+      opts::dump::DumpIdExtras = true;
+      opts::dump::DumpLines = true;
+      opts::dump::DumpModules = true;
+      opts::dump::DumpModuleFiles = true;
       opts::dump::DumpPublics = true;
       opts::dump::DumpSectionContribs = true;
+      opts::dump::DumpSectionHeaders = true;
       opts::dump::DumpSectionMap = true;
       opts::dump::DumpStreams = true;
       opts::dump::DumpStreamBlocks = true;
       opts::dump::DumpStringTable = true;
       opts::dump::DumpSummary = true;
       opts::dump::DumpSymbols = true;
-      opts::dump::DumpIds = true;
-      opts::dump::DumpIdExtras = true;
+      opts::dump::DumpSymbolStats = true;
       opts::dump::DumpTypes = true;
       opts::dump::DumpTypeExtras = true;
-      opts::dump::DumpModules = true;
-      opts::dump::DumpModuleFiles = true;
+      opts::dump::DumpUdtStats = true;
+      opts::dump::DumpXme = true;
+      opts::dump::DumpXmi = true;
     }
   }
   if (opts::PdbToYamlSubcommand) {
@@ -1173,6 +1211,19 @@ int main(int argc_, const char *argv_[]) {
     std::for_each(opts::bytes::InputFilenames.begin(),
                   opts::bytes::InputFilenames.end(), dumpBytes);
   } else if (opts::DiffSubcommand) {
+    for (StringRef S : opts::diff::RawModiEquivalences) {
+      StringRef Left;
+      StringRef Right;
+      std::tie(Left, Right) = S.split(',');
+      uint32_t X, Y;
+      if (!to_integer(Left, X) || !to_integer(Right, Y)) {
+        errs() << formatv("invalid value {0} specified for modi equivalence\n",
+                          S);
+        exit(1);
+      }
+      opts::diff::Equivalences[X] = Y;
+    }
+
     diff(opts::diff::Left, opts::diff::Right);
   } else if (opts::MergeSubcommand) {
     if (opts::merge::InputFilenames.size() < 2) {

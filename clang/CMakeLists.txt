@@ -181,12 +181,15 @@ endif()
 # we can include cmake files from this directory.
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules")
 
-find_package(LibXml2 2.5.3 QUIET)
-if (LIBXML2_FOUND)
-  set(CLANG_HAVE_LIBXML 1)
+# Don't look for libxml if we're using MSan, since uninstrumented third party
+# code may call MSan interceptors like strlen, leading to false positives.
+if(NOT LLVM_USE_SANITIZER MATCHES "Memory.*")
+  set (LIBXML2_FOUND 0)
+  find_package(LibXml2 2.5.3 QUIET)
+  if (LIBXML2_FOUND)
+    set(CLANG_HAVE_LIBXML 1)
+  endif()
 endif()
-
-find_package(Z3 4.5)
 
 include(CheckIncludeFile)
 check_include_file(sys/resource.h CLANG_HAVE_RLIMITS)
@@ -381,11 +384,14 @@ option(CLANG_ENABLE_STATIC_ANALYZER "Build static analyzer." ON)
 option(CLANG_ANALYZER_BUILD_Z3
   "Build the static analyzer with the Z3 constraint manager." OFF)
 
+option(CLANG_ENABLE_PROTO_FUZZER "Build Clang protobuf fuzzer." OFF)
+
 if(NOT CLANG_ENABLE_STATIC_ANALYZER AND (CLANG_ENABLE_ARCMT OR CLANG_ANALYZER_BUILD_Z3))
   message(FATAL_ERROR "Cannot disable static analyzer while enabling ARCMT or Z3")
 endif()
 
 if(CLANG_ANALYZER_BUILD_Z3)
+  find_package(Z3 4.5)
   if(Z3_FOUND)
     set(CLANG_ANALYZER_WITH_Z3 1)
   else()
@@ -416,7 +422,8 @@ add_subdirectory(include)
 
 # All targets below may depend on all tablegen'd files.
 get_property(CLANG_TABLEGEN_TARGETS GLOBAL PROPERTY CLANG_TABLEGEN_TARGETS)
-list(APPEND LLVM_COMMON_DEPENDS ${CLANG_TABLEGEN_TARGETS})
+add_custom_target(clang-tablegen-targets DEPENDS ${CLANG_TABLEGEN_TARGETS})
+list(APPEND LLVM_COMMON_DEPENDS clang-tablegen-targets)
 
 # Force target to be built as soon as possible. Clang modules builds depend
 # header-wise on it as they ship all headers from the umbrella folders. Building

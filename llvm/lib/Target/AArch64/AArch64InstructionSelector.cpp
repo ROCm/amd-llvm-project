@@ -37,10 +37,6 @@
 
 using namespace llvm;
 
-#ifndef LLVM_BUILD_GLOBAL_ISEL
-#error "You shouldn't build this"
-#endif
-
 namespace {
 
 #define GET_GLOBALISEL_PREDICATE_BITSET
@@ -513,6 +509,8 @@ bool AArch64InstructionSelector::selectCompareBranch(
   const unsigned CondReg = I.getOperand(0).getReg();
   MachineBasicBlock *DestMBB = I.getOperand(1).getMBB();
   MachineInstr *CCMI = MRI.getVRegDef(CondReg);
+  if (CCMI->getOpcode() == TargetOpcode::G_TRUNC)
+    CCMI = MRI.getVRegDef(CCMI->getOperand(1).getReg());
   if (CCMI->getOpcode() != TargetOpcode::G_ICMP)
     return false;
 
@@ -592,13 +590,14 @@ bool AArch64InstructionSelector::select(MachineInstr &I) const {
   MachineRegisterInfo &MRI = MF.getRegInfo();
 
   unsigned Opcode = I.getOpcode();
-  if (!isPreISelGenericOpcode(I.getOpcode())) {
+  // G_PHI requires same handling as PHI
+  if (!isPreISelGenericOpcode(Opcode) || Opcode == TargetOpcode::G_PHI) {
     // Certain non-generic instructions also need some special handling.
 
     if (Opcode ==  TargetOpcode::LOAD_STACK_GUARD)
       return constrainSelectedInstRegOperands(I, TII, TRI, RBI);
 
-    if (Opcode == TargetOpcode::PHI) {
+    if (Opcode == TargetOpcode::PHI || Opcode == TargetOpcode::G_PHI) {
       const unsigned DefReg = I.getOperand(0).getReg();
       const LLT DefTy = MRI.getType(DefReg);
 
@@ -623,6 +622,7 @@ bool AArch64InstructionSelector::select(MachineInstr &I) const {
           }
         }
       }
+      I.setDesc(TII.get(TargetOpcode::PHI));
 
       return RBI.constrainGenericRegister(DefReg, *DefRC, MRI);
     }
@@ -704,7 +704,8 @@ bool AArch64InstructionSelector::select(MachineInstr &I) const {
         return false;
       }
     } else {
-      if (Ty != s32 && Ty != s64 && Ty != p0) {
+      // s32 and s64 are covered by tablegen.
+      if (Ty != p0) {
         DEBUG(dbgs() << "Unable to materialize integer " << Ty
                      << " constant, expected: " << s32 << ", " << s64 << ", or "
                      << p0 << '\n');
@@ -1164,8 +1165,18 @@ bool AArch64InstructionSelector::select(MachineInstr &I) const {
 
 
   case TargetOpcode::G_INTTOPTR:
-  case TargetOpcode::G_BITCAST:
+    // The importer is currently unable to import pointer types since they
+    // didn't exist in SelectionDAG.
     return selectCopy(I, TII, MRI, TRI, RBI);
+
+  case TargetOpcode::G_BITCAST:
+    // Imported SelectionDAG rules can handle every bitcast except those that
+    // bitcast from a type to the same type. Ideally, these shouldn't occur
+    // but we might not run an optimizer that deletes them.
+    if (MRI.getType(I.getOperand(0).getReg()) ==
+        MRI.getType(I.getOperand(1).getReg()))
+      return selectCopy(I, TII, MRI, TRI, RBI);
+    return false;
 
   case TargetOpcode::G_FPEXT: {
     if (MRI.getType(I.getOperand(0).getReg()) != LLT::scalar(64)) {
@@ -1261,9 +1272,9 @@ bool AArch64InstructionSelector::select(MachineInstr &I) const {
     return true;
   }
   case TargetOpcode::G_ICMP: {
-    if (Ty != LLT::scalar(1)) {
+    if (Ty != LLT::scalar(32)) {
       DEBUG(dbgs() << "G_ICMP result has type: " << Ty
-                   << ", expected: " << LLT::scalar(1) << '\n');
+                   << ", expected: " << LLT::scalar(32) << '\n');
       return false;
     }
 
@@ -1308,9 +1319,9 @@ bool AArch64InstructionSelector::select(MachineInstr &I) const {
   }
 
   case TargetOpcode::G_FCMP: {
-    if (Ty != LLT::scalar(1)) {
+    if (Ty != LLT::scalar(32)) {
       DEBUG(dbgs() << "G_FCMP result has type: " << Ty
-                   << ", expected: " << LLT::scalar(1) << '\n');
+                   << ", expected: " << LLT::scalar(32) << '\n');
       return false;
     }
 

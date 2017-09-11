@@ -13,8 +13,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "polly/CodeGen/PPCGCodeGeneration.h"
+#include "polly/CodeGen/CodeGeneration.h"
 #include "polly/CodeGen/IslAst.h"
 #include "polly/CodeGen/IslNodeBuilder.h"
+#include "polly/CodeGen/PerfMonitor.h"
 #include "polly/CodeGen/Utils.h"
 #include "polly/DependenceInfo.h"
 #include "polly/LinkAllPasses.h"
@@ -31,6 +33,8 @@
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/IRReader/IRReader.h"
+#include "llvm/Linker/Linker.h"
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Target/TargetMachine.h"
@@ -87,12 +91,14 @@ static cl::opt<bool> PrivateMemory("polly-acc-use-private",
                                    cl::init(false), cl::ZeroOrMore,
                                    cl::cat(PollyCategory));
 
-static cl::opt<bool> ManagedMemory("polly-acc-codegen-managed-memory",
-                                   cl::desc("Generate Host kernel code assuming"
-                                            " that all memory has been"
-                                            " declared as managed memory"),
-                                   cl::Hidden, cl::init(false), cl::ZeroOrMore,
-                                   cl::cat(PollyCategory));
+bool polly::PollyManagedMemory;
+static cl::opt<bool, true>
+    XManagedMemory("polly-acc-codegen-managed-memory",
+                   cl::desc("Generate Host kernel code assuming"
+                            " that all memory has been"
+                            " declared as managed memory"),
+                   cl::location(PollyManagedMemory), cl::Hidden,
+                   cl::init(false), cl::ZeroOrMore, cl::cat(PollyCategory));
 
 static cl::opt<bool>
     FailOnVerifyModuleFailure("polly-acc-fail-on-verify-module-failure",
@@ -101,6 +107,11 @@ static cl::opt<bool>
                                        " kernel module."),
                               cl::Hidden, cl::init(false), cl::ZeroOrMore,
                               cl::cat(PollyCategory));
+
+static cl::opt<std::string> CUDALibDevice(
+    "polly-acc-libdevice", cl::desc("Path to CUDA libdevice"), cl::Hidden,
+    cl::init("/usr/local/cuda/nvvm/libdevice/libdevice.compute_20.10.ll"),
+    cl::ZeroOrMore, cl::cat(PollyCategory));
 
 static cl::opt<std::string>
     CudaVersion("polly-acc-cuda-version",
@@ -111,6 +122,15 @@ static cl::opt<int>
     MinCompute("polly-acc-mincompute",
                cl::desc("Minimal number of compute statements to run on GPU."),
                cl::Hidden, cl::init(10 * 512 * 512));
+
+extern bool polly::PerfMonitoring;
+
+/// Return  a unique name for a Scop, which is the scop region with the
+/// function name.
+std::string getUniqueScopName(const Scop *S) {
+  return "Scop Region: " + S->getNameStr() +
+         " | Function: " + std::string(S->getFunction().getName());
+}
 
 /// Used to store information PPCG wants for kills. This information is
 /// used by live range reordering.
@@ -169,7 +189,7 @@ static bool isScalarUsesContainedInScop(const Scop &S,
 /// @returns live range reordering information that can be used to setup
 /// PPCG.
 static MustKillsInfo computeMustKillsInfo(const Scop &S) {
-  const isl::space ParamSpace(isl::manage(S.getParamSpace()));
+  const isl::space ParamSpace = S.getParamSpace();
   MustKillsInfo Info;
 
   // 1. Collect all ScopArrayInfo that satisfy *any* of the criteria:
@@ -182,8 +202,8 @@ static MustKillsInfo computeMustKillsInfo(const Scop &S) {
       KillMemIds.push_back(isl::manage(SAI->getBasePtrId().release()));
   }
 
-  Info.TaggedMustKills = isl::union_map::empty(isl::space(ParamSpace));
-  Info.MustKills = isl::union_map::empty(isl::space(ParamSpace));
+  Info.TaggedMustKills = isl::union_map::empty(ParamSpace);
+  Info.MustKills = isl::union_map::empty(ParamSpace);
 
   // Initialising KillsSchedule to `isl_set_empty` creates an empty node in the
   // schedule:
@@ -211,7 +231,7 @@ static MustKillsInfo computeMustKillsInfo(const Scop &S) {
     //     [param] -> { [Stmt[] -> phantom_ref[]] -> scalar_to_kill[] }
 
     // 2a. [param] -> { Stmt[] -> scalar_to_kill[] }
-    isl::map StmtToScalar = isl::map::universe(isl::space(ParamSpace));
+    isl::map StmtToScalar = isl::map::universe(ParamSpace);
     StmtToScalar = StmtToScalar.set_tuple_id(isl::dim::in, isl::id(KillStmtId));
     StmtToScalar = StmtToScalar.set_tuple_id(isl::dim::out, isl::id(ToKillId));
 
@@ -220,7 +240,7 @@ static MustKillsInfo computeMustKillsInfo(const Scop &S) {
         nullptr);
 
     // 2b. [param] -> { phantom_ref[] -> scalar_to_kill[] }
-    isl::map PhantomRefToScalar = isl::map::universe(isl::space(ParamSpace));
+    isl::map PhantomRefToScalar = isl::map::universe(ParamSpace);
     PhantomRefToScalar =
         PhantomRefToScalar.set_tuple_id(isl::dim::in, PhantomRefId);
     PhantomRefToScalar =
@@ -271,9 +291,11 @@ static __isl_give isl_id_to_ast_expr *pollyBuildAstExprForStmt(
   isl::ctx Ctx = Build.get_ctx();
   isl::id_to_ast_expr RefToExpr = isl::id_to_ast_expr::alloc(Ctx, 0);
 
+  Stmt->setAstBuild(Build);
+
   for (MemoryAccess *Acc : *Stmt) {
     isl::map AddrFunc = Acc->getAddressFunction();
-    AddrFunc = AddrFunc.intersect_domain(isl::manage(Stmt->getDomain()));
+    AddrFunc = AddrFunc.intersect_domain(Stmt->getDomain());
 
     isl::id RefId = Acc->getId();
     isl::pw_multi_aff PMA = isl::pw_multi_aff::from_map(AddrFunc);
@@ -406,11 +428,19 @@ private:
   ///
   /// @param Kernel The kernel to scan for llvm::Values
   ///
-  /// @returns A pair, whose first element contains the set of values
-  ///          referenced by the kernel, and whose second element contains the
-  ///          set of functions referenced by the kernel. All functions in the
-  ///          second set satisfy isValidFunctionInKernel.
-  std::pair<SetVector<Value *>, SetVector<Function *>>
+  /// @returns A tuple, whose:
+  ///          - First element contains the set of values referenced by the
+  ///            kernel
+  ///          - Second element contains the set of functions referenced by the
+  ///             kernel. All functions in the set satisfy
+  ///             `isValidFunctionInKernel`.
+  ///          - Third element contains loops that have induction variables
+  ///            which are used in the kernel, *and* these loops are *neither*
+  ///            in the scop, nor do they immediately surroung the Scop.
+  ///            See [Code generation of induction variables of loops outside
+  ///            Scops]
+  std::tuple<SetVector<Value *>, SetVector<Function *>, SetVector<const Loop *>,
+             isl::space>
   getReferencesInKernel(ppcg_kernel *Kernel);
 
   /// Compute the sizes of the execution grid for a given kernel.
@@ -420,13 +450,10 @@ private:
   /// @returns A tuple with grid sizes for X and Y dimension
   std::tuple<Value *, Value *> getGridSizes(ppcg_kernel *Kernel);
 
-  /// Creates a array that can be sent to the kernel on the device using a
-  /// host pointer. This is required for managed memory, when we directly send
-  /// host pointers to the device.
+  /// Get the managed array pointer for sending host pointers to the device.
   /// \note
   /// This is to be used only with managed memory
-  Value *getOrCreateManagedDeviceArray(gpu_array_info *Array,
-                                       ScopArrayInfo *ArrayInfo);
+  Value *getManagedDeviceArray(gpu_array_info *Array, ScopArrayInfo *ArrayInfo);
 
   /// Compute the sizes of the thread blocks for a given kernel.
   ///
@@ -605,6 +632,12 @@ private:
   /// @param F The function to remove references to.
   void clearLoops(Function *F);
 
+  /// Check if the scop requires to be linked with CUDA's libdevice.
+  bool requiresCUDALibDevice();
+
+  /// Link with the NVIDIA libdevice library (if needed and available).
+  void addCUDALibDevice();
+
   /// Finalize the generation of the kernel function.
   ///
   /// Free the LLVM-IR module corresponding to the kernel and -- if requested --
@@ -624,6 +657,9 @@ private:
 
   /// Create code that allocates memory to store arrays on device.
   void allocateDeviceArrays();
+
+  /// Create code to prepare the managed device pointers.
+  void prepareManagedDeviceArrays();
 
   /// Free all allocated device arrays.
   void freeDeviceArrays();
@@ -718,12 +754,14 @@ void GPUNodeBuilder::initializeAfterRTH() {
 
   GPUContext = createCallInitContext();
 
-  if (!ManagedMemory)
+  if (!PollyManagedMemory)
     allocateDeviceArrays();
+  else
+    prepareManagedDeviceArrays();
 }
 
 void GPUNodeBuilder::finalize() {
-  if (!ManagedMemory)
+  if (!PollyManagedMemory)
     freeDeviceArrays();
 
   createCallFreeContext(GPUContext);
@@ -731,9 +769,10 @@ void GPUNodeBuilder::finalize() {
 }
 
 void GPUNodeBuilder::allocateDeviceArrays() {
-  assert(!ManagedMemory && "Managed memory will directly send host pointers "
-                           "to the kernel. There is no need for device arrays");
-  isl_ast_build *Build = isl_ast_build_from_context(S.getContext());
+  assert(!PollyManagedMemory &&
+         "Managed memory will directly send host pointers "
+         "to the kernel. There is no need for device arrays");
+  isl_ast_build *Build = isl_ast_build_from_context(S.getContext().release());
 
   for (int i = 0; i < Prog->n_array; ++i) {
     gpu_array_info *Array = &Prog->array[i];
@@ -748,12 +787,51 @@ void GPUNodeBuilder::allocateDeviceArrays() {
           ArraySize,
           Builder.CreateMul(Offset,
                             Builder.getInt64(ScopArray->getElemSizeInBytes())));
+    const SCEV *SizeSCEV = SE.getSCEV(ArraySize);
+    // It makes no sense to have an array of size 0. The CUDA API will
+    // throw an error anyway if we invoke `cuMallocManaged` with size `0`. We
+    // choose to be defensive and catch this at the compile phase. It is
+    // most likely that we are doing something wrong with size computation.
+    if (SizeSCEV->isZero()) {
+      errs() << getUniqueScopName(&S)
+             << " has computed array size 0: " << *ArraySize
+             << " | for array: " << *(ScopArray->getBasePtr())
+             << ". This is illegal, exiting.\n";
+      report_fatal_error("array size was computed to be 0");
+    }
+
     Value *DevArray = createCallAllocateMemoryForDevice(ArraySize);
     DevArray->setName(DevArrayName);
     DeviceAllocations[ScopArray] = DevArray;
   }
 
   isl_ast_build_free(Build);
+}
+
+void GPUNodeBuilder::prepareManagedDeviceArrays() {
+  assert(PollyManagedMemory &&
+         "Device array most only be prepared in managed-memory mode");
+  for (int i = 0; i < Prog->n_array; ++i) {
+    gpu_array_info *Array = &Prog->array[i];
+    ScopArrayInfo *ScopArray = (ScopArrayInfo *)Array->user;
+    Value *HostPtr;
+
+    if (gpu_array_is_scalar(Array))
+      HostPtr = BlockGen.getOrCreateAlloca(ScopArray);
+    else
+      HostPtr = ScopArray->getBasePtr();
+    HostPtr = getLatestValue(HostPtr);
+
+    Value *Offset = getArrayOffset(Array);
+    if (Offset) {
+      HostPtr = Builder.CreatePointerCast(
+          HostPtr, ScopArray->getElementType()->getPointerTo());
+      HostPtr = Builder.CreateGEP(HostPtr, Offset);
+    }
+
+    HostPtr = Builder.CreatePointerCast(HostPtr, Builder.getInt8PtrTy());
+    DeviceAllocations[ScopArray] = HostPtr;
+  }
 }
 
 void GPUNodeBuilder::addCUDAAnnotations(Module *M, Value *BlockDimX,
@@ -778,7 +856,7 @@ void GPUNodeBuilder::addCUDAAnnotations(Module *M, Value *BlockDimX,
 }
 
 void GPUNodeBuilder::freeDeviceArrays() {
-  assert(!ManagedMemory && "Managed memory does not use device arrays");
+  assert(!PollyManagedMemory && "Managed memory does not use device arrays");
   for (auto &Array : DeviceAllocations)
     createCallFreeDeviceMemory(Array.second);
 }
@@ -863,8 +941,9 @@ void GPUNodeBuilder::createCallFreeKernel(Value *GPUKernel) {
 }
 
 void GPUNodeBuilder::createCallFreeDeviceMemory(Value *Array) {
-  assert(!ManagedMemory && "Managed memory does not allocate or free memory "
-                           "for device");
+  assert(!PollyManagedMemory &&
+         "Managed memory does not allocate or free memory "
+         "for device");
   const char *Name = "polly_freeDeviceMemory";
   Module *M = Builder.GetInsertBlock()->getParent()->getParent();
   Function *F = M->getFunction(Name);
@@ -882,8 +961,9 @@ void GPUNodeBuilder::createCallFreeDeviceMemory(Value *Array) {
 }
 
 Value *GPUNodeBuilder::createCallAllocateMemoryForDevice(Value *Size) {
-  assert(!ManagedMemory && "Managed memory does not allocate or free memory "
-                           "for device");
+  assert(!PollyManagedMemory &&
+         "Managed memory does not allocate or free memory "
+         "for device");
   const char *Name = "polly_allocateMemoryForDevice";
   Module *M = Builder.GetInsertBlock()->getParent()->getParent();
   Function *F = M->getFunction(Name);
@@ -903,8 +983,9 @@ Value *GPUNodeBuilder::createCallAllocateMemoryForDevice(Value *Size) {
 void GPUNodeBuilder::createCallCopyFromHostToDevice(Value *HostData,
                                                     Value *DeviceData,
                                                     Value *Size) {
-  assert(!ManagedMemory && "Managed memory does not transfer memory between "
-                           "device and host");
+  assert(!PollyManagedMemory &&
+         "Managed memory does not transfer memory between "
+         "device and host");
   const char *Name = "polly_copyFromHostToDevice";
   Module *M = Builder.GetInsertBlock()->getParent()->getParent();
   Function *F = M->getFunction(Name);
@@ -926,8 +1007,9 @@ void GPUNodeBuilder::createCallCopyFromHostToDevice(Value *HostData,
 void GPUNodeBuilder::createCallCopyFromDeviceToHost(Value *DeviceData,
                                                     Value *HostData,
                                                     Value *Size) {
-  assert(!ManagedMemory && "Managed memory does not transfer memory between "
-                           "device and host");
+  assert(!PollyManagedMemory &&
+         "Managed memory does not transfer memory between "
+         "device and host");
   const char *Name = "polly_copyFromDeviceToHost";
   Module *M = Builder.GetInsertBlock()->getParent()->getParent();
   Function *F = M->getFunction(Name);
@@ -947,8 +1029,8 @@ void GPUNodeBuilder::createCallCopyFromDeviceToHost(Value *DeviceData,
 }
 
 void GPUNodeBuilder::createCallSynchronizeDevice() {
-  assert(ManagedMemory && "explicit synchronization is only necessary for "
-                          "managed memory");
+  assert(PollyManagedMemory && "explicit synchronization is only necessary for "
+                               "managed memory");
   const char *Name = "polly_synchronizeDevice";
   Module *M = Builder.GetInsertBlock()->getParent()->getParent();
   Function *F = M->getFunction(Name);
@@ -1015,8 +1097,7 @@ static bool isPrefix(std::string String, std::string Prefix) {
 }
 
 Value *GPUNodeBuilder::getArraySize(gpu_array_info *Array) {
-  isl::ast_build Build =
-      isl::ast_build::from_context(isl::manage(S.getContext()));
+  isl::ast_build Build = isl::ast_build::from_context(S.getContext());
   Value *ArraySize = ConstantInt::get(Builder.getInt64Ty(), Array->size);
 
   if (!gpu_array_is_scalar(Array)) {
@@ -1044,77 +1125,51 @@ Value *GPUNodeBuilder::getArrayOffset(gpu_array_info *Array) {
   if (gpu_array_is_scalar(Array))
     return nullptr;
 
-  isl_ast_build *Build = isl_ast_build_from_context(S.getContext());
+  isl::ast_build Build = isl::ast_build::from_context(S.getContext());
 
-  isl_set *Min = isl_set_lexmin(isl_set_copy(Array->extent));
+  isl::set Min = isl::manage(isl_set_copy(Array->extent)).lexmin();
 
-  isl_set *ZeroSet = isl_set_universe(isl_set_get_space(Min));
+  isl::set ZeroSet = isl::set::universe(Min.get_space());
 
-  for (long i = 0; i < isl_set_dim(Min, isl_dim_set); i++)
-    ZeroSet = isl_set_fix_si(ZeroSet, isl_dim_set, i, 0);
+  for (long i = 0, n = Min.dim(isl::dim::set); i < n; i++)
+    ZeroSet = ZeroSet.fix_si(isl::dim::set, i, 0);
 
-  if (isl_set_is_subset(Min, ZeroSet)) {
-    isl_set_free(Min);
-    isl_set_free(ZeroSet);
-    isl_ast_build_free(Build);
+  if (Min.is_subset(ZeroSet)) {
     return nullptr;
   }
-  isl_set_free(ZeroSet);
 
-  isl_ast_expr *Result =
-      isl_ast_expr_from_val(isl_val_int_from_si(isl_set_get_ctx(Min), 0));
+  isl::ast_expr Result = isl::ast_expr::from_val(isl::val(Min.get_ctx(), 0));
 
-  for (long i = 0; i < isl_set_dim(Min, isl_dim_set); i++) {
+  for (long i = 0, n = Min.dim(isl::dim::set); i < n; i++) {
     if (i > 0) {
-      isl_pw_aff *Bound_I = isl_multi_pw_aff_get_pw_aff(Array->bound, i - 1);
-      isl_ast_expr *BExpr = isl_ast_build_expr_from_pw_aff(Build, Bound_I);
-      Result = isl_ast_expr_mul(Result, BExpr);
+      isl::pw_aff Bound_I =
+          isl::manage(isl_multi_pw_aff_get_pw_aff(Array->bound, i - 1));
+      isl::ast_expr BExpr = Build.expr_from(Bound_I);
+      Result = Result.mul(BExpr);
     }
-    isl_pw_aff *DimMin = isl_set_dim_min(isl_set_copy(Min), i);
-    isl_ast_expr *MExpr = isl_ast_build_expr_from_pw_aff(Build, DimMin);
-    Result = isl_ast_expr_add(Result, MExpr);
+    isl::pw_aff DimMin = Min.dim_min(i);
+    isl::ast_expr MExpr = Build.expr_from(DimMin);
+    Result = Result.add(MExpr);
   }
 
-  Value *ResultValue = ExprBuilder.create(Result);
-  isl_set_free(Min);
-  isl_ast_build_free(Build);
-
-  return ResultValue;
+  return ExprBuilder.create(Result.release());
 }
 
-Value *GPUNodeBuilder::getOrCreateManagedDeviceArray(gpu_array_info *Array,
-                                                     ScopArrayInfo *ArrayInfo) {
-
-  assert(ManagedMemory && "Only used when you wish to get a host "
-                          "pointer for sending data to the kernel, "
-                          "with managed memory");
+Value *GPUNodeBuilder::getManagedDeviceArray(gpu_array_info *Array,
+                                             ScopArrayInfo *ArrayInfo) {
+  assert(PollyManagedMemory && "Only used when you wish to get a host "
+                               "pointer for sending data to the kernel, "
+                               "with managed memory");
   std::map<ScopArrayInfo *, Value *>::iterator it;
-  if ((it = DeviceAllocations.find(ArrayInfo)) != DeviceAllocations.end()) {
-    return it->second;
-  } else {
-    Value *HostPtr;
-
-    if (gpu_array_is_scalar(Array))
-      HostPtr = BlockGen.getOrCreateAlloca(ArrayInfo);
-    else
-      HostPtr = ArrayInfo->getBasePtr();
-
-    Value *Offset = getArrayOffset(Array);
-    if (Offset) {
-      HostPtr = Builder.CreatePointerCast(
-          HostPtr, ArrayInfo->getElementType()->getPointerTo());
-      HostPtr = Builder.CreateGEP(HostPtr, Offset);
-    }
-
-    HostPtr = Builder.CreatePointerCast(HostPtr, Builder.getInt8PtrTy());
-    DeviceAllocations[ArrayInfo] = HostPtr;
-    return HostPtr;
-  }
+  it = DeviceAllocations.find(ArrayInfo);
+  assert(it != DeviceAllocations.end() &&
+         "Device array expected to be available");
+  return it->second;
 }
 
 void GPUNodeBuilder::createDataTransfer(__isl_take isl_ast_node *TransferStmt,
                                         enum DataDirection Direction) {
-  assert(!ManagedMemory && "Managed memory needs no data transfers");
+  assert(!PollyManagedMemory && "Managed memory needs no data transfers");
   isl_ast_expr *Expr = isl_ast_node_user_get_expr(TransferStmt);
   isl_ast_expr *Arg = isl_ast_expr_get_op_arg(Expr, 0);
   isl_id *Id = isl_ast_expr_get_id(Arg);
@@ -1131,6 +1186,7 @@ void GPUNodeBuilder::createDataTransfer(__isl_take isl_ast_node *TransferStmt,
     HostPtr = BlockGen.getOrCreateAlloca(ScopArray);
   else
     HostPtr = ScopArray->getBasePtr();
+  HostPtr = getLatestValue(HostPtr);
 
   if (Offset) {
     HostPtr = Builder.CreatePointerCast(
@@ -1167,6 +1223,8 @@ void GPUNodeBuilder::createUser(__isl_take isl_ast_node *UserStmt) {
   const char *Str = isl_id_get_name(Id);
   if (!strcmp(Str, "kernel")) {
     createKernel(UserStmt);
+    if (PollyManagedMemory)
+      createCallSynchronizeDevice();
     isl_ast_expr_free(Expr);
     return;
   }
@@ -1183,7 +1241,7 @@ void GPUNodeBuilder::createUser(__isl_take isl_ast_node *UserStmt) {
     return;
   }
   if (isPrefix(Str, "to_device")) {
-    if (!ManagedMemory)
+    if (!PollyManagedMemory)
       createDataTransfer(UserStmt, HOST_TO_DEVICE);
     else
       isl_ast_node_free(UserStmt);
@@ -1193,10 +1251,9 @@ void GPUNodeBuilder::createUser(__isl_take isl_ast_node *UserStmt) {
   }
 
   if (isPrefix(Str, "from_device")) {
-    if (!ManagedMemory) {
+    if (!PollyManagedMemory) {
       createDataTransfer(UserStmt, DEVICE_TO_HOST);
     } else {
-      createCallSynchronizeDevice();
       isl_ast_node_free(UserStmt);
     }
     isl_ast_expr_free(Expr);
@@ -1324,13 +1381,53 @@ isl_bool collectReferencesInGPUStmt(__isl_keep isl_ast_node *Node, void *User) {
   return isl_bool_true;
 }
 
+/// A list of functions that are available in NVIDIA's libdevice.
+const std::set<std::string> CUDALibDeviceFunctions = {
+    "exp",      "expf",      "expl",      "cos", "cosf", "sqrt", "sqrtf",
+    "copysign", "copysignf", "copysignl", "log", "logf", "powi", "powif"};
+
+// A map from intrinsics to their corresponding libdevice functions.
+const std::map<std::string, std::string> IntrinsicToLibdeviceFunc = {
+    {"llvm.exp.f64", "exp"},
+    {"llvm.exp.f32", "expf"},
+    {"llvm.powi.f64", "powi"},
+    {"llvm.powi.f32", "powif"}};
+
+/// Return the corresponding CUDA libdevice function name for @p F.
+/// Note that this function will try to convert instrinsics in the list
+/// IntrinsicToLibdeviceFunc into libdevice functions.
+/// This is because some intrinsics such as `exp`
+/// are not supported by the NVPTX backend.
+/// If this restriction of the backend is lifted, we should refactor our code
+/// so that we use intrinsics whenever possible.
+///
+/// Return "" if we are not compiling for CUDA.
+std::string getCUDALibDeviceFuntion(Function *F) {
+  const std::string FnName = [&] {
+    auto It = IntrinsicToLibdeviceFunc.find(F->getName());
+    if (It != IntrinsicToLibdeviceFunc.end())
+      return It->second;
+
+    return std::string(F->getName());
+  }();
+
+  if (CUDALibDeviceFunctions.count(FnName))
+    return "__nv_" + FnName;
+
+  return "";
+}
+
 /// Check if F is a function that we can code-generate in a GPU kernel.
-static bool isValidFunctionInKernel(llvm::Function *F) {
+static bool isValidFunctionInKernel(llvm::Function *F, bool AllowLibDevice) {
   assert(F && "F is an invalid pointer");
   // We string compare against the name of the function to allow
   // all variants of the intrinsic "llvm.sqrt.*", "llvm.fabs", and
   // "llvm.copysign".
   const StringRef Name = F->getName();
+
+  if (AllowLibDevice && getCUDALibDeviceFuntion(F).length() > 0)
+    return true;
+
   return F->isIntrinsic() &&
          (Name.startswith("llvm.sqrt") || Name.startswith("llvm.fabs") ||
           Name.startswith("llvm.copysign"));
@@ -1346,42 +1443,58 @@ static bool isValidSubtreeValue(llvm::Value *V) { return !isa<Function>(V); }
 
 /// Return `Function`s from `RawSubtreeValues`.
 static SetVector<Function *>
-getFunctionsFromRawSubtreeValues(SetVector<Value *> RawSubtreeValues) {
+getFunctionsFromRawSubtreeValues(SetVector<Value *> RawSubtreeValues,
+                                 bool AllowCUDALibDevice) {
   SetVector<Function *> SubtreeFunctions;
   for (Value *It : RawSubtreeValues) {
     Function *F = dyn_cast<Function>(It);
     if (F) {
-      assert(isValidFunctionInKernel(F) && "Code should have bailed out by "
-                                           "this point if an invalid function "
-                                           "were present in a kernel.");
+      assert(isValidFunctionInKernel(F, AllowCUDALibDevice) &&
+             "Code should have bailed out by "
+             "this point if an invalid function "
+             "were present in a kernel.");
       SubtreeFunctions.insert(F);
     }
   }
   return SubtreeFunctions;
 }
 
-std::pair<SetVector<Value *>, SetVector<Function *>>
+std::tuple<SetVector<Value *>, SetVector<Function *>, SetVector<const Loop *>,
+           isl::space>
 GPUNodeBuilder::getReferencesInKernel(ppcg_kernel *Kernel) {
   SetVector<Value *> SubtreeValues;
   SetVector<const SCEV *> SCEVs;
   SetVector<const Loop *> Loops;
+  isl::space ParamSpace = isl::space(S.getIslCtx(), 0, 0).params();
   SubtreeReferences References = {
-      LI, SE, S, ValueMap, SubtreeValues, SCEVs, getBlockGenerator()};
+      LI,         SE, S, ValueMap, SubtreeValues, SCEVs, getBlockGenerator(),
+      &ParamSpace};
 
   for (const auto &I : IDToValue)
     SubtreeValues.insert(I.second);
 
+  // NOTE: this is populated in IslNodeBuilder::addParameters
+  // See [Code generation of induction variables of loops outside Scops].
+  for (const auto &I : OutsideLoopIterations)
+    SubtreeValues.insert(cast<SCEVUnknown>(I.second)->getValue());
+
   isl_ast_node_foreach_descendant_top_down(
       Kernel->tree, collectReferencesInGPUStmt, &References);
 
-  for (const SCEV *Expr : SCEVs)
+  for (const SCEV *Expr : SCEVs) {
     findValues(Expr, SE, SubtreeValues);
+    findLoops(Expr, Loops);
+  }
+
+  Loops.remove_if([this](const Loop *L) {
+    return S.contains(L) || L->contains(S.getEntry());
+  });
 
   for (auto &SAI : S.arrays())
     SubtreeValues.remove(SAI->getBasePtr());
 
-  isl_space *Space = S.getParamSpace();
-  for (long i = 0; i < isl_space_dim(Space, isl_dim_param); i++) {
+  isl_space *Space = S.getParamSpace().release();
+  for (long i = 0, n = isl_space_dim(Space, isl_dim_param); i < n; i++) {
     isl_id *Id = isl_space_get_dim_id(Space, isl_dim_param, i);
     assert(IDToValue.count(Id));
     Value *Val = IDToValue[Id];
@@ -1390,7 +1503,7 @@ GPUNodeBuilder::getReferencesInKernel(ppcg_kernel *Kernel) {
   }
   isl_space_free(Space);
 
-  for (long i = 0; i < isl_space_dim(Kernel->space, isl_dim_set); i++) {
+  for (long i = 0, n = isl_space_dim(Kernel->space, isl_dim_set); i < n; i++) {
     isl_id *Id = isl_space_get_dim_id(Kernel->space, isl_dim_set, i);
     assert(IDToValue.count(Id));
     Value *Val = IDToValue[Id];
@@ -1407,8 +1520,11 @@ GPUNodeBuilder::getReferencesInKernel(ppcg_kernel *Kernel) {
       make_filter_range(SubtreeValues, isValidSubtreeValue);
   SetVector<Value *> ValidSubtreeValues(ValidSubtreeValuesIt.begin(),
                                         ValidSubtreeValuesIt.end());
+
+  bool AllowCUDALibDevice = Arch == GPUArch::NVPTX64;
+
   SetVector<Function *> ValidSubtreeFunctions(
-      getFunctionsFromRawSubtreeValues(SubtreeValues));
+      getFunctionsFromRawSubtreeValues(SubtreeValues, AllowCUDALibDevice));
 
   // @see IslNodeBuilder::getReferencesInSubtree
   SetVector<Value *> ReplacedValues;
@@ -1419,7 +1535,8 @@ GPUNodeBuilder::getReferencesInKernel(ppcg_kernel *Kernel) {
     else
       ReplacedValues.insert(It->second);
   }
-  return std::make_pair(ReplacedValues, ValidSubtreeFunctions);
+  return std::make_tuple(ReplacedValues, ValidSubtreeFunctions, Loops,
+                         ParamSpace);
 }
 
 void GPUNodeBuilder::clearDominators(Function *F) {
@@ -1451,16 +1568,17 @@ void GPUNodeBuilder::clearLoops(Function *F) {
 
 std::tuple<Value *, Value *> GPUNodeBuilder::getGridSizes(ppcg_kernel *Kernel) {
   std::vector<Value *> Sizes;
-  isl_ast_build *Context = isl_ast_build_from_context(S.getContext());
+  isl::ast_build Context = isl::ast_build::from_context(S.getContext());
 
+  isl::multi_pw_aff GridSizePwAffs =
+      isl::manage(isl_multi_pw_aff_copy(Kernel->grid_size));
   for (long i = 0; i < Kernel->n_grid; i++) {
-    isl_pw_aff *Size = isl_multi_pw_aff_get_pw_aff(Kernel->grid_size, i);
-    isl_ast_expr *GridSize = isl_ast_build_expr_from_pw_aff(Context, Size);
-    Value *Res = ExprBuilder.create(GridSize);
+    isl::pw_aff Size = GridSizePwAffs.get_pw_aff(i);
+    isl::ast_expr GridSize = Context.expr_from(Size);
+    Value *Res = ExprBuilder.create(GridSize.release());
     Res = Builder.CreateTrunc(Res, Builder.getInt32Ty());
     Sizes.push_back(Res);
   }
-  isl_ast_build_free(Context);
 
   for (long i = Kernel->n_grid; i < 3; i++)
     Sizes.push_back(ConstantInt::get(Builder.getInt32Ty(), 1));
@@ -1497,7 +1615,15 @@ GPUNodeBuilder::createLaunchParameters(ppcg_kernel *Kernel, Function *F,
   const int NumArgs = F->arg_size();
   std::vector<int> ArgSizes(NumArgs);
 
-  Type *ArrayTy = ArrayType::get(Builder.getInt8PtrTy(), 2 * NumArgs);
+  // If we are using the OpenCL Runtime, we need to add the kernel argument
+  // sizes to the end of the launch-parameter list, so OpenCL can determine
+  // how big the respective kernel arguments are.
+  // Here we need to reserve adequate space for that.
+  Type *ArrayTy;
+  if (Runtime == GPURuntime::OpenCL)
+    ArrayTy = ArrayType::get(Builder.getInt8PtrTy(), 2 * NumArgs);
+  else
+    ArrayTy = ArrayType::get(Builder.getInt8PtrTy(), NumArgs);
 
   BasicBlock *EntryBlock =
       &Builder.GetInsertBlock()->getParent()->getEntryBlock();
@@ -1514,12 +1640,13 @@ GPUNodeBuilder::createLaunchParameters(ppcg_kernel *Kernel, Function *F,
     isl_id *Id = isl_space_get_tuple_id(Prog->array[i].space, isl_dim_set);
     const ScopArrayInfo *SAI = ScopArrayInfo::getFromId(isl::manage(Id));
 
-    ArgSizes[Index] = SAI->getElemSizeInBytes();
+    if (Runtime == GPURuntime::OpenCL)
+      ArgSizes[Index] = SAI->getElemSizeInBytes();
 
     Value *DevArray = nullptr;
-    if (ManagedMemory) {
-      DevArray = getOrCreateManagedDeviceArray(
-          &Prog->array[i], const_cast<ScopArrayInfo *>(SAI));
+    if (PollyManagedMemory) {
+      DevArray = getManagedDeviceArray(&Prog->array[i],
+                                       const_cast<ScopArrayInfo *>(SAI));
     } else {
       DevArray = DeviceAllocations[const_cast<ScopArrayInfo *>(SAI)];
       DevArray = createCallGetDevicePtr(DevArray);
@@ -1539,7 +1666,7 @@ GPUNodeBuilder::createLaunchParameters(ppcg_kernel *Kernel, Function *F,
 
     if (gpu_array_is_read_only_scalar(&Prog->array[i])) {
       Value *ValPtr = nullptr;
-      if (ManagedMemory)
+      if (PollyManagedMemory)
         ValPtr = DevArray;
       else
         ValPtr = BlockGen.getOrCreateAlloca(SAI);
@@ -1569,7 +1696,8 @@ GPUNodeBuilder::createLaunchParameters(ppcg_kernel *Kernel, Function *F,
     Value *Val = IDToValue[Id];
     isl_id_free(Id);
 
-    ArgSizes[Index] = computeSizeInBytes(Val->getType());
+    if (Runtime == GPURuntime::OpenCL)
+      ArgSizes[Index] = computeSizeInBytes(Val->getType());
 
     Instruction *Param =
         new AllocaInst(Val->getType(), AddressSpace,
@@ -1589,7 +1717,8 @@ GPUNodeBuilder::createLaunchParameters(ppcg_kernel *Kernel, Function *F,
       Val = ValueMap[Val];
     isl_id_free(Id);
 
-    ArgSizes[Index] = computeSizeInBytes(Val->getType());
+    if (Runtime == GPURuntime::OpenCL)
+      ArgSizes[Index] = computeSizeInBytes(Val->getType());
 
     Instruction *Param =
         new AllocaInst(Val->getType(), AddressSpace,
@@ -1601,7 +1730,8 @@ GPUNodeBuilder::createLaunchParameters(ppcg_kernel *Kernel, Function *F,
   }
 
   for (auto Val : SubtreeValues) {
-    ArgSizes[Index] = computeSizeInBytes(Val->getType());
+    if (Runtime == GPURuntime::OpenCL)
+      ArgSizes[Index] = computeSizeInBytes(Val->getType());
 
     Instruction *Param =
         new AllocaInst(Val->getType(), AddressSpace,
@@ -1612,15 +1742,17 @@ GPUNodeBuilder::createLaunchParameters(ppcg_kernel *Kernel, Function *F,
     Index++;
   }
 
-  for (int i = 0; i < NumArgs; i++) {
-    Value *Val = ConstantInt::get(Builder.getInt32Ty(), ArgSizes[i]);
-    Instruction *Param =
-        new AllocaInst(Builder.getInt32Ty(), AddressSpace,
-                       Launch + "_param_size_" + std::to_string(i),
-                       EntryBlock->getTerminator());
-    Builder.CreateStore(Val, Param);
-    insertStoreParameter(Parameters, Param, Index);
-    Index++;
+  if (Runtime == GPURuntime::OpenCL) {
+    for (int i = 0; i < NumArgs; i++) {
+      Value *Val = ConstantInt::get(Builder.getInt32Ty(), ArgSizes[i]);
+      Instruction *Param =
+          new AllocaInst(Builder.getInt32Ty(), AddressSpace,
+                         Launch + "_param_size_" + std::to_string(i),
+                         EntryBlock->getTerminator());
+      Builder.CreateStore(Val, Param);
+      insertStoreParameter(Parameters, Param, Index);
+      Index++;
+    }
   }
 
   auto Location = EntryBlock->getTerminator();
@@ -1661,7 +1793,16 @@ void GPUNodeBuilder::createKernel(__isl_take isl_ast_node *KernelStmt) {
 
   SetVector<Value *> SubtreeValues;
   SetVector<Function *> SubtreeFunctions;
-  std::tie(SubtreeValues, SubtreeFunctions) = getReferencesInKernel(Kernel);
+  SetVector<const Loop *> Loops;
+  isl::space ParamSpace;
+  std::tie(SubtreeValues, SubtreeFunctions, Loops, ParamSpace) =
+      getReferencesInKernel(Kernel);
+
+  // Add parameters that appear only in the access function to the kernel
+  // space. This is important to make sure that all isl_ids are passed as
+  // parameters to the kernel, even though we may not have all parameters
+  // in the context to improve compile time.
+  Kernel->space = isl_space_align_params(Kernel->space, ParamSpace.release());
 
   assert(Kernel->tree && "Device AST of kernel node is empty");
 
@@ -1670,8 +1811,6 @@ void GPUNodeBuilder::createKernel(__isl_take isl_ast_node *KernelStmt) {
   ValueMapT HostValueMap = ValueMap;
   BlockGenerator::AllocaMapTy HostScalarMap = ScalarMap;
   ScalarMap.clear();
-
-  SetVector<const Loop *> Loops;
 
   // Create for all loops we depend on values that contain the current loop
   // iteration. These values are necessary to generate code for SCEVs that
@@ -1739,11 +1878,11 @@ static std::string computeNVPTXDataLayout(bool is64Bit) {
 
   if (!is64Bit) {
     Ret += "e-p:32:32:32-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:"
-           "64-f32:32:32-f64:64:64-v16:16:16-v32:32:32-v64:64:"
+           "64-i128:128:128-f32:32:32-f64:64:64-v16:16:16-v32:32:32-v64:64:"
            "64-v128:128:128-n16:32:64";
   } else {
     Ret += "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:"
-           "64-f32:32:32-f64:64:64-v16:16:16-v32:32:32-v64:64:"
+           "64-i128:128:128-f32:32:32-f64:64:64-v16:16:16-v32:32:32-v64:64:"
            "64-v128:128:128-n16:32:64";
   }
 
@@ -1758,12 +1897,12 @@ static std::string computeSPIRDataLayout(bool is64Bit) {
 
   if (!is64Bit) {
     Ret += "e-p:32:32:32-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:"
-           "64-f32:32:32-f64:64:64-v16:16:16-v24:32:32-v32:32:"
+           "64-i128:128:128-f32:32:32-f64:64:64-v16:16:16-v24:32:32-v32:32:"
            "32-v48:64:64-v64:64:64-v96:128:128-v128:128:128-v192:"
            "256:256-v256:256:256-v512:512:512-v1024:1024:1024";
   } else {
     Ret += "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:"
-           "64-f32:32:32-f64:64:64-v16:16:16-v24:32:32-v32:32:"
+           "64-i128:128:128-f32:32:32-f64:64:64-v16:16:16-v24:32:32-v32:32:"
            "32-v48:64:64-v64:64:64-v96:128:128-v128:128:128-v192:"
            "256:256-v256:256:256-v512:512:512-v1024:1024:1024";
   }
@@ -1873,7 +2012,7 @@ GPUNodeBuilder::createKernelFunctionDecl(ppcg_kernel *Kernel,
     isl_ast_build *Build =
         isl_ast_build_from_context(isl_set_copy(Prog->context));
     Sizes.push_back(nullptr);
-    for (long j = 1; j < Kernel->array[i].array->n_index; j++) {
+    for (long j = 1, n = Kernel->array[i].array->n_index; j < n; j++) {
       isl_ast_expr *DimSize = isl_ast_build_expr_from_pw_aff(
           Build, isl_multi_pw_aff_get_pw_aff(Kernel->array[i].array->bound, j));
       auto V = ExprBuilder.create(DimSize);
@@ -2056,13 +2195,19 @@ void GPUNodeBuilder::finalizeKernelArguments(ppcg_kernel *Kernel) {
     Arg++;
   }
 
-  if (StoredScalar)
+  if (StoredScalar) {
     /// In case more than one thread contains scalar stores, the generated
     /// code might be incorrect, if we only store at the end of the kernel.
     /// To support this case we need to store these scalars back at each
     /// memory store or at least before each kernel barrier.
-    if (Kernel->n_block != 0 || Kernel->n_grid != 0)
+    if (Kernel->n_block != 0 || Kernel->n_grid != 0) {
       BuildSuccessful = 0;
+      DEBUG(
+          dbgs() << getUniqueScopName(&S)
+                 << " has a store to a scalar value that"
+                    " would be undefined to run in parallel. Bailing out.\n";);
+    }
+  }
 }
 
 void GPUNodeBuilder::createKernelVariables(ppcg_kernel *Kernel, Function *FN) {
@@ -2232,6 +2377,63 @@ std::string GPUNodeBuilder::createKernelASM() {
   return ASMStream.str();
 }
 
+bool GPUNodeBuilder::requiresCUDALibDevice() {
+  bool RequiresLibDevice = false;
+  for (Function &F : GPUModule->functions()) {
+    if (!F.isDeclaration())
+      continue;
+
+    const std::string CUDALibDeviceFunc = getCUDALibDeviceFuntion(&F);
+    if (CUDALibDeviceFunc.length() != 0) {
+      // We need to handle the case where a module looks like this:
+      // @expf(..)
+      // @llvm.exp.f64(..)
+      // Both of these functions would be renamed to `__nv_expf`.
+      //
+      // So, we must first check for the existence of the libdevice function.
+      // If this exists, we replace our current function with it.
+      //
+      // If it does not exist, we rename the current function to the
+      // libdevice functiono name.
+      if (Function *Replacement = F.getParent()->getFunction(CUDALibDeviceFunc))
+        F.replaceAllUsesWith(Replacement);
+      else
+        F.setName(CUDALibDeviceFunc);
+      RequiresLibDevice = true;
+    }
+  }
+
+  return RequiresLibDevice;
+}
+
+void GPUNodeBuilder::addCUDALibDevice() {
+  if (Arch != GPUArch::NVPTX64)
+    return;
+
+  if (requiresCUDALibDevice()) {
+    SMDiagnostic Error;
+
+    errs() << CUDALibDevice << "\n";
+    auto LibDeviceModule =
+        parseIRFile(CUDALibDevice, Error, GPUModule->getContext());
+
+    if (!LibDeviceModule) {
+      BuildSuccessful = false;
+      report_fatal_error("Could not find or load libdevice. Skipping GPU "
+                         "kernel generation. Please set -polly-acc-libdevice "
+                         "accordingly.\n");
+      return;
+    }
+
+    Linker L(*GPUModule);
+
+    // Set an nvptx64 target triple to avoid linker warnings. The original
+    // triple of the libdevice files are nvptx-unknown-unknown.
+    LibDeviceModule->setTargetTriple(Triple::normalize("nvptx64-nvidia-cuda"));
+    L.linkInModule(std::move(LibDeviceModule), Linker::LinkOnlyNeeded);
+  }
+}
+
 std::string GPUNodeBuilder::finalizeKernelFunction() {
 
   if (verifyModule(*GPUModule)) {
@@ -2246,6 +2448,8 @@ std::string GPUNodeBuilder::finalizeKernelFunction() {
     BuildSuccessful = false;
     return "";
   }
+
+  addCUDALibDevice();
 
   if (DumpKernelIR)
     outs() << *GPUModule << "\n";
@@ -2269,6 +2473,56 @@ std::string GPUNodeBuilder::finalizeKernelFunction() {
   KernelIDs.clear();
 
   return Assembly;
+}
+/// Construct an `isl_pw_aff_list` from a vector of `isl_pw_aff`
+/// @param PwAffs The list of piecewise affine functions to create an
+///               `isl_pw_aff_list` from. We expect an rvalue ref because
+///               all the isl_pw_aff are used up by this function.
+///
+/// @returns  The `isl_pw_aff_list`.
+__isl_give isl_pw_aff_list *
+createPwAffList(isl_ctx *Context,
+                const std::vector<__isl_take isl_pw_aff *> &&PwAffs) {
+  isl_pw_aff_list *List = isl_pw_aff_list_alloc(Context, PwAffs.size());
+
+  for (unsigned i = 0; i < PwAffs.size(); i++) {
+    List = isl_pw_aff_list_insert(List, i, PwAffs[i]);
+  }
+  return List;
+}
+
+/// Align all the `PwAffs` such that they have the same parameter dimensions.
+///
+/// We loop over all `pw_aff` and align all of their spaces together to
+/// create a common space for all the `pw_aff`. This common space is the
+/// `AlignSpace`. We then align all the `pw_aff` to this space. We start
+/// with the given `SeedSpace`.
+/// @param PwAffs    The list of piecewise affine functions we want to align.
+///                  This is an rvalue reference because the entire vector is
+///                  used up by the end of the operation.
+/// @param SeedSpace The space to start the alignment process with.
+/// @returns         A std::pair, whose first element is the aligned space,
+///                  whose second element is the vector of aligned piecewise
+///                  affines.
+static std::pair<__isl_give isl_space *, std::vector<__isl_give isl_pw_aff *>>
+alignPwAffs(const std::vector<__isl_take isl_pw_aff *> &&PwAffs,
+            __isl_take isl_space *SeedSpace) {
+  assert(SeedSpace && "Invalid seed space given.");
+
+  isl_space *AlignSpace = SeedSpace;
+  for (isl_pw_aff *PwAff : PwAffs) {
+    isl_space *PwAffSpace = isl_pw_aff_get_domain_space(PwAff);
+    AlignSpace = isl_space_align_params(AlignSpace, PwAffSpace);
+  }
+  std::vector<isl_pw_aff *> AdjustedPwAffs;
+
+  for (unsigned i = 0; i < PwAffs.size(); i++) {
+    isl_pw_aff *Adjusted = PwAffs[i];
+    assert(Adjusted && "Invalid pw_aff given.");
+    Adjusted = isl_pw_aff_align_params(Adjusted, isl_space_copy(AlignSpace));
+    AdjustedPwAffs.push_back(Adjusted);
+  }
+  return std::make_pair(AlignSpace, AdjustedPwAffs);
 }
 
 namespace {
@@ -2366,13 +2620,14 @@ public:
   ///
   /// @return The relation describing all tagged memory accesses.
   isl_union_map *getTaggedAccesses(enum MemoryAccess::AccessType AccessTy) {
-    isl_union_map *Accesses = isl_union_map_empty(S->getParamSpace());
+    isl_union_map *Accesses = isl_union_map_empty(S->getParamSpace().release());
 
     for (auto &Stmt : *S)
       for (auto &Acc : Stmt)
         if (Acc->getType() == AccessTy) {
           isl_map *Relation = Acc->getAccessRelation().release();
-          Relation = isl_map_intersect_domain(Relation, Stmt.getDomain());
+          Relation =
+              isl_map_intersect_domain(Relation, Stmt.getDomain().release());
 
           isl_space *Space = isl_map_get_space(Relation);
           Space = isl_space_range(Space);
@@ -2424,10 +2679,9 @@ public:
         S->getIslCtx(),
         S->getNumParams() + std::distance(S->array_begin(), S->array_end()));
     auto *Zero = isl_ast_expr_from_val(isl_val_zero(S->getIslCtx()));
-    auto *Space = S->getParamSpace();
 
-    for (int I = 0, E = S->getNumParams(); I < E; ++I) {
-      isl_id *Id = isl_space_get_dim_id(Space, isl_dim_param, I);
+    for (const SCEV *P : S->parameters()) {
+      isl_id *Id = S->getIdForParam(P).release();
       Names = isl_id_to_ast_expr_set(Names, Id, isl_ast_expr_copy(Zero));
     }
 
@@ -2436,7 +2690,6 @@ public:
       Names = isl_id_to_ast_expr_set(Names, Id, isl_ast_expr_copy(Zero));
     }
 
-    isl_space_free(Space);
     isl_ast_expr_free(Zero);
 
     return Names;
@@ -2462,17 +2715,17 @@ public:
     PPCGScop->start = 0;
     PPCGScop->end = 0;
 
-    PPCGScop->context = S->getContext();
-    PPCGScop->domain = S->getDomains();
+    PPCGScop->context = S->getContext().release();
+    PPCGScop->domain = S->getDomains().release();
     // TODO: investigate this further. PPCG calls collect_call_domains.
-    PPCGScop->call = isl_union_set_from_set(S->getContext());
+    PPCGScop->call = isl_union_set_from_set(S->getContext().release());
     PPCGScop->tagged_reads = getTaggedReads();
-    PPCGScop->reads = S->getReads();
+    PPCGScop->reads = S->getReads().release();
     PPCGScop->live_in = nullptr;
     PPCGScop->tagged_may_writes = getTaggedMayWrites();
-    PPCGScop->may_writes = S->getWrites();
+    PPCGScop->may_writes = S->getWrites().release();
     PPCGScop->tagged_must_writes = getTaggedMustWrites();
-    PPCGScop->must_writes = S->getMustWrites();
+    PPCGScop->must_writes = S->getMustWrites().release();
     PPCGScop->live_out = nullptr;
     PPCGScop->tagged_must_kills = KillsInfo.TaggedMustKills.take();
     PPCGScop->must_kills = KillsInfo.MustKills.take();
@@ -2487,7 +2740,7 @@ public:
     PPCGScop->dep_order = nullptr;
     PPCGScop->tagged_dep_order = nullptr;
 
-    PPCGScop->schedule = S->getScheduleTree();
+    PPCGScop->schedule = S->getScheduleTree().release();
     // If we have something non-trivial to kill, add it to the schedule
     if (KillsInfo.KillsSchedule.get())
       PPCGScop->schedule = isl_schedule_sequence(
@@ -2527,6 +2780,9 @@ public:
       Access->ref_id = Acc->getId().release();
       Access->next = Accesses;
       Access->n_index = Acc->getScopArrayInfo()->getNumberOfDimensions();
+      // TODO: Also mark one-element accesses to arrays as fixed-element.
+      Access->fixed_element =
+          Acc->isLatestScalarKind() ? isl_bool_true : isl_bool_false;
       Accesses = Access;
     }
 
@@ -2549,7 +2805,7 @@ public:
     for (auto &Stmt : *S) {
       gpu_stmt *GPUStmt = &Stmts[i];
 
-      GPUStmt->id = Stmt.getDomainId();
+      GPUStmt->id = Stmt.getDomainId().release();
 
       // We use the pet stmt pointer to keep track of the Polly statements.
       GPUStmt->stmt = (pet_stmt *)&Stmt;
@@ -2571,76 +2827,57 @@ public:
   /// @param Array The array to derive the extent for.
   ///
   /// @returns An isl_set describing the extent of the array.
-  __isl_give isl_set *getExtent(ScopArrayInfo *Array) {
+  isl::set getExtent(ScopArrayInfo *Array) {
     unsigned NumDims = Array->getNumberOfDimensions();
-    isl_union_map *Accesses = S->getAccesses();
-    Accesses = isl_union_map_intersect_domain(Accesses, S->getDomains());
-    Accesses = isl_union_map_detect_equalities(Accesses);
-    isl_union_set *AccessUSet = isl_union_map_range(Accesses);
-    AccessUSet = isl_union_set_coalesce(AccessUSet);
-    AccessUSet = isl_union_set_detect_equalities(AccessUSet);
-    AccessUSet = isl_union_set_coalesce(AccessUSet);
 
-    if (isl_union_set_is_empty(AccessUSet)) {
-      isl_union_set_free(AccessUSet);
-      return isl_set_empty(Array->getSpace().release());
-    }
+    if (Array->getNumberOfDimensions() == 0)
+      return isl::set::universe(Array->getSpace());
 
-    if (Array->getNumberOfDimensions() == 0) {
-      isl_union_set_free(AccessUSet);
-      return isl_set_universe(Array->getSpace().release());
-    }
+    isl::union_map Accesses = S->getAccesses(Array);
+    isl::union_set AccessUSet = Accesses.range();
+    AccessUSet = AccessUSet.coalesce();
+    AccessUSet = AccessUSet.detect_equalities();
+    AccessUSet = AccessUSet.coalesce();
 
-    isl_set *AccessSet =
-        isl_union_set_extract_set(AccessUSet, Array->getSpace().release());
+    if (AccessUSet.is_empty())
+      return isl::set::empty(Array->getSpace());
 
-    isl_union_set_free(AccessUSet);
-    isl_local_space *LS =
-        isl_local_space_from_space(Array->getSpace().release());
+    isl::set AccessSet = AccessUSet.extract_set(Array->getSpace());
 
-    isl_pw_aff *Val =
-        isl_pw_aff_from_aff(isl_aff_var_on_domain(LS, isl_dim_set, 0));
+    isl::local_space LS = isl::local_space(Array->getSpace());
 
-    isl_pw_aff *OuterMin = isl_set_dim_min(isl_set_copy(AccessSet), 0);
-    isl_pw_aff *OuterMax = isl_set_dim_max(AccessSet, 0);
-    OuterMin = isl_pw_aff_add_dims(OuterMin, isl_dim_in,
-                                   isl_pw_aff_dim(Val, isl_dim_in));
-    OuterMax = isl_pw_aff_add_dims(OuterMax, isl_dim_in,
-                                   isl_pw_aff_dim(Val, isl_dim_in));
-    OuterMin = isl_pw_aff_set_tuple_id(OuterMin, isl_dim_in,
-                                       Array->getBasePtrId().release());
-    OuterMax = isl_pw_aff_set_tuple_id(OuterMax, isl_dim_in,
-                                       Array->getBasePtrId().release());
+    isl::pw_aff Val = isl::aff::var_on_domain(LS, isl::dim::set, 0);
+    isl::pw_aff OuterMin = AccessSet.dim_min(0);
+    isl::pw_aff OuterMax = AccessSet.dim_max(0);
+    OuterMin = OuterMin.add_dims(isl::dim::in, Val.dim(isl::dim::in));
+    OuterMax = OuterMax.add_dims(isl::dim::in, Val.dim(isl::dim::in));
+    OuterMin = OuterMin.set_tuple_id(isl::dim::in, Array->getBasePtrId());
+    OuterMax = OuterMax.set_tuple_id(isl::dim::in, Array->getBasePtrId());
 
-    isl_set *Extent = isl_set_universe(Array->getSpace().release());
+    isl::set Extent = isl::set::universe(Array->getSpace());
 
-    Extent = isl_set_intersect(
-        Extent, isl_pw_aff_le_set(OuterMin, isl_pw_aff_copy(Val)));
-    Extent = isl_set_intersect(Extent, isl_pw_aff_ge_set(OuterMax, Val));
+    Extent = Extent.intersect(OuterMin.le_set(Val));
+    Extent = Extent.intersect(OuterMax.ge_set(Val));
 
     for (unsigned i = 1; i < NumDims; ++i)
-      Extent = isl_set_lower_bound_si(Extent, isl_dim_set, i, 0);
+      Extent = Extent.lower_bound_si(isl::dim::set, i, 0);
 
     for (unsigned i = 0; i < NumDims; ++i) {
-      isl_pw_aff *PwAff =
-          const_cast<isl_pw_aff *>(Array->getDimensionSizePw(i).release());
+      isl::pw_aff PwAff = Array->getDimensionSizePw(i);
 
       // isl_pw_aff can be NULL for zero dimension. Only in the case of a
       // Fortran array will we have a legitimate dimension.
-      if (!PwAff) {
+      if (PwAff.is_null()) {
         assert(i == 0 && "invalid dimension isl_pw_aff for nonzero dimension");
         continue;
       }
 
-      isl_pw_aff *Val = isl_pw_aff_from_aff(isl_aff_var_on_domain(
-          isl_local_space_from_space(Array->getSpace().release()), isl_dim_set,
-          i));
-      PwAff = isl_pw_aff_add_dims(PwAff, isl_dim_in,
-                                  isl_pw_aff_dim(Val, isl_dim_in));
-      PwAff = isl_pw_aff_set_tuple_id(PwAff, isl_dim_in,
-                                      isl_pw_aff_get_tuple_id(Val, isl_dim_in));
-      auto *Set = isl_pw_aff_gt_set(PwAff, Val);
-      Extent = isl_set_intersect(Set, Extent);
+      isl::pw_aff Val = isl::aff::var_on_domain(
+          isl::local_space(Array->getSpace()), isl::dim::set, i);
+      PwAff = PwAff.add_dims(isl::dim::in, Val.dim(isl::dim::in));
+      PwAff = PwAff.set_tuple_id(isl::dim::in, Val.get_tuple_id(isl::dim::in));
+      isl::set Set = PwAff.gt_set(Val);
+      Extent = Set.intersect(Extent);
     }
 
     return Extent;
@@ -2655,12 +2892,7 @@ public:
   /// @param PPCGArray The array to compute bounds for.
   /// @param Array The polly array from which to take the information.
   void setArrayBounds(gpu_array_info &PPCGArray, ScopArrayInfo *Array) {
-    isl_pw_aff_list *BoundsList =
-        isl_pw_aff_list_alloc(S->getIslCtx(), PPCGArray.n_index);
-    std::vector<isl::pw_aff> PwAffs;
-
-    isl_space *AlignSpace = S->getParamSpace();
-    AlignSpace = isl_space_add_dims(AlignSpace, isl_dim_set, 1);
+    std::vector<isl_pw_aff *> Bounds;
 
     if (PPCGArray.n_index > 0) {
       if (isl_set_is_empty(PPCGArray.extent)) {
@@ -2669,9 +2901,7 @@ public:
             isl_space_params(isl_set_get_space(Dom)));
         isl_set_free(Dom);
         isl_pw_aff *Zero = isl_pw_aff_from_aff(isl_aff_zero_on_domain(LS));
-        Zero = isl_pw_aff_align_params(Zero, isl_space_copy(AlignSpace));
-        PwAffs.push_back(isl::manage(isl_pw_aff_copy(Zero)));
-        BoundsList = isl_pw_aff_list_insert(BoundsList, 0, Zero);
+        Bounds.push_back(Zero);
       } else {
         isl_set *Dom = isl_set_copy(PPCGArray.extent);
         Dom = isl_set_project_out(Dom, isl_dim_set, 1, PPCGArray.n_index - 1);
@@ -2683,10 +2913,8 @@ public:
         isl_aff *One = isl_aff_zero_on_domain(LS);
         One = isl_aff_add_constant_si(One, 1);
         Bound = isl_pw_aff_add(Bound, isl_pw_aff_alloc(Dom, One));
-        Bound = isl_pw_aff_gist(Bound, S->getContext());
-        Bound = isl_pw_aff_align_params(Bound, isl_space_copy(AlignSpace));
-        PwAffs.push_back(isl::manage(isl_pw_aff_copy(Bound)));
-        BoundsList = isl_pw_aff_list_insert(BoundsList, 0, Bound);
+        Bound = isl_pw_aff_gist(Bound, S->getContext().release());
+        Bounds.push_back(Bound);
       }
     }
 
@@ -2695,13 +2923,31 @@ public:
       auto LS = isl_pw_aff_get_domain_space(Bound);
       auto Aff = isl_multi_aff_zero(LS);
       Bound = isl_pw_aff_pullback_multi_aff(Bound, Aff);
-      Bound = isl_pw_aff_align_params(Bound, isl_space_copy(AlignSpace));
-      PwAffs.push_back(isl::manage(isl_pw_aff_copy(Bound)));
-      BoundsList = isl_pw_aff_list_insert(BoundsList, i, Bound);
+      Bounds.push_back(Bound);
     }
 
-    isl_space_free(AlignSpace);
+    /// To construct a `isl_multi_pw_aff`, we need all the indivisual `pw_aff`
+    /// to have the same parameter dimensions. So, we need to align them to an
+    /// appropriate space.
+    /// Scop::Context is _not_ an appropriate space, because when we have
+    /// `-polly-ignore-parameter-bounds` enabled, the Scop::Context does not
+    /// contain all parameter dimensions.
+    /// So, use the helper `alignPwAffs` to align all the `isl_pw_aff` together.
+    isl_space *SeedAlignSpace = S->getParamSpace().release();
+    SeedAlignSpace = isl_space_add_dims(SeedAlignSpace, isl_dim_set, 1);
+
+    isl_space *AlignSpace = nullptr;
+    std::vector<isl_pw_aff *> AlignedBounds;
+    std::tie(AlignSpace, AlignedBounds) =
+        alignPwAffs(std::move(Bounds), SeedAlignSpace);
+
+    assert(AlignSpace && "alignPwAffs did not initialise AlignSpace");
+
+    isl_pw_aff_list *BoundsList =
+        createPwAffList(S->getIslCtx(), std::move(AlignedBounds));
+
     isl_space *BoundsSpace = isl_set_get_space(PPCGArray.extent);
+    BoundsSpace = isl_space_align_params(BoundsSpace, AlignSpace);
 
     assert(BoundsSpace && "Unable to access space of array.");
     assert(BoundsList && "Unable to access list of bounds.");
@@ -2728,11 +2974,11 @@ public:
 
       PPCGArray.space = Array->getSpace().release();
       PPCGArray.type = strdup(TypeName.c_str());
-      PPCGArray.size = Array->getElementType()->getPrimitiveSizeInBits() / 8;
+      PPCGArray.size = DL->getTypeAllocSize(Array->getElementType());
       PPCGArray.name = strdup(Array->getName().c_str());
       PPCGArray.extent = nullptr;
       PPCGArray.n_index = Array->getNumberOfDimensions();
-      PPCGArray.extent = getExtent(Array);
+      PPCGArray.extent = getExtent(Array).release();
       PPCGArray.n_ref = 0;
       PPCGArray.refs = nullptr;
       PPCGArray.accessed = true;
@@ -2751,6 +2997,7 @@ public:
       i++;
 
       collect_references(PPCGProg, &PPCGArray);
+      PPCGArray.only_fixed_element = only_fixed_element_accessed(&PPCGArray);
     }
   }
 
@@ -2758,7 +3005,7 @@ public:
   ///
   /// @returns An identity map between the arrays in the scop.
   isl_union_map *getArrayIdentity() {
-    isl_union_map *Maps = isl_union_map_empty(S->getParamSpace());
+    isl_union_map *Maps = isl_union_map_empty(S->getParamSpace().release());
 
     for (auto &Array : S->arrays()) {
       isl_space *Space = Array->getSpace().release();
@@ -2792,13 +3039,6 @@ public:
     PPCGProg->to_outer = getArrayIdentity();
     // TODO: verify that this assignment is correct.
     PPCGProg->any_to_outer = nullptr;
-
-    // this needs to be set when live range reordering is enabled.
-    // NOTE: I believe that is conservatively correct. I'm not sure
-    //       what the semantics of this is.
-    // Quoting PPCG/gpu.h: "Order dependences on non-scalars."
-    PPCGProg->array_order =
-        isl_union_map_empty(isl_set_get_space(PPCGScop->context));
     PPCGProg->n_stmts = std::distance(S->begin(), S->end());
     PPCGProg->stmts = getStatements();
 
@@ -2809,7 +3049,7 @@ public:
     //     2. Arrays with statically known zero size.
     auto ValidSAIsRange =
         make_filter_range(S->arrays(), [this](ScopArrayInfo *SAI) -> bool {
-          return !isl::manage(getExtent(SAI)).is_empty();
+          return !getExtent(SAI).is_empty();
         });
     SmallVector<ScopArrayInfo *, 4> ValidSAIs(ValidSAIsRange.begin(),
                                               ValidSAIsRange.end());
@@ -2820,6 +3060,9 @@ public:
                                        PPCGProg->n_array);
 
     createArrays(PPCGProg, ValidSAIs);
+
+    PPCGProg->array_order = nullptr;
+    collect_order_dependences(PPCGProg);
 
     PPCGProg->may_persist = compute_may_persist(PPCGProg);
     return PPCGProg;
@@ -2952,10 +3195,16 @@ public:
 
     int has_permutable = has_any_permutable_node(Schedule);
 
+    Schedule =
+        isl_schedule_align_params(Schedule, S->getFullParamSpace().release());
+
     if (!has_permutable || has_permutable < 0) {
       Schedule = isl_schedule_free(Schedule);
+      DEBUG(dbgs() << getUniqueScopName(S)
+                   << " does not have permutable bands. Bailing out\n";);
     } else {
-      Schedule = map_to_device(PPCGGen, Schedule);
+      const bool CreateTransferToFromDevice = !PollyManagedMemory;
+      Schedule = map_to_device(PPCGGen, Schedule, CreateTransferToFromDevice);
       PPCGGen->tree = generate_code(PPCGGen, isl_schedule_copy(Schedule));
     }
 
@@ -3031,7 +3280,7 @@ public:
     auto *Univ = isl_set_universe(Space);
     isl_pw_aff *OneAff = isl_pw_aff_val_on_domain(Univ, One);
 
-    for (long i = 0; i < isl_set_dim(Set, isl_dim_set); i++) {
+    for (long i = 0, n = isl_set_dim(Set, isl_dim_set); i < n; i++) {
       isl_pw_aff *Max = isl_set_dim_max(isl_set_copy(Set), i);
       isl_pw_aff *Min = isl_set_dim_min(isl_set_copy(Set), i);
       isl_pw_aff *DimSize = isl_pw_aff_sub(Max, Min);
@@ -3057,7 +3306,7 @@ public:
   ///          by @p Stmt.
   __isl_give isl_ast_expr *approxDynamicInst(ScopStmt &Stmt,
                                              __isl_keep isl_ast_build *Build) {
-    auto Iterations = approxPointsInSet(Stmt.getDomain(), Build);
+    auto Iterations = approxPointsInSet(Stmt.getDomain().release(), Build);
 
     long InstCount = 0;
 
@@ -3118,35 +3367,39 @@ public:
   ///
   /// If this basic block does something with a `Function` other than calling
   /// a function that we support in a kernel, return true.
-  bool containsInvalidKernelFunctionInBlock(const BasicBlock *BB) {
+  bool containsInvalidKernelFunctionInBlock(const BasicBlock *BB,
+                                            bool AllowCUDALibDevice) {
     for (const Instruction &Inst : *BB) {
       const CallInst *Call = dyn_cast<CallInst>(&Inst);
-      if (Call && isValidFunctionInKernel(Call->getCalledFunction())) {
+      if (Call && isValidFunctionInKernel(Call->getCalledFunction(),
+                                          AllowCUDALibDevice))
         continue;
-      }
 
-      for (Value *SrcVal : Inst.operands()) {
-        PointerType *p = dyn_cast<PointerType>(SrcVal->getType());
-        if (!p)
-          continue;
-        if (isa<FunctionType>(p->getElementType()))
-          return true;
-      }
+      for (Value *Op : Inst.operands())
+        // Look for (<func-type>*) among operands of Inst
+        if (auto PtrTy = dyn_cast<PointerType>(Op->getType())) {
+          if (isa<FunctionType>(PtrTy->getElementType())) {
+            DEBUG(dbgs() << Inst
+                         << " has illegal use of function in kernel.\n");
+            return true;
+          }
+        }
     }
     return false;
   }
 
   /// Return whether the Scop S uses functions in a way that we do not support.
-  bool containsInvalidKernelFunction(const Scop &S) {
+  bool containsInvalidKernelFunction(const Scop &S, bool AllowCUDALibDevice) {
     for (auto &Stmt : S) {
       if (Stmt.isBlockStmt()) {
-        if (containsInvalidKernelFunctionInBlock(Stmt.getBasicBlock()))
+        if (containsInvalidKernelFunctionInBlock(Stmt.getBasicBlock(),
+                                                 AllowCUDALibDevice))
           return true;
       } else {
         assert(Stmt.isRegionStmt() &&
                "Stmt was neither block nor region statement");
         for (const BasicBlock *BB : Stmt.getRegion()->blocks())
-          if (containsInvalidKernelFunctionInBlock(BB))
+          if (containsInvalidKernelFunctionInBlock(BB, AllowCUDALibDevice))
             return true;
       }
     }
@@ -3189,7 +3442,6 @@ public:
     // TODO: Handle LICM
     auto SplitBlock = StartBlock->getSinglePredecessor();
     Builder.SetInsertPoint(SplitBlock->getTerminator());
-    NodeBuilder.addParameters(S->getContext());
 
     isl_ast_build *Build = isl_ast_build_alloc(S->getIslCtx());
     isl_ast_expr *Condition = IslAst::buildRunCondition(*S, Build);
@@ -3199,14 +3451,50 @@ public:
 
     // preload invariant loads. Note: This should happen before the RTC
     // because the RTC may depend on values that are invariant load hoisted.
-    NodeBuilder.preloadInvariantLoads();
+    if (!NodeBuilder.preloadInvariantLoads()) {
+      DEBUG(dbgs() << "preloading invariant loads failed in function: " +
+                          S->getFunction().getName() +
+                          " | Scop Region: " + S->getNameStr());
+      // adjust the dominator tree accordingly.
+      auto *ExitingBlock = StartBlock->getUniqueSuccessor();
+      assert(ExitingBlock);
+      auto *MergeBlock = ExitingBlock->getUniqueSuccessor();
+      assert(MergeBlock);
+      polly::markBlockUnreachable(*StartBlock, Builder);
+      polly::markBlockUnreachable(*ExitingBlock, Builder);
+      auto *ExitingBB = S->getExitingBlock();
+      assert(ExitingBB);
 
-    Value *RTC = NodeBuilder.createRTC(Condition);
-    Builder.GetInsertBlock()->getTerminator()->setOperand(0, RTC);
+      DT->changeImmediateDominator(MergeBlock, ExitingBB);
+      DT->eraseNode(ExitingBlock);
+      isl_ast_expr_free(Condition);
+      isl_ast_node_free(Root);
+    } else {
 
-    Builder.SetInsertPoint(&*StartBlock->begin());
+      if (polly::PerfMonitoring) {
+        PerfMonitor P(*S, EnteringBB->getParent()->getParent());
+        P.initialize();
+        P.insertRegionStart(SplitBlock->getTerminator());
 
-    NodeBuilder.create(Root);
+        // TODO: actually think if this is the correct exiting block to place
+        // the `end` performance marker. Invariant load hoisting changes
+        // the CFG in a way that I do not precisely understand, so I
+        // (Siddharth<siddu.druid@gmail.com>) should come back to this and
+        // think about which exiting block to use.
+        auto *ExitingBlock = StartBlock->getUniqueSuccessor();
+        assert(ExitingBlock);
+        BasicBlock *MergeBlock = ExitingBlock->getUniqueSuccessor();
+        P.insertRegionEnd(MergeBlock->getTerminator());
+      }
+
+      NodeBuilder.addParameters(S->getContext().release());
+      Value *RTC = NodeBuilder.createRTC(Condition);
+      Builder.GetInsertBlock()->getTerminator()->setOperand(0, RTC);
+
+      Builder.SetInsertPoint(&*StartBlock->begin());
+
+      NodeBuilder.create(Root);
+    }
 
     /// In case a sequential kernel has more surrounding loops as any parallel
     /// kernel, the SCoP is probably mostly sequential. Hence, there is no
@@ -3226,16 +3514,20 @@ public:
     DL = &S->getRegion().getEntry()->getModule()->getDataLayout();
     RI = &getAnalysis<RegionInfoPass>().getRegionInfo();
 
+    DEBUG(dbgs() << "PPCGCodeGen running on : " << getUniqueScopName(S)
+                 << " | loop depth: " << S->getMaxLoopDepth() << "\n");
+
     // We currently do not support functions other than intrinsics inside
     // kernels, as code generation will need to offload function calls to the
     // kernel. This may lead to a kernel trying to call a function on the host.
     // This also allows us to prevent codegen from trying to take the
     // address of an intrinsic function to send to the kernel.
-    if (containsInvalidKernelFunction(CurrentScop)) {
+    if (containsInvalidKernelFunction(CurrentScop,
+                                      Architecture == GPUArch::NVPTX64)) {
       DEBUG(
-          dbgs()
-              << "Scop contains function which cannot be materialised in a GPU "
-                 "kernel. Bailing out.\n";);
+          dbgs() << getUniqueScopName(S)
+                 << " contains function which cannot be materialised in a GPU "
+                    "kernel. Bailing out.\n";);
       return false;
     }
 
@@ -3246,6 +3538,9 @@ public:
     if (PPCGGen->tree) {
       generateCode(isl_ast_node_copy(PPCGGen->tree), PPCGProg);
       CurrentScop.markAsToBeSkipped();
+    } else {
+      DEBUG(dbgs() << getUniqueScopName(S)
+                   << " has empty PPCGGen->tree. Bailing out.\n");
     }
 
     freeOptions(PPCGScop);
@@ -3259,6 +3554,8 @@ public:
   void printScop(raw_ostream &, Scop &) const override {}
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
+    ScopPass::getAnalysisUsage(AU);
+
     AU.addRequired<DominatorTreeWrapperPass>();
     AU.addRequired<RegionInfoPass>();
     AU.addRequired<ScalarEvolutionWrapperPass>();
@@ -3266,19 +3563,8 @@ public:
     AU.addRequired<ScopInfoRegionPass>();
     AU.addRequired<LoopInfoWrapperPass>();
 
-    AU.addPreserved<AAResultsWrapperPass>();
-    AU.addPreserved<BasicAAWrapperPass>();
-    AU.addPreserved<LoopInfoWrapperPass>();
-    AU.addPreserved<DominatorTreeWrapperPass>();
-    AU.addPreserved<GlobalsAAWrapperPass>();
-    AU.addPreserved<ScopDetectionWrapperPass>();
-    AU.addPreserved<ScalarEvolutionWrapperPass>();
-    AU.addPreserved<SCEVAAWrapperPass>();
-
     // FIXME: We do not yet add regions for the newly generated code to the
     //        region tree.
-    AU.addPreserved<RegionInfoPass>();
-    AU.addPreserved<ScopInfoRegionPass>();
   }
 };
 } // namespace

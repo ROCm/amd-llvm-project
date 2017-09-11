@@ -7113,16 +7113,20 @@ inline static bool isDefConvertible(MachineInstr &MI) {
   case X86::OR8ri:     case X86::OR64rr:   case X86::OR32rr:
   case X86::OR16rr:    case X86::OR8rr:    case X86::OR64rm:
   case X86::OR32rm:    case X86::OR16rm:   case X86::OR8rm:
+  case X86::ADC64ri32: case X86::ADC64ri8: case X86::ADC32ri:
+  case X86::ADC32ri8:  case X86::ADC16ri:  case X86::ADC16ri8:
+  case X86::ADC8ri:    case X86::ADC64rr:  case X86::ADC32rr:
+  case X86::ADC16rr:   case X86::ADC8rr:   case X86::ADC64rm:
+  case X86::ADC32rm:   case X86::ADC16rm:  case X86::ADC8rm:
+  case X86::SBB64ri32: case X86::SBB64ri8: case X86::SBB32ri:
+  case X86::SBB32ri8:  case X86::SBB16ri:  case X86::SBB16ri8:
+  case X86::SBB8ri:    case X86::SBB64rr:  case X86::SBB32rr:
+  case X86::SBB16rr:   case X86::SBB8rr:   case X86::SBB64rm:
+  case X86::SBB32rm:   case X86::SBB16rm:  case X86::SBB8rm:
   case X86::NEG8r:     case X86::NEG16r:   case X86::NEG32r: case X86::NEG64r:
   case X86::SAR8r1:    case X86::SAR16r1:  case X86::SAR32r1:case X86::SAR64r1:
   case X86::SHR8r1:    case X86::SHR16r1:  case X86::SHR32r1:case X86::SHR64r1:
   case X86::SHL8r1:    case X86::SHL16r1:  case X86::SHL32r1:case X86::SHL64r1:
-  case X86::ADC32ri:   case X86::ADC32ri8:
-  case X86::ADC32rr:   case X86::ADC64ri32:
-  case X86::ADC64ri8:  case X86::ADC64rr:
-  case X86::SBB32ri:   case X86::SBB32ri8:
-  case X86::SBB32rr:   case X86::SBB64ri32:
-  case X86::SBB64ri8:  case X86::SBB64rr:
   case X86::ANDN32rr:  case X86::ANDN32rm:
   case X86::ANDN64rr:  case X86::ANDN64rm:
   case X86::BEXTR32rr: case X86::BEXTR64rr:
@@ -7144,6 +7148,22 @@ inline static bool isDefConvertible(MachineInstr &MI) {
   case X86::TZCNT16rr: case X86::TZCNT16rm:
   case X86::TZCNT32rr: case X86::TZCNT32rm:
   case X86::TZCNT64rr: case X86::TZCNT64rm:
+  case X86::BEXTRI32ri:  case X86::BEXTRI32mi:
+  case X86::BEXTRI64ri:  case X86::BEXTRI64mi:
+  case X86::BLCFILL32rr: case X86::BLCFILL32rm:
+  case X86::BLCFILL64rr: case X86::BLCFILL64rm:
+  case X86::BLCI32rr:    case X86::BLCI32rm:
+  case X86::BLCI64rr:    case X86::BLCI64rm:
+  case X86::BLCIC32rr:   case X86::BLCIC32rm:
+  case X86::BLCIC64rr:   case X86::BLCIC64rm:
+  case X86::BLCMSK32rr:  case X86::BLCMSK32rm:
+  case X86::BLCMSK64rr:  case X86::BLCMSK64rm:
+  case X86::BLCS32rr:    case X86::BLCS32rm:
+  case X86::BLCS64rr:    case X86::BLCS64rm:
+  case X86::BLSFILL32rr: case X86::BLSFILL32rm:
+  case X86::BLSFILL64rr: case X86::BLSFILL64rm:
+  case X86::BLSIC32rr:   case X86::BLSIC32rm:
+  case X86::BLSIC64rr:   case X86::BLSIC64rm:
     return true;
   }
 }
@@ -7705,9 +7725,14 @@ bool X86InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
   case X86::FsFLD0SS:
   case X86::FsFLD0SD:
     return Expand2AddrUndef(MIB, get(HasAVX ? X86::VXORPSrr : X86::XORPSrr));
-  case X86::AVX_SET0:
+  case X86::AVX_SET0: {
     assert(HasAVX && "AVX not supported");
-    return Expand2AddrUndef(MIB, get(X86::VXORPSYrr));
+    const TargetRegisterInfo *TRI = &getRegisterInfo();
+    unsigned SrcReg = MIB->getOperand(0).getReg();
+    unsigned XReg = TRI->getSubReg(SrcReg, X86::sub_xmm);
+    MIB->getOperand(0).setReg(XReg);
+    return Expand2AddrUndef(MIB, get(X86::VXORPSrr));
+  }
   case X86::AVX512_128_SET0:
   case X86::AVX512_FsFLD0SS:
   case X86::AVX512_FsFLD0SD: {
@@ -7718,7 +7743,8 @@ bool X86InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
       return Expand2AddrUndef(MIB,
                               get(HasVLX ? X86::VPXORDZ128rr : X86::VXORPSrr));
     // Extended register without VLX. Use a larger XOR.
-    SrcReg = TRI->getMatchingSuperReg(SrcReg, X86::sub_xmm, &X86::VR512RegClass);
+    SrcReg =
+        TRI->getMatchingSuperReg(SrcReg, X86::sub_xmm, &X86::VR512RegClass);
     MIB->getOperand(0).setReg(SrcReg);
     return Expand2AddrUndef(MIB, get(X86::VPXORDZrr));
   }
@@ -7726,16 +7752,24 @@ bool X86InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
     bool HasVLX = Subtarget.hasVLX();
     unsigned SrcReg = MIB->getOperand(0).getReg();
     const TargetRegisterInfo *TRI = &getRegisterInfo();
-    if (HasVLX || TRI->getEncodingValue(SrcReg) < 16)
+    if (HasVLX || TRI->getEncodingValue(SrcReg) < 16) {
+      unsigned XReg = TRI->getSubReg(SrcReg, X86::sub_xmm);
+      MIB->getOperand(0).setReg(XReg);
       return Expand2AddrUndef(MIB,
-                              get(HasVLX ? X86::VPXORDZ256rr : X86::VXORPSYrr));
-    // Extended register without VLX. Use a larger XOR.
-    SrcReg = TRI->getMatchingSuperReg(SrcReg, X86::sub_ymm, &X86::VR512RegClass);
-    MIB->getOperand(0).setReg(SrcReg);
+                              get(HasVLX ? X86::VPXORDZ128rr : X86::VXORPSrr));
+    }
     return Expand2AddrUndef(MIB, get(X86::VPXORDZrr));
   }
-  case X86::AVX512_512_SET0:
+  case X86::AVX512_512_SET0: {
+    const TargetRegisterInfo *TRI = &getRegisterInfo();
+    unsigned SrcReg = MIB->getOperand(0).getReg();
+    if (TRI->getEncodingValue(SrcReg) < 16) {
+      unsigned XReg = TRI->getSubReg(SrcReg, X86::sub_xmm);
+      MIB->getOperand(0).setReg(XReg);
+      return Expand2AddrUndef(MIB, get(X86::VXORPSrr));
+    }
     return Expand2AddrUndef(MIB, get(X86::VPXORDZrr));
+  }
   case X86::V_SETALLONES:
     return Expand2AddrUndef(MIB, get(HasAVX ? X86::VPCMPEQDrr : X86::PCMPEQDrr));
   case X86::AVX2_SETALLONES:
@@ -7976,13 +8010,13 @@ MachineInstr *X86InstrInfo::foldMemoryOperandImpl(
     unsigned Size, unsigned Align, bool AllowCommute) const {
   const DenseMap<unsigned,
                  std::pair<uint16_t, uint16_t> > *OpcodeTablePtr = nullptr;
-  bool isCallRegIndirect = Subtarget.callRegIndirect();
+  bool isSlowTwoMemOps = Subtarget.slowTwoMemOps();
   bool isTwoAddrFold = false;
 
   // For CPUs that favor the register form of a call or push,
   // do not fold loads into calls or pushes, unless optimizing for size
   // aggressively.
-  if (isCallRegIndirect && !MF.getFunction()->optForMinSize() &&
+  if (isSlowTwoMemOps && !MF.getFunction()->optForMinSize() &&
       (MI.getOpcode() == X86::CALL32r || MI.getOpcode() == X86::CALL64r ||
        MI.getOpcode() == X86::PUSH16r || MI.getOpcode() == X86::PUSH32r ||
        MI.getOpcode() == X86::PUSH64r))
@@ -9347,6 +9381,30 @@ static const uint16_t ReplaceableInstrs[][3] = {
   { X86::VBROADCASTSDZ256m, X86::VBROADCASTSDZ256m, X86::VPBROADCASTQZ256m },
   { X86::VBROADCASTSDZr,    X86::VBROADCASTSDZr,    X86::VPBROADCASTQZr },
   { X86::VBROADCASTSDZm,    X86::VBROADCASTSDZm,    X86::VPBROADCASTQZm },
+  { X86::VINSERTF32x4Zrr,   X86::VINSERTF32x4Zrr,   X86::VINSERTI32x4Zrr },
+  { X86::VINSERTF32x4Zrm,   X86::VINSERTF32x4Zrm,   X86::VINSERTI32x4Zrm },
+  { X86::VINSERTF32x8Zrr,   X86::VINSERTF32x8Zrr,   X86::VINSERTI32x8Zrr },
+  { X86::VINSERTF32x8Zrm,   X86::VINSERTF32x8Zrm,   X86::VINSERTI32x8Zrm },
+  { X86::VINSERTF64x2Zrr,   X86::VINSERTF64x2Zrr,   X86::VINSERTI64x2Zrr },
+  { X86::VINSERTF64x2Zrm,   X86::VINSERTF64x2Zrm,   X86::VINSERTI64x2Zrm },
+  { X86::VINSERTF64x4Zrr,   X86::VINSERTF64x4Zrr,   X86::VINSERTI64x4Zrr },
+  { X86::VINSERTF64x4Zrm,   X86::VINSERTF64x4Zrm,   X86::VINSERTI64x4Zrm },
+  { X86::VINSERTF32x4Z256rr,X86::VINSERTF32x4Z256rr,X86::VINSERTI32x4Z256rr },
+  { X86::VINSERTF32x4Z256rm,X86::VINSERTF32x4Z256rm,X86::VINSERTI32x4Z256rm },
+  { X86::VINSERTF64x2Z256rr,X86::VINSERTF64x2Z256rr,X86::VINSERTI64x2Z256rr },
+  { X86::VINSERTF64x2Z256rm,X86::VINSERTF64x2Z256rm,X86::VINSERTI64x2Z256rm },
+  { X86::VEXTRACTF32x4Zrr,   X86::VEXTRACTF32x4Zrr,   X86::VEXTRACTI32x4Zrr },
+  { X86::VEXTRACTF32x4Zmr,   X86::VEXTRACTF32x4Zmr,   X86::VEXTRACTI32x4Zmr },
+  { X86::VEXTRACTF32x8Zrr,   X86::VEXTRACTF32x8Zrr,   X86::VEXTRACTI32x8Zrr },
+  { X86::VEXTRACTF32x8Zmr,   X86::VEXTRACTF32x8Zmr,   X86::VEXTRACTI32x8Zmr },
+  { X86::VEXTRACTF64x2Zrr,   X86::VEXTRACTF64x2Zrr,   X86::VEXTRACTI64x2Zrr },
+  { X86::VEXTRACTF64x2Zmr,   X86::VEXTRACTF64x2Zmr,   X86::VEXTRACTI64x2Zmr },
+  { X86::VEXTRACTF64x4Zrr,   X86::VEXTRACTF64x4Zrr,   X86::VEXTRACTI64x4Zrr },
+  { X86::VEXTRACTF64x4Zmr,   X86::VEXTRACTF64x4Zmr,   X86::VEXTRACTI64x4Zmr },
+  { X86::VEXTRACTF32x4Z256rr,X86::VEXTRACTF32x4Z256rr,X86::VEXTRACTI32x4Z256rr },
+  { X86::VEXTRACTF32x4Z256mr,X86::VEXTRACTF32x4Z256mr,X86::VEXTRACTI32x4Z256mr },
+  { X86::VEXTRACTF64x2Z256rr,X86::VEXTRACTF64x2Z256rr,X86::VEXTRACTI64x2Z256rr },
+  { X86::VEXTRACTF64x2Z256mr,X86::VEXTRACTF64x2Z256mr,X86::VEXTRACTI64x2Z256mr },
 };
 
 static const uint16_t ReplaceableInstrsAVX2[][3] = {
@@ -10528,25 +10586,31 @@ char LDTLSCleanup::ID = 0;
 FunctionPass*
 llvm::createCleanupLocalDynamicTLSPass() { return new LDTLSCleanup(); }
 
-unsigned X86InstrInfo::getOutliningBenefit(size_t SequenceSize,
-                                           size_t Occurrences,
-                                           bool CanBeTailCall) const {
-  unsigned NotOutlinedSize = SequenceSize * Occurrences;
-  unsigned OutlinedSize;
+// Constants defining how certain sequences should be outlined.
+const unsigned MachineOutlinerDefaultFn = 0;
+const unsigned MachineOutlinerTailCallFn = 1;
 
-  // Is it a tail call?
-  if (CanBeTailCall) {
-    // If yes, we don't have to include a return instruction-- it's already in
-    // our sequence. So we have one occurrence of the sequence + #Occurrences
-    // calls.
-    OutlinedSize = SequenceSize + Occurrences;
-  } else {
-    // If not, add one for the return instruction.
-    OutlinedSize = (SequenceSize + 1) + Occurrences;
-  }
+std::pair<size_t, unsigned> X86InstrInfo::getOutliningCallOverhead(
+    MachineBasicBlock::iterator &StartIt,
+    MachineBasicBlock::iterator &EndIt) const {
 
-  // Return the number of instructions saved by outlining this sequence.
-  return NotOutlinedSize > OutlinedSize ? NotOutlinedSize - OutlinedSize : 0;
+  // Is this a tail call? If it is, make note of it.
+  if (EndIt->isTerminator())
+    return std::make_pair(1, MachineOutlinerTailCallFn);
+
+  return std::make_pair(1, MachineOutlinerDefaultFn);
+}
+
+std::pair<size_t, unsigned> X86InstrInfo::getOutliningFrameOverhead(
+  std::vector<std::pair<MachineBasicBlock::iterator, 
+                        MachineBasicBlock::iterator>> &CandidateClass) const {
+  // Is this a tail-call?
+  // Is the last instruction in this class a terminator?
+  if (CandidateClass[0].second->isTerminator())
+    return std::make_pair(0, MachineOutlinerTailCallFn);
+
+  // No, so we have to add a return to the end.
+  return std::make_pair(1, MachineOutlinerDefaultFn);
 }
 
 bool X86InstrInfo::isFunctionSafeToOutlineFrom(MachineFunction &MF) const {
@@ -10610,10 +10674,10 @@ X86InstrInfo::getOutliningType(MachineInstr &MI) const {
 
 void X86InstrInfo::insertOutlinerEpilogue(MachineBasicBlock &MBB,
                                           MachineFunction &MF,
-                                          bool IsTailCall) const {
+                                          unsigned FrameClass) const {
 
   // If we're a tail call, we already have a return, so don't do anything.
-  if (IsTailCall)
+  if (FrameClass == MachineOutlinerTailCallFn)
     return;
 
   // We're a normal call, so our sequence doesn't have a return instruction.
@@ -10624,15 +10688,15 @@ void X86InstrInfo::insertOutlinerEpilogue(MachineBasicBlock &MBB,
 
 void X86InstrInfo::insertOutlinerPrologue(MachineBasicBlock &MBB,
                                           MachineFunction &MF,
-                                          bool IsTailCall) const {}
+                                          unsigned FrameClass) const {}
 
 MachineBasicBlock::iterator
 X86InstrInfo::insertOutlinedCall(Module &M, MachineBasicBlock &MBB,
                                  MachineBasicBlock::iterator &It,
                                  MachineFunction &MF,
-                                 bool IsTailCall) const {
+                                 unsigned CallClass) const {
   // Is it a tail call?
-  if (IsTailCall) {
+  if (CallClass == MachineOutlinerTailCallFn) {
     // Yes, just insert a JMP.
     It = MBB.insert(It,
                   BuildMI(MF, DebugLoc(), get(X86::JMP_1))

@@ -35,7 +35,7 @@ defm defsym: Eq<"defsym">, HelpText<"Define a symbol alias">;
 defm library_path: Eq<"library-path">,
   HelpText<"Add a directory to the library search path">, MetaVarName<"<dir>">;
 
-def O: Joined<["-"], "O">, HelpText<"Optimize output file size">;
+def O: JoinedOrSeparate<["-"], "O">, HelpText<"Optimize output file size">;
 
 defm Tbss: Eq<"Tbss">,
   HelpText<"Same as --section-start with .bss as the sectionname">;
@@ -139,7 +139,9 @@ defm hash_style: Eq<"hash-style">,
 
 def help: F<"help">, HelpText<"Print option help">;
 
-def icf: F<"icf=all">, HelpText<"Enable identical code folding">;
+def icf_all: F<"icf=all">, HelpText<"Enable identical code folding">;
+
+def icf_none: F<"icf=none">, HelpText<"Disable identical code folding">;
 
 defm image_base : Eq<"image-base">, HelpText<"Set the base address">;
 
@@ -173,6 +175,9 @@ def no_demangle: F<"no-demangle">,
 
 def no_dynamic_linker: F<"no-dynamic-linker">,
   HelpText<"Inhibit output of .interp section">;
+
+def no_eh_frame_hdr: F<"no-eh-frame-hdr">,
+  HelpText<"Do not create .eh_frame_hdr section">;
 
 def no_export_dynamic: F<"no-export-dynamic">;
 def no_fatal_warnings: F<"no-fatal-warnings">;
@@ -360,6 +365,8 @@ def opt_remarks_filename: Separate<["--"], "opt-remarks-filename">,
   HelpText<"YAML output file for optimization remarks">;
 def opt_remarks_with_hotness: Flag<["--"], "opt-remarks-with-hotness">,
   HelpText<"Include hotness informations in the optimization remarks file">;
+defm plugin_opt: Eq<"plugin-opt">,
+  HelpText<"specifies LTO options for compatibility with GNU linkers">;
 def save_temps: F<"save-temps">;
 def thinlto_cache_dir: J<"thinlto-cache-dir=">,
   HelpText<"Path to ThinLTO cached object file directory">;
@@ -376,8 +383,6 @@ def thinlto_jobs: J<"thinlto-jobs=">, HelpText<"Number of ThinLTO jobs">;
 // --version output.
 def plugin: S<"plugin">;
 def plugin_eq: J<"plugin=">;
-def plugin_opt: S<"plugin-opt">;
-def plugin_opt_eq: J<"plugin-opt=">;
 
 // Options listed below are silently ignored for now for compatibility.
 def allow_shlib_undefined: F<"allow-shlib-undefined">;

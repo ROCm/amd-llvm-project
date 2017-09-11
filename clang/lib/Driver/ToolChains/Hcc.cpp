@@ -26,6 +26,9 @@
 #include <utility>
 
 #include <iostream>
+#include <sstream>
+#include <string>
+#include <vector>
 
 using namespace clang::driver;
 using namespace clang::driver::toolchains;
@@ -266,6 +269,33 @@ namespace
         }
         cmd_args.push_back(args.MakeArgString(prefix + gfxip));
     }
+
+    template<typename T>
+    void split(const std::string& s, char delim, T result)
+    {
+        std::stringstream ss;
+        ss.str(s);
+        std::string item;
+        while (std::getline(ss, item, delim)) {
+            *(result++) = item;
+        }
+    }
+
+    std::vector<std::string> split_gfx_list(
+        const std::string& gfx_list,
+        char delim)
+    {
+        std::vector<std::string> elems;
+        split(gfx_list, delim, std::back_inserter(elems));
+        return elems;
+    }
+
+    template <typename T>
+    void remove_duplicate_targets(std::vector<T>& TargetVec)
+    {
+        std::sort(TargetVec.begin(), TargetVec.end());
+        TargetVec.erase(unique(TargetVec.begin(), TargetVec.end()), TargetVec.end());
+    }
 }
 
 #ifndef HCC_TOOLCHAIN_RHEL
@@ -303,7 +333,8 @@ void HCC::CXXAMPLink::ConstructJob(
         Args.getAllArgValues(options::OPT_amdgpu_target_EQ);
 
     if (AMDGPUTargetVector.empty()) {
-        AMDGPUTargetVector.push_back(HCC_AMDGPU_TARGET);
+        // split HCC_AMDGPU_TARGET list up
+        AMDGPUTargetVector = split_gfx_list(HCC_AMDGPU_TARGET, ' ');
     }
 
     const auto cnt = std::count(
@@ -317,6 +348,8 @@ void HCC::CXXAMPLink::ConstructJob(
         std::remove(
             AMDGPUTargetVector.begin(), AMDGPUTargetVector.end(), auto_tgt),
         AMDGPUTargetVector.end());
+
+    remove_duplicate_targets(AMDGPUTargetVector);
 
     for (auto&& AMDGPUTarget : AMDGPUTargetVector) {
         // TODO: this is Temporary.

@@ -699,6 +699,21 @@ TEST_F(FileSystemTest, CreateDir) {
     ThisDir = path::parent_path(ThisDir);
   }
 
+  // Also verify that paths with Unix separators are handled correctly.
+  std::string LongPathWithUnixSeparators(TestDirectory.str());
+  // Add at least one subdirectory to TestDirectory, and replace slashes with
+  // backslashes
+  do {
+    LongPathWithUnixSeparators.append("/DirNameWith19Charss");
+  } while (LongPathWithUnixSeparators.size() < 260);
+  std::replace(LongPathWithUnixSeparators.begin(),
+               LongPathWithUnixSeparators.end(),
+               '\\', '/');
+  ASSERT_NO_ERROR(fs::create_directories(Twine(LongPathWithUnixSeparators)));
+  // cleanup
+  ASSERT_NO_ERROR(fs::remove_directories(Twine(TestDirectory) +
+                                         "/DirNameWith19Charss"));
+
   // Similarly for a relative pathname.  Need to set the current directory to
   // TestDirectory so that the one we create ends up in the right place.
   char PreviousDir[260];
@@ -1143,96 +1158,6 @@ TEST(Support, ReplacePathPrefix) {
   Path = Path2;
   path::replace_path_prefix(Path, OldPrefix, EmptyPrefix);
   EXPECT_EQ(Path, "/foo");
-}
-
-TEST_F(FileSystemTest, PathFromFD) {
-  // Create a temp file.
-  int FileDescriptor;
-  SmallString<64> TempPath;
-  ASSERT_NO_ERROR(
-      fs::createTemporaryFile("prefix", "temp", FileDescriptor, TempPath));
-  FileRemover Cleanup(TempPath);
-
-  // Make sure it exists.
-  ASSERT_TRUE(sys::fs::exists(Twine(TempPath)));
-
-  // Try to get the path from the file descriptor
-  SmallString<64> ResultPath;
-  std::error_code ErrorCode =
-      fs::getPathFromOpenFD(FileDescriptor, ResultPath);
-
-  // If we succeeded, check that the paths are the same (modulo case):
-  if (!ErrorCode) {
-    // The paths returned by createTemporaryFile and getPathFromOpenFD
-    // should reference the same file on disk.
-    fs::UniqueID D1, D2;
-    ASSERT_NO_ERROR(fs::getUniqueID(Twine(TempPath), D1));
-    ASSERT_NO_ERROR(fs::getUniqueID(Twine(ResultPath), D2));
-    ASSERT_EQ(D1, D2);
-  }
-
-  ::close(FileDescriptor);
-}
-
-TEST_F(FileSystemTest, PathFromFDWin32) {
-  // Create a temp file.
-  int FileDescriptor;
-  SmallString<64> TempPath;
-  ASSERT_NO_ERROR(
-    fs::createTemporaryFile("prefix", "temp", FileDescriptor, TempPath));
-  FileRemover Cleanup(TempPath);
-
-  // Make sure it exists.
-  ASSERT_TRUE(sys::fs::exists(Twine(TempPath)));
-  
-  SmallVector<char, 8> ResultPath;
-  std::error_code ErrorCode =
-    fs::getPathFromOpenFD(FileDescriptor, ResultPath);
-
-  if (!ErrorCode) {
-    // Now that we know how much space is required for the path, create a path
-    // buffer with exactly enough space (sans null terminator, which should not
-    // be present), and call getPathFromOpenFD again to ensure that the API
-    // properly handles exactly-sized buffers.
-    SmallVector<char, 8> ExactSizedPath(ResultPath.size());
-    ErrorCode = fs::getPathFromOpenFD(FileDescriptor, ExactSizedPath);
-    ResultPath = ExactSizedPath;
-  }
-
-  if (!ErrorCode) {
-    fs::UniqueID D1, D2;
-    ASSERT_NO_ERROR(fs::getUniqueID(Twine(TempPath), D1));
-    ASSERT_NO_ERROR(fs::getUniqueID(Twine(ResultPath), D2));
-    ASSERT_EQ(D1, D2);
-  }
-  ::close(FileDescriptor);
-}
-
-TEST_F(FileSystemTest, PathFromFDUnicode) {
-  // Create a temp file.
-  int FileDescriptor;
-  SmallString<64> TempPath;
-
-  // Test Unicode: "<temp directory>/(pi)r^2<temp rand chars>.aleth.0"
-  ASSERT_NO_ERROR(
-    fs::createTemporaryFile("\xCF\x80r\xC2\xB2",
-                            "\xE2\x84\xB5.0", FileDescriptor, TempPath));
-  FileRemover Cleanup(TempPath);
-
-  // Make sure it exists.
-  ASSERT_TRUE(sys::fs::exists(Twine(TempPath)));
-
-  SmallVector<char, 8> ResultPath;
-  std::error_code ErrorCode =
-    fs::getPathFromOpenFD(FileDescriptor, ResultPath);
-
-  if (!ErrorCode) {
-    fs::UniqueID D1, D2;
-    ASSERT_NO_ERROR(fs::getUniqueID(Twine(TempPath), D1));
-    ASSERT_NO_ERROR(fs::getUniqueID(Twine(ResultPath), D2));
-    ASSERT_EQ(D1, D2);
-  }
-  ::close(FileDescriptor);
 }
 
 TEST_F(FileSystemTest, OpenFileForRead) {

@@ -7646,6 +7646,21 @@ void Sema::CheckShadow(NamedDecl *D, NamedDecl *ShadowedDecl,
           return;
         }
       }
+
+      if (cast<VarDecl>(ShadowedDecl)->hasLocalStorage()) {
+        // A variable can't shadow a local variable in an enclosing scope, if
+        // they are separated by a non-capturing declaration context.
+        for (DeclContext *ParentDC = NewDC;
+             ParentDC && !ParentDC->Equals(OldDC);
+             ParentDC = getLambdaAwareParentOfDeclContext(ParentDC)) {
+          // Only block literals, captured statements, and lambda expressions
+          // can capture; other scopes don't.
+          if (!isa<BlockDecl>(ParentDC) && !isa<CapturedDecl>(ParentDC) &&
+              !isLambdaCallOperator(ParentDC)) {
+            return;
+          }
+        }
+      }
     }
   }
 
@@ -10311,7 +10326,7 @@ bool Sema::CheckFunctionDeclaration(Scope *S, FunctionDecl *NewFD,
         AnyNoexcept |= HasNoexcept(T);
       if (AnyNoexcept)
         Diag(NewFD->getLocation(),
-             diag::warn_cxx1z_compat_exception_spec_in_signature)
+             diag::warn_cxx17_compat_exception_spec_in_signature)
             << NewFD;
     }
 
@@ -11785,6 +11800,47 @@ Sema::ActOnCXXForRangeIdentifier(Scope *S, SourceLocation IdentLoc,
                        AttrEnd.isValid() ? AttrEnd : IdentLoc);
 }
 
+/// True if the expression is valid for the initialization expression of a
+/// C++AMP global array.
+static bool checkCXXAMPGlobalArrayInitExpr(Stmt *E) {
+  if (auto *CE = dyn_cast<CXXConstructExpr>(E)) {
+    auto *CD = CE->getConstructor();
+    if (CD->hasAttr<CXXAMPRestrictAMPAttr>() &&
+        !CD->hasAttr<CXXAMPRestrictCPUAttr>())
+      return false;
+    for (auto I : CE->arguments()) {
+      if (!checkCXXAMPGlobalArrayInitExpr(I))
+        return false;
+    }
+    for (auto I : CD->inits()) {
+      if (!checkCXXAMPGlobalArrayInitExpr(I->getInit()))
+        return false;
+    }
+    return true;
+  } else if (auto *EWC = dyn_cast<ExprWithCleanups>(E)) {
+    for (auto I : EWC->children()) {
+      if (!checkCXXAMPGlobalArrayInitExpr(I))
+        return false;
+    }
+    return true;
+  } else if (auto *IL = dyn_cast<InitListExpr>(E)) {
+    for (auto I : IL->children()) {
+      if (!checkCXXAMPGlobalArrayInitExpr(I))
+        return false;
+    }
+    return true;
+  } else if (auto *MTE = dyn_cast<MaterializeTemporaryExpr>(E)) {
+    return checkCXXAMPGlobalArrayInitExpr(MTE->GetTemporaryExpr());
+  } else if (auto *CBE = dyn_cast<CXXBindTemporaryExpr>(E)) {
+    return checkCXXAMPGlobalArrayInitExpr(CBE->getSubExpr());
+  } else if (auto *IC = dyn_cast<ImplicitCastExpr>(E)) {
+    return checkCXXAMPGlobalArrayInitExpr(IC->getSubExpr());
+  } else if (auto *FC = dyn_cast<CXXFunctionalCastExpr>(E)) {
+    return checkCXXAMPGlobalArrayInitExpr(FC->getSubExpr());
+  }
+  return true;
+}
+
 void Sema::CheckCompleteVariableDeclaration(VarDecl *var) {
   if (var->isInvalidDecl()) return;
 
@@ -11959,15 +12015,8 @@ void Sema::CheckCompleteVariableDeclaration(VarDecl *var) {
       //     A arr[5];   // Error: Array initialization in global scope, CPU restricted by default
       //
       if(RDecl && RDecl->hasUserDeclaredConstructor()) {
-        for ( CXXRecordDecl::ctor_iterator CtorIt= RDecl->ctor_begin(),
-              CtorItE= RDecl->ctor_end(); CtorIt != CtorItE; ++CtorIt) {
-          if(CtorIt->hasAttr<CXXAMPRestrictAMPAttr>() &&
-            !CtorIt->hasAttr<CXXAMPRestrictCPUAttr>()) {
-            //FIXME: should find Best->function and test its constructor
-            Diag(var->getLocation(), diag::err_amp_call_from_cpu_to_amp);
-            break;
-          }
-        }
+        if (!checkCXXAMPGlobalArrayInitExpr(var->getInit()))
+          Diag(var->getLocation(), diag::err_amp_call_from_cpu_to_amp);
       }
     }
   }
@@ -12916,8 +12965,9 @@ Decl *Sema::ActOnStartOfFunctionDef(Scope *FnBodyScope, Decl *D,
     FD->setInvalidDecl();
   }
 
-  // See if this is a redefinition.
-  if (!FD->isLateTemplateParsed()) {
+  // See if this is a redefinition. If 'will have body' is already set, then
+  // these checks were already performed when it was set.
+  if (!FD->willHaveBody() && !FD->isLateTemplateParsed()) {
     CheckForFunctionRedefinition(FD, nullptr, SkipBody);
 
     // If we're skipping the body, we're done. Don't enter the scope.
@@ -13578,12 +13628,16 @@ NamedDecl *Sema::ImplicitlyDefineFunction(SourceLocation Loc,
                 SourceLocation());
   D.SetIdentifier(&II, Loc);
 
-  // Insert this function into translation-unit scope.
+  // Insert this function into the enclosing block scope.
+  while (S && !S->isCompoundStmtScope())
+    S = S->getParent();
+  if (S == nullptr)
+    S = TUScope;
 
   DeclContext *PrevDC = CurContext;
   CurContext = Context.getTranslationUnitDecl();
 
-  FunctionDecl *FD = cast<FunctionDecl>(ActOnDeclarator(TUScope, D));
+  FunctionDecl *FD = cast<FunctionDecl>(ActOnDeclarator(S, D));
   FD->setImplicit();
 
   CurContext = PrevDC;
@@ -14194,6 +14248,7 @@ Decl *Sema::ActOnTag(Scope *S, unsigned TagSpec, TagUseKind TUK,
         AddMsStructLayoutForRecord(RD);
       }
     }
+    New->setLexicalDeclContext(CurContext);
     return New;
   };
 

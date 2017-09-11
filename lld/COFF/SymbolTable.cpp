@@ -68,12 +68,12 @@ void SymbolTable::addFile(InputFile *File) {
           " conflicts with " + machineToStr(Config->Machine));
   }
 
-  if (auto *F = dyn_cast<ObjectFile>(File)) {
-    ObjectFiles.push_back(F);
+  if (auto *F = dyn_cast<ObjFile>(File)) {
+    ObjFile::Instances.push_back(F);
   } else if (auto *F = dyn_cast<BitcodeFile>(File)) {
-    BitcodeFiles.push_back(F);
+    BitcodeFile::Instances.push_back(F);
   } else if (auto *F = dyn_cast<ImportFile>(File)) {
-    ImportFiles.push_back(F);
+    ImportFile::Instances.push_back(F);
   }
 
   StringRef S = File->getDirectives();
@@ -135,7 +135,7 @@ void SymbolTable::reportRemainingUndefines() {
   for (SymbolBody *B : Config->GCRoot)
     if (Undefs.count(B))
       warn("<root>: undefined symbol: " + B->getName());
-  for (ObjectFile *File : ObjectFiles)
+  for (ObjFile *File : ObjFile::Instances)
     for (SymbolBody *Sym : File->getSymbols())
       if (Undefs.count(Sym))
         warn(toString(File) + ": undefined symbol: " + Sym->getName());
@@ -269,34 +269,39 @@ Symbol *SymbolTable::addCommon(InputFile *F, StringRef N, uint64_t Size,
   return S;
 }
 
-Symbol *SymbolTable::addImportData(StringRef N, ImportFile *F) {
+DefinedImportData *SymbolTable::addImportData(StringRef N, ImportFile *F) {
   Symbol *S;
   bool WasInserted;
   std::tie(S, WasInserted) = insert(N);
   S->IsUsedInRegularObj = true;
-  if (WasInserted || isa<Undefined>(S->body()) || isa<Lazy>(S->body()))
+  if (WasInserted || isa<Undefined>(S->body()) || isa<Lazy>(S->body())) {
     replaceBody<DefinedImportData>(S, N, F);
-  else if (!isa<DefinedCOFF>(S->body()))
-    reportDuplicate(S, nullptr);
-  return S;
+    return cast<DefinedImportData>(S->body());
+  }
+
+  reportDuplicate(S, F);
+  return nullptr;
 }
 
-Symbol *SymbolTable::addImportThunk(StringRef Name, DefinedImportData *ID,
-                                    uint16_t Machine) {
+DefinedImportThunk *SymbolTable::addImportThunk(StringRef Name,
+                                               DefinedImportData *ID,
+                                               uint16_t Machine) {
   Symbol *S;
   bool WasInserted;
   std::tie(S, WasInserted) = insert(Name);
   S->IsUsedInRegularObj = true;
-  if (WasInserted || isa<Undefined>(S->body()) || isa<Lazy>(S->body()))
+  if (WasInserted || isa<Undefined>(S->body()) || isa<Lazy>(S->body())) {
     replaceBody<DefinedImportThunk>(S, Name, ID, Machine);
-  else if (!isa<DefinedCOFF>(S->body()))
-    reportDuplicate(S, nullptr);
-  return S;
+    return cast<DefinedImportThunk>(S->body());
+  }
+
+  reportDuplicate(S, ID->File);
+  return nullptr;
 }
 
 std::vector<Chunk *> SymbolTable::getChunks() {
   std::vector<Chunk *> Res;
-  for (ObjectFile *File : ObjectFiles) {
+  for (ObjFile *File : ObjFile::Instances) {
     std::vector<Chunk *> &V = File->getChunks();
     Res.insert(Res.end(), V.begin(), V.end());
   }
@@ -356,18 +361,18 @@ SymbolBody *SymbolTable::addUndefined(StringRef Name) {
 
 std::vector<StringRef> SymbolTable::compileBitcodeFiles() {
   LTO.reset(new BitcodeCompiler);
-  for (BitcodeFile *F : BitcodeFiles)
+  for (BitcodeFile *F : BitcodeFile::Instances)
     LTO->add(*F);
   return LTO->compile();
 }
 
 void SymbolTable::addCombinedLTOObjects() {
-  if (BitcodeFiles.empty())
+  if (BitcodeFile::Instances.empty())
     return;
   for (StringRef Object : compileBitcodeFiles()) {
-    auto *Obj = make<ObjectFile>(MemoryBufferRef(Object, "lto.tmp"));
+    auto *Obj = make<ObjFile>(MemoryBufferRef(Object, "lto.tmp"));
     Obj->parse();
-    ObjectFiles.push_back(Obj);
+    ObjFile::Instances.push_back(Obj);
   }
 }
 

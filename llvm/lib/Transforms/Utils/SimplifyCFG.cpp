@@ -2507,7 +2507,7 @@ bool llvm::FoldBranchToCommonDest(BranchInst *BI, unsigned BonusInstThreshold) {
   else {
     // For unconditional branch, check for a simple CFG pattern, where
     // BB has a single predecessor and BB's successor is also its predecessor's
-    // successor. If such pattern exisits, check for CSE between BB and its
+    // successor. If such pattern exists, check for CSE between BB and its
     // predecessor.
     if (BasicBlock *PB = BB->getSinglePredecessor())
       if (BranchInst *PBI = dyn_cast<BranchInst>(PB->getTerminator()))
@@ -2860,7 +2860,8 @@ static Value *ensureValueAvailableInSuccessor(Value *V, BasicBlock *BB,
 static bool mergeConditionalStoreToAddress(BasicBlock *PTB, BasicBlock *PFB,
                                            BasicBlock *QTB, BasicBlock *QFB,
                                            BasicBlock *PostBB, Value *Address,
-                                           bool InvertPCond, bool InvertQCond) {
+                                           bool InvertPCond, bool InvertQCond,
+                                           const DataLayout &DL) {
   auto IsaBitcastOfPointerType = [](const Instruction &I) {
     return Operator::getOpcode(&I) == Instruction::BitCast &&
            I.getType()->isPointerTy();
@@ -2966,6 +2967,29 @@ static bool mergeConditionalStoreToAddress(BasicBlock *PTB, BasicBlock *PFB,
   PStore->getAAMetadata(AAMD, /*Merge=*/false);
   PStore->getAAMetadata(AAMD, /*Merge=*/true);
   SI->setAAMetadata(AAMD);
+  unsigned PAlignment = PStore->getAlignment();
+  unsigned QAlignment = QStore->getAlignment();
+  unsigned TypeAlignment =
+      DL.getABITypeAlignment(SI->getValueOperand()->getType());
+  unsigned MinAlignment;
+  unsigned MaxAlignment;
+  std::tie(MinAlignment, MaxAlignment) = std::minmax(PAlignment, QAlignment);
+  // Choose the minimum alignment. If we could prove both stores execute, we
+  // could use biggest one.  In this case, though, we only know that one of the
+  // stores executes.  And we don't know it's safe to take the alignment from a
+  // store that doesn't execute.
+  if (MinAlignment != 0) {
+    // Choose the minimum of all non-zero alignments.
+    SI->setAlignment(MinAlignment);
+  } else if (MaxAlignment != 0) {
+    // Choose the minimal alignment between the non-zero alignment and the ABI
+    // default alignment for the type of the stored value.
+    SI->setAlignment(std::min(MaxAlignment, TypeAlignment));
+  } else {
+    // If both alignments are zero, use ABI default alignment for the type of
+    // the stored value.
+    SI->setAlignment(TypeAlignment);
+  }
 
   QStore->eraseFromParent();
   PStore->eraseFromParent();
@@ -2973,7 +2997,8 @@ static bool mergeConditionalStoreToAddress(BasicBlock *PTB, BasicBlock *PFB,
   return true;
 }
 
-static bool mergeConditionalStores(BranchInst *PBI, BranchInst *QBI) {
+static bool mergeConditionalStores(BranchInst *PBI, BranchInst *QBI,
+                                   const DataLayout &DL) {
   // The intention here is to find diamonds or triangles (see below) where each
   // conditional block contains a store to the same address. Both of these
   // stores are conditional, so they can't be unconditionally sunk. But it may
@@ -3076,7 +3101,7 @@ static bool mergeConditionalStores(BranchInst *PBI, BranchInst *QBI) {
   bool Changed = false;
   for (auto *Address : CommonAddresses)
     Changed |= mergeConditionalStoreToAddress(
-        PTB, PFB, QTB, QFB, PostBB, Address, InvertPCond, InvertQCond);
+        PTB, PFB, QTB, QFB, PostBB, Address, InvertPCond, InvertQCond, DL);
   return Changed;
 }
 
@@ -3141,7 +3166,7 @@ static bool SimplifyCondBranchToCondBranch(BranchInst *PBI, BranchInst *BI,
   // If both branches are conditional and both contain stores to the same
   // address, remove the stores from the conditionals and create a conditional
   // merged store at the end.
-  if (MergeCondStores && mergeConditionalStores(PBI, BI))
+  if (MergeCondStores && mergeConditionalStores(PBI, BI, DL))
     return true;
 
   // If this is a conditional branch in an empty block, and if any
@@ -5151,8 +5176,11 @@ static bool SwitchToLookupTable(SwitchInst *SI, IRBuilder<> &Builder,
                                 const TargetTransformInfo &TTI) {
   assert(SI->getNumCases() > 1 && "Degenerate switch?");
 
-  // Only build lookup table when we have a target that supports it.
-  if (!TTI.shouldBuildLookupTables())
+  Function *Fn = SI->getParent()->getParent();
+  // Only build lookup table when we have a target that supports it or the
+  // attribute is not set.
+  if (!TTI.shouldBuildLookupTables() ||
+      (Fn->getFnAttribute("no-jump-tables").getValueAsString() == "true"))
     return false;
 
   // FIXME: If the switch is too sparse for a lookup table, perhaps we could
@@ -5333,7 +5361,7 @@ static bool SwitchToLookupTable(SwitchInst *SI, IRBuilder<> &Builder,
 
     // If using a bitmask, use any value to fill the lookup table holes.
     Constant *DV = NeedMask ? ResultLists[PHI][0].second : DefaultResults[PHI];
-    StringRef FuncName = SI->getParent()->getParent()->getName();
+    StringRef FuncName = Fn->getName();
     SwitchLookupTable Table(Mod, TableSize, MinCaseVal, ResultList, DV, DL,
                             FuncName);
 
@@ -5758,9 +5786,9 @@ bool SimplifyCFGOpt::SimplifyCondBranch(BranchInst *BI, IRBuilder<> &Builder) {
     if (PBI && PBI->isConditional() &&
         PBI->getSuccessor(0) != PBI->getSuccessor(1)) {
       assert(PBI->getSuccessor(0) == BB || PBI->getSuccessor(1) == BB);
-      bool CondIsFalse = PBI->getSuccessor(1) == BB;
+      bool CondIsTrue = PBI->getSuccessor(0) == BB;
       Optional<bool> Implication = isImpliedCondition(
-          PBI->getCondition(), BI->getCondition(), DL, CondIsFalse);
+          PBI->getCondition(), BI->getCondition(), DL, CondIsTrue);
       if (Implication) {
         // Turn this into a branch on constant.
         auto *OldCond = BI->getCondition();
@@ -5826,7 +5854,7 @@ bool SimplifyCFGOpt::SimplifyCondBranch(BranchInst *BI, IRBuilder<> &Builder) {
     if (BasicBlock *PrevBB = allPredecessorsComeFromSameSource(BB))
       if (BranchInst *PBI = dyn_cast<BranchInst>(PrevBB->getTerminator()))
         if (PBI != BI && PBI->isConditional())
-          if (mergeConditionalStores(PBI, BI))
+          if (mergeConditionalStores(PBI, BI, DL))
             return SimplifyCFG(BB, TTI, BonusInstThreshold, AC) | true;
 
   return false;

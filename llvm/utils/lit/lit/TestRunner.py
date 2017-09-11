@@ -217,7 +217,20 @@ def quote_windows_command(seq):
 # cmd is export or env
 def updateEnv(env, cmd):
     arg_idx = 1
+    unset_next_env_var = False
     for arg_idx, arg in enumerate(cmd.args[1:]):
+        # Support for the -u flag (unsetting) for env command
+        # e.g., env -u FOO -u BAR will remove both FOO and BAR
+        # from the environment.
+        if arg == '-u':
+            unset_next_env_var = True
+            continue
+        if unset_next_env_var:
+            unset_next_env_var = False
+            if arg in env.env:
+                del env.env[arg]
+            continue
+
         # Partition the string into KEY=VALUE.
         key, eq, val = arg.partition('=')
         # Stop if there was no equals.
@@ -711,6 +724,7 @@ def executeScript(test, litConfig, tmpBase, commands, cwd):
       mode += 'b'  # Avoid CRLFs when writing bash scripts.
     f = open(script, mode)
     if isWin32CMDEXE:
+        f.write('@echo off\n')
         f.write('\nif %ERRORLEVEL% NEQ 0 EXIT\n'.join(commands))
     else:
         if test.config.pipefail:
@@ -787,9 +801,13 @@ def parseIntegratedTestScriptCommands(source_path, keywords):
             # command. Note that we take care to return regular strings in
             # Python 2, to avoid other code having to differentiate between the
             # str and unicode types.
+            #
+            # Opening the file in binary mode prevented Windows \r newline
+            # characters from being converted to Unix \n newlines, so manually
+            # strip those from the yielded lines.
             keyword,ln = match.groups()
             yield (line_number, to_string(keyword.decode('utf-8')),
-                   to_string(ln.decode('utf-8')))
+                   to_string(ln.decode('utf-8').rstrip('\r')))
     finally:
         f.close()
 

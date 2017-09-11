@@ -55,10 +55,13 @@ std::vector<SpecificAllocBase *> SpecificAllocBase::Instances;
 bool link(ArrayRef<const char *> Args, raw_ostream &Diag) {
   ErrorCount = 0;
   ErrorOS = &Diag;
+
   Config = make<Configuration>();
   Config->Argv = {Args.begin(), Args.end()};
-  Config->ColorDiagnostics =
-      (ErrorOS == &llvm::errs() && Process::StandardErrHasColors());
+  Config->ColorDiagnostics = ErrorOS->has_colors();
+
+  Symtab = make<SymbolTable>();
+
   Driver = make<LinkerDriver>();
   Driver->link(Args);
   return !ErrorCount;
@@ -119,15 +122,15 @@ void LinkerDriver::addBuffer(std::unique_ptr<MemoryBuffer> MB) {
 
   FilePaths.push_back(MBRef.getBufferIdentifier());
   if (Magic == file_magic::archive)
-    return Symtab.addFile(make<ArchiveFile>(MBRef));
+    return Symtab->addFile(make<ArchiveFile>(MBRef));
   if (Magic == file_magic::bitcode)
-    return Symtab.addFile(make<BitcodeFile>(MBRef));
+    return Symtab->addFile(make<BitcodeFile>(MBRef));
 
   if (Magic == file_magic::coff_cl_gl_object)
     error(MBRef.getBufferIdentifier() + ": is not a native COFF file. "
           "Recompile without /GL");
   else
-    Symtab.addFile(make<ObjectFile>(MBRef));
+    Symtab->addFile(make<ObjFile>(MBRef));
 }
 
 void LinkerDriver::enqueuePath(StringRef Path) {
@@ -147,13 +150,13 @@ void LinkerDriver::addArchiveBuffer(MemoryBufferRef MB, StringRef SymName,
                                     StringRef ParentName) {
   file_magic Magic = identify_magic(MB.getBuffer());
   if (Magic == file_magic::coff_import_library) {
-    Symtab.addFile(make<ImportFile>(MB));
+    Symtab->addFile(make<ImportFile>(MB));
     return;
   }
 
   InputFile *Obj;
   if (Magic == file_magic::coff_object) {
-    Obj = make<ObjectFile>(MB);
+    Obj = make<ObjFile>(MB);
   } else if (Magic == file_magic::bitcode) {
     Obj = make<BitcodeFile>(MB);
   } else {
@@ -162,7 +165,7 @@ void LinkerDriver::addArchiveBuffer(MemoryBufferRef MB, StringRef SymName,
   }
 
   Obj->ParentName = ParentName;
-  Symtab.addFile(Obj);
+  Symtab->addFile(Obj);
   log("Loaded " + toString(Obj) + " for " + SymName);
 }
 
@@ -198,10 +201,14 @@ static bool isDecorated(StringRef Sym) {
 // Parses .drectve section contents and returns a list of files
 // specified by /defaultlib.
 void LinkerDriver::parseDirectives(StringRef S) {
+  ArgParser Parser;
   opt::InputArgList Args = Parser.parse(S);
 
   for (auto *Arg : Args) {
     switch (Arg->getOption().getUnaliasedOption().getID()) {
+    case OPT_aligncomm:
+      parseAligncomm(Arg->getValue());
+      break;
     case OPT_alternatename:
       parseAlternateName(Arg->getValue());
       break;
@@ -311,7 +318,7 @@ void LinkerDriver::addLibSearchPaths() {
 }
 
 SymbolBody *LinkerDriver::addUndefined(StringRef Name) {
-  SymbolBody *B = Symtab.addUndefined(Name);
+  SymbolBody *B = Symtab->addUndefined(Name);
   Config->GCRoot.insert(B);
   return B;
 }
@@ -334,8 +341,8 @@ StringRef LinkerDriver::findDefaultEntry() {
       {"wWinMain", "wWinMainCRTStartup"},
   };
   for (auto E : Entries) {
-    StringRef Entry = Symtab.findMangle(mangle(E[0]));
-    if (!Entry.empty() && !isa<Undefined>(Symtab.find(Entry)->body()))
+    StringRef Entry = Symtab->findMangle(mangle(E[0]));
+    if (!Entry.empty() && !isa<Undefined>(Symtab->find(Entry)->body()))
       return mangle(E[1]);
   }
   return "";
@@ -344,9 +351,9 @@ StringRef LinkerDriver::findDefaultEntry() {
 WindowsSubsystem LinkerDriver::inferSubsystem() {
   if (Config->DLL)
     return IMAGE_SUBSYSTEM_WINDOWS_GUI;
-  if (Symtab.findUnderscore("main") || Symtab.findUnderscore("wmain"))
+  if (Symtab->findUnderscore("main") || Symtab->findUnderscore("wmain"))
     return IMAGE_SUBSYSTEM_WINDOWS_CUI;
-  if (Symtab.findUnderscore("WinMain") || Symtab.findUnderscore("wWinMain"))
+  if (Symtab->findUnderscore("WinMain") || Symtab->findUnderscore("wWinMain"))
     return IMAGE_SUBSYSTEM_WINDOWS_GUI;
   return IMAGE_SUBSYSTEM_UNKNOWN;
 }
@@ -458,8 +465,8 @@ static void createImportLibrary(bool AsLib) {
   std::vector<COFFShortExport> Exports;
   for (Export &E1 : Config->Exports) {
     COFFShortExport E2;
-    // Use SymbolName, which will have any stdcall or fastcall qualifiers.
-    E2.Name = E1.SymbolName;
+    E2.Name = E1.Name;
+    E2.SymbolName = E1.SymbolName;
     E2.ExtName = E1.ExtName;
     E2.Ordinal = E1.Ordinal;
     E2.Noname = E1.Noname;
@@ -470,7 +477,7 @@ static void createImportLibrary(bool AsLib) {
   }
 
   writeImportLibrary(getImportName(AsLib), getImplibPath(), Exports,
-                     Config->Machine);
+                     Config->Machine, false);
 }
 
 static void parseModuleDefs(StringRef Path) {
@@ -513,25 +520,6 @@ static void parseModuleDefs(StringRef Path) {
     E2.Constant = E1.Constant;
     Config->Exports.push_back(E2);
   }
-}
-
-std::vector<MemoryBufferRef> getArchiveMembers(Archive *File) {
-  std::vector<MemoryBufferRef> V;
-  Error Err = Error::success();
-  for (const ErrorOr<Archive::Child> &COrErr : File->children(Err)) {
-    Archive::Child C =
-        check(COrErr,
-              File->getFileName() + ": could not get the child of the archive");
-    MemoryBufferRef MBRef =
-        check(C.getMemoryBufferRef(),
-              File->getFileName() +
-                  ": could not get the buffer for a child of the archive");
-    V.push_back(MBRef);
-  }
-  if (Err)
-    fatal(File->getFileName() +
-          ": Archive::children failed: " + toString(std::move(Err)));
-  return V;
 }
 
 // A helper function for filterBitcodeFiles.
@@ -593,12 +581,12 @@ filterBitcodeFiles(StringRef Path, std::vector<std::string> &TemporaryFiles) {
   std::string Temp = S.str();
   TemporaryFiles.push_back(Temp);
 
-  std::pair<StringRef, std::error_code> Ret =
+  std::error_code EC =
       llvm::writeArchive(Temp, New, /*WriteSymtab=*/true, Archive::Kind::K_GNU,
                          /*Deterministics=*/true,
                          /*Thin=*/false);
-  if (Ret.second)
-    error("failed to create a new archive " + S.str() + ": " + Ret.first);
+  if (EC)
+    error("failed to create a new archive " + S.str() + ": " + EC.message());
   return Temp;
 }
 
@@ -610,16 +598,16 @@ void LinkerDriver::invokeMSVC(opt::InputArgList &Args) {
   // Write out archive members that we used in symbol resolution and pass these
   // to MSVC before any archives, so that MSVC uses the same objects to satisfy
   // references.
-  for (const auto *O : Symtab.ObjectFiles) {
-    if (O->ParentName.empty())
+  for (ObjFile *Obj : ObjFile::Instances) {
+    if (Obj->ParentName.empty())
       continue;
     SmallString<128> S;
     int Fd;
     if (auto EC = sys::fs::createTemporaryFile(
-            "lld-" + sys::path::filename(O->ParentName), ".obj", Fd, S))
+            "lld-" + sys::path::filename(Obj->ParentName), ".obj", Fd, S))
       fatal(EC, "cannot create a temporary file");
     raw_fd_ostream OS(Fd, /*shouldClose*/ true);
-    OS << O->MB.getBuffer();
+    OS << Obj->MB.getBuffer();
     Temps.push_back(S.str());
     Rsp += quote(S) + "\n";
   }
@@ -651,8 +639,8 @@ void LinkerDriver::invokeMSVC(opt::InputArgList &Args) {
     }
   }
 
-  std::vector<StringRef> ObjectFiles = Symtab.compileBitcodeFiles();
-  runMSVCLinker(Rsp, ObjectFiles);
+  std::vector<StringRef> ObjFiles = Symtab->compileBitcodeFiles();
+  runMSVCLinker(Rsp, ObjFiles);
 
   for (StringRef Path : Temps)
     sys::fs::remove(Path);
@@ -689,6 +677,7 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
   InitializeAllDisassemblers();
 
   // Parse command line options.
+  ArgParser Parser;
   opt::InputArgList Args = Parser.parseLINK(ArgsArr.slice(1));
 
   // Parse and evaluate -mllvm options.
@@ -756,10 +745,10 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
   // Handle /debug
   if (Args.hasArg(OPT_debug)) {
     Config->Debug = true;
-    Config->DebugTypes =
-        Args.hasArg(OPT_debugtype)
-            ? parseDebugType(Args.getLastArg(OPT_debugtype)->getValue())
-            : getDefaultDebugType(Args);
+    if (auto *Arg = Args.getLastArg(OPT_debugtype))
+      Config->DebugTypes = parseDebugType(Arg->getValue());
+    else
+      Config->DebugTypes = getDefaultDebugType(Args);
   }
 
   // Create a dummy PDB file to satisfy build sytem rules.
@@ -898,6 +887,10 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
   // Handle /section
   for (auto *Arg : Args.filtered(OPT_section))
     parseSection(Arg->getValue());
+
+  // Handle /aligncomm
+  for (auto *Arg : Args.filtered(OPT_aligncomm))
+    parseAligncomm(Arg->getValue());
 
   // Handle /manifestdependency. This enables /manifest unless /manifest:no is
   // also passed.
@@ -1063,21 +1056,21 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
   if (Config->ImageBase == uint64_t(-1))
     Config->ImageBase = getDefaultImageBase();
 
-  Symtab.addSynthetic(mangle("__ImageBase"), nullptr);
+  Symtab->addSynthetic(mangle("__ImageBase"), nullptr);
   if (Config->Machine == I386) {
-    Symtab.addAbsolute("___safe_se_handler_table", 0);
-    Symtab.addAbsolute("___safe_se_handler_count", 0);
+    Symtab->addAbsolute("___safe_se_handler_table", 0);
+    Symtab->addAbsolute("___safe_se_handler_count", 0);
   }
 
   // We do not support /guard:cf (control flow protection) yet.
   // Define CFG symbols anyway so that we can link MSVC 2015 CRT.
-  Symtab.addAbsolute(mangle("__guard_fids_count"), 0);
-  Symtab.addAbsolute(mangle("__guard_fids_table"), 0);
-  Symtab.addAbsolute(mangle("__guard_flags"), 0x100);
-  Symtab.addAbsolute(mangle("__guard_iat_count"), 0);
-  Symtab.addAbsolute(mangle("__guard_iat_table"), 0);
-  Symtab.addAbsolute(mangle("__guard_longjmp_count"), 0);
-  Symtab.addAbsolute(mangle("__guard_longjmp_table"), 0);
+  Symtab->addAbsolute(mangle("__guard_fids_count"), 0);
+  Symtab->addAbsolute(mangle("__guard_fids_table"), 0);
+  Symtab->addAbsolute(mangle("__guard_flags"), 0x100);
+  Symtab->addAbsolute(mangle("__guard_iat_count"), 0);
+  Symtab->addAbsolute(mangle("__guard_iat_table"), 0);
+  Symtab->addAbsolute(mangle("__guard_longjmp_count"), 0);
+  Symtab->addAbsolute(mangle("__guard_longjmp_table"), 0);
 
   // This code may add new undefined symbols to the link, which may enqueue more
   // symbol resolution tasks, so we need to continue executing tasks until we
@@ -1086,7 +1079,7 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
     // Windows specific -- if entry point is not found,
     // search for its mangled names.
     if (Config->Entry)
-      Symtab.mangleMaybe(Config->Entry);
+      Symtab->mangleMaybe(Config->Entry);
 
     // Windows specific -- Make sure we resolve all dllexported symbols.
     for (Export &E : Config->Exports) {
@@ -1094,7 +1087,7 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
         continue;
       E.Sym = addUndefined(E.Name);
       if (!E.Directives)
-        Symtab.mangleMaybe(E.Sym);
+        Symtab->mangleMaybe(E.Sym);
     }
 
     // Add weak aliases. Weak aliases is a mechanism to give remaining
@@ -1102,16 +1095,16 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
     for (auto Pair : Config->AlternateNames) {
       StringRef From = Pair.first;
       StringRef To = Pair.second;
-      Symbol *Sym = Symtab.find(From);
+      Symbol *Sym = Symtab->find(From);
       if (!Sym)
         continue;
       if (auto *U = dyn_cast<Undefined>(Sym->body()))
         if (!U->WeakAlias)
-          U->WeakAlias = Symtab.addUndefined(To);
+          U->WeakAlias = Symtab->addUndefined(To);
     }
 
     // Windows specific -- if __load_config_used can be resolved, resolve it.
-    if (Symtab.findUnderscore("_load_config_used"))
+    if (Symtab->findUnderscore("_load_config_used"))
       addUndefined(mangle("_load_config_used"));
   } while (run());
 
@@ -1127,11 +1120,11 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
 
   // Do LTO by compiling bitcode input files to a set of native COFF files then
   // link those files.
-  Symtab.addCombinedLTOObjects();
+  Symtab->addCombinedLTOObjects();
   run();
 
   // Make sure we have resolved all symbols.
-  Symtab.reportRemainingUndefines();
+  Symtab->reportRemainingUndefines();
 
   // Windows specific -- if no /subsystem is given, we need to infer
   // that from entry point name.
@@ -1143,7 +1136,7 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
 
   // Handle /safeseh.
   if (Args.hasArg(OPT_safeseh)) {
-    for (ObjectFile *File : Symtab.ObjectFiles)
+    for (ObjFile *File : ObjFile::Instances)
       if (!File->SEHCompat)
         error("/safeseh: " + File->getName() + " is not compatible with SEH");
     if (ErrorCount)
@@ -1158,20 +1151,37 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
     assignExportOrdinals();
   }
 
+  // Set extra alignment for .comm symbols
+  for (auto Pair : Config->AlignComm) {
+    StringRef Name = Pair.first;
+    int Align = Pair.second;
+    Symbol *Sym = Symtab->find(Name);
+    if (!Sym) {
+      warn("/aligncomm symbol " + Name + " not found");
+      continue;
+    }
+    auto *DC = dyn_cast<DefinedCommon>(Sym->body());
+    if (!DC) {
+      warn("/aligncomm symbol " + Name + " of wrong kind");
+      continue;
+    }
+    DC->getChunk()->setAlign(Align);
+  }
+
   // Windows specific -- Create a side-by-side manifest file.
   if (Config->Manifest == Configuration::SideBySide)
     createSideBySideManifest();
 
   // Identify unreferenced COMDAT sections.
   if (Config->DoGC)
-    markLive(Symtab.getChunks());
+    markLive(Symtab->getChunks());
 
   // Identify identical COMDAT sections to merge them.
   if (Config->DoICF)
-    doICF(Symtab.getChunks());
+    doICF(Symtab->getChunks());
 
   // Write the result.
-  writeResult(&Symtab);
+  writeResult();
 
   // Call exit to avoid calling destructors.
   exit(0);

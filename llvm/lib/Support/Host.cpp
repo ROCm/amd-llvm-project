@@ -267,6 +267,47 @@ StringRef sys::detail::getHostCPUNameForS390x(
   return "generic";
 }
 
+StringRef sys::detail::getHostCPUNameForBPF() {
+#if !defined(__linux__) || !defined(__x86_64__)
+  return "generic";
+#else
+  uint8_t insns[40] __attribute__ ((aligned (8))) =
+      /* BPF_MOV64_IMM(BPF_REG_0, 0) */
+    { 0xb7, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+      /* BPF_MOV64_IMM(BPF_REG_2, 1) */
+      0xb7, 0x2, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0,
+      /* BPF_JMP_REG(BPF_JLT, BPF_REG_0, BPF_REG_2, 1) */
+      0xad, 0x20, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0,
+      /* BPF_MOV64_IMM(BPF_REG_0, 1) */
+      0xb7, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0,
+      /* BPF_EXIT_INSN() */
+      0x95, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0 };
+
+  struct bpf_prog_load_attr {
+    uint32_t prog_type;
+    uint32_t insn_cnt;
+    uint64_t insns;
+    uint64_t license;
+    uint32_t log_level;
+    uint32_t log_size;
+    uint64_t log_buf;
+    uint32_t kern_version;
+    uint32_t prog_flags;
+  } attr = {};
+  attr.prog_type = 1; /* BPF_PROG_TYPE_SOCKET_FILTER */
+  attr.insn_cnt = 5;
+  attr.insns = (uint64_t)insns;
+  attr.license = (uint64_t)"DUMMY";
+
+  int fd = syscall(321 /* __NR_bpf */, 5 /* BPF_PROG_LOAD */, &attr, sizeof(attr));
+  if (fd >= 0) {
+    close(fd);
+    return "v2";
+  }
+  return "v1";
+#endif
+}
+
 #if defined(__i386__) || defined(_M_IX86) || \
     defined(__x86_64__) || defined(_M_X64)
 
@@ -380,7 +421,9 @@ enum ProcessorFeatures {
   // Only one bit free left in the first 32 features.
   FEATURE_MOVBE = 32,
   FEATURE_ADX,
-  FEATURE_EM64T
+  FEATURE_EM64T,
+  FEATURE_CLFLUSHOPT,
+  FEATURE_SHA,
 };
 
 // The check below for i386 was copied from clang's cpuid.h (__get_cpuid_max).
@@ -714,7 +757,21 @@ getIntelProcessorTypeAndSubtype(unsigned Family, unsigned Model,
 
     default: // Unknown family 6 CPU, try to guess.
       if (Features & (1 << FEATURE_AVX512F)) {
-        *Type = INTEL_KNL; // knl
+        if (Features & (1 << FEATURE_AVX512VL)) {
+          *Type = INTEL_COREI7;
+          *Subtype = INTEL_COREI7_SKYLAKE_AVX512;
+        } else {
+          *Type = INTEL_KNL; // knl
+        }
+        break;
+      }
+      if (Features2 & (1 << (FEATURE_CLFLUSHOPT - 32))) {
+        if (Features2 & (1 << (FEATURE_SHA - 32))) {
+          *Type = INTEL_GOLDMONT;
+        } else {
+          *Type = INTEL_COREI7;
+          *Subtype = INTEL_COREI7_SKYLAKE;
+        }
         break;
       }
       if (Features2 & (1 << (FEATURE_ADX - 32))) {
@@ -974,12 +1031,16 @@ static void getAvailableFeatures(unsigned ECX, unsigned EDX, unsigned MaxLeaf,
     Features2 |= 1 << (FEATURE_ADX - 32);
   if (HasLeaf7 && ((EBX >> 21) & 1) && HasAVX512Save)
     Features |= 1 << FEATURE_AVX512IFMA;
+  if (HasLeaf7 && ((EBX >> 23) & 1))
+    Features2 |= 1 << (FEATURE_CLFLUSHOPT - 32);
   if (HasLeaf7 && ((EBX >> 26) & 1) && HasAVX512Save)
     Features |= 1 << FEATURE_AVX512PF;
   if (HasLeaf7 && ((EBX >> 27) & 1) && HasAVX512Save)
     Features |= 1 << FEATURE_AVX512ER;
   if (HasLeaf7 && ((EBX >> 28) & 1) && HasAVX512Save)
     Features |= 1 << FEATURE_AVX512CD;
+  if (HasLeaf7 && ((EBX >> 29) & 1))
+    Features2 |= 1 << (FEATURE_SHA - 32);
   if (HasLeaf7 && ((EBX >> 30) & 1) && HasAVX512Save)
     Features |= 1 << FEATURE_AVX512BW;
   if (HasLeaf7 && ((EBX >> 31) & 1) && HasAVX512Save)
@@ -1400,7 +1461,7 @@ bool sys::getHostCPUFeatures(StringMap<bool> &Features) {
 
   Features["prefetchwt1"] = HasLeaf7 && (ECX & 1);
   Features["avx512vbmi"] = HasLeaf7 && ((ECX >> 1) & 1) && HasAVX512Save;
-  Features["avx512vpopcntdq"] = HasLeaf7 && ((ECX >> 14) & 1) && HasAVX512Save;  
+  Features["avx512vpopcntdq"] = HasLeaf7 && ((ECX >> 14) & 1) && HasAVX512Save;
   // Enable protection keys
   Features["pku"] = HasLeaf7 && ((ECX >> 4) & 1);
 

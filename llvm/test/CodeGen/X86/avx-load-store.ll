@@ -12,11 +12,11 @@ define void @test_256_load(double* nocapture %d, float* nocapture %f, <4 x i64>*
 ; CHECK-NEXT:    movq %rdx, %r14
 ; CHECK-NEXT:    movq %rsi, %r15
 ; CHECK-NEXT:    movq %rdi, %rbx
-; CHECK-NEXT:    vmovaps (%rbx), %ymm0
+; CHECK-NEXT:    vmovaps (%rdi), %ymm0
 ; CHECK-NEXT:    vmovups %ymm0, {{[0-9]+}}(%rsp) # 32-byte Spill
-; CHECK-NEXT:    vmovaps (%r15), %ymm1
+; CHECK-NEXT:    vmovaps (%rsi), %ymm1
 ; CHECK-NEXT:    vmovups %ymm1, {{[0-9]+}}(%rsp) # 32-byte Spill
-; CHECK-NEXT:    vmovaps (%r14), %ymm2
+; CHECK-NEXT:    vmovaps (%rdx), %ymm2
 ; CHECK-NEXT:    vmovups %ymm2, (%rsp) # 32-byte Spill
 ; CHECK-NEXT:    callq dummy
 ; CHECK-NEXT:    vmovups {{[0-9]+}}(%rsp), %ymm0 # 32-byte Reload
@@ -87,7 +87,7 @@ define <8 x float> @mov00(<8 x float> %v, float * %ptr) nounwind {
 ; CHECK_O0-NEXT:    vmovss {{.*#+}} xmm0 = mem[0],zero,zero,zero
 ; CHECK_O0-NEXT:    # implicit-def: %YMM1
 ; CHECK_O0-NEXT:    vmovaps %xmm0, %xmm1
-; CHECK_O0-NEXT:    vxorps %ymm2, %ymm2, %ymm2
+; CHECK_O0-NEXT:    vxorps %xmm2, %xmm2, %xmm2
 ; CHECK_O0-NEXT:    vblendps {{.*#+}} ymm0 = ymm1[0],ymm2[1,2,3,4,5,6,7]
 ; CHECK_O0-NEXT:    retq
   %val = load float, float* %ptr
@@ -106,7 +106,7 @@ define <4 x double> @mov01(<4 x double> %v, double * %ptr) nounwind {
 ; CHECK_O0-NEXT:    vmovsd {{.*#+}} xmm0 = mem[0],zero
 ; CHECK_O0-NEXT:    # implicit-def: %YMM1
 ; CHECK_O0-NEXT:    vmovaps %xmm0, %xmm1
-; CHECK_O0-NEXT:    vxorps %ymm2, %ymm2, %ymm2
+; CHECK_O0-NEXT:    vxorps %xmm2, %xmm2, %xmm2
 ; CHECK_O0-NEXT:    vblendpd {{.*#+}} ymm0 = ymm1[0],ymm2[1,2,3]
 ; CHECK_O0-NEXT:    retq
   %val = load double, double* %ptr
