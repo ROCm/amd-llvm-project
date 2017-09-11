@@ -1171,6 +1171,8 @@ X86TargetLowering::X86TargetLowering(const X86TargetMachine &TM,
 
     setOperationAction(ISD::FP_TO_SINT,         MVT::v16i32, Legal);
     setOperationAction(ISD::FP_TO_UINT,         MVT::v16i32, Legal);
+    setOperationAction(ISD::FP_TO_UINT,         MVT::v16i8, Legal);
+    setOperationAction(ISD::FP_TO_UINT,         MVT::v16i16, Legal);
     setOperationAction(ISD::FP_TO_UINT,         MVT::v8i32, Legal);
     setOperationAction(ISD::FP_TO_UINT,         MVT::v4i32, Legal);
     setOperationAction(ISD::FP_TO_UINT,         MVT::v2i32, Custom);
@@ -4609,6 +4611,20 @@ bool X86TargetLowering::isCheapToSpeculateCttz() const {
 bool X86TargetLowering::isCheapToSpeculateCtlz() const {
   // Speculate ctlz only if we can directly use LZCNT.
   return Subtarget.hasLZCNT();
+}
+
+bool X86TargetLowering::canMergeStoresTo(unsigned AddressSpace, EVT MemVT,
+                                         const SelectionDAG &DAG) const {
+  // Do not merge to float value size (128 bytes) if no implicit
+  // float attribute is set.
+  bool NoFloat = DAG.getMachineFunction().getFunction()->hasFnAttribute(
+      Attribute::NoImplicitFloat);
+
+  if (NoFloat) {
+    unsigned MaxIntSize = Subtarget.is64Bit() ? 64 : 32;
+    return (MemVT.getSizeInBits() <= MaxIntSize);
+  }
+  return true;
 }
 
 bool X86TargetLowering::isCtlzFast() const {
@@ -12067,7 +12083,8 @@ static SDValue lowerVectorShuffleAsSplitOrBlend(const SDLoc &DL, MVT VT,
 static SDValue lowerVectorShuffleAsLanePermuteAndBlend(const SDLoc &DL, MVT VT,
                                                        SDValue V1, SDValue V2,
                                                        ArrayRef<int> Mask,
-                                                       SelectionDAG &DAG) {
+                                                       SelectionDAG &DAG,
+                                                       const X86Subtarget &Subtarget) {
   // FIXME: This should probably be generalized for 512-bit vectors as well.
   assert(VT.is256BitVector() && "Only for 256-bit vector shuffles!");
   int Size = Mask.size();
@@ -12076,12 +12093,21 @@ static SDValue lowerVectorShuffleAsLanePermuteAndBlend(const SDLoc &DL, MVT VT,
   // If there are only inputs from one 128-bit lane, splitting will in fact be
   // less expensive. The flags track whether the given lane contains an element
   // that crosses to another lane.
-  bool LaneCrossing[2] = {false, false};
-  for (int i = 0; i < Size; ++i)
-    if (Mask[i] >= 0 && (Mask[i] % Size) / LaneSize != i / LaneSize)
-      LaneCrossing[(Mask[i] % Size) / LaneSize] = true;
-  if (!LaneCrossing[0] || !LaneCrossing[1])
-    return splitAndLowerVectorShuffle(DL, VT, V1, V2, Mask, DAG);
+  if (!Subtarget.hasAVX2()) {
+    bool LaneCrossing[2] = {false, false};
+    for (int i = 0; i < Size; ++i)
+      if (Mask[i] >= 0 && (Mask[i] % Size) / LaneSize != i / LaneSize)
+        LaneCrossing[(Mask[i] % Size) / LaneSize] = true;
+    if (!LaneCrossing[0] || !LaneCrossing[1])
+      return splitAndLowerVectorShuffle(DL, VT, V1, V2, Mask, DAG);
+  } else {
+    bool LaneUsed[2] = {false, false};
+    for (int i = 0; i < Size; ++i)
+      if (Mask[i] >= 0)
+        LaneUsed[(Mask[i] / LaneSize)] = true;
+    if (!LaneUsed[0] || !LaneUsed[1])
+      return splitAndLowerVectorShuffle(DL, VT, V1, V2, Mask, DAG);
+  }
 
   assert(V2.isUndef() &&
          "This last part of this routine only works on single input shuffles");
@@ -12100,8 +12126,11 @@ static SDValue lowerVectorShuffleAsLanePermuteAndBlend(const SDLoc &DL, MVT VT,
   // the value 2 selects the low half of source 2. We only use source 2 to
   // allow folding it into a memory operand.
   unsigned PERMMask = 3 | 2 << 4;
-  SDValue Flipped = DAG.getNode(X86ISD::VPERM2X128, DL, VT, DAG.getUNDEF(VT),
-                                V1, DAG.getConstant(PERMMask, DL, MVT::i8));
+  MVT PVT = VT.isFloatingPoint() ? MVT::v4f64 : MVT::v4i64;
+  SDValue Flipped = DAG.getNode(X86ISD::VPERM2X128, DL, PVT, DAG.getUNDEF(VT),
+                                DAG.getBitcast(PVT, V1),
+                                DAG.getConstant(PERMMask, DL, MVT::i8));
+  Flipped = DAG.getBitcast(VT, Flipped);
   return DAG.getVectorShuffle(VT, DL, V1, Flipped, FlippedBlendMask);
 }
 
@@ -12696,7 +12725,7 @@ static SDValue lowerV4F64VectorShuffle(const SDLoc &DL, ArrayRef<int> Mask,
 
     // Otherwise, fall back.
     return lowerVectorShuffleAsLanePermuteAndBlend(DL, MVT::v4f64, V1, V2, Mask,
-                                                   DAG);
+                                                   DAG, Subtarget);
   }
 
   // Use dedicated unpack instructions for masks that match their pattern.
@@ -12899,7 +12928,7 @@ static SDValue lowerV8F32VectorShuffle(const SDLoc &DL, ArrayRef<int> Mask,
 
     // Otherwise, fall back.
     return lowerVectorShuffleAsLanePermuteAndBlend(DL, MVT::v8f32, V1, V2, Mask,
-                                                   DAG);
+                                                   DAG, Subtarget);
   }
 
   // Try to simplify this by merging 128-bit lanes to enable a lane-based
@@ -13100,7 +13129,7 @@ static SDValue lowerV16I16VectorShuffle(const SDLoc &DL, ArrayRef<int> Mask,
     // element types.
     if (is128BitLaneCrossingShuffleMask(MVT::v16i16, Mask))
       return lowerVectorShuffleAsLanePermuteAndBlend(DL, MVT::v16i16, V1, V2,
-                                                     Mask, DAG);
+                                                     Mask, DAG, Subtarget);
 
     SmallVector<int, 8> RepeatedMask;
     if (is128BitLaneRepeatedShuffleMask(MVT::v16i16, Mask, RepeatedMask)) {
@@ -13185,7 +13214,7 @@ static SDValue lowerV32I8VectorShuffle(const SDLoc &DL, ArrayRef<int> Mask,
   // element types.
   if (V2.isUndef() && is128BitLaneCrossingShuffleMask(MVT::v32i8, Mask))
     return lowerVectorShuffleAsLanePermuteAndBlend(DL, MVT::v32i8, V1, V2, Mask,
-                                                   DAG);
+                                                   DAG, Subtarget);
 
   if (SDValue PSHUFB = lowerVectorShuffleWithPSHUFB(
           DL, MVT::v32i8, Mask, V1, V2, Zeroable, Subtarget, DAG))
@@ -13452,6 +13481,15 @@ static SDValue lowerV16F32VectorShuffle(const SDLoc &DL, ArrayRef<int> Mask,
     // Otherwise, fall back to a SHUFPS sequence.
     return lowerVectorShuffleWithSHUFPS(DL, MVT::v16f32, RepeatedMask, V1, V2, DAG);
   }
+
+  // If we have a single input shuffle with different shuffle patterns in the
+  // 128-bit lanes and don't lane cross, use variable mask VPERMILPS.
+  if (V2.isUndef() &&
+      !is128BitLaneCrossingShuffleMask(MVT::v16f32, Mask)) {
+    SDValue VPermMask = getConstVector(Mask, MVT::v16i32, DAG, DL, true);
+    return DAG.getNode(X86ISD::VPERMILPV, DL, MVT::v16f32, V1, VPermMask);
+  }
+
   // If we have AVX512F support, we can use VEXPAND.
   if (SDValue V = lowerVectorShuffleToEXPAND(DL, MVT::v16f32, Zeroable, Mask,
                                              V1, V2, DAG, Subtarget))
@@ -16549,14 +16587,18 @@ SDValue X86TargetLowering::EmitTest(SDValue Op, unsigned X86CC, const SDLoc &dl,
     if (ConstantSDNode *C =
         dyn_cast<ConstantSDNode>(ArithOp.getOperand(1))) {
       // An add of one will be selected as an INC.
-      if (C->isOne() && !Subtarget.slowIncDec()) {
+      if (C->isOne() &&
+          (!Subtarget.slowIncDec() ||
+           DAG.getMachineFunction().getFunction()->optForSize())) {
         Opcode = X86ISD::INC;
         NumOperands = 1;
         break;
       }
 
       // An add of negative one (subtract of one) will be selected as a DEC.
-      if (C->isAllOnesValue() && !Subtarget.slowIncDec()) {
+      if (C->isAllOnesValue() &&
+          (!Subtarget.slowIncDec() ||
+           DAG.getMachineFunction().getFunction()->optForSize())) {
         Opcode = X86ISD::DEC;
         NumOperands = 1;
         break;
@@ -35656,6 +35698,22 @@ static SDValue combineInsertSubvector(SDNode *N, SelectionDAG &DAG,
   unsigned IdxVal = cast<ConstantSDNode>(Idx)->getZExtValue();
   MVT SubVecVT = SubVec.getSimpleValueType();
 
+  if (ISD::isBuildVectorAllZeros(Vec.getNode())) {
+    // Inserting zeros into zeros is a nop.
+    if (ISD::isBuildVectorAllZeros(SubVec.getNode()))
+      return Vec;
+
+    // If we're inserting into a zero vector and then into a larger zero vector,
+    // just insert into the larger zero vector directly.
+    if (SubVec.getOpcode() == ISD::INSERT_SUBVECTOR &&
+        ISD::isBuildVectorAllZeros(SubVec.getOperand(0).getNode())) {
+      unsigned Idx2Val = cast<ConstantSDNode>(Idx)->getZExtValue();
+      return DAG.getNode(ISD::INSERT_SUBVECTOR, dl, OpVT, Vec,
+                         SubVec.getOperand(1),
+                         DAG.getIntPtrConstant(IdxVal + Idx2Val, dl));
+    }
+  }
+
   // If this is an insert of an extract, combine to a shuffle. Don't do this
   // if the insert or extract can be represented with a subregister operation.
   if (SubVec.getOpcode() == ISD::EXTRACT_SUBVECTOR &&
@@ -35716,17 +35774,35 @@ static SDValue combineInsertSubvector(SDNode *N, SelectionDAG &DAG,
       }
       // If lower/upper loads are the same and the only users of the load, then
       // lower to a VBROADCASTF128/VBROADCASTI128/etc.
-      if (auto *Ld = dyn_cast<LoadSDNode>(peekThroughOneUseBitcasts(SubVec2))) {
+      if (auto *Ld = dyn_cast<LoadSDNode>(peekThroughOneUseBitcasts(SubVec2)))
         if (SubVec2 == SubVec && ISD::isNormalLoad(Ld) &&
-            SDNode::areOnlyUsersOf({N, Vec.getNode()}, SubVec2.getNode())) {
+            SDNode::areOnlyUsersOf({N, Vec.getNode()}, SubVec2.getNode()))
           return DAG.getNode(X86ISD::SUBV_BROADCAST, dl, OpVT, SubVec);
-        }
-      }
+
       // If this is subv_broadcast insert into both halves, use a larger
       // subv_broadcast.
-      if (SubVec.getOpcode() == X86ISD::SUBV_BROADCAST && SubVec == SubVec2) {
+      if (SubVec.getOpcode() == X86ISD::SUBV_BROADCAST && SubVec == SubVec2)
         return DAG.getNode(X86ISD::SUBV_BROADCAST, dl, OpVT,
                            SubVec.getOperand(0));
+
+      // If we're inserting all zeros into the upper half, change this to
+      // an insert into an all zeros vector. We will match this to a move
+      // with implicit upper bit zeroing during isel.
+      if (ISD::isBuildVectorAllZeros(SubVec.getNode()))
+        return DAG.getNode(ISD::INSERT_SUBVECTOR, dl, OpVT,
+                           getZeroVector(OpVT, Subtarget, DAG, dl), SubVec2,
+                           Vec.getOperand(2));
+
+      // If we are inserting into both halves of the vector, the starting
+      // vector should be undef. If it isn't, make it so. Only do this if the
+      // the early insert has no other uses.
+      // TODO: Should this be a generic DAG combine?
+      if (!Vec.getOperand(0).isUndef() && Vec.hasOneUse()) {
+        Vec = DAG.getNode(ISD::INSERT_SUBVECTOR, dl, OpVT, DAG.getUNDEF(OpVT),
+                          SubVec2, Vec.getOperand(2));
+        DCI.AddToWorklist(Vec.getNode());
+        return DAG.getNode(ISD::INSERT_SUBVECTOR, dl, OpVT, Vec, SubVec, Idx);
+
       }
     }
   }
