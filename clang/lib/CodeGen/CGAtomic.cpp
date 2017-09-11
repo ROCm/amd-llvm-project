@@ -645,7 +645,8 @@ AddDirectArgument(CodeGenFunction &CGF, CallArgList &Args,
         CGF.getContext().getIntTypeForBitwidth(SizeInBits, /*Signed=*/false);
     llvm::Type *IPtrTy = llvm::IntegerType::get(CGF.getLLVMContext(),
                                                 SizeInBits)->getPointerTo();
-    Address Ptr = Address(CGF.Builder.CreateBitCast(Val, IPtrTy), Align);
+    Address Ptr = Address(
+      CGF.Builder.CreatePointerBitCastOrAddrSpaceCast(Val, IPtrTy), Align);
     Val = CGF.EmitLoadOfScalar(Ptr, false,
                                CGF.getContext().getPointerType(ValTy),
                                Loc);
@@ -1006,14 +1007,16 @@ RValue CodeGenFunction::EmitAtomicExpr(AtomicExpr *E) {
 
       Builder.CreateStore(
           ResVal,
-          Builder.CreateBitCast(Dest, ResVal->getType()->getPointerTo()));
+          Builder.CreatePointerBitCastOrAddrSpaceCast(
+            Dest, ResVal->getType()->getPointerTo()));
     }
 
     if (RValTy->isVoidType())
       return RValue::get(nullptr);
 
     return convertTempToRValue(
-        Builder.CreateBitCast(Dest, ConvertTypeForMem(RValTy)->getPointerTo()),
+        Builder.CreatePointerBitCastOrAddrSpaceCast(
+          Dest, ConvertTypeForMem(RValTy)->getPointerTo()),
         RValTy, E->getExprLoc());
   }
 
@@ -1062,7 +1065,8 @@ RValue CodeGenFunction::EmitAtomicExpr(AtomicExpr *E) {
       return RValue::get(nullptr);
 
     return convertTempToRValue(
-        Builder.CreateBitCast(Dest, ConvertTypeForMem(RValTy)->getPointerTo()),
+        Builder.CreatePointerBitCastOrAddrSpaceCast(
+          Dest, ConvertTypeForMem(RValTy)->getPointerTo()),
         RValTy, E->getExprLoc());
   }
 
@@ -1134,7 +1138,8 @@ RValue CodeGenFunction::EmitAtomicExpr(AtomicExpr *E) {
 
   assert(Atomics.getValueSizeInBits() <= Atomics.getAtomicSizeInBits());
   return convertTempToRValue(
-      Builder.CreateBitCast(Dest, ConvertTypeForMem(RValTy)->getPointerTo()),
+      Builder.CreatePointerBitCastOrAddrSpaceCast(
+        Dest, ConvertTypeForMem(RValTy)->getPointerTo()),
       RValTy, E->getExprLoc());
 }
 
@@ -1143,7 +1148,8 @@ Address AtomicInfo::emitCastToAtomicIntPointer(Address addr) const {
     cast<llvm::PointerType>(addr.getPointer()->getType())->getAddressSpace();
   llvm::IntegerType *ty =
     llvm::IntegerType::get(CGF.getLLVMContext(), AtomicSizeInBits);
-  return CGF.Builder.CreateBitCast(addr, ty->getPointerTo(addrspace));
+  return CGF.Builder.CreatePointerBitCastOrAddrSpaceCast(
+    addr, ty->getPointerTo(addrspace));
 }
 
 Address AtomicInfo::convertToAtomicIntPointer(Address Addr) const {
@@ -1212,7 +1218,8 @@ RValue AtomicInfo::ConvertIntToValueOrAtomic(llvm::Value *IntVal,
     } else if (ValTy->isPointerTy())
       return RValue::get(CGF.Builder.CreateIntToPtr(IntVal, ValTy));
     else if (llvm::CastInst::isBitCastable(IntVal->getType(), ValTy))
-      return RValue::get(CGF.Builder.CreateBitCast(IntVal, ValTy));
+      return RValue::get(CGF.Builder.CreatePointerBitCastOrAddrSpaceCast(
+        IntVal, ValTy));
   }
 
   // Create a temporary.  This needs to be big enough to hold the
@@ -1397,7 +1404,8 @@ llvm::Value *AtomicInfo::convertRValueToInt(RValue RVal) const {
       if (isa<llvm::PointerType>(Value->getType()))
         return CGF.Builder.CreatePtrToInt(Value, InputIntTy);
       else if (llvm::BitCastInst::isBitCastable(Value->getType(), InputIntTy))
-        return CGF.Builder.CreateBitCast(Value, InputIntTy);
+        return CGF.Builder.CreatePointerBitCastOrAddrSpaceCast(
+          Value, InputIntTy);
     }
   }
   // Otherwise, we need to go through memory.
