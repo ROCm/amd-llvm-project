@@ -2296,8 +2296,7 @@ static void RenderAnalyzerOptions(const ArgList &Args, ArgStringList &CmdArgs,
 }
 
 static void RenderSSPOptions(const ToolChain &TC, const ArgList &Args,
-                             ArgStringList &CmdArgs, bool KernelOrKext,
-                             bool IsHosted) {
+                             ArgStringList &CmdArgs, bool KernelOrKext) {
   const llvm::Triple &EffectiveTriple = TC.getEffectiveTriple();
 
   // NVPTX doesn't support stack protectors; from the compiler's perspective, it
@@ -2322,12 +2321,7 @@ static void RenderSSPOptions(const ToolChain &TC, const ArgList &Args,
     else if (A->getOption().matches(options::OPT_fstack_protector_all))
       StackProtectorLevel = LangOptions::SSPReq;
   } else {
-    // Only use a default stack protector on Darwin in case -ffreestanding is
-    // not specified.
-    if (EffectiveTriple.isOSDarwin() && !IsHosted)
-      StackProtectorLevel = 0;
-    else
-      StackProtectorLevel = DefaultStackProtectorLevel;
+    StackProtectorLevel = DefaultStackProtectorLevel;
   }
 
   if (StackProtectorLevel) {
@@ -2481,19 +2475,6 @@ static void RenderBuiltinOptions(const ToolChain &TC, const llvm::Triple &T,
   //                     by default.
   if (TC.getArch() == llvm::Triple::le32)
     CmdArgs.push_back("-fno-math-builtin");
-
-#if 0
-  // Default to -fno-builtin-str{cat,cpy} on Darwin for ARM.
-  //
-  // FIXME: Now that PR4941 has been fixed this can be enabled.
-  if (T.isOSDarwin() && (TC.getArch() == llvm::Triple::arm ||
-                         TC.getArch() == llvm::Triple::thumb)) {
-    if (!Args.hasArg(options::OPT_fbuiltin_strcat))
-      CmdArgs.push_back("-fno-builtin-strcat");
-    if (!Args.hasArg(options::OPT_fbuiltin_strcpy))
-      CmdArgs.push_back("-fno-builtin-strcpy");
-  }
-#endif
 }
 
 static void RenderModulesOptions(Compilation &C, const Driver &D,
@@ -3336,8 +3317,12 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   CmdArgs.push_back("-mthread-model");
-  if (Arg *A = Args.getLastArg(options::OPT_mthread_model))
+  if (Arg *A = Args.getLastArg(options::OPT_mthread_model)) {
+    if (!getToolChain().isThreadModelSupported(A->getValue()))
+      D.Diag(diag::err_drv_invalid_thread_model_for_target)
+          << A->getValue() << A->getAsString(Args);
     CmdArgs.push_back(A->getValue());
+  }
   else
     CmdArgs.push_back(Args.MakeArgString(getToolChain().getThreadModel()));
 
@@ -3905,10 +3890,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddLastArg(CmdArgs, options::OPT_ftlsmodel_EQ);
 
   // -fhosted is default.
-  bool IsHosted =
-      !Args.hasFlag(options::OPT_ffreestanding, options::OPT_fhosted, false) &&
-      !KernelOrKext;
-  if (!IsHosted)
+  if (Args.hasFlag(options::OPT_ffreestanding, options::OPT_fhosted, false) ||
+      KernelOrKext)
     CmdArgs.push_back("-ffreestanding");
 
   // Forward -f (flag) options which we can pass directly.
@@ -4016,7 +3999,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   Args.AddLastArg(CmdArgs, options::OPT_pthread);
 
-  RenderSSPOptions(getToolChain(), Args, CmdArgs, KernelOrKext, IsHosted);
+  RenderSSPOptions(getToolChain(), Args, CmdArgs, KernelOrKext);
 
   // Translate -mstackrealign
   if (Args.hasFlag(options::OPT_mstackrealign, options::OPT_mno_stackrealign,

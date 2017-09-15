@@ -2332,7 +2332,6 @@ TEST_F(FormatTest, IndentPreprocessorDirectives) {
                "#define A 1\n"
                "#endif",
                Style);
-
   Style.IndentPPDirectives = FormatStyle::PPDIS_AfterHash;
   verifyFormat("#ifdef _WIN32\n"
                "#  define A 0\n"
@@ -2493,6 +2492,15 @@ TEST_F(FormatTest, IndentPreprocessorDirectives) {
                "#\tdefine A 1\n"
                "#endif",
                Style);
+
+  // Regression test: Multiline-macro inside include guards.
+  verifyFormat("#ifndef HEADER_H\n"
+               "#define HEADER_H\n"
+               "#define A()        \\\n"
+               "  int i;           \\\n"
+               "  int j;\n"
+               "#endif // HEADER_H",
+               getLLVMStyleWithColumns(20));
 }
 
 TEST_F(FormatTest, FormatHashIfNotAtStartOfLine) {
@@ -11442,6 +11450,31 @@ TEST_F(FormatTest, DoNotFormatLikelyXml) {
             format("<!-- ;> -->", getGoogleStyle()));
   EXPECT_EQ(" <!-- >; -->",
             format(" <!-- >; -->", getGoogleStyle()));
+}
+
+TEST_F(FormatTest, StructuredBindings) {
+  // Structured bindings is a C++17 feature.
+  // all modes, including C++11, C++14 and C++17
+  verifyFormat("auto [a, b] = f();");
+  EXPECT_EQ("auto [a, b] = f();", format("auto[a, b] = f();"));
+  EXPECT_EQ("const auto [a, b] = f();", format("const   auto[a, b] = f();"));
+  EXPECT_EQ("auto const [a, b] = f();", format("auto  const[a, b] = f();"));
+  EXPECT_EQ("auto const volatile [a, b] = f();",
+            format("auto  const   volatile[a, b] = f();"));
+  EXPECT_EQ("auto [a, b, c] = f();", format("auto   [  a  ,  b,c   ] = f();"));
+  EXPECT_EQ("auto & [a, b, c] = f();",
+            format("auto   &[  a  ,  b,c   ] = f();"));
+  EXPECT_EQ("auto && [a, b, c] = f();",
+            format("auto   &&[  a  ,  b,c   ] = f();"));
+  EXPECT_EQ("auto const & [a, b] = f();", format("auto  const&[a, b] = f();"));
+  EXPECT_EQ("auto const volatile && [a, b] = f();",
+            format("auto  const  volatile  &&[a, b] = f();"));
+  EXPECT_EQ("auto && [a, b] = f();", format("auto  &&[a, b] = f();"));
+
+  format::FormatStyle Spaces = format::getLLVMStyle();
+  Spaces.SpacesInSquareBrackets = true;
+  verifyFormat("auto [ a, b ] = f();", Spaces);
+  verifyFormat("auto && [ a, b ] = f();", Spaces);
 }
 
 } // end namespace

@@ -5900,14 +5900,14 @@ def warn_mixed_sign_comparison : Warning<
   InGroup<SignCompare>, DefaultIgnore;
 def warn_lunsigned_always_true_comparison : Warning<
   "comparison of unsigned%select{| enum}2 expression %0 is always %1">,
-  InGroup<TautologicalCompare>;
+  InGroup<TautologicalUnsignedZeroCompare>;
 def warn_out_of_range_compare : Warning<
   "comparison of %select{constant %0|true|false}1 with " 
   "%select{expression of type %2|boolean expression}3 is always "
   "%select{false|true}4">, InGroup<TautologicalOutOfRangeCompare>;
 def warn_runsigned_always_true_comparison : Warning<
   "comparison of %0 unsigned%select{| enum}2 expression is always %1">,
-  InGroup<TautologicalCompare>;
+  InGroup<TautologicalUnsignedZeroCompare>;
 def warn_comparison_of_mixed_enum_types : Warning<
   "comparison of two values with different enumeration types"
   "%diff{ ($ and $)|}0,1">,
@@ -7351,8 +7351,8 @@ def err_invalid_conversion_between_vector_and_integer : Error<
 def err_opencl_function_pointer : Error<
   "pointers to functions are not allowed">;
 
-def err_opencl_taking_function_address : Error<
-  "taking address of function is not allowed">;
+def err_opencl_taking_address_capture : Error<
+  "taking address of a capture is not allowed">;
 
 def err_invalid_conversion_between_vector_and_scalar : Error<
   "invalid conversion between vector type %0 and scalar type %1">;
@@ -7904,6 +7904,8 @@ def err_builtin_annotation_first_arg : Error<
   "first argument to __builtin_annotation must be an integer">;
 def err_builtin_annotation_second_arg : Error<
   "second argument to __builtin_annotation must be a non-wide string constant">;
+def err_msvc_annotation_wide_str : Error<
+  "arguments to __annotation must be wide string constants">;
 
 // CFString checking
 def err_cfstring_literal_not_string_constant : Error<
