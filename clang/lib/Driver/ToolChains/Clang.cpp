@@ -1360,6 +1360,77 @@ void Clang::AddARMTargetArgs(const llvm::Triple &Triple, const ArgList &Args,
     CmdArgs.push_back("-no-implicit-float");
 }
 
+void Clang::RenderTargetOptions(const llvm::Triple &EffectiveTriple,
+                                const ArgList &Args, bool KernelOrKext,
+                                ArgStringList &CmdArgs) const {
+  const ToolChain &TC = getToolChain();
+
+  // Add the target features
+  getTargetFeatures(TC, EffectiveTriple, Args, CmdArgs, false);
+
+  // Add target specific flags.
+  switch (TC.getArch()) {
+  default:
+    break;
+
+  case llvm::Triple::arm:
+  case llvm::Triple::armeb:
+  case llvm::Triple::thumb:
+  case llvm::Triple::thumbeb:
+    // Use the effective triple, which takes into account the deployment target.
+    AddARMTargetArgs(EffectiveTriple, Args, CmdArgs, KernelOrKext);
+    CmdArgs.push_back("-fallow-half-arguments-and-returns");
+    break;
+
+  case llvm::Triple::aarch64:
+  case llvm::Triple::aarch64_be:
+    AddAArch64TargetArgs(Args, CmdArgs);
+    CmdArgs.push_back("-fallow-half-arguments-and-returns");
+    break;
+
+  case llvm::Triple::mips:
+  case llvm::Triple::mipsel:
+  case llvm::Triple::mips64:
+  case llvm::Triple::mips64el:
+    AddMIPSTargetArgs(Args, CmdArgs);
+    break;
+
+  case llvm::Triple::ppc:
+  case llvm::Triple::ppc64:
+  case llvm::Triple::ppc64le:
+    AddPPCTargetArgs(Args, CmdArgs);
+    break;
+
+  case llvm::Triple::sparc:
+  case llvm::Triple::sparcel:
+  case llvm::Triple::sparcv9:
+    AddSparcTargetArgs(Args, CmdArgs);
+    break;
+
+  case llvm::Triple::systemz:
+    AddSystemZTargetArgs(Args, CmdArgs);
+    break;
+
+  case llvm::Triple::x86:
+  case llvm::Triple::x86_64:
+    AddX86TargetArgs(Args, CmdArgs);
+    break;
+
+  case llvm::Triple::lanai:
+    AddLanaiTargetArgs(Args, CmdArgs);
+    break;
+
+  case llvm::Triple::hexagon:
+    AddHexagonTargetArgs(Args, CmdArgs);
+    break;
+
+  case llvm::Triple::wasm32:
+  case llvm::Triple::wasm64:
+    AddWebAssemblyTargetArgs(Args, CmdArgs);
+    break;
+  }
+}
+
 void Clang::AddAArch64TargetArgs(const ArgList &Args,
                                  ArgStringList &CmdArgs) const {
   const llvm::Triple &Triple = getToolChain().getEffectiveTriple();
@@ -2125,6 +2196,11 @@ static void RenderFloatingPointOptions(const ToolChain &TC, const Driver &D,
   // Handle __FINITE_MATH_ONLY__ similarly.
   if (!HonorINFs && !HonorNaNs)
     CmdArgs.push_back("-ffinite-math-only");
+
+  if (const Arg *A = Args.getLastArg(options::OPT_mfpmath_EQ)) {
+    CmdArgs.push_back("-mfpmath");
+    CmdArgs.push_back(A->getValue());
+  }
 }
 
 static void RenderAnalyzerOptions(const ArgList &Args, ArgStringList &CmdArgs,
@@ -2200,8 +2276,7 @@ static void RenderAnalyzerOptions(const ArgList &Args, ArgStringList &CmdArgs,
 }
 
 static void RenderSSPOptions(const ToolChain &TC, const ArgList &Args,
-                             ArgStringList &CmdArgs, bool KernelOrKext,
-                             bool IsHosted) {
+                             ArgStringList &CmdArgs, bool KernelOrKext) {
   const llvm::Triple &EffectiveTriple = TC.getEffectiveTriple();
 
   // NVPTX doesn't support stack protectors; from the compiler's perspective, it
@@ -2226,12 +2301,7 @@ static void RenderSSPOptions(const ToolChain &TC, const ArgList &Args,
     else if (A->getOption().matches(options::OPT_fstack_protector_all))
       StackProtectorLevel = LangOptions::SSPReq;
   } else {
-    // Only use a default stack protector on Darwin in case -ffreestanding is
-    // not specified.
-    if (EffectiveTriple.isOSDarwin() && !IsHosted)
-      StackProtectorLevel = 0;
-    else
-      StackProtectorLevel = DefaultStackProtectorLevel;
+    StackProtectorLevel = DefaultStackProtectorLevel;
   }
 
   if (StackProtectorLevel) {
@@ -2385,19 +2455,6 @@ static void RenderBuiltinOptions(const ToolChain &TC, const llvm::Triple &T,
   //                     by default.
   if (TC.getArch() == llvm::Triple::le32)
     CmdArgs.push_back("-fno-math-builtin");
-
-#if 0
-  // Default to -fno-builtin-str{cat,cpy} on Darwin for ARM.
-  //
-  // FIXME: Now that PR4941 has been fixed this can be enabled.
-  if (T.isOSDarwin() && (TC.getArch() == llvm::Triple::arm ||
-                         TC.getArch() == llvm::Triple::thumb)) {
-    if (!Args.hasArg(options::OPT_fbuiltin_strcat))
-      CmdArgs.push_back("-fno-builtin-strcat");
-    if (!Args.hasArg(options::OPT_fbuiltin_strcpy))
-      CmdArgs.push_back("-fno-builtin-strcpy");
-  }
-#endif
 }
 
 static void RenderModulesOptions(Compilation &C, const Driver &D,
@@ -2753,6 +2810,170 @@ static void RenderDiagnosticsOptions(const Driver &D, const ArgList &Args,
     CmdArgs.push_back("-fno-spell-checking");
 }
 
+static void RenderDebugOptions(const ToolChain &TC, const Driver &D,
+                               const llvm::Triple &T, const ArgList &Args,
+                               bool EmitCodeView, bool IsWindowsMSVC,
+                               ArgStringList &CmdArgs,
+                               codegenoptions::DebugInfoKind &DebugInfoKind,
+                               const Arg *&SplitDWARFArg) {
+  bool IsPS4CPU = T.isPS4CPU();
+
+  if (Args.hasFlag(options::OPT_fdebug_info_for_profiling,
+                   options::OPT_fno_debug_info_for_profiling, false))
+    CmdArgs.push_back("-fdebug-info-for-profiling");
+
+  // The 'g' groups options involve a somewhat intricate sequence of decisions
+  // about what to pass from the driver to the frontend, but by the time they
+  // reach cc1 they've been factored into three well-defined orthogonal choices:
+  //  * what level of debug info to generate
+  //  * what dwarf version to write
+  //  * what debugger tuning to use
+  // This avoids having to monkey around further in cc1 other than to disable
+  // codeview if not running in a Windows environment. Perhaps even that
+  // decision should be made in the driver as well though.
+  unsigned DWARFVersion = 0;
+  llvm::DebuggerKind DebuggerTuning = TC.getDefaultDebuggerTuning();
+
+  bool SplitDWARFInlining =
+      Args.hasFlag(options::OPT_fsplit_dwarf_inlining,
+                   options::OPT_fno_split_dwarf_inlining, true);
+
+  Args.ClaimAllArgs(options::OPT_g_Group);
+
+  SplitDWARFArg = Args.getLastArg(options::OPT_gsplit_dwarf);
+
+  if (const Arg *A = Args.getLastArg(options::OPT_g_Group)) {
+    // If the last option explicitly specified a debug-info level, use it.
+    if (A->getOption().matches(options::OPT_gN_Group)) {
+      DebugInfoKind = DebugLevelToInfoKind(*A);
+      // If you say "-gsplit-dwarf -gline-tables-only", -gsplit-dwarf loses.
+      // But -gsplit-dwarf is not a g_group option, hence we have to check the
+      // order explicitly. If -gsplit-dwarf wins, we fix DebugInfoKind later.
+      // This gets a bit more complicated if you've disabled inline info in the
+      // skeleton CUs (SplitDWARFInlining) - then there's value in composing
+      // split-dwarf and line-tables-only, so let those compose naturally in
+      // that case.
+      // And if you just turned off debug info, (-gsplit-dwarf -g0) - do that.
+      if (SplitDWARFArg) {
+        if (A->getIndex() > SplitDWARFArg->getIndex()) {
+          if (DebugInfoKind == codegenoptions::NoDebugInfo ||
+              (DebugInfoKind == codegenoptions::DebugLineTablesOnly &&
+               SplitDWARFInlining))
+            SplitDWARFArg = nullptr;
+        } else if (SplitDWARFInlining)
+          DebugInfoKind = codegenoptions::NoDebugInfo;
+      }
+    } else {
+      // For any other 'g' option, use Limited.
+      DebugInfoKind = codegenoptions::LimitedDebugInfo;
+    }
+  }
+
+  // If a debugger tuning argument appeared, remember it.
+  if (const Arg *A =
+          Args.getLastArg(options::OPT_gTune_Group, options::OPT_ggdbN_Group)) {
+    if (A->getOption().matches(options::OPT_glldb))
+      DebuggerTuning = llvm::DebuggerKind::LLDB;
+    else if (A->getOption().matches(options::OPT_gsce))
+      DebuggerTuning = llvm::DebuggerKind::SCE;
+    else
+      DebuggerTuning = llvm::DebuggerKind::GDB;
+  }
+
+  // If a -gdwarf argument appeared, remember it.
+  if (const Arg *A =
+          Args.getLastArg(options::OPT_gdwarf_2, options::OPT_gdwarf_3,
+                          options::OPT_gdwarf_4, options::OPT_gdwarf_5))
+    DWARFVersion = DwarfVersionNum(A->getSpelling());
+
+  // Forward -gcodeview. EmitCodeView might have been set by CL-compatibility
+  // argument parsing.
+  if (Args.hasArg(options::OPT_gcodeview) || EmitCodeView) {
+    // DWARFVersion remains at 0 if no explicit choice was made.
+    CmdArgs.push_back("-gcodeview");
+  } else if (DWARFVersion == 0 &&
+             DebugInfoKind != codegenoptions::NoDebugInfo) {
+    DWARFVersion = TC.GetDefaultDwarfVersion();
+  }
+
+  // We ignore flag -gstrict-dwarf for now.
+  // And we handle flag -grecord-gcc-switches later with DWARFDebugFlags.
+  Args.ClaimAllArgs(options::OPT_g_flags_Group);
+
+  // Column info is included by default for everything except PS4 and CodeView.
+  // Clang doesn't track end columns, just starting columns, which, in theory,
+  // is fine for CodeView (and PDB).  In practice, however, the Microsoft
+  // debuggers don't handle missing end columns well, so it's better not to
+  // include any column info.
+  if (Args.hasFlag(options::OPT_gcolumn_info, options::OPT_gno_column_info,
+                   /*Default=*/ !IsPS4CPU && !(IsWindowsMSVC && EmitCodeView)))
+    CmdArgs.push_back("-dwarf-column-info");
+
+  // FIXME: Move backend command line options to the module.
+  // If -gline-tables-only is the last option it wins.
+  if (DebugInfoKind != codegenoptions::DebugLineTablesOnly &&
+      Args.hasArg(options::OPT_gmodules)) {
+    DebugInfoKind = codegenoptions::LimitedDebugInfo;
+    CmdArgs.push_back("-dwarf-ext-refs");
+    CmdArgs.push_back("-fmodule-format=obj");
+  }
+
+  // -gsplit-dwarf should turn on -g and enable the backend dwarf
+  // splitting and extraction.
+  // FIXME: Currently only works on Linux.
+  if (T.isOSLinux()) {
+    if (!SplitDWARFInlining)
+      CmdArgs.push_back("-fno-split-dwarf-inlining");
+
+    if (SplitDWARFArg) {
+      if (DebugInfoKind == codegenoptions::NoDebugInfo)
+        DebugInfoKind = codegenoptions::LimitedDebugInfo;
+      CmdArgs.push_back("-enable-split-dwarf");
+    }
+  }
+
+  // After we've dealt with all combinations of things that could
+  // make DebugInfoKind be other than None or DebugLineTablesOnly,
+  // figure out if we need to "upgrade" it to standalone debug info.
+  // We parse these two '-f' options whether or not they will be used,
+  // to claim them even if you wrote "-fstandalone-debug -gline-tables-only"
+  bool NeedFullDebug = Args.hasFlag(options::OPT_fstandalone_debug,
+                                    options::OPT_fno_standalone_debug,
+                                    TC.GetDefaultStandaloneDebug());
+  if (DebugInfoKind == codegenoptions::LimitedDebugInfo && NeedFullDebug)
+    DebugInfoKind = codegenoptions::FullDebugInfo;
+
+  RenderDebugEnablingArgs(Args, CmdArgs, DebugInfoKind, DWARFVersion,
+                          DebuggerTuning);
+
+  // -fdebug-macro turns on macro debug info generation.
+  if (Args.hasFlag(options::OPT_fdebug_macro, options::OPT_fno_debug_macro,
+                   false))
+    CmdArgs.push_back("-debug-info-macro");
+
+  // -ggnu-pubnames turns on gnu style pubnames in the backend.
+  if (Args.hasArg(options::OPT_ggnu_pubnames)) {
+    CmdArgs.push_back("-backend-option");
+    CmdArgs.push_back("-generate-gnu-dwarf-pub-sections");
+  }
+
+  // -gdwarf-aranges turns on the emission of the aranges section in the
+  // backend.
+  // Always enabled on the PS4.
+  if (Args.hasArg(options::OPT_gdwarf_aranges) || IsPS4CPU) {
+    CmdArgs.push_back("-backend-option");
+    CmdArgs.push_back("-generate-arange-section");
+  }
+
+  if (Args.hasFlag(options::OPT_fdebug_types_section,
+                   options::OPT_fno_debug_types_section, false)) {
+    CmdArgs.push_back("-backend-option");
+    CmdArgs.push_back("-generate-type-units");
+  }
+
+  RenderDebugInfoCompressionArgs(Args, CmdArgs, D);
+}
+
 void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                          const InputInfo &Output, const InputInfoList &Inputs,
                          const ArgList &Args, const char *LinkingOutput) const {
@@ -2781,7 +3002,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   bool IsWindowsGNU = RawTriple.isWindowsGNUEnvironment();
   bool IsWindowsCygnus = RawTriple.isWindowsCygwinEnvironment();
   bool IsWindowsMSVC = RawTriple.isWindowsMSVCEnvironment();
-  bool IsPS4CPU = RawTriple.isPS4CPU();
   bool IsIAMCU = RawTriple.isOSIAMCU();
 
   // Adjust IsWindowsXYZ for CUDA compilations.  Even when compiling in device
@@ -3015,8 +3235,12 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   CmdArgs.push_back("-mthread-model");
-  if (Arg *A = Args.getLastArg(options::OPT_mthread_model))
+  if (Arg *A = Args.getLastArg(options::OPT_mthread_model)) {
+    if (!getToolChain().isThreadModelSupported(A->getValue()))
+      D.Diag(diag::err_drv_invalid_thread_model_for_target)
+          << A->getValue() << A->getAsString(Args);
     CmdArgs.push_back(A->getValue());
+  }
   else
     CmdArgs.push_back(Args.MakeArgString(getToolChain().getThreadModel()));
 
@@ -3206,85 +3430,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back(Args.MakeArgString(CPU));
   }
 
-  if (const Arg *A = Args.getLastArg(options::OPT_mfpmath_EQ)) {
-    CmdArgs.push_back("-mfpmath");
-    CmdArgs.push_back(A->getValue());
-  }
+  RenderTargetOptions(Triple, Args, KernelOrKext, CmdArgs);
 
-  // Add the target features
-  getTargetFeatures(getToolChain(), Triple, Args, CmdArgs, false);
-
-  // Add target specific flags.
-  switch (getToolChain().getArch()) {
-  default:
-    break;
-
-  case llvm::Triple::arm:
-  case llvm::Triple::armeb:
-  case llvm::Triple::thumb:
-  case llvm::Triple::thumbeb:
-    // Use the effective triple, which takes into account the deployment target.
-    AddARMTargetArgs(Triple, Args, CmdArgs, KernelOrKext);
-    break;
-
-  case llvm::Triple::aarch64:
-  case llvm::Triple::aarch64_be:
-    AddAArch64TargetArgs(Args, CmdArgs);
-    break;
-
-  case llvm::Triple::mips:
-  case llvm::Triple::mipsel:
-  case llvm::Triple::mips64:
-  case llvm::Triple::mips64el:
-    AddMIPSTargetArgs(Args, CmdArgs);
-    break;
-
-  case llvm::Triple::ppc:
-  case llvm::Triple::ppc64:
-  case llvm::Triple::ppc64le:
-    AddPPCTargetArgs(Args, CmdArgs);
-    break;
-
-  case llvm::Triple::sparc:
-  case llvm::Triple::sparcel:
-  case llvm::Triple::sparcv9:
-    AddSparcTargetArgs(Args, CmdArgs);
-    break;
-
-  case llvm::Triple::systemz:
-    AddSystemZTargetArgs(Args, CmdArgs);
-    break;
-
-  case llvm::Triple::x86:
-  case llvm::Triple::x86_64:
-    AddX86TargetArgs(Args, CmdArgs);
-    break;
-
-  case llvm::Triple::lanai:
-    AddLanaiTargetArgs(Args, CmdArgs);
-    break;
-
-  case llvm::Triple::hexagon:
-    AddHexagonTargetArgs(Args, CmdArgs);
-    break;
-
-  case llvm::Triple::wasm32:
-  case llvm::Triple::wasm64:
-    AddWebAssemblyTargetArgs(Args, CmdArgs);
-    break;
-  }
-
-  // The 'g' groups options involve a somewhat intricate sequence of decisions
-  // about what to pass from the driver to the frontend, but by the time they
-  // reach cc1 they've been factored into three well-defined orthogonal choices:
-  //  * what level of debug info to generate
-  //  * what dwarf version to write
-  //  * what debugger tuning to use
-  // This avoids having to monkey around further in cc1 other than to disable
-  // codeview if not running in a Windows environment. Perhaps even that
-  // decision should be made in the driver as well though.
-  unsigned DwarfVersion = 0;
-  llvm::DebuggerKind DebuggerTuning = getToolChain().getDefaultDebuggerTuning();
   // These two are potentially updated by AddClangCLArgs.
   codegenoptions::DebugInfoKind DebugInfoKind = codegenoptions::NoDebugInfo;
   bool EmitCodeView = false;
@@ -3293,6 +3440,22 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   types::ID InputType = Input.getType();
   if (D.IsCLMode())
     AddClangCLArgs(Args, InputType, CmdArgs, &DebugInfoKind, &EmitCodeView);
+
+  const Arg *SplitDWARFArg = nullptr;
+  RenderDebugOptions(getToolChain(), D, RawTriple, Args, EmitCodeView,
+                     IsWindowsMSVC, CmdArgs, DebugInfoKind, SplitDWARFArg);
+
+  // Add the split debug info name to the command lines here so we
+  // can propagate it to the backend.
+  bool SplitDWARF = SplitDWARFArg && RawTriple.isOSLinux() &&
+                    (isa<AssembleJobAction>(JA) || isa<CompileJobAction>(JA) ||
+                     isa<BackendJobAction>(JA));
+  const char *SplitDWARFOut;
+  if (SplitDWARF) {
+    CmdArgs.push_back("-split-dwarf-file");
+    SplitDWARFOut = SplitDebugName(Args, Input);
+    CmdArgs.push_back(SplitDWARFOut);
+  }
 
   // Pass the linker version in use.
   if (Arg *A = Args.getLastArg(options::OPT_mlinker_version_EQ)) {
@@ -3339,139 +3502,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back(D.CCLogDiagnosticsFilename ? D.CCLogDiagnosticsFilename
                                                  : "-");
   }
-
-  bool splitDwarfInlining =
-      Args.hasFlag(options::OPT_fsplit_dwarf_inlining,
-                   options::OPT_fno_split_dwarf_inlining, true);
-
-  Args.ClaimAllArgs(options::OPT_g_Group);
-  Arg *SplitDwarfArg = Args.getLastArg(options::OPT_gsplit_dwarf);
-  if (Arg *A = Args.getLastArg(options::OPT_g_Group)) {
-    // If the last option explicitly specified a debug-info level, use it.
-    if (A->getOption().matches(options::OPT_gN_Group)) {
-      DebugInfoKind = DebugLevelToInfoKind(*A);
-      // If you say "-gsplit-dwarf -gline-tables-only", -gsplit-dwarf loses.
-      // But -gsplit-dwarf is not a g_group option, hence we have to check the
-      // order explicitly. (If -gsplit-dwarf wins, we fix DebugInfoKind later.)
-      // This gets a bit more complicated if you've disabled inline info in the
-      // skeleton CUs (splitDwarfInlining) - then there's value in composing
-      // split-dwarf and line-tables-only, so let those compose naturally in
-      // that case.
-      // And if you just turned off debug info, (-gsplit-dwarf -g0) - do that.
-      if (SplitDwarfArg) {
-        if (A->getIndex() > SplitDwarfArg->getIndex()) {
-          if (DebugInfoKind == codegenoptions::NoDebugInfo ||
-              (DebugInfoKind == codegenoptions::DebugLineTablesOnly &&
-               splitDwarfInlining))
-            SplitDwarfArg = nullptr;
-        } else if (splitDwarfInlining)
-          DebugInfoKind = codegenoptions::NoDebugInfo;
-      }
-    } else
-      // For any other 'g' option, use Limited.
-      DebugInfoKind = codegenoptions::LimitedDebugInfo;
-  }
-
-  // If a debugger tuning argument appeared, remember it.
-  if (Arg *A = Args.getLastArg(options::OPT_gTune_Group,
-                               options::OPT_ggdbN_Group)) {
-    if (A->getOption().matches(options::OPT_glldb))
-      DebuggerTuning = llvm::DebuggerKind::LLDB;
-    else if (A->getOption().matches(options::OPT_gsce))
-      DebuggerTuning = llvm::DebuggerKind::SCE;
-    else
-      DebuggerTuning = llvm::DebuggerKind::GDB;
-  }
-
-  // If a -gdwarf argument appeared, remember it.
-  if (Arg *A = Args.getLastArg(options::OPT_gdwarf_2, options::OPT_gdwarf_3,
-                               options::OPT_gdwarf_4, options::OPT_gdwarf_5))
-    DwarfVersion = DwarfVersionNum(A->getSpelling());
-
-  // Forward -gcodeview. EmitCodeView might have been set by CL-compatibility
-  // argument parsing.
-  if (Args.hasArg(options::OPT_gcodeview) || EmitCodeView) {
-    // DwarfVersion remains at 0 if no explicit choice was made.
-    CmdArgs.push_back("-gcodeview");
-  } else if (DwarfVersion == 0 &&
-             DebugInfoKind != codegenoptions::NoDebugInfo) {
-    DwarfVersion = getToolChain().GetDefaultDwarfVersion();
-  }
-
-  // We ignore flag -gstrict-dwarf for now.
-  // And we handle flag -grecord-gcc-switches later with DwarfDebugFlags.
-  Args.ClaimAllArgs(options::OPT_g_flags_Group);
-
-  // Column info is included by default for everything except PS4 and CodeView.
-  // Clang doesn't track end columns, just starting columns, which, in theory,
-  // is fine for CodeView (and PDB).  In practice, however, the Microsoft
-  // debuggers don't handle missing end columns well, so it's better not to
-  // include any column info.
-  if (Args.hasFlag(options::OPT_gcolumn_info, options::OPT_gno_column_info,
-                   /*Default=*/ !IsPS4CPU && !(IsWindowsMSVC && EmitCodeView)))
-    CmdArgs.push_back("-dwarf-column-info");
-
-  // FIXME: Move backend command line options to the module.
-  // If -gline-tables-only is the last option it wins.
-  if (DebugInfoKind != codegenoptions::DebugLineTablesOnly &&
-      Args.hasArg(options::OPT_gmodules)) {
-    DebugInfoKind = codegenoptions::LimitedDebugInfo;
-    CmdArgs.push_back("-dwarf-ext-refs");
-    CmdArgs.push_back("-fmodule-format=obj");
-  }
-
-  // -gsplit-dwarf should turn on -g and enable the backend dwarf
-  // splitting and extraction.
-  // FIXME: Currently only works on Linux.
-  if (RawTriple.isOSLinux()) {
-    if (!splitDwarfInlining)
-      CmdArgs.push_back("-fno-split-dwarf-inlining");
-    if (SplitDwarfArg) {
-      if (DebugInfoKind == codegenoptions::NoDebugInfo)
-        DebugInfoKind = codegenoptions::LimitedDebugInfo;
-      CmdArgs.push_back("-enable-split-dwarf");
-    }
-  }
-
-  // After we've dealt with all combinations of things that could
-  // make DebugInfoKind be other than None or DebugLineTablesOnly,
-  // figure out if we need to "upgrade" it to standalone debug info.
-  // We parse these two '-f' options whether or not they will be used,
-  // to claim them even if you wrote "-fstandalone-debug -gline-tables-only"
-  bool NeedFullDebug = Args.hasFlag(options::OPT_fstandalone_debug,
-                                    options::OPT_fno_standalone_debug,
-                                    getToolChain().GetDefaultStandaloneDebug());
-  if (DebugInfoKind == codegenoptions::LimitedDebugInfo && NeedFullDebug)
-    DebugInfoKind = codegenoptions::FullDebugInfo;
-  RenderDebugEnablingArgs(Args, CmdArgs, DebugInfoKind, DwarfVersion,
-                          DebuggerTuning);
-
-  // -fdebug-macro turns on macro debug info generation.
-  if (Args.hasFlag(options::OPT_fdebug_macro, options::OPT_fno_debug_macro,
-                   false))
-    CmdArgs.push_back("-debug-info-macro");
-
-  // -ggnu-pubnames turns on gnu style pubnames in the backend.
-  if (Args.hasArg(options::OPT_ggnu_pubnames)) {
-    CmdArgs.push_back("-backend-option");
-    CmdArgs.push_back("-generate-gnu-dwarf-pub-sections");
-  }
-
-  // -gdwarf-aranges turns on the emission of the aranges section in the
-  // backend.
-  // Always enabled on the PS4.
-  if (Args.hasArg(options::OPT_gdwarf_aranges) || IsPS4CPU) {
-    CmdArgs.push_back("-backend-option");
-    CmdArgs.push_back("-generate-arange-section");
-  }
-
-  if (Args.hasFlag(options::OPT_fdebug_types_section,
-                   options::OPT_fno_debug_types_section, false)) {
-    CmdArgs.push_back("-backend-option");
-    CmdArgs.push_back("-generate-type-units");
-  }
-
-  RenderDebugInfoCompressionArgs(Args, CmdArgs, D);
 
   bool UseSeparateSections = isUseSeparateSections(Triple);
 
@@ -3763,10 +3793,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddLastArg(CmdArgs, options::OPT_ftlsmodel_EQ);
 
   // -fhosted is default.
-  bool IsHosted =
-      !Args.hasFlag(options::OPT_ffreestanding, options::OPT_fhosted, false) &&
-      !KernelOrKext;
-  if (!IsHosted)
+  if (Args.hasFlag(options::OPT_ffreestanding, options::OPT_fhosted, false) ||
+      KernelOrKext)
     CmdArgs.push_back("-ffreestanding");
 
   // Forward -f (flag) options which we can pass directly.
@@ -3874,7 +3902,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   Args.AddLastArg(CmdArgs, options::OPT_pthread);
 
-  RenderSSPOptions(getToolChain(), Args, CmdArgs, KernelOrKext, IsHosted);
+  RenderSSPOptions(getToolChain(), Args, CmdArgs, KernelOrKext);
 
   // Translate -mstackrealign
   if (Args.hasFlag(options::OPT_mstackrealign, options::OPT_mno_stackrealign,
@@ -3893,20 +3921,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back(Args.MakeArgString("-mstack-probe-size=" + Size));
     else
       CmdArgs.push_back("-mstack-probe-size=0");
-  }
-
-  switch (getToolChain().getArch()) {
-  case llvm::Triple::aarch64:
-  case llvm::Triple::aarch64_be:
-  case llvm::Triple::arm:
-  case llvm::Triple::armeb:
-  case llvm::Triple::thumb:
-  case llvm::Triple::thumbeb:
-    CmdArgs.push_back("-fallow-half-arguments-and-returns");
-    break;
-
-  default:
-    break;
   }
 
   if (Arg *A = Args.getLastArg(options::OPT_mrestrict_it,
@@ -3938,10 +3952,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     else
       A->render(Args, CmdArgs);
   }
-
-  if (Args.hasFlag(options::OPT_fdebug_info_for_profiling,
-                   options::OPT_fno_debug_info_for_profiling, false))
-    CmdArgs.push_back("-fdebug-info-for-profiling");
 
   RenderBuiltinOptions(getToolChain(), RawTriple, Args, CmdArgs);
 
@@ -4502,18 +4512,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back(Args.MakeArgString(Flags));
   }
 
-  // Add the split debug info name to the command lines here so we
-  // can propagate it to the backend.
-  bool SplitDwarf = SplitDwarfArg && RawTriple.isOSLinux() &&
-                    (isa<AssembleJobAction>(JA) || isa<CompileJobAction>(JA) ||
-                     isa<BackendJobAction>(JA));
-  const char *SplitDwarfOut;
-  if (SplitDwarf) {
-    CmdArgs.push_back("-split-dwarf-file");
-    SplitDwarfOut = SplitDebugName(Args, Input);
-    CmdArgs.push_back(SplitDwarfOut);
-  }
-
   // Host-side cuda compilation receives device-side outputs as Inputs[1...].
   // Include them with -fcuda-include-gpubinary.
   if (IsCuda && Inputs.size() > 1)
@@ -4586,8 +4584,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // Handle the debug info splitting at object creation time if we're
   // creating an object.
   // TODO: Currently only works on linux with newer objcopy.
-  if (SplitDwarf && Output.getType() == types::TY_Object)
-    SplitDebugInfo(getToolChain(), C, *this, JA, Args, Output, SplitDwarfOut);
+  if (SplitDWARF && Output.getType() == types::TY_Object)
+    SplitDebugInfo(getToolChain(), C, *this, JA, Args, Output, SplitDWARFOut);
 
   if (Arg *A = Args.getLastArg(options::OPT_pg))
     if (Args.hasArg(options::OPT_fomit_frame_pointer))

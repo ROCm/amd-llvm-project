@@ -128,13 +128,12 @@ class FLAT_Load_Pseudo <string opName, RegisterClass regClass,
   bit HasSignedOffset = 0, bit HasSaddr = 0, bit EnableSaddr = 0> : FLAT_Pseudo<
   opName,
   (outs regClass:$vdst),
-  !if(EnableSaddr,
-    !if(HasSignedOffset,
-      (ins VReg_64:$vaddr, SReg_64:$saddr, offset_s13:$offset, GLC:$glc, slc:$slc),
-      (ins VReg_64:$vaddr, SReg_64:$saddr, offset_u12:$offset, GLC:$glc, slc:$slc)),
-    !if(HasSignedOffset,
-      (ins VReg_64:$vaddr, offset_s13:$offset, GLC:$glc, slc:$slc),
-      (ins VReg_64:$vaddr, offset_u12:$offset, GLC:$glc, slc:$slc))),
+  !con(
+    !con(
+      !con((ins VReg_64:$vaddr),
+        !if(EnableSaddr, (ins SReg_64:$saddr), (ins))),
+          (ins !if(HasSignedOffset,offset_s13,offset_u12):$offset)),
+          (ins GLC:$glc, slc:$slc)),
   " $vdst, $vaddr"#!if(HasSaddr, !if(EnableSaddr, ", $saddr", ", off"), "")#"$offset$glc$slc"> {
   let has_data = 0;
   let mayLoad = 1;
@@ -148,13 +147,12 @@ class FLAT_Store_Pseudo <string opName, RegisterClass vdataClass,
   bit HasSignedOffset = 0, bit HasSaddr = 0, bit EnableSaddr = 0> : FLAT_Pseudo<
   opName,
   (outs),
-  !if(EnableSaddr,
-      !if(HasSignedOffset,
-        (ins VReg_64:$vaddr, vdataClass:$vdata, SReg_64:$saddr, offset_s13:$offset, GLC:$glc, slc:$slc),
-        (ins VReg_64:$vaddr, vdataClass:$vdata, SReg_64:$saddr, offset_u12:$offset, GLC:$glc, slc:$slc)),
-    !if(HasSignedOffset,
-      (ins VReg_64:$vaddr, vdataClass:$vdata, offset_s13:$offset, GLC:$glc, slc:$slc),
-      (ins VReg_64:$vaddr, vdataClass:$vdata, offset_u12:$offset, GLC:$glc, slc:$slc))),
+  !con(
+    !con(
+      !con((ins VReg_64:$vaddr, vdataClass:$vdata),
+        !if(EnableSaddr, (ins SReg_64:$saddr), (ins))),
+          (ins !if(HasSignedOffset,offset_s13,offset_u12):$offset)),
+          (ins GLC:$glc, slc:$slc)),
   " $vaddr, $vdata"#!if(HasSaddr, !if(EnableSaddr, ", $saddr", ", off"), "")#"$offset$glc$slc"> {
   let mayLoad  = 0;
   let mayStore = 1;
@@ -706,6 +704,7 @@ def : FlatLoadPat <FLAT_LOAD_SBYTE, flat_sextloadi8, i32>;
 def : FlatLoadPat <FLAT_LOAD_UBYTE, flat_az_extloadi8, i16>;
 def : FlatLoadPat <FLAT_LOAD_SBYTE, flat_sextloadi8, i16>;
 def : FlatLoadPat <FLAT_LOAD_USHORT, flat_az_extloadi16, i32>;
+def : FlatLoadPat <FLAT_LOAD_USHORT, flat_load, i16>;
 def : FlatLoadPat <FLAT_LOAD_SSHORT, flat_sextloadi16, i32>;
 def : FlatLoadPat <FLAT_LOAD_DWORD, flat_load, i32>;
 def : FlatLoadPat <FLAT_LOAD_DWORDX2, flat_load, v2i32>;
@@ -763,7 +762,7 @@ def : FlatLoadSignedPat <GLOBAL_LOAD_UBYTE, az_extloadi8_global, i16>;
 def : FlatLoadSignedPat <GLOBAL_LOAD_SBYTE, sextloadi8_global, i16>;
 def : FlatLoadSignedPat <GLOBAL_LOAD_USHORT, az_extloadi16_global, i32>;
 def : FlatLoadSignedPat <GLOBAL_LOAD_SSHORT, sextloadi16_global, i32>;
-
+def : FlatLoadSignedPat <GLOBAL_LOAD_USHORT, global_load, i16>;
 
 def : FlatLoadSignedPat <GLOBAL_LOAD_DWORD, global_load, i32>;
 def : FlatLoadSignedPat <GLOBAL_LOAD_DWORDX2, global_load, v2i32>;
