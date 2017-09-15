@@ -30,6 +30,7 @@
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/MDBuilder.h"
+#include "llvm/Support/ConvertUTF.h"
 #include <sstream>
 
 using namespace clang;
@@ -1953,6 +1954,28 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
         Builder.CreateZExt(EmitSignBit(*this, EmitScalarExpr(E->getArg(0))),
                            ConvertType(E->getType())));
   }
+  case Builtin::BI__annotation: {
+    // Re-encode each wide string to UTF8 and make an MDString.
+    SmallVector<Metadata *, 1> Strings;
+    for (const Expr *Arg : E->arguments()) {
+      const auto *Str = cast<StringLiteral>(Arg->IgnoreParenCasts());
+      assert(Str->getCharByteWidth() == 2);
+      StringRef WideBytes = Str->getBytes();
+      std::string StrUtf8;
+      if (!convertUTF16ToUTF8String(
+              makeArrayRef(WideBytes.data(), WideBytes.size()), StrUtf8)) {
+        CGM.ErrorUnsupported(E, "non-UTF16 __annotation argument");
+        continue;
+      }
+      Strings.push_back(llvm::MDString::get(getLLVMContext(), StrUtf8));
+    }
+
+    // Build and MDTuple of MDStrings and emit the intrinsic call.
+    llvm::Value *F = CGM.getIntrinsic(llvm::Intrinsic::codeview_annotation, {});
+    MDTuple *StrTuple = MDTuple::get(getLLVMContext(), Strings);
+    Builder.CreateCall(F, MetadataAsValue::get(getLLVMContext(), StrTuple));
+    return RValue::getIgnored();
+  }
   case Builtin::BI__builtin_annotation: {
     llvm::Value *AnnVal = EmitScalarExpr(E->getArg(0));
     llvm::Value *F = CGM.getIntrinsic(llvm::Intrinsic::annotation,
@@ -2601,27 +2624,50 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
     }
     assert(NumArgs >= 5 && "Invalid enqueue_kernel signature");
 
+    // Create a temporary array to hold the sizes of local pointer arguments
+    // for the block. \p First is the position of the first size argument.
+    auto CreateArrayForSizeVar = [=](unsigned First) {
+      auto *AT = llvm::ArrayType::get(SizeTy, NumArgs - First);
+      auto *Arr = Builder.CreateAlloca(AT);
+      llvm::Value *Ptr;
+      // Each of the following arguments specifies the size of the corresponding
+      // argument passed to the enqueued block.
+      auto *Zero = llvm::ConstantInt::get(IntTy, 0);
+      for (unsigned I = First; I < NumArgs; ++I) {
+        auto *Index = llvm::ConstantInt::get(IntTy, I - First);
+        auto *GEP = Builder.CreateGEP(Arr, {Zero, Index});
+        if (I == First)
+          Ptr = GEP;
+        auto *V =
+            Builder.CreateZExtOrTrunc(EmitScalarExpr(E->getArg(I)), SizeTy);
+        Builder.CreateAlignedStore(
+            V, GEP, CGM.getDataLayout().getPrefTypeAlignment(SizeTy));
+      }
+      return Ptr;
+    };
+
     // Could have events and/or vaargs.
     if (E->getArg(3)->getType()->isBlockPointerType()) {
       // No events passed, but has variadic arguments.
       Name = "__enqueue_kernel_vaargs";
-      llvm::Value *Block = Builder.CreatePointerCast(
-          EmitScalarExpr(E->getArg(3)), GenericVoidPtrTy);
+      auto *Block = Builder.CreatePointerCast(EmitScalarExpr(E->getArg(3)),
+                                              GenericVoidPtrTy);
+      auto *PtrToSizeArray = CreateArrayForSizeVar(4);
+
       // Create a vector of the arguments, as well as a constant value to
       // express to the runtime the number of variadic arguments.
-      std::vector<llvm::Value *> Args = {Queue, Flags, Range, Block,
-                                         ConstantInt::get(IntTy, NumArgs - 4)};
-      std::vector<llvm::Type *> ArgTys = {QueueTy, IntTy, RangeTy,
-                                          GenericVoidPtrTy, IntTy};
-
-      // Each of the following arguments specifies the size of the corresponding
-      // argument passed to the enqueued block.
-      for (unsigned I = 4/*Position of the first size arg*/; I < NumArgs; ++I)
-        Args.push_back(
-            Builder.CreateZExtOrTrunc(EmitScalarExpr(E->getArg(I)), SizeTy));
+      std::vector<llvm::Value *> Args = {Queue,
+                                         Flags,
+                                         Range,
+                                         Block,
+                                         ConstantInt::get(IntTy, NumArgs - 4),
+                                         PtrToSizeArray};
+      std::vector<llvm::Type *> ArgTys = {QueueTy, IntTy,
+                                          RangeTy, GenericVoidPtrTy,
+                                          IntTy,   PtrToSizeArray->getType()};
 
       llvm::FunctionType *FTy = llvm::FunctionType::get(
-          Int32Ty, llvm::ArrayRef<llvm::Type *>(ArgTys), true);
+          Int32Ty, llvm::ArrayRef<llvm::Type *>(ArgTys), false);
       return RValue::get(
           Builder.CreateCall(CGM.CreateRuntimeFunction(FTy, Name),
                              llvm::ArrayRef<llvm::Value *>(Args)));
@@ -2667,14 +2713,12 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
       ArgTys.push_back(Int32Ty);
       Name = "__enqueue_kernel_events_vaargs";
 
-      // Each of the following arguments specifies the size of the corresponding
-      // argument passed to the enqueued block.
-      for (unsigned I = 7/*Position of the first size arg*/; I < NumArgs; ++I)
-        Args.push_back(
-            Builder.CreateZExtOrTrunc(EmitScalarExpr(E->getArg(I)), SizeTy));
+      auto *PtrToSizeArray = CreateArrayForSizeVar(7);
+      Args.push_back(PtrToSizeArray);
+      ArgTys.push_back(PtrToSizeArray->getType());
 
       llvm::FunctionType *FTy = llvm::FunctionType::get(
-          Int32Ty, llvm::ArrayRef<llvm::Type *>(ArgTys), true);
+          Int32Ty, llvm::ArrayRef<llvm::Type *>(ArgTys), false);
       return RValue::get(
           Builder.CreateCall(CGM.CreateRuntimeFunction(FTy, Name),
                              llvm::ArrayRef<llvm::Value *>(Args)));
@@ -2723,6 +2767,24 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
                 IntTy, {NDRange->getType(), GenericVoidPtrTy}, false),
             Name),
         {NDRange, Block}));
+  }
+
+  case Builtin::BI__builtin_store_half:
+  case Builtin::BI__builtin_store_halff: {
+    Value *Val = EmitScalarExpr(E->getArg(0));
+    Address Address = EmitPointerWithAlignment(E->getArg(1));
+    Value *HalfVal = Builder.CreateFPTrunc(Val, Builder.getHalfTy());
+    return RValue::get(Builder.CreateStore(HalfVal, Address));
+  }
+  case Builtin::BI__builtin_load_half: {
+    Address Address = EmitPointerWithAlignment(E->getArg(0));
+    Value *HalfVal = Builder.CreateLoad(Address);
+    return RValue::get(Builder.CreateFPExt(HalfVal, Builder.getDoubleTy()));
+  }
+  case Builtin::BI__builtin_load_halff: {
+    Address Address = EmitPointerWithAlignment(E->getArg(0));
+    Value *HalfVal = Builder.CreateLoad(Address);
+    return RValue::get(Builder.CreateFPExt(HalfVal, Builder.getFloatTy()));
   }
   case Builtin::BIprintf:
     if (getTarget().getTriple().isNVPTX() ||

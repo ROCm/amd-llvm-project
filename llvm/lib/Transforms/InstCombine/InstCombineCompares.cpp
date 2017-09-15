@@ -4468,7 +4468,7 @@ Instruction *InstCombiner::visitICmpInst(ICmpInst &I) {
                                   SQ.getWithInstruction(&I)))
     return replaceInstUsesWith(I, V);
 
-  // comparing -val or val with non-zero is the same as just comparing val
+  // Comparing -val or val with non-zero is the same as just comparing val
   // ie, abs(val) != 0 -> val != 0
   if (I.getPredicate() == ICmpInst::ICMP_NE && match(Op1, m_Zero())) {
     Value *Cond, *SelectTrue, *SelectFalse;
@@ -4959,6 +4959,19 @@ Instruction *InstCombiner::visitFCmpInst(FCmpInst &I) {
       // Canonicalize these to be 'fcmp ord %X, 0.0'.
       I.setPredicate(FCmpInst::FCMP_ORD);
       I.setOperand(1, Constant::getNullValue(Op0->getType()));
+      return &I;
+    }
+  }
+
+  // If we're just checking for a NaN (ORD/UNO) and have a non-NaN operand,
+  // then canonicalize the operand to 0.0.
+  if (Pred == CmpInst::FCMP_ORD || Pred == CmpInst::FCMP_UNO) {
+    if (!match(Op0, m_Zero()) && isKnownNeverNaN(Op0)) {
+      I.setOperand(0, ConstantFP::getNullValue(Op0->getType()));
+      return &I;
+    }
+    if (!match(Op1, m_Zero()) && isKnownNeverNaN(Op1)) {
+      I.setOperand(1, ConstantFP::getNullValue(Op0->getType()));
       return &I;
     }
   }
