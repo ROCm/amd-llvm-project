@@ -237,11 +237,10 @@ bool MaximalStaticExpander::isExpandable(
 
     for (auto Write : Writes) {
       auto MapDeps = filterDependences(S, Dependences, Write);
-      MapDeps.foreach_map(
-          [&StmtDomain, &WriteDomain](isl::map Map) -> isl::stat {
-            WriteDomain = WriteDomain.add_set(Map.range());
-            return isl::stat::ok;
-          });
+      MapDeps.foreach_map([&WriteDomain](isl::map Map) -> isl::stat {
+        WriteDomain = WriteDomain.add_set(Map.range());
+        return isl::stat::ok;
+      });
     }
 
     // For now, read from original scalar is not possible.
@@ -496,7 +495,7 @@ bool MaximalStaticExpander::runOnScop(Scop &S) {
   auto &D = DI.getDependences(Dependences::AL_Reference);
   auto Dependences = isl::give(D.getDependences(Dependences::TYPE_RAW));
 
-  SmallPtrSet<ScopArrayInfo *, 4> CurrentSAI(S.arrays().begin(),
+  SmallVector<ScopArrayInfo *, 4> CurrentSAI(S.arrays().begin(),
                                              S.arrays().end());
 
   for (auto SAI : CurrentSAI) {

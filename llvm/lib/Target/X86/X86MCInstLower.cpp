@@ -1049,9 +1049,9 @@ void X86AsmPrinter::LowerPATCHABLE_EVENT_CALL(const MachineInstr &MI,
   //
   //   .p2align 1, ...
   // .Lxray_event_sled_N:
-  //   jmp +N                    // jump across the instrumentation sled
-  //   ...                       // set up arguments in register
-  //   callq __xray_CustomEvent  // force dependency to symbol
+  //   jmp +N                        // jump across the instrumentation sled
+  //   ...                           // set up arguments in register
+  //   callq __xray_CustomEvent@plt  // force dependency to symbol
   //   ...
   //   <jump here>
   //
@@ -1103,6 +1103,8 @@ void X86AsmPrinter::LowerPATCHABLE_EVENT_CALL(const MachineInstr &MI,
   // name of the trampoline to be implemented by the XRay runtime.
   auto TSym = OutContext.getOrCreateSymbol("__xray_CustomEvent");
   MachineOperand TOp = MachineOperand::CreateMCSymbol(TSym);
+  if (isPositionIndependent())
+    TOp.setTargetFlags(X86II::MO_PLT);
 
   // Emit the call instruction.
   EmitAndCountInstruction(MCInstBuilder(X86::CALL64pcrel32)

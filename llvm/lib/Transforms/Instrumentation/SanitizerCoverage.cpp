@@ -25,6 +25,7 @@
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InlineAsm.h"
+#include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/MDBuilder.h"
@@ -200,13 +201,15 @@ private:
                          ArrayRef<GetElementPtrInst *> GepTraceTargets);
   void InjectTraceForSwitch(Function &F,
                             ArrayRef<Instruction *> SwitchTraceTargets);
-  bool InjectCoverage(Function &F, ArrayRef<BasicBlock *> AllBlocks);
+  bool InjectCoverage(Function &F, ArrayRef<BasicBlock *> AllBlocks,
+                      bool IsLeafFunc = true);
   GlobalVariable *CreateFunctionLocalArrayInSection(size_t NumElements,
                                                     Function &F, Type *Ty,
                                                     const char *Section);
   GlobalVariable *CreatePCArray(Function &F, ArrayRef<BasicBlock *> AllBlocks);
   void CreateFunctionLocalArrays(Function &F, ArrayRef<BasicBlock *> AllBlocks);
-  void InjectCoverageAtBlock(Function &F, BasicBlock &BB, size_t Idx);
+  void InjectCoverageAtBlock(Function &F, BasicBlock &BB, size_t Idx,
+                             bool IsLeafFunc = true);
   Function *CreateInitCallsForSections(Module &M, const char *InitFunctionName,
                                        Type *Ty, const char *Section);
   std::pair<GlobalVariable *, GlobalVariable *>
@@ -239,6 +242,7 @@ private:
   GlobalVariable *FunctionGuardArray;  // for trace-pc-guard.
   GlobalVariable *Function8bitCounterArray;  // for inline-8bit-counters.
   GlobalVariable *FunctionPCsArray;  // for pc-table.
+  SmallVector<GlobalValue *, 20> GlobalsToAppendToUsed;
 
   SanitizerCoverageOptions Options;
 };
@@ -397,6 +401,10 @@ bool SanitizerCoverageModule::runOnModule(Module &M) {
                        {IRB.CreatePointerCast(SecStartEnd.first, IntptrPtrTy),
                         IRB.CreatePointerCast(SecStartEnd.second, IntptrPtrTy)});
   }
+  // We don't reference these arrays directly in any of our runtime functions,
+  // so we need to prevent them from being dead stripped.
+  if (TargetTriple.isOSBinFormatMachO())
+    appendToUsed(M, GlobalsToAppendToUsed);
   return true;
 }
 
@@ -491,6 +499,7 @@ bool SanitizerCoverageModule::runOnFunction(Function &F) {
       &getAnalysis<DominatorTreeWrapperPass>(F).getDomTree();
   const PostDominatorTree *PDT =
       &getAnalysis<PostDominatorTreeWrapperPass>(F).getPostDomTree();
+  bool IsLeafFunc = true;
 
   for (auto &BB : F) {
     if (shouldInstrumentBlock(F, &BB, DT, PDT, Options))
@@ -515,10 +524,14 @@ bool SanitizerCoverageModule::runOnFunction(Function &F) {
       if (Options.TraceGep)
         if (GetElementPtrInst *GEP = dyn_cast<GetElementPtrInst>(&Inst))
           GepTraceTargets.push_back(GEP);
-   }
+      if (Options.StackDepth)
+        if (isa<InvokeInst>(Inst) ||
+            (isa<CallInst>(Inst) && !isa<IntrinsicInst>(Inst)))
+          IsLeafFunc = false;
+    }
   }
 
-  InjectCoverage(F, BlocksToInstrument);
+  InjectCoverage(F, BlocksToInstrument, IsLeafFunc);
   InjectCoverageForIndirectCalls(F, IndirCalls);
   InjectTraceForCmp(F, CmpTraceTargets);
   InjectTraceForSwitch(F, SwitchTraceTargets);
@@ -571,33 +584,29 @@ SanitizerCoverageModule::CreatePCArray(Function &F,
 
 void SanitizerCoverageModule::CreateFunctionLocalArrays(
     Function &F, ArrayRef<BasicBlock *> AllBlocks) {
-  SmallVector<GlobalValue *, 3> LocalArrays;
   if (Options.TracePCGuard) {
     FunctionGuardArray = CreateFunctionLocalArrayInSection(
         AllBlocks.size(), F, Int32Ty, SanCovGuardsSectionName);
-    LocalArrays.push_back(FunctionGuardArray);
+    GlobalsToAppendToUsed.push_back(FunctionGuardArray);
   }
   if (Options.Inline8bitCounters) {
     Function8bitCounterArray = CreateFunctionLocalArrayInSection(
         AllBlocks.size(), F, Int8Ty, SanCovCountersSectionName);
-    LocalArrays.push_back(Function8bitCounterArray);
+    GlobalsToAppendToUsed.push_back(Function8bitCounterArray);
   }
   if (Options.PCTable) {
     FunctionPCsArray = CreatePCArray(F, AllBlocks);
-    LocalArrays.push_back(FunctionPCsArray);
+    GlobalsToAppendToUsed.push_back(FunctionPCsArray);
   }
-
-  // We don't reference these arrays directly in any of our runtime functions,
-  // so we need to prevent them from being dead stripped.
-  appendToUsed(*F.getParent(), LocalArrays);
 }
 
 bool SanitizerCoverageModule::InjectCoverage(Function &F,
-                                             ArrayRef<BasicBlock *> AllBlocks) {
+                                             ArrayRef<BasicBlock *> AllBlocks,
+                                             bool IsLeafFunc) {
   if (AllBlocks.empty()) return false;
   CreateFunctionLocalArrays(F, AllBlocks);
   for (size_t i = 0, N = AllBlocks.size(); i < N; i++)
-    InjectCoverageAtBlock(F, *AllBlocks[i], i);
+    InjectCoverageAtBlock(F, *AllBlocks[i], i, IsLeafFunc);
   return true;
 }
 
@@ -731,7 +740,8 @@ void SanitizerCoverageModule::InjectTraceForCmp(
 }
 
 void SanitizerCoverageModule::InjectCoverageAtBlock(Function &F, BasicBlock &BB,
-                                                    size_t Idx) {
+                                                    size_t Idx,
+                                                    bool IsLeafFunc) {
   BasicBlock::iterator IP = BB.getFirstInsertionPt();
   bool IsEntryBB = &BB == &F.getEntryBlock();
   DebugLoc EntryLoc;
@@ -770,7 +780,7 @@ void SanitizerCoverageModule::InjectCoverageAtBlock(Function &F, BasicBlock &BB,
     SetNoSanitizeMetadata(Load);
     SetNoSanitizeMetadata(Store);
   }
-  if (Options.StackDepth && IsEntryBB) {
+  if (Options.StackDepth && IsEntryBB && !IsLeafFunc) {
     // Check stack depth.  If it's the deepest so far, record it.
     Function *GetFrameAddr =
         Intrinsic::getDeclaration(F.getParent(), Intrinsic::frameaddress);
@@ -781,7 +791,9 @@ void SanitizerCoverageModule::InjectCoverageAtBlock(Function &F, BasicBlock &BB,
     auto IsStackLower = IRB.CreateICmpULT(FrameAddrInt, LowestStack);
     auto ThenTerm = SplitBlockAndInsertIfThen(IsStackLower, &*IP, false);
     IRBuilder<> ThenIRB(ThenTerm);
-    ThenIRB.CreateStore(FrameAddrInt, SanCovLowestStack);
+    auto Store = ThenIRB.CreateStore(FrameAddrInt, SanCovLowestStack);
+    SetNoSanitizeMetadata(LowestStack);
+    SetNoSanitizeMetadata(Store);
   }
 }
 

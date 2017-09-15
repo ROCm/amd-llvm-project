@@ -24,6 +24,7 @@
 #include "Target.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/Support/Casting.h"
@@ -67,6 +68,7 @@ private:
   void readOutputArch();
   void readOutputFormat();
   void readPhdrs();
+  void readRegionAlias();
   void readSearchDir();
   void readSections();
   void readVersion();
@@ -111,7 +113,11 @@ private:
   std::pair<std::vector<SymbolVersion>, std::vector<SymbolVersion>>
   readSymbols();
 
+  // True if a script being read is in a subdirectory specified by -sysroot.
   bool IsUnderSysroot;
+
+  // A set to detect an INCLUDE() cycle.
+  StringSet<> Seen;
 };
 } // namespace
 
@@ -174,10 +180,24 @@ static ExprValue bitOr(ExprValue A, ExprValue B) {
 }
 
 void ScriptParser::readDynamicList() {
+  Config->HasDynamicList = true;
   expect("{");
-  readAnonymousDeclaration();
-  if (!atEOF())
+  std::vector<SymbolVersion> Locals;
+  std::vector<SymbolVersion> Globals;
+  std::tie(Locals, Globals) = readSymbols();
+  expect(";");
+
+  if (!atEOF()) {
     setError("EOF expected, but got " + next());
+    return;
+  }
+  if (!Locals.empty()) {
+    setError("\"local:\" scope not supported in --dynamic-list");
+    return;
+  }
+
+  for (SymbolVersion V : Globals)
+    Config->DynamicList.push_back(V);
 }
 
 void ScriptParser::readVersionScript() {
@@ -236,6 +256,8 @@ void ScriptParser::readLinkerScript() {
       readOutputFormat();
     } else if (Tok == "PHDRS") {
       readPhdrs();
+    } else if (Tok == "REGION_ALIAS") {
+      readRegionAlias();
     } else if (Tok == "SEARCH_DIR") {
       readSearchDir();
     } else if (Tok == "SECTIONS") {
@@ -317,6 +339,11 @@ void ScriptParser::readGroup() {
 void ScriptParser::readInclude() {
   StringRef Tok = unquote(next());
 
+  if (!Seen.insert(Tok).second) {
+    setError("there is a cycle in linker script INCLUDEs");
+    return;
+  }
+
   // https://sourceware.org/binutils/docs/ld/File-Commands.html:
   // The file will be searched for in the current directory, and in any
   // directory specified with the -L option.
@@ -384,6 +411,20 @@ void ScriptParser::readPhdrs() {
         setError("unexpected header attribute: " + next());
     }
   }
+}
+
+void ScriptParser::readRegionAlias() {
+  expect("(");
+  StringRef Alias = unquote(next());
+  expect(",");
+  StringRef Name = next();
+  expect(")");
+
+  if (Script->Opt.MemoryRegions.count(Alias))
+    setError("redefinition of memory region '" + Alias + "'");
+  if (!Script->Opt.MemoryRegions.count(Name))
+    setError("memory region '" + Name + "' is not defined");
+  Script->Opt.MemoryRegions[Alias] = Script->Opt.MemoryRegions[Name];
 }
 
 void ScriptParser::readSearchDir() {
@@ -974,7 +1015,7 @@ Expr ScriptParser::readPrimary() {
     StringRef Name = readParenLiteral();
     if (Script->Opt.MemoryRegions.count(Name) == 0)
       setError("memory region not defined: " + Name);
-    return [=] { return Script->Opt.MemoryRegions[Name].Length; };
+    return [=] { return Script->Opt.MemoryRegions[Name]->Length; };
   }
   if (Tok == "LOADADDR") {
     StringRef Name = readParenLiteral();
@@ -985,7 +1026,7 @@ Expr ScriptParser::readPrimary() {
     StringRef Name = readParenLiteral();
     if (Script->Opt.MemoryRegions.count(Name) == 0)
       setError("memory region not defined: " + Name);
-    return [=] { return Script->Opt.MemoryRegions[Name].Origin; };
+    return [=] { return Script->Opt.MemoryRegions[Name]->Origin; };
   }
   if (Tok == "SEGMENT_START") {
     expect("(");
@@ -1216,12 +1257,12 @@ void ScriptParser::readMemory() {
     expect(",");
     uint64_t Length = readMemoryAssignment("LENGTH", "len", "l");
 
-    // Add the memory region to the region map (if it doesn't already exist).
-    auto It = Script->Opt.MemoryRegions.find(Name);
-    if (It != Script->Opt.MemoryRegions.end())
+    // Add the memory region to the region map.
+    if (Script->Opt.MemoryRegions.count(Name))
       setError("region '" + Name + "' already defined");
-    else
-      Script->Opt.MemoryRegions[Name] = {Name, Origin, Length, Flags, NegFlags};
+    MemoryRegion *MR = make<MemoryRegion>();
+    *MR = {Name, Origin, Length, Flags, NegFlags};
+    Script->Opt.MemoryRegions[Name] = MR;
   }
 }
 
