@@ -113,12 +113,8 @@ static std::tuple<ELFKind, uint16_t, uint8_t> parseEmulation(StringRef Emul) {
           .Case("elf_iamcu", {ELF32LEKind, EM_IAMCU})
           .Default({ELFNoneKind, EM_NONE});
 
-  if (Ret.first == ELFNoneKind) {
-    if (S == "i386pe" || S == "i386pep" || S == "thumb2pe")
-      error("Windows targets are not supported on the ELF frontend: " + Emul);
-    else
-      error("unknown emulation: " + Emul);
-  }
+  if (Ret.first == ELFNoneKind)
+    error("unknown emulation: " + Emul);
   return std::make_tuple(Ret.first, Ret.second, OSABI);
 }
 
@@ -1012,6 +1008,15 @@ template <class ELFT> void LinkerDriver::link(opt::InputArgList &Args) {
   // symbols that we need to the symbol table.
   for (InputFile *F : Files)
     Symtab->addFile<ELFT>(F);
+
+  // Now that we have every file, we can decide if we will need a
+  // dynamic symbol table.
+  // We need one if we were asked to export dynamic symbols or if we are
+  // producing a shared library.
+  // We also need one if any shared libraries are used and for pie executables
+  // (probably because the dynamic linker needs it).
+  Config->HasDynSymTab = !SharedFile<ELFT>::Instances.empty() || Config->Pic ||
+                         Config->ExportDynamic;
 
   // Some symbols (such as __ehdr_start) are defined lazily only when there
   // are undefined symbols for them, so we add these to trigger that logic.

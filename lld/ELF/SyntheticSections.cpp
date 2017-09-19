@@ -65,7 +65,9 @@ std::vector<InputSection *> elf::createCommonSections() {
       continue;
 
     Sym->Section = make<BssSection>("COMMON");
-    Sym->Offset = Sym->Section->reserveSpace(Sym->Size, Sym->Alignment);
+    size_t Pos = Sym->Section->reserveSpace(Sym->Size, Sym->Alignment);
+    assert(Pos == 0);
+    (void)Pos;
     Sym->Section->File = Sym->getFile();
     Ret.push_back(Sym->Section);
   }
@@ -403,7 +405,7 @@ template <class ELFT>
 template <class RelTy>
 CieRecord *EhFrameSection<ELFT>::addCie(EhSectionPiece &Piece,
                                         ArrayRef<RelTy> Rels) {
-  auto *Sec = cast<EhInputSection>(Piece.ID);
+  auto *Sec = cast<EhInputSection>(Piece.Sec);
   const endianness E = ELFT::TargetEndianness;
   if (read32<E>(Piece.data().data() + 4) != 0)
     fatal(toString(Sec) + ": CIE expected at beginning of .eh_frame");
@@ -431,18 +433,23 @@ template <class ELFT>
 template <class RelTy>
 bool EhFrameSection<ELFT>::isFdeLive(EhSectionPiece &Piece,
                                      ArrayRef<RelTy> Rels) {
-  auto *Sec = cast<EhInputSection>(Piece.ID);
+  auto *Sec = cast<EhInputSection>(Piece.Sec);
   unsigned FirstRelI = Piece.FirstRelocation;
+
+  // An FDE should point to some function because FDEs are to describe
+  // functions. That's however not always the case due to an issue of
+  // ld.gold with -r. ld.gold may discard only functions and leave their
+  // corresponding FDEs, which results in creating bad .eh_frame sections.
+  // To deal with that, we ignore such FDEs.
   if (FirstRelI == (unsigned)-1)
     return false;
+
   const RelTy &Rel = Rels[FirstRelI];
   SymbolBody &B = Sec->template getFile<ELFT>()->getRelocTargetSym(Rel);
-  auto *D = dyn_cast<DefinedRegular>(&B);
-  if (!D || !D->Section)
-    return false;
-  auto *Target =
-      cast<InputSectionBase>(cast<InputSectionBase>(D->Section)->Repl);
-  return Target && Target->Live;
+  if (auto *D = dyn_cast<DefinedRegular>(&B))
+    if (D->Section)
+      return cast<InputSectionBase>(D->Section)->Repl->Live;
+  return false;
 }
 
 // .eh_frame is a sequence of CIE or FDE records. In general, there
@@ -458,7 +465,7 @@ void EhFrameSection<ELFT>::addSectionAux(EhInputSection *Sec,
   DenseMap<size_t, CieRecord *> OffsetToCie;
   for (EhSectionPiece &Piece : Sec->Pieces) {
     // The empty record is the end marker.
-    if (Piece.size() == 4)
+    if (Piece.Size == 4)
       return;
 
     size_t Offset = Piece.InputOff;
@@ -527,11 +534,11 @@ template <class ELFT> void EhFrameSection<ELFT>::finalizeContents() {
   size_t Off = 0;
   for (CieRecord *Cie : Cies) {
     Cie->Piece->OutputOff = Off;
-    Off += alignTo(Cie->Piece->size(), Config->Wordsize);
+    Off += alignTo(Cie->Piece->Size, Config->Wordsize);
 
     for (EhSectionPiece *Fde : Cie->FdePieces) {
       Fde->OutputOff = Off;
-      Off += alignTo(Fde->size(), Config->Wordsize);
+      Off += alignTo(Fde->Size, Config->Wordsize);
     }
   }
 
@@ -602,7 +609,7 @@ template <class ELFT> void EhFrameSection<ELFT>::writeTo(uint8_t *Buf) {
   if (In<ELFT>::EhFrameHdr) {
     for (CieRecord *Cie : Cies) {
       uint8_t Enc = getFdeEncoding<ELFT>(Cie->Piece);
-      for (SectionPiece *Fde : Cie->FdePieces) {
+      for (EhSectionPiece *Fde : Cie->FdePieces) {
         uint64_t Pc = getFdePc(Buf, Fde->OutputOff, Enc);
         uint64_t FdeVA = getParent()->Addr + Fde->OutputOff;
         In<ELFT>::EhFrameHdr->addFde(Pc, FdeVA);
