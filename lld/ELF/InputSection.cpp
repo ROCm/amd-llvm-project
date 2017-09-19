@@ -534,7 +534,7 @@ static uint64_t getRelocTargetVA(uint32_t Type, int64_t A, uint64_t P,
     // formula for calculation "AHL + GP - P + 4". For details see p. 4-19 at
     // ftp://www.linux-mips.org/pub/linux/mips/doc/ABI/mipsabi.pdf
     uint64_t V = InX::MipsGot->getGp() + A - P;
-    if (Type == R_MIPS_LO16)
+    if (Type == R_MIPS_LO16 || Type == R_MICROMIPS_LO16)
       V += 4;
     return V;
   }
@@ -560,7 +560,7 @@ static uint64_t getRelocTargetVA(uint32_t Type, int64_t A, uint64_t P,
   case R_PAGE_PC:
   case R_PLT_PAGE_PC: {
     uint64_t Dest;
-    if (Body.isUndefined() && !Body.isLocal() && Body.symbol()->isWeak())
+    if (Body.isUndefWeak())
       Dest = getAArch64Page(A);
     else
       Dest = getAArch64Page(Body.getVA(A));
@@ -568,7 +568,7 @@ static uint64_t getRelocTargetVA(uint32_t Type, int64_t A, uint64_t P,
   }
   case R_PC: {
     uint64_t Dest;
-    if (Body.isUndefined() && !Body.isLocal() && Body.symbol()->isWeak()) {
+    if (Body.isUndefWeak()) {
       // On ARM and AArch64 a branch to an undefined weak resolves to the
       // next instruction, otherwise the place.
       if (Config->EMachine == EM_ARM)

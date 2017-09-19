@@ -1,5 +1,4 @@
 // RUN: %clangxx -O0 %s -o %t
-// UNSUPPORTED: ubsan
 
 // Recursive include: options1 includes options2
 // RUN: echo "symbolize=1" > %t.options1.txt
@@ -35,6 +34,8 @@
 // RUN: %env_tool_opts=include_if_exists='"%t.options-not-found.%b"' %run %t 2>&1 | tee %t.out
 // RUN: FileCheck %s --check-prefix=CHECK-WITHOUT-HELP --check-prefix=CHECK-FOUND < %t.out
 
+// Android tests run on remote device so includes will not work.
+// UNSUPPORTED: android
 
 #include <stdio.h>
 
