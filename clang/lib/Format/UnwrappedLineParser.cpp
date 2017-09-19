@@ -1039,7 +1039,12 @@ void UnwrappedLineParser::parseStructuralElement() {
     if (FormatTok->Tok.is(tok::string_literal)) {
       nextToken();
       if (FormatTok->Tok.is(tok::l_brace)) {
-        parseBlock(/*MustBeDeclaration=*/true, /*AddLevel=*/false);
+        if (Style.BraceWrapping.AfterExternBlock) {
+          addUnwrappedLine();
+          parseBlock(/*MustBeDeclaration=*/true);
+        } else {
+          parseBlock(/*MustBeDeclaration=*/true, /*AddLevel=*/false);
+        }
         addUnwrappedLine();
         return;
       }
@@ -1309,14 +1314,6 @@ bool UnwrappedLineParser::tryToParseLambda() {
     nextToken();
     return false;
   }
-  const FormatToken* Previous = getPreviousToken();
-  if (Previous &&
-      (Previous->isOneOf(tok::identifier, tok::kw_operator, tok::kw_new,
-                         tok::kw_delete) ||
-       Previous->closesScope() || Previous->isSimpleTypeSpecifier())) {
-    nextToken();
-    return false;
-  }
   assert(FormatTok->is(tok::l_square));
   FormatToken &LSquare = *FormatTok;
   if (!tryToParseLambdaIntroducer())
@@ -1359,49 +1356,17 @@ bool UnwrappedLineParser::tryToParseLambda() {
 }
 
 bool UnwrappedLineParser::tryToParseLambdaIntroducer() {
-  nextToken();
-  if (FormatTok->is(tok::equal)) {
+  const FormatToken* Previous = getPreviousToken();
+  if (Previous &&
+      (Previous->isOneOf(tok::identifier, tok::kw_operator, tok::kw_new,
+                         tok::kw_delete) ||
+       Previous->closesScope() || Previous->isSimpleTypeSpecifier())) {
     nextToken();
-    if (FormatTok->is(tok::r_square)) {
-      nextToken();
-      return true;
-    }
-    if (FormatTok->isNot(tok::comma))
-      return false;
-    nextToken();
-  } else if (FormatTok->is(tok::amp)) {
-    nextToken();
-    if (FormatTok->is(tok::r_square)) {
-      nextToken();
-      return true;
-    }
-    if (!FormatTok->isOneOf(tok::comma, tok::identifier)) {
-      return false;
-    }
-    if (FormatTok->is(tok::comma))
-      nextToken();
-  } else if (FormatTok->is(tok::r_square)) {
-    nextToken();
-    return true;
+    return false;
   }
-  do {
-    if (FormatTok->is(tok::amp))
-      nextToken();
-    if (!FormatTok->isOneOf(tok::identifier, tok::kw_this))
-      return false;
-    nextToken();
-    if (FormatTok->is(tok::ellipsis))
-      nextToken();
-    if (FormatTok->is(tok::comma)) {
-      nextToken();
-    } else if (FormatTok->is(tok::r_square)) {
-      nextToken();
-      return true;
-    } else {
-      return false;
-    }
-  } while (!eof());
-  return false;
+  nextToken();
+  parseSquare(/*LambdaIntroducer=*/true);
+  return true;
 }
 
 void UnwrappedLineParser::tryToParseJSFunction() {
@@ -1603,10 +1568,12 @@ void UnwrappedLineParser::parseParens() {
   } while (!eof());
 }
 
-void UnwrappedLineParser::parseSquare() {
-  assert(FormatTok->Tok.is(tok::l_square) && "'[' expected.");
-  if (tryToParseLambda())
-    return;
+void UnwrappedLineParser::parseSquare(bool LambdaIntroducer) {
+  if (!LambdaIntroducer) {
+    assert(FormatTok->Tok.is(tok::l_square) && "'[' expected.");
+    if (tryToParseLambda())
+      return;
+  }
   do {
     switch (FormatTok->Tok.getKind()) {
     case tok::l_paren:

@@ -70,6 +70,10 @@ uint64_t ExprValue::getSecAddr() const {
   return 0;
 }
 
+uint64_t ExprValue::getSectionOffset() const {
+  return getValue() - getSecAddr();
+}
+
 static SymbolBody *addRegular(SymbolAssignment *Cmd) {
   Symbol *Sym;
   uint8_t Visibility = Cmd->Hidden ? STV_HIDDEN : STV_DEFAULT;
@@ -141,7 +145,7 @@ void LinkerScript::assignSymbol(SymbolAssignment *Cmd, bool InSec) {
     Sym->Value = V.getValue();
   } else {
     Sym->Section = V.Sec;
-    Sym->Value = alignTo(V.Val, V.Alignment);
+    Sym->Value = V.getSectionOffset();
   }
 }
 
@@ -237,25 +241,10 @@ static void sortSections(InputSection **Begin, InputSection **End,
     std::stable_sort(Begin, End, getComparator(K));
 }
 
-static llvm::DenseMap<SectionBase *, int> getSectionOrder() {
-  switch (Config->EKind) {
-  case ELF32LEKind:
-    return buildSectionOrder<ELF32LE>();
-  case ELF32BEKind:
-    return buildSectionOrder<ELF32BE>();
-  case ELF64LEKind:
-    return buildSectionOrder<ELF64LE>();
-  case ELF64BEKind:
-    return buildSectionOrder<ELF64BE>();
-  default:
-    llvm_unreachable("unknown ELF type");
-  }
-}
-
 static void sortBySymbolOrder(InputSection **Begin, InputSection **End) {
   if (Config->SymbolOrderingFile.empty())
     return;
-  static llvm::DenseMap<SectionBase *, int> Order = getSectionOrder();
+  static llvm::DenseMap<SectionBase *, int> Order = buildSectionOrder();
   MutableArrayRef<InputSection *> In(Begin, End - Begin);
   sortByOrder(In, [&](InputSectionBase *S) { return Order.lookup(S); });
 }
@@ -664,8 +653,8 @@ void LinkerScript::adjustSectionsBeforeSorting() {
   // consequeces and gives us a section to put the symbol in.
   uint64_t Flags = SHF_ALLOC;
 
-  for (int I = 0, E = Opt.Commands.size(); I != E; ++I) {
-    auto *Sec = dyn_cast<OutputSection>(Opt.Commands[I]);
+  for (BaseCommand * Cmd : Opt.Commands) {
+    auto *Sec = dyn_cast<OutputSection>(Cmd);
     if (!Sec)
       continue;
     if (Sec->Live) {
@@ -677,7 +666,6 @@ void LinkerScript::adjustSectionsBeforeSorting() {
       continue;
 
     Sec->Live = true;
-    Sec->SectionIndex = I;
     Sec->Flags = Flags;
   }
 }
@@ -868,7 +856,7 @@ ExprValue LinkerScript::getSymbolValue(const Twine &Loc, StringRef S) {
     if (auto *D = dyn_cast<DefinedRegular>(B))
       return {D->Section, D->Value, Loc};
     if (auto *C = dyn_cast<DefinedCommon>(B))
-      return {C->Section, C->Offset, Loc};
+      return {C->Section, 0, Loc};
   }
   error(Loc + ": symbol not found: " + S);
   return 0;
