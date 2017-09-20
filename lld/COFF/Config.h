@@ -167,12 +167,14 @@ struct Configuration {
   uint32_t MajorOSVersion = 6;
   uint32_t MinorOSVersion = 0;
   bool DynamicBase = true;
+  bool AllowBind = true;
   bool NxCompat = true;
   bool AllowIsolation = true;
   bool TerminalServerAware = true;
   bool LargeAddressAware = false;
   bool HighEntropyVA = false;
   bool AppContainer = false;
+  bool MinGW = false;
 };
 
 extern Configuration *Config;

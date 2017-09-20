@@ -615,9 +615,10 @@ if (DEFINED WIN32 AND LIBCXX_ENABLE_STATIC AND NOT LIBCXX_ENABLE_SHARED)
   config_define(ON _LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS)
 endif()
 
+set(site_config_path "${LIBCXX_BINARY_DIR}/__config_site")
 if (LIBCXX_NEEDS_SITE_CONFIG)
   configure_file("include/__config_site.in"
-                 "${LIBCXX_BINARY_DIR}/__config_site"
+                 "${site_config_path}"
                  @ONLY)
 
   # Provide the config definitions by included the generated __config_site
@@ -626,6 +627,11 @@ if (LIBCXX_NEEDS_SITE_CONFIG)
     add_compile_flags("/FI\"${LIBCXX_BINARY_DIR}/__config_site\"")
   else()
     add_compile_flags("-include ${LIBCXX_BINARY_DIR}/__config_site")
+  endif()
+else()
+  if (EXISTS "${site_config_path}")
+    message(STATUS "Removing stale site configuration ${site_config_path}")
+    file(REMOVE "${site_config_path}")
   endif()
 endif()
 
@@ -647,11 +653,21 @@ endif()
 #
 # However, since some submission systems strip test/ subdirectories, check for
 # it before adding it.
+
 if(IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/test")
   add_subdirectory(test)
 endif()
 if (LIBCXX_INCLUDE_TESTS)
   add_subdirectory(lib/abi)
+endif()
+
+if (LIBCXX_STANDALONE_BUILD AND EXISTS "${LLVM_MAIN_SRC_DIR}/utils/llvm-lit")
+  # Make sure the llvm-lit script is generated into the bin directory, and do
+  # it after adding all tests, since the generated script will only work
+  # correctly discovered tests against test locations from the source tree that
+  # have already been discovered.
+  add_subdirectory(${LLVM_MAIN_SRC_DIR}/utils/llvm-lit
+                   ${CMAKE_CURRENT_BINARY_DIR}/llvm-lit)
 endif()
 
 if (LIBCXX_INCLUDE_DOCS)
