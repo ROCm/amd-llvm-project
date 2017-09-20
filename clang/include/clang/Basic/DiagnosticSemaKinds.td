@@ -1219,6 +1219,8 @@ def warn_messaging_unqualified_id : Warning<
 def err_static_assert_expression_is_not_constant : Error<
   "static_assert expression is not an integral constant expression">;
 def err_static_assert_failed : Error<"static_assert failed%select{ %1|}0">;
+def err_static_assert_requirement_failed : Error<
+  "static_assert failed due to requirement '%0'%select{ %2|}1">;
 def ext_static_assert_no_message : ExtWarn<
   "static_assert with no message is a C++17 extension">, InGroup<CXX17>;
 def warn_cxx14_compat_static_assert_no_message : Warning<
@@ -1333,6 +1335,8 @@ def err_type_defined_in_alias_template : Error<
   "%0 cannot be defined in a type alias template">;
 def err_type_defined_in_condition : Error<
   "%0 cannot be defined in a condition">;
+def err_type_defined_in_enum : Error<
+  "%0 cannot be defined in an enumeration">;
 
 def note_pure_virtual_function : Note<
   "unimplemented pure virtual method %0 in %1">;
@@ -8921,16 +8925,10 @@ def err_omp_expected_base_var_name : Error<
   "expected variable name as a base of the array %select{subscript|section}0">;
 def err_omp_map_shared_storage : Error<
   "variable already marked as mapped in current construct">;
-def err_omp_not_mappable_type : Error<
-  "type %0 is not mappable to target">;
 def err_omp_invalid_map_type_for_directive : Error<
   "%select{map type '%1' is not allowed|map type must be specified}0 for '#pragma omp %2'">;
 def err_omp_no_clause_for_directive : Error<
   "expected at least one %0 clause for '#pragma omp %1'">;
-def note_omp_polymorphic_in_target : Note<
-  "mappable type cannot be polymorphic">;
-def note_omp_static_member_in_target : Note<
-  "mappable type cannot contain static members">;
 def err_omp_threadprivate_in_clause : Error<
   "threadprivate variables are not allowed in '%0' clause">;
 def err_omp_wrong_ordered_loop_count : Error<

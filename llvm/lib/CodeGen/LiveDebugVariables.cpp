@@ -165,6 +165,8 @@ public:
            indirect == IsIndirect;
   }
 
+  enum : unsigned { UndefLocNo = ~0U };
+
   /// merge - Merge equivalence classes.
   static UserValue *merge(UserValue *L1, UserValue *L2) {
     L2 = L2->getLeader();
@@ -189,7 +191,7 @@ public:
   unsigned getLocationNo(const MachineOperand &LocMO) {
     if (LocMO.isReg()) {
       if (LocMO.getReg() == 0)
-        return ~0u;
+        return UndefLocNo;
       // For register locations we dont care about use/def and other flags.
       for (unsigned i = 0, e = locations.size(); i != e; ++i)
         if (locations[i].isReg() &&
@@ -400,7 +402,7 @@ void UserValue::print(raw_ostream &OS, const TargetRegisterInfo *TRI) {
   OS << "\"\t";
   for (LocMap::const_iterator I = locInts.begin(); I.valid(); ++I) {
     OS << " [" << I.start() << ';' << I.stop() << "):";
-    if (I.value() == ~0u)
+    if (I.value() == UndefLocNo)
       OS << "undef";
     else
       OS << I.value();
@@ -660,7 +662,7 @@ void UserValue::computeIntervals(MachineRegisterInfo &MRI,
 
   // Collect all defs to be extended (Skipping undefs).
   for (LocMap::const_iterator I = locInts.begin(); I.valid(); ++I)
-    if (I.value() != ~0u)
+    if (I.value() != UndefLocNo)
       Defs.push_back(std::make_pair(I.start(), I.value()));
 
   // Extend all defs, and possibly add new ones along the way.
@@ -699,7 +701,7 @@ void UserValue::computeIntervals(MachineRegisterInfo &MRI,
 
   // Erase all the undefs.
   for (LocMap::iterator I = locInts.begin(); I.valid();)
-    if (I.value() == ~0u)
+    if (I.value() == UndefLocNo)
       I.erase();
     else
       ++I;
@@ -852,7 +854,7 @@ UserValue::splitLocation(unsigned OldLocNo, ArrayRef<unsigned> NewRegs,
       continue;
 
     // Don't allocate the new LocNo until it is needed.
-    unsigned NewLocNo = ~0u;
+    unsigned NewLocNo = UndefLocNo;
 
     // Iterate over the overlaps between locInts and LI.
     LocMapI.find(LI->beginIndex());
@@ -869,7 +871,7 @@ UserValue::splitLocation(unsigned OldLocNo, ArrayRef<unsigned> NewRegs,
       // Now LII->end > LocMapI.start(). Do we have an overlap?
       if (LocMapI.value() == OldLocNo && LII->start < LocMapI.stop()) {
         // Overlapping correct location. Allocate NewLocNo now.
-        if (NewLocNo == ~0u) {
+        if (NewLocNo == UndefLocNo) {
           MachineOperand MO = MachineOperand::CreateReg(LI->reg, false);
           MO.setSubReg(locations[OldLocNo].getSubReg());
           NewLocNo = getLocationNo(MO);

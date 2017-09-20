@@ -70,6 +70,10 @@ uint64_t ExprValue::getSecAddr() const {
   return 0;
 }
 
+uint64_t ExprValue::getSectionOffset() const {
+  return getValue() - getSecAddr();
+}
+
 static SymbolBody *addRegular(SymbolAssignment *Cmd) {
   Symbol *Sym;
   uint8_t Visibility = Cmd->Hidden ? STV_HIDDEN : STV_DEFAULT;
@@ -141,7 +145,7 @@ void LinkerScript::assignSymbol(SymbolAssignment *Cmd, bool InSec) {
     Sym->Value = V.getValue();
   } else {
     Sym->Section = V.Sec;
-    Sym->Value = alignTo(V.Val, V.Alignment);
+    Sym->Value = V.getSectionOffset();
   }
 }
 
@@ -664,8 +668,8 @@ void LinkerScript::adjustSectionsBeforeSorting() {
   // consequeces and gives us a section to put the symbol in.
   uint64_t Flags = SHF_ALLOC;
 
-  for (int I = 0, E = Opt.Commands.size(); I != E; ++I) {
-    auto *Sec = dyn_cast<OutputSection>(Opt.Commands[I]);
+  for (BaseCommand * Cmd : Opt.Commands) {
+    auto *Sec = dyn_cast<OutputSection>(Cmd);
     if (!Sec)
       continue;
     if (Sec->Live) {
@@ -677,7 +681,6 @@ void LinkerScript::adjustSectionsBeforeSorting() {
       continue;
 
     Sec->Live = true;
-    Sec->SectionIndex = I;
     Sec->Flags = Flags;
   }
 }
@@ -868,7 +871,7 @@ ExprValue LinkerScript::getSymbolValue(const Twine &Loc, StringRef S) {
     if (auto *D = dyn_cast<DefinedRegular>(B))
       return {D->Section, D->Value, Loc};
     if (auto *C = dyn_cast<DefinedCommon>(B))
-      return {C->Section, C->Offset, Loc};
+      return {C->Section, 0, Loc};
   }
   error(Loc + ": symbol not found: " + S);
   return 0;
