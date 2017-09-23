@@ -70,6 +70,11 @@ public:
     return !isUndefined() && !isShared() && !isLazy();
   }
   bool isLocal() const { return IsLocal; }
+
+  // True is this is an undefined weak symbol. This only works once
+  // all input files have been added.
+  bool isUndefWeak() const;
+
   InputFile *getFile() const;
   bool isPreemptible() const { return IsPreemptible; }
   StringRef getName() const { return Name; }
@@ -172,7 +177,6 @@ public:
 
   // The output offset of this common symbol in the output bss.
   // Computed by the writer.
-  uint64_t Offset;
   uint64_t Size;
   BssSection *Section = nullptr;
 };
@@ -244,7 +248,6 @@ public:
 
   // CopyRelSec and CopyRelSecOff are significant only when NeedsCopy is true.
   InputSection *CopyRelSec;
-  uint64_t CopyRelSecOff;
 
 private:
   template <class ELFT> const typename ELFT::Sym &getSym() const {
