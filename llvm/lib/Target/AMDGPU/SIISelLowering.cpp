@@ -502,6 +502,7 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
   setTargetDAGCombine(ISD::SCALAR_TO_VECTOR);
   setTargetDAGCombine(ISD::ZERO_EXTEND);
   setTargetDAGCombine(ISD::EXTRACT_VECTOR_ELT);
+  setTargetDAGCombine(ISD::BUILD_VECTOR);
 
   // All memory operations. Some folding on the pointer operand is done to help
   // matching the constant offsets in the addressing modes.
@@ -3011,15 +3012,18 @@ MachineBasicBlock *SITargetLowering::EmitInstrWithCustomInserter(
 
     unsigned DstLo = MRI.createVirtualRegister(&AMDGPU::VGPR_32RegClass);
     unsigned DstHi = MRI.createVirtualRegister(&AMDGPU::VGPR_32RegClass);
+    unsigned SrcCondCopy = MRI.createVirtualRegister(&AMDGPU::SReg_64_XEXECRegClass);
 
+    BuildMI(*BB, MI, DL, TII->get(AMDGPU::COPY), SrcCondCopy)
+      .addReg(SrcCond);
     BuildMI(*BB, MI, DL, TII->get(AMDGPU::V_CNDMASK_B32_e64), DstLo)
       .addReg(Src0, 0, AMDGPU::sub0)
       .addReg(Src1, 0, AMDGPU::sub0)
-      .addReg(SrcCond);
+      .addReg(SrcCondCopy);
     BuildMI(*BB, MI, DL, TII->get(AMDGPU::V_CNDMASK_B32_e64), DstHi)
       .addReg(Src0, 0, AMDGPU::sub1)
       .addReg(Src1, 0, AMDGPU::sub1)
-      .addReg(SrcCond);
+      .addReg(SrcCondCopy);
 
     BuildMI(*BB, MI, DL, TII->get(AMDGPU::REG_SEQUENCE), Dst)
       .addReg(DstLo)
@@ -5853,7 +5857,7 @@ SDValue SITargetLowering::performExtractVectorEltCombine(
   SDNode *N, DAGCombinerInfo &DCI) const {
   SDValue Vec = N->getOperand(0);
 
-  SelectionDAG &DAG= DCI.DAG;
+  SelectionDAG &DAG = DCI.DAG;
   if (Vec.getOpcode() == ISD::FNEG && allUsesHaveSourceMods(N)) {
     SDLoc SL(N);
     EVT EltVT = N->getValueType(0);
@@ -5866,6 +5870,47 @@ SDValue SITargetLowering::performExtractVectorEltCombine(
   return SDValue();
 }
 
+static bool convertBuildVectorCastElt(SelectionDAG &DAG,
+                                      SDValue &Lo, SDValue &Hi) {
+  if (Hi.getOpcode() == ISD::BITCAST &&
+      Hi.getOperand(0).getValueType() == MVT::f16 &&
+      (isa<ConstantSDNode>(Lo) || Lo.isUndef())) {
+    Lo = DAG.getNode(ISD::BITCAST, SDLoc(Lo), MVT::f16, Lo);
+    Hi = Hi.getOperand(0);
+    return true;
+  }
+
+  return false;
+}
+
+SDValue SITargetLowering::performBuildVectorCombine(
+  SDNode *N, DAGCombinerInfo &DCI) const {
+  SDLoc SL(N);
+
+  if (!isTypeLegal(MVT::v2i16))
+    return SDValue();
+  SelectionDAG &DAG = DCI.DAG;
+  EVT VT = N->getValueType(0);
+
+  if (VT == MVT::v2i16) {
+    SDValue Lo = N->getOperand(0);
+    SDValue Hi = N->getOperand(1);
+
+    // v2i16 build_vector (const|undef), (bitcast f16:$x)
+    // -> bitcast (v2f16 build_vector const|undef, $x
+    if (convertBuildVectorCastElt(DAG, Lo, Hi)) {
+      SDValue NewVec = DAG.getBuildVector(MVT::v2f16, SL, { Lo, Hi  });
+      return DAG.getNode(ISD::BITCAST, SL, VT, NewVec);
+    }
+
+    if (convertBuildVectorCastElt(DAG, Hi, Lo)) {
+      SDValue NewVec = DAG.getBuildVector(MVT::v2f16, SL, { Hi, Lo  });
+      return DAG.getNode(ISD::BITCAST, SL, VT, NewVec);
+    }
+  }
+
+  return SDValue();
+}
 
 unsigned SITargetLowering::getFusedOpcode(const SelectionDAG &DAG,
                                           const SDNode *N0,
@@ -6287,6 +6332,8 @@ SDValue SITargetLowering::PerformDAGCombine(SDNode *N,
   }
   case ISD::EXTRACT_VECTOR_ELT:
     return performExtractVectorEltCombine(N, DCI);
+  case ISD::BUILD_VECTOR:
+    return performBuildVectorCombine(N, DCI);
   }
   return AMDGPUTargetLowering::PerformDAGCombine(N, DCI);
 }

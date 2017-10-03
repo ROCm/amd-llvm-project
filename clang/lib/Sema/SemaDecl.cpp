@@ -1605,7 +1605,24 @@ static bool ShouldDiagnoseUnusedDecl(const NamedDecl *D) {
   if (D->isInvalidDecl())
     return false;
 
-  if (D->isReferenced() || D->isUsed() || D->hasAttr<UnusedAttr>() ||
+  bool Referenced = false;
+  if (auto *DD = dyn_cast<DecompositionDecl>(D)) {
+    // For a decomposition declaration, warn if none of the bindings are
+    // referenced, instead of if the variable itself is referenced (which
+    // it is, by the bindings' expressions).
+    for (auto *BD : DD->bindings()) {
+      if (BD->isReferenced()) {
+        Referenced = true;
+        break;
+      }
+    }
+  } else if (!D->getDeclName()) {
+    return false;
+  } else if (D->isReferenced() || D->isUsed()) {
+    Referenced = true;
+  }
+
+  if (Referenced || D->hasAttr<UnusedAttr>() ||
       D->hasAttr<ObjCPreciseLifetimeAttr>())
     return false;
 
@@ -1728,7 +1745,7 @@ void Sema::DiagnoseUnusedDecl(const NamedDecl *D) {
   else
     DiagID = diag::warn_unused_variable;
 
-  Diag(D->getLocation(), DiagID) << D->getDeclName() << Hint;
+  Diag(D->getLocation(), DiagID) << D << Hint;
 }
 
 static void CheckPoppedLabel(LabelDecl *L, Sema &S) {
@@ -1758,14 +1775,14 @@ void Sema::ActOnPopScope(SourceLocation Loc, Scope *S) {
     assert(isa<NamedDecl>(TmpD) && "Decl isn't NamedDecl?");
     NamedDecl *D = cast<NamedDecl>(TmpD);
 
-    if (!D->getDeclName()) continue;
-
     // Diagnose unused variables in this scope.
     if (!S->hasUnrecoverableErrorOccurred()) {
       DiagnoseUnusedDecl(D);
       if (const auto *RD = dyn_cast<RecordDecl>(D))
         DiagnoseUnusedNestedTypedefs(RD);
     }
+
+    if (!D->getDeclName()) continue;
 
     // If this was a forward reference to a label, verify it was defined.
     if (LabelDecl *LD = dyn_cast<LabelDecl>(D))
@@ -2605,6 +2622,16 @@ void Sema::mergeDeclAttributes(NamedDecl *New, Decl *Old,
     } else {
       Diag(NewAbiTagAttr->getLocation(), diag::err_abi_tag_on_redeclaration);
       Diag(Old->getLocation(), diag::note_previous_declaration);
+    }
+  }
+
+  // This redeclaration adds a section attribute.
+  if (New->hasAttr<SectionAttr>() && !Old->hasAttr<SectionAttr>()) {
+    if (auto *VD = dyn_cast<VarDecl>(New)) {
+      if (VD->isThisDeclarationADefinition() != VarDecl::Definition) {
+        Diag(New->getLocation(), diag::warn_attribute_section_on_redeclaration);
+        Diag(Old->getLocation(), diag::note_previous_declaration);
+      }
     }
   }
 
@@ -3828,7 +3855,7 @@ void Sema::MergeVarDecl(VarDecl *New, LookupResult &Previous) {
     }
   }
 
-  // If this redeclaration makes the function inline, we may need to add it to
+  // If this redeclaration makes the variable inline, we may need to add it to
   // UndefinedButUsed.
   if (!Old->isInline() && New->isInline() && Old->isUsed(false) &&
       !Old->getDefinition() && !New->isThisDeclarationADefinition())
@@ -6794,7 +6821,6 @@ NamedDecl *Sema::ActOnVariableDeclarator(
   IdentifierInfo *II = Name.getAsIdentifierInfo();
 
   if (D.isDecompositionDeclarator()) {
-    AddToScope = false;
     // Take the name of the first declarator as our name for diagnostic
     // purposes.
     auto &Decomp = D.getDecompositionDeclarator();
@@ -10782,14 +10808,9 @@ namespace {
 
     void VisitCallExpr(CallExpr *E) {
       // Treat std::move as a use.
-      if (E->getNumArgs() == 1) {
-        if (FunctionDecl *FD = E->getDirectCallee()) {
-          if (FD->isInStdNamespace() && FD->getIdentifier() &&
-              FD->getIdentifier()->isStr("move")) {
-            HandleValue(E->getArg(0));
-            return;
-          }
-        }
+      if (E->isCallToStdMove()) {
+        HandleValue(E->getArg(0));
+        return;
       }
 
       Inherited::VisitCallExpr(E);
@@ -13260,18 +13281,6 @@ Decl *Sema::ActOnFinishFunctionBody(Decl *dcl, Stmt *Body,
       }
     }
 
-    // The only way to be included in UndefinedButUsed is if there is an
-    // ODR use before the definition. Avoid the expensive map lookup if this
-    // is the first declaration.
-    if (!FD->isFirstDecl() && FD->getPreviousDecl()->isUsed()) {
-      if (!FD->isExternallyVisible())
-        UndefinedButUsed.erase(FD);
-      else if (FD->isInlined() &&
-               !LangOpts.GNUInline &&
-               (!FD->getPreviousDecl()->hasAttr<GNUInlineAttr>()))
-        UndefinedButUsed.erase(FD);
-    }
-
     // If the function implicitly returns zero (like 'main') or is naked,
     // don't complain about missing return statements.
     if (FD->hasImplicitReturnZero() || FD->hasAttr<NakedAttr>())
@@ -14878,7 +14887,8 @@ CreateNewDecl:
     Invalid = true;
   }
 
-  if (!Invalid && TUK == TUK_Definition && DC->getDeclKind() == Decl::Enum) {
+  if (!Invalid && getLangOpts().CPlusPlus && TUK == TUK_Definition &&
+      DC->getDeclKind() == Decl::Enum) {
     Diag(New->getLocation(), diag::err_type_defined_in_enum)
       << Context.getTagDeclType(New);
     Invalid = true;
@@ -15301,7 +15311,9 @@ FieldDecl *Sema::HandleField(Scope *S, RecordDecl *Record,
   }
 
   // TR 18037 does not allow fields to be declared with address spaces.
-  if (T.getQualifiers().hasAddressSpace()) {
+  if (T.getQualifiers().hasAddressSpace() ||
+      T->isDependentAddressSpaceType() ||
+      T->getBaseElementTypeUnsafe()->isDependentAddressSpaceType()) {
     Diag(Loc, diag::err_field_with_address_space);
     D.setInvalidType();
   }
@@ -16098,8 +16110,10 @@ void Sema::ActOnFields(Scope *S, SourceLocation RecLoc, Decl *EnclosingDecl,
     if (CXXRecordDecl *CXXRecord = dyn_cast<CXXRecordDecl>(Record)) {
       auto *Dtor = CXXRecord->getDestructor();
       if (Dtor && Dtor->isImplicit() &&
-          ShouldDeleteSpecialMember(Dtor, CXXDestructor))
+          ShouldDeleteSpecialMember(Dtor, CXXDestructor)) {
+        CXXRecord->setImplicitDestructorIsDeleted();
         SetDeclDeleted(Dtor, CXXRecord->getLocation());
+      }
     }
 
     if (Record->hasAttrs()) {
