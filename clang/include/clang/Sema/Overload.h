@@ -727,11 +727,20 @@ namespace clang {
     enum CandidateSetKind {
       /// Normal lookup.
       CSK_Normal,
-      /// Lookup for candidates for a call using operator syntax. Candidates
-      /// that have no parameters of class type will be skipped unless there
-      /// is a parameter of (reference to) enum type and the corresponding
-      /// argument is of the same enum type.
-      CSK_Operator
+      /// C++ [over.match.oper]:
+      /// Lookup of operator function candidates in a call using operator
+      /// syntax. Candidates that have no parameters of class type will be
+      /// skipped unless there is a parameter of (reference to) enum type and
+      /// the corresponding argument is of the same enum type.
+      CSK_Operator,
+      /// C++ [over.match.copy]:
+      /// Copy-initialization of an object of class type by user-defined
+      /// conversion.
+      CSK_InitByUserDefinedConversion,
+      /// C++ [over.match.ctor], [over.match.list]
+      /// Initialization of an object of class type by constructor,
+      /// using either a parenthesized or braced list of arguments.
+      CSK_InitByConstructor,
     };
 
   private:
@@ -796,7 +805,7 @@ namespace clang {
     }
 
     /// \brief Clear out all of the candidates.
-    void clear();
+    void clear(CandidateSetKind CSK);
 
     typedef SmallVectorImpl<OverloadCandidate>::iterator iterator;
     iterator begin() { return Candidates.begin(); }
@@ -836,9 +845,7 @@ namespace clang {
 
     /// Find the best viable function on this overload set, if it exists.
     OverloadingResult BestViableFunction(Sema &S, SourceLocation Loc,
-                                         OverloadCandidateSet::iterator& Best,
-                                         bool UserDefinedConversion = false,
-                                         Scope* SC = 0);
+                                         OverloadCandidateSet::iterator& Best);
 
     void NoteCandidates(Sema &S,
                         OverloadCandidateDisplayKind OCD,
@@ -850,11 +857,10 @@ namespace clang {
   };
 
   bool isBetterOverloadCandidate(Sema &S,
-                                 const OverloadCandidate& Cand1,
-                                 const OverloadCandidate& Cand2,
+                                 const OverloadCandidate &Cand1,
+                                 const OverloadCandidate &Cand2,
                                  SourceLocation Loc,
-                                 bool UserDefinedConversion = false,
-                                 Scope* SC = 0);
+                                 OverloadCandidateSet::CandidateSetKind Kind);
 
   struct ConstructorInfo {
     DeclAccessPair FoundDecl;

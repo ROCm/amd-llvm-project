@@ -207,6 +207,10 @@ void tools::gcc::Linker::RenderExtraToolArgs(const JobAction &JA,
 
 static bool addXRayRuntime(const ToolChain &TC, const ArgList &Args,
                            ArgStringList &CmdArgs) {
+  // Do not add the XRay runtime to shared libraries.
+  if (Args.hasArg(options::OPT_shared))
+    return false;
+
   if (Args.hasFlag(options::OPT_fxray_instrument,
                    options::OPT_fnoxray_instrument, false)) {
     CmdArgs.push_back("-whole-archive");
@@ -214,6 +218,7 @@ static bool addXRayRuntime(const ToolChain &TC, const ArgList &Args,
     CmdArgs.push_back("-no-whole-archive");
     return true;
   }
+
   return false;
 }
 

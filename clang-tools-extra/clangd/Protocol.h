@@ -29,7 +29,7 @@
 namespace clang {
 namespace clangd {
 
-class JSONOutput;
+class Logger;
 
 struct URI {
   std::string uri;
@@ -59,7 +59,7 @@ struct TextDocumentIdentifier {
   URI uri;
 
   static llvm::Optional<TextDocumentIdentifier>
-  parse(llvm::yaml::MappingNode *Params, JSONOutput &Output);
+  parse(llvm::yaml::MappingNode *Params, clangd::Logger &Logger);
 };
 
 struct Position {
@@ -79,7 +79,7 @@ struct Position {
   }
 
   static llvm::Optional<Position> parse(llvm::yaml::MappingNode *Params,
-                                        JSONOutput &Output);
+                                        clangd::Logger &Logger);
   static std::string unparse(const Position &P);
 };
 
@@ -98,7 +98,7 @@ struct Range {
   }
 
   static llvm::Optional<Range> parse(llvm::yaml::MappingNode *Params,
-                                     JSONOutput &Output);
+                                     clangd::Logger &Logger);
   static std::string unparse(const Range &P);
 };
 
@@ -126,7 +126,7 @@ struct Metadata {
   std::vector<std::string> extraFlags;
 
   static llvm::Optional<Metadata> parse(llvm::yaml::MappingNode *Params,
-                                        JSONOutput &Output);
+                                        clangd::Logger &Logger);
 };
 
 struct TextEdit {
@@ -139,7 +139,7 @@ struct TextEdit {
   std::string newText;
 
   static llvm::Optional<TextEdit> parse(llvm::yaml::MappingNode *Params,
-                                        JSONOutput &Output);
+                                        clangd::Logger &Logger);
   static std::string unparse(const TextEdit &P);
 };
 
@@ -157,7 +157,44 @@ struct TextDocumentItem {
   std::string text;
 
   static llvm::Optional<TextDocumentItem> parse(llvm::yaml::MappingNode *Params,
-                                                JSONOutput &Output);
+                                                clangd::Logger &Logger);
+};
+
+enum class TraceLevel {
+  Off = 0,
+  Messages = 1,
+  Verbose = 2,
+};
+
+struct InitializeParams {
+  /// The process Id of the parent process that started
+  /// the server. Is null if the process has not been started by another
+  /// process. If the parent process is not alive then the server should exit
+  /// (see exit notification) its process.
+  llvm::Optional<int> processId;
+
+  /// The rootPath of the workspace. Is null
+  /// if no folder is open.
+  ///
+  /// @deprecated in favour of rootUri.
+  llvm::Optional<std::string> rootPath;
+
+  /// The rootUri of the workspace. Is null if no
+  /// folder is open. If both `rootPath` and `rootUri` are set
+  /// `rootUri` wins.
+  llvm::Optional<URI> rootUri;
+
+  // User provided initialization options.
+  // initializationOptions?: any;
+
+  /// The capabilities provided by the client (editor or tool)
+  /// Note: Not currently used by clangd
+  // ClientCapabilities capabilities;
+
+  /// The initial trace setting. If omitted trace is disabled ('off').
+  llvm::Optional<TraceLevel> trace;
+  static llvm::Optional<InitializeParams> parse(llvm::yaml::MappingNode *Params,
+                                                clangd::Logger &Logger);
 };
 
 struct DidOpenTextDocumentParams {
@@ -168,7 +205,7 @@ struct DidOpenTextDocumentParams {
   llvm::Optional<Metadata> metadata;
 
   static llvm::Optional<DidOpenTextDocumentParams>
-  parse(llvm::yaml::MappingNode *Params, JSONOutput &Output);
+  parse(llvm::yaml::MappingNode *Params, clangd::Logger &Logger);
 };
 
 struct DidCloseTextDocumentParams {
@@ -176,7 +213,7 @@ struct DidCloseTextDocumentParams {
   TextDocumentIdentifier textDocument;
 
   static llvm::Optional<DidCloseTextDocumentParams>
-  parse(llvm::yaml::MappingNode *Params, JSONOutput &Output);
+  parse(llvm::yaml::MappingNode *Params, clangd::Logger &Logger);
 };
 
 struct TextDocumentContentChangeEvent {
@@ -184,7 +221,7 @@ struct TextDocumentContentChangeEvent {
   std::string text;
 
   static llvm::Optional<TextDocumentContentChangeEvent>
-  parse(llvm::yaml::MappingNode *Params, JSONOutput &Output);
+  parse(llvm::yaml::MappingNode *Params, clangd::Logger &Logger);
 };
 
 struct DidChangeTextDocumentParams {
@@ -197,7 +234,34 @@ struct DidChangeTextDocumentParams {
   std::vector<TextDocumentContentChangeEvent> contentChanges;
 
   static llvm::Optional<DidChangeTextDocumentParams>
-  parse(llvm::yaml::MappingNode *Params, JSONOutput &Output);
+  parse(llvm::yaml::MappingNode *Params, clangd::Logger &Logger);
+};
+
+enum class FileChangeType {
+  /// The file got created.
+  Created = 1,
+  /// The file got changed.
+  Changed = 2,
+  /// The file got deleted.
+  Deleted = 3
+};
+
+struct FileEvent {
+  /// The file's URI.
+  URI uri;
+  /// The change type.
+  FileChangeType type;
+
+  static llvm::Optional<FileEvent> parse(llvm::yaml::MappingNode *Params,
+                                         clangd::Logger &Logger);
+};
+
+struct DidChangeWatchedFilesParams {
+  /// The actual file events.
+  std::vector<FileEvent> changes;
+
+  static llvm::Optional<DidChangeWatchedFilesParams>
+  parse(llvm::yaml::MappingNode *Params, clangd::Logger &Logger);
 };
 
 struct FormattingOptions {
@@ -208,7 +272,7 @@ struct FormattingOptions {
   bool insertSpaces;
 
   static llvm::Optional<FormattingOptions>
-  parse(llvm::yaml::MappingNode *Params, JSONOutput &Output);
+  parse(llvm::yaml::MappingNode *Params, clangd::Logger &Logger);
   static std::string unparse(const FormattingOptions &P);
 };
 
@@ -223,7 +287,7 @@ struct DocumentRangeFormattingParams {
   FormattingOptions options;
 
   static llvm::Optional<DocumentRangeFormattingParams>
-  parse(llvm::yaml::MappingNode *Params, JSONOutput &Output);
+  parse(llvm::yaml::MappingNode *Params, clangd::Logger &Logger);
 };
 
 struct DocumentOnTypeFormattingParams {
@@ -240,7 +304,7 @@ struct DocumentOnTypeFormattingParams {
   FormattingOptions options;
 
   static llvm::Optional<DocumentOnTypeFormattingParams>
-  parse(llvm::yaml::MappingNode *Params, JSONOutput &Output);
+  parse(llvm::yaml::MappingNode *Params, clangd::Logger &Logger);
 };
 
 struct DocumentFormattingParams {
@@ -251,7 +315,7 @@ struct DocumentFormattingParams {
   FormattingOptions options;
 
   static llvm::Optional<DocumentFormattingParams>
-  parse(llvm::yaml::MappingNode *Params, JSONOutput &Output);
+  parse(llvm::yaml::MappingNode *Params, clangd::Logger &Logger);
 };
 
 struct Diagnostic {
@@ -284,7 +348,7 @@ struct Diagnostic {
   }
 
   static llvm::Optional<Diagnostic> parse(llvm::yaml::MappingNode *Params,
-                                          JSONOutput &Output);
+                                          clangd::Logger &Logger);
 };
 
 struct CodeActionContext {
@@ -292,7 +356,7 @@ struct CodeActionContext {
   std::vector<Diagnostic> diagnostics;
 
   static llvm::Optional<CodeActionContext>
-  parse(llvm::yaml::MappingNode *Params, JSONOutput &Output);
+  parse(llvm::yaml::MappingNode *Params, clangd::Logger &Logger);
 };
 
 struct CodeActionParams {
@@ -306,7 +370,7 @@ struct CodeActionParams {
   CodeActionContext context;
 
   static llvm::Optional<CodeActionParams> parse(llvm::yaml::MappingNode *Params,
-                                                JSONOutput &Output);
+                                                clangd::Logger &Logger);
 };
 
 struct TextDocumentPositionParams {
@@ -317,7 +381,7 @@ struct TextDocumentPositionParams {
   Position position;
 
   static llvm::Optional<TextDocumentPositionParams>
-  parse(llvm::yaml::MappingNode *Params, JSONOutput &Output);
+  parse(llvm::yaml::MappingNode *Params, clangd::Logger &Logger);
 };
 
 /// The kind of a completion entry.
