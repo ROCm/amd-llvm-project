@@ -8,6 +8,7 @@
 //===---------------------------------------------------------------------===//
 
 #include "GlobalCompilationDatabase.h"
+#include "Logger.h"
 #include "clang/Tooling/CompilationDatabase.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
@@ -36,6 +37,11 @@ tooling::CompileCommand getDefaultCompileCommand(PathRef File) {
                                  /*Output=*/"");
 }
 
+DirectoryBasedGlobalCompilationDatabase::
+    DirectoryBasedGlobalCompilationDatabase(
+        clangd::Logger &Logger, llvm::Optional<Path> CompileCommandsDir)
+        : Logger(Logger), CompileCommandsDir(std::move(CompileCommandsDir)) {}
+
 std::vector<tooling::CompileCommand>
 DirectoryBasedGlobalCompilationDatabase::getCompileCommands(PathRef File) {
   std::vector<tooling::CompileCommand> Commands;
@@ -62,41 +68,53 @@ void DirectoryBasedGlobalCompilationDatabase::setExtraFlagsForFile(
 }
 
 tooling::CompilationDatabase *
-DirectoryBasedGlobalCompilationDatabase::getCompilationDatabase(PathRef File) {
-  std::lock_guard<std::mutex> Lock(Mutex);
+DirectoryBasedGlobalCompilationDatabase::tryLoadDatabaseFromPath(PathRef File) {
 
   namespace path = llvm::sys::path;
+  auto CachedIt = CompilationDatabases.find(File);
 
   assert((path::is_absolute(File, path::Style::posix) ||
           path::is_absolute(File, path::Style::windows)) &&
          "path must be absolute");
 
-  for (auto Path = path::parent_path(File); !Path.empty();
-       Path = path::parent_path(Path)) {
-
-    auto CachedIt = CompilationDatabases.find(Path);
-    if (CachedIt != CompilationDatabases.end())
-      return CachedIt->second.get();
-    std::string Error;
-    auto CDB = tooling::CompilationDatabase::loadFromDirectory(Path, Error);
-    if (!CDB) {
-      if (!Error.empty()) {
-        // FIXME(ibiryukov): logging
-        // Output.log("Error when trying to load compilation database from " +
-        //            Twine(Path) + ": " + Twine(Error) + "\n");
-      }
-      continue;
-    }
-
-    // FIXME(ibiryukov): Invalidate cached compilation databases on changes
-    auto result = CDB.get();
-    CompilationDatabases.insert(std::make_pair(Path, std::move(CDB)));
-    return result;
+  if (CachedIt != CompilationDatabases.end())
+    return CachedIt->second.get();
+  std::string Error = "";
+  auto CDB = tooling::CompilationDatabase::loadFromDirectory(File, Error);
+  if (CDB && Error.empty()) {
+    auto Result = CDB.get();
+    CompilationDatabases.insert(std::make_pair(File, std::move(CDB)));
+    return Result;
   }
 
-  // FIXME(ibiryukov): logging
-  // Output.log("Failed to find compilation database for " + Twine(File) +
-  // "\n");
+  return nullptr;
+}
+
+tooling::CompilationDatabase *
+DirectoryBasedGlobalCompilationDatabase::getCompilationDatabase(PathRef File) {
+  std::lock_guard<std::mutex> Lock(Mutex);
+
+  namespace path = llvm::sys::path;
+  if (CompileCommandsDir.hasValue()) {
+    tooling::CompilationDatabase *ReturnValue =
+        tryLoadDatabaseFromPath(CompileCommandsDir.getValue());
+    if (ReturnValue == nullptr)
+      Logger.log("Failed to find compilation database for " + Twine(File) +
+                 "in overriden directory " + CompileCommandsDir.getValue() +
+                 "\n");
+    return ReturnValue;
+  }
+
+  for (auto Path = path::parent_path(File); !Path.empty();
+       Path = path::parent_path(Path)) {
+    auto CDB = tryLoadDatabaseFromPath(Path);
+    if (!CDB)
+      continue;
+    // FIXME(ibiryukov): Invalidate cached compilation databases on changes
+    return CDB;
+  }
+
+  Logger.log("Failed to find compilation database for " + Twine(File) + "\n");
   return nullptr;
 }
 
