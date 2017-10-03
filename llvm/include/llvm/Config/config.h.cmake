@@ -185,6 +185,9 @@
 /* Define to 1 if you have the `setenv' function. */
 #cmakedefine HAVE_SETENV ${HAVE_SETENV}
 
+/* Define to 1 if you have the `sched_getaffinity' function. */
+#cmakedefine HAVE_SCHED_GETAFFINITY ${HAVE_SCHED_GETAFFINITY}
+
 /* Define to 1 if you have the `setrlimit' function. */
 #cmakedefine HAVE_SETRLIMIT ${HAVE_SETRLIMIT}
 
@@ -346,6 +349,9 @@
 
 /* Has gcc/MSVC atomic intrinsics */
 #cmakedefine01 LLVM_HAS_ATOMICS
+
+/* Define if LLVM_ENABLE_DUMP is enabled */
+#cmakedefine LLVM_ENABLE_DUMP
 
 /* Host triple LLVM will be executed on */
 #cmakedefine LLVM_HOST_TRIPLE "${LLVM_HOST_TRIPLE}"

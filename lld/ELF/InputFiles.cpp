@@ -35,6 +35,11 @@ using namespace llvm::sys::fs;
 using namespace lld;
 using namespace lld::elf;
 
+std::vector<BinaryFile *> elf::BinaryFiles;
+std::vector<BitcodeFile *> elf::BitcodeFiles;
+std::vector<InputFile *> elf::ObjectFiles;
+std::vector<InputFile *> elf::SharedFiles;
+
 TarWriter *elf::Tar;
 
 InputFile::InputFile(Kind K, MemoryBufferRef M) : MB(M), FileKind(K) {}
@@ -611,7 +616,8 @@ ArchiveFile::ArchiveFile(std::unique_ptr<Archive> &&File)
 template <class ELFT> void ArchiveFile::parse() {
   Symbols.reserve(File->getNumberOfSymbols());
   for (const Archive::Symbol &Sym : File->symbols())
-    Symbols.push_back(Symtab->addLazyArchive<ELFT>(this, Sym)->body());
+    Symbols.push_back(
+        Symtab->addLazyArchive<ELFT>(Sym.getName(), this, Sym)->body());
 }
 
 // Returns a buffer pointing to a member file containing a given symbol.
@@ -774,14 +780,14 @@ template <class ELFT> void SharedFile<ELFT>::parseRest() {
         VersymIndex == VER_NDX_GLOBAL ? nullptr : Verdefs[VersymIndex];
 
     if (!Hidden)
-      Symtab->addShared(this, Name, Sym, V);
+      Symtab->addShared(Name, this, Sym, V);
 
     // Also add the symbol with the versioned name to handle undefined symbols
     // with explicit versions.
     if (V) {
       StringRef VerName = this->StringTable.data() + V->getAux()->vda_name;
       Name = Saver.save(Name + "@" + VerName);
-      Symtab->addShared(this, Name, Sym, V);
+      Symtab->addShared(Name, this, Sym, V);
     }
   }
 }
@@ -819,8 +825,6 @@ static uint8_t getBitcodeMachineKind(StringRef Path, const Triple &T) {
           T.str());
   }
 }
-
-std::vector<BitcodeFile *> BitcodeFile::Instances;
 
 BitcodeFile::BitcodeFile(MemoryBufferRef MB, StringRef ArchiveName,
                          uint64_t OffsetInArchive)
@@ -916,8 +920,6 @@ static ELFKind getELFKind(MemoryBufferRef MB) {
     return (Endian == ELFDATA2LSB) ? ELF32LEKind : ELF32BEKind;
   return (Endian == ELFDATA2LSB) ? ELF64LEKind : ELF64BEKind;
 }
-
-std::vector<BinaryFile *> BinaryFile::Instances;
 
 template <class ELFT> void BinaryFile::parse() {
   ArrayRef<uint8_t> Data = toArrayRef(MB.getBuffer());

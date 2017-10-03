@@ -62,18 +62,20 @@ public:
                      SectionBase *Section, InputFile *File);
 
   template <class ELFT>
-  void addShared(SharedFile<ELFT> *F, StringRef Name,
+  void addShared(StringRef Name, SharedFile<ELFT> *F,
                  const typename ELFT::Sym &Sym,
                  const typename ELFT::Verdef *Verdef);
 
   template <class ELFT>
-  Symbol *addLazyArchive(ArchiveFile *F, const llvm::object::Archive::Symbol S);
+  Symbol *addLazyArchive(StringRef Name, ArchiveFile *F,
+                         const llvm::object::Archive::Symbol S);
+
   template <class ELFT> void addLazyObject(StringRef Name, LazyObjFile &Obj);
 
   Symbol *addBitcode(StringRef Name, uint8_t Binding, uint8_t StOther,
                      uint8_t Type, bool CanOmitFromDynSym, BitcodeFile *File);
 
-  Symbol *addCommon(StringRef N, uint64_t Size, uint32_t Alignment,
+  Symbol *addCommon(StringRef Name, uint64_t Size, uint32_t Alignment,
                     uint8_t Binding, uint8_t StOther, uint8_t Type,
                     InputFile *File);
 
@@ -82,6 +84,7 @@ public:
                                    uint8_t Visibility, bool CanOmitFromDynSym,
                                    InputFile *File);
 
+  template <class ELFT> void fetchIfLazy(StringRef Name);
   template <class ELFT> void scanUndefinedFlags();
   template <class ELFT> void scanShlibUndefined();
   void scanVersionScript();
@@ -95,6 +98,7 @@ public:
 private:
   std::vector<SymbolBody *> findByVersion(SymbolVersion Ver);
   std::vector<SymbolBody *> findAllByVersion(SymbolVersion Ver);
+  void defsym(Symbol *Dst, Symbol *Src);
 
   llvm::StringMap<std::vector<SymbolBody *>> &getDemangledSyms();
   void handleAnonymousVersion();
@@ -131,6 +135,15 @@ private:
   // can have the same name. We use this map to handle "extern C++ {}"
   // directive in version scripts.
   llvm::Optional<llvm::StringMap<std::vector<SymbolBody *>>> DemangledSyms;
+
+  struct SymbolRenaming {
+    Symbol *Dst;
+    Symbol *Src;
+    uint8_t Binding;
+  };
+
+  // For -defsym or -wrap.
+  std::vector<SymbolRenaming> Defsyms;
 
   // For LTO.
   std::unique_ptr<BitcodeCompiler> LTO;
