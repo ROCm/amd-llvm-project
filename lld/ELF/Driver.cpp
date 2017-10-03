@@ -40,8 +40,8 @@
 #include "Target.h"
 #include "Threads.h"
 #include "Writer.h"
-#include "lld/Config/Version.h"
-#include "lld/Driver/Driver.h"
+#include "lld/Common/Driver.h"
+#include "lld/Common/Version.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/CommandLine.h"
@@ -75,7 +75,12 @@ bool elf::link(ArrayRef<const char *> Args, bool CanExitEarly,
   ErrorCount = 0;
   ErrorOS = &Error;
   InputSections.clear();
+  OutputSections.clear();
   Tar = nullptr;
+  BinaryFiles.clear();
+  BitcodeFiles.clear();
+  ObjectFiles.clear();
+  SharedFiles.clear();
 
   Config = make<Configuration>();
   Driver = make<LinkerDriver>();
@@ -128,6 +133,7 @@ std::vector<std::pair<MemoryBufferRef, uint64_t>> static getArchiveMembers(
 
   std::vector<std::pair<MemoryBufferRef, uint64_t>> V;
   Error Err = Error::success();
+  bool AddToTar = File->isThin() && Tar;
   for (const ErrorOr<Archive::Child> &COrErr : File->children(Err)) {
     Archive::Child C =
         check(COrErr, MB.getBufferIdentifier() +
@@ -136,6 +142,8 @@ std::vector<std::pair<MemoryBufferRef, uint64_t>> static getArchiveMembers(
         check(C.getMemoryBufferRef(),
               MB.getBufferIdentifier() +
                   ": could not get the buffer for a child of the archive");
+    if (AddToTar)
+      Tar->append(relativeToRoot(check(C.getFullName())), MBRef.getBuffer());
     V.push_back(std::make_pair(MBRef, C.getChildOffset()));
   }
   if (Err)
@@ -1072,11 +1080,22 @@ template <class ELFT> void LinkerDriver::link(opt::InputArgList &Args) {
     for (InputSectionBase *S : F->getSections())
       InputSections.push_back(cast<InputSection>(S));
 
+  if (Config->EMachine == EM_MIPS)
+    Config->MipsEFlags = calcMipsEFlags<ELFT>();
+
   // This adds a .comment section containing a version string. We have to add it
   // before decompressAndMergeSections because the .comment section is a
   // mergeable section.
   if (!Config->Relocatable)
     InputSections.push_back(createCommentSection<ELFT>());
+
+  // Create a .bss section for each common symbol and then replace the common
+  // symbol with a DefinedRegular symbol. As a result, all common symbols are
+  // "instantiated" as regular defined symbols, so that we don't need to care
+  // about common symbols beyond this point. Note that if -r is given, we just
+  // need to pass through common symbols as-is.
+  if (Config->DefineCommon)
+    createCommonSections<ELFT>();
 
   // Do size optimizations: garbage collection, merging of SHF_MERGE sections
   // and identical code folding.

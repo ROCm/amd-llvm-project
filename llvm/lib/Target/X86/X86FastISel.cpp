@@ -1984,7 +1984,7 @@ bool X86FastISel::X86SelectDivRem(const Instruction *I) {
   // instead to prevent AH references in a REX instruction.
   //
   // The current assumption of the fast register allocator is that isel
-  // won't generate explicit references to the GPR8_NOREX registers. If
+  // won't generate explicit references to the GR8_NOREX registers. If
   // the allocator and/or the backend get enhanced to be more robust in
   // that regard, this can be, and should be, removed.
   unsigned ResultReg = 0;
@@ -3970,7 +3970,7 @@ unsigned X86FastISel::fastEmitInst_rrrr(unsigned MachineInstOpcode,
   Op0 = constrainOperandRegClass(II, Op0, II.getNumDefs());
   Op1 = constrainOperandRegClass(II, Op1, II.getNumDefs() + 1);
   Op2 = constrainOperandRegClass(II, Op2, II.getNumDefs() + 2);
-  Op2 = constrainOperandRegClass(II, Op2, II.getNumDefs() + 3);
+  Op3 = constrainOperandRegClass(II, Op3, II.getNumDefs() + 3);
 
   if (II.getNumDefs() >= 1)
     BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DbgLoc, II, ResultReg)
