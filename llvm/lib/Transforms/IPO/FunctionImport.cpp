@@ -464,8 +464,9 @@ void llvm::computeDeadSymbols(
   // FIXME: we should only make the prevailing copy live here
   auto visit = [&](ValueInfo VI) {
     for (auto &S : VI.getSummaryList())
-      if (S->isLive())
-        return;
+      S->setLive(true);
+    ++LiveSymbols;
+    Worklist.push_back(VI);
     // FIXME: If we knew which edges were created for indirect call profiles,
     // we could skip them here. Any that are live should be reached via
     // other edges, e.g. reference edges. Otherwise, using a profile collected
@@ -477,6 +478,9 @@ void llvm::computeDeadSymbols(
     VI = updateValueInfoForIndirectCalls(Index, VI);
     if (!VI)
       return;
+    for (auto &S : VI.getSummaryList())
+      if (S->isLive())
+        return;
     for (auto &S : VI.getSummaryList())
       S->setLive(true);
     ++LiveSymbols;

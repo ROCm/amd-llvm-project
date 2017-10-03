@@ -1709,6 +1709,7 @@ public:
   bool isComplexIntegerType() const;            // GCC _Complex integer type.
   bool isVectorType() const;                    // GCC vector type.
   bool isExtVectorType() const;                 // Extended vector type.
+  bool isDependentAddressSpaceType() const;     // value-dependent address space qualifier
   bool isObjCObjectPointerType() const;         // pointer to ObjC object
   bool isObjCRetainableType() const;            // ObjC object or block pointer
   bool isObjCLifetimeType() const;              // (array of)* retainable type
@@ -2750,6 +2751,49 @@ public:
                       unsigned TypeQuals, Expr *E);
 };
 
+/// Represents an extended address space qualifier where the input address space
+/// value is dependent. Non-dependent address spaces are not represented with a 
+/// special Type subclass; they are stored on an ExtQuals node as part of a QualType.
+///
+/// For example:
+/// \code
+/// template<typename T, int AddrSpace>
+/// class AddressSpace {
+///   typedef T __attribute__((address_space(AddrSpace))) type;
+/// }
+/// \endcode
+class DependentAddressSpaceType : public Type, public llvm::FoldingSetNode {
+  const ASTContext &Context;
+  Expr *AddrSpaceExpr;
+  QualType PointeeType;
+  SourceLocation loc;
+
+  DependentAddressSpaceType(const ASTContext &Context, QualType PointeeType,
+                            QualType can, Expr *AddrSpaceExpr, 
+                            SourceLocation loc);
+
+  friend class ASTContext;
+
+public:
+  Expr *getAddrSpaceExpr() const { return AddrSpaceExpr; }
+  QualType getPointeeType() const { return PointeeType; }
+  SourceLocation getAttributeLoc() const { return loc; }
+
+  bool isSugared() const { return false; }
+  QualType desugar() const { return QualType(this, 0); }
+
+  static bool classof(const Type *T) {
+    return T->getTypeClass() == DependentAddressSpace;
+  }
+
+  void Profile(llvm::FoldingSetNodeID &ID) {
+    Profile(ID, Context, getPointeeType(), getAddrSpaceExpr());
+  }
+
+  static void Profile(llvm::FoldingSetNodeID &ID, const ASTContext &Context,
+                      QualType PointeeType, Expr *AddrSpaceExpr);
+};
+
 /// Represents an extended vector type where either the type or size is
 /// dependent.
 ///
@@ -3156,6 +3200,7 @@ public:
       ABIMask         = 0x0F,
       IsConsumed      = 0x10,
       HasPassObjSize  = 0x20,
+      IsNoEscape      = 0x40,
     };
     unsigned char Data;
 
@@ -3193,6 +3238,19 @@ public:
     ExtParameterInfo withHasPassObjectSize() const {
       ExtParameterInfo Copy = *this;
       Copy.Data |= HasPassObjSize;
+      return Copy;
+    }
+
+    bool isNoEscape() const {
+      return Data & IsNoEscape;
+    }
+
+    ExtParameterInfo withIsNoEscape(bool NoEscape) const {
+      ExtParameterInfo Copy = *this;
+      if (NoEscape)
+        Copy.Data |= IsNoEscape;
+      else
+        Copy.Data &= ~IsNoEscape;
       return Copy;
     }
 
@@ -3798,10 +3856,9 @@ public:
     return reinterpret_cast<RecordDecl*>(TagType::getDecl());
   }
 
-  // FIXME: This predicate is a helper to QualType/Type. It needs to
-  // recursively check all fields for const-ness. If any field is declared
-  // const, it needs to return false.
-  bool hasConstFields() const { return false; }
+  /// Recursively check all fields in the record for const-ness. If any field
+  /// is declared const, return true. Otherwise, return false.
+  bool hasConstFields() const;
 
   bool isSugared() const { return false; }
   QualType desugar() const { return QualType(this, 0); }
@@ -5784,6 +5841,9 @@ inline bool Type::isVectorType() const {
 }
 inline bool Type::isExtVectorType() const {
   return isa<ExtVectorType>(CanonicalType);
+}
+inline bool Type::isDependentAddressSpaceType() const {
+  return isa<DependentAddressSpaceType>(CanonicalType);
 }
 inline bool Type::isObjCObjectPointerType() const {
   return isa<ObjCObjectPointerType>(CanonicalType);

@@ -5161,6 +5161,11 @@ bool UnnamedLocalNoLinkageFinder::VisitDependentSizedExtVectorType(
   return Visit(T->getElementType());
 }
 
+bool UnnamedLocalNoLinkageFinder::VisitDependentAddressSpaceType(
+    const DependentAddressSpaceType *T) {
+  return Visit(T->getPointeeType());
+}
+
 bool UnnamedLocalNoLinkageFinder::VisitVectorType(const VectorType* T) {
   return Visit(T->getElementType());
 }

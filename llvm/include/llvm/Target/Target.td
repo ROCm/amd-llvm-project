@@ -1049,6 +1049,7 @@ def PATCHABLE_RET : Instruction {
   let AsmString = "# XRay Function Patchable RET.";
   let usesCustomInserter = 1;
   let hasSideEffects = 1;
+  let isTerminator = 1;
   let isReturn = 1;
 }
 def PATCHABLE_FUNCTION_EXIT : Instruction {
@@ -1125,6 +1126,14 @@ class AsmParser {
   // HasMnemonicFirst - Set to false if target instructions don't always
   // start with a mnemonic as the first token.
   bit HasMnemonicFirst = 1;
+
+  // ReportMultipleNearMisses -
+  // When 0, the assembly matcher reports an error for one encoding or operand
+  // that did not match the parsed instruction.
+  // When 1, the assmebly matcher returns a list of encodings that were close
+  // to matching the parsed instruction, so to allow more detailed error
+  // messages.
+  bit ReportMultipleNearMisses = 0;
 }
 def DefaultAsmParser : AsmParser;
 

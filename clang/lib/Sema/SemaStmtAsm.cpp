@@ -48,10 +48,10 @@ static bool CheckAsmLValue(const Expr *E, Sema &S) {
   if (E != E2 && E2->isLValue()) {
     if (!S.getLangOpts().HeinousExtensions)
       S.Diag(E2->getLocStart(), diag::err_invalid_asm_cast_lvalue)
-        << E->getSourceRange();
+          << E->getSourceRange();
     else
       S.Diag(E2->getLocStart(), diag::warn_invalid_asm_cast_lvalue)
-        << E->getSourceRange();
+          << E->getSourceRange();
     // Accept, even if we emitted an error diagnostic.
     return false;
   }
@@ -616,23 +616,31 @@ StmtResult Sema::ActOnGCCAsmStmt(SourceLocation AsmLoc, bool IsSimple,
   return NS;
 }
 
-static void fillInlineAsmTypeInfo(const ASTContext &Context, QualType T,
-                                  llvm::InlineAsmIdentifierInfo &Info) {
-  // Compute the type size (and array length if applicable?).
-  Info.Type = Info.Size = Context.getTypeSizeInChars(T).getQuantity();
-  if (T->isArrayType()) {
-    const ArrayType *ATy = Context.getAsArrayType(T);
-    Info.Type = Context.getTypeSizeInChars(ATy->getElementType()).getQuantity();
-    Info.Length = Info.Size / Info.Type;
+void Sema::FillInlineAsmIdentifierInfo(Expr *Res,
+                                       llvm::InlineAsmIdentifierInfo &Info) {
+  QualType T = Res->getType();
+  Expr::EvalResult Eval;
+  if (T->isFunctionType() || T->isDependentType())
+    return Info.setLabel(Res);
+  if (Res->isRValue()) {
+    if (isa<clang::EnumType>(T) && Res->EvaluateAsRValue(Eval, Context))
+      return Info.setEnum(Eval.Val.getInt().getSExtValue());
+    return Info.setLabel(Res);
   }
+  unsigned Size = Context.getTypeSizeInChars(T).getQuantity();
+  unsigned Type = Size;
+  if (const auto *ATy = Context.getAsArrayType(T))
+    Type = Context.getTypeSizeInChars(ATy->getElementType()).getQuantity();
+  bool IsGlobalLV = false;
+  if (Res->EvaluateAsLValue(Eval, Context))
+    IsGlobalLV = Eval.isGlobalLValue();
+  Info.setVar(Res, IsGlobalLV, Size, Type);
 }
 
 ExprResult Sema::LookupInlineAsmIdentifier(CXXScopeSpec &SS,
                                            SourceLocation TemplateKWLoc,
                                            UnqualifiedId &Id,
-                                           llvm::InlineAsmIdentifierInfo &Info,
                                            bool IsUnevaluatedContext) {
-  Info.clear();
 
   if (IsUnevaluatedContext)
     PushExpressionEvaluationContext(
@@ -672,12 +680,6 @@ ExprResult Sema::LookupInlineAsmIdentifier(CXXScopeSpec &SS,
   if (RequireCompleteExprType(Result.get(), diag::err_asm_incomplete_type)) {
     return ExprError();
   }
-
-  fillInlineAsmTypeInfo(Context, T, Info);
-
-  // We can work with the expression as long as it's not an r-value.
-  if (!Result.get()->isRValue())
-    Info.IsVarDecl = true;
 
   return Result;
 }
@@ -752,9 +754,7 @@ bool Sema::LookupInlineAsmField(StringRef Base, StringRef Member,
 
 ExprResult
 Sema::LookupInlineAsmVarDeclField(Expr *E, StringRef Member,
-                                  llvm::InlineAsmIdentifierInfo &Info,
                                   SourceLocation AsmLoc) {
-  Info.clear();
 
   QualType T = E->getType();
   if (T->isDependentType()) {
@@ -789,14 +789,6 @@ Sema::LookupInlineAsmVarDeclField(Expr *E, StringRef Member,
   ExprResult Result = BuildMemberReferenceExpr(
       E, E->getType(), AsmLoc, /*IsArrow=*/false, CXXScopeSpec(),
       SourceLocation(), nullptr, FieldResult, nullptr, nullptr);
-  if (Result.isInvalid())
-    return Result;
-  Info.OpDecl = Result.get();
-
-  fillInlineAsmTypeInfo(Context, Result.get()->getType(), Info);
-
-  // Fields are "variables" as far as inline assembly is concerned.
-  Info.IsVarDecl = true;
 
   return Result;
 }
