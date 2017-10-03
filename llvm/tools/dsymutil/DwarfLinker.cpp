@@ -1495,8 +1495,12 @@ static DWARFDie resolveDIEReference(
   uint64_t RefOffset = *RefValue.getAsReference();
 
   if ((RefCU = getUnitForOffset(Units, RefOffset)))
-    if (const auto RefDie = RefCU->getOrigUnit().getDIEForOffset(RefOffset))
-      return RefDie;
+    if (const auto RefDie = RefCU->getOrigUnit().getDIEForOffset(RefOffset)) {
+      // In a file with broken references, an attribute might point to a NULL
+      // DIE.
+      if(!RefDie.isNULL())
+        return RefDie;
+    }
 
   Linker.reportWarning("could not find referenced DIE", &DIE);
   return DWARFDie();
@@ -1744,10 +1748,11 @@ void DwarfLinker::reportWarning(const Twine &Warning,
     return;
 
   DIDumpOptions DumpOpts;
+  DumpOpts.RecurseDepth = 0;
   DumpOpts.Verbose = Options.Verbose;
 
   errs() << "    in DIE:\n";
-  DIE->dump(errs(), 0 /* RecurseDepth */, 6 /* Indent */, DumpOpts);
+  DIE->dump(errs(), 6 /* Indent */, DumpOpts);
 }
 
 bool DwarfLinker::createStreamer(const Triple &TheTriple,
@@ -1787,7 +1792,8 @@ static bool analyzeContextInfo(const DWARFDie &DIE,
   //
   // We treat non-C++ modules like namespaces for this reason.
   if (DIE.getTag() == dwarf::DW_TAG_module && ParentIdx == 0 &&
-      dwarf::toString(DIE.find(dwarf::DW_AT_name), "") != CU.getClangModuleName()) {
+      dwarf::toString(DIE.find(dwarf::DW_AT_name), "") !=
+          CU.getClangModuleName()) {
     InImportedModule = true;
   }
 
@@ -2112,8 +2118,9 @@ unsigned DwarfLinker::shouldKeepVariableDIE(RelocationManager &RelocMgr,
 
   if (Options.Verbose) {
     DIDumpOptions DumpOpts;
+    DumpOpts.RecurseDepth = 0;
     DumpOpts.Verbose = Options.Verbose;
-    DIE.dump(outs(), 0, 8 /* Indent */, DumpOpts);
+    DIE.dump(outs(), 8 /* Indent */, DumpOpts);
   }
 
   return Flags | TF_Keep;
@@ -2147,8 +2154,9 @@ unsigned DwarfLinker::shouldKeepSubprogramDIE(
 
   if (Options.Verbose) {
     DIDumpOptions DumpOpts;
+    DumpOpts.RecurseDepth = 0;
     DumpOpts.Verbose = Options.Verbose;
-    DIE.dump(outs(), 0, 8 /* Indent */, DumpOpts);
+    DIE.dump(outs(), 8 /* Indent */, DumpOpts);
   }
 
   Flags |= TF_Keep;
@@ -2789,11 +2797,13 @@ DIE *DwarfLinker::DIECloner::cloneDIE(
     // file might be start address of another function which got moved
     // independantly by the linker). The computation of the actual
     // high_pc value is done in cloneAddressAttribute().
-    AttrInfo.OrigHighPc = dwarf::toAddress(InputDIE.find(dwarf::DW_AT_high_pc), 0);
+    AttrInfo.OrigHighPc =
+        dwarf::toAddress(InputDIE.find(dwarf::DW_AT_high_pc), 0);
     // Also store the low_pc. It might get relocated in an
     // inline_subprogram that happens at the beginning of its
     // inlining function.
-    AttrInfo.OrigLowPc = dwarf::toAddress(InputDIE.find(dwarf::DW_AT_low_pc), UINT64_MAX);
+    AttrInfo.OrigLowPc =
+        dwarf::toAddress(InputDIE.find(dwarf::DW_AT_low_pc), UINT64_MAX);
   }
 
   // Reset the Offset to 0 as we will be working on the local copy of
@@ -2914,7 +2924,8 @@ void DwarfLinker::patchRangesForUnit(const CompileUnit &Unit,
   auto InvalidRange = FunctionRanges.end(), CurrRange = InvalidRange;
   DWARFUnit &OrigUnit = Unit.getOrigUnit();
   auto OrigUnitDie = OrigUnit.getUnitDIE(false);
-  uint64_t OrigLowPc = dwarf::toAddress(OrigUnitDie.find(dwarf::DW_AT_low_pc), -1ULL);
+  uint64_t OrigLowPc =
+      dwarf::toAddress(OrigUnitDie.find(dwarf::DW_AT_low_pc), -1ULL);
   // Ranges addresses are based on the unit's low_pc. Compute the
   // offset we need to apply to adapt to the new unit's low_pc.
   int64_t UnitPcOffset = 0;
@@ -3486,8 +3497,9 @@ bool DwarfLinker::link(const DebugMap &Map) {
       if (Options.Verbose) {
         outs() << "Input compilation unit:";
         DIDumpOptions DumpOpts;
+        DumpOpts.RecurseDepth = 0;
         DumpOpts.Verbose = Options.Verbose;
-        CUDie.dump(outs(), 0, 0, DumpOpts);
+        CUDie.dump(outs(), 0, DumpOpts);
       }
 
       if (!registerModuleReference(CUDie, *CU, ModuleMap)) {

@@ -53,7 +53,7 @@
 
 #include "lldb/Target/Language.h"
 
-#include "lldb/Utility/TaskPool.h"
+#include "lldb/Host/TaskPool.h"
 
 #include "DWARFASTParser.h"
 #include "DWARFASTParserClang.h"
@@ -436,7 +436,7 @@ void SymbolFileDWARF::InitializeObject() {
   ModuleSP module_sp(m_obj_file->GetModule());
   if (module_sp) {
     const SectionList *section_list = module_sp->GetSectionList();
-    const Section *section =
+    Section *section =
         section_list->FindSectionByName(GetDWARFMachOSegmentName()).get();
 
     // Memory map the DWARF mach-o segment so we have everything mmap'ed
