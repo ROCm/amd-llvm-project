@@ -862,7 +862,7 @@ namespace clang {
                                  const OverloadCandidate &Cand1,
                                  const OverloadCandidate &Cand2,
                                  SourceLocation Loc,
-                                 OverloadCandidateSet::CandidateSetKind Kind);
+                                 OverloadCandidateSet::CandidateSetKind Kind,
                                  bool UserDefinedConversion = false,
                                  Scope* SC = 0);
 
