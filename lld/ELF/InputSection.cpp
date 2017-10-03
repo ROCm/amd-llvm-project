@@ -25,6 +25,7 @@
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Threading.h"
+#include "llvm/Support/xxhash.h"
 #include <mutex>
 
 using namespace llvm;
@@ -234,9 +235,9 @@ InputSection *InputSectionBase::getLinkOrderDep() const {
     InputSectionBase *L = File->getSections()[Link];
     if (auto *IS = dyn_cast<InputSection>(L))
       return IS;
-    error(
-        "Merge and .eh_frame sections are not supported with SHF_LINK_ORDER " +
-        toString(L));
+    error("a section with SHF_LINK_ORDER should not refer a non-regular "
+          "section: " +
+          toString(L));
   }
   return nullptr;
 }
@@ -347,10 +348,6 @@ bool InputSection::classof(const SectionBase *S) {
          S->kind() == SectionBase::Synthetic;
 }
 
-bool InputSectionBase::classof(const SectionBase *S) {
-  return S->kind() != Output;
-}
-
 OutputSection *InputSection::getParent() const {
   return cast_or_null<OutputSection>(Parent);
 }
@@ -384,11 +381,6 @@ InputSectionBase *InputSection::getRelocatedSection() {
 template <class ELFT, class RelTy>
 void InputSection::copyRelocations(uint8_t *Buf, ArrayRef<RelTy> Rels) {
   InputSectionBase *RelocatedSection = getRelocatedSection();
-
-  // Loop is slow and have complexity O(N*M), where N - amount of
-  // relocations and M - amount of symbols in symbol table.
-  // That happens because getSymbolIndex(...) call below performs
-  // simple linear search.
   for (const RelTy &Rel : Rels) {
     uint32_t Type = Rel.getType(Config->IsMips64EL);
     SymbolBody &Body = this->getFile<ELFT>()->getRelocTargetSym(Rel);
@@ -487,6 +479,7 @@ static uint64_t getAArch64UndefinedRelativeWeakVA(uint64_t Type, uint64_t A,
   case R_AARCH64_PREL32:
   case R_AARCH64_PREL64:
   case R_AARCH64_ADR_PREL_LO21:
+  case R_AARCH64_LD_PREL_LO19:
     return P + A;
   }
   llvm_unreachable("AArch64 pc-relative relocation expected\n");
@@ -824,10 +817,6 @@ SyntheticSection *EhInputSection::getParent() const {
   return cast_or_null<SyntheticSection>(Parent);
 }
 
-bool EhInputSection::classof(const SectionBase *S) {
-  return S->kind() == InputSectionBase::EHFrame;
-}
-
 // Returns the index of the first relocation that points to a region between
 // Begin and Begin+Size.
 template <class IntTy, class RelTy>
@@ -907,7 +896,7 @@ void MergeInputSection::splitStrings(ArrayRef<uint8_t> Data, size_t EntSize) {
       fatal(toString(this) + ": string is not null terminated");
     size_t Size = End + EntSize;
     Pieces.emplace_back(Off, !IsAlloc);
-    Hashes.push_back(hash_value(toStringRef(Data.slice(0, Size))));
+    Hashes.push_back(xxHash64(toStringRef(Data.slice(0, Size))));
     Data = Data.slice(Size);
     Off += Size;
   }
@@ -921,7 +910,7 @@ void MergeInputSection::splitNonStrings(ArrayRef<uint8_t> Data,
   assert((Size % EntSize) == 0);
   bool IsAlloc = this->Flags & SHF_ALLOC;
   for (unsigned I = 0, N = Size; I != N; I += EntSize) {
-    Hashes.push_back(hash_value(toStringRef(Data.slice(I, EntSize))));
+    Hashes.push_back(xxHash64(toStringRef(Data.slice(I, EntSize))));
     Pieces.emplace_back(I, !IsAlloc);
   }
 }
@@ -950,10 +939,6 @@ void MergeInputSection::splitIntoPieces() {
   if (Config->GcSections && (this->Flags & SHF_ALLOC))
     for (uint64_t Off : LiveOffsets)
       this->getSectionPiece(Off)->Live = true;
-}
-
-bool MergeInputSection::classof(const SectionBase *S) {
-  return S->kind() == InputSectionBase::Merge;
 }
 
 // Do binary search to get a section piece at a given input offset.

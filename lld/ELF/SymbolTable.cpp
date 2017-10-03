@@ -162,11 +162,10 @@ template <class ELFT> void SymbolTable::addSymbolWrap(StringRef Name) {
   Symbol *Real = addUndefined<ELFT>(Saver.save("__real_" + Name));
   Symbol *Wrap = addUndefined<ELFT>(Saver.save("__wrap_" + Name));
 
-  // Tell LTO not to eliminate this symbol
+  // Tell LTO not to eliminate this symbol.
   Wrap->IsUsedInRegularObj = true;
-
-  Config->RenamedSymbols[Real] = {Sym, Real->Binding};
-  Config->RenamedSymbols[Sym] = {Wrap, Sym->Binding};
+  defsym(Real, Sym);
+  defsym(Sym, Wrap);
 }
 
 // Creates alias for symbol. Used to implement --defsym=ALIAS=SYM.
@@ -177,12 +176,10 @@ void SymbolTable::addSymbolAlias(StringRef Alias, StringRef Name) {
     error("-defsym: undefined symbol: " + Name);
     return;
   }
-  Symbol *Sym = B->symbol();
-  Symbol *AliasSym = addUndefined<ELFT>(Alias);
 
-  // Tell LTO not to eliminate this symbol
-  Sym->IsUsedInRegularObj = true;
-  Config->RenamedSymbols[AliasSym] = {Sym, AliasSym->Binding};
+  // Tell LTO not to eliminate this symbol.
+  B->symbol()->IsUsedInRegularObj = true;
+  defsym(addUndefined<ELFT>(Alias), B->symbol());
 }
 
 // Apply symbol renames created by -wrap and -defsym. The renames are created
@@ -190,12 +187,10 @@ void SymbolTable::addSymbolAlias(StringRef Alias, StringRef Name) {
 // LTO (if LTO is running) not to include these symbols in IPO. Now that the
 // symbols are finalized, we can perform the replacement.
 void SymbolTable::applySymbolRenames() {
-  for (auto &KV : Config->RenamedSymbols) {
-    Symbol *Dst = KV.first;
-    Symbol *Src = KV.second.Target;
-    Dst->body()->copy(Src->body());
-    Dst->File = Src->File;
-    Dst->Binding = KV.second.OriginalBinding;
+  for (SymbolRenaming &S : Defsyms) {
+    S.Dst->body()->copyFrom(S.Src->body());
+    S.Dst->File = S.Src->File;
+    S.Dst->Binding = S.Binding;
   }
 }
 
@@ -211,8 +206,12 @@ static uint8_t getMinVisibility(uint8_t VA, uint8_t VB) {
 std::pair<Symbol *, bool> SymbolTable::insert(StringRef Name) {
   // <name>@@<version> means the symbol is the default version. In that
   // case <name>@@<version> will be used to resolve references to <name>.
-  size_t Pos = Name.find("@@");
-  if (Pos != StringRef::npos)
+  //
+  // Since this is a hot path, the following string search code is
+  // optimized for speed. StringRef::find(char) is much faster than
+  // StringRef::find(StringRef).
+  size_t Pos = Name.find('@');
+  if (Pos != StringRef::npos && Pos + 1 < Name.size() && Name[Pos + 1] == '@')
     Name = Name.take_front(Pos);
 
   auto P = Symtab.insert(
@@ -233,6 +232,7 @@ std::pair<Symbol *, bool> SymbolTable::insert(StringRef Name) {
     Sym->Visibility = STV_DEFAULT;
     Sym->IsUsedInRegularObj = false;
     Sym->ExportDynamic = false;
+    Sym->CanInline = true;
     Sym->Traced = V.Traced;
     Sym->VersionId = Config->DefaultSymbolVersion;
     SymVector.push_back(Sym);
@@ -472,7 +472,7 @@ Symbol *SymbolTable::addRegular(StringRef Name, uint8_t StOther, uint8_t Type,
 }
 
 template <typename ELFT>
-void SymbolTable::addShared(SharedFile<ELFT> *File, StringRef Name,
+void SymbolTable::addShared(StringRef Name, SharedFile<ELFT> *File,
                             const typename ELFT::Sym &Sym,
                             const typename ELFT::Verdef *Verdef) {
   // DSO symbols do not affect visibility in the output, so we pass STV_DEFAULT
@@ -525,12 +525,18 @@ SymbolBody *SymbolTable::find(StringRef Name) {
   return SymVector[V.Idx]->body();
 }
 
+void SymbolTable::defsym(Symbol *Dst, Symbol *Src) {
+  // We want to tell LTO not to inline Dst symbol because LTO doesn't
+  // know the final symbol contents after renaming.
+  Dst->CanInline = false;
+  Defsyms.push_back({Dst, Src, Dst->Binding});
+}
+
 template <class ELFT>
-Symbol *SymbolTable::addLazyArchive(ArchiveFile *F,
+Symbol *SymbolTable::addLazyArchive(StringRef Name, ArchiveFile *F,
                                     const object::Archive::Symbol Sym) {
   Symbol *S;
   bool WasInserted;
-  StringRef Name = Sym.getName();
   std::tie(S, WasInserted) = insert(Name);
   if (WasInserted) {
     replaceBody<LazyArchive>(S, F, Sym, SymbolBody::UnknownType);
@@ -833,16 +839,16 @@ template DefinedRegular *SymbolTable::addIgnored<ELF64LE>(StringRef, uint8_t);
 template DefinedRegular *SymbolTable::addIgnored<ELF64BE>(StringRef, uint8_t);
 
 template Symbol *
-SymbolTable::addLazyArchive<ELF32LE>(ArchiveFile *,
+SymbolTable::addLazyArchive<ELF32LE>(StringRef, ArchiveFile *,
                                      const object::Archive::Symbol);
 template Symbol *
-SymbolTable::addLazyArchive<ELF32BE>(ArchiveFile *,
+SymbolTable::addLazyArchive<ELF32BE>(StringRef, ArchiveFile *,
                                      const object::Archive::Symbol);
 template Symbol *
-SymbolTable::addLazyArchive<ELF64LE>(ArchiveFile *,
+SymbolTable::addLazyArchive<ELF64LE>(StringRef, ArchiveFile *,
                                      const object::Archive::Symbol);
 template Symbol *
-SymbolTable::addLazyArchive<ELF64BE>(ArchiveFile *,
+SymbolTable::addLazyArchive<ELF64BE>(StringRef, ArchiveFile *,
                                      const object::Archive::Symbol);
 
 template void SymbolTable::addLazyObject<ELF32LE>(StringRef, LazyObjFile &);
@@ -850,16 +856,16 @@ template void SymbolTable::addLazyObject<ELF32BE>(StringRef, LazyObjFile &);
 template void SymbolTable::addLazyObject<ELF64LE>(StringRef, LazyObjFile &);
 template void SymbolTable::addLazyObject<ELF64BE>(StringRef, LazyObjFile &);
 
-template void SymbolTable::addShared<ELF32LE>(SharedFile<ELF32LE> *, StringRef,
+template void SymbolTable::addShared<ELF32LE>(StringRef, SharedFile<ELF32LE> *,
                                               const typename ELF32LE::Sym &,
                                               const typename ELF32LE::Verdef *);
-template void SymbolTable::addShared<ELF32BE>(SharedFile<ELF32BE> *, StringRef,
+template void SymbolTable::addShared<ELF32BE>(StringRef, SharedFile<ELF32BE> *,
                                               const typename ELF32BE::Sym &,
                                               const typename ELF32BE::Verdef *);
-template void SymbolTable::addShared<ELF64LE>(SharedFile<ELF64LE> *, StringRef,
+template void SymbolTable::addShared<ELF64LE>(StringRef, SharedFile<ELF64LE> *,
                                               const typename ELF64LE::Sym &,
                                               const typename ELF64LE::Verdef *);
-template void SymbolTable::addShared<ELF64BE>(SharedFile<ELF64BE> *, StringRef,
+template void SymbolTable::addShared<ELF64BE>(StringRef, SharedFile<ELF64BE> *,
                                               const typename ELF64BE::Sym &,
                                               const typename ELF64BE::Verdef *);
 
