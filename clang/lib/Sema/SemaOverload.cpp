@@ -9088,7 +9088,9 @@ static Comparison compareEnableIfAttrs(const Sema &S, const FunctionDecl *Cand1,
 /// candidate is a better candidate than the second (C++ 13.3.3p1).
 bool clang::isBetterOverloadCandidate(
     Sema &S, const OverloadCandidate &Cand1, const OverloadCandidate &Cand2,
-    SourceLocation Loc, OverloadCandidateSet::CandidateSetKind Kind) {
+    SourceLocation Loc, OverloadCandidateSet::CandidateSetKind Kind,
+    bool UserDefinedConversion,
+    Scope* SC) {
   // Define viable functions to be better candidates than non-viable
   // functions.
   if (!Cand2.Viable)
@@ -9397,7 +9399,9 @@ void Sema::diagnoseEquivalentInternalLinkageDeclarations(
 /// \returns The result of overload resolution.
 OverloadingResult
 OverloadCandidateSet::BestViableFunction(Sema &S, SourceLocation Loc,
-                                         iterator &Best) {
+                                         iterator &Best,
+                                         bool UserDefinedConversion,
+                                         Scope* SC) {
   llvm::SmallVector<OverloadCandidate *, 16> Candidates;
   std::transform(begin(), end(), std::back_inserter(Candidates),
                  [](OverloadCandidate &Cand) { return &Cand; });
@@ -9432,7 +9436,8 @@ OverloadCandidateSet::BestViableFunction(Sema &S, SourceLocation Loc,
   for (auto *Cand : Candidates)
     if (Cand->Viable)
       if (Best == end() ||
-          isBetterOverloadCandidate(S, *Cand, *Best, Loc, Kind))
+          isBetterOverloadCandidate(S, *Cand, *Best, Loc, Kind,
+                                    UserDefinedConversion, SC))
         Best = Cand;
 
   // If we didn't find any viable functions, abort.
@@ -9445,7 +9450,8 @@ OverloadCandidateSet::BestViableFunction(Sema &S, SourceLocation Loc,
   // function. If not, we have an ambiguity.
   for (auto *Cand : Candidates) {
     if (Cand->Viable && Cand != Best &&
-        !isBetterOverloadCandidate(S, *Best, *Cand, Loc, Kind)) {
+        !isBetterOverloadCandidate(S, *Best, *Cand, Loc, Kind,
+                                   UserDefinedConversion, SC)) {
       if (S.isEquivalentInternalLinkageDeclaration(Best->Function,
                                                    Cand->Function)) {
         EquivalentCands.push_back(Cand->Function);

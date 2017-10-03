@@ -845,7 +845,9 @@ namespace clang {
 
     /// Find the best viable function on this overload set, if it exists.
     OverloadingResult BestViableFunction(Sema &S, SourceLocation Loc,
-                                         OverloadCandidateSet::iterator& Best);
+                                         OverloadCandidateSet::iterator& Best,
+                                         bool UserDefinedConversion = false,
+                                         Scope* SC = 0);
 
     void NoteCandidates(Sema &S,
                         OverloadCandidateDisplayKind OCD,
@@ -861,6 +863,8 @@ namespace clang {
                                  const OverloadCandidate &Cand2,
                                  SourceLocation Loc,
                                  OverloadCandidateSet::CandidateSetKind Kind);
+                                 bool UserDefinedConversion = false,
+                                 Scope* SC = 0);
 
   struct ConstructorInfo {
     DeclAccessPair FoundDecl;
