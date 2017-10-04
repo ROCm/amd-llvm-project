@@ -12,7 +12,7 @@
 #include "Error.h"
 #include "InputFiles.h"
 #include "Symbols.h"
-#include "lld/Core/TargetOptionsCommandFlags.h"
+#include "lld/Common/TargetOptionsCommandFlags.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringRef.h"
@@ -49,10 +49,8 @@ static void diagnosticHandler(const DiagnosticInfo &DI) {
 }
 
 static void checkError(Error E) {
-  handleAllErrors(std::move(E), [&](ErrorInfoBase &EIB) -> Error {
-    error(EIB.message());
-    return Error::success();
-  });
+  handleAllErrors(std::move(E),
+                  [&](ErrorInfoBase &EIB) { error(EIB.message()); });
 }
 
 static void saveBuffer(StringRef Buffer, const Twine &Path) {

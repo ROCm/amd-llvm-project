@@ -27,7 +27,8 @@ class ProtocolCallbacks {
 public:
   virtual ~ProtocolCallbacks() = default;
 
-  virtual void onInitialize(StringRef ID, JSONOutput &Out) = 0;
+  virtual void onInitialize(StringRef ID, InitializeParams IP,
+                            JSONOutput &Out) = 0;
   virtual void onShutdown(JSONOutput &Out) = 0;
   virtual void onDocumentDidOpen(DidOpenTextDocumentParams Params,
                                  JSONOutput &Out) = 0;
@@ -48,10 +49,13 @@ public:
                             JSONOutput &Out) = 0;
   virtual void onGoToDefinition(TextDocumentPositionParams Params, StringRef ID,
                                 JSONOutput &Out) = 0;
+  virtual void onSwitchSourceHeader(TextDocumentIdentifier Params, StringRef ID,
+                                    JSONOutput &Out) = 0;
+  virtual void onFileEvent(const DidChangeWatchedFilesParams &Params) = 0;
 };
 
-void regiterCallbackHandlers(JSONRPCDispatcher &Dispatcher, JSONOutput &Out,
-                             ProtocolCallbacks &Callbacks);
+void registerCallbackHandlers(JSONRPCDispatcher &Dispatcher, JSONOutput &Out,
+                              ProtocolCallbacks &Callbacks);
 
 } // namespace clangd
 } // namespace clang
