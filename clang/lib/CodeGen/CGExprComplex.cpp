@@ -660,8 +660,7 @@ ComplexPairTy ComplexExprEmitter::EmitBinMul(const BinOpInfo &Op) {
   Value *ResR, *ResI;
   llvm::MDBuilder MDHelper(CGF.getLLVMContext());
 
-  // XXX disable complex number builtin for kernel compilation path for now
-  if (!CGF.CGM.getLangOpts().DevicePath && Op.LHS.first->getType()->isFloatingPointTy()) {
+  if (Op.LHS.first->getType()->isFloatingPointTy()) {
     // The general formulation is:
     // (a + ib) * (c + id) = (a * c - b * d) + i(a * d + b * c)
     //
@@ -714,8 +713,20 @@ ComplexPairTy ComplexExprEmitter::EmitBinMul(const BinOpInfo &Op) {
       // Now emit the libcall on this slowest of the slow paths.
       CGF.EmitBlock(LibCallBB);
       Value *LibCallR, *LibCallI;
-      std::tie(LibCallR, LibCallI) = EmitComplexBinOpLibCall(
-          getComplexMultiplyLibCallName(Op.LHS.first->getType()), Op);
+      if (CGF.CGM.getLangOpts().CPlusPlusAMP &&
+          CGF.CGM.getLangOpts().DevicePath) {
+        // TODO: HCC 23/09/2017 - we cannot call the builtin functions which
+        //       handle NaNs robustly and are provided in Compiler-RT on the
+        //       accelerator path. Ideally we will want to add our own
+        //       customised ones, but until such a solution is implemented we
+        //       merely propagate NaNs. Division is in a similar situation.
+        LibCallR = ResR;
+        LibCallI = ResI;
+      }
+      else {
+        std::tie(LibCallR, LibCallI) = EmitComplexBinOpLibCall(
+                getComplexMultiplyLibCallName(Op.LHS.first->getType()), Op);
+      }
       Builder.CreateBr(ContBB);
 
       // Finally continue execution by phi-ing together the different
@@ -756,6 +767,36 @@ ComplexPairTy ComplexExprEmitter::EmitBinMul(const BinOpInfo &Op) {
   return ComplexPairTy(ResR, ResI);
 }
 
+namespace
+{
+  inline
+  void EmitHCCComplexFloatDivision(
+    CGBuilderTy& Builder,
+    llvm::Value *&LHSr,
+    llvm::Value *&LHSi,
+    llvm::Value *&RHSr,
+    llvm::Value *&RHSi)
+  { // TODO: this is simplistic and should be removed as
+    //       soon as possible.
+    // (a+ib) / (c+id) = ((ac+bd)/(cc+dd)) + i((bc-ad)/(cc+dd))
+    llvm::Value *Tmp1 = Builder.CreateFMul(LHSr, RHSr); // a*c
+    llvm::Value *Tmp2 = Builder.CreateFMul(LHSi, RHSi); // b*d
+    llvm::Value *Tmp3 = Builder.CreateFAdd(Tmp1, Tmp2); // ac+bd
+
+    llvm::Value *Tmp4 = Builder.CreateFMul(RHSr, RHSr); // c*c
+    llvm::Value *Tmp5 = Builder.CreateFMul(RHSi, RHSi); // d*d
+    llvm::Value *Tmp6 = Builder.CreateFAdd(Tmp4, Tmp5); // cc+dd
+
+    llvm::Value *Tmp7 = Builder.CreateFMul(LHSi, RHSr); // b*c
+    llvm::Value *Tmp8 = Builder.CreateFMul(LHSr, RHSi); // a*d
+    llvm::Value *Tmp9 = Builder.CreateFSub(Tmp7, Tmp8); // bc-ad
+
+    LHSr = Tmp3;
+    LHSi = Tmp9;
+    RHSr = Tmp6;
+  }
+}
+
 // See C11 Annex G.5.1 for the semantics of multiplicative operators on complex
 // typed values.
 ComplexPairTy ComplexExprEmitter::EmitBinDiv(const BinOpInfo &Op) {
@@ -764,8 +805,7 @@ ComplexPairTy ComplexExprEmitter::EmitBinDiv(const BinOpInfo &Op) {
 
 
   llvm::Value *DSTr, *DSTi;
-  // XXX disable complex number builtin for kernel compilation path for now
-  if (!CGF.CGM.getLangOpts().DevicePath && LHSr->getType()->isFloatingPointTy()) {
+  if (LHSr->getType()->isFloatingPointTy()) {
     // If we have a complex operand on the RHS, we delegate to a libcall to
     // handle all of the complexities and minimize underflow/overflow cases.
     //
@@ -778,21 +818,33 @@ ComplexPairTy ComplexExprEmitter::EmitBinDiv(const BinOpInfo &Op) {
         LibCallOp.LHS.second = llvm::Constant::getNullValue(LHSr->getType());
 
       StringRef LibCallName;
-      switch (LHSr->getType()->getTypeID()) {
-      default:
-        llvm_unreachable("Unsupported floating point type!");
-      case llvm::Type::HalfTyID:
-        return EmitComplexBinOpLibCall("__divhc3", LibCallOp);
-      case llvm::Type::FloatTyID:
-        return EmitComplexBinOpLibCall("__divsc3", LibCallOp);
-      case llvm::Type::DoubleTyID:
-        return EmitComplexBinOpLibCall("__divdc3", LibCallOp);
-      case llvm::Type::PPC_FP128TyID:
-        return EmitComplexBinOpLibCall("__divtc3", LibCallOp);
-      case llvm::Type::X86_FP80TyID:
-        return EmitComplexBinOpLibCall("__divxc3", LibCallOp);
-      case llvm::Type::FP128TyID:
-        return EmitComplexBinOpLibCall("__divtc3", LibCallOp);
+      if (CGF.CGM.getLangOpts().CPlusPlusAMP &&
+          CGF.CGM.getLangOpts().DevicePath) {
+        // TODO: HCC 23/09/2017 - we cannot call the builtin functions, which
+        //       handle NaNs and INFs robustly and are provided in Compiler-RT,
+        //       on the accelerator path. Ideally we will want to add our own
+        //       customised ones, but until such a solution is implemented we
+        //       do not handle special values . Multiplication is in a similar
+        //       situation.
+        EmitHCCComplexFloatDivision(Builder, LHSr, LHSi, RHSr, RHSi);
+      }
+      else {
+        switch (LHSr->getType()->getTypeID()) {
+          default:
+            llvm_unreachable("Unsupported floating point type!");
+          case llvm::Type::HalfTyID:
+            return EmitComplexBinOpLibCall("__divhc3", LibCallOp);
+          case llvm::Type::FloatTyID:
+            return EmitComplexBinOpLibCall("__divsc3", LibCallOp);
+          case llvm::Type::DoubleTyID:
+            return EmitComplexBinOpLibCall("__divdc3", LibCallOp);
+          case llvm::Type::PPC_FP128TyID:
+            return EmitComplexBinOpLibCall("__divtc3", LibCallOp);
+          case llvm::Type::X86_FP80TyID:
+            return EmitComplexBinOpLibCall("__divxc3", LibCallOp);
+          case llvm::Type::FP128TyID:
+            return EmitComplexBinOpLibCall("__divtc3", LibCallOp);
+        }
       }
     }
     assert(LHSi && "Can have at most one non-complex operand!");

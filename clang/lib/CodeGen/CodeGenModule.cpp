@@ -59,6 +59,8 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MD5.h"
 
+#include <unordered_map>
+
 using namespace clang;
 using namespace CodeGen;
 
@@ -2055,79 +2057,93 @@ bool CodeGenModule::shouldOpportunisticallyEmitVTables() {
   return CodeGenOpts.OptimizationLevel > 0;
 }
 
+namespace
+{
+  class HCCompatible {
+    // TODO: this does not yet include the actual checking of function bodies.
+    std::unordered_map<const Decl*, bool> d_;
+
+    bool allowed_(const VarDecl* x)
+    {
+      if (!x) return true;
+      if (d_.count(x)) return d_[x];
+
+      bool r = true;
+
+      if (!x->hasAttr<HCCTileStaticAttr>() &&
+          (x->isStaticLocal() ||
+          x->hasExternalStorage() ||
+          x->hasGlobalStorage() ||
+          x->isExceptionVariable()))  {
+            r = false;
+      }
+
+      d_[x] = r;
+
+      return r;
+    }
+
+    bool allowed_(const FunctionDecl* x)
+    {
+      if (!x) return true;
+      if (d_.count(x)) return d_[x];
+
+      bool r = true;
+
+      if (x->isVariadic()) r = false;
+      if (x->isPure() || x->isVirtualAsWritten()) r = false;
+
+      d_[x] = r;
+
+      return r;
+    }
+
+    bool allowed_(const CXXRecordDecl* x)
+    {
+      if (!x) return true;
+      if (d_.count(x)) return d_[x];
+
+      bool r = true;
+
+      if (x->isPolymorphic()) r = false;
+
+      d_[x] = r;
+
+      return r;
+    }
+  public:
+    bool operator()(const Decl* x)
+    {
+      if (!x || x->hasAttr<CXXAMPRestrictAMPAttr>()) return true;
+
+      if (d_.count(x)) return d_[x];
+      if (d_.count(x->getNonClosureContext()) &&
+          !d_[x->getNonClosureContext()]) {
+        d_[x] = false;
+        return false;
+      }
+
+      bool r = true;
+
+      if (isa<VarDecl>(x)) r = allowed_(cast<VarDecl>(x));
+      else if (isa<FunctionDecl>(x)) {
+        r = allowed_(cast<FunctionDecl>(x));
+      }
+      else if (isa<CXXRecordDecl>(x)) {
+        r = allowed_(cast<CXXRecordDecl>(x));
+      }
+
+      d_[x] = r;
+
+      return r;
+    }
+  };
+}
+
 static bool isWhiteListForHCC(CodeGenModule &CGM, GlobalDecl GD) {
-  const auto *D = cast<ValueDecl>(GD.getDecl());
+  static HCCompatible r;
 
-  // let variables, kernels and functions marked with restrict(amp) to pass
-  if (D->hasAttr<CXXAMPRestrictAMPAttr>() ||
-      // let hc_grid_launch kernel functions to pass
-      D->hasAttr<HCGridLaunchAttr>())
-    return true;
-
-  // the remaining ones must be functions
-  // be selective about functions to pass
-
-  StringRef MangledName = CGM.getMangledName(GD);
-
-  // C++11 atomic functions are allowed to pass
-  // C++11 functional operators are allowed to pass
-  // C++11 swap functions are allowed to pass
-  // C++11 numeric limits are allowed to pass
-  // C++11 pair are allowed to pass
-  // C++11 complex are allowed to pass
-  // PSTL operators are allowed to pass
-  const CXXMethodDecl* MethodD = dyn_cast<CXXMethodDecl>(D);
-  if (MethodD) {
-    StringRef ClassName = MethodD->getParent()->getName();
-    if (ClassName.find("__atomic_base") != StringRef::npos ||
-        ClassName.find("plus") != StringRef::npos ||
-        ClassName.find("logical_or") != StringRef::npos ||
-        ClassName.find("logical_and") != StringRef::npos ||
-        ClassName.find("unique_ptr") != StringRef::npos ||
-        ClassName.find("compressed_pair") != StringRef::npos ||
-        ClassName.find("numeric_limits") != StringRef::npos ||
-        ClassName.find("pair") != StringRef::npos ||
-        ClassName.find("complex") != StringRef::npos ||
-        MangledName.find("experimental8parallel") != StringRef::npos) {
-      return true;
-    }
-  }
-
-  // C++11 swap/move functions are allowed to pass
-  // C++11 memory_order modifiers are allowed to pass
-  // C++11 complex operators are allowed to pass
-  // C++11 perfect forwarding functions are allowed to pass
-  // certain C++11 math functions are allowed to pass
-  // Eigen internal functions are allowed to pass
-  const FunctionDecl* FuncD = dyn_cast<FunctionDecl>(D);
-  if (FuncD) {
-    if (MangledName.find("4swap") != StringRef::npos ||
-        MangledName.find("4move") != StringRef::npos ||
-        MangledName.find("16grid_launch_parm10KernelArgsIT2_EENKUlvE_clEv") != StringRef::npos ||
-        MangledName.find("St12memory_order") != StringRef::npos ||
-        MangledName.find("Kokkos4Impl") != StringRef::npos ||
-        MangledName.find("St16initializer_list") != StringRef::npos ||
-        MangledName.find("St7complex") != StringRef::npos ||
-        MangledName.find("St7forward") != StringRef::npos ||
-        MangledName.find("5roundf") != StringRef::npos ||
-        MangledName.find("Eigen8internal") != StringRef::npos) {
-      return true;
-    }
-  }
-
-  // GridLaunch ctors are allowed to pass
-  const CXXConstructorDecl* CtorD = dyn_cast<CXXConstructorDecl>(D);
-  if (CtorD) {
-    StringRef ClassName = CtorD->getParent()->getName();
-    if (ClassName.find("gl_dim3") != StringRef::npos ||
-        ClassName.find("grid_launch_parm_cxx") != StringRef::npos ||
-        ClassName.find("grid_launch_parm") != StringRef::npos) {
-      return true;
-    }
-  }
-
-  // block all others
-  return false;
+  return r(GD.getDecl());
 }
 
 void CodeGenModule::EmitGlobalDefinition(GlobalDecl GD, llvm::GlobalValue *GV) {
@@ -2137,17 +2153,14 @@ void CodeGenModule::EmitGlobalDefinition(GlobalDecl GD, llvm::GlobalValue *GV) {
   if (LangOpts.CPlusPlusAMP && !CodeGenOpts.AMPCPU) {
     if (CodeGenOpts.AMPIsDevice) {
       // If -famp-is-device switch is on, we are in GPU build path.
-      if (!isWhiteListForHCC(*this, GD))
-        return;
-    } else {
-      // In host path:
-      // let file-scope global variables be emitted
-      // let functions qualifired with restrict(amp) or [[hc]],
-      // but not with restrict(cpu) or [[cpu]] not be emitted
+      if (!isWhiteListForHCC(*this, GD)) return;
+    }
+    else {
       if (!isa<VarDecl>(D) &&
-          D->hasAttr<CXXAMPRestrictAMPAttr>()&&
-         !D->hasAttr<CXXAMPRestrictCPUAttr>())
+          D->hasAttr<CXXAMPRestrictAMPAttr>() &&
+          !D->hasAttr<CXXAMPRestrictCPUAttr>()) {
         return;
+      }
     }
   }
 
@@ -3389,6 +3402,10 @@ void CodeGenModule::EmitGlobalFunctionDefinition(GlobalDecl GD,
     GV = cast<llvm::GlobalValue>(GetAddrOfFunction(GD, Ty, /*ForVTable=*/false,
                                                    /*DontDefer=*/true,
                                                    ForDefinition));
+
+  if (D->getAttr<CXXAMPRestrictAMPAttr>()) {
+    cast<llvm::Function>(GV)->addFnAttr("HC");
+  }
 
   // Relax the rule for C++AMP
   if (!LangOpts.CPlusPlusAMP) {
