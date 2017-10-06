@@ -37,6 +37,12 @@ public:
                                   FunctionArgList &Args);
   void EmitTrampolineNameBody(CodeGenFunction &CGF, const FunctionDecl *FD,
     FunctionArgList &Args);
+
+private:
+
+  void EmitCXXAMPDeserializer(CodeGenFunction &CGF,
+                              const FunctionDecl *Trampoline, 
+                              FunctionArgList& Args, Address& ai);
 };
 
 /// Creates an instance of a C++ AMP runtime class.

@@ -45,6 +45,189 @@ static CXXMethodDecl *findValidIndexType(QualType IndexTy) {
   }
   return IndexConstructor;
 }
+
+
+void CGAMPRuntime::EmitCXXAMPDeserializer(CodeGenFunction &CGF,
+  const FunctionDecl *Trampoline, FunctionArgList& Args,
+  Address& ai) {
+
+  const CXXRecordDecl *ClassDecl = dyn_cast<CXXMethodDecl>(Trampoline)->getParent();
+
+  CXXConstructorDecl *DeserializeConstructor =
+    dyn_cast<CXXConstructorDecl>(ClassDecl->getCXXAMPDeserializationConstructor());
+  assert(DeserializeConstructor);
+
+  CallArgList DeserializerArgs;
+
+  // this
+  DeserializerArgs.add(RValue::get(ai.getPointer()),
+
+  DeserializeConstructor ->getThisType(CGF.getContext()));
+  // the rest of constructor args. Create temporary objects for references
+  // on stack
+  CXXConstructorDecl::param_iterator CPI = DeserializeConstructor->param_begin(),
+  CPE = DeserializeConstructor->param_end();
+
+  for (FunctionArgList::iterator I = Args.begin(); 
+         I != Args.end() && CPI != CPE; ++CPI) {
+    // Reference types are only allowed to have one level; i.e. no
+    // class base {&int}; class foo { bar &base; };
+    QualType MemberType = (*CPI)->getType().getNonReferenceType();
+    if (MemberType != (*CPI)->getType()) {
+      if (!CGM.getLangOpts().HSAExtension) {
+
+        assert(MemberType.getTypePtr()->isClassType() == true &&
+               "Only supporting taking reference of classes");
+
+        CXXRecordDecl *MemberClass = MemberType.getTypePtr()->getAsCXXRecordDecl();
+
+        CXXConstructorDecl *MemberDeserializer = dyn_cast<CXXConstructorDecl>(
+                              MemberClass->getCXXAMPDeserializationConstructor());
+        assert(MemberDeserializer);
+
+        std::vector<Expr*>MemberArgDeclRefs;
+        for (CXXMethodDecl::param_iterator MCPI = MemberDeserializer->param_begin(),
+              MCPE = MemberDeserializer->param_end(); MCPI!=MCPE; ++MCPI, ++I) {
+
+          Expr *ArgDeclRef = DeclRefExpr::Create(CGM.getContext(),
+                                                 NestedNameSpecifierLoc(),
+                                                 SourceLocation(),
+                                                 const_cast<VarDecl *>(*I),
+                                                 false,
+                                                 SourceLocation(),
+                                                 (*MCPI)->getType(), VK_RValue);
+  	      MemberArgDeclRefs.push_back(ArgDeclRef);
+        }
+
+        // Allocate "this" for member referenced objects
+        Address mai = CGF.CreateMemTemp(MemberType);
+
+        // Emit code to call the deserializing constructor of temp objects
+        CXXConstructExpr *CXXCE = CXXConstructExpr::Create(CGM.getContext(), 
+                                                           MemberType,
+                                                           SourceLocation(),
+                                                           MemberDeserializer,
+                                                           false,
+                                                           MemberArgDeclRefs,
+                                                           false, false, false, false,
+                                                           CXXConstructExpr::CK_Complete,
+                                                           SourceLocation());
+
+        CGF.EmitCXXConstructorCall(MemberDeserializer, Ctor_Complete, false, false, mai, CXXCE);
+        DeserializerArgs.add(RValue::get(mai.getPointer()), (*CPI)->getType());
+
+      } else { // HSA extension check
+
+        if (MemberType.getTypePtr()->isClassType()) {
+
+          // hc::array should still be serialized as traditional C++AMP objects
+          if (MemberType.getTypePtr()->isGPUArrayType()) {
+
+            CXXRecordDecl *MemberClass = MemberType.getTypePtr()->getAsCXXRecordDecl();
+
+            CXXConstructorDecl *MemberDeserializer =
+              dyn_cast<CXXConstructorDecl>(MemberClass->getCXXAMPDeserializationConstructor());
+            assert(MemberDeserializer);
+
+            std::vector<Expr*>MemberArgDeclRefs;
+            for (CXXMethodDecl::param_iterator MCPI = MemberDeserializer->param_begin(),
+              MCPE = MemberDeserializer->param_end(); MCPI!=MCPE; ++MCPI, ++I) {
+
+              Expr *ArgDeclRef = DeclRefExpr::Create(CGM.getContext(),
+                                                     NestedNameSpecifierLoc(),
+                                                     SourceLocation(),
+                                                     const_cast<VarDecl *>(*I),
+                                                     false,
+                                                     SourceLocation(),
+                                                     (*MCPI)->getType(), VK_RValue);
+
+               MemberArgDeclRefs.push_back(ArgDeclRef);
+            }
+
+            // Allocate "this" for member referenced objects
+            Address mai = CGF.CreateMemTemp(MemberType);
+
+            // Emit code to call the deserializing constructor of temp objects
+            CXXConstructExpr *CXXCE = CXXConstructExpr::Create(CGM.getContext(), 
+                                                               MemberType,
+                                                               SourceLocation(),
+                                                               MemberDeserializer,
+                                                               false,
+                                                               MemberArgDeclRefs,
+                                                               false, false, false, false,
+                                                               CXXConstructExpr::CK_Complete,
+                                                               SourceLocation());
+
+            CGF.EmitCXXConstructorCall(MemberDeserializer, Ctor_Complete, false, false, mai, CXXCE);
+            DeserializerArgs.add(RValue::get(mai.getPointer()), (*CPI)->getType());
+
+          } else {
+
+            // capture by refernce for HSA
+            Expr *ArgDeclRef = DeclRefExpr::Create(CGM.getContext(),
+                                                   NestedNameSpecifierLoc(),
+                                                   SourceLocation(),
+                                                   const_cast<VarDecl *>(*I), false,
+                                                   SourceLocation(),
+                                                   (*I)->getType(), VK_RValue);
+
+            RValue ArgRV = CGF.EmitAnyExpr(ArgDeclRef);
+            DeserializerArgs.add(ArgRV, CGM.getContext().getPointerType(MemberType));
+            ++I;
+          }
+          
+        } else {
+
+          // capture by refernce for HSA
+          Expr *ArgDeclRef = DeclRefExpr::Create(CGM.getContext(),
+                                                 NestedNameSpecifierLoc(),
+                                                 SourceLocation(),
+                                                 const_cast<VarDecl *>(*I), false,
+                                                 SourceLocation(),
+                                                 (*I)->getType(), VK_RValue);
+
+          RValue ArgRV = CGF.EmitAnyExpr(ArgDeclRef);
+          DeserializerArgs.add(ArgRV, CGM.getContext().getPointerType(MemberType));
+          ++I;
+        }
+      } // HSA extension check
+
+    } else {
+
+      Expr *ArgDeclRef = DeclRefExpr::Create(CGM.getContext(),
+	                                           NestedNameSpecifierLoc(),
+	                                           SourceLocation(),
+	                                           const_cast<VarDecl *>(*I), false,
+	                                           SourceLocation(),
+	                                           (*I)->getType(), VK_RValue);
+
+      RValue ArgRV = CGF.EmitAnyExpr(ArgDeclRef);
+      DeserializerArgs.add(ArgRV, (*CPI)->getType());
+      ++I;
+    }
+  }
+
+  // Emit code to call the deserializing constructor
+  llvm::Constant *Callee = CGM.getAddrOfCXXStructor(DeserializeConstructor, 
+                                                    StructorType::Complete);
+
+  const FunctionProtoType *FPT =
+      DeserializeConstructor->getType()->castAs<FunctionProtoType>();
+
+  const CGFunctionInfo &DesFnInfo = 
+      CGM.getTypes().arrangeCXXStructorDeclaration(DeserializeConstructor, StructorType::Complete);
+
+  for (unsigned I = 1, E = DeserializerArgs.size(); I != E; ++I) {
+    auto T = FPT->getParamType(I-1);
+    // EmitFromMemory is necessary in case function has bool parameter.
+    if (T->isBooleanType()) {
+      DeserializerArgs[I] = CallArg(RValue::get(CGF.EmitFromMemory(DeserializerArgs[I].RV.getScalarVal(), T)),
+                                    T, false);
+    }
+  }
+  CGF.EmitCall(DesFnInfo, CGCallee::forDirect(Callee), ReturnValueSlot(), DeserializerArgs);
+}
+
 /// Operations:
 /// For each reference-typed members, construct temporary object
 /// Invoke constructor of index
@@ -57,155 +240,10 @@ void CGAMPRuntime::EmitTrampolineBody(CodeGenFunction &CGF,
   // Allocate "this"
   Address ai = CGF.CreateMemTemp(QualType(ClassDecl->getTypeForDecl(),0));
   // Locate the constructor to call
-  if(ClassDecl->getCXXAMPDeserializationConstructor()==NULL) {
-    return;
+  if(ClassDecl->getCXXAMPDeserializationConstructor()!=NULL) {
+    EmitCXXAMPDeserializer(CGF,Trampoline,Args,ai); 
   }
-  CXXConstructorDecl *DeserializeConstructor =
-    dyn_cast<CXXConstructorDecl>(
-      ClassDecl->getCXXAMPDeserializationConstructor());
-  assert(DeserializeConstructor);
-  CallArgList DeserializerArgs;
-  // this
-  DeserializerArgs.add(RValue::get(ai.getPointer()),
-    DeserializeConstructor ->getThisType(CGF.getContext()));
-  // the rest of constructor args. Create temporary objects for references
-  // on stack
-  CXXConstructorDecl::param_iterator CPI = DeserializeConstructor->param_begin(),
-    CPE = DeserializeConstructor->param_end();
-  for (FunctionArgList::iterator I = Args.begin();
-       I != Args.end() && CPI != CPE; ++CPI) {
-    // Reference types are only allowed to have one level; i.e. no
-    // class base {&int}; class foo { bar &base; };
-    QualType MemberType = (*CPI)->getType().getNonReferenceType();
-    if (MemberType != (*CPI)->getType()) {
-      if (!CGM.getLangOpts().HSAExtension) {
-        assert(MemberType.getTypePtr()->isClassType() == true &&
-               "Only supporting taking reference of classes");
-        CXXRecordDecl *MemberClass = MemberType.getTypePtr()->getAsCXXRecordDecl();
-        CXXConstructorDecl *MemberDeserializer =
-  	dyn_cast<CXXConstructorDecl>(
-            MemberClass->getCXXAMPDeserializationConstructor());
-        assert(MemberDeserializer);
-        std::vector<Expr*>MemberArgDeclRefs;
-        for (CXXMethodDecl::param_iterator MCPI = MemberDeserializer->param_begin(),
-          MCPE = MemberDeserializer->param_end(); MCPI!=MCPE; ++MCPI, ++I) {
-          Expr *ArgDeclRef = DeclRefExpr::Create(CGM.getContext(),
-                                                 NestedNameSpecifierLoc(),
-                                                 SourceLocation(),
-                                                 const_cast<VarDecl *>(*I),
-                                                 false,
-                                                 SourceLocation(),
-                                                 (*MCPI)->getType(), VK_RValue);
-  	  MemberArgDeclRefs.push_back(ArgDeclRef);
-        }
-        // Allocate "this" for member referenced objects
-        Address mai = CGF.CreateMemTemp(MemberType);
-        // Emit code to call the deserializing constructor of temp objects
-        CXXConstructExpr *CXXCE = CXXConstructExpr::Create(
-          CGM.getContext(), MemberType,
-          SourceLocation(),
-          MemberDeserializer,
-          false,
-          MemberArgDeclRefs,
-          false, false, false, false,
-          CXXConstructExpr::CK_Complete,
-          SourceLocation());
-        CGF.EmitCXXConstructorCall(MemberDeserializer,
-          Ctor_Complete, false, false, mai, CXXCE);
-        DeserializerArgs.add(RValue::get(mai.getPointer()), (*CPI)->getType());
-      } else { // HSA extension check
-        if (MemberType.getTypePtr()->isClassType()) {
-          // hc::array should still be serialized as traditional C++AMP objects
-          if (MemberType.getTypePtr()->isGPUArrayType()) {
-            CXXRecordDecl *MemberClass = MemberType.getTypePtr()->getAsCXXRecordDecl();
-            CXXConstructorDecl *MemberDeserializer =
-            dyn_cast<CXXConstructorDecl>(
-                MemberClass->getCXXAMPDeserializationConstructor());
-            assert(MemberDeserializer);
-            std::vector<Expr*>MemberArgDeclRefs;
-            for (CXXMethodDecl::param_iterator MCPI = MemberDeserializer->param_begin(),
-              MCPE = MemberDeserializer->param_end(); MCPI!=MCPE; ++MCPI, ++I) {
-              Expr *ArgDeclRef = DeclRefExpr::Create(CGM.getContext(),
-                                                     NestedNameSpecifierLoc(),
-                                                     SourceLocation(),
-                                                     const_cast<VarDecl *>(*I),
-                                                     false,
-                                                     SourceLocation(),
-                                                     (*MCPI)->getType(), VK_RValue);
-               MemberArgDeclRefs.push_back(ArgDeclRef);
-            }
-            // Allocate "this" for member referenced objects
-            Address mai = CGF.CreateMemTemp(MemberType);
-            // Emit code to call the deserializing constructor of temp objects
-            CXXConstructExpr *CXXCE = CXXConstructExpr::Create(
-              CGM.getContext(), MemberType,
-              SourceLocation(),
-              MemberDeserializer,
-              false,
-              MemberArgDeclRefs,
-              false, false, false, false,
-              CXXConstructExpr::CK_Complete,
-              SourceLocation());
-            CGF.EmitCXXConstructorCall(MemberDeserializer,
-              Ctor_Complete, false, false, mai, CXXCE);
-            DeserializerArgs.add(RValue::get(mai.getPointer()), (*CPI)->getType());
-          } else {
-            // capture by refernce for HSA
-            Expr *ArgDeclRef = DeclRefExpr::Create(CGM.getContext(),
-                                                   NestedNameSpecifierLoc(),
-                                                   SourceLocation(),
-                                                   const_cast<VarDecl *>(*I), false,
-                                                   SourceLocation(),
-                                                   (*I)->getType(), VK_RValue);
-            RValue ArgRV = CGF.EmitAnyExpr(ArgDeclRef);
-            DeserializerArgs.add(ArgRV, CGM.getContext().getPointerType(MemberType));
-            ++I;
-          }
-        } else {
-          // capture by refernce for HSA
-          Expr *ArgDeclRef = DeclRefExpr::Create(CGM.getContext(),
-              NestedNameSpecifierLoc(),
-              SourceLocation(),
-              const_cast<VarDecl *>(*I), false,
-              SourceLocation(),
-              (*I)->getType(), VK_RValue);
-          RValue ArgRV = CGF.EmitAnyExpr(ArgDeclRef);
-          DeserializerArgs.add(ArgRV, CGM.getContext().getPointerType(MemberType));
-          ++I;
-        }
-      } // HSA extension check
-    } else {
-      Expr *ArgDeclRef = DeclRefExpr::Create(CGM.getContext(),
-	  NestedNameSpecifierLoc(),
-	  SourceLocation(),
-	  const_cast<VarDecl *>(*I), false,
-	  SourceLocation(),
-	  (*I)->getType(), VK_RValue);
-      RValue ArgRV = CGF.EmitAnyExpr(ArgDeclRef);
-      DeserializerArgs.add(ArgRV, (*CPI)->getType());
-      ++I;
-    }
-  }
-  // Emit code to call the deserializing constructor
-  {
-    llvm::Constant *Callee = CGM.getAddrOfCXXStructor(
-      DeserializeConstructor, StructorType::Complete);
-    const FunctionProtoType *FPT =
-      DeserializeConstructor->getType()->castAs<FunctionProtoType>();
-    const CGFunctionInfo &DesFnInfo =
-      CGM.getTypes().arrangeCXXStructorDeclaration(
-          DeserializeConstructor, StructorType::Complete);
-    for (unsigned I = 1, E = DeserializerArgs.size(); I != E; ++I) {
-      auto T = FPT->getParamType(I-1);
-      // EmitFromMemory is necessary in case function has bool parameter.
-      if (T->isBooleanType()) {
-        DeserializerArgs[I] = CallArg(RValue::get(
-            CGF.EmitFromMemory(DeserializerArgs[I].RV.getScalarVal(), T)),
-            T, false);
-      }
-    }
-    CGF.EmitCall(DesFnInfo, CGCallee::forDirect(Callee), ReturnValueSlot(), DeserializerArgs);
-  }
+
   // Locate the type of Concurrency::index<1>
   // Locate the operator to call
   CXXMethodDecl *KernelDecl = NULL;
