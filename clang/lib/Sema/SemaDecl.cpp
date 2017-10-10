@@ -1448,6 +1448,46 @@ void Sema::FilterLookupForScope(LookupResult &R, DeclContext *Ctx, Scope *S,
   F.done();
 }
 
+/// We've determined that \p New is a redeclaration of \p Old. Check that they
+/// have compatible owning modules.
+bool Sema::CheckRedeclarationModuleOwnership(NamedDecl *New, NamedDecl *Old) {
+  // FIXME: The Modules TS is not clear about how friend declarations are
+  // to be treated. It's not meaningful to have different owning modules for
+  // linkage in redeclarations of the same entity, so for now allow the
+  // redeclaration and change the owning modules to match.
+  if (New->getFriendObjectKind() &&
+      Old->getOwningModuleForLinkage() != New->getOwningModuleForLinkage()) {
+    New->setLocalOwningModule(Old->getOwningModule());
+    makeMergedDefinitionVisible(New);
+    return false;
+  }
+
+  Module *NewM = New->getOwningModule();
+  Module *OldM = Old->getOwningModule();
+  if (NewM == OldM)
+    return false;
+
+  // FIXME: Check proclaimed-ownership-declarations here too.
+  bool NewIsModuleInterface = NewM && NewM->Kind == Module::ModuleInterfaceUnit;
+  bool OldIsModuleInterface = OldM && OldM->Kind == Module::ModuleInterfaceUnit;
+  if (NewIsModuleInterface || OldIsModuleInterface) {
+    // C++ Modules TS [basic.def.odr] 6.2/6.7 [sic]:
+    //   if a declaration of D [...] appears in the purview of a module, all
+    //   other such declarations shall appear in the purview of the same module
+    Diag(New->getLocation(), diag::err_mismatched_owning_module)
+      << New
+      << NewIsModuleInterface
+      << (NewIsModuleInterface ? NewM->getFullModuleName() : "")
+      << OldIsModuleInterface
+      << (OldIsModuleInterface ? OldM->getFullModuleName() : "");
+    Diag(Old->getLocation(), diag::note_previous_declaration);
+    New->setInvalidDecl();
+    return true;
+  }
+
+  return false;
+}
+
 static bool isUsingDecl(NamedDecl *D) {
   return isa<UsingShadowDecl>(D) ||
          isa<UnresolvedUsingTypenameDecl>(D) ||
@@ -2627,7 +2667,7 @@ void Sema::mergeDeclAttributes(NamedDecl *New, Decl *Old,
   // This redeclaration adds a section attribute.
   if (New->hasAttr<SectionAttr>() && !Old->hasAttr<SectionAttr>()) {
     if (auto *VD = dyn_cast<VarDecl>(New)) {
-      if (VD->isThisDeclarationADefinition() != VarDecl::Definition) {
+      if (VD->isThisDeclarationADefinition() == VarDecl::DeclarationOnly) {
         Diag(New->getLocation(), diag::warn_attribute_section_on_redeclaration);
         Diag(Old->getLocation(), diag::note_previous_declaration);
       }
@@ -2961,6 +3001,9 @@ bool Sema::MergeFunctionDecl(FunctionDecl *New, NamedDecl *&OldD,
     notePreviousDefinition(Old, New->getLocation());
     New->dropAttr<InternalLinkageAttr>();
   }
+
+  if (CheckRedeclarationModuleOwnership(New, Old))
+    return true;
 
   if (!getLangOpts().CPlusPlus) {
     bool OldOvl = Old->hasAttr<OverloadableAttr>();
@@ -3831,6 +3874,9 @@ void Sema::MergeVarDecl(VarDecl *New, LookupResult &Previous) {
     return New->setInvalidDecl();
   }
 
+  if (CheckRedeclarationModuleOwnership(New, Old))
+    return;
+
   // Variables with external linkage are analyzed in FinalizeDeclaratorGroup.
 
   // FIXME: The test for external storage here seems wrong? We still
@@ -4382,7 +4428,7 @@ static bool CheckAnonMemberRedeclaration(Sema &SemaRef,
                                          SourceLocation NameLoc,
                                          bool IsUnion) {
   LookupResult R(SemaRef, Name, NameLoc, Sema::LookupMemberName,
-                 Sema::ForRedeclaration);
+                 Sema::ForVisibleRedeclaration);
   if (!SemaRef.LookupName(R, S)) return false;
 
   // Pick a representative declaration.
@@ -5321,7 +5367,7 @@ NamedDecl *Sema::HandleDeclarator(Scope *S, Declarator &D,
     D.setInvalidType();
 
   LookupResult Previous(*this, NameInfo, LookupOrdinaryName,
-                        ForRedeclaration);
+                        forRedeclarationInCurContext());
 
   // See if this is a redefinition of a variable in the same scope.
   if (!D.getCXXScopeSpec().isSet()) {
@@ -5347,8 +5393,10 @@ NamedDecl *Sema::HandleDeclarator(Scope *S, Declarator &D,
                D.getDeclSpec().getStorageClassSpec() != DeclSpec::SCS_static)
       CreateBuiltins = true;
 
-    if (IsLinkageLookup)
+    if (IsLinkageLookup) {
       Previous.clear(LookupRedeclarationWithLinkage);
+      Previous.setRedeclarationKind(ForExternalRedeclaration);
+    }
 
     LookupName(Previous, S, CreateBuiltins);
   } else { // Something like "int foo::x;"
@@ -7096,7 +7144,7 @@ void Sema::CheckShadow(Scope *S, VarDecl *D) {
     return;
 
   LookupResult R(*this, D->getDeclName(), D->getLocation(),
-                 Sema::LookupOrdinaryName, Sema::ForRedeclaration);
+                 Sema::LookupOrdinaryName, Sema::ForVisibleRedeclaration);
   LookupName(R, S);
   if (NamedDecl *ShadowedDecl = getShadowedDeclaration(D, R))
     CheckShadow(D, ShadowedDecl, R);
@@ -7672,7 +7720,7 @@ static NamedDecl *DiagnoseInvalidRedeclaration(
   LookupResult Prev(SemaRef, Name, NewFD->getLocation(),
                     IsLocalFriend ? Sema::LookupLocalFriendName
                                   : Sema::LookupOrdinaryName,
-                    Sema::ForRedeclaration);
+                    Sema::ForVisibleRedeclaration);
 
   NewFD->setInvalidDecl();
   if (IsLocalFriend)
@@ -11708,7 +11756,7 @@ Decl *Sema::ActOnParamDeclarator(Scope *S, Declarator &D) {
   // Check for redeclaration of parameters, e.g. int foo(int x, int x);
   if (II) {
     LookupResult R(*this, II, D.getIdentifierLoc(), LookupOrdinaryName,
-                   ForRedeclaration);
+                   ForVisibleRedeclaration);
     LookupName(R, S);
     if (R.isSingleResult()) {
       NamedDecl *PrevDecl = R.getFoundDecl();
@@ -12613,28 +12661,50 @@ void Sema::ActOnFinishDelayedAttribute(Scope *S, Decl *D,
 /// call, forming a call to an implicitly defined function (per C99 6.5.1p2).
 NamedDecl *Sema::ImplicitlyDefineFunction(SourceLocation Loc,
                                           IdentifierInfo &II, Scope *S) {
+  Scope *BlockScope = S;
+  while (!BlockScope->isCompoundStmtScope() && BlockScope->getParent())
+    BlockScope = BlockScope->getParent();
+
   // Before we produce a declaration for an implicitly defined
   // function, see whether there was a locally-scoped declaration of
   // this name as a function or variable. If so, use that
   // (non-visible) declaration, and complain about it.
-  if (NamedDecl *ExternCPrev = findLocallyScopedExternCDecl(&II)) {
-    Diag(Loc, diag::warn_use_out_of_scope_declaration) << ExternCPrev;
-    Diag(ExternCPrev->getLocation(), diag::note_previous_declaration);
-    return ExternCPrev;
+  NamedDecl *ExternCPrev = findLocallyScopedExternCDecl(&II);
+  if (ExternCPrev) {
+    // We still need to inject the function into the enclosing block scope so
+    // that later (non-call) uses can see it.
+    PushOnScopeChains(ExternCPrev, BlockScope, /*AddToContext*/false);
+
+    // C89 footnote 38:
+    //   If in fact it is not defined as having type "function returning int",
+    //   the behavior is undefined.
+    if (!isa<FunctionDecl>(ExternCPrev) ||
+        !Context.typesAreCompatible(
+            cast<FunctionDecl>(ExternCPrev)->getType(),
+            Context.getFunctionNoProtoType(Context.IntTy))) {
+      Diag(Loc, diag::ext_use_out_of_scope_declaration)
+          << ExternCPrev << !getLangOpts().C99;
+      Diag(ExternCPrev->getLocation(), diag::note_previous_declaration);
+      return ExternCPrev;
+    }
   }
 
   // Extension in C99.  Legal in C90, but warn about it.
+  // OpenCL v2.0 s6.9.u - Implicit function declaration is not supported.
   unsigned diag_id;
   if (II.getName().startswith("__builtin_"))
     diag_id = diag::warn_builtin_unknown;
-  // OpenCL v2.0 s6.9.u - Implicit function declaration is not supported.
-  else if (getLangOpts().OpenCL)
-    diag_id = diag::err_opencl_implicit_function_decl;
-  else if (getLangOpts().C99)
+  else if (getLangOpts().C99 || getLangOpts().OpenCL)
     diag_id = diag::ext_implicit_function_decl;
   else
     diag_id = diag::warn_implicit_function_decl;
-  Diag(Loc, diag_id) << &II;
+  Diag(Loc, diag_id) << &II << getLangOpts().OpenCL;
+
+  // If we found a prior declaration of this function, don't bother building
+  // another one. We've already pushed that one into scope, so there's nothing
+  // more to do.
+  if (ExternCPrev)
+    return ExternCPrev;
 
   // Because typo correction is expensive, only do it if the implicit
   // function declaration is going to be treated as an error.
@@ -12687,18 +12757,8 @@ NamedDecl *Sema::ImplicitlyDefineFunction(SourceLocation Loc,
   D.SetIdentifier(&II, Loc);
 
   // Insert this function into the enclosing block scope.
-  while (S && !S->isCompoundStmtScope())
-    S = S->getParent();
-  if (S == nullptr)
-    S = TUScope;
-
-  DeclContext *PrevDC = CurContext;
-  CurContext = Context.getTranslationUnitDecl();
-
-  FunctionDecl *FD = cast<FunctionDecl>(ActOnDeclarator(S, D));
+  FunctionDecl *FD = cast<FunctionDecl>(ActOnDeclarator(BlockScope, D));
   FD->setImplicit();
-
-  CurContext = PrevDC;
 
   AddKnownFunctionAttributes(FD);
 
@@ -13256,7 +13316,7 @@ Decl *Sema::ActOnTag(Scope *S, unsigned TagSpec, TagUseKind TUK,
   bool isStdBadAlloc = false;
   bool isStdAlignValT = false;
 
-  RedeclarationKind Redecl = ForRedeclaration;
+  RedeclarationKind Redecl = forRedeclarationInCurContext();
   if (TUK == TUK_Friend || TUK == TUK_Reference)
     Redecl = NotForRedeclaration;
 
@@ -13534,10 +13594,10 @@ Decl *Sema::ActOnTag(Scope *S, unsigned TagSpec, TagUseKind TUK,
     // type declared by an elaborated-type-specifier.  In C that is not correct
     // and we should instead merge compatible types found by lookup.
     if (getLangOpts().CPlusPlus) {
-      Previous.setRedeclarationKind(ForRedeclaration);
+      Previous.setRedeclarationKind(forRedeclarationInCurContext());
       LookupQualifiedName(Previous, SearchDC);
     } else {
-      Previous.setRedeclarationKind(ForRedeclaration);
+      Previous.setRedeclarationKind(forRedeclarationInCurContext());
       LookupName(Previous, S);
     }
   }
@@ -14035,6 +14095,9 @@ CreateNewDecl:
   if (!Invalid && SearchDC->isRecord())
     SetMemberAccessSpecifier(New, PrevDecl, AS);
 
+  if (PrevDecl)
+    CheckRedeclarationModuleOwnership(New, PrevDecl);
+
   if (TUK == TUK_Definition)
     New->startDefinition();
 
@@ -14388,7 +14451,8 @@ FieldDecl *Sema::HandleField(Scope *S, RecordDecl *Record,
 
   // Check to see if this name was declared as a member previously
   NamedDecl *PrevDecl = nullptr;
-  LookupResult Previous(*this, II, Loc, LookupMemberName, ForRedeclaration);
+  LookupResult Previous(*this, II, Loc, LookupMemberName,
+                        ForVisibleRedeclaration);
   LookupName(Previous, S);
   switch (Previous.getResultKind()) {
     case LookupResult::Found:
@@ -14776,7 +14840,7 @@ Decl *Sema::ActOnIvar(Scope *S,
 
   if (II) {
     NamedDecl *PrevDecl = LookupSingleName(S, II, Loc, LookupMemberName,
-                                           ForRedeclaration);
+                                           ForVisibleRedeclaration);
     if (PrevDecl && isDeclInScope(PrevDecl, EnclosingContext, S)
         && !isa<TagDecl>(PrevDecl)) {
       Diag(Loc, diag::err_duplicate_member) << II;
@@ -15333,7 +15397,6 @@ EnumConstantDecl *Sema::CheckEnumConstant(EnumDecl *Enum,
     if (Enum->isDependentType() || Val->isTypeDependent())
       EltTy = Context.DependentTy;
     else {
-      SourceLocation ExpLoc;
       if (getLangOpts().CPlusPlus11 && Enum->isFixed() &&
           !getLangOpts().MSVCCompat) {
         // C++11 [dcl.enum]p5: If the underlying type is fixed, [...] the
@@ -15498,7 +15561,7 @@ Sema::SkipBodyInfo Sema::shouldSkipAnonEnumBody(Scope *S, IdentifierInfo *II,
   // determine if we should merge the definition with an existing one and
   // skip the body.
   NamedDecl *PrevDecl = LookupSingleName(S, II, IILoc, LookupOrdinaryName,
-                                         ForRedeclaration);
+                                         forRedeclarationInCurContext());
   auto *PrevECD = dyn_cast_or_null<EnumConstantDecl>(PrevDecl);
   if (!PrevECD)
     return SkipBodyInfo();
@@ -15529,7 +15592,7 @@ Decl *Sema::ActOnEnumConstant(Scope *S, Decl *theEnumDecl, Decl *lastEnumConst,
   // Verify that there isn't already something declared with this name in this
   // scope.
   NamedDecl *PrevDecl = LookupSingleName(S, Id, IdLoc, LookupOrdinaryName,
-                                         ForRedeclaration);
+                                         ForVisibleRedeclaration);
   if (PrevDecl && PrevDecl->isTemplateParameter()) {
     // Maybe we will complain about the shadowed template parameter.
     DiagnoseTemplateParameterShadow(IdLoc, PrevDecl);
@@ -15556,8 +15619,7 @@ Decl *Sema::ActOnEnumConstant(Scope *S, Decl *theEnumDecl, Decl *lastEnumConst,
     // enum constant will 'hide' the tag.
     assert((getLangOpts().CPlusPlus || !isa<TagDecl>(PrevDecl)) &&
            "Received TagDecl when not in C++!");
-    if (!isa<TagDecl>(PrevDecl) && isDeclInScope(PrevDecl, CurContext, S) &&
-        shouldLinkPossiblyHiddenDecl(PrevDecl, New)) {
+    if (!isa<TagDecl>(PrevDecl) && isDeclInScope(PrevDecl, CurContext, S)) {
       if (isa<EnumConstantDecl>(PrevDecl))
         Diag(IdLoc, diag::err_redefinition_of_enumerator) << Id;
       else
@@ -16139,7 +16201,8 @@ Sema::DeclGroupPtrTy Sema::ActOnModuleDecl(SourceLocation StartLoc,
       else if (const auto *FE = M->getASTFile())
         Diag(M->DefinitionLoc, diag::note_prev_module_definition_from_ast_file)
             << FE->getName();
-      return nullptr;
+      Mod = M;
+      break;
     }
 
     // Create a Module for the module that we're defining.
@@ -16158,6 +16221,7 @@ Sema::DeclGroupPtrTy Sema::ActOnModuleDecl(SourceLocation StartLoc,
         PP.getIdentifierInfo(ModuleName), Path[0].second);
     Mod = getModuleLoader().loadModule(ModuleLoc, Path, Module::AllVisible,
                                        /*IsIncludeDirective=*/false);
+    // FIXME: Produce an error in this case.
     if (!Mod)
       return nullptr;
     break;

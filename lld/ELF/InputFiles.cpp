@@ -775,9 +775,16 @@ template <class ELFT> void SharedFile<ELFT>::parseRest() {
     // Ignore local symbols.
     if (Versym && VersymIndex == VER_NDX_LOCAL)
       continue;
-
-    const Elf_Verdef *V =
-        VersymIndex == VER_NDX_GLOBAL ? nullptr : Verdefs[VersymIndex];
+    const Elf_Verdef *V = nullptr;
+    if (VersymIndex != VER_NDX_GLOBAL) {
+      if (VersymIndex >= Verdefs.size()) {
+        error("corrupt input file: version definition index " +
+              Twine(VersymIndex) + " for symbol " + Name +
+              " is out of bounds\n>>> defined in " + toString(this));
+        continue;
+      }
+      V = Verdefs[VersymIndex];
+    }
 
     if (!Hidden)
       Symtab->addShared(Name, this, Sym, V);
@@ -933,7 +940,7 @@ template <class ELFT> void BinaryFile::parse() {
   // characters in a filename are replaced with underscore.
   std::string S = "_binary_" + MB.getBufferIdentifier().str();
   for (size_t I = 0; I < S.size(); ++I)
-    if (!elf::isAlnum(S[I]))
+    if (!isAlnum(S[I]))
       S[I] = '_';
 
   Symtab->addRegular<ELFT>(Saver.save(S + "_start"), STV_DEFAULT, STT_OBJECT,

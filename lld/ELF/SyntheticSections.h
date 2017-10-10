@@ -67,11 +67,6 @@ template <class ELFT> class EhFrameSection final : public SyntheticSection {
   typedef typename ELFT::Rel Elf_Rel;
   typedef typename ELFT::Rela Elf_Rela;
 
-  void updateAlignment(uint64_t Val) {
-    if (Val > this->Alignment)
-      this->Alignment = Val;
-  }
-
 public:
   EhFrameSection();
   void writeTo(uint8_t *Buf) override;
@@ -157,14 +152,13 @@ private:
 // respectively.
 class BssSection final : public SyntheticSection {
 public:
-  BssSection(StringRef Name);
+  BssSection(StringRef Name, uint64_t Size, uint32_t Alignment);
   void writeTo(uint8_t *) override {}
   bool empty() const override { return getSize() == 0; }
-  size_t reserveSpace(uint64_t Size, uint32_t Alignment);
   size_t getSize() const override { return Size; }
 
 private:
-  uint64_t Size = 0;
+  uint64_t Size;
 };
 
 class MipsGotSection final : public SyntheticSection {

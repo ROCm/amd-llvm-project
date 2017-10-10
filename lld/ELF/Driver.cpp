@@ -89,6 +89,14 @@ bool elf::link(ArrayRef<const char *> Args, bool CanExitEarly,
   Config->Argv = {Args.begin(), Args.end()};
 
   Driver->main(Args, CanExitEarly);
+  waitForBackgroundThreads();
+
+  // Exit immediately if we don't need to return to the caller.
+  // This saves time because the overhead of calling destructors
+  // for all globally-allocated objects is not negligible.
+  if (Config->ExitEarly)
+    exitLld(ErrorCount ? 1 : 0);
+
   freeArena();
   return !ErrorCount;
 }
@@ -553,17 +561,6 @@ static SortSectionPolicy getSortSection(opt::InputArgList &Args) {
   return SortSectionPolicy::Default;
 }
 
-static std::pair<bool, bool> getHashStyle(opt::InputArgList &Args) {
-  StringRef S = Args.getLastArgValue(OPT_hash_style, "sysv");
-  if (S == "sysv")
-    return {true, false};
-  if (S == "gnu")
-    return {false, true};
-  if (S != "both")
-    error("unknown -hash-style: " + S);
-  return {true, true};
-}
-
 // Parse --build-id or --build-id=<style>. We handle "tree" as a
 // synonym for "sha1" because all our hash functions including
 // -build-id=sha1 are actually tree hashes for performance reasons.
@@ -742,6 +739,19 @@ void LinkerDriver::readConfigs(opt::InputArgList &Args) {
     Config->Emulation = S;
   }
 
+  // Parse -hash-style={sysv,gnu,both}.
+  if (auto *Arg = Args.getLastArg(OPT_hash_style)) {
+    StringRef S = Arg->getValue();
+    if (S == "sysv")
+      Config->SysvHash = true;
+    else if (S == "gnu")
+      Config->GnuHash = true;
+    else if (S == "both")
+      Config->SysvHash = Config->GnuHash = true;
+    else
+      error("unknown -hash-style: " + S);
+  }
+
   if (Args.hasArg(OPT_print_map))
     Config->MapFile = "-";
 
@@ -752,7 +762,6 @@ void LinkerDriver::readConfigs(opt::InputArgList &Args) {
   if (Config->Omagic)
     Config->ZRelro = false;
 
-  std::tie(Config->SysvHash, Config->GnuHash) = getHashStyle(Args);
   std::tie(Config->BuildId, Config->BuildIdVector) = getBuildId(Args);
 
   if (auto *Arg = Args.getLastArg(OPT_symbol_ordering_file))
@@ -781,18 +790,8 @@ void LinkerDriver::readConfigs(opt::InputArgList &Args) {
         readDynamicList(*Buffer);
 
     for (auto *Arg : Args.filtered(OPT_export_dynamic_symbol))
-      Config->VersionScriptGlobals.push_back(
+      Config->DynamicList.push_back(
           {Arg->getValue(), /*IsExternCpp*/ false, /*HasWildcard*/ false});
-
-    // Dynamic lists are a simplified linker script that doesn't need the
-    // "global:" and implicitly ends with a "local:*". Set the variables
-    // needed to simulate that.
-    if (Args.hasArg(OPT_dynamic_list) ||
-        Args.hasArg(OPT_export_dynamic_symbol)) {
-      Config->ExportDynamic = true;
-      if (!Config->Shared)
-        Config->DefaultSymbolVersion = VER_NDX_LOCAL;
-    }
   }
 
   if (auto *Arg = Args.getLastArg(OPT_version_script))
@@ -986,6 +985,15 @@ template <class ELFT> void LinkerDriver::link(opt::InputArgList &Args) {
   Config->MaxPageSize = getMaxPageSize(Args);
   Config->ImageBase = getImageBase(Args);
 
+  // If a -hash-style option was not given, set to a default value,
+  // which varies depending on the target.
+  if (!Args.hasArg(OPT_hash_style)) {
+    if (Config->EMachine == EM_MIPS)
+      Config->SysvHash = true;
+    else
+      Config->SysvHash = Config->GnuHash = true;
+  }
+
   // Default output filename is "a.out" by the Unix tradition.
   if (Config->OutputFile.empty())
     Config->OutputFile = "a.out";
@@ -1031,6 +1039,10 @@ template <class ELFT> void LinkerDriver::link(opt::InputArgList &Args) {
   for (StringRef Sym : Script->Opt.ReferencedSymbols)
     Symtab->addUndefined<ELFT>(Sym);
 
+  // Handle the `--undefined <sym>` options.
+  for (StringRef S : Config->Undefined)
+    Symtab->fetchIfLazy<ELFT>(S);
+
   // If an entry symbol is in a static archive, pull out that file now
   // to complete the symbol table. After this, no new names except a
   // few linker-synthesized ones will be added to the symbol table.
@@ -1039,9 +1051,6 @@ template <class ELFT> void LinkerDriver::link(opt::InputArgList &Args) {
   // Return if there were name resolution errors.
   if (ErrorCount)
     return;
-
-  // Handle the `--undefined <sym>` options.
-  Symtab->scanUndefinedFlags<ELFT>();
 
   // Handle undefined symbols in DSOs.
   Symtab->scanShlibUndefined<ELFT>();

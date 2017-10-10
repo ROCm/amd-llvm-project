@@ -522,7 +522,9 @@ class DominatorTreeBase {
   ///
   /// Batch updates should be generally faster when performing longer sequences
   /// of updates than calling insertEdge/deleteEdge manually multiple times, as
-  /// they can reorder the updates and remove redundant ones internally.
+  /// it can reorder the updates and remove redundant ones internally.
+  /// The batch updater is also able to detect sequences of zero and exactly one
+  /// update -- it's optimized to do less work in these cases.
   ///
   /// Note that for postdominators it automatically takes care of applying
   /// updates on reverse edges internally (so there's no need to swap the
@@ -637,11 +639,12 @@ class DominatorTreeBase {
     assert(Node && "Removing node that isn't in dominator tree.");
     assert(Node->getChildren().empty() && "Node is not a leaf node.");
 
+    DFSInfoValid = false;
+
     // Remove node from immediate dominator's children list.
     DomTreeNodeBase<NodeT> *IDom = Node->getIDom();
     if (IDom) {
-      typename std::vector<DomTreeNodeBase<NodeT> *>::iterator I =
-          find(IDom->Children, Node);
+      const auto I = find(IDom->Children, Node);
       assert(I != IDom->Children.end() &&
              "Not in immediate dominator children set!");
       // I am no longer your child...
