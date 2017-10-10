@@ -173,10 +173,12 @@ class MCStreamer {
   MCDwarfFrameInfo *getCurrentDwarfFrameInfo();
   void EnsureValidDwarfFrame();
 
-  MCSymbol *EmitCFILabel();
   MCSymbol *EmitCFICommon();
 
-  std::vector<WinEH::FrameInfo *> WinFrameInfos;
+  /// Similar to DwarfFrameInfos, but for SEH unwind info. Chained frames may
+  /// refer to each other, so use std::unique_ptr to provide pointer stability.
+  std::vector<std::unique_ptr<WinEH::FrameInfo>> WinFrameInfos;
+
   WinEH::FrameInfo *CurrentWinFrameInfo;
   void EnsureValidWinFrameInfo();
 
@@ -199,6 +201,10 @@ protected:
 
   virtual void EmitCFIStartProcImpl(MCDwarfFrameInfo &Frame);
   virtual void EmitCFIEndProcImpl(MCDwarfFrameInfo &CurFrame);
+
+  /// When emitting an object file, create and emit a real label. When emitting
+  /// textual assembly, this should do nothing to avoid polluting our output.
+  virtual MCSymbol *EmitCFILabel();
 
   WinEH::FrameInfo *getCurrentWinFrameInfo() {
     return CurrentWinFrameInfo;
@@ -238,7 +244,7 @@ public:
   bool hasUnfinishedDwarfFrameInfo();
 
   unsigned getNumWinFrameInfos() { return WinFrameInfos.size(); }
-  ArrayRef<WinEH::FrameInfo *> getWinFrameInfos() const {
+  ArrayRef<std::unique_ptr<WinEH::FrameInfo>> getWinFrameInfos() const {
     return WinFrameInfos;
   }
 

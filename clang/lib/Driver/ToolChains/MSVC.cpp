@@ -375,7 +375,7 @@ void visualstudio::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   if (TC.getSanitizerArgs().needsAsanRt()) {
     CmdArgs.push_back(Args.MakeArgString("-debug"));
     CmdArgs.push_back(Args.MakeArgString("-incremental:no"));
-    if (TC.getSanitizerArgs().needsSharedAsanRt() ||
+    if (TC.getSanitizerArgs().needsSharedRt() ||
         Args.hasArg(options::OPT__SLASH_MD, options::OPT__SLASH_MDd)) {
       for (const auto &Lib : {"asan_dynamic", "asan_dynamic_runtime_thunk"})
         CmdArgs.push_back(TC.getCompilerRTArgString(Args, Lib));
@@ -1266,9 +1266,8 @@ VersionTuple MSVCToolChain::computeMSVCVersion(const Driver *D,
   if (MSVT.empty() &&
       Args.hasFlag(options::OPT_fms_extensions, options::OPT_fno_ms_extensions,
                    IsWindowsMSVC)) {
-    // -fms-compatibility-version=18.00 is default.
-    // FIXME: Consider bumping this to 19 (MSVC2015) soon.
-    MSVT = VersionTuple(18);
+    // -fms-compatibility-version=19.11 is default, aka 2017
+    MSVT = VersionTuple(19, 11);
   }
   return MSVT;
 }
