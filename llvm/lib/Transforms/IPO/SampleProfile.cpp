@@ -511,10 +511,12 @@ ErrorOr<uint64_t> SampleProfileLoader::getInstWeight(const Instruction &Inst) {
   if (isa<BranchInst>(Inst) || isa<IntrinsicInst>(Inst))
     return std::error_code();
 
-  // If a call/invoke instruction is inlined in profile, but not inlined here,
+  // If a direct call/invoke instruction is inlined in profile
+  // (findCalleeFunctionSamples returns non-empty result), but not inlined here,
   // it means that the inlined callsite has no sample, thus the call
   // instruction should have 0 count.
   if ((isa<CallInst>(Inst) || isa<InvokeInst>(Inst)) &&
+      !ImmutableCallSite(&Inst).isIndirectCall() &&
       findCalleeFunctionSamples(Inst))
     return 0;
 
@@ -788,9 +790,8 @@ bool SampleProfileLoader::inlineHotFunctions(
             // as a result, we do not have profile info for the branch
             // probability. We set the probability to 80% taken to indicate
             // that the static call is likely taken.
-            Instruction *DI = dyn_cast<Instruction>(
-                promoteIndirectCall(I, R->getValue(), 80, 100, false, ORE)
-                    ->stripPointerCasts());
+            Instruction *DI = promoteIndirectCall(
+                I, R->getValue(), 80, 100, false, ORE);
             PromotedInsns.insert(I);
             // If profile mismatches, we should not attempt to inline DI.
             if ((isa<CallInst>(DI) || isa<InvokeInst>(DI)) &&

@@ -724,8 +724,8 @@ define <8 x float> @blend_shufflevector_8xfloat(<8 x float> %a, <8 x float> %b) 
 ;
 ; SSE41-LABEL: blend_shufflevector_8xfloat:
 ; SSE41:       # BB#0: # %entry
-; SSE41-NEXT:    blendps {{.*#+}} xmm1 = xmm3[0,1],xmm1[2],xmm3[3]
 ; SSE41-NEXT:    blendps {{.*#+}} xmm0 = xmm0[0],xmm2[1,2,3]
+; SSE41-NEXT:    blendps {{.*#+}} xmm1 = xmm3[0,1],xmm1[2],xmm3[3]
 ; SSE41-NEXT:    retq
 ;
 ; AVX-LABEL: blend_shufflevector_8xfloat:
@@ -986,7 +986,7 @@ define <4 x i32> @blend_neg_logic_v4i32_2(<4 x i32> %v, <4 x i32> %c) {
 ; SSE41:       # BB#0: # %entry
 ; SSE41-NEXT:    movdqa %xmm0, %xmm2
 ; SSE41-NEXT:    pxor %xmm3, %xmm3
-; SSE41-NEXT:    psubd %xmm0, %xmm3
+; SSE41-NEXT:    psubd %xmm2, %xmm3
 ; SSE41-NEXT:    movaps %xmm1, %xmm0
 ; SSE41-NEXT:    blendvps %xmm0, %xmm2, %xmm3
 ; SSE41-NEXT:    movaps %xmm3, %xmm0

@@ -825,7 +825,9 @@ static const EnumEntry<unsigned> ElfOSABI[] = {
 };
 
 static const EnumEntry<unsigned> AMDGPUElfOSABI[] = {
-  {"AMDGPU_HSA", "AMDGPU - HSA", ELF::ELFOSABI_AMDGPU_HSA}
+  {"AMDGPU_HSA",    "AMDGPU - HSA",    ELF::ELFOSABI_AMDGPU_HSA},
+  {"AMDGPU_PAL",    "AMDGPU - PAL",    ELF::ELFOSABI_AMDGPU_PAL},
+  {"AMDGPU_MESA3D", "AMDGPU - MESA3D", ELF::ELFOSABI_AMDGPU_MESA3D}
 };
 
 static const EnumEntry<unsigned> ARMElfOSABI[] = {
@@ -1240,6 +1242,12 @@ static const EnumEntry<unsigned> ElfHeaderMipsFlags[] = {
   LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_ARCH_64R2),
   LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_ARCH_32R6),
   LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_ARCH_64R6)
+};
+
+static const EnumEntry<unsigned> ElfHeaderAMDGPUFlags[] = {
+  LLVM_READOBJ_ENUM_ENT(ELF, EF_AMDGPU_ARCH_NONE),
+  LLVM_READOBJ_ENUM_ENT(ELF, EF_AMDGPU_ARCH_R600),
+  LLVM_READOBJ_ENUM_ENT(ELF, EF_AMDGPU_ARCH_GCN)
 };
 
 static const EnumEntry<unsigned> ElfHeaderRISCVFlags[] = {
@@ -2388,7 +2396,6 @@ template <class ELFT> void ELFDumper<ELFT>::printStackMap() const {
   if (!StackMapSection)
     return;
 
-  StringRef StackMapContents;
   ArrayRef<uint8_t> StackMapContentsArray =
       unwrapOrError(Obj->getSectionContents(StackMapSection));
 
@@ -3560,6 +3567,9 @@ template <class ELFT> void LLVMStyle<ELFT>::printFileHeaders(const ELFO *Obj) {
       W.printFlags("Flags", e->e_flags, makeArrayRef(ElfHeaderMipsFlags),
                    unsigned(ELF::EF_MIPS_ARCH), unsigned(ELF::EF_MIPS_ABI),
                    unsigned(ELF::EF_MIPS_MACH));
+    else if (e->e_machine == EM_AMDGPU)
+      W.printFlags("Flags", e->e_flags, makeArrayRef(ElfHeaderAMDGPUFlags),
+                   unsigned(ELF::EF_AMDGPU_ARCH));
     else if (e->e_machine == EM_RISCV)
       W.printFlags("Flags", e->e_flags, makeArrayRef(ElfHeaderRISCVFlags));
     else

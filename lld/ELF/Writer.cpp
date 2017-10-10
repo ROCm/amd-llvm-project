@@ -117,7 +117,7 @@ StringRef elf::getOutputSectionName(StringRef Name) {
 
 static bool needsInterpSection() {
   return !SharedFiles.empty() && !Config->DynamicLinker.empty() &&
-         !Script->ignoreInterpSection();
+         Script->needsInterpSection();
 }
 
 template <class ELFT> void elf::writeResult() { Writer<ELFT>().run(); }
@@ -246,12 +246,6 @@ template <class ELFT> void Writer<ELFT>::run() {
 
   if (auto EC = Buffer->commit())
     error("failed to write to the output file: " + EC.message());
-
-  // Flush the output streams and exit immediately. A full shutdown
-  // is a good test that we are keeping track of all allocated memory,
-  // but actually freeing it is a waste of time in a regular linker run.
-  if (Config->ExitEarly)
-    exitLld(0);
 }
 
 // Initialize Out members.
@@ -271,7 +265,7 @@ template <class ELFT> void Writer<ELFT>::createSyntheticSections() {
   Out::ElfHeader = make<OutputSection>("", 0, SHF_ALLOC);
   Out::ElfHeader->Size = sizeof(Elf_Ehdr);
   Out::ProgramHeaders = make<OutputSection>("", 0, SHF_ALLOC);
-  Out::ProgramHeaders->updateAlignment(Config->Wordsize);
+  Out::ProgramHeaders->Alignment = Config->Wordsize;
 
   if (needsInterpSection()) {
     InX::Interp = createInterpSection();
@@ -290,9 +284,9 @@ template <class ELFT> void Writer<ELFT>::createSyntheticSections() {
     Add(InX::BuildId);
   }
 
-  InX::Bss = make<BssSection>(".bss");
+  InX::Bss = make<BssSection>(".bss", 0, 1);
   Add(InX::Bss);
-  InX::BssRelRo = make<BssSection>(".bss.rel.ro");
+  InX::BssRelRo = make<BssSection>(".bss.rel.ro", 0, 1);
   Add(InX::BssRelRo);
 
   // Add MIPS-specific sections.
@@ -810,7 +804,9 @@ template <class ELFT> void Writer<ELFT>::addReservedSymbols() {
   // __tls_get_addr, so it's not defined anywhere. Create a hidden definition
   // to avoid the undefined symbol error.
   if (!InX::DynSymTab)
-    Symtab->addIgnored<ELFT>("__tls_get_addr");
+    if (SymbolBody *S = Symtab->find("__tls_get_addr"))
+      if (!S->isInCurrentDSO())
+        Symtab->addAbsolute<ELFT>(S->getName(), STV_HIDDEN);
 
   // __ehdr_start is the location of ELF file headers. Note that we define
   // this symbol unconditionally even when using a linker script, which
@@ -882,13 +878,15 @@ void Writer<ELFT>::forEachRelSec(std::function<void(InputSectionBase &)> Fn) {
 }
 
 template <class ELFT> void Writer<ELFT>::createSections() {
-  std::vector<BaseCommand *> Old = Script->Opt.Commands;
-  Script->Opt.Commands.clear();
+  std::vector<OutputSection *> Vec;
   for (InputSectionBase *IS : InputSections)
     if (IS)
-      Factory.addInputSec(IS, getOutputSectionName(IS->Name));
-  Script->Opt.Commands.insert(Script->Opt.Commands.end(), Old.begin(),
-                              Old.end());
+      if (OutputSection *Sec =
+              Factory.addInputSec(IS, getOutputSectionName(IS->Name)))
+        Vec.push_back(Sec);
+
+  Script->Opt.Commands.insert(Script->Opt.Commands.begin(), Vec.begin(),
+                              Vec.end());
 
   Script->fabricateDefaultCommands();
   sortBySymbolsOrder();
@@ -1917,16 +1915,14 @@ template <class ELFT> void Writer<ELFT>::writeSections() {
   // In -r or -emit-relocs mode, write the relocation sections first as in
   // ELf_Rel targets we might find out that we need to modify the relocated
   // section while doing it.
-  parallelForEach(OutputSections, [&](OutputSection *Sec) {
+  for (OutputSection *Sec : OutputSections)
     if (Sec->Type == SHT_REL || Sec->Type == SHT_RELA)
       Sec->writeTo<ELFT>(Buf + Sec->Offset);
-  });
 
-  parallelForEach(OutputSections, [&](OutputSection *Sec) {
+  for (OutputSection *Sec : OutputSections)
     if (Sec != Out::Opd && Sec != EhFrameHdr && Sec->Type != SHT_REL &&
         Sec->Type != SHT_RELA)
       Sec->writeTo<ELFT>(Buf + Sec->Offset);
-  });
 
   // The .eh_frame_hdr depends on .eh_frame section contents, therefore
   // it should be written after .eh_frame is written.
