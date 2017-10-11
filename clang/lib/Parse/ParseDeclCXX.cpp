@@ -4465,7 +4465,7 @@ unsigned Parser::ParseRestrictionSpecification(Declarator& D,
     }
     DeclarationNameInfo NameInfo = Actions.GetNameFromUnqualifiedId(D.getName());
     LookupResult R(Actions, NameInfo, Sema::LookupUsingDeclName,
-                    Sema::ForRedeclaration);
+                    Sema::ForVisibleRedeclaration);
     if (Actions.LookupName(R, getCurScope())) {
       Diag(DeclEndLoc, diag::err_amp_auto_restricted_function_has_other_declaration)
         << NameInfo.getName().getAsString();

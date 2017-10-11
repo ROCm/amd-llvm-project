@@ -1689,7 +1689,6 @@ define void @interleaved_store_vf64_i8_stride4(<64 x i8> %a, <64 x i8> %b, <64 x
 ; AVX1-LABEL: interleaved_store_vf64_i8_stride4:
 ; AVX1:       # BB#0:
 ; AVX1-NEXT:    subq $24, %rsp
-; AVX1-NEXT:  .Lcfi0:
 ; AVX1-NEXT:    .cfi_def_cfa_offset 32
 ; AVX1-NEXT:    vpunpcklbw {{.*#+}} xmm8 = xmm0[0],xmm2[0],xmm0[1],xmm2[1],xmm0[2],xmm2[2],xmm0[3],xmm2[3],xmm0[4],xmm2[4],xmm0[5],xmm2[5],xmm0[6],xmm2[6],xmm0[7],xmm2[7]
 ; AVX1-NEXT:    vmovdqa %xmm8, -{{[0-9]+}}(%rsp) # 16-byte Spill
@@ -1721,7 +1720,7 @@ define void @interleaved_store_vf64_i8_stride4(<64 x i8> %a, <64 x i8> %b, <64 x
 ; AVX1-NEXT:    vpunpckhbw {{.*#+}} xmm3 = xmm4[8],xmm3[8],xmm4[9],xmm3[9],xmm4[10],xmm3[10],xmm4[11],xmm3[11],xmm4[12],xmm3[12],xmm4[13],xmm3[13],xmm4[14],xmm3[14],xmm4[15],xmm3[15]
 ; AVX1-NEXT:    vpunpcklwd {{.*#+}} xmm4 = xmm15[0],xmm5[0],xmm15[1],xmm5[1],xmm15[2],xmm5[2],xmm15[3],xmm5[3]
 ; AVX1-NEXT:    vmovdqa %xmm8, %xmm1
-; AVX1-NEXT:    vpunpcklwd {{.*#+}} xmm11 = xmm8[0],xmm2[0],xmm8[1],xmm2[1],xmm8[2],xmm2[2],xmm8[3],xmm2[3]
+; AVX1-NEXT:    vpunpcklwd {{.*#+}} xmm11 = xmm1[0],xmm2[0],xmm1[1],xmm2[1],xmm1[2],xmm2[2],xmm1[3],xmm2[3]
 ; AVX1-NEXT:    vinsertf128 $1, %xmm4, %ymm11, %ymm0
 ; AVX1-NEXT:    vmovups %ymm0, -{{[0-9]+}}(%rsp) # 32-byte Spill
 ; AVX1-NEXT:    vpunpcklwd {{.*#+}} xmm4 = xmm10[0],xmm9[0],xmm10[1],xmm9[1],xmm10[2],xmm9[2],xmm10[3],xmm9[3]

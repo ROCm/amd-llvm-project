@@ -668,7 +668,10 @@ class Configuration(object):
                 self.config.available_features.add('libcpp-abi-version-v%s'
                     % feature_macros[m])
                 continue
-            assert m.startswith('_LIBCPP_HAS_') or m == '_LIBCPP_ABI_UNSTABLE'
+            if m == '_LIBCPP_NO_VCRUNTIME':
+                self.config.available_features.add('libcpp-no-vcruntime')
+                continue
+            assert m.startswith('_LIBCPP_HAS_') or m.startswith('_LIBCPP_ABI_')
             m = m.lower()[1:].replace('_', '-')
             self.config.available_features.add(m)
         return feature_macros

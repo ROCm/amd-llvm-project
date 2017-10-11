@@ -35,14 +35,12 @@ set(UBSAN_CXXFLAGS ${SANITIZER_COMMON_CFLAGS})
 append_rtti_flag(ON UBSAN_CXXFLAGS)
 append_list_if(SANITIZER_CAN_USE_CXXABI -DUBSAN_CAN_USE_CXXABI UBSAN_CXXFLAGS)
 
-set(UBSAN_DYNAMIC_LIBS ${SANITIZER_COMMON_LINK_LIBS})
+set(UBSAN_DYNAMIC_LIBS ${SANITIZER_CXX_ABI_LIBRARY} ${SANITIZER_COMMON_LINK_LIBS})
 
 append_list_if(COMPILER_RT_HAS_LIBDL dl UBSAN_DYNAMIC_LIBS)
 append_list_if(COMPILER_RT_HAS_LIBLOG log UBSAN_DYNAMIC_LIBS)
 append_list_if(COMPILER_RT_HAS_LIBRT rt UBSAN_DYNAMIC_LIBS)
 append_list_if(COMPILER_RT_HAS_LIBPTHREAD pthread UBSAN_DYNAMIC_LIBS)
-
-list(APPEND UBSAN_DYNAMIC_LIBS ${SANITIZER_CXX_ABI_LIBRARY})
 
 add_compiler_rt_component(ubsan)
 
@@ -78,6 +76,18 @@ if(APPLE)
                   RTUbsan_standalone
                   RTSanitizerCommon
                   RTSanitizerCommonLibc
+                  RTInterception
+      LINK_FLAGS ${WEAK_SYMBOL_LINK_FLAGS}
+      PARENT_TARGET ubsan)
+
+    add_compiler_rt_runtime(clang_rt.ubsan
+      STATIC
+      OS ${SANITIZER_COMMON_SUPPORTED_OS}
+      ARCHS ${UBSAN_SUPPORTED_ARCH}
+      OBJECT_LIBS RTUbsan
+                  RTUbsan_standalone
+                  RTSanitizerCommonNoHooks
+                  RTSanitizerCommonLibcNoHooks
                   RTInterception
       LINK_FLAGS ${WEAK_SYMBOL_LINK_FLAGS}
       PARENT_TARGET ubsan)

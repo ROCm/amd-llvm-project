@@ -122,12 +122,18 @@ X86InstrInfo::X86InstrInfo(X86Subtarget &STI)
       Subtarget(STI), RI(STI.getTargetTriple()) {
 
   static const X86MemoryFoldTableEntry MemoryFoldTable2Addr[] = {
+    { X86::ADC16ri,     X86::ADC16mi,    0 },
+    { X86::ADC16ri8,    X86::ADC16mi8,   0 },
+    { X86::ADC16rr,     X86::ADC16mr,    0 },
     { X86::ADC32ri,     X86::ADC32mi,    0 },
     { X86::ADC32ri8,    X86::ADC32mi8,   0 },
     { X86::ADC32rr,     X86::ADC32mr,    0 },
     { X86::ADC64ri32,   X86::ADC64mi32,  0 },
     { X86::ADC64ri8,    X86::ADC64mi8,   0 },
     { X86::ADC64rr,     X86::ADC64mr,    0 },
+    { X86::ADC8ri,      X86::ADC8mi,     0 },
+    { X86::ADC8ri8,     X86::ADC8mi8,    0 },
+    { X86::ADC8rr,      X86::ADC8mr,     0 },
     { X86::ADD16ri,     X86::ADD16mi,    0 },
     { X86::ADD16ri8,    X86::ADD16mi8,   0 },
     { X86::ADD16ri_DB,  X86::ADD16mi,    TB_NO_REVERSE },
@@ -147,6 +153,7 @@ X86InstrInfo::X86InstrInfo(X86Subtarget &STI)
     { X86::ADD64rr,     X86::ADD64mr,    0 },
     { X86::ADD64rr_DB,  X86::ADD64mr,    TB_NO_REVERSE },
     { X86::ADD8ri,      X86::ADD8mi,     0 },
+    { X86::ADD8ri8,     X86::ADD8mi8,    0 },
     { X86::ADD8rr,      X86::ADD8mr,     0 },
     { X86::AND16ri,     X86::AND16mi,    0 },
     { X86::AND16ri8,    X86::AND16mi8,   0 },
@@ -158,7 +165,17 @@ X86InstrInfo::X86InstrInfo(X86Subtarget &STI)
     { X86::AND64ri8,    X86::AND64mi8,   0 },
     { X86::AND64rr,     X86::AND64mr,    0 },
     { X86::AND8ri,      X86::AND8mi,     0 },
+    { X86::AND8ri8,     X86::AND8mi8,    0 },
     { X86::AND8rr,      X86::AND8mr,     0 },
+    { X86::BTC16ri8,    X86::BTC16mi8,   0 },
+    { X86::BTC32ri8,    X86::BTC32mi8,   0 },
+    { X86::BTC64ri8,    X86::BTC64mi8,   0 },
+    { X86::BTR16ri8,    X86::BTR16mi8,   0 },
+    { X86::BTR32ri8,    X86::BTR32mi8,   0 },
+    { X86::BTR64ri8,    X86::BTR64mi8,   0 },
+    { X86::BTS16ri8,    X86::BTS16mi8,   0 },
+    { X86::BTS32ri8,    X86::BTS32mi8,   0 },
+    { X86::BTS64ri8,    X86::BTS64mi8,   0 },
     { X86::DEC16r,      X86::DEC16m,     0 },
     { X86::DEC32r,      X86::DEC32m,     0 },
     { X86::DEC64r,      X86::DEC64m,     0 },
@@ -185,7 +202,32 @@ X86InstrInfo::X86InstrInfo(X86Subtarget &STI)
     { X86::OR64ri8,     X86::OR64mi8,    0 },
     { X86::OR64rr,      X86::OR64mr,     0 },
     { X86::OR8ri,       X86::OR8mi,      0 },
+    { X86::OR8ri8,      X86::OR8mi8,     0 },
     { X86::OR8rr,       X86::OR8mr,      0 },
+    { X86::RCL16r1,     X86::RCL16m1,    0 },
+    { X86::RCL16rCL,    X86::RCL16mCL,   0 },
+    { X86::RCL16ri,     X86::RCL16mi,    0 },
+    { X86::RCL32r1,     X86::RCL32m1,    0 },
+    { X86::RCL32rCL,    X86::RCL32mCL,   0 },
+    { X86::RCL32ri,     X86::RCL32mi,    0 },
+    { X86::RCL64r1,     X86::RCL64m1,    0 },
+    { X86::RCL64rCL,    X86::RCL64mCL,   0 },
+    { X86::RCL64ri,     X86::RCL64mi,    0 },
+    { X86::RCL8r1,      X86::RCL8m1,     0 },
+    { X86::RCL8rCL,     X86::RCL8mCL,    0 },
+    { X86::RCL8ri,      X86::RCL8mi,     0 },
+    { X86::RCR16r1,     X86::RCR16m1,    0 },
+    { X86::RCR16rCL,    X86::RCR16mCL,   0 },
+    { X86::RCR16ri,     X86::RCR16mi,    0 },
+    { X86::RCR32r1,     X86::RCR32m1,    0 },
+    { X86::RCR32rCL,    X86::RCR32mCL,   0 },
+    { X86::RCR32ri,     X86::RCR32mi,    0 },
+    { X86::RCR64r1,     X86::RCR64m1,    0 },
+    { X86::RCR64rCL,    X86::RCR64mCL,   0 },
+    { X86::RCR64ri,     X86::RCR64mi,    0 },
+    { X86::RCR8r1,      X86::RCR8m1,     0 },
+    { X86::RCR8rCL,     X86::RCR8mCL,    0 },
+    { X86::RCR8ri,      X86::RCR8mi,     0 },
     { X86::ROL16r1,     X86::ROL16m1,    0 },
     { X86::ROL16rCL,    X86::ROL16mCL,   0 },
     { X86::ROL16ri,     X86::ROL16mi,    0 },
@@ -222,12 +264,18 @@ X86InstrInfo::X86InstrInfo(X86Subtarget &STI)
     { X86::SAR8r1,      X86::SAR8m1,     0 },
     { X86::SAR8rCL,     X86::SAR8mCL,    0 },
     { X86::SAR8ri,      X86::SAR8mi,     0 },
+    { X86::SBB16ri,     X86::SBB16mi,    0 },
+    { X86::SBB16ri8,    X86::SBB16mi8,   0 },
+    { X86::SBB16rr,     X86::SBB16mr,    0 },
     { X86::SBB32ri,     X86::SBB32mi,    0 },
     { X86::SBB32ri8,    X86::SBB32mi8,   0 },
     { X86::SBB32rr,     X86::SBB32mr,    0 },
     { X86::SBB64ri32,   X86::SBB64mi32,  0 },
     { X86::SBB64ri8,    X86::SBB64mi8,   0 },
     { X86::SBB64rr,     X86::SBB64mr,    0 },
+    { X86::SBB8ri,      X86::SBB8mi,     0 },
+    { X86::SBB8ri8,     X86::SBB8mi8,    0 },
+    { X86::SBB8rr,      X86::SBB8mr,     0 },
     { X86::SHL16r1,     X86::SHL16m1,    0 },
     { X86::SHL16rCL,    X86::SHL16mCL,   0 },
     { X86::SHL16ri,     X86::SHL16mi,    0 },
@@ -274,6 +322,7 @@ X86InstrInfo::X86InstrInfo(X86Subtarget &STI)
     { X86::SUB64ri8,    X86::SUB64mi8,   0 },
     { X86::SUB64rr,     X86::SUB64mr,    0 },
     { X86::SUB8ri,      X86::SUB8mi,     0 },
+    { X86::SUB8ri8,     X86::SUB8mi8,    0 },
     { X86::SUB8rr,      X86::SUB8mr,     0 },
     { X86::XOR16ri,     X86::XOR16mi,    0 },
     { X86::XOR16ri8,    X86::XOR16mi8,   0 },
@@ -285,6 +334,7 @@ X86InstrInfo::X86InstrInfo(X86Subtarget &STI)
     { X86::XOR64ri8,    X86::XOR64mi8,   0 },
     { X86::XOR64rr,     X86::XOR64mr,    0 },
     { X86::XOR8ri,      X86::XOR8mi,     0 },
+    { X86::XOR8ri8,     X86::XOR8mi8,    0 },
     { X86::XOR8rr,      X86::XOR8mr,     0 }
   };
 
@@ -5189,18 +5239,8 @@ MachineInstr *X86InstrInfo::commuteInstructionImpl(MachineInstr &MI, bool NewMI,
     case X86::VMOVSSrr: Opc = X86::VBLENDPSrri; Mask = 0x0E; break;
     }
 
-    // MOVSD/MOVSS's 2nd operand is a FR64/FR32 reg class - we need to copy
-    // this over to a VR128 class like the 1st operand to use a BLENDPD/BLENDPS.
-    auto &MRI = MI.getParent()->getParent()->getRegInfo();
-    auto VR128RC = MRI.getRegClass(MI.getOperand(1).getReg());
-    unsigned VR128 = MRI.createVirtualRegister(VR128RC);
-    BuildMI(*MI.getParent(), MI, MI.getDebugLoc(), get(TargetOpcode::COPY),
-            VR128)
-        .addReg(MI.getOperand(2).getReg());
-
     auto &WorkingMI = cloneIfNew(MI);
     WorkingMI.setDesc(get(Opc));
-    WorkingMI.getOperand(2).setReg(VR128);
     WorkingMI.addOperand(MachineOperand::CreateImm(Mask));
     return TargetInstrInfo::commuteInstructionImpl(WorkingMI, /*NewMI=*/false,
                                                    OpIdx1, OpIdx2);
@@ -10773,8 +10813,22 @@ X86InstrInfo::getOutlininingCandidateInfo(
                              MachineOutlinerDefault);
 }
 
-bool X86InstrInfo::isFunctionSafeToOutlineFrom(MachineFunction &MF) const {
-  return MF.getFunction()->hasFnAttribute(Attribute::NoRedZone);
+bool X86InstrInfo::isFunctionSafeToOutlineFrom(MachineFunction &MF,
+                                           bool OutlineFromLinkOnceODRs) const {
+  const Function *F = MF.getFunction();
+
+  // Does the function use a red zone? If it does, then we can't risk messing
+  // with the stack.
+  if (!F->hasFnAttribute(Attribute::NoRedZone))
+      return false;
+  
+  // If we *don't* want to outline from things that could potentially be deduped
+  // then return false.
+  if (!OutlineFromLinkOnceODRs && F->hasLinkOnceODRLinkage())
+      return false;
+  
+  // This function is viable for outlining, so return true.
+  return true;
 }
 
 X86GenInstrInfo::MachineOutlinerInstrType

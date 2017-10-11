@@ -205,7 +205,7 @@ namespace {
         addr = CGF.Builder.CreateStructGEP(addr, 0, CharUnits());
 
       return LValue::MakeAddr(addr, getValueType(), CGF.getContext(),
-                              LVal.getBaseInfo(), LVal.getTBAAAccessType());
+                              LVal.getBaseInfo(), LVal.getTBAAInfo());
     }
 
     /// \brief Emits atomic load.
@@ -1432,8 +1432,7 @@ llvm::Value *AtomicInfo::EmitAtomicLoadOp(llvm::AtomicOrdering AO,
   // Other decoration.
   if (IsVolatile)
     Load->setVolatile(true);
-  if (LVal.getTBAAAccessType())
-    CGF.CGM.DecorateInstructionWithTBAA(Load, LVal.getTBAAAccessType());
+  CGF.CGM.DecorateInstructionWithTBAA(Load, LVal.getTBAAInfo());
   return Load;
 }
 
@@ -1950,8 +1949,7 @@ void CodeGenFunction::EmitAtomicStore(RValue rvalue, LValue dest,
     // Other decoration.
     if (IsVolatile)
       store->setVolatile(true);
-    if (dest.getTBAAAccessType())
-      CGM.DecorateInstructionWithTBAA(store, dest.getTBAAAccessType());
+    CGM.DecorateInstructionWithTBAA(store, dest.getTBAAInfo());
     return;
   }
 

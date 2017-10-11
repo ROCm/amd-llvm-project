@@ -136,16 +136,6 @@ DefinedRegular *SymbolTable::addAbsolute(StringRef Name, uint8_t Visibility,
   return cast<DefinedRegular>(Sym->body());
 }
 
-// Add Name as an "ignored" symbol. An ignored symbol is a regular
-// linker-synthesized defined symbol, but is only defined if needed.
-template <class ELFT>
-DefinedRegular *SymbolTable::addIgnored(StringRef Name, uint8_t Visibility) {
-  SymbolBody *S = find(Name);
-  if (!S || S->isInCurrentDSO())
-    return nullptr;
-  return addAbsolute<ELFT>(Name, Visibility);
-}
-
 // Set a flag for --trace-symbol so that we can print out a log message
 // if a new symbol with the same name is inserted into the symbol table.
 void SymbolTable::trace(StringRef Name) {
@@ -162,10 +152,10 @@ template <class ELFT> void SymbolTable::addSymbolWrap(StringRef Name) {
   Symbol *Real = addUndefined<ELFT>(Saver.save("__real_" + Name));
   Symbol *Wrap = addUndefined<ELFT>(Saver.save("__wrap_" + Name));
 
-  // Tell LTO not to eliminate this symbol.
-  Wrap->IsUsedInRegularObj = true;
   defsym(Real, Sym);
   defsym(Sym, Wrap);
+
+  WrapSymbols.push_back({Wrap, Real});
 }
 
 // Creates alias for symbol. Used to implement --defsym=ALIAS=SYM.
@@ -177,8 +167,6 @@ void SymbolTable::addSymbolAlias(StringRef Alias, StringRef Name) {
     return;
   }
 
-  // Tell LTO not to eliminate this symbol.
-  B->symbol()->IsUsedInRegularObj = true;
   defsym(addUndefined<ELFT>(Alias), B->symbol());
 }
 
@@ -187,10 +175,42 @@ void SymbolTable::addSymbolAlias(StringRef Alias, StringRef Name) {
 // LTO (if LTO is running) not to include these symbols in IPO. Now that the
 // symbols are finalized, we can perform the replacement.
 void SymbolTable::applySymbolRenames() {
+  // This function rotates 3 symbols:
+  //
+  // __real_foo becomes foo
+  // foo        becomes __wrap_foo
+  // __wrap_foo becomes __real_foo
+  //
+  // The last part is special in that we don't want to change what references to
+  // __wrap_foo point to, we just want have __real_foo in the symbol table.
+
+  // First make a copy of __real_foo
+  std::vector<Symbol> Origs;
+  for (const auto &P : WrapSymbols)
+    Origs.push_back(*P.second);
+
+  // Replace __real_foo with foo and foo with __wrap_foo
   for (SymbolRenaming &S : Defsyms) {
     S.Dst->body()->copyFrom(S.Src->body());
     S.Dst->File = S.Src->File;
     S.Dst->Binding = S.Binding;
+  }
+
+  // Hide one of the copies of __wrap_foo, create a new symbol and copy
+  // __real_foo into it.
+  for (unsigned I = 0, N = WrapSymbols.size(); I < N; ++I) {
+    // We now have two copies of __wrap_foo. Drop one.
+    Symbol *Wrap = WrapSymbols[I].first;
+    Wrap->IsUsedInRegularObj = false;
+
+    Symbol *Real = &Origs[I];
+    // If __real_foo was undefined, we don't want it in the symbol table.
+    if (Real->body()->isUndefined())
+      continue;
+
+    auto *NewSym = make<Symbol>();
+    memcpy(NewSym, Real, sizeof(Symbol));
+    SymVector.push_back(NewSym);
   }
 }
 
@@ -529,6 +549,10 @@ void SymbolTable::defsym(Symbol *Dst, Symbol *Src) {
   // We want to tell LTO not to inline Dst symbol because LTO doesn't
   // know the final symbol contents after renaming.
   Dst->CanInline = false;
+
+  // Tell LTO not to eliminate this symbol.
+  Src->IsUsedInRegularObj = true;
+
   Defsyms.push_back({Dst, Src, Dst->Binding});
 }
 
@@ -581,12 +605,16 @@ void SymbolTable::addLazyObject(StringRef Name, LazyObjFile &Obj) {
     addFile<ELFT>(F);
 }
 
-// Process undefined (-u) flags by loading lazy symbols named by those flags.
-template <class ELFT> void SymbolTable::scanUndefinedFlags() {
-  for (StringRef S : Config->Undefined)
-    if (auto *L = dyn_cast_or_null<Lazy>(find(S)))
+// If we already saw this symbol, force loading its file.
+template <class ELFT> void SymbolTable::fetchIfLazy(StringRef Name) {
+  if (SymbolBody *B = find(Name)) {
+    // Mark the symbol not to be eliminated by LTO
+    // even if it is a bitcode symbol.
+    B->symbol()->IsUsedInRegularObj = true;
+    if (auto *L = dyn_cast_or_null<Lazy>(B))
       if (InputFile *File = L->fetch())
         addFile<ELFT>(File);
+  }
 }
 
 // This function takes care of the case in which shared libraries depend on
@@ -695,7 +723,7 @@ void SymbolTable::handleDynamicList() {
 
     for (SymbolBody *B : Syms) {
       if (!Config->Shared)
-        B->symbol()->VersionId = VER_NDX_GLOBAL;
+        B->symbol()->ExportDynamic = true;
       else if (B->symbol()->includeInDynsym())
         B->IsPreemptible = true;
     }
@@ -833,11 +861,6 @@ template DefinedRegular *SymbolTable::addAbsolute<ELF64LE>(StringRef, uint8_t,
 template DefinedRegular *SymbolTable::addAbsolute<ELF64BE>(StringRef, uint8_t,
                                                            uint8_t);
 
-template DefinedRegular *SymbolTable::addIgnored<ELF32LE>(StringRef, uint8_t);
-template DefinedRegular *SymbolTable::addIgnored<ELF32BE>(StringRef, uint8_t);
-template DefinedRegular *SymbolTable::addIgnored<ELF64LE>(StringRef, uint8_t);
-template DefinedRegular *SymbolTable::addIgnored<ELF64BE>(StringRef, uint8_t);
-
 template Symbol *
 SymbolTable::addLazyArchive<ELF32LE>(StringRef, ArchiveFile *,
                                      const object::Archive::Symbol);
@@ -869,10 +892,10 @@ template void SymbolTable::addShared<ELF64BE>(StringRef, SharedFile<ELF64BE> *,
                                               const typename ELF64BE::Sym &,
                                               const typename ELF64BE::Verdef *);
 
-template void SymbolTable::scanUndefinedFlags<ELF32LE>();
-template void SymbolTable::scanUndefinedFlags<ELF32BE>();
-template void SymbolTable::scanUndefinedFlags<ELF64LE>();
-template void SymbolTable::scanUndefinedFlags<ELF64BE>();
+template void SymbolTable::fetchIfLazy<ELF32LE>(StringRef);
+template void SymbolTable::fetchIfLazy<ELF32BE>(StringRef);
+template void SymbolTable::fetchIfLazy<ELF64LE>(StringRef);
+template void SymbolTable::fetchIfLazy<ELF64BE>(StringRef);
 
 template void SymbolTable::scanShlibUndefined<ELF32LE>();
 template void SymbolTable::scanShlibUndefined<ELF32BE>();
