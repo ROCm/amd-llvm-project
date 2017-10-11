@@ -54,12 +54,23 @@ public:
 
   // The garbage collector sets sections' Live bits.
   // If GC is disabled, all sections are considered live by default.
-  unsigned Live : 1;     // for garbage collection
-  unsigned Assigned : 1; // for linker script
+  unsigned Live : 1;
 
-  uint32_t Alignment;
+  // True if this section has already been placed to a linker script
+  // output section. This is needed because, in a linker script, you
+  // can refer to the same section more than once. For example, in
+  // the following linker script,
+  //
+  //   .foo : { *(.text) }
+  //   .bar : { *(.text) }
+  //
+  // .foo takes all .text sections, and .bar becomes empty. To achieve
+  // this, we need to memorize whether a section has been placed or
+  // not for each input section.
+  unsigned Assigned : 1;
 
   // These corresponds to the fields in Elf_Shdr.
+  uint32_t Alignment;
   uint64_t Flags;
   uint64_t Entsize;
   uint32_t Type;
@@ -91,23 +102,11 @@ protected:
 // This corresponds to a section of an input file.
 class InputSectionBase : public SectionBase {
 public:
-  static bool classof(const SectionBase *S) { return S->kind() != Output; }
-
-  // The file this section is from.
-  InputFile *File;
-
-  ArrayRef<uint8_t> Data;
-  uint64_t getOffsetInFile() const;
-
-  static InputSectionBase Discarded;
-
   InputSectionBase()
       : SectionBase(Regular, "", /*Flags*/ 0, /*Entsize*/ 0, /*Alignment*/ 0,
                     /*Type*/ 0,
                     /*Info*/ 0, /*Link*/ 0),
         Repl(this) {
-    Live = false;
-    Assigned = false;
     NumRelocations = 0;
     AreRelocsRela = false;
   }
@@ -121,6 +120,22 @@ public:
                    uint32_t Alignment, ArrayRef<uint8_t> Data, StringRef Name,
                    Kind SectionKind);
 
+  static bool classof(const SectionBase *S) { return S->kind() != Output; }
+
+  // The file which contains this section. It's dynamic type is always
+  // ObjFile<ELFT>, but in order to avoid ELFT, we use InputFile as
+  // its static type.
+  InputFile *File;
+
+  template <class ELFT> ObjFile<ELFT> *getFile() const {
+    return cast_or_null<ObjFile<ELFT>>(File);
+  }
+
+  ArrayRef<uint8_t> Data;
+  uint64_t getOffsetInFile() const;
+
+  static InputSectionBase Discarded;
+
   // Input sections are part of an output section. Special sections
   // like .eh_frame and merge sections are first combined into a
   // synthetic section that is then added to an output section. In all
@@ -131,12 +146,14 @@ public:
   const void *FirstRelocation = nullptr;
   unsigned NumRelocations : 31;
   unsigned AreRelocsRela : 1;
+
   template <class ELFT> ArrayRef<typename ELFT::Rel> rels() const {
     assert(!AreRelocsRela);
     return llvm::makeArrayRef(
         static_cast<const typename ELFT::Rel *>(FirstRelocation),
         NumRelocations);
   }
+
   template <class ELFT> ArrayRef<typename ELFT::Rela> relas() const {
     assert(AreRelocsRela);
     return llvm::makeArrayRef(
@@ -157,25 +174,27 @@ public:
   // Returns the size of this section (even if this is a common or BSS.)
   size_t getSize() const;
 
-  template <class ELFT> ObjFile<ELFT> *getFile() const;
-
-  template <class ELFT> llvm::object::ELFFile<ELFT> getObj() const {
-    return getFile<ELFT>()->getObj();
-  }
-
   InputSection *getLinkOrderDep() const;
 
-  void uncompress();
+  // Compilers emit zlib-compressed debug sections if the -gz option
+  // is given. This function checks if this section is compressed, and
+  // if so, decompress in memory.
+  void maybeUncompress();
 
   // Returns a source location string. Used to construct an error message.
   template <class ELFT> std::string getLocation(uint64_t Offset);
   template <class ELFT> std::string getSrcMsg(uint64_t Offset);
   template <class ELFT> std::string getObjMsg(uint64_t Offset);
 
+  // Each section knows how to relocate itself. These functions apply
+  // relocations, assuming that Buf points to this section's copy in
+  // the mmap'ed output buffer.
   template <class ELFT> void relocate(uint8_t *Buf, uint8_t *BufEnd);
   void relocateAlloc(uint8_t *Buf, uint8_t *BufEnd);
-  template <class ELFT> void relocateNonAlloc(uint8_t *Buf, uint8_t *BufEnd);
 
+  // The native ELF reloc data type is not very convenient to handle.
+  // So we convert ELF reloc records to our own records in Relocations.cpp.
+  // This vector contains such "cooked" relocations.
   std::vector<Relocation> Relocations;
 
   template <typename T> llvm::ArrayRef<T> getDataAs() const {

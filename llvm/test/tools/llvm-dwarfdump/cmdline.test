@@ -10,9 +10,11 @@ HELP: -find
 HELP: -ignore-case
 HELP: -name
 HELP: -recurse-depth=<N>
+HELP: -regex
 HELP: -show-children
 HELP: -show-form
 HELP: -show-parents
+HELP: -statistics
 HELP: -summarize-types
 HELP-NOT: -reverse-iterate
 

@@ -210,9 +210,15 @@ OutputSection *SectionBase::getOutputSection() {
   return Sec ? Sec->getParent() : nullptr;
 }
 
-// Uncompress section contents. Note that this function is called
-// from parallelForEach, so it must be thread-safe.
-void InputSectionBase::uncompress() {
+// Uncompress section contents if required. Note that this function
+// is called from parallelForEach, so it must be thread-safe.
+void InputSectionBase::maybeUncompress() {
+  if (UncompressBuf)
+    return;
+
+  if (!Decompressor::isCompressedELFSection(Flags, Name))
+    return;
+
   Decompressor Dec = check(Decompressor::create(Name, toStringRef(Data),
                                                 Config->IsLE, Config->Is64));
 
@@ -380,7 +386,8 @@ InputSectionBase *InputSection::getRelocatedSection() {
 // for each relocation. So we copy relocations one by one.
 template <class ELFT, class RelTy>
 void InputSection::copyRelocations(uint8_t *Buf, ArrayRef<RelTy> Rels) {
-  InputSectionBase *RelocatedSection = getRelocatedSection();
+  InputSectionBase *Sec = getRelocatedSection();
+
   for (const RelTy &Rel : Rels) {
     uint32_t Type = Rel.getType(Config->IsMips64EL);
     SymbolBody &Body = this->getFile<ELFT>()->getRelocTargetSym(Rel);
@@ -393,8 +400,7 @@ void InputSection::copyRelocations(uint8_t *Buf, ArrayRef<RelTy> Rels) {
 
     // Output section VA is zero for -r, so r_offset is an offset within the
     // section, but for --emit-relocs it is an virtual address.
-    P->r_offset = RelocatedSection->getOutputSection()->Addr +
-                  RelocatedSection->getOffset(Rel.r_offset);
+    P->r_offset = Sec->getOutputSection()->Addr + Sec->getOffset(Rel.r_offset);
     P->setSymbolAndType(InX::SymTab->getSymbolIndex(&Body), Type,
                         Config->IsMips64EL);
 
@@ -417,10 +423,10 @@ void InputSection::copyRelocations(uint8_t *Buf, ArrayRef<RelTy> Rels) {
       if (Config->IsRela) {
         P->r_addend += Body.getVA() - Section->getOutputSection()->Addr;
       } else if (Config->Relocatable) {
-        const uint8_t *BufLoc = RelocatedSection->Data.begin() + Rel.r_offset;
-        RelocatedSection->Relocations.push_back(
-            {R_ABS, Type, Rel.r_offset, Target->getImplicitAddend(BufLoc, Type),
-             &Body});
+        const uint8_t *BufLoc = Sec->Data.begin() + Rel.r_offset;
+        Sec->Relocations.push_back({R_ABS, Type, Rel.r_offset,
+                                    Target->getImplicitAddend(BufLoc, Type),
+                                    &Body});
       }
     }
 
@@ -664,6 +670,8 @@ static uint64_t getRelocTargetVA(uint32_t Type, int64_t A, uint64_t P,
 // function as a performance optimization.
 template <class ELFT, class RelTy>
 void InputSection::relocateNonAlloc(uint8_t *Buf, ArrayRef<RelTy> Rels) {
+  const unsigned Bits = sizeof(typename ELFT::uint) * 8;
+
   for (const RelTy &Rel : Rels) {
     uint32_t Type = Rel.getType(Config->IsMips64EL);
     uint64_t Offset = getOffset(Rel.r_offset);
@@ -677,47 +685,36 @@ void InputSection::relocateNonAlloc(uint8_t *Buf, ArrayRef<RelTy> Rels) {
     if (Expr == R_NONE)
       continue;
     if (Expr != R_ABS) {
-      error(this->getLocation<ELFT>(Offset) + ": has non-ABS reloc");
+      error(this->getLocation<ELFT>(Offset) + ": has non-ABS relocation " +
+            toString(Type) + " against symbol '" + toString(Sym) + "'");
       return;
     }
 
-    uint64_t AddrLoc = getParent()->Addr + Offset;
-    uint64_t SymVA = 0;
-    if (!Sym.isTls() || Out::TlsPhdr)
-      SymVA = SignExtend64<sizeof(typename ELFT::uint) * 8>(
-          getRelocTargetVA(Type, Addend, AddrLoc, Sym, R_ABS));
-    Target->relocateOne(BufLoc, Type, SymVA);
+    if (Sym.isTls() && !Out::TlsPhdr)
+      Target->relocateOne(BufLoc, Type, 0);
+    else
+      Target->relocateOne(BufLoc, Type, SignExtend64<Bits>(Sym.getVA(Addend)));
   }
-}
-
-template <class ELFT> ObjFile<ELFT> *InputSectionBase::getFile() const {
-  return cast_or_null<ObjFile<ELFT>>(File);
 }
 
 template <class ELFT>
 void InputSectionBase::relocate(uint8_t *Buf, uint8_t *BufEnd) {
-  if (Flags & SHF_ALLOC)
+  if (Flags & SHF_ALLOC) {
     relocateAlloc(Buf, BufEnd);
-  else
-    relocateNonAlloc<ELFT>(Buf, BufEnd);
-}
+    return;
+  }
 
-template <class ELFT>
-void InputSectionBase::relocateNonAlloc(uint8_t *Buf, uint8_t *BufEnd) {
-  // scanReloc function in Writer.cpp constructs Relocations
-  // vector only for SHF_ALLOC'ed sections. For other sections,
-  // we handle relocations directly here.
-  auto *IS = cast<InputSection>(this);
-  assert(!(IS->Flags & SHF_ALLOC));
-  if (IS->AreRelocsRela)
-    IS->relocateNonAlloc<ELFT>(Buf, IS->template relas<ELFT>());
+  auto *Sec = cast<InputSection>(this);
+  if (Sec->AreRelocsRela)
+    Sec->relocateNonAlloc<ELFT>(Buf, Sec->template relas<ELFT>());
   else
-    IS->relocateNonAlloc<ELFT>(Buf, IS->template rels<ELFT>());
+    Sec->relocateNonAlloc<ELFT>(Buf, Sec->template rels<ELFT>());
 }
 
 void InputSectionBase::relocateAlloc(uint8_t *Buf, uint8_t *BufEnd) {
   assert(Flags & SHF_ALLOC);
   const unsigned Bits = Config->Wordsize * 8;
+
   for (const Relocation &Rel : Relocations) {
     uint64_t Offset = getOffset(Rel.Offset);
     uint8_t *BufLoc = Buf + Offset;
@@ -1030,11 +1027,6 @@ template void InputSection::writeTo<ELF32LE>(uint8_t *);
 template void InputSection::writeTo<ELF32BE>(uint8_t *);
 template void InputSection::writeTo<ELF64LE>(uint8_t *);
 template void InputSection::writeTo<ELF64BE>(uint8_t *);
-
-template ObjFile<ELF32LE> *InputSectionBase::getFile<ELF32LE>() const;
-template ObjFile<ELF32BE> *InputSectionBase::getFile<ELF32BE>() const;
-template ObjFile<ELF64LE> *InputSectionBase::getFile<ELF64LE>() const;
-template ObjFile<ELF64BE> *InputSectionBase::getFile<ELF64BE>() const;
 
 template MergeInputSection::MergeInputSection(ObjFile<ELF32LE> *,
                                               const ELF32LE::Shdr *, StringRef);
