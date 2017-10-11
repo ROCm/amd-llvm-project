@@ -80,6 +80,9 @@ public:
 
 // \brief C++AMP linker.
 class LLVM_LIBRARY_VISIBILITY CXXAMPLink : public gnutools::Linker {
+  mutable std::string HCCLibPath;
+  mutable std::string HCCRLibPath;
+
 public:
   CXXAMPLink(const ToolChain &TC) : Linker(TC, "clamp-link") {}
 
