@@ -241,6 +241,7 @@ bool LLParser::ValidateEndOfModule() {
     llvm::UpgradeDebugInfo(*M);
 
   UpgradeModuleFlags(*M);
+  UpgradeSectionAttributes(*M);
 
   if (!Slots)
     return false;
@@ -4777,7 +4778,6 @@ bool LLParser::ParseFunctionHeader(Function *&Fn, bool isDefine) {
   unsigned Alignment;
   std::string GC;
   GlobalValue::UnnamedAddr UnnamedAddr = GlobalValue::UnnamedAddr::None;
-  LocTy UnnamedAddrLoc;
   Constant *Prefix = nullptr;
   Constant *Prologue = nullptr;
   Constant *PersonalityFn = nullptr;
@@ -5571,7 +5571,6 @@ bool LLParser::ParseCatchRet(Instruction *&Inst, PerFunctionState &PFS) {
 ///   ::= 'catchswitch' within Parent
 bool LLParser::ParseCatchSwitch(Instruction *&Inst, PerFunctionState &PFS) {
   Value *ParentPad;
-  LocTy BBLoc;
 
   if (ParseToken(lltok::kw_within, "expected 'within' after catchswitch"))
     return true;

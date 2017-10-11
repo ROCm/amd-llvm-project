@@ -240,11 +240,6 @@ static void writeMicroRelocation16(uint8_t *Loc, uint64_t V, uint8_t BitsSize,
 
 static bool isMicroMips() { return Config->MipsEFlags & EF_MIPS_MICROMIPS; }
 
-static bool isMipsR6() {
-  uint32_t Arch = Config->MipsEFlags & EF_MIPS_ARCH;
-  return Arch == EF_MIPS_ARCH_32R6 || Arch == EF_MIPS_ARCH_64R6;
-}
-
 template <class ELFT> void MIPS<ELFT>::writePltHeader(uint8_t *Buf) const {
   const endianness E = ELFT::TargetEndianness;
   if (isMicroMips()) {
@@ -506,21 +501,21 @@ void MIPS<ELFT>::relocateOne(uint8_t *Loc, uint32_t Type, uint64_t Val) const {
       writeMicroRelocation32<E>(Loc, Val, 16, 0);
     }
     break;
+  case R_MIPS_CALL16:
   case R_MIPS_GOT_DISP:
   case R_MIPS_GOT_PAGE:
   case R_MIPS_GPREL16:
   case R_MIPS_TLS_GD:
+  case R_MIPS_TLS_GOTTPREL:
   case R_MIPS_TLS_LDM:
     checkInt<16>(Loc, Val, Type);
     LLVM_FALLTHROUGH;
-  case R_MIPS_CALL16:
   case R_MIPS_CALL_LO16:
   case R_MIPS_GOT_LO16:
   case R_MIPS_GOT_OFST:
   case R_MIPS_LO16:
   case R_MIPS_PCLO16:
   case R_MIPS_TLS_DTPREL_LO16:
-  case R_MIPS_TLS_GOTTPREL:
   case R_MIPS_TLS_TPREL_LO16:
     writeRelocation<E>(Loc, Val, 16, 0);
     break;
