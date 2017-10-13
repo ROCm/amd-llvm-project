@@ -7,8 +7,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "hcc_config.hxx"
-
 #include "Hcc.h"
 #include "InputInfo.h"
 #include "clang/Basic/VirtualFileSystem.h"
@@ -326,56 +324,6 @@ void HCC::CXXAMPLink::ConstructJob(
 
     // specify AMDGPU target
     constexpr const char auto_tgt[] = "auto";
-
-    if (getenv("HCC_BUILD")) {
-        CmdArgs.push_back("-L" CMAKE_BUILD_LIB_DIR);
-        CmdArgs.push_back("--rpath=" CMAKE_BUILD_LIB_DIR);
-
-        CmdArgs.push_back("-L" CMAKE_BUILD_COMPILER_RT_LIB_DIR);
-        CmdArgs.push_back("--rpath=" CMAKE_BUILD_COMPILER_RT_LIB_DIR);
-    }
-    else {
-        std::string path_hcc_lib;
-
-        if (const char *p = getenv("HCC_HOME")) {
-            path_hcc_lib = std::string(p) + std::string("/lib");
-        }
-        else {
-            path_hcc_lib = C.getDriver().Dir + "/../" + CMAKE_INSTALL_LIB;
-        }
-
-        HCCLibPath = "-L" + path_hcc_lib;
-        CmdArgs.push_back(HCCLibPath.c_str());
-
-        HCCRLibPath = "--rpath=" + path_hcc_lib;
-        CmdArgs.push_back(HCCRLibPath.c_str());
-    }
-
-    #ifdef USE_LIBCXX
-        CmdArgs.push_back("-stdlib=libc++");
-        CmdArgs.push_back("-lc++");
-        CmdArgs.push_back("-lc++abi");
-    #endif
-
-    CmdArgs.push_back("-ldl");
-    CmdArgs.push_back("-lm");
-    CmdArgs.push_back("-lpthread");
-    CmdArgs.push_back("-lunwind");
-
-    CmdArgs.push_back("-lhc_am");
-
-    if (const char *p = getenv("TEST_CPU"))
-        if (p == std::string("ON"))
-            CmdArgs.push_back("-lmcwamp_atomic");
-
-    CmdArgs.push_back("--whole-archive");
-    CmdArgs.push_back("-lmcwamp");
-    CmdArgs.push_back("--no-whole-archive");
-
-    #ifdef CODEXL_ACTIVITY_LOGGER_ENABLED
-        CmdArgs.push_back("-L" XSTR(CODEXL_ACTIVITY_LOGGER_LIBRARY));
-        CmdArgs.push_back("-lCXLActivityLogger");
-    #endif
 
     #if !defined(HCC_AMDGPU_TARGET)
         #define HCC_AMDGPU_TARGET auto_tgt
