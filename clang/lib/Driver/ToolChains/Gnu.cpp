@@ -7,8 +7,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "hcc_config.hxx"
-
 #include "Gnu.h"
 #include "Linux.h"
 #include "Hcc.h"
@@ -2394,29 +2392,4 @@ void Generic_ELF::addClangTargetOptions(const ArgList &DriverArgs,
   if (DriverArgs.hasFlag(options::OPT_fuse_init_array,
                          options::OPT_fno_use_init_array, UseInitArrayDefault))
     CC1Args.push_back("-fuse-init-array");
-
-  if (Driver::IsCXXAMP(DriverArgs))
-  {
-    if (getenv("HCC_BUILD")) {
-      CC1Args.push_back("-I" CMAKE_BUILD_INC_DIR);
-    }
-    else {
-      std::string path_hcc_include;
-
-      if (const char *p = getenv("HCC_HOME")) {
-        path_hcc_include = std::string(p) + std::string("/include");
-      }
-      else {
-        CC1Args.push_back("-I" CMAKE_ROCM_ROOT "/include");
-        path_hcc_include = getDriver().Dir + "/../include";
-      }
-
-      HCCIncludePath = "-I" + path_hcc_include;
-      CC1Args.push_back(HCCIncludePath.c_str());
-    }
-
-    #ifdef CODEXL_ACTIVITY_LOGGER_ENABLED
-      CC1Args.push_back("-I" XSTR(CODEXL_ACTIVITY_LOGGER_HEADER));
-    #endif
-  }
 }
