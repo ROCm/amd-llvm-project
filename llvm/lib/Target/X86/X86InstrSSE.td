@@ -1890,8 +1890,14 @@ let Predicates = [HasAVX, NoVLX] in {
                                  (v4i32 (X86cvtp2Int (v2f64 VR128:$src)))))),
               (VCVTPD2DQrr VR128:$src)>;
     def : Pat<(X86vzmovl (v2i64 (bitconvert
+                                 (v4i32 (X86cvtp2Int (loadv2f64 addr:$src)))))),
+              (VCVTPD2DQrm addr:$src)>;
+    def : Pat<(X86vzmovl (v2i64 (bitconvert
                                  (v4i32 (X86cvttp2si (v2f64 VR128:$src)))))),
               (VCVTTPD2DQrr VR128:$src)>;
+    def : Pat<(X86vzmovl (v2i64 (bitconvert
+                                 (v4i32 (X86cvttp2si (loadv2f64 addr:$src)))))),
+              (VCVTTPD2DQrm addr:$src)>;
   }
 } // Predicates = [HasAVX]
 
@@ -1912,8 +1918,14 @@ let Predicates = [UseSSE2] in {
                                  (v4i32 (X86cvtp2Int (v2f64 VR128:$src)))))),
               (CVTPD2DQrr VR128:$src)>;
     def : Pat<(X86vzmovl (v2i64 (bitconvert
+                                 (v4i32 (X86cvtp2Int (memopv2f64 addr:$src)))))),
+              (CVTPD2DQrm addr:$src)>;
+    def : Pat<(X86vzmovl (v2i64 (bitconvert
                                  (v4i32 (X86cvttp2si (v2f64 VR128:$src)))))),
               (CVTTPD2DQrr VR128:$src)>;
+    def : Pat<(X86vzmovl (v2i64 (bitconvert
+                                 (v4i32 (X86cvttp2si (memopv2f64 addr:$src)))))),
+              (CVTTPD2DQrm addr:$src)>;
   }
 } // Predicates = [UseSSE2]
 
@@ -1955,7 +1967,7 @@ let hasSideEffects = 0, mayLoad = 1 in
 def VCVTDQ2PDrm  : S2SI<0xE6, MRMSrcMem, (outs VR128:$dst), (ins i64mem:$src),
                         "vcvtdq2pd\t{$src, $dst|$dst, $src}",
                         [(set VR128:$dst,
-                          (v2f64 (X86VSintToFP (bc_v4i32 (v2i64 (X86vzload addr:$src))))))]>,
+                          (v2f64 (X86VSintToFP (bc_v4i32 (loadv2i64 addr:$src)))))]>,
                         VEX, Sched<[WriteCvtI2FLd]>, VEX_WIG;
 def VCVTDQ2PDrr  : S2SI<0xE6, MRMSrcReg, (outs VR128:$dst), (ins VR128:$src),
                         "vcvtdq2pd\t{$src, $dst|$dst, $src}",
@@ -1978,7 +1990,7 @@ let hasSideEffects = 0, mayLoad = 1 in
 def CVTDQ2PDrm  : S2SI<0xE6, MRMSrcMem, (outs VR128:$dst), (ins i64mem:$src),
                        "cvtdq2pd\t{$src, $dst|$dst, $src}",
                        [(set VR128:$dst,
-                         (v2f64 (X86VSintToFP (bc_v4i32 (v2i64 (X86vzload addr:$src))))))],
+                         (v2f64 (X86VSintToFP (bc_v4i32 (loadv2i64 addr:$src)))))],
                        IIC_SSE_CVT_PD_RR>, Sched<[WriteCvtI2FLd]>;
 def CVTDQ2PDrr  : S2SI<0xE6, MRMSrcReg, (outs VR128:$dst), (ins VR128:$src),
                        "cvtdq2pd\t{$src, $dst|$dst, $src}",
@@ -1990,11 +2002,15 @@ def CVTDQ2PDrr  : S2SI<0xE6, MRMSrcReg, (outs VR128:$dst), (ins VR128:$src),
 let Predicates = [HasAVX, NoVLX] in {
   def : Pat<(v2f64 (X86VSintToFP (bc_v4i32 (v2i64 (scalar_to_vector (loadi64 addr:$src)))))),
             (VCVTDQ2PDrm addr:$src)>;
+  def : Pat<(v2f64 (X86VSintToFP (bc_v4i32 (v2i64 (X86vzload addr:$src))))),
+            (VCVTDQ2PDrm addr:$src)>;
 } // Predicates = [HasAVX, NoVLX]
 
 // SSE2 register conversion intrinsics
 let Predicates = [UseSSE2] in {
   def : Pat<(v2f64 (X86VSintToFP (bc_v4i32 (v2i64 (scalar_to_vector (loadi64 addr:$src)))))),
+            (CVTDQ2PDrm addr:$src)>;
+  def : Pat<(v2f64 (X86VSintToFP (bc_v4i32 (v2i64 (X86vzload addr:$src))))),
             (CVTDQ2PDrm addr:$src)>;
 } // Predicates = [UseSSE2]
 
@@ -2050,18 +2066,26 @@ def CVTPD2PSrm : PDI<0x5A, MRMSrcMem, (outs VR128:$dst), (ins f128mem:$src),
 
 let Predicates = [HasAVX, NoVLX] in {
   // Match fpround and fpextend for 128/256-bit conversions
-  let AddedComplexity = 15 in
-  def : Pat<(X86vzmovl (v2f64 (bitconvert
-                               (v4f32 (X86vfpround (v2f64 VR128:$src)))))),
-            (VCVTPD2PSrr VR128:$src)>;
+  let AddedComplexity = 15 in {
+    def : Pat<(X86vzmovl (v2f64 (bitconvert
+                                 (v4f32 (X86vfpround (v2f64 VR128:$src)))))),
+              (VCVTPD2PSrr VR128:$src)>;
+    def : Pat<(X86vzmovl (v2f64 (bitconvert
+                                 (v4f32 (X86vfpround (loadv2f64 addr:$src)))))),
+              (VCVTPD2PSrm addr:$src)>;
+  }
 }
 
 let Predicates = [UseSSE2] in {
   // Match fpround and fpextend for 128 conversions
-  let AddedComplexity = 15 in
-  def : Pat<(X86vzmovl (v2f64 (bitconvert
-                               (v4f32 (X86vfpround (v2f64 VR128:$src)))))),
-            (CVTPD2PSrr VR128:$src)>;
+  let AddedComplexity = 15 in {
+    def : Pat<(X86vzmovl (v2f64 (bitconvert
+                                 (v4f32 (X86vfpround (v2f64 VR128:$src)))))),
+              (CVTPD2PSrr VR128:$src)>;
+    def : Pat<(X86vzmovl (v2f64 (bitconvert
+                                 (v4f32 (X86vfpround (memopv2f64 addr:$src)))))),
+              (CVTPD2PSrm addr:$src)>;
+  }
 }
 
 //===----------------------------------------------------------------------===//
@@ -7381,6 +7405,15 @@ let ExeDomain = SSEPackedDouble, Predicates = [HasAVX2, NoVLX] in
 def VBROADCASTSDYrr  : avx2_broadcast_rr<0x19, "vbroadcastsd", VR256,
                                          v4f64, v2f64, WriteFShuffle256>, VEX_L;
 
+let Predicates = [HasAVX, NoVLX] in {
+  def : Pat<(v4f32 (X86VBroadcast (v4f32 (scalar_to_vector (loadf32 addr:$src))))),
+            (VBROADCASTSSrm addr:$src)>;
+  def : Pat<(v8f32 (X86VBroadcast (v4f32 (scalar_to_vector (loadf32 addr:$src))))),
+            (VBROADCASTSSYrm addr:$src)>;
+  def : Pat<(v4f64 (X86VBroadcast (v2f64 (scalar_to_vector (loadf64 addr:$src))))),
+            (VBROADCASTSDYrm addr:$src)>;
+}
+
 //===----------------------------------------------------------------------===//
 // VBROADCAST*128 - Load from memory and broadcast 128-bit vector to both
 //                  halves of a 256-bit vector.
@@ -7855,12 +7888,23 @@ defm VPBROADCASTD  : avx2_broadcast<0x58, "vpbroadcastd", i32mem, loadi32,
 defm VPBROADCASTQ  : avx2_broadcast<0x59, "vpbroadcastq", i64mem, loadi64,
                                     v2i64, v4i64, NoVLX>;
 
-let Predicates = [HasAVX2, NoVLX_Or_NoBWI] in {
+let Predicates = [HasAVX2, NoVLX] in {
   // 32-bit targets will fail to load a i64 directly but can use ZEXT_LOAD.
   def : Pat<(v2i64 (X86VBroadcast (v2i64 (X86vzload addr:$src)))),
             (VPBROADCASTQrm addr:$src)>;
   def : Pat<(v4i64 (X86VBroadcast (v4i64 (X86vzload addr:$src)))),
             (VPBROADCASTQYrm addr:$src)>;
+
+  def : Pat<(v4i32 (X86VBroadcast (v4i32 (scalar_to_vector (loadi32 addr:$src))))),
+            (VPBROADCASTDrm addr:$src)>;
+  def : Pat<(v8i32 (X86VBroadcast (v4i32 (scalar_to_vector (loadi32 addr:$src))))),
+            (VPBROADCASTDYrm addr:$src)>;
+  def : Pat<(v2i64 (X86VBroadcast (v2i64 (scalar_to_vector (loadi64 addr:$src))))),
+            (VPBROADCASTQrm addr:$src)>;
+  def : Pat<(v4i64 (X86VBroadcast (v2i64 (scalar_to_vector (loadi64 addr:$src))))),
+            (VPBROADCASTQYrm addr:$src)>;
+}
+let Predicates = [HasAVX2, NoVLX_Or_NoBWI] in {
   // loadi16 is tricky to fold, because !isTypeDesirableForOp, justifiably.
   // This means we'll encounter truncated i32 loads; match that here.
   def : Pat<(v8i16 (X86VBroadcast (i16 (trunc (i32 (load addr:$src)))))),
@@ -7948,6 +7992,11 @@ let Predicates = [HasAVX, NoVLX] in {
   def : Pat<(v2f64 (X86VBroadcast f64:$src)),
             (VMOVDDUPrr (COPY_TO_REGCLASS FR64:$src, VR128))>;
   def : Pat<(v2f64 (X86VBroadcast (loadf64 addr:$src))),
+            (VMOVDDUPrm addr:$src)>;
+
+  def : Pat<(v2f64 (X86VBroadcast v2f64:$src)),
+            (VMOVDDUPrr VR128:$src)>;
+  def : Pat<(v2f64 (X86VBroadcast (loadv2f64 addr:$src))),
             (VMOVDDUPrm addr:$src)>;
 }
 

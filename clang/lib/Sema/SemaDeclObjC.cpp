@@ -4223,6 +4223,10 @@ void Sema::CheckObjCMethodOverrides(ObjCMethodDecl *ObjCMethod,
 
     // Then merge the declarations.
     mergeObjCMethodDecls(ObjCMethod, overridden);
+  }
+
+  for (ObjCMethodDecl *overridden : overrides) {
+    CheckObjCMethodOverride(ObjCMethod, overridden);
 
     if (ObjCMethod->isImplicit() && overridden->isImplicit())
       continue; // Conflicting properties are detected elsewhere.
@@ -4684,7 +4688,7 @@ VarDecl *Sema::BuildObjCExceptionDecl(TypeSourceInfo *TInfo, QualType T,
   // duration shall not be qualified by an address-space qualifier."
   // Since all parameters have automatic store duration, they can not have
   // an address space.
-  if (T.getAddressSpace() != 0) {
+  if (T.getAddressSpace() != LangAS::Default) {
     Diag(IdLoc, diag::err_arg_with_address_space);
     Invalid = true;
   }
