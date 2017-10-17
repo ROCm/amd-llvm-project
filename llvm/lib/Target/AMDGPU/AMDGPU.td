@@ -408,6 +408,13 @@ def FeatureAutoWaitcntBeforeBarrier : SubtargetFeature <
   "Hardware automatically inserts waitcnt before barrier"
 >;
 
+def FeatureCodeObjectV3 : SubtargetFeature <
+  "code-object-v3",
+  "CodeObjectV3",
+  "true",
+  "Generate code object version 3"
+>;
+
 // Dummy feature used to disable assembler instructions.
 def FeatureDisable : SubtargetFeature<"",
   "FeatureDisable","true",
@@ -724,6 +731,8 @@ def HasIntClamp : Predicate<"Subtarget->hasIntClamp()">,
 def HasMadMix : Predicate<"Subtarget->hasMadMixInsts()">,
   AssemblerPredicate<"FeatureGFX9Insts">;
 
+def EnableLateCFGStructurize : Predicate<
+  "EnableLateStructurizeCFG">;
 
 // Exists to help track down where SubtargetPredicate isn't set rather
 // than letting tablegen crash with an unhelpful error.

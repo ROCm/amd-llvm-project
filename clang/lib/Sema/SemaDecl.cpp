@@ -1724,7 +1724,8 @@ static bool ShouldDiagnoseUnusedDecl(const NamedDecl *D) {
             dyn_cast<CXXConstructExpr>(Init);
           if (Construct && !Construct->isElidable()) {
             CXXConstructorDecl *CD = Construct->getConstructor();
-            if (!CD->isTrivial() && !RD->hasAttr<WarnUnusedAttr>())
+            if (!CD->isTrivial() && !RD->hasAttr<WarnUnusedAttr>() &&
+                !VD->evaluateValue())
               return false;
           }
         }
@@ -3581,8 +3582,6 @@ void Sema::mergeObjCMethodDecls(ObjCMethodDecl *newMethod,
          ni = newMethod->param_begin(), ne = newMethod->param_end();
        ni != ne && oi != oe; ++ni, ++oi)
     mergeParamDeclAttributes(*ni, *oi, *this);
-
-  CheckObjCMethodOverride(newMethod, oldMethod);
 }
 
 static void diagnoseVarDeclTypeMismatch(Sema &S, VarDecl *New, VarDecl* Old) {
@@ -6729,6 +6728,22 @@ static void checkDLLAttributeRedeclaration(Sema &S, NamedDecl *OldDecl,
            diag::warn_dllimport_dropped_from_inline_function)
         << NewDecl << OldImportAttr;
   }
+
+  // A specialization of a class template member function is processed here
+  // since it's a redeclaration. If the parent class is dllexport, the
+  // specialization inherits that attribute. This doesn't happen automatically
+  // since the parent class isn't instantiated until later.
+  if (const CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(NewDecl)) {
+    if (MD->getTemplatedKind() == FunctionDecl::TK_MemberSpecialization &&
+        !NewImportAttr && !NewExportAttr) {
+      if (const DLLExportAttr *ParentExportAttr =
+              MD->getParent()->getAttr<DLLExportAttr>()) {
+        DLLExportAttr *NewAttr = ParentExportAttr->clone(S.Context);
+        NewAttr->setInherited(true);
+        NewDecl->addAttr(NewAttr);
+      }
+    }
+  }
 }
 
 /// Given that we are within the definition of the given function,
@@ -6950,7 +6965,7 @@ NamedDecl *Sema::ActOnVariableDeclarator(
     // The event type cannot be used with the __local, __constant and __global
     // address space qualifiers.
     if (R->isEventT()) {
-      if (R.getAddressSpace()) {
+      if (R.getAddressSpace() != LangAS::opencl_private) {
         Diag(D.getLocStart(), diag::err_event_t_addr_space_qual);
         D.setInvalidType();
       }
@@ -7964,8 +7979,8 @@ void Sema::CheckVariableDeclarationType(VarDecl *NewVD) {
   // This includes arrays of objects with address space qualifiers, but not
   // automatic variables that point to other address spaces.
   // ISO/IEC TR 18037 S5.1.2
-  if (!getLangOpts().OpenCL
-      && NewVD->hasLocalStorage() && T.getAddressSpace() != 0) {
+  if (!getLangOpts().OpenCL && NewVD->hasLocalStorage() &&
+      T.getAddressSpace() != LangAS::Default) {
     Diag(NewVD->getLocation(), diag::err_as_qualified_auto_decl) << 0;
     NewVD->setInvalidDecl();
     return;
@@ -8714,7 +8729,7 @@ static OpenCLParamType getOpenCLKernelParameterType(Sema &S, QualType PT) {
       return PtrPtrKernelParam;
     if (PointeeType.getAddressSpace() == LangAS::opencl_generic ||
         PointeeType.getAddressSpace() == LangAS::opencl_private ||
-        PointeeType.getAddressSpace() == 0)
+        PointeeType.getAddressSpace() == LangAS::Default)
       return InvalidAddrSpacePtrKernelParam;
     return PtrKernelParam;
   }
@@ -9519,10 +9534,8 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
   if (getLangOpts().OpenCL) {
     // OpenCL v1.1 s6.5: Using an address space qualifier in a function return
     // type declaration will generate a compilation error.
-    unsigned AddressSpace = NewFD->getReturnType().getAddressSpace();
-    if (AddressSpace == LangAS::opencl_local ||
-        AddressSpace == LangAS::opencl_global ||
-        AddressSpace == LangAS::opencl_constant) {
+    LangAS AddressSpace = NewFD->getReturnType().getAddressSpace();
+    if (AddressSpace != LangAS::Default) {
       Diag(NewFD->getLocation(),
            diag::err_opencl_return_value_with_address_space);
       NewFD->setInvalidDecl();
@@ -12789,13 +12802,13 @@ ParmVarDecl *Sema::CheckParameter(DeclContext *DC, SourceLocation StartLoc,
   // duration shall not be qualified by an address-space qualifier."
   // Since all parameters have automatic store duration, they can not have
   // an address space.
-  if (T.getAddressSpace() != 0) {
-    // OpenCL allows function arguments declared to be an array of a type
-    // to be qualified with an address space.
-    if (!(getLangOpts().OpenCL && T->isArrayType())) {
-      Diag(NameLoc, diag::err_arg_with_address_space);
-      New->setInvalidDecl();
-    }
+  if (T.getAddressSpace() != LangAS::Default &&
+      // OpenCL allows function arguments declared to be an array of a type
+      // to be qualified with an address space.
+      !(getLangOpts().OpenCL &&
+        (T->isArrayType() || T.getAddressSpace() == LangAS::opencl_private))) {
+    Diag(NameLoc, diag::err_arg_with_address_space);
+    New->setInvalidDecl();
   }
 
   return New;
@@ -17120,6 +17133,7 @@ Sema::DeclGroupPtrTy Sema::ActOnModuleDecl(SourceLocation StartLoc,
     // implementation unit. That indicates the 'export' is missing.
     Diag(ModuleLoc, diag::err_module_interface_implementation_mismatch)
       << FixItHint::CreateInsertion(ModuleLoc, "export ");
+    MDK = ModuleDeclKind::Interface;
     break;
 
   case LangOptions::CMK_ModuleMap:
@@ -17127,8 +17141,18 @@ Sema::DeclGroupPtrTy Sema::ActOnModuleDecl(SourceLocation StartLoc,
     return nullptr;
   }
 
+  assert(ModuleScopes.size() == 1 && "expected to be at global module scope");
+
   // FIXME: Most of this work should be done by the preprocessor rather than
   // here, in order to support macro import.
+
+  // Only one module-declaration is permitted per source file.
+  if (ModuleScopes.back().Module->Kind == Module::ModuleInterfaceUnit) {
+    Diag(ModuleLoc, diag::err_module_redeclaration);
+    Diag(VisibleModules.getImportLoc(ModuleScopes.back().Module),
+         diag::note_prev_module_declaration);
+    return nullptr;
+  }
 
   // Flatten the dots in a module name. Unlike Clang's hierarchical module map
   // modules, the dots here are just another character that can appear in a
@@ -17139,8 +17163,6 @@ Sema::DeclGroupPtrTy Sema::ActOnModuleDecl(SourceLocation StartLoc,
       ModuleName += ".";
     ModuleName += Piece.first->getName();
   }
-
-  // FIXME: If we've already seen a module-declaration, report an error.
 
   // If a module name was explicitly specified on the command line, it must be
   // correct.
@@ -17156,10 +17178,8 @@ Sema::DeclGroupPtrTy Sema::ActOnModuleDecl(SourceLocation StartLoc,
   auto &Map = PP.getHeaderSearchInfo().getModuleMap();
   Module *Mod;
 
-  assert(ModuleScopes.size() == 1 && "expected to be at global module scope");
-
   switch (MDK) {
-  case ModuleDeclKind::Module: {
+  case ModuleDeclKind::Interface: {
     // We can't have parsed or imported a definition of this module or parsed a
     // module map defining it already.
     if (auto *M = Map.findModule(ModuleName)) {
@@ -17189,14 +17209,18 @@ Sema::DeclGroupPtrTy Sema::ActOnModuleDecl(SourceLocation StartLoc,
         PP.getIdentifierInfo(ModuleName), Path[0].second);
     Mod = getModuleLoader().loadModule(ModuleLoc, Path, Module::AllVisible,
                                        /*IsIncludeDirective=*/false);
-    // FIXME: Produce an error in this case.
-    if (!Mod)
-      return nullptr;
+    if (!Mod) {
+      Diag(ModuleLoc, diag::err_module_not_defined) << ModuleName;
+      // Create an empty module interface unit for error recovery.
+      Mod = Map.createModuleForInterfaceUnit(ModuleLoc, ModuleName,
+                                             ModuleScopes.front().Module);
+    }
     break;
   }
 
   // Switch from the global module to the named module.
   ModuleScopes.back().Module = Mod;
+  ModuleScopes.back().ModuleInterface = MDK != ModuleDeclKind::Implementation;
   VisibleModules.setVisible(Mod, ModuleLoc);
 
   // From now on, we have an owning module for all declarations we see.
@@ -17382,8 +17406,7 @@ Decl *Sema::ActOnStartExportDecl(Scope *S, SourceLocation ExportLoc,
   // C++ Modules TS draft:
   //   An export-declaration shall appear in the purview of a module other than
   //   the global module.
-  if (ModuleScopes.empty() ||
-      ModuleScopes.back().Module->Kind != Module::ModuleInterfaceUnit)
+  if (ModuleScopes.empty() || !ModuleScopes.back().ModuleInterface)
     Diag(ExportLoc, diag::err_export_not_in_module_interface);
 
   //   An export-declaration [...] shall not contain more than one

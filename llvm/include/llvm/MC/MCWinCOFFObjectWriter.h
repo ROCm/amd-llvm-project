@@ -10,6 +10,8 @@
 #ifndef LLVM_MC_MCWINCOFFOBJECTWRITER_H
 #define LLVM_MC_MCWINCOFFOBJECTWRITER_H
 
+#include <memory>
+
 namespace llvm {
 
 class MCAsmBackend;
@@ -42,7 +44,7 @@ class raw_pwrite_stream;
   /// \param MOTW - The target specific WinCOFF writer subclass.
   /// \param OS - The stream to write to.
   /// \returns The constructed object writer.
-  MCObjectWriter *
+  std::unique_ptr<MCObjectWriter>
   createWinCOFFObjectWriter(std::unique_ptr<MCWinCOFFObjectTargetWriter> MOTW,
                             raw_pwrite_stream &OS);
 } // end namespace llvm

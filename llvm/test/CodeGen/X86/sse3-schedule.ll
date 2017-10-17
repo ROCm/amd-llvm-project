@@ -44,8 +44,8 @@ define <2 x double> @test_addsubpd(<2 x double> %a0, <2 x double> %a1, <2 x doub
 ; SKYLAKE-LABEL: test_addsubpd:
 ; SKYLAKE:       # BB#0:
 ; SKYLAKE-NEXT:    vaddsubpd %xmm1, %xmm0, %xmm0 # sched: [4:0.50]
-; SKYLAKE-NEXT:    vaddsubpd (%rdi), %xmm0, %xmm0 # sched: [4:0.50]
-; SKYLAKE-NEXT:    retq # sched: [2:1.00]
+; SKYLAKE-NEXT:    vaddsubpd (%rdi), %xmm0, %xmm0 # sched: [10:0.50]
+; SKYLAKE-NEXT:    retq # sched: [7:1.00]
 ;
 ; SKX-LABEL: test_addsubpd:
 ; SKX:       # BB#0:
@@ -105,8 +105,8 @@ define <4 x float> @test_addsubps(<4 x float> %a0, <4 x float> %a1, <4 x float> 
 ; SKYLAKE-LABEL: test_addsubps:
 ; SKYLAKE:       # BB#0:
 ; SKYLAKE-NEXT:    vaddsubps %xmm1, %xmm0, %xmm0 # sched: [4:0.50]
-; SKYLAKE-NEXT:    vaddsubps (%rdi), %xmm0, %xmm0 # sched: [4:0.50]
-; SKYLAKE-NEXT:    retq # sched: [2:1.00]
+; SKYLAKE-NEXT:    vaddsubps (%rdi), %xmm0, %xmm0 # sched: [10:0.50]
+; SKYLAKE-NEXT:    retq # sched: [7:1.00]
 ;
 ; SKX-LABEL: test_addsubps:
 ; SKX:       # BB#0:
@@ -166,8 +166,8 @@ define <2 x double> @test_haddpd(<2 x double> %a0, <2 x double> %a1, <2 x double
 ; SKYLAKE-LABEL: test_haddpd:
 ; SKYLAKE:       # BB#0:
 ; SKYLAKE-NEXT:    vhaddpd %xmm1, %xmm0, %xmm0 # sched: [6:2.00]
-; SKYLAKE-NEXT:    vhaddpd (%rdi), %xmm0, %xmm0 # sched: [6:2.00]
-; SKYLAKE-NEXT:    retq # sched: [2:1.00]
+; SKYLAKE-NEXT:    vhaddpd (%rdi), %xmm0, %xmm0 # sched: [12:2.00]
+; SKYLAKE-NEXT:    retq # sched: [7:1.00]
 ;
 ; SKX-LABEL: test_haddpd:
 ; SKX:       # BB#0:
@@ -227,8 +227,8 @@ define <4 x float> @test_haddps(<4 x float> %a0, <4 x float> %a1, <4 x float> *%
 ; SKYLAKE-LABEL: test_haddps:
 ; SKYLAKE:       # BB#0:
 ; SKYLAKE-NEXT:    vhaddps %xmm1, %xmm0, %xmm0 # sched: [6:2.00]
-; SKYLAKE-NEXT:    vhaddps (%rdi), %xmm0, %xmm0 # sched: [6:2.00]
-; SKYLAKE-NEXT:    retq # sched: [2:1.00]
+; SKYLAKE-NEXT:    vhaddps (%rdi), %xmm0, %xmm0 # sched: [12:2.00]
+; SKYLAKE-NEXT:    retq # sched: [7:1.00]
 ;
 ; SKX-LABEL: test_haddps:
 ; SKX:       # BB#0:
@@ -288,8 +288,8 @@ define <2 x double> @test_hsubpd(<2 x double> %a0, <2 x double> %a1, <2 x double
 ; SKYLAKE-LABEL: test_hsubpd:
 ; SKYLAKE:       # BB#0:
 ; SKYLAKE-NEXT:    vhsubpd %xmm1, %xmm0, %xmm0 # sched: [6:2.00]
-; SKYLAKE-NEXT:    vhsubpd (%rdi), %xmm0, %xmm0 # sched: [6:2.00]
-; SKYLAKE-NEXT:    retq # sched: [2:1.00]
+; SKYLAKE-NEXT:    vhsubpd (%rdi), %xmm0, %xmm0 # sched: [12:2.00]
+; SKYLAKE-NEXT:    retq # sched: [7:1.00]
 ;
 ; SKX-LABEL: test_hsubpd:
 ; SKX:       # BB#0:
@@ -349,8 +349,8 @@ define <4 x float> @test_hsubps(<4 x float> %a0, <4 x float> %a1, <4 x float> *%
 ; SKYLAKE-LABEL: test_hsubps:
 ; SKYLAKE:       # BB#0:
 ; SKYLAKE-NEXT:    vhsubps %xmm1, %xmm0, %xmm0 # sched: [6:2.00]
-; SKYLAKE-NEXT:    vhsubps (%rdi), %xmm0, %xmm0 # sched: [6:2.00]
-; SKYLAKE-NEXT:    retq # sched: [2:1.00]
+; SKYLAKE-NEXT:    vhsubps (%rdi), %xmm0, %xmm0 # sched: [12:2.00]
+; SKYLAKE-NEXT:    retq # sched: [7:1.00]
 ;
 ; SKX-LABEL: test_hsubps:
 ; SKX:       # BB#0:
@@ -406,8 +406,8 @@ define <16 x i8> @test_lddqu(i8* %a0) {
 ;
 ; SKYLAKE-LABEL: test_lddqu:
 ; SKYLAKE:       # BB#0:
-; SKYLAKE-NEXT:    vlddqu (%rdi), %xmm0 # sched: [1:0.50]
-; SKYLAKE-NEXT:    retq # sched: [2:1.00]
+; SKYLAKE-NEXT:    vlddqu (%rdi), %xmm0 # sched: [6:0.50]
+; SKYLAKE-NEXT:    retq # sched: [7:1.00]
 ;
 ; SKX-LABEL: test_lddqu:
 ; SKX:       # BB#0:
@@ -469,7 +469,7 @@ define void @test_monitor(i8* %a0, i32 %a1, i32 %a2) {
 ; SKYLAKE-NEXT:    leaq (%rdi), %rax # sched: [1:0.50]
 ; SKYLAKE-NEXT:    movl %esi, %ecx # sched: [1:0.25]
 ; SKYLAKE-NEXT:    monitor # sched: [100:0.25]
-; SKYLAKE-NEXT:    retq # sched: [2:1.00]
+; SKYLAKE-NEXT:    retq # sched: [7:1.00]
 ;
 ; SKX-LABEL: test_monitor:
 ; SKX:       # BB#0:
@@ -501,14 +501,14 @@ define <2 x double> @test_movddup(<2 x double> %a0, <2 x double> *%a1) {
 ; GENERIC:       # BB#0:
 ; GENERIC-NEXT:    movddup {{.*#+}} xmm1 = xmm0[0,0] sched: [1:1.00]
 ; GENERIC-NEXT:    movddup {{.*#+}} xmm0 = mem[0,0] sched: [6:0.50]
-; GENERIC-NEXT:    addpd %xmm1, %xmm0 # sched: [3:1.00]
+; GENERIC-NEXT:    subpd %xmm1, %xmm0 # sched: [3:1.00]
 ; GENERIC-NEXT:    retq # sched: [1:1.00]
 ;
 ; ATOM-LABEL: test_movddup:
 ; ATOM:       # BB#0:
 ; ATOM-NEXT:    movddup {{.*#+}} xmm1 = mem[0,0] sched: [1:1.00]
 ; ATOM-NEXT:    movddup {{.*#+}} xmm0 = xmm0[0,0] sched: [1:1.00]
-; ATOM-NEXT:    addpd %xmm0, %xmm1 # sched: [6:3.00]
+; ATOM-NEXT:    subpd %xmm0, %xmm1 # sched: [6:3.00]
 ; ATOM-NEXT:    movapd %xmm1, %xmm0 # sched: [1:0.50]
 ; ATOM-NEXT:    retq # sched: [79:39.50]
 ;
@@ -516,54 +516,54 @@ define <2 x double> @test_movddup(<2 x double> %a0, <2 x double> *%a1) {
 ; SLM:       # BB#0:
 ; SLM-NEXT:    movddup {{.*#+}} xmm1 = xmm0[0,0] sched: [1:1.00]
 ; SLM-NEXT:    movddup {{.*#+}} xmm0 = mem[0,0] sched: [3:1.00]
-; SLM-NEXT:    addpd %xmm1, %xmm0 # sched: [3:1.00]
+; SLM-NEXT:    subpd %xmm1, %xmm0 # sched: [3:1.00]
 ; SLM-NEXT:    retq # sched: [4:1.00]
 ;
 ; SANDY-LABEL: test_movddup:
 ; SANDY:       # BB#0:
 ; SANDY-NEXT:    vmovddup {{.*#+}} xmm0 = xmm0[0,0] sched: [1:1.00]
 ; SANDY-NEXT:    vmovddup {{.*#+}} xmm1 = mem[0,0] sched: [6:0.50]
-; SANDY-NEXT:    vaddpd %xmm1, %xmm0, %xmm0 # sched: [3:1.00]
+; SANDY-NEXT:    vsubpd %xmm0, %xmm1, %xmm0 # sched: [3:1.00]
 ; SANDY-NEXT:    retq # sched: [1:1.00]
 ;
 ; HASWELL-LABEL: test_movddup:
 ; HASWELL:       # BB#0:
 ; HASWELL-NEXT:    vmovddup {{.*#+}} xmm0 = xmm0[0,0] sched: [1:1.00]
 ; HASWELL-NEXT:    vmovddup {{.*#+}} xmm1 = mem[0,0] sched: [1:0.50]
-; HASWELL-NEXT:    vaddpd %xmm1, %xmm0, %xmm0 # sched: [3:1.00]
+; HASWELL-NEXT:    vsubpd %xmm0, %xmm1, %xmm0 # sched: [3:1.00]
 ; HASWELL-NEXT:    retq # sched: [2:1.00]
 ;
 ; SKYLAKE-LABEL: test_movddup:
 ; SKYLAKE:       # BB#0:
 ; SKYLAKE-NEXT:    vmovddup {{.*#+}} xmm0 = xmm0[0,0] sched: [1:1.00]
-; SKYLAKE-NEXT:    vmovddup {{.*#+}} xmm1 = mem[0,0] sched: [1:0.50]
-; SKYLAKE-NEXT:    vaddpd %xmm1, %xmm0, %xmm0 # sched: [4:0.50]
-; SKYLAKE-NEXT:    retq # sched: [2:1.00]
+; SKYLAKE-NEXT:    vmovddup {{.*#+}} xmm1 = mem[0,0] sched: [5:0.50]
+; SKYLAKE-NEXT:    vsubpd %xmm0, %xmm1, %xmm0 # sched: [4:0.50]
+; SKYLAKE-NEXT:    retq # sched: [7:1.00]
 ;
 ; SKX-LABEL: test_movddup:
 ; SKX:       # BB#0:
 ; SKX-NEXT:    vmovddup {{.*#+}} xmm0 = xmm0[0,0] sched: [1:1.00]
 ; SKX-NEXT:    vmovddup {{.*#+}} xmm1 = mem[0,0] sched: [5:0.50]
-; SKX-NEXT:    vaddpd %xmm1, %xmm0, %xmm0 # sched: [4:0.33]
+; SKX-NEXT:    vsubpd %xmm0, %xmm1, %xmm0 # sched: [4:0.33]
 ; SKX-NEXT:    retq # sched: [7:1.00]
 ;
 ; BTVER2-LABEL: test_movddup:
 ; BTVER2:       # BB#0:
 ; BTVER2-NEXT:    vmovddup {{.*#+}} xmm1 = mem[0,0] sched: [5:1.00]
 ; BTVER2-NEXT:    vmovddup {{.*#+}} xmm0 = xmm0[0,0] sched: [1:0.50]
-; BTVER2-NEXT:    vaddpd %xmm1, %xmm0, %xmm0 # sched: [3:1.00]
+; BTVER2-NEXT:    vsubpd %xmm0, %xmm1, %xmm0 # sched: [3:1.00]
 ; BTVER2-NEXT:    retq # sched: [4:1.00]
 ;
 ; ZNVER1-LABEL: test_movddup:
 ; ZNVER1:       # BB#0:
 ; ZNVER1-NEXT:    vmovddup {{.*#+}} xmm1 = mem[0,0] sched: [8:0.50]
 ; ZNVER1-NEXT:    vmovddup {{.*#+}} xmm0 = xmm0[0,0] sched: [1:0.50]
-; ZNVER1-NEXT:    vaddpd %xmm1, %xmm0, %xmm0 # sched: [3:1.00]
+; ZNVER1-NEXT:    vsubpd %xmm0, %xmm1, %xmm0 # sched: [3:1.00]
 ; ZNVER1-NEXT:    retq # sched: [1:0.50]
   %1 = shufflevector <2 x double> %a0, <2 x double> undef, <2 x i32> zeroinitializer
   %2 = load <2 x double>, <2 x double> *%a1, align 16
   %3 = shufflevector <2 x double> %2, <2 x double> undef, <2 x i32> zeroinitializer
-  %4 = fadd <2 x double> %1, %3
+  %4 = fsub <2 x double> %3, %1 ; Use fsub to stop the movddup from being folded as a broadcast load in avx512vl.
   ret <2 x double> %4
 }
 
@@ -607,9 +607,9 @@ define <4 x float> @test_movshdup(<4 x float> %a0, <4 x float> *%a1) {
 ; SKYLAKE-LABEL: test_movshdup:
 ; SKYLAKE:       # BB#0:
 ; SKYLAKE-NEXT:    vmovshdup {{.*#+}} xmm0 = xmm0[1,1,3,3] sched: [1:1.00]
-; SKYLAKE-NEXT:    vmovshdup {{.*#+}} xmm1 = mem[1,1,3,3] sched: [1:0.50]
+; SKYLAKE-NEXT:    vmovshdup {{.*#+}} xmm1 = mem[1,1,3,3] sched: [6:0.50]
 ; SKYLAKE-NEXT:    vaddps %xmm1, %xmm0, %xmm0 # sched: [4:0.50]
-; SKYLAKE-NEXT:    retq # sched: [2:1.00]
+; SKYLAKE-NEXT:    retq # sched: [7:1.00]
 ;
 ; SKX-LABEL: test_movshdup:
 ; SKX:       # BB#0:
@@ -678,9 +678,9 @@ define <4 x float> @test_movsldup(<4 x float> %a0, <4 x float> *%a1) {
 ; SKYLAKE-LABEL: test_movsldup:
 ; SKYLAKE:       # BB#0:
 ; SKYLAKE-NEXT:    vmovsldup {{.*#+}} xmm0 = xmm0[0,0,2,2] sched: [1:1.00]
-; SKYLAKE-NEXT:    vmovsldup {{.*#+}} xmm1 = mem[0,0,2,2] sched: [1:0.50]
+; SKYLAKE-NEXT:    vmovsldup {{.*#+}} xmm1 = mem[0,0,2,2] sched: [6:0.50]
 ; SKYLAKE-NEXT:    vaddps %xmm1, %xmm0, %xmm0 # sched: [4:0.50]
-; SKYLAKE-NEXT:    retq # sched: [2:1.00]
+; SKYLAKE-NEXT:    retq # sched: [7:1.00]
 ;
 ; SKX-LABEL: test_movsldup:
 ; SKX:       # BB#0:
@@ -750,7 +750,7 @@ define void @test_mwait(i32 %a0, i32 %a1) {
 ; SKYLAKE-NEXT:    movl %edi, %ecx # sched: [1:0.25]
 ; SKYLAKE-NEXT:    movl %esi, %eax # sched: [1:0.25]
 ; SKYLAKE-NEXT:    mwait # sched: [20:2.50]
-; SKYLAKE-NEXT:    retq # sched: [2:1.00]
+; SKYLAKE-NEXT:    retq # sched: [7:1.00]
 ;
 ; SKX-LABEL: test_mwait:
 ; SKX:       # BB#0:
