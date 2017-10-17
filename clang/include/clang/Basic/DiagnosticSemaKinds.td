@@ -5938,18 +5938,18 @@ def note_typecheck_assign_const : Note<
   "member function %q1 is declared const here|"
   "%select{|nested }1data member %2 declared const here}0">;
 
-def warn_lunsigned_always_true_comparison : Warning<
-  "comparison of unsigned expression %0 is always %select{false|true}1">,
+def warn_unsigned_always_true_comparison : Warning<
+  "comparison of %select{%3|unsigned expression}0 %2 "
+  "%select{unsigned expression|%3}0 is always %select{false|true}4">,
   InGroup<TautologicalUnsignedZeroCompare>;
-def warn_runsigned_always_true_comparison : Warning<
-  "comparison of %0 unsigned expression is always %select{false|true}1">,
-  InGroup<TautologicalUnsignedZeroCompare>;
-def warn_lunsigned_enum_always_true_comparison : Warning<
-  "comparison of unsigned enum expression %0 is always %select{false|true}1">,
+def warn_unsigned_enum_always_true_comparison : Warning<
+  "comparison of %select{%3|unsigned enum expression}0 %2 "
+  "%select{unsigned enum expression|%3}0 is always %select{false|true}4">,
   InGroup<TautologicalUnsignedEnumZeroCompare>;
-def warn_runsigned_enum_always_true_comparison : Warning<
-  "comparison of %0 unsigned enum expression is always %select{false|true}1">,
-  InGroup<TautologicalUnsignedEnumZeroCompare>;
+def warn_tautological_constant_compare : Warning<
+  "comparison %select{%3|%1}0 %2 "
+  "%select{%1|%3}0 is always %select{false|true}4">,
+  InGroup<TautologicalConstantCompare>;
 
 def warn_mixed_sign_comparison : Warning<
   "comparison of integers of different signs: %0 and %1">,
@@ -7612,6 +7612,11 @@ def err_operator_delete_dependent_param_type : Error<
   "%0 cannot take a dependent type as first parameter; use %1 instead">;
 def err_operator_delete_param_type : Error<
   "first parameter of %0 must have type %1">;
+def err_destroying_operator_delete_not_usual : Error<
+  "destroying operator delete can have only an optional size and optional "
+  "alignment parameter">;
+def note_implicit_delete_this_in_destructor_here : Note<
+  "while checking implicit 'delete this' for virtual destructor">;
 
 // C++ literal operators
 def err_literal_operator_outside_namespace : Error<
@@ -8994,6 +8999,14 @@ def err_module_redefinition : Error<
   "redefinition of module '%0'">;
 def note_prev_module_definition : Note<"previously defined here">;
 def note_prev_module_definition_from_ast_file : Note<"module loaded from '%0'">;
+def err_module_not_defined : Error<
+  "definition of module '%0' is not available; use -fmodule-file= to specify "
+  "path to precompiled module interface">;
+def err_module_redeclaration : Error<
+  "translation unit contains multiple module declarations">;
+def note_prev_module_declaration : Note<"previous module declaration is here">;
+def err_module_declaration_missing : Error<
+  "missing 'export module' declaration in module interface unit">;
 def err_module_private_specialization : Error<
   "%select{template|partial|member}0 specialization cannot be "
   "declared __module_private__">;
