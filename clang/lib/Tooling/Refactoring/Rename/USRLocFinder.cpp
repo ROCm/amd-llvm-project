@@ -160,13 +160,14 @@ public:
     const Decl *Context;
     // The nested name being replaced (can be nullptr).
     const NestedNameSpecifier *Specifier;
+    // Determine whether the prefix qualifiers of the NewName should be ignored.
+    // Normally, we set it to true for the symbol declaration and definition to
+    // avoid adding prefix qualifiers.
+    // For example, if it is true and NewName is "a::b::foo", then the symbol
+    // occurrence which the RenameInfo points to will be renamed to "foo".
+    bool IgnorePrefixQualifers;
   };
 
-  // FIXME: Currently, prefix qualifiers will be added to the renamed symbol
-  // definition (e.g. "class Foo {};" => "class b::Bar {};" when renaming
-  // "a::Foo" to "b::Bar").
-  // For renaming declarations/definitions, prefix qualifiers should be filtered
-  // out.
   bool VisitNamedDecl(const NamedDecl *Decl) {
     // UsingDecl has been handled in other place.
     if (llvm::isa<UsingDecl>(Decl))
@@ -180,8 +181,12 @@ public:
       return true;
 
     if (isInUSRSet(Decl)) {
-      RenameInfo Info = {Decl->getLocation(), Decl->getLocation(), nullptr,
-                         nullptr, nullptr};
+      RenameInfo Info = {Decl->getLocation(),
+                         Decl->getLocation(),
+                         /*FromDecl=*/nullptr,
+                         /*Context=*/nullptr,
+                         /*Specifier=*/nullptr,
+                         /*IgnorePrefixQualifers=*/true};
       RenameInfos.push_back(Info);
     }
     return true;
@@ -189,10 +194,19 @@ public:
 
   bool VisitDeclRefExpr(const DeclRefExpr *Expr) {
     const NamedDecl *Decl = Expr->getFoundDecl();
+    // Get the underlying declaration of the shadow declaration introduced by a
+    // using declaration.
+    if (auto* UsingShadow = llvm::dyn_cast<UsingShadowDecl>(Decl)) {
+      Decl = UsingShadow->getTargetDecl();
+    }
+
     if (isInUSRSet(Decl)) {
       RenameInfo Info = {Expr->getSourceRange().getBegin(),
-                         Expr->getSourceRange().getEnd(), Decl,
-                         getClosestAncestorDecl(*Expr), Expr->getQualifier()};
+                         Expr->getSourceRange().getEnd(),
+                         Decl,
+                         getClosestAncestorDecl(*Expr),
+                         Expr->getQualifier(),
+                         /*IgnorePrefixQualifers=*/false};
       RenameInfos.push_back(Info);
     }
 
@@ -220,8 +234,10 @@ public:
       if (isInUSRSet(TargetDecl)) {
         RenameInfo Info = {NestedLoc.getBeginLoc(),
                            EndLocationForType(NestedLoc.getTypeLoc()),
-                           TargetDecl, getClosestAncestorDecl(NestedLoc),
-                           NestedLoc.getNestedNameSpecifier()->getPrefix()};
+                           TargetDecl,
+                           getClosestAncestorDecl(NestedLoc),
+                           NestedLoc.getNestedNameSpecifier()->getPrefix(),
+                           /*IgnorePrefixQualifers=*/false};
         RenameInfos.push_back(Info);
       }
     }
@@ -265,9 +281,12 @@ public:
         if (!ParentTypeLoc.isNull() &&
             isInUSRSet(getSupportedDeclFromTypeLoc(ParentTypeLoc)))
           return true;
-        RenameInfo Info = {StartLocationForType(Loc), EndLocationForType(Loc),
-                           TargetDecl, getClosestAncestorDecl(Loc),
-                           GetNestedNameForType(Loc)};
+        RenameInfo Info = {StartLocationForType(Loc),
+                           EndLocationForType(Loc),
+                           TargetDecl,
+                           getClosestAncestorDecl(Loc),
+                           GetNestedNameForType(Loc),
+                           /*IgnorePrefixQualifers=*/false};
         RenameInfos.push_back(Info);
         return true;
       }
@@ -293,11 +312,13 @@ public:
             llvm::isa<ElaboratedType>(ParentTypeLoc.getType()))
           TargetLoc = ParentTypeLoc;
         RenameInfo Info = {
-            StartLocationForType(TargetLoc), EndLocationForType(TargetLoc),
+            StartLocationForType(TargetLoc),
+            EndLocationForType(TargetLoc),
             TemplateSpecType->getTemplateName().getAsTemplateDecl(),
             getClosestAncestorDecl(
                 ast_type_traits::DynTypedNode::create(TargetLoc)),
-            GetNestedNameForType(TargetLoc)};
+            GetNestedNameForType(TargetLoc),
+            /*IgnorePrefixQualifers=*/false};
         RenameInfos.push_back(Info);
       }
     }
@@ -423,18 +444,43 @@ createRenameAtomicChanges(llvm::ArrayRef<std::string> USRs,
 
   for (const auto &RenameInfo : Finder.getRenameInfos()) {
     std::string ReplacedName = NewName.str();
-    if (RenameInfo.FromDecl && RenameInfo.Context) {
-      if (!llvm::isa<clang::TranslationUnitDecl>(
-              RenameInfo.Context->getDeclContext())) {
-        ReplacedName = tooling::replaceNestedName(
-            RenameInfo.Specifier, RenameInfo.Context->getDeclContext(),
-            RenameInfo.FromDecl,
-            NewName.startswith("::") ? NewName.str() : ("::" + NewName).str());
+    if (RenameInfo.IgnorePrefixQualifers) {
+      // Get the name without prefix qualifiers from NewName.
+      size_t LastColonPos = NewName.find_last_of(':');
+      if (LastColonPos != std::string::npos)
+        ReplacedName = NewName.substr(LastColonPos + 1);
+    } else {
+      if (RenameInfo.FromDecl && RenameInfo.Context) {
+        if (!llvm::isa<clang::TranslationUnitDecl>(
+                RenameInfo.Context->getDeclContext())) {
+          ReplacedName = tooling::replaceNestedName(
+              RenameInfo.Specifier, RenameInfo.Context->getDeclContext(),
+              RenameInfo.FromDecl,
+              NewName.startswith("::") ? NewName.str()
+                                       : ("::" + NewName).str());
+        } else {
+          // This fixes the case where type `T` is a parameter inside a function
+          // type (e.g. `std::function<void(T)>`) and the DeclContext of `T`
+          // becomes the translation unit. As a workaround, we simply use
+          // fully-qualified name here for all references whose `DeclContext` is
+          // the translation unit and ignore the possible existence of
+          // using-decls (in the global scope) that can shorten the replaced
+          // name.
+          llvm::StringRef ActualName = Lexer::getSourceText(
+              CharSourceRange::getTokenRange(
+                  SourceRange(RenameInfo.Begin, RenameInfo.End)),
+              SM, TranslationUnitDecl->getASTContext().getLangOpts());
+          // Add the leading "::" back if the name written in the code contains
+          // it.
+          if (ActualName.startswith("::") && !NewName.startswith("::")) {
+            ReplacedName = "::" + NewName.str();
+          }
+        }
       }
+      // If the NewName contains leading "::", add it back.
+      if (NewName.startswith("::") && NewName.substr(2) == ReplacedName)
+        ReplacedName = NewName.str();
     }
-    // If the NewName contains leading "::", add it back.
-    if (NewName.startswith("::") && NewName.substr(2) == ReplacedName)
-      ReplacedName = NewName.str();
     Replace(RenameInfo.Begin, RenameInfo.End, ReplacedName);
   }
 

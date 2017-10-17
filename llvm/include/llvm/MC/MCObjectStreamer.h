@@ -34,6 +34,9 @@ class raw_pwrite_stream;
 /// to that file format or custom semantics expected by the object writer
 /// implementation.
 class MCObjectStreamer : public MCStreamer {
+  std::unique_ptr<MCObjectWriter> ObjectWriter;
+  std::unique_ptr<MCAsmBackend> TAB;
+  std::unique_ptr<MCCodeEmitter> Emitter;
   std::unique_ptr<MCAssembler> Assembler;
   MCSection::iterator CurInsertionPoint;
   bool EmitEHFrame;
@@ -46,9 +49,10 @@ class MCObjectStreamer : public MCStreamer {
   MCSymbol *EmitCFILabel() override;
 
 protected:
-  MCObjectStreamer(MCContext &Context, MCAsmBackend &TAB, raw_pwrite_stream &OS,
-                   MCCodeEmitter *Emitter);
-  ~MCObjectStreamer() override;
+  MCObjectStreamer(MCContext &Context, std::unique_ptr<MCAsmBackend> TAB,
+                   raw_pwrite_stream &OS,
+                   std::unique_ptr<MCCodeEmitter> Emitter);
+  ~MCObjectStreamer();
 
 public:
   /// state management

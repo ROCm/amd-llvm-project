@@ -1734,8 +1734,8 @@ void ItaniumRecordLayoutBuilder::LayoutField(const FieldDecl *D,
     FieldAlign = Context.getTypeAlignInChars(ATy->getElementType());
   } else if (RT || D->getType()->isAnyPointerType()) {
     unsigned AS = RT ?
-      RT->getPointeeType().getAddressSpace() :
-      D->getType().getAddressSpace();
+      Context.getTargetAddressSpace(RT->getPointeeType()) :
+      Context.getTargetAddressSpace(D->getType());
     // Get pointer width and align from target info
     FieldSize = 
       Context.toCharUnitsFromBits(Context.getTargetInfo().getPointerWidth(AS));

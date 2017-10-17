@@ -43,7 +43,7 @@ static const char *const DataLayoutStringSIGenericIsZero =
     "-i64:64-v16:16-v24:32-v32:32-v48:64-v96:128"
     "-v192:256-v256:256-v512:512-v1024:1024-v2048:2048-n32:64-A5";
 
-static const LangAS::Map AMDGPUPrivIsZeroDefIsGenMap = {
+static const LangASMap AMDGPUPrivIsZeroDefIsGenMap = {
     4, // Default
     1, // opencl_global
     3, // opencl_local
@@ -58,7 +58,7 @@ static const LangAS::Map AMDGPUPrivIsZeroDefIsGenMap = {
     1, // hcc_global
 };
 
-static const LangAS::Map AMDGPUGenIsZeroDefIsGenMap = {
+static const LangASMap AMDGPUGenIsZeroDefIsGenMap = {
     0, // Default
     1, // opencl_global
     3, // opencl_local
@@ -73,7 +73,7 @@ static const LangAS::Map AMDGPUGenIsZeroDefIsGenMap = {
     1, // hcc_global
 };
 
-static const LangAS::Map AMDGPUPrivIsZeroDefIsPrivMap = {
+static const LangASMap AMDGPUPrivIsZeroDefIsPrivMap = {
     0, // Default
     1, // opencl_global
     3, // opencl_local
@@ -88,7 +88,7 @@ static const LangAS::Map AMDGPUPrivIsZeroDefIsPrivMap = {
     1, // hcc_global
 };
 
-static const LangAS::Map AMDGPUGenIsZeroDefIsPrivMap = {
+static const LangASMap AMDGPUGenIsZeroDefIsPrivMap = {
     5, // Default
     1, // opencl_global
     3, // opencl_local
