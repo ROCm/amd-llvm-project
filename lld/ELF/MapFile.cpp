@@ -26,7 +26,8 @@
 #include "Strings.h"
 #include "SymbolTable.h"
 #include "SyntheticSections.h"
-#include "Threads.h"
+
+#include "lld/Common/Threads.h"
 
 #include "llvm/Support/raw_ostream.h"
 
@@ -133,7 +134,7 @@ template <class ELFT> void elf::writeMapFile() {
     OS << OSec->Name << '\n';
 
     // Dump symbols for each input section.
-    for (BaseCommand *Base : OSec->Commands) {
+    for (BaseCommand *Base : OSec->SectionCommands) {
       auto *ISD = dyn_cast<InputSectionDescription>(Base);
       if (!ISD)
         continue;
