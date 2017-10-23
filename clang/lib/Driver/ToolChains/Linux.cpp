@@ -800,6 +800,11 @@ void Linux::AddCudaIncludeArgs(const ArgList &DriverArgs,
   CudaInstallation.AddCudaIncludeArgs(DriverArgs, CC1Args);
 }
 
+void Linux::AddHCCIncludeArgs(const ArgList &DriverArgs,
+                              ArgStringList &CC1Args) const {
+  HCCInstallation.AddHCCIncludeArgs(DriverArgs, CC1Args);
+}
+
 void Linux::AddIAMCUIncludeArgs(const ArgList &DriverArgs,
                                 ArgStringList &CC1Args) const {
   if (GCCInstallation.isValid()) {

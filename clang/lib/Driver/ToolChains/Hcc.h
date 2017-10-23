@@ -96,6 +96,8 @@ public:
 namespace toolchains {
 
 class LLVM_LIBRARY_VISIBILITY HCCToolChain : public Linux {
+  friend class clang::driver::tools::HCC::CXXAMPLink;
+
 public:
   HCCToolChain(const Driver &D, const llvm::Triple &Triple,
                const llvm::opt::ArgList &Args);

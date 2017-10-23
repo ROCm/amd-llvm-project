@@ -325,6 +325,9 @@ void HCC::CXXAMPLink::ConstructJob(
     // specify AMDGPU target
     constexpr const char auto_tgt[] = "auto";
 
+    const auto &TC = static_cast<const toolchains::HCCToolChain &>(getToolChain());
+    TC.HCCInstallation.AddHCCLinkArgs(Args, CmdArgs);
+
     #if !defined(HCC_AMDGPU_TARGET)
         #define HCC_AMDGPU_TARGET auto_tgt
     #endif
