@@ -849,6 +849,22 @@ TEST(APFloatTest, fromDecimalString) {
   EXPECT_EQ(2.71828, convertToDoubleFromString("2.71828"));
 }
 
+TEST(APFloatTest, fromToStringSpecials) {
+  auto roundTrip = [] (const char* str) {
+    return convertToString(convertToDoubleFromString(str), 0, 3).c_str();
+  };
+  EXPECT_STREQ("+Inf", roundTrip("+Inf"));
+  EXPECT_STREQ("+Inf", roundTrip("INFINITY"));
+  EXPECT_STREQ("+Inf", roundTrip("inf"));
+  EXPECT_STREQ("-Inf", roundTrip("-Inf"));
+  EXPECT_STREQ("-Inf", roundTrip("-INFINITY"));
+  EXPECT_STREQ("-Inf", roundTrip("-inf"));
+  EXPECT_STREQ("NaN", roundTrip("NaN"));
+  EXPECT_STREQ("NaN", roundTrip("nan"));
+  EXPECT_STREQ("NaN", roundTrip("-NaN"));
+  EXPECT_STREQ("NaN", roundTrip("-nan"));
+}
+
 TEST(APFloatTest, fromHexadecimalString) {
   EXPECT_EQ( 1.0, APFloat(APFloat::IEEEdouble(),  "0x1p0").convertToDouble());
   EXPECT_EQ(+1.0, APFloat(APFloat::IEEEdouble(), "+0x1p0").convertToDouble());
@@ -1455,10 +1471,10 @@ TEST(APFloatTest, getZero) {
   const unsigned NumGetZeroTests = 12;
   for (unsigned i = 0; i < NumGetZeroTests; ++i) {
     APFloat test = APFloat::getZero(*GetZeroTest[i].semantics,
-				    GetZeroTest[i].sign);
+                                    GetZeroTest[i].sign);
     const char *pattern = GetZeroTest[i].sign? "-0x0p+0" : "0x0p+0";
     APFloat expected = APFloat(*GetZeroTest[i].semantics,
-			       pattern);
+                               pattern);
     EXPECT_TRUE(test.isZero());
     EXPECT_TRUE(GetZeroTest[i].sign? test.isNegative() : !test.isNegative());
     EXPECT_TRUE(test.bitwiseIsEqual(expected));
