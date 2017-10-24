@@ -10,7 +10,6 @@
 #ifndef LLVM_CLANG_LIB_DRIVER_TOOLCHAINS_GNU_H
 #define LLVM_CLANG_LIB_DRIVER_TOOLCHAINS_GNU_H
 
-#include "HID.h"
 #include "Cuda.h"
 #include "clang/Driver/Tool.h"
 #include "clang/Driver/ToolChain.h"
@@ -19,6 +18,8 @@
 
 namespace clang {
 namespace driver {
+
+class HCCInstallationDetector;
 
 struct DetectedMultilibs {
   /// The set of multilibs that the detected installation supports.
@@ -288,7 +289,7 @@ public:
 protected:
   GCCInstallationDetector GCCInstallation;
   CudaInstallationDetector CudaInstallation;
-  HCCInstallationDetector HCCInstallation;
+  HCCInstallationDetector *HCCInstallation;
 
 public:
   Generic_GCC(const Driver &D, const llvm::Triple &Triple,

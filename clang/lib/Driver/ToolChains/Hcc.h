@@ -24,6 +24,27 @@
 namespace clang {
 namespace driver {
 
+class HCCInstallationDetector {
+private:
+  const Driver &D;
+  bool IsValid = false;
+
+  std::string ROCmPath = "/opt/rocm";
+  std::string IncPath;
+  std::string LibPath;
+      
+public:
+  HCCInstallationDetector(const Driver &D, const llvm::Triple &HostTriple, const llvm::opt::ArgList &Args);
+      
+  void AddHCCIncludeArgs(const llvm::opt::ArgList &DriverArgs, llvm::opt::ArgStringList &CC1Args) const;
+
+  void AddHCCLibArgs(const llvm::opt::ArgList &Args, llvm::opt::ArgStringList &CmdArgs) const;
+      
+  bool isValid() const { return IsValid; }
+      
+  void print(raw_ostream &OS) const;
+};
+
 namespace tools {
 namespace HCC {
 

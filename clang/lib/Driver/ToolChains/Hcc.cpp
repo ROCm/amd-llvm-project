@@ -36,6 +36,53 @@ using namespace clang::driver::tools;
 using namespace clang;
 using namespace llvm::opt;
 
+HCCInstallationDetector::HCCInstallationDetector(const Driver &D, const llvm::Triple &HostTriple, const llvm::opt::ArgList &Args) : D(D) {
+  std::string BinPath = D.Dir;
+  auto &FS = D.getVFS();
+  SmallVector<std::string, 4> HCCPathCandidates;
+
+  if (Args.hasArg(options::OPT_hcc_path_EQ))
+    HCCPathCandidates.push_back(
+      Args.getLastArgValue(options::OPT_hcc_path_EQ));
+
+  if (BinPath == (ROCmPath + "/bin"))
+    HCCPathCandidates.push_back(ROCmPath);
+  else
+    HCCPathCandidates.push_back(BinPath + "/../..");
+
+  for (const auto &HCCPath: HCCPathCandidates) {
+    if (HCCPath.empty() ||
+        !FS.exists(HCCPath + "/include/hc.hpp") || 
+        !FS.exists(HCCPath + "/lib/libmcwamp.a"))
+      continue;
+
+    IncPath = HCCPath + "/include";
+    LibPath = HCCPath + "/lib";
+
+    IsValid = true;
+    break;
+  }
+}
+
+void HCCInstallationDetector::AddHCCIncludeArgs(const llvm::opt::ArgList &DriverArgs, llvm::opt::ArgStringList &CC1Args) const {
+  if (IsValid)
+    CC1Args.push_back(DriverArgs.MakeArgString("-I" + IncPath));
+}
+
+void HCCInstallationDetector::AddHCCLibArgs(const llvm::opt::ArgList &Args, llvm::opt::ArgStringList &CmdArgs) const {
+  if (IsValid) {
+    CmdArgs.push_back(Args.MakeArgString("-L" + LibPath));
+    CmdArgs.push_back(Args.MakeArgString("--rpath=" + LibPath));
+  }
+}
+
+void HCCInstallationDetector::print(raw_ostream &OS) const {
+  if (IsValid) {
+    OS << "Found HCC headers: " << IncPath << "\n";
+    OS << "Found HCC libs: " << LibPath << "\n";
+  }
+}
+
 static void HCPassOptions(const ArgList &Args, ArgStringList &CmdArgs) {
 
   for(auto A : Args) {
@@ -326,7 +373,15 @@ void HCC::CXXAMPLink::ConstructJob(
     constexpr const char auto_tgt[] = "auto";
 
     const auto &TC = static_cast<const toolchains::HCCToolChain &>(getToolChain());
-    TC.HCCInstallation.AddHCCLinkArgs(Args, CmdArgs);
+    TC.HCCInstallation->AddHCCLibArgs(Args, CmdArgs);
+
+    CmdArgs.push_back("-ldl");
+    CmdArgs.push_back("-lm");
+    CmdArgs.push_back("-lpthread");
+    CmdArgs.push_back("-lunwind");
+
+    CmdArgs.push_back("-lhc_am");
+    CmdArgs.push_back("-lmcwamp");
 
     #if !defined(HCC_AMDGPU_TARGET)
         #define HCC_AMDGPU_TARGET auto_tgt

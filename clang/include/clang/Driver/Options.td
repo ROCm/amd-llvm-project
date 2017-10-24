@@ -498,6 +498,8 @@ def cxxamp_cpu_mode : Flag<["-"], "cpu">, Flags<[DriverOption]>,Group<cxxamp_Gro
   HelpText<"C++AMP only.  This option allows the compiler to emit CPU kernel-specific artifacts"> ;
 def amdgpu_target_EQ : Joined<["-", "--"], "amdgpu-target=">, Flags<[DriverOption]>,
   HelpText<"Specify AMDGPU ISA version (ex: gfx803). Could be specified only once.">;
+def hcc_path_EQ : Joined<["--"], "hcc-path=">, Group<i_Group>,
+  HelpText<"HCC installation path">;
 def hcc_extra_libs_EQ : Joined<["-", "--"], "hcc-extra-libs=">, Flags<[DriverOption]>,
   HelpText<"Specify hcc extra libraries to be linked in.">;
 def cl_opt_disable : Flag<["-"], "cl-opt-disable">, Group<opencl_Group>, Flags<[CC1Option]>,
