@@ -4756,11 +4756,26 @@ const SCEV *ScalarEvolution::createAddRecFromPHI(PHINode *PN) {
           Ops.push_back(Add->getOperand(i));
       const SCEV *Accum = getAddExpr(Ops);
 
+      bool InvariantF = isLoopInvariant(Accum, L);
+
+      if (!InvariantF && Accum->getSCEVType() == scZeroExtend) {
+        const SCEV *Op = dyn_cast<SCEVZeroExtendExpr>(Accum)->getOperand();
+        const SCEVUnknown *Un = dyn_cast<SCEVUnknown>(Op);
+        if (Un && Un->getValue() && isa<Instruction>(Un->getValue()) &&
+            dyn_cast<Instruction>(Un->getValue())->getOpcode() ==
+                Instruction::ICmp) {
+          const SCEV *ICmpSC = evaluateForICmp(cast<ICmpInst>(Un->getValue()));
+          bool IsConstSC = ICmpSC->getSCEVType() == scConstant;
+          Accum =
+              IsConstSC ? getZeroExtendExpr(ICmpSC, Accum->getType()) : Accum;
+          InvariantF = IsConstSC ? true : false;
+        }
+      }
+
       // This is not a valid addrec if the step amount is varying each
       // loop iteration, but is not itself an addrec in this loop.
-      if (isLoopInvariant(Accum, L) ||
-          (isa<SCEVAddRecExpr>(Accum) &&
-           cast<SCEVAddRecExpr>(Accum)->getLoop() == L)) {
+      if (InvariantF || (isa<SCEVAddRecExpr>(Accum) &&
+                         cast<SCEVAddRecExpr>(Accum)->getLoop() == L)) {
         SCEV::NoWrapFlags Flags = SCEV::FlagAnyWrap;
 
         if (auto BO = MatchBinaryOp(BEValueV, DT)) {
@@ -6293,7 +6308,6 @@ ScalarEvolution::getPredicatedBackedgeTakenInfo(const Loop *L) {
   BackedgeTakenInfo Result =
       computeBackedgeTakenCount(L, /*AllowPredicates=*/true);
 
-  addToLoopUseLists(Result, L);
   return PredicatedBackedgeTakenCounts.find(L)->second = std::move(Result);
 }
 
@@ -6369,7 +6383,6 @@ ScalarEvolution::getBackedgeTakenInfo(const Loop *L) {
   // recusive call to getBackedgeTakenInfo (on a different
   // loop), which would invalidate the iterator computed
   // earlier.
-  addToLoopUseLists(Result, L);
   return BackedgeTakenCounts.find(L)->second = std::move(Result);
 }
 
@@ -6407,14 +6420,8 @@ void ScalarEvolution::forgetLoop(const Loop *L) {
 
     auto LoopUsersItr = LoopUsers.find(CurrL);
     if (LoopUsersItr != LoopUsers.end()) {
-      for (auto LoopOrSCEV : LoopUsersItr->second) {
-        if (auto *S = LoopOrSCEV.dyn_cast<const SCEV *>())
-          forgetMemoizedResults(S);
-        else {
-          BackedgeTakenCounts.erase(LoopOrSCEV.get<const Loop *>());
-          PredicatedBackedgeTakenCounts.erase(LoopOrSCEV.get<const Loop *>());
-        }
-      }
+      for (auto *S : LoopUsersItr->second)
+        forgetMemoizedResults(S);
       LoopUsers.erase(LoopUsersItr);
     }
 
@@ -6450,6 +6457,30 @@ void ScalarEvolution::forgetLoop(const Loop *L) {
     LoopWorklist.append(CurrL->begin(), CurrL->end());
   }
 }
+
+
+const SCEV *ScalarEvolution::evaluateForICmp(ICmpInst *IC) {
+  BasicBlock *Latch = nullptr;
+  const Loop *L = LI.getLoopFor(IC->getParent());
+
+  // If compare instruction is same or inverse of the compare in the
+  // branch of the loop latch, then return a constant evolution
+  // node. This shall facilitate computations of loop exit counts
+  // in cases where compare appears in the evolution chain of induction
+  // variables.
+  if (L && (Latch = L->getLoopLatch())) {
+    BranchInst *BI = dyn_cast<BranchInst>(Latch->getTerminator());
+    if (BI && BI->isConditional() && BI->getCondition() == IC) {
+      if (BI->getSuccessor(0) != L->getHeader())
+        return getZero(Type::getInt1Ty(getContext()));
+      else
+        return getOne(Type::getInt1Ty(getContext()));
+    }
+  }
+
+  return getUnknown(IC);
+}
+
 
 void ScalarEvolution::forgetValue(Value *V) {
   Instruction *I = dyn_cast<Instruction>(V);
@@ -6557,34 +6588,6 @@ bool ScalarEvolution::BackedgeTakenInfo::hasOperand(const SCEV *S,
       return true;
 
   return false;
-}
-
-static void findUsedLoopsInSCEVExpr(const SCEV *S,
-                                    SmallPtrSetImpl<const Loop *> &Result) {
-  struct FindUsedLoops {
-    SmallPtrSetImpl<const Loop *> &LoopsUsed;
-    FindUsedLoops(SmallPtrSetImpl<const Loop *> &LoopsUsed)
-        : LoopsUsed(LoopsUsed) {}
-    bool follow(const SCEV *S) {
-      if (auto *AR = dyn_cast<SCEVAddRecExpr>(S))
-        LoopsUsed.insert(AR->getLoop());
-      return true;
-    }
-
-    bool isDone() const { return false; }
-  };
-  FindUsedLoops F(Result);
-  SCEVTraversal<FindUsedLoops>(F).visitAll(S);
-}
-
-void ScalarEvolution::BackedgeTakenInfo::findUsedLoops(
-    ScalarEvolution &SE, SmallPtrSetImpl<const Loop *> &Result) const {
-  if (auto *S = getMax())
-    if (S != SE.getCouldNotCompute())
-      findUsedLoopsInSCEVExpr(S, Result);
-  for (auto &ENT : ExitNotTaken)
-    if (ENT.ExactNotTaken != SE.getCouldNotCompute())
-      findUsedLoopsInSCEVExpr(ENT.ExactNotTaken, Result);
 }
 
 ScalarEvolution::ExitLimit::ExitLimit(const SCEV *E)
@@ -9725,11 +9728,11 @@ const SCEV *ScalarEvolution::computeBECount(const SCEV *Delta, const SCEV *Step,
   return getUDivExpr(Delta, Step);
 }
 
-const SCEV *ScalarEvolution::computeMaxBECount(const SCEV *Start,
-                                               const SCEV *Stride,
-                                               const SCEV *End,
-                                               unsigned BitWidth,
-                                               bool IsSigned) {
+const SCEV *ScalarEvolution::computeMaxBECountForLT(const SCEV *Start,
+                                                    const SCEV *Stride,
+                                                    const SCEV *End,
+                                                    unsigned BitWidth,
+                                                    bool IsSigned) {
 
   assert(!isKnownNonPositive(Stride) &&
          "Stride is expected strictly positive!");
@@ -9861,7 +9864,7 @@ ScalarEvolution::howManyLessThans(const SCEV *LHS, const SCEV *RHS,
   // bound of the loop (RHS), and the fact that IV does not overflow (which is
   // checked above).
   if (!isLoopInvariant(RHS, L)) {
-    const SCEV *MaxBECount = computeMaxBECount(
+    const SCEV *MaxBECount = computeMaxBECountForLT(
         Start, Stride, RHS, getTypeSizeInBits(LHS->getType()), IsSigned);
     return ExitLimit(getCouldNotCompute() /* ExactNotTaken */, MaxBECount,
                      false /*MaxOrZero*/, Predicates);
@@ -9898,8 +9901,8 @@ ScalarEvolution::howManyLessThans(const SCEV *LHS, const SCEV *RHS,
     MaxBECount = BECountIfBackedgeTaken;
     MaxOrZero = true;
   } else {
-    MaxBECount = computeMaxBECount(Start, Stride, RHS,
-                                   getTypeSizeInBits(LHS->getType()), IsSigned);
+    MaxBECount = computeMaxBECountForLT(
+        Start, Stride, RHS, getTypeSizeInBits(LHS->getType()), IsSigned);
   }
 
   if (isa<SCEVCouldNotCompute>(MaxBECount) &&
@@ -11070,6 +11073,21 @@ ScalarEvolution::forgetMemoizedResults(const SCEV *S, bool EraseExitLimit) {
       ++I;
   }
 
+  auto RemoveSCEVFromBackedgeMap =
+      [S, this](DenseMap<const Loop *, BackedgeTakenInfo> &Map) {
+        for (auto I = Map.begin(), E = Map.end(); I != E;) {
+          BackedgeTakenInfo &BEInfo = I->second;
+          if (BEInfo.hasOperand(S, this)) {
+            BEInfo.clear();
+            Map.erase(I++);
+          } else
+            ++I;
+        }
+      };
+
+  RemoveSCEVFromBackedgeMap(BackedgeTakenCounts);
+  RemoveSCEVFromBackedgeMap(PredicatedBackedgeTakenCounts);
+
   // TODO: There is a suspicion that we only need to do it when there is a
   // SCEVUnknown somewhere inside S. Need to check this.
   if (EraseExitLimit)
@@ -11079,19 +11097,22 @@ ScalarEvolution::forgetMemoizedResults(const SCEV *S, bool EraseExitLimit) {
 }
 
 void ScalarEvolution::addToLoopUseLists(const SCEV *S) {
-  SmallPtrSet<const Loop *, 8> LoopsUsed;
-  findUsedLoopsInSCEVExpr(S, LoopsUsed);
-  for (auto *L : LoopsUsed)
-    LoopUsers[L].push_back({S});
-}
+  struct FindUsedLoops {
+    SmallPtrSet<const Loop *, 8> LoopsUsed;
+    bool follow(const SCEV *S) {
+      if (auto *AR = dyn_cast<SCEVAddRecExpr>(S))
+        LoopsUsed.insert(AR->getLoop());
+      return true;
+    }
 
-void ScalarEvolution::addToLoopUseLists(
-    const ScalarEvolution::BackedgeTakenInfo &BTI, const Loop *L) {
-  SmallPtrSet<const Loop *, 8> LoopsUsed;
-  BTI.findUsedLoops(*this, LoopsUsed);
+    bool isDone() const { return false; }
+  };
 
-  for (auto *UsedL : LoopsUsed)
-    LoopUsers[UsedL].push_back({L});
+  FindUsedLoops F;
+  SCEVTraversal<FindUsedLoops>(F).visitAll(S);
+
+  for (auto *L : F.LoopsUsed)
+    LoopUsers[L].push_back(S);
 }
 
 void ScalarEvolution::verify() const {
