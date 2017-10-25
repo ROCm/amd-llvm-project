@@ -10,6 +10,7 @@
 #ifndef LLVM_CLANG_LIB_DRIVER_TOOLCHAINS_GNU_H
 #define LLVM_CLANG_LIB_DRIVER_TOOLCHAINS_GNU_H
 
+#include "Hcc.h"
 #include "Cuda.h"
 #include "clang/Driver/Tool.h"
 #include "clang/Driver/ToolChain.h"
@@ -64,7 +65,8 @@ public:
 };
 
 class LLVM_LIBRARY_VISIBILITY Linker : public GnuTool {
-  mutable std::unique_ptr<Linker> HCLinker;
+  mutable std::unique_ptr<Tool> HCLinker;
+  friend class HCC::CXXAMPLink;
 
 public:
   Linker(const ToolChain &TC) : GnuTool("GNU::Linker", "linker", TC) {}
@@ -289,7 +291,9 @@ public:
 protected:
   GCCInstallationDetector GCCInstallation;
   CudaInstallationDetector CudaInstallation;
-  HCCInstallationDetector *HCCInstallation;
+  HCCInstallationDetector HCCInstallation;
+
+  friend class tools::HCC::CXXAMPLink;
 
 public:
   Generic_GCC(const Driver &D, const llvm::Triple &Triple,

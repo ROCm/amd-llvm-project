@@ -16,8 +16,6 @@
 #include "clang/Driver/ToolChain.h"
 #include "clang/Driver/Tool.h"
 #include "llvm/Support/Compiler.h"
-#include "Gnu.h"
-#include "Linux.h"
 #include <set>
 #include <vector>
 
@@ -32,9 +30,12 @@ private:
   std::string ROCmPath = "/opt/rocm";
   std::string IncPath;
   std::string LibPath;
-      
+
+  std::vector<const char *> SystemLibs = {"-ldl", "-lm", "-lpthread", "-lunwind"};
+  std::vector<const char *> RuntimeLibs = {"-lhc_am", "-lmcwamp"};
+
 public:
-  HCCInstallationDetector(const Driver &D, const llvm::Triple &HostTriple, const llvm::opt::ArgList &Args);
+  HCCInstallationDetector(const Driver &D, const llvm::opt::ArgList &Args);
       
   void AddHCCIncludeArgs(const llvm::opt::ArgList &DriverArgs, llvm::opt::ArgStringList &CC1Args) const;
 
@@ -100,9 +101,13 @@ public:
 };
 
 // \brief C++AMP linker.
-class LLVM_LIBRARY_VISIBILITY CXXAMPLink : public gnutools::Linker {
+class LLVM_LIBRARY_VISIBILITY CXXAMPLink : public Tool {
 public:
-  CXXAMPLink(const ToolChain &TC) : Linker(TC, "clamp-link") {}
+  CXXAMPLink(const ToolChain &TC) : Tool("clamp-link", "HC linker", TC) {}
+
+  bool hasGoodDiagnostics() const override { return true; }
+  bool hasIntegratedAssembler() const override { return false; }
+  bool hasIntegratedCPP() const override { return false; }
 
   void ConstructJob(Compilation &C, const JobAction &JA,
                     const InputInfo &Output,
@@ -116,12 +121,10 @@ public:
 
 namespace toolchains {
 
-class LLVM_LIBRARY_VISIBILITY HCCToolChain : public Linux {
-  friend class clang::driver::tools::HCC::CXXAMPLink;
-
+class LLVM_LIBRARY_VISIBILITY HCCToolChain : public ToolChain {
 public:
   HCCToolChain(const Driver &D, const llvm::Triple &Triple,
-               const llvm::opt::ArgList &Args);
+               const ToolChain &HostTC, const llvm::opt::ArgList &Args);
 
   llvm::opt::DerivedArgList *
   TranslateArgs(const llvm::opt::DerivedArgList &Args,
@@ -132,6 +135,12 @@ public:
                         llvm::opt::ArgStringList &CC1Args,
                         Action::OffloadKind DeviceOffloadKind) const override;
 
+  void AddClangSystemIncludeArgs(const llvm::opt::ArgList &DriverArgs, llvm::opt::ArgStringList &CC1Args) const override;
+
+  void AddClangCXXStdlibIncludeArgs(const llvm::opt::ArgList &Args, llvm::opt::ArgStringList &CC1Args) const override;
+
+  void AddHCCIncludeArgs(const llvm::opt::ArgList &DriverArgs, llvm::opt::ArgStringList &CC1Args) const override;
+  
   bool useIntegratedAs() const override { return false; }
 
   Tool *SelectTool(const JobAction &JA) const override;
@@ -141,6 +150,12 @@ public:
 
   // HCC ToolChain doesn't support "-pg"-style profiling yet
   bool SupportsProfiling() const override { return false; }
+
+  bool isPICDefault() const override { return false; }
+  bool isPIEDefault() const override { return false; }
+  bool isPICDefaultForced() const override { return false; }
+
+  const ToolChain &HostTC;
 
 protected:
   Tool *buildLinker() const override;

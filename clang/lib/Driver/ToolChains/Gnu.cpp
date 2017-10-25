@@ -541,7 +541,7 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C,
   // job using it.
   if (Driver::IsCXXAMP(C.getArgs())) {
     if (!HCLinker)
-      HCLinker = std::unique_ptr<Linker>(new HCC::CXXAMPLink(getToolChain()));
+      HCLinker = std::unique_ptr<Tool>(new HCC::CXXAMPLink(getToolChain()));
     HCLinker->ConstructJob(C, JA, Output, Inputs, Args, LinkingOutput);
   } else {
     ArgStringList CmdArgs;
@@ -2171,15 +2171,14 @@ bool Generic_GCC::GCCInstallationDetector::ScanGentooGccConfig(
 Generic_GCC::Generic_GCC(const Driver &D, const llvm::Triple &Triple,
                          const ArgList &Args)
     : ToolChain(D, Triple, Args), GCCInstallation(D),
-      CudaInstallation(D, Triple, Args) {
-  HCCInstallation = new HCCInstallationDetector(D, Triple, Args);
-
+      CudaInstallation(D, Triple, Args),
+      HCCInstallation(D, Args) {
   getProgramPaths().push_back(getDriver().getInstalledDir());
   if (getDriver().getInstalledDir() != getDriver().Dir)
     getProgramPaths().push_back(getDriver().Dir);
 }
 
-Generic_GCC::~Generic_GCC() { delete HCCInstallation; }
+Generic_GCC::~Generic_GCC() {}
 
 Tool *Generic_GCC::getTool(Action::ActionClass AC) const {
   switch (AC) {
@@ -2206,7 +2205,7 @@ void Generic_GCC::printVerboseInfo(raw_ostream &OS) const {
   // Print the information about how we detected the GCC installation.
   GCCInstallation.print(OS);
   CudaInstallation.print(OS);
-  HCCInstallation->print(OS);
+  HCCInstallation.print(OS);
 }
 
 bool Generic_GCC::IsUnwindTablesDefault(const ArgList &Args) const {

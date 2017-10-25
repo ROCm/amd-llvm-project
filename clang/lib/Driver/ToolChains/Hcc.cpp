@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Hcc.h"
+#include "Gnu.h"
 #include "InputInfo.h"
 #include "clang/Basic/VirtualFileSystem.h"
 #include "clang/Driver/Compilation.h"
@@ -36,7 +37,7 @@ using namespace clang::driver::tools;
 using namespace clang;
 using namespace llvm::opt;
 
-HCCInstallationDetector::HCCInstallationDetector(const Driver &D, const llvm::Triple &HostTriple, const llvm::opt::ArgList &Args) : D(D) {
+HCCInstallationDetector::HCCInstallationDetector(const Driver &D, const llvm::opt::ArgList &Args) : D(D) {
   std::string BinPath = D.Dir;
   auto &FS = D.getVFS();
   SmallVector<std::string, 4> HCCPathCandidates;
@@ -52,7 +53,7 @@ HCCInstallationDetector::HCCInstallationDetector(const Driver &D, const llvm::Tr
 
   for (const auto &HCCPath: HCCPathCandidates) {
     if (HCCPath.empty() ||
-        !FS.exists(HCCPath + "/include/hc.hpp") || 
+        !(FS.exists(HCCPath + "/include/hc.hpp") || FS.exists(HCCPath + "/include/hcc/hc.hpp"))|| 
         !FS.exists(HCCPath + "/lib/libmcwamp.a"))
       continue;
 
@@ -71,8 +72,34 @@ void HCCInstallationDetector::AddHCCIncludeArgs(const llvm::opt::ArgList &Driver
 
 void HCCInstallationDetector::AddHCCLibArgs(const llvm::opt::ArgList &Args, llvm::opt::ArgStringList &CmdArgs) const {
   if (IsValid) {
+    // add verbose flag to linker script if clang++ is invoked with --verbose flag
+    if (Args.hasArg(options::OPT_v)) CmdArgs.push_back("--verbose");
+        
+    // Reverse translate the -lstdc++ option
+    // Or add -lstdc++ when running on RHEL 7 or CentOS 7
+    if (Args.hasArg(options::OPT_Z_reserved_lib_stdcxx) ||
+      HCC_TOOLCHAIN_RHEL) {
+      CmdArgs.push_back("-lstdc++");
+    }
+
     CmdArgs.push_back(Args.MakeArgString("-L" + LibPath));
     CmdArgs.push_back(Args.MakeArgString("--rpath=" + LibPath));
+
+    for (auto &lib: SystemLibs)
+      CmdArgs.push_back(lib);
+    
+    if (!Args.hasArg(options::OPT_fno_hcc_bootstrap)) {
+      for (auto &lib: RuntimeLibs)
+        CmdArgs.push_back(lib);
+    }
+
+    if (Args.hasArg(options::OPT_hcc_extra_libs_EQ)) {
+      auto HccExtraLibs = Args.getAllArgValues(options::OPT_hcc_extra_libs_EQ);
+      std::string prefix{"--hcc-extra-libs="};
+
+      for(auto&& Lib:HccExtraLibs)
+        CmdArgs.push_back(Args.MakeArgString(prefix + Lib));
+    }
   }
 }
 
@@ -95,7 +122,9 @@ static void HCPassOptions(const ArgList &Args, ArgStringList &CmdArgs) {
                    ArgOpt.matches(options::OPT_std_EQ) || // omit -std=
                    ArgOpt.matches(options::OPT_stdlib_EQ) || // omit -stdlib=
                    ArgOpt.matches(options::OPT_m_Group) || // omit -m
-                   ArgOpt.getKind() == Option::InputClass; // omit <input>
+                   ArgOpt.matches(options::OPT_fhcc_bootstrap) || // omit -fhcc-bootstrap
+                   ArgOpt.matches(options::OPT_fno_hcc_bootstrap) || // omit -fno-hcc-bootstrap
+                   ArgOpt.getKind() == Option::InputClass; // omit <inpuit>
     if (!hasOpts) {
       std::string str = A->getSpelling().str();
 
@@ -359,29 +388,11 @@ void HCC::CXXAMPLink::ConstructJob(
 {
     ArgStringList CmdArgs;
 
-    // add verbose flag to linker script if clang++ is invoked with --verbose flag
-    if (Args.hasArg(options::OPT_v)) CmdArgs.push_back("--verbose");
-
-    // Reverse translate the -lstdc++ option
-    // Or add -lstdc++ when running on RHEL 7 or CentOS 7
-    if (Args.hasArg(options::OPT_Z_reserved_lib_stdcxx) ||
-        HCC_TOOLCHAIN_RHEL) {
-        CmdArgs.push_back("-lstdc++");
-    }
-
     // specify AMDGPU target
     constexpr const char auto_tgt[] = "auto";
 
-    const auto &TC = static_cast<const toolchains::HCCToolChain &>(getToolChain());
-    TC.HCCInstallation->AddHCCLibArgs(Args, CmdArgs);
-
-    CmdArgs.push_back("-ldl");
-    CmdArgs.push_back("-lm");
-    CmdArgs.push_back("-lpthread");
-    CmdArgs.push_back("-lunwind");
-
-    CmdArgs.push_back("-lhc_am");
-    CmdArgs.push_back("-lmcwamp");
+    const auto &TC = static_cast<const toolchains::Generic_ELF &>(getToolChain());
+    TC.HCCInstallation.AddHCCLibArgs(Args, CmdArgs);
 
     #if !defined(HCC_AMDGPU_TARGET)
         #define HCC_AMDGPU_TARGET auto_tgt
@@ -424,17 +435,10 @@ void HCC::CXXAMPLink::ConstructJob(
     }
 
     // pass inputs to gnu ld for initial processing
-    Linker::ConstructLinkerJob(
+    gnutools::Linker(getToolChain()).ConstructLinkerJob(
         C, JA, Output, Inputs, Args, LinkingOutput, CmdArgs);
 
     auto ClampArgs = CmdArgs;
-    if (Args.hasArg(options::OPT_hcc_extra_libs_EQ)) {
-      auto HccExtraLibs = Args.getAllArgValues(options::OPT_hcc_extra_libs_EQ);
-      std::string prefix{"--hcc-extra-libs="};
-      for(auto&& Lib:HccExtraLibs) {
-        ClampArgs.push_back(Args.MakeArgString(prefix + Lib));
-      }
-    }
 
   const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("clamp-link"));
 
@@ -452,18 +456,27 @@ void HCC::CXXAMPLink::ConstructJob(
 ///   - use clamp-link as linker
 
 HCCToolChain::HCCToolChain(const Driver &D, const llvm::Triple &Triple,
-                           const ArgList &Args)
-    : Linux(D, Triple, Args) {
-  llvm::Triple defaultTriple(llvm::sys::getDefaultTargetTriple());
-  GCCInstallation.init(defaultTriple, Args);
-}
+                           const ToolChain &HostTC, const ArgList &Args)
+    : ToolChain(D, Triple, Args), HostTC(HostTC) {}
 
 void HCCToolChain::addClangTargetOptions(
     const llvm::opt::ArgList &DriverArgs, llvm::opt::ArgStringList &CC1Args,
     Action::OffloadKind DeviceOffloadKind) const {
-  Linux::addClangTargetOptions(DriverArgs, CC1Args, DeviceOffloadKind);
+  HostTC.addClangTargetOptions(DriverArgs, CC1Args, DeviceOffloadKind);
 
   // TBD, depends on mode set correct arguments
+}
+
+void HCCToolChain::AddClangSystemIncludeArgs(const ArgList &DriverArgs, ArgStringList &CC1Args) const {
+  HostTC.AddClangSystemIncludeArgs(DriverArgs, CC1Args);
+}
+
+void HCCToolChain::AddClangCXXStdlibIncludeArgs(const ArgList &Args, ArgStringList &CC1Args) const {
+  HostTC.AddClangCXXStdlibIncludeArgs(Args, CC1Args);
+}
+
+void HCCToolChain::AddHCCIncludeArgs(const ArgList &DriverArgs, ArgStringList &CC1Args) const {
+  HostTC.AddHCCIncludeArgs(DriverArgs, CC1Args);
 }
 
 llvm::opt::DerivedArgList *
