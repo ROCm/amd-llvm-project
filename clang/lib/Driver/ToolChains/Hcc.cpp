@@ -39,25 +39,25 @@ using namespace llvm::opt;
 
 HCCInstallationDetector::HCCInstallationDetector(const Driver &D, const llvm::opt::ArgList &Args) : D(D) {
   std::string BinPath = D.Dir;
+  std::string InstallPath = D.InstalledDir;
   auto &FS = D.getVFS();
   SmallVector<std::string, 4> HCCPathCandidates;
 
   if (Args.hasArg(options::OPT_hcc_path_EQ))
     HCCPathCandidates.push_back(
       Args.getLastArgValue(options::OPT_hcc_path_EQ));
-
-  if (BinPath == (ROCmPath + "/bin"))
-    HCCPathCandidates.push_back(ROCmPath);
-  else
-    HCCPathCandidates.push_back(BinPath + "/../..");
+    
+  HCCPathCandidates.push_back(InstallPath + "/..");
+  HCCPathCandidates.push_back(BinPath + "/..");
+  HCCPathCandidates.push_back(BinPath + "/../..");
 
   for (const auto &HCCPath: HCCPathCandidates) {
     if (HCCPath.empty() ||
-        !(FS.exists(HCCPath + "/include/hc.hpp") || FS.exists(HCCPath + "/include/hcc/hc.hpp"))|| 
+        !(FS.exists(HCCPath + "/include/hc.hpp") || FS.exists(HCCPath + "/include/hcc/hc.hpp")) || 
         !FS.exists(HCCPath + "/lib/libmcwamp.a"))
       continue;
 
-    IncPath = HCCPath + "/include";
+    IncPath = HCCPath;
     LibPath = HCCPath + "/lib";
 
     IsValid = true;
@@ -66,8 +66,10 @@ HCCInstallationDetector::HCCInstallationDetector(const Driver &D, const llvm::op
 }
 
 void HCCInstallationDetector::AddHCCIncludeArgs(const llvm::opt::ArgList &DriverArgs, llvm::opt::ArgStringList &CC1Args) const {
-  if (IsValid)
-    CC1Args.push_back(DriverArgs.MakeArgString("-I" + IncPath));
+  if (IsValid) {
+    CC1Args.push_back(DriverArgs.MakeArgString("-I" + IncPath + "/include"));
+    CC1Args.push_back(DriverArgs.MakeArgString("-I" + IncPath + "/hcc/include"));
+  }
 }
 
 void HCCInstallationDetector::AddHCCLibArgs(const llvm::opt::ArgList &Args, llvm::opt::ArgStringList &CmdArgs) const {
@@ -104,10 +106,8 @@ void HCCInstallationDetector::AddHCCLibArgs(const llvm::opt::ArgList &Args, llvm
 }
 
 void HCCInstallationDetector::print(raw_ostream &OS) const {
-  if (IsValid) {
-    OS << "Found HCC headers: " << IncPath << "\n";
-    OS << "Found HCC libs: " << LibPath << "\n";
-  }
+  if (IsValid)
+    OS << "Found HCC installation: " << IncPath << "\n";
 }
 
 static void HCPassOptions(const ArgList &Args, ArgStringList &CmdArgs) {
@@ -124,7 +124,7 @@ static void HCPassOptions(const ArgList &Args, ArgStringList &CmdArgs) {
                    ArgOpt.matches(options::OPT_m_Group) || // omit -m
                    ArgOpt.matches(options::OPT_fhcc_bootstrap) || // omit -fhcc-bootstrap
                    ArgOpt.matches(options::OPT_fno_hcc_bootstrap) || // omit -fno-hcc-bootstrap
-                   ArgOpt.getKind() == Option::InputClass; // omit <inpuit>
+                   ArgOpt.getKind() == Option::InputClass; // omit <input>
     if (!hasOpts) {
       std::string str = A->getSpelling().str();
 
@@ -457,7 +457,11 @@ void HCC::CXXAMPLink::ConstructJob(
 
 HCCToolChain::HCCToolChain(const Driver &D, const llvm::Triple &Triple,
                            const ToolChain &HostTC, const ArgList &Args)
-    : ToolChain(D, Triple, Args), HostTC(HostTC) {}
+    : ToolChain(D, Triple, Args), HostTC(HostTC) {
+  getProgramPaths().push_back(getDriver().getInstalledDir());
+  if (getDriver().getInstalledDir() != getDriver().Dir)
+    getProgramPaths().push_back(getDriver().Dir);
+}
 
 void HCCToolChain::addClangTargetOptions(
     const llvm::opt::ArgList &DriverArgs, llvm::opt::ArgStringList &CC1Args,

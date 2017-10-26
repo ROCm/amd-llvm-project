@@ -27,7 +27,6 @@ private:
   const Driver &D;
   bool IsValid = false;
 
-  std::string ROCmPath = "/opt/rocm";
   std::string IncPath;
   std::string LibPath;
 
