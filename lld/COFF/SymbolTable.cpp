@@ -10,10 +10,10 @@
 #include "SymbolTable.h"
 #include "Config.h"
 #include "Driver.h"
-#include "Error.h"
 #include "LTO.h"
 #include "Memory.h"
 #include "Symbols.h"
+#include "lld/Common/ErrorHandler.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
@@ -351,8 +351,16 @@ StringRef SymbolTable::findMangle(StringRef Name) {
     return findByPrefix(("?" + Name + "@@Y").str());
   if (!Name.startswith("_"))
     return "";
-  // Search for x86 C function.
+  // Search for x86 stdcall function.
   StringRef S = findByPrefix((Name + "@").str());
+  if (!S.empty())
+    return S;
+  // Search for x86 fastcall function.
+  S = findByPrefix(("@" + Name.substr(1) + "@").str());
+  if (!S.empty())
+    return S;
+  // Search for x86 vectorcall function.
+  S = findByPrefix((Name.substr(1) + "@@").str());
   if (!S.empty())
     return S;
   // Search for x86 C++ non-member function.
@@ -364,8 +372,10 @@ void SymbolTable::mangleMaybe(SymbolBody *B) {
   if (!U || U->WeakAlias)
     return;
   StringRef Alias = findMangle(U->getName());
-  if (!Alias.empty())
+  if (!Alias.empty()) {
+    log(U->getName() + " aliased to " + Alias);
     U->WeakAlias = addUndefined(Alias);
+  }
 }
 
 SymbolBody *SymbolTable::addUndefined(StringRef Name) {
