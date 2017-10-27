@@ -5635,14 +5635,14 @@ ASTContext::getInlineVariableDefinitionKind(const VarDecl *VD) const {
 
   // In almost all cases, it's a weak definition.
   auto *First = VD->getFirstDecl();
-  if (!First->isConstexpr() || First->isInlineSpecified() ||
-      !VD->isStaticDataMember())
+  if (First->isInlineSpecified() || !First->isStaticDataMember())
     return InlineVariableDefinitionKind::Weak;
 
   // If there's a file-context declaration in this translation unit, it's a
   // non-discardable definition.
   for (auto *D : VD->redecls())
-    if (D->getLexicalDeclContext()->isFileContext())
+    if (D->getLexicalDeclContext()->isFileContext() &&
+        !D->isInlineSpecified() && (D->isConstexpr() || First->isConstexpr()))
       return InlineVariableDefinitionKind::Strong;
 
   // If we've not seen one yet, we don't know.
@@ -9269,7 +9269,7 @@ CallingConv ASTContext::getDefaultCallingConvention(bool IsVariadic,
   case LangOptions::DCC_CDecl:
     return CC_C;
   case LangOptions::DCC_FastCall:
-    if (getTargetInfo().hasFeature("sse2"))
+    if (getTargetInfo().hasFeature("sse2") && !IsVariadic)
       return CC_X86FastCall;
     break;
   case LangOptions::DCC_StdCall:

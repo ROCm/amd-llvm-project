@@ -29,9 +29,10 @@ def err_drv_no_cuda_installation : Error<
 def err_drv_no_cuda_libdevice : Error<
   "cannot find libdevice for %0. Provide path to different CUDA installation "
   "via --cuda-path, or pass -nocudalib to build without linking with libdevice.">;
-def err_drv_cuda_version_too_low : Error<
-  "GPU arch %1 requires CUDA version at least %3, but installation at %0 is %2. "
-  "Use --cuda-path to specify a different CUDA install, or pass "
+def err_drv_cuda_version_unsupported : Error<
+  "GPU arch %0 is supported by CUDA versions between %1 and %2 (inclusive), "
+  "but installation at %3 is %4.  Use --cuda-path to specify a different CUDA "
+  "install, pass a different GPU arch with --cuda-gpu-arch, or pass "
   "--no-cuda-version-check.">;
 def err_drv_cuda_nvptx_host : Error<"unsupported use of NVPTX for host compilation.">;
 def err_drv_invalid_thread_model_for_target : Error<
@@ -262,6 +263,9 @@ def err_analyzer_config_no_value : Error<
   "analyzer-config option '%0' has a key but no value">;
 def err_analyzer_config_multiple_values : Error<
   "analyzer-config option '%0' should contain only one '='">;
+
+def err_drv_invalid_hvx_length : Error<
+  "-mhvx-length is not supported without a -mhvx/-mhvx= flag">;
 
 def err_drv_modules_validate_once_requires_timestamp : Error<
   "option '-fmodules-validate-once-per-build-session' requires "

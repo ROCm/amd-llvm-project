@@ -10,6 +10,7 @@
 #ifndef LLVM_CFI_VERIFY_FILE_ANALYSIS_H
 #define LLVM_CFI_VERIFY_FILE_ANALYSIS_H
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCContext.h"
@@ -64,6 +65,12 @@ public:
   FileAnalysis() = delete;
   FileAnalysis(const FileAnalysis &) = delete;
   FileAnalysis(FileAnalysis &&Other) = default;
+
+  // Check whether the provided instruction is CFI protected in this file.
+  // Returns false if this instruction doesn't exist in this file, if it's not
+  // an indirect control flow instruction, or isn't CFI protected. Returns true
+  // otherwise.
+  bool isIndirectInstructionCFIProtected(uint64_t Address) const;
 
   // Returns the instruction at the provided address. Returns nullptr if there
   // is no instruction at the provided address.
@@ -161,7 +168,7 @@ private:
 
   // Contains a mapping between a specific address, and a list of instructions
   // that use this address as a branch target (including call instructions).
-  std::unordered_map<uint64_t, std::vector<uint64_t>> StaticBranchTargetings;
+  DenseMap<uint64_t, std::vector<uint64_t>> StaticBranchTargetings;
 
   // A list of addresses of indirect control flow instructions.
   std::set<uint64_t> IndirectInstructions;
@@ -170,6 +177,9 @@ private:
 class UnsupportedDisassembly : public ErrorInfo<UnsupportedDisassembly> {
 public:
   static char ID;
+  std::string Text;
+
+  UnsupportedDisassembly(StringRef Text);
 
   void log(raw_ostream &OS) const override;
   std::error_code convertToErrorCode() const override;

@@ -196,6 +196,7 @@ RegistryMaps::RegistryMaps() {
   REGISTER_MATCHER(forEachArgumentWithParam);
   REGISTER_MATCHER(forEachConstructorInitializer);
   REGISTER_MATCHER(forEachDescendant);
+  REGISTER_MATCHER(forEachOverridden);
   REGISTER_MATCHER(forEachSwitchCase);
   REGISTER_MATCHER(forField);
   REGISTER_MATCHER(forFunction);
@@ -374,6 +375,7 @@ RegistryMaps::RegistryMaps() {
   REGISTER_MATCHER(numSelectorArgs);
   REGISTER_MATCHER(ofClass);
   REGISTER_MATCHER(objcCategoryDecl);
+  REGISTER_MATCHER(objcCategoryImplDecl);
   REGISTER_MATCHER(objcImplementationDecl);
   REGISTER_MATCHER(objcInterfaceDecl);
   REGISTER_MATCHER(objcIvarDecl);

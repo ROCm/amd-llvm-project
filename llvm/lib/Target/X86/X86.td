@@ -576,7 +576,7 @@ def BDWFeatures : ProcessorFeatures<HSWFeatures.Value, [
   FeatureADX,
   FeatureRDSEED
 ]>;
-class BroadwellProc<string Name> : ProcModel<Name, HaswellModel,
+class BroadwellProc<string Name> : ProcModel<Name, BroadwellModel,
                                              BDWFeatures.Value, [
   ProcIntelBDW
 ]>;
@@ -626,7 +626,8 @@ class KnightsMillProc<string Name> : ProcModel<Name, HaswellModel,
                                                KNLFeatures.Value, [
   ProcIntelKNL,
   FeatureSlowTwoMemOps,
-  FeatureFastPartialYMMorZMMWrite
+  FeatureFastPartialYMMorZMMWrite,
+  FeatureVPOPCNTDQ
 ]>;
 def : KnightsMillProc<"knm">; // TODO Add AVX5124FMAPS/AVX5124VNNIW features
 

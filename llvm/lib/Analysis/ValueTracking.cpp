@@ -83,12 +83,6 @@ const unsigned MaxDepth = 6;
 static cl::opt<unsigned> DomConditionsMaxUses("dom-conditions-max-uses",
                                               cl::Hidden, cl::init(20));
 
-// This optimization is known to cause performance regressions is some cases,
-// keep it under a temporary flag for now.
-static cl::opt<bool>
-DontImproveNonNegativePhiBits("dont-improve-non-negative-phi-bits",
-                              cl::Hidden, cl::init(true));
-
 /// Returns the bitwidth of the given scalar or pointer type. For vector types,
 /// returns the element type's bitwidth.
 static unsigned getBitWidth(Type *Ty, const DataLayout &DL) {
@@ -1289,9 +1283,6 @@ static void computeKnownBitsFromOperator(const Operator *I, KnownBits &Known,
           Known.Zero.setLowBits(std::min(Known2.countMinTrailingZeros(),
                                          Known3.countMinTrailingZeros()));
 
-          if (DontImproveNonNegativePhiBits)
-            break;
-
           auto *OverflowOp = dyn_cast<OverflowingBinaryOperator>(LU);
           if (OverflowOp && OverflowOp->hasNoSignedWrap()) {
             // If initial value of recurrence is nonnegative, and we are adding
@@ -1516,9 +1507,8 @@ void computeKnownBits(const Value *V, KnownBits &Known, unsigned Depth,
     // We know that CDS must be a vector of integers. Take the intersection of
     // each element.
     Known.Zero.setAllBits(); Known.One.setAllBits();
-    APInt Elt(BitWidth, 0);
     for (unsigned i = 0, e = CDS->getNumElements(); i != e; ++i) {
-      Elt = CDS->getElementAsInteger(i);
+      APInt Elt = CDS->getElementAsAPInt(i);
       Known.Zero &= ~Elt;
       Known.One &= Elt;
     }
@@ -1529,7 +1519,6 @@ void computeKnownBits(const Value *V, KnownBits &Known, unsigned Depth,
     // We know that CV must be a vector of integers. Take the intersection of
     // each element.
     Known.Zero.setAllBits(); Known.One.setAllBits();
-    APInt Elt(BitWidth, 0);
     for (unsigned i = 0, e = CV->getNumOperands(); i != e; ++i) {
       Constant *Element = CV->getAggregateElement(i);
       auto *ElementCI = dyn_cast_or_null<ConstantInt>(Element);
@@ -1537,7 +1526,7 @@ void computeKnownBits(const Value *V, KnownBits &Known, unsigned Depth,
         Known.resetAll();
         return;
       }
-      Elt = ElementCI->getValue();
+      const APInt &Elt = ElementCI->getValue();
       Known.Zero &= ~Elt;
       Known.One &= Elt;
     }
@@ -2108,11 +2097,7 @@ static unsigned computeNumSignBitsVectorConstant(const Value *V,
     if (!Elt)
       return 0;
 
-    // If the sign bit is 1, flip the bits, so we always count leading zeros.
-    APInt EltVal = Elt->getValue();
-    if (EltVal.isNegative())
-      EltVal = ~EltVal;
-    MinSignBits = std::min(MinSignBits, EltVal.countLeadingZeros());
+    MinSignBits = std::min(MinSignBits, Elt->getValue().getNumSignBits());
   }
 
   return MinSignBits;
@@ -4083,14 +4068,6 @@ static SelectPatternResult matchMinMax(CmpInst::Predicate Pred,
                                        Value *CmpLHS, Value *CmpRHS,
                                        Value *TrueVal, Value *FalseVal,
                                        Value *&LHS, Value *&RHS) {
-  assert(!ICmpInst::isEquality(Pred) && "Expected not equality predicate only!");
-
-  // First, check if select has inverse order of what we will check below:
-  if (CmpRHS == FalseVal) {
-    std::swap(TrueVal, FalseVal);
-    Pred = CmpInst::getInversePredicate(Pred);
-  }
-
   // Assume success. If there's no match, callers should not use these anyway.
   LHS = TrueVal;
   RHS = FalseVal;
@@ -4103,30 +4080,26 @@ static SelectPatternResult matchMinMax(CmpInst::Predicate Pred,
 
     // (X <s C1) ? C1 : SMIN(X, C2) ==> SMAX(SMIN(X, C2), C1)
     if (match(FalseVal, m_SMin(m_Specific(CmpLHS), m_APInt(C2))) &&
-        C1->slt(*C2) &&
-        (Pred == CmpInst::ICMP_SLT || Pred == CmpInst::ICMP_SLE))
+        C1->slt(*C2) && Pred == CmpInst::ICMP_SLT)
       return {SPF_SMAX, SPNB_NA, false};
 
     // (X >s C1) ? C1 : SMAX(X, C2) ==> SMIN(SMAX(X, C2), C1)
     if (match(FalseVal, m_SMax(m_Specific(CmpLHS), m_APInt(C2))) &&
-        C1->sgt(*C2) &&
-        (Pred == CmpInst::ICMP_SGT || Pred == CmpInst::ICMP_SGE))
+        C1->sgt(*C2) && Pred == CmpInst::ICMP_SGT)
       return {SPF_SMIN, SPNB_NA, false};
 
     // (X <u C1) ? C1 : UMIN(X, C2) ==> UMAX(UMIN(X, C2), C1)
     if (match(FalseVal, m_UMin(m_Specific(CmpLHS), m_APInt(C2))) &&
-        C1->ult(*C2) &&
-        (Pred == CmpInst::ICMP_ULT || Pred == CmpInst::ICMP_ULE))
+        C1->ult(*C2) && Pred == CmpInst::ICMP_ULT)
       return {SPF_UMAX, SPNB_NA, false};
 
     // (X >u C1) ? C1 : UMAX(X, C2) ==> UMIN(UMAX(X, C2), C1)
     if (match(FalseVal, m_UMax(m_Specific(CmpLHS), m_APInt(C2))) &&
-        C1->ugt(*C2) &&
-        (Pred == CmpInst::ICMP_UGT || Pred == CmpInst::ICMP_UGE))
+        C1->ugt(*C2) && Pred == CmpInst::ICMP_UGT)
       return {SPF_UMIN, SPNB_NA, false};
   }
 
-  if (!CmpInst::isSigned(Pred))
+  if (Pred != CmpInst::ICMP_SGT && Pred != CmpInst::ICMP_SLT)
     return {SPF_UNKNOWN, SPNB_NA, false};
 
   // Z = X -nsw Y
@@ -4134,18 +4107,14 @@ static SelectPatternResult matchMinMax(CmpInst::Predicate Pred,
   // (X <s Y) ? 0 : Z ==> (Z <s 0) ? 0 : Z ==> SMAX(Z, 0)
   if (match(TrueVal, m_Zero()) &&
       match(FalseVal, m_NSWSub(m_Specific(CmpLHS), m_Specific(CmpRHS))))
-    return {(Pred == CmpInst::ICMP_SGT || Pred == CmpInst::ICMP_SGE) ? SPF_SMIN
-                                                                     : SPF_SMAX,
-            SPNB_NA, false};
+    return {Pred == CmpInst::ICMP_SGT ? SPF_SMIN : SPF_SMAX, SPNB_NA, false};
 
   // Z = X -nsw Y
   // (X >s Y) ? Z : 0 ==> (Z >s 0) ? Z : 0 ==> SMAX(Z, 0)
   // (X <s Y) ? Z : 0 ==> (Z <s 0) ? Z : 0 ==> SMIN(Z, 0)
   if (match(FalseVal, m_Zero()) &&
       match(TrueVal, m_NSWSub(m_Specific(CmpLHS), m_Specific(CmpRHS))))
-    return {(Pred == CmpInst::ICMP_SGT || Pred == CmpInst::ICMP_SGE) ? SPF_SMAX
-                                                                     : SPF_SMIN,
-            SPNB_NA, false};
+    return {Pred == CmpInst::ICMP_SGT ? SPF_SMAX : SPF_SMIN, SPNB_NA, false};
 
   if (!match(CmpRHS, m_APInt(C1)))
     return {SPF_UNKNOWN, SPNB_NA, false};
@@ -4157,15 +4126,14 @@ static SelectPatternResult matchMinMax(CmpInst::Predicate Pred,
     // Is the sign bit set?
     // (X <s 0) ? X : MAXVAL ==> (X >u MAXVAL) ? X : MAXVAL ==> UMAX
     // (X <s 0) ? MAXVAL : X ==> (X >u MAXVAL) ? MAXVAL : X ==> UMIN
-    if ((Pred == CmpInst::ICMP_SLT || Pred == CmpInst::ICMP_SLE) && *C1 == 0 &&
-        C2->isMaxSignedValue())
+    if (Pred == CmpInst::ICMP_SLT && *C1 == 0 && C2->isMaxSignedValue())
       return {CmpLHS == TrueVal ? SPF_UMAX : SPF_UMIN, SPNB_NA, false};
 
     // Is the sign bit clear?
     // (X >s -1) ? MINVAL : X ==> (X <u MINVAL) ? MINVAL : X ==> UMAX
     // (X >s -1) ? X : MINVAL ==> (X <u MINVAL) ? X : MINVAL ==> UMIN
-    if ((Pred == CmpInst::ICMP_SGT || Pred == CmpInst::ICMP_SGE) &&
-        C1->isAllOnesValue() && C2->isMinSignedValue())
+    if (Pred == CmpInst::ICMP_SGT && C1->isAllOnesValue() &&
+        C2->isMinSignedValue())
       return {CmpLHS == FalseVal ? SPF_UMAX : SPF_UMIN, SPNB_NA, false};
   }
 
@@ -4174,17 +4142,13 @@ static SelectPatternResult matchMinMax(CmpInst::Predicate Pred,
   // (X <s C) ? ~X : ~C ==> (~X >s ~C) ? ~X : ~C ==> SMAX(~X, ~C)
   if (match(TrueVal, m_Not(m_Specific(CmpLHS))) &&
       match(FalseVal, m_APInt(C2)) && ~(*C1) == *C2)
-    return {(Pred == CmpInst::ICMP_SGT || Pred == CmpInst::ICMP_SGE) ? SPF_SMIN
-                                                                     : SPF_SMAX,
-            SPNB_NA, false};
+    return {Pred == CmpInst::ICMP_SGT ? SPF_SMIN : SPF_SMAX, SPNB_NA, false};
 
   // (X >s C) ? ~C : ~X ==> (~X <s ~C) ? ~C : ~X ==> SMAX(~C, ~X)
   // (X <s C) ? ~C : ~X ==> (~X >s ~C) ? ~C : ~X ==> SMIN(~C, ~X)
   if (match(FalseVal, m_Not(m_Specific(CmpLHS))) &&
       match(TrueVal, m_APInt(C2)) && ~(*C1) == *C2)
-    return {(Pred == CmpInst::ICMP_SGT || Pred == CmpInst::ICMP_SGE) ? SPF_SMAX
-                                                                     : SPF_SMIN,
-            SPNB_NA, false};
+    return {Pred == CmpInst::ICMP_SGT ? SPF_SMAX : SPF_SMIN, SPNB_NA, false};
 
   return {SPF_UNKNOWN, SPNB_NA, false};
 }
