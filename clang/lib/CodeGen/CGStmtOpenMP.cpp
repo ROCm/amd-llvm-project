@@ -254,6 +254,12 @@ static QualType getCanonicalParamType(ASTContext &C, QualType T) {
   }
   if (T->isPointerType())
     return C.getPointerType(getCanonicalParamType(C, T->getPointeeType()));
+  if (auto *A = T->getAsArrayTypeUnsafe()) {
+    if (auto *VLA = dyn_cast<VariableArrayType>(A))
+      return getCanonicalParamType(C, VLA->getElementType());
+    else if (!A->isVariablyModifiedType())
+      return C.getCanonicalType(T);
+  }
   return C.getCanonicalParamType(T);
 }
 
@@ -327,7 +333,7 @@ static llvm::Function *emitOutlinedFunctionPrologue(
       II = &Ctx.Idents.get("vla");
     }
     if (ArgType->isVariablyModifiedType())
-      ArgType = getCanonicalParamType(Ctx, ArgType.getNonReferenceType());
+      ArgType = getCanonicalParamType(Ctx, ArgType);
     auto *Arg =
         ImplicitParamDecl::Create(Ctx, /*DC=*/nullptr, FD->getLocation(), II,
                                   ArgType, ImplicitParamDecl::Other);
@@ -996,7 +1002,9 @@ void CodeGenFunction::EmitOMPReductionClauseInit(
 
     auto *LHSVD = cast<VarDecl>(cast<DeclRefExpr>(*ILHS)->getDecl());
     auto *RHSVD = cast<VarDecl>(cast<DeclRefExpr>(*IRHS)->getDecl());
-    if (isa<OMPArraySectionExpr>(IRef)) {
+    QualType Type = PrivateVD->getType();
+    bool isaOMPArraySectionExpr = isa<OMPArraySectionExpr>(IRef);
+    if (isaOMPArraySectionExpr && Type->isVariablyModifiedType()) {
       // Store the address of the original variable associated with the LHS
       // implicit variable.
       PrivateScope.addPrivate(LHSVD, [&RedCG, Count]() -> Address {
@@ -1005,7 +1013,8 @@ void CodeGenFunction::EmitOMPReductionClauseInit(
       PrivateScope.addPrivate(RHSVD, [this, PrivateVD]() -> Address {
         return GetAddrOfLocalVar(PrivateVD);
       });
-    } else if (isa<ArraySubscriptExpr>(IRef)) {
+    } else if ((isaOMPArraySectionExpr && Type->isScalarType()) ||
+               isa<ArraySubscriptExpr>(IRef)) {
       // Store the address of the original variable associated with the LHS
       // implicit variable.
       PrivateScope.addPrivate(LHSVD, [&RedCG, Count]() -> Address {

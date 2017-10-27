@@ -15,8 +15,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "SyntheticSections.h"
+#include "Bits.h"
 #include "Config.h"
-#include "Error.h"
 #include "InputFiles.h"
 #include "LinkerScript.h"
 #include "Memory.h"
@@ -25,6 +25,7 @@
 #include "SymbolTable.h"
 #include "Target.h"
 #include "Writer.h"
+#include "lld/Common/ErrorHandler.h"
 #include "lld/Common/Threads.h"
 #include "lld/Common/Version.h"
 #include "llvm/BinaryFormat/Dwarf.h"
@@ -449,9 +450,11 @@ bool EhFrameSection<ELFT>::isFdeLive(EhSectionPiece &Fde,
 
   const RelTy &Rel = Rels[FirstRelI];
   SymbolBody &B = Sec->template getFile<ELFT>()->getRelocTargetSym(Rel);
+
+  // FDEs for garbage-collected or merged-by-ICF sections are dead.
   if (auto *D = dyn_cast<DefinedRegular>(&B))
-    if (D->Section)
-      return cast<InputSectionBase>(D->Section)->Repl->Live;
+    if (auto *Sec = cast_or_null<InputSectionBase>(D->Section))
+      return Sec->Live && (Sec == Sec->Repl);
   return false;
 }
 
@@ -508,9 +511,7 @@ void EhFrameSection<ELFT>::addSection(InputSectionBase *C) {
   if (Sec->Pieces.empty())
     return;
 
-  if (Sec->NumRelocations == 0)
-    addSectionAux(Sec, makeArrayRef<Elf_Rela>(nullptr, nullptr));
-  else if (Sec->AreRelocsRela)
+  if (Sec->AreRelocsRela)
     addSectionAux(Sec, Sec->template relas<ELFT>());
   else
     addSectionAux(Sec, Sec->template rels<ELFT>());
@@ -852,19 +853,6 @@ bool MipsGotSection::empty() const {
 
 uint64_t MipsGotSection::getGp() const { return ElfSym::MipsGp->getVA(0); }
 
-static uint64_t readUint(uint8_t *Buf) {
-  if (Config->Is64)
-    return read64(Buf, Config->Endianness);
-  return read32(Buf, Config->Endianness);
-}
-
-static void writeUint(uint8_t *Buf, uint64_t Val) {
-  if (Config->Is64)
-    write64(Buf, Val, Config->Endianness);
-  else
-    write32(Buf, Val, Config->Endianness);
-}
-
 void MipsGotSection::writeTo(uint8_t *Buf) {
   // Set the MSB of the second GOT slot. This is not required by any
   // MIPS ABI documentation, though.
@@ -1108,13 +1096,13 @@ template <class ELFT> void DynamicSection<ELFT>::finalizeContents() {
     add({DT_PLTRELSZ, In<ELFT>::RelaPlt->getParent(), Entry::SecSize});
     switch (Config->EMachine) {
     case EM_MIPS:
-      add({DT_MIPS_PLTGOT, In<ELFT>::GotPlt});
+      add({DT_MIPS_PLTGOT, InX::GotPlt});
       break;
     case EM_SPARCV9:
-      add({DT_PLTGOT, In<ELFT>::Plt});
+      add({DT_PLTGOT, InX::Plt});
       break;
     default:
-      add({DT_PLTGOT, In<ELFT>::GotPlt});
+      add({DT_PLTGOT, InX::GotPlt});
       break;
     }
     add({DT_PLTREL, uint64_t(Config->IsRela ? DT_RELA : DT_REL)});
@@ -1316,10 +1304,6 @@ static bool sortMipsSymbols(const SymbolTableEntry &L,
   return L.Symbol->GotIndex < R.Symbol->GotIndex;
 }
 
-// Finalize a symbol table. The ELF spec requires that all local
-// symbols precede global symbols, so we sort symbol entries in this
-// function. (For .dynsym, we don't do that because symbols for
-// dynamic linking are inherently all globals.)
 void SymbolTableBaseSection::finalizeContents() {
   getParent()->Link = StrTabSec.getParent()->SectionIndex;
 
@@ -1344,6 +1328,9 @@ void SymbolTableBaseSection::finalizeContents() {
   }
 }
 
+// The ELF spec requires that all local symbols precede global symbols, so we
+// sort symbol entries in this function. (For .dynsym, we don't do that because
+// symbols for dynamic linking are inherently all globals.)
 void SymbolTableBaseSection::postThunkContents() {
   if (this->Type == SHT_DYNSYM)
     return;
@@ -1608,7 +1595,11 @@ void GnuHashTableSection::addSymbols(std::vector<SymbolTableEntry> &V) {
   // its type correctly.
   std::vector<SymbolTableEntry>::iterator Mid =
       std::stable_partition(V.begin(), V.end(), [](const SymbolTableEntry &S) {
-        return S.Symbol->isUndefined() || S.Symbol->isLazy();
+        // Shared symbols that this executable preempts are special. The dynamic
+        // linker has to look them up, so they have to be in the hash table.
+        if (auto *SS = dyn_cast<SharedSymbol>(S.Symbol))
+          return SS->CopyRelSec == nullptr && !SS->NeedsPltAddr;
+        return !S.Symbol->isInCurrentDSO();
       });
   if (Mid == V.end())
     return;
@@ -1641,8 +1632,6 @@ void HashTableSection::finalizeContents() {
   NumEntries += InX::DynSymTab->getNumSymbols(); // The chain entries.
 
   // Create as many buckets as there are symbols.
-  // FIXME: This is simplistic. We can try to optimize it, but implementing
-  // support for SHT_GNU_HASH is probably even more profitable.
   NumEntries += InX::DynSymTab->getNumSymbols();
   this->Size = NumEntries * 4;
 }
@@ -2268,10 +2257,9 @@ void MergeNoTailSection::finalizeContents() {
       for (size_t I = 0, E = Sec->Pieces.size(); I != E; ++I) {
         if (!Sec->Pieces[I].Live)
           continue;
-        CachedHashStringRef Str = Sec->getData(I);
-        size_t ShardId = getShardId(Str.hash());
+        size_t ShardId = getShardId(Sec->Pieces[I].Hash);
         if ((ShardId & (Concurrency - 1)) == ThreadId)
-          Sec->Pieces[I].OutputOff = Shards[ShardId].add(Str);
+          Sec->Pieces[I].OutputOff = Shards[ShardId].add(Sec->getData(I));
       }
     }
   });
@@ -2293,7 +2281,7 @@ void MergeNoTailSection::finalizeContents() {
     for (size_t I = 0, E = Sec->Pieces.size(); I != E; ++I)
       if (Sec->Pieces[I].Live)
         Sec->Pieces[I].OutputOff +=
-            ShardOffsets[getShardId(Sec->getData(I).hash())];
+            ShardOffsets[getShardId(Sec->Pieces[I].Hash)];
   });
 }
 
