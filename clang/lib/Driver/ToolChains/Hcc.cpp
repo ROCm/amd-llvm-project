@@ -188,9 +188,8 @@ namespace
         std::vector<std::string> r;
 
         const char* tmp = std::getenv("ROCM_ROOT");
-        const char* rocm = tmp ? tmp : "/opt/rocm";
-
-        const auto e = c.getSysRoot() + rocm + "/bin/rocm_agent_enumerator";
+        const Twine rocm = tmp ? tmp : "/opt/rocm";
+        const Twine e = rocm + "/bin/rocm_agent_enumerator";
 
         if (!tc.getVFS().exists(e)) return r;
 
