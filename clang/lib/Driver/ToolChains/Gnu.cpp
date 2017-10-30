@@ -524,7 +524,9 @@ void tools::gnutools::Linker::ConstructLinkerJob(Compilation &C,
 
   // HCC: Add compiler-rt library to get the half fp builtins 
   if (Driver::IsCXXAMP(C.getArgs())) {
-    CmdArgs.push_back("-lclang_rt.builtins-aarch64");
+    CmdArgs.push_back(Args.MakeArgString(
+        "-lclang_rt.builtins-" +
+        getToolChain().getTriple().getArchName()));
   }
 
   // Add OpenMP offloading linker script args if required.
