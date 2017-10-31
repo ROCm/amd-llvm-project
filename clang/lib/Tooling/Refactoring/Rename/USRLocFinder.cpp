@@ -39,6 +39,17 @@ namespace tooling {
 
 namespace {
 
+// Returns true if the given Loc is valid for edit. We don't edit the
+// SourceLocations that are valid or in temporary buffer.
+bool IsValidEditLoc(const clang::SourceManager& SM, clang::SourceLocation Loc) {
+  if (Loc.isInvalid())
+    return false;
+  const clang::FullSourceLoc FullLoc(Loc, SM);
+  std::pair<clang::FileID, unsigned> FileIdAndOffset =
+      FullLoc.getSpellingLoc().getDecomposedLoc();
+  return SM.getFileEntryForID(FileIdAndOffset.first) != nullptr;
+}
+
 // \brief This visitor recursively searches for all instances of a USR in a
 // translation unit and stores them for later usage.
 class USRLocFindingASTVisitor
@@ -181,13 +192,57 @@ public:
       return true;
 
     if (isInUSRSet(Decl)) {
-      RenameInfo Info = {Decl->getLocation(),
-                         Decl->getLocation(),
-                         /*FromDecl=*/nullptr,
-                         /*Context=*/nullptr,
-                         /*Specifier=*/nullptr,
-                         /*IgnorePrefixQualifers=*/true};
-      RenameInfos.push_back(Info);
+      // For the case of renaming an alias template, we actually rename the
+      // underlying alias declaration of the template.
+      if (const auto* TAT = dyn_cast<TypeAliasTemplateDecl>(Decl))
+        Decl = TAT->getTemplatedDecl();
+
+      auto StartLoc = Decl->getLocation();
+      auto EndLoc = StartLoc;
+      if (IsValidEditLoc(Context.getSourceManager(), StartLoc)) {
+        RenameInfo Info = {StartLoc,
+                           EndLoc,
+                           /*FromDecl=*/nullptr,
+                           /*Context=*/nullptr,
+                           /*Specifier=*/nullptr,
+                           /*IgnorePrefixQualifers=*/true};
+        RenameInfos.push_back(Info);
+      }
+    }
+    return true;
+  }
+
+  bool VisitMemberExpr(const MemberExpr *Expr) {
+    const NamedDecl *Decl = Expr->getFoundDecl();
+    auto StartLoc = Expr->getMemberLoc();
+    auto EndLoc = Expr->getMemberLoc();
+    if (isInUSRSet(Decl)) {
+      RenameInfos.push_back({StartLoc, EndLoc,
+                            /*FromDecl=*/nullptr,
+                            /*Context=*/nullptr,
+                            /*Specifier=*/nullptr,
+                            /*IgnorePrefixQualifiers=*/true});
+    }
+    return true;
+  }
+
+  bool VisitCXXConstructorDecl(const CXXConstructorDecl *CD) {
+    // Fix the constructor initializer when renaming class members.
+    for (const auto *Initializer : CD->inits()) {
+      // Ignore implicit initializers.
+      if (!Initializer->isWritten())
+        continue;
+
+      if (const FieldDecl *FD = Initializer->getMember()) {
+        if (isInUSRSet(FD)) {
+          auto Loc = Initializer->getSourceLocation();
+          RenameInfos.push_back({Loc, Loc,
+                                 /*FromDecl=*/nullptr,
+                                 /*Context=*/nullptr,
+                                 /*Specifier=*/nullptr,
+                                 /*IgnorePrefixQualifiers=*/true});
+        }
+      }
     }
     return true;
   }
@@ -200,8 +255,27 @@ public:
       Decl = UsingShadow->getTargetDecl();
     }
 
-    auto BeginLoc = Expr->getLocStart();
-    auto EndLoc = Expr->getLocEnd();
+    auto StartLoc = Expr->getLocStart();
+    // For template function call expressions like `foo<int>()`, we want to
+    // restrict the end of location to just before the `<` character.
+    SourceLocation EndLoc = Expr->hasExplicitTemplateArgs()
+                                ? Expr->getLAngleLoc().getLocWithOffset(-1)
+                                : Expr->getLocEnd();
+
+    if (const auto *MD = llvm::dyn_cast<CXXMethodDecl>(Decl)) {
+      if (isInUSRSet(MD)) {
+        // Handle renaming static template class methods, we only rename the
+        // name without prefix qualifiers and restrict the source range to the
+        // name.
+        RenameInfos.push_back({EndLoc, EndLoc,
+                               /*FromDecl=*/nullptr,
+                               /*Context=*/nullptr,
+                               /*Specifier=*/nullptr,
+                               /*IgnorePrefixQualifiers=*/true});
+        return true;
+      }
+    }
+
     // In case of renaming an enum declaration, we have to explicitly handle
     // unscoped enum constants referenced in expressions (e.g.
     // "auto r = ns1::ns2::Green" where Green is an enum constant of an unscoped
@@ -233,8 +307,9 @@ public:
       assert(EndLoc.isValid() &&
              "The enum constant should have prefix qualifers.");
     }
-    if (isInUSRSet(Decl)) {
-      RenameInfo Info = {BeginLoc,
+    if (isInUSRSet(Decl) &&
+        IsValidEditLoc(Context.getSourceManager(), StartLoc)) {
+      RenameInfo Info = {StartLoc,
                          EndLoc,
                          Decl,
                          getClosestAncestorDecl(*Expr),
@@ -259,8 +334,6 @@ public:
   bool VisitNestedNameSpecifierLocations(NestedNameSpecifierLoc NestedLoc) {
     if (!NestedLoc.getNestedNameSpecifier()->getAsType())
       return true;
-    if (IsTypeAliasWhichWillBeRenamedElsewhere(NestedLoc.getTypeLoc()))
-      return true;
 
     if (const auto *TargetDecl =
             getSupportedDeclFromTypeLoc(NestedLoc.getTypeLoc())) {
@@ -278,9 +351,6 @@ public:
   }
 
   bool VisitTypeLoc(TypeLoc Loc) {
-    if (IsTypeAliasWhichWillBeRenamedElsewhere(Loc))
-      return true;
-
     auto Parents = Context.getParents(Loc);
     TypeLoc ParentTypeLoc;
     if (!Parents.empty()) {
@@ -314,13 +384,18 @@ public:
         if (!ParentTypeLoc.isNull() &&
             isInUSRSet(getSupportedDeclFromTypeLoc(ParentTypeLoc)))
           return true;
-        RenameInfo Info = {StartLocationForType(Loc),
-                           EndLocationForType(Loc),
-                           TargetDecl,
-                           getClosestAncestorDecl(Loc),
-                           GetNestedNameForType(Loc),
-                           /*IgnorePrefixQualifers=*/false};
-        RenameInfos.push_back(Info);
+
+        auto StartLoc = StartLocationForType(Loc);
+        auto EndLoc = EndLocationForType(Loc);
+        if (IsValidEditLoc(Context.getSourceManager(), StartLoc)) {
+          RenameInfo Info = {StartLoc,
+                             EndLoc,
+                             TargetDecl,
+                             getClosestAncestorDecl(Loc),
+                             GetNestedNameForType(Loc),
+                             /*IgnorePrefixQualifers=*/false};
+          RenameInfos.push_back(Info);
+        }
         return true;
       }
     }
@@ -344,15 +419,20 @@ public:
         if (!ParentTypeLoc.isNull() &&
             llvm::isa<ElaboratedType>(ParentTypeLoc.getType()))
           TargetLoc = ParentTypeLoc;
-        RenameInfo Info = {
-            StartLocationForType(TargetLoc),
-            EndLocationForType(TargetLoc),
-            TemplateSpecType->getTemplateName().getAsTemplateDecl(),
-            getClosestAncestorDecl(
-                ast_type_traits::DynTypedNode::create(TargetLoc)),
-            GetNestedNameForType(TargetLoc),
-            /*IgnorePrefixQualifers=*/false};
-        RenameInfos.push_back(Info);
+
+        auto StartLoc = StartLocationForType(TargetLoc);
+        auto EndLoc = EndLocationForType(TargetLoc);
+        if (IsValidEditLoc(Context.getSourceManager(), StartLoc)) {
+          RenameInfo Info = {
+              StartLoc,
+              EndLoc,
+              TemplateSpecType->getTemplateName().getAsTemplateDecl(),
+              getClosestAncestorDecl(
+                  ast_type_traits::DynTypedNode::create(TargetLoc)),
+              GetNestedNameForType(TargetLoc),
+              /*IgnorePrefixQualifers=*/false};
+          RenameInfos.push_back(Info);
+        }
       }
     }
     return true;
@@ -367,38 +447,11 @@ public:
   }
 
 private:
-  // FIXME: This method may not be suitable for renaming other types like alias
-  // types. Need to figure out a way to handle it.
-  bool IsTypeAliasWhichWillBeRenamedElsewhere(TypeLoc TL) const {
-    while (!TL.isNull()) {
-      // SubstTemplateTypeParm is the TypeLocation class for a substituted type
-      // inside a template expansion so we ignore these.  For example:
-      //
-      // template<typename T> struct S {
-      //   T t;  // <-- this T becomes a TypeLoc(int) with class
-      //         //     SubstTemplateTypeParm when S<int> is instantiated
-      // }
-      if (TL.getTypeLocClass() == TypeLoc::SubstTemplateTypeParm)
-        return true;
-
-      // Typedef is the TypeLocation class for a type which is a typedef to the
-      // type we want to replace.  We ignore the use of the typedef as we will
-      // replace the definition of it.  For example:
-      //
-      // typedef int T;
-      // T a;  // <---  This T is a TypeLoc(int) with class Typedef.
-      if (TL.getTypeLocClass() == TypeLoc::Typedef)
-        return true;
-      TL = TL.getNextTypeLoc();
-    }
-    return false;
-  }
-
   // Get the supported declaration from a given typeLoc. If the declaration type
   // is not supported, returns nullptr.
-  //
-  // FIXME: support more types, e.g. type alias.
   const NamedDecl *getSupportedDeclFromTypeLoc(TypeLoc Loc) {
+    if (const auto* TT = Loc.getType()->getAs<clang::TypedefType>())
+      return TT->getDecl();
     if (const auto *RD = Loc.getType()->getAsCXXRecordDecl())
       return RD;
     if (const auto *ED =

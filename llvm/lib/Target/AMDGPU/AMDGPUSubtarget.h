@@ -148,6 +148,7 @@ protected:
   bool Has16BitInsts;
   bool HasIntClamp;
   bool HasVOP3PInsts;
+  bool HasMadMixInsts;
   bool HasMovrel;
   bool HasVGPRIndexMode;
   bool HasScalarStores;
@@ -319,7 +320,7 @@ public:
   }
 
   bool hasMadMixInsts() const {
-    return getGeneration() >= GFX9;
+    return HasMadMixInsts;
   }
 
   bool hasCARRY() const {
@@ -586,6 +587,9 @@ public:
     return AMDGPU::IsaInfo::getWavesPerWorkGroup(getFeatureBits(),
                                                  FlatWorkGroupSize);
   }
+
+  /// \returns Default range flat work group size for a calling convention.
+  std::pair<unsigned, unsigned> getDefaultFlatWorkGroupSize(CallingConv::ID CC) const;
 
   /// \returns Subtarget's default pair of minimum/maximum flat work group sizes
   /// for function \p F, or minimum/maximum flat work group sizes explicitly

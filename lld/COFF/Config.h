@@ -84,10 +84,8 @@ struct Configuration {
   bool NoEntry = false;
   std::string OutputFile;
   std::string ImportName;
-  bool ColorDiagnostics;
   bool DoGC = true;
   bool DoICF = true;
-  uint64_t ErrorLimit = 20;
   bool Relocatable = true;
   bool Force = false;
   bool Debug = false;
@@ -166,6 +164,7 @@ struct Configuration {
   uint32_t MinorImageVersion = 0;
   uint32_t MajorOSVersion = 6;
   uint32_t MinorOSVersion = 0;
+  bool CanExitEarly = false;
   bool DynamicBase = true;
   bool AllowBind = true;
   bool NxCompat = true;
