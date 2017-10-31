@@ -138,6 +138,7 @@ struct SectionPattern {
   SortSectionPolicy SortInner;
 };
 
+class ThunkSection;
 struct InputSectionDescription : BaseCommand {
   InputSectionDescription(StringRef FilePattern)
       : BaseCommand(InputSectionKind), FilePat(FilePattern) {}
@@ -153,6 +154,11 @@ struct InputSectionDescription : BaseCommand {
   std::vector<SectionPattern> SectionPatterns;
 
   std::vector<InputSection *> Sections;
+
+  // Temporary record of synthetic ThunkSection instances and the pass that
+  // they were created in. This is used to insert newly created ThunkSections
+  // into Sections at the end of a createThunks() pass.
+  std::vector<std::pair<ThunkSection *, uint32_t>> ThunkSections;
 };
 
 // Represents an ASSERT().
@@ -205,9 +211,12 @@ class LinkerScript final {
   void setDot(Expr E, const Twine &Loc, bool InSec);
 
   std::vector<InputSection *>
-  computeInputSections(const InputSectionDescription *);
+  computeInputSections(const InputSectionDescription *,
+                       const llvm::DenseMap<SectionBase *, int> &Order);
 
-  std::vector<InputSection *> createInputSectionList(OutputSection &Cmd);
+  std::vector<InputSection *>
+  createInputSectionList(OutputSection &Cmd,
+                         const llvm::DenseMap<SectionBase *, int> &Order);
 
   std::vector<size_t> getPhdrIndices(OutputSection *Sec);
 
@@ -219,7 +228,14 @@ class LinkerScript final {
 
   void assignOffsets(OutputSection *Sec);
 
-  std::unique_ptr<AddressState> Ctx;
+  // Ctx captures the local AddressState and makes it accessible
+  // deliberately. This is needed as there are some cases where we cannot just
+  // thread the current state through to a lambda function created by the
+  // script parser.
+  // This should remain a plain pointer as its lifetime is smaller than
+  // LinkerScript.
+  AddressState *Ctx = nullptr;
+
   OutputSection *Aether;
 
   uint64_t Dot;
@@ -246,7 +262,7 @@ public:
   bool shouldKeep(InputSectionBase *S);
   void assignAddresses();
   void allocateHeaders(std::vector<PhdrEntry *> &Phdrs);
-  void processSectionCommands(OutputSectionFactory &Factory);
+  void processSectionCommands();
 
   // SECTIONS command list.
   std::vector<BaseCommand *> SectionCommands;

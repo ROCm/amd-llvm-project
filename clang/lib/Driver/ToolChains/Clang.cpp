@@ -4107,6 +4107,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-fcoroutines-ts");
   }
 
+  Args.AddLastArg(CmdArgs, options::OPT_fdouble_square_bracket_attributes,
+                  options::OPT_fno_double_square_bracket_attributes);
+
   bool HaveModules = false;
   RenderModulesOptions(C, D, Args, Input, Output, CmdArgs, HaveModules);
 
@@ -4992,7 +4995,9 @@ void Clang::AddClangCLArgs(const ArgList &Args, types::ID InputType,
 
   // Both /showIncludes and /E (and /EP) write to stdout. Allowing both
   // would produce interleaved output, so ignore /showIncludes in such cases.
-  if (!Args.hasArg(options::OPT_E) && !Args.hasArg(options::OPT__SLASH_EP))
+  if ((!Args.hasArg(options::OPT_E) && !Args.hasArg(options::OPT__SLASH_EP)) ||
+      (Args.hasArg(options::OPT__SLASH_P) &&
+       Args.hasArg(options::OPT__SLASH_EP) && !Args.hasArg(options::OPT_E)))
     if (Arg *A = Args.getLastArg(options::OPT_show_includes))
       A->render(Args, CmdArgs);
 
