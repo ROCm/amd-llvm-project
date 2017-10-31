@@ -639,9 +639,13 @@ struct InternalInstruction {
   Reg                           reg;
 
   // SIB state
+  SIBIndex                      sibIndexBase;
   SIBIndex                      sibIndex;
   uint8_t                       sibScale;
   SIBBase                       sibBase;
+
+  // Embedded rounding control.
+  uint8_t                       RC;
 
   ArrayRef<OperandSpecifier> operands;
 };

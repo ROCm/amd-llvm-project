@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "FileAnalysis.h"
+#include "GraphBuilder.h"
 
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/MC/MCAsmInfo.h"
@@ -54,7 +55,7 @@ Expected<FileAnalysis> FileAnalysis::Create(StringRef Filename) {
 
   Analysis.Object = dyn_cast<object::ObjectFile>(Analysis.Binary.getBinary());
   if (!Analysis.Object)
-    return make_error<UnsupportedDisassembly>();
+    return make_error<UnsupportedDisassembly>("Failed to cast object");
 
   Analysis.ObjectTriple = Analysis.Object->makeTriple();
   Analysis.Features = Analysis.Object->getFeatures();
@@ -75,6 +76,32 @@ FileAnalysis::FileAnalysis(object::OwningBinary<object::Binary> Binary)
 FileAnalysis::FileAnalysis(const Triple &ObjectTriple,
                            const SubtargetFeatures &Features)
     : ObjectTriple(ObjectTriple), Features(Features) {}
+
+bool FileAnalysis::isIndirectInstructionCFIProtected(uint64_t Address) const {
+  const Instr *InstrMetaPtr = getInstruction(Address);
+  if (!InstrMetaPtr)
+    return false;
+
+  const auto &InstrDesc = MII->get(InstrMetaPtr->Instruction.getOpcode());
+
+  if (!InstrDesc.mayAffectControlFlow(InstrMetaPtr->Instruction, *RegisterInfo))
+    return false;
+
+  if (!usesRegisterOperand(*InstrMetaPtr))
+    return false;
+
+  auto Flows = GraphBuilder::buildFlowGraph(*this, Address);
+
+  if (!Flows.OrphanedNodes.empty())
+    return false;
+
+  for (const auto &BranchNode : Flows.ConditionalBranchNodes) {
+    if (!BranchNode.CFIProtection)
+      return false;
+  }
+
+  return true;
+}
 
 const Instr *
 FileAnalysis::getPrevInstructionSequential(const Instr &InstrMeta) const {
@@ -224,31 +251,29 @@ Error FileAnalysis::initialiseDisassemblyMembers() {
   ObjectTarget =
       TargetRegistry::lookupTarget(ArchName, ObjectTriple, ErrorString);
   if (!ObjectTarget)
-    return make_error<StringError>(Twine("Couldn't find target \"") +
-                                       ObjectTriple.getTriple() +
-                                       "\", failed with error: " + ErrorString,
-                                   inconvertibleErrorCode());
+    return make_error<UnsupportedDisassembly>(
+        (Twine("Couldn't find target \"") + ObjectTriple.getTriple() +
+         "\", failed with error: " + ErrorString)
+            .str());
 
   RegisterInfo.reset(ObjectTarget->createMCRegInfo(TripleName));
   if (!RegisterInfo)
-    return make_error<StringError>("Failed to initialise RegisterInfo.",
-                                   inconvertibleErrorCode());
+    return make_error<UnsupportedDisassembly>(
+        "Failed to initialise RegisterInfo.");
 
   AsmInfo.reset(ObjectTarget->createMCAsmInfo(*RegisterInfo, TripleName));
   if (!AsmInfo)
-    return make_error<StringError>("Failed to initialise AsmInfo.",
-                                   inconvertibleErrorCode());
+    return make_error<UnsupportedDisassembly>("Failed to initialise AsmInfo.");
 
   SubtargetInfo.reset(ObjectTarget->createMCSubtargetInfo(
       TripleName, MCPU, Features.getString()));
   if (!SubtargetInfo)
-    return make_error<StringError>("Failed to initialise SubtargetInfo.",
-                                   inconvertibleErrorCode());
+    return make_error<UnsupportedDisassembly>(
+        "Failed to initialise SubtargetInfo.");
 
   MII.reset(ObjectTarget->createMCInstrInfo());
   if (!MII)
-    return make_error<StringError>("Failed to initialise MII.",
-                                   inconvertibleErrorCode());
+    return make_error<UnsupportedDisassembly>("Failed to initialise MII.");
 
   Context.reset(new MCContext(AsmInfo.get(), RegisterInfo.get(), &MOFI));
 
@@ -256,8 +281,8 @@ Error FileAnalysis::initialiseDisassemblyMembers() {
       ObjectTarget->createMCDisassembler(*SubtargetInfo, *Context));
 
   if (!Disassembler)
-    return make_error<StringError>("No disassembler available for target",
-                                   inconvertibleErrorCode());
+    return make_error<UnsupportedDisassembly>(
+        "No disassembler available for target");
 
   MIA.reset(ObjectTarget->createMCInstrAnalysis(MII.get()));
 
@@ -341,9 +366,11 @@ void FileAnalysis::addInstruction(const Instr &Instruction) {
   }
 }
 
+UnsupportedDisassembly::UnsupportedDisassembly(StringRef Text) : Text(Text) {}
+
 char UnsupportedDisassembly::ID;
 void UnsupportedDisassembly::log(raw_ostream &OS) const {
-  OS << "Dissassembling of non-objects not currently supported.\n";
+  OS << "Could not initialise disassembler: " << Text;
 }
 
 std::error_code UnsupportedDisassembly::convertToErrorCode() const {
