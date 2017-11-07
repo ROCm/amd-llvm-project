@@ -11,6 +11,7 @@
 #include "GraphBuilder.h"
 
 #include "llvm/BinaryFormat/ELF.h"
+#include "llvm/DebugInfo/DWARF/DWARFContext.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCDisassembler/MCDisassembler.h"
@@ -38,9 +39,20 @@
 #include <functional>
 
 using Instr = llvm::cfi_verify::FileAnalysis::Instr;
+using LLVMSymbolizer = llvm::symbolize::LLVMSymbolizer;
 
 namespace llvm {
 namespace cfi_verify {
+
+bool IgnoreDWARFFlag;
+
+static cl::opt<bool, true> IgnoreDWARFArg(
+    "ignore-dwarf",
+    cl::desc(
+        "Ignore all DWARF data. This relaxes the requirements for all "
+        "statically linked libraries to have been compiled with '-g', but "
+        "will result in false positives for 'CFI unprotected' instructions."),
+    cl::location(IgnoreDWARFFlag), cl::init(false));
 
 Expected<FileAnalysis> FileAnalysis::Create(StringRef Filename) {
   // Open the filename provided.
@@ -242,11 +254,15 @@ const MCInstrAnalysis *FileAnalysis::getMCInstrAnalysis() const {
   return MIA.get();
 }
 
+LLVMSymbolizer &FileAnalysis::getSymbolizer() { return *Symbolizer; }
+
 Error FileAnalysis::initialiseDisassemblyMembers() {
   std::string TripleName = ObjectTriple.getTriple();
   ArchName = "";
   MCPU = "";
   std::string ErrorString;
+
+  Symbolizer.reset(new LLVMSymbolizer());
 
   ObjectTarget =
       TargetRegistry::lookupTarget(ArchName, ObjectTriple, ErrorString);
@@ -294,6 +310,28 @@ Error FileAnalysis::initialiseDisassemblyMembers() {
 }
 
 Error FileAnalysis::parseCodeSections() {
+  if (!IgnoreDWARFFlag) {
+    std::unique_ptr<DWARFContext> DWARF = DWARFContext::create(*Object);
+    if (!DWARF)
+      return make_error<StringError>("Could not create DWARF information.",
+                                     inconvertibleErrorCode());
+
+    bool LineInfoValid = false;
+
+    for (auto &Unit : DWARF->compile_units()) {
+      const auto &LineTable = DWARF->getLineTableForUnit(Unit.get());
+      if (LineTable && !LineTable->Rows.empty()) {
+        LineInfoValid = true;
+        break;
+      }
+    }
+
+    if (!LineInfoValid)
+      return make_error<StringError>(
+          "DWARF line information missing. Did you compile with '-g'?",
+          inconvertibleErrorCode());
+  }
+
   for (const object::SectionRef &Section : Object->sections()) {
     // Ensure only executable sections get analysed.
     if (!(object::ELFSectionRef(Section).getFlags() & ELF::SHF_EXECINSTR))
@@ -313,6 +351,7 @@ Error FileAnalysis::parseCodeSections() {
 
 void FileAnalysis::parseSectionContents(ArrayRef<uint8_t> SectionBytes,
                                         uint64_t SectionAddress) {
+  assert(Symbolizer && "Symbolizer is uninitialised.");
   MCInst Instruction;
   Instr InstrMeta;
   uint64_t InstructionSize;
@@ -330,6 +369,22 @@ void FileAnalysis::parseSectionContents(ArrayRef<uint8_t> SectionBytes,
     InstrMeta.VMAddress = VMAddress;
     InstrMeta.InstructionSize = InstructionSize;
     InstrMeta.Valid = ValidInstruction;
+
+    // Check if this instruction exists in the range of the DWARF metadata.
+    if (!IgnoreDWARFFlag) {
+      auto LineInfo =
+          Symbolizer->symbolizeCode(Object->getFileName(), VMAddress);
+      if (!LineInfo) {
+        handleAllErrors(LineInfo.takeError(), [](const ErrorInfoBase &E) {
+          errs() << "Symbolizer failed to get line: " << E.message() << "\n";
+        });
+        continue;
+      }
+
+      if (LineInfo->FileName == "<invalid>")
+        continue;
+    }
+
     addInstruction(InstrMeta);
 
     if (!ValidInstruction)

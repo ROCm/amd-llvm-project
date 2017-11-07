@@ -729,7 +729,7 @@ void PDBLinker::addObjectsToPDB() {
   std::vector<PublicSym32> Publics;
   Symtab->forEachSymbol([&Publics](Symbol *S) {
     // Only emit defined, live symbols that have a chunk.
-    auto *Def = dyn_cast<Defined>(S->body());
+    auto *Def = dyn_cast<Defined>(S);
     if (Def && Def->isLive() && Def->getChunk())
       Publics.push_back(createPublic(Def));
   });

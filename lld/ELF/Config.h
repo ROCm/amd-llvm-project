@@ -24,7 +24,6 @@ namespace lld {
 namespace elf {
 
 class InputFile;
-struct Symbol;
 
 enum ELFKind {
   ELFNoneKind,
@@ -105,6 +104,7 @@ struct Configuration {
   std::vector<SymbolVersion> VersionScriptLocals;
   std::vector<uint8_t> BuildIdVector;
   bool AllowMultipleDefinition;
+  bool AndroidPackDynRelocs = false;
   bool AsNeeded = false;
   bool Bsymbolic;
   bool BsymbolicFunctions;
