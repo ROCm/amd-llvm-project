@@ -2642,8 +2642,13 @@ static void RenderCharacterOptions(const ArgList &Args, const llvm::Triple &T,
       CmdArgs.push_back("-fwchar-type=short");
       CmdArgs.push_back("-fno-signed-wchar");
     } else {
+      bool IsARM = T.isARM() || T.isThumb() || T.isAArch64();
       CmdArgs.push_back("-fwchar-type=int");
-      CmdArgs.push_back("-fsigned-wchar");
+      if (IsARM && !(T.isOSWindows() || T.getOS() == llvm::Triple::NetBSD ||
+                     T.getOS() == llvm::Triple::OpenBSD))
+        CmdArgs.push_back("-fno-signed-wchar");
+      else
+        CmdArgs.push_back("-fsigned-wchar");
     }
   }
 }
@@ -5086,7 +5091,8 @@ void Clang::AddClangCLArgs(const ArgList &Args, types::ID InputType,
   // Parse the default calling convention options.
   if (Arg *CCArg =
           Args.getLastArg(options::OPT__SLASH_Gd, options::OPT__SLASH_Gr,
-                          options::OPT__SLASH_Gz, options::OPT__SLASH_Gv)) {
+                          options::OPT__SLASH_Gz, options::OPT__SLASH_Gv,
+                          options::OPT__SLASH_Gregcall)) {
     unsigned DCCOptId = CCArg->getOption().getID();
     const char *DCCFlag = nullptr;
     bool ArchSupported = true;
@@ -5106,6 +5112,10 @@ void Clang::AddClangCLArgs(const ArgList &Args, types::ID InputType,
     case options::OPT__SLASH_Gv:
       ArchSupported = Arch == llvm::Triple::x86 || Arch == llvm::Triple::x86_64;
       DCCFlag = "-fdefault-calling-conv=vectorcall";
+      break;
+    case options::OPT__SLASH_Gregcall:
+      ArchSupported = Arch == llvm::Triple::x86 || Arch == llvm::Triple::x86_64;
+      DCCFlag = "-fdefault-calling-conv=regcall";
       break;
     }
 
