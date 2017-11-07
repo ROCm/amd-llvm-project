@@ -12,6 +12,7 @@
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/BinaryFormat/ELF.h"
+#include "llvm/DebugInfo/Symbolize/Symbolize.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCDisassembler/MCDisassembler.h"
@@ -42,6 +43,8 @@
 
 namespace llvm {
 namespace cfi_verify {
+
+extern bool IgnoreDWARFFlag;
 
 // Disassembler and analysis tool for machine code files. Keeps track of non-
 // sequential control flows, including indirect control flow instructions.
@@ -119,6 +122,19 @@ public:
   const MCRegisterInfo *getRegisterInfo() const;
   const MCInstrInfo *getMCInstrInfo() const;
   const MCInstrAnalysis *getMCInstrAnalysis() const;
+  symbolize::LLVMSymbolizer &getSymbolizer();
+
+  // Returns true if this class is using DWARF line tables for elimination.
+  bool hasLineTableInfo() const;
+
+  // Returns the line table information for the range {Address +-
+  // DWARFSearchRange}. Returns an empty table if the address has no valid line
+  // table information, or this analysis object has DWARF handling disabled.
+  DILineInfoTable getLineInfoForAddressRange(uint64_t Address);
+
+  // Returns whether the provided address has valid line information for
+  // instructions in the range of Address +- DWARFSearchRange.
+  bool hasValidLineInfoForAddressRange(uint64_t Address);
 
 protected:
   // Construct a blank object with the provided triple and features. Used in
@@ -162,8 +178,12 @@ private:
   std::unique_ptr<const MCInstrAnalysis> MIA;
   std::unique_ptr<MCInstPrinter> Printer;
 
+  // Symbolizer used for debug information parsing.
+  std::unique_ptr<symbolize::LLVMSymbolizer> Symbolizer;
+
   // A mapping between the virtual memory address to the instruction metadata
-  // struct.
+  // struct. TODO(hctim): Reimplement this as a sorted vector to avoid per-
+  // insertion allocation.
   std::map<uint64_t, Instr> Instructions;
 
   // Contains a mapping between a specific address, and a list of instructions
