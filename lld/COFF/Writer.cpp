@@ -396,7 +396,7 @@ void Writer::createMiscChunks() {
   for (ObjFile *File : ObjFile::Instances) {
     if (!File->SEHCompat)
       return;
-    for (SymbolBody *B : File->SEHandlers) {
+    for (Symbol *B : File->SEHandlers) {
       // Make sure the handler is still live. Assume all handlers are regular
       // symbols.
       auto *D = dyn_cast<DefinedRegular>(B);
@@ -532,7 +532,7 @@ Optional<coff_symbol16> Writer::createSymbol(Defined *Def) {
   Sym.NumberOfAuxSymbols = 0;
 
   switch (Def->kind()) {
-  case SymbolBody::DefinedAbsoluteKind:
+  case Symbol::DefinedAbsoluteKind:
     Sym.Value = Def->getRVA();
     Sym.SectionNumber = IMAGE_SYM_ABSOLUTE;
     break;
@@ -566,7 +566,7 @@ void Writer::createSymbolAndStringTable() {
   }
 
   for (ObjFile *File : ObjFile::Instances) {
-    for (SymbolBody *B : File->getSymbols()) {
+    for (Symbol *B : File->getSymbols()) {
       auto *D = dyn_cast<Defined>(B);
       if (!D || D->WrittenToSymtab)
         continue;
@@ -732,7 +732,7 @@ template <typename PEHeaderTy> void Writer::writeHeader() {
     Dir[BASE_RELOCATION_TABLE].Size = Sec->getVirtualSize();
   }
   if (Symbol *Sym = Symtab->findUnderscore("_tls_used")) {
-    if (Defined *B = dyn_cast<Defined>(Sym->body())) {
+    if (Defined *B = dyn_cast<Defined>(Sym)) {
       Dir[TLS_TABLE].RelativeVirtualAddress = B->getRVA();
       Dir[TLS_TABLE].Size = Config->is64()
                                 ? sizeof(object::coff_tls_directory64)
@@ -744,7 +744,7 @@ template <typename PEHeaderTy> void Writer::writeHeader() {
     Dir[DEBUG_DIRECTORY].Size = DebugDirectory->getSize();
   }
   if (Symbol *Sym = Symtab->findUnderscore("_load_config_used")) {
-    if (auto *B = dyn_cast<DefinedRegular>(Sym->body())) {
+    if (auto *B = dyn_cast<DefinedRegular>(Sym)) {
       SectionChunk *SC = B->getChunk();
       assert(B->getRVA() >= SC->getRVA());
       uint64_t OffsetInChunk = B->getRVA() - SC->getRVA();
@@ -806,8 +806,8 @@ void Writer::fixSafeSEHSymbols() {
   // section relative relocations.
   Symbol *T = Symtab->find("___safe_se_handler_table");
   Symbol *C = Symtab->find("___safe_se_handler_count");
-  replaceBody<DefinedSynthetic>(T, T->body()->getName(), SEHTable);
-  cast<DefinedAbsolute>(C->body())->setVA(SEHTable->getSize() / 4);
+  replaceSymbol<DefinedSynthetic>(T, T->getName(), SEHTable);
+  cast<DefinedAbsolute>(C)->setVA(SEHTable->getSize() / 4);
 }
 
 // Handles /section options to allow users to overwrite

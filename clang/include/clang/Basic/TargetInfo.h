@@ -868,7 +868,7 @@ public:
 
   /// brief Determine whether this TargetInfo supports the given CPU name.
   virtual bool isValidCPUName(StringRef Name) const {
-    return false;
+    return true;
   }
 
   /// \brief Use the specified ABI.
@@ -895,7 +895,7 @@ public:
 
   /// \brief Determine whether this TargetInfo supports the given feature.
   virtual bool isValidFeatureName(StringRef Feature) const {
-    return false;
+    return true;
   }
 
   /// \brief Perform initialization based on the user configured
