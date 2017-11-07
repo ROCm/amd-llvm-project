@@ -567,11 +567,11 @@ static void InitializePredefinedMacros(const TargetInfo &TI,
                       + getClangFullRepositoryVersion() + "\"");
 
   // hcc version macros
-  Builder.defineMacro("__hcc_major__", TOSTR(KALMAR_VERSION_MAJOR));
-  Builder.defineMacro("__hcc_minor__", TOSTR(KALMAR_VERSION_MINOR));
-  Builder.defineMacro("__hcc_patchlevel__", TOSTR(KALMAR_VERSION_PATCH));
-  Builder.defineMacro("__hcc_version__", TOSTR(KALMAR_VERSION_STRING));
-  Builder.defineMacro("__hcc_workweek__", TOSTR(KALMAR_VERSION_WORKWEEK));
+  Builder.defineMacro("__hcc_major__", TOSTR(HCC_VERSION_MAJOR));
+  Builder.defineMacro("__hcc_minor__", TOSTR(HCC_VERSION_MINOR));
+  Builder.defineMacro("__hcc_patchlevel__", TOSTR(HCC_VERSION_PATCH));
+  Builder.defineMacro("__hcc_version__", TOSTR(HCC_VERSION_STRING));
+  Builder.defineMacro("__hcc_workweek__", TOSTR(HCC_VERSION_WORKWEEK));
 
   // hcc backend macro. possible values are:
   // - CL : for non-HSA systems

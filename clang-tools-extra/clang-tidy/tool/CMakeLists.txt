@@ -1,4 +1,7 @@
 set(LLVM_LINK_COMPONENTS
+  AllTargetsAsmParsers
+  AllTargetsDescs
+  AllTargetsInfos
   support
   )
 
@@ -24,6 +27,7 @@ target_link_libraries(clang-tidy
   clangTidyMiscModule
   clangTidyModernizeModule
   clangTidyMPIModule
+  clangTidyObjCModule
   clangTidyPerformanceModule
   clangTidyReadabilityModule
   clangTooling

@@ -1288,7 +1288,7 @@ void CodeGenFunction::EmitAutoVarInit(const AutoVarEmission &emission) {
     llvm::ConstantInt::get(IntPtrTy,
                            getContext().getTypeSizeInChars(type).getQuantity());
 
-  llvm::Type *BP = Int8PtrTy;
+  llvm::Type *BP = AllocaInt8PtrTy;
   if (Loc.getType() != BP)
     Loc = Builder.CreatePointerBitCastOrAddrSpaceCast(Loc, BP);
 

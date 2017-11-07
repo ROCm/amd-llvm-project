@@ -104,8 +104,6 @@ public:
   Expected<ArrayRef<Elf_Word>> getSHNDXTable(const Elf_Shdr &Section,
                                              Elf_Shdr_Range Sections) const;
 
-  void VerifyStrTab(const Elf_Shdr *sh) const;
-
   StringRef getRelocationTypeName(uint32_t Type) const;
   void getRelocationTypeName(uint32_t Type,
                              SmallVectorImpl<char> &Result) const;
@@ -141,6 +139,8 @@ public:
   Expected<Elf_Rel_Range> rels(const Elf_Shdr *Sec) const {
     return getSectionContentsAsArray<Elf_Rel>(Sec);
   }
+
+  Expected<std::vector<Elf_Rela>> android_relas(const Elf_Shdr *Sec) const;
 
   /// \brief Iterate over program header table.
   Expected<Elf_Phdr_Range> program_headers() const {
