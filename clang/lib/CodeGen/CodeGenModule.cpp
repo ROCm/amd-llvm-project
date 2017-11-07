@@ -2167,12 +2167,10 @@ void CodeGenModule::EmitGlobalDefinition(GlobalDecl GD, llvm::GlobalValue *GV) {
       // If -famp-is-device switch is on, we are in GPU build path.
       if (!isWhiteListForHCC(*this, GD)) return;
     }
-    else {
-      if (!isa<VarDecl>(D) &&
-          D->hasAttr<CXXAMPRestrictAMPAttr>() &&
-          !D->hasAttr<CXXAMPRestrictCPUAttr>()) {
-        return;
-      }
+    else if (!isa<VarDecl>(D) &&
+      D->hasAttr<CXXAMPRestrictAMPAttr>() &&
+      !D->hasAttr<CXXAMPRestrictCPUAttr>()) {
+      return;
     }
   }
 
