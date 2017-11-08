@@ -90,7 +90,7 @@ void HCCInstallationDetector::AddHCCLibArgs(const llvm::opt::ArgList &Args, llvm
     for (auto &lib: SystemLibs)
       CmdArgs.push_back(lib);
     
-    if (!Args.hasArg(options::OPT_fno_hcc_bootstrap)) {
+    if (!Args.hasArg(options::OPT_fno_hcc_lib_link)) {
       for (auto &lib: RuntimeLibs)
         CmdArgs.push_back(lib);
     }
@@ -122,8 +122,7 @@ static void HCPassOptions(const ArgList &Args, ArgStringList &CmdArgs) {
                    ArgOpt.matches(options::OPT_std_EQ) || // omit -std=
                    ArgOpt.matches(options::OPT_stdlib_EQ) || // omit -stdlib=
                    ArgOpt.matches(options::OPT_m_Group) || // omit -m
-                   ArgOpt.matches(options::OPT_fhcc_bootstrap) || // omit -fhcc-bootstrap
-                   ArgOpt.matches(options::OPT_fno_hcc_bootstrap) || // omit -fno-hcc-bootstrap
+                   ArgOpt.matches(options::OPT_fno_hcc_lib_link) || // omit -fno-hcc-lib-link
                    ArgOpt.getKind() == Option::InputClass; // omit <input>
     if (!hasOpts) {
       std::string str = A->getSpelling().str();
@@ -378,16 +377,15 @@ namespace
   #define HCC_TOOLCHAIN_RHEL false
 #endif
 
-void HCC::CXXAMPLink::ConstructJob(
+void HCC::CXXAMPLink::ConstructLinkerJob(
     Compilation &C,
     const JobAction &JA,
     const InputInfo &Output,
     const InputInfoList &Inputs,
     const ArgList &Args,
-    const char *LinkingOutput) const
+    const char *LinkingOutput,
+    ArgStringList &CmdArgs) const
 {
-    ArgStringList CmdArgs;
-
     // specify AMDGPU target
     constexpr const char auto_tgt[] = "auto";
 
@@ -433,16 +431,14 @@ void HCC::CXXAMPLink::ConstructJob(
         }
         validate_and_add_to_command(AMDGPUTarget, C, Args, CmdArgs);
     }
+}
 
-    // pass inputs to gnu ld for initial processing
-    gnutools::Linker(getToolChain()).ConstructLinkerJob(
-        C, JA, Output, Inputs, Args, LinkingOutput, CmdArgs);
-
-    auto ClampArgs = CmdArgs;
-
-  const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("clamp-link"));
-
-  C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, ClampArgs, Inputs));
+void HCC::CXXAMPLink::ConstructJob(Compilation &C,
+                                   const JobAction &JA,
+                                   const InputInfo &Output,
+                                   const InputInfoList &Inputs,
+                                   const ArgList &Args,
+                                   const char *LinkingOutput) const {
 }
 
 /// HCC toolchain.

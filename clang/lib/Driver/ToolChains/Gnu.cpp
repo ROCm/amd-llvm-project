@@ -540,9 +540,16 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C,
   // ToDo: Find a better way to persist CXXAMPLink and construct the link
   // job using it.
   if (Driver::IsCXXAMP(C.getArgs())) {
+    ArgStringList CmdArgs;
+
     if (!HCLinker)
-      HCLinker = std::unique_ptr<Tool>(new HCC::CXXAMPLink(getToolChain()));
-    HCLinker->ConstructJob(C, JA, Output, Inputs, Args, LinkingOutput);
+      HCLinker = std::unique_ptr<HCC::CXXAMPLink>(new HCC::CXXAMPLink(getToolChain()));
+
+    HCLinker->ConstructLinkerJob(C, JA, Output, Inputs, Args, LinkingOutput, CmdArgs);
+    this->ConstructLinkerJob(C, JA, Output, Inputs, Args, LinkingOutput, CmdArgs);
+
+    const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("clamp-link"));
+    C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
   } else {
     ArgStringList CmdArgs;
 

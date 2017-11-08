@@ -108,11 +108,20 @@ public:
   bool hasIntegratedAssembler() const override { return false; }
   bool hasIntegratedCPP() const override { return false; }
 
-  void ConstructJob(Compilation &C, const JobAction &JA,
+  void ConstructJob(Compilation &C,
+                    const JobAction &JA,
                     const InputInfo &Output,
                     const InputInfoList &Inputs,
-                    const llvm::opt::ArgList &TCArgs,
+                    const llvm::opt::ArgList &Args,
                     const char *LinkingOuput) const override;
+
+  void ConstructLinkerJob(Compilation &C,
+                          const JobAction &JA,
+                          const InputInfo &Output,
+                          const InputInfoList &Inputs,
+                          const llvm::opt::ArgList &Args,
+                          const char *LinkingOutput,
+                          llvm::opt::ArgStringList &CmdArgs) const;
 };
 
 } // end namespace HCC

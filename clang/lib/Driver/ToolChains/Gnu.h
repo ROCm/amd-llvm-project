@@ -20,8 +20,6 @@
 namespace clang {
 namespace driver {
 
-class HCCInstallationDetector;
-
 struct DetectedMultilibs {
   /// The set of multilibs that the detected installation supports.
   MultilibSet Multilibs;
@@ -65,8 +63,7 @@ public:
 };
 
 class LLVM_LIBRARY_VISIBILITY Linker : public GnuTool {
-  mutable std::unique_ptr<Tool> HCLinker;
-  friend class HCC::CXXAMPLink;
+  mutable std::unique_ptr<HCC::CXXAMPLink> HCLinker;
 
 public:
   Linker(const ToolChain &TC) : GnuTool("GNU::Linker", "linker", TC) {}
