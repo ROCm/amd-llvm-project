@@ -7,6 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Hcc.h"
 #include "Linux.h"
 #include "Arch/ARM.h"
 #include "Arch/Mips.h"
@@ -798,6 +799,11 @@ void Linux::addLibStdCxxIncludePaths(const llvm::opt::ArgList &DriverArgs,
 void Linux::AddCudaIncludeArgs(const ArgList &DriverArgs,
                                ArgStringList &CC1Args) const {
   CudaInstallation.AddCudaIncludeArgs(DriverArgs, CC1Args);
+}
+
+void Linux::AddHCCIncludeArgs(const ArgList &DriverArgs,
+                              ArgStringList &CC1Args) const {
+  HCCInstallation.AddHCCIncludeArgs(DriverArgs, CC1Args);
 }
 
 void Linux::AddIAMCUIncludeArgs(const ArgList &DriverArgs,

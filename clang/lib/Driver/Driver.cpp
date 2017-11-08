@@ -626,9 +626,16 @@ void Driver::CreateOffloadingDeviceToolChains(Compilation &C,
                I.first == types::TY_HC_HOST ||
                I.first == types::TY_HC_KERNEL;
       })) {
-    const ToolChain &TC = getToolChain(
-        C.getInputArgs(), llvm::Triple("amdgcn--amdhsa-hcc"));
-    C.addOffloadDeviceToolChain(&TC, Action::OFK_HCC);
+
+    const ToolChain *HostTC = C.getSingleOffloadToolChain<Action::OFK_Host>();
+
+    auto &HccTC = ToolChains[llvm::Triple("amdgcn--amdhsa-hcc").str()];
+    if (!HccTC)
+      HccTC = llvm::make_unique<toolchains::HCCToolChain>(*this, llvm::Triple("amdgcn--amdhsa-hcc"), *HostTC, C.getInputArgs());
+      
+    const ToolChain *TC = HccTC.get();
+
+    C.addOffloadDeviceToolChain(TC, Action::OFK_HCC);
   }
 
   //
@@ -4099,11 +4106,7 @@ const ToolChain &Driver::getToolChain(const ArgList &Args,
       TC = llvm::make_unique<toolchains::Solaris>(*this, Target, Args);
       break;
     case llvm::Triple::AMDHSA:
-      if (Target.getEnvironment() == llvm::Triple::HCC) {
-        TC = llvm::make_unique<toolchains::HCCToolChain>(*this, Target, Args);
-      } else {
-        TC = llvm::make_unique<toolchains::AMDGPUToolChain>(*this, Target, Args);
-      }
+      TC = llvm::make_unique<toolchains::AMDGPUToolChain>(*this, Target, Args);
       break;
     case llvm::Triple::Win32:
       switch (Target.getEnvironment()) {

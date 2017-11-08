@@ -551,9 +551,16 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C,
   // ToDo: Find a better way to persist CXXAMPLink and construct the link
   // job using it.
   if (Driver::IsCXXAMP(C.getArgs())) {
+    ArgStringList CmdArgs;
+
     if (!HCLinker)
-      HCLinker = std::unique_ptr<Linker>(new HCC::CXXAMPLink(getToolChain()));
-    HCLinker->ConstructJob(C, JA, Output, Inputs, Args, LinkingOutput);
+      HCLinker = std::unique_ptr<HCC::CXXAMPLink>(new HCC::CXXAMPLink(getToolChain()));
+
+    HCLinker->ConstructLinkerJob(C, JA, Output, Inputs, Args, LinkingOutput, CmdArgs);
+    this->ConstructLinkerJob(C, JA, Output, Inputs, Args, LinkingOutput, CmdArgs);
+
+    const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("clamp-link"));
+    C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
   } else {
     ArgStringList CmdArgs;
 
@@ -2182,7 +2189,8 @@ bool Generic_GCC::GCCInstallationDetector::ScanGentooGccConfig(
 Generic_GCC::Generic_GCC(const Driver &D, const llvm::Triple &Triple,
                          const ArgList &Args)
     : ToolChain(D, Triple, Args), GCCInstallation(D),
-      CudaInstallation(D, Triple, Args) {
+      CudaInstallation(D, Triple, Args),
+      HCCInstallation(D, Args) {
   getProgramPaths().push_back(getDriver().getInstalledDir());
   if (getDriver().getInstalledDir() != getDriver().Dir)
     getProgramPaths().push_back(getDriver().Dir);
@@ -2215,6 +2223,7 @@ void Generic_GCC::printVerboseInfo(raw_ostream &OS) const {
   // Print the information about how we detected the GCC installation.
   GCCInstallation.print(OS);
   CudaInstallation.print(OS);
+  HCCInstallation.print(OS);
 }
 
 bool Generic_GCC::IsUnwindTablesDefault(const ArgList &Args) const {
