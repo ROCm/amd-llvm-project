@@ -380,8 +380,7 @@ X86TargetLowering::X86TargetLowering(const X86TargetMachine &TM,
   // Special handling for half-precision floating point conversions.
   // If we don't have F16C support, then lower half float conversions
   // into library calls.
-  if (Subtarget.useSoftFloat() ||
-      (!Subtarget.hasF16C() && !Subtarget.hasAVX512())) {
+  if (Subtarget.useSoftFloat() || !Subtarget.hasF16C()) {
     setOperationAction(ISD::FP16_TO_FP, MVT::f32, Expand);
     setOperationAction(ISD::FP_TO_FP16, MVT::f32, Expand);
   }
@@ -25177,6 +25176,7 @@ const char *X86TargetLowering::getTargetNodeName(unsigned Opcode) const {
   case X86ISD::SCALAR_UINT_TO_FP_RND: return "X86ISD::SCALAR_UINT_TO_FP_RND";
   case X86ISD::CVTPS2PH:           return "X86ISD::CVTPS2PH";
   case X86ISD::CVTPH2PS:           return "X86ISD::CVTPH2PS";
+  case X86ISD::CVTPH2PS_RND:       return "X86ISD::CVTPH2PS_RND";
   case X86ISD::CVTP2SI:            return "X86ISD::CVTP2SI";
   case X86ISD::CVTP2UI:            return "X86ISD::CVTP2UI";
   case X86ISD::CVTP2SI_RND:        return "X86ISD::CVTP2SI_RND";
@@ -35565,8 +35565,11 @@ static SDValue combineFMA(SDNode *N, SelectionDAG &DAG,
 
   // Only return the node is the opcode was changed or one of the
   // operand was negated. If not, we'll just recreate the same node.
-  if (HasNeg || NewOpcode != N->getOpcode())
-    return DAG.getNode(NewOpcode, dl, VT, A, B, C, N->getOperand(3));
+  if (HasNeg || NewOpcode != N->getOpcode()) {
+    if (N->getNumOperands() == 4)
+      return DAG.getNode(NewOpcode, dl, VT, A, B, C, N->getOperand(3));
+    return DAG.getNode(NewOpcode, dl, VT, A, B, C);
+  }
 
   return SDValue();
 }

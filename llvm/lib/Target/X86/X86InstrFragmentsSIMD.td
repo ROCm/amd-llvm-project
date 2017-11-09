@@ -491,10 +491,10 @@ def X86FnmaddRnds1  : SDNode<"X86ISD::FNMADDS1_RND",    SDTFmaRound>;
 def X86FmsubRnds1   : SDNode<"X86ISD::FMSUBS1_RND",     SDTFmaRound>;
 def X86FnmsubRnds1  : SDNode<"X86ISD::FNMSUBS1_RND",    SDTFmaRound>;
 
-def X86Fmadds3  : SDNode<"X86ISD::FMADDS3",  SDTFPTernaryOp>;
-def X86Fnmadds3 : SDNode<"X86ISD::FNMADDS3", SDTFPTernaryOp>;
-def X86Fmsubs3  : SDNode<"X86ISD::FMSUBS3",  SDTFPTernaryOp>;
-def X86Fnmsubs3 : SDNode<"X86ISD::FNMSUBS3", SDTFPTernaryOp>;
+def X86Fmadds3  : SDNode<"X86ISD::FMADDS3",  SDTFPTernaryOp, [SDNPCommutative]>;
+def X86Fnmadds3 : SDNode<"X86ISD::FNMADDS3", SDTFPTernaryOp, [SDNPCommutative]>;
+def X86Fmsubs3  : SDNode<"X86ISD::FMSUBS3",  SDTFPTernaryOp, [SDNPCommutative]>;
+def X86Fnmsubs3 : SDNode<"X86ISD::FNMSUBS3", SDTFPTernaryOp, [SDNPCommutative]>;
 
 // Scalar FMA intrinsics with passthru bits in operand 3.
 def X86FmaddRnds3   : SDNode<"X86ISD::FMADDS3_RND",     SDTFmaRound, [SDNPCommutative]>;
@@ -591,7 +591,12 @@ def X86VUintToFP      : SDNode<"X86ISD::CVTUI2P",  SDTVintToFP>;
 def X86cvtp2Int      : SDNode<"X86ISD::CVTP2SI",  SDTFloatToInt>;
 def X86cvtp2UInt     : SDNode<"X86ISD::CVTP2UI",  SDTFloatToInt>;
 
+
 def X86cvtph2ps     : SDNode<"X86ISD::CVTPH2PS",
+                              SDTypeProfile<1, 1, [SDTCVecEltisVT<0, f32>,
+                                                   SDTCVecEltisVT<1, i16>]> >;
+
+def X86cvtph2psRnd  : SDNode<"X86ISD::CVTPH2PS_RND",
                               SDTypeProfile<1, 2, [SDTCVecEltisVT<0, f32>,
                                                    SDTCVecEltisVT<1, i16>,
                                                    SDTCisVT<2, i32>]> >;
