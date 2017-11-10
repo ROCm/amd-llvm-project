@@ -504,8 +504,6 @@ def amdgpu_target_EQ : Joined<["-", "--"], "amdgpu-target=">, Flags<[DriverOptio
   HelpText<"Specify AMDGPU ISA version (ex: gfx803). Could be specified only once.">;
 def hcc_path_EQ : Joined<["--"], "hcc-path=">, Group<i_Group>,
   HelpText<"HCC installation path">;
-def fno_hcc_lib_link : Flag<["-"], "fno-hcc-lib-link">,
-  HelpText<"Don't link to HCC runtime">;
 def hcc_extra_libs_EQ : Joined<["-", "--"], "hcc-extra-libs=">, Flags<[DriverOption]>,
   HelpText<"Specify hcc extra libraries to be linked in.">;
 def cl_opt_disable : Flag<["-"], "cl-opt-disable">, Group<opencl_Group>, Flags<[CC1Option]>,

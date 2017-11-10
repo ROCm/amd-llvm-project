@@ -90,10 +90,8 @@ void HCCInstallationDetector::AddHCCLibArgs(const llvm::opt::ArgList &Args, llvm
     for (auto &lib: SystemLibs)
       CmdArgs.push_back(lib);
     
-    if (!Args.hasArg(options::OPT_fno_hcc_lib_link)) {
-      for (auto &lib: RuntimeLibs)
-        CmdArgs.push_back(lib);
-    }
+    for (auto &lib: RuntimeLibs)
+      CmdArgs.push_back(lib);
 
     if (Args.hasArg(options::OPT_hcc_extra_libs_EQ)) {
       auto HccExtraLibs = Args.getAllArgValues(options::OPT_hcc_extra_libs_EQ);
@@ -122,7 +120,6 @@ static void HCPassOptions(const ArgList &Args, ArgStringList &CmdArgs) {
                    ArgOpt.matches(options::OPT_std_EQ) || // omit -std=
                    ArgOpt.matches(options::OPT_stdlib_EQ) || // omit -stdlib=
                    ArgOpt.matches(options::OPT_m_Group) || // omit -m
-                   ArgOpt.matches(options::OPT_fno_hcc_lib_link) || // omit -fno-hcc-lib-link
                    ArgOpt.getKind() == Option::InputClass; // omit <input>
     if (!hasOpts) {
       std::string str = A->getSpelling().str();
