@@ -853,6 +853,8 @@ void MipsGotSection::writeTo(uint8_t *Buf) {
     Buf += Config->Wordsize;
     const Symbol *Sym = SA.first;
     uint64_t VA = Sym->getVA(SA.second);
+    if (Sym->StOther & STO_MIPS_MICROMIPS)
+      VA |= 1;
     writeUint(Entry, VA);
   };
   std::for_each(std::begin(LocalEntries), std::end(LocalEntries), AddEntry);
@@ -1622,7 +1624,7 @@ template <class ELFT> void SymbolTableSection<ELFT>::writeTo(uint8_t *Buf) {
 
       if (Config->Relocatable)
         if (auto *D = dyn_cast<Defined>(Sym))
-          if (D->isMipsPIC<ELFT>())
+          if (isMipsPIC<ELFT>(D))
             ESym->st_other |= STO_MIPS_PIC;
       ++ESym;
     }

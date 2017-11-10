@@ -128,29 +128,6 @@ EVT AMDGPUTargetLowering::getEquivalentMemType(LLVMContext &Ctx, EVT VT) {
   return EVT::getVectorVT(Ctx, MVT::i32, StoreSize / 32);
 }
 
-bool AMDGPUTargetLowering::isOrEquivalentToAdd(SelectionDAG &DAG, SDValue Op)
-{
-  assert(Op.getOpcode() == ISD::OR);
-
-  SDValue N0 = Op->getOperand(0);
-  SDValue N1 = Op->getOperand(1);
-  EVT VT = N0.getValueType();
-
-  if (VT.isInteger() && !VT.isVector()) {
-    KnownBits LHSKnown, RHSKnown;
-    DAG.computeKnownBits(N0, LHSKnown);
-
-    if (LHSKnown.Zero.getBoolValue()) {
-      DAG.computeKnownBits(N1, RHSKnown);
-
-      if (!(~RHSKnown.Zero & ~LHSKnown.Zero))
-        return true;
-    }
-  }
-
-  return false;
-}
-
 unsigned AMDGPUTargetLowering::numBitsUnsigned(SDValue Op, SelectionDAG &DAG) {
   KnownBits Known;
   EVT VT = Op.getValueType();
@@ -2923,21 +2900,6 @@ SDValue AMDGPUTargetLowering::performShlCombine(SDNode *N,
     SDValue Shl = DAG.getNode(ISD::SHL, SL, XVT, X, SDValue(RHS, 0));
     return DAG.getZExtOrTrunc(Shl, SL, VT);
   }
-  case ISD::OR:
-    if (!isOrEquivalentToAdd(DAG, LHS))
-      break;
-    LLVM_FALLTHROUGH;
-  case ISD::ADD: {
-    // shl (or|add x, c2), c1 => or|add (shl x, c1), (c2 << c1)
-    if (ConstantSDNode *C2 = dyn_cast<ConstantSDNode>(LHS->getOperand(1))) {
-      SDValue Shl = DAG.getNode(ISD::SHL, SL, VT, LHS->getOperand(0),
-                                SDValue(RHS, 0));
-      SDValue C2V = DAG.getConstant(C2->getAPIntValue() << RHSVal,
-                                    SDLoc(C2), VT);
-      return DAG.getNode(LHS->getOpcode(), SL, VT, Shl, C2V);
-    }
-    break;
-  }
   }
 
   if (VT != MVT::i64)
@@ -3998,6 +3960,19 @@ const char* AMDGPUTargetLowering::getTargetNodeName(unsigned Opcode) const {
   NODE_NAME_CASE(ATOMIC_DEC)
   NODE_NAME_CASE(BUFFER_LOAD)
   NODE_NAME_CASE(BUFFER_LOAD_FORMAT)
+  NODE_NAME_CASE(BUFFER_STORE)
+  NODE_NAME_CASE(BUFFER_STORE_FORMAT)
+  NODE_NAME_CASE(BUFFER_ATOMIC_SWAP)
+  NODE_NAME_CASE(BUFFER_ATOMIC_ADD)
+  NODE_NAME_CASE(BUFFER_ATOMIC_SUB)
+  NODE_NAME_CASE(BUFFER_ATOMIC_SMIN)
+  NODE_NAME_CASE(BUFFER_ATOMIC_UMIN)
+  NODE_NAME_CASE(BUFFER_ATOMIC_SMAX)
+  NODE_NAME_CASE(BUFFER_ATOMIC_UMAX)
+  NODE_NAME_CASE(BUFFER_ATOMIC_AND)
+  NODE_NAME_CASE(BUFFER_ATOMIC_OR)
+  NODE_NAME_CASE(BUFFER_ATOMIC_XOR)
+  NODE_NAME_CASE(BUFFER_ATOMIC_CMPSWAP)
   case AMDGPUISD::LAST_AMDGPU_ISD_NUMBER: break;
   }
   return nullptr;
