@@ -5607,9 +5607,9 @@ static void handleAMDGPUFlatWorkGroupSizeAttr(Sema &S, Decl *D,
       !checkUInt32Argument(S, Attr, MinExpr, Min))
     return;
 
-  uint32_t Max = 0;
+  uint32_t Max = Min;
   Expr *MaxExpr = MinExpr;
-  if (Attr.getNumArgs() > 1 ) {
+  if (Attr.getNumArgs() > 1) {
     MaxExpr = Attr.getArgAsExpr(1);
     if (MaxExpr->isEvaluatable(S.Context) &&
         !checkUInt32Argument(S, Attr, MaxExpr, Max))
@@ -5646,7 +5646,7 @@ static void handleAMDGPUWavesPerEUAttr(Sema &S, Decl *D,
       !checkUInt32Argument(S, Attr, MinExpr, Min))
     return;
 
-  uint32_t Max = 0;
+  uint32_t Max = Min;
   Expr *MaxExpr = MinExpr;
   if (Attr.getNumArgs() > 1) {
     MaxExpr = Attr.getArgAsExpr(1);

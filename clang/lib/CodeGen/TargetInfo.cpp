@@ -7713,8 +7713,6 @@ void AMDGPUTargetCodeGenInfo::setTargetAttributes(
     llvm::APSInt min = getConstexprInt(Attr->getMin(), FD->getASTContext());
     llvm::APSInt max = getConstexprInt(Attr->getMax(), FD->getASTContext());
 
-    Attr->getMin()->dump();
-    Attr->getMax()->dump();
     unsigned Min = min.getZExtValue();
     unsigned Max = std::max(min, max).getZExtValue();
 
