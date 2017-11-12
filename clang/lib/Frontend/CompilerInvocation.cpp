@@ -1753,7 +1753,7 @@ void CompilerInvocation::setLangDefaults(LangOptions &Opts, InputKind IK,
   Opts.GNUInline = !Opts.C99 && !Opts.CPlusPlus;
   Opts.HexFloats = Std.hasHexFloats();
   Opts.ImplicitInt = Std.hasImplicitInt();
-  Opts.CPlusPlusAMP = Std.isCPlusPlusAMP();
+  Opts.CPlusPlusAMP |= Std.isCPlusPlusAMP();
 
   // Set OpenCL Version.
   Opts.OpenCL = Std.isOpenCL();
@@ -1787,11 +1787,6 @@ void CompilerInvocation::setLangDefaults(LangOptions &Opts, InputKind IK,
 
   Opts.RenderScript = IK.getLanguage() == InputKind::RenderScript;
   if (Opts.RenderScript) {
-    Opts.NativeHalfType = 1;
-    Opts.NativeHalfArgsAndReturns = 1;
-  }
-
-  if (Opts.CPlusPlusAMP) {
     Opts.NativeHalfType = 1;
     Opts.NativeHalfArgsAndReturns = 1;
   }
@@ -1977,6 +1972,15 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
 
   llvm::Triple T(TargetOpts.Triple);
   CompilerInvocation::setLangDefaults(Opts, IK, T, PPOpts, LangStd);
+
+  // Add AMP features if we got -famp.
+  Opts.CPlusPlusAMP |= Args.hasArg(options::OPT_famp);
+
+  // Add AMP features if using AMP.
+  if (Opts.CPlusPlusAMP) {
+    Opts.NativeHalfType = 1;
+    Opts.NativeHalfArgsAndReturns = 1;
+  }
 
   // -cl-strict-aliasing needs to emit diagnostic in the case where CL > 1.0.
   // This option should be deprecated for CL > 1.0 because
