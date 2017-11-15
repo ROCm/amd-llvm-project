@@ -2006,8 +2006,11 @@ static TryCastResult TryReinterpretCast(Sema &Self, ExprResult &SrcExpr,
       //    SrcType is 'int' which will be coverted to 'int*'
       //    DestType is 'int*&' which will be converted to be 'int**'
       // Note that, the trick is 'int*&' is taken as 'int**'
-      if(Self.getLangOpts().CPlusPlusAMP && Self.IsInAMPRestricted())
-        Self.Diag(OpRange.getBegin(), diag::err_amp_int_to_pointer_cast)<< SrcType << DestType;
+      if (Self.getLangOpts().CPlusPlusAMP &&
+          Self.IsInAMPRestricted() &&
+          !Self.getLangOpts().HSAExtension)
+        Self.Diag(OpRange.getBegin(), diag::err_amp_int_to_pointer_cast)
+          << SrcType << DestType;
     }
 
     // This code does this transformation for the checked types.
