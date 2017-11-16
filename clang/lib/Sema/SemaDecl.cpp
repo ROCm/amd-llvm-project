@@ -10423,10 +10423,17 @@ bool Sema::CheckFunctionDeclaration(Scope *S, FunctionDecl *NewFD,
   }
 
   // C++AMP
-  // C linkage functions can't have multiple restrction specifiers
+  // C linkage functions can't have multiple restriction specifiers
   //   extern "C" void foo() restrict(amp, cpu) {}  // Error
+  // However, for HIP __global__ functions we allow it orthogonally to the
+  // linkage specifier, since our mechanism for implementing restrictions is not
+  // in any way impacting mangling, unlike what the original C++AMP had.
+  // TODO: this is too verbose, should be split up into separate functions.
   if (getLangOpts().CPlusPlusAMP && NewFD->isExternC() &&
-    NewFD->hasAttr<CXXAMPRestrictCPUAttr>() && NewFD->hasAttr<CXXAMPRestrictAMPAttr>())
+    NewFD->hasAttr<CXXAMPRestrictCPUAttr>() &&
+    NewFD->hasAttr<CXXAMPRestrictAMPAttr>() &&
+    (!NewFD->hasAttr<AnnotateAttr>() ||
+     NewFD->getAttr<AnnotateAttr>()->getAnnotation() != "__HIP_global_function__"))
     Diag(NewFD->getLocation(), diag::err_amp_c_linkage_function_has_multiple_restrictions)
           << NewFD->getDeclName();
 
