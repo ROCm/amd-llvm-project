@@ -76,9 +76,11 @@
 // its vtable and typeinfo to libc++ rather than having all other libraries
 // using that class define their own copies.
 #define _LIBCPP_ABI_BAD_FUNCTION_CALL_KEY_FUNCTION
-
 // Enable optimized version of __do_get_(un)signed which avoids redundant copies.
 #define _LIBCPP_ABI_OPTIMIZED_LOCALE_NUM_GET
+// Use the smallest possible integer type to represent the index of the variant.
+// Previously libc++ used "unsigned int" exclusivly.
+#define _LIBCPP_ABI_VARIANT_INDEX_TYPE_OPTIMIZATION
 #elif _LIBCPP_ABI_VERSION == 1
 #if !defined(_LIBCPP_OBJECT_FORMAT_COFF)
 // Enable compiling copies of now inline methods into the dylib to support
@@ -120,6 +122,9 @@
 #endif
 #ifndef __has_feature
 #define __has_feature(__x) 0
+#endif
+#ifndef __has_cpp_attribute
+#define __has_cpp_attribute(__x) 0
 #endif
 // '__is_identifier' returns '0' if '__x' is a reserved identifier provided by
 // the compiler and '1' otherwise.
@@ -949,6 +954,18 @@ template <unsigned> struct __static_assert_check {};
 #define _LIBCPP_CONSTEXPR_AFTER_CXX14 constexpr
 #else
 #define _LIBCPP_CONSTEXPR_AFTER_CXX14
+#endif
+
+#if _LIBCPP_STD_VER > 17 && !defined(_LIBCPP_HAS_NO_CXX14_CONSTEXPR)
+#define _LIBCPP_CONSTEXPR_AFTER_CXX17 constexpr
+#else
+#define _LIBCPP_CONSTEXPR_AFTER_CXX17
+#endif
+
+#if __has_cpp_attribute(nodiscard) && _LIBCPP_STD_VER > 17 && !defined(_LIBCPP_DISABLE_NODISCARD_AFTER_CXX17)
+#define _LIBCPP_NODISCARD_AFTER_CXX17 [[nodiscard]]
+#else
+#define _LIBCPP_NODISCARD_AFTER_CXX17
 #endif
 
 // FIXME: Remove all usages of this macro once compilers catch up.

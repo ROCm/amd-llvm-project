@@ -108,6 +108,7 @@ public:
 // The writer writes a SymbolTable result to a file.
 class Writer {
 public:
+  Writer() : Buffer(errorHandler().OutputBuffer) {}
   void run();
 
 private:
@@ -137,7 +138,7 @@ private:
   uint32_t getSizeOfInitializedData();
   std::map<StringRef, std::vector<DefinedImportData *>> binImports();
 
-  std::unique_ptr<FileOutputBuffer> Buffer;
+  std::unique_ptr<FileOutputBuffer> &Buffer;
   std::vector<OutputSection *> OutputSections;
   std::vector<char> Strtab;
   std::vector<llvm::object::coff_symbol16> OutputSymtab;
@@ -210,7 +211,8 @@ void OutputSection::writeHeaderTo(uint8_t *Buf) {
     // If name is too long, write offset into the string table as a name.
     sprintf(Hdr->Name, "/%d", StringTableOff);
   } else {
-    assert(!Config->Debug || Name.size() <= COFF::NameSize);
+    assert(!Config->Debug || Name.size() <= COFF::NameSize ||
+           (Hdr->Characteristics & IMAGE_SCN_MEM_DISCARDABLE) == 0);
     strncpy(Hdr->Name, Name.data(),
             std::min(Name.size(), (size_t)COFF::NameSize));
   }
@@ -531,40 +533,46 @@ Optional<coff_symbol16> Writer::createSymbol(Defined *Def) {
 }
 
 void Writer::createSymbolAndStringTable() {
-  if (!Config->Debug || !Config->WriteSymtab)
-    return;
-
   // Name field in the section table is 8 byte long. Longer names need
   // to be written to the string table. First, construct string table.
   for (OutputSection *Sec : OutputSections) {
     StringRef Name = Sec->getName();
     if (Name.size() <= COFF::NameSize)
       continue;
+    // If a section isn't discardable (i.e. will be mapped at runtime),
+    // prefer a truncated section name over a long section name in
+    // the string table that is unavailable at runtime. This is different from
+    // what link.exe does, but finding ".eh_fram" instead of "/4" is useful
+    // to libunwind.
+    if ((Sec->getPermissions() & IMAGE_SCN_MEM_DISCARDABLE) == 0)
+      continue;
     Sec->setStringTableOff(addEntryToStringTable(Name));
   }
 
-  for (ObjFile *File : ObjFile::Instances) {
-    for (Symbol *B : File->getSymbols()) {
-      auto *D = dyn_cast<Defined>(B);
-      if (!D || D->WrittenToSymtab)
-        continue;
-      D->WrittenToSymtab = true;
+  if (Config->DebugDwarf) {
+    for (ObjFile *File : ObjFile::Instances) {
+      for (Symbol *B : File->getSymbols()) {
+        auto *D = dyn_cast_or_null<Defined>(B);
+        if (!D || D->WrittenToSymtab)
+          continue;
+        D->WrittenToSymtab = true;
 
-      if (Optional<coff_symbol16> Sym = createSymbol(D))
-        OutputSymtab.push_back(*Sym);
+        if (Optional<coff_symbol16> Sym = createSymbol(D))
+          OutputSymtab.push_back(*Sym);
+      }
     }
   }
+
+  if (OutputSymtab.empty() && Strtab.empty())
+    return;
 
   OutputSection *LastSection = OutputSections.back();
   // We position the symbol table to be adjacent to the end of the last section.
   uint64_t FileOff = LastSection->getFileOff() +
                      alignTo(LastSection->getRawSize(), SectorSize);
-  if (!OutputSymtab.empty()) {
-    PointerToSymbolTable = FileOff;
-    FileOff += OutputSymtab.size() * sizeof(coff_symbol16);
-  }
-  if (!Strtab.empty())
-    FileOff += Strtab.size() + 4;
+  PointerToSymbolTable = FileOff;
+  FileOff += OutputSymtab.size() * sizeof(coff_symbol16);
+  FileOff += 4 + Strtab.size();
   FileSize = alignTo(FileOff, SectorSize);
 }
 
@@ -752,7 +760,7 @@ template <typename PEHeaderTy> void Writer::writeHeader() {
   SectionTable = ArrayRef<uint8_t>(
       Buf - OutputSections.size() * sizeof(coff_section), Buf);
 
-  if (OutputSymtab.empty())
+  if (OutputSymtab.empty() && Strtab.empty())
     return;
 
   COFF->PointerToSymbolTable = PointerToSymbolTable;
@@ -787,11 +795,9 @@ void Writer::createSEHTable(OutputSection *RData) {
     if (!File->SEHCompat)
       return;
     for (Symbol *B : File->SEHandlers) {
-      // Make sure the handler is still live. Assume all handlers are regular
-      // symbols.
-      auto *D = dyn_cast<DefinedRegular>(B);
-      if (D && D->getChunk()->isLive())
-        Handlers.insert(D);
+      // Make sure the handler is still live.
+      if (B->isLive())
+        Handlers.insert(cast<Defined>(B));
     }
   }
 

@@ -37,7 +37,12 @@
 #if SANITIZER_FREEBSD
 #include <pthread_np.h>
 #include <osreldate.h>
+#include <sys/sysctl.h>
 #define pthread_getattr_np pthread_attr_get_np
+#endif
+
+#if SANITIZER_NETBSD
+#include <sys/sysctl.h>
 #endif
 
 #if SANITIZER_LINUX
@@ -46,10 +51,16 @@
 
 #if SANITIZER_ANDROID
 #include <android/api-level.h>
+#if !defined(CPU_COUNT) && !defined(__aarch64__)
+#include <dirent.h>
+#include <fcntl.h>
+struct __sanitizer::linux_dirent {
+  long           d_ino;
+  off_t          d_off;
+  unsigned short d_reclen;
+  char           d_name[];
+};
 #endif
-
-#if SANITIZER_ANDROID && __ANDROID_API__ < 21
-#include <android/log.h>
 #endif
 
 #if !SANITIZER_ANDROID
@@ -316,7 +327,7 @@ uptr ThreadSelf() {
 }
 #endif  // (x86_64 || i386 || MIPS) && SANITIZER_LINUX
 
-#if SANITIZER_FREEBSD
+#if SANITIZER_FREEBSD || SANITIZER_NETBSD
 static void **ThreadSelfSegbase() {
   void **segbase = 0;
 # if defined(__i386__)
@@ -326,7 +337,7 @@ static void **ThreadSelfSegbase() {
   // sysarch(AMD64_GET_FSBASE, segbase);
   __asm __volatile("movq %%fs:0, %0" : "=r" (segbase));
 # else
-#  error "unsupported CPU arch for FreeBSD platform"
+#  error "unsupported CPU arch"
 # endif
   return segbase;
 }
@@ -334,9 +345,7 @@ static void **ThreadSelfSegbase() {
 uptr ThreadSelf() {
   return (uptr)ThreadSelfSegbase()[2];
 }
-#elif SANITIZER_NETBSD
-uptr ThreadSelf() { return (uptr)pthread_self(); }
-#endif  // SANITIZER_NETBSD
+#endif  // SANITIZER_FREEBSD || SANITIZER_NETBSD
 
 #if !SANITIZER_GO
 static void GetTls(uptr *addr, uptr *size) {
@@ -354,7 +363,7 @@ static void GetTls(uptr *addr, uptr *size) {
   *addr = 0;
   *size = 0;
 # endif
-#elif SANITIZER_FREEBSD
+#elif SANITIZER_FREEBSD || SANITIZER_NETBSD
   void** segbase = ThreadSelfSegbase();
   *addr = 0;
   *size = 0;
@@ -367,7 +376,7 @@ static void GetTls(uptr *addr, uptr *size) {
     *addr = (uptr) dtv[2];
     *size = (*addr == 0) ? 0 : ((uptr) segbase[0] - (uptr) dtv[2]);
   }
-#elif SANITIZER_ANDROID || SANITIZER_NETBSD
+#elif SANITIZER_ANDROID
   *addr = 0;
   *size = 0;
 #else
@@ -538,12 +547,62 @@ uptr GetRSS() {
   return rss * GetPageSizeCached();
 }
 
-// 64-bit Android targets don't provide the deprecated __android_log_write.
-// Starting with the L release, syslog() works and is preferable to
-// __android_log_write.
+// sysconf(_SC_NPROCESSORS_{CONF,ONLN}) cannot be used as they allocate memory.
+u32 GetNumberOfCPUs() {
+#if SANITIZER_FREEBSD || SANITIZER_NETBSD
+  u32 ncpu;
+  int req[2];
+  size_t len = sizeof(ncpu);
+  req[0] = CTL_HW;
+  req[1] = HW_NCPU;
+  CHECK_EQ(sysctl(req, 2, &ncpu, &len, NULL, 0), 0);
+  return ncpu;
+#elif SANITIZER_ANDROID && !defined(CPU_COUNT) && !defined(__aarch64__)
+  // Fall back to /sys/devices/system/cpu on Android when cpu_set_t doesn't
+  // exist in sched.h. That is the case for toolchains generated with older
+  // NDKs.
+  // This code doesn't work on AArch64 because internal_getdents makes use of
+  // the 64bit getdents syscall, but cpu_set_t seems to always exist on AArch64.
+  uptr fd = internal_open("/sys/devices/system/cpu", O_RDONLY | O_DIRECTORY);
+  if (internal_iserror(fd))
+    return 0;
+  InternalScopedBuffer<u8> buffer(4096);
+  uptr bytes_read = buffer.size();
+  uptr n_cpus = 0;
+  u8 *d_type;
+  struct linux_dirent *entry = (struct linux_dirent *)&buffer[bytes_read];
+  while (true) {
+    if ((u8 *)entry >= &buffer[bytes_read]) {
+      bytes_read = internal_getdents(fd, (struct linux_dirent *)buffer.data(),
+                                     buffer.size());
+      if (internal_iserror(bytes_read) || !bytes_read)
+        break;
+      entry = (struct linux_dirent *)buffer.data();
+    }
+    d_type = (u8 *)entry + entry->d_reclen - 1;
+    if (d_type >= &buffer[bytes_read] ||
+        (u8 *)&entry->d_name[3] >= &buffer[bytes_read])
+      break;
+    if (entry->d_ino != 0 && *d_type == DT_DIR) {
+      if (entry->d_name[0] == 'c' && entry->d_name[1] == 'p' &&
+          entry->d_name[2] == 'u' &&
+          entry->d_name[3] >= '0' && entry->d_name[3] <= '9')
+        n_cpus++;
+    }
+    entry = (struct linux_dirent *)(((u8 *)entry) + entry->d_reclen);
+  }
+  internal_close(fd);
+  return n_cpus;
+#else
+  cpu_set_t CPUs;
+  CHECK_EQ(sched_getaffinity(0, sizeof(cpu_set_t), &CPUs), 0);
+  return CPU_COUNT(&CPUs);
+#endif
+}
+
 #if SANITIZER_LINUX
 
-#if SANITIZER_ANDROID
+# if SANITIZER_ANDROID
 static atomic_uint8_t android_log_initialized;
 
 void AndroidLogInit() {
@@ -554,35 +613,55 @@ void AndroidLogInit() {
 static bool ShouldLogAfterPrintf() {
   return atomic_load(&android_log_initialized, memory_order_acquire);
 }
-#else
+
+extern "C" SANITIZER_WEAK_ATTRIBUTE
+int async_safe_write_log(int pri, const char* tag, const char* msg);
+extern "C" SANITIZER_WEAK_ATTRIBUTE
+int __android_log_write(int prio, const char* tag, const char* msg);
+
+// ANDROID_LOG_INFO is 4, but can't be resolved at runtime.
+#define SANITIZER_ANDROID_LOG_INFO 4
+
+// async_safe_write_log is a new public version of __libc_write_log that is
+// used behind syslog. It is preferable to syslog as it will not do any dynamic
+// memory allocation or formatting.
+// If the function is not available, syslog is preferred for L+ (it was broken
+// pre-L) as __android_log_write triggers a racey behavior with the strncpy
+// interceptor. Fallback to __android_log_write pre-L.
+void WriteOneLineToSyslog(const char *s) {
+  if (&async_safe_write_log) {
+    async_safe_write_log(SANITIZER_ANDROID_LOG_INFO, GetProcessName(), s);
+  } else if (AndroidGetApiLevel() > ANDROID_KITKAT) {
+    syslog(LOG_INFO, "%s", s);
+  } else {
+    CHECK(&__android_log_write);
+    __android_log_write(SANITIZER_ANDROID_LOG_INFO, nullptr, s);
+  }
+}
+
+extern "C" SANITIZER_WEAK_ATTRIBUTE
+void android_set_abort_message(const char *);
+
+void SetAbortMessage(const char *str) {
+  if (&android_set_abort_message)
+    android_set_abort_message(str);
+}
+# else
 void AndroidLogInit() {}
 
 static bool ShouldLogAfterPrintf() { return true; }
-#endif  // SANITIZER_ANDROID
 
-void WriteOneLineToSyslog(const char *s) {
-#if SANITIZER_ANDROID &&__ANDROID_API__ < 21
-  __android_log_write(ANDROID_LOG_INFO, NULL, s);
-#else
-  syslog(LOG_INFO, "%s", s);
-#endif
-}
+void WriteOneLineToSyslog(const char *s) { syslog(LOG_INFO, "%s", s); }
+
+void SetAbortMessage(const char *str) {}
+# endif  // SANITIZER_ANDROID
 
 void LogMessageOnPrintf(const char *str) {
   if (common_flags()->log_to_syslog && ShouldLogAfterPrintf())
     WriteToSyslog(str);
 }
 
-#if SANITIZER_ANDROID
-extern "C" __attribute__((weak)) void android_set_abort_message(const char *);
-void SetAbortMessage(const char *str) {
-  if (&android_set_abort_message) android_set_abort_message(str);
-}
-#else
-void SetAbortMessage(const char *str) {}
-#endif
-
-#endif // SANITIZER_LINUX
+#endif  // SANITIZER_LINUX
 
 } // namespace __sanitizer
 

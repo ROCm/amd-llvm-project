@@ -185,7 +185,7 @@ uptr internal_getpid() {
 
 int internal_sigaction(int signum, const void *act, void *oldact) {
   return sigaction(signum,
-                   (struct sigaction *)act, (struct sigaction *)oldact);
+                   (const struct sigaction *)act, (struct sigaction *)oldact);
 }
 
 void internal_sigfillset(__sanitizer_sigset_t *set) { sigfillset(set); }
@@ -864,6 +864,10 @@ uptr GetMaxUserVirtualAddress() {
 #endif  // SANITIZER_WORDSIZE
 }
 
+uptr GetMaxVirtualAddress() {
+  return GetMaxUserVirtualAddress();
+}
+
 uptr FindAvailableMemoryRange(uptr shadow_size,
                               uptr alignment,
                               uptr left_padding,
@@ -997,6 +1001,11 @@ void CheckNoDeepBind(const char *filename, int flag) {
 
 // FIXME: implement on this platform.
 bool GetRandom(void *buffer, uptr length, bool blocking) {
+  UNIMPLEMENTED();
+}
+
+// FIXME: implement on this platform.
+u32 GetNumberOfCPUs() {
   UNIMPLEMENTED();
 }
 

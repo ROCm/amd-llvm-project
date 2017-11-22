@@ -65,11 +65,6 @@ const int kSigCount = 129;
 const int kSigCount = 65;
 #endif
 
-struct my_siginfo_t {
-  // The size is determined by looking at sizeof of real siginfo_t on linux.
-  u64 opaque[128 / sizeof(u64)];
-};
-
 #ifdef __mips__
 struct ucontext_t {
   u64 opaque[768 / sizeof(u64) + 1];
@@ -149,56 +144,6 @@ typedef long long_t;  // NOLINT
 # define F_TLOCK 2      /* Test and lock a region for exclusive use.  */
 # define F_TEST  3      /* Test a region for other processes locks.  */
 
-typedef void (*sighandler_t)(int sig);
-typedef void (*sigactionhandler_t)(int sig, my_siginfo_t *siginfo, void *uctx);
-
-#if SANITIZER_ANDROID
-struct sigaction_t {
-  u32 sa_flags;
-  union {
-    sighandler_t sa_handler;
-    sigactionhandler_t sa_sigaction;
-  };
-  __sanitizer_sigset_t sa_mask;
-  void (*sa_restorer)();
-};
-#elif SANITIZER_NETBSD
-struct sigaction_t {
-  union {
-    sighandler_t sa_handler;
-    sigactionhandler_t sa_sigaction;
-  };
-  __sanitizer_sigset_t sa_mask;
-  int sa_flags;
-};
-#else
-struct sigaction_t {
-#ifdef __mips__
-  u32 sa_flags;
-#endif
-  union {
-    sighandler_t sa_handler;
-    sigactionhandler_t sa_sigaction;
-  };
-#if SANITIZER_FREEBSD
-  int sa_flags;
-  __sanitizer_sigset_t sa_mask;
-#elif SANITIZER_MAC
-  __sanitizer_sigset_t sa_mask;
-  int sa_flags;
-#else
-  __sanitizer_sigset_t sa_mask;
-#ifndef __mips__
-  int sa_flags;
-#endif
-  void (*sa_restorer)();
-#endif
-};
-#endif
-
-const sighandler_t SIG_DFL = (sighandler_t)0;
-const sighandler_t SIG_IGN = (sighandler_t)1;
-const sighandler_t SIG_ERR = (sighandler_t)-1;
 #if SANITIZER_FREEBSD || SANITIZER_MAC || SANITIZER_NETBSD
 const int SA_SIGINFO = 0x40;
 const int SIG_SETMASK = 3;
@@ -217,7 +162,7 @@ namespace __tsan {
 struct SignalDesc {
   bool armed;
   bool sigaction;
-  my_siginfo_t siginfo;
+  __sanitizer_siginfo siginfo;
   ucontext_t ctx;
 };
 
@@ -246,7 +191,7 @@ struct InterceptorContext {
   // The object is 64-byte aligned, because we want hot data to be located
   // in a single cache line if possible (it's accessed in every interceptor).
   ALIGNED(64) LibIgnore libignore;
-  sigaction_t sigactions[kSigCount];
+  __sanitizer_sigaction sigactions[kSigCount];
 #if !SANITIZER_MAC && !SANITIZER_NETBSD
   unsigned finalize_key;
 #endif
@@ -339,10 +284,20 @@ void ScopedInterceptor::DisableIgnores() {
 }
 
 #define TSAN_INTERCEPT(func) INTERCEPT_FUNCTION(func)
-#if SANITIZER_FREEBSD || SANITIZER_NETBSD
+#if SANITIZER_FREEBSD
 # define TSAN_INTERCEPT_VER(func, ver) INTERCEPT_FUNCTION(func)
+# define TSAN_MAYBE_INTERCEPT_NETBSD_ALIAS(func)
+# define TSAN_MAYBE_INTERCEPT_NETBSD_ALIAS_THR(func)
+#elif SANITIZER_NETBSD
+# define TSAN_INTERCEPT_VER(func, ver) INTERCEPT_FUNCTION(func)
+# define TSAN_MAYBE_INTERCEPT_NETBSD_ALIAS(func) \
+         INTERCEPT_FUNCTION(__libc_##func)
+# define TSAN_MAYBE_INTERCEPT_NETBSD_ALIAS_THR(func) \
+         INTERCEPT_FUNCTION(__libc_thr_##func)
 #else
 # define TSAN_INTERCEPT_VER(func, ver) INTERCEPT_FUNCTION_VER(func, ver)
+# define TSAN_MAYBE_INTERCEPT_NETBSD_ALIAS(func)
+# define TSAN_MAYBE_INTERCEPT_NETBSD_ALIAS_THR(func)
 #endif
 
 #define READ_STRING_OF_LEN(thr, pc, s, len, n)                 \
@@ -1399,10 +1354,15 @@ TSAN_INTERCEPTOR(int, pthread_once, void *o, void (*f)()) {
   if (o == 0 || f == 0)
     return errno_EINVAL;
   atomic_uint32_t *a;
-  if (!SANITIZER_MAC)
-    a = static_cast<atomic_uint32_t*>(o);
-  else  // On OS X, pthread_once_t has a header with a long-sized signature.
+
+  if (SANITIZER_MAC)
     a = static_cast<atomic_uint32_t*>((void *)((char *)o + sizeof(long_t)));
+  else if (SANITIZER_NETBSD)
+    a = static_cast<atomic_uint32_t*>
+          ((void *)((char *)o + __sanitizer::pthread_mutex_t_sz));
+  else
+    a = static_cast<atomic_uint32_t*>(o);
+
   u32 v = atomic_load(a, memory_order_acquire);
   if (v == 0 && atomic_compare_exchange_strong(a, &v, 1,
                                                memory_order_relaxed)) {
@@ -1849,8 +1809,9 @@ TSAN_INTERCEPTOR(int, pthread_sigmask, int how, const __sanitizer_sigset_t *set,
 namespace __tsan {
 
 static void CallUserSignalHandler(ThreadState *thr, bool sync, bool acquire,
-    bool sigact, int sig, my_siginfo_t *info, void *uctx) {
-  sigaction_t *sigactions = interceptor_ctx()->sigactions;
+                                  bool sigact, int sig,
+                                  __sanitizer_siginfo *info, void *uctx) {
+  __sanitizer_sigaction *sigactions = interceptor_ctx()->sigactions;
   if (acquire)
     Acquire(thr, 0, (uptr)&sigactions[sig]);
   // Signals are generally asynchronous, so if we receive a signals when
@@ -1872,14 +1833,13 @@ static void CallUserSignalHandler(ThreadState *thr, bool sync, bool acquire,
   // This code races with sigaction. Be careful to not read sa_sigaction twice.
   // Also need to remember pc for reporting before the call,
   // because the handler can reset it.
-  volatile uptr pc = sigact ?
-     (uptr)sigactions[sig].sa_sigaction :
-     (uptr)sigactions[sig].sa_handler;
-  if (pc != (uptr)SIG_DFL && pc != (uptr)SIG_IGN) {
+  volatile uptr pc =
+      sigact ? (uptr)sigactions[sig].sigaction : (uptr)sigactions[sig].handler;
+  if (pc != sig_dfl && pc != sig_ign) {
     if (sigact)
-      ((sigactionhandler_t)pc)(sig, info, uctx);
+      ((__sanitizer_sigactionhandler_ptr)pc)(sig, info, uctx);
     else
-      ((sighandler_t)pc)(sig);
+      ((__sanitizer_sighandler_ptr)pc)(sig);
   }
   if (!ctx->after_multithreaded_fork) {
     thr->ignore_reads_and_writes = ignore_reads_and_writes;
@@ -1943,7 +1903,8 @@ static bool is_sync_signal(ThreadSignalContext *sctx, int sig) {
 }
 
 void ALWAYS_INLINE rtl_generic_sighandler(bool sigact, int sig,
-    my_siginfo_t *info, void *ctx) {
+                                          __sanitizer_siginfo *info,
+                                          void *ctx) {
   ThreadState *thr = cur_thread();
   ThreadSignalContext *sctx = SigCtx(thr);
   if (sig < 0 || sig >= kSigCount) {
@@ -1993,57 +1954,8 @@ static void rtl_sighandler(int sig) {
   rtl_generic_sighandler(false, sig, 0, 0);
 }
 
-static void rtl_sigaction(int sig, my_siginfo_t *info, void *ctx) {
+static void rtl_sigaction(int sig, __sanitizer_siginfo *info, void *ctx) {
   rtl_generic_sighandler(true, sig, info, ctx);
-}
-
-TSAN_INTERCEPTOR(int, sigaction, int sig, sigaction_t *act, sigaction_t *old) {
-  // Note: if we call REAL(sigaction) directly for any reason without proxying
-  // the signal handler through rtl_sigaction, very bad things will happen.
-  // The handler will run synchronously and corrupt tsan per-thread state.
-  SCOPED_INTERCEPTOR_RAW(sigaction, sig, act, old);
-  sigaction_t *sigactions = interceptor_ctx()->sigactions;
-  if (old)
-    internal_memcpy(old, &sigactions[sig], sizeof(*old));
-  if (act == 0)
-    return 0;
-  // Copy act into sigactions[sig].
-  // Can't use struct copy, because compiler can emit call to memcpy.
-  // Can't use internal_memcpy, because it copies byte-by-byte,
-  // and signal handler reads the sa_handler concurrently. It it can read
-  // some bytes from old value and some bytes from new value.
-  // Use volatile to prevent insertion of memcpy.
-  sigactions[sig].sa_handler = *(volatile sighandler_t*)&act->sa_handler;
-  sigactions[sig].sa_flags = *(volatile int*)&act->sa_flags;
-  internal_memcpy(&sigactions[sig].sa_mask, &act->sa_mask,
-      sizeof(sigactions[sig].sa_mask));
-#if !SANITIZER_FREEBSD && !SANITIZER_MAC && !SANITIZER_NETBSD
-  sigactions[sig].sa_restorer = act->sa_restorer;
-#endif
-  sigaction_t newact;
-  internal_memcpy(&newact, act, sizeof(newact));
-  internal_sigfillset(&newact.sa_mask);
-  if (act->sa_handler != SIG_IGN && act->sa_handler != SIG_DFL) {
-    if (newact.sa_flags & SA_SIGINFO)
-      newact.sa_sigaction = rtl_sigaction;
-    else
-      newact.sa_handler = rtl_sighandler;
-  }
-  ReleaseStore(thr, pc, (uptr)&sigactions[sig]);
-  int res = REAL(sigaction)(sig, &newact, 0);
-  return res;
-}
-
-TSAN_INTERCEPTOR(sighandler_t, signal, int sig, sighandler_t h) {
-  sigaction_t act;
-  act.sa_handler = h;
-  internal_memset(&act.sa_mask, -1, sizeof(act.sa_mask));
-  act.sa_flags = 0;
-  sigaction_t old;
-  int res = sigaction(sig, &act, &old);
-  if (res)
-    return SIG_ERR;
-  return old.sa_handler;
 }
 
 TSAN_INTERCEPTOR(int, raise, int sig) {
@@ -2359,6 +2271,77 @@ static void HandleRecvmsg(ThreadState *thr, uptr pc,
 
 #include "sanitizer_common/sanitizer_common_interceptors.inc"
 
+static int sigaction_impl(int sig, const __sanitizer_sigaction *act,
+                          __sanitizer_sigaction *old);
+static __sanitizer_sighandler_ptr signal_impl(int sig,
+                                              __sanitizer_sighandler_ptr h);
+
+#define SIGNAL_INTERCEPTOR_SIGACTION_IMPL(signo, act, oldact) \
+  { return sigaction_impl(signo, act, oldact); }
+
+#define SIGNAL_INTERCEPTOR_SIGNAL_IMPL(func, signo, handler) \
+  { return (uptr)signal_impl(signo, (__sanitizer_sighandler_ptr)handler); }
+
+#include "sanitizer_common/sanitizer_signal_interceptors.inc"
+
+int sigaction_impl(int sig, const __sanitizer_sigaction *act,
+                   __sanitizer_sigaction *old) {
+  // Note: if we call REAL(sigaction) directly for any reason without proxying
+  // the signal handler through rtl_sigaction, very bad things will happen.
+  // The handler will run synchronously and corrupt tsan per-thread state.
+  SCOPED_INTERCEPTOR_RAW(sigaction, sig, act, old);
+  __sanitizer_sigaction *sigactions = interceptor_ctx()->sigactions;
+  __sanitizer_sigaction old_stored;
+  if (old) internal_memcpy(&old_stored, &sigactions[sig], sizeof(old_stored));
+  __sanitizer_sigaction newact;
+  if (act) {
+    // Copy act into sigactions[sig].
+    // Can't use struct copy, because compiler can emit call to memcpy.
+    // Can't use internal_memcpy, because it copies byte-by-byte,
+    // and signal handler reads the handler concurrently. It it can read
+    // some bytes from old value and some bytes from new value.
+    // Use volatile to prevent insertion of memcpy.
+    sigactions[sig].handler =
+        *(volatile __sanitizer_sighandler_ptr const *)&act->handler;
+    sigactions[sig].sa_flags = *(volatile int const *)&act->sa_flags;
+    internal_memcpy(&sigactions[sig].sa_mask, &act->sa_mask,
+                    sizeof(sigactions[sig].sa_mask));
+#if !SANITIZER_FREEBSD && !SANITIZER_MAC && !SANITIZER_NETBSD
+    sigactions[sig].sa_restorer = act->sa_restorer;
+#endif
+    internal_memcpy(&newact, act, sizeof(newact));
+    internal_sigfillset(&newact.sa_mask);
+    if ((uptr)act->handler != sig_ign && (uptr)act->handler != sig_dfl) {
+      if (newact.sa_flags & SA_SIGINFO)
+        newact.sigaction = rtl_sigaction;
+      else
+        newact.handler = rtl_sighandler;
+    }
+    ReleaseStore(thr, pc, (uptr)&sigactions[sig]);
+    act = &newact;
+  }
+  int res = REAL(sigaction)(sig, act, old);
+  if (res == 0 && old) {
+    uptr cb = (uptr)old->sigaction;
+    if (cb == (uptr)rtl_sigaction || cb == (uptr)rtl_sighandler) {
+      internal_memcpy(old, &old_stored, sizeof(*old));
+    }
+  }
+  return res;
+}
+
+static __sanitizer_sighandler_ptr signal_impl(int sig,
+                                              __sanitizer_sighandler_ptr h) {
+  __sanitizer_sigaction act;
+  act.handler = h;
+  internal_memset(&act.sa_mask, -1, sizeof(act.sa_mask));
+  act.sa_flags = 0;
+  __sanitizer_sigaction old;
+  int res = sigaction(sig, &act, &old);
+  if (res) return (__sanitizer_sighandler_ptr)sig_err;
+  return old.handler;
+}
+
 #define TSAN_SYSCALL() \
   ThreadState *thr = cur_thread(); \
   if (thr->ignore_interceptors) \
@@ -2509,6 +2492,23 @@ TSAN_INTERCEPTOR(void, _lwp_exit) {
 #define TSAN_MAYBE_INTERCEPT__LWP_EXIT
 #endif
 
+TSAN_INTERCEPTOR_NETBSD_ALIAS(int, cond_init, void *c, void *a);
+TSAN_INTERCEPTOR_NETBSD_ALIAS(int, cond_signal, void *c);
+TSAN_INTERCEPTOR_NETBSD_ALIAS(int, cond_broadcast, void *c);
+TSAN_INTERCEPTOR_NETBSD_ALIAS(int, cond_wait, void *c, void *m);
+TSAN_INTERCEPTOR_NETBSD_ALIAS(int, cond_destroy, void *c);
+TSAN_INTERCEPTOR_NETBSD_ALIAS(int, mutex_init, void *m, void *a);
+TSAN_INTERCEPTOR_NETBSD_ALIAS(int, mutex_destroy, void *m);
+TSAN_INTERCEPTOR_NETBSD_ALIAS(int, mutex_trylock, void *m);
+TSAN_INTERCEPTOR_NETBSD_ALIAS(int, rwlock_init, void *m, void *a);
+TSAN_INTERCEPTOR_NETBSD_ALIAS(int, rwlock_destroy, void *m);
+TSAN_INTERCEPTOR_NETBSD_ALIAS(int, rwlock_rdlock, void *m);
+TSAN_INTERCEPTOR_NETBSD_ALIAS(int, rwlock_tryrdlock, void *m);
+TSAN_INTERCEPTOR_NETBSD_ALIAS(int, rwlock_wrlock, void *m);
+TSAN_INTERCEPTOR_NETBSD_ALIAS(int, rwlock_trywrlock, void *m);
+TSAN_INTERCEPTOR_NETBSD_ALIAS(int, rwlock_unlock, void *m);
+TSAN_INTERCEPTOR_NETBSD_ALIAS_THR(int, once, void *o, void (*f)());
+
 namespace __tsan {
 
 static void finalize(void *arg) {
@@ -2543,6 +2543,7 @@ void InitializeInterceptors() {
   new(interceptor_ctx()) InterceptorContext();
 
   InitializeCommonInterceptors();
+  InitializeSignalInterceptors();
 
 #if !SANITIZER_MAC
   // We can not use TSAN_INTERCEPT to get setjmp addr,
@@ -2650,8 +2651,6 @@ void InitializeInterceptors() {
   TSAN_INTERCEPT(rmdir);
   TSAN_INTERCEPT(closedir);
 
-  TSAN_INTERCEPT(sigaction);
-  TSAN_INTERCEPT(signal);
   TSAN_INTERCEPT(sigsuspend);
   TSAN_INTERCEPT(sigblock);
   TSAN_INTERCEPT(sigsetmask);
@@ -2698,6 +2697,23 @@ void InitializeInterceptors() {
     Die();
   }
 #endif
+
+  TSAN_MAYBE_INTERCEPT_NETBSD_ALIAS(cond_init);
+  TSAN_MAYBE_INTERCEPT_NETBSD_ALIAS(cond_signal);
+  TSAN_MAYBE_INTERCEPT_NETBSD_ALIAS(cond_broadcast);
+  TSAN_MAYBE_INTERCEPT_NETBSD_ALIAS(cond_wait);
+  TSAN_MAYBE_INTERCEPT_NETBSD_ALIAS(cond_destroy);
+  TSAN_MAYBE_INTERCEPT_NETBSD_ALIAS(mutex_init);
+  TSAN_MAYBE_INTERCEPT_NETBSD_ALIAS(mutex_destroy);
+  TSAN_MAYBE_INTERCEPT_NETBSD_ALIAS(mutex_trylock);
+  TSAN_MAYBE_INTERCEPT_NETBSD_ALIAS(rwlock_init);
+  TSAN_MAYBE_INTERCEPT_NETBSD_ALIAS(rwlock_destroy);
+  TSAN_MAYBE_INTERCEPT_NETBSD_ALIAS(rwlock_rdlock);
+  TSAN_MAYBE_INTERCEPT_NETBSD_ALIAS(rwlock_tryrdlock);
+  TSAN_MAYBE_INTERCEPT_NETBSD_ALIAS(rwlock_wrlock);
+  TSAN_MAYBE_INTERCEPT_NETBSD_ALIAS(rwlock_trywrlock);
+  TSAN_MAYBE_INTERCEPT_NETBSD_ALIAS(rwlock_unlock);
+  TSAN_MAYBE_INTERCEPT_NETBSD_ALIAS_THR(once);
 
   FdInit();
 }

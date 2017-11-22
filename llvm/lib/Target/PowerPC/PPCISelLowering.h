@@ -23,6 +23,7 @@
 #include "llvm/CodeGen/MachineValueType.h"
 #include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/CodeGen/SelectionDAGNodes.h"
+#include "llvm/CodeGen/TargetLowering.h"
 #include "llvm/CodeGen/ValueTypes.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/CallingConv.h"
@@ -30,7 +31,6 @@
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Type.h"
-#include "llvm/Target/TargetLowering.h"
 #include <utility>
 
 namespace llvm {
@@ -1085,6 +1085,10 @@ namespace llvm {
     /// essentially v16i8 vector version of VINSERTH.
     SDValue lowerToVINSERTB(ShuffleVectorSDNode *N, SelectionDAG &DAG) const;
 
+    // Return whether the call instruction can potentially be optimized to a
+    // tail call. This will cause the optimizers to attempt to move, or
+    // duplicate return instructions to help enable tail call optimizations.
+    bool mayBeEmittedAsTailCall(const CallInst *CI) const override;
   }; // end class PPCTargetLowering
 
   namespace PPC {

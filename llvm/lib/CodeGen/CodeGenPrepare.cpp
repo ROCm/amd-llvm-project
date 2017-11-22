@@ -36,7 +36,9 @@
 #include "llvm/CodeGen/ISDOpcodes.h"
 #include "llvm/CodeGen/MachineValueType.h"
 #include "llvm/CodeGen/SelectionDAGNodes.h"
+#include "llvm/CodeGen/TargetLowering.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
+#include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include "llvm/CodeGen/ValueTypes.h"
 #include "llvm/IR/Argument.h"
 #include "llvm/IR/Attributes.h"
@@ -80,10 +82,8 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Target/TargetLowering.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
-#include "llvm/Target/TargetSubtargetInfo.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/BypassSlowDivision.h"
 #include "llvm/Transforms/Utils/Cloning.h"
@@ -353,9 +353,9 @@ bool CodeGenPrepare::runOnFunction(Function &F) {
   LI = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
   OptSize = F.optForSize();
 
+  ProfileSummaryInfo *PSI =
+      getAnalysis<ProfileSummaryInfoWrapperPass>().getPSI();
   if (ProfileGuidedSectionPrefix) {
-    ProfileSummaryInfo *PSI =
-        getAnalysis<ProfileSummaryInfoWrapperPass>().getPSI();
     if (PSI->isFunctionHotInCallGraph(&F))
       F.setSectionPrefix(".hot");
     else if (PSI->isFunctionColdInCallGraph(&F))
@@ -364,7 +364,8 @@ bool CodeGenPrepare::runOnFunction(Function &F) {
 
   /// This optimization identifies DIV instructions that can be
   /// profitably bypassed and carried out with a shorter, faster divide.
-  if (!OptSize && TLI && TLI->isSlowDivBypassed()) {
+  if (!OptSize && !PSI->hasHugeWorkingSetSize() && TLI &&
+      TLI->isSlowDivBypassed()) {
     const DenseMap<unsigned int, unsigned int> &BypassWidths =
        TLI->getBypassSlowDivWidths();
     BasicBlock* BB = &*F.begin();
@@ -2799,15 +2800,11 @@ public:
     else if (DifferentField != ThisDifferentField)
       DifferentField = ExtAddrMode::MultipleFields;
 
-    // If this AddrMode is the same as all the others then everything is fine
-    // (which should only happen when there is actually only one AddrMode).
-    if (DifferentField == ExtAddrMode::NoField) {
-      assert(AddrModes.size() == 1);
-      return true;
-    }
-
     // If NewAddrMode differs in only one dimension then we can handle it by
-    // inserting a phi/select later on.
+    // inserting a phi/select later on. Even if NewAddMode is the same
+    // we still need to collect it due to original value is different.
+    // And later we will need all original values as anchors during
+    // finding the common Phi node.
     if (DifferentField != ExtAddrMode::MultipleFields) {
       AddrModes.emplace_back(NewAddrMode);
       return true;
@@ -2828,7 +2825,7 @@ public:
       return false;
 
     // A single AddrMode can trivially be combined.
-    if (AddrModes.size() == 1)
+    if (AddrModes.size() == 1 || DifferentField == ExtAddrMode::NoField)
       return true;
 
     // If the AddrModes we collected are all just equal to the value they are
