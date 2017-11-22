@@ -8,6 +8,8 @@
   define void @test_trunc_and_anyext_s16() { ret void }
 
   define void @test_add_s32() { ret void }
+  define void @test_add_fold_imm_s32() { ret void }
+  define void @test_add_no_fold_imm_s32() #3 { ret void }
 
   define void @test_fadd_s32() #0 { ret void }
   define void @test_fadd_s64() #0 { ret void }
@@ -16,16 +18,14 @@
   define void @test_fsub_s64() #0 { ret void }
 
   define void @test_sub_s32() { ret void }
+  define void @test_sub_imm_s32() { ret void }
+  define void @test_sub_rev_imm_s32() { ret void }
 
   define void @test_mul_s32() #1 { ret void }
   define void @test_mulv5_s32() { ret void }
 
   define void @test_sdiv_s32() #2 { ret void }
   define void @test_udiv_s32() #2 { ret void }
-
-  define void @test_and_s32() { ret void }
-  define void @test_or_s32() { ret void }
-  define void @test_xor_s32() { ret void }
 
   define void @test_lshr_s32() { ret void }
   define void @test_ashr_s32() { ret void }
@@ -51,6 +51,7 @@
   attributes #0 = { "target-features"="+vfp2,-neonfp" }
   attributes #1 = { "target-features"="+v6" }
   attributes #2 = { "target-features"="+hwdiv-arm" }
+  attributes #3 = { "target-features"="+v6t2" }
 ...
 ---
 name:            test_trunc_and_zext_s1
@@ -264,6 +265,64 @@ body:             |
     ; CHECK: BX_RET 14, _, implicit %r0
 ...
 ---
+name:            test_add_fold_imm_s32
+# CHECK-LABEL: name: test_add_fold_imm_s32
+legalized:       true
+regBankSelected: true
+selected:        false
+# CHECK: selected: true
+registers:
+  - { id: 0, class: gprb }
+  - { id: 1, class: gprb }
+  - { id: 2, class: gprb }
+body:             |
+  bb.0:
+    liveins: %r0
+
+    %0(s32) = COPY %r0
+    ; CHECK: [[VREGX:%[0-9]+]]:gpr = COPY %r0
+
+    %1(s32) = G_CONSTANT i32 255
+    %2(s32) = G_ADD %0, %1
+    ; CHECK: [[VREGSUM:%[0-9]+]]:gpr = ADDri [[VREGX]], 255, 14, _, _
+
+    %r0 = COPY %2(s32)
+    ; CHECK: %r0 = COPY [[VREGSUM]]
+
+    BX_RET 14, _, implicit %r0
+    ; CHECK: BX_RET 14, _, implicit %r0
+...
+---
+name:            test_add_no_fold_imm_s32
+# CHECK-LABEL: name: test_add_no_fold_imm_s32
+legalized:       true
+regBankSelected: true
+selected:        false
+# CHECK: selected: true
+registers:
+  - { id: 0, class: gprb }
+  - { id: 1, class: gprb }
+  - { id: 2, class: gprb }
+body:             |
+  bb.0:
+    liveins: %r0
+
+    %0(s32) = COPY %r0
+    ; CHECK: [[VREGX:%[0-9]+]]:gpr = COPY %r0
+
+    %1(s32) = G_CONSTANT i32 65535
+    ; CHECK: [[VREGY:%[0-9]+]]:gpr = MOVi16 65535, 14, _
+
+    %2(s32) = G_ADD %0, %1
+    ; CHECK: [[VREGSUM:%[0-9]+]]:gpr = ADDrr [[VREGX]], [[VREGY]], 14, _, _
+
+    %r0 = COPY %2(s32)
+    ; CHECK: %r0 = COPY [[VREGSUM]]
+
+    BX_RET 14, _, implicit %r0
+    ; CHECK: BX_RET 14, _, implicit %r0
+...
+---
 name:            test_fadd_s32
 # CHECK-LABEL: name: test_fadd_s32
 legalized:       true
@@ -414,6 +473,62 @@ body:             |
     ; CHECK: BX_RET 14, _, implicit %r0
 ...
 ---
+name:            test_sub_imm_s32
+# CHECK-LABEL: name: test_sub_imm_s32
+legalized:       true
+regBankSelected: true
+selected:        false
+# CHECK: selected: true
+registers:
+  - { id: 0, class: gprb }
+  - { id: 1, class: gprb }
+  - { id: 2, class: gprb }
+body:             |
+  bb.0:
+    liveins: %r0, %r1
+
+    %0(s32) = COPY %r0
+    ; CHECK: [[VREGX:%[0-9]+]]:gpr = COPY %r0
+
+    %1(s32) = G_CONSTANT i32 17
+    %2(s32) = G_SUB %0, %1
+    ; CHECK: [[VREGRES:%[0-9]+]]:gpr = SUBri [[VREGX]], 17, 14, _, _
+
+    %r0 = COPY %2(s32)
+    ; CHECK: %r0 = COPY [[VREGRES]]
+
+    BX_RET 14, _, implicit %r0
+    ; CHECK: BX_RET 14, _, implicit %r0
+...
+---
+name:            test_sub_rev_imm_s32
+# CHECK-LABEL: name: test_sub_rev_imm_s32
+legalized:       true
+regBankSelected: true
+selected:        false
+# CHECK: selected: true
+registers:
+  - { id: 0, class: gprb }
+  - { id: 1, class: gprb }
+  - { id: 2, class: gprb }
+body:             |
+  bb.0:
+    liveins: %r0, %r1
+
+    %0(s32) = COPY %r0
+    ; CHECK: [[VREGX:%[0-9]+]]:gpr = COPY %r0
+
+    %1(s32) = G_CONSTANT i32 17
+    %2(s32) = G_SUB %1, %0
+    ; CHECK: [[VREGRES:%[0-9]+]]:gpr = RSBri [[VREGX]], 17, 14, _, _
+
+    %r0 = COPY %2(s32)
+    ; CHECK: %r0 = COPY [[VREGRES]]
+
+    BX_RET 14, _, implicit %r0
+    ; CHECK: BX_RET 14, _, implicit %r0
+...
+---
 name:            test_mul_s32
 # CHECK-LABEL: name: test_mul_s32
 legalized:       true
@@ -526,96 +641,6 @@ body:             |
 
     %2(s32) = G_UDIV %0, %1
     ; CHECK: [[VREGRES:%[0-9]+]]:gpr = UDIV [[VREGX]], [[VREGY]], 14, _
-
-    %r0 = COPY %2(s32)
-    ; CHECK: %r0 = COPY [[VREGRES]]
-
-    BX_RET 14, _, implicit %r0
-    ; CHECK: BX_RET 14, _, implicit %r0
-...
----
-name:            test_and_s32
-# CHECK-LABEL: name: test_and_s32
-legalized:       true
-regBankSelected: true
-selected:        false
-# CHECK: selected: true
-registers:
-  - { id: 0, class: gprb }
-  - { id: 1, class: gprb }
-  - { id: 2, class: gprb }
-body:             |
-  bb.0:
-    liveins: %r0, %r1
-
-    %0(s32) = COPY %r0
-    ; CHECK: [[VREGX:%[0-9]+]]:gpr = COPY %r0
-
-    %1(s32) = COPY %r1
-    ; CHECK: [[VREGY:%[0-9]+]]:gpr = COPY %r1
-
-    %2(s32) = G_AND %0, %1
-    ; CHECK: [[VREGRES:%[0-9]+]]:gpr = ANDrr [[VREGX]], [[VREGY]], 14, _
-
-    %r0 = COPY %2(s32)
-    ; CHECK: %r0 = COPY [[VREGRES]]
-
-    BX_RET 14, _, implicit %r0
-    ; CHECK: BX_RET 14, _, implicit %r0
-...
----
-name:            test_or_s32
-# CHECK-LABEL: name: test_or_s32
-legalized:       true
-regBankSelected: true
-selected:        false
-# CHECK: selected: true
-registers:
-  - { id: 0, class: gprb }
-  - { id: 1, class: gprb }
-  - { id: 2, class: gprb }
-body:             |
-  bb.0:
-    liveins: %r0, %r1
-
-    %0(s32) = COPY %r0
-    ; CHECK: [[VREGX:%[0-9]+]]:gpr = COPY %r0
-
-    %1(s32) = COPY %r1
-    ; CHECK: [[VREGY:%[0-9]+]]:gpr = COPY %r1
-
-    %2(s32) = G_OR %0, %1
-    ; CHECK: [[VREGRES:%[0-9]+]]:gpr = ORRrr [[VREGX]], [[VREGY]], 14, _
-
-    %r0 = COPY %2(s32)
-    ; CHECK: %r0 = COPY [[VREGRES]]
-
-    BX_RET 14, _, implicit %r0
-    ; CHECK: BX_RET 14, _, implicit %r0
-...
----
-name:            test_xor_s32
-# CHECK-LABEL: name: test_xor_s32
-legalized:       true
-regBankSelected: true
-selected:        false
-# CHECK: selected: true
-registers:
-  - { id: 0, class: gprb }
-  - { id: 1, class: gprb }
-  - { id: 2, class: gprb }
-body:             |
-  bb.0:
-    liveins: %r0, %r1
-
-    %0(s32) = COPY %r0
-    ; CHECK: [[VREGX:%[0-9]+]]:gpr = COPY %r0
-
-    %1(s32) = COPY %r1
-    ; CHECK: [[VREGY:%[0-9]+]]:gpr = COPY %r1
-
-    %2(s32) = G_XOR %0, %1
-    ; CHECK: [[VREGRES:%[0-9]+]]:gpr = EORrr [[VREGX]], [[VREGY]], 14, _
 
     %r0 = COPY %2(s32)
     ; CHECK: %r0 = COPY [[VREGRES]]

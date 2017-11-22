@@ -605,9 +605,9 @@ unsigned BreakableBlockComment::getLineLengthAfterSplitBefore(
   }
 }
 
-bool BreakableBlockComment::introducesBreakBefore(unsigned LineIndex) const {
+bool BreakableBlockComment::introducesBreakBeforeToken() const {
   // A break is introduced when we want delimiters on newline.
-  return LineIndex == 0 && DelimitersOnNewline &&
+  return DelimitersOnNewline &&
          Lines[0].substr(1).find_first_not_of(Blanks) != StringRef::npos;
 }
 
@@ -749,6 +749,7 @@ BreakableLineCommentSection::BreakableLineCommentSection(
     Prefix.resize(Lines.size());
     OriginalPrefix.resize(Lines.size());
     for (size_t i = FirstLineIndex, e = Lines.size(); i < e; ++i) {
+      Lines[i] = Lines[i].ltrim(Blanks);
       // We need to trim the blanks in case this is not the first line in a
       // multiline comment. Then the indent is included in Lines[i].
       StringRef IndentPrefix =

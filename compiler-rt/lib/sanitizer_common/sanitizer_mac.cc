@@ -864,6 +864,10 @@ uptr GetMaxUserVirtualAddress() {
 #endif  // SANITIZER_WORDSIZE
 }
 
+uptr GetMaxVirtualAddress() {
+  return GetMaxUserVirtualAddress();
+}
+
 uptr FindAvailableMemoryRange(uptr shadow_size,
                               uptr alignment,
                               uptr left_padding,
@@ -997,6 +1001,11 @@ void CheckNoDeepBind(const char *filename, int flag) {
 
 // FIXME: implement on this platform.
 bool GetRandom(void *buffer, uptr length, bool blocking) {
+  UNIMPLEMENTED();
+}
+
+// FIXME: implement on this platform.
+u32 GetNumberOfCPUs() {
   UNIMPLEMENTED();
 }
 
