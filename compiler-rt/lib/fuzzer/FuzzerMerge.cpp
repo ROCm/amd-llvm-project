@@ -223,6 +223,7 @@ void Fuzzer::CrashResistantMergeInternalStep(const std::string &CFPath) {
   std::ofstream OF(CFPath, std::ofstream::out | std::ofstream::app);
   Set<size_t> AllFeatures;
   for (size_t i = M.FirstNotProcessedFile; i < M.Files.size(); i++) {
+    MaybeExitGracefully();
     auto U = FileToVector(M.Files[i].Name);
     if (U.size() > MaxInputLen) {
       U.resize(MaxInputLen);
@@ -253,6 +254,23 @@ void Fuzzer::CrashResistantMergeInternalStep(const std::string &CFPath) {
     for (size_t F : UniqFeatures)
       OF << " " << std::hex << F;
     OF << "\n";
+    OF.flush();
+  }
+}
+
+static void WriteNewControlFile(const std::string &CFPath,
+                                const Vector<SizedFile> &AllFiles,
+                                size_t NumFilesInFirstCorpus) {
+  RemoveFile(CFPath);
+  std::ofstream ControlFile(CFPath);
+  ControlFile << AllFiles.size() << "\n";
+  ControlFile << NumFilesInFirstCorpus << "\n";
+  for (auto &SF: AllFiles)
+    ControlFile << SF.File << "\n";
+  if (!ControlFile) {
+    Printf("MERGE-OUTER: failed to write to the control file: %s\n",
+           CFPath.c_str());
+    exit(1);
   }
 }
 
@@ -266,46 +284,65 @@ void Fuzzer::CrashResistantMerge(const Vector<std::string> &Args,
     Printf("Merge requires two or more corpus dirs\n");
     return;
   }
-  Vector<SizedFile> AllFiles;
-  GetSizedFilesFromDir(Corpora[0], &AllFiles);
-  size_t NumFilesInFirstCorpus = AllFiles.size();
-  std::sort(AllFiles.begin(), AllFiles.end());
-  for (size_t i = 1; i < Corpora.size(); i++)
-    GetSizedFilesFromDir(Corpora[i], &AllFiles);
-  std::sort(AllFiles.begin() + NumFilesInFirstCorpus, AllFiles.end());
-  Printf("MERGE-OUTER: %zd files, %zd in the initial corpus\n",
-         AllFiles.size(), NumFilesInFirstCorpus);
   auto CFPath =
       MergeControlFilePathOrNull
           ? MergeControlFilePathOrNull
           : DirPlusFile(TmpDir(),
                         "libFuzzerTemp." + std::to_string(GetPid()) + ".txt");
-  // Write the control file.
-  RemoveFile(CFPath);
-  std::ofstream ControlFile(CFPath);
-  ControlFile << AllFiles.size() << "\n";
-  ControlFile << NumFilesInFirstCorpus << "\n";
-  for (auto &SF: AllFiles)
-    ControlFile << SF.File << "\n";
-  if (!ControlFile) {
-    Printf("MERGE-OUTER: failed to write to the control file: %s\n",
-           CFPath.c_str());
-    exit(1);
-  }
-  ControlFile.close();
 
-  // Execute the inner process untill it passes.
+  size_t NumAttempts = 0;
+  if (MergeControlFilePathOrNull && FileSize(MergeControlFilePathOrNull)) {
+    Printf("MERGE-OUTER: non-empty control file provided: '%s'\n",
+           MergeControlFilePathOrNull);
+    Merger M;
+    std::ifstream IF(MergeControlFilePathOrNull);
+    if (M.Parse(IF, /*ParseCoverage=*/false)) {
+      Printf("MERGE-OUTER: control file ok, %zd files total,"
+             " first not processed file %zd\n",
+             M.Files.size(), M.FirstNotProcessedFile);
+      if (!M.LastFailure.empty())
+        Printf("MERGE-OUTER: '%s' will be skipped as unlucky "
+               "(merge has stumbled on it the last time)\n",
+               M.LastFailure.c_str());
+      if (M.FirstNotProcessedFile >= M.Files.size()) {
+        Printf("MERGE-OUTER: nothing to do, merge has been completed before\n");
+        exit(0);
+      }
+
+      NumAttempts = M.Files.size() - M.FirstNotProcessedFile;
+    } else {
+      Printf("MERGE-OUTER: bad control file, will overwrite it\n");
+    }
+  }
+
+  if (!NumAttempts) {
+    // The supplied control file is empty or bad, create a fresh one.
+    Vector<SizedFile> AllFiles;
+    GetSizedFilesFromDir(Corpora[0], &AllFiles);
+    size_t NumFilesInFirstCorpus = AllFiles.size();
+    std::sort(AllFiles.begin(), AllFiles.end());
+    for (size_t i = 1; i < Corpora.size(); i++)
+      GetSizedFilesFromDir(Corpora[i], &AllFiles);
+    std::sort(AllFiles.begin() + NumFilesInFirstCorpus, AllFiles.end());
+    Printf("MERGE-OUTER: %zd files, %zd in the initial corpus\n",
+           AllFiles.size(), NumFilesInFirstCorpus);
+    WriteNewControlFile(CFPath, AllFiles, NumFilesInFirstCorpus);
+    NumAttempts = AllFiles.size();
+  }
+
+  // Execute the inner process until it passes.
   // Every inner process should execute at least one input.
   auto BaseCmd = SplitBefore("-ignore_remaining_args=1",
                              CloneArgsWithoutX(Args, "merge"));
   bool Success = false;
-  for (size_t i = 1; i <= AllFiles.size(); i++) {
-    Printf("MERGE-OUTER: attempt %zd\n", i);
+  for (size_t Attempt = 1; Attempt <= NumAttempts; Attempt++) {
+    MaybeExitGracefully();
+    Printf("MERGE-OUTER: attempt %zd\n", Attempt);
     auto ExitCode =
         ExecuteCommand(BaseCmd.first + " -merge_control_file=" + CFPath +
                        " -merge_inner=1 " + BaseCmd.second);
     if (!ExitCode) {
-      Printf("MERGE-OUTER: succesfull in %zd attempt(s)\n", i);
+      Printf("MERGE-OUTER: succesfull in %zd attempt(s)\n", Attempt);
       Success = true;
       break;
     }
