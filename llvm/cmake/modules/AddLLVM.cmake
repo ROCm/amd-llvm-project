@@ -169,7 +169,8 @@ if(NOT WIN32 AND NOT APPLE)
   elseif("${stdout}" MATCHES "GNU ld")
     set(LLVM_LINKER_IS_GNULD ON)
     message(STATUS "Linker detection: GNU ld")
-  elseif("${stderr}" MATCHES "Solaris Link Editors")
+  elseif("${stderr}" MATCHES "Solaris Link Editors" OR
+         "${stdout}" MATCHES "Solaris Link Editors")
     set(LLVM_LINKER_IS_SOLARISLD ON)
     message(STATUS "Linker detection: Solaris ld")
   else()
@@ -1124,6 +1125,15 @@ function(llvm_canonicalize_cmake_booleans)
   endforeach()
 endfunction(llvm_canonicalize_cmake_booleans)
 
+macro(set_llvm_build_mode)
+  # Configuration-time: See Unit/lit.site.cfg.in
+  if (CMAKE_CFG_INTDIR STREQUAL ".")
+    set(LLVM_BUILD_MODE ".")
+  else ()
+    set(LLVM_BUILD_MODE "%(build_mode)s")
+  endif ()
+endmacro()
+
 # This function provides an automatic way to 'configure'-like generate a file
 # based on a set of common and custom variables, specifically targeting the
 # variables needed for the 'lit.site.cfg' files. This function bundles the
@@ -1147,12 +1157,7 @@ function(configure_lit_site_cfg site_in site_out)
 
   set(SHLIBEXT "${LTDL_SHLIB_EXT}")
 
-  # Configuration-time: See Unit/lit.site.cfg.in
-  if (CMAKE_CFG_INTDIR STREQUAL ".")
-    set(LLVM_BUILD_MODE ".")
-  else ()
-    set(LLVM_BUILD_MODE "%(build_mode)s")
-  endif ()
+  set_llvm_build_mode()
 
   # They below might not be the build tree but provided binary tree.
   set(LLVM_SOURCE_DIR ${LLVM_MAIN_SRC_DIR})

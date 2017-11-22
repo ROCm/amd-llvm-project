@@ -34,6 +34,8 @@
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/PseudoSourceValue.h"
 #include "llvm/CodeGen/TargetInstrInfo.h"
+#include "llvm/CodeGen/TargetRegisterInfo.h"
+#include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/DebugLoc.h"
@@ -61,8 +63,6 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetIntrinsicInfo.h"
 #include "llvm/Target/TargetMachine.h"
-#include "llvm/Target/TargetRegisterInfo.h"
-#include "llvm/Target/TargetSubtargetInfo.h"
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
@@ -763,6 +763,21 @@ void MachineMemOperand::print(raw_ostream &OS, ModuleSlotTracker &MST) const {
     else
       OS << "<unknown>";
     OS << ")";
+  }
+
+  if (const MDNode *Ranges = getRanges()) {
+    unsigned NumRanges = Ranges->getNumOperands();
+    if (NumRanges != 0) {
+      OS << "(ranges=";
+
+      for (unsigned I = 0; I != NumRanges; ++I) {
+        Ranges->getOperand(I)->printAsOperand(OS, MST);
+        if (I != NumRanges - 1)
+          OS << ',';
+      }
+
+      OS << ')';
+    }
   }
 
   if (isNonTemporal())
