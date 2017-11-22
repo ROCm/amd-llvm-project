@@ -433,7 +433,7 @@ public:
   };
 
   /// i32s containing the indexes of the cleanup destinations.
-  llvm::Instruction *NormalCleanupDest;
+  llvm::AllocaInst *NormalCleanupDest; 
 
   unsigned NextCleanupDestIndex;
 
@@ -448,8 +448,8 @@ public:
   llvm::Value *ExceptionSlot;
 
   /// The selector slot.  Under the MandatoryCleanup model, all landing pads
-  /// write the current selector value into this instruction.
-  llvm::Instruction *EHSelectorSlot;
+  /// write the current selector value into this alloca.
+  llvm::AllocaInst *EHSelectorSlot;
 
   /// A stack of exception code slots. Entering an __except block pushes a slot
   /// on the stack and leaving pops one. The __exception_code() intrinsic loads
@@ -484,7 +484,7 @@ public:
 
     /// An i1 variable indicating whether or not the @finally is
     /// running for an exception.
-    llvm::Instruction *ForEHVar;
+    llvm::AllocaInst *ForEHVar;
 
     /// An i8* variable into which the exception pointer to rethrow
     /// has been saved.
