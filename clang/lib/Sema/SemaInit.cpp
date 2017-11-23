@@ -4154,7 +4154,7 @@ void Sema::InheritSMFMethodIntersections(CXXRecordDecl* RDecl,
 
 static void CheckCXXAMPSMFDestructor(Sema &S, CXXRecordDecl* RDecl,
                            bool& ParentCPUAttr, bool& ParentAMPAttr) {
-  if(!RDecl )
+  if(!RDecl || S.getLangOpts().HSAExtension)
     return;
 
   ASTContext &Context = S.Context;
@@ -4187,6 +4187,9 @@ static void CheckCXXAMPSMFDestructor(Sema &S, CXXRecordDecl* RDecl,
 
 static void CheckCXXAMPSMFConstructor(Sema &S, CXXRecordDecl* RDecl,
                            bool& ParentCPUAttr, bool& ParentAMPAttr) {
+  if (!RDecl || S.getLangOpts().HSAExtension)
+    return;
+
   ASTContext &Context = S.Context;
   SourceLocation Loc = RDecl->getLocation();
 
@@ -4286,7 +4289,10 @@ static void CheckCXXAMPSMFConstructor(Sema &S, CXXRecordDecl* RDecl,
 }
 
 static void CheckCXXAMPSMFMethod(Sema& S, CXXRecordDecl* RDecl,
-                                                                                 bool& ParentCPUAttr, bool& ParentAMPAttr) {
+                                 bool& ParentCPUAttr, bool& ParentAMPAttr) {
+  if (!RDecl || S.getLangOpts().HSAExtension)
+    return;
+
   ASTContext &Context = S.Context;
   SourceLocation Loc = RDecl->getLocation();
   if(!RDecl->hasUserDeclaredCopyAssignment()) {
@@ -4326,6 +4332,9 @@ static void CheckCXXAMPSMFMethod(Sema& S, CXXRecordDecl* RDecl,
 }
 
 static void CheckCXXAMPSMF(Sema& S, CXXRecordDecl *RDecl, bool& Checking) {
+  if (!RDecl || S.getLangOpts().HSAExtension)
+    return;
+
   assert(RDecl);
 
   bool ParentCPUAttr = false;
