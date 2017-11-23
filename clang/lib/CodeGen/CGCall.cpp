@@ -175,9 +175,25 @@ arrangeLLVMFunctionInfo(CodeGenTypes &CGT, bool instanceMethod,
   appendParameterTypes(CGT, prefix, paramInfos, FTP);
   CanQualType resultType = FTP->getReturnType().getUnqualifiedType();
 
+  // HCC (HIP) specific: for HIP we want __global__ functions to represent
+  // actual kernel entry-points, i.e. we want them to have AMDGPU_KERNEL as
+  // their calling convention. The only way to get that early enough appears to
+  // be the below, wherein the mark them as OpenCL kernels before the layout is
+  // generated. This is temporary and somewhat unpleasant, the correct solution
+  // would be to bubble up AMDGPU_KERNEL as a full blown calling convention
+  // which can be used orthogonally to OpenCL, such as e.g. __stdcall.
+  FunctionType::ExtInfo Tmp = FTP->getExtInfo();
+
+  if (FD &&
+      FD->hasAttr<AnnotateAttr>() &&
+      FD->getAttr<AnnotateAttr>()->getAnnotation() ==
+        "__HIP_global_function__") {
+    Tmp = Tmp.withCallingConv(CallingConv::CC_OpenCLKernel);
+  }
+
   return CGT.arrangeLLVMFunctionInfo(resultType, instanceMethod,
                                      /*chainCall=*/false, prefix,
-                                     FTP->getExtInfo(), paramInfos,
+                                     Tmp, paramInfos,
                                      Required);
 }
 
