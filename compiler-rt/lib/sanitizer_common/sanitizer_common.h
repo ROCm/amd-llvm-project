@@ -73,7 +73,7 @@ INLINE uptr GetPageSizeCached() {
   return PageSizeCached;
 }
 uptr GetMmapGranularity();
-uptr GetMaxVirtualAddress();
+uptr GetMaxUserVirtualAddress();
 // Threads
 tid_t GetTid();
 uptr GetThreadSelf();
@@ -127,6 +127,21 @@ void DontDumpShadowMemory(uptr addr, uptr length);
 void CheckVMASize();
 void RunMallocHooks(const void *ptr, uptr size);
 void RunFreeHooks(const void *ptr);
+
+class ReservedAddressRange {
+ public:
+  uptr Init(uptr size, const char *name = nullptr, uptr fixed_addr = 0);
+  uptr Map(uptr fixed_addr, uptr size);
+  uptr MapOrDie(uptr fixed_addr, uptr size);
+  void Unmap(uptr addr, uptr size);
+  void *base() const { return base_; }
+  uptr size() const { return size_; }
+
+ private:
+  void* base_;
+  uptr size_;
+  const char* name_;
+};
 
 typedef void (*fill_profile_f)(uptr start, uptr rss, bool file,
                                /*out*/uptr *stats, uptr stats_size);
@@ -211,10 +226,6 @@ void SetPrintfAndReportCallback(void (*callback)(const char *));
   do {                                                                   \
     if ((uptr)Verbosity() >= (level)) Printf(__VA_ARGS__); \
   } while (0)
-
-// Can be used to prevent mixing error reports from different sanitizers.
-// FIXME: Replace with ScopedErrorReportLock and hide.
-extern StaticSpinMutex CommonSanitizerReportMutex;
 
 // Lock sanitizer error reporting and protects against nested errors.
 class ScopedErrorReportLock {

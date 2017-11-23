@@ -21,11 +21,11 @@
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/MachineTraceMetrics.h"
 #include "llvm/CodeGen/Passes.h"
+#include "llvm/CodeGen/TargetInstrInfo.h"
 #include "llvm/CodeGen/TargetSchedule.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Target/TargetInstrInfo.h"
 #include "llvm/Target/TargetRegisterInfo.h"
 #include "llvm/Target/TargetSubtargetInfo.h"
 
@@ -161,9 +161,10 @@ MachineCombiner::getDepth(SmallVectorImpl<MachineInstr *> &InsInstrs,
         assert(DefInstr &&
                "There must be a definition for a new virtual register");
         DepthOp = InstrDepth[II->second];
-        LatencyOp = TSchedModel.computeOperandLatency(
-            DefInstr, DefInstr->findRegisterDefOperandIdx(MO.getReg()),
-            InstrPtr, InstrPtr->findRegisterUseOperandIdx(MO.getReg()));
+        int DefIdx = DefInstr->findRegisterDefOperandIdx(MO.getReg());
+        int UseIdx = InstrPtr->findRegisterUseOperandIdx(MO.getReg());
+        LatencyOp = TSchedModel.computeOperandLatency(DefInstr, DefIdx,
+                                                      InstrPtr, UseIdx);
       } else {
         MachineInstr *DefInstr = getOperandDef(MO);
         if (DefInstr) {

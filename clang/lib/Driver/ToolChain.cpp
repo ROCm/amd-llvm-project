@@ -310,14 +310,12 @@ static StringRef getArchNameForCompilerRTLib(const ToolChain &TC,
 
 std::string ToolChain::getCompilerRTPath() const {
   SmallString<128> Path(getDriver().ResourceDir);
-  StringRef OSLibName;
-  if (Triple.isOSFreeBSD())
-    OSLibName = "freebsd";
-  else if (Triple.isOSBinFormatWasm())
-    OSLibName = "wasm";
-  else
-    OSLibName = getOS();
-  llvm::sys::path::append(Path, "lib", OSLibName);
+  if (Triple.isOSUnknown()) {
+    llvm::sys::path::append(Path, "lib");
+  } else {
+    StringRef OSLibName = Triple.isOSFreeBSD() ? "freebsd" : getOS();
+    llvm::sys::path::append(Path, "lib", OSLibName);
+  }
   return Path.str();
 }
 
@@ -754,6 +752,9 @@ SanitizerMask ToolChain::getSupportedSanitizers() const {
 
 void ToolChain::AddCudaIncludeArgs(const ArgList &DriverArgs,
                                    ArgStringList &CC1Args) const {}
+
+void ToolChain::AddHCCIncludeArgs(const ArgList &DriverArgs,
+                                  ArgStringList &CC1Args) const {}
 
 void ToolChain::AddIAMCUIncludeArgs(const ArgList &DriverArgs,
                                     ArgStringList &CC1Args) const {}

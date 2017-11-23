@@ -39,6 +39,7 @@ class FileSystem;
 namespace driver {
   class Compilation;
   class CudaInstallationDetector;
+  class HCCInstallationDetector;
   class Driver;
   class JobAction;
   class RegisterEffectiveTriple;
@@ -498,6 +499,9 @@ public:
   /// \brief Add arguments to use system-specific CUDA includes.
   virtual void AddCudaIncludeArgs(const llvm::opt::ArgList &DriverArgs,
                                   llvm::opt::ArgStringList &CC1Args) const;
+
+  virtual void AddHCCIncludeArgs(const llvm::opt::ArgList &DriverArgs,
+                                 llvm::opt::ArgStringList &CC1Args) const;
 
   /// \brief Add arguments to use MCU GCC toolchain includes.
   virtual void AddIAMCUIncludeArgs(const llvm::opt::ArgList &DriverArgs,

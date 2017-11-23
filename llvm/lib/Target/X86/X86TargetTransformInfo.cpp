@@ -1437,7 +1437,7 @@ int X86TTIImpl::getCastInstrCost(unsigned Opcode, Type *Dst, Type *Src,
       return Entry->Cost;
   }
 
-  return BaseT::getCastInstrCost(Opcode, Dst, Src);
+  return BaseT::getCastInstrCost(Opcode, Dst, Src, I);
 }
 
 int X86TTIImpl::getCmpSelInstrCost(unsigned Opcode, Type *ValTy, Type *CondTy,
@@ -2536,10 +2536,35 @@ bool X86TTIImpl::areInlineCompatible(const Function *Caller,
   return (CallerBits & CalleeBits) == CalleeBits;
 }
 
-bool X86TTIImpl::enableMemCmpExpansion(unsigned &MaxLoadSize) {
-  // TODO: We can increase these based on available vector ops.
-  MaxLoadSize = ST->is64Bit() ? 8 : 4;
-  return true;
+const X86TTIImpl::TTI::MemCmpExpansionOptions *
+X86TTIImpl::enableMemCmpExpansion(bool IsZeroCmp) const {
+  // Only enable vector loads for equality comparison.
+  // Right now the vector version is not as fast, see #33329.
+  static const auto ThreeWayOptions = [this]() {
+    TTI::MemCmpExpansionOptions Options;
+    if (ST->is64Bit()) {
+      Options.LoadSizes.push_back(8);
+    }
+    Options.LoadSizes.push_back(4);
+    Options.LoadSizes.push_back(2);
+    Options.LoadSizes.push_back(1);
+    return Options;
+  }();
+  static const auto EqZeroOptions = [this]() {
+    TTI::MemCmpExpansionOptions Options;
+    // TODO: enable AVX512 when the DAG is ready.
+    // if (ST->hasAVX512()) Options.LoadSizes.push_back(64);
+    if (ST->hasAVX2()) Options.LoadSizes.push_back(32);
+    if (ST->hasSSE2()) Options.LoadSizes.push_back(16);
+    if (ST->is64Bit()) {
+      Options.LoadSizes.push_back(8);
+    }
+    Options.LoadSizes.push_back(4);
+    Options.LoadSizes.push_back(2);
+    Options.LoadSizes.push_back(1);
+    return Options;
+  }();
+  return IsZeroCmp ? &EqZeroOptions : &ThreeWayOptions;
 }
 
 bool X86TTIImpl::enableInterleavedAccessVectorization() {
@@ -2619,12 +2644,15 @@ int X86TTIImpl::getInterleavedMemoryOpCostAVX2(unsigned Opcode, Type *VecTy,
     { 3, MVT::v8i8,  9 },  //(load 24i8 and) deinterleave into 3 x 8i8
     { 3, MVT::v16i8, 11},  //(load 48i8 and) deinterleave into 3 x 16i8
     { 3, MVT::v32i8, 13},  //(load 96i8 and) deinterleave into 3 x 32i8
+    { 3, MVT::v8f32, 17 }, //(load 24f32 and)deinterleave into 3 x 8f32
 
     { 4, MVT::v2i8,  12 }, //(load 8i8 and)   deinterleave into 4 x 2i8
     { 4, MVT::v4i8,  4 },  //(load 16i8 and)  deinterleave into 4 x 4i8
     { 4, MVT::v8i8,  20 }, //(load 32i8 and)  deinterleave into 4 x 8i8
     { 4, MVT::v16i8, 39 }, //(load 64i8 and)  deinterleave into 4 x 16i8
-    { 4, MVT::v32i8, 80 }  //(load 128i8 and) deinterleave into 4 x 32i8
+    { 4, MVT::v32i8, 80 }, //(load 128i8 and) deinterleave into 4 x 32i8
+
+    { 8, MVT::v8f32, 40 }  //(load 64f32 and)deinterleave into 8 x 8f32
   };
 
   static const CostTblEntry AVX2InterleavedStoreTbl[] = {

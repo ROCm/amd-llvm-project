@@ -351,10 +351,21 @@ DerivedArgList *Driver::TranslateInputArgs(const InputArgList &Args) const {
   }
 #endif
 
-  // make -hc an alias of -std=c++amp -Xclang -fhsa-ext as of now
+  // Add extra flags -hc should imply.
   if (Args.hasArg(options::OPT_hc_mode)) {
-    DAL->AddJoinedArg(0, Opts->getOption(options::OPT_std_EQ), "c++amp");
+    DAL->AddFlagArg(0, Opts->getOption(options::OPT_famp));
+    DAL->AddPositionalArg(0, Opts->getOption(options::OPT_Xclang), "-famp");
     DAL->AddPositionalArg(0, Opts->getOption(options::OPT_Xclang), "-fhsa-ext");
+
+    // We need at least C++11 or C++AMP. If we're not given an explicit C++
+    // standard, add one because the default is too old.
+    if (!Args.hasArg(options::OPT_std_EQ)) {
+      DAL->AddPositionalArg(0, Opts->getOption(options::OPT_std_EQ), "c++amp");
+    }
+  }
+
+  if (Args.hasArg(options::OPT_famp)) {
+    DAL->AddPositionalArg(0, Opts->getOption(options::OPT_Xclang), "-famp");
   }
 
   return DAL;
@@ -362,6 +373,10 @@ DerivedArgList *Driver::TranslateInputArgs(const InputArgList &Args) const {
 
 // test if we are in C++AMP mode
 bool Driver::IsCXXAMP(const ArgList& Args) {
+  if (Args.hasArg(options::OPT_famp)) {
+    return true;
+  }
+
   for (ArgList::const_iterator it = Args.begin(), ie = Args.end();
        it != ie; ++it) {
     Arg* A = *it;
@@ -626,9 +641,16 @@ void Driver::CreateOffloadingDeviceToolChains(Compilation &C,
                I.first == types::TY_HC_HOST ||
                I.first == types::TY_HC_KERNEL;
       })) {
-    const ToolChain &TC = getToolChain(
-        C.getInputArgs(), llvm::Triple("amdgcn--amdhsa-hcc"));
-    C.addOffloadDeviceToolChain(&TC, Action::OFK_HCC);
+
+    const ToolChain *HostTC = C.getSingleOffloadToolChain<Action::OFK_Host>();
+
+    auto &HccTC = ToolChains[llvm::Triple("amdgcn--amdhsa-hcc").str()];
+    if (!HccTC)
+      HccTC = llvm::make_unique<toolchains::HCCToolChain>(*this, llvm::Triple("amdgcn--amdhsa-hcc"), *HostTC, C.getInputArgs());
+      
+    const ToolChain *TC = HccTC.get();
+
+    C.addOffloadDeviceToolChain(TC, Action::OFK_HCC);
   }
 
   //
@@ -4099,11 +4121,7 @@ const ToolChain &Driver::getToolChain(const ArgList &Args,
       TC = llvm::make_unique<toolchains::Solaris>(*this, Target, Args);
       break;
     case llvm::Triple::AMDHSA:
-      if (Target.getEnvironment() == llvm::Triple::HCC) {
-        TC = llvm::make_unique<toolchains::HCCToolChain>(*this, Target, Args);
-      } else {
-        TC = llvm::make_unique<toolchains::AMDGPUToolChain>(*this, Target, Args);
-      }
+      TC = llvm::make_unique<toolchains::AMDGPUToolChain>(*this, Target, Args);
       break;
     case llvm::Triple::Win32:
       switch (Target.getEnvironment()) {
@@ -4124,7 +4142,13 @@ const ToolChain &Driver::getToolChain(const ArgList &Args,
         break;
       case llvm::Triple::MSVC:
       case llvm::Triple::UnknownEnvironment:
-        TC = llvm::make_unique<toolchains::MSVCToolChain>(*this, Target, Args);
+        if (Args.getLastArgValue(options::OPT_fuse_ld_EQ)
+                .startswith_lower("bfd"))
+          TC = llvm::make_unique<toolchains::CrossWindowsToolChain>(
+              *this, Target, Args);
+        else
+          TC =
+              llvm::make_unique<toolchains::MSVCToolChain>(*this, Target, Args);
         break;
       }
       break;

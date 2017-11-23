@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Hcc.h"
+#include "Gnu.h"
 #include "InputInfo.h"
 #include "clang/Basic/VirtualFileSystem.h"
 #include "clang/Driver/Compilation.h"
@@ -35,6 +36,77 @@ using namespace clang::driver::toolchains;
 using namespace clang::driver::tools;
 using namespace clang;
 using namespace llvm::opt;
+
+HCCInstallationDetector::HCCInstallationDetector(const Driver &D, const llvm::opt::ArgList &Args) : D(D) {
+  std::string BinPath = D.Dir;
+  std::string InstallPath = D.InstalledDir;
+  auto &FS = D.getVFS();
+  SmallVector<std::string, 4> HCCPathCandidates;
+
+  if (Args.hasArg(options::OPT_hcc_path_EQ))
+    HCCPathCandidates.push_back(
+      Args.getLastArgValue(options::OPT_hcc_path_EQ));
+    
+  HCCPathCandidates.push_back(InstallPath + "/..");
+  HCCPathCandidates.push_back(BinPath + "/..");
+  HCCPathCandidates.push_back(BinPath + "/../..");
+
+  for (const auto &HCCPath: HCCPathCandidates) {
+    if (HCCPath.empty() ||
+        !(FS.exists(HCCPath + "/include/hc.hpp") || FS.exists(HCCPath + "/include/hcc/hc.hpp")) || 
+        !FS.exists(HCCPath + "/lib/libmcwamp.a"))
+      continue;
+
+    IncPath = HCCPath;
+    LibPath = HCCPath + "/lib";
+
+    IsValid = true;
+    break;
+  }
+}
+
+void HCCInstallationDetector::AddHCCIncludeArgs(const llvm::opt::ArgList &DriverArgs, llvm::opt::ArgStringList &CC1Args) const {
+  if (IsValid) {
+    CC1Args.push_back(DriverArgs.MakeArgString("-I" + IncPath + "/include"));
+    CC1Args.push_back(DriverArgs.MakeArgString("-I" + IncPath + "/hcc/include"));
+  }
+}
+
+void HCCInstallationDetector::AddHCCLibArgs(const llvm::opt::ArgList &Args, llvm::opt::ArgStringList &CmdArgs) const {
+  if (IsValid) {
+    // add verbose flag to linker script if clang++ is invoked with --verbose flag
+    if (Args.hasArg(options::OPT_v)) CmdArgs.push_back("--verbose");
+        
+    // Reverse translate the -lstdc++ option
+    // Or add -lstdc++ when running on RHEL 7 or CentOS 7
+    if (Args.hasArg(options::OPT_Z_reserved_lib_stdcxx) ||
+      HCC_TOOLCHAIN_RHEL) {
+      CmdArgs.push_back("-lstdc++");
+    }
+
+    CmdArgs.push_back(Args.MakeArgString("-L" + LibPath));
+    CmdArgs.push_back(Args.MakeArgString("--rpath=" + LibPath));
+
+    for (auto &lib: SystemLibs)
+      CmdArgs.push_back(lib);
+    
+    for (auto &lib: RuntimeLibs)
+      CmdArgs.push_back(lib);
+
+    if (Args.hasArg(options::OPT_hcc_extra_libs_EQ)) {
+      auto HccExtraLibs = Args.getAllArgValues(options::OPT_hcc_extra_libs_EQ);
+      std::string prefix{"--hcc-extra-libs="};
+
+      for(auto&& Lib:HccExtraLibs)
+        CmdArgs.push_back(Args.MakeArgString(prefix + Lib));
+    }
+  }
+}
+
+void HCCInstallationDetector::print(raw_ostream &OS) const {
+  if (IsValid)
+    OS << "Found HCC installation: " << IncPath << "\n";
+}
 
 static void HCPassOptions(const ArgList &Args, ArgStringList &CmdArgs) {
 
@@ -301,28 +373,20 @@ namespace
   #define HCC_TOOLCHAIN_RHEL false
 #endif
 
-void HCC::CXXAMPLink::ConstructJob(
+void HCC::CXXAMPLink::ConstructLinkerJob(
     Compilation &C,
     const JobAction &JA,
     const InputInfo &Output,
     const InputInfoList &Inputs,
     const ArgList &Args,
-    const char *LinkingOutput) const
+    const char *LinkingOutput,
+    ArgStringList &CmdArgs) const
 {
-    ArgStringList CmdArgs;
-
-    // add verbose flag to linker script if clang++ is invoked with --verbose flag
-    if (Args.hasArg(options::OPT_v)) CmdArgs.push_back("--verbose");
-
-    // Reverse translate the -lstdc++ option
-    // Or add -lstdc++ when running on RHEL 7 or CentOS 7
-    if (Args.hasArg(options::OPT_Z_reserved_lib_stdcxx) ||
-        HCC_TOOLCHAIN_RHEL) {
-        CmdArgs.push_back("-lstdc++");
-    }
-
     // specify AMDGPU target
     constexpr const char auto_tgt[] = "auto";
+
+    const auto &TC = static_cast<const toolchains::Generic_ELF &>(getToolChain());
+    TC.HCCInstallation.AddHCCLibArgs(Args, CmdArgs);
 
     #if !defined(HCC_AMDGPU_TARGET)
         #define HCC_AMDGPU_TARGET auto_tgt
@@ -363,23 +427,14 @@ void HCC::CXXAMPLink::ConstructJob(
         }
         validate_and_add_to_command(AMDGPUTarget, C, Args, CmdArgs);
     }
+}
 
-    // pass inputs to gnu ld for initial processing
-    Linker::ConstructLinkerJob(
-        C, JA, Output, Inputs, Args, LinkingOutput, CmdArgs);
-
-    auto ClampArgs = CmdArgs;
-    if (Args.hasArg(options::OPT_hcc_extra_libs_EQ)) {
-      auto HccExtraLibs = Args.getAllArgValues(options::OPT_hcc_extra_libs_EQ);
-      std::string prefix{"--hcc-extra-libs="};
-      for(auto&& Lib:HccExtraLibs) {
-        ClampArgs.push_back(Args.MakeArgString(prefix + Lib));
-      }
-    }
-
-  const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("clamp-link"));
-
-  C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, ClampArgs, Inputs));
+void HCC::CXXAMPLink::ConstructJob(Compilation &C,
+                                   const JobAction &JA,
+                                   const InputInfo &Output,
+                                   const InputInfoList &Inputs,
+                                   const ArgList &Args,
+                                   const char *LinkingOutput) const {
 }
 
 /// HCC toolchain.
@@ -393,18 +448,31 @@ void HCC::CXXAMPLink::ConstructJob(
 ///   - use clamp-link as linker
 
 HCCToolChain::HCCToolChain(const Driver &D, const llvm::Triple &Triple,
-                           const ArgList &Args)
-    : Linux(D, Triple, Args) {
-  llvm::Triple defaultTriple(llvm::sys::getDefaultTargetTriple());
-  GCCInstallation.init(defaultTriple, Args);
+                           const ToolChain &HostTC, const ArgList &Args)
+    : ToolChain(D, Triple, Args), HostTC(HostTC) {
+  getProgramPaths().push_back(getDriver().getInstalledDir());
+  if (getDriver().getInstalledDir() != getDriver().Dir)
+    getProgramPaths().push_back(getDriver().Dir);
 }
 
 void HCCToolChain::addClangTargetOptions(
     const llvm::opt::ArgList &DriverArgs, llvm::opt::ArgStringList &CC1Args,
     Action::OffloadKind DeviceOffloadKind) const {
-  Linux::addClangTargetOptions(DriverArgs, CC1Args, DeviceOffloadKind);
+  HostTC.addClangTargetOptions(DriverArgs, CC1Args, DeviceOffloadKind);
 
   // TBD, depends on mode set correct arguments
+}
+
+void HCCToolChain::AddClangSystemIncludeArgs(const ArgList &DriverArgs, ArgStringList &CC1Args) const {
+  HostTC.AddClangSystemIncludeArgs(DriverArgs, CC1Args);
+}
+
+void HCCToolChain::AddClangCXXStdlibIncludeArgs(const ArgList &Args, ArgStringList &CC1Args) const {
+  HostTC.AddClangCXXStdlibIncludeArgs(Args, CC1Args);
+}
+
+void HCCToolChain::AddHCCIncludeArgs(const ArgList &DriverArgs, ArgStringList &CC1Args) const {
+  HostTC.AddHCCIncludeArgs(DriverArgs, CC1Args);
 }
 
 llvm::opt::DerivedArgList *

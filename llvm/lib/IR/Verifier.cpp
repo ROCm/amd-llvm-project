@@ -115,8 +115,6 @@
 
 using namespace llvm;
 
-static cl::opt<bool> VerifyDebugInfo("verify-debug-info", cl::init(true));
-
 namespace llvm {
 
 struct VerifierSupport {
@@ -4029,9 +4027,7 @@ void Verifier::visitIntrinsicCallSite(Intrinsic::ID ID, CallSite CS) {
     break;
   }
   case Intrinsic::memcpy_element_unordered_atomic: {
-    const ElementUnorderedAtomicMemCpyInst *MI =
-        cast<ElementUnorderedAtomicMemCpyInst>(CS.getInstruction());
-    ;
+    const AtomicMemCpyInst *MI = cast<AtomicMemCpyInst>(CS.getInstruction());
 
     ConstantInt *ElementSizeCI =
         dyn_cast<ConstantInt>(MI->getRawElementSizeInBytes());
@@ -4066,7 +4062,7 @@ void Verifier::visitIntrinsicCallSite(Intrinsic::ID ID, CallSite CS) {
     break;
   }
   case Intrinsic::memmove_element_unordered_atomic: {
-    auto *MI = cast<ElementUnorderedAtomicMemMoveInst>(CS.getInstruction());
+    auto *MI = cast<AtomicMemMoveInst>(CS.getInstruction());
 
     ConstantInt *ElementSizeCI =
         dyn_cast<ConstantInt>(MI->getRawElementSizeInBytes());
@@ -4101,7 +4097,7 @@ void Verifier::visitIntrinsicCallSite(Intrinsic::ID ID, CallSite CS) {
     break;
   }
   case Intrinsic::memset_element_unordered_atomic: {
-    auto *MI = cast<ElementUnorderedAtomicMemSetInst>(CS.getInstruction());
+    auto *MI = cast<AtomicMemSetInst>(CS.getInstruction());
 
     ConstantInt *ElementSizeCI =
         dyn_cast<ConstantInt>(MI->getRawElementSizeInBytes());

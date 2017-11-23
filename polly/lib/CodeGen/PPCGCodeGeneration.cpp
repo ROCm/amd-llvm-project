@@ -415,6 +415,8 @@ private:
   /// @param UserStmt The ast node to generate code for.
   virtual void createUser(__isl_take isl_ast_node *UserStmt);
 
+  virtual void createFor(__isl_take isl_ast_node *Node);
+
   enum DataDirection { HOST_TO_DEVICE, DEVICE_TO_HOST };
 
   /// Create code for a data transfer statement
@@ -1284,8 +1286,12 @@ void GPUNodeBuilder::createUser(__isl_take isl_ast_node *UserStmt) {
 
   isl_ast_expr_free(Expr);
   isl_ast_node_free(UserStmt);
-  return;
 }
+
+void GPUNodeBuilder::createFor(__isl_take isl_ast_node *Node) {
+  createForSequential(Node, false);
+}
+
 void GPUNodeBuilder::createKernelCopy(ppcg_kernel_stmt *KernelStmt) {
   isl_ast_expr *LocalIndex = isl_ast_expr_copy(KernelStmt->u.c.local_index);
   LocalIndex = isl_ast_expr_address_of(LocalIndex);

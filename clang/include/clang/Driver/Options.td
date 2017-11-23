@@ -502,6 +502,8 @@ def cxxamp_cpu_mode : Flag<["-"], "cpu">, Flags<[DriverOption]>,Group<cxxamp_Gro
   HelpText<"C++AMP only.  This option allows the compiler to emit CPU kernel-specific artifacts"> ;
 def amdgpu_target_EQ : Joined<["-", "--"], "amdgpu-target=">, Flags<[DriverOption]>,
   HelpText<"Specify AMDGPU ISA version (ex: gfx803). Could be specified only once.">;
+def hcc_path_EQ : Joined<["--"], "hcc-path=">, Group<i_Group>,
+  HelpText<"HCC installation path">;
 def hcc_extra_libs_EQ : Joined<["-", "--"], "hcc-extra-libs=">, Flags<[DriverOption]>,
   HelpText<"Specify hcc extra libraries to be linked in.">;
 def cl_opt_disable : Flag<["-"], "cl-opt-disable">, Group<opencl_Group>, Flags<[CC1Option]>,
@@ -531,7 +533,7 @@ def cl_fp32_correctly_rounded_divide_sqrt : Flag<["-"], "cl-fp32-correctly-round
 def client__name : JoinedOrSeparate<["-"], "client_name">;
 def combine : Flag<["-", "--"], "combine">, Flags<[DriverOption, Unsupported]>;
 def compatibility__version : JoinedOrSeparate<["-"], "compatibility_version">;
-def coverage : Flag<["-", "--"], "coverage">;
+def coverage : Flag<["-", "--"], "coverage">, Flags<[CoreOption]>;
 def cpp_precomp : Flag<["-"], "cpp-precomp">, Group<clang_ignored_f_Group>;
 def current__version : JoinedOrSeparate<["-"], "current_version">;
 def cxx_isystem : JoinedOrSeparate<["-"], "cxx-isystem">, Group<clang_i_Group>,
@@ -926,6 +928,9 @@ def fno_sanitize_cfi_cross_dso : Flag<["-"], "fno-sanitize-cfi-cross-dso">,
                                  Flags<[CoreOption, DriverOption]>,
                                  Group<f_clang_Group>,
                                  HelpText<"Disable control flow integrity (CFI) checks for cross-DSO calls.">;
+def fsanitize_cfi_icall_generalize_pointers : Flag<["-"], "fsanitize-cfi-icall-generalize-pointers">,
+                                              Group<f_clang_Group>,
+                                              HelpText<"Generalize pointers in CFI indirect call type signature checks">;
 def fsanitize_stats : Flag<["-"], "fsanitize-stats">,
                               Group<f_clang_Group>,
                               HelpText<"Enable sanitizer statistics gathering.">;
@@ -1356,6 +1361,8 @@ def fno_objc_nonfragile_abi : Flag<["-"], "fno-objc-nonfragile-abi">, Group<f_Gr
 
 def fobjc_sender_dependent_dispatch : Flag<["-"], "fobjc-sender-dependent-dispatch">, Group<f_Group>;
 def fomit_frame_pointer : Flag<["-"], "fomit-frame-pointer">, Group<f_Group>;
+def famp : Flag<["-"], "famp">, Group<f_Group>, Flags<[CC1Option, NoArgumentUnused]>,
+  HelpText<"Enable C++AMP extensions.">;
 def fopenmp : Flag<["-"], "fopenmp">, Group<f_Group>, Flags<[CC1Option, NoArgumentUnused]>;
 def fno_openmp : Flag<["-"], "fno-openmp">, Group<f_Group>, Flags<[NoArgumentUnused]>;
 def fopenmp_version_EQ : Joined<["-"], "fopenmp-version=">, Group<f_Group>, Flags<[CC1Option, NoArgumentUnused]>;
@@ -1393,6 +1400,10 @@ def fpic : Flag<["-"], "fpic">, Group<f_Group>;
 def fno_pic : Flag<["-"], "fno-pic">, Group<f_Group>;
 def fpie : Flag<["-"], "fpie">, Group<f_Group>;
 def fno_pie : Flag<["-"], "fno-pie">, Group<f_Group>;
+def fplt : Flag<["-"], "fplt">, Group<f_Group>, Flags<[CC1Option]>,
+  HelpText<"Use the PLT to make function calls">;
+def fno_plt : Flag<["-"], "fno-plt">, Group<f_Group>, Flags<[CC1Option]>,
+  HelpText<"Do not use the PLT to make function calls">;
 def fropi : Flag<["-"], "fropi">, Group<f_Group>;
 def fno_ropi : Flag<["-"], "fno-ropi">, Group<f_Group>;
 def frwpi : Flag<["-"], "frwpi">, Group<f_Group>;
@@ -1827,7 +1838,6 @@ def mno_neg_immediates: Flag<["-"], "mno-neg-immediates">, Group<m_arm_Features_
 
 def mgeneral_regs_only : Flag<["-"], "mgeneral-regs-only">, Group<m_aarch64_Features_Group>,
   HelpText<"Generate code which only uses the general purpose registers (AArch64 only)">;
-
 def mfix_cortex_a53_835769 : Flag<["-"], "mfix-cortex-a53-835769">,
   Group<m_aarch64_Features_Group>,
   HelpText<"Workaround Cortex-A53 erratum 835769 (AArch64 only)">;
@@ -1845,6 +1855,10 @@ def mamdgpu_debugger_abi : Joined<["-"], "mamdgpu-debugger-abi=">,
   Group<m_Group>,
   HelpText<"Generate additional code for specified <version> of debugger ABI (AMDGPU only)">,
   MetaVarName<"<version>">;
+def mxnack : Flag<["-"], "mxnack">, Group<m_amdgpu_Features_Group>,
+  HelpText<"Enable XNACK (AMDGPU only)">;
+def mno_xnack : Flag<["-"], "mno-xnack">, Group<m_amdgpu_Features_Group>,
+  HelpText<"Disable XNACK (AMDGPU only)">;
 
 def faltivec : Flag<["-"], "faltivec">, Group<f_Group>, Flags<[DriverOption]>;
 def fno_altivec : Flag<["-"], "fno-altivec">, Group<f_Group>, Flags<[DriverOption]>;

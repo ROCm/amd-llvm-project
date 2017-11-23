@@ -7,6 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Hcc.h"
 #include "Linux.h"
 #include "Arch/ARM.h"
 #include "Arch/Mips.h"
@@ -800,6 +801,11 @@ void Linux::AddCudaIncludeArgs(const ArgList &DriverArgs,
   CudaInstallation.AddCudaIncludeArgs(DriverArgs, CC1Args);
 }
 
+void Linux::AddHCCIncludeArgs(const ArgList &DriverArgs,
+                              ArgStringList &CC1Args) const {
+  HCCInstallation.AddHCCIncludeArgs(DriverArgs, CC1Args);
+}
+
 void Linux::AddIAMCUIncludeArgs(const ArgList &DriverArgs,
                                 ArgStringList &CC1Args) const {
   if (GCCInstallation.isValid()) {
@@ -845,9 +851,10 @@ SanitizerMask Linux::getSupportedSanitizers() const {
     Res |= SanitizerKind::Memory;
   if (IsX86_64 || IsMIPS64)
     Res |= SanitizerKind::Efficiency;
-  if (IsX86 || IsX86_64) {
+  if (IsX86 || IsX86_64)
     Res |= SanitizerKind::Function;
-  }
+  if (IsX86_64 || IsMIPS64 || IsAArch64 || IsX86 || IsArmArch)
+    Res |= SanitizerKind::Scudo;
   return Res;
 }
 

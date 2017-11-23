@@ -169,7 +169,6 @@ private:
   bool SelectSMRDSgpr(SDValue Addr, SDValue &SBase, SDValue &Offset) const;
   bool SelectSMRDBufferImm(SDValue Addr, SDValue &Offset) const;
   bool SelectSMRDBufferImm32(SDValue Addr, SDValue &Offset) const;
-  bool SelectSMRDBufferSgpr(SDValue Addr, SDValue &Offset) const;
   bool SelectMOVRELOffset(SDValue Index, SDValue &Base, SDValue &Offset) const;
 
   bool SelectVOP3Mods_NNaN(SDValue In, SDValue &Src, SDValue &SrcMods) const;
@@ -205,6 +204,7 @@ private:
   void SelectADD_SUB_I64(SDNode *N);
   void SelectUADDO_USUBO(SDNode *N);
   void SelectDIV_SCALE(SDNode *N);
+  void SelectMAD_64_32(SDNode *N);
   void SelectFMA_W_CHAIN(SDNode *N);
   void SelectFMUL_W_CHAIN(SDNode *N);
 
@@ -595,6 +595,11 @@ void AMDGPUDAGToDAGISel::Select(SDNode *N) {
     SelectDIV_SCALE(N);
     return;
   }
+  case AMDGPUISD::MAD_I64_I32:
+  case AMDGPUISD::MAD_U64_U32: {
+    SelectMAD_64_32(N);
+    return;
+  }
   case ISD::CopyToReg: {
     const SITargetLowering& Lowering =
       *static_cast<const SITargetLowering*>(getTargetLowering());
@@ -815,6 +820,19 @@ void AMDGPUDAGToDAGISel::SelectDIV_SCALE(SDNode *N) {
   CurDAG->SelectNodeTo(N, Opc, N->getVTList(), Ops);
 }
 
+// We need to handle this here because tablegen doesn't support matching
+// instructions with multiple outputs.
+void AMDGPUDAGToDAGISel::SelectMAD_64_32(SDNode *N) {
+  SDLoc SL(N);
+  bool Signed = N->getOpcode() == AMDGPUISD::MAD_I64_I32;
+  unsigned Opc = Signed ? AMDGPU::V_MAD_I64_I32 : AMDGPU::V_MAD_U64_U32;
+
+  SDValue Clamp = CurDAG->getTargetConstant(0, SL, MVT::i1);
+  SDValue Ops[] = { N->getOperand(0), N->getOperand(1), N->getOperand(2),
+                    Clamp };
+  CurDAG->SelectNodeTo(N, Opc, N->getVTList(), Ops);
+}
+
 bool AMDGPUDAGToDAGISel::isDSOffsetLegal(const SDValue &Base, unsigned Offset,
                                          unsigned OffsetBits) const {
   if ((OffsetBits == 16 && !isUInt<16>(Offset)) ||
@@ -965,14 +983,6 @@ bool AMDGPUDAGToDAGISel::SelectDS64Bit4ByteAligned(SDValue Addr, SDValue &Base,
   return true;
 }
 
-static bool isLegalMUBUFImmOffset(unsigned Imm) {
-  return isUInt<12>(Imm);
-}
-
-static bool isLegalMUBUFImmOffset(const ConstantSDNode *Imm) {
-  return isLegalMUBUFImmOffset(Imm->getZExtValue());
-}
-
 bool AMDGPUDAGToDAGISel::SelectMUBUF(SDValue Addr, SDValue &Ptr,
                                      SDValue &VAddr, SDValue &SOffset,
                                      SDValue &Offset, SDValue &Offen,
@@ -1014,7 +1024,7 @@ bool AMDGPUDAGToDAGISel::SelectMUBUF(SDValue Addr, SDValue &Ptr,
       Ptr = N0;
     }
 
-    if (isLegalMUBUFImmOffset(C1)) {
+    if (SIInstrInfo::isLegalMUBUFImmOffset(C1->getZExtValue())) {
       Offset = CurDAG->getTargetConstant(C1->getZExtValue(), DL, MVT::i16);
       return true;
     }
@@ -1124,7 +1134,7 @@ bool AMDGPUDAGToDAGISel::SelectMUBUFScratchOffen(SDNode *Parent,
 
   if (ConstantSDNode *CAddr = dyn_cast<ConstantSDNode>(Addr)) {
     unsigned Imm = CAddr->getZExtValue();
-    assert(!isLegalMUBUFImmOffset(Imm) &&
+    assert(!SIInstrInfo::isLegalMUBUFImmOffset(Imm) &&
            "should have been selected by other pattern");
 
     SDValue HighBits = CurDAG->getTargetConstant(Imm & ~4095, DL, MVT::i32);
@@ -1151,7 +1161,7 @@ bool AMDGPUDAGToDAGISel::SelectMUBUFScratchOffen(SDNode *Parent,
 
     // Offsets in vaddr must be positive.
     ConstantSDNode *C1 = cast<ConstantSDNode>(N1);
-    if (isLegalMUBUFImmOffset(C1)) {
+    if (SIInstrInfo::isLegalMUBUFImmOffset(C1->getZExtValue())) {
       std::tie(VAddr, SOffset) = foldFrameIndex(N0);
       ImmOffset = CurDAG->getTargetConstant(C1->getZExtValue(), DL, MVT::i16);
       return true;
@@ -1170,7 +1180,7 @@ bool AMDGPUDAGToDAGISel::SelectMUBUFScratchOffset(SDNode *Parent,
                                                   SDValue &SOffset,
                                                   SDValue &Offset) const {
   ConstantSDNode *CAddr = dyn_cast<ConstantSDNode>(Addr);
-  if (!CAddr || !isLegalMUBUFImmOffset(CAddr))
+  if (!CAddr || !SIInstrInfo::isLegalMUBUFImmOffset(CAddr->getZExtValue()))
     return false;
 
   SDLoc DL(Addr);
@@ -1464,13 +1474,6 @@ bool AMDGPUDAGToDAGISel::SelectSMRDBufferImm32(SDValue Addr,
     return false;
 
   return !Imm && isa<ConstantSDNode>(Offset);
-}
-
-bool AMDGPUDAGToDAGISel::SelectSMRDBufferSgpr(SDValue Addr,
-                                              SDValue &Offset) const {
-  bool Imm;
-  return SelectSMRDOffset(Addr, Offset, Imm) && !Imm &&
-         !isa<ConstantSDNode>(Offset);
 }
 
 bool AMDGPUDAGToDAGISel::SelectMOVRELOffset(SDValue Index,

@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <set>
 
 #if defined(__has_include)
@@ -69,15 +70,39 @@ struct MallocFreeTracer {
   std::atomic<size_t> Mallocs;
   std::atomic<size_t> Frees;
   int TraceLevel = 0;
+
+  std::recursive_mutex TraceMutex;
+  bool TraceDisabled = false;
 };
 
 static MallocFreeTracer AllocTracer;
+
+// Locks printing and avoids nested hooks triggered from mallocs/frees in
+// sanitizer.
+class TraceLock {
+public:
+  TraceLock() : Lock(AllocTracer.TraceMutex) {
+    AllocTracer.TraceDisabled = !AllocTracer.TraceDisabled;
+  }
+  ~TraceLock() { AllocTracer.TraceDisabled = !AllocTracer.TraceDisabled; }
+
+  bool IsDisabled() const {
+    // This is already inverted value.
+    return !AllocTracer.TraceDisabled;
+  }
+
+private:
+  std::lock_guard<std::recursive_mutex> Lock;
+};
 
 ATTRIBUTE_NO_SANITIZE_MEMORY
 void MallocHook(const volatile void *ptr, size_t size) {
   size_t N = AllocTracer.Mallocs++;
   F->HandleMalloc(size);
   if (int TraceLevel = AllocTracer.TraceLevel) {
+    TraceLock Lock;
+    if (Lock.IsDisabled())
+      return;
     Printf("MALLOC[%zd] %p %zd\n", N, ptr, size);
     if (TraceLevel >= 2 && EF)
       EF->__sanitizer_print_stack_trace();
@@ -88,6 +113,9 @@ ATTRIBUTE_NO_SANITIZE_MEMORY
 void FreeHook(const volatile void *ptr) {
   size_t N = AllocTracer.Frees++;
   if (int TraceLevel = AllocTracer.TraceLevel) {
+    TraceLock Lock;
+    if (Lock.IsDisabled())
+      return;
     Printf("FREE[%zd]   %p\n", N, ptr);
     if (TraceLevel >= 2 && EF)
       EF->__sanitizer_print_stack_trace();
@@ -188,6 +216,12 @@ void Fuzzer::StaticInterruptCallback() {
   F->InterruptCallback();
 }
 
+void Fuzzer::StaticGracefulExitCallback() {
+  assert(F);
+  F->GracefulExitRequested = true;
+  Printf("INFO: signal received, trying to exit gracefully\n");
+}
+
 void Fuzzer::StaticFileSizeExceedCallback() {
   Printf("==%lu== ERROR: libFuzzer: file size exceeded\n", GetPid());
   exit(1);
@@ -216,6 +250,13 @@ void Fuzzer::ExitCallback() {
   DumpCurrentUnit("crash-");
   PrintFinalStats();
   _Exit(Options.ErrorExitCode);
+}
+
+void Fuzzer::MaybeExitGracefully() {
+  if (!GracefulExitRequested) return;
+  Printf("==%lu== INFO: libFuzzer: exiting as requested\n", GetPid());
+  PrintFinalStats();
+  _Exit(0);
 }
 
 void Fuzzer::InterruptCallback() {
@@ -593,17 +634,19 @@ void Fuzzer::MutateAndTestOne() {
   for (int i = 0; i < Options.MutateDepth; i++) {
     if (TotalNumberOfRuns >= Options.MaxNumberOfRuns)
       break;
+    MaybeExitGracefully();
     size_t NewSize = 0;
     NewSize = MD.Mutate(CurrentUnitData, Size, CurrentMaxMutationLen);
     assert(NewSize > 0 && "Mutator returned empty unit");
     assert(NewSize <= CurrentMaxMutationLen && "Mutator return oversized unit");
     Size = NewSize;
     II.NumExecutedMutations++;
-    if (RunOne(CurrentUnitData, Size, /*MayDeleteFile=*/true, &II))
-      ReportNewCoverage(&II, {CurrentUnitData, CurrentUnitData + Size});
 
+    bool NewCov = RunOne(CurrentUnitData, Size, /*MayDeleteFile=*/true, &II);
     TryDetectingAMemoryLeak(CurrentUnitData, Size,
                             /*DuringInitialCorpusExecution*/ false);
+    if (NewCov)
+      ReportNewCoverage(&II, {CurrentUnitData, CurrentUnitData + Size});
   }
 }
 

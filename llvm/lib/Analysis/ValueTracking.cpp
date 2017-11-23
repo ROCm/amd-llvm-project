@@ -433,6 +433,7 @@ static bool isAssumeLikeIntrinsic(const Instruction *I) {
       default: break;
       // FIXME: This list is repeated from NoTTI::getIntrinsicCost.
       case Intrinsic::assume:
+      case Intrinsic::sideeffect:
       case Intrinsic::dbg_declare:
       case Intrinsic::dbg_value:
       case Intrinsic::invariant_start:
@@ -2579,9 +2580,7 @@ Intrinsic::ID llvm::getIntrinsicForCallSite(ImmutableCallSite ICS,
   case LibFunc_sqrt:
   case LibFunc_sqrtf:
   case LibFunc_sqrtl:
-    if (ICS->hasNoNaNs())
-      return Intrinsic::sqrt;
-    return Intrinsic::not_intrinsic;
+    return Intrinsic::sqrt;
   }
 
   return Intrinsic::not_intrinsic;
@@ -3859,7 +3858,8 @@ bool llvm::isGuaranteedToTransferExecutionToSuccessor(const Instruction *I) {
     // FIXME: This isn't aggressive enough; a call which only writes to a global
     // is guaranteed to return.
     return CS.onlyReadsMemory() || CS.onlyAccessesArgMemory() ||
-           match(I, m_Intrinsic<Intrinsic::assume>());
+           match(I, m_Intrinsic<Intrinsic::assume>()) ||
+           match(I, m_Intrinsic<Intrinsic::sideeffect>());
   }
 
   // Other instructions return normally.
@@ -4063,21 +4063,19 @@ static SelectPatternResult matchFastFloatClamp(CmpInst::Predicate Pred,
   return {SPF_UNKNOWN, SPNB_NA, false};
 }
 
-/// Match non-obvious integer minimum and maximum sequences.
-static SelectPatternResult matchMinMax(CmpInst::Predicate Pred,
-                                       Value *CmpLHS, Value *CmpRHS,
-                                       Value *TrueVal, Value *FalseVal,
-                                       Value *&LHS, Value *&RHS) {
-  // Assume success. If there's no match, callers should not use these anyway.
-  LHS = TrueVal;
-  RHS = FalseVal;
-
-  // Recognize variations of:
-  // CLAMP(v,l,h) ==> ((v) < (l) ? (l) : ((v) > (h) ? (h) : (v)))
+/// Recognize variations of:
+///   CLAMP(v,l,h) ==> ((v) < (l) ? (l) : ((v) > (h) ? (h) : (v)))
+static SelectPatternResult matchClamp(CmpInst::Predicate Pred,
+                                      Value *CmpLHS, Value *CmpRHS,
+                                      Value *TrueVal, Value *FalseVal) {
+  // Swap the select operands and predicate to match the patterns below.
+  if (CmpRHS != TrueVal) {
+    Pred = ICmpInst::getSwappedPredicate(Pred);
+    std::swap(TrueVal, FalseVal);
+  }
   const APInt *C1;
   if (CmpRHS == TrueVal && match(CmpRHS, m_APInt(C1))) {
     const APInt *C2;
-
     // (X <s C1) ? C1 : SMIN(X, C2) ==> SMAX(SMIN(X, C2), C1)
     if (match(FalseVal, m_SMin(m_Specific(CmpLHS), m_APInt(C2))) &&
         C1->slt(*C2) && Pred == CmpInst::ICMP_SLT)
@@ -4098,6 +4096,21 @@ static SelectPatternResult matchMinMax(CmpInst::Predicate Pred,
         C1->ugt(*C2) && Pred == CmpInst::ICMP_UGT)
       return {SPF_UMIN, SPNB_NA, false};
   }
+  return {SPF_UNKNOWN, SPNB_NA, false};
+}
+
+/// Match non-obvious integer minimum and maximum sequences.
+static SelectPatternResult matchMinMax(CmpInst::Predicate Pred,
+                                       Value *CmpLHS, Value *CmpRHS,
+                                       Value *TrueVal, Value *FalseVal,
+                                       Value *&LHS, Value *&RHS) {
+  // Assume success. If there's no match, callers should not use these anyway.
+  LHS = TrueVal;
+  RHS = FalseVal;
+
+  SelectPatternResult SPR = matchClamp(Pred, CmpLHS, CmpRHS, TrueVal, FalseVal);
+  if (SPR.Flavor != SelectPatternFlavor::SPF_UNKNOWN)
+    return SPR;
 
   if (Pred != CmpInst::ICMP_SGT && Pred != CmpInst::ICMP_SLT)
     return {SPF_UNKNOWN, SPNB_NA, false};
@@ -4116,6 +4129,7 @@ static SelectPatternResult matchMinMax(CmpInst::Predicate Pred,
       match(TrueVal, m_NSWSub(m_Specific(CmpLHS), m_Specific(CmpRHS))))
     return {Pred == CmpInst::ICMP_SGT ? SPF_SMAX : SPF_SMIN, SPNB_NA, false};
 
+  const APInt *C1;
   if (!match(CmpRHS, m_APInt(C1)))
     return {SPF_UNKNOWN, SPNB_NA, false};
 
@@ -4126,7 +4140,8 @@ static SelectPatternResult matchMinMax(CmpInst::Predicate Pred,
     // Is the sign bit set?
     // (X <s 0) ? X : MAXVAL ==> (X >u MAXVAL) ? X : MAXVAL ==> UMAX
     // (X <s 0) ? MAXVAL : X ==> (X >u MAXVAL) ? MAXVAL : X ==> UMIN
-    if (Pred == CmpInst::ICMP_SLT && *C1 == 0 && C2->isMaxSignedValue())
+    if (Pred == CmpInst::ICMP_SLT && C1->isNullValue() &&
+        C2->isMaxSignedValue())
       return {CmpLHS == TrueVal ? SPF_UMAX : SPF_UMIN, SPNB_NA, false};
 
     // Is the sign bit clear?
@@ -4258,13 +4273,15 @@ static SelectPatternResult matchSelectPattern(CmpInst::Predicate Pred,
 
       // ABS(X) ==> (X >s 0) ? X : -X and (X >s -1) ? X : -X
       // NABS(X) ==> (X >s 0) ? -X : X and (X >s -1) ? -X : X
-      if (Pred == ICmpInst::ICMP_SGT && (*C1 == 0 || C1->isAllOnesValue())) {
+      if (Pred == ICmpInst::ICMP_SGT &&
+          (C1->isNullValue() || C1->isAllOnesValue())) {
         return {(CmpLHS == TrueVal) ? SPF_ABS : SPF_NABS, SPNB_NA, false};
       }
 
       // ABS(X) ==> (X <s 0) ? -X : X and (X <s 1) ? -X : X
       // NABS(X) ==> (X <s 0) ? X : -X and (X <s 1) ? X : -X
-      if (Pred == ICmpInst::ICMP_SLT && (*C1 == 0 || *C1 == 1)) {
+      if (Pred == ICmpInst::ICMP_SLT &&
+          (C1->isNullValue() || C1->isOneValue())) {
         return {(CmpLHS == FalseVal) ? SPF_ABS : SPF_NABS, SPNB_NA, false};
       }
     }

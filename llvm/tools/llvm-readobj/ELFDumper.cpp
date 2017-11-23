@@ -1356,8 +1356,11 @@ template <typename ELFT>
 void ELFDumper<ELFT>::parseDynamicTable(
     ArrayRef<const Elf_Phdr *> LoadSegments) {
   auto toMappedAddr = [&](uint64_t VAddr) -> const uint8_t * {
-    const Elf_Phdr *const *I = std::upper_bound(
-        LoadSegments.begin(), LoadSegments.end(), VAddr, compareAddr<ELFT>);
+    const Elf_Phdr *const *I =
+        std::upper_bound(LoadSegments.begin(), LoadSegments.end(), VAddr,
+                         [](uint64_t VAddr, const Elf_Phdr_Impl<ELFT> *Phdr) {
+                           return VAddr < Phdr->p_vaddr;
+                         });
     if (I == LoadSegments.begin())
       report_fatal_error("Virtual address is not in any segment");
     --I;
@@ -1513,6 +1516,10 @@ static const char *getTypeString(unsigned Arch, uint64_t Type) {
     }
   }
   switch (Type) {
+  LLVM_READOBJ_TYPE_CASE(ANDROID_REL);
+  LLVM_READOBJ_TYPE_CASE(ANDROID_RELSZ);
+  LLVM_READOBJ_TYPE_CASE(ANDROID_RELA);
+  LLVM_READOBJ_TYPE_CASE(ANDROID_RELASZ);
   LLVM_READOBJ_TYPE_CASE(BIND_NOW);
   LLVM_READOBJ_TYPE_CASE(DEBUG);
   LLVM_READOBJ_TYPE_CASE(FINI);
@@ -1715,6 +1722,8 @@ void ELFDumper<ELFT>::printValue(uint64_t Type, uint64_t Value) {
   case DT_INIT_ARRAYSZ:
   case DT_FINI_ARRAYSZ:
   case DT_PREINIT_ARRAYSZ:
+  case DT_ANDROID_RELSZ:
+  case DT_ANDROID_RELASZ:
     OS << Value << " (bytes)";
     break;
   case DT_NEEDED:

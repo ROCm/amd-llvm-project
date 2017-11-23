@@ -11,6 +11,7 @@
 #include "GraphBuilder.h"
 
 #include "llvm/BinaryFormat/ELF.h"
+#include "llvm/DebugInfo/DWARF/DWARFContext.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCDisassembler/MCDisassembler.h"
@@ -38,9 +39,36 @@
 #include <functional>
 
 using Instr = llvm::cfi_verify::FileAnalysis::Instr;
+using LLVMSymbolizer = llvm::symbolize::LLVMSymbolizer;
 
 namespace llvm {
 namespace cfi_verify {
+
+bool IgnoreDWARFFlag;
+
+static cl::opt<bool, true> IgnoreDWARFArg(
+    "ignore-dwarf",
+    cl::desc(
+        "Ignore all DWARF data. This relaxes the requirements for all "
+        "statically linked libraries to have been compiled with '-g', but "
+        "will result in false positives for 'CFI unprotected' instructions."),
+    cl::location(IgnoreDWARFFlag), cl::init(false));
+
+StringRef stringCFIProtectionStatus(CFIProtectionStatus Status) {
+  switch (Status) {
+  case CFIProtectionStatus::PROTECTED:
+    return "PROTECTED";
+  case CFIProtectionStatus::FAIL_NOT_INDIRECT_CF:
+    return "FAIL_NOT_INDIRECT_CF";
+  case CFIProtectionStatus::FAIL_ORPHANS:
+    return "FAIL_ORPHANS";
+  case CFIProtectionStatus::FAIL_BAD_CONDITIONAL_BRANCH:
+    return "FAIL_BAD_CONDITIONAL_BRANCH";
+  case CFIProtectionStatus::FAIL_INVALID_INSTRUCTION:
+    return "FAIL_INVALID_INSTRUCTION";
+  }
+  llvm_unreachable("Attempted to stringify an unknown enum value.");
+}
 
 Expected<FileAnalysis> FileAnalysis::Create(StringRef Filename) {
   // Open the filename provided.
@@ -76,32 +104,6 @@ FileAnalysis::FileAnalysis(object::OwningBinary<object::Binary> Binary)
 FileAnalysis::FileAnalysis(const Triple &ObjectTriple,
                            const SubtargetFeatures &Features)
     : ObjectTriple(ObjectTriple), Features(Features) {}
-
-bool FileAnalysis::isIndirectInstructionCFIProtected(uint64_t Address) const {
-  const Instr *InstrMetaPtr = getInstruction(Address);
-  if (!InstrMetaPtr)
-    return false;
-
-  const auto &InstrDesc = MII->get(InstrMetaPtr->Instruction.getOpcode());
-
-  if (!InstrDesc.mayAffectControlFlow(InstrMetaPtr->Instruction, *RegisterInfo))
-    return false;
-
-  if (!usesRegisterOperand(*InstrMetaPtr))
-    return false;
-
-  auto Flows = GraphBuilder::buildFlowGraph(*this, Address);
-
-  if (!Flows.OrphanedNodes.empty())
-    return false;
-
-  for (const auto &BranchNode : Flows.ConditionalBranchNodes) {
-    if (!BranchNode.CFIProtection)
-      return false;
-  }
-
-  return true;
-}
 
 const Instr *
 FileAnalysis::getPrevInstructionSequential(const Instr &InstrMeta) const {
@@ -242,11 +244,42 @@ const MCInstrAnalysis *FileAnalysis::getMCInstrAnalysis() const {
   return MIA.get();
 }
 
+Expected<DIInliningInfo> FileAnalysis::symbolizeInlinedCode(uint64_t Address) {
+  assert(Symbolizer != nullptr && "Symbolizer is invalid.");
+  return Symbolizer->symbolizeInlinedCode(Object->getFileName(), Address);
+}
+
+CFIProtectionStatus
+FileAnalysis::validateCFIProtection(const GraphResult &Graph) const {
+  const Instr *InstrMetaPtr = getInstruction(Graph.BaseAddress);
+  if (!InstrMetaPtr)
+    return CFIProtectionStatus::FAIL_INVALID_INSTRUCTION;
+
+  const auto &InstrDesc = MII->get(InstrMetaPtr->Instruction.getOpcode());
+  if (!InstrDesc.mayAffectControlFlow(InstrMetaPtr->Instruction, *RegisterInfo))
+    return CFIProtectionStatus::FAIL_NOT_INDIRECT_CF;
+
+  if (!usesRegisterOperand(*InstrMetaPtr))
+    return CFIProtectionStatus::FAIL_NOT_INDIRECT_CF;
+
+  if (!Graph.OrphanedNodes.empty())
+    return CFIProtectionStatus::FAIL_ORPHANS;
+
+  for (const auto &BranchNode : Graph.ConditionalBranchNodes) {
+    if (!BranchNode.CFIProtection)
+      return CFIProtectionStatus::FAIL_BAD_CONDITIONAL_BRANCH;
+  }
+
+  return CFIProtectionStatus::PROTECTED;
+}
+
 Error FileAnalysis::initialiseDisassemblyMembers() {
   std::string TripleName = ObjectTriple.getTriple();
   ArchName = "";
   MCPU = "";
   std::string ErrorString;
+
+  Symbolizer.reset(new LLVMSymbolizer());
 
   ObjectTarget =
       TargetRegistry::lookupTarget(ArchName, ObjectTriple, ErrorString);
@@ -294,6 +327,28 @@ Error FileAnalysis::initialiseDisassemblyMembers() {
 }
 
 Error FileAnalysis::parseCodeSections() {
+  if (!IgnoreDWARFFlag) {
+    std::unique_ptr<DWARFContext> DWARF = DWARFContext::create(*Object);
+    if (!DWARF)
+      return make_error<StringError>("Could not create DWARF information.",
+                                     inconvertibleErrorCode());
+
+    bool LineInfoValid = false;
+
+    for (auto &Unit : DWARF->compile_units()) {
+      const auto &LineTable = DWARF->getLineTableForUnit(Unit.get());
+      if (LineTable && !LineTable->Rows.empty()) {
+        LineInfoValid = true;
+        break;
+      }
+    }
+
+    if (!LineInfoValid)
+      return make_error<StringError>(
+          "DWARF line information missing. Did you compile with '-g'?",
+          inconvertibleErrorCode());
+  }
+
   for (const object::SectionRef &Section : Object->sections()) {
     // Ensure only executable sections get analysed.
     if (!(object::ELFSectionRef(Section).getFlags() & ELF::SHF_EXECINSTR))
@@ -313,6 +368,7 @@ Error FileAnalysis::parseCodeSections() {
 
 void FileAnalysis::parseSectionContents(ArrayRef<uint8_t> SectionBytes,
                                         uint64_t SectionAddress) {
+  assert(Symbolizer && "Symbolizer is uninitialised.");
   MCInst Instruction;
   Instr InstrMeta;
   uint64_t InstructionSize;
@@ -330,6 +386,7 @@ void FileAnalysis::parseSectionContents(ArrayRef<uint8_t> SectionBytes,
     InstrMeta.VMAddress = VMAddress;
     InstrMeta.InstructionSize = InstructionSize;
     InstrMeta.Valid = ValidInstruction;
+
     addInstruction(InstrMeta);
 
     if (!ValidInstruction)
@@ -350,6 +407,21 @@ void FileAnalysis::parseSectionContents(ArrayRef<uint8_t> SectionBytes,
 
     if (!usesRegisterOperand(InstrMeta))
       continue;
+
+    // Check if this instruction exists in the range of the DWARF metadata.
+    if (!IgnoreDWARFFlag) {
+      auto LineInfo =
+          Symbolizer->symbolizeCode(Object->getFileName(), VMAddress);
+      if (!LineInfo) {
+        handleAllErrors(LineInfo.takeError(), [](const ErrorInfoBase &E) {
+          errs() << "Symbolizer failed to get line: " << E.message() << "\n";
+        });
+        continue;
+      }
+
+      if (LineInfo->FileName == "<invalid>")
+        continue;
+    }
 
     IndirectInstructions.insert(VMAddress);
   }

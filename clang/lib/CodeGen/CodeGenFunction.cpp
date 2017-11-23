@@ -92,7 +92,7 @@ CodeGenFunction::CodeGenFunction(CodeGenModule &cgm, bool suppressNewContext)
 
   llvm::FastMathFlags FMF;
   if (CGM.getLangOpts().FastMath)
-    FMF.setUnsafeAlgebra();
+    FMF.setFast();
   if (CGM.getLangOpts().FiniteMathOnly) {
     FMF.setNoNaNs();
     FMF.setNoInfs();
@@ -142,13 +142,13 @@ CharUnits CodeGenFunction::getNaturalTypeAlignment(QualType T,
   if (auto TT = T->getAs<TypedefType>()) {
     if (auto Align = TT->getDecl()->getMaxAlignment()) {
       if (BaseInfo)
-        *BaseInfo = LValueBaseInfo(AlignmentSource::AttributedType, false);
+        *BaseInfo = LValueBaseInfo(AlignmentSource::AttributedType);
       return getContext().toCharUnitsFromBits(Align);
     }
   }
 
   if (BaseInfo)
-    *BaseInfo = LValueBaseInfo(AlignmentSource::Type, false);
+    *BaseInfo = LValueBaseInfo(AlignmentSource::Type);
 
   CharUnits Alignment;
   if (T->isIncompleteType()) {
@@ -938,17 +938,14 @@ void CodeGenFunction::StartFunction(GlobalDecl GD,
   }
 
   if (getLangOpts().CPlusPlusAMP) {
-    // Add kernel function signatures into a metadata
     if (const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(D)) {
-      // FIXME: abolish use of OpenCLKernelAttr for HCC programs
-      if (FD->hasAttr<OpenCLKernelAttr>()) {
-        SmallVector<llvm::Metadata *, 5> kernelMDArgs;
-        kernelMDArgs.push_back(llvm::ConstantAsMetadata::get(Fn));
-  
-        llvm::MDNode *kernelMDNode = llvm::MDNode::get(getLLVMContext(), kernelMDArgs);
-        llvm::NamedMDNode *HCCKernelMetadata =
-          CGM.getModule().getOrInsertNamedMetadata("hcc.kernels");
-        HCCKernelMetadata->addOperand(kernelMDNode);
+      if (FD->hasAttr<AnnotateAttr>() &&
+        FD->getAttr<AnnotateAttr>()->getAnnotation() ==
+          "__HIP_global_function__") {
+            Fn->setCallingConv(llvm::CallingConv::AMDGPU_KERNEL);
+            Fn->setDoesNotRecurse();
+            Fn->setDoesNotThrow();
+            Fn->setLinkage(llvm::Function::LinkageTypes::WeakODRLinkage);
       }
     }
   }
@@ -1333,6 +1330,14 @@ void CodeGenFunction::GenerateCode(GlobalDecl GD, llvm::Function *Fn,
            FD->hasAttr<AnnotateAttr>() &&
            FD->getAttr<AnnotateAttr>()->getAnnotation() == "__cxxamp_trampoline_name")
     CGM.getAMPRuntime().EmitTrampolineNameBody(*this, FD, Args);
+  else if (getContext().getLangOpts().CPlusPlus &&
+           (!CGM.getCodeGenOpts().AMPIsDevice || CGM.getCodeGenOpts().AMPCPU) &&
+           FD->hasAttr<AnnotateAttr>() &&
+           FD->getAttr<AnnotateAttr>()->getAnnotation() == "__HIP_global_function__") {
+    // We do not emit __global__ functions on the host path, we only want them
+    // to have a correct address which we can use to obtain the mangled name
+    // from the ELF.
+  }
   else if (getLangOpts().CUDA &&
            !getLangOpts().CUDAIsDevice &&
            FD->hasAttr<CUDAGlobalAttr>())

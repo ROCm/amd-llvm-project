@@ -7383,6 +7383,16 @@ ExprResult Sema::ActOnConditionalOp(SourceLocation QuestionLoc,
       commonExpr = commonRes.get();
     }
 
+    // If the common expression is a class or array prvalue, materialize it
+    // so that we can safely refer to it multiple times.
+    if (commonExpr->isRValue() && (commonExpr->getType()->isRecordType() ||
+                                   commonExpr->getType()->isArrayType())) {
+      ExprResult MatExpr = TemporaryMaterializationConversion(commonExpr);
+      if (MatExpr.isInvalid())
+        return ExprError();
+      commonExpr = MatExpr.get();
+    }
+
     opaqueValue = new (Context) OpaqueValueExpr(commonExpr->getExprLoc(),
                                                 commonExpr->getType(),
                                                 commonExpr->getValueKind(),
@@ -13101,8 +13111,8 @@ void Sema::ActOnBlockArguments(SourceLocation CaretLoc, Declarator &ParamInfo,
   // Look for an explicit signature in that function type.
   FunctionProtoTypeLoc ExplicitSignature;
 
-  TypeLoc tmp = Sig->getTypeLoc().IgnoreParens();
-  if ((ExplicitSignature = tmp.getAs<FunctionProtoTypeLoc>())) {
+  if ((ExplicitSignature =
+           Sig->getTypeLoc().getAsAdjusted<FunctionProtoTypeLoc>())) {
 
     // Check whether that explicit signature was synthesized by
     // GetTypeForDeclarator.  If so, don't save that as part of the
@@ -14660,8 +14670,13 @@ static bool captureInCapturedRegion(CapturedRegionScopeInfo *RSI,
   bool ByRef = true;
   // Using an LValue reference type is consistent with Lambdas (see below).
   if (S.getLangOpts().OpenMP && RSI->CapRegionKind == CR_OpenMP) {
-    if (S.IsOpenMPCapturedDecl(Var))
+    if (S.IsOpenMPCapturedDecl(Var)) {
+      bool HasConst = DeclRefType.isConstQualified();
       DeclRefType = DeclRefType.getUnqualifiedType();
+      // Don't lose diagnostics about assignments to const.
+      if (HasConst)
+        DeclRefType.addConst();
+    }
     ByRef = S.IsOpenMPCapturedByRef(Var, RSI->OpenMPLevel);
   }
 

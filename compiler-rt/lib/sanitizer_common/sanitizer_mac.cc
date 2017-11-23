@@ -185,7 +185,7 @@ uptr internal_getpid() {
 
 int internal_sigaction(int signum, const void *act, void *oldact) {
   return sigaction(signum,
-                   (struct sigaction *)act, (struct sigaction *)oldact);
+                   (const struct sigaction *)act, (struct sigaction *)oldact);
 }
 
 void internal_sigfillset(__sanitizer_sigset_t *set) { sigfillset(set); }
@@ -849,7 +849,7 @@ uptr GetTaskInfoMaxAddress() {
 }
 #endif
 
-uptr GetMaxVirtualAddress() {
+uptr GetMaxUserVirtualAddress() {
 #if SANITIZER_WORDSIZE == 64
 # if defined(__aarch64__) && SANITIZER_IOS && !SANITIZER_IOSSIM
   // Get the maximum VM address

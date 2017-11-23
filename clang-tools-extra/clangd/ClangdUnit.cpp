@@ -10,6 +10,7 @@
 #include "ClangdUnit.h"
 
 #include "Logger.h"
+#include "Trace.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/CompilerInvocation.h"
 #include "clang/Frontend/FrontendActions.h"
@@ -157,7 +158,7 @@ getOptionalParameters(const CodeCompletionString &CCS,
   return Result;
 }
 
-llvm::Optional<DiagWithFixIts> toClangdDiag(StoredDiagnostic D) {
+llvm::Optional<DiagWithFixIts> toClangdDiag(const StoredDiagnostic &D) {
   auto Location = D.getLocation();
   if (!Location.isValid() || !Location.getManager().isInMainFile(Location))
     return llvm::None;
@@ -388,6 +389,7 @@ public:
       assert(CCS && "Expected the CodeCompletionString to be non-null");
       Items.push_back(ProcessCodeCompleteResult(Result, *CCS));
     }
+    std::sort(Items.begin(), Items.end());
   }
 
   GlobalCodeCompletionAllocator &getAllocator() override { return *Allocator; }
@@ -529,7 +531,7 @@ private:
         // the code-completion string, typically a keyword or the name of
         // a declarator or macro.
         Item.filterText = Chunk.Text;
-        // Note intentional fallthrough here.
+        LLVM_FALLTHROUGH;
       case CodeCompletionString::CK_Text:
         // A piece of text that should be placed in the buffer,
         // e.g., parentheses or a comma in a function call.
@@ -744,9 +746,9 @@ bool invokeCodeComplete(std::unique_ptr<CodeCompleteConsumer> Consumer,
       Preamble = nullptr;
   }
 
-  auto Clang = prepareCompilerInstance(std::move(CI), Preamble,
-                                       std::move(ContentsBuffer), PCHs, VFS,
-                                       DummyDiagsConsumer);
+  auto Clang = prepareCompilerInstance(
+      std::move(CI), Preamble, std::move(ContentsBuffer), std::move(PCHs),
+      std::move(VFS), DummyDiagsConsumer);
   auto &DiagOpts = Clang->getDiagnosticOpts();
   DiagOpts.IgnoreWarnings = true;
 
@@ -804,7 +806,7 @@ clang::CodeCompleteOptions clangd::CodeCompleteOptions::getClangCompleteOpts() {
 }
 
 std::vector<CompletionItem>
-clangd::codeComplete(PathRef FileName, tooling::CompileCommand Command,
+clangd::codeComplete(PathRef FileName, const tooling::CompileCommand &Command,
                      PrecompiledPreamble const *Preamble, StringRef Contents,
                      Position Pos, IntrusiveRefCntPtr<vfs::FileSystem> VFS,
                      std::shared_ptr<PCHContainerOperations> PCHs,
@@ -826,7 +828,7 @@ clangd::codeComplete(PathRef FileName, tooling::CompileCommand Command,
 }
 
 SignatureHelp
-clangd::signatureHelp(PathRef FileName, tooling::CompileCommand Command,
+clangd::signatureHelp(PathRef FileName, const tooling::CompileCommand &Command,
                       PrecompiledPreamble const *Preamble, StringRef Contents,
                       Position Pos, IntrusiveRefCntPtr<vfs::FileSystem> VFS,
                       std::shared_ptr<PCHContainerOperations> PCHs,
@@ -859,9 +861,9 @@ ParsedAST::Build(std::unique_ptr<clang::CompilerInvocation> CI,
   std::vector<DiagWithFixIts> ASTDiags;
   StoreDiagsConsumer UnitDiagsConsumer(/*ref*/ ASTDiags);
 
-  auto Clang =
-      prepareCompilerInstance(std::move(CI), Preamble, std::move(Buffer), PCHs,
-                              VFS, /*ref*/ UnitDiagsConsumer);
+  auto Clang = prepareCompilerInstance(
+      std::move(CI), Preamble, std::move(Buffer), std::move(PCHs),
+      std::move(VFS), /*ref*/ UnitDiagsConsumer);
 
   // Recover resources if we crash before exiting this method.
   llvm::CrashRecoveryContextCleanupRegistrar<CompilerInstance> CICleanup(
@@ -964,10 +966,15 @@ private:
     End.character = SourceMgr.getSpellingColumnNumber(LocEnd) - 1;
     Range R = {Begin, End};
     Location L;
-    L.uri = URI::fromFile(
-        SourceMgr.getFilename(SourceMgr.getSpellingLoc(LocStart)));
-    L.range = R;
-    DeclarationLocations.push_back(L);
+    if (const FileEntry *F =
+            SourceMgr.getFileEntryForID(SourceMgr.getFileID(LocStart))) {
+      StringRef FilePath = F->tryGetRealPathName();
+      if (FilePath.empty())
+        FilePath = F->getName();
+      L.uri = URI::fromFile(FilePath);
+      L.range = R;
+      DeclarationLocations.push_back(L);
+    }
   }
 
   void finish() override {
@@ -1000,44 +1007,6 @@ private:
   }
 };
 
-SourceLocation getBeginningOfIdentifier(ParsedAST &Unit, const Position &Pos,
-                                        const FileEntry *FE) {
-  // The language server protocol uses zero-based line and column numbers.
-  // Clang uses one-based numbers.
-
-  const ASTContext &AST = Unit.getASTContext();
-  const SourceManager &SourceMgr = AST.getSourceManager();
-
-  SourceLocation InputLocation =
-      getMacroArgExpandedLocation(SourceMgr, FE, Pos);
-  if (Pos.character == 0) {
-    return InputLocation;
-  }
-
-  // This handle cases where the position is in the middle of a token or right
-  // after the end of a token. In theory we could just use GetBeginningOfToken
-  // to find the start of the token at the input position, but this doesn't
-  // work when right after the end, i.e. foo|.
-  // So try to go back by one and see if we're still inside the an identifier
-  // token. If so, Take the beginning of this token.
-  // (It should be the same identifier because you can't have two adjacent
-  // identifiers without another token in between.)
-  SourceLocation PeekBeforeLocation = getMacroArgExpandedLocation(
-      SourceMgr, FE, Position{Pos.line, Pos.character - 1});
-  Token Result;
-  if (Lexer::getRawToken(PeekBeforeLocation, Result, SourceMgr,
-                         AST.getLangOpts(), false)) {
-    // getRawToken failed, just use InputLocation.
-    return InputLocation;
-  }
-
-  if (Result.is(tok::raw_identifier)) {
-    return Lexer::GetBeginningOfToken(PeekBeforeLocation, SourceMgr,
-                                      AST.getLangOpts());
-  }
-
-  return InputLocation;
-}
 } // namespace
 
 std::vector<Location> clangd::findDefinitions(ParsedAST &AST, Position Pos,
@@ -1285,6 +1254,7 @@ CppFile::deferRebuild(StringRef NewContents,
         return OldPreamble;
       }
 
+      trace::Span Tracer(llvm::Twine("Preamble: ") + That->FileName);
       std::vector<DiagWithFixIts> PreambleDiags;
       StoreDiagsConsumer PreambleDiagnosticsConsumer(/*ref*/ PreambleDiags);
       IntrusiveRefCntPtr<DiagnosticsEngine> PreambleDiagsEngine =
@@ -1330,9 +1300,13 @@ CppFile::deferRebuild(StringRef NewContents,
     }
 
     // Compute updated AST.
-    llvm::Optional<ParsedAST> NewAST =
-        ParsedAST::Build(std::move(CI), PreambleForAST, SerializedPreambleDecls,
-                         std::move(ContentsBuffer), PCHs, VFS, That->Logger);
+    llvm::Optional<ParsedAST> NewAST;
+    {
+      trace::Span Tracer(llvm::Twine("Build: ") + That->FileName);
+      NewAST = ParsedAST::Build(
+          std::move(CI), PreambleForAST, SerializedPreambleDecls,
+          std::move(ContentsBuffer), PCHs, VFS, That->Logger);
+    }
 
     if (NewAST) {
       Diagnostics.insert(Diagnostics.end(), NewAST->getDiagnostics().begin(),
@@ -1423,4 +1397,44 @@ CppFile::RebuildGuard::~RebuildGuard() {
 
   Lock.unlock();
   File.RebuildCond.notify_all();
+}
+
+SourceLocation clangd::getBeginningOfIdentifier(ParsedAST &Unit,
+                                                const Position &Pos,
+                                                const FileEntry *FE) {
+  // The language server protocol uses zero-based line and column numbers.
+  // Clang uses one-based numbers.
+
+  const ASTContext &AST = Unit.getASTContext();
+  const SourceManager &SourceMgr = AST.getSourceManager();
+
+  SourceLocation InputLocation =
+      getMacroArgExpandedLocation(SourceMgr, FE, Pos);
+  if (Pos.character == 0) {
+    return InputLocation;
+  }
+
+  // This handle cases where the position is in the middle of a token or right
+  // after the end of a token. In theory we could just use GetBeginningOfToken
+  // to find the start of the token at the input position, but this doesn't
+  // work when right after the end, i.e. foo|.
+  // So try to go back by one and see if we're still inside the an identifier
+  // token. If so, Take the beginning of this token.
+  // (It should be the same identifier because you can't have two adjacent
+  // identifiers without another token in between.)
+  SourceLocation PeekBeforeLocation = getMacroArgExpandedLocation(
+      SourceMgr, FE, Position{Pos.line, Pos.character - 1});
+  Token Result;
+  if (Lexer::getRawToken(PeekBeforeLocation, Result, SourceMgr,
+                         AST.getLangOpts(), false)) {
+    // getRawToken failed, just use InputLocation.
+    return InputLocation;
+  }
+
+  if (Result.is(tok::raw_identifier)) {
+    return Lexer::GetBeginningOfToken(PeekBeforeLocation, SourceMgr,
+                                      AST.getLangOpts());
+  }
+
+  return InputLocation;
 }

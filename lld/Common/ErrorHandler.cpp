@@ -22,7 +22,6 @@
 #endif
 
 using namespace llvm;
-
 using namespace lld;
 
 // The functions defined in this file can be called from multiple threads,
@@ -41,15 +40,12 @@ static void newline(raw_ostream *ErrorOS, const Twine &Msg) {
   Flag = StringRef(Msg.str()).contains('\n');
 }
 
-namespace lld {
-
-ErrorHandler &errorHandler() {
+ErrorHandler &lld::errorHandler() {
   static ErrorHandler Handler;
   return Handler;
 }
 
-void exitLld(int Val) {
-  waitForBackgroundThreads();
+void lld::exitLld(int Val) {
   // Dealloc/destroy ManagedStatic variables before calling
   // _exit(). In a non-LTO build, this is a nop. In an LTO
   // build allows us to get the output of -time-passes.
@@ -118,5 +114,3 @@ void ErrorHandler::fatal(const Twine &Msg) {
   error(Msg);
   exitLld(1);
 }
-
-} // end namespace lld

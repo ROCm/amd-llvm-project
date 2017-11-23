@@ -721,10 +721,6 @@ std::error_code setLastModificationAndAccessTime(int FD, TimePoint<> Time) {
 
 std::error_code mapped_file_region::init(int FD, uint64_t Offset,
                                          mapmode Mode) {
-  // Make sure that the requested size fits within SIZE_T.
-  if (Size > std::numeric_limits<SIZE_T>::max())
-    return make_error_code(errc::invalid_argument);
-
   HANDLE FileHandle = reinterpret_cast<HANDLE>(_get_osfhandle(FD));
   if (FileHandle == INVALID_HANDLE_VALUE)
     return make_error_code(errc::bad_file_descriptor);
@@ -738,8 +734,8 @@ std::error_code mapped_file_region::init(int FD, uint64_t Offset,
 
   HANDLE FileMappingHandle =
       ::CreateFileMappingW(FileHandle, 0, flprotect,
-                           (Offset + Size) >> 32,
-                           (Offset + Size) & 0xffffffff,
+                           Size >> 32,
+                           Size & 0xffffffff,
                            0);
   if (FileMappingHandle == NULL) {
     std::error_code ec = mapWindowsError(GetLastError());

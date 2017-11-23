@@ -27,8 +27,9 @@ class LLVMConfig(object):
             # For tests that require Windows to run.
             features.add('system-windows')
 
+            lit_tools_dir = getattr(config, 'lit_tools_dir', None)
             # Seek sane tools in directories and set to $PATH.
-            path = self.lit_config.getToolsPath(config.lit_tools_dir,
+            path = self.lit_config.getToolsPath(lit_tools_dir,
                                                 config.environment['PATH'],
                                                 ['cmp.exe', 'grep.exe', 'sed.exe'])
             if path is not None:
@@ -45,14 +46,16 @@ class LLVMConfig(object):
             features.add('shell')
 
         # Running on Darwin OS
-        if platform.system() in ['Darwin']:
+        if platform.system() == 'Darwin':
             # FIXME: lld uses the first, other projects use the second.
             # We should standardize on the former.
             features.add('system-linker-mach-o')
             features.add('system-darwin')
-        elif platform.system() in ['Windows']:
+        elif platform.system() == 'Windows':
             # For tests that require Windows to run.
             features.add('system-windows')
+        elif platform.system() == "Linux":
+            features.add('system-linux')
 
         # Native compilation: host arch == default triple arch
         # Both of these values should probably be in every site config (e.g. as
@@ -411,8 +414,10 @@ class LLVMConfig(object):
             self.config.substitutions.append(
                 ('%target_itanium_abi_host_triple', ''))
 
-        self.config.substitutions.append(
-            ('%src_include_dir', self.config.clang_src_dir + '/include'))
+        clang_src_dir = getattr(self.config, 'clang_src_dir', None)
+        if clang_src_dir:
+            self.config.substitutions.append(
+                ('%src_include_dir', os.path.join(clang_src_dir, 'include')))
 
         # FIXME: Find nicer way to prohibit this.
         self.config.substitutions.append(

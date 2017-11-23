@@ -703,7 +703,7 @@ private:
       // Vector of PHIs contains PHIs for different instructions.
       // Sort the args according to their VNs, such that identical
       // instructions are together.
-      std::sort(CHIs.begin(), CHIs.end(), cmpVN);
+      std::stable_sort(CHIs.begin(), CHIs.end(), cmpVN);
       auto TI = BB->getTerminator();
       auto B = CHIs.begin();
       // [PreIt, PHIIt) form a range of CHIs which have identical VNs.
@@ -1110,7 +1110,8 @@ private:
         else if (auto *Call = dyn_cast<CallInst>(&I1)) {
           if (auto *Intr = dyn_cast<IntrinsicInst>(Call)) {
             if (isa<DbgInfoIntrinsic>(Intr) ||
-                Intr->getIntrinsicID() == Intrinsic::assume)
+                Intr->getIntrinsicID() == Intrinsic::assume ||
+                Intr->getIntrinsicID() == Intrinsic::sideeffect)
               continue;
           }
           if (Call->mayHaveSideEffects())
