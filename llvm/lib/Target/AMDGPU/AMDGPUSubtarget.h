@@ -130,6 +130,7 @@ protected:
   bool DebuggerEmitPrologue;
 
   // Used as options.
+  bool EnableHugePrivateBuffer;
   bool EnableVGPRSpilling;
   bool EnablePromoteAlloca;
   bool EnableLoadStoreOpt;
@@ -226,6 +227,10 @@ public:
 
   unsigned getWavefrontSize() const {
     return WavefrontSize;
+  }
+
+  unsigned getWavefrontSizeLog2() const {
+    return Log2_32(WavefrontSize);
   }
 
   int getLocalMemorySize() const {
@@ -345,6 +350,10 @@ public:
 
   TrapHandlerAbi getTrapHandlerAbi() const {
     return isAmdHsaOS() ? TrapHandlerAbiHsa : TrapHandlerAbiNone;
+  }
+
+  bool enableHugePrivateBuffer() const {
+    return EnableHugePrivateBuffer;
   }
 
   bool isPromoteAllocaEnabled() const {
@@ -797,8 +806,12 @@ public:
     return getGeneration() >= AMDGPUSubtarget::GFX9;
   }
 
-  bool hasReadM0Hazard() const {
+  bool hasReadM0MovRelInterpHazard() const {
     return getGeneration() >= AMDGPUSubtarget::GFX9;
+  }
+
+  bool hasReadM0SendMsgHazard() const {
+    return getGeneration() >= AMDGPUSubtarget::VOLCANIC_ISLANDS;
   }
 
   unsigned getKernArgSegmentSize(const MachineFunction &MF,

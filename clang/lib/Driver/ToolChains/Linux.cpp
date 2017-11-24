@@ -211,7 +211,12 @@ Linux::Linux(const Driver &D, const llvm::Triple &Triple, const ArgList &Args)
 
   Distro Distro(D.getVFS());
 
-  if (Distro.IsOpenSUSE() || Distro.IsUbuntu()) {
+  if (Distro.IsAlpineLinux()) {
+    ExtraOpts.push_back("-z");
+    ExtraOpts.push_back("now");
+  }
+
+  if (Distro.IsOpenSUSE() || Distro.IsUbuntu() || Distro.IsAlpineLinux()) {
     ExtraOpts.push_back("-z");
     ExtraOpts.push_back("relro");
   }
@@ -233,7 +238,7 @@ Linux::Linux(const Driver &D, const llvm::Triple &Triple, const ArgList &Args)
   // Android loader does not support .gnu.hash.
   // Hexagon linker/loader does not support .gnu.hash
   if (!IsMips && !IsAndroid && !IsHexagon) {
-    if (Distro.IsRedhat() || Distro.IsOpenSUSE() ||
+    if (Distro.IsRedhat() || Distro.IsOpenSUSE() || Distro.IsAlpineLinux() ||
         (Distro.IsUbuntu() && Distro >= Distro::UbuntuMaverick))
       ExtraOpts.push_back("--hash-style=gnu");
 
@@ -818,7 +823,7 @@ void Linux::AddIAMCUIncludeArgs(const ArgList &DriverArgs,
 
 bool Linux::isPIEDefault() const {
   return (getTriple().isAndroid() && !getTriple().isAndroidVersionLT(16)) ||
-         getSanitizerArgs().requiresPIE();
+          getTriple().isMusl() || getSanitizerArgs().requiresPIE();
 }
 
 SanitizerMask Linux::getSupportedSanitizers() const {

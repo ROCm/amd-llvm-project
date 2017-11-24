@@ -225,6 +225,10 @@ public:
   };
   CGCoroInfo CurCoro;
 
+  bool isCoroutine() const {
+    return CurCoro.Data != nullptr;
+  }
+
   /// CurGD - The GlobalDecl for the current function being compiled.
   GlobalDecl CurGD;
 
@@ -429,7 +433,7 @@ public:
   };
 
   /// i32s containing the indexes of the cleanup destinations.
-  llvm::Instruction *NormalCleanupDest;
+  llvm::AllocaInst *NormalCleanupDest; 
 
   unsigned NextCleanupDestIndex;
 
@@ -444,8 +448,8 @@ public:
   llvm::Value *ExceptionSlot;
 
   /// The selector slot.  Under the MandatoryCleanup model, all landing pads
-  /// write the current selector value into this instruction.
-  llvm::Instruction *EHSelectorSlot;
+  /// write the current selector value into this alloca.
+  llvm::AllocaInst *EHSelectorSlot;
 
   /// A stack of exception code slots. Entering an __except block pushes a slot
   /// on the stack and leaving pops one. The __exception_code() intrinsic loads
@@ -480,7 +484,7 @@ public:
 
     /// An i1 variable indicating whether or not the @finally is
     /// running for an exception.
-    llvm::Instruction *ForEHVar;
+    llvm::AllocaInst *ForEHVar;
 
     /// An i8* variable into which the exception pointer to rethrow
     /// has been saved.
@@ -1163,19 +1167,6 @@ private:
   };
   OpenMPCancelExitStack OMPCancelStack;
 
-  /// Controls insertion of cancellation exit blocks in worksharing constructs.
-  class OMPCancelStackRAII {
-    CodeGenFunction &CGF;
-
-  public:
-    OMPCancelStackRAII(CodeGenFunction &CGF, OpenMPDirectiveKind Kind,
-                       bool HasCancel)
-        : CGF(CGF) {
-      CGF.OMPCancelStack.enter(CGF, Kind, HasCancel);
-    }
-    ~OMPCancelStackRAII() { CGF.OMPCancelStack.exit(CGF); }
-  };
-
   CodeGenPGO PGO;
 
   /// Calculate branch weights appropriate for PGO data
@@ -1779,14 +1770,6 @@ public:
   /// ShouldXRayInstrument - Return true if the current function should be
   /// instrumented with XRay nop sleds.
   bool ShouldXRayInstrumentFunction() const;
-
-  /// EmitFunctionInstrumentation - Emit LLVM code to call the specified
-  /// instrumentation function with the current function and the call site, if
-  /// function instrumentation is enabled.
-  void EmitFunctionInstrumentation(const char *Fn);
-
-  /// EmitMCountInstrumentation - Emit call to .mcount.
-  void EmitMCountInstrumentation();
 
   /// Encode an address into a form suitable for use in a function prologue.
   llvm::Constant *EncodeAddrForUseInPrologue(llvm::Function *F,
@@ -2693,6 +2676,19 @@ public:
   void EmitCXXForRangeStmt(const CXXForRangeStmt &S,
                            ArrayRef<const Attr *> Attrs = None);
 
+  /// Controls insertion of cancellation exit blocks in worksharing constructs.
+  class OMPCancelStackRAII {
+    CodeGenFunction &CGF;
+
+  public:
+    OMPCancelStackRAII(CodeGenFunction &CGF, OpenMPDirectiveKind Kind,
+                       bool HasCancel)
+        : CGF(CGF) {
+      CGF.OMPCancelStack.enter(CGF, Kind, HasCancel);
+    }
+    ~OMPCancelStackRAII() { CGF.OMPCancelStack.exit(CGF); }
+  };
+
   /// Returns calculated size of the specified type.
   llvm::Value *getTypeSize(QualType Ty);
   LValue InitCapturedStruct(const CapturedStmt &S);
@@ -2910,6 +2906,10 @@ public:
   static void
   EmitOMPTargetTeamsDeviceFunction(CodeGenModule &CGM, StringRef ParentName,
                                    const OMPTargetTeamsDirective &S);
+  /// Emit device code for the target simd directive.
+  static void EmitOMPTargetSimdDeviceFunction(CodeGenModule &CGM,
+                                              StringRef ParentName,
+                                              const OMPTargetSimdDirective &S);
   /// \brief Emit inner loop of the worksharing/simd construct.
   ///
   /// \param S Directive, for which the inner loop must be emitted.
@@ -2941,6 +2941,12 @@ public:
                               const CodeGenLoopBoundsTy &CodeGenLoopBounds,
                               const CodeGenDispatchBoundsTy &CGDispatchBounds);
 
+  /// Helpers for the OpenMP loop directives.
+  void EmitOMPSimdInit(const OMPLoopDirective &D, bool IsMonotonic = false);
+  void EmitOMPSimdFinal(
+      const OMPLoopDirective &D,
+      const llvm::function_ref<llvm::Value *(CodeGenFunction &)> &CondGen);
+
   /// Emits the lvalue for the expression with possibly captured variable.
   LValue EmitOMPSharedLValue(const Expr *E);
 
@@ -2950,12 +2956,6 @@ private:
   /// need invoke function to be returned.
   llvm::Value *EmitBlockLiteral(const CGBlockInfo &Info,
                                 llvm::Function **InvokeF = nullptr);
-
-  /// Helpers for the OpenMP loop directives.
-  void EmitOMPSimdInit(const OMPLoopDirective &D, bool IsMonotonic = false);
-  void EmitOMPSimdFinal(
-      const OMPLoopDirective &D,
-      const llvm::function_ref<llvm::Value *(CodeGenFunction &)> &CondGen);
 
   void EmitOMPDistributeLoop(const OMPLoopDirective &S,
                              const CodeGenLoopTy &CodeGenLoop, Expr *IncExpr);
