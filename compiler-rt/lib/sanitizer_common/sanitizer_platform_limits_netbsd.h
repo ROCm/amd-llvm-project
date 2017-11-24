@@ -38,6 +38,7 @@ extern unsigned struct_rusage_sz;
 extern unsigned siginfo_t_sz;
 extern unsigned struct_itimerval_sz;
 extern unsigned pthread_t_sz;
+extern unsigned pthread_mutex_t_sz;
 extern unsigned pthread_cond_t_sz;
 extern unsigned pid_t_sz;
 extern unsigned timeval_sz;
@@ -226,10 +227,15 @@ struct __sanitizer_siginfo {
   u64 opaque[128 / sizeof(u64)];
 };
 
+using __sanitizer_sighandler_ptr = void (*)(int sig);
+using __sanitizer_sigactionhandler_ptr = void (*)(int sig,
+                                                  __sanitizer_siginfo *siginfo,
+                                                  void *uctx);
+
 struct __sanitizer_sigaction {
   union {
-    void (*handler)(int sig);
-    void (*sigaction)(int sig, __sanitizer_siginfo *siginfo, void *uctx);
+    __sanitizer_sighandler_ptr handler;
+    __sanitizer_sigactionhandler_ptr sigaction;
   };
   __sanitizer_sigset_t sa_mask;
   int sa_flags;
@@ -247,9 +253,10 @@ struct __sanitizer_kernel_sigaction_t {
   __sanitizer_kernel_sigset_t sa_mask;
 };
 
-extern uptr sig_ign;
-extern uptr sig_dfl;
-extern uptr sa_siginfo;
+extern const uptr sig_ign;
+extern const uptr sig_dfl;
+extern const uptr sig_err;
+extern const uptr sa_siginfo;
 
 extern int af_inet;
 extern int af_inet6;

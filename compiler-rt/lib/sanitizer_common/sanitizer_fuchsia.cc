@@ -266,6 +266,10 @@ void ReservedAddressRange::Unmap(uptr addr, uptr size) {
   CHECK((addr_as_void == base_) || (addr + size == base_as_uptr + size_));
   CHECK_LE(size, size_);
   UnmapOrDie(reinterpret_cast<void*>(addr), size);
+  if (addr_as_void == base_) {
+    base_ = reinterpret_cast<void*>(addr + size);
+  }
+  size_ = size_ - size;
 }
 
 // MmapNoAccess and MmapFixedOrDie are used only by sanitizer_allocator.
@@ -522,6 +526,10 @@ bool GetRandom(void *buffer, uptr length, bool blocking) {
   CHECK_EQ(_zx_cprng_draw(buffer, length, &size), ZX_OK);
   CHECK_EQ(size, length);
   return true;
+}
+
+u32 GetNumberOfCPUs() {
+  return zx_system_get_num_cpus();
 }
 
 }  // namespace __sanitizer

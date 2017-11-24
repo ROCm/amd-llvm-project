@@ -132,6 +132,9 @@ Please install Python or specify the PYTHON_EXECUTABLE CMake variable.")
     if(EXISTS ${LLVM_MAIN_SRC_DIR}/utils/lit/lit.py)
       # Note: path not really used, except for checking if lit was found
       set(LLVM_LIT ${LLVM_MAIN_SRC_DIR}/utils/lit/lit.py)
+      if(EXISTS ${LLVM_MAIN_SRC_DIR}/utils/llvm-lit)
+        add_subdirectory(${LLVM_MAIN_SRC_DIR}/utils/llvm-lit utils/llvm-lit)
+      endif()
       if(NOT LLVM_UTILS_PROVIDED)
         add_subdirectory(${LLVM_MAIN_SRC_DIR}/utils/FileCheck utils/FileCheck)
         add_subdirectory(${LLVM_MAIN_SRC_DIR}/utils/count utils/count)
@@ -231,6 +234,9 @@ if (NOT(CLANG_DEFAULT_RTLIB STREQUAL "" OR
   set(CLANG_DEFAULT_RTLIB "" CACHE STRING
     "Default runtime library to use (\"libgcc\" or \"compiler-rt\", empty for platform default)" FORCE)
 endif()
+
+set(CLANG_DEFAULT_OBJCOPY "objcopy" CACHE STRING
+  "Default objcopy executable to use.")
 
 set(CLANG_DEFAULT_OPENMP_RUNTIME "libomp" CACHE STRING
   "Default OpenMP runtime used by -fopenmp.")
@@ -534,8 +540,8 @@ if (CLANG_ENABLE_BOOTSTRAP)
     set(NEXT_CLANG_STAGE ${NEXT_CLANG_STAGE}-instrumented)
   endif()
   message(STATUS "Setting next clang stage to: ${NEXT_CLANG_STAGE}")
-  
-  
+
+
   set(STAMP_DIR ${CMAKE_CURRENT_BINARY_DIR}/${NEXT_CLANG_STAGE}-stamps/)
   set(BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/${NEXT_CLANG_STAGE}-bins/)
 

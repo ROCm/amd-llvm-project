@@ -131,11 +131,16 @@
 // || `[0x30000000, 0x35ffffff]` || LowShadow  ||
 // || `[0x00000000, 0x2fffffff]` || LowMem     ||
 
+#if defined(ASAN_SHADOW_SCALE)
+static const u64 kDefaultShadowScale = ASAN_SHADOW_SCALE;
+#else
 static const u64 kDefaultShadowScale = 3;
+#endif
 static const u64 kDefaultShadowSentinel = ~(uptr)0;
 static const u64 kDefaultShadowOffset32 = 1ULL << 29;  // 0x20000000
 static const u64 kDefaultShadowOffset64 = 1ULL << 44;
-static const u64 kDefaultShort64bitShadowOffset = 0x7FFF8000;  // < 2G.
+static const u64 kDefaultShort64bitShadowOffset =
+    0x7FFFFFFF & (~0xFFFULL << kDefaultShadowScale);  // < 2G.
 static const u64 kIosShadowOffset32 = 1ULL << 30;  // 0x40000000
 static const u64 kIosShadowOffset64 = 0x120200000;
 static const u64 kIosSimShadowOffset32 = 1ULL << 30;
