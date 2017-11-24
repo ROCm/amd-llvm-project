@@ -47,9 +47,8 @@ public:
 
   template <class ELFT> Symbol *addUndefined(StringRef Name);
   template <class ELFT>
-  Symbol *addUndefined(StringRef Name, bool IsLocal, uint8_t Binding,
-                       uint8_t StOther, uint8_t Type, bool CanOmitFromDynSym,
-                       InputFile *File);
+  Symbol *addUndefined(StringRef Name, uint8_t Binding, uint8_t StOther,
+                       uint8_t Type, bool CanOmitFromDynSym, InputFile *File);
   template <class ELFT>
   Symbol *addRegular(StringRef Name, uint8_t StOther, uint8_t Type,
                      uint64_t Value, uint64_t Size, uint8_t Binding,
@@ -127,8 +126,6 @@ private:
     Symbol *Sym;
     Symbol *Real;
     Symbol *Wrap;
-    uint8_t SymBinding;
-    uint8_t RealBinding;
   };
 
   // For -wrap.

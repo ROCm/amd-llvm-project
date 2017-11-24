@@ -275,8 +275,8 @@ InputSection *elf::createInterpSection() {
 
 Symbol *elf::addSyntheticLocal(StringRef Name, uint8_t Type, uint64_t Value,
                                uint64_t Size, InputSectionBase *Section) {
-  auto *S = make<Defined>(Name, /*IsLocal*/ true, STV_DEFAULT, Type, Value,
-                          Size, Section);
+  auto *S =
+      make<Defined>(Name, STB_LOCAL, STV_DEFAULT, Type, Value, Size, Section);
   if (InX::SymTab)
     InX::SymTab->addSymbol(S);
   return S;
@@ -1127,7 +1127,11 @@ template <class ELFT> void DynamicSection<ELFT>::finalizeContents() {
     add({DT_MIPS_FLAGS, RHF_NOTPOT});
     add({DT_MIPS_BASE_ADDRESS, Target->getImageBase()});
     add({DT_MIPS_SYMTABNO, InX::DynSymTab->getNumSymbols()});
-    add({DT_MIPS_LOCAL_GOTNO, InX::MipsGot->getLocalEntriesNum()});
+
+    // The number of local GOT entries has not yet been finalized. This value
+    // will be set in writeTo().
+    add({DT_MIPS_LOCAL_GOTNO, uint64_t(0)});
+
     if (const Symbol *B = InX::MipsGot->getFirstGlobalEntry())
       add({DT_MIPS_GOTSYM, B->DynsymIndex});
     else
@@ -1162,7 +1166,10 @@ template <class ELFT> void DynamicSection<ELFT>::writeTo(uint8_t *Buf) {
       P->d_un.d_ptr = E.Sym->getVA();
       break;
     case Entry::PlainInt:
-      P->d_un.d_val = E.Val;
+      if (Config->EMachine == EM_MIPS && E.Tag == DT_MIPS_LOCAL_GOTNO)
+        P->d_un.d_val = InX::MipsGot->getLocalEntriesNum();
+      else
+        P->d_un.d_val = E.Val;
       break;
     }
     ++P;
@@ -1621,7 +1628,16 @@ template <class ELFT> void SymbolTableSection<ELFT>::writeTo(uint8_t *Buf) {
       Symbol *Sym = Ent.Sym;
       if (Sym->isInPlt() && Sym->NeedsPltAddr)
         ESym->st_other |= STO_MIPS_PLT;
-
+      if (isMicroMips()) {
+        // Set STO_MIPS_MICROMIPS flag and less-significant bit for
+        // defined microMIPS symbols and shared symbols with PLT record.
+        if ((Sym->isDefined() && (Sym->StOther & STO_MIPS_MICROMIPS)) ||
+            (Sym->isShared() && Sym->NeedsPltAddr)) {
+          if (StrTabSec.isDynamic())
+            ESym->st_value |= 1;
+          ESym->st_other |= STO_MIPS_MICROMIPS;
+        }
+      }
       if (Config->Relocatable)
         if (auto *D = dyn_cast<Defined>(Sym))
           if (isMipsPIC<ELFT>(D))
@@ -2505,8 +2521,16 @@ void elf::mergeSections() {
     uint32_t Alignment = std::max<uint32_t>(MS->Alignment, MS->Entsize);
 
     auto I = llvm::find_if(MergeSections, [=](MergeSyntheticSection *Sec) {
+      // While we could create a single synthetic section for two different
+      // values of Entsize, it is better to take Entsize into consideration.
+      //
+      // With a single synthetic section no two pieces with different Entsize
+      // could be equal, so we may as well have two sections.
+      //
+      // Using Entsize in here also allows us to propagate it to the synthetic
+      // section.
       return Sec->Name == OutsecName && Sec->Flags == MS->Flags &&
-             Sec->Alignment == Alignment;
+             Sec->Entsize == MS->Entsize && Sec->Alignment == Alignment;
     });
     if (I == MergeSections.end()) {
       MergeSyntheticSection *Syn =
@@ -2514,6 +2538,7 @@ void elf::mergeSections() {
       MergeSections.push_back(Syn);
       I = std::prev(MergeSections.end());
       S = Syn;
+      Syn->Entsize = MS->Entsize;
     } else {
       S = nullptr;
     }
