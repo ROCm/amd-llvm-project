@@ -167,7 +167,7 @@ int bar(int n){
   // CHECK: br label {{%?}}[[TERMINATE:.+]]
   //
   // CHECK: [[TERMINATE]]
-  // CHECK: call void @__kmpc_kernel_deinit()
+  // CHECK: call void @__kmpc_kernel_deinit(
   // CHECK: call void @llvm.nvvm.barrier0()
   // CHECK: br label {{%?}}[[EXIT]]
   //
@@ -304,7 +304,7 @@ int bar(int n){
   // CHECK: br label {{%?}}[[TERMINATE:.+]]
   //
   // CHECK: [[TERMINATE]]
-  // CHECK: call void @__kmpc_kernel_deinit()
+  // CHECK: call void @__kmpc_kernel_deinit(
   // CHECK: call void @llvm.nvvm.barrier0()
   // CHECK: br label {{%?}}[[EXIT]]
   //
