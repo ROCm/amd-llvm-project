@@ -1,5 +1,4 @@
-// RUN: %clang -S -emit-llvm -o %t %s
-// RUN: FileCheck --input-file=%t %s
+// RUN: %clang_cc1 -triple x86_64-linux-unknown -emit-llvm %s -o - | FileCheck %s
 
 #pragma GCC visibility push(hidden)
 

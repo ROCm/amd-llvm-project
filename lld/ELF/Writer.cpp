@@ -12,13 +12,13 @@
 #include "Filesystem.h"
 #include "LinkerScript.h"
 #include "MapFile.h"
-#include "Memory.h"
 #include "OutputSections.h"
 #include "Relocations.h"
 #include "Strings.h"
 #include "SymbolTable.h"
 #include "SyntheticSections.h"
 #include "Target.h"
+#include "lld/Common/Memory.h"
 #include "lld/Common/Threads.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSwitch.h"
@@ -289,7 +289,14 @@ template <class ELFT> void Writer<ELFT>::createSyntheticSections() {
 
   InX::Bss = make<BssSection>(".bss", 0, 1);
   Add(InX::Bss);
-  InX::BssRelRo = make<BssSection>(".bss.rel.ro", 0, 1);
+
+  // If there is a SECTIONS command and a .data.rel.ro section name use name
+  // .data.rel.ro.bss so that we match in the .data.rel.ro output section.
+  // This makes sure our relro is contiguous.
+  bool HasDataRelRo =
+      Script->HasSectionsCommand && findSection(".data.rel.ro");
+  InX::BssRelRo = make<BssSection>(
+      HasDataRelRo ? ".data.rel.ro.bss" : ".bss.rel.ro", 0, 1);
   Add(InX::BssRelRo);
 
   // Add MIPS-specific sections.
@@ -441,8 +448,9 @@ static bool includeInSymtab(const Symbol &B) {
     if (auto *S = dyn_cast<MergeInputSection>(Sec))
       if (!S->getSectionPiece(D->Value)->Live)
         return false;
+    return true;
   }
-  return true;
+  return B.Used;
 }
 
 // Local symbols are not in the linker's symbol table. This function scans
@@ -1452,6 +1460,22 @@ static uint64_t computeFlags(uint64_t Flags) {
   return Flags;
 }
 
+// Prior to finalizeContents() an OutputSection containing SyntheticSections
+// may have 0 Size, but contain SyntheticSections that haven't had their size
+// calculated yet. We must use SyntheticSection->empty() for these sections.
+static bool isOutputSectionZeroSize(const OutputSection* Sec) {
+  if (Sec->Size > 0)
+    return false;
+  for (BaseCommand *BC : Sec->SectionCommands) {
+    if (auto *ISD = dyn_cast<InputSectionDescription>(BC))
+      for (InputSection *IS : ISD->Sections)
+        if (SyntheticSection *SS = dyn_cast<SyntheticSection>(IS))
+          if (!SS->empty())
+            return false;
+    }
+  return true;
+}
+
 // Decide which program headers to create and which sections to include in each
 // one.
 template <class ELFT> std::vector<PhdrEntry *> Writer<ELFT>::createPhdrs() {
@@ -1511,10 +1535,26 @@ template <class ELFT> std::vector<PhdrEntry *> Writer<ELFT>::createPhdrs() {
 
   // PT_GNU_RELRO includes all sections that should be marked as
   // read-only by dynamic linker after proccessing relocations.
+  // Current dynamic loaders only support one PT_GNU_RELRO PHDR, give
+  // an error message if more than one PT_GNU_RELRO PHDR is required.
   PhdrEntry *RelRo = make<PhdrEntry>(PT_GNU_RELRO, PF_R);
-  for (OutputSection *Sec : OutputSections)
-    if (needsPtLoad(Sec) && isRelroSection(Sec))
-      RelRo->add(Sec);
+  bool InRelroPhdr = false;
+  bool IsRelroFinished = false;
+  for (OutputSection *Sec : OutputSections) {
+    if (!needsPtLoad(Sec) || isOutputSectionZeroSize(Sec))
+      continue;
+    if (isRelroSection(Sec)) {
+      InRelroPhdr = true;
+      if (!IsRelroFinished)
+        RelRo->add(Sec);
+      else
+        error("section: " + Sec->Name + " is not contiguous with other relro" +
+              " sections");
+    } else if (InRelroPhdr) {
+      InRelroPhdr = false;
+      IsRelroFinished = true;
+    }
+  }
   if (RelRo->FirstSec)
     Ret.push_back(RelRo);
 
