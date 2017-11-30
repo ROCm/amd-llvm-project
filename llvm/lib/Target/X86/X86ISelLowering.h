@@ -18,7 +18,6 @@
 #include "llvm/CodeGen/CallingConvLower.h"
 #include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/CodeGen/TargetLowering.h"
-#include "llvm/Support/MathExtras.h"
 #include "llvm/Target/TargetOptions.h"
 
 namespace llvm {
@@ -336,6 +335,9 @@ namespace llvm {
       // Vector integer comparisons, the result is in a mask vector.
       PCMPEQM, PCMPGTM,
 
+      // v8i16 Horizontal minimum and position.
+      PHMINPOS,
+
       MULTISHIFT,
 
       /// Vector comparison generating mask bits for fp and
@@ -503,6 +505,9 @@ namespace llvm {
       FMADDSUB_RND,
       FMSUBADD_RND,
 
+      // FMA4 specific scalar intrinsics bits that zero the non-scalar bits.
+      FMADD4S, FNMADD4S, FMSUB4S, FNMSUB4S,
+
       // Scalar intrinsic FMA.
       FMADDS1, FMADDS3,
       FNMADDS1, FNMADDS3,
@@ -519,6 +524,9 @@ namespace llvm {
       // Compress and expand.
       COMPRESS,
       EXPAND,
+
+      // Bits shuffle
+      VPSHUFBITQMB,
 
       // Convert Unsigned/Integer to Floating-Point Value with rounding mode.
       SINT_TO_FP_RND, UINT_TO_FP_RND,
@@ -578,6 +586,9 @@ namespace llvm {
 
       // Conversions between float and half-float.
       CVTPS2PH, CVTPH2PS, CVTPH2PS_RND,
+
+      // Galois Field Arithmetic Instructions
+      GF2P8AFFINEINVQB, GF2P8AFFINEQB, GF2P8MULB,
 
       // LWP insert record.
       LWPINS,
@@ -676,14 +687,8 @@ namespace llvm {
     void markLibCallAttributes(MachineFunction *MF, unsigned CC,
                                ArgListTy &Args) const override;
 
-    // For i512, DAGTypeLegalizer::SplitInteger needs a shift amount 256,
-    // which cannot be held by i8, therefore use i16 instead. In all the
-    // other situations i8 is sufficient.
     MVT getScalarShiftAmountTy(const DataLayout &, EVT VT) const override {
-      MVT T = VT.getSizeInBits() >= 512 ? MVT::i16 : MVT::i8;
-      assert((VT.getSizeInBits() + 1) / 2 < (1U << T.getSizeInBits()) &&
-             "Scalar shift amount type too small");
-      return T;
+      return MVT::i8;
     }
 
     const MCExpr *

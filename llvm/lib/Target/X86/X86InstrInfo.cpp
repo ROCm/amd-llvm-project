@@ -7475,6 +7475,7 @@ bool X86InstrInfo::optimizeCompareInstr(MachineInstr &CmpInstr, unsigned SrcReg,
       }
       if (OldCC == X86::COND_INVALID) return false;
     }
+    X86::CondCode ReplacementCC = X86::COND_INVALID;
     if (IsCmpZero) {
       switch (OldCC) {
       default: break;
@@ -7494,31 +7495,32 @@ bool X86InstrInfo::optimizeCompareInstr(MachineInstr &CmpInstr, unsigned SrcReg,
         default:
           return false;
         case X86::COND_E:
+          ReplacementCC = NewCC;
           break;
         case X86::COND_NE:
-          NewCC = GetOppositeBranchCondition(NewCC);
+          ReplacementCC = GetOppositeBranchCondition(NewCC);
           break;
         }
     } else if (IsSwapped) {
       // If we have SUB(r1, r2) and CMP(r2, r1), the condition code needs
       // to be changed from r2 > r1 to r1 < r2, from r2 < r1 to r1 > r2, etc.
       // We swap the condition code and synthesize the new opcode.
-      NewCC = getSwappedCondition(OldCC);
-      if (NewCC == X86::COND_INVALID) return false;
+      ReplacementCC = getSwappedCondition(OldCC);
+      if (ReplacementCC == X86::COND_INVALID) return false;
     }
 
-    if ((ShouldUpdateCC || IsSwapped) && NewCC != OldCC) {
+    if ((ShouldUpdateCC || IsSwapped) && ReplacementCC != OldCC) {
       // Synthesize the new opcode.
       bool HasMemoryOperand = Instr.hasOneMemOperand();
       unsigned NewOpc;
       if (Instr.isBranch())
-        NewOpc = GetCondBranchFromCond(NewCC);
+        NewOpc = GetCondBranchFromCond(ReplacementCC);
       else if(OpcIsSET)
-        NewOpc = getSETFromCond(NewCC, HasMemoryOperand);
+        NewOpc = getSETFromCond(ReplacementCC, HasMemoryOperand);
       else {
         unsigned DstReg = Instr.getOperand(0).getReg();
         const TargetRegisterClass *DstRC = MRI->getRegClass(DstReg);
-        NewOpc = getCMovFromCond(NewCC, TRI->getRegSizeInBits(*DstRC)/8,
+        NewOpc = getCMovFromCond(ReplacementCC, TRI->getRegSizeInBits(*DstRC)/8,
                                  HasMemoryOperand);
       }
 
@@ -10877,7 +10879,7 @@ X86InstrInfo::getOutliningType(MachineInstr &MI) const {
   // FIXME: There are instructions which are being manually built without
   // explicit uses/defs so we also have to check the MCInstrDesc. We should be
   // able to remove the extra checks once those are fixed up. For example,
-  // sometimes we might get something like %RAX<def> = POP64r 1. This won't be
+  // sometimes we might get something like %rax<def> = POP64r 1. This won't be
   // caught by modifiesRegister or readsRegister even though the instruction
   // really ought to be formed so that modifiesRegister/readsRegister would
   // catch it.
