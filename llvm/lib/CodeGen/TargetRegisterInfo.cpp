@@ -93,12 +93,15 @@ Printable printReg(unsigned Reg, const TargetRegisterInfo *TRI,
     else if (TargetRegisterInfo::isStackSlot(Reg))
       OS << "SS#" << TargetRegisterInfo::stackSlot2Index(Reg);
     else if (TargetRegisterInfo::isVirtualRegister(Reg))
-      OS << "%vreg" << TargetRegisterInfo::virtReg2Index(Reg);
-    else if (TRI && Reg < TRI->getNumRegs()) {
+      OS << '%' << TargetRegisterInfo::virtReg2Index(Reg);
+    else if (!TRI)
+      OS << '%' << "physreg" << Reg;
+    else if (Reg < TRI->getNumRegs()) {
       OS << '%';
       printLowerCase(TRI->getName(Reg), OS);
     } else
-      OS << "%physreg" << Reg;
+      llvm_unreachable("Register kind is unsupported.");
+
     if (SubIdx) {
       if (TRI)
         OS << ':' << TRI->getSubRegIndexName(SubIdx);
@@ -134,7 +137,7 @@ Printable printRegUnit(unsigned Unit, const TargetRegisterInfo *TRI) {
 Printable printVRegOrUnit(unsigned Unit, const TargetRegisterInfo *TRI) {
   return Printable([Unit, TRI](raw_ostream &OS) {
     if (TRI && TRI->isVirtualRegister(Unit)) {
-      OS << "%vreg" << TargetRegisterInfo::virtReg2Index(Unit);
+      OS << '%' << TargetRegisterInfo::virtReg2Index(Unit);
     } else {
       OS << printRegUnit(Unit, TRI);
     }
@@ -370,31 +373,36 @@ TargetRegisterInfo::getRegAllocationHints(unsigned VirtReg,
                                           const VirtRegMap *VRM,
                                           const LiveRegMatrix *Matrix) const {
   const MachineRegisterInfo &MRI = MF.getRegInfo();
-  std::pair<unsigned, unsigned> Hint = MRI.getRegAllocationHint(VirtReg);
+  const std::pair<unsigned, SmallVector<unsigned, 4>> &Hints_MRI =
+    MRI.getRegAllocationHints(VirtReg);
 
-  // Hints with HintType != 0 were set by target-dependent code.
-  // Such targets must provide their own implementation of
-  // TRI::getRegAllocationHints to interpret those hint types.
-  assert(Hint.first == 0 && "Target must implement TRI::getRegAllocationHints");
+  // First hint may be a target hint.
+  bool Skip = (Hints_MRI.first != 0);
+  for (auto Reg : Hints_MRI.second) {
+    if (Skip) {
+      Skip = false;
+      continue;
+    }
 
-  // Target-independent hints are either a physical or a virtual register.
-  unsigned Phys = Hint.second;
-  if (VRM && isVirtualRegister(Phys))
-    Phys = VRM->getPhys(Phys);
+    // Target-independent hints are either a physical or a virtual register.
+    unsigned Phys = Reg;
+    if (VRM && isVirtualRegister(Phys))
+      Phys = VRM->getPhys(Phys);
 
-  // Check that Phys is a valid hint in VirtReg's register class.
-  if (!isPhysicalRegister(Phys))
-    return false;
-  if (MRI.isReserved(Phys))
-    return false;
-  // Check that Phys is in the allocation order. We shouldn't heed hints
-  // from VirtReg's register class if they aren't in the allocation order. The
-  // target probably has a reason for removing the register.
-  if (!is_contained(Order, Phys))
-    return false;
+    // Check that Phys is a valid hint in VirtReg's register class.
+    if (!isPhysicalRegister(Phys))
+      continue;
+    if (MRI.isReserved(Phys))
+      continue;
+    // Check that Phys is in the allocation order. We shouldn't heed hints
+    // from VirtReg's register class if they aren't in the allocation order. The
+    // target probably has a reason for removing the register.
+    if (!is_contained(Order, Phys))
+      continue;
 
-  // All clear, tell the register allocator to prefer this register.
-  Hints.push_back(Phys);
+    // All clear, tell the register allocator to prefer this register.
+    Hints.push_back(Phys);
+  }
   return false;
 }
 

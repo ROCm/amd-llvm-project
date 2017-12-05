@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Writer.h"
+#include "AArch64ErrataFix.h"
 #include "Config.h"
 #include "Filesystem.h"
 #include "LinkerScript.h"
@@ -87,38 +88,42 @@ private:
 };
 } // anonymous namespace
 
-StringRef elf::getOutputSectionName(StringRef Name) {
+StringRef elf::getOutputSectionName(InputSectionBase *S) {
   // ".zdebug_" is a prefix for ZLIB-compressed sections.
   // Because we decompressed input sections, we want to remove 'z'.
-  if (Name.startswith(".zdebug_"))
-    return Saver.save("." + Name.substr(2));
+  if (S->Name.startswith(".zdebug_"))
+    return Saver.save("." + S->Name.substr(2));
 
   if (Config->Relocatable)
-    return Name;
+    return S->Name;
 
-  // This is for --emit-relocs. If .text.foo is emitted as .text, we want to
-  // emit .rela.text.foo as .rel.text for consistency (this is not technically
-  // required, but not doing it is odd). This code guarantees that.
-  if (Name.startswith(".rel."))
-    return Saver.save(".rel" + getOutputSectionName(Name.substr(4)));
-  if (Name.startswith(".rela."))
-    return Saver.save(".rela" + getOutputSectionName(Name.substr(5)));
+  // This is for --emit-relocs. If .text.foo is emitted as .text.bar, we want
+  // to emit .rela.text.foo as .rela.text.bar for consistency (this is not
+  // technically required, but not doing it is odd). This code guarantees that.
+  if ((S->Type == SHT_REL || S->Type == SHT_RELA) &&
+      !isa<SyntheticSection>(S)) {
+    OutputSection *Out =
+        cast<InputSection>(S)->getRelocatedSection()->getOutputSection();
+    if (S->Type == SHT_RELA)
+      return Saver.save(".rela" + Out->Name);
+    return Saver.save(".rel" + Out->Name);
+  }
 
   for (StringRef V :
        {".text.", ".rodata.", ".data.rel.ro.", ".data.", ".bss.rel.ro.",
         ".bss.", ".init_array.", ".fini_array.", ".ctors.", ".dtors.", ".tbss.",
         ".gcc_except_table.", ".tdata.", ".ARM.exidx.", ".ARM.extab."}) {
     StringRef Prefix = V.drop_back();
-    if (Name.startswith(V) || Name == Prefix)
+    if (S->Name.startswith(V) || S->Name == Prefix)
       return Prefix;
   }
 
   // CommonSection is identified as "COMMON" in linker scripts.
   // By default, it should go to .bss section.
-  if (Name == "COMMON")
+  if (S->Name == "COMMON")
     return ".bss";
 
-  return Name;
+  return S->Name;
 }
 
 static bool needsInterpSection() {
@@ -508,8 +513,9 @@ template <class ELFT> void Writer<ELFT>::addSectionSymbols() {
     if (isa<SyntheticSection>(IS) && !(IS->Flags & SHF_MERGE))
       continue;
 
-    auto *Sym = make<Defined>("", STB_LOCAL, /*StOther=*/0, STT_SECTION,
-                              /*Value=*/0, /*Size=*/0, IS);
+    auto *Sym =
+        make<Defined>(IS->File, "", STB_LOCAL, /*StOther=*/0, STT_SECTION,
+                      /*Value=*/0, /*Size=*/0, IS);
     InX::SymTab->addSymbol(Sym);
   }
 }
@@ -571,20 +577,14 @@ static bool isRelroSection(const OutputSection *Sec) {
   if (Sec == InX::Dynamic->getParent())
     return true;
 
-  // .bss.rel.ro is used for copy relocations for read-only symbols.
-  // Since the dynamic linker needs to process copy relocations, the
-  // section cannot be read-only, but once initialized, they shouldn't
-  // change.
-  if (Sec == InX::BssRelRo->getParent())
-    return true;
-
   // Sections with some special names are put into RELRO. This is a
   // bit unfortunate because section names shouldn't be significant in
   // ELF in spirit. But in reality many linker features depend on
   // magic section names.
   StringRef S = Sec->Name;
-  return S == ".data.rel.ro" || S == ".ctors" || S == ".dtors" || S == ".jcr" ||
-         S == ".eh_frame" || S == ".openbsd.randomdata";
+  return S == ".data.rel.ro" || S == ".bss.rel.ro" || S == ".ctors" ||
+         S == ".dtors" || S == ".jcr" || S == ".eh_frame" ||
+         S == ".openbsd.randomdata";
 }
 
 // We compute a rank for each section. The rank indicates where the
@@ -1350,9 +1350,11 @@ template <class ELFT> void Writer<ELFT>::finalizeSections() {
   if (!Script->HasSectionsCommand && !Config->Relocatable)
     fixSectionAlignments();
 
-  // Some architectures use small displacements for jump instructions.
-  // It is linker's responsibility to create thunks containing long
-  // jump instructions if jump targets are too far. Create thunks.
+  // Some architectures need to generate content that depends on the address
+  // of InputSections. For example some architectures use small displacements
+  // for jump instructions that is is the linker's responsibility for creating
+  // range extension thunks for. As the generation of the content may also
+  // alter InputSection addresses we must converge to a fixed point.
   if (Target->NeedsThunks || Config->AndroidPackDynRelocs) {
     ThunkCreator TC;
     bool Changed;
@@ -1361,6 +1363,11 @@ template <class ELFT> void Writer<ELFT>::finalizeSections() {
       Changed = false;
       if (Target->NeedsThunks)
         Changed |= TC.createThunks(OutputSections);
+      if (Config->FixCortexA53Errata843419) {
+        if (Changed)
+          Script->assignAddresses();
+        reportA53Errata843419Fixes();
+      }
       if (InX::MipsGot)
         InX::MipsGot->updateAllocSize();
       Changed |= In<ELFT>::RelaDyn->updateAllocSize();
@@ -1460,22 +1467,6 @@ static uint64_t computeFlags(uint64_t Flags) {
   return Flags;
 }
 
-// Prior to finalizeContents() an OutputSection containing SyntheticSections
-// may have 0 Size, but contain SyntheticSections that haven't had their size
-// calculated yet. We must use SyntheticSection->empty() for these sections.
-static bool isOutputSectionZeroSize(const OutputSection* Sec) {
-  if (Sec->Size > 0)
-    return false;
-  for (BaseCommand *BC : Sec->SectionCommands) {
-    if (auto *ISD = dyn_cast<InputSectionDescription>(BC))
-      for (InputSection *IS : ISD->Sections)
-        if (SyntheticSection *SS = dyn_cast<SyntheticSection>(IS))
-          if (!SS->empty())
-            return false;
-    }
-  return true;
-}
-
 // Decide which program headers to create and which sections to include in each
 // one.
 template <class ELFT> std::vector<PhdrEntry *> Writer<ELFT>::createPhdrs() {
@@ -1541,7 +1532,7 @@ template <class ELFT> std::vector<PhdrEntry *> Writer<ELFT>::createPhdrs() {
   bool InRelroPhdr = false;
   bool IsRelroFinished = false;
   for (OutputSection *Sec : OutputSections) {
-    if (!needsPtLoad(Sec) || isOutputSectionZeroSize(Sec))
+    if (!needsPtLoad(Sec))
       continue;
     if (isRelroSection(Sec)) {
       InRelroPhdr = true;
@@ -1755,7 +1746,7 @@ template <class ELFT> void Writer<ELFT>::setPhdrs() {
 //
 // 1. the '-e' entry command-line option;
 // 2. the ENTRY(symbol) command in a linker control script;
-// 3. the value of the symbol start, if present;
+// 3. the value of the symbol _start, if present;
 // 4. the number represented by the entry symbol, if it is a number;
 // 5. the address of the first byte of the .text section, if present;
 // 6. the address 0.

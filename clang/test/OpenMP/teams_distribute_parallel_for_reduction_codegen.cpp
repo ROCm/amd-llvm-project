@@ -34,7 +34,7 @@ int main() {
   // LAMBDA: call void [[OUTER_LAMBDA:@.+]](
   [&]() {
     // LAMBDA: define{{.*}} internal{{.*}} void [[OUTER_LAMBDA]](
-    // LAMBDA: call i32 @__tgt_target(i64 -1, i8* @{{[^,]+}}, i32 1, i8** %{{[^,]+}}, i8** %{{[^,]+}}, i{{64|32}}* {{.+}}@{{[^,]+}}, i32 0, i32 0), i64* {{.+}}@{{[^,]+}}, i32 0, i32 0))
+    // LAMBDA: call i32 @__tgt_target_teams(i64 -1, i8* @{{[^,]+}}, i32 1, i8** %{{[^,]+}}, i8** %{{[^,]+}}, i{{64|32}}* {{.+}}@{{[^,]+}}, i32 0, i32 0), i64* {{.+}}@{{[^,]+}}, i32 0, i32 0), i32 0, i32 0)
     // LAMBDA: call void @[[LOFFL1:.+]](
     // LAMBDA:  ret
 #pragma omp target
@@ -91,6 +91,7 @@ int main() {
     // LAMBDA: alloca i{{[0-9]+}},
     // LAMBDA: [[SIVAR_ADDR:%.+]] = alloca i{{.+}}*,
     // skip loop vars
+    // LAMBDA: alloca i32,
     // LAMBDA: alloca i32,
     // LAMBDA: alloca i32,
     // LAMBDA: alloca i32,
@@ -158,7 +159,7 @@ int main() {
 // CHECK: [[RED_VAR:@.+]] = common global [8 x {{.+}}] zeroinitializer
 
 // CHECK: define {{.*}}i{{[0-9]+}} @main()
-// CHECK: call i32 @__tgt_target(i64 -1, i8* @{{[^,]+}}, i32 1, i8** %{{[^,]+}}, i8** %{{[^,]+}}, i{{64|32}}* {{.+}}@{{[^,]+}}, i32 0, i32 0), i64* {{.+}}@{{[^,]+}}, i32 0, i32 0))
+// CHECK: call i32 @__tgt_target_teams(i64 -1, i8* @{{[^,]+}}, i32 1, i8** %{{[^,]+}}, i8** %{{[^,]+}}, i{{64|32}}* {{.+}}@{{[^,]+}}, i32 0, i32 0), i64* {{.+}}@{{[^,]+}}, i32 0, i32 0), i32 0, i32 0)
 // CHECK: call void @[[OFFL1:.+]](i{{64|32}} %{{.+}})
 // CHECK: {{%.+}} = call{{.*}} i32 @[[TMAIN_INT:.+]]()
 // CHECK:  ret
@@ -219,6 +220,7 @@ int main() {
 // CHECK: alloca i32,
 // CHECK: alloca i32,
 // CHECK: alloca i32,
+// CHECK: alloca i32,
 // CHECK: [[SIVAR_PRIV:%.+]] = alloca i{{.+}},
 // CHECK: [[RED_LIST:%.+]] = alloca [1 x {{.+}}],
 // CHECK: store{{.+}} [[SIVAR_ARG]], {{.+}} [[SIVAR_ADDR]],
@@ -250,7 +252,7 @@ int main() {
 // CHECK: br
 
 // CHECK: define{{.*}} i{{[0-9]+}} @[[TMAIN_INT]]()
-// CHECK: call i32 @__tgt_target(i64 -1, i8* @{{[^,]+}}, i32 1,
+// CHECK: call i32 @__tgt_target_teams(i64 -1, i8* @{{[^,]+}}, i32 1,
 // CHECK: call void @[[TOFFL1:.+]]({{.+}})
 // CHECK:  ret
 
@@ -305,6 +307,7 @@ int main() {
 // CHECK: alloca i{{[0-9]+}},
 // CHECK: [[TVAR_ADDR:%.+]] = alloca i{{.+}}*,
 // skip loop vars
+// CHECK: alloca i32,
 // CHECK: alloca i32,
 // CHECK: alloca i32,
 // CHECK: alloca i32,

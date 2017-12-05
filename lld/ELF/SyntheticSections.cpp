@@ -275,8 +275,8 @@ InputSection *elf::createInterpSection() {
 
 Symbol *elf::addSyntheticLocal(StringRef Name, uint8_t Type, uint64_t Value,
                                uint64_t Size, InputSectionBase *Section) {
-  auto *S =
-      make<Defined>(Name, STB_LOCAL, STV_DEFAULT, Type, Value, Size, Section);
+  auto *S = make<Defined>(Section->File, Name, STB_LOCAL, STV_DEFAULT, Type,
+                          Value, Size, Section);
   if (InX::SymTab)
     InX::SymTab->addSymbol(S);
   return S;
@@ -1745,7 +1745,7 @@ void GnuHashTableSection::writeHashTable(uint8_t *Buf) {
   // Group symbols by hash value.
   std::vector<std::vector<Entry>> Syms(NBuckets);
   for (const Entry &Ent : Symbols)
-    Syms[Ent.Hash % NBuckets].push_back(Ent);
+    Syms[Ent.BucketIdx].push_back(Ent);
 
   // Write hash buckets. Hash buckets contain indices in the following
   // hash value table.
@@ -1775,22 +1775,6 @@ static uint32_t hashGnu(StringRef Name) {
   return H;
 }
 
-// Returns a number of hash buckets to accomodate given number of elements.
-// We want to choose a moderate number that is not too small (which
-// causes too many hash collisions) and not too large (which wastes
-// disk space.)
-//
-// We return a prime number because it (is believed to) achieve good
-// hash distribution.
-static size_t getBucketSize(size_t NumSymbols) {
-  // List of largest prime numbers that are not greater than 2^n + 1.
-  for (size_t N : {131071, 65521, 32749, 16381, 8191, 4093, 2039, 1021, 509,
-                   251, 127, 61, 31, 13, 7, 3, 1})
-    if (N <= NumSymbols)
-      return N;
-  return 0;
-}
-
 // Add symbols to this symbol hash table. Note that this function
 // destructively sort a given vector -- which is needed because
 // GNU-style hash table places some sorting requirements.
@@ -1808,16 +1792,22 @@ void GnuHashTableSection::addSymbols(std::vector<SymbolTableEntry> &V) {
   if (Mid == V.end())
     return;
 
+  // We chose load factor 4 for the on-disk hash table. For each hash
+  // collision, the dynamic linker will compare a uint32_t hash value.
+  // Since the integer comparison is quite fast, we believe we can make
+  // the load factor even larger. 4 is just a conservative choice.
+  NBuckets = std::max<size_t>((V.end() - Mid) / 4, 1);
+
   for (SymbolTableEntry &Ent : llvm::make_range(Mid, V.end())) {
     Symbol *B = Ent.Sym;
-    Symbols.push_back({B, Ent.StrTabOffset, hashGnu(B->getName())});
+    uint32_t Hash = hashGnu(B->getName());
+    uint32_t BucketIdx = Hash % NBuckets;
+    Symbols.push_back({B, Ent.StrTabOffset, Hash, BucketIdx});
   }
 
-  NBuckets = getBucketSize(Symbols.size());
-  std::stable_sort(Symbols.begin(), Symbols.end(),
-                   [&](const Entry &L, const Entry &R) {
-                     return L.Hash % NBuckets < R.Hash % NBuckets;
-                   });
+  std::stable_sort(
+      Symbols.begin(), Symbols.end(),
+      [](const Entry &L, const Entry &R) { return L.BucketIdx < R.BucketIdx; });
 
   V.erase(Mid, V.end());
   for (const Entry &Ent : Symbols)
@@ -2528,7 +2518,7 @@ void elf::mergeSections() {
     if (!MS->Live)
       continue;
 
-    StringRef OutsecName = getOutputSectionName(MS->Name);
+    StringRef OutsecName = getOutputSectionName(MS);
     uint32_t Alignment = std::max<uint32_t>(MS->Alignment, MS->Entsize);
 
     auto I = llvm::find_if(MergeSections, [=](MergeSyntheticSection *Sec) {
