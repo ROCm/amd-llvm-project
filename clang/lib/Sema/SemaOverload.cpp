@@ -8692,6 +8692,9 @@ void Sema::AddBuiltinOperatorCandidates(OverloadedOperatorKind Op,
     OpBuilder.addGenericBinaryArithmeticOverloads();
     break;
 
+  case OO_Spaceship:
+    llvm_unreachable("<=> expressions not supported yet");
+
   case OO_Percent:
   case OO_Caret:
   case OO_Pipe:
@@ -10696,7 +10699,7 @@ static bool completeFunctionType(Sema &S, FunctionDecl *FD, SourceLocation Loc,
     return true;
 
   auto *FPT = FD->getType()->castAs<FunctionProtoType>();
-  if (S.getLangOpts().CPlusPlus1z &&
+  if (S.getLangOpts().CPlusPlus17 &&
       isUnresolvedExceptionSpec(FPT->getExceptionSpecType()) &&
       !S.ResolveExceptionSpec(Loc, FPT))
     return true;

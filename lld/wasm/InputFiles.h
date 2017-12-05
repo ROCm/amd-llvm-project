@@ -21,10 +21,10 @@
 
 #include <vector>
 
+using llvm::object::Archive;
 using llvm::object::WasmObjectFile;
 using llvm::object::WasmSection;
 using llvm::object::WasmSymbol;
-using llvm::object::Archive;
 using llvm::wasm::WasmImport;
 
 namespace lld {
@@ -143,7 +143,7 @@ llvm::Optional<MemoryBufferRef> readFile(StringRef Path);
 
 } // namespace wasm
 
-std::string toString(wasm::InputFile *File);
+std::string toString(const wasm::InputFile *File);
 
 } // namespace lld
 
