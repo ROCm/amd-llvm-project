@@ -1473,7 +1473,7 @@ public:
   /// \brief C++11 deduction pattern for 'auto &&' type.
   QualType getAutoRRefDeductType() const;
 
-  /// \brief C++1z deduced class template specialization type.
+  /// \brief C++17 deduced class template specialization type.
   QualType getDeducedTemplateSpecializationType(TemplateName Template,
                                                 QualType DeducedType,
                                                 bool IsDependent) const;
@@ -2148,6 +2148,10 @@ public:
   unsigned CountNonClassIvars(const ObjCInterfaceDecl *OI) const;
   void CollectInheritedProtocols(const Decl *CDecl,
                           llvm::SmallPtrSet<ObjCProtocolDecl*, 8> &Protocols);
+
+  /// \brief Return true if the specified type has unique object representations
+  /// according to (C++17 [meta.unary.prop]p9)
+  bool hasUniqueObjectRepresentations(QualType Ty) const;
 
   //===--------------------------------------------------------------------===//
   //                            Type Operators

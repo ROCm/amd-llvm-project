@@ -102,8 +102,8 @@ Context::Context()
   , thread_registry(new(thread_registry_placeholder) ThreadRegistry(
       CreateThreadContext, kMaxTid, kThreadQuarantineSize, kMaxTidReuse))
   , racy_mtx(MutexTypeRacy, StatMtxRacy)
-  , racy_stacks(MBlockRacyStacks)
-  , racy_addresses(MBlockRacyAddresses)
+  , racy_stacks()
+  , racy_addresses()
   , fired_suppressions_mtx(MutexTypeFired, StatMtxFired)
   , fired_suppressions(8)
   , clock_alloc("clock allocator") {
@@ -121,7 +121,7 @@ ThreadState::ThreadState(Context *ctx, int tid, int unique_id, u64 epoch,
   // , ignore_interceptors()
   , clock(tid, reuse_count)
 #if !SANITIZER_GO
-  , jmp_bufs(MBlockJmpBuf)
+  , jmp_bufs()
 #endif
   , tid(tid)
   , unique_id(unique_id)
@@ -384,13 +384,6 @@ void Initialize(ThreadState *thr) {
 #if !SANITIZER_GO
   InitializeLibIgnore();
   Symbolizer::GetOrInit()->AddHooks(EnterSymbolizer, ExitSymbolizer);
-  // On MIPS, TSan initialization is run before
-  // __pthread_initialize_minimal_internal() is finished, so we can not spawn
-  // new threads.
-#ifndef __mips__
-  StartBackgroundThread();
-  SetSandboxingCallback(StopBackgroundThread);
-#endif
 #endif
 
   VPrintf(1, "***** Running under ThreadSanitizer v2 (pid %d) *****\n",
@@ -418,6 +411,21 @@ void Initialize(ThreadState *thr) {
 
   OnInitialize();
 }
+
+void MaybeSpawnBackgroundThread() {
+  // On MIPS, TSan initialization is run before
+  // __pthread_initialize_minimal_internal() is finished, so we can not spawn
+  // new threads.
+#if !SANITIZER_GO && !defined(__mips__)
+  static atomic_uint32_t bg_thread = {};
+  if (atomic_load(&bg_thread, memory_order_relaxed) == 0 &&
+      atomic_exchange(&bg_thread, 1, memory_order_relaxed) == 0) {
+    StartBackgroundThread();
+    SetSandboxingCallback(StopBackgroundThread);
+  }
+#endif
+}
+
 
 int Finalize(ThreadState *thr) {
   bool failed = false;

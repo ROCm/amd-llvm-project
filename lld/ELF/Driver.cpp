@@ -278,6 +278,9 @@ static void checkOptions(opt::InputArgList &Args) {
   if (!Config->Shared && !Config->AuxiliaryList.empty())
     error("-f may not be used without -shared");
 
+  if (!Config->Relocatable && !Config->DefineCommon)
+    error("-no-define-common not supported in non relocatable output");
+
   if (Config->Relocatable) {
     if (Config->Shared)
       error("-r and -shared may not be used together");
@@ -334,9 +337,10 @@ void LinkerDriver::main(ArrayRef<const char *> ArgsArr, bool CanExitEarly) {
   if (Args.hasArg(OPT_v) || Args.hasArg(OPT_version))
     message(getLLDVersion() + " (compatible with GNU linkers)");
 
-  // ld.bfd always exits after printing out the version string.
-  // ld.gold proceeds if a given option is -v. Because gold's behavior
-  // is more permissive than ld.bfd, we chose what gold does here.
+  // The behavior of -v or --version is a bit strange, but this is
+  // needed for compatibility with GNU linkers.
+  if (Args.hasArg(OPT_v) && !Args.hasArg(OPT_INPUT))
+    return;
   if (Args.hasArg(OPT_version))
     return;
 

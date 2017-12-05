@@ -140,6 +140,7 @@ protected:
 
   // Subtarget statically properties set by tablegen
   bool FP64;
+  bool FMA;
   bool IsGCN;
   bool GCN3Encoding;
   bool CIInsts;
@@ -261,7 +262,7 @@ public:
     return HasVOP3PInsts;
   }
 
-  bool hasHWFP64() const {
+  bool hasFP64() const {
     return FP64;
   }
 
@@ -348,6 +349,10 @@ public:
     return CaymanISA;
   }
 
+  bool hasFMA() const {
+    return FMA;
+  }
+
   TrapHandlerAbi getTrapHandlerAbi() const {
     return isAmdHsaOS() ? TrapHandlerAbiHsa : TrapHandlerAbiNone;
   }
@@ -412,6 +417,12 @@ public:
 
   bool useFlatForGlobal() const {
     return FlatForGlobal;
+  }
+
+  /// \returns If MUBUF instructions always perform range checking, even for
+  /// buffer resources used for private memory access.
+  bool privateMemoryResourceIsRangeChecked() const {
+    return getGeneration() < AMDGPUSubtarget::GFX9;
   }
 
   bool hasAutoWaitcntBeforeBarrier() const {
