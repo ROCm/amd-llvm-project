@@ -754,7 +754,6 @@ void HexagonDAGToDAGISel::SelectBitcast(SDNode *N) {
   CurDAG->RemoveDeadNode(N);
 }
 
-
 void HexagonDAGToDAGISel::Select(SDNode *N) {
   if (N->isMachineOpcode())
     return N->setNodeId(-1);  // Already selected.
@@ -770,6 +769,13 @@ void HexagonDAGToDAGISel::Select(SDNode *N) {
   case ISD::ZERO_EXTEND:          return SelectZeroExtend(N);
   case ISD::INTRINSIC_W_CHAIN:    return SelectIntrinsicWChain(N);
   case ISD::INTRINSIC_WO_CHAIN:   return SelectIntrinsicWOChain(N);
+  }
+
+  if (HST->useHVXOps()) {
+    switch (N->getOpcode()) {
+    case ISD::VECTOR_SHUFFLE:     return SelectHvxShuffle(N);
+    case HexagonISD::VROR:        return SelectHvxRor(N);
+    }
   }
 
   SelectCode(N);
@@ -1411,26 +1417,6 @@ bool HexagonDAGToDAGISel::keepsLowBits(const SDValue &Val, unsigned NumBits,
   }
   default:
     break;
-  }
-  return false;
-}
-
-
-bool HexagonDAGToDAGISel::isOrEquivalentToAdd(const SDNode *N) const {
-  assert(N->getOpcode() == ISD::OR);
-  auto *C = dyn_cast<ConstantSDNode>(N->getOperand(1));
-  if (!C)
-    return false;
-
-  // Detect when "or" is used to add an offset to a stack object.
-  if (auto *FN = dyn_cast<FrameIndexSDNode>(N->getOperand(0))) {
-    MachineFrameInfo &MFI = MF->getFrameInfo();
-    unsigned A = MFI.getObjectAlignment(FN->getIndex());
-    assert(isPowerOf2_32(A));
-    int32_t Off = C->getSExtValue();
-    // If the alleged offset fits in the zero bits guaranteed by
-    // the alignment, then this or is really an add.
-    return (Off >= 0) && (((A-1) & Off) == unsigned(Off));
   }
   return false;
 }

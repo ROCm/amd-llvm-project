@@ -81,6 +81,8 @@ CXTranslationUnit cxtu::MakeCXTranslationUnit(CIndexer *CIdx,
   D->Diagnostics = nullptr;
   D->OverridenCursorsPool = createOverridenCXCursorsPool();
   D->CommentToXML = nullptr;
+  D->ParsingOptions = 0;
+  D->Arguments = {};
   return D;
 }
 
@@ -3440,7 +3442,8 @@ clang_parseTranslationUnit_Impl(CXIndex CIdx, const char *source_filename,
 
   LibclangInvocationReporter InvocationReporter(
       *CXXIdx, LibclangInvocationReporter::OperationKind::ParseOperation,
-      options, llvm::makeArrayRef(*Args), unsaved_files);
+      options, llvm::makeArrayRef(*Args), /*InvocationArgs=*/None,
+      unsaved_files);
   std::unique_ptr<ASTUnit> Unit(ASTUnit::LoadFromCommandLine(
       Args->data(), Args->data() + Args->size(),
       CXXIdx->getPCHContainerOperations(), Diags,
@@ -3467,7 +3470,14 @@ clang_parseTranslationUnit_Impl(CXIndex CIdx, const char *source_filename,
     return CXError_ASTReadError;
 
   *out_TU = MakeCXTranslationUnit(CXXIdx, std::move(Unit));
-  return *out_TU ? CXError_Success : CXError_Failure;
+  if (CXTranslationUnitImpl *TU = *out_TU) {
+    TU->ParsingOptions = options;
+    TU->Arguments.reserve(Args->size());
+    for (const char *Arg : *Args)
+      TU->Arguments.push_back(Arg);
+    return CXError_Success;
+  }
+  return CXError_Failure;
 }
 
 CXTranslationUnit
@@ -4160,6 +4170,27 @@ CXFile clang_getFile(CXTranslationUnit TU, const char *file_name) {
 
   FileManager &FMgr = CXXUnit->getFileManager();
   return const_cast<FileEntry *>(FMgr.getFile(file_name));
+}
+
+const char *clang_getFileContents(CXTranslationUnit TU, CXFile file,
+                                  size_t *size) {
+  if (isNotUsableTU(TU)) {
+    LOG_BAD_TU(TU);
+    return nullptr;
+  }
+
+  const SourceManager &SM = cxtu::getASTUnit(TU)->getSourceManager();
+  FileID fid = SM.translateFile(static_cast<FileEntry *>(file));
+  bool Invalid = true;
+  llvm::MemoryBuffer *buf = SM.getBuffer(fid, &Invalid);
+  if (Invalid) {
+    if (size)
+      *size = 0;
+    return nullptr;
+  }
+  if (size)
+    *size = buf->getBufferSize();
+  return buf->getBufferStart();
 }
 
 unsigned clang_isFileMultipleIncludeGuarded(CXTranslationUnit TU,

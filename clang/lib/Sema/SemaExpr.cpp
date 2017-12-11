@@ -7652,7 +7652,7 @@ Sema::CheckAssignmentConstraints(SourceLocation Loc,
   // usually happen on valid code.
   OpaqueValueExpr RHSExpr(Loc, RHSType, VK_RValue);
   ExprResult RHSPtr = &RHSExpr;
-  CastKind K = CK_Invalid;
+  CastKind K;
 
   return CheckAssignmentConstraints(LHSType, RHSPtr, K, /*ConvertRHS=*/false);
 }
@@ -8044,7 +8044,7 @@ Sema::CheckTransparentUnionArgumentConstraints(QualType ArgType,
       }
     }
 
-    CastKind Kind = CK_Invalid;
+    CastKind Kind;
     if (CheckAssignmentConstraints(it->getType(), RHS, Kind)
           == Compatible) {
       RHS = ImpCastExprToType(RHS.get(), it->getType(), Kind);
@@ -8160,7 +8160,7 @@ Sema::CheckSingleAssignmentConstraints(QualType LHSType, ExprResult &CallerRHS,
     }
   }
   
-  CastKind Kind = CK_Invalid;
+  CastKind Kind;
   Sema::AssignConvertType result =
     CheckAssignmentConstraints(LHSType, RHS, Kind, ConvertRHS);
 
@@ -8255,7 +8255,7 @@ static bool tryVectorConvertAndSplat(Sema &S, ExprResult *scalar,
                                      unsigned &DiagID) {
   // The conversion to apply to the scalar before splatting it,
   // if necessary.
-  CastKind scalarCast = CK_Invalid;
+  CastKind scalarCast = CK_NoOp;
   
   if (vectorEltTy->isIntegralType(S.Context)) {
     if (S.getLangOpts().OpenCL && (scalarTy->isRealFloatingType() ||
@@ -8286,7 +8286,7 @@ static bool tryVectorConvertAndSplat(Sema &S, ExprResult *scalar,
 
   // Adjust scalar if desired.
   if (scalar) {
-    if (scalarCast != CK_Invalid)
+    if (scalarCast != CK_NoOp)
       *scalar = S.ImpCastExprToType(scalar->get(), vectorEltTy, scalarCast);
     *scalar = S.ImpCastExprToType(scalar->get(), vectorTy, CK_VectorSplat);
   }
@@ -11804,7 +11804,8 @@ CorrectDelayedTyposInBinOp(Sema &S, BinaryOperatorKind Opc, Expr *LHSExpr,
 static bool needsConversionOfHalfVec(bool OpRequiresConversion, ASTContext &Ctx,
                                      QualType SrcType) {
   return OpRequiresConversion && !Ctx.getLangOpts().NativeHalfType &&
-         Ctx.getLangOpts().HalfArgsAndReturns && isVector(SrcType, Ctx.HalfTy);
+         !Ctx.getTargetInfo().useFP16ConversionIntrinsics() &&
+         isVector(SrcType, Ctx.HalfTy);
 }
 
 /// CreateBuiltinBinOp - Creates a new built-in binary operation with
@@ -14937,14 +14938,16 @@ bool Sema::tryCaptureVariable(
         // just break here. Similarly, global variables that are captured in a
         // target region should not be captured outside the scope of the region.
         if (RSI->CapRegionKind == CR_OpenMP) {
-          auto IsTargetCap = isOpenMPTargetCapturedDecl(Var, RSI->OpenMPLevel);
+          bool IsOpenMPPrivateDecl = isOpenMPPrivateDecl(Var, RSI->OpenMPLevel);
+          auto IsTargetCap = !IsOpenMPPrivateDecl &&
+                             isOpenMPTargetCapturedDecl(Var, RSI->OpenMPLevel);
           // When we detect target captures we are looking from inside the
           // target region, therefore we need to propagate the capture from the
           // enclosing region. Therefore, the capture is not initially nested.
           if (IsTargetCap)
-            FunctionScopesIndex--;
+            adjustOpenMPTargetScopeIndex(FunctionScopesIndex, RSI->OpenMPLevel);
 
-          if (IsTargetCap || isOpenMPPrivateDecl(Var, RSI->OpenMPLevel)) {
+          if (IsTargetCap || IsOpenMPPrivateDecl) {
             Nested = !IsTargetCap;
             DeclRefType = DeclRefType.getUnqualifiedType();
             CaptureType = Context.getLValueReferenceType(DeclRefType);

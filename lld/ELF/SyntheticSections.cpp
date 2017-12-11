@@ -22,6 +22,7 @@
 #include "OutputSections.h"
 #include "Strings.h"
 #include "SymbolTable.h"
+#include "Symbols.h"
 #include "Target.h"
 #include "Writer.h"
 #include "lld/Common/ErrorHandler.h"
@@ -1077,9 +1078,9 @@ template <class ELFT> void DynamicSection<ELFT>::finalizeContents() {
     return; // Already finalized.
 
   this->Link = InX::DynStrTab->getParent()->SectionIndex;
-  if (In<ELFT>::RelaDyn->getParent() && !In<ELFT>::RelaDyn->empty()) {
-    addInSec(In<ELFT>::RelaDyn->DynamicTag, In<ELFT>::RelaDyn);
-    addSize(In<ELFT>::RelaDyn->SizeDynamicTag, In<ELFT>::RelaDyn->getParent());
+  if (InX::RelaDyn->getParent() && !InX::RelaDyn->empty()) {
+    addInSec(InX::RelaDyn->DynamicTag, InX::RelaDyn);
+    addSize(InX::RelaDyn->SizeDynamicTag, InX::RelaDyn->getParent());
 
     bool IsRela = Config->IsRela;
     addInt(IsRela ? DT_RELAENT : DT_RELENT,
@@ -1089,14 +1090,14 @@ template <class ELFT> void DynamicSection<ELFT>::finalizeContents() {
     // The problem is in the tight relation between dynamic
     // relocations and GOT. So do not emit this tag on MIPS.
     if (Config->EMachine != EM_MIPS) {
-      size_t NumRelativeRels = In<ELFT>::RelaDyn->getRelativeRelocCount();
+      size_t NumRelativeRels = InX::RelaDyn->getRelativeRelocCount();
       if (Config->ZCombreloc && NumRelativeRels)
         addInt(IsRela ? DT_RELACOUNT : DT_RELCOUNT, NumRelativeRels);
     }
   }
-  if (In<ELFT>::RelaPlt->getParent() && !In<ELFT>::RelaPlt->empty()) {
-    addInSec(DT_JMPREL, In<ELFT>::RelaPlt);
-    addSize(DT_PLTRELSZ, In<ELFT>::RelaPlt->getParent());
+  if (InX::RelaPlt->getParent() && !InX::RelaPlt->empty()) {
+    addInSec(DT_JMPREL, InX::RelaPlt);
+    addSize(DT_PLTRELSZ, InX::RelaPlt->getParent());
     switch (Config->EMachine) {
     case EM_MIPS:
       addInSec(DT_MIPS_PLTGOT, InX::GotPlt);
@@ -1219,10 +1220,10 @@ void RelocationBaseSection::finalizeContents() {
   // If all relocations are R_*_RELATIVE they don't refer to any
   // dynamic symbol and we don't need a dynamic symbol table. If that
   // is the case, just use 0 as the link.
-  this->Link = InX::DynSymTab ? InX::DynSymTab->getParent()->SectionIndex : 0;
+  Link = InX::DynSymTab ? InX::DynSymTab->getParent()->SectionIndex : 0;
 
   // Set required output section properties.
-  getParent()->Link = this->Link;
+  getParent()->Link = Link;
 }
 
 template <class ELFT>
@@ -1347,12 +1348,13 @@ bool AndroidPackedRelocationSection<ELFT>::updateAllocSize() {
 
   RelocData = {'A', 'P', 'S', '2'};
   raw_svector_ostream OS(RelocData);
+  auto Add = [&](int64_t V) { encodeSLEB128(V, OS); };
 
   // The format header includes the number of relocations and the initial
   // offset (we set this to zero because the first relocation group will
   // perform the initial adjustment).
-  encodeSLEB128(Relocs.size(), OS);
-  encodeSLEB128(0, OS);
+  Add(Relocs.size());
+  Add(0);
 
   std::vector<Elf_Rela> Relatives, NonRelatives;
 
@@ -1405,27 +1407,25 @@ bool AndroidPackedRelocationSection<ELFT>::updateAllocSize() {
   // remaining relocations.
   for (std::vector<Elf_Rela> &G : RelativeGroups) {
     // The first relocation in the group.
-    encodeSLEB128(1, OS);
-    encodeSLEB128(RELOCATION_GROUPED_BY_OFFSET_DELTA_FLAG |
-                      RELOCATION_GROUPED_BY_INFO_FLAG | HasAddendIfRela,
-                  OS);
-    encodeSLEB128(G[0].r_offset - Offset, OS);
-    encodeSLEB128(Target->RelativeRel, OS);
+    Add(1);
+    Add(RELOCATION_GROUPED_BY_OFFSET_DELTA_FLAG |
+        RELOCATION_GROUPED_BY_INFO_FLAG | HasAddendIfRela);
+    Add(G[0].r_offset - Offset);
+    Add(Target->RelativeRel);
     if (Config->IsRela) {
-      encodeSLEB128(G[0].r_addend - Addend, OS);
+      Add(G[0].r_addend - Addend);
       Addend = G[0].r_addend;
     }
 
     // The remaining relocations.
-    encodeSLEB128(G.size() - 1, OS);
-    encodeSLEB128(RELOCATION_GROUPED_BY_OFFSET_DELTA_FLAG |
-                      RELOCATION_GROUPED_BY_INFO_FLAG | HasAddendIfRela,
-                  OS);
-    encodeSLEB128(Config->Wordsize, OS);
-    encodeSLEB128(Target->RelativeRel, OS);
+    Add(G.size() - 1);
+    Add(RELOCATION_GROUPED_BY_OFFSET_DELTA_FLAG |
+        RELOCATION_GROUPED_BY_INFO_FLAG | HasAddendIfRela);
+    Add(Config->Wordsize);
+    Add(Target->RelativeRel);
     if (Config->IsRela) {
       for (auto I = G.begin() + 1, E = G.end(); I != E; ++I) {
-        encodeSLEB128(I->r_addend - Addend, OS);
+        Add(I->r_addend - Addend);
         Addend = I->r_addend;
       }
     }
@@ -1435,14 +1435,14 @@ bool AndroidPackedRelocationSection<ELFT>::updateAllocSize() {
 
   // Now the ungrouped relatives.
   if (!UngroupedRelatives.empty()) {
-    encodeSLEB128(UngroupedRelatives.size(), OS);
-    encodeSLEB128(RELOCATION_GROUPED_BY_INFO_FLAG | HasAddendIfRela, OS);
-    encodeSLEB128(Target->RelativeRel, OS);
+    Add(UngroupedRelatives.size());
+    Add(RELOCATION_GROUPED_BY_INFO_FLAG | HasAddendIfRela);
+    Add(Target->RelativeRel);
     for (Elf_Rela &R : UngroupedRelatives) {
-      encodeSLEB128(R.r_offset - Offset, OS);
+      Add(R.r_offset - Offset);
       Offset = R.r_offset;
       if (Config->IsRela) {
-        encodeSLEB128(R.r_addend - Addend, OS);
+        Add(R.r_addend - Addend);
         Addend = R.r_addend;
       }
     }
@@ -1454,14 +1454,14 @@ bool AndroidPackedRelocationSection<ELFT>::updateAllocSize() {
               return A.r_offset < B.r_offset;
             });
   if (!NonRelatives.empty()) {
-    encodeSLEB128(NonRelatives.size(), OS);
-    encodeSLEB128(HasAddendIfRela, OS);
+    Add(NonRelatives.size());
+    Add(HasAddendIfRela);
     for (Elf_Rela &R : NonRelatives) {
-      encodeSLEB128(R.r_offset - Offset, OS);
+      Add(R.r_offset - Offset);
       Offset = R.r_offset;
-      encodeSLEB128(R.r_info, OS);
+      Add(R.r_info);
       if (Config->IsRela) {
-        encodeSLEB128(R.r_addend - Addend, OS);
+        Add(R.r_addend - Addend);
         Addend = R.r_addend;
       }
     }
@@ -1710,6 +1710,11 @@ void GnuHashTableSection::finalizeContents() {
 }
 
 void GnuHashTableSection::writeTo(uint8_t *Buf) {
+  // The output buffer is not guaranteed to be zero-cleared because we pre-
+  // fill executable sections with trap instructions. This is a precaution
+  // for that case, which happens only when -no-rosegment is given.
+  memset(Buf, 0, Size);
+
   // Write a header.
   write32(Buf, NBuckets);
   write32(Buf + 4, InX::DynSymTab->getNumSymbols() - Symbols.size());
@@ -1742,29 +1747,24 @@ void GnuHashTableSection::writeBloomFilter(uint8_t *Buf) {
 }
 
 void GnuHashTableSection::writeHashTable(uint8_t *Buf) {
-  // Group symbols by hash value.
-  std::vector<std::vector<Entry>> Syms(NBuckets);
-  for (const Entry &Ent : Symbols)
-    Syms[Ent.BucketIdx].push_back(Ent);
-
-  // Write hash buckets. Hash buckets contain indices in the following
-  // hash value table.
   uint32_t *Buckets = reinterpret_cast<uint32_t *>(Buf);
-  for (size_t I = 0; I < NBuckets; ++I)
-    if (!Syms[I].empty())
-      write32(Buckets + I, Syms[I][0].Sym->DynsymIndex);
-
-  // Write a hash value table. It represents a sequence of chains that
-  // share the same hash modulo value. The last element of each chain
-  // is terminated by LSB 1.
+  uint32_t OldBucket = -1;
   uint32_t *Values = Buckets + NBuckets;
-  size_t I = 0;
-  for (std::vector<Entry> &Vec : Syms) {
-    if (Vec.empty())
+  for (auto I = Symbols.begin(), E = Symbols.end(); I != E; ++I) {
+    // Write a hash value. It represents a sequence of chains that share the
+    // same hash modulo value. The last element of each chain is terminated by
+    // LSB 1.
+    uint32_t Hash = I->Hash;
+    bool IsLastInChain = (I + 1) == E || I->BucketIdx != (I + 1)->BucketIdx;
+    Hash = IsLastInChain ? Hash | 1 : Hash & ~1;
+    write32(Values++, Hash);
+
+    if (I->BucketIdx == OldBucket)
       continue;
-    for (const Entry &Ent : makeArrayRef(Vec).drop_back())
-      write32(Values + I++, Ent.Hash & ~1);
-    write32(Values + I++, Vec.back().Hash | 1);
+    // Write a hash bucket. Hash buckets contain indices in the following hash
+    // value table.
+    write32(Buckets + I->BucketIdx, I->Sym->DynsymIndex);
+    OldBucket = I->BucketIdx;
   }
 }
 
@@ -1880,12 +1880,13 @@ void PltSection::writeTo(uint8_t *Buf) {
 
 template <class ELFT> void PltSection::addEntry(Symbol &Sym) {
   Sym.PltIndex = Entries.size();
-  RelocationSection<ELFT> *PltRelocSection = In<ELFT>::RelaPlt;
+  RelocationBaseSection *PltRelocSection = InX::RelaPlt;
   if (HeaderSize == 0) {
-    PltRelocSection = In<ELFT>::RelaIplt;
+    PltRelocSection = InX::RelaIplt;
     Sym.IsInIplt = true;
   }
-  unsigned RelOff = PltRelocSection->getRelocOffset();
+  unsigned RelOff =
+      static_cast<RelocationSection<ELFT> *>(PltRelocSection)->getRelocOffset();
   Entries.push_back(std::make_pair(&Sym, RelOff));
 }
 
@@ -2633,6 +2634,9 @@ MipsGotSection *InX::MipsGot;
 MipsRldMapSection *InX::MipsRldMap;
 PltSection *InX::Plt;
 PltSection *InX::Iplt;
+RelocationBaseSection *InX::RelaDyn;
+RelocationBaseSection *InX::RelaPlt;
+RelocationBaseSection *InX::RelaIplt;
 StringTableSection *InX::ShStrTab;
 StringTableSection *InX::StrTab;
 SymbolTableBaseSection *InX::SymTab;

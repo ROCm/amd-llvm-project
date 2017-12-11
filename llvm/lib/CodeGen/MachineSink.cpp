@@ -38,6 +38,7 @@
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/BranchProbability.h"
 #include "llvm/Support/CommandLine.h"
@@ -246,14 +247,14 @@ MachineSinking::AllUsesDominatedByBlock(unsigned Reg,
   // %bb.1: derived from LLVM BB %bb4.preheader
   //   Predecessors according to CFG: %bb.0
   //     ...
-  //     %reg16385<def> = DEC64_32r %reg16437, %eflags<imp-def,dead>
+  //     %reg16385 = DEC64_32r %reg16437, implicit-def dead %eflags
   //     ...
-  //     JE_4 <%bb.37>, %eflags<imp-use>
+  //     JE_4 <%bb.37>, implicit %eflags
   //   Successors according to CFG: %bb.37 %bb.2
   //
   // %bb.2: derived from LLVM BB %bb.nph
   //   Predecessors according to CFG: %bb.0 %bb.1
-  //     %reg16386<def> = PHI %reg16434, %bb.0, %reg16385, %bb.1
+  //     %reg16386 = PHI %reg16434, %bb.0, %reg16385, %bb.1
   BreakPHIEdge = true;
   for (MachineOperand &MO : MRI->use_nodbg_operands(Reg)) {
     MachineInstr *UseInst = MO.getParent();
@@ -868,11 +869,20 @@ bool MachineSinking::SinkInstruction(MachineInstr &MI, bool &SawStore,
   SmallVector<MachineInstr *, 2> DbgValuesToSink;
   collectDebugValues(MI, DbgValuesToSink);
 
+  // Merge or erase debug location to ensure consistent stepping in profilers
+  // and debuggers.
+  if (!SuccToSinkTo->empty() && InsertPos != SuccToSinkTo->end())
+    MI.setDebugLoc(DILocation::getMergedLocation(MI.getDebugLoc(),
+                                                 InsertPos->getDebugLoc()));
+  else
+    MI.setDebugLoc(DebugLoc());
+
+
   // Move the instruction.
   SuccToSinkTo->splice(InsertPos, ParentBlock, MI,
                        ++MachineBasicBlock::iterator(MI));
 
-  // Move debug values.
+  // Move previously adjacent debug value instructions to the insert position.
   for (SmallVectorImpl<MachineInstr *>::iterator DBI = DbgValuesToSink.begin(),
          DBE = DbgValuesToSink.end(); DBI != DBE; ++DBI) {
     MachineInstr *DbgMI = *DBI;
