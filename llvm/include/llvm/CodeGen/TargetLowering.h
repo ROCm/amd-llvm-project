@@ -1360,6 +1360,12 @@ public:
   /// getIRStackGuard returns nullptr.
   virtual Value *getSDagStackGuard(const Module &M) const;
 
+  /// If this function returns true, stack protection checks should XOR the
+  /// frame pointer (or whichever pointer is used to address locals) into the
+  /// stack guard value before checking it. getIRStackGuard must return nullptr
+  /// if this returns true.
+  virtual bool useStackGuardXorFP() const { return false; }
+
   /// If the target has a standard stack protection check function that
   /// performs validation and error handling, returns the function. Otherwise,
   /// returns nullptr. Must be previously inserted by insertSSPDeclarations.
@@ -1433,6 +1439,9 @@ public:
   /// are still natively supported below the minimum; they just
   /// require a more complex expansion.
   unsigned getMinCmpXchgSizeInBits() const { return MinCmpXchgSizeInBits; }
+
+  /// Whether the target supports unaligned atomic operations.
+  bool supportsUnalignedAtomics() const { return SupportsUnalignedAtomics; }
 
   /// Whether AtomicExpandPass should automatically insert fences and reduce
   /// ordering for this atomic. This should be true for most architectures with
@@ -1839,9 +1848,14 @@ protected:
     MaxAtomicSizeInBitsSupported = SizeInBits;
   }
 
-  // Sets the minimum cmpxchg or ll/sc size supported by the backend.
+  /// Sets the minimum cmpxchg or ll/sc size supported by the backend.
   void setMinCmpXchgSizeInBits(unsigned SizeInBits) {
     MinCmpXchgSizeInBits = SizeInBits;
+  }
+
+  /// Sets whether unaligned atomic operations are supported.
+  void setSupportsUnalignedAtomics(bool UnalignedSupported) {
+    SupportsUnalignedAtomics = UnalignedSupported;
   }
 
 public:
@@ -2324,6 +2338,9 @@ private:
   /// Size in bits of the minimum cmpxchg or ll/sc operation the
   /// backend supports.
   unsigned MinCmpXchgSizeInBits;
+
+  /// This indicates if the target supports unaligned atomic operations.
+  bool SupportsUnalignedAtomics;
 
   /// If set to a physical register, this specifies the register that
   /// llvm.savestack/llvm.restorestack should save and restore.
@@ -3485,6 +3502,11 @@ public:
   /// LOAD_STACK_GUARD node when it is lowering Intrinsic::stackprotector.
   virtual bool useLoadStackGuardNode() const {
     return false;
+  }
+
+  virtual SDValue emitStackGuardXorFP(SelectionDAG &DAG, SDValue Val,
+                                      const SDLoc &DL) const {
+    llvm_unreachable("not implemented for this target");
   }
 
   /// Lower TLS global address SDNode for target independent emulated TLS model.
