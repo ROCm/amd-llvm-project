@@ -4397,18 +4397,13 @@ hasSameArgumentList(const Function *CallerFn, ImmutableCallSite CS) {
 static bool
 areCallingConvEligibleForTCO_64SVR4(CallingConv::ID CallerCC,
                                     CallingConv::ID CalleeCC) {
-  // tail calls are possible with fastcc and ccc.
-  auto isTailCallableCC  = [] (CallingConv::ID CC){
-      return  CC == CallingConv::C || CC == CallingConv::Fast;
-  };
-  if (!isTailCallableCC(CallerCC) || !isTailCallableCC(CalleeCC))
+  // Tail or Sibling call optimization (TCO/SCO) needs callee and caller to
+  // have the same calling convention.
+  if (CallerCC != CalleeCC)
     return false;
 
-  // We can safely tail call both fastcc and ccc callees from a c calling
-  // convention caller. If the caller is fastcc, we may have less stack space
-  // then a non-fastcc caller with the same signature so disable tail-calls in
-  // that case.
-  return CallerCC == CallingConv::C || CallerCC == CalleeCC;
+  // Tail or Sibling calls can be done with fastcc/ccc.
+  return (CallerCC == CallingConv::Fast || CallerCC == CallingConv::C);
 }
 
 bool
@@ -12233,8 +12228,12 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
     EVT VT = N->getOperand(1).getValueType();
     if (Subtarget.isPPC64() && !DCI.isBeforeLegalize() &&
         isa<ConstantSDNode>(N->getOperand(1)) && VT == MVT::i32) {
-      SDValue Const64 = DAG.getConstant(N->getConstantOperandVal(1), dl,
-                                        MVT::i64);
+      // Need to sign-extended to 64-bits to handle negative values.
+      EVT MemVT = cast<StoreSDNode>(N)->getMemoryVT();
+      uint64_t Val64 = SignExtend64(N->getConstantOperandVal(1),
+                                    MemVT.getSizeInBits());
+      SDValue Const64 = DAG.getConstant(Val64, dl, MVT::i64);
+
       // DAG.getTruncStore() can't be used here because it doesn't accept
       // the general (base + offset) addressing mode.
       // So we use UpdateNodeOperands and setTruncatingStore instead.
