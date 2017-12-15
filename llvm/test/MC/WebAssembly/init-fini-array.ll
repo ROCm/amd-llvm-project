@@ -14,6 +14,18 @@ declare void @func2()
 ; CHECK:        - Type:            IMPORT
 ; CHECK-NEXT:     Imports:         
 ; CHECK-NEXT:       - Module:          env
+; CHECK-NEXT:         Field:           __linear_memory
+; CHECK-NEXT:         Kind:            MEMORY
+; CHECK-NEXT:         Memory:
+; CHECK-NEXT:           Initial:         0x00000001
+; CHECK-NEXT:       - Module:          env
+; CHECK-NEXT:         Field:           __indirect_function_table
+; CHECK-NEXT:         Kind:            TABLE
+; CHECK-NEXT:         Table:
+; CHECK-NEXT:           ElemType:        ANYFUNC
+; CHECK-NEXT:           Limits:
+; CHECK-NEXT:             Initial:         0x00000002
+; CHECK-NEXT:       - Module:          env
 ; CHECK-NEXT:         Field:           func1
 ; CHECK-NEXT:         Kind:            FUNCTION
 ; CHECK-NEXT:         SigIndex:        0
@@ -21,14 +33,6 @@ declare void @func2()
 ; CHECK-NEXT:         Field:           func2
 ; CHECK-NEXT:         Kind:            FUNCTION
 ; CHECK-NEXT:         SigIndex:        0
-; CHECK-NEXT:   - Type:            TABLE
-; CHECK-NEXT:     Tables:          
-; CHECK-NEXT:       - ElemType:        ANYFUNC
-; CHECK-NEXT:         Limits:          
-; CHECK-NEXT:           Initial:         0x00000002
-; CHECK-NEXT:   - Type:            MEMORY
-; CHECK-NEXT:     Memories:        
-; CHECK-NEXT:       - Initial:         0x00000001
 ; CHECK-NEXT:   - Type:            GLOBAL
 ; CHECK-NEXT:     Globals:         
 ; CHECK-NEXT:       - Type:            I32
@@ -88,14 +92,14 @@ declare void @func2()
 ; CHECK-NEXT:       - Index:           0
 ; CHECK-NEXT:         Name:            .data.global1
 ; CHECK-NEXT:         Alignment:       8
-; CHECK-NEXT:         Flags:           0
+; CHECK-NEXT:         Flags:           [ ]
 ; CHECK-NEXT:       - Index:           1
 ; CHECK-NEXT:         Name:            .init_array
 ; CHECK-NEXT:         Alignment:       4
-; CHECK-NEXT:         Flags:           0
+; CHECK-NEXT:         Flags:           [ ]
 ; CHECK-NEXT:       - Index:           2
 ; CHECK-NEXT:         Name:            .fini_array
 ; CHECK-NEXT:         Alignment:       4
-; CHECK-NEXT:         Flags:           0
+; CHECK-NEXT:         Flags:           [ ]
 ; CHECK-NEXT: ...
 

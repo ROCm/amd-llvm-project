@@ -851,14 +851,10 @@ bool IRTranslator::translateCall(const User &U, MachineIRBuilder &MIRBuilder) {
   const TargetLowering &TLI = *MF->getSubtarget().getTargetLowering();
   TargetLowering::IntrinsicInfo Info;
   // TODO: Add a GlobalISel version of getTgtMemIntrinsic.
-  if (TLI.getTgtMemIntrinsic(Info, CI, ID)) {
-    MachineMemOperand::Flags Flags =
-        Info.vol ? MachineMemOperand::MOVolatile : MachineMemOperand::MONone;
-    Flags |=
-        Info.readMem ? MachineMemOperand::MOLoad : MachineMemOperand::MOStore;
+  if (TLI.getTgtMemIntrinsic(Info, CI, *MF, ID)) {
     uint64_t Size = Info.memVT.getStoreSize();
     MIB.addMemOperand(MF->getMachineMemOperand(MachinePointerInfo(Info.ptrVal),
-                                               Flags, Size, Info.align));
+                                               Info.flags, Size, Info.align));
   }
 
   return true;
@@ -1252,6 +1248,15 @@ bool IRTranslator::runOnMachineFunction(MachineFunction &CurMF) {
   ORE = llvm::make_unique<OptimizationRemarkEmitter>(&F);
 
   assert(PendingPHIs.empty() && "stale PHIs");
+
+  if (!DL->isLittleEndian()) {
+    // Currently we don't properly handle big endian code.
+    OptimizationRemarkMissed R("gisel-irtranslator", "GISelFailure",
+                               MF->getFunction()->getSubprogram(),
+                               &MF->getFunction()->getEntryBlock());
+    R << "unable to translate in big endian mode";
+    reportTranslationError(*MF, *TPC, *ORE, R);
+  }
 
   // Release the per-function state when we return, whether we succeeded or not.
   auto FinalizeOnReturn = make_scope_exit([this]() { finalizeFunction(); });

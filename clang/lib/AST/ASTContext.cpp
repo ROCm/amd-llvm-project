@@ -2282,6 +2282,9 @@ bool ASTContext::hasUniqueObjectRepresentations(QualType Ty) const {
   if (Ty->isRecordType()) {
     const RecordDecl *Record = Ty->getAs<RecordType>()->getDecl();
 
+    if (Record->isInvalidDecl())
+      return false;
+
     if (Record->isUnion())
       return unionHasUniqueObjectRepresentations(*this, Record);
 

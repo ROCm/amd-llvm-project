@@ -51,6 +51,7 @@ private:
   void addSectionSymbols();
   void forEachRelSec(std::function<void(InputSectionBase &)> Fn);
   void sortSections();
+  void resolveShfLinkOrder();
   void sortInputSections();
   void finalizeSections();
   void addPredefinedSections();
@@ -171,7 +172,7 @@ static Defined *addOptionalRegular(StringRef Name, SectionBase *Sec,
 
 // The linker is expected to define some symbols depending on
 // the linking result. This function defines such symbols.
-template <class ELFT> static void addReservedSymbols() {
+template <class ELFT> void elf::addReservedSymbols() {
   if (Config->EMachine == EM_MIPS) {
     // Define _gp for MIPS. st_value of _gp symbol will be updated by Writer
     // so that it points to an absolute address which by default is relative
@@ -195,13 +196,8 @@ template <class ELFT> static void addReservedSymbols() {
           Symtab->addAbsolute<ELFT>("__gnu_local_gp", STV_HIDDEN, STB_GLOBAL);
   }
 
-  // The _GLOBAL_OFFSET_TABLE_ symbol is defined by target convention to
-  // be at some offset from the base of the .got section, usually 0 or the end
-  // of the .got
-  InputSection *GotSection = InX::MipsGot ? cast<InputSection>(InX::MipsGot)
-                                          : cast<InputSection>(InX::Got);
   ElfSym::GlobalOffsetTable = addOptionalRegular<ELFT>(
-      "_GLOBAL_OFFSET_TABLE_", GotSection, Target->GotBaseSymOff);
+      "_GLOBAL_OFFSET_TABLE_", Out::ElfHeader, Target->GotBaseSymOff);
 
   // __ehdr_start is the location of ELF file headers. Note that we define
   // this symbol unconditionally even when using a linker script, which
@@ -260,8 +256,6 @@ template <class ELFT> static void createSyntheticSections() {
   }
   InX::ShStrTab = make<StringTableSection>(".shstrtab", false);
 
-  Out::ElfHeader = make<OutputSection>("", 0, SHF_ALLOC);
-  Out::ElfHeader->Size = sizeof(typename ELFT::Ehdr);
   Out::ProgramHeaders = make<OutputSection>("", 0, SHF_ALLOC);
   Out::ProgramHeaders->Alignment = Config->Wordsize;
 
@@ -407,10 +401,6 @@ template <class ELFT> void Writer<ELFT>::run() {
   if (!Config->Relocatable)
     combineEhFrameSections<ELFT>();
 
-  // We need to create some reserved symbols such as _end. Create them.
-  if (!Config->Relocatable)
-    addReservedSymbols<ELFT>();
-
   // We want to process linker script commands. When SECTIONS command
   // is given we let it create sections.
   Script->processSectionCommands();
@@ -526,13 +516,10 @@ static bool includeInSymtab(const Symbol &B) {
     SectionBase *Sec = D->Section;
     if (!Sec)
       return true;
-    if (auto *IS = dyn_cast<InputSectionBase>(Sec)) {
-      Sec = IS->Repl;
-      IS = cast<InputSectionBase>(Sec);
-      // Exclude symbols pointing to garbage-collected sections.
-      if (!IS->Live)
-        return false;
-    }
+    Sec = Sec->Repl;
+    // Exclude symbols pointing to garbage-collected sections.
+    if (isa<InputSectionBase>(Sec) && !Sec->Live)
+      return false;
     if (auto *S = dyn_cast<MergeInputSection>(Sec))
       if (!S->getSectionPiece(D->Value)->Live)
         return false;
@@ -869,6 +856,15 @@ void Writer<ELFT>::forEachRelSec(std::function<void(InputSectionBase &)> Fn) {
 // time any references to these symbols are processed and is equivalent to
 // defining these symbols explicitly in the linker script.
 template <class ELFT> void Writer<ELFT>::setReservedSymbolSections() {
+  if (ElfSym::GlobalOffsetTable) {
+    // The _GLOBAL_OFFSET_TABLE_ symbol is defined by target convention to
+    // be at some offset from the base of the .got section, usually 0 or the end
+    // of the .got
+    InputSection *GotSection = InX::MipsGot ? cast<InputSection>(InX::MipsGot)
+                                            : cast<InputSection>(InX::Got);
+    ElfSym::GlobalOffsetTable->Section = GotSection;
+  }
+
   PhdrEntry *Last = nullptr;
   PhdrEntry *LastRO = nullptr;
 
@@ -1148,6 +1144,43 @@ template <class ELFT> void Writer<ELFT>::sortSections() {
   Script->adjustSectionsAfterSorting();
 }
 
+static bool compareByFilePosition(InputSection *A, InputSection *B) {
+  // Synthetic doesn't have link order dependecy, stable_sort will keep it last
+  if (A->kind() == InputSectionBase::Synthetic ||
+      B->kind() == InputSectionBase::Synthetic)
+    return false;
+  InputSection *LA = A->getLinkOrderDep();
+  InputSection *LB = B->getLinkOrderDep();
+  OutputSection *AOut = LA->getParent();
+  OutputSection *BOut = LB->getParent();
+  if (AOut != BOut)
+    return AOut->SectionIndex < BOut->SectionIndex;
+  return LA->OutSecOff < LB->OutSecOff;
+}
+
+template <class ELFT> void Writer<ELFT>::resolveShfLinkOrder() {
+  for (OutputSection *Sec : OutputSections) {
+    if (!(Sec->Flags & SHF_LINK_ORDER))
+      continue;
+
+    // Link order may be distributed across several InputSectionDescriptions
+    // but sort must consider them all at once.
+    std::vector<InputSection **> ScriptSections;
+    std::vector<InputSection *> Sections;
+    for (BaseCommand *Base : Sec->SectionCommands) {
+      if (auto *ISD = dyn_cast<InputSectionDescription>(Base)) {
+        for (InputSection *&IS : ISD->Sections) {
+          ScriptSections.push_back(&IS);
+          Sections.push_back(IS);
+        }
+      }
+    }
+    std::stable_sort(Sections.begin(), Sections.end(), compareByFilePosition);
+    for (int I = 0, N = Sections.size(); I < N; ++I)
+      *ScriptSections[I] = Sections[I];
+  }
+}
+
 static void applySynthetic(const std::vector<SyntheticSection *> &Sections,
                            std::function<void(SyntheticSection *)> Fn) {
   for (SyntheticSection *SS : Sections)
@@ -1354,6 +1387,10 @@ template <class ELFT> void Writer<ELFT>::finalizeSections() {
 
   if (!Script->HasSectionsCommand && !Config->Relocatable)
     fixSectionAlignments();
+
+  // After link order processing .ARM.exidx sections can be deduplicated, which
+  // needs to be resolved before any other address dependent operation.
+  resolveShfLinkOrder();
 
   // Some architectures need to generate content that depends on the address
   // of InputSections. For example some architectures use small displacements
@@ -1835,9 +1872,11 @@ template <class ELFT> void Writer<ELFT>::openFile() {
   }
 
   unlinkAsync(Config->OutputFile);
+  unsigned Flags = 0;
+  if (!Config->Relocatable)
+    Flags = FileOutputBuffer::F_executable;
   Expected<std::unique_ptr<FileOutputBuffer>> BufferOrErr =
-      FileOutputBuffer::create(Config->OutputFile, FileSize,
-                               FileOutputBuffer::F_executable);
+      FileOutputBuffer::create(Config->OutputFile, FileSize, Flags);
 
   if (!BufferOrErr)
     error("failed to open " + Config->OutputFile + ": " +
@@ -1935,3 +1974,8 @@ template void elf::writeResult<ELF32LE>();
 template void elf::writeResult<ELF32BE>();
 template void elf::writeResult<ELF64LE>();
 template void elf::writeResult<ELF64BE>();
+
+template void elf::addReservedSymbols<ELF32LE>();
+template void elf::addReservedSymbols<ELF32BE>();
+template void elf::addReservedSymbols<ELF64LE>();
+template void elf::addReservedSymbols<ELF64BE>();

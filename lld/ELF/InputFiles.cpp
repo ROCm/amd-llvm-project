@@ -599,22 +599,14 @@ template <class ELFT> void ObjFile<ELFT>::initializeSymbols() {
     this->Symbols.push_back(createSymbol(&Sym));
 }
 
-template <class ELFT>
-InputSectionBase *ObjFile<ELFT>::getSection(uint32_t Index) const {
-  if (Index == 0)
-    return nullptr;
-  if (Index >= this->Sections.size())
-    fatal(toString(this) + ": invalid section index: " + Twine(Index));
-
-  if (InputSectionBase *Sec = this->Sections[Index])
-    return Sec->Repl;
-  return nullptr;
-}
-
 template <class ELFT> Symbol *ObjFile<ELFT>::createSymbol(const Elf_Sym *Sym) {
   int Binding = Sym->getBinding();
-  InputSectionBase *Sec = getSection(this->getSectionIndex(*Sym));
 
+  uint32_t SecIdx = this->getSectionIndex(*Sym);
+  if (SecIdx >= this->Sections.size())
+    fatal(toString(this) + ": invalid section index: " + Twine(SecIdx));
+
+  InputSectionBase *Sec = this->Sections[SecIdx];
   uint8_t StOther = Sym->st_other;
   uint8_t Type = Sym->getType();
   uint64_t Value = Sym->st_value;
@@ -794,7 +786,7 @@ SharedFile<ELFT>::parseVerdefs(const Elf_Versym *&Versym) {
 template <class ELFT> void SharedFile<ELFT>::parseRest() {
   // Create mapping from version identifiers to Elf_Verdef entries.
   const Elf_Versym *Versym = nullptr;
-  std::vector<const Elf_Verdef *> Verdefs = parseVerdefs(Versym);
+  Verdefs = parseVerdefs(Versym);
 
   ArrayRef<Elf_Shdr> Sections = CHECK(this->getObj().sections(), this);
 
@@ -827,6 +819,8 @@ template <class ELFT> void SharedFile<ELFT>::parseRest() {
         continue;
       }
       Ver = Verdefs[VersymIndex];
+    } else {
+      VersymIndex = 0;
     }
 
     // We do not usually care about alignments of data in shared object
@@ -844,14 +838,14 @@ template <class ELFT> void SharedFile<ELFT>::parseRest() {
       error(toString(this) + ": alignment too large: " + Name);
 
     if (!Hidden)
-      Symtab->addShared(Name, this, Sym, Alignment, Ver);
+      Symtab->addShared(Name, this, Sym, Alignment, VersymIndex);
 
     // Also add the symbol with the versioned name to handle undefined symbols
     // with explicit versions.
     if (Ver) {
       StringRef VerName = this->StringTable.data() + Ver->getAux()->vda_name;
       Name = Saver.save(Name + "@" + VerName);
-      Symtab->addShared(Name, this, Sym, Alignment, Ver);
+      Symtab->addShared(Name, this, Sym, Alignment, VersymIndex);
     }
   }
 }

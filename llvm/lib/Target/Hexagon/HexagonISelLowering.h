@@ -102,6 +102,10 @@ namespace HexagonISD {
         const SmallVectorImpl<SDValue> &OutVals,
         const SmallVectorImpl<ISD::InputArg> &Ins, SelectionDAG& DAG) const;
 
+    bool getTgtMemIntrinsic(IntrinsicInfo &Info, const CallInst &I,
+                            MachineFunction &MF,
+                            unsigned Intrinsic) const override;
+
     bool isTruncateFree(Type *Ty1, Type *Ty2) const override;
     bool isTruncateFree(EVT VT1, EVT VT2) const override;
 
@@ -344,6 +348,7 @@ namespace HexagonISD {
     SDValue LowerHvxExtractSubvector(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerHvxInsertSubvector(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerHvxMul(SDValue Op, SelectionDAG &DAG) const;
+    SDValue LowerHvxSetCC(SDValue Op, SelectionDAG &DAG) const;
 
     std::pair<const TargetRegisterClass*, uint8_t>
     findRepresentativeClass(const TargetRegisterInfo *TRI, MVT VT)
