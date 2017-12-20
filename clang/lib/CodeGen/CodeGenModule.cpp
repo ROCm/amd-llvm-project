@@ -1238,6 +1238,9 @@ void CodeGenModule::SetFunctionAttributes(GlobalDecl GD, llvm::Function *F,
   // is handled with better precision by the receiving DSO.
   if (!CodeGenOpts.SanitizeCfiCrossDso)
     CreateFunctionTypeMetadata(FD, F);
+
+  if (getLangOpts().OpenMP && FD->hasAttr<OMPDeclareSimdDeclAttr>())
+    getOpenMPRuntime().emitDeclareSimdFunction(FD, F);
 }
 
 void CodeGenModule::addUsedGlobal(llvm::GlobalValue *GV) {
@@ -4286,7 +4289,11 @@ void CodeGenModule::ClearUnusedCoverageMapping(const Decl *D) {
 }
 
 void CodeGenModule::EmitDeferredUnusedCoverageMappings() {
-  for (const auto &Entry : DeferredEmptyCoverageMappingDecls) {
+  // We call takeVector() here to avoid use-after-free.
+  // FIXME: DeferredEmptyCoverageMappingDecls is getting mutated because
+  // we deserialize function bodies to emit coverage info for them, and that
+  // deserializes more declarations. How should we handle that case?
+  for (const auto &Entry : DeferredEmptyCoverageMappingDecls.takeVector()) {
     if (!Entry.second)
       continue;
     const Decl *D = Entry.first;

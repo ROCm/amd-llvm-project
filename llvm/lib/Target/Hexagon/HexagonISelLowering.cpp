@@ -717,12 +717,12 @@ HexagonTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   else
     CCInfo.AnalyzeCallOperands(Outs, CC_Hexagon);
 
-  auto Attr = MF.getFunction()->getFnAttribute("disable-tail-calls");
+  auto Attr = MF.getFunction().getFnAttribute("disable-tail-calls");
   if (Attr.getValueAsString() == "true")
     IsTailCall = false;
 
   if (IsTailCall) {
-    bool StructAttrFlag = MF.getFunction()->hasStructRetAttr();
+    bool StructAttrFlag = MF.getFunction().hasStructRetAttr();
     IsTailCall = IsEligibleForTailCallOptimization(Callee, CallConv,
                                                    IsVarArg, IsStructRet,
                                                    StructAttrFlag,
@@ -761,10 +761,12 @@ HexagonTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
     // Promote the value if needed.
     switch (VA.getLocInfo()) {
       default:
-        // Loc info must be one of Full, SExt, ZExt, or AExt.
+        // Loc info must be one of Full, BCvt, SExt, ZExt, or AExt.
         llvm_unreachable("Unknown loc info!");
-      case CCValAssign::BCvt:
       case CCValAssign::Full:
+        break;
+      case CCValAssign::BCvt:
+        Arg = DAG.getBitcast(VA.getLocVT(), Arg);
         break;
       case CCValAssign::SExt:
         Arg = DAG.getNode(ISD::SIGN_EXTEND, dl, VA.getLocVT(), Arg);
@@ -1135,6 +1137,8 @@ SDValue HexagonTargetLowering::LowerFormalArguments(
         unsigned VReg =
           RegInfo.createVirtualRegister(&Hexagon::IntRegsRegClass);
         RegInfo.addLiveIn(VA.getLocReg(), VReg);
+        if (VA.getLocInfo() == CCValAssign::BCvt)
+          RegVT = VA.getValVT();
         SDValue Copy = DAG.getCopyFromReg(Chain, dl, VReg, RegVT);
         // Treat values of type MVT::i1 specially: they are passed in
         // registers of type i32, but they need to remain as values of
@@ -1155,6 +1159,8 @@ SDValue HexagonTargetLowering::LowerFormalArguments(
         unsigned VReg =
           RegInfo.createVirtualRegister(&Hexagon::DoubleRegsRegClass);
         RegInfo.addLiveIn(VA.getLocReg(), VReg);
+        if (VA.getLocInfo() == CCValAssign::BCvt)
+          RegVT = VA.getValVT();
         InVals.push_back(DAG.getCopyFromReg(Chain, dl, VReg, RegVT));
 
       // Single Vector
@@ -2013,6 +2019,10 @@ HexagonTargetLowering::HexagonTargetLowering(const TargetMachine &TM,
       setOperationAction(ISD::ADD,     T, Legal);
       setOperationAction(ISD::SUB,     T, Legal);
       setOperationAction(ISD::VSELECT, T, Legal);
+      if (T != ByteV) {
+        setOperationAction(ISD::SIGN_EXTEND_VECTOR_INREG, T, Legal);
+        setOperationAction(ISD::ZERO_EXTEND_VECTOR_INREG, T, Legal);
+      }
 
       setOperationAction(ISD::MUL,                T, Custom);
       setOperationAction(ISD::SETCC,              T, Custom);
@@ -2021,6 +2031,8 @@ HexagonTargetLowering::HexagonTargetLowering(const TargetMachine &TM,
       setOperationAction(ISD::INSERT_VECTOR_ELT,  T, Custom);
       setOperationAction(ISD::EXTRACT_SUBVECTOR,  T, Custom);
       setOperationAction(ISD::EXTRACT_VECTOR_ELT, T, Custom);
+      if (T != ByteV)
+        setOperationAction(ISD::ANY_EXTEND_VECTOR_INREG, T, Custom);
     }
 
     for (MVT T : LegalV) {
@@ -2321,6 +2333,18 @@ bool HexagonTargetLowering::shouldExpandBuildVectorWithShuffles(EVT VT,
 bool HexagonTargetLowering::isShuffleMaskLegal(ArrayRef<int> Mask,
                                                EVT VT) const {
   return true;
+}
+
+TargetLoweringBase::LegalizeTypeAction
+HexagonTargetLowering::getPreferredVectorAction(EVT VT) const {
+  if (Subtarget.useHVXOps()) {
+    // If the size of VT is at least half of the vector length,
+    // widen the vector. Note: the threshold was not selected in
+    // any scientific way.
+    if (VT.getSizeInBits() >= Subtarget.getVectorLength()*8/2)
+      return TargetLoweringBase::TypeWidenVector;
+  }
+  return TargetLowering::getPreferredVectorAction(VT);
 }
 
 // Lower a vector shuffle (V1, V2, V3).  V1 and V2 are the two vectors
@@ -3006,8 +3030,8 @@ bool HexagonTargetLowering::IsEligibleForTailCallOptimization(
                                  const SmallVectorImpl<SDValue> &OutVals,
                                  const SmallVectorImpl<ISD::InputArg> &Ins,
                                  SelectionDAG& DAG) const {
-  const Function *CallerF = DAG.getMachineFunction().getFunction();
-  CallingConv::ID CallerCC = CallerF->getCallingConv();
+  const Function &CallerF = DAG.getMachineFunction().getFunction();
+  CallingConv::ID CallerCC = CallerF.getCallingConv();
   bool CCMatch = CallerCC == CalleeCC;
 
   // ***************************************************************************

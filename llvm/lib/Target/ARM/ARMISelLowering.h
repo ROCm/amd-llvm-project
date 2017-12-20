@@ -87,6 +87,7 @@ class VectorType;
       CMOV,         // ARM conditional move instructions.
 
       SSAT,         // Signed saturation
+      USAT,         // Unsigned saturation
 
       BCC_i64,
 
@@ -692,8 +693,8 @@ class VectorType;
                             SDValue ThisVal) const;
 
     bool supportSplitCSR(MachineFunction *MF) const override {
-      return MF->getFunction()->getCallingConv() == CallingConv::CXX_FAST_TLS &&
-          MF->getFunction()->hasFnAttribute(Attribute::NoUnwind);
+      return MF->getFunction().getCallingConv() == CallingConv::CXX_FAST_TLS &&
+          MF->getFunction().hasFnAttribute(Attribute::NoUnwind);
     }
 
     void initializeSplitCSR(MachineBasicBlock *Entry) const override;

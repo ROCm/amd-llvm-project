@@ -9,6 +9,7 @@ include_directories(
   )
 
 add_extra_unittest(ClangdTests
+  Annotations.cpp
   ClangdTests.cpp
   CodeCompleteTests.cpp
   ContextTests.cpp
@@ -18,7 +19,9 @@ add_extra_unittest(ClangdTests
   JSONExprTests.cpp
   TestFS.cpp
   TraceTests.cpp
+  SourceCodeTests.cpp
   SymbolCollectorTests.cpp
+  XRefsTests.cpp
   )
 
 target_link_libraries(ClangdTests
