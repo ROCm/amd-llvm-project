@@ -114,7 +114,7 @@ ScheduleDAGInstrs::ScheduleDAGInstrs(MachineFunction &mf,
     : ScheduleDAG(mf), MLI(mli), MFI(mf.getFrameInfo()),
       RemoveKillFlags(RemoveKillFlags),
       UnknownValue(UndefValue::get(
-                             Type::getVoidTy(mf.getFunction()->getContext()))) {
+                             Type::getVoidTy(mf.getFunction().getContext()))) {
   DbgValues.clear();
 
   const TargetSubtargetInfo &ST = mf.getSubtarget();
@@ -776,7 +776,8 @@ void ScheduleDAGInstrs::buildSchedGraph(AliasAnalysis *AA,
       if (PDiffs != nullptr)
         PDiffs->addInstruction(SU->NodeNum, RegOpers, MRI);
 
-      RPTracker->recedeSkipDebugValues();
+      if (RPTracker->getPos() == RegionEnd || &*RPTracker->getPos() != &MI)
+        RPTracker->recedeSkipDebugValues();
       assert(&*RPTracker->getPos() == &MI && "RPTracker in sync");
       RPTracker->recede(RegOpers);
     }

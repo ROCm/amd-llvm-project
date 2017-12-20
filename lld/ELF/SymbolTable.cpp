@@ -495,11 +495,7 @@ void SymbolTable::addShared(StringRef Name, SharedFile<ELFT> *File,
   if (WasInserted || ((S->isUndefined() || S->isLazy()) &&
                       S->getVisibility() == STV_DEFAULT)) {
     uint8_t Binding = S->Binding;
-    uint8_t OrigBinding = Sym.getBinding();
-    if (OrigBinding == STB_LOCAL)
-      error("Found local symbol '" + Name +
-            "' in global part of symbol table in file " + toString(File));
-    replaceSymbol<SharedSymbol>(S, File, Name, OrigBinding, Sym.st_other,
+    replaceSymbol<SharedSymbol>(S, File, Name, Sym.getBinding(), Sym.st_other,
                                 Sym.getType(), Sym.st_value, Sym.st_size,
                                 Alignment, VerdefIndex);
     if (!WasInserted) {
@@ -586,7 +582,7 @@ template <class ELFT> void SymbolTable::fetchIfLazy(StringRef Name) {
     // Mark the symbol not to be eliminated by LTO
     // even if it is a bitcode symbol.
     B->IsUsedInRegularObj = true;
-    if (auto *L = dyn_cast_or_null<Lazy>(B))
+    if (auto *L = dyn_cast<Lazy>(B))
       if (InputFile *File = L->fetch())
         addFile<ELFT>(File);
   }

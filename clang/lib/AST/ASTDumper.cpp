@@ -1195,12 +1195,11 @@ void ASTDumper::VisitFunctionDecl(const FunctionDecl *D) {
         };
 
       dumpChild([=] {
-        auto FirstOverrideItr = MD->begin_overridden_methods();
+        auto Overrides = MD->overridden_methods();
         OS << "Overrides: [ ";
-        dumpOverride(*FirstOverrideItr);
+        dumpOverride(*Overrides.begin());
         for (const auto *Override :
-               llvm::make_range(FirstOverrideItr + 1,
-                                MD->end_overridden_methods())) {
+             llvm::make_range(Overrides.begin() + 1, Overrides.end())) {
           OS << ", ";
           dumpOverride(Override);
         }
@@ -1538,7 +1537,7 @@ void ASTDumper::VisitTemplateDeclSpecialization(const SpecializationDecl *D,
     case TSK_ExplicitInstantiationDefinition:
       if (!DumpExplicitInst)
         break;
-      // Fall through.
+      LLVM_FALLTHROUGH;
     case TSK_Undeclared:
     case TSK_ImplicitInstantiation:
       if (DumpRefOnly)
