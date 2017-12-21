@@ -81,17 +81,9 @@ static ArrayRef<uint8_t> getVersion() {
 // With this feature, you can identify LLD-generated binaries easily
 // by "readelf --string-dump .comment <file>".
 // The returned object is a mergeable string section.
-template <class ELFT> MergeInputSection *elf::createCommentSection() {
-  typename ELFT::Shdr Hdr = {};
-  Hdr.sh_flags = SHF_MERGE | SHF_STRINGS;
-  Hdr.sh_type = SHT_PROGBITS;
-  Hdr.sh_entsize = 1;
-  Hdr.sh_addralign = 1;
-
-  auto *Ret =
-      make<MergeInputSection>((ObjFile<ELFT> *)nullptr, &Hdr, ".comment");
-  Ret->Data = getVersion();
-  return Ret;
+MergeInputSection *elf::createCommentSection() {
+  return make<MergeInputSection>(SHF_MERGE | SHF_STRINGS, SHT_PROGBITS, 1,
+                                 getVersion(), ".comment");
 }
 
 // .MIPS.abiflags section.
@@ -268,8 +260,8 @@ InputSection *elf::createInterpSection() {
   StringRef S = Saver.save(Config->DynamicLinker);
   ArrayRef<uint8_t> Contents = {(const uint8_t *)S.data(), S.size() + 1};
 
-  auto *Sec =
-      make<InputSection>(SHF_ALLOC, SHT_PROGBITS, 1, Contents, ".interp");
+  auto *Sec = make<InputSection>(nullptr, SHF_ALLOC, SHT_PROGBITS, 1, Contents,
+                                 ".interp");
   Sec->Live = true;
   return Sec;
 }
@@ -2299,8 +2291,8 @@ VersionNeedSection<ELFT>::VersionNeedSection()
 
 template <class ELFT>
 void VersionNeedSection<ELFT>::addSymbol(SharedSymbol *SS) {
-  SharedFile<ELFT> *File = SS->getFile<ELFT>();
-  const typename ELFT::Verdef *Ver = File->Verdefs[SS->VerdefIndex];
+  SharedFile<ELFT> &File = SS->getFile<ELFT>();
+  const typename ELFT::Verdef *Ver = File.Verdefs[SS->VerdefIndex];
   if (!Ver) {
     SS->VersionId = VER_NDX_GLOBAL;
     return;
@@ -2309,14 +2301,14 @@ void VersionNeedSection<ELFT>::addSymbol(SharedSymbol *SS) {
   // If we don't already know that we need an Elf_Verneed for this DSO, prepare
   // to create one by adding it to our needed list and creating a dynstr entry
   // for the soname.
-  if (File->VerdefMap.empty())
-    Needed.push_back({File, InX::DynStrTab->addString(File->SoName)});
-  typename SharedFile<ELFT>::NeededVer &NV = File->VerdefMap[Ver];
+  if (File.VerdefMap.empty())
+    Needed.push_back({&File, InX::DynStrTab->addString(File.SoName)});
+  typename SharedFile<ELFT>::NeededVer &NV = File.VerdefMap[Ver];
   // If we don't already know that we need an Elf_Vernaux for this Elf_Verdef,
   // prepare to create one by allocating a version identifier and creating a
   // dynstr entry for the version name.
   if (NV.Index == 0) {
-    NV.StrTab = InX::DynStrTab->addString(File->getStringTable().data() +
+    NV.StrTab = InX::DynStrTab->addString(File.getStringTable().data() +
                                           Ver->getAux()->vda_name);
     NV.Index = NextIndex++;
   }
@@ -2648,11 +2640,6 @@ template void PltSection::addEntry<ELF32LE>(Symbol &Sym);
 template void PltSection::addEntry<ELF32BE>(Symbol &Sym);
 template void PltSection::addEntry<ELF64LE>(Symbol &Sym);
 template void PltSection::addEntry<ELF64BE>(Symbol &Sym);
-
-template MergeInputSection *elf::createCommentSection<ELF32LE>();
-template MergeInputSection *elf::createCommentSection<ELF32BE>();
-template MergeInputSection *elf::createCommentSection<ELF64LE>();
-template MergeInputSection *elf::createCommentSection<ELF64BE>();
 
 template class elf::MipsAbiFlagsSection<ELF32LE>;
 template class elf::MipsAbiFlagsSection<ELF32BE>;
