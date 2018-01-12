@@ -667,12 +667,16 @@ void LinkerScript::assignOffsets(OutputSection *Sec) {
     Ctx->LMAOffset = [=] { return Sec->LMAExpr().getValue() - D; };
   }
 
-  switchTo(Sec);
+  if (!Sec->LMARegionName.empty()) {
+    if (MemoryRegion *MR = MemoryRegions.lookup(Sec->LMARegionName)) {
+      uint64_t Offset = MR->Origin - Dot;
+      Ctx->LMAOffset = [=] { return Offset; };
+    } else {
+      error("memory region '" + Sec->LMARegionName + "' not declared");
+    }
+  }
 
-  // We do not support custom layout for compressed debug sectons.
-  // At this point we already know their size and have compressed content.
-  if (Ctx->OutSec->Flags & SHF_COMPRESSED)
-    return;
+  switchTo(Sec);
 
   // The Size previously denoted how many InputSections had been added to this
   // section, and was used for sorting SHF_LINK_ORDER sections. Reset it to
@@ -693,6 +697,8 @@ void LinkerScript::assignOffsets(OutputSection *Sec) {
     if (auto *Cmd = dyn_cast<ByteCommand>(Base)) {
       Cmd->Offset = Dot - Ctx->OutSec->Addr;
       Dot += Cmd->Size;
+      if (Ctx->MemRegion)
+        Ctx->MemRegionOffset[Ctx->MemRegion] += Cmd->Size;
       Ctx->OutSec->Size = Dot - Ctx->OutSec->Addr;
       continue;
     }

@@ -682,6 +682,8 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
                                        OPT_fno_function_sections, false);
   Opts.DataSections = Args.hasFlag(OPT_fdata_sections,
                                    OPT_fno_data_sections, false);
+  Opts.StackSizeSection =
+      Args.hasFlag(OPT_fstack_size_section, OPT_fno_stack_size_section, false);
   Opts.UniqueSectionNames = Args.hasFlag(OPT_funique_section_names,
                                          OPT_fno_unique_section_names, true);
 
@@ -718,6 +720,8 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
 
   Opts.MainFileName = Args.getLastArgValue(OPT_main_file_name);
   Opts.VerifyModule = !Args.hasArg(OPT_disable_llvm_verifier);
+
+  Opts.ControlFlowGuard = Args.hasArg(OPT_cfguard);
 
   Opts.DisableGCov = Args.hasArg(OPT_test_coverage);
   Opts.EmitGcovArcs = Args.hasArg(OPT_femit_coverage_data);
@@ -795,6 +799,21 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
   Opts.InstrumentForProfiling = Args.hasArg(OPT_pg);
   Opts.CallFEntry = Args.hasArg(OPT_mfentry);
   Opts.EmitOpenCLArgMetadata = Args.hasArg(OPT_cl_kernel_arg_info);
+
+  if (const Arg *A = Args.getLastArg(OPT_fcf_protection_EQ)) {
+    StringRef Name = A->getValue();
+    if (Name == "full") {
+      Opts.CFProtectionReturn = 1;
+      Opts.CFProtectionBranch = 1;
+    } else if (Name == "return")
+      Opts.CFProtectionReturn = 1;
+    else if (Name == "branch")
+      Opts.CFProtectionBranch = 1;
+    else if (Name != "none") {
+      Diags.Report(diag::err_drv_invalid_value) << A->getAsString(Args) << Name;
+      Success = false;
+    }
+  }
 
   if (const Arg *A = Args.getLastArg(OPT_compress_debug_sections,
                                      OPT_compress_debug_sections_EQ)) {
@@ -2407,16 +2426,22 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
 
   // Check if -fopenmp is specified.
   Opts.OpenMP = Args.hasArg(options::OPT_fopenmp) ? 1 : 0;
+  // Check if -fopenmp-simd is specified.
+  Opts.OpenMPSimd = !Opts.OpenMP && Args.hasFlag(options::OPT_fopenmp_simd,
+                                                 options::OPT_fno_openmp_simd,
+                                                 /*Default=*/false);
   Opts.OpenMPUseTLS =
       Opts.OpenMP && !Args.hasArg(options::OPT_fnoopenmp_use_tls);
   Opts.OpenMPIsDevice =
       Opts.OpenMP && Args.hasArg(options::OPT_fopenmp_is_device);
 
-  if (Opts.OpenMP) {
-    int Version =
-        getLastArgIntValue(Args, OPT_fopenmp_version_EQ, Opts.OpenMP, Diags);
-    if (Version != 0)
+  if (Opts.OpenMP || Opts.OpenMPSimd) {
+    if (int Version =
+            getLastArgIntValue(Args, OPT_fopenmp_version_EQ,
+                               Opts.OpenMPSimd ? 45 : Opts.OpenMP, Diags))
       Opts.OpenMP = Version;
+    else if (Opts.OpenMPSimd)
+      Opts.OpenMP = 45;
     // Provide diagnostic when a given target is not expected to be an OpenMP
     // device or host.
     if (!Opts.OpenMPIsDevice) {
@@ -2595,7 +2620,6 @@ static bool isStrictlyPreprocessorAction(frontend::ActionKind Action) {
 }
 
 static void ParsePreprocessorArgs(PreprocessorOptions &Opts, ArgList &Args,
-                                  FileManager &FileMgr,
                                   DiagnosticsEngine &Diags,
                                   frontend::ActionKind Action) {
   using namespace options;
@@ -2751,7 +2775,13 @@ bool CompilerInvocation::CreateFromArgs(CompilerInvocation &Res,
 
   // Issue errors on unknown arguments.
   for (const Arg *A : Args.filtered(OPT_UNKNOWN)) {
-    Diags.Report(diag::err_drv_unknown_argument) << A->getAsString(Args);
+    auto ArgString = A->getAsString(Args);
+    std::string Nearest;
+    if (Opts->findNearest(ArgString, Nearest, IncludedFlagsBitmask) > 1)
+      Diags.Report(diag::err_drv_unknown_argument) << ArgString;
+    else
+      Diags.Report(diag::err_drv_unknown_argument_with_suggestion)
+          << ArgString << Nearest;
     Success = false;
   }
 
@@ -2811,12 +2841,7 @@ bool CompilerInvocation::CreateFromArgs(CompilerInvocation &Res,
       !LangOpts.Sanitize.has(SanitizerKind::Address) &&
       !LangOpts.Sanitize.has(SanitizerKind::Memory);
 
-  // FIXME: ParsePreprocessorArgs uses the FileManager to read the contents of
-  // PCH file and find the original header name. Remove the need to do that in
-  // ParsePreprocessorArgs and remove the FileManager
-  // parameters from the function and the "FileManager.h" #include.
-  FileManager FileMgr(Res.getFileSystemOpts());
-  ParsePreprocessorArgs(Res.getPreprocessorOpts(), Args, FileMgr, Diags,
+  ParsePreprocessorArgs(Res.getPreprocessorOpts(), Args, Diags,
                         Res.getFrontendOpts().ProgramAction);
   ParsePreprocessorOutputArgs(Res.getPreprocessorOutputOpts(), Args,
                               Res.getFrontendOpts().ProgramAction);

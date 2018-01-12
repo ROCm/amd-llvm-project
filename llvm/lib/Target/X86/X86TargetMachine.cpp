@@ -281,10 +281,9 @@ UseVZeroUpper("x86-use-vzeroupper", cl::Hidden,
 // X86 TTI query.
 //===----------------------------------------------------------------------===//
 
-TargetIRAnalysis X86TargetMachine::getTargetIRAnalysis() {
-  return TargetIRAnalysis([this](const Function &F) {
-    return TargetTransformInfo(X86TTIImpl(this, F));
-  });
+TargetTransformInfo
+X86TargetMachine::getTargetTransformInfo(const Function &F) {
+  return TargetTransformInfo(X86TTIImpl(this, F));
 }
 
 //===----------------------------------------------------------------------===//
@@ -426,6 +425,8 @@ void X86PassConfig::addPreSched2() { addPass(createX86ExpandPseudoPass()); }
 void X86PassConfig::addPreEmitPass() {
   if (getOptLevel() != CodeGenOpt::None)
     addPass(new X86ExecutionDepsFix());
+
+  addPass(createX86IndirectBranchTrackingPass());
 
   if (UseVZeroUpper)
     addPass(createX86IssueVZeroUpperPass());

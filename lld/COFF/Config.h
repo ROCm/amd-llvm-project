@@ -164,7 +164,6 @@ struct Configuration {
   uint32_t MinorImageVersion = 0;
   uint32_t MajorOSVersion = 6;
   uint32_t MinorOSVersion = 0;
-  bool CanExitEarly = false;
   bool DynamicBase = true;
   bool AllowBind = true;
   bool NxCompat = true;
@@ -174,6 +173,7 @@ struct Configuration {
   bool HighEntropyVA = false;
   bool AppContainer = false;
   bool MinGW = false;
+  bool WarnLocallyDefinedImported = true;
 };
 
 extern Configuration *Config;

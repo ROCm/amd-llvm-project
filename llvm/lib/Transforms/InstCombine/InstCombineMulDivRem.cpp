@@ -33,6 +33,7 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/KnownBits.h"
 #include "llvm/Transforms/InstCombine/InstCombineWorklist.h"
+#include "llvm/Transforms/Utils/BuildLibCalls.h"
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
@@ -725,6 +726,23 @@ Instruction *InstCombiner::visitFMul(BinaryOperator &I) {
       Value *FSub = Builder.CreateFSub(FMulVal, OpX);
       FSub->takeName(&I);
       return replaceInstUsesWith(I, FSub);
+    }
+  }
+
+  // sqrt(a) * sqrt(b) -> sqrt(a * b)
+  if (AllowReassociate &&
+      Op0->hasOneUse() && Op1->hasOneUse()) {
+    Value *Opnd0 = nullptr;
+    Value *Opnd1 = nullptr;
+    if (match(Op0, m_Intrinsic<Intrinsic::sqrt>(m_Value(Opnd0))) &&
+        match(Op1, m_Intrinsic<Intrinsic::sqrt>(m_Value(Opnd1)))) {
+      BuilderTy::FastMathFlagGuard Guard(Builder);
+      Builder.setFastMathFlags(I.getFastMathFlags());
+      Value *FMulVal = Builder.CreateFMul(Opnd0, Opnd1);
+      Value *Sqrt = Intrinsic::getDeclaration(I.getModule(), 
+                                              Intrinsic::sqrt, I.getType());
+      Value *SqrtCall = Builder.CreateCall(Sqrt, FMulVal);
+      return replaceInstUsesWith(I, SqrtCall);
     }
   }
 
@@ -1451,6 +1469,42 @@ Instruction *InstCombiner::visitFDiv(BinaryOperator &I) {
     }
   }
 
+  if (AllowReassociate &&
+      Op0->hasOneUse() && Op1->hasOneUse()) {
+    Value *A;
+    // sin(a) / cos(a) -> tan(a)
+    if (match(Op0, m_Intrinsic<Intrinsic::sin>(m_Value(A))) &&
+        match(Op1, m_Intrinsic<Intrinsic::cos>(m_Specific(A)))) {
+      if (hasUnaryFloatFn(&TLI, I.getType(), LibFunc_tan,
+                          LibFunc_tanf, LibFunc_tanl)) {
+        IRBuilder<> B(&I);
+        IRBuilder<>::FastMathFlagGuard Guard(B);
+        B.setFastMathFlags(I.getFastMathFlags());
+        Value *Tan = emitUnaryFloatFnCall(
+            A, TLI.getName(LibFunc_tan), B,
+            CallSite(Op0).getCalledFunction()->getAttributes());
+        return replaceInstUsesWith(I, Tan);
+      }
+    }
+
+    // cos(a) / sin(a) -> 1/tan(a)
+    if (match(Op0, m_Intrinsic<Intrinsic::cos>(m_Value(A))) &&
+        match(Op1, m_Intrinsic<Intrinsic::sin>(m_Specific(A)))) {
+      if (hasUnaryFloatFn(&TLI, I.getType(), LibFunc_tan,
+                          LibFunc_tanf, LibFunc_tanl)) {
+        IRBuilder<> B(&I);
+        IRBuilder<>::FastMathFlagGuard Guard(B);
+        B.setFastMathFlags(I.getFastMathFlags());
+        Value *Tan = emitUnaryFloatFnCall(
+            A, TLI.getName(LibFunc_tan), B,
+            CallSite(Op0).getCalledFunction()->getAttributes());
+        Value *One = ConstantFP::get(Tan->getType(), 1.0);
+        Value *Div = B.CreateFDiv(One, Tan);
+        return replaceInstUsesWith(I, Div);
+      }
+    }
+  }
+
   Value *LHS;
   Value *RHS;
 
@@ -1630,10 +1684,6 @@ Instruction *InstCombiner::visitFRem(BinaryOperator &I) {
   if (Value *V = SimplifyFRemInst(Op0, Op1, I.getFastMathFlags(),
                                   SQ.getWithInstruction(&I)))
     return replaceInstUsesWith(I, V);
-
-  // Handle cases involving: rem X, (select Cond, Y, Z)
-  if (simplifyDivRemOfSelectWithZeroOp(I))
-    return &I;
 
   return nullptr;
 }

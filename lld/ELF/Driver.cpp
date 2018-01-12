@@ -584,7 +584,8 @@ static bool getCompressDebugSections(opt::InputArgList &Args) {
 static int parseInt(StringRef S, opt::Arg *Arg) {
   int V = 0;
   if (!to_integer(S, V, 10))
-    error(Arg->getSpelling() + ": number expected, but got '" + S + "'");
+    error(Arg->getSpelling() + "=" + Arg->getValue() +
+          ": number expected, but got '" + S + "'");
   return V;
 }
 
@@ -618,7 +619,10 @@ void LinkerDriver::readConfigs(opt::InputArgList &Args) {
   Config->GcSections = Args.hasFlag(OPT_gc_sections, OPT_no_gc_sections, false);
   Config->GdbIndex = Args.hasFlag(OPT_gdb_index, OPT_no_gdb_index, false);
   Config->ICF = Args.hasFlag(OPT_icf_all, OPT_icf_none, false);
-  Config->ICFData = Args.hasArg(OPT_icf_data);
+  Config->IgnoreDataAddressEquality =
+      Args.hasArg(OPT_ignore_data_address_equality);
+  Config->IgnoreFunctionAddressEquality =
+      Args.hasArg(OPT_ignore_function_address_equality);
   Config->Init = Args.getLastArgValue(OPT_init, "_init");
   Config->LTOAAPipeline = Args.getLastArgValue(OPT_lto_aa_pipeline);
   Config->LTONewPmPasses = Args.getLastArgValue(OPT_lto_newpm_passes);
@@ -680,7 +684,7 @@ void LinkerDriver::readConfigs(opt::InputArgList &Args) {
   Config->ZWxneeded = hasZOption(Args, "wxneeded");
 
   // Parse LTO plugin-related options for compatibility with gold.
-  for (auto *Arg : Args.filtered(OPT_plugin_opt, OPT_plugin_opt_eq)) {
+  for (auto *Arg : Args.filtered(OPT_plugin_opt)) {
     StringRef S = Arg->getValue();
     if (S == "disable-verify")
       Config->DisableVerify = true;
@@ -1043,7 +1047,8 @@ template <class ELFT> void LinkerDriver::link(opt::InputArgList &Args) {
     return;
 
   // Handle undefined symbols in DSOs.
-  Symtab->scanShlibUndefined<ELFT>();
+  if (!Config->Shared)
+    Symtab->scanShlibUndefined<ELFT>();
 
   // Handle the -exclude-libs option.
   if (Args.hasArg(OPT_exclude_libs))
@@ -1056,7 +1061,7 @@ template <class ELFT> void LinkerDriver::link(opt::InputArgList &Args) {
 
   // We need to create some reserved symbols such as _end. Create them.
   if (!Config->Relocatable)
-    addReservedSymbols<ELFT>();
+    addReservedSymbols();
 
   // Apply version scripts.
   Symtab->scanVersionScript();

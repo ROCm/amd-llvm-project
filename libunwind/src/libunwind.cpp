@@ -51,6 +51,8 @@ _LIBUNWIND_EXPORT int unw_init_local(unw_cursor_t *cursor,
 # define REGISTER_KIND Registers_x86
 #elif defined(__x86_64__)
 # define REGISTER_KIND Registers_x86_64
+#elif defined(__powerpc64__)
+# define REGISTER_KIND Registers_ppc64
 #elif defined(__ppc__)
 # define REGISTER_KIND Registers_ppc
 #elif defined(__aarch64__)
@@ -62,7 +64,7 @@ _LIBUNWIND_EXPORT int unw_init_local(unw_cursor_t *cursor,
 #elif defined(__mips__) && defined(_ABIO32) && defined(__mips_soft_float)
 # define REGISTER_KIND Registers_mips_o32
 #elif defined(__mips__) && defined(_ABI64) && defined(__mips_soft_float)
-# define REGISTER_KIND Registers_mips_n64
+# define REGISTER_KIND Registers_mips_newabi
 #elif defined(__mips__)
 # warning The MIPS architecture is not supported with this ABI and environment!
 #else

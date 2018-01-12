@@ -1064,7 +1064,7 @@ template <class ELFT> void DynamicSection<ELFT>::finalizeContents() {
     addInt(DT_DEBUG, 0);
 
   this->Link = InX::DynStrTab->getParent()->SectionIndex;
-  if (InX::RelaDyn->getParent() && !InX::RelaDyn->empty()) {
+  if (!InX::RelaDyn->empty()) {
     addInSec(InX::RelaDyn->DynamicTag, InX::RelaDyn);
     addSize(InX::RelaDyn->SizeDynamicTag, InX::RelaDyn->getParent());
 
@@ -1081,7 +1081,13 @@ template <class ELFT> void DynamicSection<ELFT>::finalizeContents() {
         addInt(IsRela ? DT_RELACOUNT : DT_RELCOUNT, NumRelativeRels);
     }
   }
-  if (InX::RelaPlt->getParent() && !InX::RelaPlt->empty()) {
+  // .rel[a].plt section usually consists of two parts, containing plt and
+  // iplt relocations. It is possible to have only iplt relocations in the
+  // output. In that case RelaPlt is empty and have zero offset, the same offset
+  // as RelaIplt have. And we still want to emit proper dynamic tags for that
+  // case, so here we always use RelaPlt as marker for the begining of
+  // .rel[a].plt section.
+  if (InX::RelaPlt->getParent()->Live) {
     addInSec(DT_JMPREL, InX::RelaPlt);
     addSize(DT_PLTRELSZ, InX::RelaPlt->getParent());
     switch (Config->EMachine) {
@@ -1195,6 +1201,19 @@ RelocationBaseSection::RelocationBaseSection(StringRef Name, uint32_t Type,
                                              int32_t SizeDynamicTag)
     : SyntheticSection(SHF_ALLOC, Type, Config->Wordsize, Name),
       DynamicTag(DynamicTag), SizeDynamicTag(SizeDynamicTag) {}
+
+void RelocationBaseSection::addReloc(uint32_t DynType,
+                                     InputSectionBase *InputSec,
+                                     uint64_t OffsetInSec, bool UseSymVA,
+                                     Symbol *Sym, int64_t Addend, RelExpr Expr,
+                                     RelType Type) {
+  // REL type relocations don't have addend fields unlike RELAs, and
+  // their addends are stored to the section to which they are applied.
+  // So, store addends if we need to.
+  if (!Config->IsRela && UseSymVA)
+    InputSec->Relocations.push_back({Expr, Type, OffsetInSec, Addend, Sym});
+  addReloc({DynType, InputSec, OffsetInSec, UseSymVA, Sym, Addend});
+}
 
 void RelocationBaseSection::addReloc(const DynamicReloc &Reloc) {
   if (Reloc.Type == Target->RelativeRel)
@@ -1817,6 +1836,9 @@ void HashTableSection::finalizeContents() {
 }
 
 void HashTableSection::writeTo(uint8_t *Buf) {
+  // See comment in GnuHashTableSection::writeTo.
+  memset(Buf, 0, Size);
+
   unsigned NumSymbols = InX::DynSymTab->getNumSymbols();
 
   uint32_t *P = reinterpret_cast<uint32_t *>(Buf);
@@ -1836,9 +1858,9 @@ void HashTableSection::writeTo(uint8_t *Buf) {
   }
 }
 
-PltSection::PltSection(size_t S)
+PltSection::PltSection(size_t HeaderSize, bool IsIplt)
     : SyntheticSection(SHF_ALLOC | SHF_EXECINSTR, SHT_PROGBITS, 16, ".plt"),
-      HeaderSize(S) {
+      HeaderSize(HeaderSize), IsIplt(IsIplt) {
   // The PLT needs to be writable on SPARC as the dynamic linker will
   // modify the instructions in the PLT entries.
   if (Config->EMachine == EM_SPARCV9)
@@ -1848,7 +1870,7 @@ PltSection::PltSection(size_t S)
 void PltSection::writeTo(uint8_t *Buf) {
   // At beginning of PLT but not the IPLT, we have code to call the dynamic
   // linker to resolve dynsyms at runtime. Write such code.
-  if (HeaderSize != 0)
+  if (!IsIplt)
     Target->writePltHeader(Buf);
   size_t Off = HeaderSize;
   // The IPlt is immediately after the Plt, account for this in RelOff
@@ -1867,7 +1889,7 @@ void PltSection::writeTo(uint8_t *Buf) {
 template <class ELFT> void PltSection::addEntry(Symbol &Sym) {
   Sym.PltIndex = Entries.size();
   RelocationBaseSection *PltRelocSection = InX::RelaPlt;
-  if (HeaderSize == 0) {
+  if (IsIplt) {
     PltRelocSection = InX::RelaIplt;
     Sym.IsInIplt = true;
   }
@@ -1884,7 +1906,7 @@ size_t PltSection::getSize() const {
 // example ARM uses mapping symbols to aid disassembly
 void PltSection::addSymbols() {
   // The PLT may have symbols defined for the Header, the IPLT has no header
-  if (HeaderSize != 0)
+  if (!IsIplt)
     Target->addPltHeaderSymbols(*this);
   size_t Off = HeaderSize;
   for (size_t I = 0; I < Entries.size(); ++I) {
@@ -1894,7 +1916,7 @@ void PltSection::addSymbols() {
 }
 
 unsigned PltSection::getPltRelocOff() const {
-  return (HeaderSize == 0) ? InX::Plt->getSize() : 0;
+  return IsIplt ? InX::Plt->getSize() : 0;
 }
 
 // The string hash function for .gdb_index.
@@ -2429,10 +2451,8 @@ void MergeNoTailSection::finalizeContents() {
   parallelForEachN(0, Concurrency, [&](size_t ThreadId) {
     for (MergeInputSection *Sec : Sections) {
       for (size_t I = 0, E = Sec->Pieces.size(); I != E; ++I) {
-        if (!Sec->Pieces[I].Live)
-          continue;
         size_t ShardId = getShardId(Sec->Pieces[I].Hash);
-        if ((ShardId & (Concurrency - 1)) == ThreadId)
+        if ((ShardId & (Concurrency - 1)) == ThreadId && Sec->Pieces[I].Live)
           Sec->Pieces[I].OutputOff = Shards[ShardId].add(Sec->getData(I));
       }
     }
