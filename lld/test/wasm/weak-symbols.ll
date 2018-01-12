@@ -5,11 +5,13 @@
 ; RUN: obj2yaml %t.wasm | FileCheck %s
 
 declare i32 @weakFn() local_unnamed_addr
+@weakGlobal = external global i32
 
-define void @_start() local_unnamed_addr {
+define i32 @_start() local_unnamed_addr {
 entry:
   %call = call i32 @weakFn()
-  ret void
+  %val = load i32, i32* @weakGlobal, align 4
+  ret i32 %val
 }
 
 ; CHECK:      --- !WASM
@@ -19,13 +21,10 @@ entry:
 ; CHECK-NEXT:   - Type:            TYPE
 ; CHECK-NEXT:     Signatures:
 ; CHECK-NEXT:       - Index:           0
-; CHECK-NEXT:         ReturnType:      NORESULT
-; CHECK-NEXT:         ParamTypes:
-; CHECK-NEXT:       - Index:           1
 ; CHECK-NEXT:         ReturnType:      I32
 ; CHECK-NEXT:         ParamTypes:
 ; CHECK-NEXT:   - Type:            FUNCTION
-; CHECK-NEXT:     FunctionTypes:   [ 0, 1, 1, 1, 1 ]
+; CHECK-NEXT:     FunctionTypes:   [ 0, 0, 0, 0, 0 ]
 ; CHECK-NEXT:   - Type:            TABLE
 ; CHECK-NEXT:     Tables:
 ; CHECK-NEXT:       - ElemType:        ANYFUNC
@@ -38,11 +37,12 @@ entry:
 ; CHECK-NEXT:       - Initial:         0x00000002
 ; CHECK-NEXT:   - Type:            GLOBAL
 ; CHECK-NEXT:     Globals:
-; CHECK-NEXT:       - Type:            I32
+; CHECK-NEXT:       - Index:           0
+; CHECK-NEXT:         Type:            I32
 ; CHECK-NEXT:         Mutable:         true
 ; CHECK-NEXT:         InitExpr:
 ; CHECK-NEXT:           Opcode:          I32_CONST
-; CHECK-NEXT:           Value:           66560
+; CHECK-NEXT:           Value:           66576
 ; CHECK-NEXT:   - Type:            EXPORT
 ; CHECK-NEXT:     Exports:
 ; CHECK-NEXT:       - Name:            memory
@@ -68,19 +68,32 @@ entry:
 ; CHECK-NEXT:         Functions:       [ 1 ]
 ; CHECK-NEXT:   - Type:            CODE
 ; CHECK-NEXT:     Functions:
-; CHECK-NEXT:       - Locals:
-; CHECK-NEXT:         Body:            1081808080001A0B
-; CHECK-NEXT:       - Locals:
+; CHECK-NEXT:       - Index:           0
+; CHECK-NEXT:         Locals:
+; CHECK-NEXT:         Body:            1081808080001A4100280280888080000B
+; CHECK-NEXT:       - Index:           1
+; CHECK-NEXT:         Locals:
 ; CHECK-NEXT:         Body:            41010B
-; CHECK-NEXT:       - Locals:
+; CHECK-NEXT:       - Index:           2
+; CHECK-NEXT:         Locals:
 ; CHECK-NEXT:         Body:            4181808080000B
-; CHECK-NEXT:       - Locals:
+; CHECK-NEXT:       - Index:           3
+; CHECK-NEXT:         Locals:
 ; CHECK-NEXT:         Body:            41020B
-; CHECK-NEXT:       - Locals:
+; CHECK-NEXT:       - Index:           4
+; CHECK-NEXT:         Locals:
 ; CHECK-NEXT:         Body:            4181808080000B
+; CHECK-NEXT:   - Type:            DATA
+; CHECK-NEXT:     Segments:
+; CHECK-NEXT:       - SectionOffset:   7
+; CHECK-NEXT:         MemoryIndex:     0
+; CHECK-NEXT:         Offset:
+; CHECK-NEXT:           Opcode:          I32_CONST
+; CHECK-NEXT:           Value:           1024
+; CHECK-NEXT:         Content:         '0100000002000000'
 ; CHECK-NEXT:   - Type:            CUSTOM
 ; CHECK-NEXT:     Name:            linking
-; CHECK-NEXT:     DataSize:        0
+; CHECK-NEXT:     DataSize:        8
 ; CHECK-NEXT:   - Type:            CUSTOM
 ; CHECK-NEXT:     Name:            name
 ; CHECK-NEXT:     FunctionNames:

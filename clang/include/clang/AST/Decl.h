@@ -1750,6 +1750,10 @@ private:
   /// parsing it.
   unsigned WillHaveBody : 1;
 
+  /// Indicates that this function is a multiversioned function using attribute
+  /// 'target'.
+  unsigned IsMultiVersion : 1;
+
 protected:
   /// [C++17] Only used by CXXDeductionGuideDecl. Declared here to avoid
   /// increasing the size of CXXDeductionGuideDecl by the size of an unsigned
@@ -1759,6 +1763,11 @@ protected:
   unsigned IsCopyDeductionCandidate : 1;
 
 private:
+
+  /// Store the ODRHash after first calculation.
+  unsigned HasODRHash : 1;
+  unsigned ODRHash;
+
   /// \brief End part of this FunctionDecl's source range.
   ///
   /// We could compute the full range in getSourceRange(). However, when we're
@@ -1841,7 +1850,8 @@ protected:
         IsExplicitlyDefaulted(false), HasImplicitReturnZero(false),
         IsLateTemplateParsed(false), IsConstexpr(isConstexprSpecified),
         InstantiationIsPending(false), UsesSEHTry(false), HasSkippedBody(false),
-        WillHaveBody(false), IsCopyDeductionCandidate(false),
+        WillHaveBody(false), IsMultiVersion(false),
+        IsCopyDeductionCandidate(false), HasODRHash(false), ODRHash(0),
         EndRangeLoc(NameInfo.getEndLoc()), DNLoc(NameInfo.getInfo()) {}
 
   using redeclarable_base = Redeclarable<FunctionDecl>;
@@ -2148,6 +2158,15 @@ public:
   bool willHaveBody() const { return WillHaveBody; }
   void setWillHaveBody(bool V = true) { WillHaveBody = V; }
 
+  /// True if this function is considered a multiversioned function.
+  bool isMultiVersion() const { return getCanonicalDecl()->IsMultiVersion; }
+
+  /// Sets the multiversion state for this declaration and all of its
+  /// redeclarations.
+  void setIsMultiVersion(bool V = true) {
+    getCanonicalDecl()->IsMultiVersion = V;
+  }
+
   void setPreviousDeclaration(FunctionDecl * PrevDecl);
 
   FunctionDecl *getCanonicalDecl() override;
@@ -2438,6 +2457,10 @@ public:
   /// the corresponding Builtin ID. If the function is not a memory function,
   /// returns 0.
   unsigned getMemoryFunctionKind() const;
+
+  /// \brief Returns ODRHash of the function.  This value is calculated and
+  /// stored on first call, then the stored value returned on the other calls.
+  unsigned getODRHash();
 
   // Implement isa/cast/dyncast/etc.
   static bool classof(const Decl *D) { return classofKind(D->getKind()); }

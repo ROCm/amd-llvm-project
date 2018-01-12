@@ -57,9 +57,9 @@ bool link(ArrayRef<const char *> Args, bool CanExitEarly, raw_ostream &Diag) {
   errorHandler().ErrorLimitExceededMsg =
       "too many errors emitted, stopping now"
       " (use /ERRORLIMIT:0 to see all errors)";
+  errorHandler().ExitEarly = CanExitEarly;
   Config = make<Configuration>();
   Config->Argv = {Args.begin(), Args.end()};
-  Config->CanExitEarly = CanExitEarly;
 
   Symtab = make<SymbolTable>();
 
@@ -227,7 +227,29 @@ static bool isDecorated(StringRef Sym) {
 void LinkerDriver::parseDirectives(StringRef S) {
   ArgParser Parser;
   // .drectve is always tokenized using Windows shell rules.
-  opt::InputArgList Args = Parser.parse(S);
+  // /EXPORT: option can appear too many times, processing in fastpath.
+  opt::InputArgList Args;
+  std::vector<StringRef> Exports;
+  std::tie(Args, Exports) = Parser.parseDirectives(S);
+
+  for (StringRef E : Exports) {
+    // If a common header file contains dllexported function
+    // declarations, many object files may end up with having the
+    // same /EXPORT options. In order to save cost of parsing them,
+    // we dedup them first.
+    if (!DirectivesExports.insert(E).second)
+      continue;
+
+    Export Exp = parseExport(E);
+    if (Config->Machine == I386 && Config->MinGW) {
+      if (!isDecorated(Exp.Name))
+        Exp.Name = Saver.save("_" + Exp.Name);
+      if (!Exp.ExtName.empty() && !isDecorated(Exp.ExtName))
+        Exp.ExtName = Saver.save("_" + Exp.ExtName);
+    }
+    Exp.Directives = true;
+    Config->Exports.push_back(Exp);
+  }
 
   for (auto *Arg : Args) {
     switch (Arg->getOption().getUnaliasedOption().getID()) {
@@ -244,18 +266,6 @@ void LinkerDriver::parseDirectives(StringRef S) {
     case OPT_entry:
       Config->Entry = addUndefined(mangle(Arg->getValue()));
       break;
-    case OPT_export: {
-      Export E = parseExport(Arg->getValue());
-      if (Config->Machine == I386 && Config->MinGW) {
-        if (!isDecorated(E.Name))
-          E.Name = Saver.save("_" + E.Name);
-        if (!E.ExtName.empty() && !isDecorated(E.ExtName))
-          E.ExtName = Saver.save("_" + E.ExtName);
-      }
-      E.Directives = true;
-      Config->Exports.push_back(E);
-      break;
-    }
     case OPT_failifmismatch:
       checkFailIfMismatch(Arg->getValue());
       break;
@@ -794,6 +804,13 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
   for (auto *Arg : Args.filtered(OPT_libpath))
     SearchPaths.push_back(Arg->getValue());
   addLibSearchPaths();
+
+  // Handle /ignore
+  for (auto *Arg : Args.filtered(OPT_ignore)) {
+    if (StringRef(Arg->getValue()) == "4217")
+      Config->WarnLocallyDefinedImported = false;
+    // Other warning numbers are ignored.
+  }
 
   // Handle /out
   if (auto *Arg = Args.getLastArg(OPT_out))

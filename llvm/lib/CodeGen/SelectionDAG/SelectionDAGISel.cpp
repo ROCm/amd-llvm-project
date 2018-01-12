@@ -414,7 +414,7 @@ bool SelectionDAGISel::runOnMachineFunction(MachineFunction &mf) {
 
   SplitCriticalSideEffectEdges(const_cast<Function &>(Fn), DT, LI);
 
-  CurDAG->init(*MF, *ORE, this);
+  CurDAG->init(*MF, *ORE, this, LibInfo);
   FuncInfo->set(Fn, *MF, CurDAG);
 
   // Now get the optional analyzes if we want to.
@@ -1445,13 +1445,11 @@ void SelectionDAGISel::SelectAllBasicBlocks(const Function &Fn) {
       }
 
       if (AllPredsVisited) {
-        for (BasicBlock::const_iterator I = LLVMBB->begin();
-             const PHINode *PN = dyn_cast<PHINode>(I); ++I)
-          FuncInfo->ComputePHILiveOutRegInfo(PN);
+        for (const PHINode &PN : LLVMBB->phis())
+          FuncInfo->ComputePHILiveOutRegInfo(&PN);
       } else {
-        for (BasicBlock::const_iterator I = LLVMBB->begin();
-             const PHINode *PN = dyn_cast<PHINode>(I); ++I)
-          FuncInfo->InvalidatePHILiveOutRegInfo(PN);
+        for (const PHINode &PN : LLVMBB->phis())
+          FuncInfo->InvalidatePHILiveOutRegInfo(&PN);
       }
 
       FuncInfo->VisitedBBs.insert(LLVMBB);

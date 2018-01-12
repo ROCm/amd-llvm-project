@@ -1695,6 +1695,8 @@ HexagonTargetLowering::HexagonTargetLowering(const TargetMachine &TM,
   setPrefFunctionAlignment(4);
   setMinFunctionAlignment(2);
   setStackPointerRegisterToSaveRestore(HRI.getStackRegister());
+  setBooleanContents(TargetLoweringBase::UndefinedBooleanContent);
+  setBooleanVectorContents(TargetLoweringBase::UndefinedBooleanContent);
 
   setMaxAtomicSizeInBitsSupported(64);
   setMinCmpXchgSizeInBits(32);
@@ -2256,9 +2258,7 @@ const char* HexagonTargetLowering::getTargetNodeName(unsigned Opcode) const {
   case HexagonISD::DCFETCH:       return "HexagonISD::DCFETCH";
   case HexagonISD::EH_RETURN:     return "HexagonISD::EH_RETURN";
   case HexagonISD::EXTRACTU:      return "HexagonISD::EXTRACTU";
-  case HexagonISD::EXTRACTURP:    return "HexagonISD::EXTRACTURP";
   case HexagonISD::INSERT:        return "HexagonISD::INSERT";
-  case HexagonISD::INSERTRP:      return "HexagonISD::INSERTRP";
   case HexagonISD::JT:            return "HexagonISD::JT";
   case HexagonISD::RET_FLAG:      return "HexagonISD::RET_FLAG";
   case HexagonISD::TC_RETURN:     return "HexagonISD::TC_RETURN";
@@ -2509,9 +2509,10 @@ HexagonTargetLowering::getBuildVectorConstInts(ArrayRef<SDValue> Values,
       Consts[i] = ConstantInt::get(IntTy, 0);
       continue;
     }
+    // Make sure to always cast to IntTy.
     if (auto *CN = dyn_cast<ConstantSDNode>(V.getNode())) {
       const ConstantInt *CI = CN->getConstantIntValue();
-      Consts[i] = const_cast<ConstantInt*>(CI);
+      Consts[i] = ConstantInt::get(IntTy, CI->getValue().getSExtValue());
     } else if (auto *CN = dyn_cast<ConstantFPSDNode>(V.getNode())) {
       const ConstantFP *CF = CN->getConstantFPValue();
       APInt A = CF->getValueAPF().bitcastToAPInt();
@@ -2651,7 +2652,7 @@ HexagonTargetLowering::buildVector64(ArrayRef<SDValue> Elem, const SDLoc &dl,
     uint64_t Mask = (ElemTy == MVT::i8)  ? 0xFFull
                   : (ElemTy == MVT::i16) ? 0xFFFFull : 0xFFFFFFFFull;
     for (unsigned i = 0; i != Num; ++i)
-      Val = (Val << W) | (Consts[i]->getZExtValue() & Mask);
+      Val = (Val << W) | (Consts[Num-1-i]->getZExtValue() & Mask);
     SDValue V0 = DAG.getConstant(Val, dl, MVT::i64);
     return DAG.getBitcast(VecTy, V0);
   }
@@ -2707,11 +2708,8 @@ HexagonTargetLowering::extractVector(SDValue VecV, SDValue IdxV,
       IdxV = DAG.getZExtOrTrunc(IdxV, dl, MVT::i32);
     SDValue OffV = DAG.getNode(ISD::MUL, dl, MVT::i32, IdxV,
                                DAG.getConstant(ElemWidth, dl, MVT::i32));
-    // EXTRACTURP takes width/offset in a 64-bit pair.
-    SDValue CombV = DAG.getNode(HexagonISD::COMBINE, dl, MVT::i64,
-                                  {WidthV, OffV});
-    ExtV = DAG.getNode(HexagonISD::EXTRACTURP, dl, ScalarTy,
-                       {VecV, CombV});
+    ExtV = DAG.getNode(HexagonISD::EXTRACTU, dl, ScalarTy,
+                       {VecV, WidthV, OffV});
   }
 
   // Cast ExtV to the requested result type.
@@ -2752,11 +2750,8 @@ HexagonTargetLowering::insertVector(SDValue VecV, SDValue ValV, SDValue IdxV,
     if (ty(IdxV) != MVT::i32)
       IdxV = DAG.getZExtOrTrunc(IdxV, dl, MVT::i32);
     SDValue OffV = DAG.getNode(ISD::MUL, dl, MVT::i32, IdxV, WidthV);
-    // INSERTRP takes width/offset in a 64-bit pair.
-    SDValue CombV = DAG.getNode(HexagonISD::COMBINE, dl, MVT::i64,
-                                  {WidthV, OffV});
-    InsV = DAG.getNode(HexagonISD::INSERTRP, dl, ScalarTy,
-                       {VecV, ValV, CombV});
+    InsV = DAG.getNode(HexagonISD::INSERT, dl, ScalarTy,
+                       {VecV, ValV, WidthV, OffV});
   }
 
   return DAG.getNode(ISD::BITCAST, dl, VecTy, InsV);

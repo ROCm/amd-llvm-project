@@ -282,7 +282,7 @@ bool JumpThreading::runOnFunction(Function &F) {
   auto AA = &getAnalysis<AAResultsWrapperPass>().getAAResults();
   std::unique_ptr<BlockFrequencyInfo> BFI;
   std::unique_ptr<BranchProbabilityInfo> BPI;
-  bool HasProfileData = F.getEntryCount().hasValue();
+  bool HasProfileData = F.hasProfileData();
   if (HasProfileData) {
     LoopInfo LI{DominatorTree(F)};
     BPI.reset(new BranchProbabilityInfo(F, LI, TLI));
@@ -307,8 +307,7 @@ PreservedAnalyses JumpThreadingPass::run(Function &F,
 
   std::unique_ptr<BlockFrequencyInfo> BFI;
   std::unique_ptr<BranchProbabilityInfo> BPI;
-  bool HasProfileData = F.getEntryCount().hasValue();
-  if (HasProfileData) {
+  if (F.hasProfileData()) {
     LoopInfo LI{DominatorTree(F)};
     BPI.reset(new BranchProbabilityInfo(F, LI, &TLI));
     BFI.reset(new BlockFrequencyInfo(F, *BPI, LI));
@@ -1801,11 +1800,10 @@ static void AddPHINodeEntriesForMappedBlock(BasicBlock *PHIBB,
                                             BasicBlock *OldPred,
                                             BasicBlock *NewPred,
                                      DenseMap<Instruction*, Value*> &ValueMap) {
-  for (BasicBlock::iterator PNI = PHIBB->begin();
-       PHINode *PN = dyn_cast<PHINode>(PNI); ++PNI) {
+  for (PHINode &PN : PHIBB->phis()) {
     // Ok, we have a PHI node.  Figure out what the incoming value was for the
     // DestBlock.
-    Value *IV = PN->getIncomingValueForBlock(OldPred);
+    Value *IV = PN.getIncomingValueForBlock(OldPred);
 
     // Remap the value if necessary.
     if (Instruction *Inst = dyn_cast<Instruction>(IV)) {
@@ -1814,7 +1812,7 @@ static void AddPHINodeEntriesForMappedBlock(BasicBlock *PHIBB,
         IV = I->second;
     }
 
-    PN->addIncoming(IV, NewPred);
+    PN.addIncoming(IV, NewPred);
   }
 }
 

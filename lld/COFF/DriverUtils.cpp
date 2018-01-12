@@ -750,6 +750,33 @@ opt::InputArgList ArgParser::parse(ArrayRef<const char *> Argv) {
   return Args;
 }
 
+// Tokenizes and parses a given string as command line in .drective section.
+// /EXPORT options are processed in fastpath.
+std::pair<opt::InputArgList, std::vector<StringRef>>
+ArgParser::parseDirectives(StringRef S) {
+  std::vector<StringRef> Exports;
+  SmallVector<const char *, 16> Rest;
+
+  for (StringRef Tok : tokenize(S)) {
+    if (Tok.startswith_lower("/export:") || Tok.startswith_lower("-export:"))
+      Exports.push_back(Tok.substr(strlen("/export:")));
+    else
+      Rest.push_back(Tok.data());
+  }
+
+  // Make InputArgList from unparsed string vectors.
+  unsigned MissingIndex;
+  unsigned MissingCount;
+
+  opt::InputArgList Args = Table.ParseArgs(Rest, MissingIndex, MissingCount);
+
+  if (MissingCount)
+    fatal(Twine(Args.getArgString(MissingIndex)) + ": missing argument");
+  for (auto *Arg : Args.filtered(OPT_UNKNOWN))
+    warn("ignoring unknown argument: " + Arg->getSpelling());
+  return {std::move(Args), std::move(Exports)};
+}
+
 // link.exe has an interesting feature. If LINK or _LINK_ environment
 // variables exist, their contents are handled as command line strings.
 // So you can pass extra arguments using them.

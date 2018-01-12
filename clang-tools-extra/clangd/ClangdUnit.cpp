@@ -316,6 +316,10 @@ const ASTContext &ParsedAST::getASTContext() const {
 
 Preprocessor &ParsedAST::getPreprocessor() { return Clang->getPreprocessor(); }
 
+std::shared_ptr<Preprocessor> ParsedAST::getPreprocessorPtr() {
+  return Clang->getPreprocessorPtr();
+}
+
 const Preprocessor &ParsedAST::getPreprocessor() const {
   return Clang->getPreprocessor();
 }
@@ -513,10 +517,13 @@ CppFile::deferRebuild(StringRef NewContents,
           ComputePreambleBounds(*CI->getLangOpts(), ContentsBuffer.get(), 0);
       if (OldPreamble && OldPreamble->Preamble.CanReuse(
                              *CI, ContentsBuffer.get(), Bounds, VFS.get())) {
+        log(Ctx, "Reusing preamble for file " + Twine(That->FileName));
         return OldPreamble;
       }
-      // We won't need the OldPreamble anymore, release it so it can be deleted
-      // (if there are no other references to it).
+      log(Ctx, "Premble for file " + Twine(That->FileName) +
+                   " cannot be reused. Attempting to rebuild it.");
+      // We won't need the OldPreamble anymore, release it so it can be
+      // deleted (if there are no other references to it).
       OldPreamble.reset();
 
       trace::Span Tracer(Ctx, "Preamble");
@@ -526,18 +533,33 @@ CppFile::deferRebuild(StringRef NewContents,
       IntrusiveRefCntPtr<DiagnosticsEngine> PreambleDiagsEngine =
           CompilerInstance::createDiagnostics(
               &CI->getDiagnosticOpts(), &PreambleDiagnosticsConsumer, false);
+
+      // Skip function bodies when building the preamble to speed up building
+      // the preamble and make it smaller.
+      assert(!CI->getFrontendOpts().SkipFunctionBodies);
+      CI->getFrontendOpts().SkipFunctionBodies = true;
+
       CppFilePreambleCallbacks SerializedDeclsCollector;
       auto BuiltPreamble = PrecompiledPreamble::Build(
           *CI, ContentsBuffer.get(), Bounds, *PreambleDiagsEngine, VFS, PCHs,
           /*StoreInMemory=*/That->StorePreamblesInMemory,
           SerializedDeclsCollector);
 
+      // When building the AST for the main file, we do want the function
+      // bodies.
+      CI->getFrontendOpts().SkipFunctionBodies = false;
+
       if (BuiltPreamble) {
+        log(Ctx, "Built preamble of size " + Twine(BuiltPreamble->getSize()) +
+                     " for file " + Twine(That->FileName));
+
         return std::make_shared<PreambleData>(
             std::move(*BuiltPreamble),
             SerializedDeclsCollector.takeTopLevelDeclIDs(),
             std::move(PreambleDiags));
       } else {
+        log(Ctx,
+            "Could not build a preamble for file " + Twine(That->FileName));
         return nullptr;
       }
     };
