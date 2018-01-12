@@ -819,6 +819,10 @@ public:
   }
 
   bool isReg() const override {
+    return Kind == k_Register;
+  }
+
+  bool isScalarReg() const {
     return Kind == k_Register && Reg.Kind == RegKind::Scalar;
   }
 
@@ -839,6 +843,7 @@ public:
       RK = RegKind::SVEDataVector;
       break;
     case AArch64::PPRRegClassID:
+    case AArch64::PPR_3bRegClassID:
       RK = RegKind::SVEPredicateVector;
       break;
     default:
@@ -2803,6 +2808,36 @@ AArch64AsmParser::tryParseSVEPredicateVector(OperandVector &Operands) {
       AArch64Operand::CreateReg(RegNum, RegKind::SVEPredicateVector,
                                 ElementWidth, S, getLoc(), getContext()));
 
+  // Not all predicates are followed by a '/m' or '/z'.
+  MCAsmParser &Parser = getParser();
+  if (Parser.getTok().isNot(AsmToken::Slash))
+    return MatchOperand_Success;
+
+  // But when they do they shouldn't have an element type suffix.
+  if (!Kind.empty()) {
+    Error(S, "not expecting size suffix");
+    return MatchOperand_ParseFail;
+  }
+
+  // Add a literal slash as operand
+  Operands.push_back(
+      AArch64Operand::CreateToken("/" , false, getLoc(), getContext()));
+
+  Parser.Lex(); // Eat the slash.
+
+  // Zeroing or merging?
+  auto Pred = Parser.getTok().getString().lower();
+  if (Pred != "z" && Pred != "m") {
+    Error(getLoc(), "expecting 'm' or 'z' predication");
+    return MatchOperand_ParseFail;
+  }
+
+  // Add zero/merge token.
+  const char *ZM = Pred == "z" ? "z" : "m";
+  Operands.push_back(
+    AArch64Operand::CreateToken(ZM, false, getLoc(), getContext()));
+
+  Parser.Lex(); // Eat zero/merge token.
   return MatchOperand_Success;
 }
 
@@ -3148,7 +3183,7 @@ bool AArch64AsmParser::parseOperand(OperandVector &Operands, bool isCondCode,
       return true;
 
     if (Operands.size() < 2 ||
-        !static_cast<AArch64Operand &>(*Operands[1]).isReg())
+        !static_cast<AArch64Operand &>(*Operands[1]).isScalarReg())
       return Error(Loc, "Only valid when first operand is register");
 
     bool IsXReg =
@@ -3509,6 +3544,8 @@ static std::string AArch64MnemonicSpellCheck(StringRef S, uint64_t FBS,
 bool AArch64AsmParser::showMatchError(SMLoc Loc, unsigned ErrCode,
                                       OperandVector &Operands) {
   switch (ErrCode) {
+  case Match_InvalidTiedOperand:
+    return Error(Loc, "operand must match destination register");
   case Match_MissingFeature:
     return Error(Loc,
                  "instruction requires a CPU feature not currently enabled");
@@ -3648,6 +3685,12 @@ bool AArch64AsmParser::showMatchError(SMLoc Loc, unsigned ErrCode,
   case Match_InvalidSVEPredicateSReg:
   case Match_InvalidSVEPredicateDReg:
     return Error(Loc, "invalid predicate register.");
+  case Match_InvalidSVEPredicate3bAnyReg:
+  case Match_InvalidSVEPredicate3bBReg:
+  case Match_InvalidSVEPredicate3bHReg:
+  case Match_InvalidSVEPredicate3bSReg:
+  case Match_InvalidSVEPredicate3bDReg:
+    return Error(Loc, "restricted predicate has range [0, 7].");
   default:
     llvm_unreachable("unexpected error code!");
   }
@@ -3670,7 +3713,7 @@ bool AArch64AsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
   if (NumOperands == 4 && Tok == "lsl") {
     AArch64Operand &Op2 = static_cast<AArch64Operand &>(*Operands[2]);
     AArch64Operand &Op3 = static_cast<AArch64Operand &>(*Operands[3]);
-    if (Op2.isReg() && Op3.isImm()) {
+    if (Op2.isScalarReg() && Op3.isImm()) {
       const MCConstantExpr *Op3CE = dyn_cast<MCConstantExpr>(Op3.getImm());
       if (Op3CE) {
         uint64_t Op3Val = Op3CE->getValue();
@@ -3702,7 +3745,7 @@ bool AArch64AsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
     AArch64Operand LSBOp = static_cast<AArch64Operand &>(*Operands[2]);
     AArch64Operand WidthOp = static_cast<AArch64Operand &>(*Operands[3]);
 
-    if (Op1.isReg() && LSBOp.isImm() && WidthOp.isImm()) {
+    if (Op1.isScalarReg() && LSBOp.isImm() && WidthOp.isImm()) {
       const MCConstantExpr *LSBCE = dyn_cast<MCConstantExpr>(LSBOp.getImm());
       const MCConstantExpr *WidthCE = dyn_cast<MCConstantExpr>(WidthOp.getImm());
 
@@ -3758,7 +3801,7 @@ bool AArch64AsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
       AArch64Operand &Op3 = static_cast<AArch64Operand &>(*Operands[3]);
       AArch64Operand &Op4 = static_cast<AArch64Operand &>(*Operands[4]);
 
-      if (Op1.isReg() && Op3.isImm() && Op4.isImm()) {
+      if (Op1.isScalarReg() && Op3.isImm() && Op4.isImm()) {
         const MCConstantExpr *Op3CE = dyn_cast<MCConstantExpr>(Op3.getImm());
         const MCConstantExpr *Op4CE = dyn_cast<MCConstantExpr>(Op4.getImm());
 
@@ -3822,7 +3865,7 @@ bool AArch64AsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
       AArch64Operand &Op3 = static_cast<AArch64Operand &>(*Operands[3]);
       AArch64Operand &Op4 = static_cast<AArch64Operand &>(*Operands[4]);
 
-      if (Op1.isReg() && Op3.isImm() && Op4.isImm()) {
+      if (Op1.isScalarReg() && Op3.isImm() && Op4.isImm()) {
         const MCConstantExpr *Op3CE = dyn_cast<MCConstantExpr>(Op3.getImm());
         const MCConstantExpr *Op4CE = dyn_cast<MCConstantExpr>(Op4.getImm());
 
@@ -3901,7 +3944,7 @@ bool AArch64AsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
     // The source register can be Wn here, but the matcher expects a
     // GPR64. Twiddle it here if necessary.
     AArch64Operand &Op = static_cast<AArch64Operand &>(*Operands[2]);
-    if (Op.isReg()) {
+    if (Op.isScalarReg()) {
       unsigned Reg = getXRegFromWReg(Op.getReg());
       Operands[2] = AArch64Operand::CreateReg(Reg, RegKind::Scalar,
                                               Op.getStartLoc(), Op.getEndLoc(),
@@ -3911,13 +3954,13 @@ bool AArch64AsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
   // FIXME: Likewise for sxt[bh] with a Xd dst operand
   else if (NumOperands == 3 && (Tok == "sxtb" || Tok == "sxth")) {
     AArch64Operand &Op = static_cast<AArch64Operand &>(*Operands[1]);
-    if (Op.isReg() &&
+    if (Op.isScalarReg() &&
         AArch64MCRegisterClasses[AArch64::GPR64allRegClassID].contains(
             Op.getReg())) {
       // The source register can be Wn here, but the matcher expects a
       // GPR64. Twiddle it here if necessary.
       AArch64Operand &Op = static_cast<AArch64Operand &>(*Operands[2]);
-      if (Op.isReg()) {
+      if (Op.isScalarReg()) {
         unsigned Reg = getXRegFromWReg(Op.getReg());
         Operands[2] = AArch64Operand::CreateReg(Reg, RegKind::Scalar,
                                                 Op.getStartLoc(),
@@ -3928,13 +3971,13 @@ bool AArch64AsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
   // FIXME: Likewise for uxt[bh] with a Xd dst operand
   else if (NumOperands == 3 && (Tok == "uxtb" || Tok == "uxth")) {
     AArch64Operand &Op = static_cast<AArch64Operand &>(*Operands[1]);
-    if (Op.isReg() &&
+    if (Op.isScalarReg() &&
         AArch64MCRegisterClasses[AArch64::GPR64allRegClassID].contains(
             Op.getReg())) {
       // The source register can be Wn here, but the matcher expects a
       // GPR32. Twiddle it here if necessary.
       AArch64Operand &Op = static_cast<AArch64Operand &>(*Operands[1]);
-      if (Op.isReg()) {
+      if (Op.isScalarReg()) {
         unsigned Reg = getWRegFromXReg(Op.getReg());
         Operands[1] = AArch64Operand::CreateReg(Reg, RegKind::Scalar,
                                                 Op.getStartLoc(),
@@ -4022,6 +4065,7 @@ bool AArch64AsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
 
     return showMatchError(ErrorLoc, MatchResult, Operands);
   }
+  case Match_InvalidTiedOperand:
   case Match_InvalidMemoryIndexed1:
   case Match_InvalidMemoryIndexed2:
   case Match_InvalidMemoryIndexed4:
@@ -4077,6 +4121,11 @@ bool AArch64AsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
   case Match_InvalidSVEPredicateHReg:
   case Match_InvalidSVEPredicateSReg:
   case Match_InvalidSVEPredicateDReg:
+  case Match_InvalidSVEPredicate3bAnyReg:
+  case Match_InvalidSVEPredicate3bBReg:
+  case Match_InvalidSVEPredicate3bHReg:
+  case Match_InvalidSVEPredicate3bSReg:
+  case Match_InvalidSVEPredicate3bDReg:
   case Match_MSR:
   case Match_MRS: {
     if (ErrorInfo >= Operands.size())

@@ -12,6 +12,7 @@
 #include "Arch/ARM.h"
 #include "Arch/Mips.h"
 #include "Arch/PPC.h"
+#include "Arch/RISCV.h"
 #include "Arch/Sparc.h"
 #include "Arch/SystemZ.h"
 #include "Arch/X86.h"
@@ -332,6 +333,10 @@ static void getTargetFeatures(const ToolChain &TC, const llvm::Triple &Triple,
   case llvm::Triple::ppc64le:
     ppc::getPPCTargetFeatures(D, Triple, Args, Features);
     break;
+  case llvm::Triple::riscv32:
+  case llvm::Triple::riscv64:
+    riscv::getRISCVTargetFeatures(D, Args, Features);
+    break;
   case llvm::Triple::systemz:
     systemz::getSystemZTargetFeatures(Args, Features);
     break;
@@ -550,6 +555,14 @@ static bool useFramePointerForTargetByDefault(const ArgList &Args,
     default:
       return true;
     }
+  }
+
+  switch (Triple.getArch()) {
+    case llvm::Triple::riscv32:
+    case llvm::Triple::riscv64:
+      return !areOptimizationsEnabled(Args);
+    default:
+      break;
   }
 
   if (Triple.isOSWindows()) {
@@ -1290,6 +1303,8 @@ static bool isSignedCharDefault(const llvm::Triple &Triple) {
 
   case llvm::Triple::hexagon:
   case llvm::Triple::ppc64le:
+  case llvm::Triple::riscv32:
+  case llvm::Triple::riscv64:
   case llvm::Triple::systemz:
   case llvm::Triple::xcore:
     return false;
@@ -1397,6 +1412,11 @@ void Clang::RenderTargetOptions(const llvm::Triple &EffectiveTriple,
   case llvm::Triple::ppc64:
   case llvm::Triple::ppc64le:
     AddPPCTargetArgs(Args, CmdArgs);
+    break;
+
+  case llvm::Triple::riscv32:
+  case llvm::Triple::riscv64:
+    AddRISCVTargetArgs(Args, CmdArgs);
     break;
 
   case llvm::Triple::sparc:
@@ -1676,6 +1696,25 @@ void Clang::AddPPCTargetArgs(const ArgList &Args,
   }
 }
 
+void Clang::AddRISCVTargetArgs(const ArgList &Args,
+                               ArgStringList &CmdArgs) const {
+  // FIXME: currently defaults to the soft-float ABIs. Will need to be
+  // expanded to select ilp32f, ilp32d, lp64f, lp64d when appropiate.
+  const char *ABIName = nullptr;
+  const llvm::Triple &Triple = getToolChain().getTriple();
+  if (Arg *A = Args.getLastArg(options::OPT_mabi_EQ))
+    ABIName = A->getValue();
+  else if (Triple.getArch() == llvm::Triple::riscv32)
+    ABIName = "ilp32";
+  else if (Triple.getArch() == llvm::Triple::riscv64)
+    ABIName = "lp64";
+  else
+    llvm_unreachable("Unexpected triple!");
+
+  CmdArgs.push_back("-target-abi");
+  CmdArgs.push_back(ABIName);
+}
+
 void Clang::AddSparcTargetArgs(const ArgList &Args,
                                ArgStringList &CmdArgs) const {
   sparc::FloatABI FloatABI =
@@ -1746,10 +1785,9 @@ void Clang::AddHexagonTargetArgs(const ArgList &Args,
   CmdArgs.push_back("-Wreturn-type");
 
   if (auto G = toolchains::HexagonToolChain::getSmallDataThreshold(Args)) {
-    std::string N = llvm::utostr(G.getValue());
-    std::string Opt = std::string("-hexagon-small-data-threshold=") + N;
     CmdArgs.push_back("-mllvm");
-    CmdArgs.push_back(Args.MakeArgString(Opt));
+    CmdArgs.push_back(Args.MakeArgString("-hexagon-small-data-threshold=" +
+                                         Twine(G.getValue())));
   }
 
   if (!Args.hasArg(options::OPT_fno_short_enums))
@@ -3899,6 +3937,10 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back(A->getValue());
   }
 
+  if (Args.hasFlag(options::OPT_fstack_size_section,
+                   options::OPT_fno_stack_size_section, RawTriple.isPS4()))
+    CmdArgs.push_back("-fstack-size-section");
+
   CmdArgs.push_back("-ferror-limit");
   if (Arg *A = Args.getLastArg(options::OPT_ferror_limit_EQ))
     CmdArgs.push_back(A->getValue());
@@ -4002,6 +4044,10 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       // semantic analysis, etc.
       break;
     }
+  } else {
+    Args.AddLastArg(CmdArgs, options::OPT_fopenmp_simd,
+                    options::OPT_fno_openmp_simd);
+    Args.AddAllArgs(CmdArgs, options::OPT_fopenmp_version_EQ);
   }
 
   const SanitizerArgs &Sanitize = getToolChain().getSanitizerArgs();
@@ -4100,6 +4146,11 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   // Forward -cl options to -cc1
   RenderOpenCLOptions(Args, CmdArgs);
+
+  if (Arg *A = Args.getLastArg(options::OPT_fcf_protection_EQ)) {
+    CmdArgs.push_back(
+        Args.MakeArgString(Twine("-fcf-protection=") + A->getValue()));
+  }
 
   // Forward -f options with positive and negative forms; we translate
   // these by hand.
@@ -5189,6 +5240,10 @@ void Clang::AddClangCLArgs(const ArgList &Args, types::ID InputType,
     else
       CmdArgs.push_back("msvc");
   }
+
+  if (Args.hasArg(options::OPT__SLASH_Guard) &&
+      Args.getLastArgValue(options::OPT__SLASH_Guard).equals_lower("cf"))
+    CmdArgs.push_back("-cfguard");
 }
 
 visualstudio::Compiler *Clang::getCLFallback() const {

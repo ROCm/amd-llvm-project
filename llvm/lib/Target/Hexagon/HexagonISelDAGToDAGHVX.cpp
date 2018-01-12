@@ -11,6 +11,7 @@
 #include "HexagonISelDAGToDAG.h"
 #include "HexagonISelLowering.h"
 #include "HexagonTargetMachine.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/SelectionDAGISel.h"
 #include "llvm/IR/Intrinsics.h"
@@ -26,6 +27,8 @@
 #define DEBUG_TYPE "hexagon-isel"
 
 using namespace llvm;
+
+namespace {
 
 // --------------------------------------------------------------------
 // Implementation of permutation networks.
@@ -147,6 +150,7 @@ private:
   void build();
   bool color();
 };
+} // namespace
 
 std::pair<bool,uint8_t> Coloring::getUniqueColor(const NodeSet &Nodes) {
   uint8_t Color = None;
@@ -300,6 +304,7 @@ void Coloring::dump() const {
   dbgs() << "  }\n}\n";
 }
 
+namespace {
 // Base class of for reordering networks. They don't strictly need to be
 // permutations, as outputs with repeated occurrences of an input element
 // are allowed.
@@ -408,7 +413,7 @@ struct BenesNetwork : public PermNetwork {
 private:
   bool route(ElemType *P, RowType *T, unsigned Size, unsigned Step);
 };
-
+} // namespace
 
 bool ForwardDeltaNetwork::route(ElemType *P, RowType *T, unsigned Size,
                                 unsigned Step) {
@@ -602,6 +607,7 @@ bool BenesNetwork::route(ElemType *P, RowType *T, unsigned Size,
 // Support for building selection results (output instructions that are
 // parts of the final selection).
 
+namespace {
 struct OpRef {
   OpRef(SDValue V) : OpV(V) {}
   bool isValue() const { return OpV.getNode() != nullptr; }
@@ -689,6 +695,7 @@ struct ResultStack {
 
   void print(raw_ostream &OS, const SelectionDAG &G) const;
 };
+} // namespace
 
 void OpRef::print(raw_ostream &OS, const SelectionDAG &G) const {
   if (isValue()) {
@@ -740,6 +747,7 @@ void ResultStack::print(raw_ostream &OS, const SelectionDAG &G) const {
   }
 }
 
+namespace {
 struct ShuffleMask {
   ShuffleMask(ArrayRef<int> M) : Mask(M) {
     for (unsigned I = 0, E = Mask.size(); I != E; ++I) {
@@ -763,6 +771,7 @@ struct ShuffleMask {
     return ShuffleMask(Mask.take_back(H));
   }
 };
+} // namespace
 
 // --------------------------------------------------------------------
 // The HvxSelector class.
@@ -813,7 +822,6 @@ namespace llvm {
                 MutableArrayRef<int> NewMask, unsigned Options = None);
     OpRef packp(ShuffleMask SM, OpRef Va, OpRef Vb, ResultStack &Results,
                 MutableArrayRef<int> NewMask);
-    OpRef zerous(ShuffleMask SM, OpRef Va, ResultStack &Results);
     OpRef vmuxs(ArrayRef<uint8_t> Bytes, OpRef Va, OpRef Vb,
                 ResultStack &Results);
     OpRef vmuxp(ArrayRef<uint8_t> Bytes, OpRef Va, OpRef Vb,
@@ -902,7 +910,7 @@ bool HvxSelector::selectVectorConstants(SDNode *N) {
   // selection algorithm is not aware of them. Select them directly
   // here.
   SmallVector<SDNode*,4> Loads;
-  SmallVector<SDNode*,16> WorkQ;
+  SetVector<SDNode*> WorkQ;
 
   // The DAG can change (due to CSE) during selection, so cache all the
   // unselected nodes first to avoid traversing a mutating DAG.
@@ -918,7 +926,7 @@ bool HvxSelector::selectVectorConstants(SDNode *N) {
     return false;
   };
 
-  WorkQ.push_back(N);
+  WorkQ.insert(N);
   for (unsigned i = 0; i != WorkQ.size(); ++i) {
     SDNode *W = WorkQ[i];
     if (IsLoadToSelect(W)) {
@@ -926,7 +934,7 @@ bool HvxSelector::selectVectorConstants(SDNode *N) {
       continue;
     }
     for (unsigned j = 0, f = W->getNumOperands(); j != f; ++j)
-      WorkQ.push_back(W->getOperand(j).getNode());
+      WorkQ.insert(W->getOperand(j).getNode());
   }
 
   for (SDNode *L : Loads)
@@ -1129,25 +1137,6 @@ OpRef HvxSelector::packp(ShuffleMask SM, OpRef Va, OpRef Vb,
   }
 
   return concat(Out[0], Out[1], Results);
-}
-
-OpRef HvxSelector::zerous(ShuffleMask SM, OpRef Va, ResultStack &Results) {
-  DEBUG_WITH_TYPE("isel", {dbgs() << __func__ << '\n';});
-
-  int VecLen = SM.Mask.size();
-  SmallVector<uint8_t,128> UsedBytes(VecLen);
-  bool HasUnused = false;
-  for (int I = 0; I != VecLen; ++I) {
-    if (SM.Mask[I] != -1)
-      UsedBytes[I] = 0xFF;
-    else
-      HasUnused = true;
-  }
-  if (!HasUnused)
-    return Va;
-  SDValue B = getVectorConstant(UsedBytes, SDLoc(Results.InpNode));
-  Results.push(Hexagon::V6_vand, getSingleVT(MVT::i8), {Va, OpRef(B)});
-  return OpRef::res(Results.top());
 }
 
 OpRef HvxSelector::vmuxs(ArrayRef<uint8_t> Bytes, OpRef Va, OpRef Vb,

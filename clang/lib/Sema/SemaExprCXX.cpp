@@ -356,7 +356,7 @@ ParsedType Sema::getDestructorTypeForDecltype(const DeclSpec &DS,
 
 bool Sema::checkLiteralOperatorId(const CXXScopeSpec &SS,
                                   const UnqualifiedId &Name) {
-  assert(Name.getKind() == UnqualifiedId::IK_LiteralOperatorId);
+  assert(Name.getKind() == UnqualifiedIdKind::IK_LiteralOperatorId);
 
   if (!SS.isValid())
     return false;
@@ -4645,11 +4645,14 @@ static bool evaluateTypeTrait(Sema &S, TypeTrait Kind, SourceLocation KWLoc,
   if (Kind <= UTT_Last)
     return EvaluateUnaryTypeTrait(S, Kind, KWLoc, Args[0]->getType());
 
-  if (Kind <= BTT_Last)
+  // Evaluate BTT_ReferenceBindsToTemporary alongside the IsConstructible
+  // traits to avoid duplication.
+  if (Kind <= BTT_Last && Kind != BTT_ReferenceBindsToTemporary)
     return EvaluateBinaryTypeTrait(S, Kind, Args[0]->getType(),
                                    Args[1]->getType(), RParenLoc);
 
   switch (Kind) {
+  case clang::BTT_ReferenceBindsToTemporary:
   case clang::TT_IsConstructible:
   case clang::TT_IsNothrowConstructible:
   case clang::TT_IsTriviallyConstructible: {
@@ -4725,6 +4728,13 @@ static bool evaluateTypeTrait(Sema &S, TypeTrait Kind, SourceLocation KWLoc,
 
     if (Kind == clang::TT_IsConstructible)
       return true;
+
+    if (Kind == clang::BTT_ReferenceBindsToTemporary) {
+      if (!T->isReferenceType())
+        return false;
+
+      return !Init.isDirectReferenceBinding();
+    }
 
     if (Kind == clang::TT_IsNothrowConstructible)
       return S.canThrow(Result.get()) == CT_Cannot;
@@ -6271,9 +6281,8 @@ Stmt *Sema::MaybeCreateStmtWithCleanups(Stmt *SubStmt) {
   // a StmtExpr; currently this is only used for asm statements.
   // This is hacky, either create a new CXXStmtWithTemporaries statement or
   // a new AsmStmtWithTemporaries.
-  CompoundStmt *CompStmt = new (Context) CompoundStmt(Context, SubStmt,
-                                                      SourceLocation(),
-                                                      SourceLocation());
+  CompoundStmt *CompStmt = CompoundStmt::Create(
+      Context, SubStmt, SourceLocation(), SourceLocation());
   Expr *E = new (Context) StmtExpr(CompStmt, Context.VoidTy, SourceLocation(),
                                    SourceLocation());
   return MaybeCreateExprWithCleanups(E);
@@ -6723,11 +6732,11 @@ ExprResult Sema::ActOnPseudoDestructorExpr(Scope *S, Expr *Base,
                                            SourceLocation CCLoc,
                                            SourceLocation TildeLoc,
                                            UnqualifiedId &SecondTypeName) {
-  assert((FirstTypeName.getKind() == UnqualifiedId::IK_TemplateId ||
-          FirstTypeName.getKind() == UnqualifiedId::IK_Identifier) &&
+  assert((FirstTypeName.getKind() == UnqualifiedIdKind::IK_TemplateId ||
+          FirstTypeName.getKind() == UnqualifiedIdKind::IK_Identifier) &&
          "Invalid first type name in pseudo-destructor");
-  assert((SecondTypeName.getKind() == UnqualifiedId::IK_TemplateId ||
-          SecondTypeName.getKind() == UnqualifiedId::IK_Identifier) &&
+  assert((SecondTypeName.getKind() == UnqualifiedIdKind::IK_TemplateId ||
+          SecondTypeName.getKind() == UnqualifiedIdKind::IK_Identifier) &&
          "Invalid second type name in pseudo-destructor");
 
   QualType ObjectType;
@@ -6749,7 +6758,7 @@ ExprResult Sema::ActOnPseudoDestructorExpr(Scope *S, Expr *Base,
   QualType DestructedType;
   TypeSourceInfo *DestructedTypeInfo = nullptr;
   PseudoDestructorTypeStorage Destructed;
-  if (SecondTypeName.getKind() == UnqualifiedId::IK_Identifier) {
+  if (SecondTypeName.getKind() == UnqualifiedIdKind::IK_Identifier) {
     ParsedType T = getTypeName(*SecondTypeName.Identifier,
                                SecondTypeName.StartLocation,
                                S, &SS, true, false, ObjectTypePtrForLookup,
@@ -6807,9 +6816,9 @@ ExprResult Sema::ActOnPseudoDestructorExpr(Scope *S, Expr *Base,
   // Convert the name of the scope type (the type prior to '::') into a type.
   TypeSourceInfo *ScopeTypeInfo = nullptr;
   QualType ScopeType;
-  if (FirstTypeName.getKind() == UnqualifiedId::IK_TemplateId ||
+  if (FirstTypeName.getKind() == UnqualifiedIdKind::IK_TemplateId ||
       FirstTypeName.Identifier) {
-    if (FirstTypeName.getKind() == UnqualifiedId::IK_Identifier) {
+    if (FirstTypeName.getKind() == UnqualifiedIdKind::IK_Identifier) {
       ParsedType T = getTypeName(*FirstTypeName.Identifier,
                                  FirstTypeName.StartLocation,
                                  S, &SS, true, false, ObjectTypePtrForLookup,

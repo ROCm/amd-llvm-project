@@ -506,6 +506,8 @@ def hcc_path_EQ : Joined<["--"], "hcc-path=">, Group<i_Group>,
   HelpText<"HCC installation path">;
 def hcc_extra_libs_EQ : Joined<["-", "--"], "hcc-extra-libs=">, Flags<[DriverOption]>,
   HelpText<"Specify hcc extra libraries to be linked in.">;
+def cfguard : Flag<["-"], "cfguard">, Flags<[CC1Option]>,
+  HelpText<"Emit tables required for Windows Control Flow Guard.">;
 def cl_opt_disable : Flag<["-"], "cl-opt-disable">, Group<opencl_Group>, Flags<[CC1Option]>,
   HelpText<"OpenCL only. This option disables all optimizations. By default optimizations are enabled.">;
 def cl_strict_aliasing : Flag<["-"], "cl-strict-aliasing">, Group<opencl_Group>, Flags<[CC1Option]>,
@@ -533,6 +535,12 @@ def cl_fp32_correctly_rounded_divide_sqrt : Flag<["-"], "cl-fp32-correctly-round
 def client__name : JoinedOrSeparate<["-"], "client_name">;
 def combine : Flag<["-", "--"], "combine">, Flags<[DriverOption, Unsupported]>;
 def compatibility__version : JoinedOrSeparate<["-"], "compatibility_version">;
+def config : Separate<["--"], "config">, Flags<[DriverOption]>,
+  HelpText<"Specifies configuration file">;
+def config_system_dir_EQ : Joined<["--"], "config-system-dir=">, Flags<[DriverOption, HelpHidden]>,
+  HelpText<"System directory for configuration files">;
+def config_user_dir_EQ : Joined<["--"], "config-user-dir=">, Flags<[DriverOption, HelpHidden]>,
+  HelpText<"User directory for configuration files">;
 def coverage : Flag<["-", "--"], "coverage">, Flags<[CoreOption]>;
 def cpp_precomp : Flag<["-"], "cpp-precomp">, Group<clang_ignored_f_Group>;
 def current__version : JoinedOrSeparate<["-"], "current_version">;
@@ -1050,6 +1058,11 @@ def finstrument_functions_after_inlining : Flag<["-"], "finstrument-functions-af
   HelpText<"Like -finstrument-functions, but insert the calls after inlining">;
 def finstrument_function_entry_bare : Flag<["-"], "finstrument-function-entry-bare">, Group<f_Group>, Flags<[CC1Option]>,
   HelpText<"Instrument function entry only, after inlining, without arguments to the instrumentation call">;
+def fcf_protection_EQ : Joined<["-"], "fcf-protection=">, Flags<[CoreOption, CC1Option]>, Group<f_Group>,
+  HelpText<"Instrument control-flow architecture protection. Options: return, branch, full, none.">, Values<"return,branch,full,none">;
+def fcf_protection : Flag<["-"], "fcf-protection">, Group<f_Group>, Flags<[CoreOption, CC1Option]>,
+  Alias<fcf_protection_EQ>, AliasArgs<["full"]>,
+  HelpText<"Enable cf-protection in 'full' mode">;
 
 def fxray_instrument : Flag<["-"], "fxray-instrument">, Group<f_Group>,
   Flags<[CC1Option]>,
@@ -1385,12 +1398,16 @@ def fopenmp_use_tls : Flag<["-"], "fopenmp-use-tls">, Group<f_Group>, Flags<[NoA
 def fnoopenmp_use_tls : Flag<["-"], "fnoopenmp-use-tls">, Group<f_Group>, Flags<[CC1Option, NoArgumentUnused]>;
 def fopenmp_targets_EQ : CommaJoined<["-"], "fopenmp-targets=">, Flags<[DriverOption, CC1Option]>,
   HelpText<"Specify comma-separated list of triples OpenMP offloading targets to be supported">;
-def fopenmp_dump_offload_linker_script : Flag<["-"], "fopenmp-dump-offload-linker-script">, Group<f_Group>, 
+def fopenmp_dump_offload_linker_script : Flag<["-"], "fopenmp-dump-offload-linker-script">, Group<f_Group>,
   Flags<[NoArgumentUnused]>;
 def fopenmp_relocatable_target : Flag<["-"], "fopenmp-relocatable-target">, Group<f_Group>, Flags<[CC1Option, NoArgumentUnused]>,
   HelpText<"OpenMP target code is compiled as relocatable using the -c flag. For OpenMP targets the code is relocatable by default.">;
 def fnoopenmp_relocatable_target : Flag<["-"], "fnoopenmp-relocatable-target">, Group<f_Group>, Flags<[CC1Option, NoArgumentUnused]>,
   HelpText<"Do not compile OpenMP target code as relocatable.">;
+def fopenmp_simd : Flag<["-"], "fopenmp-simd">, Group<f_Group>, Flags<[CC1Option, NoArgumentUnused]>,
+  HelpText<"Emit OpenMP code only for SIMD-based constructs.">;
+def fno_openmp_simd : Flag<["-"], "fno-openmp-simd">, Group<f_Group>, Flags<[CC1Option, NoArgumentUnused]>,
+  HelpText<"Disable OpenMP code for SIMD-based constructs.">;
 def fno_optimize_sibling_calls : Flag<["-"], "fno-optimize-sibling-calls">, Group<f_Group>;
 def foptimize_sibling_calls : Flag<["-"], "foptimize-sibling-calls">, Group<f_Group>;
 def force__cpusubtype__ALL : Flag<["-"], "force_cpusubtype_ALL">;
@@ -1580,6 +1597,10 @@ def fdata_sections : Flag <["-"], "fdata-sections">, Group<f_Group>,
  Flags<[CC1Option]>, HelpText<"Place each data in its own section (ELF Only)">;
 def fno_data_sections : Flag <["-"], "fno-data-sections">, Group<f_Group>,
   Flags<[CC1Option]>;
+def fstack_size_section : Flag<["-"], "fstack-size-section">, Group<f_Group>, Flags<[CC1Option]>,
+  HelpText<"Emit section containing metadata on function stack sizes">;
+def fno_stack_size_section : Flag<["-"], "fno-stack-size-section">, Group<f_Group>, Flags<[CC1Option]>,
+  HelpText<"Don't emit section containing metadata on function stack sizes">;
 
 def funique_section_names : Flag <["-"], "funique-section-names">,
   Group<f_Group>, Flags<[CC1Option]>,
@@ -2483,6 +2504,8 @@ def mavx2 : Flag<["-"], "mavx2">, Group<m_x86_Features_Group>;
 def mno_avx2 : Flag<["-"], "mno-avx2">, Group<m_x86_Features_Group>;
 def mavx512f : Flag<["-"], "mavx512f">, Group<m_x86_Features_Group>;
 def mno_avx512f : Flag<["-"], "mno-avx512f">, Group<m_x86_Features_Group>;
+def mavx512bitalg : Flag<["-"], "mavx512bitalg">, Group<m_x86_Features_Group>;
+def mno_avx512bitalg : Flag<["-"], "mno-avx512bitalg">, Group<m_x86_Features_Group>;
 def mavx512bw : Flag<["-"], "mavx512bw">, Group<m_x86_Features_Group>;
 def mno_avx512bw : Flag<["-"], "mno-avx512bw">, Group<m_x86_Features_Group>;
 def mavx512cd : Flag<["-"], "mavx512cd">, Group<m_x86_Features_Group>;
@@ -2497,8 +2520,12 @@ def mavx512pf : Flag<["-"], "mavx512pf">, Group<m_x86_Features_Group>;
 def mno_avx512pf : Flag<["-"], "mno-avx512pf">, Group<m_x86_Features_Group>;
 def mavx512vbmi : Flag<["-"], "mavx512vbmi">, Group<m_x86_Features_Group>;
 def mno_avx512vbmi : Flag<["-"], "mno-avx512vbmi">, Group<m_x86_Features_Group>;
+def mavx512vbmi2 : Flag<["-"], "mavx512vbmi2">, Group<m_x86_Features_Group>;
+def mno_avx512vbmi2 : Flag<["-"], "mno-avx512vbmi2">, Group<m_x86_Features_Group>;
 def mavx512vl : Flag<["-"], "mavx512vl">, Group<m_x86_Features_Group>;
 def mno_avx512vl : Flag<["-"], "mno-avx512vl">, Group<m_x86_Features_Group>;
+def mavx512vnni : Flag<["-"], "mavx512vnni">, Group<m_x86_Features_Group>;
+def mno_avx512vnni : Flag<["-"], "mno-avx512vnni">, Group<m_x86_Features_Group>;
 def mavx512vpopcntdq : Flag<["-"], "mavx512vpopcntdq">, Group<m_x86_Features_Group>;
 def mno_avx512vpopcntdq : Flag<["-"], "mno-avx512vpopcntdq">, Group<m_x86_Features_Group>;
 def madx : Flag<["-"], "madx">, Group<m_x86_Features_Group>;
@@ -2527,6 +2554,8 @@ def mfsgsbase : Flag<["-"], "mfsgsbase">, Group<m_x86_Features_Group>;
 def mno_fsgsbase : Flag<["-"], "mno-fsgsbase">, Group<m_x86_Features_Group>;
 def mfxsr : Flag<["-"], "mfxsr">, Group<m_x86_Features_Group>;
 def mno_fxsr : Flag<["-"], "mno-fxsr">, Group<m_x86_Features_Group>;
+def mgfni : Flag<["-"], "mgfni">, Group<m_x86_Features_Group>;
+def mno_gfni : Flag<["-"], "mno-gfni">, Group<m_x86_Features_Group>;
 def mlwp : Flag<["-"], "mlwp">, Group<m_x86_Features_Group>;
 def mno_lwp : Flag<["-"], "mno-lwp">, Group<m_x86_Features_Group>;
 def mlzcnt : Flag<["-"], "mlzcnt">, Group<m_x86_Features_Group>;
@@ -2559,6 +2588,10 @@ def msha : Flag<["-"], "msha">, Group<m_x86_Features_Group>;
 def mno_sha : Flag<["-"], "mno-sha">, Group<m_x86_Features_Group>;
 def mtbm : Flag<["-"], "mtbm">, Group<m_x86_Features_Group>;
 def mno_tbm : Flag<["-"], "mno-tbm">, Group<m_x86_Features_Group>;
+def mvaes : Flag<["-"], "mvaes">, Group<m_x86_Features_Group>;
+def mno_vaes : Flag<["-"], "mno-vaes">, Group<m_x86_Features_Group>;
+def mvpclmulqdq : Flag<["-"], "mvpclmulqdq">, Group<m_x86_Features_Group>;
+def mno_vpclmulqdq : Flag<["-"], "mno-vpclmulqdq">, Group<m_x86_Features_Group>;
 def mxop : Flag<["-"], "mxop">, Group<m_x86_Features_Group>;
 def mno_xop : Flag<["-"], "mno-xop">, Group<m_x86_Features_Group>;
 def mxsave : Flag<["-"], "mxsave">, Group<m_x86_Features_Group>;

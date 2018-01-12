@@ -30,6 +30,7 @@ add_clang_library(clangDaemon
 
   LINK_LIBS
   clangAST
+  clangASTMatchers
   clangBasic
   clangFormat
   clangFrontend
@@ -47,3 +48,4 @@ if( LLVM_LIB_FUZZING_ENGINE OR LLVM_USE_SANITIZE_COVERAGE )
   add_subdirectory(fuzzer)
 endif()
 add_subdirectory(tool)
+add_subdirectory(global-symbol-builder)

@@ -263,9 +263,12 @@ void DwarfUnit::addSectionOffset(DIE &Die, dwarf::Attribute Attribute,
     addUInt(Die, Attribute, dwarf::DW_FORM_data4, Integer);
 }
 
-unsigned DwarfTypeUnit::getOrCreateSourceID(StringRef FileName, StringRef DirName) {
-  return SplitLineTable ? SplitLineTable->getFile(DirName, FileName)
-                        : getCU().getOrCreateSourceID(FileName, DirName);
+unsigned DwarfTypeUnit::getOrCreateSourceID(StringRef FileName,
+                                            StringRef DirName,
+                                            MD5::MD5Result *Checksum) {
+  return SplitLineTable
+             ? SplitLineTable->getFile(DirName, FileName, Checksum)
+             : getCU().getOrCreateSourceID(FileName, DirName, Checksum);
 }
 
 void DwarfUnit::addOpAddress(DIELoc &Die, const MCSymbol *Sym) {
@@ -340,7 +343,7 @@ void DwarfUnit::addSourceLine(DIE &Die, unsigned Line, StringRef File,
   if (Line == 0)
     return;
 
-  unsigned FileID = getOrCreateSourceID(File, Directory);
+  unsigned FileID = getOrCreateSourceID(File, Directory, nullptr);
   assert(FileID && "Invalid file id");
   addUInt(Die, dwarf::DW_AT_decl_file, None, FileID);
   addUInt(Die, dwarf::DW_AT_decl_line, None, Line);
@@ -975,6 +978,15 @@ void DwarfUnit::constructTypeDIE(DIE &Buffer, const DICompositeType *CTy) {
         Tag == dwarf::DW_TAG_structure_type || Tag == dwarf::DW_TAG_union_type)
       addTemplateParams(Buffer, CTy->getTemplateParams());
 
+    // Add the type's non-standard calling convention.
+    uint8_t CC = 0;
+    if (CTy->isTypePassByValue())
+      CC = dwarf::DW_CC_pass_by_value;
+    else if (CTy->isTypePassByReference())
+      CC = dwarf::DW_CC_pass_by_reference;
+    if (CC)
+      addUInt(Buffer, dwarf::DW_AT_calling_convention, dwarf::DW_FORM_data1,
+              CC);
     break;
   }
   default:
@@ -1152,9 +1164,10 @@ bool DwarfUnit::applySubprogramDefinitionAttributes(const DISubprogram *SP,
     // Look at the Decl's linkage name only if we emitted it.
     if (DD->useAllLinkageNames())
       DeclLinkageName = SPDecl->getLinkageName();
-    unsigned DeclID =
-        getOrCreateSourceID(SPDecl->getFilename(), SPDecl->getDirectory());
-    unsigned DefID = getOrCreateSourceID(SP->getFilename(), SP->getDirectory());
+    unsigned DeclID = getOrCreateSourceID(SPDecl->getFilename(),
+                                          SPDecl->getDirectory(), nullptr);
+    unsigned DefID =
+        getOrCreateSourceID(SP->getFilename(), SP->getDirectory(), nullptr);
     if (DeclID != DefID)
       addUInt(SPDie, dwarf::DW_AT_decl_file, None, DefID);
 
@@ -1391,7 +1404,8 @@ void DwarfUnit::constructMemberDIE(DIE &Buffer, const DIDerivedType *DT) {
   if (!Name.empty())
     addString(MemberDie, dwarf::DW_AT_name, Name);
 
-  addType(MemberDie, resolve(DT->getBaseType()));
+  if (DIType *Resolved = resolve(DT->getBaseType()))
+    addType(MemberDie, Resolved);
 
   addSourceLine(MemberDie, DT);
 

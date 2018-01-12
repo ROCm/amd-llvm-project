@@ -27,11 +27,6 @@ using namespace lldb_private;
 using namespace llvm;
 
 namespace llgs_tests {
-bool TestClient::IsDebugServer() {
-  return sys::path::filename(LLDB_SERVER).contains("debugserver");
-}
-
-bool TestClient::IsLldbServer() { return !IsDebugServer(); }
 
 TestClient::TestClient(std::unique_ptr<Connection> Conn) {
   SetConnection(Conn.release());
@@ -56,6 +51,10 @@ Expected<std::unique_ptr<TestClient>> TestClient::launch(StringRef Log) {
 }
 
 Expected<std::unique_ptr<TestClient>> TestClient::launch(StringRef Log, ArrayRef<StringRef> InferiorArgs) {
+  return launchCustom(Log, {}, InferiorArgs);
+}
+
+Expected<std::unique_ptr<TestClient>> TestClient::launchCustom(StringRef Log, ArrayRef<StringRef> ServerArgs, ArrayRef<StringRef> InferiorArgs) {
   const ArchSpec &arch_spec = HostInfo::GetArchitecture();
   Args args;
   args.AppendArgument(LLDB_SERVER);
@@ -80,6 +79,9 @@ Expected<std::unique_ptr<TestClient>> TestClient::launch(StringRef Log, ArrayRef
   args.AppendArgument(
       ("localhost:" + Twine(listen_socket.GetLocalPortNumber())).str());
 
+  for (StringRef arg : ServerArgs)
+    args.AppendArgument(arg);
+
   if (!InferiorArgs.empty()) {
     args.AppendArgument("--");
     for (StringRef arg : InferiorArgs)
@@ -89,10 +91,7 @@ Expected<std::unique_ptr<TestClient>> TestClient::launch(StringRef Log, ArrayRef
   ProcessLaunchInfo Info;
   Info.SetArchitecture(arch_spec);
   Info.SetArguments(args, true);
-
-  StringList Env;
-  Host::GetEnvironment(Env);
-  Info.GetEnvironmentEntries() = Args(Env);
+  Info.GetEnvironment() = Host::GetEnvironment();
 
   status = Host::LaunchProcess(Info);
   if (status.Fail())
@@ -112,14 +111,9 @@ Expected<std::unique_ptr<TestClient>> TestClient::launch(StringRef Log, ArrayRef
 }
 
 Error TestClient::SetInferior(llvm::ArrayRef<std::string> inferior_args) {
-  StringList env;
-  Host::GetEnvironment(env);
-  for (size_t i = 0; i < env.GetSize(); ++i) {
-    if (SendEnvironmentPacket(env[i].c_str()) != 0) {
-      return make_error<StringError>(
-          formatv("Failed to set environment variable: {0}", env[i]).str(),
-          inconvertibleErrorCode());
-    }
+  if (SendEnvironment(Host::GetEnvironment()) != 0) {
+    return make_error<StringError>("Failed to set launch environment",
+                                   inconvertibleErrorCode());
   }
   std::stringstream command;
   command << "A";

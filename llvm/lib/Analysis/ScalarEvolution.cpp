@@ -1268,7 +1268,11 @@ const SCEV *ScalarEvolution::getTruncateExpr(const SCEV *Op,
     }
     if (!hasTrunc)
       return getAddExpr(Operands);
-    UniqueSCEVs.FindNodeOrInsertPos(ID, IP);  // Mutates IP, returns NULL.
+    // In spite we checked in the beginning that ID is not in the cache,
+    // it is possible that during recursion and different modification
+    // ID came to cache, so if we found it, just return it.
+    if (const SCEV *S = UniqueSCEVs.FindNodeOrInsertPos(ID, IP))
+      return S;
   }
 
   // trunc(x1*x2*...*xN) --> trunc(x1)*trunc(x2)*...*trunc(xN) if we can
@@ -1284,7 +1288,11 @@ const SCEV *ScalarEvolution::getTruncateExpr(const SCEV *Op,
     }
     if (!hasTrunc)
       return getMulExpr(Operands);
-    UniqueSCEVs.FindNodeOrInsertPos(ID, IP);  // Mutates IP, returns NULL.
+    // In spite we checked in the beginning that ID is not in the cache,
+    // it is possible that during recursion and different modification
+    // ID came to cache, so if we found it, just return it.
+    if (const SCEV *S = UniqueSCEVs.FindNodeOrInsertPos(ID, IP))
+      return S;
   }
 
   // If the input value is a chrec scev, truncate the chrec's operands.
@@ -2350,7 +2358,7 @@ const SCEV *ScalarEvolution::getAddExpr(SmallVectorImpl<const SCEV *> &Ops,
       FoundMatch = true;
     }
   if (FoundMatch)
-    return getAddExpr(Ops, Flags);
+    return getAddExpr(Ops, Flags, Depth + 1);
 
   // Check for truncates. If all the operands are truncated from the same
   // type, see if factoring out the truncate would permit the result to be
@@ -3766,6 +3774,24 @@ void ScalarEvolution::eraseValueFromMap(Value *V) {
   }
 }
 
+/// Check whether value has nuw/nsw/exact set but SCEV does not.
+/// TODO: In reality it is better to check the poison recursevely
+/// but this is better than nothing.
+static bool SCEVLostPoisonFlags(const SCEV *S, const Value *V) {
+  if (auto *I = dyn_cast<Instruction>(V)) {
+    if (isa<OverflowingBinaryOperator>(I)) {
+      if (auto *NS = dyn_cast<SCEVNAryExpr>(S)) {
+        if (I->hasNoSignedWrap() && !NS->hasNoSignedWrap())
+          return true;
+        if (I->hasNoUnsignedWrap() && !NS->hasNoUnsignedWrap())
+          return true;
+      }
+    } else if (isa<PossiblyExactOperator>(I) && I->isExact())
+      return true;
+  }
+  return false;
+}
+
 /// Return an existing SCEV if it exists, otherwise analyze the expression and
 /// create a new one.
 const SCEV *ScalarEvolution::getSCEV(Value *V) {
@@ -3779,7 +3805,7 @@ const SCEV *ScalarEvolution::getSCEV(Value *V) {
     // ValueExprMap before insert S->{V, 0} into ExprValueMap.
     std::pair<ValueExprMapType::iterator, bool> Pair =
         ValueExprMap.insert({SCEVCallbackVH(V, this), S});
-    if (Pair.second) {
+    if (Pair.second && !SCEVLostPoisonFlags(S, V)) {
       ExprValueMap[S].insert({V, nullptr});
 
       // If S == Stripped + Offset, add Stripped -> {V, Offset} into
@@ -6394,9 +6420,8 @@ PushLoopPHIs(const Loop *L, SmallVectorImpl<Instruction *> &Worklist) {
   BasicBlock *Header = L->getHeader();
 
   // Push all Loop-header PHIs onto the Worklist stack.
-  for (BasicBlock::iterator I = Header->begin();
-       PHINode *PN = dyn_cast<PHINode>(I); ++I)
-    Worklist.push_back(PN);
+  for (PHINode &PN : Header->phis())
+    Worklist.push_back(&PN);
 }
 
 const ScalarEvolution::BackedgeTakenInfo &
@@ -7630,12 +7655,9 @@ ScalarEvolution::getConstantEvolutionLoopExitValue(PHINode *PN,
   if (!Latch)
     return nullptr;
 
-  for (auto &I : *Header) {
-    PHINode *PHI = dyn_cast<PHINode>(&I);
-    if (!PHI) break;
-    auto *StartCST = getOtherIncomingValue(PHI, Latch);
-    if (!StartCST) continue;
-    CurrentIterVals[PHI] = StartCST;
+  for (PHINode &PHI : Header->phis()) {
+    if (auto *StartCST = getOtherIncomingValue(&PHI, Latch))
+      CurrentIterVals[&PHI] = StartCST;
   }
   if (!CurrentIterVals.count(PN))
     return RetVal = nullptr;
@@ -7712,13 +7734,9 @@ const SCEV *ScalarEvolution::computeExitCountExhaustively(const Loop *L,
   BasicBlock *Latch = L->getLoopLatch();
   assert(Latch && "Should follow from NumIncomingValues == 2!");
 
-  for (auto &I : *Header) {
-    PHINode *PHI = dyn_cast<PHINode>(&I);
-    if (!PHI)
-      break;
-    auto *StartCST = getOtherIncomingValue(PHI, Latch);
-    if (!StartCST) continue;
-    CurrentIterVals[PHI] = StartCST;
+  for (PHINode &PHI : Header->phis()) {
+    if (auto *StartCST = getOtherIncomingValue(&PHI, Latch))
+      CurrentIterVals[&PHI] = StartCST;
   }
   if (!CurrentIterVals.count(PN))
     return getCouldNotCompute();

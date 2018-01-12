@@ -54,12 +54,15 @@ namespace {
 using namespace llvm;
 using ::testing::AllOf;
 using ::testing::Contains;
+using ::testing::Each;
 using ::testing::ElementsAre;
 using ::testing::Not;
 
 class IgnoreDiagnostics : public DiagnosticsConsumer {
-  void onDiagnosticsReady(
-      PathRef File, Tagged<std::vector<DiagWithFixIts>> Diagnostics) override {}
+  void
+  onDiagnosticsReady(const Context &Ctx, PathRef File,
+                     Tagged<std::vector<DiagWithFixIts>> Diagnostics) override {
+  }
 };
 
 // GMock helpers for matching completion items.
@@ -67,6 +70,8 @@ MATCHER_P(Named, Name, "") { return arg.insertText == Name; }
 MATCHER_P(Labeled, Label, "") { return arg.label == Label; }
 MATCHER_P(Kind, K, "") { return arg.kind == K; }
 MATCHER_P(Filter, F, "") { return arg.filterText == F; }
+MATCHER_P(Doc, D, "") { return arg.documentation == D; }
+MATCHER_P(Detail, D, "") { return arg.detail == D; }
 MATCHER_P(PlainText, Text, "") {
   return arg.insertTextFormat == clangd::InsertTextFormat::PlainText &&
          arg.insertText == Text;
@@ -74,6 +79,11 @@ MATCHER_P(PlainText, Text, "") {
 MATCHER_P(Snippet, Text, "") {
   return arg.insertTextFormat == clangd::InsertTextFormat::Snippet &&
          arg.insertText == Text;
+}
+MATCHER(FilterContainsName, "") {
+  if (arg.filterText.empty())
+    return true;
+  return llvm::StringRef(arg.insertText).contains(arg.filterText);
 }
 // Shorthand for Contains(Named(Name)).
 Matcher<const std::vector<CompletionItem> &> Has(std::string Name) {
@@ -95,9 +105,13 @@ CompletionList completions(StringRef Text,
   auto File = getVirtualTestFilePath("foo.cpp");
   Annotations Test(Text);
   Server.addDocument(Context::empty(), File, Test.code());
-  return Server.codeComplete(Context::empty(), File, Test.point(), Opts)
-      .get()
-      .second.Value;
+  auto CompletionList =
+      Server.codeComplete(Context::empty(), File, Test.point(), Opts)
+          .get()
+          .second.Value;
+  // Sanity-check that filterText is valid.
+  EXPECT_THAT(CompletionList.items, Each(FilterContainsName()));
+  return CompletionList;
 }
 
 TEST(CompletionTest, Limit) {
@@ -443,12 +457,7 @@ TEST(SignatureHelpTest, ActiveArg) {
 
 std::unique_ptr<SymbolIndex> simpleIndexFromSymbols(
     std::vector<std::pair<std::string, index::SymbolKind>> Symbols) {
-  auto I = llvm::make_unique<MemIndex>();
-  struct Snapshot {
-    SymbolSlab Slab;
-    std::vector<const Symbol *> Pointers;
-  };
-  auto Snap = std::make_shared<Snapshot>();
+  SymbolSlab::Builder Slab;
   for (const auto &Pair : Symbols) {
     Symbol Sym;
     Sym.ID = SymbolID(Pair.first);
@@ -461,15 +470,11 @@ std::unique_ptr<SymbolIndex> simpleIndexFromSymbols(
       Sym.Name = QName.substr(Pos + 2);
       Sym.Scope = QName.substr(0, Pos);
     }
+    Sym.CompletionPlainInsertText = Sym.Name;
     Sym.SymInfo.Kind = Pair.second;
-    Snap->Slab.insert(std::move(Sym));
+    Slab.insert(Sym);
   }
-  for (auto &Iter : Snap->Slab)
-    Snap->Pointers.push_back(&Iter.second);
-  auto S = std::shared_ptr<std::vector<const Symbol *>>(std::move(Snap),
-                                                        &Snap->Pointers);
-  I->build(std::move(S));
-  return std::move(I);
+  return MemIndex::build(std::move(Slab).build());
 }
 
 TEST(CompletionTest, NoIndex) {
@@ -482,6 +487,23 @@ TEST(CompletionTest, NoIndex) {
   )cpp",
                              Opts);
   EXPECT_THAT(Results.items, Has("No"));
+}
+
+TEST(CompletionTest, StaticAndDynamicIndex) {
+  clangd::CodeCompleteOptions Opts;
+  auto StaticIdx =
+      simpleIndexFromSymbols({{"ns::XYZ", index::SymbolKind::Class}});
+  Opts.StaticIndex = StaticIdx.get();
+  auto DynamicIdx =
+      simpleIndexFromSymbols({{"ns::foo", index::SymbolKind::Function}});
+  Opts.Index = DynamicIdx.get();
+
+  auto Results = completions(R"cpp(
+      void f() { ::ns::^ }
+  )cpp",
+                             Opts);
+  EXPECT_THAT(Results.items, Contains(Labeled("[G]XYZ")));
+  EXPECT_THAT(Results.items, Contains(Labeled("foo")));
 }
 
 TEST(CompletionTest, SimpleIndexBased) {
@@ -511,7 +533,7 @@ TEST(CompletionTest, IndexBasedWithFilter) {
       void f() { ns::x^ }
   )cpp",
                              Opts);
-  EXPECT_THAT(Results.items, Contains(AllOf(Named("XYZ"), Filter("x"))));
+  EXPECT_THAT(Results.items, Contains(AllOf(Named("XYZ"), Filter("XYZ"))));
   EXPECT_THAT(Results.items, Not(Has("foo")));
 }
 
@@ -549,13 +571,17 @@ TEST(CompletionTest, ASTIndexMultiFile) {
 
   Server
       .addDocument(Context::empty(), getVirtualTestFilePath("foo.cpp"), R"cpp(
-      namespace ns { class XYZ {}; void foo() {} }
+      namespace ns { class XYZ {}; void foo(int x) {} }
   )cpp")
       .wait();
 
   auto File = getVirtualTestFilePath("bar.cpp");
   Annotations Test(R"cpp(
-      namespace ns { class XXX {}; void fooooo() {} }
+      namespace ns {
+      class XXX {};
+      /// Doooc
+      void fooooo() {}
+      }
       void f() { ns::^ }
   )cpp");
   Server.addDocument(Context::empty(), File, Test.code()).wait();
@@ -568,7 +594,25 @@ TEST(CompletionTest, ASTIndexMultiFile) {
   EXPECT_THAT(Results.items, Has("XYZ", CompletionItemKind::Class));
   EXPECT_THAT(Results.items, Has("foo", CompletionItemKind::Function));
   EXPECT_THAT(Results.items, Has("XXX", CompletionItemKind::Class));
-  EXPECT_THAT(Results.items, Has("fooooo", CompletionItemKind::Function));
+  EXPECT_THAT(Results.items, Contains(AllOf(Named("fooooo"), Filter("fooooo"),
+                                            Kind(CompletionItemKind::Function),
+                                            Doc("Doooc"), Detail("void"))));
+}
+
+TEST(CompletionTest, NoDuplicates) {
+  auto Items = completions(R"cpp(
+struct Adapter {
+  void method();
+};
+
+void Adapter::method() {
+  Adapter^
+}
+  )cpp")
+                   .items;
+
+  // Make sure there are no duplicate entries of 'Adapter'.
+  EXPECT_THAT(Items, ElementsAre(Named("Adapter"), Named("~Adapter")));
 }
 
 } // namespace
