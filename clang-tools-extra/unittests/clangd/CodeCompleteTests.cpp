@@ -17,6 +17,7 @@
 #include "SourceCode.h"
 #include "TestFS.h"
 #include "index/MemIndex.h"
+#include "index/Merge.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
@@ -57,6 +58,7 @@ using ::testing::Contains;
 using ::testing::Each;
 using ::testing::ElementsAre;
 using ::testing::Not;
+using ::testing::UnorderedElementsAre;
 
 class IgnoreDiagnostics : public DiagnosticsConsumer {
   void
@@ -104,7 +106,7 @@ CompletionList completions(StringRef Text,
                       /*StorePreamblesInMemory=*/true);
   auto File = getVirtualTestFilePath("foo.cpp");
   Annotations Test(Text);
-  Server.addDocument(Context::empty(), File, Test.code());
+  Server.addDocument(Context::empty(), File, Test.code()).wait();
   auto CompletionList =
       Server.codeComplete(Context::empty(), File, Test.point(), Opts)
           .get()
@@ -253,26 +255,26 @@ void TestGlobalScopeCompletion(clangd::CodeCompleteOptions Opts) {
 }
 
 TEST(CompletionTest, CompletionOptions) {
-  clangd::CodeCompleteOptions Opts;
-  for (bool IncludeMacros : {true, false}) {
-    Opts.IncludeMacros = IncludeMacros;
-    for (bool IncludeGlobals : {true, false}) {
-      Opts.IncludeGlobals = IncludeGlobals;
-      for (bool IncludeBriefComments : {true, false}) {
-        Opts.IncludeBriefComments = IncludeBriefComments;
-        for (bool EnableSnippets : {true, false}) {
-          Opts.EnableSnippets = EnableSnippets;
-          for (bool IncludeCodePatterns : {true, false}) {
-            Opts.IncludeCodePatterns = IncludeCodePatterns;
-            for (bool IncludeIneligibleResults : {true, false}) {
-              Opts.IncludeIneligibleResults = IncludeIneligibleResults;
-              TestAfterDotCompletion(Opts);
-              TestGlobalScopeCompletion(Opts);
-            }
-          }
-        }
-      }
-    }
+  auto Test = [&](const clangd::CodeCompleteOptions &Opts) {
+    TestAfterDotCompletion(Opts);
+    TestGlobalScopeCompletion(Opts);
+  };
+  // We used to test every combination of options, but that got too slow (2^N).
+  auto Flags = {
+    &clangd::CodeCompleteOptions::IncludeMacros,
+    &clangd::CodeCompleteOptions::IncludeGlobals,
+    &clangd::CodeCompleteOptions::IncludeBriefComments,
+    &clangd::CodeCompleteOptions::EnableSnippets,
+    &clangd::CodeCompleteOptions::IncludeCodePatterns,
+    &clangd::CodeCompleteOptions::IncludeIneligibleResults,
+  };
+  // Test default options.
+  Test({});
+  // Test with one flag flipped.
+  for (auto &F : Flags) {
+    clangd::CodeCompleteOptions O;
+    O.*F ^= true;
+    Test(O);
   }
 }
 
@@ -380,6 +382,30 @@ TEST(CompletionTest, Kinds) {
   EXPECT_THAT(Results.items, Has("namespace", CompletionItemKind::Snippet));
 }
 
+TEST(CompletionTest, NoDuplicates) {
+  auto Items = completions(R"cpp(
+struct Adapter {
+  void method();
+};
+
+void Adapter::method() {
+  Adapter^
+}
+  )cpp")
+                   .items;
+
+  // Make sure there are no duplicate entries of 'Adapter'.
+  EXPECT_THAT(Items, ElementsAre(Named("Adapter"), Named("~Adapter")));
+}
+
+TEST(CompletionTest, FuzzyRanking) {
+  auto Items = completions(R"cpp(
+      struct fake { int BigBang, Babble, Ball; };
+      int main() { fake().bb^ }")cpp").items;
+  // BigBang is a better match than Babble. Ball doesn't match at all.
+  EXPECT_THAT(Items, ElementsAre(Named("BigBang"), Named("Babble")));
+}
+
 SignatureHelp signatures(StringRef Text) {
   MockFSProvider FS;
   MockCompilationDatabase CDB;
@@ -482,28 +508,28 @@ TEST(CompletionTest, NoIndex) {
   Opts.Index = nullptr;
 
   auto Results = completions(R"cpp(
-      namespace ns { class No {}; }
+      namespace ns { class Local {}; }
       void f() { ns::^ }
   )cpp",
                              Opts);
-  EXPECT_THAT(Results.items, Has("No"));
+  EXPECT_THAT(Results.items, Has("Local"));
 }
 
 TEST(CompletionTest, StaticAndDynamicIndex) {
   clangd::CodeCompleteOptions Opts;
   auto StaticIdx =
       simpleIndexFromSymbols({{"ns::XYZ", index::SymbolKind::Class}});
-  Opts.StaticIndex = StaticIdx.get();
   auto DynamicIdx =
       simpleIndexFromSymbols({{"ns::foo", index::SymbolKind::Function}});
-  Opts.Index = DynamicIdx.get();
+  auto Merge = mergeIndex(DynamicIdx.get(), StaticIdx.get());
+  Opts.Index = Merge.get();
 
   auto Results = completions(R"cpp(
       void f() { ::ns::^ }
   )cpp",
                              Opts);
-  EXPECT_THAT(Results.items, Contains(Labeled("[G]XYZ")));
-  EXPECT_THAT(Results.items, Contains(Labeled("foo")));
+  EXPECT_THAT(Results.items, Contains(Labeled("[I]XYZ")));
+  EXPECT_THAT(Results.items, Contains(Labeled("[I]foo")));
 }
 
 TEST(CompletionTest, SimpleIndexBased) {
@@ -514,13 +540,13 @@ TEST(CompletionTest, SimpleIndexBased) {
   Opts.Index = I.get();
 
   auto Results = completions(R"cpp(
-      namespace ns { class No {}; }
+      namespace ns { int local; }
       void f() { ns::^ }
   )cpp",
                              Opts);
   EXPECT_THAT(Results.items, Has("XYZ", CompletionItemKind::Class));
   EXPECT_THAT(Results.items, Has("foo", CompletionItemKind::Function));
-  EXPECT_THAT(Results.items, Not(Has("No")));
+  EXPECT_THAT(Results.items, Has("local"));
 }
 
 TEST(CompletionTest, IndexBasedWithFilter) {
@@ -561,6 +587,41 @@ TEST(CompletionTest, FullyQualifiedScope) {
   EXPECT_THAT(Results.items, Has("XYZ", CompletionItemKind::Class));
 }
 
+TEST(CompletionTest, IndexSuppressesPreambleCompletions) {
+  MockFSProvider FS;
+  MockCompilationDatabase CDB;
+  IgnoreDiagnostics DiagConsumer;
+  ClangdServer Server(CDB, DiagConsumer, FS, getDefaultAsyncThreadsCount(),
+                      /*StorePreamblesInMemory=*/true);
+
+  FS.Files[getVirtualTestFilePath("bar.h")] =
+      R"cpp(namespace ns { int preamble; })cpp";
+  auto File = getVirtualTestFilePath("foo.cpp");
+  Annotations Test(R"cpp(
+      #include "bar.h"
+      namespace ns { int local; }
+      void f() { ns::^ }
+  )cpp");
+  Server.addDocument(Context::empty(), File, Test.code()).wait();
+  clangd::CodeCompleteOptions Opts = {};
+
+  auto WithoutIndex =
+      Server.codeComplete(Context::empty(), File, Test.point(), Opts)
+          .get()
+          .second.Value;
+  EXPECT_THAT(WithoutIndex.items,
+              UnorderedElementsAre(Named("local"), Named("preamble")));
+
+  auto I = simpleIndexFromSymbols({{"ns::index", index::SymbolKind::Variable}});
+  Opts.Index = I.get();
+  auto WithIndex =
+      Server.codeComplete(Context::empty(), File, Test.point(), Opts)
+          .get()
+          .second.Value;
+  EXPECT_THAT(WithIndex.items,
+              UnorderedElementsAre(Named("local"), Named("index")));
+}
+
 TEST(CompletionTest, ASTIndexMultiFile) {
   MockFSProvider FS;
   MockCompilationDatabase CDB;
@@ -597,22 +658,6 @@ TEST(CompletionTest, ASTIndexMultiFile) {
   EXPECT_THAT(Results.items, Contains(AllOf(Named("fooooo"), Filter("fooooo"),
                                             Kind(CompletionItemKind::Function),
                                             Doc("Doooc"), Detail("void"))));
-}
-
-TEST(CompletionTest, NoDuplicates) {
-  auto Items = completions(R"cpp(
-struct Adapter {
-  void method();
-};
-
-void Adapter::method() {
-  Adapter^
-}
-  )cpp")
-                   .items;
-
-  // Make sure there are no duplicate entries of 'Adapter'.
-  EXPECT_THAT(Items, ElementsAre(Named("Adapter"), Named("~Adapter")));
 }
 
 } // namespace

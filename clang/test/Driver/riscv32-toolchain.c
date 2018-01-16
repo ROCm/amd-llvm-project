@@ -4,7 +4,7 @@
 // CC1: clang{{.*}} "-cc1" "-triple" "riscv32"
 
 
-// RUN: %clang %s -### -no-canonical-prefixes \
+// RUN: %clang %s -### -no-canonical-prefixes -fuse-ld=ld \
 // RUN:   -target riscv32-linux-unknown-elf \
 // RUN:   --gcc-toolchain=%S/Inputs/multilib_riscv_linux_sdk \
 // RUN:   --sysroot=%S/Inputs/multilib_riscv_linux_sdk/sysroot 2>&1 \
@@ -19,7 +19,7 @@
 // CC1-RV32-LINUX-ILP32: "-L{{.*}}/Inputs/multilib_riscv_linux_sdk/sysroot/lib32/ilp32"
 // CC1-RV32-LINUX-ILP32: "-L{{.*}}/Inputs/multilib_riscv_linux_sdk/sysroot/usr/lib32/ilp32"
 
-// RUN: %clang %s -### -no-canonical-prefixes \
+// RUN: %clang %s -### -no-canonical-prefixes -fuse-ld=ld \
 // RUN:   -target riscv32-linux-unknown-elf -march=rv32imafd -mabi=ilp32d \
 // RUN:   --gcc-toolchain=%S/Inputs/multilib_riscv_linux_sdk \
 // RUN:   --sysroot=%S/Inputs/multilib_riscv_linux_sdk/sysroot 2>&1 \
@@ -73,3 +73,50 @@ int align_ld = __alignof(long double);
 
 // CHECK: @align_vl = global i32 4
 int align_vl = __alignof(va_list);
+
+// Check types
+
+// CHECK: zeroext i8 @check_char()
+char check_char() { return 0; }
+
+// CHECK: define signext i16 @check_short()
+short check_short() { return 0; }
+
+// CHECK: define i32 @check_int()
+int check_int() { return 0; }
+
+// CHECK: define i32 @check_wchar_t()
+int check_wchar_t() { return 0; }
+
+// CHECK: define i32 @check_long()
+long check_long() { return 0; }
+
+// CHECK: define i64 @check_longlong()
+long long check_longlong() { return 0; }
+
+// CHECK: define zeroext i8 @check_uchar()
+unsigned char check_uchar() { return 0; }
+
+// CHECK: define zeroext i16 @check_ushort()
+unsigned short check_ushort() { return 0; }
+
+// CHECK: define i32 @check_uint()
+unsigned int check_uint() { return 0; }
+
+// CHECK: define i32 @check_ulong()
+unsigned long check_ulong() { return 0; }
+
+// CHECK: define i64 @check_ulonglong()
+unsigned long long check_ulonglong() { return 0; }
+
+// CHECK: define i32 @check_size_t()
+size_t check_size_t() { return 0; }
+
+// CHECK: define float @check_float()
+float check_float() { return 0; }
+
+// CHECK: define double @check_double()
+double check_double() { return 0; }
+
+// CHECK: define fp128 @check_longdouble()
+long double check_longdouble() { return 0; }

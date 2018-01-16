@@ -1459,6 +1459,7 @@ public:
       const PartialDiagnostic &DiagID, const PartialDiagnostic & NoteID,
       const FunctionProtoType *Old, SourceLocation OldLoc,
       const FunctionProtoType *New, SourceLocation NewLoc);
+  bool handlerCanCatch(QualType HandlerType, QualType ExceptionType);
   bool CheckExceptionSpecSubset(const PartialDiagnostic &DiagID,
                                 const PartialDiagnostic &NestedDiagID,
                                 const PartialDiagnostic &NoteID,
@@ -3199,11 +3200,13 @@ public:
 
   void LookupVisibleDecls(Scope *S, LookupNameKind Kind,
                           VisibleDeclConsumer &Consumer,
-                          bool IncludeGlobalScope = true);
+                          bool IncludeGlobalScope = true,
+                          bool LoadExternal = true);
   void LookupVisibleDecls(DeclContext *Ctx, LookupNameKind Kind,
                           VisibleDeclConsumer &Consumer,
                           bool IncludeGlobalScope = true,
-                          bool IncludeDependentBases = false);
+                          bool IncludeDependentBases = false,
+                          bool LoadExternal = true);
 
   enum CorrectTypoKind {
     CTK_NonError,     // CorrectTypo used in a non error recovery situation.
