@@ -1337,11 +1337,6 @@ defm VPBROADCASTDr : avx512_int_broadcast_reg_vl<0x7C, avx512vl_i32_info,
 defm VPBROADCASTQr : avx512_int_broadcast_reg_vl<0x7C, avx512vl_i64_info,
                                                  X86VBroadcast, GR64, HasAVX512>, VEX_W;
 
-def : Pat <(v16i32 (X86vzext VK16WM:$mask)),
-           (VPBROADCASTDrZrkz VK16WM:$mask, (i32 (MOV32ri 0x1)))>;
-def : Pat <(v8i64 (X86vzext VK8WM:$mask)),
-           (VPBROADCASTQrZrkz VK8WM:$mask, (i64 (MOV64ri 0x1)))>;
-
 // Provide aliases for broadcast from the same register class that
 // automatically does the extract.
 multiclass avx512_int_broadcast_rm_lowering<X86VectorVTInfo DestInfo,
@@ -3440,6 +3435,14 @@ let Predicates = [HasAVX512, NoVLX] in {
   defm : mask_move_lowering<"VMOVDQA64Z", v2i64x_info, v8i64_info>;
   defm : mask_move_lowering<"VMOVAPDZ", v4f64x_info, v8f64_info>;
   defm : mask_move_lowering<"VMOVDQA64Z", v4i64x_info, v8i64_info>;
+}
+
+let Predicates = [HasBWI, NoVLX] in {
+  defm : mask_move_lowering<"VMOVDQU8Z", v16i8x_info, v64i8_info>;
+  defm : mask_move_lowering<"VMOVDQU8Z", v32i8x_info, v64i8_info>;
+
+  defm : mask_move_lowering<"VMOVDQU16Z", v8i16x_info, v32i16_info>;
+  defm : mask_move_lowering<"VMOVDQU16Z", v16i16x_info, v32i16_info>;
 }
 
 let Predicates = [HasAVX512] in {
