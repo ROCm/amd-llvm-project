@@ -1591,8 +1591,8 @@ ExprResult Sema::BuildLambdaExpr(SourceLocation StartLoc, SourceLocation EndLoc,
         // Handle [This], [&]
         if(From.isReferenceCapture() || From.isThisCapture()) {
           if(const ReferenceType* RT = dyn_cast<ReferenceType>(From.getCaptureType())) {
-            const PrintingPolicy *PrintPolicy;
-            std::string Info = QualType::getAsString(From.getCaptureType()->getPointeeType().split(), *PrintPolicy);
+            const PrintingPolicy PrintPolicy = Context.getPrintingPolicy();
+            std::string Info = QualType::getAsString(From.getCaptureType()->getPointeeType().split(), PrintPolicy);
             if (!getLangOpts().HSAExtension) {
               if(RT->getPointeeType()->isPointerType()) {
                 #if 0
