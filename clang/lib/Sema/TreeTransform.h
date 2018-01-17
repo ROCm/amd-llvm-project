@@ -2581,10 +2581,11 @@ public:
   ExprResult RebuildCXXFunctionalCastExpr(TypeSourceInfo *TInfo,
                                           SourceLocation LParenLoc,
                                           Expr *Sub,
-                                          SourceLocation RParenLoc) {
+                                          SourceLocation RParenLoc,
+                                          bool ListInitialization) {
     return getSema().BuildCXXTypeConstructExpr(TInfo, LParenLoc,
-                                               MultiExprArg(&Sub, 1),
-                                               RParenLoc);
+                                               MultiExprArg(&Sub, 1), RParenLoc,
+                                               ListInitialization);
   }
 
   /// \brief Build a new C++ typeid(type) expression.
@@ -2684,8 +2685,8 @@ public:
   ExprResult RebuildCXXScalarValueInitExpr(TypeSourceInfo *TSInfo,
                                            SourceLocation LParenLoc,
                                            SourceLocation RParenLoc) {
-    return getSema().BuildCXXTypeConstructExpr(TSInfo, LParenLoc,
-                                               None, RParenLoc);
+    return getSema().BuildCXXTypeConstructExpr(
+        TSInfo, LParenLoc, None, RParenLoc, /*ListInitialization=*/false);
   }
 
   /// \brief Build a new C++ "new" expression.
@@ -2842,13 +2843,12 @@ public:
   /// By default, performs semantic analysis to build the new expression.
   /// Subclasses may override this routine to provide different behavior.
   ExprResult RebuildCXXTemporaryObjectExpr(TypeSourceInfo *TSInfo,
-                                           SourceLocation LParenLoc,
+                                           SourceLocation LParenOrBraceLoc,
                                            MultiExprArg Args,
-                                           SourceLocation RParenLoc) {
-    return getSema().BuildCXXTypeConstructExpr(TSInfo,
-                                               LParenLoc,
-                                               Args,
-                                               RParenLoc);
+                                           SourceLocation RParenOrBraceLoc,
+                                           bool ListInitialization) {
+    return getSema().BuildCXXTypeConstructExpr(
+        TSInfo, LParenOrBraceLoc, Args, RParenOrBraceLoc, ListInitialization);
   }
 
   /// \brief Build a new object-construction expression.
@@ -2858,11 +2858,10 @@ public:
   ExprResult RebuildCXXUnresolvedConstructExpr(TypeSourceInfo *TSInfo,
                                                SourceLocation LParenLoc,
                                                MultiExprArg Args,
-                                               SourceLocation RParenLoc) {
-    return getSema().BuildCXXTypeConstructExpr(TSInfo,
-                                               LParenLoc,
-                                               Args,
-                                               RParenLoc);
+                                               SourceLocation RParenLoc,
+                                               bool ListInitialization) {
+    return getSema().BuildCXXTypeConstructExpr(TSInfo, LParenLoc, Args,
+                                               RParenLoc, ListInitialization);
   }
 
   /// \brief Build a new member reference expression.
@@ -6945,6 +6944,8 @@ TreeTransform<Derived>::TransformCoroutineBodyStmt(CoroutineBodyStmt *S) {
 
   // The new CoroutinePromise object needs to be built and put into the current
   // FunctionScopeInfo before any transformations or rebuilding occurs.
+  if (!SemaRef.buildCoroutineParameterMoves(FD->getLocation()))
+    return StmtError();
   auto *Promise = SemaRef.buildCoroutinePromise(FD->getLocation());
   if (!Promise)
     return StmtError();
@@ -7035,8 +7036,6 @@ TreeTransform<Derived>::TransformCoroutineBodyStmt(CoroutineBodyStmt *S) {
       Builder.ReturnStmt = Res.get();
     }
   }
-  if (!Builder.buildParameterMoves())
-    return StmtError();
 
   return getDerived().RebuildCoroutineBodyStmt(Builder);
 }
@@ -9936,7 +9935,8 @@ TreeTransform<Derived>::TransformCXXFunctionalCastExpr(
   return getDerived().RebuildCXXFunctionalCastExpr(Type,
                                                    E->getLParenLoc(),
                                                    SubExpr.get(),
-                                                   E->getRParenLoc());
+                                                   E->getRParenLoc(),
+                                                   E->isListInitialization());
 }
 
 template<typename Derived>
@@ -10852,11 +10852,12 @@ TreeTransform<Derived>::TransformCXXTemporaryObjectExpr(
     return SemaRef.MaybeBindToTemporary(E);
   }
 
-  // FIXME: Pass in E->isListInitialization().
-  return getDerived().RebuildCXXTemporaryObjectExpr(T,
-                                          /*FIXME:*/T->getTypeLoc().getEndLoc(),
-                                                    Args,
-                                                    E->getLocEnd());
+  // FIXME: We should just pass E->isListInitialization(), but we're not
+  // prepared to handle list-initialization without a child InitListExpr.
+  SourceLocation LParenLoc = T->getTypeLoc().getEndLoc();
+  return getDerived().RebuildCXXTemporaryObjectExpr(
+      T, LParenLoc, Args, E->getLocEnd(),
+      /*ListInitialization=*/LParenLoc.isInvalid());
 }
 
 template<typename Derived>
@@ -11142,10 +11143,8 @@ TreeTransform<Derived>::TransformCXXUnresolvedConstructExpr(
     return E;
 
   // FIXME: we're faking the locations of the commas
-  return getDerived().RebuildCXXUnresolvedConstructExpr(T,
-                                                        E->getLParenLoc(),
-                                                        Args,
-                                                        E->getRParenLoc());
+  return getDerived().RebuildCXXUnresolvedConstructExpr(
+      T, E->getLParenLoc(), Args, E->getRParenLoc(), E->isListInitialization());
 }
 
 template<typename Derived>
