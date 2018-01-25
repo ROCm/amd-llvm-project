@@ -85,7 +85,10 @@ enum : uint64_t {
   ClampHi = UINT64_C(1) << 48,
 
   // Is a packed VOP3P instruction.
-  IsPacked = UINT64_C(1) << 49
+  IsPacked = UINT64_C(1) << 49,
+
+  // "d16" bit set or not.
+  D16 = UINT64_C(1) << 50
 };
 
 // v_cmp_class_* etc. use a 10-bit mask for what operation is checked.
@@ -137,7 +140,6 @@ namespace AMDGPU {
     OPERAND_INPUT_MODS,
 
     // Operand for SDWA instructions
-    OPERAND_SDWA_SRC,
     OPERAND_SDWA_VOPC_DST,
 
     /// Operand with 32-bit immediate that uses the constant bus.

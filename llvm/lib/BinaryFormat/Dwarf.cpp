@@ -567,6 +567,17 @@ StringRef llvm::dwarf::AttributeValueString(uint16_t Attr, unsigned Val) {
   return StringRef();
 }
 
+StringRef llvm::dwarf::IndexString(unsigned Idx) {
+  switch (Idx) {
+  default:
+    return StringRef();
+#define HANDLE_DW_IDX(ID, NAME)                                                \
+  case DW_IDX_##NAME:                                                          \
+    return "DW_IDX_" #NAME;
+#include "llvm/BinaryFormat/Dwarf.def"
+  }
+}
+
 bool llvm::dwarf::isValidFormForVersion(Form F, unsigned Version,
                                         bool ExtensionsOk) {
   if (FormVendor(F) == DWARF_VENDOR_DWARF) {
@@ -576,8 +587,7 @@ bool llvm::dwarf::isValidFormForVersion(Form F, unsigned Version,
   return ExtensionsOk;
 }
 
-uint32_t llvm::dwarf::djbHash(StringRef Buffer) {
-  uint32_t H = 5381;
+uint32_t llvm::dwarf::djbHash(StringRef Buffer, uint32_t H) {
   for (char C : Buffer.bytes())
     H = ((H << 5) + H) + C;
   return H;

@@ -3507,6 +3507,8 @@ static void LookupVisibleDecls(DeclContext *Ctx, LookupResult &Result,
   if (Visited.visitedContext(Ctx->getPrimaryContext()))
     return;
 
+  Consumer.EnteredContext(Ctx);
+
   // Outside C++, lookup results for the TU live on identifiers.
   if (isa<TranslationUnitDecl>(Ctx) &&
       !Result.getSema().getLangOpts().CPlusPlus) {
@@ -3541,10 +3543,13 @@ static void LookupVisibleDecls(DeclContext *Ctx, LookupResult &Result,
   if (CXXRecordDecl *Class = dyn_cast<CXXRecordDecl>(Ctx))
     Result.getSema().ForceDeclarationOfImplicitMembers(Class);
 
+  // We sometimes skip loading namespace-level results (they tend to be huge).
+  bool Load = LoadExternal ||
+              !(isa<TranslationUnitDecl>(Ctx) || isa<NamespaceDecl>(Ctx));
   // Enumerate all of the results in this context.
   for (DeclContextLookupResult R :
-       LoadExternal ? Ctx->lookups()
-                    : Ctx->noload_lookups(/*PreserveInternalState=*/false)) {
+       Load ? Ctx->lookups()
+            : Ctx->noload_lookups(/*PreserveInternalState=*/false)) {
     for (auto *D : R) {
       if (auto *ND = Result.getAcceptableDecl(D)) {
         Consumer.FoundDecl(ND, Visited.checkHidden(ND), Ctx, InBaseClass);

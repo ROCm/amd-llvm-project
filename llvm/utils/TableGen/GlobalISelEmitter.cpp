@@ -1692,6 +1692,19 @@ public:
                             RuleMatcher &Rule) const override {
     InsnMatcher->emitPredicateOpcodes(Table, Rule);
   }
+
+  bool isHigherPriorityThan(const OperandPredicateMatcher &B) const override {
+    if (OperandPredicateMatcher::isHigherPriorityThan(B))
+      return true;
+    if (B.OperandPredicateMatcher::isHigherPriorityThan(*this))
+      return false;
+
+    if (const InstructionOperandMatcher *BP =
+            dyn_cast<InstructionOperandMatcher>(&B))
+      if (InsnMatcher->isHigherPriorityThan(*BP->InsnMatcher))
+        return true;
+    return false;
+  }
 };
 
 //===- Actions ------------------------------------------------------------===//
@@ -2475,6 +2488,7 @@ void RuleMatcher::emit(MatchTable &Table) {
 
   Table << MatchTable::Opcode("GIR_Done", -1) << MatchTable::LineBreak
         << MatchTable::Label(LabelID);
+  ++NumPatternEmitted;
 }
 
 bool RuleMatcher::isHigherPriorityThan(const RuleMatcher &B) const {
@@ -2638,7 +2652,7 @@ private:
 
   /// Takes a sequence of \p Rules and group them based on the predicates
   /// they share. \p StorageGroupMatcher is used as a memory container
-  /// for the the group that are created as part of this process.
+  /// for the group that are created as part of this process.
   /// The optimization process does not change the relative order of
   /// the rules. In particular, we don't try to share predicates if
   /// that means reordering the rules (e.g., we won't group R1 and R3
@@ -3936,10 +3950,9 @@ void GlobalISelEmitter::run(raw_ostream &OS) {
                          : InputRules;
 
   MatchTable Table(0);
-  for (Matcher *Rule : OptRules) {
+  for (Matcher *Rule : OptRules)
     Rule->emit(Table);
-    ++NumPatternEmitted;
-  }
+
   Table << MatchTable::Opcode("GIM_Reject") << MatchTable::LineBreak;
   Table.emitDeclaration(OS);
   OS << "  if (executeMatchTable(*this, OutMIs, State, ISelInfo, ";
