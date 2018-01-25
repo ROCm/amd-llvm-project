@@ -325,6 +325,13 @@ enum UnitType : unsigned char {
   DW_UT_hi_user = 0xff
 };
 
+enum Index {
+#define HANDLE_DW_IDX(ID, NAME) DW_IDX_##NAME = ID,
+#include "llvm/BinaryFormat/Dwarf.def"
+  DW_IDX_lo_user = 0x2000,
+  DW_IDX_hi_user = 0x3fff
+};
+
 inline bool isUnitType(uint8_t UnitType) {
   switch (UnitType) {
   case DW_UT_compile:
@@ -420,6 +427,7 @@ StringRef UnitTypeString(unsigned);
 StringRef AtomTypeString(unsigned Atom);
 StringRef GDBIndexEntryKindString(GDBIndexEntryKind Kind);
 StringRef GDBIndexEntryLinkageString(GDBIndexEntryLinkage Linkage);
+StringRef IndexString(unsigned Idx);
 /// @}
 
 /// \defgroup DwarfConstantsParsing Dwarf constants parsing functions
@@ -518,7 +526,7 @@ private:
 enum DwarfFormat : uint8_t { DWARF32, DWARF64 };
 
 /// The Bernstein hash function used by the accelerator tables.
-uint32_t djbHash(StringRef Buffer);
+uint32_t djbHash(StringRef Buffer, uint32_t H = 5381);
 
 } // End of namespace dwarf
 
