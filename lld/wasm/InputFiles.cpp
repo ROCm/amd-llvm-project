@@ -47,11 +47,10 @@ void ObjFile::dumpInfo() const {
       "      Total Functions : " + Twine(FunctionSymbols.size()) + "\n" +
       "        Total Globals : " + Twine(GlobalSymbols.size()) + "\n" +
       "     Function Imports : " + Twine(NumFunctionImports) + "\n" +
-      "       Global Imports : " + Twine(NumGlobalImports) + "\n" +
-      "        Table Entries : " + Twine(TableSymbols.size()) + "\n");
+      "       Global Imports : " + Twine(NumGlobalImports) + "\n");
 }
 
-uint32_t ObjFile::getRelocatedAddress(uint32_t GlobalIndex) const {
+uint32_t ObjFile::relocateVirtualAddress(uint32_t GlobalIndex) const {
   return GlobalSymbols[GlobalIndex]->getVirtualAddress();
 }
 
@@ -68,7 +67,7 @@ uint32_t ObjFile::relocateTypeIndex(uint32_t Original) const {
 }
 
 uint32_t ObjFile::relocateTableIndex(uint32_t Original) const {
-  Symbol *Sym = TableSymbols[Original];
+  Symbol *Sym = FunctionSymbols[Original];
   uint32_t Index = Sym->hasTableIndex() ? Sym->getTableIndex() : 0;
   DEBUG(dbgs() << "relocateTableIndex: " << toString(*Sym) << ": " << Original
                << " -> " << Index << "\n");
@@ -92,14 +91,34 @@ uint32_t ObjFile::calcNewIndex(const WasmRelocation &Reloc) const {
   case R_WEBASSEMBLY_TYPE_INDEX_LEB:
     return relocateTypeIndex(Reloc.Index);
   case R_WEBASSEMBLY_FUNCTION_INDEX_LEB:
-    return relocateFunctionIndex(Reloc.Index);
   case R_WEBASSEMBLY_TABLE_INDEX_I32:
   case R_WEBASSEMBLY_TABLE_INDEX_SLEB:
-    return relocateTableIndex(Reloc.Index);
+    return relocateFunctionIndex(Reloc.Index);
   case R_WEBASSEMBLY_GLOBAL_INDEX_LEB:
   case R_WEBASSEMBLY_MEMORY_ADDR_LEB:
   case R_WEBASSEMBLY_MEMORY_ADDR_SLEB:
   case R_WEBASSEMBLY_MEMORY_ADDR_I32:
+    return relocateGlobalIndex(Reloc.Index);
+  default:
+    llvm_unreachable("unknown relocation type");
+  }
+}
+
+// Translate from the relocation's index into the final linked output value.
+uint32_t ObjFile::calcNewValue(const WasmRelocation &Reloc) const {
+  switch (Reloc.Type) {
+  case R_WEBASSEMBLY_TABLE_INDEX_I32:
+  case R_WEBASSEMBLY_TABLE_INDEX_SLEB:
+    return relocateTableIndex(Reloc.Index);
+  case R_WEBASSEMBLY_MEMORY_ADDR_SLEB:
+  case R_WEBASSEMBLY_MEMORY_ADDR_I32:
+  case R_WEBASSEMBLY_MEMORY_ADDR_LEB:
+    return relocateVirtualAddress(Reloc.Index) + Reloc.Addend;
+  case R_WEBASSEMBLY_TYPE_INDEX_LEB:
+    return relocateTypeIndex(Reloc.Index);
+  case R_WEBASSEMBLY_FUNCTION_INDEX_LEB:
+    return relocateFunctionIndex(Reloc.Index);
+  case R_WEBASSEMBLY_GLOBAL_INDEX_LEB:
     return relocateGlobalIndex(Reloc.Index);
   default:
     llvm_unreachable("unknown relocation type");
@@ -226,8 +245,7 @@ void ObjFile::initializeSymbols() {
     case WasmSymbol::SymbolType::FUNCTION_EXPORT: {
       InputFunction *Function = getFunction(WasmSym);
       if (!isExcludedByComdat(Function)) {
-        S = createDefined(WasmSym, Symbol::Kind::DefinedFunctionKind, nullptr,
-                          Function);
+        S = createDefined(WasmSym, Symbol::Kind::DefinedFunctionKind, Function);
         break;
       } else {
         Function->Discarded = true;
@@ -241,8 +259,8 @@ void ObjFile::initializeSymbols() {
     case WasmSymbol::SymbolType::GLOBAL_EXPORT: {
       InputSegment *Segment = getSegment(WasmSym);
       if (!isExcludedByComdat(Segment)) {
-        S = createDefined(WasmSym, Symbol::Kind::DefinedGlobalKind,
-                          Segment, nullptr, getGlobalValue(WasmSym));
+        S = createDefined(WasmSym, Symbol::Kind::DefinedGlobalKind, Segment,
+                          getGlobalValue(WasmSym));
         break;
       } else {
         Segment->Discarded = true;
@@ -252,9 +270,6 @@ void ObjFile::initializeSymbols() {
     case WasmSymbol::SymbolType::GLOBAL_IMPORT:
       S = createUndefined(WasmSym, Symbol::Kind::UndefinedGlobalKind);
       break;
-    case WasmSymbol::SymbolType::DEBUG_FUNCTION_NAME:
-      // These are for debugging only, no need to create linker symbols for them
-      continue;
     }
 
     Symbols.push_back(S);
@@ -274,24 +289,6 @@ void ObjFile::initializeSymbols() {
         for (size_t I = 0; I < GlobalSymbols.size(); ++I)
             assert(GlobalSymbols[I] != nullptr););
 
-  // Populate `TableSymbols` with all symbols that are called indirectly
-  uint32_t SegmentCount = WasmObj->elements().size();
-  if (SegmentCount) {
-    if (SegmentCount > 1)
-      fatal(getName() + ": contains more than one element segment");
-    const WasmElemSegment &Segment = WasmObj->elements()[0];
-    if (Segment.Offset.Opcode != WASM_OPCODE_I32_CONST)
-      fatal(getName() + ": unsupported element segment");
-    if (Segment.TableIndex != 0)
-      fatal(getName() + ": unsupported table index in elem segment");
-    if (Segment.Offset.Value.Int32 != 0)
-      fatal(getName() + ": unsupported element segment offset");
-    TableSymbols.reserve(Segment.Functions.size());
-    for (uint64_t FunctionIndex : Segment.Functions)
-      TableSymbols.push_back(FunctionSymbols[FunctionIndex]);
-  }
-
-  DEBUG(dbgs() << "TableSymbols: " << TableSymbols.size() << "\n");
   DEBUG(dbgs() << "Functions   : " << FunctionSymbols.size() << "\n");
   DEBUG(dbgs() << "Globals     : " << GlobalSymbols.size() << "\n");
 }
@@ -302,16 +299,14 @@ Symbol *ObjFile::createUndefined(const WasmSymbol &Sym, Symbol::Kind Kind,
 }
 
 Symbol *ObjFile::createDefined(const WasmSymbol &Sym, Symbol::Kind Kind,
-                               const InputSegment *Segment,
-                               InputFunction *Function, uint32_t Address) {
+                               InputChunk *Chunk, uint32_t Address) {
   Symbol *S;
   if (Sym.isLocal()) {
     S = make<Symbol>(Sym.Name, true);
-    S->update(Kind, this, Sym.Flags, Segment, Function, Address);
+    S->update(Kind, this, Sym.Flags, Chunk, Address);
     return S;
   }
-  return Symtab->addDefined(Sym.Name, Kind, Sym.Flags, this, Segment, Function,
-                            Address);
+  return Symtab->addDefined(Sym.Name, Kind, Sym.Flags, this, Chunk, Address);
 }
 
 void ArchiveFile::parse() {

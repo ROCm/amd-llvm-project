@@ -64,7 +64,7 @@ class AddDsymCommandCase(TestBase):
 
     def generate_main_cpp(self, version=0):
         """Generate main.cpp from main.cpp.template."""
-        temp = os.path.join(os.getcwd(), self.template)
+        temp = os.path.join(self.getSourceDir(), self.template)
         with open(temp, 'r') as f:
             content = f.read()
 
@@ -72,7 +72,8 @@ class AddDsymCommandCase(TestBase):
             '%ADD_EXTRA_CODE%',
             'printf("This is version %d\\n");' %
             version)
-        src = os.path.join(os.getcwd(), self.source)
+        self.makeBuildDir()
+        src = os.path.join(self.getBuildDir(), self.source)
         with open(src, 'w') as f:
             f.write(new_content)
 
@@ -83,15 +84,18 @@ class AddDsymCommandCase(TestBase):
 
     def do_add_dsym_with_error(self, exe_name):
         """Test that the 'add-dsym' command informs the user about failures."""
-        self.runCmd("file " + exe_name, CURRENT_EXECUTABLE_SET)
+        exe_path = self.getBuildArtifact(exe_name)
+        self.runCmd("file " + exe_path, CURRENT_EXECUTABLE_SET)
 
-        wrong_path = os.path.join("%s.dSYM" % exe_name, "Contents")
+        wrong_path = os.path.join(self.getBuildDir(),
+                                  "%s.dSYM" % exe_name, "Contents")
         self.expect("add-dsym " + wrong_path, error=True,
                     substrs=['invalid module path'])
 
         right_path = os.path.join(
+            self.getBuildDir(),
             "%s.dSYM" %
-            exe_name,
+            exe_path,
             "Contents",
             "Resources",
             "DWARF",
@@ -101,13 +105,15 @@ class AddDsymCommandCase(TestBase):
 
     def do_add_dsym_with_success(self, exe_name):
         """Test that the 'add-dsym' command informs the user about success."""
-        self.runCmd("file " + exe_name, CURRENT_EXECUTABLE_SET)
+        exe_path = self.getBuildArtifact(exe_name)
+        self.runCmd("file " + exe_path, CURRENT_EXECUTABLE_SET)
 
         # This time, the UUID should match and we expect some feedback from
         # lldb.
         right_path = os.path.join(
+            self.getBuildDir(),
             "%s.dSYM" %
-            exe_name,
+            exe_path,
             "Contents",
             "Resources",
             "DWARF",
@@ -117,9 +123,10 @@ class AddDsymCommandCase(TestBase):
 
     def do_add_dsym_with_dSYM_bundle(self, exe_name):
         """Test that the 'add-dsym' command informs the user about success when loading files in bundles."""
-        self.runCmd("file " + exe_name, CURRENT_EXECUTABLE_SET)
+        exe_path = self.getBuildArtifact(exe_name)
+        self.runCmd("file " + exe_path, CURRENT_EXECUTABLE_SET)
 
         # This time, the UUID should be found inside the bundle
-        right_path = "%s.dSYM" % exe_name
+        right_path = "%s.dSYM" % exe_path
         self.expect("add-dsym " + right_path,
                     substrs=['symbol file', 'has been added to'])

@@ -9,8 +9,9 @@ add_clang_library(clangDaemon
   ClangdUnitStore.cpp
   CodeComplete.cpp
   CodeCompletionStrings.cpp
-  Context.cpp
+  CompileArgsCache.cpp
   Compiler.cpp
+  Context.cpp
   DraftStore.cpp
   FuzzyMatch.cpp
   GlobalCompilationDatabase.cpp
@@ -21,6 +22,7 @@ add_clang_library(clangDaemon
   ProtocolHandlers.cpp
   SourceCode.cpp
   Trace.cpp
+  URI.cpp
   XRefs.cpp
   index/FileIndex.cpp
   index/Index.cpp

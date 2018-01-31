@@ -3566,9 +3566,9 @@ void CodeGenFunction::EmitCallArg(CallArgList &args, const Expr *E,
     } else {
       // We can't represent a misaligned lvalue in the CallArgList, so copy
       // to an aligned temporary now.
-      Address tmp = CreateMemTemp(type);
-      EmitAggregateCopy(tmp, L.getAddress(), type, L.isVolatile());
-      args.add(RValue::getAggregate(tmp), type);
+      LValue Dest = MakeAddrLValue(CreateMemTemp(type), type);
+      EmitAggregateCopy(Dest, L, type, L.isVolatile());
+      args.add(RValue::getAggregate(Dest.getAddress()), type);
     }
     return;
   }
@@ -3909,9 +3909,12 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
                < Align.getQuantity()) ||
             (ArgInfo.getIndirectByVal() && (RVAddrSpace != ArgAddrSpace))) {
           // Create an aligned temporary, and copy to it.
-          Address AI = CreateMemTemp(I->Ty, ArgInfo.getIndirectAlign());
-          IRCallArgs[FirstIRArg] = CastToAllocaAddrSpace(AI.getPointer());
-          EmitAggregateCopy(AI, Addr, I->Ty, RV.isVolatileQualified());
+          Address AI = CreateMemTemp(I->Ty, ArgInfo.getIndirectAlign(),
+                                     "byval-temp", false);
+          IRCallArgs[FirstIRArg] = AI.getPointer();
+          LValue Dest = MakeAddrLValue(AI, I->Ty);
+          LValue Src = MakeAddrLValue(Addr, I->Ty);
+          EmitAggregateCopy(Dest, Src, I->Ty, RV.isVolatileQualified());
         } else {
           auto Arg = Addr.getPointer();
           // Skip the extra memcpy call.

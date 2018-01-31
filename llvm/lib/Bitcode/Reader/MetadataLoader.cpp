@@ -165,7 +165,7 @@ public:
   /// necessary.
   Metadata *getMetadataFwdRef(unsigned Idx);
 
-  /// Return the the given metadata only if it is fully resolved.
+  /// Return the given metadata only if it is fully resolved.
   ///
   /// Gives the same result as \a lookup(), unless \a MDNode::isResolved()
   /// would give \c false.
@@ -1174,14 +1174,25 @@ Error MetadataLoader::MetadataLoaderImpl::parseOneMetadata(
     break;
   }
   case bitc::METADATA_SUBRANGE: {
-    if (Record.size() != 3)
-      return error("Invalid record");
+    Metadata *Val = nullptr;
+    // Operand 'count' is interpreted as:
+    // - Signed integer (version 0)
+    // - Metadata node  (version 1)
+    switch (Record[0] >> 1) {
+    case 0:
+      Val = GET_OR_DISTINCT(DISubrange,
+                            (Context, Record[1], unrotateSign(Record.back())));
+      break;
+    case 1:
+      Val = GET_OR_DISTINCT(DISubrange, (Context, getMDOrNull(Record[1]),
+                                         unrotateSign(Record.back())));
+      break;
+    default:
+      return error("Invalid record: Unsupported version of DISubrange");
+    }
 
-    IsDistinct = Record[0];
-    MetadataList.assignValue(
-        GET_OR_DISTINCT(DISubrange,
-                        (Context, Record[1], unrotateSign(Record[2]))),
-        NextMetadataNo);
+    MetadataList.assignValue(Val, NextMetadataNo);
+    IsDistinct = Record[0] & 1;
     NextMetadataNo++;
     break;
   }

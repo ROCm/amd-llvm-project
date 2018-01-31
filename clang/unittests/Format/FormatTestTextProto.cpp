@@ -289,6 +289,22 @@ TEST_F(FormatTestTextProto, SupportsAngleBracketMessageFields) {
                "  headheadheadheadheadhead_id: 1\n"
                "  product_data <product {1}>\n"
                ">");
+
+  verifyFormat("dcccwrnfioeruvginerurneitinfo {\n"
+               "  exte3nsionrnfvui {key: value}\n"
+               "}");
+}
+
+TEST_F(FormatTestTextProto, DiscardsUnbreakableTailIfCanBreakAfter) {
+  // The two closing braces count towards the string UnbreakableTailLength, but
+  // since we have broken after the corresponding opening braces, we don't
+  // consider that length for string breaking.
+  verifyFormat(
+      "foo: {\n"
+      "  bar: {\n"
+      "    text: \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n"
+      "  }\n"
+      "}");
 }
 
 TEST_F(FormatTestTextProto, DiscardsUnbreakableTailIfCanBreakAfter) {

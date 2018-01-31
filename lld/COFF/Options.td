@@ -42,6 +42,7 @@ def merge   : P<"merge", "Combine sections">;
 def mllvm   : P<"mllvm", "Options to pass to LLVM">;
 def nodefaultlib : P<"nodefaultlib", "Remove a default library">;
 def opt     : P<"opt", "Control optimizations">;
+def order   : P<"order", "Put functions in order">;
 def out     : P<"out", "Path to file to write output">;
 def pdb : P<"pdb", "PDB file path">;
 def section : P<"section", "Specify section attributes">;
@@ -132,6 +133,7 @@ def dash_dash_version : Flag<["--"], "version">,
 // Flags for debugging
 def lldmap : F<"lldmap">;
 def lldmap_file : Joined<["/", "-"], "lldmap:">;
+def show_timing : F<"time">;
 
 //==============================================================================
 // The flags below do nothing. They are defined only for link.exe compatibility.

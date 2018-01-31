@@ -7,6 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "TestFS.h"
 #include "index/SymbolCollector.h"
 #include "index/SymbolYAML.h"
 #include "clang/Basic/FileManager.h"
@@ -43,9 +44,8 @@ MATCHER_P(Plain, Text, "") { return arg.CompletionPlainInsertText == Text; }
 MATCHER_P(Snippet, S, "") {
   return arg.CompletionSnippetInsertText == S;
 }
-MATCHER_P(QName, Name, "") {
-  return (arg.Scope + (arg.Scope.empty() ? "" : "::") + arg.Name).str() == Name;
-}
+MATCHER_P(QName, Name, "") { return (arg.Scope + arg.Name).str() == Name; }
+MATCHER_P(CPath, P, "") { return arg.CanonicalDeclaration.FilePath == P; }
 
 namespace clang {
 namespace clangd {
@@ -147,18 +147,63 @@ TEST_F(SymbolCollectorTest, CollectSymbols) {
   runSymbolCollector(Header, Main);
   EXPECT_THAT(Symbols,
               UnorderedElementsAreArray(
-                  {QName("Foo"),
-                   QName("f1"),
-                   QName("f2"),
-                   QName("KInt"),
-                   QName("kStr"),
-                   QName("foo"),
-                   QName("foo::bar"),
-                   QName("foo::int32"),
-                   QName("foo::int32_t"),
-                   QName("foo::v1"),
-                   QName("foo::bar::v2"),
-                   QName("foo::baz")}));
+                  {QName("Foo"), QName("f1"), QName("f2"), QName("KInt"),
+                   QName("kStr"), QName("foo"), QName("foo::bar"),
+                   QName("foo::int32"), QName("foo::int32_t"), QName("foo::v1"),
+                   QName("foo::bar::v2"), QName("foo::baz")}));
+}
+
+TEST_F(SymbolCollectorTest, SymbolRelativeNoFallback) {
+  CollectorOpts.IndexMainFiles = false;
+  runSymbolCollector("class Foo {};", /*Main=*/"");
+  EXPECT_THAT(Symbols,
+              UnorderedElementsAre(AllOf(QName("Foo"), CPath("symbols.h"))));
+}
+
+TEST_F(SymbolCollectorTest, SymbolRelativeWithFallback) {
+  CollectorOpts.IndexMainFiles = false;
+  CollectorOpts.FallbackDir = getVirtualTestRoot();
+  runSymbolCollector("class Foo {};", /*Main=*/"");
+  EXPECT_THAT(Symbols,
+              UnorderedElementsAre(AllOf(
+                  QName("Foo"), CPath(getVirtualTestFilePath("symbols.h")))));
+}
+
+TEST_F(SymbolCollectorTest, IncludeEnums) {
+  CollectorOpts.IndexMainFiles = false;
+  const std::string Header = R"(
+    enum {
+      Red
+    };
+    enum Color {
+      Green
+    };
+    enum class Color2 {
+      Yellow // ignore
+    };
+    namespace ns {
+    enum {
+      Black
+    };
+    }
+  )";
+  runSymbolCollector(Header, /*Main=*/"");
+  EXPECT_THAT(Symbols, UnorderedElementsAre(QName("Red"), QName("Color"),
+                                            QName("Green"), QName("Color2"),
+                                            QName("ns"),
+                                            QName("ns::Black")));
+}
+
+TEST_F(SymbolCollectorTest, IgnoreNamelessSymbols) {
+  CollectorOpts.IndexMainFiles = false;
+  const std::string Header = R"(
+    struct {
+      int a;
+    } Foo;
+  )";
+  runSymbolCollector(Header, /*Main=*/"");
+  EXPECT_THAT(Symbols,
+              UnorderedElementsAre(QName("Foo")));
 }
 
 TEST_F(SymbolCollectorTest, IgnoreSymbolsInMainFile) {
@@ -254,7 +299,7 @@ TEST_F(SymbolCollectorTest, YAMLConversions) {
 ---
 ID: 057557CEBF6E6B2DD437FBF60CC58F352D1DF856
 Name:   'Foo1'
-Scope:   'clang'
+Scope:   'clang::'
 SymInfo:
   Kind:            Function
   Lang:            Cpp
@@ -274,7 +319,7 @@ Detail:
 ---
 ID: 057557CEBF6E6B2DD437FBF60CC58F352D1DF858
 Name:   'Foo2'
-Scope:   'clang'
+Scope:   'clang::'
 SymInfo:
   Kind:            Function
   Lang:            Cpp

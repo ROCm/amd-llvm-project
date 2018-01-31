@@ -13,6 +13,7 @@
 #include "ClangdUnit.h"
 #include "ClangdUnitStore.h"
 #include "CodeComplete.h"
+#include "CompileArgsCache.h"
 #include "DraftStore.h"
 #include "Function.h"
 #include "GlobalCompilationDatabase.h"
@@ -308,11 +309,11 @@ public:
                                                      PathRef File, Position Pos,
                                                      llvm::StringRef NewName);
 
-  /// Gets current document contents for \p File. \p File must point to a
-  /// currently tracked file.
+  /// Gets current document contents for \p File. Returns None if \p File is not
+  /// currently tracked.
   /// FIXME(ibiryukov): This function is here to allow offset-to-Position
   /// conversions in outside code, maybe there's a way to get rid of it.
-  std::string getDocument(PathRef File);
+  llvm::Optional<std::string> getDocument(PathRef File);
 
   /// Only for testing purposes.
   /// Waits until all requests to worker thread are finished and dumps AST for
@@ -320,6 +321,15 @@ public:
   std::string dumpAST(PathRef File);
   /// Called when an event occurs for a watched file in the workspace.
   void onFileEvent(const DidChangeWatchedFilesParams &Params);
+
+  /// Returns estimated memory usage for each of the currently open files.
+  /// The order of results is unspecified.
+  /// Overall memory usage of clangd may be significantly more than reported
+  /// here, as this metric does not account (at least) for:
+  ///   - memory occupied by static and dynamic index,
+  ///   - memory required for in-flight requests,
+  /// FIXME: those metrics might be useful too, we should add them.
+  std::vector<std::pair<Path, std::size_t>> getUsedBytesPerFile() const;
 
 private:
   /// FIXME: This stats several files to find a .clang-format file. I/O can be
@@ -336,7 +346,7 @@ private:
   std::future<Context>
   scheduleCancelRebuild(Context Ctx, std::shared_ptr<CppFile> Resources);
 
-  GlobalCompilationDatabase &CDB;
+  CompileArgsCache CompileArgs;
   DiagnosticsConsumer &DiagConsumer;
   FileSystemProvider &FSProvider;
   DraftStore DraftMgr;
@@ -351,7 +361,6 @@ private:
   // If present, a merged view of FileIdx and an external index. Read via Index.
   std::unique_ptr<SymbolIndex> MergedIndex;
   CppFileCollection Units;
-  std::string ResourceDir;
   // If set, this represents the workspace path.
   llvm::Optional<std::string> RootPath;
   std::shared_ptr<PCHContainerOperations> PCHs;

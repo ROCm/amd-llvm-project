@@ -21,8 +21,7 @@ namespace lld {
 namespace wasm {
 
 class InputFile;
-class InputSegment;
-class InputFunction;
+class InputChunk;
 
 class Symbol {
 public:
@@ -38,8 +37,7 @@ public:
     InvalidKind,
   };
 
-  Symbol(StringRef Name, uint32_t Flags)
-      : WrittenToSymtab(0), WrittenToNameSec(0), Flags(Flags), Name(Name) {}
+  Symbol(StringRef Name, uint32_t Flags) : Flags(Flags), Name(Name) {}
 
   Kind getKind() const { return SymbolKind; }
 
@@ -63,6 +61,7 @@ public:
 
   // Returns the file from which this symbol was created.
   InputFile *getFile() const { return File; }
+  InputChunk *getChunk() const { return Chunk; }
 
   bool hasFunctionType() const { return FunctionType != nullptr; }
   const WasmSignature &getFunctionType() const;
@@ -78,10 +77,10 @@ public:
   // space of the output object.
   void setOutputIndex(uint32_t Index);
 
-  uint32_t getTableIndex() const { return TableIndex.getValue(); }
+  uint32_t getTableIndex() const;
 
   // Returns true if a table index has been set for this symbol
-  bool hasTableIndex() const { return TableIndex.hasValue(); }
+  bool hasTableIndex() const;
 
   // Set the table index of the symbol
   void setTableIndex(uint32_t Index);
@@ -93,17 +92,10 @@ public:
   void setVirtualAddress(uint32_t VA);
 
   void update(Kind K, InputFile *F = nullptr, uint32_t Flags = 0,
-              const InputSegment *Segment = nullptr,
-              InputFunction *Function = nullptr, uint32_t Address = UINT32_MAX);
+              InputChunk *chunk = nullptr, uint32_t Address = UINT32_MAX);
 
   void setArchiveSymbol(const Archive::Symbol &Sym) { ArchiveSymbol = Sym; }
   const Archive::Symbol &getArchiveSymbol() { return ArchiveSymbol; }
-  InputFunction *getFunction() { return Function; }
-
-  // This bit is used by Writer::writeNameSection() to prevent
-  // symbols from being written to the symbol table more than once.
-  unsigned WrittenToSymtab : 1;
-  unsigned WrittenToNameSec : 1;
 
 protected:
   uint32_t Flags;
@@ -113,8 +105,7 @@ protected:
   Archive::Symbol ArchiveSymbol = {nullptr, 0, 0};
   Kind SymbolKind = InvalidKind;
   InputFile *File = nullptr;
-  const InputSegment *Segment = nullptr;
-  InputFunction *Function = nullptr;
+  InputChunk *Chunk = nullptr;
   llvm::Optional<uint32_t> OutputIndex;
   llvm::Optional<uint32_t> TableIndex;
   const WasmSignature *FunctionType = nullptr;

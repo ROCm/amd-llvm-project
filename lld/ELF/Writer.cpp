@@ -822,6 +822,8 @@ void PhdrEntry::add(OutputSection *Sec) {
   p_align = std::max(p_align, Sec->Alignment);
   if (p_type == PT_LOAD)
     Sec->PtLoad = this;
+  if (Sec->LMAExpr)
+    ASectionHasLMA = true;
 }
 
 // The beginning and the ending of .rel[a].plt section are marked
@@ -1015,11 +1017,36 @@ findOrphanPos(std::vector<BaseCommand *>::iterator B,
   return I;
 }
 
-// If no layout was provided by linker script, we want to apply default
-// sorting for special input sections and handle --symbol-ordering-file.
-template <class ELFT> void Writer<ELFT>::sortInputSections() {
-  assert(!Script->HasSectionsCommand);
+// Builds section order for handling --symbol-ordering-file.
+static DenseMap<SectionBase *, int> buildSectionOrder() {
+  DenseMap<SectionBase *, int> SectionOrder;
+  if (Config->SymbolOrderingFile.empty())
+    return SectionOrder;
 
+  // Build a map from symbols to their priorities. Symbols that didn't
+  // appear in the symbol ordering file have the lowest priority 0.
+  // All explicitly mentioned symbols have negative (higher) priorities.
+  DenseMap<StringRef, int> SymbolOrder;
+  int Priority = -Config->SymbolOrderingFile.size();
+  for (StringRef S : Config->SymbolOrderingFile)
+    SymbolOrder.insert({S, Priority++});
+
+  // Build a map from sections to their priorities.
+  for (InputFile *File : ObjectFiles) {
+    for (Symbol *Sym : File->getSymbols()) {
+      auto *D = dyn_cast<Defined>(Sym);
+      if (!D || !D->Section)
+        continue;
+      int &Priority = SectionOrder[D->Section];
+      Priority = std::min(Priority, SymbolOrder.lookup(D->getName()));
+    }
+  }
+  return SectionOrder;
+}
+
+// If no layout was provided by linker script, we want to apply default
+// sorting for special input sections. This also handles --symbol-ordering-file.
+template <class ELFT> void Writer<ELFT>::sortInputSections() {
   // Sort input sections by priority using the list provided
   // by --symbol-ordering-file.
   DenseMap<SectionBase *, int> Order = buildSectionOrder();
@@ -1028,6 +1055,9 @@ template <class ELFT> void Writer<ELFT>::sortInputSections() {
       if (auto *Sec = dyn_cast<OutputSection>(Base))
         if (Sec->Live)
           Sec->sort([&](InputSectionBase *S) { return Order.lookup(S); });
+
+  if (Script->HasSectionsCommand)
+    return;
 
   // Sort input sections by section name suffixes for
   // __attribute__((init_priority(N))).
@@ -1055,9 +1085,9 @@ template <class ELFT> void Writer<ELFT>::sortSections() {
     if (auto *Sec = dyn_cast<OutputSection>(Base))
       Sec->SortRank = getSectionRank(Sec);
 
-  if (!Script->HasSectionsCommand) {
-    sortInputSections();
+  sortInputSections();
 
+  if (!Script->HasSectionsCommand) {
     // We know that all the OutputSections are contiguous in this case.
     auto E = Script->SectionCommands.end();
     auto I = Script->SectionCommands.begin();
@@ -1309,7 +1339,7 @@ static void removeUnusedSyntheticSections() {
     if (!SS)
       return;
     OutputSection *OS = SS->getParent();
-    if (!SS->empty() || !OS)
+    if (!OS || !SS->empty())
       continue;
 
     std::vector<BaseCommand *>::iterator Empty = OS->SectionCommands.end();
@@ -1626,7 +1656,9 @@ template <class ELFT> std::vector<PhdrEntry *> Writer<ELFT>::createPhdrs() {
     // different flags or is loaded at a discontiguous address using AT linker
     // script command.
     uint64_t NewFlags = computeFlags(Sec->getPhdrFlags());
-    if (Sec->LMAExpr || Flags != NewFlags) {
+    if ((Sec->LMAExpr && Load->ASectionHasLMA) ||
+        Sec->MemRegion != Load->FirstSec->MemRegion || Flags != NewFlags) {
+
       Load = AddHdr(PT_LOAD, NewFlags);
       Flags = NewFlags;
     }

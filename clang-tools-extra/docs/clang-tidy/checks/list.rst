@@ -25,6 +25,7 @@ Clang-Tidy Checks
    bugprone-fold-init-type
    bugprone-forward-declaration-namespace
    bugprone-inaccurate-erase
+   bugprone-incorrect-roundings
    bugprone-integer-division
    bugprone-misplaced-operator-in-strlen-in-alloc
    bugprone-move-forwarding-reference
@@ -52,6 +53,7 @@ Clang-Tidy Checks
    cert-msc30-c (redirects to cert-msc50-cpp) <cert-msc30-c>
    cert-msc50-cpp
    cert-oop11-cpp (redirects to performance-move-constructor-init) <cert-oop11-cpp>
+   cppcoreguidelines-avoid-goto
    cppcoreguidelines-c-copy-assignment-signature (redirects to misc-unconventional-assign-operator) <cppcoreguidelines-c-copy-assignment-signature>
    cppcoreguidelines-interfaces-global-init
    cppcoreguidelines-no-malloc
@@ -69,8 +71,10 @@ Clang-Tidy Checks
    cppcoreguidelines-slicing
    cppcoreguidelines-special-member-functions
    fuchsia-default-arguments
+   fuchsia-multiple-inheritance
    fuchsia-overloaded-operator
    fuchsia-statically-constructed-objects
+   fuchsia-trailing-return
    fuchsia-virtual-inheritance
    google-build-explicit-make-pair
    google-build-namespaces
@@ -90,6 +94,7 @@ Clang-Tidy Checks
    google-runtime-member-string-references
    google-runtime-operator
    google-runtime-references
+   hicpp-avoid-goto
    hicpp-braces-around-statements (redirects to readability-braces-around-statements) <hicpp-braces-around-statements>
    hicpp-deprecated-headers (redirects to modernize-deprecated-headers) <hicpp-deprecated-headers>
    hicpp-exception-baseclass
@@ -122,7 +127,6 @@ Clang-Tidy Checks
    llvm-twine-local
    misc-definitions-in-headers
    misc-forwarding-reference-overload
-   misc-incorrect-roundings
    misc-lambda-function-name
    misc-macro-parentheses
    misc-macro-repeated-side-effects
@@ -134,7 +138,6 @@ Clang-Tidy Checks
    misc-sizeof-container
    misc-sizeof-expression
    misc-static-assert
-   misc-string-compare
    misc-string-integer-assignment
    misc-string-literal-with-embedded-nul
    misc-suspicious-enum-usage
@@ -216,4 +219,5 @@ Clang-Tidy Checks
    readability-simplify-boolean-expr
    readability-static-accessed-through-instance
    readability-static-definition-in-anonymous-namespace
+   readability-string-compare
    readability-uniqueptr-delete-release

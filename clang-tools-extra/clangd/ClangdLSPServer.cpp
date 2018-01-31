@@ -10,6 +10,7 @@
 #include "ClangdLSPServer.h"
 #include "JSONRPCDispatcher.h"
 #include "SourceCode.h"
+#include "URI.h"
 #include "llvm/Support/FormatVariadic.h"
 
 using namespace clang::clangd;
@@ -143,16 +144,21 @@ void ClangdLSPServer::onCommand(Ctx C, ExecuteCommandParams &Params) {
 
 void ClangdLSPServer::onRename(Ctx C, RenameParams &Params) {
   auto File = Params.textDocument.uri.file;
+  auto Code = Server.getDocument(File);
+  if (!Code)
+    return replyError(C, ErrorCode::InvalidParams,
+                      "onRename called for non-added file");
+
   auto Replacements = Server.rename(C, File, Params.position, Params.newName);
   if (!Replacements) {
     replyError(C, ErrorCode::InternalError,
                llvm::toString(Replacements.takeError()));
     return;
   }
-  std::string Code = Server.getDocument(File);
-  std::vector<TextEdit> Edits = replacementsToEdits(Code, *Replacements);
+
+  std::vector<TextEdit> Edits = replacementsToEdits(*Code, *Replacements);
   WorkspaceEdit WE;
-  WE.changes = {{Params.textDocument.uri.uri, Edits}};
+  WE.changes = {{Params.textDocument.uri.uri(), Edits}};
   reply(C, WE);
 }
 
@@ -164,10 +170,14 @@ void ClangdLSPServer::onDocumentDidClose(Ctx C,
 void ClangdLSPServer::onDocumentOnTypeFormatting(
     Ctx C, DocumentOnTypeFormattingParams &Params) {
   auto File = Params.textDocument.uri.file;
-  std::string Code = Server.getDocument(File);
-  auto ReplacementsOrError = Server.formatOnType(Code, File, Params.position);
+  auto Code = Server.getDocument(File);
+  if (!Code)
+    return replyError(C, ErrorCode::InvalidParams,
+                      "onDocumentOnTypeFormatting called for non-added file");
+
+  auto ReplacementsOrError = Server.formatOnType(*Code, File, Params.position);
   if (ReplacementsOrError)
-    reply(C, json::ary(replacementsToEdits(Code, ReplacementsOrError.get())));
+    reply(C, json::ary(replacementsToEdits(*Code, ReplacementsOrError.get())));
   else
     replyError(C, ErrorCode::UnknownErrorCode,
                llvm::toString(ReplacementsOrError.takeError()));
@@ -176,10 +186,14 @@ void ClangdLSPServer::onDocumentOnTypeFormatting(
 void ClangdLSPServer::onDocumentRangeFormatting(
     Ctx C, DocumentRangeFormattingParams &Params) {
   auto File = Params.textDocument.uri.file;
-  std::string Code = Server.getDocument(File);
-  auto ReplacementsOrError = Server.formatRange(Code, File, Params.range);
+  auto Code = Server.getDocument(File);
+  if (!Code)
+    return replyError(C, ErrorCode::InvalidParams,
+                      "onDocumentRangeFormatting called for non-added file");
+
+  auto ReplacementsOrError = Server.formatRange(*Code, File, Params.range);
   if (ReplacementsOrError)
-    reply(C, json::ary(replacementsToEdits(Code, ReplacementsOrError.get())));
+    reply(C, json::ary(replacementsToEdits(*Code, ReplacementsOrError.get())));
   else
     replyError(C, ErrorCode::UnknownErrorCode,
                llvm::toString(ReplacementsOrError.takeError()));
@@ -188,10 +202,14 @@ void ClangdLSPServer::onDocumentRangeFormatting(
 void ClangdLSPServer::onDocumentFormatting(Ctx C,
                                            DocumentFormattingParams &Params) {
   auto File = Params.textDocument.uri.file;
-  std::string Code = Server.getDocument(File);
-  auto ReplacementsOrError = Server.formatFile(Code, File);
+  auto Code = Server.getDocument(File);
+  if (!Code)
+    return replyError(C, ErrorCode::InvalidParams,
+                      "onDocumentFormatting called for non-added file");
+
+  auto ReplacementsOrError = Server.formatFile(*Code, File);
   if (ReplacementsOrError)
-    reply(C, json::ary(replacementsToEdits(Code, ReplacementsOrError.get())));
+    reply(C, json::ary(replacementsToEdits(*Code, ReplacementsOrError.get())));
   else
     replyError(C, ErrorCode::UnknownErrorCode,
                llvm::toString(ReplacementsOrError.takeError()));
@@ -200,13 +218,17 @@ void ClangdLSPServer::onDocumentFormatting(Ctx C,
 void ClangdLSPServer::onCodeAction(Ctx C, CodeActionParams &Params) {
   // We provide a code action for each diagnostic at the requested location
   // which has FixIts available.
-  std::string Code = Server.getDocument(Params.textDocument.uri.file);
+  auto Code = Server.getDocument(Params.textDocument.uri.file);
+  if (!Code)
+    return replyError(C, ErrorCode::InvalidParams,
+                      "onCodeAction called for non-added file");
+
   json::ary Commands;
   for (Diagnostic &D : Params.context.diagnostics) {
     auto Edits = getFixIts(Params.textDocument.uri.file, D);
     if (!Edits.empty()) {
       WorkspaceEdit WE;
-      WE.changes = {{Params.textDocument.uri.uri, std::move(Edits)}};
+      WE.changes = {{Params.textDocument.uri.uri(), std::move(Edits)}};
       Commands.push_back(json::obj{
           {"title", llvm::formatv("Apply FixIt {0}", D.message)},
           {"command", ExecuteCommandParams::CLANGD_APPLY_FIX_COMMAND},
@@ -258,8 +280,7 @@ void ClangdLSPServer::onGoToDefinition(Ctx C,
 void ClangdLSPServer::onSwitchSourceHeader(Ctx C,
                                            TextDocumentIdentifier &Params) {
   llvm::Optional<Path> Result = Server.switchSourceHeader(Params.uri.file);
-  std::string ResultUri;
-  reply(C, Result ? URI::fromFile(*Result).uri : "");
+  reply(C, Result ? URI::createFile(*Result).toString() : "");
 }
 
 void ClangdLSPServer::onDocumentHighlight(Ctx C,
@@ -356,7 +377,7 @@ void ClangdLSPServer::onDiagnosticsReady(
       {"method", "textDocument/publishDiagnostics"},
       {"params",
        json::obj{
-           {"uri", URI::fromFile(File)},
+           {"uri", URIForFile{File}},
            {"diagnostics", std::move(DiagnosticsJSON)},
        }},
   });

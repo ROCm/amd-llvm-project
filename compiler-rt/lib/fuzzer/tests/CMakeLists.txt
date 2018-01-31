@@ -19,7 +19,7 @@ else()
 endif()
 
 if("${CMAKE_SYSTEM_NAME}" STREQUAL "Linux" AND COMPILER_RT_LIBCXX_PATH)
-  list(APPEND LIBFUZZER_UNITTEST_CFLAGS -nostdinc++ -D_LIBCPP_ABI_VERSION=__Fuzzer)
+  list(APPEND LIBFUZZER_UNITTEST_CFLAGS -nostdinc++ -D_LIBCPP_ABI_VERSION=Fuzzer)
 endif()
 
 foreach(arch ${FUZZER_SUPPORTED_ARCH})
@@ -37,10 +37,10 @@ foreach(arch ${FUZZER_SUPPORTED_ARCH})
     ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     FOLDER "Compiler-RT Runtime tests")
 
-	if("${CMAKE_SYSTEM_NAME}" STREQUAL "Linux" AND COMPILER_RT_LIBCXX_PATH)
-    set(LIBFUZZER_TEST_RUNTIME_DEPS libcxx_fuzzer_${arch})
-    set(LIBFUZZER_TEST_RUNTIME_CFLAGS -isystem ${LIBCXX_${arch}_PREFIX}/include/c++/v1)
-    set(LIBFUZZER_TEST_RUNTIME_LINK_FLAGS ${LIBCXX_${arch}_PREFIX}/lib/libc++.a)
+  if("${CMAKE_SYSTEM_NAME}" STREQUAL "Linux" AND COMPILER_RT_LIBCXX_PATH)
+    set(LIBFUZZER_TEST_RUNTIME_DEPS libcxx_fuzzer_${arch}-build)
+    set(LIBFUZZER_TEST_RUNTIME_CFLAGS -isystem ${COMPILER_RT_LIBCXX_PATH}/include)
+    set(LIBFUZZER_TEST_RUNTIME_LINK_FLAGS ${LIBCXX_${arch}_PREFIX}/src/libcxx_fuzzer_${arch}-build/lib/libc++.a)
   endif()
 
   set(FuzzerTestObjects)

@@ -29,12 +29,12 @@ bool counting_equals ( const T &a, const T &b ) {
     }
 
 #if TEST_STD_VER > 17
-TEST_CONSTEXPR bool test_constexpr() {
+constexpr bool test_constexpr() {
     int ia[] = {0, 0, 0};
     int ib[] = {1, 1, 0};
     int ic[] = {1, 0, 1};
     int id[] = {1};
-    std::equal_to<int> c;
+    std::equal_to<int> c{};
     return !std::is_permutation(std::begin(ia), std::end(ia), std::begin(ib)              , c)
         && !std::is_permutation(std::begin(ia), std::end(ia), std::begin(ib), std::end(ib), c)
         &&  std::is_permutation(std::begin(ib), std::end(ib), std::begin(ic)              , c)
@@ -736,6 +736,30 @@ int main()
                                    forward_iterator<const int*>(ib),
                                    forward_iterator<const int*>(ib + sa),
                                    std::equal_to<const int>()) == false);
+#endif
+    }
+    {
+      struct S {
+          S(int i) : i_(i) {}
+          bool operator==(const S& other) = delete;
+          int i_;
+      };
+      struct eq {
+          bool operator()(const S& a, const S&b) { return a.i_ == b.i_; }
+      };
+      const S a[] = {S(0), S(1)};
+      const S b[] = {S(1), S(0)};
+      const unsigned sa = sizeof(a)/sizeof(a[0]);
+      assert(std::is_permutation(forward_iterator<const S*>(a),
+                                 forward_iterator<const S*>(a + sa),
+                                 forward_iterator<const S*>(b),
+                                 eq()));
+#if TEST_STD_VER >= 14
+      assert(std::is_permutation(forward_iterator<const S*>(a),
+                                 forward_iterator<const S*>(a + sa),
+                                 forward_iterator<const S*>(b),
+                                 forward_iterator<const S*>(b + sa),
+                                 eq()));
 #endif
     }
 

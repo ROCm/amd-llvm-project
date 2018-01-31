@@ -6,6 +6,8 @@ function(add_python_test_target name test_script args comment)
     )
 
   add_custom_target(${name}
+    # Clear the test directory first.
+    COMMAND ${CMAKE_COMMAND} -E remove_directory ${CMAKE_BINARY_DIR}/lldb-test-build
     COMMAND ${PYTHON_TEST_COMMAND} ${ARG_DEFAULT_ARGS}
     COMMENT "${comment}"
     DEPENDS ${LLDB_TEST_DEPS}
@@ -25,11 +27,17 @@ if(TARGET lldb-server)
 endif()
   
 if(TARGET debugserver)
-  list(APPEND LLDB_TEST_DEPS debugserver)
+  if(NOT CMAKE_HOST_APPLE OR LLDB_CODESIGN_IDENTITY)
+    list(APPEND LLDB_TEST_DEPS debugserver)
+  endif()
 endif()
 
 if(TARGET lldb-mi)
   list(APPEND LLDB_TEST_DEPS lldb-mi)
+endif()
+
+if(NOT LLDB_BUILT_STANDALONE)
+  list(APPEND LLDB_TEST_DEPS yaml2obj)
 endif()
 
 # The default architecture with which to compile test executables is the default LLVM target
@@ -54,6 +62,8 @@ set(LLDB_TEST_COMMON_ARGS
   --executable $<TARGET_FILE:lldb>
   -s
   ${CMAKE_BINARY_DIR}/lldb-test-traces
+  --build-dir
+  ${CMAKE_BINARY_DIR}/lldb-test-build
   -S nm
   -u CXXFLAGS
   -u CFLAGS
@@ -95,7 +105,18 @@ if (NOT ${CMAKE_SYSTEM_NAME} MATCHES "Windows|Darwin")
 endif()
 
 if(CMAKE_HOST_APPLE)
-  list(APPEND LLDB_TEST_COMMON_ARGS --server $<TARGET_FILE:debugserver>)
+  if(LLDB_CODESIGN_IDENTITY)
+    set(DEBUGSERVER_PATH $<TARGET_FILE:debugserver>)
+  else()
+    execute_process(
+      COMMAND xcode-select -p
+      OUTPUT_VARIABLE XCODE_DEV_DIR)
+    string(STRIP ${XCODE_DEV_DIR} XCODE_DEV_DIR)
+    set(DEBUGSERVER_PATH
+      "${XCODE_DEV_DIR}/../SharedFrameworks/LLDB.framework/Resources/debugserver")
+  endif()
+  message(STATUS "Path to the lldb debugserver: ${DEBUGSERVER_PATH}")
+  list(APPEND LLDB_TEST_COMMON_ARGS --server ${DEBUGSERVER_PATH})
 endif()
 
 set(LLDB_DOTEST_ARGS ${LLDB_TEST_COMMON_ARGS};${LLDB_TEST_USER_ARGS})

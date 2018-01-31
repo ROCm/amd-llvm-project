@@ -23,6 +23,7 @@
 #include "llvm/IR/Type.h"
 
 using namespace llvm;
+using namespace LegalizeActions;
 
 /// FIXME: The following static functions are SizeChangeStrategy functions
 /// that are meant to temporarily mimic the behaviour of the old legalization
@@ -40,7 +41,7 @@ addAndInterleaveWithUnsupported(LegalizerInfo::SizeAndActionsVec &result,
     result.push_back(v[i]);
     if (i + 1 < v[i].first && i + 1 < v.size() &&
         v[i + 1].first != v[i].first + 1)
-      result.push_back({v[i].first + 1, LegalizerInfo::Unsupported});
+      result.push_back({v[i].first + 1, Unsupported});
   }
 }
 
@@ -48,13 +49,14 @@ static LegalizerInfo::SizeAndActionsVec
 widen_8_16(const LegalizerInfo::SizeAndActionsVec &v) {
   assert(v.size() >= 1);
   assert(v[0].first > 17);
-  LegalizerInfo::SizeAndActionsVec result = {
-      {1, LegalizerInfo::Unsupported},
-      {8, LegalizerInfo::WidenScalar},  {9, LegalizerInfo::Unsupported},
-      {16, LegalizerInfo::WidenScalar}, {17, LegalizerInfo::Unsupported}};
+  LegalizerInfo::SizeAndActionsVec result = {{1, Unsupported},
+                                             {8, WidenScalar},
+                                             {9, Unsupported},
+                                             {16, WidenScalar},
+                                             {17, Unsupported}};
   addAndInterleaveWithUnsupported(result, v);
   auto Largest = result.back().first;
-  result.push_back({Largest + 1, LegalizerInfo::Unsupported});
+  result.push_back({Largest + 1, Unsupported});
   return result;
 }
 
@@ -63,12 +65,12 @@ widen_1_8_16_narrowToLargest(const LegalizerInfo::SizeAndActionsVec &v) {
   assert(v.size() >= 1);
   assert(v[0].first > 17);
   LegalizerInfo::SizeAndActionsVec result = {
-      {1, LegalizerInfo::WidenScalar},  {2, LegalizerInfo::Unsupported},
-      {8, LegalizerInfo::WidenScalar},  {9, LegalizerInfo::Unsupported},
-      {16, LegalizerInfo::WidenScalar}, {17, LegalizerInfo::Unsupported}};
+      {1, WidenScalar},  {2, Unsupported},
+      {8, WidenScalar},  {9, Unsupported},
+      {16, WidenScalar}, {17, Unsupported}};
   addAndInterleaveWithUnsupported(result, v);
   auto Largest = result.back().first;
-  result.push_back({Largest + 1, LegalizerInfo::NarrowScalar});
+  result.push_back({Largest + 1, NarrowScalar});
   return result;
 }
 
@@ -161,9 +163,9 @@ ARMLegalizerInfo::ARMLegalizerInfo(const ARMSubtarget &ST) {
     setAction({G_ICMP, 1, Ty}, Legal);
 
   if (!ST.useSoftFloat() && ST.hasVFP2()) {
-    for (unsigned BinOp : {G_FADD, G_FSUB, G_FMUL, G_FDIV, G_FCONSTANT, G_FNEG})
+    for (unsigned Op : {G_FADD, G_FSUB, G_FMUL, G_FDIV, G_FCONSTANT, G_FNEG})
       for (auto Ty : {s32, s64})
-        setAction({BinOp, Ty}, Legal);
+        setAction({Op, Ty}, Legal);
 
     setAction({G_LOAD, s64}, Legal);
     setAction({G_STORE, s64}, Legal);
@@ -178,6 +180,24 @@ ARMLegalizerInfo::ARMLegalizerInfo(const ARMSubtarget &ST) {
     setAction({G_MERGE_VALUES, 1, s32}, Legal);
     setAction({G_UNMERGE_VALUES, s32}, Legal);
     setAction({G_UNMERGE_VALUES, 1, s64}, Legal);
+
+    setAction({G_FPEXT, s64}, Legal);
+    setAction({G_FPEXT, 1, s32}, Legal);
+
+    setAction({G_FPTRUNC, s32}, Legal);
+    setAction({G_FPTRUNC, 1, s64}, Legal);
+
+    for (unsigned Op : {G_FPTOSI, G_FPTOUI}) {
+      setAction({Op, s32}, Legal);
+      for (auto Ty : {s32, s64})
+        setAction({Op, 1, Ty}, Legal);
+    }
+
+    for (unsigned Op : {G_SITOFP, G_UITOFP}) {
+      setAction({Op, 1, s32}, Legal);
+      for (auto Ty : {s32, s64})
+        setAction({Op, Ty}, Legal);
+    }
   } else {
     for (unsigned BinOp : {G_FADD, G_FSUB, G_FMUL, G_FDIV})
       for (auto Ty : {s32, s64})
@@ -191,6 +211,23 @@ ARMLegalizerInfo::ARMLegalizerInfo(const ARMSubtarget &ST) {
     setAction({G_FCMP, s1}, Legal);
     setAction({G_FCMP, 1, s32}, Custom);
     setAction({G_FCMP, 1, s64}, Custom);
+
+    setAction({G_FPEXT, s64}, Legal);
+    setAction({G_FPEXT, 1, s32}, Libcall);
+
+    setAction({G_FPTRUNC, s32}, Legal);
+    setAction({G_FPTRUNC, 1, s64}, Libcall);
+
+    for (unsigned Op : {G_FPTOSI, G_FPTOUI}) {
+      setAction({Op, s32}, Legal);
+      setAction({Op, 1, s32}, Libcall);
+      setAction({Op, 1, s64}, Libcall);
+    }
+
+    for (unsigned Op : {G_SITOFP, G_UITOFP}) {
+      for (auto Ty : {s32, s64})
+        setAction({Op, Ty}, Libcall);
+    }
 
     if (AEABI(ST))
       setFCmpLibcallsAEABI();

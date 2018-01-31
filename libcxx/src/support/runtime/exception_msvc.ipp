@@ -22,11 +22,11 @@ _LIBCPP_CRT_FUNC terminate_handler __cdecl set_terminate(
 _LIBCPP_CRT_FUNC terminate_handler __cdecl _get_terminate();
 
 typedef void (__cdecl* unexpected_handler)();
-_LIBCPP_CRT_FUNC unexpected_handler __cdecl set_unexpected(
+unexpected_handler __cdecl set_unexpected(
     unexpected_handler _NewUnexpectedHandler) throw();
-_LIBCPP_CRT_FUNC unexpected_handler __cdecl _get_unexpected();
+unexpected_handler __cdecl _get_unexpected();
 
-_LIBCPP_CRT_FUNC int __cdecl __uncaught_exceptions();
+int __cdecl __uncaught_exceptions();
 }
 
 namespace std {
@@ -97,6 +97,7 @@ bad_array_length::what() const _NOEXCEPT
     return "bad_array_length";
 }
 
+#if defined(_LIBCPP_NO_VCRUNTIME)
 bad_cast::bad_cast() _NOEXCEPT
 {
 }
@@ -125,7 +126,6 @@ bad_typeid::what() const _NOEXCEPT
   return "std::bad_typeid";
 }
 
-#if defined(_LIBCPP_NO_VCRUNTIME)
 exception::~exception() _NOEXCEPT
 {
 }
