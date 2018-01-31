@@ -206,7 +206,8 @@ class LinkerScript final {
     uint64_t ThreadBssOffset = 0;
     OutputSection *OutSec = nullptr;
     MemoryRegion *MemRegion = nullptr;
-    std::function<uint64_t()> LMAOffset;
+    MemoryRegion *LMARegion = nullptr;
+    uint64_t LMAOffset = 0;
   };
 
   llvm::DenseMap<StringRef, OutputSection *> NameToOutputSection;
@@ -216,12 +217,9 @@ class LinkerScript final {
   void setDot(Expr E, const Twine &Loc, bool InSec);
 
   std::vector<InputSection *>
-  computeInputSections(const InputSectionDescription *,
-                       const llvm::DenseMap<SectionBase *, int> &Order);
+  computeInputSections(const InputSectionDescription *);
 
-  std::vector<InputSection *>
-  createInputSectionList(OutputSection &Cmd,
-                         const llvm::DenseMap<SectionBase *, int> &Order);
+  std::vector<InputSection *> createInputSectionList(OutputSection &Cmd);
 
   std::vector<size_t> getPhdrIndices(OutputSection *Sec);
 
@@ -267,6 +265,7 @@ public:
   void assignAddresses();
   void allocateHeaders(std::vector<PhdrEntry *> &Phdrs);
   void processSectionCommands();
+  void declareSymbols();
 
   // SECTIONS command list.
   std::vector<BaseCommand *> SectionCommands;

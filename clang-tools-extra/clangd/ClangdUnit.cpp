@@ -35,6 +35,10 @@ using namespace clang;
 
 namespace {
 
+template <class T> std::size_t getUsedBytes(const std::vector<T> &Vec) {
+  return Vec.capacity() * sizeof(T);
+}
+
 class DeclTrackingASTConsumer : public ASTConsumer {
 public:
   DeclTrackingASTConsumer(std::vector<const Decl *> &TopLevelDecls)
@@ -225,8 +229,7 @@ void clangd::dumpAST(ParsedAST &AST, llvm::raw_ostream &OS) {
 }
 
 llvm::Optional<ParsedAST>
-ParsedAST::Build(const Context &Ctx,
-                 std::unique_ptr<clang::CompilerInvocation> CI,
+ParsedAST::Build(std::unique_ptr<clang::CompilerInvocation> CI,
                  std::shared_ptr<const PreambleData> Preamble,
                  std::unique_ptr<llvm::MemoryBuffer> Buffer,
                  std::shared_ptr<PCHContainerOperations> PCHs,
@@ -240,6 +243,8 @@ ParsedAST::Build(const Context &Ctx,
   auto Clang = prepareCompilerInstance(
       std::move(CI), PreamblePCH, std::move(Buffer), std::move(PCHs),
       std::move(VFS), /*ref*/ UnitDiagsConsumer);
+  if (!Clang)
+    return llvm::None;
 
   // Recover resources if we crash before exiting this method.
   llvm::CrashRecoveryContextCleanupRegistrar<CompilerInstance> CICleanup(
@@ -248,12 +253,12 @@ ParsedAST::Build(const Context &Ctx,
   auto Action = llvm::make_unique<ClangdFrontendAction>();
   const FrontendInputFile &MainInput = Clang->getFrontendOpts().Inputs[0];
   if (!Action->BeginSourceFile(*Clang, MainInput)) {
-    log(Ctx, "BeginSourceFile() failed when building AST for " +
-                 MainInput.getFile());
+    log("BeginSourceFile() failed when building AST for " +
+        MainInput.getFile());
     return llvm::None;
   }
   if (!Action->Execute())
-    log(Ctx, "Execute() failed when building AST for " + MainInput.getFile());
+    log("Execute() failed when building AST for " + MainInput.getFile());
 
   // UnitDiagsConsumer is local, we can not store it in CompilerInstance that
   // has a longer lifetime.
@@ -332,6 +337,14 @@ const std::vector<DiagWithFixIts> &ParsedAST::getDiagnostics() const {
   return Diags;
 }
 
+std::size_t ParsedAST::getUsedBytes() const {
+  auto &AST = getASTContext();
+  // FIXME(ibiryukov): we do not account for the dynamically allocated part of
+  // SmallVector<FixIt> inside each Diag.
+  return AST.getASTAllocatedMemory() + AST.getSideTableAllocatedMemory() +
+         ::getUsedBytes(TopLevelDecls) + ::getUsedBytes(Diags);
+}
+
 PreambleData::PreambleData(PrecompiledPreamble Preamble,
                            std::vector<serialization::DeclID> TopLevelDeclIDs,
                            std::vector<DiagWithFixIts> Diags)
@@ -370,10 +383,10 @@ CppFile::CppFile(PathRef FileName, bool StorePreamblesInMemory,
                  std::shared_ptr<PCHContainerOperations> PCHs,
                  ASTParsedCallback ASTCallback)
     : FileName(FileName), StorePreamblesInMemory(StorePreamblesInMemory),
-      RebuildCounter(0), RebuildInProgress(false), PCHs(std::move(PCHs)),
+      RebuildCounter(0), RebuildInProgress(false), ASTMemUsage(0),
+      PreambleMemUsage(0), PCHs(std::move(PCHs)),
       ASTCallback(std::move(ASTCallback)) {
-  // FIXME(ibiryukov): we should pass a proper Context here.
-  log(Context::empty(), "Created CppFile for " + FileName);
+  log("Created CppFile for " + FileName);
 
   std::lock_guard<std::mutex> Lock(Mutex);
   LatestAvailablePreamble = nullptr;
@@ -419,17 +432,19 @@ UniqueFunction<void()> CppFile::deferCancelRebuild() {
       return;
 
     // Set empty results for Promises.
+    That->PreambleMemUsage = 0;
     That->PreamblePromise.set_value(nullptr);
+    That->ASTMemUsage = 0;
     That->ASTPromise.set_value(std::make_shared<ParsedASTWrapper>(llvm::None));
   };
 }
 
 llvm::Optional<std::vector<DiagWithFixIts>>
-CppFile::rebuild(const Context &Ctx, ParseInputs &&Inputs) {
-  return deferRebuild(std::move(Inputs))(Ctx);
+CppFile::rebuild(ParseInputs &&Inputs) {
+  return deferRebuild(std::move(Inputs))();
 }
 
-UniqueFunction<llvm::Optional<std::vector<DiagWithFixIts>>(const Context &)>
+UniqueFunction<llvm::Optional<std::vector<DiagWithFixIts>>()>
 CppFile::deferRebuild(ParseInputs &&Inputs) {
   std::shared_ptr<const PreambleData> OldPreamble;
   std::shared_ptr<PCHContainerOperations> PCHs;
@@ -455,7 +470,6 @@ CppFile::deferRebuild(ParseInputs &&Inputs) {
       this->ASTPromise = std::promise<std::shared_ptr<ParsedASTWrapper>>();
       this->ASTFuture = this->ASTPromise.get_future();
     }
-    this->LastCommand = Inputs.CompileCommand;
   } // unlock Mutex.
   // Notify about changes to RebuildCounter.
   RebuildCond.notify_all();
@@ -467,13 +481,11 @@ CppFile::deferRebuild(ParseInputs &&Inputs) {
   std::shared_ptr<CppFile> That = shared_from_this();
   auto FinishRebuild =
       [OldPreamble, RequestRebuildCounter, PCHs,
-       That](ParseInputs Inputs,
-             const Context &Ctx) mutable /* to allow changing OldPreamble. */
+       That](ParseInputs Inputs) mutable /* to allow changing OldPreamble. */
       -> llvm::Optional<std::vector<DiagWithFixIts>> {
-    log(Context::empty(),
-        "Rebuilding file " + That->FileName + " with command [" +
-            Inputs.CompileCommand.Directory + "] " +
-            llvm::join(Inputs.CompileCommand.CommandLine, " "));
+    log("Rebuilding file " + That->FileName + " with command [" +
+        Inputs.CompileCommand.Directory + "] " +
+        llvm::join(Inputs.CompileCommand.CommandLine, " "));
 
     // Only one execution of this method is possible at a time.
     // RebuildGuard will wait for any ongoing rebuilds to finish and will put us
@@ -516,16 +528,16 @@ CppFile::deferRebuild(ParseInputs &&Inputs) {
       if (OldPreamble &&
           OldPreamble->Preamble.CanReuse(*CI, ContentsBuffer.get(), Bounds,
                                          Inputs.FS.get())) {
-        log(Ctx, "Reusing preamble for file " + Twine(That->FileName));
+        log("Reusing preamble for file " + Twine(That->FileName));
         return OldPreamble;
       }
-      log(Ctx, "Premble for file " + Twine(That->FileName) +
-                   " cannot be reused. Attempting to rebuild it.");
+      log("Premble for file " + Twine(That->FileName) +
+          " cannot be reused. Attempting to rebuild it.");
       // We won't need the OldPreamble anymore, release it so it can be
       // deleted (if there are no other references to it).
       OldPreamble.reset();
 
-      trace::Span Tracer(Ctx, "Preamble");
+      trace::Span Tracer("Preamble");
       SPAN_ATTACH(Tracer, "File", That->FileName);
       std::vector<DiagWithFixIts> PreambleDiags;
       StoreDiagsConsumer PreambleDiagnosticsConsumer(/*ref*/ PreambleDiags);
@@ -550,16 +562,15 @@ CppFile::deferRebuild(ParseInputs &&Inputs) {
       CI->getFrontendOpts().SkipFunctionBodies = false;
 
       if (BuiltPreamble) {
-        log(Ctx, "Built preamble of size " + Twine(BuiltPreamble->getSize()) +
-                     " for file " + Twine(That->FileName));
+        log("Built preamble of size " + Twine(BuiltPreamble->getSize()) +
+            " for file " + Twine(That->FileName));
 
         return std::make_shared<PreambleData>(
             std::move(*BuiltPreamble),
             SerializedDeclsCollector.takeTopLevelDeclIDs(),
             std::move(PreambleDiags));
       } else {
-        log(Ctx,
-            "Could not build a preamble for file " + Twine(That->FileName));
+        log("Could not build a preamble for file " + Twine(That->FileName));
         return nullptr;
       }
     };
@@ -574,6 +585,8 @@ CppFile::deferRebuild(ParseInputs &&Inputs) {
       That->LatestAvailablePreamble = NewPreamble;
       if (RequestRebuildCounter != That->RebuildCounter)
         return llvm::None; // Our rebuild request was cancelled, do nothing.
+      That->PreambleMemUsage =
+          NewPreamble ? NewPreamble->Preamble.getSize() : 0;
       That->PreamblePromise.set_value(NewPreamble);
     } // unlock Mutex
 
@@ -587,9 +600,9 @@ CppFile::deferRebuild(ParseInputs &&Inputs) {
     // Compute updated AST.
     llvm::Optional<ParsedAST> NewAST;
     {
-      trace::Span Tracer(Ctx, "Build");
+      trace::Span Tracer("Build");
       SPAN_ATTACH(Tracer, "File", That->FileName);
-      NewAST = ParsedAST::Build(Ctx, std::move(CI), std::move(NewPreamble),
+      NewAST = ParsedAST::Build(std::move(CI), std::move(NewPreamble),
                                 std::move(ContentsBuffer), PCHs, Inputs.FS);
     }
 
@@ -597,7 +610,7 @@ CppFile::deferRebuild(ParseInputs &&Inputs) {
       Diagnostics.insert(Diagnostics.end(), NewAST->getDiagnostics().begin(),
                          NewAST->getDiagnostics().end());
       if (That->ASTCallback)
-        That->ASTCallback(Ctx, That->FileName, NewAST.getPointer());
+        That->ASTCallback(That->FileName, NewAST.getPointer());
     } else {
       // Don't report even Preamble diagnostics if we coulnd't build AST.
       Diagnostics.clear();
@@ -610,6 +623,7 @@ CppFile::deferRebuild(ParseInputs &&Inputs) {
         return Diagnostics; // Our rebuild request was cancelled, don't set
                             // ASTPromise.
 
+      That->ASTMemUsage = NewAST ? NewAST->getUsedBytes() : 0;
       That->ASTPromise.set_value(
           std::make_shared<ParsedASTWrapper>(std::move(NewAST)));
     } // unlock Mutex
@@ -636,9 +650,12 @@ std::shared_future<std::shared_ptr<ParsedASTWrapper>> CppFile::getAST() const {
   return ASTFuture;
 }
 
-llvm::Optional<tooling::CompileCommand> CppFile::getLastCommand() const {
+std::size_t CppFile::getUsedBytes() const {
   std::lock_guard<std::mutex> Lock(Mutex);
-  return LastCommand;
+  // FIXME: We should not store extra size fields. When we store AST and
+  // Preamble directly, not inside futures, we could compute the sizes from the
+  // stored AST and the preamble in this function directly.
+  return ASTMemUsage + PreambleMemUsage;
 }
 
 CppFile::RebuildGuard::RebuildGuard(CppFile &File,

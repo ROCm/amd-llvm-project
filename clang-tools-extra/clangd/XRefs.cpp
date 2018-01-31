@@ -7,6 +7,8 @@
 //
 //===---------------------------------------------------------------------===//
 #include "XRefs.h"
+#include "Logger.h"
+#include "URI.h"
 #include "clang/Index/IndexDataConsumer.h"
 #include "clang/Index/IndexingAction.h"
 namespace clang {
@@ -139,15 +141,14 @@ getDeclarationLocation(ParsedAST &AST, const SourceRange &ValSourceRange) {
   StringRef FilePath = F->tryGetRealPathName();
   if (FilePath.empty())
     FilePath = F->getName();
-  L.uri = URI::fromFile(FilePath);
+  L.uri.file = FilePath;
   L.range = R;
   return L;
 }
 
 } // namespace
 
-std::vector<Location> findDefinitions(const Context &Ctx, ParsedAST &AST,
-                                      Position Pos) {
+std::vector<Location> findDefinitions(ParsedAST &AST, Position Pos) {
   const SourceManager &SourceMgr = AST.getASTContext().getSourceManager();
   const FileEntry *FE = SourceMgr.getFileEntryForID(SourceMgr.getMainFileID());
   if (!FE)
@@ -258,8 +259,8 @@ private:
 
 } // namespace
 
-std::vector<DocumentHighlight>
-findDocumentHighlights(const Context &Ctx, ParsedAST &AST, Position Pos) {
+std::vector<DocumentHighlight> findDocumentHighlights(ParsedAST &AST,
+                                                      Position Pos) {
   const SourceManager &SourceMgr = AST.getASTContext().getSourceManager();
   const FileEntry *FE = SourceMgr.getFileEntryForID(SourceMgr.getMainFileID());
   if (!FE)

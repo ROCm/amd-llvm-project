@@ -709,17 +709,9 @@ FormatStyle getGoogleStyle(FormatStyle::LanguageKind Language) {
       {
           "pb",
           "PB",
-          "proto",
-          "PROTO",
-          "textproto",
-          "TEXTPROTO",
       },
       /*EnclosingFunctionNames=*/
-       {
-           "EqualsProto",
-           "PARSE_TEXT_PROTO",
-           "ParseTextProto",
-       },
+      {},
       /*CanonicalDelimiter=*/"",
       /*BasedOnStyle=*/"google",
   }};
@@ -758,6 +750,7 @@ FormatStyle getGoogleStyle(FormatStyle::LanguageKind Language) {
   } else if (Language == FormatStyle::LK_Proto) {
     GoogleStyle.AllowShortFunctionsOnASingleLine = FormatStyle::SFS_None;
     GoogleStyle.SpacesInContainerLiterals = false;
+    GoogleStyle.Cpp11BracedListStyle = false;
   } else if (Language == FormatStyle::LK_ObjC) {
     GoogleStyle.ColumnLimit = 100;
   }
