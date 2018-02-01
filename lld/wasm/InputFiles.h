@@ -101,6 +101,7 @@ public:
   const WasmSection *DataSection = nullptr;
 
   std::vector<uint32_t> TypeMap;
+  std::vector<bool> TypeIsUsed;
   std::vector<InputSegment *> Segments;
   std::vector<InputFunction *> Functions;
 
@@ -109,6 +110,8 @@ public:
   Symbol *getFunctionSymbol(uint32_t Index) const {
     return FunctionSymbols[Index];
   }
+
+  Symbol *getGlobalSymbol(uint32_t Index) const { return GlobalSymbols[Index]; }
 
 private:
   uint32_t relocateVirtualAddress(uint32_t Index) const;

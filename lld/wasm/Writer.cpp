@@ -236,8 +236,8 @@ void Writer::createGlobalSection() {
   writeUleb128(OS, DefinedGlobals.size(), "global count");
   for (const Symbol *Sym : DefinedGlobals) {
     WasmGlobal Global;
-    Global.Type = WASM_TYPE_I32;
-    Global.Mutable = Sym == Config->StackPointerSymbol;
+    Global.Type.Type = WASM_TYPE_I32;
+    Global.Type.Mutable = Sym == Config->StackPointerSymbol;
     Global.InitExpr.Opcode = WASM_OPCODE_I32_CONST;
     Global.InitExpr.Value.Int32 = Sym->getVirtualAddress();
     writeGlobal(OS, Global);
@@ -653,6 +653,9 @@ void Writer::calculateExports() {
 
       if ((Sym->isHidden() || Sym->isLocal()) && !ExportHidden)
         continue;
+
+      // We should never be exporting a non-live symbol
+      assert(Sym->getChunk()->Live);
       ExportedSymbols.emplace_back(WasmExportEntry{Sym, BudgeLocalName(Sym)});
     }
   }
@@ -686,15 +689,23 @@ uint32_t Writer::registerType(const WasmSignature &Sig) {
 }
 
 void Writer::calculateTypes() {
+  // The output type section is the union of the following sets:
+  // 1. Any signature used in the TYPE relocation
+  // 2. The signatures of all imported functions
+  // 3. The signatures of all defined functions
+
   for (ObjFile *File : Symtab->ObjectFiles) {
-    File->TypeMap.reserve(File->getWasmObj()->types().size());
-    for (const WasmSignature &Sig : File->getWasmObj()->types())
-      File->TypeMap.push_back(registerType(Sig));
+    ArrayRef<WasmSignature> Types = File->getWasmObj()->types();
+    for (uint32_t I = 0; I < Types.size(); I++)
+      if (File->TypeIsUsed[I])
+        File->TypeMap[I] = registerType(Types[I]);
   }
 
-  for (Symbol *Sym : Symtab->getSymbols())
-    if (Sym->isFunction())
-      registerType(Sym->getFunctionType());
+  for (const Symbol *Sym : ImportedFunctions)
+    registerType(Sym->getFunctionType());
+
+  for (const InputFunction *F : DefinedFunctions)
+    registerType(F->Signature);
 }
 
 void Writer::assignIndexes() {
@@ -735,7 +746,7 @@ void Writer::assignIndexes() {
   for (ObjFile *File : Symtab->ObjectFiles) {
     DEBUG(dbgs() << "Functions: " << File->getName() << "\n");
     for (InputFunction *Func : File->Functions) {
-      if (Func->Discarded)
+      if (Func->Discarded || !Func->Live)
         continue;
       DefinedFunctions.emplace_back(Func);
       Func->setOutputIndex(FunctionIndex++);
@@ -743,25 +754,30 @@ void Writer::assignIndexes() {
   }
 
   for (ObjFile *File : Symtab->ObjectFiles) {
-    DEBUG(dbgs() << "Table Indexes: " << File->getName() << "\n");
-    auto HandleTableRelocs = [&](InputChunk *Chunk) {
+    DEBUG(dbgs() << "Handle relocs: " << File->getName() << "\n");
+    auto HandleRelocs = [&](InputChunk *Chunk) {
       if (Chunk->Discarded)
         return;
+      ArrayRef<WasmSignature> Types = File->getWasmObj()->types();
       for (const WasmRelocation& Reloc : Chunk->getRelocations()) {
-        if (Reloc.Type != R_WEBASSEMBLY_TABLE_INDEX_I32 &&
-            Reloc.Type != R_WEBASSEMBLY_TABLE_INDEX_SLEB)
-          continue;
-        Symbol *Sym = File->getFunctionSymbol(Reloc.Index);
-        if (Sym->hasTableIndex() || !Sym->hasOutputIndex())
-          continue;
-        Sym->setTableIndex(TableIndex++);
-        IndirectFunctions.emplace_back(Sym);
+        if (Reloc.Type == R_WEBASSEMBLY_TABLE_INDEX_I32 ||
+            Reloc.Type == R_WEBASSEMBLY_TABLE_INDEX_SLEB) {
+          Symbol *Sym = File->getFunctionSymbol(Reloc.Index);
+          if (Sym->hasTableIndex() || !Sym->hasOutputIndex())
+            continue;
+          Sym->setTableIndex(TableIndex++);
+          IndirectFunctions.emplace_back(Sym);
+        } else if (Reloc.Type == R_WEBASSEMBLY_TYPE_INDEX_LEB) {
+          Chunk->File->TypeMap[Reloc.Index] = registerType(Types[Reloc.Index]);
+          Chunk->File->TypeIsUsed[Reloc.Index] = true;
+        }
       }
     };
+
     for (InputFunction* Function : File->Functions)
-      HandleTableRelocs(Function);
+      HandleRelocs(Function);
     for (InputSegment* Segment : File->Segments)
-      HandleTableRelocs(Segment);
+      HandleRelocs(Segment);
   }
 }
 
@@ -784,7 +800,7 @@ static StringRef getOutputDataSegmentName(StringRef Name) {
 void Writer::createOutputSegments() {
   for (ObjFile *File : Symtab->ObjectFiles) {
     for (InputSegment *Segment : File->Segments) {
-      if (Segment->Discarded)
+      if (Segment->Discarded || !Segment->Live)
         continue;
       StringRef Name = getOutputDataSegmentName(Segment->getName());
       OutputSegment *&S = SegmentMap[Name];
@@ -855,8 +871,6 @@ void Writer::calculateInitFunctions() {
 }
 
 void Writer::run() {
-  log("-- calculateTypes");
-  calculateTypes();
   log("-- calculateImports");
   calculateImports();
   log("-- assignIndexes");
@@ -867,6 +881,8 @@ void Writer::run() {
   calculateInitFunctions();
   if (!Config->Relocatable)
     createCtorFunction();
+  log("-- calculateTypes");
+  calculateTypes();
 
   if (errorHandler().Verbose) {
     log("Defined Functions: " + Twine(DefinedFunctions.size()));

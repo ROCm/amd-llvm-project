@@ -15,6 +15,7 @@
 #ifndef LLD_WASM_INPUT_CHUNKS_H
 #define LLD_WASM_INPUT_CHUNKS_H
 
+#include "Config.h"
 #include "InputFiles.h"
 #include "WriterUtils.h"
 #include "lld/Common/ErrorHandler.h"
@@ -58,9 +59,15 @@ public:
 
   bool Discarded = false;
   std::vector<OutputRelocation> OutRelocations;
+  ObjFile *File;
+
+  // The garbage collector sets sections' Live bits.
+  // If GC is disabled, all sections are considered live by default.
+  unsigned Live : 1;
 
 protected:
-  InputChunk(const ObjFile *F, Kind K) : File(F), SectionKind(K) {}
+  InputChunk(ObjFile *F, Kind K)
+      : File(F), Live(!Config->GcSections), SectionKind(K) {}
   virtual ~InputChunk() = default;
   void calcRelocations();
   virtual ArrayRef<uint8_t> data() const = 0;
@@ -68,7 +75,6 @@ protected:
 
   std::vector<WasmRelocation> Relocations;
   int32_t OutputOffset = 0;
-  const ObjFile *File;
   Kind SectionKind;
 };
 
@@ -82,7 +88,7 @@ protected:
 // each global variable.
 class InputSegment : public InputChunk {
 public:
-  InputSegment(const WasmSegment &Seg, const ObjFile *F)
+  InputSegment(const WasmSegment &Seg, ObjFile *F)
       : InputChunk(F, InputChunk::DataSegment), Segment(Seg) {}
 
   static bool classof(const InputChunk *C) { return C->kind() == DataSegment; }
@@ -121,7 +127,7 @@ protected:
 class InputFunction : public InputChunk {
 public:
   InputFunction(const WasmSignature &S, const WasmFunction *Func,
-                const ObjFile *F)
+                ObjFile *F)
       : InputChunk(F, InputChunk::Function), Signature(S), Function(Func) {}
 
   static bool classof(const InputChunk *C) {
