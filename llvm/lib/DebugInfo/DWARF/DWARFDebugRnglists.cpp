@@ -114,7 +114,7 @@ Error DWARFDebugRnglists::extract(DWARFDataExtractor Data,
                          "offset 0x%" PRIx32,
                          *OffsetPtr - 1);
     case dwarf::DW_RLE_start_end: {
-      if (End - *OffsetPtr < HeaderData.AddrSize * 2)
+      if ((End - *OffsetPtr) < unsigned(HeaderData.AddrSize * 2))
         return createError("insufficient space remaining in table for "
                            "DW_RLE_start_end encoding "
                            "at offset 0x%" PRIx32,
@@ -161,16 +161,18 @@ Error DWARFDebugRnglists::extract(DWARFDataExtractor Data,
 
 void DWARFDebugRnglists::dump(raw_ostream &OS) const {
   // TODO: Add verbose printing of the raw encodings.
-  OS << format("Range List Header: length = 0x%8.8x, version = 0x%4.4x, "
-               "addr_size = 0x%2.2x, seg_size = 0x%2.2x, offset_entry_count = "
-               "0x%8.8x\n",
+  OS << format("Range List Header: length = 0x%8.8" PRIx32
+               ", version = 0x%4.4" PRIx16 ", "
+               "addr_size = 0x%2.2" PRIx8 ", seg_size = 0x%2.2" PRIx8
+               ", offset_entry_count = "
+               "0x%8.8" PRIx32 "\n",
                HeaderData.Length, HeaderData.Version, HeaderData.AddrSize,
                HeaderData.SegSize, HeaderData.OffsetEntryCount);
 
   if (HeaderData.OffsetEntryCount > 0) {
     OS << "Offsets: [";
     for (const auto &Off : Offsets)
-      OS << format("\n0x%8.8x", Off);
+      OS << format("\n0x%8.8" PRIx32, Off);
     OS << "\n]\n";
   }
   OS << "Ranges:\n";
