@@ -2104,47 +2104,58 @@ static bool isFusableLoadOpStorePattern(StoreSDNode *StoreNode,
   // the load output chain as an operand. Return InputChain by reference.
   SDValue Chain = StoreNode->getChain();
 
-  bool ChainCheck = false;
   if (Chain == Load.getValue(1)) {
-    ChainCheck = true;
     InputChain = LoadNode->getChain();
-  } else if (Chain.getOpcode() == ISD::TokenFactor) {
+    return true;
+  }
+
+  if (Chain.getOpcode() == ISD::TokenFactor) {
+    // Fusing Load-Op-Store requires predecessors of store must also
+    // be predecessors of the load. This addition may cause a loop. We
+    // can check this by doing a search for Load in the new
+    // dependencies. As this can be expensive, heuristically prune
+    // this search by visiting the uses and make sure they all have
+    // smaller node id than the load.
+
+    bool FoundLoad = false;
     SmallVector<SDValue, 4> ChainOps;
+    SmallVector<const SDNode *, 4> LoopWorklist;
+    SmallPtrSet<const SDNode *, 16> Visited;
     for (unsigned i = 0, e = Chain.getNumOperands(); i != e; ++i) {
       SDValue Op = Chain.getOperand(i);
       if (Op == Load.getValue(1)) {
-        ChainCheck = true;
+        FoundLoad = true;
         // Drop Load, but keep its chain. No cycle check necessary.
         ChainOps.push_back(Load.getOperand(0));
         continue;
       }
-
-      // Make sure using Op as part of the chain would not cause a cycle here.
-      // In theory, we could check whether the chain node is a predecessor of
-      // the load. But that can be very expensive. Instead visit the uses and
-      // make sure they all have smaller node id than the load.
-      int LoadId = LoadNode->getNodeId();
-      for (SDNode::use_iterator UI = Op.getNode()->use_begin(),
-             UE = UI->use_end(); UI != UE; ++UI) {
-        if (UI.getUse().getResNo() != 0)
-          continue;
-        if (UI->getNodeId() > LoadId)
-          return false;
-      }
-
+      LoopWorklist.push_back(Op.getNode());
       ChainOps.push_back(Op);
     }
 
-    if (ChainCheck)
-      // Make a new TokenFactor with all the other input chains except
-      // for the load.
-      InputChain = CurDAG->getNode(ISD::TokenFactor, SDLoc(Chain),
-                                   MVT::Other, ChainOps);
-  }
-  if (!ChainCheck)
-    return false;
+    if (!FoundLoad)
+      return false;
 
-  return true;
+    // If Loop Worklist is not empty. Check if we would make a loop.
+    if (!LoopWorklist.empty()) {
+      const unsigned int Max = 8192;
+      // if Load is predecessor to potentially loop inducing chain
+      // dependencies.
+      if (SDNode::hasPredecessorHelper(Load.getNode(), Visited, LoopWorklist,
+                                       Max, true))
+        return false;
+      // Fail conservatively if we ended loop search early.
+      if (Visited.size() >= Max)
+        return false;
+    }
+
+    // Make a new TokenFactor with all the other input chains except
+    // for the load.
+    InputChain =
+        CurDAG->getNode(ISD::TokenFactor, SDLoc(Chain), MVT::Other, ChainOps);
+    return true;
+  }
+  return false;
 }
 
 // Change a chain of {load; op; store} of the same value into a simple op
@@ -2374,6 +2385,8 @@ bool X86DAGToDAGISel::foldLoadStoreIntoMemOperand(SDNode *Node) {
   MemOp[1] = LoadNode->getMemOperand();
   Result->setMemRefs(MemOp, MemOp + 2);
 
+  // Update Load Chain uses as well.
+  ReplaceUses(SDValue(LoadNode, 1), SDValue(Result, 1));
   ReplaceUses(SDValue(StoreNode, 0), SDValue(Result, 1));
   ReplaceUses(SDValue(StoredVal.getNode(), 1), SDValue(Result, 0));
   CurDAG->RemoveDeadNode(Node);
@@ -2486,14 +2499,24 @@ bool X86DAGToDAGISel::shrinkAndImmediate(SDNode *And) {
   if (!And1C)
     return false;
 
-  // Bail out if the mask constant is already negative. It can't shrink more.
+  // Bail out if the mask constant is already negative. It's can't shrink more.
+  // If the upper 32 bits of a 64 bit mask are all zeros, we have special isel
+  // patterns to use a 32-bit and instead of a 64-bit and by relying on the
+  // implicit zeroing of 32 bit ops. So we should check if the lower 32 bits
+  // are negative too.
   APInt MaskVal = And1C->getAPIntValue();
   unsigned MaskLZ = MaskVal.countLeadingZeros();
-  if (!MaskLZ)
+  if (!MaskLZ || (VT == MVT::i64 && MaskLZ == 32))
     return false;
 
+  // Don't extend into the upper 32 bits of a 64 bit mask.
+  if (VT == MVT::i64 && MaskLZ >= 32) {
+    MaskLZ -= 32;
+    MaskVal = MaskVal.trunc(32);
+  }
+
   SDValue And0 = And->getOperand(0);
-  APInt HighZeros = APInt::getHighBitsSet(VT.getSizeInBits(), MaskLZ);
+  APInt HighZeros = APInt::getHighBitsSet(MaskVal.getBitWidth(), MaskLZ);
   APInt NegMaskVal = MaskVal | HighZeros;
 
   // If a negative constant would not allow a smaller encoding, there's no need
@@ -2501,6 +2524,12 @@ bool X86DAGToDAGISel::shrinkAndImmediate(SDNode *And) {
   unsigned MinWidth = NegMaskVal.getMinSignedBits();
   if (MinWidth > 32 || (MinWidth > 8 && MaskVal.getMinSignedBits() <= 32))
     return false;
+
+  // Extend masks if we truncated above.
+  if (VT == MVT::i64 && MaskVal.getBitWidth() < 64) {
+    NegMaskVal = NegMaskVal.zext(64);
+    HighZeros = HighZeros.zext(64);
+  }
 
   // The variable operand must be all zeros in the top bits to allow using the
   // new, negative constant as the mask.
