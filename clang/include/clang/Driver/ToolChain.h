@@ -356,6 +356,9 @@ public:
   // as OpenMP) to find arch-specific libraries.
   std::string getArchSpecificLibPath() const;
 
+  // Returns <OSname> part of above.
+  StringRef getOSLibName() const;
+
   /// needsProfileRT - returns true if instrumentation profile is on.
   static bool needsProfileRT(const llvm::opt::ArgList &Args);
 

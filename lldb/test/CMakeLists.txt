@@ -7,7 +7,7 @@ function(add_python_test_target name test_script args comment)
 
   add_custom_target(${name}
     # Clear the test directory first.
-    COMMAND ${CMAKE_COMMAND} -E remove_directory ${CMAKE_BINARY_DIR}/lldb-test-build
+    COMMAND ${CMAKE_COMMAND} -E remove_directory ${CMAKE_BINARY_DIR}/lldb-test-build.noindex
     COMMAND ${PYTHON_TEST_COMMAND} ${ARG_DEFAULT_ARGS}
     COMMENT "${comment}"
     DEPENDS ${LLDB_TEST_DEPS}
@@ -57,13 +57,18 @@ set(LLDB_TEST_USER_ARGS
   ""
   CACHE STRING "Specify additional arguments to pass to test runner. For example: '-C gcc -C clang -A i386 -A x86_64'")
 
+# The .nodindex suffix is a marker for Spotlight to never index the
+# build directory.  LLDB queries Spotlight to locate .dSYM bundles
+# based on the UUID embedded in a binary, and because the UUID is a
+# hash of filename and .text section, there *will* be conflicts inside
+# the build directory.
 set(LLDB_TEST_COMMON_ARGS
   --arch=${LLDB_TEST_ARCH}
   --executable $<TARGET_FILE:lldb>
   -s
   ${CMAKE_BINARY_DIR}/lldb-test-traces
   --build-dir
-  ${CMAKE_BINARY_DIR}/lldb-test-build
+  ${CMAKE_BINARY_DIR}/lldb-test-build.noindex
   -S nm
   -u CXXFLAGS
   -u CFLAGS

@@ -4365,14 +4365,14 @@ define i8 @trunc_8i16_to_8i1(<8 x i16> %a) {
 define <8 x i32> @sext_8i1_8i32(<8 x i32> %a1, <8 x i32> %a2) nounwind {
 ; GENERIC-LABEL: sext_8i1_8i32:
 ; GENERIC:       # %bb.0:
-; GENERIC-NEXT:    vpcmpled %ymm0, %ymm1, %k0 # sched: [3:1.00]
-; GENERIC-NEXT:    vpmovm2d %k0, %ymm0 # sched: [1:0.33]
+; GENERIC-NEXT:    vpcmpgtd %ymm0, %ymm1, %ymm0 # sched: [3:1.00]
+; GENERIC-NEXT:    vpternlogq $15, %ymm0, %ymm0, %ymm0 # sched: [3:1.00]
 ; GENERIC-NEXT:    retq # sched: [1:1.00]
 ;
 ; SKX-LABEL: sext_8i1_8i32:
 ; SKX:       # %bb.0:
-; SKX-NEXT:    vpcmpled %ymm0, %ymm1, %k0 # sched: [3:1.00]
-; SKX-NEXT:    vpmovm2d %k0, %ymm0 # sched: [1:0.25]
+; SKX-NEXT:    vpcmpgtd %ymm0, %ymm1, %ymm0 # sched: [1:0.50]
+; SKX-NEXT:    vpternlogq $15, %ymm0, %ymm0, %ymm0 # sched: [1:0.33]
 ; SKX-NEXT:    retq # sched: [7:1.00]
   %x = icmp slt <8 x i32> %a1, %a2
   %x1 = xor <8 x i1>%x, <i1 true, i1 true, i1 true, i1 true, i1 true, i1 true, i1 true, i1 true>
@@ -6663,18 +6663,14 @@ define <8 x double> @mov_test47(i8 * %addr, <8 x double> %mask1) {
 define i16 @mask16(i16 %x) {
 ; GENERIC-LABEL: mask16:
 ; GENERIC:       # %bb.0:
-; GENERIC-NEXT:    kmovd %edi, %k0 # sched: [1:0.33]
-; GENERIC-NEXT:    knotw %k0, %k0 # sched: [1:1.00]
-; GENERIC-NEXT:    kmovd %k0, %eax # sched: [1:0.33]
-; GENERIC-NEXT:    # kill: def $ax killed $ax killed $eax
+; GENERIC-NEXT:    notl %edi # sched: [1:0.33]
+; GENERIC-NEXT:    movl %edi, %eax # sched: [1:0.33]
 ; GENERIC-NEXT:    retq # sched: [1:1.00]
 ;
 ; SKX-LABEL: mask16:
 ; SKX:       # %bb.0:
-; SKX-NEXT:    kmovd %edi, %k0 # sched: [1:1.00]
-; SKX-NEXT:    knotw %k0, %k0 # sched: [1:1.00]
-; SKX-NEXT:    kmovd %k0, %eax # sched: [3:1.00]
-; SKX-NEXT:    # kill: def $ax killed $ax killed $eax
+; SKX-NEXT:    notl %edi # sched: [1:0.25]
+; SKX-NEXT:    movl %edi, %eax # sched: [1:0.25]
 ; SKX-NEXT:    retq # sched: [7:1.00]
   %m0 = bitcast i16 %x to <16 x i1>
   %m1 = xor <16 x i1> %m0, <i1 -1, i1 -1, i1 -1, i1 -1, i1 -1, i1 -1, i1 -1, i1 -1, i1 -1, i1 -1, i1 -1, i1 -1, i1 -1, i1 -1, i1 -1, i1 -1>
@@ -6685,16 +6681,14 @@ define i16 @mask16(i16 %x) {
 define i32 @mask16_zext(i16 %x) {
 ; GENERIC-LABEL: mask16_zext:
 ; GENERIC:       # %bb.0:
-; GENERIC-NEXT:    kmovd %edi, %k0 # sched: [1:0.33]
-; GENERIC-NEXT:    knotw %k0, %k0 # sched: [1:1.00]
-; GENERIC-NEXT:    kmovw %k0, %eax # sched: [1:0.33]
+; GENERIC-NEXT:    notl %edi # sched: [1:0.33]
+; GENERIC-NEXT:    movzwl %di, %eax # sched: [1:0.33]
 ; GENERIC-NEXT:    retq # sched: [1:1.00]
 ;
 ; SKX-LABEL: mask16_zext:
 ; SKX:       # %bb.0:
-; SKX-NEXT:    kmovd %edi, %k0 # sched: [1:1.00]
-; SKX-NEXT:    knotw %k0, %k0 # sched: [1:1.00]
-; SKX-NEXT:    kmovw %k0, %eax # sched: [3:1.00]
+; SKX-NEXT:    notl %edi # sched: [1:0.25]
+; SKX-NEXT:    movzwl %di, %eax # sched: [1:0.25]
 ; SKX-NEXT:    retq # sched: [7:1.00]
   %m0 = bitcast i16 %x to <16 x i1>
   %m1 = xor <16 x i1> %m0, <i1 -1, i1 -1, i1 -1, i1 -1, i1 -1, i1 -1, i1 -1, i1 -1, i1 -1, i1 -1, i1 -1, i1 -1, i1 -1, i1 -1, i1 -1, i1 -1>
@@ -6706,17 +6700,17 @@ define i32 @mask16_zext(i16 %x) {
 define i8 @mask8(i8 %x) {
 ; GENERIC-LABEL: mask8:
 ; GENERIC:       # %bb.0:
-; GENERIC-NEXT:    kmovd %edi, %k0 # sched: [1:0.33]
-; GENERIC-NEXT:    knotb %k0, %k0 # sched: [1:1.00]
+; GENERIC-NEXT:    kxnorw %k0, %k0, %k0 # sched: [1:1.00]
 ; GENERIC-NEXT:    kmovd %k0, %eax # sched: [1:0.33]
+; GENERIC-NEXT:    xorb %dil, %al # sched: [1:0.33]
 ; GENERIC-NEXT:    # kill: def $al killed $al killed $eax
 ; GENERIC-NEXT:    retq # sched: [1:1.00]
 ;
 ; SKX-LABEL: mask8:
 ; SKX:       # %bb.0:
-; SKX-NEXT:    kmovd %edi, %k0 # sched: [1:1.00]
-; SKX-NEXT:    knotb %k0, %k0 # sched: [1:1.00]
+; SKX-NEXT:    kxnorw %k0, %k0, %k0 # sched: [1:1.00]
 ; SKX-NEXT:    kmovd %k0, %eax # sched: [3:1.00]
+; SKX-NEXT:    xorb %dil, %al # sched: [1:0.25]
 ; SKX-NEXT:    # kill: def $al killed $al killed $eax
 ; SKX-NEXT:    retq # sched: [7:1.00]
   %m0 = bitcast i8 %x to <8 x i1>
@@ -6728,16 +6722,18 @@ define i8 @mask8(i8 %x) {
 define i32 @mask8_zext(i8 %x) {
 ; GENERIC-LABEL: mask8_zext:
 ; GENERIC:       # %bb.0:
-; GENERIC-NEXT:    kmovd %edi, %k0 # sched: [1:0.33]
-; GENERIC-NEXT:    knotb %k0, %k0 # sched: [1:1.00]
-; GENERIC-NEXT:    kmovb %k0, %eax # sched: [1:0.33]
+; GENERIC-NEXT:    kxnorw %k0, %k0, %k0 # sched: [1:1.00]
+; GENERIC-NEXT:    kmovd %k0, %eax # sched: [1:0.33]
+; GENERIC-NEXT:    xorb %dil, %al # sched: [1:0.33]
+; GENERIC-NEXT:    movzbl %al, %eax # sched: [1:0.33]
 ; GENERIC-NEXT:    retq # sched: [1:1.00]
 ;
 ; SKX-LABEL: mask8_zext:
 ; SKX:       # %bb.0:
-; SKX-NEXT:    kmovd %edi, %k0 # sched: [1:1.00]
-; SKX-NEXT:    knotb %k0, %k0 # sched: [1:1.00]
-; SKX-NEXT:    kmovb %k0, %eax # sched: [3:1.00]
+; SKX-NEXT:    kxnorw %k0, %k0, %k0 # sched: [1:1.00]
+; SKX-NEXT:    kmovd %k0, %eax # sched: [3:1.00]
+; SKX-NEXT:    xorb %dil, %al # sched: [1:0.25]
+; SKX-NEXT:    movzbl %al, %eax # sched: [1:0.25]
 ; SKX-NEXT:    retq # sched: [7:1.00]
   %m0 = bitcast i8 %x to <8 x i1>
   %m1 = xor <8 x i1> %m0, <i1 -1, i1 -1, i1 -1, i1 -1, i1 -1, i1 -1, i1 -1, i1 -1>

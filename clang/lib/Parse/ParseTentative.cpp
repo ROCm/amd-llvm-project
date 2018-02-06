@@ -874,7 +874,8 @@ Parser::TPResult Parser::TryParseOperatorId() {
 ///           template-id                                                 [TODO]
 ///
 Parser::TPResult Parser::TryParseDeclarator(bool mayBeAbstract,
-                                            bool mayHaveIdentifier) {
+                                            bool mayHaveIdentifier,
+                                            bool mayHaveDirectInit) {
   // declarator:
   //   direct-declarator
   //   ptr-operator declarator
@@ -930,6 +931,9 @@ Parser::TPResult Parser::TryParseDeclarator(bool mayBeAbstract,
   } else if (!mayBeAbstract) {
     return TPResult::False;
   }
+
+  if (mayHaveDirectInit)
+    return TPResult::Ambiguous;
 
   while (1) {
     TPResult TPR(TPResult::Ambiguous);

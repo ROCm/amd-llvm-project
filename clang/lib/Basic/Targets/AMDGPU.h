@@ -77,11 +77,7 @@ class LLVM_LIBRARY_VISIBILITY AMDGPUTargetInfo final : public TargetInfo {
     return TT.getArch() == llvm::Triple::amdgcn;
   }
 
-  static bool isGenericZero(const llvm::Triple &TT) {
-    return TT.getEnvironmentName() == "amdgiz" ||
-           TT.getEnvironmentName() == "amdgizcl" ||
-           TT.getEnvironment() == llvm::Triple::HCC;
-  }
+  static bool isGenericZero(const llvm::Triple &TT) { return true; }
 
 public:
   AMDGPUTargetInfo(const llvm::Triple &Triple, const TargetOptions &Opts);
