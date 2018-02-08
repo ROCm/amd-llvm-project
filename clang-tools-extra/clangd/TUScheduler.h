@@ -56,12 +56,8 @@ public:
                   OnUpdated);
 
   /// Remove \p File from the list of tracked files and schedule removal of its
-  /// resources. \p Action will be called when resources are freed.
-  /// If an error occurs during processing, it is forwarded to the \p Action
-  /// callback.
-  /// FIXME(ibiryukov): the callback passed to this function is not used, we
-  /// should remove it.
-  void remove(PathRef File, UniqueFunction<void(llvm::Error)> Action);
+  /// resources.
+  void remove(PathRef File);
 
   /// Schedule an async read of the AST. \p Action will be called when AST is
   /// ready. The AST passed to \p Action refers to the version of \p File

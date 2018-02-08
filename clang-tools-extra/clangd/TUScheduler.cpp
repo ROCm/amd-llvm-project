@@ -43,6 +43,7 @@
 //   immediately.
 
 #include "TUScheduler.h"
+#include "Logger.h"
 #include "clang/Frontend/PCHContainerOperations.h"
 #include "llvm/Support/Errc.h"
 #include <memory>
@@ -350,15 +351,11 @@ void TUScheduler::update(
   FD->Worker->update(std::move(Inputs), std::move(OnUpdated));
 }
 
-void TUScheduler::remove(PathRef File,
-                         UniqueFunction<void(llvm::Error)> Action) {
-  auto It = Files.find(File);
-  if (It == Files.end()) {
-    Action(llvm::make_error<llvm::StringError>(
-        "trying to remove non-added document", llvm::errc::invalid_argument));
-    return;
-  }
-  Files.erase(It);
+void TUScheduler::remove(PathRef File) {
+  bool Removed = Files.erase(File);
+  if (!Removed)
+    log("Trying to remove file from TUScheduler that is not tracked. File:" +
+        File);
 }
 
 void TUScheduler::runWithAST(

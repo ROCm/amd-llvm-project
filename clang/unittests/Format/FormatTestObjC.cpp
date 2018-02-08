@@ -189,6 +189,17 @@ TEST_F(FormatTestObjC, FormatObjCAutoreleasepool) {
                "}\n");
 }
 
+TEST_F(FormatTestObjC, FormatObjCGenerics) {
+  Style.ColumnLimit = 40;
+  verifyFormat("int aaaaaaaaaaaaaaaa(\n"
+               "    NSArray<aaaaaaaaaaaaaaaaaa *>\n"
+               "        aaaaaaaaaaaaaaaaa);\n");
+  verifyFormat("int aaaaaaaaaaaaaaaa(\n"
+               "    NSArray<aaaaaaaaaaaaaaaaaaa<\n"
+               "        aaaaaaaaaaaaaaaa *> *>\n"
+               "        aaaaaaaaaaaaaaaaa);\n");
+}
+
 TEST_F(FormatTestObjC, FormatObjCInterface) {
   verifyFormat("@interface Foo : NSObject <NSSomeDelegate> {\n"
                "@public\n"
@@ -322,13 +333,16 @@ TEST_F(FormatTestObjC, FormatObjCInterface) {
   verifyFormat("@interface Foo (HackStuff) <MyProtocol>\n"
                "+ (id)init;\n"
                "@end");
-  Style.BinPackParameters = false;
-  Style.ColumnLimit = 80;
-  verifyFormat("@interface aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa () <\n"
-               "    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,\n"
-               "    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,\n"
-               "    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,\n"
-               "    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa> {\n"
+  Style.ColumnLimit = 40;
+  // BinPackParameters should be true by default.
+  verifyFormat("void eeeeeeee(int eeeee, int eeeee,\n"
+               "              int eeeee, int eeeee);\n");
+  // ObjCBinPackProtocolList should be BPS_Never by default.
+  verifyFormat("@interface fffffffffffff () <\n"
+               "    fffffffffffff,\n"
+               "    fffffffffffff,\n"
+               "    fffffffffffff,\n"
+               "    fffffffffffff> {\n"
                "}");
 }
 
@@ -681,6 +695,39 @@ TEST_F(FormatTestObjC, FormatObjCMethodExpr) {
   verifyFormat("[I drawRectOn:surface //\n"
                "        ofSize:aa:bbb\n"
                "      atOrigin:cc:dd];");
+
+  // Inline block as a first argument.
+  verifyFormat("[object justBlock:^{\n"
+               "  a = 42;\n"
+               "}];");
+  verifyFormat("[object\n"
+               "    justBlock:^{\n"
+               "      a = 42;\n"
+               "    }\n"
+               "     notBlock:42\n"
+               "            a:42];");
+  verifyFormat("[object\n"
+               "    firstBlock:^{\n"
+               "      a = 42;\n"
+               "    }\n"
+               "    blockWithLongerName:^{\n"
+               "      a = 42;\n"
+               "    }];");
+  verifyFormat("[object\n"
+               "    blockWithLongerName:^{\n"
+               "      a = 42;\n"
+               "    }\n"
+               "    secondBlock:^{\n"
+               "      a = 42;\n"
+               "    }];");
+  verifyFormat("[object\n"
+               "    firstBlock:^{\n"
+               "      a = 42;\n"
+               "    }\n"
+               "    notBlock:42\n"
+               "    secondBlock:^{\n"
+               "      a = 42;\n"
+               "    }];");
 
   Style.ColumnLimit = 70;
   verifyFormat(

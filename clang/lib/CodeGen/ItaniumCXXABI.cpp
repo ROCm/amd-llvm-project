@@ -280,9 +280,9 @@ public:
   llvm::GlobalVariable *getAddrOfVTable(const CXXRecordDecl *RD,
                                         CharUnits VPtrOffset) override;
 
-  llvm::Value *getVirtualFunctionPointer(CodeGenFunction &CGF, GlobalDecl GD,
-                                         Address This, llvm::Type *Ty,
-                                         SourceLocation Loc) override;
+  CGCallee getVirtualFunctionPointer(CodeGenFunction &CGF, GlobalDecl GD,
+                                     Address This, llvm::Type *Ty,
+                                     SourceLocation Loc) override;
 
   llvm::Value *EmitVirtualDestructorCall(CodeGenFunction &CGF,
                                          const CXXDestructorDecl *Dtor,
@@ -1531,7 +1531,7 @@ void ItaniumCXXABI::emitVTableDefinitions(CodeGenVTables &CGVT,
     VTable->setComdat(CGM.getModule().getOrInsertComdat(VTable->getName()));
 
   // Set the right visibility.
-  CGM.setGlobalVisibility(VTable, RD, ForDefinition);
+  CGM.setGVProperties(VTable, RD);
 
   // Use pointer alignment for the vtable. Otherwise we would align them based
   // on the size of the initializer which doesn't make sense as only single
@@ -1641,7 +1641,7 @@ llvm::GlobalVariable *ItaniumCXXABI::getAddrOfVTable(const CXXRecordDecl *RD,
   VTable = CGM.CreateOrReplaceCXXRuntimeVariable(
       Name, VTableType, llvm::GlobalValue::ExternalLinkage);
   VTable->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
-  CGM.setGlobalVisibility(VTable, RD, NotForDefinition);
+  CGM.setGVProperties(VTable, RD);
 
   if (RD->hasAttr<DLLImportAttr>())
     VTable->setDLLStorageClass(llvm::GlobalValue::DLLImportStorageClass);
@@ -1651,42 +1651,47 @@ llvm::GlobalVariable *ItaniumCXXABI::getAddrOfVTable(const CXXRecordDecl *RD,
   return VTable;
 }
 
-llvm::Value *ItaniumCXXABI::getVirtualFunctionPointer(CodeGenFunction &CGF,
-                                                      GlobalDecl GD,
-                                                      Address This,
-                                                      llvm::Type *Ty,
-                                                      SourceLocation Loc) {
+CGCallee ItaniumCXXABI::getVirtualFunctionPointer(CodeGenFunction &CGF,
+                                                  GlobalDecl GD,
+                                                  Address This,
+                                                  llvm::Type *Ty,
+                                                  SourceLocation Loc) {
   GD = GD.getCanonicalDecl();
   Ty = Ty->getPointerTo()->getPointerTo();
   auto *MethodDecl = cast<CXXMethodDecl>(GD.getDecl());
   llvm::Value *VTable = CGF.GetVTablePtr(This, Ty, MethodDecl->getParent());
 
   uint64_t VTableIndex = CGM.getItaniumVTableContext().getMethodVTableIndex(GD);
-  if (CGF.ShouldEmitVTableTypeCheckedLoad(MethodDecl->getParent()))
-    return CGF.EmitVTableTypeCheckedLoad(
+  llvm::Value *VFunc;
+  if (CGF.ShouldEmitVTableTypeCheckedLoad(MethodDecl->getParent())) {
+    VFunc = CGF.EmitVTableTypeCheckedLoad(
         MethodDecl->getParent(), VTable,
         VTableIndex * CGM.getContext().getTargetInfo().getPointerWidth(0) / 8);
+  } else {
+    CGF.EmitTypeMetadataCodeForVCall(MethodDecl->getParent(), VTable, Loc);
 
-  CGF.EmitTypeMetadataCodeForVCall(MethodDecl->getParent(), VTable, Loc);
+    llvm::Value *VFuncPtr =
+        CGF.Builder.CreateConstInBoundsGEP1_64(VTable, VTableIndex, "vfn");
+    auto *VFuncLoad =
+        CGF.Builder.CreateAlignedLoad(VFuncPtr, CGF.getPointerAlign());
 
-  llvm::Value *VFuncPtr =
-      CGF.Builder.CreateConstInBoundsGEP1_64(VTable, VTableIndex, "vfn");
-  auto *VFuncLoad =
-      CGF.Builder.CreateAlignedLoad(VFuncPtr, CGF.getPointerAlign());
+    // Add !invariant.load md to virtual function load to indicate that
+    // function didn't change inside vtable.
+    // It's safe to add it without -fstrict-vtable-pointers, but it would not
+    // help in devirtualization because it will only matter if we will have 2
+    // the same virtual function loads from the same vtable load, which won't
+    // happen without enabled devirtualization with -fstrict-vtable-pointers.
+    if (CGM.getCodeGenOpts().OptimizationLevel > 0 &&
+        CGM.getCodeGenOpts().StrictVTablePointers)
+      VFuncLoad->setMetadata(
+          llvm::LLVMContext::MD_invariant_load,
+          llvm::MDNode::get(CGM.getLLVMContext(),
+                            llvm::ArrayRef<llvm::Metadata *>()));
+    VFunc = VFuncLoad;
+  }
 
-  // Add !invariant.load md to virtual function load to indicate that
-  // function didn't change inside vtable.
-  // It's safe to add it without -fstrict-vtable-pointers, but it would not
-  // help in devirtualization because it will only matter if we will have 2
-  // the same virtual function loads from the same vtable load, which won't
-  // happen without enabled devirtualization with -fstrict-vtable-pointers.
-  if (CGM.getCodeGenOpts().OptimizationLevel > 0 &&
-      CGM.getCodeGenOpts().StrictVTablePointers)
-    VFuncLoad->setMetadata(
-        llvm::LLVMContext::MD_invariant_load,
-        llvm::MDNode::get(CGM.getLLVMContext(),
-                          llvm::ArrayRef<llvm::Metadata *>()));
-  return VFuncLoad;
+  CGCallee Callee(MethodDecl, VFunc);
+  return Callee;
 }
 
 llvm::Value *ItaniumCXXABI::EmitVirtualDestructorCall(
@@ -2047,6 +2052,7 @@ void ItaniumCXXABI::EmitGuardedInit(CodeGenFunction &CGF,
                                      false, var->getLinkage(),
                                      llvm::ConstantInt::get(guardTy, 0),
                                      guardName.str());
+    guard->setDSOLocal(var->isDSOLocal());
     guard->setVisibility(var->getVisibility());
     // If the variable is thread-local, so is its guard variable.
     guard->setThreadLocalMode(var->getThreadLocalMode());
@@ -3207,7 +3213,10 @@ llvm::Constant *ItaniumRTTIBuilder::BuildTypeInfo(QualType Ty, bool Force,
     llvmVisibility = CodeGenModule::GetLLVMVisibility(Ty->getVisibility());
 
   TypeName->setVisibility(llvmVisibility);
+  CGM.setDSOLocal(TypeName, Ty->getAsCXXRecordDecl());
+
   GV->setVisibility(llvmVisibility);
+  CGM.setDSOLocal(GV, Ty->getAsCXXRecordDecl());
 
   if (CGM.getTriple().isWindowsItaniumEnvironment()) {
     auto RD = Ty->getAsCXXRecordDecl();
