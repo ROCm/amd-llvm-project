@@ -266,6 +266,11 @@ bool ContinuationIndenter::mustBreak(const LineState &State) {
     return true;
   if (Previous.is(tok::semi) && State.LineContainsContinuedForLoopSection)
     return true;
+  if (Style.Language == FormatStyle::LK_ObjC &&
+      Current.ObjCSelectorNameParts > 1 &&
+      Current.startsSequence(TT_SelectorName, tok::colon, tok::caret)) {
+    return true;
+  }
   if ((startsNextParameter(Current, Style) || Previous.is(tok::semi) ||
        (Previous.is(TT_TemplateCloser) && Current.is(TT_StartOfName) &&
         Style.isCpp() &&
@@ -857,7 +862,7 @@ unsigned ContinuationIndenter::getNewLineColumn(const LineState &State) {
       (Current.Next->is(TT_DictLiteral) ||
        ((Style.Language == FormatStyle::LK_Proto ||
          Style.Language == FormatStyle::LK_TextProto) &&
-        Current.Next->isOneOf(TT_TemplateOpener, tok::l_brace))))
+        Current.Next->isOneOf(tok::less, tok::l_brace))))
     return State.Stack.back().Indent;
   if (NextNonComment->is(TT_ObjCStringLiteral) &&
       State.StartOfStringLiteral != 0)
@@ -1211,7 +1216,6 @@ void ContinuationIndenter::moveStatePastScopeOpener(LineState &State,
     // void SomeFunction(vector<  // break
     //                       int> v);
     // FIXME: We likely want to do this for more combinations of brackets.
-    // Verify that it is wanted for ObjC, too.
     if (Current.is(tok::less) && Current.ParentBracket == tok::l_paren) {
       NewIndent = std::max(NewIndent, State.Stack.back().Indent);
       LastSpace = std::max(LastSpace, State.Stack.back().Indent);
@@ -1281,6 +1285,9 @@ void ContinuationIndenter::moveStatePastScopeOpener(LineState &State,
   State.Stack.back().NestedBlockIndent = NestedBlockIndent;
   State.Stack.back().BreakBeforeParameter = BreakBeforeParameter;
   State.Stack.back().HasMultipleNestedBlocks = Current.BlockParameterCount > 1;
+  State.Stack.back().IsInsideObjCArrayLiteral =
+      Current.is(TT_ArrayInitializerLSquare) && Current.Previous &&
+      Current.Previous->is(tok::at);
 }
 
 void ContinuationIndenter::moveStatePastScopeCloser(LineState &State) {
@@ -1293,7 +1300,8 @@ void ContinuationIndenter::moveStatePastScopeCloser(LineState &State) {
   if (State.Stack.size() > 1 &&
       (Current.isOneOf(tok::r_paren, tok::r_square, TT_TemplateString) ||
        (Current.is(tok::r_brace) && State.NextToken != State.Line->First) ||
-       State.NextToken->is(TT_TemplateCloser)))
+       State.NextToken->is(TT_TemplateCloser) ||
+       (Current.is(tok::greater) && Current.is(TT_DictLiteral))))
     State.Stack.pop_back();
 
   if (Current.is(tok::r_square)) {
@@ -1573,6 +1581,11 @@ std::unique_ptr<BreakableToken> ContinuationIndenter::createBreakableToken(
     // likely want to terminate the string before any line breaking is done.
     if (Current.IsUnterminatedLiteral)
       return nullptr;
+    // Don't break string literals inside Objective-C array literals (doing so
+    // raises the warning -Wobjc-string-concatenation).
+    if (State.Stack.back().IsInsideObjCArrayLiteral) {
+      return nullptr;
+    }
 
     StringRef Text = Current.TokenText;
     StringRef Prefix;
@@ -1987,7 +2000,7 @@ bool ContinuationIndenter::nextIsMultilineString(const LineState &State) {
   if (Current.getNextNonComment() &&
       Current.getNextNonComment()->isStringLiteral())
     return true; // Implicit concatenation.
-  if (Style.ColumnLimit != 0 &&
+  if (Style.ColumnLimit != 0 && Style.BreakStringLiterals &&
       State.Column + Current.ColumnWidth + Current.UnbreakableTailLength >
           Style.ColumnLimit)
     return true; // String will be split.

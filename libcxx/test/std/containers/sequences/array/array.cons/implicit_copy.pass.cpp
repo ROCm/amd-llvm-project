@@ -65,7 +65,7 @@ int main() {
     // const arrays of size 0 should disable the implicit copy assignment operator.
     typedef double T;
     typedef std::array<const T, 0> C;
-    C c = {};
+    C c = {{}};
     C c2 = c;
     ((void)c2);
     static_assert(std::is_copy_constructible<C>::value, "");
@@ -83,7 +83,7 @@ int main() {
   {
     typedef NoDefault T;
     typedef std::array<const T, 0> C;
-    C c = {};
+    C c = {{}};
     C c2 = c;
     ((void)c2);
     static_assert(std::is_copy_constructible<C>::value, "");

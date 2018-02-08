@@ -3728,7 +3728,7 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
                                  SourceLocation Loc) {
   // FIXME: We no longer need the types from CallArgs; lift up and simplify.
 
-  assert(Callee.isOrdinary());
+  assert(Callee.isOrdinary() || Callee.isVirtual());
 
   // Handle struct-return functions by passing a pointer to the
   // location that we would like to return into.
@@ -4052,7 +4052,8 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
     }
   }
 
-  llvm::Value *CalleePtr = Callee.getFunctionPointer();
+  const CGCallee &ConcreteCallee = Callee.prepareConcreteCallee(*this);
+  llvm::Value *CalleePtr = ConcreteCallee.getFunctionPointer();
 
   // If we're using inalloca, set up that argument.
   if (ArgMemory.isValid()) {
@@ -4403,6 +4404,17 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
   }
 
   return Ret;
+}
+
+CGCallee CGCallee::prepareConcreteCallee(CodeGenFunction &CGF) const {
+  if (isVirtual()) {
+    const CallExpr *CE = getVirtualCallExpr();
+    return CGF.CGM.getCXXABI().getVirtualFunctionPointer(
+        CGF, getVirtualMethodDecl(), getThisAddress(),
+        getFunctionType(), CE ? CE->getLocStart() : SourceLocation());
+  }
+
+  return *this;
 }
 
 /* VarArg handling */

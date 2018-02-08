@@ -18,6 +18,7 @@
 // Disable the missing braces warning for this reason.
 #include "disable_missing_braces_warning.h"
 
+
 int main()
 {
     {

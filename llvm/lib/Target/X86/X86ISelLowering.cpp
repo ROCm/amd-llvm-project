@@ -16352,15 +16352,17 @@ static SDValue LowerAVXExtend(SDValue Op, SelectionDAG &DAG,
   MVT InVT = In.getSimpleValueType();
   SDLoc dl(Op);
 
-  if ((VT != MVT::v4i64  || InVT != MVT::v4i32) &&
-      (VT != MVT::v8i32  || InVT != MVT::v8i16) &&
-      (VT != MVT::v16i16 || InVT != MVT::v16i8) &&
-      (VT != MVT::v8i64  || InVT != MVT::v8i32) &&
-      (VT != MVT::v8i64  || InVT != MVT::v8i16) &&
-      (VT != MVT::v16i32 || InVT != MVT::v16i16) &&
-      (VT != MVT::v16i32 || InVT != MVT::v16i8) &&
-      (VT != MVT::v32i16 || InVT != MVT::v32i8))
-    return SDValue();
+  assert(VT.isVector() && InVT.isVector() && "Expected vector type");
+  assert(VT.getVectorNumElements() == VT.getVectorNumElements() &&
+         "Expected same number of elements");
+  assert((VT.getVectorElementType() == MVT::i16 ||
+          VT.getVectorElementType() == MVT::i32 ||
+          VT.getVectorElementType() == MVT::i64) &&
+         "Unexpected element type");
+  assert((InVT.getVectorElementType() == MVT::i8 ||
+          InVT.getVectorElementType() == MVT::i16 ||
+          InVT.getVectorElementType() == MVT::i32) &&
+         "Unexpected element type");
 
   if (Subtarget.hasInt256())
     return DAG.getNode(X86ISD::VZEXT, dl, VT, In);
@@ -16466,14 +16468,8 @@ static SDValue LowerZERO_EXTEND(SDValue Op, const X86Subtarget &Subtarget,
   if (SVT.getVectorElementType() == MVT::i1)
     return LowerZERO_EXTEND_Mask(Op, Subtarget, DAG);
 
-  if (Subtarget.hasFp256())
-    if (SDValue Res = LowerAVXExtend(Op, DAG, Subtarget))
-      return Res;
-
-  assert(!Op.getSimpleValueType().is256BitVector() || !SVT.is128BitVector() ||
-         Op.getSimpleValueType().getVectorNumElements() !=
-             SVT.getVectorNumElements());
-  return SDValue();
+  assert(Subtarget.hasFp256() && "Expected AVX support");
+  return LowerAVXExtend(Op, DAG, Subtarget);
 }
 
 /// Helper to recursively truncate vector elements in half with PACKSS/PACKUS.
@@ -17118,33 +17114,10 @@ static bool hasNonFlagsUse(SDValue Op) {
   return false;
 }
 
-// Emit KTEST instruction for bit vectors on AVX-512
-static SDValue EmitKTEST(SDValue Op, SelectionDAG &DAG,
-                         const X86Subtarget &Subtarget) {
-  if (Op.getOpcode() == ISD::BITCAST) {
-    auto hasKTEST = [&](MVT VT) {
-      unsigned SizeInBits = VT.getSizeInBits();
-      return (Subtarget.hasDQI() && (SizeInBits == 8 || SizeInBits == 16)) ||
-        (Subtarget.hasBWI() && (SizeInBits == 32 || SizeInBits == 64));
-    };
-    SDValue Op0 = Op.getOperand(0);
-    MVT Op0VT = Op0.getValueType().getSimpleVT();
-    if (Op0VT.isVector() && Op0VT.getVectorElementType() == MVT::i1 &&
-        hasKTEST(Op0VT))
-      return DAG.getNode(X86ISD::KTEST, SDLoc(Op), Op0VT, Op0, Op0);
-  }
-  return SDValue();
-}
-
 /// Emit nodes that will be selected as "test Op0,Op0", or something
 /// equivalent.
 SDValue X86TargetLowering::EmitTest(SDValue Op, unsigned X86CC, const SDLoc &dl,
                                     SelectionDAG &DAG) const {
-  if (Op.getValueType() == MVT::i1) {
-    SDValue ExtOp = DAG.getNode(ISD::ZERO_EXTEND, dl, MVT::i8, Op);
-    return DAG.getNode(X86ISD::CMP, dl, MVT::i32, ExtOp,
-                       DAG.getConstant(0, dl, MVT::i8));
-  }
   // CF and OF aren't always set the way we want. Determine which
   // of these we need.
   bool NeedCF = false;
@@ -17180,9 +17153,6 @@ SDValue X86TargetLowering::EmitTest(SDValue Op, unsigned X86CC, const SDLoc &dl,
   // doing a separate TEST. TEST always sets OF and CF to 0, so unless
   // we prove that the arithmetic won't overflow, we can't use OF or CF.
   if (Op.getResNo() != 0 || NeedOF || NeedCF) {
-    // Emit KTEST for bit vectors
-    if (auto Node = EmitKTEST(Op, DAG, Subtarget))
-      return Node;
     // Emit a CMP with 0, which is the TEST pattern.
     return DAG.getNode(X86ISD::CMP, dl, MVT::i32, Op,
                        DAG.getConstant(0, dl, Op.getValueType()));
@@ -17405,10 +17375,6 @@ SDValue X86TargetLowering::EmitTest(SDValue Op, unsigned X86CC, const SDLoc &dl,
   }
 
   if (Opcode == 0) {
-    // Emit KTEST for bit vectors
-    if (auto Node = EmitKTEST(Op, DAG, Subtarget))
-      return Node;
-
     // Emit a CMP with 0, which is the TEST pattern.
     return DAG.getNode(X86ISD::CMP, dl, MVT::i32, Op,
                        DAG.getConstant(0, dl, Op.getValueType()));
@@ -18155,6 +18121,46 @@ static SDValue LowerVSETCC(SDValue Op, const X86Subtarget &Subtarget,
   return Result;
 }
 
+// Try to select this as a KTEST+SETCC if possible.
+static SDValue EmitKTEST(SDValue Op0, SDValue Op1, ISD::CondCode CC,
+                         const SDLoc &dl, SelectionDAG &DAG,
+                         const X86Subtarget &Subtarget) {
+  // Only support equality comparisons.
+  if (CC != ISD::SETEQ && CC != ISD::SETNE)
+    return SDValue();
+
+  // Must be a bitcast from vXi1.
+  if (Op0.getOpcode() != ISD::BITCAST)
+    return SDValue();
+
+  Op0 = Op0.getOperand(0);
+  MVT VT = Op0.getSimpleValueType();
+  if (!(Subtarget.hasAVX512() && VT == MVT::v16i1) &&
+      !(Subtarget.hasDQI() && VT == MVT::v8i1) &&
+      !(Subtarget.hasBWI() && (VT == MVT::v32i1 || VT == MVT::v64i1)))
+    return SDValue();
+
+  X86::CondCode X86CC;
+  if (isNullConstant(Op1)) {
+    X86CC = CC == ISD::SETEQ ? X86::COND_E : X86::COND_NE;
+  } else if (isAllOnesConstant(Op1)) {
+    // C flag is set for all ones.
+    X86CC = CC == ISD::SETEQ ? X86::COND_B : X86::COND_AE;
+  } else
+    return SDValue();
+
+  // If the input is an OR, we can combine it's operands into the KORTEST.
+  SDValue LHS = Op0;
+  SDValue RHS = Op0;
+  if (Op0.getOpcode() == ISD::OR && Op0.hasOneUse()) {
+    LHS = Op0.getOperand(0);
+    RHS = Op0.getOperand(1);
+  }
+
+  SDValue KORTEST = DAG.getNode(X86ISD::KORTEST, dl, MVT::i32, LHS, RHS);
+  return getSETCC(X86CC, KORTEST, dl, DAG);
+}
+
 SDValue X86TargetLowering::LowerSETCC(SDValue Op, SelectionDAG &DAG) const {
 
   MVT VT = Op.getSimpleValueType();
@@ -18184,6 +18190,10 @@ SDValue X86TargetLowering::LowerSETCC(SDValue Op, SelectionDAG &DAG) const {
     if (SDValue NewSetCC = LowerVectorAllZeroTest(Op0, CC, Subtarget, DAG))
       return NewSetCC;
   }
+
+  // Try to lower using KTEST.
+  if (SDValue NewSetCC = EmitKTEST(Op0, Op1, CC, dl, DAG, Subtarget))
+    return NewSetCC;
 
   // Look for X == 0, X == 1, X != 0, or X != 1.  We can simplify some forms of
   // these.
@@ -18668,11 +18678,8 @@ static SDValue LowerANY_EXTEND(SDValue Op, const X86Subtarget &Subtarget,
   if (InVT.getVectorElementType() == MVT::i1)
     return LowerSIGN_EXTEND_Mask(Op, Subtarget, DAG);
 
-  if (Subtarget.hasFp256())
-    if (SDValue Res = LowerAVXExtend(Op, DAG, Subtarget))
-      return Res;
-
-  return SDValue();
+  assert(Subtarget.hasFp256() && "Expected AVX support");
+  return LowerAVXExtend(Op, DAG, Subtarget);
 }
 
 // Lowering for SIGN_EXTEND_VECTOR_INREG and ZERO_EXTEND_VECTOR_INREG.
@@ -18772,15 +18779,17 @@ static SDValue LowerSIGN_EXTEND(SDValue Op, const X86Subtarget &Subtarget,
   if (InVT.getVectorElementType() == MVT::i1)
     return LowerSIGN_EXTEND_Mask(Op, Subtarget, DAG);
 
-  if ((VT != MVT::v4i64  || InVT != MVT::v4i32) &&
-      (VT != MVT::v8i32  || InVT != MVT::v8i16) &&
-      (VT != MVT::v16i16 || InVT != MVT::v16i8) &&
-      (VT != MVT::v8i64  || InVT != MVT::v8i32) &&
-      (VT != MVT::v8i64  || InVT != MVT::v8i16) &&
-      (VT != MVT::v16i32 || InVT != MVT::v16i16) &&
-      (VT != MVT::v16i32 || InVT != MVT::v16i8) &&
-      (VT != MVT::v32i16 || InVT != MVT::v32i8))
-    return SDValue();
+  assert(VT.isVector() && InVT.isVector() && "Expected vector type");
+  assert(VT.getVectorNumElements() == VT.getVectorNumElements() &&
+         "Expected same number of elements");
+  assert((VT.getVectorElementType() == MVT::i16 ||
+          VT.getVectorElementType() == MVT::i32 ||
+          VT.getVectorElementType() == MVT::i64) &&
+         "Unexpected element type");
+  assert((InVT.getVectorElementType() == MVT::i8 ||
+          InVT.getVectorElementType() == MVT::i16 ||
+          InVT.getVectorElementType() == MVT::i32) &&
+         "Unexpected element type");
 
   if (Subtarget.hasInt256())
     return DAG.getNode(X86ISD::VSEXT, dl, VT, In);
@@ -26953,28 +26962,57 @@ static unsigned getOpcodeForRetpoline(unsigned RPOpc) {
 
 static const char *getRetpolineSymbol(const X86Subtarget &Subtarget,
                                       unsigned Reg) {
+  if (Subtarget.useRetpolineExternalThunk()) {
+    // When using an external thunk for retpolines, we pick names that match the
+    // names GCC happens to use as well. This helps simplify the implementation
+    // of the thunks for kernels where they have no easy ability to create
+    // aliases and are doing non-trivial configuration of the thunk's body. For
+    // example, the Linux kernel will do boot-time hot patching of the thunk
+    // bodies and cannot easily export aliases of these to loaded modules.
+    //
+    // Note that at any point in the future, we may need to change the semantics
+    // of how we implement retpolines and at that time will likely change the
+    // name of the called thunk. Essentially, there is no hard guarantee that
+    // LLVM will generate calls to specific thunks, we merely make a best-effort
+    // attempt to help out kernels and other systems where duplicating the
+    // thunks is costly.
+    switch (Reg) {
+    case 0:
+      assert(!Subtarget.is64Bit() && "R11 should always be available on x64");
+      return "__x86_indirect_thunk";
+    case X86::EAX:
+      assert(!Subtarget.is64Bit() && "Should not be using a 32-bit thunk!");
+      return "__x86_indirect_thunk_eax";
+    case X86::ECX:
+      assert(!Subtarget.is64Bit() && "Should not be using a 32-bit thunk!");
+      return "__x86_indirect_thunk_ecx";
+    case X86::EDX:
+      assert(!Subtarget.is64Bit() && "Should not be using a 32-bit thunk!");
+      return "__x86_indirect_thunk_edx";
+    case X86::R11:
+      assert(Subtarget.is64Bit() && "Should not be using a 64-bit thunk!");
+      return "__x86_indirect_thunk_r11";
+    }
+    llvm_unreachable("unexpected reg for retpoline");
+  }
+
+  // When targeting an internal COMDAT thunk use an LLVM-specific name.
   switch (Reg) {
   case 0:
     assert(!Subtarget.is64Bit() && "R11 should always be available on x64");
-    return Subtarget.useRetpolineExternalThunk()
-               ? "__llvm_external_retpoline_push"
-               : "__llvm_retpoline_push";
+    return "__llvm_retpoline_push";
   case X86::EAX:
-    return Subtarget.useRetpolineExternalThunk()
-               ? "__llvm_external_retpoline_eax"
-               : "__llvm_retpoline_eax";
+    assert(!Subtarget.is64Bit() && "Should not be using a 32-bit thunk!");
+    return "__llvm_retpoline_eax";
   case X86::ECX:
-    return Subtarget.useRetpolineExternalThunk()
-               ? "__llvm_external_retpoline_ecx"
-               : "__llvm_retpoline_ecx";
+    assert(!Subtarget.is64Bit() && "Should not be using a 32-bit thunk!");
+    return "__llvm_retpoline_ecx";
   case X86::EDX:
-    return Subtarget.useRetpolineExternalThunk()
-               ? "__llvm_external_retpoline_edx"
-               : "__llvm_retpoline_edx";
+    assert(!Subtarget.is64Bit() && "Should not be using a 32-bit thunk!");
+    return "__llvm_retpoline_edx";
   case X86::R11:
-    return Subtarget.useRetpolineExternalThunk()
-               ? "__llvm_external_retpoline_r11"
-               : "__llvm_retpoline_r11";
+    assert(Subtarget.is64Bit() && "Should not be using a 64-bit thunk!");
+    return "__llvm_retpoline_r11";
   }
   llvm_unreachable("unexpected reg for retpoline");
 }
@@ -32066,17 +32104,6 @@ static SDValue combineCMov(SDNode *N, SelectionDAG &DAG,
   X86::CondCode CC = (X86::CondCode)N->getConstantOperandVal(2);
   SDValue Cond = N->getOperand(3);
 
-  if (CC == X86::COND_E || CC == X86::COND_NE) {
-    switch (Cond.getOpcode()) {
-    default: break;
-    case X86ISD::BSR:
-    case X86ISD::BSF:
-      // If operand of BSR / BSF are proven never zero, then ZF cannot be set.
-      if (DAG.isKnownNeverZero(Cond.getOperand(0)))
-        return (CC == X86::COND_E) ? FalseOp : TrueOp;
-    }
-  }
-
   // Try to simplify the EFLAGS and condition code operands.
   // We can't always do this as FCMOV only supports a subset of X86 cond.
   if (SDValue Flags = combineSetCCEFLAGS(Cond, CC, DAG, Subtarget)) {
@@ -33984,9 +34011,10 @@ static SDValue detectUSatPattern(SDValue In, EVT VT) {
 /// or:
 /// (truncate (smax ((smin (x, signed_max_of_dest_type)),
 ///                  signed_min_of_dest_type)) to dest_type).
+/// With MatchPackUS, the smax/smin range is [0, unsigned_max_of_dest_type].
 /// Return the source value to be truncated or SDValue() if the pattern was not
 /// matched.
-static SDValue detectSSatPattern(SDValue In, EVT VT) {
+static SDValue detectSSatPattern(SDValue In, EVT VT, bool MatchPackUS = false) {
   unsigned NumDstBits = VT.getScalarSizeInBits();
   unsigned NumSrcBits = In.getScalarValueSizeInBits();
   assert(NumSrcBits > NumDstBits && "Unexpected types for truncate operation");
@@ -34000,8 +34028,14 @@ static SDValue detectSSatPattern(SDValue In, EVT VT) {
     return SDValue();
   };
 
-  APInt SignedMax = APInt::getSignedMaxValue(NumDstBits).sext(NumSrcBits);
-  APInt SignedMin = APInt::getSignedMinValue(NumDstBits).sext(NumSrcBits);
+  APInt SignedMax, SignedMin;
+  if (MatchPackUS) {
+    SignedMax = APInt::getAllOnesValue(NumDstBits).zext(NumSrcBits);
+    SignedMin = APInt(NumSrcBits, 0);
+  } else {
+    SignedMax = APInt::getSignedMaxValue(NumDstBits).sext(NumSrcBits);
+    SignedMin = APInt::getSignedMinValue(NumDstBits).sext(NumSrcBits);
+  }
 
   if (SDValue SMin = MatchMinMax(In, ISD::SMIN, SignedMax))
     if (SDValue SMax = MatchMinMax(SMin, ISD::SMAX, SignedMin))
@@ -34032,14 +34066,25 @@ static SDValue detectAVX512USatPattern(SDValue In, EVT VT,
 static SDValue combineTruncateWithSat(SDValue In, EVT VT, const SDLoc &DL,
                                       SelectionDAG &DAG,
                                       const X86Subtarget &Subtarget) {
+  EVT InVT = In.getValueType();
   const TargetLowering &TLI = DAG.getTargetLoweringInfo();
-  if (!TLI.isTypeLegal(In.getValueType()) || !TLI.isTypeLegal(VT))
+  if (!TLI.isTypeLegal(InVT) || !TLI.isTypeLegal(VT))
     return SDValue();
-  if (isSATValidOnAVX512Subtarget(In.getValueType(), VT, Subtarget)) {
+  if (isSATValidOnAVX512Subtarget(InVT, VT, Subtarget)) {
     if (auto SSatVal = detectSSatPattern(In, VT))
       return DAG.getNode(X86ISD::VTRUNCS, DL, VT, SSatVal);
     if (auto USatVal = detectUSatPattern(In, VT))
       return DAG.getNode(X86ISD::VTRUNCUS, DL, VT, USatVal);
+  }
+  if ((VT.getScalarType() == MVT::i8 && InVT.getScalarType() == MVT::i16) ||
+      (VT.getScalarType() == MVT::i16 && InVT.getScalarType() == MVT::i32)) {
+    if (auto SSatVal = detectSSatPattern(In, VT))
+      return truncateVectorWithPACK(X86ISD::PACKSS, VT, SSatVal, DL, DAG,
+                                    Subtarget);
+    if (Subtarget.hasSSE41() || VT.getScalarType() == MVT::i8)
+      if (auto USatVal = detectSSatPattern(In, VT, true))
+        return truncateVectorWithPACK(X86ISD::PACKUS, VT, USatVal, DL, DAG,
+                                      Subtarget);
   }
   return SDValue();
 }
@@ -36118,8 +36163,7 @@ static SDValue combineExtSetcc(SDNode *N, SelectionDAG &DAG,
   // Don't fold if the condition code can't be handled by PCMPEQ/PCMPGT since
   // that's the only integer compares with we have.
   ISD::CondCode CC = cast<CondCodeSDNode>(N0->getOperand(2))->get();
-  if (ISD::isUnsignedIntSetCC(CC) || CC == ISD::SETLE || CC == ISD::SETGE ||
-      CC == ISD::SETNE)
+  if (ISD::isUnsignedIntSetCC(CC))
     return SDValue();
 
   // Only do this combine if the extension will be fully consumed by the setcc.

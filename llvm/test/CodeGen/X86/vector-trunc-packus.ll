@@ -1185,28 +1185,14 @@ define <8 x i16> @trunc_packus_v8i32_v8i16(<8 x i32> %a0) {
 ; AVX1-LABEL: trunc_packus_v8i32_v8i16:
 ; AVX1:       # %bb.0:
 ; AVX1-NEXT:    vextractf128 $1, %ymm0, %xmm1
-; AVX1-NEXT:    vmovdqa {{.*#+}} xmm2 = [65535,65535,65535,65535]
-; AVX1-NEXT:    vpminsd %xmm2, %xmm1, %xmm1
-; AVX1-NEXT:    vpminsd %xmm2, %xmm0, %xmm0
-; AVX1-NEXT:    vpxor %xmm2, %xmm2, %xmm2
-; AVX1-NEXT:    vpmaxsd %xmm2, %xmm0, %xmm0
-; AVX1-NEXT:    vpmaxsd %xmm2, %xmm1, %xmm1
-; AVX1-NEXT:    vmovdqa {{.*#+}} xmm2 = [0,1,4,5,8,9,12,13,8,9,12,13,12,13,14,15]
-; AVX1-NEXT:    vpshufb %xmm2, %xmm1, %xmm1
-; AVX1-NEXT:    vpshufb %xmm2, %xmm0, %xmm0
-; AVX1-NEXT:    vpunpcklqdq {{.*#+}} xmm0 = xmm0[0],xmm1[0]
+; AVX1-NEXT:    vpackusdw %xmm1, %xmm0, %xmm0
 ; AVX1-NEXT:    vzeroupper
 ; AVX1-NEXT:    retq
 ;
 ; AVX2-LABEL: trunc_packus_v8i32_v8i16:
 ; AVX2:       # %bb.0:
-; AVX2-NEXT:    vpbroadcastd {{.*#+}} ymm1 = [65535,65535,65535,65535,65535,65535,65535,65535]
-; AVX2-NEXT:    vpminsd %ymm1, %ymm0, %ymm0
-; AVX2-NEXT:    vpxor %xmm1, %xmm1, %xmm1
-; AVX2-NEXT:    vpmaxsd %ymm1, %ymm0, %ymm0
-; AVX2-NEXT:    vpshufb {{.*#+}} ymm0 = ymm0[0,1,4,5,8,9,12,13,8,9,12,13,12,13,14,15,16,17,20,21,24,25,28,29,24,25,28,29,28,29,30,31]
-; AVX2-NEXT:    vpermq {{.*#+}} ymm0 = ymm0[0,2,2,3]
-; AVX2-NEXT:    # kill: def $xmm0 killed $xmm0 killed $ymm0
+; AVX2-NEXT:    vextracti128 $1, %ymm0, %xmm1
+; AVX2-NEXT:    vpackusdw %xmm1, %xmm0, %xmm0
 ; AVX2-NEXT:    vzeroupper
 ; AVX2-NEXT:    retq
 ;
@@ -1400,17 +1386,10 @@ define <16 x i16> @trunc_packus_v16i32_v16i16(<16 x i32> %a0) {
 ;
 ; AVX2-LABEL: trunc_packus_v16i32_v16i16:
 ; AVX2:       # %bb.0:
-; AVX2-NEXT:    vpbroadcastd {{.*#+}} ymm2 = [65535,65535,65535,65535,65535,65535,65535,65535]
-; AVX2-NEXT:    vpminsd %ymm2, %ymm0, %ymm0
-; AVX2-NEXT:    vpminsd %ymm2, %ymm1, %ymm1
-; AVX2-NEXT:    vpxor %xmm2, %xmm2, %xmm2
-; AVX2-NEXT:    vpmaxsd %ymm2, %ymm1, %ymm1
-; AVX2-NEXT:    vpmaxsd %ymm2, %ymm0, %ymm0
-; AVX2-NEXT:    vmovdqa {{.*#+}} ymm2 = [0,1,4,5,8,9,12,13,8,9,12,13,12,13,14,15,16,17,20,21,24,25,28,29,24,25,28,29,28,29,30,31]
-; AVX2-NEXT:    vpshufb %ymm2, %ymm0, %ymm0
-; AVX2-NEXT:    vpermq {{.*#+}} ymm0 = ymm0[0,2,2,3]
-; AVX2-NEXT:    vpshufb %ymm2, %ymm1, %ymm1
-; AVX2-NEXT:    vpermq {{.*#+}} ymm1 = ymm1[0,2,2,3]
+; AVX2-NEXT:    vextracti128 $1, %ymm1, %xmm2
+; AVX2-NEXT:    vpackusdw %xmm2, %xmm1, %xmm1
+; AVX2-NEXT:    vextracti128 $1, %ymm0, %xmm2
+; AVX2-NEXT:    vpackusdw %xmm2, %xmm0, %xmm0
 ; AVX2-NEXT:    vinserti128 $1, %xmm1, %ymm0, %ymm0
 ; AVX2-NEXT:    retq
 ;
@@ -3079,29 +3058,14 @@ define <16 x i8> @trunc_packus_v16i16_v16i8(<16 x i16> %a0) {
 ; AVX1-LABEL: trunc_packus_v16i16_v16i8:
 ; AVX1:       # %bb.0:
 ; AVX1-NEXT:    vextractf128 $1, %ymm0, %xmm1
-; AVX1-NEXT:    vmovdqa {{.*#+}} xmm2 = [255,255,255,255,255,255,255,255]
-; AVX1-NEXT:    vpminsw %xmm2, %xmm1, %xmm1
-; AVX1-NEXT:    vpminsw %xmm2, %xmm0, %xmm0
-; AVX1-NEXT:    vpxor %xmm2, %xmm2, %xmm2
-; AVX1-NEXT:    vpmaxsw %xmm2, %xmm0, %xmm0
-; AVX1-NEXT:    vpmaxsw %xmm2, %xmm1, %xmm1
-; AVX1-NEXT:    vmovdqa {{.*#+}} xmm2 = <0,2,4,6,8,10,12,14,u,u,u,u,u,u,u,u>
-; AVX1-NEXT:    vpshufb %xmm2, %xmm1, %xmm1
-; AVX1-NEXT:    vpshufb %xmm2, %xmm0, %xmm0
-; AVX1-NEXT:    vpunpcklqdq {{.*#+}} xmm0 = xmm0[0],xmm1[0]
+; AVX1-NEXT:    vpackuswb %xmm1, %xmm0, %xmm0
 ; AVX1-NEXT:    vzeroupper
 ; AVX1-NEXT:    retq
 ;
 ; AVX2-LABEL: trunc_packus_v16i16_v16i8:
 ; AVX2:       # %bb.0:
-; AVX2-NEXT:    vpminsw {{.*}}(%rip), %ymm0, %ymm0
-; AVX2-NEXT:    vpxor %xmm1, %xmm1, %xmm1
-; AVX2-NEXT:    vpmaxsw %ymm1, %ymm0, %ymm0
 ; AVX2-NEXT:    vextracti128 $1, %ymm0, %xmm1
-; AVX2-NEXT:    vmovdqa {{.*#+}} xmm2 = <0,2,4,6,8,10,12,14,u,u,u,u,u,u,u,u>
-; AVX2-NEXT:    vpshufb %xmm2, %xmm1, %xmm1
-; AVX2-NEXT:    vpshufb %xmm2, %xmm0, %xmm0
-; AVX2-NEXT:    vpunpcklqdq {{.*#+}} xmm0 = xmm0[0],xmm1[0]
+; AVX2-NEXT:    vpackuswb %xmm1, %xmm0, %xmm0
 ; AVX2-NEXT:    vzeroupper
 ; AVX2-NEXT:    retq
 ;
@@ -3220,44 +3184,18 @@ define <32 x i8> @trunc_packus_v32i16_v32i8(<32 x i16> %a0) {
 ; AVX1-LABEL: trunc_packus_v32i16_v32i8:
 ; AVX1:       # %bb.0:
 ; AVX1-NEXT:    vextractf128 $1, %ymm1, %xmm2
-; AVX1-NEXT:    vmovdqa {{.*#+}} xmm3 = [255,255,255,255,255,255,255,255]
-; AVX1-NEXT:    vpminsw %xmm3, %xmm2, %xmm2
-; AVX1-NEXT:    vpminsw %xmm3, %xmm1, %xmm1
-; AVX1-NEXT:    vextractf128 $1, %ymm0, %xmm4
-; AVX1-NEXT:    vpminsw %xmm3, %xmm4, %xmm4
-; AVX1-NEXT:    vpminsw %xmm3, %xmm0, %xmm0
-; AVX1-NEXT:    vpxor %xmm3, %xmm3, %xmm3
-; AVX1-NEXT:    vpmaxsw %xmm3, %xmm0, %xmm0
-; AVX1-NEXT:    vpmaxsw %xmm3, %xmm4, %xmm4
-; AVX1-NEXT:    vpmaxsw %xmm3, %xmm1, %xmm1
-; AVX1-NEXT:    vpmaxsw %xmm3, %xmm2, %xmm2
-; AVX1-NEXT:    vmovdqa {{.*#+}} xmm3 = <0,2,4,6,8,10,12,14,u,u,u,u,u,u,u,u>
-; AVX1-NEXT:    vpshufb %xmm3, %xmm2, %xmm2
-; AVX1-NEXT:    vpshufb %xmm3, %xmm1, %xmm1
-; AVX1-NEXT:    vpunpcklqdq {{.*#+}} xmm1 = xmm1[0],xmm2[0]
-; AVX1-NEXT:    vpshufb %xmm3, %xmm4, %xmm2
-; AVX1-NEXT:    vpshufb %xmm3, %xmm0, %xmm0
-; AVX1-NEXT:    vpunpcklqdq {{.*#+}} xmm0 = xmm0[0],xmm2[0]
+; AVX1-NEXT:    vpackuswb %xmm2, %xmm1, %xmm1
+; AVX1-NEXT:    vextractf128 $1, %ymm0, %xmm2
+; AVX1-NEXT:    vpackuswb %xmm2, %xmm0, %xmm0
 ; AVX1-NEXT:    vinsertf128 $1, %xmm1, %ymm0, %ymm0
 ; AVX1-NEXT:    retq
 ;
 ; AVX2-LABEL: trunc_packus_v32i16_v32i8:
 ; AVX2:       # %bb.0:
-; AVX2-NEXT:    vmovdqa {{.*#+}} ymm2 = [255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255]
-; AVX2-NEXT:    vpminsw %ymm2, %ymm1, %ymm1
-; AVX2-NEXT:    vpminsw %ymm2, %ymm0, %ymm0
-; AVX2-NEXT:    vpxor %xmm2, %xmm2, %xmm2
-; AVX2-NEXT:    vpmaxsw %ymm2, %ymm0, %ymm0
-; AVX2-NEXT:    vpmaxsw %ymm2, %ymm1, %ymm1
 ; AVX2-NEXT:    vextracti128 $1, %ymm1, %xmm2
-; AVX2-NEXT:    vmovdqa {{.*#+}} xmm3 = <0,2,4,6,8,10,12,14,u,u,u,u,u,u,u,u>
-; AVX2-NEXT:    vpshufb %xmm3, %xmm2, %xmm2
-; AVX2-NEXT:    vpshufb %xmm3, %xmm1, %xmm1
-; AVX2-NEXT:    vpunpcklqdq {{.*#+}} xmm1 = xmm1[0],xmm2[0]
+; AVX2-NEXT:    vpackuswb %xmm2, %xmm1, %xmm1
 ; AVX2-NEXT:    vextracti128 $1, %ymm0, %xmm2
-; AVX2-NEXT:    vpshufb %xmm3, %xmm2, %xmm2
-; AVX2-NEXT:    vpshufb %xmm3, %xmm0, %xmm0
-; AVX2-NEXT:    vpunpcklqdq {{.*#+}} xmm0 = xmm0[0],xmm2[0]
+; AVX2-NEXT:    vpackuswb %xmm2, %xmm0, %xmm0
 ; AVX2-NEXT:    vinserti128 $1, %xmm1, %ymm0, %ymm0
 ; AVX2-NEXT:    retq
 ;

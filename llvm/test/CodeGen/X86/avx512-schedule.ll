@@ -2911,7 +2911,7 @@ define <2 x float> @ubto2f32(<2 x i32> %a) {
 ; GENERIC:       # %bb.0:
 ; GENERIC-NEXT:    vpxor %xmm1, %xmm1, %xmm1 # sched: [1:0.33]
 ; GENERIC-NEXT:    vpblendd {{.*#+}} xmm0 = xmm0[0],xmm1[1],xmm0[2],xmm1[3] sched: [1:0.50]
-; GENERIC-NEXT:    vpcmpltuq %xmm1, %xmm0, %k1 # sched: [3:1.00]
+; GENERIC-NEXT:    vptestmq %xmm0, %xmm0, %k1 # sched: [1:1.00]
 ; GENERIC-NEXT:    vpbroadcastd {{.*}}(%rip), %xmm0 {%k1} {z} # sched: [5:1.00]
 ; GENERIC-NEXT:    vcvtdq2ps %xmm0, %xmm0 # sched: [3:1.00]
 ; GENERIC-NEXT:    retq # sched: [1:1.00]
@@ -2920,11 +2920,11 @@ define <2 x float> @ubto2f32(<2 x i32> %a) {
 ; SKX:       # %bb.0:
 ; SKX-NEXT:    vpxor %xmm1, %xmm1, %xmm1 # sched: [1:0.33]
 ; SKX-NEXT:    vpblendd {{.*#+}} xmm0 = xmm0[0],xmm1[1],xmm0[2],xmm1[3] sched: [1:0.33]
-; SKX-NEXT:    vpcmpltuq %xmm1, %xmm0, %k1 # sched: [3:1.00]
+; SKX-NEXT:    vptestmq %xmm0, %xmm0, %k1 # sched: [3:1.00]
 ; SKX-NEXT:    vpbroadcastd {{.*}}(%rip), %xmm0 {%k1} {z} # sched: [7:0.50]
 ; SKX-NEXT:    vcvtdq2ps %xmm0, %xmm0 # sched: [4:0.33]
 ; SKX-NEXT:    retq # sched: [7:1.00]
-  %mask = icmp ult <2 x i32> %a, zeroinitializer
+  %mask = icmp ne <2 x i32> %a, zeroinitializer
   %1 = uitofp <2 x i1> %mask to <2 x float>
   ret <2 x float> %1
 }
@@ -2934,7 +2934,7 @@ define <2 x double> @ubto2f64(<2 x i32> %a) {
 ; GENERIC:       # %bb.0:
 ; GENERIC-NEXT:    vpxor %xmm1, %xmm1, %xmm1 # sched: [1:0.33]
 ; GENERIC-NEXT:    vpblendd {{.*#+}} xmm0 = xmm0[0],xmm1[1],xmm0[2],xmm1[3] sched: [1:0.50]
-; GENERIC-NEXT:    vpcmpltuq %xmm1, %xmm0, %k1 # sched: [3:1.00]
+; GENERIC-NEXT:    vptestmq %xmm0, %xmm0, %k1 # sched: [1:1.00]
 ; GENERIC-NEXT:    vpbroadcastd {{.*}}(%rip), %xmm0 {%k1} {z} # sched: [5:1.00]
 ; GENERIC-NEXT:    vcvtudq2pd %xmm0, %xmm0 # sched: [4:1.00]
 ; GENERIC-NEXT:    retq # sched: [1:1.00]
@@ -2943,11 +2943,11 @@ define <2 x double> @ubto2f64(<2 x i32> %a) {
 ; SKX:       # %bb.0:
 ; SKX-NEXT:    vpxor %xmm1, %xmm1, %xmm1 # sched: [1:0.33]
 ; SKX-NEXT:    vpblendd {{.*#+}} xmm0 = xmm0[0],xmm1[1],xmm0[2],xmm1[3] sched: [1:0.33]
-; SKX-NEXT:    vpcmpltuq %xmm1, %xmm0, %k1 # sched: [3:1.00]
+; SKX-NEXT:    vptestmq %xmm0, %xmm0, %k1 # sched: [3:1.00]
 ; SKX-NEXT:    vpbroadcastd {{.*}}(%rip), %xmm0 {%k1} {z} # sched: [7:0.50]
 ; SKX-NEXT:    vcvtudq2pd %xmm0, %xmm0 # sched: [5:1.00]
 ; SKX-NEXT:    retq # sched: [7:1.00]
-  %mask = icmp ult <2 x i32> %a, zeroinitializer
+  %mask = icmp ne <2 x i32> %a, zeroinitializer
   %1 = uitofp <2 x i1> %mask to <2 x double>
   ret <2 x double> %1
 }
@@ -4365,14 +4365,14 @@ define i8 @trunc_8i16_to_8i1(<8 x i16> %a) {
 define <8 x i32> @sext_8i1_8i32(<8 x i32> %a1, <8 x i32> %a2) nounwind {
 ; GENERIC-LABEL: sext_8i1_8i32:
 ; GENERIC:       # %bb.0:
-; GENERIC-NEXT:    vpcmpled %ymm0, %ymm1, %k0 # sched: [3:1.00]
-; GENERIC-NEXT:    vpmovm2d %k0, %ymm0 # sched: [1:0.33]
+; GENERIC-NEXT:    vpcmpgtd %ymm0, %ymm1, %ymm0 # sched: [3:1.00]
+; GENERIC-NEXT:    vpternlogq $15, %ymm0, %ymm0, %ymm0 # sched: [3:1.00]
 ; GENERIC-NEXT:    retq # sched: [1:1.00]
 ;
 ; SKX-LABEL: sext_8i1_8i32:
 ; SKX:       # %bb.0:
-; SKX-NEXT:    vpcmpled %ymm0, %ymm1, %k0 # sched: [3:1.00]
-; SKX-NEXT:    vpmovm2d %k0, %ymm0 # sched: [1:0.25]
+; SKX-NEXT:    vpcmpgtd %ymm0, %ymm1, %ymm0 # sched: [1:0.50]
+; SKX-NEXT:    vpternlogq $15, %ymm0, %ymm0, %ymm0 # sched: [1:0.33]
 ; SKX-NEXT:    retq # sched: [7:1.00]
   %x = icmp slt <8 x i32> %a1, %a2
   %x1 = xor <8 x i1>%x, <i1 true, i1 true, i1 true, i1 true, i1 true, i1 true, i1 true, i1 true>
@@ -7030,8 +7030,7 @@ define void @vcmp_test7(<8 x i1> %mask)  {
 ; GENERIC-NEXT:    vpmovw2m %xmm0, %k0 # sched: [1:0.33]
 ; GENERIC-NEXT:    movb $85, %al # sched: [1:0.33]
 ; GENERIC-NEXT:    kmovd %eax, %k1 # sched: [1:0.33]
-; GENERIC-NEXT:    korb %k1, %k0, %k0 # sched: [1:1.00]
-; GENERIC-NEXT:    ktestb %k0, %k0 # sched: [1:1.00]
+; GENERIC-NEXT:    kortestb %k1, %k0 # sched: [1:1.00]
 ; GENERIC-NEXT:    retq # sched: [1:1.00]
 ;
 ; SKX-LABEL: vcmp_test7:
@@ -7040,8 +7039,7 @@ define void @vcmp_test7(<8 x i1> %mask)  {
 ; SKX-NEXT:    vpmovw2m %xmm0, %k0 # sched: [1:1.00]
 ; SKX-NEXT:    movb $85, %al # sched: [1:0.25]
 ; SKX-NEXT:    kmovd %eax, %k1 # sched: [1:1.00]
-; SKX-NEXT:    korb %k1, %k0, %k0 # sched: [1:1.00]
-; SKX-NEXT:    ktestb %k0, %k0 # sched: [3:1.00]
+; SKX-NEXT:    kortestb %k1, %k0 # sched: [3:1.00]
 ; SKX-NEXT:    retq # sched: [7:1.00]
 allocas:
   %a= or <8 x i1> %mask, <i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false>
@@ -7615,7 +7613,7 @@ define void @ktest_1(<8 x double> %in, double * %base) {
 ; GENERIC-NEXT:    vcmpltpd %zmm0, %zmm1, %k1 # sched: [3:1.00]
 ; GENERIC-NEXT:    vmovupd 8(%rdi), %zmm1 {%k1} {z} # sched: [4:0.50]
 ; GENERIC-NEXT:    vcmpltpd %zmm1, %zmm0, %k0 {%k1} # sched: [3:1.00]
-; GENERIC-NEXT:    ktestb %k0, %k0 # sched: [1:1.00]
+; GENERIC-NEXT:    kortestb %k0, %k0 # sched: [1:1.00]
 ; GENERIC-NEXT:    je .LBB410_2 # sched: [1:1.00]
 ; GENERIC-NEXT:  # %bb.1: # %L1
 ; GENERIC-NEXT:    vmovapd %zmm0, (%rdi) # sched: [1:1.00]
@@ -7632,7 +7630,7 @@ define void @ktest_1(<8 x double> %in, double * %base) {
 ; SKX-NEXT:    vcmpltpd %zmm0, %zmm1, %k1 # sched: [3:1.00]
 ; SKX-NEXT:    vmovupd 8(%rdi), %zmm1 {%k1} {z} # sched: [8:0.50]
 ; SKX-NEXT:    vcmpltpd %zmm1, %zmm0, %k0 {%k1} # sched: [3:1.00]
-; SKX-NEXT:    ktestb %k0, %k0 # sched: [3:1.00]
+; SKX-NEXT:    kortestb %k0, %k0 # sched: [3:1.00]
 ; SKX-NEXT:    je .LBB410_2 # sched: [1:0.50]
 ; SKX-NEXT:  # %bb.1: # %L1
 ; SKX-NEXT:    vmovapd %zmm0, (%rdi) # sched: [1:1.00]
@@ -7683,8 +7681,7 @@ define void @ktest_2(<32 x float> %in, float * %base) {
 ; GENERIC-NEXT:    vcmpltps %zmm3, %zmm0, %k1 # sched: [3:1.00]
 ; GENERIC-NEXT:    vcmpltps %zmm2, %zmm1, %k2 # sched: [3:1.00]
 ; GENERIC-NEXT:    kunpckwd %k1, %k2, %k1 # sched: [1:1.00]
-; GENERIC-NEXT:    kord %k1, %k0, %k0 # sched: [1:1.00]
-; GENERIC-NEXT:    ktestd %k0, %k0 # sched: [1:1.00]
+; GENERIC-NEXT:    kortestd %k1, %k0 # sched: [1:1.00]
 ; GENERIC-NEXT:    je .LBB411_2 # sched: [1:1.00]
 ; GENERIC-NEXT:  # %bb.1: # %L1
 ; GENERIC-NEXT:    vmovaps %zmm0, (%rdi) # sched: [1:1.00]
@@ -7703,14 +7700,13 @@ define void @ktest_2(<32 x float> %in, float * %base) {
 ; SKX-NEXT:    vmovups 64(%rdi), %zmm3 # sched: [8:0.50]
 ; SKX-NEXT:    vcmpltps %zmm0, %zmm2, %k1 # sched: [3:1.00]
 ; SKX-NEXT:    vcmpltps %zmm1, %zmm3, %k2 # sched: [3:1.00]
+; SKX-NEXT:    kunpckwd %k1, %k2, %k0 # sched: [3:1.00]
 ; SKX-NEXT:    vmovups 68(%rdi), %zmm2 {%k2} {z} # sched: [8:0.50]
 ; SKX-NEXT:    vmovups 4(%rdi), %zmm3 {%k1} {z} # sched: [8:0.50]
-; SKX-NEXT:    kunpckwd %k1, %k2, %k0 # sched: [3:1.00]
 ; SKX-NEXT:    vcmpltps %zmm3, %zmm0, %k1 # sched: [3:1.00]
 ; SKX-NEXT:    vcmpltps %zmm2, %zmm1, %k2 # sched: [3:1.00]
 ; SKX-NEXT:    kunpckwd %k1, %k2, %k1 # sched: [3:1.00]
-; SKX-NEXT:    kord %k1, %k0, %k0 # sched: [1:1.00]
-; SKX-NEXT:    ktestd %k0, %k0 # sched: [3:1.00]
+; SKX-NEXT:    kortestd %k1, %k0 # sched: [3:1.00]
 ; SKX-NEXT:    je .LBB411_2 # sched: [1:0.50]
 ; SKX-NEXT:  # %bb.1: # %L1
 ; SKX-NEXT:    vmovaps %zmm0, (%rdi) # sched: [1:1.00]

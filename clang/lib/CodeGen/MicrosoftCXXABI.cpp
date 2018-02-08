@@ -1887,9 +1887,9 @@ llvm::Value *MicrosoftCXXABI::EmitVirtualDestructorCall(
   GlobalDecl GD(Dtor, Dtor_Deleting);
   const CGFunctionInfo *FInfo = &CGM.getTypes().arrangeCXXStructorDeclaration(
       Dtor, StructorType::Deleting);
-  llvm::Type *Ty = CGF.CGM.getTypes().GetFunctionType(*FInfo);
-  CGCallee Callee = getVirtualFunctionPointer(
-      CGF, GD, This, Ty, CE ? CE->getLocStart() : SourceLocation());
+  auto *Ty =
+      cast<llvm::FunctionType>(CGF.CGM.getTypes().GetFunctionType(*FInfo));
+  CGCallee Callee = CGCallee::forVirtual(CE, GD, This, Ty);
 
   ASTContext &Context = getContext();
   llvm::Value *ImplicitParam = llvm::ConstantInt::get(
