@@ -1103,6 +1103,8 @@ public:
   /// value.
   void AddDependentLib(StringRef Lib);
 
+  void AddELFLibDirective(StringRef Lib);
+
   llvm::GlobalVariable::LinkageTypes getFunctionLinkage(GlobalDecl GD);
 
   void setFunctionLinkage(GlobalDecl GD, llvm::Function *F) {
