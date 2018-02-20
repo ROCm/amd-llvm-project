@@ -26,16 +26,18 @@ void Semaphore::unlock() {
   SlotsChanged.notify_one();
 }
 
-AsyncTaskRunner::~AsyncTaskRunner() { waitForAll(); }
+AsyncTaskRunner::~AsyncTaskRunner() { wait(); }
 
-void AsyncTaskRunner::waitForAll() {
+bool AsyncTaskRunner::wait(Deadline D) const {
   std::unique_lock<std::mutex> Lock(Mutex);
-  TasksReachedZero.wait(Lock, [&]() { return InFlightTasks == 0; });
+  return clangd::wait(Lock, TasksReachedZero, D,
+                      [&] { return InFlightTasks == 0; });
 }
 
-void AsyncTaskRunner::runAsync(UniqueFunction<void()> Action) {
+void AsyncTaskRunner::runAsync(llvm::Twine Name,
+                               UniqueFunction<void()> Action) {
   {
-    std::unique_lock<std::mutex> Lock(Mutex);
+    std::lock_guard<std::mutex> Lock(Mutex);
     ++InFlightTasks;
   }
 
@@ -50,14 +52,24 @@ void AsyncTaskRunner::runAsync(UniqueFunction<void()> Action) {
   });
 
   std::thread(
-      [](decltype(Action) Action, decltype(CleanupTask)) {
+      [](std::string Name, decltype(Action) Action, decltype(CleanupTask)) {
+        llvm::set_thread_name(Name);
         Action();
         // Make sure function stored by Action is destroyed before CleanupTask
         // is run.
         Action = nullptr;
       },
-      std::move(Action), std::move(CleanupTask))
+      Name.str(), std::move(Action), std::move(CleanupTask))
       .detach();
 }
+
+Deadline timeoutSeconds(llvm::Optional<double> Seconds) {
+  using namespace std::chrono;
+  if (!Seconds)
+    return llvm::None;
+  return steady_clock::now() +
+         duration_cast<steady_clock::duration>(duration<double>(*Seconds));
+}
+
 } // namespace clangd
 } // namespace clang

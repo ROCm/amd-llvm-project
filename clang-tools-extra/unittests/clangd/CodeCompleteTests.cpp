@@ -14,6 +14,7 @@
 #include "Matchers.h"
 #include "Protocol.h"
 #include "SourceCode.h"
+#include "SyncAPI.h"
 #include "TestFS.h"
 #include "index/MemIndex.h"
 #include "gmock/gmock.h"
@@ -118,11 +119,11 @@ CompletionList completions(StringRef Text,
   IgnoreDiagnostics DiagConsumer;
   ClangdServer Server(CDB, DiagConsumer, FS, getDefaultAsyncThreadsCount(),
                       /*StorePreamblesInMemory=*/true);
-  auto File = getVirtualTestFilePath("foo.cpp");
+  auto File = testPath("foo.cpp");
   Annotations Test(Text);
-  Server.addDocument(File, Test.code()).wait();
-  auto CompletionList =
-      Server.codeComplete(File, Test.point(), Opts).get().Value;
+  Server.addDocument(File, Test.code());
+  EXPECT_TRUE(Server.blockUntilIdleForTest()) << "Waiting for preamble";
+  auto CompletionList = runCodeComplete(Server, File, Test.point(), Opts).Value;
   // Sanity-check that filterText is valid.
   EXPECT_THAT(CompletionList.items, Each(NameContainsFilter()));
   return CompletionList;
@@ -343,15 +344,13 @@ TEST(CompletionTest, CheckContentsOverride) {
   MockCompilationDatabase CDB;
   ClangdServer Server(CDB, DiagConsumer, FS, getDefaultAsyncThreadsCount(),
                       /*StorePreamblesInMemory=*/true);
-  auto File = getVirtualTestFilePath("foo.cpp");
+  auto File = testPath("foo.cpp");
   Server.addDocument(File, "ignored text!");
 
   Annotations Example("int cbc; int b = ^;");
   auto Results =
-      Server
-          .codeComplete(File, Example.point(), clangd::CodeCompleteOptions(),
-                        StringRef(Example.code()))
-          .get()
+      runCodeComplete(Server, File, Example.point(),
+                      clangd::CodeCompleteOptions(), StringRef(Example.code()))
           .Value;
   EXPECT_THAT(Results.items, Contains(Named("cbc")));
 }
@@ -544,30 +543,33 @@ TEST(CompletionTest, IndexSuppressesPreambleCompletions) {
   ClangdServer Server(CDB, DiagConsumer, FS, getDefaultAsyncThreadsCount(),
                       /*StorePreamblesInMemory=*/true);
 
-  FS.Files[getVirtualTestFilePath("bar.h")] =
+  FS.Files[testPath("bar.h")] =
       R"cpp(namespace ns { struct preamble { int member; }; })cpp";
-  auto File = getVirtualTestFilePath("foo.cpp");
+  auto File = testPath("foo.cpp");
   Annotations Test(R"cpp(
       #include "bar.h"
       namespace ns { int local; }
       void f() { ns::^; }
       void f() { ns::preamble().$2^; }
   )cpp");
-  Server.addDocument(File, Test.code()).wait();
+  Server.addDocument(File, Test.code());
+  ASSERT_TRUE(Server.blockUntilIdleForTest()) << "Waiting for preamble";
   clangd::CodeCompleteOptions Opts = {};
-
-  auto WithoutIndex = Server.codeComplete(File, Test.point(), Opts).get().Value;
-  EXPECT_THAT(WithoutIndex.items,
-              UnorderedElementsAre(Named("local"), Named("preamble")));
 
   auto I = memIndex({var("ns::index")});
   Opts.Index = I.get();
-  auto WithIndex = Server.codeComplete(File, Test.point(), Opts).get().Value;
+  auto WithIndex = runCodeComplete(Server, File, Test.point(), Opts).Value;
   EXPECT_THAT(WithIndex.items,
               UnorderedElementsAre(Named("local"), Named("index")));
   auto ClassFromPreamble =
-      Server.codeComplete(File, Test.point("2"), Opts).get().Value;
+      runCodeComplete(Server, File, Test.point("2"), Opts).Value;
   EXPECT_THAT(ClassFromPreamble.items, Contains(Named("member")));
+
+  Opts.Index = nullptr;
+  auto WithoutIndex = runCodeComplete(Server, File, Test.point(), Opts).Value;
+  EXPECT_THAT(WithoutIndex.items,
+              UnorderedElementsAre(Named("local"), Named("preamble")));
+
 }
 
 TEST(CompletionTest, DynamicIndexMultiFile) {
@@ -578,13 +580,15 @@ TEST(CompletionTest, DynamicIndexMultiFile) {
                       /*StorePreamblesInMemory=*/true,
                       /*BuildDynamicSymbolIndex=*/true);
 
-  Server
-      .addDocument(getVirtualTestFilePath("foo.cpp"), R"cpp(
+  FS.Files[testPath("foo.h")] = R"cpp(
       namespace ns { class XYZ {}; void foo(int x) {} }
-  )cpp")
-      .wait();
+  )cpp";
+  Server.addDocument(testPath("foo.cpp"), R"cpp(
+      #include "foo.h"
+  )cpp");
+  ASSERT_TRUE(Server.blockUntilIdleForTest()) << "Waiting for preamble";
 
-  auto File = getVirtualTestFilePath("bar.cpp");
+  auto File = testPath("bar.cpp");
   Annotations Test(R"cpp(
       namespace ns {
       class XXX {};
@@ -593,9 +597,10 @@ TEST(CompletionTest, DynamicIndexMultiFile) {
       }
       void f() { ns::^ }
   )cpp");
-  Server.addDocument(File, Test.code()).wait();
+  Server.addDocument(File, Test.code());
+  ASSERT_TRUE(Server.blockUntilIdleForTest()) << "Waiting for preamble";
 
-  auto Results = Server.codeComplete(File, Test.point(), {}).get().Value;
+  auto Results = runCodeComplete(Server, File, Test.point(), {}).Value;
   // "XYZ" and "foo" are not included in the file being completed but are still
   // visible through the index.
   EXPECT_THAT(Results.items, Has("XYZ", CompletionItemKind::Class));
@@ -620,10 +625,11 @@ SignatureHelp signatures(StringRef Text) {
   IgnoreDiagnostics DiagConsumer;
   ClangdServer Server(CDB, DiagConsumer, FS, getDefaultAsyncThreadsCount(),
                       /*StorePreamblesInMemory=*/true);
-  auto File = getVirtualTestFilePath("foo.cpp");
+  auto File = testPath("foo.cpp");
   Annotations Test(Text);
   Server.addDocument(File, Test.code());
-  auto R = Server.signatureHelp(File, Test.point());
+  EXPECT_TRUE(Server.blockUntilIdleForTest()) << "Waiting for preamble";
+  auto R = runSignatureHelp(Server, File, Test.point());
   assert(R);
   return R.get().Value;
 }
@@ -695,7 +701,7 @@ public:
   fuzzyFind(const FuzzyFindRequest &Req,
             llvm::function_ref<void(const Symbol &)> Callback) const override {
     Requests.push_back(Req);
-    return false;
+    return true;
   }
 
   const std::vector<FuzzyFindRequest> allRequests() const { return Requests; }

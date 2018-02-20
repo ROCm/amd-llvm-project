@@ -31,14 +31,18 @@ protected:
     return *Result;
   }
 
-  static std::string format(llvm::StringRef Code) {
-    FormatStyle Style = getGoogleStyle(FormatStyle::LK_TextProto);
-    Style.ColumnLimit = 60; // To make writing tests easier.
+  static std::string format(llvm::StringRef Code, const FormatStyle &Style) {
     return format(Code, 0, Code.size(), Style);
   }
 
+  static void verifyFormat(llvm::StringRef Code, const FormatStyle &Style) {
+    EXPECT_EQ(Code.str(), format(test::messUp(Code), Style));
+  }
+
   static void verifyFormat(llvm::StringRef Code) {
-    EXPECT_EQ(Code.str(), format(test::messUp(Code)));
+    FormatStyle Style = getGoogleStyle(FormatStyle::LK_TextProto);
+    Style.ColumnLimit = 60; // To make writing tests easier.
+    verifyFormat(Code, Style);
   }
 };
 
@@ -312,6 +316,129 @@ TEST_F(FormatTestTextProto, KeepsLongStringLiteralsOnSameLine) {
       "foo: {\n"
       "  text: \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaasaaaaaaaaaa\"\n"
       "}");
+}
+
+TEST_F(FormatTestTextProto, KeepsCommentsIndentedInList) {
+  verifyFormat("aaaaaaaaaa: 100\n"
+               "bbbbbbbbbbbbbbbbbbbbbbbbbbb: 200\n"
+               "# Single line comment for stuff here.\n"
+               "cccccccccccccccccccccccc: 3849\n"
+               "# Multiline comment for stuff here.\n"
+               "# Multiline comment for stuff here.\n"
+               "# Multiline comment for stuff here.\n"
+               "cccccccccccccccccccccccc: 3849");
+}
+
+TEST_F(FormatTestTextProto, FormatsExtensions) {
+  verifyFormat("[type] { key: value }");
+  verifyFormat("[type] {\n"
+               "  keyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy: value\n"
+               "}");
+  verifyFormat("[type.type] { key: value }");
+  verifyFormat("[type.type] < key: value >");
+  verifyFormat("[type.type/type.type] { key: value }");
+  verifyFormat("msg {\n"
+               "  [type.type] { key: value }\n"
+               "}");
+  verifyFormat("msg {\n"
+               "  [type.type] {\n"
+               "    keyyyyyyyyyyyyyy: valuuuuuuuuuuuuuuuuuuuuuuuuue\n"
+               "  }\n"
+               "}");
+  verifyFormat("key: value\n"
+               "[a.b] { key: value }");
+  verifyFormat("msg: <\n"
+               "  key: value\n"
+               "  [a.b.c/d.e]: < key: value >\n"
+               "  [f.g]: <\n"
+               "    key: valueeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\n"
+               "    key: {}\n"
+               "  >\n"
+               "  key {}\n"
+               "  [h.i.j] < key: value >\n"
+               "  [a]: {\n"
+               "    [b.c]: {}\n"
+               "    [d] <>\n"
+               "    [e/f]: 1\n"
+               "  }\n"
+               ">");
+  verifyFormat("[longg.long.long.long.long.long.long.long.long.long.long\n"
+               "     .longg.longlong] { key: value }");
+  verifyFormat("[longg.long.long.long.long.long.long.long.long.long.long\n"
+               "     .longg.longlong] {\n"
+               "  key: value\n"
+               "  key: value\n"
+               "  key: value\n"
+               "  key: value\n"
+               "}");
+  verifyFormat("[longg.long.long.long.long.long.long.long.long.long\n"
+               "     .long/longg.longlong] { key: value }");
+  verifyFormat("[aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/\n"
+               " bbbbbbbbbbbbbb] { key: value }");
+  verifyFormat("[aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+               "] { key: value }");
+  verifyFormat("[aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+               "] {\n"
+               "  [type.type] {\n"
+               "    keyyyyyyyyyyyyyy: valuuuuuuuuuuuuuuuuuuuuuuuuue\n"
+               "  }\n"
+               "}");
+  verifyFormat("[aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/\n"
+               " bbbbbbb] {\n"
+               "  [type.type] {\n"
+               "    keyyyyyyyyyyyyyy: valuuuuuuuuuuuuuuuuuuuuuuuuue\n"
+               "  }\n"
+               "}");
+  verifyFormat(
+      "aaaaaaaaaaaaaaa {\n"
+      "  bbbbbb {\n"
+      "    [a.b/cy] {\n"
+      "      eeeeeeeeeeeee: \"The lazy coo cat jumps over the lazy hot dog\"\n"
+      "    }\n"
+      "  }\n"
+      "}");
+}
+
+TEST_F(FormatTestTextProto, NoSpaceAfterPercent) {
+  verifyFormat("key: %d");
+}
+
+TEST_F(FormatTestTextProto, FormatsRepeatedListInitializers) {
+  verifyFormat("keys: []");
+  verifyFormat("keys: [ 1 ]");
+  verifyFormat("keys: [ 'ala', 'bala' ]");
+  verifyFormat("keys:\n"
+               "    [ 'ala', 'bala', 'porto', 'kala', 'too', 'long', 'ng' ]");
+  verifyFormat("key: item\n"
+               "keys: [\n"
+               "  'ala',\n"
+               "  'bala',\n"
+               "  'porto',\n"
+               "  'kala',\n"
+               "  'too',\n"
+               "  'long',\n"
+               "  'long',\n"
+               "  'long'\n"
+               "]\n"
+               "key: item\n"
+               "msg {\n"
+               "  key: item\n"
+               "  keys: [\n"
+               "    'ala',\n"
+               "    'bala',\n"
+               "    'porto',\n"
+               "    'kala',\n"
+               "    'too',\n"
+               "    'long',\n"
+               "    'long'\n"
+               "  ]\n"
+               "}\n"
+               "key: value"
+               );
+  FormatStyle Style = getGoogleStyle(FormatStyle::LK_TextProto);
+  Style.ColumnLimit = 60; // To make writing tests easier.
+  Style.Cpp11BracedListStyle = true;
+  verifyFormat("keys: [1]", Style);
 }
 } // end namespace tooling
 } // end namespace clang

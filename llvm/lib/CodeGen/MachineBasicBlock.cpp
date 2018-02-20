@@ -323,53 +323,106 @@ void MachineBasicBlock::print(raw_ostream &OS, ModuleSlotTracker &MST,
   OS << ":\n";
 
   const TargetRegisterInfo *TRI = MF->getSubtarget().getRegisterInfo();
-  if (!livein_empty()) {
-    if (Indexes) OS << '\t';
-    OS << "    Live Ins:";
-    for (const auto &LI : LiveIns) {
-      OS << ' ' << printReg(LI.PhysReg, TRI);
-      if (!LI.LaneMask.all())
-        OS << ':' << PrintLaneMask(LI.LaneMask);
-    }
-    OS << '\n';
-  }
+  const MachineRegisterInfo &MRI = MF->getRegInfo();
+  const TargetInstrInfo &TII = *getParent()->getSubtarget().getInstrInfo();
+  bool HasLineAttributes = false;
+
   // Print the preds of this block according to the CFG.
   if (!pred_empty()) {
     if (Indexes) OS << '\t';
-    OS << "    Predecessors according to CFG:";
-    for (const_pred_iterator PI = pred_begin(), E = pred_end(); PI != E; ++PI)
-      OS << " " << printMBBReference(*(*PI));
-    OS << '\n';
-  }
-
-  for (auto &I : instrs()) {
-    if (Indexes) {
-      if (Indexes->hasIndex(I))
-        OS << Indexes->getInstructionIndex(I);
-      OS << '\t';
+    // Don't indent(2), align with previous line attributes.
+    OS << "; predecessors: ";
+    for (auto I = pred_begin(), E = pred_end(); I != E; ++I) {
+      if (I != pred_begin())
+        OS << ", ";
+      OS << printMBBReference(**I);
     }
-    OS << '\t';
-    if (I.isInsideBundle())
-      OS << "  * ";
-    I.print(OS, MST, IsStandalone);
+    OS << '\n';
+    HasLineAttributes = true;
   }
 
-  // Print the successors of this block according to the CFG.
   if (!succ_empty()) {
     if (Indexes) OS << '\t';
-    OS << "    Successors according to CFG:";
-    for (const_succ_iterator SI = succ_begin(), E = succ_end(); SI != E; ++SI) {
-      OS << " " << printMBBReference(*(*SI));
+    // Print the successors
+    OS.indent(2) << "successors: ";
+    for (auto I = succ_begin(), E = succ_end(); I != E; ++I) {
+      if (I != succ_begin())
+        OS << ", ";
+      OS << printMBBReference(**I);
       if (!Probs.empty())
-        OS << '(' << *getProbabilityIterator(SI) << ')';
+        OS << '('
+           << format("0x%08" PRIx32, getSuccProbability(I).getNumerator())
+           << ')';
     }
+    if (!Probs.empty()) {
+      // Print human readable probabilities as comments.
+      OS << "; ";
+      for (auto I = succ_begin(), E = succ_end(); I != E; ++I) {
+        const BranchProbability &BP = *getProbabilityIterator(I);
+        if (I != succ_begin())
+          OS << ", ";
+        OS << printMBBReference(**I) << '('
+           << format("%.2f%%",
+                     rint(((double)BP.getNumerator() / BP.getDenominator()) *
+                          100.0 * 100.0) /
+                         100.0)
+           << ')';
+      }
+    }
+
     OS << '\n';
+    HasLineAttributes = true;
   }
+
+  if (!livein_empty() && MRI.tracksLiveness()) {
+    if (Indexes) OS << '\t';
+    OS.indent(2) << "liveins: ";
+
+    bool First = true;
+    for (const auto &LI : liveins()) {
+      if (!First)
+        OS << ", ";
+      First = false;
+      OS << printReg(LI.PhysReg, TRI);
+      if (!LI.LaneMask.all())
+        OS << ":0x" << PrintLaneMask(LI.LaneMask);
+    }
+    HasLineAttributes = true;
+  }
+
+  if (HasLineAttributes)
+    OS << '\n';
+
+  bool IsInBundle = false;
+  for (const MachineInstr &MI : instrs()) {
+    if (Indexes) {
+      if (Indexes->hasIndex(MI))
+        OS << Indexes->getInstructionIndex(MI);
+      OS << '\t';
+    }
+
+    if (IsInBundle && !MI.isInsideBundle()) {
+      OS.indent(2) << "}\n";
+      IsInBundle = false;
+    }
+
+    OS.indent(IsInBundle ? 4 : 2);
+    MI.print(OS, MST, IsStandalone, /*SkipOpers=*/false, /*SkipDebugLoc=*/false,
+             &TII);
+
+    if (!IsInBundle && MI.getFlag(MachineInstr::BundledSucc)) {
+      OS << " {";
+      IsInBundle = true;
+    }
+  }
+
+  if (IsInBundle)
+    OS.indent(2) << "}\n";
+
   if (IrrLoopHeaderWeight) {
     if (Indexes) OS << '\t';
-    OS << "    Irreducible loop header weight: "
-       << IrrLoopHeaderWeight.getValue();
-    OS << '\n';
+    OS.indent(2) << "; Irreducible loop header weight: "
+                 << IrrLoopHeaderWeight.getValue() << '\n';
   }
 }
 

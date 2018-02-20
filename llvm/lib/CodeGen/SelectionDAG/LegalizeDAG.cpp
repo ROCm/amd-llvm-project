@@ -3766,7 +3766,7 @@ bool SelectionDAGLegalize::ExpandNode(SDNode *Node) {
     // illegal; expand it into a SELECT_CC.
     EVT VT = Node->getValueType(0);
     int TrueValue;
-    switch (TLI.getBooleanContents(Tmp1->getValueType(0))) {
+    switch (TLI.getBooleanContents(Tmp1.getValueType())) {
     case TargetLowering::ZeroOrOneBooleanContent:
     case TargetLowering::UndefinedBooleanContent:
       TrueValue = 1;
@@ -3971,6 +3971,7 @@ void SelectionDAGLegalize::ConvertNodeToLibcall(SDNode *Node) {
   case ISD::ATOMIC_LOAD_ADD:
   case ISD::ATOMIC_LOAD_SUB:
   case ISD::ATOMIC_LOAD_AND:
+  case ISD::ATOMIC_LOAD_CLR:
   case ISD::ATOMIC_LOAD_OR:
   case ISD::ATOMIC_LOAD_XOR:
   case ISD::ATOMIC_LOAD_NAND:

@@ -197,9 +197,27 @@ m_GMul(const LHS &L, const RHS &R) {
 }
 
 template <typename LHS, typename RHS>
-inline BinaryOp_match<LHS, RHS, TargetOpcode::G_FADD> m_GFAdd(const LHS &L,
-                                                              const RHS &R) {
-  return BinaryOp_match<LHS, RHS, TargetOpcode::G_FADD>(L, R);
+inline BinaryOp_match<LHS, RHS, TargetOpcode::G_FADD, true>
+m_GFAdd(const LHS &L, const RHS &R) {
+  return BinaryOp_match<LHS, RHS, TargetOpcode::G_FADD, true>(L, R);
+}
+
+template <typename LHS, typename RHS>
+inline BinaryOp_match<LHS, RHS, TargetOpcode::G_FMUL, true>
+m_GFMul(const LHS &L, const RHS &R) {
+  return BinaryOp_match<LHS, RHS, TargetOpcode::G_FMUL, true>(L, R);
+}
+
+template <typename LHS, typename RHS>
+inline BinaryOp_match<LHS, RHS, TargetOpcode::G_AND, true>
+m_GAnd(const LHS &L, const RHS &R) {
+  return BinaryOp_match<LHS, RHS, TargetOpcode::G_AND, true>(L, R);
+}
+
+template <typename LHS, typename RHS>
+inline BinaryOp_match<LHS, RHS, TargetOpcode::G_OR, true> m_GOr(const LHS &L,
+                                                                const RHS &R) {
+  return BinaryOp_match<LHS, RHS, TargetOpcode::G_OR, true>(L, R);
 }
 
 // Helper for unary instructions (G_[ZSA]EXT/G_TRUNC) etc
@@ -242,6 +260,24 @@ inline UnaryOp_match<SrcTy, TargetOpcode::G_FPEXT> m_GFPExt(const SrcTy &Src) {
 template <typename SrcTy>
 inline UnaryOp_match<SrcTy, TargetOpcode::G_TRUNC> m_GTrunc(const SrcTy &Src) {
   return UnaryOp_match<SrcTy, TargetOpcode::G_TRUNC>(Src);
+}
+
+template <typename SrcTy>
+inline UnaryOp_match<SrcTy, TargetOpcode::G_BITCAST>
+m_GBitcast(const SrcTy &Src) {
+  return UnaryOp_match<SrcTy, TargetOpcode::G_BITCAST>(Src);
+}
+
+template <typename SrcTy>
+inline UnaryOp_match<SrcTy, TargetOpcode::G_PTRTOINT>
+m_GPtrToInt(const SrcTy &Src) {
+  return UnaryOp_match<SrcTy, TargetOpcode::G_PTRTOINT>(Src);
+}
+
+template <typename SrcTy>
+inline UnaryOp_match<SrcTy, TargetOpcode::G_INTTOPTR>
+m_GIntToPtr(const SrcTy &Src) {
+  return UnaryOp_match<SrcTy, TargetOpcode::G_INTTOPTR>(Src);
 }
 
 template <typename SrcTy>

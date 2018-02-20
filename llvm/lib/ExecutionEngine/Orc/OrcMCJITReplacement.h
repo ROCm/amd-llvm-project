@@ -166,32 +166,32 @@ class OrcMCJITReplacement : public ExecutionEngine {
       return UnresolvedSymbols;
     }
 
-    SymbolNameSet lookup(AsynchronousSymbolQuery &Query,
+    SymbolNameSet lookup(std::shared_ptr<AsynchronousSymbolQuery> Query,
                          SymbolNameSet Symbols) override {
       SymbolNameSet UnresolvedSymbols;
 
       for (auto &S : Symbols) {
         if (auto Sym = M.findMangledSymbol(*S)) {
           if (auto Addr = Sym.getAddress())
-            Query.setDefinition(S, JITEvaluatedSymbol(*Addr, Sym.getFlags()));
+            Query->setDefinition(S, JITEvaluatedSymbol(*Addr, Sym.getFlags()));
           else {
-            Query.setFailed(Addr.takeError());
+            Query->setFailed(Addr.takeError());
             return SymbolNameSet();
           }
         } else if (auto Err = Sym.takeError()) {
-          Query.setFailed(std::move(Err));
+          Query->setFailed(std::move(Err));
           return SymbolNameSet();
         } else {
           if (auto Sym2 = M.ClientResolver->findSymbol(*S)) {
             if (auto Addr = Sym2.getAddress())
-              Query.setDefinition(S,
-                                  JITEvaluatedSymbol(*Addr, Sym2.getFlags()));
+              Query->setDefinition(S,
+                                   JITEvaluatedSymbol(*Addr, Sym2.getFlags()));
             else {
-              Query.setFailed(Addr.takeError());
+              Query->setFailed(Addr.takeError());
               return SymbolNameSet();
             }
           } else if (auto Err = Sym2.takeError()) {
-            Query.setFailed(std::move(Err));
+            Query->setFailed(std::move(Err));
             return SymbolNameSet();
           } else
             UnresolvedSymbols.insert(S);
@@ -229,9 +229,12 @@ public:
         Resolver(std::make_shared<LinkingORCResolver>(*this)),
         ClientResolver(std::move(ClientResolver)), NotifyObjectLoaded(*this),
         NotifyFinalized(*this),
-        ObjectLayer(ES, [this](VModuleKey K) { return this->MemMgr; },
-                    [this](VModuleKey K) { return this->Resolver; },
-                    NotifyObjectLoaded, NotifyFinalized),
+        ObjectLayer(
+            ES,
+            [this](VModuleKey K) {
+              return ObjectLayerT::Resources{this->MemMgr, this->Resolver};
+            },
+            NotifyObjectLoaded, NotifyFinalized),
         CompileLayer(ObjectLayer, SimpleCompiler(*this->TM)),
         LazyEmitLayer(CompileLayer) {}
 
@@ -393,10 +396,10 @@ private:
 
     NotifyObjectLoadedT(OrcMCJITReplacement &M) : M(M) {}
 
-    void operator()(RTDyldObjectLinkingLayerBase::ObjHandleT H,
+    void operator()(VModuleKey K,
                     const RTDyldObjectLinkingLayer::ObjectPtr &Obj,
                     const RuntimeDyld::LoadedObjectInfo &Info) const {
-      M.UnfinalizedSections[H] = std::move(M.SectionsAllocatedSinceLastLoad);
+      M.UnfinalizedSections[K] = std::move(M.SectionsAllocatedSinceLastLoad);
       M.SectionsAllocatedSinceLastLoad = SectionAddrSet();
       M.MemMgr->notifyObjectLoaded(&M, *Obj->getBinary());
     }
@@ -408,9 +411,7 @@ private:
   public:
     NotifyFinalizedT(OrcMCJITReplacement &M) : M(M) {}
 
-    void operator()(RTDyldObjectLinkingLayerBase::ObjHandleT H) {
-      M.UnfinalizedSections.erase(H);
-    }
+    void operator()(VModuleKey K) { M.UnfinalizedSections.erase(K); }
 
   private:
     OrcMCJITReplacement &M;
@@ -455,15 +456,8 @@ private:
   // that have been emitted but not yet finalized so that we can forward the
   // mapSectionAddress calls appropriately.
   using SectionAddrSet = std::set<const void *>;
-  struct ObjHandleCompare {
-    bool operator()(ObjectLayerT::ObjHandleT H1,
-                    ObjectLayerT::ObjHandleT H2) const {
-      return &*H1 < &*H2;
-    }
-  };
   SectionAddrSet SectionsAllocatedSinceLastLoad;
-  std::map<ObjectLayerT::ObjHandleT, SectionAddrSet, ObjHandleCompare>
-      UnfinalizedSections;
+  std::map<VModuleKey, SectionAddrSet> UnfinalizedSections;
 
   std::vector<object::OwningBinary<object::Archive>> Archives;
 };

@@ -31,6 +31,7 @@
 #include "clang/Sema/ScopeInfo.h"
 #include "clang/Sema/SemaInternal.h"
 #include "clang/Sema/Template.h"
+#include "clang/Sema/TemplateInstCallback.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringSwitch.h"
@@ -7565,6 +7566,14 @@ bool Sema::RequireCompleteTypeImpl(SourceLocation Loc, QualType T,
         diagnoseMissingImport(Loc, SuggestedDef, MissingImportKind::Definition,
                               /*Recover*/TreatAsComplete);
       return !TreatAsComplete;
+    } else if (Def && !TemplateInstCallbacks.empty()) {
+      CodeSynthesisContext TempInst;
+      TempInst.Kind = CodeSynthesisContext::Memoization;
+      TempInst.Template = Def;
+      TempInst.Entity = Def;
+      TempInst.PointOfInstantiation = Loc;
+      atTemplateBegin(TemplateInstCallbacks, *this, TempInst);
+      atTemplateEnd(TemplateInstCallbacks, *this, TempInst);
     }
 
     return false;
@@ -7859,8 +7868,9 @@ static QualType getDecltypeForExpr(Sema &S, Expr *E) {
     if (const ValueDecl *VD = dyn_cast<ValueDecl>(DRE->getDecl()))
       return VD->getType();
   } else if (const MemberExpr *ME = dyn_cast<MemberExpr>(E)) {
-    if (const FieldDecl *FD = dyn_cast<FieldDecl>(ME->getMemberDecl()))
-      return FD->getType();
+    if (const ValueDecl *VD = ME->getMemberDecl())
+      if (isa<FieldDecl>(VD) || isa<VarDecl>(VD))
+        return VD->getType();
   } else if (const ObjCIvarRefExpr *IR = dyn_cast<ObjCIvarRefExpr>(E)) {
     return IR->getDecl()->getType();
   } else if (const ObjCPropertyRefExpr *PR = dyn_cast<ObjCPropertyRefExpr>(E)) {

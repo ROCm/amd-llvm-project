@@ -70,9 +70,10 @@ TEST(RTDyldObjectLinkingLayerTest, TestSetProcessAllSections) {
   SymbolStringPool SSP;
   ExecutionSession ES(SSP);
 
-  RTDyldObjectLinkingLayer ObjLayer(
-      ES, [&MM](VModuleKey) { return MM; },
-      [](orc::VModuleKey) { return std::make_shared<NullResolver>(); });
+  RTDyldObjectLinkingLayer ObjLayer(ES, [&MM](VModuleKey) {
+    return RTDyldObjectLinkingLayer::Resources{
+        MM, std::make_shared<NullResolver>()};
+  });
 
   LLVMContext Context;
   auto M = llvm::make_unique<Module>("", Context);
@@ -100,21 +101,23 @@ TEST(RTDyldObjectLinkingLayerTest, TestSetProcessAllSections) {
 
   {
     // Test with ProcessAllSections = false (the default).
-    auto H = cantFail(ObjLayer.addObject(ES.allocateVModule(), Obj));
-    cantFail(ObjLayer.emitAndFinalize(H));
+    auto K = ES.allocateVModule();
+    cantFail(ObjLayer.addObject(K, Obj));
+    cantFail(ObjLayer.emitAndFinalize(K));
     EXPECT_EQ(DebugSectionSeen, false)
       << "Unexpected debug info section";
-    cantFail(ObjLayer.removeObject(H));
+    cantFail(ObjLayer.removeObject(K));
   }
 
   {
     // Test with ProcessAllSections = true.
     ObjLayer.setProcessAllSections(true);
-    auto H = cantFail(ObjLayer.addObject(ES.allocateVModule(), Obj));
-    cantFail(ObjLayer.emitAndFinalize(H));
+    auto K = ES.allocateVModule();
+    cantFail(ObjLayer.addObject(K, Obj));
+    cantFail(ObjLayer.emitAndFinalize(K));
     EXPECT_EQ(DebugSectionSeen, true)
       << "Expected debug info section not seen";
-    cantFail(ObjLayer.removeObject(H));
+    cantFail(ObjLayer.removeObject(K));
   }
 }
 
@@ -129,15 +132,13 @@ TEST_F(RTDyldObjectLinkingLayerExecutionTest, NoDuplicateFinalization) {
 
   std::map<orc::VModuleKey, std::shared_ptr<orc::SymbolResolver>> Resolvers;
 
-  RTDyldObjectLinkingLayer ObjLayer(ES, [&MM](VModuleKey) { return MM; },
-                                    [&](VModuleKey K) {
-                                      auto I = Resolvers.find(K);
-                                      assert(I != Resolvers.end() &&
-                                             "Missing resolver");
-                                      auto R = std::move(I->second);
-                                      Resolvers.erase(I);
-                                      return R;
-                                    });
+  RTDyldObjectLinkingLayer ObjLayer(ES, [&](VModuleKey K) {
+    auto I = Resolvers.find(K);
+    assert(I != Resolvers.end() && "Missing resolver");
+    auto R = std::move(I->second);
+    Resolvers.erase(I);
+    return RTDyldObjectLinkingLayer::Resources{MM, std::move(R)};
+  });
   SimpleCompiler Compile(*TM);
 
   // Create a pair of modules that will trigger recursive finalization:
@@ -194,13 +195,14 @@ TEST_F(RTDyldObjectLinkingLayerExecutionTest, NoDuplicateFinalization) {
         return cantFail(
             lookupFlagsWithLegacyFn(SymbolFlags, Symbols, LegacyLookup));
       },
-      [&](AsynchronousSymbolQuery &Query, const SymbolNameSet &Symbols) {
-        return lookupWithLegacyFn(Query, Symbols, LegacyLookup);
+      [&](std::shared_ptr<AsynchronousSymbolQuery> Query,
+          const SymbolNameSet &Symbols) {
+        return lookupWithLegacyFn(*Query, Symbols, LegacyLookup);
       });
 
-  auto H = cantFail(ObjLayer.addObject(K2, std::move(Obj2)));
-  cantFail(ObjLayer.emitAndFinalize(H));
-  cantFail(ObjLayer.removeObject(H));
+  cantFail(ObjLayer.addObject(K2, std::move(Obj2)));
+  cantFail(ObjLayer.emitAndFinalize(K2));
+  cantFail(ObjLayer.removeObject(K2));
 
   // Finalization of module 2 should trigger finalization of module 1.
   // Verify that finalize on SMMW is only called once.
@@ -217,9 +219,10 @@ TEST_F(RTDyldObjectLinkingLayerExecutionTest, NoPrematureAllocation) {
 
   auto MM = std::make_shared<SectionMemoryManagerWrapper>();
 
-  RTDyldObjectLinkingLayer ObjLayer(
-      ES, [&MM](VModuleKey) { return MM; },
-      [](VModuleKey) { return std::make_shared<NullResolver>(); });
+  RTDyldObjectLinkingLayer ObjLayer(ES, [&MM](VModuleKey K) {
+    return RTDyldObjectLinkingLayer::Resources{
+        MM, std::make_shared<NullResolver>()};
+  });
   SimpleCompiler Compile(*TM);
 
   // Create a pair of unrelated modules:
@@ -264,10 +267,11 @@ TEST_F(RTDyldObjectLinkingLayerExecutionTest, NoPrematureAllocation) {
     std::make_shared<object::OwningBinary<object::ObjectFile>>(
       Compile(*MB2.getModule()));
 
-  auto H = cantFail(ObjLayer.addObject(ES.allocateVModule(), std::move(Obj1)));
+  auto K = ES.allocateVModule();
+  cantFail(ObjLayer.addObject(K, std::move(Obj1)));
   cantFail(ObjLayer.addObject(ES.allocateVModule(), std::move(Obj2)));
-  cantFail(ObjLayer.emitAndFinalize(H));
-  cantFail(ObjLayer.removeObject(H));
+  cantFail(ObjLayer.emitAndFinalize(K));
+  cantFail(ObjLayer.removeObject(K));
 
   // Only one call to needsToReserveAllocationSpace should have been made.
   EXPECT_EQ(MM->NeedsToReserveAllocationSpaceCount, 1)
@@ -279,10 +283,12 @@ TEST_F(RTDyldObjectLinkingLayerExecutionTest, TestNotifyLoadedSignature) {
   SymbolStringPool SSP;
   ExecutionSession ES(SSP);
   RTDyldObjectLinkingLayer ObjLayer(
-      ES, [](VModuleKey) { return nullptr; },
-      [](VModuleKey) { return std::make_shared<NullResolver>(); },
-      [](RTDyldObjectLinkingLayer::ObjHandleT,
-         const RTDyldObjectLinkingLayer::ObjectPtr &obj,
+      ES,
+      [](VModuleKey) {
+        return RTDyldObjectLinkingLayer::Resources{
+            nullptr, std::make_shared<NullResolver>()};
+      },
+      [](VModuleKey, const RTDyldObjectLinkingLayer::ObjectPtr &obj,
          const RuntimeDyld::LoadedObjectInfo &info) {});
 }
 

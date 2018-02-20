@@ -44,10 +44,13 @@
 
 #include "TUScheduler.h"
 #include "Logger.h"
+#include "Trace.h"
 #include "clang/Frontend/PCHContainerOperations.h"
 #include "llvm/Support/Errc.h"
+#include "llvm/Support/Path.h"
 #include <memory>
 #include <queue>
+#include <thread>
 
 namespace clang {
 namespace clangd {
@@ -66,7 +69,8 @@ class ASTWorkerHandle;
 /// worker.
 class ASTWorker {
   friend class ASTWorkerHandle;
-  ASTWorker(Semaphore &Barrier, std::shared_ptr<CppFile> AST, bool RunSync);
+  ASTWorker(llvm::StringRef File, Semaphore &Barrier, CppFile AST,
+            bool RunSync);
 
 public:
   /// Create a new ASTWorker and return a handle to it.
@@ -74,14 +78,16 @@ public:
   /// is null, all requests will be processed on the calling thread
   /// synchronously instead. \p Barrier is acquired when processing each
   /// request, it is be used to limit the number of actively running threads.
-  static ASTWorkerHandle Create(AsyncTaskRunner *Tasks, Semaphore &Barrier,
-                                std::shared_ptr<CppFile> AST);
+  static ASTWorkerHandle Create(llvm::StringRef File, AsyncTaskRunner *Tasks,
+                                Semaphore &Barrier, CppFile AST);
   ~ASTWorker();
 
   void update(ParseInputs Inputs,
               UniqueFunction<void(llvm::Optional<std::vector<DiagWithFixIts>>)>
                   OnUpdated);
-  void runWithAST(UniqueFunction<void(llvm::Expected<InputsAndAST>)> Action);
+  void runWithAST(llvm::StringRef Name,
+                  UniqueFunction<void(llvm::Expected<InputsAndAST>)> Action);
+  bool blockUntilIdle(Deadline Timeout) const;
 
   std::shared_ptr<const PreambleData> getPossiblyStalePreamble() const;
   std::size_t getUsedBytes() const;
@@ -94,26 +100,34 @@ private:
   /// Signal that run() should finish processing pending requests and exit.
   void stop();
   /// Adds a new task to the end of the request queue.
-  void startTask(UniqueFunction<void()> Task, bool isUpdate,
-                 llvm::Optional<CancellationFlag> CF);
+  void startTask(llvm::StringRef Name, UniqueFunction<void()> Task,
+                 bool isUpdate, llvm::Optional<CancellationFlag> CF);
 
-  using RequestWithCtx = std::pair<UniqueFunction<void()>, Context>;
+  struct Request {
+    UniqueFunction<void()> Action;
+    std::string Name;
+    Context Ctx;
+  };
 
+  std::string File;
   const bool RunSync;
   Semaphore &Barrier;
   // AST and FileInputs are only accessed on the processing thread from run().
-  const std::shared_ptr<CppFile> AST;
+  CppFile AST;
   // Inputs, corresponding to the current state of AST.
   ParseInputs FileInputs;
   // Guards members used by both TUScheduler and the worker thread.
   mutable std::mutex Mutex;
+  std::shared_ptr<const PreambleData> LastBuiltPreamble; /* GUARDED_BY(Mutex) */
+  // Result of getUsedBytes() after the last rebuild or read of AST.
+  std::size_t LastASTSize; /* GUARDED_BY(Mutex) */
   // Set to true to signal run() to finish processing.
   bool Done;                           /* GUARDED_BY(Mutex) */
-  std::queue<RequestWithCtx> Requests; /* GUARDED_BY(Mutex) */
+  std::queue<Request> Requests;        /* GUARDED_BY(Mutex) */
   // Only set when last request is an update. This allows us to cancel an update
   // that was never read, if a subsequent update comes in.
   llvm::Optional<CancellationFlag> LastUpdateCF; /* GUARDED_BY(Mutex) */
-  std::condition_variable RequestsCV;
+  mutable std::condition_variable RequestsCV;
 };
 
 /// A smart-pointer-like class that points to an active ASTWorker.
@@ -158,19 +172,21 @@ private:
   std::shared_ptr<ASTWorker> Worker;
 };
 
-ASTWorkerHandle ASTWorker::Create(AsyncTaskRunner *Tasks, Semaphore &Barrier,
-                                  std::shared_ptr<CppFile> AST) {
+ASTWorkerHandle ASTWorker::Create(llvm::StringRef File, AsyncTaskRunner *Tasks,
+                                  Semaphore &Barrier, CppFile AST) {
   std::shared_ptr<ASTWorker> Worker(
-      new ASTWorker(Barrier, std::move(AST), /*RunSync=*/!Tasks));
+      new ASTWorker(File, Barrier, std::move(AST), /*RunSync=*/!Tasks));
   if (Tasks)
-    Tasks->runAsync([Worker]() { Worker->run(); });
+    Tasks->runAsync("worker:" + llvm::sys::path::filename(File),
+                    [Worker]() { Worker->run(); });
 
   return ASTWorkerHandle(std::move(Worker));
 }
 
-ASTWorker::ASTWorker(Semaphore &Barrier, std::shared_ptr<CppFile> AST,
+ASTWorker::ASTWorker(llvm::StringRef File, Semaphore &Barrier, CppFile AST,
                      bool RunSync)
-    : RunSync(RunSync), Barrier(Barrier), AST(std::move(AST)), Done(false) {
+    : File(File), RunSync(RunSync), Barrier(Barrier), AST(std::move(AST)),
+      Done(false) {
   if (RunSync)
     return;
 }
@@ -193,7 +209,14 @@ void ASTWorker::update(
       return;
     }
     FileInputs = Inputs;
-    auto Diags = AST->rebuild(std::move(Inputs));
+    auto Diags = AST.rebuild(std::move(Inputs));
+
+    {
+      std::lock_guard<std::mutex> Lock(Mutex);
+      if (AST.getPreamble())
+        LastBuiltPreamble = AST.getPreamble();
+      LastASTSize = AST.getUsedBytes();
+    }
     // We want to report the diagnostics even if this update was cancelled.
     // It seems more useful than making the clients wait indefinitely if they
     // spam us with updates.
@@ -201,40 +224,41 @@ void ASTWorker::update(
   };
 
   CancellationFlag UpdateCF;
-  startTask(BindWithForward(Task, UpdateCF, std::move(OnUpdated)),
+  startTask("Update", BindWithForward(Task, UpdateCF, std::move(OnUpdated)),
             /*isUpdate=*/true, UpdateCF);
 }
 
 void ASTWorker::runWithAST(
+    llvm::StringRef Name,
     UniqueFunction<void(llvm::Expected<InputsAndAST>)> Action) {
   auto Task = [=](decltype(Action) Action) {
-    auto ASTWrapper = this->AST->getAST().get();
-    // FIXME: no need to lock here, cleanup the CppFile interface to get rid of
-    // them.
-    ASTWrapper->runUnderLock([&](ParsedAST *AST) {
-      if (!AST) {
-        Action(llvm::make_error<llvm::StringError>(
-            "invalid AST", llvm::errc::invalid_argument));
-        return;
-      }
-      Action(InputsAndAST{FileInputs, *AST});
-    });
+    ParsedAST *ActualAST = AST.getAST();
+    if (!ActualAST) {
+      Action(llvm::make_error<llvm::StringError>("invalid AST",
+                                                 llvm::errc::invalid_argument));
+      return;
+    }
+    Action(InputsAndAST{FileInputs, *ActualAST});
+
+    // Size of the AST might have changed after reads too, e.g. if some decls
+    // were deserialized from preamble.
+    std::lock_guard<std::mutex> Lock(Mutex);
+    LastASTSize = ActualAST->getUsedBytes();
   };
 
-  startTask(BindWithForward(Task, std::move(Action)), /*isUpdate=*/false,
-            llvm::None);
+  startTask(Name, BindWithForward(Task, std::move(Action)),
+            /*isUpdate=*/false, llvm::None);
 }
 
 std::shared_ptr<const PreambleData>
 ASTWorker::getPossiblyStalePreamble() const {
-  return AST->getPossiblyStalePreamble();
+  std::lock_guard<std::mutex> Lock(Mutex);
+  return LastBuiltPreamble;
 }
 
 std::size_t ASTWorker::getUsedBytes() const {
-  // FIXME(ibiryukov): we'll need to take locks here after we remove
-  // thread-safety from CppFile. For now, CppFile is thread-safe and we can
-  // safely call methods on it without acquiring a lock.
-  return AST->getUsedBytes();
+  std::lock_guard<std::mutex> Lock(Mutex);
+  return LastASTSize;
 }
 
 void ASTWorker::stop() {
@@ -243,16 +267,17 @@ void ASTWorker::stop() {
     assert(!Done && "stop() called twice");
     Done = true;
   }
-  RequestsCV.notify_one();
+  RequestsCV.notify_all();
 }
 
-void ASTWorker::startTask(UniqueFunction<void()> Task, bool isUpdate,
-                          llvm::Optional<CancellationFlag> CF) {
+void ASTWorker::startTask(llvm::StringRef Name, UniqueFunction<void()> Task,
+                          bool isUpdate, llvm::Optional<CancellationFlag> CF) {
   assert(isUpdate == CF.hasValue() &&
          "Only updates are expected to pass CancellationFlag");
 
   if (RunSync) {
     assert(!Done && "running a task after stop()");
+    trace::Span Tracer(Name + ":" + llvm::sys::path::filename(File));
     Task();
     return;
   }
@@ -270,14 +295,14 @@ void ASTWorker::startTask(UniqueFunction<void()> Task, bool isUpdate,
     } else {
       LastUpdateCF = llvm::None;
     }
-    Requests.emplace(std::move(Task), Context::current().clone());
+    Requests.push({std::move(Task), Name, Context::current().clone()});
   } // unlock Mutex.
-  RequestsCV.notify_one();
+  RequestsCV.notify_all();
 }
 
 void ASTWorker::run() {
   while (true) {
-    RequestWithCtx Req;
+    Request Req;
     {
       std::unique_lock<std::mutex> Lock(Mutex);
       RequestsCV.wait(Lock, [&]() { return Done || !Requests.empty(); });
@@ -289,14 +314,29 @@ void ASTWorker::run() {
       // before exiting the processing loop.
 
       Req = std::move(Requests.front());
-      Requests.pop();
+      // Leave it on the queue for now, so waiters don't see an empty queue.
     } // unlock Mutex
 
-    std::lock_guard<Semaphore> BarrierLock(Barrier);
-    WithContext Guard(std::move(Req.second));
-    Req.first();
+    {
+      std::lock_guard<Semaphore> BarrierLock(Barrier);
+      WithContext Guard(std::move(Req.Ctx));
+      trace::Span Tracer(Req.Name);
+      Req.Action();
+    }
+
+    {
+      std::lock_guard<std::mutex> Lock(Mutex);
+      Requests.pop();
+    }
+    RequestsCV.notify_all();
   }
 }
+
+bool ASTWorker::blockUntilIdle(Deadline Timeout) const {
+  std::unique_lock<std::mutex> Lock(Mutex);
+  return wait(Lock, RequestsCV, Timeout, [&] { return Requests.empty(); });
+}
+
 } // namespace
 
 unsigned getDefaultAsyncThreadsCount() {
@@ -321,8 +361,10 @@ TUScheduler::TUScheduler(unsigned AsyncThreadsCount,
     : StorePreamblesInMemory(StorePreamblesInMemory),
       PCHOps(std::make_shared<PCHContainerOperations>()),
       ASTCallback(std::move(ASTCallback)), Barrier(AsyncThreadsCount) {
-  if (0 < AsyncThreadsCount)
-    Tasks.emplace();
+  if (0 < AsyncThreadsCount) {
+    PreambleTasks.emplace();
+    WorkerThreads.emplace();
+  }
 }
 
 TUScheduler::~TUScheduler() {
@@ -330,8 +372,20 @@ TUScheduler::~TUScheduler() {
   Files.clear();
 
   // Wait for all in-flight tasks to finish.
-  if (Tasks)
-    Tasks->waitForAll();
+  if (PreambleTasks)
+    PreambleTasks->wait();
+  if (WorkerThreads)
+    WorkerThreads->wait();
+}
+
+bool TUScheduler::blockUntilIdle(Deadline D) const {
+  for (auto &File : Files)
+    if (!File.getValue()->Worker->blockUntilIdle(D))
+      return false;
+  if (PreambleTasks)
+    if (!PreambleTasks->wait(D))
+      return false;
+  return true;
 }
 
 void TUScheduler::update(
@@ -342,8 +396,8 @@ void TUScheduler::update(
   if (!FD) {
     // Create a new worker to process the AST-related tasks.
     ASTWorkerHandle Worker = ASTWorker::Create(
-        Tasks ? Tasks.getPointer() : nullptr, Barrier,
-        CppFile::Create(File, StorePreamblesInMemory, PCHOps, ASTCallback));
+        File, WorkerThreads ? WorkerThreads.getPointer() : nullptr, Barrier,
+        CppFile(File, StorePreamblesInMemory, PCHOps, ASTCallback));
     FD = std::unique_ptr<FileData>(new FileData{Inputs, std::move(Worker)});
   } else {
     FD->Inputs = Inputs;
@@ -359,7 +413,8 @@ void TUScheduler::remove(PathRef File) {
 }
 
 void TUScheduler::runWithAST(
-    PathRef File, UniqueFunction<void(llvm::Expected<InputsAndAST>)> Action) {
+    llvm::StringRef Name, PathRef File,
+    UniqueFunction<void(llvm::Expected<InputsAndAST>)> Action) {
   auto It = Files.find(File);
   if (It == Files.end()) {
     Action(llvm::make_error<llvm::StringError>(
@@ -368,11 +423,11 @@ void TUScheduler::runWithAST(
     return;
   }
 
-  It->second->Worker->runWithAST(std::move(Action));
+  It->second->Worker->runWithAST(Name, std::move(Action));
 }
 
 void TUScheduler::runWithPreamble(
-    PathRef File,
+    llvm::StringRef Name, PathRef File,
     UniqueFunction<void(llvm::Expected<InputsAndPreamble>)> Action) {
   auto It = Files.find(File);
   if (It == Files.end()) {
@@ -382,7 +437,9 @@ void TUScheduler::runWithPreamble(
     return;
   }
 
-  if (!Tasks) {
+  if (!PreambleTasks) {
+    trace::Span Tracer(Name);
+    SPAN_ATTACH(Tracer, "file", File);
     std::shared_ptr<const PreambleData> Preamble =
         It->second->Worker->getPossiblyStalePreamble();
     Action(InputsAndPreamble{It->second->Inputs, Preamble.get()});
@@ -391,17 +448,22 @@ void TUScheduler::runWithPreamble(
 
   ParseInputs InputsCopy = It->second->Inputs;
   std::shared_ptr<const ASTWorker> Worker = It->second->Worker.lock();
-  auto Task = [InputsCopy, Worker, this](Context Ctx,
+  auto Task = [InputsCopy, Worker, this](std::string Name, std::string File,
+                                         Context Ctx,
                                          decltype(Action) Action) mutable {
     std::lock_guard<Semaphore> BarrierLock(Barrier);
     WithContext Guard(std::move(Ctx));
+    trace::Span Tracer(Name);
+    SPAN_ATTACH(Tracer, "file", File);
     std::shared_ptr<const PreambleData> Preamble =
         Worker->getPossiblyStalePreamble();
     Action(InputsAndPreamble{InputsCopy, Preamble.get()});
   };
 
-  Tasks->runAsync(
-      BindWithForward(Task, Context::current().clone(), std::move(Action)));
+  PreambleTasks->runAsync(
+      "task:" + llvm::sys::path::filename(File),
+      BindWithForward(Task, std::string(Name), std::string(File),
+                      Context::current().clone(), std::move(Action)));
 }
 
 std::vector<std::pair<Path, std::size_t>>

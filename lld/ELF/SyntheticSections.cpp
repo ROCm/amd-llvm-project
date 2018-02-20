@@ -1184,7 +1184,7 @@ uint64_t DynamicReloc::getOffset() const {
   return InputSec->getOutputSection()->Addr + InputSec->getOffset(OffsetInSec);
 }
 
-int64_t DynamicReloc::getAddend() const {
+int64_t DynamicReloc::computeAddend() const {
   if (UseSymVA)
     return Sym->getVA(Addend);
   return Addend;
@@ -1202,18 +1202,21 @@ RelocationBaseSection::RelocationBaseSection(StringRef Name, uint32_t Type,
     : SyntheticSection(SHF_ALLOC, Type, Config->Wordsize, Name),
       DynamicTag(DynamicTag), SizeDynamicTag(SizeDynamicTag) {}
 
-void RelocationBaseSection::addReloc(uint32_t DynType,
+void RelocationBaseSection::addReloc(RelType DynType, InputSectionBase *IS,
+                                     uint64_t OffsetInSec, Symbol *Sym) {
+  addReloc({DynType, IS, OffsetInSec, false, Sym, 0});
+}
+
+void RelocationBaseSection::addReloc(RelType DynType,
                                      InputSectionBase *InputSec,
-                                     uint64_t OffsetInSec, bool UseSymVA,
-                                     Symbol *Sym, int64_t Addend, RelExpr Expr,
+                                     uint64_t OffsetInSec, Symbol *Sym,
+                                     int64_t Addend, RelExpr Expr,
                                      RelType Type) {
-  // We store the addends for dynamic relocations for both REL and RELA
-  // relocations for compatibility with GNU Linkers. There is some system
-  // software such as the Bionic dynamic linker that uses the addend prior
-  // to dynamic relocation resolution.
-  if (Config->WriteAddends && UseSymVA)
+  // Write the addends to the relocated address if required. We skip
+  // it if the written value would be zero.
+  if (Config->WriteAddends && (Expr != R_ADDEND || Addend != 0))
     InputSec->Relocations.push_back({Expr, Type, OffsetInSec, Addend, Sym});
-  addReloc({DynType, InputSec, OffsetInSec, UseSymVA, Sym, Addend});
+  addReloc({DynType, InputSec, OffsetInSec, Expr != R_ADDEND, Sym, Addend});
 }
 
 void RelocationBaseSection::addReloc(const DynamicReloc &Reloc) {
@@ -1236,7 +1239,7 @@ template <class ELFT>
 static void encodeDynamicReloc(typename ELFT::Rela *P,
                                const DynamicReloc &Rel) {
   if (Config->IsRela)
-    P->r_addend = Rel.getAddend();
+    P->r_addend = Rel.computeAddend();
   P->r_offset = Rel.getOffset();
   if (Config->EMachine == EM_MIPS && Rel.getInputSec() == InX::MipsGot)
     // The MIPS GOT section contains dynamic relocations that correspond to TLS
@@ -2482,11 +2485,11 @@ static MergeSyntheticSection *createMergeSynthetic(StringRef Name,
   return make<MergeNoTailSection>(Name, Type, Flags, Alignment);
 }
 
-// Debug sections may be compressed by zlib. Uncompress if exists.
+// Debug sections may be compressed by zlib. Decompress if exists.
 void elf::decompressSections() {
   parallelForEach(InputSections, [](InputSectionBase *Sec) {
     if (Sec->Live)
-      Sec->maybeUncompress();
+      Sec->maybeDecompress();
   });
 }
 

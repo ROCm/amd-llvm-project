@@ -37,7 +37,7 @@ struct InputsAndPreamble {
 /// TUScheduler is not thread-safe, only one thread should be providing updates
 /// and scheduling tasks.
 /// Callbacks are run on a threadpool and it's appropriate to do slow work in
-/// them.
+/// them. Each task has a name, used for tracing (should be UpperCamelCase).
 class TUScheduler {
 public:
   TUScheduler(unsigned AsyncThreadsCount, bool StorePreamblesInMemory,
@@ -65,7 +65,7 @@ public:
   /// \p Action is executed.
   /// If an error occurs during processing, it is forwarded to the \p Action
   /// callback.
-  void runWithAST(PathRef File,
+  void runWithAST(llvm::StringRef Name, PathRef File,
                   UniqueFunction<void(llvm::Expected<InputsAndAST>)> Action);
 
   /// Schedule an async read of the Preamble. Preamble passed to \p Action may
@@ -74,8 +74,12 @@ public:
   /// If an error occurs during processing, it is forwarded to the \p Action
   /// callback.
   void runWithPreamble(
-      PathRef File,
+      llvm::StringRef Name, PathRef File,
       UniqueFunction<void(llvm::Expected<InputsAndPreamble>)> Action);
+
+  /// Wait until there are no scheduled or running tasks.
+  /// Mostly useful for synchronizing tests.
+  bool blockUntilIdle(Deadline D) const;
 
 private:
   /// This class stores per-file data in the Files map.
@@ -88,7 +92,8 @@ private:
   llvm::StringMap<std::unique_ptr<FileData>> Files;
   // None when running tasks synchronously and non-None when running tasks
   // asynchronously.
-  llvm::Optional<AsyncTaskRunner> Tasks;
+  llvm::Optional<AsyncTaskRunner> PreambleTasks;
+  llvm::Optional<AsyncTaskRunner> WorkerThreads;
 };
 } // namespace clangd
 } // namespace clang

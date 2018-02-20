@@ -969,8 +969,8 @@ void CodeGenFunction::EmitAndRegisterVariableArrayDimensions(
     if (auto *C = dyn_cast<llvm::ConstantInt>(VlaSize.NumElts))
       Dimensions.emplace_back(C, Type1D.getUnqualifiedType());
     else {
-      auto SizeExprAddr =
-          CreateDefaultAlignTempAlloca(VlaSize.NumElts->getType(), "vla_expr");
+      auto SizeExprAddr = CreateDefaultAlignTempAlloca(
+          VlaSize.NumElts->getType(), "__vla_expr");
       Builder.CreateStore(VlaSize.NumElts, SizeExprAddr);
       Dimensions.emplace_back(SizeExprAddr.getPointer(),
                               Type1D.getUnqualifiedType());
@@ -999,6 +999,7 @@ void CodeGenFunction::EmitAndRegisterVariableArrayDimensions(
           getContext(), const_cast<DeclContext *>(D.getDeclContext()),
           D.getLocation(), D.getLocation(), &NameIdent, QT,
           getContext().CreateTypeSourceInfo(QT), SC_Auto);
+      ArtificialDecl->setImplicit();
 
       MD = DI->EmitDeclareOfAutoVariable(ArtificialDecl, VlaSize.NumElts,
                                          Builder);
@@ -1337,7 +1338,8 @@ void CodeGenFunction::EmitAutoVarInit(const AutoVarEmission &emission) {
                          isVolatile);
     // Zero and undef don't require a stores.
     if (!constant->isNullValue() && !isa<llvm::UndefValue>(constant)) {
-      Loc = Builder.CreateBitCast(Loc, constant->getType()->getPointerTo());
+      Loc = Builder.CreateBitCast(Loc,
+        constant->getType()->getPointerTo(Loc.getAddressSpace()));
       emitStoresForInitAfterMemset(constant, Loc.getPointer(),
                                    isVolatile, Builder);
     }

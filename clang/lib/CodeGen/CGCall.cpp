@@ -1877,46 +1877,7 @@ void CodeGenModule::ConstructAttributeList(
                         TargetDecl->hasAttr<AnyX86InterruptAttr>()));
     FuncAttrs.addAttribute("disable-tail-calls",
                            llvm::toStringRef(DisableTailCalls));
-
-    // Add target-cpu and target-features attributes to functions. If
-    // we have a decl for the function and it has a target attribute then
-    // parse that and add it to the feature set.
-    StringRef TargetCPU = getTarget().getTargetOpts().CPU;
-    std::vector<std::string> Features;
-    const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(TargetDecl);
-    if (FD && FD->hasAttr<TargetAttr>()) {
-      llvm::StringMap<bool> FeatureMap;
-      getFunctionFeatureMap(FeatureMap, FD);
-
-      // Produce the canonical string for this set of features.
-      for (llvm::StringMap<bool>::const_iterator it = FeatureMap.begin(),
-                                                 ie = FeatureMap.end();
-           it != ie; ++it)
-        Features.push_back((it->second ? "+" : "-") + it->first().str());
-
-      // Now add the target-cpu and target-features to the function.
-      // While we populated the feature map above, we still need to
-      // get and parse the target attribute so we can get the cpu for
-      // the function.
-      const auto *TD = FD->getAttr<TargetAttr>();
-      TargetAttr::ParsedTargetAttr ParsedAttr = TD->parse();
-      if (ParsedAttr.Architecture != "" &&
-          getTarget().isValidCPUName(ParsedAttr.Architecture))
-        TargetCPU = ParsedAttr.Architecture;
-    } else {
-      // Otherwise just add the existing target cpu and target features to the
-      // function.
-      Features = getTarget().getTargetOpts().Features;
-    }
-
-    if (TargetCPU != "")
-      FuncAttrs.addAttribute("target-cpu", TargetCPU);
-    if (!Features.empty()) {
-      std::sort(Features.begin(), Features.end());
-      FuncAttrs.addAttribute(
-          "target-features",
-          llvm::join(Features, ","));
-    }
+    GetCPUAndFeaturesAttributes(TargetDecl, FuncAttrs);
   }
 
   ClangToLLVMArgMapping IRFunctionArgs(getContext(), FI);
@@ -3608,20 +3569,21 @@ CodeGenFunction::EmitRuntimeCall(llvm::Value *callee,
 
 // Calls which may throw must have operand bundles indicating which funclet
 // they are nested within.
-static void
-getBundlesForFunclet(llvm::Value *Callee, llvm::Instruction *CurrentFuncletPad,
-                     SmallVectorImpl<llvm::OperandBundleDef> &BundleList) {
+SmallVector<llvm::OperandBundleDef, 1>
+CodeGenFunction::getBundlesForFunclet(llvm::Value *Callee) {
+  SmallVector<llvm::OperandBundleDef, 1> BundleList;
   // There is no need for a funclet operand bundle if we aren't inside a
   // funclet.
   if (!CurrentFuncletPad)
-    return;
+    return BundleList;
 
   // Skip intrinsics which cannot throw.
   auto *CalleeFn = dyn_cast<llvm::Function>(Callee->stripPointerCasts());
   if (CalleeFn && CalleeFn->isIntrinsic() && CalleeFn->doesNotThrow())
-    return;
+    return BundleList;
 
   BundleList.emplace_back("funclet", CurrentFuncletPad);
+  return BundleList;
 }
 
 /// Emits a simple call (never an invoke) to the given runtime function.
@@ -3629,10 +3591,8 @@ llvm::CallInst *
 CodeGenFunction::EmitRuntimeCall(llvm::Value *callee,
                                  ArrayRef<llvm::Value*> args,
                                  const llvm::Twine &name) {
-  SmallVector<llvm::OperandBundleDef, 1> BundleList;
-  getBundlesForFunclet(callee, CurrentFuncletPad, BundleList);
-
-  llvm::CallInst *call = Builder.CreateCall(callee, args, BundleList, name);
+  llvm::CallInst *call =
+      Builder.CreateCall(callee, args, getBundlesForFunclet(callee), name);
   call->setCallingConv(getRuntimeCC());
   return call;
 }
@@ -3640,8 +3600,8 @@ CodeGenFunction::EmitRuntimeCall(llvm::Value *callee,
 /// Emits a call or invoke to the given noreturn runtime function.
 void CodeGenFunction::EmitNoreturnRuntimeCallOrInvoke(llvm::Value *callee,
                                                ArrayRef<llvm::Value*> args) {
-  SmallVector<llvm::OperandBundleDef, 1> BundleList;
-  getBundlesForFunclet(callee, CurrentFuncletPad, BundleList);
+  SmallVector<llvm::OperandBundleDef, 1> BundleList =
+      getBundlesForFunclet(callee);
 
   if (getInvokeDest()) {
     llvm::InvokeInst *invoke = 
@@ -3684,8 +3644,8 @@ CodeGenFunction::EmitCallOrInvoke(llvm::Value *Callee,
                                   ArrayRef<llvm::Value *> Args,
                                   const Twine &Name) {
   llvm::BasicBlock *InvokeDest = getInvokeDest();
-  SmallVector<llvm::OperandBundleDef, 1> BundleList;
-  getBundlesForFunclet(Callee, CurrentFuncletPad, BundleList);
+  SmallVector<llvm::OperandBundleDef, 1> BundleList =
+      getBundlesForFunclet(Callee);
 
   llvm::Instruction *Inst;
   if (!InvokeDest)
@@ -4196,8 +4156,8 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
   }
   llvm::BasicBlock *InvokeDest = CannotThrow ? nullptr : getInvokeDest();
 
-  SmallVector<llvm::OperandBundleDef, 1> BundleList;
-  getBundlesForFunclet(CalleePtr, CurrentFuncletPad, BundleList);
+  SmallVector<llvm::OperandBundleDef, 1> BundleList =
+      getBundlesForFunclet(CalleePtr);
 
   // Emit the actual call/invoke instruction.
   llvm::CallSite CS;

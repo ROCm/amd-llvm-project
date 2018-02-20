@@ -796,38 +796,16 @@ public:
   /// searches to be performed in parallel, caching of results across
   /// queries and incremental addition to Worklist. Stops early if N is
   /// found but will resume. Remember to clear Visited and Worklists
-  /// if DAG changes. MaxSteps gives a maximum number of nodes to visit before
-  /// giving up. The TopologicalPrune flag signals that positive NodeIds are
-  /// topologically ordered (Operands have strictly smaller node id) and search
-  /// can be pruned leveraging this.
+  /// if DAG changes.
   static bool hasPredecessorHelper(const SDNode *N,
                                    SmallPtrSetImpl<const SDNode *> &Visited,
                                    SmallVectorImpl<const SDNode *> &Worklist,
-                                   unsigned int MaxSteps = 0,
-                                   bool TopologicalPrune = false) {
-    SmallVector<const SDNode *, 8> DeferredNodes;
+                                   unsigned int MaxSteps = 0) {
     if (Visited.count(N))
       return true;
-
-    // Node Id's are assigned in three places: As a topological
-    // ordering (> 0), during legalization (results in values set to
-    // 0), and new nodes (set to -1). If N has a topolgical id then we
-    // know that all nodes with ids smaller than it cannot be
-    // successors and we need not check them. Filter out all node
-    // that can't be matches. We add them to the worklist before exit
-    // in case of multiple calls.
-
-    int NId = N->getNodeId();
-
-    bool Found = false;
     while (!Worklist.empty()) {
       const SDNode *M = Worklist.pop_back_val();
-      int MId = M->getNodeId();
-      if (TopologicalPrune && M->getOpcode() != ISD::TokenFactor && (NId > 0) &&
-          (MId > 0) && (MId < NId)) {
-        DeferredNodes.push_back(M);
-        continue;
-      }
+      bool Found = false;
       for (const SDValue &OpV : M->op_values()) {
         SDNode *Op = OpV.getNode();
         if (Visited.insert(Op).second)
@@ -836,13 +814,11 @@ public:
           Found = true;
       }
       if (Found)
-        break;
+        return true;
       if (MaxSteps != 0 && Visited.size() >= MaxSteps)
-        break;
+        return false;
     }
-    // Push deferred nodes back on worklist.
-    Worklist.append(DeferredNodes.begin(), DeferredNodes.end());
-    return Found;
+    return false;
   }
 
   /// Return true if all the users of N are contained in Nodes.
@@ -1291,6 +1267,7 @@ public:
            N->getOpcode() == ISD::ATOMIC_LOAD_ADD     ||
            N->getOpcode() == ISD::ATOMIC_LOAD_SUB     ||
            N->getOpcode() == ISD::ATOMIC_LOAD_AND     ||
+           N->getOpcode() == ISD::ATOMIC_LOAD_CLR     ||
            N->getOpcode() == ISD::ATOMIC_LOAD_OR      ||
            N->getOpcode() == ISD::ATOMIC_LOAD_XOR     ||
            N->getOpcode() == ISD::ATOMIC_LOAD_NAND    ||
@@ -1342,6 +1319,7 @@ public:
            N->getOpcode() == ISD::ATOMIC_LOAD_ADD     ||
            N->getOpcode() == ISD::ATOMIC_LOAD_SUB     ||
            N->getOpcode() == ISD::ATOMIC_LOAD_AND     ||
+           N->getOpcode() == ISD::ATOMIC_LOAD_CLR     ||
            N->getOpcode() == ISD::ATOMIC_LOAD_OR      ||
            N->getOpcode() == ISD::ATOMIC_LOAD_XOR     ||
            N->getOpcode() == ISD::ATOMIC_LOAD_NAND    ||

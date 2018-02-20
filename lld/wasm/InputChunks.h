@@ -27,6 +27,10 @@ using llvm::wasm::WasmRelocation;
 using llvm::wasm::WasmSignature;
 using llvm::object::WasmSection;
 
+namespace llvm {
+class raw_ostream;
+}
+
 namespace lld {
 namespace wasm {
 
@@ -37,7 +41,7 @@ class InputChunk {
 public:
   enum Kind { DataSegment, Function };
 
-  Kind kind() const { return SectionKind; };
+  Kind kind() const { return SectionKind; }
 
   uint32_t getSize() const { return data().size(); }
 
@@ -45,36 +49,30 @@ public:
 
   void writeTo(uint8_t *SectionStart) const;
 
-  void setOutputOffset(uint32_t Offset) {
-    OutputOffset = Offset;
-    calcRelocations();
-  }
-
-  uint32_t getOutputOffset() const { return OutputOffset; }
   ArrayRef<WasmRelocation> getRelocations() const { return Relocations; }
-  StringRef getFileName() const { return File->getName(); }
 
   virtual StringRef getComdat() const = 0;
   virtual StringRef getName() const = 0;
 
-  bool Discarded = false;
-  std::vector<OutputRelocation> OutRelocations;
-  ObjFile *File;
+  size_t NumRelocations() const { return Relocations.size(); }
+  void writeRelocations(llvm::raw_ostream &OS) const;
 
-  // The garbage collector sets sections' Live bits.
-  // If GC is disabled, all sections are considered live by default.
+  ObjFile *File;
+  int32_t OutputOffset = 0;
+
+  // Signals that the section is part of the output.  The garbage collector,
+  // and COMDAT handling can set a sections' Live bit.
+  // If GC is disabled, all sections start out as live by default.
   unsigned Live : 1;
 
 protected:
   InputChunk(ObjFile *F, Kind K)
       : File(F), Live(!Config->GcSections), SectionKind(K) {}
   virtual ~InputChunk() = default;
-  void calcRelocations();
   virtual ArrayRef<uint8_t> data() const = 0;
   virtual uint32_t getInputSectionOffset() const = 0;
 
   std::vector<WasmRelocation> Relocations;
-  int32_t OutputOffset = 0;
   Kind SectionKind;
 };
 
@@ -175,6 +173,8 @@ protected:
 };
 
 } // namespace wasm
+
+std::string toString(const wasm::InputChunk *);
 } // namespace lld
 
 #endif // LLD_WASM_INPUT_CHUNKS_H

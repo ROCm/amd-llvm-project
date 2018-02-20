@@ -676,7 +676,7 @@ class Base(unittest2.TestCase):
         if not lldb.remote_platform or not configuration.lldb_platform_working_dir:
             return
 
-        components = [str(self.test_number)] + self.mydir.split(os.path.sep)
+        components = self.mydir.split(os.path.sep) + [str(self.test_number), self.getBuildDirBasename()]
         remote_test_dir = configuration.lldb_platform_working_dir
         for c in components:
             remote_test_dir = lldbutil.join_remote_paths(remote_test_dir, c)
@@ -705,13 +705,16 @@ class Base(unittest2.TestCase):
         """Return the full path to the current test."""
         return os.path.join(os.environ["LLDB_TEST"], self.mydir)
 
+    def getBuildDirBasename(self):
+        return self.__class__.__module__ + "." + self.testMethodName
+
     def getBuildDir(self):
         """Return the full path to the current test."""
         variant = self.getDebugInfo()
         if variant is None:
             variant = 'default'
         return os.path.join(os.environ["LLDB_BUILD"], self.mydir,
-                            self.testMethodName)
+                            self.getBuildDirBasename())
     
      
     def makeBuildDir(self):
@@ -1478,10 +1481,10 @@ class Base(unittest2.TestCase):
             d = {
                 'DYLIB_CXX_SOURCES': sources,
                 'DYLIB_NAME': lib_name,
-                'CFLAGS_EXTRAS': "%s -I%s -fPIC" % (stdflag,
-                                                    os.path.join(
-                                                        os.environ["LLDB_SRC"],
-                                                        "include")),
+                'CFLAGS_EXTRAS': "%s -I%s " % (stdflag,
+                                               os.path.join(
+                                                   os.environ["LLDB_SRC"],
+                                                   "include")),
                 'LD_EXTRAS': "-shared -l%s\liblldb.lib" % self.os.environ["LLDB_IMPLIB_DIR"]}
         if self.TraceOn():
             print(
@@ -1504,7 +1507,7 @@ class Base(unittest2.TestCase):
             clean=True):
         """Platform specific way to build the default binaries."""
         testdir = self.mydir
-        testname = self.testMethodName
+        testname = self.getBuildDirBasename()
         if self.getDebugInfo():
             raise Exception("buildDefault tests must set NO_DEBUG_INFO_TESTCASE")
         module = builder_module()
@@ -1522,7 +1525,7 @@ class Base(unittest2.TestCase):
             clean=True):
         """Platform specific way to build binaries with dsym info."""
         testdir = self.mydir
-        testname = self.testMethodName
+        testname = self.getBuildDirBasename()
         if self.getDebugInfo() != "dsym":
             raise Exception("NO_DEBUG_INFO_TESTCASE must build with buildDefault")
 
@@ -1540,7 +1543,7 @@ class Base(unittest2.TestCase):
             clean=True):
         """Platform specific way to build binaries with dwarf maps."""
         testdir = self.mydir
-        testname = self.testMethodName
+        testname = self.getBuildDirBasename()
         if self.getDebugInfo() != "dwarf":
             raise Exception("NO_DEBUG_INFO_TESTCASE must build with buildDefault")
 
@@ -1558,7 +1561,7 @@ class Base(unittest2.TestCase):
             clean=True):
         """Platform specific way to build binaries with dwarf maps."""
         testdir = self.mydir
-        testname = self.testMethodName
+        testname = self.getBuildDirBasename()
         if self.getDebugInfo() != "dwo":
             raise Exception("NO_DEBUG_INFO_TESTCASE must build with buildDefault")
 
@@ -1576,7 +1579,7 @@ class Base(unittest2.TestCase):
             clean=True):
         """Platform specific way to build binaries with gmodules info."""
         testdir = self.mydir
-        testname = self.testMethodName
+        testname = self.getBuildDirBasename()
         if self.getDebugInfo() != "gmodules":
             raise Exception("NO_DEBUG_INFO_TESTCASE must build with buildDefault")
 
@@ -1913,6 +1916,14 @@ class TestBase(Base):
         # Works with the test driver to conditionally skip tests via
         # decorators.
         Base.setUp(self)
+
+        # Set the clang modules cache path.
+        if self.child:
+            assert(self.getDebugInfo() == 'default')
+            mod_cache = os.path.join(self.getBuildDir(), "module-cache")
+            self.runCmd("settings set target.clang-modules-cache-path "
+                        + mod_cache)
+
 
         if "LLDB_MAX_LAUNCH_COUNT" in os.environ:
             self.maxLaunchCount = int(os.environ["LLDB_MAX_LAUNCH_COUNT"])

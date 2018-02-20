@@ -120,20 +120,16 @@ void MCStreamer::EmitIntValue(uint64_t Value, unsigned Size) {
   EmitBytes(StringRef(buf, Size));
 }
 
-/// EmitULEB128Value - Special case of EmitULEB128Value that avoids the
+/// EmitULEB128IntValue - Special case of EmitULEB128Value that avoids the
 /// client having to pass in a MCExpr for constant integers.
-void MCStreamer::EmitPaddedULEB128IntValue(uint64_t Value, unsigned PadTo) {
+void MCStreamer::EmitULEB128IntValue(uint64_t Value) {
   SmallString<128> Tmp;
   raw_svector_ostream OSE(Tmp);
-  encodeULEB128(Value, OSE, PadTo);
+  encodeULEB128(Value, OSE);
   EmitBytes(OSE.str());
 }
 
-void MCStreamer::EmitULEB128IntValue(uint64_t Value) {
-  EmitPaddedULEB128IntValue(Value, 0);
-}
-
-/// EmitSLEB128Value - Special case of EmitSLEB128Value that avoids the
+/// EmitSLEB128IntValue - Special case of EmitSLEB128Value that avoids the
 /// client having to pass in a MCExpr for constant integers.
 void MCStreamer::EmitSLEB128IntValue(int64_t Value) {
   SmallString<128> Tmp;
@@ -820,10 +816,11 @@ void MCStreamer::EmitWindowsUnwindTables() {
 }
 
 void MCStreamer::Finish() {
-  if (!DwarfFrameInfos.empty() && !DwarfFrameInfos.back().End)
+  if ((!DwarfFrameInfos.empty() && !DwarfFrameInfos.back().End) ||
+      (!WinFrameInfos.empty() && !WinFrameInfos.back()->End)) {
     getContext().reportError(SMLoc(), "Unfinished frame!");
-  if (!WinFrameInfos.empty() && !WinFrameInfos.back()->End)
-    getContext().reportError(SMLoc(), "Unfinished frame!");
+    return;
+  }
 
   MCTargetStreamer *TS = getTargetStreamer();
   if (TS)
@@ -900,6 +897,16 @@ void MCStreamer::emitAbsoluteSymbolDiff(const MCSymbol *Hi, const MCSymbol *Lo,
   MCSymbol *SetLabel = Context.createTempSymbol("set", true);
   EmitAssignment(SetLabel, Diff);
   EmitSymbolValue(SetLabel, Size);
+}
+
+void MCStreamer::emitAbsoluteSymbolDiffAsULEB128(const MCSymbol *Hi,
+                                                 const MCSymbol *Lo) {
+  // Get the Hi-Lo expression.
+  const MCExpr *Diff =
+      MCBinaryExpr::createSub(MCSymbolRefExpr::create(Hi, Context),
+                              MCSymbolRefExpr::create(Lo, Context), Context);
+
+  EmitULEB128Value(Diff);
 }
 
 void MCStreamer::EmitAssemblerFlag(MCAssemblerFlag Flag) {}

@@ -90,12 +90,15 @@ generateNumSymbols(int Begin, int End,
 }
 
 std::vector<std::string> match(const SymbolIndex &I,
-                               const FuzzyFindRequest &Req) {
+                               const FuzzyFindRequest &Req,
+                               bool *Incomplete = nullptr) {
   std::vector<std::string> Matches;
-  I.fuzzyFind(Req, [&](const Symbol &Sym) {
+  bool IsIncomplete = I.fuzzyFind(Req, [&](const Symbol &Sym) {
     Matches.push_back(
         (Sym.Scope + (Sym.Scope.empty() ? "" : "::") + Sym.Name).str());
   });
+  if (Incomplete)
+    *Incomplete = IsIncomplete;
   return Matches;
 }
 
@@ -144,8 +147,10 @@ TEST(MemIndexTest, MemIndexLimitedNumMatches) {
   FuzzyFindRequest Req;
   Req.Query = "5";
   Req.MaxCandidateCount = 3;
-  auto Matches = match(I, Req);
+  bool Incomplete;
+  auto Matches = match(I, Req, &Incomplete);
   EXPECT_EQ(Matches.size(), Req.MaxCandidateCount);
+  EXPECT_TRUE(Incomplete);
 }
 
 TEST(MemIndexTest, FuzzyMatch) {
@@ -246,6 +251,28 @@ TEST(MergeTest, Merge) {
   ASSERT_TRUE(M.Detail);
   EXPECT_EQ(M.Detail->CompletionDetail, "DetL");
   EXPECT_EQ(M.Detail->Documentation, "--doc--");
+}
+
+TEST(MergeTest, PreferSymbolWithDefn) {
+  Symbol L, R;
+  Symbol::Details Scratch;
+
+  L.ID = R.ID = SymbolID("hello");
+  L.CanonicalDeclaration.FileURI = "file:/left.h";
+  R.CanonicalDeclaration.FileURI = "file:/right.h";
+  L.CompletionPlainInsertText = "left-insert";
+  R.CompletionPlainInsertText = "right-insert";
+
+  Symbol M = mergeSymbol(L, R, &Scratch);
+  EXPECT_EQ(M.CanonicalDeclaration.FileURI, "file:/left.h");
+  EXPECT_EQ(M.Definition.FileURI, "");
+  EXPECT_EQ(M.CompletionPlainInsertText, "left-insert");
+
+  R.Definition.FileURI = "file:/right.cpp"; // Now right will be favored.
+  M = mergeSymbol(L, R, &Scratch);
+  EXPECT_EQ(M.CanonicalDeclaration.FileURI, "file:/right.h");
+  EXPECT_EQ(M.Definition.FileURI, "file:/right.cpp");
+  EXPECT_EQ(M.CompletionPlainInsertText, "right-insert");
 }
 
 } // namespace

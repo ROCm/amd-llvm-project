@@ -113,10 +113,6 @@ TEST(FormatTestObjCStyle, DetectsObjCInHeaders) {
   ASSERT_TRUE((bool)Style);
   EXPECT_EQ(FormatStyle::LK_Cpp, Style->Language);
 
-  Style = getStyle("{}", "a.h", "none", "extern NSString *kFoo;\n");
-  ASSERT_TRUE((bool)Style);
-  EXPECT_EQ(FormatStyle::LK_ObjC, Style->Language);
-
   Style =
       getStyle("{}", "a.h", "none", "typedef NS_ENUM(NSInteger, Foo) {};\n");
   ASSERT_TRUE((bool)Style);
@@ -125,10 +121,6 @@ TEST(FormatTestObjCStyle, DetectsObjCInHeaders) {
   Style = getStyle("{}", "a.h", "none", "enum Foo {};");
   ASSERT_TRUE((bool)Style);
   EXPECT_EQ(FormatStyle::LK_Cpp, Style->Language);
-
-  Style = getStyle("{}", "a.h", "none", "extern NSInteger Foo();\n");
-  ASSERT_TRUE((bool)Style);
-  EXPECT_EQ(FormatStyle::LK_ObjC, Style->Language);
 
   Style =
       getStyle("{}", "a.h", "none", "inline void Foo() { Log(@\"Foo\"); }\n");
@@ -154,6 +146,23 @@ TEST(FormatTestObjCStyle, DetectsObjCInHeaders) {
                    "inline void Foo() { int foo[] = {1, 2, 3}; }\n");
   ASSERT_TRUE((bool)Style);
   EXPECT_EQ(FormatStyle::LK_Cpp, Style->Language);
+
+  // ObjC characteristic types.
+  Style = getStyle("{}", "a.h", "none", "extern NSString *kFoo;\n");
+  ASSERT_TRUE((bool)Style);
+  EXPECT_EQ(FormatStyle::LK_ObjC, Style->Language);
+
+  Style = getStyle("{}", "a.h", "none", "extern NSInteger Foo();\n");
+  ASSERT_TRUE((bool)Style);
+  EXPECT_EQ(FormatStyle::LK_ObjC, Style->Language);
+
+  Style = getStyle("{}", "a.h", "none", "NSObject *Foo();\n");
+  ASSERT_TRUE((bool)Style);
+  EXPECT_EQ(FormatStyle::LK_ObjC, Style->Language);
+
+  Style = getStyle("{}", "a.h", "none", "NSSet *Foo();\n");
+  ASSERT_TRUE((bool)Style);
+  EXPECT_EQ(FormatStyle::LK_ObjC, Style->Language);
 }
 
 TEST_F(FormatTestObjC, FormatObjCTryCatch) {
@@ -693,8 +702,8 @@ TEST_F(FormatTestObjC, FormatObjCMethodExpr) {
   // Formats pair-parameters.
   verifyFormat("[I drawRectOn:surface ofSize:aa:bbb atOrigin:cc:dd];");
   verifyFormat("[I drawRectOn:surface //\n"
-               "        ofSize:aa:bbb\n"
-               "      atOrigin:cc:dd];");
+               "       ofSize:aa:bbb\n"
+               "     atOrigin:cc:dd];");
 
   // Inline block as a first argument.
   verifyFormat("[object justBlock:^{\n"
@@ -760,6 +769,26 @@ TEST_F(FormatTestObjC, FormatObjCMethodExpr) {
       "                  backing:NSBackingStoreBuffered\n"
       "                    defer:NO]);\n"
       "}");
+
+  // Respect continuation indent and colon alignment (e.g. when object name is
+  // short, and first selector is the longest one)
+  Style = getLLVMStyle();
+  Style.Language = FormatStyle::LK_ObjC;
+  Style.ContinuationIndentWidth = 8;
+  verifyFormat("[self performSelectorOnMainThread:@selector(loadAccessories)\n"
+               "                       withObject:nil\n"
+               "                    waitUntilDone:false];");
+  verifyFormat("[self performSelector:@selector(loadAccessories)\n"
+               "        withObjectOnMainThread:nil\n"
+               "                 waitUntilDone:false];");
+  verifyFormat("[aaaaaaaaaaaaaaaaaaaaaaaaa\n"
+               "        performSelectorOnMainThread:@selector(loadAccessories)\n"
+               "                         withObject:nil\n"
+               "                      waitUntilDone:false];");
+  verifyFormat("[self // force wrapping\n"
+               "        performSelectorOnMainThread:@selector(loadAccessories)\n"
+               "                         withObject:nil\n"
+               "                      waitUntilDone:false];");
 }
 
 TEST_F(FormatTestObjC, ObjCAt) {

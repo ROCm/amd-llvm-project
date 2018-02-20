@@ -97,10 +97,6 @@ static cl::opt<bool> EnableVectorPrint("enable-hexagon-vector-print",
 static cl::opt<bool> EnableVExtractOpt("hexagon-opt-vextract", cl::Hidden,
   cl::ZeroOrMore, cl::init(true), cl::desc("Enable vextract optimization"));
 
-static cl::opt<bool> EnableTrapUnreachable("hexagon-trap-unreachable",
-  cl::Hidden, cl::ZeroOrMore, cl::init(false),
-  cl::desc("Enable generating trap for unreachable"));
-
 /// HexagonTargetMachineModule - Note that this is used on hosts that
 /// cannot link in a library unless there are references into the
 /// library.  In particular, it seems that it is not possible to get
@@ -125,6 +121,7 @@ SchedCustomRegistry("hexagon", "Run Hexagon's custom scheduler",
 
 namespace llvm {
   extern char &HexagonExpandCondsetsID;
+  void initializeHexagonBitSimplifyPass(PassRegistry&);
   void initializeHexagonConstExtendersPass(PassRegistry&);
   void initializeHexagonEarlyIfConversionPass(PassRegistry&);
   void initializeHexagonExpandCondsetsPass(PassRegistry&);
@@ -189,6 +186,7 @@ extern "C" void LLVMInitializeHexagonTarget() {
   RegisterTargetMachine<HexagonTargetMachine> X(getTheHexagonTarget());
 
   PassRegistry &PR = *PassRegistry::getPassRegistry();
+  initializeHexagonBitSimplifyPass(PR);
   initializeHexagonConstExtendersPass(PR);
   initializeHexagonEarlyIfConversionPass(PR);
   initializeHexagonGenMuxPass(PR);
@@ -219,8 +217,6 @@ HexagonTargetMachine::HexagonTargetMachine(const Target &T, const Triple &TT,
           TT, CPU, FS, Options, getEffectiveRelocModel(RM),
           getEffectiveCodeModel(CM), (HexagonNoOpt ? CodeGenOpt::None : OL)),
       TLOF(make_unique<HexagonTargetObjectFile>()) {
-  if (EnableTrapUnreachable)
-    this->Options.TrapUnreachable = true;
   initializeHexagonExpandCondsetsPass(*PassRegistry::getPassRegistry());
   initAsmInfo();
 }

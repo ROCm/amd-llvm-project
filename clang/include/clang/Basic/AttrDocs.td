@@ -3273,3 +3273,13 @@ For more information see
 or `msvc documentation <https://docs.microsoft.com/pl-pl/cpp/cpp/selectany>`_.
 }];
 }
+
+def ArtificialDocs : Documentation {
+  let Category = DocCatFunction;
+  let Content = [{
+The ``artificial`` attribute can be applied to an inline function. If such a
+function is inlined, the attribute indicates that debuggers should associate
+the resulting instructions with the call site, rather than with the 
+corresponding line within the inlined callee.
+  }];
+}
