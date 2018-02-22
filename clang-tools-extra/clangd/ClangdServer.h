@@ -11,7 +11,6 @@
 #define LLVM_CLANG_TOOLS_EXTRA_CLANGD_CLANGDSERVER_H
 
 #include "ClangdUnit.h"
-#include "ClangdUnitStore.h"
 #include "CodeComplete.h"
 #include "CompileArgsCache.h"
 #include "DraftStore.h"
@@ -26,6 +25,7 @@
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/StringRef.h"
 #include <functional>
+#include <future>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -158,11 +158,7 @@ public:
 
   /// Remove \p File from list of tracked files, schedule a request to free
   /// resources associated with it.
-  /// \return A future that will become ready when the file is removed and all
-  /// associated resources are freed.
-  /// FIXME: don't return futures here, LSP does not require a response for this
-  /// request.
-  std::future<void> removeDocument(PathRef File);
+  void removeDocument(PathRef File);
 
   /// Force \p File to be reparsed using the latest contents.
   /// Will also check if CompileCommand, provided by GlobalCompilationDatabase
@@ -191,13 +187,6 @@ public:
                     UniqueFunction<void(Tagged<CompletionList>)> Callback,
                     llvm::Optional<StringRef> OverridenContents = llvm::None,
                     IntrusiveRefCntPtr<vfs::FileSystem> *UsedFS = nullptr);
-
-  /// DEPRECATED: Please use the callback-based version of codeComplete.
-  std::future<Tagged<CompletionList>>
-  codeComplete(PathRef File, Position Pos,
-               const clangd::CodeCompleteOptions &Opts,
-               llvm::Optional<StringRef> OverridenContents = llvm::None,
-               IntrusiveRefCntPtr<vfs::FileSystem> *UsedFS = nullptr);
 
   /// Provide signature help for \p File at \p Pos. If \p OverridenContents is
   /// not None, they will used only for signature help, i.e. no diagnostics

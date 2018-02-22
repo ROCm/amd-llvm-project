@@ -9,6 +9,8 @@
 
 #include "ClangdLSPServer.h"
 #include "ClangdServer.h"
+#include "Matchers.h"
+#include "SyncAPI.h"
 #include "TestFS.h"
 #include "clang/Config/config.h"
 #include "llvm/ADT/SmallVector.h"
@@ -301,14 +303,14 @@ TEST_F(ClangdVFSTest, CheckVersions) {
   // thread.
   FS.Tag = "123";
   Server.addDocument(FooCpp, SourceContents);
-  EXPECT_EQ(Server.codeComplete(FooCpp, Position{0, 0}, CCOpts).get().Tag,
+  EXPECT_EQ(runCodeComplete(Server, FooCpp, Position{0, 0}, CCOpts).Tag,
             FS.Tag);
   EXPECT_EQ(DiagConsumer.lastVFSTag(), FS.Tag);
 
   FS.Tag = "321";
   Server.addDocument(FooCpp, SourceContents);
   EXPECT_EQ(DiagConsumer.lastVFSTag(), FS.Tag);
-  EXPECT_EQ(Server.codeComplete(FooCpp, Position{0, 0}, CCOpts).get().Tag,
+  EXPECT_EQ(runCodeComplete(Server, FooCpp, Position{0, 0}, CCOpts).Tag,
             FS.Tag);
 }
 
@@ -453,6 +455,39 @@ struct Something {
   EXPECT_THAT(Server.getUsedBytesPerFile(), IsEmpty());
 }
 
+TEST_F(ClangdVFSTest, InvalidCompileCommand) {
+  MockFSProvider FS;
+  ErrorCheckingDiagConsumer DiagConsumer;
+  MockCompilationDatabase CDB;
+
+  ClangdServer Server(CDB, DiagConsumer, FS,
+                      /*AsyncThreadsCount=*/0,
+                      /*StorePreamblesInMemory=*/true);
+
+  auto FooCpp = getVirtualTestFilePath("foo.cpp");
+  // clang cannot create CompilerInvocation if we pass two files in the
+  // CompileCommand. We pass the file in ExtraFlags once and CDB adds another
+  // one in getCompileCommand().
+  CDB.ExtraClangFlags.push_back(FooCpp.str());
+
+  // Clang can't parse command args in that case, but we shouldn't crash.
+  Server.addDocument(FooCpp, "int main() {}");
+
+  EXPECT_EQ(Server.dumpAST(FooCpp), "<no-ast>");
+  EXPECT_ERROR(Server.findDefinitions(FooCpp, Position{0, 0}));
+  EXPECT_ERROR(Server.findDocumentHighlights(FooCpp, Position{0, 0}));
+  EXPECT_ERROR(Server.rename(FooCpp, Position{0, 0}, "new_name"));
+  // FIXME: codeComplete and signatureHelp should also return errors when they
+  // can't parse the file.
+  EXPECT_THAT(runCodeComplete(Server, FooCpp, Position{0, 0},
+                              clangd::CodeCompleteOptions())
+                  .Value.items,
+              IsEmpty());
+  auto SigHelp = Server.signatureHelp(FooCpp, Position{0, 0});
+  ASSERT_TRUE(bool(SigHelp)) << "signatureHelp returned an error";
+  EXPECT_THAT(SigHelp->Value.signatures, IsEmpty());
+}
+
 class ClangdThreadingTest : public ClangdVFSTest {};
 
 TEST_F(ClangdThreadingTest, StressTest) {
@@ -539,7 +574,6 @@ int d;
     unsigned RequestsWithErrors = 0;
     bool LastContentsHadErrors = false;
     bool FileIsRemoved = true;
-    std::future<void> LastRequestFuture;
   };
 
   std::vector<RequestStats> ReqStats;
@@ -565,8 +599,7 @@ int d;
     std::uniform_int_distribution<int> ColumnDist(0, MaxColumnForFileRequests);
 
     // Some helpers.
-    auto UpdateStatsOnAddDocument = [&](unsigned FileIndex, bool HadErrors,
-                                        std::future<void> Future) {
+    auto UpdateStatsOnAddDocument = [&](unsigned FileIndex, bool HadErrors) {
       auto &Stats = ReqStats[FileIndex];
 
       if (HadErrors)
@@ -575,22 +608,17 @@ int d;
         ++Stats.RequestsWithoutErrors;
       Stats.LastContentsHadErrors = HadErrors;
       Stats.FileIsRemoved = false;
-      Stats.LastRequestFuture = std::move(Future);
     };
 
-    auto UpdateStatsOnRemoveDocument = [&](unsigned FileIndex,
-                                           std::future<void> Future) {
+    auto UpdateStatsOnRemoveDocument = [&](unsigned FileIndex) {
       auto &Stats = ReqStats[FileIndex];
 
       Stats.FileIsRemoved = true;
-      Stats.LastRequestFuture = std::move(Future);
     };
 
-    auto UpdateStatsOnForceReparse = [&](unsigned FileIndex,
-                                         std::future<void> Future) {
+    auto UpdateStatsOnForceReparse = [&](unsigned FileIndex) {
       auto &Stats = ReqStats[FileIndex];
 
-      Stats.LastRequestFuture = std::move(Future);
       if (Stats.LastContentsHadErrors)
         ++Stats.RequestsWithErrors;
       else
@@ -599,10 +627,10 @@ int d;
 
     auto AddDocument = [&](unsigned FileIndex) {
       bool ShouldHaveErrors = ShouldHaveErrorsDist(RandGen);
-      auto Future = Server.addDocument(
-          FilePaths[FileIndex], ShouldHaveErrors ? SourceContentsWithErrors
-                                                 : SourceContentsWithoutErrors);
-      UpdateStatsOnAddDocument(FileIndex, ShouldHaveErrors, std::move(Future));
+      Server.addDocument(FilePaths[FileIndex],
+                         ShouldHaveErrors ? SourceContentsWithErrors
+                                          : SourceContentsWithoutErrors);
+      UpdateStatsOnAddDocument(FileIndex, ShouldHaveErrors);
     };
 
     // Various requests that we would randomly run.
@@ -617,8 +645,8 @@ int d;
       if (ReqStats[FileIndex].FileIsRemoved)
         AddDocument(FileIndex);
 
-      auto Future = Server.forceReparse(FilePaths[FileIndex]);
-      UpdateStatsOnForceReparse(FileIndex, std::move(Future));
+      Server.forceReparse(FilePaths[FileIndex]);
+      UpdateStatsOnForceReparse(FileIndex);
     };
 
     auto RemoveDocumentRequest = [&]() {
@@ -627,8 +655,8 @@ int d;
       if (ReqStats[FileIndex].FileIsRemoved)
         AddDocument(FileIndex);
 
-      auto Future = Server.removeDocument(FilePaths[FileIndex]);
-      UpdateStatsOnRemoveDocument(FileIndex, std::move(Future));
+      Server.removeDocument(FilePaths[FileIndex]);
+      UpdateStatsOnRemoveDocument(FileIndex);
     };
 
     auto CodeCompletionRequest = [&]() {
@@ -644,10 +672,8 @@ int d;
       // requests as opposed to AddDocument/RemoveDocument, which are implicitly
       // cancelled by any subsequent AddDocument/RemoveDocument request to the
       // same file.
-      Server
-          .codeComplete(FilePaths[FileIndex], Pos,
-                        clangd::CodeCompleteOptions())
-          .wait();
+      runCodeComplete(Server, FilePaths[FileIndex], Pos,
+                      clangd::CodeCompleteOptions());
     };
 
     auto FindDefinitionsRequest = [&]() {
@@ -680,17 +706,6 @@ int d;
         auto RequestIndex = BlockingRequestIndexDist(RandGen);
         BlockingRequests[RequestIndex]();
       }
-    }
-
-    // Wait for last requests to finish.
-    for (auto &ReqStat : ReqStats) {
-      if (!ReqStat.LastRequestFuture.valid())
-        continue; // We never ran any requests for this file.
-
-      // Future should be ready much earlier than in 5 seconds, the timeout is
-      // there to check we won't wait indefinitely.
-      ASSERT_EQ(ReqStat.LastRequestFuture.wait_for(std::chrono::seconds(5)),
-                std::future_status::ready);
     }
   } // Wait for ClangdServer to shutdown before proceeding.
 

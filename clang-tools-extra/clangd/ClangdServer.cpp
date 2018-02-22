@@ -146,23 +146,10 @@ std::future<void> ClangdServer::addDocument(PathRef File, StringRef Contents) {
                                  std::move(TaggedFS));
 }
 
-std::future<void> ClangdServer::removeDocument(PathRef File) {
+void ClangdServer::removeDocument(PathRef File) {
   DraftMgr.removeDraft(File);
   CompileArgs.invalidate(File);
-
-  std::promise<void> DonePromise;
-  std::future<void> DoneFuture = DonePromise.get_future();
-
-  auto Callback = BindWithForward(
-      [](std::promise<void> DonePromise, llvm::Error Err) {
-        if (Err)
-          ignoreError(std::move(Err));
-        DonePromise.set_value();
-      },
-      std::move(DonePromise));
-
-  WorkScheduler.remove(File, std::move(Callback));
-  return DoneFuture;
+  WorkScheduler.remove(File);
 }
 
 std::future<void> ClangdServer::forceReparse(PathRef File) {
@@ -177,24 +164,6 @@ std::future<void> ClangdServer::forceReparse(PathRef File) {
   auto TaggedFS = FSProvider.getTaggedFileSystem(File);
   return scheduleReparseAndDiags(File, std::move(FileContents),
                                  std::move(TaggedFS));
-}
-
-std::future<Tagged<CompletionList>>
-ClangdServer::codeComplete(PathRef File, Position Pos,
-                           const clangd::CodeCompleteOptions &Opts,
-                           llvm::Optional<StringRef> OverridenContents,
-                           IntrusiveRefCntPtr<vfs::FileSystem> *UsedFS) {
-  std::promise<Tagged<CompletionList>> ResultPromise;
-  auto Callback = [](std::promise<Tagged<CompletionList>> ResultPromise,
-                     Tagged<CompletionList> Result) -> void {
-    ResultPromise.set_value(std::move(Result));
-  };
-
-  auto ResultFuture = ResultPromise.get_future();
-  codeComplete(File, Pos, Opts,
-               BindWithForward(Callback, std::move(ResultPromise)),
-               OverridenContents, UsedFS);
-  return ResultFuture;
 }
 
 void ClangdServer::codeComplete(

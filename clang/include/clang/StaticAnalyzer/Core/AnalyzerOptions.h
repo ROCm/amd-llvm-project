@@ -191,6 +191,7 @@ public:
   enum class ExplorationStrategyKind {
     DFS,
     BFS,
+    UnexploredFirst,
     BFSBlockDFSContents,
     NotSet
   };
@@ -230,6 +231,9 @@ private:
 
   /// \sa IncludeLoopExitInCFG
   Optional<bool> IncludeLoopExitInCFG;
+
+  /// \sa IncludeRichConstructorsInCFG
+  Optional<bool> IncludeRichConstructorsInCFG;
 
   /// \sa mayInlineCXXStandardLibrary
   Optional<bool> InlineCXXStandardLibrary;
@@ -273,6 +277,8 @@ private:
 
   /// \sa StableReportFilename
   Optional<bool> StableReportFilename;
+
+  Optional<bool> SerializeStats;
 
   /// \sa getGraphTrimInterval
   Optional<unsigned> GraphTrimInterval;
@@ -444,6 +450,13 @@ public:
   /// the values "true" and "false".
   bool includeLoopExitInCFG();
 
+  /// Returns whether or not construction site information should be included
+  /// in the CFG C++ constructor elements.
+  ///
+  /// This is controlled by the 'cfg-rich-constructors' config options,
+  /// which accepts the values "true" and "false".
+  bool includeRichConstructorsInCFG();
+
   /// Returns whether or not C++ standard library functions may be considered
   /// for inlining.
   ///
@@ -527,6 +540,14 @@ public:
   /// This is controlled by the 'stable-report-filename' config option,
   /// which accepts the values "true" and "false". Default = false
   bool shouldWriteStableReportFilename();
+
+  /// \return Whether the analyzer should
+  /// serialize statistics to plist output.
+  /// Statistics would be serialized in JSON format inside the main dictionary
+  /// under the \c statistics key.
+  /// Available only if compiled in assert mode or with LLVM statistics
+  /// explicitly enabled.
+  bool shouldSerializeStats();
 
   /// Returns whether irrelevant parts of a bug report path should be pruned
   /// out of the final output.

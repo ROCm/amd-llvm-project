@@ -307,16 +307,23 @@ TEST_F(FormatTestTextProto, DiscardsUnbreakableTailIfCanBreakAfter) {
       "}");
 }
 
-TEST_F(FormatTestTextProto, DiscardsUnbreakableTailIfCanBreakAfter) {
-  // The two closing braces count towards the string UnbreakableTailLength, but
-  // since we have broken after the corresponding opening braces, we don't
-  // consider that length for string breaking.
+TEST_F(FormatTestTextProto, KeepsLongStringLiteralsOnSameLine) {
   verifyFormat(
       "foo: {\n"
-      "  bar: {\n"
-      "    text: \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n"
-      "  }\n"
+      "  text: \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaasaaaaaaaaaa\"\n"
       "}");
 }
+
+TEST_F(FormatTestTextProto, KeepsCommentsIndentedInList) {
+  verifyFormat("aaaaaaaaaa: 100\n"
+               "bbbbbbbbbbbbbbbbbbbbbbbbbbb: 200\n"
+               "# Single line comment for stuff here.\n"
+               "cccccccccccccccccccccccc: 3849\n"
+               "# Multiline comment for stuff here.\n"
+               "# Multiline comment for stuff here.\n"
+               "# Multiline comment for stuff here.\n"
+               "cccccccccccccccccccccccc: 3849");
+}
+
 } // end namespace tooling
 } // end namespace clang

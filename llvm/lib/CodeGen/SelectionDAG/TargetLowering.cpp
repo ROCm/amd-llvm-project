@@ -1232,6 +1232,27 @@ bool TargetLowering::SimplifyDemandedBits(SDValue Op,
       }
       return true;
     }
+
+    // If we have a constant operand, we may be able to turn it into -1 if we
+    // do not demand the high bits. This can make the constant smaller to
+    // encode, allow more general folding, or match specialized instruction
+    // patterns (eg, 'blsr' on x86). Don't bother changing 1 to -1 because that
+    // is probably not useful (and could be detrimental).
+    ConstantSDNode *C = isConstOrConstSplat(Op1);
+    APInt HighMask = APInt::getHighBitsSet(NewMask.getBitWidth(), NewMaskLZ);
+    if (C && !C->isAllOnesValue() && !C->isOne() &&
+        (C->getAPIntValue() | HighMask).isAllOnesValue()) {
+      SDValue Neg1 = TLO.DAG.getAllOnesConstant(dl, VT);
+      // We can't guarantee that the new math op doesn't wrap, so explicitly
+      // clear those flags to prevent folding with a potential existing node
+      // that has those flags set.
+      SDNodeFlags Flags;
+      Flags.setNoSignedWrap(false);
+      Flags.setNoUnsignedWrap(false);
+      SDValue NewOp = TLO.DAG.getNode(Op.getOpcode(), dl, VT, Op0, Neg1, Flags);
+      return TLO.CombineTo(Op, NewOp);
+    }
+
     LLVM_FALLTHROUGH;
   }
   default:
@@ -1337,16 +1358,6 @@ bool TargetLowering::isConstTrueVal(const SDNode *N) const {
   }
 
   llvm_unreachable("Invalid boolean contents");
-}
-
-SDValue TargetLowering::getConstTrueVal(SelectionDAG &DAG, EVT VT,
-                                        const SDLoc &DL) const {
-  unsigned ElementWidth = VT.getScalarSizeInBits();
-  APInt TrueInt =
-      getBooleanContents(VT) == TargetLowering::ZeroOrOneBooleanContent
-          ? APInt(ElementWidth, 1)
-          : APInt::getAllOnesValue(ElementWidth);
-  return DAG.getConstant(TrueInt, DL, VT);
 }
 
 bool TargetLowering::isConstFalseVal(const SDNode *N) const {
@@ -1459,20 +1470,15 @@ SDValue TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
                                       DAGCombinerInfo &DCI,
                                       const SDLoc &dl) const {
   SelectionDAG &DAG = DCI.DAG;
+  EVT OpVT = N0.getValueType();
 
   // These setcc operations always fold.
   switch (Cond) {
   default: break;
   case ISD::SETFALSE:
-  case ISD::SETFALSE2: return DAG.getConstant(0, dl, VT);
+  case ISD::SETFALSE2: return DAG.getBoolConstant(false, dl, VT, OpVT);
   case ISD::SETTRUE:
-  case ISD::SETTRUE2: {
-    TargetLowering::BooleanContent Cnt =
-        getBooleanContents(N0->getValueType(0));
-    return DAG.getConstant(
-        Cnt == TargetLowering::ZeroOrNegativeOneBooleanContent ? -1ULL : 1, dl,
-        VT);
-  }
+  case ISD::SETTRUE2:  return DAG.getBoolConstant(true, dl, VT, OpVT);
   }
 
   // Ensure that the constant occurs on the RHS and fold constant comparisons.
@@ -1867,7 +1873,7 @@ SDValue TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
     if (Cond == ISD::SETGE || Cond == ISD::SETUGE) {
       // X >= MIN --> true
       if (C1 == MinVal)
-        return DAG.getConstant(1, dl, VT);
+        return DAG.getBoolConstant(true, dl, VT, OpVT);
 
       // X >= C0 --> X > (C0 - 1)
       APInt C = C1 - 1;
@@ -1885,7 +1891,7 @@ SDValue TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
     if (Cond == ISD::SETLE || Cond == ISD::SETULE) {
       // X <= MAX --> true
       if (C1 == MaxVal)
-          return DAG.getConstant(1, dl, VT);
+        return DAG.getBoolConstant(true, dl, VT, OpVT);
 
       // X <= C0 --> X < (C0 + 1)
       APInt C = C1 + 1;
@@ -1901,13 +1907,13 @@ SDValue TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
     }
 
     if ((Cond == ISD::SETLT || Cond == ISD::SETULT) && C1 == MinVal)
-      return DAG.getConstant(0, dl, VT);      // X < MIN --> false
+      return DAG.getBoolConstant(false, dl, VT, OpVT); // X < MIN --> false
     if ((Cond == ISD::SETGE || Cond == ISD::SETUGE) && C1 == MinVal)
-      return DAG.getConstant(1, dl, VT);      // X >= MIN --> true
+      return DAG.getBoolConstant(true, dl, VT, OpVT);  // X >= MIN --> true
     if ((Cond == ISD::SETGT || Cond == ISD::SETUGT) && C1 == MaxVal)
-      return DAG.getConstant(0, dl, VT);      // X > MAX --> false
+      return DAG.getBoolConstant(false, dl, VT, OpVT); // X > MAX --> false
     if ((Cond == ISD::SETLE || Cond == ISD::SETULE) && C1 == MaxVal)
-      return DAG.getConstant(1, dl, VT);      // X <= MAX --> true
+      return DAG.getBoolConstant(true, dl, VT, OpVT);  // X <= MAX --> true
 
     // Canonicalize setgt X, Min --> setne X, Min
     if ((Cond == ISD::SETGT || Cond == ISD::SETUGT) && C1 == MinVal)
@@ -2044,9 +2050,9 @@ SDValue TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
       switch (ISD::getUnorderedFlavor(Cond)) {
       default: llvm_unreachable("Unknown flavor!");
       case 0:  // Known false.
-        return DAG.getConstant(0, dl, VT);
+        return DAG.getBoolConstant(false, dl, VT, OpVT);
       case 1:  // Known true.
-        return DAG.getConstant(1, dl, VT);
+        return DAG.getBoolConstant(true, dl, VT, OpVT);
       case 2:  // Undefined.
         return DAG.getUNDEF(VT);
       }
@@ -2110,26 +2116,18 @@ SDValue TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
   if (N0 == N1) {
     // The sext(setcc()) => setcc() optimization relies on the appropriate
     // constant being emitted.
-    uint64_t EqVal = 0;
-    switch (getBooleanContents(N0.getValueType())) {
-    case UndefinedBooleanContent:
-    case ZeroOrOneBooleanContent:
-      EqVal = ISD::isTrueWhenEqual(Cond);
-      break;
-    case ZeroOrNegativeOneBooleanContent:
-      EqVal = ISD::isTrueWhenEqual(Cond) ? -1 : 0;
-      break;
-    }
+
+    bool EqTrue = ISD::isTrueWhenEqual(Cond);
 
     // We can always fold X == X for integer setcc's.
-    if (N0.getValueType().isInteger()) {
-      return DAG.getConstant(EqVal, dl, VT);
-    }
+    if (N0.getValueType().isInteger())
+      return DAG.getBoolConstant(EqTrue, dl, VT, OpVT);
+
     unsigned UOF = ISD::getUnorderedFlavor(Cond);
     if (UOF == 2)   // FP operators that are undefined on NaNs.
-      return DAG.getConstant(EqVal, dl, VT);
-    if (UOF == unsigned(ISD::isTrueWhenEqual(Cond)))
-      return DAG.getConstant(EqVal, dl, VT);
+      return DAG.getBoolConstant(EqTrue, dl, VT, OpVT);
+    if (UOF == unsigned(EqTrue))
+      return DAG.getBoolConstant(EqTrue, dl, VT, OpVT);
     // Otherwise, we can't fold it.  However, we can simplify it to SETUO/SETO
     // if it is not already.
     ISD::CondCode NewCond = UOF == 0 ? ISD::SETO : ISD::SETUO;

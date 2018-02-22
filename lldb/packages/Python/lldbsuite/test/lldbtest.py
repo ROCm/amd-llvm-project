@@ -1478,10 +1478,10 @@ class Base(unittest2.TestCase):
             d = {
                 'DYLIB_CXX_SOURCES': sources,
                 'DYLIB_NAME': lib_name,
-                'CFLAGS_EXTRAS': "%s -I%s -fPIC" % (stdflag,
-                                                    os.path.join(
-                                                        os.environ["LLDB_SRC"],
-                                                        "include")),
+                'CFLAGS_EXTRAS': "%s -I%s " % (stdflag,
+                                               os.path.join(
+                                                   os.environ["LLDB_SRC"],
+                                                   "include")),
                 'LD_EXTRAS': "-shared -l%s\liblldb.lib" % self.os.environ["LLDB_IMPLIB_DIR"]}
         if self.TraceOn():
             print(
@@ -1913,6 +1913,14 @@ class TestBase(Base):
         # Works with the test driver to conditionally skip tests via
         # decorators.
         Base.setUp(self)
+
+        # Set the clang modules cache path.
+        if self.child:
+            assert(self.getDebugInfo() == 'default')
+            mod_cache = os.path.join(self.getBuildDir(), "module-cache")
+            self.runCmd("settings set target.clang-modules-cache-path "
+                        + mod_cache)
+
 
         if "LLDB_MAX_LAUNCH_COUNT" in os.environ:
             self.maxLaunchCount = int(os.environ["LLDB_MAX_LAUNCH_COUNT"])
