@@ -949,7 +949,7 @@ void CodeGenFunction::StartFunction(GlobalDecl GD,
       EmitOpenCLKernelMetadata(FD, Fn);
   }
 
-  if (getLangOpts().CPlusPlusAMP) {
+  if (getLangOpts().CPlusPlusAMP && getLangOpts().DevicePath) {
     if (const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(D)) {
       if (FD->hasAttr<AnnotateAttr>() &&
         FD->getAttr<AnnotateAttr>()->getAnnotation() ==
@@ -1357,10 +1357,11 @@ void CodeGenFunction::GenerateCode(GlobalDecl GD, llvm::Function *Fn,
            FD->hasAttr<AnnotateAttr>() &&
            FD->getAttr<AnnotateAttr>()->getAnnotation() == "__cxxamp_trampoline_name")
     CGM.getAMPRuntime().EmitTrampolineNameBody(*this, FD, Args);
-  else if (getContext().getLangOpts().CPlusPlus &&
-           (!CGM.getCodeGenOpts().AMPIsDevice || CGM.getCodeGenOpts().AMPCPU) &&
+  else if (getContext().getLangOpts().CPlusPlusAMP &&
+           !getContext().getLangOpts().DevicePath &&
            FD->hasAttr<AnnotateAttr>() &&
-           FD->getAttr<AnnotateAttr>()->getAnnotation() == "__HIP_global_function__") {
+           FD->getAttr<AnnotateAttr>()->getAnnotation() ==
+             "__HIP_global_function__") {
     // We do not emit __global__ functions on the host path, we only want them
     // to have a correct address which we can use to obtain the mangled name
     // from the ELF.
