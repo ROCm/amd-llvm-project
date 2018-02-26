@@ -3352,13 +3352,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-disable-free");
 
 #ifdef NDEBUG
-  CmdArgs.push_back("-disable-llvm-verifier");
-
-  // Do not discard value names in HC mode
-  if (!Args.hasArg(options::OPT_hc_mode)) {
-    // Discard LLVM value names in -asserts builds.
-    CmdArgs.push_back("-discard-value-names");
-  }
   const bool IsAssertBuild = false;
 #else
   const bool IsAssertBuild = true;
@@ -3373,9 +3366,12 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                                      options::OPT_fno_discard_value_names)) {
     if (A->getOption().matches(options::OPT_fdiscard_value_names))
       CmdArgs.push_back("-discard-value-names");
-  } else if (!IsAssertBuild)
-    CmdArgs.push_back("-discard-value-names");
-
+  } else if (!IsAssertBuild) {
+    // Do not discard value names in HC mode
+    if (!Args.hasArg(options::OPT_hc_mode))
+      CmdArgs.push_back("-discard-value-names");
+  }
+  
   // Set the main file name, so that debug info works even with
   // -save-temps.
   CmdArgs.push_back("-main-file-name");
