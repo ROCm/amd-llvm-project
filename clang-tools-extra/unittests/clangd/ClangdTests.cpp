@@ -7,6 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Annotations.h"
 #include "ClangdLSPServer.h"
 #include "ClangdServer.h"
 #include "Matchers.h"
@@ -75,6 +76,43 @@ private:
   std::mutex Mutex;
   bool HadErrorInLastDiags = false;
   VFSTag LastVFSTag = VFSTag();
+};
+
+/// For each file, record whether the last published diagnostics contained at
+/// least one error.
+class MultipleErrorCheckingDiagConsumer : public DiagnosticsConsumer {
+public:
+  void
+  onDiagnosticsReady(PathRef File,
+                     Tagged<std::vector<DiagWithFixIts>> Diagnostics) override {
+    bool HadError = diagsContainErrors(Diagnostics.Value);
+
+    std::lock_guard<std::mutex> Lock(Mutex);
+    LastDiagsHadError[File] = HadError;
+  }
+
+  /// Exposes all files consumed by onDiagnosticsReady in an unspecified order.
+  /// For each file, a bool value indicates whether the last diagnostics
+  /// contained an error.
+  std::vector<std::pair<Path, bool>> filesWithDiags() const {
+    std::vector<std::pair<Path, bool>> Result;
+    std::lock_guard<std::mutex> Lock(Mutex);
+
+    for (const auto &it : LastDiagsHadError) {
+      Result.emplace_back(it.first(), it.second);
+    }
+
+    return Result;
+  }
+
+  void clear() {
+    std::lock_guard<std::mutex> Lock(Mutex);
+    LastDiagsHadError.clear();
+  }
+
+private:
+  mutable std::mutex Mutex;
+  llvm::StringMap<bool> LastDiagsHadError;
 };
 
 /// Replaces all patterns of the form 0x123abc with spaces
@@ -411,6 +449,72 @@ int main() { return 0; }
   // Subsequent addDocument call should finish without errors too.
   Server.addDocument(FooCpp, SourceContents);
   EXPECT_FALSE(DiagConsumer.hadErrorInLastDiags());
+}
+
+// Test ClangdServer.reparseOpenedFiles.
+TEST_F(ClangdVFSTest, ReparseOpenedFiles) {
+  Annotations FooSource(R"cpp(
+#ifdef MACRO
+$one[[static void bob() {}]]
+#else
+$two[[static void bob() {}]]
+#endif
+
+int main () { bo^b (); return 0; }
+)cpp");
+
+  Annotations BarSource(R"cpp(
+#ifdef MACRO
+this is an error
+#endif
+)cpp");
+
+  Annotations BazSource(R"cpp(
+int hello;
+)cpp");
+
+  MockFSProvider FS;
+  MockCompilationDatabase CDB;
+  MultipleErrorCheckingDiagConsumer DiagConsumer;
+  ClangdServer Server(CDB, DiagConsumer, FS,
+                      /*AsyncThreadsCount=*/0,
+                      /*StorePreamblesInMemory=*/true);
+
+  auto FooCpp = testPath("foo.cpp");
+  auto BarCpp = testPath("bar.cpp");
+  auto BazCpp = testPath("baz.cpp");
+
+  FS.Files[FooCpp] = "";
+  FS.Files[BarCpp] = "";
+  FS.Files[BazCpp] = "";
+
+  CDB.ExtraClangFlags = {"-DMACRO=1"};
+  Server.addDocument(FooCpp, FooSource.code());
+  Server.addDocument(BarCpp, BarSource.code());
+  Server.addDocument(BazCpp, BazSource.code());
+
+  EXPECT_THAT(DiagConsumer.filesWithDiags(),
+              UnorderedElementsAre(Pair(FooCpp, false), Pair(BarCpp, true),
+                                   Pair(BazCpp, false)));
+
+  auto Locations = runFindDefinitions(Server, FooCpp, FooSource.point());
+  EXPECT_TRUE(bool(Locations));
+  EXPECT_THAT(Locations->Value, ElementsAre(Location{URIForFile{FooCpp},
+                                                     FooSource.range("one")}));
+
+  // Undefine MACRO, close baz.cpp.
+  CDB.ExtraClangFlags.clear();
+  DiagConsumer.clear();
+  Server.removeDocument(BazCpp);
+  Server.reparseOpenedFiles();
+
+  EXPECT_THAT(DiagConsumer.filesWithDiags(),
+              UnorderedElementsAre(Pair(FooCpp, false), Pair(BarCpp, false)));
+
+  Locations = runFindDefinitions(Server, FooCpp, FooSource.point());
+  EXPECT_TRUE(bool(Locations));
+  EXPECT_THAT(Locations->Value, ElementsAre(Location{URIForFile{FooCpp},
+                                                     FooSource.range("two")}));
 }
 
 TEST_F(ClangdVFSTest, MemoryUsage) {
@@ -862,6 +966,8 @@ TEST_F(ClangdVFSTest, InsertIncludes) {
   MockFSProvider FS;
   ErrorCheckingDiagConsumer DiagConsumer;
   MockCompilationDatabase CDB;
+  std::string SearchDirArg = (llvm::Twine("-I") + testRoot()).str();
+  CDB.ExtraClangFlags.insert(CDB.ExtraClangFlags.end(), {SearchDirArg.c_str()});
   ClangdServer Server(CDB, DiagConsumer, FS,
                       /*AsyncThreadsCount=*/0,
                       /*StorePreamblesInMemory=*/true);
@@ -877,8 +983,10 @@ void f() {}
   FS.Files[FooCpp] = Code;
   Server.addDocument(FooCpp, Code);
 
-  auto Inserted = [&](llvm::StringRef Header, llvm::StringRef Expected) {
-    auto Replaces = Server.insertInclude(FooCpp, Code, Header);
+  auto Inserted = [&](llvm::StringRef Original, llvm::StringRef Preferred,
+                      llvm::StringRef Expected) {
+    auto Replaces = Server.insertInclude(
+        FooCpp, Code, Original, Preferred.empty() ? Original : Preferred);
     EXPECT_TRUE(static_cast<bool>(Replaces));
     auto Changed = tooling::applyAllReplacements(Code, *Replaces);
     EXPECT_TRUE(static_cast<bool>(Changed));
@@ -886,8 +994,19 @@ void f() {}
         (llvm::Twine("#include ") + Expected + "").str());
   };
 
-  EXPECT_TRUE(Inserted("\"y.h\"", "\"y.h\""));
-  EXPECT_TRUE(Inserted("<string>", "<string>"));
+  EXPECT_TRUE(Inserted("\"y.h\"", /*Preferred=*/"","\"y.h\""));
+  EXPECT_TRUE(Inserted("\"y.h\"", /*Preferred=*/"\"Y.h\"", "\"Y.h\""));
+  EXPECT_TRUE(Inserted("<string>", /*Preferred=*/"", "<string>"));
+  EXPECT_TRUE(Inserted("<string>", /*Preferred=*/"", "<string>"));
+
+  std::string OriginalHeader = URI::createFile(testPath("y.h")).toString();
+  std::string PreferredHeader = URI::createFile(testPath("Y.h")).toString();
+  EXPECT_TRUE(Inserted(OriginalHeader,
+                       /*Preferred=*/"", "\"y.h\""));
+  EXPECT_TRUE(Inserted(OriginalHeader,
+                       /*Preferred=*/"<Y.h>", "<Y.h>"));
+  EXPECT_TRUE(Inserted(OriginalHeader, PreferredHeader, "\"Y.h\""));
+  EXPECT_TRUE(Inserted("<y.h>", PreferredHeader, "\"Y.h\""));
 }
 
 } // namespace

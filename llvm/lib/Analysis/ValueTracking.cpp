@@ -2728,6 +2728,24 @@ static bool cannotBeOrderedLessThanZeroImpl(const Value *V,
            (!SignBitOnly && CFP->getValueAPF().isZero());
   }
 
+  // Handle vector of constants.
+  if (auto *CV = dyn_cast<Constant>(V)) {
+    if (CV->getType()->isVectorTy()) {
+      unsigned NumElts = CV->getType()->getVectorNumElements();
+      for (unsigned i = 0; i != NumElts; ++i) {
+        auto *CFP = dyn_cast_or_null<ConstantFP>(CV->getAggregateElement(i));
+        if (!CFP)
+          return false;
+        if (CFP->getValueAPF().isNegative() &&
+            (SignBitOnly || !CFP->getValueAPF().isZero()))
+          return false;
+      }
+
+      // All non-negative ConstantFPs.
+      return true;
+    }
+  }
+
   if (Depth == MaxDepth)
     return false; // Limit search depth.
 
@@ -2763,6 +2781,12 @@ static bool cannotBeOrderedLessThanZeroImpl(const Value *V,
   case Instruction::FPExt:
   case Instruction::FPTrunc:
     // Widening/narrowing never change sign.
+    return cannotBeOrderedLessThanZeroImpl(I->getOperand(0), TLI, SignBitOnly,
+                                           Depth + 1);
+  case Instruction::ExtractElement:
+    // Look through extract element. At the moment we keep this simple and skip
+    // tracking the specific element. But at least we might find information
+    // valid for all elements of the vector.
     return cannotBeOrderedLessThanZeroImpl(I->getOperand(0), TLI, SignBitOnly,
                                            Depth + 1);
   case Instruction::Call:

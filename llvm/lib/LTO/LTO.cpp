@@ -1038,10 +1038,7 @@ namespace {
 class WriteIndexesThinBackend : public ThinBackendProc {
   std::string OldPrefix, NewPrefix;
   bool ShouldEmitImportsFiles;
-
-  std::string LinkedObjectsFileName;
-  std::unique_ptr<llvm::raw_fd_ostream> LinkedObjectsFile;
-
+  raw_fd_ostream *LinkedObjectsFile;
   lto::IndexWriteCallback OnWrite;
 
 public:
@@ -1049,11 +1046,11 @@ public:
       Config &Conf, ModuleSummaryIndex &CombinedIndex,
       const StringMap<GVSummaryMapTy> &ModuleToDefinedGVSummaries,
       std::string OldPrefix, std::string NewPrefix, bool ShouldEmitImportsFiles,
-      std::string LinkedObjectsFileName, lto::IndexWriteCallback OnWrite)
+      raw_fd_ostream *LinkedObjectsFile, lto::IndexWriteCallback OnWrite)
       : ThinBackendProc(Conf, CombinedIndex, ModuleToDefinedGVSummaries),
         OldPrefix(OldPrefix), NewPrefix(NewPrefix),
         ShouldEmitImportsFiles(ShouldEmitImportsFiles),
-        LinkedObjectsFileName(LinkedObjectsFileName), OnWrite(OnWrite) {}
+        LinkedObjectsFile(LinkedObjectsFile), OnWrite(OnWrite) {}
 
   Error start(
       unsigned Task, BitcodeModule BM,
@@ -1065,21 +1062,14 @@ public:
     std::string NewModulePath =
         getThinLTOOutputFile(ModulePath, OldPrefix, NewPrefix);
 
-    std::error_code EC;
-    if (!LinkedObjectsFileName.empty()) {
-      if (!LinkedObjectsFile) {
-        LinkedObjectsFile = llvm::make_unique<raw_fd_ostream>(
-            LinkedObjectsFileName, EC, sys::fs::OpenFlags::F_None);
-        if (EC)
-          return errorCodeToError(EC);
-      }
+    if (LinkedObjectsFile)
       *LinkedObjectsFile << NewModulePath << '\n';
-    }
 
     std::map<std::string, GVSummaryMapTy> ModuleToSummariesForIndex;
     gatherImportedSummariesForModule(ModulePath, ModuleToDefinedGVSummaries,
                                      ImportList, ModuleToSummariesForIndex);
 
+    std::error_code EC;
     raw_fd_ostream OS(NewModulePath + ".thinlto.bc", EC,
                       sys::fs::OpenFlags::F_None);
     if (EC)
@@ -1101,11 +1091,9 @@ public:
 };
 } // end anonymous namespace
 
-ThinBackend lto::createWriteIndexesThinBackend(std::string OldPrefix,
-                                               std::string NewPrefix,
-                                               bool ShouldEmitImportsFiles,
-                                               std::string LinkedObjectsFile,
-                                               IndexWriteCallback OnWrite) {
+ThinBackend lto::createWriteIndexesThinBackend(
+    std::string OldPrefix, std::string NewPrefix, bool ShouldEmitImportsFiles,
+    raw_fd_ostream *LinkedObjectsFile, IndexWriteCallback OnWrite) {
   return [=](Config &Conf, ModuleSummaryIndex &CombinedIndex,
              const StringMap<GVSummaryMapTy> &ModuleToDefinedGVSummaries,
              AddStreamFn AddStream, NativeObjectCache Cache) {
@@ -1214,10 +1202,10 @@ Error LTO::runThinLTO(AddStreamFn AddStream, NativeObjectCache Cache) {
   return BackendProc->wait();
 }
 
-Expected<std::unique_ptr<ToolOutputFile>>
-lto::setupOptimizationRemarks(LLVMContext &Context,
-                              StringRef LTORemarksFilename,
-                              bool LTOPassRemarksWithHotness, int Count) {
+Expected<std::unique_ptr<ToolOutputFile>> lto::setupOptimizationRemarks(
+    LLVMContext &Context, StringRef LTORemarksFilename,
+    bool LTOPassRemarksWithHotness, unsigned LTOPassRemarksHotnessThreshold,
+    int Count) {
   if (LTORemarksFilename.empty())
     return nullptr;
 
@@ -1234,6 +1222,8 @@ lto::setupOptimizationRemarks(LLVMContext &Context,
       llvm::make_unique<yaml::Output>(DiagnosticFile->os()));
   if (LTOPassRemarksWithHotness)
     Context.setDiagnosticsHotnessRequested(true);
+  if (LTOPassRemarksHotnessThreshold)
+    Context.setDiagnosticsHotnessThreshold(LTOPassRemarksHotnessThreshold);
   DiagnosticFile->keep();
   return std::move(DiagnosticFile);
 }

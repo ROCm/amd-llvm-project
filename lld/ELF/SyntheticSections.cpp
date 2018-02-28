@@ -20,13 +20,13 @@
 #include "InputFiles.h"
 #include "LinkerScript.h"
 #include "OutputSections.h"
-#include "Strings.h"
 #include "SymbolTable.h"
 #include "Symbols.h"
 #include "Target.h"
 #include "Writer.h"
 #include "lld/Common/ErrorHandler.h"
 #include "lld/Common/Memory.h"
+#include "lld/Common/Strings.h"
 #include "lld/Common/Threads.h"
 #include "lld/Common/Version.h"
 #include "llvm/BinaryFormat/Dwarf.h"
@@ -2579,12 +2579,9 @@ void ARMExidxSentinelSection::writeTo(uint8_t *Buf) {
 
 // The sentinel has to be removed if there are no other .ARM.exidx entries.
 bool ARMExidxSentinelSection::empty() const {
-  OutputSection *OS = getParent();
-  for (auto *B : OS->SectionCommands)
-    if (auto *ISD = dyn_cast<InputSectionDescription>(B))
-      for (auto *S : ISD->Sections)
-        if (!isa<ARMExidxSentinelSection>(S))
-          return false;
+  for (InputSection *IS : getInputSections(getParent()))
+    if (!isa<ARMExidxSentinelSection>(IS))
+      return false;
   return true;
 }
 

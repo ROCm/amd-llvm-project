@@ -110,11 +110,12 @@ void ClangdServer::setRootPath(PathRef RootPath) {
     this->RootPath = NewRootPath;
 }
 
-void ClangdServer::addDocument(PathRef File, StringRef Contents) {
+void ClangdServer::addDocument(PathRef File, StringRef Contents,
+                               WantDiagnostics WantDiags) {
   DocVersion Version = DraftMgr.updateDraft(File, Contents);
   auto TaggedFS = FSProvider.getTaggedFileSystem(File);
   scheduleReparseAndDiags(File, VersionedDraft{Version, Contents.str()},
-                          std::move(TaggedFS));
+                          WantDiags, std::move(TaggedFS));
 }
 
 void ClangdServer::removeDocument(PathRef File) {
@@ -133,13 +134,13 @@ void ClangdServer::forceReparse(PathRef File) {
   CompileArgs.invalidate(File);
 
   auto TaggedFS = FSProvider.getTaggedFileSystem(File);
-  scheduleReparseAndDiags(File, std::move(FileContents), std::move(TaggedFS));
+  scheduleReparseAndDiags(File, std::move(FileContents), WantDiagnostics::Yes,
+                          std::move(TaggedFS));
 }
 
 void ClangdServer::codeComplete(
     PathRef File, Position Pos, const clangd::CodeCompleteOptions &Opts,
     UniqueFunction<void(Tagged<CompletionList>)> Callback,
-    llvm::Optional<StringRef> OverridenContents,
     IntrusiveRefCntPtr<vfs::FileSystem> *UsedFS) {
   using CallbackType = UniqueFunction<void(Tagged<CompletionList>)>;
 
@@ -152,14 +153,9 @@ void ClangdServer::codeComplete(
   if (!CodeCompleteOpts.Index) // Respect overridden index.
     CodeCompleteOpts.Index = Index;
 
-  std::string Contents;
-  if (OverridenContents) {
-    Contents = OverridenContents->str();
-  } else {
-    VersionedDraft Latest = DraftMgr.getDraft(File);
-    assert(Latest.Draft && "codeComplete called for non-added document");
-    Contents = *Latest.Draft;
-  }
+  VersionedDraft Latest = DraftMgr.getDraft(File);
+  // FIXME(sammccall): return error for consistency?
+  assert(Latest.Draft && "codeComplete called for non-added document");
 
   // Copy PCHs to avoid accessing this->PCHs concurrently
   std::shared_ptr<PCHContainerOperations> PCHs = this->PCHs;
@@ -179,37 +175,29 @@ void ClangdServer::codeComplete(
     Callback(make_tagged(std::move(Result), std::move(TaggedFS.Tag)));
   };
 
-  WorkScheduler.runWithPreamble("CodeComplete", File,
-                                BindWithForward(Task, std::move(Contents),
-                                                File.str(),
-                                                std::move(Callback)));
+  WorkScheduler.runWithPreamble(
+      "CodeComplete", File,
+      Bind(Task, std::move(*Latest.Draft), File.str(), std::move(Callback)));
 }
 
 void ClangdServer::signatureHelp(
     PathRef File, Position Pos,
     UniqueFunction<void(llvm::Expected<Tagged<SignatureHelp>>)> Callback,
-    llvm::Optional<StringRef> OverridenContents,
     IntrusiveRefCntPtr<vfs::FileSystem> *UsedFS) {
   auto TaggedFS = FSProvider.getTaggedFileSystem(File);
   if (UsedFS)
     *UsedFS = TaggedFS.Value;
 
-  std::string Contents;
-  if (OverridenContents) {
-    Contents = OverridenContents->str();
-  } else {
-    VersionedDraft Latest = DraftMgr.getDraft(File);
-    if (!Latest.Draft)
-      return Callback(llvm::make_error<llvm::StringError>(
-          "signatureHelp is called for non-added document",
-          llvm::errc::invalid_argument));
-    Contents = std::move(*Latest.Draft);
-  }
+  VersionedDraft Latest = DraftMgr.getDraft(File);
+  if (!Latest.Draft)
+    return Callback(llvm::make_error<llvm::StringError>(
+        "signatureHelp is called for non-added document",
+        llvm::errc::invalid_argument));
 
   auto PCHs = this->PCHs;
-  auto Action = [Contents, Pos, TaggedFS,
-                 PCHs](Path File, decltype(Callback) Callback,
-                       llvm::Expected<InputsAndPreamble> IP) {
+  auto Action = [Pos, TaggedFS, PCHs](std::string Contents, Path File,
+                                      decltype(Callback) Callback,
+                                      llvm::Expected<InputsAndPreamble> IP) {
     if (!IP)
       return Callback(IP.takeError());
 
@@ -224,7 +212,7 @@ void ClangdServer::signatureHelp(
 
   WorkScheduler.runWithPreamble(
       "SignatureHelp", File,
-      BindWithForward(Action, File.str(), std::move(Callback)));
+      Bind(Action, std::move(*Latest.Draft), File.str(), std::move(Callback)));
 }
 
 llvm::Expected<tooling::Replacements>
@@ -310,34 +298,45 @@ void ClangdServer::rename(
 
   WorkScheduler.runWithAST(
       "Rename", File,
-      BindWithForward(Action, File.str(), NewName.str(), std::move(Callback)));
+      Bind(Action, File.str(), NewName.str(), std::move(Callback)));
 }
+
+/// Creates a `HeaderFile` from \p Header which can be either a URI or a literal
+/// include.
+static llvm::Expected<HeaderFile> toHeaderFile(StringRef Header,
+                                               llvm::StringRef HintPath) {
+  if (isLiteralInclude(Header))
+    return HeaderFile{Header.str(), /*Verbatim=*/true};
+  auto U = URI::parse(Header);
+  if (!U)
+    return U.takeError();
+  auto Resolved = URI::resolve(*U, HintPath);
+  if (!Resolved)
+    return Resolved.takeError();
+  return HeaderFile{std::move(*Resolved), /*Verbatim=*/false};
+};
 
 Expected<tooling::Replacements>
 ClangdServer::insertInclude(PathRef File, StringRef Code,
-                            llvm::StringRef Header) {
+                            StringRef DeclaringHeader,
+                            StringRef InsertedHeader) {
+  assert(!DeclaringHeader.empty() && !InsertedHeader.empty());
   std::string ToInclude;
-  if (Header.startswith("<") || Header.startswith("\"")) {
-    ToInclude = Header;
-  } else {
-    auto U = URI::parse(Header);
-    if (!U)
-      return U.takeError();
-    auto Resolved = URI::resolve(*U, /*HintPath=*/File);
-    if (!Resolved)
-      return Resolved.takeError();
-
-    tooling::CompileCommand CompileCommand =
-        CompileArgs.getCompileCommand(File);
-    auto Include =
-        calculateIncludePath(File, Code, *Resolved, CompileCommand,
-                             FSProvider.getTaggedFileSystem(File).Value);
-    if (!Include)
-      return Include.takeError();
-    if (Include->empty())
-      return tooling::Replacements();
-    ToInclude = std::move(*Include);
-  }
+  auto ResolvedOrginal = toHeaderFile(DeclaringHeader, File);
+  if (!ResolvedOrginal)
+    return ResolvedOrginal.takeError();
+  auto ResolvedPreferred = toHeaderFile(InsertedHeader, File);
+  if (!ResolvedPreferred)
+    return ResolvedPreferred.takeError();
+  tooling::CompileCommand CompileCommand = CompileArgs.getCompileCommand(File);
+  auto Include = calculateIncludePath(
+      File, Code, *ResolvedOrginal, *ResolvedPreferred, CompileCommand,
+      FSProvider.getTaggedFileSystem(File).Value);
+  if (!Include)
+    return Include.takeError();
+  if (Include->empty())
+    return tooling::Replacements();
+  ToInclude = std::move(*Include);
 
   auto Style = format::getStyle("file", File, "llvm");
   if (!Style) {
@@ -376,8 +375,7 @@ void ClangdServer::dumpAST(PathRef File,
     Callback(Result);
   };
 
-  WorkScheduler.runWithAST("DumpAST", File,
-                           BindWithForward(Action, std::move(Callback)));
+  WorkScheduler.runWithAST("DumpAST", File, Bind(Action, std::move(Callback)));
 }
 
 void ClangdServer::findDefinitions(
@@ -394,7 +392,7 @@ void ClangdServer::findDefinitions(
   };
 
   WorkScheduler.runWithAST("Definitions", File,
-                           BindWithForward(Action, std::move(Callback)));
+                           Bind(Action, std::move(Callback)));
 }
 
 llvm::Optional<Path> ClangdServer::switchSourceHeader(PathRef Path) {
@@ -491,7 +489,7 @@ void ClangdServer::findDocumentHighlights(
   };
 
   WorkScheduler.runWithAST("Highlights", File,
-                           BindWithForward(Action, std::move(Callback)));
+                           Bind(Action, std::move(Callback)));
 }
 
 void ClangdServer::findHover(
@@ -514,25 +512,20 @@ void ClangdServer::findHover(
     Callback(make_tagged(std::move(Result), TaggedFS.Tag));
   };
 
-  WorkScheduler.runWithAST("Hover", File,
-                           BindWithForward(Action, std::move(Callback)));
+  WorkScheduler.runWithAST("Hover", File, Bind(Action, std::move(Callback)));
 }
 
 void ClangdServer::scheduleReparseAndDiags(
-    PathRef File, VersionedDraft Contents,
+    PathRef File, VersionedDraft Contents, WantDiagnostics WantDiags,
     Tagged<IntrusiveRefCntPtr<vfs::FileSystem>> TaggedFS) {
   tooling::CompileCommand Command = CompileArgs.getCompileCommand(File);
-
-  using OptDiags = llvm::Optional<std::vector<DiagWithFixIts>>;
 
   DocVersion Version = Contents.Version;
   Path FileStr = File.str();
   VFSTag Tag = std::move(TaggedFS.Tag);
 
-  auto Callback = [this, Version, FileStr, Tag](OptDiags Diags) {
-    if (!Diags)
-      return; // A new reparse was requested before this one completed.
-
+  auto Callback = [this, Version, FileStr,
+                   Tag](std::vector<DiagWithFixIts> Diags) {
     // We need to serialize access to resulting diagnostics to avoid calling
     // `onDiagnosticsReady` in the wrong order.
     std::lock_guard<std::mutex> DiagsLock(DiagnosticsMutex);
@@ -546,14 +539,19 @@ void ClangdServer::scheduleReparseAndDiags(
     LastReportedDiagsVersion = Version;
 
     DiagConsumer.onDiagnosticsReady(
-        FileStr, make_tagged(std::move(*Diags), std::move(Tag)));
+        FileStr, make_tagged(std::move(Diags), std::move(Tag)));
   };
 
   WorkScheduler.update(File,
                        ParseInputs{std::move(Command),
                                    std::move(TaggedFS.Value),
                                    std::move(*Contents.Draft)},
-                       std::move(Callback));
+                       WantDiags, std::move(Callback));
+}
+
+void ClangdServer::reparseOpenedFiles() {
+  for (const Path &FilePath : DraftMgr.getActiveFiles())
+    forceReparse(FilePath);
 }
 
 void ClangdServer::onFileEvent(const DidChangeWatchedFilesParams &Params) {

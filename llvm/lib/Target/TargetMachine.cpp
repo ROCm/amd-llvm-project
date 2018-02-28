@@ -131,7 +131,7 @@ bool TargetMachine::shouldAssumeDSOLocal(const Module &M,
     return false;
 
   // Every other GV is local on COFF.
-  // Make an exception for windows OS in the triple: Some firmwares builds use
+  // Make an exception for windows OS in the triple: Some firmware builds use
   // *-win32-macho triples. This (accidentally?) produced windows relocations
   // without GOT tables in older clang versions; Keep this behaviour.
   if (TT.isOSBinFormatCOFF() || (TT.isOSWindows() && TT.isOSBinFormatMachO()))
@@ -190,6 +190,14 @@ bool TargetMachine::shouldAssumeDSOLocal(const Module &M,
 
   // ELF supports preemption of other symbols.
   return false;
+}
+
+bool TargetMachine::useEmulatedTLS() const {
+  // Returns Options.EmulatedTLS if the -emulated-tls or -no-emulated-tls
+  // was specified explicitly; otherwise uses target triple to decide default.
+  if (Options.ExplicitEmulatedTLS)
+    return Options.EmulatedTLS;
+  return getTargetTriple().hasDefaultEmulatedTLS();
 }
 
 TLSModel::Model TargetMachine::getTLSModel(const GlobalValue *GV) const {

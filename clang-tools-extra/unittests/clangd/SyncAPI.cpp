@@ -32,7 +32,7 @@ template <typename T> struct CaptureProxy {
   operator UniqueFunction<void(T)>() && {
     assert(!Future.valid() && "conversion to callback called multiple times");
     Future = Promise.get_future();
-    return BindWithForward(
+    return Bind(
         [](std::promise<std::shared_ptr<T>> Promise, T Value) {
           Promise.set_value(std::make_shared<T>(std::move(Value)));
         },
@@ -61,20 +61,18 @@ template <typename T> CaptureProxy<T> capture(llvm::Optional<T> &Target) {
 }
 } // namespace
 
-Tagged<CompletionList>
-runCodeComplete(ClangdServer &Server, PathRef File, Position Pos,
-                clangd::CodeCompleteOptions Opts,
-                llvm::Optional<StringRef> OverridenContents) {
+Tagged<CompletionList> runCodeComplete(ClangdServer &Server, PathRef File,
+                                       Position Pos,
+                                       clangd::CodeCompleteOptions Opts) {
   llvm::Optional<Tagged<CompletionList>> Result;
-  Server.codeComplete(File, Pos, Opts, capture(Result), OverridenContents);
+  Server.codeComplete(File, Pos, Opts, capture(Result));
   return std::move(*Result);
 }
 
 llvm::Expected<Tagged<SignatureHelp>>
-runSignatureHelp(ClangdServer &Server, PathRef File, Position Pos,
-                 llvm::Optional<StringRef> OverridenContents) {
+runSignatureHelp(ClangdServer &Server, PathRef File, Position Pos) {
   llvm::Optional<llvm::Expected<Tagged<SignatureHelp>>> Result;
-  Server.signatureHelp(File, Pos, capture(Result), OverridenContents);
+  Server.signatureHelp(File, Pos, capture(Result));
   return std::move(*Result);
 }
 

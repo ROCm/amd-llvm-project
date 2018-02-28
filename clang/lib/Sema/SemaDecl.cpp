@@ -9225,62 +9225,49 @@ static bool CheckMultiVersionAdditionalRules(Sema &S, const FunctionDecl *OldFD,
     return true;
   }
 
-  if (std::distance(NewFD->attr_begin(), NewFD->attr_end()) != 1) {
-    S.Diag(NewFD->getLocation(), diag::err_multiversion_no_other_attrs);
-    return true;
-  }
+  if (std::distance(NewFD->attr_begin(), NewFD->attr_end()) != 1)
+    return S.Diag(NewFD->getLocation(), diag::err_multiversion_no_other_attrs);
 
-  if (NewFD->getTemplatedKind() == FunctionDecl::TK_FunctionTemplate) {
-    S.Diag(NewFD->getLocation(), diag::err_multiversion_doesnt_support)
-        << FuncTemplates;
-    return true;
-  }
-
+  if (NewFD->getTemplatedKind() == FunctionDecl::TK_FunctionTemplate)
+    return S.Diag(NewFD->getLocation(), diag::err_multiversion_doesnt_support)
+           << FuncTemplates;
 
   if (const auto *NewCXXFD = dyn_cast<CXXMethodDecl>(NewFD)) {
-    if (NewCXXFD->isVirtual()) {
-      S.Diag(NewCXXFD->getLocation(), diag::err_multiversion_doesnt_support)
-          << VirtFuncs;
-      return true;
-    }
+    if (NewCXXFD->isVirtual())
+      return S.Diag(NewCXXFD->getLocation(),
+                    diag::err_multiversion_doesnt_support)
+             << VirtFuncs;
 
-    if (const auto *NewCXXCtor = dyn_cast<CXXConstructorDecl>(NewFD)) {
-      S.Diag(NewCXXCtor->getLocation(), diag::err_multiversion_doesnt_support)
-          << Constructors;
-      return true;
-    }
+    if (const auto *NewCXXCtor = dyn_cast<CXXConstructorDecl>(NewFD))
+      return S.Diag(NewCXXCtor->getLocation(),
+                    diag::err_multiversion_doesnt_support)
+             << Constructors;
 
-    if (const auto *NewCXXDtor = dyn_cast<CXXDestructorDecl>(NewFD)) {
-      S.Diag(NewCXXDtor->getLocation(), diag::err_multiversion_doesnt_support)
-          << Destructors;
-      return true;
-    }
+    if (const auto *NewCXXDtor = dyn_cast<CXXDestructorDecl>(NewFD))
+      return S.Diag(NewCXXDtor->getLocation(),
+                    diag::err_multiversion_doesnt_support)
+             << Destructors;
   }
 
-  if (NewFD->isDeleted()) {
-    S.Diag(NewFD->getLocation(), diag::err_multiversion_doesnt_support)
-      << DeletedFuncs;
-  }
-  if (NewFD->isDefaulted()) {
-    S.Diag(NewFD->getLocation(), diag::err_multiversion_doesnt_support)
-      << DefaultedFuncs;
-  }
+  if (NewFD->isDeleted())
+    return S.Diag(NewFD->getLocation(), diag::err_multiversion_doesnt_support)
+           << DeletedFuncs;
+
+  if (NewFD->isDefaulted())
+    return S.Diag(NewFD->getLocation(), diag::err_multiversion_doesnt_support)
+           << DefaultedFuncs;
 
   QualType NewQType = S.getASTContext().getCanonicalType(NewFD->getType());
   const auto *NewType = cast<FunctionType>(NewQType);
   QualType NewReturnType = NewType->getReturnType();
 
-  if (NewReturnType->isUndeducedType()) {
-    S.Diag(NewFD->getLocation(), diag::err_multiversion_doesnt_support)
-        << DeducedReturn;
-    return true;
-  }
+  if (NewReturnType->isUndeducedType())
+    return S.Diag(NewFD->getLocation(), diag::err_multiversion_doesnt_support)
+           << DeducedReturn;
 
   // Only allow transition to MultiVersion if it hasn't been used.
-  if (OldFD && CausesMV && OldFD->isUsed(false)) {
-    S.Diag(NewFD->getLocation(), diag::err_multiversion_after_used);
-    return true;
-  }
+  if (OldFD && CausesMV && OldFD->isUsed(false))
+    return S.Diag(NewFD->getLocation(), diag::err_multiversion_after_used);
 
   // Ensure the return type is identical.
   if (OldFD) {
@@ -9289,38 +9276,31 @@ static bool CheckMultiVersionAdditionalRules(Sema &S, const FunctionDecl *OldFD,
     FunctionType::ExtInfo OldTypeInfo = OldType->getExtInfo();
     FunctionType::ExtInfo NewTypeInfo = NewType->getExtInfo();
 
-    if (OldTypeInfo.getCC() != NewTypeInfo.getCC()) {
-      S.Diag(NewFD->getLocation(), diag::err_multiversion_diff) << CallingConv;
-      return true;
-    }
+    if (OldTypeInfo.getCC() != NewTypeInfo.getCC())
+      return S.Diag(NewFD->getLocation(), diag::err_multiversion_diff)
+             << CallingConv;
 
     QualType OldReturnType = OldType->getReturnType();
 
-    if (OldReturnType != NewReturnType) {
-      S.Diag(NewFD->getLocation(), diag::err_multiversion_diff) << ReturnType;
-      return true;
-    }
+    if (OldReturnType != NewReturnType)
+      return S.Diag(NewFD->getLocation(), diag::err_multiversion_diff)
+             << ReturnType;
 
-    if (OldFD->isConstexpr() != NewFD->isConstexpr()) {
-      S.Diag(NewFD->getLocation(), diag::err_multiversion_diff)
-          << ConstexprSpec;
-      return true;
-    }
+    if (OldFD->isConstexpr() != NewFD->isConstexpr())
+      return S.Diag(NewFD->getLocation(), diag::err_multiversion_diff)
+             << ConstexprSpec;
 
-    if (OldFD->isInlineSpecified() != NewFD->isInlineSpecified()) {
-      S.Diag(NewFD->getLocation(), diag::err_multiversion_diff) << InlineSpec;
-      return true;
-    }
+    if (OldFD->isInlineSpecified() != NewFD->isInlineSpecified())
+      return S.Diag(NewFD->getLocation(), diag::err_multiversion_diff)
+             << InlineSpec;
 
-    if (OldFD->getStorageClass() != NewFD->getStorageClass()) {
-      S.Diag(NewFD->getLocation(), diag::err_multiversion_diff) << StorageClass;
-      return true;
-    }
+    if (OldFD->getStorageClass() != NewFD->getStorageClass())
+      return S.Diag(NewFD->getLocation(), diag::err_multiversion_diff)
+             << StorageClass;
 
-    if (OldFD->isExternC() != NewFD->isExternC()) {
-      S.Diag(NewFD->getLocation(), diag::err_multiversion_diff) << Linkage;
-      return true;
-    }
+    if (OldFD->isExternC() != NewFD->isExternC())
+      return S.Diag(NewFD->getLocation(), diag::err_multiversion_diff)
+             << Linkage;
 
     if (S.CheckEquivalentExceptionSpec(
             OldFD->getType()->getAs<FunctionProtoType>(), OldFD->getLocation(),
@@ -9344,7 +9324,7 @@ static bool CheckMultiVersionFunction(Sema &S, FunctionDecl *NewFD,
   if (NewFD->isMain()) {
     if (NewTA && NewTA->isDefaultVersion()) {
       S.Diag(NewFD->getLocation(), diag::err_multiversion_not_allowed_on_main);
-      NewFD->isInvalidDecl();
+      NewFD->setInvalidDecl();
       return true;
     }
     return false;
@@ -9365,6 +9345,7 @@ static bool CheckMultiVersionFunction(Sema &S, FunctionDecl *NewFD,
       }
       if (!S.getASTContext().getTargetInfo().supportsMultiVersioning()) {
         S.Diag(NewFD->getLocation(), diag::err_multiversion_not_supported);
+        NewFD->setInvalidDecl();
         return true;
       }
 
@@ -9407,6 +9388,7 @@ static bool CheckMultiVersionFunction(Sema &S, FunctionDecl *NewFD,
     if (!S.getASTContext().getTargetInfo().supportsMultiVersioning()) {
       S.Diag(NewFD->getLocation(), diag::err_multiversion_not_supported);
       S.Diag(OldFD->getLocation(), diag::note_previous_declaration);
+      NewFD->setInvalidDecl();
       return true;
     }
 
@@ -11341,6 +11323,9 @@ void Sema::CheckCompleteVariableDeclaration(VarDecl *var) {
       break;
     }
   }
+
+  if (var->getType().isDestructedType() == QualType::DK_nontrivial_c_struct)
+    getCurFunction()->setHasBranchProtectedScope();
 
   // Warn about externally-visible variables being defined without a
   // prior declaration.  We only want to do this for global
@@ -15232,6 +15217,7 @@ void Sema::ActOnFields(Scope *S, SourceLocation RecLoc, Decl *EnclosingDecl,
 
     // Get the type for the field.
     const Type *FDTy = FD->getType().getTypePtr();
+    Qualifiers QS = FD->getType().getQualifiers();
 
     if (!FD->isAnonymousStructOrUnion()) {
       // Remember all fields written by the user.
@@ -15373,7 +15359,9 @@ void Sema::ActOnFields(Scope *S, SourceLocation RecLoc, Decl *EnclosingDecl,
       FD->setType(T);
     } else if (getLangOpts().allowsNonTrivialObjCLifetimeQualifiers() &&
                Record && !ObjCFieldLifetimeErrReported &&
-               (!getLangOpts().CPlusPlus || Record->isUnion())) {
+               ((!getLangOpts().CPlusPlus &&
+                 QS.getObjCLifetime() == Qualifiers::OCL_Weak) ||
+                Record->isUnion())) {
       // It's an error in ARC or Weak if a field has lifetime.
       // We don't want to report this in a system header, though,
       // so we just make the field unavailable.
@@ -15409,6 +15397,18 @@ void Sema::ActOnFields(Scope *S, SourceLocation RecLoc, Decl *EnclosingDecl,
                Record->setHasObjectMember(true);
       }
     }
+
+    if (Record && !getLangOpts().CPlusPlus) {
+      QualType FT = FD->getType();
+      if (FT.isNonTrivialToPrimitiveDefaultInitialize())
+        Record->setNonTrivialToPrimitiveDefaultInitialize();
+      QualType::PrimitiveCopyKind PCK = FT.isNonTrivialToPrimitiveCopy();
+      if (PCK != QualType::PCK_Trivial && PCK != QualType::PCK_VolatileTrivial)
+        Record->setNonTrivialToPrimitiveCopy();
+      if (FT.isDestructedType())
+        Record->setNonTrivialToPrimitiveDestroy();
+    }
+
     if (Record && FD->getType().isVolatileQualified())
       Record->setHasVolatileMember(true);
     // Keep track of the number of named members.

@@ -721,8 +721,11 @@ public:
   /// Set the visibility for the given LLVM GlobalValue.
   void setGlobalVisibility(llvm::GlobalValue *GV, const NamedDecl *D) const;
 
-  void setDSOLocal(llvm::GlobalValue *GV, const NamedDecl *D) const;
+  void setDSOLocal(llvm::GlobalValue *GV) const;
 
+  /// Set visibility and dso_local.
+  /// This must be called after dllimport/dllexport is set.
+  /// FIXME: should this set dllimport/dllexport instead?
   void setGVProperties(llvm::GlobalValue *GV, const NamedDecl *D) const;
 
   /// Set the TLS mode for the given LLVM GlobalValue for the thread-local
@@ -1180,8 +1183,7 @@ public:
   bool TryEmitBaseDestructorAsAlias(const CXXDestructorDecl *D);
 
   /// Set attributes for a global definition.
-  void setFunctionDefinitionAttributes(const FunctionDecl *D,
-                                       llvm::Function *F);
+  void setFunctionDefinitionAttributes(GlobalDecl GD, llvm::Function *F);
 
   llvm::GlobalValue *GetGlobalValue(StringRef Ref);
 
@@ -1195,7 +1197,7 @@ public:
   /// attributes (i.e. it includes a call to SetCommonAttributes).
   ///
   /// NOTE: This should only be called for definitions.
-  void setAliasAttributes(const Decl *D, llvm::GlobalValue *GV);
+  void setAliasAttributes(GlobalDecl GD, llvm::GlobalValue *GV);
 
   void addReplacement(StringRef Name, llvm::Constant *C);
 

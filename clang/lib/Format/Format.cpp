@@ -2294,6 +2294,25 @@ static FormatStyle::LanguageKind getLanguageByFileName(StringRef FileName) {
   return FormatStyle::LK_Cpp;
 }
 
+FormatStyle::LanguageKind guessLanguage(StringRef FileName, StringRef Code) {
+  const auto GuessedLanguage = getLanguageByFileName(FileName);
+  if (GuessedLanguage == FormatStyle::LK_Cpp) {
+    auto Extension = llvm::sys::path::extension(FileName);
+    // If there's no file extension (or it's .h), we need to check the contents
+    // of the code to see if it contains Objective-C.
+    if (Extension.empty() || Extension == ".h") {
+      auto NonEmptyFileName = FileName.empty() ? "guess.h" : FileName;
+      std::unique_ptr<Environment> Env =
+          Environment::CreateVirtualEnvironment(Code, NonEmptyFileName, /*Ranges=*/{});
+      ObjCHeaderStyleGuesser Guesser(*Env, getLLVMStyle());
+      Guesser.process();
+      if (Guesser.isObjC())
+        return FormatStyle::LK_ObjC;
+    }
+  }
+  return GuessedLanguage;
+}
+
 llvm::Expected<FormatStyle> getStyle(StringRef StyleName, StringRef FileName,
                                      StringRef FallbackStyleName,
                                      StringRef Code, vfs::FileSystem *FS) {
@@ -2301,17 +2320,7 @@ llvm::Expected<FormatStyle> getStyle(StringRef StyleName, StringRef FileName,
     FS = vfs::getRealFileSystem().get();
   }
   FormatStyle Style = getLLVMStyle();
-  Style.Language = getLanguageByFileName(FileName);
-
-  if (Style.Language == FormatStyle::LK_Cpp && FileName.endswith(".h")) {
-    std::unique_ptr<Environment> Env =
-        Environment::CreateVirtualEnvironment(Code, FileName, /*Ranges=*/{});
-    ObjCHeaderStyleGuesser Guesser(*Env, Style);
-    Guesser.process();
-    if (Guesser.isObjC()) {
-      Style.Language = FormatStyle::LK_ObjC;
-    }
-  }
+  Style.Language = guessLanguage(FileName, Code);
 
   FormatStyle FallbackStyle = getNoStyle();
   if (!getPredefinedStyle(FallbackStyleName, Style.Language, &FallbackStyle))

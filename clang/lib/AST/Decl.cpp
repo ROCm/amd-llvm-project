@@ -3625,6 +3625,12 @@ unsigned FunctionDecl::getODRHash() {
     }
   }
 
+  if (auto *FT = getInstantiatedFromMemberFunction()) {
+    HasODRHash = true;
+    ODRHash = FT->getODRHash();
+    return ODRHash;
+  }
+
   class ODRHash Hash;
   Hash.AddFunctionDecl(this);
   HasODRHash = true;
@@ -3923,7 +3929,9 @@ RecordDecl::RecordDecl(Kind DK, TagKind TK, const ASTContext &C,
     : TagDecl(DK, TK, C, DC, IdLoc, Id, PrevDecl, StartLoc),
       HasFlexibleArrayMember(false), AnonymousStructOrUnion(false),
       HasObjectMember(false), HasVolatileMember(false),
-      LoadedFieldsFromExternalStorage(false) {
+      LoadedFieldsFromExternalStorage(false),
+      NonTrivialToPrimitiveDefaultInitialize(false),
+      NonTrivialToPrimitiveCopy(false), NonTrivialToPrimitiveDestroy(false) {
   assert(classof(static_cast<Decl*>(this)) && "Invalid Kind!");
 }
 

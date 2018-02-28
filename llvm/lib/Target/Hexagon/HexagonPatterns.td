@@ -679,8 +679,10 @@ def: Pat<(i32 (zext (i1 (seteq I32:$Rs, anyimm:$s8)))),
 def: Pat<(i32 (zext (i1 (setne I32:$Rs, anyimm:$s8)))),
          (A4_rcmpneqi I32:$Rs, imm:$s8)>;
 
-def: Pat<(i1 (setne I1:$Ps, I1:$Pt)),
-         (C2_xor I1:$Ps, I1:$Pt)>;
+def: Pat<(i1 (seteq I1:$Ps, (i1 -1))), (I1:$Ps)>;
+def: Pat<(i1 (setne I1:$Ps, (i1 -1))), (C2_not I1:$Ps)>;
+def: Pat<(i1 (seteq I1:$Ps, I1:$Pt)),  (C2_xor I1:$Ps, (C2_not I1:$Pt))>;
+def: Pat<(i1 (setne I1:$Ps, I1:$Pt)),  (C2_xor I1:$Ps, I1:$Pt)>;
 
 def: Pat<(i1 (seteq V4I8:$Rs, V4I8:$Rt)),
          (A2_vcmpbeq (ToZext64 $Rs), (ToZext64 $Rt))>;
@@ -2799,6 +2801,8 @@ def: Pat<(brcond I1:$Pu, bb:$dst),
 def: Pat<(brcond (not I1:$Pu), bb:$dst),
          (J2_jumpf I1:$Pu, bb:$dst)>;
 def: Pat<(brcond (i1 (setne I1:$Pu, -1)), bb:$dst),
+         (J2_jumpf I1:$Pu, bb:$dst)>;
+def: Pat<(brcond (i1 (seteq I1:$Pu, 0)), bb:$dst),
          (J2_jumpf I1:$Pu, bb:$dst)>;
 def: Pat<(brcond (i1 (setne I1:$Pu, 0)), bb:$dst),
          (J2_jumpt I1:$Pu, bb:$dst)>;

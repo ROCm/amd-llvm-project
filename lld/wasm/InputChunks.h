@@ -7,8 +7,14 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// An input chunk represents an indivisible blocks of code or data from an input
-// file.  i.e. a single wasm data segment or a single wasm function.
+// An InputChunks represents an indivisible opaque region of a input wasm file.
+// i.e. a single wasm data segment or a single wasm function.
+//
+// They are written directly to the mmap'd output file after which relocations
+// are applied.  Because each Chunk is independent they can be written in
+// parallel.
+//
+// Chunks are also unit on which garbage collection (--gc-sections) operates.
 //
 //===----------------------------------------------------------------------===//
 
@@ -17,7 +23,6 @@
 
 #include "Config.h"
 #include "InputFiles.h"
-#include "WriterUtils.h"
 #include "lld/Common/ErrorHandler.h"
 #include "llvm/Object/Wasm.h"
 
@@ -91,23 +96,11 @@ public:
 
   static bool classof(const InputChunk *C) { return C->kind() == DataSegment; }
 
-  // Translate an offset in the input segment to an offset in the output
-  // segment.
-  uint32_t translateVA(uint32_t Address) const;
-
-  const OutputSegment *getOutputSegment() const { return OutputSeg; }
-
-  void setOutputSegment(const OutputSegment *Segment, uint32_t Offset) {
-    OutputSeg = Segment;
-    OutputSegmentOffset = Offset;
-  }
-
   uint32_t getAlignment() const { return Segment.Data.Alignment; }
-  uint32_t startVA() const { return Segment.Data.Offset.Value.Int32; }
-  uint32_t endVA() const { return startVA() + getSize(); }
   StringRef getName() const override { return Segment.Data.Name; }
   StringRef getComdat() const override { return Segment.Data.Comdat; }
 
+  const OutputSegment *OutputSeg = nullptr;
   int32_t OutputSegmentOffset = 0;
 
 protected:
@@ -117,7 +110,6 @@ protected:
   }
 
   const WasmSegment &Segment;
-  const OutputSegment *OutputSeg = nullptr;
 };
 
 // Represents a single wasm function within and input file.  These are

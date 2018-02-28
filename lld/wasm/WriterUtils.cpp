@@ -8,9 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "WriterUtils.h"
-
 #include "lld/Common/ErrorHandler.h"
-
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/EndianStream.h"
 #include "llvm/Support/LEB128.h"
@@ -65,7 +63,7 @@ void wasm::writeStr(raw_ostream &OS, StringRef String, StringRef Msg) {
   OS.write(String.data(), String.size());
 }
 
-void wasm::writeU8(raw_ostream &OS, uint8_t byte, StringRef Msg) { OS << byte; }
+void wasm::writeU8(raw_ostream &OS, uint8_t Byte, StringRef Msg) { OS << Byte; }
 
 void wasm::writeU32(raw_ostream &OS, uint32_t Number, StringRef Msg) {
   debugWrite(OS.tell(), Msg + "[" + utohexstr(Number) + "]");
@@ -191,4 +189,11 @@ std::string lld::toString(const WasmSignature &Sig) {
   else
     S += toString(static_cast<ValType>(Sig.ReturnType));
   return S.str();
+}
+
+std::string lld::toString(const WasmGlobalType &Sig) {
+  std::string S = toString(static_cast<ValType>(Sig.Type));
+  if (Sig.Mutable)
+    return "mutable " + S;
+  return S;
 }

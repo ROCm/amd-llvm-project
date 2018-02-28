@@ -141,16 +141,21 @@ void ClangdLSPServer::onDocumentDidOpen(DidOpenTextDocumentParams &Params) {
   if (Params.metadata && !Params.metadata->extraFlags.empty())
     CDB.setExtraFlagsForFile(Params.textDocument.uri.file(),
                              std::move(Params.metadata->extraFlags));
-  Server.addDocument(Params.textDocument.uri.file(), Params.textDocument.text);
+  Server.addDocument(Params.textDocument.uri.file(), Params.textDocument.text,
+                     WantDiagnostics::Yes);
 }
 
 void ClangdLSPServer::onDocumentDidChange(DidChangeTextDocumentParams &Params) {
   if (Params.contentChanges.size() != 1)
     return replyError(ErrorCode::InvalidParams,
                       "can only apply one change at a time");
+  auto WantDiags = WantDiagnostics::Auto;
+  if (Params.wantDiagnostics.hasValue())
+    WantDiags = Params.wantDiagnostics.getValue() ? WantDiagnostics::Yes
+                                                  : WantDiagnostics::No;
   // We only support full syncing right now.
   Server.addDocument(Params.textDocument.uri.file(),
-                     Params.contentChanges[0].text);
+                     Params.contentChanges[0].text, WantDiags);
 }
 
 void ClangdLSPServer::onFileEvent(DidChangeWatchedFilesParams &Params) {
@@ -189,12 +194,20 @@ void ClangdLSPServer::onCommand(ExecuteCommandParams &Params) {
                          ExecuteCommandParams::CLANGD_INSERT_HEADER_INCLUDE +
                          " called on non-added file " + FileURI.file())
                             .str());
-    auto Replaces = Server.insertInclude(FileURI.file(), *Code,
-                                         Params.includeInsertion->header);
+    llvm::StringRef DeclaringHeader = Params.includeInsertion->declaringHeader;
+    if (DeclaringHeader.empty())
+      return replyError(
+          ErrorCode::InvalidParams,
+          "declaringHeader must be provided for include insertion.");
+    llvm::StringRef PreferredHeader = Params.includeInsertion->preferredHeader;
+    auto Replaces = Server.insertInclude(
+        FileURI.file(), *Code, DeclaringHeader,
+        PreferredHeader.empty() ? DeclaringHeader : PreferredHeader);
     if (!Replaces) {
       std::string ErrMsg =
           ("Failed to generate include insertion edits for adding " +
-           Params.includeInsertion->header + " into " + FileURI.file())
+           DeclaringHeader + " (" + PreferredHeader + ") into " +
+           FileURI.file())
               .str();
       log(ErrMsg + ":" + llvm::toString(Replaces.takeError()));
       replyError(ErrorCode::InternalError, ErrMsg);
@@ -204,7 +217,8 @@ void ClangdLSPServer::onCommand(ExecuteCommandParams &Params) {
     WorkspaceEdit WE;
     WE.changes = {{FileURI.uri(), Edits}};
 
-    reply("Inserted header " + Params.includeInsertion->header);
+    reply(("Inserted header " + DeclaringHeader + " (" + PreferredHeader + ")")
+              .str());
     ApplyEdit(std::move(WE));
   } else {
     // We should not get here because ExecuteCommandParams would not have
@@ -367,6 +381,18 @@ void ClangdLSPServer::onHover(TextDocumentPositionParams &Params) {
 
                      reply(H->Value);
                    });
+}
+
+// FIXME: This function needs to be properly tested.
+void ClangdLSPServer::onChangeConfiguration(
+    DidChangeConfigurationParams &Params) {
+  ClangdConfigurationParamsChange &Settings = Params.settings;
+
+  // Compilation database change.
+  if (Settings.compilationDatabasePath.hasValue()) {
+    CDB.setCompileCommandsDir(Settings.compilationDatabasePath.getValue());
+    Server.reparseOpenedFiles();
+  }
 }
 
 ClangdLSPServer::ClangdLSPServer(JSONOutput &Out, unsigned AsyncThreadsCount,
