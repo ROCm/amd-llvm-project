@@ -569,6 +569,9 @@ void CodeGenModule::Release() {
       getModule().setPIELevel(static_cast<llvm::PIELevel::Level>(PLevel));
   }
 
+  if (CodeGenOpts.NoPLT)
+    getModule().setRtLibUseGOT();
+
   SimplifyPersonality();
 
   if (getCodeGenOpts().EmitDeclMetadata)
@@ -616,13 +619,9 @@ llvm::MDNode *CodeGenModule::getTBAATypeInfo(QualType QTy) {
 }
 
 TBAAAccessInfo CodeGenModule::getTBAAAccessInfo(QualType AccessType) {
-  // Pointee values may have incomplete types, but they shall never be
-  // dereferenced.
-  if (AccessType->isIncompleteType())
-    return TBAAAccessInfo::getIncompleteInfo();
-
-  uint64_t Size = Context.getTypeSizeInChars(AccessType).getQuantity();
-  return TBAAAccessInfo(getTBAATypeInfo(AccessType), Size);
+  if (!TBAA)
+    return TBAAAccessInfo();
+  return TBAA->getAccessInfo(AccessType);
 }
 
 TBAAAccessInfo
@@ -730,9 +729,21 @@ void CodeGenModule::setGlobalVisibility(llvm::GlobalValue *GV,
 }
 
 static bool shouldAssumeDSOLocal(const CodeGenModule &CGM,
-                                 llvm::GlobalValue *GV, const NamedDecl *D) {
+                                 llvm::GlobalValue *GV) {
+  // DLLImport explicitly marks the GV as external.
+  if (GV->hasDLLImportStorageClass())
+    return false;
+
   const llvm::Triple &TT = CGM.getTriple();
-  // Only handle ELF for now.
+  // Every other GV is local on COFF.
+  // Make an exception for windows OS in the triple: Some firmware builds use
+  // *-win32-macho triples. This (accidentally?) produced windows relocations
+  // without GOT tables in older clang versions; Keep this behaviour.
+  // FIXME: even thread local variables?
+  if (TT.isOSBinFormatCOFF() || (TT.isOSWindows() && TT.isOSBinFormatMachO()))
+    return true;
+
+  // Only handle COFF and ELF for now.
   if (!TT.isOSBinFormatELF())
     return false;
 
@@ -760,31 +771,30 @@ static bool shouldAssumeDSOLocal(const CodeGenModule &CGM,
     return false;
 
   // If we can use copy relocations we can assume it is local.
-  if (auto *VD = dyn_cast<VarDecl>(D))
-    if (VD->getTLSKind() == VarDecl::TLS_None &&
+  if (auto *Var = dyn_cast<llvm::GlobalVariable>(GV))
+    if (!Var->isThreadLocal() &&
         (RM == llvm::Reloc::Static || CGOpts.PIECopyRelocations))
       return true;
 
   // If we can use a plt entry as the symbol address we can assume it
   // is local.
   // FIXME: This should work for PIE, but the gold linker doesn't support it.
-  if (isa<FunctionDecl>(D) && !CGOpts.NoPLT && RM == llvm::Reloc::Static)
+  if (isa<llvm::Function>(GV) && !CGOpts.NoPLT && RM == llvm::Reloc::Static)
     return true;
 
   // Otherwise don't assue it is local.
   return false;
 }
 
-void CodeGenModule::setDSOLocal(llvm::GlobalValue *GV,
-                                const NamedDecl *D) const {
-  if (shouldAssumeDSOLocal(*this, GV, D))
+void CodeGenModule::setDSOLocal(llvm::GlobalValue *GV) const {
+  if (shouldAssumeDSOLocal(*this, GV))
     GV->setDSOLocal(true);
 }
 
 void CodeGenModule::setGVProperties(llvm::GlobalValue *GV,
                                     const NamedDecl *D) const {
   setGlobalVisibility(GV, D);
-  setDSOLocal(GV, D);
+  setDSOLocal(GV);
 }
 
 static llvm::GlobalVariable::ThreadLocalMode GetLLVMTLSModel(StringRef S) {
@@ -1084,9 +1094,9 @@ llvm::ConstantInt *CodeGenModule::CreateCrossDsoCfiTypeId(llvm::Metadata *MD) {
   return llvm::ConstantInt::get(Int64Ty, llvm::MD5Hash(MDS->getString()));
 }
 
-void CodeGenModule::setFunctionDefinitionAttributes(const FunctionDecl *D,
+void CodeGenModule::setFunctionDefinitionAttributes(GlobalDecl GD,
                                                     llvm::Function *F) {
-  setNonAliasAttributes(D, F);
+  setNonAliasAttributes(GD.getDecl(), F);
 }
 
 void CodeGenModule::SetLLVMFunctionAttributes(const Decl *D,
@@ -1263,8 +1273,8 @@ void CodeGenModule::SetCommonAttributes(const Decl *D,
     addUsedGlobal(GV);
 }
 
-void CodeGenModule::setAliasAttributes(const Decl *D,
-                                       llvm::GlobalValue *GV) {
+void CodeGenModule::setAliasAttributes(GlobalDecl GD, llvm::GlobalValue *GV) {
+  const Decl *D = GD.getDecl();
   SetCommonAttributes(D, GV);
 
   // Process the dllexport attribute based on whether the original definition
@@ -2919,13 +2929,14 @@ CodeGenModule::GetOrCreateLLVMGlobal(StringRef MangledName,
     GV->setAlignment(getContext().getDeclAlign(D).getQuantity());
 
     setLinkageForGV(GV, D);
-    setGVProperties(GV, D);
 
     if (D->getTLSKind()) {
       if (D->getTLSKind() == VarDecl::TLS_Dynamic)
         CXXThreadLocals.push_back(D);
       setTLSMode(GV, *D);
     }
+
+    setGVProperties(GV, D);
 
     // If required by the ABI, treat declarations of static data members with
     // inline initializers as definitions.
@@ -3760,7 +3771,7 @@ void CodeGenModule::EmitGlobalFunctionDefinition(GlobalDecl GD,
 
   CodeGenFunction(*this).GenerateCode(D, Fn, FI);
 
-  setFunctionDefinitionAttributes(D, Fn);
+  setFunctionDefinitionAttributes(GD, Fn);
   SetLLVMFunctionAttributesForDefinition(D, Fn);
 
   if (const ConstructorAttr *CA = D->getAttr<ConstructorAttr>())
@@ -3844,7 +3855,7 @@ void CodeGenModule::EmitAliasDefinition(GlobalDecl GD) {
     if (VD->getTLSKind())
       setTLSMode(GA, *VD);
 
-  setAliasAttributes(D, GA);
+  setAliasAttributes(GD, GA);
 }
 
 void CodeGenModule::emitIFuncDefinition(GlobalDecl GD) {

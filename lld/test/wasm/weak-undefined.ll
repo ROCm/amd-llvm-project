@@ -1,5 +1,5 @@
 ; RUN: llc -filetype=obj -o %t.o %s
-; RUN: lld -flavor wasm --check-signatures -strip-debug %t.o -o %t.wasm
+; RUN: wasm-ld --check-signatures -strip-debug %t.o -o %t.wasm
 ; RUN: obj2yaml %t.wasm | FileCheck %s
 
 ; Test that undefined weak externals (global_var) and (foo) don't cause
@@ -104,7 +104,4 @@ entry:
 ; CHECK-NEXT:       - Index:           3
 ; CHECK-NEXT:         Locals:
 ; CHECK-NEXT:         Body:            0B
-; CHECK-NEXT:   - Type:            CUSTOM
-; CHECK-NEXT:     Name:            linking
-; CHECK-NEXT:     DataSize:        0
 ; CHECK-NEXT: ...

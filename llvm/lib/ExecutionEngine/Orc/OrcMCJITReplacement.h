@@ -166,32 +166,32 @@ class OrcMCJITReplacement : public ExecutionEngine {
       return UnresolvedSymbols;
     }
 
-    SymbolNameSet lookup(AsynchronousSymbolQuery &Query,
+    SymbolNameSet lookup(std::shared_ptr<AsynchronousSymbolQuery> Query,
                          SymbolNameSet Symbols) override {
       SymbolNameSet UnresolvedSymbols;
 
       for (auto &S : Symbols) {
         if (auto Sym = M.findMangledSymbol(*S)) {
           if (auto Addr = Sym.getAddress())
-            Query.setDefinition(S, JITEvaluatedSymbol(*Addr, Sym.getFlags()));
+            Query->setDefinition(S, JITEvaluatedSymbol(*Addr, Sym.getFlags()));
           else {
-            Query.setFailed(Addr.takeError());
+            Query->setFailed(Addr.takeError());
             return SymbolNameSet();
           }
         } else if (auto Err = Sym.takeError()) {
-          Query.setFailed(std::move(Err));
+          Query->setFailed(std::move(Err));
           return SymbolNameSet();
         } else {
           if (auto Sym2 = M.ClientResolver->findSymbol(*S)) {
             if (auto Addr = Sym2.getAddress())
-              Query.setDefinition(S,
-                                  JITEvaluatedSymbol(*Addr, Sym2.getFlags()));
+              Query->setDefinition(S,
+                                   JITEvaluatedSymbol(*Addr, Sym2.getFlags()));
             else {
-              Query.setFailed(Addr.takeError());
+              Query->setFailed(Addr.takeError());
               return SymbolNameSet();
             }
           } else if (auto Err = Sym2.takeError()) {
-            Query.setFailed(std::move(Err));
+            Query->setFailed(std::move(Err));
             return SymbolNameSet();
           } else
             UnresolvedSymbols.insert(S);
@@ -229,9 +229,12 @@ public:
         Resolver(std::make_shared<LinkingORCResolver>(*this)),
         ClientResolver(std::move(ClientResolver)), NotifyObjectLoaded(*this),
         NotifyFinalized(*this),
-        ObjectLayer(ES, [this](VModuleKey K) { return this->MemMgr; },
-                    [this](VModuleKey K) { return this->Resolver; },
-                    NotifyObjectLoaded, NotifyFinalized),
+        ObjectLayer(
+            ES,
+            [this](VModuleKey K) {
+              return ObjectLayerT::Resources{this->MemMgr, this->Resolver};
+            },
+            NotifyObjectLoaded, NotifyFinalized),
         CompileLayer(ObjectLayer, SimpleCompiler(*this->TM)),
         LazyEmitLayer(CompileLayer) {}
 
@@ -260,16 +263,15 @@ public:
   }
 
   void addObjectFile(std::unique_ptr<object::ObjectFile> O) override {
-    auto Obj =
-      std::make_shared<object::OwningBinary<object::ObjectFile>>(std::move(O),
-                                                                 nullptr);
-    cantFail(ObjectLayer.addObject(ES.allocateVModule(), std::move(Obj)));
+    cantFail(ObjectLayer.addObject(
+        ES.allocateVModule(), MemoryBuffer::getMemBufferCopy(O->getData())));
   }
 
   void addObjectFile(object::OwningBinary<object::ObjectFile> O) override {
-    auto Obj =
-      std::make_shared<object::OwningBinary<object::ObjectFile>>(std::move(O));
-    cantFail(ObjectLayer.addObject(ES.allocateVModule(), std::move(Obj)));
+    std::unique_ptr<object::ObjectFile> Obj;
+    std::unique_ptr<MemoryBuffer> ObjBuffer;
+    std::tie(Obj, ObjBuffer) = O.takeBinary();
+    cantFail(ObjectLayer.addObject(ES.allocateVModule(), std::move(ObjBuffer)));
   }
 
   void addArchive(object::OwningBinary<object::Archive> A) override {
@@ -372,12 +374,9 @@ private:
         }
         std::unique_ptr<object::Binary> &ChildBin = ChildBinOrErr.get();
         if (ChildBin->isObject()) {
-          std::unique_ptr<object::ObjectFile> ChildObj(
-            static_cast<object::ObjectFile*>(ChildBinOrErr->release()));
-          auto Obj =
-            std::make_shared<object::OwningBinary<object::ObjectFile>>(
-              std::move(ChildObj), nullptr);
-          cantFail(ObjectLayer.addObject(ES.allocateVModule(), std::move(Obj)));
+          cantFail(ObjectLayer.addObject(
+              ES.allocateVModule(),
+              MemoryBuffer::getMemBufferCopy(ChildBin->getData())));
           if (auto Sym = ObjectLayer.findSymbol(Name, true))
             return Sym;
         }
@@ -393,12 +392,11 @@ private:
 
     NotifyObjectLoadedT(OrcMCJITReplacement &M) : M(M) {}
 
-    void operator()(VModuleKey K,
-                    const RTDyldObjectLinkingLayer::ObjectPtr &Obj,
+    void operator()(VModuleKey K, const object::ObjectFile &Obj,
                     const RuntimeDyld::LoadedObjectInfo &Info) const {
       M.UnfinalizedSections[K] = std::move(M.SectionsAllocatedSinceLastLoad);
       M.SectionsAllocatedSinceLastLoad = SectionAddrSet();
-      M.MemMgr->notifyObjectLoaded(&M, *Obj->getBinary());
+      M.MemMgr->notifyObjectLoaded(&M, Obj);
     }
   private:
     OrcMCJITReplacement &M;

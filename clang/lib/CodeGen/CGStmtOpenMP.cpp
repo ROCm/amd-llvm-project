@@ -2230,6 +2230,7 @@ bool CodeGenFunction::EmitOMPWorksharingLoop(
       incrementProfileCounter(&S);
     }
 
+    RunCleanupsScope DoacrossCleanupScope(*this);
     bool Ordered = false;
     if (auto *OrderedClause = S.getSingleClause<OMPOrderedClause>()) {
       if (OrderedClause->getNumForLoops())
@@ -2366,6 +2367,7 @@ bool CodeGenFunction::EmitOMPWorksharingLoop(
       return CGF.Builder.CreateIsNotNull(
           CGF.EmitLoadOfScalar(IL, S.getLocStart()));
     });
+    DoacrossCleanupScope.ForceCleanup();
     // We're now done with the loop, so jump to the continuation block.
     if (ContBlock) {
       EmitBranch(ContBlock);
@@ -3356,26 +3358,30 @@ void CodeGenFunction::EmitOMPDistributeLoop(const OMPLoopDirective &S,
               CGF.EmitLoadOfScalar(IL, S.getLocStart()));
         });
       }
-      OpenMPDirectiveKind ReductionKind = OMPD_unknown;
-      if (isOpenMPParallelDirective(S.getDirectiveKind()) &&
-          isOpenMPSimdDirective(S.getDirectiveKind())) {
-        ReductionKind = OMPD_parallel_for_simd;
-      } else if (isOpenMPParallelDirective(S.getDirectiveKind())) {
-        ReductionKind = OMPD_parallel_for;
-      } else if (isOpenMPSimdDirective(S.getDirectiveKind())) {
-        ReductionKind = OMPD_simd;
-      } else if (!isOpenMPTeamsDirective(S.getDirectiveKind()) &&
-                 S.hasClausesOfKind<OMPReductionClause>()) {
-        llvm_unreachable(
-            "No reduction clauses is allowed in distribute directive.");
+      if (isOpenMPSimdDirective(S.getDirectiveKind()) &&
+          !isOpenMPParallelDirective(S.getDirectiveKind()) &&
+          !isOpenMPTeamsDirective(S.getDirectiveKind())) {
+        OpenMPDirectiveKind ReductionKind = OMPD_unknown;
+        if (isOpenMPParallelDirective(S.getDirectiveKind()) &&
+            isOpenMPSimdDirective(S.getDirectiveKind())) {
+          ReductionKind = OMPD_parallel_for_simd;
+        } else if (isOpenMPParallelDirective(S.getDirectiveKind())) {
+          ReductionKind = OMPD_parallel_for;
+        } else if (isOpenMPSimdDirective(S.getDirectiveKind())) {
+          ReductionKind = OMPD_simd;
+        } else if (!isOpenMPTeamsDirective(S.getDirectiveKind()) &&
+                   S.hasClausesOfKind<OMPReductionClause>()) {
+          llvm_unreachable(
+              "No reduction clauses is allowed in distribute directive.");
+        }
+        EmitOMPReductionClauseFinal(S, ReductionKind);
+        // Emit post-update of the reduction variables if IsLastIter != 0.
+        emitPostUpdateForReductionClause(
+            *this, S, [&](CodeGenFunction &CGF) -> llvm::Value * {
+              return CGF.Builder.CreateIsNotNull(
+                  CGF.EmitLoadOfScalar(IL, S.getLocStart()));
+            });
       }
-      EmitOMPReductionClauseFinal(S, ReductionKind);
-      // Emit post-update of the reduction variables if IsLastIter != 0.
-      emitPostUpdateForReductionClause(
-          *this, S, [&](CodeGenFunction &CGF) -> llvm::Value * {
-            return CGF.Builder.CreateIsNotNull(
-                CGF.EmitLoadOfScalar(IL, S.getLocStart()));
-          });
       // Emit final copy of the lastprivate variables if IsLastIter != 0.
       if (HasLastprivateClause) {
         EmitOMPLastprivateClauseFinal(

@@ -110,17 +110,6 @@ if (NOT ${CMAKE_SYSTEM_NAME} MATCHES "Windows|Darwin")
 endif()
 
 if(CMAKE_HOST_APPLE)
-  if(LLDB_CODESIGN_IDENTITY)
-    set(DEBUGSERVER_PATH $<TARGET_FILE:debugserver>)
-  else()
-    execute_process(
-      COMMAND xcode-select -p
-      OUTPUT_VARIABLE XCODE_DEV_DIR)
-    string(STRIP ${XCODE_DEV_DIR} XCODE_DEV_DIR)
-    set(DEBUGSERVER_PATH
-      "${XCODE_DEV_DIR}/../SharedFrameworks/LLDB.framework/Resources/debugserver")
-  endif()
-  message(STATUS "Path to the lldb debugserver: ${DEBUGSERVER_PATH}")
   list(APPEND LLDB_TEST_COMMON_ARGS --server ${DEBUGSERVER_PATH})
 endif()
 
@@ -154,6 +143,9 @@ if (CMAKE_SYSTEM_NAME MATCHES "Windows")
     message(WARNING "lld required to test LLDB on Windows")
   endif ()
 endif ()
+
+# Run the lit-style tests and the unittests as part of the check-lldb target.
+add_dependencies(check-lldb check-lldb-lit)
 
 add_custom_target(lldb-test-depends DEPENDS ${LLDB_TEST_DEPENDS})
 # This will add LLDB's test dependencies to the depenednecies for check-all and

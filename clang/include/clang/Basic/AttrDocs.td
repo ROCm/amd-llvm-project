@@ -353,7 +353,7 @@ available in C.
 
   int isdigit(int c);
   int isdigit(int c) __attribute__((enable_if(c <= -1 || c > 255, "chosen when 'c' is out of range"))) __attribute__((unavailable("'c' must have the value of an unsigned char or EOF")));
-  
+
   void foo(char c) {
     isdigit(c);
     isdigit(10);
@@ -406,7 +406,7 @@ overload out of a number of viable overloads using enable_if.
 
   void f() __attribute__((enable_if(true, "")));  // #1
   void f() __attribute__((enable_if(true, ""))) __attribute__((enable_if(true, "")));  // #2
-  
+
   void g(int i, int j) __attribute__((enable_if(i, "")));  // #1
   void g(int i, int j) __attribute__((enable_if(j, ""))) __attribute__((enable_if(true)));  // #2
 
@@ -918,11 +918,11 @@ default name.
 can only be placed before an @protocol or @interface declaration:
         
 .. code-block:: objc
-        
+
   __attribute__((objc_runtime_name("MyLocalName")))
   @interface Message
   @end
-        
+
     }];
 }
 
@@ -1228,7 +1228,7 @@ potentially-evaluated discarded-value expression that is not explicitly cast to
 .. code-block: c++
   struct [[nodiscard]] error_info { /*...*/ };
   error_info enable_missile_safety_mode();
-  
+
   void launch_missiles();
   void test_missiles() {
     enable_missile_safety_mode(); // diagnoses
@@ -1480,14 +1480,15 @@ x86/x86-64 targets, which can be used to create multiple implementations of the
 same function that will be resolved at runtime based on the priority of their
 ``target`` attribute strings. A function is considered a multiversioned function
 if either two declarations of the function have different ``target`` attribute
-  strings, or if it has a ``target`` attribute string of ``default``.  For
-  example:
+strings, or if it has a ``target`` attribute string of ``default``.  For
+example:
 
   .. code-block:: c++
-  __attribute__((target("arch=atom")))
-  void foo() {} // will be called on 'atom' processors.
-  __attribute__((target("default")))
-  void foo() {} // will be called on any other processors.
+
+    __attribute__((target("arch=atom")))
+    void foo() {} // will be called on 'atom' processors.
+    __attribute__((target("default")))
+    void foo() {} // will be called on any other processors.
 
 All multiversioned functions must contain a ``default`` (fallback)
 implementation, otherwise usages of the function are considered invalid.
@@ -2329,11 +2330,11 @@ Attribute ``trivial_abi`` has no effect in the following cases:
 
 - The class directly declares a virtual base or virtual methods.
 - The class has a base class that is non-trivial for the purposes of calls.
-- The class has a non-static data member whose type is non-trivial for the
-purposes of calls, which includes:
- - classes that are non-trivial for the purposes of calls
- - __weak-qualified types in Objective-C++
- - arrays of any of the above
+- The class has a non-static data member whose type is non-trivial for the purposes of calls, which includes:
+
+  - classes that are non-trivial for the purposes of calls
+  - __weak-qualified types in Objective-C++
+  - arrays of any of the above
   }];
 }
 
@@ -2754,23 +2755,23 @@ used to process multiple arguments from a single invocation from a SIMD loop
 concurrently.
 The syntax of the `declare simd` construct is as follows:
 
-  .. code-block:: c
+  .. code-block:: none
 
-  #pragma omp declare simd [clause[[,] clause] ...] new-line
-  [#pragma omp declare simd [clause[[,] clause] ...] new-line]
-  [...]
-  function definition or declaration
+    #pragma omp declare simd [clause[[,] clause] ...] new-line
+    [#pragma omp declare simd [clause[[,] clause] ...] new-line]
+    [...]
+    function definition or declaration
 
 where clause is one of the following:
 
-  .. code-block:: c
+  .. code-block:: none
 
-  simdlen(length)
-  linear(argument-list[:constant-linear-step])
-  aligned(argument-list[:alignment])
-  uniform(argument-list)
-  inbranch
-  notinbranch
+    simdlen(length)
+    linear(argument-list[:constant-linear-step])
+    aligned(argument-list[:alignment])
+    uniform(argument-list)
+    inbranch
+    notinbranch
 
   }];
 }
@@ -2786,9 +2787,9 @@ The syntax of the declare target directive is as follows:
 
   .. code-block:: c
 
-  #pragma omp declare target new-line
-  declarations-definition-seq
-  #pragma omp end declare target new-line
+    #pragma omp declare target new-line
+    declarations-definition-seq
+    #pragma omp end declare target new-line
   }];
 }
 
@@ -3325,4 +3326,14 @@ For more information see
 `gcc documentation <https://gcc.gnu.org/onlinedocs/gcc-7.2.0/gcc/Microsoft-Windows-Variable-Attributes.html>`_
 or `msvc documentation <https://docs.microsoft.com/pl-pl/cpp/cpp/selectany>`_.
 }];
+}
+
+def ArtificialDocs : Documentation {
+  let Category = DocCatFunction;
+  let Content = [{
+The ``artificial`` attribute can be applied to an inline function. If such a
+function is inlined, the attribute indicates that debuggers should associate
+the resulting instructions with the call site, rather than with the 
+corresponding line within the inlined callee.
+  }];
 }

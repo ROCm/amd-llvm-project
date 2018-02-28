@@ -7,8 +7,14 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// An input chunk represents an indivisible blocks of code or data from an input
-// file.  i.e. a single wasm data segment or a single wasm function.
+// An InputChunks represents an indivisible opaque region of a input wasm file.
+// i.e. a single wasm data segment or a single wasm function.
+//
+// They are written directly to the mmap'd output file after which relocations
+// are applied.  Because each Chunk is independent they can be written in
+// parallel.
+//
+// Chunks are also unit on which garbage collection (--gc-sections) operates.
 //
 //===----------------------------------------------------------------------===//
 
@@ -17,7 +23,6 @@
 
 #include "Config.h"
 #include "InputFiles.h"
-#include "WriterUtils.h"
 #include "lld/Common/ErrorHandler.h"
 #include "llvm/Object/Wasm.h"
 
@@ -26,6 +31,10 @@ using llvm::wasm::WasmFunction;
 using llvm::wasm::WasmRelocation;
 using llvm::wasm::WasmSignature;
 using llvm::object::WasmSection;
+
+namespace llvm {
+class raw_ostream;
+}
 
 namespace lld {
 namespace wasm {
@@ -45,36 +54,30 @@ public:
 
   void writeTo(uint8_t *SectionStart) const;
 
-  void setOutputOffset(uint32_t Offset) {
-    OutputOffset = Offset;
-    calcRelocations();
-  }
-
-  uint32_t getOutputOffset() const { return OutputOffset; }
   ArrayRef<WasmRelocation> getRelocations() const { return Relocations; }
-  StringRef getFileName() const { return File->getName(); }
 
   virtual StringRef getComdat() const = 0;
   virtual StringRef getName() const = 0;
 
-  bool Discarded = false;
-  std::vector<OutputRelocation> OutRelocations;
-  ObjFile *File;
+  size_t NumRelocations() const { return Relocations.size(); }
+  void writeRelocations(llvm::raw_ostream &OS) const;
 
-  // The garbage collector sets sections' Live bits.
-  // If GC is disabled, all sections are considered live by default.
+  ObjFile *File;
+  int32_t OutputOffset = 0;
+
+  // Signals that the section is part of the output.  The garbage collector,
+  // and COMDAT handling can set a sections' Live bit.
+  // If GC is disabled, all sections start out as live by default.
   unsigned Live : 1;
 
 protected:
   InputChunk(ObjFile *F, Kind K)
       : File(F), Live(!Config->GcSections), SectionKind(K) {}
   virtual ~InputChunk() = default;
-  void calcRelocations();
   virtual ArrayRef<uint8_t> data() const = 0;
   virtual uint32_t getInputSectionOffset() const = 0;
 
   std::vector<WasmRelocation> Relocations;
-  int32_t OutputOffset = 0;
   Kind SectionKind;
 };
 
@@ -93,23 +96,11 @@ public:
 
   static bool classof(const InputChunk *C) { return C->kind() == DataSegment; }
 
-  // Translate an offset in the input segment to an offset in the output
-  // segment.
-  uint32_t translateVA(uint32_t Address) const;
-
-  const OutputSegment *getOutputSegment() const { return OutputSeg; }
-
-  void setOutputSegment(const OutputSegment *Segment, uint32_t Offset) {
-    OutputSeg = Segment;
-    OutputSegmentOffset = Offset;
-  }
-
   uint32_t getAlignment() const { return Segment.Data.Alignment; }
-  uint32_t startVA() const { return Segment.Data.Offset.Value.Int32; }
-  uint32_t endVA() const { return startVA() + getSize(); }
   StringRef getName() const override { return Segment.Data.Name; }
   StringRef getComdat() const override { return Segment.Data.Comdat; }
 
+  const OutputSegment *OutputSeg = nullptr;
   int32_t OutputSegmentOffset = 0;
 
 protected:
@@ -119,7 +110,6 @@ protected:
   }
 
   const WasmSegment &Segment;
-  const OutputSegment *OutputSeg = nullptr;
 };
 
 // Represents a single wasm function within and input file.  These are
@@ -175,6 +165,8 @@ protected:
 };
 
 } // namespace wasm
+
+std::string toString(const wasm::InputChunk *);
 } // namespace lld
 
 #endif // LLD_WASM_INPUT_CHUNKS_H

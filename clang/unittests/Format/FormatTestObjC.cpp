@@ -113,10 +113,6 @@ TEST(FormatTestObjCStyle, DetectsObjCInHeaders) {
   ASSERT_TRUE((bool)Style);
   EXPECT_EQ(FormatStyle::LK_Cpp, Style->Language);
 
-  Style = getStyle("{}", "a.h", "none", "extern NSString *kFoo;\n");
-  ASSERT_TRUE((bool)Style);
-  EXPECT_EQ(FormatStyle::LK_ObjC, Style->Language);
-
   Style =
       getStyle("{}", "a.h", "none", "typedef NS_ENUM(NSInteger, Foo) {};\n");
   ASSERT_TRUE((bool)Style);
@@ -125,10 +121,6 @@ TEST(FormatTestObjCStyle, DetectsObjCInHeaders) {
   Style = getStyle("{}", "a.h", "none", "enum Foo {};");
   ASSERT_TRUE((bool)Style);
   EXPECT_EQ(FormatStyle::LK_Cpp, Style->Language);
-
-  Style = getStyle("{}", "a.h", "none", "extern NSInteger Foo();\n");
-  ASSERT_TRUE((bool)Style);
-  EXPECT_EQ(FormatStyle::LK_ObjC, Style->Language);
 
   Style =
       getStyle("{}", "a.h", "none", "inline void Foo() { Log(@\"Foo\"); }\n");
@@ -154,6 +146,23 @@ TEST(FormatTestObjCStyle, DetectsObjCInHeaders) {
                    "inline void Foo() { int foo[] = {1, 2, 3}; }\n");
   ASSERT_TRUE((bool)Style);
   EXPECT_EQ(FormatStyle::LK_Cpp, Style->Language);
+
+  // ObjC characteristic types.
+  Style = getStyle("{}", "a.h", "none", "extern NSString *kFoo;\n");
+  ASSERT_TRUE((bool)Style);
+  EXPECT_EQ(FormatStyle::LK_ObjC, Style->Language);
+
+  Style = getStyle("{}", "a.h", "none", "extern NSInteger Foo();\n");
+  ASSERT_TRUE((bool)Style);
+  EXPECT_EQ(FormatStyle::LK_ObjC, Style->Language);
+
+  Style = getStyle("{}", "a.h", "none", "NSObject *Foo();\n");
+  ASSERT_TRUE((bool)Style);
+  EXPECT_EQ(FormatStyle::LK_ObjC, Style->Language);
+
+  Style = getStyle("{}", "a.h", "none", "NSSet *Foo();\n");
+  ASSERT_TRUE((bool)Style);
+  EXPECT_EQ(FormatStyle::LK_ObjC, Style->Language);
 }
 
 TEST_F(FormatTestObjC, FormatObjCTryCatch) {
@@ -178,7 +187,8 @@ TEST_F(FormatTestObjC, FormatObjCAutoreleasepool) {
                "@autoreleasepool {\n"
                "  f();\n"
                "}\n");
-  Style.BreakBeforeBraces = FormatStyle::BS_Allman;
+  Style.BreakBeforeBraces = FormatStyle::BS_Custom;
+  Style.BraceWrapping.AfterControlStatement = true;
   verifyFormat("@autoreleasepool\n"
                "{\n"
                "  f();\n"
@@ -198,6 +208,25 @@ TEST_F(FormatTestObjC, FormatObjCGenerics) {
                "    NSArray<aaaaaaaaaaaaaaaaaaa<\n"
                "        aaaaaaaaaaaaaaaa *> *>\n"
                "        aaaaaaaaaaaaaaaaa);\n");
+}
+
+TEST_F(FormatTestObjC, FormatObjCSynchronized) {
+  verifyFormat("@synchronized(self) {\n"
+               "  f();\n"
+               "}\n"
+               "@synchronized(self) {\n"
+               "  f();\n"
+               "}\n");
+  Style.BreakBeforeBraces = FormatStyle::BS_Custom;
+  Style.BraceWrapping.AfterControlStatement = true;
+  verifyFormat("@synchronized(self)\n"
+               "{\n"
+               "  f();\n"
+               "}\n"
+               "@synchronized(self)\n"
+               "{\n"
+               "  f();\n"
+               "}\n");
 }
 
 TEST_F(FormatTestObjC, FormatObjCInterface) {

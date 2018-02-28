@@ -241,6 +241,12 @@ void DwarfUnit::addSInt(DIELoc &Die, Optional<dwarf::Form> Form,
 
 void DwarfUnit::addString(DIE &Die, dwarf::Attribute Attribute,
                           StringRef String) {
+  if (DD->useInlineStrings()) {
+    Die.addValue(DIEValueAllocator, Attribute, dwarf::DW_FORM_string,
+                 new (DIEValueAllocator)
+                     DIEInlineString(String, DIEValueAllocator));
+    return;
+  }
   auto StringPoolEntry = DU->getStringPool().getEntry(*Asm, String);
   dwarf::Form IxForm =
       isDwoUnit() ? dwarf::DW_FORM_GNU_str_index : dwarf::DW_FORM_strp;
@@ -296,7 +302,9 @@ MD5::MD5Result *DwarfUnit::getMD5AsBytes(const DIFile *File) {
 unsigned DwarfTypeUnit::getOrCreateSourceID(const DIFile *File) {
   return SplitLineTable
              ? SplitLineTable->getFile(File->getDirectory(),
-                                       File->getFilename(), getMD5AsBytes(File))
+                                       File->getFilename(),
+                                       getMD5AsBytes(File),
+                                       File->getSource())
              : getCU().getOrCreateSourceID(File);
 }
 
@@ -1382,14 +1390,9 @@ void DwarfUnit::constructSubrangeDIE(DIE &Buffer, const DISubrange *SR,
     addUInt(DW_Subrange, dwarf::DW_AT_lower_bound, None, LowerBound);
 
   if (auto *CV = SR->getCount().dyn_cast<DIVariable*>()) {
-    // 'finishVariableDefinition' that creates the types for a variable is
-    // always called _after_ the DIEs for variables are created.
-    auto *CountVarDIE = getDIE(CV);
-    assert(CountVarDIE && "DIE for count is not yet instantiated");
-    addDIEEntry(DW_Subrange, dwarf::DW_AT_count, *CountVarDIE);
+    if (auto *CountVarDIE = getDIE(CV))
+      addDIEEntry(DW_Subrange, dwarf::DW_AT_count, *CountVarDIE);
   } else if (Count != -1)
-    // FIXME: An unbounded array should reference the expression that defines
-    // the array.
     addUInt(DW_Subrange, dwarf::DW_AT_count, None, Count);
 }
 
@@ -1430,11 +1433,11 @@ void DwarfUnit::constructArrayTypeDIE(DIE &Buffer, const DICompositeType *CTy) {
 void DwarfUnit::constructEnumTypeDIE(DIE &Buffer, const DICompositeType *CTy) {
   const DIType *DTy = resolve(CTy->getBaseType());
   bool IsUnsigned = DTy && isUnsignedDIType(DD, DTy);
-  if (DTy && DD->getDwarfVersion() >= 3)
-    addType(Buffer, DTy);
-  if (DD->getDwarfVersion() >= 4 && (CTy->getFlags() & DINode::FlagFixedEnum)) {
-    assert(DTy);
-    addFlag(Buffer, dwarf::DW_AT_enum_class);
+  if (DTy) {
+    if (DD->getDwarfVersion() >= 3)
+      addType(Buffer, DTy);
+    if (DD->getDwarfVersion() >= 4 && (CTy->getFlags() & DINode::FlagFixedEnum))
+      addFlag(Buffer, dwarf::DW_AT_enum_class);
   }
 
   DINodeArray Elements = CTy->getElements();

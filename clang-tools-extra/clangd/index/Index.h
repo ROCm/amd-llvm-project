@@ -11,6 +11,7 @@
 #define LLVM_CLANG_TOOLS_EXTRA_CLANGD_INDEX_INDEX_H
 
 #include "clang/Index/IndexSymbol.h"
+#include "clang/Lex/Lexer.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/Hashing.h"
@@ -25,11 +26,9 @@ namespace clangd {
 struct SymbolLocation {
   // The URI of the source file where a symbol occurs.
   llvm::StringRef FileURI;
-  // The 0-based offset to the first character of the symbol from the beginning
-  // of the source file.
+  // The 0-based offsets of the symbol from the beginning of the source file,
+  // using half-open range, [StartOffset, EndOffset).
   unsigned StartOffset = 0;
-  // The 0-based offset to the last character of the symbol from the beginning
-  // of the source file.
   unsigned EndOffset = 0;
 
   operator bool() const { return !FileURI.empty(); }
@@ -121,9 +120,10 @@ struct Symbol {
   // The containing namespace. e.g. "" (global), "ns::" (top-level namespace).
   llvm::StringRef Scope;
   // The location of the symbol's definition, if one was found.
-  // This covers the whole definition (e.g. class body).
+  // This just covers the symbol name (e.g. without class/function body).
   SymbolLocation Definition;
   // The location of the preferred declaration of the symbol.
+  // This just covers the symbol name.
   // This may be the same as Definition.
   //
   // A C++ symbol may have multiple declarations, and we pick one to prefer.
@@ -152,17 +152,24 @@ struct Symbol {
   /// and have clients resolve full symbol information for a specific candidate
   /// if needed.
   struct Details {
-    // Documentation including comment for the symbol declaration.
+    /// Documentation including comment for the symbol declaration.
     llvm::StringRef Documentation;
-    // This is what goes into the LSP detail field in a completion item. For
-    // example, the result type of a function.
+    /// This is what goes into the LSP detail field in a completion item. For
+    /// example, the result type of a function.
     llvm::StringRef CompletionDetail;
+    /// This can be either a URI of the header to be #include'd for this symbol,
+    /// or a literal header quoted with <> or "" that is suitable to be included
+    /// directly. When this is a URI, the exact #include path needs to be
+    /// calculated according to the URI scheme.
+    ///
+    /// This is a canonical include for the symbol and can be different from
+    /// FileURI in the CanonicalDeclaration.
+    llvm::StringRef IncludeHeader;
   };
 
   // Optional details of the symbol.
   const Details *Detail = nullptr;
 
-  // FIXME: add definition location of the symbol.
   // FIXME: add all occurrences support.
   // FIXME: add extra fields for index scoring signals.
 };
@@ -248,8 +255,7 @@ public:
   /// each matched symbol before returning.
   /// If returned Symbols are used outside Callback, they must be deep-copied!
   ///
-  /// Returns true if the result list is complete, false if it was truncated due
-  /// to MaxCandidateCount
+  /// Returns true if there may be more results (limited by MaxCandidateCount).
   virtual bool
   fuzzyFind(const FuzzyFindRequest &Req,
             llvm::function_ref<void(const Symbol &)> Callback) const = 0;

@@ -263,6 +263,52 @@ bool ISD::allOperandsUndef(const SDNode *N) {
   return true;
 }
 
+bool ISD::matchUnaryPredicate(SDValue Op,
+                              std::function<bool(ConstantSDNode *)> Match) {
+  if (auto *Cst = dyn_cast<ConstantSDNode>(Op))
+    return Match(Cst);
+
+  if (ISD::BUILD_VECTOR != Op.getOpcode())
+    return false;
+
+  EVT SVT = Op.getValueType().getScalarType();
+  for (unsigned i = 0, e = Op.getNumOperands(); i != e; ++i) {
+    auto *Cst = dyn_cast<ConstantSDNode>(Op.getOperand(i));
+    if (!Cst || Cst->getValueType(0) != SVT || !Match(Cst))
+      return false;
+  }
+  return true;
+}
+
+bool ISD::matchBinaryPredicate(
+    SDValue LHS, SDValue RHS,
+    std::function<bool(ConstantSDNode *, ConstantSDNode *)> Match) {
+  if (LHS.getValueType() != RHS.getValueType())
+    return false;
+
+  if (auto *LHSCst = dyn_cast<ConstantSDNode>(LHS))
+    if (auto *RHSCst = dyn_cast<ConstantSDNode>(RHS))
+      return Match(LHSCst, RHSCst);
+
+  if (ISD::BUILD_VECTOR != LHS.getOpcode() ||
+      ISD::BUILD_VECTOR != RHS.getOpcode())
+    return false;
+
+  EVT SVT = LHS.getValueType().getScalarType();
+  for (unsigned i = 0, e = LHS.getNumOperands(); i != e; ++i) {
+    auto *LHSCst = dyn_cast<ConstantSDNode>(LHS.getOperand(i));
+    auto *RHSCst = dyn_cast<ConstantSDNode>(RHS.getOperand(i));
+    if (!LHSCst || !RHSCst)
+      return false;
+    if (LHSCst->getValueType(0) != SVT ||
+        LHSCst->getValueType(0) != RHSCst->getValueType(0))
+      return false;
+    if (!Match(LHSCst, RHSCst))
+      return false;
+  }
+  return true;
+}
+
 ISD::NodeType ISD::getExtForLoadExtType(bool IsFP, ISD::LoadExtType ExtType) {
   switch (ExtType) {
   case ISD::EXTLOAD:
@@ -2920,11 +2966,38 @@ void SelectionDAG::computeKnownBits(SDValue Op, KnownBits &Known,
   }
   case ISD::SMIN:
   case ISD::SMAX: {
-    computeKnownBits(Op.getOperand(0), Known, DemandedElts,
-                     Depth + 1);
-    // If we don't know any bits, early out.
-    if (Known.isUnknown())
-      break;
+    // If we have a clamp pattern, we know that the number of sign bits will be
+    // the minimum of the clamp min/max range.
+    bool IsMax = (Opcode == ISD::SMAX);
+    ConstantSDNode *CstLow = nullptr, *CstHigh = nullptr;
+    if ((CstLow = isConstOrDemandedConstSplat(Op.getOperand(1), DemandedElts)))
+      if (Op.getOperand(0).getOpcode() == (IsMax ? ISD::SMIN : ISD::SMAX))
+        CstHigh = isConstOrDemandedConstSplat(Op.getOperand(0).getOperand(1),
+                                              DemandedElts);
+    if (CstLow && CstHigh) {
+      if (!IsMax)
+        std::swap(CstLow, CstHigh);
+
+      const APInt &ValueLow = CstLow->getAPIntValue();
+      const APInt &ValueHigh = CstHigh->getAPIntValue();
+      if (ValueLow.sle(ValueHigh)) {
+        unsigned LowSignBits = ValueLow.getNumSignBits();
+        unsigned HighSignBits = ValueHigh.getNumSignBits();
+        unsigned MinSignBits = std::min(LowSignBits, HighSignBits);
+        if (ValueLow.isNegative() && ValueHigh.isNegative()) {
+          Known.One.setHighBits(MinSignBits);
+          break;
+        }
+        if (ValueLow.isNonNegative() && ValueHigh.isNonNegative()) {
+          Known.Zero.setHighBits(MinSignBits);
+          break;
+        }
+      }
+    }
+
+    // Fallback - just get the shared known bits of the operands.
+    computeKnownBits(Op.getOperand(0), Known, DemandedElts, Depth + 1);
+    if (Known.isUnknown()) break; // Early-out
     computeKnownBits(Op.getOperand(1), Known2, DemandedElts, Depth + 1);
     Known.Zero &= Known2.Zero;
     Known.One &= Known2.One;
@@ -3054,7 +3127,8 @@ unsigned SelectionDAG::ComputeNumSignBits(SDValue Op, const APInt &DemandedElts,
   if (!DemandedElts)
     return 1;  // No demanded elts, better to assume we don't know anything.
 
-  switch (Op.getOpcode()) {
+  unsigned Opcode = Op.getOpcode();
+  switch (Opcode) {
   default: break;
   case ISD::AssertSext:
     Tmp = cast<VTSDNode>(Op.getOperand(1))->getVT().getSizeInBits();
@@ -3205,7 +3279,32 @@ unsigned SelectionDAG::ComputeNumSignBits(SDValue Op, const APInt &DemandedElts,
     return std::min(Tmp, Tmp2);
 
   case ISD::SMIN:
-  case ISD::SMAX:
+  case ISD::SMAX: {
+    // If we have a clamp pattern, we know that the number of sign bits will be
+    // the minimum of the clamp min/max range.
+    bool IsMax = (Opcode == ISD::SMAX);
+    ConstantSDNode *CstLow = nullptr, *CstHigh = nullptr;
+    if ((CstLow = isConstOrDemandedConstSplat(Op.getOperand(1), DemandedElts)))
+      if (Op.getOperand(0).getOpcode() == (IsMax ? ISD::SMIN : ISD::SMAX))
+        CstHigh = isConstOrDemandedConstSplat(Op.getOperand(0).getOperand(1),
+                                              DemandedElts);
+    if (CstLow && CstHigh) {
+      if (!IsMax)
+        std::swap(CstLow, CstHigh);
+      if (CstLow->getAPIntValue().sle(CstHigh->getAPIntValue())) {
+        Tmp = CstLow->getAPIntValue().getNumSignBits();
+        Tmp2 = CstHigh->getAPIntValue().getNumSignBits();
+        return std::min(Tmp, Tmp2);
+      }
+    }
+
+    // Fallback - just get the minimum number of sign bits of the operands.
+    Tmp = ComputeNumSignBits(Op.getOperand(0), Depth + 1);
+    if (Tmp == 1)
+      return 1;  // Early out.
+    Tmp2 = ComputeNumSignBits(Op.getOperand(1), Depth + 1);
+    return std::min(Tmp, Tmp2);
+  }
   case ISD::UMIN:
   case ISD::UMAX:
     Tmp = ComputeNumSignBits(Op.getOperand(0), Depth + 1);
@@ -3241,7 +3340,7 @@ unsigned SelectionDAG::ComputeNumSignBits(SDValue Op, const APInt &DemandedElts,
       unsigned RotAmt = C->getAPIntValue().urem(VTBits);
 
       // Handle rotate right by N like a rotate left by 32-N.
-      if (Op.getOpcode() == ISD::ROTR)
+      if (Opcode == ISD::ROTR)
         RotAmt = (VTBits - RotAmt) % VTBits;
 
       // If we aren't rotating out all of the known-in sign bits, return the
@@ -3439,10 +3538,10 @@ unsigned SelectionDAG::ComputeNumSignBits(SDValue Op, const APInt &DemandedElts,
   }
 
   // Allow the target to implement this method for its nodes.
-  if (Op.getOpcode() >= ISD::BUILTIN_OP_END ||
-      Op.getOpcode() == ISD::INTRINSIC_WO_CHAIN ||
-      Op.getOpcode() == ISD::INTRINSIC_W_CHAIN ||
-      Op.getOpcode() == ISD::INTRINSIC_VOID) {
+  if (Opcode >= ISD::BUILTIN_OP_END ||
+      Opcode == ISD::INTRINSIC_WO_CHAIN ||
+      Opcode == ISD::INTRINSIC_W_CHAIN ||
+      Opcode == ISD::INTRINSIC_VOID) {
     unsigned NumBits =
         TLI->ComputeNumSignBitsForTargetNode(Op, DemandedElts, *this, Depth);
     if (NumBits > 1)
@@ -4667,7 +4766,7 @@ SDValue SelectionDAG::getNode(unsigned Opcode, const SDLoc &DL, EVT VT,
       case ISD::FSUB:
       case ISD::FDIV:
       case ISD::FREM:
-        return N1;     // fold op(undef, arg2) -> undef
+        return getUNDEF(VT);     // fold op(undef, arg2) -> undef
       case ISD::UDIV:
       case ISD::SDIV:
       case ISD::UREM:
@@ -4700,7 +4799,7 @@ SDValue SelectionDAG::getNode(unsigned Opcode, const SDLoc &DL, EVT VT,
     case ISD::SRA:
     case ISD::SRL:
     case ISD::SHL:
-      return N2;       // fold op(arg1, undef) -> undef
+      return getUNDEF(VT);       // fold op(arg1, undef) -> undef
     case ISD::FADD:
     case ISD::FSUB:
     case ISD::FMUL:
@@ -7977,8 +8076,8 @@ unsigned SelectionDAG::InferPtrAlignment(SDValue Ptr) const {
   const GlobalValue *GV;
   int64_t GVOffset = 0;
   if (TLI->isGAPlusOffset(Ptr.getNode(), GV, GVOffset)) {
-    unsigned PtrWidth = getDataLayout().getPointerTypeSizeInBits(GV->getType());
-    KnownBits Known(PtrWidth);
+    unsigned IdxWidth = getDataLayout().getIndexTypeSizeInBits(GV->getType());
+    KnownBits Known(IdxWidth);
     llvm::computeKnownBits(GV, Known, getDataLayout());
     unsigned AlignBits = Known.countMinTrailingZeros();
     unsigned Align = AlignBits ? 1 << std::min(31U, AlignBits) : 0;

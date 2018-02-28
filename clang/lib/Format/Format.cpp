@@ -715,6 +715,8 @@ FormatStyle getGoogleStyle(FormatStyle::LanguageKind Language) {
       {
           "pb",
           "PB",
+          "proto",
+          "PROTO",
       },
       /*EnclosingFunctionNames=*/
       {},
@@ -1440,7 +1442,9 @@ private:
         "NSAffineTransform",
         "NSArray",
         "NSAttributedString",
+        "NSBundle",
         "NSCache",
+        "NSCalendar",
         "NSCharacterSet",
         "NSCountedSet",
         "NSData",
@@ -1466,6 +1470,7 @@ private:
         "NSMutableString",
         "NSNumber",
         "NSNumberFormatter",
+        "NSObject",
         "NSOrderedSet",
         "NSPoint",
         "NSPointerArray",
@@ -1475,17 +1480,19 @@ private:
         "NSSet",
         "NSSize",
         "NSString",
+        "NSTimeZone",
         "NSUInteger",
         "NSURL",
         "NSURLComponents",
         "NSURLQueryItem",
         "NSUUID",
+        "NSValue",
     };
 
     for (auto &Line : AnnotatedLines) {
-      for (FormatToken *FormatTok = Line->First->Next; FormatTok;
+      for (FormatToken *FormatTok = Line->First; FormatTok;
            FormatTok = FormatTok->Next) {
-        if ((FormatTok->Previous->is(tok::at) &&
+        if ((FormatTok->Previous && FormatTok->Previous->is(tok::at) &&
              (FormatTok->isObjCAtKeyword(tok::objc_interface) ||
               FormatTok->isObjCAtKeyword(tok::objc_implementation) ||
               FormatTok->isObjCAtKeyword(tok::objc_protocol) ||
@@ -2287,6 +2294,25 @@ static FormatStyle::LanguageKind getLanguageByFileName(StringRef FileName) {
   return FormatStyle::LK_Cpp;
 }
 
+FormatStyle::LanguageKind guessLanguage(StringRef FileName, StringRef Code) {
+  const auto GuessedLanguage = getLanguageByFileName(FileName);
+  if (GuessedLanguage == FormatStyle::LK_Cpp) {
+    auto Extension = llvm::sys::path::extension(FileName);
+    // If there's no file extension (or it's .h), we need to check the contents
+    // of the code to see if it contains Objective-C.
+    if (Extension.empty() || Extension == ".h") {
+      auto NonEmptyFileName = FileName.empty() ? "guess.h" : FileName;
+      std::unique_ptr<Environment> Env =
+          Environment::CreateVirtualEnvironment(Code, NonEmptyFileName, /*Ranges=*/{});
+      ObjCHeaderStyleGuesser Guesser(*Env, getLLVMStyle());
+      Guesser.process();
+      if (Guesser.isObjC())
+        return FormatStyle::LK_ObjC;
+    }
+  }
+  return GuessedLanguage;
+}
+
 llvm::Expected<FormatStyle> getStyle(StringRef StyleName, StringRef FileName,
                                      StringRef FallbackStyleName,
                                      StringRef Code, vfs::FileSystem *FS) {
@@ -2294,17 +2320,7 @@ llvm::Expected<FormatStyle> getStyle(StringRef StyleName, StringRef FileName,
     FS = vfs::getRealFileSystem().get();
   }
   FormatStyle Style = getLLVMStyle();
-  Style.Language = getLanguageByFileName(FileName);
-
-  if (Style.Language == FormatStyle::LK_Cpp && FileName.endswith(".h")) {
-    std::unique_ptr<Environment> Env =
-        Environment::CreateVirtualEnvironment(Code, FileName, /*Ranges=*/{});
-    ObjCHeaderStyleGuesser Guesser(*Env, Style);
-    Guesser.process();
-    if (Guesser.isObjC()) {
-      Style.Language = FormatStyle::LK_ObjC;
-    }
-  }
+  Style.Language = guessLanguage(FileName, Code);
 
   FormatStyle FallbackStyle = getNoStyle();
   if (!getPredefinedStyle(FallbackStyleName, Style.Language, &FallbackStyle))

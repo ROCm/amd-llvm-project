@@ -39,7 +39,8 @@ void fnc4smp(sampler_t s) {}
 
 kernel void foo(image1d_t img) {
   sampler_t smp = CLK_ADDRESS_CLAMP_TO_EDGE|CLK_NORMALIZED_COORDS_TRUE|CLK_FILTER_LINEAR;
-  // CHECK-COM: alloca %opencl.sampler_t addrspace(2)*
+  // CHECK-SPIR: alloca %opencl.sampler_t addrspace(2)*
+  // CHECK-AMDGCN: alloca %opencl.sampler_t addrspace(4)*
   event_t evt;
   // CHECK-SPIR: alloca %opencl.event_t*
   // CHECK-AMDGCN: alloca %opencl.event_t addrspace(5)*
@@ -52,11 +53,14 @@ kernel void foo(image1d_t img) {
   reserve_id_t rid;
   // CHECK-SPIR: alloca %opencl.reserve_id_t*
   // CHECK-AMDGCN: alloca %opencl.reserve_id_t addrspace(1)*
-  // CHECK-COM: store %opencl.sampler_t addrspace(2)*
+  // CHECK-SPIR: store %opencl.sampler_t addrspace(2)*
+  // CHECK-AMDGCN: store %opencl.sampler_t addrspace(4)*
   fnc4smp(smp);
-  // CHECK-COM: call {{.*}}void @fnc4smp(%opencl.sampler_t addrspace(2)*
+  // CHECK-SPIR: call {{.*}}void @fnc4smp(%opencl.sampler_t addrspace(2)*
+  // CHECK-AMDGCN: call {{.*}}void @fnc4smp(%opencl.sampler_t addrspace(4)*
   fnc4smp(glb_smp);
-  // CHECK-COM: call {{.*}}void @fnc4smp(%opencl.sampler_t addrspace(2)*
+  // CHECK-SPIR: call {{.*}}void @fnc4smp(%opencl.sampler_t addrspace(2)*
+  // CHECK-AMDGCN: call {{.*}}void @fnc4smp(%opencl.sampler_t addrspace(4)*
 }
 
 kernel void foo_pipe(read_only pipe int p) {}

@@ -1314,6 +1314,8 @@ static bool isSignedCharDefault(const llvm::Triple &Triple) {
 static bool isNoCommonDefault(const llvm::Triple &Triple) {
   switch (Triple.getArch()) {
   default:
+    if (Triple.isOSFuchsia())
+      return true;
     return false;
 
   case llvm::Triple::xcore:
@@ -2402,6 +2404,7 @@ static void RenderOpenCLOptions(const ArgList &Args, ArgStringList &CmdArgs) {
       options::OPT_cl_no_signed_zeros,
       options::OPT_cl_denorms_are_zero,
       options::OPT_cl_fp32_correctly_rounded_divide_sqrt,
+      options::OPT_cl_uniform_work_group_size
   };
 
   if (Arg *A = Args.getLastArg(options::OPT_cl_std_EQ)) {
@@ -2990,7 +2993,7 @@ static void RenderDebugOptions(const ToolChain &TC, const Driver &D,
 
   // Forward -gcodeview. EmitCodeView might have been set by CL-compatibility
   // argument parsing.
-  if (Args.hasArg(options::OPT_gcodeview) || EmitCodeView) {
+  if (EmitCodeView) {
     // DWARFVersion remains at 0 if no explicit choice was made.
     CmdArgs.push_back("-gcodeview");
   } else if (DWARFVersion == 0 &&
@@ -3045,6 +3048,18 @@ static void RenderDebugOptions(const ToolChain &TC, const Driver &D,
                                     TC.GetDefaultStandaloneDebug());
   if (DebugInfoKind == codegenoptions::LimitedDebugInfo && NeedFullDebug)
     DebugInfoKind = codegenoptions::FullDebugInfo;
+
+  if (Args.hasFlag(options::OPT_gembed_source, options::OPT_gno_embed_source, false)) {
+    // Source embedding is a vendor extension to DWARF v5. By now we have
+    // checked if a DWARF version was stated explicitly, and have otherwise
+    // fallen back to the target default, so if this is still not at least 5 we
+    // emit an error.
+    if (DWARFVersion < 5)
+      D.Diag(diag::err_drv_argument_only_allowed_with)
+          << Args.getLastArg(options::OPT_gembed_source)->getAsString(Args)
+          << "-gdwarf-5";
+    CmdArgs.push_back("-gembed-source");
+  }
 
   RenderDebugEnablingArgs(Args, CmdArgs, DebugInfoKind, DWARFVersion,
                           DebuggerTuning);
@@ -3362,16 +3377,12 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-disable-llvm-verifier");
 
   // Discard value names in assert builds unless otherwise specified.
-  if (const Arg *A = Args.getLastArg(options::OPT_fdiscard_value_names,
-                                     options::OPT_fno_discard_value_names)) {
-    if (A->getOption().matches(options::OPT_fdiscard_value_names))
-      CmdArgs.push_back("-discard-value-names");
-  } else if (!IsAssertBuild) {
-    // Do not discard value names in HC mode
+  if (Args.hasFlag(options::OPT_fdiscard_value_names,
+                   options::OPT_fno_discard_value_names, !IsAssertBuild))
+      
     if (!Args.hasArg(options::OPT_hc_mode))
-      CmdArgs.push_back("-discard-value-names");
-  }
-  
+       CmdArgs.push_back("-discard-value-names");
+
   // Set the main file name, so that debug info works even with
   // -save-temps.
   CmdArgs.push_back("-main-file-name");
@@ -3639,6 +3650,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   types::ID InputType = Input.getType();
   if (D.IsCLMode())
     AddClangCLArgs(Args, InputType, CmdArgs, &DebugInfoKind, &EmitCodeView);
+  else
+    EmitCodeView = Args.hasArg(options::OPT_gcodeview);
 
   const Arg *SplitDWARFArg = nullptr;
   RenderDebugOptions(getToolChain(), D, RawTriple, Args, EmitCodeView,
@@ -4147,6 +4160,10 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     else
       CmdArgs.push_back("-mstack-probe-size=0");
   }
+
+  if (!Args.hasFlag(options::OPT_mstack_arg_probe,
+                    options::OPT_mno_stack_arg_probe, true))
+    CmdArgs.push_back(Args.MakeArgString("-mno-stack-arg-probe"));
 
   if (Arg *A = Args.getLastArg(options::OPT_mrestrict_it,
                                options::OPT_mno_restrict_it)) {
@@ -4865,6 +4882,12 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     } else {
       CmdArgs.push_back("-global-isel=0");
     }
+  }
+
+  if (Arg *A = Args.getLastArg(options::OPT_fforce_enable_int128,
+                               options::OPT_fno_force_enable_int128)) {
+    if (A->getOption().matches(options::OPT_fforce_enable_int128))
+      CmdArgs.push_back("-fforce-enable-int128");
   }
 
   // Finally add the compile command to the compilation.

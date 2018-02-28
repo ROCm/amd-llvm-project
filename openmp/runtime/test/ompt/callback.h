@@ -61,10 +61,11 @@ static void print_ids(int level)
     printf("%" PRIu64 ": task level %d: parallel_id=%" PRIu64 ", task_id=%" PRIu64 ", frame=%p\n", ompt_get_thread_data()->value, level, exists_task ? parallel_data->value : 0, exists_task ? task_data->value : 0, frame);
 }
 
-#define print_frame(level)\
-do {\
-  printf("%" PRIu64 ": __builtin_frame_address(%d)=%p\n", ompt_get_thread_data()->value, level, __builtin_frame_address(level));\
-} while(0)
+#define get_frame_address(level) __builtin_frame_address(level)
+
+#define print_frame(level)                                                     \
+  printf("%" PRIu64 ": __builtin_frame_address(%d)=%p\n",                      \
+         ompt_get_thread_data()->value, level, get_frame_address(level))
 
 // clang (version 5.0 and above) adds an intermediate function call with debug flag (-g)
 #if defined(TEST_NEED_PRINT_FRAME_FROM_OUTLINED_FN)
@@ -74,8 +75,10 @@ do {\
     #define print_frame_from_outlined_fn(level) print_frame(level)
   #endif
 
-  #warning "Clang 5.0 and later add an additional wrapper function for tasks when compiling with debug information."
-  #warning "Please define -DDEBUG iff you manually pass in -g!"
+  #if defined(__clang__) && __clang_major__ >= 5
+    #warning "Clang 5.0 and later add an additional wrapper for outlined functions when compiling with debug information."
+    #warning "Please define -DDEBUG iff you manually pass in -g to make the tests succeed!"
+  #endif
 #endif
 
 // This macro helps to define a label at the current position that can be used

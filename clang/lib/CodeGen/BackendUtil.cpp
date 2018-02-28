@@ -1086,14 +1086,20 @@ Expected<BitcodeModule> clang::FindThinLTOModule(MemoryBufferRef MBRef) {
 
   // The bitcode file may contain multiple modules, we want the one that is
   // marked as being the ThinLTO module.
-  for (BitcodeModule &BM : *BMsOrErr) {
-    Expected<BitcodeLTOInfo> LTOInfo = BM.getLTOInfo();
-    if (LTOInfo && LTOInfo->IsThinLTO)
-      return BM;
-  }
+  if (const BitcodeModule *Bm = FindThinLTOModule(*BMsOrErr))
+    return *Bm;
 
   return make_error<StringError>("Could not find module summary",
                                  inconvertibleErrorCode());
+}
+
+BitcodeModule *clang::FindThinLTOModule(MutableArrayRef<BitcodeModule> BMs) {
+  for (BitcodeModule &BM : BMs) {
+    Expected<BitcodeLTOInfo> LTOInfo = BM.getLTOInfo();
+    if (LTOInfo && LTOInfo->IsThinLTO)
+      return &BM;
+  }
+  return nullptr;
 }
 
 static void runThinLTOBackend(ModuleSummaryIndex *CombinedIndex, Module *M,
@@ -1183,7 +1189,7 @@ static void runThinLTOBackend(ModuleSummaryIndex *CombinedIndex, Module *M,
     break;
   case Backend_EmitBC:
     Conf.PreCodeGenModuleHook = [&](size_t Task, const Module &Mod) {
-      WriteBitcodeToFile(M, *OS, CGOpts.EmitLLVMUseLists);
+      WriteBitcodeToFile(*M, *OS, CGOpts.EmitLLVMUseLists);
       return false;
     };
     break;
@@ -1209,6 +1215,7 @@ void clang::EmitBackendOutput(DiagnosticsEngine &Diags,
                               BackendAction Action,
                               std::unique_ptr<raw_pwrite_stream> OS,
                               bool SetLLVMOpts) {
+  std::unique_ptr<llvm::Module> EmptyModule;
   if (!CGOpts.ThinLTOIndexFile.empty()) {
     // If we are performing a ThinLTO importing compile, load the function index
     // into memory and pass it into runThinLTOBackend, which will run the
@@ -1226,11 +1233,22 @@ void clang::EmitBackendOutput(DiagnosticsEngine &Diags,
     // A null CombinedIndex means we should skip ThinLTO compilation
     // (LLVM will optionally ignore empty index files, returning null instead
     // of an error).
-    bool DoThinLTOBackend = CombinedIndex != nullptr;
-    if (DoThinLTOBackend) {
-      runThinLTOBackend(CombinedIndex.get(), M, HeaderOpts, CGOpts, TOpts,
-                        LOpts, std::move(OS), CGOpts.SampleProfileFile, Action);
-      return;
+    if (CombinedIndex) {
+      if (!CombinedIndex->skipModuleByDistributedBackend()) {
+        runThinLTOBackend(CombinedIndex.get(), M, HeaderOpts, CGOpts, TOpts,
+                          LOpts, std::move(OS), CGOpts.SampleProfileFile,
+                          Action);
+        return;
+      }
+      // Distributed indexing detected that nothing from the module is needed
+      // for the final linking. So we can skip the compilation. We sill need to
+      // output an empty object file to make sure that a linker does not fail
+      // trying to read it. Also for some features, like CFI, we must skip
+      // the compilation as CombinedIndex does not contain all required
+      // information.
+      EmptyModule = llvm::make_unique<llvm::Module>("empty", M->getContext());
+      EmptyModule->setTargetTriple(M->getTargetTriple());
+      M = EmptyModule.get();
     }
   }
 
@@ -1332,7 +1350,7 @@ void clang::EmbedBitcode(llvm::Module *M, const CodeGenOptions &CGOpts,
       // If the input is LLVM Assembly, bitcode is produced by serializing
       // the module. Use-lists order need to be perserved in this case.
       llvm::raw_string_ostream OS(Data);
-      llvm::WriteBitcodeToFile(M, OS, /* ShouldPreserveUseListOrder */ true);
+      llvm::WriteBitcodeToFile(*M, OS, /* ShouldPreserveUseListOrder */ true);
       ModuleData =
           ArrayRef<uint8_t>((const uint8_t *)OS.str().data(), OS.str().size());
     } else

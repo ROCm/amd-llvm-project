@@ -45,7 +45,9 @@ OutputSection *Out::FiniArray;
 std::vector<OutputSection *> elf::OutputSections;
 
 uint32_t OutputSection::getPhdrFlags() const {
-  uint32_t Ret = PF_R;
+  uint32_t Ret = 0;
+  if (Config->EMachine != EM_ARM || !(Flags & SHF_ARM_PURECODE))
+    Ret |= PF_R;
   if (Flags & SHF_WRITE)
     Ret |= PF_W;
   if (Flags & SHF_EXECINSTR)
@@ -76,6 +78,25 @@ OutputSection::OutputSection(StringRef Name, uint32_t Type, uint64_t Flags)
   Live = false;
 }
 
+bool OutputSection::isAllSectionDescription() const {
+  // We do not remove empty sections that are explicitly
+  // assigned to any segment.
+  if (!Phdrs.empty())
+    return false;
+
+  // We do not want to remove sections that have custom address or align
+  // expressions set even if them are empty. We keep them because we
+  // want to be sure that any expressions can be evaluated and report
+  // an error otherwise.
+  if (AddrExpr || AlignExpr || LMAExpr)
+    return false;
+
+  for (BaseCommand *Base : SectionCommands)
+    if (!isa<InputSectionDescription>(*Base))
+      return false;
+  return true;
+}
+
 // We allow sections of types listed below to merged into a
 // single progbits section. This is typically done by linker
 // scripts. Merging nobits and progbits will force disk space
@@ -91,10 +112,11 @@ static bool canMergeToProgbits(unsigned Type) {
 void OutputSection::addSection(InputSection *IS) {
   if (!Live) {
     // If IS is the first section to be added to this section,
-    // initialize Type and Entsize from IS.
+    // initialize Type, Entsize and flags from IS.
     Live = true;
     Type = IS->Type;
     Entsize = IS->Entsize;
+    Flags = IS->Flags;
   } else {
     // Otherwise, check if new type or flags are compatible with existing ones.
     if ((Flags & (SHF_ALLOC | SHF_TLS)) != (IS->Flags & (SHF_ALLOC | SHF_TLS)))
@@ -114,7 +136,13 @@ void OutputSection::addSection(InputSection *IS) {
   }
 
   IS->Parent = this;
-  Flags |= IS->Flags;
+  uint64_t AndMask =
+      Config->EMachine == EM_ARM ? (uint64_t)SHF_ARM_PURECODE : 0;
+  uint64_t OrMask = ~AndMask;
+  uint64_t AndFlags = (Flags & IS->Flags) & AndMask;
+  uint64_t OrFlags = (Flags | IS->Flags) & OrMask;
+  Flags = AndFlags | OrFlags;
+
   Alignment = std::max(Alignment, IS->Alignment);
   IS->OutSecOff = Size++;
 
@@ -231,12 +259,7 @@ template <class ELFT> void OutputSection::writeTo(uint8_t *Buf) {
   }
 
   // Write leading padding.
-  std::vector<InputSection *> Sections;
-  for (BaseCommand *Cmd : SectionCommands)
-    if (auto *ISD = dyn_cast<InputSectionDescription>(Cmd))
-      for (InputSection *IS : ISD->Sections)
-        if (IS->Live)
-          Sections.push_back(IS);
+  std::vector<InputSection *> Sections = getInputSections(this);
   uint32_t Filler = getFiller();
   if (Filler)
     fill(Buf, Sections.empty() ? Size : Sections[0]->OutSecOff, Filler);
@@ -281,17 +304,13 @@ static void finalizeShtGroup(OutputSection *OS,
 }
 
 template <class ELFT> void OutputSection::finalize() {
-  InputSection *First = nullptr;
-  for (BaseCommand *Base : SectionCommands) {
-    if (auto *ISD = dyn_cast<InputSectionDescription>(Base)) {
-      if (ISD->Sections.empty())
-        continue;
-      if (First == nullptr)
-        First = ISD->Sections.front();
-    }
-    if (isa<ByteCommand>(Base) && Type == SHT_NOBITS)
-      Type = SHT_PROGBITS;
-  }
+  if (Type == SHT_NOBITS)
+    for (BaseCommand *Base : SectionCommands)
+      if (isa<ByteCommand>(Base))
+        Type = SHT_PROGBITS;
+
+  std::vector<InputSection *> V = getInputSections(this);
+  InputSection *First = V.empty() ? nullptr : V[0];
 
   if (Flags & SHF_LINK_ORDER) {
     // We must preserve the link order dependency of sections with the
@@ -392,6 +411,14 @@ int elf::getPriority(StringRef S) {
   if (!to_integer(S.substr(Pos + 1), V, 10))
     return 65536;
   return V;
+}
+
+std::vector<InputSection *> elf::getInputSections(OutputSection *OS) {
+  std::vector<InputSection *> Ret;
+  for (BaseCommand *Base : OS->SectionCommands)
+    if (auto *ISD = dyn_cast<InputSectionDescription>(Base))
+      Ret.insert(Ret.end(), ISD->Sections.begin(), ISD->Sections.end());
+  return Ret;
 }
 
 // Sorts input sections by section name suffixes, so that .foo.N comes

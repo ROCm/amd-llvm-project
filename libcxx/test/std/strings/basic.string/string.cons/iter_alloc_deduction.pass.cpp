@@ -9,8 +9,7 @@
 
 // <string>
 // UNSUPPORTED: c++98, c++03, c++11, c++14
-// UNSUPPORTED: clang-3.3, clang-3.4, clang-3.5, clang-3.6, clang-3.7, clang-3.8, clang-3.9, clang-4.0
-// UNSUPPORTED: apple-clang-6, apple-clang-7, apple-clang-8.0
+// XFAIL: libcpp-no-deduction-guides
 
 // template<class InputIterator>
 //   basic_string(InputIterator begin, InputIterator end,
@@ -40,6 +39,17 @@
 
 int main()
 {
+    {
+    const char* s = "12345678901234";
+    std::basic_string s1(s, s+10);  // Can't use {} here
+    using S = decltype(s1); // what type did we get?
+    static_assert(std::is_same_v<S::value_type,                      char>,  "");
+    static_assert(std::is_same_v<S::traits_type,    std::char_traits<char>>, "");
+    static_assert(std::is_same_v<S::allocator_type,   std::allocator<char>>, "");
+    assert(s1.size() == 10);
+    assert(s1.compare(0, s1.size(), s, s1.size()) == 0);
+    }
+
     {
     const char* s = "12345678901234";
     std::basic_string s1{s, s+10, std::allocator<char>{}};

@@ -63,6 +63,7 @@ namespace llvm {
 extern cl::opt<bool> LTODiscardValueNames;
 extern cl::opt<std::string> LTORemarksFilename;
 extern cl::opt<bool> LTOPassRemarksWithHotness;
+extern cl::opt<unsigned> LTOPassRemarksHotnessThreshold;
 }
 
 namespace {
@@ -82,7 +83,7 @@ static void saveTempBitcode(const Module &TheModule, StringRef TempDir,
   if (EC)
     report_fatal_error(Twine("Failed to open ") + SaveTempPath +
                        " to save optimized bitcode\n");
-  WriteBitcodeToFile(&TheModule, OS, /* ShouldPreserveUseListOrder */ true);
+  WriteBitcodeToFile(TheModule, OS, /* ShouldPreserveUseListOrder */ true);
 }
 
 static const GlobalValueSummary *
@@ -476,7 +477,7 @@ ProcessThinLTOModule(Module &TheModule, ModuleSummaryIndex &Index,
       raw_svector_ostream OS(OutputBuffer);
       ProfileSummaryInfo PSI(TheModule);
       auto Index = buildModuleSummaryIndex(TheModule, nullptr, &PSI);
-      WriteBitcodeToFile(&TheModule, OS, true, &Index);
+      WriteBitcodeToFile(TheModule, OS, true, &Index);
     }
     return make_unique<ObjectMemoryBuffer>(std::move(OutputBuffer));
   }
@@ -998,7 +999,8 @@ void ThinLTOCodeGenerator::run() {
         Context.setDiscardValueNames(LTODiscardValueNames);
         Context.enableDebugTypeODRUniquing();
         auto DiagFileOrErr = lto::setupOptimizationRemarks(
-            Context, LTORemarksFilename, LTOPassRemarksWithHotness, count);
+            Context, LTORemarksFilename, LTOPassRemarksWithHotness,
+            LTOPassRemarksHotnessThreshold, count);
         if (!DiagFileOrErr) {
           errs() << "Error: " << toString(DiagFileOrErr.takeError()) << "\n";
           report_fatal_error("ThinLTO: Can't get an output file for the "

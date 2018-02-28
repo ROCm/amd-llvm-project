@@ -8,13 +8,14 @@
 //===----------------------------------------------------------------------===//
 
 #include "OutputSections.h"
-
 #include "InputChunks.h"
 #include "InputFiles.h"
 #include "OutputSegment.h"
+#include "WriterUtils.h"
 #include "lld/Common/ErrorHandler.h"
 #include "lld/Common/Threads.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/Support/LEB128.h"
 
 #define DEBUG_TYPE "lld"
 
@@ -65,14 +66,10 @@ std::string OutputSection::getSectionName() const {
   return sectionTypeToString(Type);
 }
 
-std::string SubSection::getSectionName() const {
-  return std::string("subsection <type=") + std::to_string(Type) + ">";
-}
-
 void OutputSection::createHeader(size_t BodySize) {
   raw_string_ostream OS(Header);
   debugWrite(OS.tell(), "section type [" + Twine(getSectionName()) + "]");
-  writeUleb128(OS, Type, nullptr);
+  encodeULEB128(Type, OS);
   writeUleb128(OS, BodySize, "section size");
   OS.flush();
   log("createHeader: " + toString(*this) + " body=" + Twine(BodySize) +
@@ -89,7 +86,7 @@ CodeSection::CodeSection(ArrayRef<InputFunction *> Functions)
   BodySize = CodeSectionHeader.size();
 
   for (InputChunk *Func : Functions) {
-    Func->setOutputOffset(BodySize);
+    Func->OutputOffset = BodySize;
     BodySize += Func->getSize();
   }
 
@@ -107,29 +104,25 @@ void CodeSection::writeTo(uint8_t *Buf) {
   memcpy(Buf, Header.data(), Header.size());
   Buf += Header.size();
 
-  uint8_t *ContentsStart = Buf;
-
   // Write code section headers
   memcpy(Buf, CodeSectionHeader.data(), CodeSectionHeader.size());
-  Buf += CodeSectionHeader.size();
 
   // Write code section bodies
-  parallelForEach(Functions, [ContentsStart](const InputChunk *Chunk) {
-    Chunk->writeTo(ContentsStart);
+  parallelForEach(Functions, [&](const InputChunk *Chunk) {
+    Chunk->writeTo(Buf);
   });
 }
 
 uint32_t CodeSection::numRelocations() const {
   uint32_t Count = 0;
   for (const InputChunk *Func : Functions)
-    Count += Func->OutRelocations.size();
+    Count += Func->NumRelocations();
   return Count;
 }
 
 void CodeSection::writeRelocations(raw_ostream &OS) const {
-  for (const InputChunk *Func : Functions)
-    for (const OutputRelocation &Reloc : Func->OutRelocations)
-      writeReloc(OS, Reloc);
+  for (const InputChunk *C : Functions)
+    C->writeRelocations(OS);
 }
 
 DataSection::DataSection(ArrayRef<OutputSegment *> Segments)
@@ -152,9 +145,9 @@ DataSection::DataSection(ArrayRef<OutputSegment *> Segments)
     BodySize += Segment->Header.size() + Segment->Size;
     log("Data segment: size=" + Twine(Segment->Size));
     for (InputSegment *InputSeg : Segment->InputSegments)
-      InputSeg->setOutputOffset(Segment->getSectionOffset() +
-                                Segment->Header.size() +
-                                InputSeg->OutputSegmentOffset);
+      InputSeg->OutputOffset = Segment->getSectionOffset() +
+                               Segment->Header.size() +
+                               InputSeg->OutputSegmentOffset;
   }
 
   createHeader(BodySize);
@@ -169,19 +162,17 @@ void DataSection::writeTo(uint8_t *Buf) {
   memcpy(Buf, Header.data(), Header.size());
   Buf += Header.size();
 
-  uint8_t *ContentsStart = Buf;
-
   // Write data section headers
   memcpy(Buf, DataSectionHeader.data(), DataSectionHeader.size());
 
-  parallelForEach(Segments, [ContentsStart](const OutputSegment *Segment) {
+  parallelForEach(Segments, [&](const OutputSegment *Segment) {
     // Write data segment header
-    uint8_t *SegStart = ContentsStart + Segment->getSectionOffset();
+    uint8_t *SegStart = Buf + Segment->getSectionOffset();
     memcpy(SegStart, Segment->Header.data(), Segment->Header.size());
 
     // Write segment data payload
     for (const InputChunk *Chunk : Segment->InputSegments)
-      Chunk->writeTo(ContentsStart);
+      Chunk->writeTo(Buf);
   });
 }
 
@@ -189,13 +180,12 @@ uint32_t DataSection::numRelocations() const {
   uint32_t Count = 0;
   for (const OutputSegment *Seg : Segments)
     for (const InputChunk *InputSeg : Seg->InputSegments)
-      Count += InputSeg->OutRelocations.size();
+      Count += InputSeg->NumRelocations();
   return Count;
 }
 
 void DataSection::writeRelocations(raw_ostream &OS) const {
   for (const OutputSegment *Seg : Segments)
-    for (const InputChunk *InputSeg : Seg->InputSegments)
-      for (const OutputRelocation &Reloc : InputSeg->OutRelocations)
-        writeReloc(OS, Reloc);
+    for (const InputChunk *C : Seg->InputSegments)
+      C->writeRelocations(OS);
 }

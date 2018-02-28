@@ -417,13 +417,16 @@ Optional<DIFile::ChecksumKind> DIFile::getChecksumKind(StringRef CSKindStr) {
 DIFile *DIFile::getImpl(LLVMContext &Context, MDString *Filename,
                         MDString *Directory,
                         Optional<DIFile::ChecksumInfo<MDString *>> CS,
-                        StorageType Storage, bool ShouldCreate) {
+                        Optional<MDString *> Source, StorageType Storage,
+                        bool ShouldCreate) {
   assert(isCanonical(Filename) && "Expected canonical MDString");
   assert(isCanonical(Directory) && "Expected canonical MDString");
   assert((!CS || isCanonical(CS->Value)) && "Expected canonical MDString");
-  DEFINE_GETIMPL_LOOKUP(DIFile, (Filename, Directory, CS));
-  Metadata *Ops[] = {Filename, Directory, CS ? CS->Value : nullptr};
-  DEFINE_GETIMPL_STORE(DIFile, (CS), Ops);
+  assert((!Source || isCanonical(*Source)) && "Expected canonical MDString");
+  DEFINE_GETIMPL_LOOKUP(DIFile, (Filename, Directory, CS, Source));
+  Metadata *Ops[] = {Filename, Directory, CS ? CS->Value : nullptr,
+                     Source.getValueOr(nullptr)};
+  DEFINE_GETIMPL_STORE(DIFile, (CS, Source), Ops);
 }
 
 DICompileUnit *DICompileUnit::getImpl(
@@ -708,7 +711,14 @@ bool DIExpression::isValid() const {
     case dwarf::DW_OP_plus:
     case dwarf::DW_OP_minus:
     case dwarf::DW_OP_mul:
+    case dwarf::DW_OP_div:
+    case dwarf::DW_OP_mod:
     case dwarf::DW_OP_or:
+    case dwarf::DW_OP_and:
+    case dwarf::DW_OP_xor:
+    case dwarf::DW_OP_shl:
+    case dwarf::DW_OP_shr:
+    case dwarf::DW_OP_shra:
     case dwarf::DW_OP_deref:
     case dwarf::DW_OP_xderef:
       break;

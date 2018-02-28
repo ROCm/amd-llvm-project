@@ -380,9 +380,7 @@ void tools::gnutools::Linker::ConstructLinkerJob(Compilation &C,
   for (const auto &Opt : ToolChain.ExtraOpts)
     CmdArgs.push_back(Opt.c_str());
 
-  if (!Args.hasArg(options::OPT_static)) {
-    CmdArgs.push_back("--eh-frame-hdr");
-  }
+  CmdArgs.push_back("--eh-frame-hdr");
 
   if (const char *LDMOption = getLDMOption(ToolChain.getTriple(), Args)) {
     CmdArgs.push_back("-m");

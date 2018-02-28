@@ -67,7 +67,6 @@ public:
     ISAVersion7_0_2,
     ISAVersion7_0_3,
     ISAVersion7_0_4,
-    ISAVersion8_0_0,
     ISAVersion8_0_1,
     ISAVersion8_0_2,
     ISAVersion8_0_3,
@@ -843,6 +842,12 @@ public:
   /// \returns true if the flat_scratch register should be initialized with the
   /// pointer to the wave's scratch memory rather than a size and offset.
   bool flatScratchIsPointer() const {
+    return getGeneration() >= GFX9;
+  }
+
+  /// \returns true if the machine has merged shaders in which s0-s7 are
+  /// reserved by the hardware and user SGPRs start at s8
+  bool hasMergedShaders() const {
     return getGeneration() >= GFX9;
   }
 

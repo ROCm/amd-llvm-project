@@ -38,6 +38,7 @@ namespace clang {
 class ASTContext;
 class BinaryOperator;
 class CFG;
+class ConstructionContext;
 class CXXBaseSpecifier;
 class CXXBindTemporaryExpr;
 class CXXCtorInitializer;
@@ -140,45 +141,6 @@ protected:
   CFGStmt() = default;
 };
 
-// This is bulky data for CFGConstructor which would not fit into the
-// CFGElement's room (pair of pointers). Contains the information
-// necessary to express what memory is being initialized by
-// the construction.
-class ConstructionContext {
-public:
-  typedef llvm::PointerUnion<Stmt *, CXXCtorInitializer *> TriggerTy;
-
-private:
-  // The construction site - the statement that triggered the construction
-  // for one of its parts. For instance, stack variable declaration statement
-  // triggers construction of itself or its elements if it's an array,
-  // new-expression triggers construction of the newly allocated object(s).
-  TriggerTy Trigger;
-
-public:
-  ConstructionContext() = default;
-  ConstructionContext(TriggerTy Trigger)
-      : Trigger(Trigger) {}
-
-  bool isNull() const { return Trigger.isNull(); }
-
-  TriggerTy getTrigger() const { return Trigger; }
-
-  const Stmt *getTriggerStmt() const {
-    return Trigger.dyn_cast<Stmt *>();
-  }
-
-  const CXXCtorInitializer *getTriggerInit() const {
-    return Trigger.dyn_cast<CXXCtorInitializer *>();
-  }
-
-  const ConstructionContext *getPersistentCopy(BumpVectorContext &C) const {
-    ConstructionContext *CC = C.getAllocator().Allocate<ConstructionContext>();
-    *CC = *this;
-    return CC;
-  }
-};
-
 /// CFGConstructor - Represents C++ constructor call. Maintains information
 /// necessary to figure out what memory is being initialized by the
 /// constructor expression. For now this is only used by the analyzer's CFG.
@@ -186,7 +148,7 @@ class CFGConstructor : public CFGStmt {
 public:
   explicit CFGConstructor(CXXConstructExpr *CE, const ConstructionContext *C)
       : CFGStmt(CE, Constructor) {
-    assert(!C->isNull());
+    assert(C);
     Data2.setPointer(const_cast<ConstructionContext *>(C));
   }
 
@@ -196,18 +158,6 @@ public:
 
   QualType getType() const {
     return cast<CXXConstructExpr>(getStmt())->getType();
-  }
-
-  ConstructionContext::TriggerTy getTrigger() const {
-    return getConstructionContext()->getTrigger();
-  }
-
-  const Stmt *getTriggerStmt() const {
-    return getConstructionContext()->getTriggerStmt();
-  }
-
-  const CXXCtorInitializer *getTriggerInit() const {
-    return getConstructionContext()->getTriggerInit();
   }
 
 private:
@@ -834,9 +784,9 @@ public:
     Elements.push_back(CFGStmt(statement), C);
   }
 
-  void appendConstructor(CXXConstructExpr *CE, const ConstructionContext &CC,
+  void appendConstructor(CXXConstructExpr *CE, const ConstructionContext *CC,
                          BumpVectorContext &C) {
-    Elements.push_back(CFGConstructor(CE, CC.getPersistentCopy(C)), C);
+    Elements.push_back(CFGConstructor(CE, CC), C);
   }
 
   void appendInitializer(CXXCtorInitializer *initializer,

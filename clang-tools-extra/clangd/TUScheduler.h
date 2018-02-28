@@ -32,12 +32,20 @@ struct InputsAndPreamble {
   const PreambleData *Preamble;
 };
 
+/// Determines whether diagnostics should be generated for a file snapshot.
+enum class WantDiagnostics {
+  Yes,  /// Diagnostics must be generated for this snapshot.
+  No,   /// Diagnostics must not be generated for this snapshot.
+  Auto, /// Diagnostics must be generated for this snapshot or a subsequent one,
+        /// within a bounded amount of time.
+};
+
 /// Handles running tasks for ClangdServer and managing the resources (e.g.,
 /// preambles and ASTs) for opened files.
 /// TUScheduler is not thread-safe, only one thread should be providing updates
 /// and scheduling tasks.
 /// Callbacks are run on a threadpool and it's appropriate to do slow work in
-/// them.
+/// them. Each task has a name, used for tracing (should be UpperCamelCase).
 class TUScheduler {
 public:
   TUScheduler(unsigned AsyncThreadsCount, bool StorePreamblesInMemory,
@@ -51,9 +59,8 @@ public:
   /// Schedule an update for \p File. Adds \p File to a list of tracked files if
   /// \p File was not part of it before.
   /// FIXME(ibiryukov): remove the callback from this function.
-  void update(PathRef File, ParseInputs Inputs,
-              UniqueFunction<void(llvm::Optional<std::vector<DiagWithFixIts>>)>
-                  OnUpdated);
+  void update(PathRef File, ParseInputs Inputs, WantDiagnostics WD,
+              UniqueFunction<void(std::vector<DiagWithFixIts>)> OnUpdated);
 
   /// Remove \p File from the list of tracked files and schedule removal of its
   /// resources.
@@ -65,7 +72,7 @@ public:
   /// \p Action is executed.
   /// If an error occurs during processing, it is forwarded to the \p Action
   /// callback.
-  void runWithAST(PathRef File,
+  void runWithAST(llvm::StringRef Name, PathRef File,
                   UniqueFunction<void(llvm::Expected<InputsAndAST>)> Action);
 
   /// Schedule an async read of the Preamble. Preamble passed to \p Action may
@@ -74,8 +81,12 @@ public:
   /// If an error occurs during processing, it is forwarded to the \p Action
   /// callback.
   void runWithPreamble(
-      PathRef File,
+      llvm::StringRef Name, PathRef File,
       UniqueFunction<void(llvm::Expected<InputsAndPreamble>)> Action);
+
+  /// Wait until there are no scheduled or running tasks.
+  /// Mostly useful for synchronizing tests.
+  bool blockUntilIdle(Deadline D) const;
 
 private:
   /// This class stores per-file data in the Files map.
@@ -88,7 +99,8 @@ private:
   llvm::StringMap<std::unique_ptr<FileData>> Files;
   // None when running tasks synchronously and non-None when running tasks
   // asynchronously.
-  llvm::Optional<AsyncTaskRunner> Tasks;
+  llvm::Optional<AsyncTaskRunner> PreambleTasks;
+  llvm::Optional<AsyncTaskRunner> WorkerThreads;
 };
 } // namespace clangd
 } // namespace clang

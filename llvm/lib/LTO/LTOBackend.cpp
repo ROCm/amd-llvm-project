@@ -82,7 +82,7 @@ Error Config::addSaveTemps(std::string OutputFileName,
       // directly and exit.
       if (EC)
         reportOpenError(Path, EC.message());
-      WriteBitcodeToFile(&M, OS, /*ShouldPreserveUseListOrder=*/false);
+      WriteBitcodeToFile(M, OS, /*ShouldPreserveUseListOrder=*/false);
       return true;
     };
   };
@@ -309,7 +309,7 @@ void splitCodeGen(Config &C, TargetMachine *TM, AddStreamFn AddStream,
         // FIXME: Provide a more direct way to do this in LLVM.
         SmallString<0> BC;
         raw_svector_ostream BCOS(BC);
-        WriteBitcodeToFile(MPart.get(), BCOS);
+        WriteBitcodeToFile(*MPart, BCOS);
 
         // Enqueue the task
         CodegenThreadPool.async(
@@ -376,7 +376,8 @@ Error lto::backend(Config &C, AddStreamFn AddStream,
 
   // Setup optimization remarks.
   auto DiagFileOrErr = lto::setupOptimizationRemarks(
-      Mod->getContext(), C.RemarksFilename, C.RemarksWithHotness);
+      Mod->getContext(), C.RemarksFilename, C.RemarksWithHotness,
+      C.RemarksHotnessThreshold);
   if (!DiagFileOrErr)
     return DiagFileOrErr.takeError();
   auto DiagnosticOutputFile = std::move(*DiagFileOrErr);

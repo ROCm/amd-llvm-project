@@ -11,21 +11,18 @@
 __asm__("file scope asm is host only");
 
 // CHECK-HOST: constantdata = internal global
-// ITANIUM: constantdata = externally_initialized global
-// AMDGCN: constantdata = addrspace(4) externally_initialized global
+// CHECK-DEVICE: constantdata = {{(dso_local )?}}externally_initialized global
 __constant__ char constantdata[256];
 
 // CHECK-HOST: devicedata = internal global
-// ITANIUM: devicedata = externally_initialized global
-// AMDGCN: devicedata = addrspace(1) externally_initialized global
+// CHECK-DEVICE: devicedata = {{(dso_local )?}}externally_initialized global
 __device__ char devicedata[256];
 
 // CHECK-HOST: shareddata = internal global
-// ITANIUM: shareddata = global
-// AMDGCN: shareddata = addrspace(3) global
+// CHECK-DEVICE: shareddata = {{(dso_local )?}}global
 __shared__ char shareddata[256];
 
-// CHECK-HOST: hostdata = global
+// CHECK-HOST: hostdata = {{(dso_local )?}}global
 // CHECK-DEVICE-NOT: hostdata = global
 char hostdata[256];
 

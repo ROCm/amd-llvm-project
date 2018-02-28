@@ -207,8 +207,6 @@ IsaVersion getIsaVersion(const FeatureBitset &Features) {
     return {7, 0, 4};
 
   // GCN GFX8 (Volcanic Islands (VI)).
-  if (Features.test(FeatureISAVersion8_0_0))
-    return {8, 0, 0};
   if (Features.test(FeatureISAVersion8_0_1))
     return {8, 0, 1};
   if (Features.test(FeatureISAVersion8_0_2))
@@ -929,7 +927,7 @@ AMDGPUAS getAMDGPUAS(Triple T) {
   AMDGPUAS AS;
   AS.FLAT_ADDRESS = 0;
   AS.PRIVATE_ADDRESS = 5;
-  AS.REGION_ADDRESS = 4;
+  AS.REGION_ADDRESS = 2;
   return AS;
 }
 

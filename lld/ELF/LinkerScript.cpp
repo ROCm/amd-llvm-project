@@ -127,9 +127,9 @@ static bool shouldDefineSym(SymbolAssignment *Cmd) {
   // If a symbol was in PROVIDE(), we need to define it only
   // when it is a referenced undefined symbol.
   Symbol *B = Symtab->find(Cmd->Name);
-  if (!B || B->isDefined())
-    return false;
-  return true;
+  if (B && !B->isDefined())
+    return true;
+  return false;
 }
 
 // This function is called from processSectionCommands,
@@ -436,6 +436,8 @@ void LinkerScript::processSectionCommands() {
       Sec->SectionIndex = I++;
       if (Sec->Noload)
         Sec->Type = SHT_NOBITS;
+      if (Sec->NonAlloc)
+        Sec->Flags &= ~(uint64_t)SHF_ALLOC;
     }
   }
   Ctx = nullptr;
@@ -506,7 +508,7 @@ static OutputSection *addInputSec(StringMap<OutputSection *> &Map,
   // ignored. We should not have two output .text sections just because one was
   // in a group and another was not for example.
   //
-  // It also seems that that wording was a late addition and didn't get the
+  // It also seems that wording was a late addition and didn't get the
   // necessary scrutiny.
   //
   // Merging sections with different flags is expected by some users. One
@@ -750,27 +752,6 @@ void LinkerScript::assignOffsets(OutputSection *Sec) {
   }
 }
 
-void LinkerScript::removeEmptyCommands() {
-  // It is common practice to use very generic linker scripts. So for any
-  // given run some of the output sections in the script will be empty.
-  // We could create corresponding empty output sections, but that would
-  // clutter the output.
-  // We instead remove trivially empty sections. The bfd linker seems even
-  // more aggressive at removing them.
-  llvm::erase_if(SectionCommands, [&](BaseCommand *Base) {
-    if (auto *Sec = dyn_cast<OutputSection>(Base))
-      return !Sec->Live;
-    return false;
-  });
-}
-
-static bool isAllSectionDescription(const OutputSection &Cmd) {
-  for (BaseCommand *Base : Cmd.SectionCommands)
-    if (!isa<InputSectionDescription>(*Base))
-      return false;
-  return true;
-}
-
 void LinkerScript::adjustSectionsBeforeSorting() {
   // If the output section contains only symbol assignments, create a
   // corresponding output section. The issue is what to do with linker script
@@ -783,7 +764,7 @@ void LinkerScript::adjustSectionsBeforeSorting() {
   // Given that we want to create the section, we have to worry what impact
   // it will have on the link. For example, if we just create a section with
   // 0 for flags, it would change which PT_LOADs are created.
-  // We could remember that that particular section is dummy and ignore it in
+  // We could remember that particular section is dummy and ignore it in
   // other parts of the linker, but unfortunately there are quite a few places
   // that would need to change:
   //   * The program header creation.
@@ -794,7 +775,7 @@ void LinkerScript::adjustSectionsBeforeSorting() {
   // the previous sections. Only a few flags are needed to keep the impact low.
   uint64_t Flags = SHF_ALLOC;
 
-  for (BaseCommand *Cmd : SectionCommands) {
+  for (BaseCommand *&Cmd : SectionCommands) {
     auto *Sec = dyn_cast<OutputSection>(Cmd);
     if (!Sec)
       continue;
@@ -803,20 +784,25 @@ void LinkerScript::adjustSectionsBeforeSorting() {
       continue;
     }
 
-    if (isAllSectionDescription(*Sec))
-      continue;
-
-    Sec->Live = true;
-    Sec->Flags = Flags;
+    if (!Sec->isAllSectionDescription())
+      Sec->Flags = Flags;
+    else
+      Cmd = nullptr;
   }
+
+  // It is common practice to use very generic linker scripts. So for any
+  // given run some of the output sections in the script will be empty.
+  // We could create corresponding empty output sections, but that would
+  // clutter the output.
+  // We instead remove trivially empty sections. The bfd linker seems even
+  // more aggressive at removing them.
+  llvm::erase_if(SectionCommands, [&](BaseCommand *Base) { return !Base; });
 }
 
 void LinkerScript::adjustSectionsAfterSorting() {
   // Try and find an appropriate memory region to assign offsets in.
   for (BaseCommand *Base : SectionCommands) {
     if (auto *Sec = dyn_cast<OutputSection>(Base)) {
-      if (!Sec->Live)
-        continue;
       if (!Sec->LMARegionName.empty()) {
         if (MemoryRegion *M = MemoryRegions.lookup(Sec->LMARegionName))
           Sec->LMARegion = M;

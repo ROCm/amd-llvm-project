@@ -930,8 +930,7 @@ void MachineInstr::clearKillInfo() {
 
 void MachineInstr::substituteRegister(unsigned FromReg, unsigned ToReg,
                                       unsigned SubIdx,
-                                      const TargetRegisterInfo &RegInfo,
-                                      bool ClearIsRenamable) {
+                                      const TargetRegisterInfo &RegInfo) {
   if (TargetRegisterInfo::isPhysicalRegister(ToReg)) {
     if (SubIdx)
       ToReg = RegInfo.getSubReg(ToReg, SubIdx);
@@ -939,11 +938,8 @@ void MachineInstr::substituteRegister(unsigned FromReg, unsigned ToReg,
       if (!MO.isReg() || MO.getReg() != FromReg)
         continue;
       MO.substPhysReg(ToReg, RegInfo);
-      if (ClearIsRenamable)
-        MO.setIsRenamable(false);
     }
   } else {
-    assert(!ClearIsRenamable && "IsRenamable invalid for virtual registers");
     for (MachineOperand &MO : operands()) {
       if (!MO.isReg() || MO.getReg() != FromReg)
         continue;
@@ -1239,6 +1235,8 @@ void MachineInstr::print(raw_ostream &OS, bool IsStandalone, bool SkipOpers,
   if (const MachineFunction *MF = getMFIfAvailable(*this)) {
     F = &MF->getFunction();
     M = F->getParent();
+    if (!TII)
+      TII = MF->getSubtarget().getInstrInfo();
   }
 
   ModuleSlotTracker MST(M);
@@ -1473,6 +1471,8 @@ void MachineInstr::print(raw_ostream &OS, ModuleSlotTracker &MST,
     if (isIndirectDebugValue())
       OS << " indirect";
   }
+
+  OS << '\n';
 }
 
 bool MachineInstr::addRegisterKilled(unsigned IncomingReg,
