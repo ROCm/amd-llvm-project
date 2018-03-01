@@ -19,13 +19,16 @@
 #include "Compiler.h"
 #include "FuzzyMatch.h"
 #include "Logger.h"
+#include "SourceCode.h"
 #include "Trace.h"
 #include "index/Index.h"
+#include "clang/Format/Format.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendActions.h"
 #include "clang/Index/USRGeneration.h"
 #include "clang/Sema/CodeCompleteConsumer.h"
 #include "clang/Sema/Sema.h"
+#include "clang/Tooling/Core/Replacement.h"
 #include "llvm/Support/Format.h"
 #include <queue>
 
@@ -249,7 +252,8 @@ struct CompletionCandidate {
   }
 
   // Builds an LSP completion item.
-  CompletionItem build(const CompletionItemScores &Scores,
+  CompletionItem build(llvm::StringRef FileName,
+                       const CompletionItemScores &Scores,
                        const CodeCompleteOptions &Opts,
                        CodeCompletionString *SemaCCS) const {
     assert(bool(SemaResult) == bool(SemaCCS));
@@ -282,6 +286,27 @@ struct CompletionCandidate {
           I.documentation = D->Documentation;
         if (I.detail.empty())
           I.detail = D->CompletionDetail;
+        // FIXME: delay creating include insertion command to
+        // "completionItem/resolve", when it is supported
+        if (!D->IncludeHeader.empty()) {
+          // LSP favors additionalTextEdits over command. But we are still using
+          // command here because it would be expensive to calculate #include
+          // insertion edits for all candidates, and the include insertion edit
+          // is unlikely to conflict with the code completion edits.
+          Command Cmd;
+          // Command title is not added since this is not a user-facing command.
+          Cmd.command = ExecuteCommandParams::CLANGD_INSERT_HEADER_INCLUDE;
+          IncludeInsertion Insertion;
+          // Fallback to canonical header if declaration location is invalid.
+          Insertion.declaringHeader =
+              IndexResult->CanonicalDeclaration.FileURI.empty()
+                  ? D->IncludeHeader
+                  : IndexResult->CanonicalDeclaration.FileURI;
+          Insertion.preferredHeader = D->IncludeHeader;
+          Insertion.textDocument.uri = URIForFile(FileName);
+          Cmd.includeInsertion = std::move(Insertion);
+          I.command = std::move(Cmd);
+        }
       }
     }
     I.scoreInfo = Scores;
@@ -404,13 +429,19 @@ std::vector<std::string> getQueryScopes(CodeCompletionContext &CCContext,
 // It filters out ignored results (but doesn't apply fuzzy-filtering yet).
 // It doesn't do scoring or conversion to CompletionItem yet, as we want to
 // merge with index results first.
+// Generally the fields and methods of this object should only be used from
+// within the callback.
 struct CompletionRecorder : public CodeCompleteConsumer {
-  CompletionRecorder(const CodeCompleteOptions &Opts)
+  CompletionRecorder(const CodeCompleteOptions &Opts,
+                     UniqueFunction<void()> ResultsCallback)
       : CodeCompleteConsumer(Opts.getClangCompleteOpts(),
                              /*OutputIsBinary=*/false),
         CCContext(CodeCompletionContext::CCC_Other), Opts(Opts),
         CCAllocator(std::make_shared<GlobalCodeCompletionAllocator>()),
-        CCTUInfo(CCAllocator) {}
+        CCTUInfo(CCAllocator), ResultsCallback(std::move(ResultsCallback)) {
+    assert(this->ResultsCallback);
+  }
+
   std::vector<CodeCompletionResult> Results;
   CodeCompletionContext CCContext;
   Sema *CCSema = nullptr; // Sema that created the results.
@@ -441,6 +472,7 @@ struct CompletionRecorder : public CodeCompleteConsumer {
         continue;
       Results.push_back(Result);
     }
+    ResultsCallback();
   }
 
   CodeCompletionAllocator &getAllocator() override { return *CCAllocator; }
@@ -478,6 +510,7 @@ private:
   CodeCompleteOptions Opts;
   std::shared_ptr<GlobalCodeCompletionAllocator> CCAllocator;
   CodeCompletionTUInfo CCTUInfo;
+  UniqueFunction<void()> ResultsCallback;
 };
 
 // Tracks a bounded number of candidates with the best scores.
@@ -632,17 +665,19 @@ struct SemaCompleteInput {
 };
 
 // Invokes Sema code completion on a file.
-// Callback will be invoked once completion is done, but before cleaning up.
 bool semaCodeComplete(std::unique_ptr<CodeCompleteConsumer> Consumer,
                       const clang::CodeCompleteOptions &Options,
-                      const SemaCompleteInput &Input,
-                      llvm::function_ref<void()> Callback = nullptr) {
-  auto Tracer = llvm::make_unique<trace::Span>("Sema completion");
+                      const SemaCompleteInput &Input) {
+  trace::Span Tracer("Sema completion");
   std::vector<const char *> ArgStrs;
   for (const auto &S : Input.Command.CommandLine)
     ArgStrs.push_back(S.c_str());
 
-  Input.VFS->setCurrentWorkingDirectory(Input.Command.Directory);
+  if (Input.VFS->setCurrentWorkingDirectory(Input.Command.Directory)) {
+    log("Couldn't set working directory");
+    // We run parsing anyway, our lit-tests rely on results for non-existing
+    // working dirs.
+  }
 
   IgnoreDiagnostics DummyDiagsConsumer;
   auto CI = createInvocationFromCommandLine(
@@ -650,7 +685,10 @@ bool semaCodeComplete(std::unique_ptr<CodeCompleteConsumer> Consumer,
       CompilerInstance::createDiagnostics(new DiagnosticOptions,
                                           &DummyDiagsConsumer, false),
       Input.VFS);
-  assert(CI && "Couldn't create CompilerInvocation");
+  if (!CI) {
+    log("Couldn't create CompilerInvocation");;
+    return false;
+  }
   CI->getFrontendOpts().DisableFree = false;
 
   std::unique_ptr<llvm::MemoryBuffer> ContentsBuffer =
@@ -669,11 +707,11 @@ bool semaCodeComplete(std::unique_ptr<CodeCompleteConsumer> Consumer,
     Input.Preamble->CanReuse(*CI, ContentsBuffer.get(), Bounds,
                              Input.VFS.get());
   }
+  // The diagnostic options must be set before creating a CompilerInstance.
+  CI->getDiagnosticOpts().IgnoreWarnings = true;
   auto Clang = prepareCompilerInstance(
       std::move(CI), Input.Preamble, std::move(ContentsBuffer),
       std::move(Input.PCHs), std::move(Input.VFS), DummyDiagsConsumer);
-  auto &DiagOpts = Clang->getDiagnosticOpts();
-  DiagOpts.IgnoreWarnings = true;
 
   // Disable typo correction in Sema.
   Clang->getLangOpts().SpellChecking = false;
@@ -697,12 +735,6 @@ bool semaCodeComplete(std::unique_ptr<CodeCompleteConsumer> Consumer,
     log("Execute() failed when running codeComplete for " + Input.FileName);
     return false;
   }
-  Tracer.reset();
-
-  if (Callback)
-    Callback();
-
-  Tracer = llvm::make_unique<trace::Span>("Sema completion cleanup");
   Action.EndSourceFile();
 
   return true;
@@ -781,7 +813,7 @@ clang::CodeCompleteOptions CodeCompleteOptions::getClangCompleteOpts() const {
 //     other arenas, which must stay alive for us to build CompletionItems.
 //   - we may get duplicate results from Sema and the Index, we need to merge.
 //
-// So we start Sema completion first, but defer its cleanup until we're done.
+// So we start Sema completion first, and do all our work in its callback.
 // We use the Sema context information to query the index.
 // Then we merge the two result sets, producing items that are Sema/Index/Both.
 // These items are scored, and the top N are synthesized into the LSP response.
@@ -799,33 +831,35 @@ clang::CodeCompleteOptions CodeCompleteOptions::getClangCompleteOpts() const {
 //     This score is combined with the result quality score for the final score.
 //   - TopN determines the results with the best score.
 class CodeCompleteFlow {
+  PathRef FileName;
   const CodeCompleteOptions &Opts;
   // Sema takes ownership of Recorder. Recorder is valid until Sema cleanup.
-  std::unique_ptr<CompletionRecorder> RecorderOwner;
-  CompletionRecorder &Recorder;
+  CompletionRecorder *Recorder = nullptr;
   int NSema = 0, NIndex = 0, NBoth = 0; // Counters for logging.
   bool Incomplete = false; // Would more be available with a higher limit?
   llvm::Optional<FuzzyMatcher> Filter; // Initialized once Sema runs.
 
 public:
   // A CodeCompleteFlow object is only useful for calling run() exactly once.
-  CodeCompleteFlow(const CodeCompleteOptions &Opts)
-      : Opts(Opts), RecorderOwner(new CompletionRecorder(Opts)),
-        Recorder(*RecorderOwner) {}
+  CodeCompleteFlow(PathRef FileName, const CodeCompleteOptions &Opts)
+      : FileName(FileName), Opts(Opts) {}
 
   CompletionList run(const SemaCompleteInput &SemaCCInput) && {
     trace::Span Tracer("CodeCompleteFlow");
     // We run Sema code completion first. It builds an AST and calculates:
-    //   - completion results based on the AST. These are saved for merging.
+    //   - completion results based on the AST.
     //   - partial identifier and context. We need these for the index query.
     CompletionList Output;
+    auto RecorderOwner = llvm::make_unique<CompletionRecorder>(Opts, [&]() {
+      assert(Recorder && "Recorder is not set");
+      Output = runWithSema();
+      SPAN_ATTACH(Tracer, "sema_completion_kind",
+                  getCompletionKindString(Recorder->CCContext.getKind()));
+    });
+
+    Recorder = RecorderOwner.get();
     semaCodeComplete(std::move(RecorderOwner), Opts.getClangCompleteOpts(),
-                     SemaCCInput, [&] {
-                       if (Recorder.CCSema)
-                         Output = runWithSema();
-                       else
-                         log("Code complete: no Sema callback, 0 results");
-                     });
+                     SemaCCInput);
 
     SPAN_ATTACH(Tracer, "sema_results", NSema);
     SPAN_ATTACH(Tracer, "index_results", NIndex);
@@ -847,7 +881,7 @@ private:
   // Sema data structures are torn down. It does all the real work.
   CompletionList runWithSema() {
     Filter = FuzzyMatcher(
-        Recorder.CCSema->getPreprocessor().getCodeCompletionFilter());
+        Recorder->CCSema->getPreprocessor().getCodeCompletionFilter());
     // Sema provides the needed context to query the index.
     // FIXME: in addition to querying for extra/overlapping symbols, we should
     //        explicitly request symbols corresponding to Sema results.
@@ -855,7 +889,7 @@ private:
     // We must copy index results to preserve them, but there are at most Limit.
     auto IndexResults = queryIndex();
     // Merge Sema and Index results, score them, and pick the winners.
-    auto Top = mergeResults(Recorder.Results, IndexResults);
+    auto Top = mergeResults(Recorder->Results, IndexResults);
     // Convert the results to the desired LSP structs.
     CompletionList Output;
     for (auto &C : Top)
@@ -865,7 +899,7 @@ private:
   }
 
   SymbolSlab queryIndex() {
-    if (!Opts.Index || !allowIndex(Recorder.CCContext.getKind()))
+    if (!Opts.Index || !allowIndex(Recorder->CCContext.getKind()))
       return SymbolSlab();
     trace::Span Tracer("Query index");
     SPAN_ATTACH(Tracer, "limit", Opts.Limit);
@@ -876,14 +910,15 @@ private:
     if (Opts.Limit)
       Req.MaxCandidateCount = Opts.Limit;
     Req.Query = Filter->pattern();
-    Req.Scopes =
-        getQueryScopes(Recorder.CCContext, Recorder.CCSema->getSourceManager());
+    Req.Scopes = getQueryScopes(Recorder->CCContext,
+                                Recorder->CCSema->getSourceManager());
     log(llvm::formatv("Code complete: fuzzyFind(\"{0}\", scopes=[{1}])",
                       Req.Query,
                       llvm::join(Req.Scopes.begin(), Req.Scopes.end(), ",")));
     // Run the query against the index.
-    Incomplete |= !Opts.Index->fuzzyFind(
-        Req, [&](const Symbol &Sym) { ResultsBuilder.insert(Sym); });
+    if (Opts.Index->fuzzyFind(
+            Req, [&](const Symbol &Sym) { ResultsBuilder.insert(Sym); }))
+      Incomplete = true;
     return std::move(ResultsBuilder).build();
   }
 
@@ -908,7 +943,7 @@ private:
       return nullptr;
     };
     // Emit all Sema results, merging them with Index results if possible.
-    for (auto &SemaResult : Recorder.Results)
+    for (auto &SemaResult : Recorder->Results)
       addCandidate(Top, &SemaResult, CorrespondingIndexResult(SemaResult));
     // Now emit any Index-only results.
     for (const auto &IndexResult : IndexResults) {
@@ -925,7 +960,7 @@ private:
     CompletionCandidate C;
     C.SemaResult = SemaResult;
     C.IndexResult = IndexResult;
-    C.Name = IndexResult ? IndexResult->Name : Recorder.getName(*SemaResult);
+    C.Name = IndexResult ? IndexResult->Name : Recorder->getName(*SemaResult);
 
     CompletionItemScores Scores;
     if (auto FuzzyScore = Filter->match(C.Name))
@@ -941,15 +976,16 @@ private:
     NSema += bool(SemaResult);
     NIndex += bool(IndexResult);
     NBoth += SemaResult && IndexResult;
-    Incomplete |= Candidates.push({C, Scores});
+    if (Candidates.push({C, Scores}))
+      Incomplete = true;
   }
 
   CompletionItem toCompletionItem(const CompletionCandidate &Candidate,
                                   const CompletionItemScores &Scores) {
     CodeCompletionString *SemaCCS = nullptr;
     if (auto *SR = Candidate.SemaResult)
-      SemaCCS = Recorder.codeCompletionString(*SR, Opts.IncludeBriefComments);
-    return Candidate.build(Scores, Opts, SemaCCS);
+      SemaCCS = Recorder->codeCompletionString(*SR, Opts.IncludeBriefComments);
+    return Candidate.build(FileName, Scores, Opts, SemaCCS);
   }
 };
 
@@ -960,8 +996,8 @@ CompletionList codeComplete(PathRef FileName,
                             IntrusiveRefCntPtr<vfs::FileSystem> VFS,
                             std::shared_ptr<PCHContainerOperations> PCHs,
                             CodeCompleteOptions Opts) {
-  return CodeCompleteFlow(Opts).run(
-      {FileName, Command, Preamble, Contents, Pos, VFS, PCHs});
+  return CodeCompleteFlow(FileName, Opts)
+      .run({FileName, Command, Preamble, Contents, Pos, VFS, PCHs});
 }
 
 SignatureHelp signatureHelp(PathRef FileName,

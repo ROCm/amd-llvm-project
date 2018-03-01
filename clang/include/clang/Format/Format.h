@@ -662,7 +662,9 @@ struct FormatStyle {
     ///   }
     /// \endcode
     bool AfterNamespace;
-    /// \brief Wrap ObjC definitions (``@autoreleasepool``, interfaces, ..).
+    /// \brief Wrap ObjC definitions (interfaces, implementations...).
+    /// \note @autoreleasepool and @synchronized blocks are wrapped
+    /// according to `AfterControlStatement` flag.
     bool AfterObjCDeclaration;
     /// \brief Wrap struct definitions.
     /// \code
@@ -1980,6 +1982,10 @@ llvm::Expected<FormatStyle> getStyle(StringRef StyleName, StringRef FileName,
                                      StringRef FallbackStyle,
                                      StringRef Code = "",
                                      vfs::FileSystem *FS = nullptr);
+
+// \brief Guesses the language from the ``FileName`` and ``Code`` to be formatted.
+// Defaults to FormatStyle::LK_Cpp.
+FormatStyle::LanguageKind guessLanguage(StringRef FileName, StringRef Code);
 
 // \brief Returns a string representation of ``Language``.
 inline StringRef getLanguageName(FormatStyle::LanguageKind Language) {

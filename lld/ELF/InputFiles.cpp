@@ -707,9 +707,8 @@ ArchiveFile::ArchiveFile(std::unique_ptr<Archive> &&File)
       File(std::move(File)) {}
 
 template <class ELFT> void ArchiveFile::parse() {
-  Symbols.reserve(File->getNumberOfSymbols());
   for (const Archive::Symbol &Sym : File->symbols())
-    Symbols.push_back(Symtab->addLazyArchive<ELFT>(Sym.getName(), *this, Sym));
+    Symtab->addLazyArchive<ELFT>(Sym.getName(), *this, Sym);
 }
 
 // Returns a buffer pointing to a member file containing a given symbol.
@@ -852,7 +851,10 @@ template <class ELFT> void SharedFile<ELFT>::parseRest() {
 
     StringRef Name = CHECK(Sym.getName(this->StringTable), this);
     if (Sym.isUndefined()) {
-      Undefs.push_back(Name);
+      Symbol *S = Symtab->addUndefined<ELFT>(Name, Sym.getBinding(),
+                                             Sym.st_other, Sym.getType(),
+                                             /*CanOmitFromDynSym=*/false, this);
+      S->ExportDynamic = true;
       continue;
     }
 

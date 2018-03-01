@@ -200,6 +200,7 @@ LineState ContinuationIndenter::getInitialState(unsigned FirstIndent,
     // global scope.
     State.Stack.back().AvoidBinPacking = true;
     State.Stack.back().BreakBeforeParameter = true;
+    State.Stack.back().AlignColons = false;
   }
 
   // The first token has already been indented and thus consumed.
@@ -701,7 +702,8 @@ unsigned ContinuationIndenter::addTokenOnNewLine(LineState &State,
                  ? std::max(State.Stack.back().Indent,
                             State.FirstIndent + Style.ContinuationIndentWidth)
                  : State.Stack.back().Indent) +
-            NextNonComment->LongestObjCSelectorName;
+            std::max(NextNonComment->LongestObjCSelectorName,
+                     NextNonComment->ColumnWidth);
       }
     } else if (State.Stack.back().AlignColons &&
                State.Stack.back().ColonPos <= NextNonComment->ColumnWidth) {
@@ -900,7 +902,8 @@ unsigned ContinuationIndenter::getNewLineColumn(const LineState &State) {
                   ? std::max(State.Stack.back().Indent,
                              State.FirstIndent + Style.ContinuationIndentWidth)
                   : State.Stack.back().Indent) +
-             NextNonComment->LongestObjCSelectorName -
+             std::max(NextNonComment->LongestObjCSelectorName,
+                      NextNonComment->ColumnWidth) -
              NextNonComment->ColumnWidth;
     }
     if (!State.Stack.back().AlignColons)
@@ -940,6 +943,8 @@ unsigned ContinuationIndenter::getNewLineColumn(const LineState &State) {
   if (Previous.is(tok::r_paren) && !Current.isBinaryOperator() &&
       !Current.isOneOf(tok::colon, tok::comment))
     return ContinuationIndent;
+  if (Current.is(TT_ProtoExtensionLSquare))
+    return State.Stack.back().Indent;
   if (State.Stack.back().Indent == State.FirstIndent && PreviousNonComment &&
       PreviousNonComment->isNot(tok::r_brace))
     // Ensure that we fall back to the continuation indent width instead of
@@ -1285,6 +1290,9 @@ void ContinuationIndenter::moveStatePastScopeOpener(LineState &State,
   State.Stack.back().NestedBlockIndent = NestedBlockIndent;
   State.Stack.back().BreakBeforeParameter = BreakBeforeParameter;
   State.Stack.back().HasMultipleNestedBlocks = Current.BlockParameterCount > 1;
+  State.Stack.back().IsInsideObjCArrayLiteral =
+      Current.is(TT_ArrayInitializerLSquare) && Current.Previous &&
+      Current.Previous->is(tok::at);
 }
 
 void ContinuationIndenter::moveStatePastScopeCloser(LineState &State) {
@@ -1578,6 +1586,11 @@ std::unique_ptr<BreakableToken> ContinuationIndenter::createBreakableToken(
     // likely want to terminate the string before any line breaking is done.
     if (Current.IsUnterminatedLiteral)
       return nullptr;
+    // Don't break string literals inside Objective-C array literals (doing so
+    // raises the warning -Wobjc-string-concatenation).
+    if (State.Stack.back().IsInsideObjCArrayLiteral) {
+      return nullptr;
+    }
 
     StringRef Text = Current.TokenText;
     StringRef Prefix;

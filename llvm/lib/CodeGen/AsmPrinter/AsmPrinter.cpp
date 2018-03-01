@@ -353,6 +353,9 @@ bool AsmPrinter::doInitialization(Module &M) {
       break;
     }
     break;
+  case ExceptionHandling::Wasm:
+    // TODO to prevent warning
+    break;
   }
   if (ES)
     Handlers.push_back(HandlerInfo(ES, EHTimerName, EHTimerDescription,
@@ -426,7 +429,7 @@ MCSymbol *AsmPrinter::getSymbol(const GlobalValue *GV) const {
 
 /// EmitGlobalVariable - Emit the specified global variable to the .s file.
 void AsmPrinter::EmitGlobalVariable(const GlobalVariable *GV) {
-  bool IsEmuTLSVar = TM.Options.EmulatedTLS && GV->isThreadLocal();
+  bool IsEmuTLSVar = TM.useEmulatedTLS() && GV->isThreadLocal();
   assert(!(IsEmuTLSVar && GV->hasCommonLinkage()) &&
          "No emulated TLS variables in the common section");
 

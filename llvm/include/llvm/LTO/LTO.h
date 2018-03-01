@@ -73,7 +73,9 @@ std::string getThinLTOOutputFile(const std::string &Path,
 /// Setup optimization remarks.
 Expected<std::unique_ptr<ToolOutputFile>>
 setupOptimizationRemarks(LLVMContext &Context, StringRef LTORemarksFilename,
-                         bool LTOPassRemarksWithHotness, int Count = -1);
+                         bool LTOPassRemarksWithHotness,
+                         unsigned LTOPassRemarksHotnessThreshold,
+                         int Count = -1);
 
 class LTO;
 struct SymbolResolution;
@@ -210,13 +212,15 @@ ThinBackend createInProcessThinBackend(unsigned ParallelismLevel);
 /// appends ".thinlto.bc" and writes the index to that path. If
 /// ShouldEmitImportsFiles is true it also writes a list of imported files to a
 /// similar path with ".imports" appended instead.
+/// LinkedObjectsFile is an output stream to write the list of object files for
+/// the final ThinLTO linking. Can be nullptr.
 /// OnWrite is callback which receives module identifier and notifies LTO user
 /// that index file for the module (and optionally imports file) was created.
 using IndexWriteCallback = std::function<void(const std::string &)>;
 ThinBackend createWriteIndexesThinBackend(std::string OldPrefix,
                                           std::string NewPrefix,
                                           bool ShouldEmitImportsFiles,
-                                          std::string LinkedObjectsFile,
+                                          raw_fd_ostream *LinkedObjectsFile,
                                           IndexWriteCallback OnWrite);
 
 /// This class implements a resolution-based interface to LLVM's LTO

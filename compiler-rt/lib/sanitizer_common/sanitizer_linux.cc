@@ -1618,6 +1618,8 @@ static HandleSignalMode GetHandleSignalModeImpl(int signum) {
       return common_flags()->handle_abort;
     case SIGILL:
       return common_flags()->handle_sigill;
+    case SIGTRAP:
+      return common_flags()->handle_sigtrap;
     case SIGFPE:
       return common_flags()->handle_sigfpe;
     case SIGSEGV:
@@ -1725,7 +1727,13 @@ void SignalContext::DumpAllRegisters(void *context) {
 }
 
 static void GetPcSpBp(void *context, uptr *pc, uptr *sp, uptr *bp) {
-#if defined(__arm__)
+#if SANITIZER_NETBSD
+  // This covers all NetBSD architectures
+  ucontext_t *ucontext = (ucontext_t *)context;
+  *pc = _UC_MACHINE_PC(ucontext);
+  *bp = _UC_MACHINE_FP(ucontext);
+  *sp = _UC_MACHINE_SP(ucontext);
+#elif defined(__arm__)
   ucontext_t *ucontext = (ucontext_t*)context;
   *pc = ucontext->uc_mcontext.arm_pc;
   *bp = ucontext->uc_mcontext.arm_fp;
@@ -1747,11 +1755,6 @@ static void GetPcSpBp(void *context, uptr *pc, uptr *sp, uptr *bp) {
   *pc = ucontext->uc_mcontext.mc_rip;
   *bp = ucontext->uc_mcontext.mc_rbp;
   *sp = ucontext->uc_mcontext.mc_rsp;
-#elif SANITIZER_NETBSD
-  ucontext_t *ucontext = (ucontext_t *)context;
-  *pc = ucontext->uc_mcontext.__gregs[_REG_RIP];
-  *bp = ucontext->uc_mcontext.__gregs[_REG_RBP];
-  *sp = ucontext->uc_mcontext.__gregs[_REG_RSP];
 # else
   ucontext_t *ucontext = (ucontext_t*)context;
   *pc = ucontext->uc_mcontext.gregs[REG_RIP];
@@ -1764,11 +1767,6 @@ static void GetPcSpBp(void *context, uptr *pc, uptr *sp, uptr *bp) {
   *pc = ucontext->uc_mcontext.mc_eip;
   *bp = ucontext->uc_mcontext.mc_ebp;
   *sp = ucontext->uc_mcontext.mc_esp;
-#elif SANITIZER_NETBSD
-  ucontext_t *ucontext = (ucontext_t *)context;
-  *pc = ucontext->uc_mcontext.__gregs[_REG_EIP];
-  *bp = ucontext->uc_mcontext.__gregs[_REG_EBP];
-  *sp = ucontext->uc_mcontext.__gregs[_REG_ESP];
 # else
   ucontext_t *ucontext = (ucontext_t*)context;
 # if SANITIZER_SOLARIS
@@ -1861,7 +1859,8 @@ void CheckNoDeepBind(const char *filename, int flag) {
 }
 
 uptr FindAvailableMemoryRange(uptr size, uptr alignment, uptr left_padding,
-                              uptr *largest_gap_found) {
+                              uptr *largest_gap_found,
+                              uptr *max_occupied_addr) {
   UNREACHABLE("FindAvailableMemoryRange is not available");
   return 0;
 }

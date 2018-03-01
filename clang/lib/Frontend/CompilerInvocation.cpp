@@ -545,6 +545,7 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
   Opts.DebugTypeExtRefs = Args.hasArg(OPT_dwarf_ext_refs);
   Opts.DebugExplicitImport = Args.hasArg(OPT_dwarf_explicit_import);
   Opts.DebugFwdTemplateParams = Args.hasArg(OPT_debug_forward_template_params);
+  Opts.EmbedSource = Args.hasArg(OPT_gembed_source);
 
   for (const auto &Arg : Args.getAllArgValues(OPT_fdebug_prefix_map_EQ))
     Opts.DebugPrefixMap.insert(StringRef(Arg).split('='));
@@ -659,6 +660,8 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
   Opts.FlushDenorm = Args.hasArg(OPT_cl_denorms_are_zero);
   Opts.CorrectlyRoundedDivSqrt =
       Args.hasArg(OPT_cl_fp32_correctly_rounded_divide_sqrt);
+  Opts.UniformWGSize =
+      Args.hasArg(OPT_cl_uniform_work_group_size);
   Opts.Reciprocals = Args.getAllArgValues(OPT_mrecip_EQ);
   Opts.ReciprocalMath = Args.hasArg(OPT_freciprocal_math);
   Opts.NoTrappingMath = Args.hasArg(OPT_fno_trapping_math);
@@ -890,6 +893,13 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
   Opts.SanitizeCfiICallGeneralizePointers =
       Args.hasArg(OPT_fsanitize_cfi_icall_generalize_pointers);
   Opts.SanitizeStats = Args.hasArg(OPT_fsanitize_stats);
+  if (Arg *A = Args.getLastArg(
+          OPT_fsanitize_address_poison_class_member_array_new_cookie,
+          OPT_fno_sanitize_address_poison_class_member_array_new_cookie)) {
+    Opts.SanitizeAddressPoisonClassMemberArrayNewCookie =
+        A->getOption().getID() ==
+        OPT_fsanitize_address_poison_class_member_array_new_cookie;
+  }
   if (Arg *A = Args.getLastArg(OPT_fsanitize_address_use_after_scope,
                                OPT_fno_sanitize_address_use_after_scope)) {
     Opts.SanitizeAddressUseAfterScope =
@@ -913,6 +923,8 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
     Val.getAsInteger(0, StackProbeSize);
     Opts.StackProbeSize = StackProbeSize;
   }
+
+  Opts.NoStackArgProbe = Args.hasArg(OPT_mno_stack_arg_probe);
 
   if (Arg *A = Args.getLastArg(OPT_fobjc_dispatch_method_EQ)) {
     StringRef Name = A->getValue();
@@ -1034,8 +1046,8 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
                       Args.getAllArgValues(OPT_fsanitize_trap_EQ), Diags,
                       Opts.SanitizeTrap);
 
-  Opts.CudaGpuBinaryFileNames =
-      Args.getAllArgValues(OPT_fcuda_include_gpubinary);
+  Opts.CudaGpuBinaryFileName =
+      Args.getLastArgValue(OPT_fcuda_include_gpubinary);
 
   Opts.Backchain = Args.hasArg(OPT_mbackchain);
 
@@ -1358,6 +1370,8 @@ static InputKind ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
       Opts.ProgramAction = frontend::PrintPreamble; break;
     case OPT_E:
       Opts.ProgramAction = frontend::PrintPreprocessedInput; break;
+    case OPT_templight_dump:
+      Opts.ProgramAction = frontend::TemplightDump; break;
     case OPT_rewrite_macros:
       Opts.ProgramAction = frontend::RewriteMacros; break;
     case OPT_rewrite_objc:
@@ -2072,6 +2086,8 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
   if (Opts.CUDAIsDevice && Args.hasArg(OPT_fcuda_approx_transcendentals))
     Opts.CUDADeviceApproxTranscendentals = 1;
 
+  Opts.CUDARelocatableDeviceCode = Args.hasArg(OPT_fcuda_rdc);
+
   if (Opts.ObjC1) {
     if (Arg *arg = Args.getLastArg(OPT_fobjc_runtime_EQ)) {
       StringRef value = arg->getValue();
@@ -2620,6 +2636,7 @@ static bool isStrictlyPreprocessorAction(frontend::ActionKind Action) {
   case frontend::RewriteObjC:
   case frontend::RewriteTest:
   case frontend::RunAnalysis:
+  case frontend::TemplightDump:
   case frontend::MigrateSource:
     return false;
 
@@ -2765,6 +2782,7 @@ static void ParseTargetArgs(TargetOptions &Opts, ArgList &Args,
   if (Opts.Triple.empty())
     Opts.Triple = llvm::sys::getDefaultTargetTriple();
   Opts.OpenCLExtensionsAsWritten = Args.getAllArgValues(OPT_cl_ext_EQ);
+  Opts.ForceEnableInt128 = Args.hasArg(OPT_fforce_enable_int128);
 }
 
 bool CompilerInvocation::CreateFromArgs(CompilerInvocation &Res,

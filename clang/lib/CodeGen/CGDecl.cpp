@@ -240,7 +240,6 @@ llvm::Constant *CodeGenModule::getOrCreateStaticVarDecl(
       getModule(), LTy, Ty.isConstant(getContext()), Linkage, Init, Name,
       nullptr, llvm::GlobalVariable::NotThreadLocal, TargetAS);
   GV->setAlignment(getContext().getDeclAlign(&D).getQuantity());
-  setGVProperties(GV, &D);
 
   if (supportsCOMDAT() && GV->isWeakForLinker())
     GV->setComdat(TheModule.getOrInsertComdat(GV->getName()));
@@ -254,6 +253,8 @@ llvm::Constant *CodeGenModule::getOrCreateStaticVarDecl(
     else if (D.hasAttr<DLLExportAttr>())
       GV->setDLLStorageClass(llvm::GlobalVariable::DLLExportStorageClass);
   }
+
+  setGVProperties(GV, &D);
 
   // Make sure the result is of the correct type.
   LangAS ExpectedAS = Ty.getAddressSpace();
@@ -969,8 +970,8 @@ void CodeGenFunction::EmitAndRegisterVariableArrayDimensions(
     if (auto *C = dyn_cast<llvm::ConstantInt>(VlaSize.NumElts))
       Dimensions.emplace_back(C, Type1D.getUnqualifiedType());
     else {
-      auto SizeExprAddr =
-          CreateDefaultAlignTempAlloca(VlaSize.NumElts->getType(), "vla_expr");
+      auto SizeExprAddr = CreateDefaultAlignTempAlloca(
+          VlaSize.NumElts->getType(), "__vla_expr");
       Builder.CreateStore(VlaSize.NumElts, SizeExprAddr);
       Dimensions.emplace_back(SizeExprAddr.getPointer(),
                               Type1D.getUnqualifiedType());
@@ -999,6 +1000,7 @@ void CodeGenFunction::EmitAndRegisterVariableArrayDimensions(
           getContext(), const_cast<DeclContext *>(D.getDeclContext()),
           D.getLocation(), D.getLocation(), &NameIdent, QT,
           getContext().CreateTypeSourceInfo(QT), SC_Auto);
+      ArtificialDecl->setImplicit();
 
       MD = DI->EmitDeclareOfAutoVariable(ArtificialDecl, VlaSize.NumElts,
                                          Builder);
@@ -1287,6 +1289,19 @@ void CodeGenFunction::EmitAutoVarInit(const AutoVarEmission &emission) {
   if (emission.IsByRef)
     emitByrefStructureInit(emission);
 
+  // Initialize the variable here if it doesn't have a initializer and it is a
+  // C struct that is non-trivial to initialize or an array containing such a
+  // struct.
+  if (!Init &&
+      type.isNonTrivialToPrimitiveDefaultInitialize() ==
+          QualType::PDIK_Struct) {
+    LValue Dst = MakeAddrLValue(emission.getAllocatedAddress(), type);
+    if (emission.IsByRef)
+      drillIntoBlockVariable(*this, Dst, &D);
+    defaultInitNonTrivialCStructVar(Dst);
+    return;
+  }
+
   if (isTrivialInitializer(Init))
     return;
 
@@ -1337,7 +1352,8 @@ void CodeGenFunction::EmitAutoVarInit(const AutoVarEmission &emission) {
                          isVolatile);
     // Zero and undef don't require a stores.
     if (!constant->isNullValue() && !isa<llvm::UndefValue>(constant)) {
-      Loc = Builder.CreateBitCast(Loc, constant->getType()->getPointerTo());
+      Loc = Builder.CreateBitCast(Loc,
+        constant->getType()->getPointerTo(Loc.getAddressSpace()));
       emitStoresForInitAfterMemset(constant, Loc.getPointer(),
                                    isVolatile, Builder);
     }
@@ -1461,6 +1477,10 @@ void CodeGenFunction::emitAutoVarTypeCleanup(
 
   case QualType::DK_objc_weak_lifetime:
     break;
+
+  case QualType::DK_nontrivial_c_struct:
+    destroyer = CodeGenFunction::destroyNonTrivialCStruct;
+    break;
   }
 
   // If we haven't chosen a more specific destroyer, use the default.
@@ -1522,6 +1542,8 @@ CodeGenFunction::getDestroyer(QualType::DestructionKind kind) {
     return destroyARCStrongPrecise;
   case QualType::DK_objc_weak_lifetime:
     return destroyARCWeak;
+  case QualType::DK_nontrivial_c_struct:
+    return destroyNonTrivialCStruct;
   }
   llvm_unreachable("Unknown DestructionKind");
 }
@@ -1846,9 +1868,12 @@ void CodeGenFunction::EmitParmDecl(const VarDecl &D, ParamValue Arg,
   // Use better IR generation for certain implicit parameters.
   if (auto IPD = dyn_cast<ImplicitParamDecl>(&D)) {
     // The only implicit argument a block has is its literal.
-    // We assume this is always passed directly.
+    // This may be passed as an inalloca'ed value on Windows x86.
     if (BlockInfo) {
-      setBlockContextParameter(IPD, ArgNo, Arg.getDirectValue());
+      llvm::Value *V = Arg.isIndirect()
+                           ? Builder.CreateLoad(Arg.getIndirectAddress())
+                           : Arg.getDirectValue();
+      setBlockContextParameter(IPD, ArgNo, V);
       return;
     }
   }
@@ -1870,9 +1895,12 @@ void CodeGenFunction::EmitParmDecl(const VarDecl &D, ParamValue Arg,
     // cleanup.
     if (!IsScalar && !CurFuncIsThunk &&
         getContext().isParamDestroyedInCallee(Ty)) {
-      const CXXRecordDecl *RD = Ty->getAsCXXRecordDecl();
-      if (RD && RD->hasNonTrivialDestructor())
-        pushDestroy(QualType::DK_cxx_destructor, DeclPtr, Ty);
+      if (QualType::DestructionKind DtorKind = Ty.isDestructedType()) {
+        assert((DtorKind == QualType::DK_cxx_destructor ||
+                DtorKind == QualType::DK_nontrivial_c_struct) &&
+               "unexpected destructor type");
+        pushDestroy(DtorKind, DeclPtr, Ty);
+      }
     }
   } else {
     // Otherwise, create a temporary to hold the value.

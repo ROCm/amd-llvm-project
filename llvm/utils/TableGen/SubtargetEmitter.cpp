@@ -444,7 +444,7 @@ EmitStageAndOperandCycleData(raw_ostream &OS,
       }
 
       // Check to see if stage already exists and create if it doesn't
-      unsigned FindStage = 0;
+      uint16_t FindStage = 0;
       if (NStages > 0) {
         FindStage = ItinStageMap[ItinStageString];
         if (FindStage == 0) {
@@ -460,7 +460,7 @@ EmitStageAndOperandCycleData(raw_ostream &OS,
       }
 
       // Check to see if operand cycle already exists and create if it doesn't
-      unsigned FindOperandCycle = 0;
+      uint16_t FindOperandCycle = 0;
       if (NOperandCycles > 0) {
         std::string ItinOperandString = ItinOperandCycleString+ItinBypassString;
         FindOperandCycle = ItinOperandMap[ItinOperandString];
@@ -482,10 +482,14 @@ EmitStageAndOperandCycleData(raw_ostream &OS,
       }
 
       // Set up itinerary as location and location + stage count
-      int NumUOps = ItinData ? ItinData->getValueAsInt("NumMicroOps") : 0;
-      InstrItinerary Intinerary = { NumUOps, FindStage, FindStage + NStages,
-                                    FindOperandCycle,
-                                    FindOperandCycle + NOperandCycles };
+      int16_t NumUOps = ItinData ? ItinData->getValueAsInt("NumMicroOps") : 0;
+      InstrItinerary Intinerary = {
+          NumUOps,
+          FindStage,
+          uint16_t(FindStage + NStages),
+          FindOperandCycle,
+          uint16_t(FindOperandCycle + NOperandCycles),
+      };
 
       // Inject - empty slots will be 0, 0
       ItinList[SchedClassIdx] = Intinerary;
@@ -561,7 +565,8 @@ EmitItineraries(raw_ostream &OS,
         ", // " << j << " " << SchedModels.getSchedClass(j).Name << "\n";
     }
     // End processor itinerary table
-    OS << "  { 0, ~0U, ~0U, ~0U, ~0U } // end marker\n";
+    OS << "  { 0, uint16_t(~0U), uint16_t(~0U), uint16_t(~0U), uint16_t(~0U) }"
+          "// end marker\n";
     OS << "};\n";
   }
 }
@@ -608,9 +613,10 @@ void SubtargetEmitter::EmitProcessorResources(const CodeGenProcModel &ProcModel,
   EmitProcessorResourceSubUnits(ProcModel, OS);
 
   OS << "\n// {Name, NumUnits, SuperIdx, IsBuffered, SubUnitsIdxBegin}\n";
-  OS << "static const llvm::MCProcResourceDesc "
-     << ProcModel.ModelName << "ProcResources" << "[] = {\n"
-     << "  {DBGFIELD(\"InvalidUnit\")     0, 0, 0},\n";
+  OS << "static const llvm::MCProcResourceDesc " << ProcModel.ModelName
+     << "ProcResources"
+     << "[] = {\n"
+     << "  {DBGFIELD(\"InvalidUnit\")     0, 0, 0, 0},\n";
 
   unsigned SubUnitsOffset = 1;
   for (unsigned i = 0, e = ProcModel.ProcResourceDefs.size(); i < e; ++i) {
@@ -625,7 +631,7 @@ void SubtargetEmitter::EmitProcessorResources(const CodeGenProcModel &ProcModel,
       RecVec ResUnits = PRDef->getValueAsListOfDefs("Resources");
       for (Record *RU : ResUnits) {
         NumUnits += RU->getValueAsInt("NumUnits");
-        SubUnitsOffset += NumUnits;
+        SubUnitsOffset += RU->getValueAsInt("NumUnits");
       }
     }
     else {

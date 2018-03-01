@@ -146,6 +146,7 @@ void DAGTypeLegalizer::PromoteIntegerResult(SDNode *N, unsigned ResNo) {
   case ISD::ATOMIC_LOAD_ADD:
   case ISD::ATOMIC_LOAD_SUB:
   case ISD::ATOMIC_LOAD_AND:
+  case ISD::ATOMIC_LOAD_CLR:
   case ISD::ATOMIC_LOAD_OR:
   case ISD::ATOMIC_LOAD_XOR:
   case ISD::ATOMIC_LOAD_NAND:
@@ -1402,6 +1403,7 @@ void DAGTypeLegalizer::ExpandIntegerResult(SDNode *N, unsigned ResNo) {
   case ISD::ATOMIC_LOAD_ADD:
   case ISD::ATOMIC_LOAD_SUB:
   case ISD::ATOMIC_LOAD_AND:
+  case ISD::ATOMIC_LOAD_CLR:
   case ISD::ATOMIC_LOAD_OR:
   case ISD::ATOMIC_LOAD_XOR:
   case ISD::ATOMIC_LOAD_NAND:
@@ -3485,21 +3487,6 @@ SDValue DAGTypeLegalizer::PromoteIntRes_CONCAT_VECTORS(SDNode *N) {
   unsigned NumOperands = N->getNumOperands();
   assert(NumElem * NumOperands == NumOutElem &&
          "Unexpected number of elements");
-
-  // If the input type is legal and we can promote it to a legal type with the
-  // same element size, go ahead do that to create a new concat.
-  if (getTypeAction(N->getOperand(0).getValueType()) ==
-      TargetLowering::TypeLegal) {
-    EVT InPromotedTy = EVT::getVectorVT(*DAG.getContext(), OutElemTy, NumElem);
-    if (TLI.isTypeLegal(InPromotedTy)) {
-      SmallVector<SDValue, 8> Ops(NumOperands);
-      for (unsigned i = 0; i < NumOperands; ++i) {
-        Ops[i] = DAG.getNode(ISD::ANY_EXTEND, dl, InPromotedTy,
-                             N->getOperand(i));
-      }
-      return DAG.getNode(ISD::CONCAT_VECTORS, dl, NOutVT, Ops);
-    }
-  }
 
   // Take the elements from the first vector.
   SmallVector<SDValue, 8> Ops(NumOutElem);

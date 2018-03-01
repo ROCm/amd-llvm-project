@@ -9,17 +9,22 @@
 
 # CHECK: debug_line[0x00000000]
 # CHECK: version: 5
-# CHECK: include_directories[ 0] = .debug_line_str[0x00000000] = ""
-# CHECK: include_directories[ 1] = .debug_line_str[0x00000001] = "dir1"
-# CHECK: include_directories[ 2] = .debug_line_str[0x00000006] = "dir2"
+# CHECK: include_directories[ 0] = .debug_line_str[0x[[DIR0:[0-9a-f]+]]] = ""
+# CHECK: include_directories[ 1] = .debug_line_str[0x[[DIR1:[0-9a-f]+]]] = "dir1"
+# CHECK: include_directories[ 2] = .debug_line_str[0x[[DIR2:[0-9a-f]+]]] = "dir2"
 # CHECK-NOT: include_directories
-# CHECK: Dir MD5 Checksum File Name
-# CHECK: file_names[ 1] 1 00112233445566778899aabbccddeeff .debug_line_str[0x0000000b] = "foo"
-# CHECK: file_names[ 2] 2 ffeeddccbbaa99887766554433221100 .debug_line_str[0x0000000f] = "bar"
+# CHECK: file_names[ 0]:
+# CHECK-NEXT: name: .debug_line_str[0x[[FILE1:[0-9a-f]+]]] = "foo"
+# CHECK-NEXT: dir_index: 1
+# CHECK-NEXT: md5_checksum: 00112233445566778899aabbccddeeff
+# CHECK: file_names[ 1]:
+# CHECK-NEXT: name: .debug_line_str[0x[[FILE2:[0-9a-f]+]]] = "bar"
+# CHECK-NEXT: dir_index: 2
+# CHECK-NEXT: md5_checksum: ffeeddccbbaa99887766554433221100
 
 # CHECK: .debug_line_str contents:
-# CHECK-NEXT: 0x00000000: ""
-# CHECK-NEXT: 0x00000001: "dir1"
-# CHECK-NEXT: 0x00000006: "dir2"
-# CHECK-NEXT: 0x0000000b: "foo"
-# CHECK-NEXT: 0x0000000f: "bar"
+# CHECK-NEXT: 0x[[DIR0]]: ""
+# CHECK-NEXT: 0x[[DIR1]]: "dir1"
+# CHECK-NEXT: 0x[[DIR2]]: "dir2"
+# CHECK-NEXT: 0x[[FILE1]]: "foo"
+# CHECK-NEXT: 0x[[FILE2]]: "bar"

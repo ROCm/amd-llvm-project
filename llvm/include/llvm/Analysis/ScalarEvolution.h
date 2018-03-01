@@ -834,6 +834,11 @@ public:
   bool isKnownPredicate(ICmpInst::Predicate Pred, const SCEV *LHS,
                         const SCEV *RHS);
 
+  /// Test if the condition described by Pred, LHS, RHS is known to be true on
+  /// every iteration of the loop of the recurrency LHS.
+  bool isKnownOnEveryIteration(ICmpInst::Predicate Pred,
+                               const SCEVAddRecExpr *LHS, const SCEV *RHS);
+
   /// Return true if, for all loop invariant X, the predicate "LHS `Pred` X"
   /// is monotonically increasing or decreasing.  In the former case set
   /// `Increasing` to true and in the latter case set `Increasing` to false.
@@ -1591,8 +1596,8 @@ private:
 
   /// Test whether the condition described by Pred, LHS, and RHS is true.
   /// Use only simple non-recursive types of checks, such as range analysis etc.
-  bool isKnownViaSimpleReasoning(ICmpInst::Predicate Pred,
-                                 const SCEV *LHS, const SCEV *RHS);
+  bool isKnownViaNonRecursiveReasoning(ICmpInst::Predicate Pred,
+                                       const SCEV *LHS, const SCEV *RHS);
 
   /// Test whether the condition described by Pred, LHS, and RHS is true
   /// whenever the condition described by Pred, FoundLHS, and FoundRHS is
@@ -1763,6 +1768,11 @@ private:
   /// Get mul expr already created or create a new one.
   const SCEV *getOrCreateMulExpr(SmallVectorImpl<const SCEV *> &Ops,
                                  SCEV::NoWrapFlags Flags);
+
+  /// Find all of the loops transitively used in \p S, and fill \p LoopsUsed.
+  /// A loop is considered "used" by an expression if it contains
+  /// an add rec on said loop.
+  void getUsedLoops(const SCEV *S, SmallPtrSetImpl<const Loop *> &LoopsUsed);
 
   /// Find all of the loops transitively used in \p S, and update \c LoopUsers
   /// accordingly.

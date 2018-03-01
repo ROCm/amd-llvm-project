@@ -9225,62 +9225,49 @@ static bool CheckMultiVersionAdditionalRules(Sema &S, const FunctionDecl *OldFD,
     return true;
   }
 
-  if (std::distance(NewFD->attr_begin(), NewFD->attr_end()) != 1) {
-    S.Diag(NewFD->getLocation(), diag::err_multiversion_no_other_attrs);
-    return true;
-  }
+  if (std::distance(NewFD->attr_begin(), NewFD->attr_end()) != 1)
+    return S.Diag(NewFD->getLocation(), diag::err_multiversion_no_other_attrs);
 
-  if (NewFD->getTemplatedKind() == FunctionDecl::TK_FunctionTemplate) {
-    S.Diag(NewFD->getLocation(), diag::err_multiversion_doesnt_support)
-        << FuncTemplates;
-    return true;
-  }
-
+  if (NewFD->getTemplatedKind() == FunctionDecl::TK_FunctionTemplate)
+    return S.Diag(NewFD->getLocation(), diag::err_multiversion_doesnt_support)
+           << FuncTemplates;
 
   if (const auto *NewCXXFD = dyn_cast<CXXMethodDecl>(NewFD)) {
-    if (NewCXXFD->isVirtual()) {
-      S.Diag(NewCXXFD->getLocation(), diag::err_multiversion_doesnt_support)
-          << VirtFuncs;
-      return true;
-    }
+    if (NewCXXFD->isVirtual())
+      return S.Diag(NewCXXFD->getLocation(),
+                    diag::err_multiversion_doesnt_support)
+             << VirtFuncs;
 
-    if (const auto *NewCXXCtor = dyn_cast<CXXConstructorDecl>(NewFD)) {
-      S.Diag(NewCXXCtor->getLocation(), diag::err_multiversion_doesnt_support)
-          << Constructors;
-      return true;
-    }
+    if (const auto *NewCXXCtor = dyn_cast<CXXConstructorDecl>(NewFD))
+      return S.Diag(NewCXXCtor->getLocation(),
+                    diag::err_multiversion_doesnt_support)
+             << Constructors;
 
-    if (const auto *NewCXXDtor = dyn_cast<CXXDestructorDecl>(NewFD)) {
-      S.Diag(NewCXXDtor->getLocation(), diag::err_multiversion_doesnt_support)
-          << Destructors;
-      return true;
-    }
+    if (const auto *NewCXXDtor = dyn_cast<CXXDestructorDecl>(NewFD))
+      return S.Diag(NewCXXDtor->getLocation(),
+                    diag::err_multiversion_doesnt_support)
+             << Destructors;
   }
 
-  if (NewFD->isDeleted()) {
-    S.Diag(NewFD->getLocation(), diag::err_multiversion_doesnt_support)
-      << DeletedFuncs;
-  }
-  if (NewFD->isDefaulted()) {
-    S.Diag(NewFD->getLocation(), diag::err_multiversion_doesnt_support)
-      << DefaultedFuncs;
-  }
+  if (NewFD->isDeleted())
+    return S.Diag(NewFD->getLocation(), diag::err_multiversion_doesnt_support)
+           << DeletedFuncs;
+
+  if (NewFD->isDefaulted())
+    return S.Diag(NewFD->getLocation(), diag::err_multiversion_doesnt_support)
+           << DefaultedFuncs;
 
   QualType NewQType = S.getASTContext().getCanonicalType(NewFD->getType());
   const auto *NewType = cast<FunctionType>(NewQType);
   QualType NewReturnType = NewType->getReturnType();
 
-  if (NewReturnType->isUndeducedType()) {
-    S.Diag(NewFD->getLocation(), diag::err_multiversion_doesnt_support)
-        << DeducedReturn;
-    return true;
-  }
+  if (NewReturnType->isUndeducedType())
+    return S.Diag(NewFD->getLocation(), diag::err_multiversion_doesnt_support)
+           << DeducedReturn;
 
   // Only allow transition to MultiVersion if it hasn't been used.
-  if (OldFD && CausesMV && OldFD->isUsed(false)) {
-    S.Diag(NewFD->getLocation(), diag::err_multiversion_after_used);
-    return true;
-  }
+  if (OldFD && CausesMV && OldFD->isUsed(false))
+    return S.Diag(NewFD->getLocation(), diag::err_multiversion_after_used);
 
   // Ensure the return type is identical.
   if (OldFD) {
@@ -9289,38 +9276,31 @@ static bool CheckMultiVersionAdditionalRules(Sema &S, const FunctionDecl *OldFD,
     FunctionType::ExtInfo OldTypeInfo = OldType->getExtInfo();
     FunctionType::ExtInfo NewTypeInfo = NewType->getExtInfo();
 
-    if (OldTypeInfo.getCC() != NewTypeInfo.getCC()) {
-      S.Diag(NewFD->getLocation(), diag::err_multiversion_diff) << CallingConv;
-      return true;
-    }
+    if (OldTypeInfo.getCC() != NewTypeInfo.getCC())
+      return S.Diag(NewFD->getLocation(), diag::err_multiversion_diff)
+             << CallingConv;
 
     QualType OldReturnType = OldType->getReturnType();
 
-    if (OldReturnType != NewReturnType) {
-      S.Diag(NewFD->getLocation(), diag::err_multiversion_diff) << ReturnType;
-      return true;
-    }
+    if (OldReturnType != NewReturnType)
+      return S.Diag(NewFD->getLocation(), diag::err_multiversion_diff)
+             << ReturnType;
 
-    if (OldFD->isConstexpr() != NewFD->isConstexpr()) {
-      S.Diag(NewFD->getLocation(), diag::err_multiversion_diff)
-          << ConstexprSpec;
-      return true;
-    }
+    if (OldFD->isConstexpr() != NewFD->isConstexpr())
+      return S.Diag(NewFD->getLocation(), diag::err_multiversion_diff)
+             << ConstexprSpec;
 
-    if (OldFD->isInlineSpecified() != NewFD->isInlineSpecified()) {
-      S.Diag(NewFD->getLocation(), diag::err_multiversion_diff) << InlineSpec;
-      return true;
-    }
+    if (OldFD->isInlineSpecified() != NewFD->isInlineSpecified())
+      return S.Diag(NewFD->getLocation(), diag::err_multiversion_diff)
+             << InlineSpec;
 
-    if (OldFD->getStorageClass() != NewFD->getStorageClass()) {
-      S.Diag(NewFD->getLocation(), diag::err_multiversion_diff) << StorageClass;
-      return true;
-    }
+    if (OldFD->getStorageClass() != NewFD->getStorageClass())
+      return S.Diag(NewFD->getLocation(), diag::err_multiversion_diff)
+             << StorageClass;
 
-    if (OldFD->isExternC() != NewFD->isExternC()) {
-      S.Diag(NewFD->getLocation(), diag::err_multiversion_diff) << Linkage;
-      return true;
-    }
+    if (OldFD->isExternC() != NewFD->isExternC())
+      return S.Diag(NewFD->getLocation(), diag::err_multiversion_diff)
+             << Linkage;
 
     if (S.CheckEquivalentExceptionSpec(
             OldFD->getType()->getAs<FunctionProtoType>(), OldFD->getLocation(),
@@ -9344,7 +9324,7 @@ static bool CheckMultiVersionFunction(Sema &S, FunctionDecl *NewFD,
   if (NewFD->isMain()) {
     if (NewTA && NewTA->isDefaultVersion()) {
       S.Diag(NewFD->getLocation(), diag::err_multiversion_not_allowed_on_main);
-      NewFD->isInvalidDecl();
+      NewFD->setInvalidDecl();
       return true;
     }
     return false;
@@ -9365,6 +9345,7 @@ static bool CheckMultiVersionFunction(Sema &S, FunctionDecl *NewFD,
       }
       if (!S.getASTContext().getTargetInfo().supportsMultiVersioning()) {
         S.Diag(NewFD->getLocation(), diag::err_multiversion_not_supported);
+        NewFD->setInvalidDecl();
         return true;
       }
 
@@ -9407,6 +9388,7 @@ static bool CheckMultiVersionFunction(Sema &S, FunctionDecl *NewFD,
     if (!S.getASTContext().getTargetInfo().supportsMultiVersioning()) {
       S.Diag(NewFD->getLocation(), diag::err_multiversion_not_supported);
       S.Diag(OldFD->getLocation(), diag::note_previous_declaration);
+      NewFD->setInvalidDecl();
       return true;
     }
 
@@ -11342,6 +11324,9 @@ void Sema::CheckCompleteVariableDeclaration(VarDecl *var) {
     }
   }
 
+  if (var->getType().isDestructedType() == QualType::DK_nontrivial_c_struct)
+    getCurFunction()->setHasBranchProtectedScope();
+
   // Warn about externally-visible variables being defined without a
   // prior declaration.  We only want to do this for global
   // declarations, but we also specifically need to avoid doing it for
@@ -13236,11 +13221,9 @@ bool Sema::CheckEnumUnderlyingType(TypeSourceInfo *TI) {
 
 /// Check whether this is a valid redeclaration of a previous enumeration.
 /// \return true if the redeclaration was invalid.
-bool Sema::CheckEnumRedeclaration(
-    SourceLocation EnumLoc, bool IsScoped, QualType EnumUnderlyingTy,
-    bool EnumUnderlyingIsImplicit, const EnumDecl *Prev) {
-  bool IsFixed = !EnumUnderlyingTy.isNull();
-
+bool Sema::CheckEnumRedeclaration(SourceLocation EnumLoc, bool IsScoped,
+                                  QualType EnumUnderlyingTy, bool IsFixed,
+                                  const EnumDecl *Prev) {
   if (IsScoped != Prev->isScoped()) {
     Diag(EnumLoc, diag::err_enum_redeclare_scoped_mismatch)
       << Prev->isScoped();
@@ -13260,10 +13243,6 @@ bool Sema::CheckEnumRedeclaration(
           << Prev->getIntegerTypeRange();
       return true;
     }
-  } else if (IsFixed && !Prev->isFixed() && EnumUnderlyingIsImplicit) {
-    ;
-  } else if (!IsFixed && Prev->isFixed() && !Prev->getIntegerTypeSourceInfo()) {
-    ;
   } else if (IsFixed != Prev->isFixed()) {
     Diag(EnumLoc, diag::err_enum_redeclare_fixed_mismatch)
       << Prev->isFixed();
@@ -13559,14 +13538,14 @@ Decl *Sema::ActOnTag(Scope *S, unsigned TagSpec, TagUseKind TUK,
   // this early, because it's needed to detect if this is an incompatible
   // redeclaration.
   llvm::PointerUnion<const Type*, TypeSourceInfo*> EnumUnderlying;
-  bool EnumUnderlyingIsImplicit = false;
+  bool IsFixed = !UnderlyingType.isUnset() || ScopedEnum;
 
   if (Kind == TTK_Enum) {
-    if (UnderlyingType.isInvalid() || (!UnderlyingType.get() && ScopedEnum))
+    if (UnderlyingType.isInvalid() || (!UnderlyingType.get() && ScopedEnum)) {
       // No underlying type explicitly specified, or we failed to parse the
       // type, default to int.
       EnumUnderlying = Context.IntTy.getTypePtr();
-    else if (UnderlyingType.get()) {
+    } else if (UnderlyingType.get()) {
       // C++0x 7.2p2: The type-specifier-seq of an enum-base shall name an
       // integral type; any cv-qualification is ignored.
       TypeSourceInfo *TI = nullptr;
@@ -13582,11 +13561,12 @@ Decl *Sema::ActOnTag(Scope *S, unsigned TagSpec, TagUseKind TUK,
         EnumUnderlying = Context.IntTy.getTypePtr();
 
     } else if (Context.getTargetInfo().getCXXABI().isMicrosoft()) {
-      if (getLangOpts().MSVCCompat || TUK == TUK_Definition) {
-        // Microsoft enums are always of int type.
+      // For MSVC ABI compatibility, unfixed enums must use an underlying type
+      // of 'int'. However, if this is an unfixed forward declaration, don't set
+      // the underlying type unless the user enables -fms-compatibility. This
+      // makes unfixed forward declared enums incomplete and is more conforming.
+      if (TUK == TUK_Definition || getLangOpts().MSVCCompat)
         EnumUnderlying = Context.IntTy.getTypePtr();
-        EnumUnderlyingIsImplicit = true;
-      }
     }
   }
 
@@ -13612,8 +13592,7 @@ Decl *Sema::ActOnTag(Scope *S, unsigned TagSpec, TagUseKind TUK,
 
     if (Kind == TTK_Enum) {
       New = EnumDecl::Create(Context, SearchDC, KWLoc, Loc, Name, nullptr,
-                             ScopedEnum, ScopedEnumUsesClassTag,
-                             !EnumUnderlying.isNull());
+                             ScopedEnum, ScopedEnumUsesClassTag, IsFixed);
       // If this is an undefined enum, bail.
       if (TUK != TUK_Definition && !Invalid)
         return nullptr;
@@ -13992,7 +13971,7 @@ Decl *Sema::ActOnTag(Scope *S, unsigned TagSpec, TagUseKind TUK,
           // in which case we want the caller to bail out.
           if (CheckEnumRedeclaration(NameLoc.isValid() ? NameLoc : KWLoc,
                                      ScopedEnum, EnumUnderlyingTy,
-                                     EnumUnderlyingIsImplicit, PrevEnum))
+                                     IsFixed, PrevEnum))
             return TUK == TUK_Declaration ? PrevTagDecl : nullptr;
         }
 
@@ -14208,7 +14187,7 @@ CreateNewDecl:
     // enum X { A, B, C } D;    D should chain to X.
     New = EnumDecl::Create(Context, SearchDC, KWLoc, Loc, Name,
                            cast_or_null<EnumDecl>(PrevDecl), ScopedEnum,
-                           ScopedEnumUsesClassTag, !EnumUnderlying.isNull());
+                           ScopedEnumUsesClassTag, IsFixed);
 
     if (isStdAlignValT && (!StdAlignValT || getStdAlignValT()->isImplicit()))
       StdAlignValT = cast<EnumDecl>(New);
@@ -14216,8 +14195,7 @@ CreateNewDecl:
     // If this is an undefined enum, warn.
     if (TUK != TUK_Definition && !Invalid) {
       TagDecl *Def;
-      if (!EnumUnderlyingIsImplicit &&
-          (getLangOpts().CPlusPlus11 || getLangOpts().ObjC2) &&
+      if (IsFixed && (getLangOpts().CPlusPlus11 || getLangOpts().ObjC2) &&
           cast<EnumDecl>(New)->isFixed()) {
         // C++0x: 7.2p2: opaque-enum-declaration.
         // Conflicts are diagnosed above. Do nothing.
@@ -14249,6 +14227,7 @@ CreateNewDecl:
       else
         ED->setIntegerType(QualType(EnumUnderlying.get<const Type*>(), 0));
       ED->setPromotionType(ED->getIntegerType());
+      assert(ED->isComplete() && "enum with type should be complete");
     }
   } else {
     // struct/union/class
@@ -15238,6 +15217,7 @@ void Sema::ActOnFields(Scope *S, SourceLocation RecLoc, Decl *EnclosingDecl,
 
     // Get the type for the field.
     const Type *FDTy = FD->getType().getTypePtr();
+    Qualifiers QS = FD->getType().getQualifiers();
 
     if (!FD->isAnonymousStructOrUnion()) {
       // Remember all fields written by the user.
@@ -15379,7 +15359,9 @@ void Sema::ActOnFields(Scope *S, SourceLocation RecLoc, Decl *EnclosingDecl,
       FD->setType(T);
     } else if (getLangOpts().allowsNonTrivialObjCLifetimeQualifiers() &&
                Record && !ObjCFieldLifetimeErrReported &&
-               (!getLangOpts().CPlusPlus || Record->isUnion())) {
+               ((!getLangOpts().CPlusPlus &&
+                 QS.getObjCLifetime() == Qualifiers::OCL_Weak) ||
+                Record->isUnion())) {
       // It's an error in ARC or Weak if a field has lifetime.
       // We don't want to report this in a system header, though,
       // so we just make the field unavailable.
@@ -15415,6 +15397,18 @@ void Sema::ActOnFields(Scope *S, SourceLocation RecLoc, Decl *EnclosingDecl,
                Record->setHasObjectMember(true);
       }
     }
+
+    if (Record && !getLangOpts().CPlusPlus) {
+      QualType FT = FD->getType();
+      if (FT.isNonTrivialToPrimitiveDefaultInitialize())
+        Record->setNonTrivialToPrimitiveDefaultInitialize();
+      QualType::PrimitiveCopyKind PCK = FT.isNonTrivialToPrimitiveCopy();
+      if (PCK != QualType::PCK_Trivial && PCK != QualType::PCK_VolatileTrivial)
+        Record->setNonTrivialToPrimitiveCopy();
+      if (FT.isDestructedType())
+        Record->setNonTrivialToPrimitiveDestroy();
+    }
+
     if (Record && FD->getType().isVolatileQualified())
       Record->setHasVolatileMember(true);
     // Keep track of the number of named members.
@@ -15707,7 +15701,7 @@ EnumConstantDecl *Sema::CheckEnumConstant(EnumDecl *Enum,
                                                          &EnumVal).get())) {
         // C99 6.7.2.2p2: Make sure we have an integer constant expression.
       } else {
-        if (Enum->isFixed()) {
+        if (Enum->isComplete()) {
           EltTy = Enum->getIntegerType();
 
           // In Obj-C and Microsoft mode, require the enumeration value to be
@@ -16218,7 +16212,9 @@ void Sema::ActOnEnumBody(SourceLocation EnumLoc, SourceRange BraceRange,
   if (LangOpts.ShortEnums)
     Packed = true;
 
-  if (Enum->isFixed()) {
+  // If the enum already has a type because it is fixed or dictated by the
+  // target, promote that type instead of analyzing the enumerators.
+  if (Enum->isComplete()) {
     BestType = Enum->getIntegerType();
     if (BestType->isPromotableIntegerType())
       BestPromotionType = Context.getPromotedIntegerType(BestType);

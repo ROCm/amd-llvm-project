@@ -115,6 +115,21 @@ DwarfAccelTables("dwarf-accel-tables", cl::Hidden,
                             clEnumVal(Disable, "Disabled")),
                  cl::init(Default));
 
+static cl::opt<DefaultOnOff>
+DwarfInlinedStrings("dwarf-inlined-strings", cl::Hidden,
+                 cl::desc("Use inlined strings rather than string section."),
+                 cl::values(clEnumVal(Default, "Default for platform"),
+                            clEnumVal(Enable, "Enabled"),
+                            clEnumVal(Disable, "Disabled")),
+                 cl::init(Default));
+
+static cl::opt<DefaultOnOff> DwarfSectionsAsReferences(
+    "dwarf-sections-as-references", cl::Hidden,
+    cl::desc("Use sections+offset as references rather than labels."),
+    cl::values(clEnumVal(Default, "Default for platform"),
+               clEnumVal(Enable, "Enabled"), clEnumVal(Disable, "Disabled")),
+    cl::init(Default));
+
 enum LinkageNameOption {
   DefaultLinkageNames,
   AllLinkageNames,
@@ -262,8 +277,7 @@ DwarfDebug::DwarfDebug(AsmPrinter *A, Module *M)
     : DebugHandlerBase(A), DebugLocs(A->OutStreamer->isVerboseAsm()),
       InfoHolder(A, "info_string", DIEValueAllocator),
       SkeletonHolder(A, "skel_string", DIEValueAllocator),
-      IsDarwin(A->TM.getTargetTriple().isOSDarwin()), AccelNames(), AccelObjC(),
-      AccelNamespace(), AccelTypes() {
+      IsDarwin(A->TM.getTargetTriple().isOSDarwin()) {
   const Triple &TT = Asm->TM.getTargetTriple();
 
   // Make sure we know our "debugger tuning."  The target option takes
@@ -285,6 +299,7 @@ DwarfDebug::DwarfDebug(AsmPrinter *A, Module *M)
   else
     HasDwarfAccelTables = DwarfAccelTables == Enable;
 
+  UseInlineStrings = DwarfInlinedStrings == Enable;
   HasAppleExtensionAttributes = tuneForLLDB();
 
   // Handle split DWARF.
@@ -301,6 +316,10 @@ DwarfDebug::DwarfDebug(AsmPrinter *A, Module *M)
                                     : MMI->getModule()->getDwarfVersion();
   // Use dwarf 4 by default if nothing is requested.
   DwarfVersion = DwarfVersion ? DwarfVersion : dwarf::DWARF_VERSION;
+
+  // Use sections as references in DWARF v2.
+  UseSectionsAsReferences =
+      DwarfVersion == 2 && DwarfSectionsAsReferences == Enable;
 
   // Work around a GDB bug. GDB doesn't support the standard opcode;
   // SCE doesn't support GNU's; LLDB prefers the standard opcode, which
@@ -729,7 +748,7 @@ void DwarfDebug::finalizeModuleInfo() {
     // ranges for all subprogram DIEs for mach-o.
     DwarfCompileUnit &U = SkCU ? *SkCU : TheCU;
     if (unsigned NumRanges = TheCU.getRanges().size()) {
-      if (NumRanges > 1)
+      if (NumRanges > 1 && !useSectionsAsReferences())
         // A DW_AT_low_pc attribute may also be specified in combination with
         // DW_AT_ranges to specify the default base address for use in
         // location lists (see Section 2.6.2) and range lists (see Section
@@ -1176,7 +1195,9 @@ void DwarfDebug::beginInstruction(const MachineInstr *MI) {
     return;
 
   // Check if source location changes, but ignore DBG_VALUE and CFI locations.
-  if (MI->isMetaInstruction())
+  // If the instruction is part of the function frame setup code, do not emit
+  // any line record, as there is no correspondence with any user code.
+  if (MI->isMetaInstruction() || MI->getFlag(MachineInstr::FrameSetup))
     return;
   const DebugLoc &DL = MI->getDebugLoc();
   // When we emit a line-0 record, we don't update PrevInstLoc; so look at
@@ -1374,7 +1395,7 @@ void DwarfDebug::endFunctionImpl(const MachineFunction *MF) {
 void DwarfDebug::recordSourceLine(unsigned Line, unsigned Col, const MDNode *S,
                                   unsigned Flags) {
   StringRef Fn;
-  unsigned Src = 1;
+  unsigned FileNo = 1;
   unsigned Discriminator = 0;
   if (auto *Scope = cast_or_null<DIScope>(S)) {
     Fn = Scope->getFilename();
@@ -1383,10 +1404,10 @@ void DwarfDebug::recordSourceLine(unsigned Line, unsigned Col, const MDNode *S,
         Discriminator = LBF->getDiscriminator();
 
     unsigned CUID = Asm->OutStreamer->getContext().getDwarfCompileUnitID();
-    Src = static_cast<DwarfCompileUnit &>(*InfoHolder.getUnits()[CUID])
+    FileNo = static_cast<DwarfCompileUnit &>(*InfoHolder.getUnits()[CUID])
               .getOrCreateSourceID(Scope->getFile());
   }
-  Asm->OutStreamer->EmitDwarfLocDirective(Src, Line, Col, Flags, 0,
+  Asm->OutStreamer->EmitDwarfLocDirective(FileNo, Line, Col, Flags, 0,
                                           Discriminator, Fn);
 }
 
@@ -1416,11 +1437,10 @@ void DwarfDebug::emitStringOffsetsTableHeader() {
 template <typename AccelTableT>
 void DwarfDebug::emitAccel(AccelTableT &Accel, MCSection *Section,
                            StringRef TableName) {
-  Accel.finalizeTable(Asm, TableName);
   Asm->OutStreamer->SwitchSection(Section);
 
   // Emit the full data.
-  Accel.emit(Asm, Section->getBeginSymbol());
+  emitAppleAccelTable(Asm, Accel, TableName, Section->getBeginSymbol());
 }
 
 // Emit visible names into a hashed accelerator table section.
@@ -1556,7 +1576,13 @@ void DwarfDebug::emitDebugPubSection(bool GnuStyle, StringRef Name,
   Asm->EmitInt16(dwarf::DW_PUBNAMES_VERSION);
 
   Asm->OutStreamer->AddComment("Offset of Compilation Unit Info");
-  Asm->emitDwarfSymbolReference(TheU->getLabelBegin());
+  if (useSectionsAsReferences()) {
+    Asm->EmitLabelPlusOffset(TheU->getSection()->getBeginSymbol(),
+                             TheU->getDebugSectionOffset(),
+                             Asm->MAI->getCodePointerSize());
+  } else {
+    Asm->emitDwarfSymbolReference(TheU->getLabelBegin());
+  }
 
   Asm->OutStreamer->AddComment("Compilation Unit Length");
   Asm->EmitInt32(TheU->getLength());
@@ -1771,7 +1797,7 @@ void DwarfDebug::emitDebugARanges() {
     }
 
     // Sort the symbols by offset within the section.
-    std::sort(
+    std::stable_sort(
         List.begin(), List.end(), [&](const SymbolCU &A, const SymbolCU &B) {
           unsigned IA = A.Sym ? Asm->OutStreamer->GetSymbolOrder(A.Sym) : 0;
           unsigned IB = B.Sym ? Asm->OutStreamer->GetSymbolOrder(B.Sym) : 0;
@@ -1855,7 +1881,13 @@ void DwarfDebug::emitDebugARanges() {
     Asm->OutStreamer->AddComment("DWARF Arange version number");
     Asm->EmitInt16(dwarf::DW_ARANGES_VERSION);
     Asm->OutStreamer->AddComment("Offset Into Debug Info Section");
-    Asm->emitDwarfSymbolReference(CU->getLabelBegin());
+    if (useSectionsAsReferences()) {
+      Asm->EmitLabelPlusOffset(CU->getSection()->getBeginSymbol(),
+                               CU->getDebugSectionOffset(),
+                               Asm->MAI->getCodePointerSize());
+    } else {
+      Asm->emitDwarfSymbolReference(CU->getLabelBegin());
+    }
     Asm->OutStreamer->AddComment("Address Size (in bytes)");
     Asm->EmitInt8(PtrSize);
     Asm->OutStreamer->AddComment("Segment Size (in bytes)");
@@ -2011,8 +2043,11 @@ void DwarfDebug::emitDebugMacinfo() {
     auto *SkCU = TheCU.getSkeleton();
     DwarfCompileUnit &U = SkCU ? *SkCU : TheCU;
     auto *CUNode = cast<DICompileUnit>(P.first);
-    Asm->OutStreamer->EmitLabel(U.getMacroLabelBegin());
-    handleMacroNodes(CUNode->getMacros(), U);
+    DIMacroNodeArray Macros = CUNode->getMacros();
+    if (!Macros.empty()) {
+      Asm->OutStreamer->EmitLabel(U.getMacroLabelBegin());
+      handleMacroNodes(Macros, U);
+    }
   }
   Asm->OutStreamer->AddComment("End Of Macro List Mark");
   Asm->EmitInt8(0);

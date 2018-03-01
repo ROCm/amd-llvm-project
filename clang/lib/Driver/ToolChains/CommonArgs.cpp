@@ -550,16 +550,10 @@ void tools::linkSanitizerRuntimeDeps(const ToolChain &TC,
       TC.getTriple().getOS() != llvm::Triple::NetBSD &&
       TC.getTriple().getOS() != llvm::Triple::RTEMS)
     CmdArgs.push_back("-ldl");
-  // Required for functions like forkpty on some OSes
-  if (TC.getTriple().getOS() == llvm::Triple::NetBSD)
-    CmdArgs.push_back("-lutil");
   // Required for backtrace on some OSes
   if (TC.getTriple().getOS() == llvm::Triple::NetBSD ||
       TC.getTriple().getOS() == llvm::Triple::FreeBSD)
     CmdArgs.push_back("-lexecinfo");
-  // Required for kvm (kernel memory interface) on some OSes
-  if (TC.getTriple().getOS() == llvm::Triple::NetBSD)
-    CmdArgs.push_back("-lkvm");
 }
 
 static void
@@ -863,6 +857,10 @@ tools::ParsePICArgs(const ToolChain &ToolChain, const ArgList &Args) {
       break;
     }
   }
+
+  // AMDGPU-specific defaults for PIC.
+  if (Triple.getArch() == llvm::Triple::amdgcn)
+    PIC = true;
 
   // The last argument relating to either PIC or PIE wins, and no
   // other argument is used. If the last argument is any flavor of the

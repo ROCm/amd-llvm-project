@@ -1641,12 +1641,13 @@ llvm::GlobalVariable *ItaniumCXXABI::getAddrOfVTable(const CXXRecordDecl *RD,
   VTable = CGM.CreateOrReplaceCXXRuntimeVariable(
       Name, VTableType, llvm::GlobalValue::ExternalLinkage);
   VTable->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
-  CGM.setGVProperties(VTable, RD);
 
   if (RD->hasAttr<DLLImportAttr>())
     VTable->setDLLStorageClass(llvm::GlobalValue::DLLImportStorageClass);
   else if (RD->hasAttr<DLLExportAttr>())
     VTable->setDLLStorageClass(llvm::GlobalValue::DLLExportStorageClass);
+
+  CGM.setGVProperties(VTable, RD);
 
   return VTable;
 }
@@ -1848,7 +1849,8 @@ Address ItaniumCXXABI::InitializeArrayCookie(CodeGenFunction &CGF,
 
   // Handle the array cookie specially in ASan.
   if (CGM.getLangOpts().Sanitize.has(SanitizerKind::Address) && AS == 0 &&
-      expr->getOperatorNew()->isReplaceableGlobalAllocationFunction()) {
+      (expr->getOperatorNew()->isReplaceableGlobalAllocationFunction() ||
+       CGM.getCodeGenOpts().SanitizeAddressPoisonClassMemberArrayNewCookie)) {
     // The store to the CookiePtr does not need to be instrumented.
     CGM.getSanitizerMetadata()->disableSanitizerForInstruction(SI);
     llvm::FunctionType *FTy =
@@ -3213,10 +3215,10 @@ llvm::Constant *ItaniumRTTIBuilder::BuildTypeInfo(QualType Ty, bool Force,
     llvmVisibility = CodeGenModule::GetLLVMVisibility(Ty->getVisibility());
 
   TypeName->setVisibility(llvmVisibility);
-  CGM.setDSOLocal(TypeName, Ty->getAsCXXRecordDecl());
+  CGM.setDSOLocal(TypeName);
 
   GV->setVisibility(llvmVisibility);
-  CGM.setDSOLocal(GV, Ty->getAsCXXRecordDecl());
+  CGM.setDSOLocal(GV);
 
   if (CGM.getTriple().isWindowsItaniumEnvironment()) {
     auto RD = Ty->getAsCXXRecordDecl();
@@ -3635,7 +3637,7 @@ static void emitConstructorDestructorAlias(CodeGenModule &CGM,
   }
 
   // Finally, set up the alias with its proper name and attributes.
-  CGM.setAliasAttributes(cast<NamedDecl>(AliasDecl.getDecl()), Alias);
+  CGM.setAliasAttributes(AliasDecl, Alias);
 }
 
 void ItaniumCXXABI::emitCXXStructor(const CXXMethodDecl *MD,

@@ -379,11 +379,25 @@ static Optional<bool> comparePath(const PathPieces &X, const PathPieces &Y) {
   return None;
 }
 
+static bool compareCrossTUSourceLocs(FullSourceLoc XL, FullSourceLoc YL) {
+  std::pair<FileID, unsigned> XOffs = XL.getDecomposedLoc();
+  std::pair<FileID, unsigned> YOffs = YL.getDecomposedLoc();
+  const SourceManager &SM = XL.getManager();
+  std::pair<bool, bool> InSameTU = SM.isInTheSameTranslationUnit(XOffs, YOffs);
+  if (InSameTU.first)
+    return XL.isBeforeInTranslationUnitThan(YL);
+  const FileEntry *XFE = SM.getFileEntryForID(XL.getFileID());
+  const FileEntry *YFE = SM.getFileEntryForID(YL.getFileID());
+  if (!XFE || !YFE)
+    return XFE && !YFE;
+  return XFE->getName() < YFE->getName();
+}
+
 static bool compare(const PathDiagnostic &X, const PathDiagnostic &Y) {
   FullSourceLoc XL = X.getLocation().asLocation();
   FullSourceLoc YL = Y.getLocation().asLocation();
   if (XL != YL)
-    return XL.isBeforeInTranslationUnitThan(YL);
+    return compareCrossTUSourceLocs(XL, YL);
   if (X.getBugType() != Y.getBugType())
     return X.getBugType() < Y.getBugType();
   if (X.getCategory() != Y.getCategory())
@@ -403,7 +417,8 @@ static bool compare(const PathDiagnostic &X, const PathDiagnostic &Y) {
     SourceLocation YDL = YD->getLocation();
     if (XDL != YDL) {
       const SourceManager &SM = XL.getManager();
-      return SM.isBeforeInTranslationUnit(XDL, YDL);
+      return compareCrossTUSourceLocs(FullSourceLoc(XDL, SM),
+                                      FullSourceLoc(YDL, SM));
     }
   }
   PathDiagnostic::meta_iterator XI = X.meta_begin(), XE = X.meta_end();
@@ -551,6 +566,7 @@ getLocationForCaller(const StackFrameContext *SFC,
 
   switch (Source.getKind()) {
   case CFGElement::Statement:
+  case CFGElement::Constructor:
     return PathDiagnosticLocation(Source.castAs<CFGStmt>().getStmt(),
                                   SM, CallerCtx);
   case CFGElement::Initializer: {
@@ -578,8 +594,14 @@ getLocationForCaller(const StackFrameContext *SFC,
     const CFGNewAllocator &Alloc = Source.castAs<CFGNewAllocator>();
     return PathDiagnosticLocation(Alloc.getAllocatorExpr(), SM, CallerCtx);
   }
-  case CFGElement::TemporaryDtor:
-    llvm_unreachable("not yet implemented!");
+  case CFGElement::TemporaryDtor: {
+    // Temporary destructors are for temporaries. They die immediately at around
+    // the location of CXXBindTemporaryExpr. If they are lifetime-extended,
+    // they'd be dealt with via an AutomaticObjectDtor instead.
+    const auto &Dtor = Source.castAs<CFGTemporaryDtor>();
+    return PathDiagnosticLocation::createEnd(Dtor.getBindTemporaryExpr(), SM,
+                                             CallerCtx);
+  }
   case CFGElement::LifetimeEnds:
   case CFGElement::LoopExit:
     llvm_unreachable("CFGElement kind should not be on callsite!");

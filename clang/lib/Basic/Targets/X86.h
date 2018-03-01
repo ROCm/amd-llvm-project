@@ -99,6 +99,7 @@ class LLVM_LIBRARY_VISIBILITY X86TargetInfo : public TargetInfo {
   bool HasRDPID = false;
   bool HasRetpoline = false;
   bool HasRetpolineExternalThunk = false;
+  bool HasLAHFSAHF = false;
 
 protected:
   /// \brief Enumeration of all of the X86 CPUs supported by Clang.
@@ -263,6 +264,8 @@ public:
   bool isValidCPUName(StringRef Name) const override {
     return checkCPUKind(getCPUKind(Name));
   }
+
+  void fillValidCPUList(SmallVectorImpl<StringRef> &Values) const override;
 
   bool setCPU(const std::string &Name) override {
     return checkCPUKind(CPU = getCPUKind(Name));
