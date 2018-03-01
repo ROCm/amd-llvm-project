@@ -168,6 +168,16 @@ TEST_F(FormatTestProto, MessageFieldAttributes) {
                "    aaaaaaaaaaaaaaaa: true\n"
                "  }\n"
                "];");
+  verifyFormat("extensions 20 [(proto2.type) = 'Aaaa.bbbb'];");
+  verifyFormat("extensions 20\n"
+               "    [(proto3.type) = 'Aaaa.bbbb', (aaa.Aaa) = 'aaa.bbb'];");
+  verifyFormat("extensions 123 [\n"
+               "  (aaa) = aaaa,\n"
+               "  (bbbbbbbbbbbbbbbbbbbbbbbbbb) = {\n"
+               "    aaaaaaaaaaaaaaaaa: true,\n"
+               "    aaaaaaaaaaaaaaaa: true\n"
+               "  }\n"
+               "];");
 }
 
 TEST_F(FormatTestProto, DoesntWrapFileOptions) {
@@ -419,6 +429,65 @@ TEST_F(FormatTestProto, KeepsLongStringLiteralsOnSameLine) {
       "    text: \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaasaaaaaaaa\"\n"
       "  }\n"
       "}");
+}
+
+TEST_F(FormatTestProto, FormatsOptionsExtensions) {
+  verifyFormat("option (MyProto.options) = {\n"
+               "  msg_field: { field_d: 123 }\n"
+               "  [ext.t/u] { key: value }\n"
+               "  key: value\n"
+               "  [t.u/v] <\n"
+               "    [ext] { key: value }\n"
+               "  >\n"
+               "};");
+}
+
+TEST_F(FormatTestProto, NoSpaceAfterPercent) {
+  verifyFormat("option (MyProto.options) = {\n"
+               "  key: %lld\n"
+               "};");
+}
+
+TEST_F(FormatTestProto, FormatsRepeatedListInitializersInOptions) {
+  verifyFormat("option (MyProto.options) = {\n"
+               "  key: item\n"
+               "  keys: [\n"
+               "    'ala',\n"
+               "    'bala',\n"
+               "    'porto',\n"
+               "    'kala',\n"
+               "    'too',\n"
+               "    'long',\n"
+               "    'long',\n"
+               "    'long'\n"
+               "  ]\n"
+               "  key: [ item ]\n"
+               "  msg {\n"
+               "    key: item\n"
+               "    keys: [\n"
+               "      'ala',\n"
+               "      'bala',\n"
+               "      'porto',\n"
+               "      'kala',\n"
+               "      'too',\n"
+               "      'long',\n"
+               "      'long'\n"
+               "    ]\n"
+               "  }\n"
+               "  key: value\n"
+               "};");
+}
+
+TEST_F(FormatTestProto, AcceptsOperatorAsKeyInOptions) {
+  verifyFormat("option (MyProto.options) = {\n"
+               "  bbbbbbbbb: <\n"
+               "    ccccccccccccccccccccccc: <\n"
+               "      operator: 1\n"
+               "      operator: 2\n"
+               "      operator { key: value }\n"
+               "    >\n"
+               "  >\n"
+               "};");
 }
 
 } // end namespace tooling

@@ -92,6 +92,7 @@ void X86LegalizerInfo::setLegalizerInfo32bit() {
   const LLT s16 = LLT::scalar(16);
   const LLT s32 = LLT::scalar(32);
   const LLT s64 = LLT::scalar(64);
+  const LLT s128 = LLT::scalar(128);
 
   for (auto Ty : {p0, s1, s8, s16, s32})
     setAction({G_IMPLICIT_DEF, Ty}, Legal);
@@ -123,6 +124,14 @@ void X86LegalizerInfo::setLegalizerInfo32bit() {
   setAction({G_GEP, p0}, Legal);
   setAction({G_GEP, 1, s32}, Legal);
 
+  if (!Subtarget.is64Bit()) {
+    getActionDefinitionsBuilder(G_PTRTOINT)
+        .legalForCartesianProduct({s1, s8, s16, s32}, {p0})
+        .maxScalar(0, s32)
+        .widenScalarToNextPow2(0, /*Min*/ 8);
+    getActionDefinitionsBuilder(G_INTTOPTR).legalFor({s32, p0});
+  }
+
   // Control-flow
   setAction({G_BRCOND, s1}, Legal);
 
@@ -136,6 +145,7 @@ void X86LegalizerInfo::setLegalizerInfo32bit() {
     setAction({G_SEXT, Ty}, Legal);
     setAction({G_ANYEXT, Ty}, Legal);
   }
+  setAction({G_ANYEXT, s128}, Legal);
 
   // Comparison
   setAction({G_ICMP, s1}, Legal);
@@ -159,10 +169,18 @@ void X86LegalizerInfo::setLegalizerInfo64bit() {
   if (!Subtarget.is64Bit())
     return;
 
+  const LLT p0 = LLT::pointer(0, TM.getPointerSize() * 8);
+  const LLT s1 = LLT::scalar(1);
+  const LLT s8 = LLT::scalar(8);
+  const LLT s16 = LLT::scalar(16);
+  const LLT s32 = LLT::scalar(32);
   const LLT s64 = LLT::scalar(64);
   const LLT s128 = LLT::scalar(128);
 
   setAction({G_IMPLICIT_DEF, s64}, Legal);
+  // Need to have that, as tryFoldImplicitDef will create this pattern:
+  // s128 = EXTEND (G_IMPLICIT_DEF s32/s64) -> s128 = G_IMPLICIT_DEF
+  setAction({G_IMPLICIT_DEF, s128}, Legal);
 
   setAction({G_PHI, s64}, Legal);
 
@@ -174,6 +192,11 @@ void X86LegalizerInfo::setLegalizerInfo64bit() {
 
   // Pointer-handling
   setAction({G_GEP, 1, s64}, Legal);
+  getActionDefinitionsBuilder(G_PTRTOINT)
+      .legalForCartesianProduct({s1, s8, s16, s32, s64}, {p0})
+      .maxScalar(0, s64)
+      .widenScalarToNextPow2(0, /*Min*/ 8);
+  getActionDefinitionsBuilder(G_INTTOPTR).legalFor({s64, p0});
 
   // Constants
   setAction({TargetOpcode::G_CONSTANT, s64}, Legal);

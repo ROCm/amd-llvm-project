@@ -37,9 +37,7 @@ namespace orc {
 
 class RTDyldObjectLinkingLayerBase {
 public:
-
-  using ObjectPtr =
-    std::shared_ptr<object::OwningBinary<object::ObjectFile>>;
+  using ObjectPtr = std::unique_ptr<MemoryBuffer>;
 
 protected:
 
@@ -81,12 +79,6 @@ protected:
     StringMap<JITEvaluatedSymbol> SymbolTable;
     bool Finalized = false;
   };
-
-  using LinkedObjectListT = std::list<std::unique_ptr<LinkedObject>>;
-
-public:
-  /// @brief Handle to a loaded object.
-  using ObjHandleT = LinkedObjectListT::iterator;
 };
 
 /// @brief Bare bones object linking layer.
@@ -102,23 +94,25 @@ public:
 
   /// @brief Functor for receiving object-loaded notifications.
   using NotifyLoadedFtor =
-    std::function<void(ObjHandleT, const ObjectPtr &Obj,
-                       const RuntimeDyld::LoadedObjectInfo &)>;
+      std::function<void(VModuleKey, const object::ObjectFile &Obj,
+                         const RuntimeDyld::LoadedObjectInfo &)>;
 
   /// @brief Functor for receiving finalization notifications.
-  using NotifyFinalizedFtor = std::function<void(ObjHandleT)>;
+  using NotifyFinalizedFtor = std::function<void(VModuleKey)>;
 
 private:
-  template <typename MemoryManagerPtrT, typename FinalizerFtor>
+  using OwnedObject = object::OwningBinary<object::ObjectFile>;
+
+  template <typename MemoryManagerPtrT>
   class ConcreteLinkedObject : public LinkedObject {
   public:
-    ConcreteLinkedObject(ExecutionSession &ES, ObjectPtr Obj,
-                         MemoryManagerPtrT MemMgr,
+    ConcreteLinkedObject(RTDyldObjectLinkingLayer &Parent, VModuleKey K,
+                         OwnedObject Obj, MemoryManagerPtrT MemMgr,
                          std::shared_ptr<SymbolResolver> Resolver,
-                         FinalizerFtor Finalizer, bool ProcessAllSections)
+                         bool ProcessAllSections)
         : MemMgr(std::move(MemMgr)),
           PFC(llvm::make_unique<PreFinalizeContents>(
-              ES, std::move(Obj), std::move(Resolver), std::move(Finalizer),
+              Parent, std::move(K), std::move(Obj), std::move(Resolver),
               ProcessAllSections)) {
       buildInitialSymbolTable(PFC->Obj);
     }
@@ -127,25 +121,35 @@ private:
       MemMgr->deregisterEHFrames();
     }
 
-    void setHandle(ObjHandleT H) {
-      PFC->Handle = H;
-    }
-
     Error finalize() override {
       assert(PFC && "mapSectionAddress called on finalized LinkedObject");
 
-      JITSymbolResolverAdapter ResolverAdapter(PFC->ES, *PFC->Resolver);
-      RuntimeDyld RTDyld(*MemMgr, ResolverAdapter);
-      RTDyld.setProcessAllSections(PFC->ProcessAllSections);
-      PFC->RTDyld = &RTDyld;
+      JITSymbolResolverAdapter ResolverAdapter(PFC->Parent.ES, *PFC->Resolver);
+      PFC->RTDyld = llvm::make_unique<RuntimeDyld>(*MemMgr, ResolverAdapter);
+      PFC->RTDyld->setProcessAllSections(PFC->ProcessAllSections);
 
-      this->Finalized = true;
-      auto Err = PFC->Finalizer(PFC->Handle, RTDyld, std::move(PFC->Obj),
-                                [&]() { this->updateSymbolTable(RTDyld); });
+      Finalized = true;
+
+      std::unique_ptr<RuntimeDyld::LoadedObjectInfo> Info =
+          PFC->RTDyld->loadObject(*PFC->Obj.getBinary());
+
+      updateSymbolTable(*PFC->RTDyld);
+
+      if (PFC->Parent.NotifyLoaded)
+        PFC->Parent.NotifyLoaded(PFC->K, *PFC->Obj.getBinary(), *Info);
+
+      PFC->RTDyld->finalizeWithMemoryManagerLocking();
+
+      if (PFC->RTDyld->hasError())
+        return make_error<StringError>(PFC->RTDyld->getErrorString(),
+                                       inconvertibleErrorCode());
+
+      if (PFC->Parent.NotifyFinalized)
+        PFC->Parent.NotifyFinalized(PFC->K);
 
       // Release resources.
       PFC = nullptr;
-      return Err;
+      return Error::success();
     }
 
     JITSymbol::GetAddressFtor getSymbolMaterializer(std::string Name) override {
@@ -167,9 +171,8 @@ private:
     }
 
   private:
-
-    void buildInitialSymbolTable(const ObjectPtr &Obj) {
-      for (auto &Symbol : Obj->getBinary()->symbols()) {
+    void buildInitialSymbolTable(const OwnedObject &Obj) {
+      for (auto &Symbol : Obj.getBinary()->symbols()) {
         if (Symbol.getFlags() & object::SymbolRef::SF_Undefined)
           continue;
         Expected<StringRef> SymbolName = Symbol.getName();
@@ -192,56 +195,53 @@ private:
     // Contains the information needed prior to finalization: the object files,
     // memory manager, resolver, and flags needed for RuntimeDyld.
     struct PreFinalizeContents {
-      PreFinalizeContents(ExecutionSession &ES, ObjectPtr Obj,
+      PreFinalizeContents(RTDyldObjectLinkingLayer &Parent, VModuleKey K,
+                          OwnedObject Obj,
                           std::shared_ptr<SymbolResolver> Resolver,
-                          FinalizerFtor Finalizer, bool ProcessAllSections)
-          : ES(ES), Obj(std::move(Obj)), Resolver(std::move(Resolver)),
-            Finalizer(std::move(Finalizer)),
+                          bool ProcessAllSections)
+          : Parent(Parent), K(std::move(K)), Obj(std::move(Obj)),
+            Resolver(std::move(Resolver)),
             ProcessAllSections(ProcessAllSections) {}
 
-      ExecutionSession &ES;
-      ObjectPtr Obj;
+      RTDyldObjectLinkingLayer &Parent;
+      VModuleKey K;
+      OwnedObject Obj;
       std::shared_ptr<SymbolResolver> Resolver;
-      FinalizerFtor Finalizer;
       bool ProcessAllSections;
-      ObjHandleT Handle;
-      RuntimeDyld *RTDyld;
+      std::unique_ptr<RuntimeDyld> RTDyld;
     };
 
     MemoryManagerPtrT MemMgr;
     std::unique_ptr<PreFinalizeContents> PFC;
   };
 
-  template <typename MemoryManagerPtrT, typename FinalizerFtor>
-  std::unique_ptr<ConcreteLinkedObject<MemoryManagerPtrT, FinalizerFtor>>
-  createLinkedObject(ExecutionSession &ES, ObjectPtr Obj,
-                     MemoryManagerPtrT MemMgr,
+  template <typename MemoryManagerPtrT>
+  std::unique_ptr<ConcreteLinkedObject<MemoryManagerPtrT>>
+  createLinkedObject(RTDyldObjectLinkingLayer &Parent, VModuleKey K,
+                     OwnedObject Obj, MemoryManagerPtrT MemMgr,
                      std::shared_ptr<SymbolResolver> Resolver,
-                     FinalizerFtor Finalizer, bool ProcessAllSections) {
-    using LOS = ConcreteLinkedObject<MemoryManagerPtrT, FinalizerFtor>;
-    return llvm::make_unique<LOS>(ES, std::move(Obj), std::move(MemMgr),
-                                  std::move(Resolver), std::move(Finalizer),
+                     bool ProcessAllSections) {
+    using LOS = ConcreteLinkedObject<MemoryManagerPtrT>;
+    return llvm::make_unique<LOS>(Parent, std::move(K), std::move(Obj),
+                                  std::move(MemMgr), std::move(Resolver),
                                   ProcessAllSections);
   }
 
 public:
+  struct Resources {
+    std::shared_ptr<RuntimeDyld::MemoryManager> MemMgr;
+    std::shared_ptr<SymbolResolver> Resolver;
+  };
 
-  /// @brief Functor for creating memory managers.
-  using MemoryManagerGetter =
-      std::function<std::shared_ptr<RuntimeDyld::MemoryManager>(VModuleKey)>;
-
-  using ResolverGetter =
-      std::function<std::shared_ptr<SymbolResolver>(VModuleKey)>;
+  using ResourcesGetter = std::function<Resources(VModuleKey)>;
 
   /// @brief Construct an ObjectLinkingLayer with the given NotifyLoaded,
   ///        and NotifyFinalized functors.
   RTDyldObjectLinkingLayer(
-      ExecutionSession &ES, MemoryManagerGetter GetMemMgr,
-      ResolverGetter GetResolver,
+      ExecutionSession &ES, ResourcesGetter GetResources,
       NotifyLoadedFtor NotifyLoaded = NotifyLoadedFtor(),
       NotifyFinalizedFtor NotifyFinalized = NotifyFinalizedFtor())
-      : ES(ES), GetMemMgr(std::move(GetMemMgr)),
-        GetResolver(std::move(GetResolver)),
+      : ES(ES), GetResources(std::move(GetResources)),
         NotifyLoaded(std::move(NotifyLoaded)),
         NotifyFinalized(std::move(NotifyFinalized)), ProcessAllSections(false) {
   }
@@ -257,47 +257,25 @@ public:
   }
 
   /// @brief Add an object to the JIT.
-  ///
-  /// @return A handle that can be used to refer to the loaded object (for 
-  ///         symbol searching, finalization, freeing memory, etc.).
-  Expected<ObjHandleT> addObject(VModuleKey K, ObjectPtr Obj) {
-    auto Finalizer = [&](ObjHandleT H, RuntimeDyld &RTDyld,
-                         const ObjectPtr &ObjToLoad,
-                         std::function<void()> LOSHandleLoad) -> Error {
-      std::unique_ptr<RuntimeDyld::LoadedObjectInfo> Info =
-        RTDyld.loadObject(*ObjToLoad->getBinary());
+  Error addObject(VModuleKey K, ObjectPtr ObjBuffer) {
 
-      LOSHandleLoad();
+    auto Obj =
+        object::ObjectFile::createObjectFile(ObjBuffer->getMemBufferRef());
+    if (!Obj)
+      return Obj.takeError();
 
-      if (this->NotifyLoaded)
-        this->NotifyLoaded(H, ObjToLoad, *Info);
+    assert(!LinkedObjects.count(K) && "VModuleKey already in use");
 
-      RTDyld.finalizeWithMemoryManagerLocking();
+    auto R = GetResources(K);
 
-      if (RTDyld.hasError())
-        return make_error<StringError>(RTDyld.getErrorString(),
-                                       inconvertibleErrorCode());
+    LinkedObjects[K] = createLinkedObject(
+        *this, K, OwnedObject(std::move(*Obj), std::move(ObjBuffer)),
+        std::move(R.MemMgr), std::move(R.Resolver), ProcessAllSections);
 
-      if (this->NotifyFinalized)
-        this->NotifyFinalized(H);
-
-      return Error::success();
-    };
-
-    auto LO =
-        createLinkedObject(ES, std::move(Obj), GetMemMgr(K), GetResolver(K),
-                           std::move(Finalizer), ProcessAllSections);
-    // LOS is an owning-ptr. Keep a non-owning one so that we can set the handle
-    // below.
-    auto *LOPtr = LO.get();
-
-    ObjHandleT Handle = LinkedObjList.insert(LinkedObjList.end(), std::move(LO));
-    LOPtr->setHandle(Handle);
-
-    return Handle;
+    return Error::success();
   }
 
-  /// @brief Remove the object associated with handle H.
+  /// @brief Remove the object associated with VModuleKey K.
   ///
   ///   All memory allocated for the object will be freed, and the sections and
   /// symbols it provided will no longer be available. No attempt is made to
@@ -305,9 +283,10 @@ public:
   /// indirectly) will result in undefined behavior. If dependence tracking is
   /// required to detect or resolve such issues it should be added at a higher
   /// layer.
-  Error removeObject(ObjHandleT H) {
+  Error removeObject(VModuleKey K) {
+    assert(LinkedObjects.count(K) && "VModuleKey not associated with object");
     // How do we invalidate the symbols in H?
-    LinkedObjList.erase(H);
+    LinkedObjects.erase(K);
     return Error::success();
   }
 
@@ -316,42 +295,49 @@ public:
   /// @param ExportedSymbolsOnly If true, search only for exported symbols.
   /// @return A handle for the given named symbol, if it exists.
   JITSymbol findSymbol(StringRef Name, bool ExportedSymbolsOnly) {
-    for (auto I = LinkedObjList.begin(), E = LinkedObjList.end(); I != E;
-         ++I)
-      if (auto Symbol = findSymbolIn(I, Name, ExportedSymbolsOnly))
-        return Symbol;
+    for (auto &KV : LinkedObjects)
+      if (auto Sym = KV.second->getSymbol(Name, ExportedSymbolsOnly))
+        return Sym;
+      else if (auto Err = Sym.takeError())
+        return std::move(Err);
 
     return nullptr;
   }
 
   /// @brief Search for the given named symbol in the context of the loaded
-  ///        object represented by the handle H.
-  /// @param H The handle for the object to search in.
+  ///        object represented by the VModuleKey K.
+  /// @param K The VModuleKey for the object to search in.
   /// @param Name The name of the symbol to search for.
   /// @param ExportedSymbolsOnly If true, search only for exported symbols.
   /// @return A handle for the given named symbol, if it is found in the
   ///         given object.
-  JITSymbol findSymbolIn(ObjHandleT H, StringRef Name,
+  JITSymbol findSymbolIn(VModuleKey K, StringRef Name,
                          bool ExportedSymbolsOnly) {
-    return (*H)->getSymbol(Name, ExportedSymbolsOnly);
+    assert(LinkedObjects.count(K) && "VModuleKey not associated with object");
+    return LinkedObjects[K]->getSymbol(Name, ExportedSymbolsOnly);
   }
 
-  /// @brief Map section addresses for the object associated with the handle H.
-  void mapSectionAddress(ObjHandleT H, const void *LocalAddress,
+  /// @brief Map section addresses for the object associated with the
+  ///        VModuleKey K.
+  void mapSectionAddress(VModuleKey K, const void *LocalAddress,
                          JITTargetAddress TargetAddr) {
-    (*H)->mapSectionAddress(LocalAddress, TargetAddr);
+    assert(LinkedObjects.count(K) && "VModuleKey not associated with object");
+    LinkedObjects[K]->mapSectionAddress(LocalAddress, TargetAddr);
   }
 
   /// @brief Immediately emit and finalize the object represented by the given
-  ///        handle.
-  /// @param H Handle for object to emit/finalize.
-  Error emitAndFinalize(ObjHandleT H) { return (*H)->finalize(); }
+  ///        VModuleKey.
+  /// @param K VModuleKey for object to emit/finalize.
+  Error emitAndFinalize(VModuleKey K) {
+    assert(LinkedObjects.count(K) && "VModuleKey not associated with object");
+    return LinkedObjects[K]->finalize();
+  }
 
 private:
   ExecutionSession &ES;
-  LinkedObjectListT LinkedObjList;
-  MemoryManagerGetter GetMemMgr;
-  ResolverGetter GetResolver;
+
+  std::map<VModuleKey, std::unique_ptr<LinkedObject>> LinkedObjects;
+  ResourcesGetter GetResources;
   NotifyLoadedFtor NotifyLoaded;
   NotifyFinalizedFtor NotifyFinalized;
   bool ProcessAllSections = false;

@@ -1420,6 +1420,23 @@ static Constant *fitsInFPType(ConstantFP *CFP, const fltSemantics &Sem) {
   return nullptr;
 }
 
+static Constant *shrinkFPConstant(ConstantFP *CFP) {
+  if (CFP->getType() == Type::getPPC_FP128Ty(CFP->getContext()))
+    return nullptr;  // No constant folding of this.
+  // See if the value can be truncated to half and then reextended.
+  if (Constant *NewCFP = fitsInFPType(CFP, APFloat::IEEEhalf()))
+    return NewCFP;
+  // See if the value can be truncated to float and then reextended.
+  if (Constant *NewCFP = fitsInFPType(CFP, APFloat::IEEEsingle()))
+    return NewCFP;
+  if (CFP->getType()->isDoubleTy())
+    return nullptr;  // Won't shrink.
+  if (Constant *NewCFP = fitsInFPType(CFP, APFloat::IEEEdouble()))
+    return NewCFP;
+  // Don't try to shrink to various long double types.
+  return nullptr;
+}
+
 /// Look through floating-point extensions until we get the source value.
 static Value *lookThroughFPExtensions(Value *V) {
   while (auto *FPExt = dyn_cast<FPExtInst>(V))
@@ -1428,21 +1445,9 @@ static Value *lookThroughFPExtensions(Value *V) {
   // If this value is a constant, return the constant in the smallest FP type
   // that can accurately represent it.  This allows us to turn
   // (float)((double)X+2.0) into x+2.0f.
-  if (auto *CFP = dyn_cast<ConstantFP>(V)) {
-    if (CFP->getType() == Type::getPPC_FP128Ty(V->getContext()))
-      return V;  // No constant folding of this.
-    // See if the value can be truncated to half and then reextended.
-    if (Value *V = fitsInFPType(CFP, APFloat::IEEEhalf()))
-      return V;
-    // See if the value can be truncated to float and then reextended.
-    if (Value *V = fitsInFPType(CFP, APFloat::IEEEsingle()))
-      return V;
-    if (CFP->getType()->isDoubleTy())
-      return V;  // Won't shrink.
-    if (Value *V = fitsInFPType(CFP, APFloat::IEEEdouble()))
-      return V;
-    // Don't try to shrink to various long double types.
-  }
+  if (auto *CFP = dyn_cast<ConstantFP>(V))
+    if (Constant *NewCFP = shrinkFPConstant(CFP))
+      return NewCFP;
 
   return V;
 }
@@ -1761,7 +1766,7 @@ Instruction *InstCombiner::visitPtrToInt(PtrToIntInst &CI) {
   Type *Ty = CI.getType();
   unsigned AS = CI.getPointerAddressSpace();
 
-  if (Ty->getScalarSizeInBits() == DL.getPointerSizeInBits(AS))
+  if (Ty->getScalarSizeInBits() == DL.getIndexSizeInBits(AS))
     return commonPointerCastTransforms(CI);
 
   Type *PtrTy = DL.getIntPtrType(CI.getContext(), AS);
@@ -2014,13 +2019,13 @@ static Instruction *foldBitCastBitwiseLogic(BitCastInst &BitCast,
       !match(BitCast.getOperand(0), m_OneUse(m_BinOp(BO))) ||
       !BO->isBitwiseLogicOp())
     return nullptr;
-  
+
   // FIXME: This transform is restricted to vector types to avoid backend
   // problems caused by creating potentially illegal operations. If a fix-up is
   // added to handle that situation, we can remove this check.
   if (!DestTy->isVectorTy() || !BO->getType()->isVectorTy())
     return nullptr;
-  
+
   Value *X;
   if (match(BO->getOperand(0), m_OneUse(m_BitCast(m_Value(X)))) &&
       X->getType() == DestTy && !isa<Constant>(X)) {

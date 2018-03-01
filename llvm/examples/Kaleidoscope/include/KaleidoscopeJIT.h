@@ -42,7 +42,6 @@ class KaleidoscopeJIT {
 public:
   using ObjLayerT = RTDyldObjectLinkingLayer;
   using CompileLayerT = IRCompileLayer<ObjLayerT, SimpleCompiler>;
-  using ModuleHandleT = CompileLayerT::ModuleHandleT;
 
   KaleidoscopeJIT()
       : ES(SSP),
@@ -52,26 +51,27 @@ public:
             },
             [](Error Err) { cantFail(std::move(Err), "lookupFlags failed"); })),
         TM(EngineBuilder().selectTarget()), DL(TM->createDataLayout()),
-        ObjectLayer(
-            ES,
-            [](VModuleKey) { return std::make_shared<SectionMemoryManager>(); },
-            [this](VModuleKey) { return Resolver; }),
+        ObjectLayer(ES,
+                    [this](VModuleKey) {
+                      return ObjLayerT::Resources{
+                          std::make_shared<SectionMemoryManager>(), Resolver};
+                    }),
         CompileLayer(ObjectLayer, SimpleCompiler(*TM)) {
     llvm::sys::DynamicLibrary::LoadLibraryPermanently(nullptr);
   }
 
   TargetMachine &getTargetMachine() { return *TM; }
 
-  ModuleHandleT addModule(std::unique_ptr<Module> M) {
-    auto H =
-        cantFail(CompileLayer.addModule(ES.allocateVModule(), std::move(M)));
-    ModuleHandles.push_back(H);
-    return H;
+  VModuleKey addModule(std::unique_ptr<Module> M) {
+    auto K = ES.allocateVModule();
+    cantFail(CompileLayer.addModule(K, std::move(M)));
+    ModuleKeys.push_back(K);
+    return K;
   }
 
-  void removeModule(ModuleHandleT H) {
-    ModuleHandles.erase(find(ModuleHandles, H));
-    cantFail(CompileLayer.removeModule(H));
+  void removeModule(VModuleKey K) {
+    ModuleKeys.erase(find(ModuleKeys, K));
+    cantFail(CompileLayer.removeModule(K));
   }
 
   JITSymbol findSymbol(const std::string Name) {
@@ -105,7 +105,7 @@ private:
     // Search modules in reverse order: from last added to first added.
     // This is the opposite of the usual search order for dlsym, but makes more
     // sense in a REPL where we want to bind to the newest available definition.
-    for (auto H : make_range(ModuleHandles.rbegin(), ModuleHandles.rend()))
+    for (auto H : make_range(ModuleKeys.rbegin(), ModuleKeys.rend()))
       if (auto Sym = CompileLayer.findSymbolIn(H, Name, ExportedSymbolsOnly))
         return Sym;
 
@@ -133,7 +133,7 @@ private:
   const DataLayout DL;
   ObjLayerT ObjectLayer;
   CompileLayerT CompileLayer;
-  std::vector<ModuleHandleT> ModuleHandles;
+  std::vector<VModuleKey> ModuleKeys;
 };
 
 } // end namespace orc

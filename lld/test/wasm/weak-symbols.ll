@@ -1,7 +1,7 @@
 ; RUN: llc -filetype=obj %p/Inputs/weak-symbol1.ll -o %t1.o
 ; RUN: llc -filetype=obj %p/Inputs/weak-symbol2.ll -o %t2.o
 ; RUN: llc -filetype=obj %s -o %t.o
-; RUN: lld -flavor wasm -no-gc-sections --check-signatures -o %t.wasm %t.o %t1.o %t2.o
+; RUN: wasm-ld -no-gc-sections --check-signatures -o %t.wasm %t.o %t1.o %t2.o
 ; RUN: obj2yaml %t.wasm | FileCheck %s
 
 target triple = "wasm32-unknown-unknown-wasm"
@@ -117,9 +117,6 @@ entry:
 ; CHECK-NEXT:           Opcode:          I32_CONST
 ; CHECK-NEXT:           Value:           1024
 ; CHECK-NEXT:         Content:         '0100000002000000'
-; CHECK-NEXT:   - Type:            CUSTOM
-; CHECK-NEXT:     Name:            linking
-; CHECK-NEXT:     DataSize:        8
 ; CHECK-NEXT:   - Type:            CUSTOM
 ; CHECK-NEXT:     Name:            name
 ; CHECK-NEXT:     FunctionNames:

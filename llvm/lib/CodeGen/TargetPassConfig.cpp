@@ -653,6 +653,9 @@ void TargetPassConfig::addPassesToHandleExceptions() {
     addPass(createWinEHPass());
     addPass(createDwarfEHPass());
     break;
+  case ExceptionHandling::Wasm:
+    // TODO to prevent warning
+    break;
   case ExceptionHandling::None:
     addPass(createLowerInvokePass());
 
@@ -745,7 +748,7 @@ bool TargetPassConfig::addCoreISelPasses() {
 }
 
 bool TargetPassConfig::addISelPasses() {
-  if (TM->Options.EmulatedTLS)
+  if (TM->useEmulatedTLS())
     addPass(createLowerEmuTLSPass());
 
   addPass(createPreISelIntrinsicLoweringPass());

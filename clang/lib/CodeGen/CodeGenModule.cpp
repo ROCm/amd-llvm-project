@@ -555,6 +555,9 @@ void CodeGenModule::Release() {
       getModule().setPIELevel(static_cast<llvm::PIELevel::Level>(PLevel));
   }
 
+  if (CodeGenOpts.NoPLT)
+    getModule().setRtLibUseGOT();
+
   SimplifyPersonality();
 
   if (getCodeGenOpts().EmitDeclMetadata)
@@ -602,13 +605,9 @@ llvm::MDNode *CodeGenModule::getTBAATypeInfo(QualType QTy) {
 }
 
 TBAAAccessInfo CodeGenModule::getTBAAAccessInfo(QualType AccessType) {
-  // Pointee values may have incomplete types, but they shall never be
-  // dereferenced.
-  if (AccessType->isIncompleteType())
-    return TBAAAccessInfo::getIncompleteInfo();
-
-  uint64_t Size = Context.getTypeSizeInChars(AccessType).getQuantity();
-  return TBAAAccessInfo(getTBAATypeInfo(AccessType), Size);
+  if (!TBAA)
+    return TBAAAccessInfo();
+  return TBAA->getAccessInfo(AccessType);
 }
 
 TBAAAccessInfo
@@ -716,9 +715,21 @@ void CodeGenModule::setGlobalVisibility(llvm::GlobalValue *GV,
 }
 
 static bool shouldAssumeDSOLocal(const CodeGenModule &CGM,
-                                 llvm::GlobalValue *GV, const NamedDecl *D) {
+                                 llvm::GlobalValue *GV) {
+  // DLLImport explicitly marks the GV as external.
+  if (GV->hasDLLImportStorageClass())
+    return false;
+
   const llvm::Triple &TT = CGM.getTriple();
-  // Only handle ELF for now.
+  // Every other GV is local on COFF.
+  // Make an exception for windows OS in the triple: Some firmware builds use
+  // *-win32-macho triples. This (accidentally?) produced windows relocations
+  // without GOT tables in older clang versions; Keep this behaviour.
+  // FIXME: even thread local variables?
+  if (TT.isOSBinFormatCOFF() || (TT.isOSWindows() && TT.isOSBinFormatMachO()))
+    return true;
+
+  // Only handle COFF and ELF for now.
   if (!TT.isOSBinFormatELF())
     return false;
 
@@ -746,31 +757,30 @@ static bool shouldAssumeDSOLocal(const CodeGenModule &CGM,
     return false;
 
   // If we can use copy relocations we can assume it is local.
-  if (auto *VD = dyn_cast<VarDecl>(D))
-    if (VD->getTLSKind() == VarDecl::TLS_None &&
+  if (auto *Var = dyn_cast<llvm::GlobalVariable>(GV))
+    if (!Var->isThreadLocal() &&
         (RM == llvm::Reloc::Static || CGOpts.PIECopyRelocations))
       return true;
 
   // If we can use a plt entry as the symbol address we can assume it
   // is local.
   // FIXME: This should work for PIE, but the gold linker doesn't support it.
-  if (isa<FunctionDecl>(D) && !CGOpts.NoPLT && RM == llvm::Reloc::Static)
+  if (isa<llvm::Function>(GV) && !CGOpts.NoPLT && RM == llvm::Reloc::Static)
     return true;
 
   // Otherwise don't assue it is local.
   return false;
 }
 
-void CodeGenModule::setDSOLocal(llvm::GlobalValue *GV,
-                                const NamedDecl *D) const {
-  if (shouldAssumeDSOLocal(*this, GV, D))
+void CodeGenModule::setDSOLocal(llvm::GlobalValue *GV) const {
+  if (shouldAssumeDSOLocal(*this, GV))
     GV->setDSOLocal(true);
 }
 
 void CodeGenModule::setGVProperties(llvm::GlobalValue *GV,
                                     const NamedDecl *D) const {
   setGlobalVisibility(GV, D);
-  setDSOLocal(GV, D);
+  setDSOLocal(GV);
 }
 
 static llvm::GlobalVariable::ThreadLocalMode GetLLVMTLSModel(StringRef S) {
@@ -1070,9 +1080,9 @@ llvm::ConstantInt *CodeGenModule::CreateCrossDsoCfiTypeId(llvm::Metadata *MD) {
   return llvm::ConstantInt::get(Int64Ty, llvm::MD5Hash(MDS->getString()));
 }
 
-void CodeGenModule::setFunctionDefinitionAttributes(const FunctionDecl *D,
+void CodeGenModule::setFunctionDefinitionAttributes(GlobalDecl GD,
                                                     llvm::Function *F) {
-  setNonAliasAttributes(D, F);
+  setNonAliasAttributes(GD.getDecl(), F);
 }
 
 void CodeGenModule::SetLLVMFunctionAttributes(const Decl *D,
@@ -1238,14 +1248,60 @@ void CodeGenModule::SetCommonAttributes(const Decl *D,
     addUsedGlobal(GV);
 }
 
-void CodeGenModule::setAliasAttributes(const Decl *D,
-                                       llvm::GlobalValue *GV) {
+void CodeGenModule::setAliasAttributes(GlobalDecl GD, llvm::GlobalValue *GV) {
+  const Decl *D = GD.getDecl();
   SetCommonAttributes(D, GV);
 
   // Process the dllexport attribute based on whether the original definition
   // (not necessarily the aliasee) was exported.
   if (D->hasAttr<DLLExportAttr>())
     GV->setDLLStorageClass(llvm::GlobalValue::DLLExportStorageClass);
+}
+
+bool CodeGenModule::GetCPUAndFeaturesAttributes(const Decl *D,
+                                                llvm::AttrBuilder &Attrs) {
+  // Add target-cpu and target-features attributes to functions. If
+  // we have a decl for the function and it has a target attribute then
+  // parse that and add it to the feature set.
+  StringRef TargetCPU = getTarget().getTargetOpts().CPU;
+  std::vector<std::string> Features;
+  const auto *FD = dyn_cast_or_null<FunctionDecl>(D);
+  FD = FD ? FD->getMostRecentDecl() : FD;
+  const auto *TD = FD ? FD->getAttr<TargetAttr>() : nullptr;
+  bool AddedAttr = false;
+  if (TD) {
+    llvm::StringMap<bool> FeatureMap;
+    getFunctionFeatureMap(FeatureMap, FD);
+
+    // Produce the canonical string for this set of features.
+    for (const llvm::StringMap<bool>::value_type &Entry : FeatureMap)
+      Features.push_back((Entry.getValue() ? "+" : "-") + Entry.getKey().str());
+
+    // Now add the target-cpu and target-features to the function.
+    // While we populated the feature map above, we still need to
+    // get and parse the target attribute so we can get the cpu for
+    // the function.
+    TargetAttr::ParsedTargetAttr ParsedAttr = TD->parse();
+    if (ParsedAttr.Architecture != "" &&
+        getTarget().isValidCPUName(ParsedAttr.Architecture))
+      TargetCPU = ParsedAttr.Architecture;
+  } else {
+    // Otherwise just add the existing target cpu and target features to the
+    // function.
+    Features = getTarget().getTargetOpts().Features;
+  }
+
+  if (TargetCPU != "") {
+    Attrs.addAttribute("target-cpu", TargetCPU);
+    AddedAttr = true;
+  }
+  if (!Features.empty()) {
+    std::sort(Features.begin(), Features.end());
+    Attrs.addAttribute("target-features", llvm::join(Features, ","));
+    AddedAttr = true;
+  }
+
+  return AddedAttr;
 }
 
 void CodeGenModule::setNonAliasAttributes(const Decl *D,
@@ -1264,8 +1320,18 @@ void CodeGenModule::setNonAliasAttributes(const Decl *D,
 
     if (auto *F = dyn_cast<llvm::Function>(GO)) {
       if (auto *SA = D->getAttr<PragmaClangTextSectionAttr>())
-       if (!D->getAttr<SectionAttr>())
-         F->addFnAttr("implicit-section-name", SA->getName());
+        if (!D->getAttr<SectionAttr>())
+          F->addFnAttr("implicit-section-name", SA->getName());
+
+      llvm::AttrBuilder Attrs;
+      if (GetCPUAndFeaturesAttributes(D, Attrs)) {
+        // We know that GetCPUAndFeaturesAttributes will always have the
+        // newest set, since it has the newest possible FunctionDecl, so the
+        // new ones should replace the old.
+        F->removeFnAttr("target-cpu");
+        F->removeFnAttr("target-features");
+        F->addAttributes(llvm::AttributeList::FunctionIndex, Attrs);
+      }
     }
 
     if (const SectionAttr *SA = D->getAttr<SectionAttr>())
@@ -2697,13 +2763,14 @@ CodeGenModule::GetOrCreateLLVMGlobal(StringRef MangledName,
     GV->setAlignment(getContext().getDeclAlign(D).getQuantity());
 
     setLinkageForGV(GV, D);
-    setGVProperties(GV, D);
 
     if (D->getTLSKind()) {
       if (D->getTLSKind() == VarDecl::TLS_Dynamic)
         CXXThreadLocals.push_back(D);
       setTLSMode(GV, *D);
     }
+
+    setGVProperties(GV, D);
 
     // If required by the ABI, treat declarations of static data members with
     // inline initializers as definitions.
@@ -3524,7 +3591,7 @@ void CodeGenModule::EmitGlobalFunctionDefinition(GlobalDecl GD,
 
   CodeGenFunction(*this).GenerateCode(D, Fn, FI);
 
-  setFunctionDefinitionAttributes(D, Fn);
+  setFunctionDefinitionAttributes(GD, Fn);
   SetLLVMFunctionAttributesForDefinition(D, Fn);
 
   if (const ConstructorAttr *CA = D->getAttr<ConstructorAttr>())
@@ -3608,7 +3675,7 @@ void CodeGenModule::EmitAliasDefinition(GlobalDecl GD) {
     if (VD->getTLSKind())
       setTLSMode(GA, *VD);
 
-  setAliasAttributes(D, GA);
+  setAliasAttributes(GD, GA);
 }
 
 void CodeGenModule::emitIFuncDefinition(GlobalDecl GD) {

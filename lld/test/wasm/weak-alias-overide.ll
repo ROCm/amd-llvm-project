@@ -1,6 +1,6 @@
 ; RUN: llc -filetype=obj -o %t.o %s
 ; RUN: llc -filetype=obj %S/Inputs/weak-alias.ll -o %t2.o
-; RUN: lld -flavor wasm --check-signatures %t.o %t2.o -o %t.wasm
+; RUN: wasm-ld --check-signatures %t.o %t2.o -o %t.wasm
 ; RUN: obj2yaml %t.wasm | FileCheck %s
 
 ; Test that the strongly defined alias_fn from this file is used both here
@@ -131,9 +131,6 @@ entry:
 ; CHECK-NEXT:       - Index:           7
 ; CHECK-NEXT:         Locals:
 ; CHECK-NEXT:         Body:            0B
-; CHECK-NEXT:   - Type:            CUSTOM
-; CHECK-NEXT:     Name:            linking
-; CHECK-NEXT:     DataSize:        0
 ; CHECK-NEXT:   - Type:            CUSTOM
 ; CHECK-NEXT:     Name:            name
 ; CHECK-NEXT:     FunctionNames:

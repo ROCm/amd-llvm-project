@@ -546,7 +546,8 @@ def FeatureISAVersion7_0_1 : SubtargetFeatureISAVersion <7,0,1,
 
 def FeatureISAVersion7_0_2 : SubtargetFeatureISAVersion <7,0,2,
   [FeatureSeaIslands,
-   FeatureLDSBankCount16]>;
+   FeatureLDSBankCount16,
+   FeatureFastFMAF32]>;
 
 def FeatureISAVersion7_0_3 : SubtargetFeatureISAVersion <7,0,3,
   [FeatureSeaIslands,
@@ -555,12 +556,6 @@ def FeatureISAVersion7_0_3 : SubtargetFeatureISAVersion <7,0,3,
 def FeatureISAVersion7_0_4 : SubtargetFeatureISAVersion <7,0,4,
   [FeatureSeaIslands,
    FeatureLDSBankCount32]>;
-
-def FeatureISAVersion8_0_0 : SubtargetFeatureISAVersion <8,0,0,
-  [FeatureVolcanicIslands,
-   FeatureLDSBankCount32,
-   FeatureSGPRInitBug,
-   FeatureUnpackedD16VMem]>;
 
 def FeatureISAVersion8_0_1 : SubtargetFeatureISAVersion <8,0,1,
   [FeatureVolcanicIslands,
@@ -595,7 +590,8 @@ def FeatureISAVersion9_0_0 : SubtargetFeatureISAVersion <9,0,0,
 def FeatureISAVersion9_0_2 : SubtargetFeatureISAVersion <9,0,2,
   [FeatureGFX9,
    FeatureMadMixInsts,
-   FeatureLDSBankCount32
+   FeatureLDSBankCount32,
+   FeatureXNACK
    ]>;
 
 //===----------------------------------------------------------------------===//
@@ -691,6 +687,7 @@ def AMDGPU : Target {
                                 SDWA9AsmParserVariant,
                                 DPPAsmParserVariant];
   let AssemblyWriters = [AMDGPUAsmWriter];
+  let AllowRegisterRenaming = 1;
 }
 
 // Dummy Instruction itineraries for pseudo instructions

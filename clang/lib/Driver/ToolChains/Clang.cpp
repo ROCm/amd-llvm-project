@@ -1306,6 +1306,8 @@ static bool isSignedCharDefault(const llvm::Triple &Triple) {
 static bool isNoCommonDefault(const llvm::Triple &Triple) {
   switch (Triple.getArch()) {
   default:
+    if (Triple.isOSFuchsia())
+      return true;
     return false;
 
   case llvm::Triple::xcore:
@@ -2379,6 +2381,7 @@ static void RenderOpenCLOptions(const ArgList &Args, ArgStringList &CmdArgs) {
       options::OPT_cl_no_signed_zeros,
       options::OPT_cl_denorms_are_zero,
       options::OPT_cl_fp32_correctly_rounded_divide_sqrt,
+      options::OPT_cl_uniform_work_group_size
   };
 
   if (Arg *A = Args.getLastArg(options::OPT_cl_std_EQ)) {
@@ -2500,6 +2503,13 @@ static void RenderBuiltinOptions(const ToolChain &TC, const llvm::Triple &T,
     CmdArgs.push_back("-fno-math-builtin");
 }
 
+void Driver::getDefaultModuleCachePath(SmallVectorImpl<char> &Result) {
+  llvm::sys::path::system_temp_directory(/*erasedOnReboot=*/false, Result);
+  llvm::sys::path::append(Result, "org.llvm.clang.");
+  appendUserToPath(Result);
+  llvm::sys::path::append(Result, "ModuleCache");
+}
+
 static void RenderModulesOptions(Compilation &C, const Driver &D,
                                  const ArgList &Args, const InputInfo &Input,
                                  const InputInfo &Output,
@@ -2560,10 +2570,7 @@ static void RenderModulesOptions(Compilation &C, const Driver &D,
       llvm::sys::path::append(Path, "modules");
     } else if (Path.empty()) {
       // No module path was provided: use the default.
-      llvm::sys::path::system_temp_directory(/*erasedOnReboot=*/false, Path);
-      llvm::sys::path::append(Path, "org.llvm.clang.");
-      appendUserToPath(Path);
-      llvm::sys::path::append(Path, "ModuleCache");
+      Driver::getDefaultModuleCachePath(Path);
     }
 
     const char Arg[] = "-fmodules-cache-path=";
@@ -2961,7 +2968,7 @@ static void RenderDebugOptions(const ToolChain &TC, const Driver &D,
 
   // Forward -gcodeview. EmitCodeView might have been set by CL-compatibility
   // argument parsing.
-  if (Args.hasArg(options::OPT_gcodeview) || EmitCodeView) {
+  if (EmitCodeView) {
     // DWARFVersion remains at 0 if no explicit choice was made.
     CmdArgs.push_back("-gcodeview");
   } else if (DWARFVersion == 0 &&
@@ -3016,6 +3023,18 @@ static void RenderDebugOptions(const ToolChain &TC, const Driver &D,
                                     TC.GetDefaultStandaloneDebug());
   if (DebugInfoKind == codegenoptions::LimitedDebugInfo && NeedFullDebug)
     DebugInfoKind = codegenoptions::FullDebugInfo;
+
+  if (Args.hasFlag(options::OPT_gembed_source, options::OPT_gno_embed_source, false)) {
+    // Source embedding is a vendor extension to DWARF v5. By now we have
+    // checked if a DWARF version was stated explicitly, and have otherwise
+    // fallen back to the target default, so if this is still not at least 5 we
+    // emit an error.
+    if (DWARFVersion < 5)
+      D.Diag(diag::err_drv_argument_only_allowed_with)
+          << Args.getLastArg(options::OPT_gembed_source)->getAsString(Args)
+          << "-gdwarf-5";
+    CmdArgs.push_back("-gembed-source");
+  }
 
   RenderDebugEnablingArgs(Args, CmdArgs, DebugInfoKind, DWARFVersion,
                           DebuggerTuning);
@@ -3277,11 +3296,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-disable-llvm-verifier");
 
   // Discard value names in assert builds unless otherwise specified.
-  if (const Arg *A = Args.getLastArg(options::OPT_fdiscard_value_names,
-                                     options::OPT_fno_discard_value_names)) {
-    if (A->getOption().matches(options::OPT_fdiscard_value_names))
-      CmdArgs.push_back("-discard-value-names");
-  } else if (!IsAssertBuild)
+  if (Args.hasFlag(options::OPT_fdiscard_value_names,
+                   options::OPT_fno_discard_value_names, !IsAssertBuild))
     CmdArgs.push_back("-discard-value-names");
 
   // Set the main file name, so that debug info works even with
@@ -3551,6 +3567,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   types::ID InputType = Input.getType();
   if (D.IsCLMode())
     AddClangCLArgs(Args, InputType, CmdArgs, &DebugInfoKind, &EmitCodeView);
+  else
+    EmitCodeView = Args.hasArg(options::OPT_gcodeview);
 
   const Arg *SplitDWARFArg = nullptr;
   RenderDebugOptions(getToolChain(), D, RawTriple, Args, EmitCodeView,
@@ -4044,6 +4062,10 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     else
       CmdArgs.push_back("-mstack-probe-size=0");
   }
+
+  if (!Args.hasFlag(options::OPT_mstack_arg_probe,
+                    options::OPT_mno_stack_arg_probe, true))
+    CmdArgs.push_back(Args.MakeArgString("-mno-stack-arg-probe"));
 
   if (Arg *A = Args.getLastArg(options::OPT_mrestrict_it,
                                options::OPT_mno_restrict_it)) {
@@ -4654,13 +4676,18 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back(Args.MakeArgString(Flags));
   }
 
-  // Host-side cuda compilation receives device-side outputs as Inputs[1...].
-  // Include them with -fcuda-include-gpubinary.
-  if (IsCuda && Inputs.size() > 1)
-    for (auto I = std::next(Inputs.begin()), E = Inputs.end(); I != E; ++I) {
+  if (IsCuda) {
+    // Host-side cuda compilation receives all device-side outputs in a single
+    // fatbin as Inputs[1]. Include the binary with -fcuda-include-gpubinary.
+    if (Inputs.size() > 1) {
+      assert(Inputs.size() == 2 && "More than one GPU binary!");
       CmdArgs.push_back("-fcuda-include-gpubinary");
-      CmdArgs.push_back(I->getFilename());
+      CmdArgs.push_back(Inputs[1].getFilename());
     }
+
+    if (Args.hasFlag(options::OPT_fcuda_rdc, options::OPT_fno_cuda_rdc, false))
+      CmdArgs.push_back("-fcuda-rdc");
+  }
 
   // OpenMP offloading device jobs take the argument -fopenmp-host-ir-file-path
   // to specify the result of the compile phase on the host, so the meaningful
@@ -4734,6 +4761,12 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     } else {
       CmdArgs.push_back("-global-isel=0");
     }
+  }
+
+  if (Arg *A = Args.getLastArg(options::OPT_fforce_enable_int128,
+                               options::OPT_fno_force_enable_int128)) {
+    if (A->getOption().matches(options::OPT_fforce_enable_int128))
+      CmdArgs.push_back("-fforce-enable-int128");
   }
 
   // Finally add the compile command to the compilation.

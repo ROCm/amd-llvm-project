@@ -776,6 +776,9 @@ Sema::VarArgKind Sema::isValidVarArgType(const QualType &Ty) {
     return VAK_Valid;
   }
 
+  if (Ty.isDestructedType() == QualType::DK_nontrivial_c_struct)
+    return VAK_Invalid;
+
   if (Ty.isCXX98PODType(Context))
     return VAK_Valid;
 
@@ -837,7 +840,10 @@ void Sema::checkVariadicArgument(const Expr *E, VariadicCallType CT) {
     break;
 
   case VAK_Invalid:
-    if (Ty->isObjCObjectType())
+    if (Ty.isDestructedType() == QualType::DK_nontrivial_c_struct)
+      Diag(E->getLocStart(),
+           diag::err_cannot_pass_non_trivial_c_struct_to_vararg) << Ty << CT;
+    else if (Ty->isObjCObjectType())
       DiagRuntimeBehavior(
           E->getLocStart(), nullptr,
           PDiag(diag::err_cannot_pass_objc_interface_to_vararg)
@@ -4395,8 +4401,13 @@ Sema::CreateBuiltinArraySubscriptExpr(Expr *Base, SourceLocation LLoc,
     if (VK != VK_RValue)
       OK = OK_VectorComponent;
 
-    // FIXME: need to deal with const...
     ResultType = VTy->getElementType();
+    QualType BaseType = BaseExpr->getType();
+    Qualifiers BaseQuals = BaseType.getQualifiers();
+    Qualifiers MemberQuals = ResultType.getQualifiers();
+    Qualifiers Combined = BaseQuals + MemberQuals;
+    if (Combined != MemberQuals)
+      ResultType = Context.getQualifiedType(ResultType, Combined);
   } else if (LHSTy->isArrayType()) {
     // If we see an array that wasn't promoted by
     // DefaultFunctionArrayLvalueConversion, it must be an array that
@@ -10434,8 +10445,16 @@ static void DiagnoseConstAssignment(Sema &S, const Expr *E,
         // Static fields do not inherit constness from parents.
         break;
       }
-      break;
-    } // End MemberExpr
+      break; // End MemberExpr
+    } else if (const ArraySubscriptExpr *ASE =
+                   dyn_cast<ArraySubscriptExpr>(E)) {
+      E = ASE->getBase()->IgnoreParenImpCasts();
+      continue;
+    } else if (const ExtVectorElementExpr *EVE =
+                   dyn_cast<ExtVectorElementExpr>(E)) {
+      E = EVE->getBase()->IgnoreParenImpCasts();
+      continue;
+    }
     break;
   }
 

@@ -25,6 +25,7 @@
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/StringRef.h"
 #include <functional>
+#include <future>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -149,11 +150,8 @@ public:
   /// \p File is already tracked. Also schedules parsing of the AST for it on a
   /// separate thread. When the parsing is complete, DiagConsumer passed in
   /// constructor will receive onDiagnosticsReady callback.
-  /// \return A future that will become ready when the rebuild (including
-  /// diagnostics) is finished.
-  /// FIXME: don't return futures here, LSP does not require a response for this
-  /// request.
-  std::future<void> addDocument(PathRef File, StringRef Contents);
+  void addDocument(PathRef File, StringRef Contents,
+                   WantDiagnostics WD = WantDiagnostics::Auto);
 
   /// Remove \p File from list of tracked files, schedule a request to free
   /// resources associated with it.
@@ -163,17 +161,17 @@ public:
   /// Will also check if CompileCommand, provided by GlobalCompilationDatabase
   /// for \p File has changed. If it has, will remove currently stored Preamble
   /// and AST and rebuild them from scratch.
-  /// FIXME: don't return futures here, LSP does not require a response for this
-  /// request.
-  std::future<void> forceReparse(PathRef File);
+  void forceReparse(PathRef File);
+
+  /// Calls forceReparse() on all currently opened files.
+  /// As a result, this method may be very expensive.
+  /// This method is normally called when the compilation database is changed.
+  void reparseOpenedFiles();
 
   /// Run code completion for \p File at \p Pos.
   /// Request is processed asynchronously.
   ///
-  /// If \p OverridenContents is not None, they will used only for code
-  /// completion, i.e. no diagnostics update will be scheduled and a draft for
-  /// \p File will not be updated. If \p OverridenContents is None, contents of
-  /// the current draft for \p File will be used. If \p UsedFS is non-null, it
+  /// The current draft for \p File will be used. If \p UsedFS is non-null, it
   /// will be overwritten by vfs::FileSystem used for completion.
   ///
   /// This method should only be called for currently tracked files. However, it
@@ -184,39 +182,38 @@ public:
   void codeComplete(PathRef File, Position Pos,
                     const clangd::CodeCompleteOptions &Opts,
                     UniqueFunction<void(Tagged<CompletionList>)> Callback,
-                    llvm::Optional<StringRef> OverridenContents = llvm::None,
                     IntrusiveRefCntPtr<vfs::FileSystem> *UsedFS = nullptr);
-
-  /// DEPRECATED: Please use the callback-based version of codeComplete.
-  std::future<Tagged<CompletionList>>
-  codeComplete(PathRef File, Position Pos,
-               const clangd::CodeCompleteOptions &Opts,
-               llvm::Optional<StringRef> OverridenContents = llvm::None,
-               IntrusiveRefCntPtr<vfs::FileSystem> *UsedFS = nullptr);
 
   /// Provide signature help for \p File at \p Pos. If \p OverridenContents is
   /// not None, they will used only for signature help, i.e. no diagnostics
   /// update will be scheduled and a draft for \p File will not be updated. If
-  /// \p OverridenContents is None, contents of the current draft for \p File
-  /// will be used. If \p UsedFS is non-null, it will be overwritten by
-  /// vfs::FileSystem used for signature help. This method should only be called
-  /// for currently tracked files.
-  llvm::Expected<Tagged<SignatureHelp>>
-  signatureHelp(PathRef File, Position Pos,
-                llvm::Optional<StringRef> OverridenContents = llvm::None,
-                IntrusiveRefCntPtr<vfs::FileSystem> *UsedFS = nullptr);
+  /// If \p UsedFS is non-null, it will be overwritten by vfs::FileSystem used
+  /// for signature help. This method should only be called for tracked files.
+  void signatureHelp(
+      PathRef File, Position Pos,
+      UniqueFunction<void(llvm::Expected<Tagged<SignatureHelp>>)> Callback,
+      IntrusiveRefCntPtr<vfs::FileSystem> *UsedFS = nullptr);
 
   /// Get definition of symbol at a specified \p Line and \p Column in \p File.
-  llvm::Expected<Tagged<std::vector<Location>>> findDefinitions(PathRef File,
-                                                                Position Pos);
+  void findDefinitions(
+      PathRef File, Position Pos,
+      UniqueFunction<void(llvm::Expected<Tagged<std::vector<Location>>>)>
+          Callback);
 
   /// Helper function that returns a path to the corresponding source file when
   /// given a header file and vice versa.
   llvm::Optional<Path> switchSourceHeader(PathRef Path);
 
   /// Get document highlights for a given position.
-  llvm::Expected<Tagged<std::vector<DocumentHighlight>>>
-  findDocumentHighlights(PathRef File, Position Pos);
+  void findDocumentHighlights(
+      PathRef File, Position Pos,
+      UniqueFunction<
+          void(llvm::Expected<Tagged<std::vector<DocumentHighlight>>>)>
+          Callback);
+
+  /// Get code hover for a given position.
+  void findHover(PathRef File, Position Pos,
+                 UniqueFunction<void(llvm::Expected<Tagged<Hover>>)> Callback);
 
   /// Run formatting for \p Rng inside \p File with content \p Code.
   llvm::Expected<tooling::Replacements> formatRange(StringRef Code,
@@ -233,8 +230,25 @@ public:
 
   /// Rename all occurrences of the symbol at the \p Pos in \p File to
   /// \p NewName.
-  Expected<std::vector<tooling::Replacement>> rename(PathRef File, Position Pos,
-                                                     llvm::StringRef NewName);
+  void rename(PathRef File, Position Pos, llvm::StringRef NewName,
+              UniqueFunction<void(Expected<std::vector<tooling::Replacement>>)>
+                  Callback);
+
+  /// Inserts a new #include into \p File, if it's not present in \p Code.
+  ///
+  /// \p DeclaringHeader The original header corresponding to this insertion
+  /// e.g. the header that declared a symbol. This can be either a URI or a
+  /// literal string quoted with <> or "" that can be #included directly.
+  /// \p InsertedHeader The preferred header to be inserted. This may be
+  /// different from \p DeclaringHeader as a header file can have a different
+  /// canonical include. This can be either a URI or a literal string quoted
+  /// with <> or "" that can be #included directly.
+  ///
+  /// Both OriginalHeader and InsertedHeader will be considered to determine
+  /// whether an include needs to be added.
+  Expected<tooling::Replacements> insertInclude(PathRef File, StringRef Code,
+                                                StringRef DeclaringHeader,
+                                                StringRef InsertedHeader);
 
   /// Gets current document contents for \p File. Returns None if \p File is not
   /// currently tracked.
@@ -245,7 +259,7 @@ public:
   /// Only for testing purposes.
   /// Waits until all requests to worker thread are finished and dumps AST for
   /// \p File. \p File must be in the list of added documents.
-  std::string dumpAST(PathRef File);
+  void dumpAST(PathRef File, UniqueFunction<void(std::string)> Callback);
   /// Called when an event occurs for a watched file in the workspace.
   void onFileEvent(const DidChangeWatchedFilesParams &Params);
 
@@ -258,6 +272,11 @@ public:
   /// FIXME: those metrics might be useful too, we should add them.
   std::vector<std::pair<Path, std::size_t>> getUsedBytesPerFile() const;
 
+  // Blocks the main thread until the server is idle. Only for use in tests.
+  // Returns false if the timeout expires.
+  LLVM_NODISCARD bool
+  blockUntilIdleForTest(llvm::Optional<double> TimeoutSeconds = 10);
+
 private:
   /// FIXME: This stats several files to find a .clang-format file. I/O can be
   /// slow. Think of a way to cache this.
@@ -265,8 +284,9 @@ private:
   formatCode(llvm::StringRef Code, PathRef File,
              ArrayRef<tooling::Range> Ranges);
 
-  std::future<void>
+  void
   scheduleReparseAndDiags(PathRef File, VersionedDraft Contents,
+                          WantDiagnostics WD,
                           Tagged<IntrusiveRefCntPtr<vfs::FileSystem>> TaggedFS);
 
   CompileArgsCache CompileArgs;

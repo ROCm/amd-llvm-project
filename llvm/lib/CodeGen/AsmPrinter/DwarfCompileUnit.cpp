@@ -102,9 +102,10 @@ unsigned DwarfCompileUnit::getOrCreateSourceID(const DIFile *File) {
   // extend .file to support this.
   unsigned CUID = Asm->OutStreamer->hasRawTextSupport() ? 0 : getUniqueID();
   if (!File)
-    return Asm->OutStreamer->EmitDwarfFileDirective(0, "", "", nullptr, CUID);
+    return Asm->OutStreamer->EmitDwarfFileDirective(0, "", "", nullptr, None, CUID);
   return Asm->OutStreamer->EmitDwarfFileDirective(
-      0, File->getDirectory(), File->getFilename(), getMD5AsBytes(File), CUID);
+      0, File->getDirectory(), File->getFilename(), getMD5AsBytes(File),
+      File->getSource(), CUID);
 }
 
 DIE *DwarfCompileUnit::getOrCreateGlobalVariableDIE(
@@ -197,7 +198,7 @@ DIE *DwarfCompileUnit::getOrCreateGlobalVariableDIE(
     if (Global) {
       const MCSymbol *Sym = Asm->getSymbol(Global);
       if (Global->isThreadLocal()) {
-        if (Asm->TM.Options.EmulatedTLS) {
+        if (Asm->TM.useEmulatedTLS()) {
           // TODO: add debug info for emulated thread local mode.
         } else {
           // FIXME: Make this work with -gsplit-dwarf.
@@ -269,15 +270,20 @@ void DwarfCompileUnit::addRange(RangeSpan Range) {
 
 void DwarfCompileUnit::initStmtList() {
   // Define start line table label for each Compile Unit.
-  MCSymbol *LineTableStartSym =
-      Asm->OutStreamer->getDwarfLineTableSymbol(getUniqueID());
+  MCSymbol *LineTableStartSym;
+  const TargetLoweringObjectFile &TLOF = Asm->getObjFileLowering();
+  if (DD->useSectionsAsReferences()) {
+    LineTableStartSym = TLOF.getDwarfLineSection()->getBeginSymbol();
+  } else {
+    LineTableStartSym =
+        Asm->OutStreamer->getDwarfLineTableSymbol(getUniqueID());
+  }
 
   // DW_AT_stmt_list is a offset of line number information for this
   // compile unit in debug_line section. For split dwarf this is
   // left in the skeleton CU and so not included.
   // The line table entries are not always emitted in assembly, so it
   // is not okay to use line_table_start here.
-  const TargetLoweringObjectFile &TLOF = Asm->getObjFileLowering();
   StmtListValue =
       addSectionLabel(getUnitDie(), dwarf::DW_AT_stmt_list, LineTableStartSym,
                       TLOF.getDwarfLineSection()->getBeginSymbol());
@@ -409,9 +415,10 @@ void DwarfCompileUnit::addScopeRangeList(DIE &ScopeDIE,
 
 void DwarfCompileUnit::attachRangesOrLowHighPC(
     DIE &Die, SmallVector<RangeSpan, 2> Ranges) {
-  if (Ranges.size() == 1) {
-    const auto &single = Ranges.front();
-    attachLowHighPC(Die, single.getStart(), single.getEnd());
+  if (Ranges.size() == 1 || DD->useSectionsAsReferences()) {
+    const auto &front = Ranges.front();
+    const auto &back = Ranges.back();
+    attachLowHighPC(Die, front.getStart(), back.getEnd());
   } else
     addScopeRangeList(Die, std::move(Ranges));
 }
@@ -568,25 +575,79 @@ DIE *DwarfCompileUnit::constructVariableDIE(DbgVariable &DV,
   return Var;
 }
 
-/// Determine whether a variable appears in a count: expression.
-static bool dependsOn(DbgVariable *A, DbgVariable *B) {
-  auto *Array = dyn_cast<DICompositeType>(A->getType());
+/// Return all DIVariables that appear in count: expressions.
+static SmallVector<const DIVariable *, 2> dependencies(DbgVariable *Var) {
+  SmallVector<const DIVariable *, 2> Result;
+  auto *Array = dyn_cast<DICompositeType>(Var->getType());
   if (!Array || Array->getTag() != dwarf::DW_TAG_array_type)
-    return false;
-  return llvm::any_of(Array->getElements(), [&](DINode *El) {
+    return Result;
+  for (auto *El : Array->getElements()) {
     if (auto *Subrange = dyn_cast<DISubrange>(El)) {
       auto Count = Subrange->getCount();
-      if (auto *Var = Count.dyn_cast<DIVariable *>())
-        return Var == B->getVariable();
+      if (auto *Dependency = Count.dyn_cast<DIVariable *>())
+        Result.push_back(Dependency);
     }
-    return false;
-  });
+  }
+  return Result;
 }
 
 /// Sort local variables so that variables appearing inside of helper
 /// expressions come first.
-static bool sortLocalVars(DbgVariable *A, DbgVariable *B) {
-  return dependsOn(B, A);
+static SmallVector<DbgVariable *, 8>
+sortLocalVars(SmallVectorImpl<DbgVariable *> &Input) {
+  SmallVector<DbgVariable *, 8> Result;
+  SmallVector<PointerIntPair<DbgVariable *, 1>, 8> WorkList;
+  // Map back from a DIVariable to its containing DbgVariable.
+  SmallDenseMap<const DILocalVariable *, DbgVariable *> DbgVar;
+  // Set of DbgVariables in Result.
+  SmallDenseSet<DbgVariable *, 8> Visited;
+  // For cycle detection.
+  SmallDenseSet<DbgVariable *, 8> Visiting;
+
+  // Initialize the worklist and the DIVariable lookup table.
+  for (auto Var : reverse(Input)) {
+    DbgVar.insert({Var->getVariable(), Var});
+    WorkList.push_back({Var, 0});
+  }
+
+  // Perform a stable topological sort by doing a DFS.
+  while (!WorkList.empty()) {
+    auto Item = WorkList.back();
+    DbgVariable *Var = Item.getPointer();
+    bool visitedAllDependencies = Item.getInt();
+    WorkList.pop_back();
+
+    // Dependency is in a different lexical scope or a global.
+    if (!Var)
+      continue;
+
+    // Already handled.
+    if (Visited.count(Var))
+      continue;
+
+    // Add to Result if all dependencies are visited.
+    if (visitedAllDependencies) {
+      Visited.insert(Var);
+      Result.push_back(Var);
+      continue;
+    }
+
+    // Detect cycles.
+    auto Res = Visiting.insert(Var);
+    if (!Res.second) {
+      assert(false && "dependency cycle in local variables");
+      return Result;
+    }
+
+    // Push dependencies and this node onto the worklist, so that this node is
+    // visited again after all of its dependencies are handled.
+    WorkList.push_back({Var, 1});
+    for (auto *Dependency : dependencies(Var)) {
+      auto Dep = dyn_cast_or_null<const DILocalVariable>(Dependency);
+      WorkList.push_back({DbgVar[Dep], 0});
+    }
+  }
+  return Result;
 }
 
 DIE *DwarfCompileUnit::createScopeChildrenDIE(LexicalScope *Scope,
@@ -601,8 +662,8 @@ DIE *DwarfCompileUnit::createScopeChildrenDIE(LexicalScope *Scope,
     Children.push_back(constructVariableDIE(*DV.second, *Scope, ObjectPointer));
 
   // Emit local variables.
-  std::stable_sort(Vars.Locals.begin(), Vars.Locals.end(), sortLocalVars);
-  for (DbgVariable *DV : Vars.Locals)
+  auto Locals = sortLocalVars(Vars.Locals);
+  for (DbgVariable *DV : Locals)
     Children.push_back(constructVariableDIE(*DV, *Scope, ObjectPointer));
 
   // Skip imported directives in gmlt-like data.
@@ -779,7 +840,7 @@ void DwarfCompileUnit::createAbstractVariable(const DILocalVariable *Var,
 
 void DwarfCompileUnit::emitHeader(bool UseOffsets) {
   // Don't bother labeling the .dwo unit, as its offset isn't used.
-  if (!Skeleton) {
+  if (!Skeleton && !DD->useSectionsAsReferences()) {
     LabelBegin = Asm->createTempSymbol("cu_begin");
     Asm->OutStreamer->EmitLabel(LabelBegin);
   }
@@ -796,7 +857,8 @@ bool DwarfCompileUnit::hasDwarfPubSections() const {
   if (CUNode->getGnuPubnames())
     return true;
 
-  return DD->tuneForGDB() && !includeMinimalInlineScopes();
+  return DD->tuneForGDB() && !includeMinimalInlineScopes() &&
+         !DD->useSectionsAsReferences();
 }
 
 /// addGlobalName - Add a new global name to the compile unit.

@@ -14,7 +14,6 @@
 #include "InputSection.h"
 #include "LinkerScript.h"
 #include "Relocations.h"
-
 #include "lld/Common/LLVM.h"
 #include "llvm/MC/StringTableBuilder.h"
 #include "llvm/Object/ELF.h"
@@ -42,6 +41,8 @@ class Defined;
 class OutputSection final : public BaseCommand, public SectionBase {
 public:
   OutputSection(StringRef Name, uint32_t Type, uint64_t Flags);
+
+  bool isAllSectionDescription() const;
 
   static bool classof(const SectionBase *S) {
     return S->kind() == SectionBase::Output;
@@ -100,6 +101,7 @@ public:
   std::string Location;
   std::string MemoryRegionName;
   std::string LMARegionName;
+  bool NonAlloc = false;
   bool Noload = false;
 
   template <class ELFT> void finalize();
@@ -119,6 +121,8 @@ private:
 };
 
 int getPriority(StringRef S);
+
+std::vector<InputSection *> getInputSections(OutputSection* OS);
 
 // All output sections that are handled by the linker specially are
 // globally accessible. Writer initializes them, so don't use them

@@ -55,7 +55,6 @@ public:
   using IRDumpLayerT = orc::IRTransformLayer<CompileLayerT, TransformFtor>;
   using CODLayerT = orc::CompileOnDemandLayer<IRDumpLayerT, CompileCallbackMgr>;
   using IndirectStubsManagerBuilder = CODLayerT::IndirectStubsManagerBuilderT;
-  using ModuleHandleT = CODLayerT::ModuleHandleT;
 
   OrcLazyJIT(std::unique_ptr<TargetMachine> TM,
              std::unique_ptr<CompileCallbackMgr> CCMgr,
@@ -64,16 +63,15 @@ public:
       : ES(SSP), TM(std::move(TM)), DL(this->TM->createDataLayout()),
         CCMgr(std::move(CCMgr)),
         ObjectLayer(ES,
-                    [](orc::VModuleKey) {
-                      return std::make_shared<SectionMemoryManager>();
-                    },
-                    [&](orc::VModuleKey K) {
+                    [this](orc::VModuleKey K) {
                       auto ResolverI = Resolvers.find(K);
                       assert(ResolverI != Resolvers.end() &&
                              "Missing resolver for module K");
                       auto Resolver = std::move(ResolverI->second);
                       Resolvers.erase(ResolverI);
-                      return Resolver;
+                      return ObjLayerT::Resources{
+                          std::make_shared<SectionMemoryManager>(),
+                          std::move(Resolver)};
                     }),
         CompileLayer(ObjectLayer, orc::SimpleCompiler(*this->TM)),
         IRDumpLayer(CompileLayer, createDebugDumper()),
@@ -138,7 +136,7 @@ public:
     //   1) Search the JIT symbols.
     //   2) Check for C++ runtime overrides.
     //   3) Search the host process (LLI)'s symbol table.
-    if (!ModulesHandle) {
+    if (!ModulesKey) {
       auto LegacyLookupInDylib = [this](const std::string &Name) -> JITSymbol {
         if (auto Sym = CODLayer.findSymbol(Name, true))
           return Sym;
@@ -160,9 +158,9 @@ public:
         return nullptr;
       };
 
-      auto K = ES.allocateVModule();
-      assert(!Resolvers.count(K) && "Resolver already present");
-      Resolvers[K] = orc::createSymbolResolver(
+      ModulesKey = ES.allocateVModule();
+      assert(!Resolvers.count(*ModulesKey) && "Resolver already present");
+      Resolvers[*ModulesKey] = orc::createSymbolResolver(
           [LegacyLookupInDylib](orc::SymbolFlagsMap &SymbolFlags,
                                 const orc::SymbolNameSet &Symbols) {
             auto NotFoundViaLegacyLookup = lookupFlagsWithLegacyFn(
@@ -175,30 +173,26 @@ public:
             }
             return std::move(*NotFoundViaLegacyLookup);
           },
-          [LegacyLookup](orc::AsynchronousSymbolQuery &Query,
+          [LegacyLookup](std::shared_ptr<orc::AsynchronousSymbolQuery> Query,
                          orc::SymbolNameSet Symbols) {
-            return lookupWithLegacyFn(Query, Symbols, LegacyLookup);
+            return lookupWithLegacyFn(*Query, Symbols, LegacyLookup);
           });
 
       // Add the module to the JIT.
-      if (auto ModulesHandleOrErr =
-              CODLayer.addModule(std::move(K), std::move(M)))
-        ModulesHandle = std::move(*ModulesHandleOrErr);
-      else
-        return ModulesHandleOrErr.takeError();
+      if (auto Err = CODLayer.addModule(*ModulesKey, std::move(M)))
+        return Err;
 
-    } else if (auto Err = CODLayer.addExtraModule(*ModulesHandle, std::move(M)))
+    } else if (auto Err = CODLayer.addExtraModule(*ModulesKey, std::move(M)))
       return Err;
 
     // Run the static constructors, and save the static destructor runner for
     // execution when the JIT is torn down.
     orc::CtorDtorRunner<CODLayerT> CtorRunner(std::move(CtorNames),
-                                              *ModulesHandle);
+                                              *ModulesKey);
     if (auto Err = CtorRunner.runViaLayer(CODLayer))
       return Err;
 
-    IRStaticDestructorRunners.emplace_back(std::move(DtorNames),
-                                           *ModulesHandle);
+    IRStaticDestructorRunners.emplace_back(std::move(DtorNames), *ModulesKey);
 
     return Error::success();
   }
@@ -207,8 +201,8 @@ public:
     return CODLayer.findSymbol(mangle(Name), true);
   }
 
-  JITSymbol findSymbolIn(ModuleHandleT H, const std::string &Name) {
-    return CODLayer.findSymbolIn(H, mangle(Name), true);
+  JITSymbol findSymbolIn(orc::VModuleKey K, const std::string &Name) {
+    return CODLayer.findSymbolIn(K, mangle(Name), true);
   }
 
 private:
@@ -246,7 +240,7 @@ private:
 
   orc::LocalCXXRuntimeOverrides CXXRuntimeOverrides;
   std::vector<orc::CtorDtorRunner<CODLayerT>> IRStaticDestructorRunners;
-  llvm::Optional<CODLayerT::ModuleHandleT> ModulesHandle;
+  llvm::Optional<orc::VModuleKey> ModulesKey;
 };
 
 int runOrcLazyJIT(std::vector<std::unique_ptr<Module>> Ms,

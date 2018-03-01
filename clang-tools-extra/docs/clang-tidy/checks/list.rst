@@ -24,14 +24,19 @@ Clang-Tidy Checks
    bugprone-dangling-handle
    bugprone-fold-init-type
    bugprone-forward-declaration-namespace
+   bugprone-forwarding-reference-overload
    bugprone-inaccurate-erase
    bugprone-incorrect-roundings
    bugprone-integer-division
+   bugprone-lambda-function-name
+   bugprone-macro-repeated-side-effects
    bugprone-misplaced-operator-in-strlen-in-alloc
+   bugprone-misplaced-widening-cast
    bugprone-move-forwarding-reference
    bugprone-multiple-statement-macro
    bugprone-string-constructor
    bugprone-suspicious-memset-usage
+   bugprone-throw-keyword-missing
    bugprone-undefined-memory-manipulation
    bugprone-use-after-move
    bugprone-virtual-near-miss
@@ -126,12 +131,8 @@ Clang-Tidy Checks
    llvm-namespace-comment
    llvm-twine-local
    misc-definitions-in-headers
-   misc-forwarding-reference-overload
-   misc-lambda-function-name
    misc-macro-parentheses
-   misc-macro-repeated-side-effects
    misc-misplaced-const
-   misc-misplaced-widening-cast
    misc-new-delete-overloads
    misc-non-copyable-objects
    misc-redundant-expression
@@ -176,6 +177,7 @@ Clang-Tidy Checks
    modernize-use-nullptr
    modernize-use-override
    modernize-use-transparent-functors
+   modernize-use-uncaught-exceptions
    modernize-use-using
    mpi-buffer-deref
    mpi-type-mismatch
@@ -216,6 +218,7 @@ Clang-Tidy Checks
    readability-redundant-smartptr-get
    readability-redundant-string-cstr
    readability-redundant-string-init
+   readability-simd-intrinsics
    readability-simplify-boolean-expr
    readability-static-accessed-through-instance
    readability-static-definition-in-anonymous-namespace

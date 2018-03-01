@@ -23,10 +23,10 @@
 #include "InputFiles.h"
 #include "LinkerScript.h"
 #include "OutputSections.h"
-#include "Strings.h"
 #include "SymbolTable.h"
 #include "Symbols.h"
 #include "SyntheticSections.h"
+#include "lld/Common/Strings.h"
 #include "lld/Common/Threads.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -137,17 +137,11 @@ void elf::writeMapFile() {
     OS << OSec->Name << '\n';
 
     // Dump symbols for each input section.
-    for (BaseCommand *Base : OSec->SectionCommands) {
-      auto *ISD = dyn_cast<InputSectionDescription>(Base);
-      if (!ISD)
-        continue;
-      for (InputSection *IS : ISD->Sections) {
-        writeHeader(OS, OSec->Addr + IS->OutSecOff, IS->getSize(),
-                    IS->Alignment);
-        OS << indent(1) << toString(IS) << '\n';
-        for (Symbol *Sym : SectionSyms[IS])
-          OS << SymStr[Sym] << '\n';
-      }
+    for (InputSection *IS : getInputSections(OSec)) {
+      writeHeader(OS, OSec->Addr + IS->OutSecOff, IS->getSize(), IS->Alignment);
+      OS << indent(1) << toString(IS) << '\n';
+      for (Symbol *Sym : SectionSyms[IS])
+        OS << SymStr[Sym] << '\n';
     }
   }
 }

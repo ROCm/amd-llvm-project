@@ -15,12 +15,12 @@
 #include "MapFile.h"
 #include "OutputSections.h"
 #include "Relocations.h"
-#include "Strings.h"
 #include "SymbolTable.h"
 #include "Symbols.h"
 #include "SyntheticSections.h"
 #include "Target.h"
 #include "lld/Common/Memory.h"
+#include "lld/Common/Strings.h"
 #include "lld/Common/Threads.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSwitch.h"
@@ -88,11 +88,6 @@ private:
 } // anonymous namespace
 
 StringRef elf::getOutputSectionName(InputSectionBase *S) {
-  // ".zdebug_" is a prefix for ZLIB-compressed sections.
-  // Because we decompressed input sections, we want to remove 'z'.
-  if (S->Name.startswith(".zdebug_"))
-    return Saver.save("." + S->Name.substr(2));
-
   if (Config->Relocatable)
     return S->Name;
 
@@ -826,8 +821,6 @@ void PhdrEntry::add(OutputSection *Sec) {
   p_align = std::max(p_align, Sec->Alignment);
   if (p_type == PT_LOAD)
     Sec->PtLoad = this;
-  if (Sec->LMAExpr)
-    ASectionHasLMA = true;
 }
 
 // The beginning and the ending of .rel[a].plt section are marked
@@ -944,8 +937,7 @@ static int getRankProximityAux(OutputSection *A, OutputSection *B) {
 
 static int getRankProximity(OutputSection *A, BaseCommand *B) {
   if (auto *Sec = dyn_cast<OutputSection>(B))
-    if (Sec->Live)
-      return getRankProximityAux(A, Sec);
+    return getRankProximityAux(A, Sec);
   return -1;
 }
 
@@ -991,20 +983,16 @@ findOrphanPos(std::vector<BaseCommand *>::iterator B,
   int Proximity = getRankProximity(Sec, *I);
   for (; I != E; ++I) {
     auto *CurSec = dyn_cast<OutputSection>(*I);
-    if (!CurSec || !CurSec->Live)
+    if (!CurSec)
       continue;
     if (getRankProximity(Sec, CurSec) != Proximity ||
         Sec->SortRank < CurSec->SortRank)
       break;
   }
 
-  auto IsLiveSection = [](BaseCommand *Cmd) {
-    auto *OS = dyn_cast<OutputSection>(Cmd);
-    return OS && OS->Live;
-  };
-
+  auto IsOutputSec = [](BaseCommand *Cmd) { return isa<OutputSection>(Cmd); };
   auto J = std::find_if(llvm::make_reverse_iterator(I),
-                        llvm::make_reverse_iterator(B), IsLiveSection);
+                        llvm::make_reverse_iterator(B), IsOutputSec);
   I = J.base();
 
   // As a special case, if the orphan section is the last section, put
@@ -1012,7 +1000,7 @@ findOrphanPos(std::vector<BaseCommand *>::iterator B,
   // This matches bfd's behavior and is convenient when the linker script fully
   // specifies the start of the file, but doesn't care about the end (the non
   // alloc sections for example).
-  auto NextSec = std::find_if(I, E, IsLiveSection);
+  auto NextSec = std::find_if(I, E, IsOutputSec);
   if (NextSec == E)
     return E;
 
@@ -1022,59 +1010,103 @@ findOrphanPos(std::vector<BaseCommand *>::iterator B,
 }
 
 // Builds section order for handling --symbol-ordering-file.
-static DenseMap<SectionBase *, int> buildSectionOrder() {
-  DenseMap<SectionBase *, int> SectionOrder;
+static DenseMap<const InputSectionBase *, int> buildSectionOrder() {
+  DenseMap<const InputSectionBase *, int> SectionOrder;
   if (Config->SymbolOrderingFile.empty())
     return SectionOrder;
+
+  struct SymbolOrderEntry {
+    int Priority;
+    bool Present;
+  };
 
   // Build a map from symbols to their priorities. Symbols that didn't
   // appear in the symbol ordering file have the lowest priority 0.
   // All explicitly mentioned symbols have negative (higher) priorities.
-  DenseMap<StringRef, int> SymbolOrder;
+  DenseMap<StringRef, SymbolOrderEntry> SymbolOrder;
   int Priority = -Config->SymbolOrderingFile.size();
   for (StringRef S : Config->SymbolOrderingFile)
-    SymbolOrder.insert({S, Priority++});
+    SymbolOrder.insert({S, {Priority++, false}});
 
   // Build a map from sections to their priorities.
   for (InputFile *File : ObjectFiles) {
     for (Symbol *Sym : File->getSymbols()) {
-      auto *D = dyn_cast<Defined>(Sym);
-      if (!D || !D->Section)
+      auto It = SymbolOrder.find(Sym->getName());
+      if (It == SymbolOrder.end())
         continue;
-      int &Priority = SectionOrder[D->Section];
-      Priority = std::min(Priority, SymbolOrder.lookup(D->getName()));
+      SymbolOrderEntry &Ent = It->second;
+      Ent.Present = true;
+
+      auto *D = dyn_cast<Defined>(Sym);
+      if (Config->WarnSymbolOrdering) {
+        if (Sym->isUndefined())
+          warn(File->getName() +
+               ": unable to order undefined symbol: " + Sym->getName());
+        else if (Sym->isShared())
+          warn(File->getName() +
+               ": unable to order shared symbol: " + Sym->getName());
+        else if (D && !D->Section)
+          warn(File->getName() +
+               ": unable to order absolute symbol: " + Sym->getName());
+        else if (D && !D->Section->Live)
+          warn(File->getName() +
+               ": unable to order discarded symbol: " + Sym->getName());
+      }
+      if (!D)
+        continue;
+
+      if (auto *Sec = dyn_cast_or_null<InputSectionBase>(D->Section)) {
+        int &Priority = SectionOrder[cast<InputSectionBase>(Sec->Repl)];
+        Priority = std::min(Priority, Ent.Priority);
+      }
     }
   }
+
+  if (Config->WarnSymbolOrdering)
+    for (auto OrderEntry : SymbolOrder)
+      if (!OrderEntry.second.Present)
+        warn("symbol ordering file: no such symbol: " + OrderEntry.first);
+
   return SectionOrder;
+}
+
+static void sortSection(OutputSection *Sec,
+                        const DenseMap<const InputSectionBase *, int> &Order) {
+  StringRef Name = Sec->Name;
+
+  // Sort input sections by section name suffixes for
+  // __attribute__((init_priority(N))).
+  if (Name == ".init_array" || Name == ".fini_array") {
+    if (!Script->HasSectionsCommand)
+      Sec->sortInitFini();
+    return;
+  }
+
+  // Sort input sections by the special rule for .ctors and .dtors.
+  if (Name == ".ctors" || Name == ".dtors") {
+    if (!Script->HasSectionsCommand)
+      Sec->sortCtorsDtors();
+    return;
+  }
+
+  // Never sort these.
+  if (Name == ".init" || Name == ".fini")
+    return;
+
+  // Sort input sections by priority using the list provided
+  // by --symbol-ordering-file.
+  if (!Order.empty())
+    Sec->sort([&](InputSectionBase *S) { return Order.lookup(S); });
 }
 
 // If no layout was provided by linker script, we want to apply default
 // sorting for special input sections. This also handles --symbol-ordering-file.
 template <class ELFT> void Writer<ELFT>::sortInputSections() {
-  // Sort input sections by priority using the list provided
-  // by --symbol-ordering-file.
-  DenseMap<SectionBase *, int> Order = buildSectionOrder();
-  if (!Order.empty())
-    for (BaseCommand *Base : Script->SectionCommands)
-      if (auto *Sec = dyn_cast<OutputSection>(Base))
-        if (Sec->Live)
-          Sec->sort([&](InputSectionBase *S) { return Order.lookup(S); });
-
-  if (Script->HasSectionsCommand)
-    return;
-
-  // Sort input sections by section name suffixes for
-  // __attribute__((init_priority(N))).
-  if (OutputSection *Sec = findSection(".init_array"))
-    Sec->sortInitFini();
-  if (OutputSection *Sec = findSection(".fini_array"))
-    Sec->sortInitFini();
-
-  // Sort input sections by the special rule for .ctors and .dtors.
-  if (OutputSection *Sec = findSection(".ctors"))
-    Sec->sortCtorsDtors();
-  if (OutputSection *Sec = findSection(".dtors"))
-    Sec->sortCtorsDtors();
+  // Build the order once since it is expensive.
+  DenseMap<const InputSectionBase *, int> Order = buildSectionOrder();
+  for (BaseCommand *Base : Script->SectionCommands)
+    if (auto *Sec = dyn_cast<OutputSection>(Base))
+      sortSection(Sec, Order);
 }
 
 template <class ELFT> void Writer<ELFT>::sortSections() {
@@ -1131,7 +1163,7 @@ template <class ELFT> void Writer<ELFT>::sortSections() {
   // The way we define an order then is:
   // *  Sort only the orphan sections. They are in the end right now.
   // *  Move each orphan section to its preferred position. We try
-  //    to put each section in the last position where it it can share
+  //    to put each section in the last position where it can share
   //    a PT_LOAD.
   //
   // There is some ambiguity as to where exactly a new entry should be
@@ -1147,7 +1179,7 @@ template <class ELFT> void Writer<ELFT>::sortSections() {
   auto E = Script->SectionCommands.end();
   auto NonScriptI = std::find_if(I, E, [](BaseCommand *Base) {
     if (auto *Sec = dyn_cast<OutputSection>(Base))
-      return Sec->Live && Sec->SectionIndex == INT_MAX;
+      return Sec->SectionIndex == INT_MAX;
     return false;
   });
 
@@ -1309,9 +1341,7 @@ template <class ELFT> void Writer<ELFT>::resolveShfLinkOrder() {
     // Remove the Sections we marked as duplicate earlier.
     for (BaseCommand *Base : Sec->SectionCommands)
       if (auto *ISD = dyn_cast<InputSectionDescription>(Base))
-        ISD->Sections.erase(
-            std::remove(ISD->Sections.begin(), ISD->Sections.end(), nullptr),
-            ISD->Sections.end());
+        llvm::erase_if(ISD->Sections, [](InputSection *IS) { return !IS; });
   }
 }
 
@@ -1355,12 +1385,7 @@ static void removeUnusedSyntheticSections() {
 
     // If there are no other alive sections or commands left in the output
     // section description, we remove it from the output.
-    bool IsEmpty = llvm::all_of(OS->SectionCommands, [](BaseCommand *B) {
-      if (auto *ISD = dyn_cast<InputSectionDescription>(B))
-        return ISD->Sections.empty();
-      return false;
-    });
-    if (IsEmpty)
+    if (getInputSections(OS).empty() && OS->isAllSectionDescription())
       OS->Live = false;
   }
 }
@@ -1466,7 +1491,6 @@ template <class ELFT> void Writer<ELFT>::finalizeSections() {
   removeUnusedSyntheticSections();
 
   sortSections();
-  Script->removeEmptyCommands();
 
   // Now that we have the final list, create a list of all the
   // OutputSections for convenience.
@@ -1525,7 +1549,7 @@ template <class ELFT> void Writer<ELFT>::finalizeSections() {
 
   // Some architectures need to generate content that depends on the address
   // of InputSections. For example some architectures use small displacements
-  // for jump instructions that is is the linker's responsibility for creating
+  // for jump instructions that is the linker's responsibility for creating
   // range extension thunks for. As the generation of the content may also
   // alter InputSection addresses we must converge to a fixed point.
   if (Target->NeedsThunks || Config->AndroidPackDynRelocs) {
@@ -1656,9 +1680,11 @@ template <class ELFT> std::vector<PhdrEntry *> Writer<ELFT>::createPhdrs() {
     // (e.g. executable or writable). There is one phdr for each segment.
     // Therefore, we need to create a new phdr when the next section has
     // different flags or is loaded at a discontiguous address using AT linker
-    // script command.
+    // script command. At the same time, we don't want to create a separate
+    // load segment for the headers, even if the first output section has
+    // an AT attribute.
     uint64_t NewFlags = computeFlags(Sec->getPhdrFlags());
-    if ((Sec->LMAExpr && Load->ASectionHasLMA) ||
+    if ((Sec->LMAExpr && Load->LastSec != Out::ProgramHeaders) ||
         Sec->MemRegion != Load->FirstSec->MemRegion || Flags != NewFlags) {
 
       Load = AddHdr(PT_LOAD, NewFlags);
@@ -1907,9 +1933,8 @@ template <class ELFT> void Writer<ELFT>::setPhdrs() {
 
 static std::string rangeToString(uint64_t Addr, uint64_t Len) {
   if (Len == 0)
-    return "<emtpy range at 0x" + utohexstr(Addr) + ">";
-  return "[0x" + utohexstr(Addr) + " -> 0x" +
-         utohexstr(Addr + Len - 1) + "]";
+    return "<empty range at 0x" + utohexstr(Addr) + ">";
+  return "[0x" + utohexstr(Addr) + " -> 0x" + utohexstr(Addr + Len - 1) + "]";
 }
 
 // Check whether sections overlap for a specific address range (file offsets,
@@ -1939,11 +1964,11 @@ static void checkForSectionOverlap(ArrayRef<OutputSection *> AllSections,
             [=](const OutputSection *A, const OutputSection *B) {
               return GetStart(A) < GetStart(B);
             });
-  for (size_t i = 0; i < Sections.size(); ++i) {
-    OutputSection *Sec = Sections[i];
+  for (size_t I = 0; I < Sections.size(); ++I) {
+    OutputSection *Sec = Sections[I];
     uint64_t Start = GetStart(Sec);
-    for (auto *Other : ArrayRef<OutputSection *>(Sections).slice(i + 1)) {
-      // Since the sections are storted by start address we only need to check
+    for (auto *Other : ArrayRef<OutputSection *>(Sections).slice(I + 1)) {
+      // Since the sections are sorted by start address we only need to check
       // whether the other sections starts before the end of Sec. If this is
       // not the case we can break out of this loop since all following sections
       // will also start after the end of Sec.
@@ -1983,7 +2008,7 @@ template <class ELFT> void Writer<ELFT>::checkNoOverlappingSections() {
     return;
 
   // Checking for overlapping virtual and load addresses only needs to take
-  // into account SHF_ALLOC sections since since others will not be loaded.
+  // into account SHF_ALLOC sections since others will not be loaded.
   // Furthermore, we also need to skip SHF_TLS sections since these will be
   // mapped to other addresses at runtime and can therefore have overlapping
   // ranges in the file.
@@ -2043,6 +2068,16 @@ static uint16_t getELFType() {
   return ET_EXEC;
 }
 
+static uint8_t getAbiVersion() {
+  if (Config->EMachine == EM_MIPS) {
+    // Increment the ABI version for non-PIC executable files.
+    if (getELFType() == ET_EXEC &&
+        (Config->EFlags & (EF_MIPS_PIC | EF_MIPS_CPIC)) == EF_MIPS_CPIC)
+      return 1;
+  }
+  return 0;
+}
+
 template <class ELFT> void Writer<ELFT>::writeHeader() {
   uint8_t *Buf = Buffer->getBufferStart();
   memcpy(Buf, "\177ELF", 4);
@@ -2053,6 +2088,7 @@ template <class ELFT> void Writer<ELFT>::writeHeader() {
   EHdr->e_ident[EI_DATA] = Config->IsLE ? ELFDATA2LSB : ELFDATA2MSB;
   EHdr->e_ident[EI_VERSION] = EV_CURRENT;
   EHdr->e_ident[EI_OSABI] = Config->OSABI;
+  EHdr->e_ident[EI_ABIVERSION] = getAbiVersion();
   EHdr->e_type = getELFType();
   EHdr->e_machine = Config->EMachine;
   EHdr->e_version = EV_CURRENT;

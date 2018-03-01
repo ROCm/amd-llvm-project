@@ -331,7 +331,8 @@ void DontDumpShadowMemory(uptr addr, uptr length) {
 }
 
 uptr FindAvailableMemoryRange(uptr size, uptr alignment, uptr left_padding,
-                              uptr *largest_gap_found) {
+                              uptr *largest_gap_found,
+                              uptr *max_occupied_addr) {
   uptr address = 0;
   while (true) {
     MEMORY_BASIC_INFORMATION info;
@@ -763,7 +764,10 @@ uptr internal_ftruncate(fd_t fd, uptr size) {
 }
 
 uptr GetRSS() {
-  return 0;
+  PROCESS_MEMORY_COUNTERS counters;
+  if (!GetProcessMemoryInfo(GetCurrentProcess(), &counters, sizeof(counters)))
+    return 0;
+  return counters.WorkingSetSize;
 }
 
 void *internal_start_thread(void (*func)(void *arg), void *arg) { return 0; }

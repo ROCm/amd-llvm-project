@@ -89,8 +89,6 @@ private:
   std::unique_ptr<IndirectStubsManager> IndirectStubsMgr;
 
 public:
-  using ModuleHandle = decltype(OptimizeLayer)::ModuleHandleT;
-
   KaleidoscopeJIT()
       : ES(SSP),
         Resolver(createLegacyLookupResolver(
@@ -108,10 +106,11 @@ public:
             },
             [](Error Err) { cantFail(std::move(Err), "lookupFlags failed"); })),
         TM(EngineBuilder().selectTarget()), DL(TM->createDataLayout()),
-        ObjectLayer(
-            ES,
-            [](VModuleKey) { return std::make_shared<SectionMemoryManager>(); },
-            [&](VModuleKey K) { return Resolver; }),
+        ObjectLayer(ES,
+                    [this](VModuleKey K) {
+                      return RTDyldObjectLinkingLayer::Resources{
+                          std::make_shared<SectionMemoryManager>(), Resolver};
+                    }),
         CompileLayer(ObjectLayer, SimpleCompiler(*TM)),
         OptimizeLayer(CompileLayer,
                       [this](std::shared_ptr<Module> M) {
@@ -127,10 +126,11 @@ public:
 
   TargetMachine &getTargetMachine() { return *TM; }
 
-  ModuleHandle addModule(std::unique_ptr<Module> M) {
+  VModuleKey addModule(std::unique_ptr<Module> M) {
     // Add the module to the JIT with a new VModuleKey.
-    return cantFail(
-        OptimizeLayer.addModule(ES.allocateVModule(), std::move(M)));
+    auto K = ES.allocateVModule();
+    cantFail(OptimizeLayer.addModule(K, std::move(M)));
+    return K;
   }
 
   Error addFunctionAST(std::unique_ptr<FunctionAST> FnAST) {
@@ -195,8 +195,8 @@ public:
     return OptimizeLayer.findSymbol(mangle(Name), true);
   }
 
-  void removeModule(ModuleHandle H) {
-    cantFail(OptimizeLayer.removeModule(H));
+  void removeModule(VModuleKey K) {
+    cantFail(OptimizeLayer.removeModule(K));
   }
 
 private:

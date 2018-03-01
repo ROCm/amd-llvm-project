@@ -1536,6 +1536,7 @@ public:
       return false;
     case QualType::DK_cxx_destructor:
     case QualType::DK_objc_weak_lifetime:
+    case QualType::DK_nontrivial_c_struct:
       return getLangOpts().Exceptions;
     case QualType::DK_objc_strong_lifetime:
       return getLangOpts().Exceptions &&
@@ -1583,10 +1584,7 @@ public:
   /// \return an LLVM value which is a pointer to a struct which contains
   /// information about the block, including the block invoke function, the
   /// captured variables, etc.
-  /// \param InvokeF will contain the block invoke function if it is not
-  /// nullptr.
-  llvm::Value *EmitBlockLiteral(const BlockExpr *,
-                                llvm::Function **InvokeF = nullptr);
+  llvm::Value *EmitBlockLiteral(const BlockExpr *);
   static void destroyBlockInfos(CGBlockInfo *info);
 
   llvm::Function *GenerateBlockFunction(GlobalDecl GD,
@@ -3010,11 +3008,8 @@ public:
   LValue EmitOMPSharedLValue(const Expr *E);
 
 private:
-  /// Helpers for blocks. Returns invoke function by \p InvokeF if it is not
-  /// nullptr. It should be called without \p InvokeF if the caller does not
-  /// need invoke function to be returned.
-  llvm::Value *EmitBlockLiteral(const CGBlockInfo &Info,
-                                llvm::Function **InvokeF = nullptr);
+  /// Helpers for blocks.
+  llvm::Value *EmitBlockLiteral(const CGBlockInfo &Info);
 
   /// struct with the values to be passed to the OpenMP loop-related functions
   struct OMPLoopArguments {
@@ -3367,6 +3362,9 @@ public:
                                           ArrayRef<llvm::Value*> args,
                                           const Twine &name = "");
 
+  SmallVector<llvm::OperandBundleDef, 1>
+  getBundlesForFunclet(llvm::Value *Callee);
+
   llvm::CallSite EmitCallOrInvoke(llvm::Value *Callee,
                                   ArrayRef<llvm::Value *> Args,
                                   const Twine &Name = "");
@@ -3385,6 +3383,16 @@ public:
   CGCallee BuildAppleKextVirtualDestructorCall(const CXXDestructorDecl *DD,
                                                CXXDtorType Type,
                                                const CXXRecordDecl *RD);
+
+  // These functions emit calls to the special functions of non-trivial C
+  // structs.
+  void defaultInitNonTrivialCStructVar(LValue Dst);
+  void callCStructDefaultConstructor(LValue Dst);
+  void callCStructDestructor(LValue Dst);
+  void callCStructCopyConstructor(LValue Dst, LValue Src);
+  void callCStructMoveConstructor(LValue Dst, LValue Src);
+  void callCStructCopyAssignmentOperator(LValue Dst, LValue Src);
+  void callCStructMoveAssignmentOperator(LValue Dst, LValue Src);
 
   RValue
   EmitCXXMemberOrOperatorCall(const CXXMethodDecl *Method,
@@ -3560,6 +3568,7 @@ public:
   static Destroyer destroyARCStrongPrecise;
   static Destroyer destroyARCWeak;
   static Destroyer emitARCIntrinsicUse;
+  static Destroyer destroyNonTrivialCStruct;
 
   void EmitObjCAutoreleasePoolPop(llvm::Value *Ptr);
   llvm::Value *EmitObjCAutoreleasePoolPush();

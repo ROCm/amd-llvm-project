@@ -58,21 +58,26 @@ AnalyzerOptions::UserModeKind AnalyzerOptions::getUserMode() {
 AnalyzerOptions::ExplorationStrategyKind
 AnalyzerOptions::getExplorationStrategy() {
   if (ExplorationStrategy == ExplorationStrategyKind::NotSet) {
-    StringRef StratStr = Config.insert(
-            std::make_pair("exploration_strategy", "dfs")).first->second;
-    ExplorationStrategy = llvm::StringSwitch<ExplorationStrategyKind>(StratStr)
-      .Case("dfs", ExplorationStrategyKind::DFS)
-      .Case("bfs", ExplorationStrategyKind::BFS)
-      .Case("bfs_block_dfs_contents", ExplorationStrategyKind::BFSBlockDFSContents)
-      .Default(ExplorationStrategyKind::NotSet);
-    assert(ExplorationStrategy != ExplorationStrategyKind::NotSet
-        && "User mode is invalid.");
+    StringRef StratStr =
+        Config
+            .insert(std::make_pair("exploration_strategy", "unexplored_first_queue"))
+            .first->second;
+    ExplorationStrategy =
+        llvm::StringSwitch<ExplorationStrategyKind>(StratStr)
+            .Case("dfs", ExplorationStrategyKind::DFS)
+            .Case("bfs", ExplorationStrategyKind::BFS)
+            .Case("unexplored_first",
+                  ExplorationStrategyKind::UnexploredFirst)
+            .Case("unexplored_first_queue",
+                  ExplorationStrategyKind::UnexploredFirstQueue)
+            .Case("bfs_block_dfs_contents",
+                  ExplorationStrategyKind::BFSBlockDFSContents)
+            .Default(ExplorationStrategyKind::NotSet);
+    assert(ExplorationStrategy != ExplorationStrategyKind::NotSet &&
+           "User mode is invalid.");
   }
   return ExplorationStrategy;
-
 }
-
-
 
 IPAKind AnalyzerOptions::getIPAMode() {
   if (IPAMode == IPAK_NotSet) {
@@ -204,7 +209,13 @@ bool AnalyzerOptions::includeLifetimeInCFG() {
 
 bool AnalyzerOptions::includeLoopExitInCFG() {
   return getBooleanOption(IncludeLoopExitInCFG, "cfg-loopexit",
-          /* Default = */ false);
+                          /* Default = */ false);
+}
+
+bool AnalyzerOptions::includeRichConstructorsInCFG() {
+  return getBooleanOption(IncludeRichConstructorsInCFG,
+                          "cfg-rich-constructors",
+                          /* Default = */ true);
 }
 
 bool AnalyzerOptions::mayInlineCXXStandardLibrary() {
@@ -237,6 +248,11 @@ bool AnalyzerOptions::mayInlineCXXSharedPtrDtor() {
                           /*Default=*/false);
 }
 
+bool AnalyzerOptions::mayInlineCXXTemporaryDtors() {
+  return getBooleanOption(InlineCXXTemporaryDtors,
+                          "c++-temp-dtor-inlining",
+                          /*Default=*/true);
+}
 
 bool AnalyzerOptions::mayInlineObjCMethod() {
   return getBooleanOption(ObjCInliningMode,
@@ -278,6 +294,12 @@ bool AnalyzerOptions::shouldReportIssuesInMainSourceFile() {
 bool AnalyzerOptions::shouldWriteStableReportFilename() {
   return getBooleanOption(StableReportFilename,
                           "stable-report-filename",
+                          /* Default = */ false);
+}
+
+bool AnalyzerOptions::shouldSerializeStats() {
+  return getBooleanOption(SerializeStats,
+                          "serialize-stats",
                           /* Default = */ false);
 }
 
@@ -410,4 +432,27 @@ bool AnalyzerOptions::shouldDisplayNotesAsEvents() {
     DisplayNotesAsEvents =
         getBooleanOption("notes-as-events", /*Default=*/false);
   return DisplayNotesAsEvents.getValue();
+}
+
+StringRef AnalyzerOptions::getCTUDir() {
+  if (!CTUDir.hasValue()) {
+    CTUDir = getOptionAsString("ctu-dir", "");
+    if (!llvm::sys::fs::is_directory(*CTUDir))
+      CTUDir = "";
+  }
+  return CTUDir.getValue();
+}
+
+bool AnalyzerOptions::naiveCTUEnabled() {
+  if (!NaiveCTU.hasValue()) {
+    NaiveCTU = getBooleanOption("experimental-enable-naive-ctu-analysis",
+                                /*Default=*/false);
+  }
+  return NaiveCTU.getValue();
+}
+
+StringRef AnalyzerOptions::getCTUIndexName() {
+  if (!CTUIndexName.hasValue())
+    CTUIndexName = getOptionAsString("ctu-index-name", "externalFnMap.txt");
+  return CTUIndexName.getValue();
 }
