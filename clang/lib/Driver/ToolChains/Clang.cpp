@@ -3537,6 +3537,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   if (!Args.hasFlag(options::OPT_foptimize_sibling_calls,
                     options::OPT_fno_optimize_sibling_calls))
     CmdArgs.push_back("-mdisable-tail-calls");
+  if (Args.hasFlag(options::OPT_fno_escaping_block_tail_calls,
+                   options::OPT_fescaping_block_tail_calls))
+    CmdArgs.push_back("-fno-escaping-block-tail-calls");
 
   Args.AddLastArg(CmdArgs, options::OPT_ffine_grained_bitfield_accesses,
                   options::OPT_fno_fine_grained_bitfield_accesses);
@@ -4035,13 +4038,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddLastArg(CmdArgs, options::OPT_femit_all_decls);
   Args.AddLastArg(CmdArgs, options::OPT_fheinous_gnu_extensions);
   Args.AddLastArg(CmdArgs, options::OPT_fno_operator_names);
-  // Emulated TLS is enabled by default on Android and OpenBSD, and can be enabled
-  // manually with -femulated-tls.
-  bool EmulatedTLSDefault = Triple.isAndroid() || Triple.isOSOpenBSD() ||
-                            Triple.isWindowsCygwinEnvironment();
-  if (Args.hasFlag(options::OPT_femulated_tls, options::OPT_fno_emulated_tls,
-                   EmulatedTLSDefault))
-    CmdArgs.push_back("-femulated-tls");
+  Args.AddLastArg(CmdArgs, options::OPT_femulated_tls,
+                  options::OPT_fno_emulated_tls);
+
   // AltiVec-like language extensions aren't relevant for assembling.
   if (!isa<PreprocessJobAction>(JA) || Output.getType() != types::TY_PP_Asm)
     Args.AddLastArg(CmdArgs, options::OPT_fzvector);
@@ -4068,6 +4067,11 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                         options::OPT_fnoopenmp_use_tls, /*Default=*/true))
         CmdArgs.push_back("-fnoopenmp-use-tls");
       Args.AddAllArgs(CmdArgs, options::OPT_fopenmp_version_EQ);
+
+      // When in OpenMP offloading mode with NVPTX target, forward
+      // cuda-mode flag
+      Args.AddLastArg(CmdArgs, options::OPT_fopenmp_cuda_mode,
+                      options::OPT_fno_openmp_cuda_mode);
       break;
     default:
       // By default, if Clang doesn't know how to generate useful OpenMP code
@@ -4792,13 +4796,12 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   if (IsCuda) {
-    // Host-side cuda compilation receives device-side outputs as Inputs[1...].
-    // Include them with -fcuda-include-gpubinary.
+    // Host-side cuda compilation receives all device-side outputs in a single
+    // fatbin as Inputs[1]. Include the binary with -fcuda-include-gpubinary.
     if (Inputs.size() > 1) {
-      for (auto I = std::next(Inputs.begin()), E = Inputs.end(); I != E; ++I) {
-        CmdArgs.push_back("-fcuda-include-gpubinary");
-        CmdArgs.push_back(I->getFilename());
-      }
+      assert(Inputs.size() == 2 && "More than one GPU binary!");
+      CmdArgs.push_back("-fcuda-include-gpubinary");
+      CmdArgs.push_back(Inputs[1].getFilename());
     }
 
     if (Args.hasFlag(options::OPT_fcuda_rdc, options::OPT_fno_cuda_rdc, false))

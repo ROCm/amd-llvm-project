@@ -251,22 +251,20 @@ Instruction *InstCombiner::visitMul(BinaryOperator &I) {
     }
   }
 
+  if (Instruction *FoldedMul = foldBinOpIntoSelectOrPhi(I))
+    return FoldedMul;
+
   // Simplify mul instructions with a constant RHS.
   if (isa<Constant>(Op1)) {
-    if (Instruction *FoldedMul = foldOpWithConstantIntoOperand(I))
-      return FoldedMul;
-
     // Canonicalize (X+C1)*CI -> X*CI+C1*CI.
-    {
-      Value *X;
-      Constant *C1;
-      if (match(Op0, m_OneUse(m_Add(m_Value(X), m_Constant(C1))))) {
-        Value *Mul = Builder.CreateMul(C1, Op1);
-        // Only go forward with the transform if C1*CI simplifies to a tidier
-        // constant.
-        if (!match(Mul, m_Mul(m_Value(), m_Value())))
-          return BinaryOperator::CreateAdd(Builder.CreateMul(X, Op1), Mul);
-      }
+    Value *X;
+    Constant *C1;
+    if (match(Op0, m_OneUse(m_Add(m_Value(X), m_Constant(C1))))) {
+      Value *Mul = Builder.CreateMul(C1, Op1);
+      // Only go forward with the transform if C1*CI simplifies to a tidier
+      // constant.
+      if (!match(Mul, m_Mul(m_Value(), m_Value())))
+        return BinaryOperator::CreateAdd(Builder.CreateMul(X, Op1), Mul);
     }
   }
 
@@ -555,23 +553,19 @@ Instruction *InstCombiner::visitFMul(BinaryOperator &I) {
 
   bool AllowReassociate = I.isFast();
 
+  if (Instruction *FoldedMul = foldBinOpIntoSelectOrPhi(I))
+    return FoldedMul;
+
   // Simplify mul instructions with a constant RHS.
   if (auto *C = dyn_cast<Constant>(Op1)) {
-    if (Instruction *FoldedMul = foldOpWithConstantIntoOperand(I))
-      return FoldedMul;
-
     // -X * C --> X * -C
     Value *X;
     if (match(Op0, m_FNeg(m_Value(X))))
       return BinaryOperator::CreateFMulFMF(X, ConstantExpr::getFNeg(C), &I);
 
-    // (fmul X, -1.0) --> (fsub -0.0, X)
-    if (match(C, m_SpecificFP(-1.0))) {
-      Constant *NegZero = ConstantFP::getNegativeZero(Op1->getType());
-      Instruction *RI = BinaryOperator::CreateFSub(NegZero, Op0);
-      RI->copyFastMathFlags(&I);
-      return RI;
-    }
+    // X * -1.0 --> -X
+    if (match(C, m_SpecificFP(-1.0)))
+      return BinaryOperator::CreateFNegFMF(Op0, &I);
 
     if (AllowReassociate && C->isFiniteNonZeroFP()) {
       // Let MDC denote an expression in one of these forms:
@@ -671,46 +665,28 @@ Instruction *InstCombiner::visitFMul(BinaryOperator &I) {
   if (match(Op1, m_OneUse(m_FNeg(m_Value(X)))))
     return BinaryOperator::CreateFNegFMF(Builder.CreateFMulFMF(X, Op0, &I), &I);
 
-  // Handle symmetric situation in a 2-iteration loop
-  Value *Opnd0 = Op0;
-  Value *Opnd1 = Op1;
-  for (int i = 0; i < 2; i++) {
-    // Handle specials cases for FMul with selects feeding the operation
-    if (Value *V = SimplifySelectsFeedingBinaryOp(I, Op0, Op1))
-      return replaceInstUsesWith(I, V);
+  // (select A, B, C) * (select A, D, E) --> select A, (B*D), (C*E)
+  if (Value *V = SimplifySelectsFeedingBinaryOp(I, Op0, Op1))
+    return replaceInstUsesWith(I, V);
 
-    // (X*Y) * X => (X*X) * Y where Y != X
-    //  The purpose is two-fold:
-    //   1) to form a power expression (of X).
-    //   2) potentially shorten the critical path: After transformation, the
-    //  latency of the instruction Y is amortized by the expression of X*X,
-    //  and therefore Y is in a "less critical" position compared to what it
-    //  was before the transformation.
-    if (AllowReassociate) {
-      Value *Opnd0_0, *Opnd0_1;
-      if (Opnd0->hasOneUse() &&
-          match(Opnd0, m_FMul(m_Value(Opnd0_0), m_Value(Opnd0_1)))) {
-        Value *Y = nullptr;
-        if (Opnd0_0 == Opnd1 && Opnd0_1 != Opnd1)
-          Y = Opnd0_1;
-        else if (Opnd0_1 == Opnd1 && Opnd0_0 != Opnd1)
-          Y = Opnd0_0;
-
-        if (Y) {
-          BuilderTy::FastMathFlagGuard Guard(Builder);
-          Builder.setFastMathFlags(I.getFastMathFlags());
-          Value *T = Builder.CreateFMul(Opnd1, Opnd1);
-          Value *R = Builder.CreateFMul(T, Y);
-          R->takeName(&I);
-          return replaceInstUsesWith(I, R);
-        }
-      }
+  // (X*Y) * X => (X*X) * Y where Y != X
+  //  The purpose is two-fold:
+  //   1) to form a power expression (of X).
+  //   2) potentially shorten the critical path: After transformation, the
+  //  latency of the instruction Y is amortized by the expression of X*X,
+  //  and therefore Y is in a "less critical" position compared to what it
+  //  was before the transformation.
+  if (I.hasAllowReassoc()) {
+    if (match(Op0, m_OneUse(m_c_FMul(m_Specific(Op1), m_Value(Y)))) &&
+        Op1 != Y) {
+      Value *XX = Builder.CreateFMulFMF(Op1, Op1, &I);
+      return BinaryOperator::CreateFMulFMF(XX, Y, &I);
     }
-
-    if (!isa<Constant>(Op1))
-      std::swap(Opnd0, Opnd1);
-    else
-      break;
+    if (match(Op1, m_OneUse(m_c_FMul(m_Specific(Op0), m_Value(Y)))) &&
+        Op0 != Y) {
+      Value *XX = Builder.CreateFMulFMF(Op0, Op0, &I);
+      return BinaryOperator::CreateFMulFMF(XX, Y, &I);
+    }
   }
 
   return Changed ? &I : nullptr;
@@ -900,7 +876,7 @@ Instruction *InstCombiner::commonIDivTransforms(BinaryOperator &I) {
     }
 
     if (!C2->isNullValue()) // avoid X udiv 0
-      if (Instruction *FoldedDiv = foldOpWithConstantIntoOperand(I))
+      if (Instruction *FoldedDiv = foldBinOpIntoSelectOrPhi(I))
         return FoldedDiv;
   }
 
