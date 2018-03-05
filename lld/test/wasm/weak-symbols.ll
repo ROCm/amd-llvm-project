@@ -60,11 +60,23 @@ entry:
 ; CHECK-NEXT:         InitExpr:
 ; CHECK-NEXT:           Opcode:          I32_CONST
 ; CHECK-NEXT:           Value:           1032
+; CHECK-NEXT:       - Index:           3
+; CHECK-NEXT:         Type:            I32
+; CHECK-NEXT:         Mutable:         false
+; CHECK-NEXT:         InitExpr:
+; CHECK-NEXT:           Opcode:          I32_CONST
+; CHECK-NEXT:           Value:           1024
 ; CHECK-NEXT:   - Type:            EXPORT
 ; CHECK-NEXT:     Exports:
 ; CHECK-NEXT:       - Name:            memory
 ; CHECK-NEXT:         Kind:            MEMORY
 ; CHECK-NEXT:         Index:           0
+; CHECK-NEXT:       - Name:            __heap_base
+; CHECK-NEXT:         Kind:            GLOBAL
+; CHECK-NEXT:         Index:           1
+; CHECK-NEXT:       - Name:            __data_end
+; CHECK-NEXT:         Kind:            GLOBAL
+; CHECK-NEXT:         Index:           2
 ; CHECK-NEXT:       - Name:            _start
 ; CHECK-NEXT:         Kind:            FUNCTION
 ; CHECK-NEXT:         Index:           0
@@ -74,15 +86,12 @@ entry:
 ; CHECK-NEXT:       - Name:            exportWeak1
 ; CHECK-NEXT:         Kind:            FUNCTION
 ; CHECK-NEXT:         Index:           2
+; CHECK-NEXT:       - Name:            weakGlobal
+; CHECK-NEXT:         Kind:            GLOBAL
+; CHECK-NEXT:         Index:           3
 ; CHECK-NEXT:       - Name:            exportWeak2
 ; CHECK-NEXT:         Kind:            FUNCTION
 ; CHECK-NEXT:         Index:           4
-; CHECK-NEXT:       - Name:            __heap_base
-; CHECK-NEXT:         Kind:            GLOBAL
-; CHECK-NEXT:         Index:           1
-; CHECK-NEXT:       - Name:            __data_end
-; CHECK-NEXT:         Kind:            GLOBAL
-; CHECK-NEXT:         Index:           2
 ; CHECK-NEXT:   - Type:            ELEM
 ; CHECK-NEXT:     Segments:
 ; CHECK-NEXT:       - Offset:

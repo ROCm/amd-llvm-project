@@ -1847,10 +1847,9 @@ void CodeGenModule::ConstructAttributeList(
     HasOptnone = TargetDecl->hasAttr<OptimizeNoneAttr>();
     if (auto *AllocSize = TargetDecl->getAttr<AllocSizeAttr>()) {
       Optional<unsigned> NumElemsParam;
-      // alloc_size args are base-1, 0 means not present.
-      if (unsigned N = AllocSize->getNumElemsParam())
-        NumElemsParam = N - 1;
-      FuncAttrs.addAllocSizeAttr(AllocSize->getElemSizeParam() - 1,
+      if (AllocSize->numElemsParam().isValid())
+        NumElemsParam = AllocSize->numElemsParam().getLLVMIndex();
+      FuncAttrs.addAllocSizeAttr(AllocSize->elemSizeParam().getLLVMIndex(),
                                  NumElemsParam);
     }
   }
@@ -1887,10 +1886,21 @@ void CodeGenModule::ConstructAttributeList(
   }
 
   if (!AttrOnCallSite) {
-    bool DisableTailCalls =
-        CodeGenOpts.DisableTailCalls ||
-        (TargetDecl && (TargetDecl->hasAttr<DisableTailCallsAttr>() ||
-                        TargetDecl->hasAttr<AnyX86InterruptAttr>()));
+    bool DisableTailCalls = false;
+
+    if (CodeGenOpts.DisableTailCalls)
+      DisableTailCalls = true;
+    else if (TargetDecl) {
+      if (TargetDecl->hasAttr<DisableTailCallsAttr>() ||
+          TargetDecl->hasAttr<AnyX86InterruptAttr>())
+        DisableTailCalls = true;
+      else if (CodeGenOpts.NoEscapingBlockTailCalls) {
+        if (const auto *BD = dyn_cast<BlockDecl>(TargetDecl))
+          if (!BD->doesNotEscape())
+            DisableTailCalls = true;
+      }
+    }
+
     FuncAttrs.addAttribute("disable-tail-calls",
                            llvm::toStringRef(DisableTailCalls));
     GetCPUAndFeaturesAttributes(TargetDecl, FuncAttrs);
@@ -4384,7 +4394,7 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
                               OffsetValue);
     } else if (const auto *AA = TargetDecl->getAttr<AllocAlignAttr>()) {
       llvm::Value *ParamVal =
-          CallArgs[AA->getParamIndex() - 1].RV.getScalarVal();
+          CallArgs[AA->paramIndex().getLLVMIndex()].RV.getScalarVal();
       EmitAlignmentAssumption(Ret.getScalarVal(), ParamVal);
     }
   }

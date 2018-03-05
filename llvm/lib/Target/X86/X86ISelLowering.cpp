@@ -14910,36 +14910,35 @@ static SDValue ExtractBitFromMaskVector(SDValue Op, SelectionDAG &DAG,
     return DAG.getNode(ISD::TRUNCATE, dl, EltVT, Elt);
   }
 
-  // Canonicalize result type to MVT::i32.
-  if (EltVT != MVT::i32) {
-    SDValue Extract = DAG.getNode(ISD::EXTRACT_VECTOR_ELT, dl, MVT::i32,
-                                  Vec, Idx);
-    return DAG.getAnyExtOrTrunc(Extract, dl, EltVT);
-  }
-
   unsigned IdxVal = cast<ConstantSDNode>(Idx)->getZExtValue();
-
-  // Extracts from element 0 are always allowed.
-  if (IdxVal == 0)
-    return Op;
 
   // If the kshift instructions of the correct width aren't natively supported
   // then we need to promote the vector to the native size to get the correct
   // zeroing behavior.
-  if ((!Subtarget.hasDQI() && (VecVT.getVectorNumElements() == 8)) ||
-      (VecVT.getVectorNumElements() < 8)) {
+  if (VecVT.getVectorNumElements() < 16) {
     VecVT = MVT::v16i1;
-    Vec = DAG.getNode(ISD::INSERT_SUBVECTOR, dl, VecVT,
-                      DAG.getUNDEF(VecVT),
-                      Vec,
+    Vec = DAG.getNode(ISD::INSERT_SUBVECTOR, dl, MVT::v16i1,
+                      DAG.getUNDEF(VecVT), Vec,
                       DAG.getIntPtrConstant(0, dl));
   }
 
-  // Use kshiftr instruction to move to the lower element.
-  Vec = DAG.getNode(X86ISD::KSHIFTR, dl, VecVT, Vec,
-                    DAG.getConstant(IdxVal, dl, MVT::i8));
-  return DAG.getNode(ISD::EXTRACT_VECTOR_ELT, dl, MVT::i32, Vec,
-                     DAG.getIntPtrConstant(0, dl));
+  // Extracts from element 0 are always allowed.
+  if (IdxVal != 0) {
+    // Use kshiftr instruction to move to the lower element.
+    Vec = DAG.getNode(X86ISD::KSHIFTR, dl, VecVT, Vec,
+                      DAG.getConstant(IdxVal, dl, MVT::i8));
+  }
+
+  // Shrink to v16i1 since that's always legal.
+  if (VecVT.getVectorNumElements() > 16) {
+    VecVT = MVT::v16i1;
+    Vec = DAG.getNode(ISD::EXTRACT_SUBVECTOR, dl, VecVT, Vec,
+                      DAG.getIntPtrConstant(0, dl));
+  }
+
+  // Convert to a bitcast+aext/trunc.
+  MVT CastVT = MVT::getIntegerVT(VecVT.getVectorNumElements());
+  return DAG.getAnyExtOrTrunc(DAG.getBitcast(CastVT, Vec), dl, EltVT);
 }
 
 SDValue
@@ -30834,14 +30833,19 @@ static SDValue combineBitcast(SDNode *N, SelectionDAG &DAG,
   // it's better to handle them early to be sure we emit efficient code by
   // avoiding store-load conversions.
   if (VT == MVT::x86mmx) {
-    // Detect zero-extended MMX constant vectors.
+    // Detect MMX constant vectors.
     APInt UndefElts;
-    SmallVector<APInt, 2> EltBits;
-    if (getTargetConstantBitsFromNode(N0, 32, UndefElts, EltBits) &&
-        EltBits[1] == 0) {
+    SmallVector<APInt, 1> EltBits;
+    if (getTargetConstantBitsFromNode(N0, 64, UndefElts, EltBits)) {
       SDLoc DL(N0);
-      return DAG.getNode(X86ISD::MMX_MOVW2D, DL, VT,
-                         DAG.getConstant(EltBits[0], DL, MVT::i32));
+      // Handle zero-extension of i32 with MOVD.
+      if (EltBits[0].countLeadingZeros() >= 32)
+        return DAG.getNode(X86ISD::MMX_MOVW2D, DL, VT,
+                           DAG.getConstant(EltBits[0].trunc(32), DL, MVT::i32));
+      // Else, bitcast to a double.
+      // TODO - investigate supporting sext 32-bit immediates on x86_64.
+      APFloat F64(APFloat::IEEEdouble(), EltBits[0]);
+      return DAG.getBitcast(VT, DAG.getConstantFP(F64, DL, MVT::f64));
     }
 
     // Detect bitcasts to x86mmx low word.
@@ -34349,6 +34353,20 @@ static SDValue detectSSatPattern(SDValue In, EVT VT, bool MatchPackUS = false) {
   return SDValue();
 }
 
+/// Detect a pattern of truncation with signed saturation.
+/// The types should allow to use VPMOVSS* instruction on AVX512.
+/// Return the source value to be truncated or SDValue() if the pattern was not
+/// matched.
+static SDValue detectAVX512SSatPattern(SDValue In, EVT VT,
+                                       const X86Subtarget &Subtarget,
+                                       const TargetLowering &TLI) {
+  if (!TLI.isTypeLegal(In.getValueType()))
+    return SDValue();
+  if (!isSATValidOnAVX512Subtarget(In.getValueType(), VT, Subtarget))
+    return SDValue();
+  return detectSSatPattern(In, VT);
+}
+
 /// Detect a pattern of truncation with saturation:
 /// (truncate (umin (x, unsigned_max_of_dest_type)) to dest_type).
 /// The types should allow to use VPMOVUS* instruction on AVX512.
@@ -34987,6 +35005,12 @@ static SDValue combineStore(SDNode *N, SelectionDAG &DAG,
                           St->getMemOperand()->getFlags());
 
     const TargetLowering &TLI = DAG.getTargetLoweringInfo();
+    if (SDValue Val =
+        detectAVX512SSatPattern(St->getValue(), St->getMemoryVT(), Subtarget,
+                                TLI))
+      return EmitTruncSStore(true /* Signed saturation */, St->getChain(),
+                             dl, Val, St->getBasePtr(),
+                             St->getMemoryVT(), St->getMemOperand(), DAG);
     if (SDValue Val =
         detectAVX512USatPattern(St->getValue(), St->getMemoryVT(), Subtarget,
                                 TLI))
@@ -35718,7 +35742,7 @@ static SDValue combineFneg(SDNode *N, SelectionDAG &DAG,
   // If we're negating an FMA node, then we can adjust the
   // instruction to include the extra negation.
   unsigned NewOpcode = 0;
-  if (Arg.hasOneUse()) {
+  if (Arg.hasOneUse() && Subtarget.hasAnyFMA()) {
     switch (Arg.getOpcode()) {
     case ISD::FMA:             NewOpcode = X86ISD::FNMSUB;       break;
     case X86ISD::FMSUB:        NewOpcode = X86ISD::FNMADD;       break;
@@ -39133,6 +39157,15 @@ X86TargetLowering::getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
       }
       return Res;
     }
+    return Res;
+  }
+
+  // Make sure it isn't a register that requires AVX512.
+  if (!Subtarget.hasAVX512() && isFRClass(*Res.second) &&
+      TRI->getEncodingValue(Res.first) & 0x10) {
+    // Register requires EVEX prefix.
+    Res.first = 0;
+    Res.second = nullptr;
     return Res;
   }
 

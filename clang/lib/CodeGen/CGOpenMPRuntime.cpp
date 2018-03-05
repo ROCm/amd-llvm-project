@@ -1209,7 +1209,7 @@ emitCombinerOrInitializer(CodeGenModule &CGM, QualType Ty,
   auto *Fn = llvm::Function::Create(
       FnTy, llvm::GlobalValue::InternalLinkage,
       IsCombiner ? ".omp_combiner." : ".omp_initializer.", &CGM.getModule());
-  CGM.SetInternalFunctionAttributes(/*D=*/nullptr, Fn, FnInfo);
+  CGM.SetInternalFunctionAttributes(GlobalDecl(), Fn, FnInfo);
   Fn->removeFnAttr(llvm::Attribute::NoInline);
   Fn->removeFnAttr(llvm::Attribute::OptimizeNone);
   Fn->addFnAttr(llvm::Attribute::AlwaysInline);
@@ -2804,7 +2804,7 @@ static llvm::Value *emitCopyprivateCopyFunction(
   auto *Fn = llvm::Function::Create(
       CGM.getTypes().GetFunctionType(CGFI), llvm::GlobalValue::InternalLinkage,
       ".omp.copyprivate.copy_func", &CGM.getModule());
-  CGM.SetInternalFunctionAttributes(/*D=*/nullptr, Fn, CGFI);
+  CGM.SetInternalFunctionAttributes(GlobalDecl(), Fn, CGFI);
   CodeGenFunction CGF(CGM);
   CGF.StartFunction(GlobalDecl(), C.VoidTy, Fn, CGFI, Args, Loc, Loc);
   // Dest = (void*[n])(LHSArg);
@@ -3682,9 +3682,7 @@ void CGOpenMPRuntime::loadOffloadInfoMetadata() {
   if (!MD)
     return;
 
-  for (auto I : MD->operands()) {
-    llvm::MDNode *MN = cast<llvm::MDNode>(I);
-
+  for (llvm::MDNode *MN : MD->operands()) {
     auto getMDInt = [&](unsigned Idx) {
       llvm::ConstantAsMetadata *V =
           cast<llvm::ConstantAsMetadata>(MN->getOperand(Idx));
@@ -3952,7 +3950,7 @@ emitProxyTaskFunction(CodeGenModule &CGM, SourceLocation Loc,
   auto *TaskEntry =
       llvm::Function::Create(TaskEntryTy, llvm::GlobalValue::InternalLinkage,
                              ".omp_task_entry.", &CGM.getModule());
-  CGM.SetInternalFunctionAttributes(/*D=*/nullptr, TaskEntry, TaskEntryFnInfo);
+  CGM.SetInternalFunctionAttributes(GlobalDecl(), TaskEntry, TaskEntryFnInfo);
   CodeGenFunction CGF(CGM);
   CGF.StartFunction(GlobalDecl(), KmpInt32Ty, TaskEntry, TaskEntryFnInfo, Args,
                     Loc, Loc);
@@ -4052,7 +4050,7 @@ static llvm::Value *emitDestructorsFunction(CodeGenModule &CGM,
   auto *DestructorFn =
       llvm::Function::Create(DestructorFnTy, llvm::GlobalValue::InternalLinkage,
                              ".omp_task_destructor.", &CGM.getModule());
-  CGM.SetInternalFunctionAttributes(/*D=*/nullptr, DestructorFn,
+  CGM.SetInternalFunctionAttributes(GlobalDecl(), DestructorFn,
                                     DestructorFnInfo);
   CodeGenFunction CGF(CGM);
   CGF.StartFunction(GlobalDecl(), KmpInt32Ty, DestructorFn, DestructorFnInfo,
@@ -4142,7 +4140,7 @@ emitTaskPrivateMappingFunction(CodeGenModule &CGM, SourceLocation Loc,
   auto *TaskPrivatesMap = llvm::Function::Create(
       TaskPrivatesMapTy, llvm::GlobalValue::InternalLinkage,
       ".omp_task_privates_map.", &CGM.getModule());
-  CGM.SetInternalFunctionAttributes(/*D=*/nullptr, TaskPrivatesMap,
+  CGM.SetInternalFunctionAttributes(GlobalDecl(), TaskPrivatesMap,
                                     TaskPrivatesMapFnInfo);
   TaskPrivatesMap->removeFnAttr(llvm::Attribute::NoInline);
   TaskPrivatesMap->removeFnAttr(llvm::Attribute::OptimizeNone);
@@ -4330,7 +4328,7 @@ emitTaskDupFunction(CodeGenModule &CGM, SourceLocation Loc,
   auto *TaskDup =
       llvm::Function::Create(TaskDupTy, llvm::GlobalValue::InternalLinkage,
                              ".omp_task_dup.", &CGM.getModule());
-  CGM.SetInternalFunctionAttributes(/*D=*/nullptr, TaskDup, TaskDupFnInfo);
+  CGM.SetInternalFunctionAttributes(GlobalDecl(), TaskDup, TaskDupFnInfo);
   CodeGenFunction CGF(CGM);
   CGF.StartFunction(GlobalDecl(), C.VoidTy, TaskDup, TaskDupFnInfo, Args, Loc,
                     Loc);
@@ -4972,7 +4970,7 @@ llvm::Value *CGOpenMPRuntime::emitReductionFunction(
   auto *Fn = llvm::Function::Create(
       CGM.getTypes().GetFunctionType(CGFI), llvm::GlobalValue::InternalLinkage,
       ".omp.reduction.reduction_func", &CGM.getModule());
-  CGM.SetInternalFunctionAttributes(/*D=*/nullptr, Fn, CGFI);
+  CGM.SetInternalFunctionAttributes(GlobalDecl(), Fn, CGFI);
   CodeGenFunction CGF(CGM);
   CGF.StartFunction(GlobalDecl(), C.VoidTy, Fn, CGFI, Args, Loc, Loc);
 
@@ -5387,7 +5385,7 @@ static llvm::Value *emitReduceInitFunction(CodeGenModule &CGM,
   auto *FnTy = CGM.getTypes().GetFunctionType(FnInfo);
   auto *Fn = llvm::Function::Create(FnTy, llvm::GlobalValue::InternalLinkage,
                                     ".red_init.", &CGM.getModule());
-  CGM.SetInternalFunctionAttributes(/*D=*/nullptr, Fn, FnInfo);
+  CGM.SetInternalFunctionAttributes(GlobalDecl(), Fn, FnInfo);
   CodeGenFunction CGF(CGM);
   CGF.StartFunction(GlobalDecl(), C.VoidTy, Fn, FnInfo, Args, Loc, Loc);
   Address PrivateAddr = CGF.EmitLoadOfPointer(
@@ -5459,7 +5457,7 @@ static llvm::Value *emitReduceCombFunction(CodeGenModule &CGM,
   auto *FnTy = CGM.getTypes().GetFunctionType(FnInfo);
   auto *Fn = llvm::Function::Create(FnTy, llvm::GlobalValue::InternalLinkage,
                                     ".red_comb.", &CGM.getModule());
-  CGM.SetInternalFunctionAttributes(/*D=*/nullptr, Fn, FnInfo);
+  CGM.SetInternalFunctionAttributes(GlobalDecl(), Fn, FnInfo);
   CodeGenFunction CGF(CGM);
   CGF.StartFunction(GlobalDecl(), C.VoidTy, Fn, FnInfo, Args, Loc, Loc);
   llvm::Value *Size = nullptr;
@@ -5527,7 +5525,7 @@ static llvm::Value *emitReduceFiniFunction(CodeGenModule &CGM,
   auto *FnTy = CGM.getTypes().GetFunctionType(FnInfo);
   auto *Fn = llvm::Function::Create(FnTy, llvm::GlobalValue::InternalLinkage,
                                     ".red_fini.", &CGM.getModule());
-  CGM.SetInternalFunctionAttributes(/*D=*/nullptr, Fn, FnInfo);
+  CGM.SetInternalFunctionAttributes(GlobalDecl(), Fn, FnInfo);
   CodeGenFunction CGF(CGM);
   CGF.StartFunction(GlobalDecl(), C.VoidTy, Fn, FnInfo, Args, Loc, Loc);
   Address PrivateAddr = CGF.EmitLoadOfPointer(
@@ -6788,7 +6786,7 @@ public:
     const ValueDecl *VD =
         Cap->capturesThis()
             ? nullptr
-            : cast<ValueDecl>(Cap->getCapturedVar()->getCanonicalDecl());
+            : Cap->getCapturedVar()->getCanonicalDecl();
 
     // If this declaration appears in a is_device_ptr clause we just have to
     // pass the pointer by value. If it is a reference to a declaration, we just
@@ -7863,7 +7861,7 @@ emitX86DeclareSimdFunction(const FunctionDecl *FD, llvm::Function *Fn,
 void CGOpenMPRuntime::emitDeclareSimdFunction(const FunctionDecl *FD,
                                               llvm::Function *Fn) {
   ASTContext &C = CGM.getContext();
-  FD = FD->getCanonicalDecl();
+  FD = FD->getMostRecentDecl();
   // Map params to their positions in function decl.
   llvm::DenseMap<const Decl *, unsigned> ParamPositions;
   if (isa<CXXMethodDecl>(FD))
@@ -7873,80 +7871,84 @@ void CGOpenMPRuntime::emitDeclareSimdFunction(const FunctionDecl *FD,
     ParamPositions.insert({P->getCanonicalDecl(), ParamPos});
     ++ParamPos;
   }
-  for (auto *Attr : FD->specific_attrs<OMPDeclareSimdDeclAttr>()) {
-    llvm::SmallVector<ParamAttrTy, 8> ParamAttrs(ParamPositions.size());
-    // Mark uniform parameters.
-    for (auto *E : Attr->uniforms()) {
-      E = E->IgnoreParenImpCasts();
-      unsigned Pos;
-      if (isa<CXXThisExpr>(E))
-        Pos = ParamPositions[FD];
-      else {
-        auto *PVD = cast<ParmVarDecl>(cast<DeclRefExpr>(E)->getDecl())
-                        ->getCanonicalDecl();
-        Pos = ParamPositions[PVD];
+  while (FD) {
+    for (auto *Attr : FD->specific_attrs<OMPDeclareSimdDeclAttr>()) {
+      llvm::SmallVector<ParamAttrTy, 8> ParamAttrs(ParamPositions.size());
+      // Mark uniform parameters.
+      for (auto *E : Attr->uniforms()) {
+        E = E->IgnoreParenImpCasts();
+        unsigned Pos;
+        if (isa<CXXThisExpr>(E))
+          Pos = ParamPositions[FD];
+        else {
+          auto *PVD = cast<ParmVarDecl>(cast<DeclRefExpr>(E)->getDecl())
+                          ->getCanonicalDecl();
+          Pos = ParamPositions[PVD];
+        }
+        ParamAttrs[Pos].Kind = Uniform;
       }
-      ParamAttrs[Pos].Kind = Uniform;
-    }
-    // Get alignment info.
-    auto NI = Attr->alignments_begin();
-    for (auto *E : Attr->aligneds()) {
-      E = E->IgnoreParenImpCasts();
-      unsigned Pos;
-      QualType ParmTy;
-      if (isa<CXXThisExpr>(E)) {
-        Pos = ParamPositions[FD];
-        ParmTy = E->getType();
-      } else {
-        auto *PVD = cast<ParmVarDecl>(cast<DeclRefExpr>(E)->getDecl())
-                        ->getCanonicalDecl();
-        Pos = ParamPositions[PVD];
-        ParmTy = PVD->getType();
-      }
-      ParamAttrs[Pos].Alignment =
-          (*NI) ? (*NI)->EvaluateKnownConstInt(C)
+      // Get alignment info.
+      auto NI = Attr->alignments_begin();
+      for (auto *E : Attr->aligneds()) {
+        E = E->IgnoreParenImpCasts();
+        unsigned Pos;
+        QualType ParmTy;
+        if (isa<CXXThisExpr>(E)) {
+          Pos = ParamPositions[FD];
+          ParmTy = E->getType();
+        } else {
+          auto *PVD = cast<ParmVarDecl>(cast<DeclRefExpr>(E)->getDecl())
+                          ->getCanonicalDecl();
+          Pos = ParamPositions[PVD];
+          ParmTy = PVD->getType();
+        }
+        ParamAttrs[Pos].Alignment =
+            (*NI)
+                ? (*NI)->EvaluateKnownConstInt(C)
                 : llvm::APSInt::getUnsigned(
                       C.toCharUnitsFromBits(C.getOpenMPDefaultSimdAlign(ParmTy))
                           .getQuantity());
-      ++NI;
-    }
-    // Mark linear parameters.
-    auto SI = Attr->steps_begin();
-    auto MI = Attr->modifiers_begin();
-    for (auto *E : Attr->linears()) {
-      E = E->IgnoreParenImpCasts();
-      unsigned Pos;
-      if (isa<CXXThisExpr>(E))
-        Pos = ParamPositions[FD];
-      else {
-        auto *PVD = cast<ParmVarDecl>(cast<DeclRefExpr>(E)->getDecl())
-                        ->getCanonicalDecl();
-        Pos = ParamPositions[PVD];
+        ++NI;
       }
-      auto &ParamAttr = ParamAttrs[Pos];
-      ParamAttr.Kind = Linear;
-      if (*SI) {
-        if (!(*SI)->EvaluateAsInt(ParamAttr.StrideOrArg, C,
-                                  Expr::SE_AllowSideEffects)) {
-          if (auto *DRE = cast<DeclRefExpr>((*SI)->IgnoreParenImpCasts())) {
-            if (auto *StridePVD = cast<ParmVarDecl>(DRE->getDecl())) {
-              ParamAttr.Kind = LinearWithVarStride;
-              ParamAttr.StrideOrArg = llvm::APSInt::getUnsigned(
-                  ParamPositions[StridePVD->getCanonicalDecl()]);
+      // Mark linear parameters.
+      auto SI = Attr->steps_begin();
+      auto MI = Attr->modifiers_begin();
+      for (auto *E : Attr->linears()) {
+        E = E->IgnoreParenImpCasts();
+        unsigned Pos;
+        if (isa<CXXThisExpr>(E))
+          Pos = ParamPositions[FD];
+        else {
+          auto *PVD = cast<ParmVarDecl>(cast<DeclRefExpr>(E)->getDecl())
+                          ->getCanonicalDecl();
+          Pos = ParamPositions[PVD];
+        }
+        auto &ParamAttr = ParamAttrs[Pos];
+        ParamAttr.Kind = Linear;
+        if (*SI) {
+          if (!(*SI)->EvaluateAsInt(ParamAttr.StrideOrArg, C,
+                                    Expr::SE_AllowSideEffects)) {
+            if (auto *DRE = cast<DeclRefExpr>((*SI)->IgnoreParenImpCasts())) {
+              if (auto *StridePVD = cast<ParmVarDecl>(DRE->getDecl())) {
+                ParamAttr.Kind = LinearWithVarStride;
+                ParamAttr.StrideOrArg = llvm::APSInt::getUnsigned(
+                    ParamPositions[StridePVD->getCanonicalDecl()]);
+              }
             }
           }
         }
+        ++SI;
+        ++MI;
       }
-      ++SI;
-      ++MI;
+      llvm::APSInt VLENVal;
+      if (const Expr *VLEN = Attr->getSimdlen())
+        VLENVal = VLEN->EvaluateKnownConstInt(C);
+      OMPDeclareSimdDeclAttr::BranchStateTy State = Attr->getBranchState();
+      if (CGM.getTriple().getArch() == llvm::Triple::x86 ||
+          CGM.getTriple().getArch() == llvm::Triple::x86_64)
+        emitX86DeclareSimdFunction(FD, Fn, VLENVal, ParamAttrs, State);
     }
-    llvm::APSInt VLENVal;
-    if (const Expr *VLEN = Attr->getSimdlen())
-      VLENVal = VLEN->EvaluateKnownConstInt(C);
-    OMPDeclareSimdDeclAttr::BranchStateTy State = Attr->getBranchState();
-    if (CGM.getTriple().getArch() == llvm::Triple::x86 ||
-        CGM.getTriple().getArch() == llvm::Triple::x86_64)
-      emitX86DeclareSimdFunction(FD, Fn, VLENVal, ParamAttrs, State);
+    FD = FD->getPreviousDecl();
   }
 }
 

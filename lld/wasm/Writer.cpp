@@ -17,7 +17,6 @@
 #include "WriterUtils.h"
 #include "lld/Common/ErrorHandler.h"
 #include "lld/Common/Memory.h"
-#include "lld/Common/Strings.h"
 #include "lld/Common/Threads.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/BinaryFormat/Wasm.h"
@@ -137,7 +136,6 @@ private:
   std::vector<OutputSection *> OutputSections;
 
   std::unique_ptr<FileOutputBuffer> Buffer;
-  std::string CtorFunctionBody;
 
   std::vector<OutputSegment *> Segments;
   llvm::SmallDenseMap<StringRef, OutputSegment *> SegmentMap;
@@ -261,7 +259,7 @@ void Writer::createTableSection() {
   raw_ostream &OS = Section->getStream();
 
   writeUleb128(OS, 1, "table count");
-  writeSleb128(OS, WASM_TYPE_ANYFUNC, "table type");
+  writeU8(OS, WASM_TYPE_ANYFUNC, "table type");
   writeUleb128(OS, WASM_LIMITS_FLAG_HAS_MAX, "table flags");
   writeUleb128(OS, TableSize, "table initial size");
   writeUleb128(OS, TableSize, "table max size");
@@ -427,7 +425,7 @@ void Writer::createLinkingSection() {
       WasmSymbolType Kind = Sym->getWasmType();
       uint32_t Flags = getWasmFlags(Sym);
 
-      writeUleb128(Sub.OS, Kind, "sym kind");
+      writeU8(Sub.OS, Kind, "sym kind");
       writeUleb128(Sub.OS, Flags, "sym flags");
 
       switch (Kind) {
@@ -503,7 +501,7 @@ void Writer::createLinkingSection() {
       writeUleb128(Sub.OS, 0, "comdat flags"); // flags for future use
       writeUleb128(Sub.OS, C.second.size(), "num entries");
       for (const ComdatEntry &Entry : C.second) {
-        writeUleb128(Sub.OS, Entry.Kind, "entry kind");
+        writeU8(Sub.OS, Entry.Kind, "entry kind");
         writeUleb128(Sub.OS, Entry.Index, "entry index");
       }
     }
@@ -669,42 +667,20 @@ void Writer::calculateExports() {
   if (Config->Relocatable)
     return;
 
-  auto ExportSym = [&](Symbol *Sym) {
+  for (Symbol *Sym : Symtab->getSymbols()) {
     if (!Sym->isDefined())
-      return;
+      continue;
     if (Sym->isHidden() || Sym->isLocal())
-      return;
+      continue;
     if (!Sym->isLive())
-      return;
+      continue;
 
     DEBUG(dbgs() << "exporting sym: " << Sym->getName() << "\n");
 
-    if (auto *D = dyn_cast<DefinedData>(Sym)) {
-      // TODO Remove this check here; for non-relocatable output we actually
-      // used only to create fake-global exports for the synthetic symbols.  Fix
-      // this in a future commit
-      if (Sym != WasmSym::DataEnd && Sym != WasmSym::HeapBase)
-        return;
+    if (auto *D = dyn_cast<DefinedData>(Sym))
       DefinedFakeGlobals.emplace_back(D);
-    }
     ExportedSymbols.emplace_back(Sym);
-  };
-
-  // TODO The two loops below should be replaced with this single loop, with
-  // ExportSym inlined:
-  //  for (Symbol *Sym : Symtab->getSymbols())
-  //    ExportSym(Sym);
-  // Making that change would reorder the output though, so it should be done as
-  // a separate commit.
-
-  for (ObjFile *File : Symtab->ObjectFiles)
-    for (Symbol *Sym : File->getSymbols())
-      if (File == Sym->getFile())
-        ExportSym(Sym);
-
-  for (Symbol *Sym : Symtab->getSymbols())
-    if (Sym->getFile() == nullptr)
-      ExportSym(Sym);
+  }
 }
 
 void Writer::assignSymtab() {
@@ -875,10 +851,10 @@ void Writer::createCtorFunction() {
   uint32_t FunctionIndex = NumImportedFunctions + InputFunctions.size();
   WasmSym::CallCtors->setOutputIndex(FunctionIndex);
 
-  // First write the body bytes to a string.
-  std::string FunctionBody;
+  // First write the body's contents to a string.
+  std::string BodyContent;
   {
-    raw_string_ostream OS(FunctionBody);
+    raw_string_ostream OS(BodyContent);
     writeUleb128(OS, 0, "num locals");
     for (const WasmInitEntry &F : InitFunctions) {
       writeU8(OS, OPCODE_CALL, "CALL");
@@ -888,14 +864,16 @@ void Writer::createCtorFunction() {
   }
 
   // Once we know the size of the body we can create the final function body
-  raw_string_ostream OS(CtorFunctionBody);
-  writeUleb128(OS, FunctionBody.size(), "function size");
-  OS.flush();
-  CtorFunctionBody += FunctionBody;
+  std::string FunctionBody;
+  {
+    raw_string_ostream OS(FunctionBody);
+    writeUleb128(OS, BodyContent.size(), "function size");
+    OS << BodyContent;
+  }
 
   const WasmSignature *Sig = WasmSym::CallCtors->getFunctionType();
   SyntheticFunction *F = make<SyntheticFunction>(
-      *Sig, toArrayRef(CtorFunctionBody), WasmSym::CallCtors->getName());
+      *Sig, std::move(FunctionBody), WasmSym::CallCtors->getName());
 
   F->setOutputIndex(FunctionIndex);
   F->Live = true;
@@ -909,9 +887,12 @@ void Writer::createCtorFunction() {
 void Writer::calculateInitFunctions() {
   for (ObjFile *File : Symtab->ObjectFiles) {
     const WasmLinkingData &L = File->getWasmObj()->linkingData();
-    for (const WasmInitFunc &F : L.InitFunctions)
-      InitFunctions.emplace_back(
-          WasmInitEntry{File->getFunctionSymbol(F.Symbol), F.Priority});
+    for (const WasmInitFunc &F : L.InitFunctions) {
+      FunctionSymbol *Sym = File->getFunctionSymbol(F.Symbol);
+      if (*Sym->getFunctionType() != WasmSignature{{}, WASM_TYPE_NORESULT})
+        error("invalid signature for init func: " + toString(*Sym));
+      InitFunctions.emplace_back(WasmInitEntry{Sym, F.Priority});
+    }
   }
 
   // Sort in order of priority (lowest first) so that they are called
