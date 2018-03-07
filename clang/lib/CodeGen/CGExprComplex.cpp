@@ -828,6 +828,8 @@ ComplexPairTy ComplexExprEmitter::EmitBinDiv(const BinOpInfo &Op) {
         //       do not handle special values . Multiplication is in a similar
         //       situation.
         EmitHCCComplexFloatDivision(Builder, LHSr, LHSi, RHSr, RHSi);
+        DSTr = Builder.CreateFDiv(LHSr, RHSr);
+        DSTi = Builder.CreateFDiv(LHSi, RHSr);
       }
       else {
         switch (LHSr->getType()->getTypeID()) {
