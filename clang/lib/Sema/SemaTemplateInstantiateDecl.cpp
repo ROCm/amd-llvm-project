@@ -176,7 +176,7 @@ static void instantiateDependentAllocAlignAttr(
     Sema &S, const MultiLevelTemplateArgumentList &TemplateArgs,
     const AllocAlignAttr *Align, Decl *New) {
   Expr *Param = IntegerLiteral::Create(
-      S.getASTContext(), llvm::APInt(64, Align->paramIndex().getSourceIndex()),
+      S.getASTContext(), llvm::APInt(64, Align->getParamIndex()),
       S.getASTContext().UnsignedLongLongTy, Align->getLocation());
   S.AddAllocAlignAttr(Align->getLocation(), New, Param,
                       Align->getSpellingListIndex());
@@ -3116,6 +3116,13 @@ TemplateDeclInstantiator::SubstTemplateParams(TemplateParameterList *L) {
                                     L->getRAngleLoc(),
                                     UninstantiatedRequiresClause);
   return InstL;
+}
+
+TemplateParameterList *
+Sema::SubstTemplateParams(TemplateParameterList *Params, DeclContext *Owner,
+                          const MultiLevelTemplateArgumentList &TemplateArgs) {
+  TemplateDeclInstantiator Instantiator(*this, Owner, TemplateArgs);
+  return Instantiator.SubstTemplateParams(Params);
 }
 
 /// \brief Instantiate the declaration of a class template partial

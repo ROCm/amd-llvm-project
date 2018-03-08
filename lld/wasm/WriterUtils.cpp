@@ -174,6 +174,8 @@ std::string lld::toString(ValType Type) {
     return "F32";
   case ValType::F64:
     return "F64";
+  case ValType::EXCEPT_REF:
+    return "except_ref";
   }
   llvm_unreachable("Invalid wasm::ValType");
 }
@@ -195,5 +197,5 @@ std::string lld::toString(const WasmSignature &Sig) {
 
 std::string lld::toString(const WasmGlobalType &Sig) {
   return (Sig.Mutable ? "var " : "const ") +
-      toString(static_cast<ValType>(Sig.Type));
+         toString(static_cast<ValType>(Sig.Type));
 }
