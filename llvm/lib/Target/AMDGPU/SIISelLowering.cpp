@@ -3454,6 +3454,10 @@ bool SITargetLowering::isFMAFasterThanFMulAndFAdd(EVT VT) const {
   return false;
 }
 
+static bool isDwordAligned(unsigned Alignment) {
+  return Alignment % 4 == 0;
+}
+
 //===----------------------------------------------------------------------===//
 // Custom DAG Lowering Operations
 //===----------------------------------------------------------------------===//
@@ -5353,9 +5357,10 @@ SDValue SITargetLowering::LowerLOAD(SDValue Op, SelectionDAG &DAG) const {
   assert(Op.getValueType().getVectorElementType() == MVT::i32 &&
          "Custom lowering for non-i32 vectors hasn't been implemented.");
 
+  unsigned Alignment = Load->getAlignment();
   unsigned AS = Load->getAddressSpace();
   if (!allowsMemoryAccess(*DAG.getContext(), DAG.getDataLayout(), MemVT,
-                          AS, Load->getAlignment())) {
+                          AS, Alignment)) {
     SDValue Ops[2];
     std::tie(Ops[0], Ops[1]) = expandUnalignedLoad(Load, DAG);
     return DAG.getMergeValues(Ops, DL);
@@ -5372,7 +5377,7 @@ SDValue SITargetLowering::LowerLOAD(SDValue Op, SelectionDAG &DAG) const {
   unsigned NumElements = MemVT.getVectorNumElements();
   if (AS == AMDGPUASI.CONSTANT_ADDRESS ||
       AS == AMDGPUASI.CONSTANT_ADDRESS_32BIT) {
-    if (isMemOpUniform(Load))
+    if (!Op->isDivergent())
       return SDValue();
     // Non-uniform loads will be selected to MUBUF instructions, so they
     // have the same legalization requirements as global and private
@@ -5382,8 +5387,9 @@ SDValue SITargetLowering::LowerLOAD(SDValue Op, SelectionDAG &DAG) const {
   if (AS == AMDGPUASI.CONSTANT_ADDRESS ||
       AS == AMDGPUASI.CONSTANT_ADDRESS_32BIT ||
       AS == AMDGPUASI.GLOBAL_ADDRESS) {
-    if (Subtarget->getScalarizeGlobalBehavior() && isMemOpUniform(Load) &&
-        !Load->isVolatile() && isMemOpHasNoClobberedMemOperand(Load))
+    if (Subtarget->getScalarizeGlobalBehavior() && !Op->isDivergent() &&
+        !Load->isVolatile() && isMemOpHasNoClobberedMemOperand(Load) &&
+        isDwordAligned(Alignment))
       return SDValue();
     // Non-uniform loads will be selected to MUBUF instructions, so they
     // have the same legalization requirements as global and private
@@ -5904,7 +5910,7 @@ SDValue SITargetLowering::performUCharToFloatCombine(SDNode *N,
   // easier if i8 vectors weren't promoted to i32 vectors, particularly after
   // types are legalized. v4i8 -> v4f32 is probably the only case to worry
   // about in practice.
-  if (DCI.isAfterLegalizeVectorOps() && SrcVT == MVT::i32) {
+  if (DCI.isAfterLegalizeDAG() && SrcVT == MVT::i32) {
     if (DAG.MaskedValueIsZero(Src, APInt::getHighBitsSet(32, 24))) {
       SDValue Cvt = DAG.getNode(AMDGPUISD::CVT_F32_UBYTE0, DL, VT, Src);
       DCI.AddToWorklist(Cvt.getNode());

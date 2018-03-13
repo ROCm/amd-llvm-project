@@ -1388,8 +1388,9 @@ static void addBlockPointerConversion(Sema &S,
   Class->addDecl(Conversion);
 }
 
-static ExprResult performLambdaVarCaptureInitialization(
-    Sema &S, const LambdaScopeInfo::Capture &Capture, FieldDecl *Field) {
+static ExprResult performLambdaVarCaptureInitialization(Sema &S,
+                                                        const Capture &Capture,
+                                                        FieldDecl *Field) {
   assert(Capture.isVariableCapture() && "not a variable capture");
 
   auto *Var = Capture.getVariable();
@@ -1443,7 +1444,7 @@ mapImplicitCaptureStyle(CapturingScopeInfo::ImplicitCaptureStyle ICS) {
   llvm_unreachable("Unknown implicit capture style");
 }
 
-bool Sema::CaptureHasSideEffects(const LambdaScopeInfo::Capture &From) {
+bool Sema::CaptureHasSideEffects(const Capture &From) {
   if (!From.isVLATypeCapture()) {
     Expr *Init = From.getInitExpr();
     if (Init && Init->HasSideEffects(Context))
@@ -1468,7 +1469,7 @@ bool Sema::CaptureHasSideEffects(const LambdaScopeInfo::Capture &From) {
   return false;
 }
 
-void Sema::DiagnoseUnusedLambdaCapture(const LambdaScopeInfo::Capture &From) {
+void Sema::DiagnoseUnusedLambdaCapture(const Capture &From) {
   if (CaptureHasSideEffects(From))
     return;
 
@@ -1523,7 +1524,7 @@ ExprResult Sema::BuildLambdaExpr(SourceLocation StartLoc, SourceLocation EndLoc,
     // Translate captures.
     auto CurField = Class->field_begin();
     for (unsigned I = 0, N = LSI->Captures.size(); I != N; ++I, ++CurField) {
-      const LambdaScopeInfo::Capture &From = LSI->Captures[I];
+      const Capture &From = LSI->Captures[I];
       assert(!From.isBlockCapture() && "Cannot capture __block variables");
       bool IsImplicit = I >= LSI->NumExplicitCaptures;
 
@@ -1567,10 +1568,10 @@ ExprResult Sema::BuildLambdaExpr(SourceLocation StartLoc, SourceLocation EndLoc,
     }
 
     // C++AMP
-    std::vector<std::pair<LambdaScopeInfo::Capture, unsigned> > FoundVec;
+    std::vector<std::pair<Capture, unsigned> > FoundVec;
     if (getLangOpts().CPlusPlusAMP && CallOperator->hasAttr<CXXAMPRestrictAMPAttr>()) {
       for (unsigned K = 0, N = LSI->Captures.size(); K != N; ++K) {
-        LambdaScopeInfo::Capture From = LSI->Captures[K];
+        Capture From = LSI->Captures[K];
         assert(!From.isBlockCapture() && "Cannot capture __block variables");
         if (From.isThisCapture()) continue;
         // Handle [Var]
@@ -1625,7 +1626,7 @@ ExprResult Sema::BuildLambdaExpr(SourceLocation StartLoc, SourceLocation EndLoc,
             (!CallOperator->hasAttr<CXXAMPRestrictAMPAttr>() &&
             !CallOperator->hasAttr<CXXAMPRestrictCPUAttr>())))) {
       for (unsigned K = 0, N = LSI->Captures.size(); K != N; ++K) {
-        LambdaScopeInfo::Capture From = LSI->Captures[K];
+        Capture From = LSI->Captures[K];
         assert(!From.isBlockCapture() && "Cannot capture __block variables");
         if (From.isThisCapture()) continue;
         QualType CaptureType = From.getCaptureType();
@@ -1636,7 +1637,7 @@ ExprResult Sema::BuildLambdaExpr(SourceLocation StartLoc, SourceLocation EndLoc,
       }
     }
     if(FoundVec.size()) {
-      for( std::vector<std::pair<LambdaScopeInfo::Capture, unsigned> >::iterator iter = FoundVec.begin();
+      for( std::vector<std::pair<Capture, unsigned> >::iterator iter = FoundVec.begin();
         iter!=FoundVec.end(); iter++)
         if(iter->first.getVariable())
           Diag(iter->first.getLocation(), iter->second) << iter->first.getVariable()->getName();

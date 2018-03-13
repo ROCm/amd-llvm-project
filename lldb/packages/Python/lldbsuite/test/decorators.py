@@ -10,6 +10,7 @@ import platform
 import re
 import sys
 import tempfile
+import subprocess
 
 # Third-party modules
 import six
@@ -304,15 +305,12 @@ def add_test_categories(cat):
         if isinstance(func, type) and issubclass(func, unittest2.TestCase):
             raise Exception(
                 "@add_test_categories can only be used to decorate a test method")
-
-        # Update or set the categories attribute. For instance methods, the
-        # attribute must be set on the actual function.
-        func_for_attr = func
-        if inspect.ismethod(func_for_attr):
-            func_for_attr = func.__func__
-        if hasattr(func_for_attr, "categories"):
-            cat.extend(func_for_attr.categories)
-        setattr(func_for_attr, "categories", cat)
+        try:
+            if hasattr(func, "categories"):
+                cat.extend(func.categories)
+            setattr(func, "categories", cat)
+        except AttributeError:
+            raise Exception('Cannot assign categories to inline tests.')
 
         return func
 
@@ -744,3 +742,20 @@ def skipIfXmlSupportMissing(func):
     fail_value = True # More likely to notice if something goes wrong
     have_xml = xml.GetValueForKey("value").GetBooleanValue(fail_value)
     return unittest2.skipIf(not have_xml, "requires xml support")(func)
+
+# Call sysctl on darwin to see if a specified hardware feature is available on this machine.
+def skipUnlessFeature(feature):
+    def is_feature_enabled(self):
+        if platform.system() == 'Darwin':
+            try:
+                DEVNULL = open(os.devnull, 'w')
+                output = subprocess.check_output(["/usr/sbin/sysctl", feature], stderr=DEVNULL)
+                # If 'feature: 1' was output, then this feature is available and
+                # the test should not be skipped.
+                if re.match('%s: 1\s*' % feature, output):
+                    return None
+                else:
+                    return "%s is not supported on this system." % feature
+            except subprocess.CalledProcessError:
+                return "%s is not supported on this system." % feature
+    return skipTestIfFn(is_feature_enabled)

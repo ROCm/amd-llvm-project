@@ -102,16 +102,36 @@ OutputSection *LinkerScript::getOrCreateOutputSection(StringRef Name) {
   return CmdRef;
 }
 
+// Expands the memory region by the specified size.
+static void expandMemoryRegion(MemoryRegion *MemRegion, uint64_t Size,
+                               StringRef RegionName, StringRef SecName) {
+  MemRegion->CurPos += Size;
+  uint64_t NewSize = MemRegion->CurPos - MemRegion->Origin;
+  if (NewSize > MemRegion->Length)
+    error("section '" + SecName + "' will not fit in region '" + RegionName +
+          "': overflowed by " + Twine(NewSize - MemRegion->Length) + " bytes");
+}
+
+void LinkerScript::expandOutputSection(uint64_t Size) {
+  Ctx->OutSec->Size += Size;
+  if (Ctx->MemRegion)
+    expandMemoryRegion(Ctx->MemRegion, Size, Ctx->MemRegion->Name,
+                       Ctx->OutSec->Name);
+  if (Ctx->LMARegion)
+    expandMemoryRegion(Ctx->LMARegion, Size, Ctx->LMARegion->Name,
+                       Ctx->OutSec->Name);
+}
+
 void LinkerScript::setDot(Expr E, const Twine &Loc, bool InSec) {
   uint64_t Val = E().getValue();
   if (Val < Dot && InSec)
     error(Loc + ": unable to move location counter backward for: " +
           Ctx->OutSec->Name);
-  Dot = Val;
 
   // Update to location counter means update to section size.
   if (InSec)
-    Ctx->OutSec->Size = Dot - Ctx->OutSec->Addr;
+    expandOutputSection(Val - Dot);
+  Dot = Val;
 }
 
 // Used for handling linker symbol assignments, for both finalizing
@@ -360,6 +380,14 @@ void LinkerScript::discard(ArrayRef<InputSection *> V) {
         S == InX::DynStrTab)
       error("discarding " + S->Name + " section is not allowed");
 
+    // You can discard .hash and .gnu.hash sections by linker scripts. Since
+    // they are synthesized sections, we need to handle them differently than
+    // other regular sections.
+    if (S == InX::GnuHashTab)
+      InX::GnuHashTab = nullptr;
+    if (S == InX::HashTab)
+      InX::HashTab = nullptr;
+
     S->Assigned = false;
     S->Live = false;
     discard(S->DependentSections);
@@ -594,7 +622,7 @@ void LinkerScript::addOrphanSections() {
 
     if (OutputSection *OS = addInputSec(Map, S, Name))
       V.push_back(OS);
-    assert(S->getOutputSection()->SectionIndex == INT_MAX);
+    assert(S->getOutputSection()->SectionIndex == UINT32_MAX);
   }
 
   // If no SECTIONS command was given, we should insert sections commands
@@ -621,16 +649,6 @@ uint64_t LinkerScript::advance(uint64_t Size, unsigned Alignment) {
   return End;
 }
 
-// Expands the memory region by the specified size.
-static void expandMemoryRegion(MemoryRegion *MemRegion, uint64_t Size,
-                               StringRef RegionName, StringRef SecName) {
-  MemRegion->CurPos += Size;
-  uint64_t NewSize = MemRegion->CurPos - MemRegion->Origin;
-  if (NewSize > MemRegion->Length)
-    error("section '" + SecName + "' will not fit in region '" + RegionName +
-          "': overflowed by " + Twine(NewSize - MemRegion->Length) + " bytes");
-}
-
 void LinkerScript::output(InputSection *S) {
   uint64_t Before = advance(0, 1);
   uint64_t Pos = advance(S->getSize(), S->Alignment);
@@ -639,17 +657,7 @@ void LinkerScript::output(InputSection *S) {
   // Update output section size after adding each section. This is so that
   // SIZEOF works correctly in the case below:
   // .foo { *(.aaa) a = SIZEOF(.foo); *(.bbb) }
-  Ctx->OutSec->Size = Pos - Ctx->OutSec->Addr;
-
-  // If there is a memory region associated with this input section, then
-  // place the section in that region and update the region index.
-  if (Ctx->LMARegion)
-    Ctx->LMARegion->CurPos += Pos - Before;
-  // FIXME: should we also produce overflow errors for LMARegion?
-
-  if (Ctx->MemRegion)
-    expandMemoryRegion(Ctx->MemRegion, Pos - Before, Ctx->MemRegion->Name,
-                       Ctx->OutSec->Name);
+  expandOutputSection(Pos - Before);
 }
 
 void LinkerScript::switchTo(OutputSection *Sec) {
@@ -739,12 +747,7 @@ void LinkerScript::assignOffsets(OutputSection *Sec) {
     if (auto *Cmd = dyn_cast<ByteCommand>(Base)) {
       Cmd->Offset = Dot - Ctx->OutSec->Addr;
       Dot += Cmd->Size;
-      if (Ctx->MemRegion)
-        expandMemoryRegion(Ctx->MemRegion, Cmd->Size, Ctx->MemRegion->Name,
-                           Ctx->OutSec->Name);
-      if (Ctx->LMARegion)
-        Ctx->LMARegion->CurPos += Cmd->Size;
-      Ctx->OutSec->Size = Dot - Ctx->OutSec->Addr;
+      expandOutputSection(Cmd->Size);
       continue;
     }
 

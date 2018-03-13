@@ -1904,17 +1904,21 @@ void CodeGenFunction::EmitParmDecl(const VarDecl &D, ParamValue Arg,
     llvm::Type *IRTy = ConvertTypeForMem(Ty)->getPointerTo(AS);
     if (DeclPtr.getType() != IRTy)
       DeclPtr = Builder.CreateBitCast(DeclPtr, IRTy, D.getName());
-    // Byval argument is in alloca address space, which may be different
+
+    // Indirect argument is in alloca address space, which may be different
     // from the default address space.
     auto AllocaAS = CGM.getASTAllocaAddressSpace();
     auto *V = DeclPtr.getPointer();
-    auto SrcAS = V->getType()->getPointerAddressSpace();
-    auto DestAS = getContext().getTargetAddressSpace(LangAS::Default);
-    if (SrcAS != DestAS) {
-      assert(SrcAS == CGM.getDataLayout().getAllocaAddrSpace());
+    auto SrcLangAS = getLangOpts().OpenCL ? LangAS::opencl_private : AllocaAS;
+    auto DestLangAS =
+        getLangOpts().OpenCL ? LangAS::opencl_private : LangAS::Default;
+    if (SrcLangAS != DestLangAS) {
+      assert(getContext().getTargetAddressSpace(SrcLangAS) ==
+             CGM.getDataLayout().getAllocaAddrSpace());
+      auto DestAS = getContext().getTargetAddressSpace(DestLangAS);
       auto *T = V->getType()->getPointerElementType()->getPointerTo(DestAS);
       DeclPtr = Address(getTargetHooks().performAddrSpaceCast(
-                            *this, V, AllocaAS, LangAS::Default, T, true),
+                            *this, V, SrcLangAS, DestLangAS, T, true),
                         DeclPtr.getAlignment());
     }
 
