@@ -221,8 +221,10 @@ void CGAMPRuntime::EmitCXXAMPDeserializer(CodeGenFunction &CGF,
     auto T = FPT->getParamType(I-1);
     // EmitFromMemory is necessary in case function has bool parameter.
     if (T->isBooleanType()) {
-      DeserializerArgs[I] = CallArg(RValue::get(CGF.EmitFromMemory(DeserializerArgs[I].RV.getScalarVal(), T)),
-                                    T, false);
+      DeserializerArgs[I] =
+          CallArg(RValue::get(CGF.EmitFromMemory(
+                      DeserializerArgs[I].getKnownRValue().getScalarVal(), T)),
+                  T);
     }
   }
   CGF.EmitCall(DesFnInfo, CGCallee::forDirect(Callee), ReturnValueSlot(), DeserializerArgs);
@@ -341,7 +343,9 @@ void CGAMPRuntime::EmitTrampolineBody(CodeGenFunction &CGF,
     }
 
     // *index
-    KArgs.add(RValue::getAggregate(index), IndexTy);
+    // index is of reference type of IndexTy.
+    KArgs.add(RValue::get(index.getPointer()),
+        CGF.getContext().getLValueReferenceType(IndexTy));
   }
 
   const CGFunctionInfo &FnInfo = CGM.getTypes().arrangeFreeFunctionCall(KArgs, MT, false);
