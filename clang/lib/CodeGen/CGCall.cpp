@@ -1062,14 +1062,13 @@ void CodeGenFunction::ExpandTypeToArgs(
   if (auto CAExp = dyn_cast<ConstantArrayExpansion>(Exp.get())) {
     Address Addr = Arg.hasLValue() ? Arg.getKnownLValue().getAddress()
                                    : Arg.getKnownRValue().getAggregateAddress();
-    forConstantArrayExpansion(
-        *this, CAExp, Addr, [&](Address EltAddr) {
-          CallArg EltArg = CallArg(
-              convertTempToRValue(EltAddr, CAExp->EltTy, SourceLocation()),
-              CAExp->EltTy);
-          ExpandTypeToArgs(CAExp->EltTy, EltArg, IRFuncTy, IRCallArgs,
-                           IRCallArgPos);
-        });
+    forConstantArrayExpansion(*this, CAExp, Addr, [&](Address EltAddr) {
+      CallArg EltArg =
+          CallArg(convertTempToRValue(EltAddr, CAExp->EltTy, SourceLocation()),
+                  CAExp->EltTy);
+      ExpandTypeToArgs(CAExp->EltTy, EltArg, IRFuncTy, IRCallArgs,
+                       IRCallArgPos);
+    });
   } else if (auto RExp = dyn_cast<RecordExpansion>(Exp.get())) {
     Address This = Arg.hasLValue() ? Arg.getKnownLValue().getAddress()
                                    : Arg.getKnownRValue().getAggregateAddress();
@@ -1628,8 +1627,8 @@ CodeGenTypes::GetFunctionType(const CGFunctionInfo &FI) {
       assert(NumIRArgs == 1);
       // indirect arguments are always on the stack, which is alloca addr space.
       llvm::Type *LTy = ConvertTypeForMem(it->type);
-      ArgTypes[FirstIRArg] = 
-           LTy->getPointerTo(CGM.getDataLayout().getAllocaAddrSpace());
+      ArgTypes[FirstIRArg] =
+          LTy->getPointerTo(CGM.getDataLayout().getAllocaAddrSpace());
       break;
     }
 
@@ -1669,7 +1668,7 @@ CodeGenTypes::GetFunctionType(const CGFunctionInfo &FI) {
 
   bool Erased = FunctionsBeingProcessed.erase(&FI); (void)Erased;
   assert(Erased && "Not in set?");
-  
+
   auto *FT = llvm::FunctionType::get(resultType, ArgTypes, FI.isVariadic());
   return FT;
 }
@@ -3951,7 +3950,6 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
           IRCallArgs[FirstIRArg] = AI.getPointer();
           I->copyInto(*this, AI);
         } else {
-          auto Arg = Addr.getPointer();
           // Skip the extra memcpy call.
           auto *T = V->getType()->getPointerElementType()->getPointerTo(
               CGM.getDataLayout().getAllocaAddrSpace());
