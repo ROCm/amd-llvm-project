@@ -2117,6 +2117,9 @@ public:
     return false;
   }
 
+  /// Return true if the target has a vector blend instruction.
+  virtual bool hasVectorBlend() const { return false; }
+
   /// \brief Get the maximum supported factor for interleaved memory accesses.
   /// Default to be the minimum interleave factor: 2.
   virtual unsigned getMaxSupportedInterleaveFactor() const { return 2; }
@@ -3580,6 +3583,13 @@ public:
   /// Lower TLS global address SDNode for target independent emulated TLS model.
   virtual SDValue LowerToTLSEmulatedModel(const GlobalAddressSDNode *GA,
                                           SelectionDAG &DAG) const;
+
+  /// Expands target specific indirect branch for the case of JumpTable
+  /// expanasion.
+  virtual SDValue expandIndirectJTBranch(const SDLoc& dl, SDValue Value, SDValue Addr,
+                                         SelectionDAG &DAG) const {
+    return DAG.getNode(ISD::BRIND, dl, MVT::Other, Value, Addr);
+  }
 
   // seteq(x, 0) -> truncate(srl(ctlz(zext(x)), log2(#bits)))
   // If we're comparing for equality to zero and isCtlzFast is true, expose the

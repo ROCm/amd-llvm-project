@@ -114,6 +114,10 @@ def : WriteRes<WriteIDivLd, [SBPort23, SBPort0, SBDivider]> {
 }
 
 // Scalar and vector floating point.
+def  : WriteRes<WriteFStore,       [SBPort23, SBPort4]>;
+def  : WriteRes<WriteFLoad,        [SBPort23]> { let Latency = 6; }
+def  : WriteRes<WriteFMove,        [SBPort5]>;
+
 defm : SBWriteResPair<WriteFAdd,   SBPort1, 3>;
 defm : SBWriteResPair<WriteFMul,   SBPort0, 5>;
 defm : SBWriteResPair<WriteFDiv,   SBPort0, 24>;
@@ -135,6 +139,10 @@ def : WriteRes<WriteFVarBlendLd, [SBPort0, SBPort5, SBPort23]> {
 }
 
 // Vector integer operations.
+def  : WriteRes<WriteVecStore,       [SBPort23, SBPort4]>;
+def  : WriteRes<WriteVecLoad,        [SBPort23]> { let Latency = 6; }
+def  : WriteRes<WriteVecMove,        [SBPort05]>;
+
 defm : SBWriteResPair<WriteVecShift, SBPort5,  1>;
 defm : SBWriteResPair<WriteVecLogic, SBPort5, 1>;
 defm : SBWriteResPair<WriteVecALU,   SBPort1,  3>;
@@ -344,9 +352,9 @@ def: InstRW<[SBWriteResGroup2], (instregex "JMP64r")>;
 def: InstRW<[SBWriteResGroup2], (instregex "JMP_1")>;
 def: InstRW<[SBWriteResGroup2], (instregex "JMP_4")>;
 def: InstRW<[SBWriteResGroup2], (instregex "LD_Frr")>;
-def: InstRW<[SBWriteResGroup2], (instregex "LOOP")>;
-def: InstRW<[SBWriteResGroup2], (instregex "LOOPE")>;
-def: InstRW<[SBWriteResGroup2], (instregex "LOOPNE")>;
+def: InstRW<[SBWriteResGroup2], (instrs LOOP)>;
+def: InstRW<[SBWriteResGroup2], (instrs LOOPE)>;
+def: InstRW<[SBWriteResGroup2], (instrs LOOPNE)>;
 def: InstRW<[SBWriteResGroup2], (instregex "MOV64toPQIrr")>;
 def: InstRW<[SBWriteResGroup2], (instregex "MOVAPDrr")>;
 def: InstRW<[SBWriteResGroup2], (instregex "MOVAPSrr")>;
@@ -391,7 +399,7 @@ def: InstRW<[SBWriteResGroup2], (instregex "VMOVDDUPYrr")>;
 def: InstRW<[SBWriteResGroup2], (instregex "VMOVDDUPrr")>;
 def: InstRW<[SBWriteResGroup2], (instregex "VMOVDI2PDIrr")>;
 def: InstRW<[SBWriteResGroup2], (instregex "VMOVHLPSrr")>;
-def: InstRW<[SBWriteResGroup2], (instregex "VMOVHLPSrr")>;
+def: InstRW<[SBWriteResGroup2], (instregex "VMOVLHPSrr")>;
 def: InstRW<[SBWriteResGroup2], (instregex "VMOVSDrr")>;
 def: InstRW<[SBWriteResGroup2], (instregex "VMOVSHDUPYrr")>;
 def: InstRW<[SBWriteResGroup2], (instregex "VMOVSHDUPrr")>;
@@ -665,7 +673,7 @@ def: InstRW<[SBWriteResGroup6], (instregex "CMP(16|32|64)rr")>;
 def: InstRW<[SBWriteResGroup6], (instregex "CMP8i8")>;
 def: InstRW<[SBWriteResGroup6], (instregex "CMP8ri")>;
 def: InstRW<[SBWriteResGroup6], (instregex "CMP8rr")>;
-def: InstRW<[SBWriteResGroup6], (instregex "CWDE")>;
+def: InstRW<[SBWriteResGroup6], (instrs CWDE)>;
 def: InstRW<[SBWriteResGroup6], (instregex "DEC(16|32|64)r")>;
 def: InstRW<[SBWriteResGroup6], (instregex "DEC8r")>;
 def: InstRW<[SBWriteResGroup6], (instregex "INC(16|32|64)r")>;
@@ -822,7 +830,7 @@ def SBWriteResGroup15 : SchedWriteRes<[SBPort0,SBPort015]> {
   let NumMicroOps = 2;
   let ResourceCycles = [1,1];
 }
-def: InstRW<[SBWriteResGroup15], (instregex "CWD")>;
+def: InstRW<[SBWriteResGroup15], (instrs CWD)>;
 def: InstRW<[SBWriteResGroup15], (instregex "FNSTSW16r")>;
 
 def SBWriteResGroup16 : SchedWriteRes<[SBPort1,SBPort05]> {
@@ -2129,7 +2137,7 @@ def SBWriteResGroup86 : SchedWriteRes<[SBPort4,SBPort23,SBPort015]> {
   let ResourceCycles = [1,2,2];
 }
 def: InstRW<[SBWriteResGroup86], (instregex "MOVSB")>;
-def: InstRW<[SBWriteResGroup86], (instregex "MOVSL")>;
+def: InstRW<[SBWriteResGroup86], (instrs MOVSL)>;
 def: InstRW<[SBWriteResGroup86], (instregex "MOVSQ")>;
 def: InstRW<[SBWriteResGroup86], (instregex "MOVSW")>;
 def: InstRW<[SBWriteResGroup86], (instregex "XADD(16|32|64)rm")>;

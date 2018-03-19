@@ -2256,7 +2256,7 @@ bool BalancedDelimiterTracker::expectAndConsume(unsigned DiagID,
     return true;
   }
 
-  if (getDepth() < MaxDepth)
+  if (getDepth() < P.getLangOpts().BracketDepth)
     return false;
     
   return diagnoseOverflow();

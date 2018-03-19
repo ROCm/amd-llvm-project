@@ -11,6 +11,7 @@
 #define LLVM_DEBUGINFO_DWARF_DWARFVERIFIER_H
 
 #include "llvm/DebugInfo/DIContext.h"
+#include "llvm/DebugInfo/DWARF/DWARFAcceleratorTable.h"
 #include "llvm/DebugInfo/DWARF/DWARFAddressRange.h"
 #include "llvm/DebugInfo/DWARF/DWARFDie.h"
 
@@ -231,6 +232,27 @@ private:
   unsigned verifyAppleAccelTable(const DWARFSection *AccelSection,
                                  DataExtractor *StrData,
                                  const char *SectionName);
+
+  unsigned verifyDebugNamesCULists(const DWARFDebugNames &AccelTable);
+  unsigned verifyNameIndexBuckets(const DWARFDebugNames::NameIndex &NI,
+                                  const DataExtractor &StrData);
+
+  /// Verify that the DWARF v5 accelerator table is valid.
+  ///
+  /// This function currently checks that:
+  /// - Headers and abbreviation tables of individual Name Indices fit into the
+  ///   section and can be parsed.
+  /// - The CU lists reference existing compile units.
+  /// - The buckets have a valid index, or they are empty.
+  /// - All names are reachable via the hash table (they have the correct hash,
+  ///   and the hash is in the correct bucket).
+  ///
+  /// \param AccelSection section containing the acceleration table
+  /// \param StrData string section
+  ///
+  /// \returns The number of errors occurred during verification
+  unsigned verifyDebugNames(const DWARFSection &AccelSection,
+                            const DataExtractor &StrData);
 
 public:
   DWARFVerifier(raw_ostream &S, DWARFContext &D,

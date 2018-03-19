@@ -3051,7 +3051,9 @@ Sema::ActOnCXXMemberDeclarator(Scope *S, AccessSpecifier AS, Declarator &D,
       //   int X::member;
       // };
       if (DeclContext *DC = computeDeclContext(SS, false))
-        diagnoseQualifiedDeclaration(SS, DC, Name, D.getIdentifierLoc());
+        diagnoseQualifiedDeclaration(SS, DC, Name, D.getIdentifierLoc(),
+                                     D.getName().getKind() ==
+                                         UnqualifiedIdKind::IK_TemplateId);
       else
         Diag(D.getIdentifierLoc(), diag::err_member_qualification)
           << Name << SS.getRange();
@@ -5728,6 +5730,21 @@ void Sema::checkClassLevelDLLAttribute(CXXRecordDecl *Class) {
           cast<InheritableAttr>(ClassAttr->clone(getASTContext()));
       NewAttr->setInherited(true);
       Member->addAttr(NewAttr);
+
+      if (MD) {
+        // Propagate DLLAttr to friend re-declarations of MD that have already
+        // been constructed.
+        for (FunctionDecl *FD = MD->getMostRecentDecl(); FD;
+             FD = FD->getPreviousDecl()) {
+          if (FD->getFriendObjectKind() == Decl::FOK_None)
+            continue;
+          assert(!getDLLAttr(FD) &&
+                 "friend re-decl should not already have a DLLAttr");
+          NewAttr = cast<InheritableAttr>(ClassAttr->clone(getASTContext()));
+          NewAttr->setInherited(true);
+          FD->addAttr(NewAttr);
+        }
+      }
     }
   }
 

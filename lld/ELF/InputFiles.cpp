@@ -213,8 +213,7 @@ Optional<DILineInfo> ObjFile<ELFT>::getDILineInfo(InputSectionBase *S,
   return Info;
 }
 
-// Returns source line information for a given offset
-// using DWARF debug info.
+// Returns source line information for a given offset using DWARF debug info.
 template <class ELFT>
 std::string ObjFile<ELFT>::getLineInfo(InputSectionBase *S, uint64_t Offset) {
   if (Optional<DILineInfo> Info = getDILineInfo(S, Offset))
@@ -308,7 +307,7 @@ StringRef ObjFile<ELFT>::getShtGroupSignature(ArrayRef<Elf_Shdr> Sections,
   // we use a section name as a signature.
   //
   // Such SHT_GROUP sections are invalid from the perspective of the ELF
-  // standard, but GNU gold 1.14 (the neweset version as of July 2017) or
+  // standard, but GNU gold 1.14 (the newest version as of July 2017) or
   // older produce such sections as outputs for the -r option, so we need
   // a bug-compatibility.
   if (Signature.empty() && Sym->getType() == STT_SECTION)
@@ -431,8 +430,15 @@ void ObjFile<ELFT>::initializeSections(
       if (Sec.sh_link >= this->Sections.size())
         fatal(toString(this) +
               ": invalid sh_link index: " + Twine(Sec.sh_link));
-      this->Sections[Sec.sh_link]->DependentSections.push_back(
-          cast<InputSection>(this->Sections[I]));
+
+      InputSectionBase *LinkSec = this->Sections[Sec.sh_link];
+      InputSection *IS = cast<InputSection>(this->Sections[I]);
+      LinkSec->DependentSections.push_back(IS);
+      if (!isa<InputSection>(LinkSec))
+        error("a section " + IS->Name +
+              " with SHF_LINK_ORDER should not refer a non-regular "
+              "section: " +
+              toString(LinkSec));
     }
   }
 }
@@ -860,6 +866,10 @@ template <class ELFT> void SharedFile<ELFT>::parseRest() {
       continue;
     }
 
+    // ELF spec requires that all local symbols precede weak or global
+    // symbols in each symbol table, and the index of first non-local symbol
+    // is stored to sh_info. If a local symbol appears after some non-local
+    // symbol, that's a violation of the spec.
     if (Sym.getBinding() == STB_LOCAL) {
       warn("found local symbol '" + Name +
            "' in global part of symbol table in file " + toString(this));

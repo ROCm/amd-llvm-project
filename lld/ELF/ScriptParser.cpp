@@ -267,7 +267,8 @@ void ScriptParser::readDefsym(StringRef Name) {
   Expr E = readExpr();
   if (!atEOF())
     setError("EOF expected, but got " + next());
-  SymbolAssignment *Cmd = make<SymbolAssignment>(Name, E, getCurrentLocation());
+  SymbolAssignment *Cmd = make<SymbolAssignment>(Name, E, getCurrentLocation(),
+                                                 "" /*CommandString*/);
   Script->SectionCommands.push_back(Cmd);
 }
 
@@ -436,6 +437,7 @@ void ScriptParser::readSections() {
   Config->SingleRoRx = true;
 
   expect("{");
+  std::vector<BaseCommand *> V;
   while (!errorCount() && !consume("}")) {
     StringRef Tok = next();
     BaseCommand *Cmd = readProvideOrAssignment(Tok);
@@ -445,17 +447,34 @@ void ScriptParser::readSections() {
       else
         Cmd = readOutputSectionDescription(Tok);
     }
-    Script->SectionCommands.push_back(Cmd);
+    V.push_back(Cmd);
   }
+
+  if (!atEOF() && consume("INSERT")) {
+    std::vector<BaseCommand *> *Dest = nullptr;
+    if (consume("AFTER"))
+      Dest = &Script->InsertAfterCommands[next()];
+    else if (consume("BEFORE"))
+      Dest = &Script->InsertBeforeCommands[next()];
+    else
+      setError("expected AFTER/BEFORE, but got '" + next() + "'");
+    if (Dest)
+      Dest->insert(Dest->end(), V.begin(), V.end());
+    return;
+  }
+
+  Script->SectionCommands.insert(Script->SectionCommands.end(), V.begin(),
+                                 V.end());
 }
 
 static int precedence(StringRef Op) {
   return StringSwitch<int>(Op)
-      .Cases("*", "/", "%", 5)
-      .Cases("+", "-", 4)
-      .Cases("<<", ">>", 3)
-      .Cases("<", "<=", ">", ">=", "==", "!=", 2)
-      .Cases("&", "|", 1)
+      .Cases("*", "/", "%", 6)
+      .Cases("+", "-", 5)
+      .Cases("<<", ">>", 4)
+      .Cases("<", "<=", ">", ">=", "==", "!=", 3)
+      .Case("&", 2)
+      .Case("|", 1)
       .Default(-1);
 }
 
@@ -774,6 +793,7 @@ SymbolAssignment *ScriptParser::readProvideOrAssignment(StringRef Tok) {
 }
 
 SymbolAssignment *ScriptParser::readAssignment(StringRef Name) {
+  size_t OldPos = Pos;
   StringRef Op = next();
   assert(Op == "=" || Op == "+=");
   Expr E = readExpr();
@@ -781,7 +801,11 @@ SymbolAssignment *ScriptParser::readAssignment(StringRef Name) {
     std::string Loc = getCurrentLocation();
     E = [=] { return add(Script->getSymbolValue(Name, Loc), E()); };
   }
-  return make<SymbolAssignment>(Name, E, getCurrentLocation());
+
+  std::string CommandString =
+      Name.str() + " " +
+      llvm::join(Tokens.begin() + OldPos, Tokens.begin() + Pos, " ");
+  return make<SymbolAssignment>(Name, E, getCurrentLocation(), CommandString);
 }
 
 // This is an operator-precedence parser to parse a linker
@@ -935,7 +959,13 @@ ByteCommand *ScriptParser::readByteCommand(StringRef Tok) {
                  .Default(-1);
   if (Size == -1)
     return nullptr;
-  return make<ByteCommand>(readParenExpr(), Size);
+
+  size_t OldPos = Pos;
+  Expr E = readParenExpr();
+  std::string CommandString =
+      Tok.str() + " " +
+      llvm::join(Tokens.begin() + OldPos, Tokens.begin() + Pos, " ");
+  return make<ByteCommand>(E, Size, CommandString);
 }
 
 StringRef ScriptParser::readParenLiteral() {
@@ -1310,11 +1340,10 @@ void ScriptParser::readMemory() {
     uint64_t Length = readMemoryAssignment("LENGTH", "len", "l");
 
     // Add the memory region to the region map.
-    if (Script->MemoryRegions.count(Name))
-      setError("region '" + Name + "' already defined");
     MemoryRegion *MR =
         make<MemoryRegion>(Name, Origin, Length, Flags, NegFlags);
-    Script->MemoryRegions[Name] = MR;
+    if (!Script->MemoryRegions.insert({Name, MR}).second)
+      setError("region '" + Name + "' already defined");
   }
 }
 

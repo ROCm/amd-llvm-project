@@ -1557,33 +1557,35 @@ SDValue SelectionDAG::getVectorShuffle(EVT VT, const SDLoc &dl, SDValue N1,
   if (N1.isUndef())
     commuteShuffle(N1, N2, MaskVec);
 
-  // If shuffling a splat, try to blend the splat instead. We do this here so
-  // that even when this arises during lowering we don't have to re-handle it.
-  auto BlendSplat = [&](BuildVectorSDNode *BV, int Offset) {
-    BitVector UndefElements;
-    SDValue Splat = BV->getSplatValue(&UndefElements);
-    if (!Splat)
-      return;
+  if (TLI->hasVectorBlend()) {
+    // If shuffling a splat, try to blend the splat instead. We do this here so
+    // that even when this arises during lowering we don't have to re-handle it.
+    auto BlendSplat = [&](BuildVectorSDNode *BV, int Offset) {
+      BitVector UndefElements;
+      SDValue Splat = BV->getSplatValue(&UndefElements);
+      if (!Splat)
+        return;
 
-    for (int i = 0; i < NElts; ++i) {
-      if (MaskVec[i] < Offset || MaskVec[i] >= (Offset + NElts))
-        continue;
+      for (int i = 0; i < NElts; ++i) {
+        if (MaskVec[i] < Offset || MaskVec[i] >= (Offset + NElts))
+          continue;
 
-      // If this input comes from undef, mark it as such.
-      if (UndefElements[MaskVec[i] - Offset]) {
-        MaskVec[i] = -1;
-        continue;
+        // If this input comes from undef, mark it as such.
+        if (UndefElements[MaskVec[i] - Offset]) {
+          MaskVec[i] = -1;
+          continue;
+        }
+
+        // If we can blend a non-undef lane, use that instead.
+        if (!UndefElements[i])
+          MaskVec[i] = i + Offset;
       }
-
-      // If we can blend a non-undef lane, use that instead.
-      if (!UndefElements[i])
-        MaskVec[i] = i + Offset;
-    }
-  };
-  if (auto *N1BV = dyn_cast<BuildVectorSDNode>(N1))
-    BlendSplat(N1BV, 0);
-  if (auto *N2BV = dyn_cast<BuildVectorSDNode>(N2))
-    BlendSplat(N2BV, NElts);
+    };
+    if (auto *N1BV = dyn_cast<BuildVectorSDNode>(N1))
+      BlendSplat(N1BV, 0);
+    if (auto *N2BV = dyn_cast<BuildVectorSDNode>(N2))
+      BlendSplat(N2BV, NElts);
+  }
 
   // Canonicalize all index into lhs, -> shuffle lhs, undef
   // Canonicalize all index into rhs, -> shuffle rhs, undef
@@ -2361,10 +2363,7 @@ void SelectionDAG::computeKnownBits(SDValue Op, KnownBits &Known,
       break;
     }
 
-    // Support big-endian targets when it becomes useful.
     bool IsLE = getDataLayout().isLittleEndian();
-    if (!IsLE)
-      break;
 
     // Bitcast 'small element' vector to 'large element' scalar/vector.
     if ((BitWidth % SubBitWidth) == 0) {
@@ -2383,8 +2382,9 @@ void SelectionDAG::computeKnownBits(SDValue Op, KnownBits &Known,
       for (unsigned i = 0; i != SubScale; ++i) {
         computeKnownBits(N0, Known2, SubDemandedElts.shl(i),
                          Depth + 1);
-        Known.One |= Known2.One.zext(BitWidth).shl(SubBitWidth * i);
-        Known.Zero |= Known2.Zero.zext(BitWidth).shl(SubBitWidth * i);
+        unsigned Shifts = IsLE ? i : SubScale - 1 - i;
+        Known.One |= Known2.One.zext(BitWidth).shl(SubBitWidth * Shifts);
+        Known.Zero |= Known2.Zero.zext(BitWidth).shl(SubBitWidth * Shifts);
       }
     }
 
@@ -2406,7 +2406,8 @@ void SelectionDAG::computeKnownBits(SDValue Op, KnownBits &Known,
       Known.Zero.setAllBits(); Known.One.setAllBits();
       for (unsigned i = 0; i != NumElts; ++i)
         if (DemandedElts[i]) {
-          unsigned Offset = (i % SubScale) * BitWidth;
+          unsigned Shifts = IsLE ? i : NumElts - 1 - i;
+          unsigned Offset = (Shifts % SubScale) * BitWidth;
           Known.One &= Known2.One.lshr(Offset).trunc(BitWidth);
           Known.Zero &= Known2.Zero.lshr(Offset).trunc(BitWidth);
           // If we don't know any bits, early out.

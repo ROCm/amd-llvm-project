@@ -8245,6 +8245,8 @@ QualType ASTContext::mergeFunctionTypes(QualType lhs, QualType rhs,
     return QualType();
   if (lbaseInfo.getNoCallerSavedRegs() != rbaseInfo.getNoCallerSavedRegs())
     return QualType();
+  if (lbaseInfo.getNoCfCheck() != rbaseInfo.getNoCfCheck())
+    return QualType();
 
   // FIXME: some uses, e.g. conditional exprs, really want this to be 'both'.
   bool NoReturn = lbaseInfo.getNoReturn() || rbaseInfo.getNoReturn();
@@ -9408,8 +9410,7 @@ bool ASTContext::DeclMustBeEmitted(const Decl *D) {
       return false;
   } else if (isa<PragmaCommentDecl>(D))
     return true;
-  else if (isa<OMPThreadPrivateDecl>(D) ||
-           D->hasAttr<OMPDeclareTargetDeclAttr>())
+  else if (isa<OMPThreadPrivateDecl>(D))
     return true;
   else if (isa<PragmaDetectMismatchDecl>(D))
     return true;
@@ -9497,6 +9498,12 @@ bool ASTContext::DeclMustBeEmitted(const Decl *D) {
       if (auto *BindingVD = BD->getHoldingVar())
         if (DeclMustBeEmitted(BindingVD))
           return true;
+
+  // If the decl is marked as `declare target`, it should be emitted.
+  for (const auto *Decl = D->getMostRecentDecl(); Decl;
+       Decl = Decl->getPreviousDecl())
+    if (Decl->hasAttr<OMPDeclareTargetDeclAttr>())
+      return true;
 
   return false;
 }
