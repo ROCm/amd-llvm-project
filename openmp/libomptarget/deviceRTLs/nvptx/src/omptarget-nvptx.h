@@ -62,6 +62,46 @@
 #define __ACTIVEMASK() __ballot(1)
 #endif
 
+// arguments needed for L0 parallelism only.
+class omptarget_nvptx_SharedArgs {
+public:
+  // All these methods must be called by the master thread only.
+  INLINE void Init() {
+    args  = buffer;
+    nArgs = MAX_SHARED_ARGS;
+  }
+  INLINE void DeInit() {
+    // Free any memory allocated for outlined parallel function with a large
+    // number of arguments.
+    if (nArgs > MAX_SHARED_ARGS) {
+      SafeFree(args, (char *)"new extended args");
+      Init();
+    }
+  }
+  INLINE void EnsureSize(size_t size) {
+    if (size > nArgs) {
+      if (nArgs > MAX_SHARED_ARGS) {
+        SafeFree(args, (char *)"new extended args");
+      }
+      args = (void **) SafeMalloc(size * sizeof(void *),
+                                  (char *)"new extended args");
+      nArgs = size;
+    }
+  }
+  // Called by all threads.
+  INLINE void **GetArgs() { return args; };
+private:
+  // buffer of pre-allocated arguments.
+  void *buffer[MAX_SHARED_ARGS];
+  // pointer to arguments buffer.
+  // starts off as a pointer to 'buffer' but can be dynamically allocated.
+  void **args;
+  // starts off as MAX_SHARED_ARGS but can increase in size.
+  uint32_t nArgs;
+};
+
+extern __device__ __shared__ omptarget_nvptx_SharedArgs omptarget_nvptx_globalArgs;
+
 // Data sharing related quantities, need to match what is used in the compiler.
 enum DATA_SHARING_SIZES {
   // The maximum number of workers in a kernel.
@@ -80,6 +120,7 @@ enum DATA_SHARING_SIZES {
 struct DataSharingStateTy {
   __kmpc_data_sharing_slot *SlotPtr[DS_Max_Warp_Number];
   void *StackPtr[DS_Max_Warp_Number];
+  __kmpc_data_sharing_slot *TailPtr[DS_Max_Warp_Number];
   void *FramePtr[DS_Max_Warp_Number];
   int32_t ActiveThreads[DS_Max_Warp_Number];
 };
@@ -87,6 +128,8 @@ struct DataSharingStateTy {
 // size of 4*32 bytes.
 struct __kmpc_data_sharing_worker_slot_static {
   __kmpc_data_sharing_slot *Next;
+  __kmpc_data_sharing_slot *Prev;
+  void *PrevSlotStackPtr;
   void *DataEnd;
   char Data[DS_Worker_Warp_Slot_Size];
 };
@@ -94,6 +137,8 @@ struct __kmpc_data_sharing_worker_slot_static {
 // size of 4 bytes.
 struct __kmpc_data_sharing_master_slot_static {
   __kmpc_data_sharing_slot *Next;
+  __kmpc_data_sharing_slot *Prev;
+  void *PrevSlotStackPtr;
   void *DataEnd;
   char Data[DS_Slot_Size];
 };
@@ -107,27 +152,27 @@ public:
   // methods for flags
   INLINE omp_sched_t GetRuntimeSched();
   INLINE void SetRuntimeSched(omp_sched_t sched);
-  INLINE int IsDynamic() { return data.items.flags & TaskDescr_IsDynamic; }
+  INLINE int IsDynamic() { return items.flags & TaskDescr_IsDynamic; }
   INLINE void SetDynamic() {
-    data.items.flags = data.items.flags | TaskDescr_IsDynamic;
+    items.flags = items.flags | TaskDescr_IsDynamic;
   }
   INLINE void ClearDynamic() {
-    data.items.flags = data.items.flags & (~TaskDescr_IsDynamic);
+    items.flags = items.flags & (~TaskDescr_IsDynamic);
   }
-  INLINE int InParallelRegion() { return data.items.flags & TaskDescr_InPar; }
+  INLINE int InParallelRegion() { return items.flags & TaskDescr_InPar; }
   INLINE int InL2OrHigherParallelRegion() {
-    return data.items.flags & TaskDescr_InParL2P;
+    return items.flags & TaskDescr_InParL2P;
   }
   INLINE int IsParallelConstruct() {
-    return data.items.flags & TaskDescr_IsParConstr;
+    return items.flags & TaskDescr_IsParConstr;
   }
   INLINE int IsTaskConstruct() { return !IsParallelConstruct(); }
   // methods for other fields
-  INLINE uint16_t &NThreads() { return data.items.nthreads; }
-  INLINE uint16_t &ThreadLimit() { return data.items.threadlimit; }
-  INLINE uint16_t &ThreadId() { return data.items.threadId; }
-  INLINE uint16_t &ThreadsInTeam() { return data.items.threadsInTeam; }
-  INLINE uint64_t &RuntimeChunkSize() { return data.items.runtimeChunkSize; }
+  INLINE uint16_t &NThreads() { return items.nthreads; }
+  INLINE uint16_t &ThreadLimit() { return items.threadlimit; }
+  INLINE uint16_t &ThreadId() { return items.threadId; }
+  INLINE uint16_t &ThreadsInTeam() { return items.threadsInTeam; }
+  INLINE uint64_t &RuntimeChunkSize() { return items.runtimeChunkSize; }
   INLINE omptarget_nvptx_TaskDescr *GetPrevTaskDescr() { return prev; }
   INLINE void SetPrevTaskDescr(omptarget_nvptx_TaskDescr *taskDescr) {
     prev = taskDescr;
@@ -160,18 +205,15 @@ private:
   static const uint8_t TaskDescr_IsParConstr = 0x20;
   static const uint8_t TaskDescr_InParL2P = 0x40;
 
-  union { // both have same size
-    uint64_t vect[2];
-    struct TaskDescr_items {
-      uint8_t flags; // 6 bit used (see flag above)
-      uint8_t unused;
-      uint16_t nthreads;         // thread num for subsequent parallel regions
-      uint16_t threadlimit;      // thread limit ICV
-      uint16_t threadId;         // thread id
-      uint16_t threadsInTeam;    // threads in current team
-      uint64_t runtimeChunkSize; // runtime chunk size
-    } items;
-  } data;
+  struct TaskDescr_items {
+    uint8_t flags; // 6 bit used (see flag above)
+    uint8_t unused;
+    uint16_t nthreads;         // thread num for subsequent parallel regions
+    uint16_t threadlimit;      // thread limit ICV
+    uint16_t threadId;         // thread id
+    uint16_t threadsInTeam;    // threads in current team
+    uint64_t runtimeChunkSize; // runtime chunk size
+  } items;
   omptarget_nvptx_TaskDescr *prev;
 };
 
@@ -226,6 +268,8 @@ public:
       master_rootS[0].DataEnd = &master_rootS[0].Data[0] + DS_Slot_Size;
       // We currently do not have a next slot.
       master_rootS[0].Next = 0;
+      master_rootS[0].Prev = 0;
+      master_rootS[0].PrevSlotStackPtr = 0;
       return (__kmpc_data_sharing_slot *)&master_rootS[0];
     }
     // Initialize the pointer to the end of the slot given the size of the data
@@ -234,6 +278,8 @@ public:
         &worker_rootS[wid].Data[0] + DS_Worker_Warp_Slot_Size;
     // We currently do not have a next slot.
     worker_rootS[wid].Next = 0;
+    worker_rootS[wid].Prev = 0;
+    worker_rootS[wid].PrevSlotStackPtr = 0;
     return (__kmpc_data_sharing_slot *)&worker_rootS[wid];
   }
 
