@@ -317,6 +317,7 @@ protected:
     IK_UnOpInit,
     IK_LastOpInit,
     IK_FoldOpInit,
+    IK_IsAOpInit,
     IK_StringInit,
     IK_VarInit,
     IK_VarListElementInit,
@@ -741,10 +742,6 @@ public:
   virtual unsigned getNumOperands() const = 0;
   virtual Init *getOperand(unsigned i) const = 0;
 
-  // Fold - If possible, fold this to a simpler init.  Return this if not
-  // possible to fold.
-  virtual Init *Fold(Record *CurRec, MultiClass *CurMultiClass) const = 0;
-
   Init *getBit(unsigned Bit) const override;
 };
 
@@ -791,7 +788,7 @@ public:
 
   // Fold - If possible, fold this to a simpler init.  Return this if not
   // possible to fold.
-  Init *Fold(Record *CurRec, MultiClass *CurMultiClass) const override;
+  Init *Fold(Record *CurRec, bool IsFinal = false) const;
 
   Init *resolveReferences(Resolver &R) const override;
 
@@ -802,7 +799,7 @@ public:
 class BinOpInit : public OpInit, public FoldingSetNode {
 public:
   enum BinaryOp : uint8_t { ADD, AND, OR, SHL, SRA, SRL, LISTCONCAT,
-                            STRCONCAT, CONCAT, EQ };
+                            STRCONCAT, CONCAT, EQ, NE, LE, LT, GE, GT };
 
 private:
   Init *LHS, *RHS;
@@ -820,6 +817,7 @@ public:
 
   static BinOpInit *get(BinaryOp opc, Init *lhs, Init *rhs,
                         RecTy *Type);
+  static Init *getStrConcat(Init *lhs, Init *rhs);
 
   void Profile(FoldingSetNodeID &ID) const;
 
@@ -845,7 +843,7 @@ public:
 
   // Fold - If possible, fold this to a simpler init.  Return this if not
   // possible to fold.
-  Init *Fold(Record *CurRec, MultiClass *CurMultiClass) const override;
+  Init *Fold(Record *CurRec) const;
 
   Init *resolveReferences(Resolver &R) const override;
 
@@ -855,7 +853,7 @@ public:
 /// !op (X, Y, Z) - Combine two inits.
 class TernOpInit : public OpInit, public FoldingSetNode {
 public:
-  enum TernaryOp : uint8_t { SUBST, FOREACH, IF };
+  enum TernaryOp : uint8_t { SUBST, FOREACH, IF, DAG };
 
 private:
   Init *LHS, *MHS, *RHS;
@@ -903,7 +901,7 @@ public:
 
   // Fold - If possible, fold this to a simpler init.  Return this if not
   // possible to fold.
-  Init *Fold(Record *CurRec, MultiClass *CurMultiClass) const override;
+  Init *Fold(Record *CurRec) const;
 
   bool isComplete() const override {
     return LHS->isComplete() && MHS->isComplete() && RHS->isComplete();
@@ -941,6 +939,39 @@ public:
   // Fold - If possible, fold this to a simpler init.  Return this if not
   // possible to fold.
   Init *Fold(Record *CurRec) const;
+
+  bool isComplete() const override { return false; }
+
+  Init *resolveReferences(Resolver &R) const override;
+
+  Init *getBit(unsigned Bit) const override;
+
+  std::string getAsString() const override;
+};
+
+/// !isa<type>(expr) - Dynamically determine the type of an expression.
+class IsAOpInit : public TypedInit, public FoldingSetNode {
+private:
+  RecTy *CheckType;
+  Init *Expr;
+
+  IsAOpInit(RecTy *CheckType, Init *Expr)
+      : TypedInit(IK_IsAOpInit, IntRecTy::get()), CheckType(CheckType),
+        Expr(Expr) {}
+
+public:
+  IsAOpInit(const IsAOpInit &) = delete;
+  IsAOpInit &operator=(const IsAOpInit &) = delete;
+
+  static bool classof(const Init *I) { return I->getKind() == IK_IsAOpInit; }
+
+  static IsAOpInit *get(RecTy *CheckType, Init *Expr);
+
+  void Profile(FoldingSetNodeID &ID) const;
+
+  // Fold - If possible, fold this to a simpler init.  Return this if not
+  // possible to fold.
+  Init *Fold() const;
 
   bool isComplete() const override { return false; }
 
@@ -1169,6 +1200,7 @@ public:
   Init *getBit(unsigned Bit) const override;
 
   Init *resolveReferences(Resolver &R) const override;
+  Init *Fold(Record *CurRec) const;
 
   std::string getAsString() const override {
     return Rec->getAsString() + "." + FieldName->getValue().str();
@@ -1465,6 +1497,9 @@ public:
 
   /// If there are any field references that refer to fields
   /// that have been filled in, we can propagate the values now.
+  ///
+  /// This is a final resolve: any error messages, e.g. due to undefined
+  /// !cast references, are generated now.
   void resolveReferences();
 
   /// Apply the resolver to the name of the record as well as to the
@@ -1577,6 +1612,7 @@ class RecordKeeper {
   using RecordMap = std::map<std::string, std::unique_ptr<Record>>;
   RecordMap Classes, Defs;
   FoldingSet<RecordRecTy> RecordTypePool;
+  std::map<std::string, Init *> ExtraGlobals;
   unsigned AnonCounter = 0;
 
 public:
@@ -1593,6 +1629,13 @@ public:
     return I == Defs.end() ? nullptr : I->second.get();
   }
 
+  Init *getGlobal(StringRef Name) const {
+    if (Record *R = getDef(Name))
+      return R->getDefInit();
+    auto It = ExtraGlobals.find(Name);
+    return It == ExtraGlobals.end() ? nullptr : It->second;
+  }
+
   void addClass(std::unique_ptr<Record> R) {
     bool Ins = Classes.insert(std::make_pair(R->getName(),
                                              std::move(R))).second;
@@ -1605,6 +1648,13 @@ public:
                                           std::move(R))).second;
     (void)Ins;
     assert(Ins && "Record already exists");
+  }
+
+  void addExtraGlobal(StringRef Name, Init *I) {
+    bool Ins = ExtraGlobals.insert(std::make_pair(Name, I)).second;
+    (void)Ins;
+    assert(!getDef(Name));
+    assert(Ins && "Global already exists");
   }
 
   Init *getNewAnonymousName();
@@ -1739,6 +1789,7 @@ Init *QualifyName(Record &CurRec, MultiClass *CurMultiClass,
 /// Init::resolveReferences.
 class Resolver {
   Record *CurRec;
+  bool IsFinal = false;
 
 public:
   explicit Resolver(Record *CurRec) : CurRec(CurRec) {}
@@ -1754,6 +1805,13 @@ public:
   // result in a ? (UnsetInit). This behavior is used to represent instruction
   // encodings by keeping references to unset variables within a record.
   virtual bool keepUnsetBits() const { return false; }
+
+  // Whether this is the final resolve step before adding a record to the
+  // RecordKeeper. Error reporting during resolve and related constant folding
+  // should only happen when this is true.
+  bool isFinal() const { return IsFinal; }
+
+  void setFinal(bool Final) { IsFinal = Final; }
 };
 
 /// Resolve arbitrary mappings.
@@ -1814,7 +1872,10 @@ class ShadowResolver final : public Resolver {
   DenseSet<Init *> Shadowed;
 
 public:
-  explicit ShadowResolver(Resolver &R) : Resolver(R.getCurrentRecord()), R(R) {}
+  explicit ShadowResolver(Resolver &R)
+      : Resolver(R.getCurrentRecord()), R(R) {
+    setFinal(R.isFinal());
+  }
 
   void addShadow(Init *Key) { Shadowed.insert(Key); }
 

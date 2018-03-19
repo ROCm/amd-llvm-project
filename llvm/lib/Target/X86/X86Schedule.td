@@ -63,6 +63,9 @@ def WriteZero : SchedWrite;
 defm WriteJump : X86SchedWritePair;
 
 // Floating point. This covers both scalar and vector operations.
+def  WriteFLoad  : SchedWrite;
+def  WriteFStore : SchedWrite;
+def  WriteFMove  : SchedWrite;
 defm WriteFAdd   : X86SchedWritePair; // Floating point add/sub/compare.
 defm WriteFMul   : X86SchedWritePair; // Floating point multiplication.
 defm WriteFDiv   : X86SchedWritePair; // Floating point division.
@@ -82,6 +85,9 @@ defm WriteFHAdd  : X86SchedWritePair;
 defm WritePHAdd : X86SchedWritePair;
 
 // Vector integer operations.
+def  WriteVecLoad  : SchedWrite;
+def  WriteVecStore : SchedWrite;
+def  WriteVecMove  : SchedWrite;
 defm WriteVecALU   : X86SchedWritePair; // Vector integer ALU op, no logicals.
 defm WriteVecShift : X86SchedWritePair; // Vector integer shifts.
 defm WriteVecIMul  : X86SchedWritePair; // Vector integer multiply.
@@ -236,8 +242,6 @@ def IIC_RET_IMM : InstrItinClass;
 def IIC_MOVSX : InstrItinClass;
 def IIC_MOVSX_R16_R8 : InstrItinClass;
 def IIC_MOVSX_R16_M8 : InstrItinClass;
-def IIC_MOVSX_R16_R16 : InstrItinClass;
-def IIC_MOVSX_R32_R32 : InstrItinClass;
 //zero extension movs
 def IIC_MOVZX : InstrItinClass;
 def IIC_MOVZX_R16_R8 : InstrItinClass;

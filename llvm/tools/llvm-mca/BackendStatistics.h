@@ -59,6 +59,8 @@
 
 #include "Backend.h"
 #include "View.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/Support/raw_ostream.h"
 #include <map>
 
@@ -67,6 +69,7 @@ namespace mca {
 class BackendStatistics : public View {
   // TODO: remove the dependency from Backend.
   const Backend &B;
+  const llvm::MCSubtargetInfo &STI;
 
   using Histogram = std::map<unsigned, unsigned>;
   Histogram DispatchGroupSizePerCycle;
@@ -77,6 +80,10 @@ class BackendStatistics : public View {
   unsigned NumIssued;
   unsigned NumRetired;
   unsigned NumCycles;
+
+  // Counts dispatch stall events caused by unavailability of resources.  There
+  // is one counter for every generic stall kind (see class HWStallEvent).
+  llvm::SmallVector<unsigned, 8> HWStalls;
 
   void updateHistograms() {
     DispatchGroupSizePerCycle[NumDispatched]++;
@@ -91,10 +98,7 @@ class BackendStatistics : public View {
   void printDispatchUnitStatistics(llvm::raw_ostream &OS) const;
   void printSchedulerStatistics(llvm::raw_ostream &OS) const;
 
-  void printDispatchStalls(llvm::raw_ostream &OS, unsigned RATStalls,
-                           unsigned RCUStalls, unsigned SQStalls,
-                           unsigned LDQStalls, unsigned STQStalls,
-                           unsigned DGStalls) const;
+  void printDispatchStalls(llvm::raw_ostream &OS) const;
   void printRATStatistics(llvm::raw_ostream &OS, unsigned Mappings,
                           unsigned MaxUsedMappings) const;
   void printRCUStatistics(llvm::raw_ostream &OS, const Histogram &Histogram,
@@ -107,34 +111,32 @@ class BackendStatistics : public View {
                            const llvm::ArrayRef<BufferUsageEntry> &Usage) const;
 
 public:
-  BackendStatistics(const Backend &backend)
-      : B(backend), NumDispatched(0), NumIssued(0), NumRetired(0) {}
+  BackendStatistics(const Backend &backend, const llvm::MCSubtargetInfo &sti)
+      : B(backend), STI(sti), NumDispatched(0), NumIssued(0), NumRetired(0),
+        NumCycles(0), HWStalls(HWStallEvent::LastGenericEvent) {}
 
-  void onInstructionDispatched(unsigned Index) override { NumDispatched++; }
-  void
-  onInstructionIssued(unsigned Index,
-                      const llvm::ArrayRef<std::pair<ResourceRef, unsigned>>
-                          & /* unused */) override {
-    NumIssued++;
-  }
-  void onInstructionRetired(unsigned Index) override { NumRetired++; }
+  void onInstructionEvent(const HWInstructionEvent &Event) override;
 
   void onCycleBegin(unsigned Cycle) override { NumCycles++; }
 
   void onCycleEnd(unsigned Cycle) override { updateHistograms(); }
 
+  void onStallEvent(const HWStallEvent &Event) override {
+    if (Event.Type < HWStallEvent::LastGenericEvent)
+      HWStalls[Event.Type]++;
+  }
+
   void printView(llvm::raw_ostream &OS) const override {
-    printDispatchStalls(OS, B.getNumRATStalls(), B.getNumRCUStalls(), B.getNumSQStalls(),
-                        B.getNumLDQStalls(), B.getNumSTQStalls(), B.getNumDispatchGroupStalls());
+    printDispatchStalls(OS);
     printRATStatistics(OS, B.getTotalRegisterMappingsCreated(),
-                           B.getMaxUsedRegisterMappings());
+                       B.getMaxUsedRegisterMappings());
     printDispatchUnitStatistics(OS);
     printSchedulerStatistics(OS);
     printRetireUnitStatistics(OS);
 
     std::vector<BufferUsageEntry> Usage;
     B.getBuffersUsage(Usage);
-    printSchedulerUsage(OS, B.getSchedModel(), Usage);
+    printSchedulerUsage(OS, STI.getSchedModel(), Usage);
   }
 };
 

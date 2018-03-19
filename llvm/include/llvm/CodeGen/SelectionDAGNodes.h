@@ -189,8 +189,10 @@ public:
   inline bool isUndef() const;
   inline unsigned getMachineOpcode() const;
   inline const DebugLoc &getDebugLoc() const;
-  inline void dump(const SelectionDAG *G = nullptr) const;
-  inline void dumpr(const SelectionDAG *G = nullptr) const;
+  inline void dump() const;
+  inline void dump(const SelectionDAG *G) const;
+  inline void dumpr() const;
+  inline void dumpr(const SelectionDAG *G) const;
 
   /// Return true if this operand (which must be a chain) reaches the
   /// specified operand without crossing any side-effecting instructions.
@@ -820,7 +822,7 @@ public:
       if (Found)
         return true;
       if (MaxSteps != 0 && Visited.size() >= MaxSteps)
-        return false;
+        return true;
     }
     return false;
   }
@@ -1093,8 +1095,16 @@ inline const DebugLoc &SDValue::getDebugLoc() const {
   return Node->getDebugLoc();
 }
 
+inline void SDValue::dump() const {
+  return Node->dump();
+}
+
 inline void SDValue::dump(const SelectionDAG *G) const {
   return Node->dump(G);
+}
+
+inline void SDValue::dumpr() const {
+  return Node->dumpr();
 }
 
 inline void SDValue::dumpr(const SelectionDAG *G) const {
@@ -1194,7 +1204,8 @@ public:
   /// encoding of the volatile flag, as well as bits used by subclasses. This
   /// function should only be used to compute a FoldingSetNodeID value.
   /// The HasDebugValue bit is masked out because CSE map needs to match
-  /// nodes with debug info with nodes without debug info.
+  /// nodes with debug info with nodes without debug info. Same is about
+  /// isDivergent bit.
   unsigned getRawSubclassData() const {
     uint16_t Data;
     union {
@@ -1203,6 +1214,7 @@ public:
     };
     memcpy(&RawSDNodeBits, &this->RawSDNodeBits, sizeof(this->RawSDNodeBits));
     SDNodeBits.HasDebugValue = 0;
+    SDNodeBits.IsDivergent = false;
     memcpy(&Data, &RawSDNodeBits, sizeof(RawSDNodeBits));
     return Data;
   }

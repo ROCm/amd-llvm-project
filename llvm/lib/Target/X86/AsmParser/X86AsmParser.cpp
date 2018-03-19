@@ -1383,6 +1383,7 @@ bool X86AsmParser::ParseIntelExpression(IntelExprStateMachine &SM, SMLoc &End) {
       if (ParseIntelDotOperator(SM, End))
         return true;
       break;
+    case AsmToken::At:
     case AsmToken::String:
     case AsmToken::Identifier: {
       SMLoc IdentLoc = Tok.getLoc();
@@ -1390,7 +1391,7 @@ bool X86AsmParser::ParseIntelExpression(IntelExprStateMachine &SM, SMLoc &End) {
       UpdateLocLex = false;
       // Register
       unsigned Reg;
-      if (Tok.isNot(AsmToken::String) && !ParseRegister(Reg, IdentLoc, End)) {
+      if (Tok.is(AsmToken::Identifier) && !ParseRegister(Reg, IdentLoc, End)) {
         if (SM.onRegister(Reg, ErrMsg))
           return Error(Tok.getLoc(), ErrMsg);
         break;
@@ -1428,6 +1429,9 @@ bool X86AsmParser::ParseIntelExpression(IntelExprStateMachine &SM, SMLoc &End) {
         break;
       }
       // MS InlineAsm identifier
+      // Call parseIdentifier() to combine @ with the identifier behind it.
+      if (TK == AsmToken::At && Parser.parseIdentifier(Identifier))
+        return Error(IdentLoc, "expected identifier");
       if (ParseIntelInlineAsmIdentifier(Val, Identifier, Info, false, End))
         return true;
       else if (SM.onIdentifierExpr(Val, Identifier, Info, true, ErrMsg))
@@ -2349,21 +2353,22 @@ bool X86AsmParser::ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
                       .Cases("acquire", "release", isParsingIntelSyntax())
                       .Default(false);
 
-  auto isLockRepeatPrefix = [](StringRef N) {
+  auto isLockRepeatNtPrefix = [](StringRef N) {
     return StringSwitch<bool>(N)
-        .Cases("lock", "rep", "repe", "repz", "repne", "repnz", true)
+        .Cases("lock", "rep", "repe", "repz", "repne", "repnz", "notrack", true)
         .Default(false);
   };
 
   bool CurlyAsEndOfStatement = false;
 
   unsigned Flags = X86::IP_NO_PREFIX;
-  while (isLockRepeatPrefix(Name.lower())) {
+  while (isLockRepeatNtPrefix(Name.lower())) {
     unsigned Prefix =
         StringSwitch<unsigned>(Name)
             .Cases("lock", "lock", X86::IP_HAS_LOCK)
             .Cases("rep", "repe", "repz", X86::IP_HAS_REPEAT)
             .Cases("repne", "repnz", X86::IP_HAS_REPEAT_NE)
+            .Cases("notrack", "notrack", X86::IP_HAS_NOTRACK)
             .Default(X86::IP_NO_PREFIX); // Invalid prefix (impossible)
     Flags |= Prefix;
     if (getLexer().is(AsmToken::EndOfStatement)) {
