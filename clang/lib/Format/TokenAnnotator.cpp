@@ -701,7 +701,8 @@ private:
         else
           Tok->Type = TT_InheritanceColon;
       } else if (Tok->Previous->is(tok::identifier) && Tok->Next &&
-                 Tok->Next->isOneOf(tok::r_paren, tok::comma)) {
+                 (Tok->Next->isOneOf(tok::r_paren, tok::comma) ||
+                  Tok->Next->startsSequence(tok::identifier, tok::colon))) {
         // This handles a special macro in ObjC code where selectors including
         // the colon are passed as macro arguments.
         Tok->Type = TT_ObjCMethodExpr;
@@ -2614,8 +2615,10 @@ bool TokenAnnotator::spaceRequiredBefore(const AnnotatedLine &Line,
   if (Line.Type == LT_ObjCMethodDecl) {
     if (Left.is(TT_ObjCMethodSpecifier))
       return true;
-    if (Left.is(tok::r_paren) && Right.is(tok::identifier))
-      // Don't space between ')' and <id>
+    if (Left.is(tok::r_paren) && Right.isOneOf(tok::identifier, tok::kw_new))
+      // Don't space between ')' and <id> or ')' and 'new'. 'new' is not a
+      // keyword in Objective-C, and '+ (instancetype)new;' is a standard class
+      // method declaration.
       return false;
   }
   if (Line.Type == LT_ObjCProperty &&

@@ -1101,6 +1101,10 @@ public:
     /// with the ARC __strong qualifier.
     PDIK_ARCStrong,
 
+    /// The type is an Objective-C retainable pointer type that is qualified
+    /// with the ARC __weak qualifier.
+    PDIK_ARCWeak,
+
     /// The type is a struct containing a field whose type is not PCK_Trivial.
     PDIK_Struct
   };
@@ -1128,6 +1132,10 @@ public:
     /// with the ARC __strong qualifier.
     PCK_ARCStrong,
 
+    /// The type is an Objective-C retainable pointer type that is qualified
+    /// with the ARC __weak qualifier.
+    PCK_ARCWeak,
+
     /// The type is a struct containing a field whose type is neither
     /// PCK_Trivial nor PCK_VolatileTrivial.
     /// Note that a C++ struct type does not necessarily match this; C++ copying
@@ -1149,6 +1157,8 @@ public:
   /// after it is moved, as opposed to a truly destructive move in which the
   /// source object is placed in an uninitialized state.
   PrimitiveCopyKind isNonTrivialToPrimitiveDestructiveMove() const;
+
+  bool canPassInRegisters() const;
 
   enum DestructionKind {
     DK_none,

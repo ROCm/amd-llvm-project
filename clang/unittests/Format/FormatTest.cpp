@@ -276,7 +276,6 @@ TEST_F(FormatTest, RemovesEmptyLines) {
                    "\n"
                    "}"));
 
-  // FIXME: This is slightly inconsistent.
   FormatStyle LLVMWithNoNamespaceFix = getLLVMStyle();
   LLVMWithNoNamespaceFix.FixNamespaceComments = false;
   EXPECT_EQ("namespace {\n"
@@ -295,12 +294,25 @@ TEST_F(FormatTest, RemovesEmptyLines) {
                    "}"));
   EXPECT_EQ("namespace {\n"
             "int i;\n"
-            "\n"
+            "};",
+            format("namespace {\n"
+                   "int i;\n"
+                   "\n"
+                   "};"));
+  EXPECT_EQ("namespace {\n"
+            "int i;\n"
             "} // namespace",
             format("namespace {\n"
                    "int i;\n"
                    "\n"
                    "}  // namespace"));
+  EXPECT_EQ("namespace {\n"
+            "int i;\n"
+            "}; // namespace",
+            format("namespace {\n"
+                   "int i;\n"
+                   "\n"
+                   "};  // namespace"));
 
   FormatStyle Style = getLLVMStyle();
   Style.AllowShortFunctionsOnASingleLine = FormatStyle::SFS_All;
@@ -12096,6 +12108,12 @@ TEST_F(FormatTest, FileAndCode) {
   EXPECT_EQ(FormatStyle::LK_ObjC, guessLanguage("foo.h", "@interface Foo\n@end\n"));
   EXPECT_EQ(FormatStyle::LK_Cpp, guessLanguage("foo", ""));
   EXPECT_EQ(FormatStyle::LK_ObjC, guessLanguage("foo", "@interface Foo\n@end\n"));
+  EXPECT_EQ(FormatStyle::LK_ObjC,
+            guessLanguage("foo.h", "int DoStuff(CGRect rect);\n"));
+  EXPECT_EQ(
+      FormatStyle::LK_ObjC,
+      guessLanguage("foo.h",
+                    "#define MY_POINT_MAKE(x, y) CGPointMake((x), (y));\n"));
 }
 
 TEST_F(FormatTest, GuessLanguageWithCpp11AttributeSpecifiers) {

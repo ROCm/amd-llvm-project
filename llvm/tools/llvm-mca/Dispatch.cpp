@@ -45,7 +45,8 @@ void RegisterFile::addRegisterFile(ArrayRef<unsigned> RegisterClasses,
   }
 }
 
-void RegisterFile::createNewMappings(unsigned RegisterFileMask) {
+void RegisterFile::createNewMappings(unsigned RegisterFileMask,
+                                     MutableArrayRef<unsigned> UsedPhysRegs) {
   assert(RegisterFileMask && "RegisterFileMask cannot be zero!");
   // Notify each register file that contains RegID.
   do {
@@ -53,13 +54,13 @@ void RegisterFile::createNewMappings(unsigned RegisterFileMask) {
     unsigned RegisterFileIndex = llvm::countTrailingZeros(NextRegisterFile);
     RegisterMappingTracker &RMT = RegisterFiles[RegisterFileIndex];
     RMT.NumUsedMappings++;
-    RMT.MaxUsedMappings = std::max(RMT.MaxUsedMappings, RMT.NumUsedMappings);
-    RMT.TotalMappingsCreated++;
+    UsedPhysRegs[RegisterFileIndex]++;
     RegisterFileMask ^= NextRegisterFile;
   } while (RegisterFileMask);
 }
 
-void RegisterFile::removeMappings(unsigned RegisterFileMask) {
+void RegisterFile::removeMappings(unsigned RegisterFileMask,
+                                  MutableArrayRef<unsigned> FreedPhysRegs) {
   assert(RegisterFileMask && "RegisterFileMask cannot be zero!");
   // Notify each register file that contains RegID.
   do {
@@ -68,11 +69,13 @@ void RegisterFile::removeMappings(unsigned RegisterFileMask) {
     RegisterMappingTracker &RMT = RegisterFiles[RegisterFileIndex];
     assert(RMT.NumUsedMappings);
     RMT.NumUsedMappings--;
+    FreedPhysRegs[RegisterFileIndex]++;
     RegisterFileMask ^= NextRegisterFile;
   } while (RegisterFileMask);
 }
 
-void RegisterFile::addRegisterMapping(WriteState &WS) {
+void RegisterFile::addRegisterMapping(WriteState &WS,
+                                      MutableArrayRef<unsigned> UsedPhysRegs) {
   unsigned RegID = WS.getRegisterID();
   assert(RegID && "Adding an invalid register definition?");
 
@@ -81,7 +84,8 @@ void RegisterFile::addRegisterMapping(WriteState &WS) {
   for (MCSubRegIterator I(RegID, &MRI); I.isValid(); ++I)
     RegisterMappings[*I].first = &WS;
 
-  createNewMappings(Mapping.second);
+  createNewMappings(Mapping.second, UsedPhysRegs);
+
   // If this is a partial update, then we are done.
   if (!WS.fullyUpdatesSuperRegs())
     return;
@@ -90,7 +94,8 @@ void RegisterFile::addRegisterMapping(WriteState &WS) {
     RegisterMappings[*I].first = &WS;
 }
 
-void RegisterFile::invalidateRegisterMapping(const WriteState &WS) {
+void RegisterFile::invalidateRegisterMapping(
+    const WriteState &WS, MutableArrayRef<unsigned> FreedPhysRegs) {
   unsigned RegID = WS.getRegisterID();
   bool ShouldInvalidateSuperRegs = WS.fullyUpdatesSuperRegs();
 
@@ -102,7 +107,7 @@ void RegisterFile::invalidateRegisterMapping(const WriteState &WS) {
   if (!Mapping.first)
     return;
 
-  removeMappings(Mapping.second);
+  removeMappings(Mapping.second, FreedPhysRegs);
 
   if (Mapping.first == &WS)
     Mapping.first = nullptr;
@@ -117,17 +122,6 @@ void RegisterFile::invalidateRegisterMapping(const WriteState &WS) {
   for (MCSuperRegIterator I(RegID, &MRI); I.isValid(); ++I)
     if (RegisterMappings[*I].first == &WS)
       RegisterMappings[*I].first = nullptr;
-}
-
-// Update the number of used mappings in the event of instruction retired.
-// This mehod delegates to the register file the task of invalidating
-// register mappings that were created for instruction IS.
-void DispatchUnit::invalidateRegisterMappings(const Instruction &IS) {
-  for (const std::unique_ptr<WriteState> &WS : IS.getDefs()) {
-    DEBUG(dbgs() << "[RAT] Invalidating mapping for: ");
-    DEBUG(WS->dump());
-    RAT->invalidateRegisterMapping(*WS.get());
-  }
 }
 
 void RegisterFile::collectWrites(SmallVectorImpl<WriteState *> &Writes,
@@ -150,7 +144,7 @@ void RegisterFile::collectWrites(SmallVectorImpl<WriteState *> &Writes,
   }
 }
 
-unsigned RegisterFile::isAvailable(const ArrayRef<unsigned> Regs) const {
+unsigned RegisterFile::isAvailable(ArrayRef<unsigned> Regs) const {
   SmallVector<unsigned, 4> NumTemporaries(getNumRegisterFiles());
 
   // Find how many new mappings must be created for each register file.
@@ -207,8 +201,6 @@ void RegisterFile::dump() const {
     dbgs() << "Register File #" << I;
     const RegisterMappingTracker &RMT = RegisterFiles[I];
     dbgs() << "\n  TotalMappings:        " << RMT.TotalMappings
-           << "\n  TotalMappingsCreated: " << RMT.TotalMappingsCreated
-           << "\n  MaxUsedMappings:      " << RMT.MaxUsedMappings
            << "\n  NumUsedMappings:      " << RMT.NumUsedMappings << '\n';
   }
 }
@@ -231,19 +223,20 @@ unsigned RetireControlUnit::reserveSlot(unsigned Index, unsigned NumMicroOps) {
   return TokenID;
 }
 
-void DispatchUnit::notifyInstructionDispatched(unsigned Index) {
+void DispatchUnit::notifyInstructionDispatched(
+    unsigned Index, ArrayRef<unsigned> UsedRegs) {
   DEBUG(dbgs() << "[E] Instruction Dispatched: " << Index << '\n');
-  Owner->notifyInstructionEvent(
-      HWInstructionEvent(HWInstructionEvent::Dispatched, Index));
+  Owner->notifyInstructionEvent(HWInstructionDispatchedEvent(Index, UsedRegs));
 }
 
 void DispatchUnit::notifyInstructionRetired(unsigned Index) {
   DEBUG(dbgs() << "[E] Instruction Retired: " << Index << '\n');
-  Owner->notifyInstructionEvent(
-      HWInstructionEvent(HWInstructionEvent::Retired, Index));
-
   const Instruction &IS = Owner->getInstruction(Index);
-  invalidateRegisterMappings(IS);
+  SmallVector<unsigned, 4> FreedRegs(RAT->getNumRegisterFiles());
+  for (const std::unique_ptr<WriteState> &WS : IS.getDefs())
+    RAT->invalidateRegisterMapping(*WS.get(), FreedRegs);
+
+  Owner->notifyInstructionEvent(HWInstructionRetiredEvent(Index, FreedRegs));
   Owner->eraseInstruction(Index);
 }
 
@@ -280,56 +273,50 @@ void RetireControlUnit::dump() const {
 }
 #endif
 
-bool DispatchUnit::checkRAT(const Instruction &Instr) {
-  // Collect register definitions from the WriteStates.
-  SmallVector<unsigned, 8> RegDefs;
-
-  for (const std::unique_ptr<WriteState> &Def : Instr.getDefs())
-    RegDefs.push_back(Def->getRegisterID());
-
-  unsigned RegisterMask = RAT->isAvailable(RegDefs);
+bool DispatchUnit::checkRAT(unsigned Index, const Instruction &Instr) {
+  const InstrDesc &Desc = Instr.getDesc();
+  unsigned NumWrites = Desc.Writes.size();
+  unsigned RegisterMask = RAT->isAvailable(NumWrites);
   // A mask with all zeroes means: register files are available.
   if (RegisterMask) {
-    // TODO: We currently implement a single hardware counter for all the
-    // dispatch stalls caused by the unavailability of registers in one of the
-    // register files.  In future, we want to let register files directly notify
-    // hardware listeners in the event of a dispatch stall.  This would simplify
-    // the logic in Dispatch.[h/cpp], and move all the "hardware counting logic"
-    // into a View (for example: BackendStatistics).
-    DispatchStalls[DS_RAT_REG_UNAVAILABLE]++;
+    Owner->notifyStallEvent(
+        HWStallEvent(HWStallEvent::RegisterFileStall, Index));
     return false;
   }
 
   return true;
 }
 
-bool DispatchUnit::checkRCU(const InstrDesc &Desc) {
+bool DispatchUnit::checkRCU(unsigned Index, const InstrDesc &Desc) {
   unsigned NumMicroOps = Desc.NumMicroOps;
   if (RCU->isAvailable(NumMicroOps))
     return true;
-  DispatchStalls[DS_RCU_TOKEN_UNAVAILABLE]++;
+  Owner->notifyStallEvent(
+      HWStallEvent(HWStallEvent::RetireControlUnitStall, Index));
   return false;
 }
 
-bool DispatchUnit::checkScheduler(const InstrDesc &Desc) {
+bool DispatchUnit::checkScheduler(unsigned Index, const InstrDesc &Desc) {
   // If this is a zero-latency instruction, then it bypasses
   // the scheduler.
+  HWStallEvent::GenericEventType Type = HWStallEvent::Invalid;
   switch (SC->canBeDispatched(Desc)) {
   case Scheduler::HWS_AVAILABLE:
     return true;
   case Scheduler::HWS_QUEUE_UNAVAILABLE:
-    DispatchStalls[DS_SQ_TOKEN_UNAVAILABLE]++;
+    Type = HWStallEvent::SchedulerQueueFull;
     break;
   case Scheduler::HWS_LD_QUEUE_UNAVAILABLE:
-    DispatchStalls[DS_LDQ_TOKEN_UNAVAILABLE]++;
+    Type = HWStallEvent::LoadQueueFull;
     break;
   case Scheduler::HWS_ST_QUEUE_UNAVAILABLE:
-    DispatchStalls[DS_STQ_TOKEN_UNAVAILABLE]++;
+    Type = HWStallEvent::StoreQueueFull;
     break;
   case Scheduler::HWS_DISPATCH_GROUP_RESTRICTION:
-    DispatchStalls[DS_DISPATCH_GROUP_RESTRICTION]++;
+    Type = HWStallEvent::DispatchGroupStall;
   }
 
+  Owner->notifyStallEvent(HWStallEvent(Type, Index));
   return false;
 }
 
@@ -379,8 +366,9 @@ unsigned DispatchUnit::dispatch(unsigned IID, Instruction *NewInst,
     updateRAWDependencies(*RS, STI);
 
   // Allocate new mappings.
+  SmallVector<unsigned, 4> RegisterFiles(RAT->getNumRegisterFiles());
   for (std::unique_ptr<WriteState> &WS : NewInst->getDefs())
-    addNewRegisterMapping(*WS);
+    RAT->addRegisterMapping(*WS, RegisterFiles);
 
   // Set the cycles left before the write-back stage.
   const InstrDesc &D = NewInst->getDesc();
@@ -389,9 +377,9 @@ unsigned DispatchUnit::dispatch(unsigned IID, Instruction *NewInst,
   // Reserve slots in the RCU.
   unsigned RCUTokenID = RCU->reserveSlot(IID, NumMicroOps);
   NewInst->setRCUTokenID(RCUTokenID);
-  notifyInstructionDispatched(IID);
+  notifyInstructionDispatched(IID, RegisterFiles);
 
-  SC->scheduleInstruction(IID, NewInst);
+  SC->scheduleInstruction(IID, *NewInst);
   return RCUTokenID;
 }
 
@@ -399,16 +387,6 @@ unsigned DispatchUnit::dispatch(unsigned IID, Instruction *NewInst,
 void DispatchUnit::dump() const {
   RAT->dump();
   RCU->dump();
-
-  unsigned DSRAT = DispatchStalls[DS_RAT_REG_UNAVAILABLE];
-  unsigned DSRCU = DispatchStalls[DS_RCU_TOKEN_UNAVAILABLE];
-  unsigned DSSCHEDQ = DispatchStalls[DS_SQ_TOKEN_UNAVAILABLE];
-  unsigned DSLQ = DispatchStalls[DS_LDQ_TOKEN_UNAVAILABLE];
-  unsigned DSSQ = DispatchStalls[DS_STQ_TOKEN_UNAVAILABLE];
-
-  dbgs() << "STALLS --- RAT: " << DSRAT << ", RCU: " << DSRCU
-         << ", SCHED_QUEUE: " << DSSCHEDQ << ", LOAD_QUEUE: " << DSLQ
-         << ", STORE_QUEUE: " << DSSQ << '\n';
 }
 #endif
 

@@ -709,8 +709,8 @@ define <16 x i8> @test_pblendvb(<16 x i8> %a0, <16 x i8> %a1, <16 x i8> %a2, <16
 ; GENERIC:       # %bb.0:
 ; GENERIC-NEXT:    movdqa %xmm0, %xmm3 # sched: [1:0.33]
 ; GENERIC-NEXT:    movaps %xmm2, %xmm0 # sched: [1:1.00]
-; GENERIC-NEXT:    pblendvb %xmm0, %xmm1, %xmm3 # sched: [8:1.00]
-; GENERIC-NEXT:    pblendvb %xmm0, (%rdi), %xmm3 # sched: [6:1.00]
+; GENERIC-NEXT:    pblendvb %xmm0, %xmm1, %xmm3 # sched: [2:1.00]
+; GENERIC-NEXT:    pblendvb %xmm0, (%rdi), %xmm3 # sched: [8:1.00]
 ; GENERIC-NEXT:    movdqa %xmm3, %xmm0 # sched: [1:0.33]
 ; GENERIC-NEXT:    retq # sched: [1:1.00]
 ;
@@ -2853,14 +2853,14 @@ define <4 x i32> @test_pmulld(<4 x i32> %a0, <4 x i32> %a1, <4 x i32> *%a2) {
 ;
 ; SKYLAKE-LABEL: test_pmulld:
 ; SKYLAKE:       # %bb.0:
-; SKYLAKE-NEXT:    vpmulld %xmm1, %xmm0, %xmm0 # sched: [8:0.67]
-; SKYLAKE-NEXT:    vpmulld (%rdi), %xmm0, %xmm0 # sched: [14:0.67]
+; SKYLAKE-NEXT:    vpmulld %xmm1, %xmm0, %xmm0 # sched: [10:1.00]
+; SKYLAKE-NEXT:    vpmulld (%rdi), %xmm0, %xmm0 # sched: [16:1.00]
 ; SKYLAKE-NEXT:    retq # sched: [7:1.00]
 ;
 ; SKX-LABEL: test_pmulld:
 ; SKX:       # %bb.0:
-; SKX-NEXT:    vpmulld %xmm1, %xmm0, %xmm0 # sched: [8:0.67]
-; SKX-NEXT:    vpmulld (%rdi), %xmm0, %xmm0 # sched: [14:0.67]
+; SKX-NEXT:    vpmulld %xmm1, %xmm0, %xmm0 # sched: [10:0.67]
+; SKX-NEXT:    vpmulld (%rdi), %xmm0, %xmm0 # sched: [16:0.67]
 ; SKX-NEXT:    retq # sched: [7:1.00]
 ;
 ; BTVER2-LABEL: test_pmulld:

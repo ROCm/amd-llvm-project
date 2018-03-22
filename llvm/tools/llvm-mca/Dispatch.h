@@ -43,14 +43,9 @@ class RegisterFile {
     const unsigned TotalMappings;
     // Number of mappings that are currently in use.
     unsigned NumUsedMappings;
-    // Maximum number of register mappings used.
-    unsigned MaxUsedMappings;
-    // Total number of mappings allocated during the entire execution.
-    unsigned TotalMappingsCreated;
 
     RegisterMappingTracker(unsigned NumMappings)
-        : TotalMappings(NumMappings), NumUsedMappings(0), MaxUsedMappings(0),
-          TotalMappingsCreated(0) {}
+        : TotalMappings(NumMappings), NumUsedMappings(0) {}
   };
 
   // This is where information related to the various register files is kept.
@@ -105,11 +100,13 @@ class RegisterFile {
 
   // Allocates a new register mapping in every register file specified by the
   // register file mask. This method is called from addRegisterMapping.
-  void createNewMappings(unsigned RegisterFileMask);
+  void createNewMappings(unsigned RegisterFileMask,
+                         llvm::MutableArrayRef<unsigned> UsedPhysRegs);
 
   // Removes a previously allocated mapping from each register file in the
   // RegisterFileMask set. This method is called from invalidateRegisterMapping.
-  void removeMappings(unsigned RegisterFileMask);
+  void removeMappings(unsigned RegisterFileMask,
+                      llvm::MutableArrayRef<unsigned> FreedPhysRegs);
 
 public:
   RegisterFile(const llvm::MCRegisterInfo &mri, unsigned TempRegs = 0)
@@ -121,12 +118,14 @@ public:
   // Creates a new register mapping for RegID.
   // This reserves a microarchitectural register in every register file that
   // contains RegID.
-  void addRegisterMapping(WriteState &WS);
+  void addRegisterMapping(WriteState &WS,
+                          llvm::MutableArrayRef<unsigned> UsedPhysRegs);
 
   // Invalidates register mappings associated to the input WriteState object.
   // This releases previously allocated mappings for the physical register
   // associated to the WriteState.
-  void invalidateRegisterMapping(const WriteState &WS);
+  void invalidateRegisterMapping(const WriteState &WS,
+                                 llvm::MutableArrayRef<unsigned> FreedPhysRegs);
 
   // Checks if there are enough microarchitectural registers in the register
   // files.  Returns a "response mask" where each bit is the response from a
@@ -134,20 +133,11 @@ public:
   // For example: if all register files are available, then the response mask
   // is a bitmask of all zeroes. If Instead register file #1 is not available,
   // then the response mask is 0b10.
-  unsigned isAvailable(const llvm::ArrayRef<unsigned> Regs) const;
+  unsigned isAvailable(llvm::ArrayRef<unsigned> Regs) const;
   void collectWrites(llvm::SmallVectorImpl<WriteState *> &Writes,
                      unsigned RegID) const;
   void updateOnRead(ReadState &RS, unsigned RegID);
-  unsigned getMaxUsedRegisterMappings(unsigned RegisterFileIndex) const {
-    assert(RegisterFileIndex < getNumRegisterFiles() &&
-           "Invalid register file index!");
-    return RegisterFiles[RegisterFileIndex].MaxUsedMappings;
-  }
-  unsigned getTotalRegisterMappingsCreated(unsigned RegisterFileIndex) const {
-    assert(RegisterFileIndex < getNumRegisterFiles() &&
-           "Invalid register file index!");
-    return RegisterFiles[RegisterFileIndex].TotalMappingsCreated;
-  }
+
   unsigned getNumRegisterFiles() const { return RegisterFiles.size(); }
 
 #ifndef NDEBUG
@@ -255,44 +245,12 @@ class DispatchUnit {
   std::unique_ptr<RetireControlUnit> RCU;
   Backend *Owner;
 
-  /// Dispatch stall event identifiers.
-  ///
-  /// The naming convention is:
-  /// * Event names starts with the "DS_" prefix
-  /// * For dynamic dispatch stalls, the "DS_" prefix is followed by the
-  ///   the unavailable resource/functional unit acronym (example: RAT)
-  /// * The last substring is the event reason (example: REG_UNAVAILABLE means
-  ///   that register renaming couldn't find enough spare registers in the
-  ///   register file).
-  ///
-  /// List of acronyms used for processor resoures:
-  /// RAT - Register Alias Table (used by the register renaming logic)
-  /// RCU - Retire Control Unit
-  /// SQ  - Scheduler's Queue
-  /// LDQ - Load Queue
-  /// STQ - Store Queue
-  enum {
-    DS_RAT_REG_UNAVAILABLE,
-    DS_RCU_TOKEN_UNAVAILABLE,
-    DS_SQ_TOKEN_UNAVAILABLE,
-    DS_LDQ_TOKEN_UNAVAILABLE,
-    DS_STQ_TOKEN_UNAVAILABLE,
-    DS_DISPATCH_GROUP_RESTRICTION,
-    DS_LAST
-  };
-
-  // The DispatchUnit track dispatch stall events caused by unavailable
-  // of hardware resources. Events are classified based on the stall kind;
-  // so we have a counter for every source of dispatch stall. Counters are
-  // stored into a vector `DispatchStall` which is always of size DS_LAST.
-  std::vector<unsigned> DispatchStalls;
-
-  bool checkRAT(const Instruction &Desc);
-  bool checkRCU(const InstrDesc &Desc);
-  bool checkScheduler(const InstrDesc &Desc);
+  bool checkRAT(unsigned Index, const Instruction &Desc);
+  bool checkRCU(unsigned Index, const InstrDesc &Desc);
+  bool checkScheduler(unsigned Index, const InstrDesc &Desc);
 
   void updateRAWDependencies(ReadState &RS, const llvm::MCSubtargetInfo &STI);
-  void notifyInstructionDispatched(unsigned IID);
+  void notifyInstructionDispatched(unsigned IID, llvm::ArrayRef<unsigned> UsedPhysRegs);
 
 public:
   DispatchUnit(Backend *B, const llvm::MCRegisterInfo &MRI,
@@ -304,7 +262,7 @@ public:
         RAT(llvm::make_unique<RegisterFile>(MRI, RegisterFileSize)),
         RCU(llvm::make_unique<RetireControlUnit>(MicroOpBufferSize,
                                                  MaxRetirePerCycle, this)),
-        Owner(B), DispatchStalls(DS_LAST, 0) {}
+        Owner(B) {}
 
   unsigned getDispatchWidth() const { return DispatchWidth; }
 
@@ -314,10 +272,11 @@ public:
 
   bool isRCUEmpty() const { return RCU->isEmpty(); }
 
-  bool canDispatch(const Instruction &Inst) {
+  bool canDispatch(unsigned Index, const Instruction &Inst) {
     const InstrDesc &Desc = Inst.getDesc();
     assert(isAvailable(Desc.NumMicroOps));
-    return checkRCU(Desc) && checkRAT(Inst) && checkScheduler(Desc);
+    return checkRCU(Index, Desc) && checkRAT(Index, Inst) &&
+           checkScheduler(Index, Desc);
   }
 
   unsigned dispatch(unsigned IID, Instruction *NewInst,
@@ -327,31 +286,6 @@ public:
                      unsigned RegID) const {
     return RAT->collectWrites(Vec, RegID);
   }
-  unsigned getNumRATStalls() const {
-    return DispatchStalls[DS_RAT_REG_UNAVAILABLE];
-  }
-  unsigned getNumRCUStalls() const {
-    return DispatchStalls[DS_RCU_TOKEN_UNAVAILABLE];
-  }
-  unsigned getNumSQStalls() const {
-    return DispatchStalls[DS_SQ_TOKEN_UNAVAILABLE];
-  }
-  unsigned getNumLDQStalls() const {
-    return DispatchStalls[DS_LDQ_TOKEN_UNAVAILABLE];
-  }
-  unsigned getNumSTQStalls() const {
-    return DispatchStalls[DS_STQ_TOKEN_UNAVAILABLE];
-  }
-  unsigned getNumDispatchGroupStalls() const {
-    return DispatchStalls[DS_DISPATCH_GROUP_RESTRICTION];
-  }
-  unsigned getMaxUsedRegisterMappings(unsigned RegFileIndex = 0) const {
-    return RAT->getMaxUsedRegisterMappings(RegFileIndex);
-  }
-  unsigned getTotalRegisterMappingsCreated(unsigned RegFileIndex = 0) const {
-    return RAT->getTotalRegisterMappingsCreated(RegFileIndex);
-  }
-  void addNewRegisterMapping(WriteState &WS) { RAT->addRegisterMapping(WS); }
 
   void cycleEvent(unsigned Cycle) {
     RCU->cycleEvent();
@@ -362,11 +296,12 @@ public:
 
   void notifyInstructionRetired(unsigned Index);
 
+  void notifyDispatchStall(unsigned Index, unsigned EventType);
+
   void onInstructionExecuted(unsigned TokenID) {
     RCU->onInstructionExecuted(TokenID);
   }
 
-  void invalidateRegisterMappings(const Instruction &Inst);
 #ifndef NDEBUG
   void dump() const;
 #endif
