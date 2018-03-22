@@ -48,7 +48,7 @@ const uptr kMaxThreadStackSize = 1 << 30;  // 1Gb
 static const uptr kErrorMessageBufferSize = 1 << 16;
 
 // Denotes fake PC values that come from JIT/JAVA/etc.
-// For such PC values __tsan_symbolize_external() will be called.
+// For such PC values __tsan_symbolize_external_ex() will be called.
 const u64 kExternalPCBit = 1ULL << 60;
 
 extern const char *SanitizerToolName;  // Can be changed by the tool.
@@ -377,6 +377,8 @@ void ReportErrorSummary(const char *error_type, const AddressInfo &info,
 // Same as above, but obtains AddressInfo by symbolizing top stack trace frame.
 void ReportErrorSummary(const char *error_type, const StackTrace *trace,
                         const char *alt_tool_name = nullptr);
+
+void ReportMmapWriteExec();
 
 // Math
 #if SANITIZER_WINDOWS && !defined(__clang__) && !defined(__GNUC__)

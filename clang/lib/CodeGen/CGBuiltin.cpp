@@ -2611,11 +2611,12 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
   case Builtin::BI__builtin_addressof:
     return RValue::get(EmitLValue(E->getArg(0)).getPointer());
   case Builtin::BI__builtin_operator_new:
-    return EmitBuiltinNewDeleteCall(FD->getType()->castAs<FunctionProtoType>(),
-                                    E->getArg(0), false);
+    return EmitBuiltinNewDeleteCall(
+        E->getCallee()->getType()->castAs<FunctionProtoType>(), E, false);
   case Builtin::BI__builtin_operator_delete:
-    return EmitBuiltinNewDeleteCall(FD->getType()->castAs<FunctionProtoType>(),
-                                    E->getArg(0), true);
+    return EmitBuiltinNewDeleteCall(
+        E->getCallee()->getType()->castAs<FunctionProtoType>(), E, true);
+
   case Builtin::BI__noop:
     // __noop always evaluates to an integer literal zero.
     return RValue::get(ConstantInt::get(IntTy, 0));
@@ -7238,6 +7239,16 @@ Value *CodeGenFunction::EmitAArch64BuiltinExpr(unsigned BuiltinID,
     Int = Intrinsic::aarch64_neon_fmulx;
     return EmitNeonCall(CGM.getIntrinsic(Int, Ty), Ops, "vmulx");
   }
+  case NEON::BI__builtin_neon_vmulxh_lane_f16:
+  case NEON::BI__builtin_neon_vmulxh_laneq_f16: {
+    // vmulx_lane should be mapped to Neon scalar mulx after
+    // extracting the scalar element
+    Ops.push_back(EmitScalarExpr(E->getArg(2)));
+    Ops[1] = Builder.CreateExtractElement(Ops[1], Ops[2], "extract");
+    Ops.pop_back();
+    Int = Intrinsic::aarch64_neon_fmulx;
+    return EmitNeonCall(CGM.getIntrinsic(Int, HalfTy), Ops, "vmulx");
+  }
   case NEON::BI__builtin_neon_vmul_lane_v:
   case NEON::BI__builtin_neon_vmul_laneq_v: {
     // v1f64 vmul_lane should be mapped to Neon scalar mul lane
@@ -10504,31 +10515,30 @@ Value *CodeGenFunction::EmitNVPTXBuiltinExpr(unsigned BuiltinID,
     unsigned NumResults;
     switch (BuiltinID) {
     case NVPTX::BI__hmma_m16n16k16_ld_a:
-      IID = isColMajor ? Intrinsic::nvvm_wmma_load_a_f16_col_stride
-                       : Intrinsic::nvvm_wmma_load_a_f16_row_stride;
+      IID = isColMajor ? Intrinsic::nvvm_wmma_m16n16k16_load_a_f16_col_stride
+                       : Intrinsic::nvvm_wmma_m16n16k16_load_a_f16_row_stride;
       NumResults = 8;
       break;
     case NVPTX::BI__hmma_m16n16k16_ld_b:
-      IID = isColMajor ? Intrinsic::nvvm_wmma_load_b_f16_col_stride
-                       : Intrinsic::nvvm_wmma_load_b_f16_row_stride;
+      IID = isColMajor ? Intrinsic::nvvm_wmma_m16n16k16_load_b_f16_col_stride
+                       : Intrinsic::nvvm_wmma_m16n16k16_load_b_f16_row_stride;
       NumResults = 8;
       break;
     case NVPTX::BI__hmma_m16n16k16_ld_c_f16:
-      IID = isColMajor ? Intrinsic::nvvm_wmma_load_c_f16_col_stride
-                       : Intrinsic::nvvm_wmma_load_c_f16_row_stride;
+      IID = isColMajor ? Intrinsic::nvvm_wmma_m16n16k16_load_c_f16_col_stride
+                       : Intrinsic::nvvm_wmma_m16n16k16_load_c_f16_row_stride;
       NumResults = 4;
       break;
     case NVPTX::BI__hmma_m16n16k16_ld_c_f32:
-      IID = isColMajor ? Intrinsic::nvvm_wmma_load_c_f32_col_stride
-                       : Intrinsic::nvvm_wmma_load_c_f32_row_stride;
+      IID = isColMajor ? Intrinsic::nvvm_wmma_m16n16k16_load_c_f32_col_stride
+                       : Intrinsic::nvvm_wmma_m16n16k16_load_c_f32_row_stride;
       NumResults = 8;
       break;
     default:
       llvm_unreachable("Unexpected builtin ID.");
     }
     Value *Result =
-        Builder.CreateCall(CGM.getIntrinsic(IID),
-                           {Builder.CreatePointerCast(Src, VoidPtrTy), Ldm});
+        Builder.CreateCall(CGM.getIntrinsic(IID, Src->getType()), {Src, Ldm});
 
     // Save returned values.
     for (unsigned i = 0; i < NumResults; ++i) {
@@ -10556,21 +10566,20 @@ Value *CodeGenFunction::EmitNVPTXBuiltinExpr(unsigned BuiltinID,
     // for some reason nvcc builtins use _c_.
     switch (BuiltinID) {
     case NVPTX::BI__hmma_m16n16k16_st_c_f16:
-      IID = isColMajor ? Intrinsic::nvvm_wmma_store_d_f16_col_stride
-                       : Intrinsic::nvvm_wmma_store_d_f16_row_stride;
+      IID = isColMajor ? Intrinsic::nvvm_wmma_m16n16k16_store_d_f16_col_stride
+                       : Intrinsic::nvvm_wmma_m16n16k16_store_d_f16_row_stride;
       NumResults = 4;
       break;
     case NVPTX::BI__hmma_m16n16k16_st_c_f32:
-      IID = isColMajor ? Intrinsic::nvvm_wmma_store_d_f32_col_stride
-                       : Intrinsic::nvvm_wmma_store_d_f32_row_stride;
+      IID = isColMajor ? Intrinsic::nvvm_wmma_m16n16k16_store_d_f32_col_stride
+                       : Intrinsic::nvvm_wmma_m16n16k16_store_d_f32_row_stride;
       break;
     default:
       llvm_unreachable("Unexpected builtin ID.");
     }
-    Function *Intrinsic = CGM.getIntrinsic(IID);
+    Function *Intrinsic = CGM.getIntrinsic(IID, Dst->getType());
     llvm::Type *ParamType = Intrinsic->getFunctionType()->getParamType(1);
-    SmallVector<Value *, 10> Values;
-    Values.push_back(Builder.CreatePointerCast(Dst, VoidPtrTy));
+    SmallVector<Value *, 10> Values = {Dst};
     for (unsigned i = 0; i < NumResults; ++i) {
       Value *V = Builder.CreateAlignedLoad(
           Builder.CreateGEP(Src.getPointer(), llvm::ConstantInt::get(IntTy, i)),
@@ -10582,8 +10591,8 @@ Value *CodeGenFunction::EmitNVPTXBuiltinExpr(unsigned BuiltinID,
     return Result;
   }
 
-  // BI__hmma_m16n16k16_mma_<Dtype><CType>(d, a, b, c, layout, satf)
-  //  --> Intrinsic::nvvm_wmma_mma_sync<layout A,B><DType><CType><Satf>
+  // BI__hmma_m16n16k16_mma_<Dtype><CType>(d, a, b, c, layout, satf) -->
+  // Intrinsic::nvvm_wmma_m16n16k16_mma_sync<layout A,B><DType><CType><Satf>
   case NVPTX::BI__hmma_m16n16k16_mma_f16f16:
   case NVPTX::BI__hmma_m16n16k16_mma_f32f16:
   case NVPTX::BI__hmma_m16n16k16_mma_f32f32:
@@ -10604,15 +10613,15 @@ Value *CodeGenFunction::EmitNVPTXBuiltinExpr(unsigned BuiltinID,
     bool Satf = SatfArg.getSExtValue();
 
     // clang-format off
-#define MMA_VARIANTS(type) {{                                   \
-      Intrinsic::nvvm_wmma_mma_sync_row_row_##type,             \
-      Intrinsic::nvvm_wmma_mma_sync_row_row_##type##_satfinite, \
-      Intrinsic::nvvm_wmma_mma_sync_row_col_##type,             \
-      Intrinsic::nvvm_wmma_mma_sync_row_col_##type##_satfinite, \
-      Intrinsic::nvvm_wmma_mma_sync_col_row_##type,             \
-      Intrinsic::nvvm_wmma_mma_sync_col_row_##type##_satfinite, \
-      Intrinsic::nvvm_wmma_mma_sync_col_col_##type,             \
-      Intrinsic::nvvm_wmma_mma_sync_col_col_##type##_satfinite  \
+#define MMA_VARIANTS(type) {{                                        \
+      Intrinsic::nvvm_wmma_m16n16k16_mma_row_row_##type,             \
+      Intrinsic::nvvm_wmma_m16n16k16_mma_row_row_##type##_satfinite, \
+      Intrinsic::nvvm_wmma_m16n16k16_mma_row_col_##type,             \
+      Intrinsic::nvvm_wmma_m16n16k16_mma_row_col_##type##_satfinite, \
+      Intrinsic::nvvm_wmma_m16n16k16_mma_col_row_##type,             \
+      Intrinsic::nvvm_wmma_m16n16k16_mma_col_row_##type##_satfinite, \
+      Intrinsic::nvvm_wmma_m16n16k16_mma_col_col_##type,             \
+      Intrinsic::nvvm_wmma_m16n16k16_mma_col_col_##type##_satfinite  \
     }}
     // clang-format on
 

@@ -72,7 +72,7 @@ public:
             this, MRI, Subtarget.getSchedModel().MicroOpBufferSize,
             RegisterFileSize, MaxRetirePerCycle, DispatchWidth, HWS.get())),
         SM(Source), Cycles(0) {
-    IB = llvm::make_unique<InstrBuilder>(MCII, HWS->getProcResourceMasks());
+    IB = llvm::make_unique<InstrBuilder>(Subtarget, MCII);
     HWS->setDispatchUnit(DU.get());
   }
 
@@ -88,21 +88,14 @@ public:
     return *It->second;
   }
   void eraseInstruction(unsigned Index) { Instructions.erase(Index); }
-  unsigned getTotalRegisterMappingsCreated() const {
-    return DU->getTotalRegisterMappingsCreated();
-  }
-  unsigned getMaxUsedRegisterMappings() const {
-    return DU->getMaxUsedRegisterMappings();
-  }
-  void getBuffersUsage(std::vector<BufferUsageEntry> &Usage) const {
-    return HWS->getBuffersUsage(Usage);
-  }
 
   void addEventListener(HWEventListener *Listener);
   void notifyCycleBegin(unsigned Cycle);
   void notifyInstructionEvent(const HWInstructionEvent &Event);
   void notifyStallEvent(const HWStallEvent &Event);
   void notifyResourceAvailable(const ResourceRef &RR);
+  void notifyReservedBuffers(llvm::ArrayRef<unsigned> Buffers);
+  void notifyReleasedBuffers(llvm::ArrayRef<unsigned> Buffers);
   void notifyCycleEnd(unsigned Cycle);
 };
 

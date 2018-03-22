@@ -28,6 +28,7 @@ public:
   virtual bool isPicRel(RelType Type) const { return true; }
   virtual RelType getDynRel(RelType Type) const { return Type; }
   virtual void writeGotPltHeader(uint8_t *Buf) const {}
+  virtual void writeGotHeader(uint8_t *Buf) const {}
   virtual void writeGotPlt(uint8_t *Buf, const Symbol &S) const {};
   virtual void writeIgotPlt(uint8_t *Buf, const Symbol &S) const;
   virtual int64_t getImplicitAddend(const uint8_t *Buf, RelType Type) const;
@@ -102,6 +103,9 @@ public:
   // to support lazy loading.
   unsigned GotPltHeaderEntriesNum = 3;
 
+  // On PPC ELF V2 abi, the first entry in the .got is the .TOC.
+  unsigned GotHeaderEntriesNum = 0;
+
   // Set to 0 for variant 2
   unsigned TcbSize = 0;
 
@@ -139,7 +143,17 @@ TargetInfo *getX86TargetInfo();
 TargetInfo *getX86_64TargetInfo();
 template <class ELFT> TargetInfo *getMipsTargetInfo();
 
-std::string getErrorLocation(const uint8_t *Loc);
+struct ErrorPlace {
+  InputSectionBase *IS;
+  std::string Loc;
+};
+
+// Returns input section and corresponding source string for the given location.
+ErrorPlace getErrorPlace(const uint8_t *Loc);
+
+static inline std::string getErrorLocation(const uint8_t *Loc) {
+  return getErrorPlace(Loc).Loc;
+}
 
 uint64_t getPPC64TocBase();
 uint64_t getAArch64Page(uint64_t Expr);
@@ -151,9 +165,15 @@ template <class ELFT> bool isMipsPIC(const Defined *Sym);
 
 static inline void reportRangeError(uint8_t *Loc, RelType Type, const Twine &V,
                                     int64_t Min, uint64_t Max) {
-  error(getErrorLocation(Loc) + "relocation " + lld::toString(Type) +
-        " out of range: " + V + " is not in [" + Twine(Min) + ", " +
-        Twine(Max) + "]");
+  ErrorPlace ErrPlace = getErrorPlace(Loc);
+  StringRef Hint;
+  if (ErrPlace.IS && ErrPlace.IS->Name.startswith(".debug"))
+    Hint = "; consider recompiling with -fdebug-types-section to reduce size "
+           "of debug sections";
+
+  error(ErrPlace.Loc + "relocation " + lld::toString(Type) +
+        " out of range: " + V.str() + " is not in [" + Twine(Min).str() + ", " +
+        Twine(Max).str() + "]" + Hint);
 }
 
 template <unsigned N>
