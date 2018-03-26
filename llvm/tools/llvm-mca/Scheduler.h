@@ -363,7 +363,7 @@ public:
 
   void issueInstruction(
       unsigned Index, const InstrDesc &Desc,
-      llvm::SmallVectorImpl<std::pair<ResourceRef, unsigned>> &Pipes);
+      llvm::SmallVectorImpl<std::pair<ResourceRef, double>> &Pipes);
 
   void cycleEvent(llvm::SmallVectorImpl<ResourceRef> &ResourcesFreed);
 
@@ -418,9 +418,9 @@ class Scheduler {
   std::map<unsigned, Instruction *> ReadyQueue;
   std::map<unsigned, Instruction *> IssuedQueue;
 
-  void notifyInstructionIssued(
-      unsigned Index,
-      llvm::ArrayRef<std::pair<ResourceRef, unsigned>> Used);
+  void
+  notifyInstructionIssued(unsigned Index,
+                          llvm::ArrayRef<std::pair<ResourceRef, double>> Used);
   void notifyInstructionExecuted(unsigned Index);
   void notifyInstructionReady(unsigned Index);
   void notifyResourceAvailable(const ResourceRef &RR);

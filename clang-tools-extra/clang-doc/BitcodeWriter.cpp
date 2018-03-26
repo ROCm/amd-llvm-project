@@ -115,16 +115,16 @@ static const llvm::IndexedMap<llvm::StringRef, BlockIdToIndexFunctor>
 
       // There is no init-list constructor for the IndexedMap, so have to
       // improvise
-      static const std::initializer_list<std::pair<BlockId, const char *const>>
-          Inits = {{BI_VERSION_BLOCK_ID, "VersionBlock"},
-                   {BI_NAMESPACE_BLOCK_ID, "NamespaceBlock"},
-                   {BI_ENUM_BLOCK_ID, "EnumBlock"},
-                   {BI_TYPE_BLOCK_ID, "TypeBlock"},
-                   {BI_FIELD_TYPE_BLOCK_ID, "FieldTypeBlock"},
-                   {BI_MEMBER_TYPE_BLOCK_ID, "MemberTypeBlock"},
-                   {BI_RECORD_BLOCK_ID, "RecordBlock"},
-                   {BI_FUNCTION_BLOCK_ID, "FunctionBlock"},
-                   {BI_COMMENT_BLOCK_ID, "CommentBlock"}};
+      static const std::vector<std::pair<BlockId, const char *const>> Inits = {
+          {BI_VERSION_BLOCK_ID, "VersionBlock"},
+          {BI_NAMESPACE_BLOCK_ID, "NamespaceBlock"},
+          {BI_ENUM_BLOCK_ID, "EnumBlock"},
+          {BI_TYPE_BLOCK_ID, "TypeBlock"},
+          {BI_FIELD_TYPE_BLOCK_ID, "FieldTypeBlock"},
+          {BI_MEMBER_TYPE_BLOCK_ID, "MemberTypeBlock"},
+          {BI_RECORD_BLOCK_ID, "RecordBlock"},
+          {BI_FUNCTION_BLOCK_ID, "FunctionBlock"},
+          {BI_COMMENT_BLOCK_ID, "CommentBlock"}};
       assert(Inits.size() == BlockIdCount);
       for (const auto &Init : Inits)
         BlockIdNameMap[Init.first] = Init.second;
@@ -139,51 +139,51 @@ static const llvm::IndexedMap<RecordIdDsc, RecordIdToIndexFunctor>
 
       // There is no init-list constructor for the IndexedMap, so have to
       // improvise
-      static const std::initializer_list<std::pair<RecordId, RecordIdDsc>>
-          Inits = {{VERSION, {"Version", &IntAbbrev}},
-                   {COMMENT_KIND, {"Kind", &StringAbbrev}},
-                   {COMMENT_TEXT, {"Text", &StringAbbrev}},
-                   {COMMENT_NAME, {"Name", &StringAbbrev}},
-                   {COMMENT_DIRECTION, {"Direction", &StringAbbrev}},
-                   {COMMENT_PARAMNAME, {"ParamName", &StringAbbrev}},
-                   {COMMENT_CLOSENAME, {"CloseName", &StringAbbrev}},
-                   {COMMENT_SELFCLOSING, {"SelfClosing", &BoolAbbrev}},
-                   {COMMENT_EXPLICIT, {"Explicit", &BoolAbbrev}},
-                   {COMMENT_ATTRKEY, {"AttrKey", &StringAbbrev}},
-                   {COMMENT_ATTRVAL, {"AttrVal", &StringAbbrev}},
-                   {COMMENT_ARG, {"Arg", &StringAbbrev}},
-                   {TYPE_REF, {"Type", &ReferenceAbbrev}},
-                   {FIELD_TYPE_REF, {"Type", &ReferenceAbbrev}},
-                   {FIELD_TYPE_NAME, {"Name", &StringAbbrev}},
-                   {MEMBER_TYPE_REF, {"Type", &ReferenceAbbrev}},
-                   {MEMBER_TYPE_NAME, {"Name", &StringAbbrev}},
-                   {MEMBER_TYPE_ACCESS, {"Access", &IntAbbrev}},
-                   {NAMESPACE_USR, {"USR", &SymbolIDAbbrev}},
-                   {NAMESPACE_NAME, {"Name", &StringAbbrev}},
-                   {NAMESPACE_NAMESPACE, {"Namespace", &ReferenceAbbrev}},
-                   {ENUM_USR, {"USR", &SymbolIDAbbrev}},
-                   {ENUM_NAME, {"Name", &StringAbbrev}},
-                   {ENUM_NAMESPACE, {"Namespace", &ReferenceAbbrev}},
-                   {ENUM_DEFLOCATION, {"DefLocation", &LocationAbbrev}},
-                   {ENUM_LOCATION, {"Location", &LocationAbbrev}},
-                   {ENUM_MEMBER, {"Member", &StringAbbrev}},
-                   {ENUM_SCOPED, {"Scoped", &BoolAbbrev}},
-                   {RECORD_USR, {"USR", &SymbolIDAbbrev}},
-                   {RECORD_NAME, {"Name", &StringAbbrev}},
-                   {RECORD_NAMESPACE, {"Namespace", &ReferenceAbbrev}},
-                   {RECORD_DEFLOCATION, {"DefLocation", &LocationAbbrev}},
-                   {RECORD_LOCATION, {"Location", &LocationAbbrev}},
-                   {RECORD_TAG_TYPE, {"TagType", &IntAbbrev}},
-                   {RECORD_PARENT, {"Parent", &ReferenceAbbrev}},
-                   {RECORD_VPARENT, {"VParent", &ReferenceAbbrev}},
-                   {FUNCTION_USR, {"USR", &SymbolIDAbbrev}},
-                   {FUNCTION_NAME, {"Name", &StringAbbrev}},
-                   {FUNCTION_NAMESPACE, {"Namespace", &ReferenceAbbrev}},
-                   {FUNCTION_DEFLOCATION, {"DefLocation", &LocationAbbrev}},
-                   {FUNCTION_LOCATION, {"Location", &LocationAbbrev}},
-                   {FUNCTION_PARENT, {"Parent", &ReferenceAbbrev}},
-                   {FUNCTION_ACCESS, {"Access", &IntAbbrev}},
-                   {FUNCTION_IS_METHOD, {"IsMethod", &BoolAbbrev}}};
+      static const std::vector<std::pair<RecordId, RecordIdDsc>> Inits = {
+          {VERSION, {"Version", &IntAbbrev}},
+          {COMMENT_KIND, {"Kind", &StringAbbrev}},
+          {COMMENT_TEXT, {"Text", &StringAbbrev}},
+          {COMMENT_NAME, {"Name", &StringAbbrev}},
+          {COMMENT_DIRECTION, {"Direction", &StringAbbrev}},
+          {COMMENT_PARAMNAME, {"ParamName", &StringAbbrev}},
+          {COMMENT_CLOSENAME, {"CloseName", &StringAbbrev}},
+          {COMMENT_SELFCLOSING, {"SelfClosing", &BoolAbbrev}},
+          {COMMENT_EXPLICIT, {"Explicit", &BoolAbbrev}},
+          {COMMENT_ATTRKEY, {"AttrKey", &StringAbbrev}},
+          {COMMENT_ATTRVAL, {"AttrVal", &StringAbbrev}},
+          {COMMENT_ARG, {"Arg", &StringAbbrev}},
+          {TYPE_REF, {"Type", &ReferenceAbbrev}},
+          {FIELD_TYPE_REF, {"Type", &ReferenceAbbrev}},
+          {FIELD_TYPE_NAME, {"Name", &StringAbbrev}},
+          {MEMBER_TYPE_REF, {"Type", &ReferenceAbbrev}},
+          {MEMBER_TYPE_NAME, {"Name", &StringAbbrev}},
+          {MEMBER_TYPE_ACCESS, {"Access", &IntAbbrev}},
+          {NAMESPACE_USR, {"USR", &SymbolIDAbbrev}},
+          {NAMESPACE_NAME, {"Name", &StringAbbrev}},
+          {NAMESPACE_NAMESPACE, {"Namespace", &ReferenceAbbrev}},
+          {ENUM_USR, {"USR", &SymbolIDAbbrev}},
+          {ENUM_NAME, {"Name", &StringAbbrev}},
+          {ENUM_NAMESPACE, {"Namespace", &ReferenceAbbrev}},
+          {ENUM_DEFLOCATION, {"DefLocation", &LocationAbbrev}},
+          {ENUM_LOCATION, {"Location", &LocationAbbrev}},
+          {ENUM_MEMBER, {"Member", &StringAbbrev}},
+          {ENUM_SCOPED, {"Scoped", &BoolAbbrev}},
+          {RECORD_USR, {"USR", &SymbolIDAbbrev}},
+          {RECORD_NAME, {"Name", &StringAbbrev}},
+          {RECORD_NAMESPACE, {"Namespace", &ReferenceAbbrev}},
+          {RECORD_DEFLOCATION, {"DefLocation", &LocationAbbrev}},
+          {RECORD_LOCATION, {"Location", &LocationAbbrev}},
+          {RECORD_TAG_TYPE, {"TagType", &IntAbbrev}},
+          {RECORD_PARENT, {"Parent", &ReferenceAbbrev}},
+          {RECORD_VPARENT, {"VParent", &ReferenceAbbrev}},
+          {FUNCTION_USR, {"USR", &SymbolIDAbbrev}},
+          {FUNCTION_NAME, {"Name", &StringAbbrev}},
+          {FUNCTION_NAMESPACE, {"Namespace", &ReferenceAbbrev}},
+          {FUNCTION_DEFLOCATION, {"DefLocation", &LocationAbbrev}},
+          {FUNCTION_LOCATION, {"Location", &LocationAbbrev}},
+          {FUNCTION_PARENT, {"Parent", &ReferenceAbbrev}},
+          {FUNCTION_ACCESS, {"Access", &IntAbbrev}},
+          {FUNCTION_IS_METHOD, {"IsMethod", &BoolAbbrev}}};
       assert(Inits.size() == RecordIdCount);
       for (const auto &Init : Inits) {
         RecordIdNameMap[Init.first] = Init.second;
@@ -192,6 +192,39 @@ static const llvm::IndexedMap<RecordIdDsc, RecordIdToIndexFunctor>
       assert(RecordIdNameMap.size() == RecordIdCount);
       return RecordIdNameMap;
     }();
+
+static const std::vector<std::pair<BlockId, std::vector<RecordId>>>
+    RecordsByBlock{
+        // Version Block
+        {BI_VERSION_BLOCK_ID, {VERSION}},
+        // Comment Block
+        {BI_COMMENT_BLOCK_ID,
+         {COMMENT_KIND, COMMENT_TEXT, COMMENT_NAME, COMMENT_DIRECTION,
+          COMMENT_PARAMNAME, COMMENT_CLOSENAME, COMMENT_SELFCLOSING,
+          COMMENT_EXPLICIT, COMMENT_ATTRKEY, COMMENT_ATTRVAL, COMMENT_ARG}},
+        // Type Block
+        {BI_TYPE_BLOCK_ID, {TYPE_REF}},
+        // FieldType Block
+        {BI_FIELD_TYPE_BLOCK_ID, {FIELD_TYPE_REF, FIELD_TYPE_NAME}},
+        // MemberType Block
+        {BI_MEMBER_TYPE_BLOCK_ID,
+         {MEMBER_TYPE_REF, MEMBER_TYPE_NAME, MEMBER_TYPE_ACCESS}},
+        // Enum Block
+        {BI_ENUM_BLOCK_ID,
+         {ENUM_USR, ENUM_NAME, ENUM_NAMESPACE, ENUM_DEFLOCATION, ENUM_LOCATION,
+          ENUM_MEMBER, ENUM_SCOPED}},
+        // Namespace Block
+        {BI_NAMESPACE_BLOCK_ID,
+         {NAMESPACE_USR, NAMESPACE_NAME, NAMESPACE_NAMESPACE}},
+        // Record Block
+        {BI_RECORD_BLOCK_ID,
+         {RECORD_USR, RECORD_NAME, RECORD_NAMESPACE, RECORD_DEFLOCATION,
+          RECORD_LOCATION, RECORD_TAG_TYPE, RECORD_PARENT, RECORD_VPARENT}},
+        // Function Block
+        {BI_FUNCTION_BLOCK_ID,
+         {FUNCTION_USR, FUNCTION_NAME, FUNCTION_NAMESPACE, FUNCTION_DEFLOCATION,
+          FUNCTION_LOCATION, FUNCTION_PARENT, FUNCTION_ACCESS,
+          FUNCTION_IS_METHOD}}};
 
 // AbbreviationMap
 
@@ -355,40 +388,6 @@ bool ClangDocBitcodeWriter::prepRecordData(RecordId ID, bool ShouldEmit) {
 // BlockInfo Block
 
 void ClangDocBitcodeWriter::emitBlockInfoBlock() {
-  const std::initializer_list<
-      std::pair<BlockId, std::initializer_list<RecordId>>>
-      RecordsByBlock{
-          // Version Block
-          {BI_VERSION_BLOCK_ID, {VERSION}},
-          // Comment Block
-          {BI_COMMENT_BLOCK_ID,
-           {COMMENT_KIND, COMMENT_TEXT, COMMENT_NAME, COMMENT_DIRECTION,
-            COMMENT_PARAMNAME, COMMENT_CLOSENAME, COMMENT_SELFCLOSING,
-            COMMENT_EXPLICIT, COMMENT_ATTRKEY, COMMENT_ATTRVAL, COMMENT_ARG}},
-          // Type Block
-          {BI_TYPE_BLOCK_ID, {TYPE_REF}},
-          // FieldType Block
-          {BI_FIELD_TYPE_BLOCK_ID, {FIELD_TYPE_REF, FIELD_TYPE_NAME}},
-          // MemberType Block
-          {BI_MEMBER_TYPE_BLOCK_ID,
-           {MEMBER_TYPE_REF, MEMBER_TYPE_NAME, MEMBER_TYPE_ACCESS}},
-          // Enum Block
-          {BI_ENUM_BLOCK_ID,
-           {ENUM_USR, ENUM_NAME, ENUM_NAMESPACE, ENUM_DEFLOCATION,
-            ENUM_LOCATION, ENUM_MEMBER, ENUM_SCOPED}},
-          // Namespace Block
-          {BI_NAMESPACE_BLOCK_ID,
-           {NAMESPACE_USR, NAMESPACE_NAME, NAMESPACE_NAMESPACE}},
-          // Record Block
-          {BI_RECORD_BLOCK_ID,
-           {RECORD_USR, RECORD_NAME, RECORD_NAMESPACE, RECORD_DEFLOCATION,
-            RECORD_LOCATION, RECORD_TAG_TYPE, RECORD_PARENT, RECORD_VPARENT}},
-          // Function Block
-          {BI_FUNCTION_BLOCK_ID,
-           {FUNCTION_USR, FUNCTION_NAME, FUNCTION_NAMESPACE,
-            FUNCTION_DEFLOCATION, FUNCTION_LOCATION, FUNCTION_PARENT,
-            FUNCTION_ACCESS, FUNCTION_IS_METHOD}}};
-
   Stream.EnterBlockInfoBlock();
   for (const auto &Block : RecordsByBlock) {
     assert(Block.second.size() < (1U << BitCodeConstants::SubblockIDSize));
@@ -397,8 +396,8 @@ void ClangDocBitcodeWriter::emitBlockInfoBlock() {
   Stream.ExitBlock();
 }
 
-void ClangDocBitcodeWriter::emitBlockInfo(
-    BlockId BID, const std::initializer_list<RecordId> &RIDs) {
+void ClangDocBitcodeWriter::emitBlockInfo(BlockId BID,
+                                          const std::vector<RecordId> &RIDs) {
   assert(RIDs.size() < (1U << BitCodeConstants::SubblockIDSize));
   emitBlockID(BID);
   for (RecordId RID : RIDs) {
@@ -430,7 +429,7 @@ void ClangDocBitcodeWriter::emitBlock(const MemberTypeInfo &T) {
 void ClangDocBitcodeWriter::emitBlock(const CommentInfo &I) {
   StreamSubBlockGuard Block(Stream, BI_COMMENT_BLOCK_ID);
   for (const auto &L :
-       std::initializer_list<std::pair<llvm::StringRef, RecordId>>{
+       std::vector<std::pair<llvm::StringRef, RecordId>>{
            {I.Kind, COMMENT_KIND},
            {I.Text, COMMENT_TEXT},
            {I.Name, COMMENT_NAME},

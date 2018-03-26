@@ -173,7 +173,7 @@ private:
   void emitRecordID(RecordId ID);
   void emitBlockID(BlockId ID);
   void emitBlockInfoBlock();
-  void emitBlockInfo(BlockId BID, const std::initializer_list<RecordId> &RIDs);
+  void emitBlockInfo(BlockId BID, const std::vector<RecordId> &RIDs);
 
   // Emission of individual record types.
   void emitRecord(StringRef Str, RecordId ID);

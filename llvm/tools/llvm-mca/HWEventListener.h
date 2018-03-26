@@ -60,12 +60,12 @@ public:
 class HWInstructionIssuedEvent : public HWInstructionEvent {
 public:
   using ResourceRef = std::pair<uint64_t, uint64_t>;
-  HWInstructionIssuedEvent(
-      unsigned Index, llvm::ArrayRef<std::pair<ResourceRef, unsigned>> UR)
+  HWInstructionIssuedEvent(unsigned Index,
+                           llvm::ArrayRef<std::pair<ResourceRef, double>> UR)
       : HWInstructionEvent(HWInstructionEvent::Issued, Index),
         UsedResources(UR) {}
 
-  llvm::ArrayRef<std::pair<ResourceRef, unsigned>> UsedResources;
+  llvm::ArrayRef<std::pair<ResourceRef, double>> UsedResources;
 };
 
 class HWInstructionDispatchedEvent : public HWInstructionEvent {
@@ -134,7 +134,6 @@ public:
 private:
   virtual void anchor();
 };
-
 } // namespace mca
 
 #endif

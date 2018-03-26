@@ -438,7 +438,7 @@ Error RawInstrProfReader<IntPtrT>::readValueProfilingData(
   // Note that besides deserialization, this also performs the conversion for
   // indirect call targets.  The function pointers from the raw profile are
   // remapped into function name hashes.
-  VDataPtrOrErr.get()->deserializeTo(Record, &Symtab->getAddrHashMap());
+  VDataPtrOrErr.get()->deserializeTo(Record, Symtab.get());
   CurValueDataSize = VDataPtrOrErr.get()->getSize();
   return success();
 }
@@ -448,23 +448,23 @@ Error RawInstrProfReader<IntPtrT>::readNextRecord(NamedInstrProfRecord &Record) 
   if (atEnd())
     // At this point, ValueDataStart field points to the next header.
     if (Error E = readNextHeader(getNextHeaderPos()))
-      return error(std::move(E));
+      return E;
 
   // Read name ad set it in Record.
   if (Error E = readName(Record))
-    return error(std::move(E));
+    return E;
 
   // Read FuncHash and set it in Record.
   if (Error E = readFuncHash(Record))
-    return error(std::move(E));
+    return E;
 
   // Read raw counts and set Record.
   if (Error E = readRawCounts(Record))
-    return error(std::move(E));
+    return E;
 
   // Read value data and set Record.
   if (Error E = readValueProfilingData(Record))
-    return error(std::move(E));
+    return E;
 
   // Iterate.
   advanceData();

@@ -44,7 +44,6 @@
 #include "llvm/CodeGen/MachineOperand.h"
 #include "llvm/CodeGen/MachinePassRegistry.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
-#include "llvm/CodeGen/MachineValueType.h"
 #include "llvm/CodeGen/SchedulerRegistry.h"
 #include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/CodeGen/SelectionDAGNodes.h"
@@ -53,7 +52,6 @@
 #include "llvm/CodeGen/TargetLowering.h"
 #include "llvm/CodeGen/TargetRegisterInfo.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
-#include "llvm/CodeGen/ValueTypes.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
@@ -72,6 +70,7 @@
 #include "llvm/IR/Type.h"
 #include "llvm/IR/User.h"
 #include "llvm/IR/Value.h"
+#include "llvm/IR/ValueTypes.h"
 #include "llvm/MC/MCInstrDesc.h"
 #include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/Pass.h"
@@ -83,6 +82,7 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/KnownBits.h"
+#include "llvm/Support/MachineValueType.h"
 #include "llvm/Support/Timer.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetIntrinsicInfo.h"
@@ -989,12 +989,27 @@ void SelectionDAGISel::EnforceNodeIdInvariant(SDNode *Node) {
     for (auto *U : N->uses()) {
       auto UId = U->getNodeId();
       if (UId > 0) {
-        int InvalidatedUId = -UId + 1;
-        U->setNodeId(InvalidatedUId);
+        InvalidateNodeId(U);
         Nodes.push_back(U);
       }
     }
   }
+}
+
+// InvalidateNodeId - As discusses in EnforceNodeIdInvariant, mark a
+// NodeId with the equivalent node id which is invalid for topological
+// pruning.
+void SelectionDAGISel::InvalidateNodeId(SDNode *N) {
+  int InvalidId = -(N->getNodeId() + 1);
+  N->setNodeId(InvalidId);
+}
+
+// getUninvalidatedNodeId - get original uninvalidated node id.
+int SelectionDAGISel::getUninvalidatedNodeId(SDNode *N) {
+  int Id = N->getNodeId();
+  if (Id < -1)
+    return -(Id + 1);
+  return Id;
 }
 
 void SelectionDAGISel::DoInstructionSelection() {
