@@ -28,7 +28,6 @@ module LLVM_Backend {
     textual header "CodeGen/CommandFlags.def"
     textual header "CodeGen/DIEValue.def"
     textual header "CodeGen/RuntimeLibcalls.def"
-    textual header "CodeGen/TargetOpcodes.def"
   }
 
   module Target {
@@ -93,12 +92,14 @@ module LLVM_DebugInfo_PDB {
   exclude header "DebugInfo/PDB/DIA/DIAEnumDebugStreams.h"
   exclude header "DebugInfo/PDB/DIA/DIAEnumInjectedSources.h"
   exclude header "DebugInfo/PDB/DIA/DIAEnumLineNumbers.h"
+  exclude header "DebugInfo/PDB/DIA/DIAEnumSectionContribs.h"
   exclude header "DebugInfo/PDB/DIA/DIAEnumSourceFiles.h"
   exclude header "DebugInfo/PDB/DIA/DIAEnumSymbols.h"
   exclude header "DebugInfo/PDB/DIA/DIAEnumTables.h"
   exclude header "DebugInfo/PDB/DIA/DIAInjectedSource.h"
   exclude header "DebugInfo/PDB/DIA/DIALineNumber.h"
   exclude header "DebugInfo/PDB/DIA/DIARawSymbol.h"
+  exclude header "DebugInfo/PDB/DIA/DIASectionContrib.h"
   exclude header "DebugInfo/PDB/DIA/DIASession.h"
   exclude header "DebugInfo/PDB/DIA/DIASourceFile.h"
   exclude header "DebugInfo/PDB/DIA/DIASupport.h"
@@ -301,18 +302,13 @@ module LLVM_Utils {
     // These are intended for textual inclusion.
     textual header "Support/ARMTargetParser.def"
     textual header "Support/AArch64TargetParser.def"
+    textual header "Support/TargetOpcodes.def"
     textual header "Support/X86TargetParser.def"
   }
 
   // This part of the module is usable from both C and C++ code.
   module ConvertUTF {
     header "Support/ConvertUTF.h"
-    export *
-  }
-
-  module LLVM_CodeGen_MachineValueType {
-    requires cplusplus
-    header "CodeGen/MachineValueType.h"
     export *
   }
 }

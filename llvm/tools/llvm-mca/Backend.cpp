@@ -34,7 +34,7 @@ void Backend::runCycle(unsigned Cycle) {
   while (SM.hasNext()) {
     InstRef IR = SM.peekNext();
     std::unique_ptr<Instruction> NewIS =
-        IB->createInstruction(IR.first, *IR.second);
+        IB.createInstruction(IR.first, *IR.second);
     const InstrDesc &Desc = NewIS->getDesc();
     if (!DU->isAvailable(Desc.NumMicroOps) ||
         !DU->canDispatch(IR.first, *NewIS))
@@ -42,7 +42,7 @@ void Backend::runCycle(unsigned Cycle) {
 
     Instruction *IS = NewIS.get();
     Instructions[IR.first] = std::move(NewIS);
-    IS->setRCUTokenID(DU->dispatch(IR.first, IS, STI));
+    DU->dispatch(IR.first, IS, STI);
     SM.updateNext();
   }
 
