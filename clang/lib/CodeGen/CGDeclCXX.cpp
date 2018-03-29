@@ -379,8 +379,9 @@ CodeGenModule::EmitCXXGlobalVarDeclInitFunc(const VarDecl *D,
        D->hasAttr<CUDASharedAttr>()))
     return;
 
-  if (getLangOpts().CPlusPlusAMP && getLangOpts().DevicePath &&
-      D->hasAttr<HCCTileStaticAttr>())
+  if ( (getLangOpts().CPlusPlusAMP && getLangOpts().DevicePath &&
+        D->hasAttr<HCCTileStaticAttr>()) ||
+       (getLangOpts().OpenMP && getOpenMPRuntime().emitDeclareTargetVarDefinition(D, Addr, PerformInit)))
     return;
 
   // Check if we've already initialized this decl.
