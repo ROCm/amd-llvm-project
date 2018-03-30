@@ -1022,6 +1022,9 @@ static unsigned getDwarfCC(CallingConv CC) {
     return llvm::dwarf::DW_CC_LLVM_PreserveAll;
   case CC_X86RegCall:
     return llvm::dwarf::DW_CC_LLVM_X86RegCall;
+  case CC_CUDAKernel:
+    // ToDo: Add llvm::dwarf::DW_CC_LLVM_CUDAKernel;
+    return 0;
   }
   return 0;
 }
@@ -1413,7 +1416,7 @@ llvm::DISubprogram *CGDebugInfo::CreateCXXMemberFunction(
       // deleting dtor.
       const auto *DD = dyn_cast<CXXDestructorDecl>(Method);
       GlobalDecl GD = DD ? GlobalDecl(DD, Dtor_Deleting) : GlobalDecl(Method);
-      MicrosoftVTableContext::MethodVFTableLocation ML =
+      const MethodVFTableLocation &ML =
           CGM.getMicrosoftVTableContext().getMethodVFTableLocation(GD);
       VIndex = ML.Index;
 
