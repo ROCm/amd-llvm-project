@@ -2195,12 +2195,6 @@ bool QualType::isTriviallyCopyableType(const ASTContext &Context) const {
   return false;
 }
 
-bool QualType::hasTrivialABIOverride() const {
-  if (const auto *RD = getTypePtr()->getAsCXXRecordDecl())
-    return RD->hasTrivialABIOverride();
-  return false;
-}
-
 bool QualType::isNonWeakInMRRWithObjCWeak(const ASTContext &Context) const {
   return !Context.getLangOpts().ObjCAutoRefCount &&
          Context.getLangOpts().ObjCWeak &&
@@ -2758,6 +2752,7 @@ StringRef FunctionType::getNameForCallConv(CallingConv CC) {
   case CC_Swift: return "swiftcall";
   case CC_PreserveMost: return "preserve_most";
   case CC_PreserveAll: return "preserve_all";
+  case CC_CUDAKernel: return "cuda_kernel";
   }
 
   llvm_unreachable("Invalid calling convention.");

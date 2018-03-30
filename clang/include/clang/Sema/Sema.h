@@ -546,7 +546,7 @@ public:
   /// FieldCollector - Collects CXXFieldDecls during parsing of C++ classes.
   std::unique_ptr<CXXFieldCollector> FieldCollector;
 
-  typedef llvm::SmallSetVector<const NamedDecl*, 16> NamedDeclSetType;
+  typedef llvm::SmallSetVector<NamedDecl *, 16> NamedDeclSetType;
 
   /// \brief Set containing all declared private fields that are not used.
   NamedDeclSetType UnusedPrivateFields;
@@ -3947,7 +3947,7 @@ public:
 
   void redelayDiagnostics(sema::DelayedDiagnosticPool &pool);
 
-  void DiagnoseAvailabilityOfDecl(NamedDecl *D, SourceLocation Loc,
+  void DiagnoseAvailabilityOfDecl(NamedDecl *D, ArrayRef<SourceLocation> Locs,
                                   const ObjCInterfaceDecl *UnknownObjCClass,
                                   bool ObjCPropertyAccess,
                                   bool AvoidPartialAvailabilityChecks = false);
@@ -3962,7 +3962,7 @@ public:
   // Expression Parsing Callbacks: SemaExpr.cpp.
 
   bool CanUseDecl(NamedDecl *D, bool TreatUnavailableAsInvalid);
-  bool DiagnoseUseOfDecl(NamedDecl *D, SourceLocation Loc,
+  bool DiagnoseUseOfDecl(NamedDecl *D, ArrayRef<SourceLocation> Locs,
                          const ObjCInterfaceDecl *UnknownObjCClass = nullptr,
                          bool ObjCPropertyAccess = false,
                          bool AvoidPartialAvailabilityChecks = false);

@@ -53,6 +53,7 @@
 #include "llvm/CodeGen/SelectionDAGNodes.h"
 #include "llvm/CodeGen/TargetCallingConv.h"
 #include "llvm/CodeGen/TargetRegisterInfo.h"
+#include "llvm/CodeGen/ValueTypes.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DebugLoc.h"
@@ -65,7 +66,6 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Type.h"
-#include "llvm/IR/ValueTypes.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/CodeGen.h"
 #include "llvm/Support/CommandLine.h"
@@ -1087,7 +1087,7 @@ bool SITargetLowering::isNoopAddrSpaceCast(unsigned SrcAS,
 bool SITargetLowering::isMemOpHasNoClobberedMemOperand(const SDNode *N) const {
   const MemSDNode *MemNode = cast<MemSDNode>(N);
   const Value *Ptr = MemNode->getMemOperand()->getValue();
-  const Instruction *I = dyn_cast<Instruction>(Ptr);
+  const Instruction *I = dyn_cast_or_null<Instruction>(Ptr);
   return I && I->getMetadata("amdgpu.noclobber");
 }
 
@@ -3351,8 +3351,13 @@ MachineBasicBlock *SITargetLowering::EmitInstrWithCustomInserter(
   case AMDGPU::ADJCALLSTACKDOWN: {
     const SIMachineFunctionInfo *Info = MF->getInfo<SIMachineFunctionInfo>();
     MachineInstrBuilder MIB(*MF, &MI);
+
+    // Add an implicit use of the frame offset reg to prevent the restore copy
+    // inserted after the call from being reorderd after stack operations in the
+    // the caller's frame.
     MIB.addReg(Info->getStackPtrOffsetReg(), RegState::ImplicitDefine)
-        .addReg(Info->getStackPtrOffsetReg(), RegState::Implicit);
+        .addReg(Info->getStackPtrOffsetReg(), RegState::Implicit)
+        .addReg(Info->getFrameOffsetReg(), RegState::Implicit);
     return BB;
   }
   case AMDGPU::SI_CALL_ISEL:
@@ -3457,10 +3462,6 @@ bool SITargetLowering::isFMAFasterThanFMulAndFAdd(EVT VT) const {
   }
 
   return false;
-}
-
-static bool isDwordAligned(unsigned Alignment) {
-  return Alignment % 4 == 0;
 }
 
 //===----------------------------------------------------------------------===//
@@ -5380,21 +5381,23 @@ SDValue SITargetLowering::LowerLOAD(SDValue Op, SelectionDAG &DAG) const {
          AMDGPUASI.PRIVATE_ADDRESS : AMDGPUASI.GLOBAL_ADDRESS;
 
   unsigned NumElements = MemVT.getVectorNumElements();
+
   if (AS == AMDGPUASI.CONSTANT_ADDRESS ||
       AS == AMDGPUASI.CONSTANT_ADDRESS_32BIT) {
-    if (!Op->isDivergent())
+    if (!Op->isDivergent() && Alignment >= 4)
       return SDValue();
     // Non-uniform loads will be selected to MUBUF instructions, so they
     // have the same legalization requirements as global and private
     // loads.
     //
   }
+
   if (AS == AMDGPUASI.CONSTANT_ADDRESS ||
       AS == AMDGPUASI.CONSTANT_ADDRESS_32BIT ||
       AS == AMDGPUASI.GLOBAL_ADDRESS) {
     if (Subtarget->getScalarizeGlobalBehavior() && !Op->isDivergent() &&
         !Load->isVolatile() && isMemOpHasNoClobberedMemOperand(Load) &&
-        isDwordAligned(Alignment))
+        Alignment >= 4)
       return SDValue();
     // Non-uniform loads will be selected to MUBUF instructions, so they
     // have the same legalization requirements as global and private

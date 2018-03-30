@@ -85,8 +85,6 @@ DwarfTypeUnit::DwarfTypeUnit(DwarfCompileUnit &CU, AsmPrinter *A,
                              MCDwarfDwoLineTable *SplitLineTable)
     : DwarfUnit(dwarf::DW_TAG_type_unit, CU.getCUNode(), A, DW, DWU), CU(CU),
       SplitLineTable(SplitLineTable) {
-  if (SplitLineTable)
-    addSectionOffset(getUnitDie(), dwarf::DW_AT_stmt_list, 0);
 }
 
 DwarfUnit::~DwarfUnit() {
@@ -284,8 +282,10 @@ void DwarfUnit::addSectionOffset(DIE &Die, dwarf::Attribute Attribute,
     addUInt(Die, Attribute, dwarf::DW_FORM_data4, Integer);
 }
 
-MD5::MD5Result *DwarfUnit::getMD5AsBytes(const DIFile *File) {
+MD5::MD5Result *DwarfUnit::getMD5AsBytes(const DIFile *File) const {
   assert(File);
+  if (DD->getDwarfVersion() < 5)
+    return nullptr;
   Optional<DIFile::ChecksumInfo<StringRef>> Checksum = File->getChecksum();
   if (!Checksum || Checksum->Kind != DIFile::CSK_MD5)
     return nullptr;
@@ -300,12 +300,15 @@ MD5::MD5Result *DwarfUnit::getMD5AsBytes(const DIFile *File) {
 }
 
 unsigned DwarfTypeUnit::getOrCreateSourceID(const DIFile *File) {
-  return SplitLineTable
-             ? SplitLineTable->getFile(File->getDirectory(),
-                                       File->getFilename(),
-                                       getMD5AsBytes(File),
-                                       File->getSource())
-             : getCU().getOrCreateSourceID(File);
+  if (!SplitLineTable)
+    return getCU().getOrCreateSourceID(File);
+  if (!UsedLineTable) {
+    UsedLineTable = true;
+    // This is a split type unit that needs a line table.
+    addSectionOffset(getUnitDie(), dwarf::DW_AT_stmt_list, 0);
+  }
+  return SplitLineTable->getFile(File->getDirectory(), File->getFilename(),
+                                 getMD5AsBytes(File), File->getSource());
 }
 
 void DwarfUnit::addOpAddress(DIELoc &Die, const MCSymbol *Sym) {
