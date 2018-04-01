@@ -195,7 +195,7 @@ def SSE_MPSADBW_ITINS : OpndItins<
   IIC_SSE_MPSADBW_RR, IIC_SSE_MPSADBW_RM
 >;
 
-let Sched = WriteVecIMul in
+let Sched = WritePMULLD in
 def SSE_PMULLD_ITINS : OpndItins<
   IIC_SSE_PMULLD_RR, IIC_SSE_PMULLD_RM
 >;
@@ -6645,7 +6645,12 @@ multiclass SS41I_quaternary_int_avx<bits<8> opc, string OpcodeStr,
                         (IntId RC:$src1, (bitconvert (mem_frag addr:$src2)),
                                RC:$src3))],
                   itins.rm, SSEPackedInt>, TAPD, VEX_4V,
-                Sched<[itins.Sched.Folded, ReadAfterLd]>;
+                Sched<[itins.Sched.Folded, ReadAfterLd,
+                       // x86memop:$src2
+                       ReadDefault, ReadDefault, ReadDefault, ReadDefault,
+                       ReadDefault,
+                       // RC::$src3
+                       ReadAfterLd]>;
 }
 
 let Predicates = [HasAVX] in {
