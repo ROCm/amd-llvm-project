@@ -191,8 +191,14 @@ extern llvm::cl::opt<bool> DumpModuleSyms;
 
 namespace explain {
 extern llvm::cl::list<std::string> InputFilename;
-extern llvm::cl::opt<uint64_t> Offset;
+extern llvm::cl::list<uint64_t> Offsets;
 } // namespace explain
+
+namespace exportstream {
+extern llvm::cl::opt<std::string> OutputFile;
+extern llvm::cl::opt<std::string> Stream;
+extern llvm::cl::opt<bool> ForceName;
+} // namespace exportstream
 }
 
 #endif

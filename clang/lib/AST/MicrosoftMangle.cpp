@@ -607,7 +607,7 @@ MicrosoftCXXNameMangler::mangleMemberFunctionPointer(const CXXRecordDecl *RD,
     if (MD->isVirtual()) {
       MicrosoftVTableContext *VTContext =
           cast<MicrosoftVTableContext>(getASTContext().getVTableContext());
-      const MethodVFTableLocation &ML =
+      MethodVFTableLocation ML =
           VTContext->getMethodVFTableLocation(GlobalDecl(MD));
       mangleVirtualMemPtrThunk(MD, ML);
       NVOffset = ML.VFPtrOffset.getQuantity();

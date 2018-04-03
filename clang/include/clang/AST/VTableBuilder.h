@@ -523,7 +523,7 @@ private:
     MethodVFTableLocationsTy;
   MethodVFTableLocationsTy MethodVFTableLocations;
 
-  typedef llvm::DenseMap<const CXXRecordDecl *, VPtrInfoVector>
+  typedef llvm::DenseMap<const CXXRecordDecl *, std::unique_ptr<VPtrInfoVector>>
       VFPtrLocationsMapTy;
   VFPtrLocationsMapTy VFPtrLocations;
 
@@ -560,7 +560,7 @@ public:
   const VTableLayout &getVFTableLayout(const CXXRecordDecl *RD,
                                        CharUnits VFPtrOffset);
 
-  const MethodVFTableLocation &getMethodVFTableLocation(GlobalDecl GD);
+  MethodVFTableLocation getMethodVFTableLocation(GlobalDecl GD);
 
   const ThunkInfoVectorTy *getThunkInfo(GlobalDecl GD) override {
     // Complete destructors don't have a slot in a vftable, so no thunks needed.
