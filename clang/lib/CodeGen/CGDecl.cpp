@@ -229,14 +229,15 @@ llvm::Constant *CodeGenModule::getOrCreateStaticVarDecl(
   LangAS AS = GetGlobalVarAddressSpace(&D);
   unsigned TargetAS = getContext().getTargetAddressSpace(AS);
 
-  // Local address space cannot have an initializer.
+  // OpenCL variables in local address space and CUDA shared
+  // variables cannot have an initializer.
   // HCC tile_static variables cannot have an initializer.
   llvm::Constant *Init = nullptr;
-  if (Ty.getAddressSpace() != LangAS::opencl_local &&
-      !D.hasAttr<HCCTileStaticAttr>())
-    Init = EmitNullConstant(Ty);
-  else
+  if (Ty.getAddressSpace() == LangAS::opencl_local ||
+      D.hasAttr<CUDASharedAttr>() || D.hasAttr<HCCTileStaticAttr>())
     Init = llvm::UndefValue::get(LTy);
+  else
+    Init = EmitNullConstant(Ty);
 
   llvm::GlobalVariable *GV = new llvm::GlobalVariable(
       getModule(), LTy, Ty.isConstant(getContext()), Linkage, Init, Name,

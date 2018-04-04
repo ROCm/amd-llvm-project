@@ -816,6 +816,8 @@ SanitizerMask ToolChain::getSupportedSanitizers() const {
       getTriple().getArch() == llvm::Triple::wasm32 ||
       getTriple().getArch() == llvm::Triple::wasm64)
     Res |= CFIICall;
+  if (getTriple().getArch() == llvm::Triple::x86_64)
+    Res |= ShadowCallStack;
   return Res;
 }
 
