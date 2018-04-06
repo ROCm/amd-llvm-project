@@ -879,8 +879,7 @@ static bool getBinaryOption(StringRef S) {
 
 void LinkerDriver::createFiles(opt::InputArgList &Args) {
   for (auto *Arg : Args) {
-    unsigned ID = Arg->getOption().getUnaliasedOption().getID();
-    switch (ID) {
+    switch (Arg->getOption().getUnaliasedOption().getID()) {
     case OPT_library:
       addLibrary(Arg->getValue());
       break;
@@ -903,19 +902,25 @@ void LinkerDriver::createFiles(opt::InputArgList &Args) {
       error(Twine("cannot find linker script ") + Arg->getValue());
       break;
     case OPT_as_needed:
-    case OPT_no_as_needed:
-      Config->AsNeeded = (ID == OPT_as_needed);
+      Config->AsNeeded = true;
       break;
     case OPT_format:
       InBinary = getBinaryOption(Arg->getValue());
       break;
+    case OPT_no_as_needed:
+      Config->AsNeeded = false;
+      break;
     case OPT_Bstatic:
+      Config->Static = true;
+      break;
     case OPT_Bdynamic:
-      Config->Static = (ID == OPT_Bstatic);
+      Config->Static = false;
       break;
     case OPT_whole_archive:
+      InWholeArchive = true;
+      break;
     case OPT_no_whole_archive:
-      InWholeArchive = (ID == OPT_whole_archive);
+      InWholeArchive = false;
       break;
     case OPT_just_symbols:
       if (Optional<MemoryBufferRef> MB = readFile(Arg->getValue())) {
@@ -924,8 +929,10 @@ void LinkerDriver::createFiles(opt::InputArgList &Args) {
       }
       break;
     case OPT_start_lib:
+      InLib = true;
+      break;
     case OPT_end_lib:
-      InLib = (ID == OPT_start_lib);
+      InLib = false;
       break;
     }
   }
@@ -1017,6 +1024,20 @@ static void excludeLibs(opt::InputArgList &Args) {
             Sym->VersionId = VER_NDX_LOCAL;
 }
 
+// Force Sym to be entered in the output. Used for -u or equivalent.
+template <class ELFT> static void handleUndefined(StringRef Name) {
+  Symbol *Sym = Symtab->find(Name);
+  if (!Sym)
+    return;
+
+  // Since symbol S may not be used inside the program, LTO may
+  // eliminate it. Mark the symbol as "used" to prevent it.
+  Sym->IsUsedInRegularObj = true;
+
+  if (Sym->isLazy())
+    Symtab->fetchLazy<ELFT>(Sym);
+}
+
 // Do actual linking. Note that when this function is called,
 // all linker scripts have already been parsed.
 template <class ELFT> void LinkerDriver::link(opt::InputArgList &Args) {
@@ -1081,12 +1102,12 @@ template <class ELFT> void LinkerDriver::link(opt::InputArgList &Args) {
 
   // Handle the `--undefined <sym>` options.
   for (StringRef S : Config->Undefined)
-    Symtab->fetchIfLazy<ELFT>(S);
+    handleUndefined<ELFT>(S);
 
   // If an entry symbol is in a static archive, pull out that file now
   // to complete the symbol table. After this, no new names except a
   // few linker-synthesized ones will be added to the symbol table.
-  Symtab->fetchIfLazy<ELFT>(Config->Entry);
+  handleUndefined<ELFT>(Config->Entry);
 
   // Return if there were name resolution errors.
   if (errorCount())
