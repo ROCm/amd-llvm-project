@@ -62,8 +62,9 @@ Improvements to Clang's diagnostics
 Non-comprehensive list of changes in this release
 -------------------------------------------------
 
-- clang binary and libraries have been renamed from 7.0 to 7.
-  For example, the clang binary will be called clang-7 instead of clang-7.0.
+- Clang binary and libraries have been renamed from 7.0 to 7.
+  For example, the ``clang`` binary will be called ``clang-7``
+  instead of ``clang-7.0``.
 
 - ...
 
@@ -83,10 +84,10 @@ future versions of Clang.
 Modified Compiler Flags
 -----------------------
 
-- Before Clang 7.0, we prepended the `#` character to the `--autocomplete`
+- Before Clang 7, we prepended the `#` character to the `--autocomplete`
   argument to enable cc1 flags. For example, when the `-cc1` or `-Xclang` flag
   is in the :program:`clang` invocation, the shell executed
-  `clang --autocomplete=#-<flag to be completed>`. Clang 7.0 now requires the
+  `clang --autocomplete=#-<flag to be completed>`. Clang 7 now requires the
   whole invocation including all flags to be passed to the `--autocomplete` like
   this: `clang --autocomplete=-cc1,-xc++,-fsyn`.
 
