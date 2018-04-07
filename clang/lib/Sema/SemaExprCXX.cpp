@@ -4533,8 +4533,10 @@ static bool EvaluateUnaryTypeTrait(Sema &Self, TypeTrait UTT,
       return RD->hasTrivialDefaultConstructor() &&
              !RD->hasNonTrivialDefaultConstructor();
     return false;
-  case UTT_HasTrivialMoveConstructor:
-    if (T.isNonTrivialToPrimitiveDestructiveMove())
+  case UTT_HasTrivialMoveConstructor: {
+    QualType::PrimitiveCopyKind PCK =
+        T.isNonTrivialToPrimitiveDestructiveMove();
+    if (PCK != QualType::PCK_Trivial && PCK != QualType::PCK_VolatileTrivial)
       return false;
     //  This trait is implemented by MSVC 2012 and needed to parse the
     //  standard library headers. Specifically this is used as the logic
@@ -4544,8 +4546,10 @@ static bool EvaluateUnaryTypeTrait(Sema &Self, TypeTrait UTT,
     if (CXXRecordDecl *RD = C.getBaseElementType(T)->getAsCXXRecordDecl())
       return RD->hasTrivialMoveConstructor() && !RD->hasNonTrivialMoveConstructor();
     return false;
-  case UTT_HasTrivialCopy:
-    if (T.isNonTrivialToPrimitiveCopy())
+  }
+  case UTT_HasTrivialCopy: {
+    QualType::PrimitiveCopyKind PCK = T.isNonTrivialToPrimitiveCopy();
+    if (PCK != QualType::PCK_Trivial && PCK != QualType::PCK_VolatileTrivial)
       return false;
     // http://gcc.gnu.org/onlinedocs/gcc/Type-Traits.html:
     //   If __is_pod (type) is true or type is a reference type then
@@ -4558,8 +4562,11 @@ static bool EvaluateUnaryTypeTrait(Sema &Self, TypeTrait UTT,
       return RD->hasTrivialCopyConstructor() &&
              !RD->hasNonTrivialCopyConstructor();
     return false;
-  case UTT_HasTrivialMoveAssign:
-    if (T.isNonTrivialToPrimitiveDestructiveMove())
+  }
+  case UTT_HasTrivialMoveAssign: {
+    QualType::PrimitiveCopyKind PCK =
+        T.isNonTrivialToPrimitiveDestructiveMove();
+    if (PCK != QualType::PCK_Trivial && PCK != QualType::PCK_VolatileTrivial)
       return false;
     //  This trait is implemented by MSVC 2012 and needed to parse the
     //  standard library headers. Specifically it is used as the logic
@@ -4569,8 +4576,10 @@ static bool EvaluateUnaryTypeTrait(Sema &Self, TypeTrait UTT,
     if (CXXRecordDecl *RD = C.getBaseElementType(T)->getAsCXXRecordDecl())
       return RD->hasTrivialMoveAssignment() && !RD->hasNonTrivialMoveAssignment();
     return false;
-  case UTT_HasTrivialAssign:
-    if (T.isNonTrivialToPrimitiveCopy())
+  }
+  case UTT_HasTrivialAssign: {
+    QualType::PrimitiveCopyKind PCK = T.isNonTrivialToPrimitiveCopy();
+    if (PCK != QualType::PCK_Trivial && PCK != QualType::PCK_VolatileTrivial)
       return false;
     // http://gcc.gnu.org/onlinedocs/gcc/Type-Traits.html:
     //   If type is const qualified or is a reference type then the
@@ -4592,6 +4601,7 @@ static bool EvaluateUnaryTypeTrait(Sema &Self, TypeTrait UTT,
       return RD->hasTrivialCopyAssignment() &&
              !RD->hasNonTrivialCopyAssignment();
     return false;
+  }
   case UTT_IsDestructible:
   case UTT_IsTriviallyDestructible:
   case UTT_IsNothrowDestructible:
@@ -5466,7 +5476,7 @@ static bool TryClassUnification(Sema &Self, Expr *From, Expr *To,
   //      constraint that in the conversion the reference must bind directly to
   //      an lvalue.
   //   -- If E2 is an xvalue: E1 can be converted to match E2 if E1 can be
-  //      implicitly conveted to the type "rvalue reference to R2", subject to
+  //      implicitly converted to the type "rvalue reference to R2", subject to
   //      the constraint that the reference must bind directly.
   if (To->isLValue() || To->isXValue()) {
     QualType T = To->isLValue() ? Self.Context.getLValueReferenceType(ToType)

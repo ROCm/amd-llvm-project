@@ -920,6 +920,10 @@ void MergeInputSection::splitIntoPieces() {
   else
     splitNonStrings(Data, Entsize);
 
+  OffsetMap.reserve(Pieces.size());
+  for (size_t I = 0, E = Pieces.size(); I != E; ++I)
+    OffsetMap[Pieces[I].InputOff] = I;
+
   if (Config->GcSections && (Flags & SHF_ALLOC))
     for (uint32_t Off : LiveOffsets)
       getSectionPiece(Off)->Live = true;
@@ -966,9 +970,6 @@ SectionPiece *MergeInputSection::getSectionPiece(uint64_t Offset) {
 // Because contents of a mergeable section is not contiguous in output,
 // it is not just an addition to a base output offset.
 uint64_t MergeInputSection::getOffset(uint64_t Offset) const {
-  if (!Live)
-    return 0;
-
   // Find a string starting at a given offset.
   auto It = OffsetMap.find(Offset);
   if (It != OffsetMap.end())
