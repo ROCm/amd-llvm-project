@@ -30,7 +30,7 @@ private:
   std::string IncPath;
   std::string LibPath;
 
-  std::vector<const char *> SystemLibs = {"-ldl", "-lm", "-lpthread", "-lunwind"};
+  std::vector<const char *> SystemLibs = {"-ldl", "-lm", "-lpthread"};
   std::vector<const char *> RuntimeLibs = {"-lhc_am", "-lmcwamp"};
 
 public:
