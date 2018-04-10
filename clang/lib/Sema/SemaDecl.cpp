@@ -44,6 +44,7 @@
 #include "clang/Sema/Template.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/Triple.h"
+#include "llvm/Support/Timer.h"
 #include <algorithm>
 #include <cstring>
 #include <functional>
@@ -849,6 +850,8 @@ Sema::ClassifyName(Scope *S, CXXScopeSpec &SS, IdentifierInfo *&Name,
                    SourceLocation NameLoc, const Token &NextToken,
                    bool IsAddressOfOperand,
                    std::unique_ptr<CorrectionCandidateCallback> CCC) {
+  llvm::NamedRegionTimer T("classifyname", "Classify Name", GroupName,
+                           GroupDescription, llvm::TimePassesIsEnabled);
   DeclarationNameInfo NameInfo(Name, NameLoc);
   ObjCMethodDecl *CurMethod = getCurMethodDecl();
 
@@ -5321,6 +5324,8 @@ bool Sema::diagnoseQualifiedDeclaration(CXXScopeSpec &SS, DeclContext *DC,
 
 NamedDecl *Sema::HandleDeclarator(Scope *S, Declarator &D,
                                   MultiTemplateParamsArg TemplateParamLists) {
+  llvm::NamedRegionTimer T("handledeclarator", "Handle Declarator", GroupName,
+                           GroupDescription, llvm::TimePassesIsEnabled);
   // TODO: consider using NameInfo for diagnostic.
   DeclarationNameInfo NameInfo = GetNameForDeclarator(D);
   DeclarationName Name = NameInfo.getName();
@@ -15465,8 +15470,13 @@ void Sema::ActOnFields(Scope *S, SourceLocation RecLoc, Decl *EnclosingDecl,
         Record->setNonTrivialToPrimitiveDestroy(true);
         Record->setParamDestroyedInCallee(true);
       }
-      if (!FT.canPassInRegisters())
-        Record->setCanPassInRegisters(false);
+
+      if (const auto *RT = FT->getAs<RecordType>()) {
+        if (RT->getDecl()->getArgPassingRestrictions() ==
+            RecordDecl::APK_CanNeverPassInRegs)
+          Record->setArgPassingRestrictions(RecordDecl::APK_CanNeverPassInRegs);
+      } else if (FT.getQualifiers().getObjCLifetime() == Qualifiers::OCL_Weak)
+        Record->setArgPassingRestrictions(RecordDecl::APK_CanNeverPassInRegs);
     }
 
     if (Record && FD->getType().isVolatileQualified())

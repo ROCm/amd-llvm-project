@@ -134,7 +134,7 @@ void SubtargetEmitter::Enumeration(raw_ostream &OS) {
   // Get all records of class and sort
   std::vector<Record*> DefList =
     Records.getAllDerivedDefinitions("SubtargetFeature");
-  std::sort(DefList.begin(), DefList.end(), LessRecord());
+  llvm::sort(DefList.begin(), DefList.end(), LessRecord());
 
   unsigned N = DefList.size();
   if (N == 0)
@@ -173,7 +173,7 @@ unsigned SubtargetEmitter::FeatureKeyValues(raw_ostream &OS) {
   if (FeatureList.empty())
     return 0;
 
-  std::sort(FeatureList.begin(), FeatureList.end(), LessRecordFieldName());
+  llvm::sort(FeatureList.begin(), FeatureList.end(), LessRecordFieldName());
 
   // Begin feature table
   OS << "// Sorted (by key) array of values for CPU features.\n"
@@ -223,7 +223,7 @@ unsigned SubtargetEmitter::CPUKeyValues(raw_ostream &OS) {
   // Gather and sort processor information
   std::vector<Record*> ProcessorList =
                           Records.getAllDerivedDefinitions("Processor");
-  std::sort(ProcessorList.begin(), ProcessorList.end(), LessRecordFieldName());
+  llvm::sort(ProcessorList.begin(), ProcessorList.end(), LessRecordFieldName());
 
   // Begin processor table
   OS << "// Sorted (by key) array of values for CPU subtype.\n"
@@ -635,7 +635,7 @@ static void EmitRegisterFileInfo(const CodeGenProcModel &ProcModel,
     OS << ProcModel.ModelName << "RegisterCosts,\n  ";
   else
     OS << "nullptr,\n  ";
-  OS << NumCostEntries << " // Number of register cost entries.\n";
+  OS << NumCostEntries << ", // Number of register cost entries.\n";
 }
 
 unsigned
@@ -686,12 +686,68 @@ SubtargetEmitter::EmitRegisterFileTables(const CodeGenProcModel &ProcModel,
 
   return CostTblIndex;
 }
+static bool EmitPfmIssueCountersTable(const CodeGenProcModel &ProcModel,
+                                      raw_ostream &OS) {
+  std::vector<const Record *> CounterDefs(ProcModel.ProcResourceDefs.size());
+  bool HasCounters = false;
+  for (const Record *CounterDef : ProcModel.PfmIssueCounterDefs) {
+    const Record *&CD = CounterDefs[ProcModel.getProcResourceIdx(
+        CounterDef->getValueAsDef("Resource"))];
+    if (CD) {
+      PrintFatalError(CounterDef->getLoc(),
+                      "multiple issue counters for " +
+                          CounterDef->getValueAsDef("Resource")->getName());
+    }
+    CD = CounterDef;
+    HasCounters = true;
+  }
+  if (!HasCounters) {
+    return false;
+  }
+  OS << "\nstatic const char* " << ProcModel.ModelName
+     << "PfmIssueCounters[] = {\n";
+  for (const Record *CounterDef : CounterDefs) {
+    if (CounterDef) {
+      const auto PfmCounters = CounterDef->getValueAsListOfStrings("Counters");
+      if (PfmCounters.empty())
+        PrintFatalError(CounterDef->getLoc(), "empty counter list");
+      for (const StringRef CounterName : PfmCounters)
+        OS << "  \"" << CounterName << ",\"";
+      OS << ",  //" << CounterDef->getValueAsDef("Resource")->getName() << "\n";
+    } else {
+      OS << "  nullptr,\n";
+    }
+  }
+  OS << "};\n";
+  return true;
+}
+
+static void EmitPfmCounters(const CodeGenProcModel &ProcModel,
+                            const bool HasPfmIssueCounters, raw_ostream &OS) {
+  OS << "  {\n";
+  // Emit the cycle counter.
+  if (ProcModel.PfmCycleCounterDef)
+    OS << "    \"" << ProcModel.PfmCycleCounterDef->getValueAsString("Counter")
+       << "\",  // Cycle counter.\n";
+  else
+    OS << "    nullptr,  // No cycle counter.\n";
+
+  // Emit a reference to issue counters table.
+  if (HasPfmIssueCounters)
+    OS << "    " << ProcModel.ModelName << "PfmIssueCounters\n";
+  else
+    OS << "    nullptr  // No issue counters.\n";
+  OS << "  }\n";
+}
 
 void SubtargetEmitter::EmitExtraProcessorInfo(const CodeGenProcModel &ProcModel,
                                               raw_ostream &OS) {
   // Generate a table of register file descriptors (one entry per each user
   // defined register file), and a table of register costs.
   unsigned NumCostEntries = EmitRegisterFileTables(ProcModel, OS);
+
+  // Generate a table of ProcRes counter names.
+  const bool HasPfmIssueCounters = EmitPfmIssueCountersTable(ProcModel, OS);
 
   // Now generate a table for the extra processor info.
   OS << "\nstatic const llvm::MCExtraProcessorInfo " << ProcModel.ModelName
@@ -704,6 +760,8 @@ void SubtargetEmitter::EmitExtraProcessorInfo(const CodeGenProcModel &ProcModel,
   // file descriptors and register costs).
   EmitRegisterFileInfo(ProcModel, ProcModel.RegisterFiles.size(),
                        NumCostEntries, OS);
+
+  EmitPfmCounters(ProcModel, HasPfmIssueCounters, OS);
 
   OS << "};\n";
 }
@@ -1091,7 +1149,7 @@ void SubtargetEmitter::GenSchedClassTables(const CodeGenProcModel &ProcModel,
           WriteIDs.push_back(SchedModels.getSchedRWIdx(VW, /*IsRead=*/false));
         }
       }
-      std::sort(WriteIDs.begin(), WriteIDs.end());
+      llvm::sort(WriteIDs.begin(), WriteIDs.end());
       for(unsigned W : WriteIDs) {
         MCReadAdvanceEntry RAEntry;
         RAEntry.UseIdx = UseIdx;
@@ -1109,8 +1167,8 @@ void SubtargetEmitter::GenSchedClassTables(const CodeGenProcModel &ProcModel,
     // compression.
     //
     // WritePrecRes entries are sorted by ProcResIdx.
-    std::sort(WriteProcResources.begin(), WriteProcResources.end(),
-              LessWriteProcResources());
+    llvm::sort(WriteProcResources.begin(), WriteProcResources.end(),
+               LessWriteProcResources());
 
     SCDesc.NumWriteProcResEntries = WriteProcResources.size();
     std::vector<MCWriteProcResEntry>::iterator WPRPos =
@@ -1308,9 +1366,9 @@ void SubtargetEmitter::EmitProcessorModels(raw_ostream &OS) {
     else
       OS << "  nullptr, // No Itinerary\n";
     if (PM.hasExtraProcessorInfo())
-      OS << "  &" << PM.ModelName << "ExtraInfo\n";
+      OS << "  &" << PM.ModelName << "ExtraInfo,\n";
     else
-      OS << "  nullptr  // No extra processor descriptor\n";
+      OS << "  nullptr // No extra processor descriptor\n";
     OS << "};\n";
   }
 }
@@ -1322,7 +1380,7 @@ void SubtargetEmitter::EmitProcessorLookup(raw_ostream &OS) {
   // Gather and sort processor information
   std::vector<Record*> ProcessorList =
                           Records.getAllDerivedDefinitions("Processor");
-  std::sort(ProcessorList.begin(), ProcessorList.end(), LessRecordFieldName());
+  llvm::sort(ProcessorList.begin(), ProcessorList.end(), LessRecordFieldName());
 
   // Begin processor table
   OS << "\n";
@@ -1387,7 +1445,7 @@ void SubtargetEmitter::EmitSchedModelHelpers(const std::string &ClassName,
      << " const TargetSchedModel *SchedModel) const {\n";
 
   std::vector<Record*> Prologs = Records.getAllDerivedDefinitions("PredicateProlog");
-  std::sort(Prologs.begin(), Prologs.end(), LessRecord());
+  llvm::sort(Prologs.begin(), Prologs.end(), LessRecord());
   for (Record *P : Prologs) {
     OS << P->getValueAsString("Code") << '\n';
   }
@@ -1471,7 +1529,7 @@ void SubtargetEmitter::ParseFeaturesFunction(raw_ostream &OS,
                                              unsigned NumProcs) {
   std::vector<Record*> Features =
                        Records.getAllDerivedDefinitions("SubtargetFeature");
-  std::sort(Features.begin(), Features.end(), LessRecord());
+  llvm::sort(Features.begin(), Features.end(), LessRecord());
 
   OS << "// ParseSubtargetFeatures - Parses features string setting specified\n"
      << "// subtarget options.\n"

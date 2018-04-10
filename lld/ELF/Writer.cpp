@@ -494,7 +494,7 @@ template <class ELFT> void Writer<ELFT>::run() {
 
 static bool shouldKeepInSymtab(SectionBase *Sec, StringRef SymName,
                                const Symbol &B) {
-  if (B.isFile() || B.isSection())
+  if (B.isSection())
     return false;
 
   // If sym references a section in a discarded group, don't keep it.
@@ -1057,16 +1057,16 @@ static DenseMap<const InputSectionBase *, int> buildSectionOrder() {
       auto *D = dyn_cast<Defined>(&Sym);
       InputFile *File = Sym.File;
       if (Sym.isUndefined())
-        warn(File->getName() +
+        warn(toString(File) +
              ": unable to order undefined symbol: " + Sym.getName());
       else if (Sym.isShared())
-        warn(File->getName() +
+        warn(toString(File) +
              ": unable to order shared symbol: " + Sym.getName());
       else if (D && !D->Section)
-        warn(File->getName() +
+        warn(toString(File) +
              ": unable to order absolute symbol: " + Sym.getName());
       else if (D && !D->Section->Live)
-        warn(File->getName() +
+        warn(toString(File) +
              ": unable to order discarded symbol: " + Sym.getName());
     }
 
@@ -1213,11 +1213,21 @@ template <class ELFT> void Writer<ELFT>::sortSections() {
   if (Config->Relocatable)
     return;
 
-  for (BaseCommand *Base : Script->SectionCommands)
-    if (auto *Sec = dyn_cast<OutputSection>(Base))
-      Sec->SortRank = getSectionRank(Sec);
-
   sortInputSections();
+
+  for (BaseCommand *Base : Script->SectionCommands) {
+    auto *OS = dyn_cast<OutputSection>(Base);
+    if (!OS)
+      continue;
+    OS->SortRank = getSectionRank(OS);
+
+    // We want to assign rude approximation values to OutSecOff fields
+    // to know the relative order of the input sections. We use it for
+    // sorting SHF_LINK_ORDER sections. See resolveShfLinkOrder().
+    uint64_t I = 0;
+    for (InputSection *Sec : getInputSections(OS))
+      Sec->OutSecOff = I++;
+  }
 
   if (!Script->HasSectionsCommand) {
     // We know that all the OutputSections are contiguous in this case.
