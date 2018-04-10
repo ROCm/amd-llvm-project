@@ -1153,8 +1153,6 @@ public:
   /// source object is placed in an uninitialized state.
   PrimitiveCopyKind isNonTrivialToPrimitiveDestructiveMove() const;
 
-  bool canPassInRegisters() const;
-
   enum DestructionKind {
     DK_none,
     DK_cxx_destructor,
@@ -2014,7 +2012,7 @@ public:
   TagDecl *getAsTagDecl() const;
 
   /// If this is a pointer or reference to a RecordType, return the
-  /// CXXRecordDecl that that type refers to.
+  /// CXXRecordDecl that the type refers to.
   ///
   /// If this is not a pointer or reference, or the type being pointed to does
   /// not refer to a CXXRecordDecl, returns NULL.

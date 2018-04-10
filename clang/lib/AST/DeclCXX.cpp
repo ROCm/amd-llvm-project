@@ -420,6 +420,10 @@ CXXRecordDecl::setBases(CXXBaseSpecifier const * const *Bases,
     if (BaseClassDecl->hasVolatileMember())
       setHasVolatileMember(true);
 
+    if (BaseClassDecl->getArgPassingRestrictions() ==
+        RecordDecl::APK_CanNeverPassInRegs)
+      setArgPassingRestrictions(RecordDecl::APK_CanNeverPassInRegs);
+
     // Keep track of the presence of mutable fields.
     if (BaseClassDecl->hasMutableFields()) {
       data().HasMutableFields = true;
@@ -960,7 +964,7 @@ void CXXRecordDecl::addedMember(Decl *D) {
 
         // Structs with __weak fields should never be passed directly.
         if (LT == Qualifiers::OCL_Weak)
-          setCanPassInRegisters(false);
+          setArgPassingRestrictions(RecordDecl::APK_CanNeverPassInRegs);
 
         Data.HasIrrelevantDestructor = false;
       } else if (!Context.getLangOpts().ObjCAutoRefCount) {
@@ -1127,6 +1131,9 @@ void CXXRecordDecl::addedMember(Decl *D) {
           setHasObjectMember(true);
         if (FieldRec->hasVolatileMember())
           setHasVolatileMember(true);
+        if (FieldRec->getArgPassingRestrictions() ==
+            RecordDecl::APK_CanNeverPassInRegs)
+          setArgPassingRestrictions(RecordDecl::APK_CanNeverPassInRegs);
 
         // C++0x [class]p7:
         //   A standard-layout class is a class that:
@@ -1775,7 +1782,7 @@ void CXXRecordDecl::completeDefinition(CXXFinalOverriderMap *FinalOverriders) {
                                     SOEnd = M->second.end();
            SO != SOEnd && !Done; ++SO) {
         assert(SO->second.size() > 0 && 
-               "All virtual functions have overridding virtual functions");
+               "All virtual functions have overriding virtual functions");
         
         // C++ [class.abstract]p4:
         //   A class is abstract if it contains or inherits at least one
@@ -2375,7 +2382,7 @@ bool CXXConstructorDecl::isSpecializationCopyingObject() const {
   ASTContext &Context = getASTContext();
   CanQualType ParamType = Context.getCanonicalType(Param->getType());
   
-  // Is it the same as our our class type?
+  // Is it the same as our class type?
   CanQualType ClassTy 
     = Context.getCanonicalType(Context.getTagDeclType(getParent()));
   if (ParamType.getUnqualifiedType() != ClassTy)

@@ -1087,7 +1087,7 @@ public:
   /// \brief Determine whether this class has a user-declared copy assignment
   /// operator.
   ///
-  /// When false, a copy assigment operator will be implicitly declared.
+  /// When false, a copy assignment operator will be implicitly declared.
   bool hasUserDeclaredCopyAssignment() const {
     return data().UserDeclaredSpecialMembers & SMF_CopyAssignment;
   }
@@ -1950,7 +1950,7 @@ public:
   }
 
   // \brief Determine whether this type is an Interface Like type for
-  // __interface inheritence purposes.
+  // __interface inheritance purposes.
   bool isInterfaceLike() const;
 
   static bool classof(const Decl *D) { return classofKind(D->getKind()); }

@@ -102,6 +102,7 @@ math/exp10.cl
 math/fdim.cl
 math/fmax.cl
 math/fmin.cl
+math/clc_fmod.cl
 math/fmod.cl
 math/fract.cl
 math/frexp.cl
@@ -119,6 +120,7 @@ math/half_rsqrt.cl
 math/half_sin.cl
 math/half_sqrt.cl
 math/half_tan.cl
+math/clc_hypot.cl
 math/hypot.cl
 math/ilogb.cl
 math/clc_ldexp.cl

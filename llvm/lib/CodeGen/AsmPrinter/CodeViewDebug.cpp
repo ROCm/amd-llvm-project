@@ -524,7 +524,7 @@ void CodeViewDebug::emitTypeInformation() {
   if (TypeTable.empty())
     return;
 
-  // Start the .debug$T section with 0x4.
+  // Start the .debug$T or .debug$P section with 0x4.
   OS.SwitchSection(Asm->getObjFileLowering().getCOFFDebugTypesSection());
   emitCodeViewMagicVersion();
 
@@ -2271,10 +2271,10 @@ void CodeViewDebug::emitLocalVariableList(ArrayRef<LocalVariable> Locals) {
   for (const LocalVariable &L : Locals)
     if (L.DIVar->isParameter())
       Params.push_back(&L);
-  std::sort(Params.begin(), Params.end(),
-            [](const LocalVariable *L, const LocalVariable *R) {
-              return L->DIVar->getArg() < R->DIVar->getArg();
-            });
+  llvm::sort(Params.begin(), Params.end(),
+             [](const LocalVariable *L, const LocalVariable *R) {
+               return L->DIVar->getArg() < R->DIVar->getArg();
+             });
   for (const LocalVariable *L : Params)
     emitLocalVariable(*L);
 

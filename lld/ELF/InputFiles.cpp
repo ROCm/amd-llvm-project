@@ -38,6 +38,8 @@ using namespace llvm::sys::fs;
 using namespace lld;
 using namespace lld::elf;
 
+bool InputFile::IsInGroup;
+uint32_t InputFile::NextGroupId;
 std::vector<BinaryFile *> elf::BinaryFiles;
 std::vector<BitcodeFile *> elf::BitcodeFiles;
 std::vector<InputFile *> elf::ObjectFiles;
@@ -45,7 +47,13 @@ std::vector<InputFile *> elf::SharedFiles;
 
 TarWriter *elf::Tar;
 
-InputFile::InputFile(Kind K, MemoryBufferRef M) : MB(M), FileKind(K) {}
+InputFile::InputFile(Kind K, MemoryBufferRef M)
+    : MB(M), GroupId(NextGroupId), FileKind(K) {
+  // All files within the same --{start,end}-group get the same group ID.
+  // Otherwise, a new file will get a new group ID.
+  if (!IsInGroup)
+    ++NextGroupId;
+}
 
 Optional<MemoryBufferRef> elf::readFile(StringRef Path) {
   // The --chroot option changes our virtual root directory.
@@ -760,8 +768,10 @@ InputFile *ArchiveFile::fetch(const Archive::Symbol &Sym) {
   if (Tar && C.getParent()->isThin())
     Tar->append(relativeToRoot(CHECK(C.getFullName(), this)), MB.getBuffer());
 
-  return createObjectFile(MB, getName(),
-                          C.getParent()->isThin() ? 0 : C.getChildOffset());
+  InputFile *File = createObjectFile(
+      MB, getName(), C.getParent()->isThin() ? 0 : C.getChildOffset());
+  File->GroupId = GroupId;
+  return File;
 }
 
 template <class ELFT>
@@ -906,6 +916,11 @@ template <class ELFT> void SharedFile<ELFT>::parseRest() {
   std::vector<uint32_t> Versyms = parseVersyms(); // parse .gnu.version
   ArrayRef<Elf_Shdr> Sections = CHECK(this->getObj().sections(), this);
 
+  // System libraries can have a lot of symbols with versions. Using a
+  // fixed buffer for computing the versions name (foo@ver) can save a
+  // lot of allocations.
+  SmallString<0> VersionedNameBuffer;
+
   // Add symbols to the symbol table.
   ArrayRef<Elf_Sym> Syms = this->getGlobalELFSyms();
   for (size_t I = 0; I < Syms.size(); ++I) {
@@ -956,8 +971,9 @@ template <class ELFT> void SharedFile<ELFT>::parseRest() {
 
     StringRef VerName =
         this->StringTable.data() + Verdefs[Idx]->getAux()->vda_name;
-    Name = Saver.save(Name + "@" + VerName);
-    Symtab->addShared(Name, *this, Sym, Alignment, Idx);
+    VersionedNameBuffer.clear();
+    Name = (Name + "@" + VerName).toStringRef(VersionedNameBuffer);
+    Symtab->addShared(Saver.save(Name), *this, Sym, Alignment, Idx);
   }
 }
 
@@ -1162,7 +1178,10 @@ InputFile *LazyObjFile::fetch() {
   MemoryBufferRef MBRef = getBuffer();
   if (MBRef.getBuffer().empty())
     return nullptr;
-  return createObjectFile(MBRef, ArchiveName, OffsetInArchive);
+
+  InputFile *File = createObjectFile(MBRef, ArchiveName, OffsetInArchive);
+  File->GroupId = GroupId;
+  return File;
 }
 
 template <class ELFT> void LazyObjFile::parse() {

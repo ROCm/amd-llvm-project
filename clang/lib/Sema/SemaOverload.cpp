@@ -6452,7 +6452,7 @@ void Sema::AddFunctionCandidates(const UnresolvedSetImpl &Fns,
         Expr::Classification ObjectClassification;
         if (Args.size() > 0) {
           if (Expr *E = Args[0]) {
-            // Use the explit base to restrict the lookup:
+            // Use the explicit base to restrict the lookup:
             ObjectType = E->getType();
             ObjectClassification = E->Classify(Context);
           } // .. else there is an implit base.
@@ -6480,7 +6480,7 @@ void Sema::AddFunctionCandidates(const UnresolvedSetImpl &Fns,
         QualType ObjectType;
         Expr::Classification ObjectClassification;
         if (Expr *E = Args[0]) {
-          // Use the explit base to restrict the lookup:
+          // Use the explicit base to restrict the lookup:
           ObjectType = E->getType();
           ObjectClassification = E->Classify(Context);
         } // .. else there is an implit base.
@@ -12450,7 +12450,7 @@ static ExprResult FinishOverloadedCallExpr(Sema &SemaRef, Scope *S, Expr *Fn,
       << Fn->getSourceRange();
     CandidateSet->NoteCandidates(SemaRef, OCD_AllCandidates, Args);
 
-    // We emitted an error for the unvailable/deleted function call but keep
+    // We emitted an error for the unavailable/deleted function call but keep
     // the call in the AST.
     FunctionDecl *FDecl = (*Best)->Function;
     Fn = SemaRef.FixOverloadedFunctionReference(Fn, (*Best)->FoundDecl, FDecl);
@@ -12930,7 +12930,7 @@ Sema::CreateOverloadedBinOp(SourceLocation OpLoc,
       if (Opc == BO_Comma)
         break;
 
-      // For class as left operand for assignment or compound assigment
+      // For class as left operand for assignment or compound assignment
       // operator do not fall through to handling in built-in, but report that
       // no overloaded assignment operator found
       ExprResult Result = ExprError();
