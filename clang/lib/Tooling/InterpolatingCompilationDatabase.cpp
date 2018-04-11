@@ -191,9 +191,9 @@ struct TransferableCommand {
     // --std flag may only be transferred if the language is the same.
     // We may consider "translating" these, e.g. c++11 -> c11.
     if (Std != LangStandard::lang_unspecified && foldType(TargetType) == Type) {
-      Result.CommandLine.push_back("-std");
       Result.CommandLine.push_back(
-          LangStandard::getLangStandardForKind(Std).getName());
+          "-std=" +
+          std::string(LangStandard::getLangStandardForKind(Std).getName()));
     }
     Result.CommandLine.push_back(Filename);
     return Result;
@@ -373,8 +373,8 @@ private:
   ArrayRef<SubstringAndIndex>
   indexLookup(StringRef Key, const std::vector<SubstringAndIndex> &Idx) const {
     // Use pointers as iteratiors to ease conversion of result to ArrayRef.
-    auto Range =
-        std::equal_range(&Idx[0], &Idx[Idx.size()], Key, Less<Prefix>());
+    auto Range = std::equal_range(Idx.data(), Idx.data() + Idx.size(), Key,
+                                  Less<Prefix>());
     return {Range.first, Range.second};
   }
 
