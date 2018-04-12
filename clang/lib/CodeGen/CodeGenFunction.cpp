@@ -990,6 +990,15 @@ void CodeGenFunction::StartFunction(GlobalDecl GD,
     }
   }
 
+  if (getLangOpts().CPlusPlusAMP) {
+    if (const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(D)) {
+      if (FD->hasAttr<AnnotateAttr>() &&
+          FD->getAttr<AnnotateAttr>()->getAnnotation() == "serialize") {
+        Fn->setLinkage(llvm::Function::LinkageTypes::WeakODRLinkage);
+      }
+    }
+  }
+
   // If we are checking function types, emit a function type signature as
   // prologue data.
   if (getLangOpts().CPlusPlus && SanOpts.has(SanitizerKind::Function)) {
