@@ -245,16 +245,6 @@ def IIC_SHD64_REG_IM : InstrItinClass;
 def IIC_SHD64_REG_CL : InstrItinClass;
 def IIC_SHD64_MEM_IM : InstrItinClass;
 def IIC_SHD64_MEM_CL : InstrItinClass;
-// cmov
-def IIC_CMOV16_RM : InstrItinClass;
-def IIC_CMOV16_RR : InstrItinClass;
-def IIC_CMOV32_RM : InstrItinClass;
-def IIC_CMOV32_RR : InstrItinClass;
-def IIC_CMOV64_RM : InstrItinClass;
-def IIC_CMOV64_RR : InstrItinClass;
-// set
-def IIC_SET_R : InstrItinClass;
-def IIC_SET_M : InstrItinClass;
 // jmp/jcc/jcxz
 def IIC_Jcc : InstrItinClass;
 def IIC_JCXZ : InstrItinClass;
@@ -437,51 +427,6 @@ def IIC_SSE_CVT_SD2SI_RR : InstrItinClass;
 
 def IIC_AVX_ZERO : InstrItinClass;
 
-// MMX
-def IIC_MMX_MOV_MM_RM : InstrItinClass;
-def IIC_MMX_MOV_REG_MM : InstrItinClass;
-def IIC_MMX_MOVQ_RM : InstrItinClass;
-def IIC_MMX_MOVQ_RR : InstrItinClass;
-
-def IIC_MMX_ALU_RM : InstrItinClass;
-def IIC_MMX_ALU_RR : InstrItinClass;
-def IIC_MMX_ALUQ_RM : InstrItinClass;
-def IIC_MMX_ALUQ_RR : InstrItinClass;
-def IIC_MMX_PHADDSUBW_RM : InstrItinClass;
-def IIC_MMX_PHADDSUBW_RR : InstrItinClass;
-def IIC_MMX_PHADDSUBD_RM : InstrItinClass;
-def IIC_MMX_PHADDSUBD_RR : InstrItinClass;
-def IIC_MMX_PMUL : InstrItinClass;
-def IIC_MMX_MISC_FUNC_MEM : InstrItinClass;
-def IIC_MMX_MISC_FUNC_REG : InstrItinClass;
-def IIC_MMX_PSADBW : InstrItinClass;
-def IIC_MMX_SHIFT_RI : InstrItinClass;
-def IIC_MMX_SHIFT_RM : InstrItinClass;
-def IIC_MMX_SHIFT_RR : InstrItinClass;
-def IIC_MMX_UNPCK_H_RM : InstrItinClass;
-def IIC_MMX_UNPCK_H_RR : InstrItinClass;
-def IIC_MMX_UNPCK_L : InstrItinClass;
-def IIC_MMX_PCK_RM : InstrItinClass;
-def IIC_MMX_PCK_RR : InstrItinClass;
-def IIC_MMX_PSHUF : InstrItinClass;
-def IIC_MMX_PEXTR : InstrItinClass;
-def IIC_MMX_PINSRW : InstrItinClass;
-def IIC_MMX_MASKMOV : InstrItinClass;
-def IIC_MMX_MOVMSK : InstrItinClass;
-def IIC_MMX_CVT_PD_RR : InstrItinClass;
-def IIC_MMX_CVT_PD_RM : InstrItinClass;
-def IIC_MMX_CVT_PS_RR : InstrItinClass;
-def IIC_MMX_CVT_PS_RM : InstrItinClass;
-
-def IIC_3DNOW_FALU_RM : InstrItinClass;
-def IIC_3DNOW_FALU_RR : InstrItinClass;
-def IIC_3DNOW_FCVT_F2I_RM : InstrItinClass;
-def IIC_3DNOW_FCVT_F2I_RR : InstrItinClass;
-def IIC_3DNOW_FCVT_I2F_RM : InstrItinClass;
-def IIC_3DNOW_FCVT_I2F_RR : InstrItinClass;
-def IIC_3DNOW_MISC_FUNC_REG : InstrItinClass;
-def IIC_3DNOW_MISC_FUNC_MEM : InstrItinClass;
-
 def IIC_CMPX_LOCK : InstrItinClass;
 def IIC_CMPX_LOCK_8 : InstrItinClass;
 def IIC_CMPX_LOCK_8B : InstrItinClass;
@@ -489,47 +434,6 @@ def IIC_CMPX_LOCK_16B : InstrItinClass;
 
 def IIC_XADD_LOCK_MEM : InstrItinClass;
 def IIC_XADD_LOCK_MEM8 : InstrItinClass;
-
-def IIC_FCMOV : InstrItinClass;
-def IIC_FILD : InstrItinClass;
-def IIC_FLD : InstrItinClass;
-def IIC_FLD80 : InstrItinClass;
-def IIC_FST : InstrItinClass;
-def IIC_FST80 : InstrItinClass;
-def IIC_FIST : InstrItinClass;
-def IIC_FLDZ : InstrItinClass;
-def IIC_FUCOM : InstrItinClass;
-def IIC_FUCOMI : InstrItinClass;
-def IIC_FCOMI : InstrItinClass;
-def IIC_FNSTSW : InstrItinClass;
-def IIC_FNSTCW : InstrItinClass;
-def IIC_FLDCW : InstrItinClass;
-def IIC_FNINIT : InstrItinClass;
-def IIC_FFREE : InstrItinClass;
-def IIC_FNCLEX : InstrItinClass;
-def IIC_WAIT : InstrItinClass;
-def IIC_FXAM : InstrItinClass;
-def IIC_FNOP : InstrItinClass;
-def IIC_FLDL : InstrItinClass;
-def IIC_F2XM1 : InstrItinClass;
-def IIC_FYL2X : InstrItinClass;
-def IIC_FPTAN : InstrItinClass;
-def IIC_FPATAN : InstrItinClass;
-def IIC_FXTRACT : InstrItinClass;
-def IIC_FPREM1 : InstrItinClass;
-def IIC_FPSTP : InstrItinClass;
-def IIC_FPREM : InstrItinClass;
-def IIC_FSIGN : InstrItinClass;
-def IIC_FSQRT : InstrItinClass;
-def IIC_FYL2XP1 : InstrItinClass;
-def IIC_FSINCOS : InstrItinClass;
-def IIC_FRNDINT : InstrItinClass;
-def IIC_FSCALE : InstrItinClass;
-def IIC_FCOMPP : InstrItinClass;
-def IIC_FXSAVE : InstrItinClass;
-def IIC_FXRSTOR : InstrItinClass;
-
-def IIC_FXCH : InstrItinClass;
 
 // System instructions
 def IIC_CPUID : InstrItinClass;
