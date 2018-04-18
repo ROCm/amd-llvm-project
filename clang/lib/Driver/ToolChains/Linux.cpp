@@ -23,6 +23,7 @@
 #include "llvm/Option/ArgList.h"
 #include "llvm/ProfileData/InstrProf.h"
 #include "llvm/Support/Path.h"
+#include "llvm/Support/ScopedPrinter.h"
 #include <system_error>
 
 using namespace clang::driver;
@@ -351,6 +352,21 @@ Linux::Linux(const Driver &D, const llvm::Triple &Triple, const ArgList &Args)
 
   addPathIfExists(D, SysRoot + "/lib/" + MultiarchTriple, Paths);
   addPathIfExists(D, SysRoot + "/lib/../" + OSLibDir, Paths);
+
+  if (IsAndroid) {
+    // Android sysroots contain a library directory for each supported OS
+    // version as well as some unversioned libraries in the usual multiarch
+    // directory.
+    unsigned Major;
+    unsigned Minor;
+    unsigned Micro;
+    Triple.getEnvironmentVersion(Major, Minor, Micro);
+    addPathIfExists(D,
+                    SysRoot + "/usr/lib/" + MultiarchTriple + "/" +
+                        llvm::to_string(Major),
+                    Paths);
+  }
+
   addPathIfExists(D, SysRoot + "/usr/lib/" + MultiarchTriple, Paths);
   addPathIfExists(D, SysRoot + "/usr/lib/../" + OSLibDir, Paths);
   if (IsRISCV) {
@@ -906,8 +922,10 @@ SanitizerMask Linux::getSupportedSanitizers() const {
     Res |= SanitizerKind::Function;
   if (IsX86_64 || IsMIPS64 || IsAArch64 || IsX86 || IsMIPS || IsArmArch)
     Res |= SanitizerKind::Scudo;
-  if (IsX86_64 || IsAArch64)
+  if (IsX86_64 || IsAArch64) {
     Res |= SanitizerKind::HWAddress;
+    Res |= SanitizerKind::KernelHWAddress;
+  }
   return Res;
 }
 

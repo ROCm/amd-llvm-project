@@ -679,7 +679,8 @@ TARGET_BUILTIN(__builtin_ia32_clflushopt, "vvC*", "", "clflushopt")
 //CLWB
 TARGET_BUILTIN(__builtin_ia32_clwb, "vvC*", "", "clwb")
 
-//WBNOINVD
+//WB[NO]INVD
+TARGET_BUILTIN(__builtin_ia32_wbinvd, "v", "", "")
 TARGET_BUILTIN(__builtin_ia32_wbnoinvd, "v", "", "wbnoinvd")
 
 // ADX
@@ -1881,6 +1882,9 @@ TARGET_BUILTIN(__builtin_ia32_mwaitx, "vUiUiUi", "", "mwaitx")
 
 // CLZERO
 TARGET_BUILTIN(__builtin_ia32_clzero, "vv*", "", "clzero")
+
+// CLDEMOTE
+TARGET_BUILTIN(__builtin_ia32_cldemote, "vvC*", "", "cldemote")
 
 // MSVC
 TARGET_HEADER_BUILTIN(_BitScanForward, "UcUNi*UNi", "nh", "intrin.h", ALL_MS_LANGUAGES, "")

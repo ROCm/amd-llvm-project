@@ -667,8 +667,12 @@ static char isNegatibleForFree(SDValue Op, bool LegalOperations,
   // fneg is removable even if it has multiple uses.
   if (Op.getOpcode() == ISD::FNEG) return 2;
 
-  // Don't allow anything with multiple uses.
-  if (!Op.hasOneUse()) return 0;
+  // Don't allow anything with multiple uses unless we know it is free.
+  EVT VT = Op.getValueType();
+  if (!Op.hasOneUse())
+    if (!(Op.getOpcode() == ISD::FP_EXTEND &&
+          TLI.isFPExtFree(VT, Op.getOperand(0).getValueType())))
+      return 0;
 
   // Don't recurse exponentially.
   if (Depth > 6) return 0;
@@ -681,7 +685,6 @@ static char isNegatibleForFree(SDValue Op, bool LegalOperations,
 
     // Don't invert constant FP values after legalization unless the target says
     // the negated constant is legal.
-    EVT VT = Op.getValueType();
     return TLI.isOperationLegal(ISD::ConstantFP, VT) ||
       TLI.isFPImmLegal(neg(cast<ConstantFPSDNode>(Op)->getValueAPF()), VT);
   }
@@ -690,8 +693,7 @@ static char isNegatibleForFree(SDValue Op, bool LegalOperations,
     if (!Options->UnsafeFPMath) return 0;
 
     // After operation legalization, it might not be legal to create new FSUBs.
-    if (LegalOperations &&
-        !TLI.isOperationLegalOrCustom(ISD::FSUB,  Op.getValueType()))
+    if (LegalOperations && !TLI.isOperationLegalOrCustom(ISD::FSUB, VT))
       return 0;
 
     // fold (fneg (fadd A, B)) -> (fsub (fneg A), B)
@@ -736,9 +738,6 @@ static SDValue GetNegatedExpression(SDValue Op, SelectionDAG &DAG,
   const TargetOptions &Options = DAG.getTarget().Options;
   // fneg is removable even if it has multiple uses.
   if (Op.getOpcode() == ISD::FNEG) return Op.getOperand(0);
-
-  // Don't allow anything with multiple uses.
-  assert(Op.hasOneUse() && "Unknown reuse!");
 
   assert(Depth <= 6 && "GetNegatedExpression doesn't match isNegatibleForFree");
 
@@ -2800,7 +2799,8 @@ SDValue DAGCombiner::useDivRem(SDNode *Node) {
   for (SDNode::use_iterator UI = Op0.getNode()->use_begin(),
          UE = Op0.getNode()->use_end(); UI != UE; ++UI) {
     SDNode *User = *UI;
-    if (User == Node || User->use_empty())
+    if (User == Node || User->getOpcode() == ISD::DELETED_NODE ||
+        User->use_empty())
       continue;
     // Convert the other matching node(s), too;
     // otherwise, the DIVREM may get target-legalized into something
@@ -10890,15 +10890,6 @@ SDValue DAGCombiner::visitSINT_TO_FP(SDNode *N) {
     }
   }
 
-  // fptosi rounds towards zero, so converting from FP to integer and back is
-  // the same as an 'ftrunc': sitofp (fptosi X) --> ftrunc X
-  // We only do this if the target has legal ftrunc, otherwise we'd likely be
-  // replacing casts with a libcall.
-  if (N0.getOpcode() == ISD::FP_TO_SINT &&
-      N0.getOperand(0).getValueType() == VT &&
-      TLI.isOperationLegal(ISD::FTRUNC, VT))
-    return DAG.getNode(ISD::FTRUNC, SDLoc(N), VT, N0.getOperand(0));
-
   return SDValue();
 }
 
@@ -10937,15 +10928,6 @@ SDValue DAGCombiner::visitUINT_TO_FP(SDNode *N) {
       return DAG.getNode(ISD::SELECT_CC, DL, VT, Ops);
     }
   }
-
-  // fptoui rounds towards zero, so converting from FP to integer and back is
-  // the same as an 'ftrunc': uitofp (fptoui X) --> ftrunc X
-  // We only do this if the target has legal ftrunc, otherwise we'd likely be
-  // replacing casts with a libcall.
-  if (N0.getOpcode() == ISD::FP_TO_UINT &&
-      N0.getOperand(0).getValueType() == VT &&
-      TLI.isOperationLegal(ISD::FTRUNC, VT))
-    return DAG.getNode(ISD::FTRUNC, SDLoc(N), VT, N0.getOperand(0));
 
   return SDValue();
 }
