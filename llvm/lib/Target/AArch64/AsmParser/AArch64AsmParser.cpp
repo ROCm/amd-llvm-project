@@ -89,6 +89,7 @@ private:
   bool parseRegister(OperandVector &Operands);
   bool parseSymbolicImmVal(const MCExpr *&ImmVal);
   bool parseNeonVectorList(OperandVector &Operands);
+  bool parseOptionalMulVl(OperandVector &Operands);
   bool parseOperand(OperandVector &Operands, bool isCondCode,
                     bool invertCondCode);
 
@@ -1136,30 +1137,33 @@ public:
     Inst.addOperand(MCOperand::createReg(getReg()));
   }
 
-  template <unsigned NumRegs>
-  void addVectorList64Operands(MCInst &Inst, unsigned N) const {
+  enum VecListIndexType {
+    VecListIdx_DReg = 0,
+    VecListIdx_QReg = 1,
+    VecListIdx_ZReg = 2,
+  };
+
+  template <VecListIndexType RegTy, unsigned NumRegs>
+  void addVectorListOperands(MCInst &Inst, unsigned N) const {
     assert(N == 1 && "Invalid number of operands!");
-    static const unsigned FirstRegs[] = { AArch64::D0,
-                                          AArch64::D0_D1,
-                                          AArch64::D0_D1_D2,
-                                          AArch64::D0_D1_D2_D3 };
-    unsigned FirstReg = FirstRegs[NumRegs - 1];
+    static const unsigned FirstRegs[][5] = {
+      /* DReg */ { AArch64::Q0,
+                   AArch64::D0,       AArch64::D0_D1,
+                   AArch64::D0_D1_D2, AArch64::D0_D1_D2_D3 },
+      /* QReg */ { AArch64::Q0,
+                   AArch64::Q0,       AArch64::Q0_Q1,
+                   AArch64::Q0_Q1_Q2, AArch64::Q0_Q1_Q2_Q3 },
+      /* ZReg */ { AArch64::Z0,
+                   AArch64::Z0,       AArch64::Z0_Z1,
+                   AArch64::Z0_Z1_Z2, AArch64::Z0_Z1_Z2_Z3 }
+    };
 
-    Inst.addOperand(
-        MCOperand::createReg(FirstReg + getVectorListStart() - AArch64::Q0));
-  }
+    assert((RegTy != VecListIdx_ZReg || NumRegs <= 4) &&
+           " NumRegs must be <= 4 for ZRegs");
 
-  template <unsigned NumRegs>
-  void addVectorList128Operands(MCInst &Inst, unsigned N) const {
-    assert(N == 1 && "Invalid number of operands!");
-    static const unsigned FirstRegs[] = { AArch64::Q0,
-                                          AArch64::Q0_Q1,
-                                          AArch64::Q0_Q1_Q2,
-                                          AArch64::Q0_Q1_Q2_Q3 };
-    unsigned FirstReg = FirstRegs[NumRegs - 1];
-
-    Inst.addOperand(
-        MCOperand::createReg(FirstReg + getVectorListStart() - AArch64::Q0));
+    unsigned FirstReg = FirstRegs[(unsigned)RegTy][NumRegs];
+    Inst.addOperand(MCOperand::createReg(FirstReg + getVectorListStart() -
+                                         FirstRegs[(unsigned)RegTy][0]));
   }
 
   void addVectorIndex1Operands(MCInst &Inst, unsigned N) const {
@@ -1367,6 +1371,13 @@ public:
     assert(N == 1 && "Invalid number of operands!");
     const MCConstantExpr *MCE = cast<MCConstantExpr>(getImm());
     Inst.addOperand(MCOperand::createImm(MCE->getValue()));
+  }
+
+  template <int Scale>
+  void addImmScaledOperands(MCInst &Inst, unsigned N) const {
+    assert(N == 1 && "Invalid number of operands!");
+    const MCConstantExpr *MCE = cast<MCConstantExpr>(getImm());
+    Inst.addOperand(MCOperand::createImm(MCE->getValue() / Scale));
   }
 
   template <typename T>
@@ -3047,6 +3058,29 @@ AArch64AsmParser::tryParseGPR64sp0Operand(OperandVector &Operands) {
   return MatchOperand_Success;
 }
 
+bool AArch64AsmParser::parseOptionalMulVl(OperandVector &Operands) {
+  MCAsmParser &Parser = getParser();
+
+  // Some SVE instructions have a decoration after the immediate, i.e.
+  // "mul vl". We parse them here and add tokens, which must be present in the
+  // asm string in the tablegen instruction.
+  if (!Parser.getTok().getString().equals_lower("mul") ||
+      !Parser.getLexer().peekTok().getString().equals_lower("vl"))
+    return true;
+
+  SMLoc S = getLoc();
+  Operands.push_back(
+    AArch64Operand::CreateToken("mul", false, S, getContext()));
+  Parser.Lex(); // Eat the "mul"
+
+  S = getLoc();
+  Operands.push_back(
+    AArch64Operand::CreateToken("vl", false, S, getContext()));
+  Parser.Lex(); // Eat the "vl"
+
+  return false;
+}
+
 /// parseOperand - Parse a arm instruction operand.  For now this parses the
 /// operand regardless of the mnemonic.
 bool AArch64AsmParser::parseOperand(OperandVector &Operands, bool isCondCode,
@@ -3098,6 +3132,10 @@ bool AArch64AsmParser::parseOperand(OperandVector &Operands, bool isCondCode,
 
     // If it's a register name, parse it.
     if (!parseRegister(Operands))
+      return false;
+
+    // See if this is a "mul vl" decoration used by SVE instructions.
+    if (!parseOptionalMulVl(Operands))
       return false;
 
     // This could be an optional "shift" or "extend" operand.
@@ -3608,6 +3646,14 @@ bool AArch64AsmParser::showMatchError(SMLoc Loc, unsigned ErrCode,
     return Error(Loc, "index must be an integer in range [-32, 31].");
   case Match_InvalidMemoryIndexedSImm5:
     return Error(Loc, "index must be an integer in range [-16, 15].");
+  case Match_InvalidMemoryIndexed1SImm4:
+    return Error(Loc, "index must be an integer in range [-8, 7].");
+  case Match_InvalidMemoryIndexed2SImm4:
+    return Error(Loc, "index must be a multiple of 2 in range [-16, 14].");
+  case Match_InvalidMemoryIndexed3SImm4:
+    return Error(Loc, "index must be a multiple of 3 in range [-24, 21].");
+  case Match_InvalidMemoryIndexed4SImm4:
+    return Error(Loc, "index must be a multiple of 3 in range [-32, 28].");
   case Match_InvalidMemoryIndexedSImm9:
     return Error(Loc, "index must be an integer in range [-256, 255].");
   case Match_InvalidMemoryIndexedSImm10:
@@ -4122,10 +4168,14 @@ bool AArch64AsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
   case Match_InvalidMemoryXExtend32:
   case Match_InvalidMemoryXExtend64:
   case Match_InvalidMemoryXExtend128:
-  case Match_InvalidMemoryIndexedSImm6:
+  case Match_InvalidMemoryIndexed1SImm4:
+  case Match_InvalidMemoryIndexed2SImm4:
+  case Match_InvalidMemoryIndexed3SImm4:
+  case Match_InvalidMemoryIndexed4SImm4:
   case Match_InvalidMemoryIndexed4SImm7:
   case Match_InvalidMemoryIndexed8SImm7:
   case Match_InvalidMemoryIndexed16SImm7:
+  case Match_InvalidMemoryIndexedSImm6:
   case Match_InvalidMemoryIndexedSImm5:
   case Match_InvalidMemoryIndexedSImm9:
   case Match_InvalidMemoryIndexedSImm10:

@@ -213,11 +213,11 @@ public:
   // The COMDAT leader symbol if this is a COMDAT chunk.
   DefinedRegular *Sym = nullptr;
 
+  ArrayRef<coff_relocation> Relocs;
+
 private:
   StringRef SectionName;
   std::vector<SectionChunk *> AssocChildren;
-  llvm::iterator_range<const coff_relocation *> Relocs;
-  size_t NumRelocs;
 
   // Used by the garbage collector.
   bool Live;

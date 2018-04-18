@@ -58,8 +58,7 @@ XRayArgs::XRayArgs(const ToolChain &TC, const ArgList &Args) {
       }
     } else {
       D.Diag(diag::err_drv_clang_unsupported)
-          << (std::string(XRayInstrumentOption) +
-              " on non-supported target OS");
+          << (std::string(XRayInstrumentOption) + " on " + Triple.str());
     }
     XRayInstrument = true;
     if (const Arg *A =
@@ -78,9 +77,43 @@ XRayArgs::XRayArgs(const ToolChain &TC, const ArgList &Args) {
                      options::OPT_fnoxray_always_emit_customevents, false))
       XRayAlwaysEmitCustomEvents = true;
 
+    if (Args.hasFlag(options::OPT_fxray_always_emit_typedevents,
+                     options::OPT_fnoxray_always_emit_typedevents, false))
+      XRayAlwaysEmitTypedEvents = true;
+
     if (!Args.hasFlag(options::OPT_fxray_link_deps,
                       options::OPT_fnoxray_link_deps, true))
       XRayRT = false;
+
+    auto Bundles =
+        Args.getAllArgValues(options::OPT_fxray_instrumentation_bundle);
+    if (Bundles.empty())
+      InstrumentationBundle.Mask = XRayInstrKind::All;
+    else
+      for (const auto &B : Bundles) {
+        llvm::SmallVector<StringRef, 2> BundleParts;
+        llvm::SplitString(B, BundleParts, ",");
+        for (const auto &P : BundleParts) {
+          // TODO: Automate the generation of the string case table.
+          auto Valid = llvm::StringSwitch<bool>(P)
+                           .Cases("none", "all", "function", "custom", true)
+                           .Default(false);
+
+          if (!Valid) {
+            D.Diag(clang::diag::err_drv_invalid_value)
+                << "-fxray-instrumentation-bundle=" << P;
+            continue;
+          }
+
+          auto Mask = parseXRayInstrValue(P);
+          if (Mask == XRayInstrKind::None) {
+            InstrumentationBundle.clear();
+            break;
+          }
+
+          InstrumentationBundle.Mask |= Mask;
+        }
+      }
 
     // Validate the always/never attribute files. We also make sure that they
     // are treated as actual dependencies.
@@ -117,21 +150,16 @@ XRayArgs::XRayArgs(const ToolChain &TC, const ArgList &Args) {
       llvm::copy(XRaySupportedModes, std::back_inserter(Modes));
     else
       for (const auto &Arg : SpecifiedModes) {
-        if (Arg == "none") {
-          Modes.clear();
-          break;
-        }
-        if (Arg == "all") {
-          Modes.clear();
-          llvm::copy(XRaySupportedModes, std::back_inserter(Modes));
-          break;
-        }
-
         // Parse CSV values for -fxray-modes=...
         llvm::SmallVector<StringRef, 2> ModeParts;
         llvm::SplitString(Arg, ModeParts, ",");
         for (const auto &M : ModeParts)
-          Modes.push_back(M);
+          if (M == "none")
+            Modes.clear();
+          else if (M == "all")
+            llvm::copy(XRaySupportedModes, std::back_inserter(Modes));
+          else
+            Modes.push_back(M);
       }
 
     // Then we want to sort and unique the modes we've collected.
@@ -150,6 +178,9 @@ void XRayArgs::addArgs(const ToolChain &TC, const ArgList &Args,
   if (XRayAlwaysEmitCustomEvents)
     CmdArgs.push_back("-fxray-always-emit-customevents");
 
+  if (XRayAlwaysEmitTypedEvents)
+    CmdArgs.push_back("-fxray-always-emit-typedevents");
+
   CmdArgs.push_back(Args.MakeArgString(Twine(XRayInstructionThresholdOption) +
                                        Twine(InstructionThreshold)));
 
@@ -165,7 +196,7 @@ void XRayArgs::addArgs(const ToolChain &TC, const ArgList &Args,
     CmdArgs.push_back(Args.MakeArgString(NeverInstrumentOpt));
   }
 
-  for (const auto& AttrFile : AttrListFiles) {
+  for (const auto &AttrFile : AttrListFiles) {
     SmallString<64> AttrListFileOpt("-fxray-attr-list=");
     AttrListFileOpt += AttrFile;
     CmdArgs.push_back(Args.MakeArgString(AttrListFileOpt));
@@ -175,5 +206,11 @@ void XRayArgs::addArgs(const ToolChain &TC, const ArgList &Args,
     SmallString<64> ExtraDepOpt("-fdepfile-entry=");
     ExtraDepOpt += Dep;
     CmdArgs.push_back(Args.MakeArgString(ExtraDepOpt));
+  }
+
+  for (const auto &Mode : Modes) {
+    SmallString<64> ModeOpt("-fxray-modes=");
+    ModeOpt += Mode;
+    CmdArgs.push_back(Args.MakeArgString(ModeOpt));
   }
 }

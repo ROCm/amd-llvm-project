@@ -47,7 +47,6 @@
 #include "lldb/Host/Symbols.h"
 #include "lldb/Host/ThreadLauncher.h"
 #include "lldb/Host/XML.h"
-#include "lldb/Interpreter/Args.h"
 #include "lldb/Interpreter/CommandInterpreter.h"
 #include "lldb/Interpreter/CommandObject.h"
 #include "lldb/Interpreter/CommandObjectMultiword.h"
@@ -66,6 +65,7 @@
 #include "lldb/Target/Target.h"
 #include "lldb/Target/TargetList.h"
 #include "lldb/Target/ThreadPlanCallFunction.h"
+#include "lldb/Utility/Args.h"
 #include "lldb/Utility/CleanUp.h"
 #include "lldb/Utility/FileSpec.h"
 #include "lldb/Utility/StreamString.h"
@@ -1822,10 +1822,9 @@ ThreadSP ProcessGDBRemote::SetThreadStopInfo(
       if (!thread_sp->StopInfoIsUpToDate()) {
         thread_sp->SetStopInfo(StopInfoSP());
         // If there's a memory thread backed by this thread, we need to use it
-        // to calcualte StopInfo.
-        ThreadSP memory_thread_sp =
-            m_thread_list.FindThreadByProtocolID(thread_sp->GetProtocolID());
-        if (memory_thread_sp)
+        // to calculate StopInfo.
+        if (ThreadSP memory_thread_sp =
+                m_thread_list.GetBackingThread(thread_sp))
           thread_sp = memory_thread_sp;
 
         if (exc_type != 0) {

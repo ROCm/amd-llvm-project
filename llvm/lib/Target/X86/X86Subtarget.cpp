@@ -219,8 +219,6 @@ void X86Subtarget::initSubtargetFeatures(StringRef CPU, StringRef FS) {
   // micro-architectures respectively.
   if (hasSSE42() || hasSSE4A())
     IsUAMem16Slow = false;
-  
-  InstrItins = getInstrItineraryForCPU(CPUName);
 
   // It's important to keep the MCSubtargetInfo feature bits in sync with
   // target data structure which is shared with MC code emitter, etc.
@@ -318,6 +316,7 @@ void X86Subtarget::initializeEnvironment() {
   HasLAHFSAHF = false;
   HasMWAITX = false;
   HasCLZERO = false;
+  HasCLDEMOTE = false;
   HasMPX = false;
   HasSHSTK = false;
   HasIBT = false;
