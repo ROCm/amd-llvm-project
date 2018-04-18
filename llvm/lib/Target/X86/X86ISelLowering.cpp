@@ -20855,24 +20855,6 @@ SDValue X86TargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
   switch (IntNo) {
   default: return SDValue();    // Don't custom lower most intrinsics.
 
-  case Intrinsic::x86_sse41_pmuldq:
-  case Intrinsic::x86_avx2_pmul_dq:
-  case Intrinsic::x86_avx512_pmul_dq_512: {
-    MVT OpVT = Op.getSimpleValueType();
-    return DAG.getNode(X86ISD::PMULDQ, dl, OpVT,
-                       DAG.getBitcast(OpVT, Op.getOperand(1)),
-                       DAG.getBitcast(OpVT, Op.getOperand(2)));
-  }
-
-  case Intrinsic::x86_sse2_pmulu_dq:
-  case Intrinsic::x86_avx2_pmulu_dq:
-  case Intrinsic::x86_avx512_pmulu_dq_512: {
-    MVT OpVT = Op.getSimpleValueType();
-    return DAG.getNode(X86ISD::PMULUDQ, dl, OpVT,
-                       DAG.getBitcast(OpVT, Op.getOperand(1)),
-                       DAG.getBitcast(OpVT, Op.getOperand(2)));
-  }
-
   case Intrinsic::x86_avx2_permd:
   case Intrinsic::x86_avx2_permps:
     // Operands intentionally swapped. Mask is last operand to intrinsic,
@@ -22389,7 +22371,7 @@ static SDValue LowerABS(SDValue Op, SelectionDAG &DAG) {
 static SDValue LowerMINMAX(SDValue Op, SelectionDAG &DAG) {
   MVT VT = Op.getSimpleValueType();
 
-  // For AVX1 cases, split to use use legal ops (everything but v4i64).
+  // For AVX1 cases, split to use legal ops (everything but v4i64).
   if (VT.getScalarType() != MVT::i64 && VT.is256BitVector())
     return Lower256IntArith(Op, DAG);
 
@@ -28236,6 +28218,9 @@ X86TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
 
   case TargetOpcode::PATCHABLE_EVENT_CALL:
     return emitXRayCustomEvent(MI, BB);
+
+  case TargetOpcode::PATCHABLE_TYPED_EVENT_CALL:
+    return emitXRayTypedEvent(MI, BB);
 
   case X86::LCMPXCHG8B: {
     const X86RegisterInfo *TRI = Subtarget.getRegisterInfo();

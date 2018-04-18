@@ -43,14 +43,18 @@ void RISCVInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
     return;
   }
 
-  if (RISCV::FPR32RegClass.contains(DstReg, SrcReg)) {
-    BuildMI(MBB, MBBI, DL, get(RISCV::FSGNJ_S), DstReg)
-        .addReg(SrcReg, getKillRegState(KillSrc))
-        .addReg(SrcReg, getKillRegState(KillSrc));
-    return;
-  }
+  // FPR->FPR copies
+  unsigned Opc;
+  if (RISCV::FPR32RegClass.contains(DstReg, SrcReg))
+    Opc = RISCV::FSGNJ_S;
+  else if (RISCV::FPR64RegClass.contains(DstReg, SrcReg))
+    Opc = RISCV::FSGNJ_D;
+  else
+    llvm_unreachable("Impossible reg-to-reg copy");
 
-  llvm_unreachable("Impossible reg-to-reg copy");
+  BuildMI(MBB, MBBI, DL, get(Opc), DstReg)
+      .addReg(SrcReg, getKillRegState(KillSrc))
+      .addReg(SrcReg, getKillRegState(KillSrc));
 }
 
 void RISCVInstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,
@@ -68,6 +72,8 @@ void RISCVInstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,
     Opcode = RISCV::SW;
   else if (RISCV::FPR32RegClass.hasSubClassEq(RC))
     Opcode = RISCV::FSW;
+  else if (RISCV::FPR64RegClass.hasSubClassEq(RC))
+    Opcode = RISCV::FSD;
   else
     llvm_unreachable("Can't store this register to stack slot");
 
@@ -92,6 +98,8 @@ void RISCVInstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
     Opcode = RISCV::LW;
   else if (RISCV::FPR32RegClass.hasSubClassEq(RC))
     Opcode = RISCV::FLW;
+  else if (RISCV::FPR64RegClass.hasSubClassEq(RC))
+    Opcode = RISCV::FLD;
   else
     llvm_unreachable("Can't load this register from stack slot");
 
@@ -104,17 +112,8 @@ void RISCVInstrInfo::movImm32(MachineBasicBlock &MBB,
                               MachineInstr::MIFlag Flag) const {
   assert(isInt<32>(Val) && "Can only materialize 32-bit constants");
 
-  // TODO: If the value can be materialized using only one instruction, only
-  // insert a single instruction.
-
-  uint64_t Hi20 = ((Val + 0x800) >> 12) & 0xfffff;
-  uint64_t Lo12 = SignExtend64<12>(Val);
-  BuildMI(MBB, MBBI, DL, get(RISCV::LUI), DstReg)
-      .addImm(Hi20)
-      .setMIFlag(Flag);
-  BuildMI(MBB, MBBI, DL, get(RISCV::ADDI), DstReg)
-      .addReg(DstReg, RegState::Kill)
-      .addImm(Lo12)
+  BuildMI(MBB, MBBI, DL, get(RISCV::PseudoLI), DstReg)
+      .addImm(Val)
       .setMIFlag(Flag);
 }
 

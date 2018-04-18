@@ -89,6 +89,7 @@ private:
   bool parseRegister(OperandVector &Operands);
   bool parseSymbolicImmVal(const MCExpr *&ImmVal);
   bool parseNeonVectorList(OperandVector &Operands);
+  bool parseOptionalMulVl(OperandVector &Operands);
   bool parseOperand(OperandVector &Operands, bool isCondCode,
                     bool invertCondCode);
 
@@ -140,7 +141,9 @@ private:
   template <bool ParseSuffix>
   OperandMatchResultTy tryParseSVEDataVector(OperandVector &Operands);
   OperandMatchResultTy tryParseSVEPredicateVector(OperandVector &Operands);
-  bool tryParseVectorList(OperandVector &Operands);
+  template <RegKind VectorKind>
+  OperandMatchResultTy tryParseVectorList(OperandVector &Operands,
+                                          bool ExpectMatch = false);
   OperandMatchResultTy tryParseSVEPattern(OperandVector &Operands);
 
 public:
@@ -217,7 +220,8 @@ private:
     unsigned RegNum;
     unsigned Count;
     unsigned NumElements;
-    unsigned ElementKind;
+    unsigned ElementWidth;
+    RegKind  RegisterKind;
   };
 
   struct VectorIndexOp {
@@ -861,18 +865,23 @@ public:
 
   /// Is this a vector list with the type implicit (presumably attached to the
   /// instruction itself)?
-  template <unsigned NumRegs> bool isImplicitlyTypedVectorList() const {
+  template <RegKind VectorKind, unsigned NumRegs>
+  bool isImplicitlyTypedVectorList() const {
     return Kind == k_VectorList && VectorList.Count == NumRegs &&
-           !VectorList.ElementKind;
+           VectorList.NumElements == 0 &&
+           VectorList.RegisterKind == VectorKind;
   }
 
-  template <unsigned NumRegs, unsigned NumElements, char ElementKind>
+  template <RegKind VectorKind, unsigned NumRegs, unsigned NumElements,
+            unsigned ElementWidth>
   bool isTypedVectorList() const {
     if (Kind != k_VectorList)
       return false;
     if (VectorList.Count != NumRegs)
       return false;
-    if (VectorList.ElementKind != ElementKind)
+    if (VectorList.RegisterKind != VectorKind)
+      return false;
+    if (VectorList.ElementWidth != ElementWidth)
       return false;
     return VectorList.NumElements == NumElements;
   }
@@ -1128,30 +1137,33 @@ public:
     Inst.addOperand(MCOperand::createReg(getReg()));
   }
 
-  template <unsigned NumRegs>
-  void addVectorList64Operands(MCInst &Inst, unsigned N) const {
+  enum VecListIndexType {
+    VecListIdx_DReg = 0,
+    VecListIdx_QReg = 1,
+    VecListIdx_ZReg = 2,
+  };
+
+  template <VecListIndexType RegTy, unsigned NumRegs>
+  void addVectorListOperands(MCInst &Inst, unsigned N) const {
     assert(N == 1 && "Invalid number of operands!");
-    static const unsigned FirstRegs[] = { AArch64::D0,
-                                          AArch64::D0_D1,
-                                          AArch64::D0_D1_D2,
-                                          AArch64::D0_D1_D2_D3 };
-    unsigned FirstReg = FirstRegs[NumRegs - 1];
+    static const unsigned FirstRegs[][5] = {
+      /* DReg */ { AArch64::Q0,
+                   AArch64::D0,       AArch64::D0_D1,
+                   AArch64::D0_D1_D2, AArch64::D0_D1_D2_D3 },
+      /* QReg */ { AArch64::Q0,
+                   AArch64::Q0,       AArch64::Q0_Q1,
+                   AArch64::Q0_Q1_Q2, AArch64::Q0_Q1_Q2_Q3 },
+      /* ZReg */ { AArch64::Z0,
+                   AArch64::Z0,       AArch64::Z0_Z1,
+                   AArch64::Z0_Z1_Z2, AArch64::Z0_Z1_Z2_Z3 }
+    };
 
-    Inst.addOperand(
-        MCOperand::createReg(FirstReg + getVectorListStart() - AArch64::Q0));
-  }
+    assert((RegTy != VecListIdx_ZReg || NumRegs <= 4) &&
+           " NumRegs must be <= 4 for ZRegs");
 
-  template <unsigned NumRegs>
-  void addVectorList128Operands(MCInst &Inst, unsigned N) const {
-    assert(N == 1 && "Invalid number of operands!");
-    static const unsigned FirstRegs[] = { AArch64::Q0,
-                                          AArch64::Q0_Q1,
-                                          AArch64::Q0_Q1_Q2,
-                                          AArch64::Q0_Q1_Q2_Q3 };
-    unsigned FirstReg = FirstRegs[NumRegs - 1];
-
-    Inst.addOperand(
-        MCOperand::createReg(FirstReg + getVectorListStart() - AArch64::Q0));
+    unsigned FirstReg = FirstRegs[(unsigned)RegTy][NumRegs];
+    Inst.addOperand(MCOperand::createReg(FirstReg + getVectorListStart() -
+                                         FirstRegs[(unsigned)RegTy][0]));
   }
 
   void addVectorIndex1Operands(MCInst &Inst, unsigned N) const {
@@ -1359,6 +1371,13 @@ public:
     assert(N == 1 && "Invalid number of operands!");
     const MCConstantExpr *MCE = cast<MCConstantExpr>(getImm());
     Inst.addOperand(MCOperand::createImm(MCE->getValue()));
+  }
+
+  template <int Scale>
+  void addImmScaledOperands(MCInst &Inst, unsigned N) const {
+    assert(N == 1 && "Invalid number of operands!");
+    const MCConstantExpr *MCE = cast<MCConstantExpr>(getImm());
+    Inst.addOperand(MCOperand::createImm(MCE->getValue() / Scale));
   }
 
   template <typename T>
@@ -1590,30 +1609,14 @@ public:
 
   static std::unique_ptr<AArch64Operand>
   CreateVectorList(unsigned RegNum, unsigned Count, unsigned NumElements,
-                   unsigned ElementWidth, SMLoc S, SMLoc E, MCContext &Ctx) {
+                   unsigned ElementWidth, RegKind RegisterKind, SMLoc S, SMLoc E,
+                   MCContext &Ctx) {
     auto Op = make_unique<AArch64Operand>(k_VectorList, Ctx);
     Op->VectorList.RegNum = RegNum;
     Op->VectorList.Count = Count;
     Op->VectorList.NumElements = NumElements;
-    switch (ElementWidth) {
-    case 0:
-      Op->VectorList.ElementKind = 0;
-      break;
-    case 8:
-      Op->VectorList.ElementKind = 'b';
-      break;
-    case 16:
-      Op->VectorList.ElementKind = 'h';
-      break;
-    case 32:
-      Op->VectorList.ElementKind = 's';
-      break;
-    case 64:
-      Op->VectorList.ElementKind = 'd';
-      break;
-    default:
-      llvm_unreachable("Unsupported elementwidth");
-    }
+    Op->VectorList.ElementWidth = ElementWidth;
+    Op->VectorList.RegisterKind = RegisterKind;
     Op->StartLoc = S;
     Op->EndLoc = E;
     return Op;
@@ -2883,30 +2886,50 @@ bool AArch64AsmParser::parseSymbolicImmVal(const MCExpr *&ImmVal) {
   return false;
 }
 
-/// parseVectorList - Parse a vector list operand for vector instructions.
-bool AArch64AsmParser::tryParseVectorList(OperandVector &Operands) {
+template <RegKind VectorKind>
+OperandMatchResultTy
+AArch64AsmParser::tryParseVectorList(OperandVector &Operands,
+                                     bool ExpectMatch) {
   MCAsmParser &Parser = getParser();
-  assert(Parser.getTok().is(AsmToken::LCurly) && "Token is not a Left Bracket");
+  if (!Parser.getTok().is(AsmToken::LCurly))
+    return MatchOperand_NoMatch;
 
   // Wrapper around parse function
-  auto ParseVector = [this](int &Reg, StringRef &Kind, SMLoc Loc) {
-    if (tryParseVectorRegister(Reg, Kind, RegKind::NeonVector) ==
-        MatchOperand_Success) {
+  auto ParseVector = [this, &Parser](int &Reg, StringRef &Kind, SMLoc Loc,
+                                     bool NoMatchIsError) {
+    auto RegTok = Parser.getTok();
+    auto ParseRes = tryParseVectorRegister(Reg, Kind, VectorKind);
+    if (ParseRes == MatchOperand_Success) {
       if (parseVectorKind(Kind, RegKind::NeonVector))
-        return true;
+        return ParseRes;
       llvm_unreachable("Expected a valid vector kind");
     }
 
-    Error(Loc, "vector register expected");
-    return false;
+    if (RegTok.isNot(AsmToken::Identifier) ||
+        ParseRes == MatchOperand_ParseFail ||
+        (ParseRes == MatchOperand_NoMatch && NoMatchIsError)) {
+      Error(Loc, "vector register expected");
+      return MatchOperand_ParseFail;
+    }
+
+    return MatchOperand_NoMatch;
   };
 
   SMLoc S = getLoc();
+  auto LCurly = Parser.getTok();
   Parser.Lex(); // Eat left bracket token.
+
   StringRef Kind;
   int FirstReg = -1;
-  if (!ParseVector(FirstReg, Kind, getLoc()))
-     return true;
+  auto ParseRes = ParseVector(FirstReg, Kind, getLoc(), ExpectMatch);
+
+  // Put back the original left bracket if there was no match, so that
+  // different types of list-operands can be matched (e.g. SVE, Neon).
+  if (ParseRes == MatchOperand_NoMatch)
+    Parser.getLexer().UnLex(LCurly);
+
+  if (ParseRes != MatchOperand_Success)
+    return ParseRes;
 
   int64_t PrevReg = FirstReg;
   unsigned Count = 1;
@@ -2916,17 +2939,21 @@ bool AArch64AsmParser::tryParseVectorList(OperandVector &Operands) {
     StringRef NextKind;
 
     int Reg;
-    if (!ParseVector(Reg, NextKind, getLoc()))
-      return true;
+    ParseRes = ParseVector(Reg, NextKind, getLoc(), true);
+    if (ParseRes != MatchOperand_Success)
+      return ParseRes;
 
     // Any Kind suffices must match on all regs in the list.
-    if (Kind != NextKind)
-      return Error(Loc, "mismatched register size suffix");
+    if (Kind != NextKind) {
+      Error(Loc, "mismatched register size suffix");
+      return MatchOperand_ParseFail;
+    }
 
     unsigned Space = (PrevReg < Reg) ? (Reg - PrevReg) : (Reg + 32 - PrevReg);
 
     if (Space == 0 || Space > 3) {
-      return Error(Loc, "invalid number of vectors");
+      Error(Loc, "invalid number of vectors");
+      return MatchOperand_ParseFail;
     }
 
     Count += Space;
@@ -2936,16 +2963,22 @@ bool AArch64AsmParser::tryParseVectorList(OperandVector &Operands) {
       SMLoc Loc = getLoc();
       StringRef NextKind;
       int Reg;
-      if (!ParseVector(Reg, NextKind, getLoc()))
-        return true;
+      ParseRes = ParseVector(Reg, NextKind, getLoc(), true);
+      if (ParseRes != MatchOperand_Success)
+        return ParseRes;
+
       // Any Kind suffices must match on all regs in the list.
-      if (Kind != NextKind)
-        return Error(Loc, "mismatched register size suffix");
+      if (Kind != NextKind) {
+        Error(Loc, "mismatched register size suffix");
+        return MatchOperand_ParseFail;
+      }
 
       // Registers must be incremental (with wraparound at 31)
       if (getContext().getRegisterInfo()->getEncodingValue(Reg) !=
-          (getContext().getRegisterInfo()->getEncodingValue(PrevReg) + 1) % 32)
-       return Error(Loc, "registers must be sequential");
+          (getContext().getRegisterInfo()->getEncodingValue(PrevReg) + 1) % 32) {
+        Error(Loc, "registers must be sequential");
+        return MatchOperand_ParseFail;
+      }
 
       PrevReg = Reg;
       ++Count;
@@ -2953,27 +2986,31 @@ bool AArch64AsmParser::tryParseVectorList(OperandVector &Operands) {
   }
 
   if (parseToken(AsmToken::RCurly, "'}' expected"))
-    return true;
+    return MatchOperand_ParseFail;
 
-  if (Count > 4)
-    return Error(S, "invalid number of vectors");
+  if (Count > 4) {
+    Error(S, "invalid number of vectors");
+    return MatchOperand_ParseFail;
+  }
 
   unsigned NumElements = 0;
   unsigned ElementWidth = 0;
   if (!Kind.empty()) {
-    if (const auto &VK = parseVectorKind(Kind, RegKind::NeonVector))
+    if (const auto &VK = parseVectorKind(Kind, VectorKind))
       std::tie(NumElements, ElementWidth) = *VK;
   }
 
   Operands.push_back(AArch64Operand::CreateVectorList(
-      FirstReg, Count, NumElements, ElementWidth, S, getLoc(), getContext()));
+      FirstReg, Count, NumElements, ElementWidth, VectorKind, S, getLoc(),
+      getContext()));
 
-  return false;
+  return MatchOperand_Success;
 }
 
 /// parseNeonVectorList - Parse a vector list operand for AdvSIMD instructions.
 bool AArch64AsmParser::parseNeonVectorList(OperandVector &Operands) {
-  if (tryParseVectorList(Operands))
+  auto ParseRes = tryParseVectorList<RegKind::NeonVector>(Operands, true);
+  if (ParseRes != MatchOperand_Success)
     return true;
 
   return tryParseVectorIndex(Operands) == MatchOperand_ParseFail;
@@ -3019,6 +3056,29 @@ AArch64AsmParser::tryParseGPR64sp0Operand(OperandVector &Operands) {
   Operands.push_back(
       AArch64Operand::CreateReg(RegNum, RegKind::Scalar, S, getLoc(), Ctx));
   return MatchOperand_Success;
+}
+
+bool AArch64AsmParser::parseOptionalMulVl(OperandVector &Operands) {
+  MCAsmParser &Parser = getParser();
+
+  // Some SVE instructions have a decoration after the immediate, i.e.
+  // "mul vl". We parse them here and add tokens, which must be present in the
+  // asm string in the tablegen instruction.
+  if (!Parser.getTok().getString().equals_lower("mul") ||
+      !Parser.getLexer().peekTok().getString().equals_lower("vl"))
+    return true;
+
+  SMLoc S = getLoc();
+  Operands.push_back(
+    AArch64Operand::CreateToken("mul", false, S, getContext()));
+  Parser.Lex(); // Eat the "mul"
+
+  S = getLoc();
+  Operands.push_back(
+    AArch64Operand::CreateToken("vl", false, S, getContext()));
+  Parser.Lex(); // Eat the "vl"
+
+  return false;
 }
 
 /// parseOperand - Parse a arm instruction operand.  For now this parses the
@@ -3072,6 +3132,10 @@ bool AArch64AsmParser::parseOperand(OperandVector &Operands, bool isCondCode,
 
     // If it's a register name, parse it.
     if (!parseRegister(Operands))
+      return false;
+
+    // See if this is a "mul vl" decoration used by SVE instructions.
+    if (!parseOptionalMulVl(Operands))
       return false;
 
     // This could be an optional "shift" or "extend" operand.
@@ -3582,6 +3646,14 @@ bool AArch64AsmParser::showMatchError(SMLoc Loc, unsigned ErrCode,
     return Error(Loc, "index must be an integer in range [-32, 31].");
   case Match_InvalidMemoryIndexedSImm5:
     return Error(Loc, "index must be an integer in range [-16, 15].");
+  case Match_InvalidMemoryIndexed1SImm4:
+    return Error(Loc, "index must be an integer in range [-8, 7].");
+  case Match_InvalidMemoryIndexed2SImm4:
+    return Error(Loc, "index must be a multiple of 2 in range [-16, 14].");
+  case Match_InvalidMemoryIndexed3SImm4:
+    return Error(Loc, "index must be a multiple of 3 in range [-24, 21].");
+  case Match_InvalidMemoryIndexed4SImm4:
+    return Error(Loc, "index must be a multiple of 3 in range [-32, 28].");
   case Match_InvalidMemoryIndexedSImm9:
     return Error(Loc, "index must be an integer in range [-256, 255].");
   case Match_InvalidMemoryIndexedSImm10:
@@ -4096,10 +4168,14 @@ bool AArch64AsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
   case Match_InvalidMemoryXExtend32:
   case Match_InvalidMemoryXExtend64:
   case Match_InvalidMemoryXExtend128:
-  case Match_InvalidMemoryIndexedSImm6:
+  case Match_InvalidMemoryIndexed1SImm4:
+  case Match_InvalidMemoryIndexed2SImm4:
+  case Match_InvalidMemoryIndexed3SImm4:
+  case Match_InvalidMemoryIndexed4SImm4:
   case Match_InvalidMemoryIndexed4SImm7:
   case Match_InvalidMemoryIndexed8SImm7:
   case Match_InvalidMemoryIndexed16SImm7:
+  case Match_InvalidMemoryIndexedSImm6:
   case Match_InvalidMemoryIndexedSImm5:
   case Match_InvalidMemoryIndexedSImm9:
   case Match_InvalidMemoryIndexedSImm10:
