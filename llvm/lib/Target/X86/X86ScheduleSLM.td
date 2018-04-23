@@ -84,6 +84,11 @@ def : WriteRes<WriteLoad,  [SLM_MEC_RSV]> { let Latency = 3; }
 def : WriteRes<WriteMove,  [SLM_IEC_RSV01]>;
 def : WriteRes<WriteZero,  []>;
 
+// Load/store MXCSR.
+// FIXME: These are probably wrong. They are copy pasted from WriteStore/Load.
+def : WriteRes<WriteSTMXCSR, [SLM_IEC_RSV01, SLM_MEC_RSV]>;
+def : WriteRes<WriteLDMXCSR,  [SLM_MEC_RSV]> { let Latency = 3; }
+
 // Treat misc copies as a move.
 def : InstRW<[WriteMove], (instrs COPY)>;
 
@@ -135,6 +140,8 @@ defm : SLMWriteResPair<WriteFSqrt,  [SLM_FPC_RSV0], 15>;
 defm : SLMWriteResPair<WriteCvtF2I, [SLM_FPC_RSV01], 4>;
 defm : SLMWriteResPair<WriteCvtI2F, [SLM_FPC_RSV01], 4>;
 defm : SLMWriteResPair<WriteCvtF2F, [SLM_FPC_RSV01], 4>;
+defm : SLMWriteResPair<WriteFSign,  [SLM_FPC_RSV01], 1>;
+defm : SLMWriteResPair<WriteFLogic, [SLM_FPC_RSV01], 1>;
 defm : SLMWriteResPair<WriteFShuffle, [SLM_FPC_RSV0],  1>;
 defm : SLMWriteResPair<WriteFVarShuffle, [SLM_FPC_RSV0],  1>;
 defm : SLMWriteResPair<WriteFBlend,  [SLM_FPC_RSV0],  1>;
