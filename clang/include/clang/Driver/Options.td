@@ -587,7 +587,7 @@ def fno_cuda_flush_denormals_to_zero : Flag<["-"], "fno-cuda-flush-denormals-to-
 def fcuda_approx_transcendentals : Flag<["-"], "fcuda-approx-transcendentals">,
   Flags<[CC1Option]>, HelpText<"Use approximate transcendental functions">;
 def fno_cuda_approx_transcendentals : Flag<["-"], "fno-cuda-approx-transcendentals">;
-def fcuda_rdc : Flag<["-"], "fcuda-rdc">, Flags<[CC1Option, HelpHidden]>,
+def fcuda_rdc : Flag<["-"], "fcuda-rdc">, Flags<[CC1Option]>,
   HelpText<"Generate relocatable device code, also known as separate compilation mode.">;
 def fno_cuda_rdc : Flag<["-"], "fno-cuda-rdc">;
 def dA : Flag<["-"], "dA">, Group<d_Group>;
@@ -625,6 +625,9 @@ def fno_PIC : Flag<["-"], "fno-PIC">, Group<f_Group>;
 def fPIE : Flag<["-"], "fPIE">, Group<f_Group>;
 def fno_PIE : Flag<["-"], "fno-PIE">, Group<f_Group>;
 def faccess_control : Flag<["-"], "faccess-control">, Group<f_Group>;
+def falign_functions : Flag<["-"], "falign-functions">, Group<f_Group>;
+def falign_functions_EQ : Joined<["-"], "falign-functions=">, Group<f_Group>;
+def fno_align_functions: Flag<["-"], "fno-align-functions">, Group<f_Group>;
 def fallow_unsupported : Flag<["-"], "fallow-unsupported">, Group<f_Group>;
 def fapple_kext : Flag<["-"], "fapple-kext">, Group<f_Group>, Flags<[CC1Option]>,
   HelpText<"Use Apple's kernel extensions ABI">;
@@ -1476,8 +1479,10 @@ def fnoopenmp_relocatable_target : Flag<["-"], "fnoopenmp-relocatable-target">,
 def fopenmp_simd : Flag<["-"], "fopenmp-simd">, Group<f_Group>, Flags<[CC1Option, NoArgumentUnused]>,
   HelpText<"Emit OpenMP code only for SIMD-based constructs.">;
 def fno_openmp_simd : Flag<["-"], "fno-openmp-simd">, Group<f_Group>, Flags<[CC1Option, NoArgumentUnused]>;
-def fopenmp_cuda_mode : Flag<["-"], "fopenmp-cuda-mode">, Group<f_Group>, Flags<[CC1Option, NoArgumentUnused]>;
-def fno_openmp_cuda_mode : Flag<["-"], "fno-openmp-cuda-mode">, Group<f_Group>, Flags<[NoArgumentUnused]>;
+def fopenmp_cuda_mode : Flag<["-"], "fopenmp-cuda-mode">, Group<f_Group>,
+  Flags<[CC1Option, NoArgumentUnused, HelpHidden]>;
+def fno_openmp_cuda_mode : Flag<["-"], "fno-openmp-cuda-mode">, Group<f_Group>,
+  Flags<[NoArgumentUnused, HelpHidden]>;
 def fno_optimize_sibling_calls : Flag<["-"], "fno-optimize-sibling-calls">, Group<f_Group>;
 def foptimize_sibling_calls : Flag<["-"], "foptimize-sibling-calls">, Group<f_Group>;
 def fno_escaping_block_tail_calls : Flag<["-"], "fno-escaping-block-tail-calls">, Group<f_Group>, Flags<[CC1Option]>;
@@ -2691,6 +2696,8 @@ def mvaes : Flag<["-"], "mvaes">, Group<m_x86_Features_Group>;
 def mno_vaes : Flag<["-"], "mno-vaes">, Group<m_x86_Features_Group>;
 def mvpclmulqdq : Flag<["-"], "mvpclmulqdq">, Group<m_x86_Features_Group>;
 def mno_vpclmulqdq : Flag<["-"], "mno-vpclmulqdq">, Group<m_x86_Features_Group>;
+def mwaitpkg : Flag<["-"], "mwaitpkg">, Group<m_x86_Features_Group>;
+def mno_waitpkg : Flag<["-"], "mno-waitpkg">, Group<m_x86_Features_Group>;
 def mxop : Flag<["-"], "mxop">, Group<m_x86_Features_Group>;
 def mno_xop : Flag<["-"], "mno-xop">, Group<m_x86_Features_Group>;
 def mxsave : Flag<["-"], "mxsave">, Group<m_x86_Features_Group>;
@@ -2744,8 +2751,6 @@ def fprofile_dir : Joined<["-"], "fprofile-dir=">, Group<f_Group>;
 
 def fuse_ld_EQ : Joined<["-"], "fuse-ld=">, Group<f_Group>, Flags<[CoreOption]>;
 
-defm align_functions : BooleanFFlag<"align-functions">, Group<clang_ignored_gcc_optimization_f_Group>;
-def falign_functions_EQ : Joined<["-"], "falign-functions=">, Group<clang_ignored_gcc_optimization_f_Group>;
 defm align_labels : BooleanFFlag<"align-labels">, Group<clang_ignored_gcc_optimization_f_Group>;
 def falign_labels_EQ : Joined<["-"], "falign-labels=">, Group<clang_ignored_gcc_optimization_f_Group>;
 defm align_loops : BooleanFFlag<"align-loops">, Group<clang_ignored_gcc_optimization_f_Group>;
