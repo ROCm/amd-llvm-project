@@ -163,6 +163,7 @@ public:
     OpenCL,
     CUDA,
     RenderScript,
+    HIP,
     ///@}
   };
 

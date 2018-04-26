@@ -130,7 +130,8 @@ Driver::Driver(StringRef ClangExecutable, StringRef DefaultTargetTriple,
 
 void Driver::ParseDriverMode(StringRef ProgramName,
                              ArrayRef<const char *> Args) {
-  ClangNameParts = ToolChain::getTargetAndModeFromProgramName(ProgramName);
+  if (ClangNameParts.isEmpty())
+    ClangNameParts = ToolChain::getTargetAndModeFromProgramName(ProgramName);
   setDriverModeFromOption(ClangNameParts.DriverMode);
 
   for (const char *ArgPtr : Args) {
@@ -933,11 +934,14 @@ Compilation *Driver::BuildCompilation(ArrayRef<const char *> ArgList) {
                                               : std::move(*CLOptions));
   if (HasConfigFile)
     for (auto *Opt : *CLOptions) {
+      if (Opt->getOption().matches(options::OPT_config))
+        continue;
+      unsigned Index = Args.MakeIndex(Opt->getSpelling());
       const Arg *BaseArg = &Opt->getBaseArg();
       if (BaseArg == Opt)
         BaseArg = nullptr;
       Arg *Copy = new llvm::opt::Arg(Opt->getOption(), Opt->getSpelling(),
-                                     Args.size(), BaseArg);
+                                     Index, BaseArg);
       Copy->getValues() = Opt->getValues();
       if (Opt->isClaimed())
         Copy->claim();

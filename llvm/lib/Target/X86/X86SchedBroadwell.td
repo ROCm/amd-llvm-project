@@ -12,7 +12,7 @@
 //
 //===----------------------------------------------------------------------===//
 def BroadwellModel : SchedMachineModel {
-  // All x86 instructions are modeled as a single micro-op, and HW can decode 4
+  // All x86 instructions are modeled as a single micro-op, and BW can decode 4
   // instructions per cycle.
   let IssueWidth = 4;
   let MicroOpBufferSize = 192; // Based on the reorder buffer.
@@ -162,13 +162,21 @@ defm : BWWriteResPair<WriteFDiv,   [BWPort0], 12>; // 10-14 cycles. // Floating 
 defm : BWWriteResPair<WriteFSqrt,  [BWPort0], 15>; // Floating point square root.
 defm : BWWriteResPair<WriteFRcp,   [BWPort0], 5>; // Floating point reciprocal estimate.
 defm : BWWriteResPair<WriteFRsqrt, [BWPort0], 5>; // Floating point reciprocal square root estimate.
-defm : BWWriteResPair<WriteFMA,    [BWPort01], 5>; // Fused Multiply Add.
+defm : BWWriteResPair<WriteFMA,    [BWPort01], 5, [1], 1, 5>; // Fused Multiply Add.
+defm : BWWriteResPair<WriteFMAS,   [BWPort01], 5, [1], 1, 5>; // Fused Multiply Add (Scalar).
+defm : BWWriteResPair<WriteFMAY,   [BWPort01], 5, [1], 1, 6>; // Fused Multiply Add (YMM/ZMM).
 defm : BWWriteResPair<WriteFSign,     [BWPort5],  1>; // Floating point fabs/fchs.
 defm : BWWriteResPair<WriteFLogic,    [BWPort5],  1>; // Floating point and/or/xor logicals.
 defm : BWWriteResPair<WriteFShuffle,  [BWPort5],  1>; // Floating point vector shuffles.
 defm : BWWriteResPair<WriteFVarShuffle,  [BWPort5],  1>; // Floating point vector variable shuffles.
 defm : BWWriteResPair<WriteFBlend,  [BWPort015],  1>; // Floating point vector blends.
 defm : BWWriteResPair<WriteFVarBlend,  [BWPort5], 2, [2], 2, 5>; // Fp vector variable blends.
+
+def  : WriteRes<WriteCvtF2FSt, [BWPort1,BWPort4,BWPort237]> {
+  let Latency = 4;
+  let NumMicroOps = 3;
+  let ResourceCycles = [1,1,1];
+}
 
 // FMA Scheduling helper class.
 // class FMASC { X86FoldableSchedWrite Sched = WriteFAdd; }
@@ -188,7 +196,28 @@ defm : BWWriteResPair<WriteVarShuffle, [BWPort5],  1>; // Vector variable shuffl
 defm : BWWriteResPair<WriteBlend,  [BWPort5],  1>; // Vector blends.
 defm : BWWriteResPair<WriteVarBlend,  [BWPort5], 2, [2], 2, 5>; // Vector variable blends.
 defm : BWWriteResPair<WriteMPSAD,  [BWPort0, BWPort5], 7, [1, 2], 3, 5>; // Vector MPSAD.
-defm : BWWriteResPair<WritePSADBW,  [BWPort0],   5>; // Vector PSADBW.
+defm : BWWriteResPair<WritePSADBW,   [BWPort0],   5>; // Vector PSADBW.
+defm : BWWriteResPair<WritePHMINPOS, [BWPort0],   5>; // Vector PHMINPOS.
+
+// Vector insert/extract operations.
+def : WriteRes<WriteVecInsert, [BWPort5]> {
+  let Latency = 2;
+  let NumMicroOps = 2;
+  let ResourceCycles = [2];
+}
+def : WriteRes<WriteVecInsertLd, [BWPort5,BWPort23]> {
+  let Latency = 6;
+  let NumMicroOps = 2;
+}
+
+def : WriteRes<WriteVecExtract, [BWPort0,BWPort5]> {
+  let Latency = 2;
+  let NumMicroOps = 2;
+}
+def : WriteRes<WriteVecExtractSt, [BWPort4,BWPort5,BWPort237]> {
+  let Latency = 2;
+  let NumMicroOps = 3;
+}
 
 // Conversion between integer and float.
 defm : BWWriteResPair<WriteCvtF2I, [BWPort1], 3>; // Float -> Integer.
@@ -368,8 +397,7 @@ def BWWriteResGroup5 : SchedWriteRes<[BWPort01]> {
   let NumMicroOps = 1;
   let ResourceCycles = [1];
 }
-def: InstRW<[BWWriteResGroup5], (instregex "FINCSTP",
-                                           "FNOP")>;
+def: InstRW<[BWWriteResGroup5], (instrs FINCSTP, FNOP)>;
 
 def BWWriteResGroup6 : SchedWriteRes<[BWPort06]> {
   let Latency = 1;
@@ -402,8 +430,7 @@ def BWWriteResGroup7 : SchedWriteRes<[BWPort15]> {
 def: InstRW<[BWWriteResGroup7], (instregex "ANDN(32|64)rr",
                                            "BLSI(32|64)rr",
                                            "BLSMSK(32|64)rr",
-                                           "BLSR(32|64)rr",
-                                           "LEA(16|32|64)(_32)?r")>;
+                                           "BLSR(32|64)rr")>;
 
 def BWWriteResGroup8 : SchedWriteRes<[BWPort015]> {
   let Latency = 1;
@@ -464,23 +491,12 @@ def: InstRW<[BWWriteResGroup10], (instregex "FBSTPm",
                                             "(V?)MOVUPD(Y?)mr",
                                             "(V?)MOVUPS(Y?)mr")>;
 
-def BWWriteResGroup11 : SchedWriteRes<[BWPort5]> {
-  let Latency = 2;
-  let NumMicroOps = 2;
-  let ResourceCycles = [2];
-}
-def: InstRW<[BWWriteResGroup11], (instregex "MMX_PINSRWrr",
-                                            "(V?)PINSRBrr",
-                                            "(V?)PINSRDrr",
-                                            "(V?)PINSRQrr",
-                                            "(V?)PINSRWrr")>;
-
 def BWWriteResGroup12 : SchedWriteRes<[BWPort01]> {
   let Latency = 2;
   let NumMicroOps = 2;
   let ResourceCycles = [2];
 }
-def: InstRW<[BWWriteResGroup12], (instregex "FDECSTP")>;
+def: InstRW<[BWWriteResGroup12], (instrs FDECSTP)>;
 
 def BWWriteResGroup13 : SchedWriteRes<[BWPort06]> {
   let Latency = 2;
@@ -507,15 +523,9 @@ def BWWriteResGroup15 : SchedWriteRes<[BWPort0,BWPort5]> {
   let NumMicroOps = 2;
   let ResourceCycles = [1,1];
 }
-def: InstRW<[BWWriteResGroup15], (instregex "MMX_PEXTRWrr",
-                                            "VCVTPH2PS(Y?)rr",
+def: InstRW<[BWWriteResGroup15], (instregex "VCVTPH2PS(Y?)rr",
                                             "(V?)CVTPS2PDrr",
                                             "(V?)CVTSS2SDrr",
-                                            "(V?)EXTRACTPSrr",
-                                            "(V?)PEXTRBrr",
-                                            "(V?)PEXTRDrr",
-                                            "(V?)PEXTRQrr",
-                                            "(V?)PEXTRWrr",
                                             "(V?)PSLLDrr",
                                             "(V?)PSLLQrr",
                                             "(V?)PSLLWrr",
@@ -574,17 +584,6 @@ def: InstRW<[BWWriteResGroup20], (instregex "ADC8i8",
                                             "SBB8i8",
                                             "SBB8ri",
                                             "SET(A|BE)r")>;
-
-def BWWriteResGroup21 : SchedWriteRes<[BWPort4,BWPort5,BWPort237]> {
-  let Latency = 2;
-  let NumMicroOps = 3;
-  let ResourceCycles = [1,1,1];
-}
-def: InstRW<[BWWriteResGroup21], (instregex "(V?)EXTRACTPSmr",
-                                            "(V?)PEXTRBmr",
-                                            "(V?)PEXTRDmr",
-                                            "(V?)PEXTRQmr",
-                                            "(V?)PEXTRWmr")>;
 
 def BWWriteResGroup22 : SchedWriteRes<[BWPort4,BWPort6,BWPort237]> {
   let Latency = 2;
@@ -816,15 +815,14 @@ def: InstRW<[BWWriteResGroup44], (instregex "ISTT_FP16m",
                                             "IST_F32m",
                                             "IST_FP16m",
                                             "IST_FP32m",
-                                            "IST_FP64m",
-                                            "VCVTPS2PH(Y?)mr")>;
+                                            "IST_FP64m")>;
 
 def BWWriteResGroup45 : SchedWriteRes<[BWPort0156]> {
   let Latency = 4;
   let NumMicroOps = 4;
   let ResourceCycles = [4];
 }
-def: InstRW<[BWWriteResGroup45], (instregex "FNCLEX")>;
+def: InstRW<[BWWriteResGroup45], (instrs FNCLEX)>;
 
 def BWWriteResGroup46 : SchedWriteRes<[BWPort015,BWPort0156]> {
   let Latency = 4;
@@ -951,15 +949,7 @@ def BWWriteResGroup59 : SchedWriteRes<[BWPort0,BWPort23]> {
   let NumMicroOps = 2;
   let ResourceCycles = [1,1];
 }
-def: InstRW<[BWWriteResGroup59], (instregex "MMX_PSLLDrm",
-                                            "MMX_PSLLQrm",
-                                            "MMX_PSLLWrm",
-                                            "MMX_PSRADrm",
-                                            "MMX_PSRAWrm",
-                                            "MMX_PSRLDrm",
-                                            "MMX_PSRLQrm",
-                                            "MMX_PSRLWrm",
-                                            "VCVTPH2PS(Y?)rm",
+def: InstRW<[BWWriteResGroup59], (instregex "VCVTPH2PS(Y?)rm",
                                             "(V?)CVTPS2PDrm",
                                             "(V?)CVTSS2SDrm",
                                             "VPSLLVQrm",
@@ -977,57 +967,6 @@ def: InstRW<[BWWriteResGroup60], (instregex "VCVTDQ2PDYrr",
                                             "VCVTPD2PSYrr",
                                             "VCVTPS2PHYrr",
                                             "VCVTTPD2DQYrr")>;
-
-def BWWriteResGroup61 : SchedWriteRes<[BWPort5,BWPort23]> {
-  let Latency = 6;
-  let NumMicroOps = 2;
-  let ResourceCycles = [1,1];
-}
-def: InstRW<[BWWriteResGroup61], (instregex "MMX_PALIGNRrmi",
-                                            "MMX_PINSRWrm",
-                                            "MMX_PSHUFBrm",
-                                            "MMX_PUNPCKHBWirm",
-                                            "MMX_PUNPCKHDQirm",
-                                            "MMX_PUNPCKHWDirm",
-                                            "MMX_PUNPCKLBWirm",
-                                            "MMX_PUNPCKLDQirm",
-                                            "MMX_PUNPCKLWDirm",
-                                            "(V?)INSERTPSrm",
-                                            "(V?)MOVHPDrm",
-                                            "(V?)MOVHPSrm",
-                                            "(V?)MOVLPDrm",
-                                            "(V?)MOVLPSrm",
-                                            "(V?)PACKSSDWrm",
-                                            "(V?)PACKSSWBrm",
-                                            "(V?)PACKUSDWrm",
-                                            "(V?)PACKUSWBrm",
-                                            "(V?)PALIGNRrmi",
-                                            "VPERMILPDmi",
-                                            "VPERMILPDrm",
-                                            "VPERMILPSmi",
-                                            "VPERMILPSrm",
-                                            "(V?)PINSRBrm",
-                                            "(V?)PINSRDrm",
-                                            "(V?)PINSRQrm",
-                                            "(V?)PINSRWrm",
-                                            "(V?)PSHUFBrm",
-                                            "(V?)PSHUFDmi",
-                                            "(V?)PSHUFHWmi",
-                                            "(V?)PSHUFLWmi",
-                                            "(V?)PUNPCKHBWrm",
-                                            "(V?)PUNPCKHDQrm",
-                                            "(V?)PUNPCKHQDQrm",
-                                            "(V?)PUNPCKHWDrm",
-                                            "(V?)PUNPCKLBWrm",
-                                            "(V?)PUNPCKLDQrm",
-                                            "(V?)PUNPCKLQDQrm",
-                                            "(V?)PUNPCKLWDrm",
-                                            "(V?)SHUFPDrmi",
-                                            "(V?)SHUFPSrmi",
-                                            "(V?)UNPCKHPDrm",
-                                            "(V?)UNPCKHPSrm",
-                                            "(V?)UNPCKLPDrm",
-                                            "(V?)UNPCKLPSrm")>;
 
 def BWWriteResGroup62 : SchedWriteRes<[BWPort6,BWPort23]> {
   let Latency = 6;
@@ -1057,62 +996,7 @@ def: InstRW<[BWWriteResGroup64], (instregex "ANDN(32|64)rm",
                                             "BLSI(32|64)rm",
                                             "BLSMSK(32|64)rm",
                                             "BLSR(32|64)rm",
-                                            "MMX_PADD(B|D|Q|W)irm",
-                                            "MMX_PADDS(B|W)irm",
-                                            "MMX_PADDUS(B|W)irm",
-                                            "MMX_PAVG(B|W)irm",
-                                            "MMX_PCMPEQ(B|D|W)irm",
-                                            "MMX_PCMPGT(B|D|W)irm",
-                                            "MMX_P(MAX|MIN)SWirm",
-                                            "MMX_P(MAX|MIN)UBirm",
-                                            "MMX_PSIGN(B|D|W)rm",
-                                            "MMX_PSUB(B|D|Q|W)irm",
-                                            "MMX_PSUBS(B|W)irm",
-                                            "MMX_PSUBUS(B|W)irm",
-                                            "MOVBE(16|32|64)rm",
-                                            "(V?)PABSBrm",
-                                            "(V?)PABSDrm",
-                                            "(V?)PABSWrm",
-                                            "(V?)PADDBrm",
-                                            "(V?)PADDDrm",
-                                            "(V?)PADDQrm",
-                                            "(V?)PADDSBrm",
-                                            "(V?)PADDSWrm",
-                                            "(V?)PADDUSBrm",
-                                            "(V?)PADDUSWrm",
-                                            "(V?)PADDWrm",
-                                            "(V?)PAVGBrm",
-                                            "(V?)PAVGWrm",
-                                            "(V?)PCMPEQBrm",
-                                            "(V?)PCMPEQDrm",
-                                            "(V?)PCMPEQQrm",
-                                            "(V?)PCMPEQWrm",
-                                            "(V?)PCMPGTBrm",
-                                            "(V?)PCMPGTDrm",
-                                            "(V?)PCMPGTWrm",
-                                            "(V?)PMAXSBrm",
-                                            "(V?)PMAXSDrm",
-                                            "(V?)PMAXSWrm",
-                                            "(V?)PMAXUBrm",
-                                            "(V?)PMAXUDrm",
-                                            "(V?)PMAXUWrm",
-                                            "(V?)PMINSBrm",
-                                            "(V?)PMINSDrm",
-                                            "(V?)PMINSWrm",
-                                            "(V?)PMINUBrm",
-                                            "(V?)PMINUDrm",
-                                            "(V?)PMINUWrm",
-                                            "(V?)PSIGNBrm",
-                                            "(V?)PSIGNDrm",
-                                            "(V?)PSIGNWrm",
-                                            "(V?)PSUBBrm",
-                                            "(V?)PSUBDrm",
-                                            "(V?)PSUBQrm",
-                                            "(V?)PSUBSBrm",
-                                            "(V?)PSUBSWrm",
-                                            "(V?)PSUBUSBrm",
-                                            "(V?)PSUBUSWrm",
-                                            "(V?)PSUBWrm")>;
+                                            "MOVBE(16|32|64)rm")>;
 
 def BWWriteResGroup65 : SchedWriteRes<[BWPort23,BWPort015]> {
   let Latency = 6;
@@ -1415,17 +1299,7 @@ def BWWriteResGroup91 : SchedWriteRes<[BWPort1,BWPort23]> {
 def: InstRW<[BWWriteResGroup91], (instregex "MMX_CVTPI2PSirm",
                                             "PDEP(32|64)rm",
                                             "PEXT(32|64)rm",
-                                            "(V?)ADDPDrm",
-                                            "(V?)ADDPSrm",
-                                            "(V?)ADDSDrm",
-                                            "(V?)ADDSSrm",
-                                            "(V?)ADDSUBPDrm",
-                                            "(V?)ADDSUBPSrm",
-                                            "(V?)CVTDQ2PSrm",
-                                            "(V?)SUBPDrm",
-                                            "(V?)SUBPSrm",
-                                            "(V?)SUBSDrm",
-                                            "(V?)SUBSSrm")>;
+                                            "(V?)CVTDQ2PSrm")>;
 
 def BWWriteResGroup91_16 : SchedWriteRes<[BWPort1, BWPort0156, BWPort23]> {
   let Latency = 8;
@@ -1679,28 +1553,7 @@ def BWWriteResGroup115 : SchedWriteRes<[BWPort0,BWPort23]> {
   let NumMicroOps = 2;
   let ResourceCycles = [1,1];
 }
-def: InstRW<[BWWriteResGroup115], (instregex "MMX_PMADDUBSWrm",
-                                             "MMX_PMADDWDirm",
-                                             "MMX_PMULHRSWrm",
-                                             "MMX_PMULHUWirm",
-                                             "MMX_PMULHWirm",
-                                             "MMX_PMULLWirm",
-                                             "MMX_PMULUDQirm",
-                                             "MMX_PSADBWirm",
-                                             "(V?)PCMPGTQrm",
-                                             "(V?)PHMINPOSUWrm",
-                                             "(V?)PMADDUBSWrm",
-                                             "(V?)PMADDWDrm",
-                                             "(V?)PSADBWrm")>;
-
-def BWWriteResGroup116 : SchedWriteRes<[BWPort01,BWPort23]> {
-  let Latency = 10;
-  let NumMicroOps = 2;
-  let ResourceCycles = [1,1];
-}
-def: InstRW<[BWWriteResGroup116],
-            (instregex "VF(N)?M(ADD|SUB|ADDSUB|SUBADD)(132|213|231)P(D|S)m",
-                       "VF(N)?M(ADD|SUB)(132|213|231)S(D|S)m")>;
+def: InstRW<[BWWriteResGroup115], (instregex "(V?)PCMPGTQrm")>;
 
 def BWWriteResGroup117 : SchedWriteRes<[BWPort1,BWPort23]> {
   let Latency = 10;
@@ -1764,14 +1617,6 @@ def: InstRW<[BWWriteResGroup123], (instregex "MUL_F32m",
                                              "VPMULLWYrm",
                                              "VPMULUDQYrm",
                                              "VPSADBWYrm")>;
-
-def BWWriteResGroup124 : SchedWriteRes<[BWPort01,BWPort23]> {
-  let Latency = 11;
-  let NumMicroOps = 2;
-  let ResourceCycles = [1,1];
-}
-def: InstRW<[BWWriteResGroup124],
-            (instregex "VF(N)?M(ADD|SUB|ADDSUB|SUBADD)(132|213|231)P(D|S)Ym")>;
 
 def BWWriteResGroup126 : SchedWriteRes<[BWPort0,BWPort015]> {
   let Latency = 11;
@@ -2312,7 +2157,7 @@ def BWWriteResGroup200 : SchedWriteRes<[BWPort5,BWPort01,BWPort0156]> {
   let NumMicroOps = 15;
   let ResourceCycles = [6,3,6];
 }
-def: InstRW<[BWWriteResGroup200], (instregex "FNINIT")>;
+def: InstRW<[BWWriteResGroup200], (instrs FNINIT)>;
 
 def BWWriteResGroup201 : SchedWriteRes<[BWPort0,BWPort1,BWPort5,BWPort6,BWPort01,BWPort0156]> {
   let Latency = 80;

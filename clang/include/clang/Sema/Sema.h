@@ -6311,6 +6311,8 @@ public:
                                 SourceLocation TemplateLoc,
                                 const TemplateArgumentListInfo *TemplateArgs);
 
+  void diagnoseMissingTemplateArguments(TemplateName Name, SourceLocation Loc);
+
   ExprResult BuildTemplateIdExpr(const CXXScopeSpec &SS,
                                  SourceLocation TemplateKWLoc,
                                  LookupResult &R,

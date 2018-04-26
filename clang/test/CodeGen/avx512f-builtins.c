@@ -1952,6 +1952,19 @@ __m512i test_mm512_mullo_epi32(__m512i __A, __m512i __B) {
   return _mm512_mullo_epi32(__A,__B);
 }
 
+__m512i test_mm512_mullox_epi64 (__m512i __A, __m512i __B) {
+  // CHECK-LABEL: @test_mm512_mullox_epi64
+  // CHECK: mul <8 x i64>
+  return (__m512i) ((__v8di) __A * (__v8di) __B);
+}
+
+__m512i test_mm512_mask_mullox_epi64 (__m512i __W, __mmask8 __U, __m512i __A, __m512i __B) {
+  // CHECK-LABEL: @test_mm512_mask_mullox_epi64
+  // CHECK: mul <8 x i64> %{{.*}}, %{{.*}}
+  // CHECK: select <8 x i1> %{{.*}}, <8 x i64> %{{.*}}, <8 x i64> %{{.*}}
+  return (__m512i) _mm512_mask_mullox_epi64(__W, __U, __A, __B);
+}
+
 __m512d test_mm512_add_round_pd(__m512d __A, __m512d __B) {
   // CHECK-LABEL: @test_mm512_add_round_pd
   // CHECK: @llvm.x86.avx512.mask.add.pd.512
@@ -8051,7 +8064,6 @@ __m512i test_mm512_setr_epi32 (int __A, int __B, int __C, int __D,
               __I, __J, __K, __L,__M, __N, __O, __P);
 }
 
-#ifdef __x86_64__
 __m512i test_mm512_mask_set1_epi64 (__m512i __O, __mmask8 __M, long long __A)
 {
   // CHECK-LABEL: @test_mm512_mask_set1_epi64
@@ -8081,7 +8093,6 @@ __m512i test_mm512_maskz_set1_epi64 (__mmask8 __M, long long __A)
   // CHECK: select <8 x i1> %{{.*}}, <8 x i64> %{{.*}}, <8 x i64> %{{.*}}
   return _mm512_maskz_set1_epi64 (__M, __A);
 }
-#endif
 
 
 __m512i test_mm512_set_epi64 (long long __A, long long __B, long long __C,

@@ -50,6 +50,7 @@
 #include "llvm/Transforms/IPO/AlwaysInliner.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
 #include "llvm/Transforms/IPO/ThinLTOBitcodeWriter.h"
+#include "llvm/Transforms/InstCombine/InstCombine.h"
 #include "llvm/Transforms/Instrumentation.h"
 #include "llvm/Transforms/Instrumentation/BoundsChecking.h"
 #include "llvm/Transforms/Instrumentation/GCOVProfiler.h"
@@ -773,7 +774,7 @@ void EmitAssemblyHelper::AddPreLinkPasses() {
 
 void EmitAssemblyHelper::EmitAssembly(BackendAction Action,
                                       std::unique_ptr<raw_pwrite_stream> OS) {
-  TimeRegion Region(llvm::TimePassesIsEnabled ? &CodeGenerationTime : nullptr);
+  TimeRegion Region(FrontendTimesIsEnabled ? &CodeGenerationTime : nullptr);
 
   setCommandLineOpts(CodeGenOpts, LangOpts);
 
@@ -919,8 +920,8 @@ static PassBuilder::OptimizationLevel mapToLevel(const CodeGenOptions &Opts) {
 /// `EmitAssembly` at some point in the future when the default switches.
 void EmitAssemblyHelper::EmitAssemblyWithNewPassManager(
     BackendAction Action, std::unique_ptr<raw_pwrite_stream> OS) {
-  TimeRegion Region(llvm::TimePassesIsEnabled ? &CodeGenerationTime : nullptr);
-  setCommandLineOpts(CodeGenOpts, LangOpts);
+  TimeRegion Region(FrontendTimesIsEnabled ? &CodeGenerationTime : nullptr);
+  setCommandLineOpts(CodeGenOpts);
 
   // The new pass manager always makes a target machine available to passes
   // during construction.
