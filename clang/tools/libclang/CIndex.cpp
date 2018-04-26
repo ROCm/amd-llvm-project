@@ -1796,7 +1796,7 @@ bool CursorVisitor::VisitCXXRecordDecl(CXXRecordDecl *D) {
 
 bool CursorVisitor::VisitAttributes(Decl *D) {
   for (const auto *I : D->attrs())
-    if (Visit(MakeCXCursor(I, D, TU)))
+    if (!I->isImplicit() && Visit(MakeCXCursor(I, D, TU)))
         return true;
 
   return false;
@@ -6173,6 +6173,7 @@ CXCursor clang_getCursorDefinition(CXCursor C) {
   case Decl::PragmaComment:
   case Decl::PragmaDetectMismatch:
   case Decl::UsingPack:
+  case Decl::Concept:
     return C;
 
   // Declaration kinds that don't make any sense here, but are
