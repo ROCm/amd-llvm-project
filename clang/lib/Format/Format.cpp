@@ -718,20 +718,39 @@ FormatStyle getGoogleStyle(FormatStyle::LanguageKind Language) {
   GoogleStyle.ObjCSpaceAfterProperty = false;
   GoogleStyle.ObjCSpaceBeforeProtocolList = true;
   GoogleStyle.PointerAlignment = FormatStyle::PAS_Left;
-  GoogleStyle.RawStringFormats = {{
-      FormatStyle::LK_TextProto,
-      /*Delimiters=*/
+  GoogleStyle.RawStringFormats = {
       {
-          "pb",
-          "PB",
-          "proto",
-          "PROTO",
+          FormatStyle::LK_Cpp,
+          /*Delimiters=*/
+          {
+              "cc",
+              "CC",
+              "cpp",
+              "Cpp",
+              "CPP",
+              "c++",
+              "C++",
+          },
+          /*EnclosingFunctionNames=*/
+          {},
+          /*CanonicalDelimiter=*/"",
+          /*BasedOnStyle=*/"google",
       },
-      /*EnclosingFunctionNames=*/
-      {},
-      /*CanonicalDelimiter=*/"",
-      /*BasedOnStyle=*/"google",
-  }};
+      {
+          FormatStyle::LK_TextProto,
+          /*Delimiters=*/
+          {
+              "pb",
+              "PB",
+              "proto",
+              "PROTO",
+          },
+          /*EnclosingFunctionNames=*/
+          {},
+          /*CanonicalDelimiter=*/"",
+          /*BasedOnStyle=*/"google",
+      },
+  };
   GoogleStyle.SpacesBeforeTrailingComments = 2;
   GoogleStyle.Standard = FormatStyle::LS_Auto;
 
@@ -1006,8 +1025,7 @@ public:
   analyze(TokenAnnotator &Annotator,
           SmallVectorImpl<AnnotatedLine *> &AnnotatedLines,
           FormatTokenLexer &Tokens) override {
-    AffectedRangeMgr.computeAffectedLines(AnnotatedLines.begin(),
-                                          AnnotatedLines.end());
+    AffectedRangeMgr.computeAffectedLines(AnnotatedLines);
     tooling::Replacements Result;
     requoteJSStringLiteral(AnnotatedLines, Result);
     return {Result, 0};
@@ -1097,8 +1115,7 @@ public:
           FormatTokenLexer &Tokens) override {
     tooling::Replacements Result;
     deriveLocalStyle(AnnotatedLines);
-    AffectedRangeMgr.computeAffectedLines(AnnotatedLines.begin(),
-                                          AnnotatedLines.end());
+    AffectedRangeMgr.computeAffectedLines(AnnotatedLines);
     for (unsigned i = 0, e = AnnotatedLines.size(); i != e; ++i) {
       Annotator.calculateFormattingInformation(*AnnotatedLines[i]);
     }
@@ -1222,8 +1239,7 @@ public:
     // To determine if some redundant code is actually introduced by
     // replacements(e.g. deletions), we need to come up with a more
     // sophisticated way of computing affected ranges.
-    AffectedRangeMgr.computeAffectedLines(AnnotatedLines.begin(),
-                                          AnnotatedLines.end());
+    AffectedRangeMgr.computeAffectedLines(AnnotatedLines);
 
     checkEmptyNamespace(AnnotatedLines);
 
