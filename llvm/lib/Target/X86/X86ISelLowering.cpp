@@ -216,6 +216,8 @@ X86TargetLowering::X86TargetLowering(const X86TargetMachine &TM,
     // We have an algorithm for SSE2, and we turn this into a 64-bit
     // FILD or VCVTUSI2SS/SD for other targets.
     setOperationAction(ISD::UINT_TO_FP     , MVT::i32  , Custom);
+  } else {
+    setOperationAction(ISD::UINT_TO_FP     , MVT::i32  , Expand);
   }
 
   // Promote i1/i8 SINT_TO_FP to larger SINT_TO_FP's, as X86 doesn't have
@@ -235,7 +237,7 @@ X86TargetLowering::X86TargetLowering(const X86TargetMachine &TM,
     }
   } else {
     setOperationAction(ISD::SINT_TO_FP     , MVT::i16  , Promote);
-    setOperationAction(ISD::SINT_TO_FP     , MVT::i32  , Promote);
+    setOperationAction(ISD::SINT_TO_FP     , MVT::i32  , Expand);
   }
 
   // Promote i1/i8 FP_TO_SINT to larger FP_TO_SINTS's, as X86 doesn't have
@@ -33223,8 +33225,13 @@ static SDValue combineMul(SDNode *N, SelectionDAG &DAG,
   if (!C)
     return SDValue();
   uint64_t MulAmt = C->getZExtValue();
-  if (isPowerOf2_64(MulAmt) || MulAmt == 3 || MulAmt == 5 || MulAmt == 9)
+  if (isPowerOf2_64(MulAmt))
     return SDValue();
+
+  SDLoc DL(N);
+  if (MulAmt == 3 || MulAmt == 5 || MulAmt == 9)
+    return DAG.getNode(X86ISD::MUL_IMM, DL, VT, N->getOperand(0),
+                       N->getOperand(1));
 
   uint64_t MulAmt1 = 0;
   uint64_t MulAmt2 = 0;
@@ -33239,7 +33246,6 @@ static SDValue combineMul(SDNode *N, SelectionDAG &DAG,
     MulAmt2 = MulAmt / 3;
   }
 
-  SDLoc DL(N);
   SDValue NewMul;
   if (MulAmt2 &&
       (isPowerOf2_64(MulAmt2) || MulAmt2 == 3 || MulAmt2 == 5 || MulAmt2 == 9)){
