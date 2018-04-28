@@ -2126,7 +2126,6 @@ public:
 
   Decl *ParsedFreeStandingDeclSpec(Scope *S, AccessSpecifier AS, DeclSpec &DS,
                                    RecordDecl *&AnonRecord);
-
   Decl *ParsedFreeStandingDeclSpec(Scope *S, AccessSpecifier AS, DeclSpec &DS,
                                    MultiTemplateParamsArg TemplateParams,
                                    bool IsExplicitInstantiation,
@@ -6075,7 +6074,7 @@ public:
   TemplateNameKind isTemplateName(Scope *S,
                                   CXXScopeSpec &SS,
                                   bool hasTemplateKeyword,
-                                  UnqualifiedId &Name,
+                                  const UnqualifiedId &Name,
                                   ParsedType ObjectType,
                                   bool EnteringContext,
                                   TemplateTy &Template,
@@ -6230,12 +6229,7 @@ public:
                                 SourceLocation TemplateLoc,
                                 const TemplateArgumentListInfo *TemplateArgs);
 
-  ExprResult
-  CheckConceptTemplateId(const CXXScopeSpec &SS,
-                         const DeclarationNameInfo &NameInfo,
-                         ConceptDecl *Template,
-                         SourceLocation TemplateLoc,
-                         const TemplateArgumentListInfo *TemplateArgs);
+  void diagnoseMissingTemplateArguments(TemplateName Name, SourceLocation Loc);
 
   ExprResult BuildTemplateIdExpr(const CXXScopeSpec &SS,
                                  SourceLocation TemplateKWLoc,
@@ -6250,7 +6244,7 @@ public:
 
   TemplateNameKind ActOnDependentTemplateName(
       Scope *S, CXXScopeSpec &SS, SourceLocation TemplateKWLoc,
-      UnqualifiedId &Name, ParsedType ObjectType, bool EnteringContext,
+      const UnqualifiedId &Name, ParsedType ObjectType, bool EnteringContext,
       TemplateTy &Template, bool AllowInjectedClassName = false);
 
   DeclResult
@@ -6514,13 +6508,6 @@ public:
   getTemplateArgumentBindingsText(const TemplateParameterList *Params,
                                   const TemplateArgument *Args,
                                   unsigned NumArgs);
-
-  // Concepts
-  ConceptDecl *ActOnConceptDefinition(
-      Scope *S,
-      MultiTemplateParamsArg TemplateParameterLists,
-      IdentifierInfo *Name, SourceLocation NameLoc,
-      Expr *ConstraintExpr);
 
   //===--------------------------------------------------------------------===//
   // C++ Variadic Templates (C++0x [temp.variadic])
