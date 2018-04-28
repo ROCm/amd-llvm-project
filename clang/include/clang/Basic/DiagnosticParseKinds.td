@@ -1073,6 +1073,10 @@ def err_opencl_taking_function_address_parser : Error<
 def err_opencl_logical_exclusive_or : Error<
   "^^ is a reserved operator in OpenCL">;
 
+// OpenCL C++.
+def err_openclcxx_virtual_function : Error<
+  "virtual functions are not supported in OpenCL C++">;
+
 // OpenMP support.
 def warn_pragma_omp_ignored : Warning<
   "unexpected '#pragma omp ...' in program">, InGroup<SourceUsesOpenMP>, DefaultIgnore;
@@ -1145,6 +1149,24 @@ def err_pragma_cannot_end_force_cuda_host_device : Error<
   "force_cuda_host_device end pragma without matching "
   "force_cuda_host_device begin">;
 } // end of Parse Issue category.
+
+let CategoryName = "Concepts Issue" in {
+def err_concept_at_non_namespace_scope : Error<
+  "'concept' can only appear in namespace scope">;
+
+def err_concept_extra_headers : Error<
+  "extraneous template parameter list in concept definition">;
+def err_concept_unexpected_scope_spec : Error<
+  "invalid nested name specifier; concepts must be defined in their own namespace">;
+def err_concept_nontemplate : Error<"concept definition must be a template; "
+                                    "missing template parameter list">;
+def err_concept_specialized : Error<
+  "'concept' cannot be "
+  "%select{explicitly specialized|partially specialized}0">;
+def note_concept_specialized : Note<
+  "'concept' cannot be "
+  "%select{explicitly specialized|partially specialized}0">;
+}
 
 let CategoryName = "Modules Issue" in {
 def err_unexpected_module_decl : Error<
