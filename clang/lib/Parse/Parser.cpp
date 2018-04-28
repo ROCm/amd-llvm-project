@@ -2008,7 +2008,7 @@ bool Parser::ParseMicrosoftIfExistsCondition(IfExistsCondition& Result) {
   if (ParseUnqualifiedId(
           Result.SS, /*EnteringContext*/false, /*AllowDestructorName*/true,
           /*AllowConstructorName*/true, /*AllowDeductionGuide*/false, nullptr,
-          TemplateKWLoc, Result.Name)) {
+          &TemplateKWLoc, Result.Name)) {
     T.skipToEnd();
     return true;
   }
