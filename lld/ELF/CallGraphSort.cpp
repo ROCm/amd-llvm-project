@@ -214,17 +214,15 @@ void CallGraphSort::groupClusters() {
   }
 
   // Remove empty or dead nodes. Invalidates all cluster indices.
-  Clusters.erase(std::remove_if(Clusters.begin(), Clusters.end(),
-                                [](const Cluster &C) {
-                                  return C.Size == 0 || C.Sections.empty();
-                                }),
-                 Clusters.end());
+  llvm::erase_if(Clusters, [](const Cluster &C) {
+    return C.Size == 0 || C.Sections.empty();
+  });
 
   // Sort by density.
-  std::sort(Clusters.begin(), Clusters.end(),
-            [](const Cluster &A, const Cluster &B) {
-              return A.getDensity() > B.getDensity();
-            });
+  std::stable_sort(Clusters.begin(), Clusters.end(),
+                   [](const Cluster &A, const Cluster &B) {
+                     return A.getDensity() > B.getDensity();
+                   });
 }
 
 DenseMap<const InputSectionBase *, int> CallGraphSort::run() {
