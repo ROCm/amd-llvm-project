@@ -1959,16 +1959,7 @@ private:
                         ParsedAttributesWithRange &Attrs);
   DeclSpecContext
   getDeclSpecContextFromDeclaratorContext(DeclaratorContext Context);
-
-  /// \brief Parses declaration-specifiers upto a declarator or ';' emitting
-  /// diagnostics as necessary and storing parsed information within DS.
-  ///
-  /// Note: Asides from parsing the routine C/C++ decl-specifiers (which could
-  /// include entire class or enum definitions), this also parses a concept
-  /// definition and stores the appropriate AST representations (for
-  /// class/enum/concept declarations/definitions, decltype
-  /// expression-operands or types, where appropriate) within DS.
-  void ParseDeclarationSpecifiersOrConceptDefinition(
+  void ParseDeclarationSpecifiers(
       DeclSpec &DS,
       const ParsedTemplateInfo &TemplateInfo = ParsedTemplateInfo(),
       AccessSpecifier AS = AS_none,
@@ -2553,12 +2544,11 @@ private:
   struct UsingDeclarator {
     SourceLocation TypenameLoc;
     CXXScopeSpec SS;
-    SourceLocation TemplateKWLoc;
     UnqualifiedId Name;
     SourceLocation EllipsisLoc;
 
     void clear() {
-      TypenameLoc = TemplateKWLoc = EllipsisLoc = SourceLocation();
+      TypenameLoc = EllipsisLoc = SourceLocation();
       SS.clear();
       Name.clear();
     }
@@ -2753,7 +2743,7 @@ public:
                           bool AllowConstructorName,
                           bool AllowDeductionGuide,
                           ParsedType ObjectType,
-                          SourceLocation& TemplateKWLoc,
+                          SourceLocation *TemplateKWLoc,
                           UnqualifiedId &Result);
 
 private:
@@ -2820,11 +2810,6 @@ private:
                                    SourceLocation &DeclEnd,
                                    AccessSpecifier AS = AS_none);
 
-  /// \brief Parse a single template declaration that declares a concept [c++2a]
-  /// and store the AST node within DS.
-  void ParseConceptDefinition(SourceLocation ConceptLoc, DeclSpec &DS,
-                              const ParsedTemplateInfo &TemplateInfo,
-                              AccessSpecifier AS, DeclSpecContext DSC);
   //===--------------------------------------------------------------------===//
   // Modules
   DeclGroupPtrTy ParseModuleDecl();

@@ -105,7 +105,6 @@ void CodeGenFunction::EmitDecl(const Decl &D) {
   case Decl::OMPThreadPrivate:
   case Decl::OMPCapturedExpr:
   case Decl::Empty:
-  case Decl::Concept:
     // None of these decls require codegen support.
     return;
 
@@ -1963,6 +1962,8 @@ void CodeGenFunction::EmitParmDecl(const VarDecl &D, ParamValue Arg,
                 DtorKind == QualType::DK_nontrivial_c_struct) &&
                "unexpected destructor type");
         pushDestroy(DtorKind, DeclPtr, Ty);
+        CalleeDestructedParamCleanups[cast<ParmVarDecl>(&D)] =
+            EHStack.stable_begin();
       }
     }
   } else {
