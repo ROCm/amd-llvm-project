@@ -479,6 +479,20 @@ static void InitializeStandardPredefinedMacros(const TargetInfo &TI,
     if (LangOpts.CUDAIsDevice)
       Builder.defineMacro("__HIP_DEVICE_COMPILE__");
   }
+  if(LangOpts.DevicePath) {
+    if(LangOpts.AMPCPU) {
+      Builder.defineMacro("__AMP_CPU__", "1");
+      Builder.defineMacro("__KALMAR_ACCELERATOR__", "2");
+      Builder.defineMacro("__HCC_ACCELERATOR__", "2");
+    } else {
+      Builder.defineMacro("__GPU__", "1");
+      Builder.defineMacro("__KALMAR_ACCELERATOR__", "1");
+      Builder.defineMacro("__HCC_ACCELERATOR__", "1");
+    }
+  } else {
+    Builder.defineMacro("__KALMAR_CPU__", "1");
+    Builder.defineMacro("__HCC_CPU__", "1");
+  }
 }
 
 /// Initialize the predefined C++ language feature test macros defined in
