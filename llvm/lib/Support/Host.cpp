@@ -18,7 +18,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/Triple.h"
-#include "llvm/Config/config.h"
+#include "llvm/Config/llvm-config.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -30,7 +30,7 @@
 #ifdef LLVM_ON_UNIX
 #include "Unix/Host.inc"
 #endif
-#ifdef LLVM_ON_WIN32
+#ifdef _WIN32
 #include "Windows/Host.inc"
 #endif
 #ifdef _MSC_VER
@@ -1261,6 +1261,8 @@ bool sys::getHostCPUFeatures(StringMap<bool> &Features) {
   Features["avx512vpopcntdq"] = HasLeaf7 && ((ECX >> 14) & 1) && HasAVX512Save;
   Features["rdpid"]           = HasLeaf7 && ((ECX >> 22) & 1);
   Features["cldemote"]        = HasLeaf7 && ((ECX >> 25) & 1);
+  Features["movdiri"]         = HasLeaf7 && ((ECX >> 27) & 1);
+  Features["movdir64b"]       = HasLeaf7 && ((ECX >> 28) & 1);
 
   Features["ibt"] = HasLeaf7 && ((EDX >> 20) & 1);
 

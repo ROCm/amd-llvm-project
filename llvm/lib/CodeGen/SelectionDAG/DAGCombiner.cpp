@@ -2887,6 +2887,13 @@ SDValue DAGCombiner::visitSDIV(SDNode *N) {
     unsigned Idx = EltIndex++;
     if (C->isNullValue() || C->isOpaque())
       return false;
+    // The instruction sequence to be generated contains shifting C by (op size
+    // in bits - # of trailing zeros in C), which results in an undef value when
+    // C == 1. (e.g. if the op size in bits is 32, it will be (sra x , 32) if C
+    // == 1)
+    if (C->getAPIntValue().isOneValue())
+      return false;
+
     if (C->getAPIntValue().isPowerOf2())
       return true;
     if ((-C->getAPIntValue()).isPowerOf2()) {
@@ -10908,8 +10915,8 @@ static SDValue foldFPToIntToFP(SDNode *N, SelectionDAG &DAG,
   // unexpected results. Ie, programs may be relying on the platform-specific
   // undefined behavior when the float-to-int conversion overflows.
   const Function &F = DAG.getMachineFunction().getFunction();
-  Attribute CastWorkaround = F.getFnAttribute("fp-cast-overflow-workaround");
-  if (CastWorkaround.getValueAsString().equals("true"))
+  Attribute StrictOverflow = F.getFnAttribute("strict-float-cast-overflow");
+  if (StrictOverflow.getValueAsString().equals("false"))
     return SDValue();
 
   // We only do this if the target has legal ftrunc. Otherwise, we'd likely be
