@@ -12,7 +12,7 @@
 
 #include "llvm/Support/CodeGenCoverage.h"
 
-#include "llvm/Config/config.h"
+#include "llvm/Config/llvm-config.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -22,7 +22,7 @@
 
 #if LLVM_ON_UNIX
 #include <unistd.h>
-#elif LLVM_ON_WIN32
+#elif _WIN32
 #include <windows.h>
 #endif
 
@@ -93,7 +93,7 @@ bool CodeGenCoverage::emit(StringRef CoveragePrefix,
     std::string Pid =
 #if LLVM_ON_UNIX
         llvm::to_string(::getpid());
-#elif LLVM_ON_WIN32
+#elif _WIN32
         llvm::to_string(::GetCurrentProcessId());
 #else
         "";
