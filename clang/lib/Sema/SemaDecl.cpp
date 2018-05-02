@@ -5701,7 +5701,7 @@ bool Sema::IsCXXAMPTileStatic(Declarator &D) {
 }
 
  void Sema::DiagnosticCXXAMPTileStatic(Declarator &D, Decl *Dcl) {
-  if(!IsInAMPRestricted() && !IsGridLaunchKernel())
+  if(!IsInAMPRestricted())
     Diag(D.getIdentifierLoc(), diag::err_amp_tile_static_unsupported_usage);
 
   if(!Dcl)
@@ -9804,26 +9804,6 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
   }
 
   MarkUnusedFileScopedDecl(NewFD);
-  // HCC GridLaunch
-  // Place this check before returning FunctionTemplate
-  if (NewFD->hasAttr<HCGridLaunchAttr>()) {
-    for(auto PVD : NewFD->parameters()) {
-      QualType PT = PVD->getType().getCanonicalType();
-      // Check if first parameter has grid_launch_parm type
-      if(PT->getAs<ReferenceType>()) {
-        Diag(PVD->getLocation(), diag::err_hc_grid_launch_ref);
-        D.setInvalidType();
-      }
-      // Check if first parameter has grid_launch_parm type
-      else if (PVD == *(NewFD->param_begin())) {
-        std::size_t found = PT.getAsString().find("grid_launch_parm");
-        if (found == std::string::npos) {
-          Diag(PVD->getLocation(), diag::err_hc_grid_launch_parm) << PT.getAsString();
-          D.setInvalidType();
-        }
-      }
-    }
-  }
 
   if (getLangOpts().CPlusPlus) {
     if (FunctionTemplate) {

@@ -1125,8 +1125,7 @@ Sema::BuildMemberReferenceExpr(Expr *BaseExpr, QualType BaseExprType,
       std::string name;
       if(getCurFunctionDecl()) {
         ParentCPU = getCurFunctionDecl()->hasAttr<CXXAMPRestrictCPUAttr>();
-        ParentAMP = getCurFunctionDecl()->hasAttr<CXXAMPRestrictAMPAttr>() ||
-                    getCurFunctionDecl()->hasAttr<HCGridLaunchAttr>();
+        ParentAMP = getCurFunctionDecl()->hasAttr<CXXAMPRestrictAMPAttr>();
         name = getCurFunctionDecl()->getNameAsString();
       }
       if(ParentCPU || ParentAMP) {

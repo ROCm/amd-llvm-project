@@ -67,7 +67,6 @@ inline bool DeclAttrsMatchHCCMode(const LangOptions &LangOpts, Decl *D) {
   if (!LangOpts.CPlusPlusAMP || !D)
     return true;
   bool isDeviceSideDecl = D->hasAttr<CXXAMPRestrictAMPAttr>() ||
-                          D->hasAttr<HCGridLaunchAttr>() ||
                           D->hasAttr<HC_HCAttr>();
   return isDeviceSideDecl == LangOpts.DevicePath;
 }
