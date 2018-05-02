@@ -1482,6 +1482,7 @@ bool ASTReader::ReadSLocEntry(int ID) {
     SourceMgr.createExpansionLoc(SpellingLoc,
                                      ReadSourceLocation(*F, Record[2]),
                                      ReadSourceLocation(*F, Record[3]),
+                                     Record[5],
                                      Record[4],
                                      ID,
                                      BaseOffset + Record[0]);
@@ -6839,6 +6840,9 @@ QualType ASTReader::GetType(TypeID ID) {
       break;
     case PREDEF_TYPE_NULLPTR_ID:
       T = Context.NullPtrTy;
+      break;
+    case PREDEF_TYPE_CHAR8_ID:
+      T = Context.Char8Ty;
       break;
     case PREDEF_TYPE_CHAR16_ID:
       T = Context.Char16Ty;

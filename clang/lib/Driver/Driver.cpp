@@ -57,6 +57,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/ADT/StringSwitch.h"
+#include "llvm/Config/llvm-config.h"
 #include "llvm/Option/Arg.h"
 #include "llvm/Option/ArgList.h"
 #include "llvm/Option/OptSpecifier.h"
@@ -1593,7 +1594,13 @@ bool Driver::HandleImmediateArgs(const Compilation &C) {
   }
 
   if (Arg *A = C.getArgs().getLastArg(options::OPT_print_prog_name_EQ)) {
-    llvm::outs() << GetProgramPath(A->getValue(), TC) << "\n";
+    StringRef ProgName = A->getValue();
+
+    // Null program name cannot have a path.
+    if (! ProgName.empty())
+      llvm::outs() << GetProgramPath(ProgName, TC);
+
+    llvm::outs() << "\n";
     return false;
   }
 
