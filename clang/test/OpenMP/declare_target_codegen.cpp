@@ -18,10 +18,20 @@
 // CHECK-DAG: @d = global i32 0,
 // CHECK-DAG: @c = external global i32,
 
-// CHECK-DAG: define {{.*}}i32 @{{.*}}{{foo|bar|baz2|baz3}}{{.*}}()
+// CHECK-DAG: define {{.*}}i32 @{{.*}}{{foo|bar|baz2|baz3|FA|f_method}}{{.*}}()
+// CHECK-DAG: define {{.*}}void @{{.*}}TemplateClass{{.*}}(%class.TemplateClass* %{{.*}})
+// CHECK-DAG: define {{.*}}i32 @{{.*}}TemplateClass{{.*}}f_method{{.*}}(%class.TemplateClass* %{{.*}})
 
 #ifndef HEADER
 #define HEADER
+
+template <typename T>
+class TemplateClass {
+  T a;
+public:
+  TemplateClass() {}
+  T f_method() const { return a; }
+};
 
 int foo();
 
@@ -30,6 +40,12 @@ int baz1();
 int baz2();
 
 int baz4() { return 5; }
+
+template <typename T>
+T FA() {
+  TemplateClass<T> s;
+  return s.f_method();
+}
 
 #pragma omp declare target
 struct S {
@@ -54,19 +70,18 @@ int maini1() {
   {
     S s(a);
     static long aaa = 23;
-    a = foo() + bar() + b + c + d + aa + aaa;
+    a = foo() + bar() + b + c + d + aa + aaa + FA<int>();
   }
   return baz4();
 }
 
-int baz3();
+int baz3() { return 2 + baz2(); }
 int baz2() {
 // CHECK-DAG: define void @__omp_offloading_{{.*}}baz2{{.*}}_l[[@LINE+1]](i64 {{.*}})
 #pragma omp target
   ++c;
   return 2 + baz3();
 }
-int baz3() { return 2 + baz2(); }
 
 // CHECK-NOT: define {{.*}}{{baz1|baz4|maini1}}
 #endif // HEADER
