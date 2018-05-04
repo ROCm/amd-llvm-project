@@ -5267,13 +5267,24 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
         if (RFV.occupiesMultipleRegs()) {
           unsigned I = 0;
           unsigned Offset = 0;
+          unsigned BitsToDescribe = 0;
+          if (auto VarSize = Variable->getSizeInBits())
+            BitsToDescribe = *VarSize;
+          if (auto Fragment = Expression->getFragmentInfo())
+            BitsToDescribe = Fragment->SizeInBits;
           for (auto CountAndVT : zip_first(RFV.RegCount, RFV.RegVTs)) {
             unsigned RegCount = std::get<0>(CountAndVT);
             MVT RegisterVT = std::get<1>(CountAndVT);
             unsigned RegisterSize = RegisterVT.getSizeInBits();
             for (unsigned E = I + RegCount; I != E; ++I) {
+              // Bail out if all bits already are described.
+              if (Offset >= BitsToDescribe)
+                break;
+              unsigned FragmentSize = (Offset + RegisterSize > BitsToDescribe)
+                  ? BitsToDescribe - Offset
+                  : RegisterSize;
               auto FragmentExpr = DIExpression::createFragmentExpression(
-                  Expression, Offset, RegisterSize);
+                  Expression, Offset, FragmentSize);
               if (!FragmentExpr)
                 continue;
               // The vregs are guaranteed to be allocated in sequence.
@@ -5735,7 +5746,7 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
   }
   case Intrinsic::annotation:
   case Intrinsic::ptr_annotation:
-  case Intrinsic::invariant_group_barrier:
+  case Intrinsic::launder_invariant_group:
     // Drop the intrinsic, but forward the value
     setValue(&I, getValue(I.getOperand(0)));
     return nullptr;
