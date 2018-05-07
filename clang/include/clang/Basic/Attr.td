@@ -2935,12 +2935,6 @@ def CXXAMPRestrictCPU : InheritableAttr {
   let Documentation = [Undocumented];
 }
 
-def HCGridLaunch : InheritableAttr {
-  let Spellings = [GNU<"hc_grid_launch">, CXX11<"", "hc_grid_launch", 201511>];
-  let Subjects = SubjectList<[Function]>;
-  let Documentation = [Undocumented];
-}
-
 def HCCTileStatic : InheritableAttr {
   let Spellings = [GNU<"tile_static">];
   let Subjects = SubjectList<[Var]>;

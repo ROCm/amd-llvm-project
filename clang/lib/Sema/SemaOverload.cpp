@@ -8944,10 +8944,6 @@ Sema::AddArgumentDependentLookupCandidates(DeclarationName Name,
   }
 }
 
-bool Sema::IsGridLaunchKernel() {
-  return (getCurFunctionDecl() && getCurFunctionDecl()->hasAttr<HCGridLaunchAttr>());
-}
-
 // FIXME: should consider decltype trailing return type
 bool Sema::IsInAMPRestricted() {
   return ((getCurFunctionDecl() && getCurFunctionDecl()->hasAttr<CXXAMPRestrictAMPAttr>()) ||
@@ -12277,7 +12273,7 @@ void Sema::DiagnoseCXXAMPOverloadedCallExpr(SourceLocation LParenLoc,
   LambdaScopeInfo* LambdaInfo = this->getCurLambda();
   bool CallerAMP = (LambdaInfo && LambdaInfo->CallOperator)?
     LambdaInfo->CallOperator->hasAttr<CXXAMPRestrictAMPAttr>():
-    (Caller?(Caller->hasAttr<CXXAMPRestrictAMPAttr>() || Caller->hasAttr<HCGridLaunchAttr>()):false);
+    (Caller?Caller->hasAttr<CXXAMPRestrictAMPAttr>():false);
   bool CallerCPU= (LambdaInfo && LambdaInfo->CallOperator)?
     LambdaInfo->CallOperator->hasAttr<CXXAMPRestrictCPUAttr>():
     (Caller?Caller->hasAttr<CXXAMPRestrictCPUAttr>():false);

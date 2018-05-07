@@ -414,20 +414,6 @@ static void handleSimpleAttributeWithExclusions(Sema &S, Decl *D,
                                                                           AL);
 }
 
-static void handleHCGridLaunchAttr(Sema &S, Decl *D,
-                                   const AttributeList &Attr) {
-  if (!isa<FunctionDecl>(D)) {
-    return;
-  }
-  D->addAttr(::new (S.Context)
-             HCGridLaunchAttr(Attr.getRange(), S.Context,
-                              Attr.getAttributeSpellingListIndex()));
-  // make all hc_grid_launch functions always be emitted
-  D->addAttr(::new (S.Context)
-             UsedAttr(Attr.getRange(), S.Context,
-                              Attr.getAttributeSpellingListIndex()));
-}
-
 /// \brief Check if the passed-in expression is of type int or bool.
 static bool isIntOrBool(Expr *Exp) {
   QualType QT = Exp->getType();
@@ -6206,9 +6192,6 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
     break;
   case AttributeList::AT_ExtVectorType:
     handleExtVectorTypeAttr(S, D, AL);
-    break;
-  case AttributeList::AT_HCGridLaunch:
-    handleHCGridLaunchAttr(S, D, AL);
     break;
   case AttributeList::AT_ExternalSourceSymbol:
     handleExternalSourceSymbolAttr(S, D, AL);
