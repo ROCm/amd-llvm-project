@@ -5934,7 +5934,8 @@ def ext_typecheck_ordered_comparison_of_pointer_and_zero : Extension<
 def err_typecheck_ordered_comparison_of_pointer_and_zero : Error<
   "ordered comparison between pointer and zero (%0 and %1)">;
 def ext_typecheck_ordered_comparison_of_function_pointers : ExtWarn<
-  "ordered comparison of function pointers (%0 and %1)">;
+  "ordered comparison of function pointers (%0 and %1)">,
+  InGroup<DiagGroup<"ordered-compare-function-pointers">>;
 def ext_typecheck_comparison_of_fptr_to_void : Extension<
   "equality comparison between function pointer and void pointer (%0 and %1)">;
 def err_typecheck_comparison_of_fptr_to_void : Error<
@@ -7095,6 +7096,8 @@ def err_atomic_builtin_must_be_pointer : Error<
 def err_atomic_builtin_must_be_pointer_intptr : Error<
   "address argument to atomic builtin must be a pointer to integer or pointer"
   " (%0 invalid)">;
+def err_atomic_builtin_cannot_be_const : Error<
+  "address argument to atomic builtin cannot be const-qualified (%0 invalid)">;
 def err_atomic_builtin_must_be_pointer_intfltptr : Error<
   "address argument to atomic builtin must be a pointer to integer,"
   " floating-point or pointer (%0 invalid)">;

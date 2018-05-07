@@ -1077,7 +1077,9 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
   bool UsingProfile = UsingSampleProfile ||
       (Opts.getProfileUse() != CodeGenOptions::ProfileNone);
 
-  if (Opts.DiagnosticsWithHotness && !UsingProfile)
+  if (Opts.DiagnosticsWithHotness && !UsingProfile &&
+      // An IR file will contain PGO as metadata
+      IK.getLanguage() != InputKind::LLVM_IR)
     Diags.Report(diag::warn_drv_diagnostics_hotness_requires_pgo)
         << "-fdiagnostics-show-hotness";
 
@@ -1132,7 +1134,17 @@ static void ParseDependencyOutputArgs(DependencyOutputOptions &Opts,
   Opts.ShowHeaderIncludes = Args.hasArg(OPT_H);
   Opts.HeaderIncludeOutputFile = Args.getLastArgValue(OPT_header_include_file);
   Opts.AddMissingHeaderDeps = Args.hasArg(OPT_MG);
-  Opts.PrintShowIncludes = Args.hasArg(OPT_show_includes);
+  if (Args.hasArg(OPT_show_includes)) {
+    // Writing both /showIncludes and preprocessor output to stdout
+    // would produce interleaved output, so use stderr for /showIncludes.
+    // This behaves the same as cl.exe, when /E, /EP or /P are passed.
+    if (Args.hasArg(options::OPT_E) || Args.hasArg(options::OPT_P))
+      Opts.ShowIncludesDest = ShowIncludesDestination::Stderr;
+    else
+      Opts.ShowIncludesDest = ShowIncludesDestination::Stdout;
+  } else {
+    Opts.ShowIncludesDest = ShowIncludesDestination::None;
+  }
   Opts.DOTOutputFile = Args.getLastArgValue(OPT_dependency_dot);
   Opts.ModuleDependencyOutputDir =
       Args.getLastArgValue(OPT_module_dependency_dir);
