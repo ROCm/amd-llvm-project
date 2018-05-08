@@ -166,10 +166,17 @@ defm : HWWriteResPair<WriteFSqrtY, [HWPort0], 15, [1], 1, 7>;
 defm : HWWriteResPair<WriteCvtF2I, [HWPort1], 3>;
 defm : HWWriteResPair<WriteCvtI2F, [HWPort1], 4>;
 defm : HWWriteResPair<WriteCvtF2F, [HWPort1], 3>;
-defm : HWWriteResPair<WriteFMA,   [HWPort01], 5, [1], 1, 6>;
-defm : HWWriteResPair<WriteFMAS,  [HWPort01], 5, [1], 1, 5>;
+defm : HWWriteResPair<WriteFMA,   [HWPort01], 5, [1], 1, 5>;
+defm : HWWriteResPair<WriteFMAX,  [HWPort01], 5, [1], 1, 6>;
 defm : HWWriteResPair<WriteFMAY,  [HWPort01], 5, [1], 1, 7>;
+defm : HWWriteResPair<WriteDPPD,  [HWPort0,HWPort1,HWPort5],  9, [1,1,1], 3, 6>;
+defm : HWWriteResPair<WriteDPPS,  [HWPort0,HWPort1,HWPort5], 14, [2,1,1], 4, 6>;
+defm : HWWriteResPair<WriteDPPSY, [HWPort0,HWPort1,HWPort5], 14, [2,1,1], 4, 7>;
 defm : HWWriteResPair<WriteFSign,  [HWPort0], 1>;
+defm : X86WriteRes<WriteFRnd,            [HWPort23],  6, [1],   1>;
+defm : X86WriteRes<WriteFRndY,           [HWPort23],  6, [1],   1>;
+defm : X86WriteRes<WriteFRndLd,  [HWPort1,HWPort23], 12, [2,1], 3>;
+defm : X86WriteRes<WriteFRndYLd, [HWPort1,HWPort23], 13, [2,1], 3>;
 defm : HWWriteResPair<WriteFLogic,  [HWPort5], 1, [1], 1, 6>;
 defm : HWWriteResPair<WriteFLogicY, [HWPort5], 1, [1], 1, 7>;
 defm : HWWriteResPair<WriteFShuffle,  [HWPort5], 1, [1], 1, 6>;
@@ -198,7 +205,8 @@ defm : HWWriteResPair<WriteVecLogic, [HWPort015], 1, [1], 1, 6>;
 defm : HWWriteResPair<WriteVecLogicY,[HWPort015], 1, [1], 1, 7>;
 defm : HWWriteResPair<WriteVecALU,   [HWPort15],  1, [1], 1, 6>;
 defm : HWWriteResPair<WriteVecALUY,  [HWPort15],  1, [1], 1, 7>;
-defm : HWWriteResPair<WriteVecIMul,  [HWPort0],  5, [1], 1, 6>;
+defm : HWWriteResPair<WriteVecIMul,  [HWPort0],  5, [1], 1, 5>;
+defm : HWWriteResPair<WriteVecIMulX, [HWPort0],  5, [1], 1, 6>;
 defm : HWWriteResPair<WriteVecIMulY, [HWPort0],  5, [1], 1, 7>;
 defm : HWWriteResPair<WritePMULLD,   [HWPort0], 10, [2], 2, 6>;
 defm : HWWriteResPair<WritePMULLDY,  [HWPort0], 10, [2], 2, 7>;
@@ -224,6 +232,7 @@ defm : HWWriteResPair<WriteVecShiftX,    [HWPort0,HWPort5],  2, [1,1], 2, 6>;
 defm : X86WriteRes<WriteVecShiftY,       [HWPort0,HWPort5],  4, [1,1], 2>;
 defm : X86WriteRes<WriteVecShiftYLd,     [HWPort0,HWPort23], 8, [1,1], 2>;
 
+defm : HWWriteResPair<WriteVecShiftImm,  [HWPort0], 1, [1], 1, 5>;
 defm : HWWriteResPair<WriteVecShiftImmX, [HWPort0], 1, [1], 1, 6>;
 defm : HWWriteResPair<WriteVecShiftImmY, [HWPort0], 1, [1], 1, 7>;
 defm : HWWriteResPair<WriteVarVecShift,  [HWPort0, HWPort5], 3, [2,1], 3, 6>;
@@ -301,9 +310,10 @@ def : WriteRes<WritePCmpEStrILd, [HWPort0, HWPort5, HWPort23, HWPort0156]> {
 }
 
 // MOVMSK Instructions.
-def : WriteRes<WriteFMOVMSK, [HWPort0]> { let Latency = 3; }
-def : WriteRes<WriteVecMOVMSK, [HWPort0]> { let Latency = 3; }
-def : WriteRes<WriteMMXMOVMSK, [HWPort0]> { let Latency = 1; }
+def : WriteRes<WriteFMOVMSK,    [HWPort0]> { let Latency = 3; }
+def : WriteRes<WriteVecMOVMSK,  [HWPort0]> { let Latency = 3; }
+def : WriteRes<WriteVecMOVMSKY, [HWPort0]> { let Latency = 3; }
+def : WriteRes<WriteMMXMOVMSK,  [HWPort0]> { let Latency = 1; }
 
 // AES Instructions.
 def : WriteRes<WriteAESDecEnc, [HWPort5]> {
@@ -642,11 +652,7 @@ def: InstRW<[HWWriteResGroup0], (instregex "VBROADCASTSSrm",
                                            "(V?)MOVUPDrm",
                                            "(V?)MOVUPSrm",
                                            "VPBROADCASTDrm",
-                                           "VPBROADCASTQrm",
-                                           "(V?)ROUNDPD(Y?)r",
-                                           "(V?)ROUNDPS(Y?)r",
-                                           "(V?)ROUNDSDr",
-                                           "(V?)ROUNDSSr")>;
+                                           "VPBROADCASTQrm")>;
 
 def HWWriteResGroup0_1 : SchedWriteRes<[HWPort23]> {
   let Latency = 7;
@@ -1668,14 +1674,7 @@ def HWWriteResGroup91_5 : SchedWriteRes<[HWPort0,HWPort23]> {
   let NumMicroOps = 2;
   let ResourceCycles = [1,1];
 }
-def: InstRW<[HWWriteResGroup91_5], (instregex "MMX_PMADDUBSWrm",
-                                              "MMX_PMADDWDirm",
-                                              "MMX_PMULHRSWrm",
-                                              "MMX_PMULHUWirm",
-                                              "MMX_PMULHWirm",
-                                              "MMX_PMULLWirm",
-                                              "MMX_PMULUDQirm",
-                                              "MMX_PSADBWirm")>;
+def: InstRW<[HWWriteResGroup91_5], (instregex "MMX_PSADBWirm")>;
 
 def HWWriteResGroup92_2 : SchedWriteRes<[HWPort01,HWPort23]> {
   let Latency = 10;
@@ -1757,19 +1756,7 @@ def HWWriteResGroup103 : SchedWriteRes<[HWPort1,HWPort23]> {
   let NumMicroOps = 3;
   let ResourceCycles = [2,1];
 }
-def: InstRW<[HWWriteResGroup103], (instregex "(ADD|SUB|SUBR)_FI(16|32)m",
-                                             "VROUNDPDYm",
-                                             "VROUNDPSYm")>;
-
-def HWWriteResGroup103_1 : SchedWriteRes<[HWPort1,HWPort23]> {
-  let Latency = 12;
-  let NumMicroOps = 3;
-  let ResourceCycles = [2,1];
-}
-def: InstRW<[HWWriteResGroup103_1], (instregex "(V?)ROUNDPDm",
-                                               "(V?)ROUNDPSm",
-                                               "(V?)ROUNDSDm",
-                                               "(V?)ROUNDSSm")>;
+def: InstRW<[HWWriteResGroup103], (instregex "(ADD|SUB|SUBR)_FI(16|32)m")>;
 
 def HWWriteResGroup104 : SchedWriteRes<[HWPort1,HWPort5,HWPort23]> {
   let Latency = 12;
@@ -1828,20 +1815,6 @@ def HWWriteResGroup115 : SchedWriteRes<[HWPort0,HWPort1,HWPort23]> {
   let ResourceCycles = [1,1,1];
 }
 def: InstRW<[HWWriteResGroup115], (instregex "MUL_FI(16|32)m")>;
-
-def HWWriteResGroup116 : SchedWriteRes<[HWPort0,HWPort1,HWPort5]> {
-  let Latency = 9;
-  let NumMicroOps = 3;
-  let ResourceCycles = [1,1,1];
-}
-def: InstRW<[HWWriteResGroup116], (instregex "(V?)DPPDrri")>;
-
-def HWWriteResGroup117 : SchedWriteRes<[HWPort0,HWPort1,HWPort5,HWPort23]> {
-  let Latency = 15;
-  let NumMicroOps = 4;
-  let ResourceCycles = [1,1,1,1];
-}
-def: InstRW<[HWWriteResGroup117], (instregex "(V?)DPPDrmi")>;
 
 def HWWriteResGroup120 : SchedWriteRes<[HWPort1,HWPort23,HWPort237,HWPort06,HWPort15,HWPort0156]> {
   let Latency = 16;
@@ -1931,27 +1904,6 @@ def HWWriteResGroup138 : SchedWriteRes<[HWPort0,HWPort23,HWFPDivider]> {
   let ResourceCycles = [1,1,7];
 }
 def: InstRW<[HWWriteResGroup138], (instregex "(V?)SQRTPSm")>;
-
-def HWWriteResGroup140 : SchedWriteRes<[HWPort0,HWPort1,HWPort5]> {
-  let Latency = 14;
-  let NumMicroOps = 4;
-  let ResourceCycles = [2,1,1];
-}
-def: InstRW<[HWWriteResGroup140], (instregex "(V?)DPPS(Y?)rri")>;
-
-def HWWriteResGroup141 : SchedWriteRes<[HWPort0,HWPort1,HWPort5,HWPort23]> {
-  let Latency = 20;
-  let NumMicroOps = 5;
-  let ResourceCycles = [2,1,1,1];
-}
-def: InstRW<[HWWriteResGroup141], (instregex "(V?)DPPSrmi")>;
-
-def HWWriteResGroup141_1 : SchedWriteRes<[HWPort0,HWPort1,HWPort5,HWPort23]> {
-  let Latency = 21;
-  let NumMicroOps = 5;
-  let ResourceCycles = [2,1,1,1];
-}
-def: InstRW<[HWWriteResGroup141_1], (instregex "VDPPSYrmi")>;
 
 def HWWriteResGroup142 : SchedWriteRes<[HWPort1,HWPort06,HWPort15,HWPort0156]> {
   let Latency = 14;
