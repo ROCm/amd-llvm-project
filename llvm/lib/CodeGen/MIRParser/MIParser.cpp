@@ -1303,11 +1303,17 @@ bool MIParser::parseIRConstant(StringRef::iterator Loc, const Constant *&C) {
 }
 
 bool MIParser::parseLowLevelType(StringRef::iterator Loc, LLT &Ty) {
-  if (Token.is(MIToken::ScalarType)) {
+  if (Token.range().front() == 's' || Token.range().front() == 'p') {
+    StringRef SizeStr = Token.range().drop_front();
+    if (SizeStr.size() == 0 || !llvm::all_of(SizeStr, isdigit))
+      return error("expected integers after 's'/'p' type character");
+  }
+
+  if (Token.range().front() == 's') {
     Ty = LLT::scalar(APSInt(Token.range().drop_front()).getZExtValue());
     lex();
     return false;
-  } else if (Token.is(MIToken::PointerType)) {
+  } else if (Token.range().front() == 'p') {
     const DataLayout &DL = MF.getDataLayout();
     unsigned AS = APSInt(Token.range().drop_front()).getZExtValue();
     Ty = LLT::pointer(AS, DL.getPointerSizeInBits(AS));
@@ -1318,34 +1324,53 @@ bool MIParser::parseLowLevelType(StringRef::iterator Loc, LLT &Ty) {
   // Now we're looking for a vector.
   if (Token.isNot(MIToken::less))
     return error(Loc,
-                 "expected unsized, pN, sN or <N x sM> for GlobalISel type");
-
+                 "expected sN, pA, <M x sN>, or <M x pA> for GlobalISel type");
   lex();
 
   if (Token.isNot(MIToken::IntegerLiteral))
-    return error(Loc, "expected <N x sM> for vctor type");
+    return error(Loc, "expected <M x sN> or <M x pA> for vector type");
   uint64_t NumElements = Token.integerValue().getZExtValue();
   lex();
 
   if (Token.isNot(MIToken::Identifier) || Token.stringValue() != "x")
-    return error(Loc, "expected '<N x sM>' for vector type");
+    return error(Loc, "expected <M x sN> or <M x pA> for vector type");
   lex();
 
-  if (Token.isNot(MIToken::ScalarType))
-    return error(Loc, "expected '<N x sM>' for vector type");
-  uint64_t ScalarSize = APSInt(Token.range().drop_front()).getZExtValue();
+  if (Token.range().front() != 's' && Token.range().front() != 'p')
+    return error(Loc, "expected <M x sN> or <M x pA> for vector type");
+  StringRef SizeStr = Token.range().drop_front();
+  if (SizeStr.size() == 0 || !llvm::all_of(SizeStr, isdigit))
+    return error("expected integers after 's'/'p' type character");
+
+  if (Token.range().front() == 's')
+    Ty = LLT::scalar(APSInt(Token.range().drop_front()).getZExtValue());
+  else if (Token.range().front() == 'p') {
+    const DataLayout &DL = MF.getDataLayout();
+    unsigned AS = APSInt(Token.range().drop_front()).getZExtValue();
+    Ty = LLT::pointer(AS, DL.getPointerSizeInBits(AS));
+  } else
+    return error(Loc, "expected <M x sN> or <M x pA> for vector type");
   lex();
 
   if (Token.isNot(MIToken::greater))
-    return error(Loc, "expected '<N x sM>' for vector type");
+    return error(Loc, "expected <M x sN> or <M x pA> for vector type");
   lex();
 
-  Ty = LLT::vector(NumElements, ScalarSize);
+  Ty = LLT::vector(NumElements, Ty);
   return false;
 }
 
 bool MIParser::parseTypedImmediateOperand(MachineOperand &Dest) {
-  assert(Token.is(MIToken::IntegerType));
+  assert(Token.is(MIToken::Identifier));
+  StringRef TypeStr = Token.range();
+  if (TypeStr.front() != 'i' && TypeStr.front() != 's' &&
+      TypeStr.front() != 'p')
+    return error(
+        "a typed immediate operand should start with one of 'i', 's', or 'p'");
+  StringRef SizeStr = Token.range().drop_front();
+  if (SizeStr.size() == 0 || !llvm::all_of(SizeStr, isdigit))
+    return error("expected integers after 'i'/'s'/'p' type character");
+
   auto Loc = Token.location();
   lex();
   if (Token.isNot(MIToken::IntegerLiteral))
@@ -2004,8 +2029,6 @@ bool MIParser::parseMachineOperand(MachineOperand &Dest,
     return parseRegisterOperand(Dest, TiedDefIdx);
   case MIToken::IntegerLiteral:
     return parseImmediateOperand(Dest);
-  case MIToken::IntegerType:
-    return parseTypedImmediateOperand(Dest);
   case MIToken::kw_half:
   case MIToken::kw_float:
   case MIToken::kw_double:
@@ -2066,8 +2089,10 @@ bool MIParser::parseMachineOperand(MachineOperand &Dest,
       Dest = MachineOperand::CreateRegMask(RegMask);
       lex();
       break;
-    } else
+    } else if (Token.stringValue() == "CustomRegMask") {
       return parseCustomRegisterMaskOperand(Dest);
+    } else
+      return parseTypedImmediateOperand(Dest);
   default:
     // FIXME: Parse the MCSymbol machine operand.
     return error("expected a machine operand");

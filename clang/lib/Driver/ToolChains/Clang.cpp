@@ -4215,9 +4215,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                    IsWindowsMSVC))
     CmdArgs.push_back("-fms-extensions");
 
-  // -fno-use-line-directives is default.
+  // -fno-use-line-directives is default, except for MSVC targets.
   if (Args.hasFlag(options::OPT_fuse_line_directives,
-                   options::OPT_fno_use_line_directives, false))
+                   options::OPT_fno_use_line_directives, IsWindowsMSVC))
     CmdArgs.push_back("-fuse-line-directives");
 
   // -fms-compatibility=0 is default.
@@ -5082,13 +5082,8 @@ void Clang::AddClangCLArgs(const ArgList &Args, types::ID InputType,
     CmdArgs.push_back("--dependent-lib=oldnames");
   }
 
-  // Both /showIncludes and /E (and /EP) write to stdout. Allowing both
-  // would produce interleaved output, so ignore /showIncludes in such cases.
-  if ((!Args.hasArg(options::OPT_E) && !Args.hasArg(options::OPT__SLASH_EP)) ||
-      (Args.hasArg(options::OPT__SLASH_P) &&
-       Args.hasArg(options::OPT__SLASH_EP) && !Args.hasArg(options::OPT_E)))
-    if (Arg *A = Args.getLastArg(options::OPT_show_includes))
-      A->render(Args, CmdArgs);
+  if (Arg *A = Args.getLastArg(options::OPT_show_includes))
+    A->render(Args, CmdArgs);
 
   // This controls whether or not we emit RTTI data for polymorphic types.
   if (Args.hasFlag(options::OPT__SLASH_GR_, options::OPT__SLASH_GR,

@@ -3140,6 +3140,9 @@ def warn_impcast_bitfield_precision_constant : Warning<
 def warn_impcast_literal_float_to_integer : Warning<
   "implicit conversion from %0 to %1 changes value from %2 to %3">,
   InGroup<LiteralConversion>;
+def warn_impcast_literal_float_to_integer_out_of_range : Warning<
+  "implicit conversion of out of range value from %0 to %1 is undefined">,
+  InGroup<LiteralConversion>;
 def warn_impcast_float_integer : Warning<
   "implicit conversion turns floating-point number into integer: %0 to %1">,
   InGroup<FloatConversion>, DefaultIgnore;
@@ -3147,6 +3150,9 @@ def warn_impcast_float_integer : Warning<
 def warn_impcast_float_to_integer : Warning<
   "implicit conversion of out of range value from %0 to %1 changes value "
   "from %2 to %3">,
+  InGroup<FloatOverflowConversion>, DefaultIgnore;
+def warn_impcast_float_to_integer_out_of_range : Warning<
+  "implicit conversion of out of range value from %0 to %1 is undefined">,
   InGroup<FloatOverflowConversion>, DefaultIgnore;
 def warn_impcast_float_to_integer_zero : Warning<
   "implicit conversion from %0 to %1 changes non-zero value from %2 to %3">,
@@ -5932,7 +5938,8 @@ def ext_typecheck_ordered_comparison_of_pointer_and_zero : Extension<
 def err_typecheck_ordered_comparison_of_pointer_and_zero : Error<
   "ordered comparison between pointer and zero (%0 and %1)">;
 def ext_typecheck_ordered_comparison_of_function_pointers : ExtWarn<
-  "ordered comparison of function pointers (%0 and %1)">;
+  "ordered comparison of function pointers (%0 and %1)">,
+  InGroup<DiagGroup<"ordered-compare-function-pointers">>;
 def ext_typecheck_comparison_of_fptr_to_void : Extension<
   "equality comparison between function pointer and void pointer (%0 and %1)">;
 def err_typecheck_comparison_of_fptr_to_void : Error<
@@ -7093,6 +7100,8 @@ def err_atomic_builtin_must_be_pointer : Error<
 def err_atomic_builtin_must_be_pointer_intptr : Error<
   "address argument to atomic builtin must be a pointer to integer or pointer"
   " (%0 invalid)">;
+def err_atomic_builtin_cannot_be_const : Error<
+  "address argument to atomic builtin cannot be const-qualified (%0 invalid)">;
 def err_atomic_builtin_must_be_pointer_intfltptr : Error<
   "address argument to atomic builtin must be a pointer to integer,"
   " floating-point or pointer (%0 invalid)">;
@@ -9415,4 +9424,18 @@ def err_multiversion_not_allowed_on_main : Error<
 def err_multiversion_not_supported : Error<
  "function multiversioning is not supported on the current target">;
 
+// three-way comparison operator diagnostics
+def err_implied_comparison_category_type_not_found : Error<
+  "cannot deduce return type of 'operator<=>' because type '%0' was not found; "
+  "include <compare>">;
+def err_spaceship_argument_narrowing : Error<
+  "argument to 'operator<=>' "
+  "%select{cannot be narrowed from type %1 to %2|"
+  "evaluates to %1, which cannot be narrowed to type %2}0">;
+def err_std_compare_type_not_supported : Error<
+  "standard library implementation of %0 is not supported; "
+   "%select{member '%2' does not have expected form|"
+   "member '%2' is missing|"
+   "the type is not trivially copyable|"
+   "the type does not have the expected form}1">;
 } // end of sema component.
