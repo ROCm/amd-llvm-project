@@ -520,7 +520,7 @@ _mm512_mask2int(__mmask16 __a)
   return (int)__a;
 }
 
-/// \brief Constructs a 512-bit floating-point vector of [8 x double] from a
+/// Constructs a 512-bit floating-point vector of [8 x double] from a
 ///    128-bit floating-point vector of [2 x double]. The lower 128 bits
 ///    contain the value of the source vector. The upper 384 bits are set
 ///    to zero.
@@ -539,7 +539,7 @@ _mm512_zextpd128_pd512(__m128d __a)
   return __builtin_shufflevector((__v2df)__a, (__v2df)_mm_setzero_pd(), 0, 1, 2, 3, 2, 3, 2, 3);
 }
 
-/// \brief Constructs a 512-bit floating-point vector of [8 x double] from a
+/// Constructs a 512-bit floating-point vector of [8 x double] from a
 ///    256-bit floating-point vector of [4 x double]. The lower 256 bits
 ///    contain the value of the source vector. The upper 256 bits are set
 ///    to zero.
@@ -558,7 +558,7 @@ _mm512_zextpd256_pd512(__m256d __a)
   return __builtin_shufflevector((__v4df)__a, (__v4df)_mm256_setzero_pd(), 0, 1, 2, 3, 4, 5, 6, 7);
 }
 
-/// \brief Constructs a 512-bit floating-point vector of [16 x float] from a
+/// Constructs a 512-bit floating-point vector of [16 x float] from a
 ///    128-bit floating-point vector of [4 x float]. The lower 128 bits contain
 ///    the value of the source vector. The upper 384 bits are set to zero.
 ///
@@ -576,7 +576,7 @@ _mm512_zextps128_ps512(__m128 __a)
   return __builtin_shufflevector((__v4sf)__a, (__v4sf)_mm_setzero_ps(), 0, 1, 2, 3, 4, 5, 6, 7, 4, 5, 6, 7, 4, 5, 6, 7);
 }
 
-/// \brief Constructs a 512-bit floating-point vector of [16 x float] from a
+/// Constructs a 512-bit floating-point vector of [16 x float] from a
 ///    256-bit floating-point vector of [8 x float]. The lower 256 bits contain
 ///    the value of the source vector. The upper 256 bits are set to zero.
 ///
@@ -594,7 +594,7 @@ _mm512_zextps256_ps512(__m256 __a)
   return __builtin_shufflevector((__v8sf)__a, (__v8sf)_mm256_setzero_ps(), 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
 }
 
-/// \brief Constructs a 512-bit integer vector from a 128-bit integer vector.
+/// Constructs a 512-bit integer vector from a 128-bit integer vector.
 ///    The lower 128 bits contain the value of the source vector. The upper
 ///    384 bits are set to zero.
 ///
@@ -612,7 +612,7 @@ _mm512_zextsi128_si512(__m128i __a)
   return __builtin_shufflevector((__v2di)__a, (__v2di)_mm_setzero_si128(), 0, 1, 2, 3, 2, 3, 2, 3);
 }
 
-/// \brief Constructs a 512-bit integer vector from a 256-bit integer vector.
+/// Constructs a 512-bit integer vector from a 256-bit integer vector.
 ///    The lower 256 bits contain the value of the source vector. The upper
 ///    256 bits are set to zero.
 ///
@@ -9091,17 +9091,13 @@ _mm_maskz_move_sd (__mmask8 __U, __m128d __A, __m128d __B)
 static __inline__ void __DEFAULT_FN_ATTRS
 _mm_mask_store_ss (float * __W, __mmask8 __U, __m128 __A)
 {
-  __builtin_ia32_storess128_mask ((__v16sf *)__W,
-                (__v16sf) _mm512_castps128_ps512(__A),
-                (__mmask16) __U & (__mmask16)1);
+  __builtin_ia32_storess128_mask ((__v4sf *)__W, __A, __U & 1);
 }
 
 static __inline__ void __DEFAULT_FN_ATTRS
 _mm_mask_store_sd (double * __W, __mmask8 __U, __m128d __A)
 {
-  __builtin_ia32_storesd128_mask ((__v8df *)__W,
-                (__v8df) _mm512_castpd128_pd512(__A),
-                (__mmask8) __U & 1);
+  __builtin_ia32_storesd128_mask ((__v2df *)__W, __A, __U & 1);
 }
 
 static __inline__ __m128 __DEFAULT_FN_ATTRS
@@ -9111,21 +9107,15 @@ _mm_mask_load_ss (__m128 __W, __mmask8 __U, const float* __A)
                                                 (__v4sf) {0.0, 0.0, 0.0, 0.0},
                                                 0, 4, 4, 4);
 
-  return (__m128) __builtin_shufflevector(
-                           __builtin_ia32_loadss128_mask ((__v16sf *) __A,
-                                      (__v16sf) _mm512_castps128_ps512(src),
-                                      (__mmask16) __U & 1),
-                           _mm512_undefined_ps(), 0, 1, 2, 3);
+  return (__m128) __builtin_ia32_loadss128_mask ((__v4sf *) __A, src, __U & 1);
 }
 
 static __inline__ __m128 __DEFAULT_FN_ATTRS
 _mm_maskz_load_ss (__mmask8 __U, const float* __A)
 {
-  return (__m128) __builtin_shufflevector(
-                           __builtin_ia32_loadss128_mask ((__v16sf *) __A,
-                                      (__v16sf) _mm512_setzero_ps(),
-                                      (__mmask16) __U & 1),
-                           _mm512_undefined_ps(), 0, 1, 2, 3);
+  return (__m128)__builtin_ia32_loadss128_mask ((__v4sf *) __A,
+                                                (__v4sf) _mm_setzero_ps(),
+                                                __U & 1);
 }
 
 static __inline__ __m128d __DEFAULT_FN_ATTRS
@@ -9134,21 +9124,15 @@ _mm_mask_load_sd (__m128d __W, __mmask8 __U, const double* __A)
   __m128d src = (__v2df) __builtin_shufflevector((__v2df) __W,
                                                  (__v2df) {0.0, 0.0}, 0, 2);
 
-  return (__m128d) __builtin_shufflevector(
-                            __builtin_ia32_loadsd128_mask ((__v8df *) __A,
-                                      (__v8df) _mm512_castpd128_pd512(src),
-                                      (__mmask8) __U & 1),
-                            _mm512_undefined_pd(), 0, 1);
+  return (__m128d) __builtin_ia32_loadsd128_mask ((__v2df *) __A, src, __U & 1);
 }
 
 static __inline__ __m128d __DEFAULT_FN_ATTRS
 _mm_maskz_load_sd (__mmask8 __U, const double* __A)
 {
-  return (__m128d) __builtin_shufflevector(
-                            __builtin_ia32_loadsd128_mask ((__v8df *) __A,
-                                      (__v8df) _mm512_setzero_pd(),
-                                      (__mmask8) __U & 1),
-                            _mm512_undefined_pd(), 0, 1);
+  return (__m128d) __builtin_ia32_loadsd128_mask ((__v2df *) __A,
+                                                  (__v2df) _mm_setzero_pd(),
+                                                  __U & 1);
 }
 
 #define _mm512_shuffle_epi32(A, I) __extension__ ({ \

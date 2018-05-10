@@ -688,16 +688,38 @@ let Predicates = [In64BitMode, HasRDPID] in {
 
 
 //===----------------------------------------------------------------------===//
-// PTWRITE Instruction
+// PTWRITE Instruction - Write Data to a Processor Trace Packet
 let SchedRW = [WriteSystem] in {
-
 def PTWRITEm: I<0xAE, MRM4m, (outs), (ins i32mem:$dst),
-                "ptwrite{l}\t$dst", []>, XS;
+                "ptwrite{l}\t$dst", [(int_x86_ptwrite32 (loadi32 addr:$dst))]>, XS,
+                Requires<[HasPTWRITE]>;
 def PTWRITE64m : RI<0xAE, MRM4m, (outs), (ins i64mem:$dst),
-                    "ptwrite{q}\t$dst", []>, XS, Requires<[In64BitMode]>;
+                    "ptwrite{q}\t$dst", [(int_x86_ptwrite64 (loadi64 addr:$dst))]>, XS,
+                    Requires<[In64BitMode, HasPTWRITE]>;
 
 def PTWRITEr : I<0xAE, MRM4r, (outs), (ins GR32:$dst),
-                 "ptwrite{l}\t$dst", []>, XS;
+                 "ptwrite{l}\t$dst", [(int_x86_ptwrite32 GR32:$dst)]>, XS,
+                    Requires<[HasPTWRITE]>;
 def PTWRITE64r : RI<0xAE, MRM4r, (outs), (ins GR64:$dst),
-                    "ptwrite{q}\t$dst", []>, XS, Requires<[In64BitMode]>;
+                    "ptwrite{q}\t$dst", [(int_x86_ptwrite64 GR64:$dst)]>, XS,
+                    Requires<[In64BitMode, HasPTWRITE]>;
+} // SchedRW
+
+//===----------------------------------------------------------------------===//
+// Platform Configuration instruction
+
+// From ISA docs:
+//  "This instruction is used to execute functions for configuring platform
+//   features.
+//   EAX: Leaf function to be invoked.
+//   RBX/RCX/RDX: Leaf-specific purpose."
+//  "Successful execution of the leaf clears RAX (set to zero) and ZF, CF, PF,
+//   AF, OF, and SF are cleared. In case of failure, the failure reason is
+//   indicated in RAX with ZF set to 1 and CF, PF, AF, OF, and SF are cleared."
+// Thus all these mentioned registers are considered clobbered.
+
+let SchedRW = [WriteSystem] in {
+let Uses = [RAX, RBX, RCX, RDX], Defs = [RAX, RBX, RCX, RDX, EFLAGS] in
+    def PCONFIG : I<0x01, MRM_C5, (outs), (ins), "pconfig", []>, TB,
+                  Requires<[HasPCONFIG]>;
 } // SchedRW

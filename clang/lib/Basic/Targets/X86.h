@@ -92,6 +92,7 @@ class LLVM_LIBRARY_VISIBILITY X86TargetInfo : public TargetInfo {
   bool HasMWAITX = false;
   bool HasCLZERO = false;
   bool HasCLDEMOTE = false;
+  bool HasPCONFIG = false;
   bool HasPKU = false;
   bool HasCLFLUSHOPT = false;
   bool HasCLWB = false;
@@ -105,9 +106,10 @@ class LLVM_LIBRARY_VISIBILITY X86TargetInfo : public TargetInfo {
   bool HasWAITPKG = false;
   bool HasMOVDIRI = false;
   bool HasMOVDIR64B = false;
+  bool HasPTWRITE = false;
 
 protected:
-  /// \brief Enumeration of all of the X86 CPUs supported by Clang.
+  /// Enumeration of all of the X86 CPUs supported by Clang.
   ///
   /// Each enumeration represents a particular CPU supported by Clang. These
   /// loosely correspond to the options passed to '-march' or '-mtune' flags.

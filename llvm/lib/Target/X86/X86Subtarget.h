@@ -215,6 +215,9 @@ protected:
   /// Processor has MOVDIR64B instruction (direct store 64 bytes).
   bool HasMOVDIR64B;
 
+  /// Processor has ptwrite instruction.
+  bool HasPTWRITE;
+
   /// Processor has Prefetch with intent to Write instruction
   bool HasPREFETCHWT1;
 
@@ -378,6 +381,9 @@ protected:
 
   /// Processor supports WaitPKG instructions
   bool HasWAITPKG;
+
+  /// Processor supports PCONFIG instruction
+  bool HasPCONFIG;
 
   /// Use a retpoline thunk rather than indirect calls to block speculative
   /// execution.
@@ -590,6 +596,7 @@ public:
   bool hasCLDEMOTE() const { return HasCLDEMOTE; }
   bool hasMOVDIRI() const { return HasMOVDIRI; }
   bool hasMOVDIR64B() const { return HasMOVDIR64B; }
+  bool hasPTWRITE() const { return HasPTWRITE; }
   bool isSHLDSlow() const { return IsSHLDSlow; }
   bool isPMULLDSlow() const { return IsPMULLDSlow; }
   bool isUnalignedMem16Slow() const { return IsUAMem16Slow; }
@@ -640,6 +647,8 @@ public:
   bool hasWBNOINVD() const { return HasWBNOINVD; }
   bool hasRDPID() const { return HasRDPID; }
   bool hasWAITPKG() const { return HasWAITPKG; }
+  bool hasPCONFIG() const { return HasPCONFIG; }
+  bool hasSGX() const { return HasSGX; }
   bool useRetpoline() const { return UseRetpoline; }
   bool useRetpolineExternalThunk() const { return UseRetpolineExternalThunk; }
 

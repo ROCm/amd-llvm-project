@@ -159,3 +159,13 @@
 // RUN: %clang -target i386-unknown-linux-gnu -march=i386 -mno-movdir64b %s -### -o %t.o 2>&1 | FileCheck -check-prefix=NO-MOVDIR64B %s
 // MOVDIR64B: "-target-feature" "+movdir64b"
 // NO-MOVDIR64B: "-target-feature" "-movdir64b"
+
+// RUN: %clang -target i386-unknown-linux-gnu -march=i386 -mpconfig %s -### -o %t.o 2>&1 | FileCheck -check-prefix=PCONFIG %s
+// RUN: %clang -target i386-unknown-linux-gnu -march=i386 -mno-pconfig %s -### -o %t.o 2>&1 | FileCheck -check-prefix=NO-PCONFIG %s
+// PCONFIG: "-target-feature" "+pconfig"
+// NO-PCONFIG: "-target-feature" "-pconfig"
+
+// RUN: %clang -target i386-unknown-linux-gnu -march=i386 -mptwrite %s -### -o %t.o 2>&1 | FileCheck -check-prefix=PTWRITE %s
+// RUN: %clang -target i386-unknown-linux-gnu -march=i386 -mno-ptwrite %s -### -o %t.o 2>&1 | FileCheck -check-prefix=NO-PTWRITE %s
+// PTWRITE: "-target-feature" "+ptwrite"
+// NO-PTWRITE: "-target-feature" "-ptwrite"

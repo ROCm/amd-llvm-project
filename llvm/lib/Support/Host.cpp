@@ -1266,6 +1266,18 @@ bool sys::getHostCPUFeatures(StringMap<bool> &Features) {
 
   Features["ibt"] = HasLeaf7 && ((EDX >> 20) & 1);
 
+  // There are two CPUID leafs which information associated with the pconfig
+  // instruction:
+  // EAX=0x7, ECX=0x0 indicates the availability of the instruction (via the 18th
+  // bit of EDX), while the EAX=0x1b leaf returns information on the
+  // availability of specific pconfig leafs.
+  // The target feature here only refers to the the first of these two.
+  // Users might need to check for the availability of specific pconfig
+  // leaves using cpuid, since that information is ignored while
+  // detecting features using the "-march=native" flag.
+  // For more info, see X86 ISA docs.
+  Features["pconfig"] = HasLeaf7 && ((EDX >> 18) & 1);
+
   bool HasLeafD = MaxLevel >= 0xd &&
                   !getX86CpuIDAndInfoEx(0xd, 0x1, &EAX, &EBX, &ECX, &EDX);
 
@@ -1273,6 +1285,11 @@ bool sys::getHostCPUFeatures(StringMap<bool> &Features) {
   Features["xsaveopt"] = HasLeafD && ((EAX >> 0) & 1) && HasAVXSave;
   Features["xsavec"]   = HasLeafD && ((EAX >> 1) & 1) && HasAVXSave;
   Features["xsaves"]   = HasLeafD && ((EAX >> 3) & 1) && HasAVXSave;
+
+  bool HasLeaf14 = MaxLevel >= 0x14 &&
+                  !getX86CpuIDAndInfoEx(0x14, 0x0, &EAX, &EBX, &ECX, &EDX);
+
+  Features["ptwrite"] = HasLeaf14 && ((EBX >> 4) & 1);
 
   return true;
 }

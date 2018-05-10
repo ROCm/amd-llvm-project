@@ -1142,12 +1142,14 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
   if (!hasUnwindExceptions(LangOpts))
     B.addAttribute(llvm::Attribute::NoUnwind);
 
-  if (LangOpts.getStackProtector() == LangOptions::SSPOn)
-    B.addAttribute(llvm::Attribute::StackProtect);
-  else if (LangOpts.getStackProtector() == LangOptions::SSPStrong)
-    B.addAttribute(llvm::Attribute::StackProtectStrong);
-  else if (LangOpts.getStackProtector() == LangOptions::SSPReq)
-    B.addAttribute(llvm::Attribute::StackProtectReq);
+  if (!D || !D->hasAttr<NoStackProtectorAttr>()) {
+    if (LangOpts.getStackProtector() == LangOptions::SSPOn)
+      B.addAttribute(llvm::Attribute::StackProtect);
+    else if (LangOpts.getStackProtector() == LangOptions::SSPStrong)
+      B.addAttribute(llvm::Attribute::StackProtectStrong);
+    else if (LangOpts.getStackProtector() == LangOptions::SSPReq)
+      B.addAttribute(llvm::Attribute::StackProtectReq);
+  }
 
   if (!D) {
     // If we don't have a declaration to control inlining, the function isn't
@@ -1548,7 +1550,7 @@ void CodeGenModule::AddDependentLib(StringRef Lib) {
   LinkerOptionsMetadata.push_back(llvm::MDNode::get(getLLVMContext(), MDOpts));
 }
 
-/// \brief Add link options implied by the given module, including modules
+/// Add link options implied by the given module, including modules
 /// it depends on, using a postorder walk.
 static void addLinkOptionsPostorder(CodeGenModule &CGM, Module *Mod,
                                     SmallVectorImpl<llvm::MDNode *> &Metadata,
