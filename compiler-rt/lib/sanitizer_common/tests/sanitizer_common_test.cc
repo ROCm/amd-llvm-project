@@ -39,37 +39,37 @@ TEST(SanitizerCommon, SortTest) {
   for (uptr i = 0; i < n; i++) {
     array[i] = i;
   }
-  SortArray(array, n);
+  Sort(array, n);
   EXPECT_TRUE(IsSorted(array, n));
   // Reverse order.
   for (uptr i = 0; i < n; i++) {
     array[i] = n - 1 - i;
   }
-  SortArray(array, n);
+  Sort(array, n);
   EXPECT_TRUE(IsSorted(array, n));
   // Mixed order.
   for (uptr i = 0; i < n; i++) {
     array[i] = (i % 2 == 0) ? i : n - 1 - i;
   }
-  SortArray(array, n);
+  Sort(array, n);
   EXPECT_TRUE(IsSorted(array, n));
   // All equal.
   for (uptr i = 0; i < n; i++) {
     array[i] = 42;
   }
-  SortArray(array, n);
+  Sort(array, n);
   EXPECT_TRUE(IsSorted(array, n));
   // All but one sorted.
   for (uptr i = 0; i < n - 1; i++) {
     array[i] = i;
   }
   array[n - 1] = 42;
-  SortArray(array, n);
+  Sort(array, n);
   EXPECT_TRUE(IsSorted(array, n));
   // Minimal case - sort three elements.
   array[0] = 1;
   array[1] = 0;
-  SortArray(array, 2);
+  Sort(array, 2);
   EXPECT_TRUE(IsSorted(array, 2));
 }
 
@@ -86,6 +86,35 @@ TEST(SanitizerCommon, MmapAlignedOrDieOnFatalError) {
       }
     }
   }
+}
+
+TEST(SanitizerCommon, InternalMmapVectorRoundUpCapacity) {
+  InternalMmapVector<uptr> v;
+  v.reserve(1);
+  CHECK_EQ(v.capacity(), GetPageSizeCached() / sizeof(uptr));
+}
+
+TEST(SanitizerCommon, InternalMmapVectorReize) {
+  InternalMmapVector<uptr> v;
+  CHECK_EQ(0U, v.size());
+  CHECK_GE(v.capacity(), v.size());
+
+  v.reserve(1000);
+  CHECK_EQ(0U, v.size());
+  CHECK_GE(v.capacity(), 1000U);
+
+  v.resize(10000);
+  CHECK_EQ(10000U, v.size());
+  CHECK_GE(v.capacity(), v.size());
+  uptr cap = v.capacity();
+
+  v.resize(100);
+  CHECK_EQ(100U, v.size());
+  CHECK_EQ(v.capacity(), cap);
+
+  v.reserve(10);
+  CHECK_EQ(100U, v.size());
+  CHECK_EQ(v.capacity(), cap);
 }
 
 TEST(SanitizerCommon, InternalMmapVector) {
@@ -128,6 +157,24 @@ TEST(SanitizerCommon, InternalMmapVectorEq) {
   vector1[55] = 1;
   EXPECT_FALSE(vector1 == vector2);
   EXPECT_TRUE(vector1 != vector2);
+}
+
+TEST(SanitizerCommon, InternalMmapVectorSwap) {
+  InternalMmapVector<uptr> vector1;
+  InternalMmapVector<uptr> vector2;
+  InternalMmapVector<uptr> vector3;
+  InternalMmapVector<uptr> vector4;
+  for (uptr i = 0; i < 100; i++) {
+    vector1.push_back(i);
+    vector2.push_back(i);
+    vector3.push_back(-i);
+    vector4.push_back(-i);
+  }
+  EXPECT_NE(vector2, vector3);
+  EXPECT_NE(vector1, vector4);
+  vector1.swap(vector3);
+  EXPECT_EQ(vector2, vector3);
+  EXPECT_EQ(vector1, vector4);
 }
 
 void TestThreadInfo(bool main) {

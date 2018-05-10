@@ -98,6 +98,8 @@ std::string Action::getOffloadingKindPrefix() const {
     return "device-openmp";
   case OFK_HCC:
     return "device-hcc";
+  case OFK_HIP:
+    return "device-hip";
 
     // TODO: Add other programming models here.
   }
@@ -106,8 +108,13 @@ std::string Action::getOffloadingKindPrefix() const {
     return {};
 
   std::string Res("host");
+  assert(!((ActiveOffloadKindMask & OFK_Cuda) &&
+           (ActiveOffloadKindMask & OFK_HIP)) &&
+         "Cannot offload CUDA and HIP at the same time");
   if (ActiveOffloadKindMask & OFK_Cuda)
     Res += "-cuda";
+  if (ActiveOffloadKindMask & OFK_HIP)
+    Res += "-hip";
   if (ActiveOffloadKindMask & OFK_OpenMP)
     Res += "-openmp";
 
@@ -149,6 +156,8 @@ StringRef Action::GetOffloadKindName(OffloadKind Kind) {
     return "openmp";
   case OFK_HCC:
     return "hcc";
+  case OFK_HIP:
+    return "hip";
 
     // TODO: Add other programming models here.
   }

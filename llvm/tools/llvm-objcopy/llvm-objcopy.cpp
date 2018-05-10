@@ -147,6 +147,7 @@ struct CopyConfig {
   std::vector<StringRef> SymbolsToLocalize;
   std::vector<StringRef> SymbolsToGlobalize;
   std::vector<StringRef> SymbolsToWeaken;
+  std::vector<StringRef> SymbolsToRemove;
   StringMap<StringRef> SymbolsToRename;
   bool StripAll = false;
   bool StripAllGNU = false;
@@ -371,11 +372,17 @@ void HandleArgs(const CopyConfig &Config, Object &Obj, const Reader &Reader,
         Sym.Name = I->getValue();
     });
 
-    Obj.SymbolTable->removeSymbols([&](const Symbol &Sym) {
+    Obj.removeSymbols([&](const Symbol &Sym) {
       if (Config.DiscardAll && Sym.Binding == STB_LOCAL &&
           Sym.getShndx() != SHN_UNDEF && Sym.Type != STT_FILE &&
           Sym.Type != STT_SECTION)
         return true;
+
+      if (!Config.SymbolsToRemove.empty() &&
+          is_contained(Config.SymbolsToRemove, Sym.Name)) {
+        return true;
+      }
+
       return false;
     });
   }
@@ -409,8 +416,13 @@ CopyConfig ParseObjcopyOptions(ArrayRef<const char *> ArgsArr) {
   unsigned MissingArgumentIndex, MissingArgumentCount;
   llvm::opt::InputArgList InputArgs =
       T.ParseArgs(ArgsArr, MissingArgumentIndex, MissingArgumentCount);
-
-  if (InputArgs.size() == 0 || InputArgs.hasArg(OBJCOPY_help)) {
+  
+  if (InputArgs.size() == 0) {
+    T.PrintHelp(errs(), "llvm-objcopy <input> [ <output> ]", "objcopy tool");
+    exit(1);
+  }
+  
+  if (InputArgs.hasArg(OBJCOPY_help)) {
     T.PrintHelp(outs(), "llvm-objcopy <input> [ <output> ]", "objcopy tool");
     exit(0);
   }
@@ -471,6 +483,8 @@ CopyConfig ParseObjcopyOptions(ArrayRef<const char *> ArgsArr) {
     Config.SymbolsToGlobalize.push_back(Arg->getValue());
   for (auto Arg : InputArgs.filtered(OBJCOPY_weaken_symbol))
     Config.SymbolsToWeaken.push_back(Arg->getValue());
+  for (auto Arg : InputArgs.filtered(OBJCOPY_strip_symbol))
+    Config.SymbolsToRemove.push_back(Arg->getValue());
 
   return Config;
 }
@@ -484,7 +498,12 @@ CopyConfig ParseStripOptions(ArrayRef<const char *> ArgsArr) {
   llvm::opt::InputArgList InputArgs =
       T.ParseArgs(ArgsArr, MissingArgumentIndex, MissingArgumentCount);
 
-  if (InputArgs.size() == 0 || InputArgs.hasArg(STRIP_help)) {
+  if (InputArgs.size() == 0) {
+    T.PrintHelp(errs(), "llvm-strip <input> [ <output> ]", "strip tool");
+    exit(1);
+  }
+  
+  if (InputArgs.hasArg(STRIP_help)) {
     T.PrintHelp(outs(), "llvm-strip <input> [ <output> ]", "strip tool");
     exit(0);
   }

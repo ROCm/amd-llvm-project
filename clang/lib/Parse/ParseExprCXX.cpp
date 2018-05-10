@@ -100,7 +100,7 @@ void Parser::CheckForTemplateAndDigraph(Token &Next, ParsedType ObjectType,
              /*AtDigraph*/false);
 }
 
-/// \brief Parse global scope or nested-name-specifier if present.
+/// Parse global scope or nested-name-specifier if present.
 ///
 /// Parses a C++ global scope specifier ('::') or nested-name-specifier (which
 /// may be preceded by '::'). Note that this routine will not parse ::new or
@@ -737,7 +737,7 @@ ExprResult Parser::TryParseLambdaExpression() {
   return ParseLambdaExpressionAfterIntroducer(Intro, AttrIntro);
 }
 
-/// \brief Parse a lambda introducer.
+/// Parse a lambda introducer.
 /// \param Intro A LambdaIntroducer filled in with information about the
 ///        contents of the lambda-introducer.
 /// \param SkippedInits If non-null, we are disambiguating between an Obj-C
@@ -1572,7 +1572,7 @@ ExprResult Parser::ParseCXXUuidof() {
   return Result;
 }
 
-/// \brief Parse a C++ pseudo-destructor expression after the base,
+/// Parse a C++ pseudo-destructor expression after the base,
 /// . or -> operator, and nested-name-specifier have already been
 /// parsed.
 ///
@@ -1693,7 +1693,7 @@ ExprResult Parser::ParseThrowExpression() {
   }
 }
 
-/// \brief Parse the C++ Coroutines co_yield expression.
+/// Parse the C++ Coroutines co_yield expression.
 ///
 ///       co_yield-expression:
 ///         'co_yield' assignment-expression[opt]
@@ -2079,7 +2079,7 @@ bool Parser::ParseCXXTypeSpecifierSeq(DeclSpec &DS) {
   return false;
 }
 
-/// \brief Finish parsing a C++ unqualified-id that is a template-id of
+/// Finish parsing a C++ unqualified-id that is a template-id of
 /// some form. 
 ///
 /// This routine is invoked when a '<' is encountered after an identifier or
@@ -2263,7 +2263,7 @@ bool Parser::ParseUnqualifiedIdTemplateId(CXXScopeSpec &SS,
   return false;
 }
 
-/// \brief Parse an operator-function-id or conversion-function-id as part
+/// Parse an operator-function-id or conversion-function-id as part
 /// of a C++ unqualified-id.
 ///
 /// This routine is responsible only for parsing the operator-function-id or
@@ -2502,7 +2502,7 @@ bool Parser::ParseUnqualifiedIdOperator(CXXScopeSpec &SS, bool EnteringContext,
   return false;  
 }
 
-/// \brief Parse a C++ unqualified-id (or a C identifier), which describes the
+/// Parse a C++ unqualified-id (or a C identifier), which describes the
 /// name of an entity.
 ///
 /// \code
@@ -3074,7 +3074,7 @@ static unsigned TypeTraitArity(tok::TokenKind kind) {
   }
 }
 
-/// \brief Parse the built-in type-trait pseudo-functions that allow 
+/// Parse the built-in type-trait pseudo-functions that allow 
 /// implementation of the TR1/C++11 type traits templates.
 ///
 ///       primary-expression:

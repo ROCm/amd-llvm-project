@@ -905,8 +905,7 @@ bool internal_sigismember(__sanitizer_sigset_t *set, int signum) {
 #endif // !SANITIZER_SOLARIS
 
 // ThreadLister implementation.
-ThreadLister::ThreadLister(int pid) : pid_(pid), buffer_(4096) {
-  buffer_.resize(buffer_.capacity());
+ThreadLister::ThreadLister(pid_t pid) : pid_(pid), buffer_(4096) {
   char task_directory_path[80];
   internal_snprintf(task_directory_path, sizeof(task_directory_path),
                     "/proc/%d/task/", pid);
@@ -916,8 +915,9 @@ ThreadLister::ThreadLister(int pid) : pid_(pid), buffer_(4096) {
   }
 }
 
-bool ThreadLister::ListThreads(InternalMmapVector<int> *threads) {
-  if (!descriptor_) return false;
+bool ThreadLister::ListThreads(InternalMmapVector<tid_t> *threads) {
+  if (internal_iserror(descriptor_))
+    return false;
   internal_lseek(descriptor_, 0, SEEK_SET);
   threads->clear();
 
@@ -942,7 +942,7 @@ bool ThreadLister::ListThreads(InternalMmapVector<int> *threads) {
 }
 
 ThreadLister::~ThreadLister() {
-  if (descriptor_ >= 0)
+  if (!internal_iserror(descriptor_))
     internal_close(descriptor_);
 }
 

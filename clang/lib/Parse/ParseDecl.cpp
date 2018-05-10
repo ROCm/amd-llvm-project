@@ -29,7 +29,6 @@
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringSwitch.h"
-#include "llvm/Support/ScopedPrinter.h"
 
 using namespace clang;
 
@@ -71,7 +70,7 @@ TypeResult Parser::ParseTypeName(SourceRange *Range,
   return Actions.ActOnTypeName(getCurScope(), DeclaratorInfo);
 }
 
-/// \brief Normalizes an attribute name by dropping prefixed and suffixed __.
+/// Normalizes an attribute name by dropping prefixed and suffixed __.
 static StringRef normalizeAttrName(StringRef Name) {
   if (Name.size() >= 4 && Name.startswith("__") && Name.endswith("__"))
     return Name.drop_front(2).drop_back(2);
@@ -207,7 +206,7 @@ void Parser::ParseGNUAttributes(ParsedAttributes &attrs,
   }
 }
 
-/// \brief Determine whether the given attribute has an identifier argument.
+/// Determine whether the given attribute has an identifier argument.
 static bool attributeHasIdentifierArg(const IdentifierInfo &II) {
 #define CLANG_ATTR_IDENTIFIER_ARG_LIST
   return llvm::StringSwitch<bool>(normalizeAttrName(II.getName()))
@@ -216,7 +215,7 @@ static bool attributeHasIdentifierArg(const IdentifierInfo &II) {
 #undef CLANG_ATTR_IDENTIFIER_ARG_LIST
 }
 
-/// \brief Determine whether the given attribute parses a type argument.
+/// Determine whether the given attribute parses a type argument.
 static bool attributeIsTypeArgAttr(const IdentifierInfo &II) {
 #define CLANG_ATTR_TYPE_ARG_LIST
   return llvm::StringSwitch<bool>(normalizeAttrName(II.getName()))
@@ -225,7 +224,7 @@ static bool attributeIsTypeArgAttr(const IdentifierInfo &II) {
 #undef CLANG_ATTR_TYPE_ARG_LIST
 }
 
-/// \brief Determine whether the given attribute requires parsing its arguments
+/// Determine whether the given attribute requires parsing its arguments
 /// in an unevaluated context or not.
 static bool attributeParsedArgsUnevaluated(const IdentifierInfo &II) {
 #define CLANG_ATTR_ARG_CONTEXT_LIST
@@ -766,7 +765,7 @@ static bool VersionNumberSeparator(const char Separator) {
   return (Separator == '.' || Separator == '_');
 }
 
-/// \brief Parse a version number.
+/// Parse a version number.
 ///
 /// version:
 ///   simple-integer
@@ -883,7 +882,7 @@ VersionTuple Parser::ParseVersionTuple(SourceRange &Range) {
   return VersionTuple(Major, Minor, Subminor, (AfterMajorSeparator == '_'));
 }
 
-/// \brief Parse the contents of the "availability" attribute.
+/// Parse the contents of the "availability" attribute.
 ///
 /// availability-attribute:
 ///   'availability' '(' platform ',' opt-strict version-arg-list,
@@ -1115,7 +1114,7 @@ void Parser::ParseAvailabilityAttribute(IdentifierInfo &Availability,
                Syntax, StrictLoc, ReplacementExpr.get());
 }
 
-/// \brief Parse the contents of the "external_source_symbol" attribute.
+/// Parse the contents of the "external_source_symbol" attribute.
 ///
 /// external-source-symbol-attribute:
 ///   'external_source_symbol' '(' keyword-arg-list ')'
@@ -1228,7 +1227,7 @@ void Parser::ParseExternalSourceSymbolAttribute(
                ScopeName, ScopeLoc, Args, llvm::array_lengthof(Args), Syntax);
 }
 
-/// \brief Parse the contents of the "objc_bridge_related" attribute.
+/// Parse the contents of the "objc_bridge_related" attribute.
 /// objc_bridge_related '(' related_class ',' opt-class_method ',' opt-instance_method ')'
 /// related_class:
 ///     Identifier
@@ -1359,7 +1358,7 @@ void Parser::ParseLexedAttributes(ParsingClass &Class) {
                                                  Class.TagOrTemplate);
 }
 
-/// \brief Parse all attributes in LAs, and attach them to Decl D.
+/// Parse all attributes in LAs, and attach them to Decl D.
 void Parser::ParseLexedAttributeList(LateParsedAttrList &LAs, Decl *D,
                                      bool EnterScope, bool OnDefinition) {
   assert(LAs.parseSoon() &&
@@ -1373,7 +1372,7 @@ void Parser::ParseLexedAttributeList(LateParsedAttrList &LAs, Decl *D,
   LAs.clear();
 }
 
-/// \brief Finish parsing an attribute for which parsing was delayed.
+/// Finish parsing an attribute for which parsing was delayed.
 /// This will be called at the end of parsing a class declaration
 /// for each LateParsedAttribute. We consume the saved tokens and
 /// create an attribute with the arguments filled in. We add this
@@ -1559,7 +1558,7 @@ bool Parser::DiagnoseProhibitedCXX11Attribute() {
   llvm_unreachable("All cases handled above.");
 }
 
-/// \brief We have found the opening square brackets of a C++11
+/// We have found the opening square brackets of a C++11
 /// attribute-specifier in a location where an attribute is not permitted, but
 /// we know where the attributes ought to be written. Parse them anyway, and
 /// provide a fixit moving them to the right place.
@@ -2136,7 +2135,7 @@ bool Parser::ParseAsmAttributesAfterDeclarator(Declarator &D) {
   return false;
 }
 
-/// \brief Parse 'declaration' after parsing 'declaration-specifiers
+/// Parse 'declaration' after parsing 'declaration-specifiers
 /// declarator'. This method parses the remainder of the declaration
 /// (including any attributes or initializer, among other things) and
 /// finalizes the declaration.
@@ -2724,7 +2723,7 @@ bool Parser::ParseImplicitInt(DeclSpec &DS, CXXScopeSpec *SS,
   return false;
 }
 
-/// \brief Determine the declaration specifier context from the declarator
+/// Determine the declaration specifier context from the declarator
 /// context.
 ///
 /// \param Context the declarator context, which is one of the
@@ -3804,11 +3803,25 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
                                  getLangOpts());
       break;
 
-    // OpenCL qualifiers:
+    // OpenCL access qualifiers:
+    case tok::kw___read_only:
+    case tok::kw___write_only:
+    case tok::kw___read_write:
+      // OpenCL C++ 1.0 s2.2: access qualifiers are reserved keywords.
+      if (Actions.getLangOpts().OpenCLCPlusPlus) {
+        DiagID = diag::err_openclcxx_reserved;
+        PrevSpec = Tok.getIdentifierInfo()->getNameStart();
+        isInvalid = true;
+      }
+      ParseOpenCLQualifiers(DS.getAttributes());
+      break;
+
+    // OpenCL address space qualifiers:
     case tok::kw___generic:
       // generic address space is introduced only in OpenCL v2.0
       // see OpenCL C Spec v2.0 s6.5.5
-      if (Actions.getLangOpts().OpenCLVersion < 200) {
+      if (Actions.getLangOpts().OpenCLVersion < 200 &&
+          !Actions.getLangOpts().OpenCLCPlusPlus) {
         DiagID = diag::err_opencl_unknown_type_specifier;
         PrevSpec = Tok.getIdentifierInfo()->getNameStart();
         isInvalid = true;
@@ -3819,9 +3832,6 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
     case tok::kw___global:
     case tok::kw___local:
     case tok::kw___constant:
-    case tok::kw___read_only:
-    case tok::kw___write_only:
-    case tok::kw___read_write:
       ParseOpenCLQualifiers(DS.getAttributes());
       break;
 
@@ -3859,11 +3869,9 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
         Diag(Tok, DiagID)
           << PrevSpec << FixItHint::CreateRemoval(Tok.getLocation());
       else if (DiagID == diag::err_opencl_unknown_type_specifier) {
-        const int OpenCLVer = getLangOpts().OpenCLVersion;
-        std::string VerSpec = llvm::to_string(OpenCLVer / 100) +
-                              std::string (".") +
-                              llvm::to_string((OpenCLVer % 100) / 10);
-        Diag(Tok, DiagID) << VerSpec << PrevSpec << isStorageClass;
+        Diag(Tok, DiagID) << getLangOpts().OpenCLCPlusPlus
+            << getLangOpts().getOpenCLVersionTuple().getAsString()
+            << PrevSpec << isStorageClass;
       } else
         Diag(Tok, DiagID) << PrevSpec;
     }
