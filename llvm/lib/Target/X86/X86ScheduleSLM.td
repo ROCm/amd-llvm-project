@@ -92,11 +92,12 @@ def : WriteRes<WriteLDMXCSR,  [SLM_MEC_RSV]> { let Latency = 3; }
 // Treat misc copies as a move.
 def : InstRW<[WriteMove], (instrs COPY)>;
 
-defm : SLMWriteResPair<WriteALU,   [SLM_IEC_RSV01], 1>;
-defm : SLMWriteResPair<WriteIMul,  [SLM_IEC_RSV1],  3>;
-defm : SLMWriteResPair<WriteShift, [SLM_IEC_RSV0],  1>;
-defm : SLMWriteResPair<WriteJump,  [SLM_IEC_RSV1],  1>;
-defm : SLMWriteResPair<WriteCRC32, [SLM_IEC_RSV1],  3>;
+defm : SLMWriteResPair<WriteALU,    [SLM_IEC_RSV01], 1>;
+defm : SLMWriteResPair<WriteIMul,   [SLM_IEC_RSV1],  3>;
+defm : SLMWriteResPair<WriteIMul64, [SLM_IEC_RSV1],  3>;
+defm : SLMWriteResPair<WriteShift,  [SLM_IEC_RSV0],  1>;
+defm : SLMWriteResPair<WriteJump,   [SLM_IEC_RSV1],  1>;
+defm : SLMWriteResPair<WriteCRC32,  [SLM_IEC_RSV1],  3>;
 
 defm : SLMWriteResPair<WriteCMOV,  [SLM_IEC_RSV01], 2, [2]>;
 def  : WriteRes<WriteSETCC, [SLM_IEC_RSV01]>;
@@ -121,29 +122,67 @@ defm : SLMWriteResPair<WritePOPCNT,  [SLM_IEC_RSV0], 3>;
 defm : SLMWriteResPair<WriteBEXTR, [SLM_IEC_RSV0], 1>;
 defm : SLMWriteResPair<WriteBZHI, [SLM_IEC_RSV0], 1>;
 
-// This is quite rough, latency depends on the dividend.
-defm : SLMWriteResPair<WriteIDiv, [SLM_IEC_RSV01, SLMDivider], 25, [1,25], 1, 4>;
+defm : SLMWriteResPair<WriteDiv8,   [SLM_IEC_RSV01, SLMDivider], 25, [1,25], 1, 4>;
+defm : SLMWriteResPair<WriteDiv16,  [SLM_IEC_RSV01, SLMDivider], 25, [1,25], 1, 4>;
+defm : SLMWriteResPair<WriteDiv32,  [SLM_IEC_RSV01, SLMDivider], 25, [1,25], 1, 4>;
+defm : SLMWriteResPair<WriteDiv64,  [SLM_IEC_RSV01, SLMDivider], 25, [1,25], 1, 4>;
+defm : SLMWriteResPair<WriteIDiv8,  [SLM_IEC_RSV01, SLMDivider], 25, [1,25], 1, 4>;
+defm : SLMWriteResPair<WriteIDiv16, [SLM_IEC_RSV01, SLMDivider], 25, [1,25], 1, 4>;
+defm : SLMWriteResPair<WriteIDiv32, [SLM_IEC_RSV01, SLMDivider], 25, [1,25], 1, 4>;
+defm : SLMWriteResPair<WriteIDiv64, [SLM_IEC_RSV01, SLMDivider], 25, [1,25], 1, 4>;
 
 // Scalar and vector floating point.
-def  : WriteRes<WriteFStore,       [SLM_FPC_RSV01, SLM_MEC_RSV]>;
-def  : WriteRes<WriteFLoad,        [SLM_MEC_RSV]> { let Latency = 3; }
-def  : WriteRes<WriteFMove,        [SLM_FPC_RSV01]>;
+def  : WriteRes<WriteFLoad,         [SLM_MEC_RSV]> { let Latency = 3; }
+def  : WriteRes<WriteFMaskedLoad,   [SLM_MEC_RSV]> { let Latency = 3; }
+def  : WriteRes<WriteFMaskedLoadY,  [SLM_MEC_RSV]> { let Latency = 3; }
+def  : WriteRes<WriteFStore,        [SLM_FPC_RSV01, SLM_MEC_RSV]>;
+def  : WriteRes<WriteFMaskedStore,  [SLM_FPC_RSV01, SLM_MEC_RSV]>;
+def  : WriteRes<WriteFMaskedStoreY, [SLM_FPC_RSV01, SLM_MEC_RSV]>;
+def  : WriteRes<WriteFMove,         [SLM_FPC_RSV01]>;
+defm : X86WriteRes<WriteEMMS,       [SLM_FPC_RSV01], 10, [10], 9>;
 
-defm : SLMWriteResPair<WriteFAdd,   [SLM_FPC_RSV1], 3>;
-defm : SLMWriteResPair<WriteFAddY,  [SLM_FPC_RSV1], 3>;
-defm : SLMWriteResPair<WriteFCmp,   [SLM_FPC_RSV1], 3>;
-defm : SLMWriteResPair<WriteFCmpY,  [SLM_FPC_RSV1], 3>;
-defm : SLMWriteResPair<WriteFCom,   [SLM_FPC_RSV1], 3>;
-defm : SLMWriteResPair<WriteFMul,   [SLM_FPC_RSV0, SLMFPMultiplier], 5, [1,2]>;
-defm : SLMWriteResPair<WriteFMulY,  [SLM_FPC_RSV0, SLMFPMultiplier], 5, [1,2]>;
-defm : SLMWriteResPair<WriteFDiv,   [SLM_FPC_RSV0, SLMFPDivider], 34, [1,34]>;
-defm : SLMWriteResPair<WriteFDivY,  [SLM_FPC_RSV0, SLMFPDivider], 34, [1,34]>;
-defm : SLMWriteResPair<WriteFRcp,   [SLM_FPC_RSV0], 5>;
-defm : SLMWriteResPair<WriteFRcpY,  [SLM_FPC_RSV0], 5>;
-defm : SLMWriteResPair<WriteFRsqrt, [SLM_FPC_RSV0], 5>;
-defm : SLMWriteResPair<WriteFRsqrtY,[SLM_FPC_RSV0], 5>;
-defm : SLMWriteResPair<WriteFSqrt,  [SLM_FPC_RSV0], 15>;
-defm : SLMWriteResPair<WriteFSqrtY, [SLM_FPC_RSV0], 15>;
+defm : SLMWriteResPair<WriteFAdd,     [SLM_FPC_RSV1], 3>;
+defm : SLMWriteResPair<WriteFAddX,    [SLM_FPC_RSV1], 3>;
+defm : SLMWriteResPair<WriteFAddY,    [SLM_FPC_RSV1], 3>;
+defm : SLMWriteResPair<WriteFAdd64,   [SLM_FPC_RSV1], 3>;
+defm : SLMWriteResPair<WriteFAdd64X,  [SLM_FPC_RSV1], 3>;
+defm : SLMWriteResPair<WriteFAdd64Y,  [SLM_FPC_RSV1], 3>;
+defm : SLMWriteResPair<WriteFCmp,     [SLM_FPC_RSV1], 3>;
+defm : SLMWriteResPair<WriteFCmpX,    [SLM_FPC_RSV1], 3>;
+defm : SLMWriteResPair<WriteFCmpY,    [SLM_FPC_RSV1], 3>;
+defm : SLMWriteResPair<WriteFCmp64,   [SLM_FPC_RSV1], 3>;
+defm : SLMWriteResPair<WriteFCmp64X,  [SLM_FPC_RSV1], 3>;
+defm : SLMWriteResPair<WriteFCmp64Y,  [SLM_FPC_RSV1], 3>;
+defm : SLMWriteResPair<WriteFCom,     [SLM_FPC_RSV1], 3>;
+defm : SLMWriteResPair<WriteFMul,     [SLM_FPC_RSV0, SLMFPMultiplier], 5, [1,2]>;
+defm : SLMWriteResPair<WriteFMulX,    [SLM_FPC_RSV0, SLMFPMultiplier], 5, [1,2]>;
+defm : SLMWriteResPair<WriteFMulY,    [SLM_FPC_RSV0, SLMFPMultiplier], 5, [1,2]>;
+defm : SLMWriteResPair<WriteFMul64,   [SLM_FPC_RSV0, SLMFPMultiplier], 5, [1,2]>;
+defm : SLMWriteResPair<WriteFMul64X,  [SLM_FPC_RSV0, SLMFPMultiplier], 5, [1,2]>;
+defm : SLMWriteResPair<WriteFMul64Y,  [SLM_FPC_RSV0, SLMFPMultiplier], 5, [1,2]>;
+defm : SLMWriteResPair<WriteFDiv,     [SLM_FPC_RSV0, SLMFPDivider], 19, [1,17]>;
+defm : SLMWriteResPair<WriteFDivX,    [SLM_FPC_RSV0, SLMFPDivider], 39, [1,39]>;
+defm : SLMWriteResPair<WriteFDivY,    [SLM_FPC_RSV0, SLMFPDivider], 39, [1,39]>;
+defm : SLMWriteResPair<WriteFDivZ,    [SLM_FPC_RSV0, SLMFPDivider], 39, [1,39]>;
+defm : SLMWriteResPair<WriteFDiv64,   [SLM_FPC_RSV0, SLMFPDivider], 34, [1,32]>;
+defm : SLMWriteResPair<WriteFDiv64X,  [SLM_FPC_RSV0, SLMFPDivider], 69, [1,69]>;
+defm : SLMWriteResPair<WriteFDiv64Y,  [SLM_FPC_RSV0, SLMFPDivider], 69, [1,69]>;
+defm : SLMWriteResPair<WriteFDiv64Z,  [SLM_FPC_RSV0, SLMFPDivider], 69, [1,69]>;
+defm : SLMWriteResPair<WriteFRcp,     [SLM_FPC_RSV0], 5>;
+defm : SLMWriteResPair<WriteFRcpX,    [SLM_FPC_RSV0], 5>;
+defm : SLMWriteResPair<WriteFRcpY,    [SLM_FPC_RSV0], 5>;
+defm : SLMWriteResPair<WriteFRsqrt,   [SLM_FPC_RSV0], 5>;
+defm : SLMWriteResPair<WriteFRsqrtX,  [SLM_FPC_RSV0], 5>;
+defm : SLMWriteResPair<WriteFRsqrtY,  [SLM_FPC_RSV0], 5>;
+defm : SLMWriteResPair<WriteFSqrt,    [SLM_FPC_RSV0,SLMFPDivider], 20, [1,20], 1, 3>;
+defm : SLMWriteResPair<WriteFSqrtX,   [SLM_FPC_RSV0,SLMFPDivider], 41, [1,40], 1, 3>;
+defm : SLMWriteResPair<WriteFSqrtY,   [SLM_FPC_RSV0,SLMFPDivider], 41, [1,40], 1, 3>;
+defm : SLMWriteResPair<WriteFSqrtZ,   [SLM_FPC_RSV0,SLMFPDivider], 41, [1,40], 1, 3>;
+defm : SLMWriteResPair<WriteFSqrt64,  [SLM_FPC_RSV0,SLMFPDivider], 35, [1,35], 1, 3>;
+defm : SLMWriteResPair<WriteFSqrt64X, [SLM_FPC_RSV0,SLMFPDivider], 71, [1,70], 1, 3>;
+defm : SLMWriteResPair<WriteFSqrt64Y, [SLM_FPC_RSV0,SLMFPDivider], 71, [1,70], 1, 3>;
+defm : SLMWriteResPair<WriteFSqrt64Z, [SLM_FPC_RSV0,SLMFPDivider], 71, [1,70], 1, 3>;
+defm : SLMWriteResPair<WriteFSqrt80,  [SLM_FPC_RSV0,SLMFPDivider], 40, [1,40]>;
 defm : SLMWriteResPair<WriteDPPD,   [SLM_FPC_RSV1], 3>;
 defm : SLMWriteResPair<WriteDPPS,   [SLM_FPC_RSV1], 3>;
 defm : SLMWriteResPair<WriteDPPSY,  [SLM_FPC_RSV1], 3>;
@@ -155,6 +194,8 @@ defm : SLMWriteResPair<WriteFRnd,   [SLM_FPC_RSV1], 3>;
 defm : SLMWriteResPair<WriteFRndY,  [SLM_FPC_RSV1], 3>;
 defm : SLMWriteResPair<WriteFLogic, [SLM_FPC_RSV01], 1>;
 defm : SLMWriteResPair<WriteFLogicY, [SLM_FPC_RSV01], 1>;
+defm : SLMWriteResPair<WriteFTest,  [SLM_FPC_RSV01], 1>;
+defm : SLMWriteResPair<WriteFTestY, [SLM_FPC_RSV01], 1>;
 defm : SLMWriteResPair<WriteFShuffle,  [SLM_FPC_RSV0], 1>;
 defm : SLMWriteResPair<WriteFShuffleY, [SLM_FPC_RSV0], 1>;
 defm : SLMWriteResPair<WriteFVarShuffle, [SLM_FPC_RSV0],  1>;
@@ -163,9 +204,13 @@ defm : SLMWriteResPair<WriteFBlend,  [SLM_FPC_RSV0],  1>;
 def  : WriteRes<WriteCvtF2FSt, [SLM_FPC_RSV01, SLM_MEC_RSV]>;
 
 // Vector integer operations.
-def  : WriteRes<WriteVecStore,       [SLM_FPC_RSV01, SLM_MEC_RSV]>;
-def  : WriteRes<WriteVecLoad,        [SLM_MEC_RSV]> { let Latency = 3; }
-def  : WriteRes<WriteVecMove,        [SLM_FPC_RSV01]>;
+def  : WriteRes<WriteVecLoad,         [SLM_MEC_RSV]> { let Latency = 3; }
+def  : WriteRes<WriteVecMaskedLoad,   [SLM_MEC_RSV]> { let Latency = 3; }
+def  : WriteRes<WriteVecMaskedLoadY,  [SLM_MEC_RSV]> { let Latency = 3; }
+def  : WriteRes<WriteVecStore,        [SLM_FPC_RSV01, SLM_MEC_RSV]>;
+def  : WriteRes<WriteVecMaskedStore,  [SLM_FPC_RSV01, SLM_MEC_RSV]>;
+def  : WriteRes<WriteVecMaskedStoreY, [SLM_FPC_RSV01, SLM_MEC_RSV]>;
+def  : WriteRes<WriteVecMove,         [SLM_FPC_RSV01]>;
 
 defm : SLMWriteResPair<WriteVecShift,    [SLM_FPC_RSV0],  1>;
 defm : SLMWriteResPair<WriteVecShiftX,   [SLM_FPC_RSV0],  1>;
@@ -175,6 +220,8 @@ defm : SLMWriteResPair<WriteVecShiftImmX,[SLM_FPC_RSV0],  1>;
 defm : SLMWriteResPair<WriteVecShiftImmY,[SLM_FPC_RSV0],  1>;
 defm : SLMWriteResPair<WriteVecLogic, [SLM_FPC_RSV01], 1>;
 defm : SLMWriteResPair<WriteVecLogicY,[SLM_FPC_RSV01], 1>;
+defm : SLMWriteResPair<WriteVecTest,  [SLM_FPC_RSV01], 1>;
+defm : SLMWriteResPair<WriteVecTestY, [SLM_FPC_RSV01], 1>;
 defm : SLMWriteResPair<WriteVecALU,   [SLM_FPC_RSV01],  1>;
 defm : SLMWriteResPair<WriteVecALUY,  [SLM_FPC_RSV01],  1>;
 defm : SLMWriteResPair<WriteVecIMul,  [SLM_FPC_RSV0],   4>;
@@ -322,119 +369,5 @@ defm : SLMWriteResPair<WriteVarVecShiftY, [SLM_FPC_RSV0],  1>;
 defm : SLMWriteResPair<WriteFMA, [SLM_FPC_RSV0],  1>;
 defm : SLMWriteResPair<WriteFMAX, [SLM_FPC_RSV0],  1>;
 defm : SLMWriteResPair<WriteFMAY, [SLM_FPC_RSV0],  1>;
-
-// Instruction overrides
-
-def SLMriteResGroup1 : SchedWriteRes<[SLM_FPC_RSV0,SLMFPDivider]> {
-  let Latency = 69;
-  let NumMicroOps = 1;
-  let ResourceCycles = [1,69];
-}
-def: InstRW<[SLMriteResGroup1], (instregex "(V?)DIVPDrr")>;
-
-def SLMriteResGroup2 : SchedWriteRes<[SLM_FPC_RSV0,SLMFPDivider]> {
-  let Latency = 39;
-  let NumMicroOps = 1;
-  let ResourceCycles = [1,39];
-}
-def: InstRW<[SLMriteResGroup2], (instregex "(V?)DIVPSrr")>;
-
-def SLMriteResGroup3 : SchedWriteRes<[SLM_FPC_RSV0,SLMFPDivider]> {
-  let Latency = 34;
-  let NumMicroOps = 1;
-  let ResourceCycles = [1,32];
-}
-def: InstRW<[SLMriteResGroup3], (instregex "(V?)DIVSDrr")>;
-
-def SLMriteResGroup4 : SchedWriteRes<[SLM_FPC_RSV0,SLMFPDivider]> {
-  let Latency = 19;
-  let NumMicroOps = 1;
-  let ResourceCycles = [1,17];
-}
-def: InstRW<[SLMriteResGroup4], (instregex "(V?)DIVSSrr")>;
-
-def SLMriteResGroup5 : SchedWriteRes<[SLM_MEC_RSV,SLM_FPC_RSV0,SLMFPDivider]> {
-  let Latency = 72;
-  let NumMicroOps = 1;
-  let ResourceCycles = [1,1,69];
-}
-def: InstRW<[SLMriteResGroup5], (instregex "(V?)DIVPDrm")>;
-
-def SLMriteResGroup6 : SchedWriteRes<[SLM_MEC_RSV,SLM_FPC_RSV0,SLMFPDivider]> {
-  let Latency = 42;
-  let NumMicroOps = 1;
-  let ResourceCycles = [1,1,39];
-}
-def: InstRW<[SLMriteResGroup6], (instregex "(V?)DIVPSrm")>;
-
-def SLMriteResGroup7 : SchedWriteRes<[SLM_MEC_RSV,SLM_FPC_RSV0,SLMFPDivider]> {
-  let Latency = 37;
-  let NumMicroOps = 1;
-  let ResourceCycles = [1,1,32];
-}
-def: InstRW<[SLMriteResGroup7], (instregex "(V?)DIVSDrm")>;
-
-def SLMriteResGroup8 : SchedWriteRes<[SLM_MEC_RSV,SLM_FPC_RSV0,SLMFPDivider]> {
-  let Latency = 22;
-  let NumMicroOps = 1;
-  let ResourceCycles = [1,1,17];
-}
-def: InstRW<[SLMriteResGroup8], (instregex "(V?)DIVSSrm")>;
-
-def SLMriteResGroup9 : SchedWriteRes<[SLM_FPC_RSV0,SLMFPDivider]> {
-  let Latency = 71;
-  let NumMicroOps = 1;
-  let ResourceCycles = [1,70];
-}
-def: InstRW<[SLMriteResGroup9], (instregex "(V?)SQRTPDr")>;
-
-def SLMriteResGroup10 : SchedWriteRes<[SLM_FPC_RSV0,SLMFPDivider]> {
-  let Latency = 41;
-  let NumMicroOps = 1;
-  let ResourceCycles = [1,40];
-}
-def: InstRW<[SLMriteResGroup10], (instregex "(V?)SQRTPSr")>;
-
-def SLMriteResGroup11 : SchedWriteRes<[SLM_FPC_RSV0,SLMFPDivider]> {
-  let Latency = 35;
-  let NumMicroOps = 1;
-  let ResourceCycles = [1,35];
-}
-def: InstRW<[SLMriteResGroup11], (instregex "(V?)SQRTSDr")>;
-
-def SLMriteResGroup12 : SchedWriteRes<[SLM_FPC_RSV0,SLMFPDivider]> {
-  let Latency = 20;
-  let NumMicroOps = 1;
-  let ResourceCycles = [1,20];
-}
-def: InstRW<[SLMriteResGroup12], (instregex "(V?)SQRTSSr")>;
-
-def SLMriteResGroup13 : SchedWriteRes<[SLM_MEC_RSV,SLM_FPC_RSV0,SLMFPDivider]> {
-  let Latency = 74;
-  let NumMicroOps = 1;
-  let ResourceCycles = [1,1,70];
-}
-def: InstRW<[SLMriteResGroup13], (instregex "(V?)SQRTPDm")>;
-
-def SLMriteResGroup14 : SchedWriteRes<[SLM_MEC_RSV,SLM_FPC_RSV0,SLMFPDivider]> {
-  let Latency = 44;
-  let NumMicroOps = 1;
-  let ResourceCycles = [1,1,40];
-}
-def: InstRW<[SLMriteResGroup14], (instregex "(V?)SQRTPSm")>;
-
-def SLMriteResGroup15 : SchedWriteRes<[SLM_MEC_RSV,SLM_FPC_RSV0,SLMFPDivider]> {
-  let Latency = 38;
-  let NumMicroOps = 1;
-  let ResourceCycles = [1,1,35];
-}
-def: InstRW<[SLMriteResGroup15], (instregex "(V?)SQRTSDm")>;
-
-def SLMriteResGroup16 : SchedWriteRes<[SLM_MEC_RSV,SLM_FPC_RSV0,SLMFPDivider]> {
-  let Latency = 23;
-  let NumMicroOps = 1;
-  let ResourceCycles = [1,1,20];
-}
-def: InstRW<[SLMriteResGroup16], (instregex "(V?)SQRTSSm")>;
 
 } // SchedModel

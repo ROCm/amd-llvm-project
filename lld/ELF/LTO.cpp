@@ -55,11 +55,11 @@ static void saveBuffer(StringRef Buffer, const Twine &Path) {
 }
 
 static void diagnosticHandler(const DiagnosticInfo &DI) {
-  SmallString<128> ErrStorage;
-  raw_svector_ostream OS(ErrStorage);
+  SmallString<128> S;
+  raw_svector_ostream OS(S);
   DiagnosticPrinterRawOStream DP(OS);
   DI.print(DP);
-  warn(ErrStorage);
+  warn(S);
 }
 
 static void checkError(Error E) {
@@ -67,113 +67,91 @@ static void checkError(Error E) {
                   [&](ErrorInfoBase &EIB) { error(EIB.message()); });
 }
 
-// With the ThinLTOIndexOnly option, only the thin link is performed, and will
-// generate index files for the ThinLTO backends in a distributed build system.
-// The distributed build system may expect that index files are created for all
-// input bitcode objects provided to the linker for the thin link. However,
-// index files will not normally be created for input bitcode objects that
-// either aren't selected by the linker (i.e. in a static library and not
-// needed), or because they don't have a summary. Therefore we need to create
-// empty dummy index file outputs in those cases.
-// If SkipModule is true then .thinlto.bc should contain just
-// SkipModuleByDistributedBackend flag which requests distributed backend
-// to skip the compilation of the corresponding module and produce an empty
-// object file.
-static void writeEmptyDistributedBuildOutputs(const std::string &ModulePath,
-                                              const std::string &OldPrefix,
-                                              const std::string &NewPrefix,
-                                              bool SkipModule) {
-  std::string NewModulePath =
-      lto::getThinLTOOutputFile(ModulePath, OldPrefix, NewPrefix);
-  std::error_code EC;
-
-  raw_fd_ostream OS(NewModulePath + ".thinlto.bc", EC,
-                    sys::fs::OpenFlags::F_None);
-  if (EC)
-    error("failed to write " + NewModulePath + ".thinlto.bc" + ": " +
-          EC.message());
-
-  if (SkipModule) {
-    ModuleSummaryIndex Index(false);
-    Index.setSkipModuleByDistributedBackend();
-    WriteIndexToFile(Index, OS);
-  }
-}
-
-// Creates and returns output stream with a list of object files for final
+// Creates an empty file to store a list of object files for final
 // linking of distributed ThinLTO.
-static std::unique_ptr<raw_fd_ostream> createLinkedObjectsFile() {
-  if (Config->ThinLTOIndexOnlyObjectsFile.empty())
-    return nullptr;
+static std::unique_ptr<raw_fd_ostream> openFile(StringRef File) {
   std::error_code EC;
-  auto LinkedObjectsFile = llvm::make_unique<raw_fd_ostream>(
-      Config->ThinLTOIndexOnlyObjectsFile, EC, sys::fs::OpenFlags::F_None);
-  if (EC)
-    error("cannot create " + Config->ThinLTOIndexOnlyObjectsFile + ": " +
-          EC.message());
-  return LinkedObjectsFile;
+  auto Ret =
+      llvm::make_unique<raw_fd_ostream>(File, EC, sys::fs::OpenFlags::F_None);
+  if (EC) {
+    error("cannot open " + File + ": " + EC.message());
+    return nullptr;
+  }
+  return Ret;
 }
 
-// Creates instance of LTO.
-// LinkedObjectsFile is an output stream to write the list of object files for
-// the final ThinLTO linking. Can be nullptr.
-static std::unique_ptr<lto::LTO> createLTO(raw_fd_ostream *LinkedObjectsFile) {
-  lto::Config Conf;
+static std::string getThinLTOOutputFile(StringRef ModulePath) {
+  return lto::getThinLTOOutputFile(ModulePath,
+                                   Config->ThinLTOPrefixReplace.first,
+                                   Config->ThinLTOPrefixReplace.second);
+}
+
+static lto::Config createConfig() {
+  lto::Config C;
 
   // LLD supports the new relocations.
-  Conf.Options = InitTargetOptionsFromCodeGenFlags();
-  Conf.Options.RelaxELFRelocations = true;
+  C.Options = InitTargetOptionsFromCodeGenFlags();
+  C.Options.RelaxELFRelocations = true;
 
   // Always emit a section per function/datum with LTO.
-  Conf.Options.FunctionSections = true;
-  Conf.Options.DataSections = true;
+  C.Options.FunctionSections = true;
+  C.Options.DataSections = true;
 
   if (Config->Relocatable)
-    Conf.RelocModel = None;
+    C.RelocModel = None;
   else if (Config->Pic)
-    Conf.RelocModel = Reloc::PIC_;
+    C.RelocModel = Reloc::PIC_;
   else
-    Conf.RelocModel = Reloc::Static;
-  Conf.CodeModel = GetCodeModelFromCMModel();
-  Conf.DisableVerify = Config->DisableVerify;
-  Conf.DiagHandler = diagnosticHandler;
-  Conf.OptLevel = Config->LTOO;
-  Conf.CPU = GetCPUStr();
+    C.RelocModel = Reloc::Static;
+
+  C.CodeModel = GetCodeModelFromCMModel();
+  C.DisableVerify = Config->DisableVerify;
+  C.DiagHandler = diagnosticHandler;
+  C.OptLevel = Config->LTOO;
+  C.CPU = GetCPUStr();
 
   // Set up a custom pipeline if we've been asked to.
-  Conf.OptPipeline = Config->LTONewPmPasses;
-  Conf.AAPipeline = Config->LTOAAPipeline;
+  C.OptPipeline = Config->LTONewPmPasses;
+  C.AAPipeline = Config->LTOAAPipeline;
 
   // Set up optimization remarks if we've been asked to.
-  Conf.RemarksFilename = Config->OptRemarksFilename;
-  Conf.RemarksWithHotness = Config->OptRemarksWithHotness;
+  C.RemarksFilename = Config->OptRemarksFilename;
+  C.RemarksWithHotness = Config->OptRemarksWithHotness;
+
+  C.SampleProfile = Config->LTOSampleProfile;
+  C.UseNewPM = Config->LTONewPassManager;
+  C.DebugPassManager = Config->LTODebugPassManager;
 
   if (Config->SaveTemps)
-    checkError(Conf.addSaveTemps(std::string(Config->OutputFile) + ".",
-                                 /*UseInputModulePath*/ true));
-
-  lto::ThinBackend Backend;
-  if (Config->ThinLTOJobs != -1u)
-    Backend = lto::createInProcessThinBackend(Config->ThinLTOJobs);
-
-  if (Config->ThinLTOIndexOnly) {
-    std::string OldPrefix, NewPrefix;
-    std::tie(OldPrefix, NewPrefix) = Config->ThinLTOPrefixReplace.split(';');
-    Backend = lto::createWriteIndexesThinBackend(OldPrefix, NewPrefix, true,
-                                                 LinkedObjectsFile, nullptr);
-  }
-
-  Conf.SampleProfile = Config->LTOSampleProfile;
-  Conf.UseNewPM = Config->LTONewPassManager;
-  Conf.DebugPassManager = Config->LTODebugPassManager;
-
-  return llvm::make_unique<lto::LTO>(std::move(Conf), Backend,
-                                     Config->LTOPartitions);
+    checkError(C.addSaveTemps(Config->OutputFile.str() + ".",
+                              /*UseInputModulePath*/ true));
+  return C;
 }
 
 BitcodeCompiler::BitcodeCompiler() {
-  LinkedObjects = createLinkedObjectsFile();
-  LTOObj = createLTO(LinkedObjects.get());
+  // Initialize LTOObj.
+  lto::ThinBackend Backend;
+
+  if (Config->ThinLTOIndexOnly) {
+    StringRef Path = Config->ThinLTOIndexOnlyArg;
+    if (!Path.empty())
+      IndexFile = openFile(Path);
+
+    auto OnIndexWrite = [&](const std::string &Identifier) {
+      ObjectToIndexFileState[Identifier] = true;
+    };
+
+    Backend = lto::createWriteIndexesThinBackend(
+        Config->ThinLTOPrefixReplace.first, Config->ThinLTOPrefixReplace.second,
+        Config->ThinLTOEmitImportsFiles, IndexFile.get(), OnIndexWrite);
+  } else if (Config->ThinLTOJobs != -1U) {
+    Backend = lto::createInProcessThinBackend(Config->ThinLTOJobs);
+  }
+
+  LTOObj = llvm::make_unique<lto::LTO>(createConfig(), Backend,
+                                       Config->LTOPartitions);
+
+  // Initialize UsedStartStop.
   for (Symbol *Sym : Symtab->getSymbols()) {
     StringRef Name = Sym->getName();
     for (StringRef Prefix : {"__start_", "__stop_"})
@@ -191,26 +169,20 @@ static void undefine(Symbol *S) {
 
 void BitcodeCompiler::add(BitcodeFile &F) {
   lto::InputFile &Obj = *F.Obj;
+  bool IsExec = !Config->Shared && !Config->Relocatable;
 
-  std::string OldPrefix, NewPrefix;
-  std::tie(OldPrefix, NewPrefix) = Config->ThinLTOPrefixReplace.split(';');
-
-  // Create the empty files which, if indexed, will be overwritten later.
   if (Config->ThinLTOIndexOnly)
-    writeEmptyDistributedBuildOutputs(Obj.getName(), OldPrefix, NewPrefix,
-                                      false);
+    ObjectToIndexFileState.insert({Obj.getName(), false});
 
-  unsigned SymNum = 0;
-  std::vector<Symbol *> Syms = F.getSymbols();
+  ArrayRef<Symbol *> Syms = F.getSymbols();
+  ArrayRef<lto::InputFile::Symbol> ObjSyms = Obj.symbols();
   std::vector<lto::SymbolResolution> Resols(Syms.size());
 
-  bool IsExecutable = !Config->Shared && !Config->Relocatable;
-
   // Provide a resolution to the LTO API for each symbol.
-  for (const lto::InputFile::Symbol &ObjSym : Obj.symbols()) {
-    Symbol *Sym = Syms[SymNum];
-    lto::SymbolResolution &R = Resols[SymNum];
-    ++SymNum;
+  for (size_t I = 0, E = Syms.size(); I != E; ++I) {
+    Symbol *Sym = Syms[I];
+    const lto::InputFile::Symbol &ObjSym = ObjSyms[I];
+    lto::SymbolResolution &R = Resols[I];
 
     // Ideally we shouldn't check for SF_Undefined but currently IRObjectFile
     // reports two symbols for module ASM defined. Without this check, lld
@@ -230,7 +202,7 @@ void BitcodeCompiler::add(BitcodeFile &F) {
                             UsedStartStop.count(ObjSym.getSectionName());
     const auto *DR = dyn_cast<Defined>(Sym);
     R.FinalDefinitionInLinkageUnit =
-        (IsExecutable || Sym->Visibility != STV_DEFAULT) && DR &&
+        (IsExec || Sym->Visibility != STV_DEFAULT) && DR &&
         // Skip absolute symbols from ELF objects, otherwise PC-rel relocations
         // will be generated by for them, triggering linker errors.
         // Symbol section is always null for bitcode symbols, hence the check
@@ -252,16 +224,9 @@ void BitcodeCompiler::add(BitcodeFile &F) {
 // Merge all the bitcode files we have seen, codegen the result
 // and return the resulting ObjectFile(s).
 std::vector<InputFile *> BitcodeCompiler::compile() {
-  std::vector<InputFile *> Ret;
   unsigned MaxTasks = LTOObj->getMaxTasks();
   Buff.resize(MaxTasks);
   Files.resize(MaxTasks);
-
-  // If LazyObjFile has not been added to link, emit empty index files
-  if (Config->ThinLTOIndexOnly)
-    for (LazyObjFile *F : LazyObjFiles)
-      if (!F->AddedToLink && isBitcode(F->MB))
-        addLazyObjFile(F);
 
   // The --thinlto-cache-dir option specifies the path to a directory in which
   // to cache native object files for ThinLTO incremental builds. If a path was
@@ -281,9 +246,53 @@ std::vector<InputFile *> BitcodeCompiler::compile() {
       },
       Cache));
 
+  // Emit empty index files for non-indexed files
+  if (Config->ThinLTOIndexOnly) {
+    for (auto &Identifier : ObjectToIndexFileState)
+      if (!Identifier.getValue()) {
+        std::string Path = getThinLTOOutputFile(Identifier.getKey());
+        openFile(Path + ".thinlto.bc");
+
+        if (Config->ThinLTOEmitImportsFiles)
+          openFile(Path + ".imports");
+      }
+  }
+
+  // If LazyObjFile has not been added to link, emit empty index files.
+  // This is needed because this is what GNU gold plugin does and we have a
+  // distributed build system that depends on that behavior.
+  if (Config->ThinLTOIndexOnly) {
+    for (LazyObjFile *F : LazyObjFiles) {
+      if (F->AddedToLink || !isBitcode(F->MB))
+        continue;
+
+      std::string Path = getThinLTOOutputFile(F->getName());
+      std::unique_ptr<raw_fd_ostream> OS = openFile(Path + ".thinlto.bc");
+      if (!OS)
+        continue;
+
+      ModuleSummaryIndex M(false);
+      M.setSkipModuleByDistributedBackend();
+      WriteIndexToFile(M, *OS);
+
+      if (Config->ThinLTOEmitImportsFiles)
+        openFile(Path + ".imports");
+    }
+
+    if (!Config->LTOObjPath.empty())
+      saveBuffer(Buff[0], Config->LTOObjPath);
+
+    // ThinLTO with index only option is required to generate only the index
+    // files. After that, we exit from linker and ThinLTO backend runs in a
+    // distributed environment.
+    if (IndexFile)
+      IndexFile->close();
+    return {};
+  }
   if (!Config->ThinLTOCacheDir.empty())
     pruneCache(Config->ThinLTOCacheDir, Config->ThinLTOCachePolicy);
 
+  std::vector<InputFile *> Ret;
   for (unsigned I = 0; I != MaxTasks; ++I) {
     if (Buff[I].empty())
       continue;
@@ -297,24 +306,8 @@ std::vector<InputFile *> BitcodeCompiler::compile() {
     Ret.push_back(Obj);
   }
 
-  // ThinLTO with index only option is required to generate only the index
-  // files. After that, we exit from linker and ThinLTO backend runs in a
-  // distributed environment.
-  if (Config->ThinLTOIndexOnly)
-    exit(0);
-
   for (std::unique_ptr<MemoryBuffer> &File : Files)
     if (File)
       Ret.push_back(createObjectFile(*File));
-
   return Ret;
-}
-
-// For lazy object files not added to link, adds empty index files
-void BitcodeCompiler::addLazyObjFile(LazyObjFile *File) {
-  StringRef Identifier = File->getBuffer().getBufferIdentifier();
-  std::string OldPrefix, NewPrefix;
-  std::tie(OldPrefix, NewPrefix) = Config->ThinLTOPrefixReplace.split(';');
-  writeEmptyDistributedBuildOutputs(Identifier, OldPrefix, NewPrefix,
-                                    /* SkipModule */ true);
 }

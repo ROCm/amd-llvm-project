@@ -372,6 +372,11 @@ bool llvm::wouldInstructionBeTriviallyDead(Instruction *I,
       return false;
     return true;
   }
+  if (DbgLabelInst *DLI = dyn_cast<DbgLabelInst>(I)) {
+    if (DLI->getLabel())
+      return false;
+    return true;
+  }
 
   if (!I->mayHaveSideEffects())
     return true;
@@ -2496,7 +2501,7 @@ bool llvm::canReplaceOperandWithVariable(const Instruction *I, unsigned OpIdx) {
     // Static allocas (constant size in the entry block) are handled by
     // prologue/epilogue insertion so they're free anyway. We definitely don't
     // want to make them non-constant.
-    return !dyn_cast<AllocaInst>(I)->isStaticAlloca();
+    return !cast<AllocaInst>(I)->isStaticAlloca();
   case Instruction::GetElementPtr:
     if (OpIdx == 0)
       return true;

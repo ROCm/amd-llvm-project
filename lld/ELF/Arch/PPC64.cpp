@@ -43,10 +43,13 @@ public:
   uint32_t calcEFlags() const override;
   RelExpr getRelExpr(RelType Type, const Symbol &S,
                      const uint8_t *Loc) const override;
+  void writePltHeader(uint8_t *Buf) const override;
   void writePlt(uint8_t *Buf, uint64_t GotPltEntryAddr, uint64_t PltEntryAddr,
                 int32_t Index, unsigned RelOff) const override;
   void relocateOne(uint8_t *Loc, RelType Type, uint64_t Val) const override;
   void writeGotHeader(uint8_t *Buf) const override;
+  bool needsThunk(RelExpr Expr, RelType Type, const InputFile *File,
+                  uint64_t BranchAddr, const Symbol &S) const override;
 };
 } // namespace
 
@@ -64,17 +67,17 @@ static uint16_t applyPPCHighesta(uint64_t V) { return (V + 0x8000) >> 48; }
 
 PPC64::PPC64() {
   GotRel = R_PPC64_GLOB_DAT;
+  PltRel = R_PPC64_JMP_SLOT;
   RelativeRel = R_PPC64_RELATIVE;
   GotEntrySize = 8;
+  PltEntrySize = 4;
   GotPltEntrySize = 8;
-  PltEntrySize = 32;
-  PltHeaderSize = 0;
   GotBaseSymInGotPlt = false;
   GotBaseSymOff = 0x8000;
-
   GotHeaderEntriesNum = 1;
   GotPltHeaderEntriesNum = 2;
-  PltRel = R_PPC64_JMP_SLOT;
+  PltHeaderSize = 60;
+  NeedsThunks = true;
 
   // We need 64K pages (at least under glibc/Linux, the loader won't
   // set different permissions on a finer granularity than that).
@@ -170,26 +173,35 @@ void PPC64::writeGotHeader(uint8_t *Buf) const {
   write64(Buf, getPPC64TocBase());
 }
 
+void PPC64::writePltHeader(uint8_t *Buf) const {
+  // The generic resolver stub goes first.
+  write32(Buf +  0, 0x7c0802a6); // mflr r0
+  write32(Buf +  4, 0x429f0005); // bcl  20,4*cr7+so,8 <_glink+0x8>
+  write32(Buf +  8, 0x7d6802a6); // mflr r11
+  write32(Buf + 12, 0x7c0803a6); // mtlr r0
+  write32(Buf + 16, 0x7d8b6050); // subf r12, r11, r12
+  write32(Buf + 20, 0x380cffcc); // subi r0,r12,52
+  write32(Buf + 24, 0x7800f082); // srdi r0,r0,62,2
+  write32(Buf + 28, 0xe98b002c); // ld   r12,44(r11)
+  write32(Buf + 32, 0x7d6c5a14); // add  r11,r12,r11
+  write32(Buf + 36, 0xe98b0000); // ld   r12,0(r11)
+  write32(Buf + 40, 0xe96b0008); // ld   r11,8(r11)
+  write32(Buf + 44, 0x7d8903a6); // mtctr   r12
+  write32(Buf + 48, 0x4e800420); // bctr
+
+  // The 'bcl' instruction will set the link register to the address of the
+  // following instruction ('mflr r11'). Here we store the offset from that
+  // instruction  to the first entry in the GotPlt section.
+  int64_t GotPltOffset = InX::GotPlt->getVA() - (InX::Plt->getVA() + 8);
+  write64(Buf + 52, GotPltOffset);
+}
+
 void PPC64::writePlt(uint8_t *Buf, uint64_t GotPltEntryAddr,
                      uint64_t PltEntryAddr, int32_t Index,
                      unsigned RelOff) const {
-  uint64_t Off = GotPltEntryAddr - getPPC64TocBase();
-
-  // The most-common form of the plt stub. This assumes that the toc-pointer
-  // register is properly initalized, and that the stub must save the toc
-  // pointer value to the stack-save slot reserved for it (sp + 24).
-  // There are 2 other variants but we don't have to emit those until we add
-  // support for R_PPC64_REL24_NOTOC and R_PPC64_TOCSAVE relocations.
-  // We are missing a super simple optimization, where if the upper 16 bits of
-  // the offset are zero, then we can omit the addis instruction, and load
-  // r2 + lo-offset directly into r12. I decided to leave this out in the
-  // spirit of keeping it simple until we can link actual non-trivial
-  // programs.
-  write32(Buf +  0, 0xf8410018);                    // std     r2,24(r1)
-  write32(Buf +  4, 0x3d820000 | applyPPCHa(Off));  // addis   r12,r2, X@plt@to@ha
-  write32(Buf +  8, 0xe98c0000 | applyPPCLo(Off));  // ld      r12,X@plt@toc@l(r12)
-  write32(Buf + 12, 0x7d8903a6);                    // mtctr    r12
-  write32(Buf + 16, 0x4e800420);                    // bctr
+ int32_t Offset = PltHeaderSize + Index * PltEntrySize;
+ // bl __glink_PLTresolve
+ write32(Buf, 0x48000000 | ((-Offset) & 0x03FFFFFc));
 }
 
 static std::pair<RelType, uint64_t> toAddr16Rel(RelType Type, uint64_t Val) {
@@ -279,6 +291,13 @@ void PPC64::relocateOne(uint8_t *Loc, RelType Type, uint64_t Val) const {
   default:
     error(getErrorLocation(Loc) + "unrecognized reloc " + Twine(Type));
   }
+}
+
+bool PPC64::needsThunk(RelExpr Expr, RelType Type, const InputFile *File,
+                       uint64_t BranchAddr, const Symbol &S) const {
+  // If a function is in the plt it needs to be called through
+  // a call stub.
+  return Type == R_PPC64_REL24 && S.isInPlt();
 }
 
 TargetInfo *elf::getPPC64TargetInfo() {

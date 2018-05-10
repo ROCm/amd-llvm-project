@@ -189,7 +189,7 @@ static RValue EmitBinaryAtomicPost(CodeGenFunction &CGF,
   return RValue::get(Result);
 }
 
-/// @brief Utility to insert an atomic cmpxchg instruction.
+/// Utility to insert an atomic cmpxchg instruction.
 ///
 /// @param CGF The current codegen function.
 /// @param E   Builtin call expression to convert to cmpxchg.
@@ -320,7 +320,7 @@ static RValue emitLibraryCall(CodeGenFunction &CGF, const FunctionDecl *FD,
   return CGF.EmitCall(E->getCallee()->getType(), callee, E, ReturnValueSlot());
 }
 
-/// \brief Emit a call to llvm.{sadd,uadd,ssub,usub,smul,umul}.with.overflow.*
+/// Emit a call to llvm.{sadd,uadd,ssub,usub,smul,umul}.with.overflow.*
 /// depending on IntrinsicID.
 ///
 /// \arg CGF The current codegen function.
@@ -3164,10 +3164,10 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
       return Ptr;
     };
 
-    // Could have events and/or vaargs.
+    // Could have events and/or varargs.
     if (E->getArg(3)->getType()->isBlockPointerType()) {
       // No events passed, but has variadic arguments.
-      Name = "__enqueue_kernel_vaargs";
+      Name = "__enqueue_kernel_varargs";
       auto Info =
           CGM.getOpenCLRuntime().emitOpenCLEnqueuedBlock(*this, E->getArg(3));
       llvm::Value *Kernel =
@@ -3235,7 +3235,7 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
       // Pass the number of variadics to the runtime function too.
       Args.push_back(ConstantInt::get(Int32Ty, NumArgs - 7));
       ArgTys.push_back(Int32Ty);
-      Name = "__enqueue_kernel_events_vaargs";
+      Name = "__enqueue_kernel_events_varargs";
 
       auto *PtrToSizeArray = CreateArrayForSizeVar(7);
       Args.push_back(PtrToSizeArray);
@@ -3276,7 +3276,7 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
         CGM.CreateRuntimeFunction(
             llvm::FunctionType::get(IntTy, {GenericVoidPtrTy, GenericVoidPtrTy},
                                     false),
-            "__get_kernel_preferred_work_group_multiple_impl"),
+            "__get_kernel_preferred_work_group_size_multiple_impl"),
         {Kernel, Arg}));
   }
   case Builtin::BIget_kernel_max_sub_group_size_for_ndrange:
@@ -3667,7 +3667,7 @@ Value *CodeGenFunction::EmitNeonShiftVector(Value *V, llvm::Type *Ty,
   return ConstantInt::get(Ty, neg ? -SV : SV);
 }
 
-// \brief Right-shift a vector by a constant.
+// Right-shift a vector by a constant.
 Value *CodeGenFunction::EmitNeonRShiftImm(Value *Vec, Value *Shift,
                                           llvm::Type *Ty, bool usgn,
                                           const char *name) {

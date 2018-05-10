@@ -3962,11 +3962,13 @@ SDValue SelectionDAG::getNode(unsigned Opcode, const SDLoc &DL, EVT VT,
     else if (OpOpcode == ISD::UNDEF)
       return getUNDEF(VT);
 
-    // (ext (trunx x)) -> x
+    // (ext (trunc x)) -> x
     if (OpOpcode == ISD::TRUNCATE) {
       SDValue OpOp = Operand.getOperand(0);
-      if (OpOp.getValueType() == VT)
+      if (OpOp.getValueType() == VT) {
+        transferDbgValues(Operand, OpOp);
         return OpOp;
+      }
     }
     break;
   case ISD::TRUNCATE:
@@ -7418,6 +7420,14 @@ void SelectionDAG::salvageDebugInfo(SDNode &N) {
     AddDbgValue(Dbg, Dbg->getSDNode(), false);
 }
 
+/// Creates a SDDbgLabel node.
+SDDbgLabel *SelectionDAG::getDbgLabel(DILabel *Label,
+                                      const DebugLoc &DL, unsigned O) {
+  assert(cast<DILabel>(Label)->isValidLocationForIntrinsic(DL) &&
+         "Expected inlined-at fields to agree");
+  return new (DbgInfo->getAlloc()) SDDbgLabel(Label, DL, O);
+}
+
 namespace {
 
 /// RAUWUpdateListener - Helper for ReplaceAllUsesWith - When the node
@@ -7901,6 +7911,10 @@ void SelectionDAG::AddDbgValue(SDDbgValue *DB, SDNode *SD, bool isParameter) {
     SD->setHasDebugValue(true);
   }
   DbgInfo->add(DB, SD, isParameter);
+}
+
+void SelectionDAG::AddDbgLabel(SDDbgLabel *DB) {
+  DbgInfo->add(DB);
 }
 
 SDValue SelectionDAG::makeEquivalentMemoryOrdering(LoadSDNode *OldLoad,

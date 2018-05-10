@@ -2776,7 +2776,8 @@ void SelectionDAGBuilder::visitBinary(const User &I, unsigned OpCode) {
   Flags.setNoInfs(FMF.noInfs());
   Flags.setNoNaNs(FMF.noNaNs());
   Flags.setNoSignedZeros(FMF.noSignedZeros());
-  Flags.setUnsafeAlgebra(FMF.isFast());
+  Flags.setApproximateFuncs(FMF.approxFunc());
+  Flags.setAllowReassociation(FMF.allowReassoc());
 
   SDValue BinNodeValue = DAG.getNode(OpCode, getCurSDLoc(), Op1.getValueType(),
                                      Op1, Op2, Flags);
@@ -5227,6 +5228,16 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
         DEBUG(dbgs() << "Dropping debug info for " << DI << "\n");
       }
     }
+    return nullptr;
+  }
+  case Intrinsic::dbg_label: {
+    const DbgLabelInst &DI = cast<DbgLabelInst>(I);
+    DILabel *Label = DI.getLabel();
+    assert(Label && "Missing label");
+
+    SDDbgLabel *SDV;
+    SDV = DAG.getDbgLabel(Label, dl, SDNodeOrder);
+    DAG.AddDbgLabel(SDV);
     return nullptr;
   }
   case Intrinsic::dbg_value: {

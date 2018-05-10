@@ -121,11 +121,13 @@ enum ResourceKind {
   // kind is equal to this type ID.
   RkNull = 0,
   RkSingleCursor = 1,
+  RkBitmap = 2,
   RkSingleIcon = 3,
   RkMenu = 4,
   RkDialog = 5,
   RkStringTableBundle = 6,
   RkAccelerators = 9,
+  RkRcData = 10,
   RkCursorGroup = 12,
   RkIconGroup = 14,
   RkVersionInfo = 16,
@@ -302,6 +304,29 @@ public:
   ResourceKind getKind() const override { return RkAccelerators; }
   static bool classof(const RCResource *Res) {
     return Res->getKind() == RkAccelerators;
+  }
+};
+
+// BITMAP resource. Represents a bitmap (".bmp") file.
+//
+// Ref: msdn.microsoft.com/en-us/library/windows/desktop/aa380680(v=vs.85).aspx
+class BitmapResource : public RCResource {
+public:
+  StringRef BitmapLoc;
+
+  BitmapResource(StringRef Location) : BitmapLoc(Location) {}
+  raw_ostream &log(raw_ostream &) const override;
+
+  IntOrString getResourceType() const override { return RkBitmap; }
+  uint16_t getMemoryFlags() const override { return MfPure | MfMoveable; }
+
+  Twine getResourceTypeName() const override { return "BITMAP"; }
+  Error visit(Visitor *V) const override {
+    return V->visitBitmapResource(this);
+  }
+  ResourceKind getKind() const override { return RkBitmap; }
+  static bool classof(const RCResource *Res) {
+    return Res->getKind() == RkBitmap;
   }
 };
 
@@ -518,6 +543,7 @@ public:
   IntOrString Title;
   uint32_t ID, X, Y, Width, Height;
   Optional<uint32_t> Style, ExtStyle, HelpID;
+  IntOrString Class;
 
   // Control classes as described in DLGITEMTEMPLATEEX documentation.
   //
@@ -541,10 +567,10 @@ public:
   Control(StringRef CtlType, IntOrString CtlTitle, uint32_t CtlID,
           uint32_t PosX, uint32_t PosY, uint32_t ItemWidth, uint32_t ItemHeight,
           Optional<uint32_t> ItemStyle, Optional<uint32_t> ExtItemStyle,
-          Optional<uint32_t> CtlHelpID)
+          Optional<uint32_t> CtlHelpID, IntOrString CtlClass)
       : Type(CtlType), Title(CtlTitle), ID(CtlID), X(PosX), Y(PosY),
         Width(ItemWidth), Height(ItemHeight), Style(ItemStyle),
-        ExtStyle(ExtItemStyle), HelpID(CtlHelpID) {}
+        ExtStyle(ExtItemStyle), HelpID(CtlHelpID), Class(CtlClass) {}
 
   static const StringMap<CtlInfo> SupportedCtls;
 

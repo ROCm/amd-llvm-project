@@ -38,9 +38,10 @@ void NORETURN ReportMmapFailureAndDie(uptr size, const char *mem_type,
                                       const char *mmap_type, error_t err,
                                       bool raw_report) {
   static int recursion_count;
-  if (raw_report || recursion_count) {
-    // If raw report is requested or we went into recursion, just die.
-    // The Report() and CHECK calls below may call mmap recursively and fail.
+  if (SANITIZER_RTEMS || raw_report || recursion_count) {
+    // If we are on RTEMS or raw report is requested or we went into recursion,
+    // just die.  The Report() and CHECK calls below may call mmap recursively
+    // and fail.
     RawWrite("ERROR: Failed to mmap\n");
     Die();
   }
@@ -56,19 +57,6 @@ void NORETURN ReportMmapFailureAndDie(uptr size, const char *mem_type,
 
 typedef bool UptrComparisonFunction(const uptr &a, const uptr &b);
 typedef bool U32ComparisonFunction(const u32 &a, const u32 &b);
-
-template<class T>
-static inline bool CompareLess(const T &a, const T &b) {
-  return a < b;
-}
-
-void SortArray(uptr *array, uptr size) {
-  InternalSort<uptr*, UptrComparisonFunction>(&array, size, CompareLess);
-}
-
-void SortArray(u32 *array, uptr size) {
-  InternalSort<u32*, U32ComparisonFunction>(&array, size, CompareLess);
-}
 
 const char *StripPathPrefix(const char *filepath,
                             const char *strip_path_prefix) {

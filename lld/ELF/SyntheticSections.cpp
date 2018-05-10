@@ -184,8 +184,6 @@ MipsOptionsSection<ELFT> *MipsOptionsSection<ELFT>::create() {
 
       auto *Opt = reinterpret_cast<const Elf_Mips_Options *>(D.data());
       if (Opt->kind == ODK_REGINFO) {
-        if (Config->Relocatable && Opt->getRegInfo().ri_gp_value)
-          error(Filename + ": unsupported non-zero ri_gp_value");
         Reginfo.ri_gprmask |= Opt->getRegInfo().ri_gprmask;
         Sec->getFile<ELFT>()->MipsGp0 = Opt->getRegInfo().ri_gp_value;
         break;
@@ -236,10 +234,8 @@ MipsReginfoSection<ELFT> *MipsReginfoSection<ELFT>::create() {
       error(toString(Sec->File) + ": invalid size of .reginfo section");
       return nullptr;
     }
-    auto *R = reinterpret_cast<const Elf_Mips_RegInfo *>(Sec->Data.data());
-    if (Config->Relocatable && R->ri_gp_value)
-      error(toString(Sec->File) + ": unsupported non-zero ri_gp_value");
 
+    auto *R = reinterpret_cast<const Elf_Mips_RegInfo *>(Sec->Data.data());
     Reginfo.ri_gprmask |= R->ri_gprmask;
     Sec->getFile<ELFT>()->MipsGp0 = R->ri_gp_value;
   };
@@ -497,10 +493,10 @@ void EhFrameSection::finalizeContents() {
   }
 
   // The LSB standard does not allow a .eh_frame section with zero
-  // Call Frame Information records. Therefore add a CIE record length
-  // 0 as a terminator if this .eh_frame section is empty.
-  if (Off == 0)
-    Off = 4;
+  // Call Frame Information records. glibc unwind-dw2-fde.c
+  // classify_object_over_fdes expects there is a CIE record length 0 as a
+  // terminator. Thus we add one unconditionally.
+  Off += 4;
 
   this->Size = Off;
 }
@@ -878,9 +874,15 @@ void MipsGotSection::writeTo(uint8_t *Buf) {
   }
 }
 
+// On PowerPC the .plt section is used to hold the table of function addresses
+// instead of the .got.plt, and the type is SHT_NOBITS similar to a .bss
+// section. I don't know why we have a BSS style type for the section but it is
+// consitent across both 64-bit PowerPC ABIs as well as the 32-bit PowerPC ABI.
 GotPltSection::GotPltSection()
-    : SyntheticSection(SHF_ALLOC | SHF_WRITE, SHT_PROGBITS,
-                       Target->GotPltEntrySize, ".got.plt") {}
+    : SyntheticSection(SHF_ALLOC | SHF_WRITE,
+                       Config->EMachine == EM_PPC64 ? SHT_NOBITS : SHT_PROGBITS,
+                       Target->GotPltEntrySize,
+                       Config->EMachine == EM_PPC64 ? ".plt" : ".got.plt") {}
 
 void GotPltSection::addEntry(Symbol &Sym) {
   assert(Sym.PltIndex == Entries.size());
@@ -909,12 +911,25 @@ bool GotPltSection::empty() const {
          !(ElfSym::GlobalOffsetTable && Target->GotBaseSymInGotPlt);
 }
 
-// On ARM the IgotPltSection is part of the GotSection, on other Targets it is
-// part of the .got.plt
+static StringRef getIgotPltName() {
+  // On ARM the IgotPltSection is part of the GotSection.
+  if (Config->EMachine == EM_ARM)
+    return ".got";
+
+  // On PowerPC64 the GotPltSection is renamed to '.plt' so the IgotPltSection
+  // needs to be named the same.
+  if (Config->EMachine == EM_PPC64)
+    return ".plt";
+
+  return ".got.plt";
+}
+
+// On PowerPC64 the GotPltSection type is SHT_NOBITS so we have to follow suit
+// with the IgotPltSection.
 IgotPltSection::IgotPltSection()
-    : SyntheticSection(SHF_ALLOC | SHF_WRITE, SHT_PROGBITS,
-                       Target->GotPltEntrySize,
-                       Config->EMachine == EM_ARM ? ".got" : ".got.plt") {}
+    : SyntheticSection(SHF_ALLOC | SHF_WRITE,
+                       Config->EMachine == EM_PPC64 ? SHT_NOBITS : SHT_PROGBITS,
+                       Target->GotPltEntrySize, getIgotPltName()) {}
 
 void IgotPltSection::addEntry(Symbol &Sym) {
   Sym.IsInIgot = true;
@@ -1184,6 +1199,16 @@ template <class ELFT> void DynamicSection<ELFT>::finalizeContents() {
       // relative to the address of the tag.
       addInSecRelative(DT_MIPS_RLD_MAP_REL, InX::MipsRldMap);
     }
+  }
+
+  // Glink dynamic tag is required by the V2 abi if the plt section isn't empty.
+  if (Config->EMachine == EM_PPC64 && !InX::Plt->empty()) {
+    // The Glink tag points to 32 bytes before the first lazy symbol resolution
+    // stub, which starts directly after the header.
+    Entries.push_back({DT_PPC64_GLINK, [=] {
+                         unsigned Offset = Target->PltHeaderSize - 32;
+                         return InX::Plt->getVA(0) + Offset;
+                       }});
   }
 
   addInt(DT_NULL, 0);
@@ -1685,8 +1710,11 @@ template <class ELFT> void SymbolTableSection<ELFT>::writeTo(uint8_t *Buf) {
         ESym->st_other |= STO_MIPS_PLT;
       if (isMicroMips()) {
         // Set STO_MIPS_MICROMIPS flag and less-significant bit for
-        // defined microMIPS symbols and shared symbols with PLT record.
-        if (Sym->isDefined() && (Sym->StOther & STO_MIPS_MICROMIPS)) {
+        // a defined microMIPS symbol and symbol should point to its
+        // PLT entry (in case of microMIPS, PLT entries always contain
+        // microMIPS code).
+        if (Sym->isDefined() &&
+            ((Sym->StOther & STO_MIPS_MICROMIPS) || Sym->NeedsPltAddr)) {
           if (StrTabSec.isDynamic())
             ESym->st_value |= 1;
           ESym->st_other |= STO_MIPS_MICROMIPS;
@@ -1900,8 +1928,11 @@ void HashTableSection::writeTo(uint8_t *Buf) {
   }
 }
 
+// On PowerPC64 the lazy symbol resolvers go into the `global linkage table`
+// in the .glink section, rather then the typical .plt section.
 PltSection::PltSection(bool IsIplt)
-    : SyntheticSection(SHF_ALLOC | SHF_EXECINSTR, SHT_PROGBITS, 16, ".plt"),
+    : SyntheticSection(SHF_ALLOC | SHF_EXECINSTR, SHT_PROGBITS, 16,
+                       Config->EMachine == EM_PPC64 ? ".glink" : ".plt"),
       HeaderSize(IsIplt ? 0 : Target->PltHeaderSize), IsIplt(IsIplt) {
   // The PLT needs to be writable on SPARC as the dynamic linker will
   // modify the instructions in the PLT entries.

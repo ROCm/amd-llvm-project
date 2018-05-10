@@ -26,12 +26,19 @@
 ; RUN: ld.lld -m elf_x86_64 --plugin-opt=thinlto-index-only -shared %t.o %t4.o --start-lib %t2.o --end-lib -o %t5
 ; RUN: ls %t2.o.thinlto.bc
 
+; Ensure lld writes linked files to linked objects file
+; RUN: ld.lld -m elf_x86_64 --plugin-opt=thinlto-index-only=%tlinkedobjfile -shared %t.o %t2.o %t4.o -o %t5
+; RUN: cat %tlinkedobjfile 2>&1 | FileCheck %s --check-prefix=IN1
+; IN1: {{.*}}thinlto.ll.tmp.o
+; IN1-NEXT: {{.*}}thinlto.ll.tmp2.o
+; IN1-NEXT: {{.*}}thinlto.ll.tmp4.o
+
 ; Ensure lld generates error if unable to write to index file
 ; RUN: rm -f %t4.o.thinlto.bc
 ; RUN: touch %t4.o.thinlto.bc
 ; RUN: chmod 400 %t4.o.thinlto.bc
-; RUN: ld.lld -m elf_x86_64 --plugin-opt=thinlto-index-only -shared %t.o %t4.o -o %t5 2>&1 | FileCheck %s --check-prefix=ERR
-; ERR: failed to write {{.*}}4.o.thinlto.bc: {{P|p}}ermission denied
+; RUN: not ld.lld -m elf_x86_64 --plugin-opt=thinlto-index-only -shared %t.o %t4.o -o %t5 2>&1 | FileCheck %s --check-prefix=ERR
+; ERR: cannot open {{.*}}4.o.thinlto.bc: {{P|p}}ermission denied
 
 ; Ensure lld doesn't generates index files when thinlto-index-only is not enabled
 ; RUN: rm -f %t.o.thinlto.bc
@@ -59,10 +66,17 @@
 ; stable on the final output file itself.
 ; RUN: ld.lld -shared %t.o %t2.o -o %t2
 
+; Test to ensure that thinlto-index-only with obj-path creates the file.
+; RUN: rm -f %t5.o
+; RUN: ld.lld --plugin-opt=thinlto-index-only --plugin-opt=obj-path=%t5.o -shared %t.o %t2.o -o %t4
+; RUN: llvm-readobj -h %t5.o | FileCheck %s --check-prefix=FORMAT
+; RUN: llvm-nm %t5.o | count 0
+
 ; NM: T f
 ; NM1: T f
 ; NM1-NOT: U g
 ; NM2: T g
+; FORMAT: Format: ELF64-x86-64
 
 ; The backend index for this module contains summaries from itself and
 ; Inputs/thinlto.ll, as it imports from the latter.
