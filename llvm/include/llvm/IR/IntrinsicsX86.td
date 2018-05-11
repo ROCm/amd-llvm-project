@@ -1596,11 +1596,6 @@ let TargetPrefix = "x86" in {  // All intrinsics start with "llvm.x86.".
         GCCBuiltin<"__builtin_ia32_maskstoreps256">,
         Intrinsic<[], [llvm_ptr_ty,
                   llvm_v8i32_ty, llvm_v8f32_ty], [IntrArgMemOnly]>;
-
-  def int_x86_avx512_mask_store_ss :
-        GCCBuiltin<"__builtin_ia32_storess_mask">,
-        Intrinsic<[], [llvm_ptr_ty, llvm_v4f32_ty, llvm_i8_ty],
-                  [IntrArgMemOnly]>;
 }
 
 // BITALG bits shuffle
@@ -6424,4 +6419,14 @@ let TargetPrefix = "x86" in {
       Intrinsic<[], [llvm_ptr_ty, llvm_i64_ty], []>;
   def int_x86_movdir64b : GCCBuiltin<"__builtin_ia32_movdir64b">,
       Intrinsic<[], [llvm_ptr_ty, llvm_ptr_ty], []>;
+}
+
+//===----------------------------------------------------------------------===//
+// PTWrite - Write data to processor trace pocket
+
+let TargetPrefix = "x86" in {
+  def int_x86_ptwrite32 : GCCBuiltin<"__builtin_ia32_ptwrite32">,
+              Intrinsic<[], [llvm_i32_ty], []>;
+  def int_x86_ptwrite64 : GCCBuiltin<"__builtin_ia32_ptwrite64">,
+              Intrinsic<[], [llvm_i64_ty], []>;
 }

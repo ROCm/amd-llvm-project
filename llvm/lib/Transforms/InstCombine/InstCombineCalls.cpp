@@ -79,6 +79,13 @@ static cl::opt<unsigned> UnfoldElementAtomicMemcpyMaxElements(
     cl::desc("Maximum number of elements in atomic memcpy the optimizer is "
              "allowed to unfold"));
 
+static cl::opt<unsigned> GuardWideningWindow(
+    "instcombine-guard-widening-window",
+    cl::init(3),
+    cl::desc("How wide an instruction window to bypass looking for "
+             "another guard"));
+
+
 /// Return the specified type promoted as it would be to pass though a va_arg
 /// area.
 static Type *getPromotedType(Type *Ty) {
@@ -1945,8 +1952,24 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
       II->setArgOperand(1, Arg0);
       return II;
     }
+
+    // FIXME: Simplifications should be in instsimplify.
     if (Value *V = simplifyMinnumMaxnum(*II))
       return replaceInstUsesWith(*II, V);
+
+    Value *X, *Y;
+    if (match(Arg0, m_FNeg(m_Value(X))) && match(Arg1, m_FNeg(m_Value(Y))) &&
+        (Arg0->hasOneUse() || Arg1->hasOneUse())) {
+      // If both operands are negated, invert the call and negate the result:
+      // minnum(-X, -Y) --> -(maxnum(X, Y))
+      // maxnum(-X, -Y) --> -(minnum(X, Y))
+      Intrinsic::ID NewIID = II->getIntrinsicID() == Intrinsic::maxnum ?
+          Intrinsic::minnum : Intrinsic::maxnum;
+      Value *NewCall = Builder.CreateIntrinsic(NewIID, { X, Y }, II);
+      Instruction *FNeg = BinaryOperator::CreateFNeg(NewCall);
+      FNeg->copyIRFlags(II);
+      return FNeg;
+    }
     break;
   }
   case Intrinsic::fmuladd: {
@@ -3624,8 +3647,16 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
   }
 
   case Intrinsic::experimental_guard: {
-    // Is this guard followed by another guard?
+    // Is this guard followed by another guard?  We scan forward over a small
+    // fixed window of instructions to handle common cases with conditions
+    // computed between guards.
     Instruction *NextInst = II->getNextNode();
+    for (unsigned i = 0; i < GuardWideningWindow; i++) {
+      // Note: Using context-free form to avoid compile time blow up
+      if (!isSafeToSpeculativelyExecute(NextInst))
+        break;
+      NextInst = NextInst->getNextNode();
+    }
     Value *NextCond = nullptr;
     if (match(NextInst,
               m_Intrinsic<Intrinsic::experimental_guard>(m_Value(NextCond)))) {
@@ -3636,6 +3667,12 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
         return eraseInstFromFunction(*NextInst);
 
       // Otherwise canonicalize guard(a); guard(b) -> guard(a & b).
+      Instruction* MoveI = II->getNextNode();
+      while (MoveI != NextInst) {
+        auto *Temp = MoveI;
+        MoveI = MoveI->getNextNode();
+        Temp->moveBefore(II);
+      }
       II->setArgOperand(0, Builder.CreateAnd(CurrCond, NextCond));
       return eraseInstFromFunction(*NextInst);
     }
