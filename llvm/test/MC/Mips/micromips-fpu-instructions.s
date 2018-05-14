@@ -25,8 +25,6 @@
 # CHECK-EL: nop                         # encoding: [0x00,0x00,0x00,0x00]
 # CHECK-EL: bc1t       1332             # encoding: [0xa0,0x43,0x9a,0x02]
 # CHECK-EL: nop                         # encoding: [0x00,0x00,0x00,0x00]
-# CHECK-EL: luxc1      $f2, $4($6)      # encoding: [0x86,0x54,0x48,0x11]
-# CHECK-EL: suxc1      $f2, $4($6)      # encoding: [0x86,0x54,0x88,0x11]
 # CHECK-EL: ceil.w.s   $f6, $f8         # encoding: [0xc8,0x54,0x3b,0x1b]
 # CHECK-EL: ceil.w.d   $f6, $f8         # encoding: [0xc8,0x54,0x3b,0x5b]
 # CHECK-EL: cvt.w.s    $f6, $f8         # encoding: [0xc8,0x54,0x3b,0x09]
@@ -102,8 +100,6 @@
 # CHECK-EB: nop                         # encoding: [0x00,0x00,0x00,0x00]
 # CHECK-EB: bc1t  1332                  # encoding: [0x43,0xa0,0x02,0x9a]
 # CHECK-EB: nop                         # encoding: [0x00,0x00,0x00,0x00]
-# CHECK-EB: luxc1 $f2, $4($6)           # encoding: [0x54,0x86,0x11,0x48]
-# CHECK-EB: suxc1 $f2, $4($6)           # encoding: [0x54,0x86,0x11,0x88]
 # CHECK-EB: ceil.w.s  $f6, $f8          # encoding: [0x54,0xc8,0x1b,0x3b]
 # CHECK-EB: ceil.w.d  $f6, $f8          # encoding: [0x54,0xc8,0x5b,0x3b]
 # CHECK-EB: cvt.w.s   $f6, $f8          # encoding: [0x54,0xc8,0x09,0x3b]
@@ -153,12 +149,19 @@
 # CHECK-EB: movf.d  $f4, $f6, $fcc0     # encoding: [0x54,0x86,0x02,0x20]
 # CHECK-EB-NEXT:                        # <MCInst #{{[0-9]+}} MOVF_D32_MM
 # CHECK-EB: madd.s  $f2, $f4, $f6, $f8  # encoding: [0x55,0x06,0x11,0x01]
+# CHECK-EB-NEXT:                        # <MCInst #{{[0-9]+}} MADD_S_MM
 # CHECK-EB: madd.d  $f2, $f4, $f6, $f8  # encoding: [0x55,0x06,0x11,0x09]
+# CHECK-EB-NEXT:                        # <MCInst #{{[0-9]+}} MADD_D32_MM
 # CHECK-EB: msub.s  $f2, $f4, $f6, $f8  # encoding: [0x55,0x06,0x11,0x21]
+# CHECK-EB-NEXT:                        # <MCInst #{{[0-9]+}} MSUB_S_MM
 # CHECK-EB: msub.d  $f2, $f4, $f6, $f8  # encoding: [0x55,0x06,0x11,0x29]
+# CHECK-EB-NEXT:                        # <MCInst #{{[0-9]+}} MSUB_D32_MM
 # CHECK-EB: nmadd.s $f2, $f4, $f6, $f8  # encoding: [0x55,0x06,0x11,0x02]
+# CHECK-EB-NEXT:                        # <MCInst #{{[0-9]+}} NMADD_S_MM
 # CHECK-EB: nmadd.d $f2, $f4, $f6, $f8  # encoding: [0x55,0x06,0x11,0x0a]
+# CHECK-EB-NEXT:                        # <MCInst #{{[0-9]+}} NMADD_D32_MM
 # CHECK-EB: nmsub.s $f2, $f4, $f6, $f8  # encoding: [0x55,0x06,0x11,0x22]
+# CHECK-EB-NEXT:                        # <MCInst #{{[0-9]+}} NMSUB_S_MM
 # CHECK-EB: nmsub.d $f2, $f4, $f6, $f8  # encoding: [0x55,0x06,0x11,0x2a]
 
     add.s      $f4, $f6, $f8
@@ -175,8 +178,6 @@
     sdc1       $f2, 4($6)
     bc1f       1332
     bc1t       1332
-    luxc1      $f2, $4($6)
-    suxc1      $f2, $4($6)
     ceil.w.s   $f6, $f8
     ceil.w.d   $f6, $f8
     cvt.w.s    $f6, $f8

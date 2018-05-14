@@ -92,6 +92,7 @@ defm : AtomWriteResPair<WriteIDiv64, [AtomPort01], [AtomPort01],130,130,[130],[1
 defm : AtomWriteResPair<WriteCRC32, [AtomPort01], [AtomPort01]>; // NOTE: Doesn't exist on Atom.
 
 defm : AtomWriteResPair<WriteCMOV,  [AtomPort01], [AtomPort0]>;
+defm : X86WriteRes<WriteFCMOV, [AtomPort01], 9, [9], 1>; // x87 conditional move.
 
 def  : WriteRes<WriteSETCC, [AtomPort01]>;
 def  : WriteRes<WriteSETCCStore, [AtomPort01]> {
@@ -181,15 +182,22 @@ def : WriteRes<WriteNop, [AtomPort01]>;
 ////////////////////////////////////////////////////////////////////////////////
 
 def  : WriteRes<WriteFLoad,         [AtomPort0]>;
+def  : WriteRes<WriteFLoadX,        [AtomPort0]>;
+def  : WriteRes<WriteFLoadY,        [AtomPort0]>;
 def  : WriteRes<WriteFMaskedLoad,   [AtomPort0]>;
 def  : WriteRes<WriteFMaskedLoadY,  [AtomPort0]>;
 
 def  : WriteRes<WriteFStore,        [AtomPort0]>;
+def  : WriteRes<WriteFStoreX,       [AtomPort0]>;
+def  : WriteRes<WriteFStoreY,       [AtomPort0]>;
 def  : WriteRes<WriteFMaskedStore,  [AtomPort0]>;
 def  : WriteRes<WriteFMaskedStoreY, [AtomPort0]>;
 
-def  : WriteRes<WriteFMove,  [AtomPort01]>;
-defm : X86WriteRes<WriteEMMS,[AtomPort01], 5, [5], 1>;
+def  : WriteRes<WriteFMove,         [AtomPort01]>;
+def  : WriteRes<WriteFMoveX,        [AtomPort01]>;
+def  : WriteRes<WriteFMoveY,        [AtomPort01]>;
+                                    
+defm : X86WriteRes<WriteEMMS,       [AtomPort01], 5, [5], 1>;
 
 defm : AtomWriteResPair<WriteFAdd,           [AtomPort0],  [AtomPort0],  5,  5,  [5],  [5]>;
 defm : AtomWriteResPair<WriteFAddX,          [AtomPort0],  [AtomPort0],  5,  5,  [5],  [5]>;
@@ -271,14 +279,20 @@ def  : WriteRes<WriteCvtF2FSt, [AtomPort0]>; // NOTE: Doesn't exist on Atom.
 ////////////////////////////////////////////////////////////////////////////////
 
 def  : WriteRes<WriteVecLoad,         [AtomPort0]>;
+def  : WriteRes<WriteVecLoadX,        [AtomPort0]>;
+def  : WriteRes<WriteVecLoadY,        [AtomPort0]>;
 def  : WriteRes<WriteVecMaskedLoad,   [AtomPort0]>;
 def  : WriteRes<WriteVecMaskedLoadY,  [AtomPort0]>;
 
 def  : WriteRes<WriteVecStore,        [AtomPort0]>;
+def  : WriteRes<WriteVecStoreX,       [AtomPort0]>;
+def  : WriteRes<WriteVecStoreY,       [AtomPort0]>;
 def  : WriteRes<WriteVecMaskedStore,  [AtomPort0]>;
 def  : WriteRes<WriteVecMaskedStoreY, [AtomPort0]>;
 
-def  : WriteRes<WriteVecMove,  [AtomPort01]>;
+def  : WriteRes<WriteVecMove,         [AtomPort01]>;
+def  : WriteRes<WriteVecMoveX,        [AtomPort01]>;
+def  : WriteRes<WriteVecMoveY,        [AtomPort01]>;
 
 defm : AtomWriteResPair<WriteVecALU,       [AtomPort01],  [AtomPort0], 1, 1>;
 defm : AtomWriteResPair<WriteVecALUX,      [AtomPort01],  [AtomPort0], 1, 1>;
@@ -580,8 +594,7 @@ def : InstRW<[AtomWrite01_9], (instrs BT16mr, BT32mr, BT64mr,
                                       SHLD64mri8, SHRD64mri8,
                                       SHLD64rri8, SHRD64rri8,
                                       CMPXCHG8rr)>;
-def : InstRW<[AtomWrite01_9], (instregex "CMOV(B|BE|E|P|NB|NBE|NE|NP)_F",
-                                         "(U)?COM_FI", "TST_F",
+def : InstRW<[AtomWrite01_9], (instregex "(U)?COM_FI", "TST_F",
                                          "(U)?COMIS(D|S)rr",
                                          "CVT(T)?SS2SI64rr(_Int)?")>;
 
