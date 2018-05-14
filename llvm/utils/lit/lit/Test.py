@@ -360,7 +360,8 @@ class Test:
         """
         return self.suite.config.is_early
 
-    def getJUnitXML(self):
+    def writeJUnitXML(self, fil):
+        """Write the test's report xml representation to a file handle."""
         test_name = escape(self.path_in_suite[-1])
         test_path = self.path_in_suite[:-1]
         safe_test_path = [x.replace(".","_") for x in test_path]
@@ -370,14 +371,25 @@ class Test:
             class_name = safe_name + "." + "/".join(safe_test_path) 
         else:
             class_name = safe_name + "." + safe_name
-
-        xml = "<testcase classname='" + class_name + "' name='" + \
-            test_name + "'"
-        xml += " time='{:.2f}'".format(
-            self.result.elapsed if self.result.elapsed is not None else 0.0)
+        testcase_template = "<testcase classname='{class_name}' name='{test_name}' time='{time:.2f}'"
+        elapsed_time = self.result.elapsed if self.result.elapsed is not None else 0.0
+        testcase_xml = testcase_template.format(class_name=class_name, test_name=test_name, time=elapsed_time)
+        fil.write(testcase_xml)
         if self.result.code.isFailure:
-            xml += ">\n\t<failure >\n" + escape(self.result.output)
-            xml += "\n\t</failure>\n</testcase>"
+            fil.write(">\n\t<failure ><![CDATA[")
+            if type(self.result.output) == unicode:
+                encoded_output = self.result.output.encode("utf-8", 'ignore')
+            else:
+                encoded_output = self.result.output
+            fil.write(encoded_output)
+            fil.write("]]></failure>\n</testcase>")
+        elif self.result.code == UNSUPPORTED:
+            unsupported_features = self.getMissingRequiredFeatures()
+            if unsupported_features:
+                skip_message = escape("Skipping because of: " + ", ".join(unsupported_features))
+            else:
+                skip_message = "Skipping because of configuration."
+
+            fil.write(">\n\t<skipped message=\"{}\" />\n</testcase>\n".format(skip_message))
         else:
-            xml += "/>"
-        return xml
+            fil.write("/>")

@@ -571,6 +571,8 @@ def no_cuda_include_ptx_EQ : Joined<["--"], "no-cuda-include-ptx=">, Flags<[Driv
   HelpText<"Do not include PTX for the follwing GPU architecture (e.g. sm_35) or 'all'. May be specified more than once.">;
 def cuda_gpu_arch_EQ : Joined<["--"], "cuda-gpu-arch=">, Flags<[DriverOption]>,
   HelpText<"CUDA GPU architecture (e.g. sm_35).  May be specified more than once.">;
+def hip_link : Flag<["--"], "hip-link">,
+  HelpText<"Link clang-offload-bundler bundles for HIP">;
 def no_cuda_gpu_arch_EQ : Joined<["--"], "no-cuda-gpu-arch=">, Flags<[DriverOption]>,
   HelpText<"Remove GPU architecture (e.g. sm_35) from the list of GPUs to compile for. "
            "'all' resets the list to its default value.">;
@@ -732,10 +734,10 @@ def fprofile_instr_use_EQ : Joined<["-"], "fprofile-instr-use=">,
     Group<f_Group>, Flags<[CoreOption]>,
     HelpText<"Use instrumentation data for profile-guided optimization">;
 def fcoverage_mapping : Flag<["-"], "fcoverage-mapping">,
-    Group<f_Group>, Flags<[CC1Option]>,
+    Group<f_Group>, Flags<[CC1Option, CoreOption]>,
     HelpText<"Generate coverage mapping to enable code coverage analysis">;
 def fno_coverage_mapping : Flag<["-"], "fno-coverage-mapping">,
-    Group<f_Group>, Flags<[DriverOption]>,
+    Group<f_Group>, Flags<[DriverOption, CoreOption]>,
     HelpText<"Disable code coverage analysis">;
 def fprofile_generate : Flag<["-"], "fprofile-generate">,
     Group<f_Group>, Flags<[DriverOption]>,
