@@ -76,6 +76,11 @@ Improvements to clang-tidy
   Detects and fixes calls to grand-...parent virtual methods instead of calls
   to overridden parent's virtual methods.
 
+- New :doc:`bugprone-terminating-continue
+  <clang-tidy/checks/bugprone-terminating-continue>` check
+
+  Checks if a ``continue`` statement terminates the loop.
+
 - New :doc:`bugprone-throw-keyword-missing
   <clang-tidy/checks/bugprone-throw-keyword-missing>` check.
 
@@ -146,10 +151,10 @@ Improvements to clang-tidy
   Warns or suggests alternatives if SIMD intrinsics are used which can be replaced by
   ``std::experimental::simd`` operations.
 
-- New :doc:`bugprone-terminating-continue
-  <clang-tidy/checks/bugprone-terminating-continue>` check
+- New :doc:`readability-simplify-subscript-expr
+  <clang-tidy/checks/readability-simplify-subscript-expr>` check.
 
-  Checks if a ``continue`` statement terminates the loop.
+  Simplifies subscript expressions like ``s.data()[i]`` into ``s[i]``.
 
 - New :doc:`zircon-temporary-objects
   <clang-tidy/checks/zircon-temporary-objects>` check.

@@ -61,6 +61,14 @@ AST_MATCHER_P(CXXMethodDecl, ofOutermostEnclosingClass,
   return InnerMatcher.matches(*Parent, Finder, Builder);
 }
 
+std::string CleanPath(StringRef PathRef) {
+  llvm::SmallString<128> Path(PathRef);
+  llvm::sys::path::remove_dots(Path, /*remove_dot_dot=*/true);
+  // FIXME: figure out why this is necessary.
+  llvm::sys::path::native(Path);
+  return Path.str();
+}
+
 // Make the Path absolute using the CurrentDir if the Path is not an absolute
 // path. An empty Path will result in an empty string.
 std::string MakeAbsolutePath(StringRef CurrentDir, StringRef Path) {
@@ -72,9 +80,7 @@ std::string MakeAbsolutePath(StringRef CurrentDir, StringRef Path) {
           llvm::sys::fs::make_absolute(InitialDirectory, AbsolutePath))
     llvm::errs() << "Warning: could not make absolute file: '" << EC.message()
                  << '\n';
-  llvm::sys::path::remove_dots(AbsolutePath, /*remove_dot_dot=*/true);
-  llvm::sys::path::native(AbsolutePath);
-  return AbsolutePath.str();
+  return CleanPath(std::move(AbsolutePath));
 }
 
 // Make the Path absolute using the current working directory of the given
@@ -95,13 +101,15 @@ std::string MakeAbsolutePath(const SourceManager &SM, StringRef Path) {
       llvm::sys::path::parent_path(AbsolutePath.str()));
   if (Dir) {
     StringRef DirName = SM.getFileManager().getCanonicalName(Dir);
-    SmallVector<char, 128> AbsoluteFilename;
-    llvm::sys::path::append(AbsoluteFilename, DirName,
-                            llvm::sys::path::filename(AbsolutePath.str()));
-    return llvm::StringRef(AbsoluteFilename.data(), AbsoluteFilename.size())
-        .str();
+    // FIXME: getCanonicalName might fail to get real path on VFS.
+    if (llvm::sys::path::is_absolute(DirName)) {
+      SmallString<128> AbsoluteFilename;
+      llvm::sys::path::append(AbsoluteFilename, DirName,
+                              llvm::sys::path::filename(AbsolutePath.str()));
+      return CleanPath(AbsoluteFilename);
+    }
   }
-  return AbsolutePath.str();
+  return CleanPath(AbsolutePath);
 }
 
 // Matches AST nodes that are expanded within the given AbsoluteFilePath.
@@ -680,8 +688,8 @@ void ClangMoveTool::run(const ast_matchers::MatchFinder::MatchResult &Result) {
                  Result.Nodes.getNodeAs<clang::NamedDecl>("helper_decls")) {
     MovedDecls.push_back(ND);
     HelperDeclarations.push_back(ND);
-    DEBUG(llvm::dbgs() << "Add helper : "
-                       << ND->getNameAsString() << " (" << ND << ")\n");
+    LLVM_DEBUG(llvm::dbgs() << "Add helper : " << ND->getNameAsString() << " ("
+                            << ND << ")\n");
   } else if (const auto *UD =
                  Result.Nodes.getNodeAs<clang::NamedDecl>("using_decl")) {
     MovedDecls.push_back(UD);
@@ -741,12 +749,12 @@ void ClangMoveTool::removeDeclsInOldFiles() {
     // We remove the helper declarations which are not used in the old.cc after
     // moving the given declarations.
     for (const auto *D : HelperDeclarations) {
-      DEBUG(llvm::dbgs() << "Check helper is used: "
-                         << D->getNameAsString() << " (" << D << ")\n");
+      LLVM_DEBUG(llvm::dbgs() << "Check helper is used: "
+                              << D->getNameAsString() << " (" << D << ")\n");
       if (!UsedDecls.count(HelperDeclRGBuilder::getOutmostClassOrFunDecl(
               D->getCanonicalDecl()))) {
-        DEBUG(llvm::dbgs() << "Helper removed in old.cc: "
-                           << D->getNameAsString() << " (" << D << ")\n");
+        LLVM_DEBUG(llvm::dbgs() << "Helper removed in old.cc: "
+                                << D->getNameAsString() << " (" << D << ")\n");
         RemovedDecls.push_back(D);
       }
     }
@@ -826,8 +834,8 @@ void ClangMoveTool::moveDeclsToNewFiles() {
             D->getCanonicalDecl())))
       continue;
 
-    DEBUG(llvm::dbgs() << "Helper used in new.cc: " << D->getNameAsString()
-                       << " " << D << "\n");
+    LLVM_DEBUG(llvm::dbgs() << "Helper used in new.cc: " << D->getNameAsString()
+                            << " " << D << "\n");
     ActualNewCCDecls.push_back(D);
   }
 
@@ -937,7 +945,7 @@ void ClangMoveTool::onEndOfTranslationUnit() {
     moveAll(SM, Context->Spec.OldCC, Context->Spec.NewCC);
     return;
   }
-  DEBUG(RGBuilder.getGraph()->dump());
+  LLVM_DEBUG(RGBuilder.getGraph()->dump());
   moveDeclsToNewFiles();
   removeDeclsInOldFiles();
 }

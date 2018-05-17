@@ -402,6 +402,12 @@ bool ContinuationIndenter::mustBreak(const LineState &State) {
         Style.Language == FormatStyle::LK_JavaScript))
     return true;
 
+  // If the template declaration spans multiple lines, force wrap before the
+  // function/class declaration
+  if (Previous.ClosesTemplateDeclaration &&
+      State.Stack.back().BreakBeforeParameter)
+    return true;
+
   if (State.Column <= NewLineColumn)
     return false;
 
@@ -453,7 +459,7 @@ bool ContinuationIndenter::mustBreak(const LineState &State) {
     // for cases where the entire line does not fit on a single line as a
     // different LineFormatter would be used otherwise.
     if (Previous.ClosesTemplateDeclaration)
-      return true;
+      return Style.AlwaysBreakTemplateDeclarations != FormatStyle::BTDS_No;
     if (Previous.is(TT_FunctionAnnotationRParen))
       return true;
     if (Previous.is(TT_LeadingJavaAnnotation) && Current.isNot(tok::l_paren) &&
@@ -1067,8 +1073,34 @@ unsigned ContinuationIndenter::moveStateToNextToken(LineState &State,
   if (Current.isMemberAccess())
     State.Stack.back().StartOfFunctionCall =
         !Current.NextOperator ? 0 : State.Column;
-  if (Current.is(TT_SelectorName))
+  if (Current.is(TT_SelectorName) &&
+      !State.Stack.back().ObjCSelectorNameFound) {
     State.Stack.back().ObjCSelectorNameFound = true;
+
+    // Reevaluate whether ObjC message arguments fit into one line.
+    // If a receiver spans multiple lines, e.g.:
+    //   [[object block:^{
+    //     return 42;
+    //   }] a:42 b:42];
+    // BreakBeforeParameter is calculated based on an incorrect assumption
+    // (it is checked whether the whole expression fits into one line without
+    // considering a line break inside a message receiver).
+    if (Current.Previous && Current.Previous->closesScope() &&
+        Current.Previous->MatchingParen &&
+        Current.Previous->MatchingParen->Previous) {
+      const FormatToken &CurrentScopeOpener =
+          *Current.Previous->MatchingParen->Previous;
+      if (CurrentScopeOpener.is(TT_ObjCMethodExpr) &&
+          CurrentScopeOpener.MatchingParen) {
+        int NecessarySpaceInLine =
+            getLengthToMatchingParen(CurrentScopeOpener, State.Stack) +
+            CurrentScopeOpener.TotalLength - Current.TotalLength - 1;
+        if (State.Column + Current.ColumnWidth + NecessarySpaceInLine <=
+            Style.ColumnLimit)
+          State.Stack.back().BreakBeforeParameter = false;
+      }
+    }
+  }
   if (Current.is(TT_CtorInitializerColon) &&
       Style.BreakConstructorInitializers != FormatStyle::BCIS_AfterColon) {
     // Indent 2 from the column, so:
@@ -1768,12 +1800,12 @@ ContinuationIndenter::breakProtrudingToken(const FormatToken &Current,
     Token->adaptStartOfLine(0, Whitespaces);
 
   unsigned Penalty = 0;
-  DEBUG(llvm::dbgs() << "Breaking protruding token at column " << StartColumn
-                     << ".\n");
+  LLVM_DEBUG(llvm::dbgs() << "Breaking protruding token at column "
+                          << StartColumn << ".\n");
   for (unsigned LineIndex = 0, EndIndex = Token->getLineCount();
        LineIndex != EndIndex; ++LineIndex) {
-    DEBUG(llvm::dbgs() << "  Line: " << LineIndex << " (Reflow: " << Reflow
-                       << ")\n");
+    LLVM_DEBUG(llvm::dbgs()
+               << "  Line: " << LineIndex << " (Reflow: " << Reflow << ")\n");
     NewBreakBefore = false;
     // If we did reflow the previous line, we'll try reflowing again. Otherwise
     // we'll start reflowing if the current line is broken or whitespace is
@@ -1781,11 +1813,11 @@ ContinuationIndenter::breakProtrudingToken(const FormatToken &Current,
     bool TryReflow = Reflow;
     // Break the current token until we can fit the rest of the line.
     while (ContentStartColumn + RemainingTokenColumns > ColumnLimit) {
-      DEBUG(llvm::dbgs() << "    Over limit, need: "
-                         << (ContentStartColumn + RemainingTokenColumns)
-                         << ", space: " << ColumnLimit
-                         << ", reflown prefix: " << ContentStartColumn
-                         << ", offset in line: " << TailOffset << "\n");
+      LLVM_DEBUG(llvm::dbgs() << "    Over limit, need: "
+                              << (ContentStartColumn + RemainingTokenColumns)
+                              << ", space: " << ColumnLimit
+                              << ", reflown prefix: " << ContentStartColumn
+                              << ", offset in line: " << TailOffset << "\n");
       // If the current token doesn't fit, find the latest possible split in the
       // current line so that breaking at it will be under the column limit.
       // FIXME: Use the earliest possible split while reflowing to correctly
@@ -1800,7 +1832,7 @@ ContinuationIndenter::breakProtrudingToken(const FormatToken &Current,
           // The last line's penalty is handled in addNextStateToQueue().
           Penalty += Style.PenaltyExcessCharacter *
                      (ContentStartColumn + RemainingTokenColumns - ColumnLimit);
-        DEBUG(llvm::dbgs() << "    No break opportunity.\n");
+        LLVM_DEBUG(llvm::dbgs() << "    No break opportunity.\n");
         break;
       }
       assert(Split.first != 0);
@@ -1827,7 +1859,7 @@ ContinuationIndenter::breakProtrudingToken(const FormatToken &Current,
         //    ^--------------- to next split columns
         unsigned ToSplitColumns = Token->getRangeLength(
             LineIndex, TailOffset, Split.first, ContentStartColumn);
-        DEBUG(llvm::dbgs() << "    ToSplit: " << ToSplitColumns << "\n");
+        LLVM_DEBUG(llvm::dbgs() << "    ToSplit: " << ToSplitColumns << "\n");
 
         BreakableToken::Split NextSplit = Token->getSplit(
             LineIndex, TailOffset + Split.first + Split.second, ColumnLimit,
@@ -1847,9 +1879,10 @@ ContinuationIndenter::breakProtrudingToken(const FormatToken &Current,
         // unbreakable sequence.
         ToNextSplitColumns =
             Token->getLengthAfterCompression(ToNextSplitColumns, Split);
-        DEBUG(llvm::dbgs() << "    ContentStartColumn: " << ContentStartColumn
-                           << "\n");
-        DEBUG(llvm::dbgs() << "    ToNextSplit: " << ToNextSplitColumns << "\n");
+        LLVM_DEBUG(llvm::dbgs()
+                   << "    ContentStartColumn: " << ContentStartColumn << "\n");
+        LLVM_DEBUG(llvm::dbgs()
+                   << "    ToNextSplit: " << ToNextSplitColumns << "\n");
         // If the whitespace compression makes us fit, continue on the current
         // line.
         bool ContinueOnLine =
@@ -1861,16 +1894,16 @@ ContinuationIndenter::breakProtrudingToken(const FormatToken &Current,
           ExcessCharactersPenalty =
               (ContentStartColumn + ToNextSplitColumns - ColumnLimit) *
               Style.PenaltyExcessCharacter;
-          DEBUG(llvm::dbgs()
-                << "    Penalty excess: " << ExcessCharactersPenalty
-                << "\n            break : " << NewBreakPenalty << "\n");
+          LLVM_DEBUG(llvm::dbgs()
+                     << "    Penalty excess: " << ExcessCharactersPenalty
+                     << "\n            break : " << NewBreakPenalty << "\n");
           if (ExcessCharactersPenalty < NewBreakPenalty) {
             Exceeded = true;
             ContinueOnLine = true;
           }
         }
         if (ContinueOnLine) {
-          DEBUG(llvm::dbgs() << "    Continuing on line...\n");
+          LLVM_DEBUG(llvm::dbgs() << "    Continuing on line...\n");
           // The current line fits after compressing the whitespace - reflow
           // the next line into it if possible.
           TryReflow = true;
@@ -1886,7 +1919,7 @@ ContinuationIndenter::breakProtrudingToken(const FormatToken &Current,
           continue;
         }
       }
-      DEBUG(llvm::dbgs() << "    Breaking...\n");
+      LLVM_DEBUG(llvm::dbgs() << "    Breaking...\n");
       ContentStartColumn =
           Token->getContentStartColumn(LineIndex, /*Break=*/true);
       unsigned NewRemainingTokenColumns = Token->getRemainingLength(
@@ -1902,8 +1935,8 @@ ContinuationIndenter::breakProtrudingToken(const FormatToken &Current,
       }
       assert(NewRemainingTokenColumns < RemainingTokenColumns);
 
-      DEBUG(llvm::dbgs() << "    Breaking at: " << TailOffset + Split.first
-                         << ", " << Split.second << "\n");
+      LLVM_DEBUG(llvm::dbgs() << "    Breaking at: " << TailOffset + Split.first
+                              << ", " << Split.second << "\n");
       if (!DryRun)
         Token->insertBreak(LineIndex, TailOffset, Split, Whitespaces);
 
@@ -1941,11 +1974,12 @@ ContinuationIndenter::breakProtrudingToken(const FormatToken &Current,
         // the next logical line.
         BreakableToken::Split SplitBeforeNext =
             Token->getReflowSplit(NextLineIndex, CommentPragmasRegex);
-        DEBUG(llvm::dbgs() << "    Size of reflown text: " << ContentStartColumn
-                           << "\n    Potential reflow split: ");
+        LLVM_DEBUG(llvm::dbgs()
+                   << "    Size of reflown text: " << ContentStartColumn
+                   << "\n    Potential reflow split: ");
         if (SplitBeforeNext.first != StringRef::npos) {
-          DEBUG(llvm::dbgs() << SplitBeforeNext.first << ", "
-                             << SplitBeforeNext.second << "\n");
+          LLVM_DEBUG(llvm::dbgs() << SplitBeforeNext.first << ", "
+                                  << SplitBeforeNext.second << "\n");
           TailOffset = SplitBeforeNext.first + SplitBeforeNext.second;
           // If the rest of the next line fits into the current line below the
           // column limit, we can safely reflow.
@@ -1953,11 +1987,12 @@ ContinuationIndenter::breakProtrudingToken(const FormatToken &Current,
               NextLineIndex, TailOffset, ContentStartColumn);
           Reflow = true;
           if (ContentStartColumn + RemainingTokenColumns > ColumnLimit) {
-            DEBUG(llvm::dbgs() << "    Over limit after reflow, need: "
-                               << (ContentStartColumn + RemainingTokenColumns)
-                               << ", space: " << ColumnLimit
-                               << ", reflown prefix: " << ContentStartColumn
-                               << ", offset in line: " << TailOffset << "\n");
+            LLVM_DEBUG(llvm::dbgs()
+                       << "    Over limit after reflow, need: "
+                       << (ContentStartColumn + RemainingTokenColumns)
+                       << ", space: " << ColumnLimit
+                       << ", reflown prefix: " << ContentStartColumn
+                       << ", offset in line: " << TailOffset << "\n");
             // If the whole next line does not fit, try to find a point in
             // the next line at which we can break so that attaching the part
             // of the next line to that break point onto the current line is
@@ -1966,7 +2001,7 @@ ContinuationIndenter::breakProtrudingToken(const FormatToken &Current,
                 Token->getSplit(NextLineIndex, TailOffset, ColumnLimit,
                                 ContentStartColumn, CommentPragmasRegex);
             if (Split.first == StringRef::npos) {
-              DEBUG(llvm::dbgs() << "    Did not find later break\n");
+              LLVM_DEBUG(llvm::dbgs() << "    Did not find later break\n");
               Reflow = false;
             } else {
               // Check whether the first split point gets us below the column
@@ -1975,9 +2010,9 @@ ContinuationIndenter::breakProtrudingToken(const FormatToken &Current,
               unsigned ToSplitColumns = Token->getRangeLength(
                   NextLineIndex, TailOffset, Split.first, ContentStartColumn);
               if (ContentStartColumn + ToSplitColumns > ColumnLimit) {
-                DEBUG(llvm::dbgs() << "    Next split protrudes, need: "
-                                   << (ContentStartColumn + ToSplitColumns)
-                                   << ", space: " << ColumnLimit);
+                LLVM_DEBUG(llvm::dbgs() << "    Next split protrudes, need: "
+                                        << (ContentStartColumn + ToSplitColumns)
+                                        << ", space: " << ColumnLimit);
                 unsigned ExcessCharactersPenalty =
                     (ContentStartColumn + ToSplitColumns - ColumnLimit) *
                     Style.PenaltyExcessCharacter;
@@ -1988,7 +2023,7 @@ ContinuationIndenter::breakProtrudingToken(const FormatToken &Current,
             }
           }
         } else {
-          DEBUG(llvm::dbgs() << "not found.\n");
+          LLVM_DEBUG(llvm::dbgs() << "not found.\n");
         }
       }
       if (!Reflow) {
@@ -2030,7 +2065,7 @@ ContinuationIndenter::breakProtrudingToken(const FormatToken &Current,
   BreakableToken::Split SplitAfterLastLine =
       Token->getSplitAfterLastLine(TailOffset);
   if (SplitAfterLastLine.first != StringRef::npos) {
-    DEBUG(llvm::dbgs() << "Replacing whitespace after last line.\n");
+    LLVM_DEBUG(llvm::dbgs() << "Replacing whitespace after last line.\n");
     if (!DryRun)
       Token->replaceWhitespaceAfterLastLine(TailOffset, SplitAfterLastLine,
                                             Whitespaces);

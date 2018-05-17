@@ -40,8 +40,8 @@ protected:
 
   std::string format(llvm::StringRef Code,
                      StatusCheck CheckComplete = SC_ExpectComplete) {
-    DEBUG(llvm::errs() << "---\n");
-    DEBUG(llvm::errs() << Code << "\n\n");
+    LLVM_DEBUG(llvm::errs() << "---\n");
+    LLVM_DEBUG(llvm::errs() << Code << "\n\n");
     std::vector<tooling::Range> Ranges(1, tooling::Range(0, Code.size()));
     FormattingAttemptStatus Status;
     tooling::Replacements Replaces =
@@ -53,7 +53,7 @@ protected:
     }
     auto Result = applyAllReplacements(Code, Replaces);
     EXPECT_TRUE(static_cast<bool>(Result));
-    DEBUG(llvm::errs() << "\n" << *Result << "\n\n");
+    LLVM_DEBUG(llvm::errs() << "\n" << *Result << "\n\n");
     return *Result;
   }
 
@@ -791,6 +791,35 @@ TEST_F(FormatTestObjC, FormatObjCMethodExpr) {
                "    secondBlock:^{\n"
                "      a = 42;\n"
                "    }];");
+
+  // Message receiver taking multiple lines.
+  Style.ColumnLimit = 20;
+  // Non-corner case.
+  verifyFormat("[[object block:^{\n"
+               "  return 42;\n"
+               "}] a:42 b:42];");
+  // Arguments just fit into one line.
+  verifyFormat("[[object block:^{\n"
+               "  return 42;\n"
+               "}] aaaaaaa:42 b:42];");
+  // Arguments just over a column limit.
+  verifyFormat("[[object block:^{\n"
+               "  return 42;\n"
+               "}] aaaaaaa:42\n"
+               "        bb:42];");
+  // Non-corner case.
+  verifyFormat("[[object aaa:42\n"
+               "           b:42]\n"
+               "    cc:42 d:42];");
+  // Arguments just fit into one line.
+  verifyFormat("[[object aaa:42\n"
+               "           b:42]\n"
+               "    cccccc:42 d:42];");
+  // Arguments just over a column limit.
+  verifyFormat("[[object aaa:42\n"
+               "           b:42]\n"
+               "    cccccc:42\n"
+               "        dd:42];");
 
   Style.ColumnLimit = 70;
   verifyFormat(

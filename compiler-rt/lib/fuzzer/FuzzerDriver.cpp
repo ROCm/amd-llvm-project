@@ -620,6 +620,8 @@ int FuzzerDriver(int *argc, char ***argv, UserCallback Callback) {
     Options.ExitOnSrcPos = Flags.exit_on_src_pos;
   if (Flags.exit_on_item)
     Options.ExitOnItem = Flags.exit_on_item;
+  if (Flags.focus_function)
+    Options.FocusFunction = Flags.focus_function;
 
   unsigned Seed = Flags.seed;
   // Initialize Seed.
@@ -663,6 +665,7 @@ int FuzzerDriver(int *argc, char ***argv, UserCallback Callback) {
   if (Flags.cleanse_crash)
     return CleanseCrashInput(Args, Options);
 
+#if 0  // deprecated, to be removed.
   if (auto Name = Flags.run_equivalence_server) {
     SMR.Destroy(Name);
     if (!SMR.Create(Name)) {
@@ -688,6 +691,7 @@ int FuzzerDriver(int *argc, char ***argv, UserCallback Callback) {
     }
     Printf("INFO: EQUIVALENCE CLIENT UP\n");
   }
+#endif
 
   if (DoPlainRun) {
     Options.SaveArtifacts = false;
