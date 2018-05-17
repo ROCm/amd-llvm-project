@@ -1181,10 +1181,6 @@ public:
                            const FunctionProtoType::ExceptionSpecInfo &ESI,
                            bool AsWritten = false);
 
-  /// Determine whether a type is a class that should be detructed in the
-  /// callee function.
-  bool isParamDestroyedInCallee(QualType T) const;
-
   /// Return the uniqued reference to the type for a complex
   /// number with the specified element type.
   QualType getComplexType(QualType T) const;
@@ -1419,8 +1415,8 @@ public:
   QualType getParenType(QualType NamedType) const;
 
   QualType getElaboratedType(ElaboratedTypeKeyword Keyword,
-                             NestedNameSpecifier *NNS,
-                             QualType NamedType) const;
+                             NestedNameSpecifier *NNS, QualType NamedType,
+                             TagDecl *OwnedTagDecl = nullptr) const;
   QualType getDependentNameType(ElaboratedTypeKeyword Keyword,
                                 NestedNameSpecifier *NNS,
                                 const IdentifierInfo *Name,

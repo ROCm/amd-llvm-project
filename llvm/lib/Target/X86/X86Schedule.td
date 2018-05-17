@@ -90,9 +90,10 @@ class X86SchedWriteMoveLSWidths<X86SchedWriteMoveLS sScl,
 }
 
 // Loads, stores, and moves, not folded with other operations.
-def WriteLoad  : SchedWrite;
-def WriteStore : SchedWrite;
-def WriteMove  : SchedWrite;
+def WriteLoad    : SchedWrite;
+def WriteStore   : SchedWrite;
+def WriteStoreNT : SchedWrite;
+def WriteMove    : SchedWrite;
 
 // Arithmetic.
 defm WriteALU    : X86SchedWritePair; // Simple integer ALU op.
@@ -145,6 +146,9 @@ def  WriteFMaskedLoadY  : SchedWrite;
 def  WriteFStore        : SchedWrite;
 def  WriteFStoreX       : SchedWrite;
 def  WriteFStoreY       : SchedWrite;
+def  WriteFStoreNT      : SchedWrite;
+def  WriteFStoreNTX     : SchedWrite;
+def  WriteFStoreNTY     : SchedWrite;
 def  WriteFMaskedStore  : SchedWrite;
 def  WriteFMaskedStoreY : SchedWrite;
 def  WriteFMove         : SchedWrite;
@@ -229,11 +233,15 @@ defm WritePHAddY : X86SchedWritePair; // YMM/ZMM.
 def  WriteVecLoad         : SchedWrite;
 def  WriteVecLoadX        : SchedWrite;
 def  WriteVecLoadY        : SchedWrite;
+def  WriteVecLoadNT       : SchedWrite;
+def  WriteVecLoadNTY      : SchedWrite;
 def  WriteVecMaskedLoad   : SchedWrite;
 def  WriteVecMaskedLoadY  : SchedWrite;
 def  WriteVecStore        : SchedWrite;
 def  WriteVecStoreX       : SchedWrite;
 def  WriteVecStoreY       : SchedWrite;
+def  WriteVecStoreNT      : SchedWrite;
+def  WriteVecStoreNTY     : SchedWrite;
 def  WriteVecMaskedStore  : SchedWrite;
 def  WriteVecMaskedStoreY : SchedWrite;
 def  WriteVecMove         : SchedWrite;
@@ -288,10 +296,37 @@ def WriteVecMOVMSKY : SchedWrite;
 def WriteMMXMOVMSK  : SchedWrite;
 
 // Conversion between integer and float.
-defm WriteCvtF2I : X86SchedWritePair; // Float -> Integer.
-defm WriteCvtI2F : X86SchedWritePair; // Integer -> Float.
-defm WriteCvtF2F : X86SchedWritePair; // Float -> Float size conversion.
-def  WriteCvtF2FSt : SchedWrite; // // Float -> Float + store size conversion.
+defm WriteCvtSD2I  : X86SchedWritePair; // Double -> Integer.
+defm WriteCvtPD2I  : X86SchedWritePair; // Double -> Integer (XMM).
+defm WriteCvtPD2IY : X86SchedWritePair; // Double -> Integer (YMM/ZMM).
+
+defm WriteCvtSS2I  : X86SchedWritePair; // Float -> Integer.
+defm WriteCvtPS2I  : X86SchedWritePair; // Float -> Integer (XMM).
+defm WriteCvtPS2IY : X86SchedWritePair; // Float -> Integer (YMM/ZMM).
+
+defm WriteCvtI2SD  : X86SchedWritePair; // Integer -> Double.
+defm WriteCvtI2PD  : X86SchedWritePair; // Integer -> Double (XMM).
+defm WriteCvtI2PDY : X86SchedWritePair; // Integer -> Double (YMM/ZMM).
+
+defm WriteCvtI2SS  : X86SchedWritePair; // Integer -> Float.
+defm WriteCvtI2PS  : X86SchedWritePair; // Integer -> Float (XMM).
+defm WriteCvtI2PSY : X86SchedWritePair; // Integer -> Float (YMM/ZMM).
+
+defm WriteCvtSS2SD  : X86SchedWritePair; // Float -> Double size conversion.
+defm WriteCvtPS2PD  : X86SchedWritePair; // Float -> Double size conversion (XMM).
+defm WriteCvtPS2PDY : X86SchedWritePair; // Float -> Double size conversion (YMM/ZMM).
+
+defm WriteCvtSD2SS  : X86SchedWritePair; // Double -> Float size conversion.
+defm WriteCvtPD2PS  : X86SchedWritePair; // Double -> Float size conversion (XMM).
+defm WriteCvtPD2PSY : X86SchedWritePair; // Double -> Float size conversion (YMM/ZMM).
+
+defm WriteCvtPH2PS    : X86SchedWritePair; // Half -> Float size conversion.
+defm WriteCvtPH2PSY   : X86SchedWritePair; // Half -> Float size conversion (YMM/ZMM).
+
+def  WriteCvtPS2PH    : SchedWrite; // // Float -> Half size conversion.
+def  WriteCvtPS2PHY   : SchedWrite; // // Float -> Half size conversion (YMM/ZMM).
+def  WriteCvtPS2PHSt  : SchedWrite; // // Float -> Half + store size conversion.
+def  WriteCvtPS2PHYSt : SchedWrite; // // Float -> Half + store size conversion (YMM/ZMM).
 
 // CRC32 instruction.
 defm WriteCRC32 : X86SchedWritePair;
@@ -352,6 +387,16 @@ def SchedWriteFMoveLS
   : X86SchedWriteMoveLSWidths<WriteFMoveLS, WriteFMoveLSX,
                               WriteFMoveLSY, WriteFMoveLSY>;
 
+def WriteFMoveLSNT
+ : X86SchedWriteMoveLS<WriteFMove, WriteFLoad, WriteFStoreNT>;
+def WriteFMoveLSNTX
+ : X86SchedWriteMoveLS<WriteFMove, WriteFLoad, WriteFStoreNTX>;
+def WriteFMoveLSNTY
+ : X86SchedWriteMoveLS<WriteFMoveY, WriteFLoadY, WriteFStoreNTY>;
+def SchedWriteFMoveLSNT
+  : X86SchedWriteMoveLSWidths<WriteFMoveLSNT, WriteFMoveLSNTX,
+                              WriteFMoveLSNTY, WriteFMoveLSNTY>;
+
 def WriteVecMoveLS
  : X86SchedWriteMoveLS<WriteVecMove, WriteVecLoad, WriteVecStore>;
 def WriteVecMoveLSX
@@ -361,6 +406,16 @@ def WriteVecMoveLSY
 def SchedWriteVecMoveLS
   : X86SchedWriteMoveLSWidths<WriteVecMoveLS, WriteVecMoveLSX,
                               WriteVecMoveLSY, WriteVecMoveLSY>;
+
+def WriteVecMoveLSNT
+ : X86SchedWriteMoveLS<WriteVecMove, WriteVecLoadNT, WriteVecStoreNT>;
+def WriteVecMoveLSNTX
+ : X86SchedWriteMoveLS<WriteVecMoveX, WriteVecLoadNT, WriteVecStoreNT>;
+def WriteVecMoveLSNTY
+ : X86SchedWriteMoveLS<WriteVecMoveY, WriteVecLoadNTY, WriteVecStoreNTY>;
+def SchedWriteVecMoveLSNT
+  : X86SchedWriteMoveLSWidths<WriteVecMoveLSNT, WriteVecMoveLSNTX,
+                              WriteVecMoveLSNTY, WriteVecMoveLSNTY>;
 
 // Vector width wrappers.
 def SchedWriteFAdd
@@ -415,6 +470,25 @@ def SchedWriteFBlend
 def SchedWriteFVarBlend
  : X86SchedWriteWidths<WriteFVarBlend, WriteFVarBlend,
                        WriteFVarBlendY, WriteFVarBlendY>;
+
+def SchedWriteCvtDQ2PD
+ : X86SchedWriteWidths<WriteCvtI2SD, WriteCvtI2PD,
+                       WriteCvtI2PDY, WriteCvtI2PDY>;
+def SchedWriteCvtDQ2PS
+ : X86SchedWriteWidths<WriteCvtI2SS, WriteCvtI2PS,
+                       WriteCvtI2PSY, WriteCvtI2PSY>;
+def SchedWriteCvtPD2DQ
+ : X86SchedWriteWidths<WriteCvtSD2I, WriteCvtPD2I,
+                       WriteCvtPD2IY, WriteCvtPD2IY>;
+def SchedWriteCvtPS2DQ
+ : X86SchedWriteWidths<WriteCvtSS2I, WriteCvtPS2I,
+                       WriteCvtPS2IY, WriteCvtPS2IY>;
+def SchedWriteCvtPS2PD
+ : X86SchedWriteWidths<WriteCvtSS2SD, WriteCvtPS2PD,
+                       WriteCvtPS2PDY, WriteCvtPS2PDY>;
+def SchedWriteCvtPD2PS
+ : X86SchedWriteWidths<WriteCvtSD2SS, WriteCvtPD2PS,
+                       WriteCvtPD2PSY, WriteCvtPD2PSY>;
 
 def SchedWriteVecALU
  : X86SchedWriteWidths<WriteVecALU, WriteVecALUX, WriteVecALUY, WriteVecALUY>;

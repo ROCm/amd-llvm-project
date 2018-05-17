@@ -2030,11 +2030,14 @@ public:
   /// various ways, this function will perform the cast by default. The cast
   /// may be avoided by passing false as \p CastToDefaultAddrSpace; this is
   /// more efficient if the caller knows that the address will not be exposed.
+  /// The original alloca instruction is returned through \p Alloca if it is
+  /// not nullptr.
   llvm::AllocaInst *CreateTempAlloca(llvm::Type *Ty, const Twine &Name = "tmp",
                                      llvm::Value *ArraySize = nullptr);
   Address CreateTempAlloca(llvm::Type *Ty, CharUnits align,
                            const Twine &Name = "tmp",
                            llvm::Value *ArraySize = nullptr,
+                           Address *Alloca = nullptr,
                            bool CastToDefaultAddrSpace = true);
   /// Get alloca instruction operand of an addrspacecast instruction.
   /// If \p Inst is alloca instruction, returns \p Inst;
@@ -2074,10 +2077,13 @@ public:
 
   /// CreateMemTemp - Create a temporary memory object of the given type, with
   /// appropriate alignment. Cast it to the default address space if
-  /// \p CastToDefaultAddrSpace is true.
+  /// \p CastToDefaultAddrSpace is true. Returns the original alloca
+  /// instruction by \p Alloca if it is not nullptr.
   Address CreateMemTemp(QualType T, const Twine &Name = "tmp",
+                        Address *Alloca = nullptr,
                         bool CastToDefaultAddrSpace = true);
   Address CreateMemTemp(QualType T, CharUnits Align, const Twine &Name = "tmp",
+                        Address *Alloca = nullptr,
                         bool CastToDefaultAddrSpace = true);
 
   /// CreateAggTemp - Create a temporary memory object for the given
@@ -2525,7 +2531,9 @@ public:
 
     const VarDecl *Variable;
 
-    /// The address of the alloca.  Invalid if the variable was emitted
+    /// The address of the alloca for languages with explicit address space
+    /// (e.g. OpenCL) or alloca casted to generic pointer for address space
+    /// agnostic languages (e.g. C++). Invalid if the variable was emitted
     /// as a global constant.
     Address Addr;
 
@@ -2541,13 +2549,19 @@ public:
     /// Non-null if we should use lifetime annotations.
     llvm::Value *SizeForLifetimeMarkers;
 
+    /// Address with original alloca instruction. Invalid if the variable was
+    /// emitted as a global constant.
+    Address AllocaAddr;
+
     struct Invalid {};
-    AutoVarEmission(Invalid) : Variable(nullptr), Addr(Address::invalid()) {}
+    AutoVarEmission(Invalid)
+        : Variable(nullptr), Addr(Address::invalid()),
+          AllocaAddr(Address::invalid()) {}
 
     AutoVarEmission(const VarDecl &variable)
-      : Variable(&variable), Addr(Address::invalid()), NRVOFlag(nullptr),
-        IsByRef(false), IsConstantAggregate(false),
-        SizeForLifetimeMarkers(nullptr) {}
+        : Variable(&variable), Addr(Address::invalid()), NRVOFlag(nullptr),
+          IsByRef(false), IsConstantAggregate(false),
+          SizeForLifetimeMarkers(nullptr), AllocaAddr(Address::invalid()) {}
 
     bool wasEmittedAsGlobal() const { return !Addr.isValid(); }
 
@@ -2563,10 +2577,14 @@ public:
     }
 
     /// Returns the raw, allocated address, which is not necessarily
-    /// the address of the object itself.
+    /// the address of the object itself. It is casted to default
+    /// address space for address space agnostic languages.
     Address getAllocatedAddress() const {
       return Addr;
     }
+
+    /// Returns the address for the original alloca instruction.
+    Address getOriginalAllocatedAddress() const { return AllocaAddr; }
 
     /// Returns the address of the object within this declaration.
     /// Note that this does not chase the forwarding pointer for

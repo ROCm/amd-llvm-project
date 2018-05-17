@@ -9673,7 +9673,8 @@ static void DiagnoseFloatingImpCast(Sema &S, Expr *E, QualType T,
     return DiagnoseImpCast(
         S, E, T, CContext,
         IsLiteral ? diag::warn_impcast_literal_float_to_integer_out_of_range
-                  : diag::warn_impcast_float_to_integer_out_of_range);
+                  : diag::warn_impcast_float_to_integer_out_of_range,
+        PruneWarnings);
 
   unsigned DiagID = 0;
   if (IsLiteral) {
@@ -11296,7 +11297,7 @@ bool Sema::CheckParmsForFunctionDef(ArrayRef<ParmVarDecl *> Parameters,
         if (!ClassDecl->isInvalidDecl() &&
             !ClassDecl->hasIrrelevantDestructor() &&
             !ClassDecl->isDependentContext() &&
-            Context.isParamDestroyedInCallee(Param->getType())) {
+            ClassDecl->isParamDestroyedInCallee()) {
           CXXDestructorDecl *Destructor = LookupDestructor(ClassDecl);
           MarkFunctionReferenced(Param->getLocation(), Destructor);
           DiagnoseUseOfDecl(Destructor, Param->getLocation());

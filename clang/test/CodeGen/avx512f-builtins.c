@@ -5102,7 +5102,7 @@ void test_mm512_mask_cvtusepi64_storeu_epi16(void *__P, __mmask8 __M, __m512i __
 
 __m128i test_mm512_cvtepi32_epi8(__m512i __A) {
   // CHECK-LABEL: @test_mm512_cvtepi32_epi8
-  // CHECK: @llvm.x86.avx512.mask.pmov.db.512
+  // CHECK: trunc <16 x i32> %{{.*}} to <16 x i8>
   return _mm512_cvtepi32_epi8(__A); 
 }
 
@@ -5126,7 +5126,7 @@ void test_mm512_mask_cvtepi32_storeu_epi8(void * __P, __mmask16 __M, __m512i __A
 
 __m256i test_mm512_cvtepi32_epi16(__m512i __A) {
   // CHECK-LABEL: @test_mm512_cvtepi32_epi16
-  // CHECK: @llvm.x86.avx512.mask.pmov.dw.512
+  // CHECK: trunc <16 x i32> %{{.*}} to <16 x i16>
   return _mm512_cvtepi32_epi16(__A); 
 }
 
@@ -5174,19 +5174,21 @@ void test_mm512_mask_cvtepi64_storeu_epi8(void * __P, __mmask8 __M, __m512i __A)
 
 __m256i test_mm512_cvtepi64_epi32(__m512i __A) {
   // CHECK-LABEL: @test_mm512_cvtepi64_epi32
-  // CHECK: @llvm.x86.avx512.mask.pmov.qd.512
+  // CHECK: trunc <8 x i64> %{{.*}} to <8 x i32>
   return _mm512_cvtepi64_epi32(__A); 
 }
 
 __m256i test_mm512_mask_cvtepi64_epi32(__m256i __O, __mmask8 __M, __m512i __A) {
   // CHECK-LABEL: @test_mm512_mask_cvtepi64_epi32
-  // CHECK: @llvm.x86.avx512.mask.pmov.qd.512
+  // CHECK: trunc <8 x i64> %{{.*}} to <8 x i32>
+  // CHECK: select <8 x i1> %{{.*}}, <8 x i32> %{{.*}}, <8 x i32> %{{.*}}
   return _mm512_mask_cvtepi64_epi32(__O, __M, __A); 
 }
 
 __m256i test_mm512_maskz_cvtepi64_epi32(__mmask8 __M, __m512i __A) {
   // CHECK-LABEL: @test_mm512_maskz_cvtepi64_epi32
-  // CHECK: @llvm.x86.avx512.mask.pmov.qd.512
+  // CHECK: trunc <8 x i64> %{{.*}} to <8 x i32>
+  // CHECK: select <8 x i1> %{{.*}}, <8 x i32> %{{.*}}, <8 x i32> %{{.*}}
   return _mm512_maskz_cvtepi64_epi32(__M, __A); 
 }
 
@@ -5198,7 +5200,7 @@ void test_mm512_mask_cvtepi64_storeu_epi32(void* __P, __mmask8 __M, __m512i __A)
 
 __m128i test_mm512_cvtepi64_epi16(__m512i __A) {
   // CHECK-LABEL: @test_mm512_cvtepi64_epi16
-  // CHECK: @llvm.x86.avx512.mask.pmov.qw.512
+  // CHECK: trunc <8 x i64> %{{.*}} to <8 x i16>
   return _mm512_cvtepi64_epi16(__A); 
 }
 
