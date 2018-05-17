@@ -194,6 +194,19 @@ bool types::isHIP(ID Id) {
   }
 }
 
+bool types::isHCC(ID Id) {
+  switch (Id) {
+  default:
+    return false;
+
+  case TY_CXX_AMP:
+  case TY_CXX_AMP_CPU:
+  case TY_HC_HOST:
+  case TY_HC_KERNEL:
+    return true;
+  }
+}
+
 bool types::isSrcFile(ID Id) {
   return Id != TY_Object && getPreprocessedType(Id) != TY_INVALID;
 }

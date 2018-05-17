@@ -688,17 +688,14 @@ void Driver::CreateOffloadingDeviceToolChains(Compilation &C,
   //
   // Initialize HCC device TC if we have HCC inputs.
   if (llvm::any_of(Inputs, [](const std::pair<types::ID, const Arg *> &I) {
-        return I.first == types::TY_CXX_AMP ||
-               I.first == types::TY_CXX_AMP_CPU ||
-               I.first == types::TY_HC_HOST ||
-               I.first == types::TY_HC_KERNEL;
+        return types::isHCC(I.first);
       })) {
 
     const ToolChain *HostTC = C.getSingleOffloadToolChain<Action::OFK_Host>();
-
-    auto &HccTC = ToolChains[llvm::Triple("amdgcn--amdhsa-hcc").str()];
+    llvm::Triple HccTriple("amdgcn--amdhsa-hcc");
+    auto &HccTC = ToolChains[HccTriple.str()];
     if (!HccTC)
-      HccTC = llvm::make_unique<toolchains::HCCToolChain>(*this, llvm::Triple("amdgcn--amdhsa-hcc"), *HostTC, C.getInputArgs());
+      HccTC = llvm::make_unique<toolchains::HCCToolChain>(*this, HccTriple, *HostTC, C.getInputArgs());
       
     const ToolChain *TC = HccTC.get();
 
@@ -2064,7 +2061,6 @@ void Driver::BuildInputs(const ToolChain &TC, DerivedArgList &Args,
       }
 
       if (DiagnoseInputExistence(*this, Args, Value, Ty)) {
-
         // C++ AMP-specific
         // For C++ source files, duplicate the input so we launch the compiler twice
         // 1 for GPU compilation (TY_CXX_AMP), 1 for CPU compilation (TY_CXX)
@@ -2074,41 +2070,8 @@ void Driver::BuildInputs(const ToolChain &TC, DerivedArgList &Args,
           switch (FinalPhase) {
             // -E
             case phases::Preprocess:
-              if (Args.hasArg(options::OPT_cxxamp_cpu_mode))
-                  Inputs.push_back(std::make_pair(types::TY_CXX_AMP_CPU, A));
-              if(Args.hasArg(options::OPT_hc_mode)) {
-                Inputs.push_back(std::make_pair(types::TY_HC_HOST, A));
-                Inputs.push_back(std::make_pair(types::TY_HC_KERNEL, A));
-              } else {
-                Inputs.push_back(std::make_pair(Ty, A));
-                Inputs.push_back(std::make_pair(types::TY_CXX_AMP, A));
-              }
-            break;
-
-            // -S
-            case phases::Backend:
-              if (Args.hasArg(options::OPT_cxxamp_kernel_mode)) {
-                Inputs.push_back(std::make_pair(types::TY_CXX_AMP, A));
-              } else if (Args.hasArg(options::OPT_cxxamp_cpu_mode)) {
-                  Inputs.push_back(std::make_pair(types::TY_CXX_AMP_CPU, A));
-              } else {
-                Inputs.push_back(std::make_pair(Ty, A));
-              }
-            break;
-
             // -c
             case phases::Assemble:
-              if (Args.hasArg(options::OPT_cxxamp_cpu_mode))
-                  Inputs.push_back(std::make_pair(types::TY_CXX_AMP_CPU, A));
-              if(Args.hasArg(options::OPT_hc_mode)) {
-                Inputs.push_back(std::make_pair(types::TY_HC_HOST, A));
-                Inputs.push_back(std::make_pair(types::TY_HC_KERNEL, A));
-              } else {
-                Inputs.push_back(std::make_pair(Ty, A));
-                Inputs.push_back(std::make_pair(types::TY_CXX_AMP, A));
-              }
-            break;
-
             // build executable
             case phases::Link:
               if (Args.hasArg(options::OPT_cxxamp_cpu_mode))
@@ -2121,18 +2084,25 @@ void Driver::BuildInputs(const ToolChain &TC, DerivedArgList &Args,
                 Inputs.push_back(std::make_pair(types::TY_CXX_AMP, A));
               }
             break;
-
+            // -S
+            case phases::Backend:
+              if (Args.hasArg(options::OPT_cxxamp_kernel_mode)) {
+                Inputs.push_back(std::make_pair(types::TY_CXX_AMP, A));
+              } else if (Args.hasArg(options::OPT_cxxamp_cpu_mode)) {
+                  Inputs.push_back(std::make_pair(types::TY_CXX_AMP_CPU, A));
+              } else {
+                Inputs.push_back(std::make_pair(Ty, A));
+              }
+            break;
             default:
               Inputs.push_back(std::make_pair(Ty, A));
             break;
           }
         } else {
-
           // Standard compilation flow
           Inputs.push_back(std::make_pair(Ty, A));
         }
       }
-
     } else if (A->getOption().matches(options::OPT__SLASH_Tc)) {
       StringRef Value = A->getValue();
       if (DiagnoseInputExistence(*this, Args, Value, types::TY_C)) {
@@ -3319,24 +3289,12 @@ void Driver::BuildJobs(Compilation &C) const {
         LinkingOutput = getDefaultImageName();
     }
 
-    JobAction *JA = dyn_cast<JobAction>(A);
-    // UPGRADE_TBD: FIXME This is hack. Need to find a cleaner way
-    // The line is added so clang -emit-llvm would pick correct toolchain for HCC inputs
-    if (JA && IsCXXAMPBackendJobAction(JA)) {
-      BuildJobsForAction(C, A, C.getSingleOffloadToolChain<Action::OFK_HCC>(),
-                       /*BoundArch*/ StringRef(),
-                       /*AtTopLevel*/ true,
-                       /*MultipleArchs*/ ArchNames.size() > 1,
-                       /*LinkingOutput*/ LinkingOutput, CachedResults,
-                       /*TargetDeviceOffloadKind*/ Action::OFK_None);
-    } else {
-      BuildJobsForAction(C, A, &C.getDefaultToolChain(),
-                       /*BoundArch*/ StringRef(),
-                       /*AtTopLevel*/ true,
-                       /*MultipleArchs*/ ArchNames.size() > 1,
-                       /*LinkingOutput*/ LinkingOutput, CachedResults,
-                       /*TargetDeviceOffloadKind*/ Action::OFK_None);
-    }
+    BuildJobsForAction(C, A, &C.getDefaultToolChain(),
+                      /*BoundArch*/ StringRef(),
+                      /*AtTopLevel*/ true,
+                      /*MultipleArchs*/ ArchNames.size() > 1,
+                      /*LinkingOutput*/ LinkingOutput, CachedResults,
+                      /*TargetDeviceOffloadKind*/ Action::OFK_None);
   }
 
   // If the user passed -Qunused-arguments or there were errors, don't warn
