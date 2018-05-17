@@ -406,7 +406,7 @@ void ObjFile<ELFT>::initializeSections(
     DenseSet<CachedHashStringRef> &ComdatGroups) {
   const ELFFile<ELFT> &Obj = this->getObj();
 
-  ArrayRef<Elf_Shdr> ObjSections = CHECK(this->getObj().sections(), this);
+  ArrayRef<Elf_Shdr> ObjSections = CHECK(Obj.sections(), this);
   uint64_t Size = ObjSections.size();
   this->Sections.resize(Size);
   this->SectionStringTable =
@@ -1024,18 +1024,21 @@ BitcodeFile::BitcodeFile(MemoryBufferRef MB, StringRef ArchiveName,
     : InputFile(BitcodeKind, MB) {
   this->ArchiveName = ArchiveName;
 
-  // Here we pass a new MemoryBufferRef which is identified by ArchiveName
-  // (the fully resolved path of the archive) + member name + offset of the
-  // member in the archive.
-  // ThinLTO uses the MemoryBufferRef identifier to access its internal
-  // data structures and if two archives define two members with the same name,
-  // this causes a collision which result in only one of the objects being
-  // taken into consideration at LTO time (which very likely causes undefined
-  // symbols later in the link stage).
+  std::string Path = MB.getBufferIdentifier().str();
+  if (Config->ThinLTOIndexOnly)
+    Path = replaceThinLTOSuffix(MB.getBufferIdentifier());
+
+  // ThinLTO assumes that all MemoryBufferRefs given to it have a unique
+  // name. If two archives define two members with the same name, this
+  // causes a collision which result in only one of the objects being taken
+  // into consideration at LTO time (which very likely causes undefined
+  // symbols later in the link stage). So we append file offset to make
+  // filename unique.
   MemoryBufferRef MBRef(
       MB.getBuffer(),
-      Saver.save(ArchiveName + MB.getBufferIdentifier() +
+      Saver.save(ArchiveName + Path +
                  (ArchiveName.empty() ? "" : utostr(OffsetInArchive))));
+
   Obj = CHECK(lto::InputFile::create(MBRef), this);
 
   Triple T(Obj->getTargetTriple());
@@ -1236,6 +1239,18 @@ template <class ELFT> void LazyObjFile::addElfSymbols() {
                                     *this);
     return;
   }
+}
+
+std::string elf::replaceThinLTOSuffix(StringRef Path) {
+  StringRef Suffix = Config->ThinLTOObjectSuffixReplace.first;
+  StringRef Repl = Config->ThinLTOObjectSuffixReplace.second;
+
+  if (!Path.endswith(Suffix)) {
+    error("-thinlto-object-suffix-replace=" + Suffix + ";" + Repl +
+          " was given, but " + Path + " does not end with the suffix");
+    return "";
+  }
+  return (Path.drop_back(Suffix.size()) + Repl).str();
 }
 
 template void ArchiveFile::parse<ELF32LE>();

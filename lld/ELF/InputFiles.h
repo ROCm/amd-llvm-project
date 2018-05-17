@@ -355,6 +355,8 @@ inline bool isBitcode(MemoryBufferRef MB) {
   return identify_magic(MB.getBuffer()) == llvm::file_magic::bitcode;
 }
 
+std::string replaceThinLTOSuffix(StringRef Path);
+
 extern std::vector<BinaryFile *> BinaryFiles;
 extern std::vector<BitcodeFile *> BitcodeFiles;
 extern std::vector<LazyObjFile *> LazyObjFiles;

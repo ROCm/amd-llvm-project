@@ -13,7 +13,6 @@ set(LLVM_LINK_COMPONENTS
 add_llvm_unittest(LLVMExegesisTests
   BenchmarkResultTest.cpp
   ClusteringTest.cpp
-  OperandGraphTest.cpp
   PerfHelperTest.cpp
   )
 target_link_libraries(LLVMExegesisTests PRIVATE LLVMExegesis)
@@ -23,7 +22,8 @@ if(LLVM_ENABLE_LIBPFM AND HAVE_LIBPFM)
 endif()
 
 if(LLVM_TARGETS_TO_BUILD MATCHES "X86")
-  add_subdirectory(
-    X86
-  )
+  add_subdirectory(X86)
+endif()
+if(LLVM_TARGETS_TO_BUILD MATCHES "ARM")
+	add_subdirectory(ARM)
 endif()

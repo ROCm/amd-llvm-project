@@ -1638,7 +1638,8 @@ public:
   }
 
   QualType getElaboratedType(ElaboratedTypeKeyword Keyword,
-                             const CXXScopeSpec &SS, QualType T);
+                             const CXXScopeSpec &SS, QualType T,
+                             TagDecl *OwnedTagDecl = nullptr);
 
   QualType BuildTypeofExprType(Expr *E, SourceLocation Loc);
   /// If AsUnevaluated is false, E is treated as though it were an evaluated
@@ -1933,6 +1934,7 @@ public:
   bool shouldLinkDependentDeclWithPrevious(Decl *D, Decl *OldDecl);
   void CheckMain(FunctionDecl *FD, const DeclSpec &D);
   void CheckMSVCRTEntryPoint(FunctionDecl *FD);
+  Attr *getImplicitSectionAttrForFunction(const FunctionDecl *FD, bool IsDefinition = true);
   Decl *ActOnParamDeclarator(Scope *S, Declarator &D);
   ParmVarDecl *BuildParmVarDeclForTypedef(DeclContext *DC,
                                           SourceLocation Loc,
@@ -2113,12 +2115,12 @@ public:
   void checkPartialSpecializationVisibility(SourceLocation Loc,
                                             NamedDecl *Spec);
 
-  /// Retrieve a suitable printing policy.
+  /// Retrieve a suitable printing policy for diagnostics.
   PrintingPolicy getPrintingPolicy() const {
     return getPrintingPolicy(Context, PP);
   }
 
-  /// Retrieve a suitable printing policy.
+  /// Retrieve a suitable printing policy for diagnostics.
   static PrintingPolicy getPrintingPolicy(const ASTContext &Ctx,
                                           const Preprocessor &PP);
 
@@ -5835,6 +5837,7 @@ public:
   /// ensure that referenceDLLExportedClassMethods is called some point later
   /// when all outer classes of Class are complete.
   void checkClassLevelDLLAttribute(CXXRecordDecl *Class);
+  void checkClassLevelSectionAttribute(CXXRecordDecl *Class);
 
   void referenceDLLExportedClassMethods();
 

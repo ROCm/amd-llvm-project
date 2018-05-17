@@ -13,6 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Backend.h"
+#include "FetchStage.h"
 #include "HWEventListener.h"
 #include "llvm/CodeGen/TargetSchedule.h"
 #include "llvm/Support/Debug.h"
@@ -28,31 +29,30 @@ void Backend::addEventListener(HWEventListener *Listener) {
     Listeners.insert(Listener);
 }
 
+void Backend::run() {
+  while (Fetch->isReady() || !Dispatch->isReady())
+    runCycle(Cycles++);
+}
+
 void Backend::runCycle(unsigned Cycle) {
   notifyCycleBegin(Cycle);
 
-  while (SM.hasNext()) {
-    SourceRef SR = SM.peekNext();
-    std::unique_ptr<Instruction> NewIS = IB.createInstruction(*SR.second);
-    const InstrDesc &Desc = NewIS->getDesc();
-    Instruction *IS = NewIS.get();
-    InstRef IR(SR.first, IS);
-    if (!DU->isAvailable(Desc.NumMicroOps) || !DU->canDispatch(IR))
+  InstRef IR;
+  while (Fetch->execute(IR)) {
+    if (!Dispatch->execute(IR))
       break;
-    Instructions[SR.first] = std::move(NewIS);
-    DU->dispatch(IR, STI);
-    SM.updateNext();
+    Fetch->postExecute(IR);
   }
 
   notifyCycleEnd(Cycle);
 }
 
 void Backend::notifyCycleBegin(unsigned Cycle) {
-  DEBUG(dbgs() << "[E] Cycle begin: " << Cycle << '\n');
+  LLVM_DEBUG(dbgs() << "[E] Cycle begin: " << Cycle << '\n');
   for (HWEventListener *Listener : Listeners)
     Listener->onCycleBegin();
 
-  DU->cycleEvent();
+  Dispatch->cycleEvent();
   HWS->cycleEvent();
 }
 
@@ -67,8 +67,8 @@ void Backend::notifyStallEvent(const HWStallEvent &Event) {
 }
 
 void Backend::notifyResourceAvailable(const ResourceRef &RR) {
-  DEBUG(dbgs() << "[E] Resource Available: [" << RR.first << '.' << RR.second
-               << "]\n");
+  LLVM_DEBUG(dbgs() << "[E] Resource Available: [" << RR.first << '.'
+                    << RR.second << "]\n");
   for (HWEventListener *Listener : Listeners)
     Listener->onResourceAvailable(RR);
 }
@@ -84,7 +84,7 @@ void Backend::notifyReleasedBuffers(ArrayRef<unsigned> Buffers) {
 }
 
 void Backend::notifyCycleEnd(unsigned Cycle) {
-  DEBUG(dbgs() << "[E] Cycle end: " << Cycle << "\n\n");
+  LLVM_DEBUG(dbgs() << "[E] Cycle end: " << Cycle << "\n\n");
   for (HWEventListener *Listener : Listeners)
     Listener->onCycleEnd();
 }

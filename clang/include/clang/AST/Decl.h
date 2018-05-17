@@ -1456,6 +1456,11 @@ public:
 
   void setDescribedVarTemplate(VarTemplateDecl *Template);
 
+  // Is this variable known to have a definition somewhere in the complete
+  // program? This may be true even if the declaration has internal linkage and
+  // has no definition within this source file.
+  bool isKnownToBeDefined() const;
+
   // Implement isa/cast/dyncast/etc.
   static bool classof(const Decl *D) { return classofKind(D->getKind()); }
   static bool classofKind(Kind K) { return K >= firstVar && K <= lastVar; }
@@ -3572,40 +3577,38 @@ private:
   /// This is true if this struct ends with a flexible
   /// array member (e.g. int X[]) or if this union contains a struct that does.
   /// If so, this cannot be contained in arrays or other structs as a member.
-  bool HasFlexibleArrayMember : 1;
+  unsigned HasFlexibleArrayMember : 1;
 
   /// Whether this is the type of an anonymous struct or union.
-  bool AnonymousStructOrUnion : 1;
+  unsigned AnonymousStructOrUnion : 1;
 
   /// This is true if this struct has at least one member
   /// containing an Objective-C object pointer type.
-  bool HasObjectMember : 1;
+  unsigned HasObjectMember : 1;
 
   /// This is true if struct has at least one member of
   /// 'volatile' type.
-  bool HasVolatileMember : 1;
+  unsigned HasVolatileMember : 1;
 
   /// Whether the field declarations of this record have been loaded
   /// from external storage. To avoid unnecessary deserialization of
   /// methods/nested types we allow deserialization of just the fields
   /// when needed.
-  mutable bool LoadedFieldsFromExternalStorage : 1;
+  mutable unsigned LoadedFieldsFromExternalStorage : 1;
 
   /// Basic properties of non-trivial C structs.
-  bool NonTrivialToPrimitiveDefaultInitialize : 1;
-  bool NonTrivialToPrimitiveCopy : 1;
-  bool NonTrivialToPrimitiveDestroy : 1;
+  unsigned NonTrivialToPrimitiveDefaultInitialize : 1;
+  unsigned NonTrivialToPrimitiveCopy : 1;
+  unsigned NonTrivialToPrimitiveDestroy : 1;
 
-  /// Indicates whether this struct is destroyed in the callee. This flag is
-  /// meaningless when Microsoft ABI is used since parameters are always
-  /// destroyed in the callee.
+  /// Indicates whether this struct is destroyed in the callee.
   ///
   /// Please note that MSVC won't merge adjacent bitfields if they don't have
   /// the same type.
-  uint8_t ParamDestroyedInCallee : 1;
+  unsigned ParamDestroyedInCallee : 1;
 
   /// Represents the way this type is passed to a function.
-  uint8_t ArgPassingRestrictions : 2;
+  unsigned ArgPassingRestrictions : 2;
 
 protected:
   RecordDecl(Kind DK, TagKind TK, const ASTContext &C, DeclContext *DC,
