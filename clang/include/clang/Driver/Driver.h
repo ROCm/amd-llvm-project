@@ -314,8 +314,6 @@ public:
     return ClangExecutable.c_str();
   }
 
-  static bool IsCXXAMP(const llvm::opt::ArgList& Args);
-
   /// Get the path to where the clang executable was installed.
   const char *getInstalledDir() const {
     if (!InstalledDir.empty())

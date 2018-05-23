@@ -1076,7 +1076,9 @@ void Clang::AddPreprocessingOptions(Compilation &C, const JobAction &JA,
   if (JA.isOffloading(Action::OFK_Cuda))
     getToolChain().AddCudaIncludeArgs(Args, CmdArgs);
 
-  if (D.IsCXXAMP(Args))
+  if (Args.hasArg(options::OPT_famp) ||
+    llvm::any_of(Args.getAllArgValues(options::OPT_std_EQ), [](std::string s)
+    { return s == "c++amp"; }))
     getToolChain().AddHCCIncludeArgs(Args, CmdArgs);
 
   // Add -i* options, and automatically translate to
@@ -3177,7 +3179,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   if (Args.hasArg(options::OPT_hc_mode)) {
     CmdArgs.push_back("-D__KALMAR_HC__=1");
     CmdArgs.push_back("-D__HCC_HC__=1");
-  } else if (D.IsCXXAMP(Args)) {
+  } else if (Args.hasArg(options::OPT_famp) ||
+    llvm::any_of(Args.getAllArgValues(options::OPT_std_EQ), [](std::string s)
+    { return s == "c++amp"; })) {
     CmdArgs.push_back("-D__KALMAR_AMP__=1");
     CmdArgs.push_back("-D__HCC_AMP__=1");
   }
