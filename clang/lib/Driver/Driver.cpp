@@ -2044,9 +2044,8 @@ void Driver::BuildInputs(const ToolChain &TC, DerivedArgList &Args,
         // C++ AMP-specific
         // For C++ source files, duplicate the input so we launch the compiler twice
         // 1 for GPU compilation (TY_CXX_AMP), 1 for CPU compilation (TY_CXX)
-        if ((Args.hasArg(options::OPT_famp) ||
-          llvm::any_of(Args.getAllArgValues(options::OPT_std_EQ),
-          [](std::string s) { return s == "c++amp"; })) && Ty == types::TY_CXX) {
+        if (Ty == types::TY_CXX && (Args.hasArg(options::OPT_famp) ||
+          Args.getLastArgValue(options::OPT_std_EQ).equals("c++amp"))) {
           Arg *FinalPhaseArg;
           phases::ID FinalPhase = getFinalPhase(Args, &FinalPhaseArg);
           switch (FinalPhase) {
@@ -3238,8 +3237,7 @@ void Driver::BuildJobs(Compilation &C) const {
     if (NumOutputs > 1) {
       // relax rule for C++AMP because we may have multiple outputs
       if (!C.getArgs().hasArg(options::OPT_famp) &&
-        !llvm::any_of(C.getArgs().getAllArgValues(options::OPT_std_EQ),
-        [](std::string s) { return s == "c++amp"; })) {
+        !C.getArgs().getLastArgValue(options::OPT_std_EQ).equals("c++amp")) {
         Diag(clang::diag::err_drv_output_argument_with_multiple_files);
         FinalOutput = nullptr;
       }

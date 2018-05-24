@@ -536,8 +536,7 @@ void tools::gnutools::Linker::ConstructLinkerJob(Compilation &C,
 
   // HCC: Add compiler-rt library to get the half fp builtins
   if (C.getArgs().hasArg(options::OPT_famp) ||
-    llvm::any_of(C.getArgs().getAllArgValues(options::OPT_std_EQ),
-    [](std::string s) { return s == "c++amp"; })) {
+    C.getArgs().getLastArgValue(options::OPT_std_EQ).equals("c++amp")) {
     CmdArgs.push_back(Args.MakeArgString(
         "-lclang_rt.builtins-" +
         getToolChain().getTriple().getArchName()));
@@ -556,8 +555,7 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C,
   // ToDo: Find a better way to persist CXXAMPLink and construct the link
   // job using it.
   if (C.getArgs().hasArg(options::OPT_famp) ||
-    llvm::any_of(C.getArgs().getAllArgValues(options::OPT_std_EQ),
-    [](std::string s) { return s == "c++amp"; })) {
+    C.getArgs().getLastArgValue(options::OPT_std_EQ).equals("c++amp")) {
     ArgStringList CmdArgs;
 
     if (!HCLinker)
