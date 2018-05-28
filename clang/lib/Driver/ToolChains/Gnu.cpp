@@ -544,6 +544,9 @@ void tools::gnutools::Linker::ConstructLinkerJob(Compilation &C,
 
   // Add OpenMP offloading linker script args if required.
   AddOpenMPLinkerScript(getToolChain(), C, Output, Inputs, Args, CmdArgs, JA);
+  // Add HIP offloading linker script args if required.
+  AddHIPLinkerScript(getToolChain(), C, Output, Inputs, Args, CmdArgs, JA,
+                     *this);
 }
 
 void tools::gnutools::Linker::ConstructJob(Compilation &C,

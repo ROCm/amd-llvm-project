@@ -350,6 +350,8 @@ void Fuzzer::PrintStats(const char *Where, const char *End, size_t Units) {
 void Fuzzer::PrintFinalStats() {
   if (Options.PrintCoverage)
     TPC.PrintCoverage();
+  if (Options.DumpCoverage)
+    TPC.DumpCoverage();
   if (Options.PrintCorpusStats)
     Corpus.PrintStats();
   if (!Options.PrintFinalStats)
@@ -741,7 +743,7 @@ void Fuzzer::ReadAndExecuteSeedCorpora(const Vector<std::string> &CorpusDirs) {
     Printf("INFO: %zd/%zd inputs touch the focus function\n",
            Corpus.NumInputsThatTouchFocusFunction(), Corpus.size());
 
-  if (Corpus.empty()) {
+  if (Corpus.empty() && Options.MaxNumberOfRuns) {
     Printf("ERROR: no interesting inputs were found. "
            "Is the code instrumented for coverage? Exiting.\n");
     exit(1);

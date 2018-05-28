@@ -1539,6 +1539,8 @@ static InputKind ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
     = !Args.hasArg(OPT_no_code_completion_ns_level_decls);
   Opts.CodeCompleteOpts.IncludeBriefComments
     = Args.hasArg(OPT_code_completion_brief_comments);
+  Opts.CodeCompleteOpts.IncludeFixIts
+    = Args.hasArg(OPT_code_completion_with_fixits);
 
   Opts.OverrideRecordLayoutsFile
     = Args.getLastArgValue(OPT_foverride_record_layout_EQ);
@@ -2588,9 +2590,10 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
   // Check if -fopenmp is specified.
   Opts.OpenMP = Args.hasArg(options::OPT_fopenmp) ? 1 : 0;
   // Check if -fopenmp-simd is specified.
-  Opts.OpenMPSimd = !Opts.OpenMP && Args.hasFlag(options::OPT_fopenmp_simd,
-                                                 options::OPT_fno_openmp_simd,
-                                                 /*Default=*/false);
+  bool IsSimdSpecified =
+      Args.hasFlag(options::OPT_fopenmp_simd, options::OPT_fno_openmp_simd,
+                   /*Default=*/false);
+  Opts.OpenMPSimd = !Opts.OpenMP && IsSimdSpecified;
   Opts.OpenMPUseTLS =
       Opts.OpenMP && !Args.hasArg(options::OPT_fnoopenmp_use_tls);
   Opts.OpenMPIsDevice =
@@ -2599,9 +2602,9 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
   if (Opts.OpenMP || Opts.OpenMPSimd) {
     if (int Version =
             getLastArgIntValue(Args, OPT_fopenmp_version_EQ,
-                               Opts.OpenMPSimd ? 45 : Opts.OpenMP, Diags))
+                               IsSimdSpecified ? 45 : Opts.OpenMP, Diags))
       Opts.OpenMP = Version;
-    else if (Opts.OpenMPSimd)
+    else if (IsSimdSpecified)
       Opts.OpenMP = 45;
     // Provide diagnostic when a given target is not expected to be an OpenMP
     // device or host.
@@ -2868,6 +2871,17 @@ static void ParsePreprocessorArgs(PreprocessorOptions &Opts, ArgList &Args,
     }
   }
 
+  // Add the __CET__ macro if a CFProtection option is set.
+  if (const Arg *A = Args.getLastArg(OPT_fcf_protection_EQ)) {
+    StringRef Name = A->getValue();
+    if (Name == "branch")
+      Opts.addMacroDef("__CET__=1");
+    else if (Name == "return")
+      Opts.addMacroDef("__CET__=2");
+    else if (Name == "full")
+      Opts.addMacroDef("__CET__=3");
+  }
+
   // Add macros from the command line.
   for (const auto *A : Args.filtered(OPT_D, OPT_U)) {
     if (A->getOption().matches(OPT_D))
@@ -2955,10 +2969,11 @@ static void ParseTargetArgs(TargetOptions &Opts, ArgList &Args,
   Opts.FPMath = Args.getLastArgValue(OPT_mfpmath);
   Opts.FeaturesAsWritten = Args.getAllArgValues(OPT_target_feature);
   Opts.LinkerVersion = Args.getLastArgValue(OPT_target_linker_version);
-  Opts.Triple = llvm::Triple::normalize(Args.getLastArgValue(OPT_triple));
+  Opts.Triple = Args.getLastArgValue(OPT_triple);
   // Use the default target triple if unspecified.
   if (Opts.Triple.empty())
     Opts.Triple = llvm::sys::getDefaultTargetTriple();
+  Opts.Triple = llvm::Triple::normalize(Opts.Triple);
   Opts.OpenCLExtensionsAsWritten = Args.getAllArgValues(OPT_cl_ext_EQ);
   Opts.ForceEnableInt128 = Args.hasArg(OPT_fforce_enable_int128);
   Opts.NVPTXUseShortPointers = Args.hasFlag(

@@ -11,7 +11,6 @@
 #ifndef LLVM_LIB_TARGET_AMDGPU_AMDGPU_H
 #define LLVM_LIB_TARGET_AMDGPU_AMDGPU_H
 
-#include "MCTargetDesc/AMDGPUMCTargetDesc.h"
 #include "llvm/Target/TargetMachine.h"
 
 namespace llvm {
@@ -73,6 +72,10 @@ ModulePass *createAMDGPULowerIntrinsicsPass();
 void initializeAMDGPULowerIntrinsicsPass(PassRegistry &);
 extern char &AMDGPULowerIntrinsicsID;
 
+ModulePass *createAMDGPULowerKernelAttributesPass();
+void initializeAMDGPULowerKernelAttributesPass(PassRegistry &);
+extern char &AMDGPULowerKernelAttributesID;
+
 void initializeAMDGPURewriteOutArgumentsPass(PassRegistry &);
 extern char &AMDGPURewriteOutArgumentsID;
 
@@ -132,6 +135,9 @@ extern char &AMDGPUSimplifyLibCallsID;
 
 void initializeAMDGPUUseNativeCallsPass(PassRegistry &);
 extern char &AMDGPUUseNativeCallsID;
+
+void initializeAMDGPUPerfHintAnalysisPass(PassRegistry &);
+extern char &AMDGPUPerfHintAnalysisID;
 
 // Passes common to R600 and SI
 FunctionPass *createAMDGPUPromoteAlloca();

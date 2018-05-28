@@ -80,11 +80,6 @@
 // CETSS: "-target-feature" "+shstk"
 // NO-CETSS: "-target-feature" "-shstk"
 
-// RUN: %clang -target i386-unknown-linux-gnu -march=i386 -mibt %s -### -o %t.o 2>&1 | FileCheck -check-prefix=CETIBT %s
-// RUN: %clang -target i386-unknown-linux-gnu -march=i386 -mno-ibt %s -### -o %t.o 2>&1 | FileCheck -check-prefix=NO-CETIBT %s
-// CETIBT: "-target-feature" "+ibt"
-// NO-CETIBT: "-target-feature" "-ibt"
-
 // RUN: %clang -target i386-unknown-linux-gnu -march=i386 -msgx %s -### -o %t.o 2>&1 | FileCheck -check-prefix=SGX %s
 // RUN: %clang -target i386-unknown-linux-gnu -march=i386 -mno-sgx %s -### -o %t.o 2>&1 | FileCheck -check-prefix=NO-SGX %s
 // SGX: "-target-feature" "+sgx"
@@ -169,3 +164,8 @@
 // RUN: %clang -target i386-unknown-linux-gnu -march=i386 -mno-ptwrite %s -### -o %t.o 2>&1 | FileCheck -check-prefix=NO-PTWRITE %s
 // PTWRITE: "-target-feature" "+ptwrite"
 // NO-PTWRITE: "-target-feature" "-ptwrite"
+
+// RUN: %clang -target i386-unknown-linux-gnu -march=i386 -minvpcid %s -### -o %t.o 2>&1 | FileCheck -check-prefix=INVPCID %s
+// RUN: %clang -target i386-unknown-linux-gnu -march=i386 -mno-invpcid %s -### -o %t.o 2>&1 | FileCheck -check-prefix=NO-INVPCID %s
+// INVPCID: "-target-feature" "+invpcid"
+// NO-INVPCID: "-target-feature" "-invpcid"

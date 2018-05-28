@@ -30,6 +30,7 @@
 
 using namespace llvm;
 
+namespace {
 // Class that is used to build the plain CFG for the incoming IR.
 class PlainCFGBuilder {
 private:
@@ -74,6 +75,7 @@ public:
   // Build the plain CFG and return its Top Region.
   VPRegionBlock *buildPlainCFG();
 };
+} // anonymous namespace
 
 // Return true if \p Inst is an incoming Instruction to be ignored in the VPlan
 // representation.
@@ -116,7 +118,7 @@ VPBasicBlock *PlainCFGBuilder::getOrCreateVPBB(BasicBlock *BB) {
     return BlockIt->second;
 
   // Create new VPBB.
-  DEBUG(dbgs() << "Creating VPBasicBlock for " << BB->getName() << "\n");
+  LLVM_DEBUG(dbgs() << "Creating VPBasicBlock for " << BB->getName() << "\n");
   VPBasicBlock *VPBB = new VPBasicBlock(BB->getName());
   BB2VPBB[BB] = VPBB;
   VPBB->setParent(TopRegion);
@@ -314,7 +316,7 @@ void VPlanHCFGBuilder::buildHierarchicalCFG(VPlan &Plan) {
   PlainCFGBuilder PCFGBuilder(TheLoop, LI, Plan);
   VPRegionBlock *TopRegion = PCFGBuilder.buildPlainCFG();
   Plan.setEntry(TopRegion);
-  DEBUG(Plan.setName("HCFGBuilder: Plain CFG\n"); dbgs() << Plan);
+  LLVM_DEBUG(Plan.setName("HCFGBuilder: Plain CFG\n"); dbgs() << Plan);
 
   Verifier.verifyHierarchicalCFG(TopRegion);
 }

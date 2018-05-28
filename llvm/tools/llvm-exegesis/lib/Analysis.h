@@ -40,8 +40,12 @@ public:
   template <typename Pass> llvm::Error run(llvm::raw_ostream &OS) const;
 
 private:
-  void printInstructionRow(bool PrintSchedClass, size_t PointId,
-                           llvm::raw_ostream &OS) const;
+  void printInstructionRowCsv(size_t PointId, llvm::raw_ostream &OS) const;
+
+  void printSchedClassClustersHtml(std::vector<size_t> PointIds,
+                                   llvm::raw_ostream &OS) const;
+  void printSchedClassDescHtml(const llvm::MCSchedClassDesc &SCDesc,
+                               llvm::raw_ostream &OS) const;
 
   // Builds a map of Sched Class -> indices of points that belong to the sched
   // class.

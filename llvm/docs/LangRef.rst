@@ -80,7 +80,7 @@ identifiers, for different purposes:
    characters may be escaped using ``"\xx"`` where ``xx`` is the ASCII
    code for the character in hexadecimal. In this way, any character can
    be used in a name value, even quotes themselves. The ``"\01"`` prefix
-   can be used on global variables to suppress mangling.
+   can be used on global values to suppress mangling.
 #. Unnamed values are represented as an unsigned numeric value with
    their prefix. For example, ``%12``, ``@2``, ``%44``.
 #. Constants, which are described in the section Constants_ below.
@@ -5314,10 +5314,10 @@ Irreducible loop header weights are typically based on profile data.
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 The experimental ``invariant.group`` metadata may be attached to 
-``load``/``store`` instructions.
+``load``/``store`` instructions referencing a single metadata with no entries.
 The existence of the ``invariant.group`` metadata on the instruction tells
 the optimizer that every ``load`` and ``store`` to the same pointer operand
-within the same invariant group can be assumed to load or store the same
+can be assumed to load or store the same
 value (but see the ``llvm.launder.invariant.group`` intrinsic which affects
 when two pointers are considered the same). Pointers returned by bitcast or
 getelementptr with only zero indices are considered the same.
@@ -5334,7 +5334,6 @@ Examples:
 
    %a = load i8, i8* %ptr, !invariant.group !0 ; Can assume that value under %ptr didn't change
    call void @foo(i8* %ptr)
-   %b = load i8, i8* %ptr, !invariant.group !1 ; Can't assume anything, because group changed
 
    %newPtr = call i8* @getPointer(i8* %ptr)
    %c = load i8, i8* %newPtr, !invariant.group !0 ; Can't assume anything, because we only have information about %ptr
@@ -5351,8 +5350,7 @@ Examples:
    declare i8* @getPointer(i8*)
    declare i8* @llvm.launder.invariant.group(i8*)
 
-   !0 = !{!"magic ptr"}
-   !1 = !{!"other ptr"}
+   !0 = !{}
 
 The invariant.group metadata must be dropped when replacing one pointer by
 another based on aliasing information. This is because invariant.group is tied
@@ -5701,6 +5699,310 @@ assembly writer or object file emitter.
 Each individual option is required to be either a valid option for the target's
 linker, or an option that is reserved by the target specific assembly writer or
 object file emitter. No other aspect of these options is defined by the IR.
+
+.. _summary:
+
+ThinLTO Summary
+===============
+
+Compiling with `ThinLTO <https://clang.llvm.org/docs/ThinLTO.html>`_
+causes the building of a compact summary of the module that is emitted into
+the bitcode. The summary is emitted into the LLVM assembly and identified
+in syntax by a caret ('``^``').
+
+*Note that temporarily the summary entries are skipped when parsing the
+assembly, although the parsing support is actively being implemented. The
+following describes when the summary entries will be parsed once implemented.*
+The summary will be parsed into a ModuleSummaryIndex object under the
+same conditions where summary index is currently built from bitcode.
+Specifically, tools that test the Thin Link portion of a ThinLTO compile
+(i.e. llvm-lto and llvm-lto2), or when parsing a combined index
+for a distributed ThinLTO backend via clang's "``-fthinlto-index=<>``" flag.
+Additionally, it will be parsed into a bitcode output, along with the Module
+IR, via the "``llvm-as``" tool. Tools that parse the Module IR for the purposes
+of optimization (e.g. "``clang -x ir``" and "``opt``"), will ignore the
+summary entries (just as they currently ignore summary entries in a bitcode
+input file).
+
+There are currently 3 types of summary entries in the LLVM assembly:
+:ref:`module paths<module_path_summary>`,
+:ref:`global values<gv_summary>`, and
+:ref:`type identifiers<typeid_summary>`.
+
+.. _module_path_summary:
+
+Module Path Summary Entry
+-------------------------
+
+Each module path summary entry lists a module containing global values included
+in the summary. For a single IR module there will be one such entry, but
+in a combined summary index produced during the thin link, there will be
+one module path entry per linked module with summary.
+
+Example:
+
+.. code-block:: llvm
+
+    ^0 = module: (path: "/path/to/file.o", hash: (2468601609, 1329373163, 1565878005, 638838075, 3148790418))
+
+The ``path`` field is a string path to the bitcode file, and the ``hash``
+field is the 160-bit SHA-1 hash of the IR bitcode contents, used for
+incremental builds and caching.
+
+.. _gv_summary:
+
+Global Value Summary Entry
+--------------------------
+
+Each global value summary entry corresponds to a global value defined or
+referenced by a summarized module.
+
+Example:
+
+.. code-block:: llvm
+
+    ^4 = gv: (name: "f"[, summaries: (Summary)[, (Summary)]*]?) ; guid = 14740650423002898831
+
+For declarations, there will not be a summary list. For definitions, a
+global value will contain a list of summaries, one per module containing
+a definition. There can be multiple entries in a combined summary index
+for symbols with weak linkage.
+
+Each ``Summary`` format will depend on whether the global value is a
+:ref:`function<function_summary>`, :ref:`variable<variable_summary>`, or
+:ref:`alias<alias_summary>`.
+
+.. _function_summary:
+
+Function Summary
+^^^^^^^^^^^^^^^^
+
+If the global value is a function, the ``Summary`` entry will look like:
+
+.. code-block:: llvm
+
+    function: (module: ^0, flags: (linkage: external, notEligibleToImport: 0, live: 0, dsoLocal: 0), insts: 2[, FuncFlags]?[, Calls]?[, TypeIdInfo]?[, Refs]?
+
+The ``module`` field includes the summary entry id for the module containing
+this definition, and the ``flags`` field contains information such as
+the linkage type, a flag indicating whether it is legal to import the
+definition, whether it is globally live and whether the linker resolved it
+to a local definition (the latter two are populated during the thin link).
+The ``insts`` field contains the number of IR instructions in the function.
+Finally, there are several optional fields: :ref:`FuncFlags<funcflags_summary>`,
+:ref:`Calls<calls_summary>`, :ref:`TypeIdInfo<typeidinfo_summary>`,
+:ref:`Refs<refs_summary>`.
+
+.. _variable_summary:
+
+Global Variable Summary
+^^^^^^^^^^^^^^^^^^^^^^^
+
+If the global value is a variable, the ``Summary`` entry will look like:
+
+.. code-block:: llvm
+
+    variable: (module: ^0, flags: (linkage: external, notEligibleToImport: 0, live: 0, dsoLocal: 0)[, Refs]?
+
+The variable entry contains a subset of the fields in a
+:ref:`function summary <function_summary>`, see the descriptions there.
+
+.. _alias_summary:
+
+Alias Summary
+^^^^^^^^^^^^^
+
+If the global value is an alias, the ``Summary`` entry will look like:
+
+.. code-block:: llvm
+
+    alias: (module: ^0, flags: (linkage: external, notEligibleToImport: 0, live: 0, dsoLocal: 0), aliasee: ^2)
+
+The ``module`` and ``flags`` fields are as described for a
+:ref:`function summary <function_summary>`. The ``aliasee`` field
+contains a reference to the global value summary entry of the aliasee.
+
+.. _funcflags_summary:
+
+Function Flags
+^^^^^^^^^^^^^^
+
+The optional ``FuncFlags`` field looks like:
+
+.. code-block:: llvm
+
+    funcFlags: (readNone: 0, readOnly: 0, noRecurse: 0, returnDoesNotAlias: 0)
+
+If unspecified, flags are assumed to hold the conservative ``false`` value of
+``0``.
+
+.. _calls_summary:
+
+Calls
+^^^^^
+
+The optional ``Calls`` field looks like:
+
+.. code-block:: llvm
+
+    calls: ((Callee)[, (Callee)]*)
+
+where each ``Callee`` looks like:
+
+.. code-block:: llvm
+
+    callee: ^1[, hotness: None]?[, relbf: 0]?
+
+The ``callee`` refers to the summary entry id of the callee. At most one
+of ``hotness`` (which can take the values ``Unknown``, ``Cold``, ``None``,
+``Hot``, and ``Critical``), and ``relbf`` (which holds the integer
+branch frequency relative to the entry frequency, scaled down by 2^8)
+may be specified. The defaults are ``Unknown`` and ``0``, respectively.
+
+.. _refs_summary:
+
+Refs
+^^^^
+
+The optional ``Refs`` field looks like:
+
+.. code-block:: llvm
+
+    refs: ((Ref)[, (Ref)]*)
+
+where each ``Ref`` contains a reference to the summary id of the referenced
+value (e.g. ``^1``).
+
+.. _typeidinfo_summary:
+
+TypeIdInfo
+^^^^^^^^^^
+
+The optional ``TypeIdInfo`` field, used for
+`Control Flow Integrity <http://clang.llvm.org/docs/ControlFlowIntegrity.html>`_,
+looks like:
+
+.. code-block:: llvm
+
+    typeIdInfo: [(TypeTests)]?[, (TypeTestAssumeVCalls)]?[, (TypeCheckedLoadVCalls)]?[, (TypeTestAssumeConstVCalls)]?[, (TypeCheckedLoadConstVCalls)]?
+
+These optional fields have the following forms:
+
+TypeTests
+"""""""""
+
+.. code-block:: llvm
+
+    typeTests: (TypeIdRef[, TypeIdRef]*)
+
+Where each ``TypeIdRef`` refers to a :ref:`type id<typeid_summary>`
+by summary id or ``GUID``.
+
+TypeTestAssumeVCalls
+""""""""""""""""""""
+
+.. code-block:: llvm
+
+    typeTestAssumeVCalls: (VFuncId[, VFuncId]*)
+
+Where each VFuncId has the format:
+
+.. code-block:: llvm
+
+    vFuncId: (TypeIdRef, offset: 16)
+
+Where each ``TypeIdRef`` refers to a :ref:`type id<typeid_summary>`
+by summary id or ``GUID`` preceeded by a ``guid:`` tag.
+
+TypeCheckedLoadVCalls
+"""""""""""""""""""""
+
+.. code-block:: llvm
+
+    typeCheckedLoadVCalls: (VFuncId[, VFuncId]*)
+
+Where each VFuncId has the format described for ``TypeTestAssumeVCalls``.
+
+TypeTestAssumeConstVCalls
+"""""""""""""""""""""""""
+
+.. code-block:: llvm
+
+    typeTestAssumeConstVCalls: (ConstVCall[, ConstVCall]*)
+
+Where each ConstVCall has the format:
+
+.. code-block:: llvm
+
+    VFuncId, args: (Arg[, Arg]*)
+
+and where each VFuncId has the format described for ``TypeTestAssumeVCalls``,
+and each Arg is an integer argument number.
+
+TypeCheckedLoadConstVCalls
+""""""""""""""""""""""""""
+
+.. code-block:: llvm
+
+    typeCheckedLoadConstVCalls: (ConstVCall[, ConstVCall]*)
+
+Where each ConstVCall has the format described for
+``TypeTestAssumeConstVCalls``.
+
+.. _typeid_summary:
+
+Type ID Summary Entry
+---------------------
+
+Each type id summary entry corresponds to a type identifier resolution
+which is generated during the LTO link portion of the compile when building
+with `Control Flow Integrity <http://clang.llvm.org/docs/ControlFlowIntegrity.html>`_,
+so these are only present in a combined summary index.
+
+Example:
+
+.. code-block:: llvm
+
+    ^4 = typeid: (name: "_ZTS1A", summary: (typeTestRes: (kind: allOnes, sizeM1BitWidth: 7[, alignLog2: 0]?[, sizeM1: 0]?[, bitMask: 0]?[, inlineBits: 0]?)[, WpdResolutions]?)) ; guid = 7004155349499253778
+
+The ``typeTestRes`` gives the type test resolution ``kind`` (which may
+be ``unsat``, ``byteArray``, ``inline``, ``single``, or ``allOnes``), and
+the ``size-1`` bit width. It is followed by optional flags, which default to 0,
+and an optional WpdResolutions (whole program devirtualization resolution)
+field that looks like:
+
+.. code-block:: llvm
+
+    wpdResolutions: ((offset: 0, WpdRes)[, (offset: 1, WpdRes)]*
+
+where each entry is a mapping from the given byte offset to the whole-program
+devirtualization resolution WpdRes, that has one of the following formats:
+
+.. code-block:: llvm
+
+    wpdRes: (kind: branchFunnel)
+    wpdRes: (kind: singleImpl, singleImplName: "_ZN1A1nEi")
+    wpdRes: (kind: indir)
+
+Additionally, each wpdRes has an optional ``resByArg`` field, which
+describes the resolutions for calls with all constant integer arguments:
+
+.. code-block:: llvm
+
+    resByArg: (ResByArg[, ResByArg]*)
+
+where ResByArg is:
+
+.. code-block:: llvm
+
+    args: (Arg[, Arg]*), byArg: (kind: UniformRetVal[, info: 0][, byte: 0][, bit: 0])
+
+Where the ``kind`` can be ``Indir``, ``UniformRetVal``, ``UniqueRetVal``
+or ``VirtualConstProp``. The ``info`` field is only used if the kind
+is ``UniformRetVal`` (indicates the uniform return value), or
+``UniqueRetVal`` (holds the return value associated with the unique vtable
+(0 or 1)). The ``byte`` and ``bit`` fields are only used if the target does
+not support the use of absolute symbols to store constants.
 
 .. _intrinsicglobalvariables:
 
@@ -7637,7 +7939,8 @@ referenced by the load contains the same value at all points in the
 program where the memory location is known to be dereferenceable.
 
 The optional ``!invariant.group`` metadata must reference a single metadata name
- ``<index>`` corresponding to a metadata node. See ``invariant.group`` metadata.
+ ``<index>`` corresponding to a metadata node with no entries.
+ See ``invariant.group`` metadata.
 
 The optional ``!nonnull`` metadata must reference a single
 metadata name ``<index>`` corresponding to a metadata node with no

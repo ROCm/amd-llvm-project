@@ -8,10 +8,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "lldb/Host/HostInfo.h"
-#include "lldb/Host/macosx/HostInfoMacOSX.h"
 #include "lldb/lldb-defines.h"
 #include "TestingSupport/TestUtilities.h"
 #include "gtest/gtest.h"
+
+#ifdef __APPLE__
+#include "lldb/Host/macosx/HostInfoMacOSX.h"
+#endif
 
 using namespace lldb_private;
 using namespace llvm;
@@ -47,6 +50,8 @@ TEST_F(HostInfoTest, GetAugmentedArchSpec) {
 }
 
 
+#ifdef __APPLE__
+
 struct HostInfoMacOSXTest : public HostInfoMacOSX {
   static std::string ComputeClangDir(std::string lldb_shlib_path,
                                      bool verify = false) {
@@ -58,7 +63,6 @@ struct HostInfoMacOSXTest : public HostInfoMacOSX {
 };
 
 
-#ifdef __APPLE__
 TEST_F(HostInfoTest, MacOSX) {
   // This returns whatever the POSIX fallback returns.
   std::string posix = "/usr/lib/liblldb.dylib";
@@ -85,6 +89,14 @@ TEST_F(HostInfoTest, MacOSX) {
       "/Applications/Xcode.app/Contents/Developer/Toolchains/"
       "Swift-4.1-development-snapshot.xctoolchain/usr/lib/swift/clang";
   EXPECT_EQ(HostInfoMacOSXTest::ComputeClangDir(toolchain), toolchain_clang);
+
+  std::string cltools = "/Library/Developer/CommandLineTools/Library/"
+                        "PrivateFrameworks/LLDB.framework";
+  std::string cltools_clang =
+      "/Library/Developer/CommandLineTools/Library/PrivateFrameworks/"
+      "LLDB.framework/Resources/Clang";
+  EXPECT_EQ(HostInfoMacOSXTest::ComputeClangDir(cltools), cltools_clang);
+
 
   // Test that a bogus path is detected.
   EXPECT_NE(HostInfoMacOSXTest::ComputeClangDir(GetInputFilePath(xcode), true),

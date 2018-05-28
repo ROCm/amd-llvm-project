@@ -92,7 +92,7 @@ static bool isSectionPrefix(StringRef Prefix, StringRef Name) {
   return Name.startswith(Prefix) || Name == Prefix.drop_back();
 }
 
-StringRef elf::getOutputSectionName(InputSectionBase *S) {
+StringRef elf::getOutputSectionName(const InputSectionBase *S) {
   if (Config->Relocatable)
     return S->Name;
 
@@ -663,6 +663,9 @@ static bool isRelroSection(const OutputSection *Sec) {
   if (InX::Got && Sec == InX::Got->getParent())
     return true;
 
+  if (Sec->Name.equals(".toc"))
+    return true;
+
   // .got.plt contains pointers to external function symbols. They are
   // by default resolved lazily, so we usually cannot put it into RELRO.
   // However, if "-z now" is given, the lazy symbol resolution is
@@ -707,8 +710,9 @@ enum RankFlags {
   RF_BSS = 1 << 8,
   RF_NOTE = 1 << 7,
   RF_PPC_NOT_TOCBSS = 1 << 6,
-  RF_PPC_TOCL = 1 << 4,
-  RF_PPC_TOC = 1 << 3,
+  RF_PPC_TOCL = 1 << 5,
+  RF_PPC_TOC = 1 << 4,
+  RF_PPC_GOT = 1 << 3,
   RF_PPC_BRANCH_LT = 1 << 2,
   RF_MIPS_GPREL = 1 << 1,
   RF_MIPS_NOT_GOT = 1 << 0
@@ -826,6 +830,9 @@ static unsigned getSectionRank(const OutputSection *Sec) {
 
     if (Name == ".toc")
       Rank |= RF_PPC_TOC;
+
+    if (Name == ".got")
+      Rank |= RF_PPC_GOT;
 
     if (Name == ".branch_lt")
       Rank |= RF_PPC_BRANCH_LT;
@@ -1702,17 +1709,29 @@ template <class ELFT> void Writer<ELFT>::finalizeSections() {
 // The linker is expected to define SECNAME_start and SECNAME_end
 // symbols for a few sections. This function defines them.
 template <class ELFT> void Writer<ELFT>::addStartEndSymbols() {
-  auto Define = [&](StringRef Start, StringRef End, OutputSection *OS) {
-    // These symbols resolve to the image base if the section does not exist.
-    // A special value -1 indicates end of the section.
+  // If a section does not exist, there's ambiguity as to how we
+  // define _start and _end symbols for an init/fini section. Since
+  // the loader assume that the symbols are always defined, we need to
+  // always define them. But what value? The loader iterates over all
+  // pointers between _start and _end to run global ctors/dtors, so if
+  // the section is empty, their symbol values don't actually matter
+  // as long as _start and _end point to the same location.
+  //
+  // That said, we don't want to set the symbols to 0 (which is
+  // probably the simplest value) because that could cause some
+  // program to fail to link due to relocation overflow, if their
+  // program text is above 2 GiB. We use the address of the .text
+  // section instead to prevent that failure.
+  OutputSection *Default = findSection(".text");
+  if (!Default)
+    Default = Out::ElfHeader;
+  auto Define = [=](StringRef Start, StringRef End, OutputSection *OS) {
     if (OS) {
       addOptionalRegular(Start, OS, 0);
       addOptionalRegular(End, OS, -1);
     } else {
-      if (Config->Pic)
-        OS = Out::ElfHeader;
-      addOptionalRegular(Start, OS, 0);
-      addOptionalRegular(End, OS, 0);
+      addOptionalRegular(Start, Default, 0);
+      addOptionalRegular(End, Default, 0);
     }
   };
 

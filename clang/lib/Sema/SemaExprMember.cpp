@@ -1563,9 +1563,6 @@ static ExprResult LookupMemberExpr(Sema &S, LookupResult &R,
         }
 
         if (ObjCMethodDecl *OMD = dyn_cast<ObjCMethodDecl>(PMDecl)) {
-          // Check the use of this method.
-          if (S.DiagnoseUseOfDecl(OMD, MemberLoc))
-            return ExprError();
           Selector SetterSel =
             SelectorTable::constructSetterSelector(S.PP.getIdentifierTable(),
                                                    S.PP.getSelectorTable(),
