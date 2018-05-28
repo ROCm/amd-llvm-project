@@ -962,21 +962,6 @@ class POOL32A_DVPEVP_FM_MMR6<string instr_asm, bits<10> funct>
   let Inst{5-0}   = 0b111100;
 }
 
-class POOL32B_LWP_SWP_FM_MMR6<bits<4> funct> : MipsR6Inst {
-  bits<5> rd;
-  bits<21> addr;
-  bits<5> base = addr{20-16};
-  bits<12> offset = addr{11-0};
-
-  bits<32> Inst;
-
-  let Inst{31-26} = 0x8;
-  let Inst{25-21} = rd;
-  let Inst{20-16} = base;
-  let Inst{15-12} = funct;
-  let Inst{11-0}  = offset;
-}
-
 class CMP_BRANCH_OFF21_FM_MMR6<string opstr, bits<6> funct> : MipsR6Inst {
   bits<5> rs;
   bits<21> offset;
@@ -1031,4 +1016,22 @@ class POOL32B_LDWC2_SDWC2_FM_MMR6<string instr_asm, bits<4> funct>
   let Inst{15-12} = funct;
   let Inst{11}    = 0;
   let Inst{10-0}  = offset;
+}
+
+class POOL32C_LL_E_SC_E_FM_MMR6<string instr_asm, bits<4> majorFunc,
+                                bits<3> minorFunc>
+    : MMR6Arch<instr_asm>, MipsR6Inst {
+  bits<5> rt;
+  bits<21> addr;
+  bits<5> base = addr{20-16};
+  bits<9> offset = addr{8-0};
+
+  bits<32> Inst;
+
+  let Inst{31-26} = 0b011000;
+  let Inst{25-21} = rt;
+  let Inst{20-16} = base;
+  let Inst{15-12} = majorFunc;
+  let Inst{11-9}  = minorFunc;
+  let Inst{8-0}   = offset;
 }

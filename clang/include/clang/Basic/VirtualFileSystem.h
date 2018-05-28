@@ -304,15 +304,20 @@ public:
   directory_iterator dir_begin(const Twine &Dir, std::error_code &EC) override;
   llvm::ErrorOr<std::string> getCurrentWorkingDirectory() const override;
   std::error_code setCurrentWorkingDirectory(const Twine &Path) override;
+  std::error_code getRealPath(const Twine &Path,
+                              SmallVectorImpl<char> &Output) const override;
 
   using iterator = FileSystemList::reverse_iterator;
-  
+  using const_iterator = FileSystemList::const_reverse_iterator;
+
   /// Get an iterator pointing to the most recently added file system.
   iterator overlays_begin() { return FSList.rbegin(); }
+  const_iterator overlays_begin() const { return FSList.rbegin(); }
 
   /// Get an iterator pointing one-past the least recently added file
   /// system.
   iterator overlays_end() { return FSList.rend(); }
+  const_iterator overlays_end() const { return FSList.rend(); }
 };
 
 namespace detail {
@@ -369,6 +374,14 @@ public:
   llvm::ErrorOr<std::string> getCurrentWorkingDirectory() const override {
     return WorkingDirectory;
   }
+  /// Canonicalizes \p Path by combining with the current working
+  /// directory and normalizing the path (e.g. remove dots). If the current
+  /// working directory is not set, this returns errc::operation_not_permitted.
+  ///
+  /// This doesn't resolve symlinks as they are not supported in in-memory file
+  /// system.
+  std::error_code getRealPath(const Twine &Path,
+                              SmallVectorImpl<char> &Output) const override;
 
   std::error_code setCurrentWorkingDirectory(const Twine &Path) override;
 };

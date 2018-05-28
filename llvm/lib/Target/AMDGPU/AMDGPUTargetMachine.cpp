@@ -110,12 +110,6 @@ static cl::opt<bool> EnableAMDGPUAliasAnalysis("enable-amdgpu-aa", cl::Hidden,
   cl::desc("Enable AMDGPU Alias Analysis"),
   cl::init(true));
 
-// Option to enable new waitcnt insertion pass.
-static cl::opt<bool> EnableSIInsertWaitcntsPass(
-  "enable-si-insert-waitcnts",
-  cl::desc("Use new waitcnt insertion pass"),
-  cl::init(true));
-
 // Option to run late CFG structurizer
 static cl::opt<bool, true> LateCFGStructurize(
   "amdgpu-late-structurize",
@@ -161,6 +155,7 @@ extern "C" void LLVMInitializeAMDGPUTarget() {
   initializeAMDGPUAnnotateKernelFeaturesPass(*PR);
   initializeAMDGPUAnnotateUniformValuesPass(*PR);
   initializeAMDGPUArgumentUsageInfoPass(*PR);
+  initializeAMDGPULowerKernelAttributesPass(*PR);
   initializeAMDGPULowerIntrinsicsPass(*PR);
   initializeAMDGPUOpenCLEnqueuedBlockLoweringPass(*PR);
   initializeAMDGPUPromoteAllocaPass(*PR);
@@ -403,6 +398,10 @@ void AMDGPUTargetMachine::adjustPassManager(PassManagerBuilder &Builder) {
       // Add infer address spaces pass to the opt pipeline after inlining
       // but before SROA to increase SROA opportunities.
       PM.add(createInferAddressSpacesPass());
+
+      // This should run after inlining to have any chance of doing anything,
+      // and before other cleanup optimizations.
+      PM.add(createAMDGPULowerKernelAttributesPass());
   });
 }
 

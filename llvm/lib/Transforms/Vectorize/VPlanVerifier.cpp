@@ -26,7 +26,8 @@ static cl::opt<bool> EnableHCFGVerifier("vplan-verify-hcfg", cl::init(false),
 
 /// Utility function that checks whether \p VPBlockVec has duplicate
 /// VPBlockBases.
-static bool hasDuplicates(const SmallVectorImpl<VPBlockBase *> &VPBlockVec) {
+LLVM_ATTRIBUTE_USED static bool
+hasDuplicates(const SmallVectorImpl<VPBlockBase *> &VPBlockVec) {
   SmallDenseSet<const VPBlockBase *, 8> VPBlockSet;
   for (const auto *Block : VPBlockVec) {
     if (VPBlockSet.count(Block))
@@ -119,7 +120,7 @@ void VPlanVerifier::verifyHierarchicalCFG(
   if (!EnableHCFGVerifier)
     return;
 
-  DEBUG(dbgs() << "Verifying VPlan H-CFG.\n");
+  LLVM_DEBUG(dbgs() << "Verifying VPlan H-CFG.\n");
   assert(!TopRegion->getParent() && "VPlan Top Region should have no parent.");
   verifyRegionRec(TopRegion);
 }

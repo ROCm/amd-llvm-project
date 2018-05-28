@@ -381,6 +381,15 @@ OverlayFileSystem::setCurrentWorkingDirectory(const Twine &Path) {
   return {};
 }
 
+std::error_code
+OverlayFileSystem::getRealPath(const Twine &Path,
+                               SmallVectorImpl<char> &Output) const {
+  for (auto &FS : FSList)
+    if (FS->exists(Path))
+      return FS->getRealPath(Path, Output);
+  return errc::no_such_file_or_directory;
+}
+
 clang::vfs::detail::DirIterImpl::~DirIterImpl() = default;
 
 namespace {
@@ -776,6 +785,19 @@ std::error_code InMemoryFileSystem::setCurrentWorkingDirectory(const Twine &P) {
 
   if (!Path.empty())
     WorkingDirectory = Path.str();
+  return {};
+}
+
+std::error_code
+InMemoryFileSystem::getRealPath(const Twine &Path,
+                                SmallVectorImpl<char> &Output) const {
+  auto CWD = getCurrentWorkingDirectory();
+  if (!CWD || CWD->empty())
+    return errc::operation_not_permitted;
+  Path.toVector(Output);
+  if (auto EC = makeAbsolute(Output))
+    return EC;
+  llvm::sys::path::remove_dots(Output, /*remove_dot_dot=*/true);
   return {};
 }
 

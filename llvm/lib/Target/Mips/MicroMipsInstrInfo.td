@@ -238,35 +238,23 @@ MicroMipsInst16<(outs movep_regpair:$dst_regs), (ins RO:$rs, RO:$rt),
                  !strconcat(opstr, "\t$dst_regs, $rs, $rt"), [],
                  NoItinerary, FrmR> {
   let isReMaterializable = 1;
-}
-
-/// A register pair used by load/store pair instructions.
-def RegPairAsmOperand : AsmOperandClass {
-  let Name = "RegPair";
-  let ParserMethod = "parseRegisterPair";
-  let PredicateMethod = "isRegPair";
-}
-
-def regpair : Operand<i32> {
-  let EncoderMethod = "getRegisterPairOpValue";
-  let ParserMatchClass = RegPairAsmOperand;
-  let PrintMethod = "printRegisterPair";
-  let DecoderMethod = "DecodeRegPairOperand";
-  let MIOperandInfo = (ops ptr_rc, ptr_rc);
+  let isMoveReg = 1;
 }
 
 class StorePairMM<string opstr, ComplexPattern Addr = addr>
-    :  InstSE<(outs), (ins regpair:$rt, mem_simm12:$addr),
+    :  InstSE<(outs), (ins GPR32Opnd:$rt, GPR32Opnd:$rt2, mem_simm12:$addr),
          !strconcat(opstr, "\t$rt, $addr"), [], II_SWP, FrmI, opstr> {
   let DecoderMethod = "DecodeMemMMImm12";
   let mayStore = 1;
+  let AsmMatchConverter = "ConvertXWPOperands";
 }
 
 class LoadPairMM<string opstr, ComplexPattern Addr = addr>
-    : InstSE<(outs regpair:$rt), (ins mem_simm12:$addr),
+    : InstSE<(outs GPR32Opnd:$rt, GPR32Opnd:$rt2), (ins mem_simm12:$addr),
           !strconcat(opstr, "\t$rt, $addr"), [], II_LWP, FrmI, opstr> {
   let DecoderMethod = "DecodeMemMMImm12";
   let mayLoad = 1;
+  let AsmMatchConverter = "ConvertXWPOperands";
 }
 
 class LLBaseMM<string opstr, RegisterOperand RO> :
@@ -415,12 +403,14 @@ class MoveFromHILOMM<string opstr, RegisterOperand RO, Register UseReg> :
   [], II_MFHI_MFLO, FrmR> {
   let Uses = [UseReg];
   let hasSideEffects = 0;
+  let isMoveReg = 1;
 }
 
 class MoveMM16<string opstr, RegisterOperand RO>
     :  MicroMipsInst16<(outs RO:$rd), (ins RO:$rs),
                        !strconcat(opstr, "\t$rd, $rs"), [], II_MOVE, FrmR> {
   let isReMaterializable = 1;
+  let isMoveReg = 1;
 }
 
 class LoadImmMM16<string opstr, Operand Od, RegisterOperand RO> :
@@ -1041,27 +1031,25 @@ let DecoderNamespace = "MicroMips" in {
                  TEQI_FM_MM<0x0a>, ISA_MICROMIPS32_NOT_MIPS32R6;
   def TNEI_MM  : MMRel, TEQI_FT<"tnei", GPR32Opnd, II_TNEI>, TEQI_FM_MM<0x0c>,
                  ISA_MICROMIPS32_NOT_MIPS32R6;
-}
-let DecoderNamespace = "MicroMips", Predicates = [InMicroMips] in {
+
   /// Load-linked, Store-conditional
-  def LL_MM : LLBaseMM<"ll", GPR32Opnd>, LL_FM_MM<0x3>;
-  def SC_MM : SCBaseMM<"sc", GPR32Opnd>, LL_FM_MM<0xb>;
-}
-let DecoderNamespace = "MicroMips" in {
+  def LL_MM : LLBaseMM<"ll", GPR32Opnd>, LL_FM_MM<0x3>,
+              ISA_MICROMIPS32_NOT_MIPS32R6;
+  def SC_MM : SCBaseMM<"sc", GPR32Opnd>, LL_FM_MM<0xb>,
+              ISA_MICROMIPS32_NOT_MIPS32R6;
+
   def LLE_MM : MMRel, LLEBaseMM<"lle", GPR32Opnd>, LLE_FM_MM<0x6>,
                ISA_MICROMIPS, ASE_EVA;
   def SCE_MM : MMRel, SCEBaseMM<"sce", GPR32Opnd>, LLE_FM_MM<0xA>,
                ISA_MICROMIPS, ASE_EVA;
-}
-let DecoderNamespace = "MicroMips", Predicates = [InMicroMips] in {
+
   let DecoderMethod = "DecodeCacheOpMM" in {
-  def CACHE_MM : MMRel, CacheOp<"cache", mem_mm_12, II_CACHE>,
-                 CACHE_PREF_FM_MM<0x08, 0x6>;
-  def PREF_MM  : MMRel, CacheOp<"pref", mem_mm_12, II_PREF>,
-                 CACHE_PREF_FM_MM<0x18, 0x2>;
+    def CACHE_MM : MMRel, CacheOp<"cache", mem_mm_12, II_CACHE>,
+                   CACHE_PREF_FM_MM<0x08, 0x6>, ISA_MICROMIPS32_NOT_MIPS32R6;
+    def PREF_MM  : MMRel, CacheOp<"pref", mem_mm_12, II_PREF>,
+                   CACHE_PREF_FM_MM<0x18, 0x2>, ISA_MICROMIPS32_NOT_MIPS32R6;
   }
-}
-let DecoderNamespace = "MicroMips" in {
+
   let DecoderMethod = "DecodePrefeOpMM" in {
     def PREFE_MM  : MMRel, CacheOp<"prefe", mem_mm_9, II_PREFE>,
                     CACHE_PREFE_FM_MM<0x18, 0x2>, ISA_MICROMIPS, ASE_EVA;

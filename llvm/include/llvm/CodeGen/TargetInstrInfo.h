@@ -845,6 +845,14 @@ public:
     llvm_unreachable("Target didn't implement TargetInstrInfo::copyPhysReg!");
   }
 
+  /// If the specific machine instruction is a instruction that moves/copies
+  /// value from one register to another register return true along with
+  /// @Source machine operand and @Destination machine operand.
+  virtual bool isCopyInstr(const MachineInstr &MI, MachineOperand &Source,
+                           MachineOperand &Destination) const {
+    return false;
+  }
+
   /// Store the specified register of the given register class to the specified
   /// stack frame index. The store instruction is to be added to the given
   /// machine basic block before the specified machine instruction. If isKill
@@ -1639,10 +1647,12 @@ public:
 
   /// Represents how an instruction should be mapped by the outliner.
   /// \p Legal instructions are those which are safe to outline.
+  /// \p LegalTerminator instructions are safe to outline, but only as the
+  /// last instruction in a sequence.
   /// \p Illegal instructions are those which cannot be outlined.
   /// \p Invisible instructions are instructions which can be outlined, but
   /// shouldn't actually impact the outlining result.
-  enum MachineOutlinerInstrType { Legal, Illegal, Invisible };
+  enum MachineOutlinerInstrType { Legal, LegalTerminator, Illegal, Invisible };
 
   /// Returns how or if \p MI should be outlined.
   virtual MachineOutlinerInstrType

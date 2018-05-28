@@ -2112,29 +2112,23 @@ void Scop::addUserContext() {
   if (UserContextStr.empty())
     return;
 
-  isl_set *UserContext =
-      isl_set_read_from_str(getIslCtx().get(), UserContextStr.c_str());
-  isl_space *Space = getParamSpace().release();
-  if (isl_space_dim(Space, isl_dim_param) !=
-      isl_set_dim(UserContext, isl_dim_param)) {
-    auto SpaceStr = isl_space_to_str(Space);
+  isl::set UserContext = isl::set(getIslCtx(), UserContextStr.c_str());
+  isl::space Space = getParamSpace();
+  if (Space.dim(isl::dim::param) != UserContext.dim(isl::dim::param)) {
+    std::string SpaceStr = Space.to_str();
     errs() << "Error: the context provided in -polly-context has not the same "
            << "number of dimensions than the computed context. Due to this "
            << "mismatch, the -polly-context option is ignored. Please provide "
            << "the context in the parameter space: " << SpaceStr << ".\n";
-    free(SpaceStr);
-    isl_set_free(UserContext);
-    isl_space_free(Space);
     return;
   }
 
-  for (unsigned i = 0; i < isl_space_dim(Space, isl_dim_param); i++) {
+  for (unsigned i = 0; i < Space.dim(isl::dim::param); i++) {
     std::string NameContext = Context.get_dim_name(isl::dim::param, i);
-    std::string NameUserContext =
-        isl_set_get_dim_name(UserContext, isl_dim_param, i);
+    std::string NameUserContext = UserContext.get_dim_name(isl::dim::param, i);
 
     if (NameContext != NameUserContext) {
-      auto SpaceStr = isl_space_to_str(Space);
+      std::string SpaceStr = Space.to_str();
       errs() << "Error: the name of dimension " << i
              << " provided in -polly-context "
              << "is '" << NameUserContext << "', but the name in the computed "
@@ -2142,19 +2136,14 @@ void Scop::addUserContext() {
              << "'. Due to this name mismatch, "
              << "the -polly-context option is ignored. Please provide "
              << "the context in the parameter space: " << SpaceStr << ".\n";
-      free(SpaceStr);
-      isl_set_free(UserContext);
-      isl_space_free(Space);
       return;
     }
 
-    UserContext =
-        isl_set_set_dim_id(UserContext, isl_dim_param, i,
-                           isl_space_get_dim_id(Space, isl_dim_param, i));
+    UserContext = UserContext.set_dim_id(isl::dim::param, i,
+                                         Space.get_dim_id(isl::dim::param, i));
   }
 
-  Context = Context.intersect(isl::manage(UserContext));
-  isl_space_free(Space);
+  Context = Context.intersect(UserContext);
 }
 
 void Scop::buildInvariantEquivalenceClasses() {
@@ -2957,19 +2946,19 @@ bool Scop::propagateDomainConstraints(
 ///             [i0, i1, i2, i3] -> [i0, i1, i2 + 1, i3]
 ///
 /// if @p Dim is 2 and @p SetSpace has 4 dimensions.
-static __isl_give isl_map *
-createNextIterationMap(__isl_take isl_space *SetSpace, unsigned Dim) {
-  auto *MapSpace = isl_space_map_from_set(SetSpace);
-  auto *NextIterationMap = isl_map_universe(isl_space_copy(MapSpace));
-  for (unsigned u = 0; u < isl_map_dim(NextIterationMap, isl_dim_in); u++)
+static isl::map createNextIterationMap(isl::space SetSpace, unsigned Dim) {
+  isl::space MapSpace = SetSpace.map_from_set();
+  isl::map NextIterationMap = isl::map::universe(MapSpace);
+  for (unsigned u = 0; u < NextIterationMap.dim(isl::dim::in); u++)
     if (u != Dim)
       NextIterationMap =
-          isl_map_equate(NextIterationMap, isl_dim_in, u, isl_dim_out, u);
-  auto *C = isl_constraint_alloc_equality(isl_local_space_from_space(MapSpace));
-  C = isl_constraint_set_constant_si(C, 1);
-  C = isl_constraint_set_coefficient_si(C, isl_dim_in, Dim, 1);
-  C = isl_constraint_set_coefficient_si(C, isl_dim_out, Dim, -1);
-  NextIterationMap = isl_map_add_constraint(NextIterationMap, C);
+          NextIterationMap.equate(isl::dim::in, u, isl::dim::out, u);
+  isl::constraint C =
+      isl::constraint::alloc_equality(isl::local_space(MapSpace));
+  C = C.set_constant_si(1);
+  C = C.set_coefficient_si(isl::dim::in, Dim, 1);
+  C = C.set_coefficient_si(isl::dim::out, Dim, -1);
+  NextIterationMap = NextIterationMap.add_constraint(C);
   return NextIterationMap;
 }
 
@@ -2982,8 +2971,8 @@ bool Scop::addLoopBoundsToHeaderDomain(
   assert(DomainMap.count(HeaderBB));
   isl::set &HeaderBBDom = DomainMap[HeaderBB];
 
-  isl::map NextIterationMap = isl::manage(
-      createNextIterationMap(HeaderBBDom.get_space().release(), LoopDepth));
+  isl::map NextIterationMap =
+      createNextIterationMap(HeaderBBDom.get_space(), LoopDepth);
 
   isl::set UnionBackedgeCondition = HeaderBBDom.empty(HeaderBBDom.get_space());
 
