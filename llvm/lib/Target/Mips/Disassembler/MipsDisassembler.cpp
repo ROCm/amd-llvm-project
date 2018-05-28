@@ -1860,7 +1860,7 @@ static DecodeStatus DecodeMemMMImm9(MCInst &Inst,
   Reg = getReg(Decoder, Mips::GPR32RegClassID, Reg);
   Base = getReg(Decoder, Mips::GPR32RegClassID, Base);
 
-  if (Inst.getOpcode() == Mips::SCE_MM)
+  if (Inst.getOpcode() == Mips::SCE_MM || Inst.getOpcode() == Mips::SC_MMR6)
     Inst.addOperand(MCOperand::createReg(Reg));
 
   Inst.addOperand(MCOperand::createReg(Reg));
@@ -1895,8 +1895,7 @@ static DecodeStatus DecodeMemMMImm12(MCInst &Inst,
     LLVM_FALLTHROUGH;
   default:
     Inst.addOperand(MCOperand::createReg(Reg));
-    if (Inst.getOpcode() == Mips::LWP_MM || Inst.getOpcode() == Mips::SWP_MM ||
-        Inst.getOpcode() == Mips::LWP_MMR6 || Inst.getOpcode() == Mips::SWP_MMR6)
+    if (Inst.getOpcode() == Mips::LWP_MM || Inst.getOpcode() == Mips::SWP_MM)
       Inst.addOperand(MCOperand::createReg(Reg+1));
 
     Inst.addOperand(MCOperand::createReg(Base));

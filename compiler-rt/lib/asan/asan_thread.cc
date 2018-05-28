@@ -303,8 +303,13 @@ void AsanThread::SetThreadStackAndTls(const InitOptions *options) {
 
 void AsanThread::ClearShadowForThreadStackAndTLS() {
   PoisonShadow(stack_bottom_, stack_top_ - stack_bottom_, 0);
-  if (tls_begin_ != tls_end_)
-    PoisonShadow(tls_begin_, tls_end_ - tls_begin_, 0);
+  if (tls_begin_ != tls_end_) {
+    uptr tls_begin_aligned = RoundDownTo(tls_begin_, SHADOW_GRANULARITY);
+    uptr tls_end_aligned = RoundUpTo(tls_end_, SHADOW_GRANULARITY);
+    FastPoisonShadowPartialRightRedzone(tls_begin_aligned,
+                                        tls_end_ - tls_begin_aligned,
+                                        tls_end_aligned - tls_end_, 0);
+  }
 }
 
 bool AsanThread::GetStackFrameAccessByAddr(uptr addr,
@@ -389,6 +394,9 @@ static bool ThreadStackContainsAddress(ThreadContextBase *tctx_base,
 }
 
 AsanThread *GetCurrentThread() {
+  if (SANITIZER_RTEMS && !asan_inited)
+    return nullptr;
+
   AsanThreadContext *context =
       reinterpret_cast<AsanThreadContext *>(AsanTSDGet());
   if (!context) {
