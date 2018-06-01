@@ -2588,27 +2588,25 @@ llvm::Constant *CodeGenModule::GetOrCreateLLVMFunction(
       setDSOLocal(Entry);
     }
 
-
     // Relax the rule for C++AMP
     if (!LangOpts.CPlusPlusAMP) {
 
-      // If there are two attempts to define the same mangled name, issue an
-      // error.
-      if (IsForDefinition && !Entry->isDeclaration()) {
-        GlobalDecl OtherGD;
-        // Check that GD is not yet in DiagnosedConflictingDefinitions is required
-        // to make sure that we issue an error only once.
-        if (lookupRepresentativeDecl(MangledName, OtherGD) &&
-            (GD.getCanonicalDecl().getDecl() !=
-             OtherGD.getCanonicalDecl().getDecl()) &&
-            DiagnosedConflictingDefinitions.insert(GD).second) {
-          getDiags().Report(D->getLocation(),
-                            diag::err_duplicate_mangled_name);
-          getDiags().Report(OtherGD.getDecl()->getLocation(),
-                            diag::note_previous_definition);
-        }
+     // If there are two attempts to define the same mangled name, issue an
+     // error.
+     if (IsForDefinition && !Entry->isDeclaration()) {
+      GlobalDecl OtherGD;
+      // Check that GD is not yet in DiagnosedConflictingDefinitions is required
+      // to make sure that we issue an error only once.
+      if (lookupRepresentativeDecl(MangledName, OtherGD) &&
+          (GD.getCanonicalDecl().getDecl() !=
+           OtherGD.getCanonicalDecl().getDecl()) &&
+          DiagnosedConflictingDefinitions.insert(GD).second) {
+        getDiags().Report(D->getLocation(), diag::err_duplicate_mangled_name)
+            << MangledName;
+        getDiags().Report(OtherGD.getDecl()->getLocation(),
+                          diag::note_previous_definition);
       }
-
+     }
     }
 
     if ((isa<llvm::Function>(Entry) || isa<llvm::GlobalAlias>(Entry)) &&
@@ -2903,8 +2901,8 @@ CodeGenModule::GetOrCreateLLVMGlobal(StringRef MangledName,
           (OtherD = dyn_cast<VarDecl>(OtherGD.getDecl())) &&
           OtherD->hasInit() &&
           DiagnosedConflictingDefinitions.insert(D).second) {
-        getDiags().Report(D->getLocation(),
-                          diag::err_duplicate_mangled_name);
+        getDiags().Report(D->getLocation(), diag::err_duplicate_mangled_name)
+            << MangledName;
         getDiags().Report(OtherGD.getDecl()->getLocation(),
                           diag::note_previous_definition);
       }
@@ -3952,7 +3950,8 @@ void CodeGenModule::emitIFuncDefinition(GlobalDecl GD) {
     GlobalDecl OtherGD;
     if (lookupRepresentativeDecl(MangledName, OtherGD) &&
         DiagnosedConflictingDefinitions.insert(GD).second) {
-      Diags.Report(D->getLocation(), diag::err_duplicate_mangled_name);
+      Diags.Report(D->getLocation(), diag::err_duplicate_mangled_name)
+          << MangledName;
       Diags.Report(OtherGD.getDecl()->getLocation(),
                    diag::note_previous_definition);
     }

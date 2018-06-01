@@ -180,33 +180,22 @@ bool DWARFUnit::ExtractDIEsIfNeeded() {
     m_first_die = m_die_array.front();
   }
 
-  // Since std::vector objects will double their size, we really need to make a
-  // new array with the perfect size so we don't end up wasting space. So here
-  // we copy and swap to make sure we don't have any extra memory taken up.
-
-  if (m_die_array.size() < m_die_array.capacity()) {
-    DWARFDebugInfoEntry::collection exact_size_die_array(m_die_array.begin(),
-                                                         m_die_array.end());
-    exact_size_die_array.swap(m_die_array);
-  }
+  m_die_array.shrink_to_fit();
 
   ExtractDIEsEndCheck(offset);
 
-  if (!m_dwo_symbol_file)
-    return m_die_array.size();
+  if (m_dwo_symbol_file) {
+    DWARFUnit *dwo_cu = m_dwo_symbol_file->GetCompileUnit();
+    dwo_cu->ExtractDIEsIfNeeded();
+  }
 
-  DWARFUnit *dwo_cu = m_dwo_symbol_file->GetCompileUnit();
-  size_t dwo_die_count = dwo_cu->ExtractDIEsIfNeeded();
-  return m_die_array.size() + dwo_die_count -
-         1; // We have 2 CU die, but we want to count it only as one
+  return true;
 }
 
 //--------------------------------------------------------------------------
 // Final checks for both ExtractUnitDIEIfNeeded() and ExtractDIEsIfNeeded().
 //--------------------------------------------------------------------------
 void DWARFUnit::ExtractDIEsEndCheck(lldb::offset_t offset) const {
-  lldb::offset_t next_cu_offset = GetNextCompileUnitOffset();
-
   // Give a little bit of info if we encounter corrupt DWARF (our offset should
   // always terminate at or before the start of the next compilation unit
   // header).
@@ -450,8 +439,6 @@ DWARFFormValue::FixedFormSizes DWARFUnit::GetFixedFormSizes() {
 }
 
 void DWARFUnit::SetBaseAddress(dw_addr_t base_addr) { m_base_addr = base_addr; }
-
-bool DWARFUnit::HasDIEsParsed() const { return m_die_array.size() > 1; }
 
 //----------------------------------------------------------------------
 // Compare function DWARFDebugAranges::Range structures
