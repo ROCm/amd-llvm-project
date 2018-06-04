@@ -28,26 +28,26 @@
 #ifndef __AVXINTRIN_H
 #define __AVXINTRIN_H
 
-typedef double __v4df __attribute__ ((__vector_size__ (32)));
-typedef float __v8sf __attribute__ ((__vector_size__ (32)));
-typedef long long __v4di __attribute__ ((__vector_size__ (32)));
-typedef int __v8si __attribute__ ((__vector_size__ (32)));
-typedef short __v16hi __attribute__ ((__vector_size__ (32)));
-typedef char __v32qi __attribute__ ((__vector_size__ (32)));
+typedef double __v4df __attribute__ ((__vector_size__ (32))) __attribute__((__aligned__(32)));
+typedef float __v8sf __attribute__ ((__vector_size__ (32))) __attribute__((__aligned__(32)));
+typedef long long __v4di __attribute__ ((__vector_size__ (32))) __attribute__((__aligned__(32)));
+typedef int __v8si __attribute__ ((__vector_size__ (32))) __attribute__((__aligned__(32)));
+typedef short __v16hi __attribute__ ((__vector_size__ (32))) __attribute__((__aligned__(32)));
+typedef char __v32qi __attribute__ ((__vector_size__ (32))) __attribute__((__aligned__(32)));
 
 /* Unsigned types */
-typedef unsigned long long __v4du __attribute__ ((__vector_size__ (32)));
-typedef unsigned int __v8su __attribute__ ((__vector_size__ (32)));
-typedef unsigned short __v16hu __attribute__ ((__vector_size__ (32)));
-typedef unsigned char __v32qu __attribute__ ((__vector_size__ (32)));
+typedef unsigned long long __v4du __attribute__ ((__vector_size__ (32))) __attribute__((__aligned__(32)));
+typedef unsigned int __v8su __attribute__ ((__vector_size__ (32))) __attribute__((__aligned__(32)));
+typedef unsigned short __v16hu __attribute__ ((__vector_size__ (32))) __attribute__((__aligned__(32)));
+typedef unsigned char __v32qu __attribute__ ((__vector_size__ (32))) __attribute__((__aligned__(32)));
 
 /* We need an explicitly signed variant for char. Note that this shouldn't
  * appear in the interface though. */
-typedef signed char __v32qs __attribute__((__vector_size__(32)));
+typedef signed char __v32qs __attribute__((__vector_size__(32))) __attribute__((__aligned__(32)));
 
-typedef float __m256 __attribute__ ((__vector_size__ (32)));
-typedef double __m256d __attribute__((__vector_size__(32)));
-typedef long long __m256i __attribute__((__vector_size__(32)));
+typedef float __m256 __attribute__ ((__vector_size__ (32))) __attribute__((__aligned__(32)));
+typedef double __m256d __attribute__((__vector_size__(32))) __attribute__((__aligned__(32)));
+typedef long long __m256i __attribute__((__vector_size__(32))) __attribute__((__aligned__(32)));
 
 /* Define the default attributes for the functions in this file. */
 #define __DEFAULT_FN_ATTRS __attribute__((__always_inline__, __nodebug__, __target__("avx")))
@@ -3111,7 +3111,9 @@ _mm256_broadcast_ss(float const *__a)
 static __inline __m256d __DEFAULT_FN_ATTRS
 _mm256_broadcast_pd(__m128d const *__a)
 {
-  return (__m256d)__builtin_ia32_vbroadcastf128_pd256((__v2df const *)__a);
+  __m128d __b = _mm_loadu_pd((const double *)__a);
+  return (__m256d)__builtin_shufflevector((__v2df)__b, (__v2df)__b,
+                                          0, 1, 0, 1);
 }
 
 /// Loads the data from a 128-bit vector of [4 x float] from the
@@ -3129,7 +3131,9 @@ _mm256_broadcast_pd(__m128d const *__a)
 static __inline __m256 __DEFAULT_FN_ATTRS
 _mm256_broadcast_ps(__m128 const *__a)
 {
-  return (__m256)__builtin_ia32_vbroadcastf128_ps256((__v4sf const *)__a);
+  __m128 __b = _mm_loadu_ps((const float *)__a);
+  return (__m256)__builtin_shufflevector((__v4sf)__b, (__v4sf)__b,
+                                         0, 1, 2, 3, 0, 1, 2, 3);
 }
 
 /* SIMD load ops */
@@ -3589,8 +3593,7 @@ _mm_maskstore_ps(float *__p, __m128i __m, __m128 __a)
 static __inline void __DEFAULT_FN_ATTRS
 _mm256_stream_si256(__m256i *__a, __m256i __b)
 {
-  typedef __v4di __v4di_aligned __attribute__((aligned(32)));
-  __builtin_nontemporal_store((__v4di_aligned)__b, (__v4di_aligned*)__a);
+  __builtin_nontemporal_store((__v4di)__b, (__v4di*)__a);
 }
 
 /// Moves double-precision values from a 256-bit vector of [4 x double]
@@ -3609,8 +3612,7 @@ _mm256_stream_si256(__m256i *__a, __m256i __b)
 static __inline void __DEFAULT_FN_ATTRS
 _mm256_stream_pd(double *__a, __m256d __b)
 {
-  typedef __v4df __v4df_aligned __attribute__((aligned(32)));
-  __builtin_nontemporal_store((__v4df_aligned)__b, (__v4df_aligned*)__a);
+  __builtin_nontemporal_store((__v4df)__b, (__v4df*)__a);
 }
 
 /// Moves single-precision floating point values from a 256-bit vector
@@ -3630,8 +3632,7 @@ _mm256_stream_pd(double *__a, __m256d __b)
 static __inline void __DEFAULT_FN_ATTRS
 _mm256_stream_ps(float *__p, __m256 __a)
 {
-  typedef __v8sf __v8sf_aligned __attribute__((aligned(32)));
-  __builtin_nontemporal_store((__v8sf_aligned)__a, (__v8sf_aligned*)__p);
+  __builtin_nontemporal_store((__v8sf)__a, (__v8sf*)__p);
 }
 
 /* Create vectors */

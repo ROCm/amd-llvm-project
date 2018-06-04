@@ -27,18 +27,20 @@ def Bdynamic: F<"Bdynamic">, HelpText<"Link against shared libraries (default)">
 
 def Bstatic: F<"Bstatic">, HelpText<"Do not link against shared libraries">;
 
-def build_id: F<"build-id">, HelpText<"Generate build ID note">;
+def build_id: F<"build-id">, HelpText<"Alias for --build-id=fast">;
 
-def build_id_eq: J<"build-id=">, HelpText<"Generate build ID note">;
+def build_id_eq: J<"build-id=">, HelpText<"Generate build ID note">,
+  MetaVarName<"[fast,md5,sha,uuid,0x<hexstring>]">;
 
 defm check_sections: B<"check-sections",
     "Check section addresses for overlaps (default)",
     "Do not check section addresses for overlaps">;
 
 defm compress_debug_sections:
-  Eq<"compress-debug-sections", "Compress DWARF debug sections">;
+  Eq<"compress-debug-sections", "Compress DWARF debug sections">,
+  MetaVarName<"[none,zlib]">;
 
-defm defsym: Eq<"defsym", "Define a symbol alias">;
+defm defsym: Eq<"defsym", "Define a symbol alias">, MetaVarName<"<symbol>=<value>">;
 
 defm library_path:
   Eq<"library-path", "Add a directory to the library search path">, MetaVarName<"<dir>">;
@@ -70,10 +72,11 @@ defm call_graph_ordering_file:
 def chroot: Separate<["--", "-"], "chroot">;
 
 def color_diagnostics: F<"color-diagnostics">,
-  HelpText<"Use colors in diagnostics">;
+  HelpText<"Alias for --color-diagnostics=always">;
 
 def color_diagnostics_eq: J<"color-diagnostics=">,
-  HelpText<"Use colors in diagnostics; one of 'always', 'never', 'auto'">;
+  HelpText<"Use colors in diagnostics">,
+  MetaVarName<"[auto,always,never]">;
 
 defm cref: B<"cref",
     "Output cross reference table",
@@ -147,7 +150,7 @@ def fix_cortex_a53_843419: F<"fix-cortex-a53-843419">,
   HelpText<"Apply fixes for AArch64 Cortex-A53 erratum 843419">;
 
 defm format: Eq<"format", "Change the input format of the inputs following this option">,
-  MetaVarName<"<input-format>">;
+  MetaVarName<"[default,elf,binary]">;
 
 defm gc_sections: B<"gc-sections",
     "Enable garbage collection of unused sections",
@@ -229,8 +232,8 @@ defm orphan_handling:
   Eq<"orphan-handling", "Control how orphan sections are handled when linker script used">;
 
 defm pack_dyn_relocs:
-  Eq<"pack-dyn-relocs", "Pack dynamic relocations in the given format (none or android)">,
-  MetaVarName<"<format>">;
+  Eq<"pack-dyn-relocs", "Pack dynamic relocations in the given format">,
+  MetaVarName<"[none,android]">;
 
 defm pie: B<"pie",
     "Create a position independent executable",
@@ -306,7 +309,8 @@ def trace: F<"trace">, HelpText<"Print the names of the input files">;
 
 defm trace_symbol: Eq<"trace-symbol", "Trace references to symbols">;
 
-defm undefined: Eq<"undefined", "Force undefined symbol during linking">;
+defm undefined: Eq<"undefined", "Force undefined symbol during linking">,
+  MetaVarName<"<symbol>">;
 
 defm unresolved_symbols:
   Eq<"unresolved-symbols", "Determine how to handle unresolved symbols">;
@@ -315,8 +319,8 @@ defm undefined_version: B<"undefined-version",
   "Allow unused version in version script (default)",
   "Report version scripts that refer undefined symbols">;
 
-defm rsp_quoting:
-  Eq<"rsp-quoting", "Quoting style for response files. Values supported: windows|posix">;
+defm rsp_quoting: Eq<"rsp-quoting", "Quoting style for response files">,
+  MetaVarName<"[posix,windows]">;
 
 def v: Flag<["-"], "v">, HelpText<"Display the version number">;
 
@@ -346,51 +350,51 @@ defm whole_archive: B<"whole-archive",
     "Do not force load of all members in a static library (default)">;
 
 defm wrap: Eq<"wrap", "Use wrapper functions for symbol">,
-  MetaVarName<"<symbol>">;
+  MetaVarName<"<symbol>=<symbol>">;
 
 def z: JoinedOrSeparate<["-"], "z">, MetaVarName<"<option>">,
   HelpText<"Linker option extensions">;
 
 // Aliases
-def alias_auxiliary: Separate<["-"], "f">, Alias<auxiliary>;
-def alias_Bdynamic_call_shared: F<"call_shared">, Alias<Bdynamic>;
-def alias_Bdynamic_dy: F<"dy">, Alias<Bdynamic>;
-def alias_Bstatic_dn: F<"dn">, Alias<Bstatic>;
-def alias_Bstatic_non_shared: F<"non_shared">, Alias<Bstatic>;
-def alias_Bstatic_static: F<"static">, Alias<Bstatic>;
-def alias_define_common_d: Flag<["-"], "d">, Alias<define_common>;
-def alias_define_common_dc: F<"dc">, Alias<define_common>;
-def alias_define_common_dp: F<"dp">, Alias<define_common>;
-def alias_discard_all_x: Flag<["-"], "x">, Alias<discard_all>;
-def alias_discard_locals_X: Flag<["-"], "X">, Alias<discard_locals>;
-def alias_emit_relocs: Flag<["-"], "q">, Alias<emit_relocs>;
-def alias_end_group_paren: Flag<["-"], ")">, Alias<end_group>;
-def alias_entry_e: JoinedOrSeparate<["-"], "e">, Alias<entry>;
-def alias_export_dynamic_E: Flag<["-"], "E">, Alias<export_dynamic>;
-def alias_filter: Separate<["-"], "F">, Alias<filter>;
-def alias_format_b: Separate<["-"], "b">, Alias<format>;
-def alias_library: JoinedOrSeparate<["-"], "l">, Alias<library>;
-def alias_library_path: JoinedOrSeparate<["-"], "L">, Alias<library_path>;
-def alias_no_pie_pic_executable: F<"no-pic-executable">, Alias<no_pie>;
-def alias_omagic: Flag<["-"], "N">, Alias<omagic>;
-def alias_o_output: Joined<["--"], "output=">, Alias<o>;
-def alias_o_output2 : Separate<["--"], "output">, Alias<o>;
-def alias_pie_pic_executable: F<"pic-executable">, Alias<pie>;
-def alias_print_map_M: Flag<["-"], "M">, Alias<print_map>;
-def alias_relocatable_r: Flag<["-"], "r">, Alias<relocatable>;
-def alias_rpath_R: JoinedOrSeparate<["-"], "R">, Alias<rpath>;
-def alias_script_T: JoinedOrSeparate<["-"], "T">, Alias<script>;
-def alias_shared_Bshareable: F<"Bshareable">, Alias<shared>;
-def alias_soname_h: JoinedOrSeparate<["-"], "h">, Alias<soname>;
-def alias_start_group_paren: Flag<["-"], "(">, Alias<start_group>;
-def alias_strip_all: Flag<["-"], "s">, Alias<strip_all>;
-def alias_strip_debug_S: Flag<["-"], "S">, Alias<strip_debug>;
-def alias_trace: Flag<["-"], "t">, Alias<trace>;
-def alias_trace_symbol_y : JoinedOrSeparate<["-"], "y">, Alias<trace_symbol>;
-def alias_Ttext_segment: Separate<["-", "--"], "Ttext-segment">, Alias<Ttext>;
-def alias_Ttext_segment_eq: Joined<["-", "--"], "Ttext-segment=">, Alias<Ttext>;
-def alias_undefined_u: JoinedOrSeparate<["-"], "u">, Alias<undefined>;
-def alias_version_V: Flag<["-"], "V">, Alias<version>;
+def: Separate<["-"], "f">, Alias<auxiliary>, HelpText<"Alias for --auxiliary">;
+def: F<"call_shared">, Alias<Bdynamic>, HelpText<"Alias for --Bdynamic">;
+def: F<"dy">, Alias<Bdynamic>, HelpText<"Alias for --Bdynamic">;
+def: F<"dn">, Alias<Bstatic>, HelpText<"Alias for --Bstatic">;
+def: F<"non_shared">, Alias<Bstatic>, HelpText<"Alias for --Bstatic">;
+def: F<"static">, Alias<Bstatic>, HelpText<"Alias for --Bstatic">;
+def: Flag<["-"], "d">, Alias<define_common>, HelpText<"Alias for --define-common">;
+def: F<"dc">, Alias<define_common>, HelpText<"Alias for --define-common">;
+def: F<"dp">, Alias<define_common>, HelpText<"Alias for --define-common">;
+def: Flag<["-"], "x">, Alias<discard_all>, HelpText<"Alias for --discard-all">;
+def: Flag<["-"], "X">, Alias<discard_locals>, HelpText<"Alias for --discard-locals">;
+def: Flag<["-"], "q">, Alias<emit_relocs>, HelpText<"Alias for --emit-relocs">;
+def: Flag<["-"], ")">, Alias<end_group>, HelpText<"Alias for --end-group">;
+def: JoinedOrSeparate<["-"], "e">, Alias<entry>, HelpText<"Alias for --entry">;
+def: Flag<["-"], "E">, Alias<export_dynamic>, HelpText<"Alias for --export-dynamic">;
+def: Separate<["-"], "F">, Alias<filter>, HelpText<"Alias for --filter">;
+def: Separate<["-"], "b">, Alias<format>, HelpText<"Alias for --format">;
+def: JoinedOrSeparate<["-"], "l">, Alias<library>, HelpText<"Alias for --library">;
+def: JoinedOrSeparate<["-"], "L">, Alias<library_path>, HelpText<"Alias for --library-path">;
+def: F<"no-pic-executable">, Alias<no_pie>, HelpText<"Alias for --no-pie">;
+def: Flag<["-"], "N">, Alias<omagic>, HelpText<"Alias for --omagic">;
+def: Joined<["--"], "output=">, Alias<o>, HelpText<"Alias for -o">;
+def: Separate<["--"], "output">, Alias<o>, HelpText<"Alias for -o">;
+def: F<"pic-executable">, Alias<pie>, HelpText<"Alias for --pie">;
+def: Flag<["-"], "M">, Alias<print_map>, HelpText<"Alias for --print-map">;
+def: Flag<["-"], "r">, Alias<relocatable>, HelpText<"Alias for --relocatable">;
+def: JoinedOrSeparate<["-"], "R">, Alias<rpath>, HelpText<"Alias for --rpath">;
+def: JoinedOrSeparate<["-"], "T">, Alias<script>, HelpText<"Alias for --script">;
+def: F<"Bshareable">, Alias<shared>, HelpText<"Alias for --shared">;
+def: JoinedOrSeparate<["-"], "h">, Alias<soname>, HelpText<"Alias for --soname">;
+def: Flag<["-"], "(">, Alias<start_group>, HelpText<"Alias for --start-group">;
+def: Flag<["-"], "s">, Alias<strip_all>, HelpText<"Alias for --strip-all">;
+def: Flag<["-"], "S">, Alias<strip_debug>, HelpText<"Alias for --strip-debug">;
+def: Flag<["-"], "t">, Alias<trace>, HelpText<"Alias for --trace">;
+def: JoinedOrSeparate<["-"], "y">, Alias<trace_symbol>, HelpText<"Alias for --trace-symbol">;
+def: Separate<["-", "--"], "Ttext-segment">, Alias<Ttext>, HelpText<"Alias for --Ttext">;
+def: Joined<["-", "--"], "Ttext-segment=">, Alias<Ttext>, HelpText<"Alias for --Ttext">;
+def: JoinedOrSeparate<["-"], "u">, Alias<undefined>, HelpText<"Alias for --undefined">;
+def: Flag<["-"], "V">, Alias<version>, HelpText<"Alias for --version">;
 
 // LTO-related options.
 def lto_aa_pipeline: J<"lto-aa-pipeline=">,
@@ -420,16 +424,19 @@ def thinlto_cache_dir: J<"thinlto-cache-dir=">,
 defm thinlto_cache_policy: Eq<"thinlto-cache-policy", "Pruning policy for the ThinLTO cache">;
 def thinlto_jobs: J<"thinlto-jobs=">, HelpText<"Number of ThinLTO jobs">;
 
-def plugin_opt_O: J<"plugin-opt=O">, Alias<lto_O>;
-def plugin_opt_debug_pass_manager: F<"plugin-opt=debug-pass-manager">, Alias<lto_debug_pass_manager>;
-def plugin_opt_disable_verify: F<"plugin-opt=disable-verify">, Alias<disable_verify>;
-def plugin_opt_jobs_eq: J<"plugin-opt=jobs=">, Alias<thinlto_jobs>;
-def plugin_opt_lto_partitions_eq: J<"plugin-opt=lto-partitions=">, Alias<lto_partitions>;
+def: J<"plugin-opt=O">, Alias<lto_O>, HelpText<"Alias for -lto-O">;
+def: F<"plugin-opt=debug-pass-manager">,
+  Alias<lto_debug_pass_manager>, HelpText<"Alias for -lto-debug-pass-manager">;
+def: F<"plugin-opt=disable-verify">, Alias<disable_verify>, HelpText<"Alias for -disable-verify">;
+def: J<"plugin-opt=jobs=">, Alias<thinlto_jobs>, HelpText<"Alias for -thinlto-jobs">;
+def: J<"plugin-opt=lto-partitions=">, Alias<lto_partitions>, HelpText<"Alias for -lto-partitions">;
 def plugin_opt_mcpu_eq: J<"plugin-opt=mcpu=">;
-def plugin_opt_new_pass_manager: F<"plugin-opt=new-pass-manager">, Alias<lto_new_pass_manager>;
+def: F<"plugin-opt=new-pass-manager">,
+  Alias<lto_new_pass_manager>, HelpText<"Alias for -lto-new-pass-manager">;
 def plugin_opt_obj_path_eq: J<"plugin-opt=obj-path=">;
-def plugin_opt_sample_profile_eq: J<"plugin-opt=sample-profile=">, Alias<lto_sample_profile>;
-def plugin_opt_save_temps: F<"plugin-opt=save-temps">, Alias<save_temps>;
+def: J<"plugin-opt=sample-profile=">,
+  Alias<lto_sample_profile>, HelpText<"Alias for -lto-sample-profile">;
+def: F<"plugin-opt=save-temps">, Alias<save_temps>, HelpText<"Alias for -save-temps">;
 def plugin_opt_thinlto_emit_imports_files: F<"plugin-opt=thinlto-emit-imports-files">;
 def plugin_opt_thinlto_index_only: F<"plugin-opt=thinlto-index-only">;
 def plugin_opt_thinlto_index_only_eq: J<"plugin-opt=thinlto-index-only=">;
@@ -443,7 +450,7 @@ def plugin_opt_thinlto_prefix_replace_eq: J<"plugin-opt=thinlto-prefix-replace="
 // just ignore the option on lld side as it's easier. In fact, the linker could
 // be called 'ld' and understanding which linker is used would require parsing of
 // --version output.
-def plugin: J<"plugin">;
+defm plugin: Eq<"plugin", "Ignored for compatibility with GNU linkers">;
 
 def plugin_opt_fresolution_eq: J<"plugin-opt=-fresolution=">;
 def plugin_opt_pass_through_eq: J<"plugin-opt=-pass-through=">;
@@ -462,7 +469,7 @@ def: F<"no-ctors-in-init-array">;
 def: F<"no-keep-memory">;
 def: F<"no-mmap-output-file">;
 def: F<"no-warn-mismatch">;
-def: J<"rpath-link">;
+def: Separate<["--", "-"], "rpath-link">;
 def: J<"rpath-link=">;
 def: F<"sort-common">;
 def: F<"stats">;

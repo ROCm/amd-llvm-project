@@ -46,17 +46,25 @@ IRMaterializationUnit::IRMaterializationUnit(ExecutionSession &ES,
         !G.hasAvailableExternallyLinkage()) {
       auto MangledName = Mangle(G.getName());
       SymbolFlags[MangledName] = JITSymbolFlags::fromGlobalValue(G);
-      Discardable[MangledName] = &G;
+      SymbolToDefinition[MangledName] = &G;
     }
   }
 }
 
+IRMaterializationUnit::IRMaterializationUnit(
+    std::unique_ptr<Module> M, SymbolFlagsMap SymbolFlags,
+    SymbolNameToDefinitionMap SymbolToDefinition)
+    : MaterializationUnit(std::move(SymbolFlags)), M(std::move(M)),
+      SymbolToDefinition(std::move(SymbolToDefinition)) {}
+
 void IRMaterializationUnit::discard(const VSO &V, SymbolStringPtr Name) {
-  auto I = Discardable.find(Name);
-  assert(I != Discardable.end() &&
+  auto I = SymbolToDefinition.find(Name);
+  assert(I != SymbolToDefinition.end() &&
          "Symbol not provided by this MU, or previously discarded");
+  assert(!I->second->isDeclaration() &&
+         "Discard should only apply to definitions");
   I->second->setLinkage(GlobalValue::AvailableExternallyLinkage);
-  Discardable.erase(I);
+  SymbolToDefinition.erase(I);
 }
 
 BasicIRLayerMaterializationUnit::BasicIRLayerMaterializationUnit(
