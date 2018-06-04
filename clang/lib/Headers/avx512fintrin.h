@@ -27,22 +27,22 @@
 #ifndef __AVX512FINTRIN_H
 #define __AVX512FINTRIN_H
 
-typedef char __v64qi __attribute__((__vector_size__(64)));
-typedef short __v32hi __attribute__((__vector_size__(64)));
-typedef double __v8df __attribute__((__vector_size__(64)));
-typedef float __v16sf __attribute__((__vector_size__(64)));
-typedef long long __v8di __attribute__((__vector_size__(64)));
-typedef int __v16si __attribute__((__vector_size__(64)));
+typedef char __v64qi __attribute__((__vector_size__(64))) __attribute__((__aligned__(64)));
+typedef short __v32hi __attribute__((__vector_size__(64))) __attribute__((__aligned__(64)));
+typedef double __v8df __attribute__((__vector_size__(64))) __attribute__((__aligned__(64)));
+typedef float __v16sf __attribute__((__vector_size__(64))) __attribute__((__aligned__(64)));
+typedef long long __v8di __attribute__((__vector_size__(64))) __attribute__((__aligned__(64)));
+typedef int __v16si __attribute__((__vector_size__(64))) __attribute__((__aligned__(64)));
 
 /* Unsigned types */
-typedef unsigned char __v64qu __attribute__((__vector_size__(64)));
-typedef unsigned short __v32hu __attribute__((__vector_size__(64)));
-typedef unsigned long long __v8du __attribute__((__vector_size__(64)));
-typedef unsigned int __v16su __attribute__((__vector_size__(64)));
+typedef unsigned char __v64qu __attribute__((__vector_size__(64))) __attribute__((__aligned__(64)));
+typedef unsigned short __v32hu __attribute__((__vector_size__(64))) __attribute__((__aligned__(64)));
+typedef unsigned long long __v8du __attribute__((__vector_size__(64))) __attribute__((__aligned__(64)));
+typedef unsigned int __v16su __attribute__((__vector_size__(64))) __attribute__((__aligned__(64)));
 
-typedef float __m512 __attribute__((__vector_size__(64)));
-typedef double __m512d __attribute__((__vector_size__(64)));
-typedef long long __m512i __attribute__((__vector_size__(64)));
+typedef float __m512 __attribute__((__vector_size__(64))) __attribute__((__aligned__(64)));
+typedef double __m512d __attribute__((__vector_size__(64))) __attribute__((__aligned__(64)));
+typedef long long __m512i __attribute__((__vector_size__(64))) __attribute__((__aligned__(64)));
 
 typedef unsigned char __mmask8;
 typedef unsigned short __mmask16;
@@ -2226,13 +2226,13 @@ _mm512_maskz_sub_ps(__mmask16 __U, __m512 __A, __m512 __B) {
   (__m512)__builtin_ia32_subps512_mask((__v16sf)(__m512)(A), \
                                        (__v16sf)(__m512)(B), \
                                        (__v16sf)(__m512)(W), (__mmask16)(U), \
-                                       (int)(R));
+                                       (int)(R))
 
 #define _mm512_maskz_sub_round_ps(U, A, B, R)  \
   (__m512)__builtin_ia32_subps512_mask((__v16sf)(__m512)(A), \
                                        (__v16sf)(__m512)(B), \
                                        (__v16sf)_mm512_setzero_ps(), \
-                                       (__mmask16)(U), (int)(R));
+                                       (__mmask16)(U), (int)(R))
 
 static __inline__ __m128 __DEFAULT_FN_ATTRS
 _mm_mask_mul_ss(__m128 __W, __mmask8 __U,__m128 __A, __m128 __B) {
@@ -2361,13 +2361,13 @@ _mm512_maskz_mul_ps(__mmask16 __U, __m512 __A, __m512 __B) {
   (__m512)__builtin_ia32_mulps512_mask((__v16sf)(__m512)(A), \
                                        (__v16sf)(__m512)(B), \
                                        (__v16sf)(__m512)(W), (__mmask16)(U), \
-                                       (int)(R));
+                                       (int)(R))
 
 #define _mm512_maskz_mul_round_ps(U, A, B, R)  \
   (__m512)__builtin_ia32_mulps512_mask((__v16sf)(__m512)(A), \
                                        (__v16sf)(__m512)(B), \
                                        (__v16sf)_mm512_setzero_ps(), \
-                                       (__mmask16)(U), (int)(R));
+                                       (__mmask16)(U), (int)(R))
 
 static __inline__ __m128 __DEFAULT_FN_ATTRS
 _mm_mask_div_ss(__m128 __W, __mmask8 __U,__m128 __A, __m128 __B) {
@@ -2509,17 +2509,18 @@ _mm512_maskz_div_ps(__mmask16 __U, __m512 __A, __m512 __B) {
   (__m512)__builtin_ia32_divps512_mask((__v16sf)(__m512)(A), \
                                        (__v16sf)(__m512)(B), \
                                        (__v16sf)(__m512)(W), (__mmask16)(U), \
-                                       (int)(R));
+                                       (int)(R))
 
 #define _mm512_maskz_div_round_ps(U, A, B, R)  \
   (__m512)__builtin_ia32_divps512_mask((__v16sf)(__m512)(A), \
                                        (__v16sf)(__m512)(B), \
                                        (__v16sf)_mm512_setzero_ps(), \
-                                       (__mmask16)(U), (int)(R));
+                                       (__mmask16)(U), (int)(R))
 
 #define _mm512_roundscale_ps(A, B) \
   (__m512)__builtin_ia32_rndscaleps_mask((__v16sf)(__m512)(A), (int)(B), \
-                                         (__v16sf)(__m512)(A), (__mmask16)-1, \
+                                         (__v16sf)_mm512_undefined_ps(), \
+                                         (__mmask16)-1, \
                                          _MM_FROUND_CUR_DIRECTION)
 
 #define _mm512_mask_roundscale_ps(A, B, C, imm) \
@@ -2550,7 +2551,8 @@ _mm512_maskz_div_ps(__mmask16 __U, __m512 __A, __m512 __B) {
 
 #define _mm512_roundscale_pd(A, B) \
   (__m512d)__builtin_ia32_rndscalepd_mask((__v8df)(__m512d)(A), (int)(B), \
-                                          (__v8df)(__m512d)(A), (__mmask8)-1, \
+                                          (__v8df)_mm512_undefined_pd(), \
+                                          (__mmask8)-1, \
                                           _MM_FROUND_CUR_DIRECTION)
 
 #define _mm512_mask_roundscale_pd(A, B, C, imm) \
@@ -2915,7 +2917,7 @@ _mm512_mask_fmadd_ps(__m512 __A, __mmask16 __U, __m512 __B, __m512 __C)
                     __builtin_ia32_vfmaddps512 ((__v16sf) __A,
                                                 (__v16sf) __B,
                                                 (__v16sf) __C,
-                                                _MM_FROUND_CUR_DIRECTION), \
+                                                _MM_FROUND_CUR_DIRECTION),
             (__v16sf) __A);
 }
 
@@ -2926,7 +2928,7 @@ _mm512_mask3_fmadd_ps(__m512 __A, __m512 __B, __m512 __C, __mmask16 __U)
                     __builtin_ia32_vfmaddps512 ((__v16sf) __A,
                                                 (__v16sf) __B,
                                                 (__v16sf) __C,
-                                                _MM_FROUND_CUR_DIRECTION), \
+                                                _MM_FROUND_CUR_DIRECTION),
             (__v16sf) __C);
 }
 
@@ -3230,7 +3232,7 @@ _mm512_mask_fmaddsub_ps(__m512 __A, __mmask16 __U, __m512 __B, __m512 __C)
                     __builtin_ia32_vfmaddsubps512 ((__v16sf) __A,
                                                    (__v16sf) __B,
                                                    (__v16sf) __C,
-                                                   _MM_FROUND_CUR_DIRECTION), \
+                                                   _MM_FROUND_CUR_DIRECTION),
             (__v16sf) __A);
 }
 
@@ -3241,7 +3243,7 @@ _mm512_mask3_fmaddsub_ps(__m512 __A, __m512 __B, __m512 __C, __mmask16 __U)
                     __builtin_ia32_vfmaddsubps512 ((__v16sf) __A,
                                                    (__v16sf) __B,
                                                    (__v16sf) __C,
-                                                   _MM_FROUND_CUR_DIRECTION), \
+                                                   _MM_FROUND_CUR_DIRECTION),
             (__v16sf) __C);
 }
 
@@ -4812,7 +4814,7 @@ _mm512_mask_store_pd(void *__P, __mmask8 __U, __m512d __A)
 static __inline void __DEFAULT_FN_ATTRS
 _mm512_store_pd(void *__P, __m512d __A)
 {
-  *(__m512d*)__P = __A;
+  *(__m512d *) __P = __A;
 }
 
 static __inline void __DEFAULT_FN_ATTRS
@@ -4825,7 +4827,7 @@ _mm512_mask_store_ps(void *__P, __mmask16 __U, __m512 __A)
 static __inline void __DEFAULT_FN_ATTRS
 _mm512_store_ps(void *__P, __m512 __A)
 {
-  *(__m512*)__P = __A;
+  *(__m512 *) __P = __A;
 }
 
 static __inline void __DEFAULT_FN_ATTRS
@@ -8779,29 +8781,25 @@ _mm512_kxor (__mmask16 __A, __mmask16 __B)
 static __inline__ void __DEFAULT_FN_ATTRS
 _mm512_stream_si512 (__m512i * __P, __m512i __A)
 {
-  typedef __v8di __v8di_aligned __attribute__((aligned(64)));
-  __builtin_nontemporal_store((__v8di_aligned)__A, (__v8di_aligned*)__P);
+  __builtin_nontemporal_store((__v8di)__A, (__v8di*)__P);
 }
 
 static __inline__ __m512i __DEFAULT_FN_ATTRS
 _mm512_stream_load_si512 (void const *__P)
 {
-  typedef __v8di __v8di_aligned __attribute__((aligned(64)));
-  return (__m512i) __builtin_nontemporal_load((const __v8di_aligned *)__P);
+  return (__m512i) __builtin_nontemporal_load((const __v8di *)__P);
 }
 
 static __inline__ void __DEFAULT_FN_ATTRS
 _mm512_stream_pd (double *__P, __m512d __A)
 {
-  typedef __v8df __v8df_aligned __attribute__((aligned(64)));
-  __builtin_nontemporal_store((__v8df_aligned)__A, (__v8df_aligned*)__P);
+  __builtin_nontemporal_store((__v8df)__A, (__v8df*)__P);
 }
 
 static __inline__ void __DEFAULT_FN_ATTRS
 _mm512_stream_ps (float *__P, __m512 __A)
 {
-  typedef __v16sf __v16sf_aligned __attribute__((aligned(64)));
-  __builtin_nontemporal_store((__v16sf_aligned)__A, (__v16sf_aligned*)__P);
+  __builtin_nontemporal_store((__v16sf)__A, (__v16sf*)__P);
 }
 
 static __inline__ __m512d __DEFAULT_FN_ATTRS
