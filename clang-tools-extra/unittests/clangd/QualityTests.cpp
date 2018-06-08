@@ -39,36 +39,68 @@ TEST(QualityTests, SymbolQualitySignalExtraction) {
   SymbolQualitySignals Quality;
   Quality.merge(findSymbol(Symbols, "x"));
   EXPECT_FALSE(Quality.Deprecated);
-  EXPECT_EQ(Quality.SemaCCPriority, SymbolQualitySignals().SemaCCPriority);
   EXPECT_EQ(Quality.References, SymbolQualitySignals().References);
+  EXPECT_EQ(Quality.Category, SymbolQualitySignals::Variable);
 
   Symbol F = findSymbol(Symbols, "f");
   F.References = 24; // TestTU doesn't count references, so fake it.
   Quality = {};
   Quality.merge(F);
   EXPECT_FALSE(Quality.Deprecated); // FIXME: Include deprecated bit in index.
-  EXPECT_EQ(Quality.SemaCCPriority, SymbolQualitySignals().SemaCCPriority);
   EXPECT_EQ(Quality.References, 24u);
+  EXPECT_EQ(Quality.Category, SymbolQualitySignals::Function);
 
   Quality = {};
   Quality.merge(CodeCompletionResult(&findDecl(AST, "f"), /*Priority=*/42));
   EXPECT_TRUE(Quality.Deprecated);
-  EXPECT_EQ(Quality.SemaCCPriority, 42u);
   EXPECT_EQ(Quality.References, SymbolQualitySignals().References);
+  EXPECT_EQ(Quality.Category, SymbolQualitySignals::Function);
 }
 
 TEST(QualityTests, SymbolRelevanceSignalExtraction) {
-  auto AST = TestTU::withHeaderCode(R"cpp(
+  TestTU Test;
+  Test.HeaderCode = R"cpp(
+    int header();
+    int header_main();
+    )cpp";
+  Test.Code = R"cpp(
+    int ::header_main() {}
+    int main();
+
     [[deprecated]]
-    int f() { return 0; }
-  )cpp")
-                 .build();
+    int deprecated() { return 0; }
+
+    namespace { struct X { void y() { int z; } }; }
+  )cpp";
+  auto AST = Test.build();
 
   SymbolRelevanceSignals Relevance;
-  Relevance.merge(CodeCompletionResult(&findDecl(AST, "f"), /*Priority=*/42,
-                                       nullptr, false, /*Accessible=*/false));
+  Relevance.merge(CodeCompletionResult(&findDecl(AST, "deprecated"),
+                                       /*Priority=*/42, nullptr, false,
+                                       /*Accessible=*/false));
   EXPECT_EQ(Relevance.NameMatch, SymbolRelevanceSignals().NameMatch);
   EXPECT_TRUE(Relevance.Forbidden);
+  EXPECT_EQ(Relevance.Scope, SymbolRelevanceSignals::GlobalScope);
+
+  Relevance = {};
+  Relevance.merge(CodeCompletionResult(&findDecl(AST, "main"), 42));
+  EXPECT_FLOAT_EQ(Relevance.ProximityScore, 1.0) << "Decl in current file";
+  Relevance = {};
+  Relevance.merge(CodeCompletionResult(&findDecl(AST, "header"), 42));
+  EXPECT_FLOAT_EQ(Relevance.ProximityScore, 0.0) << "Decl from header";
+  Relevance = {};
+  Relevance.merge(CodeCompletionResult(&findDecl(AST, "header_main"), 42));
+  EXPECT_FLOAT_EQ(Relevance.ProximityScore, 1.0) << "Current file and header";
+
+  Relevance = {};
+  Relevance.merge(CodeCompletionResult(&findAnyDecl(AST, "X"), 42));
+  EXPECT_EQ(Relevance.Scope, SymbolRelevanceSignals::FileScope);
+  Relevance = {};
+  Relevance.merge(CodeCompletionResult(&findAnyDecl(AST, "y"), 42));
+  EXPECT_EQ(Relevance.Scope, SymbolRelevanceSignals::ClassScope);
+  Relevance = {};
+  Relevance.merge(CodeCompletionResult(&findAnyDecl(AST, "z"), 42));
+  EXPECT_EQ(Relevance.Scope, SymbolRelevanceSignals::FunctionScope);
 }
 
 // Do the signals move the scores in the direction we expect?
@@ -86,11 +118,11 @@ TEST(QualityTests, SymbolQualitySignalsSanity) {
   EXPECT_GT(WithReferences.evaluate(), Default.evaluate());
   EXPECT_GT(ManyReferences.evaluate(), WithReferences.evaluate());
 
-  SymbolQualitySignals LowPriority, HighPriority;
-  LowPriority.SemaCCPriority = 60;
-  HighPriority.SemaCCPriority = 20;
-  EXPECT_GT(HighPriority.evaluate(), Default.evaluate());
-  EXPECT_LT(LowPriority.evaluate(), Default.evaluate());
+  SymbolQualitySignals Variable, Macro;
+  Variable.Category = SymbolQualitySignals::Variable;
+  Macro.Category = SymbolQualitySignals::Macro;
+  EXPECT_GT(Variable.evaluate(), Default.evaluate());
+  EXPECT_LT(Macro.evaluate(), Default.evaluate());
 }
 
 TEST(QualityTests, SymbolRelevanceSignalsSanity) {
@@ -104,6 +136,16 @@ TEST(QualityTests, SymbolRelevanceSignalsSanity) {
   SymbolRelevanceSignals PoorNameMatch;
   PoorNameMatch.NameMatch = 0.2f;
   EXPECT_LT(PoorNameMatch.evaluate(), Default.evaluate());
+
+  SymbolRelevanceSignals WithProximity;
+  WithProximity.ProximityScore = 0.2f;
+  EXPECT_GT(WithProximity.evaluate(), Default.evaluate());
+
+  SymbolRelevanceSignals Scoped;
+  Scoped.Scope = SymbolRelevanceSignals::FileScope;
+  EXPECT_EQ(Scoped.evaluate(), Default.evaluate());
+  Scoped.Query = SymbolRelevanceSignals::CodeComplete;
+  EXPECT_GT(Scoped.evaluate(), Default.evaluate());
 }
 
 TEST(QualityTests, SortText) {

@@ -367,7 +367,8 @@ public:
                  SectionBase *DefinedIn, uint64_t Value, uint8_t Visibility,
                  uint16_t Shndx, uint64_t Sz);
   void addSymbolNames();
-  bool empty() const { return Symbols.empty(); }
+  // An 'empty' symbol table still contains a null symbol.
+  bool empty() const { return Symbols.size() == 1; }
   const SectionBase *getStrTab() const { return SymbolNames; }
   const Symbol *getSymbolByIndex(uint32_t Index) const;
   Symbol *getSymbolByIndex(uint32_t Index);
@@ -583,7 +584,6 @@ private:
   using SecPtr = std::unique_ptr<SectionBase>;
   using SegPtr = std::unique_ptr<Segment>;
 
-  std::shared_ptr<MemoryBuffer> OwnedData;
   std::vector<SecPtr> Sections;
   std::vector<SegPtr> Segments;
 
@@ -615,10 +615,6 @@ public:
 
   StringTableSection *SectionNames = nullptr;
   SymbolTableSection *SymbolTable = nullptr;
-
-  explicit Object(std::shared_ptr<MemoryBuffer> Data)
-      : OwnedData(std::move(Data)) {}
-  virtual ~Object() = default;
 
   void sortSections();
   SectionTableRef sections() { return SectionTableRef(Sections); }

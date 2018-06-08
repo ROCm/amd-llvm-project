@@ -292,9 +292,7 @@ void HandleArgs(const CopyConfig &Config, Object &Obj, const Reader &Reader,
         return true;
       }
 
-      // TODO: We might handle the 'null symbol' in a different way
-      // by probably handling it the same way as we handle 'null section' ?
-      if (Config.StripUnneeded && !Sym.Referenced && Sym.Index != 0 &&
+      if (Config.StripUnneeded && !Sym.Referenced &&
           (Sym.Binding == STB_LOCAL || Sym.getShndx() == SHN_UNDEF) &&
           Sym.Type != STT_FILE && Sym.Type != STT_SECTION)
         return true;
@@ -585,9 +583,12 @@ CopyConfig ParseStripOptions(ArrayRef<const char *> ArgsArr) {
   Config.OutputFilename =
       InputArgs.getLastArgValue(STRIP_output, Positional[0]);
 
-  // Strip debug info only.
   Config.StripDebug = InputArgs.hasArg(STRIP_strip_debug);
-  if (!Config.StripDebug)
+  
+  Config.DiscardAll = InputArgs.hasArg(STRIP_discard_all);
+  Config.StripUnneeded = InputArgs.hasArg(STRIP_strip_unneeded);
+
+  if (!Config.StripDebug && !Config.StripUnneeded && !Config.DiscardAll)
     Config.StripAll = true;
 
   for (auto Arg : InputArgs.filtered(STRIP_remove_section))
