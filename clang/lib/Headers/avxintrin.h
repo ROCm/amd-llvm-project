@@ -28,26 +28,26 @@
 #ifndef __AVXINTRIN_H
 #define __AVXINTRIN_H
 
-typedef double __v4df __attribute__ ((__vector_size__ (32))) __attribute__((__aligned__(32)));
-typedef float __v8sf __attribute__ ((__vector_size__ (32))) __attribute__((__aligned__(32)));
-typedef long long __v4di __attribute__ ((__vector_size__ (32))) __attribute__((__aligned__(32)));
-typedef int __v8si __attribute__ ((__vector_size__ (32))) __attribute__((__aligned__(32)));
-typedef short __v16hi __attribute__ ((__vector_size__ (32))) __attribute__((__aligned__(32)));
-typedef char __v32qi __attribute__ ((__vector_size__ (32))) __attribute__((__aligned__(32)));
+typedef double __v4df __attribute__ ((__vector_size__ (32)));
+typedef float __v8sf __attribute__ ((__vector_size__ (32)));
+typedef long long __v4di __attribute__ ((__vector_size__ (32)));
+typedef int __v8si __attribute__ ((__vector_size__ (32)));
+typedef short __v16hi __attribute__ ((__vector_size__ (32)));
+typedef char __v32qi __attribute__ ((__vector_size__ (32)));
 
 /* Unsigned types */
-typedef unsigned long long __v4du __attribute__ ((__vector_size__ (32))) __attribute__((__aligned__(32)));
-typedef unsigned int __v8su __attribute__ ((__vector_size__ (32))) __attribute__((__aligned__(32)));
-typedef unsigned short __v16hu __attribute__ ((__vector_size__ (32))) __attribute__((__aligned__(32)));
-typedef unsigned char __v32qu __attribute__ ((__vector_size__ (32))) __attribute__((__aligned__(32)));
+typedef unsigned long long __v4du __attribute__ ((__vector_size__ (32)));
+typedef unsigned int __v8su __attribute__ ((__vector_size__ (32)));
+typedef unsigned short __v16hu __attribute__ ((__vector_size__ (32)));
+typedef unsigned char __v32qu __attribute__ ((__vector_size__ (32)));
 
 /* We need an explicitly signed variant for char. Note that this shouldn't
  * appear in the interface though. */
-typedef signed char __v32qs __attribute__((__vector_size__(32))) __attribute__((__aligned__(32)));
+typedef signed char __v32qs __attribute__((__vector_size__(32)));
 
-typedef float __m256 __attribute__ ((__vector_size__ (32))) __attribute__((__aligned__(32)));
-typedef double __m256d __attribute__((__vector_size__(32))) __attribute__((__aligned__(32)));
-typedef long long __m256i __attribute__((__vector_size__(32))) __attribute__((__aligned__(32)));
+typedef float __m256 __attribute__ ((__vector_size__ (32)));
+typedef double __m256d __attribute__((__vector_size__(32)));
+typedef long long __m256i __attribute__((__vector_size__(32)));
 
 /* Define the default attributes for the functions in this file. */
 #define __DEFAULT_FN_ATTRS __attribute__((__always_inline__, __nodebug__, __target__("avx")))
@@ -2015,12 +2015,8 @@ _mm256_blendv_ps(__m256 __a, __m256 __b, __m256 __c)
 ///    element is extracted and returned.
 /// \returns A 32-bit integer containing the extracted 32 bits of extended
 ///    packed data.
-static __inline int __DEFAULT_FN_ATTRS
-_mm256_extract_epi32(__m256i __a, const int __imm)
-{
-  __v8si __b = (__v8si)__a;
-  return __b[__imm & 7];
-}
+#define _mm256_extract_epi32(X, N) \
+  (int)__builtin_ia32_vec_ext_v8si((__v8si)(__m256i)(X), (int)(N))
 
 /// Takes a [16 x i16] vector and returns the vector element value
 ///    indexed by the immediate constant operand.
@@ -2037,12 +2033,9 @@ _mm256_extract_epi32(__m256i __a, const int __imm)
 ///    element is extracted and returned.
 /// \returns A 32-bit integer containing the extracted 16 bits of zero extended
 ///    packed data.
-static __inline int __DEFAULT_FN_ATTRS
-_mm256_extract_epi16(__m256i __a, const int __imm)
-{
-  __v16hi __b = (__v16hi)__a;
-  return (unsigned short)__b[__imm & 15];
-}
+#define _mm256_extract_epi16(X, N) \
+  (int)(unsigned short)__builtin_ia32_vec_ext_v16hi((__v16hi)(__m256i)(X), \
+                                                    (int)(N))
 
 /// Takes a [32 x i8] vector and returns the vector element value
 ///    indexed by the immediate constant operand.
@@ -2059,12 +2052,9 @@ _mm256_extract_epi16(__m256i __a, const int __imm)
 ///    element is extracted and returned.
 /// \returns A 32-bit integer containing the extracted 8 bits of zero extended
 ///    packed data.
-static __inline int __DEFAULT_FN_ATTRS
-_mm256_extract_epi8(__m256i __a, const int __imm)
-{
-  __v32qi __b = (__v32qi)__a;
-  return (unsigned char)__b[__imm & 31];
-}
+#define _mm256_extract_epi8(X, N) \
+  (int)(unsigned char)__builtin_ia32_vec_ext_v32qi((__v32qi)(__m256i)(X), \
+                                                   (int)(N))
 
 #ifdef __x86_64__
 /// Takes a [4 x i64] vector and returns the vector element value
@@ -2082,12 +2072,8 @@ _mm256_extract_epi8(__m256i __a, const int __imm)
 ///    element is extracted and returned.
 /// \returns A 64-bit integer containing the extracted 64 bits of extended
 ///    packed data.
-static __inline long long  __DEFAULT_FN_ATTRS
-_mm256_extract_epi64(__m256i __a, const int __imm)
-{
-  __v4di __b = (__v4di)__a;
-  return __b[__imm & 3];
-}
+#define _mm256_extract_epi64(X, N) \
+  (long long)__builtin_ia32_vec_ext_v4di((__v4di)(__m256i)(X), (int)(N))
 #endif
 
 /// Takes a [8 x i32] vector and replaces the vector element value
@@ -2108,13 +2094,9 @@ _mm256_extract_epi64(__m256i __a, const int __imm)
 ///    replaced.
 /// \returns A copy of vector \a __a, after replacing its element indexed by
 ///    \a __imm with \a __b.
-static __inline __m256i __DEFAULT_FN_ATTRS
-_mm256_insert_epi32(__m256i __a, int __b, int const __imm)
-{
-  __v8si __c = (__v8si)__a;
-  __c[__imm & 7] = __b;
-  return (__m256i)__c;
-}
+#define _mm256_insert_epi32(X, I, N) \
+  (__m256i)__builtin_ia32_vec_set_v8si((__v8si)(__m256i)(X), \
+                                       (int)(I), (int)(N))
 
 
 /// Takes a [16 x i16] vector and replaces the vector element value
@@ -2135,13 +2117,9 @@ _mm256_insert_epi32(__m256i __a, int __b, int const __imm)
 ///    replaced.
 /// \returns A copy of vector \a __a, after replacing its element indexed by
 ///    \a __imm with \a __b.
-static __inline __m256i __DEFAULT_FN_ATTRS
-_mm256_insert_epi16(__m256i __a, int __b, int const __imm)
-{
-  __v16hi __c = (__v16hi)__a;
-  __c[__imm & 15] = __b;
-  return (__m256i)__c;
-}
+#define _mm256_insert_epi16(X, I, N) \
+  (__m256i)__builtin_ia32_vec_set_v16hi((__v16hi)(__m256i)(X), \
+                                        (int)(I), (int)(N))
 
 /// Takes a [32 x i8] vector and replaces the vector element value
 ///    indexed by the immediate constant operand with a new value. Returns the
@@ -2161,13 +2139,9 @@ _mm256_insert_epi16(__m256i __a, int __b, int const __imm)
 ///    replaced.
 /// \returns A copy of vector \a __a, after replacing its element indexed by
 ///    \a __imm with \a __b.
-static __inline __m256i __DEFAULT_FN_ATTRS
-_mm256_insert_epi8(__m256i __a, int __b, int const __imm)
-{
-  __v32qi __c = (__v32qi)__a;
-  __c[__imm & 31] = __b;
-  return (__m256i)__c;
-}
+#define _mm256_insert_epi8(X, I, N) \
+  (__m256i)__builtin_ia32_vec_set_v32qi((__v32qi)(__m256i)(X), \
+                                        (int)(I), (int)(N))
 
 #ifdef __x86_64__
 /// Takes a [4 x i64] vector and replaces the vector element value
@@ -2188,13 +2162,9 @@ _mm256_insert_epi8(__m256i __a, int __b, int const __imm)
 ///    replaced.
 /// \returns A copy of vector \a __a, after replacing its element indexed by
 ///     \a __imm with \a __b.
-static __inline __m256i __DEFAULT_FN_ATTRS
-_mm256_insert_epi64(__m256i __a, long long __b, int const __imm)
-{
-  __v4di __c = (__v4di)__a;
-  __c[__imm & 3] = __b;
-  return (__m256i)__c;
-}
+#define _mm256_insert_epi64(X, I, N) \
+  (__m256i)__builtin_ia32_vec_set_v4di((__v4di)(__m256i)(X), \
+                                       (long long)(I), (int)(N))
 #endif
 
 /* Conversion */
@@ -3593,7 +3563,8 @@ _mm_maskstore_ps(float *__p, __m128i __m, __m128 __a)
 static __inline void __DEFAULT_FN_ATTRS
 _mm256_stream_si256(__m256i *__a, __m256i __b)
 {
-  __builtin_nontemporal_store((__v4di)__b, (__v4di*)__a);
+  typedef __v4di __v4di_aligned __attribute__((aligned(32)));
+  __builtin_nontemporal_store((__v4di_aligned)__b, (__v4di_aligned*)__a);
 }
 
 /// Moves double-precision values from a 256-bit vector of [4 x double]
@@ -3612,7 +3583,8 @@ _mm256_stream_si256(__m256i *__a, __m256i __b)
 static __inline void __DEFAULT_FN_ATTRS
 _mm256_stream_pd(double *__a, __m256d __b)
 {
-  __builtin_nontemporal_store((__v4df)__b, (__v4df*)__a);
+  typedef __v4df __v4df_aligned __attribute__((aligned(32)));
+  __builtin_nontemporal_store((__v4df_aligned)__b, (__v4df_aligned*)__a);
 }
 
 /// Moves single-precision floating point values from a 256-bit vector
@@ -3632,7 +3604,8 @@ _mm256_stream_pd(double *__a, __m256d __b)
 static __inline void __DEFAULT_FN_ATTRS
 _mm256_stream_ps(float *__p, __m256 __a)
 {
-  __builtin_nontemporal_store((__v8sf)__a, (__v8sf*)__p);
+  typedef __v8sf __v8sf_aligned __attribute__((aligned(32)));
+  __builtin_nontemporal_store((__v8sf_aligned)__a, (__v8sf_aligned*)__p);
 }
 
 /* Create vectors */
