@@ -16308,9 +16308,9 @@ void Sema::SetIvarInitializers(ObjCImplementationDecl *ObjCImplementation) {
 
 static
 void DelegatingCycleHelper(CXXConstructorDecl* Ctor,
-                           llvm::SmallSet<CXXConstructorDecl*, 4> &Valid,
-                           llvm::SmallSet<CXXConstructorDecl*, 4> &Invalid,
-                           llvm::SmallSet<CXXConstructorDecl*, 4> &Current,
+                           llvm::SmallPtrSet<CXXConstructorDecl*, 4> &Valid,
+                           llvm::SmallPtrSet<CXXConstructorDecl*, 4> &Invalid,
+                           llvm::SmallPtrSet<CXXConstructorDecl*, 4> &Current,
                            Sema &S) {
   if (Ctor->isInvalidDecl())
     return;
@@ -16372,7 +16372,7 @@ void DelegatingCycleHelper(CXXConstructorDecl* Ctor,
 
 
 void Sema::CheckDelegatingCtorCycles() {
-  llvm::SmallSet<CXXConstructorDecl*, 4> Valid, Invalid, Current;
+  llvm::SmallPtrSet<CXXConstructorDecl*, 4> Valid, Invalid, Current;
 
   for (DelegatingCtorDeclsType::iterator
          I = DelegatingCtorDecls.begin(ExternalSource),
@@ -16380,9 +16380,7 @@ void Sema::CheckDelegatingCtorCycles() {
        I != E; ++I)
     DelegatingCycleHelper(*I, Valid, Invalid, Current, *this);
 
-  for (llvm::SmallSet<CXXConstructorDecl *, 4>::iterator CI = Invalid.begin(),
-                                                         CE = Invalid.end();
-       CI != CE; ++CI)
+  for (auto CI = Invalid.begin(), CE = Invalid.end(); CI != CE; ++CI)
     (*CI)->setInvalidDecl();
 }
 
