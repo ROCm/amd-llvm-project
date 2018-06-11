@@ -28,7 +28,7 @@
 #include "llvm/Analysis/ScalarEvolutionExpander.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
-#include "llvm/Analysis/Utils/Local.h"
+#include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
@@ -189,7 +189,7 @@ namespace {
     bool PreserveLCSSA;
 
     using SmallInstructionVector = SmallVector<Instruction *, 16>;
-    using SmallInstructionSet = SmallSet<Instruction *, 16>;
+    using SmallInstructionSet = SmallPtrSet<Instruction *, 16>;
 
     // Map between induction variable and its increment
     DenseMap<Instruction *, int64_t> IVToIncMap;

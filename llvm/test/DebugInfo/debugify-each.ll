@@ -13,20 +13,23 @@
 ; Verify that debugify each can be safely used with piping
 ; RUN: opt -debugify-each -O1 < %s | opt -O2 -o /dev/null
 
+; Check that the quiet mode emits no messages.
+; RUN: opt -disable-output -debugify-quiet -debugify-each -O1 < %s 2>&1 | count 0
+
 ; Check that stripped textual IR compares equal before and after applying
 ; debugify.
 ; RUN: opt -O1 < %s -S -o - | \
-; RUN:   opt -strip -strip-dead-prototypes -strip-module-flags -S -o %t.before
+; RUN:   opt -strip -strip-dead-prototypes -strip-named-metadata -S -o %t.before
 ; RUN: opt -O1 -debugify-each < %s -S -o - | \
-; RUN:   opt -strip -strip-dead-prototypes -strip-module-flags -S -o %t.after
+; RUN:   opt -strip -strip-dead-prototypes -strip-named-metadata -S -o %t.after
 ; RUN: diff %t.before %t.after
 
 ; Check that stripped IR compares equal before and after applying debugify.
 ; RUN: opt -O1 < %s | \
-; RUN:   opt -strip -strip-dead-prototypes -strip-module-flags | \
+; RUN:   opt -strip -strip-dead-prototypes -strip-named-metadata | \
 ; RUN:   llvm-dis -o %t.before
 ; RUN: opt -O1 -debugify-each < %s | \
-; RUN:   opt -strip -strip-dead-prototypes -strip-module-flags | \
+; RUN:   opt -strip -strip-dead-prototypes -strip-named-metadata | \
 ; RUN:   llvm-dis -o %t.after
 ; RUN: diff %t.before %t.after
 

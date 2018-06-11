@@ -2641,6 +2641,14 @@ template <class ELFT> void GNUStyle<ELFT>::printRelocations(const ELFO *Obj) {
     HasRelocSections = true;
     StringRef Name = unwrapOrError(Obj->getSectionName(&Sec));
     unsigned Entries = Sec.getEntityCount();
+    std::vector<Elf_Rela> AndroidRelas;
+    if (Sec.sh_type == ELF::SHT_ANDROID_REL ||
+        Sec.sh_type == ELF::SHT_ANDROID_RELA) {
+      // Android's packed relocation section needs to be unpacked first
+      // to get the actual number of entries.
+      AndroidRelas = unwrapOrError(Obj->android_relas(&Sec));
+      Entries = AndroidRelas.size();
+    }
     uintX_t Offset = Sec.sh_offset;
     OS << "\nRelocation section '" << Name << "' at offset 0x"
        << to_hexString(Offset, false) << " contains " << Entries
@@ -2665,7 +2673,7 @@ template <class ELFT> void GNUStyle<ELFT>::printRelocations(const ELFO *Obj) {
       break;
     case ELF::SHT_ANDROID_REL:
     case ELF::SHT_ANDROID_RELA:
-      for (const auto &R : unwrapOrError(Obj->android_relas(&Sec)))
+      for (const auto &R : AndroidRelas)
         printRelocation(Obj, SymTab, R, Sec.sh_type == ELF::SHT_ANDROID_RELA);
       break;
     }
@@ -3491,7 +3499,7 @@ static void printGNUProperty(raw_ostream &OS, uint32_t Type, uint32_t DataSize,
   case GNU_PROPERTY_STACK_SIZE: {
     OS << "    stack size: ";
     if (DataSize == sizeof(typename ELFT::uint))
-      OS << format("0x%x\n",
+      OS << format("0x%llx\n",
                    (uint64_t)(*(const typename ELFT::Addr *)Data.data()));
     else
       OS << format("<corrupt length: 0x%x>\n", DataSize);
@@ -3501,6 +3509,36 @@ static void printGNUProperty(raw_ostream &OS, uint32_t Type, uint32_t DataSize,
     OS << "    no copy on protected";
     if (DataSize)
       OS << format(" <corrupt length: 0x%x>", DataSize);
+    OS << "\n";
+    break;
+  case GNU_PROPERTY_X86_FEATURE_1_AND:
+    OS << "    X86 features: ";
+    if (DataSize != 4 && DataSize != 8) {
+      OS << format("<corrupt length: 0x%x>\n", DataSize);
+      break;
+    }
+    uint64_t CFProtection =
+        (DataSize == 4)
+            ? support::endian::read32<ELFT::TargetEndianness>(Data.data())
+            : support::endian::read64<ELFT::TargetEndianness>(Data.data());
+    if (CFProtection == 0) {
+      OS << "none\n";
+      break;
+    }
+    if (CFProtection & GNU_PROPERTY_X86_FEATURE_1_IBT) {
+      OS << "IBT";
+      CFProtection &= ~GNU_PROPERTY_X86_FEATURE_1_IBT;
+      if (CFProtection)
+        OS << ", ";
+    }
+    if (CFProtection & GNU_PROPERTY_X86_FEATURE_1_SHSTK) {
+      OS << "SHSTK";
+      CFProtection &= ~GNU_PROPERTY_X86_FEATURE_1_SHSTK;
+      if (CFProtection)
+        OS << ", ";
+    }
+    if (CFProtection)
+      OS << format("<unknown flags: 0x%llx>", CFProtection);
     OS << "\n";
     break;
   }

@@ -194,10 +194,16 @@ mov     z21.d, #32512
 // CHECK-UNKNOWN: f5 ef f8 25 <unknown>
 
 mov     z0.h, #32768
-// CHECK-INST: dupm    z0.h, #0x8000
-// CHECK-ENCODING: [0x00,0x0c,0xc0,0x05]
+// CHECK-INST: mov    z0.h, #-32768
+// CHECK-ENCODING: [0x00,0xf0,0x78,0x25]
 // CHECK-ERROR: instruction requires: sve
-// CHECK-UNKNOWN: 00 0c c0 05 <unknown>
+// CHECK-UNKNOWN: 00 f0 78 25 <unknown>
+
+mov     z0.h, #65280
+// CHECK-INST: mov    z0.h, #-256
+// CHECK-ENCODING: [0xe0,0xff,0x78,0x25]
+// CHECK-ERROR: instruction requires: sve
+// CHECK-UNKNOWN: e0 ff 78 25 <unknown>
 
 mov     z0.s, #-32769
 // CHECK-INST: mov     z0.s, #0xffff7fff
@@ -401,3 +407,96 @@ mov     z21.d, p15/m, #-128, lsl #8
 // CHECK-ENCODING: [0x15,0x70,0xdf,0x05]
 // CHECK-ERROR: instruction requires: sve
 // CHECK-UNKNOWN: 15 70 df 05  <unknown>
+
+// --------------------------------------------------------------------------//
+// Tests for indexed variant
+
+mov     z0.b, z0.b[0]
+// CHECK-INST: mov     z0.b, b0
+// CHECK-ENCODING: [0x00,0x20,0x21,0x05]
+// CHECK-ERROR: instruction requires: sve
+// CHECK-UNKNOWN: 00 20 21 05 <unknown>
+
+mov     z0.h, z0.h[0]
+// CHECK-INST: mov     z0.h, h0
+// CHECK-ENCODING: [0x00,0x20,0x22,0x05]
+// CHECK-ERROR: instruction requires: sve
+// CHECK-UNKNOWN: 00 20 22 05 <unknown>
+
+mov     z0.s, z0.s[0]
+// CHECK-INST: mov     z0.s, s0
+// CHECK-ENCODING: [0x00,0x20,0x24,0x05]
+// CHECK-ERROR: instruction requires: sve
+// CHECK-UNKNOWN: 00 20 24 05 <unknown>
+
+mov     z0.d, z0.d[0]
+// CHECK-INST: mov     z0.d, d0
+// CHECK-ENCODING: [0x00,0x20,0x28,0x05]
+// CHECK-ERROR: instruction requires: sve
+// CHECK-UNKNOWN: 00 20 28 05 <unknown>
+
+mov     z0.q, z0.q[0]
+// CHECK-INST: mov     z0.q, q0
+// CHECK-ENCODING: [0x00,0x20,0x30,0x05]
+// CHECK-ERROR: instruction requires: sve
+// CHECK-UNKNOWN: 00 20 30 05 <unknown>
+
+mov     z0.b, b0
+// CHECK-INST: mov     z0.b, b0
+// CHECK-ENCODING: [0x00,0x20,0x21,0x05]
+// CHECK-ERROR: instruction requires: sve
+// CHECK-UNKNOWN: 00 20 21 05 <unknown>
+
+mov     z0.h, h0
+// CHECK-INST: mov     z0.h, h0
+// CHECK-ENCODING: [0x00,0x20,0x22,0x05]
+// CHECK-ERROR: instruction requires: sve
+// CHECK-UNKNOWN: 00 20 22 05 <unknown>
+
+mov     z0.s, s0
+// CHECK-INST: mov     z0.s, s0
+// CHECK-ENCODING: [0x00,0x20,0x24,0x05]
+// CHECK-ERROR: instruction requires: sve
+// CHECK-UNKNOWN: 00 20 24 05 <unknown>
+
+mov     z0.d, d0
+// CHECK-INST: mov     z0.d, d0
+// CHECK-ENCODING: [0x00,0x20,0x28,0x05]
+// CHECK-ERROR: instruction requires: sve
+// CHECK-UNKNOWN: 00 20 28 05 <unknown>
+
+mov     z0.q, q0
+// CHECK-INST: mov     z0.q, q0
+// CHECK-ENCODING: [0x00,0x20,0x30,0x05]
+// CHECK-ERROR: instruction requires: sve
+// CHECK-UNKNOWN: 00 20 30 05 <unknown>
+
+mov     z31.b, z31.b[63]
+// CHECK-INST: mov     z31.b, z31.b[63]
+// CHECK-ENCODING: [0xff,0x23,0xff,0x05]
+// CHECK-ERROR: instruction requires: sve
+// CHECK-UNKNOWN: ff 23 ff 05 <unknown>
+
+mov     z31.h, z31.h[31]
+// CHECK-INST: mov     z31.h, z31.h[31]
+// CHECK-ENCODING: [0xff,0x23,0xfe,0x05]
+// CHECK-ERROR: instruction requires: sve
+// CHECK-UNKNOWN: ff 23 fe 05 <unknown>
+
+mov     z31.s, z31.s[15]
+// CHECK-INST: mov     z31.s, z31.s[15]
+// CHECK-ENCODING: [0xff,0x23,0xfc,0x05]
+// CHECK-ERROR: instruction requires: sve
+// CHECK-UNKNOWN: ff 23 fc 05 <unknown>
+
+mov     z31.d, z31.d[7]
+// CHECK-INST: mov     z31.d, z31.d[7]
+// CHECK-ENCODING: [0xff,0x23,0xf8,0x05]
+// CHECK-ERROR: instruction requires: sve
+// CHECK-UNKNOWN: ff 23 f8 05 <unknown>
+
+mov     z5.q, z17.q[3]
+// CHECK-INST: mov     z5.q, z17.q[3]
+// CHECK-ENCODING: [0x25,0x22,0xf0,0x05]
+// CHECK-ERROR: instruction requires: sve
+// CHECK-UNKNOWN: 25 22 f0 05 <unknown>
