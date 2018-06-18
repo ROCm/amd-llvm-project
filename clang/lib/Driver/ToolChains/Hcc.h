@@ -10,7 +10,6 @@
 #ifndef LLVM_CLANG_LIB_DRIVER_TOOLCHAINS_HCC_H
 #define LLVM_CLANG_LIB_DRIVER_TOOLCHAINS_HCC_H
 
-#include "clang/Basic/VersionTuple.h"
 #include "clang/Driver/Action.h"
 #include "clang/Driver/Multilib.h"
 #include "clang/Driver/ToolChain.h"
