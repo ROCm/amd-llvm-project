@@ -1703,10 +1703,10 @@ example:
     the ELF x86-64 abi, but it can be disabled for some compilation
     units.
 ``nocf_check``
-    This attribute indicates that no control-flow check will be perfomed on
+    This attribute indicates that no control-flow check will be performed on
     the attributed entity. It disables -fcf-protection=<> for a specific
     entity to fine grain the HW control flow protection mechanism. The flag
-    is target independant and currently appertains to a function or function
+    is target independent and currently appertains to a function or function
     pointer.
 ``shadowcallstack``
     This attribute indicates that the ShadowCallStack checks are enabled for
@@ -3275,25 +3275,25 @@ The following is the syntax for constant expressions:
     integer constant. TYPE must be a scalar or vector integer type. CST
     must be of scalar or vector floating-point type. Both CST and TYPE
     must be scalars, or vectors of the same number of elements. If the
-    value won't fit in the integer type, the results are undefined.
+    value won't fit in the integer type, the result is a
+    :ref:`poison value <poisonvalues>`.
 ``fptosi (CST to TYPE)``
     Convert a floating-point constant to the corresponding signed
     integer constant. TYPE must be a scalar or vector integer type. CST
     must be of scalar or vector floating-point type. Both CST and TYPE
     must be scalars, or vectors of the same number of elements. If the
-    value won't fit in the integer type, the results are undefined.
+    value won't fit in the integer type, the result is a
+    :ref:`poison value <poisonvalues>`.
 ``uitofp (CST to TYPE)``
     Convert an unsigned integer constant to the corresponding 
     floating-point constant. TYPE must be a scalar or vector floating-point
     type.  CST must be of scalar or vector integer type. Both CST and TYPE must
-    be scalars, or vectors of the same number of elements. If the value
-    won't fit in the floating-point type, the results are undefined.
+    be scalars, or vectors of the same number of elements.
 ``sitofp (CST to TYPE)``
     Convert a signed integer constant to the corresponding floating-point
     constant. TYPE must be a scalar or vector floating-point type.
     CST must be of scalar or vector integer type. Both CST and TYPE must
-    be scalars, or vectors of the same number of elements. If the value
-    won't fit in the floating-point type, the results are undefined.
+    be scalars, or vectors of the same number of elements.
 ``ptrtoint (CST to TYPE)``
     Perform the :ref:`ptrtoint operation <i_ptrtoint>` on constants.
 ``inttoptr (CST to TYPE)``
@@ -7595,7 +7595,8 @@ Semantics:
 
 The result is a scalar of the same type as the element type of ``val``.
 Its value is the value at position ``idx`` of ``val``. If ``idx``
-exceeds the length of ``val``, the results are undefined.
+exceeds the length of ``val``, the result is a
+:ref:`poison value <poisonvalues>`.
 
 Example:
 """"""""
@@ -7636,8 +7637,8 @@ Semantics:
 
 The result is a vector of the same type as ``val``. Its element values
 are those of ``val`` except at position ``idx``, where it gets the value
-``elt``. If ``idx`` exceeds the length of ``val``, the results are
-undefined.
+``elt``. If ``idx`` exceeds the length of ``val``, the result
+is a :ref:`poison value <poisonvalues>`.
 
 Example:
 """"""""
@@ -8764,8 +8765,8 @@ Semantics:
 
 The '``fptoui``' instruction converts its :ref:`floating-point
 <t_floating>` operand into the nearest (rounding towards zero)
-unsigned integer value. If the value cannot fit in ``ty2``, the results
-are undefined.
+unsigned integer value. If the value cannot fit in ``ty2``, the result
+is a :ref:`poison value <poisonvalues>`.
 
 Example:
 """"""""
@@ -8806,8 +8807,8 @@ Semantics:
 
 The '``fptosi``' instruction converts its :ref:`floating-point
 <t_floating>` operand into the nearest (rounding towards zero)
-signed integer value. If the value cannot fit in ``ty2``, the results
-are undefined.
+signed integer value. If the value cannot fit in ``ty2``, the result
+is a :ref:`poison value <poisonvalues>`.
 
 Example:
 """"""""
@@ -8848,8 +8849,9 @@ Semantics:
 
 The '``uitofp``' instruction interprets its operand as an unsigned
 integer quantity and converts it to the corresponding floating-point
-value. If the value cannot fit in the floating-point value, the results
-are undefined.
+value. If the value cannot be exactly represented, it is rounded using
+the default rounding mode.
+
 
 Example:
 """"""""
@@ -8888,9 +8890,9 @@ Semantics:
 """"""""""
 
 The '``sitofp``' instruction interprets its operand as a signed integer
-quantity and converts it to the corresponding floating-point value. If
-the value cannot fit in the floating-point value, the results are
-undefined.
+quantity and converts it to the corresponding floating-point value. If the
+value cannot be exactly represented, it is rounded using the default rounding
+mode.
 
 Example:
 """"""""

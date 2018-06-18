@@ -388,9 +388,11 @@ struct ScudoAllocator {
     if (PrimaryAllocator::CanAllocate(AlignedSize, MinAlignment)) {
       BackendSize = AlignedSize;
       ClassId = SizeClassMap::ClassID(BackendSize);
-      ScudoTSD *TSD = getTSDAndLock();
+      bool UnlockRequired;
+      ScudoTSD *TSD = getTSDAndLock(&UnlockRequired);
       BackendPtr = BackendAllocator.allocatePrimary(&TSD->Cache, ClassId);
-      TSD->unlock();
+      if (UnlockRequired)
+        TSD->unlock();
     } else {
       BackendSize = NeededSize;
       ClassId = 0;
@@ -447,10 +449,12 @@ struct ScudoAllocator {
       Chunk::eraseHeader(Ptr);
       void *BackendPtr = Chunk::getBackendPtr(Ptr, Header);
       if (Header->ClassId) {
-        ScudoTSD *TSD = getTSDAndLock();
+        bool UnlockRequired;
+        ScudoTSD *TSD = getTSDAndLock(&UnlockRequired);
         getBackendAllocator().deallocatePrimary(&TSD->Cache, BackendPtr,
                                                 Header->ClassId);
-        TSD->unlock();
+        if (UnlockRequired)
+          TSD->unlock();
       } else {
         getBackendAllocator().deallocateSecondary(BackendPtr);
       }
@@ -464,17 +468,20 @@ struct ScudoAllocator {
       UnpackedHeader NewHeader = *Header;
       NewHeader.State = ChunkQuarantine;
       Chunk::compareExchangeHeader(Ptr, &NewHeader, Header);
-      ScudoTSD *TSD = getTSDAndLock();
+      bool UnlockRequired;
+      ScudoTSD *TSD = getTSDAndLock(&UnlockRequired);
       AllocatorQuarantine.Put(getQuarantineCache(TSD),
                               QuarantineCallback(&TSD->Cache), Ptr,
                               EstimatedSize);
-      TSD->unlock();
+      if (UnlockRequired)
+        TSD->unlock();
     }
   }
 
   // Deallocates a Chunk, which means either adding it to the quarantine or
   // directly returning it to the backend if criteria are met.
-  void deallocate(void *Ptr, uptr DeleteSize, AllocType Type) {
+  void deallocate(void *Ptr, uptr DeleteSize, uptr DeleteAlignment,
+                  AllocType Type) {
     // For a deallocation, we only ensure minimal initialization, meaning thread
     // local data will be left uninitialized for now (when using ELF TLS). The
     // fallback cache will be used instead. This is a workaround for a situation
@@ -507,6 +514,7 @@ struct ScudoAllocator {
         dieWithMessage("invalid sized delete when deallocating address %p\n",
                        Ptr);
     }
+    (void)DeleteAlignment;  // TODO(kostyak): verify that the alignment matches.
     quarantineOrDeallocateChunk(Ptr, &Header, Size);
   }
 
@@ -612,8 +620,7 @@ void initScudo() {
   Instance.init();
 }
 
-void ScudoTSD::init(bool Shared) {
-  UnlockRequired = Shared;
+void ScudoTSD::init() {
   getBackendAllocator().initCache(&Cache);
   memset(QuarantineCachePlaceHolder, 0, sizeof(QuarantineCachePlaceHolder));
 }
@@ -622,23 +629,23 @@ void ScudoTSD::commitBack() {
   Instance.commitBack(this);
 }
 
-void *scudoMalloc(uptr Size, AllocType Type) {
-  return SetErrnoOnNull(Instance.allocate(Size, MinAlignment, Type));
+void *scudoAllocate(uptr Size, uptr Alignment, AllocType Type) {
+  if (Alignment && UNLIKELY(!IsPowerOfTwo(Alignment))) {
+    errno = EINVAL;
+    return Instance.handleBadRequest();
+  }
+  return SetErrnoOnNull(Instance.allocate(Size, Alignment, Type));
 }
 
-void scudoFree(void *Ptr, AllocType Type) {
-  Instance.deallocate(Ptr, 0, Type);
-}
-
-void scudoSizedFree(void *Ptr, uptr Size, AllocType Type) {
-  Instance.deallocate(Ptr, Size, Type);
+void scudoDeallocate(void *Ptr, uptr Size, uptr Alignment, AllocType Type) {
+  Instance.deallocate(Ptr, Size, Alignment, Type);
 }
 
 void *scudoRealloc(void *Ptr, uptr Size) {
   if (!Ptr)
     return SetErrnoOnNull(Instance.allocate(Size, MinAlignment, FromMalloc));
   if (Size == 0) {
-    Instance.deallocate(Ptr, 0, FromMalloc);
+    Instance.deallocate(Ptr, 0, 0, FromMalloc);
     return nullptr;
   }
   return SetErrnoOnNull(Instance.reallocate(Ptr, Size));
@@ -662,14 +669,6 @@ void *scudoPvalloc(uptr Size) {
   // pvalloc(0) should allocate one page.
   Size = Size ? RoundUpTo(Size, PageSize) : PageSize;
   return SetErrnoOnNull(Instance.allocate(Size, PageSize, FromMemalign));
-}
-
-void *scudoMemalign(uptr Alignment, uptr Size) {
-  if (UNLIKELY(!IsPowerOfTwo(Alignment))) {
-    errno = EINVAL;
-    return Instance.handleBadRequest();
-  }
-  return SetErrnoOnNull(Instance.allocate(Size, Alignment, FromMemalign));
 }
 
 int scudoPosixMemalign(void **MemPtr, uptr Alignment, uptr Size) {
