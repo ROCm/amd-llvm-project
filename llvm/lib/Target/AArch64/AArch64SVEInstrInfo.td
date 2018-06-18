@@ -35,6 +35,10 @@ let Predicates = [HasSVE] in {
   defm EOR_ZI : sve_int_log_imm<0b01, "eor", "eon">;
   defm AND_ZI : sve_int_log_imm<0b10, "and", "bic">;
 
+  defm FADD_ZPmI    : sve_fp_2op_i_p_zds<0b000, "fadd", sve_fpimm_half_one>;
+  defm FMUL_ZPmI    : sve_fp_2op_i_p_zds<0b010, "fmul", sve_fpimm_half_two>;
+  defm FMAX_ZPmI    : sve_fp_2op_i_p_zds<0b110, "fmax", sve_fpimm_zero_one>;
+
   // Splat immediate (unpredicated)
   defm DUP_ZI   : sve_int_dup_imm<"dup">;
   defm FDUP_ZI  : sve_int_dup_fpimm<"fdup">;
@@ -48,6 +52,29 @@ let Predicates = [HasSVE] in {
   // Splat scalar register (unpredicated, GPR or vector + element index)
   defm DUP_ZR  : sve_int_perm_dup_r<"dup">;
   defm DUP_ZZI : sve_int_perm_dup_i<"dup">;
+
+  // Splat scalar register (predicated)
+  defm CPY_ZPmR : sve_int_perm_cpy_r<"cpy">;
+  defm CPY_ZPmV : sve_int_perm_cpy_v<"cpy">;
+
+  // Select elements from either vector (predicated)
+  defm SEL_ZPZZ    : sve_int_sel_vvv<"sel">;
+
+  def AND_PPzPP   : sve_int_pred_log<0b0000, "and">;
+  def BIC_PPzPP   : sve_int_pred_log<0b0001, "bic">;
+  def EOR_PPzPP   : sve_int_pred_log<0b0010, "eor">;
+  def SEL_PPPP    : sve_int_pred_log<0b0011, "sel">;
+  def ANDS_PPzPP  : sve_int_pred_log<0b0100, "ands">;
+  def BICS_PPzPP  : sve_int_pred_log<0b0101, "bics">;
+  def EORS_PPzPP  : sve_int_pred_log<0b0110, "eors">;
+  def ORR_PPzPP   : sve_int_pred_log<0b1000, "orr">;
+  def ORN_PPzPP   : sve_int_pred_log<0b1001, "orn">;
+  def NOR_PPzPP   : sve_int_pred_log<0b1010, "nor">;
+  def NAND_PPzPP  : sve_int_pred_log<0b1011, "nand">;
+  def ORRS_PPzPP  : sve_int_pred_log<0b1100, "orrs">;
+  def ORNS_PPzPP  : sve_int_pred_log<0b1101, "orns">;
+  def NORS_PPzPP  : sve_int_pred_log<0b1110, "nors">;
+  def NANDS_PPzPP : sve_int_pred_log<0b1111, "nands">;
 
   // continuous load with reg+immediate
   defm LD1B_IMM    : sve_mem_cld_si<0b0000, "ld1b",  Z_b, ZPR8>;
@@ -473,6 +500,15 @@ let Predicates = [HasSVE] in {
   def ADDVL_XXI : sve_int_arith_vl<0b0, "addvl">;
   def ADDPL_XXI : sve_int_arith_vl<0b1, "addpl">;
 
+  defm INCB_XPiI : sve_int_pred_pattern_a<0b000, "incb">;
+  defm DECB_XPiI : sve_int_pred_pattern_a<0b001, "decb">;
+  defm INCH_XPiI : sve_int_pred_pattern_a<0b010, "inch">;
+  defm DECH_XPiI : sve_int_pred_pattern_a<0b011, "dech">;
+  defm INCW_XPiI : sve_int_pred_pattern_a<0b100, "incw">;
+  defm DECW_XPiI : sve_int_pred_pattern_a<0b101, "decw">;
+  defm INCD_XPiI : sve_int_pred_pattern_a<0b110, "incd">;
+  defm DECD_XPiI : sve_int_pred_pattern_a<0b111, "decd">;
+
   defm INDEX_RR : sve_int_index_rr<"index">;
   defm INDEX_IR : sve_int_index_ir<"index">;
   defm INDEX_RI : sve_int_index_ri<"index">;
@@ -487,4 +523,21 @@ let Predicates = [HasSVE] in {
   // InstAliases
   def : InstAlias<"mov $Zd, $Zn",
                   (ORR_ZZZ ZPR64:$Zd, ZPR64:$Zn, ZPR64:$Zn), 1>;
+  def : InstAlias<"mov $Pd, $Pg/m, $Pn",
+                  (SEL_PPPP PPR8:$Pd, PPRAny:$Pg, PPR8:$Pn, PPR8:$Pd), 1>;
+  def : InstAlias<"mov $Pd, $Pn",
+                  (ORR_PPzPP PPR8:$Pd, PPR8:$Pn, PPR8:$Pn, PPR8:$Pn), 1>;
+  def : InstAlias<"mov $Pd, $Pg/z, $Pn",
+                  (AND_PPzPP PPR8:$Pd, PPRAny:$Pg, PPR8:$Pn, PPR8:$Pn), 1>;
+
+  def : InstAlias<"movs $Pd, $Pn",
+                  (ORRS_PPzPP PPR8:$Pd, PPR8:$Pn, PPR8:$Pn, PPR8:$Pn), 1>;
+  def : InstAlias<"movs $Pd, $Pg/z, $Pn",
+                  (ANDS_PPzPP PPR8:$Pd, PPRAny:$Pg, PPR8:$Pn, PPR8:$Pn), 1>;
+
+  def : InstAlias<"not $Pd, $Pg/z, $Pn",
+                  (EOR_PPzPP PPR8:$Pd, PPRAny:$Pg, PPR8:$Pn, PPRAny:$Pg), 1>;
+
+  def : InstAlias<"nots $Pd, $Pg/z, $Pn",
+                  (EORS_PPzPP PPR8:$Pd, PPRAny:$Pg, PPR8:$Pn, PPRAny:$Pg), 1>;
 }

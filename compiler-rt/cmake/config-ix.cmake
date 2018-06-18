@@ -123,6 +123,13 @@ endif()
 # List of all architectures we can target.
 set(COMPILER_RT_SUPPORTED_ARCH)
 
+# Try to compile a very simple source file to ensure we can target the given
+# platform. We use the results of these tests to build only the various target
+# runtime libraries supported by our current compilers cross-compiling
+# abilities.
+set(SIMPLE_SOURCE ${CMAKE_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/simple.cc)
+file(WRITE ${SIMPLE_SOURCE} "#include <stdlib.h>\n#include <stdio.h>\nint main() { printf(\"hello, world\"); }\n")
+
 # Detect whether the current target platform is 32-bit or 64-bit, and setup
 # the correct commandline flags needed to attempt to target 32-bit and 64-bit.
 if (NOT CMAKE_SIZEOF_VOID_P EQUAL 4 AND
@@ -192,7 +199,7 @@ set(ALL_SANITIZER_COMMON_SUPPORTED_ARCH ${X86} ${X86_64} ${PPC64}
 set(ALL_ASAN_SUPPORTED_ARCH ${X86} ${X86_64} ${ARM32} ${ARM64}
     ${MIPS32} ${MIPS64} ${PPC64} ${S390X})
 set(ALL_DFSAN_SUPPORTED_ARCH ${X86_64} ${MIPS64} ${ARM64})
-set(ALL_FUZZER_SUPPORTED_ARCH x86_64)
+set(ALL_FUZZER_SUPPORTED_ARCH ${X86_64} ${ARM64})
 
 if(APPLE)
   set(ALL_LSAN_SUPPORTED_ARCH ${X86} ${X86_64} ${MIPS64} ${ARM64})

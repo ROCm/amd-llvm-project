@@ -14,6 +14,7 @@
 #ifndef LLVM_EXECUTIONENGINE_ORC_CORE_H
 #define LLVM_EXECUTIONENGINE_ORC_CORE_H
 
+#include "llvm/ADT/BitmaskEnum.h"
 #include "llvm/ExecutionEngine/JITSymbol.h"
 #include "llvm/ExecutionEngine/Orc/SymbolStringPool.h"
 #include "llvm/IR/Module.h"
@@ -476,6 +477,9 @@ class VSO {
   friend class ExecutionSession;
   friend class MaterializationResponsibility;
 public:
+  using FallbackDefinitionGeneratorFunction =
+      std::function<SymbolNameSet(VSO &Parent, const SymbolNameSet &Names)>;
+
   using AsynchronousSymbolQuerySet =
       std::set<std::shared_ptr<AsynchronousSymbolQuery>>;
 
@@ -494,6 +498,14 @@ public:
 
   /// Get a reference to the ExecutionSession for this VSO.
   ExecutionSessionBase &getExecutionSession() const { return ES; }
+
+  /// Set a fallback defenition generator. If set, lookup and lookupFlags will
+  /// pass the unresolved symbols set to the fallback definition generator,
+  /// allowing it to add a new definition to the VSO.
+  void setFallbackDefinitionGenerator(
+      FallbackDefinitionGeneratorFunction FallbackDefinitionGenerator) {
+    this->FallbackDefinitionGenerator = std::move(FallbackDefinitionGenerator);
+  }
 
   /// Define all symbols provided by the materialization unit to be part
   ///        of the given VSO.
@@ -559,6 +571,13 @@ private:
 
   using MaterializingInfosMap = std::map<SymbolStringPtr, MaterializingInfo>;
 
+  using LookupImplActionFlags = enum {
+    None = 0,
+    NotifyFullyResolved = 1 << 0U,
+    NotifyFullyReady = 1 << 1U,
+    LLVM_MARK_AS_BITMASK_ENUM(NotifyFullyReady)
+  };
+
   VSO(ExecutionSessionBase &ES, std::string Name)
       : ES(ES), VSOName(std::move(Name)) {}
 
@@ -567,8 +586,17 @@ private:
   SymbolMap Symbols;
   UnmaterializedInfosMap UnmaterializedInfos;
   MaterializingInfosMap MaterializingInfos;
+  FallbackDefinitionGeneratorFunction FallbackDefinitionGenerator;
 
   Error defineImpl(MaterializationUnit &MU);
+
+  SymbolNameSet lookupFlagsImpl(SymbolFlagsMap &Flags,
+                                const SymbolNameSet &Names);
+
+  LookupImplActionFlags
+  lookupImpl(std::shared_ptr<AsynchronousSymbolQuery> &Q,
+             std::vector<std::unique_ptr<MaterializationUnit>> &MUs,
+             SymbolNameSet &Unresolved);
 
   void detachQueryHelper(AsynchronousSymbolQuery &Q,
                          const SymbolNameSet &QuerySymbols);
@@ -613,6 +641,15 @@ public:
 private:
   std::vector<std::unique_ptr<VSO>> VSOs;
 };
+
+using AsynchronousLookupFunction = std::function<SymbolNameSet(
+    std::shared_ptr<AsynchronousSymbolQuery> Q, SymbolNameSet Names)>;
+
+/// Perform a blocking lookup on the given symbols.
+Expected<SymbolMap> blockingLookup(ExecutionSessionBase &ES,
+                                   AsynchronousLookupFunction AsyncLookup,
+                                   SymbolNameSet Names, bool WaiUntilReady,
+                                   MaterializationResponsibility *MR = nullptr);
 
 /// Look up the given names in the given VSOs.
 /// VSOs will be searched in order and no VSO pointer may be null.

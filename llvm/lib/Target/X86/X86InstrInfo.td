@@ -1145,19 +1145,19 @@ def trunc_su : PatFrag<(ops node:$src), (trunc node:$src), [{
 let hasSideEffects = 0, SchedRW = [WriteNop] in {
   def NOOP : I<0x90, RawFrm, (outs), (ins), "nop", []>;
   def NOOPW : I<0x1f, MRMXm, (outs), (ins i16mem:$zero),
-                "nop{w}\t$zero", []>, TB, OpSize16;
+                "nop{w}\t$zero", []>, TB, OpSize16, NotMemoryFoldable;
   def NOOPL : I<0x1f, MRMXm, (outs), (ins i32mem:$zero),
-                "nop{l}\t$zero", []>, TB, OpSize32;
+                "nop{l}\t$zero", []>, TB, OpSize32, NotMemoryFoldable;
   def NOOPQ : RI<0x1f, MRMXm, (outs), (ins i64mem:$zero),
-                "nop{q}\t$zero", []>, TB,
+                "nop{q}\t$zero", []>, TB, NotMemoryFoldable,
                 Requires<[In64BitMode]>;
   // Also allow register so we can assemble/disassemble
   def NOOPWr : I<0x1f, MRMXr, (outs), (ins GR16:$zero),
-                 "nop{w}\t$zero", []>, TB, OpSize16;
+                 "nop{w}\t$zero", []>, TB, OpSize16, NotMemoryFoldable;
   def NOOPLr : I<0x1f, MRMXr, (outs), (ins GR32:$zero),
-                 "nop{l}\t$zero", []>, TB, OpSize32;
+                 "nop{l}\t$zero", []>, TB, OpSize32, NotMemoryFoldable;
   def NOOPQr : RI<0x1f, MRMXr, (outs), (ins GR64:$zero),
-                  "nop{q}\t$zero", []>, TB,
+                  "nop{q}\t$zero", []>, TB, NotMemoryFoldable,
                   Requires<[In64BitMode]>;
 }
 
@@ -1191,10 +1191,13 @@ def POP16r  : I<0x58, AddRegFrm, (outs GR16:$reg), (ins), "pop{w}\t$reg", []>,
                 OpSize16;
 def POP32r  : I<0x58, AddRegFrm, (outs GR32:$reg), (ins), "pop{l}\t$reg", []>, 
                 OpSize32, Requires<[Not64BitMode]>;
+// Long form for the disassembler.
+let isCodeGenOnly = 1, ForceDisassemble = 1 in {
 def POP16rmr: I<0x8F, MRM0r, (outs GR16:$reg), (ins), "pop{w}\t$reg", []>,
-                OpSize16;
+                OpSize16, NotMemoryFoldable;
 def POP32rmr: I<0x8F, MRM0r, (outs GR32:$reg), (ins), "pop{l}\t$reg", []>,
-                OpSize32, Requires<[Not64BitMode]>;
+                OpSize32, Requires<[Not64BitMode]>, NotMemoryFoldable;
+} // isCodeGenOnly = 1, ForceDisassemble = 1
 } // mayLoad, SchedRW
 let mayStore = 1, mayLoad = 1, SchedRW = [WriteRMW] in {
 def POP16rmm: I<0x8F, MRM0m, (outs), (ins i16mem:$dst), "pop{w}\t$dst", []>,
@@ -1208,10 +1211,13 @@ def PUSH16r  : I<0x50, AddRegFrm, (outs), (ins GR16:$reg), "push{w}\t$reg",[]>,
                  OpSize16;
 def PUSH32r  : I<0x50, AddRegFrm, (outs), (ins GR32:$reg), "push{l}\t$reg",[]>,
                  OpSize32, Requires<[Not64BitMode]>;
+// Long form for the disassembler.
+let isCodeGenOnly = 1, ForceDisassemble = 1 in {
 def PUSH16rmr: I<0xFF, MRM6r, (outs), (ins GR16:$reg), "push{w}\t$reg",[]>,
-                 OpSize16;
+                 OpSize16, NotMemoryFoldable;
 def PUSH32rmr: I<0xFF, MRM6r, (outs), (ins GR32:$reg), "push{l}\t$reg",[]>,
-                 OpSize32, Requires<[Not64BitMode]>;
+                 OpSize32, Requires<[Not64BitMode]>, NotMemoryFoldable;
+} // isCodeGenOnly = 1, ForceDisassemble = 1
 
 def PUSH16i8 : Ii8<0x6a, RawFrm, (outs), (ins i16i8imm:$imm),
                    "push{w}\t$imm", []>, OpSize16;
@@ -1279,8 +1285,11 @@ let Defs = [RSP], Uses = [RSP], hasSideEffects=0 in {
 let mayLoad = 1, SchedRW = [WriteLoad] in {
 def POP64r   : I<0x58, AddRegFrm, (outs GR64:$reg), (ins), "pop{q}\t$reg", []>,
                  OpSize32, Requires<[In64BitMode]>;
+// Long form for the disassembler.
+let isCodeGenOnly = 1, ForceDisassemble = 1 in {
 def POP64rmr: I<0x8F, MRM0r, (outs GR64:$reg), (ins), "pop{q}\t$reg", []>,
-                OpSize32, Requires<[In64BitMode]>;
+                OpSize32, Requires<[In64BitMode]>, NotMemoryFoldable;
+} // isCodeGenOnly = 1, ForceDisassemble = 1
 } // mayLoad, SchedRW
 let mayLoad = 1, mayStore = 1, SchedRW = [WriteRMW] in
 def POP64rmm: I<0x8F, MRM0m, (outs), (ins i64mem:$dst), "pop{q}\t$dst", []>,
@@ -1288,8 +1297,11 @@ def POP64rmm: I<0x8F, MRM0m, (outs), (ins i64mem:$dst), "pop{q}\t$dst", []>,
 let mayStore = 1, SchedRW = [WriteStore] in {
 def PUSH64r  : I<0x50, AddRegFrm, (outs), (ins GR64:$reg), "push{q}\t$reg", []>,
                  OpSize32, Requires<[In64BitMode]>;
+// Long form for the disassembler.
+let isCodeGenOnly = 1, ForceDisassemble = 1 in {
 def PUSH64rmr: I<0xFF, MRM6r, (outs), (ins GR64:$reg), "push{q}\t$reg", []>,
-                 OpSize32, Requires<[In64BitMode]>;
+                 OpSize32, Requires<[In64BitMode]>, NotMemoryFoldable;
+} // isCodeGenOnly = 1, ForceDisassemble = 1
 } // mayStore, SchedRW
 let mayLoad = 1, mayStore = 1, SchedRW = [WriteRMW] in {
 def PUSH64rmm: I<0xFF, MRM6m, (outs), (ins i64mem:$src), "push{q}\t$src", []>,
@@ -1640,6 +1652,24 @@ def MOV64rr_REV : RI<0x8B, MRMSrcReg, (outs GR64:$dst), (ins GR64:$src),
                      FoldGenData<"MOV64rr">;
 }
 
+// Reversed version with ".s" suffix for GAS compatibility.
+def : InstAlias<"mov{b}.s\t{$src, $dst|$dst, $src}",
+                (MOV8rr_REV GR8:$dst, GR8:$src), 0>;
+def : InstAlias<"mov{w}.s\t{$src, $dst|$dst, $src}",
+                (MOV16rr_REV GR16:$dst, GR16:$src), 0>;
+def : InstAlias<"mov{l}.s\t{$src, $dst|$dst, $src}",
+                (MOV32rr_REV GR32:$dst, GR32:$src), 0>;
+def : InstAlias<"mov{q}.s\t{$src, $dst|$dst, $src}",
+                (MOV64rr_REV GR64:$dst, GR64:$src), 0>;
+def : InstAlias<"mov.s\t{$src, $dst|$dst, $src}",
+                (MOV8rr_REV GR8:$dst, GR8:$src), 0, "att">;
+def : InstAlias<"mov.s\t{$src, $dst|$dst, $src}",
+                (MOV16rr_REV GR16:$dst, GR16:$src), 0, "att">;
+def : InstAlias<"mov.s\t{$src, $dst|$dst, $src}",
+                (MOV32rr_REV GR32:$dst, GR32:$src), 0, "att">;
+def : InstAlias<"mov.s\t{$src, $dst|$dst, $src}",
+                (MOV64rr_REV GR64:$dst, GR64:$src), 0, "att">;
+
 let canFoldAsLoad = 1, isReMaterializable = 1, SchedRW = [WriteLoad] in {
 def MOV8rm  : I<0x8A, MRMSrcMem, (outs GR8 :$dst), (ins i8mem :$src),
                 "mov{b}\t{$src, $dst|$dst, $src}",
@@ -1949,25 +1979,25 @@ multiclass ATOMIC_SWAP<bits<8> opc8, bits<8> opc, string mnemonic, string frag> 
   }
 }
 
-defm XCHG    : ATOMIC_SWAP<0x86, 0x87, "xchg", "atomic_swap">;
+defm XCHG    : ATOMIC_SWAP<0x86, 0x87, "xchg", "atomic_swap">, NotMemoryFoldable;
 
 // Swap between registers.
 let SchedRW = [WriteALU] in {
 let Constraints = "$src1 = $dst1, $src2 = $dst2", hasSideEffects = 0 in {
 def XCHG8rr : I<0x86, MRMSrcReg, (outs GR8:$dst1, GR8:$dst2),
                 (ins GR8:$src1, GR8:$src2),
-                "xchg{b}\t{$src2, $src1|$src1, $src2}", []>;
+                "xchg{b}\t{$src2, $src1|$src1, $src2}", []>, NotMemoryFoldable;
 def XCHG16rr : I<0x87, MRMSrcReg, (outs GR16:$dst1, GR16:$dst2),
                  (ins GR16:$src1, GR16:$src2),
                  "xchg{w}\t{$src2, $src1|$src1, $src2}", []>,
-                 OpSize16;
+                 OpSize16, NotMemoryFoldable;
 def XCHG32rr : I<0x87, MRMSrcReg, (outs GR32:$dst1, GR32:$dst2),
                  (ins GR32:$src1, GR32:$src2),
                  "xchg{l}\t{$src2, $src1|$src1, $src2}", []>,
-                 OpSize32;
+                 OpSize32, NotMemoryFoldable;
 def XCHG64rr : RI<0x87, MRMSrcReg, (outs GR64:$dst1, GR64:$dst2),
                   (ins GR64:$src1 ,GR64:$src2),
-                  "xchg{q}\t{$src2, $src1|$src1, $src2}", []>;
+                  "xchg{q}\t{$src2, $src1|$src1, $src2}", []>, NotMemoryFoldable;
 }
 
 // Swap between EAX and other registers.
@@ -2022,32 +2052,40 @@ def XADD64rm  : RI<0xC1, MRMSrcMem, (outs GR64:$dst),
 let SchedRW = [WriteALU], hasSideEffects = 0 in {
 let Defs = [AL, EFLAGS], Uses = [AL] in
 def CMPXCHG8rr : I<0xB0, MRMDestReg, (outs GR8:$dst), (ins GR8:$src),
-                   "cmpxchg{b}\t{$src, $dst|$dst, $src}", []>, TB;
+                   "cmpxchg{b}\t{$src, $dst|$dst, $src}", []>, TB,
+                   NotMemoryFoldable;
 let Defs = [AX, EFLAGS], Uses = [AX] in
 def CMPXCHG16rr : I<0xB1, MRMDestReg, (outs GR16:$dst), (ins GR16:$src),
-                    "cmpxchg{w}\t{$src, $dst|$dst, $src}", []>, TB, OpSize16;
+                    "cmpxchg{w}\t{$src, $dst|$dst, $src}", []>, TB, OpSize16,
+                    NotMemoryFoldable;
 let Defs = [EAX, EFLAGS], Uses = [EAX] in
 def CMPXCHG32rr  : I<0xB1, MRMDestReg, (outs GR32:$dst), (ins GR32:$src),
-                     "cmpxchg{l}\t{$src, $dst|$dst, $src}", []>, TB, OpSize32;
+                     "cmpxchg{l}\t{$src, $dst|$dst, $src}", []>, TB, OpSize32,
+                     NotMemoryFoldable;
 let Defs = [RAX, EFLAGS], Uses = [RAX] in
 def CMPXCHG64rr  : RI<0xB1, MRMDestReg, (outs GR64:$dst), (ins GR64:$src),
-                      "cmpxchg{q}\t{$src, $dst|$dst, $src}", []>, TB;
+                      "cmpxchg{q}\t{$src, $dst|$dst, $src}", []>, TB,
+                      NotMemoryFoldable;
 } // SchedRW, hasSideEffects
 
 let SchedRW = [WriteALULd, WriteRMW], mayLoad = 1, mayStore = 1,
     hasSideEffects = 0 in {
 let Defs = [AL, EFLAGS], Uses = [AL] in
 def CMPXCHG8rm   : I<0xB0, MRMDestMem, (outs), (ins i8mem:$dst, GR8:$src),
-                     "cmpxchg{b}\t{$src, $dst|$dst, $src}", []>, TB;
+                     "cmpxchg{b}\t{$src, $dst|$dst, $src}", []>, TB,
+                     NotMemoryFoldable;
 let Defs = [AX, EFLAGS], Uses = [AX] in
 def CMPXCHG16rm  : I<0xB1, MRMDestMem, (outs), (ins i16mem:$dst, GR16:$src),
-                     "cmpxchg{w}\t{$src, $dst|$dst, $src}", []>, TB, OpSize16;
+                     "cmpxchg{w}\t{$src, $dst|$dst, $src}", []>, TB, OpSize16,
+                     NotMemoryFoldable;
 let Defs = [EAX, EFLAGS], Uses = [EAX] in
 def CMPXCHG32rm  : I<0xB1, MRMDestMem, (outs), (ins i32mem:$dst, GR32:$src),
-                     "cmpxchg{l}\t{$src, $dst|$dst, $src}", []>, TB, OpSize32;
+                     "cmpxchg{l}\t{$src, $dst|$dst, $src}", []>, TB, OpSize32,
+                     NotMemoryFoldable;
 let Defs = [RAX, EFLAGS], Uses = [RAX] in
 def CMPXCHG64rm  : RI<0xB1, MRMDestMem, (outs), (ins i64mem:$dst, GR64:$src),
-                      "cmpxchg{q}\t{$src, $dst|$dst, $src}", []>, TB;
+                      "cmpxchg{q}\t{$src, $dst|$dst, $src}", []>, TB,
+                      NotMemoryFoldable;
 
 let Defs = [EAX, EDX, EFLAGS], Uses = [EAX, EBX, ECX, EDX] in
 def CMPXCHG8B : I<0xC7, MRM1m, (outs), (ins i64mem:$dst),
@@ -2181,11 +2219,11 @@ def BOUNDS32rm : I<0x62, MRMSrcMem, (outs GR32:$dst), (ins i32mem:$src),
 // Adjust RPL Field of Segment Selector
 def ARPL16rr : I<0x63, MRMDestReg, (outs GR16:$dst), (ins GR16:$src),
                  "arpl\t{$src, $dst|$dst, $src}", []>,
-                 Requires<[Not64BitMode]>;
+                 Requires<[Not64BitMode]>, NotMemoryFoldable;
 let mayStore = 1 in
 def ARPL16mr : I<0x63, MRMDestMem, (outs), (ins i16mem:$dst, GR16:$src),
                  "arpl\t{$src, $dst|$dst, $src}", []>,
-                 Requires<[Not64BitMode]>;
+                 Requires<[Not64BitMode]>, NotMemoryFoldable;
 } // SchedRW
 
 //===----------------------------------------------------------------------===//
@@ -2723,7 +2761,7 @@ let SchedRW = [WriteSystem] in {
     def TPAUSE : I<0xAE, MRM6r,
                      (outs), (ins GR32orGR64:$src), "tpause\t$src",
                      [(set EFLAGS, (X86tpause GR32orGR64:$src, EDX, EAX))]>,
-                     PD, Requires<[HasWAITPKG]>;
+                     PD, Requires<[HasWAITPKG]>, NotMemoryFoldable;
   }
 } // SchedRW
 
@@ -2843,7 +2881,7 @@ def CLFLUSHOPT : I<0xAE, MRM7m, (outs), (ins i8mem:$src),
 
 let Predicates = [HasCLWB], SchedRW = [WriteLoad] in
 def CLWB       : I<0xAE, MRM6m, (outs), (ins i8mem:$src), "clwb\t$src",
-                   [(int_x86_clwb addr:$src)]>, PD;
+                   [(int_x86_clwb addr:$src)]>, PD, NotMemoryFoldable;
 
 let Predicates = [HasCLDEMOTE], SchedRW = [WriteLoad] in
 def CLDEMOTE : I<0x1C, MRM0m, (outs), (ins i8mem:$src), "cldemote\t$src",
