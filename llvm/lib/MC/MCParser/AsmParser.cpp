@@ -3283,7 +3283,7 @@ bool AsmParser::parseDirectiveFile(SMLoc DirectiveLoc) {
       return TokError("negative file number");
   }
 
-  std::string Path = getTok().getString();
+  std::string Path;
 
   // Usually the directory and filename together, otherwise just the directory.
   // Allow the strings to have escaped octal character sequence.
@@ -3362,9 +3362,11 @@ bool AsmParser::parseDirectiveFile(SMLoc DirectiveLoc) {
       memcpy(SourceBuf, SourceString.data(), SourceString.size());
       Source = StringRef(SourceBuf, SourceString.size());
     }
-    if (FileNumber == 0)
+    if (FileNumber == 0) {
+      if (Ctx.getDwarfVersion() < 5)
+        return Warning(DirectiveLoc, "file 0 not supported prior to DWARF-5");
       getStreamer().emitDwarfFile0Directive(Directory, Filename, CKMem, Source);
-    else {
+    } else {
       Expected<unsigned> FileNumOrErr = getStreamer().tryEmitDwarfFileDirective(
           FileNumber, Directory, Filename, CKMem, Source);
       if (!FileNumOrErr)

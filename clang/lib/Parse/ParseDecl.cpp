@@ -1649,9 +1649,7 @@ void Parser::stripTypeAttributesOffDeclSpec(ParsedAttributesWithRange &Attrs,
   }
 
   // Find end of type attributes Attrs and add NewTypeAttributes in the same
-  // order they were in originally.  (Remember, in AttributeList things earlier
-  // in source order are later in the list, since new attributes are added to
-  // the front of the list.)
+  // order they were in originally.
   Attrs.addAllAtEnd(TypeAttrHead);
 }
 
@@ -3252,6 +3250,13 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
         continue;
       }
 
+      // If we're in a context where the identifier could be a class name,
+      // check whether this is a constructor declaration.
+      if (getLangOpts().CPlusPlus && DSContext == DeclSpecContext::DSC_class &&
+          Actions.isCurrentClassName(*Tok.getIdentifierInfo(), getCurScope()) &&
+          isConstructorDeclarator(/*Unqualified*/true))
+        goto DoneWithDeclSpec;
+
       ParsedType TypeRep = Actions.getTypeName(
           *Tok.getIdentifierInfo(), Tok.getLocation(), getCurScope(), nullptr,
           false, false, nullptr, false, false,
@@ -3270,13 +3275,6 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
         }
         goto DoneWithDeclSpec;
       }
-
-      // If we're in a context where the identifier could be a class name,
-      // check whether this is a constructor declaration.
-      if (getLangOpts().CPlusPlus && DSContext == DeclSpecContext::DSC_class &&
-          Actions.isCurrentClassName(*Tok.getIdentifierInfo(), getCurScope()) &&
-          isConstructorDeclarator(/*Unqualified*/true))
-        goto DoneWithDeclSpec;
 
       // Likewise, if this is a context where the identifier could be a template
       // name, check whether this is a deduction guide declaration.

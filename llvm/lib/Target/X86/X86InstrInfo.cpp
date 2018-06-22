@@ -7874,6 +7874,23 @@ unsigned X86::getCMovFromCond(CondCode CC, unsigned RegBytes,
   }
 }
 
+/// Get the VPCMP immediate for the given condition.
+unsigned X86::getVPCMPImmForCond(ISD::CondCode CC) {
+  switch (CC) {
+  default: llvm_unreachable("Unexpected SETCC condition");
+  case ISD::SETNE:  return 4;
+  case ISD::SETEQ:  return 0;
+  case ISD::SETULT:
+  case ISD::SETLT: return 1;
+  case ISD::SETUGT:
+  case ISD::SETGT: return 6;
+  case ISD::SETUGE:
+  case ISD::SETGE: return 5;
+  case ISD::SETULE:
+  case ISD::SETLE: return 2;
+  }
+}
+
 /// Get the VPCMP immediate if the opcodes are swapped.
 unsigned X86::getSwappedVPCMPImm(unsigned Imm) {
   switch (Imm) {
@@ -13017,7 +13034,7 @@ X86InstrInfo::getOutliningType(MachineBasicBlock::iterator &MIT,  unsigned Flags
   return outliner::InstrType::Legal;
 }
 
-void X86InstrInfo::insertOutlinerEpilogue(MachineBasicBlock &MBB,
+void X86InstrInfo::buildOutlinedFrame(MachineBasicBlock &MBB,
                                           MachineFunction &MF,
                                           const outliner::TargetCostInfo &TCI)
                                           const {
@@ -13030,11 +13047,6 @@ void X86InstrInfo::insertOutlinerEpilogue(MachineBasicBlock &MBB,
   MachineInstr *retq = BuildMI(MF, DebugLoc(), get(X86::RETQ));
   MBB.insert(MBB.end(), retq);
 }
-
-void X86InstrInfo::insertOutlinerPrologue(MachineBasicBlock &MBB,
-                                          MachineFunction &MF,
-                                          const outliner::TargetCostInfo &TCI)
-                                          const {}
 
 MachineBasicBlock::iterator
 X86InstrInfo::insertOutlinedCall(Module &M, MachineBasicBlock &MBB,
