@@ -2576,6 +2576,9 @@ def err_attribute_address_space_too_high : Error<
   "address space is larger than the maximum supported (%0)">;
 def err_attribute_address_multiple_qualifiers : Error<
   "multiple address spaces specified for type">;
+def warn_attribute_address_multiple_identical_qualifiers : Warning<
+  "multiple identical address spaces specified for type">,
+  InGroup<DuplicateDeclSpecifier>;
 def err_attribute_address_function_type : Error<
   "function type may not be qualified with an address space">;
 def err_as_qualified_auto_decl : Error<
@@ -8129,7 +8132,10 @@ def err_altivec_empty_initializer : Error<"expected initializer">;
 def err_invalid_neon_type_code : Error<
   "incompatible constant for this __builtin_neon function">; 
 def err_argument_invalid_range : Error<
-  "argument should be a value from %0 to %1">;
+  "argument value %0 is outside the valid range [%1, %2]">;
+def warn_argument_invalid_range : Warning<
+  "argument value %0 is outside the valid range [%1, %2]">, DefaultError,
+  InGroup<DiagGroup<"argument-outside-range">>;
 def err_argument_not_multiple : Error<
   "argument should be a multiple of %0">;
 def warn_neon_vector_initializer_non_portable : Warning<

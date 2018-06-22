@@ -292,14 +292,21 @@ def SI_ELSE_BREAK : CFPseudoInstSI <
   let isReMaterializable = 1;
 }
 
-let Uses = [EXEC], Defs = [EXEC,VCC] in {
+let Uses = [EXEC] in {
 
 multiclass PseudoInstKill <dag ins> {
+  // Even though this pseudo can usually be expanded without an SCC def, we
+  // conservatively assume that it has an SCC def, both because it is sometimes
+  // required in degenerate cases (when V_CMPX cannot be used due to constant
+  // bus limitations) and because it allows us to avoid having to track SCC
+  // liveness across basic blocks.
+  let Defs = [EXEC,VCC,SCC] in
   def _PSEUDO : PseudoInstSI <(outs), ins> {
     let isConvergent = 1;
     let usesCustomInserter = 1;
   }
 
+  let Defs = [EXEC,VCC,SCC] in
   def _TERMINATOR : SPseudoInstSI <(outs), ins> {
     let isTerminator = 1;
   }
@@ -308,6 +315,7 @@ multiclass PseudoInstKill <dag ins> {
 defm SI_KILL_I1 : PseudoInstKill <(ins SSrc_b64:$src, i1imm:$killvalue)>;
 defm SI_KILL_F32_COND_IMM : PseudoInstKill <(ins VSrc_b32:$src0, i32imm:$src1, i32imm:$cond)>;
 
+let Defs = [EXEC,VCC] in
 def SI_ILLEGAL_COPY : SPseudoInstSI <
   (outs unknown:$dst), (ins unknown:$src),
   [], " ; illegal copy $src to $dst">;
@@ -445,7 +453,7 @@ def ADJCALLSTACKDOWN : SPseudoInstSI<
   let usesCustomInserter = 1;
 }
 
-let Defs = [M0, EXEC],
+let Defs = [M0, EXEC, SCC],
   UseNamedOperandTable = 1 in {
 
 class SI_INDIRECT_SRC<RegisterClass rc> : VPseudoInstSI <
@@ -795,6 +803,27 @@ foreach Index = 0-15 in {
   >;
 }
 
+
+def : Pat <
+  (extract_subvector v4i16:$vec, (i32 0)),
+  (v2i16 (EXTRACT_SUBREG v4i16:$vec, sub0))
+>;
+
+def : Pat <
+  (extract_subvector v4i16:$vec, (i32 2)),
+  (v2i16 (EXTRACT_SUBREG v4i16:$vec, sub1))
+>;
+
+def : Pat <
+  (extract_subvector v4f16:$vec, (i32 0)),
+  (v2f16 (EXTRACT_SUBREG v4f16:$vec, sub0))
+>;
+
+def : Pat <
+  (extract_subvector v4f16:$vec, (i32 2)),
+  (v2f16 (EXTRACT_SUBREG v4f16:$vec, sub1))
+>;
+
 let SubtargetPredicate = isGCN in {
 
 // FIXME: Why do only some of these type combinations for SReg and
@@ -834,6 +863,26 @@ def : BitConvert <f64, v2f32, VReg_64>;
 def : BitConvert <v2f32, f64, VReg_64>;
 def : BitConvert <f64, v2i32, VReg_64>;
 def : BitConvert <v2i32, f64, VReg_64>;
+
+// FIXME: Make SGPR
+def : BitConvert <v2i32, v4f16, VReg_64>;
+def : BitConvert <v4f16, v2i32, VReg_64>;
+def : BitConvert <v2i32, v4f16, VReg_64>;
+def : BitConvert <v2i32, v4i16, VReg_64>;
+def : BitConvert <v4i16, v2i32, VReg_64>;
+def : BitConvert <v2f32, v4f16, VReg_64>;
+def : BitConvert <v4f16, v2f32, VReg_64>;
+def : BitConvert <v2f32, v4i16, VReg_64>;
+def : BitConvert <v4i16, v2f32, VReg_64>;
+def : BitConvert <v4i16, f64, VReg_64>;
+def : BitConvert <v4f16, f64, VReg_64>;
+def : BitConvert <f64, v4i16, VReg_64>;
+def : BitConvert <f64, v4f16, VReg_64>;
+def : BitConvert <v4i16, i64, VReg_64>;
+def : BitConvert <v4f16, i64, VReg_64>;
+def : BitConvert <i64, v4i16, VReg_64>;
+def : BitConvert <i64, v4f16, VReg_64>;
+
 def : BitConvert <v4i32, v4f32, VReg_128>;
 def : BitConvert <v4f32, v4i32, VReg_128>;
 
@@ -1447,6 +1496,16 @@ def : GCNPat <
 //   (v2i16 (scalar_to_vector i16:$src0)),
 //   (COPY $src0)
 // >;
+
+def : GCNPat <
+  (v4i16 (scalar_to_vector i16:$src0)),
+  (INSERT_SUBREG (IMPLICIT_DEF), $src0, sub0)
+>;
+
+def : GCNPat <
+  (v4f16 (scalar_to_vector f16:$src0)),
+  (INSERT_SUBREG (IMPLICIT_DEF), $src0, sub0)
+>;
 
 //===----------------------------------------------------------------------===//
 // Fract Patterns
