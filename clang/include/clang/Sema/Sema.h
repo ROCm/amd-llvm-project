@@ -5051,6 +5051,8 @@ public:
                                           SourceLocation NameLoc,
                                           IdentifierInfo &Name);
 
+  ParsedType getConstructorName(IdentifierInfo &II, SourceLocation NameLoc,
+                                Scope *S, CXXScopeSpec &SS);
   ParsedType getDestructorName(SourceLocation TildeLoc,
                                IdentifierInfo &II, SourceLocation NameLoc,
                                Scope *S, CXXScopeSpec &SS,
@@ -5771,6 +5773,7 @@ public:
   //===--------------------------------------------------------------------===//
   // C++ Classes
   //
+  CXXRecordDecl *getCurrentClass(Scope *S, const CXXScopeSpec *SS);
   bool isCurrentClassName(const IdentifierInfo &II, Scope *S,
                           const CXXScopeSpec *SS = nullptr);
   bool isCurrentClassNameTypo(IdentifierInfo *&II, const CXXScopeSpec *SS);
@@ -10517,8 +10520,8 @@ private:
                                                     bool IsDelete);
   bool SemaBuiltinConstantArg(CallExpr *TheCall, int ArgNum,
                               llvm::APSInt &Result);
-  bool SemaBuiltinConstantArgRange(CallExpr *TheCall, int ArgNum,
-                                   int Low, int High);
+  bool SemaBuiltinConstantArgRange(CallExpr *TheCall, int ArgNum, int Low,
+                                   int High, bool RangeIsError = true);
   bool SemaBuiltinConstantArgMultiple(CallExpr *TheCall, int ArgNum,
                                       unsigned Multiple);
   bool SemaBuiltinARMSpecialReg(unsigned BuiltinID, CallExpr *TheCall,

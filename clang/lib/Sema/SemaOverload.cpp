@@ -6257,24 +6257,6 @@ Sema::SelectBestMethod(Selector Sel, MultiExprArg Args, bool IsInstance,
   return nullptr;
 }
 
-// specific_attr_iterator iterates over enable_if attributes in reverse, and
-// enable_if is order-sensitive. As a result, we need to reverse things
-// sometimes. Size of 4 elements is arbitrary.
-static SmallVector<EnableIfAttr *, 4>
-getOrderedEnableIfAttrs(const FunctionDecl *Function) {
-  SmallVector<EnableIfAttr *, 4> Result;
-  if (!Function->hasAttrs())
-    return Result;
-
-  const auto &FuncAttrs = Function->getAttrs();
-  for (Attr *Attr : FuncAttrs)
-    if (auto *EnableIf = dyn_cast<EnableIfAttr>(Attr))
-      Result.push_back(EnableIf);
-
-  std::reverse(Result.begin(), Result.end());
-  return Result;
-}
-
 static bool
 convertArgsForAvailabilityChecks(Sema &S, FunctionDecl *Function, Expr *ThisArg,
                                  ArrayRef<Expr *> Args, Sema::SFINAETrap &Trap,
@@ -6348,9 +6330,9 @@ convertArgsForAvailabilityChecks(Sema &S, FunctionDecl *Function, Expr *ThisArg,
 
 EnableIfAttr *Sema::CheckEnableIf(FunctionDecl *Function, ArrayRef<Expr *> Args,
                                   bool MissingImplicitThis) {
-  SmallVector<EnableIfAttr *, 4> EnableIfAttrs =
-      getOrderedEnableIfAttrs(Function);
-  if (EnableIfAttrs.empty())
+  auto EnableIfAttrs = Function->specific_attrs<EnableIfAttr>();
+
+  if (EnableIfAttrs.begin() == EnableIfAttrs.end())
     return nullptr;
 
   SFINAETrap Trap(*this);
@@ -6360,7 +6342,7 @@ EnableIfAttr *Sema::CheckEnableIf(FunctionDecl *Function, ArrayRef<Expr *> Args,
   if (!convertArgsForAvailabilityChecks(
           *this, Function, /*ThisArg=*/nullptr, Args, Trap,
           /*MissingImplicitThis=*/true, DiscardedThis, ConvertedArgs))
-    return EnableIfAttrs[0];
+    return *EnableIfAttrs.begin();
 
   for (auto *EIA : EnableIfAttrs) {
     APValue Result;
@@ -6449,63 +6431,61 @@ bool Sema::diagnoseArgIndependentDiagnoseIfAttrs(const NamedDecl *ND,
 /// the overload candidate set.
 void Sema::AddFunctionCandidates(const UnresolvedSetImpl &Fns,
                                  ArrayRef<Expr *> Args,
-                                 OverloadCandidateSet& CandidateSet,
+                                 OverloadCandidateSet &CandidateSet,
                                  TemplateArgumentListInfo *ExplicitTemplateArgs,
                                  bool SuppressUserConversions,
                                  bool PartialOverloading,
                                  bool FirstArgumentIsBase) {
   for (UnresolvedSetIterator F = Fns.begin(), E = Fns.end(); F != E; ++F) {
     NamedDecl *D = F.getDecl()->getUnderlyingDecl();
-    if (FunctionDecl *FD = dyn_cast<FunctionDecl>(D)) {
-      ArrayRef<Expr *> FunctionArgs = Args;
-      if (isa<CXXMethodDecl>(FD) && !cast<CXXMethodDecl>(FD)->isStatic()) {
-        QualType ObjectType;
-        Expr::Classification ObjectClassification;
-        if (Args.size() > 0) {
-          if (Expr *E = Args[0]) {
-            // Use the explicit base to restrict the lookup:
-            ObjectType = E->getType();
-            ObjectClassification = E->Classify(Context);
-          } // .. else there is an implit base.
-          FunctionArgs = Args.slice(1);
-        }
-        AddMethodCandidate(cast<CXXMethodDecl>(FD), F.getPair(),
-                           cast<CXXMethodDecl>(FD)->getParent(), ObjectType,
-                           ObjectClassification, FunctionArgs, CandidateSet,
-                           SuppressUserConversions, PartialOverloading);
-      } else {
-        // Slice the first argument (which is the base) when we access
-        // static method as non-static
-        if (Args.size() > 0 && (!Args[0] || (FirstArgumentIsBase && isa<CXXMethodDecl>(FD) &&
-                                             !isa<CXXConstructorDecl>(FD)))) {
-          assert(cast<CXXMethodDecl>(FD)->isStatic());
-          FunctionArgs = Args.slice(1);
-        }
-        AddOverloadCandidate(FD, F.getPair(), FunctionArgs, CandidateSet,
-                             SuppressUserConversions, PartialOverloading);
-      }
-    } else {
-      FunctionTemplateDecl *FunTmpl = cast<FunctionTemplateDecl>(D);
-      if (isa<CXXMethodDecl>(FunTmpl->getTemplatedDecl()) &&
-          !cast<CXXMethodDecl>(FunTmpl->getTemplatedDecl())->isStatic()) {
-        QualType ObjectType;
-        Expr::Classification ObjectClassification;
+    ArrayRef<Expr *> FunctionArgs = Args;
+
+    FunctionTemplateDecl *FunTmpl = dyn_cast<FunctionTemplateDecl>(D);
+    FunctionDecl *FD =
+        FunTmpl ? FunTmpl->getTemplatedDecl() : cast<FunctionDecl>(D);
+
+    if (isa<CXXMethodDecl>(FD) && !cast<CXXMethodDecl>(FD)->isStatic()) {
+      QualType ObjectType;
+      Expr::Classification ObjectClassification;
+      if (Args.size() > 0) {
         if (Expr *E = Args[0]) {
           // Use the explicit base to restrict the lookup:
           ObjectType = E->getType();
           ObjectClassification = E->Classify(Context);
-        } // .. else there is an implit base.
+        } // .. else there is an implicit base.
+        FunctionArgs = Args.slice(1);
+      }
+      if (FunTmpl) {
         AddMethodTemplateCandidate(
             FunTmpl, F.getPair(),
             cast<CXXRecordDecl>(FunTmpl->getDeclContext()),
             ExplicitTemplateArgs, ObjectType, ObjectClassification,
-            Args.slice(1), CandidateSet, SuppressUserConversions,
+            FunctionArgs, CandidateSet, SuppressUserConversions,
             PartialOverloading);
       } else {
-        AddTemplateOverloadCandidate(FunTmpl, F.getPair(),
-                                     ExplicitTemplateArgs, Args,
-                                     CandidateSet, SuppressUserConversions,
-                                     PartialOverloading);
+        AddMethodCandidate(cast<CXXMethodDecl>(FD), F.getPair(),
+                           cast<CXXMethodDecl>(FD)->getParent(), ObjectType,
+                           ObjectClassification, FunctionArgs, CandidateSet,
+                           SuppressUserConversions, PartialOverloading);
+      }
+    } else {
+      // This branch handles both standalone functions and static methods.
+
+      // Slice the first argument (which is the base) when we access
+      // static method as non-static.
+      if (Args.size() > 0 &&
+          (!Args[0] || (FirstArgumentIsBase && isa<CXXMethodDecl>(FD) &&
+                        !isa<CXXConstructorDecl>(FD)))) {
+        assert(cast<CXXMethodDecl>(FD)->isStatic());
+        FunctionArgs = Args.slice(1);
+      }
+      if (FunTmpl) {
+        AddTemplateOverloadCandidate(
+            FunTmpl, F.getPair(), ExplicitTemplateArgs, FunctionArgs,
+            CandidateSet, SuppressUserConversions, PartialOverloading);
+      } else {
+        AddOverloadCandidate(FD, F.getPair(), FunctionArgs, CandidateSet,
+                             SuppressUserConversions, PartialOverloading);
       }
     }
   }
@@ -9168,24 +9148,21 @@ static Comparison compareEnableIfAttrs(const Sema &S, const FunctionDecl *Cand1,
     return Cand1Attr ? Comparison::Better : Comparison::Worse;
   }
 
-  // FIXME: The next several lines are just
-  // specific_attr_iterator<EnableIfAttr> but going in declaration order,
-  // instead of reverse order which is how they're stored in the AST.
-  auto Cand1Attrs = getOrderedEnableIfAttrs(Cand1);
-  auto Cand2Attrs = getOrderedEnableIfAttrs(Cand2);
-
-  // It's impossible for Cand1 to be better than (or equal to) Cand2 if Cand1
-  // has fewer enable_if attributes than Cand2.
-  if (Cand1Attrs.size() < Cand2Attrs.size())
-    return Comparison::Worse;
+  auto Cand1Attrs = Cand1->specific_attrs<EnableIfAttr>();
+  auto Cand2Attrs = Cand2->specific_attrs<EnableIfAttr>();
 
   auto Cand1I = Cand1Attrs.begin();
   llvm::FoldingSetNodeID Cand1ID, Cand2ID;
-  for (auto &Cand2A : Cand2Attrs) {
+  for (auto Cand2A : Cand2Attrs) {
     Cand1ID.clear();
     Cand2ID.clear();
 
-    auto &Cand1A = *Cand1I++;
+    // It's impossible for Cand1 to be better than (or equal to) Cand2 if Cand1
+    // has fewer enable_if attributes than Cand2.
+    if (Cand1I == Cand1Attrs.end())
+      return Comparison::Worse;
+    auto Cand1A = Cand1I++;
+
     Cand1A->getCond()->Profile(Cand1ID, S.getASTContext(), true);
     Cand2A->getCond()->Profile(Cand2ID, S.getASTContext(), true);
     if (Cand1ID != Cand2ID)

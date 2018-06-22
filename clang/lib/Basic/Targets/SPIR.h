@@ -50,6 +50,7 @@ public:
     LongWidth = LongAlign = 64;
     AddrSpaceMap = &SPIRAddrSpaceMap;
     UseAddrSpaceMapMangling = true;
+    HasLegalHalfType = true;
     // Define available target features
     // These must be defined in sorted order!
     NoAsmVariants = true;
@@ -61,6 +62,10 @@ public:
   bool hasFeature(StringRef Feature) const override {
     return Feature == "spir";
   }
+
+  // SPIR supports the half type and the only llvm intrinsic allowed in SPIR is
+  // memcpy as per section 3 of the SPIR spec.
+  bool useFP16ConversionIntrinsics() const override { return false; }
 
   ArrayRef<Builtin::Info> getTargetBuiltins() const override { return None; }
 
