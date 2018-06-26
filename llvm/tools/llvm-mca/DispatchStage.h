@@ -30,7 +30,7 @@ namespace mca {
 
 class WriteState;
 class Scheduler;
-class Backend;
+class Pipeline;
 
 // Implements the hardware dispatch logic.
 //
@@ -54,7 +54,7 @@ class DispatchStage : public Stage {
   unsigned DispatchWidth;
   unsigned AvailableEntries;
   unsigned CarryOver;
-  Backend *Owner;
+  Pipeline *Owner;
   const llvm::MCSubtargetInfo &STI;
   RetireControlUnit &RCU;
   RegisterFile &PRF;
@@ -64,7 +64,6 @@ class DispatchStage : public Stage {
   bool checkPRF(const InstRef &IR);
   bool checkScheduler(const InstRef &IR);
   void dispatch(InstRef IR);
-  bool isRCUEmpty() const { return RCU.isEmpty(); }
   void updateRAWDependencies(ReadState &RS, const llvm::MCSubtargetInfo &STI);
 
   void notifyInstructionDispatched(const InstRef &IR,
@@ -85,14 +84,17 @@ class DispatchStage : public Stage {
   }
 
 public:
-  DispatchStage(Backend *B, const llvm::MCSubtargetInfo &Subtarget,
+  DispatchStage(Pipeline *P, const llvm::MCSubtargetInfo &Subtarget,
                 const llvm::MCRegisterInfo &MRI, unsigned RegisterFileSize,
                 unsigned MaxDispatchWidth, RetireControlUnit &R,
                 RegisterFile &F, Scheduler &Sched)
       : DispatchWidth(MaxDispatchWidth), AvailableEntries(MaxDispatchWidth),
-        CarryOver(0U), Owner(B), STI(Subtarget), RCU(R), PRF(F), SC(Sched) {}
+        CarryOver(0U), Owner(P), STI(Subtarget), RCU(R), PRF(F), SC(Sched) {}
 
-  virtual bool isReady() const override final { return isRCUEmpty(); }
+  // We can always try to dispatch, so returning false is okay in this case.
+  // The retire stage, which controls the RCU, might have items to complete but
+  // RetireStage::hasWorkToComplete will check for that case.
+  virtual bool hasWorkToComplete() const override final { return false; }
   virtual void preExecute(const InstRef &IR) override final;
   virtual bool execute(InstRef &IR) override final;
   void notifyDispatchStall(const InstRef &IR, unsigned EventType);

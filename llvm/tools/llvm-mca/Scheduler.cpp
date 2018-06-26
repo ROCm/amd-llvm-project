@@ -12,14 +12,15 @@
 //===----------------------------------------------------------------------===//
 
 #include "Scheduler.h"
-#include "Backend.h"
-#include "HWEventListener.h"
 #include "Support.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 
 namespace mca {
 
 using namespace llvm;
+
+#define DEBUG_TYPE "llvm-mca"
 
 uint64_t ResourceState::selectNextInSequence() {
   assert(isReady());

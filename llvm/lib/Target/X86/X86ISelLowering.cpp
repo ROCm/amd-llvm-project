@@ -2722,7 +2722,7 @@ enum StructReturnType {
   StackStructReturn
 };
 static StructReturnType
-callIsStructReturn(const SmallVectorImpl<ISD::OutputArg> &Outs, bool IsMCU) {
+callIsStructReturn(ArrayRef<ISD::OutputArg> Outs, bool IsMCU) {
   if (Outs.empty())
     return NotStructReturn;
 
@@ -2736,7 +2736,7 @@ callIsStructReturn(const SmallVectorImpl<ISD::OutputArg> &Outs, bool IsMCU) {
 
 /// Determines whether a function uses struct return semantics.
 static StructReturnType
-argsAreStructReturn(const SmallVectorImpl<ISD::InputArg> &Ins, bool IsMCU) {
+argsAreStructReturn(ArrayRef<ISD::InputArg> Ins, bool IsMCU) {
   if (Ins.empty())
     return NotStructReturn;
 
@@ -2984,7 +2984,7 @@ static ArrayRef<MCPhysReg> get64BitArgumentXMMs(MachineFunction &MF,
 }
 
 #ifndef NDEBUG
-static bool isSortedByValueNo(const SmallVectorImpl<CCValAssign> &ArgLocs) {
+static bool isSortedByValueNo(ArrayRef<CCValAssign> ArgLocs) {
   return std::is_sorted(ArgLocs.begin(), ArgLocs.end(),
                         [](const CCValAssign &A, const CCValAssign &B) -> bool {
                           return A.getValNo() < B.getValNo();
@@ -6655,9 +6655,8 @@ static SDValue getVShift(bool isLeft, EVT VT, SDValue SrcOp, unsigned NumBits,
   MVT ShVT = MVT::v16i8;
   unsigned Opc = isLeft ? X86ISD::VSHLDQ : X86ISD::VSRLDQ;
   SrcOp = DAG.getBitcast(ShVT, SrcOp);
-  MVT ScalarShiftTy = TLI.getScalarShiftAmountTy(DAG.getDataLayout(), VT);
   assert(NumBits % 8 == 0 && "Only support byte sized shifts");
-  SDValue ShiftVal = DAG.getConstant(NumBits/8, dl, ScalarShiftTy);
+  SDValue ShiftVal = DAG.getConstant(NumBits/8, dl, MVT::i8);
   return DAG.getBitcast(VT, DAG.getNode(Opc, dl, ShVT, SrcOp, ShiftVal));
 }
 
@@ -10765,9 +10764,7 @@ static SDValue lowerVectorShuffleAsElementInsertion(
       V2 = DAG.getBitcast(MVT::v16i8, V2);
       V2 = DAG.getNode(
           X86ISD::VSHLDQ, DL, MVT::v16i8, V2,
-          DAG.getConstant(V2Index * EltVT.getSizeInBits() / 8, DL,
-                          DAG.getTargetLoweringInfo().getScalarShiftAmountTy(
-                              DAG.getDataLayout(), VT)));
+          DAG.getConstant(V2Index * EltVT.getSizeInBits() / 8, DL, MVT::i8));
       V2 = DAG.getBitcast(VT, V2);
     }
   }
@@ -20748,23 +20745,11 @@ SDValue X86TargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
                                   Mask, PassThru, Subtarget, DAG);
     }
     case FPCLASS: {
-      // FPclass intrinsics with mask
-       SDValue Src1 = Op.getOperand(1);
-       MVT VT = Src1.getSimpleValueType();
-       MVT MaskVT = MVT::getVectorVT(MVT::i1, VT.getVectorNumElements());
-       SDValue Imm = Op.getOperand(2);
-       SDValue Mask = Op.getOperand(3);
-       MVT BitcastVT = MVT::getVectorVT(MVT::i1,
-                                     Mask.getSimpleValueType().getSizeInBits());
-       SDValue FPclass = DAG.getNode(IntrData->Opc0, dl, MaskVT, Src1, Imm);
-       SDValue FPclassMask = getVectorMaskingNode(FPclass, Mask, SDValue(),
-                                                  Subtarget, DAG);
-       // Need to fill with zeros to ensure the bitcast will produce zeroes
-       // for the upper bits in the v2i1/v4i1 case.
-       SDValue Res = DAG.getNode(ISD::INSERT_SUBVECTOR, dl, BitcastVT,
-                                 DAG.getConstant(0, dl, BitcastVT),
-                                 FPclassMask, DAG.getIntPtrConstant(0, dl));
-       return DAG.getBitcast(Op.getValueType(), Res);
+      // FPclass intrinsics
+      SDValue Src1 = Op.getOperand(1);
+      MVT MaskVT = Op.getSimpleValueType();
+      SDValue Imm = Op.getOperand(2);
+      return DAG.getNode(IntrData->Opc0, dl, MaskVT, Src1, Imm);
     }
     case FPCLASSS: {
       SDValue Src1 = Op.getOperand(1);
@@ -20808,8 +20793,7 @@ SDValue X86TargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
     }
 
     case CMP_MASK_CC: {
-      MVT VT = Op.getOperand(1).getSimpleValueType();
-      MVT MaskVT = MVT::getVectorVT(MVT::i1, VT.getVectorNumElements());
+      MVT MaskVT = Op.getSimpleValueType();
       SDValue Cmp;
       SDValue CC = Op.getOperand(3);
       CC = DAG.getNode(ISD::TRUNCATE, dl, MVT::i8, CC);
@@ -29983,7 +29967,7 @@ static SDValue combineX86ShuffleChain(ArrayRef<SDValue> Inputs, SDValue Root,
 // Attempt to constant fold all of the constant source ops.
 // Returns true if the entire shuffle is folded to a constant.
 // TODO: Extend this to merge multiple constant Ops and update the mask.
-static SDValue combineX86ShufflesConstants(const SmallVectorImpl<SDValue> &Ops,
+static SDValue combineX86ShufflesConstants(ArrayRef<SDValue> Ops,
                                            ArrayRef<int> Mask, SDValue Root,
                                            bool HasVariableMask,
                                            SelectionDAG &DAG,
@@ -32741,8 +32725,7 @@ static SDValue combineSelect(SDNode *N, SelectionDAG &DAG,
     SDValue AndNode = Cond.getOperand(0);
     if (AndNode.getOpcode() == ISD::AND && CC == ISD::SETEQ &&
         isNullConstant(Cond.getOperand(1)) &&
-        isa<ConstantSDNode>(AndNode.getOperand(1)) &&
-        cast<ConstantSDNode>(AndNode.getOperand(1))->getAPIntValue() == 1) {
+        isOneConstant(AndNode.getOperand(1))) {
       // LHS and RHS swapped due to
       // setcc outputting 1 when AND resulted in 0 and vice versa.
       AndNode = DAG.getZExtOrTrunc(AndNode, DL, MVT::i8);
@@ -39226,32 +39209,9 @@ static SDValue combineScalarToVector(SDNode *N, SelectionDAG &DAG) {
   // TODO: SimplifyDemandedBits instead?
   if (VT == MVT::v1i1 && Src.getOpcode() == ISD::AND && Src.hasOneUse())
     if (auto *C = dyn_cast<ConstantSDNode>(Src.getOperand(1)))
-      if (C->getAPIntValue().isOneValue()) {
-        SDValue Mask = Src.getOperand(0);
-        if (Mask.getOpcode() == ISD::TRUNCATE &&
-            (Mask.getOperand(0).getValueType() == MVT::i8 ||
-             Mask.getOperand(0).getValueType() == MVT::i32))
-          Mask = Mask.getOperand(0);
-        return DAG.getNode(ISD::SCALAR_TO_VECTOR, SDLoc(N), MVT::v1i1, Mask);
-      }
-
-  // The result of AND may also be truncated. This occurs in code for lowered
-  // masked scalar intrinsics.
-  if (VT == MVT::v1i1 && Src.getOpcode() == ISD::TRUNCATE && Src.hasOneUse() &&
-      Src.getOperand(0).getOpcode() == ISD::AND &&
-      Src.getOperand(0).hasOneUse())
-    if (auto *C = dyn_cast<ConstantSDNode>(Src.getOperand(0).getOperand(1)))
-      if (C->getAPIntValue().isOneValue()) {
-        SDValue Mask = Src.getOperand(0).getOperand(0);
-        if (Mask.getOpcode() == ISD::TRUNCATE &&
-            (Mask.getOperand(0).getValueType() == MVT::i8 ||
-             Mask.getOperand(0).getValueType() == MVT::i32))
-          Mask = Mask.getOperand(0);
-        // Check if the initial value is of a legal type for scalar_to_vector.
-        if (Mask.getValueType() != MVT::i8 && Mask.getValueType() != MVT::i32)
-          return SDValue();
-        return DAG.getNode(ISD::SCALAR_TO_VECTOR, SDLoc(N), MVT::v1i1, Mask);
-      }
+      if (C->getAPIntValue().isOneValue())
+        return DAG.getNode(ISD::SCALAR_TO_VECTOR, SDLoc(N), MVT::v1i1,
+                           Src.getOperand(0));
 
   return SDValue();
 }
