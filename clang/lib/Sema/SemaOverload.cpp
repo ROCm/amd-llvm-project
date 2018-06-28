@@ -12722,7 +12722,8 @@ Sema::CreateOverloadedUnaryOp(SourceLocation OpLoc, UnaryOperatorKind Opc,
       // break out so that we will build the appropriate built-in
       // operator node.
       ExprResult InputRes = PerformImplicitConversion(
-          Input, Best->BuiltinParamTypes[0], Best->Conversions[0], AA_Passing);
+          Input, Best->BuiltinParamTypes[0], Best->Conversions[0], AA_Passing,
+          CCK_ForBuiltinOverloadedOp);
       if (InputRes.isInvalid())
         return ExprError();
       Input = InputRes.get();
@@ -12966,16 +12967,16 @@ Sema::CreateOverloadedBinOp(SourceLocation OpLoc,
         // We matched a built-in operator. Convert the arguments, then
         // break out so that we will build the appropriate built-in
         // operator node.
-        ExprResult ArgsRes0 =
-            PerformImplicitConversion(Args[0], Best->BuiltinParamTypes[0],
-                                      Best->Conversions[0], AA_Passing);
+        ExprResult ArgsRes0 = PerformImplicitConversion(
+            Args[0], Best->BuiltinParamTypes[0], Best->Conversions[0],
+            AA_Passing, CCK_ForBuiltinOverloadedOp);
         if (ArgsRes0.isInvalid())
           return ExprError();
         Args[0] = ArgsRes0.get();
 
-        ExprResult ArgsRes1 =
-            PerformImplicitConversion(Args[1], Best->BuiltinParamTypes[1],
-                                      Best->Conversions[1], AA_Passing);
+        ExprResult ArgsRes1 = PerformImplicitConversion(
+            Args[1], Best->BuiltinParamTypes[1], Best->Conversions[1],
+            AA_Passing, CCK_ForBuiltinOverloadedOp);
         if (ArgsRes1.isInvalid())
           return ExprError();
         Args[1] = ArgsRes1.get();
@@ -13178,16 +13179,16 @@ Sema::CreateOverloadedArraySubscriptExpr(SourceLocation LLoc,
         // We matched a built-in operator. Convert the arguments, then
         // break out so that we will build the appropriate built-in
         // operator node.
-        ExprResult ArgsRes0 =
-            PerformImplicitConversion(Args[0], Best->BuiltinParamTypes[0],
-                                      Best->Conversions[0], AA_Passing);
+        ExprResult ArgsRes0 = PerformImplicitConversion(
+            Args[0], Best->BuiltinParamTypes[0], Best->Conversions[0],
+            AA_Passing, CCK_ForBuiltinOverloadedOp);
         if (ArgsRes0.isInvalid())
           return ExprError();
         Args[0] = ArgsRes0.get();
 
-        ExprResult ArgsRes1 =
-            PerformImplicitConversion(Args[1], Best->BuiltinParamTypes[1],
-                                      Best->Conversions[1], AA_Passing);
+        ExprResult ArgsRes1 = PerformImplicitConversion(
+            Args[1], Best->BuiltinParamTypes[1], Best->Conversions[1],
+            AA_Passing, CCK_ForBuiltinOverloadedOp);
         if (ArgsRes1.isInvalid())
           return ExprError();
         Args[1] = ArgsRes1.get();
