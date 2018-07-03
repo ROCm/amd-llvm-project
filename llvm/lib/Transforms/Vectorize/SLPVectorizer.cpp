@@ -299,11 +299,6 @@ isShuffle(ArrayRef<Value *> VL) {
               : TargetTransformInfo::SK_PermuteSingleSrc;
 }
 
-static bool sameOpcodeOrAlt(unsigned Opcode, unsigned AltOpcode,
-                            unsigned CheckedOpcode) {
-  return Opcode == CheckedOpcode || AltOpcode == CheckedOpcode;
-}
-
 namespace {
 
 /// Main data required for vectorization of instructions.
@@ -318,6 +313,11 @@ struct InstructionsState {
   /// Some of the instructions in the list have alternate opcodes.
   bool isAltShuffle() const { return Opcode != AltOpcode; }
 
+  bool isOpcodeOrAlt(Instruction *I) const {
+    unsigned CheckedOpcode = I->getOpcode();
+    return Opcode == CheckedOpcode || AltOpcode == CheckedOpcode;
+  }
+
   InstructionsState() = default;
   InstructionsState(Value *OpValue, unsigned Opcode, unsigned AltOpcode)
       : OpValue(OpValue), Opcode(Opcode), AltOpcode(AltOpcode) {}
@@ -330,7 +330,7 @@ struct InstructionsState {
 /// OpValue.
 static Value *isOneOf(const InstructionsState &S, Value *Op) {
   auto *I = dyn_cast<Instruction>(Op);
-  if (I && sameOpcodeOrAlt(S.Opcode, S.AltOpcode, I->getOpcode()))
+  if (I && S.isOpcodeOrAlt(I))
     return Op;
   return S.OpValue;
 }
@@ -352,7 +352,7 @@ static InstructionsState getSameOpcode(ArrayRef<Value *> VL,
   // TODO - can we support other operators (casts etc.)?
   for (int Cnt = 0, E = VL.size(); Cnt < E; Cnt++) {
     unsigned InstOpcode = cast<Instruction>(VL[Cnt])->getOpcode();
-    if (!sameOpcodeOrAlt(Opcode, AltOpcode, InstOpcode)) {
+    if (InstOpcode != Opcode && InstOpcode != AltOpcode) {
       if (Opcode == AltOpcode && IsBinOp && isa<BinaryOperator>(VL[Cnt])) {
         AltOpcode = InstOpcode;
         continue;
@@ -2350,19 +2350,18 @@ int BoUpSLP::getEntryCost(TreeEntry *E) {
       return ReuseShuffleCost + VecCallCost - ScalarCallCost;
     }
     case Instruction::ShuffleVector: {
+      assert(S.isAltShuffle() && Instruction::isBinaryOp(S.Opcode) &&
+             Instruction::isBinaryOp(S.AltOpcode) &&
+             "Invalid Shuffle Vector Operand");
       int ScalarCost = 0;
       if (NeedToShuffleReuses) {
         for (unsigned Idx : E->ReuseShuffleIndices) {
           Instruction *I = cast<Instruction>(VL[Idx]);
-          if (!I)
-            continue;
           ReuseShuffleCost -=
               TTI->getArithmeticInstrCost(I->getOpcode(), ScalarTy);
         }
         for (Value *V : VL) {
           Instruction *I = cast<Instruction>(V);
-          if (!I)
-            continue;
           ReuseShuffleCost +=
               TTI->getArithmeticInstrCost(I->getOpcode(), ScalarTy);
         }
@@ -2370,16 +2369,13 @@ int BoUpSLP::getEntryCost(TreeEntry *E) {
       int VecCost = 0;
       for (Value *i : VL) {
         Instruction *I = cast<Instruction>(i);
-        if (!I)
-          break;
+        assert(S.isOpcodeOrAlt(I) && "Unexpected main/alternate opcode");
         ScalarCost += TTI->getArithmeticInstrCost(I->getOpcode(), ScalarTy);
       }
       // VecCost is equal to sum of the cost of creating 2 vectors
       // and the cost of creating shuffle.
-      Instruction *I0 = cast<Instruction>(VL[0]);
-      VecCost = TTI->getArithmeticInstrCost(I0->getOpcode(), VecTy);
-      Instruction *I1 = cast<Instruction>(VL[1]);
-      VecCost += TTI->getArithmeticInstrCost(I1->getOpcode(), VecTy);
+      VecCost = TTI->getArithmeticInstrCost(S.Opcode, VecTy);
+      VecCost += TTI->getArithmeticInstrCost(S.AltOpcode, VecTy);
       VecCost += TTI->getShuffleCost(TargetTransformInfo::SK_Select, VecTy, 0);
       return ReuseShuffleCost + VecCost - ScalarCost;
     }
@@ -2629,8 +2625,7 @@ void BoUpSLP::reorderAltShuffleOperands(const InstructionsState &S,
   // Push left and right operands of binary operation into Left and Right
   for (Value *V : VL) {
     auto *I = cast<Instruction>(V);
-    assert(sameOpcodeOrAlt(S.Opcode, S.AltOpcode, I->getOpcode()) &&
-           "Incorrect instruction in vector");
+    assert(S.isOpcodeOrAlt(I) && "Incorrect instruction in vector");
     Left.push_back(I->getOperand(0));
     Right.push_back(I->getOperand(1));
   }
@@ -2838,9 +2833,8 @@ void BoUpSLP::setInsertPointAfterBundle(ArrayRef<Value *> VL,
   auto *Front = cast<Instruction>(S.OpValue);
   auto *BB = Front->getParent();
   assert(llvm::all_of(make_range(VL.begin(), VL.end()), [=](Value *V) -> bool {
-    return !sameOpcodeOrAlt(S.Opcode, S.AltOpcode,
-                            cast<Instruction>(V)->getOpcode()) ||
-           cast<Instruction>(V)->getParent() == BB;
+    auto *I = cast<Instruction>(V);
+    return !S.isOpcodeOrAlt(I) || I->getParent() == BB;
   }));
 
   // The last instruction in the bundle in program order.
@@ -2880,7 +2874,7 @@ void BoUpSLP::setInsertPointAfterBundle(ArrayRef<Value *> VL,
   if (!LastInst) {
     SmallPtrSet<Value *, 16> Bundle(VL.begin(), VL.end());
     for (auto &I : make_range(BasicBlock::iterator(Front), BB->end())) {
-      if (Bundle.erase(&I) && sameOpcodeOrAlt(S.Opcode, S.AltOpcode, I.getOpcode()))
+      if (Bundle.erase(&I) && S.isOpcodeOrAlt(&I))
         LastInst = &I;
       if (Bundle.empty())
         break;
@@ -3463,7 +3457,8 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
     }
     case Instruction::ShuffleVector: {
       ValueList LHSVL, RHSVL;
-      assert(Instruction::isBinaryOp(S.Opcode) &&
+      assert(S.isAltShuffle() && Instruction::isBinaryOp(S.Opcode) &&
+             Instruction::isBinaryOp(S.AltOpcode) &&
              "Invalid Shuffle Vector Operand");
       reorderAltShuffleOperands(S, E->Scalars, LHSVL, RHSVL);
       setInsertPointAfterBundle(E->Scalars, S);
@@ -3492,10 +3487,8 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
       SmallVector<Constant *, 8> Mask(e);
       for (unsigned i = 0; i < e; ++i) {
         auto *OpInst = cast<Instruction>(E->Scalars[i]);
-        unsigned InstOpcode = OpInst->getOpcode();
-        assert(sameOpcodeOrAlt(S.Opcode, S.AltOpcode, InstOpcode) &&
-               "Unexpected main/alternate opcode");
-        if (InstOpcode == S.AltOpcode) {
+        assert(S.isOpcodeOrAlt(OpInst) && "Unexpected main/alternate opcode");
+        if (OpInst->getOpcode() == S.AltOpcode) {
           Mask[i] = Builder.getInt32(e + i);
           AltScalars.push_back(E->Scalars[i]);
         } else {
@@ -5476,6 +5469,77 @@ class HorizontalReduction {
         return OperationData(
             Instruction::FCmp, LHS, RHS, RK_Max,
             cast<Instruction>(Select->getCondition())->hasNoNaNs());
+      } else {
+        // Try harder: look for min/max pattern based on instructions producing
+        // same values such as: select ((cmp Inst1, Inst2), Inst1, Inst2).
+        // During the intermediate stages of SLP, it's very common to have
+        // pattern like this (since optimizeGatherSequence is run only once
+        // at the end):
+        // %1 = extractelement <2 x i32> %a, i32 0
+        // %2 = extractelement <2 x i32> %a, i32 1
+        // %cond = icmp sgt i32 %1, %2
+        // %3 = extractelement <2 x i32> %a, i32 0
+        // %4 = extractelement <2 x i32> %a, i32 1
+        // %select = select i1 %cond, i32 %3, i32 %4
+        CmpInst::Predicate Pred;
+        Instruction *L1;
+        Instruction *L2;
+
+        LHS = Select->getTrueValue();
+        RHS = Select->getFalseValue();
+        Value *Cond = Select->getCondition();
+
+        // TODO: Support inverse predicates.
+        if (match(Cond, m_Cmp(Pred, m_Specific(LHS), m_Instruction(L2)))) {
+          if (!isa<ExtractElementInst>(RHS) ||
+              !L2->isIdenticalTo(cast<Instruction>(RHS)))
+            return OperationData(V);
+        } else if (match(Cond, m_Cmp(Pred, m_Instruction(L1), m_Specific(RHS)))) {
+          if (!isa<ExtractElementInst>(LHS) ||
+              !L1->isIdenticalTo(cast<Instruction>(LHS)))
+            return OperationData(V);
+        } else {
+          if (!isa<ExtractElementInst>(LHS) || !isa<ExtractElementInst>(RHS))
+            return OperationData(V);
+          if (!match(Cond, m_Cmp(Pred, m_Instruction(L1), m_Instruction(L2))) ||
+              !L1->isIdenticalTo(cast<Instruction>(LHS)) ||
+              !L2->isIdenticalTo(cast<Instruction>(RHS)))
+            return OperationData(V);
+        }
+        switch (Pred) {
+        default:
+          return OperationData(V);
+
+        case CmpInst::ICMP_ULT:
+        case CmpInst::ICMP_ULE:
+          return OperationData(Instruction::ICmp, LHS, RHS, RK_UMin);
+
+        case CmpInst::ICMP_SLT:
+        case CmpInst::ICMP_SLE:
+          return OperationData(Instruction::ICmp, LHS, RHS, RK_Min);
+
+        case CmpInst::FCMP_OLT:
+        case CmpInst::FCMP_OLE:
+        case CmpInst::FCMP_ULT:
+        case CmpInst::FCMP_ULE:
+          return OperationData(Instruction::FCmp, LHS, RHS, RK_Min,
+                               cast<Instruction>(Cond)->hasNoNaNs());
+
+        case CmpInst::ICMP_UGT:
+        case CmpInst::ICMP_UGE:
+          return OperationData(Instruction::ICmp, LHS, RHS, RK_UMax);
+
+        case CmpInst::ICMP_SGT:
+        case CmpInst::ICMP_SGE:
+          return OperationData(Instruction::ICmp, LHS, RHS, RK_Max);
+
+        case CmpInst::FCMP_OGT:
+        case CmpInst::FCMP_OGE:
+        case CmpInst::FCMP_UGT:
+        case CmpInst::FCMP_UGE:
+          return OperationData(Instruction::FCmp, LHS, RHS, RK_Max,
+                               cast<Instruction>(Cond)->hasNoNaNs());
+        }
       }
     }
     return OperationData(V);
