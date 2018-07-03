@@ -462,7 +462,10 @@ bool CodeGenPrepare::runOnFunction(Function &F) {
 
   if (!DisableBranchOpts) {
     MadeChange = false;
-    SmallPtrSet<BasicBlock*, 8> WorkList;
+    // Use a set vector to get deterministic iteration order. The order the
+    // blocks are removed may affect whether or not PHI nodes in successors
+    // are removed.
+    SmallSetVector<BasicBlock*, 8> WorkList;
     for (BasicBlock &BB : F) {
       SmallVector<BasicBlock *, 2> Successors(succ_begin(&BB), succ_end(&BB));
       MadeChange |= ConstantFoldTerminator(&BB, true);
@@ -477,8 +480,7 @@ bool CodeGenPrepare::runOnFunction(Function &F) {
     // Delete the dead blocks and any of their dead successors.
     MadeChange |= !WorkList.empty();
     while (!WorkList.empty()) {
-      BasicBlock *BB = *WorkList.begin();
-      WorkList.erase(BB);
+      BasicBlock *BB = WorkList.pop_back_val();
       SmallVector<BasicBlock*, 2> Successors(succ_begin(BB), succ_end(BB));
 
       DeleteDeadBlock(BB);
@@ -1702,6 +1704,7 @@ bool CodeGenPrepare::optimizeCallInst(CallInst *CI, bool &ModifiedDT) {
       return true;
     }
     case Intrinsic::launder_invariant_group:
+    case Intrinsic::strip_invariant_group:
       II->replaceAllUsesWith(II->getArgOperand(0));
       II->eraseFromParent();
       return true;
