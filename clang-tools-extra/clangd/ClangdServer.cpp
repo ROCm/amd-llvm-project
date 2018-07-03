@@ -146,7 +146,7 @@ void ClangdServer::removeDocument(PathRef File) {
 
 void ClangdServer::codeComplete(PathRef File, Position Pos,
                                 const clangd::CodeCompleteOptions &Opts,
-                                Callback<CompletionList> CB) {
+                                Callback<CodeCompleteResult> CB) {
   // Copy completion options for passing them to async task handler.
   auto CodeCompleteOpts = Opts;
   if (!CodeCompleteOpts.Index) // Respect overridden index.
@@ -156,7 +156,7 @@ void ClangdServer::codeComplete(PathRef File, Position Pos,
   std::shared_ptr<PCHContainerOperations> PCHs = this->PCHs;
   auto FS = FSProvider.getFileSystem();
   auto Task = [PCHs, Pos, FS,
-               CodeCompleteOpts](Path File, Callback<CompletionList> CB,
+               CodeCompleteOpts](Path File, Callback<CodeCompleteResult> CB,
                                  llvm::Expected<InputsAndPreamble> IP) {
     if (!IP)
       return CB(IP.takeError());
@@ -167,13 +167,9 @@ void ClangdServer::codeComplete(PathRef File, Position Pos,
     // both the old and the new version in case only one of them matches.
     CodeCompleteResult Result = clangd::codeComplete(
         File, IP->Command, PreambleData ? &PreambleData->Preamble : nullptr,
-        PreambleData ? PreambleData->Inclusions : std::vector<Inclusion>(),
+        PreambleData ? PreambleData->Includes : IncludeStructure(),
         IP->Contents, Pos, FS, PCHs, CodeCompleteOpts);
-    CompletionList LSPResult;
-    LSPResult.isIncomplete = Result.HasMore;
-    for (const auto &Completion : Result.Completions)
-      LSPResult.items.push_back(Completion.render(CodeCompleteOpts));
-    CB(std::move(LSPResult));
+    CB(std::move(Result));
   };
 
   WorkScheduler.runWithPreamble("CodeComplete", File,

@@ -14,6 +14,7 @@
 #include "MCTargetDesc/X86MCTargetDesc.h"
 #include "X86.h"
 #include "X86RegisterInfo.h"
+#include "X86Subtarget.h"
 #include "llvm/MC/MCInstBuilder.h"
 
 namespace exegesis {
@@ -130,41 +131,46 @@ class ExegesisX86Target : public ExegesisTarget {
     PM.add(llvm::createX86FloatingPointStackifierPass());
   }
 
-  std::vector<llvm::MCInst>
-  setRegToConstant(unsigned Reg) const override {
-    if (llvm::X86::GR8RegClass.contains(Reg)) {
+  std::vector<llvm::MCInst> setRegToConstant(const llvm::MCSubtargetInfo &STI,
+                                             unsigned Reg) const override {
+    // GPR.
+    if (llvm::X86::GR8RegClass.contains(Reg))
       return {llvm::MCInstBuilder(llvm::X86::MOV8ri).addReg(Reg).addImm(1)};
-    }
-    if (llvm::X86::GR16RegClass.contains(Reg)) {
+    if (llvm::X86::GR16RegClass.contains(Reg))
       return {llvm::MCInstBuilder(llvm::X86::MOV16ri).addReg(Reg).addImm(1)};
-    }
-    if (llvm::X86::GR32RegClass.contains(Reg)) {
+    if (llvm::X86::GR32RegClass.contains(Reg))
       return {llvm::MCInstBuilder(llvm::X86::MOV32ri).addReg(Reg).addImm(1)};
-    }
-    if (llvm::X86::GR64RegClass.contains(Reg)) {
+    if (llvm::X86::GR64RegClass.contains(Reg))
       return {llvm::MCInstBuilder(llvm::X86::MOV64ri32).addReg(Reg).addImm(1)};
-    }
+    // MMX.
+    if (llvm::X86::VR64RegClass.contains(Reg))
+      return setVectorRegToConstant(Reg, 8, llvm::X86::MMX_MOVQ64rm);
+    // {X,Y,Z}MM.
     if (llvm::X86::VR128XRegClass.contains(Reg)) {
-      return setVectorRegToConstant(Reg, 16, llvm::X86::VMOVDQUrm);
+      if (STI.getFeatureBits()[llvm::X86::FeatureAVX512])
+        return setVectorRegToConstant(Reg, 16, llvm::X86::VMOVDQU32Z128rm);
+      if (STI.getFeatureBits()[llvm::X86::FeatureAVX])
+        return setVectorRegToConstant(Reg, 16, llvm::X86::VMOVDQUrm);
+      return setVectorRegToConstant(Reg, 16, llvm::X86::MOVDQUrm);
     }
     if (llvm::X86::VR256XRegClass.contains(Reg)) {
+      if (STI.getFeatureBits()[llvm::X86::FeatureAVX512])
+        return setVectorRegToConstant(Reg, 32, llvm::X86::VMOVDQU32Z256rm);
       return setVectorRegToConstant(Reg, 32, llvm::X86::VMOVDQUYrm);
     }
-    if (llvm::X86::VR512RegClass.contains(Reg)) {
-      return setVectorRegToConstant(Reg, 64, llvm::X86::VMOVDQU64Zrm);
-    }
+    if (llvm::X86::VR512RegClass.contains(Reg))
+      return setVectorRegToConstant(Reg, 64, llvm::X86::VMOVDQU32Zrm);
+    // X87.
     if (llvm::X86::RFP32RegClass.contains(Reg) ||
         llvm::X86::RFP64RegClass.contains(Reg) ||
-        llvm::X86::RFP80RegClass.contains(Reg)) {
+        llvm::X86::RFP80RegClass.contains(Reg))
       return setVectorRegToConstant(Reg, 8, llvm::X86::LD_Fp64m);
-    }
     return {};
   }
 
   std::unique_ptr<BenchmarkRunner>
   createLatencyBenchmarkRunner(const LLVMState &State) const override {
-    return llvm::make_unique<X86BenchmarkRunner<X86LatencyImpl>>(
-        State);
+    return llvm::make_unique<X86BenchmarkRunner<X86LatencyImpl>>(State);
   }
 
   std::unique_ptr<BenchmarkRunner>
