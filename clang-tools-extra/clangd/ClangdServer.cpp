@@ -167,7 +167,7 @@ void ClangdServer::codeComplete(PathRef File, Position Pos,
     // both the old and the new version in case only one of them matches.
     CodeCompleteResult Result = clangd::codeComplete(
         File, IP->Command, PreambleData ? &PreambleData->Preamble : nullptr,
-        PreambleData ? PreambleData->Inclusions : std::vector<Inclusion>(),
+        PreambleData ? PreambleData->Includes : IncludeStructure(),
         IP->Contents, Pos, FS, PCHs, CodeCompleteOpts);
     CB(std::move(Result));
   };
@@ -280,7 +280,7 @@ void ClangdServer::rename(PathRef File, Position Pos, llvm::StringRef NewName,
 }
 
 void ClangdServer::dumpAST(PathRef File,
-                           UniqueFunction<void(std::string)> Callback) {
+                           llvm::unique_function<void(std::string)> Callback) {
   auto Action = [](decltype(Callback) Callback,
                    llvm::Expected<InputsAndAST> InpAST) {
     if (!InpAST) {
@@ -454,6 +454,18 @@ void ClangdServer::workspaceSymbols(
     StringRef Query, int Limit, Callback<std::vector<SymbolInformation>> CB) {
   CB(clangd::getWorkspaceSymbols(Query, Limit, Index,
                                  RootPath ? *RootPath : ""));
+}
+
+void ClangdServer::documentSymbols(
+    StringRef File, Callback<std::vector<SymbolInformation>> CB) {
+  auto Action = [](Callback<std::vector<SymbolInformation>> CB,
+                   llvm::Expected<InputsAndAST> InpAST) {
+    if (!InpAST)
+      return CB(InpAST.takeError());
+    CB(clangd::getDocumentSymbols(InpAST->AST));
+  };
+  WorkScheduler.runWithAST("documentSymbols", File,
+                           Bind(Action, std::move(CB)));
 }
 
 std::vector<std::pair<Path, std::size_t>>

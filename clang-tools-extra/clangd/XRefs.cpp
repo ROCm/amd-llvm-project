@@ -175,20 +175,6 @@ IdentifiedSymbol getSymbolAtPosition(ParsedAST &AST, SourceLocation Pos) {
   return {DeclMacrosFinder.takeDecls(), DeclMacrosFinder.takeMacroInfos()};
 }
 
-llvm::Optional<std::string>
-getAbsoluteFilePath(const FileEntry *F, const SourceManager &SourceMgr) {
-  SmallString<64> FilePath = F->tryGetRealPathName();
-  if (FilePath.empty())
-    FilePath = F->getName();
-  if (!llvm::sys::path::is_absolute(FilePath)) {
-    if (!SourceMgr.getFileManager().makeAbsolutePath(FilePath)) {
-      log("Could not turn relative path to absolute: " + FilePath);
-      return llvm::None;
-    }
-  }
-  return FilePath.str().str();
-}
-
 llvm::Optional<Location>
 makeLocation(ParsedAST &AST, const SourceRange &ValSourceRange) {
   const SourceManager &SourceMgr = AST.getASTContext().getSourceManager();
@@ -230,13 +216,10 @@ llvm::Optional<SymbolID> getSymbolID(const Decl *D) {
 std::vector<Location> findDefinitions(ParsedAST &AST, Position Pos,
                                       const SymbolIndex *Index) {
   const SourceManager &SourceMgr = AST.getASTContext().getSourceManager();
-  SourceLocation SourceLocationBeg =
-      getBeginningOfIdentifier(AST, Pos, SourceMgr.getMainFileID());
 
   std::vector<Location> Result;
   // Handle goto definition for #include.
-  for (auto &Inc : AST.getInclusions()) {
-    Position Pos = sourceLocToPosition(SourceMgr, SourceLocationBeg);
+  for (auto &Inc : AST.getIncludeStructure().MainFileIncludes) {
     if (!Inc.Resolved.empty() && Inc.R.contains(Pos))
       Result.push_back(Location{URIForFile{Inc.Resolved}, {}});
   }
@@ -244,6 +227,8 @@ std::vector<Location> findDefinitions(ParsedAST &AST, Position Pos,
     return Result;
 
   // Identified symbols at a specific position.
+  SourceLocation SourceLocationBeg =
+      getBeginningOfIdentifier(AST, Pos, SourceMgr.getMainFileID());
   auto Symbols = getSymbolAtPosition(AST, SourceLocationBeg);
 
   for (auto Item : Symbols.Macros) {

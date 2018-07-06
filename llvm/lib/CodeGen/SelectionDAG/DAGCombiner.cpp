@@ -3051,8 +3051,6 @@ SDValue DAGCombiner::visitSDIV(SDNode *N) {
   auto IsPowerOfTwo = [](ConstantSDNode *C) {
     if (C->isNullValue() || C->isOpaque())
       return false;
-    if (C->getAPIntValue().isMinSignedValue())
-      return false;
     if (C->getAPIntValue().isPowerOf2())
       return true;
     if ((-C->getAPIntValue()).isPowerOf2())
@@ -18252,7 +18250,7 @@ bool DAGCombiner::findBetterNeighborChains(StoreSDNode *St) {
         Index = nullptr;
         break;
       }
-    } // end while
+    }// end while
   }
 
   // At this point, ChainedStores lists all of the Store nodes

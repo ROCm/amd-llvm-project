@@ -846,66 +846,66 @@ __m512d test_mm512_maskz_fmsubadd_round_pd(__mmask8 __U, __m512d __A, __m512d __
 }
 __m512d test_mm512_fmaddsub_pd(__m512d __A, __m512d __B, __m512d __C) {
   // CHECK-LABEL: @test_mm512_fmaddsub_pd
-  // CHECK: call <8 x double> @llvm.fma.v8f64(<8 x double> %{{.*}}, <8 x double> %{{.*}}, <8 x double> %{{.*}})
-  // CHECK: fsub <8 x double> <double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00>, %{{.*}}
-  // CHECK: call <8 x double> @llvm.fma.v8f64(<8 x double> %{{.*}}, <8 x double> %{{.*}}, <8 x double> %{{.*}})
-  // CHECK: select <8 x i1> <i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false>, <8 x double> %{{.*}}, <8 x double> %{{.*}}
+  // CHECK: [[ADD:%.+]] = call <8 x double> @llvm.fma.v8f64(<8 x double> %{{.*}}, <8 x double> %{{.*}}, <8 x double> %{{.*}})
+  // CHECK: [[NEG:%.+]] = fsub <8 x double> <double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00>, %{{.*}}
+  // CHECK: [[SUB:%.+]] = call <8 x double> @llvm.fma.v8f64(<8 x double> %{{.*}}, <8 x double> %{{.*}}, <8 x double> [[NEG]]
+  // CHECK: shufflevector <8 x double> [[SUB]], <8 x double> [[ADD]], <8 x i32> <i32 0, i32 9, i32 2, i32 11, i32 4, i32 13, i32 6, i32 15>
   return _mm512_fmaddsub_pd(__A, __B, __C);
 }
 __m512d test_mm512_mask_fmaddsub_pd(__m512d __A, __mmask8 __U, __m512d __B, __m512d __C) {
   // CHECK-LABEL: @test_mm512_mask_fmaddsub_pd
-  // CHECK: call <8 x double> @llvm.fma.v8f64(<8 x double> %{{.*}}, <8 x double> %{{.*}}, <8 x double> %{{.*}})
-  // CHECK: fsub <8 x double> <double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00>, %{{.*}}
-  // CHECK: call <8 x double> @llvm.fma.v8f64(<8 x double> %{{.*}}, <8 x double> %{{.*}}, <8 x double> %{{.*}})
-  // CHECK: select <8 x i1> <i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false>, <8 x double> %{{.*}}, <8 x double> %{{.*}}
+  // CHECK: [[ADD:%.+]] = call <8 x double> @llvm.fma.v8f64(<8 x double> %{{.*}}, <8 x double> %{{.*}}, <8 x double> %{{.*}})
+  // CHECK: [[NEG:%.+]] = fsub <8 x double> <double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00>, %{{.*}}
+  // CHECK: [[SUB:%.+]] = call <8 x double> @llvm.fma.v8f64(<8 x double> %{{.*}}, <8 x double> %{{.*}}, <8 x double> [[NEG]]
+  // CHECK: shufflevector <8 x double> [[SUB]], <8 x double> [[ADD]], <8 x i32> <i32 0, i32 9, i32 2, i32 11, i32 4, i32 13, i32 6, i32 15>
   // CHECK: bitcast i8 %{{.*}} to <8 x i1>
   // CHECK: select <8 x i1> %{{.*}}, <8 x double> %{{.*}}, <8 x double> %{{.*}}
   return _mm512_mask_fmaddsub_pd(__A, __U, __B, __C);
 }
 __m512d test_mm512_mask3_fmaddsub_pd(__m512d __A, __m512d __B, __m512d __C, __mmask8 __U) {
   // CHECK-LABEL: @test_mm512_mask3_fmaddsub_pd
-  // CHECK: call <8 x double> @llvm.fma.v8f64(<8 x double> %{{.*}}, <8 x double> %{{.*}}, <8 x double> %{{.*}})
-  // CHECK: fsub <8 x double> <double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00>, %{{.*}}
-  // CHECK: call <8 x double> @llvm.fma.v8f64(<8 x double> %{{.*}}, <8 x double> %{{.*}}, <8 x double> %{{.*}})
-  // CHECK: select <8 x i1> <i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false>, <8 x double> %{{.*}}, <8 x double> %{{.*}}
+  // CHECK: [[ADD:%.+]] = call <8 x double> @llvm.fma.v8f64(<8 x double> %{{.*}}, <8 x double> %{{.*}}, <8 x double> %{{.*}})
+  // CHECK: [[NEG:%.+]] = fsub <8 x double> <double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00>, %{{.*}}
+  // CHECK: [[SUB:%.+]] = call <8 x double> @llvm.fma.v8f64(<8 x double> %{{.*}}, <8 x double> %{{.*}}, <8 x double> [[NEG]]
+  // CHECK: shufflevector <8 x double> [[SUB]], <8 x double> [[ADD]], <8 x i32> <i32 0, i32 9, i32 2, i32 11, i32 4, i32 13, i32 6, i32 15>
   // CHECK: bitcast i8 %{{.*}} to <8 x i1>
   // CHECK: select <8 x i1> %{{.*}}, <8 x double> %{{.*}}, <8 x double> %{{.*}}
   return _mm512_mask3_fmaddsub_pd(__A, __B, __C, __U);
 }
 __m512d test_mm512_maskz_fmaddsub_pd(__mmask8 __U, __m512d __A, __m512d __B, __m512d __C) {
   // CHECK-LABEL: @test_mm512_maskz_fmaddsub_pd
-  // check: call <8 x double> @llvm.fma.v8f64(<8 x double> %{{.*}}, <8 x double> %{{.*}}, <8 x double> %{{.*}})
-  // check: fsub <8 x double> <double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00>, %{{.*}}
-  // check: call <8 x double> @llvm.fma.v8f64(<8 x double> %{{.*}}, <8 x double> %{{.*}}, <8 x double> %{{.*}})
-  // check: select <8 x i1> <i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false>, <8 x double> %{{.*}}, <8 x double> %{{.*}}
+  // CHECK: [[ADD:%.+]] = call <8 x double> @llvm.fma.v8f64(<8 x double> %{{.*}}, <8 x double> %{{.*}}, <8 x double> %{{.*}})
+  // CHECK: [[NEG:%.+]] = fsub <8 x double> <double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00>, %{{.*}}
+  // CHECK: [[SUB:%.+]] = call <8 x double> @llvm.fma.v8f64(<8 x double> %{{.*}}, <8 x double> %{{.*}}, <8 x double> [[NEG]]
+  // CHECK: shufflevector <8 x double> [[SUB]], <8 x double> [[ADD]], <8 x i32> <i32 0, i32 9, i32 2, i32 11, i32 4, i32 13, i32 6, i32 15>
   // CHECK: bitcast i8 %{{.*}} to <8 x i1>
   // CHECK: select <8 x i1> %{{.*}}, <8 x double> %{{.*}}, <8 x double> zeroinitializer
   return _mm512_maskz_fmaddsub_pd(__U, __A, __B, __C);
 }
 __m512d test_mm512_fmsubadd_pd(__m512d __A, __m512d __B, __m512d __C) {
   // CHECK-LABEL: @test_mm512_fmsubadd_pd
-  // CHECK: fsub <8 x double> <double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00>, %{{.*}}
-  // CHECK: call <8 x double> @llvm.fma.v8f64(<8 x double> %{{.*}}, <8 x double> %{{.*}}, <8 x double> %{{.*}})
-  // CHECK: call <8 x double> @llvm.fma.v8f64(<8 x double> %{{.*}}, <8 x double> %{{.*}}, <8 x double> %{{.*}})
-  // CHECK: select <8 x i1> <i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false>, <8 x double> %{{.*}}, <8 x double> %{{.*}}
+  // CHECK: [[NEG:%.+]] = fsub <8 x double> <double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00>, %{{.*}}
+  // CHECK: [[SUB:%.+]] = call <8 x double> @llvm.fma.v8f64(<8 x double> %{{.*}}, <8 x double> %{{.*}}, <8 x double> [[NEG]]
+  // CHECK: [[ADD:%.+]] = call <8 x double> @llvm.fma.v8f64(<8 x double> %{{.*}}, <8 x double> %{{.*}}, <8 x double> %{{.*}})
+  // CHECK: shufflevector <8 x double> [[ADD]], <8 x double> [[SUB]], <8 x i32> <i32 0, i32 9, i32 2, i32 11, i32 4, i32 13, i32 6, i32 15>
   return _mm512_fmsubadd_pd(__A, __B, __C);
 }
 __m512d test_mm512_mask_fmsubadd_pd(__m512d __A, __mmask8 __U, __m512d __B, __m512d __C) {
   // CHECK-LABEL: @test_mm512_mask_fmsubadd_pd
-  // CHECK: fsub <8 x double> <double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00>, %{{.*}}
-  // CHECK: call <8 x double> @llvm.fma.v8f64(<8 x double> %{{.*}}, <8 x double> %{{.*}}, <8 x double> %{{.*}})
-  // CHECK: call <8 x double> @llvm.fma.v8f64(<8 x double> %{{.*}}, <8 x double> %{{.*}}, <8 x double> %{{.*}})
-  // CHECK: select <8 x i1> <i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false>, <8 x double> %{{.*}}, <8 x double> %{{.*}}
+  // CHECK: [[NEG:%.+]] = fsub <8 x double> <double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00>, %{{.*}}
+  // CHECK: [[SUB:%.+]] = call <8 x double> @llvm.fma.v8f64(<8 x double> %{{.*}}, <8 x double> %{{.*}}, <8 x double> [[NEG]]
+  // CHECK: [[ADD:%.+]] = call <8 x double> @llvm.fma.v8f64(<8 x double> %{{.*}}, <8 x double> %{{.*}}, <8 x double> %{{.*}})
+  // CHECK: shufflevector <8 x double> [[ADD]], <8 x double> [[SUB]], <8 x i32> <i32 0, i32 9, i32 2, i32 11, i32 4, i32 13, i32 6, i32 15>
   // CHECK: bitcast i8 %{{.*}} to <8 x i1>
   // CHECK: select <8 x i1> %{{.*}}, <8 x double> %{{.*}}, <8 x double> %{{.*}}
   return _mm512_mask_fmsubadd_pd(__A, __U, __B, __C);
 }
 __m512d test_mm512_maskz_fmsubadd_pd(__mmask8 __U, __m512d __A, __m512d __B, __m512d __C) {
   // CHECK-LABEL: @test_mm512_maskz_fmsubadd_pd
-  // CHECK: fsub <8 x double> <double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00>, %{{.*}}
-  // CHECK: call <8 x double> @llvm.fma.v8f64(<8 x double> %{{.*}}, <8 x double> %{{.*}}, <8 x double> %{{.*}})
-  // CHECK: call <8 x double> @llvm.fma.v8f64(<8 x double> %{{.*}}, <8 x double> %{{.*}}, <8 x double> %{{.*}})
-  // CHECK: select <8 x i1> <i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false>, <8 x double> %{{.*}}, <8 x double> %{{.*}}
+  // CHECK: [[NEG:%.+]] = fsub <8 x double> <double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00>, %{{.*}}
+  // CHECK: [[SUB:%.+]] = call <8 x double> @llvm.fma.v8f64(<8 x double> %{{.*}}, <8 x double> %{{.*}}, <8 x double> [[NEG]]
+  // CHECK: [[ADD:%.+]] = call <8 x double> @llvm.fma.v8f64(<8 x double> %{{.*}}, <8 x double> %{{.*}}, <8 x double> %{{.*}})
+  // CHECK: shufflevector <8 x double> [[ADD]], <8 x double> [[SUB]], <8 x i32> <i32 0, i32 9, i32 2, i32 11, i32 4, i32 13, i32 6, i32 15>
   // CHECK: bitcast i8 %{{.*}} to <8 x i1>
   // CHECK: select <8 x i1> %{{.*}}, <8 x double> %{{.*}}, <8 x double> zeroinitializer
   return _mm512_maskz_fmsubadd_pd(__U, __A, __B, __C);
@@ -960,66 +960,66 @@ __m512 test_mm512_maskz_fmsubadd_round_ps(__mmask16 __U, __m512 __A, __m512 __B,
 }
 __m512 test_mm512_fmaddsub_ps(__m512 __A, __m512 __B, __m512 __C) {
   // CHECK-LABEL: @test_mm512_fmaddsub_ps
-  // CHECK: call <16 x float> @llvm.fma.v16f32(<16 x float> %{{.*}}, <16 x float> %{{.*}}, <16 x float> %{{.*}})
-  // CHECK: fsub <16 x float> <float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00>, %{{.*}}
-  // CHECK: call <16 x float> @llvm.fma.v16f32(<16 x float> %{{.*}}, <16 x float> %{{.*}}, <16 x float> %{{.*}})
-  // CHECK: select <16 x i1> <i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false>, <16 x float> %{{.*}}, <16 x float> %{{.*}}
+  // CHECK: [[ADD:%.+]] = call <16 x float> @llvm.fma.v16f32(<16 x float> %{{.*}}, <16 x float> %{{.*}}, <16 x float> %{{.*}})
+  // CHECK: [[NEG:%.+]] = fsub <16 x float> <float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00>, %{{.*}}
+  // CHECK: [[SUB:%.+]] = call <16 x float> @llvm.fma.v16f32(<16 x float> %{{.*}}, <16 x float> %{{.*}}, <16 x float> [[NEG]]
+  // CHECK: shufflevector <16 x float> [[SUB]], <16 x float> [[ADD]], <16 x i32> <i32 0, i32 17, i32 2, i32 19, i32 4, i32 21, i32 6, i32 23, i32 8, i32 25, i32 10, i32 27, i32 12, i32 29, i32 14, i32 31>
   return _mm512_fmaddsub_ps(__A, __B, __C);
 }
 __m512 test_mm512_mask_fmaddsub_ps(__m512 __A, __mmask16 __U, __m512 __B, __m512 __C) {
   // CHECK-LABEL: @test_mm512_mask_fmaddsub_ps
-  // CHECK: call <16 x float> @llvm.fma.v16f32(<16 x float> %{{.*}}, <16 x float> %{{.*}}, <16 x float> %{{.*}})
-  // CHECK: fsub <16 x float> <float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00>, %{{.*}}
-  // CHECK: call <16 x float> @llvm.fma.v16f32(<16 x float> %{{.*}}, <16 x float> %{{.*}}, <16 x float> %{{.*}})
-  // CHECK: select <16 x i1> <i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false>, <16 x float> %{{.*}}, <16 x float> %{{.*}}
+  // CHECK: [[ADD:%.+]] = call <16 x float> @llvm.fma.v16f32(<16 x float> %{{.*}}, <16 x float> %{{.*}}, <16 x float> %{{.*}})
+  // CHECK: [[NEG:%.+]] = fsub <16 x float> <float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00>, %{{.*}}
+  // CHECK: [[SUB:%.+]] = call <16 x float> @llvm.fma.v16f32(<16 x float> %{{.*}}, <16 x float> %{{.*}}, <16 x float> [[NEG]]
+  // CHECK: shufflevector <16 x float> [[SUB]], <16 x float> [[ADD]], <16 x i32> <i32 0, i32 17, i32 2, i32 19, i32 4, i32 21, i32 6, i32 23, i32 8, i32 25, i32 10, i32 27, i32 12, i32 29, i32 14, i32 31>
   // CHECK: bitcast i16 %{{.*}} to <16 x i1>
   // CHECK: select <16 x i1> %{{.*}}, <16 x float> %{{.*}}, <16 x float> %{{.*}}
   return _mm512_mask_fmaddsub_ps(__A, __U, __B, __C);
 }
 __m512 test_mm512_mask3_fmaddsub_ps(__m512 __A, __m512 __B, __m512 __C, __mmask16 __U) {
   // CHECK-LABEL: @test_mm512_mask3_fmaddsub_ps
-  // CHECK: call <16 x float> @llvm.fma.v16f32(<16 x float> %{{.*}}, <16 x float> %{{.*}}, <16 x float> %{{.*}})
-  // CHECK: fsub <16 x float> <float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00>, %{{.*}}
-  // CHECK: call <16 x float> @llvm.fma.v16f32(<16 x float> %{{.*}}, <16 x float> %{{.*}}, <16 x float> %{{.*}})
-  // CHECK: select <16 x i1> <i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false>, <16 x float> %{{.*}}, <16 x float> %{{.*}}
+  // CHECK: [[ADD:%.+]] = call <16 x float> @llvm.fma.v16f32(<16 x float> %{{.*}}, <16 x float> %{{.*}}, <16 x float> %{{.*}})
+  // CHECK: [[NEG:%.+]] = fsub <16 x float> <float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00>, %{{.*}}
+  // CHECK: [[SUB:%.+]] = call <16 x float> @llvm.fma.v16f32(<16 x float> %{{.*}}, <16 x float> %{{.*}}, <16 x float> [[NEG]]
+  // CHECK: shufflevector <16 x float> [[SUB]], <16 x float> [[ADD]], <16 x i32> <i32 0, i32 17, i32 2, i32 19, i32 4, i32 21, i32 6, i32 23, i32 8, i32 25, i32 10, i32 27, i32 12, i32 29, i32 14, i32 31>
   // CHECK: bitcast i16 %{{.*}} to <16 x i1>
   // CHECK: select <16 x i1> %{{.*}}, <16 x float> %{{.*}}, <16 x float> %{{.*}}
   return _mm512_mask3_fmaddsub_ps(__A, __B, __C, __U);
 }
 __m512 test_mm512_maskz_fmaddsub_ps(__mmask16 __U, __m512 __A, __m512 __B, __m512 __C) {
   // CHECK-LABEL: @test_mm512_maskz_fmaddsub_ps
-  // CHECK: call <16 x float> @llvm.fma.v16f32(<16 x float> %{{.*}}, <16 x float> %{{.*}}, <16 x float> %{{.*}})
-  // CHECK: fsub <16 x float> <float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00>, %{{.*}}
-  // CHECK: call <16 x float> @llvm.fma.v16f32(<16 x float> %{{.*}}, <16 x float> %{{.*}}, <16 x float> %{{.*}})
-  // CHECK: select <16 x i1> <i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false>, <16 x float> %{{.*}}, <16 x float> %{{.*}}
+  // CHECK: [[ADD:%.+]] = call <16 x float> @llvm.fma.v16f32(<16 x float> %{{.*}}, <16 x float> %{{.*}}, <16 x float> %{{.*}})
+  // CHECK: [[NEG:%.+]] = fsub <16 x float> <float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00>, %{{.*}}
+  // CHECK: [[SUB:%.+]] = call <16 x float> @llvm.fma.v16f32(<16 x float> %{{.*}}, <16 x float> %{{.*}}, <16 x float> [[NEG]]
+  // CHECK: shufflevector <16 x float> [[SUB]], <16 x float> [[ADD]], <16 x i32> <i32 0, i32 17, i32 2, i32 19, i32 4, i32 21, i32 6, i32 23, i32 8, i32 25, i32 10, i32 27, i32 12, i32 29, i32 14, i32 31>
   // CHECK: bitcast i16 %{{.*}} to <16 x i1>
   // CHECK: select <16 x i1> %{{.*}}, <16 x float> %{{.*}}, <16 x float> zeroinitializer
   return _mm512_maskz_fmaddsub_ps(__U, __A, __B, __C);
 }
 __m512 test_mm512_fmsubadd_ps(__m512 __A, __m512 __B, __m512 __C) {
   // CHECK-LABEL: @test_mm512_fmsubadd_ps
-  // CHECK: fsub <16 x float> <float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00>, %{{.*}}
-  // CHECK: call <16 x float> @llvm.fma.v16f32(<16 x float> %{{.*}}, <16 x float> %{{.*}}, <16 x float> %{{.*}})
-  // CHECK: call <16 x float> @llvm.fma.v16f32(<16 x float> %{{.*}}, <16 x float> %{{.*}}, <16 x float> %{{.*}})
-  // CHECK: select <16 x i1> <i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false>, <16 x float> %{{.*}}, <16 x float> %{{.*}}
+  // CHECK: [[NEG:%.+]] = fsub <16 x float> <float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00>, %{{.*}}
+  // CHECK: [[SUB:%.+]] = call <16 x float> @llvm.fma.v16f32(<16 x float> %{{.*}}, <16 x float> %{{.*}}, <16 x float> [[NEG]]
+  // CHECK: [[ADD:%.+]] = call <16 x float> @llvm.fma.v16f32(<16 x float> %{{.*}}, <16 x float> %{{.*}}, <16 x float> %{{.*}})
+  // CHECK: shufflevector <16 x float> [[ADD]], <16 x float> [[SUB]], <16 x i32> <i32 0, i32 17, i32 2, i32 19, i32 4, i32 21, i32 6, i32 23, i32 8, i32 25, i32 10, i32 27, i32 12, i32 29, i32 14, i32 31>
   return _mm512_fmsubadd_ps(__A, __B, __C);
 }
 __m512 test_mm512_mask_fmsubadd_ps(__m512 __A, __mmask16 __U, __m512 __B, __m512 __C) {
   // CHECK-LABEL: @test_mm512_mask_fmsubadd_ps
-  // CHECK: fsub <16 x float> <float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00>, %{{.*}}
-  // CHECK: call <16 x float> @llvm.fma.v16f32(<16 x float> %{{.*}}, <16 x float> %{{.*}}, <16 x float> %{{.*}})
-  // CHECK: call <16 x float> @llvm.fma.v16f32(<16 x float> %{{.*}}, <16 x float> %{{.*}}, <16 x float> %{{.*}})
-  // CHECK: select <16 x i1> <i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false>, <16 x float> %{{.*}}, <16 x float> %{{.*}}
+  // CHECK: [[NEG:%.+]] = fsub <16 x float> <float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00>, %{{.*}}
+  // CHECK: [[SUB:%.+]] = call <16 x float> @llvm.fma.v16f32(<16 x float> %{{.*}}, <16 x float> %{{.*}}, <16 x float> [[NEG]]
+  // CHECK: [[ADD:%.+]] = call <16 x float> @llvm.fma.v16f32(<16 x float> %{{.*}}, <16 x float> %{{.*}}, <16 x float> %{{.*}})
+  // CHECK: shufflevector <16 x float> [[ADD]], <16 x float> [[SUB]], <16 x i32> <i32 0, i32 17, i32 2, i32 19, i32 4, i32 21, i32 6, i32 23, i32 8, i32 25, i32 10, i32 27, i32 12, i32 29, i32 14, i32 31>
   // CHECK: bitcast i16 %{{.*}} to <16 x i1>
   // CHECK: select <16 x i1> %{{.*}}, <16 x float> %{{.*}}, <16 x float> %{{.*}}
   return _mm512_mask_fmsubadd_ps(__A, __U, __B, __C);
 }
 __m512 test_mm512_maskz_fmsubadd_ps(__mmask16 __U, __m512 __A, __m512 __B, __m512 __C) {
   // CHECK-LABEL: @test_mm512_maskz_fmsubadd_ps
-  // CHECK: fsub <16 x float> <float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00>, %{{.*}}
-  // CHECK: call <16 x float> @llvm.fma.v16f32(<16 x float> %{{.*}}, <16 x float> %{{.*}}, <16 x float> %{{.*}})
-  // CHECK: call <16 x float> @llvm.fma.v16f32(<16 x float> %{{.*}}, <16 x float> %{{.*}}, <16 x float> %{{.*}})
-  // CHECK: select <16 x i1> <i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false>, <16 x float> %{{.*}}, <16 x float> %{{.*}}
+  // CHECK: [[NEG:%.+]] = fsub <16 x float> <float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00>, %{{.*}}
+  // CHECK: [[SUB:%.+]] = call <16 x float> @llvm.fma.v16f32(<16 x float> %{{.*}}, <16 x float> %{{.*}}, <16 x float> [[NEG]]
+  // CHECK: [[ADD:%.+]] = call <16 x float> @llvm.fma.v16f32(<16 x float> %{{.*}}, <16 x float> %{{.*}}, <16 x float> %{{.*}})
+  // CHECK: shufflevector <16 x float> [[ADD]], <16 x float> [[SUB]], <16 x i32> <i32 0, i32 17, i32 2, i32 19, i32 4, i32 21, i32 6, i32 23, i32 8, i32 25, i32 10, i32 27, i32 12, i32 29, i32 14, i32 31>
   // CHECK: bitcast i16 %{{.*}} to <16 x i1>
   // CHECK: select <16 x i1> %{{.*}}, <16 x float> %{{.*}}, <16 x float> zeroinitializer
   return _mm512_maskz_fmsubadd_ps(__U, __A, __B, __C);
@@ -1066,10 +1066,10 @@ __m512d test_mm512_mask3_fmsubadd_round_pd(__m512d __A, __m512d __B, __m512d __C
 }
 __m512d test_mm512_mask3_fmsubadd_pd(__m512d __A, __m512d __B, __m512d __C, __mmask8 __U) {
   // CHECK-LABEL: @test_mm512_mask3_fmsubadd_pd
-  // CHECK: fsub <8 x double> <double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00>, %{{.*}}
-  // CHECK: call <8 x double> @llvm.fma.v8f64(<8 x double> %{{.*}}, <8 x double> %{{.*}}, <8 x double> %{{.*}})
-  // CHECK: call <8 x double> @llvm.fma.v8f64(<8 x double> %{{.*}}, <8 x double> %{{.*}}, <8 x double> %{{.*}})
-  // CHECK: select <8 x i1> <i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false>, <8 x double> %{{.*}}, <8 x double> %{{.*}}
+  // CHECK: [[NEG:%.+]] = fsub <8 x double> <double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00, double -0.000000e+00>, %{{.*}}
+  // CHECK: [[SUB:%.+]] = call <8 x double> @llvm.fma.v8f64(<8 x double> %{{.*}}, <8 x double> %{{.*}}, <8 x double> [[NEG]]
+  // CHECK: [[ADD:%.+]] = call <8 x double> @llvm.fma.v8f64(<8 x double> %{{.*}}, <8 x double> %{{.*}}, <8 x double> %{{.*}})
+  // CHECK: shufflevector <8 x double> [[ADD]], <8 x double> [[SUB]], <8 x i32> <i32 0, i32 9, i32 2, i32 11, i32 4, i32 13, i32 6, i32 15>
   // CHECK: bitcast i8 %{{.*}} to <8 x i1>
   // CHECK: select <8 x i1> %{{.*}}, <8 x double> %{{.*}}, <8 x double> %{{.*}}
   return _mm512_mask3_fmsubadd_pd(__A, __B, __C, __U);
@@ -1084,10 +1084,10 @@ __m512 test_mm512_mask3_fmsubadd_round_ps(__m512 __A, __m512 __B, __m512 __C, __
 }
 __m512 test_mm512_mask3_fmsubadd_ps(__m512 __A, __m512 __B, __m512 __C, __mmask16 __U) {
   // CHECK-LABEL: @test_mm512_mask3_fmsubadd_ps
-  // CHECK: fsub <16 x float> <float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00>, %{{.*}}
-  // CHECK: call <16 x float> @llvm.fma.v16f32(<16 x float> %{{.*}}, <16 x float> %{{.*}}, <16 x float> %{{.*}})
-  // CHECK: call <16 x float> @llvm.fma.v16f32(<16 x float> %{{.*}}, <16 x float> %{{.*}}, <16 x float> %{{.*}})
-  // CHECK: select <16 x i1> <i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false, i1 true, i1 false>, <16 x float> %{{.*}}, <16 x float> %{{.*}}
+  // CHECK: [[NEG:%.+]] = fsub <16 x float> <float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00, float -0.000000e+00>, %{{.*}}
+  // CHECK: [[SUB:%.+]] = call <16 x float> @llvm.fma.v16f32(<16 x float> %{{.*}}, <16 x float> %{{.*}}, <16 x float> [[NEG]]
+  // CHECK: [[ADD:%.+]] = call <16 x float> @llvm.fma.v16f32(<16 x float> %{{.*}}, <16 x float> %{{.*}}, <16 x float> %{{.*}})
+  // CHECK: shufflevector <16 x float> [[ADD]], <16 x float> [[SUB]], <16 x i32> <i32 0, i32 17, i32 2, i32 19, i32 4, i32 21, i32 6, i32 23, i32 8, i32 25, i32 10, i32 27, i32 12, i32 29, i32 14, i32 31>
   // CHECK: bitcast i16 %{{.*}} to <16 x i1>
   // CHECK: select <16 x i1> %{{.*}}, <16 x float> %{{.*}}, <16 x float> %{{.*}}
   return _mm512_mask3_fmsubadd_ps(__A, __B, __C, __U);
@@ -1290,45 +1290,420 @@ __mmask16 test_mm512_mask_cmp_round_ps_mask(__mmask16 m, __m512 a, __m512 b) {
   return _mm512_mask_cmp_round_ps_mask(m, a, b, 0, _MM_FROUND_CUR_DIRECTION);
 }
 
-__mmask16 test_mm512_cmp_ps_mask(__m512 a, __m512 b) {
-  // CHECK-LABEL: @test_mm512_cmp_ps_mask
+__mmask16 test_mm512_cmp_ps_mask_eq_oq(__m512 a, __m512 b) {
+  // CHECK-LABEL: @test_mm512_cmp_ps_mask_eq_oq
   // CHECK: fcmp oeq <16 x float> %{{.*}}, %{{.*}}
-  return _mm512_cmp_ps_mask(a, b, 0);
+  return _mm512_cmp_ps_mask(a, b, _CMP_EQ_OQ);
 }
 
-__mmask16 test_mm512_cmp_ps_mask_true_uq(__m512 a, __m512 b) {
-  // CHECK-LABEL: @test_mm512_cmp_ps_mask_true_uq
-  // CHECK-NOT: call
-  // CHECK: ret i16 -1
-  return _mm512_cmp_ps_mask(a, b, _CMP_TRUE_UQ);
+__mmask16 test_mm512_cmp_ps_mask_lt_os(__m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_cmp_ps_mask_lt_os
+  // CHECK: fcmp olt <16 x float> %{{.*}}, %{{.*}}
+  return _mm512_cmp_ps_mask(a, b, _CMP_LT_OS);
 }
 
-__mmask16 test_mm512_cmp_ps_mask_true_us(__m512 a, __m512 b) {
-  // CHECK-LABEL: @test_mm512_cmp_ps_mask_true_us
-  // CHECK-NOT: call
-  // CHECK: ret i16 -1
-  return _mm512_cmp_ps_mask(a, b, _CMP_TRUE_US);
+__mmask16 test_mm512_cmp_ps_mask_le_os(__m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_cmp_ps_mask_le_os
+  // CHECK: fcmp ole <16 x float> %{{.*}}, %{{.*}}
+  return _mm512_cmp_ps_mask(a, b, _CMP_LE_OS);
+}
+
+__mmask16 test_mm512_cmp_ps_mask_unord_q(__m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_cmp_ps_mask_unord_q
+  // CHECK: fcmp uno <16 x float> %{{.*}}, %{{.*}}
+  return _mm512_cmp_ps_mask(a, b, _CMP_UNORD_Q);
+}
+
+__mmask16 test_mm512_cmp_ps_mask_neq_uq(__m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_cmp_ps_mask_neq_uq
+  // CHECK: fcmp une <16 x float> %{{.*}}, %{{.*}}
+  return _mm512_cmp_ps_mask(a, b, _CMP_NEQ_UQ);
+}
+
+__mmask16 test_mm512_cmp_ps_mask_nlt_us(__m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_cmp_ps_mask_nlt_us
+  // CHECK: fcmp uge <16 x float> %{{.*}}, %{{.*}}
+  return _mm512_cmp_ps_mask(a, b, _CMP_NLT_US);
+}
+
+__mmask16 test_mm512_cmp_ps_mask_nle_us(__m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_cmp_ps_mask_nle_us
+  // CHECK: fcmp ugt <16 x float> %{{.*}}, %{{.*}}
+  return _mm512_cmp_ps_mask(a, b, _CMP_NLE_US);
+}
+
+__mmask16 test_mm512_cmp_ps_mask_ord_q(__m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_cmp_ps_mask_ord_q
+  // CHECK: fcmp ord <16 x float> %{{.*}}, %{{.*}}
+  return _mm512_cmp_ps_mask(a, b, _CMP_ORD_Q);
+}
+
+__mmask16 test_mm512_cmp_ps_mask_eq_uq(__m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_cmp_ps_mask_eq_uq
+  // CHECK: fcmp ueq <16 x float> %{{.*}}, %{{.*}}
+  return _mm512_cmp_ps_mask(a, b, _CMP_EQ_UQ);
+}
+
+__mmask16 test_mm512_cmp_ps_mask_nge_us(__m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_cmp_ps_mask_nge_us
+  // CHECK: fcmp ult <16 x float> %{{.*}}, %{{.*}}
+  return _mm512_cmp_ps_mask(a, b, _CMP_NGE_US);
+}
+
+__mmask16 test_mm512_cmp_ps_mask_ngt_us(__m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_cmp_ps_mask_ngt_us
+  // CHECK: fcmp ule <16 x float> %{{.*}}, %{{.*}}
+  return _mm512_cmp_ps_mask(a, b, _CMP_NGT_US);
 }
 
 __mmask16 test_mm512_cmp_ps_mask_false_oq(__m512 a, __m512 b) {
-  // CHECK-LABEL: @test_mm512_cmp_ps_mask_false_oq
-  // CHECK-NOT: call
-  // CHECK: ret i16 0
+  // CHECK-LABEL: test_mm512_cmp_ps_mask_false_oq
+  // CHECK: fcmp false <16 x float> %{{.*}}, %{{.*}}
   return _mm512_cmp_ps_mask(a, b, _CMP_FALSE_OQ);
 }
 
+__mmask16 test_mm512_cmp_ps_mask_neq_oq(__m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_cmp_ps_mask_neq_oq
+  // CHECK: fcmp one <16 x float> %{{.*}}, %{{.*}}
+  return _mm512_cmp_ps_mask(a, b, _CMP_NEQ_OQ);
+}
+
+__mmask16 test_mm512_cmp_ps_mask_ge_os(__m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_cmp_ps_mask_ge_os
+  // CHECK: fcmp oge <16 x float> %{{.*}}, %{{.*}}
+  return _mm512_cmp_ps_mask(a, b, _CMP_GE_OS);
+}
+
+__mmask16 test_mm512_cmp_ps_mask_gt_os(__m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_cmp_ps_mask_gt_os
+  // CHECK: fcmp ogt <16 x float> %{{.*}}, %{{.*}}
+  return _mm512_cmp_ps_mask(a, b, _CMP_GT_OS);
+}
+
+__mmask16 test_mm512_cmp_ps_mask_true_uq(__m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_cmp_ps_mask_true_uq
+  // CHECK: fcmp true <16 x float> %{{.*}}, %{{.*}}
+  return _mm512_cmp_ps_mask(a, b, _CMP_TRUE_UQ);
+}
+
+__mmask16 test_mm512_cmp_ps_mask_eq_os(__m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_cmp_ps_mask_eq_os
+  // CHECK: fcmp oeq <16 x float> %{{.*}}, %{{.*}}
+  return _mm512_cmp_ps_mask(a, b, _CMP_EQ_OS);
+}
+
+__mmask16 test_mm512_cmp_ps_mask_lt_oq(__m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_cmp_ps_mask_lt_oq
+  // CHECK: fcmp olt <16 x float> %{{.*}}, %{{.*}}
+  return _mm512_cmp_ps_mask(a, b, _CMP_LT_OQ);
+}
+
+__mmask16 test_mm512_cmp_ps_mask_le_oq(__m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_cmp_ps_mask_le_oq
+  // CHECK: fcmp ole <16 x float> %{{.*}}, %{{.*}}
+  return _mm512_cmp_ps_mask(a, b, _CMP_LE_OQ);
+}
+
+__mmask16 test_mm512_cmp_ps_mask_unord_s(__m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_cmp_ps_mask_unord_s
+  // CHECK: fcmp uno <16 x float> %{{.*}}, %{{.*}}
+  return _mm512_cmp_ps_mask(a, b, _CMP_UNORD_S);
+}
+
+__mmask16 test_mm512_cmp_ps_mask_neq_us(__m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_cmp_ps_mask_neq_us
+  // CHECK: fcmp une <16 x float> %{{.*}}, %{{.*}}
+  return _mm512_cmp_ps_mask(a, b, _CMP_NEQ_US);
+}
+
+__mmask16 test_mm512_cmp_ps_mask_nlt_uq(__m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_cmp_ps_mask_nlt_uq
+  // CHECK: fcmp uge <16 x float> %{{.*}}, %{{.*}}
+  return _mm512_cmp_ps_mask(a, b, _CMP_NLT_UQ);
+}
+
+__mmask16 test_mm512_cmp_ps_mask_nle_uq(__m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_cmp_ps_mask_nle_uq
+  // CHECK: fcmp ugt <16 x float> %{{.*}}, %{{.*}}
+  return _mm512_cmp_ps_mask(a, b, _CMP_NLE_UQ);
+}
+
+__mmask16 test_mm512_cmp_ps_mask_ord_s(__m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_cmp_ps_mask_ord_s
+  // CHECK: fcmp ord <16 x float> %{{.*}}, %{{.*}}
+  return _mm512_cmp_ps_mask(a, b, _CMP_ORD_S);
+}
+
+__mmask16 test_mm512_cmp_ps_mask_eq_us(__m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_cmp_ps_mask_eq_us
+  // CHECK: fcmp ueq <16 x float> %{{.*}}, %{{.*}}
+  return _mm512_cmp_ps_mask(a, b, _CMP_EQ_US);
+}
+
+__mmask16 test_mm512_cmp_ps_mask_nge_uq(__m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_cmp_ps_mask_nge_uq
+  // CHECK: fcmp ult <16 x float> %{{.*}}, %{{.*}}
+  return _mm512_cmp_ps_mask(a, b, _CMP_NGE_UQ);
+}
+
+__mmask16 test_mm512_cmp_ps_mask_ngt_uq(__m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_cmp_ps_mask_ngt_uq
+  // CHECK: fcmp ule <16 x float> %{{.*}}, %{{.*}}
+  return _mm512_cmp_ps_mask(a, b, _CMP_NGT_UQ);
+}
+
 __mmask16 test_mm512_cmp_ps_mask_false_os(__m512 a, __m512 b) {
-  // CHECK-LABEL: @test_mm512_cmp_ps_mask_false_os
-  // CHECK-NOT: call
-  // CHECK: ret i16 0
+  // CHECK-LABEL: test_mm512_cmp_ps_mask_false_os
+  // CHECK: fcmp false <16 x float> %{{.*}}, %{{.*}}
   return _mm512_cmp_ps_mask(a, b, _CMP_FALSE_OS);
 }
 
-__mmask16 test_mm512_mask_cmp_ps_mask(__mmask16 m, __m512 a, __m512 b) {
-  // CHECK-LABEL: @test_mm512_mask_cmp_ps_mask
+__mmask16 test_mm512_cmp_ps_mask_neq_os(__m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_cmp_ps_mask_neq_os
+  // CHECK: fcmp one <16 x float> %{{.*}}, %{{.*}}
+  return _mm512_cmp_ps_mask(a, b, _CMP_NEQ_OS);
+}
+
+__mmask16 test_mm512_cmp_ps_mask_ge_oq(__m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_cmp_ps_mask_ge_oq
+  // CHECK: fcmp oge <16 x float> %{{.*}}, %{{.*}}
+  return _mm512_cmp_ps_mask(a, b, _CMP_GE_OQ);
+}
+
+__mmask16 test_mm512_cmp_ps_mask_gt_oq(__m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_cmp_ps_mask_gt_oq
+  // CHECK: fcmp ogt <16 x float> %{{.*}}, %{{.*}}
+  return _mm512_cmp_ps_mask(a, b, _CMP_GT_OQ);
+}
+
+__mmask16 test_mm512_cmp_ps_mask_true_us(__m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_cmp_ps_mask_true_us
+  // CHECK: fcmp true <16 x float> %{{.*}}, %{{.*}}
+  return _mm512_cmp_ps_mask(a, b, _CMP_TRUE_US);
+}
+
+__mmask16 test_mm512_mask_cmp_ps_mask_eq_oq(__mmask16 m, __m512 a, __m512 b) {
+  // CHECK-LABEL: @test_mm512_mask_cmp_ps_mask_eq_oq
   // CHECK: [[CMP:%.*]] = fcmp oeq <16 x float> %{{.*}}, %{{.*}}
   // CHECK: and <16 x i1> [[CMP]], {{.*}}
-  return _mm512_mask_cmp_ps_mask(m, a, b, 0);
+  return _mm512_mask_cmp_ps_mask(m, a, b, _CMP_EQ_OQ);
+}
+
+__mmask16 test_mm512_mask_cmp_ps_mask_lt_os(__mmask16 m, __m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_ps_mask_lt_os
+  // CHECK: [[CMP:%.*]] = fcmp olt <16 x float> %{{.*}}, %{{.*}}
+  // CHECK: and <16 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_ps_mask(m, a, b, _CMP_LT_OS);
+}
+
+__mmask16 test_mm512_mask_cmp_ps_mask_le_os(__mmask16 m, __m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_ps_mask_le_os
+  // CHECK: [[CMP:%.*]] = fcmp ole <16 x float> %{{.*}}, %{{.*}}
+  // CHECK: and <16 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_ps_mask(m, a, b, _CMP_LE_OS);
+}
+
+__mmask16 test_mm512_mask_cmp_ps_mask_unord_q(__mmask16 m, __m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_ps_mask_unord_q
+  // CHECK: [[CMP:%.*]] = fcmp uno <16 x float> %{{.*}}, %{{.*}}
+  // CHECK: and <16 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_ps_mask(m, a, b, _CMP_UNORD_Q);
+}
+
+__mmask16 test_mm512_mask_cmp_ps_mask_neq_uq(__mmask16 m, __m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_ps_mask_neq_uq
+  // CHECK: [[CMP:%.*]] = fcmp une <16 x float> %{{.*}}, %{{.*}}
+  // CHECK: and <16 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_ps_mask(m, a, b, _CMP_NEQ_UQ);
+}
+
+__mmask16 test_mm512_mask_cmp_ps_mask_nlt_us(__mmask16 m, __m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_ps_mask_nlt_us
+  // CHECK: [[CMP:%.*]] = fcmp uge <16 x float> %{{.*}}, %{{.*}}
+  // CHECK: and <16 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_ps_mask(m, a, b, _CMP_NLT_US);
+}
+
+__mmask16 test_mm512_mask_cmp_ps_mask_nle_us(__mmask16 m, __m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_ps_mask_nle_us
+  // CHECK: [[CMP:%.*]] = fcmp ugt <16 x float> %{{.*}}, %{{.*}}
+  // CHECK: and <16 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_ps_mask(m, a, b, _CMP_NLE_US);
+}
+
+__mmask16 test_mm512_mask_cmp_ps_mask_ord_q(__mmask16 m, __m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_ps_mask_ord_q
+  // CHECK: [[CMP:%.*]] = fcmp ord <16 x float> %{{.*}}, %{{.*}}
+  // CHECK: and <16 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_ps_mask(m, a, b, _CMP_ORD_Q);
+}
+
+__mmask16 test_mm512_mask_cmp_ps_mask_eq_uq(__mmask16 m, __m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_ps_mask_eq_uq
+  // CHECK: [[CMP:%.*]] = fcmp ueq <16 x float> %{{.*}}, %{{.*}}
+  // CHECK: and <16 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_ps_mask(m, a, b, _CMP_EQ_UQ);
+}
+
+__mmask16 test_mm512_mask_cmp_ps_mask_nge_us(__mmask16 m, __m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_ps_mask_nge_us
+  // CHECK: [[CMP:%.*]] = fcmp ult <16 x float> %{{.*}}, %{{.*}}
+  // CHECK: and <16 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_ps_mask(m, a, b, _CMP_NGE_US);
+}
+
+__mmask16 test_mm512_mask_cmp_ps_mask_ngt_us(__mmask16 m, __m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_ps_mask_ngt_us
+  // CHECK: [[CMP:%.*]] = fcmp ule <16 x float> %{{.*}}, %{{.*}}
+  // CHECK: and <16 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_ps_mask(m, a, b, _CMP_NGT_US);
+}
+
+__mmask16 test_mm512_mask_cmp_ps_mask_false_oq(__mmask16 m, __m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_ps_mask_false_oq
+  // CHECK: [[CMP:%.*]] = fcmp false <16 x float> %{{.*}}, %{{.*}}
+  // CHECK: and <16 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_ps_mask(m, a, b, _CMP_FALSE_OQ);
+}
+
+__mmask16 test_mm512_mask_cmp_ps_mask_neq_oq(__mmask16 m, __m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_ps_mask_neq_oq
+  // CHECK: [[CMP:%.*]] = fcmp one <16 x float> %{{.*}}, %{{.*}}
+  // CHECK: and <16 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_ps_mask(m, a, b, _CMP_NEQ_OQ);
+}
+
+__mmask16 test_mm512_mask_cmp_ps_mask_ge_os(__mmask16 m, __m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_ps_mask_ge_os
+  // CHECK: [[CMP:%.*]] = fcmp oge <16 x float> %{{.*}}, %{{.*}}
+  // CHECK: and <16 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_ps_mask(m, a, b, _CMP_GE_OS);
+}
+
+__mmask16 test_mm512_mask_cmp_ps_mask_gt_os(__mmask16 m, __m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_ps_mask_gt_os
+  // CHECK: [[CMP:%.*]] = fcmp ogt <16 x float> %{{.*}}, %{{.*}}
+  // CHECK: and <16 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_ps_mask(m, a, b, _CMP_GT_OS);
+}
+
+__mmask16 test_mm512_mask_cmp_ps_mask_true_uq(__mmask16 m, __m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_ps_mask_true_uq
+  // CHECK: [[CMP:%.*]] = fcmp true <16 x float> %{{.*}}, %{{.*}}
+  // CHECK: and <16 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_ps_mask(m, a, b, _CMP_TRUE_UQ);
+}
+
+__mmask16 test_mm512_mask_cmp_ps_mask_eq_os(__mmask16 m, __m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_ps_mask_eq_os
+  // CHECK: [[CMP:%.*]] = fcmp oeq <16 x float> %{{.*}}, %{{.*}}
+  // CHECK: and <16 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_ps_mask(m, a, b, _CMP_EQ_OS);
+}
+
+__mmask16 test_mm512_mask_cmp_ps_mask_lt_oq(__mmask16 m, __m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_ps_mask_lt_oq
+  // CHECK: [[CMP:%.*]] = fcmp olt <16 x float> %{{.*}}, %{{.*}}
+  // CHECK: and <16 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_ps_mask(m, a, b, _CMP_LT_OQ);
+}
+
+__mmask16 test_mm512_mask_cmp_ps_mask_le_oq(__mmask16 m, __m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_ps_mask_le_oq
+  // CHECK: [[CMP:%.*]] = fcmp ole <16 x float> %{{.*}}, %{{.*}}
+  // CHECK: and <16 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_ps_mask(m, a, b, _CMP_LE_OQ);
+}
+
+__mmask16 test_mm512_mask_cmp_ps_mask_unord_s(__mmask16 m, __m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_ps_mask_unord_s
+  // CHECK: [[CMP:%.*]] = fcmp uno <16 x float> %{{.*}}, %{{.*}}
+  // CHECK: and <16 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_ps_mask(m, a, b, _CMP_UNORD_S);
+}
+
+__mmask16 test_mm512_mask_cmp_ps_mask_neq_us(__mmask16 m, __m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_ps_mask_neq_us
+  // CHECK: [[CMP:%.*]] = fcmp une <16 x float> %{{.*}}, %{{.*}}
+  // CHECK: and <16 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_ps_mask(m, a, b, _CMP_NEQ_US);
+}
+
+__mmask16 test_mm512_mask_cmp_ps_mask_nlt_uq(__mmask16 m, __m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_ps_mask_nlt_uq
+  // CHECK: [[CMP:%.*]] = fcmp uge <16 x float> %{{.*}}, %{{.*}}
+  // CHECK: and <16 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_ps_mask(m, a, b, _CMP_NLT_UQ);
+}
+
+__mmask16 test_mm512_mask_cmp_ps_mask_nle_uq(__mmask16 m, __m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_ps_mask_nle_uq
+  // CHECK: [[CMP:%.*]] = fcmp ugt <16 x float> %{{.*}}, %{{.*}}
+  // CHECK: and <16 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_ps_mask(m, a, b, _CMP_NLE_UQ);
+}
+
+__mmask16 test_mm512_mask_cmp_ps_mask_ord_s(__mmask16 m, __m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_ps_mask_ord_s
+  // CHECK: [[CMP:%.*]] = fcmp ord <16 x float> %{{.*}}, %{{.*}}
+  // CHECK: and <16 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_ps_mask(m, a, b, _CMP_ORD_S);
+}
+
+__mmask16 test_mm512_mask_cmp_ps_mask_eq_us(__mmask16 m, __m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_ps_mask_eq_us
+  // CHECK: [[CMP:%.*]] = fcmp ueq <16 x float> %{{.*}}, %{{.*}}
+  // CHECK: and <16 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_ps_mask(m, a, b, _CMP_EQ_US);
+}
+
+__mmask16 test_mm512_mask_cmp_ps_mask_nge_uq(__mmask16 m, __m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_ps_mask_nge_uq
+  // CHECK: [[CMP:%.*]] = fcmp ult <16 x float> %{{.*}}, %{{.*}}
+  // CHECK: and <16 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_ps_mask(m, a, b, _CMP_NGE_UQ);
+}
+
+__mmask16 test_mm512_mask_cmp_ps_mask_ngt_uq(__mmask16 m, __m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_ps_mask_ngt_uq
+  // CHECK: [[CMP:%.*]] = fcmp ule <16 x float> %{{.*}}, %{{.*}}
+  // CHECK: and <16 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_ps_mask(m, a, b, _CMP_NGT_UQ);
+}
+
+__mmask16 test_mm512_mask_cmp_ps_mask_false_os(__mmask16 m, __m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_ps_mask_false_os
+  // CHECK: [[CMP:%.*]] = fcmp false <16 x float> %{{.*}}, %{{.*}}
+  // CHECK: and <16 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_ps_mask(m, a, b, _CMP_FALSE_OS);
+}
+
+__mmask16 test_mm512_mask_cmp_ps_mask_neq_os(__mmask16 m, __m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_ps_mask_neq_os
+  // CHECK: [[CMP:%.*]] = fcmp one <16 x float> %{{.*}}, %{{.*}}
+  // CHECK: and <16 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_ps_mask(m, a, b, _CMP_NEQ_OS);
+}
+
+__mmask16 test_mm512_mask_cmp_ps_mask_ge_oq(__mmask16 m, __m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_ps_mask_ge_oq
+  // CHECK: [[CMP:%.*]] = fcmp oge <16 x float> %{{.*}}, %{{.*}}
+  // CHECK: and <16 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_ps_mask(m, a, b, _CMP_GE_OQ);
+}
+
+__mmask16 test_mm512_mask_cmp_ps_mask_gt_oq(__mmask16 m, __m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_ps_mask_gt_oq
+  // CHECK: [[CMP:%.*]] = fcmp ogt <16 x float> %{{.*}}, %{{.*}}
+  // CHECK: and <16 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_ps_mask(m, a, b, _CMP_GT_OQ);
+}
+
+__mmask16 test_mm512_mask_cmp_ps_mask_true_us(__mmask16 m, __m512 a, __m512 b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_ps_mask_true_us
+  // CHECK: [[CMP:%.*]] = fcmp true <16 x float> %{{.*}}, %{{.*}}
+  // CHECK: and <16 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_ps_mask(m, a, b, _CMP_TRUE_US);
 }
 
 __mmask8 test_mm512_cmp_round_pd_mask(__m512d a, __m512d b) {
@@ -1344,38 +1719,420 @@ __mmask8 test_mm512_mask_cmp_round_pd_mask(__mmask8 m, __m512d a, __m512d b) {
   return _mm512_mask_cmp_round_pd_mask(m, a, b, 0, _MM_FROUND_CUR_DIRECTION);
 }
 
-__mmask8 test_mm512_cmp_pd_mask(__m512d a, __m512d b) {
-  // CHECK-LABEL: @test_mm512_cmp_pd_mask
+__mmask8 test_mm512_cmp_pd_mask_eq_oq(__m512d a, __m512d b) {
+  // CHECK-LABEL: @test_mm512_cmp_pd_mask_eq_oq
   // CHECK: fcmp oeq <8 x double> %{{.*}}, %{{.*}}
-  return _mm512_cmp_pd_mask(a, b, 0);
+  return _mm512_cmp_pd_mask(a, b, _CMP_EQ_OQ);
 }
 
-__mmask8 test_mm512_cmp_pd_mask_true_uq(__m512d a, __m512d b) {
-  // CHECK-LABEL: @test_mm512_cmp_pd_mask_true_uq
-  // CHECK-NOT: call
-  // CHECK: ret i8 -1
-  return _mm512_cmp_pd_mask(a, b, _CMP_TRUE_UQ);
+__mmask8 test_mm512_cmp_pd_mask_lt_os(__m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_cmp_pd_mask_lt_os
+  // CHECK: fcmp olt <8 x double> %{{.*}}, %{{.*}}
+  return _mm512_cmp_pd_mask(a, b, _CMP_LT_OS);
 }
 
-__mmask8 test_mm512_cmp_pd_mask_true_us(__m512d a, __m512d b) {
-  // CHECK-LABEL: @test_mm512_cmp_pd_mask_true_us
-  // CHECK-NOT: call
-  // CHECK: ret i8 -1
-  return _mm512_cmp_pd_mask(a, b, _CMP_TRUE_US);
+__mmask8 test_mm512_cmp_pd_mask_le_os(__m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_cmp_pd_mask_le_os
+  // CHECK: fcmp ole <8 x double> %{{.*}}, %{{.*}}
+  return _mm512_cmp_pd_mask(a, b, _CMP_LE_OS);
+}
+
+__mmask8 test_mm512_cmp_pd_mask_unord_q(__m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_cmp_pd_mask_unord_q
+  // CHECK: fcmp uno <8 x double> %{{.*}}, %{{.*}}
+  return _mm512_cmp_pd_mask(a, b, _CMP_UNORD_Q);
+}
+
+__mmask8 test_mm512_cmp_pd_mask_neq_uq(__m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_cmp_pd_mask_neq_uq
+  // CHECK: fcmp une <8 x double> %{{.*}}, %{{.*}}
+  return _mm512_cmp_pd_mask(a, b, _CMP_NEQ_UQ);
+}
+
+__mmask8 test_mm512_cmp_pd_mask_nlt_us(__m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_cmp_pd_mask_nlt_us
+  // CHECK: fcmp uge <8 x double> %{{.*}}, %{{.*}}
+  return _mm512_cmp_pd_mask(a, b, _CMP_NLT_US);
+}
+
+__mmask8 test_mm512_cmp_pd_mask_nle_us(__m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_cmp_pd_mask_nle_us
+  // CHECK: fcmp ugt <8 x double> %{{.*}}, %{{.*}}
+  return _mm512_cmp_pd_mask(a, b, _CMP_NLE_US);
+}
+
+__mmask8 test_mm512_cmp_pd_mask_ord_q(__m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_cmp_pd_mask_ord_q
+  // CHECK: fcmp ord <8 x double> %{{.*}}, %{{.*}}
+  return _mm512_cmp_pd_mask(a, b, _CMP_ORD_Q);
+}
+
+__mmask8 test_mm512_cmp_pd_mask_eq_uq(__m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_cmp_pd_mask_eq_uq
+  // CHECK: fcmp ueq <8 x double> %{{.*}}, %{{.*}}
+  return _mm512_cmp_pd_mask(a, b, _CMP_EQ_UQ);
+}
+
+__mmask8 test_mm512_cmp_pd_mask_nge_us(__m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_cmp_pd_mask_nge_us
+  // CHECK: fcmp ult <8 x double> %{{.*}}, %{{.*}}
+  return _mm512_cmp_pd_mask(a, b, _CMP_NGE_US);
+}
+
+__mmask8 test_mm512_cmp_pd_mask_ngt_us(__m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_cmp_pd_mask_ngt_us
+  // CHECK: fcmp ule <8 x double> %{{.*}}, %{{.*}}
+  return _mm512_cmp_pd_mask(a, b, _CMP_NGT_US);
 }
 
 __mmask8 test_mm512_cmp_pd_mask_false_oq(__m512d a, __m512d b) {
-  // CHECK-LABEL: @test_mm512_cmp_pd_mask_false_oq
-  // CHECK-NOT: call
-  // CHECK: ret i8 0
+  // CHECK-LABEL: test_mm512_cmp_pd_mask_false_oq
+  // CHECK: fcmp false <8 x double> %{{.*}}, %{{.*}}
   return _mm512_cmp_pd_mask(a, b, _CMP_FALSE_OQ);
 }
 
+__mmask8 test_mm512_cmp_pd_mask_neq_oq(__m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_cmp_pd_mask_neq_oq
+  // CHECK: fcmp one <8 x double> %{{.*}}, %{{.*}}
+  return _mm512_cmp_pd_mask(a, b, _CMP_NEQ_OQ);
+}
+
+__mmask8 test_mm512_cmp_pd_mask_ge_os(__m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_cmp_pd_mask_ge_os
+  // CHECK: fcmp oge <8 x double> %{{.*}}, %{{.*}}
+  return _mm512_cmp_pd_mask(a, b, _CMP_GE_OS);
+}
+
+__mmask8 test_mm512_cmp_pd_mask_gt_os(__m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_cmp_pd_mask_gt_os
+  // CHECK: fcmp ogt <8 x double> %{{.*}}, %{{.*}}
+  return _mm512_cmp_pd_mask(a, b, _CMP_GT_OS);
+}
+
+__mmask8 test_mm512_cmp_pd_mask_true_uq(__m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_cmp_pd_mask_true_uq
+  // CHECK: fcmp true <8 x double> %{{.*}}, %{{.*}}
+  return _mm512_cmp_pd_mask(a, b, _CMP_TRUE_UQ);
+}
+
+__mmask8 test_mm512_cmp_pd_mask_eq_os(__m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_cmp_pd_mask_eq_os
+  // CHECK: fcmp oeq <8 x double> %{{.*}}, %{{.*}}
+  return _mm512_cmp_pd_mask(a, b, _CMP_EQ_OS);
+}
+
+__mmask8 test_mm512_cmp_pd_mask_lt_oq(__m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_cmp_pd_mask_lt_oq
+  // CHECK: fcmp olt <8 x double> %{{.*}}, %{{.*}}
+  return _mm512_cmp_pd_mask(a, b, _CMP_LT_OQ);
+}
+
+__mmask8 test_mm512_cmp_pd_mask_le_oq(__m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_cmp_pd_mask_le_oq
+  // CHECK: fcmp ole <8 x double> %{{.*}}, %{{.*}}
+  return _mm512_cmp_pd_mask(a, b, _CMP_LE_OQ);
+}
+
+__mmask8 test_mm512_cmp_pd_mask_unord_s(__m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_cmp_pd_mask_unord_s
+  // CHECK: fcmp uno <8 x double> %{{.*}}, %{{.*}}
+  return _mm512_cmp_pd_mask(a, b, _CMP_UNORD_S);
+}
+
+__mmask8 test_mm512_cmp_pd_mask_neq_us(__m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_cmp_pd_mask_neq_us
+  // CHECK: fcmp une <8 x double> %{{.*}}, %{{.*}}
+  return _mm512_cmp_pd_mask(a, b, _CMP_NEQ_US);
+}
+
+__mmask8 test_mm512_cmp_pd_mask_nlt_uq(__m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_cmp_pd_mask_nlt_uq
+  // CHECK: fcmp uge <8 x double> %{{.*}}, %{{.*}}
+  return _mm512_cmp_pd_mask(a, b, _CMP_NLT_UQ);
+}
+
+__mmask8 test_mm512_cmp_pd_mask_nle_uq(__m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_cmp_pd_mask_nle_uq
+  // CHECK: fcmp ugt <8 x double> %{{.*}}, %{{.*}}
+  return _mm512_cmp_pd_mask(a, b, _CMP_NLE_UQ);
+}
+
+__mmask8 test_mm512_cmp_pd_mask_ord_s(__m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_cmp_pd_mask_ord_s
+  // CHECK: fcmp ord <8 x double> %{{.*}}, %{{.*}}
+  return _mm512_cmp_pd_mask(a, b, _CMP_ORD_S);
+}
+
+__mmask8 test_mm512_cmp_pd_mask_eq_us(__m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_cmp_pd_mask_eq_us
+  // CHECK: fcmp ueq <8 x double> %{{.*}}, %{{.*}}
+  return _mm512_cmp_pd_mask(a, b, _CMP_EQ_US);
+}
+
+__mmask8 test_mm512_cmp_pd_mask_nge_uq(__m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_cmp_pd_mask_nge_uq
+  // CHECK: fcmp ult <8 x double> %{{.*}}, %{{.*}}
+  return _mm512_cmp_pd_mask(a, b, _CMP_NGE_UQ);
+}
+
+__mmask8 test_mm512_cmp_pd_mask_ngt_uq(__m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_cmp_pd_mask_ngt_uq
+  // CHECK: fcmp ule <8 x double> %{{.*}}, %{{.*}}
+  return _mm512_cmp_pd_mask(a, b, _CMP_NGT_UQ);
+}
+
 __mmask8 test_mm512_cmp_pd_mask_false_os(__m512d a, __m512d b) {
-  // CHECK-LABEL: @test_mm512_cmp_pd_mask_false_os
-  // CHECK-NOT: call
-  // CHECK: ret i8 0
+  // CHECK-LABEL: test_mm512_cmp_pd_mask_false_os
+  // CHECK: fcmp false <8 x double> %{{.*}}, %{{.*}}
   return _mm512_cmp_pd_mask(a, b, _CMP_FALSE_OS);
+}
+
+__mmask8 test_mm512_cmp_pd_mask_neq_os(__m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_cmp_pd_mask_neq_os
+  // CHECK: fcmp one <8 x double> %{{.*}}, %{{.*}}
+  return _mm512_cmp_pd_mask(a, b, _CMP_NEQ_OS);
+}
+
+__mmask8 test_mm512_cmp_pd_mask_ge_oq(__m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_cmp_pd_mask_ge_oq
+  // CHECK: fcmp oge <8 x double> %{{.*}}, %{{.*}}
+  return _mm512_cmp_pd_mask(a, b, _CMP_GE_OQ);
+}
+
+__mmask8 test_mm512_cmp_pd_mask_gt_oq(__m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_cmp_pd_mask_gt_oq
+  // CHECK: fcmp ogt <8 x double> %{{.*}}, %{{.*}}
+  return _mm512_cmp_pd_mask(a, b, _CMP_GT_OQ);
+}
+
+__mmask8 test_mm512_cmp_pd_mask_true_us(__m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_cmp_pd_mask_true_us
+  // CHECK: fcmp true <8 x double> %{{.*}}, %{{.*}}
+  return _mm512_cmp_pd_mask(a, b, _CMP_TRUE_US);
+}
+
+__mmask8 test_mm512_mask_cmp_pd_mask_eq_oq(__mmask8 m, __m512d a, __m512d b) {
+  // CHECK-LABEL: @test_mm512_mask_cmp_pd_mask_eq_oq
+  // CHECK: [[CMP:%.*]] = fcmp oeq <8 x double> %{{.*}}, %{{.*}}
+  // CHECK: and <8 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_pd_mask(m, a, b, _CMP_EQ_OQ);
+}
+
+__mmask8 test_mm512_mask_cmp_pd_mask_lt_os(__mmask8 m, __m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_pd_mask_lt_os
+  // CHECK: [[CMP:%.*]] = fcmp olt <8 x double> %{{.*}}, %{{.*}}
+  // CHECK: and <8 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_pd_mask(m, a, b, _CMP_LT_OS);
+}
+
+__mmask8 test_mm512_mask_cmp_pd_mask_le_os(__mmask8 m, __m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_pd_mask_le_os
+  // CHECK: [[CMP:%.*]] = fcmp ole <8 x double> %{{.*}}, %{{.*}}
+  // CHECK: and <8 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_pd_mask(m, a, b, _CMP_LE_OS);
+}
+
+__mmask8 test_mm512_mask_cmp_pd_mask_unord_q(__mmask8 m, __m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_pd_mask_unord_q
+  // CHECK: [[CMP:%.*]] = fcmp uno <8 x double> %{{.*}}, %{{.*}}
+  // CHECK: and <8 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_pd_mask(m, a, b, _CMP_UNORD_Q);
+}
+
+__mmask8 test_mm512_mask_cmp_pd_mask_neq_uq(__mmask8 m, __m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_pd_mask_neq_uq
+  // CHECK: [[CMP:%.*]] = fcmp une <8 x double> %{{.*}}, %{{.*}}
+  // CHECK: and <8 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_pd_mask(m, a, b, _CMP_NEQ_UQ);
+}
+
+__mmask8 test_mm512_mask_cmp_pd_mask_nlt_us(__mmask8 m, __m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_pd_mask_nlt_us
+  // CHECK: [[CMP:%.*]] = fcmp uge <8 x double> %{{.*}}, %{{.*}}
+  // CHECK: and <8 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_pd_mask(m, a, b, _CMP_NLT_US);
+}
+
+__mmask8 test_mm512_mask_cmp_pd_mask_nle_us(__mmask8 m, __m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_pd_mask_nle_us
+  // CHECK: [[CMP:%.*]] = fcmp ugt <8 x double> %{{.*}}, %{{.*}}
+  // CHECK: and <8 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_pd_mask(m, a, b, _CMP_NLE_US);
+}
+
+__mmask8 test_mm512_mask_cmp_pd_mask_ord_q(__mmask8 m, __m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_pd_mask_ord_q
+  // CHECK: [[CMP:%.*]] = fcmp ord <8 x double> %{{.*}}, %{{.*}}
+  // CHECK: and <8 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_pd_mask(m, a, b, _CMP_ORD_Q);
+}
+
+__mmask8 test_mm512_mask_cmp_pd_mask_eq_uq(__mmask8 m, __m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_pd_mask_eq_uq
+  // CHECK: [[CMP:%.*]] = fcmp ueq <8 x double> %{{.*}}, %{{.*}}
+  // CHECK: and <8 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_pd_mask(m, a, b, _CMP_EQ_UQ);
+}
+
+__mmask8 test_mm512_mask_cmp_pd_mask_nge_us(__mmask8 m, __m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_pd_mask_nge_us
+  // CHECK: [[CMP:%.*]] = fcmp ult <8 x double> %{{.*}}, %{{.*}}
+  // CHECK: and <8 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_pd_mask(m, a, b, _CMP_NGE_US);
+}
+
+__mmask8 test_mm512_mask_cmp_pd_mask_ngt_us(__mmask8 m, __m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_pd_mask_ngt_us
+  // CHECK: [[CMP:%.*]] = fcmp ule <8 x double> %{{.*}}, %{{.*}}
+  // CHECK: and <8 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_pd_mask(m, a, b, _CMP_NGT_US);
+}
+
+__mmask8 test_mm512_mask_cmp_pd_mask_false_oq(__mmask8 m, __m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_pd_mask_false_oq
+  // CHECK: [[CMP:%.*]] = fcmp false <8 x double> %{{.*}}, %{{.*}}
+  // CHECK: and <8 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_pd_mask(m, a, b, _CMP_FALSE_OQ);
+}
+
+__mmask8 test_mm512_mask_cmp_pd_mask_neq_oq(__mmask8 m, __m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_pd_mask_neq_oq
+  // CHECK: [[CMP:%.*]] = fcmp one <8 x double> %{{.*}}, %{{.*}}
+  // CHECK: and <8 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_pd_mask(m, a, b, _CMP_NEQ_OQ);
+}
+
+__mmask8 test_mm512_mask_cmp_pd_mask_ge_os(__mmask8 m, __m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_pd_mask_ge_os
+  // CHECK: [[CMP:%.*]] = fcmp oge <8 x double> %{{.*}}, %{{.*}}
+  // CHECK: and <8 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_pd_mask(m, a, b, _CMP_GE_OS);
+}
+
+__mmask8 test_mm512_mask_cmp_pd_mask_gt_os(__mmask8 m, __m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_pd_mask_gt_os
+  // CHECK: [[CMP:%.*]] = fcmp ogt <8 x double> %{{.*}}, %{{.*}}
+  // CHECK: and <8 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_pd_mask(m, a, b, _CMP_GT_OS);
+}
+
+__mmask8 test_mm512_mask_cmp_pd_mask_true_uq(__mmask8 m, __m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_pd_mask_true_uq
+  // CHECK: [[CMP:%.*]] = fcmp true <8 x double> %{{.*}}, %{{.*}}
+  // CHECK: and <8 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_pd_mask(m, a, b, _CMP_TRUE_UQ);
+}
+
+__mmask8 test_mm512_mask_cmp_pd_mask_eq_os(__mmask8 m, __m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_pd_mask_eq_os
+  // CHECK: [[CMP:%.*]] = fcmp oeq <8 x double> %{{.*}}, %{{.*}}
+  // CHECK: and <8 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_pd_mask(m, a, b, _CMP_EQ_OS);
+}
+
+__mmask8 test_mm512_mask_cmp_pd_mask_lt_oq(__mmask8 m, __m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_pd_mask_lt_oq
+  // CHECK: [[CMP:%.*]] = fcmp olt <8 x double> %{{.*}}, %{{.*}}
+  // CHECK: and <8 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_pd_mask(m, a, b, _CMP_LT_OQ);
+}
+
+__mmask8 test_mm512_mask_cmp_pd_mask_le_oq(__mmask8 m, __m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_pd_mask_le_oq
+  // CHECK: [[CMP:%.*]] = fcmp ole <8 x double> %{{.*}}, %{{.*}}
+  // CHECK: and <8 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_pd_mask(m, a, b, _CMP_LE_OQ);
+}
+
+__mmask8 test_mm512_mask_cmp_pd_mask_unord_s(__mmask8 m, __m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_pd_mask_unord_s
+  // CHECK: [[CMP:%.*]] = fcmp uno <8 x double> %{{.*}}, %{{.*}}
+  // CHECK: and <8 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_pd_mask(m, a, b, _CMP_UNORD_S);
+}
+
+__mmask8 test_mm512_mask_cmp_pd_mask_neq_us(__mmask8 m, __m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_pd_mask_neq_us
+  // CHECK: [[CMP:%.*]] = fcmp une <8 x double> %{{.*}}, %{{.*}}
+  // CHECK: and <8 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_pd_mask(m, a, b, _CMP_NEQ_US);
+}
+
+__mmask8 test_mm512_mask_cmp_pd_mask_nlt_uq(__mmask8 m, __m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_pd_mask_nlt_uq
+  // CHECK: [[CMP:%.*]] = fcmp uge <8 x double> %{{.*}}, %{{.*}}
+  // CHECK: and <8 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_pd_mask(m, a, b, _CMP_NLT_UQ);
+}
+
+__mmask8 test_mm512_mask_cmp_pd_mask_nle_uq(__mmask8 m, __m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_pd_mask_nle_uq
+  // CHECK: [[CMP:%.*]] = fcmp ugt <8 x double> %{{.*}}, %{{.*}}
+  // CHECK: and <8 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_pd_mask(m, a, b, _CMP_NLE_UQ);
+}
+
+__mmask8 test_mm512_mask_cmp_pd_mask_ord_s(__mmask8 m, __m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_pd_mask_ord_s
+  // CHECK: [[CMP:%.*]] = fcmp ord <8 x double> %{{.*}}, %{{.*}}
+  // CHECK: and <8 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_pd_mask(m, a, b, _CMP_ORD_S);
+}
+
+__mmask8 test_mm512_mask_cmp_pd_mask_eq_us(__mmask8 m, __m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_pd_mask_eq_us
+  // CHECK: [[CMP:%.*]] = fcmp ueq <8 x double> %{{.*}}, %{{.*}}
+  // CHECK: and <8 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_pd_mask(m, a, b, _CMP_EQ_US);
+}
+
+__mmask8 test_mm512_mask_cmp_pd_mask_nge_uq(__mmask8 m, __m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_pd_mask_nge_uq
+  // CHECK: [[CMP:%.*]] = fcmp ult <8 x double> %{{.*}}, %{{.*}}
+  // CHECK: and <8 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_pd_mask(m, a, b, _CMP_NGE_UQ);
+}
+
+__mmask8 test_mm512_mask_cmp_pd_mask_ngt_uq(__mmask8 m, __m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_pd_mask_ngt_uq
+  // CHECK: [[CMP:%.*]] = fcmp ule <8 x double> %{{.*}}, %{{.*}}
+  // CHECK: and <8 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_pd_mask(m, a, b, _CMP_NGT_UQ);
+}
+
+__mmask8 test_mm512_mask_cmp_pd_mask_false_os(__mmask8 m, __m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_pd_mask_false_os
+  // CHECK: [[CMP:%.*]] = fcmp false <8 x double> %{{.*}}, %{{.*}}
+  // CHECK: and <8 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_pd_mask(m, a, b, _CMP_FALSE_OS);
+}
+
+__mmask8 test_mm512_mask_cmp_pd_mask_neq_os(__mmask8 m, __m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_pd_mask_neq_os
+  // CHECK: [[CMP:%.*]] = fcmp one <8 x double> %{{.*}}, %{{.*}}
+  // CHECK: and <8 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_pd_mask(m, a, b, _CMP_NEQ_OS);
+}
+
+__mmask8 test_mm512_mask_cmp_pd_mask_ge_oq(__mmask8 m, __m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_pd_mask_ge_oq
+  // CHECK: [[CMP:%.*]] = fcmp oge <8 x double> %{{.*}}, %{{.*}}
+  // CHECK: and <8 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_pd_mask(m, a, b, _CMP_GE_OQ);
+}
+
+__mmask8 test_mm512_mask_cmp_pd_mask_gt_oq(__mmask8 m, __m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_pd_mask_gt_oq
+  // CHECK: [[CMP:%.*]] = fcmp ogt <8 x double> %{{.*}}, %{{.*}}
+  // CHECK: and <8 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_pd_mask(m, a, b, _CMP_GT_OQ);
+}
+
+__mmask8 test_mm512_mask_cmp_pd_mask_true_us(__mmask8 m, __m512d a, __m512d b) {
+  // CHECK-LABEL: test_mm512_mask_cmp_pd_mask_true_us
+  // CHECK: [[CMP:%.*]] = fcmp true <8 x double> %{{.*}}, %{{.*}}
+  // CHECK: and <8 x i1> [[CMP]], {{.*}}
+  return _mm512_mask_cmp_pd_mask(m, a, b, _CMP_TRUE_US);
 }
 
 __mmask8 test_mm512_mask_cmp_pd_mask(__mmask8 m, __m512d a, __m512d b) {
@@ -2757,12 +3514,12 @@ __m512d test_mm512_maskz_div_round_pd(__mmask8 __U, __m512d __A, __m512d __B) {
   return _mm512_maskz_div_round_pd(__U,__A,__B,_MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC); 
 }
 __m512d test_mm512_div_pd(__m512d __a, __m512d __b) {
-  // CHECK-LABLE: @test_mm512_div_pd
+  // CHECK-LABEL: @test_mm512_div_pd
   // CHECK: fdiv <8 x double>
   return _mm512_div_pd(__a,__b); 
 }
 __m512d test_mm512_mask_div_pd(__m512d __w, __mmask8 __u, __m512d __a, __m512d __b) {
-  // CHECK-LABLE: @test_mm512_mask_div_pd
+  // CHECK-LABEL: @test_mm512_mask_div_pd
   // CHECK: fdiv <8 x double> %{{.*}}, %{{.*}}
   // CHECK: select <8 x i1> %{{.*}}, <8 x double> %{{.*}}, <8 x double> %{{.*}}
   return _mm512_mask_div_pd(__w,__u,__a,__b); 
