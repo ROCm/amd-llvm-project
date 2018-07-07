@@ -521,26 +521,22 @@ HCCToolChain::TranslateArgs(const llvm::opt::DerivedArgList &Args,
   return DAL;
 }
 
-extern bool IsHCHostAssembleJobAction(const JobAction* A);
-extern bool IsHCKernelAssembleJobAction(const JobAction* A);
-extern bool IsCXXAMPAssembleJobAction(const JobAction* A);
-extern bool IsCXXAMPCPUAssembleJobAction(const JobAction* A);
-
 Tool *HCCToolChain::SelectTool(const JobAction &JA) const {
   Action::ActionClass AC = JA.getKind();
 
   if (AC == Action::AssembleJobClass) {
-    if (IsHCHostAssembleJobAction(&JA)) {
+    if (JA.ContainsActions(Action::AssembleJobClass, types::TY_HC_HOST)) {
       if (!HCHostAssembler)
         HCHostAssembler.reset(new tools::HCC::HCHostAssemble(*this));
       return HCHostAssembler.get();
     }
-    if (IsHCKernelAssembleJobAction(&JA)) {
+    if (JA.ContainsActions(Action::AssembleJobClass, types::TY_HC_KERNEL)) {
       if (!HCKernelAssembler)
         HCKernelAssembler.reset(new tools::HCC::HCKernelAssemble(*this));
       return HCKernelAssembler.get();
     }
-    if (IsCXXAMPAssembleJobAction(&JA) || IsCXXAMPCPUAssembleJobAction(&JA)) {
+    if (JA.ContainsActions(Action::AssembleJobClass, types::TY_PP_CXX_AMP) ||
+        JA.ContainsActions(Action::AssembleJobClass, types::TY_PP_CXX_AMP_CPU)) {
       if (!CXXAMPAssembler)
         CXXAMPAssembler.reset(new tools::HCC::CXXAMPAssemble(*this));
       return CXXAMPAssembler.get();
