@@ -537,6 +537,16 @@ public:
   bool isImm() const override { return Kind == k_Immediate; }
   bool isMem() const override { return false; }
 
+  bool isUImm6() const {
+    if (!isImm())
+      return false;
+    const MCConstantExpr *MCE = dyn_cast<MCConstantExpr>(getImm());
+    if (!MCE)
+      return false;
+    int64_t Val = MCE->getValue();
+    return (Val >= 0 && Val < 64);
+  }
+
   template <int Width> bool isSImm() const { return isSImmScaled<Width, 1>(); }
 
   template <int Bits, int Scale> DiagnosticPredicate isSImmScaled() const {
@@ -1499,6 +1509,12 @@ public:
     Inst.addOperand(MCOperand::createImm(MCE->getValue() / Scale));
   }
 
+  void addUImm6Operands(MCInst &Inst, unsigned N) const {
+    assert(N == 1 && "Invalid number of operands!");
+    const MCConstantExpr *MCE = cast<MCConstantExpr>(getImm());
+    Inst.addOperand(MCOperand::createImm(MCE->getValue()));
+  }
+
   template <int Scale>
   void addImmScaledOperands(MCInst &Inst, unsigned N) const {
     assert(N == 1 && "Invalid number of operands!");
@@ -2374,14 +2390,17 @@ AArch64AsmParser::tryParseAdrLabel(OperandVector &Operands) {
   SMLoc S = getLoc();
   const MCExpr *Expr;
 
-  parseOptionalToken(AsmToken::Hash);
-  if (getParser().parseExpression(Expr))
-    return MatchOperand_ParseFail;
+  const AsmToken &Tok = getParser().getTok();
+  if (parseOptionalToken(AsmToken::Hash) || Tok.is(AsmToken::Integer)) {
+    if (getParser().parseExpression(Expr))
+      return MatchOperand_ParseFail;
 
-  SMLoc E = SMLoc::getFromPointer(getLoc().getPointer() - 1);
-  Operands.push_back(AArch64Operand::CreateImm(Expr, S, E, getContext()));
+    SMLoc E = SMLoc::getFromPointer(getLoc().getPointer() - 1);
+    Operands.push_back(AArch64Operand::CreateImm(Expr, S, E, getContext()));
 
-  return MatchOperand_Success;
+    return MatchOperand_Success;
+  }
+  return MatchOperand_NoMatch;
 }
 
 /// tryParseFPImm - A floating point immediate expression operand.
@@ -4111,6 +4130,14 @@ bool AArch64AsmParser::showMatchError(SMLoc Loc, unsigned ErrCode,
   case Match_InvalidZPR64UXTW64:
   case Match_InvalidZPR64SXTW64:
     return Error(Loc, "invalid shift/extend specified, expected 'z[0..31].d, (lsl|uxtw|sxtw) #3'");
+  case Match_InvalidZPR32LSL8:
+    return Error(Loc, "invalid shift/extend specified, expected 'z[0..31].s'");
+  case Match_InvalidZPR32LSL16:
+    return Error(Loc, "invalid shift/extend specified, expected 'z[0..31].s, lsl #1'");
+  case Match_InvalidZPR32LSL32:
+    return Error(Loc, "invalid shift/extend specified, expected 'z[0..31].s, lsl #2'");
+  case Match_InvalidZPR32LSL64:
+    return Error(Loc, "invalid shift/extend specified, expected 'z[0..31].s, lsl #3'");
   case Match_InvalidZPR64LSL8:
     return Error(Loc, "invalid shift/extend specified, expected 'z[0..31].d'");
   case Match_InvalidZPR64LSL16:
@@ -4637,6 +4664,10 @@ bool AArch64AsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
   case Match_InvalidZPR64SXTW32:
   case Match_InvalidZPR64UXTW64:
   case Match_InvalidZPR64SXTW64:
+  case Match_InvalidZPR32LSL8:
+  case Match_InvalidZPR32LSL16:
+  case Match_InvalidZPR32LSL32:
+  case Match_InvalidZPR32LSL64:
   case Match_InvalidZPR64LSL8:
   case Match_InvalidZPR64LSL16:
   case Match_InvalidZPR64LSL32:

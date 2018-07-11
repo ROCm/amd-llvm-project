@@ -298,7 +298,9 @@ namespace {
     SDValue visitMUL(SDNode *N);
     SDValue useDivRem(SDNode *N);
     SDValue visitSDIV(SDNode *N);
+    SDValue visitSDIVLike(SDValue N0, SDValue N1, SDNode *N);
     SDValue visitUDIV(SDNode *N);
+    SDValue visitUDIVLike(SDValue N0, SDValue N1, SDNode *N);
     SDValue visitREM(SDNode *N);
     SDValue visitMULHU(SDNode *N);
     SDValue visitMULHS(SDNode *N);
@@ -409,6 +411,7 @@ namespace {
     SDValue foldLogicOfSetCCs(bool IsAnd, SDValue N0, SDValue N1,
                               const SDLoc &DL);
     SDValue unfoldMaskedMerge(SDNode *N);
+    SDValue unfoldExtremeBitClearingToShifts(SDNode *N);
     SDValue SimplifySetCC(EVT VT, SDValue N0, SDValue N1, ISD::CondCode Cond,
                           const SDLoc &DL, bool foldBooleans);
     SDValue rebuildSetCC(SDValue N);
@@ -447,7 +450,6 @@ namespace {
     SDNode *MatchRotate(SDValue LHS, SDValue RHS, const SDLoc &DL);
     SDValue MatchLoadCombine(SDNode *N);
     SDValue ReduceLoadWidth(SDNode *N);
-    SDValue foldRedundantShiftedMasks(SDNode *N);
     SDValue ReduceLoadOpStoreWidth(SDNode *N);
     SDValue splitMergedValStore(StoreSDNode *ST);
     SDValue TransformFPLoadStorePair(SDNode *N);
@@ -3010,7 +3012,6 @@ SDValue DAGCombiner::visitSDIV(SDNode *N) {
   SDValue N1 = N->getOperand(1);
   EVT VT = N->getValueType(0);
   EVT CCVT = getSetCCResultType(VT);
-  unsigned BitWidth = VT.getScalarSizeInBits();
 
   // fold vector ops
   if (VT.isVector())
@@ -3046,6 +3047,28 @@ SDValue DAGCombiner::visitSDIV(SDNode *N) {
   // udiv instead.  Handles (X&15) /s 4 -> X&15 >> 2
   if (DAG.SignBitIsZero(N1) && DAG.SignBitIsZero(N0))
     return DAG.getNode(ISD::UDIV, DL, N1.getValueType(), N0, N1);
+
+  if (SDValue V = visitSDIVLike(N0, N1, N))
+    return V;
+
+  // sdiv, srem -> sdivrem
+  // If the divisor is constant, then return DIVREM only if isIntDivCheap() is
+  // true.  Otherwise, we break the simplification logic in visitREM().
+  AttributeList Attr = DAG.getMachineFunction().getFunction().getAttributes();
+  if (!N1C || TLI.isIntDivCheap(N->getValueType(0), Attr))
+    if (SDValue DivRem = useDivRem(N))
+        return DivRem;
+
+  return SDValue();
+}
+
+SDValue DAGCombiner::visitSDIVLike(SDValue N0, SDValue N1, SDNode *N) {
+  SDLoc DL(N);
+  EVT VT = N->getValueType(0);
+  EVT CCVT = getSetCCResultType(VT);
+  unsigned BitWidth = VT.getScalarSizeInBits();
+
+  ConstantSDNode *N1C = isConstOrConstSplat(N1);
 
   // Helper for determining whether a value is a power-2 constant scalar or a
   // vector of such elements.
@@ -3119,13 +3142,6 @@ SDValue DAGCombiner::visitSDIV(SDNode *N) {
     if (SDValue Op = BuildSDIV(N))
       return Op;
 
-  // sdiv, srem -> sdivrem
-  // If the divisor is constant, then return DIVREM only if isIntDivCheap() is
-  // true.  Otherwise, we break the simplification logic in visitREM().
-  if (!N1C || TLI.isIntDivCheap(N->getValueType(0), Attr))
-    if (SDValue DivRem = useDivRem(N))
-        return DivRem;
-
   return SDValue();
 }
 
@@ -3133,6 +3149,7 @@ SDValue DAGCombiner::visitUDIV(SDNode *N) {
   SDValue N0 = N->getOperand(0);
   SDValue N1 = N->getOperand(1);
   EVT VT = N->getValueType(0);
+  EVT CCVT = getSetCCResultType(VT);
 
   // fold vector ops
   if (VT.isVector())
@@ -3148,12 +3165,40 @@ SDValue DAGCombiner::visitUDIV(SDNode *N) {
     if (SDValue Folded = DAG.FoldConstantArithmetic(ISD::UDIV, DL, VT,
                                                     N0C, N1C))
       return Folded;
+  // fold (udiv X, 1) -> X
+  if (N1C && N1C->isOne())
+    return N0;
+  // fold (udiv X, -1) -> select(X == -1, 1, 0)
+  if (N1C && N1C->getAPIntValue().isAllOnesValue())
+    return DAG.getSelect(DL, VT, DAG.getSetCC(DL, CCVT, N0, N1, ISD::SETEQ),
+                         DAG.getConstant(1, DL, VT),
+                         DAG.getConstant(0, DL, VT));
 
   if (SDValue V = simplifyDivRem(N, DAG))
     return V;
 
   if (SDValue NewSel = foldBinOpIntoSelect(N))
     return NewSel;
+
+  if (SDValue V = visitUDIVLike(N0, N1, N))
+    return V;
+
+  // sdiv, srem -> sdivrem
+  // If the divisor is constant, then return DIVREM only if isIntDivCheap() is
+  // true.  Otherwise, we break the simplification logic in visitREM().
+  AttributeList Attr = DAG.getMachineFunction().getFunction().getAttributes();
+  if (!N1C || TLI.isIntDivCheap(N->getValueType(0), Attr))
+    if (SDValue DivRem = useDivRem(N))
+        return DivRem;
+
+  return SDValue();
+}
+
+SDValue DAGCombiner::visitUDIVLike(SDValue N0, SDValue N1, SDNode *N) {
+  SDLoc DL(N);
+  EVT VT = N->getValueType(0);
+
+  ConstantSDNode *N1C = isConstOrConstSplat(N1);
 
   // fold (udiv x, (1 << c)) -> x >>u c
   if (isConstantOrConstantVector(N1, /*NoOpaques*/ true) &&
@@ -3189,13 +3234,6 @@ SDValue DAGCombiner::visitUDIV(SDNode *N) {
   if (N1C && !TLI.isIntDivCheap(N->getValueType(0), Attr))
     if (SDValue Op = BuildUDIV(N))
       return Op;
-
-  // sdiv, srem -> sdivrem
-  // If the divisor is constant, then return DIVREM only if isIntDivCheap() is
-  // true.  Otherwise, we break the simplification logic in visitREM().
-  if (!N1C || TLI.isIntDivCheap(N->getValueType(0), Attr))
-    if (SDValue DivRem = useDivRem(N))
-        return DivRem;
 
   return SDValue();
 }
@@ -3248,22 +3286,19 @@ SDValue DAGCombiner::visitREM(SDNode *N) {
 
   // If X/C can be simplified by the division-by-constant logic, lower
   // X%C to the equivalent of X-X/C*C.
-  // To avoid mangling nodes, this simplification requires that the combine()
-  // call for the speculative DIV must not cause a DIVREM conversion.  We guard
-  // against this by skipping the simplification if isIntDivCheap().  When
-  // div is not cheap, combine will not return a DIVREM.  Regardless,
-  // checking cheapness here makes sense since the simplification results in
-  // fatter code.
+  // Reuse the SDIVLike/UDIVLike combines - to avoid mangling nodes, the
+  // speculative DIV must not cause a DIVREM conversion.  We guard against this
+  // by skipping the simplification if isIntDivCheap().  When div is not cheap,
+  // combine will not return a DIVREM.  Regardless, checking cheapness here
+  // makes sense since the simplification results in fatter code.
   if (N1C && !N1C->isNullValue() && !TLI.isIntDivCheap(VT, Attr)) {
-    unsigned DivOpcode = isSigned ? ISD::SDIV : ISD::UDIV;
-    SDValue Div = DAG.getNode(DivOpcode, DL, VT, N0, N1);
-    AddToWorklist(Div.getNode());
-    SDValue OptimizedDiv = combine(Div.getNode());
-    if (OptimizedDiv.getNode() && OptimizedDiv.getNode() != Div.getNode() &&
-        OptimizedDiv.getOpcode() != ISD::UDIVREM &&
+    SDValue OptimizedDiv =
+        isSigned ? visitSDIVLike(N0, N1, N) : visitUDIVLike(N0, N1, N);
+    if (OptimizedDiv.getNode() && OptimizedDiv.getOpcode() != ISD::UDIVREM &&
         OptimizedDiv.getOpcode() != ISD::SDIVREM) {
       SDValue Mul = DAG.getNode(ISD::MUL, DL, VT, OptimizedDiv, N1);
       SDValue Sub = DAG.getNode(ISD::SUB, DL, VT, N0, Mul);
+      AddToWorklist(OptimizedDiv.getNode());
       AddToWorklist(Mul.getNode());
       return Sub;
     }
@@ -4170,6 +4205,60 @@ bool DAGCombiner::BackwardsPropagateMask(SDNode *N, SelectionDAG &DAG) {
   return false;
 }
 
+// Unfold
+//    x &  (-1 'logical shift' y)
+// To
+//    (x 'opposite logical shift' y) 'logical shift' y
+// if it is better for performance.
+SDValue DAGCombiner::unfoldExtremeBitClearingToShifts(SDNode *N) {
+  assert(N->getOpcode() == ISD::AND);
+
+  SDValue N0 = N->getOperand(0);
+  SDValue N1 = N->getOperand(1);
+
+  // Do we actually prefer shifts over mask?
+  if (!TLI.preferShiftsToClearExtremeBits(N0))
+    return SDValue();
+
+  // Try to match  (-1 '[outer] logical shift' y)
+  unsigned OuterShift;
+  unsigned InnerShift; // The opposite direction to the OuterShift.
+  SDValue Y;           // Shift amount.
+  auto matchMask = [&OuterShift, &InnerShift, &Y](SDValue M) -> bool {
+    if (!M.hasOneUse())
+      return false;
+    OuterShift = M->getOpcode();
+    if (OuterShift == ISD::SHL)
+      InnerShift = ISD::SRL;
+    else if (OuterShift == ISD::SRL)
+      InnerShift = ISD::SHL;
+    else
+      return false;
+    if (!isAllOnesConstant(M->getOperand(0)))
+      return false;
+    Y = M->getOperand(1);
+    return true;
+  };
+
+  SDValue X;
+  if (matchMask(N1))
+    X = N0;
+  else if (matchMask(N0))
+    X = N1;
+  else
+    return SDValue();
+
+  SDLoc DL(N);
+  EVT VT = N->getValueType(0);
+
+  //     tmp = x   'opposite logical shift' y
+  SDValue T0 = DAG.getNode(InnerShift, DL, VT, X, Y);
+  //     ret = tmp 'logical shift' y
+  SDValue T1 = DAG.getNode(OuterShift, DL, VT, T0, Y);
+
+  return T1;
+}
+
 SDValue DAGCombiner::visitAND(SDNode *N) {
   SDValue N0 = N->getOperand(0);
   SDValue N1 = N->getOperand(1);
@@ -4379,9 +4468,6 @@ SDValue DAGCombiner::visitAND(SDNode *N) {
     }
   }
 
-  if (SDValue R = foldRedundantShiftedMasks(N))
-    return R;
-
   if (Level >= AfterLegalizeTypes) {
     // Attempt to propagate the AND back up to the leaves which, if they're
     // loads, can be combined to narrow loads and the AND node can be removed.
@@ -4469,6 +4555,9 @@ SDValue DAGCombiner::visitAND(SDNode *N) {
                                            N0.getOperand(1), false))
       return BSwap;
   }
+
+  if (SDValue Shifts = unfoldExtremeBitClearingToShifts(N))
+    return Shifts;
 
   return SDValue();
 }
@@ -5943,107 +6032,6 @@ SDValue DAGCombiner::visitRotate(SDNode *N) {
         return DAG.getNode(N->getOpcode(), dl, VT, N0->getOperand(0),
                            CombinedShiftNorm);
       }
-    }
-  }
-  return SDValue();
-}
-
-// fold expressions x1 and x2 alike:
-// x1 = ( and, x, 0x00FF )
-// x2 = (( shl x, 8 ) and 0xFF00 )
-// into
-// x2 = shl x1, 8 ; reuse the computation of x1
-SDValue DAGCombiner::foldRedundantShiftedMasks(SDNode *AND) {
-  if (!AND)
-    return SDValue();
-
-  const SDValue &SHIFT = AND->getOperand(0);
-  if ((SHIFT.getNumOperands() != 2) || (!SHIFT.hasOneUse()))
-    return SDValue();
-
-  const ConstantSDNode *ShiftAmount =
-      dyn_cast<ConstantSDNode>(SHIFT.getOperand(1));
-  if (!ShiftAmount)
-    return SDValue();
-
-  const ConstantSDNode *Mask = dyn_cast<ConstantSDNode>(AND->getOperand(1));
-  if (!Mask)
-    return SDValue();
-
-  SDValue MASKED = SHIFT.getOperand(0);
-  const auto &MaskedValue = dyn_cast<SDNode>(MASKED);
-  unsigned N0Opcode = SHIFT.getOpcode();
-  for (SDNode *OtherUser : MaskedValue->uses()) {
-    if ((&(*OtherUser) == ShiftAmount) || (OtherUser->getOpcode() != ISD::AND))
-      continue;
-
-    ConstantSDNode *OtherMask =
-        dyn_cast<ConstantSDNode>(OtherUser->getOperand(1));
-
-    if (!OtherMask)
-      continue;
-
-    bool CanReduce = false;
-
-    const APInt &MaskValue = Mask->getAPIntValue();
-    const APInt &ShiftValue = ShiftAmount->getAPIntValue();
-    const APInt &OtherMaskValue = OtherMask->getAPIntValue();
-
-    KnownBits MaskedValueBits;
-    DAG.computeKnownBits(MASKED, MaskedValueBits);
-    KnownBits ShiftedValueBits;
-    DAG.computeKnownBits(SHIFT, ShiftedValueBits);
-
-    const APInt EffectiveOtherMask = OtherMaskValue & ~MaskedValueBits.Zero;
-    const APInt EffectiveMask = MaskValue & ~ShiftedValueBits.Zero;
-
-    LLVM_DEBUG(
-        dbgs() << "\tValue being masked and shift-masked: "; MASKED.dump();
-        dbgs() << "\t\tValue zero bits: 0x"
-               << MaskedValueBits.Zero.toString(16, false)
-               << "\n\n\t\tApplied mask: 0x"
-               << OtherMaskValue.toString(16, false) << " : ";
-        OtherUser->dump();
-        dbgs() << "\t\tEffective mask: 0x"
-               << EffectiveOtherMask.toString(16, false)
-               << "\n\n\tShifted by: " << ShiftValue.getZExtValue() << " : ";
-        SHIFT.dump(); dbgs() << "\t\tAnd masked by: 0x"
-                             << MaskValue.toString(16, false) << " : ";
-        AND->dump(); dbgs() << "\t\tEffective mask to shifted value: 0x"
-                            << EffectiveMask.toString(16, false) << '\n';);
-
-    switch (N0Opcode) {
-    case ISD::SHL:
-      CanReduce = (EffectiveOtherMask.shl(EffectiveMask) == EffectiveMask) ||
-                  (EffectiveMask.lshr(ShiftValue) == EffectiveOtherMask);
-      break;
-    case ISD::SRA:
-      if (!MaskedValueBits.Zero.isSignBitSet()) {
-        CanReduce = (EffectiveOtherMask.ashr(ShiftValue) == EffectiveMask);
-        break;
-      } else // Same as SRL
-        N0Opcode = ISD::SRL;
-      LLVM_FALLTHROUGH;
-    case ISD::SRL:
-      CanReduce = (EffectiveOtherMask.lshr(ShiftValue) == EffectiveMask) ||
-                  (EffectiveMask.shl(ShiftValue) == EffectiveOtherMask);
-      break;
-    case ISD::ROTR:
-      CanReduce = (EffectiveOtherMask.rotr(ShiftValue) == EffectiveMask);
-      break;
-    default:
-      return SDValue();
-    }
-    if (CanReduce) {
-      LLVM_DEBUG(dbgs() << "\tCan just shift the masked value\n");
-
-      SDValue ShiftTheAND(OtherUser, 0);
-      const SDLoc DL(SHIFT);
-      EVT VT = AND->getValueType(0);
-      SDValue NewShift =
-          DAG.getNode(N0Opcode, DL, VT, ShiftTheAND, SHIFT.getOperand(1));
-      AddToWorklist(OtherUser);
-      return NewShift;
     }
   }
   return SDValue();
@@ -16230,6 +16218,9 @@ SDValue DAGCombiner::visitEXTRACT_SUBVECTOR(SDNode* N) {
 
   if (SDValue NarrowBOp = narrowExtractedVectorBinOp(N, DAG))
     return NarrowBOp;
+
+  if (SimplifyDemandedVectorElts(SDValue(N, 0)))
+    return SDValue(N, 0);
 
   return SDValue();
 }
