@@ -438,6 +438,7 @@ template <class ELFT> class DynamicSection final : public SyntheticSection {
   typedef typename ELFT::Dyn Elf_Dyn;
   typedef typename ELFT::Rel Elf_Rel;
   typedef typename ELFT::Rela Elf_Rela;
+  typedef typename ELFT::Relr Elf_Relr;
   typedef typename ELFT::Shdr Elf_Shdr;
   typedef typename ELFT::Sym Elf_Sym;
 
@@ -515,6 +516,39 @@ public:
 
 private:
   SmallVector<char, 0> RelocData;
+};
+
+struct RelativeReloc {
+  uint64_t getOffset() const { return InputSec->getVA(OffsetInSec); }
+
+  const InputSectionBase *InputSec;
+  uint64_t OffsetInSec;
+};
+
+class RelrBaseSection : public SyntheticSection {
+public:
+  RelrBaseSection();
+  std::vector<RelativeReloc> Relocs;
+};
+
+// RelrSection is used to encode offsets for relative relocations.
+// Proposal for adding SHT_RELR sections to generic-abi is here:
+//   https://groups.google.com/forum/#!topic/generic-abi/bX460iggiKg
+// For more details, see the comment in RelrSection::updateAllocSize().
+template <class ELFT> class RelrSection final : public RelrBaseSection {
+  typedef typename ELFT::Relr Elf_Relr;
+
+public:
+  RelrSection();
+
+  bool updateAllocSize() override;
+  size_t getSize() const override { return RelrRelocs.size() * this->Entsize; }
+  void writeTo(uint8_t *Buf) override {
+    memcpy(Buf, RelrRelocs.data(), getSize());
+  }
+
+private:
+  std::vector<Elf_Relr> RelrRelocs;
 };
 
 struct SymbolTableEntry {
@@ -634,7 +668,7 @@ struct GdbIndexChunk {
 
   struct NameTypeEntry {
     llvm::CachedHashStringRef Name;
-    uint8_t Type;
+    uint32_t Type;
   };
 
   InputSection *DebugInfoSec;
@@ -643,46 +677,40 @@ struct GdbIndexChunk {
   std::vector<NameTypeEntry> NamesAndTypes;
 };
 
-// The symbol type for the .gdb_index section.
-struct GdbSymbol {
-  uint32_t NameHash;
-  size_t NameOffset;
-  size_t CuVectorIndex;
-};
-
 class GdbIndexSection final : public SyntheticSection {
 public:
   GdbIndexSection(std::vector<GdbIndexChunk> &&Chunks);
   void writeTo(uint8_t *Buf) override;
-  size_t getSize() const override;
+  size_t getSize() const override { return TotalSize; }
   bool empty() const override;
 
 private:
-  void fixCuIndex();
-  std::vector<std::vector<uint32_t>> createCuVectors();
-  std::vector<GdbSymbol *> createGdbSymtab();
+  struct GdbSymbol {
+    llvm::CachedHashStringRef Name;
+    uint32_t OutputOff;
+    uint32_t CuVectorIdx;
+  };
 
   // A symbol table for this .gdb_index section.
-  std::vector<GdbSymbol *> GdbSymtab;
+  std::vector<GdbSymbol> Symbols;
 
   // CU vector is a part of constant pool area of section.
   std::vector<std::vector<uint32_t>> CuVectors;
-
-  // Symbol table contents.
-  llvm::DenseMap<llvm::CachedHashStringRef, GdbSymbol *> Symbols;
 
   // Each chunk contains information gathered from a debug sections of single
   // object and used to build different areas of gdb index.
   std::vector<GdbIndexChunk> Chunks;
 
-  static constexpr uint32_t CuListOffset = 24;
-  uint32_t CuTypesOffset;
-  uint32_t SymtabOffset;
-  uint32_t ConstantPoolOffset;
-  uint32_t StringPoolOffset;
-  uint32_t StringPoolSize;
+  uint64_t CuListOffset = 24;
+  uint64_t CuTypesOffset;
+  uint64_t SymtabOffset;
+  uint64_t SymtabSize = 0;
+  uint64_t ConstantPoolOffset;
+  uint64_t CuVectorsPoolSize = 0;
+  uint64_t StringPoolSize = 0;
+  uint64_t TotalSize;
 
-  std::vector<size_t> CuVectorOffsets;
+  std::vector<uint32_t> CuVectorOffsets;
 };
 
 template <class ELFT> GdbIndexSection *createGdbIndex();
@@ -958,6 +986,7 @@ struct InX {
   static PltSection *Plt;
   static PltSection *Iplt;
   static RelocationBaseSection *RelaDyn;
+  static RelrBaseSection *RelrDyn;
   static RelocationBaseSection *RelaPlt;
   static RelocationBaseSection *RelaIplt;
   static StringTableSection *ShStrTab;
