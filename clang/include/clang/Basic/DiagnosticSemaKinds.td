@@ -6184,6 +6184,12 @@ def err_bad_cxx_cast_bitfield : Error<
 def err_bad_cxx_cast_qualifiers_away : Error<
   "%select{const_cast|static_cast|reinterpret_cast|dynamic_cast|C-style cast|"
   "functional-style cast}0 from %1 to %2 casts away qualifiers">;
+def ext_bad_cxx_cast_qualifiers_away_incoherent : ExtWarn<
+  "ISO C++ does not allow "
+  "%select{const_cast|static_cast|reinterpret_cast|dynamic_cast|C-style cast|"
+  "functional-style cast}0 from %1 to %2 because it casts away qualifiers, "
+  "even though the source and destination types are unrelated">,
+  SFINAEFailure, InGroup<DiagGroup<"cast-qual-unrelated">>;
 def err_bad_const_cast_dest : Error<
   "%select{const_cast||||C-style cast|functional-style cast}0 to %2, "
   "which is not a reference, pointer-to-object, or pointer-to-data-member">;
@@ -6545,6 +6551,11 @@ let CategoryName = "Lambda Issue" in {
   def ext_equals_this_lambda_capture_cxx2a : ExtWarn<
     "explicit capture of 'this' with a capture default of '=' "
     "is a C++2a extension">, InGroup<CXX2a>;
+  def warn_deprecated_this_capture : Warning<
+    "implicit capture of 'this' with a capture default of '=' is deprecated">,
+    InGroup<DeprecatedThisCapture>, DefaultIgnore;
+  def note_deprecated_this_capture : Note<
+    "add an explicit capture of 'this' to capture '*this' by reference">;
 }
 
 def err_return_in_captured_stmt : Error<
@@ -9071,7 +9082,7 @@ def err_coroutine_promise_type_incomplete : Error<
   "this function cannot be a coroutine: %0 is an incomplete type">;
 def err_coroutine_type_missing_specialization : Error<
   "this function cannot be a coroutine: missing definition of "
-  "specialization %q0">;
+  "specialization %0">;
 def err_coroutine_promise_incompatible_return_functions : Error<
   "the coroutine promise type %0 declares both 'return_value' and 'return_void'">;
 def err_coroutine_promise_requires_return_function : Error<
