@@ -3424,93 +3424,6 @@ void Driver::BuildJobs(Compilation &C) const {
   }
 }
 
-static bool IsBackendJobActionWithInputType(const JobAction* A, types::ID typesID) {
-  bool ret = false;
-  // detect if a backend job takes a particular kind of input
-  if (isa<BackendJobAction>(A)) {
-    const ActionList& al = dyn_cast<BackendJobAction>(A)->getInputs();
-    if ((al.size() == 1) && (isa<CompileJobAction>(*al[0]))) {
-      const ActionList& bl = dyn_cast<CompileJobAction>(al[0])->getInputs();
-      if ((bl.size() == 1) && (bl[0]->getType() == typesID)) {
-        ret = true;
-      }
-    }
-  }
-  return ret;
-}
-
-bool IsCXXAMPBackendJobAction(const JobAction* A) {
-  // detect if a compile job takes an C++ AMP input
-  return IsBackendJobActionWithInputType(A, types::TY_PP_CXX_AMP);
-}
-
-bool IsHCHostBackendJobAction(const JobAction* A) {
-  // detect if a compile job takes a HC input on host side
-  return IsBackendJobActionWithInputType(A, types::TY_PP_HC_HOST);
-}
-
-bool IsCXXAMPCPUBackendJobAction(const JobAction* A) {
-  return IsBackendJobActionWithInputType(A, types::TY_PP_CXX_AMP_CPU);
-}
-
-static bool IsAssembleJobActionWithInputType(const JobAction* A, types::ID typesID) {
-  bool ret = false;
-  if (isa<AssembleJobAction>(A)) {
-    const ActionList& al = dyn_cast<AssembleJobAction>(A)->getInputs();
-    if ((al.size() == 1) && (isa<BackendJobAction>(*al[0]))) {
-      const ActionList& bl = dyn_cast<BackendJobAction>(al[0])->getInputs();
-      if ((bl.size() == 1) && (isa<CompileJobAction>(*bl[0]))) {
-        const ActionList& cl = dyn_cast<CompileJobAction>(bl[0])->getInputs();
-        if ((cl.size() == 1) && (cl[0]->getType() == typesID)) {
-          ret = true;
-        }
-      }
-    }
-  }
-  return ret;
-}
-
-bool IsCXXAMPCPUAssembleJobAction(const JobAction* A) {
-  // detect if an assemble job takes an C++ AMP input with CPU as target
-  return IsAssembleJobActionWithInputType(A, types::TY_PP_CXX_AMP_CPU);
-}
-
-bool IsCXXAMPAssembleJobAction(const JobAction* A) {
-  // detect if an assemble job takes an C++ AMP input
-  return IsAssembleJobActionWithInputType(A, types::TY_PP_CXX_AMP);
-}
-
-static bool IsHCAssembleJobActionWithInputType(const JobAction* A, types::ID typesID) {
-  bool ret = false;
-  if (isa<AssembleJobAction>(A)) {
-    const ActionList& al = dyn_cast<AssembleJobAction>(A)->getInputs();
-    if ((al.size() == 1) && (isa<BackendJobAction>(*al[0]))) {
-      const ActionList& bl = dyn_cast<BackendJobAction>(al[0])->getInputs();
-      if ((bl.size() == 1) && (isa<CompileJobAction>(*bl[0]))) {
-        const ActionList& cl = dyn_cast<CompileJobAction>(bl[0])->getInputs();
-        if ((cl.size() == 1) && (isa<PreprocessJobAction>(*cl[0]))) {
-          const ActionList& il = dyn_cast<PreprocessJobAction>(cl[0])->getInputs();
-          if((il.size() == 1) && (il[0]->getType() == typesID)) {
-            ret = true;
-          }
-        }
-      }
-    }
-  }
-  return ret;
-}
-
-bool IsHCKernelAssembleJobAction(const JobAction* A) {
-  // detect if an assemble job takes a HC input on GPU side
-  return IsHCAssembleJobActionWithInputType(A, types::TY_HC_KERNEL);
-}
-
-bool IsHCHostAssembleJobAction(const JobAction* A) {
-  // detect if an assemble job takes a HC input on host side
-  return IsHCAssembleJobActionWithInputType(A, types::TY_HC_HOST);
-}
-
-
 namespace {
 /// Utility class to control the collapse of dependent actions and select the
 /// tools accordingly.
@@ -3766,10 +3679,10 @@ public:
   const Tool *getTool(const ActionList *&Inputs,
                       ActionList &CollapsedOffloadAction) {
 
-    if (IsHCHostAssembleJobAction(BaseAction) ||
-        IsHCKernelAssembleJobAction(BaseAction) ||
-        IsCXXAMPAssembleJobAction(BaseAction) ||
-        IsCXXAMPCPUAssembleJobAction(BaseAction)) {
+    if (BaseAction->ContainsActions(Action::AssembleJobClass, types::TY_HC_HOST) ||
+        BaseAction->ContainsActions(Action::AssembleJobClass, types::TY_HC_KERNEL) ||
+        BaseAction->ContainsActions(Action::AssembleJobClass, types::TY_PP_CXX_AMP) ||
+        BaseAction->ContainsActions(Action::AssembleJobClass, types::TY_PP_CXX_AMP_CPU)) {
       const ToolChain *DeviceTC = C.getSingleOffloadToolChain<Action::OFK_HCC>();
       assert(DeviceTC && "HCC Device ToolChain is not set.");
       Inputs = &BaseAction->getInputs();
@@ -3989,18 +3902,16 @@ InputInfo Driver::BuildJobsForActionNoCache(
         AtTopLevel && (isa<DsymutilJobAction>(A) || isa<VerifyJobAction>(A));
     // UPGRADE_TBD: Find a better way to check HCC-specific Action objects
     // Find correct Tool for HCC-specific Actions in HCC ToolChain
-    if (IsCXXAMPBackendJobAction(JA) || IsCXXAMPCPUBackendJobAction(JA) ||
-        IsHCKernelAssembleJobAction(JA) ||
-        IsCXXAMPAssembleJobAction(JA) || IsCXXAMPCPUAssembleJobAction(JA)) {
-      InputInfos.push_back(BuildJobsForAction(
-        C, Input, C.getSingleOffloadToolChain<Action::OFK_HCC>(), BoundArch,
-        SubJobAtTopLevel, MultipleArchs, LinkingOutput, CachedResults,
-        A->getOffloadingDeviceKind()));
-    } else {
-      InputInfos.push_back(BuildJobsForAction(
-        C, Input, TC, BoundArch, SubJobAtTopLevel, MultipleArchs, LinkingOutput,
-        CachedResults, A->getOffloadingDeviceKind()));
-    }
+    bool IsHccTC =
+      JA->ContainsActions(Action::BackendJobClass, types::TY_PP_CXX_AMP) ||
+      JA->ContainsActions(Action::BackendJobClass, types::TY_PP_CXX_AMP_CPU) ||
+      JA->ContainsActions(Action::AssembleJobClass, types::TY_HC_KERNEL) ||
+      JA->ContainsActions(Action::AssembleJobClass, types::TY_PP_CXX_AMP) ||
+      JA->ContainsActions(Action::AssembleJobClass, types::TY_PP_CXX_AMP_CPU);
+    InputInfos.push_back(BuildJobsForAction(
+      C, Input, IsHccTC ? C.getSingleOffloadToolChain<Action::OFK_HCC>() : TC,
+      BoundArch, SubJobAtTopLevel, MultipleArchs, LinkingOutput, CachedResults,
+      A->getOffloadingDeviceKind()));
   }
 
   // Always use the first input as the base input.
@@ -4218,25 +4129,23 @@ const char *Driver::GetNamedOutputPath(Compilation &C, const JobAction &JA,
     std::pair<StringRef, StringRef> Split = Name.split('.');
     SmallString<128> TmpName;
     const char *Suffix = types::getTypeTempSuffix(JA.getType(), IsCLMode());
-
-    if (IsCXXAMPCPUBackendJobAction(&JA) || IsCXXAMPCPUAssembleJobAction(&JA))
-      TmpName += ".cpu";
-    else {
-      Arg *A = C.getArgs().getLastArg(options::OPT_fcrash_diagnostics_dir);
-      if (CCGenDiagnostics && A) {
-        SmallString<128> CrashDirectory(A->getValue());
-        llvm::sys::path::append(CrashDirectory, Split.first);
-        const char *Middle = Suffix ? "-%%%%%%." : "-%%%%%%";
-        std::error_code EC =
-            llvm::sys::fs::createUniqueFile(CrashDirectory + Middle + Suffix, TmpName);
-        if (EC) {
-          Diag(clang::diag::err_unable_to_make_temp) << EC.message();
-          return "";
-        }
-      } else {
-        TmpName = GetTemporaryPath(Split.first, Suffix);
+    Arg *A = C.getArgs().getLastArg(options::OPT_fcrash_diagnostics_dir);
+    if (CCGenDiagnostics && A) {
+      SmallString<128> CrashDirectory(A->getValue());
+      llvm::sys::path::append(CrashDirectory, Split.first);
+      const char *Middle = Suffix ? "-%%%%%%." : "-%%%%%%";
+      std::error_code EC =
+        llvm::sys::fs::createUniqueFile(CrashDirectory + Middle + Suffix, TmpName);
+      if (EC) {
+        Diag(clang::diag::err_unable_to_make_temp) << EC.message();
+        return "";
       }
+    } else {
+      TmpName = GetTemporaryPath(Split.first, Suffix);
     }
+    if (JA.ContainsActions(Action::BackendJobClass, types::TY_PP_CXX_AMP_CPU) ||
+        JA.ContainsActions(Action::AssembleJobClass, types::TY_PP_CXX_AMP_CPU))
+      TmpName += ".cpu";
     return C.addTempFile(C.getArgs().MakeArgString(TmpName));
   }
 

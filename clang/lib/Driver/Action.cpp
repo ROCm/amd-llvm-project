@@ -165,6 +165,23 @@ StringRef Action::GetOffloadKindName(OffloadKind Kind) {
   llvm_unreachable("invalid offload kind");
 }
 
+bool Action::ContainsActions(ActionClass kind,
+                             types::ID typesID,
+                             bool singleInputActionsOnly,
+                             bool startsWithActionKind) const {
+  if (startsWithActionKind && getKind() != kind)
+    return false;
+  if (singleInputActionsOnly && size() != 1)
+    return false;
+  if (getType() == typesID)
+    return true;
+  for (const Action *A : inputs()) {
+    if (A->ContainsActions(kind, typesID, singleInputActionsOnly, false))
+      return true;
+  }
+  return false;
+}
+
 void InputAction::anchor() {}
 
 InputAction::InputAction(const Arg &_Input, types::ID _Type)

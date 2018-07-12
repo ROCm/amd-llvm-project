@@ -2040,21 +2040,6 @@ static void CollectArgsForIntegratedAssembler(Compilation &C,
   }
 }
 
-extern bool IsCXXAMPBackendJobAction(const JobAction* A);
-extern bool IsHCHostBackendJobAction(const JobAction* A);
-extern bool IsCXXAMPCPUBackendJobAction(const JobAction* A);
-
-static bool IsHCAcceleratorPreprocessJobActionWithInputType(const JobAction* A, types::ID typesID) {
-  bool ret = false;
-  if (isa<PreprocessJobAction>(A)) {
-    const ActionList& al = dyn_cast<PreprocessJobAction>(A)->getInputs();
-    if ((al.size() == 1) && (al[0]->getType() == typesID)) {
-      ret = true;
-    }
-  }
-  return ret;
-}
-
 static void RenderFloatingPointOptions(const ToolChain &TC, const Driver &D,
                                        bool OFastEnabled, const ArgList &Args,
                                        ArgStringList &CmdArgs) {
@@ -3131,17 +3116,17 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   // C++ AMP-specific
-  if (IsCXXAMPBackendJobAction(&JA) ||
-      IsHCAcceleratorPreprocessJobActionWithInputType(&JA, types::TY_HC_KERNEL) ||
-      IsHCAcceleratorPreprocessJobActionWithInputType(&JA, types::TY_CXX_AMP)) {
+  if (JA.ContainsActions(Action::BackendJobClass, types::TY_PP_CXX_AMP) ||
+      JA.ContainsActions(Action::PreprocessJobClass, types::TY_HC_KERNEL) ||
+      JA.ContainsActions(Action::PreprocessJobClass, types::TY_CXX_AMP)) {
     // path to compile kernel codes on GPU
     CmdArgs.push_back("-famp-is-device");
     CmdArgs.push_back("-fno-builtin");
     CmdArgs.push_back("-fno-common");
     //CmdArgs.push_back("-m32"); // added below using -triple
     CmdArgs.push_back("-O2");
-  } else if(IsCXXAMPCPUBackendJobAction(&JA) ||
-    IsHCAcceleratorPreprocessJobActionWithInputType(&JA, types::TY_CXX_AMP_CPU)){
+  } else if (JA.ContainsActions(Action::BackendJobClass, types::TY_PP_CXX_AMP_CPU) ||
+             JA.ContainsActions(Action::PreprocessJobClass, types::TY_CXX_AMP_CPU)) {
     // path to compile kernel codes on CPU
     CmdArgs.push_back("-famp-is-device");
     CmdArgs.push_back("-famp-cpu");
@@ -3177,7 +3162,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   // Make sure host triple is specified for HCC kernel compilation path
-  bool IsHCCKernelPath = IsCXXAMPBackendJobAction(&JA) || IsCXXAMPCPUBackendJobAction(&JA);
+  bool IsHCCKernelPath = JA.ContainsActions(Action::BackendJobClass, types::TY_PP_CXX_AMP) ||
+                         JA.ContainsActions(Action::BackendJobClass, types::TY_PP_CXX_AMP_CPU);
   if (IsHCCKernelPath) {
     // We have to pass the triple of the host if compiling for a HCC device
     std::string NormalizedTriple;
@@ -3767,7 +3753,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       D.Diag(diag::warn_O4_is_O3);
     } else {
       // C++ AMP-specific
-      if (IsCXXAMPBackendJobAction(&JA)) {
+      if (JA.ContainsActions(Action::BackendJobClass, types::TY_PP_CXX_AMP)) {
         // ignore -O0 and -O1 for GPU compilation paths
         // because inliner would not be enabled and will cause compilation fail
         if (A->getOption().matches(options::OPT_O0)) {
@@ -4702,12 +4688,12 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   if (Output.getType() == types::TY_Dependencies) {
     // Handled with other dependency code.
   } else if (Output.isFilename() &&
-             (IsHCAcceleratorPreprocessJobActionWithInputType(&JA, types::TY_HC_KERNEL) ||
-              IsHCAcceleratorPreprocessJobActionWithInputType(&JA, types::TY_CXX_AMP) ||
-              IsHCAcceleratorPreprocessJobActionWithInputType(&JA, types::TY_CXX_AMP_CPU))) {
+             (JA.ContainsActions(Action::PreprocessJobClass, types::TY_HC_KERNEL) ||
+              JA.ContainsActions(Action::PreprocessJobClass, types::TY_CXX_AMP) ||
+              JA.ContainsActions(Action::PreprocessJobClass, types::TY_CXX_AMP_CPU))) {
     CmdArgs.push_back("-o");
     SmallString<128> KernelPreprocessFile(Output.getFilename());
-    if (IsHCAcceleratorPreprocessJobActionWithInputType(&JA, types::TY_CXX_AMP_CPU)) {
+    if (JA.ContainsActions(Action::PreprocessJobClass, types::TY_CXX_AMP_CPU)) {
       llvm::sys::path::replace_extension(KernelPreprocessFile, ".amp_cpu.i");
     } else {
       llvm::sys::path::replace_extension(KernelPreprocessFile, ".gpu.i");
@@ -4815,7 +4801,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   // C++ AMP-specific
-  if (IsCXXAMPBackendJobAction(&JA) || IsCXXAMPCPUBackendJobAction(&JA) || IsHCHostBackendJobAction(&JA)) {
+  if (JA.ContainsActions(Action::BackendJobClass, types::TY_PP_CXX_AMP) ||
+      JA.ContainsActions(Action::BackendJobClass, types::TY_PP_CXX_AMP_CPU) ||
+      JA.ContainsActions(Action::BackendJobClass, types::TY_PP_HC_HOST)) {
     CmdArgs.push_back("-emit-llvm-bc");
   }
 
