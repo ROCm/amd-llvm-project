@@ -537,6 +537,16 @@ public:
   bool isImm() const override { return Kind == k_Immediate; }
   bool isMem() const override { return false; }
 
+  bool isUImm6() const {
+    if (!isImm())
+      return false;
+    const MCConstantExpr *MCE = dyn_cast<MCConstantExpr>(getImm());
+    if (!MCE)
+      return false;
+    int64_t Val = MCE->getValue();
+    return (Val >= 0 && Val < 64);
+  }
+
   template <int Width> bool isSImm() const { return isSImmScaled<Width, 1>(); }
 
   template <int Bits, int Scale> DiagnosticPredicate isSImmScaled() const {
@@ -1499,6 +1509,12 @@ public:
     Inst.addOperand(MCOperand::createImm(MCE->getValue() / Scale));
   }
 
+  void addUImm6Operands(MCInst &Inst, unsigned N) const {
+    assert(N == 1 && "Invalid number of operands!");
+    const MCConstantExpr *MCE = cast<MCConstantExpr>(getImm());
+    Inst.addOperand(MCOperand::createImm(MCE->getValue()));
+  }
+
   template <int Scale>
   void addImmScaledOperands(MCInst &Inst, unsigned N) const {
     assert(N == 1 && "Invalid number of operands!");
@@ -2374,14 +2390,17 @@ AArch64AsmParser::tryParseAdrLabel(OperandVector &Operands) {
   SMLoc S = getLoc();
   const MCExpr *Expr;
 
-  parseOptionalToken(AsmToken::Hash);
-  if (getParser().parseExpression(Expr))
-    return MatchOperand_ParseFail;
+  const AsmToken &Tok = getParser().getTok();
+  if (parseOptionalToken(AsmToken::Hash) || Tok.is(AsmToken::Integer)) {
+    if (getParser().parseExpression(Expr))
+      return MatchOperand_ParseFail;
 
-  SMLoc E = SMLoc::getFromPointer(getLoc().getPointer() - 1);
-  Operands.push_back(AArch64Operand::CreateImm(Expr, S, E, getContext()));
+    SMLoc E = SMLoc::getFromPointer(getLoc().getPointer() - 1);
+    Operands.push_back(AArch64Operand::CreateImm(Expr, S, E, getContext()));
 
-  return MatchOperand_Success;
+    return MatchOperand_Success;
+  }
+  return MatchOperand_NoMatch;
 }
 
 /// tryParseFPImm - A floating point immediate expression operand.
@@ -2646,6 +2665,10 @@ static void setRequiredFeatureString(FeatureBitset FBS, std::string &Str) {
     Str += "ARMv8.1a";
   else if (FBS[AArch64::HasV8_2aOps])
     Str += "ARMv8.2a";
+  else if (FBS[AArch64::HasV8_3aOps])
+    Str += "ARMv8.3a";
+  else if (FBS[AArch64::HasV8_4aOps])
+    Str += "ARMv8.4a";
   else
     Str += "(unknown)";
 }
@@ -2756,9 +2779,11 @@ AArch64AsmParser::tryParseBarrierOperand(OperandVector &Operands) {
   MCAsmParser &Parser = getParser();
   const AsmToken &Tok = Parser.getTok();
 
+  if (Mnemonic == "tsb" && Tok.isNot(AsmToken::Identifier)) {
+    TokError("'csync' operand expected");
+    return MatchOperand_ParseFail;
   // Can be either a #imm style literal or an option name
-  if (parseOptionalToken(AsmToken::Hash) ||
-      Tok.is(AsmToken::Integer)) {
+  } else if (parseOptionalToken(AsmToken::Hash) || Tok.is(AsmToken::Integer)) {
     // Immediate operand.
     const MCExpr *ImmVal;
     SMLoc ExprLoc = getLoc();
@@ -2784,18 +2809,23 @@ AArch64AsmParser::tryParseBarrierOperand(OperandVector &Operands) {
     return MatchOperand_ParseFail;
   }
 
+  auto TSB = AArch64TSB::lookupTSBByName(Tok.getString());
   // The only valid named option for ISB is 'sy'
   auto DB = AArch64DB::lookupDBByName(Tok.getString());
   if (Mnemonic == "isb" && (!DB || DB->Encoding != AArch64DB::sy)) {
     TokError("'sy' or #imm operand expected");
     return MatchOperand_ParseFail;
-  } else if (!DB) {
+  // The only valid named option for TSB is 'csync'
+  } else if (Mnemonic == "tsb" && (!TSB || TSB->Encoding != AArch64TSB::csync)) {
+    TokError("'csync' operand expected");
+    return MatchOperand_ParseFail;
+  } else if (!DB && !TSB) {
     TokError("invalid barrier option name");
     return MatchOperand_ParseFail;
   }
 
   Operands.push_back(AArch64Operand::CreateBarrier(
-      DB->Encoding, Tok.getString(), getLoc(), getContext()));
+      DB ? DB->Encoding : TSB->Encoding, Tok.getString(), getLoc(), getContext()));
   Parser.Lex(); // Consume the option
 
   return MatchOperand_Success;
@@ -4100,6 +4130,14 @@ bool AArch64AsmParser::showMatchError(SMLoc Loc, unsigned ErrCode,
   case Match_InvalidZPR64UXTW64:
   case Match_InvalidZPR64SXTW64:
     return Error(Loc, "invalid shift/extend specified, expected 'z[0..31].d, (lsl|uxtw|sxtw) #3'");
+  case Match_InvalidZPR32LSL8:
+    return Error(Loc, "invalid shift/extend specified, expected 'z[0..31].s'");
+  case Match_InvalidZPR32LSL16:
+    return Error(Loc, "invalid shift/extend specified, expected 'z[0..31].s, lsl #1'");
+  case Match_InvalidZPR32LSL32:
+    return Error(Loc, "invalid shift/extend specified, expected 'z[0..31].s, lsl #2'");
+  case Match_InvalidZPR32LSL64:
+    return Error(Loc, "invalid shift/extend specified, expected 'z[0..31].s, lsl #3'");
   case Match_InvalidZPR64LSL8:
     return Error(Loc, "invalid shift/extend specified, expected 'z[0..31].d'");
   case Match_InvalidZPR64LSL16:
@@ -4626,6 +4664,10 @@ bool AArch64AsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
   case Match_InvalidZPR64SXTW32:
   case Match_InvalidZPR64UXTW64:
   case Match_InvalidZPR64SXTW64:
+  case Match_InvalidZPR32LSL8:
+  case Match_InvalidZPR32LSL16:
+  case Match_InvalidZPR32LSL32:
+  case Match_InvalidZPR32LSL64:
   case Match_InvalidZPR64LSL8:
   case Match_InvalidZPR64LSL16:
   case Match_InvalidZPR64LSL32:

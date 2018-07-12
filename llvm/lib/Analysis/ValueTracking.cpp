@@ -1129,7 +1129,7 @@ static void computeKnownBitsFromOperator(const Operator *I, KnownBits &Known,
   }
   case Instruction::BitCast: {
     Type *SrcTy = I->getOperand(0)->getType();
-    if ((SrcTy->isIntegerTy() || SrcTy->isPointerTy()) &&
+    if (SrcTy->isIntOrPtrTy() &&
         // TODO: For now, not handling conversions like:
         // (bitcast i64 %x to <2 x i32>)
         !I->getType()->isVectorTy()) {
@@ -1769,7 +1769,12 @@ bool isKnownToBeAPowerOfTwo(const Value *V, bool OrZero, unsigned Depth,
 /// Currently this routine does not support vector GEPs.
 static bool isGEPKnownNonNull(const GEPOperator *GEP, unsigned Depth,
                               const Query &Q) {
-  if (!GEP->isInBounds() || GEP->getPointerAddressSpace() != 0)
+  const Function *F = nullptr;
+  if (const Instruction *I = dyn_cast<Instruction>(GEP))
+    F = I->getFunction();
+
+  if (!GEP->isInBounds() ||
+      NullPointerIsDefined(F, GEP->getPointerAddressSpace()))
     return false;
 
   // FIXME: Support vector-GEPs.

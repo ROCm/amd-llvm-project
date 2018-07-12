@@ -242,10 +242,8 @@ defm MOVSD : sse12_move<FR64, X86Movsd, v2f64, f64mem, "movsd",
 let canFoldAsLoad = 1, isReMaterializable = 1 in {
   defm MOVSS : sse12_move_rm<FR32, f32mem, loadf32, "movss",
                              SSEPackedSingle>, XS;
-
-  let AddedComplexity = 20 in
-    defm MOVSD : sse12_move_rm<FR64, f64mem, loadf64, "movsd",
-                               SSEPackedDouble>, XD;
+  defm MOVSD : sse12_move_rm<FR64, f64mem, loadf64, "movsd",
+                             SSEPackedDouble>, XD;
 }
 
 // Patterns
@@ -307,19 +305,6 @@ let Predicates = [UseAVX] in {
 
   def : Pat<(v2f64 (X86Movsd VR128:$src1, (scalar_to_vector FR64:$src2))),
             (VMOVSDrr VR128:$src1, (COPY_TO_REGCLASS FR64:$src2, VR128))>;
-
-  // FIXME: Instead of a X86Movlps there should be a X86Movsd here, the problem
-  // is during lowering, where it's not possible to recognize the fold cause
-  // it has two uses through a bitcast. One use disappears at isel time and the
-  // fold opportunity reappears.
-  def : Pat<(v2f64 (X86Movlpd VR128:$src1, VR128:$src2)),
-            (VMOVSDrr VR128:$src1, VR128:$src2)>;
-  def : Pat<(v2i64 (X86Movlpd VR128:$src1, VR128:$src2)),
-            (VMOVSDrr VR128:$src1, VR128:$src2)>;
-  def : Pat<(v4f32 (X86Movlps VR128:$src1, VR128:$src2)),
-            (VMOVSDrr VR128:$src1, VR128:$src2)>;
-  def : Pat<(v4i32 (X86Movlps VR128:$src1, VR128:$src2)),
-            (VMOVSDrr VR128:$src1, VR128:$src2)>;
 }
 
 let Predicates = [UseSSE1] in {
@@ -358,13 +343,6 @@ let Predicates = [UseSSE1] in {
 }
 
 let Predicates = [UseSSE2] in {
-  let Predicates = [NoSSE41], AddedComplexity = 15 in {
-  // Move scalar to XMM zero-extended, zeroing a VR128 then do a
-  // MOVSD to the lower bits.
-  def : Pat<(v2f64 (X86vzmovl (v2f64 (scalar_to_vector FR64:$src)))),
-            (MOVSDrr (v2f64 (V_SET0)), (COPY_TO_REGCLASS FR64:$src, VR128))>;
-  }
-
   let AddedComplexity = 20 in {
   // MOVSDrm already zeros the high parts of the register.
   def : Pat<(v2f64 (X86vzmovl (v2f64 (scalar_to_vector (loadf64 addr:$src))))),
@@ -385,19 +363,6 @@ let Predicates = [UseSSE2] in {
 
   def : Pat<(v2f64 (X86Movsd VR128:$src1, (scalar_to_vector FR64:$src2))),
             (MOVSDrr VR128:$src1, (COPY_TO_REGCLASS FR64:$src2, VR128))>;
-
-  // FIXME: Instead of a X86Movlps there should be a X86Movsd here, the problem
-  // is during lowering, where it's not possible to recognize the fold because
-  // it has two uses through a bitcast. One use disappears at isel time and the
-  // fold opportunity reappears.
-  def : Pat<(v2f64 (X86Movlpd VR128:$src1, VR128:$src2)),
-            (MOVSDrr VR128:$src1, VR128:$src2)>;
-  def : Pat<(v2i64 (X86Movlpd VR128:$src1, VR128:$src2)),
-            (MOVSDrr VR128:$src1, VR128:$src2)>;
-  def : Pat<(v4f32 (X86Movlps VR128:$src1, VR128:$src2)),
-            (MOVSDrr VR128:$src1, VR128:$src2)>;
-  def : Pat<(v4i32 (X86Movlps VR128:$src1, VR128:$src2)),
-            (MOVSDrr VR128:$src1, VR128:$src2)>;
 }
 
 // Aliases to help the assembler pick two byte VEX encodings by swapping the
@@ -709,8 +674,8 @@ multiclass sse12_mov_hilo_packed_base<bits<8>opc, SDNode psnode, SDNode pdnode,
      Sched<[SchedWriteFShuffle.XMM.Folded, ReadAfterLd]>;
 }
 
-multiclass sse12_mov_hilo_packed<bits<8>opc, SDNode psnode, SDNode pdnode,
-                                 string base_opc> {
+multiclass sse12_mov_hilo_packed<bits<8>opc, SDPatternOperator psnode,
+                                 SDPatternOperator pdnode, string base_opc> {
   let Predicates = [UseAVX] in
     defm V#NAME : sse12_mov_hilo_packed_base<opc, psnode, pdnode, base_opc,
                                     "\t{$src2, $src1, $dst|$dst, $src1, $src2}">,
@@ -721,9 +686,7 @@ multiclass sse12_mov_hilo_packed<bits<8>opc, SDNode psnode, SDNode pdnode,
                                     "\t{$src2, $dst|$dst, $src2}">;
 }
 
-let AddedComplexity = 20 in {
-  defm MOVL : sse12_mov_hilo_packed<0x12, X86Movlps, X86Movlpd, "movlp">;
-}
+defm MOVL : sse12_mov_hilo_packed<0x12, null_frag, null_frag, "movlp">;
 
 let SchedRW = [WriteFStore] in {
 let Predicates = [UseAVX] in {
@@ -749,24 +712,10 @@ def MOVLPDmr : PDI<0x13, MRMDestMem, (outs), (ins f64mem:$dst, VR128:$src),
 } // SchedRW
 
 let Predicates = [UseAVX] in {
-  // Shuffle with VMOVLPS
-  def : Pat<(v4f32 (X86Movlps VR128:$src1, (load addr:$src2))),
-            (VMOVLPSrm VR128:$src1, addr:$src2)>;
-
   // Shuffle with VMOVLPD
-  def : Pat<(v2f64 (X86Movlpd VR128:$src1, (load addr:$src2))),
-            (VMOVLPDrm VR128:$src1, addr:$src2)>;
   def : Pat<(v2f64 (X86Movsd VR128:$src1,
                              (v2f64 (scalar_to_vector (loadf64 addr:$src2))))),
             (VMOVLPDrm VR128:$src1, addr:$src2)>;
-
-  // Store patterns
-  def : Pat<(store (v4f32 (X86Movlps (load addr:$src1), VR128:$src2)),
-                   addr:$src1),
-            (VMOVLPSmr addr:$src1, VR128:$src2)>;
-  def : Pat<(store (v2f64 (X86Movlpd (load addr:$src1), VR128:$src2)),
-                   addr:$src1),
-            (VMOVLPDmr addr:$src1, VR128:$src2)>;
 }
 
 let Predicates = [UseSSE1] in {
@@ -774,41 +723,20 @@ let Predicates = [UseSSE1] in {
   def : Pat<(store (i64 (extractelt (bc_v2i64 (v4f32 VR128:$src2)),
                                  (iPTR 0))), addr:$src1),
             (MOVLPSmr addr:$src1, VR128:$src2)>;
-
-  // Shuffle with MOVLPS
-  def : Pat<(v4f32 (X86Movlps VR128:$src1, (load addr:$src2))),
-            (MOVLPSrm VR128:$src1, addr:$src2)>;
-  def : Pat<(X86Movlps VR128:$src1,
-                      (bc_v4f32 (v2i64 (scalar_to_vector (loadi64 addr:$src2))))),
-            (MOVLPSrm VR128:$src1, addr:$src2)>;
-
-  // Store patterns
-  def : Pat<(store (v4f32 (X86Movlps (load addr:$src1), VR128:$src2)),
-                                      addr:$src1),
-            (MOVLPSmr addr:$src1, VR128:$src2)>;
 }
 
 let Predicates = [UseSSE2] in {
   // Shuffle with MOVLPD
-  def : Pat<(v2f64 (X86Movlpd VR128:$src1, (load addr:$src2))),
-            (MOVLPDrm VR128:$src1, addr:$src2)>;
   def : Pat<(v2f64 (X86Movsd VR128:$src1,
                              (v2f64 (scalar_to_vector (loadf64 addr:$src2))))),
             (MOVLPDrm VR128:$src1, addr:$src2)>;
-
-  // Store patterns
-  def : Pat<(store (v2f64 (X86Movlpd (load addr:$src1), VR128:$src2)),
-                           addr:$src1),
-            (MOVLPDmr addr:$src1, VR128:$src2)>;
 }
 
 //===----------------------------------------------------------------------===//
 // SSE 1 & 2 - Move Hi packed FP Instructions
 //===----------------------------------------------------------------------===//
 
-let AddedComplexity = 20 in {
-  defm MOVH : sse12_mov_hilo_packed<0x16, X86Movlhps, X86Unpckl, "movhp">;
-}
+defm MOVH : sse12_mov_hilo_packed<0x16, X86Movlhps, X86Unpckl, "movhp">;
 
 let SchedRW = [WriteFStore] in {
 // v2f64 extract element 1 is always custom lowered to unpack high to low
@@ -899,7 +827,7 @@ let Predicates = [UseSSE2] in {
 // SSE 1 & 2 - Move Low to High and High to Low packed FP Instructions
 //===----------------------------------------------------------------------===//
 
-let AddedComplexity = 20, Predicates = [UseAVX] in {
+let Predicates = [UseAVX] in {
   def VMOVLHPSrr : VPSI<0x16, MRMSrcReg, (outs VR128:$dst),
                                        (ins VR128:$src1, VR128:$src2),
                       "movlhps\t{$src2, $src1, $dst|$dst, $src1, $src2}",
@@ -914,7 +842,7 @@ let AddedComplexity = 20, Predicates = [UseAVX] in {
                       VEX_4V, Sched<[SchedWriteFShuffle.XMM]>, VEX_WIG,
                       NotMemoryFoldable;
 }
-let Constraints = "$src1 = $dst", AddedComplexity = 20 in {
+let Constraints = "$src1 = $dst" in {
   def MOVLHPSrr : PSI<0x16, MRMSrcReg, (outs VR128:$dst),
                                        (ins VR128:$src1, VR128:$src2),
                       "movlhps\t{$src2, $dst|$dst, $src2}",
@@ -4255,8 +4183,6 @@ let Predicates = [UseAVX] in {
               (VMOVDI2PDIrm addr:$src)>;
     def : Pat<(v4i32 (X86vzmovl (v4i32 (scalar_to_vector (loadi32 addr:$src))))),
               (VMOVDI2PDIrm addr:$src)>;
-    def : Pat<(v4i32 (X86vzmovl (bc_v4i32 (loadv4f32 addr:$src)))),
-              (VMOVDI2PDIrm addr:$src)>;
     def : Pat<(v4i32 (X86vzmovl (bc_v4i32 (loadv2i64 addr:$src)))),
               (VMOVDI2PDIrm addr:$src)>;
     def : Pat<(v4i32 (X86vzload addr:$src)),
@@ -4285,8 +4211,6 @@ let Predicates = [UseSSE2] in {
     def : Pat<(v2i64 (X86vzmovl (v2i64 (scalar_to_vector (zextloadi64i32 addr:$src))))),
               (MOVDI2PDIrm addr:$src)>;
     def : Pat<(v4i32 (X86vzmovl (v4i32 (scalar_to_vector (loadi32 addr:$src))))),
-              (MOVDI2PDIrm addr:$src)>;
-    def : Pat<(v4i32 (X86vzmovl (bc_v4i32 (loadv4f32 addr:$src)))),
               (MOVDI2PDIrm addr:$src)>;
     def : Pat<(v4i32 (X86vzmovl (bc_v4i32 (loadv2i64 addr:$src)))),
               (MOVDI2PDIrm addr:$src)>;
@@ -4364,11 +4288,7 @@ def : InstAlias<"movq.s\t{$src, $dst|$dst, $src}",
                 (MOVPQI2QIrr VR128:$dst, VR128:$src), 0>;
 
 let Predicates = [UseAVX], AddedComplexity = 20 in {
-  def : Pat<(v2i64 (X86vzmovl (v2i64 (scalar_to_vector (loadi64 addr:$src))))),
-            (VMOVQI2PQIrm addr:$src)>;
   def : Pat<(v2i64 (X86vzmovl (loadv2i64 addr:$src))),
-            (VMOVQI2PQIrm addr:$src)>;
-  def : Pat<(v2i64 (X86vzmovl (bc_v2i64 (loadv4f32 addr:$src)))),
             (VMOVQI2PQIrm addr:$src)>;
   def : Pat<(v2i64 (X86vzload addr:$src)),
             (VMOVQI2PQIrm addr:$src)>;
@@ -4380,11 +4300,7 @@ let Predicates = [UseAVX], AddedComplexity = 20 in {
 }
 
 let Predicates = [UseSSE2], AddedComplexity = 20 in {
-  def : Pat<(v2i64 (X86vzmovl (v2i64 (scalar_to_vector (loadi64 addr:$src))))),
-            (MOVQI2PQIrm addr:$src)>;
   def : Pat<(v2i64 (X86vzmovl (loadv2i64 addr:$src))),
-            (MOVQI2PQIrm addr:$src)>;
-  def : Pat<(v2i64 (X86vzmovl (bc_v2i64 (loadv4f32 addr:$src)))),
             (MOVQI2PQIrm addr:$src)>;
   def : Pat<(v2i64 (X86vzload addr:$src)), (MOVQI2PQIrm addr:$src)>;
 }
@@ -6527,8 +6443,6 @@ let Predicates = [UseAVX] in {
             (VBLENDPSrri (v4f32 (V_SET0)), VR128:$src, (i8 1))>;
   def : Pat<(v4i32 (X86vzmovl (v4i32 VR128:$src))),
             (VPBLENDWrri (v4i32 (V_SET0)), VR128:$src, (i8 3))>;
-  def : Pat<(v2f64 (X86vzmovl (v2f64 (scalar_to_vector FR64:$src)))),
-            (VMOVSDrr (v2f64 (V_SET0)), (COPY_TO_REGCLASS FR64:$src, VR128))>;
 
   // Move low f32 and clear high bits.
   def : Pat<(v8f32 (X86vzmovl (v8f32 VR256:$src))),

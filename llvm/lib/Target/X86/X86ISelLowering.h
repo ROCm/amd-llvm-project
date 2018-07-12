@@ -408,8 +408,6 @@ namespace llvm {
       MOVSLDUP,
       MOVLHPS,
       MOVHLPS,
-      MOVLPS,
-      MOVLPD,
       MOVSD,
       MOVSS,
       UNPCKL,
@@ -500,9 +498,6 @@ namespace llvm {
       FNMSUB_RND,
       FMADDSUB_RND,
       FMSUBADD_RND,
-
-      // FMA4 specific scalar intrinsics bits that zero the non-scalar bits.
-      FMADD4S, FNMADD4S, FMSUB4S, FNMSUB4S,
 
       // Scalar intrinsic FMA.
       FMADDS1, FMADDS3,
@@ -830,6 +825,8 @@ namespace llvm {
     bool hasAndNotCompare(SDValue Y) const override;
 
     bool hasAndNot(SDValue Y) const override;
+
+    bool preferShiftsToClearExtremeBits(SDValue Y) const override;
 
     bool convertSetCCLogicToBitwiseLogic(EVT VT) const override {
       return VT.isScalarInteger();

@@ -52,6 +52,7 @@ using namespace llvm::support;
 using namespace lld;
 using namespace lld::elf;
 
+using llvm::support::endian::read32le;
 using llvm::support::endian::write32le;
 using llvm::support::endian::write64le;
 
@@ -1294,6 +1295,14 @@ template <class ELFT> void DynamicSection<ELFT>::finalizeContents() {
         addInt(IsRela ? DT_RELACOUNT : DT_RELCOUNT, NumRelativeRels);
     }
   }
+  if (InX::RelrDyn && !InX::RelrDyn->Relocs.empty()) {
+    addInSec(Config->UseAndroidRelrTags ? DT_ANDROID_RELR : DT_RELR,
+             InX::RelrDyn);
+    addSize(Config->UseAndroidRelrTags ? DT_ANDROID_RELRSZ : DT_RELRSZ,
+            InX::RelrDyn->getParent());
+    addInt(Config->UseAndroidRelrTags ? DT_ANDROID_RELRENT : DT_RELRENT,
+           sizeof(Elf_Relr));
+  }
   // .rel[a].plt section usually consists of two parts, containing plt and
   // iplt relocations. It is possible to have only iplt relocations in the
   // output. In that case RelaPlt is empty and have zero offset, the same offset
@@ -1465,6 +1474,11 @@ void RelocationBaseSection::finalizeContents() {
   // Set required output section properties.
   getParent()->Link = Link;
 }
+
+RelrBaseSection::RelrBaseSection()
+    : SyntheticSection(SHF_ALLOC,
+                       Config->UseAndroidRelrTags ? SHT_ANDROID_RELR : SHT_RELR,
+                       Config->Wordsize, ".relr.dyn") {}
 
 template <class ELFT>
 static void encodeDynamicReloc(typename ELFT::Rela *P,
@@ -1692,6 +1706,97 @@ bool AndroidPackedRelocationSection<ELFT>::updateAllocSize() {
   // turn can affect the sizes of the LEB-encoded integers stored in this
   // section.
   return RelocData.size() != OldSize;
+}
+
+template <class ELFT> RelrSection<ELFT>::RelrSection() {
+  this->Entsize = Config->Wordsize;
+}
+
+template <class ELFT> bool RelrSection<ELFT>::updateAllocSize() {
+  // This function computes the contents of an SHT_RELR packed relocation
+  // section.
+  //
+  // Proposal for adding SHT_RELR sections to generic-abi is here:
+  //   https://groups.google.com/forum/#!topic/generic-abi/bX460iggiKg
+  //
+  // The encoded sequence of Elf64_Relr entries in a SHT_RELR section looks
+  // like [ AAAAAAAA BBBBBBB1 BBBBBBB1 ... AAAAAAAA BBBBBB1 ... ]
+  //
+  // i.e. start with an address, followed by any number of bitmaps. The address
+  // entry encodes 1 relocation. The subsequent bitmap entries encode up to 63
+  // relocations each, at subsequent offsets following the last address entry.
+  //
+  // The bitmap entries must have 1 in the least significant bit. The assumption
+  // here is that an address cannot have 1 in lsb. Odd addresses are not
+  // supported.
+  //
+  // Excluding the least significant bit in the bitmap, each non-zero bit in
+  // the bitmap represents a relocation to be applied to a corresponding machine
+  // word that follows the base address word. The second least significant bit
+  // represents the machine word immediately following the initial address, and
+  // each bit that follows represents the next word, in linear order. As such,
+  // a single bitmap can encode up to 31 relocations in a 32-bit object, and
+  // 63 relocations in a 64-bit object.
+  //
+  // This encoding has a couple of interesting properties:
+  // 1. Looking at any entry, it is clear whether it's an address or a bitmap:
+  //    even means address, odd means bitmap.
+  // 2. Just a simple list of addresses is a valid encoding.
+
+  size_t OldSize = RelrRelocs.size();
+  RelrRelocs.clear();
+
+  // Same as Config->Wordsize but faster because this is a compile-time
+  // constant.
+  const size_t Wordsize = sizeof(typename ELFT::uint);
+
+  // Number of bits to use for the relocation offsets bitmap.
+  // Must be either 63 or 31.
+  const size_t NBits = Wordsize * 8 - 1;
+
+  // Get offsets for all relative relocations and sort them.
+  std::vector<uint64_t> Offsets;
+  for (const RelativeReloc &Rel : Relocs)
+    Offsets.push_back(Rel.getOffset());
+  llvm::sort(Offsets.begin(), Offsets.end());
+
+  // For each leading relocation, find following ones that can be folded
+  // as a bitmap and fold them.
+  for (size_t I = 0, E = Offsets.size(); I < E;) {
+    // Add a leading relocation.
+    RelrRelocs.push_back(Elf_Relr(Offsets[I]));
+    uint64_t Base = Offsets[I] + Wordsize;
+    ++I;
+
+    // Find foldable relocations to construct bitmaps.
+    while (I < E) {
+      uint64_t Bitmap = 0;
+
+      while (I < E) {
+        uint64_t Delta = Offsets[I] - Base;
+
+        // If it is too far, it cannot be folded.
+        if (Delta >= NBits * Wordsize)
+          break;
+
+        // If it is not a multiple of wordsize away, it cannot be folded.
+        if (Delta % Wordsize)
+          break;
+
+        // Fold it.
+        Bitmap |= 1ULL << (Delta / Wordsize);
+        ++I;
+      }
+
+      if (!Bitmap)
+        break;
+
+      RelrRelocs.push_back(Elf_Relr((Bitmap << 1) | 1));
+      Base += NBits * Wordsize;
+    }
+  }
+
+  return RelrRelocs.size() != OldSize;
 }
 
 SymbolTableBaseSection::SymbolTableBaseSection(StringTableSection &StrTabSec)
@@ -2207,19 +2312,17 @@ readAddressAreas(DWARFContext &Dwarf, InputSection *Sec) {
 }
 
 static std::vector<GdbIndexChunk::NameTypeEntry>
-readPubNamesAndTypes(DWARFContext &Dwarf) {
+readPubNamesAndTypes(DWARFContext &Dwarf, uint32_t Idx) {
   StringRef Sec1 = Dwarf.getDWARFObj().getGnuPubNamesSection();
   StringRef Sec2 = Dwarf.getDWARFObj().getGnuPubTypesSection();
 
   std::vector<GdbIndexChunk::NameTypeEntry> Ret;
   for (StringRef Sec : {Sec1, Sec2}) {
     DWARFDebugPubTable Table(Sec, Config->IsLE, true);
-    for (const DWARFDebugPubTable::Set &Set : Table.getData()) {
-      for (const DWARFDebugPubTable::Entry &Ent : Set.Entries) {
-        CachedHashStringRef S(Ent.Name, computeGdbHash(Ent.Name));
-        Ret.push_back({S, Ent.Descriptor.toBits()});
-      }
-    }
+    for (const DWARFDebugPubTable::Set &Set : Table.getData())
+      for (const DWARFDebugPubTable::Entry &Ent : Set.Entries)
+        Ret.push_back({{Ent.Name, computeGdbHash(Ent.Name)},
+                       (Ent.Descriptor.toBits() << 24) | Idx});
   }
   return Ret;
 }
@@ -2230,43 +2333,6 @@ static std::vector<InputSection *> getDebugInfoSections() {
     if (InputSection *IS = dyn_cast<InputSection>(S))
       if (IS->Name == ".debug_info")
         Ret.push_back(IS);
-  return Ret;
-}
-
-void GdbIndexSection::fixCuIndex() {
-  uint32_t Idx = 0;
-  for (GdbIndexChunk &Chunk : Chunks) {
-    for (GdbIndexChunk::AddressEntry &Ent : Chunk.AddressAreas)
-      Ent.CuIndex += Idx;
-    Idx += Chunk.CompilationUnits.size();
-  }
-}
-
-std::vector<std::vector<uint32_t>> GdbIndexSection::createCuVectors() {
-  std::vector<std::vector<uint32_t>> Ret;
-  uint32_t Idx = 0;
-  uint32_t Off = 0;
-
-  for (GdbIndexChunk &Chunk : Chunks) {
-    for (GdbIndexChunk::NameTypeEntry &Ent : Chunk.NamesAndTypes) {
-      GdbSymbol *&Sym = Symbols[Ent.Name];
-      if (!Sym) {
-        Sym = make<GdbSymbol>(GdbSymbol{Ent.Name.hash(), Off, Ret.size()});
-        Off += Ent.Name.size() + 1;
-        Ret.push_back({});
-      }
-
-      // gcc 5.4.1 produces a buggy .debug_gnu_pubnames that contains
-      // duplicate entries, so we want to dedup them.
-      std::vector<uint32_t> &Vec = Ret[Sym->CuVectorIndex];
-      uint32_t Val = (Ent.Type << 24) | Idx;
-      if (Vec.empty() || Vec.back() != Val)
-        Vec.push_back(Val);
-    }
-    Idx += Chunk.CompilationUnits.size();
-  }
-
-  StringPoolSize = Off;
   return Ret;
 }
 
@@ -2282,7 +2348,7 @@ template <class ELFT> GdbIndexSection *elf::createGdbIndex() {
     Chunks[I].DebugInfoSec = Sections[I];
     Chunks[I].CompilationUnits = readCuList(Dwarf);
     Chunks[I].AddressAreas = readAddressAreas(Dwarf, Sections[I]);
-    Chunks[I].NamesAndTypes = readPubNamesAndTypes(Dwarf);
+    Chunks[I].NamesAndTypes = readPubNamesAndTypes(Dwarf, I);
   });
 
   // .debug_gnu_pub{names,types} are useless in executables.
@@ -2310,48 +2376,61 @@ static size_t getAddressAreaSize(ArrayRef<GdbIndexChunk> Arr) {
   return Ret;
 }
 
-std::vector<GdbSymbol *> GdbIndexSection::createGdbSymtab() {
-  uint32_t Size = NextPowerOf2(Symbols.size() * 4 / 3);
-  if (Size < 1024)
-    Size = 1024;
-
-  uint32_t Mask = Size - 1;
-  std::vector<GdbSymbol *> Ret(Size);
-
-  for (auto &KV : Symbols) {
-    GdbSymbol *Sym = KV.second;
-    uint32_t I = Sym->NameHash & Mask;
-    uint32_t Step = ((Sym->NameHash * 17) & Mask) | 1;
-
-    while (Ret[I])
-      I = (I + Step) & Mask;
-    Ret[I] = Sym;
-  }
-  return Ret;
+// Returns the desired size of an on-disk hash table for a .gdb_index section.
+// There's a tradeoff between size and collision rate. We aim 75% utilization.
+static size_t getSymtabSize(size_t NumSymbols) {
+  return std::max<size_t>(NextPowerOf2(NumSymbols * 4 / 3), 1024);
 }
 
 GdbIndexSection::GdbIndexSection(std::vector<GdbIndexChunk> &&C)
     : SyntheticSection(0, SHT_PROGBITS, 1, ".gdb_index"), Chunks(std::move(C)) {
-  fixCuIndex();
-  CuVectors = createCuVectors();
-  GdbSymtab = createGdbSymtab();
+  // A map to identify duplicate symbols.
+  DenseMap<CachedHashStringRef, size_t> Map;
+
+  // Initialize Symbols and CuVectors while deduplicating symbols by name.
+  for (GdbIndexChunk &Chunk : Chunks) {
+    for (GdbIndexChunk::NameTypeEntry &Ent : Chunk.NamesAndTypes) {
+      CachedHashStringRef S = Ent.Name;
+      size_t &Idx = Map[S];
+
+      if (!Idx) {
+        Idx = Symbols.size() + 1;
+        Symbols.push_back({S, static_cast<uint32_t>(StringPoolSize),
+                           static_cast<uint32_t>(Symbols.size())});
+        StringPoolSize += S.size() + 1;
+        CuVectors.push_back({});
+      }
+
+      // gcc 5.4.1 produces a buggy .debug_gnu_pubnames that contains
+      // duplicate entries, so we want to dedup them.
+      std::vector<uint32_t> &Vec = CuVectors[Symbols[Idx - 1].CuVectorIdx];
+      if (Vec.empty() || Vec.back() != Ent.Type)
+        Vec.push_back(Ent.Type);
+    }
+
+    // NamesAndTypes is useless beyond this point, so clear it to save memory.
+    Chunk.NamesAndTypes = {};
+  }
 
   // Compute offsets early to know the section size.
   // Each chunk size needs to be in sync with what we write in writeTo.
   CuTypesOffset = CuListOffset + getCuSize(Chunks) * 16;
   SymtabOffset = CuTypesOffset + getAddressAreaSize(Chunks) * 20;
-  ConstantPoolOffset = SymtabOffset + GdbSymtab.size() * 8;
+  SymtabSize = getSymtabSize(Symbols.size());
+  ConstantPoolOffset = SymtabOffset + SymtabSize * 8;
 
-  size_t Off = 0;
   for (ArrayRef<uint32_t> Vec : CuVectors) {
-    CuVectorOffsets.push_back(Off);
-    Off += (Vec.size() + 1) * 4;
+    CuVectorOffsets.push_back(CuVectorsPoolSize);
+    CuVectorsPoolSize += (Vec.size() + 1) * 4;
   }
-  StringPoolOffset = ConstantPoolOffset + Off;
-}
 
-size_t GdbIndexSection::getSize() const {
-  return StringPoolOffset + StringPoolSize;
+  uint64_t PoolSize = CuVectorsPoolSize + StringPoolSize;
+  TotalSize = ConstantPoolOffset + PoolSize;
+
+  // Length fields in the .gdb_index section are only 4 byte long,
+  // so the section cannot contain very large contents.
+  if (ConstantPoolOffset > UINT32_MAX || PoolSize > UINT32_MAX)
+    error(".gdb_index section too large");
 }
 
 void GdbIndexSection::writeTo(uint8_t *Buf) {
@@ -2365,33 +2444,43 @@ void GdbIndexSection::writeTo(uint8_t *Buf) {
   Buf += 24;
 
   // Write the CU list.
-  for (GdbIndexChunk &D : Chunks) {
-    for (GdbIndexChunk::CuEntry &Cu : D.CompilationUnits) {
-      write64le(Buf, D.DebugInfoSec->OutSecOff + Cu.CuOffset);
+  for (GdbIndexChunk &Chunk : Chunks) {
+    for (GdbIndexChunk::CuEntry &Cu : Chunk.CompilationUnits) {
+      write64le(Buf, Chunk.DebugInfoSec->OutSecOff + Cu.CuOffset);
       write64le(Buf + 8, Cu.CuLength);
       Buf += 16;
     }
   }
 
   // Write the address area.
-  for (GdbIndexChunk &D : Chunks) {
-    for (GdbIndexChunk::AddressEntry &E : D.AddressAreas) {
+  uint32_t Idx = 0;
+  for (GdbIndexChunk &Chunk : Chunks) {
+    for (GdbIndexChunk::AddressEntry &E : Chunk.AddressAreas) {
       uint64_t BaseAddr = E.Section->getVA(0);
       write64le(Buf, BaseAddr + E.LowAddress);
       write64le(Buf + 8, BaseAddr + E.HighAddress);
-      write32le(Buf + 16, E.CuIndex);
+      write32le(Buf + 16, E.CuIndex + Idx);
       Buf += 20;
     }
+    Idx += Chunk.CompilationUnits.size();
   }
 
-  // Write the symbol table.
-  for (GdbSymbol *Sym : GdbSymtab) {
-    if (Sym) {
-      write32le(Buf, Sym->NameOffset + StringPoolOffset - ConstantPoolOffset);
-      write32le(Buf + 4, CuVectorOffsets[Sym->CuVectorIndex]);
-    }
-    Buf += 8;
+  // Write the on-disk open-addressing hash table containing symbols.
+  for (GdbSymbol &Sym : Symbols) {
+    uint32_t Mask = SymtabSize - 1;
+    uint32_t H = Sym.Name.hash();
+    uint32_t I = H & Mask;
+    uint32_t Step = ((H * 17) & Mask) | 1;
+
+    while (read32le(Buf + I * 8))
+      I = (I + Step) & Mask;
+
+    uint8_t *P = Buf + I * 8;
+    write32le(P, CuVectorsPoolSize + Sym.OutputOff);
+    write32le(P + 4, CuVectorOffsets[Sym.CuVectorIdx]);
   }
+
+  Buf += SymtabSize * 8;
 
   // Write the CU vectors.
   for (ArrayRef<uint32_t> Vec : CuVectors) {
@@ -2404,13 +2493,8 @@ void GdbIndexSection::writeTo(uint8_t *Buf) {
   }
 
   // Write the string pool.
-  for (auto &KV : Symbols) {
-    CachedHashStringRef S = KV.first;
-    GdbSymbol *Sym = KV.second;
-    size_t Off = Sym->NameOffset;
-    memcpy(Buf + Off, S.val().data(), S.size());
-    Buf[Off + S.size()] = '\0';
-  }
+  for (GdbSymbol &Sym : Symbols)
+    memcpy(Buf + Sym.OutputOff, Sym.Name.data(), Sym.Name.size());
 }
 
 bool GdbIndexSection::empty() const { return !Out::DebugInfo; }
@@ -2893,6 +2977,7 @@ MipsRldMapSection *InX::MipsRldMap;
 PltSection *InX::Plt;
 PltSection *InX::Iplt;
 RelocationBaseSection *InX::RelaDyn;
+RelrBaseSection *InX::RelrDyn;
 RelocationBaseSection *InX::RelaPlt;
 RelocationBaseSection *InX::RelaIplt;
 StringTableSection *InX::ShStrTab;
@@ -2953,6 +3038,11 @@ template class elf::AndroidPackedRelocationSection<ELF32LE>;
 template class elf::AndroidPackedRelocationSection<ELF32BE>;
 template class elf::AndroidPackedRelocationSection<ELF64LE>;
 template class elf::AndroidPackedRelocationSection<ELF64BE>;
+
+template class elf::RelrSection<ELF32LE>;
+template class elf::RelrSection<ELF32BE>;
+template class elf::RelrSection<ELF64LE>;
+template class elf::RelrSection<ELF64BE>;
 
 template class elf::SymbolTableSection<ELF32LE>;
 template class elf::SymbolTableSection<ELF32BE>;
