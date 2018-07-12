@@ -4129,25 +4129,23 @@ const char *Driver::GetNamedOutputPath(Compilation &C, const JobAction &JA,
     std::pair<StringRef, StringRef> Split = Name.split('.');
     SmallString<128> TmpName;
     const char *Suffix = types::getTypeTempSuffix(JA.getType(), IsCLMode());
+    Arg *A = C.getArgs().getLastArg(options::OPT_fcrash_diagnostics_dir);
+    if (CCGenDiagnostics && A) {
+      SmallString<128> CrashDirectory(A->getValue());
+      llvm::sys::path::append(CrashDirectory, Split.first);
+      const char *Middle = Suffix ? "-%%%%%%." : "-%%%%%%";
+      std::error_code EC =
+        llvm::sys::fs::createUniqueFile(CrashDirectory + Middle + Suffix, TmpName);
+      if (EC) {
+        Diag(clang::diag::err_unable_to_make_temp) << EC.message();
+        return "";
+      }
+    } else {
+      TmpName = GetTemporaryPath(Split.first, Suffix);
+    }
     if (JA.ContainsActions(Action::BackendJobClass, types::TY_PP_CXX_AMP_CPU) ||
         JA.ContainsActions(Action::AssembleJobClass, types::TY_PP_CXX_AMP_CPU))
       TmpName += ".cpu";
-    else {
-      Arg *A = C.getArgs().getLastArg(options::OPT_fcrash_diagnostics_dir);
-      if (CCGenDiagnostics && A) {
-        SmallString<128> CrashDirectory(A->getValue());
-        llvm::sys::path::append(CrashDirectory, Split.first);
-        const char *Middle = Suffix ? "-%%%%%%." : "-%%%%%%";
-        std::error_code EC =
-            llvm::sys::fs::createUniqueFile(CrashDirectory + Middle + Suffix, TmpName);
-        if (EC) {
-          Diag(clang::diag::err_unable_to_make_temp) << EC.message();
-          return "";
-        }
-      } else {
-        TmpName = GetTemporaryPath(Split.first, Suffix);
-      }
-    }
     return C.addTempFile(C.getArgs().MakeArgString(TmpName));
   }
 
