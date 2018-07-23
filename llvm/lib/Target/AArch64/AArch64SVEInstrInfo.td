@@ -48,6 +48,11 @@ let Predicates = [HasSVE] in {
   defm SQSUB_ZI : sve_int_arith_imm0<0b110, "sqsub">;
   defm UQSUB_ZI : sve_int_arith_imm0<0b111, "uqsub">;
 
+  defm MAD_ZPmZZ : sve_int_mladdsub_vvv_pred<0b0, "mad">;
+  defm MSB_ZPmZZ : sve_int_mladdsub_vvv_pred<0b1, "msb">;
+  defm MLA_ZPmZZ : sve_int_mlas_vvv_pred<0b0, "mla">;
+  defm MLS_ZPmZZ : sve_int_mlas_vvv_pred<0b1, "mls">;
+
   defm ORR_ZI : sve_int_log_imm<0b00, "orr", "orn">;
   defm EOR_ZI : sve_int_log_imm<0b01, "eor", "eon">;
   defm AND_ZI : sve_int_log_imm<0b10, "and", "bic">;
@@ -56,6 +61,22 @@ let Predicates = [HasSVE] in {
   defm SMIN_ZI   : sve_int_arith_imm1<0b10, "smin", simm8>;
   defm UMAX_ZI   : sve_int_arith_imm1<0b01, "umax", imm0_255>;
   defm UMIN_ZI   : sve_int_arith_imm1<0b11, "umin", imm0_255>;
+
+  defm MUL_ZI    : sve_int_arith_imm2<"mul">;
+  defm MUL_ZPmZ   : sve_int_bin_pred_arit_2<0b000, "mul">;
+  defm SMULH_ZPmZ : sve_int_bin_pred_arit_2<0b010, "smulh">;
+  defm UMULH_ZPmZ : sve_int_bin_pred_arit_2<0b011, "umulh">;
+
+  defm SDIV_ZPmZ  : sve_int_bin_pred_arit_2_div<0b100, "sdiv">;
+  defm UDIV_ZPmZ  : sve_int_bin_pred_arit_2_div<0b101, "udiv">;
+  defm SDIVR_ZPmZ : sve_int_bin_pred_arit_2_div<0b110, "sdivr">;
+  defm UDIVR_ZPmZ : sve_int_bin_pred_arit_2_div<0b111, "udivr">;
+
+  defm SDOT_ZZZ : sve_intx_dot<0b0, "sdot">;
+  defm UDOT_ZZZ : sve_intx_dot<0b1, "udot">;
+
+  defm SDOT_ZZZI : sve_intx_dot_by_indexed_elem<0b0, "sdot">;
+  defm UDOT_ZZZI : sve_intx_dot_by_indexed_elem<0b1, "udot">;
 
   defm SXTB_ZPmZ : sve_int_un_pred_arit_0_h<0b000, "sxtb">;
   defm UXTB_ZPmZ : sve_int_un_pred_arit_0_h<0b001, "uxtb">;
@@ -82,11 +103,52 @@ let Predicates = [HasSVE] in {
   defm UABD_ZPmZ : sve_int_bin_pred_arit_1<0b101, "uabd">;
 
   defm FADD_ZPmI    : sve_fp_2op_i_p_zds<0b000, "fadd", sve_fpimm_half_one>;
+  defm FSUB_ZPmI    : sve_fp_2op_i_p_zds<0b001, "fsub", sve_fpimm_half_one>;
   defm FMUL_ZPmI    : sve_fp_2op_i_p_zds<0b010, "fmul", sve_fpimm_half_two>;
+  defm FSUBR_ZPmI   : sve_fp_2op_i_p_zds<0b011, "fsubr", sve_fpimm_half_one>;
+  defm FMAXNM_ZPmI  : sve_fp_2op_i_p_zds<0b100, "fmaxnm", sve_fpimm_zero_one>;
+  defm FMINNM_ZPmI  : sve_fp_2op_i_p_zds<0b101, "fminnm", sve_fpimm_zero_one>;
   defm FMAX_ZPmI    : sve_fp_2op_i_p_zds<0b110, "fmax", sve_fpimm_zero_one>;
+  defm FMIN_ZPmI    : sve_fp_2op_i_p_zds<0b111, "fmin", sve_fpimm_zero_one>;
+
+  defm FADD_ZPmZ   : sve_fp_2op_p_zds<0b0000, "fadd">;
+  defm FSUB_ZPmZ   : sve_fp_2op_p_zds<0b0001, "fsub">;
+  defm FMUL_ZPmZ   : sve_fp_2op_p_zds<0b0010, "fmul">;
+  defm FSUBR_ZPmZ  : sve_fp_2op_p_zds<0b0011, "fsubr">;
+  defm FMAXNM_ZPmZ : sve_fp_2op_p_zds<0b0100, "fmaxnm">;
+  defm FMINNM_ZPmZ : sve_fp_2op_p_zds<0b0101, "fminnm">;
+  defm FMAX_ZPmZ   : sve_fp_2op_p_zds<0b0110, "fmax">;
+  defm FMIN_ZPmZ   : sve_fp_2op_p_zds<0b0111, "fmin">;
+  defm FABD_ZPmZ   : sve_fp_2op_p_zds<0b1000, "fabd">;
+  defm FSCALE_ZPmZ : sve_fp_2op_p_zds<0b1001, "fscale">;
+  defm FMULX_ZPmZ  : sve_fp_2op_p_zds<0b1010, "fmulx">;
+  defm FDIVR_ZPmZ  : sve_fp_2op_p_zds<0b1100, "fdivr">;
+  defm FDIV_ZPmZ   : sve_fp_2op_p_zds<0b1101, "fdiv">;
+
+  defm FADD_ZZZ    : sve_fp_3op_u_zd<0b000, "fadd">;
+  defm FSUB_ZZZ    : sve_fp_3op_u_zd<0b001, "fsub">;
+  defm FMUL_ZZZ    : sve_fp_3op_u_zd<0b010, "fmul">;
+  defm FTSMUL_ZZZ  : sve_fp_3op_u_zd<0b011, "ftsmul">;
+  defm FRECPS_ZZZ  : sve_fp_3op_u_zd<0b110, "frecps">;
+  defm FRSQRTS_ZZZ : sve_fp_3op_u_zd<0b111, "frsqrts">;
 
   defm FCADD_ZPmZ : sve_fp_fcadd<"fcadd">;
   defm FCMLA_ZPmZZ : sve_fp_fcmla<"fcmla">;
+
+  defm FMLA_ZPmZZ  : sve_fp_3op_p_zds_a<0b00, "fmla">;
+  defm FMLS_ZPmZZ  : sve_fp_3op_p_zds_a<0b01, "fmls">;
+  defm FNMLA_ZPmZZ : sve_fp_3op_p_zds_a<0b10, "fnmla">;
+  defm FNMLS_ZPmZZ : sve_fp_3op_p_zds_a<0b11, "fnmls">;
+
+  defm FMAD_ZPmZZ  : sve_fp_3op_p_zds_b<0b00, "fmad">;
+  defm FMSB_ZPmZZ  : sve_fp_3op_p_zds_b<0b01, "fmsb">;
+  defm FNMAD_ZPmZZ : sve_fp_3op_p_zds_b<0b10, "fnmad">;
+  defm FNMSB_ZPmZZ : sve_fp_3op_p_zds_b<0b11, "fnmsb">;
+
+  defm FTMAD_ZZI : sve_fp_ftmad<"ftmad">;
+
+  defm FMLA_ZZZI : sve_fp_fma_by_indexed_elem<0b0, "fmla">;
+  defm FMLS_ZZZI : sve_fp_fma_by_indexed_elem<0b1, "fmls">;
 
   defm FCMLA_ZZZI : sve_fp_fcmla_by_indexed_elem<"fcmla">;
   defm FMUL_ZZZI   : sve_fp_fmul_by_indexed_elem<"fmul">;
@@ -112,6 +174,28 @@ let Predicates = [HasSVE] in {
   // Select elements from either vector (predicated)
   defm SEL_ZPZZ    : sve_int_sel_vvv<"sel">;
 
+  defm SPLICE_ZPZ : sve_int_perm_splice<"splice">;
+  defm COMPACT_ZPZ : sve_int_perm_compact<"compact">;
+  defm INSR_ZR : sve_int_perm_insrs<"insr">;
+  defm INSR_ZV : sve_int_perm_insrv<"insr">;
+  def  EXT_ZZI : sve_int_perm_extract_i<"ext">;
+
+  defm RBIT_ZPmZ : sve_int_perm_rev_rbit<"rbit">;
+  defm REVB_ZPmZ : sve_int_perm_rev_revb<"revb">;
+  defm REVH_ZPmZ : sve_int_perm_rev_revh<"revh">;
+  defm REVW_ZPmZ : sve_int_perm_rev_revw<"revw">;
+
+  defm REV_PP : sve_int_perm_reverse_p<"rev">;
+  defm REV_ZZ : sve_int_perm_reverse_z<"rev">;
+
+  defm SUNPKLO_ZZ : sve_int_perm_unpk<0b00, "sunpklo">;
+  defm SUNPKHI_ZZ : sve_int_perm_unpk<0b01, "sunpkhi">;
+  defm UUNPKLO_ZZ : sve_int_perm_unpk<0b10, "uunpklo">;
+  defm UUNPKHI_ZZ : sve_int_perm_unpk<0b11, "uunpkhi">;
+
+  def  PUNPKLO_PP : sve_int_perm_punpk<0b0, "punpklo">;
+  def  PUNPKHI_PP : sve_int_perm_punpk<0b1, "punpkhi">;
+
   def AND_PPzPP   : sve_int_pred_log<0b0000, "and">;
   def BIC_PPzPP   : sve_int_pred_log<0b0001, "bic">;
   def EOR_PPzPP   : sve_int_pred_log<0b0010, "eor">;
@@ -127,6 +211,18 @@ let Predicates = [HasSVE] in {
   def ORNS_PPzPP  : sve_int_pred_log<0b1101, "orns">;
   def NORS_PPzPP  : sve_int_pred_log<0b1110, "nors">;
   def NANDS_PPzPP : sve_int_pred_log<0b1111, "nands">;
+
+  defm CLASTA_RPZ : sve_int_perm_clast_rz<0, "clasta">;
+  defm CLASTB_RPZ : sve_int_perm_clast_rz<1, "clastb">;
+  defm CLASTA_VPZ : sve_int_perm_clast_vz<0, "clasta">;
+  defm CLASTB_VPZ : sve_int_perm_clast_vz<1, "clastb">;
+  defm CLASTA_ZPZ : sve_int_perm_clast_zz<0, "clasta">;
+  defm CLASTB_ZPZ : sve_int_perm_clast_zz<1, "clastb">;
+
+  defm LASTA_RPZ : sve_int_perm_last_r<0, "lasta">;
+  defm LASTB_RPZ : sve_int_perm_last_r<1, "lastb">;
+  defm LASTA_VPZ : sve_int_perm_last_v<0, "lasta">;
+  defm LASTB_VPZ : sve_int_perm_last_v<1, "lastb">;
 
   // continuous load with reg+immediate
   defm LD1B_IMM    : sve_mem_cld_si<0b0000, "ld1b",  Z_b, ZPR8>;

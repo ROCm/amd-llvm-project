@@ -8,6 +8,9 @@
 #include <fstream>
 #include <random>
 #include <chrono>
+#include <vector>
+
+#include "rapid-cxx-test.hpp"
 
 // static test helpers
 
@@ -102,6 +105,20 @@ static const fs::path RecDirFollowSymlinksIterationList[] = {
 #error LIBCXX_FILESYSTEM_DYNAMIC_TEST_HELPER must be defined
 #endif
 
+namespace random_utils {
+inline char to_hex(int ch) {
+  return ch < 10 ? static_cast<char>('0' + ch)
+                 : static_cast<char>('a' + (ch - 10));
+}
+
+inline char random_hex_char() {
+  static std::mt19937 rd{std::random_device{}()};
+  static std::uniform_int_distribution<int> mrand{0, 15};
+  return to_hex(mrand(rd));
+}
+
+} // namespace random_utils
+
 struct scoped_test_env
 {
     scoped_test_env() : test_root(random_env_path())
@@ -176,21 +193,11 @@ struct scoped_test_env
     fs::path const test_root;
 
 private:
-    static char to_hex(int ch) {
-        return ch < 10 ? static_cast<char>('0' + ch)
-                       : static_cast<char>('a' + (ch - 10));
-    }
-
-    static char random_hex_char() {
-        static std::mt19937 rd { std::random_device{}() };
-        static std::uniform_int_distribution<int> mrand{0, 15};
-        return to_hex( mrand(rd) );
-    }
-
     static std::string unique_path_suffix() {
         std::string model = "test.%%%%%%";
         for (auto & ch :  model) {
-            if (ch == '%') ch = random_hex_char();
+          if (ch == '%')
+            ch = random_utils::random_hex_char();
         }
         return model;
     }
@@ -381,8 +388,39 @@ bool checkCollectionsEqualBackwards(
 // We often need to test that the error_code was cleared if no error occurs
 // this function returns an error_code which is set to an error that will
 // never be returned by the filesystem functions.
-inline std::error_code GetTestEC() {
-    return std::make_error_code(std::errc::address_family_not_supported);
+inline std::error_code GetTestEC(unsigned Idx = 0) {
+  using std::errc;
+  auto GetErrc = [&]() {
+    switch (Idx) {
+    case 0:
+      return errc::address_family_not_supported;
+    case 1:
+      return errc::address_not_available;
+    case 2:
+      return errc::address_in_use;
+    case 3:
+      return errc::argument_list_too_long;
+    default:
+      assert(false && "Idx out of range");
+      std::abort();
+    }
+  };
+  return std::make_error_code(GetErrc());
+}
+
+inline bool ErrorIsImp(const std::error_code& ec,
+                       std::vector<std::errc> const& errors) {
+  for (auto errc : errors) {
+    if (ec == std::make_error_code(errc))
+      return true;
+  }
+  return false;
+}
+
+template <class... ErrcT>
+inline bool ErrorIs(const std::error_code& ec, std::errc First, ErrcT... Rest) {
+  std::vector<std::errc> errors = {First, Rest...};
+  return ErrorIsImp(ec, errors);
 }
 
 // Provide our own Sleep routine since std::this_thread::sleep_for is not
@@ -402,5 +440,27 @@ void SleepFor(std::chrono::seconds dur) {
 inline bool PathEq(fs::path const& LHS, fs::path const& RHS) {
   return LHS.native() == RHS.native();
 }
+
+struct ExceptionChecker {
+  std::vector<std::errc> expected_err_list;
+  fs::path expected_path1;
+  fs::path expected_path2;
+
+  template <class... ErrcT>
+  explicit ExceptionChecker(fs::path p, std::errc first_err, ErrcT... rest_err)
+      : expected_err_list({first_err, rest_err...}), expected_path1(p) {}
+
+  template <class... ErrcT>
+  explicit ExceptionChecker(fs::path p1, fs::path p2, std::errc first_err,
+                            ErrcT... rest_err)
+      : expected_err_list({first_err, rest_err...}), expected_path1(p1),
+        expected_path2(p2) {}
+
+  void operator()(fs::filesystem_error const& Err) const {
+    TEST_CHECK(ErrorIsImp(Err.code(), expected_err_list));
+    TEST_CHECK(Err.path1() == expected_path1);
+    TEST_CHECK(Err.path2() == expected_path2);
+  }
+};
 
 #endif /* FILESYSTEM_TEST_HELPER_HPP */

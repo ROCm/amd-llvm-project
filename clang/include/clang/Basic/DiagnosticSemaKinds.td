@@ -608,6 +608,8 @@ def err_builtin_redeclare : Error<"cannot redeclare builtin function %0">;
 def err_arm_invalid_specialreg : Error<"invalid special register for builtin">;
 def err_invalid_cpu_supports : Error<"invalid cpu feature string for builtin">;
 def err_invalid_cpu_is : Error<"invalid cpu name for builtin">;
+def err_invalid_cpu_specific_dispatch_value : Error<
+"invalid option '%0' for %select{cpu_specific|cpu_dispatch}1">;
 def err_builtin_needs_feature : Error<"%0 needs target feature %1">;
 def err_function_needs_feature
     : Error<"always_inline function %1 requires target feature '%2', but would "
@@ -619,14 +621,14 @@ def warn_cstruct_memaccess : Warning<
   "%select{destination for|source of|first operand of|second operand of}0 this "
   "%1 call is a pointer to record %2 that is not trivial to "
   "%select{primitive-default-initialize|primitive-copy}3">,
-  InGroup<DiagGroup<"nontrivial-memaccess">>;
+  InGroup<NonTrivialMemaccess>;
 def note_nontrivial_field : Note<
   "field is non-trivial to %select{copy|default-initialize}0">;
 def warn_dyn_class_memaccess : Warning<
   "%select{destination for|source of|first operand of|second operand of}0 this "
   "%1 call is a pointer to %select{|class containing a }2dynamic class %3; "
   "vtable pointer will be %select{overwritten|copied|moved|compared}4">,
-  InGroup<DiagGroup<"dynamic-class-memaccess">>;
+  InGroup<DynamicClassMemaccess>;
 def note_bad_memaccess_silence : Note<
   "explicitly cast the pointer to silence this warning">;
 def warn_sizeof_pointer_expr_memaccess : Warning<
@@ -655,7 +657,19 @@ def note_memsize_comparison_paren : Note<
   "did you mean to compare the result of %0 instead?">;
 def note_memsize_comparison_cast_silence : Note<
   "explicitly cast the argument to size_t to silence this warning">;
-  
+def warn_suspicious_sizeof_memset : Warning<
+  "%select{'size' argument to memset is '0'|"
+  "setting buffer to a 'sizeof' expression}0"
+  "; did you mean to transpose the last two arguments?">,
+  InGroup<MemsetTransposedArgs>;
+def note_suspicious_sizeof_memset_silence : Note<
+  "%select{parenthesize the third argument|"
+  "cast the second argument to 'int'}0 to silence">;
+def warn_suspicious_bzero_size : Warning<"'size' argument to bzero is '0'">,
+  InGroup<SuspiciousBzero>;
+def note_suspicious_bzero_size_silence : Note<
+  "parenthesize the second argument to silence">;
+
 def warn_strncat_large_size : Warning<
   "the value of the size argument in 'strncat' is too large, might lead to a " 
   "buffer overflow">, InGroup<StrncatSize>;
@@ -2049,10 +2063,6 @@ def err_implied_std_initializer_list_not_found : Error<
   "not found; include <initializer_list>">;
 def err_malformed_std_initializer_list : Error<
   "std::initializer_list must be a class template with a single type parameter">;
-def warn_dangling_std_initializer_list : Warning<
-  "array backing the initializer list will be destroyed at the end of "
-  "%select{the full-expression|the constructor}0">,
-  InGroup<DiagGroup<"dangling-initializer-list">>;
 def err_auto_init_list_from_c : Error<
   "cannot use __auto_type with initializer list in C">;
 def err_auto_bitfield : Error<
@@ -2672,11 +2682,19 @@ def err_only_annotate_after_access_spec : Error<
   "access specifier can only have annotation attributes">;
 
 def err_attribute_section_invalid_for_target : Error<
-  "argument to 'section' attribute is not valid for this target: %0">;
+  "argument to %select{'code_seg'|'section'}1 attribute is not valid for this target: %0">;
 def warn_mismatched_section : Warning<
-  "section does not match previous declaration">, InGroup<Section>;
+  "%select{codeseg|section}0 does not match previous declaration">, InGroup<Section>;
 def warn_attribute_section_on_redeclaration : Warning<
   "section attribute is specified on redeclared variable">, InGroup<Section>;
+def err_mismatched_code_seg_base : Error<
+  "derived class must specify the same code segment as its base classes">;
+def err_mismatched_code_seg_override : Error<
+  "overriding virtual function must specify the same code segment as its overridden function">;
+def err_conflicting_codeseg_attribute : Error<
+  "conflicting code segment specifiers">;
+def warn_duplicate_codeseg_attribute : Warning<
+  "duplicate code segment specifiers">, InGroup<Section>;
 
 def err_anonymous_property: Error<
   "anonymous property is not supported">;
@@ -3573,6 +3591,9 @@ def note_ovl_candidate_bad_deduction : Note<
     "candidate template ignored: failed template argument deduction">;
 def note_ovl_candidate_incomplete_deduction : Note<"candidate template ignored: "
     "couldn't infer template argument %0">;
+def note_ovl_candidate_incomplete_deduction_pack : Note<"candidate template ignored: "
+    "deduced too few arguments for expanded pack %0; no argument for %ordinal1 "
+    "expanded parameter in deduced argument pack %2">;
 def note_ovl_candidate_inconsistent_deduction : Note<
     "candidate template ignored: deduced conflicting %select{types|values|"
     "templates}0 for parameter %1%diff{ ($ vs. $)|}2,3">;
@@ -3769,8 +3790,8 @@ def err_ovl_no_viable_subscript :
 def err_ovl_no_oper :
     Error<"type %0 does not provide a %select{subscript|call}1 operator">;
 def err_ovl_unresolvable : Error<
-  "reference to overloaded function could not be resolved; "
-  "did you mean to call it%select{| with no arguments}0?">;
+  "reference to %select{overloaded|multiversioned}1 function could not be "
+  "resolved; did you mean to call it%select{| with no arguments}0?">;
 def err_bound_member_function : Error<
   "reference to non-static member function must be called"
   "%select{|; did you mean to call it with no arguments?}0">;
@@ -4087,6 +4108,13 @@ def ext_explicit_specialization_storage_class : ExtWarn<
 def err_explicit_specialization_inconsistent_storage_class : Error<
   "explicit specialization has extraneous, inconsistent storage class "
   "'%select{none|extern|static|__private_extern__|auto|register}0'">;
+def err_dependent_function_template_spec_no_match : Error<
+  "no candidate function template was found for dependent"
+  " friend function template specialization">;
+def note_dependent_function_template_spec_discard_reason : Note<
+  "candidate ignored: %select{not a function template"
+  "|not a member of the enclosing namespace;"
+  " did you mean to explicitly qualify the specialization?}0">;
 
 // C++ class template specializations and out-of-line definitions
 def err_template_spec_needs_header : Error<
@@ -4446,6 +4474,9 @@ def err_pack_expansion_length_conflict : Error<
 def err_pack_expansion_length_conflict_multilevel : Error<
   "pack expansion contains parameter pack %0 that has a different "
   "length (%1 vs. %2) from outer parameter packs">;
+def err_pack_expansion_length_conflict_partial : Error<
+  "pack expansion contains parameter pack %0 that has a different "
+  "length (at least %1 vs. %2) from outer parameter packs">;
 def err_pack_expansion_member_init : Error<
   "pack expansion for initialization of member %0">;
 
@@ -6184,6 +6215,12 @@ def err_bad_cxx_cast_bitfield : Error<
 def err_bad_cxx_cast_qualifiers_away : Error<
   "%select{const_cast|static_cast|reinterpret_cast|dynamic_cast|C-style cast|"
   "functional-style cast}0 from %1 to %2 casts away qualifiers">;
+def ext_bad_cxx_cast_qualifiers_away_incoherent : ExtWarn<
+  "ISO C++ does not allow "
+  "%select{const_cast|static_cast|reinterpret_cast|dynamic_cast|C-style cast|"
+  "functional-style cast}0 from %1 to %2 because it casts away qualifiers, "
+  "even though the source and destination types are unrelated">,
+  SFINAEFailure, InGroup<DiagGroup<"cast-qual-unrelated">>;
 def err_bad_const_cast_dest : Error<
   "%select{const_cast||||C-style cast|functional-style cast}0 to %2, "
   "which is not a reference, pointer-to-object, or pointer-to-data-member">;
@@ -6487,6 +6524,8 @@ let CategoryName = "Lambda Issue" in {
     "lambda expression in an unevaluated operand">;
   def err_lambda_in_constant_expression : Error<
     "a lambda expression may not appear inside of a constant expression">;
+  def err_lambda_in_invalid_context : Error<
+    "a lambda expression cannot appear in this context">;
   def err_lambda_return_init_list : Error<
     "cannot deduce lambda return type from initializer list">;
   def err_lambda_capture_default_arg : Error<
@@ -7831,18 +7870,44 @@ def note_ref_var_local_bind : Note<
 // Check for initializing a member variable with the address or a reference to
 // a constructor parameter.
 def warn_bind_ref_member_to_parameter : Warning<
-  "binding reference member %0 to stack allocated parameter %1">,
-  InGroup<DanglingField>;
+  "binding reference member %0 to stack allocated "
+  "%select{variable|parameter}2 %1">, InGroup<DanglingField>;
 def warn_init_ptr_member_to_parameter_addr : Warning<
-  "initializing pointer member %0 with the stack address of parameter %1">,
-  InGroup<DanglingField>;
-def warn_bind_ref_member_to_temporary : Warning<
-  "binding reference %select{|subobject of }1member %0 to a temporary value">,
-  InGroup<DanglingField>;
+  "initializing pointer member %0 with the stack address of "
+  "%select{variable|parameter}2 %1">, InGroup<DanglingField>;
 def note_ref_or_ptr_member_declared_here : Note<
   "%select{reference|pointer}0 member declared here">;
-def note_ref_subobject_of_member_declared_here : Note<
-  "member with reference subobject declared here">;
+
+def err_bind_ref_member_to_temporary : Error<
+  "%select{reference|backing array for 'std::initializer_list'}2 "
+  "%select{|subobject of }1member %0 "
+  "%select{binds to|is}2 a temporary object "
+  "whose lifetime would be shorter than the constructed object">;
+def note_lifetime_extending_member_declared_here : Note<
+  "%select{%select{reference|'std::initializer_list'}0 member|"
+  "member with %select{reference|'std::initializer_list'}0 subobject}1 "
+  "declared here">;
+def warn_new_dangling_reference : Warning<
+  "temporary bound to reference member of allocated object "
+  "will be destroyed at the end of the full-expression">,
+  InGroup<DanglingField>;
+def warn_new_dangling_initializer_list : Warning<
+  "array backing "
+  "%select{initializer list subobject of the allocated object|"
+  "the allocated initializer list}0 "
+  "will be destroyed at the end of the full-expression">,
+  InGroup<DanglingInitializerList>;
+def warn_default_member_init_temporary_not_extended : Warning<
+  "sorry, lifetime extension of temporary created by aggregate initialization "
+  "using default member initializer is not supported; lifetime of temporary "
+  "will end at the end of the full-expression">, InGroup<DanglingField>;
+def warn_default_member_init_init_list_not_extended : Warning<
+  "sorry, lifetime extension of backing array of initializer list "
+  "created by aggregate initialization using default member initializer "
+  "is not supported; lifetime of backing array will end at the end of the "
+  "full-expression">, InGroup<DanglingInitializerList>;
+def note_in_default_member_initalizer_here : Note<
+  "in default member initializer for field %0 used here">;
 
 // For non-floating point, expressions of the form x == x or x != x
 // should result in a warning, since these always evaluate to a constant.
@@ -8173,9 +8238,15 @@ def err_x86_builtin_invalid_rounding : Error<
   "invalid rounding argument">;
 def err_x86_builtin_invalid_scale : Error<
   "scale argument must be 1, 2, 4, or 8">;
+def err_hexagon_builtin_unsupported_cpu : Error<
+  "builtin is not supported on this CPU">;
+def err_hexagon_builtin_requires_hvx : Error<
+  "builtin requires HVX">;
+def err_hexagon_builtin_unsupported_hvx : Error<
+  "builtin is not supported on this version of HVX">;
+
 def err_builtin_target_unsupported : Error<
   "builtin is not supported on this target">;
-
 def err_builtin_longjmp_unsupported : Error<
   "__builtin_longjmp is not supported for the current target">;
 def err_builtin_setjmp_unsupported : Error<
@@ -9033,9 +9104,9 @@ def note_equivalent_internal_linkage_decl : Note<
   "declared here%select{ in module '%1'|}0">;
 
 def note_redefinition_modules_same_file : Note<
-	"'%0' included multiple times, additional include site in header from module '%1'">;
+  "'%0' included multiple times, additional include site in header from module '%1'">;
 def note_redefinition_include_same_file : Note<
-	"'%0' included multiple times, additional include site here">;
+  "'%0' included multiple times, additional include site here">;
 }
 
 let CategoryName = "Coroutines Issue" in {
@@ -9076,7 +9147,7 @@ def err_coroutine_promise_type_incomplete : Error<
   "this function cannot be a coroutine: %0 is an incomplete type">;
 def err_coroutine_type_missing_specialization : Error<
   "this function cannot be a coroutine: missing definition of "
-  "specialization %q0">;
+  "specialization %0">;
 def err_coroutine_promise_incompatible_return_functions : Error<
   "the coroutine promise type %0 declares both 'return_value' and 'return_void'">;
 def err_coroutine_promise_requires_return_function : Error<
@@ -9286,9 +9357,9 @@ def warn_shadow_field :
   InGroup<ShadowField>, DefaultIgnore;
 def note_shadow_field : Note<"declared here">;
 
-def err_target_required_in_redecl : Error<
-  "function declaration is missing 'target' attribute in a multiversioned "
-  "function">;
+def err_multiversion_required_in_redecl : Error<
+  "function declaration is missing %select{'target'|'cpu_specific' or "
+  "'cpu_dispatch'}0 attribute in a multiversioned function">;
 def note_multiversioning_caused_here : Note<
   "function multiversioning caused by this declaration">;
 def err_multiversion_after_used : Error<
@@ -9302,20 +9373,33 @@ def err_multiversion_duplicate : Error<
 def err_multiversion_noproto : Error<
   "multiversioned function must have a prototype">;
 def err_multiversion_no_other_attrs : Error<
-  "attribute 'target' multiversioning cannot be combined with other "
-  "attributes">;
+  "attribute '%select{target|cpu_specific|cpu_dispatch}0' multiversioning cannot be combined"
+  " with other attributes">;
 def err_multiversion_diff : Error<
   "multiversioned function declaration has a different %select{calling convention"
   "|return type|constexpr specification|inline specification|storage class|"
   "linkage}0">;
 def err_multiversion_doesnt_support : Error<
-  "multiversioned functions do not yet support %select{function templates|"
-  "virtual functions|deduced return types|constructors|destructors|"
-  "deleted functions|defaulted functions}0">;
+  "attribute '%select{target|cpu_specific|cpu_dispatch}0' multiversioned functions do not "
+  "yet support %select{function templates|virtual functions|"
+  "deduced return types|constructors|destructors|deleted functions|"
+  "defaulted functions|constexpr functions}1">;
 def err_multiversion_not_allowed_on_main : Error<
   "'main' cannot be a multiversioned function">;
 def err_multiversion_not_supported : Error<
  "function multiversioning is not supported on the current target">;
+def err_multiversion_types_mixed : Error<
+  "multiversioning attributes cannot be combined">;
+def err_cpu_dispatch_mismatch : Error<
+ "'cpu_dispatch' function redeclared with different CPUs">;
+def err_cpu_specific_multiple_defs : Error<
+ "multiple 'cpu_specific' functions cannot specify the same CPU: %0">;
+def warn_multiversion_duplicate_entries : Warning<
+ "CPU list contains duplicate entries; attribute ignored">,
+  InGroup<FunctionMultiVersioning>;
+def warn_dispatch_body_ignored : Warning<
+  "body of cpu_dispatch function will be ignored">,
+  InGroup<FunctionMultiVersioning>;
 
 // three-way comparison operator diagnostics
 def err_implied_comparison_category_type_not_found : Error<
