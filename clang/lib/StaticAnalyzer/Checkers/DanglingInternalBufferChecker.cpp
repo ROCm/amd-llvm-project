@@ -24,16 +24,32 @@
 using namespace clang;
 using namespace ento;
 
-// FIXME: member functions that return a pointer to the container's internal
-// buffer may be called on the object many times, so the object's memory
-// region should have a list of pointer symbols associated with it.
-REGISTER_MAP_WITH_PROGRAMSTATE(RawPtrMap, const MemRegion *, SymbolRef)
+using PtrSet = llvm::ImmutableSet<SymbolRef>;
+
+// Associate container objects with a set of raw pointer symbols.
+REGISTER_MAP_WITH_PROGRAMSTATE(RawPtrMap, const MemRegion *, PtrSet)
+
+// This is a trick to gain access to PtrSet's Factory.
+namespace clang {
+namespace ento {
+template <>
+struct ProgramStateTrait<PtrSet> : public ProgramStatePartialTrait<PtrSet> {
+  static void *GDMIndex() {
+    static int Index = 0;
+    return &Index;
+  }
+};
+} // end namespace ento
+} // end namespace clang
 
 namespace {
 
 class DanglingInternalBufferChecker
     : public Checker<check::DeadSymbols, check::PostCall> {
-  CallDescription CStrFn, DataFn;
+
+  CallDescription AppendFn, AssignFn, ClearFn, CStrFn, DataFn, EraseFn,
+      InsertFn, PopBackFn, PushBackFn, ReplaceFn, ReserveFn, ResizeFn,
+      ShrinkToFitFn, SwapFn;
 
 public:
   class DanglingBufferBRVisitor : public BugReporterVisitor {
@@ -61,14 +77,24 @@ public:
     bool isSymbolTracked(ProgramStateRef State, SymbolRef Sym) {
       RawPtrMapTy Map = State->get<RawPtrMap>();
       for (const auto Entry : Map) {
-        if (Entry.second == Sym)
+        if (Entry.second.contains(Sym))
           return true;
       }
       return false;
     }
   };
 
-  DanglingInternalBufferChecker() : CStrFn("c_str"), DataFn("data") {}
+  DanglingInternalBufferChecker()
+      : AppendFn("append"), AssignFn("assign"), ClearFn("clear"),
+        CStrFn("c_str"), DataFn("data"), EraseFn("erase"), InsertFn("insert"),
+        PopBackFn("pop_back"), PushBackFn("push_back"), ReplaceFn("replace"),
+        ReserveFn("reserve"), ResizeFn("resize"),
+        ShrinkToFitFn("shrink_to_fit"), SwapFn("swap") {}
+
+  /// Check whether the function called on the container object is a
+  /// member function that potentially invalidates pointers referring
+  /// to the objects's internal buffer.
+  bool mayInvalidateBuffer(const CallEvent &Call) const;
 
   /// Record the connection between the symbol returned by c_str() and the
   /// corresponding string object region in the ProgramState. Mark the symbol
@@ -81,6 +107,37 @@ public:
 
 } // end anonymous namespace
 
+// [string.require]
+//
+// "References, pointers, and iterators referring to the elements of a
+// basic_string sequence may be invalidated by the following uses of that
+// basic_string object:
+//
+// -- TODO: As an argument to any standard library function taking a reference
+// to non-const basic_string as an argument. For example, as an argument to
+// non-member functions swap(), operator>>(), and getline(), or as an argument
+// to basic_string::swap().
+//
+// -- Calling non-const member functions, except operator[], at, front, back,
+// begin, rbegin, end, and rend."
+//
+bool DanglingInternalBufferChecker::mayInvalidateBuffer(
+    const CallEvent &Call) const {
+  if (const auto *MemOpCall = dyn_cast<CXXMemberOperatorCall>(&Call)) {
+    OverloadedOperatorKind Opc = MemOpCall->getOriginExpr()->getOperator();
+    if (Opc == OO_Equal || Opc == OO_PlusEqual)
+      return true;
+    return false;
+  }
+  return (isa<CXXDestructorCall>(Call) || Call.isCalled(AppendFn) ||
+          Call.isCalled(AssignFn) || Call.isCalled(ClearFn) ||
+          Call.isCalled(EraseFn) || Call.isCalled(InsertFn) ||
+          Call.isCalled(PopBackFn) || Call.isCalled(PushBackFn) ||
+          Call.isCalled(ReplaceFn) || Call.isCalled(ReserveFn) ||
+          Call.isCalled(ResizeFn) || Call.isCalled(ShrinkToFitFn) ||
+          Call.isCalled(SwapFn));
+}
+
 void DanglingInternalBufferChecker::checkPostCall(const CallEvent &Call,
                                                   CheckerContext &C) const {
   const auto *ICall = dyn_cast<CXXInstanceCall>(&Call);
@@ -88,11 +145,11 @@ void DanglingInternalBufferChecker::checkPostCall(const CallEvent &Call,
     return;
 
   SVal Obj = ICall->getCXXThisVal();
-  const auto *TypedR = dyn_cast_or_null<TypedValueRegion>(Obj.getAsRegion());
-  if (!TypedR)
+  const auto *ObjRegion = dyn_cast_or_null<TypedValueRegion>(Obj.getAsRegion());
+  if (!ObjRegion)
     return;
 
-  auto *TypeDecl = TypedR->getValueType()->getAsCXXRecordDecl();
+  auto *TypeDecl = ObjRegion->getValueType()->getAsCXXRecordDecl();
   if (TypeDecl->getName() != "basic_string")
     return;
 
@@ -100,20 +157,30 @@ void DanglingInternalBufferChecker::checkPostCall(const CallEvent &Call,
 
   if (Call.isCalled(CStrFn) || Call.isCalled(DataFn)) {
     SVal RawPtr = Call.getReturnValue();
-    if (!RawPtr.isUnknown()) {
-      State = State->set<RawPtrMap>(TypedR, RawPtr.getAsSymbol());
+    if (SymbolRef Sym = RawPtr.getAsSymbol(/*IncludeBaseRegions=*/true)) {
+      // Start tracking this raw pointer by adding it to the set of symbols
+      // associated with this container object in the program state map.
+      PtrSet::Factory &F = State->getStateManager().get_context<PtrSet>();
+      const PtrSet *SetPtr = State->get<RawPtrMap>(ObjRegion);
+      PtrSet Set = SetPtr ? *SetPtr : F.getEmptySet();
+      assert(C.wasInlined || !Set.contains(Sym));
+      Set = F.add(Set, Sym);
+      State = State->set<RawPtrMap>(ObjRegion, Set);
       C.addTransition(State);
     }
     return;
   }
 
-  if (isa<CXXDestructorCall>(ICall)) {
-    if (State->contains<RawPtrMap>(TypedR)) {
-      const SymbolRef *StrBufferPtr = State->get<RawPtrMap>(TypedR);
-      // FIXME: What if Origin is null?
+  if (mayInvalidateBuffer(Call)) {
+    if (const PtrSet *PS = State->get<RawPtrMap>(ObjRegion)) {
+      // Mark all pointer symbols associated with the deleted object released.
       const Expr *Origin = Call.getOriginExpr();
-      State = allocation_state::markReleased(State, *StrBufferPtr, Origin);
-      State = State->remove<RawPtrMap>(TypedR);
+      for (const auto Symbol : *PS) {
+        // NOTE: `Origin` may be null, and will be stored so in the symbol's
+        // `RefState` in MallocChecker's `RegionState` program state map.
+        State = allocation_state::markReleased(State, Symbol, Origin);
+      }
+      State = State->remove<RawPtrMap>(ObjRegion);
       C.addTransition(State);
       return;
     }
@@ -123,14 +190,23 @@ void DanglingInternalBufferChecker::checkPostCall(const CallEvent &Call,
 void DanglingInternalBufferChecker::checkDeadSymbols(SymbolReaper &SymReaper,
                                                      CheckerContext &C) const {
   ProgramStateRef State = C.getState();
+  PtrSet::Factory &F = State->getStateManager().get_context<PtrSet>();
   RawPtrMapTy RPM = State->get<RawPtrMap>();
   for (const auto Entry : RPM) {
-    if (!SymReaper.isLive(Entry.second))
-      State = State->remove<RawPtrMap>(Entry.first);
     if (!SymReaper.isLiveRegion(Entry.first)) {
-      // Due to incomplete destructor support, some dead regions might still
+      // Due to incomplete destructor support, some dead regions might
       // remain in the program state map. Clean them up.
       State = State->remove<RawPtrMap>(Entry.first);
+    }
+    if (const PtrSet *OldSet = State->get<RawPtrMap>(Entry.first)) {
+      PtrSet CleanedUpSet = *OldSet;
+      for (const auto Symbol : Entry.second) {
+        if (!SymReaper.isLive(Symbol))
+          CleanedUpSet = F.remove(CleanedUpSet, Symbol);
+      }
+      State = CleanedUpSet.isEmpty()
+                  ? State->remove<RawPtrMap>(Entry.first)
+                  : State->set<RawPtrMap>(Entry.first, CleanedUpSet);
     }
   }
   C.addTransition(State);
@@ -151,7 +227,7 @@ DanglingInternalBufferChecker::DanglingBufferBRVisitor::VisitNode(
 
   SmallString<256> Buf;
   llvm::raw_svector_ostream OS(Buf);
-  OS << "Pointer to dangling buffer was obtained here";
+  OS << "Dangling inner pointer obtained here";
   PathDiagnosticLocation Pos(S, BRC.getSourceManager(),
                              N->getLocationContext());
   return std::make_shared<PathDiagnosticEventPiece>(Pos, OS.str(), true,

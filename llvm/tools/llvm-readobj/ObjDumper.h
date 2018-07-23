@@ -14,6 +14,7 @@
 #include <system_error>
 
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Object/ObjectFile.h"
 
 namespace llvm {
 namespace object {
@@ -43,7 +44,7 @@ public:
   virtual void printDynamicTable() { }
   virtual void printNeededLibraries() { }
   virtual void printProgramHeaders() { }
-  virtual void printSectionAsString(StringRef SectionName) {}
+  virtual void printSectionAsHex(StringRef SectionName) {}
   virtual void printHashTable() { }
   virtual void printGnuHashTable() { }
   virtual void printLoadName() {}
@@ -51,6 +52,7 @@ public:
   virtual void printGroupSections() {}
   virtual void printHashHistogram() {}
   virtual void printCGProfile() {}
+  virtual void printAddrsig() {}
   virtual void printNotes() {}
   virtual void printELFLinkerOptions() {}
 
@@ -86,8 +88,11 @@ public:
 
   virtual void printStackMap() const = 0;
 
+  void printSectionAsString(const object::ObjectFile *Obj, StringRef SecName);
+
 protected:
   ScopedPrinter &W;
+  void SectionHexDump(StringRef SecName, const uint8_t *Section, size_t Size);
 };
 
 std::error_code createCOFFDumper(const object::ObjectFile *Obj,

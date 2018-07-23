@@ -824,6 +824,7 @@ Optional<unsigned> Parser::ParseLambdaIntroducer(LambdaIntroducer &Intro,
     IdentifierInfo *Id = nullptr;
     SourceLocation EllipsisLoc;
     ExprResult Init;
+    SourceLocation LocStart = Tok.getLocation();
 
     if (Tok.is(tok::star)) {
       Loc = ConsumeToken(); 
@@ -997,8 +998,11 @@ Optional<unsigned> Parser::ParseLambdaIntroducer(LambdaIntroducer &Intro,
           Loc, Kind == LCK_ByRef, Id, InitKind, InitExpr);
       Init = InitExpr;
     }
+
+    SourceLocation LocEnd = PrevTokLocation;
+
     Intro.addCapture(Kind, Loc, Id, EllipsisLoc, InitKind, Init,
-                     InitCaptureType);
+                     InitCaptureType, SourceRange(LocStart, LocEnd));
   }
 
   T.consumeClose();
@@ -1127,12 +1131,12 @@ ExprResult Parser::ParseLambdaExpressionAfterIntroducer(
   // after '(...)'. nvcc doesn't accept this.
   auto WarnIfHasCUDATargetAttr = [&] {
     if (getLangOpts().CUDA)
-      for (auto *A = Attr.getList(); A != nullptr; A = A->getNext())
-        if (A->getKind() == AttributeList::AT_CUDADevice ||
-            A->getKind() == AttributeList::AT_CUDAHost ||
-            A->getKind() == AttributeList::AT_CUDAGlobal)
-          Diag(A->getLoc(), diag::warn_cuda_attr_lambda_position)
-              << A->getName()->getName();
+      for (const ParsedAttr &A : Attr)
+        if (A.getKind() == ParsedAttr::AT_CUDADevice ||
+            A.getKind() == ParsedAttr::AT_CUDAHost ||
+            A.getKind() == ParsedAttr::AT_CUDAGlobal)
+          Diag(A.getLoc(), diag::warn_cuda_attr_lambda_position)
+              << A.getName()->getName();
   };
 
   // try parse attributes before parameter list
@@ -1196,7 +1200,7 @@ ExprResult Parser::ParseLambdaExpressionAfterIntroducer(
           cppampSpec = CPPAMP_AUTO;
           IdentifierInfo *II = &PP.getIdentifierTable().get("auto");
           assert(II);
-          Attr.addNew(II, DeclEndLoc, 0, DeclEndLoc, /*0, DeclEndLoc,*/ 0, 0, AttributeList::AS_GNU);
+          Attr.addNew(II, DeclEndLoc, 0, DeclEndLoc, /*0, DeclEndLoc,*/ 0, 0, ParsedAttr::AS_GNU);
         }
       }
     }
@@ -1252,30 +1256,24 @@ ExprResult Parser::ParseLambdaExpressionAfterIntroducer(
     WarnIfHasCUDATargetAttr();
 
     SourceLocation NoLoc;
-    D.AddTypeInfo(DeclaratorChunk::getFunction(/*hasProto=*/true,
-                                           /*isAmbiguous=*/false,
-                                           LParenLoc,
-                                           ParamInfo.data(), ParamInfo.size(),
-                                           EllipsisLoc, RParenLoc,
-                                           DS.getTypeQualifiers(),
-                                           /*RefQualifierIsLValueRef=*/true,
-                                           /*RefQualifierLoc=*/NoLoc,
-                                           /*ConstQualifierLoc=*/NoLoc,
-                                           /*VolatileQualifierLoc=*/NoLoc,
-                                           /*RestrictQualifierLoc=*/NoLoc,
-                                           MutableLoc,
-                                           ESpecType, ESpecRange,
-                                           DynamicExceptions.data(),
-                                           DynamicExceptionRanges.data(),
-                                           DynamicExceptions.size(),
-                                           NoexceptExpr.isUsable() ?
-                                             NoexceptExpr.get() : nullptr,
-                                           /*ExceptionSpecTokens*/nullptr,
-                                           /*DeclsInPrototype=*/None,
-                                           LParenLoc, FunLocalRangeEnd, D,
-                                           TrailingReturnType),
-                  Attr, DeclEndLoc);
-  } else if (Tok.isOneOf(tok::kw_mutable, tok::arrow, /*tok::kw___attribute,*/
+    D.AddTypeInfo(DeclaratorChunk::getFunction(
+                      /*hasProto=*/true,
+                      /*isAmbiguous=*/false, LParenLoc, ParamInfo.data(),
+                      ParamInfo.size(), EllipsisLoc, RParenLoc,
+                      DS.getTypeQualifiers(),
+                      /*RefQualifierIsLValueRef=*/true,
+                      /*RefQualifierLoc=*/NoLoc,
+                      /*ConstQualifierLoc=*/NoLoc,
+                      /*VolatileQualifierLoc=*/NoLoc,
+                      /*RestrictQualifierLoc=*/NoLoc, MutableLoc, ESpecType,
+                      ESpecRange, DynamicExceptions.data(),
+                      DynamicExceptionRanges.data(), DynamicExceptions.size(),
+                      NoexceptExpr.isUsable() ? NoexceptExpr.get() : nullptr,
+                      /*ExceptionSpecTokens*/ nullptr,
+                      /*DeclsInPrototype=*/None, LParenLoc, FunLocalRangeEnd, D,
+                      TrailingReturnType),
+                  std::move(Attr), DeclEndLoc);
+  } else if (Tok.isOneOf(tok::kw_mutable, tok::arrow, tok::kw___attribute,
                          tok::kw_constexpr) ||
              (Tok.is(tok::l_square) && NextToken().is(tok::l_square))) {
     // It's common to forget that one needs '()' before 'mutable', an attribute
@@ -1321,31 +1319,29 @@ ExprResult Parser::ParseLambdaExpressionAfterIntroducer(
     WarnIfHasCUDATargetAttr();
 
     SourceLocation NoLoc;
-    D.AddTypeInfo(DeclaratorChunk::getFunction(/*hasProto=*/true,
-                                               /*isAmbiguous=*/false,
-                                               /*LParenLoc=*/NoLoc,
-                                               /*Params=*/nullptr,
-                                               /*NumParams=*/0,
-                                               /*EllipsisLoc=*/NoLoc,
-                                               /*RParenLoc=*/NoLoc,
-                                               /*TypeQuals=*/0,
-                                               /*RefQualifierIsLValueRef=*/true,
-                                               /*RefQualifierLoc=*/NoLoc,
-                                               /*ConstQualifierLoc=*/NoLoc,
-                                               /*VolatileQualifierLoc=*/NoLoc,
-                                               /*RestrictQualifierLoc=*/NoLoc,
-                                               MutableLoc,
-                                               EST_None,
-                                               /*ESpecRange=*/SourceRange(),
-                                               /*Exceptions=*/nullptr,
-                                               /*ExceptionRanges=*/nullptr,
-                                               /*NumExceptions=*/0,
-                                               /*NoexceptExpr=*/nullptr,
-                                               /*ExceptionSpecTokens=*/nullptr,
-                                               /*DeclsInPrototype=*/None,
-                                               DeclLoc, DeclEndLoc, D,
-                                               TrailingReturnType),
-                  Attr, DeclEndLoc);
+    D.AddTypeInfo(DeclaratorChunk::getFunction(
+                      /*hasProto=*/true,
+                      /*isAmbiguous=*/false,
+                      /*LParenLoc=*/NoLoc,
+                      /*Params=*/nullptr,
+                      /*NumParams=*/0,
+                      /*EllipsisLoc=*/NoLoc,
+                      /*RParenLoc=*/NoLoc,
+                      /*TypeQuals=*/0,
+                      /*RefQualifierIsLValueRef=*/true,
+                      /*RefQualifierLoc=*/NoLoc,
+                      /*ConstQualifierLoc=*/NoLoc,
+                      /*VolatileQualifierLoc=*/NoLoc,
+                      /*RestrictQualifierLoc=*/NoLoc, MutableLoc, EST_None,
+                      /*ESpecRange=*/SourceRange(),
+                      /*Exceptions=*/nullptr,
+                      /*ExceptionRanges=*/nullptr,
+                      /*NumExceptions=*/0,
+                      /*NoexceptExpr=*/nullptr,
+                      /*ExceptionSpecTokens=*/nullptr,
+                      /*DeclsInPrototype=*/None, DeclLoc, DeclEndLoc, D,
+                      TrailingReturnType),
+                  std::move(Attr), DeclEndLoc);
   }  else if (Tok.is(tok::l_brace)) {
     // Next is compound-statement.
     // Parse C++AMP restrict specifier though the lambda expression has no params, so that
@@ -1360,7 +1356,7 @@ ExprResult Parser::ParseLambdaExpressionAfterIntroducer(
       SourceLocation LambdaEndLoc = Intro.Range.getEnd();
       ParsedAttributes Attr(AttrFactory);
       ParseRestrictionSpecification(D, Attr, LambdaEndLoc);
-      D.getAttrListRef() = Attr.getList();
+      D.getAttributes().addAll(Attr.begin(), Attr.end());
       D.getAttributePool().takeAllFrom(Attr.getPool());
     }
   }
@@ -2961,10 +2957,9 @@ void Parser::ParseDirectNewDeclarator(Declarator &D) {
 
     D.AddTypeInfo(DeclaratorChunk::getArray(0,
                                             /*static=*/false, /*star=*/false,
-                                            Size.get(),
-                                            T.getOpenLocation(),
+                                            Size.get(), T.getOpenLocation(),
                                             T.getCloseLocation()),
-                  Attrs, T.getCloseLocation());
+                  std::move(Attrs), T.getCloseLocation());
 
     if (T.getCloseLocation().isInvalid())
       return;

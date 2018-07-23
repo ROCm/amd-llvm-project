@@ -379,11 +379,9 @@ SVal SValBuilder::makeSymExprValNN(ProgramStateRef State,
                                    BinaryOperator::Opcode Op,
                                    NonLoc LHS, NonLoc RHS,
                                    QualType ResultTy) {
-  if (!State->isTainted(RHS) && !State->isTainted(LHS))
-    return UnknownVal();
-
   const SymExpr *symLHS = LHS.getAsSymExpr();
   const SymExpr *symRHS = RHS.getAsSymExpr();
+
   // TODO: When the Max Complexity is reached, we should conjure a symbol
   // instead of generating an Unknown value and propagate the taint info to it.
   const unsigned MaxComp = StateMgr.getOwningEngine()
@@ -459,7 +457,7 @@ DefinedOrUnknownSVal SValBuilder::evalEQ(ProgramStateRef state,
 /// Assumes the input types are canonical.
 static bool shouldBeModeledWithNoOp(ASTContext &Context, QualType ToTy,
                                                          QualType FromTy) {
-  while (Context.UnwrapSimilarPointerTypes(ToTy, FromTy)) {
+  while (Context.UnwrapSimilarTypes(ToTy, FromTy)) {
     Qualifiers Quals1, Quals2;
     ToTy = Context.getUnqualifiedArrayType(ToTy, Quals1);
     FromTy = Context.getUnqualifiedArrayType(FromTy, Quals2);
@@ -474,6 +472,10 @@ static bool shouldBeModeledWithNoOp(ASTContext &Context, QualType ToTy,
 
   // If we are casting to void, the 'From' value can be used to represent the
   // 'To' value.
+  //
+  // FIXME: Doing this after unwrapping the types doesn't make any sense. A
+  // cast from 'int**' to 'void**' is not special in the way that a cast from
+  // 'int*' to 'void*' is.
   if (ToTy->isVoidType())
     return true;
 

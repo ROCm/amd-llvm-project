@@ -203,20 +203,20 @@ std::vector<uint32_t> MetadataStreamer::getWorkGroupDimensions(
 Kernel::CodeProps::Metadata MetadataStreamer::getHSACodeProps(
     const MachineFunction &MF,
     const SIProgramInfo &ProgramInfo) const {
-  const SISubtarget &STM = MF.getSubtarget<SISubtarget>();
+  const GCNSubtarget &STM = MF.getSubtarget<GCNSubtarget>();
   const SIMachineFunctionInfo &MFI = *MF.getInfo<SIMachineFunctionInfo>();
   HSAMD::Kernel::CodeProps::Metadata HSACodeProps;
   const Function &F = MF.getFunction();
 
-  // Avoid asserting on erroneous cases.
-  if (F.getCallingConv() != CallingConv::AMDGPU_KERNEL)
-    return HSACodeProps;
+  assert(F.getCallingConv() == CallingConv::AMDGPU_KERNEL ||
+         F.getCallingConv() == CallingConv::SPIR_KERNEL);
 
-  HSACodeProps.mKernargSegmentSize = STM.getKernArgSegmentSize(F);
+  unsigned MaxKernArgAlign;
+  HSACodeProps.mKernargSegmentSize = STM.getKernArgSegmentSize(F,
+                                                               MaxKernArgAlign);
   HSACodeProps.mGroupSegmentFixedSize = ProgramInfo.LDSSize;
   HSACodeProps.mPrivateSegmentFixedSize = ProgramInfo.ScratchSize;
-  HSACodeProps.mKernargSegmentAlign =
-      std::max(uint32_t(4), MFI.getMaxKernArgAlign());
+  HSACodeProps.mKernargSegmentAlign = std::max(MaxKernArgAlign, 4u);
   HSACodeProps.mWavefrontSize = STM.getWavefrontSize();
   HSACodeProps.mNumSGPRs = ProgramInfo.NumSGPR;
   HSACodeProps.mNumVGPRs = ProgramInfo.NumVGPR;
@@ -232,7 +232,7 @@ Kernel::CodeProps::Metadata MetadataStreamer::getHSACodeProps(
 Kernel::DebugProps::Metadata MetadataStreamer::getHSADebugProps(
     const MachineFunction &MF,
     const SIProgramInfo &ProgramInfo) const {
-  const SISubtarget &STM = MF.getSubtarget<SISubtarget>();
+  const GCNSubtarget &STM = MF.getSubtarget<GCNSubtarget>();
   HSAMD::Kernel::DebugProps::Metadata HSADebugProps;
 
   if (!STM.debuggerSupported())
@@ -465,11 +465,11 @@ void MetadataStreamer::end() {
 
 void MetadataStreamer::emitKernel(const MachineFunction &MF, const SIProgramInfo &ProgramInfo) {
   auto &Func = MF.getFunction();
-  auto CodeProps = getHSACodeProps(MF, ProgramInfo);
-  auto DebugProps = getHSADebugProps(MF, ProgramInfo);
-
   if (Func.getCallingConv() != CallingConv::AMDGPU_KERNEL)
     return;
+
+  auto CodeProps = getHSACodeProps(MF, ProgramInfo);
+  auto DebugProps = getHSADebugProps(MF, ProgramInfo);
 
   HSAMetadata.mKernels.push_back(Kernel::Metadata());
   auto &Kernel = HSAMetadata.mKernels.back();
