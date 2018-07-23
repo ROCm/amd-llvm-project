@@ -17,6 +17,7 @@
 #include "FuzzerValueBitMap.h"
 
 #include <set>
+#include <unordered_map>
 
 namespace fuzzer {
 
@@ -103,6 +104,7 @@ class TracePC {
 
   void PrintCoverage();
   void DumpCoverage();
+  void PrintUnstableStats();
 
   template<class CallBack>
   void IterateCoveredFunctions(CallBack CB);
@@ -135,7 +137,17 @@ class TracePC {
   void SetFocusFunction(const std::string &FuncName);
   bool ObservedFocusFunction();
 
+  void InitializeUnstableCounters();
+  void UpdateUnstableCounters();
+
 private:
+  // Value used to represent unstable edge.
+  static constexpr int16_t kUnstableCounter = -1;
+
+  // Uses 16-bit signed type to be able to accommodate any possible value from
+  // uint8_t counter and -1 constant as well.
+  int16_t UnstableCounters[kNumPCs];
+
   bool UseCounters = false;
   uint32_t UseValueProfileMask = false;
   bool DoPrintNewPCs = false;
@@ -165,10 +177,12 @@ private:
   uintptr_t *PCs() const;
 
   Set<uintptr_t> ObservedPCs;
-  Set<uintptr_t> ObservedFuncs;
+  std::unordered_map<uintptr_t, uintptr_t> ObservedFuncs;  // PC => Counter.
+
+  template <class Callback>
+  void IterateInline8bitCounters(Callback CB) const;
 
   std::pair<size_t, size_t> FocusFunction = {-1, -1};  // Module and PC IDs.
-
 
   ValueBitMap ValueProfileMap;
   uintptr_t InitialStack;

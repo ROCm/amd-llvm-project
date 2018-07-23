@@ -859,12 +859,12 @@ void ResultBuilder::MaybeAddResult(Result R, DeclContext *CurContext) {
   }
 
   // Look through using declarations.
-  if (const UsingShadowDecl *Using =
-          dyn_cast<UsingShadowDecl>(R.Declaration)) {
-    MaybeAddResult(Result(Using->getTargetDecl(),
-                          getBasePriority(Using->getTargetDecl()),
-                          R.Qualifier),
-                   CurContext);
+  if (const UsingShadowDecl *Using = dyn_cast<UsingShadowDecl>(R.Declaration)) {
+    CodeCompletionResult Result(Using->getTargetDecl(),
+                                getBasePriority(Using->getTargetDecl()),
+                                R.Qualifier);
+    Result.ShadowDecl = Using;
+    MaybeAddResult(Result, CurContext);
     return;
   }
 
@@ -977,10 +977,11 @@ void ResultBuilder::AddResult(Result R, DeclContext *CurContext,
 
   // Look through using declarations.
   if (const UsingShadowDecl *Using = dyn_cast<UsingShadowDecl>(R.Declaration)) {
-    AddResult(Result(Using->getTargetDecl(),
-                     getBasePriority(Using->getTargetDecl()),
-                     R.Qualifier),
-              CurContext, Hiding);
+    CodeCompletionResult Result(Using->getTargetDecl(),
+                                getBasePriority(Using->getTargetDecl()),
+                                R.Qualifier);
+    Result.ShadowDecl = Using;
+    AddResult(Result, CurContext, Hiding);
     return;
   }
 
@@ -1004,10 +1005,10 @@ void ResultBuilder::AddResult(Result R, DeclContext *CurContext,
   if (AsNestedNameSpecifier) {
     R.StartsNestedNameSpecifier = true;
     R.Priority = CCP_NestedNameSpecifier;
-  }
-  else if (Filter == &ResultBuilder::IsMember && !R.Qualifier && InBaseClass &&
-           isa<CXXRecordDecl>(R.Declaration->getDeclContext()
-                                                  ->getRedeclContext()))
+  } else if (Filter == &ResultBuilder::IsMember && !R.Qualifier &&
+             InBaseClass &&
+             isa<CXXRecordDecl>(
+                 R.Declaration->getDeclContext()->getRedeclContext()))
     R.QualifierIsInformative = true;
 
   // If this result is supposed to have an informative qualifier, add one.
@@ -1302,8 +1303,33 @@ namespace {
     void FoundDecl(NamedDecl *ND, NamedDecl *Hiding, DeclContext *Ctx,
                    bool InBaseClass) override {
       bool Accessible = true;
-      if (Ctx)
-        Accessible = Results.getSema().IsSimplyAccessible(ND, Ctx);
+      if (Ctx) {
+        DeclContext *AccessingCtx = Ctx;
+        // If ND comes from a base class, set the naming class back to the
+        // derived class if the search starts from the derived class (i.e.
+        // InBaseClass is true).
+        //
+        // Example:
+        //   class B { protected: int X; }
+        //   class D : public B { void f(); }
+        //   void D::f() { this->^; }
+        // The completion after "this->" will have `InBaseClass` set to true and
+        // `Ctx` set to "B", when looking up in `B`. We need to set the actual
+        // accessing context (i.e. naming class) to "D" so that access can be
+        // calculated correctly.
+        if (InBaseClass && isa<CXXRecordDecl>(Ctx)) {
+          CXXRecordDecl *RC = nullptr;
+          // Get the enclosing record.
+          for (DeclContext *DC = CurContext; !DC->isFileContext();
+               DC = DC->getParent()) {
+            if ((RC = dyn_cast<CXXRecordDecl>(DC)))
+              break;
+          }
+          if (RC)
+            AccessingCtx = RC;
+        }
+        Accessible = Results.getSema().IsSimplyAccessible(ND, AccessingCtx);
+      }
 
       ResultBuilder::Result Result(ND, Results.getBasePriority(ND), nullptr,
                                    false, Accessible, FixIts);

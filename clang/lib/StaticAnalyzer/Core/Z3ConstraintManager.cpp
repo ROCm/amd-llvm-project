@@ -681,12 +681,14 @@ public:
       Z3_get_numeral_uint64(Z3Context::ZC, AST,
                             reinterpret_cast<__uint64 *>(&Value[0]));
       if (Sort.getBitvectorSortSize() <= 64) {
-        Int = llvm::APSInt(llvm::APInt(Int.getBitWidth(), Value[0]), true);
+        Int = llvm::APSInt(llvm::APInt(Int.getBitWidth(), Value[0]),
+                           Int.isUnsigned());
       } else if (Sort.getBitvectorSortSize() == 128) {
         Z3Expr ASTHigh = Z3Expr(Z3_mk_extract(Z3Context::ZC, 127, 64, AST));
         Z3_get_numeral_uint64(Z3Context::ZC, AST,
                               reinterpret_cast<__uint64 *>(&Value[1]));
-        Int = llvm::APSInt(llvm::APInt(Int.getBitWidth(), Value), true);
+        Int = llvm::APSInt(llvm::APInt(Int.getBitWidth(), Value),
+                           Int.isUnsigned());
       } else {
         assert(false && "Bitwidth not supported!");
         return false;
@@ -702,7 +704,7 @@ public:
           llvm::APInt(Int.getBitWidth(),
                       Z3_get_bool_value(Z3Context::ZC, AST) == Z3_L_TRUE ? 1
                                                                          : 0),
-          true);
+          Int.isUnsigned());
       return true;
     }
   }
@@ -1075,40 +1077,39 @@ bool Z3ConstraintManager::canReasonAbout(SVal X) const {
     return true;
 
   const SymExpr *Sym = SymVal->getSymbol();
-  do {
-    QualType Ty = Sym->getType();
+  QualType Ty = Sym->getType();
 
-    // Complex types are not modeled
-    if (Ty->isComplexType() || Ty->isComplexIntegerType())
-      return false;
+  // Complex types are not modeled
+  if (Ty->isComplexType() || Ty->isComplexIntegerType())
+    return false;
 
-    // Non-IEEE 754 floating-point types are not modeled
-    if ((Ty->isSpecificBuiltinType(BuiltinType::LongDouble) &&
-         (&TI.getLongDoubleFormat() == &llvm::APFloat::x87DoubleExtended() ||
-          &TI.getLongDoubleFormat() == &llvm::APFloat::PPCDoubleDouble())))
-      return false;
+  // Non-IEEE 754 floating-point types are not modeled
+  if ((Ty->isSpecificBuiltinType(BuiltinType::LongDouble) &&
+       (&TI.getLongDoubleFormat() == &llvm::APFloat::x87DoubleExtended() ||
+        &TI.getLongDoubleFormat() == &llvm::APFloat::PPCDoubleDouble())))
+    return false;
 
-    if (isa<SymbolData>(Sym)) {
-      break;
-    } else if (const SymbolCast *SC = dyn_cast<SymbolCast>(Sym)) {
-      Sym = SC->getOperand();
-    } else if (const BinarySymExpr *BSE = dyn_cast<BinarySymExpr>(Sym)) {
-      if (const SymIntExpr *SIE = dyn_cast<SymIntExpr>(BSE)) {
-        Sym = SIE->getLHS();
-      } else if (const IntSymExpr *ISE = dyn_cast<IntSymExpr>(BSE)) {
-        Sym = ISE->getRHS();
-      } else if (const SymSymExpr *SSM = dyn_cast<SymSymExpr>(BSE)) {
-        return canReasonAbout(nonloc::SymbolVal(SSM->getLHS())) &&
-               canReasonAbout(nonloc::SymbolVal(SSM->getRHS()));
-      } else {
-        llvm_unreachable("Unsupported binary expression to reason about!");
-      }
-    } else {
-      llvm_unreachable("Unsupported expression to reason about!");
-    }
-  } while (Sym);
+  if (isa<SymbolData>(Sym))
+    return true;
 
-  return true;
+  SValBuilder &SVB = getSValBuilder();
+
+  if (const SymbolCast *SC = dyn_cast<SymbolCast>(Sym))
+    return canReasonAbout(SVB.makeSymbolVal(SC->getOperand()));
+
+  if (const BinarySymExpr *BSE = dyn_cast<BinarySymExpr>(Sym)) {
+    if (const SymIntExpr *SIE = dyn_cast<SymIntExpr>(BSE))
+      return canReasonAbout(SVB.makeSymbolVal(SIE->getLHS()));
+
+    if (const IntSymExpr *ISE = dyn_cast<IntSymExpr>(BSE))
+      return canReasonAbout(SVB.makeSymbolVal(ISE->getRHS()));
+
+    if (const SymSymExpr *SSE = dyn_cast<SymSymExpr>(BSE))
+      return canReasonAbout(SVB.makeSymbolVal(SSE->getLHS())) &&
+             canReasonAbout(SVB.makeSymbolVal(SSE->getRHS()));
+  }
+
+  llvm_unreachable("Unsupported expression to reason about!");
 }
 
 ConditionTruthVal Z3ConstraintManager::checkNull(ProgramStateRef State,

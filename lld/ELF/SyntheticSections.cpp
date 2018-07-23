@@ -328,8 +328,6 @@ void BuildIdSection::computeHash(
 BssSection::BssSection(StringRef Name, uint64_t Size, uint32_t Alignment)
     : SyntheticSection(SHF_ALLOC | SHF_WRITE, SHT_NOBITS, Alignment, Name) {
   this->Bss = true;
-  if (OutputSection *Sec = getParent())
-    Sec->Alignment = std::max(Sec->Alignment, Alignment);
   this->Size = Size;
 }
 
@@ -370,15 +368,11 @@ EhFrameSection::EhFrameSection()
 // and where their relocations point to.
 template <class ELFT, class RelTy>
 CieRecord *EhFrameSection::addCie(EhSectionPiece &Cie, ArrayRef<RelTy> Rels) {
-  auto *Sec = cast<EhInputSection>(Cie.Sec);
-  if (read32(Cie.data().data() + 4) != 0)
-    fatal(toString(Sec) + ": CIE expected at beginning of .eh_frame");
-
   Symbol *Personality = nullptr;
   unsigned FirstRelI = Cie.FirstRelocation;
   if (FirstRelI != (unsigned)-1)
     Personality =
-        &Sec->template getFile<ELFT>()->getRelocTargetSym(Rels[FirstRelI]);
+        &Cie.Sec->template getFile<ELFT>()->getRelocTargetSym(Rels[FirstRelI]);
 
   // Search for an existing CIE by CIE contents/relocation target pair.
   CieRecord *&Rec = CieMap[{Cie.data(), Personality}];
@@ -480,9 +474,7 @@ static void writeCieFde(uint8_t *Buf, ArrayRef<uint8_t> D) {
 }
 
 void EhFrameSection::finalizeContents() {
-  if (this->Size)
-    return; // Already finalized.
-
+  assert(!this->Size); // Not finalized.
   size_t Off = 0;
   for (CieRecord *Rec : CieRecords) {
     Rec->Cie->OutputOff = Off;
@@ -510,14 +502,31 @@ std::vector<EhFrameSection::FdeData> EhFrameSection::getFdeData() const {
   uint8_t *Buf = getParent()->Loc + OutSecOff;
   std::vector<FdeData> Ret;
 
+  uint64_t VA = InX::EhFrameHdr->getVA();
   for (CieRecord *Rec : CieRecords) {
     uint8_t Enc = getFdeEncoding(Rec->Cie);
     for (EhSectionPiece *Fde : Rec->Fdes) {
-      uint32_t Pc = getFdePc(Buf, Fde->OutputOff, Enc);
-      uint32_t FdeVA = getParent()->Addr + Fde->OutputOff;
-      Ret.push_back({Pc, FdeVA});
+      uint64_t Pc = getFdePc(Buf, Fde->OutputOff, Enc);
+      uint64_t FdeVA = getParent()->Addr + Fde->OutputOff;
+      if (!isInt<32>(Pc - VA))
+        fatal(toString(Fde->Sec) + ": PC offset is too large: 0x" +
+              Twine::utohexstr(Pc - VA));
+      Ret.push_back({uint32_t(Pc - VA), uint32_t(FdeVA - VA)});
     }
   }
+
+  // Sort the FDE list by their PC and uniqueify. Usually there is only
+  // one FDE for a PC (i.e. function), but if ICF merges two functions
+  // into one, there can be more than one FDEs pointing to the address.
+  auto Less = [](const FdeData &A, const FdeData &B) {
+    return A.PcRel < B.PcRel;
+  };
+  std::stable_sort(Ret.begin(), Ret.end(), Less);
+  auto Eq = [](const FdeData &A, const FdeData &B) {
+    return A.PcRel == B.PcRel;
+  };
+  Ret.erase(std::unique(Ret.begin(), Ret.end(), Eq), Ret.end());
+
   return Ret;
 }
 
@@ -1855,8 +1864,7 @@ void SymbolTableBaseSection::finalizeContents() {
 // symbol. That is convenient for purpose of identifying where are local symbols
 // coming from.
 void SymbolTableBaseSection::postThunkContents() {
-  if (this->Type == SHT_DYNSYM)
-    return;
+  assert(this->Type == SHT_SYMTAB);
 
   // Move all local symbols before global symbols.
   auto E = std::stable_partition(
@@ -2366,27 +2374,51 @@ createSymbols(ArrayRef<std::vector<GdbIndexSection::NameTypeEntry>> NameTypes) {
   typedef GdbIndexSection::GdbSymbol GdbSymbol;
   typedef GdbIndexSection::NameTypeEntry NameTypeEntry;
 
-  // A map to uniquify symbols by name.
-  DenseMap<CachedHashStringRef, size_t> Map;
+  // The number of symbols we will handle in this function is of the order
+  // of millions for very large executables, so we use multi-threading to
+  // speed it up.
+  size_t NumShards = 32;
+  size_t Concurrency = 1;
+  if (ThreadsEnabled)
+    Concurrency =
+        std::min<size_t>(PowerOf2Floor(hardware_concurrency()), NumShards);
+
+  // A sharded map to uniquify symbols by name.
+  std::vector<DenseMap<CachedHashStringRef, size_t>> Map(NumShards);
+  size_t Shift = 32 - countTrailingZeros(NumShards);
 
   // Instantiate GdbSymbols while uniqufying them by name.
-  std::vector<GdbSymbol> Ret;
-  for (ArrayRef<NameTypeEntry> Entries : NameTypes) {
-    for (const NameTypeEntry &Ent : Entries) {
-      size_t &Idx = Map[Ent.Name];
-      if (Idx) {
-        // gcc 5.4.1 produces a buggy .debug_gnu_pubnames that contains
-        // duplicate entries, so we want to dedup them.
-        std::vector<uint32_t> &Vec = Ret[Idx - 1].CuVector;
-        if (Vec.empty() || Vec.back() != Ent.Type)
-          Vec.push_back(Ent.Type);
-        continue;
-      }
+  std::vector<std::vector<GdbSymbol>> Symbols(NumShards);
+  parallelForEachN(0, Concurrency, [&](size_t ThreadId) {
+    for (ArrayRef<NameTypeEntry> Entries : NameTypes) {
+      for (const NameTypeEntry &Ent : Entries) {
+        size_t ShardId = Ent.Name.hash() >> Shift;
+        if ((ShardId & (Concurrency - 1)) != ThreadId)
+          continue;
 
-      Idx = Ret.size() + 1;
-      Ret.push_back({Ent.Name, {Ent.Type}, 0, 0});
+        size_t &Idx = Map[ShardId][Ent.Name];
+        if (Idx) {
+          Symbols[ShardId][Idx - 1].CuVector.push_back(Ent.Type);
+          continue;
+        }
+
+        Idx = Symbols[ShardId].size() + 1;
+        Symbols[ShardId].push_back({Ent.Name, {Ent.Type}, 0, 0});
+      }
     }
-  }
+  });
+
+  size_t NumSymbols = 0;
+  for (ArrayRef<GdbSymbol> V : Symbols)
+    NumSymbols += V.size();
+
+  // The return type is a flattened vector, so we'll copy each vector
+  // contents to Ret.
+  std::vector<GdbSymbol> Ret;
+  Ret.reserve(NumSymbols);
+  for (std::vector<GdbSymbol> &Vec : Symbols)
+    for (GdbSymbol &Sym : Vec)
+      Ret.push_back(std::move(Sym));
 
   // CU vectors and symbol names are adjacent in the output file.
   // We can compute their offsets in the output file now.
@@ -2515,14 +2547,6 @@ void EhFrameHeader::writeTo(uint8_t *Buf) {
 
   std::vector<FdeData> Fdes = InX::EhFrame->getFdeData();
 
-  // Sort the FDE list by their PC and uniqueify. Usually there is only
-  // one FDE for a PC (i.e. function), but if ICF merges two functions
-  // into one, there can be more than one FDEs pointing to the address.
-  auto Less = [](const FdeData &A, const FdeData &B) { return A.Pc < B.Pc; };
-  std::stable_sort(Fdes.begin(), Fdes.end(), Less);
-  auto Eq = [](const FdeData &A, const FdeData &B) { return A.Pc == B.Pc; };
-  Fdes.erase(std::unique(Fdes.begin(), Fdes.end(), Eq), Fdes.end());
-
   Buf[0] = 1;
   Buf[1] = DW_EH_PE_pcrel | DW_EH_PE_sdata4;
   Buf[2] = DW_EH_PE_udata4;
@@ -2531,10 +2555,9 @@ void EhFrameHeader::writeTo(uint8_t *Buf) {
   write32(Buf + 8, Fdes.size());
   Buf += 12;
 
-  uint64_t VA = this->getVA();
   for (FdeData &Fde : Fdes) {
-    write32(Buf, Fde.Pc - VA);
-    write32(Buf + 4, Fde.FdeVA - VA);
+    write32(Buf, Fde.PcRel);
+    write32(Buf + 4, Fde.FdeVARel);
     Buf += 8;
   }
 }
@@ -2920,6 +2943,10 @@ bool ARMExidxSentinelSection::empty() const {
     if (!isa<ARMExidxSentinelSection>(IS))
       return false;
   return true;
+}
+
+bool ARMExidxSentinelSection::classof(const SectionBase *D) {
+  return D->kind() == InputSectionBase::Synthetic && D->Type == SHT_ARM_EXIDX;
 }
 
 ThunkSection::ThunkSection(OutputSection *OS, uint64_t Off)

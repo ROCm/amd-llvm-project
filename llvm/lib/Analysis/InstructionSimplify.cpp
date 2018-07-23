@@ -540,6 +540,10 @@ static Value *SimplifyAddInst(Value *Op0, Value *Op1, bool IsNSW, bool IsNUW,
   if (match(Op1, m_Zero()))
     return Op0;
 
+  // If two operands are negative, return 0.
+  if (isKnownNegation(Op0, Op1))
+    return Constant::getNullValue(Op0->getType());
+
   // X + (Y - X) -> Y
   // (Y - X) + X -> Y
   // Eg: X + -X -> 0
@@ -1104,6 +1108,10 @@ static Value *SimplifySRemInst(Value *Op0, Value *Op1, const SimplifyQuery &Q,
   Value *X;
   if (match(Op1, m_SExt(m_Value(X))) && X->getType()->isIntOrIntVectorTy(1))
     return ConstantInt::getNullValue(Op0->getType());
+
+  // If the two operands are negated, return 0.
+  if (isKnownNegation(Op0, Op1))
+   return ConstantInt::getNullValue(Op0->getType());
 
   return simplifyRem(Instruction::SRem, Op0, Op1, Q, MaxRecurse);
 }
@@ -4720,6 +4728,14 @@ static Value *SimplifyIntrinsic(Function *F, IterTy ArgBegin, IterTy ArgEnd,
         if (Power->isOne())
           return LHS;
       }
+      return nullptr;
+    case Intrinsic::maxnum:
+    case Intrinsic::minnum:
+      // If one argument is NaN, return the other argument.
+      if (match(LHS, m_NaN()))
+        return RHS;
+      if (match(RHS, m_NaN()))
+        return LHS;
       return nullptr;
     default:
       return nullptr;

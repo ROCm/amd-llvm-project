@@ -24,7 +24,6 @@ char FailedToMaterialize::ID = 0;
 char SymbolsNotFound::ID = 0;
 
 void MaterializationUnit::anchor() {}
-void SymbolResolver::anchor() {}
 
 raw_ostream &operator<<(raw_ostream &OS, const JITSymbolFlags &Flags) {
   if (Flags.isWeak())
@@ -96,6 +95,20 @@ raw_ostream &operator<<(raw_ostream &OS, const SymbolDependenceMap &Deps) {
       OS << ", { " << KV.first->getName() << ": " << KV.second << " }";
   }
   OS << " }";
+  return OS;
+}
+
+raw_ostream &operator<<(raw_ostream &OS, const VSOList &VSOs) {
+  OS << "[";
+  if (!VSOs.empty()) {
+    assert(VSOs.front() && "VSOList entries must not be null");
+    OS << " " << VSOs.front()->getName();
+    for (auto *V : make_range(std::next(VSOs.begin()), VSOs.end())) {
+      assert(V && "VSOList entries must not be null");
+      OS << ", " << V->getName();
+    }
+  }
+  OS << " ]";
   return OS;
 }
 
@@ -509,11 +522,14 @@ ReExportsMaterializationUnit::extractFlags(const SymbolAliasMap &Aliases) {
 
 Expected<SymbolAliasMap>
 buildSimpleReexportsAliasMap(VSO &SourceV, const SymbolNameSet &Symbols) {
-  SymbolFlagsMap Flags;
-  auto Unresolved = SourceV.lookupFlags(Flags, Symbols);
+  auto Flags = SourceV.lookupFlags(Symbols);
 
-  if (!Unresolved.empty())
+  if (Flags.size() != Symbols.size()) {
+    SymbolNameSet Unresolved = Symbols;
+    for (auto &KV : Flags)
+      Unresolved.erase(KV.first);
     return make_error<SymbolsNotFound>(std::move(Unresolved));
+  }
 
   SymbolAliasMap Result;
   for (auto &Name : Symbols) {
@@ -859,22 +875,48 @@ void VSO::runOutstandingMUs() {
   }
 }
 
-SymbolNameSet VSO::lookupFlags(SymbolFlagsMap &Flags,
-                               const SymbolNameSet &Names) {
+void VSO::setSearchOrder(VSOList NewSearchOrder, bool SearchThisVSOFirst) {
+  if (SearchThisVSOFirst && NewSearchOrder.front() != this)
+    NewSearchOrder.insert(NewSearchOrder.begin(), this);
+
+  ES.runSessionLocked([&]() { SearchOrder = std::move(NewSearchOrder); });
+}
+
+void VSO::addToSearchOrder(VSO &V) {
+  ES.runSessionLocked([&]() { SearchOrder.push_back(&V); });
+}
+
+void VSO::replaceInSearchOrder(VSO &OldV, VSO &NewV) {
+  ES.runSessionLocked([&]() {
+    auto I = std::find(SearchOrder.begin(), SearchOrder.end(), &OldV);
+
+    if (I != SearchOrder.end())
+      *I = &NewV;
+  });
+}
+
+void VSO::removeFromSearchOrder(VSO &V) {
+  ES.runSessionLocked([&]() {
+    auto I = std::find(SearchOrder.begin(), SearchOrder.end(), &V);
+    if (I != SearchOrder.end())
+      SearchOrder.erase(I);
+  });
+}
+
+SymbolFlagsMap VSO::lookupFlags(const SymbolNameSet &Names) {
   return ES.runSessionLocked([&, this]() {
-    auto Unresolved = lookupFlagsImpl(Flags, Names);
+    SymbolFlagsMap Result;
+    auto Unresolved = lookupFlagsImpl(Result, Names);
     if (FallbackDefinitionGenerator && !Unresolved.empty()) {
       auto FallbackDefs = FallbackDefinitionGenerator(*this, Unresolved);
       if (!FallbackDefs.empty()) {
-        auto Unresolved2 = lookupFlagsImpl(Flags, FallbackDefs);
+        auto Unresolved2 = lookupFlagsImpl(Result, FallbackDefs);
         (void)Unresolved2;
         assert(Unresolved2.empty() &&
                "All fallback defs should have been found by lookupFlagsImpl");
-        for (auto &D : FallbackDefs)
-          Unresolved.erase(D);
       }
     };
-    return Unresolved;
+    return Result;
   });
 }
 
@@ -1064,6 +1106,11 @@ void VSO::dump(raw_ostream &OS) {
         OS << "        " << KV2.first->getName() << ": " << KV2.second << "\n";
     }
   });
+}
+
+VSO::VSO(ExecutionSessionBase &ES, std::string Name)
+    : ES(ES), VSOName(std::move(Name)) {
+  SearchOrder.push_back(this);
 }
 
 Error VSO::defineImpl(MaterializationUnit &MU) {

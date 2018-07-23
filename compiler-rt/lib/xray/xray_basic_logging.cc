@@ -90,7 +90,9 @@ static int openLogFile() XRAY_NEVER_INSTRUMENT {
   // header will only be written once, at the start, and let the threads
   // logging do writes which just append.
   XRayFileHeader Header;
-  Header.Version = 2; // Version 2 includes tail exit records.
+  // Version 2 includes tail exit records.
+  // Version 3 includes pid inside records.
+  Header.Version = 3;
   Header.Type = FileTypes::NAIVE_LOG;
   Header.CycleFrequency = atomic_load(&CycleFrequency, memory_order_acquire);
 
@@ -269,7 +271,7 @@ void InMemoryRawLogWithArg(int32_t FuncId, XRayEntryType Type, uint64_t Arg1,
   if (!G)
     return;
 
-  // And from here on write the arg payload.
+  // And, from here on write the arg payload.
   XRayArgPayload R;
   R.RecordType = RecordTypes::ARG_PAYLOAD;
   R.FuncId = FuncId;

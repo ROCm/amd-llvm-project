@@ -40,6 +40,9 @@ enum class BuildIdKind { None, Fast, Md5, Sha1, Hexstring, Uuid };
 // For --discard-{all,locals,none}.
 enum class DiscardPolicy { Default, All, Locals, None };
 
+// For --icf={none,safe,all}.
+enum class ICFLevel { None, Safe, All };
+
 // For --strip-{all,debug}.
 enum class StripPolicy { None, All, Debug };
 
@@ -80,6 +83,7 @@ struct Configuration {
   llvm::StringMap<uint64_t> SectionStartMap;
   llvm::StringRef Chroot;
   llvm::StringRef DynamicLinker;
+  llvm::StringRef DwoDir;
   llvm::StringRef Entry;
   llvm::StringRef Emulation;
   llvm::StringRef Fini;
@@ -137,7 +141,6 @@ struct Configuration {
   bool GnuUnique;
   bool HasDynamicList = false;
   bool HasDynSymTab;
-  bool ICF;
   bool IgnoreDataAddressEquality;
   bool IgnoreFunctionAddressEquality;
   bool LTODebugPassManager;
@@ -186,6 +189,7 @@ struct Configuration {
   bool ZRetpolineplt;
   bool ZWxneeded;
   DiscardPolicy Discard;
+  ICFLevel ICF;
   OrphanHandlingPolicy OrphanHandling;
   SortSectionPolicy SortSection;
   StripPolicy Strip;
