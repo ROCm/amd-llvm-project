@@ -882,10 +882,10 @@ void CodeGenFunction::StartFunction(GlobalDecl GD,
         SanOpts.set(SanitizerKind::HWAddress, false);
     }
 
-    // Device code has all sanitizers disabled for now
-      if (D->hasAttr<CXXAMPRestrictAMPAttr>())
-         SanOpts.clear();
   }
+  // Device code has all sanitizers disabled for now
+  if (CGM.getCodeGenOpts().AMPIsDevice)
+     SanOpts.clear();
 
   // Apply sanitizer attributes to the function.
   if (SanOpts.hasOneOf(SanitizerKind::Address | SanitizerKind::KernelAddress))
