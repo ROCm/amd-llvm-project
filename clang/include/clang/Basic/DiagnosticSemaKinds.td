@@ -608,6 +608,8 @@ def err_builtin_redeclare : Error<"cannot redeclare builtin function %0">;
 def err_arm_invalid_specialreg : Error<"invalid special register for builtin">;
 def err_invalid_cpu_supports : Error<"invalid cpu feature string for builtin">;
 def err_invalid_cpu_is : Error<"invalid cpu name for builtin">;
+def err_invalid_cpu_specific_dispatch_value : Error<
+"invalid option '%0' for %select{cpu_specific|cpu_dispatch}1">;
 def err_builtin_needs_feature : Error<"%0 needs target feature %1">;
 def err_function_needs_feature
     : Error<"always_inline function %1 requires target feature '%2', but would "
@@ -1802,7 +1804,8 @@ def err_destructor_template : Error<
 
 // C++ initialization
 def err_init_conversion_failed : Error<
-  "cannot initialize %select{a variable|a parameter|return object|an "
+  "cannot initialize %select{a variable|a parameter|return object|"
+  "statement expression result|an "
   "exception object|a member subobject|an array element|a new value|a value|a "
   "base class|a constructor delegation|a vector element|a block element|a "
   "block element|a complex element|a lambda capture|a compound literal "
@@ -1842,10 +1845,6 @@ def err_reference_bind_failed : Error<
   "type $|could not bind to %select{rvalue|lvalue}1 of incompatible type}0,2">;
 def err_reference_bind_init_list : Error<
   "reference to type %0 cannot bind to an initializer list">;
-def warn_temporary_array_to_pointer_decay : Warning<
-  "pointer is initialized by a temporary array, which will be destroyed at the "
-  "end of the full-expression">,
-  InGroup<DiagGroup<"address-of-array-temporary">>;
 def err_init_list_bad_dest_type : Error<
   "%select{|non-aggregate }0type %1 cannot be initialized with an initializer "
   "list">;
@@ -1937,34 +1936,29 @@ def warn_unsequenced_mod_mod : Warning<
 def warn_unsequenced_mod_use : Warning<
   "unsequenced modification and access to %0">, InGroup<Unsequenced>;
 
+def select_initialized_entity_kind : TextSubstitution<
+  "%select{copying variable|copying parameter|"
+  "returning object|initializing statement expression result|"
+  "throwing object|copying member subobject|copying array element|"
+  "allocating object|copying temporary|initializing base subobject|"
+  "initializing vector element|capturing value}0">;
+
 def err_temp_copy_no_viable : Error<
-  "no viable constructor %select{copying variable|copying parameter|"
-  "returning object|throwing object|copying member subobject|copying array "
-  "element|allocating object|copying temporary|initializing base subobject|"
-  "initializing vector element|capturing value}0 of type %1">;
+  "no viable constructor %sub{select_initialized_entity_kind}0 of type %1">;
 def ext_rvalue_to_reference_temp_copy_no_viable : Extension<
-  "no viable constructor %select{copying variable|copying parameter|"
-  "returning object|throwing object|copying member subobject|copying array "
-  "element|allocating object|copying temporary|initializing base subobject|"
-  "initializing vector element|capturing value}0 of type %1; C++98 requires a copy "
-  "constructor when binding a reference to a temporary">,
+  "no viable constructor %sub{select_initialized_entity_kind}0 of type %1; "
+  "C++98 requires a copy constructor when binding a reference to a temporary">,
   InGroup<BindToTemporaryCopy>;
 def err_temp_copy_ambiguous : Error<
-  "ambiguous constructor call when %select{copying variable|copying "
-  "parameter|returning object|throwing object|copying member subobject|copying "
-  "array element|allocating object|copying temporary|initializing base subobject|"
-  "initializing vector element|capturing value}0 of type %1">;
+  "ambiguous constructor call when %sub{select_initialized_entity_kind}0 "
+  "of type %1">;
 def err_temp_copy_deleted : Error<
-  "%select{copying variable|copying parameter|returning object|throwing "
-  "object|copying member subobject|copying array element|allocating object|"
-  "copying temporary|initializing base subobject|initializing vector element|"
-  "capturing value}0 of type %1 invokes deleted constructor">;
+  "%sub{select_initialized_entity_kind}0 of type %1 "
+  "invokes deleted constructor">;
 def err_temp_copy_incomplete : Error<
   "copying a temporary object of incomplete type %0">;
 def warn_cxx98_compat_temp_copy : Warning<
-  "%select{copying variable|copying parameter|returning object|throwing "
-  "object|copying member subobject|copying array element|allocating object|"
-  "copying temporary|initializing base subobject|initializing vector element}1 "
+  "%sub{select_initialized_entity_kind}1 "
   "of type %2 when binding a reference to a temporary would %select{invoke "
   "an inaccessible constructor|find no viable constructor|find ambiguous "
   "constructors|invoke a deleted constructor}0 in C++98">,
@@ -3790,8 +3784,8 @@ def err_ovl_no_viable_subscript :
 def err_ovl_no_oper :
     Error<"type %0 does not provide a %select{subscript|call}1 operator">;
 def err_ovl_unresolvable : Error<
-  "reference to overloaded function could not be resolved; "
-  "did you mean to call it%select{| with no arguments}0?">;
+  "reference to %select{overloaded|multiversioned}1 function could not be "
+  "resolved; did you mean to call it%select{| with no arguments}0?">;
 def err_bound_member_function : Error<
   "reference to non-static member function must be called"
   "%select{|; did you mean to call it with no arguments?}0">;
@@ -7853,8 +7847,8 @@ def warn_null_ret : Warning<
 
 // CHECK: returning address/reference of stack memory
 def warn_ret_stack_addr_ref : Warning<
-  "%select{address of|reference to}0 stack memory associated with local "
-  "variable %1 returned">,
+  "%select{address of|reference to}0 stack memory associated with "
+  "%select{local variable|parameter}2 %1 returned">,
   InGroup<ReturnStackAddress>;
 def warn_ret_local_temp_addr_ref : Warning<
   "returning %select{address of|reference to}0 local temporary object">,
@@ -7864,29 +7858,47 @@ def warn_ret_addr_label : Warning<
   InGroup<ReturnStackAddress>;
 def err_ret_local_block : Error<
   "returning block that lives on the local stack">;
-def note_ref_var_local_bind : Note<
-  "binding reference variable %0 here">;
+def note_local_var_initializer : Note<
+  "%select{via initialization of|binding reference}0 variable %1 here">;
+def note_init_with_default_member_initalizer : Note<
+  "initializing field %0 with default member initializer">;
 
 // Check for initializing a member variable with the address or a reference to
 // a constructor parameter.
 def warn_bind_ref_member_to_parameter : Warning<
-  "binding reference member %0 to stack allocated parameter %1">,
-  InGroup<DanglingField>;
+  "binding reference member %0 to stack allocated "
+  "%select{variable|parameter}2 %1">, InGroup<DanglingField>;
 def warn_init_ptr_member_to_parameter_addr : Warning<
-  "initializing pointer member %0 with the stack address of parameter %1">,
-  InGroup<DanglingField>;
+  "initializing pointer member %0 with the stack address of "
+  "%select{variable|parameter}2 %1">, InGroup<DanglingField>;
 def note_ref_or_ptr_member_declared_here : Note<
   "%select{reference|pointer}0 member declared here">;
 
-def err_bind_ref_member_to_temporary : Error<
+def err_dangling_member : Error<
   "%select{reference|backing array for 'std::initializer_list'}2 "
   "%select{|subobject of }1member %0 "
   "%select{binds to|is}2 a temporary object "
-  "whose lifetime would be shorter than the constructed object">;
+  "whose lifetime would be shorter than the lifetime of "
+  "the constructed object">;
+def warn_dangling_member : Warning<
+  "%select{reference|backing array for 'std::initializer_list'}2 "
+  "%select{|subobject of }1member %0 "
+  "%select{binds to|is}2 a temporary object "
+  "whose lifetime is shorter than the lifetime of the constructed object">,
+  InGroup<DanglingField>;
 def note_lifetime_extending_member_declared_here : Note<
   "%select{%select{reference|'std::initializer_list'}0 member|"
   "member with %select{reference|'std::initializer_list'}0 subobject}1 "
   "declared here">;
+def warn_dangling_variable : Warning<
+  "%select{temporary %select{whose address is used as value of|bound to}3 "
+  "%select{%select{|reference }3member of local variable|"
+  "local %select{variable|reference}3}1|"
+  "array backing "
+  "%select{initializer list subobject of local variable|"
+  "local initializer list}1}0 "
+  "%2 will be destroyed at the end of the full-expression">,
+  InGroup<Dangling>;
 def warn_new_dangling_reference : Warning<
   "temporary bound to reference member of allocated object "
   "will be destroyed at the end of the full-expression">,
@@ -7897,17 +7909,12 @@ def warn_new_dangling_initializer_list : Warning<
   "the allocated initializer list}0 "
   "will be destroyed at the end of the full-expression">,
   InGroup<DanglingInitializerList>;
-def warn_default_member_init_temporary_not_extended : Warning<
-  "sorry, lifetime extension of temporary created by aggregate initialization "
-  "using default member initializer is not supported; lifetime of temporary "
-  "will end at the end of the full-expression">, InGroup<DanglingField>;
-def warn_default_member_init_init_list_not_extended : Warning<
-  "sorry, lifetime extension of backing array of initializer list "
-  "created by aggregate initialization using default member initializer "
-  "is not supported; lifetime of backing array will end at the end of the "
-  "full-expression">, InGroup<DanglingInitializerList>;
-def note_in_default_member_initalizer_here : Note<
-  "in default member initializer for field %0 used here">;
+def warn_unsupported_lifetime_extension : Warning<
+  "sorry, lifetime extension of "
+  "%select{temporary|backing array of initializer list}0 created "
+  "by aggregate initialization using default member initializer "
+  "is not supported; lifetime of %select{temporary|backing array}0 "
+  "will end at the end of the full-expression">, InGroup<Dangling>;
 
 // For non-floating point, expressions of the form x == x or x != x
 // should result in a warning, since these always evaluate to a constant.
@@ -9435,9 +9442,9 @@ def warn_shadow_field :
   InGroup<ShadowField>, DefaultIgnore;
 def note_shadow_field : Note<"declared here">;
 
-def err_target_required_in_redecl : Error<
-  "function declaration is missing 'target' attribute in a multiversioned "
-  "function">;
+def err_multiversion_required_in_redecl : Error<
+  "function declaration is missing %select{'target'|'cpu_specific' or "
+  "'cpu_dispatch'}0 attribute in a multiversioned function">;
 def note_multiversioning_caused_here : Note<
   "function multiversioning caused by this declaration">;
 def err_multiversion_after_used : Error<
@@ -9451,20 +9458,33 @@ def err_multiversion_duplicate : Error<
 def err_multiversion_noproto : Error<
   "multiversioned function must have a prototype">;
 def err_multiversion_no_other_attrs : Error<
-  "attribute 'target' multiversioning cannot be combined with other "
-  "attributes">;
+  "attribute '%select{target|cpu_specific|cpu_dispatch}0' multiversioning cannot be combined"
+  " with other attributes">;
 def err_multiversion_diff : Error<
   "multiversioned function declaration has a different %select{calling convention"
   "|return type|constexpr specification|inline specification|storage class|"
   "linkage}0">;
 def err_multiversion_doesnt_support : Error<
-  "multiversioned functions do not yet support %select{function templates|"
-  "virtual functions|deduced return types|constructors|destructors|"
-  "deleted functions|defaulted functions}0">;
+  "attribute '%select{target|cpu_specific|cpu_dispatch}0' multiversioned functions do not "
+  "yet support %select{function templates|virtual functions|"
+  "deduced return types|constructors|destructors|deleted functions|"
+  "defaulted functions|constexpr functions}1">;
 def err_multiversion_not_allowed_on_main : Error<
   "'main' cannot be a multiversioned function">;
 def err_multiversion_not_supported : Error<
  "function multiversioning is not supported on the current target">;
+def err_multiversion_types_mixed : Error<
+  "multiversioning attributes cannot be combined">;
+def err_cpu_dispatch_mismatch : Error<
+ "'cpu_dispatch' function redeclared with different CPUs">;
+def err_cpu_specific_multiple_defs : Error<
+ "multiple 'cpu_specific' functions cannot specify the same CPU: %0">;
+def warn_multiversion_duplicate_entries : Warning<
+ "CPU list contains duplicate entries; attribute ignored">,
+  InGroup<FunctionMultiVersioning>;
+def warn_dispatch_body_ignored : Warning<
+  "body of cpu_dispatch function will be ignored">,
+  InGroup<FunctionMultiVersioning>;
 
 // three-way comparison operator diagnostics
 def err_implied_comparison_category_type_not_found : Error<

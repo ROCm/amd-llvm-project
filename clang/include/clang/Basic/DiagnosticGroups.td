@@ -273,6 +273,10 @@ def OverloadedShiftOpParentheses: DiagGroup<"overloaded-shift-op-parentheses">;
 def DanglingElse: DiagGroup<"dangling-else">;
 def DanglingField : DiagGroup<"dangling-field">;
 def DanglingInitializerList : DiagGroup<"dangling-initializer-list">;
+def ReturnStackAddress : DiagGroup<"return-stack-address">;
+def Dangling : DiagGroup<"dangling", [DanglingField,
+                                      DanglingInitializerList,
+                                      ReturnStackAddress]>;
 def DistributedObjectModifiers : DiagGroup<"distributed-object-modifiers">;
 def ExpansionToDefined : DiagGroup<"expansion-to-defined">;
 def FlagEnum : DiagGroup<"flag-enum">;
@@ -407,7 +411,6 @@ def RedeclaredClassMember : DiagGroup<"redeclared-class-member">;
 def GNURedeclaredEnum : DiagGroup<"gnu-redeclared-enum">;
 def RedundantMove : DiagGroup<"redundant-move">;
 def Register : DiagGroup<"register", [DeprecatedRegister]>;
-def ReturnStackAddress : DiagGroup<"return-stack-address">;
 def ReturnTypeCLinkage : DiagGroup<"return-type-c-linkage">;
 def ReturnType : DiagGroup<"return-type", [ReturnTypeCLinkage]>;
 def BindToTemporaryCopy : DiagGroup<"bind-to-temporary-copy",
@@ -1022,3 +1025,7 @@ def SpirCompat : DiagGroup<"spir-compat">;
 
 // Warning for the experimental-isel options.
 def ExperimentalISel : DiagGroup<"experimental-isel">;
+
+// A warning group specifically for warnings related to function
+// multiversioning.
+def FunctionMultiVersioning : DiagGroup<"function-multiversion">;

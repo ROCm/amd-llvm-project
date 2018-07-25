@@ -1093,30 +1093,35 @@ void SelectionDAGBuilder::visit(unsigned Opcode, const User &I) {
 
 void SelectionDAGBuilder::dropDanglingDebugInfo(const DILocalVariable *Variable,
                                                 const DIExpression *Expr) {
-  for (auto &DDIMI : DanglingDebugInfoMap)
-    for (auto &DDI : DDIMI.second)
-      if (DDI.getDI()) {
-        const DbgValueInst *DI = DDI.getDI();
-        DIVariable *DanglingVariable = DI->getVariable();
-        DIExpression *DanglingExpr = DI->getExpression();
-        if (DanglingVariable == Variable &&
-            Expr->fragmentsOverlap(DanglingExpr)) {
-          LLVM_DEBUG(dbgs()
-                     << "Dropping dangling debug info for " << *DI << "\n");
-          DDI = DanglingDebugInfo();
-        }
-      }
+  auto isMatchingDbgValue = [&](DanglingDebugInfo &DDI) {
+    const DbgValueInst *DI = DDI.getDI();
+    DIVariable *DanglingVariable = DI->getVariable();
+    DIExpression *DanglingExpr = DI->getExpression();
+    if (DanglingVariable == Variable && Expr->fragmentsOverlap(DanglingExpr)) {
+      LLVM_DEBUG(dbgs() << "Dropping dangling debug info for " << *DI << "\n");
+      return true;
+    }
+    return false;
+  };
+
+  for (auto &DDIMI : DanglingDebugInfoMap) {
+    DanglingDebugInfoVector &DDIV = DDIMI.second;
+    DDIV.erase(remove_if(DDIV, isMatchingDbgValue), DDIV.end());
+  }
 }
 
 // resolveDanglingDebugInfo - if we saw an earlier dbg_value referring to V,
 // generate the debug data structures now that we've seen its definition.
 void SelectionDAGBuilder::resolveDanglingDebugInfo(const Value *V,
                                                    SDValue Val) {
-  DanglingDebugInfoVector &DDIV = DanglingDebugInfoMap[V];
+  auto DanglingDbgInfoIt = DanglingDebugInfoMap.find(V);
+  if (DanglingDbgInfoIt == DanglingDebugInfoMap.end())
+    return;
+
+  DanglingDebugInfoVector &DDIV = DanglingDbgInfoIt->second;
   for (auto &DDI : DDIV) {
-    if (!DDI.getDI())
-      continue;
     const DbgValueInst *DI = DDI.getDI();
+    assert(DI && "Ill-formed DanglingDebugInfo");
     DebugLoc dl = DDI.getdl();
     unsigned ValSDNodeOrder = Val.getNode()->getIROrder();
     unsigned DbgSDNodeOrder = DDI.getSDNodeOrder();
@@ -1146,7 +1151,7 @@ void SelectionDAGBuilder::resolveDanglingDebugInfo(const Value *V,
     } else
       LLVM_DEBUG(dbgs() << "Dropping debug info for " << *DI << "\n");
   }
-  DanglingDebugInfoMap[V].clear();
+  DDIV.clear();
 }
 
 /// getCopyFromRegs - If there was virtual register allocated for the value V
@@ -2668,6 +2673,10 @@ static bool isVectorReductionOp(const User *I) {
   }
 
   unsigned ElemNum = Inst->getType()->getVectorNumElements();
+  // Ensure the reduction size is a power of 2.
+  if (!isPowerOf2_32(ElemNum))
+    return false;
+
   unsigned ElemNumToReduce = ElemNum;
 
   // Do DFS search on the def-use chain from the given instruction. We only
@@ -2753,7 +2762,7 @@ static bool isVectorReductionOp(const User *I) {
           return false;
 
         const ConstantInt *Val = dyn_cast<ConstantInt>(U->getOperand(1));
-        if (!Val || Val->getZExtValue() != 0)
+        if (!Val || !Val->isZero())
           return false;
 
         ReduxExtracted = true;
@@ -5316,8 +5325,7 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
     if (!V->use_empty() ) {
       // Do not call getValue(V) yet, as we don't want to generate code.
       // Remember it for later.
-      DanglingDebugInfo DDI(&DI, dl, SDNodeOrder);
-      DanglingDebugInfoMap[V].push_back(DDI);
+      DanglingDebugInfoMap[V].emplace_back(&DI, dl, SDNodeOrder);
       return nullptr;
     }
 
