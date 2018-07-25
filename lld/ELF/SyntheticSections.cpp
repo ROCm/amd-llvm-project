@@ -534,9 +534,14 @@ static uint64_t readFdeAddr(uint8_t *Buf, int Size) {
   switch (Size) {
   case DW_EH_PE_udata2:
     return read16(Buf);
+  case DW_EH_PE_sdata2:
+    return (int16_t)read16(Buf);
   case DW_EH_PE_udata4:
     return read32(Buf);
+  case DW_EH_PE_sdata4:
+    return (int32_t)read32(Buf);
   case DW_EH_PE_udata8:
+  case DW_EH_PE_sdata8:
     return read64(Buf);
   case DW_EH_PE_absptr:
     return readUint(Buf);
@@ -551,7 +556,7 @@ uint64_t EhFrameSection::getFdePc(uint8_t *Buf, size_t FdeOff,
   // The starting address to which this FDE applies is
   // stored at FDE + 8 byte.
   size_t Off = FdeOff + 8;
-  uint64_t Addr = readFdeAddr(Buf + Off, Enc & 0x7);
+  uint64_t Addr = readFdeAddr(Buf + Off, Enc & 0xf);
   if ((Enc & 0x70) == DW_EH_PE_absptr)
     return Addr;
   if ((Enc & 0x70) == DW_EH_PE_pcrel)
@@ -867,7 +872,13 @@ template <class ELFT> void MipsGotSection::build() {
     if (tryMergeGots(MergedGots.front(), SrcGot, true)) {
       File->MipsGotIndex = 0;
     } else {
-      if (!tryMergeGots(MergedGots.back(), SrcGot, false)) {
+      // If this is the first time we failed to merge with the primary GOT,
+      // MergedGots.back() will also be the primary GOT. We must make sure not
+      // to try to merge again with IsPrimary=false, as otherwise, if the
+      // inputs are just right, we could allow the primary GOT to become 1 or 2
+      // words too big due to ignoring the header size.
+      if (MergedGots.size() == 1 ||
+          !tryMergeGots(MergedGots.back(), SrcGot, false)) {
         MergedGots.emplace_back();
         std::swap(MergedGots.back(), SrcGot);
       }
