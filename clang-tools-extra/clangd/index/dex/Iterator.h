@@ -118,22 +118,31 @@ createAnd(std::vector<std::unique_ptr<Iterator>> Children);
 std::unique_ptr<Iterator>
 createOr(std::vector<std::unique_ptr<Iterator>> Children);
 
-/// This allows createAnd({create(...), create(...)}) syntax.
-template <size_t Size>
-std::unique_ptr<Iterator>
-createAnd(std::unique_ptr<Iterator>(&&Children)[Size]) {
-  std::vector<std::unique_ptr<Iterator>> Elements;
-  std::move(begin(Children), end(Children), std::back_inserter(Elements));
-  return createAnd(move(Elements));
+/// This allows createAnd(create(...), create(...)) syntax.
+template <typename... Args> std::unique_ptr<Iterator> createAnd(Args... args) {
+  std::vector<std::unique_ptr<Iterator>> Children;
+  populateChildren(Children, args...);
+  return createAnd(move(Children));
 }
 
-/// This allows createOr({create(...), create(...)}) syntax.
-template <size_t Size>
-std::unique_ptr<Iterator>
-createOr(std::unique_ptr<Iterator>(&&Children)[Size]) {
-  std::vector<std::unique_ptr<Iterator>> Elements;
-  std::move(begin(Children), end(Children), std::back_inserter(Elements));
-  return createOr(move(Elements));
+/// This allows createOr(create(...), create(...)) syntax.
+template <typename... Args> std::unique_ptr<Iterator> createOr(Args... args) {
+  std::vector<std::unique_ptr<Iterator>> Children;
+  populateChildren(Children, args...);
+  return createOr(move(Children));
+}
+
+template <typename HeadT, typename... TailT>
+void populateChildren(std::vector<std::unique_ptr<Iterator>> &Children,
+                      HeadT &Head, TailT &... Tail) {
+  Children.push_back(move(Head));
+  populateChildren(Children, Tail...);
+}
+
+template <typename HeadT>
+void populateChildren(std::vector<std::unique_ptr<Iterator>> &Children,
+                      HeadT &Head) {
+  Children.push_back(move(Head));
 }
 
 } // namespace dex

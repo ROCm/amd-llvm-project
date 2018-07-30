@@ -282,6 +282,79 @@ let Predicates = [HasSVE] in {
 
 
 //===----------------------------------------------------------------------===//
+// SVE Predicate Misc Group
+//===----------------------------------------------------------------------===//
+
+class sve_int_pfalse<bits<6> opc, string asm>
+: I<(outs PPR8:$Pd), (ins),
+  asm, "\t$Pd",
+  "",
+  []>, Sched<[]> {
+  bits<4> Pd;
+  let Inst{31-24} = 0b00100101;
+  let Inst{23-22} = opc{5-4};
+  let Inst{21-19} = 0b011;
+  let Inst{18-16} = opc{3-1};
+  let Inst{15-10} = 0b111001;
+  let Inst{9}     = opc{0};
+  let Inst{8-4}   = 0b00000;
+  let Inst{3-0}   = Pd;
+}
+
+class sve_int_ptest<bits<6> opc, string asm>
+: I<(outs), (ins PPRAny:$Pg, PPR8:$Pn),
+  asm, "\t$Pg, $Pn",
+  "",
+  []>, Sched<[]> {
+  bits<4> Pg;
+  bits<4> Pn;
+  let Inst{31-24} = 0b00100101;
+  let Inst{23-22} = opc{5-4};
+  let Inst{21-19} = 0b010;
+  let Inst{18-16} = opc{3-1};
+  let Inst{15-14} = 0b11;
+  let Inst{13-10} = Pg;
+  let Inst{9}     = opc{0};
+  let Inst{8-5}   = Pn;
+  let Inst{4-0}   = 0b00000;
+
+  let Defs = [NZCV];
+}
+
+class sve_int_pfirst_next<bits<2> sz8_64, bits<5> opc, string asm,
+                          PPRRegOp pprty>
+: I<(outs pprty:$Pdn), (ins PPRAny:$Pg, pprty:$_Pdn),
+  asm, "\t$Pdn, $Pg, $_Pdn",
+  "",
+  []>, Sched<[]> {
+  bits<4> Pdn;
+  bits<4> Pg;
+  let Inst{31-24} = 0b00100101;
+  let Inst{23-22} = sz8_64;
+  let Inst{21-19} = 0b011;
+  let Inst{18-16} = opc{4-2};
+  let Inst{15-11} = 0b11000;
+  let Inst{10-9}  = opc{1-0};
+  let Inst{8-5}   = Pg;
+  let Inst{4}     = 0;
+  let Inst{3-0}   = Pdn;
+
+  let Constraints = "$Pdn = $_Pdn";
+  let Defs = [NZCV];
+}
+
+multiclass sve_int_pfirst<bits<5> opc, string asm> {
+  def : sve_int_pfirst_next<0b01, opc, asm, PPR8>;
+}
+
+multiclass sve_int_pnext<bits<5> opc, string asm> {
+  def _B : sve_int_pfirst_next<0b00, opc, asm, PPR8>;
+  def _H : sve_int_pfirst_next<0b01, opc, asm, PPR16>;
+  def _S : sve_int_pfirst_next<0b10, opc, asm, PPR32>;
+  def _D : sve_int_pfirst_next<0b11, opc, asm, PPR64>;
+}
+
+//===----------------------------------------------------------------------===//
 // SVE Predicate Count Group
 //===----------------------------------------------------------------------===//
 
@@ -1432,6 +1505,33 @@ multiclass sve_fp_2op_p_zd_HSD<bits<5> opc, string asm> {
 }
  
 //===----------------------------------------------------------------------===//
+// SVE Floating Point Unary Operations - Unpredicated Group
+//===----------------------------------------------------------------------===//
+
+class sve_fp_2op_u_zd<bits<2> sz, bits<3> opc, string asm,
+                      ZPRRegOp zprty>
+: I<(outs zprty:$Zd), (ins zprty:$Zn),
+  asm, "\t$Zd, $Zn",
+  "",
+  []>, Sched<[]> {
+  bits<5> Zd;
+  bits<5> Zn;
+  let Inst{31-24} = 0b01100101;
+  let Inst{23-22} = sz;
+  let Inst{21-19} = 0b001;
+  let Inst{18-16} = opc;
+  let Inst{15-10} = 0b001100;
+  let Inst{9-5}   = Zn;
+  let Inst{4-0}   = Zd;
+}
+
+multiclass sve_fp_2op_u_zd<bits<3> opc, string asm> {
+  def _H : sve_fp_2op_u_zd<0b01, opc, asm, ZPR16>;
+  def _S : sve_fp_2op_u_zd<0b10, opc, asm, ZPR32>;
+  def _D : sve_fp_2op_u_zd<0b11, opc, asm, ZPR64>;
+}
+
+//===----------------------------------------------------------------------===//
 // SVE Integer Arithmetic - Binary Predicated Group
 //===----------------------------------------------------------------------===//
 
@@ -2054,6 +2154,127 @@ multiclass sve_int_ucmp_vi<bits<2> opc, string asm> {
   def _D : sve_int_ucmp_vi<0b11, opc, asm, PPR64, ZPR64, imm0_127>;
 }
 
+
+//===----------------------------------------------------------------------===//
+// SVE Integer Compare - Scalars Group
+//===----------------------------------------------------------------------===//
+
+class sve_int_cterm<bit sz, bit opc, string asm, RegisterClass rt>
+: I<(outs), (ins rt:$Rn, rt:$Rm),
+  asm, "\t$Rn, $Rm",
+  "",
+  []>, Sched<[]> {
+  bits<5> Rm;
+  bits<5> Rn;
+  let Inst{31-23} = 0b001001011;
+  let Inst{22}    = sz;
+  let Inst{21}    = 0b1;
+  let Inst{20-16} = Rm;
+  let Inst{15-10} = 0b001000;
+  let Inst{9-5}   = Rn;
+  let Inst{4}     = opc;
+  let Inst{3-0}   = 0b0000;
+
+  let Defs = [NZCV];
+}
+
+class sve_int_while_rr<bits<2> sz8_64, bits<4> opc, string asm,
+                       RegisterClass gprty, PPRRegOp pprty>
+: I<(outs pprty:$Pd), (ins gprty:$Rn, gprty:$Rm),
+  asm, "\t$Pd, $Rn, $Rm",
+  "", []>, Sched<[]> {
+  bits<4> Pd;
+  bits<5> Rm;
+  bits<5> Rn;
+  let Inst{31-24} = 0b00100101;
+  let Inst{23-22} = sz8_64;
+  let Inst{21}    = 0b1;
+  let Inst{20-16} = Rm;
+  let Inst{15-13} = 0b000;
+  let Inst{12-10} = opc{3-1};
+  let Inst{9-5}   = Rn;
+  let Inst{4}     = opc{0};
+  let Inst{3-0}   = Pd;
+
+  let Defs = [NZCV];
+}
+
+multiclass sve_int_while4_rr<bits<3> opc, string asm> {
+  def _B : sve_int_while_rr<0b00, { 0, opc }, asm, GPR32, PPR8>;
+  def _H : sve_int_while_rr<0b01, { 0, opc }, asm, GPR32, PPR16>;
+  def _S : sve_int_while_rr<0b10, { 0, opc }, asm, GPR32, PPR32>;
+  def _D : sve_int_while_rr<0b11, { 0, opc }, asm, GPR32, PPR64>;
+}
+
+multiclass sve_int_while8_rr<bits<3> opc, string asm> {
+  def _B : sve_int_while_rr<0b00, { 1, opc }, asm, GPR64, PPR8>;
+  def _H : sve_int_while_rr<0b01, { 1, opc }, asm, GPR64, PPR16>;
+  def _S : sve_int_while_rr<0b10, { 1, opc }, asm, GPR64, PPR32>;
+  def _D : sve_int_while_rr<0b11, { 1, opc }, asm, GPR64, PPR64>;
+}
+
+
+//===----------------------------------------------------------------------===//
+// SVE Floating Point Fast Reduction Group
+//===----------------------------------------------------------------------===//
+
+class sve_fp_fast_red<bits<2> sz, bits<3> opc, string asm,
+                      ZPRRegOp zprty, RegisterClass dstRegClass>
+: I<(outs dstRegClass:$Vd), (ins PPR3bAny:$Pg, zprty:$Zn),
+  asm, "\t$Vd, $Pg, $Zn",
+  "",
+  []>, Sched<[]> {
+  bits<5> Zn;
+  bits<5> Vd;
+  bits<3> Pg;
+  let Inst{31-24} = 0b01100101;
+  let Inst{23-22} = sz;
+  let Inst{21-19} = 0b000;
+  let Inst{18-16} = opc;
+  let Inst{15-13} = 0b001;
+  let Inst{12-10} = Pg;
+  let Inst{9-5}   = Zn;
+  let Inst{4-0}   = Vd;
+}
+
+multiclass sve_fp_fast_red<bits<3> opc, string asm> {
+  def _H : sve_fp_fast_red<0b01, opc, asm, ZPR16, FPR16>;
+  def _S : sve_fp_fast_red<0b10, opc, asm, ZPR32, FPR32>;
+  def _D : sve_fp_fast_red<0b11, opc, asm, ZPR64, FPR64>;
+}
+
+
+//===----------------------------------------------------------------------===//
+// SVE Floating Point Accumulating Reduction Group
+//===----------------------------------------------------------------------===//
+
+class sve_fp_2op_p_vd<bits<2> sz, bits<3> opc, string asm,
+                      ZPRRegOp zprty, RegisterClass dstRegClass>
+: I<(outs dstRegClass:$Vdn), (ins PPR3bAny:$Pg, dstRegClass:$_Vdn, zprty:$Zm),
+  asm, "\t$Vdn, $Pg, $_Vdn, $Zm",
+  "",
+  []>,
+  Sched<[]> {
+  bits<3> Pg;
+  bits<5> Vdn;
+  bits<5> Zm;
+  let Inst{31-24} = 0b01100101;
+  let Inst{23-22} = sz;
+  let Inst{21-19} = 0b011;
+  let Inst{18-16} = opc;
+  let Inst{15-13} = 0b001;
+  let Inst{12-10} = Pg;
+  let Inst{9-5}   = Zm;
+  let Inst{4-0}   = Vdn;
+
+  let Constraints = "$Vdn = $_Vdn";
+}
+
+multiclass sve_fp_2op_p_vd<bits<3> opc, string asm> {
+  def _H : sve_fp_2op_p_vd<0b01, opc, asm, ZPR16, FPR16>;
+  def _S : sve_fp_2op_p_vd<0b10, opc, asm, ZPR32, FPR32>;
+  def _D : sve_fp_2op_p_vd<0b11, opc, asm, ZPR64, FPR64>;
+}
 
 //===----------------------------------------------------------------------===//
 // SVE Floating Point Compare - Vectors Group
@@ -3932,3 +4153,185 @@ multiclass sve_int_bin_cons_misc_0_a_64_lsl<bits<2> opc, string asm> {
   def _2 : sve_int_bin_cons_misc_0_a<opc, 0b10, asm, ZPR64, ZPR64ExtLSL32>;
   def _3 : sve_int_bin_cons_misc_0_a<opc, 0b11, asm, ZPR64, ZPR64ExtLSL64>;
 }
+
+
+//===----------------------------------------------------------------------===//
+// SVE Integer Misc - Unpredicated Group
+//===----------------------------------------------------------------------===//
+
+class sve_int_bin_cons_misc_0_b<bits<2> sz, string asm, ZPRRegOp zprty>
+: I<(outs zprty:$Zd), (ins zprty:$Zn, zprty:$Zm),
+  asm, "\t$Zd, $Zn, $Zm",
+  "",
+  []>, Sched<[]> {
+  bits<5> Zd;
+  bits<5> Zm;
+  bits<5> Zn;
+  let Inst{31-24} = 0b00000100;
+  let Inst{23-22} = sz;
+  let Inst{21}    = 0b1;
+  let Inst{20-16} = Zm;
+  let Inst{15-10} = 0b101100;
+  let Inst{9-5}   = Zn;
+  let Inst{4-0}   = Zd;
+}
+
+multiclass sve_int_bin_cons_misc_0_b<string asm> {
+  def _H : sve_int_bin_cons_misc_0_b<0b01, asm, ZPR16>;
+  def _S : sve_int_bin_cons_misc_0_b<0b10, asm, ZPR32>;
+  def _D : sve_int_bin_cons_misc_0_b<0b11, asm, ZPR64>;
+}
+
+class sve_int_bin_cons_misc_0_c<bits<8> opc, string asm, ZPRRegOp zprty>
+: I<(outs zprty:$Zd), (ins zprty:$Zn),
+  asm, "\t$Zd, $Zn",
+  "",
+  []>, Sched<[]> {
+  bits<5> Zd;
+  bits<5> Zn;
+  let Inst{31-24} = 0b00000100;
+  let Inst{23-22} = opc{7-6};
+  let Inst{21}    = 0b1;
+  let Inst{20-16} = opc{5-1};
+  let Inst{15-11} = 0b10111;
+  let Inst{10}    = opc{0};
+  let Inst{9-5}   = Zn;
+  let Inst{4-0}   = Zd;
+}
+
+//===----------------------------------------------------------------------===//
+// SVE Integer Reduction Group
+//===----------------------------------------------------------------------===//
+
+class sve_int_reduce<bits<2> sz8_32, bits<2> fmt, bits<3> opc, string asm,
+                     ZPRRegOp zprty, RegisterClass regtype>
+: I<(outs regtype:$Vd), (ins PPR3bAny:$Pg, zprty:$Zn),
+  asm, "\t$Vd, $Pg, $Zn",
+  "",
+  []>, Sched<[]> {
+  bits<3> Pg;
+  bits<5> Vd;
+  bits<5> Zn;
+  let Inst{31-24} = 0b00000100;
+  let Inst{23-22} = sz8_32;
+  let Inst{21}    = 0b0;
+  let Inst{20-19} = fmt;
+  let Inst{18-16} = opc;
+  let Inst{15-13} = 0b001;
+  let Inst{12-10} = Pg;
+  let Inst{9-5}   = Zn;
+  let Inst{4-0}   = Vd;
+}
+
+multiclass sve_int_reduce_0_saddv<bits<3> opc, string asm> {
+  def _B : sve_int_reduce<0b00, 0b00, opc, asm, ZPR8, FPR64>;
+  def _H : sve_int_reduce<0b01, 0b00, opc, asm, ZPR16, FPR64>;
+  def _S : sve_int_reduce<0b10, 0b00, opc, asm, ZPR32, FPR64>;
+}
+
+multiclass sve_int_reduce_0_uaddv<bits<3> opc, string asm> {
+  def _B : sve_int_reduce<0b00, 0b00, opc, asm, ZPR8, FPR64>;
+  def _H : sve_int_reduce<0b01, 0b00, opc, asm, ZPR16, FPR64>;
+  def _S : sve_int_reduce<0b10, 0b00, opc, asm, ZPR32, FPR64>;
+  def _D : sve_int_reduce<0b11, 0b00, opc, asm, ZPR64, FPR64>;
+}
+
+multiclass sve_int_reduce_1<bits<3> opc, string asm> {
+  def _B : sve_int_reduce<0b00, 0b01, opc, asm, ZPR8, FPR8>;
+  def _H : sve_int_reduce<0b01, 0b01, opc, asm, ZPR16, FPR16>;
+  def _S : sve_int_reduce<0b10, 0b01, opc, asm, ZPR32, FPR32>;
+  def _D : sve_int_reduce<0b11, 0b01, opc, asm, ZPR64, FPR64>;
+}
+
+multiclass sve_int_reduce_2<bits<3> opc, string asm> {
+  def _B : sve_int_reduce<0b00, 0b11, opc, asm, ZPR8, FPR8>;
+  def _H : sve_int_reduce<0b01, 0b11, opc, asm, ZPR16, FPR16>;
+  def _S : sve_int_reduce<0b10, 0b11, opc, asm, ZPR32, FPR32>;
+  def _D : sve_int_reduce<0b11, 0b11, opc, asm, ZPR64, FPR64>;
+}
+
+
+//===----------------------------------------------------------------------===//
+// SVE Propagate Break Group
+//===----------------------------------------------------------------------===//
+
+class sve_int_brkp<bits<2> opc, string asm>
+: I<(outs PPR8:$Pd), (ins PPRAny:$Pg, PPR8:$Pn, PPR8:$Pm),
+  asm, "\t$Pd, $Pg/z, $Pn, $Pm",
+  "",
+  []>, Sched<[]> {
+  bits<4> Pd;
+  bits<4> Pg;
+  bits<4> Pm;
+  bits<4> Pn;
+  let Inst{31-24} = 0b00100101;
+  let Inst{23}    = 0b0;
+  let Inst{22}    = opc{1};
+  let Inst{21-20} = 0b00;
+  let Inst{19-16} = Pm;
+  let Inst{15-14} = 0b11;
+  let Inst{13-10} = Pg;
+  let Inst{9}     = 0b0;
+  let Inst{8-5}   = Pn;
+  let Inst{4}     = opc{0};
+  let Inst{3-0}   = Pd;
+
+  let Defs = !if(!eq (opc{1}, 1), [NZCV], []);
+}
+
+
+//===----------------------------------------------------------------------===//
+// SVE Partition Break Group
+//===----------------------------------------------------------------------===//
+
+class sve_int_brkn<bit S, string asm>
+: I<(outs PPR8:$Pdm), (ins PPRAny:$Pg, PPR8:$Pn, PPR8:$_Pdm),
+  asm, "\t$Pdm, $Pg/z, $Pn, $_Pdm",
+  "",
+  []>, Sched<[]> {
+  bits<4> Pdm;
+  bits<4> Pg;
+  bits<4> Pn;
+  let Inst{31-23} = 0b001001010;
+  let Inst{22}    = S;
+  let Inst{21-14} = 0b01100001;
+  let Inst{13-10} = Pg;
+  let Inst{9}     = 0b0;
+  let Inst{8-5}   = Pn;
+  let Inst{4}     = 0b0;
+  let Inst{3-0}   = Pdm;
+
+  let Constraints = "$Pdm = $_Pdm";
+  let Defs = !if(!eq (S, 0b1), [NZCV], []);
+}
+
+class sve_int_break<bits<3> opc, string asm, string suffix, dag iops>
+: I<(outs PPR8:$Pd), iops,
+  asm, "\t$Pd, $Pg"#suffix#", $Pn",
+  "",
+  []>, Sched<[]> {
+  bits<4> Pd;
+  bits<4> Pg;
+  bits<4> Pn;
+  let Inst{31-24} = 0b00100101;
+  let Inst{23-22} = opc{2-1};
+  let Inst{21-14} = 0b01000001;
+  let Inst{13-10} = Pg;
+  let Inst{9}     = 0b0;
+  let Inst{8-5}   = Pn;
+  let Inst{4}     = opc{0};
+  let Inst{3-0}   = Pd;
+
+  let Constraints = !if(!eq (opc{0}, 1), "$Pd = $_Pd", "");
+  let Defs = !if(!eq (opc{1}, 1), [NZCV], []);
+
+}
+
+multiclass sve_int_break_m<bits<3> opc, string asm> {
+  def NAME : sve_int_break<opc, asm, "/m", (ins PPR8:$_Pd, PPRAny:$Pg, PPR8:$Pn)>;
+}
+
+multiclass sve_int_break_z<bits<3> opc, string asm> {
+  def NAME : sve_int_break<opc, asm, "/z", (ins PPRAny:$Pg, PPR8:$Pn)>;
+}
+

@@ -50,10 +50,10 @@ TEST(DexIndexIterators, AndWithEmpty) {
   const PostingList L0;
   const PostingList L1 = {0, 5, 7, 10, 42, 320, 9000};
 
-  auto AndEmpty = createAnd({create(L0)});
+  auto AndEmpty = createAnd(create(L0));
   EXPECT_EQ(AndEmpty->reachedEnd(), true);
 
-  auto AndWithEmpty = createAnd({create(L0), create(L1)});
+  auto AndWithEmpty = createAnd(create(L0), create(L1));
   EXPECT_EQ(AndWithEmpty->reachedEnd(), true);
 
   EXPECT_THAT(consume(*AndWithEmpty), ElementsAre());
@@ -63,12 +63,12 @@ TEST(DexIndexIterators, AndTwoLists) {
   const PostingList L0 = {0, 5, 7, 10, 42, 320, 9000};
   const PostingList L1 = {0, 4, 7, 10, 30, 60, 320, 9000};
 
-  auto And = createAnd({create(L1), create(L0)});
+  auto And = createAnd(create(L1), create(L0));
 
   EXPECT_EQ(And->reachedEnd(), false);
   EXPECT_THAT(consume(*And), ElementsAre(0U, 7U, 10U, 320U, 9000U));
 
-  And = createAnd({create(L0), create(L1)});
+  And = createAnd(create(L0), create(L1));
 
   And->advanceTo(0);
   EXPECT_EQ(And->peek(), 0U);
@@ -88,7 +88,7 @@ TEST(DexIndexIterators, AndThreeLists) {
   const PostingList L1 = {0, 4, 7, 10, 30, 60, 320, 9000};
   const PostingList L2 = {1, 4, 7, 11, 30, 60, 320, 9000};
 
-  auto And = createAnd({create(L0), create(L1), create(L2)});
+  auto And = createAnd(create(L0), create(L1), create(L2));
   EXPECT_EQ(And->peek(), 7U);
   And->advanceTo(300);
   EXPECT_EQ(And->peek(), 320U);
@@ -101,10 +101,10 @@ TEST(DexIndexIterators, OrWithEmpty) {
   const PostingList L0;
   const PostingList L1 = {0, 5, 7, 10, 42, 320, 9000};
 
-  auto OrEmpty = createOr({create(L0)});
+  auto OrEmpty = createOr(create(L0));
   EXPECT_EQ(OrEmpty->reachedEnd(), true);
 
-  auto OrWithEmpty = createOr({create(L0), create(L1)});
+  auto OrWithEmpty = createOr(create(L0), create(L1));
   EXPECT_EQ(OrWithEmpty->reachedEnd(), false);
 
   EXPECT_THAT(consume(*OrWithEmpty),
@@ -115,7 +115,7 @@ TEST(DexIndexIterators, OrTwoLists) {
   const PostingList L0 = {0, 5, 7, 10, 42, 320, 9000};
   const PostingList L1 = {0, 4, 7, 10, 30, 60, 320, 9000};
 
-  auto Or = createOr({create(L0), create(L1)});
+  auto Or = createOr(create(L0), create(L1));
 
   EXPECT_EQ(Or->reachedEnd(), false);
   EXPECT_EQ(Or->peek(), 0U);
@@ -138,7 +138,7 @@ TEST(DexIndexIterators, OrTwoLists) {
   Or->advanceTo(9001);
   EXPECT_EQ(Or->reachedEnd(), true);
 
-  Or = createOr({create(L0), create(L1)});
+  Or = createOr(create(L0), create(L1));
 
   EXPECT_THAT(consume(*Or),
               ElementsAre(0U, 4U, 5U, 7U, 10U, 30U, 42U, 60U, 320U, 9000U));
@@ -149,7 +149,7 @@ TEST(DexIndexIterators, OrThreeLists) {
   const PostingList L1 = {0, 4, 7, 10, 30, 60, 320, 9000};
   const PostingList L2 = {1, 4, 7, 11, 30, 60, 320, 9000};
 
-  auto Or = createOr({create(L0), create(L1), create(L2)});
+  auto Or = createOr(create(L0), create(L1), create(L2));
 
   EXPECT_EQ(Or->reachedEnd(), false);
   EXPECT_EQ(Or->peek(), 0U);
@@ -202,12 +202,11 @@ TEST(DexIndexIterators, QueryTree) {
   const PostingList L4;
 
   // Root of the query tree: [1, 5]
-  auto Root = createAnd({
+  auto Root = createAnd(
       // Lower And Iterator: [1, 5, 9]
-      createAnd({create(L0), create(L1)}),
+      createAnd(create(L0), create(L1)),
       // Lower Or Iterator: [0, 1, 5]
-      createOr({create(L2), create(L3), create(L4)}),
-  });
+      createOr(create(L2), create(L3), create(L4)));
 
   EXPECT_EQ(Root->reachedEnd(), false);
   EXPECT_EQ(Root->peek(), 1U);
@@ -234,10 +233,8 @@ TEST(DexIndexIterators, StringRepresentation) {
 
   EXPECT_EQ(llvm::to_string(*(create(L0))), "[4, 7, 8, 20, 42, 100]");
 
-  auto Nested = createAnd({
-      createAnd({create(L1), create(L2)}),
-      createOr({create(L3), create(L4), create(L5)}),
-  });
+  auto Nested = createAnd(createAnd(create(L1), create(L2)),
+                          createOr(create(L3), create(L4), create(L5)));
 
   EXPECT_EQ(llvm::to_string(*Nested),
             "(& (& [1, 3, 5, 8, 9] [1, 5, 7, 9]) (| [0, 5] [0, 1, 5] []))");
