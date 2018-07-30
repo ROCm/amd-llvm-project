@@ -5874,7 +5874,7 @@ static bool canPassInRegisters(Sema &S, CXXRecordDecl *D,
     return !D->hasNonTrivialDestructorForCall() &&
            !D->hasNonTrivialCopyConstructorForCall();
 
-  if (CCK == TargetInfo::CCK_MicrosoftX86_64) {
+  if (CCK == TargetInfo::CCK_MicrosoftWin64) {
     bool CopyCtorIsTrivial = false, CopyCtorIsTrivialForCall = false;
     bool DtorIsTrivialForCall = false;
 

@@ -1660,6 +1660,7 @@ private:
   /// ParenParseOption - Control what ParseParenExpression will parse.
   enum ParenParseOption {
     SimpleExpr,      // Only parse '(' expression ')'
+    FoldExpr,        // Also allow fold-expression <anything>
     CompoundStmt,    // Also allow '(' compound-statement ')'
     CompoundLiteral, // Also allow '(' type-name ')' '{' ... '}'
     CastExpr         // Also allow '(' type-name ')' <anything>

@@ -3328,6 +3328,10 @@ LangAS CodeGenModule::GetGlobalVarAddressSpace(const VarDecl *D) {
       return LangAS::cuda_constant;
     else if (D && D->hasAttr<CUDASharedAttr>())
       return LangAS::cuda_shared;
+    else if (D && D->hasAttr<CUDADeviceAttr>())
+      return LangAS::cuda_device;
+    else if (D && D->getType().isConstQualified())
+      return LangAS::cuda_constant;
     else
       return LangAS::cuda_device;
   }
