@@ -1639,7 +1639,7 @@ bool Sema::isVisibleSlow(const NamedDecl *D) {
 bool Sema::shouldLinkPossiblyHiddenDecl(LookupResult &R, const NamedDecl *New) {
   // FIXME: If there are both visible and hidden declarations, we need to take
   // into account whether redeclaration is possible. Example:
-  // 
+  //
   // Non-imported module:
   //   int f(T);        // #1
   // Some TU:
@@ -1813,7 +1813,7 @@ bool Sema::LookupName(LookupResult &R, Scope *S, bool AllowBuiltinCreation) {
           // actually exists in a Scope).
           while (S && !S->isDeclScope(D))
             S = S->getParent();
-          
+
           // If the scope containing the declaration is the translation unit,
           // then we'll need to perform our checks based on the matching
           // DeclContexts rather than matching scopes.
@@ -1824,7 +1824,7 @@ bool Sema::LookupName(LookupResult &R, Scope *S, bool AllowBuiltinCreation) {
           DeclContext *DC = nullptr;
           if (!S)
             DC = (*I)->getDeclContext()->getRedeclContext();
-            
+
           IdentifierResolver::iterator LastI = I;
           for (++LastI; LastI != IEnd; ++LastI) {
             if (S) {
@@ -1833,7 +1833,7 @@ bool Sema::LookupName(LookupResult &R, Scope *S, bool AllowBuiltinCreation) {
                 break;
             } else {
               // Match based on DeclContext.
-              DeclContext *LastDC 
+              DeclContext *LastDC
                 = (*LastI)->getDeclContext()->getRedeclContext();
               if (!LastDC->Equals(DC))
                 break;
@@ -1861,8 +1861,8 @@ bool Sema::LookupName(LookupResult &R, Scope *S, bool AllowBuiltinCreation) {
   if (AllowBuiltinCreation && LookupBuiltin(*this, R))
     return true;
 
-  // If we didn't find a use of this identifier, the ExternalSource 
-  // may be able to handle the situation. 
+  // If we didn't find a use of this identifier, the ExternalSource
+  // may be able to handle the situation.
   // Note: some lookup failures are expected!
   // See e.g. R.isForRedeclaration().
   return (ExternalSource && ExternalSource->LookupUnqualified(R, S));
@@ -2055,11 +2055,11 @@ bool Sema::LookupQualifiedName(LookupResult &R, DeclContext *LookupCtx,
     bool oldVal;
     DeclContext *Context;
     // Set flag in DeclContext informing debugger that we're looking for qualified name
-    QualifiedLookupInScope(DeclContext *ctx) : Context(ctx) { 
-      oldVal = ctx->setUseQualifiedLookup(); 
+    QualifiedLookupInScope(DeclContext *ctx) : Context(ctx) {
+      oldVal = ctx->setUseQualifiedLookup();
     }
-    ~QualifiedLookupInScope() { 
-      Context->setUseQualifiedLookup(oldVal); 
+    ~QualifiedLookupInScope() {
+      Context->setUseQualifiedLookup(oldVal);
     }
   } QL(LookupCtx);
 
@@ -2756,7 +2756,7 @@ addAssociatedClassesAndNamespaces(AssociatedLookup &Result, QualType Ty) {
     case Type::DeducedTemplateSpecialization:
       break;
 
-    // If T is an Objective-C object or interface type, or a pointer to an 
+    // If T is an Objective-C object or interface type, or a pointer to an
     // object or interface type, the associated namespace is the global
     // namespace.
     case Type::ObjCObject:
@@ -4539,7 +4539,7 @@ static void AddKeywordsToConsumer(Sema &SemaRef,
     // Add type-specifier keywords to the set of results.
     static const char *const CTypeSpecs[] = {
       "char", "const", "double", "enum", "float", "int", "long", "short",
-      "signed", "struct", "union", "unsigned", "void", "volatile", 
+      "signed", "struct", "union", "unsigned", "void", "volatile",
       "_Complex", "_Imaginary",
       // storage-specifiers as well
       "extern", "inline", "static", "typedef"
@@ -4555,7 +4555,7 @@ static void AddKeywordsToConsumer(Sema &SemaRef,
       Consumer.addKeywordResult("bool");
     else if (SemaRef.getLangOpts().C99)
       Consumer.addKeywordResult("_Bool");
-    
+
     if (SemaRef.getLangOpts().CPlusPlus) {
       Consumer.addKeywordResult("class");
       Consumer.addKeywordResult("typename");

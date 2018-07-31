@@ -8850,7 +8850,7 @@ static Value *EmitX86Ternlog(CodeGenFunction &CGF, bool ZeroMask,
   return EmitX86Select(CGF, Ops[4], Ternlog, PassThru);
 }
 
-static Value *EmitX86SExtMask(CodeGenFunction &CGF, Value *Op, 
+static Value *EmitX86SExtMask(CodeGenFunction &CGF, Value *Op,
                               llvm::Type *DstTy) {
   unsigned NumberOfElements = DstTy->getVectorNumElements();
   Value *Mask = getMaskVecValue(CGF, Op, NumberOfElements);
@@ -9972,7 +9972,7 @@ Value *CodeGenFunction::EmitX86BuiltinExpr(unsigned BuiltinID,
     Value *A = Builder.CreateExtractElement(Ops[0], (uint64_t)0);
     Function *F = CGM.getIntrinsic(Intrinsic::sqrt, A->getType());
     A = Builder.CreateCall(F, {A});
-    return Builder.CreateInsertElement(Ops[0], A, (uint64_t)0);    
+    return Builder.CreateInsertElement(Ops[0], A, (uint64_t)0);
   }
   case X86::BI__builtin_ia32_sqrtsd_round_mask:
   case X86::BI__builtin_ia32_sqrtss_round_mask: {
@@ -10284,7 +10284,7 @@ Value *CodeGenFunction::EmitX86BuiltinExpr(unsigned BuiltinID,
       return EmitX86MaskedCompareResult(*this, Cmp, NumElts, Ops[3]);
     }
     default:
-      return getVectorFCmpIR(Pred); 
+      return getVectorFCmpIR(Pred);
     }
   }
 

@@ -113,7 +113,7 @@ void CGAMPRuntime::EmitCXXAMPDeserializer(CodeGenFunction &CGF,
                                                            CXXConstructExpr::CK_Complete,
                                                            SourceLocation());
 
-        CGF.EmitCXXConstructorCall(MemberDeserializer, Ctor_Complete, false, false, mai, CXXCE, AggValueSlot::DoesNotOverlap);
+        CGF.EmitCXXConstructorCall(MemberDeserializer, Ctor_Complete, false, false, mai, CXXCE, AggValueSlot::DoesNotOverlap, false);
         DeserializerArgs.add(RValue::get(mai.getPointer()), (*CPI)->getType());
 
       } else { // HSA extension check
@@ -158,7 +158,7 @@ void CGAMPRuntime::EmitCXXAMPDeserializer(CodeGenFunction &CGF,
                                                                CXXConstructExpr::CK_Complete,
                                                                SourceLocation());
 
-            CGF.EmitCXXConstructorCall(MemberDeserializer, Ctor_Complete, false, false, mai, CXXCE, AggValueSlot::DoesNotOverlap);
+            CGF.EmitCXXConstructorCall(MemberDeserializer, Ctor_Complete, false, false, mai, CXXCE, AggValueSlot::DoesNotOverlap, false);
             DeserializerArgs.add(RValue::get(mai.getPointer()), (*CPI)->getType());
 
           } else {
@@ -328,7 +328,7 @@ void CGAMPRuntime::EmitTrampolineBody(CodeGenFunction &CGF,
                                                            false, false, false, false,
                                                            CXXConstructExpr::CK_Complete,
                                                            SourceLocation());
-        CGF.EmitCXXConstructorCall(Constructor, Ctor_Complete, false, false, index, CXXCE, AggValueSlot::DoesNotOverlap);
+        CGF.EmitCXXConstructorCall(Constructor, Ctor_Complete, false, false, index, CXXCE, AggValueSlot::DoesNotOverlap, false);
 
       } else {
         llvm::FunctionType *indexInitType = CGM.getTypes().GetFunctionType(
