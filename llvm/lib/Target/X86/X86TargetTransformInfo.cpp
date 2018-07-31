@@ -2337,7 +2337,7 @@ int X86TTIImpl::getIntImmCost(unsigned Opcode, unsigned Idx, const APInt &Imm,
   case Instruction::Add:
   case Instruction::Sub:
     // For add/sub, we can use the opposite instruction for INT32_MIN.
-    if (Idx == 1 && Imm.getBitWidth() == 64 && isInt<32>(-Imm.getSExtValue()))
+    if (Idx == 1 && Imm.getBitWidth() == 64 && Imm.getZExtValue() == 0x80000000)
       return TTI::TCC_Free;
     ImmIdx = 1;
     break;
