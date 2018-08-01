@@ -58,11 +58,6 @@
 ; CHECK-NEXT:         Function Alias Analysis Results
 ; CHECK-NEXT:         Memory SSA
 ; CHECK-NEXT:         Early CSE w/ MemorySSA
-; CHECK-NEXT:         Post-Dominator Tree Construction
-; CHECK-NEXT:         Basic Alias Analysis (stateless AA impl)
-; CHECK-NEXT:         Function Alias Analysis Results
-; CHECK-NEXT:         Memory Dependence Analysis
-; CHECK-NEXT:         Early GVN Hoisting of Expressions
 ; CHECK-NEXT:         Speculatively execute instructions if target has divergent branches
 ; CHECK-NEXT:         Basic Alias Analysis (stateless AA impl)
 ; CHECK-NEXT:         Function Alias Analysis Results
@@ -126,6 +121,7 @@
 ; CHECK-NEXT:           Delete dead loops
 ; CHECK-NEXT:           Unroll loops
 ; CHECK-NEXT:         MergedLoadStoreMotion
+; CHECK-NEXT:         Phi Values Analysis
 ; CHECK-NEXT:         Basic Alias Analysis (stateless AA impl)
 ; CHECK-NEXT:         Function Alias Analysis Results
 ; CHECK-NEXT:         Memory Dependence Analysis
@@ -133,6 +129,7 @@
 ; CHECK-NEXT:         Lazy Block Frequency Analysis
 ; CHECK-NEXT:         Optimization Remark Emitter
 ; CHECK-NEXT:         Global Value Numbering
+; CHECK-NEXT:         Phi Values Analysis
 ; CHECK-NEXT:         Basic Alias Analysis (stateless AA impl)
 ; CHECK-NEXT:         Function Alias Analysis Results
 ; CHECK-NEXT:         Memory Dependence Analysis
@@ -152,6 +149,7 @@
 ; CHECK-NEXT:         Value Propagation
 ; CHECK-NEXT:         Basic Alias Analysis (stateless AA impl)
 ; CHECK-NEXT:         Function Alias Analysis Results
+; CHECK-NEXT:         Phi Values Analysis
 ; CHECK-NEXT:         Memory Dependence Analysis
 ; CHECK-NEXT:         Dead Store Elimination
 ; CHECK-NEXT:         Natural Loop Information

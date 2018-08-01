@@ -95,6 +95,11 @@ bool DwarfFile::addScopeVariable(LexicalScope *LS, DbgVariable *Var) {
     }
   } else {
     ScopeVars.Locals.push_back(Var);
-  }    
+  }
   return true;
+}
+
+void DwarfFile::addScopeLabel(LexicalScope *LS, DbgLabel *Label) {
+  SmallVectorImpl<DbgLabel *> &Labels = ScopeLabels[LS];
+  Labels.push_back(Label);
 }

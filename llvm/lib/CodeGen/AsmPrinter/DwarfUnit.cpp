@@ -401,6 +401,12 @@ void DwarfUnit::addSourceLine(DIE &Die, const DISubprogram *SP) {
   addSourceLine(Die, SP->getLine(), SP->getFile());
 }
 
+void DwarfUnit::addSourceLine(DIE &Die, const DILabel *L) {
+  assert(L);
+
+  addSourceLine(Die, L->getLine(), L->getFile());
+}
+
 void DwarfUnit::addSourceLine(DIE &Die, const DIType *Ty) {
   assert(Ty);
 
@@ -1182,7 +1188,7 @@ DIE *DwarfUnit::getOrCreateModule(const DIModule *M) {
     addString(MDie, dwarf::DW_AT_LLVM_include_path, M->getIncludePath());
   if (!M->getISysRoot().empty())
     addString(MDie, dwarf::DW_AT_LLVM_isysroot, M->getISysRoot());
-  
+
   return &MDie;
 }
 
@@ -1691,7 +1697,7 @@ void DwarfUnit::emitCommonHeader(bool UseOffsets, dwarf::UnitType UT) {
 }
 
 void DwarfTypeUnit::emitHeader(bool UseOffsets) {
-  DwarfUnit::emitCommonHeader(UseOffsets, 
+  DwarfUnit::emitCommonHeader(UseOffsets,
                               DD->useSplitDwarf() ? dwarf::DW_UT_split_type
                                                   : dwarf::DW_UT_type);
   Asm->OutStreamer->AddComment("Type Signature");
