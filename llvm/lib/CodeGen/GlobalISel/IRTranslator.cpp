@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/CodeGen/GlobalISel/IRTranslator.h"
+#include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallSet.h"
@@ -33,6 +34,7 @@
 #include "llvm/CodeGen/TargetRegisterInfo.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/CFG.h"
 #include "llvm/IR/Constant.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
@@ -764,17 +766,6 @@ bool IRTranslator::translateKnownIntrinsic(const CallInst &CI, Intrinsic::ID ID,
     } else
       MIRBuilder.buildDirectDbgValue(getOrCreateVReg(*Address),
                                      DI.getVariable(), DI.getExpression());
-    return true;
-  }
-  case Intrinsic::dbg_label: {
-    const DbgLabelInst &DI = cast<DbgLabelInst>(CI);
-    assert(DI.getLabel() && "Missing label");
-
-    assert(DI.getLabel()->isValidLocationForIntrinsic(
-               MIRBuilder.getDebugLoc()) &&
-           "Expected inlined-at fields to agree");
-
-    MIRBuilder.buildDbgLabel(DI.getLabel());
     return true;
   }
   case Intrinsic::vaend:
@@ -1624,19 +1615,20 @@ bool IRTranslator::runOnMachineFunction(MachineFunction &CurMF) {
     ArgIt++;
   }
 
-  // And translate the function!
-  for (const BasicBlock &BB : F) {
-    MachineBasicBlock &MBB = getMBB(BB);
+  // Need to visit defs before uses when translating instructions.
+  ReversePostOrderTraversal<const Function *> RPOT(&F);
+  for (const BasicBlock *BB : RPOT) {
+    MachineBasicBlock &MBB = getMBB(*BB);
     // Set the insertion point of all the following translations to
     // the end of this basic block.
     CurBuilder.setMBB(MBB);
 
-    for (const Instruction &Inst : BB) {
+    for (const Instruction &Inst : *BB) {
       if (translate(Inst))
         continue;
 
       OptimizationRemarkMissed R("gisel-irtranslator", "GISelFailure",
-                                 Inst.getDebugLoc(), &BB);
+                                 Inst.getDebugLoc(), BB);
       R << "unable to translate instruction: " << ore::NV("Opcode", &Inst);
 
       if (ORE->allowExtraAnalysis("gisel-irtranslator")) {

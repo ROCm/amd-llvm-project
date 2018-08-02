@@ -697,11 +697,20 @@ bool SITargetLowering::isShuffleMaskLegal(ArrayRef<int>, EVT) const {
 MVT SITargetLowering::getRegisterTypeForCallingConv(LLVMContext &Context,
                                                     CallingConv::ID CC,
                                                     EVT VT) const {
-  if (CC != CallingConv::AMDGPU_KERNEL &&
-      VT.isVector() && VT.getVectorNumElements() == 3) {
+  // TODO: Consider splitting all arguments into 32-bit pieces.
+  if (CC != CallingConv::AMDGPU_KERNEL && VT.isVector()) {
     EVT ScalarVT = VT.getScalarType();
-    if (ScalarVT.getSizeInBits() == 32)
+    unsigned Size = ScalarVT.getSizeInBits();
+    if (Size == 32)
       return ScalarVT.getSimpleVT();
+
+    if (Size == 64)
+      return MVT::i32;
+
+    if (Size == 16 &&
+        Subtarget->has16BitInsts() &&
+        isPowerOf2_32(VT.getVectorNumElements()))
+      return VT.isInteger() ? MVT::v2i16 : MVT::v2f16;
   }
 
   return TargetLowering::getRegisterTypeForCallingConv(Context, CC, VT);
@@ -710,11 +719,20 @@ MVT SITargetLowering::getRegisterTypeForCallingConv(LLVMContext &Context,
 unsigned SITargetLowering::getNumRegistersForCallingConv(LLVMContext &Context,
                                                          CallingConv::ID CC,
                                                          EVT VT) const {
-  if (CC != CallingConv::AMDGPU_KERNEL &&
-      VT.isVector() && VT.getVectorNumElements() == 3) {
+  if (CC != CallingConv::AMDGPU_KERNEL && VT.isVector()) {
+    unsigned NumElts = VT.getVectorNumElements();
     EVT ScalarVT = VT.getScalarType();
-    if (ScalarVT.getSizeInBits() == 32)
-      return 3;
+    unsigned Size = ScalarVT.getSizeInBits();
+
+    if (Size == 32)
+      return NumElts;
+
+    if (Size == 64)
+      return 2 * NumElts;
+
+    // FIXME: Fails to break down as we want with v3.
+    if (Size == 16 && Subtarget->has16BitInsts() && isPowerOf2_32(NumElts))
+      return VT.getVectorNumElements() / 2;
   }
 
   return TargetLowering::getNumRegistersForCallingConv(Context, CC, VT);
@@ -724,14 +742,31 @@ unsigned SITargetLowering::getVectorTypeBreakdownForCallingConv(
   LLVMContext &Context, CallingConv::ID CC,
   EVT VT, EVT &IntermediateVT,
   unsigned &NumIntermediates, MVT &RegisterVT) const {
-
-  if (CC != CallingConv::AMDGPU_KERNEL && VT.getVectorNumElements() == 3) {
+  if (CC != CallingConv::AMDGPU_KERNEL && VT.isVector()) {
+    unsigned NumElts = VT.getVectorNumElements();
     EVT ScalarVT = VT.getScalarType();
-    if (ScalarVT.getSizeInBits() == 32 ||
-        ScalarVT.getSizeInBits() == 64) {
+    unsigned Size = ScalarVT.getSizeInBits();
+    if (Size == 32) {
       RegisterVT = ScalarVT.getSimpleVT();
       IntermediateVT = RegisterVT;
-      NumIntermediates = 3;
+      NumIntermediates = NumElts;
+      return NumIntermediates;
+    }
+
+    if (Size == 64) {
+      RegisterVT = MVT::i32;
+      IntermediateVT = RegisterVT;
+      NumIntermediates = 2 * NumElts;
+      return NumIntermediates;
+    }
+
+    // FIXME: We should fix the ABI to be the same on targets without 16-bit
+    // support, but unless we can properly handle 3-vectors, it will be still be
+    // inconsistent.
+    if (Size == 16 && Subtarget->has16BitInsts() && isPowerOf2_32(NumElts)) {
+      RegisterVT = VT.isInteger() ? MVT::v2i16 : MVT::v2f16;
+      IntermediateVT = RegisterVT;
+      NumIntermediates = NumElts / 2;
       return NumIntermediates;
     }
   }
@@ -1314,6 +1349,8 @@ static void processShaderInputArgs(SmallVectorImpl<ISD::InputArg> &Splits,
   for (unsigned I = 0, E = Ins.size(), PSInputNum = 0; I != E; ++I) {
     const ISD::InputArg *Arg = &Ins[I];
 
+    assert(!Arg->VT.isVector() && "vector type argument should have been split");
+
     // First check if it's a PS input addr.
     if (CallConv == CallingConv::AMDGPU_PS &&
         !Arg->Flags.isInReg() && !Arg->Flags.isByVal() && PSInputNum <= 15) {
@@ -1347,25 +1384,7 @@ static void processShaderInputArgs(SmallVectorImpl<ISD::InputArg> &Splits,
       ++PSInputNum;
     }
 
-    // Second split vertices into their elements.
-    if (Arg->VT.isVector()) {
-      ISD::InputArg NewArg = *Arg;
-      NewArg.Flags.setSplit();
-      NewArg.VT = Arg->VT.getVectorElementType();
-
-      // We REALLY want the ORIGINAL number of vertex elements here, e.g. a
-      // three or five element vertex only needs three or five registers,
-      // NOT four or eight.
-      Type *ParamType = FType->getParamType(Arg->getOrigArgIndex());
-      unsigned NumElements = ParamType->getVectorNumElements();
-
-      for (unsigned J = 0; J != NumElements; ++J) {
-        Splits.push_back(NewArg);
-        NewArg.PartOffset += NewArg.VT.getStoreSize();
-      }
-    } else {
-      Splits.push_back(*Arg);
-    }
+    Splits.push_back(*Arg);
   }
 }
 
@@ -4536,6 +4555,9 @@ SDValue SITargetLowering::lowerImage(SDValue Op,
   const AMDGPU::MIMGBaseOpcodeInfo *BaseOpcode =
       AMDGPU::getMIMGBaseOpcodeInfo(Intr->BaseOpcode);
   const AMDGPU::MIMGDimInfo *DimInfo = AMDGPU::getMIMGDimInfo(Intr->Dim);
+  const AMDGPU::MIMGLZMappingInfo *LZMappingInfo =
+      AMDGPU::getMIMGLZMappingInfo(Intr->BaseOpcode);
+  unsigned IntrOpcode = Intr->BaseOpcode;
 
   SmallVector<EVT, 2> ResultTypes(Op->value_begin(), Op->value_end());
   bool IsD16 = false;
@@ -4621,6 +4643,18 @@ SDValue SITargetLowering::lowerImage(SDValue Op,
   SmallVector<SDValue, 4> VAddrs;
   for (unsigned i = 0; i < NumVAddrs; ++i)
     VAddrs.push_back(Op.getOperand(AddrIdx + i));
+
+  // Optimize _L to _LZ when _L is zero
+  if (LZMappingInfo) {
+    if (auto ConstantLod =
+         dyn_cast<ConstantFPSDNode>(VAddrs[NumVAddrs-1].getNode())) {
+      if (ConstantLod->isZero() || ConstantLod->isNegative()) {
+        IntrOpcode = LZMappingInfo->LZ;  // set new opcode to _lz variant of _l
+        VAddrs.pop_back();               // remove 'lod'
+      }
+    }
+  }
+
   SDValue VAddr = getBuildDwordsVector(DAG, DL, VAddrs);
 
   SDValue True = DAG.getTargetConstant(1, DL, MVT::i1);
@@ -4680,10 +4714,10 @@ SDValue SITargetLowering::lowerImage(SDValue Op,
   int Opcode = -1;
 
   if (Subtarget->getGeneration() >= AMDGPUSubtarget::VOLCANIC_ISLANDS)
-    Opcode = AMDGPU::getMIMGOpcode(Intr->BaseOpcode, AMDGPU::MIMGEncGfx8,
+    Opcode = AMDGPU::getMIMGOpcode(IntrOpcode, AMDGPU::MIMGEncGfx8,
                                    NumVDataDwords, NumVAddrDwords);
   if (Opcode == -1)
-    Opcode = AMDGPU::getMIMGOpcode(Intr->BaseOpcode, AMDGPU::MIMGEncGfx6,
+    Opcode = AMDGPU::getMIMGOpcode(IntrOpcode, AMDGPU::MIMGEncGfx6,
                                    NumVDataDwords, NumVAddrDwords);
   assert(Opcode != -1);
 
@@ -4991,7 +5025,8 @@ SDValue SITargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
                        Op.getOperand(1), Op.getOperand(2), Op.getOperand(3));
   case Intrinsic::amdgcn_fdot2:
     return DAG.getNode(AMDGPUISD::FDOT2, DL, VT,
-                       Op.getOperand(1), Op.getOperand(2), Op.getOperand(3));
+                       Op.getOperand(1), Op.getOperand(2), Op.getOperand(3),
+                       Op.getOperand(4));
   case Intrinsic::amdgcn_fmul_legacy:
     return DAG.getNode(AMDGPUISD::FMUL_LEGACY, DL, VT,
                        Op.getOperand(1), Op.getOperand(2));
@@ -7594,8 +7629,10 @@ SDValue SITargetLowering::performFMACombine(SDNode *N,
       return SDValue();
 
     if ((Vec1 == Vec3 && Vec2 == Vec4) ||
-        (Vec1 == Vec4 && Vec2 == Vec3))
-      return DAG.getNode(AMDGPUISD::FDOT2, SL, MVT::f32, Vec1, Vec2, FMAAcc);
+        (Vec1 == Vec4 && Vec2 == Vec3)) {
+      return DAG.getNode(AMDGPUISD::FDOT2, SL, MVT::f32, Vec1, Vec2, FMAAcc,
+                         DAG.getTargetConstant(0, SL, MVT::i1));
+    }
   }
   return SDValue();
 }
