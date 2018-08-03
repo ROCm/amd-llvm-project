@@ -30,7 +30,7 @@ BenchmarkRunner::BenchmarkRunner(const LLVMState &State,
                                  InstructionBenchmark::ModeE Mode)
     : State(State), RATC(State.getRegInfo(),
                          getFunctionReservedRegs(State.getTargetMachine())),
-      Mode(Mode) {}
+      Mode(Mode), Scratch(llvm::make_unique<ScratchSpace>()) {}
 
 BenchmarkRunner::~BenchmarkRunner() = default;
 
@@ -119,7 +119,7 @@ BenchmarkRunner::runOne(const BenchmarkConfiguration &Configuration,
                << *ObjectFilePath << "\n";
   const ExecutableFunction EF(State.createTargetMachine(),
                               getObjectFromFile(*ObjectFilePath));
-  InstrBenchmark.Measurements = runMeasurements(EF, NumRepetitions);
+  InstrBenchmark.Measurements = runMeasurements(EF, *Scratch, NumRepetitions);
 
   return InstrBenchmark;
 }
@@ -131,10 +131,15 @@ BenchmarkRunner::generateConfigurations(unsigned Opcode) const {
     // TODO: Generate as many configurations as needed here.
     BenchmarkConfiguration Configuration;
     Configuration.Info = Prototype.Explanation;
-    for (InstructionInstance &II : Prototype.Snippet) {
-      II.randomizeUnsetVariables();
-      Configuration.Snippet.push_back(II.build());
+    for (InstructionBuilder &IB : Prototype.Snippet) {
+      IB.randomizeUnsetVariables(
+          Prototype.ScratchSpaceReg
+              ? RATC.getRegister(Prototype.ScratchSpaceReg).aliasedBits()
+              : RATC.emptyRegisters());
+      Configuration.Snippet.push_back(IB.build());
     }
+    if (Prototype.ScratchSpaceReg)
+      Configuration.SnippetSetup.LiveIns.push_back(Prototype.ScratchSpaceReg);
     Configuration.SnippetSetup.RegsToDef = computeRegsToDef(Prototype.Snippet);
     return std::vector<BenchmarkConfiguration>{Configuration};
   } else
@@ -142,25 +147,27 @@ BenchmarkRunner::generateConfigurations(unsigned Opcode) const {
 }
 
 std::vector<unsigned> BenchmarkRunner::computeRegsToDef(
-    const std::vector<InstructionInstance> &Snippet) const {
+    const std::vector<InstructionBuilder> &Snippet) const {
   // Collect all register uses and create an assignment for each of them.
+  // Ignore memory operands which are handled separately.
   // Loop invariant: DefinedRegs[i] is true iif it has been set at least once
   // before the current instruction.
   llvm::BitVector DefinedRegs = RATC.emptyRegisters();
   std::vector<unsigned> RegsToDef;
-  for (const InstructionInstance &II : Snippet) {
+  for (const InstructionBuilder &IB : Snippet) {
     // Returns the register that this Operand sets or uses, or 0 if this is not
     // a register.
-    const auto GetOpReg = [&II](const Operand &Op) -> unsigned {
-      if (Op.ImplicitReg) {
+    const auto GetOpReg = [&IB](const Operand &Op) -> unsigned {
+      if (Op.IsMem)
+        return 0;
+      if (Op.ImplicitReg)
         return *Op.ImplicitReg;
-      } else if (Op.IsExplicit && II.getValueFor(Op).isReg()) {
-        return II.getValueFor(Op).getReg();
-      }
+      if (Op.IsExplicit && IB.getValueFor(Op).isReg())
+        return IB.getValueFor(Op).getReg();
       return 0;
     };
     // Collect used registers that have never been def'ed.
-    for (const Operand &Op : II.Instr.Operands) {
+    for (const Operand &Op : IB.Instr.Operands) {
       if (!Op.IsDef) {
         const unsigned Reg = GetOpReg(Op);
         if (Reg > 0 && !DefinedRegs.test(Reg)) {
@@ -170,12 +177,11 @@ std::vector<unsigned> BenchmarkRunner::computeRegsToDef(
       }
     }
     // Mark defs as having been def'ed.
-    for (const Operand &Op : II.Instr.Operands) {
+    for (const Operand &Op : IB.Instr.Operands) {
       if (Op.IsDef) {
         const unsigned Reg = GetOpReg(Op);
-        if (Reg > 0) {
+        if (Reg > 0)
           DefinedRegs.set(Reg);
-        }
       }
     }
   }
@@ -192,7 +198,7 @@ BenchmarkRunner::writeObjectFile(const BenchmarkConfiguration::Setup &Setup,
     return std::move(E);
   llvm::raw_fd_ostream OFS(ResultFD, true /*ShouldClose*/);
   assembleToStream(State.getExegesisTarget(), State.createTargetMachine(),
-                   Setup.RegsToDef, Code, OFS);
+                   Setup.LiveIns, Setup.RegsToDef, Code, OFS);
   return ResultPath.str();
 }
 
@@ -203,17 +209,17 @@ BenchmarkRunner::generateSelfAliasingPrototype(const Instruction &Instr) const {
     return llvm::make_error<BenchmarkFailure>("empty self aliasing");
   }
   SnippetPrototype Prototype;
-  InstructionInstance II(Instr);
+  InstructionBuilder IB(Instr);
   if (SelfAliasing.hasImplicitAliasing()) {
     Prototype.Explanation = "implicit Self cycles, picking random values.";
   } else {
     Prototype.Explanation =
         "explicit self cycles, selecting one aliasing Conf.";
     // This is a self aliasing instruction so defs and uses are from the same
-    // instance, hence twice II in the following call.
-    setRandomAliasing(SelfAliasing, II, II);
+    // instance, hence twice IB in the following call.
+    setRandomAliasing(SelfAliasing, IB, IB);
   }
-  Prototype.Snippet.push_back(std::move(II));
+  Prototype.Snippet.push_back(std::move(IB));
   return std::move(Prototype);
 }
 

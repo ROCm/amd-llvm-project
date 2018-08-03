@@ -39,7 +39,7 @@ struct Variable {
   llvm::SmallVector<unsigned, 2> TiedOperands;
   llvm::MCOperand AssignedValue;
   // The index of this Variable in Instruction.Variables and its associated
-  // Value in InstructionInstance.VariableValues.
+  // Value in InstructionBuilder.VariableValues.
   unsigned Index = -1;
 };
 
@@ -58,6 +58,7 @@ struct Variable {
 struct Operand {
   unsigned Index = 0;
   bool IsDef = false;
+  bool IsMem = false;
   bool IsExplicit = false;
   const RegisterAliasingTracker *Tracker = nullptr; // Set for Register Op.
   const llvm::MCOperandInfo *Info = nullptr;        // Set for Explicit Op.
@@ -72,6 +73,8 @@ struct Instruction {
   Instruction(const llvm::MCInstrDesc &MCInstrDesc,
               const RegisterAliasingTrackerCache &ATC);
 
+  bool hasMemoryOperands() const;
+
   const llvm::MCInstrDesc *Description; // Never nullptr.
   llvm::SmallVector<Operand, 8> Operands;
   llvm::SmallVector<Variable, 4> Variables;
@@ -79,17 +82,14 @@ struct Instruction {
   llvm::BitVector UseRegisters; // The union of the aliased use registers.
 };
 
-// An instance of an Instruction holding values for each of its Variables.
-struct InstructionInstance {
-  InstructionInstance(const Instruction &Instr);
+// A builder for an Instruction holding values for each of its Variables.
+struct InstructionBuilder {
+  InstructionBuilder(const Instruction &Instr);
 
-  // No copy.
-  InstructionInstance(const InstructionInstance &) = delete;
-  InstructionInstance &operator=(const InstructionInstance &) = delete;
-
-  // Moving is OK.
-  InstructionInstance(InstructionInstance &&);
-  InstructionInstance &operator=(InstructionInstance &&);
+  InstructionBuilder(const InstructionBuilder &);
+  InstructionBuilder &operator=(const InstructionBuilder &);
+  InstructionBuilder(InstructionBuilder &&);
+  InstructionBuilder &operator=(InstructionBuilder &&);
 
   unsigned getOpcode() const;
   llvm::MCOperand &getValueFor(const Variable &Var);
@@ -99,9 +99,10 @@ struct InstructionInstance {
   bool hasImmediateVariables() const;
 
   // Assigns a Random Value to all Variables that are still Invalid.
-  void randomizeUnsetVariables();
+  // Do not use any of the registers in `ForbiddenRegs`.
+  void randomizeUnsetVariables(const llvm::BitVector &ForbiddenRegs);
 
-  // Returns the instance as an llvm::MCInst. The InstructionInstance must be
+  // Returns the instance as an llvm::MCInst. The InstructionBuilder must be
   // fully allocated (no invalid variables).
   llvm::MCInst build() const;
 
@@ -125,7 +126,10 @@ struct SnippetPrototype {
   SnippetPrototype &operator=(SnippetPrototype &&);
 
   std::string Explanation;
-  std::vector<InstructionInstance> Snippet;
+  // If the prototype uses the provided scratch memory, the register in which
+  // the pointer to this memory is passed in to the function.
+  unsigned ScratchSpaceReg = 0;
+  std::vector<InstructionBuilder> Snippet;
 };
 
 // Represents the assignment of a Register to an Operand.
@@ -182,7 +186,7 @@ size_t randomBit(const llvm::BitVector &Vector);
 // Picks a random configuration, then selects a random def and a random use from
 // it and finally set the selected values in the provided InstructionInstances.
 void setRandomAliasing(const AliasingConfigurations &AliasingConfigurations,
-                       InstructionInstance &DefII, InstructionInstance &UseII);
+                       InstructionBuilder &DefIB, InstructionBuilder &UseIB);
 
 // Writes MCInst to OS.
 // This is not assembly but the internal LLVM's name for instructions and

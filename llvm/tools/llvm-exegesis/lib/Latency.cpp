@@ -62,18 +62,18 @@ LatencyBenchmarkRunner::generateTwoInstructionPrototype(
     const AliasingConfigurations Back(OtherInstr, Instr);
     if (Forward.empty() || Back.empty())
       continue;
-    InstructionInstance ThisII(Instr);
-    InstructionInstance OtherII(OtherInstr);
+    InstructionBuilder ThisIB(Instr);
+    InstructionBuilder OtherIB(OtherInstr);
     if (!Forward.hasImplicitAliasing())
-      setRandomAliasing(Forward, ThisII, OtherII);
+      setRandomAliasing(Forward, ThisIB, OtherIB);
     if (!Back.hasImplicitAliasing())
-      setRandomAliasing(Back, OtherII, ThisII);
+      setRandomAliasing(Back, OtherIB, ThisIB);
     SnippetPrototype Prototype;
     Prototype.Explanation =
         llvm::formatv("creating cycle through {0}.",
                       State.getInstrInfo().getName(OtherOpcode));
-    Prototype.Snippet.push_back(std::move(ThisII));
-    Prototype.Snippet.push_back(std::move(OtherII));
+    Prototype.Snippet.push_back(std::move(ThisIB));
+    Prototype.Snippet.push_back(std::move(OtherIB));
     return std::move(Prototype);
   }
   return llvm::make_error<BenchmarkFailure>(
@@ -108,6 +108,7 @@ const char *LatencyBenchmarkRunner::getCounterName() const {
 
 std::vector<BenchmarkMeasure>
 LatencyBenchmarkRunner::runMeasurements(const ExecutableFunction &Function,
+                                        ScratchSpace &Scratch,
                                         const unsigned NumRepetitions) const {
   // Cycle measurements include some overhead from the kernel. Repeat the
   // measure several times and take the minimum value.
@@ -121,8 +122,9 @@ LatencyBenchmarkRunner::runMeasurements(const ExecutableFunction &Function,
     llvm::report_fatal_error("invalid perf event");
   for (size_t I = 0; I < NumMeasurements; ++I) {
     pfm::Counter Counter(CyclesPerfEvent);
+    Scratch.clear();
     Counter.start();
-    Function();
+    Function(Scratch.ptr());
     Counter.stop();
     const int64_t Value = Counter.read();
     if (Value < MinLatency)
