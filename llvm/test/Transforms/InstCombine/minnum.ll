@@ -131,14 +131,6 @@ define float @canonicalize_constant_minnum_f32(float %x) {
   ret float %y
 }
 
-define float @noop_minnum_f32(float %x) {
-; CHECK-LABEL: @noop_minnum_f32(
-; CHECK-NEXT:    ret float [[X:%.*]]
-;
-  %y = call float @llvm.minnum.f32(float %x, float %x)
-  ret float %y
-}
-
 define float @minnum_f32_nan_val(float %x) {
 ; CHECK-LABEL: @minnum_f32_nan_val(
 ; CHECK-NEXT:    ret float [[X:%.*]]
@@ -160,22 +152,6 @@ define float @fold_minnum_f32_undef_undef(float %x) {
 ; CHECK-NEXT:    ret float undef
 ;
   %val = call float @llvm.minnum.f32(float undef, float undef)
-  ret float %val
-}
-
-define float @fold_minnum_f32_val_undef(float %x) {
-; CHECK-LABEL: @fold_minnum_f32_val_undef(
-; CHECK-NEXT:    ret float [[X:%.*]]
-;
-  %val = call float @llvm.minnum.f32(float %x, float undef)
-  ret float %val
-}
-
-define float @fold_minnum_f32_undef_val(float %x) {
-; CHECK-LABEL: @fold_minnum_f32_undef_val(
-; CHECK-NEXT:    ret float [[X:%.*]]
-;
-  %val = call float @llvm.minnum.f32(float undef, float %x)
   ret float %val
 }
 

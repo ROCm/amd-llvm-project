@@ -83,7 +83,13 @@ public:
   /// @return
   ///     The number of bytes that were appended to the stream.
   //------------------------------------------------------------------
-  virtual size_t Write(const void *src, size_t src_len) = 0;
+  size_t Write(const void *src, size_t src_len) {
+    size_t appended_byte_count = WriteImpl(src, src_len);
+    m_bytes_written += appended_byte_count;
+    return appended_byte_count;
+  }
+
+  size_t GetWrittenBytes() const { return m_bytes_written; }
 
   //------------------------------------------------------------------
   // Member functions
@@ -121,14 +127,10 @@ public:
       __attribute__((__format__(__printf__, 2, 3)));
 
   //------------------------------------------------------------------
-  /// Format a C string from a printf style format and variable arguments and
-  /// encode and append the resulting C string as hex bytes.
+  /// Append an uint8_t value in the hexadecimal format to the stream.
   ///
-  /// @param[in] format
-  ///     A printf style format string.
-  ///
-  /// @param[in] ...
-  ///     Any additional arguments needed for the printf format string.
+  /// @param[in] uvalue
+  ///     The value to append.
   ///
   /// @return
   ///     The number of bytes that were appended to the stream.
@@ -504,9 +506,6 @@ public:
   ///
   /// @param[in] uval
   ///     A uint64_t value that was extracted as a SLEB128 value.
-  ///
-  /// @param[in] format
-  ///     The optional printf format that can be overridden.
   //------------------------------------------------------------------
   size_t PutSLEB128(int64_t uval);
 
@@ -518,9 +517,6 @@ public:
   ///
   /// @param[in] uval
   ///     A uint64_t value that was extracted as a ULEB128 value.
-  ///
-  /// @param[in] format
-  ///     The optional printf format that can be overridden.
   //------------------------------------------------------------------
   size_t PutULEB128(uint64_t uval);
 
@@ -533,8 +529,25 @@ protected:
   lldb::ByteOrder
       m_byte_order;   ///< Byte order to use when encoding scalar types.
   int m_indent_level; ///< Indention level.
+  std::size_t m_bytes_written = 0; ///< Number of bytes written so far.
 
   size_t _PutHex8(uint8_t uvalue, bool add_prefix);
+
+  //------------------------------------------------------------------
+  /// Output character bytes to the stream.
+  ///
+  /// Appends \a src_len characters from the buffer \a src to the stream.
+  ///
+  /// @param[in] src
+  ///     A buffer containing at least \a src_len bytes of data.
+  ///
+  /// @param[in] src_len
+  ///     A number of bytes to append to the stream.
+  ///
+  /// @return
+  ///     The number of bytes that were appended to the stream.
+  //------------------------------------------------------------------
+  virtual size_t WriteImpl(const void *src, size_t src_len) = 0;
 };
 
 } // namespace lldb_private

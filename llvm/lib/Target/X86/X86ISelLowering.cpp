@@ -7623,7 +7623,7 @@ static bool isAddSubOrSubAdd(const BuildVectorSDNode *BV,
   // adding/subtracting two integer/float elements.
   // Even-numbered elements in the input build vector are obtained from
   // subtracting/adding two integer/float elements.
-  unsigned Opc[2] {0, 0};
+  unsigned Opc[2] = {0, 0};
   for (unsigned i = 0, e = NumElts; i != e; ++i) {
     SDValue Op = BV->getOperand(i);
 
@@ -9095,6 +9095,28 @@ static SmallVector<int, 64> createTargetShuffleMask(ArrayRef<int> Mask,
     TargetMask[i] = (Zeroable[i] ? SM_SentinelZero : M);
   }
   return TargetMask;
+}
+
+// Attempt to create a shuffle mask from a VSELECT condition mask.
+static bool createShuffleMaskFromVSELECT(SmallVectorImpl<int> &Mask,
+                                         SDValue Cond) {
+  if (!ISD::isBuildVectorOfConstantSDNodes(Cond.getNode()))
+    return false;
+
+  unsigned Size = Cond.getValueType().getVectorNumElements();
+  Mask.resize(Size, SM_SentinelUndef);
+
+  for (int i = 0; i != (int)Size; ++i) {
+    SDValue CondElt = Cond.getOperand(i);
+    Mask[i] = i;
+    // Arbitrarily choose from the 2nd operand if the select condition element
+    // is undef.
+    // TODO: Can we do better by matching patterns such as even/odd?
+    if (CondElt.isUndef() || isNullConstant(CondElt))
+      Mask[i] += Size;
+  }
+
+  return true;
 }
 
 // Check if the shuffle mask is suitable for the AVX vpunpcklwd or vpunpckhwd
@@ -15135,26 +15157,15 @@ static SDValue lowerVSELECTtoVectorShuffle(SDValue Op,
   SDValue Cond = Op.getOperand(0);
   SDValue LHS = Op.getOperand(1);
   SDValue RHS = Op.getOperand(2);
-  SDLoc dl(Op);
   MVT VT = Op.getSimpleValueType();
-
-  if (!ISD::isBuildVectorOfConstantSDNodes(Cond.getNode()))
-    return SDValue();
-  auto *CondBV = cast<BuildVectorSDNode>(Cond);
 
   // Only non-legal VSELECTs reach this lowering, convert those into generic
   // shuffles and re-use the shuffle lowering path for blends.
   SmallVector<int, 32> Mask;
-  for (int i = 0, Size = VT.getVectorNumElements(); i < Size; ++i) {
-    SDValue CondElt = CondBV->getOperand(i);
-    int M = i;
-    // We can't map undef to undef here. They have different meanings. Treat
-    // as the same as zero.
-    if (CondElt.isUndef() || isNullConstant(CondElt))
-      M += Size;
-    Mask.push_back(M);
-  }
-  return DAG.getVectorShuffle(VT, dl, LHS, RHS, Mask);
+  if (createShuffleMaskFromVSELECT(Mask, Cond))
+    return DAG.getVectorShuffle(VT, SDLoc(Op), LHS, RHS, Mask);
+
+  return SDValue();
 }
 
 SDValue X86TargetLowering::LowerVSELECT(SDValue Op, SelectionDAG &DAG) const {
@@ -15793,7 +15804,7 @@ X86TargetLowering::LowerExternalSymbol(SDValue Op, SelectionDAG &DAG) const {
   Result = DAG.getNode(getGlobalWrapperKind(), DL, PtrVT, Result);
 
   // With PIC, the address is actually $g + Offset.
-  if (isPositionIndependent() && !Subtarget.is64Bit()) {
+  if (OpFlag) {
     Result =
         DAG.getNode(ISD::ADD, DL, PtrVT,
                     DAG.getNode(X86ISD::GlobalBaseReg, SDLoc(), PtrVT), Result);
@@ -32560,18 +32571,9 @@ static SDValue combineSelect(SDNode *N, SelectionDAG &DAG,
   // Convert vselects with constant condition into shuffles.
   if (ISD::isBuildVectorOfConstantSDNodes(Cond.getNode()) &&
       DCI.isBeforeLegalizeOps()) {
-    SmallVector<int, 64> Mask(VT.getVectorNumElements(), -1);
-    for (int i = 0, Size = Mask.size(); i != Size; ++i) {
-      SDValue CondElt = Cond->getOperand(i);
-      Mask[i] = i;
-      // Arbitrarily choose from the 2nd operand if the select condition element
-      // is undef.
-      // TODO: Can we do better by matching patterns such as even/odd?
-      if (CondElt.isUndef() || isNullConstant(CondElt))
-        Mask[i] += Size;
-    }
-
-    return DAG.getVectorShuffle(VT, DL, LHS, RHS, Mask);
+    SmallVector<int, 64> Mask;
+    if (createShuffleMaskFromVSELECT(Mask, Cond))
+      return DAG.getVectorShuffle(VT, DL, LHS, RHS, Mask);
   }
 
   // If we have SSE[12] support, try to form min/max nodes. SSE min/max
@@ -33395,10 +33397,13 @@ static SDValue combineCMov(SDNode *N, SelectionDAG &DAG,
     SDValue Add = TrueOp;
     SDValue Const = FalseOp;
     // Canonicalize the condition code for easier matching and output.
-    if (CC == X86::COND_E) {
+    if (CC == X86::COND_E)
       std::swap(Add, Const);
-      CC = X86::COND_NE;
-    }
+
+    // We might have replaced the constant in the cmov with the LHS of the
+    // compare. If so change it to the RHS of the compare.
+    if (Const == Cond.getOperand(0))
+      Const = Cond.getOperand(1);
 
     // Ok, now make sure that Add is (add (cttz X), C2) and Const is a constant.
     if (isa<ConstantSDNode>(Const) && Add.getOpcode() == ISD::ADD &&
@@ -33410,7 +33415,8 @@ static SDValue combineCMov(SDNode *N, SelectionDAG &DAG,
       // This should constant fold.
       SDValue Diff = DAG.getNode(ISD::SUB, DL, VT, Const, Add.getOperand(1));
       SDValue CMov = DAG.getNode(X86ISD::CMOV, DL, VT, Diff, Add.getOperand(0),
-                                 DAG.getConstant(CC, DL, MVT::i8), Cond);
+                                 DAG.getConstant(X86::COND_NE, DL, MVT::i8),
+                                 Cond);
       return DAG.getNode(ISD::ADD, DL, VT, CMov, Add.getOperand(1));
     }
   }
@@ -39762,6 +39768,19 @@ bool X86TargetLowering::IsDesirableToPromoteOp(SDValue Op, EVT &PVT) const {
     return Ld->getBasePtr() == St->getBasePtr();
   };
 
+  auto IsFoldableAtomicRMW = [](SDValue Load, SDValue Op) {
+    if (!Load.hasOneUse() || Load.getOpcode() != ISD::ATOMIC_LOAD)
+      return false;
+    if (!Op.hasOneUse())
+      return false;
+    SDNode *User = *Op->use_begin();
+    if (User->getOpcode() != ISD::ATOMIC_STORE)
+      return false;
+    auto *Ld = cast<AtomicSDNode>(Load);
+    auto *St = cast<AtomicSDNode>(User);
+    return Ld->getBasePtr() == St->getBasePtr();
+  };
+
   bool Commute = false;
   switch (Op.getOpcode()) {
   default: return false;
@@ -39795,6 +39814,9 @@ bool X86TargetLowering::IsDesirableToPromoteOp(SDValue Op, EVT &PVT) const {
     if (MayFoldLoad(N0) &&
         ((Commute && !isa<ConstantSDNode>(N1)) ||
          (Op.getOpcode() != ISD::MUL && IsFoldableRMW(N0, Op))))
+      return false;
+    if (IsFoldableAtomicRMW(N0, Op) ||
+        (Commute && IsFoldableAtomicRMW(N1, Op)))
       return false;
   }
   }
