@@ -129,11 +129,11 @@ bool InnerPointerChecker::isCalledOnStringObject(
     return false;
 
   QualType ObjTy = ObjRegion->getValueType();
-  if (ObjTy.isNull() ||
-      ObjTy->getAsCXXRecordDecl()->getName() != "basic_string")
+  if (ObjTy.isNull())
     return false;
 
-  return true;
+  CXXRecordDecl *Decl = ObjTy->getAsCXXRecordDecl();
+  return Decl && Decl->getName() == "basic_string";
 }
 
 bool InnerPointerChecker::isInvalidatingMemberFunction(
