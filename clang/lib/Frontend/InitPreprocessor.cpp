@@ -567,7 +567,7 @@ static void InitializeCPlusPlusFeatureTestMacros(const LangOptions &LangOpts,
     Builder.defineMacro("__cpp_guaranteed_copy_elision", "201606L");
     Builder.defineMacro("__cpp_nontype_template_parameter_auto", "201606L");
   }
-  if (LangOpts.AlignedAllocation)
+  if (LangOpts.AlignedAllocation && !LangOpts.AlignedAllocationUnavailable)
     Builder.defineMacro("__cpp_aligned_new", "201606L");
   if (LangOpts.RelaxedTemplateTemplateArgs)
     Builder.defineMacro("__cpp_template_template_args", "201611L");
