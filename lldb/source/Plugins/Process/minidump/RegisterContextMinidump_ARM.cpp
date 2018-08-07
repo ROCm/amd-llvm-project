@@ -31,33 +31,35 @@ using namespace minidump;
 
 #define DEF_R(i)                                                               \
   {                                                                            \
-    "r" #i, nullptr, 4, OFFSET(r[i]), eEncodingUint, eFormatHex,               \
+    "r" #i, nullptr, 4, OFFSET(r) + i * 4, eEncodingUint, eFormatHex,          \
         {INV, dwarf_r##i, INV, INV, reg_r##i}, nullptr, nullptr, nullptr, 0    \
   }
 
 #define DEF_R_ARG(i, n)                                                        \
   {                                                                            \
-    "r" #i, "arg" #n, 4, OFFSET(r[i]), eEncodingUint, eFormatHex,              \
+    "r" #i, "arg" #n, 4, OFFSET(r) + i * 4, eEncodingUint, eFormatHex,         \
         {INV, dwarf_r##i, LLDB_REGNUM_GENERIC_ARG1 + i, INV, reg_r##i},        \
         nullptr, nullptr, nullptr, 0                                           \
   }
 
 #define DEF_D(i)                                                               \
   {                                                                            \
-    "d" #i, nullptr, 8, OFFSET(d[i]), eEncodingVector, eFormatVectorOfUInt8,   \
-        {INV, dwarf_d##i, INV, INV, reg_d##i}, nullptr, nullptr, nullptr, 0    \
+    "d" #i, nullptr, 8, OFFSET(d) + i * 8, eEncodingVector,                    \
+        eFormatVectorOfUInt8, {INV, dwarf_d##i, INV, INV, reg_d##i},           \
+        nullptr, nullptr, nullptr, 0    \
   }
 
 #define DEF_S(i)                                                               \
   {                                                                            \
-    "s" #i, nullptr, 4, OFFSET(s[i]), eEncodingIEEE754, eFormatFloat,          \
+    "s" #i, nullptr, 4, OFFSET(s) + i * 4, eEncodingIEEE754, eFormatFloat,     \
         {INV, dwarf_s##i, INV, INV, reg_s##i}, nullptr, nullptr, nullptr, 0    \
   }
 
 #define DEF_Q(i)                                                               \
   {                                                                            \
-    "q" #i, nullptr, 16, OFFSET(q[i]), eEncodingVector, eFormatVectorOfUInt8,  \
-        {INV, dwarf_q##i, INV, INV, reg_q##i}, nullptr, nullptr, nullptr, 0    \
+    "q" #i, nullptr, 16, OFFSET(q) + i * 16, eEncodingVector,                  \
+        eFormatVectorOfUInt8, {INV, dwarf_q##i, INV, INV, reg_q##i},           \
+        nullptr, nullptr, nullptr, 0    \
   }
 
 // Zero based LLDB register numbers for this register context
@@ -169,7 +171,7 @@ static RegisterInfo g_reg_info_apple_fp = {
     "fp",
     "r7",
     4,
-    OFFSET(r[7]),
+    OFFSET(r) + 7 * 4,
     eEncodingUint,
     eFormatHex,
     {INV, dwarf_r7, LLDB_REGNUM_GENERIC_FP, INV, reg_r7},
@@ -182,7 +184,7 @@ static RegisterInfo g_reg_info_fp = {
     "fp",
     "r11",
     4,
-    OFFSET(r[11]),
+    OFFSET(r) + 11 * 4,
     eEncodingUint,
     eFormatHex,
     {INV, dwarf_r11, LLDB_REGNUM_GENERIC_FP, INV, reg_r11},
@@ -209,7 +211,7 @@ static RegisterInfo g_reg_infos[] = {
     {"sp",
      "r13",
      4,
-     OFFSET(r[13]),
+     OFFSET(r) + 13 * 4,
      eEncodingUint,
      eFormatHex,
      {INV, dwarf_sp, LLDB_REGNUM_GENERIC_SP, INV, reg_sp},
@@ -220,7 +222,7 @@ static RegisterInfo g_reg_infos[] = {
     {"lr",
      "r14",
      4,
-     OFFSET(r[14]),
+     OFFSET(r) + 14 * 4,
      eEncodingUint,
      eFormatHex,
      {INV, dwarf_lr, LLDB_REGNUM_GENERIC_RA, INV, reg_lr},
@@ -231,7 +233,7 @@ static RegisterInfo g_reg_infos[] = {
     {"pc",
      "r15",
      4,
-     OFFSET(r[15]),
+     OFFSET(r) + 15 * 4,
      eEncodingUint,
      eFormatHex,
      {INV, dwarf_pc, LLDB_REGNUM_GENERIC_PC, INV, reg_pc},
