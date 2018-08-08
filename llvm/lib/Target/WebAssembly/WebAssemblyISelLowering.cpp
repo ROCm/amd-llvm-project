@@ -59,7 +59,9 @@ WebAssemblyTargetLowering::WebAssemblyTargetLowering(
     addRegisterClass(MVT::v16i8, &WebAssembly::V128RegClass);
     addRegisterClass(MVT::v8i16, &WebAssembly::V128RegClass);
     addRegisterClass(MVT::v4i32, &WebAssembly::V128RegClass);
+    addRegisterClass(MVT::v2i64, &WebAssembly::V128RegClass);
     addRegisterClass(MVT::v4f32, &WebAssembly::V128RegClass);
+    addRegisterClass(MVT::v2f64, &WebAssembly::V128RegClass);
   }
   // Compute derived properties from the register classes.
   computeRegisterProperties(Subtarget->getRegisterInfo());
@@ -155,6 +157,23 @@ WebAssemblyTargetLowering::WebAssemblyTargetLowering(
   setOperationAction(ISD::INTRINSIC_WO_CHAIN, MVT::Other, Custom);
 
   setMaxAtomicSizeInBitsSupported(64);
+}
+
+TargetLowering::AtomicExpansionKind
+WebAssemblyTargetLowering::shouldExpandAtomicRMWInIR(AtomicRMWInst *AI) const {
+  // We have wasm instructions for these
+  switch (AI->getOperation()) {
+  case AtomicRMWInst::Add:
+  case AtomicRMWInst::Sub:
+  case AtomicRMWInst::And:
+  case AtomicRMWInst::Or:
+  case AtomicRMWInst::Xor:
+  case AtomicRMWInst::Xchg:
+    return AtomicExpansionKind::None;
+  default:
+    break;
+  }
+  return AtomicExpansionKind::CmpXChg;
 }
 
 FastISel *WebAssemblyTargetLowering::createFastISel(
