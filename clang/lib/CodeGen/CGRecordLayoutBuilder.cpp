@@ -631,6 +631,13 @@ void CGRecordLowering::determinePacked(bool NVBaseType) {
   // non-virtual sub-object and an unpacked complete object or vise versa.
   if (NVSize % NVAlignment)
     Packed = true;
+
+  // TODO: this is a heinous workaround the sad reality that passing things by
+  //       value through Kernarg is essentially broken, since the packing choice
+  //       made here is opaque for HLLs, and thus the latter will layout the
+  //       memory erroneously.
+  Packed = Packed && !Context.getLangOpts().CPlusPlusAMP;
+
   // Update the alignment of the sentinel.
   if (!Packed)
     Members.back().Data = getIntNType(Context.toBits(Alignment));
