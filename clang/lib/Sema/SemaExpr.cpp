@@ -4953,6 +4953,29 @@ Sema::ConvertArgumentsForCall(CallExpr *Call, Expr *Fn,
   return false;
 }
 
+static void MarkByValueRecordsPassedToHIPGlobalFN(FunctionDecl *FDecl)
+{ // TODO: this is a temporary kludge; a preferable solution shall be provided
+  //       in the future, which shall eschew FE involvement. Note that the name
+  //       is misleading as it is not only lambdas that can be affected, and we
+  //       may need to extend it.
+  if (!FDecl) return;
+  if (FDecl->getName() != "hipLaunchKernelGGL") return;
+
+  for (auto &&Parameter : FDecl->parameters()) {
+    if (Parameter->getOriginalType()->isPointerType()) continue;
+    if (Parameter->getOriginalType()->isReferenceType()) continue;
+    if (!Parameter->getOriginalType()->isRecordType()) continue;
+
+    if (auto RD = Parameter->getOriginalType()->getAsCXXRecordDecl()) {
+      if (!RD->isLambda()) continue;
+
+      static constexpr const char HIPKernargLambda[]{"__HIP_KERNARG_LAMBDA__"};
+      RD->addAttr(
+        AnnotateAttr::CreateImplicit(RD->getASTContext(), HIPKernargLambda));
+    }
+  }
+}
+
 bool Sema::GatherArgumentsForCall(SourceLocation CallLoc, FunctionDecl *FDecl,
                                   const FunctionProtoType *Proto,
                                   unsigned FirstParam, ArrayRef<Expr *> Args,
@@ -5055,6 +5078,9 @@ bool Sema::GatherArgumentsForCall(SourceLocation CallLoc, FunctionDecl *FDecl,
     for (Expr *A : Args.slice(ArgIx))
       CheckArrayAccess(A);
   }
+
+  if (getLangOpts().CPlusPlusAMP) MarkByValueRecordsPassedToHIPGlobalFN(FDecl);
+
   return Invalid;
 }
 

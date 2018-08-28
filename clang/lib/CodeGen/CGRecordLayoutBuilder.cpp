@@ -602,6 +602,20 @@ void CGRecordLowering::clipTailPadding() {
   }
 }
 
+static bool isPassedToHIPGlobalFn(const CXXRecordDecl *MaybeLambda)
+{
+  if (!MaybeLambda) return false;
+  if (!MaybeLambda->isLambda()) return false;
+  if (!MaybeLambda->hasAttr<AnnotateAttr>()) return false;
+
+  // N.B.: this is set in Sema::GatherArgumentsForCall, via
+  //       MarkByValueRecordsPassedToHIPGlobalFN.
+  static constexpr const char HIPKernargLambda[]{"__HIP_KERNARG_LAMBDA__"};
+
+  return MaybeLambda->getAttr<AnnotateAttr>()->getAnnotation()
+    .find(HIPKernargLambda) != StringRef::npos;
+}
+
 void CGRecordLowering::determinePacked(bool NVBaseType) {
   if (Packed)
     return;
@@ -636,7 +650,7 @@ void CGRecordLowering::determinePacked(bool NVBaseType) {
   //       value through Kernarg is essentially broken, since the packing choice
   //       made here is opaque for HLLs, and thus the latter will layout the
   //       memory erroneously.
-  Packed = Packed && !Context.getLangOpts().CPlusPlusAMP;
+  Packed = Packed && !isPassedToHIPGlobalFn(RD);
 
   // Update the alignment of the sentinel.
   if (!Packed)
