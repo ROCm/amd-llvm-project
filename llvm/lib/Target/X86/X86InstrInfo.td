@@ -955,8 +955,8 @@ def HasFastLZCNT : Predicate<"Subtarget->hasFastLZCNT()">;
 def HasFastSHLDRotate : Predicate<"Subtarget->hasFastSHLDRotate()">;
 def HasERMSB : Predicate<"Subtarget->hasERMSB()">;
 def HasMFence    : Predicate<"Subtarget->hasMFence()">;
-def UseRetpoline : Predicate<"Subtarget->useRetpoline()">;
-def NotUseRetpoline : Predicate<"!Subtarget->useRetpoline()">;
+def UseRetpolineIndirectCalls : Predicate<"Subtarget->useRetpolineIndirectCalls()">;
+def NotUseRetpolineIndirectCalls : Predicate<"!Subtarget->useRetpolineIndirectCalls()">;
 
 //===----------------------------------------------------------------------===//
 // X86 Instruction Format Definitions.
@@ -1994,7 +1994,7 @@ multiclass ATOMIC_SWAP<bits<8> opc8, bits<8> opc, string mnemonic, string frag> 
 defm XCHG    : ATOMIC_SWAP<0x86, 0x87, "xchg", "atomic_swap">, NotMemoryFoldable;
 
 // Swap between registers.
-let SchedRW = [WriteALU] in {
+let SchedRW = [WriteXCHG] in {
 let Constraints = "$src1 = $dst1, $src2 = $dst2", hasSideEffects = 0 in {
 def XCHG8rr : I<0x86, MRMSrcReg, (outs GR8:$dst1, GR8:$dst2),
                 (ins GR8:$src1, GR8:$src2),
@@ -2027,7 +2027,7 @@ def XCHG64ar : RI<0x90, AddRegFrm, (outs GR64:$dst), (ins GR64:$src),
 } // SchedRW
 
 let hasSideEffects = 0, Constraints = "$src1 = $dst1, $src2 = $dst2",
-    Defs = [EFLAGS], SchedRW = [WriteALU] in {
+    Defs = [EFLAGS], SchedRW = [WriteXCHG] in {
 def XADD8rr : I<0xC0, MRMDestReg, (outs GR8:$dst1, GR8:$dst2),
                 (ins GR8:$src1, GR8:$src2),
                 "xadd{b}\t{$src2, $src1|$src1, $src2}", []>, TB;
