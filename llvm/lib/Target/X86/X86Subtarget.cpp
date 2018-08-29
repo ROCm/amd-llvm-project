@@ -77,6 +77,8 @@ X86Subtarget::classifyLocalReference(const GlobalValue *GV) const {
     if (isTargetELF()) {
       switch (TM.getCodeModel()) {
       // 64-bit small code model is simple: All rip-relative.
+      case CodeModel::Tiny:
+        llvm_unreachable("Tiny codesize model not supported on X86");
       case CodeModel::Small:
       case CodeModel::Kernel:
         return X86II::MO_NO_FLAG;
@@ -135,6 +137,14 @@ unsigned char X86Subtarget::classifyGlobalReference(const GlobalValue *GV,
         return X86II::MO_NO_FLAG;
     }
   }
+
+  // For MinGW, if a data reference isn't marked as DSO local or DLLImport,
+  // and it's a pure declaration without a definition, it might potentially
+  // be automatically imported from another DLL, thus route accesses via a stub.
+  if (isTargetWindowsGNU() && GV && !GV->isDSOLocal() &&
+      !GV->hasDLLImportStorageClass() && GV->isDeclarationForLinker() &&
+      isa<GlobalVariable>(GV))
+    return X86II::MO_COFFSTUB;
 
   if (TM.shouldAssumeDSOLocal(M, GV))
     return classifyLocalReference(GV);

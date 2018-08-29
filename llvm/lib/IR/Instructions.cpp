@@ -72,46 +72,6 @@ User::op_iterator CallSite::getCallee() const {
 }
 
 //===----------------------------------------------------------------------===//
-//                            TerminatorInst Class
-//===----------------------------------------------------------------------===//
-
-unsigned TerminatorInst::getNumSuccessors() const {
-  switch (getOpcode()) {
-#define HANDLE_TERM_INST(N, OPC, CLASS)                                        \
-  case Instruction::OPC:                                                       \
-    return static_cast<const CLASS *>(this)->getNumSuccessors();
-#include "llvm/IR/Instruction.def"
-  default:
-    break;
-  }
-  llvm_unreachable("not a terminator");
-}
-
-BasicBlock *TerminatorInst::getSuccessor(unsigned idx) const {
-  switch (getOpcode()) {
-#define HANDLE_TERM_INST(N, OPC, CLASS)                                        \
-  case Instruction::OPC:                                                       \
-    return static_cast<const CLASS *>(this)->getSuccessor(idx);
-#include "llvm/IR/Instruction.def"
-  default:
-    break;
-  }
-  llvm_unreachable("not a terminator");
-}
-
-void TerminatorInst::setSuccessor(unsigned idx, BasicBlock *B) {
-  switch (getOpcode()) {
-#define HANDLE_TERM_INST(N, OPC, CLASS)                                        \
-  case Instruction::OPC:                                                       \
-    return static_cast<CLASS *>(this)->setSuccessor(idx, B);
-#include "llvm/IR/Instruction.def"
-  default:
-    break;
-  }
-  llvm_unreachable("not a terminator");
-}
-
-//===----------------------------------------------------------------------===//
 //                              SelectInst Class
 //===----------------------------------------------------------------------===//
 
@@ -2978,12 +2938,14 @@ CastInst::castIsValid(Instruction::CastOps op, Value *S, Type *DstTy) {
       return false;
 
     // A vector of pointers must have the same number of elements.
-    if (VectorType *SrcVecTy = dyn_cast<VectorType>(SrcTy)) {
-      if (VectorType *DstVecTy = dyn_cast<VectorType>(DstTy))
-        return (SrcVecTy->getNumElements() == DstVecTy->getNumElements());
-
-      return false;
-    }
+    VectorType *SrcVecTy = dyn_cast<VectorType>(SrcTy);
+    VectorType *DstVecTy = dyn_cast<VectorType>(DstTy);
+    if (SrcVecTy && DstVecTy)
+      return (SrcVecTy->getNumElements() == DstVecTy->getNumElements());
+    if (SrcVecTy)
+      return SrcVecTy->getNumElements() == 1;
+    if (DstVecTy)
+      return DstVecTy->getNumElements() == 1;
 
     return true;
   }
