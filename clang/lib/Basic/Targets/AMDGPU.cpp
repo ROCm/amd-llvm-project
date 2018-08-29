@@ -265,6 +265,8 @@ AMDGPUTargetInfo::AMDGPUTargetInfo(const llvm::Triple &Triple,
     IntPtrType = SignedLong;
   }
 
+  MaxAtomicPromoteWidth = MaxAtomicInlineWidth = 64;
+
   // If possible, get a TargetInfo for our host triple, so we can match its
   // types.
   llvm::Triple HostTriple(Opts.HostTriple);
@@ -325,7 +327,6 @@ AMDGPUTargetInfo::AMDGPUTargetInfo(const llvm::Triple &Triple,
   //   correctly be different on host/device, e.g. if host has wider vector
   //   types than device.
   // - LongDoubleWidth, LongDoubleAlign: TBD
-  MaxAtomicPromoteWidth = MaxAtomicInlineWidth = 64;
 }
 
 void AMDGPUTargetInfo::adjust(LangOptions &Opts) {
