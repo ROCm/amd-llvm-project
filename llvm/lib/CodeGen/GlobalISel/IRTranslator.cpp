@@ -355,7 +355,7 @@ bool IRTranslator::translateBr(const User &U, MachineIRBuilder &MIRBuilder) {
     MIRBuilder.buildBr(TgtBB);
 
   // Link successors.
-  for (const BasicBlock *Succ : BrInst.successors())
+  for (const BasicBlock *Succ : successors(&BrInst))
     CurBB.addSuccessor(&getMBB(*Succ));
   return true;
 }
@@ -415,7 +415,7 @@ bool IRTranslator::translateIndirectBr(const User &U,
 
   // Link successors.
   MachineBasicBlock &CurBB = MIRBuilder.getMBB();
-  for (const BasicBlock *Succ : BrInst.successors())
+  for (const BasicBlock *Succ : successors(&BrInst))
     CurBB.addSuccessor(&getMBB(*Succ));
 
   return true;
@@ -706,13 +706,12 @@ void IRTranslator::getStackGuard(unsigned DstReg,
     return;
 
   MachinePointerInfo MPInfo(Global);
-  MachineInstr::mmo_iterator MemRefs = MF->allocateMemRefsArray(1);
   auto Flags = MachineMemOperand::MOLoad | MachineMemOperand::MOInvariant |
                MachineMemOperand::MODereferenceable;
-  *MemRefs =
+  MachineMemOperand *MemRef =
       MF->getMachineMemOperand(MPInfo, Flags, DL->getPointerSizeInBits() / 8,
                                DL->getPointerABIAlignment(0));
-  MIB.setMemRefs(MemRefs, MemRefs + 1);
+  MIB.setMemRefs({MemRef});
 }
 
 bool IRTranslator::translateOverflowIntrinsic(const CallInst &CI, unsigned Op,
@@ -768,6 +767,17 @@ bool IRTranslator::translateKnownIntrinsic(const CallInst &CI, Intrinsic::ID ID,
     } else
       MIRBuilder.buildDirectDbgValue(getOrCreateVReg(*Address),
                                      DI.getVariable(), DI.getExpression());
+    return true;
+  }
+  case Intrinsic::dbg_label: {
+    const DbgLabelInst &DI = cast<DbgLabelInst>(CI);
+    assert(DI.getLabel() && "Missing label");
+
+    assert(DI.getLabel()->isValidLocationForIntrinsic(
+               MIRBuilder.getDebugLoc()) &&
+           "Expected inlined-at fields to agree");
+
+    MIRBuilder.buildDbgLabel(DI.getLabel());
     return true;
   }
   case Intrinsic::vaend:
@@ -848,6 +858,16 @@ bool IRTranslator::translateKnownIntrinsic(const CallInst &CI, Intrinsic::ID ID,
     return true;
   case Intrinsic::fabs:
     MIRBuilder.buildInstr(TargetOpcode::G_FABS)
+        .addDef(getOrCreateVReg(CI))
+        .addUse(getOrCreateVReg(*CI.getArgOperand(0)));
+    return true;
+  case Intrinsic::trunc:
+    MIRBuilder.buildInstr(TargetOpcode::G_INTRINSIC_TRUNC)
+        .addDef(getOrCreateVReg(CI))
+        .addUse(getOrCreateVReg(*CI.getArgOperand(0)));
+    return true;
+  case Intrinsic::round:
+    MIRBuilder.buildInstr(TargetOpcode::G_INTRINSIC_ROUND)
         .addDef(getOrCreateVReg(CI))
         .addUse(getOrCreateVReg(*CI.getArgOperand(0)));
     return true;
@@ -1457,6 +1477,8 @@ void IRTranslator::finishPendingPhis() {
 bool IRTranslator::valueIsSplit(const Value &V,
                                 SmallVectorImpl<uint64_t> *Offsets) {
   SmallVector<LLT, 4> SplitTys;
+  if (Offsets && !Offsets->empty())
+    Offsets->clear();
   computeValueLLTs(*DL, *V.getType(), SplitTys, Offsets);
   return SplitTys.size() > 1;
 }

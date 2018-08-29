@@ -47,10 +47,10 @@ static bool CheckAsmLValue(const Expr *E, Sema &S) {
   const Expr *E2 = E->IgnoreParenNoopCasts(S.Context);
   if (E != E2 && E2->isLValue()) {
     if (!S.getLangOpts().HeinousExtensions)
-      S.Diag(E2->getLocStart(), diag::err_invalid_asm_cast_lvalue)
+      S.Diag(E2->getBeginLoc(), diag::err_invalid_asm_cast_lvalue)
           << E->getSourceRange();
     else
-      S.Diag(E2->getLocStart(), diag::warn_invalid_asm_cast_lvalue)
+      S.Diag(E2->getBeginLoc(), diag::warn_invalid_asm_cast_lvalue)
           << E->getSourceRange();
     // Accept, even if we emitted an error diagnostic.
     return false;
@@ -90,13 +90,13 @@ static bool CheckNakedParmReference(Expr *E, Sema &S) {
   while (WorkList.size()) {
     Expr *E = WorkList.pop_back_val();
     if (isa<CXXThisExpr>(E)) {
-      S.Diag(E->getLocStart(), diag::err_asm_naked_this_ref);
+      S.Diag(E->getBeginLoc(), diag::err_asm_naked_this_ref);
       S.Diag(Func->getAttr<NakedAttr>()->getLocation(), diag::note_attribute);
       return true;
     }
     if (DeclRefExpr *DRE = dyn_cast<DeclRefExpr>(E)) {
       if (isa<ParmVarDecl>(DRE->getDecl())) {
-        S.Diag(DRE->getLocStart(), diag::err_asm_naked_parm_ref);
+        S.Diag(DRE->getBeginLoc(), diag::err_asm_naked_parm_ref);
         S.Diag(Func->getAttr<NakedAttr>()->getLocation(), diag::note_attribute);
         return true;
       }
@@ -131,7 +131,7 @@ static bool checkExprMemoryConstraintCompat(Sema &S, Expr *E,
     EType = ExprGlobalRegVar;
 
   if (EType != ExprSafeType) {
-    S.Diag(E->getLocStart(), diag::err_asm_non_addr_value_in_memory_constraint)
+    S.Diag(E->getBeginLoc(), diag::err_asm_non_addr_value_in_memory_constraint)
         << EType << is_input_expr << Info.getConstraintStr()
         << E->getSourceRange();
     return true;
@@ -185,7 +185,7 @@ getClobberConflictLocation(MultiExprArg Exprs, StringLiteral **Constraints,
     Clobber = Target.getNormalizedGCCRegisterName(Clobber, true);
     // Go over the output's registers we collected
     if (InOutVars.count(Clobber))
-      return Clobbers[i]->getLocStart();
+      return Clobbers[i]->getBeginLoc();
   }
   return SourceLocation();
 }
@@ -235,9 +235,9 @@ StmtResult Sema::ActOnGCCAsmStmt(SourceLocation AsmLoc, bool IsSimple,
 
     TargetInfo::ConstraintInfo Info(Literal->getString(), OutputName);
     if (!Context.getTargetInfo().validateOutputConstraint(Info))
-      return StmtError(Diag(Literal->getLocStart(),
-                            diag::err_asm_invalid_output_constraint)
-                       << Info.getConstraintStr());
+      return StmtError(
+          Diag(Literal->getBeginLoc(), diag::err_asm_invalid_output_constraint)
+          << Info.getConstraintStr());
 
     ExprResult ER = CheckPlaceholderExpr(Exprs[i]);
     if (ER.isInvalid())
@@ -274,10 +274,10 @@ StmtResult Sema::ActOnGCCAsmStmt(SourceLocation AsmLoc, bool IsSimple,
     case Expr::MLV_LValueCast: {
       const Expr *LVal = OutputExpr->IgnoreParenNoopCasts(Context);
       if (!getLangOpts().HeinousExtensions) {
-        Diag(LVal->getLocStart(), diag::err_invalid_asm_cast_lvalue)
+        Diag(LVal->getBeginLoc(), diag::err_invalid_asm_cast_lvalue)
             << OutputExpr->getSourceRange();
       } else {
-        Diag(LVal->getLocStart(), diag::warn_invalid_asm_cast_lvalue)
+        Diag(LVal->getBeginLoc(), diag::warn_invalid_asm_cast_lvalue)
             << OutputExpr->getSourceRange();
       }
       // Accept, even if we emitted an error diagnostic.
@@ -285,12 +285,12 @@ StmtResult Sema::ActOnGCCAsmStmt(SourceLocation AsmLoc, bool IsSimple,
     }
     case Expr::MLV_IncompleteType:
     case Expr::MLV_IncompleteVoidType:
-      if (RequireCompleteType(OutputExpr->getLocStart(), Exprs[i]->getType(),
+      if (RequireCompleteType(OutputExpr->getBeginLoc(), Exprs[i]->getType(),
                               diag::err_dereference_incomplete_type))
         return StmtError();
       LLVM_FALLTHROUGH;
     default:
-      return StmtError(Diag(OutputExpr->getLocStart(),
+      return StmtError(Diag(OutputExpr->getBeginLoc(),
                             diag::err_asm_invalid_lvalue_in_output)
                        << OutputExpr->getSourceRange());
     }
@@ -298,9 +298,9 @@ StmtResult Sema::ActOnGCCAsmStmt(SourceLocation AsmLoc, bool IsSimple,
     unsigned Size = Context.getTypeSize(OutputExpr->getType());
     if (!Context.getTargetInfo().validateOutputSize(Literal->getString(),
                                                     Size))
-      return StmtError(Diag(OutputExpr->getLocStart(),
-                            diag::err_asm_invalid_output_size)
-                       << Info.getConstraintStr());
+      return StmtError(
+          Diag(OutputExpr->getBeginLoc(), diag::err_asm_invalid_output_size)
+          << Info.getConstraintStr());
   }
 
   SmallVector<TargetInfo::ConstraintInfo, 4> InputConstraintInfos;
@@ -316,9 +316,9 @@ StmtResult Sema::ActOnGCCAsmStmt(SourceLocation AsmLoc, bool IsSimple,
     TargetInfo::ConstraintInfo Info(Literal->getString(), InputName);
     if (!Context.getTargetInfo().validateInputConstraint(OutputConstraintInfos,
                                                          Info)) {
-      return StmtError(Diag(Literal->getLocStart(),
-                            diag::err_asm_invalid_input_constraint)
-                       << Info.getConstraintStr());
+      return StmtError(
+          Diag(Literal->getBeginLoc(), diag::err_asm_invalid_input_constraint)
+          << Info.getConstraintStr());
     }
 
     ExprResult ER = CheckPlaceholderExpr(Exprs[i]);
@@ -340,7 +340,7 @@ StmtResult Sema::ActOnGCCAsmStmt(SourceLocation AsmLoc, bool IsSimple,
     // Only allow void types for memory constraints.
     if (Info.allowsMemory() && !Info.allowsRegister()) {
       if (CheckAsmLValue(InputExpr, *this))
-        return StmtError(Diag(InputExpr->getLocStart(),
+        return StmtError(Diag(InputExpr->getBeginLoc(),
                               diag::err_asm_invalid_lvalue_in_input)
                          << Info.getConstraintStr()
                          << InputExpr->getSourceRange());
@@ -348,11 +348,11 @@ StmtResult Sema::ActOnGCCAsmStmt(SourceLocation AsmLoc, bool IsSimple,
       if (!InputExpr->isValueDependent()) {
         llvm::APSInt Result;
         if (!InputExpr->EvaluateAsInt(Result, Context))
-           return StmtError(
-               Diag(InputExpr->getLocStart(), diag::err_asm_immediate_expected)
-                << Info.getConstraintStr() << InputExpr->getSourceRange());
+          return StmtError(
+              Diag(InputExpr->getBeginLoc(), diag::err_asm_immediate_expected)
+              << Info.getConstraintStr() << InputExpr->getSourceRange());
          if (!Info.isValidAsmImmediate(Result))
-           return StmtError(Diag(InputExpr->getLocStart(),
+           return StmtError(Diag(InputExpr->getBeginLoc(),
                                  diag::err_invalid_asm_value_for_constraint)
                             << Result.toString(10) << Info.getConstraintStr()
                             << InputExpr->getSourceRange());
@@ -368,10 +368,10 @@ StmtResult Sema::ActOnGCCAsmStmt(SourceLocation AsmLoc, bool IsSimple,
 
     if (Info.allowsRegister()) {
       if (InputExpr->getType()->isVoidType()) {
-        return StmtError(Diag(InputExpr->getLocStart(),
-                              diag::err_asm_invalid_type_in_input)
-          << InputExpr->getType() << Info.getConstraintStr()
-          << InputExpr->getSourceRange());
+        return StmtError(
+            Diag(InputExpr->getBeginLoc(), diag::err_asm_invalid_type_in_input)
+            << InputExpr->getType() << Info.getConstraintStr()
+            << InputExpr->getSourceRange());
       }
     }
 
@@ -382,16 +382,16 @@ StmtResult Sema::ActOnGCCAsmStmt(SourceLocation AsmLoc, bool IsSimple,
       continue;
 
     if (!Ty->isVoidType() || !Info.allowsMemory())
-      if (RequireCompleteType(InputExpr->getLocStart(), Exprs[i]->getType(),
+      if (RequireCompleteType(InputExpr->getBeginLoc(), Exprs[i]->getType(),
                               diag::err_dereference_incomplete_type))
         return StmtError();
 
     unsigned Size = Context.getTypeSize(Ty);
     if (!Context.getTargetInfo().validateInputSize(Literal->getString(),
                                                    Size))
-      return StmtError(Diag(InputExpr->getLocStart(),
-                            diag::err_asm_invalid_input_size)
-                       << Info.getConstraintStr());
+      return StmtError(
+          Diag(InputExpr->getBeginLoc(), diag::err_asm_invalid_input_size)
+          << Info.getConstraintStr());
   }
 
   // Check that the clobbers are valid.
@@ -402,8 +402,9 @@ StmtResult Sema::ActOnGCCAsmStmt(SourceLocation AsmLoc, bool IsSimple,
     StringRef Clobber = Literal->getString();
 
     if (!Context.getTargetInfo().isValidClobber(Clobber))
-      return StmtError(Diag(Literal->getLocStart(),
-                  diag::err_asm_unknown_register_name) << Clobber);
+      return StmtError(
+          Diag(Literal->getBeginLoc(), diag::err_asm_unknown_register_name)
+          << Clobber);
   }
 
   GCCAsmStmt *NS =
@@ -455,7 +456,7 @@ StmtResult Sema::ActOnGCCAsmStmt(SourceLocation AsmLoc, bool IsSimple,
     if (!Context.getTargetInfo().validateConstraintModifier(
             Literal->getString(), Piece.getModifier(), Size,
             SuggestedModifier)) {
-      Diag(Exprs[ConstraintIdx]->getLocStart(),
+      Diag(Exprs[ConstraintIdx]->getBeginLoc(),
            diag::warn_asm_mismatched_size_modifier);
 
       if (!SuggestedModifier.empty()) {
@@ -478,7 +479,7 @@ StmtResult Sema::ActOnGCCAsmStmt(SourceLocation AsmLoc, bool IsSimple,
     if (NumAlternatives == ~0U)
       NumAlternatives = AltCount;
     else if (NumAlternatives != AltCount)
-      return StmtError(Diag(NS->getOutputExpr(i)->getLocStart(),
+      return StmtError(Diag(NS->getOutputExpr(i)->getBeginLoc(),
                             diag::err_asm_unexpected_constraint_alternatives)
                        << NumAlternatives << AltCount);
   }
@@ -491,7 +492,7 @@ StmtResult Sema::ActOnGCCAsmStmt(SourceLocation AsmLoc, bool IsSimple,
     if (NumAlternatives == ~0U)
       NumAlternatives = AltCount;
     else if (NumAlternatives != AltCount)
-      return StmtError(Diag(NS->getInputExpr(i)->getLocStart(),
+      return StmtError(Diag(NS->getInputExpr(i)->getBeginLoc(),
                             diag::err_asm_unexpected_constraint_alternatives)
                        << NumAlternatives << AltCount);
 
@@ -508,10 +509,10 @@ StmtResult Sema::ActOnGCCAsmStmt(SourceLocation AsmLoc, bool IsSimple,
     // Make sure no more than one input constraint matches each output.
     assert(TiedTo < InputMatchedToOutput.size() && "TiedTo value out of range");
     if (InputMatchedToOutput[TiedTo] != ~0U) {
-      Diag(NS->getInputExpr(i)->getLocStart(),
+      Diag(NS->getInputExpr(i)->getBeginLoc(),
            diag::err_asm_input_duplicate_match)
           << TiedTo;
-      Diag(NS->getInputExpr(InputMatchedToOutput[TiedTo])->getLocStart(),
+      Diag(NS->getInputExpr(InputMatchedToOutput[TiedTo])->getBeginLoc(),
            diag::note_asm_input_duplicate_first)
           << TiedTo;
       return StmtError();
@@ -599,10 +600,9 @@ StmtResult Sema::ActOnGCCAsmStmt(SourceLocation AsmLoc, bool IsSimple,
       continue;
     }
 
-    Diag(InputExpr->getLocStart(),
-         diag::err_asm_tying_incompatible_types)
-      << InTy << OutTy << OutputExpr->getSourceRange()
-      << InputExpr->getSourceRange();
+    Diag(InputExpr->getBeginLoc(), diag::err_asm_tying_incompatible_types)
+        << InTy << OutTy << OutputExpr->getSourceRange()
+        << InputExpr->getSourceRange();
     return StmtError();
   }
 

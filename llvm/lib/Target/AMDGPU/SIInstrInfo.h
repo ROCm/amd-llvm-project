@@ -101,6 +101,8 @@ private:
                             MachineInstr &Inst) const;
   void splitScalar64BitBFE(SetVectorType &Worklist,
                            MachineInstr &Inst) const;
+  void splitScalarBuffer(SetVectorType &Worklist,
+                         MachineInstr &Inst) const;
   void movePackToVALU(SetVectorType &Worklist,
                       MachineRegisterInfo &MRI,
                       MachineInstr &Inst) const;
@@ -276,7 +278,7 @@ public:
                           unsigned TrueReg, unsigned FalseReg) const;
 
   unsigned getAddressSpaceForPseudoSourceKind(
-             PseudoSourceValue::PSVKind Kind) const override;
+             unsigned Kind) const override;
 
   bool
   areMemAccessesTriviallyDisjoint(MachineInstr &MIa, MachineInstr &MIb,
