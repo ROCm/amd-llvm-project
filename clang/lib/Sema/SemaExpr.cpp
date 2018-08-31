@@ -5548,7 +5548,7 @@ ExprResult Sema::ActOnConvertVectorExpr(Expr *E, ParsedType ParsedDestTy,
 
 void Sema::DiagnoseCXXAMPMethodCallExpr(SourceLocation LParenLoc,
                                   CXXMethodDecl *Callee) {
-  if(!Callee)
+  if(!Callee || Callee->isConstexpr() || Callee->getBuiltinID() != 0u)
     return;
 
   FunctionDecl* Caller = this->getCurFunctionDecl();
