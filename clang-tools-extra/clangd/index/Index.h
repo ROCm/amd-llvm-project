@@ -16,9 +16,12 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/Optional.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Support/StringSaver.h"
 #include <array>
+#include <mutex>
 #include <string>
 #include <tuple>
 
@@ -32,9 +35,6 @@ struct SymbolLocation {
     uint32_t Line = 0; // 0-based
     // Using UTF-16 code units.
     uint32_t Column = 0; // 0-based
-    bool operator==(const Position& P) const {
-      return Line == P.Line && Column == P.Column;
-    }
   };
 
   // The URI of the source file where a symbol occurs.
@@ -45,11 +45,23 @@ struct SymbolLocation {
   Position End;
 
   explicit operator bool() const { return !FileURI.empty(); }
-  bool operator==(const SymbolLocation& Loc) const {
-    return std::tie(FileURI, Start, End) ==
-           std::tie(Loc.FileURI, Loc.Start, Loc.End);
-  }
 };
+inline bool operator==(const SymbolLocation::Position &L,
+                       const SymbolLocation::Position &R) {
+  return std::tie(L.Line, L.Column) == std::tie(R.Line, R.Column);
+}
+inline bool operator<(const SymbolLocation::Position &L,
+                      const SymbolLocation::Position &R) {
+  return std::tie(L.Line, L.Column) < std::tie(R.Line, R.Column);
+}
+inline bool operator==(const SymbolLocation &L, const SymbolLocation &R) {
+  return std::tie(L.FileURI, L.Start, L.End) ==
+         std::tie(R.FileURI, R.Start, R.End);
+}
+inline bool operator<(const SymbolLocation &L, const SymbolLocation &R) {
+  return std::tie(L.FileURI, L.Start, L.End) <
+         std::tie(R.FileURI, R.Start, R.End);
+}
 llvm::raw_ostream &operator<<(llvm::raw_ostream &, const SymbolLocation &);
 
 // The class identifies a particular C++ symbol (class, function, method, etc).
@@ -72,25 +84,27 @@ public:
     return HashValue < Sym.HashValue;
   }
 
+  constexpr static size_t RawSize = 20;
+  llvm::StringRef raw() const {
+    return StringRef(reinterpret_cast<const char *>(HashValue.data()), RawSize);
+  }
+  static SymbolID fromRaw(llvm::StringRef);
   // Returns a 40-bytes hex encoded string.
   std::string str() const;
 
 private:
-  static constexpr unsigned HashByteLength = 20;
-
-  friend llvm::hash_code hash_value(const SymbolID &ID) {
-    // We already have a good hash, just return the first bytes.
-    static_assert(sizeof(size_t) <= HashByteLength, "size_t longer than SHA1!");
-    size_t Result;
-    memcpy(&Result, ID.HashValue.data(), sizeof(size_t));
-    return llvm::hash_code(Result);
-  }
-  friend llvm::raw_ostream &operator<<(llvm::raw_ostream &OS,
-                                       const SymbolID &ID);
   friend void operator>>(llvm::StringRef Str, SymbolID &ID);
 
-  std::array<uint8_t, HashByteLength> HashValue;
+  std::array<uint8_t, RawSize> HashValue;
 };
+
+inline llvm::hash_code hash_value(const SymbolID &ID) {
+  // We already have a good hash, just return the first bytes.
+  assert(sizeof(size_t) <= SymbolID::RawSize && "size_t longer than SHA1!");
+  size_t Result;
+  memcpy(&Result, ID.raw().data(), sizeof(size_t));
+  return llvm::hash_code(Result);
+}
 
 // Write SymbolID into the given stream. SymbolID is encoded as a 40-bytes
 // hex string.
@@ -199,41 +213,61 @@ struct Symbol {
   /// This is in LSP snippet syntax (e.g. "({$0})" for a no-args function).
   /// (When snippets are disabled, the symbol name alone is used).
   llvm::StringRef CompletionSnippetSuffix;
+  /// Documentation including comment for the symbol declaration.
+  llvm::StringRef Documentation;
+  /// Type when this symbol is used in an expression. (Short display form).
+  /// e.g. return type of a function, or type of a variable.
+  llvm::StringRef ReturnType;
 
-  /// Optional symbol details that are not required to be set. For example, an
-  /// index fuzzy match can return a large number of symbol candidates, and it
-  /// is preferable to send only core symbol information in the batched results
-  /// and have clients resolve full symbol information for a specific candidate
-  /// if needed.
-  struct Details {
-    /// Documentation including comment for the symbol declaration.
-    llvm::StringRef Documentation;
-    /// Type when this symbol is used in an expression. (Short display form).
-    /// e.g. return type of a function, or type of a variable.
-    llvm::StringRef ReturnType;
-    /// This can be either a URI of the header to be #include'd for this symbol,
-    /// or a literal header quoted with <> or "" that is suitable to be included
-    /// directly. When this is a URI, the exact #include path needs to be
-    /// calculated according to the URI scheme.
+  struct IncludeHeaderWithReferences {
+    IncludeHeaderWithReferences() = default;
+
+    IncludeHeaderWithReferences(llvm::StringRef IncludeHeader,
+                                unsigned References)
+        : IncludeHeader(IncludeHeader), References(References) {}
+
+    /// This can be either a URI of the header to be #include'd
+    /// for this symbol, or a literal header quoted with <> or "" that is
+    /// suitable to be included directly. When it is a URI, the exact #include
+    /// path needs to be calculated according to the URI scheme.
     ///
-    /// This is a canonical include for the symbol and can be different from
-    /// FileURI in the CanonicalDeclaration.
-    llvm::StringRef IncludeHeader;
+    /// Note that the include header is a canonical include for the symbol and
+    /// can be different from FileURI in the CanonicalDeclaration.
+    llvm::StringRef IncludeHeader = "";
+    /// The number of translation units that reference this symbol and include
+    /// this header. This number is only meaningful if aggregated in an index.
+    unsigned References = 0;
   };
+  /// One Symbol can potentially be incuded via different headers.
+  ///   - If we haven't seen a definition, this covers all declarations.
+  ///   - If we have seen a definition, this covers declarations visible from
+  ///   any definition.
+  llvm::SmallVector<IncludeHeaderWithReferences, 1> IncludeHeaders;
 
-  // Optional details of the symbol.
-  const Details *Detail = nullptr;
-
-  // FIXME: add all occurrences support.
   // FIXME: add extra fields for index scoring signals.
 };
 llvm::raw_ostream &operator<<(llvm::raw_ostream &OS, const Symbol &S);
+
+// Invokes Callback with each StringRef& contained in the Symbol.
+// Useful for deduplicating backing strings.
+template <typename Callback> void visitStrings(Symbol &S, const Callback &CB) {
+  CB(S.Name);
+  CB(S.Scope);
+  CB(S.CanonicalDeclaration.FileURI);
+  CB(S.Definition.FileURI);
+  CB(S.Signature);
+  CB(S.CompletionSnippetSuffix);
+  CB(S.Documentation);
+  CB(S.ReturnType);
+  for (auto &Include : S.IncludeHeaders)
+    CB(Include.IncludeHeader);
+}
 
 // Computes query-independent quality score for a Symbol.
 // This currently falls in the range [1, ln(#indexed documents)].
 // FIXME: this should probably be split into symbol -> signals
 //        and signals -> score, so it can be reused for Sema completions.
-double quality(const Symbol &S);
+float quality(const Symbol &S);
 
 // An immutable symbol container that stores a set of symbols.
 // The container will maintain the lifetime of the symbols.
@@ -291,38 +325,86 @@ private:
   std::vector<Symbol> Symbols;  // Sorted by SymbolID to allow lookup.
 };
 
-// Describes the kind of a symbol occurrence.
+// Describes the kind of a cross-reference.
 //
 // This is a bitfield which can be combined from different kinds.
-enum class SymbolOccurrenceKind : uint8_t {
+enum class RefKind : uint8_t {
   Unknown = 0,
   Declaration = static_cast<uint8_t>(index::SymbolRole::Declaration),
   Definition = static_cast<uint8_t>(index::SymbolRole::Definition),
   Reference = static_cast<uint8_t>(index::SymbolRole::Reference),
+  All = Declaration | Definition | Reference,
 };
-inline SymbolOccurrenceKind operator|(SymbolOccurrenceKind L,
-                                      SymbolOccurrenceKind R) {
-  return static_cast<SymbolOccurrenceKind>(static_cast<uint8_t>(L) |
-                                           static_cast<uint8_t>(R));
+inline RefKind operator|(RefKind L, RefKind R) {
+  return static_cast<RefKind>(static_cast<uint8_t>(L) |
+                              static_cast<uint8_t>(R));
 }
-inline SymbolOccurrenceKind &operator|=(SymbolOccurrenceKind &L,
-                                        SymbolOccurrenceKind R) {
-  return L = L | R;
+inline RefKind &operator|=(RefKind &L, RefKind R) { return L = L | R; }
+inline RefKind operator&(RefKind A, RefKind B) {
+  return static_cast<RefKind>(static_cast<uint8_t>(A) &
+                              static_cast<uint8_t>(B));
 }
-inline SymbolOccurrenceKind operator&(SymbolOccurrenceKind A,
-                                      SymbolOccurrenceKind B) {
-  return static_cast<SymbolOccurrenceKind>(static_cast<uint8_t>(A) &
-                                           static_cast<uint8_t>(B));
-}
+llvm::raw_ostream &operator<<(llvm::raw_ostream &, RefKind);
 
-// Represents a symbol occurrence in the source file. It could be a
-// declaration/definition/reference occurrence.
+// Represents a symbol occurrence in the source file.
+// Despite the name, it could be a declaration/definition/reference.
 //
 // WARNING: Location does not own the underlying data - Copies are shallow.
-struct SymbolOccurrence {
-  // The location of the occurrence.
+struct Ref {
+  // The source location where the symbol is named.
   SymbolLocation Location;
-  SymbolOccurrenceKind Kind = SymbolOccurrenceKind::Unknown;
+  RefKind Kind = RefKind::Unknown;
+};
+inline bool operator<(const Ref &L, const Ref &R) {
+  return std::tie(L.Location, L.Kind) < std::tie(R.Location, R.Kind);
+}
+inline bool operator==(const Ref &L, const Ref &R) {
+  return std::tie(L.Location, L.Kind) == std::tie(R.Location, R.Kind);
+}
+llvm::raw_ostream &operator<<(llvm::raw_ostream &, const Ref &);
+
+// An efficient structure of storing large set of symbol references in memory.
+// Filenames are deduplicated.
+class RefSlab {
+public:
+  using value_type = std::pair<SymbolID, llvm::ArrayRef<Ref>>;
+  using const_iterator = std::vector<value_type>::const_iterator;
+  using iterator = const_iterator;
+
+  RefSlab() = default;
+  RefSlab(RefSlab &&Slab) = default;
+  RefSlab &operator=(RefSlab &&RHS) = default;
+
+  const_iterator begin() const { return Refs.begin(); }
+  const_iterator end() const { return Refs.end(); }
+  size_t size() const { return Refs.size(); }
+
+  size_t bytes() const {
+    return sizeof(*this) + Arena.getTotalMemory() +
+           sizeof(value_type) * Refs.size();
+  }
+
+  // RefSlab::Builder is a mutable container that can 'freeze' to RefSlab.
+  class Builder {
+  public:
+    Builder() : UniqueStrings(Arena) {}
+    // Adds a ref to the slab. Deep copy: Strings will be owned by the slab.
+    void insert(const SymbolID &ID, const Ref &S);
+    // Consumes the builder to finalize the slab.
+    RefSlab build() &&;
+
+  private:
+    llvm::BumpPtrAllocator Arena;
+    llvm::UniqueStringSaver UniqueStrings; // Contents on the arena.
+    llvm::DenseMap<SymbolID, std::vector<Ref>> Refs;
+  };
+
+private:
+  RefSlab(std::vector<value_type> Refs, llvm::BumpPtrAllocator Arena)
+      : Arena(std::move(Arena)), Refs(std::move(Refs)) {}
+
+  llvm::BumpPtrAllocator Arena;
+  std::vector<value_type> Refs;
 };
 
 struct FuzzyFindRequest {
@@ -358,12 +440,12 @@ struct LookupRequest {
   llvm::DenseSet<SymbolID> IDs;
 };
 
-struct OccurrencesRequest {
+struct RefsRequest {
   llvm::DenseSet<SymbolID> IDs;
-  SymbolOccurrenceKind Filter;
+  RefKind Filter = RefKind::All;
 };
 
-/// \brief Interface for symbol indexes that can be used for searching or
+/// Interface for symbol indexes that can be used for searching or
 /// matching symbols among a set of symbols based on names or unique IDs.
 class SymbolIndex {
 public:
@@ -385,21 +467,43 @@ public:
   lookup(const LookupRequest &Req,
          llvm::function_ref<void(const Symbol &)> Callback) const = 0;
 
-  /// CrossReference finds all symbol occurrences (e.g. references,
-  /// declarations, definitions) and applies \p Callback on each result.
+  /// Finds all occurrences (e.g. references, declarations, definitions) of a
+  /// symbol and applies \p Callback on each result.
   ///
-  /// Resutls are returned in arbitrary order.
-  ///
+  /// Results should be returned in arbitrary order.
   /// The returned result must be deep-copied if it's used outside Callback.
-  virtual void findOccurrences(
-      const OccurrencesRequest &Req,
-      llvm::function_ref<void(const SymbolOccurrence &)> Callback) const = 0;
+  virtual void refs(const RefsRequest &Req,
+                    llvm::function_ref<void(const Ref &)> Callback) const = 0;
 
   /// Returns estimated size of index (in bytes).
   // FIXME(kbobyrev): Currently, this only returns the size of index itself
   // excluding the size of actual symbol slab index refers to. We should include
   // both.
   virtual size_t estimateMemoryUsage() const = 0;
+};
+
+// Delegating implementation of SymbolIndex whose delegate can be swapped out.
+class SwapIndex : public SymbolIndex {
+public:
+  // If an index is not provided, reset() must be called.
+  SwapIndex(std::unique_ptr<SymbolIndex> Index = nullptr)
+      : Index(std::move(Index)) {}
+  void reset(std::unique_ptr<SymbolIndex>);
+
+  // SymbolIndex methods delegate to the current index, which is kept alive
+  // until the call returns (even if reset() is called).
+  bool fuzzyFind(const FuzzyFindRequest &,
+                 llvm::function_ref<void(const Symbol &)>) const override;
+  void lookup(const LookupRequest &,
+              llvm::function_ref<void(const Symbol &)>) const override;
+  void refs(const RefsRequest &,
+            llvm::function_ref<void(const Ref &)>) const override;
+  size_t estimateMemoryUsage() const override;
+
+private:
+  std::shared_ptr<SymbolIndex> snapshot() const;
+  mutable std::mutex Mutex;
+  std::shared_ptr<SymbolIndex> Index;
 };
 
 } // namespace clangd

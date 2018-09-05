@@ -183,6 +183,10 @@ public:
   bool blockUntilIdle(Deadline Timeout) const;
 
   std::shared_ptr<const PreambleData> getPossiblyStalePreamble() const;
+  /// Obtain a preamble reflecting all updates so far. Threadsafe.
+  /// It may be delivered immediately, or later on the worker thread.
+  void getCurrentPreamble(
+      llvm::unique_function<void(std::shared_ptr<const PreambleData>)>);
   /// Wait for the first build of preamble to finish. Preamble itself can be
   /// accessed via getPossibleStalePreamble(). Note that this function will
   /// return after an unsuccessful build of the preamble too, i.e. result of
@@ -361,13 +365,12 @@ void ASTWorker::update(
 
     std::shared_ptr<const PreambleData> OldPreamble =
         getPossiblyStalePreamble();
-    std::shared_ptr<const PreambleData> NewPreamble =
-        buildPreamble(FileName, *Invocation, OldPreamble, OldCommand, Inputs,
-                      PCHs, StorePreambleInMemory,
-                      [this](PathRef Path, ASTContext &Ctx,
-                             std::shared_ptr<clang::Preprocessor> PP) {
-                        Callbacks.onPreambleAST(FileName, Ctx, std::move(PP));
-                      });
+    std::shared_ptr<const PreambleData> NewPreamble = buildPreamble(
+        FileName, *Invocation, OldPreamble, OldCommand, Inputs, PCHs,
+        StorePreambleInMemory,
+        [this](ASTContext &Ctx, std::shared_ptr<clang::Preprocessor> PP) {
+          Callbacks.onPreambleAST(FileName, Ctx, std::move(PP));
+        });
 
     bool CanReuseAST = InputsAreTheSame && (OldPreamble == NewPreamble);
     {
@@ -462,6 +465,34 @@ std::shared_ptr<const PreambleData>
 ASTWorker::getPossiblyStalePreamble() const {
   std::lock_guard<std::mutex> Lock(Mutex);
   return LastBuiltPreamble;
+}
+
+void ASTWorker::getCurrentPreamble(
+    llvm::unique_function<void(std::shared_ptr<const PreambleData>)> Callback) {
+  // We could just call startTask() to throw the read on the queue, knowing
+  // it will run after any updates. But we know this task is cheap, so to
+  // improve latency we cheat: insert it on the queue after the last update.
+  std::unique_lock<std::mutex> Lock(Mutex);
+  auto LastUpdate =
+      std::find_if(Requests.rbegin(), Requests.rend(),
+                   [](const Request &R) { return R.UpdateType.hasValue(); });
+  // If there were no writes in the queue, the preamble is ready now.
+  if (LastUpdate == Requests.rend()) {
+    Lock.unlock();
+    return Callback(getPossiblyStalePreamble());
+  }
+  assert(!RunSync && "Running synchronously, but queue is non-empty!");
+  Requests.insert(LastUpdate.base(),
+                  Request{Bind(
+                              [this](decltype(Callback) Callback) {
+                                Callback(getPossiblyStalePreamble());
+                              },
+                              std::move(Callback)),
+                          "GetPreamble", steady_clock::now(),
+                          Context::current().clone(),
+                          /*UpdateType=*/llvm::None});
+  Lock.unlock();
+  RequestsCV.notify_all();
 }
 
 void ASTWorker::waitForFirstPreamble() const {
@@ -622,11 +653,6 @@ unsigned getDefaultAsyncThreadsCount() {
   return HardwareConcurrency;
 }
 
-ParsingCallbacks &noopParsingCallbacks() {
-  static ParsingCallbacks *Instance = new ParsingCallbacks;
-  return *Instance;
-}
-
 struct TUScheduler::FileData {
   /// Latest inputs, passed to TUScheduler::update().
   std::string Contents;
@@ -636,11 +662,13 @@ struct TUScheduler::FileData {
 
 TUScheduler::TUScheduler(unsigned AsyncThreadsCount,
                          bool StorePreamblesInMemory,
-                         ParsingCallbacks &Callbacks,
+                         std::unique_ptr<ParsingCallbacks> Callbacks,
                          std::chrono::steady_clock::duration UpdateDebounce,
                          ASTRetentionPolicy RetentionPolicy)
     : StorePreamblesInMemory(StorePreamblesInMemory),
-      PCHOps(std::make_shared<PCHContainerOperations>()), Callbacks(Callbacks),
+      PCHOps(std::make_shared<PCHContainerOperations>()),
+      Callbacks(Callbacks ? move(Callbacks)
+                          : llvm::make_unique<ParsingCallbacks>()),
       Barrier(AsyncThreadsCount),
       IdleASTs(llvm::make_unique<ASTCache>(RetentionPolicy.MaxRetainedASTs)),
       UpdateDebounce(UpdateDebounce) {
@@ -679,7 +707,7 @@ void TUScheduler::update(
     // Create a new worker to process the AST-related tasks.
     ASTWorkerHandle Worker = ASTWorker::create(
         File, *IdleASTs, WorkerThreads ? WorkerThreads.getPointer() : nullptr,
-        Barrier, UpdateDebounce, PCHOps, StorePreamblesInMemory, Callbacks);
+        Barrier, UpdateDebounce, PCHOps, StorePreamblesInMemory, *Callbacks);
     FD = std::unique_ptr<FileData>(new FileData{
         Inputs.Contents, Inputs.CompileCommand, std::move(Worker)});
   } else {
@@ -711,7 +739,7 @@ void TUScheduler::runWithAST(
 }
 
 void TUScheduler::runWithPreamble(
-    llvm::StringRef Name, PathRef File,
+    llvm::StringRef Name, PathRef File, PreambleConsistency Consistency,
     llvm::unique_function<void(llvm::Expected<InputsAndPreamble>)> Action) {
   auto It = Files.find(File);
   if (It == Files.end()) {
@@ -731,22 +759,40 @@ void TUScheduler::runWithPreamble(
     return;
   }
 
+  // Future is populated if the task needs a specific preamble.
+  std::future<std::shared_ptr<const PreambleData>> ConsistentPreamble;
+  if (Consistency == Consistent) {
+    std::promise<std::shared_ptr<const PreambleData>> Promise;
+    ConsistentPreamble = Promise.get_future();
+    It->second->Worker->getCurrentPreamble(Bind(
+        [](decltype(Promise) Promise,
+           std::shared_ptr<const PreambleData> Preamble) {
+          Promise.set_value(std::move(Preamble));
+        },
+        std::move(Promise)));
+  }
+
   std::shared_ptr<const ASTWorker> Worker = It->second->Worker.lock();
   auto Task = [Worker, this](std::string Name, std::string File,
                              std::string Contents,
                              tooling::CompileCommand Command, Context Ctx,
+                             decltype(ConsistentPreamble) ConsistentPreamble,
                              decltype(Action) Action) mutable {
-    // We don't want to be running preamble actions before the preamble was
-    // built for the first time. This avoids extra work of processing the
-    // preamble headers in parallel multiple times.
-    Worker->waitForFirstPreamble();
+    std::shared_ptr<const PreambleData> Preamble;
+    if (ConsistentPreamble.valid()) {
+      Preamble = ConsistentPreamble.get();
+    } else {
+      // We don't want to be running preamble actions before the preamble was
+      // built for the first time. This avoids extra work of processing the
+      // preamble headers in parallel multiple times.
+      Worker->waitForFirstPreamble();
+      Preamble = Worker->getPossiblyStalePreamble();
+    }
 
     std::lock_guard<Semaphore> BarrierLock(Barrier);
     WithContext Guard(std::move(Ctx));
     trace::Span Tracer(Name);
     SPAN_ATTACH(Tracer, "file", File);
-    std::shared_ptr<const PreambleData> Preamble =
-        Worker->getPossiblyStalePreamble();
     Action(InputsAndPreamble{Contents, Command, Preamble.get()});
   };
 
@@ -755,7 +801,7 @@ void TUScheduler::runWithPreamble(
       Bind(Task, std::string(Name), std::string(File), It->second->Contents,
            It->second->Command,
            Context::current().derive(kFileBeingProcessed, File),
-           std::move(Action)));
+           std::move(ConsistentPreamble), std::move(Action)));
 }
 
 std::vector<std::pair<Path, std::size_t>>

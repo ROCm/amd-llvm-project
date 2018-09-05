@@ -1256,23 +1256,25 @@ Value *LibCallSimplifier::replacePowWithExp(CallInst *Pow, IRBuilder<> &B) {
     return nullptr;
 
   // pow(2.0 ** n, x) -> exp2(n * x)
-  APFloat BaseR = APFloat(1.0);
-  BaseR.convert(BaseF->getSemantics(), APFloat::rmTowardZero, &Ignored);
-  BaseR = BaseR / *BaseF;
-  bool IsInteger    = BaseF->isInteger(),
-       IsReciprocal = BaseR.isInteger();
-  const APFloat *NF = IsReciprocal ? &BaseR : BaseF;
-  APSInt NI(64, false);
-  if ((IsInteger || IsReciprocal) &&
-      !NF->convertToInteger(NI, APFloat::rmTowardZero, &Ignored) &&
-      NI > 1 && NI.isPowerOf2()) {
-    double N = NI.logBase2() * (IsReciprocal ? -1.0 : 1.0);
-    Value *FMul = B.CreateFMul(Expo, ConstantFP::get(Ty, N), "mul");
-    if (Pow->doesNotAccessMemory())
-      return B.CreateCall(Intrinsic::getDeclaration(Mod, Intrinsic::exp2, Ty),
-                          FMul, "exp2");
-    else
-      return emitUnaryFloatFnCall(FMul, TLI->getName(LibFunc_exp2), B, Attrs);
+  if (hasUnaryFloatFn(TLI, Ty, LibFunc_exp2, LibFunc_exp2f, LibFunc_exp2l)) {
+    APFloat BaseR = APFloat(1.0);
+    BaseR.convert(BaseF->getSemantics(), APFloat::rmTowardZero, &Ignored);
+    BaseR = BaseR / *BaseF;
+    bool IsInteger    = BaseF->isInteger(),
+         IsReciprocal = BaseR.isInteger();
+    const APFloat *NF = IsReciprocal ? &BaseR : BaseF;
+    APSInt NI(64, false);
+    if ((IsInteger || IsReciprocal) &&
+        !NF->convertToInteger(NI, APFloat::rmTowardZero, &Ignored) &&
+        NI > 1 && NI.isPowerOf2()) {
+      double N = NI.logBase2() * (IsReciprocal ? -1.0 : 1.0);
+      Value *FMul = B.CreateFMul(Expo, ConstantFP::get(Ty, N), "mul");
+      if (Pow->doesNotAccessMemory())
+        return B.CreateCall(Intrinsic::getDeclaration(Mod, Intrinsic::exp2, Ty),
+                            FMul, "exp2");
+      else
+        return emitUnaryFloatFnCall(FMul, TLI->getName(LibFunc_exp2), B, Attrs);
+    }
   }
 
   // pow(10.0, x) -> exp10(x)
@@ -1280,6 +1282,27 @@ Value *LibCallSimplifier::replacePowWithExp(CallInst *Pow, IRBuilder<> &B) {
   if (match(Base, m_SpecificFP(10.0)) &&
       hasUnaryFloatFn(TLI, Ty, LibFunc_exp10, LibFunc_exp10f, LibFunc_exp10l))
     return emitUnaryFloatFnCall(Expo, TLI->getName(LibFunc_exp10), B, Attrs);
+
+  return nullptr;
+}
+
+static Value *getSqrtCall(Value *V, AttributeList Attrs, bool NoErrno,
+                          Module *M, IRBuilder<> &B,
+                          const TargetLibraryInfo *TLI) {
+  // If errno is never set, then use the intrinsic for sqrt().
+  if (NoErrno) {
+    Function *SqrtFn =
+        Intrinsic::getDeclaration(M, Intrinsic::sqrt, V->getType());
+    return B.CreateCall(SqrtFn, V, "sqrt");
+  }
+
+  // Otherwise, use the libcall for sqrt().
+  if (hasUnaryFloatFn(TLI, V->getType(), LibFunc_sqrt, LibFunc_sqrtf,
+                      LibFunc_sqrtl))
+    // TODO: We also should check that the target can in fact lower the sqrt()
+    // libcall. We currently have no way to ask this question, so we ask if
+    // the target has a sqrt() libcall, which is not exactly the same.
+    return emitUnaryFloatFnCall(V, TLI->getName(LibFunc_sqrt), B, Attrs);
 
   return nullptr;
 }
@@ -1296,19 +1319,8 @@ Value *LibCallSimplifier::replacePowWithSqrt(CallInst *Pow, IRBuilder<> &B) {
       (!ExpoF->isExactlyValue(0.5) && !ExpoF->isExactlyValue(-0.5)))
     return nullptr;
 
-  // If errno is never set, then use the intrinsic for sqrt().
-  if (Pow->doesNotAccessMemory()) {
-    Function *SqrtFn = Intrinsic::getDeclaration(Pow->getModule(),
-                                                 Intrinsic::sqrt, Ty);
-    Sqrt = B.CreateCall(SqrtFn, Base, "sqrt");
-  }
-  // Otherwise, use the libcall for sqrt().
-  else if (hasUnaryFloatFn(TLI, Ty, LibFunc_sqrt, LibFunc_sqrtf, LibFunc_sqrtl))
-    // TODO: We also should check that the target can in fact lower the sqrt()
-    // libcall. We currently have no way to ask this question, so we ask if
-    // the target has a sqrt() libcall, which is not exactly the same.
-    Sqrt = emitUnaryFloatFnCall(Base, TLI->getName(LibFunc_sqrt), B, Attrs);
-  else
+  Sqrt = getSqrtCall(Base, Attrs, Pow->doesNotAccessMemory(), Mod, B, TLI);
+  if (!Sqrt)
     return nullptr;
 
   // Handle signed zero base by expanding to fabs(sqrt(x)).
@@ -1389,9 +1401,33 @@ Value *LibCallSimplifier::optimizePow(CallInst *Pow, IRBuilder<> &B) {
   const APFloat *ExpoF;
   if (Pow->isFast() && match(Expo, m_APFloat(ExpoF))) {
     // We limit to a max of 7 multiplications, thus the maximum exponent is 32.
+    // If the exponent is an integer+0.5 we generate a call to sqrt and an
+    // additional fmul.
+    // TODO: This whole transformation should be backend specific (e.g. some
+    //       backends might prefer libcalls or the limit for the exponent might
+    //       be different) and it should also consider optimizing for size.
     APFloat LimF(ExpoF->getSemantics(), 33.0),
             ExpoA(abs(*ExpoF));
-    if (ExpoA.isInteger() && ExpoA.compare(LimF) == APFloat::cmpLessThan) {
+    if (ExpoA.compare(LimF) == APFloat::cmpLessThan) {
+      // This transformation applies to integer or integer+0.5 exponents only.
+      // For integer+0.5, we create a sqrt(Base) call.
+      Value *Sqrt = nullptr;
+      if (!ExpoA.isInteger()) {
+        APFloat Expo2 = ExpoA;
+        // To check if ExpoA is an integer + 0.5, we add it to itself. If there
+        // is no floating point exception and the result is an integer, then
+        // ExpoA == integer + 0.5
+        if (Expo2.add(ExpoA, APFloat::rmNearestTiesToEven) != APFloat::opOK)
+          return nullptr;
+
+        if (!Expo2.isInteger())
+          return nullptr;
+
+        Sqrt =
+            getSqrtCall(Base, Pow->getCalledFunction()->getAttributes(),
+                        Pow->doesNotAccessMemory(), Pow->getModule(), B, TLI);
+      }
+
       // We will memoize intermediate products of the Addition Chain.
       Value *InnerChain[33] = {nullptr};
       InnerChain[1] = Base;
@@ -1401,6 +1437,10 @@ Value *LibCallSimplifier::optimizePow(CallInst *Pow, IRBuilder<> &B) {
       // So we first convert it to something which could be converted to double.
       ExpoA.convert(APFloat::IEEEdouble(), APFloat::rmTowardZero, &Ignored);
       Value *FMul = getPow(InnerChain, ExpoA.convertToDouble(), B);
+
+      // Expand pow(x, y+0.5) to pow(x, y) * sqrt(x).
+      if (Sqrt)
+        FMul = B.CreateFMul(FMul, Sqrt);
 
       // If the exponent is negative, then get the reciprocal.
       if (ExpoF->isNegative())
