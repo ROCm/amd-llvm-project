@@ -10,7 +10,10 @@ add %eax, %eax
 # ALL:             Iterations:        100
 # ALL-NEXT:        Instructions:      100
 # ALL-NEXT:        Total Cycles:      103
-# ALL-NEXT:        Dispatch Width:    2
+# ALL-NEXT:        Total uOps:        100
+
+# ALL:             Dispatch Width:    2
+# ALL-NEXT:        uOps Per Cycle:    0.97
 # ALL-NEXT:        IPC:               0.97
 # ALL-NEXT:        Block RThroughput: 0.5
 
@@ -28,12 +31,12 @@ add %eax, %eax
 # ALL:             Dynamic Dispatch Stall Cycles:
 # ALL-NEXT:        RAT     - Register unavailable:                      0
 # ALL-NEXT:        RCU     - Retire tokens unavailable:                 0
-# ALL-NEXT:        SCHEDQ  - Scheduler full:                            61
+# ALL-NEXT:        SCHEDQ  - Scheduler full:                            61  (59.2%)
 # ALL-NEXT:        LQ      - Load queue full:                           0
 # ALL-NEXT:        SQ      - Store queue full:                          0
 # ALL-NEXT:        GROUP   - Static restrictions on the dispatch group: 0
 
-# ALL:             Dispatch Logic - number of cycles where we saw N instructions dispatched:
+# ALL:             Dispatch Logic - number of cycles where we saw N micro opcodes dispatched:
 # ALL-NEXT:        [# dispatched], [# cycles]
 # ALL-NEXT:         0,              22  (21.4%)
 # ALL-NEXT:         1,              62  (60.2%)

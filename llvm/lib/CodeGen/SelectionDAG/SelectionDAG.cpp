@@ -984,7 +984,7 @@ SelectionDAG::SelectionDAG(const TargetMachine &tm, CodeGenOpt::Level OL)
 void SelectionDAG::init(MachineFunction &NewMF,
                         OptimizationRemarkEmitter &NewORE,
                         Pass *PassPtr, const TargetLibraryInfo *LibraryInfo,
-                        DivergenceAnalysis * Divergence) {
+                        LegacyDivergenceAnalysis * Divergence) {
   MF = &NewMF;
   SDAGISelPass = PassPtr;
   ORE = &NewORE;
@@ -6664,7 +6664,7 @@ SDValue SelectionDAG::getMaskedGather(SDVTList VTs, EVT VT, const SDLoc &dl,
   assert(N->getMask().getValueType().getVectorNumElements() ==
              N->getValueType(0).getVectorNumElements() &&
          "Vector width mismatch between mask and data");
-  assert(N->getIndex().getValueType().getVectorNumElements() ==
+  assert(N->getIndex().getValueType().getVectorNumElements() >=
              N->getValueType(0).getVectorNumElements() &&
          "Vector width mismatch between index and data");
   assert(isa<ConstantSDNode>(N->getScale()) &&
@@ -6701,7 +6701,7 @@ SDValue SelectionDAG::getMaskedScatter(SDVTList VTs, EVT VT, const SDLoc &dl,
   assert(N->getMask().getValueType().getVectorNumElements() ==
              N->getValue().getValueType().getVectorNumElements() &&
          "Vector width mismatch between mask and data");
-  assert(N->getIndex().getValueType().getVectorNumElements() ==
+  assert(N->getIndex().getValueType().getVectorNumElements() >=
              N->getValue().getValueType().getVectorNumElements() &&
          "Vector width mismatch between index and data");
   assert(isa<ConstantSDNode>(N->getScale()) &&

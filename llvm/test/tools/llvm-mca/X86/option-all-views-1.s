@@ -11,7 +11,10 @@ add %eax, %eax
 # DEFAULTREPORT:      Iterations:        100
 # DEFAULTREPORT-NEXT: Instructions:      100
 # DEFAULTREPORT-NEXT: Total Cycles:      103
-# DEFAULTREPORT-NEXT: Dispatch Width:    2
+# DEFAULTREPORT-NEXT: Total uOps:        100
+
+# DEFAULTREPORT:      Dispatch Width:    2
+# DEFAULTREPORT-NEXT: uOps Per Cycle:    0.97
 # DEFAULTREPORT-NEXT: IPC:               0.97
 # DEFAULTREPORT-NEXT: Block RThroughput: 0.5
 
@@ -29,12 +32,12 @@ add %eax, %eax
 # FULLREPORT:         Dynamic Dispatch Stall Cycles:
 # FULLREPORT-NEXT:    RAT     - Register unavailable:                      0
 # FULLREPORT-NEXT:    RCU     - Retire tokens unavailable:                 0
-# FULLREPORT-NEXT:    SCHEDQ  - Scheduler full:                            61
+# FULLREPORT-NEXT:    SCHEDQ  - Scheduler full:                            61  (59.2%)
 # FULLREPORT-NEXT:    LQ      - Load queue full:                           0
 # FULLREPORT-NEXT:    SQ      - Store queue full:                          0
 # FULLREPORT-NEXT:    GROUP   - Static restrictions on the dispatch group: 0
 
-# FULLREPORT:         Dispatch Logic - number of cycles where we saw N instructions dispatched:
+# FULLREPORT:         Dispatch Logic - number of cycles where we saw N micro opcodes dispatched:
 # FULLREPORT-NEXT:    [# dispatched], [# cycles]
 # FULLREPORT-NEXT:     0,              22  (21.4%)
 # FULLREPORT-NEXT:     1,              62  (60.2%)

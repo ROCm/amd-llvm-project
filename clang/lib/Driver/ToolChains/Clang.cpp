@@ -498,6 +498,8 @@ static codegenoptions::DebugInfoKind DebugLevelToInfoKind(const Arg &A) {
   if (A.getOption().matches(options::OPT_gline_tables_only) ||
       A.getOption().matches(options::OPT_ggdb1))
     return codegenoptions::DebugLineTablesOnly;
+  if (A.getOption().matches(options::OPT_gline_directives_only))
+    return codegenoptions::DebugDirectivesOnly;
   return codegenoptions::LimitedDebugInfo;
 }
 
@@ -894,6 +896,9 @@ static void RenderDebugEnablingArgs(const ArgList &Args, ArgStringList &CmdArgs,
                                     unsigned DwarfVersion,
                                     llvm::DebuggerKind DebuggerTuning) {
   switch (DebugInfoKind) {
+  case codegenoptions::DebugDirectivesOnly:
+    CmdArgs.push_back("-debug-info-kind=line-directives-only");
+    break;
   case codegenoptions::DebugLineTablesOnly:
     CmdArgs.push_back("-debug-info-kind=line-tables-only");
     break;
@@ -2242,8 +2247,6 @@ static void RenderAnalyzerOptions(const ArgList &Args, ArgStringList &CmdArgs,
   // Treat blocks as analysis entry points.
   CmdArgs.push_back("-analyzer-opt-analyze-nested-blocks");
 
-  CmdArgs.push_back("-analyzer-eagerly-assume");
-
   // Add default argument set.
   if (!Args.hasArg(options::OPT__analyzer_no_default_checks)) {
     CmdArgs.push_back("-analyzer-checker=core");
@@ -2939,6 +2942,7 @@ static void RenderDebugOptions(const ToolChain &TC, const Driver &D,
         if (SplitDWARFArg) {
           if (A->getIndex() > SplitDWARFArg->getIndex()) {
             if (DebugInfoKind == codegenoptions::NoDebugInfo ||
+                DebugInfoKind == codegenoptions::DebugDirectivesOnly ||
                 (DebugInfoKind == codegenoptions::DebugLineTablesOnly &&
                  SplitDWARFInlining))
               SplitDWARFArg = nullptr;
@@ -2992,6 +2996,10 @@ static void RenderDebugOptions(const ToolChain &TC, const Driver &D,
       DebugInfoKind != codegenoptions::NoDebugInfo)
     DWARFVersion = TC.GetDefaultDwarfVersion();
 
+  // -gline-directives-only supported only for the DWARF debug info.
+  if (DWARFVersion == 0 && DebugInfoKind == codegenoptions::DebugDirectivesOnly)
+    DebugInfoKind = codegenoptions::NoDebugInfo;
+
   // We ignore flag -gstrict-dwarf for now.
   // And we handle flag -grecord-gcc-switches later with DWARFDebugFlags.
   Args.ClaimAllArgs(options::OPT_g_flags_Group);
@@ -3009,10 +3017,11 @@ static void RenderDebugOptions(const ToolChain &TC, const Driver &D,
     CmdArgs.push_back("-dwarf-column-info");
 
   // FIXME: Move backend command line options to the module.
-  // If -gline-tables-only is the last option it wins.
+  // If -gline-tables-only or -gline-directives-only is the last option it wins.
   if (const Arg *A = Args.getLastArg(options::OPT_gmodules))
     if (checkDebugInfoOption(A, Args, D, TC)) {
-      if (DebugInfoKind != codegenoptions::DebugLineTablesOnly) {
+      if (DebugInfoKind != codegenoptions::DebugLineTablesOnly &&
+          DebugInfoKind != codegenoptions::DebugDirectivesOnly) {
         DebugInfoKind = codegenoptions::LimitedDebugInfo;
         CmdArgs.push_back("-dwarf-ext-refs");
         CmdArgs.push_back("-fmodule-format=obj");
@@ -4112,8 +4121,16 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
       // When in OpenMP offloading mode with NVPTX target, forward
       // cuda-mode flag
-      Args.AddLastArg(CmdArgs, options::OPT_fopenmp_cuda_mode,
-                      options::OPT_fno_openmp_cuda_mode);
+      if (Args.hasFlag(options::OPT_fopenmp_cuda_mode,
+                       options::OPT_fno_openmp_cuda_mode, /*Default=*/false))
+        CmdArgs.push_back("-fopenmp-cuda-mode");
+
+      // When in OpenMP offloading mode with NVPTX target, check if full runtime
+      // is required.
+      if (Args.hasFlag(options::OPT_fopenmp_cuda_force_full_runtime,
+                       options::OPT_fno_openmp_cuda_force_full_runtime,
+                       /*Default=*/false))
+        CmdArgs.push_back("-fopenmp-cuda-force-full-runtime");
       break;
     default:
       // By default, if Clang doesn't know how to generate useful OpenMP code

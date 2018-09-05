@@ -1759,7 +1759,7 @@ Parser::ParseCXXTypeConstructExpression(const DeclSpec &DS) {
       if (ParseExpressionList(Exprs, CommaLocs, [&] {
             Actions.CodeCompleteConstructor(
                 getCurScope(), TypeRep.get()->getCanonicalTypeInternal(),
-                DS.getEndLoc(), Exprs);
+                DS.getEndLoc(), Exprs, T.getOpenLocation());
           })) {
         SkipUntil(tok::r_paren, StopAtSemi);
         return ExprError();
@@ -2893,7 +2893,7 @@ Parser::ParseCXXNewExpression(bool UseGlobal, SourceLocation Start) {
                                                        DeclaratorInfo).get();
             Actions.CodeCompleteConstructor(
                 getCurScope(), TypeRep.get()->getCanonicalTypeInternal(),
-                DeclaratorInfo.getEndLoc(), ConstructorArgs);
+                DeclaratorInfo.getEndLoc(), ConstructorArgs, ConstructorLParen);
       })) {
         SkipUntil(tok::semi, StopAtSemi | StopBeforeMatch);
         return ExprError();

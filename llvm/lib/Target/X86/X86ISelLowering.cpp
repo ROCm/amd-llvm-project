@@ -9862,7 +9862,6 @@ static SDValue lowerVectorShuffleAsBlend(const SDLoc &DL, MVT VT, SDValue V1,
   case MVT::v8f32:
     return DAG.getNode(X86ISD::BLENDI, DL, VT, V1, V2,
                        DAG.getConstant(BlendMask, DL, MVT::i8));
-
   case MVT::v4i64:
   case MVT::v8i32:
     assert(Subtarget.hasAVX2() && "256-bit integer blends require AVX2!");
@@ -9894,7 +9893,6 @@ static SDValue lowerVectorShuffleAsBlend(const SDLoc &DL, MVT VT, SDValue V1,
                           DAG.getNode(X86ISD::BLENDI, DL, MVT::v8i16, V1, V2,
                                       DAG.getConstant(BlendMask, DL, MVT::i8)));
   }
-
   case MVT::v16i16: {
     assert(Subtarget.hasAVX2() && "256-bit integer blends require AVX2!");
     SmallVector<int, 8> RepeatedMask;
@@ -9907,6 +9905,20 @@ static SDValue lowerVectorShuffleAsBlend(const SDLoc &DL, MVT VT, SDValue V1,
           BlendMask |= 1ull << i;
       return DAG.getNode(X86ISD::BLENDI, DL, MVT::v16i16, V1, V2,
                          DAG.getConstant(BlendMask, DL, MVT::i8));
+    }
+    // Use PBLENDW for lower/upper lanes and then blend lanes.
+    // TODO - we should allow 2 PBLENDW here and leave shuffle combine to
+    // merge to VSELECT where useful.
+    uint64_t LoMask = BlendMask & 0xFF;
+    uint64_t HiMask = (BlendMask >> 8) & 0xFF;
+    if (LoMask == 0 || LoMask == 255 || HiMask == 0 || HiMask == 255) {
+      SDValue Lo = DAG.getNode(X86ISD::BLENDI, DL, MVT::v16i16, V1, V2,
+                               DAG.getConstant(LoMask, DL, MVT::i8));
+      SDValue Hi = DAG.getNode(X86ISD::BLENDI, DL, MVT::v16i16, V1, V2,
+                               DAG.getConstant(HiMask, DL, MVT::i8));
+      return DAG.getVectorShuffle(
+          MVT::v16i16, DL, Lo, Hi,
+          {0, 1, 2, 3, 4, 5, 6, 7, 24, 25, 26, 27, 28, 29, 30, 31});
     }
     LLVM_FALLTHROUGH;
   }
@@ -15041,6 +15053,39 @@ static SDValue lower512BitVectorShuffle(const SDLoc &DL, ArrayRef<int> Mask,
   }
 }
 
+// Determine if this shuffle can be implemented with a KSHIFT instruction.
+// Returns the shift amount if possible or -1 if not. This is a simplified
+// version of matchVectorShuffleAsShift.
+static int match1BitShuffleAsKSHIFT(unsigned &Opcode, ArrayRef<int> Mask,
+                                    int MaskOffset, const APInt &Zeroable) {
+  int Size = Mask.size();
+
+  auto CheckZeros = [&](int Shift, bool Left) {
+    for (int j = 0; j < Shift; ++j)
+      if (!Zeroable[j + (Left ? 0 : (Size - Shift))])
+        return false;
+
+    return true;
+  };
+
+  auto MatchShift = [&](int Shift, bool Left) {
+    unsigned Pos = Left ? Shift : 0;
+    unsigned Low = Left ? 0 : Shift;
+    unsigned Len = Size - Shift;
+    return isSequentialOrUndefInRange(Mask, Pos, Len, Low + MaskOffset);
+  };
+
+  for (int Shift = 1; Shift != Size; ++Shift)
+    for (bool Left : {true, false})
+      if (CheckZeros(Shift, Left) && MatchShift(Shift, Left)) {
+        Opcode = Left ? X86ISD::KSHIFTL : X86ISD::KSHIFTR;
+        return Shift;
+      }
+
+  return -1;
+}
+
+
 // Lower vXi1 vector shuffles.
 // There is no a dedicated instruction on AVX-512 that shuffles the masks.
 // The only way to shuffle bits is to sign-extend the mask vector to SIMD
@@ -15050,6 +15095,9 @@ static SDValue lower1BitVectorShuffle(const SDLoc &DL, ArrayRef<int> Mask,
                                       const APInt &Zeroable,
                                       const X86Subtarget &Subtarget,
                                       SelectionDAG &DAG) {
+  assert(Subtarget.hasAVX512() &&
+         "Cannot lower 512-bit vectors w/o basic ISA!");
+
   unsigned NumElts = Mask.size();
 
   // Try to recognize shuffles that are just padding a subvector with zeros.
@@ -15076,9 +15124,21 @@ static SDValue lower1BitVectorShuffle(const SDLoc &DL, ArrayRef<int> Mask,
                        Extract, DAG.getIntPtrConstant(0, DL));
   }
 
+  // Try to match KSHIFTs.
+  // TODO: Support narrower than legal shifts by widening and extracting.
+  if (NumElts >= 16 || (Subtarget.hasDQI() && NumElts == 8)) {
+    unsigned Offset = 0;
+    for (SDValue V : { V1, V2 }) {
+      unsigned Opcode;
+      int ShiftAmt = match1BitShuffleAsKSHIFT(Opcode, Mask, Offset, Zeroable);
+      if (ShiftAmt >= 0)
+        return DAG.getNode(Opcode, DL, VT, V,
+                           DAG.getConstant(ShiftAmt, DL, MVT::i8));
+      Offset += NumElts; // Increment for next iteration.
+    }
+  }
 
-  assert(Subtarget.hasAVX512() &&
-         "Cannot lower 512-bit vectors w/o basic ISA!");
+
   MVT ExtVT;
   switch (VT.SimpleTy) {
   default:
@@ -18023,7 +18083,13 @@ SDValue X86TargetLowering::EmitTest(SDValue Op, unsigned X86CC, const SDLoc &dl,
         if (!ZeroCheck)
           break;
 
-        assert(!isa<ConstantSDNode>(Op0) && "AND node isn't canonicalized");
+        // And with cosntant should be canonicalized unless we're dealing
+        // with opaque constants.
+        assert((!isa<ConstantSDNode>(Op0) ||
+                (isa<ConstantSDNode>(Op1) &&
+                 (cast<ConstantSDNode>(Op0)->isOpaque() ||
+                  cast<ConstantSDNode>(Op1)->isOpaque()))) &&
+               "AND node isn't canonicalized");
         auto *CN = dyn_cast<ConstantSDNode>(Op1);
         if (!CN)
           break;
@@ -21231,6 +21297,14 @@ SDValue X86TargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
   // ptest and testp intrinsics. The intrinsic these come from are designed to
   // return an integer value, not just an instruction so lower it to the ptest
   // or testp pattern and a setcc for the result.
+  case Intrinsic::x86_avx512_ktestc_b:
+  case Intrinsic::x86_avx512_ktestc_w:
+  case Intrinsic::x86_avx512_ktestc_d:
+  case Intrinsic::x86_avx512_ktestc_q:
+  case Intrinsic::x86_avx512_ktestz_b:
+  case Intrinsic::x86_avx512_ktestz_w:
+  case Intrinsic::x86_avx512_ktestz_d:
+  case Intrinsic::x86_avx512_ktestz_q:
   case Intrinsic::x86_sse41_ptestz:
   case Intrinsic::x86_sse41_ptestc:
   case Intrinsic::x86_sse41_ptestnzc:
@@ -21249,15 +21323,30 @@ SDValue X86TargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
   case Intrinsic::x86_avx_vtestz_pd_256:
   case Intrinsic::x86_avx_vtestc_pd_256:
   case Intrinsic::x86_avx_vtestnzc_pd_256: {
-    bool IsTestPacked = false;
+    unsigned TestOpc = X86ISD::PTEST;
     X86::CondCode X86CC;
     switch (IntNo) {
     default: llvm_unreachable("Bad fallthrough in Intrinsic lowering.");
+    case Intrinsic::x86_avx512_ktestc_b:
+    case Intrinsic::x86_avx512_ktestc_w:
+    case Intrinsic::x86_avx512_ktestc_d:
+    case Intrinsic::x86_avx512_ktestc_q:
+      // CF = 1
+      TestOpc = X86ISD::KTEST;
+      X86CC = X86::COND_B;
+      break;
+    case Intrinsic::x86_avx512_ktestz_b:
+    case Intrinsic::x86_avx512_ktestz_w:
+    case Intrinsic::x86_avx512_ktestz_d:
+    case Intrinsic::x86_avx512_ktestz_q:
+      TestOpc = X86ISD::KTEST;
+      X86CC = X86::COND_E;
+      break;
     case Intrinsic::x86_avx_vtestz_ps:
     case Intrinsic::x86_avx_vtestz_pd:
     case Intrinsic::x86_avx_vtestz_ps_256:
     case Intrinsic::x86_avx_vtestz_pd_256:
-      IsTestPacked = true;
+      TestOpc = X86ISD::TESTP;
       LLVM_FALLTHROUGH;
     case Intrinsic::x86_sse41_ptestz:
     case Intrinsic::x86_avx_ptestz_256:
@@ -21268,7 +21357,7 @@ SDValue X86TargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
     case Intrinsic::x86_avx_vtestc_pd:
     case Intrinsic::x86_avx_vtestc_ps_256:
     case Intrinsic::x86_avx_vtestc_pd_256:
-      IsTestPacked = true;
+      TestOpc = X86ISD::TESTP;
       LLVM_FALLTHROUGH;
     case Intrinsic::x86_sse41_ptestc:
     case Intrinsic::x86_avx_ptestc_256:
@@ -21279,7 +21368,7 @@ SDValue X86TargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
     case Intrinsic::x86_avx_vtestnzc_pd:
     case Intrinsic::x86_avx_vtestnzc_ps_256:
     case Intrinsic::x86_avx_vtestnzc_pd_256:
-      IsTestPacked = true;
+      TestOpc = X86ISD::TESTP;
       LLVM_FALLTHROUGH;
     case Intrinsic::x86_sse41_ptestnzc:
     case Intrinsic::x86_avx_ptestnzc_256:
@@ -21290,7 +21379,6 @@ SDValue X86TargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
 
     SDValue LHS = Op.getOperand(1);
     SDValue RHS = Op.getOperand(2);
-    unsigned TestOpc = IsTestPacked ? X86ISD::TESTP : X86ISD::PTEST;
     SDValue Test = DAG.getNode(TestOpc, dl, MVT::i32, LHS, RHS);
     SDValue SetCC = getSETCC(X86CC, Test, dl, DAG);
     return DAG.getNode(ISD::ZERO_EXTEND, dl, MVT::i32, SetCC);
@@ -25701,7 +25789,8 @@ void X86TargetLowering::ReplaceNodeResults(SDNode *N,
     // setCC result type is v2i1 because type legalzation will end up with
     // a v4i1 setcc plus an extend.
     assert(N->getValueType(0) == MVT::v2i32 && "Unexpected type");
-    if (N->getOperand(0).getValueType() != MVT::v2f32)
+    if (N->getOperand(0).getValueType() != MVT::v2f32 ||
+        getTypeAction(*DAG.getContext(), MVT::v2i32) == TypeWidenVector)
       return;
     SDValue UNDEF = DAG.getUNDEF(MVT::v2f32);
     SDValue LHS = DAG.getNode(ISD::CONCAT_VECTORS, dl, MVT::v4f32,
@@ -25710,9 +25799,8 @@ void X86TargetLowering::ReplaceNodeResults(SDNode *N,
                               N->getOperand(1), UNDEF);
     SDValue Res = DAG.getNode(ISD::SETCC, dl, MVT::v4i32, LHS, RHS,
                               N->getOperand(2));
-    if (getTypeAction(*DAG.getContext(), MVT::v2i32) != TypeWidenVector)
-      Res = DAG.getNode(ISD::EXTRACT_SUBVECTOR, dl, MVT::v2i32, Res,
-                        DAG.getIntPtrConstant(0, dl));
+    Res = DAG.getNode(ISD::EXTRACT_SUBVECTOR, dl, MVT::v2i32, Res,
+                      DAG.getIntPtrConstant(0, dl));
     Results.push_back(Res);
     return;
   }
@@ -25772,14 +25860,14 @@ void X86TargetLowering::ReplaceNodeResults(SDNode *N,
         Results.push_back(Res);
         return;
       }
-      if (SrcVT == MVT::v2f32) {
+      if (SrcVT == MVT::v2f32 &&
+          getTypeAction(*DAG.getContext(), MVT::v2i32) != TypeWidenVector) {
         SDValue Idx = DAG.getIntPtrConstant(0, dl);
         SDValue Res = DAG.getNode(ISD::CONCAT_VECTORS, dl, MVT::v4f32, Src,
                                   DAG.getUNDEF(MVT::v2f32));
         Res = DAG.getNode(IsSigned ? ISD::FP_TO_SINT
                                    : ISD::FP_TO_UINT, dl, MVT::v4i32, Res);
-        if (getTypeAction(*DAG.getContext(), MVT::v2i32) != TypeWidenVector)
-          Res = DAG.getNode(ISD::EXTRACT_SUBVECTOR, dl, MVT::v2i32, Res, Idx);
+        Res = DAG.getNode(ISD::EXTRACT_SUBVECTOR, dl, MVT::v2i32, Res, Idx);
         Results.push_back(Res);
         return;
       }
