@@ -18,23 +18,13 @@
 #include "llvm/Option/ArgList.h"
 #include "llvm/Support/Path.h"
 
-#include <array>
-#include <cstdio>
-#include <cstdlib>
-#include <fstream>
-#include <memory>
-#include <system_error>
-#include <utility>
-
-#include <iostream>
 #include <sstream>
 #include <string>
-#include <vector>
 
+using namespace clang;
 using namespace clang::driver;
 using namespace clang::driver::toolchains;
 using namespace clang::driver::tools;
-using namespace clang;
 using namespace llvm::opt;
 
 HCCInstallationDetector::HCCInstallationDetector(const Driver &D, const llvm::opt::ArgList &Args) : D(D) {
@@ -106,34 +96,6 @@ void HCCInstallationDetector::AddHCCLibArgs(const llvm::opt::ArgList &Args, llvm
 void HCCInstallationDetector::print(raw_ostream &OS) const {
   if (IsValid)
     OS << "Found HCC installation: " << IncPath << "\n";
-}
-
-static void HCPassOptions(const ArgList &Args, ArgStringList &CmdArgs) {
-
-  for(auto A : Args) {
-    Option ArgOpt = A->getOption();
-    // Avoid passing options that have already been processed by the compilation stage or will be used for the linking stage
-    bool hasOpts = ArgOpt.hasFlag(options::LinkerInput) || // omit linking options
-                   ArgOpt.hasFlag(options::DriverOption) || // omit --driver-mode -### -hc -o -Xclang
-                   ArgOpt.matches(options::OPT_L) || // omit -L
-                   ArgOpt.matches(options::OPT_I_Group) || // omit -I
-                   ArgOpt.matches(options::OPT_std_EQ) || // omit -std=
-                   ArgOpt.matches(options::OPT_stdlib_EQ) || // omit -stdlib=
-                   ArgOpt.matches(options::OPT_m_Group) || // omit -m
-                   ArgOpt.getKind() == Option::InputClass; // omit <input>
-    if (!hasOpts) {
-      std::string str = A->getSpelling().str();
-
-      // If this is a valued option
-      ArrayRef<const char *> Vals = A->getValues();
-      if(!Vals.empty()) {
-        for(auto V : Vals) {
-          str += V;
-        }
-      }
-      CmdArgs.push_back(Args.MakeArgString(str));
-    }
-  }
 }
 
 void HCC::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
@@ -355,7 +317,7 @@ void HCC::CXXAMPLink::ConstructLinkerJob(
         AMDGPUTargetVector = split_gfx_list(HCC_AMDGPU_TARGET, ' ');
     }
 
-    const auto cnt = std::count(
+    const unsigned cnt = std::count(
         AMDGPUTargetVector.cbegin(), AMDGPUTargetVector.cend(), auto_tgt);
 
     if (cnt > 1) C.getDriver().Diag(diag::warn_amdgpu_target_auto_nonsingular);

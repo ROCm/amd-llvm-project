@@ -11,12 +11,9 @@
 #define LLVM_CLANG_LIB_DRIVER_TOOLCHAINS_HCC_H
 
 #include "clang/Driver/Action.h"
-#include "clang/Driver/Multilib.h"
 #include "clang/Driver/ToolChain.h"
 #include "clang/Driver/Tool.h"
 #include "llvm/Support/Compiler.h"
-#include <set>
-#include <vector>
 
 namespace clang {
 namespace driver {
