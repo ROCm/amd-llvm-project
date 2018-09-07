@@ -18,23 +18,13 @@
 #include "llvm/Option/ArgList.h"
 #include "llvm/Support/Path.h"
 
-#include <array>
-#include <cstdio>
-#include <cstdlib>
-#include <fstream>
-#include <memory>
-#include <system_error>
-#include <utility>
-
-#include <iostream>
 #include <sstream>
 #include <string>
-#include <vector>
 
+using namespace clang;
 using namespace clang::driver;
 using namespace clang::driver::toolchains;
 using namespace clang::driver::tools;
-using namespace clang;
 using namespace llvm::opt;
 
 HCCInstallationDetector::HCCInstallationDetector(const Driver &D, const llvm::opt::ArgList &Args) : D(D) {
@@ -108,35 +98,7 @@ void HCCInstallationDetector::print(raw_ostream &OS) const {
     OS << "Found HCC installation: " << IncPath << "\n";
 }
 
-static void HCPassOptions(const ArgList &Args, ArgStringList &CmdArgs) {
-
-  for(auto A : Args) {
-    Option ArgOpt = A->getOption();
-    // Avoid passing options that have already been processed by the compilation stage or will be used for the linking stage
-    bool hasOpts = ArgOpt.hasFlag(options::LinkerInput) || // omit linking options
-                   ArgOpt.hasFlag(options::DriverOption) || // omit --driver-mode -### -hc -o -Xclang
-                   ArgOpt.matches(options::OPT_L) || // omit -L
-                   ArgOpt.matches(options::OPT_I_Group) || // omit -I
-                   ArgOpt.matches(options::OPT_std_EQ) || // omit -std=
-                   ArgOpt.matches(options::OPT_stdlib_EQ) || // omit -stdlib=
-                   ArgOpt.matches(options::OPT_m_Group) || // omit -m
-                   ArgOpt.getKind() == Option::InputClass; // omit <input>
-    if (!hasOpts) {
-      std::string str = A->getSpelling().str();
-
-      // If this is a valued option
-      ArrayRef<const char *> Vals = A->getValues();
-      if(!Vals.empty()) {
-        for(auto V : Vals) {
-          str += V;
-        }
-      }
-      CmdArgs.push_back(Args.MakeArgString(str));
-    }
-  }
-}
-
-void HCC::HCKernelAssemble::ConstructJob(Compilation &C, const JobAction &JA,
+void HCC::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
                                     const InputInfo &Output,
                                     const InputInfoList &Inputs,
                                     const ArgList &Args,
@@ -158,67 +120,23 @@ void HCC::HCKernelAssemble::ConstructJob(Compilation &C, const JobAction &JA,
   else
     Output.getInputArg().renderAsInput(Args, CmdArgs);
 
-  // locate where the command is
-  const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("hc-kernel-assemble"));
-
-  C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
-}
-
-void HCC::HCHostAssemble::ConstructJob(Compilation &C, const JobAction &JA,
-                                  const InputInfo &Output,
-                                  const InputInfoList &Inputs,
-                                  const ArgList &Args,
-                                  const char *LinkingOutput) const {
-  assert(Inputs.size() == 1 && "Unable to handle multiple inputs.");
-
-  ArgStringList CmdArgs;
-  for (InputInfoList::const_iterator
-         it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
-    const InputInfo &II = *it;
-    if (II.isFilename())
-      CmdArgs.push_back(II.getFilename());
-    else
-      II.getInputArg().renderAsInput(Args, CmdArgs);
+  if (JA.getKind() == Action::AssembleJobClass) {
+    std::string assembler;
+    if (JA.ContainsActions(Action::AssembleJobClass, types::TY_HC_HOST))
+      assembler = "hc-host-assemble";
+    else if (JA.ContainsActions(Action::AssembleJobClass, types::TY_HC_KERNEL))
+      assembler = "hc-kernel-assemble";
+    else if (JA.ContainsActions(Action::AssembleJobClass, types::TY_PP_CXX_AMP) ||
+      JA.ContainsActions(Action::AssembleJobClass, types::TY_PP_CXX_AMP_CPU))
+      assembler = "clamp-assemble";
+    else {
+      assert(!assembler.empty() && "Unsupported assembler.");
+      return;
+    }
+    const char *Exec = Args.MakeArgString(
+      getToolChain().GetProgramPath(assembler.c_str()));
+    C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
   }
-
-  if (Output.isFilename())
-    CmdArgs.push_back(Output.getFilename());
-  else
-    Output.getInputArg().renderAsInput(Args, CmdArgs);
-
-  // decide which options gets passed through
-  HCPassOptions(Args, CmdArgs);
-
-  const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("hc-host-assemble"));
-
-  C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
-}
-
-void HCC::CXXAMPAssemble::ConstructJob(Compilation &C, const JobAction &JA,
-                                  const InputInfo &Output,
-                                  const InputInfoList &Inputs,
-                                  const ArgList &Args,
-                                  const char *LinkingOutput) const {
-  assert(Inputs.size() == 1 && "Unable to handle multiple inputs.");
-
-  ArgStringList CmdArgs;
-  for (InputInfoList::const_iterator
-         it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
-    const InputInfo &II = *it;
-    if (II.isFilename())
-      CmdArgs.push_back(II.getFilename());
-    else
-      II.getInputArg().renderAsInput(Args, CmdArgs);
-  }
-
-  if (Output.isFilename())
-    CmdArgs.push_back(Output.getFilename());
-  else
-    Output.getInputArg().renderAsInput(Args, CmdArgs);
-
-  const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("clamp-assemble"));
-
-  C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
 }
 
 namespace
@@ -399,7 +317,7 @@ void HCC::CXXAMPLink::ConstructLinkerJob(
         AMDGPUTargetVector = split_gfx_list(HCC_AMDGPU_TARGET, ' ');
     }
 
-    const auto cnt = std::count(
+    const unsigned cnt = std::count(
         AMDGPUTargetVector.cbegin(), AMDGPUTargetVector.cend(), auto_tgt);
 
     if (cnt > 1) C.getDriver().Diag(diag::warn_amdgpu_target_auto_nonsingular);
@@ -521,29 +439,8 @@ HCCToolChain::TranslateArgs(const llvm::opt::DerivedArgList &Args,
   return DAL;
 }
 
-Tool *HCCToolChain::SelectTool(const JobAction &JA) const {
-  Action::ActionClass AC = JA.getKind();
-
-  if (AC == Action::AssembleJobClass) {
-    if (JA.ContainsActions(Action::AssembleJobClass, types::TY_HC_HOST)) {
-      if (!HCHostAssembler)
-        HCHostAssembler.reset(new tools::HCC::HCHostAssemble(*this));
-      return HCHostAssembler.get();
-    }
-    if (JA.ContainsActions(Action::AssembleJobClass, types::TY_HC_KERNEL)) {
-      if (!HCKernelAssembler)
-        HCKernelAssembler.reset(new tools::HCC::HCKernelAssemble(*this));
-      return HCKernelAssembler.get();
-    }
-    if (JA.ContainsActions(Action::AssembleJobClass, types::TY_PP_CXX_AMP) ||
-        JA.ContainsActions(Action::AssembleJobClass, types::TY_PP_CXX_AMP_CPU)) {
-      if (!CXXAMPAssembler)
-        CXXAMPAssembler.reset(new tools::HCC::CXXAMPAssemble(*this));
-      return CXXAMPAssembler.get();
-    }
-  }
-
-  return ToolChain::SelectTool(JA);
+Tool *HCCToolChain::buildAssembler() const {
+  return new tools::HCC::Assembler(*this);
 }
 
 Tool *HCCToolChain::buildLinker() const {

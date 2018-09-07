@@ -11,12 +11,9 @@
 #define LLVM_CLANG_LIB_DRIVER_TOOLCHAINS_HCC_H
 
 #include "clang/Driver/Action.h"
-#include "clang/Driver/Multilib.h"
 #include "clang/Driver/ToolChain.h"
 #include "clang/Driver/Tool.h"
 #include "llvm/Support/Compiler.h"
-#include <set>
-#include <vector>
 
 namespace clang {
 namespace driver {
@@ -47,45 +44,11 @@ public:
 namespace tools {
 namespace HCC {
 
-/// \brief C++AMP kernel assembler tool.
-class LLVM_LIBRARY_VISIBILITY CXXAMPAssemble : public Tool {
+/// \brief HC assembler tool.
+class LLVM_LIBRARY_VISIBILITY Assembler : public Tool {
 public:
-  CXXAMPAssemble(const ToolChain &TC)
-      : Tool("clamp-assemble", "C++AMP kernel assembler", TC) {}
-
-  bool hasGoodDiagnostics() const override { return true; }
-  bool hasIntegratedAssembler() const override { return false; }
-  bool hasIntegratedCPP() const override { return false; }
-
-  void ConstructJob(Compilation &C, const JobAction &JA,
-                    const InputInfo &Output,
-                    const InputInfoList &Inputs,
-                    const llvm::opt::ArgList &TCArgs,
-                    const char *LinkingOuput) const override;
-};
-
-/// \brief HC mode kernel assembler tool.
-class LLVM_LIBRARY_VISIBILITY HCKernelAssemble : public Tool {
-public:
-  HCKernelAssemble(const ToolChain &TC)
-      : Tool("hc-kernel-assemble", "HC kernel assembler", TC) {}
-
-  bool hasGoodDiagnostics() const override { return true; }
-  bool hasIntegratedAssembler() const override { return false; }
-  bool hasIntegratedCPP() const override { return false; }
-
-  void ConstructJob(Compilation &C, const JobAction &JA,
-                    const InputInfo &Output,
-                    const InputInfoList &Inputs,
-                    const llvm::opt::ArgList &TCArgs,
-                    const char *LinkingOuput) const override;
-};
-
-/// \brief HC mode host code assembler tool.
-class LLVM_LIBRARY_VISIBILITY HCHostAssemble : public Tool {
-public:
-  HCHostAssemble(const ToolChain &TC)
-      : Tool("hc-host-assemble", "HC host assembler", TC) {}
+  Assembler(const ToolChain &TC)
+      : Tool("hc-assemble", "HC assembler", TC) {}
 
   bool hasGoodDiagnostics() const override { return true; }
   bool hasIntegratedAssembler() const override { return false; }
@@ -150,8 +113,6 @@ public:
   
   bool useIntegratedAs() const override { return false; }
 
-  Tool *SelectTool(const JobAction &JA) const override;
-
   // HCC ToolChain use DWARF version 2 by default
   unsigned GetDefaultDwarfVersion() const override { return 2; }
 
@@ -165,12 +126,8 @@ public:
   const ToolChain &HostTC;
 
 protected:
+  Tool *buildAssembler() const override;
   Tool *buildLinker() const override;
-
-private:
-  mutable std::unique_ptr<Tool> HCHostAssembler;
-  mutable std::unique_ptr<Tool> HCKernelAssembler;
-  mutable std::unique_ptr<Tool> CXXAMPAssembler;
 };
 
 } // end namespace toolchains
