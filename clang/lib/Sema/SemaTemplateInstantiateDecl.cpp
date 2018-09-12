@@ -1228,7 +1228,7 @@ Decl *TemplateDeclInstantiator::VisitClassTemplateDecl(ClassTemplateDecl *D) {
       }
 
       TemplateParameterList *PrevParams
-        = PrevClassTemplate->getTemplateParameters();
+        = PrevClassTemplate->getMostRecentDecl()->getTemplateParameters();
 
       // Make sure the parameter lists match.
       if (!SemaRef.TemplateParameterListsAreEqual(InstParams, PrevParams,
@@ -3689,6 +3689,9 @@ TemplateDeclInstantiator::InitMethodInstantiation(CXXMethodDecl *New,
                                                   CXXMethodDecl *Tmpl) {
   if (InitFunctionInstantiation(New, Tmpl))
     return true;
+
+  if (isa<CXXDestructorDecl>(New) && SemaRef.getLangOpts().CPlusPlus11)
+    SemaRef.AdjustDestructorExceptionSpec(cast<CXXDestructorDecl>(New));
 
   New->setAccess(Tmpl->getAccess());
   if (Tmpl->isVirtualAsWritten())

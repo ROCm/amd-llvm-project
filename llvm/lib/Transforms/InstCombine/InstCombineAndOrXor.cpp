@@ -2702,6 +2702,22 @@ Instruction *InstCombiner::visitXor(BinaryOperator &I) {
       return BinaryOperator::CreateSub(ConstantExpr::getNeg(AddOne(C)), X);
   }
 
+  // Use DeMorgan and reassociation to eliminate a 'not' op.
+  Constant *C1;
+  if (match(Op1, m_Constant(C1))) {
+    Constant *C2;
+    if (match(Op0, m_OneUse(m_Or(m_Not(m_Value(X)), m_Constant(C2))))) {
+      // (~X | C2) ^ C1 --> ((X & ~C2) ^ -1) ^ C1 --> (X & ~C2) ^ ~C1
+      Value *And = Builder.CreateAnd(X, ConstantExpr::getNot(C2));
+      return BinaryOperator::CreateXor(And, ConstantExpr::getNot(C1));
+    }
+    if (match(Op0, m_OneUse(m_And(m_Not(m_Value(X)), m_Constant(C2))))) {
+      // (~X & C2) ^ C1 --> ((X | ~C2) ^ -1) ^ C1 --> (X | ~C2) ^ ~C1
+      Value *Or = Builder.CreateOr(X, ConstantExpr::getNot(C2));
+      return BinaryOperator::CreateXor(Or, ConstantExpr::getNot(C1));
+    }
+  }
+
   // not (cmp A, B) = !cmp A, B
   CmpInst::Predicate Pred;
   if (match(&I, m_Not(m_OneUse(m_Cmp(Pred, m_Value(), m_Value()))))) {
@@ -2867,14 +2883,20 @@ Instruction *InstCombiner::visitXor(BinaryOperator &I) {
     Value *LHS, *RHS;
     SelectPatternFlavor SPF = matchSelectPattern(Op0, LHS, RHS).Flavor;
     if (SelectPatternResult::isMinOrMax(SPF)) {
-      Value *X;
-      if (match(RHS, m_Not(m_Value(X))))
-        std::swap(RHS, LHS);
-
-      if (match(LHS, m_Not(m_Value(X)))) {
+      // It's possible we get here before the not has been simplified, so make
+      // sure the input to the not isn't freely invertible.
+      if (match(LHS, m_Not(m_Value(X))) && !IsFreeToInvert(X, X->hasOneUse())) {
         Value *NotY = Builder.CreateNot(RHS);
         return SelectInst::Create(
             Builder.CreateICmp(getInverseMinMaxPred(SPF), X, NotY), X, NotY);
+      }
+
+      // It's possible we get here before the not has been simplified, so make
+      // sure the input to the not isn't freely invertible.
+      if (match(RHS, m_Not(m_Value(Y))) && !IsFreeToInvert(Y, Y->hasOneUse())) {
+        Value *NotX = Builder.CreateNot(LHS);
+        return SelectInst::Create(
+            Builder.CreateICmp(getInverseMinMaxPred(SPF), NotX, Y), NotX, Y);
       }
     }
   }
