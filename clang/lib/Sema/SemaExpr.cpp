@@ -206,7 +206,8 @@ void Sema::MaybeSuggestAddingStaticToDecl(const FunctionDecl *Cur) {
 bool Sema::DiagnoseUseOfDecl(NamedDecl *D, ArrayRef<SourceLocation> Locs,
                              const ObjCInterfaceDecl *UnknownObjCClass,
                              bool ObjCPropertyAccess,
-                             bool AvoidPartialAvailabilityChecks) {
+                             bool AvoidPartialAvailabilityChecks,
+                             ObjCInterfaceDecl *ClassReceiver) {
   SourceLocation Loc = Locs.front();
   if (getLangOpts().CPlusPlus && isa<FunctionDecl>(D)) {
     // If there were any diagnostics suppressed by template argument deduction,
@@ -292,7 +293,7 @@ bool Sema::DiagnoseUseOfDecl(NamedDecl *D, ArrayRef<SourceLocation> Locs,
   }
 
   DiagnoseAvailabilityOfDecl(D, Locs, UnknownObjCClass, ObjCPropertyAccess,
-                             AvoidPartialAvailabilityChecks);
+                             AvoidPartialAvailabilityChecks, ClassReceiver);
 
   DiagnoseUnusedOfDecl(*this, D, Loc);
 
@@ -5727,12 +5728,20 @@ Sema::BuildCompoundLiteralExpr(SourceLocation LParenLoc, TypeSourceInfo *TInfo,
   LiteralExpr = Result.get();
 
   bool isFileScope = !CurContext->isFunctionOrMethod();
-  if (isFileScope &&
-      !LiteralExpr->isTypeDependent() &&
-      !LiteralExpr->isValueDependent() &&
-      !literalType->isDependentType()) { // 6.5.2.5p3
-    if (CheckForConstantInitializer(LiteralExpr, literalType))
-      return ExprError();
+  if (isFileScope) {
+    if (!LiteralExpr->isTypeDependent() &&
+        !LiteralExpr->isValueDependent() &&
+        !literalType->isDependentType()) // C99 6.5.2.5p3
+      if (CheckForConstantInitializer(LiteralExpr, literalType))
+        return ExprError();
+  } else if (literalType.getAddressSpace() != LangAS::opencl_private &&
+             literalType.getAddressSpace() != LangAS::Default) {
+    // Embedded-C extensions to C99 6.5.2.5:
+    //   "If the compound literal occurs inside the body of a function, the
+    //   type name shall not be qualified by an address-space qualifier."
+    Diag(LParenLoc, diag::err_compound_literal_with_address_space)
+      << SourceRange(LParenLoc, LiteralExpr->getSourceRange().getEnd());
+    return ExprError();
   }
 
   // In C, compound literals are l-values for some reason.

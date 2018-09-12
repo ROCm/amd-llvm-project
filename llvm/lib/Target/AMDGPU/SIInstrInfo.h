@@ -227,6 +227,9 @@ public:
   bool findCommutedOpIndices(MachineInstr &MI, unsigned &SrcOpIdx1,
                              unsigned &SrcOpIdx2) const override;
 
+  bool findCommutedOpIndices(MCInstrDesc Desc, unsigned & SrcOpIdx0,
+   unsigned & SrcOpIdx1) const;
+
   bool isBranchOffsetInRange(unsigned BranchOpc,
                              int64_t BrOffset) const override;
 
@@ -918,12 +921,6 @@ namespace AMDGPU {
 
   LLVM_READONLY
   int getAddr64Inst(uint16_t Opcode);
-
-  /// Check if \p Opcode is an Addr64 opcode.
-  ///
-  /// \returns \p Opcode if it is an Addr64 opcode, otherwise -1.
-  LLVM_READONLY
-  int getIfAddr64Inst(uint16_t Opcode);
 
   LLVM_READONLY
   int getMUBUFNoLdsInst(uint16_t Opcode);

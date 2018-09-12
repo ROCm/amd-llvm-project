@@ -517,7 +517,7 @@ uint16_t MachineInstr::mergeFlagsWith(const MachineInstr &Other) const {
   return getFlags() | Other.getFlags();
 }
 
-bool MachineInstr::hasPropertyInBundle(unsigned Mask, QueryType Type) const {
+bool MachineInstr::hasPropertyInBundle(uint64_t Mask, QueryType Type) const {
   assert(!isBundledWithPred() && "Must be called on bundle header");
   for (MachineBasicBlock::const_instr_iterator MII = getIterator();; ++MII) {
     if (MII->getDesc().getFlags() & Mask) {
@@ -1479,6 +1479,12 @@ void MachineInstr::print(raw_ostream &OS, ModuleSlotTracker &MST,
     OS << "afn ";
   if (getFlag(MachineInstr::FmReassoc))
     OS << "reassoc ";
+  if (getFlag(MachineInstr::NoUWrap))
+    OS << "nuw ";
+  if (getFlag(MachineInstr::NoSWrap))
+    OS << "nsw ";
+  if (getFlag(MachineInstr::IsExact))
+    OS << "exact ";
 
   // Print the opcode name.
   if (TII)

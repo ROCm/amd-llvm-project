@@ -284,8 +284,6 @@ static bool ParseAnalyzerArgs(AnalyzerOptions &Opts, ArgList &Args,
 
   Opts.visualizeExplodedGraphWithGraphViz =
     Args.hasArg(OPT_analyzer_viz_egraph_graphviz);
-  Opts.visualizeExplodedGraphWithUbiGraph =
-    Args.hasArg(OPT_analyzer_viz_egraph_ubigraph);
   Opts.NoRetryExhausted = Args.hasArg(OPT_analyzer_disable_retry_exhausted);
   Opts.AnalyzeAll = Args.hasArg(OPT_analyzer_opt_analyze_headers);
   Opts.AnalyzerDisplayProgress = Args.hasArg(OPT_analyzer_display_progress);
@@ -2864,6 +2862,9 @@ static void ParsePreprocessorArgs(PreprocessorOptions &Opts, ArgList &Args,
                                   frontend::ActionKind Action) {
   Opts.ImplicitPCHInclude = Args.getLastArgValue(OPT_include_pch);
   Opts.ImplicitPTHInclude = Args.getLastArgValue(OPT_include_pth);
+  Opts.PCHWithHdrStop = Args.hasArg(OPT_pch_through_hdrstop_create) ||
+                        Args.hasArg(OPT_pch_through_hdrstop_use);
+  Opts.PCHWithHdrStopCreate = Args.hasArg(OPT_pch_through_hdrstop_create);
   Opts.PCHThroughHeader = Args.getLastArgValue(OPT_pch_through_header_EQ);
   if (const Arg *A = Args.getLastArg(OPT_token_cache))
       Opts.TokenCache = A->getValue();
@@ -3094,7 +3095,9 @@ bool CompilerInvocation::CreateFromArgs(CompilerInvocation &Res,
   // names.
   Res.getCodeGenOpts().DiscardValueNames &=
       !LangOpts.Sanitize.has(SanitizerKind::Address) &&
-      !LangOpts.Sanitize.has(SanitizerKind::Memory);
+      !LangOpts.Sanitize.has(SanitizerKind::KernelAddress) &&
+      !LangOpts.Sanitize.has(SanitizerKind::Memory) &&
+      !LangOpts.Sanitize.has(SanitizerKind::KernelMemory);
 
   ParsePreprocessorArgs(Res.getPreprocessorOpts(), Args, Diags,
                         Res.getFrontendOpts().ProgramAction);

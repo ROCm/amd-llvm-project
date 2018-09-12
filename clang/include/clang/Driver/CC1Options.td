@@ -80,8 +80,6 @@ def trim_egraph : Flag<["-"], "trim-egraph">,
   HelpText<"Only show error-related paths in the analysis graph">;
 def analyzer_viz_egraph_graphviz : Flag<["-"], "analyzer-viz-egraph-graphviz">,
   HelpText<"Display exploded graph using GraphViz">;
-def analyzer_viz_egraph_ubigraph : Flag<["-"], "analyzer-viz-egraph-ubigraph">,
-  HelpText<"Display exploded graph using Ubigraph">;
 
 def analyzer_inline_max_stack_depth : Separate<["-"], "analyzer-inline-max-stack-depth">,
   HelpText<"Bound on stack depth while inlining (4 by default)">;
@@ -606,6 +604,10 @@ def foverride_record_layout_EQ : Joined<["-"], "foverride-record-layout=">,
 def pch_through_header_EQ : Joined<["-"], "pch-through-header=">,
   HelpText<"Stop PCH generation after including this file.  When using a PCH, "
            "skip tokens until after this file is included.">;
+def pch_through_hdrstop_create : Flag<["-"], "pch-through-hdrstop-create">,
+  HelpText<"When creating a PCH, stop PCH generation after #pragma hdrstop.">;
+def pch_through_hdrstop_use : Flag<["-"], "pch-through-hdrstop-use">,
+  HelpText<"When using a PCH, skip tokens until after a #pragma hdrstop.">;
 def fno_pch_timestamp : Flag<["-"], "fno-pch-timestamp">,
   HelpText<"Disable inclusion of timestamp in precompiled headers">;
 def building_pch_with_obj : Flag<["-"], "building-pch-with-obj">,

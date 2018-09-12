@@ -23,7 +23,7 @@ namespace {
 /// tree) and is simply a wrapper around PostingList::const_iterator.
 class DocumentIterator : public Iterator {
 public:
-  DocumentIterator(PostingListRef Documents)
+  explicit DocumentIterator(PostingListRef Documents)
       : Documents(Documents), Index(std::begin(Documents)) {}
 
   bool reachedEnd() const override { return Index == std::end(Documents); }
@@ -38,7 +38,10 @@ public:
   /// or higher than the given one.
   void advanceTo(DocID ID) override {
     assert(!reachedEnd() && "DOCUMENT iterator can't advance() at the end.");
-    Index = std::lower_bound(Index, std::end(Documents), ID);
+    // If current ID is beyond requested one, iterator is already in the right
+    // state.
+    if (peek() < ID)
+      Index = std::lower_bound(Index, std::end(Documents), ID);
   }
 
   DocID peek() const override {
@@ -85,7 +88,7 @@ private:
 /// iterator restores the invariant: all children must point to the same item.
 class AndIterator : public Iterator {
 public:
-  AndIterator(std::vector<std::unique_ptr<Iterator>> AllChildren)
+  explicit AndIterator(std::vector<std::unique_ptr<Iterator>> AllChildren)
       : Children(std::move(AllChildren)) {
     assert(!Children.empty() && "AND iterator should have at least one child.");
     // Establish invariants.
@@ -193,7 +196,7 @@ private:
 /// soon as all of its children are exhausted.
 class OrIterator : public Iterator {
 public:
-  OrIterator(std::vector<std::unique_ptr<Iterator>> AllChildren)
+  explicit OrIterator(std::vector<std::unique_ptr<Iterator>> AllChildren)
       : Children(std::move(AllChildren)) {
     assert(Children.size() > 0 && "OR iterator must have at least one child.");
   }
@@ -279,7 +282,7 @@ private:
 /// in O(1).
 class TrueIterator : public Iterator {
 public:
-  TrueIterator(DocID Size) : Size(Size) {}
+  explicit TrueIterator(DocID Size) : Size(Size) {}
 
   bool reachedEnd() const override { return Index >= Size; }
 
