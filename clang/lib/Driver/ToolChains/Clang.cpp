@@ -1114,10 +1114,19 @@ void Clang::AddPreprocessingOptions(Compilation &C, const JobAction &JA,
       StringRef ThroughHeader = YcArg ? YcArg->getValue() : YuArg->getValue();
       if (!isa<PrecompileJobAction>(JA)) {
         CmdArgs.push_back("-include-pch");
-        CmdArgs.push_back(Args.MakeArgString(D.GetClPchPath(C, ThroughHeader)));
+        CmdArgs.push_back(Args.MakeArgString(D.GetClPchPath(
+            C, !ThroughHeader.empty()
+                   ? ThroughHeader
+                   : llvm::sys::path::filename(Inputs[0].getBaseInput()))));
       }
-      CmdArgs.push_back(
-          Args.MakeArgString(Twine("-pch-through-header=") + ThroughHeader));
+
+      if (ThroughHeader.empty()) {
+        CmdArgs.push_back(Args.MakeArgString(
+            Twine("-pch-through-hdrstop-") + (YcArg ? "create" : "use")));
+      } else {
+        CmdArgs.push_back(
+            Args.MakeArgString(Twine("-pch-through-header=") + ThroughHeader));
+      }
     }
   }
 
@@ -3083,7 +3092,7 @@ static void RenderDebugOptions(const ToolChain &TC, const Driver &D,
   const auto *PubnamesArg =
       Args.getLastArg(options::OPT_ggnu_pubnames, options::OPT_gno_gnu_pubnames,
                       options::OPT_gpubnames, options::OPT_gno_pubnames);
-  if (SplitDWARFArg ||
+  if (SplitDWARFArg || DebuggerTuning == llvm::DebuggerKind::LLDB ||
       (PubnamesArg && checkDebugInfoOption(PubnamesArg, Args, D, TC)))
     if (!PubnamesArg ||
         (!PubnamesArg->getOption().matches(options::OPT_gno_gnu_pubnames) &&
@@ -4202,6 +4211,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                   options::OPT_fno_unroll_loops);
 
   Args.AddLastArg(CmdArgs, options::OPT_pthread);
+
+  Args.AddLastArg(CmdArgs, options::OPT_mspeculative_load_hardening,
+                  options::OPT_mno_speculative_load_hardening);
 
   RenderSSPOptions(getToolChain(), Args, CmdArgs, KernelOrKext);
 

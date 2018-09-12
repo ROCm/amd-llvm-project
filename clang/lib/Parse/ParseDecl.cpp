@@ -2334,20 +2334,28 @@ Decl *Parser::ParseDeclarationAfterDeclaratorAndAttributes(
     llvm::function_ref<void()> ExprListCompleter;
     auto ThisVarDecl = dyn_cast_or_null<VarDecl>(ThisDecl);
     auto ConstructorCompleter = [&, ThisVarDecl] {
-      Actions.CodeCompleteConstructor(
+      QualType PreferredType = Actions.ProduceConstructorSignatureHelp(
           getCurScope(), ThisVarDecl->getType()->getCanonicalTypeInternal(),
           ThisDecl->getLocation(), Exprs, T.getOpenLocation());
+      CalledSignatureHelp = true;
+      Actions.CodeCompleteExpression(getCurScope(), PreferredType);
     };
     if (ThisVarDecl) {
       // ParseExpressionList can sometimes succeed even when ThisDecl is not
       // VarDecl. This is an error and it is reported in a call to
       // Actions.ActOnInitializerError(). However, we call
-      // CodeCompleteConstructor only on VarDecls, falling back to default
-      // completer in other cases.
+      // ProduceConstructorSignatureHelp only on VarDecls, falling back to
+      // default completer in other cases.
       ExprListCompleter = ConstructorCompleter;
     }
 
     if (ParseExpressionList(Exprs, CommaLocs, ExprListCompleter)) {
+      if (ThisVarDecl && PP.isCodeCompletionReached() && !CalledSignatureHelp) {
+        Actions.ProduceConstructorSignatureHelp(
+            getCurScope(), ThisVarDecl->getType()->getCanonicalTypeInternal(),
+            ThisDecl->getLocation(), Exprs, T.getOpenLocation());
+        CalledSignatureHelp = true;
+      }
       Actions.ActOnInitializerError(ThisDecl);
       SkipUntil(tok::r_paren, StopAtSemi);
     } else {
@@ -6210,7 +6218,7 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
                   const Type* UTy = ETy->getDecl()->getIntegerType().getTypePtrOrNull();
                   if (UTy->isCharType() || UTy->isWideCharType() || UTy->isSpecificBuiltinType(BuiltinType::Short) || UTy->isSpecificBuiltinType(BuiltinType::LongLong) || UTy->isSpecificBuiltinType(BuiltinType::LongDouble)) {
                     Diag(param->IdentLoc, diag::err_amp_illegal_function_parameter);
-                    Diag(ETy->getDecl()->getLocStart(), diag::err_amp_illegal_function_parameter);
+                    Diag(ETy->getDecl()->getBeginLoc(), diag::err_amp_illegal_function_parameter);
                   }
                 }
               }
@@ -6219,16 +6227,16 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
 
           // check if the return type is of incompatible type
           if (!getLangOpts().HSAExtension && D.getDeclSpec().getTypeSpecType() == DeclSpec::TST_char) {
-            Diag(D.getLocStart(), diag::err_amp_illegal_function_return_char);
+            Diag(D.getBeginLoc(), diag::err_amp_illegal_function_return_char);
           } else if (!getLangOpts().HSAExtension && D.getDeclSpec().getTypeSpecWidth() == DeclSpec::TSW_short) {
-            Diag(D.getLocStart(), diag::err_amp_illegal_function_return_short);
+            Diag(D.getBeginLoc(), diag::err_amp_illegal_function_return_short);
           } else if (D.getDeclSpec().getTypeQualifiers() & DeclSpec::TQ_volatile) {
-            Diag(D.getLocStart(), diag::err_amp_illegal_function_return_volatile);
+            Diag(D.getBeginLoc(), diag::err_amp_illegal_function_return_volatile);
           }
 
           // check if the function is volatile-qualified
           if (DS.getTypeQualifiers() & DeclSpec::TQ_volatile) {
-            Diag(D.getLocStart(), diag::err_amp_illegal_function_return_volatile);
+            Diag(D.getBeginLoc(), diag::err_amp_illegal_function_return_volatile);
           }
         }
       }
