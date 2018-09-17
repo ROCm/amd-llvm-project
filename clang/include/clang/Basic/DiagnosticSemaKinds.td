@@ -2498,7 +2498,8 @@ def err_attribute_invalid_vector_type : Error<"invalid vector element type %0">;
 def err_attribute_bad_neon_vector_size : Error<
   "Neon vector size must be 64 or 128 bits">;
 def err_attribute_requires_positive_integer : Error<
-  "%0 attribute requires a positive integral compile time constant expression">;
+  "%0 attribute requires a %select{positive|non-negative}1 "
+  "integral compile time constant expression">;
 def err_attribute_requires_opencl_version : Error<
   "%0 attribute requires OpenCL version %1%select{| or above}2">;
 def warn_unsupported_target_attribute
@@ -2531,8 +2532,6 @@ def err_attribute_argument_type : Error<
   "constant|a string|an identifier}1">;
 def err_attribute_argument_outof_range : Error<
   "%0 attribute requires integer constant between %1 and %2 inclusive">;
-def err_attribute_argument_negative : Error<
-  "negative argument is not allowed for %0 attribute">;
 def err_init_priority_object_attr : Error<
   "can only use 'init_priority' attribute on file-scope definitions "
   "of objects of class type">;
@@ -9090,6 +9089,8 @@ def err_invalid_type_for_program_scope_var : Error<
 let CategoryName = "Modules Issue" in {
 def err_module_decl_in_module_map_module : Error<
   "'module' declaration found while building module from module map">;
+def err_module_decl_in_header_module : Error<
+  "'module' declaration found while building header module">;
 def err_module_interface_implementation_mismatch : Error<
   "missing 'export' specifier in module declaration while "
   "building module interface">;
