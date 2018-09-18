@@ -602,6 +602,19 @@ void CGRecordLowering::clipTailPadding() {
   }
 }
 
+static bool isPassedToHIPGlobalFn(const CXXRecordDecl *MaybeKernarg)
+{
+  if (!MaybeKernarg) return false;
+  if (!MaybeKernarg->hasAttr<AnnotateAttr>()) return false;
+
+  // N.B.: this is set in Sema::GatherArgumentsForCall, via
+  //       MarkByValueRecordsPassedToHIPGlobalFN.
+  static constexpr const char HIPKernargRecord[]{"__HIP_KERNARG_RECORD__"};
+
+  return MaybeKernarg->getAttr<AnnotateAttr>()->getAnnotation()
+    .find(HIPKernargRecord) != StringRef::npos;
+}
+
 void CGRecordLowering::determinePacked(bool NVBaseType) {
   if (Packed)
     return;
@@ -631,6 +644,13 @@ void CGRecordLowering::determinePacked(bool NVBaseType) {
   // non-virtual sub-object and an unpacked complete object or vise versa.
   if (NVSize % NVAlignment)
     Packed = true;
+
+  // TODO: this is a heinous workaround the sad reality that passing things by
+  //       value through Kernarg is essentially broken, since the packing choice
+  //       made here is opaque for HLLs, and thus the latter will layout the
+  //       memory erroneously.
+  Packed = Packed && !isPassedToHIPGlobalFn(RD);
+
   // Update the alignment of the sentinel.
   if (!Packed)
     Members.back().Data = getIntNType(Context.toBits(Alignment));
