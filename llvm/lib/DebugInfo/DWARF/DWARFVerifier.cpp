@@ -6,7 +6,6 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-
 #include "llvm/DebugInfo/DWARF/DWARFVerifier.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/DebugInfo/DWARF/DWARFCompileUnit.h"
@@ -93,7 +92,7 @@ bool DWARFVerifier::DieRangeInfo::intersects(const DieRangeInfo &RHS) const {
   auto End = Ranges.end();
   auto Iter = findRange(RHS.Ranges.front());
   for (const auto &R : RHS.Ranges) {
-    if(Iter == End)
+    if (Iter == End)
       return false;
     if (R.HighPC <= Iter->LowPC)
       continue;
@@ -156,14 +155,14 @@ bool DWARFVerifier::verifyUnitHeader(const DWARFDataExtractor DebugInfoData,
                       OffsetStart);
     if (!ValidLength)
       note() << "The length for this unit is too "
-            "large for the .debug_info provided.\n";
+                "large for the .debug_info provided.\n";
     if (!ValidVersion)
       note() << "The 16 bit unit header version is not valid.\n";
     if (!ValidType)
       note() << "The unit type encoding is not valid.\n";
     if (!ValidAbbrevOffset)
       note() << "The offset into the .debug_abbrev section is "
-            "not valid.\n";
+                "not valid.\n";
     if (!ValidAddrSize)
       note() << "The address size is unsupported.\n";
   }
@@ -171,7 +170,7 @@ bool DWARFVerifier::verifyUnitHeader(const DWARFDataExtractor DebugInfoData,
   return Success;
 }
 
-unsigned DWARFVerifier::verifyUnitContents(DWARFUnit &Unit, uint8_t UnitType) {
+unsigned DWARFVerifier::verifyUnitContents(DWARFUnit &Unit) {
   unsigned NumUnitErrors = 0;
   unsigned NumDies = Unit.getNumDIEs();
   for (unsigned I = 0; I < NumDies; ++I) {
@@ -197,8 +196,8 @@ unsigned DWARFVerifier::verifyUnitContents(DWARFUnit &Unit, uint8_t UnitType) {
     NumUnitErrors++;
   }
 
-  if (UnitType != 0 &&
-      !DWARFUnit::isMatchingUnitTypeAndTag(UnitType, Die.getTag())) {
+  uint8_t UnitType = Unit.getUnitType();
+  if (!DWARFUnit::isMatchingUnitTypeAndTag(UnitType, Die.getTag())) {
     error() << "Compilation unit type (" << dwarf::UnitTypeString(UnitType)
             << ") and root DIE (" << dwarf::TagString(Die.getTag())
             << ") do not match.\n";
@@ -288,8 +287,7 @@ unsigned DWARFVerifier::verifyUnitSection(const DWARFSection &S,
       case dwarf::DW_UT_split_compile:
       case dwarf::DW_UT_compile:
       case dwarf::DW_UT_partial:
-      // UnitType = 0 means that we are
-      // verifying a compile unit in DWARF v4.
+      // UnitType = 0 means that we are verifying a compile unit in DWARF v4.
       case 0: {
         Unit.reset(new DWARFCompileUnit(
             DCtx, S, Header, DCtx.getDebugAbbrev(), &DObj.getRangeSection(),
@@ -300,7 +298,7 @@ unsigned DWARFVerifier::verifyUnitSection(const DWARFSection &S,
       }
       default: { llvm_unreachable("Invalid UnitType."); }
       }
-      NumDebugInfoErrors += verifyUnitContents(*Unit, UnitType);
+      NumDebugInfoErrors += verifyUnitContents(*Unit);
     }
     hasDIE = DebugInfoData.isValidOffset(Offset);
     ++UnitIdx;
@@ -369,9 +367,8 @@ unsigned DWARFVerifier::verifyDieRanges(const DWARFDie &Die,
   if (IntersectingChild != ParentRI.Children.end()) {
     ++NumErrors;
     error() << "DIEs have overlapping address ranges:";
-    Die.dump(OS, 0);
-    IntersectingChild->Die.dump(OS, 0);
-    OS << "\n";
+    dump(Die);
+    dump(IntersectingChild->Die) << '\n';
   }
 
   // Verify that ranges are contained within their parent.
@@ -381,9 +378,8 @@ unsigned DWARFVerifier::verifyDieRanges(const DWARFDie &Die,
   if (ShouldBeContained && !ParentRI.contains(RI)) {
     ++NumErrors;
     error() << "DIE address ranges are not contained in its parent's ranges:";
-    ParentRI.Die.dump(OS, 0);
-    Die.dump(OS, 2);
-    OS << "\n";
+    dump(ParentRI.Die);
+    dump(Die, 2) << '\n';
   }
 
   // Recursively check children.
@@ -399,8 +395,7 @@ unsigned DWARFVerifier::verifyDebugInfoAttribute(const DWARFDie &Die,
   auto ReportError = [&](const Twine &TitleMsg) {
     ++NumErrors;
     error() << TitleMsg << '\n';
-    Die.dump(OS, 0, DumpOpts);
-    OS << "\n";
+    dump(Die) << '\n';
   };
 
   const DWARFObject &DObj = DCtx.getDWARFObj();
@@ -481,7 +476,7 @@ unsigned DWARFVerifier::verifyDebugInfoForm(const DWARFDie &Die,
                 << " is invalid (must be less than CU size of "
                 << format("0x%08" PRIx32, CUSize) << "):\n";
         Die.dump(OS, 0, DumpOpts);
-        OS << "\n";
+        dump(Die) << '\n';
       } else {
         // Valid reference, but we will verify it points to an actual
         // DIE later.
@@ -500,8 +495,7 @@ unsigned DWARFVerifier::verifyDebugInfoForm(const DWARFDie &Die,
         ++NumErrors;
         error() << "DW_FORM_ref_addr offset beyond .debug_info "
                    "bounds:\n";
-        Die.dump(OS, 0, DumpOpts);
-        OS << "\n";
+        dump(Die) << '\n';
       } else {
         // Valid reference, but we will verify it points to an actual
         // DIE later.
@@ -516,8 +510,7 @@ unsigned DWARFVerifier::verifyDebugInfoForm(const DWARFDie &Die,
     if (SecOffset && *SecOffset >= DObj.getStringSection().size()) {
       ++NumErrors;
       error() << "DW_FORM_strp offset beyond .debug_str bounds:\n";
-      Die.dump(OS, 0, DumpOpts);
-      OS << "\n";
+      dump(Die) << '\n';
     }
     break;
   }
@@ -539,11 +532,8 @@ unsigned DWARFVerifier::verifyDebugInfoReferences() {
     ++NumErrors;
     error() << "invalid DIE reference " << format("0x%08" PRIx64, Pair.first)
             << ". Offset is in between DIEs:\n";
-    for (auto Offset : Pair.second) {
-      auto ReferencingDie = DCtx.getDIEForOffset(Offset);
-      ReferencingDie.dump(OS, 0, DumpOpts);
-      OS << "\n";
-    }
+    for (auto Offset : Pair.second)
+      dump(DCtx.getDIEForOffset(Offset)) << '\n';
     OS << "\n";
   }
   return NumErrors;
@@ -566,8 +556,7 @@ void DWARFVerifier::verifyDebugLineStmtOffsets() {
         ++NumDebugLineErrors;
         error() << ".debug_line[" << format("0x%08" PRIx32, LineTableOffset)
                 << "] was not able to be parsed for CU:\n";
-        Die.dump(OS, 0, DumpOpts);
-        OS << '\n';
+        dump(Die) << '\n';
         continue;
       }
     } else {
@@ -584,9 +573,8 @@ void DWARFVerifier::verifyDebugLineStmtOffsets() {
               << format("0x%08" PRIx32, Iter->second.getOffset()) << " and "
               << format("0x%08" PRIx32, Die.getOffset())
               << ", have the same DW_AT_stmt_list section offset:\n";
-      Iter->second.dump(OS, 0, DumpOpts);
-      Die.dump(OS, 0, DumpOpts);
-      OS << '\n';
+      dump(Iter->second);
+      dump(Die) << '\n';
       // Already verified this line table before, no need to do it again.
       continue;
     }
@@ -827,8 +815,8 @@ DWARFVerifier::verifyDebugNamesCULists(const DWARFDebugNames &AccelTable) {
 
       if (Iter->second != NotIndexed) {
         error() << formatv("Name Index @ {0:x} references a CU @ {1:x}, but "
-                          "this CU is already indexed by Name Index @ {2:x}\n",
-                          NI.getUnitOffset(), Offset, Iter->second);
+                           "this CU is already indexed by Name Index @ {2:x}\n",
+                           NI.getUnitOffset(), Offset, Iter->second);
         continue;
       }
       Iter->second = NI.getUnitOffset();
@@ -1348,17 +1336,17 @@ bool DWARFVerifier::handleAccelTables() {
   DataExtractor StrData(D.getStringSection(), DCtx.isLittleEndian(), 0);
   unsigned NumErrors = 0;
   if (!D.getAppleNamesSection().Data.empty())
-    NumErrors +=
-        verifyAppleAccelTable(&D.getAppleNamesSection(), &StrData, ".apple_names");
+    NumErrors += verifyAppleAccelTable(&D.getAppleNamesSection(), &StrData,
+                                       ".apple_names");
   if (!D.getAppleTypesSection().Data.empty())
-    NumErrors +=
-        verifyAppleAccelTable(&D.getAppleTypesSection(), &StrData, ".apple_types");
+    NumErrors += verifyAppleAccelTable(&D.getAppleTypesSection(), &StrData,
+                                       ".apple_types");
   if (!D.getAppleNamespacesSection().Data.empty())
     NumErrors += verifyAppleAccelTable(&D.getAppleNamespacesSection(), &StrData,
-                                  ".apple_namespaces");
+                                       ".apple_namespaces");
   if (!D.getAppleObjCSection().Data.empty())
-    NumErrors +=
-        verifyAppleAccelTable(&D.getAppleObjCSection(), &StrData, ".apple_objc");
+    NumErrors += verifyAppleAccelTable(&D.getAppleObjCSection(), &StrData,
+                                       ".apple_objc");
 
   if (!D.getDebugNamesSection().Data.empty())
     NumErrors += verifyDebugNames(D.getDebugNamesSection(), StrData);
@@ -1370,3 +1358,8 @@ raw_ostream &DWARFVerifier::error() const { return WithColor::error(OS); }
 raw_ostream &DWARFVerifier::warn() const { return WithColor::warning(OS); }
 
 raw_ostream &DWARFVerifier::note() const { return WithColor::note(OS); }
+
+raw_ostream &DWARFVerifier::dump(const DWARFDie &Die, unsigned indent) const {
+  Die.dump(OS, indent, DumpOpts);
+  return OS;
+}
