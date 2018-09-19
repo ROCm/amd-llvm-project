@@ -14,14 +14,16 @@ namespace llvm {
 namespace pdb {
 
 NativeTypeBuiltin::NativeTypeBuiltin(NativeSession &PDBSession, SymIndexId Id,
+                                     codeview::ModifierOptions Mods,
                                      PDB_BuiltinType T, uint64_t L)
     : NativeRawSymbol(PDBSession, PDB_SymType::BuiltinType, Id),
-      Session(PDBSession), Type(T), Length(L) {}
+      Session(PDBSession), Mods(Mods), Type(T), Length(L) {}
 
 NativeTypeBuiltin::~NativeTypeBuiltin() {}
 
-void NativeTypeBuiltin::dump(raw_ostream &OS, int Indent) const {
-}
+void NativeTypeBuiltin::dump(raw_ostream &OS, int Indent,
+                             PdbSymbolIdField ShowIdFields,
+                             PdbSymbolIdField RecurseIdFields) const {}
 
 PDB_SymType NativeTypeBuiltin::getSymTag() const {
   return PDB_SymType::BuiltinType;
