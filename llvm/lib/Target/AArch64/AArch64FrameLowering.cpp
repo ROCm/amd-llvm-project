@@ -356,7 +356,7 @@ static unsigned findScratchNonCalleeSaveRegister(MachineBasicBlock *MBB) {
   LiveRegs.addLiveIns(*MBB);
 
   // Mark callee saved registers as used so we will not choose them.
-  const MCPhysReg *CSRegs = TRI.getCalleeSavedRegs(MF);
+  const MCPhysReg *CSRegs = MF->getRegInfo().getCalleeSavedRegs();
   for (unsigned i = 0; CSRegs[i]; ++i)
     LiveRegs.addReg(CSRegs[i]);
 
@@ -622,6 +622,12 @@ void AArch64FrameLowering::emitPrologue(MachineFunction &MF,
   if (ShouldSignReturnAddress(MF)) {
     BuildMI(MBB, MBBI, DL, TII->get(AArch64::PACIASP))
         .setMIFlag(MachineInstr::FrameSetup);
+
+    unsigned CFIIndex =
+        MF.addFrameInst(MCCFIInstruction::createNegateRAState(nullptr));
+    BuildMI(MBB, MBBI, DL, TII->get(TargetOpcode::CFI_INSTRUCTION))
+        .addCFIIndex(CFIIndex)
+        .setMIFlags(MachineInstr::FrameSetup);
   }
 
   // All calls are tail calls in GHC calling conv, and functions have no
@@ -1541,7 +1547,7 @@ void AArch64FrameLowering::determineCalleeSaves(MachineFunction &MF,
   unsigned UnspilledCSGPRPaired = AArch64::NoRegister;
 
   MachineFrameInfo &MFI = MF.getFrameInfo();
-  const MCPhysReg *CSRegs = RegInfo->getCalleeSavedRegs(&MF);
+  const MCPhysReg *CSRegs = MF.getRegInfo().getCalleeSavedRegs();
 
   unsigned BasePointerReg = RegInfo->hasBasePointer(MF)
                                 ? RegInfo->getBaseRegister()
