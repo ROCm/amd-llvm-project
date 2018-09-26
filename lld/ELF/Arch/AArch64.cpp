@@ -67,6 +67,10 @@ AArch64::AArch64() {
   PltHeaderSize = 32;
   DefaultMaxPageSize = 65536;
 
+  // Align to the 2 MiB page size (known as a superpage or huge page).
+  // FreeBSD automatically promotes 2 MiB-aligned allocations.
+  DefaultImageBase = 0x200000;
+
   // It doesn't seem to be documented anywhere, but tls on aarch64 uses variant
   // 1 of the tls structures and the tcb size is 16.
   TcbSize = 16;
@@ -152,7 +156,7 @@ RelType AArch64::getDynRel(RelType Type) const {
 }
 
 void AArch64::writeGotPlt(uint8_t *Buf, const Symbol &) const {
-  write64le(Buf, InX::Plt->getVA());
+  write64le(Buf, In.Plt->getVA());
 }
 
 void AArch64::writePltHeader(uint8_t *Buf) const {
@@ -168,8 +172,8 @@ void AArch64::writePltHeader(uint8_t *Buf) const {
   };
   memcpy(Buf, PltData, sizeof(PltData));
 
-  uint64_t Got = InX::GotPlt->getVA();
-  uint64_t Plt = InX::Plt->getVA();
+  uint64_t Got = In.GotPlt->getVA();
+  uint64_t Plt = In.Plt->getVA();
   relocateOne(Buf + 4, R_AARCH64_ADR_PREL_PG_HI21,
               getAArch64Page(Got + 16) - getAArch64Page(Plt + 4));
   relocateOne(Buf + 8, R_AARCH64_LDST64_ABS_LO12_NC, Got + 16);

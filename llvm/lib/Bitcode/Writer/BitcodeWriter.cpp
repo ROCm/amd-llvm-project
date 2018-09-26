@@ -1403,6 +1403,7 @@ unsigned ModuleBitcodeWriter::createDILocationAbbrev() {
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 8));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6));
   Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6));
+  Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1));
   return Stream.EmitAbbrev(std::move(Abbv));
 }
 
@@ -1417,6 +1418,7 @@ void ModuleBitcodeWriter::writeDILocation(const DILocation *N,
   Record.push_back(N->getColumn());
   Record.push_back(VE.getMetadataID(N->getScope()));
   Record.push_back(VE.getMetadataOrNullID(N->getInlinedAt()));
+  Record.push_back(N->isImplicitCode());
 
   Stream.EmitRecord(bitc::METADATA_LOCATION, Record, Abbrev);
   Record.clear();
@@ -3093,6 +3095,7 @@ void ModuleBitcodeWriter::writeFunction(
       Vals.push_back(DL->getColumn());
       Vals.push_back(VE.getMetadataOrNullID(DL->getScope()));
       Vals.push_back(VE.getMetadataOrNullID(DL->getInlinedAt()));
+      Vals.push_back(DL->isImplicitCode());
       Stream.EmitRecord(bitc::FUNC_CODE_DEBUG_LOC, Vals);
       Vals.clear();
 
@@ -3900,12 +3903,13 @@ void IndexBitcodeWriter::writeCombinedGlobalValueSummary() {
     NameVals.clear();
   }
 
-  if (!Index.typeIds().empty()) {
-    for (auto &S : Index.typeIds()) {
-      // Skip if not referenced in any GV summary within this index file.
-      if (!ReferencedTypeIds.count(GlobalValue::getGUID(S.first)))
-        continue;
-      writeTypeIdSummaryRecord(NameVals, StrtabBuilder, S.first, S.second);
+  // Walk the GUIDs that were referenced, and write the
+  // corresponding type id records.
+  for (auto &T : ReferencedTypeIds) {
+    auto TidIter = Index.typeIds().equal_range(T);
+    for (auto It = TidIter.first; It != TidIter.second; ++It) {
+      writeTypeIdSummaryRecord(NameVals, StrtabBuilder, It->second.first,
+                               It->second.second);
       Stream.EmitRecord(bitc::FS_TYPE_ID, NameVals);
       NameVals.clear();
     }

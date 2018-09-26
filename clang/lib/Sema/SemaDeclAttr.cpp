@@ -425,17 +425,36 @@ static bool isIntOrBool(Expr *Exp) {
 // Check to see if the type is a smart pointer of some kind.  We assume
 // it's a smart pointer if it defines both operator-> and operator*.
 static bool threadSafetyCheckIsSmartPointer(Sema &S, const RecordType* RT) {
-  DeclContextLookupResult Res1 = RT->getDecl()->lookup(
-      S.Context.DeclarationNames.getCXXOperatorName(OO_Star));
-  if (Res1.empty())
+  auto IsOverloadedOperatorPresent = [&S](const RecordDecl *Record,
+                                          OverloadedOperatorKind Op) {
+    DeclContextLookupResult Result =
+        Record->lookup(S.Context.DeclarationNames.getCXXOperatorName(Op));
+    return !Result.empty();
+  };
+
+  const RecordDecl *Record = RT->getDecl();
+  bool foundStarOperator = IsOverloadedOperatorPresent(Record, OO_Star);
+  bool foundArrowOperator = IsOverloadedOperatorPresent(Record, OO_Arrow);
+  if (foundStarOperator && foundArrowOperator)
+    return true;
+
+  const CXXRecordDecl *CXXRecord = dyn_cast<CXXRecordDecl>(Record);
+  if (!CXXRecord)
     return false;
 
-  DeclContextLookupResult Res2 = RT->getDecl()->lookup(
-      S.Context.DeclarationNames.getCXXOperatorName(OO_Arrow));
-  if (Res2.empty())
-    return false;
+  for (auto BaseSpecifier : CXXRecord->bases()) {
+    if (!foundStarOperator)
+      foundStarOperator = IsOverloadedOperatorPresent(
+          BaseSpecifier.getType()->getAsRecordDecl(), OO_Star);
+    if (!foundArrowOperator)
+      foundArrowOperator = IsOverloadedOperatorPresent(
+          BaseSpecifier.getType()->getAsRecordDecl(), OO_Arrow);
+  }
 
-  return true;
+  if (foundStarOperator && foundArrowOperator)
+    return true;
+
+  return false;
 }
 
 /// Check if passed in Decl is a pointer type.
@@ -7769,6 +7788,7 @@ void Sema::PopParsingDeclaration(ParsingDeclState state, Decl *decl) {
   // for each of the different declarations.
   const DelayedDiagnosticPool *pool = &poppedPool;
   do {
+    bool AnyAccessFailures = false;
     for (DelayedDiagnosticPool::pool_iterator
            i = pool->pool_begin(), e = pool->pool_end(); i != e; ++i) {
       // This const_cast is a bit lame.  Really, Triggered should be mutable.
@@ -7785,7 +7805,14 @@ void Sema::PopParsingDeclaration(ParsingDeclState state, Decl *decl) {
         break;
 
       case DelayedDiagnostic::Access:
+        // Only produce one access control diagnostic for a structured binding
+        // declaration: we don't need to tell the user that all the fields are
+        // inaccessible one at a time.
+        if (AnyAccessFailures && isa<DecompositionDecl>(decl))
+          continue;
         HandleDelayedAccessCheck(diag, decl);
+        if (diag.Triggered)
+          AnyAccessFailures = true;
         break;
 
       case DelayedDiagnostic::ForbiddenType:
