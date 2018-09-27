@@ -1585,7 +1585,8 @@ static void MarkByValueRecordsPassedToHIPGlobalFN(FunctionDecl *FDecl)
 { // TODO: this is a temporary kludge; a preferable solution shall be provided
   //       in the future, which shall eschew FE involvement.
   if (!FDecl) return;
-  if (FDecl->getName() != "hipLaunchKernelGGL") return;
+  if (FDecl->getDeclName().isIdentifier() &&
+    FDecl->getName() != "hipLaunchKernelGGL") return;
 
   for (auto &&Parameter : FDecl->parameters()) {
     if (Parameter->getOriginalType()->isPointerType()) continue;
