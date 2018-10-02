@@ -1872,6 +1872,9 @@ def err_reference_bind_init_list : Error<
 def err_init_list_bad_dest_type : Error<
   "%select{|non-aggregate }0type %1 cannot be initialized with an initializer "
   "list">;
+def warn_cxx2a_compat_aggregate_init_with_ctors : Warning<
+  "aggregate initialization of type %0 with user-declared constructors "
+  "is incompatible with C++2a">, DefaultIgnore, InGroup<CXX2aCompat>;
 
 def err_reference_bind_to_bitfield : Error<
   "%select{non-const|volatile}0 reference cannot bind to "
@@ -2296,6 +2299,9 @@ def warn_for_range_copy : Warning<
   "loop variable %0 of type %1 creates a copy from type %2">,
   InGroup<RangeLoopAnalysis>, DefaultIgnore;
 def note_use_reference_type : Note<"use reference type %0 to prevent copying">;
+def err_objc_for_range_init_stmt : Error<
+  "initialization statement is not supported when iterating over Objective-C "
+  "collection">;
 
 // C++11 constexpr
 def warn_cxx98_compat_constexpr : Warning<
@@ -6632,6 +6638,11 @@ let CategoryName = "Lambda Issue" in {
     InGroup<DeprecatedThisCapture>, DefaultIgnore;
   def note_deprecated_this_capture : Note<
     "add an explicit capture of 'this' to capture '*this' by reference">;
+
+  // C++2a default constructible / assignable lambdas.
+  def warn_cxx17_compat_lambda_def_ctor_assign : Warning<
+    "%select{default construction|assignment}0 of lambda is incompatible with "
+    "C++ standards before C++2a">, InGroup<CXXPre2aCompat>, DefaultIgnore;
 }
 
 def err_return_in_captured_stmt : Error<
@@ -7754,9 +7765,19 @@ def err_incorrect_defaulted_exception_spec : Error<
 def err_incorrect_defaulted_constexpr : Error<
   "defaulted definition of %sub{select_special_member_kind}0 "
   "is not constexpr">;
+def warn_defaulted_method_deleted : Warning<
+  "explicitly defaulted %sub{select_special_member_kind}0 is implicitly "
+  "deleted">, InGroup<DiagGroup<"defaulted-function-deleted">>;
 def err_out_of_line_default_deletes : Error<
   "defaulting this %sub{select_special_member_kind}0 "
   "would delete it after its first declaration">;
+def note_deleted_type_mismatch : Note<
+  "function is implicitly deleted because its declared type does not match "
+  "the type of an implicit %sub{select_special_member_kind}0">;
+def warn_cxx17_compat_defaulted_method_type_mismatch : Warning<
+  "explicitly defaulting this %sub{select_special_member_kind}0 with a type "
+  "different from the implicit type is incompatible with C++ standards before "
+  "C++2a">, InGroup<CXXPre2aCompat>, DefaultIgnore;
 def warn_vbase_moved_multiple_times : Warning<
   "defaulted move assignment operator of %0 will move assign virtual base "
   "class %1 multiple times">, InGroup<DiagGroup<"multiple-move-vbase">>;

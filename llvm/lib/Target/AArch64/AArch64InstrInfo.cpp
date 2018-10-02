@@ -675,6 +675,26 @@ bool AArch64InstrInfo::isAsCheapAsAMove(const MachineInstr &MI) const {
   if (!Subtarget.hasCustomCheapAsMoveHandling())
     return MI.isAsCheapAsAMove();
 
+  const unsigned Opcode = MI.getOpcode();
+
+  // Firstly, check cases gated by features.
+
+  if (Subtarget.hasZeroCycleZeroingFP()) {
+    if (Opcode == AArch64::FMOVH0 ||
+        Opcode == AArch64::FMOVS0 ||
+        Opcode == AArch64::FMOVD0)
+      return true;
+  }
+
+  if (Subtarget.hasZeroCycleZeroingGP()) {
+    if (Opcode == TargetOpcode::COPY &&
+        (MI.getOperand(1).getReg() == AArch64::WZR ||
+         MI.getOperand(1).getReg() == AArch64::XZR))
+      return true;
+  }
+
+  // Secondly, check cases specific to sub-targets.
+
   if (Subtarget.hasExynosCheapAsMoveHandling()) {
     if (isExynosResetFast(MI) || isExynosShiftLeftFast(MI))
       return true;
@@ -682,7 +702,9 @@ bool AArch64InstrInfo::isAsCheapAsAMove(const MachineInstr &MI) const {
       return MI.isAsCheapAsAMove();
   }
 
-  switch (MI.getOpcode()) {
+  // Finally, check generic cases.
+
+  switch (Opcode) {
   default:
     return false;
 
@@ -723,17 +745,6 @@ bool AArch64InstrInfo::isAsCheapAsAMove(const MachineInstr &MI) const {
     return canBeExpandedToORR(MI, 32);
   case AArch64::MOVi64imm:
     return canBeExpandedToORR(MI, 64);
-
-  // It is cheap to zero out registers if the subtarget has ZeroCycleZeroing
-  // feature.
-  case AArch64::FMOVH0:
-  case AArch64::FMOVS0:
-  case AArch64::FMOVD0:
-    return Subtarget.hasZeroCycleZeroing();
-  case TargetOpcode::COPY:
-    return (Subtarget.hasZeroCycleZeroing() &&
-            (MI.getOperand(1).getReg() == AArch64::WZR ||
-             MI.getOperand(1).getReg() == AArch64::XZR));
   }
 
   llvm_unreachable("Unknown opcode to check as cheap as a move!");
@@ -2481,7 +2492,7 @@ void AArch64InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
             .addImm(0)
             .addImm(AArch64_AM::getShifterImm(AArch64_AM::LSL, 0));
       }
-    } else if (SrcReg == AArch64::WZR && Subtarget.hasZeroCycleZeroing()) {
+    } else if (SrcReg == AArch64::WZR && Subtarget.hasZeroCycleZeroingGP()) {
       BuildMI(MBB, I, DL, get(AArch64::MOVZWi), DestReg)
           .addImm(0)
           .addImm(AArch64_AM::getShifterImm(AArch64_AM::LSL, 0));
@@ -2518,7 +2529,7 @@ void AArch64InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
           .addReg(SrcReg, getKillRegState(KillSrc))
           .addImm(0)
           .addImm(AArch64_AM::getShifterImm(AArch64_AM::LSL, 0));
-    } else if (SrcReg == AArch64::XZR && Subtarget.hasZeroCycleZeroing()) {
+    } else if (SrcReg == AArch64::XZR && Subtarget.hasZeroCycleZeroingGP()) {
       BuildMI(MBB, I, DL, get(AArch64::MOVZXi), DestReg)
           .addImm(0)
           .addImm(AArch64_AM::getShifterImm(AArch64_AM::LSL, 0));

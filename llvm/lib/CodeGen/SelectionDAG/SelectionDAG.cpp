@@ -7955,6 +7955,7 @@ void SelectionDAG::CreateTopologicalOrder(std::vector<SDNode*>& Order) {
   }
 }
 
+#ifndef NDEBUG
 void SelectionDAG::VerifyDAGDiverence()
 {
   std::vector<SDNode*> TopoOrder;
@@ -7981,6 +7982,7 @@ void SelectionDAG::VerifyDAGDiverence()
            "Divergence bit inconsistency detected\n");
   }
 }
+#endif
 
 
 /// ReplaceAllUsesOfValuesWith - Replace any uses of From with To, leaving
@@ -8014,7 +8016,7 @@ void SelectionDAG::ReplaceAllUsesOfValuesWith(const SDValue *From,
   }
 
   // Sort the uses, so that all the uses from a given User are together.
-  llvm::sort(Uses.begin(), Uses.end());
+  llvm::sort(Uses);
 
   for (unsigned UseIndex = 0, UseIndexEnd = Uses.size();
        UseIndex != UseIndexEnd; ) {

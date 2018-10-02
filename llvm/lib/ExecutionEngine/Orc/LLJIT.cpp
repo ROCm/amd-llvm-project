@@ -54,7 +54,7 @@ LLJIT::Create(JITTargetMachineBuilder JTMB, DataLayout DL,
 }
 
 Error LLJIT::defineAbsolute(StringRef Name, JITEvaluatedSymbol Sym) {
-  auto InternedName = ES->getSymbolStringPool().intern(Name);
+  auto InternedName = ES->intern(Name);
   SymbolMap Symbols({{InternedName, Sym}});
   return Main.define(absoluteSymbols(std::move(Symbols)));
 }
@@ -78,39 +78,43 @@ Error LLJIT::addObjectFile(JITDylib &JD, std::unique_ptr<MemoryBuffer> Obj) {
 
 Expected<JITEvaluatedSymbol> LLJIT::lookupLinkerMangled(JITDylib &JD,
                                                         StringRef Name) {
-  return llvm::orc::lookup({&JD}, ES->getSymbolStringPool().intern(Name));
+  return llvm::orc::lookup({&JD}, ES->intern(Name));
 }
 
 LLJIT::LLJIT(std::unique_ptr<ExecutionSession> ES,
              std::unique_ptr<TargetMachine> TM, DataLayout DL)
-    : ES(std::move(ES)), Main(this->ES->createJITDylib("main")),
-      DL(std::move(DL)),
+    : ES(std::move(ES)), Main(this->ES->getMainJITDylib()), DL(std::move(DL)),
       ObjLinkingLayer(*this->ES,
                       [this](VModuleKey K) { return getMemoryManager(K); }),
-      CompileLayer(*this->ES, ObjLinkingLayer, TMOwningSimpleCompiler(std::move(TM))),
+      CompileLayer(*this->ES, ObjLinkingLayer,
+                   TMOwningSimpleCompiler(std::move(TM))),
       CtorRunner(Main), DtorRunner(Main) {}
 
-LLJIT::LLJIT(std::unique_ptr<ExecutionSession> ES,
-             JITTargetMachineBuilder JTMB, DataLayout DL,
-             unsigned NumCompileThreads)
-    : ES(std::move(ES)), Main(this->ES->createJITDylib("main")),
-      DL(std::move(DL)),
+LLJIT::LLJIT(std::unique_ptr<ExecutionSession> ES, JITTargetMachineBuilder JTMB,
+             DataLayout DL, unsigned NumCompileThreads)
+    : ES(std::move(ES)), Main(this->ES->getMainJITDylib()), DL(std::move(DL)),
       ObjLinkingLayer(*this->ES,
                       [this](VModuleKey K) { return getMemoryManager(K); }),
-      CompileLayer(*this->ES, ObjLinkingLayer, MultiThreadedSimpleCompiler(std::move(JTMB))),
+      CompileLayer(*this->ES, ObjLinkingLayer,
+                   MultiThreadedSimpleCompiler(std::move(JTMB))),
       CtorRunner(Main), DtorRunner(Main) {
   assert(NumCompileThreads != 0 &&
          "Multithreaded LLJIT instance can not be created with 0 threads");
 
+  // Move modules to new contexts when they're emitted so that we can compile
+  // them in parallel.
+  CompileLayer.setCloneToNewContextOnEmit(true);
+
+  // Create a thread pool to compile on and set the execution session
+  // dispatcher to use the thread pool.
   CompileThreads = llvm::make_unique<ThreadPool>(NumCompileThreads);
-  this->ES->setDispatchMaterialization([this](JITDylib &JD, std::unique_ptr<MaterializationUnit> MU) {
-      // FIXME: Switch to move capture once we have c++14.
-      auto SharedMU = std::shared_ptr<MaterializationUnit>(std::move(MU));
-      auto Work = [SharedMU, &JD]() {
-        SharedMU->doMaterialize(JD);
-      };
-      CompileThreads->async(std::move(Work));
-    });
+  this->ES->setDispatchMaterialization(
+      [this](JITDylib &JD, std::unique_ptr<MaterializationUnit> MU) {
+        // FIXME: Switch to move capture once we have c++14.
+        auto SharedMU = std::shared_ptr<MaterializationUnit>(std::move(MU));
+        auto Work = [SharedMU, &JD]() { SharedMU->doMaterialize(JD); };
+        CompileThreads->async(std::move(Work));
+      });
 }
 
 std::unique_ptr<RuntimeDyld::MemoryManager>
@@ -151,9 +155,9 @@ Expected<std::unique_ptr<LLLazyJIT>>
 
   const Triple &TT = JTMB.getTargetTriple();
 
-  auto CCMgr = createLocalCompileCallbackManager(TT, *ES, 0);
-  if (!CCMgr)
-    return CCMgr.takeError();
+  auto LCTMgr = createLocalLazyCallThroughManager(TT, *ES, 0);
+  if (!LCTMgr)
+    return LCTMgr.takeError();
 
   auto ISMBuilder = createLocalIndirectStubsManagerBuilder(TT);
   if (!ISMBuilder)
@@ -167,12 +171,12 @@ Expected<std::unique_ptr<LLLazyJIT>>
       return TM.takeError();
     return std::unique_ptr<LLLazyJIT>(
         new LLLazyJIT(std::move(ES), std::move(*TM), std::move(DL),
-                      std::move(*CCMgr), std::move(ISMBuilder)));
+                      std::move(*LCTMgr), std::move(ISMBuilder)));
   }
 
   return std::unique_ptr<LLLazyJIT>(new LLLazyJIT(
       std::move(ES), std::move(JTMB), std::move(DL), NumCompileThreads,
-      std::move(*CCMgr), std::move(ISMBuilder)));
+      std::move(*LCTMgr), std::move(ISMBuilder)));
 }
 
 Error LLLazyJIT::addLazyIRModule(JITDylib &JD, ThreadSafeModule TSM) {
@@ -181,7 +185,7 @@ Error LLLazyJIT::addLazyIRModule(JITDylib &JD, ThreadSafeModule TSM) {
   if (auto Err = applyDataLayout(*TSM.getModule()))
     return Err;
 
-  makeAllSymbolsExternallyAccessible(*TSM.getModule());
+  PromoteSymbols(*TSM.getModule());
 
   recordCtorDtors(*TSM.getModule());
 
@@ -191,20 +195,23 @@ Error LLLazyJIT::addLazyIRModule(JITDylib &JD, ThreadSafeModule TSM) {
 
 LLLazyJIT::LLLazyJIT(
     std::unique_ptr<ExecutionSession> ES, std::unique_ptr<TargetMachine> TM,
-    DataLayout DL, std::unique_ptr<JITCompileCallbackManager> CCMgr,
+    DataLayout DL, std::unique_ptr<LazyCallThroughManager> LCTMgr,
     std::function<std::unique_ptr<IndirectStubsManager>()> ISMBuilder)
     : LLJIT(std::move(ES), std::move(TM), std::move(DL)),
-      CCMgr(std::move(CCMgr)), TransformLayer(*this->ES, CompileLayer),
-      CODLayer(*this->ES, TransformLayer, *this->CCMgr, std::move(ISMBuilder)) {
-}
+      LCTMgr(std::move(LCTMgr)), TransformLayer(*this->ES, CompileLayer),
+      CODLayer(*this->ES, TransformLayer, *this->LCTMgr,
+               std::move(ISMBuilder)) {}
 
 LLLazyJIT::LLLazyJIT(
     std::unique_ptr<ExecutionSession> ES, JITTargetMachineBuilder JTMB,
-    DataLayout DL, unsigned NumCompileThreads, std::unique_ptr<JITCompileCallbackManager> CCMgr,
+    DataLayout DL, unsigned NumCompileThreads,
+    std::unique_ptr<LazyCallThroughManager> LCTMgr,
     std::function<std::unique_ptr<IndirectStubsManager>()> ISMBuilder)
     : LLJIT(std::move(ES), std::move(JTMB), std::move(DL), NumCompileThreads),
-      CCMgr(std::move(CCMgr)), TransformLayer(*this->ES, CompileLayer),
-      CODLayer(*this->ES, TransformLayer, *this->CCMgr, std::move(ISMBuilder)) {
+      LCTMgr(std::move(LCTMgr)), TransformLayer(*this->ES, CompileLayer),
+      CODLayer(*this->ES, TransformLayer, *this->LCTMgr,
+               std::move(ISMBuilder)) {
+  CODLayer.setCloneToNewContextOnEmit(true);
 }
 
 } // End namespace orc.
