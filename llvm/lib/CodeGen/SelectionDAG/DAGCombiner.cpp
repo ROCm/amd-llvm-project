@@ -3103,6 +3103,7 @@ static SDValue simplifyDivRem(SDNode *N, SelectionDAG &DAG) {
 
   unsigned Opc = N->getOpcode();
   bool IsDiv = (ISD::SDIV == Opc) || (ISD::UDIV == Opc);
+  ConstantSDNode *N1C = isConstOrConstSplat(N1);
 
   // X / undef -> undef
   // X % undef -> undef
@@ -3125,8 +3126,10 @@ static SDValue simplifyDivRem(SDNode *N, SelectionDAG &DAG) {
   if (N0 == N1)
     return DAG.getConstant(IsDiv ? 1 : 0, DL, VT);
 
-  // TODO: X / 1 -> X
-  // TODO: X % 1 -> 0
+  // X / 1 -> X
+  // X % 1 -> 0
+  if (N1C && N1C->isOne())
+    return IsDiv ? N0 : DAG.getConstant(0, DL, VT);
   // If this is a boolean op (single-bit element type), we can't have
   // division-by-zero or remainder-by-zero, so assume the divisor is 1.
   // Similarly, if we're zero-extending a boolean divisor, then assume it's a 1.
@@ -3152,9 +3155,6 @@ SDValue DAGCombiner::visitSDIV(SDNode *N) {
   ConstantSDNode *N1C = isConstOrConstSplat(N1);
   if (N0C && N1C && !N0C->isOpaque() && !N1C->isOpaque())
     return DAG.FoldConstantArithmetic(ISD::SDIV, DL, VT, N0C, N1C);
-  // fold (sdiv X, 1) -> X
-  if (N1C && N1C->isOne())
-    return N0;
   // fold (sdiv X, -1) -> 0-X
   if (N1C && N1C->isAllOnesValue())
     return DAG.getNode(ISD::SUB, DL, VT, DAG.getConstant(0, DL, VT), N0);
@@ -3290,9 +3290,6 @@ SDValue DAGCombiner::visitUDIV(SDNode *N) {
     if (SDValue Folded = DAG.FoldConstantArithmetic(ISD::UDIV, DL, VT,
                                                     N0C, N1C))
       return Folded;
-  // fold (udiv X, 1) -> X
-  if (N1C && N1C->isOne())
-    return N0;
   // fold (udiv X, -1) -> select(X == -1, 1, 0)
   if (N1C && N1C->getAPIntValue().isAllOnesValue())
     return DAG.getSelect(DL, VT, DAG.getSetCC(DL, CCVT, N0, N1, ISD::SETEQ),
@@ -11726,8 +11723,8 @@ SDValue DAGCombiner::visitSINT_TO_FP(SDNode *N) {
 
   // If the input is a legal type, and SINT_TO_FP is not legal on this target,
   // but UINT_TO_FP is legal on this target, try to convert.
-  if (!TLI.isOperationLegalOrCustom(ISD::SINT_TO_FP, OpVT) &&
-      TLI.isOperationLegalOrCustom(ISD::UINT_TO_FP, OpVT)) {
+  if (!hasOperation(ISD::SINT_TO_FP, OpVT) &&
+      hasOperation(ISD::UINT_TO_FP, OpVT)) {
     // If the sign bit is known to be zero, we can change this to UINT_TO_FP.
     if (DAG.SignBitIsZero(N0))
       return DAG.getNode(ISD::UINT_TO_FP, SDLoc(N), VT, N0);
@@ -11783,8 +11780,8 @@ SDValue DAGCombiner::visitUINT_TO_FP(SDNode *N) {
 
   // If the input is a legal type, and UINT_TO_FP is not legal on this target,
   // but SINT_TO_FP is legal on this target, try to convert.
-  if (!TLI.isOperationLegalOrCustom(ISD::UINT_TO_FP, OpVT) &&
-      TLI.isOperationLegalOrCustom(ISD::SINT_TO_FP, OpVT)) {
+  if (!hasOperation(ISD::UINT_TO_FP, OpVT) &&
+      hasOperation(ISD::SINT_TO_FP, OpVT)) {
     // If the sign bit is known to be zero, we can change this to SINT_TO_FP.
     if (DAG.SignBitIsZero(N0))
       return DAG.getNode(ISD::SINT_TO_FP, SDLoc(N), VT, N0);
@@ -13250,8 +13247,7 @@ static void adjustCostForPairing(SmallVectorImpl<LoadedSlice> &LoadedSlices,
 
   // Sort the slices so that elements that are likely to be next to each
   // other in memory are next to each other in the list.
-  llvm::sort(LoadedSlices.begin(), LoadedSlices.end(),
-             [](const LoadedSlice &LHS, const LoadedSlice &RHS) {
+  llvm::sort(LoadedSlices, [](const LoadedSlice &LHS, const LoadedSlice &RHS) {
     assert(LHS.Origin == RHS.Origin && "Different bases not implemented.");
     return LHS.getOffsetFromBase() < RHS.getOffsetFromBase();
   });
@@ -13920,26 +13916,17 @@ bool DAGCombiner::MergeStoresOfConstantsOrVecElts(
         if ((MemVT != Val.getValueType()) &&
             (Val.getOpcode() == ISD::EXTRACT_VECTOR_ELT ||
              Val.getOpcode() == ISD::EXTRACT_SUBVECTOR)) {
-          SDValue Vec = Val.getOperand(0);
           EVT MemVTScalarTy = MemVT.getScalarType();
-          SDValue Idx = Val.getOperand(1);
           // We may need to add a bitcast here to get types to line up.
-          if (MemVTScalarTy != Vec.getValueType()) {
-            unsigned Elts = Vec.getValueType().getSizeInBits() /
-                            MemVTScalarTy.getSizeInBits();
-            if (Val.getValueType().isVector() && MemVT.isVector()) {
-              unsigned IdxC = cast<ConstantSDNode>(Idx)->getZExtValue();
-              unsigned NewIdx =
-                  ((uint64_t)IdxC * MemVT.getVectorNumElements()) / Elts;
-              Idx = DAG.getConstant(NewIdx, SDLoc(Val), Idx.getValueType());
-            }
-            EVT NewVecTy =
-                EVT::getVectorVT(*DAG.getContext(), MemVTScalarTy, Elts);
-            Vec = DAG.getBitcast(NewVecTy, Vec);
+          if (MemVTScalarTy != Val.getValueType().getScalarType()) {
+            Val = DAG.getBitcast(MemVT, Val);
+          } else {
+            unsigned OpC = MemVT.isVector() ? ISD::EXTRACT_SUBVECTOR
+                                            : ISD::EXTRACT_VECTOR_ELT;
+            SDValue Vec = Val.getOperand(0);
+            SDValue Idx = Val.getOperand(1);
+            Val = DAG.getNode(OpC, SDLoc(Val), MemVT, Vec, Idx);
           }
-          auto OpC = (MemVT.isVector()) ? ISD::EXTRACT_SUBVECTOR
-                                        : ISD::EXTRACT_VECTOR_ELT;
-          Val = DAG.getNode(OpC, SDLoc(Val), MemVT, Vec, Idx);
         }
         Ops.push_back(Val);
       }
@@ -14247,10 +14234,9 @@ bool DAGCombiner::MergeConsecutiveStores(StoreSDNode *St) {
 
   // Sort the memory operands according to their distance from the
   // base pointer.
-  llvm::sort(StoreNodes.begin(), StoreNodes.end(),
-             [](MemOpLink LHS, MemOpLink RHS) {
-               return LHS.OffsetFromBase < RHS.OffsetFromBase;
-             });
+  llvm::sort(StoreNodes, [](MemOpLink LHS, MemOpLink RHS) {
+    return LHS.OffsetFromBase < RHS.OffsetFromBase;
+  });
 
   // Store Merge attempts to merge the lowest stores. This generally
   // works out as if successful, as the remaining stores are checked

@@ -779,6 +779,8 @@ bool MIParser::parse(MachineInstr *&MI) {
     MDNode *Node = nullptr;
     if (parseMDNode(Node))
       return true;
+    if (!isa<DILocation>(Node))
+      return error("referenced metadata is not a DILocation");
     DebugLocation = DebugLoc(Node);
   }
 
@@ -1816,9 +1818,6 @@ bool MIParser::parseCFIOperand(MachineOperand &Dest) {
   case MIToken::kw_cfi_window_save:
     CFIIndex = MF.addFrameInst(MCCFIInstruction::createWindowSave(nullptr));
     break;
-  case MIToken::kw_cfi_aarch64_negate_ra_sign_state:
-    CFIIndex = MF.addFrameInst(MCCFIInstruction::createNegateRAState(nullptr));
-    break;
   case MIToken::kw_cfi_escape: {
     std::string Values;
     if (parseCFIEscapeValues(Values))
@@ -2111,7 +2110,6 @@ bool MIParser::parseMachineOperand(MachineOperand &Dest,
   case MIToken::kw_cfi_restore_state:
   case MIToken::kw_cfi_undefined:
   case MIToken::kw_cfi_window_save:
-  case MIToken::kw_cfi_aarch64_negate_ra_sign_state:
     return parseCFIOperand(Dest);
   case MIToken::kw_blockaddress:
     return parseBlockAddressOperand(Dest);

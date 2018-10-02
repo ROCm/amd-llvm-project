@@ -8011,6 +8011,7 @@ OMPClause *Sema::ActOnOpenMPSingleExprClause(OpenMPClauseKind Kind, Expr *Expr,
   case OMPC_use_device_ptr:
   case OMPC_is_device_ptr:
   case OMPC_unified_address:
+  case OMPC_unified_shared_memory:
     llvm_unreachable("Clause is not allowed.");
   }
   return Res;
@@ -8533,6 +8534,7 @@ static OpenMPDirectiveKind getOpenMPCaptureRegionForClause(
   case OMPC_use_device_ptr:
   case OMPC_is_device_ptr:
   case OMPC_unified_address:
+  case OMPC_unified_shared_memory:
     llvm_unreachable("Unexpected OpenMP clause.");
   }
   return CaptureRegion;
@@ -8851,6 +8853,7 @@ OMPClause *Sema::ActOnOpenMPSimpleClause(
   case OMPC_use_device_ptr:
   case OMPC_is_device_ptr:
   case OMPC_unified_address:
+  case OMPC_unified_shared_memory:
     llvm_unreachable("Clause is not allowed.");
   }
   return Res;
@@ -9008,6 +9011,7 @@ OMPClause *Sema::ActOnOpenMPSingleExprWithArgClause(
   case OMPC_use_device_ptr:
   case OMPC_is_device_ptr:
   case OMPC_unified_address:
+  case OMPC_unified_shared_memory:
     llvm_unreachable("Clause is not allowed.");
   }
   return Res;
@@ -9166,6 +9170,9 @@ OMPClause *Sema::ActOnOpenMPClause(OpenMPClauseKind Kind,
   case OMPC_unified_address:
     Res = ActOnOpenMPUnifiedAddressClause(StartLoc, EndLoc);
     break;
+  case OMPC_unified_shared_memory:
+    Res = ActOnOpenMPUnifiedSharedMemoryClause(StartLoc, EndLoc);
+    break;
   case OMPC_if:
   case OMPC_final:
   case OMPC_num_threads:
@@ -9269,6 +9276,11 @@ OMPClause *Sema::ActOnOpenMPNogroupClause(SourceLocation StartLoc,
 OMPClause *Sema::ActOnOpenMPUnifiedAddressClause(SourceLocation StartLoc,
                                                  SourceLocation EndLoc) {
   return new (Context) OMPUnifiedAddressClause(StartLoc, EndLoc);
+}
+
+OMPClause *Sema::ActOnOpenMPUnifiedSharedMemoryClause(SourceLocation StartLoc,
+                                                      SourceLocation EndLoc) {
+  return new (Context) OMPUnifiedSharedMemoryClause(StartLoc, EndLoc);
 }
 
 OMPClause *Sema::ActOnOpenMPVarListClause(
@@ -9379,6 +9391,7 @@ OMPClause *Sema::ActOnOpenMPVarListClause(
   case OMPC_unknown:
   case OMPC_uniform:
   case OMPC_unified_address:
+  case OMPC_unified_shared_memory:
     llvm_unreachable("Clause is not allowed.");
   }
   return Res;
@@ -10631,64 +10644,67 @@ static bool actOnOMPReductionKindClause(
       }
       continue;
     }
+
+    OpenMPDirectiveKind CurrDir = Stack->getCurrentDirective();
     // OpenMP [2.9.3.6, Restrictions, C/C++, p.4]
     //  If a list-item is a reference type then it must bind to the same object
     //  for all threads of the team.
-    if (!ASE && !OASE && VD) {
-      VarDecl *VDDef = VD->getDefinition();
-      if (VD->getType()->isReferenceType() && VDDef && VDDef->hasInit()) {
-        DSARefChecker Check(Stack);
-        if (Check.Visit(VDDef->getInit())) {
-          S.Diag(ELoc, diag::err_omp_reduction_ref_type_arg)
-              << getOpenMPClauseName(ClauseKind) << ERange;
-          S.Diag(VDDef->getLocation(), diag::note_defined_here) << VDDef;
-          continue;
+    if (!ASE && !OASE) {
+      if (VD) {
+        VarDecl *VDDef = VD->getDefinition();
+        if (VD->getType()->isReferenceType() && VDDef && VDDef->hasInit()) {
+          DSARefChecker Check(Stack);
+          if (Check.Visit(VDDef->getInit())) {
+            S.Diag(ELoc, diag::err_omp_reduction_ref_type_arg)
+                << getOpenMPClauseName(ClauseKind) << ERange;
+            S.Diag(VDDef->getLocation(), diag::note_defined_here) << VDDef;
+            continue;
+          }
         }
       }
-    }
 
-    // OpenMP [2.14.1.1, Data-sharing Attribute Rules for Variables Referenced
-    // in a Construct]
-    //  Variables with the predetermined data-sharing attributes may not be
-    //  listed in data-sharing attributes clauses, except for the cases
-    //  listed below. For these exceptions only, listing a predetermined
-    //  variable in a data-sharing attribute clause is allowed and overrides
-    //  the variable's predetermined data-sharing attributes.
-    // OpenMP [2.14.3.6, Restrictions, p.3]
-    //  Any number of reduction clauses can be specified on the directive,
-    //  but a list item can appear only once in the reduction clauses for that
-    //  directive.
-    DSAStackTy::DSAVarData DVar = Stack->getTopDSA(D, /*FromParent=*/false);
-    if (DVar.CKind == OMPC_reduction) {
-      S.Diag(ELoc, diag::err_omp_once_referenced)
-          << getOpenMPClauseName(ClauseKind);
-      if (DVar.RefExpr)
-        S.Diag(DVar.RefExpr->getExprLoc(), diag::note_omp_referenced);
-      continue;
-    }
-    if (DVar.CKind != OMPC_unknown) {
-      S.Diag(ELoc, diag::err_omp_wrong_dsa)
-          << getOpenMPClauseName(DVar.CKind)
-          << getOpenMPClauseName(OMPC_reduction);
-      reportOriginalDsa(S, Stack, D, DVar);
-      continue;
-    }
-
-    // OpenMP [2.14.3.6, Restrictions, p.1]
-    //  A list item that appears in a reduction clause of a worksharing
-    //  construct must be shared in the parallel regions to which any of the
-    //  worksharing regions arising from the worksharing construct bind.
-    OpenMPDirectiveKind CurrDir = Stack->getCurrentDirective();
-    if (isOpenMPWorksharingDirective(CurrDir) &&
-        !isOpenMPParallelDirective(CurrDir) &&
-        !isOpenMPTeamsDirective(CurrDir)) {
-      DVar = Stack->getImplicitDSA(D, true);
-      if (DVar.CKind != OMPC_shared) {
-        S.Diag(ELoc, diag::err_omp_required_access)
-            << getOpenMPClauseName(OMPC_reduction)
-            << getOpenMPClauseName(OMPC_shared);
+      // OpenMP [2.14.1.1, Data-sharing Attribute Rules for Variables Referenced
+      // in a Construct]
+      //  Variables with the predetermined data-sharing attributes may not be
+      //  listed in data-sharing attributes clauses, except for the cases
+      //  listed below. For these exceptions only, listing a predetermined
+      //  variable in a data-sharing attribute clause is allowed and overrides
+      //  the variable's predetermined data-sharing attributes.
+      // OpenMP [2.14.3.6, Restrictions, p.3]
+      //  Any number of reduction clauses can be specified on the directive,
+      //  but a list item can appear only once in the reduction clauses for that
+      //  directive.
+      DSAStackTy::DSAVarData DVar = Stack->getTopDSA(D, /*FromParent=*/false);
+      if (DVar.CKind == OMPC_reduction) {
+        S.Diag(ELoc, diag::err_omp_once_referenced)
+            << getOpenMPClauseName(ClauseKind);
+        if (DVar.RefExpr)
+          S.Diag(DVar.RefExpr->getExprLoc(), diag::note_omp_referenced);
+        continue;
+      }
+      if (DVar.CKind != OMPC_unknown) {
+        S.Diag(ELoc, diag::err_omp_wrong_dsa)
+            << getOpenMPClauseName(DVar.CKind)
+            << getOpenMPClauseName(OMPC_reduction);
         reportOriginalDsa(S, Stack, D, DVar);
         continue;
+      }
+
+      // OpenMP [2.14.3.6, Restrictions, p.1]
+      //  A list item that appears in a reduction clause of a worksharing
+      //  construct must be shared in the parallel regions to which any of the
+      //  worksharing regions arising from the worksharing construct bind.
+      if (isOpenMPWorksharingDirective(CurrDir) &&
+          !isOpenMPParallelDirective(CurrDir) &&
+          !isOpenMPTeamsDirective(CurrDir)) {
+        DVar = Stack->getImplicitDSA(D, true);
+        if (DVar.CKind != OMPC_shared) {
+          S.Diag(ELoc, diag::err_omp_required_access)
+              << getOpenMPClauseName(OMPC_reduction)
+              << getOpenMPClauseName(OMPC_shared);
+          reportOriginalDsa(S, Stack, D, DVar);
+          continue;
+        }
       }
     }
 
@@ -11223,8 +11239,7 @@ OMPClause *Sema::ActOnOpenMPLinearClause(
     SourceLocation ELoc;
     SourceRange ERange;
     Expr *SimpleRefExpr = RefExpr;
-    auto Res = getPrivateItem(*this, SimpleRefExpr, ELoc, ERange,
-                              /*AllowArraySection=*/false);
+    auto Res = getPrivateItem(*this, SimpleRefExpr, ELoc, ERange);
     if (Res.second) {
       // It will be analyzed later.
       Vars.push_back(RefExpr);
@@ -11364,8 +11379,7 @@ static bool FinishOpenMPLinearClause(OMPLinearClause &Clause, DeclRefExpr *IV,
     SourceLocation ELoc;
     SourceRange ERange;
     Expr *SimpleRefExpr = RefExpr;
-    auto Res = getPrivateItem(SemaRef, SimpleRefExpr, ELoc, ERange,
-                              /*AllowArraySection=*/false);
+    auto Res = getPrivateItem(SemaRef, SimpleRefExpr, ELoc, ERange);
     ValueDecl *D = Res.first;
     if (Res.second || !D) {
       Updates.push_back(nullptr);
@@ -11446,8 +11460,7 @@ OMPClause *Sema::ActOnOpenMPAlignedClause(
     SourceLocation ELoc;
     SourceRange ERange;
     Expr *SimpleRefExpr = RefExpr;
-    auto Res = getPrivateItem(*this, SimpleRefExpr, ELoc, ERange,
-                              /*AllowArraySection=*/false);
+    auto Res = getPrivateItem(*this, SimpleRefExpr, ELoc, ERange);
     if (Res.second) {
       // It will be analyzed later.
       Vars.push_back(RefExpr);
@@ -11619,8 +11632,7 @@ OMPClause *Sema::ActOnOpenMPCopyprivateClause(ArrayRef<Expr *> VarList,
     SourceLocation ELoc;
     SourceRange ERange;
     Expr *SimpleRefExpr = RefExpr;
-    auto Res = getPrivateItem(*this, SimpleRefExpr, ELoc, ERange,
-                              /*AllowArraySection=*/false);
+    auto Res = getPrivateItem(*this, SimpleRefExpr, ELoc, ERange);
     if (Res.second) {
       // It will be analyzed later.
       Vars.push_back(RefExpr);
@@ -11818,8 +11830,7 @@ Sema::ActOnOpenMPDependClause(OpenMPDependClauseKind DepKind,
       }
       SourceLocation ELoc;
       SourceRange ERange;
-      auto Res = getPrivateItem(*this, LHS, ELoc, ERange,
-                                /*AllowArraySection=*/false);
+      auto Res = getPrivateItem(*this, LHS, ELoc, ERange);
       if (Res.second) {
         // It will be analyzed later.
         Vars.push_back(RefExpr);

@@ -19,6 +19,7 @@
 #include "llvm/ExecutionEngine/Orc/ExecutionUtils.h"
 #include "llvm/ExecutionEngine/Orc/IRCompileLayer.h"
 #include "llvm/ExecutionEngine/Orc/IRTransformLayer.h"
+#include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
 #include "llvm/ExecutionEngine/Orc/ObjectTransformLayer.h"
 #include "llvm/ExecutionEngine/Orc/RTDyldObjectLinkingLayer.h"
 #include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
@@ -50,6 +51,8 @@ public:
 
   /// Convenience method for defining an absolute symbol.
   Error defineAbsolute(StringRef Name, JITEvaluatedSymbol Address);
+
+  /// Convenience method for defining an
 
   /// Adds an IR module to the given JITDylib.
   Error addIRModule(JITDylib &JD, ThreadSafeModule TSM);
@@ -146,6 +149,12 @@ public:
     TransformLayer.setTransform(std::move(Transform));
   }
 
+  /// Sets the partition function.
+  void
+  setPartitionFunction(CompileOnDemandLayer2::PartitionFunction Partition) {
+    CODLayer.setPartitionFunction(std::move(Partition));
+  }
+
   /// Add a module to be lazily compiled to JITDylib JD.
   Error addLazyIRModule(JITDylib &JD, ThreadSafeModule M);
 
@@ -173,6 +182,7 @@ private:
 
   IRTransformLayer2 TransformLayer;
   CompileOnDemandLayer2 CODLayer;
+  SymbolLinkagePromoter PromoteSymbols;
 };
 
 } // End namespace orc
