@@ -23,6 +23,8 @@ def compress_debug_sections_eq : Joined<["--", "-"], "compress-debug-sections=">
                                  HelpText<"Compress DWARF debug sections using "
                                           "specified style. Supported styles: "
                                           "'zlib-gnu' and 'zlib'">;
+def decompress_debug_sections : Flag<["-", "--"], "decompress-debug-sections">,
+                                HelpText<"Decompress DWARF debug sections.">;
 def O : JoinedOrSeparate<["-"], "O">,
         Alias<output_target>;
 defm split_dwo : Eq<"split-dwo">,
@@ -106,6 +108,9 @@ defm keep_global_symbols
 	  "contains one symbol per line and may contain comments beginning "
 	  "with '#'. Leading and trailing whitespace is stripped from each "
 	  "line. May be repeated to read symbols from many files.">;
+
+def version : Flag<[ "-", "--" ], "version">,
+              HelpText<"Print the version and exit.">;
 
 defm weaken_symbol : Eq<"weaken-symbol">,
                        MetaVarName<"symbol">,

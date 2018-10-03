@@ -29,7 +29,7 @@ namespace mca {
 
 void DispatchStage::notifyInstructionDispatched(const InstRef &IR,
                                                 ArrayRef<unsigned> UsedRegs,
-                                                unsigned UOps) {
+                                                unsigned UOps) const {
   LLVM_DEBUG(dbgs() << "[E] Instruction Dispatched: #" << IR << '\n');
   notifyEvent<HWInstructionEvent>(
       HWInstructionDispatchedEvent(IR, UsedRegs, UOps));
@@ -85,7 +85,7 @@ void DispatchStage::updateRAWDependencies(ReadState &RS,
   }
 }
 
-llvm::Error DispatchStage::dispatch(InstRef IR) {
+Error DispatchStage::dispatch(InstRef IR) {
   assert(!CarryOver && "Cannot dispatch another instruction!");
   Instruction &IS = *IR.getInstruction();
   const InstrDesc &Desc = IS.getDesc();
@@ -115,7 +115,8 @@ llvm::Error DispatchStage::dispatch(InstRef IR) {
   // to the instruction.
   SmallVector<unsigned, 4> RegisterFiles(PRF.getNumRegisterFiles());
   for (std::unique_ptr<WriteState> &WS : IS.getDefs())
-    PRF.addRegisterWrite(WriteRef(IR.getSourceIndex(), WS.get()), RegisterFiles);
+    PRF.addRegisterWrite(WriteRef(IR.getSourceIndex(), WS.get()),
+                         RegisterFiles);
 
   // Reserve slots in the RCU, and notify the instruction that it has been
   // dispatched to the schedulers for execution.
@@ -128,22 +129,22 @@ llvm::Error DispatchStage::dispatch(InstRef IR) {
   return moveToTheNextStage(IR);
 }
 
-llvm::Error DispatchStage::cycleStart() {
+Error DispatchStage::cycleStart() {
   if (!CarryOver) {
     AvailableEntries = DispatchWidth;
-    return llvm::ErrorSuccess();
+    return ErrorSuccess();
   }
 
   AvailableEntries = CarryOver >= DispatchWidth ? 0 : DispatchWidth - CarryOver;
   unsigned DispatchedOpcodes = DispatchWidth - AvailableEntries;
   CarryOver -= DispatchedOpcodes;
   assert(CarriedOver.isValid() && "Invalid dispatched instruction");
-  
+
   SmallVector<unsigned, 8> RegisterFiles(PRF.getNumRegisterFiles(), 0U);
   notifyInstructionDispatched(CarriedOver, RegisterFiles, DispatchedOpcodes);
   if (!CarryOver)
     CarriedOver = InstRef();
-  return llvm::ErrorSuccess();
+  return ErrorSuccess();
 }
 
 bool DispatchStage::isAvailable(const InstRef &IR) const {
@@ -157,7 +158,7 @@ bool DispatchStage::isAvailable(const InstRef &IR) const {
   return canDispatch(IR);
 }
 
-llvm::Error DispatchStage::execute(InstRef &IR) {
+Error DispatchStage::execute(InstRef &IR) {
   assert(canDispatch(IR) && "Cannot dispatch another instruction!");
   return dispatch(IR);
 }

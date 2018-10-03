@@ -113,6 +113,8 @@ enum DATA_SHARING_SIZES {
   DS_Worker_Warp_Slot_Size = WARPSIZE * DS_Slot_Size,
   // The maximum number of warps in use
   DS_Max_Warp_Number = 32,
+  // The size of the preallocated shared memory buffer per team
+  DS_Shared_Memory_Size = 128,
 };
 
 // Data structure to keep in shared memory that traces the current slot, stack,
@@ -152,13 +154,6 @@ public:
   // methods for flags
   INLINE omp_sched_t GetRuntimeSched();
   INLINE void SetRuntimeSched(omp_sched_t sched);
-  INLINE int IsDynamic() { return items.flags & TaskDescr_IsDynamic; }
-  INLINE void SetDynamic() {
-    items.flags = items.flags | TaskDescr_IsDynamic;
-  }
-  INLINE void ClearDynamic() {
-    items.flags = items.flags & (~TaskDescr_IsDynamic);
-  }
   INLINE int InParallelRegion() { return items.flags & TaskDescr_InPar; }
   INLINE int InL2OrHigherParallelRegion() {
     return items.flags & TaskDescr_InParL2P;
@@ -194,15 +189,13 @@ public:
   INLINE void RestoreLoopData() const;
 
 private:
-  // bits for flags: (7 used, 1 free)
+  // bits for flags: (6 used, 2 free)
   //   3 bits (SchedMask) for runtime schedule
-  //   1 bit (IsDynamic) for dynamic schedule (false = static)
   //   1 bit (InPar) if this thread has encountered one or more parallel region
   //   1 bit (IsParConstr) if ICV for a parallel region (false = explicit task)
   //   1 bit (InParL2+) if this thread has encountered L2 or higher parallel
   //   region
   static const uint8_t TaskDescr_SchedMask = (0x1 | 0x2 | 0x4);
-  static const uint8_t TaskDescr_IsDynamic = 0x8;
   static const uint8_t TaskDescr_InPar = 0x10;
   static const uint8_t TaskDescr_IsParConstr = 0x20;
   static const uint8_t TaskDescr_InParL2P = 0x40;
@@ -386,12 +379,15 @@ struct omptarget_device_environmentTy {
 
 class omptarget_nvptx_SimpleThreadPrivateContext {
   uint16_t par_level[MAX_THREADS_PER_TEAM];
+
 public:
   INLINE void Init() {
     ASSERT0(LT_FUSSY, isSPMDMode() && isRuntimeUninitialized(),
             "Expected SPMD + uninitialized runtime modes.");
     par_level[GetThreadIdInBlock()] = 0;
   }
+  static INLINE void *Allocate(size_t DataSize);
+  static INLINE void Deallocate(void *Ptr);
   INLINE void IncParLevel() {
     ASSERT0(LT_FUSSY, isSPMDMode() && isRuntimeUninitialized(),
             "Expected SPMD + uninitialized runtime modes.");

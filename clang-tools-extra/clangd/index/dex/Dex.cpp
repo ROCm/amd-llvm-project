@@ -12,7 +12,11 @@
 #include "FuzzyMatch.h"
 #include "Logger.h"
 #include "Quality.h"
+#include "Trace.h"
+#include "index/Index.h"
+#include "index/dex/Iterator.h"
 #include "llvm/ADT/StringSet.h"
+#include "llvm/Support/ScopedPrinter.h"
 #include <algorithm>
 #include <queue>
 
@@ -21,6 +25,10 @@ namespace clangd {
 namespace dex {
 
 namespace {
+
+// Mark symbols which are can be used for code completion.
+const Token RestrictedForCodeCompletion =
+    Token(Token::Kind::Sentinel, "Restricted For Code Completion");
 
 // Returns the tokens which are given symbol's characteristics. Currently, the
 // generated tokens only contain fuzzy matching trigrams and symbol's scope,
@@ -39,6 +47,8 @@ std::vector<Token> generateSearchTokens(const Symbol &Sym) {
     for (const auto &ProximityURI :
          generateProximityURIs(Sym.CanonicalDeclaration.FileURI))
       Result.emplace_back(Token::Kind::ProximityURI, ProximityURI);
+  if (Sym.Flags & Symbol::IndexedForCodeCompletion)
+    Result.emplace_back(RestrictedForCodeCompletion);
   return Result;
 }
 
@@ -46,7 +56,8 @@ std::vector<Token> generateSearchTokens(const Symbol &Sym) {
 std::vector<std::unique_ptr<Iterator>> createFileProximityIterators(
     llvm::ArrayRef<std::string> ProximityPaths,
     llvm::ArrayRef<std::string> URISchemes,
-    const llvm::DenseMap<Token, PostingList> &InvertedIndex) {
+    const llvm::DenseMap<Token, PostingList> &InvertedIndex,
+    const Corpus &Corpus) {
   std::vector<std::unique_ptr<Iterator>> BoostingIterators;
   // Deduplicate parent URIs extracted from the ProximityPaths.
   llvm::StringSet<> ParentURIs;
@@ -76,13 +87,13 @@ std::vector<std::unique_ptr<Iterator>> createFileProximityIterators(
   // ProximityPaths. Boosting factor should depend on the distance to the
   // Proximity Path: the closer processed path is, the higher boosting factor.
   for (const auto &ParentURI : ParentURIs.keys()) {
-    const auto It =
-        InvertedIndex.find(Token(Token::Kind::ProximityURI, ParentURI));
+    Token Tok(Token::Kind::ProximityURI, ParentURI);
+    const auto It = InvertedIndex.find(Tok);
     if (It != InvertedIndex.end()) {
       // FIXME(kbobyrev): Append LIMIT on top of every BOOST iterator.
       PathProximitySignals.SymbolURI = ParentURI;
-      BoostingIterators.push_back(
-          createBoost(It->second.iterator(), PathProximitySignals.evaluate()));
+      BoostingIterators.push_back(Corpus.boost(
+          It->second.iterator(&It->first), PathProximitySignals.evaluate()));
     }
   }
   return BoostingIterators;
@@ -91,6 +102,7 @@ std::vector<std::unique_ptr<Iterator>> createFileProximityIterators(
 } // namespace
 
 void Dex::buildIndex() {
+  this->Corpus = dex::Corpus(Symbols.size());
   std::vector<std::pair<float, const Symbol *>> ScoredSymbols(Symbols.size());
 
   for (size_t I = 0; I < Symbols.size(); ++I) {
@@ -122,11 +134,8 @@ void Dex::buildIndex() {
 
   // Convert lists of items to posting lists.
   for (const auto &TokenToPostingList : TempInvertedIndex)
-    InvertedIndex.insert({TokenToPostingList.first,
-                          PostingList(move(TokenToPostingList.second))});
-
-  vlog("Built Dex with estimated memory usage {0} bytes.",
-       estimateMemoryUsage());
+    InvertedIndex.insert(
+        {TokenToPostingList.first, PostingList(TokenToPostingList.second)});
 }
 
 /// Constructs iterators over tokens extracted from the query and exhausts it
@@ -136,11 +145,12 @@ bool Dex::fuzzyFind(const FuzzyFindRequest &Req,
                     llvm::function_ref<void(const Symbol &)> Callback) const {
   assert(!StringRef(Req.Query).contains("::") &&
          "There must be no :: in query.");
+  trace::Span Tracer("Dex fuzzyFind");
   FuzzyMatcher Filter(Req.Query);
   bool More = false;
 
   std::vector<std::unique_ptr<Iterator>> TopLevelChildren;
-  const auto TrigramTokens = generateIdentifierTrigrams(Req.Query);
+  const auto TrigramTokens = generateQueryTrigrams(Req.Query);
 
   // Generate query trigrams and construct AND iterator over all query
   // trigrams.
@@ -148,45 +158,57 @@ bool Dex::fuzzyFind(const FuzzyFindRequest &Req,
   for (const auto &Trigram : TrigramTokens) {
     const auto It = InvertedIndex.find(Trigram);
     if (It != InvertedIndex.end())
-      TrigramIterators.push_back(It->second.iterator());
+      TrigramIterators.push_back(It->second.iterator(&It->first));
   }
   if (!TrigramIterators.empty())
-    TopLevelChildren.push_back(createAnd(move(TrigramIterators)));
+    TopLevelChildren.push_back(Corpus.intersect(move(TrigramIterators)));
 
   // Generate scope tokens for search query.
   std::vector<std::unique_ptr<Iterator>> ScopeIterators;
   for (const auto &Scope : Req.Scopes) {
-    const auto It = InvertedIndex.find(Token(Token::Kind::Scope, Scope));
+    Token Tok(Token::Kind::Scope, Scope);
+    const auto It = InvertedIndex.find(Tok);
     if (It != InvertedIndex.end())
-      ScopeIterators.push_back(It->second.iterator());
+      ScopeIterators.push_back(It->second.iterator(&It->first));
   }
+  if (Req.AnyScope)
+    ScopeIterators.push_back(
+        Corpus.boost(Corpus.all(), ScopeIterators.empty() ? 1.0 : 0.2));
+
   // Add OR iterator for scopes if there are any Scope Iterators.
   if (!ScopeIterators.empty())
-    TopLevelChildren.push_back(createOr(move(ScopeIterators)));
+    TopLevelChildren.push_back(Corpus.unionOf(move(ScopeIterators)));
 
   // Add proximity paths boosting.
   auto BoostingIterators = createFileProximityIterators(
-      Req.ProximityPaths, URISchemes, InvertedIndex);
+      Req.ProximityPaths, URISchemes, InvertedIndex, Corpus);
   // Boosting iterators do not actually filter symbols. In order to preserve
   // the validity of resulting query, TRUE iterator should be added along
   // BOOSTs.
   if (!BoostingIterators.empty()) {
-    BoostingIterators.push_back(createTrue(Symbols.size()));
-    TopLevelChildren.push_back(createOr(move(BoostingIterators)));
+    BoostingIterators.push_back(Corpus.all());
+    TopLevelChildren.push_back(Corpus.unionOf(move(BoostingIterators)));
   }
+
+  if (Req.RestrictForCodeCompletion)
+    TopLevelChildren.push_back(
+        InvertedIndex.find(RestrictedForCodeCompletion)
+            ->second.iterator(&RestrictedForCodeCompletion));
 
   // Use TRUE iterator if both trigrams and scopes from the query are not
   // present in the symbol index.
   auto QueryIterator = TopLevelChildren.empty()
-                           ? createTrue(Symbols.size())
-                           : createAnd(move(TopLevelChildren));
+                           ? Corpus.all()
+                           : Corpus.intersect(move(TopLevelChildren));
   // Retrieve more items than it was requested: some of  the items with high
   // final score might not be retrieved otherwise.
   // FIXME(kbobyrev): Pre-scoring retrieval threshold should be adjusted as
   // using 100x of the requested number might not be good in practice, e.g.
   // when the requested number of items is small.
-  auto Root = Req.Limit ? createLimit(move(QueryIterator), *Req.Limit * 100)
+  auto Root = Req.Limit ? Corpus.limit(move(QueryIterator), *Req.Limit * 100)
                         : move(QueryIterator);
+  SPAN_ATTACH(Tracer, "query", llvm::to_string(*Root));
+  vlog("Dex query tree: {0}", *Root);
 
   using IDAndScore = std::pair<DocID, float>;
   std::vector<IDAndScore> IDAndScores = consume(*Root);
@@ -221,6 +243,7 @@ bool Dex::fuzzyFind(const FuzzyFindRequest &Req,
 
 void Dex::lookup(const LookupRequest &Req,
                  llvm::function_ref<void(const Symbol &)> Callback) const {
+  trace::Span Tracer("Dex lookup");
   for (const auto &ID : Req.IDs) {
     auto I = LookupTable.find(ID);
     if (I != LookupTable.end())
@@ -230,6 +253,7 @@ void Dex::lookup(const LookupRequest &Req,
 
 void Dex::refs(const RefsRequest &Req,
                llvm::function_ref<void(const Ref &)> Callback) const {
+  trace::Span Tracer("Dex refs");
   log("refs is not implemented.");
 }
 
@@ -238,8 +262,8 @@ size_t Dex::estimateMemoryUsage() const {
   Bytes += SymbolQuality.size() * sizeof(float);
   Bytes += LookupTable.getMemorySize();
   Bytes += InvertedIndex.getMemorySize();
-  for (const auto &P : InvertedIndex)
-    Bytes += P.second.bytes();
+  for (const auto &TokenToPostingList : InvertedIndex)
+    Bytes += TokenToPostingList.second.bytes();
   return Bytes + BackingDataSize;
 }
 

@@ -15,6 +15,7 @@
 #include "llvm/DebugInfo/PDB/DIA/DIAEnumSymbols.h"
 #include "llvm/DebugInfo/PDB/DIA/DIALineNumber.h"
 #include "llvm/DebugInfo/PDB/DIA/DIASession.h"
+#include "llvm/DebugInfo/PDB/DIA/DIAUtils.h"
 #include "llvm/DebugInfo/PDB/PDBExtras.h"
 #include "llvm/DebugInfo/PDB/PDBSymbolTypeBuiltin.h"
 #include "llvm/DebugInfo/PDB/PDBSymbolTypePointer.h"
@@ -115,16 +116,7 @@ RetType PrivateGetDIAValue(IDiaSymbol *Symbol,
 std::string
 PrivateGetDIAValue(IDiaSymbol *Symbol,
                    HRESULT (__stdcall IDiaSymbol::*Method)(BSTR *)) {
-  CComBSTR Result16;
-  if (S_OK != (Symbol->*Method)(&Result16))
-    return std::string();
-
-  const char *SrcBytes = reinterpret_cast<const char *>(Result16.m_str);
-  llvm::ArrayRef<char> SrcByteArray(SrcBytes, Result16.ByteLength());
-  std::string Result8;
-  if (!llvm::convertUTF16ToUTF8String(SrcByteArray, Result8))
-    return std::string();
-  return Result8;
+  return invokeBstrMethod(*Symbol, Method);
 }
 
 codeview::GUID
@@ -243,9 +235,9 @@ void DIARawSymbol::dump(raw_ostream &OS, int Indent,
   RAW_METHOD_DUMP(OS, baseDataOffset);
   RAW_METHOD_DUMP(OS, baseDataSlot);
   RAW_METHOD_DUMP(OS, baseSymbolId);
-  RAW_METHOD_DUMP(OS, baseType);
+  RAW_METHOD_DUMP_AS(OS, baseType, PDB_BuiltinType);
   RAW_METHOD_DUMP(OS, bitPosition);
-  RAW_METHOD_DUMP(OS, callingConvention);
+  RAW_METHOD_DUMP_AS(OS, callingConvention, PDB_CallingConv);
   RAW_ID_METHOD_DUMP(OS, classParentId, Session, PdbSymbolIdField::ClassParent,
                      ShowIdFields, RecurseIdFields);
   RAW_METHOD_DUMP(OS, compilerName);
@@ -317,7 +309,7 @@ void DIARawSymbol::dump(raw_ostream &OS, int Indent,
   RAW_METHOD_DUMP(OS, length);
   RAW_METHOD_DUMP(OS, liveRangeLength);
   RAW_METHOD_DUMP(OS, virtualAddress);
-  RAW_METHOD_DUMP(OS, udtKind);
+  RAW_METHOD_DUMP_AS(OS, udtKind, PDB_UdtType);
   RAW_METHOD_DUMP(OS, constructor);
   RAW_METHOD_DUMP(OS, customCallingConvention);
   RAW_METHOD_DUMP(OS, farReturn);

@@ -1,5 +1,4 @@
-//===- NativeTypePointer.h - info about pointer type ------------------*- C++
-//-*-===//
+//===- NativeTypePointer.h - info about pointer type -------------*- C++-*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -34,6 +33,7 @@ public:
   void dump(raw_ostream &OS, int Indent, PdbSymbolIdField ShowIdFields,
             PdbSymbolIdField RecurseIdFields) const override;
 
+  SymIndexId getClassParentId() const override;
   bool isConstType() const override;
   uint64_t getLength() const override;
   bool isReference() const override;
@@ -45,7 +45,12 @@ public:
   bool isVolatileType() const override;
   bool isUnalignedType() const override;
 
+  bool isSingleInheritance() const override;
+  bool isMultipleInheritance() const override;
+  bool isVirtualInheritance() const override;
+
 protected:
+  bool isMemberPointer() const;
   codeview::TypeIndex TI;
   Optional<codeview::PointerRecord> Record;
 };

@@ -16,6 +16,7 @@
 #ifndef LLVM_CLANG_TOOLS_EXTRA_CLANGD_CODECOMPLETE_H
 #define LLVM_CLANG_TOOLS_EXTRA_CLANGD_CODECOMPLETE_H
 
+#include "ClangdUnit.h"
 #include "Headers.h"
 #include "Logger.h"
 #include "Path.h"
@@ -101,6 +102,13 @@ struct CodeCompleteOptions {
   /// Whether to generate snippets for function arguments on code-completion.
   /// Needs snippets to be enabled as well.
   bool EnableFunctionArgSnippets = true;
+
+  /// Whether to include index symbols that are not defined in the scopes
+  /// visible from the code completion point. This applies in contexts without
+  /// explicit scope qualifiers.
+  ///
+  /// Such completions can insert scope qualifiers.
+  bool AllScopes = false;
 };
 
 // Semi-structured representation of a code-complete suggestion for our C++ API.
@@ -214,8 +222,7 @@ struct SpeculativeFuzzyFind {
 /// destroyed when the async request finishes.
 CodeCompleteResult codeComplete(PathRef FileName,
                                 const tooling::CompileCommand &Command,
-                                PrecompiledPreamble const *Preamble,
-                                const IncludeStructure &PreambleInclusions,
+                                const PreambleData *Preamble,
                                 StringRef Contents, Position Pos,
                                 IntrusiveRefCntPtr<vfs::FileSystem> VFS,
                                 std::shared_ptr<PCHContainerOperations> PCHs,
@@ -225,8 +232,8 @@ CodeCompleteResult codeComplete(PathRef FileName,
 /// Get signature help at a specified \p Pos in \p FileName.
 SignatureHelp signatureHelp(PathRef FileName,
                             const tooling::CompileCommand &Command,
-                            PrecompiledPreamble const *Preamble,
-                            StringRef Contents, Position Pos,
+                            const PreambleData *Preamble, StringRef Contents,
+                            Position Pos,
                             IntrusiveRefCntPtr<vfs::FileSystem> VFS,
                             std::shared_ptr<PCHContainerOperations> PCHs,
                             const SymbolIndex *Index);

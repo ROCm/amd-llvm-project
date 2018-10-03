@@ -171,10 +171,12 @@ struct Configuration {
   bool Trace;
   bool ThinLTOEmitImportsFiles;
   bool ThinLTOIndexOnly;
+  bool TocOptimize;
   bool UndefinedVersion;
   bool UseAndroidRelrTags = false;
   bool WarnBackrefs;
   bool WarnCommon;
+  bool WarnIfuncTextrel;
   bool WarnMissingEntry;
   bool WarnSymbolOrdering;
   bool WriteAddends;

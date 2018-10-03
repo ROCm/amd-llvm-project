@@ -1140,6 +1140,7 @@ function(add_benchmark benchmark_name)
   add_llvm_executable(${benchmark_name} IGNORE_EXTERNALIZE_DEBUGINFO NO_INSTALL_RPATH ${ARGN})
   set(outdir ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_CFG_INTDIR})
   set_output_directory(${benchmark_name} BINARY_DIR ${outdir} LIBRARY_DIR ${outdir})
+  set_property(TARGET ${benchmark_name} PROPERTY FOLDER "Utils")
   target_link_libraries(${benchmark_name} PRIVATE benchmark)
 endfunction()
 
@@ -1366,6 +1367,17 @@ function(add_lit_target target comment)
       COMMAND ${CMAKE_COMMAND} -E echo "${target} does nothing, no tools built.")
     message(STATUS "${target} does nothing.")
   endif()
+
+  # Add lit test dependencies.
+  set(llvm_utils_deps
+    FileCheck count not
+  )
+  foreach(dep ${llvm_utils_deps})
+    if (TARGET ${dep})
+      add_dependencies(${target} ${dep})
+    endif()
+  endforeach()
+
   if (ARG_DEPENDS)
     add_dependencies(${target} ${ARG_DEPENDS})
   endif()

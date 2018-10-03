@@ -186,9 +186,7 @@ namespace {
       list.push_back(UnqualUsingEntry(UD->getNominatedNamespace(), Common));
     }
 
-    void done() {
-      llvm::sort(list.begin(), list.end(), UnqualUsingEntry::Comparator());
-    }
+    void done() { llvm::sort(list, UnqualUsingEntry::Comparator()); }
 
     typedef ListTy::const_iterator const_iterator;
 
@@ -3621,8 +3619,9 @@ static void LookupVisibleDecls(DeclContext *Ctx, LookupResult &Result,
 
       // Find results in this base class (and its bases).
       ShadowContextRAII Shadow(Visited);
-      LookupVisibleDecls(RD, Result, QualifiedNameLookup, true, Consumer,
-                         Visited, IncludeDependentBases, LoadExternal);
+      LookupVisibleDecls(RD, Result, QualifiedNameLookup, /*InBaseClass=*/true,
+                         Consumer, Visited, IncludeDependentBases,
+                         LoadExternal);
     }
   }
 

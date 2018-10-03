@@ -29,11 +29,29 @@ class SymbolCache {
   NativeSession &Session;
   DbiStream *Dbi = nullptr;
 
+  /// Cache of all stable symbols, indexed by SymIndexId.  Just because a
+  /// symbol has been parsed does not imply that it will be stable and have
+  /// an Id.  Id allocation is an implementation, with the only guarantee
+  /// being that once an Id is allocated, the symbol can be assumed to be
+  /// cached.
   std::vector<std::unique_ptr<NativeRawSymbol>> Cache;
+
+  /// For type records from the TPI stream which have been paresd and cached,
+  /// stores a mapping to SymIndexId of the cached symbol.
   DenseMap<codeview::TypeIndex, SymIndexId> TypeIndexToSymbolId;
+
+  /// For field list members which have been parsed and cached, stores a mapping
+  /// from (IndexOfClass, MemberIndex) to the corresponding SymIndexId of the
+  /// cached symbol.
   DenseMap<std::pair<codeview::TypeIndex, uint32_t>, SymIndexId>
       FieldListMembersToSymbolId;
+
+  /// List of SymIndexIds for each compiland, indexed by compiland index as they
+  /// appear in the PDB file.
   std::vector<SymIndexId> Compilands;
+
+  /// Map from global symbol offset to SymIndexId.
+  DenseMap<uint32_t, SymIndexId> GlobalOffsetToSymbolId;
 
   SymIndexId createSymbolPlaceholder() {
     SymIndexId Id = Cache.size();
@@ -68,14 +86,29 @@ public:
   SymIndexId createSymbol(Args &&... ConstructorArgs) {
     SymIndexId Id = Cache.size();
 
+    // Initial construction must not access the cache, since it must be done
+    // atomically.
     auto Result = llvm::make_unique<ConcreteSymbolT>(
         Session, Id, std::forward<Args>(ConstructorArgs)...);
+    Result->SymbolId = Id;
+
+    NativeRawSymbol *NRS = static_cast<NativeRawSymbol *>(Result.get());
     Cache.push_back(std::move(Result));
+
+    // After the item is in the cache, we can do further initialization which
+    // is then allowed to access the cache.
+    NRS->initialize();
     return Id;
   }
 
   std::unique_ptr<IPDBEnumSymbols>
   createTypeEnumerator(codeview::TypeLeafKind Kind);
+
+  std::unique_ptr<IPDBEnumSymbols>
+  createTypeEnumerator(std::vector<codeview::TypeLeafKind> Kinds);
+
+  std::unique_ptr<IPDBEnumSymbols>
+  createGlobalsEnumerator(codeview::SymbolKind Kind);
 
   SymIndexId findSymbolByTypeIndex(codeview::TypeIndex TI);
 
@@ -86,15 +119,15 @@ public:
     SymIndexId SymId = Cache.size();
     std::pair<codeview::TypeIndex, uint32_t> Key{FieldListTI, Index};
     auto Result = FieldListMembersToSymbolId.try_emplace(Key, SymId);
-    if (Result.second) {
-      auto NewSymbol = llvm::make_unique<ConcreteSymbolT>(
-          Session, SymId, std::forward<Args>(ConstructorArgs)...);
-      Cache.push_back(std::move(NewSymbol));
-    } else {
+    if (Result.second)
+      SymId =
+          createSymbol<ConcreteSymbolT>(std::forward<Args>(ConstructorArgs)...);
+    else
       SymId = Result.first->second;
-    }
     return SymId;
   }
+
+  SymIndexId getOrCreateGlobalSymbolByOffset(uint32_t Offset);
 
   std::unique_ptr<PDBSymbolCompiland> getOrCreateCompiland(uint32_t Index);
   uint32_t getNumCompilands() const;

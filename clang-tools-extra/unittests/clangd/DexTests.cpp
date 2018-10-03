@@ -69,29 +69,17 @@ TEST(DexIterators, DocumentIterator) {
   EXPECT_TRUE(DocIterator->reachedEnd());
 }
 
-TEST(DexIterators, AndWithEmpty) {
-  const PostingList L0({});
-  const PostingList L1({0, 5, 7, 10, 42, 320, 9000});
-
-  auto AndEmpty = createAnd(L0.iterator());
-  EXPECT_TRUE(AndEmpty->reachedEnd());
-
-  auto AndWithEmpty = createAnd(L0.iterator(), L1.iterator());
-  EXPECT_TRUE(AndWithEmpty->reachedEnd());
-
-  EXPECT_THAT(consumeIDs(*AndWithEmpty), ElementsAre());
-}
-
 TEST(DexIterators, AndTwoLists) {
+  Corpus C{10000};
   const PostingList L0({0, 5, 7, 10, 42, 320, 9000});
   const PostingList L1({0, 4, 7, 10, 30, 60, 320, 9000});
 
-  auto And = createAnd(L1.iterator(), L0.iterator());
+  auto And = C.intersect(L1.iterator(), L0.iterator());
 
   EXPECT_FALSE(And->reachedEnd());
   EXPECT_THAT(consumeIDs(*And), ElementsAre(0U, 7U, 10U, 320U, 9000U));
 
-  And = createAnd(L0.iterator(), L1.iterator());
+  And = C.intersect(L0.iterator(), L1.iterator());
 
   And->advanceTo(0);
   EXPECT_EQ(And->peek(), 0U);
@@ -107,11 +95,12 @@ TEST(DexIterators, AndTwoLists) {
 }
 
 TEST(DexIterators, AndThreeLists) {
+  Corpus C{10000};
   const PostingList L0({0, 5, 7, 10, 42, 320, 9000});
   const PostingList L1({0, 4, 7, 10, 30, 60, 320, 9000});
   const PostingList L2({1, 4, 7, 11, 30, 60, 320, 9000});
 
-  auto And = createAnd(L0.iterator(), L1.iterator(), L2.iterator());
+  auto And = C.intersect(L0.iterator(), L1.iterator(), L2.iterator());
   EXPECT_EQ(And->peek(), 7U);
   And->advanceTo(300);
   EXPECT_EQ(And->peek(), 320U);
@@ -120,25 +109,12 @@ TEST(DexIterators, AndThreeLists) {
   EXPECT_TRUE(And->reachedEnd());
 }
 
-TEST(DexIterators, OrWithEmpty) {
-  const PostingList L0({});
-  const PostingList L1({0, 5, 7, 10, 42, 320, 9000});
-
-  auto OrEmpty = createOr(L0.iterator());
-  EXPECT_TRUE(OrEmpty->reachedEnd());
-
-  auto OrWithEmpty = createOr(L0.iterator(), L1.iterator());
-  EXPECT_FALSE(OrWithEmpty->reachedEnd());
-
-  EXPECT_THAT(consumeIDs(*OrWithEmpty),
-              ElementsAre(0U, 5U, 7U, 10U, 42U, 320U, 9000U));
-}
-
 TEST(DexIterators, OrTwoLists) {
+  Corpus C{10000};
   const PostingList L0({0, 5, 7, 10, 42, 320, 9000});
   const PostingList L1({0, 4, 7, 10, 30, 60, 320, 9000});
 
-  auto Or = createOr(L0.iterator(), L1.iterator());
+  auto Or = C.unionOf(L0.iterator(), L1.iterator());
 
   EXPECT_FALSE(Or->reachedEnd());
   EXPECT_EQ(Or->peek(), 0U);
@@ -161,18 +137,19 @@ TEST(DexIterators, OrTwoLists) {
   Or->advanceTo(9001);
   EXPECT_TRUE(Or->reachedEnd());
 
-  Or = createOr(L0.iterator(), L1.iterator());
+  Or = C.unionOf(L0.iterator(), L1.iterator());
 
   EXPECT_THAT(consumeIDs(*Or),
               ElementsAre(0U, 4U, 5U, 7U, 10U, 30U, 42U, 60U, 320U, 9000U));
 }
 
 TEST(DexIterators, OrThreeLists) {
+  Corpus C{10000};
   const PostingList L0({0, 5, 7, 10, 42, 320, 9000});
   const PostingList L1({0, 4, 7, 10, 30, 60, 320, 9000});
   const PostingList L2({1, 4, 7, 11, 30, 60, 320, 9000});
 
-  auto Or = createOr(L0.iterator(), L1.iterator(), L2.iterator());
+  auto Or = C.unionOf(L0.iterator(), L1.iterator(), L2.iterator());
 
   EXPECT_FALSE(Or->reachedEnd());
   EXPECT_EQ(Or->peek(), 0U);
@@ -211,29 +188,28 @@ TEST(DexIterators, QueryTree) {
   //      |And Iterator: 1, 5, 9|              |Or Iterator: 0, 1, 3, 5|
   //      +----------+----------+              +----------+------------+
   //                 |                                    |
-  //          +------+-----+                    +---------------------+
-  //          |            |                    |         |           |
-  //  +-------v-----+ +----+---+             +--v--+  +---v----+ +----v---+
-  //  |1, 3, 5, 8, 9| |Boost: 2|             |Empty|  |Boost: 3| |Boost: 4|
-  //  +-------------+ +----+---+             +-----+  +---+----+ +----+---+
-  //                       |                              |           |
-  //                  +----v-----+                      +-v--+    +---v---+
-  //                  |1, 5, 7, 9|                      |1, 5|    |0, 3, 5|
-  //                  +----------+                      +----+    +-------+
+  //          +------+-----+                        ------------+
+  //          |            |                        |           |
+  //  +-------v-----+ +----+---+                +---v----+ +----v---+
+  //  |1, 3, 5, 8, 9| |Boost: 2|                |Boost: 3| |Boost: 4|
+  //  +-------------+ +----+---+                +---+----+ +----+---+
+  //                       |                        |           |
+  //                  +----v-----+                +-v--+    +---v---+
+  //                  |1, 5, 7, 9|                |1, 5|    |0, 3, 5|
+  //                  +----------+                +----+    +-------+
   //
+  Corpus C{10};
   const PostingList L0({1, 3, 5, 8, 9});
   const PostingList L1({1, 5, 7, 9});
-  const PostingList L3({});
-  const PostingList L4({1, 5});
-  const PostingList L5({0, 3, 5});
+  const PostingList L2({1, 5});
+  const PostingList L3({0, 3, 5});
 
   // Root of the query tree: [1, 5]
-  auto Root = createAnd(
+  auto Root = C.intersect(
       // Lower And Iterator: [1, 5, 9]
-      createAnd(L0.iterator(), createBoost(L1.iterator(), 2U)),
+      C.intersect(L0.iterator(), C.boost(L1.iterator(), 2U)),
       // Lower Or Iterator: [0, 1, 5]
-      createOr(L3.iterator(), createBoost(L4.iterator(), 3U),
-               createBoost(L5.iterator(), 4U)));
+      C.unionOf(C.boost(L2.iterator(), 3U), C.boost(L3.iterator(), 4U)));
 
   EXPECT_FALSE(Root->reachedEnd());
   EXPECT_EQ(Root->peek(), 1U);
@@ -255,68 +231,73 @@ TEST(DexIterators, QueryTree) {
 }
 
 TEST(DexIterators, StringRepresentation) {
-  const PostingList L0({4, 7, 8, 20, 42, 100});
-  const PostingList L1({1, 3, 5, 8, 9});
-  const PostingList L2({1, 5, 7, 9});
-  const PostingList L3({0, 5});
-  const PostingList L4({0, 1, 5});
-  const PostingList L5({});
+  Corpus C{10};
+  const PostingList L1({1, 3, 5});
+  const PostingList L2({1, 7, 9});
 
-  EXPECT_EQ(llvm::to_string(*(L0.iterator())), "[4]");
+  // No token given, prints full posting list.
+  auto I1 = L1.iterator();
+  EXPECT_EQ(llvm::to_string(*I1), "[1 3 5]");
 
-  auto Nested =
-      createAnd(createAnd(L1.iterator(), L2.iterator()),
-                createOr(L3.iterator(), L4.iterator(), L5.iterator()));
+  // Token given, uses token's string representation.
+  Token Tok(Token::Kind::Trigram, "L2");
+  auto I2 = L1.iterator(&Tok);
+  EXPECT_EQ(llvm::to_string(*I2), "T=L2");
 
-  EXPECT_EQ(llvm::to_string(*Nested), "(& (| [5] [1] [END]) (& [1] [1]))");
+  auto Tree = C.limit(C.intersect(move(I1), move(I2)), 10);
+  EXPECT_EQ(llvm::to_string(*Tree), "(LIMIT 10 (& [1 3 5] T=L2))");
 }
 
 TEST(DexIterators, Limit) {
+  Corpus C{10000};
   const PostingList L0({3, 6, 7, 20, 42, 100});
   const PostingList L1({1, 3, 5, 6, 7, 30, 100});
   const PostingList L2({0, 3, 5, 7, 8, 100});
 
-  auto DocIterator = createLimit(L0.iterator(), 42);
+  auto DocIterator = C.limit(L0.iterator(), 42);
   EXPECT_THAT(consumeIDs(*DocIterator), ElementsAre(3, 6, 7, 20, 42, 100));
 
-  DocIterator = createLimit(L0.iterator(), 3);
+  DocIterator = C.limit(L0.iterator(), 3);
   EXPECT_THAT(consumeIDs(*DocIterator), ElementsAre(3, 6, 7));
 
-  DocIterator = createLimit(L0.iterator(), 0);
+  DocIterator = C.limit(L0.iterator(), 0);
   EXPECT_THAT(consumeIDs(*DocIterator), ElementsAre());
 
-  auto AndIterator = createAnd(
-      createLimit(createTrue(9000), 343), createLimit(L0.iterator(), 2),
-      createLimit(L1.iterator(), 3), createLimit(L2.iterator(), 42));
+  auto AndIterator =
+      C.intersect(C.limit(C.all(), 343), C.limit(L0.iterator(), 2),
+                  C.limit(L1.iterator(), 3), C.limit(L2.iterator(), 42));
   EXPECT_THAT(consumeIDs(*AndIterator), ElementsAre(3, 7));
 }
 
 TEST(DexIterators, True) {
-  auto TrueIterator = createTrue(0U);
+  Corpus C{0};
+  auto TrueIterator = C.all();
   EXPECT_TRUE(TrueIterator->reachedEnd());
   EXPECT_THAT(consumeIDs(*TrueIterator), ElementsAre());
 
+  C = Corpus{7};
   const PostingList L0({1, 2, 5, 7});
-  TrueIterator = createTrue(7U);
+  TrueIterator = C.all();
   EXPECT_THAT(TrueIterator->peek(), 0);
-  auto AndIterator = createAnd(L0.iterator(), move(TrueIterator));
+  auto AndIterator = C.intersect(L0.iterator(), move(TrueIterator));
   EXPECT_FALSE(AndIterator->reachedEnd());
   EXPECT_THAT(consumeIDs(*AndIterator), ElementsAre(1, 2, 5));
 }
 
 TEST(DexIterators, Boost) {
-  auto BoostIterator = createBoost(createTrue(5U), 42U);
+  Corpus C{5};
+  auto BoostIterator = C.boost(C.all(), 42U);
   EXPECT_FALSE(BoostIterator->reachedEnd());
   auto ElementBoost = BoostIterator->consume();
   EXPECT_THAT(ElementBoost, 42U);
 
   const PostingList L0({2, 4});
   const PostingList L1({1, 4});
-  auto Root = createOr(createTrue(5U), createBoost(L0.iterator(), 2U),
-                       createBoost(L1.iterator(), 3U));
+  auto Root = C.unionOf(C.all(), C.boost(L0.iterator(), 2U),
+                        C.boost(L1.iterator(), 3U));
 
   ElementBoost = Root->consume();
-  EXPECT_THAT(ElementBoost, Iterator::DEFAULT_BOOST_SCORE);
+  EXPECT_THAT(ElementBoost, 1);
   Root->advance();
   EXPECT_THAT(Root->peek(), 1U);
   ElementBoost = Root->consume();
@@ -475,17 +456,6 @@ TEST(Dex, FuzzyFind) {
                                    "other::A"));
 }
 
-TEST(DexTest, FuzzyMatchQ) {
-  auto I = Dex::build(
-      generateSymbols({"LaughingOutLoud", "LionPopulation", "LittleOldLady"}),
-      URISchemes);
-  FuzzyFindRequest Req;
-  Req.Query = "lol";
-  Req.Limit = 2;
-  EXPECT_THAT(match(*I, Req),
-              UnorderedElementsAre("LaughingOutLoud", "LittleOldLady"));
-}
-
 // FIXME(kbobyrev): This test is different for Dex and MemIndex: while
 // MemIndex manages response deduplication, Dex simply returns all matched
 // symbols which means there might be equivalent symbols in the response.
@@ -565,6 +535,17 @@ TEST(DexTest, NoMatchNestedScopes) {
   EXPECT_THAT(match(*I, Req), UnorderedElementsAre("a::y1"));
 }
 
+TEST(DexTest, WildcardScope) {
+  auto I =
+      Dex::build(generateSymbols({"a::y1", "a::b::y2", "c::y3"}), URISchemes);
+  FuzzyFindRequest Req;
+  Req.Query = "y";
+  Req.Scopes = {"a::"};
+  Req.AnyScope = true;
+  EXPECT_THAT(match(*I, Req),
+              UnorderedElementsAre("a::y1", "a::b::y2", "c::y3"));
+}
+
 TEST(DexTest, IgnoreCases) {
   auto I = Dex::build(generateSymbols({"ns::ABC", "ns::abc"}), URISchemes);
   FuzzyFindRequest Req;
@@ -581,6 +562,20 @@ TEST(DexTest, Lookup) {
   EXPECT_THAT(lookup(*I, {SymbolID("ns::nonono"), SymbolID("ns::xyz")}),
               UnorderedElementsAre("ns::xyz"));
   EXPECT_THAT(lookup(*I, SymbolID("ns::nonono")), UnorderedElementsAre());
+}
+
+TEST(DexTest, SymbolIndexOptionsFilter) {
+  auto CodeCompletionSymbol = symbol("Completion");
+  auto NonCodeCompletionSymbol = symbol("NoCompletion");
+  CodeCompletionSymbol.Flags = Symbol::SymbolFlag::IndexedForCodeCompletion;
+  NonCodeCompletionSymbol.Flags = Symbol::SymbolFlag::None;
+  std::vector<Symbol> Symbols{CodeCompletionSymbol, NonCodeCompletionSymbol};
+  Dex I(Symbols, URISchemes);
+  FuzzyFindRequest Req;
+  Req.RestrictForCodeCompletion = false;
+  EXPECT_THAT(match(I, Req), ElementsAre("Completion", "NoCompletion"));
+  Req.RestrictForCodeCompletion = true;
+  EXPECT_THAT(match(I, Req), ElementsAre("Completion"));
 }
 
 TEST(DexTest, ProximityPathsBoosting) {

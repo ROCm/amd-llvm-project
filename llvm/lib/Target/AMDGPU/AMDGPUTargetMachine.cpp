@@ -45,6 +45,7 @@
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Scalar/GVN.h"
+#include "llvm/Transforms/Utils.h"
 #include "llvm/Transforms/Vectorize.h"
 #include <memory>
 
@@ -601,20 +602,18 @@ void AMDGPUPassConfig::addIRPasses() {
   disablePass(&FuncletLayoutID);
   disablePass(&PatchableFunctionID);
 
+  addPass(createAtomicExpandPass());
   addPass(createAMDGPULowerIntrinsicsPass());
 
-  if (TM.getTargetTriple().getArch() == Triple::r600 ||
-      !EnableAMDGPUFunctionCalls) {
-    // Function calls are not supported, so make sure we inline everything.
-    addPass(createAMDGPUAlwaysInlinePass());
-    addPass(createAlwaysInlinerLegacyPass());
-    // We need to add the barrier noop pass, otherwise adding the function
-    // inlining pass will cause all of the PassConfigs passes to be run
-    // one function at a time, which means if we have a nodule with two
-    // functions, then we will generate code for the first function
-    // without ever running any passes on the second.
-    addPass(createBarrierNoopPass());
-  }
+  // Function calls are not supported, so make sure we inline everything.
+  addPass(createAMDGPUAlwaysInlinePass());
+  addPass(createAlwaysInlinerLegacyPass());
+  // We need to add the barrier noop pass, otherwise adding the function
+  // inlining pass will cause all of the PassConfigs passes to be run
+  // one function at a time, which means if we have a nodule with two
+  // functions, then we will generate code for the first function
+  // without ever running any passes on the second.
+  addPass(createBarrierNoopPass());
 
   if (TM.getTargetTriple().getArch() == Triple::amdgcn) {
     // TODO: May want to move later or split into an early and late one.
@@ -678,6 +677,7 @@ void AMDGPUPassConfig::addCodeGenPrepare() {
 }
 
 bool AMDGPUPassConfig::addPreISel() {
+  addPass(createLowerSwitchPass());
   addPass(createFlattenCFGPass());
   return false;
 }

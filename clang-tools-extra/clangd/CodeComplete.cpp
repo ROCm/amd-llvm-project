@@ -20,6 +20,7 @@
 
 #include "CodeComplete.h"
 #include "AST.h"
+#include "ClangdUnit.h"
 #include "CodeCompletionStrings.h"
 #include "Compiler.h"
 #include "Diagnostics.h"
@@ -44,6 +45,7 @@
 #include "clang/Sema/CodeCompleteConsumer.h"
 #include "clang/Sema/Sema.h"
 #include "clang/Tooling/Core/Replacement.h"
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Error.h"
@@ -198,55 +200,6 @@ static llvm::Expected<HeaderFile> toHeaderFile(StringRef Header,
   return HeaderFile{std::move(*Resolved), /*Verbatim=*/false};
 }
 
-// First traverses all method definitions inside current class/struct/union
-// definition. Than traverses base classes to find virtual methods that haven't
-// been overriden within current context.
-// FIXME(kadircet): Currently we cannot see declarations below completion point.
-// It is because Sema gets run only upto completion point. Need to find a
-// solution to run it for the whole class/struct/union definition.
-static std::vector<CodeCompletionResult>
-getNonOverridenMethodCompletionResults(const DeclContext *DC, Sema *S) {
-  const auto *CR = llvm::dyn_cast<CXXRecordDecl>(DC);
-  // If not inside a class/struct/union return empty.
-  if (!CR)
-    return {};
-  // First store overrides within current class.
-  // These are stored by name to make querying fast in the later step.
-  llvm::StringMap<std::vector<FunctionDecl *>> Overrides;
-  for (auto *Method : CR->methods()) {
-    if (!Method->isVirtual() || !Method->getIdentifier())
-      continue;
-    Overrides[Method->getName()].push_back(Method);
-  }
-
-  std::vector<CodeCompletionResult> Results;
-  for (const auto &Base : CR->bases()) {
-    const auto *BR = Base.getType().getTypePtr()->getAsCXXRecordDecl();
-    if (!BR)
-      continue;
-    for (auto *Method : BR->methods()) {
-      if (!Method->isVirtual() || !Method->getIdentifier())
-        continue;
-      const auto it = Overrides.find(Method->getName());
-      bool IsOverriden = false;
-      if (it != Overrides.end()) {
-        for (auto *MD : it->second) {
-          // If the method in current body is not an overload of this virtual
-          // function, then it overrides this one.
-          if (!S->IsOverload(MD, Method, false)) {
-            IsOverriden = true;
-            break;
-          }
-        }
-      }
-      if (!IsOverriden)
-        Results.emplace_back(Method, 0);
-    }
-  }
-
-  return Results;
-}
-
 /// A code completion result, in clang-native form.
 /// It may be promoted to a CompletionItem if it's among the top-ranked results.
 struct CompletionCandidate {
@@ -255,9 +208,6 @@ struct CompletionCandidate {
   const CodeCompletionResult *SemaResult = nullptr;
   const Symbol *IndexResult = nullptr;
   llvm::SmallVector<StringRef, 1> RankedIncludeHeaders;
-
-  // States whether this item is an override suggestion.
-  bool IsOverride = false;
 
   // Returns a token identifying the overload set this is part of.
   // 0 indicates it's not part of any overload set.
@@ -330,6 +280,7 @@ struct ScoredBundleGreater {
 struct CodeCompletionBuilder {
   CodeCompletionBuilder(ASTContext &ASTCtx, const CompletionCandidate &C,
                         CodeCompletionString *SemaCCS,
+                        llvm::ArrayRef<std::string> QueryScopes,
                         const IncludeInserter &Includes, StringRef FileName,
                         CodeCompletionContext::Kind ContextKind,
                         const CodeCompleteOptions &Opts)
@@ -349,6 +300,11 @@ struct CodeCompletionBuilder {
       }
       Completion.Kind = toCompletionItemKind(
           C.SemaResult->Kind, C.SemaResult->Declaration, ContextKind);
+      // Sema could provide more info on whether the completion was a file or
+      // folder.
+      if (Completion.Kind == CompletionItemKind::File &&
+          Completion.Name.back() == '/')
+        Completion.Kind = CompletionItemKind::Folder;
       for (const auto &FixIt : C.SemaResult->FixIts) {
         Completion.FixIts.push_back(
             toTextEdit(FixIt, ASTCtx.getSourceManager(), ASTCtx.getLangOpts()));
@@ -369,6 +325,18 @@ struct CodeCompletionBuilder {
         Completion.Kind = toCompletionItemKind(C.IndexResult->SymInfo.Kind);
       if (Completion.Name.empty())
         Completion.Name = C.IndexResult->Name;
+      // If the completion was visible to Sema, no qualifier is needed. This
+      // avoids unneeded qualifiers in cases like with `using ns::X`.
+      if (Completion.RequiredQualifier.empty() && !C.SemaResult) {
+        StringRef ShortestQualifier = C.IndexResult->Scope;
+        for (StringRef Scope : QueryScopes) {
+          StringRef Qualifier = C.IndexResult->Scope;
+          if (Qualifier.consume_front(Scope) &&
+              Qualifier.size() < ShortestQualifier.size())
+            ShortestQualifier = Qualifier;
+        }
+        Completion.RequiredQualifier = ShortestQualifier;
+      }
       Completion.Deprecated |= (C.IndexResult->Flags & Symbol::Deprecated);
     }
 
@@ -428,8 +396,6 @@ struct CodeCompletionBuilder {
         Completion.Documentation = getDocComment(ASTCtx, *C.SemaResult,
                                                  /*CommentsFromHeader=*/false);
     }
-    if (C.IsOverride)
-      S.OverrideSuffix = true;
   }
 
   CodeCompletion build() {
@@ -437,12 +403,6 @@ struct CodeCompletionBuilder {
     Completion.Signature = summarizeSignature();
     Completion.SnippetSuffix = summarizeSnippet();
     Completion.BundleSize = Bundled.size();
-    if (summarizeOverride()) {
-      Completion.Name = Completion.ReturnType + ' ' +
-                        std::move(Completion.Name) +
-                        std::move(Completion.Signature) + " override";
-      Completion.Signature.clear();
-    }
     return std::move(Completion);
   }
 
@@ -451,7 +411,6 @@ private:
     std::string SnippetSuffix;
     std::string Signature;
     std::string ReturnType;
-    bool OverrideSuffix;
   };
 
   // If all BundledEntrys have the same value for a property, return it.
@@ -482,13 +441,43 @@ private:
     auto *Snippet = onlyValue<&BundledEntry::SnippetSuffix>();
     if (!Snippet)
       // All bundles are function calls.
+      // FIXME(ibiryukov): sometimes add template arguments to a snippet, e.g.
+      // we need to complete 'forward<$1>($0)'.
       return "($0)";
-    if (!Snippet->empty() && !EnableFunctionArgSnippets &&
-        ((Completion.Kind == CompletionItemKind::Function) ||
-         (Completion.Kind == CompletionItemKind::Method)) &&
-        (Snippet->front() == '(') && (Snippet->back() == ')'))
-      // Check whether function has any parameters or not.
-      return Snippet->size() > 2 ? "($0)" : "()";
+    if (EnableFunctionArgSnippets)
+      return *Snippet;
+
+    // Replace argument snippets with a simplified pattern.
+    if (Snippet->empty())
+      return "";
+    if (Completion.Kind == CompletionItemKind::Function ||
+        Completion.Kind == CompletionItemKind::Method) {
+      // Functions snippets can be of 2 types:
+      // - containing only function arguments, e.g.
+      //   foo(${1:int p1}, ${2:int p2});
+      //   We transform this pattern to '($0)' or '()'.
+      // - template arguments and function arguments, e.g.
+      //   foo<${1:class}>(${2:int p1}).
+      //   We transform this pattern to '<$1>()$0' or '<$0>()'.
+
+      bool EmptyArgs = llvm::StringRef(*Snippet).endswith("()");
+      if (Snippet->front() == '<')
+        return EmptyArgs ? "<$1>()$0" : "<$1>($0)";
+      if (Snippet->front() == '(')
+        return EmptyArgs ? "()" : "($0)";
+      return *Snippet; // Not an arg snippet?
+    }
+    if (Completion.Kind == CompletionItemKind::Reference ||
+        Completion.Kind == CompletionItemKind::Class) {
+      if (Snippet->front() != '<')
+        return *Snippet; // Not an arg snippet?
+
+      // Classes and template using aliases can only have template arguments,
+      // e.g. Foo<${1:class}>.
+      if (llvm::StringRef(*Snippet).endswith("<>"))
+        return "<>"; // can happen with defaulted template arguments.
+      return "<$0>";
+    }
     return *Snippet;
   }
 
@@ -497,12 +486,6 @@ private:
       return *Signature;
     // All bundles are function calls.
     return "(…)";
-  }
-
-  bool summarizeOverride() const {
-    if (auto *OverrideSuffix = onlyValue<&BundledEntry::OverrideSuffix>())
-      return *OverrideSuffix;
-    return false;
   }
 
   ASTContext &ASTCtx;
@@ -569,9 +552,11 @@ struct SpecifiedScope {
   }
 };
 
-// Get all scopes that will be queried in indexes.
-std::vector<std::string> getQueryScopes(CodeCompletionContext &CCContext,
-                                        const SourceManager &SM) {
+// Get all scopes that will be queried in indexes and whether symbols from
+// any scope is allowed.
+std::pair<std::vector<std::string>, bool>
+getQueryScopes(CodeCompletionContext &CCContext, const SourceManager &SM,
+               const CodeCompleteOptions &Opts) {
   auto GetAllAccessibleScopes = [](CodeCompletionContext &CCContext) {
     SpecifiedScope Info;
     for (auto *Context : CCContext.getVisitedContexts()) {
@@ -592,13 +577,15 @@ std::vector<std::string> getQueryScopes(CodeCompletionContext &CCContext,
     // FIXME: Capture scopes and use for scoring, for example,
     //        "using namespace std; namespace foo {v^}" =>
     //        foo::value > std::vector > boost::variant
-    return GetAllAccessibleScopes(CCContext).scopesForIndexQuery();
+    auto Scopes = GetAllAccessibleScopes(CCContext).scopesForIndexQuery();
+    // Allow AllScopes completion only for there is no explicit scope qualifier.
+    return {Scopes, Opts.AllScopes};
   }
 
   // Qualified completion ("std::vec^"), we have two cases depending on whether
   // the qualifier can be resolved by Sema.
   if ((*SS)->isValid()) { // Resolved qualifier.
-    return GetAllAccessibleScopes(CCContext).scopesForIndexQuery();
+    return {GetAllAccessibleScopes(CCContext).scopesForIndexQuery(), false};
   }
 
   // Unresolved qualifier.
@@ -616,7 +603,7 @@ std::vector<std::string> getQueryScopes(CodeCompletionContext &CCContext,
   if (!Info.UnresolvedQualifier->empty())
     *Info.UnresolvedQualifier += "::";
 
-  return Info.scopesForIndexQuery();
+  return {Info.scopesForIndexQuery(), false};
 }
 
 // Should we perform index-based completion in a context of the specified kind?
@@ -1000,7 +987,7 @@ private:
 struct SemaCompleteInput {
   PathRef FileName;
   const tooling::CompileCommand &Command;
-  PrecompiledPreamble const *Preamble;
+  const PreambleData *Preamble;
   StringRef Contents;
   Position Pos;
   IntrusiveRefCntPtr<vfs::FileSystem> VFS;
@@ -1024,12 +1011,15 @@ bool semaCodeComplete(std::unique_ptr<CodeCompleteConsumer> Consumer,
     // working dirs.
   }
 
+  IntrusiveRefCntPtr<vfs::FileSystem> VFS = Input.VFS;
+  if (Input.Preamble && Input.Preamble->StatCache)
+    VFS = Input.Preamble->StatCache->getConsumingFS(std::move(VFS));
   IgnoreDiagnostics DummyDiagsConsumer;
   auto CI = createInvocationFromCommandLine(
       ArgStrs,
       CompilerInstance::createDiagnostics(new DiagnosticOptions,
                                           &DummyDiagsConsumer, false),
-      Input.VFS);
+      VFS);
   if (!CI) {
     elog("Couldn't create CompilerInvocation");
     return false;
@@ -1068,8 +1058,10 @@ bool semaCodeComplete(std::unique_ptr<CodeCompleteConsumer> Consumer,
   // NOTE: we must call BeginSourceFile after prepareCompilerInstance. Otherwise
   // the remapped buffers do not get freed.
   auto Clang = prepareCompilerInstance(
-      std::move(CI), CompletingInPreamble ? nullptr : Input.Preamble,
-      std::move(ContentsBuffer), std::move(Input.PCHs), std::move(Input.VFS),
+      std::move(CI),
+      (Input.Preamble && !CompletingInPreamble) ? &Input.Preamble->Preamble
+                                                : nullptr,
+      std::move(ContentsBuffer), std::move(Input.PCHs), std::move(VFS),
       DummyDiagsConsumer);
   Clang->getPreprocessorOpts().SingleFileParseMode = CompletingInPreamble;
   Clang->setCodeCompletionConsumer(Consumer.release());
@@ -1227,8 +1219,10 @@ class CodeCompleteFlow {
   CompletionRecorder *Recorder = nullptr;
   int NSema = 0, NIndex = 0, NBoth = 0; // Counters for logging.
   bool Incomplete = false; // Would more be available with a higher limit?
-  llvm::Optional<FuzzyMatcher> Filter;       // Initialized once Sema runs.
-  std::vector<std::string> QueryScopes;      // Initialized once Sema runs.
+  llvm::Optional<FuzzyMatcher> Filter;  // Initialized once Sema runs.
+  std::vector<std::string> QueryScopes; // Initialized once Sema runs.
+  // Whether to query symbols from any scope. Initialized once Sema runs.
+  bool AllScopes = false;
   // Include-insertion and proximity scoring rely on the include structure.
   // This is available after Sema has run.
   llvm::Optional<IncludeInserter> Inserter;  // Available during runWithSema.
@@ -1304,9 +1298,9 @@ public:
       Inserter.reset(); // Make sure this doesn't out-live Clang.
       SPAN_ATTACH(Tracer, "sema_completion_kind",
                   getCompletionKindString(Recorder->CCContext.getKind()));
-      log("Code complete: sema context {0}, query scopes [{1}]",
+      log("Code complete: sema context {0}, query scopes [{1}] (AnyScope={2})",
           getCompletionKindString(Recorder->CCContext.getKind()),
-          llvm::join(QueryScopes.begin(), QueryScopes.end(), ","));
+          llvm::join(QueryScopes.begin(), QueryScopes.end(), ","), AllScopes);
     });
 
     Recorder = RecorderOwner.get();
@@ -1352,8 +1346,8 @@ private:
     }
     Filter = FuzzyMatcher(
         Recorder->CCSema->getPreprocessor().getCodeCompletionFilter());
-    QueryScopes = getQueryScopes(Recorder->CCContext,
-                                 Recorder->CCSema->getSourceManager());
+    std::tie(QueryScopes, AllScopes) = getQueryScopes(
+        Recorder->CCContext, Recorder->CCSema->getSourceManager(), Opts);
     // Sema provides the needed context to query the index.
     // FIXME: in addition to querying for extra/overlapping symbols, we should
     //        explicitly request symbols corresponding to Sema results.
@@ -1363,11 +1357,8 @@ private:
                             ? queryIndex()
                             : SymbolSlab();
     trace::Span Tracer("Populate CodeCompleteResult");
-    // Merge Sema, Index and Override results, score them, and pick the
-    // winners.
-    const auto Overrides = getNonOverridenMethodCompletionResults(
-        Recorder->CCSema->CurContext, Recorder->CCSema);
-    auto Top = mergeResults(Recorder->Results, IndexResults, Overrides);
+    // Merge Sema and Index results, score them, and pick the winners.
+    auto Top = mergeResults(Recorder->Results, IndexResults);
     CodeCompleteResult Output;
 
     // Convert the results to final form, assembling the expensive strings.
@@ -1393,6 +1384,7 @@ private:
     Req.Query = Filter->pattern();
     Req.RestrictForCodeCompletion = true;
     Req.Scopes = QueryScopes;
+    Req.AnyScope = AllScopes;
     // FIXME: we should send multiple weighted paths here.
     Req.ProximityPaths.push_back(FileName);
     vlog("Code complete: fuzzyFind({0:2})", toJSON(Req));
@@ -1418,26 +1410,22 @@ private:
     return std::move(ResultsBuilder).build();
   }
 
-  // Merges Sema, Index and Override results where possible, to form
-  // CompletionCandidates. Groups overloads if desired, to form
-  // CompletionCandidate::Bundles. The bundles are scored and top results are
-  // returned, best to worst.
+  // Merges Sema and Index results where possible, to form CompletionCandidates.
+  // Groups overloads if desired, to form CompletionCandidate::Bundles. The
+  // bundles are scored and top results are returned, best to worst.
   std::vector<ScoredBundle>
   mergeResults(const std::vector<CodeCompletionResult> &SemaResults,
-               const SymbolSlab &IndexResults,
-               const std::vector<CodeCompletionResult> &OverrideResults) {
+               const SymbolSlab &IndexResults) {
     trace::Span Tracer("Merge and score results");
     std::vector<CompletionCandidate::Bundle> Bundles;
     llvm::DenseMap<size_t, size_t> BundleLookup;
     auto AddToBundles = [&](const CodeCompletionResult *SemaResult,
-                            const Symbol *IndexResult,
-                            bool IsOverride) {
+                            const Symbol *IndexResult) {
       CompletionCandidate C;
       C.SemaResult = SemaResult;
       C.IndexResult = IndexResult;
       if (C.IndexResult)
         C.RankedIncludeHeaders = getRankedIncludes(*C.IndexResult);
-      C.IsOverride = IsOverride;
       C.Name = IndexResult ? IndexResult->Name : Recorder->getName(*SemaResult);
       if (auto OverloadSet = Opts.BundleOverloads ? C.overloadSet() : 0) {
         auto Ret = BundleLookup.try_emplace(OverloadSet, Bundles.size());
@@ -1464,19 +1452,12 @@ private:
     };
     // Emit all Sema results, merging them with Index results if possible.
     for (auto &SemaResult : Recorder->Results)
-      AddToBundles(&SemaResult, CorrespondingIndexResult(SemaResult), false);
-    // Handle OverrideResults the same way we deal with SemaResults. Since these
-    // results use the same structs as a SemaResult it is safe to do that, but
-    // we need to make sure we dont' duplicate things in future if Sema starts
-    // to provide them as well.
-    for (auto &OverrideResult : OverrideResults)
-      AddToBundles(&OverrideResult, CorrespondingIndexResult(OverrideResult),
-                   true);
+      AddToBundles(&SemaResult, CorrespondingIndexResult(SemaResult));
     // Now emit any Index-only results.
     for (const auto &IndexResult : IndexResults) {
       if (UsedIndexResults.count(&IndexResult))
         continue;
-      AddToBundles(/*SemaResult=*/nullptr, &IndexResult, false);
+      AddToBundles(/*SemaResult=*/nullptr, &IndexResult);
     }
     // We only keep the best N results at any time, in "native" format.
     TopN<ScoredBundle, ScoredBundleGreater> Top(
@@ -1503,6 +1484,8 @@ private:
     Relevance.Context = Recorder->CCContext.getKind();
     Relevance.Query = SymbolRelevanceSignals::CodeComplete;
     Relevance.FileProximityMatch = FileProximity.getPointer();
+    // FIXME: incorparate scope proximity into relevance score.
+
     auto &First = Bundle.front();
     if (auto FuzzyScore = fuzzyScore(First))
       Relevance.NameMatch = *FuzzyScore;
@@ -1552,8 +1535,8 @@ private:
                           : nullptr;
       if (!Builder)
         Builder.emplace(Recorder->CCSema->getASTContext(), Item, SemaCCS,
-                        *Inserter, FileName, Recorder->CCContext.getKind(),
-                        Opts);
+                        QueryScopes, *Inserter, FileName,
+                        Recorder->CCContext.getKind(), Opts);
       else
         Builder->add(Item, SemaCCS);
     }
@@ -1588,19 +1571,20 @@ speculateCompletionFilter(llvm::StringRef Content, Position Pos) {
 
 CodeCompleteResult
 codeComplete(PathRef FileName, const tooling::CompileCommand &Command,
-             PrecompiledPreamble const *Preamble,
-             const IncludeStructure &PreambleInclusions, StringRef Contents,
-             Position Pos, IntrusiveRefCntPtr<vfs::FileSystem> VFS,
+             const PreambleData *Preamble, StringRef Contents, Position Pos,
+             IntrusiveRefCntPtr<vfs::FileSystem> VFS,
              std::shared_ptr<PCHContainerOperations> PCHs,
              CodeCompleteOptions Opts, SpeculativeFuzzyFind *SpecFuzzyFind) {
-  return CodeCompleteFlow(FileName, PreambleInclusions, SpecFuzzyFind, Opts)
+  return CodeCompleteFlow(FileName,
+                          Preamble ? Preamble->Includes : IncludeStructure(),
+                          SpecFuzzyFind, Opts)
       .run({FileName, Command, Preamble, Contents, Pos, VFS, PCHs});
 }
 
 SignatureHelp signatureHelp(PathRef FileName,
                             const tooling::CompileCommand &Command,
-                            PrecompiledPreamble const *Preamble,
-                            StringRef Contents, Position Pos,
+                            const PreambleData *Preamble, StringRef Contents,
+                            Position Pos,
                             IntrusiveRefCntPtr<vfs::FileSystem> VFS,
                             std::shared_ptr<PCHContainerOperations> PCHs,
                             const SymbolIndex *Index) {

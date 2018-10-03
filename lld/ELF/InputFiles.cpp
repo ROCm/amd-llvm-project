@@ -412,6 +412,11 @@ void ObjFile<ELFT>::initializeSections(
       continue;
     const Elf_Shdr &Sec = ObjSections[I];
 
+    if (Sec.sh_type == ELF::SHT_LLVM_CALL_GRAPH_PROFILE)
+      CGProfile = check(
+          this->getObj().template getSectionContentsAsArray<Elf_CGProfile>(
+              &Sec));
+
     // SHF_EXCLUDE'ed sections are discarded by the linker. However,
     // if -r is given, we'll let the final link discard such sections.
     // This is compatible with GNU.
@@ -620,9 +625,9 @@ InputSectionBase *ObjFile<ELFT>::createInputSection(const Elf_Shdr &Sec) {
     // FIXME: Retain the first attribute section we see. The eglibc ARM
     // dynamic loaders require the presence of an attribute section for dlopen
     // to work. In a full implementation we would merge all attribute sections.
-    if (InX::ARMAttributes == nullptr) {
-      InX::ARMAttributes = make<InputSection>(*this, Sec, Name);
-      return InX::ARMAttributes;
+    if (In.ARMAttributes == nullptr) {
+      In.ARMAttributes = make<InputSection>(*this, Sec, Name);
+      return In.ARMAttributes;
     }
     return &InputSection::Discarded;
   }
@@ -706,7 +711,7 @@ InputSectionBase *ObjFile<ELFT>::createInputSection(const Elf_Shdr &Sec) {
   // for split stack will include a .note.GNU-split-stack section.
   if (Name == ".note.GNU-split-stack") {
     if (Config->Relocatable) {
-      error("Cannot mix split-stack and non-split-stack in a relocatable link");
+      error("cannot mix split-stack and non-split-stack in a relocatable link");
       return &InputSection::Discarded;
     }
     this->SplitStack = true;
@@ -1071,6 +1076,7 @@ static uint8_t getBitcodeMachineKind(StringRef Path, const Triple &T) {
   case Triple::ppc:
     return EM_PPC;
   case Triple::ppc64:
+  case Triple::ppc64le:
     return EM_PPC64;
   case Triple::x86:
     return T.isOSIAMCU() ? EM_IAMCU : EM_386;

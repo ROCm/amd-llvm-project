@@ -275,11 +275,10 @@ namespace {
       write(Len);
       write(Number);
 
-      llvm::sort(
-          SortedLinesByFile.begin(), SortedLinesByFile.end(),
-          [](StringMapEntry<GCOVLines> *LHS, StringMapEntry<GCOVLines> *RHS) {
-            return LHS->getKey() < RHS->getKey();
-          });
+      llvm::sort(SortedLinesByFile, [](StringMapEntry<GCOVLines> *LHS,
+                                       StringMapEntry<GCOVLines> *RHS) {
+        return LHS->getKey() < RHS->getKey();
+      });
       for (auto &I : SortedLinesByFile)
         I->getValue().writeOut();
       write(0);
@@ -593,7 +592,8 @@ void GCOVProfiler::emitProfileNotes() {
             continue;
 
           // Artificial lines such as calls to the global constructors.
-          if (Loc.getLine() == 0) continue;
+          if (Loc.getLine() == 0 || Loc.isImplicitCode())
+            continue;
 
           if (Line == Loc.getLine()) continue;
           Line = Loc.getLine();

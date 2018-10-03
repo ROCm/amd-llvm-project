@@ -106,6 +106,8 @@ const OMPClauseWithPreInit *OMPClauseWithPreInit::get(const OMPClause *C) {
   case OMPC_from:
   case OMPC_use_device_ptr:
   case OMPC_is_device_ptr:
+  case OMPC_unified_address:
+  case OMPC_unified_shared_memory:
     break;
   }
 
@@ -175,6 +177,8 @@ const OMPClauseWithPostUpdate *OMPClauseWithPostUpdate::get(const OMPClause *C) 
   case OMPC_from:
   case OMPC_use_device_ptr:
   case OMPC_is_device_ptr:
+  case OMPC_unified_address:
+  case OMPC_unified_shared_memory:
     break;
   }
 
@@ -222,12 +226,12 @@ void OMPOrderedClause::setLoopCounter(unsigned NumLoop, Expr *Counter) {
   getTrailingObjects<Expr *>()[NumberOfLoops + NumLoop] = Counter;
 }
 
-Expr *OMPOrderedClause::getLoopCunter(unsigned NumLoop) {
+Expr *OMPOrderedClause::getLoopCounter(unsigned NumLoop) {
   assert(NumLoop < NumberOfLoops && "out of loops number.");
   return getTrailingObjects<Expr *>()[NumberOfLoops + NumLoop];
 }
 
-const Expr *OMPOrderedClause::getLoopCunter(unsigned NumLoop) const {
+const Expr *OMPOrderedClause::getLoopCounter(unsigned NumLoop) const {
   assert(NumLoop < NumberOfLoops && "out of loops number.");
   return getTrailingObjects<Expr *>()[NumberOfLoops + NumLoop];
 }
