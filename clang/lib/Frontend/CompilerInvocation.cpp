@@ -1472,8 +1472,6 @@ static InputKind ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
       Opts.ProgramAction = frontend::ModuleFileInfo; break;
     case OPT_verify_pch:
       Opts.ProgramAction = frontend::VerifyPCH; break;
-    case OPT_print_decl_contexts:
-      Opts.ProgramAction = frontend::PrintDeclContext; break;
     case OPT_print_preamble:
       Opts.ProgramAction = frontend::PrintPreamble; break;
     case OPT_E:
@@ -2246,7 +2244,7 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
   if (Opts.CUDAIsDevice && Args.hasArg(OPT_fcuda_approx_transcendentals))
     Opts.CUDADeviceApproxTranscendentals = 1;
 
-  Opts.CUDARelocatableDeviceCode = Args.hasArg(OPT_fcuda_rdc);
+  Opts.GPURelocatableDeviceCode = Args.hasArg(OPT_fgpu_rdc);
 
   if (Opts.ObjC1) {
     if (Arg *arg = Args.getLastArg(OPT_fobjc_runtime_EQ)) {
@@ -2879,7 +2877,6 @@ static bool isStrictlyPreprocessorAction(frontend::ActionKind Action) {
   case frontend::ModuleFileInfo:
   case frontend::VerifyPCH:
   case frontend::PluginAction:
-  case frontend::PrintDeclContext:
   case frontend::RewriteObjC:
   case frontend::RewriteTest:
   case frontend::RunAnalysis:
