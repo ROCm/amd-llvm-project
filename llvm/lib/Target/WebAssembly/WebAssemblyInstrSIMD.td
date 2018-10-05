@@ -20,8 +20,19 @@ def LaneIdx#SIZE : ImmLeaf<i32, "return 0 <= Imm && Imm < "#SIZE#";">;
 
 // Custom nodes for custom operations
 def wasm_shuffle_t : SDTypeProfile<1, 18, []>;
+def wasm_saturate_t : SDTypeProfile<1, 2,
+  [SDTCisVec<0>, SDTCisSameAs<0, 1>, SDTCisSameAs<0, 2>]
+>;
+def wasm_bitselect_t : SDTypeProfile<1, 3,
+  [SDTCisVec<0>, SDTCisSameAs<0, 1>, SDTCisSameAs<0, 2>, SDTCisSameAs<0, 3>]
+>;
 def wasm_reduce_t : SDTypeProfile<1, 1, [SDTCisVT<0, i32>, SDTCisVec<1>]>;
 def wasm_shuffle : SDNode<"WebAssemblyISD::SHUFFLE", wasm_shuffle_t>;
+def wasm_add_sat_s : SDNode<"WebAssemblyISD::ADD_SAT_S", wasm_saturate_t>;
+def wasm_add_sat_u : SDNode<"WebAssemblyISD::ADD_SAT_U", wasm_saturate_t>;
+def wasm_sub_sat_s : SDNode<"WebAssemblyISD::SUB_SAT_S", wasm_saturate_t>;
+def wasm_sub_sat_u : SDNode<"WebAssemblyISD::SUB_SAT_U", wasm_saturate_t>;
+def wasm_bitselect : SDNode<"WebAssemblyISD::BITSELECT", wasm_bitselect_t>;
 def wasm_anytrue : SDNode<"WebAssemblyISD::ANYTRUE", wasm_reduce_t>;
 def wasm_alltrue : SDNode<"WebAssemblyISD::ALLTRUE", wasm_reduce_t>;
 
@@ -135,6 +146,10 @@ multiclass SIMDBinaryFP<SDNode node, string name, bits<32> baseInst> {
   defm "" : SIMDBinary<v4f32, "f32x4", node, name, baseInst>;
   defm "" : SIMDBinary<v2f64, "f64x2", node, name, !add(baseInst, 1)>;
 }
+multiclass SIMDBinarySat<SDNode node, string name, bits<32> baseInst> {
+  defm "" : SIMDBinary<v16i8, "i8x16", node, name, baseInst>;
+  defm "" : SIMDBinary<v8i16, "i16x8", node, name, !add(baseInst, 2)>;
+}
 multiclass SIMDShift<ValueType vec_t, string vec, SDNode node, dag shift_vec,
                      string name, bits<32> simdop> {
   defm _#vec_t : SIMD_I<(outs V128:$dst), (ins V128:$vec, I32:$x),
@@ -192,6 +207,16 @@ multiclass SIMDNot<ValueType vec_t, PatFrag splat_pat, ValueType lane_t> {
                              ))
                            )],
                            "v128.not\t$dst, $vec", "v128.not", 63>;
+}
+multiclass Bitselect<ValueType vec_t> {
+  defm BITSELECT_#vec_t :
+    SIMD_I<(outs V128:$dst), (ins V128:$v1, V128:$v2, V128:$c), (outs), (ins),
+           [(set (vec_t V128:$dst),
+             (vec_t (wasm_bitselect
+               (vec_t V128:$c), (vec_t V128:$v1), (vec_t V128:$v2)
+             ))
+           )],
+           "v128.bitselect\t$dst, $v1, $v2, $c", "v128.bitselect", 64>;
 }
 multiclass SIMDReduceVec<ValueType vec_t, string vec, string name, SDNode op,
                       bits<32> simdop> {
@@ -352,10 +377,14 @@ defm ADD : SIMDBinaryInt<add, "add", 24>;
 defm ADD : SIMDBinaryFP<fadd, "add", 133>;
 defm MUL : SIMDBinaryIntNoI64x2<mul, "mul", 32>;
 defm MUL : SIMDBinaryFP<fmul, "mul", 139>;
+defm ADD_SAT_S : SIMDBinarySat<wasm_add_sat_s, "add_saturate_s", 40>;
+defm ADD_SAT_U : SIMDBinarySat<wasm_add_sat_u, "add_saturate_u", 41>;
 } // isCommutable = 1
 
 defm SUB : SIMDBinaryInt<sub, "sub", 28>;
 defm SUB : SIMDBinaryFP<fsub, "sub", 135>;
+defm SUB_SAT_S : SIMDBinarySat<wasm_sub_sat_s, "sub_saturate_s", 44>;
+defm SUB_SAT_U : SIMDBinarySat<wasm_sub_sat_u, "sub_saturate_u", 45>;
 defm DIV : SIMDBinaryFP<fdiv, "div", 137>;
 
 defm "" : SIMDNegInt<v16i8, "i8x16", splat16, i32, 36>;
@@ -379,6 +408,9 @@ defm "" : SIMDNot<v16i8, splat16, i32>;
 defm "" : SIMDNot<v8i16, splat8, i32>;
 defm "" : SIMDNot<v4i32, splat4, i32>;
 defm "" : SIMDNot<v2i64, splat2, i64>;
+
+foreach vec_t = [v16i8, v8i16, v4i32, v2i64, v4f32, v2f64] in
+defm "" : Bitselect<vec_t>;
 
 defm ANYTRUE : SIMDReduce<"any_true", wasm_anytrue, 65>;
 defm ALLTRUE : SIMDReduce<"all_true", wasm_alltrue, 69>;
@@ -442,6 +474,13 @@ def : StorePatGlobalAddrOffOnly<vec_t, store, !cast<NI>("STORE_"#vec_t)>;
 def : StorePatExternSymOffOnly<vec_t, store, !cast<NI>("STORE_"#vec_t)>;
 
 }
+
+// Bitselect is equivalent to (c & v1) | (~c & v2)
+foreach vec_t = [v16i8, v8i16, v4i32, v2i64] in
+  def : Pat<(vec_t (or (and (vec_t V128:$c), (vec_t V128:$v1)),
+              (and (vnot V128:$c), (vec_t V128:$v2)))),
+            (!cast<Instruction>("BITSELECT_"#vec_t)
+              V128:$v1, V128:$v2, V128:$c)>;
 
 // Lower float comparisons that don't care about NaN to standard
 // WebAssembly float comparisons. These instructions are generated in

@@ -145,6 +145,30 @@
     # CHECK: i64x2.neg # encoding: [0xfd,0x27]
     i64x2.neg
 
+    # CHECK: i8x16.add_saturate_s # encoding: [0xfd,0x28]
+    i8x16.add_saturate_s
+
+    # CHECK: i8x16.add_saturate_u # encoding: [0xfd,0x29]
+    i8x16.add_saturate_u
+
+    # CHECK: i16x8.add_saturate_s # encoding: [0xfd,0x2a]
+    i16x8.add_saturate_s
+
+    # CHECK: i16x8.add_saturate_u # encoding: [0xfd,0x2b]
+    i16x8.add_saturate_u
+
+    # CHECK: i8x16.sub_saturate_s # encoding: [0xfd,0x2c]
+    i8x16.sub_saturate_s
+
+    # CHECK: i8x16.sub_saturate_u # encoding: [0xfd,0x2d]
+    i8x16.sub_saturate_u
+
+    # CHECK: i16x8.sub_saturate_s # encoding: [0xfd,0x2e]
+    i16x8.sub_saturate_s
+
+    # CHECK: i16x8.sub_saturate_u # encoding: [0xfd,0x2f]
+    i16x8.sub_saturate_u
+
     # CHECK: i8x16.shl # encoding: [0xfd,0x30]
     i8x16.shl
 
@@ -192,6 +216,9 @@
 
     # CHECK: v128.not # encoding: [0xfd,0x3f]
     v128.not
+
+    # CHECK: v128.bitselect # encoding: [0xfd,0x40]
+    v128.bitselect
 
     # CHECK: i8x16.any_true # encoding: [0xfd,0x41]
     i8x16.any_true
