@@ -1873,6 +1873,23 @@ struct TestTryLock {
    int i = a;
    mu.Unlock();
   }
+
+  // Test with conditional operator
+  void foo13() {
+    if (mu.TryLock() ? 1 : 0)
+      mu.Unlock();
+  }
+
+  void foo14() {
+    if (mu.TryLock() ? 0 : 1)
+      return;
+    mu.Unlock();
+  }
+
+  void foo15() {
+    if (mu.TryLock() ? 0 : 1) // expected-note{{mutex acquired here}}
+      mu.Unlock();            // expected-warning{{releasing mutex 'mu' that was not held}}
+  }                           // expected-warning{{mutex 'mu' is not held on every path through here}}
 };  // end TestTrylock
 
 } // end namespace TrylockTest
@@ -4997,6 +5014,8 @@ public:
   void operator+(const Foo& f);
 
   void operator[](const Foo& g);
+
+  void operator()();
 };
 
 template<class T>
@@ -5014,8 +5033,23 @@ void destroy(Foo&& f);
 void operator/(const Foo& f, const Foo& g);
 void operator*(const Foo& f, const Foo& g);
 
+// Test constructors.
+struct FooRead {
+  FooRead(const Foo &);
+};
+struct FooWrite {
+  FooWrite(Foo &);
+};
 
+// Test variadic functions
+template<typename... T>
+void copyVariadic(T...) {}
+template<typename... T>
+void writeVariadic(T&...) {}
+template<typename... T>
+void readVariadic(const T&...) {}
 
+void copyVariadicC(int, ...);
 
 class Bar {
 public:
@@ -5047,6 +5081,14 @@ public:
     read2(10, foo);        // expected-warning {{passing variable 'foo' by reference requires holding mutex 'mu'}}
     destroy(mymove(foo));  // expected-warning {{passing variable 'foo' by reference requires holding mutex 'mu'}}
 
+    copyVariadic(foo);     // expected-warning {{reading variable 'foo' requires holding mutex 'mu'}}
+    readVariadic(foo);     // expected-warning {{passing variable 'foo' by reference requires holding mutex 'mu'}}
+    writeVariadic(foo);    // expected-warning {{passing variable 'foo' by reference requires holding mutex 'mu'}}
+    copyVariadicC(1, foo); // expected-warning {{reading variable 'foo' requires holding mutex 'mu'}}
+
+    FooRead reader(foo);   // expected-warning {{passing variable 'foo' by reference requires holding mutex 'mu'}}
+    FooWrite writer(foo);  // expected-warning {{passing variable 'foo' by reference requires holding mutex 'mu'}}
+
     mwrite1(foo);           // expected-warning {{passing variable 'foo' by reference requires holding mutex 'mu'}}
     mwrite2(10, foo);       // expected-warning {{passing variable 'foo' by reference requires holding mutex 'mu'}}
     mread1(foo);            // expected-warning {{passing variable 'foo' by reference requires holding mutex 'mu'}}
@@ -5065,6 +5107,7 @@ public:
                              // expected-warning {{passing variable 'foo2' by reference requires holding mutex 'mu'}}
     foo[foo2];               // expected-warning {{reading variable 'foo' requires holding mutex 'mu'}} \
                              // expected-warning {{passing variable 'foo2' by reference requires holding mutex 'mu'}}
+    foo();                   // expected-warning {{reading variable 'foo' requires holding mutex 'mu'}}
     (*this) << foo;          // expected-warning {{passing variable 'foo' by reference requires holding mutex 'mu'}}
 
     copy(*foop);             // expected-warning {{reading the value pointed to by 'foop' requires holding mutex 'mu'}}
