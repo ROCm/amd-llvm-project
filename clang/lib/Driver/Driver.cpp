@@ -43,7 +43,6 @@
 #include "ToolChains/WebAssembly.h"
 #include "ToolChains/XCore.h"
 #include "clang/Basic/Version.h"
-#include "clang/Basic/VirtualFileSystem.h"
 #include "clang/Config/config.h"
 #include "clang/Driver/Action.h"
 #include "clang/Driver/Compilation.h"
@@ -68,12 +67,14 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/PrettyStackTrace.h"
 #include "llvm/Support/Process.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/StringSaver.h"
 #include "llvm/Support/TargetRegistry.h"
+#include "llvm/Support/VirtualFileSystem.h"
 #include "llvm/Support/raw_ostream.h"
 #include <map>
 #include <memory>
@@ -88,7 +89,7 @@ using namespace llvm::opt;
 
 Driver::Driver(StringRef ClangExecutable, StringRef TargetTriple,
                DiagnosticsEngine &Diags,
-               IntrusiveRefCntPtr<vfs::FileSystem> VFS)
+               IntrusiveRefCntPtr<llvm::vfs::FileSystem> VFS)
     : Opts(createDriverOptTable()), Diags(Diags), VFS(std::move(VFS)),
       Mode(GCCMode), SaveTemps(SaveTempsNone), BitcodeEmbed(EmbedNone),
       LTOMode(LTOK_None), ClangExecutable(ClangExecutable),
@@ -103,7 +104,7 @@ Driver::Driver(StringRef ClangExecutable, StringRef TargetTriple,
 
   // Provide a sane fallback if no VFS is specified.
   if (!this->VFS)
-    this->VFS = vfs::getRealFileSystem();
+    this->VFS = llvm::vfs::getRealFileSystem();
 
   Name = llvm::sys::path::filename(ClangExecutable);
   Dir = llvm::sys::path::parent_path(ClangExecutable);
@@ -1433,7 +1434,8 @@ void Driver::PrintHelp(bool ShowHidden) const {
   if (!ShowHidden)
     ExcludedFlagsBitmask |= HelpHidden;
 
-  getOpts().PrintHelp(llvm::outs(), Name.c_str(), DriverTitle.c_str(),
+  std::string Usage = llvm::formatv("{0} [options] file...", Name).str();
+  getOpts().PrintHelp(llvm::outs(), Usage.c_str(), DriverTitle.c_str(),
                       IncludedFlagsBitmask, ExcludedFlagsBitmask,
                       /*ShowAllAliases=*/false);
 }

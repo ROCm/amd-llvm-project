@@ -19051,23 +19051,21 @@ static SDValue LowerVSETCC(SDValue Op, const X86Subtarget &Subtarget,
     if (Opc == X86ISD::PCMPGT && !Subtarget.hasSSE42()) {
       assert(Subtarget.hasSSE2() && "Don't know how to lower!");
 
-      // First cast everything to the right type.
-      Op0 = DAG.getBitcast(MVT::v4i32, Op0);
-      Op1 = DAG.getBitcast(MVT::v4i32, Op1);
-
       // Since SSE has no unsigned integer comparisons, we need to flip the sign
       // bits of the inputs before performing those operations. The lower
       // compare is always unsigned.
       SDValue SB;
       if (FlipSigns) {
-        SB = DAG.getConstant(0x80000000U, dl, MVT::v4i32);
+        SB = DAG.getConstant(0x8000000080000000ULL, dl, MVT::v2i64);
       } else {
-        SDValue Sign = DAG.getConstant(0x80000000U, dl, MVT::i32);
-        SDValue Zero = DAG.getConstant(0x00000000U, dl, MVT::i32);
-        SB = DAG.getBuildVector(MVT::v4i32, dl, {Sign, Zero, Sign, Zero});
+        SB = DAG.getConstant(0x0000000080000000ULL, dl, MVT::v2i64);
       }
-      Op0 = DAG.getNode(ISD::XOR, dl, MVT::v4i32, Op0, SB);
-      Op1 = DAG.getNode(ISD::XOR, dl, MVT::v4i32, Op1, SB);
+      Op0 = DAG.getNode(ISD::XOR, dl, MVT::v2i64, Op0, SB);
+      Op1 = DAG.getNode(ISD::XOR, dl, MVT::v2i64, Op1, SB);
+
+      // Cast everything to the right type.
+      Op0 = DAG.getBitcast(MVT::v4i32, Op0);
+      Op1 = DAG.getBitcast(MVT::v4i32, Op1);
 
       // Emulate PCMPGTQ with (hi1 > hi2) | ((hi1 == hi2) & (lo1 > lo2))
       SDValue GT = DAG.getNode(X86ISD::PCMPGT, dl, MVT::v4i32, Op0, Op1);
@@ -35280,6 +35278,69 @@ static SDValue combineAndLoadToBZHI(SDNode *Node, SelectionDAG &DAG,
   return SDValue();
 }
 
+static bool hasBEXTR(const X86Subtarget &Subtarget, EVT VT) {
+  // If we have TBM we can use an immediate for the control. If we have BMI
+  // we should only do this if the BEXTR instruction is implemented well.
+  // Otherwise moving the control into a register makes this more costly.
+  // TODO: Maybe load folding, greater than 32-bit masks, or a guarantee of LICM
+  // hoisting the move immediate would make it worthwhile with a less optimal
+  // BEXTR?
+  if (!Subtarget.hasTBM() && !(Subtarget.hasBMI() && Subtarget.hasFastBEXTR()))
+    return false;
+  return (VT == MVT::i32 || (VT == MVT::i64 && Subtarget.is64Bit()));
+}
+
+// See if this is an (X >> C1) & C2 that we can match to BEXTR/BEXTRI.
+static SDValue combineAndIntoBEXTR(SDNode *Node, SelectionDAG &DAG,
+                                   const X86Subtarget &Subtarget) {
+  EVT NVT = Node->getValueType(0);
+  SDLoc dl(Node);
+
+  SDValue N0 = Node->getOperand(0);
+  SDValue N1 = Node->getOperand(1);
+
+  // Check if subtarget has BEXTR instruction for the node's type
+  if (!hasBEXTR(Subtarget, NVT))
+    return SDValue();
+
+  // Must have a shift right.
+  if (N0->getOpcode() != ISD::SRL && N0->getOpcode() != ISD::SRA)
+    return SDValue();
+
+  // Shift can't have additional users.
+  if (!N0->hasOneUse())
+    return SDValue();
+
+  // Shift amount and RHS of and must be constant.
+  ConstantSDNode *MaskCst = dyn_cast<ConstantSDNode>(N1);
+  ConstantSDNode *ShiftCst = dyn_cast<ConstantSDNode>(N0->getOperand(1));
+  if (!MaskCst || !ShiftCst)
+    return SDValue();
+
+  // And RHS must be a mask.
+  uint64_t Mask = MaskCst->getZExtValue();
+  if (!isMask_64(Mask))
+    return SDValue();
+
+  uint64_t Shift = ShiftCst->getZExtValue();
+  uint64_t MaskSize = countPopulation(Mask);
+
+  // Don't interfere with something that can be handled by extracting AH.
+  // TODO: If we are able to fold a load, BEXTR might still be better than AH.
+  if (Shift == 8 && MaskSize == 8)
+    return SDValue();
+
+  // Make sure we are only using bits that were in the original value, not
+  // shifted in.
+  if (Shift + MaskSize > NVT.getSizeInBits())
+    return SDValue();
+
+  // Create a BEXTR node.
+  SDValue C = DAG.getConstant(Shift | (MaskSize << 8), dl, NVT);
+  SDValue New = DAG.getNode(X86ISD::BEXTR, dl, NVT, N0->getOperand(0), C);
+  return New;
+}
+
 // Look for (and (ctpop X), 1) which is the IR form of __builtin_parity.
 // Turn it into series of XORs and a setnp.
 static SDValue combineParity(SDNode *N, SelectionDAG &DAG,
@@ -35380,6 +35441,9 @@ static SDValue combineAnd(SDNode *N, SelectionDAG &DAG,
 
   if (DCI.isBeforeLegalizeOps())
     return SDValue();
+
+  if (SDValue R = combineAndIntoBEXTR(N, DAG, Subtarget))
+    return R;
 
   if (SDValue R = combineCompareEqual(N, DAG, DCI, Subtarget))
     return R;
@@ -36521,31 +36585,25 @@ static SDValue reduceMaskedStoreToScalarStore(MaskedStoreSDNode *MS,
 }
 
 static SDValue combineMaskedStore(SDNode *N, SelectionDAG &DAG,
+                                  TargetLowering::DAGCombinerInfo &DCI,
                                   const X86Subtarget &Subtarget) {
   MaskedStoreSDNode *Mst = cast<MaskedStoreSDNode>(N);
-
   if (Mst->isCompressingStore())
     return SDValue();
 
+  EVT VT = Mst->getValue().getValueType();
   if (!Mst->isTruncatingStore()) {
     if (SDValue ScalarStore = reduceMaskedStoreToScalarStore(Mst, DAG))
       return ScalarStore;
 
-    // If the mask is checking (0 > X), we're creating a vector with all-zeros
-    // or all-ones elements based on the sign bits of X. AVX1 masked store only
-    // cares about the sign bit of each mask element, so eliminate the compare:
-    // mstore val, ptr, (pcmpgt 0, X) --> mstore val, ptr, X
-    // Note that by waiting to match an x86-specific PCMPGT node, we're
-    // eliminating potentially more complex matching of a setcc node which has
-    // a full range of predicates.
+    // If the mask value has been legalized to a non-boolean vector, try to
+    // simplify ops leading up to it. We only demand the MSB of each lane.
     SDValue Mask = Mst->getMask();
-    if (Mask.getOpcode() == X86ISD::PCMPGT &&
-        ISD::isBuildVectorAllZeros(Mask.getOperand(0).getNode())) {
-      assert(Mask.getValueType() == Mask.getOperand(1).getValueType() &&
-             "Unexpected type for PCMPGT");
-      return DAG.getMaskedStore(
-          Mst->getChain(), SDLoc(N), Mst->getValue(), Mst->getBasePtr(),
-          Mask.getOperand(1), Mst->getMemoryVT(), Mst->getMemOperand());
+    if (Mask.getScalarValueSizeInBits() != 1) {
+      const TargetLowering &TLI = DAG.getTargetLoweringInfo();
+      APInt DemandedMask(APInt::getSignMask(VT.getScalarSizeInBits()));
+      if (TLI.SimplifyDemandedBits(Mask, DemandedMask, DCI))
+        return SDValue(N, 0);
     }
 
     // TODO: AVX512 targets should also be able to simplify something like the
@@ -36556,7 +36614,6 @@ static SDValue combineMaskedStore(SDNode *N, SelectionDAG &DAG,
   }
 
   // Resolve truncating stores.
-  EVT VT = Mst->getValue().getValueType();
   unsigned NumElems = VT.getVectorNumElements();
   EVT StVT = Mst->getMemoryVT();
   SDLoc dl(Mst);
@@ -37035,9 +37092,13 @@ static bool isHorizontalBinOp(SDValue &LHS, SDValue &RHS, bool IsCommutative) {
         continue;
 
       // The  low half of the 128-bit result must choose from A.
-      // The high half of the 128-bit result must choose from B.
+      // The high half of the 128-bit result must choose from B,
+      // unless B is undef. In that case, we are always choosing from A.
+      // TODO: Using a horizontal op on a single input is likely worse for
+      // performance on many CPUs, so this should be limited here or reversed
+      // in a later pass.
       unsigned NumEltsPer64BitChunk = NumEltsPer128BitChunk / 2;
-      unsigned Src = i >= NumEltsPer64BitChunk;
+      unsigned Src = B.getNode() ? i >= NumEltsPer64BitChunk : 0;
 
       // Check that successive elements are being operated on. If not, this is
       // not a horizontal operation.
@@ -38965,16 +39026,10 @@ static SDValue combineGatherScatter(SDNode *N, SelectionDAG &DAG,
   // With AVX2 we only demand the upper bit of the mask.
   if (!Subtarget.hasAVX512()) {
     const TargetLowering &TLI = DAG.getTargetLoweringInfo();
-    TargetLowering::TargetLoweringOpt TLO(DAG, !DCI.isBeforeLegalize(),
-                                          !DCI.isBeforeLegalizeOps());
     SDValue Mask = N->getOperand(2);
-    KnownBits Known;
     APInt DemandedMask(APInt::getSignMask(Mask.getScalarValueSizeInBits()));
-    if (TLI.SimplifyDemandedBits(Mask, DemandedMask, Known, TLO)) {
-      DCI.AddToWorklist(Mask.getNode());
-      DCI.CommitTargetLoweringOpt(TLO);
+    if (TLI.SimplifyDemandedBits(Mask, DemandedMask, DCI))
       return SDValue(N, 0);
-    }
   }
 
   return SDValue();
@@ -40382,7 +40437,7 @@ SDValue X86TargetLowering::PerformDAGCombine(SDNode *N,
   case ISD::LOAD:           return combineLoad(N, DAG, DCI, Subtarget);
   case ISD::MLOAD:          return combineMaskedLoad(N, DAG, DCI, Subtarget);
   case ISD::STORE:          return combineStore(N, DAG, Subtarget);
-  case ISD::MSTORE:         return combineMaskedStore(N, DAG, Subtarget);
+  case ISD::MSTORE:         return combineMaskedStore(N, DAG, DCI, Subtarget);
   case ISD::SINT_TO_FP:     return combineSIntToFP(N, DAG, Subtarget);
   case ISD::UINT_TO_FP:     return combineUIntToFP(N, DAG, Subtarget);
   case ISD::FADD:
