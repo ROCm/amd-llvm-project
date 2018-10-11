@@ -26,10 +26,9 @@ template <typename Impl> class X86SnippetGenerator : public Impl {
   using Impl::Impl;
 
   llvm::Expected<CodeTemplate>
-  generateCodeTemplate(unsigned Opcode) const override {
+  generateCodeTemplate(const Instruction &Instr) const override {
     // Test whether we can generate a snippet for this instruction.
-    const auto &InstrInfo = this->State.getInstrInfo();
-    const auto OpcodeName = InstrInfo.getName(Opcode);
+    const auto OpcodeName = Instr.Name;
     if (OpcodeName.startswith("POPF") || OpcodeName.startswith("PUSHF") ||
         OpcodeName.startswith("ADJCALLSTACK")) {
       return llvm::make_error<BenchmarkFailure>(
@@ -37,9 +36,8 @@ template <typename Impl> class X86SnippetGenerator : public Impl {
     }
 
     // Handle X87.
-    const auto &InstrDesc = InstrInfo.get(Opcode);
-    const unsigned FPInstClass = InstrDesc.TSFlags & llvm::X86II::FPTypeMask;
-    const Instruction Instr(InstrDesc, this->RATC);
+    const unsigned FPInstClass =
+        Instr.Description->TSFlags & llvm::X86II::FPTypeMask;
     switch (FPInstClass) {
     case llvm::X86II::NotFP:
       break;
@@ -67,7 +65,7 @@ template <typename Impl> class X86SnippetGenerator : public Impl {
     }
 
     // Fallback to generic implementation.
-    return Impl::Base::generateCodeTemplate(Opcode);
+    return Impl::Base::generateCodeTemplate(Instr);
   }
 };
 
@@ -262,25 +260,25 @@ class ExegesisX86Target : public ExegesisTarget {
     // value for input and output.
     for (size_t I = 0, E = IT.Instr.Operands.size(); I < E; ++I) {
       const Operand *Op = &IT.Instr.Operands[I];
-      if (Op->IsExplicit && Op->IsMem) {
+      if (Op->isExplicit() && Op->isMemory()) {
         // Case 1: 5-op memory.
         assert((I + 5 <= E) && "x86 memory references are always 5 ops");
         IT.getValueFor(*Op) = llvm::MCOperand::createReg(Reg); // BaseReg
         Op = &IT.Instr.Operands[++I];
-        assert(Op->IsMem);
-        assert(Op->IsExplicit);
+        assert(Op->isMemory());
+        assert(Op->isExplicit());
         IT.getValueFor(*Op) = llvm::MCOperand::createImm(1); // ScaleAmt
         Op = &IT.Instr.Operands[++I];
-        assert(Op->IsMem);
-        assert(Op->IsExplicit);
+        assert(Op->isMemory());
+        assert(Op->isExplicit());
         IT.getValueFor(*Op) = llvm::MCOperand::createReg(0); // IndexReg
         Op = &IT.Instr.Operands[++I];
-        assert(Op->IsMem);
-        assert(Op->IsExplicit);
+        assert(Op->isMemory());
+        assert(Op->isExplicit());
         IT.getValueFor(*Op) = llvm::MCOperand::createImm(Offset); // Disp
         Op = &IT.Instr.Operands[++I];
-        assert(Op->IsMem);
-        assert(Op->IsExplicit);
+        assert(Op->isMemory());
+        assert(Op->isExplicit());
         IT.getValueFor(*Op) = llvm::MCOperand::createReg(0); // Segment
         // Case2: segment:index addressing. We assume that ES is 0.
       }

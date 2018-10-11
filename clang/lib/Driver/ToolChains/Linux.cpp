@@ -14,7 +14,6 @@
 #include "Arch/PPC.h"
 #include "Arch/RISCV.h"
 #include "CommonArgs.h"
-#include "clang/Basic/VirtualFileSystem.h"
 #include "clang/Config/config.h"
 #include "clang/Driver/Distro.h"
 #include "clang/Driver/Driver.h"
@@ -24,6 +23,7 @@
 #include "llvm/ProfileData/InstrProf.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/ScopedPrinter.h"
+#include "llvm/Support/VirtualFileSystem.h"
 #include <system_error>
 
 using namespace clang::driver;
