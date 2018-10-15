@@ -607,6 +607,7 @@
 		26EFB61C1BFE8D3E00544801 /* PlatformNetBSD.h in Headers */ = {isa = PBXBuildFile; fileRef = 26EFB6191BFE8D3E00544801 /* PlatformNetBSD.h */; };
 		4CE4EFAA1E8999B900A80C06 /* PlatformOpenBSD.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 4CE4EFA61E8999B000A80C06 /* PlatformOpenBSD.cpp */; };
 		945759671534941F005A9070 /* PlatformPOSIX.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 945759651534941F005A9070 /* PlatformPOSIX.cpp */; };
+		AF663250216EB9C300BB510D /* PlatformRemoteAppleBridge.cpp in Sources */ = {isa = PBXBuildFile; fileRef = AF66324E216EB9C300BB510D /* PlatformRemoteAppleBridge.cpp */; };
 		AF8AD6371BEC28C400150209 /* PlatformRemoteAppleTV.cpp in Sources */ = {isa = PBXBuildFile; fileRef = AF8AD6331BEC28C400150209 /* PlatformRemoteAppleTV.cpp */; };
 		AF8AD6381BEC28C400150209 /* PlatformRemoteAppleTV.h in Headers */ = {isa = PBXBuildFile; fileRef = AF8AD6341BEC28C400150209 /* PlatformRemoteAppleTV.h */; };
 		AF8AD6391BEC28C400150209 /* PlatformRemoteAppleWatch.cpp in Sources */ = {isa = PBXBuildFile; fileRef = AF8AD6351BEC28C400150209 /* PlatformRemoteAppleWatch.cpp */; };
@@ -912,7 +913,6 @@
 		4C7D48241F5099A1005314B4 /* SymbolFileDWARFDwp.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 4C7D481C1F509963005314B4 /* SymbolFileDWARFDwp.cpp */; };
 		9A2057121F3B824B00F6C293 /* SymbolFileDWARFTests.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 9A20570A1F3B81F300F6C293 /* SymbolFileDWARFTests.cpp */; };
 		AF6335E21C87B21E00F7D554 /* SymbolFilePDB.cpp in Sources */ = {isa = PBXBuildFile; fileRef = AF6335E01C87B21E00F7D554 /* SymbolFilePDB.cpp */; };
-		AF6335E31C87B21E00F7D554 /* SymbolFilePDB.h in Headers */ = {isa = PBXBuildFile; fileRef = AF6335E11C87B21E00F7D554 /* SymbolFilePDB.h */; };
 		268900CE13353E5F00698AC0 /* SymbolFileSymtab.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 260C89DE10F57C5600BB2B04 /* SymbolFileSymtab.cpp */; };
 		268900E013353E6F00698AC0 /* SymbolVendor.cpp in Sources */ = {isa = PBXBuildFile; fileRef = AF94005711C03F6500085DB9 /* SymbolVendor.cpp */; };
 		2635879417822FC2004C30BA /* SymbolVendorELF.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 2635879017822E56004C30BA /* SymbolVendorELF.cpp */; };
@@ -2458,6 +2458,8 @@
 		4CE4EFA71E8999B000A80C06 /* PlatformOpenBSD.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PlatformOpenBSD.h; sourceTree = "<group>"; };
 		945759651534941F005A9070 /* PlatformPOSIX.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = PlatformPOSIX.cpp; path = POSIX/PlatformPOSIX.cpp; sourceTree = "<group>"; };
 		945759661534941F005A9070 /* PlatformPOSIX.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = PlatformPOSIX.h; path = POSIX/PlatformPOSIX.h; sourceTree = "<group>"; };
+		AF66324E216EB9C300BB510D /* PlatformRemoteAppleBridge.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = PlatformRemoteAppleBridge.cpp; sourceTree = "<group>"; };
+		AF66324F216EB9C300BB510D /* PlatformRemoteAppleBridge.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PlatformRemoteAppleBridge.h; sourceTree = "<group>"; };
 		AF8AD6331BEC28C400150209 /* PlatformRemoteAppleTV.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = PlatformRemoteAppleTV.cpp; sourceTree = "<group>"; };
 		AF8AD6341BEC28C400150209 /* PlatformRemoteAppleTV.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PlatformRemoteAppleTV.h; sourceTree = "<group>"; };
 		AF8AD6351BEC28C400150209 /* PlatformRemoteAppleWatch.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = PlatformRemoteAppleWatch.cpp; sourceTree = "<group>"; };
@@ -5813,6 +5815,8 @@
 				AF3A4AD11EA05C4700B5DEB4 /* PlatformRemoteDarwinDevice.h */,
 				AF8AD6331BEC28C400150209 /* PlatformRemoteAppleTV.cpp */,
 				AF8AD6341BEC28C400150209 /* PlatformRemoteAppleTV.h */,
+				AF66324E216EB9C300BB510D /* PlatformRemoteAppleBridge.cpp */,
+				AF66324F216EB9C300BB510D /* PlatformRemoteAppleBridge.h */,
 				AF8AD6351BEC28C400150209 /* PlatformRemoteAppleWatch.cpp */,
 				AF8AD6361BEC28C400150209 /* PlatformRemoteAppleWatch.h */,
 				2675F6FE1332BE690067997B /* PlatformRemoteiOS.cpp */,
@@ -7060,7 +7064,6 @@
 				AF3A4AD31EA05C4700B5DEB4 /* PlatformRemoteDarwinDevice.h in Headers */,
 				AF9113FE1FBE78EA004320CD /* RegisterContextPOSIXCore_ppc64le.h in Headers */,
 				AF33B4BF1C1FA441001B28D9 /* NetBSDSignals.h in Headers */,
-				AF6335E31C87B21E00F7D554 /* SymbolFilePDB.h in Headers */,
 				AF6CA6681FBBAF37005A0DC3 /* ArchSpec.h in Headers */,
 				AF235EB41FBE7858009C5541 /* RegisterInfoPOSIX_ppc64le.h in Headers */,
 				AF2E02A41FA2CEAF00A86C34 /* ArchitectureArm.h in Headers */,
@@ -8110,6 +8113,7 @@
 				268900BB13353E5F00698AC0 /* DWARFDebugArangeSet.cpp in Sources */,
 				268900BC13353E5F00698AC0 /* DWARFDebugInfo.cpp in Sources */,
 				268900BD13353E5F00698AC0 /* DWARFDebugInfoEntry.cpp in Sources */,
+				AF663250216EB9C300BB510D /* PlatformRemoteAppleBridge.cpp in Sources */,
 				268900BE13353E5F00698AC0 /* DWARFDebugLine.cpp in Sources */,
 				268900BF13353E5F00698AC0 /* DWARFDebugMacinfo.cpp in Sources */,
 				268900C013353E5F00698AC0 /* DWARFDebugMacinfoEntry.cpp in Sources */,

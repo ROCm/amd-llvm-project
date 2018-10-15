@@ -45,13 +45,11 @@ void RegisterFile::initialize(const MCSchedModel &SM, unsigned NumRegs) {
   // object. The size of every register file, as well as the mapping between
   // register files and register classes is specified via tablegen.
   const MCExtraProcessorInfo &Info = SM.getExtraProcessorInfo();
-  for (unsigned I = 0, E = Info.NumRegisterFiles; I < E; ++I) {
+
+  // Skip invalid register file at index 0.
+  for (unsigned I = 1, E = Info.NumRegisterFiles; I < E; ++I) {
     const MCRegisterFileDesc &RF = Info.RegisterFiles[I];
-    // Skip invalid register files with zero physical registers.
-    // TODO: verify this constraint in SubtargetEmitter, and convert this
-    // statement into an assert.
-    if (!RF.NumPhysRegs)
-      continue;
+    assert(RF.NumPhysRegs && "Invalid PRF with zero physical registers!");
 
     // The cost of a register definition is equivalent to the number of
     // physical registers that are allocated at register renaming stage.
@@ -75,7 +73,8 @@ void RegisterFile::addRegisterFile(const MCRegisterFileDesc &RF,
   // registers in register file #0 through the command line flag
   // `-register-file-size`.
   unsigned RegisterFileIndex = RegisterFiles.size();
-  RegisterFiles.emplace_back(RF.NumPhysRegs);
+  RegisterFiles.emplace_back(RF.NumPhysRegs, RF.MaxMovesEliminatedPerCycle,
+                             RF.AllowZeroMoveEliminationOnly);
 
   // Special case where there is no register class identifier in the set.
   // An empty set of register classes means: this register file contains all
@@ -101,6 +100,7 @@ void RegisterFile::addRegisterFile(const MCRegisterFileDesc &RF,
       }
       IPC = std::make_pair(RegisterFileIndex, RCE.Cost);
       Entry.RenameAs = Reg;
+      Entry.AllowMoveElimination = RCE.AllowMoveElimination;
 
       // Assume the same cost for each sub-register.
       for (MCSubRegIterator I(Reg, &MRI); I.isValid(); ++I) {
@@ -275,10 +275,6 @@ bool RegisterFile::tryEliminateMove(WriteState &WS, const ReadState &RS) {
   const RegisterMapping &RMFrom = RegisterMappings[RS.getRegisterID()];
   const RegisterMapping &RMTo = RegisterMappings[WS.getRegisterID()];
 
-  // Early exit if the PRF doesn't support move elimination for this register.
-  if (!RMTo.second.AllowMoveElimination)
-    return false;
-
   // From and To must be owned by the same PRF.
   const RegisterRenamingInfo &RRIFrom = RMFrom.second;
   const RegisterRenamingInfo &RRITo = RMTo.second;
@@ -300,9 +296,13 @@ bool RegisterFile::tryEliminateMove(WriteState &WS, const ReadState &RS) {
   // For now, we assume that there is a strong correlation between registers
   // that allow move elimination, and how those same registers are renamed in
   // hardware.
-  if (RRITo.RenameAs && RRITo.RenameAs != WS.getRegisterID())
+  if (RRITo.RenameAs && RRITo.RenameAs != WS.getRegisterID()) {
+    // Early exit if the PRF doesn't support move elimination for this register.
+    if (!RegisterMappings[RRITo.RenameAs].second.AllowMoveElimination)
+      return false;
     if (!WS.clearsSuperRegisters())
       return false;
+  }
 
   RegisterMappingTracker &RMT = RegisterFiles[RegisterFileIndex];
   if (RMT.MaxMoveEliminatedPerCycle &&
