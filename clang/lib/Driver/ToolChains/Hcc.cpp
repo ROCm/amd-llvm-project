@@ -141,21 +141,6 @@ void HCC::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
 
 namespace
 {
-    std::string temporary_replace_long_form_GFXIp(
-        const Compilation& c, std::string l)
-    {   // Precondition: l = "AMD:AMDGPU:\d:\d:\d"
-        // TODO: this should be removed once we have transitioned all users to
-        //       the short form. It is purposefully inefficient.
-        const auto t = l;
-
-        l.replace(0u, 3u, {'g', 'f', 'x'});
-        l.erase(std::copy_if(
-            l.begin() + 3u, l.end(), l.begin() + 3u, isdigit), l.end());
-        c.getDriver().Diag(diag::warn_drv_deprecated_arg) << t << l;
-
-        return l;
-    }
-
     struct Process_deleter {
         int status = EXIT_FAILURE;
         void operator()(std::FILE* p)
@@ -332,16 +317,6 @@ void HCC::CXXAMPLink::ConstructLinkerJob(
     remove_duplicate_targets(AMDGPUTargetVector);
 
     for (auto&& AMDGPUTarget : AMDGPUTargetVector) {
-        // TODO: this is Temporary.
-        static const std::string long_gfx_ip_prefix{"AMD:AMDGPU:"};
-        if (std::search(
-            AMDGPUTarget.cbegin(),
-            AMDGPUTarget.cend(),
-            long_gfx_ip_prefix.cbegin(),
-            long_gfx_ip_prefix.cend()) != AMDGPUTarget.cend()) {
-            AMDGPUTarget =
-                temporary_replace_long_form_GFXIp(C, AMDGPUTarget);
-        }
         validate_and_add_to_command(AMDGPUTarget, C, Args, CmdArgs);
     }
 }
