@@ -13,7 +13,6 @@
 #include "Arch/PPC.h"
 #include "Arch/RISCV.h"
 #include "CommonArgs.h"
-#include "clang/Basic/VirtualFileSystem.h"
 #include "clang/Config/config.h"
 #include "clang/Driver/Distro.h"
 #include "clang/Driver/Driver.h"
@@ -23,6 +22,7 @@
 #include "llvm/ProfileData/InstrProf.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/ScopedPrinter.h"
+#include "llvm/Support/VirtualFileSystem.h"
 #include <system_error>
 
 using namespace clang::driver;
@@ -44,6 +44,9 @@ static std::string getMultiarchTriple(const Driver &D,
   llvm::Triple::EnvironmentType TargetEnvironment =
       TargetTriple.getEnvironment();
   bool IsAndroid = TargetTriple.isAndroid();
+  std::string Mips64Abi = "gnuabi64";
+  if (TargetEnvironment == llvm::Triple::GNUABIN32)
+    Mips64Abi = "gnuabin32";
 
   // For most architectures, just use whatever we have rather than trying to be
   // clever.
@@ -112,18 +115,14 @@ static std::string getMultiarchTriple(const Driver &D,
       return "mipsel-linux-gnu";
     break;
   case llvm::Triple::mips64:
-    if (D.getVFS().exists(SysRoot + "/lib/mips64-linux-gnu"))
-      return "mips64-linux-gnu";
-    if (D.getVFS().exists(SysRoot + "/lib/mips64-linux-gnuabi64"))
-      return "mips64-linux-gnuabi64";
+    if (D.getVFS().exists(SysRoot + "/lib/mips64-linux-" + Mips64Abi))
+      return "mips64-linux-" + Mips64Abi;
     break;
   case llvm::Triple::mips64el:
     if (IsAndroid)
       return "mips64el-linux-android";
-    if (D.getVFS().exists(SysRoot + "/lib/mips64el-linux-gnu"))
-      return "mips64el-linux-gnu";
-    if (D.getVFS().exists(SysRoot + "/lib/mips64el-linux-gnuabi64"))
-      return "mips64el-linux-gnuabi64";
+    if (D.getVFS().exists(SysRoot + "/lib/mips64el-linux-" + Mips64Abi))
+      return "mips64el-linux-" + Mips64Abi;
     break;
   case llvm::Triple::ppc:
     if (D.getVFS().exists(SysRoot + "/lib/powerpc-linux-gnuspe"))
@@ -229,12 +228,13 @@ Linux::Linux(const Driver &D, const llvm::Triple &Triple, const ArgList &Args)
 
   Distro Distro(D.getVFS());
 
-  if (Distro.IsAlpineLinux()) {
+  if (Distro.IsAlpineLinux() || Triple.isAndroid()) {
     ExtraOpts.push_back("-z");
     ExtraOpts.push_back("now");
   }
 
-  if (Distro.IsOpenSUSE() || Distro.IsUbuntu() || Distro.IsAlpineLinux()) {
+  if (Distro.IsOpenSUSE() || Distro.IsUbuntu() || Distro.IsAlpineLinux() ||
+      Triple.isAndroid()) {
     ExtraOpts.push_back("-z");
     ExtraOpts.push_back("relro");
   }
@@ -264,15 +264,18 @@ Linux::Linux(const Driver &D, const llvm::Triple &Triple, const ArgList &Args)
   // and the MIPS ABI require .dynsym to be sorted in different ways.
   // .gnu.hash needs symbols to be grouped by hash code whereas the MIPS
   // ABI requires a mapping between the GOT and the symbol table.
-  // Android loader does not support .gnu.hash.
+  // Android loader does not support .gnu.hash until API 23.
   // Hexagon linker/loader does not support .gnu.hash
-  if (!IsMips && !IsAndroid && !IsHexagon) {
+  if (!IsMips && !IsHexagon) {
     if (Distro.IsRedhat() || Distro.IsOpenSUSE() || Distro.IsAlpineLinux() ||
-        (Distro.IsUbuntu() && Distro >= Distro::UbuntuMaverick))
+        (Distro.IsUbuntu() && Distro >= Distro::UbuntuMaverick) ||
+        (IsAndroid && !Triple.isAndroidVersionLT(23)))
       ExtraOpts.push_back("--hash-style=gnu");
 
-    if (Distro.IsDebian() || Distro.IsOpenSUSE() || Distro == Distro::UbuntuLucid ||
-        Distro == Distro::UbuntuJaunty || Distro == Distro::UbuntuKarmic)
+    if (Distro.IsDebian() || Distro.IsOpenSUSE() ||
+        Distro == Distro::UbuntuLucid || Distro == Distro::UbuntuJaunty ||
+        Distro == Distro::UbuntuKarmic ||
+        (IsAndroid && Triple.isAndroidVersionLT(23)))
       ExtraOpts.push_back("--hash-style=both");
   }
 
@@ -698,6 +701,10 @@ void Linux::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
   const StringRef MIPS64ELMultiarchIncludeDirs[] = {
       "/usr/include/mips64el-linux-gnu",
       "/usr/include/mips64el-linux-gnuabi64"};
+  const StringRef MIPSN32MultiarchIncludeDirs[] = {
+      "/usr/include/mips64-linux-gnuabin32"};
+  const StringRef MIPSN32ELMultiarchIncludeDirs[] = {
+      "/usr/include/mips64el-linux-gnuabin32"};
   const StringRef PPCMultiarchIncludeDirs[] = {
       "/usr/include/powerpc-linux-gnu",
       "/usr/include/powerpc-linux-gnuspe"};
@@ -744,10 +751,16 @@ void Linux::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
     MultiarchIncludeDirs = MIPSELMultiarchIncludeDirs;
     break;
   case llvm::Triple::mips64:
-    MultiarchIncludeDirs = MIPS64MultiarchIncludeDirs;
+    if (getTriple().getEnvironment() == llvm::Triple::GNUABIN32)
+      MultiarchIncludeDirs = MIPSN32MultiarchIncludeDirs;
+    else
+      MultiarchIncludeDirs = MIPS64MultiarchIncludeDirs;
     break;
   case llvm::Triple::mips64el:
-    MultiarchIncludeDirs = MIPS64ELMultiarchIncludeDirs;
+    if (getTriple().getEnvironment() == llvm::Triple::GNUABIN32)
+      MultiarchIncludeDirs = MIPSN32ELMultiarchIncludeDirs;
+    else
+      MultiarchIncludeDirs = MIPS64ELMultiarchIncludeDirs;
     break;
   case llvm::Triple::ppc:
     MultiarchIncludeDirs = PPCMultiarchIncludeDirs;

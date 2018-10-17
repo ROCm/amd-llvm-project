@@ -170,7 +170,7 @@ define <8 x i8> @test12a(<8 x i8> %t6, <8 x i8> %t2) {
   ret <8 x i8> %t3
 }
 
-; TODO: The mask length of the 1st shuffle can be reduced to eliminate the 2nd shuffle.
+; The mask length of the 1st shuffle can be reduced to eliminate the 2nd shuffle.
 
 define <2 x i8> @extract_subvector_of_shuffle(<2 x i8> %x, <2 x i8> %y) {
 ; CHECK-LABEL: @extract_subvector_of_shuffle(
@@ -182,7 +182,6 @@ define <2 x i8> @extract_subvector_of_shuffle(<2 x i8> %x, <2 x i8> %y) {
   ret <2 x i8> %extract_subv
 }
 
-; TODO:
 ; Extra uses are ok.
 ; Undef elements in either mask are ok. Undefs from the 2nd shuffle mask should propagate to the new shuffle.
 ; The type of the inputs does not have to match the output type.

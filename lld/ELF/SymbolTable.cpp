@@ -139,13 +139,6 @@ template <class ELFT> void SymbolTable::addCombinedLTOObject() {
   }
 }
 
-Defined *SymbolTable::addAbsolute(StringRef Name, uint8_t Visibility,
-                                  uint8_t Binding) {
-  Symbol *Sym =
-      addRegular(Name, Visibility, STT_NOTYPE, 0, 0, Binding, nullptr, nullptr);
-  return cast<Defined>(Sym);
-}
-
 // Set a flag for --trace-symbol so that we can print out a log message
 // if a new symbol with the same name is inserted into the symbol table.
 void SymbolTable::trace(StringRef Name) {
@@ -178,7 +171,7 @@ static uint8_t getMinVisibility(uint8_t VA, uint8_t VB) {
 }
 
 // Find an existing symbol or create and insert a new one.
-std::pair<Symbol *, bool> SymbolTable::insert(StringRef Name) {
+std::pair<Symbol *, bool> SymbolTable::insertName(StringRef Name) {
   // <name>@@<version> means the symbol is the default version. In that
   // case <name>@@<version> will be used to resolve references to <name>.
   //
@@ -204,6 +197,7 @@ std::pair<Symbol *, bool> SymbolTable::insert(StringRef Name) {
     return {SymVector[SymIndex], false};
 
   auto *Sym = reinterpret_cast<Symbol *>(make<SymbolUnion>());
+  Sym->SymbolKind = Symbol::PlaceholderKind;
   Sym->Visibility = STV_DEFAULT;
   Sym->IsUsedInRegularObj = false;
   Sym->ExportDynamic = false;
@@ -216,13 +210,13 @@ std::pair<Symbol *, bool> SymbolTable::insert(StringRef Name) {
 
 // Find an existing symbol or create and insert a new one, then apply the given
 // attributes.
-std::pair<Symbol *, bool> SymbolTable::insert(StringRef Name, uint8_t Type,
+std::pair<Symbol *, bool> SymbolTable::insert(StringRef Name,
                                               uint8_t Visibility,
                                               bool CanOmitFromDynSym,
                                               InputFile *File) {
   Symbol *S;
   bool WasInserted;
-  std::tie(S, WasInserted) = insert(Name);
+  std::tie(S, WasInserted) = insertName(Name);
 
   // Merge in the new symbol's visibility.
   S->Visibility = getMinVisibility(S->Visibility, Visibility);
@@ -233,18 +227,7 @@ std::pair<Symbol *, bool> SymbolTable::insert(StringRef Name, uint8_t Type,
   if (!File || File->kind() == InputFile::ObjKind)
     S->IsUsedInRegularObj = true;
 
-  bool HasTlsAttr = !WasInserted && (!S->isLazy() || S->isTls());
-  if (HasTlsAttr && (Type == STT_TLS) != S->isTls())
-    error("TLS attribute mismatch: " + toString(*S) + "\n>>> defined in " +
-          toString(S->File) + "\n>>> defined in " + toString(File));
-
   return {S, WasInserted};
-}
-
-template <class ELFT> Symbol *SymbolTable::addUndefined(StringRef Name) {
-  return addUndefined<ELFT>(Name, STB_GLOBAL, STV_DEFAULT,
-                            /*Type*/ 0,
-                            /*CanOmitFromDynSym*/ false, /*File*/ nullptr);
 }
 
 static uint8_t getVisibility(uint8_t StOther) { return StOther & 3; }
@@ -256,8 +239,7 @@ Symbol *SymbolTable::addUndefined(StringRef Name, uint8_t Binding,
   Symbol *S;
   bool WasInserted;
   uint8_t Visibility = getVisibility(StOther);
-  std::tie(S, WasInserted) =
-      insert(Name, Type, Visibility, CanOmitFromDynSym, File);
+  std::tie(S, WasInserted) = insert(Name, Visibility, CanOmitFromDynSym, File);
 
   // An undefined symbol with non default visibility must be satisfied
   // in the same DSO.
@@ -405,7 +387,7 @@ Symbol *SymbolTable::addCommon(StringRef N, uint64_t Size, uint32_t Alignment,
                                InputFile &File) {
   Symbol *S;
   bool WasInserted;
-  std::tie(S, WasInserted) = insert(N, Type, getVisibility(StOther),
+  std::tie(S, WasInserted) = insert(N, getVisibility(StOther),
                                     /*CanOmitFromDynSym*/ false, &File);
 
   int Cmp = compareDefined(S, WasInserted, Binding, N);
@@ -477,12 +459,12 @@ static void reportDuplicate(Symbol *Sym, InputFile *NewFile,
   error(Msg);
 }
 
-Symbol *SymbolTable::addRegular(StringRef Name, uint8_t StOther, uint8_t Type,
+Symbol *SymbolTable::addDefined(StringRef Name, uint8_t StOther, uint8_t Type,
                                 uint64_t Value, uint64_t Size, uint8_t Binding,
                                 SectionBase *Section, InputFile *File) {
   Symbol *S;
   bool WasInserted;
-  std::tie(S, WasInserted) = insert(Name, Type, getVisibility(StOther),
+  std::tie(S, WasInserted) = insert(Name, getVisibility(StOther),
                                     /*CanOmitFromDynSym*/ false, File);
   int Cmp = compareDefinedNonCommon(S, WasInserted, Binding, Section == nullptr,
                                     Value, Name);
@@ -504,7 +486,7 @@ void SymbolTable::addShared(StringRef Name, SharedFile<ELFT> &File,
   // unchanged.
   Symbol *S;
   bool WasInserted;
-  std::tie(S, WasInserted) = insert(Name, Sym.getType(), STV_DEFAULT,
+  std::tie(S, WasInserted) = insert(Name, STV_DEFAULT,
                                     /*CanOmitFromDynSym*/ true, &File);
   // Make sure we preempt DSO symbols with default visibility.
   if (Sym.getVisibility() == STV_DEFAULT)
@@ -533,7 +515,7 @@ Symbol *SymbolTable::addBitcode(StringRef Name, uint8_t Binding,
   Symbol *S;
   bool WasInserted;
   std::tie(S, WasInserted) =
-      insert(Name, Type, getVisibility(StOther), CanOmitFromDynSym, &F);
+      insert(Name, getVisibility(StOther), CanOmitFromDynSym, &F);
   int Cmp = compareDefinedNonCommon(S, WasInserted, Binding,
                                     /*IsAbs*/ false, /*Value*/ 0, Name);
   if (Cmp > 0)
@@ -557,7 +539,7 @@ void SymbolTable::addLazyArchive(StringRef Name, ArchiveFile &File,
                                  const object::Archive::Symbol Sym) {
   Symbol *S;
   bool WasInserted;
-  std::tie(S, WasInserted) = insert(Name);
+  std::tie(S, WasInserted) = insertName(Name);
   if (WasInserted) {
     replaceSymbol<LazyArchive>(S, File, STT_NOTYPE, Sym);
     return;
@@ -581,7 +563,7 @@ template <class ELFT>
 void SymbolTable::addLazyObject(StringRef Name, LazyObjFile &File) {
   Symbol *S;
   bool WasInserted;
-  std::tie(S, WasInserted) = insert(Name);
+  std::tie(S, WasInserted) = insertName(Name);
   if (WasInserted) {
     replaceSymbol<LazyObject>(S, File, STT_NOTYPE, Name);
     return;
@@ -778,11 +760,6 @@ template void SymbolTable::addFile<ELF32LE>(InputFile *);
 template void SymbolTable::addFile<ELF32BE>(InputFile *);
 template void SymbolTable::addFile<ELF64LE>(InputFile *);
 template void SymbolTable::addFile<ELF64BE>(InputFile *);
-
-template Symbol *SymbolTable::addUndefined<ELF32LE>(StringRef);
-template Symbol *SymbolTable::addUndefined<ELF32BE>(StringRef);
-template Symbol *SymbolTable::addUndefined<ELF64LE>(StringRef);
-template Symbol *SymbolTable::addUndefined<ELF64BE>(StringRef);
 
 template Symbol *SymbolTable::addUndefined<ELF32LE>(StringRef, uint8_t, uint8_t,
                                                     uint8_t, bool, InputFile *);

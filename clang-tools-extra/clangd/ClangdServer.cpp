@@ -72,7 +72,8 @@ public:
 } // namespace
 
 // Returns callbacks that can be used to update the FileIndex with new ASTs.
-std::unique_ptr<ParsingCallbacks> makeUpdateCallbacks(FileIndex *FIndex) {
+static std::unique_ptr<ParsingCallbacks>
+makeUpdateCallbacks(FileIndex *FIndex) {
   struct CB : public ParsingCallbacks {
     CB(FileIndex *FIndex) : FIndex(FIndex) {}
     FileIndex *FIndex;
@@ -97,8 +98,8 @@ ClangdServer::Options ClangdServer::optsForTest() {
   return Opts;
 }
 
-ClangdServer::ClangdServer(GlobalCompilationDatabase &CDB,
-                           FileSystemProvider &FSProvider,
+ClangdServer::ClangdServer(const GlobalCompilationDatabase &CDB,
+                           const FileSystemProvider &FSProvider,
                            DiagnosticsConsumer &DiagConsumer,
                            const Options &Opts)
     : CDB(CDB), DiagConsumer(DiagConsumer), FSProvider(FSProvider),

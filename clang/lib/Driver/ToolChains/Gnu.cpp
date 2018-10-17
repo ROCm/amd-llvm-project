@@ -16,7 +16,6 @@
 #include "Arch/SystemZ.h"
 #include "CommonArgs.h"
 #include "Linux.h"
-#include "clang/Basic/VirtualFileSystem.h"
 #include "clang/Config/config.h" // for GCC_INSTALL_PREFIX
 #include "clang/Driver/Compilation.h"
 #include "clang/Driver/Driver.h"
@@ -27,6 +26,7 @@
 #include "llvm/Support/CodeGen.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/TargetParser.h"
+#include "llvm/Support/VirtualFileSystem.h"
 #include <system_error>
 
 using namespace clang::driver;
@@ -264,11 +264,13 @@ static const char *getLDMOption(const llvm::Triple &T, const ArgList &Args) {
   case llvm::Triple::mipsel:
     return "elf32ltsmip";
   case llvm::Triple::mips64:
-    if (tools::mips::hasMipsAbiArg(Args, "n32"))
+    if (tools::mips::hasMipsAbiArg(Args, "n32") ||
+        T.getEnvironment() == llvm::Triple::GNUABIN32)
       return "elf32btsmipn32";
     return "elf64btsmip";
   case llvm::Triple::mips64el:
-    if (tools::mips::hasMipsAbiArg(Args, "n32"))
+    if (tools::mips::hasMipsAbiArg(Args, "n32") ||
+        T.getEnvironment() == llvm::Triple::GNUABIN32)
       return "elf32ltsmipn32";
     return "elf64ltsmip";
   case llvm::Triple::systemz:
@@ -791,10 +793,10 @@ namespace {
 // Filter to remove Multilibs that don't exist as a suffix to Path
 class FilterNonExistent {
   StringRef Base, File;
-  vfs::FileSystem &VFS;
+  llvm::vfs::FileSystem &VFS;
 
 public:
-  FilterNonExistent(StringRef Base, StringRef File, vfs::FileSystem &VFS)
+  FilterNonExistent(StringRef Base, StringRef File, llvm::vfs::FileSystem &VFS)
       : Base(Base), File(File), VFS(VFS) {}
   bool operator()(const Multilib &M) {
     return !VFS.exists(Base + M.gccSuffix() + File);
@@ -940,7 +942,7 @@ static bool findMipsCsMultilibs(const Multilib::flags_list &Flags,
   return false;
 }
 
-static bool findMipsAndroidMultilibs(vfs::FileSystem &VFS, StringRef Path,
+static bool findMipsAndroidMultilibs(llvm::vfs::FileSystem &VFS, StringRef Path,
                                      const Multilib::flags_list &Flags,
                                      FilterNonExistent &NonExistent,
                                      DetectedMultilibs &Result) {
@@ -1762,7 +1764,8 @@ void Generic_GCC::GCCInstallationDetector::AddDefaultGCCPrefixes(
 
     std::string PrefixDir = SysRoot.str() + "/usr/gcc";
     std::error_code EC;
-    for (vfs::directory_iterator LI = D.getVFS().dir_begin(PrefixDir, EC), LE;
+    for (llvm::vfs::directory_iterator LI = D.getVFS().dir_begin(PrefixDir, EC),
+                                       LE;
          !EC && LI != LE; LI = LI.increment(EC)) {
       StringRef VersionText = llvm::sys::path::filename(LI->path());
       GCCVersion CandidateVersion = GCCVersion::Parse(VersionText);
@@ -1854,6 +1857,10 @@ void Generic_GCC::GCCInstallationDetector::AddDefaultGCCPrefixes(
       "mips64el-linux-gnu", "mips-mti-linux-gnu", "mips-img-linux-gnu",
       "mips64el-linux-gnuabi64"};
 
+  static const char *const MIPSN32LibDirs[] = {"/lib32"};
+  static const char *const MIPSN32Triples[] = {"mips64-linux-gnuabin32"};
+  static const char *const MIPSN32ELLibDirs[] = {"/lib32"};
+  static const char *const MIPSN32ELTriples[] = {"mips64el-linux-gnuabin32"};
 
   static const char *const PPCLibDirs[] = {"/lib32", "/lib"};
   static const char *const PPCTriples[] = {
@@ -2050,6 +2057,8 @@ void Generic_GCC::GCCInstallationDetector::AddDefaultGCCPrefixes(
     TripleAliases.append(begin(MIPSTriples), end(MIPSTriples));
     BiarchLibDirs.append(begin(MIPS64LibDirs), end(MIPS64LibDirs));
     BiarchTripleAliases.append(begin(MIPS64Triples), end(MIPS64Triples));
+    BiarchLibDirs.append(begin(MIPSN32LibDirs), end(MIPSN32LibDirs));
+    BiarchTripleAliases.append(begin(MIPSN32Triples), end(MIPSN32Triples));
     break;
   case llvm::Triple::mipsel:
     LibDirs.append(begin(MIPSELLibDirs), end(MIPSELLibDirs));
@@ -2057,18 +2066,24 @@ void Generic_GCC::GCCInstallationDetector::AddDefaultGCCPrefixes(
     TripleAliases.append(begin(MIPSTriples), end(MIPSTriples));
     BiarchLibDirs.append(begin(MIPS64ELLibDirs), end(MIPS64ELLibDirs));
     BiarchTripleAliases.append(begin(MIPS64ELTriples), end(MIPS64ELTriples));
+    BiarchLibDirs.append(begin(MIPSN32ELLibDirs), end(MIPSN32ELLibDirs));
+    BiarchTripleAliases.append(begin(MIPSN32ELTriples), end(MIPSN32ELTriples));
     break;
   case llvm::Triple::mips64:
     LibDirs.append(begin(MIPS64LibDirs), end(MIPS64LibDirs));
     TripleAliases.append(begin(MIPS64Triples), end(MIPS64Triples));
     BiarchLibDirs.append(begin(MIPSLibDirs), end(MIPSLibDirs));
     BiarchTripleAliases.append(begin(MIPSTriples), end(MIPSTriples));
+    BiarchLibDirs.append(begin(MIPSN32LibDirs), end(MIPSN32LibDirs));
+    BiarchTripleAliases.append(begin(MIPSN32Triples), end(MIPSN32Triples));
     break;
   case llvm::Triple::mips64el:
     LibDirs.append(begin(MIPS64ELLibDirs), end(MIPS64ELLibDirs));
     TripleAliases.append(begin(MIPS64ELTriples), end(MIPS64ELTriples));
     BiarchLibDirs.append(begin(MIPSELLibDirs), end(MIPSELLibDirs));
     BiarchTripleAliases.append(begin(MIPSELTriples), end(MIPSELTriples));
+    BiarchLibDirs.append(begin(MIPSN32ELLibDirs), end(MIPSN32ELLibDirs));
+    BiarchTripleAliases.append(begin(MIPSN32ELTriples), end(MIPSN32ELTriples));
     BiarchTripleAliases.append(begin(MIPSTriples), end(MIPSTriples));
     break;
   case llvm::Triple::ppc:
@@ -2205,7 +2220,7 @@ void Generic_GCC::GCCInstallationDetector::ScanLibDirForGCCTriple(
 
     StringRef LibSuffix = Suffix.LibSuffix;
     std::error_code EC;
-    for (vfs::directory_iterator
+    for (llvm::vfs::directory_iterator
              LI = D.getVFS().dir_begin(LibDir + "/" + LibSuffix, EC),
              LE;
          !EC && LI != LE; LI = LI.increment(EC)) {

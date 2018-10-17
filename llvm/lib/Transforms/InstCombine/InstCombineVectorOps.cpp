@@ -1490,13 +1490,21 @@ static Instruction *foldIdentityExtractShuffle(ShuffleVectorInst &Shuf) {
 
   // We are extracting a subvector from a shuffle. Remove excess elements from
   // the 1st shuffle mask to eliminate the extract.
-  //   shuf (shuf X, Y, <C0, C1, C2, C3>), undef, <0, undef, 2> -->
-  //   shuf X, Y, <C0, undef, C2>
+  //
+  // This transform is conservatively limited to identity extracts because we do
+  // not allow arbitrary shuffle mask creation as a target-independent transform
+  // (because we can't guarantee that will lower efficiently).
+  //
+  // If the extracting shuffle has an undef mask element, it transfers to the
+  // new shuffle mask. Otherwise, copy the original mask element. Example:
+  //   shuf (shuf X, Y, <C0, C1, C2, undef, C4>), undef, <0, undef, 2, 3> -->
+  //   shuf X, Y, <C0, undef, C2, undef>
   unsigned NumElts = Shuf.getType()->getVectorNumElements();
   SmallVector<Constant *, 16> NewMask(NumElts);
+  assert(NumElts < Mask->getType()->getVectorNumElements() &&
+         "Identity with extract must have less elements than its inputs");
+
   for (unsigned i = 0; i != NumElts; ++i) {
-    // If the extracting shuffle has an undef mask element, it transfers to the
-    // new shuffle mask. Otherwise, copy the original mask element.
     Constant *ExtractMaskElt = Shuf.getMask()->getAggregateElement(i);
     Constant *MaskElt = Mask->getAggregateElement(i);
     NewMask[i] = isa<UndefValue>(ExtractMaskElt) ? ExtractMaskElt : MaskElt;
