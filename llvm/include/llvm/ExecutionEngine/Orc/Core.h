@@ -20,10 +20,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/Support/Debug.h"
 
-#include <list>
-#include <map>
 #include <memory>
-#include <set>
 #include <vector>
 
 #define DEBUG_TYPE "orc"
@@ -44,18 +41,18 @@ using VModuleKey = uint64_t;
 
 /// A set of symbol names (represented by SymbolStringPtrs for
 //         efficiency).
-using SymbolNameSet = std::set<SymbolStringPtr>;
+using SymbolNameSet = DenseSet<SymbolStringPtr>;
 
 /// A map from symbol names (as SymbolStringPtrs) to JITSymbols
 ///        (address/flags pairs).
-using SymbolMap = std::map<SymbolStringPtr, JITEvaluatedSymbol>;
+using SymbolMap = DenseMap<SymbolStringPtr, JITEvaluatedSymbol>;
 
 /// A map from symbol names (as SymbolStringPtrs) to JITSymbolFlags.
-using SymbolFlagsMap = std::map<SymbolStringPtr, JITSymbolFlags>;
+using SymbolFlagsMap = DenseMap<SymbolStringPtr, JITSymbolFlags>;
 
 /// A base class for materialization failures that allows the failing
 ///        symbols to be obtained for logging.
-using SymbolDependenceMap = std::map<JITDylib *, SymbolNameSet>;
+using SymbolDependenceMap = DenseMap<JITDylib *, SymbolNameSet>;
 
 /// A list of JITDylib pointers.
 using JITDylibList = std::vector<JITDylib *>;
@@ -171,6 +168,9 @@ public:
   ///        into.
   JITDylib &getTargetJITDylib() const { return JD; }
 
+  /// Returns the VModuleKey for this instance.
+  VModuleKey getVModuleKey() const { return K; }
+
   /// Returns the symbol flags map for this responsibility instance.
   /// Note: The returned flags may have transient flags (Lazy, Materializing)
   /// set. These should be stripped with JITSymbolFlags::stripTransientFlags
@@ -221,7 +221,8 @@ public:
   /// Delegates responsibility for the given symbols to the returned
   /// materialization responsibility. Useful for breaking up work between
   /// threads, or different kinds of materialization processes.
-  MaterializationResponsibility delegate(const SymbolNameSet &Symbols);
+  MaterializationResponsibility delegate(const SymbolNameSet &Symbols,
+                                         VModuleKey NewKey = VModuleKey());
 
   void addDependencies(const SymbolStringPtr &Name,
                        const SymbolDependenceMap &Dependencies);
@@ -232,10 +233,12 @@ public:
 private:
   /// Create a MaterializationResponsibility for the given JITDylib and
   ///        initial symbols.
-  MaterializationResponsibility(JITDylib &JD, SymbolFlagsMap SymbolFlags);
+  MaterializationResponsibility(JITDylib &JD, SymbolFlagsMap SymbolFlags,
+                                VModuleKey K);
 
   JITDylib &JD;
   SymbolFlagsMap SymbolFlags;
+  VModuleKey K;
 };
 
 /// A MaterializationUnit represents a set of symbol definitions that can
@@ -248,8 +251,8 @@ private:
 /// stronger definition is added or already present.
 class MaterializationUnit {
 public:
-  MaterializationUnit(SymbolFlagsMap InitalSymbolFlags)
-      : SymbolFlags(std::move(InitalSymbolFlags)) {}
+  MaterializationUnit(SymbolFlagsMap InitalSymbolFlags, VModuleKey K)
+      : SymbolFlags(std::move(InitalSymbolFlags)), K(std::move(K)) {}
 
   virtual ~MaterializationUnit() {}
 
@@ -264,7 +267,8 @@ public:
   /// ExecutionSession::DispatchMaterializationFunction) to trigger
   /// materialization of this MaterializationUnit.
   void doMaterialize(JITDylib &JD) {
-    materialize(MaterializationResponsibility(JD, std::move(SymbolFlags)));
+    materialize(MaterializationResponsibility(JD, std::move(SymbolFlags),
+                                              std::move(K)));
   }
 
   /// Called by JITDylibs to notify MaterializationUnits that the given symbol
@@ -276,6 +280,7 @@ public:
 
 protected:
   SymbolFlagsMap SymbolFlags;
+  VModuleKey K;
 
 private:
   virtual void anchor();
@@ -301,7 +306,7 @@ using MaterializationUnitList =
 /// materialized.
 class AbsoluteSymbolsMaterializationUnit : public MaterializationUnit {
 public:
-  AbsoluteSymbolsMaterializationUnit(SymbolMap Symbols);
+  AbsoluteSymbolsMaterializationUnit(SymbolMap Symbols, VModuleKey K);
 
   StringRef getName() const override;
 
@@ -324,9 +329,9 @@ private:
 /// \endcode
 ///
 inline std::unique_ptr<AbsoluteSymbolsMaterializationUnit>
-absoluteSymbols(SymbolMap Symbols) {
+absoluteSymbols(SymbolMap Symbols, VModuleKey K = VModuleKey()) {
   return llvm::make_unique<AbsoluteSymbolsMaterializationUnit>(
-      std::move(Symbols));
+      std::move(Symbols), std::move(K));
 }
 
 struct SymbolAliasMapEntry {
@@ -339,7 +344,7 @@ struct SymbolAliasMapEntry {
 };
 
 /// A map of Symbols to (Symbol, Flags) pairs.
-using SymbolAliasMap = std::map<SymbolStringPtr, SymbolAliasMapEntry>;
+using SymbolAliasMap = DenseMap<SymbolStringPtr, SymbolAliasMapEntry>;
 
 /// A materialization unit for symbol aliases. Allows existing symbols to be
 /// aliased with alternate flags.
@@ -352,7 +357,8 @@ public:
   /// Note: Care must be taken that no sets of aliases form a cycle, as such
   ///       a cycle will result in a deadlock when any symbol in the cycle is
   ///       resolved.
-  ReExportsMaterializationUnit(JITDylib *SourceJD, SymbolAliasMap Aliases);
+  ReExportsMaterializationUnit(JITDylib *SourceJD, SymbolAliasMap Aliases,
+                               VModuleKey K);
 
   StringRef getName() const override;
 
@@ -377,17 +383,18 @@ private:
 ///     return Err;
 /// \endcode
 inline std::unique_ptr<ReExportsMaterializationUnit>
-symbolAliases(SymbolAliasMap Aliases) {
-  return llvm::make_unique<ReExportsMaterializationUnit>(nullptr,
-                                                         std::move(Aliases));
+symbolAliases(SymbolAliasMap Aliases, VModuleKey K = VModuleKey()) {
+  return llvm::make_unique<ReExportsMaterializationUnit>(
+      nullptr, std::move(Aliases), std::move(K));
 }
 
 /// Create a materialization unit for re-exporting symbols from another JITDylib
 /// with alternative names/flags.
 inline std::unique_ptr<ReExportsMaterializationUnit>
-reexports(JITDylib &SourceJD, SymbolAliasMap Aliases) {
-  return llvm::make_unique<ReExportsMaterializationUnit>(&SourceJD,
-                                                         std::move(Aliases));
+reexports(JITDylib &SourceJD, SymbolAliasMap Aliases,
+          VModuleKey K = VModuleKey()) {
+  return llvm::make_unique<ReExportsMaterializationUnit>(
+      &SourceJD, std::move(Aliases), std::move(K));
 }
 
 /// Build a SymbolAliasMap for the common case where you want to re-export
@@ -489,7 +496,7 @@ public:
       JITDylib &Parent, const SymbolNameSet &Names)>;
 
   using AsynchronousSymbolQuerySet =
-      std::set<std::shared_ptr<AsynchronousSymbolQuery>>;
+    std::set<std::shared_ptr<AsynchronousSymbolQuery>>;
 
   JITDylib(const JITDylib &) = delete;
   JITDylib &operator=(const JITDylib &) = delete;
@@ -609,7 +616,7 @@ private:
   };
 
   using UnmaterializedInfosMap =
-      std::map<SymbolStringPtr, std::shared_ptr<UnmaterializedInfo>>;
+      DenseMap<SymbolStringPtr, std::shared_ptr<UnmaterializedInfo>>;
 
   struct MaterializingInfo {
     AsynchronousSymbolQueryList PendingQueries;
@@ -618,7 +625,7 @@ private:
     bool IsEmitted = false;
   };
 
-  using MaterializingInfosMap = std::map<SymbolStringPtr, MaterializingInfo>;
+  using MaterializingInfosMap = DenseMap<SymbolStringPtr, MaterializingInfo>;
 
   using LookupImplActionFlags = enum {
     None = 0,

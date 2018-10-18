@@ -808,10 +808,10 @@ Function *CodeExtractor::constructFunction(const ValueSet &inputs,
   for (unsigned i = 0, e = Users.size(); i != e; ++i)
     // The BasicBlock which contains the branch is not in the region
     // modify the branch target to a new block
-    if (TerminatorInst *TI = dyn_cast<TerminatorInst>(Users[i]))
-      if (!Blocks.count(TI->getParent()) &&
-          TI->getParent()->getParent() == oldFunction)
-        TI->replaceUsesOfWith(header, newHeader);
+    if (Instruction *I = dyn_cast<Instruction>(Users[i]))
+      if (I->isTerminator() && !Blocks.count(I->getParent()) &&
+          I->getParent()->getParent() == oldFunction)
+        I->replaceUsesOfWith(header, newHeader);
 
   return newFunction;
 }
@@ -1285,6 +1285,19 @@ Function *CodeExtractor::extractCodeRegion() {
           }
         }
     }
+
+  // Erase debug info intrinsics. Variable updates within the new function are
+  // invisible to debuggers. This could be improved by defining a DISubprogram
+  // for the new function.
+  for (BasicBlock &BB : *newFunction) {
+    auto BlockIt = BB.begin();
+    while (BlockIt != BB.end()) {
+      Instruction *Inst = &*BlockIt;
+      ++BlockIt;
+      if (isa<DbgInfoIntrinsic>(Inst))
+        Inst->eraseFromParent();
+    }
+  }
 
   LLVM_DEBUG(if (verifyFunction(*newFunction))
                  report_fatal_error("verifyFunction failed!"));
