@@ -66,15 +66,17 @@ createStaticIndexingAction(SymbolCollector::Options Opts,
   Opts.CollectIncludePath = true;
   Opts.CountReferences = true;
   Opts.Origin = SymbolOrigin::Static;
-  if (RefsCallback != nullptr)
+  if (RefsCallback != nullptr) {
     Opts.RefFilter = RefKind::All;
+    Opts.RefsInHeaders = true;
+  }
   auto Includes = llvm::make_unique<CanonicalIncludes>();
   addSystemHeadersMapping(Includes.get());
   Opts.Includes = Includes.get();
   return llvm::make_unique<IndexAction>(
       std::make_shared<SymbolCollector>(std::move(Opts)), std::move(Includes),
       IndexOpts, SymbolsCallback, RefsCallback);
-};
+}
 
 } // namespace clangd
 } // namespace clang

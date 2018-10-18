@@ -82,6 +82,7 @@
 #include <utility>
 #if LLVM_ON_UNIX
 #include <unistd.h> // getpid
+#include <sysexits.h> // EX_IOERR
 #endif
 
 using namespace clang::driver;
@@ -501,12 +502,25 @@ static llvm::Triple computeTargetTriple(const Driver &D,
   // If target is MIPS adjust the target triple
   // accordingly to provided ABI name.
   A = Args.getLastArg(options::OPT_mabi_EQ);
-  if (A && Target.isMIPS())
-    Target = llvm::StringSwitch<llvm::Triple>(A->getValue())
-                 .Case("32", Target.get32BitArchVariant())
-                 .Case("n32", Target.get64BitArchVariant())
-                 .Case("64", Target.get64BitArchVariant())
-                 .Default(Target);
+  if (A && Target.isMIPS()) {
+    StringRef ABIName = A->getValue();
+    if (ABIName == "32") {
+      Target = Target.get32BitArchVariant();
+      if (Target.getEnvironment() == llvm::Triple::GNUABI64 ||
+          Target.getEnvironment() == llvm::Triple::GNUABIN32)
+        Target.setEnvironment(llvm::Triple::GNU);
+    } else if (ABIName == "n32") {
+      Target = Target.get64BitArchVariant();
+      if (Target.getEnvironment() == llvm::Triple::GNU ||
+          Target.getEnvironment() == llvm::Triple::GNUABI64)
+        Target.setEnvironment(llvm::Triple::GNUABIN32);
+    } else if (ABIName == "64") {
+      Target = Target.get64BitArchVariant();
+      if (Target.getEnvironment() == llvm::Triple::GNU ||
+          Target.getEnvironment() == llvm::Triple::GNUABIN32)
+        Target.setEnvironment(llvm::Triple::GNUABI64);
+    }
+  }
 
   return Target;
 }
@@ -1423,8 +1437,9 @@ int Driver::ExecuteCompilation(
 
   // Otherwise, remove result files and print extra information about abnormal
   // failures.
+  int Res = 0;
   for (const auto &CmdPair : FailingCommands) {
-    int Res = CmdPair.first;
+    int CommandRes = CmdPair.first;
     const Command *FailingCommand = CmdPair.second;
 
     // Remove result files if we're not saving temps.
@@ -1433,9 +1448,18 @@ int Driver::ExecuteCompilation(
       C.CleanupFileMap(C.getResultFiles(), JA, true);
 
       // Failure result files are valid unless we crashed.
-      if (Res < 0)
+      if (CommandRes < 0)
         C.CleanupFileMap(C.getFailureResultFiles(), JA, true);
     }
+
+#if LLVM_ON_UNIX
+    // llvm/lib/Support/Unix/Signals.inc will exit with a special return code
+    // for SIGPIPE. Do not print diagnostics for this case.
+    if (CommandRes == EX_IOERR) {
+      Res = CommandRes;
+      continue;
+    }
+#endif
 
     // Print extra information about abnormal failures, if possible.
     //
@@ -1446,17 +1470,17 @@ int Driver::ExecuteCompilation(
     // diagnostics, so always print the diagnostic there.
     const Tool &FailingTool = FailingCommand->getCreator();
 
-    if (!FailingCommand->getCreator().hasGoodDiagnostics() || Res != 1) {
+    if (!FailingCommand->getCreator().hasGoodDiagnostics() || CommandRes != 1) {
       // FIXME: See FIXME above regarding result code interpretation.
-      if (Res < 0)
+      if (CommandRes < 0)
         Diag(clang::diag::err_drv_command_signalled)
             << FailingTool.getShortName();
       else
-        Diag(clang::diag::err_drv_command_failed) << FailingTool.getShortName()
-                                                  << Res;
+        Diag(clang::diag::err_drv_command_failed)
+            << FailingTool.getShortName() << CommandRes;
     }
   }
-  return 0;
+  return Res;
 }
 
 void Driver::PrintHelp(bool ShowHidden) const {

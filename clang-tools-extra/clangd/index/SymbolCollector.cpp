@@ -19,6 +19,7 @@
 #include "clang/AST/DeclBase.h"
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/DeclTemplate.h"
+#include "clang/Basic/SourceLocation.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/Specifiers.h"
 #include "clang/Index/IndexSymbol.h"
@@ -345,15 +346,20 @@ bool SymbolCollector::handleDeclOccurence(
       SM.getFileID(SpellingLoc) == SM.getMainFileID())
     ReferencedDecls.insert(ND);
 
-  if ((static_cast<unsigned>(Opts.RefFilter) & Roles) &&
-      SM.getFileID(SpellingLoc) == SM.getMainFileID())
-    DeclRefs[ND].emplace_back(SpellingLoc, Roles);
+  bool CollectRef = static_cast<unsigned>(Opts.RefFilter) & Roles;
+  bool IsOnlyRef =
+      !(Roles & (static_cast<unsigned>(index::SymbolRole::Declaration) |
+                 static_cast<unsigned>(index::SymbolRole::Definition)));
 
-  // Don't continue indexing if this is a mere reference.
-  if (!(Roles & static_cast<unsigned>(index::SymbolRole::Declaration) ||
-        Roles & static_cast<unsigned>(index::SymbolRole::Definition)))
+  if (IsOnlyRef && !CollectRef)
     return true;
   if (!shouldCollectSymbol(*ND, *ASTCtx, Opts))
+    return true;
+  if (CollectRef &&
+      (Opts.RefsInHeaders || SM.getFileID(SpellingLoc) == SM.getMainFileID()))
+    DeclRefs[ND].emplace_back(SpellingLoc, Roles);
+  // Don't continue indexing if this is a mere reference.
+  if (IsOnlyRef)
     return true;
 
   auto ID = getSymbolID(ND);
@@ -470,28 +476,45 @@ void SymbolCollector::finish() {
   }
 
   const auto &SM = ASTCtx->getSourceManager();
-  auto* MainFileEntry = SM.getFileEntryForID(SM.getMainFileID());
+  llvm::DenseMap<FileID, std::string> URICache;
+  auto GetURI = [&](FileID FID) -> llvm::Optional<std::string> {
+    auto Found = URICache.find(FID);
+    if (Found == URICache.end()) {
+      if (auto *FileEntry = SM.getFileEntryForID(FID)) {
+        auto FileURI = toURI(SM, FileEntry->getName(), Opts);
+        if (!FileURI) {
+          log("Failed to create URI for file: {0}\n", FileEntry);
+          FileURI = ""; // reset to empty as we also want to cache this case.
+        }
+        Found = URICache.insert({FID, *FileURI}).first;
+      } else {
+        // Ignore cases where we can not find a corresponding file entry
+        // for the loc, thoses are not interesting, e.g. symbols formed
+        // via macro concatenation.
+        return llvm::None;
+      }
+    }
+    return Found->second;
+  };
 
-  if (auto MainFileURI = toURI(SM, MainFileEntry->getName(), Opts)) {
-    std::string MainURI = *MainFileURI;
+  if (auto MainFileURI = GetURI(SM.getMainFileID())) {
     for (const auto &It : DeclRefs) {
       if (auto ID = getSymbolID(It.first)) {
-        if (Symbols.find(*ID)) {
-          for (const auto &LocAndRole : It.second) {
-            Ref R;
+        for (const auto &LocAndRole : It.second) {
+          auto FileID = SM.getFileID(LocAndRole.first);
+          if (auto FileURI = GetURI(FileID)) {
             auto Range =
                 getTokenRange(LocAndRole.first, SM, ASTCtx->getLangOpts());
+            Ref R;
             R.Location.Start = Range.first;
             R.Location.End = Range.second;
-            R.Location.FileURI = MainURI;
+            R.Location.FileURI = *FileURI;
             R.Kind = toRefKind(LocAndRole.second);
             Refs.insert(*ID, R);
           }
         }
       }
     }
-  } else {
-    log("Failed to create URI for main file: {0}", MainFileEntry->getName());
   }
 
   ReferencedDecls.clear();

@@ -27,8 +27,9 @@ public:
   using CompileFunction = JITCompileCallbackManager::CompileFunction;
 
   CompileCallbackMaterializationUnit(SymbolStringPtr Name,
-                                     CompileFunction Compile)
-      : MaterializationUnit(SymbolFlagsMap({{Name, JITSymbolFlags::Exported}})),
+                                     CompileFunction Compile, VModuleKey K)
+      : MaterializationUnit(SymbolFlagsMap({{Name, JITSymbolFlags::Exported}}),
+                            std::move(K)),
         Name(std::move(Name)), Compile(std::move(Compile)) {}
 
   StringRef getName() const override { return "<Compile Callbacks>"; }
@@ -67,7 +68,8 @@ JITCompileCallbackManager::getCompileCallback(CompileFunction Compile) {
     AddrToSymbol[*TrampolineAddr] = CallbackName;
     cantFail(CallbacksJD.define(
         llvm::make_unique<CompileCallbackMaterializationUnit>(
-            std::move(CallbackName), std::move(Compile))));
+            std::move(CallbackName), std::move(Compile),
+            ES.allocateVModule())));
     return *TrampolineAddr;
   } else
     return TrampolineAddr.takeError();
@@ -99,9 +101,10 @@ JITTargetAddress JITCompileCallbackManager::executeCompileCallback(
       Name = I->second;
   }
 
-  if (auto Sym = lookup({&CallbacksJD}, Name))
+  if (auto Sym = ES.lookup({&CallbacksJD}, Name, true))
     return Sym->getAddress();
   else {
+    llvm::dbgs() << "Didn't find callback.\n";
     // If anything goes wrong materializing Sym then report it to the session
     // and return the ErrorHandlerAddress;
     ES.reportError(Sym.takeError());
