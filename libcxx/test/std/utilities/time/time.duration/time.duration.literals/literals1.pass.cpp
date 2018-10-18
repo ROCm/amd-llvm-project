@@ -7,8 +7,8 @@
 // Source Licenses. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-
 // UNSUPPORTED: c++98, c++03, c++11
+
 #include <chrono>
 #include <cassert>
 
@@ -67,9 +67,5 @@ int main()
     assert(October   == month(10));
     assert(November  == month(11));
     assert(December  == month(12));
-
-    year y1 = 2018y;
-    assert (y1 == year(2018));
-//  No conversion from floating point for years
 #endif
 }
