@@ -2181,8 +2181,14 @@ public:
       // Define implicit data-sharing attributes for task.
       DVar = Stack->getImplicitDSA(FD, /*FromParent=*/false);
       if (isOpenMPTaskingDirective(DKind) && DVar.CKind != OMPC_shared &&
-          !Stack->isLoopControlVariable(FD).first)
-        ImplicitFirstprivate.push_back(E);
+          !Stack->isLoopControlVariable(FD).first) {
+        // Check if there is a captured expression for the current field in the
+        // region. Do not mark it as firstprivate unless there is no captured
+        // expression.
+        // TODO: try to make it firstprivate.
+        if (DVar.CKind != OMPC_unknown)
+          ImplicitFirstprivate.push_back(E);
+      }
       return;
     }
     if (isOpenMPTargetExecutionDirective(DKind)) {
@@ -2245,8 +2251,31 @@ public:
   }
   void VisitStmt(Stmt *S) {
     for (Stmt *C : S->children()) {
-      if (C && !isa<OMPExecutableDirective>(C))
-        Visit(C);
+      if (C) {
+        if (auto *OED = dyn_cast<OMPExecutableDirective>(C)) {
+          // Check implicitly captured vriables in the task-based directives to
+          // check if they must be firstprivatized.
+          if (!OED->hasAssociatedStmt())
+            continue;
+          const Stmt *AS = OED->getAssociatedStmt();
+          if (!AS)
+            continue;
+          for (const CapturedStmt::Capture &Cap :
+               cast<CapturedStmt>(AS)->captures()) {
+            if (Cap.capturesVariable()) {
+              DeclRefExpr *DRE = buildDeclRefExpr(
+                  SemaRef, Cap.getCapturedVar(),
+                  Cap.getCapturedVar()->getType().getNonLValueExprType(
+                      SemaRef.Context),
+                  Cap.getLocation(),
+                  /*RefersToCapture=*/true);
+              Visit(DRE);
+            }
+          }
+        } else {
+          Visit(C);
+        }
+      }
     }
   }
 
