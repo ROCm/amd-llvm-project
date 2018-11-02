@@ -906,6 +906,10 @@ void StmtPrinter::VisitOMPTargetTeamsDistributeSimdDirective(
 //  Expr printing methods.
 //===----------------------------------------------------------------------===//
 
+void StmtPrinter::VisitConstantExpr(ConstantExpr *Node) {
+  PrintExpr(Node->getSubExpr());
+}
+
 void StmtPrinter::VisitDeclRefExpr(DeclRefExpr *Node) {
   if (const auto *OCED = dyn_cast<OMPCapturedExprDecl>(Node->getDecl())) {
     OCED->getInit()->IgnoreImpCasts()->printPretty(OS, nullptr, Policy);
@@ -991,7 +995,7 @@ void StmtPrinter::VisitObjCSubscriptRefExpr(ObjCSubscriptRefExpr *Node) {
 }
 
 void StmtPrinter::VisitPredefinedExpr(PredefinedExpr *Node) {
-  OS << PredefinedExpr::getIdentTypeName(Node->getIdentType());
+  OS << PredefinedExpr::getIdentKindName(Node->getIdentKind());
 }
 
 void StmtPrinter::VisitCharacterLiteral(CharacterLiteral *Node) {
@@ -1234,6 +1238,9 @@ void StmtPrinter::VisitUnaryExprOrTypeTraitExpr(UnaryExprOrTypeTraitExpr *Node){
       OS << "_Alignof";
     else
       OS << "__alignof";
+    break;
+  case UETT_PreferredAlignOf:
+    OS << "__alignof";
     break;
   case UETT_VecStep:
     OS << "vec_step";

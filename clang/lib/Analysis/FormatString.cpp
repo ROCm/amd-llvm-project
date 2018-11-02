@@ -689,7 +689,7 @@ bool FormatSpecifier::hasValidLengthModifier(const TargetInfo &Target) const {
             break;
         }
       }
-      // Fall through.
+      LLVM_FALLTHROUGH;
     case LengthModifier::AsChar:
     case LengthModifier::AsLongLong:
     case LengthModifier::AsQuad:
@@ -874,7 +874,7 @@ bool FormatSpecifier::hasStandardConversionSpecifier(
       return true;
     case ConversionSpecifier::CArg:
     case ConversionSpecifier::SArg:
-      return LangOpt.ObjC1 || LangOpt.ObjC2;
+      return LangOpt.ObjC;
     case ConversionSpecifier::InvalidSpecifier:
     case ConversionSpecifier::FreeBSDbArg:
     case ConversionSpecifier::FreeBSDDArg:

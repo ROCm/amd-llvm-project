@@ -22,6 +22,7 @@
 #include "lldb/Core/Address.h"
 #include "lldb/Core/Module.h"
 #include "lldb/Core/ModuleSpec.h"
+#include "lldb/Host/FileSystem.h"
 #include "lldb/Host/HostInfo.h"
 #include "lldb/Symbol/ClangASTContext.h"
 #include "lldb/Symbol/CompileUnit.h"
@@ -49,6 +50,7 @@ public:
     ::CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 #endif
 
+    FileSystem::Initialize();
     HostInfo::Initialize();
     ObjectFilePECOFF::Initialize();
     SymbolFileDWARF::Initialize();
@@ -65,6 +67,7 @@ public:
     SymbolFileDWARF::Terminate();
     ObjectFilePECOFF::Terminate();
     HostInfo::Terminate();
+    FileSystem::Terminate();
 
 #if defined(_MSC_VER)
     ::CoUninitialize();
@@ -200,8 +203,7 @@ TEST_F(SymbolFilePDBTests, TestResolveSymbolContextFullPath) {
   EXPECT_TRUE(ContainsCompileUnit(sc_list, header_spec));
 }
 
-TEST_F(SymbolFilePDBTests,
-       TestLookupOfHeaderFileWithInlines) {
+TEST_F(SymbolFilePDBTests, TestLookupOfHeaderFileWithInlines) {
   // Test that when looking up a header file via ResolveSymbolContext (i.e. a
   // file that was not by itself
   // compiled, but only contributes to the combined code of other source files),
@@ -271,7 +273,8 @@ TEST_F(SymbolFilePDBTests, TestLineTablesMatchAll) {
   EXPECT_EQ(2u, cus);
 
   SymbolContextList sc_list;
-  uint32_t scope = lldb::eSymbolContextCompUnit | lldb::eSymbolContextLineEntry;
+  lldb::SymbolContextItem scope =
+      lldb::eSymbolContextCompUnit | lldb::eSymbolContextLineEntry;
 
   uint32_t count =
       symfile->ResolveSymbolContext(source_file, 0, true, scope, sc_list);
@@ -320,7 +323,8 @@ TEST_F(SymbolFilePDBTests, TestLineTablesMatchSpecific) {
   EXPECT_EQ(2u, cus);
 
   SymbolContextList sc_list;
-  uint32_t scope = lldb::eSymbolContextCompUnit | lldb::eSymbolContextLineEntry;
+  lldb::SymbolContextItem scope =
+      lldb::eSymbolContextCompUnit | lldb::eSymbolContextLineEntry;
 
   // First test with line 7, and verify that only line 7 entries are added.
   uint32_t count =
@@ -531,7 +535,9 @@ TEST_F(SymbolFilePDBTests, TestTypedefs) {
   llvm::DenseSet<SymbolFile *> searched_files;
   TypeMap results;
 
-  const char *TypedefsToCheck[] = {"ClassTypedef", "NSClassTypedef"};
+  const char *TypedefsToCheck[] = {"ClassTypedef", "NSClassTypedef",
+                                   "FuncPointerTypedef",
+                                   "VariadicFuncPointerTypedef"};
   for (auto Typedef : TypedefsToCheck) {
     TypeMap results;
     EXPECT_EQ(1u, symfile->FindTypes(sc, ConstString(Typedef), nullptr, false,
@@ -561,7 +567,7 @@ TEST_F(SymbolFilePDBTests, TestRegexNameMatch) {
   SymbolFilePDB *symfile =
       static_cast<SymbolFilePDB *>(plugin->GetSymbolFile());
   TypeMap results;
-   
+
   symfile->FindTypesByRegex(RegularExpression(".*"), 0, results);
   EXPECT_GT(results.GetSize(), 1u);
 
@@ -583,8 +589,8 @@ TEST_F(SymbolFilePDBTests, TestMaxMatches) {
   llvm::DenseSet<SymbolFile *> searched_files;
   TypeMap results;
   const ConstString name("ClassTypedef");
-  uint32_t num_results = symfile->FindTypes(sc, name, nullptr,
-                                            false, 0, searched_files, results);
+  uint32_t num_results =
+      symfile->FindTypes(sc, name, nullptr, false, 0, searched_files, results);
   // Try to limit ourselves from 1 to 10 results, otherwise we could be doing
   // this thousands of times.
   // The idea is just to make sure that for a variety of values, the number of

@@ -80,6 +80,23 @@ private:
   using BaseT = TargetTransformInfoImplCRTPBase<T>;
   using TTI = TargetTransformInfo;
 
+  /// Estimate a cost of Broadcast as an extract and sequence of insert
+  /// operations.
+  unsigned getBroadcastShuffleOverhead(Type *Ty) {
+    assert(Ty->isVectorTy() && "Can only shuffle vectors");
+    unsigned Cost = 0;
+    // Broadcast cost is equal to the cost of extracting the zero'th element
+    // plus the cost of inserting it into every element of the result vector.
+    Cost += static_cast<T *>(this)->getVectorInstrCost(
+        Instruction::ExtractElement, Ty, 0);
+
+    for (int i = 0, e = Ty->getVectorNumElements(); i < e; ++i) {
+      Cost += static_cast<T *>(this)->getVectorInstrCost(
+          Instruction::InsertElement, Ty, i);
+    }
+    return Cost;
+  }
+
   /// Estimate a cost of shuffle as a sequence of extract and insert
   /// operations.
   unsigned getPermuteShuffleOverhead(Type *Ty) {
@@ -554,7 +571,10 @@ public:
   unsigned getShuffleCost(TTI::ShuffleKind Kind, Type *Tp, int Index,
                           Type *SubTp) {
     switch (Kind) {
+    case TTI::SK_Broadcast:
+      return getBroadcastShuffleOverhead(Tp);
     case TTI::SK_Select:
+    case TTI::SK_Reverse:
     case TTI::SK_Transpose:
     case TTI::SK_PermuteSingleSrc:
     case TTI::SK_PermuteTwoSrc:
@@ -784,7 +804,8 @@ public:
                                       unsigned Factor,
                                       ArrayRef<unsigned> Indices,
                                       unsigned Alignment, unsigned AddressSpace,
-                                      bool IsMasked = false) {
+                                      bool UseMaskForCond = false,
+                                      bool UseMaskForGaps = false) {
     VectorType *VT = dyn_cast<VectorType>(VecTy);
     assert(VT && "Expect a vector type for interleaved memory op");
 
@@ -796,7 +817,7 @@ public:
 
     // Firstly, the cost of load/store operation.
     unsigned Cost;
-    if (IsMasked)
+    if (UseMaskForCond || UseMaskForGaps)
       Cost = static_cast<T *>(this)->getMaskedMemoryOpCost(
           Opcode, VecTy, Alignment, AddressSpace);
     else
@@ -897,7 +918,7 @@ public:
                     ->getVectorInstrCost(Instruction::InsertElement, VT, i);
     }
 
-    if (!IsMasked)
+    if (!UseMaskForCond)
       return Cost;
 
     Type *I8Type = Type::getInt8Ty(VT->getContext());
@@ -921,6 +942,15 @@ public:
     for (unsigned i = 0; i < NumElts; i++)
       Cost += static_cast<T *>(this)->getVectorInstrCost(
           Instruction::InsertElement, MaskVT, i);
+
+    // The Gaps mask is invariant and created outside the loop, therefore the
+    // cost of creating it is not accounted for here. However if we have both
+    // a MaskForGaps and some other mask that guards the execution of the
+    // memory access, we need to account for the cost of And-ing the two masks
+    // inside the loop.
+    if (UseMaskForGaps)
+      Cost += static_cast<T *>(this)->getArithmeticInstrCost(
+          BinaryOperator::And, MaskVT); 
 
     return Cost;
   }
@@ -1072,12 +1102,12 @@ public:
     case Intrinsic::minnum:
       ISDs.push_back(ISD::FMINNUM);
       if (FMF.noNaNs())
-        ISDs.push_back(ISD::FMINNAN);
+        ISDs.push_back(ISD::FMINIMUM);
       break;
     case Intrinsic::maxnum:
       ISDs.push_back(ISD::FMAXNUM);
       if (FMF.noNaNs())
-        ISDs.push_back(ISD::FMAXNAN);
+        ISDs.push_back(ISD::FMAXIMUM);
       break;
     case Intrinsic::copysign:
       ISDs.push_back(ISD::FCOPYSIGN);
@@ -1314,12 +1344,13 @@ public:
         LT.second.isVector() ? LT.second.getVectorNumElements() : 1;
     while (NumVecElts > MVTLen) {
       NumVecElts /= 2;
+      Type *SubTy = VectorType::get(ScalarTy, NumVecElts);
       // Assume the pairwise shuffles add a cost.
       ShuffleCost += (IsPairwise + 1) *
                      ConcreteTTI->getShuffleCost(TTI::SK_ExtractSubvector, Ty,
-                                                 NumVecElts, Ty);
+                                                 NumVecElts, SubTy);
       ArithCost += ConcreteTTI->getArithmeticInstrCost(Opcode, Ty);
-      Ty = VectorType::get(ScalarTy, NumVecElts);
+      Ty = SubTy;
       ++LongVectorCount;
     }
     // The minimal length of the vector is limited by the real length of vector
@@ -1327,8 +1358,8 @@ public:
     // reduction operations are performed on the vectors with the same
     // architecture-dependent length.
     ShuffleCost += (NumReduxLevels - LongVectorCount) * (IsPairwise + 1) *
-                   ConcreteTTI->getShuffleCost(TTI::SK_ExtractSubvector, Ty,
-                                               NumVecElts, Ty);
+                   ConcreteTTI->getShuffleCost(TTI::SK_PermuteSingleSrc, Ty,
+                                               0, Ty);
     ArithCost += (NumReduxLevels - LongVectorCount) *
                  ConcreteTTI->getArithmeticInstrCost(Opcode, Ty);
     return ShuffleCost + ArithCost + getScalarizationOverhead(Ty, false, true);
@@ -1361,15 +1392,16 @@ public:
         LT.second.isVector() ? LT.second.getVectorNumElements() : 1;
     while (NumVecElts > MVTLen) {
       NumVecElts /= 2;
+      Type *SubTy = VectorType::get(ScalarTy, NumVecElts);
       // Assume the pairwise shuffles add a cost.
       ShuffleCost += (IsPairwise + 1) *
                      ConcreteTTI->getShuffleCost(TTI::SK_ExtractSubvector, Ty,
-                                                 NumVecElts, Ty);
+                                                 NumVecElts, SubTy);
       MinMaxCost +=
           ConcreteTTI->getCmpSelInstrCost(CmpOpcode, Ty, CondTy, nullptr) +
           ConcreteTTI->getCmpSelInstrCost(Instruction::Select, Ty, CondTy,
                                           nullptr);
-      Ty = VectorType::get(ScalarTy, NumVecElts);
+      Ty = SubTy;
       CondTy = VectorType::get(ScalarCondTy, NumVecElts);
       ++LongVectorCount;
     }
@@ -1378,8 +1410,8 @@ public:
     // reduction opertions are perfomed on the vectors with the same
     // architecture-dependent length.
     ShuffleCost += (NumReduxLevels - LongVectorCount) * (IsPairwise + 1) *
-                   ConcreteTTI->getShuffleCost(TTI::SK_ExtractSubvector, Ty,
-                                               NumVecElts, Ty);
+                   ConcreteTTI->getShuffleCost(TTI::SK_PermuteSingleSrc, Ty,
+                                               0, Ty);
     MinMaxCost +=
         (NumReduxLevels - LongVectorCount) *
         (ConcreteTTI->getCmpSelInstrCost(CmpOpcode, Ty, CondTy, nullptr) +

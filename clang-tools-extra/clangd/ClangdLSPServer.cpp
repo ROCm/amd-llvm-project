@@ -18,10 +18,9 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/ScopedPrinter.h"
 
-using namespace clang::clangd;
-using namespace clang;
 using namespace llvm;
-
+namespace clang {
+namespace clangd {
 namespace {
 
 /// \brief Supports a test URI scheme with relaxed constraints for lit tests.
@@ -30,23 +29,22 @@ namespace {
 /// C:\clangd-test\a.cpp on Windows and /clangd-test/a.cpp on Unix.
 class TestScheme : public URIScheme {
 public:
-  llvm::Expected<std::string>
-  getAbsolutePath(llvm::StringRef /*Authority*/, llvm::StringRef Body,
-                  llvm::StringRef /*HintPath*/) const override {
+  Expected<std::string> getAbsolutePath(StringRef /*Authority*/, StringRef Body,
+                                        StringRef /*HintPath*/) const override {
     using namespace llvm::sys;
     // Still require "/" in body to mimic file scheme, as we want lengths of an
     // equivalent URI in both schemes to be the same.
     if (!Body.startswith("/"))
-      return llvm::make_error<llvm::StringError>(
+      return make_error<StringError>(
           "Expect URI body to be an absolute path starting with '/': " + Body,
-          llvm::inconvertibleErrorCode());
+          inconvertibleErrorCode());
     Body = Body.ltrim('/');
 #ifdef _WIN32
     constexpr char TestDir[] = "C:\\clangd-test";
 #else
     constexpr char TestDir[] = "/clangd-test";
 #endif
-    llvm::SmallVector<char, 16> Path(Body.begin(), Body.end());
+    SmallVector<char, 16> Path(Body.begin(), Body.end());
     path::native(Path);
     auto Err = fs::make_absolute(TestDir, Path);
     if (Err)
@@ -54,8 +52,7 @@ public:
     return std::string(Path.begin(), Path.end());
   }
 
-  llvm::Expected<URI>
-  uriFromAbsolutePath(llvm::StringRef AbsolutePath) const override {
+  Expected<URI> uriFromAbsolutePath(StringRef AbsolutePath) const override {
     llvm_unreachable("Clangd must never create a test URI.");
   }
 };
@@ -108,16 +105,21 @@ public:
   }
 
   bool onCall(StringRef Method, json::Value Params, json::Value ID) override {
+    // Calls can be canceled by the client. Add cancellation context.
+    WithContext WithCancel(cancelableRequestContext(ID));
+    trace::Span Tracer(Method);
+    SPAN_ATTACH(Tracer, "Params", Params);
+    ReplyOnce Reply(ID, Method, &Server, Tracer.Args);
     log("<-- {0}({1})", Method, ID);
     if (!Server.Server && Method != "initialize") {
       elog("Call {0} before initialization.", Method);
-      Server.reply(ID, make_error<LSPError>("server not initialized",
-                                            ErrorCode::ServerNotInitialized));
+      Reply(make_error<LSPError>("server not initialized",
+                                 ErrorCode::ServerNotInitialized));
     } else if (auto Handler = Calls.lookup(Method))
-      Handler(std::move(Params), std::move(ID));
+      Handler(std::move(Params), std::move(Reply));
     else
-      Server.reply(ID, llvm::make_error<LSPError>("method not found",
-                                                  ErrorCode::MethodNotFound));
+      Reply(
+          make_error<LSPError>("method not found", ErrorCode::MethodNotFound));
     return true;
   }
 
@@ -126,41 +128,24 @@ public:
     if (Result)
       log("<-- reply({0})", ID);
     else
-      log("<-- reply({0}) error: {1}", ID, llvm::toString(Result.takeError()));
+      log("<-- reply({0}) error: {1}", ID, toString(Result.takeError()));
     return true;
   }
 
   // Bind an LSP method name to a call.
-  template <typename Param, typename Reply>
+  template <typename Param, typename Result>
   void bind(const char *Method,
-            void (ClangdLSPServer::*Handler)(const Param &, Callback<Reply>)) {
+            void (ClangdLSPServer::*Handler)(const Param &, Callback<Result>)) {
     Calls[Method] = [Method, Handler, this](json::Value RawParams,
-                                            json::Value ID) {
+                                            ReplyOnce Reply) {
       Param P;
-      if (!fromJSON(RawParams, P)) {
+      if (fromJSON(RawParams, P)) {
+        (Server.*Handler)(P, std::move(Reply));
+      } else {
         elog("Failed to decode {0} request.", Method);
-        Server.reply(ID, make_error<LSPError>("failed to decode request",
-                                              ErrorCode::InvalidRequest));
-        return;
+        Reply(make_error<LSPError>("failed to decode request",
+                                   ErrorCode::InvalidRequest));
       }
-      trace::Span Tracer(Method);
-      SPAN_ATTACH(Tracer, "Params", RawParams);
-      auto *Trace = Tracer.Args; // We attach reply from another thread.
-      // Calls can be canceled by the client. Add cancellation context.
-      WithContext WithCancel(cancelableRequestContext(ID));
-      // FIXME: this function should assert it's called exactly once.
-      (Server.*Handler)(P, [this, ID, Trace](llvm::Expected<Reply> Result) {
-        if (Result) {
-          if (Trace)
-            (*Trace)["Reply"] = *Result;
-          Server.reply(ID, json::Value(std::move(*Result)));
-        } else {
-          auto Err = Result.takeError();
-          if (Trace)
-            (*Trace)["Error"] = llvm::to_string(Err);
-          Server.reply(ID, std::move(Err));
-        }
-      });
     };
   }
 
@@ -181,16 +166,80 @@ public:
   }
 
 private:
-  llvm::StringMap<std::function<void(json::Value)>> Notifications;
-  llvm::StringMap<std::function<void(json::Value, json::Value)>> Calls;
+  // Function object to reply to an LSP call.
+  // Each instance must be called exactly once, otherwise:
+  //  - the bug is logged, and (in debug mode) an assert will fire
+  //  - if there was no reply, an error reply is sent
+  //  - if there were multiple replies, only the first is sent
+  class ReplyOnce {
+    std::atomic<bool> Replied = {false};
+    std::chrono::steady_clock::time_point Start;
+    json::Value ID;
+    std::string Method;
+    ClangdLSPServer *Server; // Null when moved-from.
+    json::Object *TraceArgs;
+
+  public:
+    ReplyOnce(const json::Value &ID, StringRef Method, ClangdLSPServer *Server,
+              json::Object *TraceArgs)
+        : Start(std::chrono::steady_clock::now()), ID(ID), Method(Method),
+          Server(Server), TraceArgs(TraceArgs) {
+      assert(Server);
+    }
+    ReplyOnce(ReplyOnce &&Other)
+        : Replied(Other.Replied.load()), Start(Other.Start),
+          ID(std::move(Other.ID)), Method(std::move(Other.Method)),
+          Server(Other.Server), TraceArgs(Other.TraceArgs) {
+      Other.Server = nullptr;
+    }
+    ReplyOnce& operator=(ReplyOnce&&) = delete;
+    ReplyOnce(const ReplyOnce &) = delete;
+    ReplyOnce& operator=(const ReplyOnce&) = delete;
+
+    ~ReplyOnce() {
+      if (Server && !Replied) {
+        elog("No reply to message {0}({1})", Method, ID);
+        assert(false && "must reply to all calls!");
+        (*this)(make_error<LSPError>("server failed to reply",
+                                     ErrorCode::InternalError));
+      }
+    }
+
+    void operator()(Expected<json::Value> Reply) {
+      assert(Server && "moved-from!");
+      if (Replied.exchange(true)) {
+        elog("Replied twice to message {0}({1})", Method, ID);
+        assert(false && "must reply to each call only once!");
+        return;
+      }
+      auto Duration = std::chrono::steady_clock::now() - Start;
+      if (Reply) {
+        log("--> reply:{0}({1}) {2:ms}", Method, ID, Duration);
+        if (TraceArgs)
+          (*TraceArgs)["Reply"] = *Reply;
+        std::lock_guard<std::mutex> Lock(Server->TranspWriter);
+        Server->Transp.reply(std::move(ID), std::move(Reply));
+      } else {
+        Error Err = Reply.takeError();
+        log("--> reply:{0}({1}) {2:ms}, error: {3}", Method, ID, Duration, Err);
+        if (TraceArgs)
+          (*TraceArgs)["Error"] = to_string(Err);
+        std::lock_guard<std::mutex> Lock(Server->TranspWriter);
+        Server->Transp.reply(std::move(ID), std::move(Err));
+      }
+    }
+  };
+
+  StringMap<std::function<void(json::Value)>> Notifications;
+  StringMap<std::function<void(json::Value, ReplyOnce)>> Calls;
 
   // Method calls may be cancelled by ID, so keep track of their state.
   // This needs a mutex: handlers may finish on a different thread, and that's
   // when we clean up entries in the map.
   mutable std::mutex RequestCancelersMutex;
-  llvm::StringMap<std::pair<Canceler, /*Cookie*/ unsigned>> RequestCancelers;
+  StringMap<std::pair<Canceler, /*Cookie*/ unsigned>> RequestCancelers;
   unsigned NextRequestCookie = 0; // To disambiguate reused IDs, see below.
-  void onCancel(const llvm::json::Value &Params) {
+  void onCancel(const json::Value &Params) {
     const json::Value *ID = nullptr;
     if (auto *O = Params.getAsObject())
       ID = O->get("id");
@@ -198,7 +247,7 @@ private:
       elog("Bad cancellation request: {0}", Params);
       return;
     }
-    auto StrID = llvm::to_string(*ID);
+    auto StrID = to_string(*ID);
     std::lock_guard<std::mutex> Lock(RequestCancelersMutex);
     auto It = RequestCancelers.find(StrID);
     if (It != RequestCancelers.end())
@@ -210,7 +259,7 @@ private:
   // If a client reuses an ID, the last wins and the first cannot be canceled.
   Context cancelableRequestContext(const json::Value &ID) {
     auto Task = cancelableTask();
-    auto StrID = llvm::to_string(ID);  // JSON-serialize ID for map key.
+    auto StrID = to_string(ID);        // JSON-serialize ID for map key.
     auto Cookie = NextRequestCookie++; // No lock, only called on main thread.
     {
       std::lock_guard<std::mutex> Lock(RequestCancelersMutex);
@@ -245,42 +294,23 @@ void ClangdLSPServer::notify(StringRef Method, json::Value Params) {
   Transp.notify(Method, std::move(Params));
 }
 
-void ClangdLSPServer::reply(llvm::json::Value ID,
-                            llvm::Expected<llvm::json::Value> Result) {
-  if (Result) {
-    log("--> reply({0})", ID);
-    std::lock_guard<std::mutex> Lock(TranspWriter);
-    Transp.reply(std::move(ID), std::move(Result));
-  } else {
-    Error Err = Result.takeError();
-    log("--> reply({0}) error: {1}", ID, Err);
-    std::lock_guard<std::mutex> Lock(TranspWriter);
-    Transp.reply(std::move(ID), std::move(Err));
-  }
-}
-
 void ClangdLSPServer::onInitialize(const InitializeParams &Params,
                                    Callback<json::Value> Reply) {
+  if (Params.rootUri && *Params.rootUri)
+    ClangdServerOpts.WorkspaceRoot = Params.rootUri->file();
+  else if (Params.rootPath && !Params.rootPath->empty())
+    ClangdServerOpts.WorkspaceRoot = *Params.rootPath;
   if (Server)
     return Reply(make_error<LSPError>("server already initialized",
                                       ErrorCode::InvalidRequest));
-  Server.emplace(CDB.getCDB(), FSProvider,
+  if (const auto &Dir = Params.initializationOptions.compilationDatabasePath)
+    CompileCommandsDir = Dir;
+  CDB.emplace(UseInMemoryCDB
+                  ? CompilationDB::makeInMemory()
+                  : CompilationDB::makeDirectoryBased(CompileCommandsDir));
+  Server.emplace(CDB->getCDB(), FSProvider,
                  static_cast<DiagnosticsConsumer &>(*this), ClangdServerOpts);
-  if (Params.initializationOptions) {
-    const ClangdInitializationOptions &Opts = *Params.initializationOptions;
-
-    // Explicit compilation database path.
-    if (Opts.compilationDatabasePath.hasValue()) {
-      CDB.setCompileCommandsDir(Opts.compilationDatabasePath.getValue());
-    }
-
-    applyConfiguration(Opts.ParamsChange);
-  }
-
-  if (Params.rootUri && *Params.rootUri)
-    Server->setRootPath(Params.rootUri->file());
-  else if (Params.rootPath && !Params.rootPath->empty())
-    Server->setRootPath(*Params.rootPath);
+  applyConfiguration(Params.initializationOptions.ConfigSettings);
 
   CCOpts.EnableSnippets = Params.capabilities.CompletionSnippets;
   DiagOpts.EmbedFixesInDiagnostics = Params.capabilities.DiagnosticFixes;
@@ -337,7 +367,7 @@ void ClangdLSPServer::onDocumentDidOpen(
     const DidOpenTextDocumentParams &Params) {
   PathRef File = Params.textDocument.uri.file();
   if (Params.metadata && !Params.metadata->extraFlags.empty())
-    CDB.setExtraFlagsForFile(File, std::move(Params.metadata->extraFlags));
+    CDB->setExtraFlagsForFile(File, std::move(Params.metadata->extraFlags));
 
   const std::string &Contents = Params.textDocument.text;
 
@@ -353,7 +383,7 @@ void ClangdLSPServer::onDocumentDidChange(
                                                   : WantDiagnostics::No;
 
   PathRef File = Params.textDocument.uri.file();
-  llvm::Expected<std::string> Contents =
+  Expected<std::string> Contents =
       DraftMgr.updateDraft(File, Params.contentChanges);
   if (!Contents) {
     // If this fails, we are most likely going to be not in sync anymore with
@@ -361,7 +391,6 @@ void ClangdLSPServer::onDocumentDidChange(
     // fail rather than giving wrong results.
     DraftMgr.removeDraft(File);
     Server->removeDocument(File);
-    CDB.invalidate(File);
     elog("Failed to update {0}: {1}", File, Contents.takeError());
     return;
   }
@@ -400,7 +429,7 @@ void ClangdLSPServer::onCommand(const ExecuteCommandParams &Params,
     // parsed in the first place and this handler should not be called. But if
     // more commands are added, this will be here has a safe guard.
     Reply(make_error<LSPError>(
-        llvm::formatv("Unsupported command \"{0}\".", Params.command).str(),
+        formatv("Unsupported command \"{0}\".", Params.command).str(),
         ErrorCode::InvalidParams));
   }
 }
@@ -412,7 +441,7 @@ void ClangdLSPServer::onWorkspaceSymbol(
       Params.query, CCOpts.Limit,
       Bind(
           [this](decltype(Reply) Reply,
-                 llvm::Expected<std::vector<SymbolInformation>> Items) {
+                 Expected<std::vector<SymbolInformation>> Items) {
             if (!Items)
               return Reply(Items.takeError());
             for (auto &Sym : *Items)
@@ -426,7 +455,7 @@ void ClangdLSPServer::onWorkspaceSymbol(
 void ClangdLSPServer::onRename(const RenameParams &Params,
                                Callback<WorkspaceEdit> Reply) {
   Path File = Params.textDocument.uri.file();
-  llvm::Optional<std::string> Code = DraftMgr.getDraft(File);
+  Optional<std::string> Code = DraftMgr.getDraft(File);
   if (!Code)
     return Reply(make_error<LSPError>("onRename called for non-added file",
                                       ErrorCode::InvalidParams));
@@ -434,9 +463,9 @@ void ClangdLSPServer::onRename(const RenameParams &Params,
   Server->rename(
       File, Params.position, Params.newName,
       Bind(
-          [File, Code, Params](
-              decltype(Reply) Reply,
-              llvm::Expected<std::vector<tooling::Replacement>> Replacements) {
+          [File, Code,
+           Params](decltype(Reply) Reply,
+                   Expected<std::vector<tooling::Replacement>> Replacements) {
             if (!Replacements)
               return Reply(Replacements.takeError());
 
@@ -457,7 +486,6 @@ void ClangdLSPServer::onDocumentDidClose(
   PathRef File = Params.textDocument.uri.file();
   DraftMgr.removeDraft(File);
   Server->removeDocument(File);
-  CDB.invalidate(File);
 }
 
 void ClangdLSPServer::onDocumentOnTypeFormatting(
@@ -518,7 +546,7 @@ void ClangdLSPServer::onDocumentSymbol(
       Params.textDocument.uri.file(),
       Bind(
           [this](decltype(Reply) Reply,
-                 llvm::Expected<std::vector<SymbolInformation>> Items) {
+                 Expected<std::vector<SymbolInformation>> Items) {
             if (!Items)
               return Reply(Items.takeError());
             for (auto &Sym : *Items)
@@ -531,14 +559,14 @@ void ClangdLSPServer::onDocumentSymbol(
 static Optional<Command> asCommand(const CodeAction &Action) {
   Command Cmd;
   if (Action.command && Action.edit)
-    return llvm::None; // Not representable. (We never emit these anyway).
+    return None; // Not representable. (We never emit these anyway).
   if (Action.command) {
     Cmd = *Action.command;
   } else if (Action.edit) {
     Cmd.command = Command::CLANGD_APPLY_FIX_COMMAND;
     Cmd.workspaceEdit = *Action.edit;
   } else {
-    return llvm::None;
+    return None;
   }
   Cmd.title = Action.title;
   if (Action.kind && *Action.kind == CodeAction::QUICKFIX_KIND)
@@ -556,14 +584,8 @@ void ClangdLSPServer::onCodeAction(const CodeActionParams &Params,
   std::vector<CodeAction> Actions;
   for (const Diagnostic &D : Params.context.diagnostics) {
     for (auto &F : getFixes(Params.textDocument.uri.file(), D)) {
-      Actions.emplace_back();
-      Actions.back().title = F.Message;
-      Actions.back().kind = CodeAction::QUICKFIX_KIND;
+      Actions.push_back(toCodeAction(F, Params.textDocument.uri));
       Actions.back().diagnostics = {D};
-      Actions.back().edit.emplace();
-      Actions.back().edit->changes.emplace();
-      (*Actions.back().edit->changes)[Params.textDocument.uri.uri()] = {
-          F.Edits.begin(), F.Edits.end()};
     }
   }
 
@@ -583,7 +605,7 @@ void ClangdLSPServer::onCompletion(const TextDocumentPositionParams &Params,
   Server->codeComplete(Params.textDocument.uri.file(), Params.position, CCOpts,
                        Bind(
                            [this](decltype(Reply) Reply,
-                                  llvm::Expected<CodeCompleteResult> List) {
+                                  Expected<CodeCompleteResult> List) {
                              if (!List)
                                return Reply(List.takeError());
                              CompletionList LSPList;
@@ -613,7 +635,7 @@ void ClangdLSPServer::onGoToDefinition(const TextDocumentPositionParams &Params,
 
 void ClangdLSPServer::onSwitchSourceHeader(const TextDocumentIdentifier &Params,
                                            Callback<std::string> Reply) {
-  llvm::Optional<Path> Result = Server->switchSourceHeader(Params.uri.file());
+  Optional<Path> Result = Server->switchSourceHeader(Params.uri.file());
   Reply(Result ? URI::createFile(*Result).toString() : "");
 }
 
@@ -625,31 +647,28 @@ void ClangdLSPServer::onDocumentHighlight(
 }
 
 void ClangdLSPServer::onHover(const TextDocumentPositionParams &Params,
-                              Callback<llvm::Optional<Hover>> Reply) {
+                              Callback<Optional<Hover>> Reply) {
   Server->findHover(Params.textDocument.uri.file(), Params.position,
                     std::move(Reply));
 }
 
 void ClangdLSPServer::applyConfiguration(
-    const ClangdConfigurationParamsChange &Params) {
+    const ConfigurationSettings &Settings) {
   // Per-file update to the compilation database.
-  if (Params.compilationDatabaseChanges) {
-    const auto &CompileCommandUpdates = *Params.compilationDatabaseChanges;
-    bool ShouldReparseOpenFiles = false;
-    for (auto &Entry : CompileCommandUpdates) {
-      /// The opened files need to be reparsed only when some existing
-      /// entries are changed.
-      PathRef File = Entry.first;
-      if (!CDB.setCompilationCommandForFile(
-              File, tooling::CompileCommand(
-                        std::move(Entry.second.workingDirectory), File,
-                        std::move(Entry.second.compilationCommand),
-                        /*Output=*/"")))
-        ShouldReparseOpenFiles = true;
-    }
-    if (ShouldReparseOpenFiles)
-      reparseOpenedFiles();
+  bool ShouldReparseOpenFiles = false;
+  for (auto &Entry : Settings.compilationDatabaseChanges) {
+    /// The opened files need to be reparsed only when some existing
+    /// entries are changed.
+    PathRef File = Entry.first;
+    if (!CDB->setCompilationCommandForFile(
+            File, tooling::CompileCommand(
+                      std::move(Entry.second.workingDirectory), File,
+                      std::move(Entry.second.compilationCommand),
+                      /*Output=*/"")))
+      ShouldReparseOpenFiles = true;
   }
+  if (ShouldReparseOpenFiles)
+    reparseOpenedFiles();
 }
 
 // FIXME: This function needs to be properly tested.
@@ -666,15 +685,14 @@ void ClangdLSPServer::onReference(const ReferenceParams &Params,
 
 ClangdLSPServer::ClangdLSPServer(class Transport &Transp,
                                  const clangd::CodeCompleteOptions &CCOpts,
-                                 llvm::Optional<Path> CompileCommandsDir,
+                                 Optional<Path> CompileCommandsDir,
                                  bool ShouldUseInMemoryCDB,
                                  const ClangdServer::Options &Opts)
-    : Transp(Transp), MsgHandler(new MessageHandler(*this)),
-      CDB(ShouldUseInMemoryCDB ? CompilationDB::makeInMemory()
-                               : CompilationDB::makeDirectoryBased(
-                                     std::move(CompileCommandsDir))),
-      CCOpts(CCOpts), SupportedSymbolKinds(defaultSymbolKinds()),
+    : Transp(Transp), MsgHandler(new MessageHandler(*this)), CCOpts(CCOpts),
+      SupportedSymbolKinds(defaultSymbolKinds()),
       SupportedCompletionItemKinds(defaultCompletionItemKinds()),
+      UseInMemoryCDB(ShouldUseInMemoryCDB),
+      CompileCommandsDir(std::move(CompileCommandsDir)),
       ClangdServerOpts(Opts) {
   // clang-format off
   MsgHandler->bind("initialize", &ClangdLSPServer::onInitialize);
@@ -734,36 +752,16 @@ std::vector<Fix> ClangdLSPServer::getFixes(StringRef File,
 
 void ClangdLSPServer::onDiagnosticsReady(PathRef File,
                                          std::vector<Diag> Diagnostics) {
-  json::Array DiagnosticsJSON;
-
+  URIForFile URI(File);
+  std::vector<Diagnostic> LSPDiagnostics;
   DiagnosticToReplacementMap LocalFixIts; // Temporary storage
   for (auto &Diag : Diagnostics) {
-    toLSPDiags(Diag, [&](clangd::Diagnostic Diag, llvm::ArrayRef<Fix> Fixes) {
-      json::Object LSPDiag({
-          {"range", Diag.range},
-          {"severity", Diag.severity},
-          {"message", Diag.message},
-      });
-      // LSP extension: embed the fixes in the diagnostic.
-      if (DiagOpts.EmbedFixesInDiagnostics && !Fixes.empty()) {
-        json::Array ClangdFixes;
-        for (const auto &Fix : Fixes) {
-          WorkspaceEdit WE;
-          URIForFile URI{File};
-          WE.changes = {{URI.uri(), std::vector<TextEdit>(Fix.Edits.begin(),
-                                                          Fix.Edits.end())}};
-          ClangdFixes.push_back(
-              json::Object{{"edit", toJSON(WE)}, {"title", Fix.Message}});
-        }
-        LSPDiag["clangd_fixes"] = std::move(ClangdFixes);
-      }
-      if (DiagOpts.SendDiagnosticCategory && !Diag.category.empty())
-        LSPDiag["category"] = Diag.category;
-      DiagnosticsJSON.push_back(std::move(LSPDiag));
-
-      auto &FixItsForDiagnostic = LocalFixIts[Diag];
-      llvm::copy(Fixes, std::back_inserter(FixItsForDiagnostic));
-    });
+    toLSPDiags(Diag, URI, DiagOpts,
+               [&](clangd::Diagnostic Diag, ArrayRef<Fix> Fixes) {
+                 auto &FixItsForDiagnostic = LocalFixIts[Diag];
+                 llvm::copy(Fixes, std::back_inserter(FixItsForDiagnostic));
+                 LSPDiagnostics.push_back(std::move(Diag));
+               });
   }
 
   // Cache FixIts
@@ -776,8 +774,8 @@ void ClangdLSPServer::onDiagnosticsReady(PathRef File,
   // Publish diagnostics.
   notify("textDocument/publishDiagnostics",
          json::Object{
-             {"uri", URIForFile{File}},
-             {"diagnostics", std::move(DiagnosticsJSON)},
+             {"uri", URI},
+             {"diagnostics", std::move(LSPDiagnostics)},
          });
 }
 
@@ -788,25 +786,17 @@ void ClangdLSPServer::reparseOpenedFiles() {
 }
 
 ClangdLSPServer::CompilationDB ClangdLSPServer::CompilationDB::makeInMemory() {
-  return CompilationDB(llvm::make_unique<InMemoryCompilationDb>(), nullptr,
+  return CompilationDB(llvm::make_unique<InMemoryCompilationDb>(),
                        /*IsDirectoryBased=*/false);
 }
 
 ClangdLSPServer::CompilationDB
 ClangdLSPServer::CompilationDB::makeDirectoryBased(
-    llvm::Optional<Path> CompileCommandsDir) {
+    Optional<Path> CompileCommandsDir) {
   auto CDB = llvm::make_unique<DirectoryBasedGlobalCompilationDatabase>(
       std::move(CompileCommandsDir));
-  auto CachingCDB = llvm::make_unique<CachingCompilationDb>(*CDB);
-  return CompilationDB(std::move(CDB), std::move(CachingCDB),
+  return CompilationDB(std::move(CDB),
                        /*IsDirectoryBased=*/true);
-}
-
-void ClangdLSPServer::CompilationDB::invalidate(PathRef File) {
-  if (!IsDirectoryBased)
-    static_cast<InMemoryCompilationDb *>(CDB.get())->invalidate(File);
-  else
-    CachingCDB->invalidate(File);
 }
 
 bool ClangdLSPServer::CompilationDB::setCompilationCommandForFile(
@@ -831,22 +821,7 @@ void ClangdLSPServer::CompilationDB::setExtraFlagsForFile(
   }
   static_cast<DirectoryBasedGlobalCompilationDatabase *>(CDB.get())
       ->setExtraFlagsForFile(File, std::move(ExtraFlags));
-  CachingCDB->invalidate(File);
 }
 
-void ClangdLSPServer::CompilationDB::setCompileCommandsDir(Path P) {
-  if (!IsDirectoryBased) {
-    elog("Trying to set compile commands dir while using in-memory compilation "
-         "database");
-    return;
-  }
-  static_cast<DirectoryBasedGlobalCompilationDatabase *>(CDB.get())
-      ->setCompileCommandsDir(P);
-  CachingCDB->clear();
-}
-
-GlobalCompilationDatabase &ClangdLSPServer::CompilationDB::getCDB() {
-  if (CachingCDB)
-    return *CachingCDB;
-  return *CDB;
-}
+} // namespace clangd
+} // namespace clang

@@ -2576,7 +2576,7 @@ Expr *ParmVarDecl::getDefaultArg() {
          "Default argument is not yet instantiated!");
 
   Expr *Arg = getInit();
-  if (auto *E = dyn_cast_or_null<ExprWithCleanups>(Arg))
+  if (auto *E = dyn_cast_or_null<FullExpr>(Arg))
     return E->getSubExpr();
 
   return Arg;
@@ -2945,6 +2945,10 @@ bool FunctionDecl::isCPUDispatchMultiVersion() const {
 
 bool FunctionDecl::isCPUSpecificMultiVersion() const {
   return isMultiVersion() && hasAttr<CPUSpecificAttr>();
+}
+
+bool FunctionDecl::isTargetMultiVersion() const {
+  return isMultiVersion() && hasAttr<TargetAttr>();
 }
 
 void

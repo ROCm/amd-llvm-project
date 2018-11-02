@@ -327,12 +327,6 @@ def FeatureEnableHugePrivateBuffer : SubtargetFeature<
   "Enable private/scratch buffer sizes greater than 128 GB"
 >;
 
-def FeatureVGPRSpilling : SubtargetFeature<"vgpr-spilling",
-  "EnableVGPRSpilling",
-  "true",
-  "Enable spilling of VGPRs to scratch memory"
->;
-
 def FeatureDumpCode : SubtargetFeature <"DumpCode",
   "DumpCode",
   "true",
@@ -552,6 +546,13 @@ def FeatureISAVersion9_0_6 : SubtargetFeatureISAVersion <9,0,6,
    FeatureFmaMixInsts,
    FeatureLDSBankCount32,
    FeatureDLInsts]>;
+
+def FeatureISAVersion9_0_9 : SubtargetFeatureISAVersion <9,0,9,
+  [FeatureGFX9,
+   FeatureMadMixInsts,
+   FeatureLDSBankCount32,
+   FeatureXNACK,
+   FeatureD16PreservesUnusedBits]>;
 
 //===----------------------------------------------------------------------===//
 // Debugger related subtarget features.

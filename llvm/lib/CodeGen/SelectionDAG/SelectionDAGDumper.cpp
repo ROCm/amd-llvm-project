@@ -124,6 +124,7 @@ std::string SDNode::getOperationName(const SelectionDAG *G) const {
   case ISD::RETURNADDR:                 return "RETURNADDR";
   case ISD::ADDROFRETURNADDR:           return "ADDROFRETURNADDR";
   case ISD::FRAMEADDR:                  return "FRAMEADDR";
+  case ISD::SPONENTRY:                  return "SPONENTRY";
   case ISD::LOCAL_RECOVER:              return "LOCAL_RECOVER";
   case ISD::READ_REGISTER:              return "READ_REGISTER";
   case ISD::WRITE_REGISTER:             return "WRITE_REGISTER";
@@ -175,9 +176,13 @@ std::string SDNode::getOperationName(const SelectionDAG *G) const {
   // Unary operators
   case ISD::FABS:                       return "fabs";
   case ISD::FMINNUM:                    return "fminnum";
+  case ISD::STRICT_FMINNUM:             return "strict_fminnum";
   case ISD::FMAXNUM:                    return "fmaxnum";
-  case ISD::FMINNAN:                    return "fminnan";
-  case ISD::FMAXNAN:                    return "fmaxnan";
+  case ISD::STRICT_FMAXNUM:             return "strict_fmaxnum";
+  case ISD::FMINNUM_IEEE:               return "fminnum_ieee";
+  case ISD::FMAXNUM_IEEE:               return "fmaxnum_ieee";
+  case ISD::FMINIMUM:                   return "fminimum";
+  case ISD::FMAXIMUM:                   return "fmaximum";
   case ISD::FNEG:                       return "fneg";
   case ISD::FSQRT:                      return "fsqrt";
   case ISD::STRICT_FSQRT:               return "strict_fsqrt";
@@ -283,6 +288,9 @@ std::string SDNode::getOperationName(const SelectionDAG *G) const {
   case ISD::SRL_PARTS:                  return "srl_parts";
 
   case ISD::SADDSAT:                    return "saddsat";
+  case ISD::UADDSAT:                    return "uaddsat";
+  case ISD::SSUBSAT:                    return "ssubsat";
+  case ISD::USUBSAT:                    return "usubsat";
 
   // Conversion operators.
   case ISD::SIGN_EXTEND:                return "sign_extend";

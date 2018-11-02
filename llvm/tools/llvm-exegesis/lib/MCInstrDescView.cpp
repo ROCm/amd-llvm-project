@@ -15,6 +15,7 @@
 
 #include "llvm/ADT/STLExtras.h"
 
+namespace llvm {
 namespace exegesis {
 
 unsigned Variable::getIndex() const {
@@ -94,10 +95,10 @@ const llvm::MCOperandInfo &Operand::getExplicitOperandInfo() const {
   return *Info;
 }
 
-Instruction::Instruction(const LLVMState &State, unsigned Opcode)
-    : Description(&State.getInstrInfo().get(Opcode)),
-      Name(State.getInstrInfo().getName(Opcode)) {
-  const auto &RATC = State.getRATC();
+Instruction::Instruction(const llvm::MCInstrInfo &InstrInfo,
+                         const RegisterAliasingTrackerCache &RATC,
+                         unsigned Opcode)
+    : Description(&InstrInfo.get(Opcode)), Name(InstrInfo.getName(Opcode)) {
   unsigned OpIndex = 0;
   for (; OpIndex < Description->getNumOperands(); ++OpIndex) {
     const auto &OpInfo = Description->opInfo_begin()[OpIndex];
@@ -174,7 +175,7 @@ const Operand &Instruction::getPrimaryOperand(const Variable &Var) const {
 }
 
 bool Instruction::hasMemoryOperands() const {
-  return std::any_of(Operands.begin(), Operands.end(), [](const Operand &Op) {
+  return any_of(Operands, [](const Operand &Op) {
     return Op.isReg() && Op.isExplicit() && Op.isMemory();
   });
 }
@@ -261,6 +262,17 @@ void Instruction::dump(const llvm::MCRegisterInfo &RegInfo,
     Stream << "- hasAliasingRegisters\n";
 }
 
+InstructionsCache::InstructionsCache(const llvm::MCInstrInfo &InstrInfo,
+                                     const RegisterAliasingTrackerCache &RATC)
+    : InstrInfo(InstrInfo), RATC(RATC) {}
+
+const Instruction &InstructionsCache::getInstr(unsigned Opcode) const {
+  auto &Found = Instructions[Opcode];
+  if (!Found)
+    Found.reset(new Instruction(InstrInfo, RATC, Opcode));
+  return *Found;
+}
+
 bool RegisterOperandAssignment::
 operator==(const RegisterOperandAssignment &Other) const {
   return std::tie(Op, Reg) == std::tie(Other.Op, Other.Reg);
@@ -343,3 +355,4 @@ void DumpMCInst(const llvm::MCRegisterInfo &MCRegisterInfo,
 }
 
 } // namespace exegesis
+} // namespace llvm

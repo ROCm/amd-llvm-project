@@ -93,7 +93,7 @@ private:
   /// may be very expensive.  This method is normally called when the
   /// compilation database is changed.
   void reparseOpenedFiles();
-  void applyConfiguration(const ClangdConfigurationParamsChange &Settings);
+  void applyConfiguration(const ConfigurationSettings &Settings);
 
   /// Used to indicate that the 'shutdown' request was received from the
   /// Language Server client.
@@ -113,8 +113,6 @@ private:
     static CompilationDB
     makeDirectoryBased(llvm::Optional<Path> CompileCommandsDir);
 
-    void invalidate(PathRef File);
-
     /// Sets the compilation command for a particular file.
     /// Only valid for in-memory CDB, no-op and error log on DirectoryBasedCDB.
     ///
@@ -129,27 +127,18 @@ private:
     void setExtraFlagsForFile(PathRef File,
                               std::vector<std::string> ExtraFlags);
 
-    /// Set the compile commands directory to \p P.
-    /// Only valid for directory-based CDB, no-op and error log on InMemoryCDB;
-    void setCompileCommandsDir(Path P);
-
     /// Returns a CDB that should be used to get compile commands for the
     /// current instance of ClangdLSPServer.
-    GlobalCompilationDatabase &getCDB();
+    GlobalCompilationDatabase &getCDB() { return *CDB; }
 
   private:
     CompilationDB(std::unique_ptr<GlobalCompilationDatabase> CDB,
-                  std::unique_ptr<CachingCompilationDb> CachingCDB,
                   bool IsDirectoryBased)
-        : CDB(std::move(CDB)), CachingCDB(std::move(CachingCDB)),
-          IsDirectoryBased(IsDirectoryBased) {}
+        : CDB(std::move(CDB)), IsDirectoryBased(IsDirectoryBased) {}
 
     // if IsDirectoryBased is true, an instance of InMemoryCDB.
     // If IsDirectoryBased is false, an instance of DirectoryBasedCDB.
-    // unique_ptr<GlobalCompilationDatabase> CDB;
     std::unique_ptr<GlobalCompilationDatabase> CDB;
-    // Non-null only for directory-based CDB
-    std::unique_ptr<CachingCompilationDb> CachingCDB;
     bool IsDirectoryBased;
   };
 
@@ -162,11 +151,6 @@ private:
   std::mutex TranspWriter;
   void call(StringRef Method, llvm::json::Value Params);
   void notify(StringRef Method, llvm::json::Value Params);
-  void reply(llvm::json::Value ID, llvm::Expected<llvm::json::Value> Result);
-
-  // Various ClangdServer parameters go here. It's important they're created
-  // before ClangdServer.
-  CompilationDB CDB;
 
   RealFileSystemProvider FSProvider;
   /// Options used for code completion
@@ -183,6 +167,10 @@ private:
   // Store of the current versions of the open documents.
   DraftStore DraftMgr;
 
+  // The CDB is created by the "initialize" LSP method.
+  bool UseInMemoryCDB; // FIXME: make this a capability.
+  llvm::Optional<Path> CompileCommandsDir; // FIXME: merge with capability?
+  llvm::Optional<CompilationDB> CDB;
   // The ClangdServer is created by the "initialize" LSP method.
   // It is destroyed before run() returns, to ensure worker threads exit.
   ClangdServer::Options ClangdServerOpts;

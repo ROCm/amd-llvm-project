@@ -847,11 +847,11 @@ void AggExprEmitter::VisitCastExpr(CastExpr *E) {
   case CK_ARCExtendBlockObject:
   case CK_CopyAndAutoreleaseBlockObject:
   case CK_BuiltinFnToFnPtr:
-  case CK_ZeroToOCLEvent:
-  case CK_ZeroToOCLQueue:
+  case CK_ZeroToOCLOpaqueType:
   case CK_AddressSpaceConversion:
   case CK_IntToOCLSampler:
   case CK_FixedPointCast:
+  case CK_FixedPointToBoolean:
     llvm_unreachable("cast kind invalid for aggregate types");
   }
 }
@@ -1300,7 +1300,8 @@ static bool isSimpleZero(const Expr *E, CodeGenFunction &CGF) {
   // (int*)0 - Null pointer expressions.
   if (const CastExpr *ICE = dyn_cast<CastExpr>(E))
     return ICE->getCastKind() == CK_NullToPointer &&
-        CGF.getTypes().isPointerZeroInitializable(E->getType());
+           CGF.getTypes().isPointerZeroInitializable(E->getType()) &&
+           !E->HasSideEffects(CGF.getContext());
   // '\0'
   if (const CharacterLiteral *CL = dyn_cast<CharacterLiteral>(E))
     return CL->getValue() == 0;

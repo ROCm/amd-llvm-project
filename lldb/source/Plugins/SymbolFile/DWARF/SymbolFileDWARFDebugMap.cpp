@@ -351,7 +351,7 @@ void SymbolFileDWARFDebugMap::InitOSO() {
             so_symbol->GetType() == eSymbolTypeSourceFile &&
             oso_symbol->GetType() == eSymbolTypeObjectFile) {
           m_compile_unit_infos[i].so_file.SetFile(
-              so_symbol->GetName().AsCString(), false, FileSpec::Style::native);
+              so_symbol->GetName().AsCString(), FileSpec::Style::native);
           m_compile_unit_infos[i].oso_path = oso_symbol->GetName();
           m_compile_unit_infos[i].oso_mod_time =
               llvm::sys::toTimePoint(oso_symbol->GetIntegerValue(0));
@@ -421,10 +421,10 @@ Module *SymbolFileDWARFDebugMap::GetModuleByCompUnitInfo(
       m_oso_map[{comp_unit_info->oso_path, comp_unit_info->oso_mod_time}] =
           comp_unit_info->oso_sp;
       const char *oso_path = comp_unit_info->oso_path.GetCString();
-      FileSpec oso_file(oso_path, false);
+      FileSpec oso_file(oso_path);
       ConstString oso_object;
-      if (oso_file.Exists()) {
-        auto oso_mod_time = FileSystem::GetModificationTime(oso_file);
+      if (FileSystem::Instance().Exists(oso_file)) {
+        auto oso_mod_time = FileSystem::Instance().GetModificationTime(oso_file);
         if (oso_mod_time != comp_unit_info->oso_mod_time) {
           obj_file->GetModule()->ReportError(
               "debug map object file '%s' has changed (actual time is "
@@ -717,8 +717,10 @@ bool SymbolFileDWARFDebugMap::CompleteType(CompilerType &compiler_type) {
   return success;
 }
 
-uint32_t SymbolFileDWARFDebugMap::ResolveSymbolContext(
-    const Address &exe_so_addr, uint32_t resolve_scope, SymbolContext &sc) {
+uint32_t
+SymbolFileDWARFDebugMap::ResolveSymbolContext(const Address &exe_so_addr,
+                                              SymbolContextItem resolve_scope,
+                                              SymbolContext &sc) {
   uint32_t resolved_flags = 0;
   Symtab *symtab = m_obj_file->GetSymtab();
   if (symtab) {
@@ -760,7 +762,7 @@ uint32_t SymbolFileDWARFDebugMap::ResolveSymbolContext(
 
 uint32_t SymbolFileDWARFDebugMap::ResolveSymbolContext(
     const FileSpec &file_spec, uint32_t line, bool check_inlines,
-    uint32_t resolve_scope, SymbolContextList &sc_list) {
+    SymbolContextItem resolve_scope, SymbolContextList &sc_list) {
   const uint32_t initial = sc_list.GetSize();
   const uint32_t cu_count = GetNumCompileUnits();
 
@@ -977,7 +979,7 @@ static void RemoveFunctionsWithModuleNotEqualTo(const ModuleSP &module_sp,
 
 uint32_t SymbolFileDWARFDebugMap::FindFunctions(
     const ConstString &name, const CompilerDeclContext *parent_decl_ctx,
-    uint32_t name_type_mask, bool include_inlines, bool append,
+    FunctionNameType name_type_mask, bool include_inlines, bool append,
     SymbolContextList &sc_list) {
   static Timer::Category func_cat(LLVM_PRETTY_FUNCTION);
   Timer scoped_timer(func_cat,
@@ -1032,7 +1034,7 @@ uint32_t SymbolFileDWARFDebugMap::FindFunctions(const RegularExpression &regex,
 }
 
 size_t SymbolFileDWARFDebugMap::GetTypes(SymbolContextScope *sc_scope,
-                                         uint32_t type_mask,
+                                         lldb::TypeClass type_mask,
                                          TypeList &type_list) {
   static Timer::Category func_cat(LLVM_PRETTY_FUNCTION);
   Timer scoped_timer(func_cat,

@@ -90,124 +90,30 @@ define <4 x i32> @combine_vec_udiv_by_minsigned(<4 x i32> %x) {
   ret <4 x i32> %1
 }
 
-; TODO fold (udiv 0, x) -> 0
+; fold (udiv 0, x) -> 0
 define i32 @combine_udiv_zero(i32 %x) {
 ; CHECK-LABEL: combine_udiv_zero:
 ; CHECK:       # %bb.0:
 ; CHECK-NEXT:    xorl %eax, %eax
-; CHECK-NEXT:    xorl %edx, %edx
-; CHECK-NEXT:    divl %edi
 ; CHECK-NEXT:    retq
   %1 = udiv i32 0, %x
   ret i32 %1
 }
 
 define <4 x i32> @combine_vec_udiv_zero(<4 x i32> %x) {
-; SSE2-LABEL: combine_vec_udiv_zero:
-; SSE2:       # %bb.0:
-; SSE2-NEXT:    pshufd {{.*#+}} xmm1 = xmm0[3,1,2,3]
-; SSE2-NEXT:    movd %xmm1, %ecx
-; SSE2-NEXT:    xorl %eax, %eax
-; SSE2-NEXT:    xorl %edx, %edx
-; SSE2-NEXT:    divl %ecx
-; SSE2-NEXT:    movd %eax, %xmm1
-; SSE2-NEXT:    pshufd {{.*#+}} xmm2 = xmm0[2,3,0,1]
-; SSE2-NEXT:    movd %xmm2, %ecx
-; SSE2-NEXT:    xorl %eax, %eax
-; SSE2-NEXT:    xorl %edx, %edx
-; SSE2-NEXT:    divl %ecx
-; SSE2-NEXT:    movd %eax, %xmm2
-; SSE2-NEXT:    punpckldq {{.*#+}} xmm2 = xmm2[0],xmm1[0],xmm2[1],xmm1[1]
-; SSE2-NEXT:    movd %xmm0, %ecx
-; SSE2-NEXT:    xorl %eax, %eax
-; SSE2-NEXT:    xorl %edx, %edx
-; SSE2-NEXT:    divl %ecx
-; SSE2-NEXT:    movd %eax, %xmm1
-; SSE2-NEXT:    pshufd {{.*#+}} xmm0 = xmm0[1,1,2,3]
-; SSE2-NEXT:    movd %xmm0, %ecx
-; SSE2-NEXT:    xorl %eax, %eax
-; SSE2-NEXT:    xorl %edx, %edx
-; SSE2-NEXT:    divl %ecx
-; SSE2-NEXT:    movd %eax, %xmm0
-; SSE2-NEXT:    punpckldq {{.*#+}} xmm1 = xmm1[0],xmm0[0],xmm1[1],xmm0[1]
-; SSE2-NEXT:    punpcklqdq {{.*#+}} xmm1 = xmm1[0],xmm2[0]
-; SSE2-NEXT:    movdqa %xmm1, %xmm0
-; SSE2-NEXT:    retq
-;
-; SSE41-LABEL: combine_vec_udiv_zero:
-; SSE41:       # %bb.0:
-; SSE41-NEXT:    pextrd $1, %xmm0, %ecx
-; SSE41-NEXT:    xorl %eax, %eax
-; SSE41-NEXT:    xorl %edx, %edx
-; SSE41-NEXT:    divl %ecx
-; SSE41-NEXT:    movl %eax, %ecx
-; SSE41-NEXT:    movd %xmm0, %esi
-; SSE41-NEXT:    xorl %eax, %eax
-; SSE41-NEXT:    xorl %edx, %edx
-; SSE41-NEXT:    divl %esi
-; SSE41-NEXT:    movd %eax, %xmm1
-; SSE41-NEXT:    pinsrd $1, %ecx, %xmm1
-; SSE41-NEXT:    pextrd $2, %xmm0, %ecx
-; SSE41-NEXT:    xorl %eax, %eax
-; SSE41-NEXT:    xorl %edx, %edx
-; SSE41-NEXT:    divl %ecx
-; SSE41-NEXT:    pinsrd $2, %eax, %xmm1
-; SSE41-NEXT:    pextrd $3, %xmm0, %ecx
-; SSE41-NEXT:    xorl %eax, %eax
-; SSE41-NEXT:    xorl %edx, %edx
-; SSE41-NEXT:    divl %ecx
-; SSE41-NEXT:    pinsrd $3, %eax, %xmm1
-; SSE41-NEXT:    movdqa %xmm1, %xmm0
-; SSE41-NEXT:    retq
+; SSE-LABEL: combine_vec_udiv_zero:
+; SSE:       # %bb.0:
+; SSE-NEXT:    xorps %xmm0, %xmm0
+; SSE-NEXT:    retq
 ;
 ; AVX-LABEL: combine_vec_udiv_zero:
 ; AVX:       # %bb.0:
-; AVX-NEXT:    vpextrd $1, %xmm0, %ecx
-; AVX-NEXT:    xorl %eax, %eax
-; AVX-NEXT:    xorl %edx, %edx
-; AVX-NEXT:    divl %ecx
-; AVX-NEXT:    movl %eax, %ecx
-; AVX-NEXT:    vmovd %xmm0, %esi
-; AVX-NEXT:    xorl %eax, %eax
-; AVX-NEXT:    xorl %edx, %edx
-; AVX-NEXT:    divl %esi
-; AVX-NEXT:    vmovd %eax, %xmm1
-; AVX-NEXT:    vpinsrd $1, %ecx, %xmm1, %xmm1
-; AVX-NEXT:    vpextrd $2, %xmm0, %ecx
-; AVX-NEXT:    xorl %eax, %eax
-; AVX-NEXT:    xorl %edx, %edx
-; AVX-NEXT:    divl %ecx
-; AVX-NEXT:    vpinsrd $2, %eax, %xmm1, %xmm1
-; AVX-NEXT:    vpextrd $3, %xmm0, %ecx
-; AVX-NEXT:    xorl %eax, %eax
-; AVX-NEXT:    xorl %edx, %edx
-; AVX-NEXT:    divl %ecx
-; AVX-NEXT:    vpinsrd $3, %eax, %xmm1, %xmm0
+; AVX-NEXT:    vxorps %xmm0, %xmm0, %xmm0
 ; AVX-NEXT:    retq
 ;
 ; XOP-LABEL: combine_vec_udiv_zero:
 ; XOP:       # %bb.0:
-; XOP-NEXT:    vpextrd $1, %xmm0, %ecx
-; XOP-NEXT:    xorl %eax, %eax
-; XOP-NEXT:    xorl %edx, %edx
-; XOP-NEXT:    divl %ecx
-; XOP-NEXT:    movl %eax, %ecx
-; XOP-NEXT:    vmovd %xmm0, %esi
-; XOP-NEXT:    xorl %eax, %eax
-; XOP-NEXT:    xorl %edx, %edx
-; XOP-NEXT:    divl %esi
-; XOP-NEXT:    vmovd %eax, %xmm1
-; XOP-NEXT:    vpinsrd $1, %ecx, %xmm1, %xmm1
-; XOP-NEXT:    vpextrd $2, %xmm0, %ecx
-; XOP-NEXT:    xorl %eax, %eax
-; XOP-NEXT:    xorl %edx, %edx
-; XOP-NEXT:    divl %ecx
-; XOP-NEXT:    vpinsrd $2, %eax, %xmm1, %xmm1
-; XOP-NEXT:    vpextrd $3, %xmm0, %ecx
-; XOP-NEXT:    xorl %eax, %eax
-; XOP-NEXT:    xorl %edx, %edx
-; XOP-NEXT:    divl %ecx
-; XOP-NEXT:    vpinsrd $3, %eax, %xmm1, %xmm0
+; XOP-NEXT:    vxorps %xmm0, %xmm0, %xmm0
 ; XOP-NEXT:    retq
   %1 = udiv <4 x i32> zeroinitializer, %x
   ret <4 x i32> %1
@@ -911,166 +817,17 @@ define <8 x i16> @pr38477(<8 x i16> %a0) {
 define i1 @bool_udiv(i1 %x, i1 %y) {
 ; CHECK-LABEL: bool_udiv:
 ; CHECK:       # %bb.0:
-; CHECK-NEXT:    andb $1, %sil
-; CHECK-NEXT:    andb $1, %dil
-; CHECK-NEXT:    movzbl %dil, %eax
-; CHECK-NEXT:    # kill: def $eax killed $eax def $ax
-; CHECK-NEXT:    divb %sil
+; CHECK-NEXT:    movl %edi, %eax
+; CHECK-NEXT:    # kill: def $al killed $al killed $eax
 ; CHECK-NEXT:    retq
   %r = udiv i1 %x, %y
   ret i1 %r
 }
 
 define <4 x i1> @boolvec_udiv(<4 x i1> %x, <4 x i1> %y) {
-; SSE2-LABEL: boolvec_udiv:
-; SSE2:       # %bb.0:
-; SSE2-NEXT:    movdqa {{.*#+}} xmm2 = [1,1,1,1]
-; SSE2-NEXT:    pand %xmm2, %xmm1
-; SSE2-NEXT:    pand %xmm2, %xmm0
-; SSE2-NEXT:    pshufd {{.*#+}} xmm2 = xmm0[3,1,2,3]
-; SSE2-NEXT:    movd %xmm2, %eax
-; SSE2-NEXT:    pshufd {{.*#+}} xmm2 = xmm1[3,1,2,3]
-; SSE2-NEXT:    movd %xmm2, %ecx
-; SSE2-NEXT:    xorl %edx, %edx
-; SSE2-NEXT:    divl %ecx
-; SSE2-NEXT:    movd %eax, %xmm2
-; SSE2-NEXT:    pshufd {{.*#+}} xmm3 = xmm0[2,3,0,1]
-; SSE2-NEXT:    movd %xmm3, %eax
-; SSE2-NEXT:    pshufd {{.*#+}} xmm3 = xmm1[2,3,0,1]
-; SSE2-NEXT:    movd %xmm3, %ecx
-; SSE2-NEXT:    xorl %edx, %edx
-; SSE2-NEXT:    divl %ecx
-; SSE2-NEXT:    movd %eax, %xmm3
-; SSE2-NEXT:    punpckldq {{.*#+}} xmm3 = xmm3[0],xmm2[0],xmm3[1],xmm2[1]
-; SSE2-NEXT:    movd %xmm0, %eax
-; SSE2-NEXT:    movd %xmm1, %ecx
-; SSE2-NEXT:    xorl %edx, %edx
-; SSE2-NEXT:    divl %ecx
-; SSE2-NEXT:    movd %eax, %xmm2
-; SSE2-NEXT:    pshufd {{.*#+}} xmm0 = xmm0[1,1,2,3]
-; SSE2-NEXT:    movd %xmm0, %eax
-; SSE2-NEXT:    pshufd {{.*#+}} xmm0 = xmm1[1,1,2,3]
-; SSE2-NEXT:    movd %xmm0, %ecx
-; SSE2-NEXT:    xorl %edx, %edx
-; SSE2-NEXT:    divl %ecx
-; SSE2-NEXT:    movd %eax, %xmm0
-; SSE2-NEXT:    punpckldq {{.*#+}} xmm2 = xmm2[0],xmm0[0],xmm2[1],xmm0[1]
-; SSE2-NEXT:    punpcklqdq {{.*#+}} xmm2 = xmm2[0],xmm3[0]
-; SSE2-NEXT:    movdqa %xmm2, %xmm0
-; SSE2-NEXT:    retq
-;
-; SSE41-LABEL: boolvec_udiv:
-; SSE41:       # %bb.0:
-; SSE41-NEXT:    movdqa {{.*#+}} xmm2 = [1,1,1,1]
-; SSE41-NEXT:    pand %xmm2, %xmm1
-; SSE41-NEXT:    pand %xmm2, %xmm0
-; SSE41-NEXT:    pextrd $1, %xmm0, %eax
-; SSE41-NEXT:    pextrd $1, %xmm1, %ecx
-; SSE41-NEXT:    xorl %edx, %edx
-; SSE41-NEXT:    divl %ecx
-; SSE41-NEXT:    movl %eax, %ecx
-; SSE41-NEXT:    movd %xmm0, %eax
-; SSE41-NEXT:    movd %xmm1, %esi
-; SSE41-NEXT:    xorl %edx, %edx
-; SSE41-NEXT:    divl %esi
-; SSE41-NEXT:    movd %eax, %xmm2
-; SSE41-NEXT:    pinsrd $1, %ecx, %xmm2
-; SSE41-NEXT:    pextrd $2, %xmm0, %eax
-; SSE41-NEXT:    pextrd $2, %xmm1, %ecx
-; SSE41-NEXT:    xorl %edx, %edx
-; SSE41-NEXT:    divl %ecx
-; SSE41-NEXT:    pinsrd $2, %eax, %xmm2
-; SSE41-NEXT:    pextrd $3, %xmm0, %eax
-; SSE41-NEXT:    pextrd $3, %xmm1, %ecx
-; SSE41-NEXT:    xorl %edx, %edx
-; SSE41-NEXT:    divl %ecx
-; SSE41-NEXT:    pinsrd $3, %eax, %xmm2
-; SSE41-NEXT:    movdqa %xmm2, %xmm0
-; SSE41-NEXT:    retq
-;
-; AVX1-LABEL: boolvec_udiv:
-; AVX1:       # %bb.0:
-; AVX1-NEXT:    vmovdqa {{.*#+}} xmm2 = [1,1,1,1]
-; AVX1-NEXT:    vpand %xmm2, %xmm1, %xmm1
-; AVX1-NEXT:    vpand %xmm2, %xmm0, %xmm0
-; AVX1-NEXT:    vpextrd $1, %xmm0, %eax
-; AVX1-NEXT:    vpextrd $1, %xmm1, %ecx
-; AVX1-NEXT:    xorl %edx, %edx
-; AVX1-NEXT:    divl %ecx
-; AVX1-NEXT:    movl %eax, %ecx
-; AVX1-NEXT:    vmovd %xmm0, %eax
-; AVX1-NEXT:    vmovd %xmm1, %esi
-; AVX1-NEXT:    xorl %edx, %edx
-; AVX1-NEXT:    divl %esi
-; AVX1-NEXT:    vmovd %eax, %xmm2
-; AVX1-NEXT:    vpinsrd $1, %ecx, %xmm2, %xmm2
-; AVX1-NEXT:    vpextrd $2, %xmm0, %eax
-; AVX1-NEXT:    vpextrd $2, %xmm1, %ecx
-; AVX1-NEXT:    xorl %edx, %edx
-; AVX1-NEXT:    divl %ecx
-; AVX1-NEXT:    vpinsrd $2, %eax, %xmm2, %xmm2
-; AVX1-NEXT:    vpextrd $3, %xmm0, %eax
-; AVX1-NEXT:    vpextrd $3, %xmm1, %ecx
-; AVX1-NEXT:    xorl %edx, %edx
-; AVX1-NEXT:    divl %ecx
-; AVX1-NEXT:    vpinsrd $3, %eax, %xmm2, %xmm0
-; AVX1-NEXT:    retq
-;
-; AVX2-LABEL: boolvec_udiv:
-; AVX2:       # %bb.0:
-; AVX2-NEXT:    vpbroadcastd {{.*#+}} xmm2 = [1,1,1,1]
-; AVX2-NEXT:    vpand %xmm2, %xmm1, %xmm1
-; AVX2-NEXT:    vpand %xmm2, %xmm0, %xmm0
-; AVX2-NEXT:    vpextrd $1, %xmm0, %eax
-; AVX2-NEXT:    vpextrd $1, %xmm1, %ecx
-; AVX2-NEXT:    xorl %edx, %edx
-; AVX2-NEXT:    divl %ecx
-; AVX2-NEXT:    movl %eax, %ecx
-; AVX2-NEXT:    vmovd %xmm0, %eax
-; AVX2-NEXT:    vmovd %xmm1, %esi
-; AVX2-NEXT:    xorl %edx, %edx
-; AVX2-NEXT:    divl %esi
-; AVX2-NEXT:    vmovd %eax, %xmm2
-; AVX2-NEXT:    vpinsrd $1, %ecx, %xmm2, %xmm2
-; AVX2-NEXT:    vpextrd $2, %xmm0, %eax
-; AVX2-NEXT:    vpextrd $2, %xmm1, %ecx
-; AVX2-NEXT:    xorl %edx, %edx
-; AVX2-NEXT:    divl %ecx
-; AVX2-NEXT:    vpinsrd $2, %eax, %xmm2, %xmm2
-; AVX2-NEXT:    vpextrd $3, %xmm0, %eax
-; AVX2-NEXT:    vpextrd $3, %xmm1, %ecx
-; AVX2-NEXT:    xorl %edx, %edx
-; AVX2-NEXT:    divl %ecx
-; AVX2-NEXT:    vpinsrd $3, %eax, %xmm2, %xmm0
-; AVX2-NEXT:    retq
-;
-; XOP-LABEL: boolvec_udiv:
-; XOP:       # %bb.0:
-; XOP-NEXT:    vmovdqa {{.*#+}} xmm2 = [1,1,1,1]
-; XOP-NEXT:    vpand %xmm2, %xmm1, %xmm1
-; XOP-NEXT:    vpand %xmm2, %xmm0, %xmm0
-; XOP-NEXT:    vpextrd $1, %xmm0, %eax
-; XOP-NEXT:    vpextrd $1, %xmm1, %ecx
-; XOP-NEXT:    xorl %edx, %edx
-; XOP-NEXT:    divl %ecx
-; XOP-NEXT:    movl %eax, %ecx
-; XOP-NEXT:    vmovd %xmm0, %eax
-; XOP-NEXT:    vmovd %xmm1, %esi
-; XOP-NEXT:    xorl %edx, %edx
-; XOP-NEXT:    divl %esi
-; XOP-NEXT:    vmovd %eax, %xmm2
-; XOP-NEXT:    vpinsrd $1, %ecx, %xmm2, %xmm2
-; XOP-NEXT:    vpextrd $2, %xmm0, %eax
-; XOP-NEXT:    vpextrd $2, %xmm1, %ecx
-; XOP-NEXT:    xorl %edx, %edx
-; XOP-NEXT:    divl %ecx
-; XOP-NEXT:    vpinsrd $2, %eax, %xmm2, %xmm2
-; XOP-NEXT:    vpextrd $3, %xmm0, %eax
-; XOP-NEXT:    vpextrd $3, %xmm1, %ecx
-; XOP-NEXT:    xorl %edx, %edx
-; XOP-NEXT:    divl %ecx
-; XOP-NEXT:    vpinsrd $3, %eax, %xmm2, %xmm0
-; XOP-NEXT:    retq
+; CHECK-LABEL: boolvec_udiv:
+; CHECK:       # %bb.0:
+; CHECK-NEXT:    retq
   %r = udiv <4 x i1> %x, %y
   ret <4 x i1> %r
 }

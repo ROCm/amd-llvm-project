@@ -75,7 +75,9 @@ Status OptionValueFileSpec::SetValueFromString(llvm::StringRef value,
       // or whitespace.
       value = value.trim("\"' \t");
       m_value_was_set = true;
-      m_current_value.SetFile(value.str(), m_resolve, FileSpec::Style::native);
+      m_current_value.SetFile(value.str(), FileSpec::Style::native);
+      if (m_resolve)
+        FileSystem::Instance().Resolve(m_current_value);
       m_data_sp.reset();
       m_data_mod_time = llvm::sys::TimePoint<>();
       NotifyValueChanged();
@@ -109,7 +111,7 @@ size_t OptionValueFileSpec::AutoComplete(CommandInterpreter &interpreter,
 
 const lldb::DataBufferSP &OptionValueFileSpec::GetFileContents() {
   if (m_current_value) {
-    const auto file_mod_time = FileSystem::GetModificationTime(m_current_value);
+    const auto file_mod_time = FileSystem::Instance().GetModificationTime(m_current_value);
     if (m_data_sp && m_data_mod_time == file_mod_time)
       return m_data_sp;
     m_data_sp = DataBufferLLVM::CreateFromPath(m_current_value.GetPath());

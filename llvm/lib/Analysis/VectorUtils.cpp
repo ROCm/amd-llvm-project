@@ -54,6 +54,8 @@ bool llvm::isTriviallyVectorizable(Intrinsic::ID ID) {
   case Intrinsic::fabs:
   case Intrinsic::minnum:
   case Intrinsic::maxnum:
+  case Intrinsic::minimum:
+  case Intrinsic::maximum:
   case Intrinsic::copysign:
   case Intrinsic::floor:
   case Intrinsic::ceil:
@@ -502,6 +504,25 @@ Instruction *llvm::propagateMetadata(Instruction *Inst, ArrayRef<Value *> VL) {
   return Inst;
 }
 
+Constant *llvm::createBitMaskForGaps(IRBuilder<> &Builder, unsigned VF,
+                                           const InterleaveGroup &Group) {
+  // All 1's means mask is not needed.
+  if (Group.getNumMembers() == Group.getFactor())
+    return nullptr;
+
+  // TODO: support reversed access.
+  assert(!Group.isReverse() && "Reversed group not supported.");
+
+  SmallVector<Constant *, 16> Mask;
+  for (unsigned i = 0; i < VF; i++)
+    for (unsigned j = 0; j < Group.getFactor(); ++j) {
+      unsigned HasMember = Group.getMember(j) ? 1 : 0;
+      Mask.push_back(Builder.getInt1(HasMember));
+    }
+
+  return ConstantVector::get(Mask);
+}
+
 Constant *llvm::createReplicatedMask(IRBuilder<> &Builder, 
                                      unsigned ReplicationFactor, unsigned VF) {
   SmallVector<Constant *, 16> MaskVec;
@@ -916,4 +937,29 @@ void InterleavedAccessInfo::analyzeInterleaving(
       RequiresScalarEpilogue = true;
     }
   }
+}
+
+void InterleavedAccessInfo::invalidateGroupsRequiringScalarEpilogue() {
+  // If no group had triggered the requirement to create an epilogue loop,
+  // there is nothing to do.
+  if (!requiresScalarEpilogue())
+    return;
+
+  // Avoid releasing a Group twice.
+  SmallPtrSet<InterleaveGroup *, 4> DelSet;
+  for (auto &I : InterleaveGroupMap) {
+    InterleaveGroup *Group = I.second;
+    if (Group->requiresScalarEpilogue())
+      DelSet.insert(Group);
+  }
+  for (auto *Ptr : DelSet) {
+    LLVM_DEBUG(
+        dbgs()
+        << "LV: Invalidate candidate interleaved group due to gaps that "
+           "require a scalar epilogue (not allowed under optsize) and cannot "
+           "be masked (not enabled). \n");
+    releaseGroup(Ptr);
+  }
+
+  RequiresScalarEpilogue = false;
 }

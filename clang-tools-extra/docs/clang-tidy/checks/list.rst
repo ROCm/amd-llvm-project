@@ -5,6 +5,7 @@ Clang-Tidy Checks
 
 .. toctree::
    abseil-duration-division
+   abseil-duration-factory-float
    abseil-faster-strsplit-delimiter
    abseil-no-internal-dependencies
    abseil-no-namespace
@@ -89,6 +90,7 @@ Clang-Tidy Checks
    cppcoreguidelines-avoid-magic-numbers (redirects to readability-magic-numbers) <cppcoreguidelines-avoid-magic-numbers>
    cppcoreguidelines-c-copy-assignment-signature (redirects to misc-unconventional-assign-operator) <cppcoreguidelines-c-copy-assignment-signature>
    cppcoreguidelines-interfaces-global-init
+   cppcoreguidelines-macro-usage
    cppcoreguidelines-narrowing-conversions
    cppcoreguidelines-no-malloc
    cppcoreguidelines-non-private-member-variables-in-classes (redirects to misc-non-private-member-variables-in-classes) <cppcoreguidelines-non-private-member-variables-in-classes>
@@ -223,6 +225,7 @@ Clang-Tidy Checks
    portability-simd-intrinsics
    readability-avoid-const-params-in-decls
    readability-braces-around-statements
+   readability-const-return-type
    readability-container-size-empty
    readability-delete-null-pointer
    readability-deleted-default
@@ -231,6 +234,7 @@ Clang-Tidy Checks
    readability-identifier-naming
    readability-implicit-bool-conversion
    readability-inconsistent-declaration-parameter-name
+   readability-isolate-declaration
    readability-magic-numbers
    readability-misleading-indentation
    readability-misplaced-array-index

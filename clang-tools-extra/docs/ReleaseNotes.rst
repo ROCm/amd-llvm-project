@@ -74,6 +74,13 @@ Improvements to clang-tidy
   floating-point context, and recommends the use of a function that
   returns a floating-point value.
 
+- New :doc:`abseil-duration-factory-float
+  <clang-tidy/checks/abseil-duration-factory-float>` check.
+
+  Checks for cases where the floating-point overloads of various
+  ``absl::Duration`` factory functions are called when the more-efficient
+  integer versions could be used instead.
+
 - New :doc:`abseil-faster-strsplit-delimiter
   <clang-tidy/checks/abseil-faster-strsplit-delimiter>` check.
 
@@ -103,6 +110,12 @@ Improvements to clang-tidy
   Flags uses of ``absl::StrCat()`` to append to a ``std::string``. Suggests
   ``absl::StrAppend()`` should be used instead.
 
+- New :doc:`cppcoreguidelines-macro-usage
+  <clang-tidy/checks/cppcoreguidelines-macro-usage>` check.
+
+  Finds macro usage that is considered problematic because better language
+  constructs exist for the task.
+
 - New :doc:`misc-non-private-member-variables-in-classes
   <clang-tidy/checks/misc-non-private-member-variables-in-classes>` check.
 
@@ -122,6 +135,18 @@ Improvements to clang-tidy
 
   Detects usage of the deprecated member types of ``std::ios_base`` and replaces
   those that have a non-deprecated equivalent.
+
+- New :doc:`readability-isolate-decl
+  <clang-tidy/checks/readability-isolate-declaration>` check.
+
+  Detects local variable declarations declaring more than one variable and
+  tries to refactor the code to one statement per declaration.
+
+- New :doc:`readability-const-return-type
+  <clang-tidy/checks/readability-const-return-type>` check.
+
+  Checks for functions with a ``const``-qualified return type and recommends
+  removal of the ``const`` keyword.
 
 - New :doc:`readability-magic-numbers
   <clang-tidy/checks/readability-magic-numbers>` check.
@@ -152,6 +177,10 @@ Improvements to clang-tidy
   :doc:`readability-uppercase-literal-suffix
   <clang-tidy/checks/readability-uppercase-literal-suffix>`
   added.
+
+- The :doc:`readability-redundant-smartptr-get
+  <clang-tidy/checks/readability-redundant-smartptr-get>` check does not warn
+  about calls inside macros anymore by default.
 
 Improvements to include-fixer
 -----------------------------

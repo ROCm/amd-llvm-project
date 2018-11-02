@@ -39,7 +39,6 @@ Defined *ElfSym::MipsGp;
 Defined *ElfSym::MipsGpDisp;
 Defined *ElfSym::MipsLocalGp;
 Defined *ElfSym::RelaIpltEnd;
-Defined *ElfSym::RISCVGlobalPointer;
 
 static uint64_t getSymVA(const Symbol &Sym, int64_t &Addend) {
   switch (Sym.kind()) {
@@ -261,7 +260,7 @@ void elf::printTraceSymbol(Symbol *Sym) {
   message(toString(Sym->File) + S + Sym->getName());
 }
 
-void elf::warnUnorderableSymbol(const Symbol *Sym) {
+void elf::maybeWarnUnorderableSymbol(const Symbol *Sym) {
   if (!Config->WarnSymbolOrdering)
     return;
 

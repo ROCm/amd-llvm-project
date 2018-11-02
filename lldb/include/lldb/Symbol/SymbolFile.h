@@ -20,6 +20,14 @@
 
 #include "llvm/ADT/DenseSet.h"
 
+#include <mutex>
+
+#if defined(LLDB_CONFIGURATION_DEBUG)
+#define ASSERT_MODULE_LOCK(expr) (expr->AssertModuleLock())
+#else
+#define ASSERT_MODULE_LOCK(expr) ((void)0)
+#endif
+
 namespace lldb_private {
 
 class SymbolFile : public PluginInterface {
@@ -94,6 +102,12 @@ public:
   virtual uint32_t CalculateAbilities() = 0;
 
   //------------------------------------------------------------------
+  /// Symbols file subclasses should override this to return the Module that
+  /// owns the TypeSystem that this symbol file modifies type information in.
+  //------------------------------------------------------------------
+  virtual std::recursive_mutex &GetModuleMutex() const;
+
+  //------------------------------------------------------------------
   /// Initialize the SymbolFile object.
   ///
   /// The SymbolFile object with the best set of abilities (detected
@@ -141,11 +155,11 @@ public:
     return CompilerDeclContext();
   }
   virtual uint32_t ResolveSymbolContext(const Address &so_addr,
-                                        uint32_t resolve_scope,
+                                        lldb::SymbolContextItem resolve_scope,
                                         SymbolContext &sc) = 0;
   virtual uint32_t ResolveSymbolContext(const FileSpec &file_spec,
                                         uint32_t line, bool check_inlines,
-                                        uint32_t resolve_scope,
+                                        lldb::SymbolContextItem resolve_scope,
                                         SymbolContextList &sc_list);
   virtual uint32_t
   FindGlobalVariables(const ConstString &name,
@@ -156,8 +170,9 @@ public:
                                        VariableList &variables);
   virtual uint32_t FindFunctions(const ConstString &name,
                                  const CompilerDeclContext *parent_decl_ctx,
-                                 uint32_t name_type_mask, bool include_inlines,
-                                 bool append, SymbolContextList &sc_list);
+                                 lldb::FunctionNameType name_type_mask,
+                                 bool include_inlines, bool append,
+                                 SymbolContextList &sc_list);
   virtual uint32_t FindFunctions(const RegularExpression &regex,
                                  bool include_inlines, bool append,
                                  SymbolContextList &sc_list);
@@ -178,7 +193,7 @@ public:
   //  types) = 0;
   virtual TypeList *GetTypeList();
   virtual size_t GetTypes(lldb_private::SymbolContextScope *sc_scope,
-                          uint32_t type_mask,
+                          lldb::TypeClass type_mask,
                           lldb_private::TypeList &type_list) = 0;
 
   virtual void PreloadSymbols();
@@ -208,6 +223,8 @@ public:
   virtual void Dump(Stream &s) {}
 
 protected:
+  void AssertModuleLock();
+
   ObjectFile *m_obj_file; // The object file that symbols can be extracted from.
   uint32_t m_abilities;
   bool m_calculated_abilities;

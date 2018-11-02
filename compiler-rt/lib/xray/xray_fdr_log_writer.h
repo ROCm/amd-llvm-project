@@ -110,6 +110,44 @@ public:
     return true;
   }
 
+  bool writeCustomEvent(uint64_t TSC, uint16_t CPU, const void *Event,
+                        int32_t EventSize) {
+    // We write the metadata record and the custom event data into the buffer
+    // first, before we atomically update the extents for the buffer. This
+    // allows us to ensure that any threads reading the extents of the buffer
+    // will only ever see the full metadata and custom event payload accounted
+    // (no partial writes accounted).
+    MetadataRecord R =
+        createMetadataRecord<MetadataRecord::RecordKinds::CustomEventMarker>(
+            EventSize, TSC, CPU);
+    NextRecord = reinterpret_cast<char *>(internal_memcpy(
+                     NextRecord, reinterpret_cast<char *>(&R), sizeof(R))) +
+                 sizeof(R);
+    NextRecord = reinterpret_cast<char *>(
+                     internal_memcpy(NextRecord, Event, EventSize)) +
+                 EventSize;
+    atomic_fetch_add(&Buffer.Extents, sizeof(R) + EventSize,
+                     memory_order_acq_rel);
+    return true;
+  }
+
+  bool writeTypedEvent(uint64_t TSC, uint16_t EventType, const void *Event,
+                       int32_t EventSize) {
+    // We do something similar when writing out typed events, see
+    // writeCustomEvent(...) above for details.
+    MetadataRecord R =
+        createMetadataRecord<MetadataRecord::RecordKinds::TypedEventMarker>(
+            EventSize, TSC, EventType);
+    NextRecord = reinterpret_cast<char *>(internal_memcpy(
+                     NextRecord, reinterpret_cast<char *>(&R), sizeof(R))) +
+                 sizeof(R);
+    NextRecord = reinterpret_cast<char *>(
+                     internal_memcpy(NextRecord, Event, EventSize)) +
+                 EventSize;
+    atomic_fetch_add(&Buffer.Extents, EventSize, memory_order_acq_rel);
+    return true;
+  }
+
   char *getNextRecord() const { return NextRecord; }
 
   void resetRecord() {
@@ -118,7 +156,7 @@ public:
   }
 
   void undoWrites(size_t B) {
-    DCHECK_GE(NextRecord - B, reinterpret_cast<char*>(Buffer.Data));
+    DCHECK_GE(NextRecord - B, reinterpret_cast<char *>(Buffer.Data));
     NextRecord -= B;
     atomic_fetch_sub(&Buffer.Extents, B, memory_order_acq_rel);
   }

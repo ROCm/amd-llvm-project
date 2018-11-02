@@ -421,7 +421,7 @@ static void InitializeStandardPredefinedMacros(const TargetInfo &TI,
   Builder.defineMacro("__STDC_UTF_16__", "1");
   Builder.defineMacro("__STDC_UTF_32__", "1");
 
-  if (LangOpts.ObjC1)
+  if (LangOpts.ObjC)
     Builder.defineMacro("__OBJC__");
 
   // OpenCL v1.0/1.1 s6.9, v1.2/2.0 s6.10: Preprocessor Directives and Macros.
@@ -668,7 +668,7 @@ static void InitializePredefinedMacros(const TargetInfo &TI,
   if (!LangOpts.MSVCCompat && LangOpts.CPlusPlus11)
     Builder.defineMacro("__GXX_EXPERIMENTAL_CXX0X__");
 
-  if (LangOpts.ObjC1) {
+  if (LangOpts.ObjC) {
     if (LangOpts.ObjCRuntime.isNonFragile()) {
       Builder.defineMacro("__OBJC2__");
 
@@ -732,7 +732,7 @@ static void InitializePredefinedMacros(const TargetInfo &TI,
   if (!LangOpts.NoConstantCFStrings)
       Builder.defineMacro("__CONSTANT_CFSTRINGS__");
 
-  if (LangOpts.ObjC2)
+  if (LangOpts.ObjC)
     Builder.defineMacro("OBJC_NEW_PROPERTIES");
 
   if (LangOpts.PascalStrings)
@@ -1049,7 +1049,7 @@ static void InitializePredefinedMacros(const TargetInfo &TI,
     Builder.defineMacro("__strong", "__attribute__((objc_gc(strong)))");
     Builder.defineMacro("__autoreleasing", "");
     Builder.defineMacro("__unsafe_unretained", "");
-  } else if (LangOpts.ObjC1) {
+  } else if (LangOpts.ObjC) {
     Builder.defineMacro("__weak", "__attribute__((objc_ownership(weak)))");
     Builder.defineMacro("__strong", "__attribute__((objc_ownership(strong)))");
     Builder.defineMacro("__autoreleasing",
@@ -1163,7 +1163,7 @@ void clang::InitializePreprocessor(
 
     // Install definitions to make Objective-C++ ARC work well with various
     // C++ Standard Library implementations.
-    if (LangOpts.ObjC1 && LangOpts.CPlusPlus &&
+    if (LangOpts.ObjC && LangOpts.CPlusPlus &&
         (LangOpts.ObjCAutoRefCount || LangOpts.ObjCWeak)) {
       switch (InitOpts.ObjCXXARCStandardLibrary) {
       case ARCXX_nolib:
