@@ -9,9 +9,12 @@
 
 #include "lldb/Host/FileSystem.h"
 
+#include "lldb/Utility/LLDBAssert.h"
 #include "lldb/Utility/TildeExpressionResolver.h"
 
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/Path.h"
+#include "llvm/Support/Program.h"
 #include "llvm/Support/Threading.h"
 
 #include <algorithm>
@@ -25,17 +28,17 @@ using namespace llvm;
 FileSystem &FileSystem::Instance() { return *InstanceImpl(); }
 
 void FileSystem::Initialize() {
-  assert(!InstanceImpl());
+  lldbassert(!InstanceImpl() && "Already initialized.");
   InstanceImpl().emplace();
 }
 
 void FileSystem::Initialize(IntrusiveRefCntPtr<vfs::FileSystem> fs) {
-  assert(!InstanceImpl());
+  lldbassert(!InstanceImpl() && "Already initialized.");
   InstanceImpl().emplace(fs);
 }
 
 void FileSystem::Terminate() {
-  assert(InstanceImpl());
+  lldbassert(InstanceImpl() && "Already terminated.");
   InstanceImpl().reset();
 }
 
@@ -75,10 +78,23 @@ uint32_t FileSystem::GetPermissions(const FileSpec &file_spec) const {
   return GetPermissions(file_spec.GetPath());
 }
 
+uint32_t FileSystem::GetPermissions(const FileSpec &file_spec,
+                                    std::error_code &ec) const {
+  return GetPermissions(file_spec.GetPath(), ec);
+}
+
 uint32_t FileSystem::GetPermissions(const Twine &path) const {
+  std::error_code ec;
+  return GetPermissions(path, ec);
+}
+
+uint32_t FileSystem::GetPermissions(const Twine &path,
+                                    std::error_code &ec) const {
   ErrorOr<vfs::Status> status = m_fs->status(path);
-  if (!status)
+  if (!status) {
+    ec = status.getError();
     return sys::fs::perms::perms_not_known;
+  }
   return status->getPermissions();
 }
 
@@ -96,6 +112,36 @@ bool FileSystem::Readable(const FileSpec &file_spec) const {
   return Readable(file_spec.GetPath());
 }
 
+void FileSystem::EnumerateDirectory(Twine path, bool find_directories,
+                                    bool find_files, bool find_other,
+                                    EnumerateDirectoryCallbackType callback,
+                                    void *callback_baton) {
+  std::error_code EC;
+  vfs::recursive_directory_iterator Iter(*m_fs, path, EC);
+  vfs::recursive_directory_iterator End;
+  for (; Iter != End && !EC; Iter.increment(EC)) {
+    const auto &Item = *Iter;
+    ErrorOr<vfs::Status> Status = m_fs->status(Item.path());
+    if (!Status)
+      break;
+    if (!find_files && Status->isRegularFile())
+      continue;
+    if (!find_directories && Status->isDirectory())
+      continue;
+    if (!find_other && Status->isOther())
+      continue;
+
+    auto Result = callback(callback_baton, Status->getType(), Item.path());
+    if (Result == eEnumerateDirectoryResultQuit)
+      return;
+    if (Result == eEnumerateDirectoryResultNext) {
+      // Default behavior is to recurse. Opt out if the callback doesn't want
+      // this behavior.
+      Iter.no_push();
+    }
+  }
+}
+
 std::error_code FileSystem::MakeAbsolute(SmallVectorImpl<char> &path) const {
   return m_fs->makeAbsolute(path);
 }
@@ -108,7 +154,7 @@ std::error_code FileSystem::MakeAbsolute(FileSpec &file_spec) const {
   if (EC)
     return EC;
 
-  FileSpec new_file_spec(path, false, file_spec.GetPathStyle());
+  FileSpec new_file_spec(path, file_spec.GetPathStyle());
   file_spec = new_file_spec;
   return {};
 }
@@ -146,4 +192,38 @@ void FileSystem::Resolve(FileSpec &file_spec) {
 
   // Update the FileSpec with the resolved path.
   file_spec.SetPath(path);
+  file_spec.SetIsResolved(true);
+}
+
+bool FileSystem::ResolveExecutableLocation(FileSpec &file_spec) {
+  // If the directory is set there's nothing to do.
+  const ConstString &directory = file_spec.GetDirectory();
+  if (directory)
+    return false;
+
+  // We cannot look for a file if there's no file name.
+  const ConstString &filename = file_spec.GetFilename();
+  if (!filename)
+    return false;
+
+  // Search for the file on the host.
+  const std::string filename_str(filename.GetCString());
+  llvm::ErrorOr<std::string> error_or_path =
+      llvm::sys::findProgramByName(filename_str);
+  if (!error_or_path)
+    return false;
+
+  // findProgramByName returns "." if it can't find the file.
+  llvm::StringRef path = *error_or_path;
+  llvm::StringRef parent = llvm::sys::path::parent_path(path);
+  if (parent.empty() || parent == ".")
+    return false;
+
+  // Make sure that the result exists.
+  FileSpec result(*error_or_path);
+  if (!Exists(result))
+    return false;
+
+  file_spec = result;
+  return true;
 }

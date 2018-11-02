@@ -66,6 +66,8 @@ public:
   /// @{
   uint32_t GetPermissions(const FileSpec &file_spec) const;
   uint32_t GetPermissions(const llvm::Twine &path) const;
+  uint32_t GetPermissions(const FileSpec &file_spec, std::error_code &ec) const;
+  uint32_t GetPermissions(const llvm::Twine &path, std::error_code &ec) const;
   /// @}
 
   /// Returns whether the given file exists.
@@ -91,6 +93,31 @@ public:
   void Resolve(llvm::SmallVectorImpl<char> &path);
   void Resolve(FileSpec &file_spec);
   /// @}
+
+  /// Call into the Host to see if it can help find the file.
+  bool ResolveExecutableLocation(FileSpec &file_spec);
+
+  enum EnumerateDirectoryResult {
+    /// Enumerate next entry in the current directory.
+    eEnumerateDirectoryResultNext,
+    /// Recurse into the current entry if it is a directory or symlink, or next
+    /// if not.
+    eEnumerateDirectoryResultEnter,
+    /// Stop directory enumerations at any level.
+    eEnumerateDirectoryResultQuit
+  };
+
+  typedef EnumerateDirectoryResult (*EnumerateDirectoryCallbackType)(
+      void *baton, llvm::sys::fs::file_type file_type, llvm::StringRef);
+
+  typedef std::function<EnumerateDirectoryResult(
+      llvm::sys::fs::file_type file_type, llvm::StringRef)>
+      DirectoryCallback;
+
+  void EnumerateDirectory(llvm::Twine path, bool find_directories,
+                          bool find_files, bool find_other,
+                          EnumerateDirectoryCallbackType callback,
+                          void *callback_baton);
 
   std::error_code GetRealPath(const llvm::Twine &path,
                               llvm::SmallVectorImpl<char> &output) const;

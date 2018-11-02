@@ -18,6 +18,7 @@
 #include "lldb/Core/ModuleSpec.h"
 #include "lldb/Core/PluginManager.h"
 #include "lldb/Core/Section.h"
+#include "lldb/Host/FileSystem.h"
 #include "lldb/Symbol/DWARFCallFrameInfo.h"
 #include "lldb/Symbol/SymbolContext.h"
 #include "lldb/Target/SectionLoadList.h"
@@ -713,7 +714,8 @@ size_t ObjectFileELF::GetModuleSpecifications(
                   func_cat,
                   "Calculating module crc32 %s with size %" PRIu64 " KiB",
                   file.GetLastPathComponent().AsCString(),
-                  (file.GetByteSize() - file_offset) / 1024);
+                  (FileSystem::Instance().GetByteSize(file) - file_offset) /
+                      1024);
 
               // For core files - which usually don't happen to have a
               // gnu_debuglink, and are pretty bulky - calculating whole
@@ -953,7 +955,7 @@ lldb_private::FileSpecList ObjectFileELF::GetDebugSymbolFilePaths() {
   FileSpecList file_spec_list;
 
   if (!m_gnu_debuglink_file.empty()) {
-    FileSpec file_spec(m_gnu_debuglink_file, false);
+    FileSpec file_spec(m_gnu_debuglink_file);
     file_spec_list.Append(file_spec);
   }
   return file_spec_list;
@@ -1107,7 +1109,9 @@ size_t ObjectFileELF::ParseDependentModules() {
 
       uint32_t str_index = static_cast<uint32_t>(symbol.d_val);
       const char *lib_name = dynstr_data.PeekCStr(str_index);
-      m_filespec_ap->Append(FileSpec(lib_name, true));
+      FileSpec file_spec(lib_name);
+      FileSystem::Instance().Resolve(file_spec);
+      m_filespec_ap->Append(file_spec);
     }
   }
 
