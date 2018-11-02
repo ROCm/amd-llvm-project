@@ -869,9 +869,9 @@ public:
     case CK_FloatingToIntegral:
     case CK_FloatingToBoolean:
     case CK_FloatingCast:
-    case CK_ZeroToOCLEvent:
-    case CK_ZeroToOCLQueue:
     case CK_FixedPointCast:
+    case CK_FixedPointToBoolean:
+    case CK_ZeroToOCLOpaqueType:
       return nullptr;
     }
     llvm_unreachable("Invalid CastKind");
@@ -1783,7 +1783,7 @@ ConstantLValueEmitter::VisitPredefinedExpr(const PredefinedExpr *E) {
     return cast<ConstantAddress>(Res.getAddress());
   }
 
-  auto kind = E->getIdentType();
+  auto kind = E->getIdentKind();
   if (kind == PredefinedExpr::PrettyFunction) {
     return CGM.GetAddrOfConstantCString("top level", ".tmp");
   }

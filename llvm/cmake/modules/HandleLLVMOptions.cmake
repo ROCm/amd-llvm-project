@@ -224,6 +224,10 @@ if(NOT WIN32 AND NOT CYGWIN)
   append_if(SUPPORTS_FVISIBILITY_INLINES_HIDDEN_FLAG "-fvisibility-inlines-hidden" CMAKE_CXX_FLAGS)
 endif()
 
+if(CMAKE_SIZEOF_VOID_P EQUAL 8 AND MINGW)
+  add_definitions( -D_FILE_OFFSET_BITS=64 )
+endif()
+
 if( CMAKE_SIZEOF_VOID_P EQUAL 8 AND NOT WIN32 )
   # TODO: support other platforms and toolchains.
   if( LLVM_BUILD_32_BITS )
@@ -576,6 +580,7 @@ if (LLVM_ENABLE_WARNINGS AND (LLVM_COMPILER_IS_GCC_COMPATIBLE OR CLANG_CL))
     append("-Wno-long-long" CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
   endif()
 
+  add_flag_if_supported("-Wimplicit-fallthrough" IMPLICIT_FALLTHROUGH_FLAG)
   add_flag_if_supported("-Wcovered-switch-default" COVERED_SWITCH_DEFAULT_FLAG)
   append_if(USE_NO_UNINITIALIZED "-Wno-uninitialized" CMAKE_CXX_FLAGS)
   append_if(USE_NO_MAYBE_UNINITIALIZED "-Wno-maybe-uninitialized" CMAKE_CXX_FLAGS)

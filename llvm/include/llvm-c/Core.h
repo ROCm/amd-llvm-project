@@ -1539,16 +1539,15 @@ LLVMTypeRef LLVMX86MMXType(void);
       macro(SelectInst)                     \
       macro(ShuffleVectorInst)              \
       macro(StoreInst)                      \
-      macro(TerminatorInst)                 \
-        macro(BranchInst)                   \
-        macro(IndirectBrInst)               \
-        macro(InvokeInst)                   \
-        macro(ReturnInst)                   \
-        macro(SwitchInst)                   \
-        macro(UnreachableInst)              \
-        macro(ResumeInst)                   \
-        macro(CleanupReturnInst)            \
-        macro(CatchReturnInst)              \
+      macro(BranchInst)                     \
+      macro(IndirectBrInst)                 \
+      macro(InvokeInst)                     \
+      macro(ReturnInst)                     \
+      macro(SwitchInst)                     \
+      macro(UnreachableInst)                \
+      macro(ResumeInst)                     \
+      macro(CleanupReturnInst)              \
+      macro(CatchReturnInst)                \
       macro(FuncletPadInst)                 \
         macro(CatchPadInst)                 \
         macro(CleanupPadInst)               \
@@ -2679,7 +2678,7 @@ LLVMValueRef LLVMGetBasicBlockParent(LLVMBasicBlockRef BB);
  * If the basic block does not have a terminator (it is not well-formed
  * if it doesn't), then NULL is returned.
  *
- * The returned LLVMValueRef corresponds to a llvm::TerminatorInst.
+ * The returned LLVMValueRef corresponds to an llvm::Instruction.
  *
  * @see llvm::BasicBlock::getTerminator()
  */
@@ -2952,6 +2951,15 @@ LLVMRealPredicate LLVMGetFCmpPredicate(LLVMValueRef Inst);
 LLVMValueRef LLVMInstructionClone(LLVMValueRef Inst);
 
 /**
+ * Determine whether an instruction is a terminator. This routine is named to
+ * be compatible with historical functions that did this by querying the
+ * underlying C++ type.
+ *
+ * @see llvm::Instruction::isTerminator()
+ */
+LLVMValueRef LLVMIsATerminatorInst(LLVMValueRef Inst);
+
+/**
  * @defgroup LLVMCCoreValueInstructionCall Call Sites and Invocations
  *
  * Functions in this group apply to instructions that refer to call
@@ -3091,8 +3099,8 @@ void LLVMSetUnwindDest(LLVMValueRef InvokeInst, LLVMBasicBlockRef B);
 /**
  * @defgroup LLVMCCoreValueInstructionTerminator Terminators
  *
- * Functions in this group only apply to instructions that map to
- * llvm::TerminatorInst instances.
+ * Functions in this group only apply to instructions for which
+ * LLVMIsATerminatorInst returns true.
  *
  * @{
  */
@@ -3100,21 +3108,21 @@ void LLVMSetUnwindDest(LLVMValueRef InvokeInst, LLVMBasicBlockRef B);
 /**
  * Return the number of successors that this terminator has.
  *
- * @see llvm::TerminatorInst::getNumSuccessors
+ * @see llvm::Instruction::getNumSuccessors
  */
 unsigned LLVMGetNumSuccessors(LLVMValueRef Term);
 
 /**
  * Return the specified successor.
  *
- * @see llvm::TerminatorInst::getSuccessor
+ * @see llvm::Instruction::getSuccessor
  */
 LLVMBasicBlockRef LLVMGetSuccessor(LLVMValueRef Term, unsigned i);
 
 /**
  * Update the specified successor to point at the provided block.
  *
- * @see llvm::TerminatorInst::setSuccessor
+ * @see llvm::Instruction::setSuccessor
  */
 void LLVMSetSuccessor(LLVMValueRef Term, unsigned i, LLVMBasicBlockRef block);
 
@@ -3465,6 +3473,35 @@ LLVMValueRef LLVMBuildNot(LLVMBuilderRef, LLVMValueRef V, const char *Name);
 LLVMValueRef LLVMBuildMalloc(LLVMBuilderRef, LLVMTypeRef Ty, const char *Name);
 LLVMValueRef LLVMBuildArrayMalloc(LLVMBuilderRef, LLVMTypeRef Ty,
                                   LLVMValueRef Val, const char *Name);
+
+/**
+ * Creates and inserts a memset to the specified pointer and the 
+ * specified value.
+ *
+ * @see llvm::IRRBuilder::CreateMemSet()
+ */
+LLVMValueRef LLVMBuildMemSet(LLVMBuilderRef B, LLVMValueRef Ptr,
+                             LLVMValueRef Val, LLVMValueRef Len,
+                             unsigned Align);
+/**
+ * Creates and inserts a memcpy between the specified pointers.
+ *
+ * @see llvm::IRRBuilder::CreateMemCpy()
+ */
+LLVMValueRef LLVMBuildMemCpy(LLVMBuilderRef B, 
+                             LLVMValueRef Dst, unsigned DstAlign,
+                             LLVMValueRef Src, unsigned SrcAlign,
+                             LLVMValueRef Size);
+/**
+ * Creates and inserts a memmove between the specified pointers.
+ *
+ * @see llvm::IRRBuilder::CreateMemMove()
+ */
+LLVMValueRef LLVMBuildMemMove(LLVMBuilderRef B, 
+                              LLVMValueRef Dst, unsigned DstAlign,
+                              LLVMValueRef Src, unsigned SrcAlign,
+                              LLVMValueRef Size);
+
 LLVMValueRef LLVMBuildAlloca(LLVMBuilderRef, LLVMTypeRef Ty, const char *Name);
 LLVMValueRef LLVMBuildArrayAlloca(LLVMBuilderRef, LLVMTypeRef Ty,
                                   LLVMValueRef Val, const char *Name);

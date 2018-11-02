@@ -14,6 +14,7 @@
 #include "lldb/Core/Module.h"
 #include "lldb/Core/ModuleSpec.h"
 #include "lldb/Core/Section.h"
+#include "lldb/Host/FileSystem.h"
 #include "lldb/Host/HostInfo.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/Support/Compression.h"
@@ -29,6 +30,7 @@ using namespace lldb;
 class ObjectFileELFTest : public testing::Test {
 public:
   void SetUp() override {
+    FileSystem::Initialize();
     HostInfo::Initialize();
     ObjectFileELF::Initialize();
     SymbolVendorELF::Initialize();
@@ -38,6 +40,7 @@ public:
     SymbolVendorELF::Terminate();
     ObjectFileELF::Terminate();
     HostInfo::Terminate();
+    FileSystem::Terminate();
   }
 
 protected:
@@ -71,8 +74,8 @@ TEST_F(ObjectFileELFTest, SectionsResolveConsistently) {
   ASSERT_NO_ERROR(llvm::sys::fs::file_size(obj, size));
   ASSERT_GT(size, 0u);
 
-  ModuleSpec spec{FileSpec(obj, false)};
-  spec.GetSymbolFileSpec().SetFile(obj, false, FileSpec::Style::native);
+  ModuleSpec spec{FileSpec(obj)};
+  spec.GetSymbolFileSpec().SetFile(obj, FileSpec::Style::native);
   auto module_sp = std::make_shared<Module>(spec);
   SectionList *list = module_sp->GetSectionList();
   ASSERT_NE(nullptr, list);
@@ -131,7 +134,7 @@ Sections:
 TEST_F(ObjectFileELFTest, GetModuleSpecifications_EarlySectionHeaders) {
   std::string SO = GetInputFilePath("early-section-headers.so");
   ModuleSpecList Specs;
-  ASSERT_EQ(1u, ObjectFile::GetModuleSpecifications(FileSpec(SO, false), 0, 0, Specs));
+  ASSERT_EQ(1u, ObjectFile::GetModuleSpecifications(FileSpec(SO), 0, 0, Specs));
   ModuleSpec Spec;
   ASSERT_TRUE(Specs.GetModuleSpecAtIndex(0, Spec)) ;
   UUID Uuid;

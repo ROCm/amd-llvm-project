@@ -805,6 +805,8 @@ def fcomplete_member_pointers : Flag<["-"], "fcomplete-member-pointers">, Group<
 def fno_complete_member_pointers : Flag<["-"], "fno-complete-member-pointers">, Group<f_clang_Group>,
    Flags<[CoreOption]>,
    HelpText<"Do not require member pointer base types to be complete if they would be significant under the Microsoft ABI">;
+def fcf_runtime_abi_EQ : Joined<["-"], "fcf-runtime-abi=">, Group<f_Group>,
+    Flags<[CC1Option]>;
 def fconstant_cfstrings : Flag<["-"], "fconstant-cfstrings">, Group<f_Group>;
 def fconstant_string_class_EQ : Joined<["-"], "fconstant-string-class=">, Group<f_Group>;
 def fconstexpr_depth_EQ : Joined<["-"], "fconstexpr-depth=">, Group<f_Group>;
@@ -1544,6 +1546,10 @@ def fopenmp_cuda_force_full_runtime : Flag<["-"], "fopenmp-cuda-force-full-runti
   Flags<[CC1Option, NoArgumentUnused, HelpHidden]>;
 def fno_openmp_cuda_force_full_runtime : Flag<["-"], "fno-openmp-cuda-force-full-runtime">, Group<f_Group>,
   Flags<[NoArgumentUnused, HelpHidden]>;
+def fopenmp_cuda_number_of_sm_EQ : Joined<["-"], "fopenmp-cuda-number-of-sm=">, Group<f_Group>,
+  Flags<[CC1Option, NoArgumentUnused, HelpHidden]>;
+def fopenmp_cuda_blocks_per_sm_EQ : Joined<["-"], "fopenmp-cuda-blocks-per-sm=">, Group<f_Group>,
+  Flags<[CC1Option, NoArgumentUnused, HelpHidden]>;
 def fno_optimize_sibling_calls : Flag<["-"], "fno-optimize-sibling-calls">, Group<f_Group>;
 def foptimize_sibling_calls : Flag<["-"], "foptimize-sibling-calls">, Group<f_Group>;
 def fno_escaping_block_tail_calls : Flag<["-"], "fno-escaping-block-tail-calls">, Group<f_Group>, Flags<[CC1Option]>;
@@ -2011,6 +2017,8 @@ def mno_global_merge : Flag<["-"], "mno-global-merge">, Group<m_Group>, Flags<[C
 def mno_pascal_strings : Flag<["-"], "mno-pascal-strings">,
   Alias<fno_pascal_strings>;
 def mno_red_zone : Flag<["-"], "mno-red-zone">, Group<m_Group>;
+def mno_tls_direct_seg_refs : Flag<["-"], "mno-tls-direct-seg-refs">, Group<m_Group>, Flags<[CC1Option]>,
+  HelpText<"Disable direct TLS access through segment registers">;
 def mno_relax_all : Flag<["-"], "mno-relax-all">, Group<m_Group>;
 def mno_rtd: Flag<["-"], "mno-rtd">, Group<m_Group>;
 def mno_soft_float : Flag<["-"], "mno-soft-float">, Group<m_Group>;
@@ -2067,9 +2075,11 @@ foreach i = {8-15,18} in
   def fcall_saved_x#i : Flag<["-"], "fcall-saved-x"#i>, Group<m_aarch64_Features_Group>,
     HelpText<"Make the x"#i#" register call-saved (AArch64 only)">;
 
-def msign_return_address : Joined<["-"], "msign-return-address=">,
-  Flags<[CC1Option]>, Group<m_Group>,
-  HelpText<"Select return address signing scope">, Values<"none,all,non-leaf">;
+def msign_return_address_EQ : Joined<["-"], "msign-return-address=">,
+  Flags<[CC1Option]>, Group<m_Group>, Values<"none,all,non-leaf">,
+  HelpText<"Select return address signing scope">;
+def mbranch_protection_EQ : Joined<["-"], "mbranch-protection=">,
+  HelpText<"Enforce targets of indirect branches and function returns">;
 
 def msimd128 : Flag<["-"], "msimd128">, Group<m_wasm_Features_Group>;
 def mno_simd128 : Flag<["-"], "mno-simd128">, Group<m_wasm_Features_Group>;
@@ -2171,6 +2181,8 @@ def momit_leaf_frame_pointer : Flag<["-"], "momit-leaf-frame-pointer">, Group<m_
 def moslib_EQ : Joined<["-"], "moslib=">, Group<m_Group>;
 def mpascal_strings : Flag<["-"], "mpascal-strings">, Alias<fpascal_strings>;
 def mred_zone : Flag<["-"], "mred-zone">, Group<m_Group>;
+def mtls_direct_seg_refs : Flag<["-"], "mtls-direct-seg-refs">, Group<m_Group>,
+  HelpText<"Enable direct TLS access through segment registers (default)">;
 def mregparm_EQ : Joined<["-"], "mregparm=">, Group<m_Group>;
 def mrelax_all : Flag<["-"], "mrelax-all">, Group<m_Group>, Flags<[CC1Option,CC1AsOption]>,
   HelpText<"(integrated-as) Relax all machine instructions">;
@@ -2657,8 +2669,6 @@ def _ : Joined<["--"], "">, Flags<[Unsupported]>;
 // Hexagon feature flags.
 def mieee_rnd_near : Flag<["-"], "mieee-rnd-near">,
   Group<m_hexagon_Features_Group>;
-def mv4 : Flag<["-"], "mv4">, Group<m_hexagon_Features_Group>,
-  Alias<mcpu_EQ>, AliasArgs<["hexagonv4"]>;
 def mv5 : Flag<["-"], "mv5">, Group<m_hexagon_Features_Group>, Alias<mcpu_EQ>,
   AliasArgs<["hexagonv5"]>;
 def mv55 : Flag<["-"], "mv55">, Group<m_hexagon_Features_Group>,

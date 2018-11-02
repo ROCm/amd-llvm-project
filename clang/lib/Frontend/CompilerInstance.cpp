@@ -1024,7 +1024,7 @@ static InputKind::Language getLanguageFromOptions(const LangOptions &LangOpts) {
     return InputKind::OpenCL;
   if (LangOpts.CUDA)
     return InputKind::CUDA;
-  if (LangOpts.ObjC1)
+  if (LangOpts.ObjC)
     return LangOpts.CPlusPlus ? InputKind::ObjCXX : InputKind::ObjC;
   return LangOpts.CPlusPlus ? InputKind::CXX : InputKind::C;
 }
@@ -1269,7 +1269,7 @@ static bool compileAndLoadModule(CompilerInstance &ImportingInstance,
           << Module->Name << Locked.getErrorMessage();
       // Clear out any potential leftover.
       Locked.unsafeRemoveLockFile();
-      // FALLTHROUGH
+      LLVM_FALLTHROUGH;
     case llvm::LockFileManager::LFS_Owned:
       // We're responsible for building the module ourselves.
       if (!compileModuleImpl(ImportingInstance, ModuleNameLoc, Module,

@@ -149,7 +149,183 @@ TEST_F(MatchSelectPatternTest, FMinConstantZeroNsz) {
   expectPattern({SPF_FMINNUM, SPNB_RETURNS_OTHER, true});
 }
 
-TEST_F(MatchSelectPatternTest, VectorFMinNaN) {
+TEST_F(MatchSelectPatternTest, FMinMismatchConstantZero1) {
+  parseAssembly(
+      "define float @test(float %a) {\n"
+      "  %1 = fcmp olt float -0.0, %a\n"
+      "  %A = select i1 %1, float 0.0, float %a\n"
+      "  ret float %A\n"
+      "}\n");
+  // FIXME: The sign of zero doesn't matter in fcmp.
+  expectPattern({SPF_UNKNOWN, SPNB_NA, false});
+}
+
+TEST_F(MatchSelectPatternTest, FMinMismatchConstantZero2) {
+  parseAssembly(
+      "define float @test(float %a) {\n"
+      "  %1 = fcmp ogt float %a, -0.0\n"
+      "  %A = select i1 %1, float 0.0, float %a\n"
+      "  ret float %A\n"
+      "}\n");
+  // FIXME: The sign of zero doesn't matter in fcmp.
+  expectPattern({SPF_UNKNOWN, SPNB_NA, false});
+}
+
+TEST_F(MatchSelectPatternTest, FMinMismatchConstantZero3) {
+  parseAssembly(
+      "define float @test(float %a) {\n"
+      "  %1 = fcmp olt float 0.0, %a\n"
+      "  %A = select i1 %1, float -0.0, float %a\n"
+      "  ret float %A\n"
+      "}\n");
+  // FIXME: The sign of zero doesn't matter in fcmp.
+  expectPattern({SPF_UNKNOWN, SPNB_NA, false});
+}
+
+TEST_F(MatchSelectPatternTest, FMinMismatchConstantZero4) {
+  parseAssembly(
+      "define float @test(float %a) {\n"
+      "  %1 = fcmp ogt float %a, 0.0\n"
+      "  %A = select i1 %1, float -0.0, float %a\n"
+      "  ret float %A\n"
+      "}\n");
+  // FIXME: The sign of zero doesn't matter in fcmp.
+  expectPattern({SPF_UNKNOWN, SPNB_NA, false});
+}
+
+TEST_F(MatchSelectPatternTest, FMinMismatchConstantZero5) {
+  parseAssembly(
+      "define float @test(float %a) {\n"
+      "  %1 = fcmp ogt float -0.0, %a\n"
+      "  %A = select i1 %1, float %a, float 0.0\n"
+      "  ret float %A\n"
+      "}\n");
+  // FIXME: The sign of zero doesn't matter in fcmp.
+  expectPattern({SPF_UNKNOWN, SPNB_NA, false});
+}
+
+TEST_F(MatchSelectPatternTest, FMinMismatchConstantZero6) {
+  parseAssembly(
+      "define float @test(float %a) {\n"
+      "  %1 = fcmp olt float %a, -0.0\n"
+      "  %A = select i1 %1, float %a, float 0.0\n"
+      "  ret float %A\n"
+      "}\n");
+  // FIXME: The sign of zero doesn't matter in fcmp.
+  expectPattern({SPF_UNKNOWN, SPNB_NA, false});
+}
+
+TEST_F(MatchSelectPatternTest, FMinMismatchConstantZero7) {
+  parseAssembly(
+      "define float @test(float %a) {\n"
+      "  %1 = fcmp ogt float 0.0, %a\n"
+      "  %A = select i1 %1, float %a, float -0.0\n"
+      "  ret float %A\n"
+      "}\n");
+  // FIXME: The sign of zero doesn't matter in fcmp.
+  expectPattern({SPF_UNKNOWN, SPNB_NA, false});
+}
+
+TEST_F(MatchSelectPatternTest, FMinMismatchConstantZero8) {
+  parseAssembly(
+      "define float @test(float %a) {\n"
+      "  %1 = fcmp olt float %a, 0.0\n"
+      "  %A = select i1 %1, float %a, float -0.0\n"
+      "  ret float %A\n"
+      "}\n");
+  // FIXME: The sign of zero doesn't matter in fcmp.
+  expectPattern({SPF_UNKNOWN, SPNB_NA, false});
+}
+
+TEST_F(MatchSelectPatternTest, FMaxMismatchConstantZero1) {
+  parseAssembly(
+      "define float @test(float %a) {\n"
+      "  %1 = fcmp ogt float -0.0, %a\n"
+      "  %A = select i1 %1, float 0.0, float %a\n"
+      "  ret float %A\n"
+      "}\n");
+  // FIXME: The sign of zero doesn't matter in fcmp.
+  expectPattern({SPF_UNKNOWN, SPNB_NA, false});
+}
+
+TEST_F(MatchSelectPatternTest, FMaxMismatchConstantZero2) {
+  parseAssembly(
+      "define float @test(float %a) {\n"
+      "  %1 = fcmp olt float %a, -0.0\n"
+      "  %A = select i1 %1, float 0.0, float %a\n"
+      "  ret float %A\n"
+      "}\n");
+  // FIXME: The sign of zero doesn't matter in fcmp.
+  expectPattern({SPF_UNKNOWN, SPNB_NA, false});
+}
+
+TEST_F(MatchSelectPatternTest, FMaxMismatchConstantZero3) {
+  parseAssembly(
+      "define float @test(float %a) {\n"
+      "  %1 = fcmp ogt float 0.0, %a\n"
+      "  %A = select i1 %1, float -0.0, float %a\n"
+      "  ret float %A\n"
+      "}\n");
+  // FIXME: The sign of zero doesn't matter in fcmp.
+  expectPattern({SPF_UNKNOWN, SPNB_NA, false});
+}
+
+TEST_F(MatchSelectPatternTest, FMaxMismatchConstantZero4) {
+  parseAssembly(
+      "define float @test(float %a) {\n"
+      "  %1 = fcmp olt float %a, 0.0\n"
+      "  %A = select i1 %1, float -0.0, float %a\n"
+      "  ret float %A\n"
+      "}\n");
+  // FIXME: The sign of zero doesn't matter in fcmp.
+  expectPattern({SPF_UNKNOWN, SPNB_NA, false});
+}
+
+TEST_F(MatchSelectPatternTest, FMaxMismatchConstantZero5) {
+  parseAssembly(
+      "define float @test(float %a) {\n"
+      "  %1 = fcmp olt float -0.0, %a\n"
+      "  %A = select i1 %1, float %a, float 0.0\n"
+      "  ret float %A\n"
+      "}\n");
+  // FIXME: The sign of zero doesn't matter in fcmp.
+  expectPattern({SPF_UNKNOWN, SPNB_NA, false});
+}
+
+TEST_F(MatchSelectPatternTest, FMaxMismatchConstantZero6) {
+  parseAssembly(
+      "define float @test(float %a) {\n"
+      "  %1 = fcmp ogt float %a, -0.0\n"
+      "  %A = select i1 %1, float %a, float 0.0\n"
+      "  ret float %A\n"
+      "}\n");
+  // FIXME: The sign of zero doesn't matter in fcmp.
+  expectPattern({SPF_UNKNOWN, SPNB_NA, false});
+}
+
+TEST_F(MatchSelectPatternTest, FMaxMismatchConstantZero7) {
+  parseAssembly(
+      "define float @test(float %a) {\n"
+      "  %1 = fcmp olt float 0.0, %a\n"
+      "  %A = select i1 %1, float %a, float -0.0\n"
+      "  ret float %A\n"
+      "}\n");
+  // FIXME: The sign of zero doesn't matter in fcmp.
+  expectPattern({SPF_UNKNOWN, SPNB_NA, false});
+}
+
+TEST_F(MatchSelectPatternTest, FMaxMismatchConstantZero8) {
+  parseAssembly(
+      "define float @test(float %a) {\n"
+      "  %1 = fcmp ogt float %a, 0.0\n"
+      "  %A = select i1 %1, float %a, float -0.0\n"
+      "  ret float %A\n"
+      "}\n");
+  // FIXME: The sign of zero doesn't matter in fcmp.
+  expectPattern({SPF_UNKNOWN, SPNB_NA, false});
+}
+
+TEST_F(MatchSelectPatternTest, VectorFMinimum) {
   parseAssembly(
       "define <4 x float> @test(<4 x float> %a) {\n"
       "  %1 = fcmp ule <4 x float> %a, \n"
@@ -177,7 +353,7 @@ TEST_F(MatchSelectPatternTest, VectorFMinOtherOrdered) {
   expectPattern({SPF_FMINNUM, SPNB_RETURNS_OTHER, true});
 }
 
-TEST_F(MatchSelectPatternTest, VectorNotFMinNaN) {
+TEST_F(MatchSelectPatternTest, VectorNotFMinimum) {
   parseAssembly(
       "define <4 x float> @test(<4 x float> %a) {\n"
       "  %1 = fcmp ule <4 x float> %a, \n"
@@ -303,6 +479,26 @@ TEST(ValueTracking, ComputeNumSignBits_PR32045) {
   StringRef Assembly = "define i32 @f(i32 %a) { "
                        "  %val = ashr i32 %a, -1 "
                        "  ret i32 %val "
+                       "} ";
+
+  LLVMContext Context;
+  SMDiagnostic Error;
+  auto M = parseAssemblyString(Assembly, Error, Context);
+  assert(M && "Bad assembly?");
+
+  auto *F = M->getFunction("f");
+  assert(F && "Bad assembly?");
+
+  auto *RVal =
+      cast<ReturnInst>(F->getEntryBlock().getTerminator())->getOperand(0);
+  EXPECT_EQ(ComputeNumSignBits(RVal, M->getDataLayout()), 1u);
+}
+
+// No guarantees for canonical IR in this analysis, so this just bails out. 
+TEST(ValueTracking, ComputeNumSignBits_Shuffle) {
+  StringRef Assembly = "define <2 x i32> @f() { "
+                       "  %val = shufflevector <2 x i32> undef, <2 x i32> undef, <2 x i32> <i32 0, i32 0> "
+                       "  ret <2 x i32> %val "
                        "} ";
 
   LLVMContext Context;

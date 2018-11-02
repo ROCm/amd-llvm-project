@@ -30,6 +30,7 @@
 #include "gtest/gtest.h"
 #include <vector>
 
+using namespace llvm;
 namespace clang {
 namespace clangd {
 
@@ -184,6 +185,13 @@ TEST(QualityTests, SymbolRelevanceSignalExtraction) {
   Relevance = {};
   Relevance.merge(CodeCompletionResult(&findDecl(AST, "S::S"), 42));
   EXPECT_EQ(Relevance.Scope, SymbolRelevanceSignals::GlobalScope);
+
+  Relevance = {};
+  EXPECT_FALSE(Relevance.InBaseClass);
+  auto BaseMember = CodeCompletionResult(&findAnyDecl(AST, "y"), 42);
+  BaseMember.InBaseClass = true;
+  Relevance.merge(BaseMember);
+  EXPECT_TRUE(Relevance.InBaseClass);
 }
 
 // Do the signals move the scores in the direction we expect?
@@ -251,7 +259,7 @@ TEST(QualityTests, SymbolRelevanceSignalsSanity) {
 
   SymbolRelevanceSignals IndexProximate;
   IndexProximate.SymbolURI = "unittest:/foo/bar.h";
-  llvm::StringMap<SourceParams> ProxSources;
+  StringMap<SourceParams> ProxSources;
   ProxSources.try_emplace(testPath("foo/baz.h"));
   URIDistance Distance(ProxSources);
   IndexProximate.FileProximityMatch = &Distance;
@@ -275,6 +283,10 @@ TEST(QualityTests, SymbolRelevanceSignalsSanity) {
   EXPECT_LT(Instance.evaluate(), Default.evaluate());
   Instance.IsInstanceMember = true;
   EXPECT_EQ(Instance.evaluate(), Default.evaluate());
+
+  SymbolRelevanceSignals InBaseClass;
+  InBaseClass.InBaseClass = true;
+  EXPECT_LT(InBaseClass.evaluate(), Default.evaluate());
 }
 
 TEST(QualityTests, ScopeProximity) {
@@ -335,7 +347,7 @@ TEST(QualityTests, NoBoostForClassConstructor) {
 
   const NamedDecl *CtorDecl = &findAnyDecl(AST, [](const NamedDecl &ND) {
     return (ND.getQualifiedNameAsString() == "Foo::Foo") &&
-           llvm::isa<CXXConstructorDecl>(&ND);
+           isa<CXXConstructorDecl>(&ND);
   });
   SymbolRelevanceSignals Ctor;
   Ctor.merge(CodeCompletionResult(CtorDecl, /*Priority=*/0));
@@ -397,7 +409,7 @@ TEST(QualityTests, ConstructorQuality) {
 
   const NamedDecl *CtorDecl = &findAnyDecl(AST, [](const NamedDecl &ND) {
     return (ND.getQualifiedNameAsString() == "Foo::Foo") &&
-           llvm::isa<CXXConstructorDecl>(&ND);
+           isa<CXXConstructorDecl>(&ND);
   });
 
   SymbolQualitySignals Q;

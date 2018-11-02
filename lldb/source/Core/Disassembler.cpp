@@ -429,9 +429,9 @@ bool Disassembler::PrintInstructions(Disassembler *disasm_ptr,
       const Address &addr = inst->GetAddress();
       ModuleSP module_sp(addr.GetModule());
       if (module_sp) {
-        const uint32_t resolve_mask = eSymbolContextFunction |
-                                      eSymbolContextSymbol |
-                                      eSymbolContextLineEntry;
+        const SymbolContextItem resolve_mask = eSymbolContextFunction |
+                                               eSymbolContextSymbol |
+                                               eSymbolContextLineEntry;
         uint32_t resolved_mask =
             module_sp->ResolveSymbolContextForAddress(addr, resolve_mask, sc);
         if (resolved_mask) {
@@ -934,7 +934,7 @@ bool Instruction::TestEmulation(Stream *out_stream, const char *file_name) {
     out_stream->Printf("Instruction::TestEmulation:  Missing file_name.");
     return false;
   }
-  FILE *test_file = FileSystem::Fopen(file_name, "r");
+  FILE *test_file = FileSystem::Instance().Fopen(file_name, "r");
   if (!test_file) {
     out_stream->Printf(
         "Instruction::TestEmulation: Attempt to open test file failed.");

@@ -22,6 +22,7 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Program.h"
 
+namespace llvm {
 namespace exegesis {
 
 BenchmarkFailure::BenchmarkFailure(const llvm::Twine &S)
@@ -60,13 +61,14 @@ private:
     // (e.g. P23 on SandyBridge).
     int64_t CounterValue = 0;
     llvm::SmallVector<llvm::StringRef, 2> CounterNames;
-    llvm::StringRef(Counters).split(CounterNames, ',');
+    llvm::StringRef(Counters).split(CounterNames, '+');
     char *const ScratchPtr = Scratch->ptr();
-    for (const auto &CounterName : CounterNames) {
+    for (auto &CounterName : CounterNames) {
+      CounterName = CounterName.trim();
       pfm::PerfEvent PerfEvent(CounterName);
       if (!PerfEvent.valid())
         llvm::report_fatal_error(
-            llvm::Twine("invalid perf event ").concat(Counters));
+            llvm::Twine("invalid perf event '").concat(CounterName).concat("'"));
       pfm::Counter Counter(PerfEvent);
       Scratch->clear();
       {
@@ -74,7 +76,7 @@ private:
         llvm::CrashRecoveryContext::Enable();
         const bool Crashed = !CRC.RunSafely([this, &Counter, ScratchPtr]() {
           Counter.start();
-          Function(ScratchPtr);
+          this->Function(ScratchPtr);
           Counter.stop();
         });
         llvm::CrashRecoveryContext::Disable();
@@ -173,3 +175,4 @@ BenchmarkRunner::writeObjectFile(const BenchmarkCode &BC,
 BenchmarkRunner::FunctionExecutor::~FunctionExecutor() {}
 
 } // namespace exegesis
+} // namespace llvm

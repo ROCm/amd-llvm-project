@@ -12,11 +12,14 @@
 #include "Assembler.h"
 #include "BenchmarkRunner.h"
 #include "MCInstrDescView.h"
+#include "PerfHelper.h"
+#include "Target.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCInstBuilder.h"
 #include "llvm/Support/FormatVariadic.h"
 
+namespace llvm {
 namespace exegesis {
 
 struct ExecutionClass {
@@ -48,7 +51,7 @@ computeAliasingInstructions(const LLVMState &State, const Instruction &Instr,
   for (const unsigned OtherOpcode : Opcodes) {
     if (OtherOpcode == Instr.Description->getOpcode())
       continue;
-    const Instruction OtherInstr(State, OtherOpcode);
+    const Instruction &OtherInstr = State.getIC().getInstr(OtherOpcode);
     if (OtherInstr.hasMemoryOperands())
       continue;
     if (Instr.hasAliasingRegistersThrough(OtherInstr))
@@ -164,12 +167,7 @@ LatencySnippetGenerator::generateCodeTemplates(const Instruction &Instr) const {
 }
 
 const char *LatencyBenchmarkRunner::getCounterName() const {
-  if (!State.getSubtargetInfo().getSchedModel().hasExtraProcessorInfo())
-    llvm::report_fatal_error("sched model is missing extra processor info!");
-  const char *CounterName = State.getSubtargetInfo()
-                                .getSchedModel()
-                                .getExtraProcessorInfo()
-                                .PfmCounters.CycleCounter;
+  const char *CounterName = State.getPfmCounters().CycleCounter;
   if (!CounterName)
     llvm::report_fatal_error("sched model does not define a cycle counter");
   return CounterName;
@@ -200,3 +198,4 @@ LatencyBenchmarkRunner::runMeasurements(
 }
 
 } // namespace exegesis
+} // namespace llvm

@@ -200,7 +200,7 @@ static bool GetDeclarationForSymbol(const PDBSymbol &symbol,
   if (!src_file_up)
     return false;
 
-  FileSpec spec(src_file_up->getFileName(), /*resolve_path*/ false);
+  FileSpec spec(src_file_up->getFileName());
   decl.SetFile(spec);
   decl.SetColumn(first_line_up->getColumnNumber());
   decl.SetLine(first_line_up->getLineNumber());
@@ -288,6 +288,7 @@ GetClassOrFunctionParent(const llvm::pdb::PDBSymbol &symbol) {
     auto class_parent_id = raw.getClassParentId();
     if (auto class_parent = session.getSymbolById(class_parent_id))
       return class_parent;
+    break;
   }
   default:
     break;
@@ -1208,7 +1209,8 @@ void PDBASTParser::AddRecordBases(
     lldb_private::CompilerType &record_type, int record_kind,
     PDBBaseClassSymbolEnumerator &bases_enum,
     lldb_private::ClangASTImporter::LayoutInfo &layout_info) const {
-  std::vector<clang::CXXBaseSpecifier *> base_classes;
+  std::vector<std::unique_ptr<clang::CXXBaseSpecifier>> base_classes;
+
   while (auto base = bases_enum.getNext()) {
     auto base_type = symbol_file.ResolveTypeUID(base->getTypeId());
     if (!base_type)
@@ -1229,13 +1231,13 @@ void PDBASTParser::AddRecordBases(
 
     auto is_virtual = base->isVirtualBaseClass();
 
-    auto base_class_spec = m_ast.CreateBaseClassSpecifier(
-        base_comp_type.GetOpaqueQualType(), access, is_virtual,
-        record_kind == clang::TTK_Class);
-    if (!base_class_spec)
-      continue;
+    std::unique_ptr<clang::CXXBaseSpecifier> base_spec =
+        m_ast.CreateBaseClassSpecifier(base_comp_type.GetOpaqueQualType(),
+                                       access, is_virtual,
+                                       record_kind == clang::TTK_Class);
+    lldbassert(base_spec);
 
-    base_classes.push_back(base_class_spec);
+    base_classes.push_back(std::move(base_spec));
 
     if (is_virtual)
       continue;
@@ -1247,13 +1249,9 @@ void PDBASTParser::AddRecordBases(
     auto offset = clang::CharUnits::fromQuantity(base->getOffset());
     layout_info.base_offsets.insert(std::make_pair(decl, offset));
   }
-  if (!base_classes.empty()) {
-    m_ast.SetBaseClassesForClassType(record_type.GetOpaqueQualType(),
-                                     &base_classes.front(),
-                                     base_classes.size());
-    ClangASTContext::DeleteBaseClassSpecifiers(&base_classes.front(),
-                                               base_classes.size());
-  }
+
+  m_ast.TransferBaseClasses(record_type.GetOpaqueQualType(),
+                            std::move(base_classes));
 }
 
 void PDBASTParser::AddRecordMethods(lldb_private::SymbolFile &symbol_file,

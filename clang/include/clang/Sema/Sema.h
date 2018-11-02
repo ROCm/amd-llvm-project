@@ -491,15 +491,22 @@ public:
   /// VisContext - Manages the stack for \#pragma GCC visibility.
   void *VisContext; // Really a "PragmaVisStack*"
 
-  /// This represents the stack of attributes that were pushed by
-  /// \#pragma clang attribute.
+  /// This an attribute introduced by \#pragma clang attribute.
   struct PragmaAttributeEntry {
     SourceLocation Loc;
     ParsedAttr *Attribute;
     SmallVector<attr::SubjectMatchRule, 4> MatchRules;
     bool IsUsed;
   };
-  SmallVector<PragmaAttributeEntry, 2> PragmaAttributeStack;
+
+  /// A push'd group of PragmaAttributeEntries.
+  struct PragmaAttributeGroup {
+    /// The location of the push attribute.
+    SourceLocation Loc;
+    SmallVector<PragmaAttributeEntry, 2> Entries;
+  };
+
+  SmallVector<PragmaAttributeGroup, 2> PragmaAttributeStack;
 
   /// The declaration that is currently receiving an attribute from the
   /// #pragma attribute stack.
@@ -1994,6 +2001,7 @@ public:
                                         SourceLocation AttrEnd);
   void SetDeclDeleted(Decl *dcl, SourceLocation DelLoc);
   void SetDeclDefaulted(Decl *dcl, SourceLocation DefaultLoc);
+  void CheckStaticLocalForDllExport(VarDecl *VD);
   void FinalizeDeclaration(Decl *D);
   DeclGroupPtrTy FinalizeDeclaratorGroup(Scope *S, const DeclSpec &DS,
                                          ArrayRef<Decl *> Group);
@@ -4214,7 +4222,7 @@ public:
                       TemplateArgumentListInfo *ExplicitTemplateArgs = nullptr);
 
   ExprResult BuildPredefinedExpr(SourceLocation Loc,
-                                 PredefinedExpr::IdentType IT);
+                                 PredefinedExpr::IdentKind IK);
   ExprResult ActOnPredefinedExpr(SourceLocation Loc, tok::TokenKind Kind);
   ExprResult ActOnIntegerConstant(SourceLocation Loc, uint64_t Val);
 
@@ -5315,8 +5323,7 @@ public:
   }
   ExprResult ActOnFinishFullExpr(Expr *Expr, SourceLocation CC,
                                  bool DiscardedValue = false,
-                                 bool IsConstexpr = false,
-                                 bool IsLambdaInitCaptureInitializer = false);
+                                 bool IsConstexpr = false);
   StmtResult ActOnFinishFullStmt(Stmt *Stmt);
 
   // Marks SS invalid if it represents an incomplete type.
@@ -5581,7 +5588,9 @@ public:
   void finishLambdaExplicitCaptures(sema::LambdaScopeInfo *LSI);
 
   /// Introduce the lambda parameters into scope.
-  void addLambdaParameters(CXXMethodDecl *CallOperator, Scope *CurScope);
+  void addLambdaParameters(
+      ArrayRef<LambdaIntroducer::LambdaCapture> Captures,
+      CXXMethodDecl *CallOperator, Scope *CurScope);
 
   /// Deduce a block or lambda's return type based on the return
   /// statements present in the body.
@@ -8469,9 +8478,10 @@ public:
   /// the appropriate attribute.
   void AddCFAuditedAttribute(Decl *D);
 
-  /// Called on well-formed '\#pragma clang attribute push'.
-  void ActOnPragmaAttributePush(ParsedAttr &Attribute, SourceLocation PragmaLoc,
-                                attr::ParsedSubjectMatchRuleSet Rules);
+  void ActOnPragmaAttributeAttribute(ParsedAttr &Attribute,
+                                     SourceLocation PragmaLoc,
+                                     attr::ParsedSubjectMatchRuleSet Rules);
+  void ActOnPragmaAttributeEmptyPush(SourceLocation PragmaLoc);
 
   /// Called on well-formed '\#pragma clang attribute pop'.
   void ActOnPragmaAttributePop(SourceLocation PragmaLoc);
@@ -8684,6 +8694,10 @@ public:
   VarDecl *isOpenMPCapturedDecl(ValueDecl *D);
   ExprResult getOpenMPCapturedExpr(VarDecl *Capture, ExprValueKind VK,
                                    ExprObjectKind OK, SourceLocation Loc);
+
+  /// If the current region is a loop-based region, mark the start of the loop
+  /// construct.
+  void startOpenMPLoop();
 
   /// Check if the specified variable is used in 'private' clause.
   /// \param Level Relative level of nested OpenMP construct for that the check
@@ -9194,6 +9208,11 @@ public:
   /// Called on well-formed 'dynamic_allocators' clause.
   OMPClause *ActOnOpenMPDynamicAllocatorsClause(SourceLocation StartLoc,
                                                 SourceLocation EndLoc);
+
+  /// Called on well-formed 'atomic_default_mem_order' clause.
+  OMPClause *ActOnOpenMPAtomicDefaultMemOrderClause(
+      OpenMPAtomicDefaultMemOrderClauseKind Kind, SourceLocation KindLoc,
+      SourceLocation StartLoc, SourceLocation LParenLoc, SourceLocation EndLoc);
 
   OMPClause *ActOnOpenMPVarListClause(
       OpenMPClauseKind Kind, ArrayRef<Expr *> Vars, Expr *TailExpr,

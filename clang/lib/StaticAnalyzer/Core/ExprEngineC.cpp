@@ -379,7 +379,6 @@ void ExprEngine::VisitCast(const CastExpr *CastE, const Expr *Ex,
       case CK_BitCast:
       case CK_AddressSpaceConversion:
       case CK_BooleanToSignedIntegral:
-      case CK_NullToPointer:
       case CK_IntegralToPointer:
       case CK_PointerToIntegral: {
         SVal V = state->getSVal(Ex, LCtx);
@@ -412,11 +411,11 @@ void ExprEngine::VisitCast(const CastExpr *CastE, const Expr *Ex,
       case CK_BlockPointerToObjCPointerCast:
       case CK_AnyPointerToBlockPointerCast:
       case CK_ObjCObjectLValueCast:
-      case CK_ZeroToOCLEvent:
-      case CK_ZeroToOCLQueue:
+      case CK_ZeroToOCLOpaqueType:
       case CK_IntToOCLSampler:
       case CK_LValueBitCast:
-      case CK_FixedPointCast: {
+      case CK_FixedPointCast:
+      case CK_FixedPointToBoolean: {
         state =
             handleLValueBitCast(state, Ex, LCtx, T, ExTy, CastE, Bldr, Pred);
         continue;
@@ -499,6 +498,12 @@ void ExprEngine::VisitCast(const CastExpr *CastE, const Expr *Ex,
                                          currBldrCtx->blockCount());
         }
         state = state->BindExpr(CastE, LCtx, val);
+        Bldr.generateNode(CastE, Pred, state);
+        continue;
+      }
+      case CK_NullToPointer: {
+        SVal V = svalBuilder.makeNull();
+        state = state->BindExpr(CastE, LCtx, V);
         Bldr.generateNode(CastE, Pred, state);
         continue;
       }
@@ -957,7 +962,7 @@ void ExprEngine::VisitUnaryOperator(const UnaryOperator* U, ExplodedNode *Pred,
     }
     case UO_Plus:
       assert(!U->isGLValue());
-      // FALL-THROUGH.
+      LLVM_FALLTHROUGH;
     case UO_Deref:
     case UO_Extension: {
       handleUOExtension(I, U, Bldr);

@@ -35,6 +35,7 @@
 #include "Views/TimelineView.h"
 #include "include/Context.h"
 #include "include/Pipeline.h"
+#include "include/Support.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCObjectFileInfo.h"
@@ -68,13 +69,13 @@ static cl::opt<std::string> OutputFilename("o", cl::desc("Output filename"),
                                            cl::value_desc("filename"));
 
 static cl::opt<std::string>
-    ArchName("march", cl::desc("Target arch to assemble for, "
-                               "see -version for available targets"),
+    ArchName("march", cl::desc("Target architecture. "
+                               "See -version for available targets"),
              cl::cat(ToolOptions));
 
 static cl::opt<std::string>
-    TripleName("mtriple", cl::desc("Target triple to assemble for, "
-                                   "see -version for available targets"),
+    TripleName("mtriple",
+               cl::desc("Target triple. See -version for available targets"),
                cl::cat(ToolOptions));
 
 static cl::opt<std::string>
@@ -270,9 +271,10 @@ public:
       : MCStreamer(Context), Regions(R) {}
 
   // We only want to intercept the emission of new instructions.
-  virtual void EmitInstruction(const MCInst &Inst, const MCSubtargetInfo &STI,
+  virtual void EmitInstruction(const MCInst &Inst,
+                               const MCSubtargetInfo & /* unused */,
                                bool /* unused */) override {
-    Regions.addInstruction(llvm::make_unique<const MCInst>(Inst));
+    Regions.addInstruction(Inst);
   }
 
   bool EmitSymbolAttribute(MCSymbol *Symbol, MCSymbolAttr Attribute) override {
@@ -290,8 +292,7 @@ public:
   void EmitCOFFSymbolType(int Type) override {}
   void EndCOFFSymbolDef() override {}
 
-  const std::vector<std::unique_ptr<const MCInst>> &
-  GetInstructionSequence(unsigned Index) const {
+  ArrayRef<MCInst> GetInstructionSequence(unsigned Index) const {
     return Regions.getInstructionSequence(Index);
   }
 };
@@ -322,6 +323,16 @@ static void processViewOptions() {
   processOptionImpl(PrintDispatchStats, Default);
   processOptionImpl(PrintSchedulerStats, Default);
   processOptionImpl(PrintRetireStats, Default);
+}
+
+// Returns true on success.
+static bool runPipeline(mca::Pipeline &P) {
+  // Handle pipeline errors here.
+  if (auto Err = P.run()) {
+    WithColor::error() << toString(std::move(Err));
+    return false;
+  }
+  return true;
 }
 
 int main(int argc, char **argv) {
@@ -460,7 +471,7 @@ int main(int argc, char **argv) {
     Width = DispatchWidth;
 
   // Create an instruction builder.
-  mca::InstrBuilder IB(*STI, *MCII, *MRI, *MCIA, *IP);
+  mca::InstrBuilder IB(*STI, *MCII, *MRI, *MCIA);
 
   // Create a context to control ownership of the pipeline hardware.
   mca::Context MCA(*MRI, *STI);
@@ -470,6 +481,7 @@ int main(int argc, char **argv) {
 
   // Number each region in the sequence.
   unsigned RegionIdx = 0;
+
   for (const std::unique_ptr<mca::CodeRegion> &Region : Regions) {
     // Skip empty code regions.
     if (Region->empty())
@@ -485,26 +497,53 @@ int main(int argc, char **argv) {
       TOF->os() << "\n\n";
     }
 
-    mca::SourceMgr S(Region->getInstructions(),
-                     PrintInstructionTables ? 1 : Iterations);
+    // Lower the MCInst sequence into an mca::Instruction sequence.
+    ArrayRef<MCInst> Insts = Region->getInstructions();
+    std::vector<std::unique_ptr<mca::Instruction>> LoweredSequence;
+    for (const MCInst &MCI : Insts) {
+      llvm::Expected<std::unique_ptr<mca::Instruction>> Inst =
+          IB.createInstruction(MCI);
+      if (!Inst) {
+        if (auto NewE = handleErrors(
+                Inst.takeError(),
+                [&IP, &STI](const mca::InstructionError<MCInst> &IE) {
+                  std::string InstructionStr;
+                  raw_string_ostream SS(InstructionStr);
+                  WithColor::error() << IE.Message << '\n';
+                  IP->printInst(&IE.Inst, SS, "", *STI);
+                  SS.flush();
+                  WithColor::note() << "instruction: " << InstructionStr
+                                    << '\n';
+                })) {
+          // Default case.
+          WithColor::error() << toString(std::move(NewE));
+        }
+        return 1;
+      }
+
+      LoweredSequence.emplace_back(std::move(Inst.get()));
+    }
+
+    mca::SourceMgr S(LoweredSequence, PrintInstructionTables ? 1 : Iterations);
 
     if (PrintInstructionTables) {
       //  Create a pipeline, stages, and a printer.
       auto P = llvm::make_unique<mca::Pipeline>();
-      P->appendStage(llvm::make_unique<mca::FetchStage>(IB, S));
-      P->appendStage(llvm::make_unique<mca::InstructionTables>(SM, IB));
+      P->appendStage(llvm::make_unique<mca::FetchStage>(S));
+      P->appendStage(llvm::make_unique<mca::InstructionTables>(SM));
       mca::PipelinePrinter Printer(*P);
 
       // Create the views for this pipeline, execute, and emit a report.
       if (PrintInstructionInfoView) {
-        Printer.addView(
-            llvm::make_unique<mca::InstructionInfoView>(*STI, *MCII, S, *IP));
+        Printer.addView(llvm::make_unique<mca::InstructionInfoView>(
+            *STI, *MCII, Insts, *IP));
       }
       Printer.addView(
-          llvm::make_unique<mca::ResourcePressureView>(*STI, *IP, S));
-      auto Err = P->run();
-      if (Err)
-        report_fatal_error(toString(std::move(Err)));
+          llvm::make_unique<mca::ResourcePressureView>(*STI, *IP, Insts));
+
+      if (!runPipeline(*P))
+        return 1;
+
       Printer.printReport(TOF->os());
       continue;
     }
@@ -514,11 +553,11 @@ int main(int argc, char **argv) {
     mca::PipelinePrinter Printer(*P);
 
     if (PrintSummaryView)
-      Printer.addView(llvm::make_unique<mca::SummaryView>(SM, S, Width));
+      Printer.addView(llvm::make_unique<mca::SummaryView>(SM, Insts, Width));
 
     if (PrintInstructionInfoView)
       Printer.addView(
-          llvm::make_unique<mca::InstructionInfoView>(*STI, *MCII, S, *IP));
+          llvm::make_unique<mca::InstructionInfoView>(*STI, *MCII, Insts, *IP));
 
     if (PrintDispatchStats)
       Printer.addView(llvm::make_unique<mca::DispatchStatistics>());
@@ -534,16 +573,19 @@ int main(int argc, char **argv) {
 
     if (PrintResourcePressureView)
       Printer.addView(
-          llvm::make_unique<mca::ResourcePressureView>(*STI, *IP, S));
+          llvm::make_unique<mca::ResourcePressureView>(*STI, *IP, Insts));
 
     if (PrintTimelineView) {
+      unsigned TimelineIterations =
+          TimelineMaxIterations ? TimelineMaxIterations : 10;
       Printer.addView(llvm::make_unique<mca::TimelineView>(
-          *STI, *IP, S, TimelineMaxIterations, TimelineMaxCycles));
+          *STI, *IP, Insts, std::min(TimelineIterations, S.getNumIterations()),
+          TimelineMaxCycles));
     }
 
-    auto Err = P->run();
-    if (Err)
-      report_fatal_error(toString(std::move(Err)));
+    if (!runPipeline(*P))
+      return 1;
+
     Printer.printReport(TOF->os());
 
     // Clear the InstrBuilder internal state in preparation for another round.

@@ -390,6 +390,33 @@ private:
     return to_hexString(Value, false);
   }
 
+  template <typename T, typename TEnum>
+  std::string printFlags(T Value, ArrayRef<EnumEntry<TEnum>> EnumValues,
+                         TEnum EnumMask1 = {}, TEnum EnumMask2 = {},
+                         TEnum EnumMask3 = {}) {
+    std::string Str;
+    for (const auto &Flag : EnumValues) {
+      if (Flag.Value == 0)
+        continue;
+
+      TEnum EnumMask{};
+      if (Flag.Value & EnumMask1)
+        EnumMask = EnumMask1;
+      else if (Flag.Value & EnumMask2)
+        EnumMask = EnumMask2;
+      else if (Flag.Value & EnumMask3)
+        EnumMask = EnumMask3;
+      bool IsEnum = (Flag.Value & EnumMask) != 0;
+      if ((!IsEnum && (Value & Flag.Value) == Flag.Value) ||
+          (IsEnum && (Value & EnumMask) == Flag.Value)) {
+        if (!Str.empty())
+          Str += ", ";
+        Str += Flag.AltName;
+      }
+    }
+    return Str;
+  }
+
   formatted_raw_ostream &printField(struct Field F) {
     if (F.Column != 0)
       OS.PadToColumn(F.Column);
@@ -1167,6 +1194,7 @@ static const char *getElfSegmentType(unsigned Arch, unsigned Type) {
     switch (Type) {
     LLVM_READOBJ_ENUM_CASE(ELF, PT_ARM_EXIDX);
     }
+    break;
   case ELF::EM_MIPS:
   case ELF::EM_MIPS_RS3_LE:
     switch (Type) {
@@ -1175,6 +1203,7 @@ static const char *getElfSegmentType(unsigned Arch, unsigned Type) {
     LLVM_READOBJ_ENUM_CASE(ELF, PT_MIPS_OPTIONS);
     LLVM_READOBJ_ENUM_CASE(ELF, PT_MIPS_ABIFLAGS);
     }
+    break;
   }
 
   switch (Type) {
@@ -1221,7 +1250,7 @@ static std::string getElfPtType(unsigned Arch, unsigned Type) {
     case ELF::EM_ARM:
       if (Type == ELF::PT_ARM_EXIDX)
         return "EXIDX";
-      return "";
+      break;
     case ELF::EM_MIPS:
     case ELF::EM_MIPS_RS3_LE:
       switch (Type) {
@@ -1234,7 +1263,7 @@ static std::string getElfPtType(unsigned Arch, unsigned Type) {
       case PT_MIPS_ABIFLAGS:
         return "ABIFLAGS";
       }
-      return "";
+      break;
     }
   }
   return std::string("<unknown>: ") + to_string(format_hex(Type, 1));
@@ -1247,49 +1276,49 @@ static const EnumEntry<unsigned> ElfSegmentFlags[] = {
 };
 
 static const EnumEntry<unsigned> ElfHeaderMipsFlags[] = {
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_NOREORDER),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_PIC),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_CPIC),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_ABI2),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_32BITMODE),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_FP64),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_NAN2008),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_ABI_O32),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_ABI_O64),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_ABI_EABI32),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_ABI_EABI64),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_MACH_3900),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_MACH_4010),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_MACH_4100),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_MACH_4650),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_MACH_4120),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_MACH_4111),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_MACH_SB1),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_MACH_OCTEON),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_MACH_XLR),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_MACH_OCTEON2),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_MACH_OCTEON3),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_MACH_5400),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_MACH_5900),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_MACH_5500),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_MACH_9000),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_MACH_LS2E),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_MACH_LS2F),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_MACH_LS3A),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_MICROMIPS),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_ARCH_ASE_M16),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_ARCH_ASE_MDMX),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_ARCH_1),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_ARCH_2),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_ARCH_3),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_ARCH_4),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_ARCH_5),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_ARCH_32),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_ARCH_64),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_ARCH_32R2),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_ARCH_64R2),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_ARCH_32R6),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_MIPS_ARCH_64R6)
+  ENUM_ENT(EF_MIPS_NOREORDER, "noreorder"),
+  ENUM_ENT(EF_MIPS_PIC, "pic"),
+  ENUM_ENT(EF_MIPS_CPIC, "cpic"),
+  ENUM_ENT(EF_MIPS_ABI2, "abi2"),
+  ENUM_ENT(EF_MIPS_32BITMODE, "32bitmode"),
+  ENUM_ENT(EF_MIPS_FP64, "fp64"),
+  ENUM_ENT(EF_MIPS_NAN2008, "nan2008"),
+  ENUM_ENT(EF_MIPS_ABI_O32, "o32"),
+  ENUM_ENT(EF_MIPS_ABI_O64, "o64"),
+  ENUM_ENT(EF_MIPS_ABI_EABI32, "eabi32"),
+  ENUM_ENT(EF_MIPS_ABI_EABI64, "eabi64"),
+  ENUM_ENT(EF_MIPS_MACH_3900, "3900"),
+  ENUM_ENT(EF_MIPS_MACH_4010, "4010"),
+  ENUM_ENT(EF_MIPS_MACH_4100, "4100"),
+  ENUM_ENT(EF_MIPS_MACH_4650, "4650"),
+  ENUM_ENT(EF_MIPS_MACH_4120, "4120"),
+  ENUM_ENT(EF_MIPS_MACH_4111, "4111"),
+  ENUM_ENT(EF_MIPS_MACH_SB1, "sb1"),
+  ENUM_ENT(EF_MIPS_MACH_OCTEON, "octeon"),
+  ENUM_ENT(EF_MIPS_MACH_XLR, "xlr"),
+  ENUM_ENT(EF_MIPS_MACH_OCTEON2, "octeon2"),
+  ENUM_ENT(EF_MIPS_MACH_OCTEON3, "octeon3"),
+  ENUM_ENT(EF_MIPS_MACH_5400, "5400"),
+  ENUM_ENT(EF_MIPS_MACH_5900, "5900"),
+  ENUM_ENT(EF_MIPS_MACH_5500, "5500"),
+  ENUM_ENT(EF_MIPS_MACH_9000, "9000"),
+  ENUM_ENT(EF_MIPS_MACH_LS2E, "loongson-2e"),
+  ENUM_ENT(EF_MIPS_MACH_LS2F, "loongson-2f"),
+  ENUM_ENT(EF_MIPS_MACH_LS3A, "loongson-3a"),
+  ENUM_ENT(EF_MIPS_MICROMIPS, "micromips"),
+  ENUM_ENT(EF_MIPS_ARCH_ASE_M16, "mips16"),
+  ENUM_ENT(EF_MIPS_ARCH_ASE_MDMX, "mdmx"),
+  ENUM_ENT(EF_MIPS_ARCH_1, "mips1"),
+  ENUM_ENT(EF_MIPS_ARCH_2, "mips2"),
+  ENUM_ENT(EF_MIPS_ARCH_3, "mips3"),
+  ENUM_ENT(EF_MIPS_ARCH_4, "mips4"),
+  ENUM_ENT(EF_MIPS_ARCH_5, "mips5"),
+  ENUM_ENT(EF_MIPS_ARCH_32, "mips32"),
+  ENUM_ENT(EF_MIPS_ARCH_64, "mips64"),
+  ENUM_ENT(EF_MIPS_ARCH_32R2, "mips32r2"),
+  ENUM_ENT(EF_MIPS_ARCH_64R2, "mips64r2"),
+  ENUM_ENT(EF_MIPS_ARCH_32R6, "mips32r6"),
+  ENUM_ENT(EF_MIPS_ARCH_64R6, "mips64r6")
 };
 
 static const EnumEntry<unsigned> ElfHeaderAMDGPUFlags[] = {
@@ -1325,15 +1354,16 @@ static const EnumEntry<unsigned> ElfHeaderAMDGPUFlags[] = {
   LLVM_READOBJ_ENUM_ENT(ELF, EF_AMDGPU_MACH_AMDGCN_GFX902),
   LLVM_READOBJ_ENUM_ENT(ELF, EF_AMDGPU_MACH_AMDGCN_GFX904),
   LLVM_READOBJ_ENUM_ENT(ELF, EF_AMDGPU_MACH_AMDGCN_GFX906),
+  LLVM_READOBJ_ENUM_ENT(ELF, EF_AMDGPU_MACH_AMDGCN_GFX909),
   LLVM_READOBJ_ENUM_ENT(ELF, EF_AMDGPU_XNACK)
 };
 
 static const EnumEntry<unsigned> ElfHeaderRISCVFlags[] = {
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_RISCV_RVC),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_RISCV_FLOAT_ABI_SINGLE),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_RISCV_FLOAT_ABI_DOUBLE),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_RISCV_FLOAT_ABI_QUAD),
-  LLVM_READOBJ_ENUM_ENT(ELF, EF_RISCV_RVE)
+  ENUM_ENT(EF_RISCV_RVC, "RVC"),
+  ENUM_ENT(EF_RISCV_FLOAT_ABI_SINGLE, "single-float ABI"),
+  ENUM_ENT(EF_RISCV_FLOAT_ABI_DOUBLE, "double-float ABI"),
+  ENUM_ENT(EF_RISCV_FLOAT_ABI_QUAD, "quad-float ABI"),
+  ENUM_ENT(EF_RISCV_RVE, "RVE")
 };
 
 static const EnumEntry<unsigned> ElfSymOtherFlags[] = {
@@ -1610,29 +1640,32 @@ static const char *getTypeString(unsigned Arch, uint64_t Type) {
   case EM_HEXAGON:
     switch (Type) {
 #define HEXAGON_DYNAMIC_TAG(name, value)                                       \
-  case DT_##name:                                                              \
-    return #name;
+    case DT_##name:                                                            \
+      return #name;
 #include "llvm/BinaryFormat/DynamicTags.def"
 #undef HEXAGON_DYNAMIC_TAG
     }
+    break;
 
   case EM_MIPS:
     switch (Type) {
 #define MIPS_DYNAMIC_TAG(name, value)                                          \
-  case DT_##name:                                                              \
-    return #name;
+    case DT_##name:                                                            \
+      return #name;
 #include "llvm/BinaryFormat/DynamicTags.def"
 #undef MIPS_DYNAMIC_TAG
     }
+    break;
 
-    case EM_PPC64:
-      switch(Type) {
+  case EM_PPC64:
+    switch(Type) {
 #define PPC64_DYNAMIC_TAG(name, value)                                         \
     case DT_##name:                                                            \
       return #name;
 #include "llvm/BinaryFormat/DynamicTags.def"
 #undef PPC64_DYNAMIC_TAG
     }
+    break;
   }
 #undef DYNAMIC_TAG
   switch (Type) {
@@ -2517,7 +2550,17 @@ template <class ELFT> void GNUStyle<ELFT>::printFileHeaders(const ELFO *Obj) {
   printFields(OS, "Start of program headers:", Str);
   Str = to_string(e->e_shoff) + " (bytes into file)";
   printFields(OS, "Start of section headers:", Str);
+  std::string ElfFlags;
+  if (e->e_machine == EM_MIPS)
+    ElfFlags =
+        printFlags(e->e_flags, makeArrayRef(ElfHeaderMipsFlags),
+                   unsigned(ELF::EF_MIPS_ARCH), unsigned(ELF::EF_MIPS_ABI),
+                   unsigned(ELF::EF_MIPS_MACH));
+  else if (e->e_machine == EM_RISCV)
+    ElfFlags = printFlags(e->e_flags, makeArrayRef(ElfHeaderRISCVFlags));
   Str = "0x" + to_hexString(e->e_flags);
+  if (!ElfFlags.empty())
+    Str = Str + ", " + ElfFlags;
   printFields(OS, "Flags:", Str);
   Str = to_string(e->e_ehsize) + " (bytes)";
   printFields(OS, "Size of this header:", Str);
@@ -2791,11 +2834,13 @@ std::string getSectionTypeString(unsigned Arch, unsigned Type) {
     case SHT_ARM_OVERLAYSECTION:
       return "ARM_OVERLAYSECTION";
     }
+    break;
   case EM_X86_64:
     switch (Type) {
     case SHT_X86_64_UNWIND:
       return "X86_64_UNWIND";
     }
+    break;
   case EM_MIPS:
   case EM_MIPS_RS3_LE:
     switch (Type) {
@@ -2808,6 +2853,7 @@ std::string getSectionTypeString(unsigned Arch, unsigned Type) {
     case SHT_MIPS_DWARF:
       return "SHT_MIPS_DWARF";
     }
+    break;
   }
   switch (Type) {
   case SHT_NULL:

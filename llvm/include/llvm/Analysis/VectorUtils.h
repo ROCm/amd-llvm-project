@@ -24,6 +24,7 @@ namespace llvm {
 template <typename T> class ArrayRef;
 class DemandedBits;
 class GetElementPtrInst;
+class InterleaveGroup; 
 class Loop;
 class ScalarEvolution;
 class TargetTransformInfo;
@@ -124,6 +125,20 @@ computeMinimumValueSizes(ArrayRef<BasicBlock*> Blocks,
 ///
 /// This function always sets a (possibly null) value for each K in Kinds.
 Instruction *propagateMetadata(Instruction *I, ArrayRef<Value *> VL);
+
+/// Create a mask that filters the members of an interleave group where there
+/// are gaps.
+///
+/// For example, the mask for \p Group with interleave-factor 3
+/// and \p VF 4, that has only its first member present is:
+///
+///   <1,0,0,1,0,0,1,0,0,1,0,0>
+///
+/// Note: The result is a mask of 0's and 1's, as opposed to the other
+/// create[*]Mask() utilities which create a shuffle mask (mask that
+/// consists of indices).
+Constant *createBitMaskForGaps(IRBuilder<> &Builder, unsigned VF,
+                               const InterleaveGroup &Group);
 
 /// Create a mask with replicated elements.
 ///
@@ -308,6 +323,23 @@ public:
     propagateMetadata(NewInst, VL);
   }
 
+  /// Returns true if this Group requires a scalar iteration to handle gaps.
+  bool requiresScalarEpilogue() const {
+    // If the last member of the Group exists, then a scalar epilog is not
+    // needed for this group.
+    if (getMember(getFactor() - 1))
+      return false;
+
+    // We have a group with gaps. It therefore cannot be a group of stores,
+    // and it can't be a reversed access, because such groups get invalidated.
+    assert(!getMember(0)->mayWriteToMemory() &&
+           "Group should have been invalidated");
+    assert(!isReverse() && "Group should have been invalidated");
+
+    // This is a group of loads, with gaps, and without a last-member
+    return true;
+  }
+
 private:
   unsigned Factor; // Interleave Factor.
   bool Reverse;
@@ -345,20 +377,29 @@ public:
                         const LoopAccessInfo *LAI)
       : PSE(PSE), TheLoop(L), DT(DT), LI(LI), LAI(LAI) {}
 
-  ~InterleavedAccessInfo() {
-    SmallPtrSet<InterleaveGroup *, 4> DelSet;
-    // Avoid releasing a pointer twice.
-    for (auto &I : InterleaveGroupMap)
-      DelSet.insert(I.second);
-    for (auto *Ptr : DelSet)
-      delete Ptr;
-  }
+  ~InterleavedAccessInfo() { reset(); }
 
   /// Analyze the interleaved accesses and collect them in interleave
   /// groups. Substitute symbolic strides using \p Strides.
   /// Consider also predicated loads/stores in the analysis if
   /// \p EnableMaskedInterleavedGroup is true.
   void analyzeInterleaving(bool EnableMaskedInterleavedGroup);
+
+  /// Invalidate groups, e.g., in case all blocks in loop will be predicated
+  /// contrary to original assumption. Although we currently prevent group
+  /// formation for predicated accesses, we may be able to relax this limitation
+  /// in the future once we handle more complicated blocks.
+  void reset() {
+    SmallPtrSet<InterleaveGroup *, 4> DelSet;
+    // Avoid releasing a pointer twice.
+    for (auto &I : InterleaveGroupMap)
+      DelSet.insert(I.second);
+    for (auto *Ptr : DelSet)
+      delete Ptr;
+    InterleaveGroupMap.clear();
+    RequiresScalarEpilogue = false;
+  }
+
 
   /// Check if \p Instr belongs to any interleave group.
   bool isInterleaved(Instruction *Instr) const {
@@ -378,6 +419,11 @@ public:
   /// Returns true if an interleaved group that may access memory
   /// out-of-bounds requires a scalar epilogue iteration for correctness.
   bool requiresScalarEpilogue() const { return RequiresScalarEpilogue; }
+
+  /// Invalidate groups that require a scalar epilogue (due to gaps). This can
+  /// happen when optimizing for size forbids a scalar epilogue, and the gap
+  /// cannot be filtered by masking the load/store.
+  void invalidateGroupsRequiringScalarEpilogue();
 
 private:
   /// A wrapper around ScalarEvolution, used to add runtime SCEV checks.

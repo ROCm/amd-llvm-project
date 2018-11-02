@@ -110,6 +110,7 @@ private:
 
   /// Custom lowering for ISD::FP_ROUND for MVT::f16.
   SDValue lowerFP_ROUND(SDValue Op, SelectionDAG &DAG) const;
+  SDValue lowerFMINNUM_FMAXNUM(SDValue Op, SelectionDAG &DAG) const;
 
   SDValue getSegmentAperture(unsigned AS, const SDLoc &DL,
                              SelectionDAG &DAG) const;
@@ -153,7 +154,6 @@ private:
   SDValue performFMed3Combine(SDNode *N, DAGCombinerInfo &DCI) const;
   SDValue performCvtPkRTZCombine(SDNode *N, DAGCombinerInfo &DCI) const;
   SDValue performExtractVectorEltCombine(SDNode *N, DAGCombinerInfo &DCI) const;
-  SDValue performBuildVectorCombine(SDNode *N, DAGCombinerInfo &DCI) const;
 
   unsigned getFusedOpcode(const SelectionDAG &DAG,
                           const SDNode *N0, const SDNode *N1) const;
@@ -346,6 +346,11 @@ public:
   bool isCanonicalized(SelectionDAG &DAG, SDValue Op,
                        unsigned MaxDepth = 5) const;
   bool denormalsEnabledForType(EVT VT) const;
+
+  bool isKnownNeverNaNForTargetNode(SDValue Op,
+                                    const SelectionDAG &DAG,
+                                    bool SNaN = false,
+                                    unsigned Depth = 0) const override;
 };
 
 } // End namespace llvm

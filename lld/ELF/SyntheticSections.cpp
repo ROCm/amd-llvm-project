@@ -1491,11 +1491,11 @@ void RelocationBaseSection::addReloc(const DynamicReloc &Reloc) {
 }
 
 void RelocationBaseSection::finalizeContents() {
-  // If all relocations are R_*_RELATIVE they don't refer to any
-  // dynamic symbol and we don't need a dynamic symbol table. If that
-  // is the case, just use the index of the regular symbol table section.
-  getParent()->Link = In.DynSymTab ? In.DynSymTab->getParent()->SectionIndex
-                                   : In.SymTab->getParent()->SectionIndex;
+  // When linking glibc statically, .rel{,a}.plt contains R_*_IRELATIVE
+  // relocations due to IFUNC (e.g. strcpy). sh_link will be set to 0 in that
+  // case.
+  InputSection *SymTab = Config->Relocatable ? In.SymTab : In.DynSymTab;
+  getParent()->Link = SymTab ? SymTab->getParent()->SectionIndex : 0;
 
   if (In.RelaIplt == this || In.RelaPlt == this)
     getParent()->Info = In.GotPlt->getParent()->SectionIndex;
@@ -2595,7 +2595,7 @@ void GdbIndexSection::writeTo(uint8_t *Buf) {
   }
 }
 
-bool GdbIndexSection::empty() const { return !Out::DebugInfo; }
+bool GdbIndexSection::empty() const { return Chunks.empty(); }
 
 EhFrameHeader::EhFrameHeader()
     : SyntheticSection(SHF_ALLOC, SHT_PROGBITS, 4, ".eh_frame_hdr") {}

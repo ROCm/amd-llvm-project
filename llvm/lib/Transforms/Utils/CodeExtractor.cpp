@@ -228,19 +228,21 @@ buildExtractionBlockSet(ArrayRef<BasicBlock *> BBs, DominatorTree *DT,
 CodeExtractor::CodeExtractor(ArrayRef<BasicBlock *> BBs, DominatorTree *DT,
                              bool AggregateArgs, BlockFrequencyInfo *BFI,
                              BranchProbabilityInfo *BPI, bool AllowVarArgs,
-                             bool AllowAlloca)
+                             bool AllowAlloca, std::string Suffix)
     : DT(DT), AggregateArgs(AggregateArgs || AggregateArgsOpt), BFI(BFI),
       BPI(BPI), AllowVarArgs(AllowVarArgs),
-      Blocks(buildExtractionBlockSet(BBs, DT, AllowVarArgs, AllowAlloca)) {}
+      Blocks(buildExtractionBlockSet(BBs, DT, AllowVarArgs, AllowAlloca)),
+      Suffix(Suffix) {}
 
 CodeExtractor::CodeExtractor(DominatorTree &DT, Loop &L, bool AggregateArgs,
                              BlockFrequencyInfo *BFI,
-                             BranchProbabilityInfo *BPI)
+                             BranchProbabilityInfo *BPI, std::string Suffix)
     : DT(&DT), AggregateArgs(AggregateArgs || AggregateArgsOpt), BFI(BFI),
       BPI(BPI), AllowVarArgs(false),
       Blocks(buildExtractionBlockSet(L.getBlocks(), &DT,
                                      /* AllowVarArgs */ false,
-                                     /* AllowAlloca */ false)) {}
+                                     /* AllowAlloca */ false)),
+      Suffix(Suffix) {}
 
 /// definedInRegion - Return true if the specified value is defined in the
 /// extracted region.
@@ -669,10 +671,14 @@ Function *CodeExtractor::constructFunction(const ValueSet &inputs,
                   FunctionType::get(RetTy, paramTy,
                                     AllowVarArgs && oldFunction->isVarArg());
 
+  std::string SuffixToUse =
+      Suffix.empty()
+          ? (header->getName().empty() ? "extracted" : header->getName().str())
+          : Suffix;
   // Create the new function
   Function *newFunction = Function::Create(
       funcType, GlobalValue::InternalLinkage, oldFunction->getAddressSpace(),
-      oldFunction->getName() + "_" + header->getName(), M);
+      oldFunction->getName() + "." + SuffixToUse, M);
   // If the old function is no-throw, so is the new one.
   if (oldFunction->doesNotThrow())
     newFunction->setDoesNotThrow();
@@ -1267,24 +1273,32 @@ Function *CodeExtractor::extractCodeRegion() {
   // Look at all successors of the codeReplacer block.  If any of these blocks
   // had PHI nodes in them, we need to update the "from" block to be the code
   // replacer, not the original block in the extracted region.
-  std::vector<BasicBlock *> Succs(succ_begin(codeReplacer),
-                                  succ_end(codeReplacer));
-  for (unsigned i = 0, e = Succs.size(); i != e; ++i)
-    for (BasicBlock::iterator I = Succs[i]->begin(); isa<PHINode>(I); ++I) {
-      PHINode *PN = cast<PHINode>(I);
-      std::set<BasicBlock*> ProcessedPreds;
-      for (unsigned i = 0, e = PN->getNumIncomingValues(); i != e; ++i)
-        if (Blocks.count(PN->getIncomingBlock(i))) {
-          if (ProcessedPreds.insert(PN->getIncomingBlock(i)).second)
-            PN->setIncomingBlock(i, codeReplacer);
-          else {
-            // There were multiple entries in the PHI for this block, now there
-            // is only one, so remove the duplicated entries.
-            PN->removeIncomingValue(i, false);
-            --i; --e;
-          }
+  for (BasicBlock *SuccBB : successors(codeReplacer)) {
+    for (PHINode &PN : SuccBB->phis()) {
+      Value *IncomingCodeReplacerVal = nullptr;
+      SmallVector<unsigned, 2> IncomingValsToRemove;
+      for (unsigned I = 0, E = PN.getNumIncomingValues(); I != E; ++I) {
+        BasicBlock *IncomingBB = PN.getIncomingBlock(I);
+
+        // Ignore incoming values from outside of the extracted region.
+        if (!Blocks.count(IncomingBB))
+          continue;
+
+        // Ensure that there is only one incoming value from codeReplacer.
+        if (!IncomingCodeReplacerVal) {
+          PN.setIncomingBlock(I, codeReplacer);
+          IncomingCodeReplacerVal = PN.getIncomingValue(I);
+        } else {
+          assert(IncomingCodeReplacerVal == PN.getIncomingValue(I) &&
+                 "PHI has two incompatbile incoming values from codeRepl");
+          IncomingValsToRemove.push_back(I);
         }
+      }
+
+      for (unsigned I : reverse(IncomingValsToRemove))
+        PN.removeIncomingValue(I, /*DeletePHIIfEmpty=*/false);
     }
+  }
 
   // Erase debug info intrinsics. Variable updates within the new function are
   // invisible to debuggers. This could be improved by defining a DISubprogram

@@ -2996,6 +2996,44 @@ static Value *simplifyICmpWithBinOp(CmpInst::Predicate Pred, Value *LHS,
   return nullptr;
 }
 
+static Value *simplifyICmpWithAbsNabs(CmpInst::Predicate Pred, Value *Op0,
+                                      Value *Op1) {
+  // We need a comparison with a constant.
+  const APInt *C;
+  if (!match(Op1, m_APInt(C)))
+    return nullptr;
+
+  // matchSelectPattern returns the negation part of an abs pattern in SP1.
+  // If the negate has an NSW flag, abs(INT_MIN) is undefined. Without that
+  // constraint, we can't make a contiguous range for the result of abs.
+  ICmpInst::Predicate AbsPred = ICmpInst::BAD_ICMP_PREDICATE;
+  Value *SP0, *SP1;
+  SelectPatternFlavor SPF = matchSelectPattern(Op0, SP0, SP1).Flavor;
+  if (SPF == SelectPatternFlavor::SPF_ABS &&
+      cast<Instruction>(SP1)->hasNoSignedWrap())
+    // The result of abs(X) is >= 0 (with nsw).
+    AbsPred = ICmpInst::ICMP_SGE;
+  if (SPF == SelectPatternFlavor::SPF_NABS)
+    // The result of -abs(X) is <= 0.
+    AbsPred = ICmpInst::ICMP_SLE;
+
+  if (AbsPred == ICmpInst::BAD_ICMP_PREDICATE)
+    return nullptr;
+
+  // If there is no intersection between abs/nabs and the range of this icmp,
+  // the icmp must be false. If the abs/nabs range is a subset of the icmp
+  // range, the icmp must be true.
+  APInt Zero = APInt::getNullValue(C->getBitWidth());
+  ConstantRange AbsRange = ConstantRange::makeExactICmpRegion(AbsPred, Zero);
+  ConstantRange CmpRange = ConstantRange::makeExactICmpRegion(Pred, *C);
+  if (AbsRange.intersectWith(CmpRange).isEmptySet())
+    return getFalse(GetCompareTy(Op0));
+  if (CmpRange.contains(AbsRange))
+    return getTrue(GetCompareTy(Op0));
+
+  return nullptr;
+}
+
 /// Simplify integer comparisons where at least one operand of the compare
 /// matches an integer min/max idiom.
 static Value *simplifyICmpWithMinMax(CmpInst::Predicate Pred, Value *LHS,
@@ -3427,6 +3465,9 @@ static Value *SimplifyICmpInst(unsigned Predicate, Value *LHS, Value *RHS,
   if (Value *V = simplifyICmpWithMinMax(Pred, LHS, RHS, Q, MaxRecurse))
     return V;
 
+  if (Value *V = simplifyICmpWithAbsNabs(Pred, LHS, RHS))
+    return V;
+
   // Simplify comparisons of related pointers using a powerful, recursive
   // GEP-walk when we have target data available..
   if (LHS->getType()->isPointerTy())
@@ -3570,12 +3611,19 @@ static Value *SimplifyFCmpInst(unsigned Predicate, Value *LHS, Value *RHS,
     }
     if (C->isZero()) {
       switch (Pred) {
+      case FCmpInst::FCMP_OGE:
+        if (FMF.noNaNs() && CannotBeOrderedLessThanZero(LHS, Q.TLI))
+          return getTrue(RetTy);
+        break;
       case FCmpInst::FCMP_UGE:
         if (CannotBeOrderedLessThanZero(LHS, Q.TLI))
           return getTrue(RetTy);
         break;
+      case FCmpInst::FCMP_ULT:
+        if (FMF.noNaNs() && CannotBeOrderedLessThanZero(LHS, Q.TLI))
+          return getFalse(RetTy);
+        break;
       case FCmpInst::FCMP_OLT:
-        // X < 0
         if (CannotBeOrderedLessThanZero(LHS, Q.TLI))
           return getFalse(RetTy);
         break;
@@ -4827,13 +4875,24 @@ static Value *simplifyBinaryIntrinsic(Function *F, Value *Op0, Value *Op1,
     }
     break;
   case Intrinsic::maxnum:
-  case Intrinsic::minnum: {
+  case Intrinsic::minnum:
+  case Intrinsic::maximum:
+  case Intrinsic::minimum: {
     // If the arguments are the same, this is a no-op.
     if (Op0 == Op1) return Op0;
 
-    // If one argument is NaN or undef, return the other argument.
-    if (match(Op0, m_CombineOr(m_NaN(), m_Undef()))) return Op1;
-    if (match(Op1, m_CombineOr(m_NaN(), m_Undef()))) return Op0;
+    // If one argument is undef, return the other argument.
+    if (match(Op0, m_Undef()))
+      return Op1;
+    if (match(Op1, m_Undef()))
+      return Op0;
+
+    // If one argument is NaN, return other or NaN appropriately.
+    bool PropagateNaN = IID == Intrinsic::minimum || IID == Intrinsic::maximum;
+    if (match(Op0, m_NaN()))
+      return PropagateNaN ? Op0 : Op1;
+    if (match(Op1, m_NaN()))
+      return PropagateNaN ? Op1 : Op0;
 
     // Min/max of the same operation with common operand:
     // m(m(X, Y)), X --> m(X, Y) (4 commuted variants)
@@ -4846,9 +4905,9 @@ static Value *simplifyBinaryIntrinsic(Function *F, Value *Op0, Value *Op1,
           (M1->getOperand(0) == Op0 || M1->getOperand(1) == Op0))
         return Op1;
 
-    // minnum(X, -Inf) --> -Inf (and commuted variant)
-    // maxnum(X, +Inf) --> +Inf (and commuted variant)
-    bool UseNegInf = IID == Intrinsic::minnum;
+    // min(X, -Inf) --> -Inf (and commuted variant)
+    // max(X, +Inf) --> +Inf (and commuted variant)
+    bool UseNegInf = IID == Intrinsic::minnum || IID == Intrinsic::minimum;
     const APFloat *C;
     if ((match(Op0, m_APFloat(C)) && C->isInfinity() &&
          C->isNegative() == UseNegInf) ||
