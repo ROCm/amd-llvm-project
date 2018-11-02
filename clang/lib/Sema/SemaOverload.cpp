@@ -12324,6 +12324,83 @@ BuildRecoveryCallExpr(Sema &SemaRef, Scope *S, Expr *Fn,
                                RParenLoc);
 }
 
+static FunctionDecl *getBestCandidateForHIP(Sema &S,
+                                            UnresolvedLookupExpr *ULE,
+                                            MultiExprArg Args) {
+  OverloadCandidateSet CandidateSet{ULE->getBeginLoc(),
+                                    OverloadCandidateSet::CSK_Normal};
+  S.AddOverloadedCallCandidates(ULE, Args, CandidateSet);
+
+  if (CandidateSet.empty()) return nullptr;
+
+  auto It = CandidateSet.end();
+  CandidateSet.BestViableFunction(S, ULE->getBeginLoc(), It);
+
+  if (It != CandidateSet.end()) return It->Function;
+
+  It = std::min_element(CandidateSet.begin(), CandidateSet.end(),
+                        [&](const OverloadCandidate &C0,
+                            const OverloadCandidate &C1) {
+    unsigned int Cnt0 = 0;
+    unsigned int Cnt1 = 0;
+
+    for (decltype(Args.size()) I = 0; I != Args.size(); ++I) {
+      Cnt0 += C0.Function->parameters()[I]->getType() != Args[I]->getType();
+      Cnt1 += C1.Function->parameters()[I]->getType() != Args[I]->getType();
+    }
+
+    return Cnt0 < Cnt1;
+  });
+
+  return It->Function;
+}
+
+static void maybeCastArgsForHIPGlobalFunction(Sema &S,
+                                              UnresolvedLookupExpr *ULE,
+                                              MultiExprArg Args) {
+  static constexpr const char HIPLaunch[]{"hipLaunchKernelGGL"};
+
+  if (ULE->getName().getAsString().find(HIPLaunch) == std::string::npos) {
+    return;
+  }
+  if (!isa<UnresolvedLookupExpr>(*Args.begin())) return;
+
+  static constexpr unsigned int IgnoreCnt{5u}; // Skip launch configuration.
+
+  FunctionDecl *FD =
+    getBestCandidateForHIP(S, cast<UnresolvedLookupExpr>(*Args.begin()),
+                           MultiExprArg{Args.begin() + IgnoreCnt, Args.end()});
+
+  if (!FD) return;
+
+  std::transform(FD->param_begin(), FD->param_end(), Args.begin() + IgnoreCnt,
+                 Args.begin() + IgnoreCnt,
+                 [&](const ParmVarDecl *Formal, Expr *Actual) {
+    QualType FormalT = Formal->getType();
+    QualType ActualT = Actual->getType();
+
+    if (FormalT == ActualT) return Actual;
+    if (FormalT->isReferenceType()) return Actual;
+
+    CastKind CK;
+    if (FormalT->isPointerType()) CK = CK_NoOp;
+    if (FormalT->isIntegerType()) {
+      if (ActualT->isIntegerType()) CK = CK_IntegralCast;
+      if (ActualT->isFloatingType()) CK = CK_FloatingToIntegral;
+    }
+    if (FormalT->isFloatingType()) {
+      if (ActualT->isIntegerType()) CK = CK_FloatingToIntegral;
+      if (ActualT->isFloatingType()) CK = CK_FloatingCast;
+    }
+    // TODO: this does not handle UDTs which are convertible either via ctor
+    //       or via an user defined conversion operator, since it is unclear if
+    //       this is a valid case for a __global__ function.
+
+    return cast<Expr>(ImplicitCastExpr::Create(S.Context, FormalT, CK, Actual,
+                                               nullptr, VK_XValue));
+  });
+}
+
 /// Constructs and populates an OverloadedCandidateSet from
 /// the given function.
 /// \returns true when an the ExprResult output parameter has been set.
@@ -12350,6 +12427,10 @@ bool Sema::buildOverloadedCallSet(Scope *S, Expr *Fn,
     assert(getLangOpts().CPlusPlus && "ADL enabled in C");
   }
 #endif
+
+  if (getLangOpts().CPlusPlusAMP) {
+    maybeCastArgsForHIPGlobalFunction(*this, ULE, Args);
+  }
 
   UnbridgedCastsSet UnbridgedCasts;
   if (checkArgPlaceholdersForOverload(*this, Args, UnbridgedCasts)) {
