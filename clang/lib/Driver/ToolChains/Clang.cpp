@@ -5110,6 +5110,20 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back("-fcuda-short-ptr");
   }
 
+  if (Args.hasArg(options::OPT_hc_mode) ||
+    Args.hasArg(options::OPT_famp) ||
+    Args.getLastArgValue(options::OPT_std_EQ).equals("c++amp")) {
+
+    // Generate *relocatable* code by default for HCC
+    // In reality, HCC doesn't support relocatible code at the moment.
+    // What it really cares about is -fno-gpu-rdc, which instructs
+    // HCC to generate non-relocatable code.  This is a hint for HCC
+    // to enable early finalization because kernels don't contain calls 
+    // to functions defined in another module.
+    if (Args.hasFlag(options::OPT_fgpu_rdc, options::OPT_fno_gpu_rdc, true))
+      CmdArgs.push_back("-fgpu-rdc");
+  }
+
   // OpenMP offloading device jobs take the argument -fopenmp-host-ir-file-path
   // to specify the result of the compile phase on the host, so the meaningful
   // device declarations can be identified. Also, -fopenmp-is-device is passed
