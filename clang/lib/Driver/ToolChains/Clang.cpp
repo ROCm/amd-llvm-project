@@ -4365,6 +4365,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       Args.AddLastArg(CmdArgs, options::OPT_fopenmp_simd,
                       options::OPT_fno_openmp_simd);
       Args.AddAllArgs(CmdArgs, options::OPT_fopenmp_version_EQ);
+      Args.AddAllArgs(CmdArgs, options::OPT_fopenmp_cuda_number_of_sm_EQ);
+      Args.AddAllArgs(CmdArgs, options::OPT_fopenmp_cuda_blocks_per_sm_EQ);
 
       // When in OpenMP offloading mode with NVPTX target, forward
       // cuda-mode flag
@@ -5606,6 +5608,11 @@ void Clang::AddClangCLArgs(const ArgList &Args, types::ID InputType,
 
   if (VolatileOptionID == options::OPT__SLASH_volatile_ms)
     CmdArgs.push_back("-fms-volatile");
+
+ if (Args.hasFlag(options::OPT__SLASH_Zc_dllexportInlines_,
+                  options::OPT__SLASH_Zc_dllexportInlines,
+                  false))
+    CmdArgs.push_back("-fno-dllexport-inlines");
 
   Arg *MostGeneralArg = Args.getLastArg(options::OPT__SLASH_vmg);
   Arg *BestCaseArg = Args.getLastArg(options::OPT__SLASH_vmb);

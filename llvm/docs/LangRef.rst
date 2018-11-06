@@ -14016,7 +14016,7 @@ value operands and has the same type as the operands.  The remainder has the
 same sign as the dividend.
 
 '``llvm.experimental.constrained.fma``' Intrinsic
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Syntax:
 """""""
@@ -14507,7 +14507,7 @@ mode argument is only intended as information to the compiler.
 
 
 '``llvm.experimental.constrained.maxnum``' Intrinsic
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Syntax:
 """""""
@@ -14544,7 +14544,7 @@ mode argument is only intended as information to the compiler.
 
 
 '``llvm.experimental.constrained.minnum``' Intrinsic
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Syntax:
 """""""
@@ -14578,6 +14578,151 @@ This function follows the IEEE-754 semantics for minNum. The rounding mode is
 described, not determined, by the rounding mode argument. The actual rounding
 mode is determined by the runtime floating-point environment. The rounding
 mode argument is only intended as information to the compiler.
+
+
+'``llvm.experimental.constrained.ceil``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+::
+
+      declare <type>
+      @llvm.experimental.constrained.ceil(<type> <op1>,
+                                          metadata <rounding mode>,
+                                          metadata <exception behavior>)
+
+Overview:
+"""""""""
+
+The '``llvm.experimental.constrained.ceil``' intrinsic returns the ceiling of the 
+first operand.
+
+Arguments:
+""""""""""
+
+The first argument and the return value are floating-point numbers of the same
+type.
+
+The second and third arguments specify the rounding mode and exception
+behavior as described above. The rounding mode is currently unused for this
+intrinsic.
+
+Semantics:
+""""""""""
+
+This function returns the same values as the libm ``ceil`` functions
+would and handles error conditions in the same way.
+
+
+'``llvm.experimental.constrained.floor``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+::
+
+      declare <type>
+      @llvm.experimental.constrained.floor(<type> <op1>,
+                                           metadata <rounding mode>,
+                                           metadata <exception behavior>)
+
+Overview:
+"""""""""
+
+The '``llvm.experimental.constrained.floor``' intrinsic returns the floor of the 
+first operand.
+
+Arguments:
+""""""""""
+
+The first argument and the return value are floating-point numbers of the same
+type.
+
+The second and third arguments specify the rounding mode and exception
+behavior as described above. The rounding mode is currently unused for this
+intrinsic.
+
+Semantics:
+""""""""""
+
+This function returns the same values as the libm ``floor`` functions
+would and handles error conditions in the same way. 
+
+
+'``llvm.experimental.constrained.round``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+::
+
+      declare <type>
+      @llvm.experimental.constrained.round(<type> <op1>,
+                                           metadata <rounding mode>,
+                                           metadata <exception behavior>)
+
+Overview:
+"""""""""
+
+The '``llvm.experimental.constrained.round``' intrinsic returns the first 
+operand rounded to the nearest integer.
+
+Arguments:
+""""""""""
+
+The first argument and the return value are floating-point numbers of the same
+type.
+
+The second and third arguments specify the rounding mode and exception
+behavior as described above. The rounding mode is currently unused for this
+intrinsic.
+
+Semantics:
+""""""""""
+
+This function returns the same values as the libm ``round`` functions
+would and handles error conditions in the same way.
+
+
+'``llvm.experimental.constrained.trunc``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+::
+
+      declare <type>
+      @llvm.experimental.constrained.trunc(<type> <op1>,
+                                           metadata <truncing mode>,
+                                           metadata <exception behavior>)
+
+Overview:
+"""""""""
+
+The '``llvm.experimental.constrained.trunc``' intrinsic returns the first 
+operand rounded to the nearest integer not larger in magnitude than the 
+operand.
+
+Arguments:
+""""""""""
+
+The first argument and the return value are floating-point numbers of the same
+type.
+
+The second and third arguments specify the truncing mode and exception
+behavior as described above. The truncing mode is currently unused for this
+intrinsic.
+
+Semantics:
+""""""""""
+
+This function returns the same values as the libm ``trunc`` functions
+would and handles error conditions in the same way.
 
 
 General Intrinsics

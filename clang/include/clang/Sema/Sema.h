@@ -9295,6 +9295,11 @@ public:
   OMPClause *ActOnOpenMPDynamicAllocatorsClause(SourceLocation StartLoc,
                                                 SourceLocation EndLoc);
 
+  /// Called on well-formed 'atomic_default_mem_order' clause.
+  OMPClause *ActOnOpenMPAtomicDefaultMemOrderClause(
+      OpenMPAtomicDefaultMemOrderClauseKind Kind, SourceLocation KindLoc,
+      SourceLocation StartLoc, SourceLocation LParenLoc, SourceLocation EndLoc);
+
   OMPClause *ActOnOpenMPVarListClause(
       OpenMPClauseKind Kind, ArrayRef<Expr *> Vars, Expr *TailExpr,
       SourceLocation StartLoc, SourceLocation LParenLoc,
@@ -10672,7 +10677,8 @@ private:
   /// Check if there is a field shadowing.
   void CheckShadowInheritedFields(const SourceLocation &Loc,
                                   DeclarationName FieldName,
-                                  const CXXRecordDecl *RD);
+                                  const CXXRecordDecl *RD,
+                                  bool DeclIsField = true);
 
   /// Check if the given expression contains 'break' or 'continue'
   /// statement that produces control flow different from GCC.

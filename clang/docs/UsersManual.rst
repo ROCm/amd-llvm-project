@@ -22,7 +22,7 @@ This document describes important notes about using Clang as a compiler
 for an end-user, documenting the supported features, command line
 options, etc. If you are interested in using Clang to build a tool that
 processes code, please see :doc:`InternalsManual`. If you are interested in the
-`Clang Static Analyzer <http://clang-analyzer.llvm.org>`_, please see its web
+`Clang Static Analyzer <https://clang-analyzer.llvm.org>`_, please see its web
 page.
 
 Clang is one component in a complete toolchain for C family languages.
@@ -587,7 +587,7 @@ Options to Control Clang Crash Diagnostics
 
 As unbelievable as it may sound, Clang does crash from time to time.
 Generally, this only occurs to those living on the `bleeding
-edge <http://llvm.org/releases/download.html#svn>`_. Clang goes to great
+edge <https://llvm.org/releases/download.html#svn>`_. Clang goes to great
 lengths to assist you in filing a bug report. Specifically, Clang
 generates preprocessed source file(s) and associated run script(s) upon
 a crash. These files should be attached to a bug report to ease
@@ -982,11 +982,11 @@ Controlling Static Analyzer Diagnostics
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 While not strictly part of the compiler, the diagnostics from Clang's
-`static analyzer <http://clang-analyzer.llvm.org>`_ can also be
+`static analyzer <https://clang-analyzer.llvm.org>`_ can also be
 influenced by the user via changes to the source code. See the available
-`annotations <http://clang-analyzer.llvm.org/annotations.html>`_ and the
+`annotations <https://clang-analyzer.llvm.org/annotations.html>`_ and the
 analyzer's `FAQ
-page <http://clang-analyzer.llvm.org/faq.html#exclude_code>`_ for more
+page <https://clang-analyzer.llvm.org/faq.html#exclude_code>`_ for more
 information.
 
 .. _usersmanual-precompiled-headers:
@@ -2158,7 +2158,7 @@ comment(lib)`` are well supported.
 clang has a ``-fms-compatibility`` flag that makes clang accept enough
 invalid C++ to be able to parse most Microsoft headers. For example, it
 allows `unqualified lookup of dependent base class members
-<http://clang.llvm.org/compatibility.html#dep_lookup_bases>`_, which is
+<https://clang.llvm.org/compatibility.html#dep_lookup_bases>`_, which is
 a common compatibility issue with clang. This flag is enabled by default
 for Windows targets.
 
@@ -3000,8 +3000,8 @@ Execute ``clang-cl /?`` to see a list of supported options:
       -fno-debug-macro        Do not emit macro debug information
       -fno-delayed-template-parsing
                               Disable delayed template parsing
-      -fno-sanitize-address-poison-class-member-array-new-cookie
-                              Disable poisoning array cookies when using class member operator new[] in AddressSanitizer
+      -fno-sanitize-address-poison-custom-array-cookie
+                              Disable poisoning array cookies when using custom operator new[] in AddressSanitizer
       -fno-sanitize-address-use-after-scope
                               Disable use-after-scope detection in AddressSanitizer
       -fno-sanitize-blacklist Don't use blacklist file for sanitizers
@@ -3037,8 +3037,8 @@ Execute ``clang-cl /?`` to see a list of supported options:
                               Level of field padding for AddressSanitizer
       -fsanitize-address-globals-dead-stripping
                               Enable linker dead stripping of globals in AddressSanitizer
-      -fsanitize-address-poison-class-member-array-new-cookie
-                              Enable poisoning array cookies when using class member operator new[] in AddressSanitizer
+      -fsanitize-address-poison-custom-array-cookie
+                              Enable poisoning array cookies when using custom operator new[] in AddressSanitizer
       -fsanitize-address-use-after-scope
                               Enable use-after-scope detection in AddressSanitizer
       -fsanitize-blacklist=<value>
