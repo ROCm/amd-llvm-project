@@ -640,6 +640,10 @@ void ReExec() {
 #elif SANITIZER_SOLARIS
   pathname = getexecname();
   CHECK_NE(pathname, NULL);
+#elif SANITIZER_USE_GETAUXVAL
+  // Calling execve with /proc/self/exe sets that as $EXEC_ORIGIN. Binaries that
+  // rely on that will fail to load shared libraries. Query AT_EXECFN instead.
+  pathname = reinterpret_cast<const char *>(getauxval(AT_EXECFN));
 #endif
 
   GetArgsAndEnv(&argv, &envp);
@@ -1946,14 +1950,14 @@ static void GetPcSpBp(void *context, uptr *pc, uptr *sp, uptr *bp) {
 #elif defined(__sparc__)
   ucontext_t *ucontext = (ucontext_t*)context;
   uptr *stk_ptr;
-# if defined (__sparcv9)
+# if defined(__sparcv9) || defined (__arch64__)
 # ifndef MC_PC
 #  define MC_PC REG_PC
 # endif
 # ifndef MC_O6
 #  define MC_O6 REG_O6
 # endif
-# ifdef SANITIZER_SOLARIS
+# if SANITIZER_SOLARIS
 #  define mc_gregs gregs
 # endif
   *pc = ucontext->uc_mcontext.mc_gregs[MC_PC];
