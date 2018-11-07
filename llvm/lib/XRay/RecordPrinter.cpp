@@ -42,6 +42,21 @@ Error RecordPrinter::visit(CustomEventRecord &R) {
   return Error::success();
 }
 
+Error RecordPrinter::visit(CustomEventRecordV5 &R) {
+  OS << formatv("<Custom Event: delta = +{0}, size = {1}, data = '{2}'>",
+                R.delta(), R.size(), R.data())
+     << Delim;
+  return Error::success();
+}
+
+Error RecordPrinter::visit(TypedEventRecord &R) {
+  OS << formatv(
+            "<Typed Event: delta = +{0}, type = {1}, size = {2}, data = '{3}'",
+            R.delta(), R.eventType(), R.size(), R.data())
+     << Delim;
+  return Error::success();
+}
+
 Error RecordPrinter::visit(CallArgRecord &R) {
   OS << formatv("<Call Argument: data = {0} (hex = {0:x})>", R.arg()) << Delim;
   return Error::success();
@@ -80,6 +95,10 @@ Error RecordPrinter::visit(FunctionRecord &R) {
   case RecordTypes::TAIL_EXIT:
     OS << formatv("<Function Tail Exit: #{0} delta = +{1}>", R.functionId(),
                   R.delta());
+    break;
+  case RecordTypes::CUSTOM_EVENT:
+  case RecordTypes::TYPED_EVENT:
+    // TODO: Flag as a bug?
     break;
   }
   OS << Delim;
