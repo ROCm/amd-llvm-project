@@ -152,6 +152,8 @@ void streamIsaVersion(const MCSubtargetInfo *STI, raw_ostream &Stream) {
 
   if (hasXNACK(*STI))
     Stream << "+xnack";
+  if (hasSRAMECC(*STI))
+    Stream << "+sram-ecc";
 
   Stream.flush();
 }
@@ -593,6 +595,10 @@ bool hasXNACK(const MCSubtargetInfo &STI) {
   return STI.getFeatureBits()[AMDGPU::FeatureXNACK];
 }
 
+bool hasSRAMECC(const MCSubtargetInfo &STI) {
+  return STI.getFeatureBits()[AMDGPU::FeatureSRAMECC];
+}
+
 bool hasMIMG_R128(const MCSubtargetInfo &STI) {
   return STI.getFeatureBits()[AMDGPU::FeatureMIMG_R128];
 }
@@ -888,12 +894,9 @@ bool isLegalSMRDImmOffset(const MCSubtargetInfo &ST, int64_t ByteOffset) {
 // Given Imm, split it into the values to put into the SOffset and ImmOffset
 // fields in an MUBUF instruction. Return false if it is not possible (due to a
 // hardware bug needing a workaround).
-//
-// The required alignment ensures that individual address components remain
-// aligned if they are aligned to begin with. It also ensures that additional
-// offsets within the given alignment can be added to the resulting ImmOffset.
 bool splitMUBUFOffset(uint32_t Imm, uint32_t &SOffset, uint32_t &ImmOffset,
-                      const GCNSubtarget *Subtarget, uint32_t Align) {
+                      const GCNSubtarget *Subtarget) {
+  const uint32_t Align = 4;
   const uint32_t MaxImm = alignDown(4095, Align);
   uint32_t Overflow = 0;
 

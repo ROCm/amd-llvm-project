@@ -7765,17 +7765,15 @@ public:
 };
 }
 
-namespace
-{
-  inline
-  llvm::APSInt getConstexprInt(const Expr *E, const ASTContext& Ctx)
-  {
-    llvm::APSInt r{32, 0};
-    if (E) E->EvaluateAsInt(r, Ctx);
+namespace {
+inline llvm::APSInt getConstexprInt(const Expr *E, const ASTContext &Ctx) {
+  llvm::APSInt r{32, 0};
+  if (E)
+    E->EvaluateAsInt(r, Ctx);
 
-    return r;
-  }
+  return r;
 }
+} // namespace
 
 void AMDGPUTargetCodeGenInfo::setTargetAttributes(
     const Decl *D, llvm::GlobalValue *GV, CodeGen::CodeGenModule &M) const {
@@ -7797,11 +7795,14 @@ void AMDGPUTargetCodeGenInfo::setTargetAttributes(
 
   const auto *FlatWGS = FD->getAttr<AMDGPUFlatWorkGroupSizeAttr>();
   if (ReqdWGS || FlatWGS) {
-    llvm::APSInt min = getConstexprInt(FlatWGS->getMin(), FD->getASTContext());
-    llvm::APSInt max = getConstexprInt(FlatWGS->getMax(), FD->getASTContext());
+    llvm::APSInt min = getConstexprInt(FlatWGS ? FlatWGS->getMin() : nullptr,
+                                       FD->getASTContext());
+    llvm::APSInt max = getConstexprInt(FlatWGS ? FlatWGS->getMax() : nullptr,
+                                       FD->getASTContext());
 
     unsigned Min = min.getZExtValue();
-    unsigned Max = std::max(min, max).getZExtValue();
+    unsigned Max = max.getZExtValue();
+
     if (ReqdWGS && Min == 0 && Max == 0)
       Min = Max = ReqdWGS->getXDim() * ReqdWGS->getYDim() * ReqdWGS->getZDim();
 
@@ -7821,7 +7822,7 @@ void AMDGPUTargetCodeGenInfo::setTargetAttributes(
     llvm::APSInt max = getConstexprInt(Attr->getMax(), FD->getASTContext());
 
     unsigned Min = min.getZExtValue();
-    unsigned Max = std::max(min, max).getZExtValue();
+    unsigned Max = max.getZExtValue();
 
     if (Min != 0) {
       assert((Max == 0 || Min <= Max) && "Min must be less than or equal Max");

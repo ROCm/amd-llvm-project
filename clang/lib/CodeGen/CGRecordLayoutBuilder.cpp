@@ -645,11 +645,11 @@ void CGRecordLowering::determinePacked(bool NVBaseType) {
   if (NVSize % NVAlignment)
     Packed = true;
 
-  // TODO: this is a heinous workaround the sad reality that passing things by
-  //       value through Kernarg is essentially broken, since the packing choice
-  //       made here is opaque for HLLs, and thus the latter will layout the
-  //       memory erroneously.
-  Packed = Packed && !isPassedToHIPGlobalFn(RD);
+  // ToDo: This is a workaround for PyTorch lambda function kernels.
+  // Without this workaround some PyTorch lambda function kernels will hang.
+  // Remove this workaround after the proper fix is in place.
+  if (Context.getLangOpts().HIP)
+    Packed = false;
 
   // Update the alignment of the sentinel.
   if (!Packed)

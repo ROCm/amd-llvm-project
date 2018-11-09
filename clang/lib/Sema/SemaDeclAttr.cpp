@@ -5641,23 +5641,18 @@ static void handleAMDGPUFlatWorkGroupSizeAttr(Sema &S, Decl *D,
       return;
   }
 
-  if (Min == 0 && Max != 0) {
-    S.Diag(AL.getLoc(), diag::err_attribute_argument_invalid) << AL << 0;
-    return;
+  if (MinExpr->isEvaluatable(S.Context) && MaxExpr->isEvaluatable(S.Context)) {
+    if (Min == 0 && Max != 0) {
+      S.Diag(AL.getLoc(), diag::err_attribute_argument_invalid) << AL << 0;
+      return;
+    }
+    if (Min > Max) {
+      S.Diag(AL.getLoc(), diag::err_attribute_argument_invalid) << AL << 1;
+      return;
+    }
   }
 
-  if (AL.getNumArgs() > 1 && Min > Max) {
-    S.Diag(AL.getLoc(), diag::err_attribute_argument_invalid)
-      << AL << 1;
-    return;
-  }
-
-  if (Min > Max) {
-    S.Diag(AL.getLoc(), diag::err_attribute_argument_invalid) << AL << 1;
-    return;
-  }
-
-  AMDGPUISAVersionChecker VC(S);
+ AMDGPUISAVersionChecker VC(S);
   StringRef ISA;
   if (VC.checkAMDGPUISAVersion(AL, 2, ISA))
     D->addAttr(::new (S.Context)
@@ -5675,9 +5670,9 @@ static void handleAMDGPUWavesPerEUAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
       !checkUInt32Argument(S, AL, MinExpr, Min))
     return;
 
-  uint32_t Max = Min;
-  Expr *MaxExpr = MinExpr;
-  if (AL.getNumArgs() > 1) {
+  Expr *MaxExpr = nullptr;
+  uint32_t Max = 0;
+  if (AL.getNumArgs() == 2) {
     MaxExpr = AL.getArgAsExpr(1);
     if (MaxExpr->isEvaluatable(S.Context) &&
         !checkUInt32Argument(S, AL, MaxExpr, Max))
