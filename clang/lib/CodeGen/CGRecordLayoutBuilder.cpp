@@ -651,6 +651,12 @@ void CGRecordLowering::determinePacked(bool NVBaseType) {
   if (Context.getLangOpts().HIP)
     Packed = false;
 
+  // TODO: this is a heinous workaround the sad reality that passing things by
+  //       value through Kernarg is essentially broken, since the packing choice
+  //       made here is opaque for HLLs, and thus the latter will layout the
+  //       memory erroneously.
+  Packed = Packed && !isPassedToHIPGlobalFn(RD);
+
   // Update the alignment of the sentinel.
   if (!Packed)
     Members.back().Data = getIntNType(Context.toBits(Alignment));
