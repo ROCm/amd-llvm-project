@@ -5512,7 +5512,7 @@ static ExprResult CheckConvertedConstantExpression(Sema &S, Expr *From,
 
     if (Notes.empty()) {
       // It's a constant expression.
-      return Result;
+      return new (S.Context) ConstantExpr(Result.get());
     }
   }
 
