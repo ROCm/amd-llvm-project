@@ -3188,6 +3188,11 @@ static void RenderDebugOptions(const ToolChain &TC, const Driver &D,
                             ? "-gpubnames"
                             : "-ggnu-pubnames");
 
+  if (Args.hasFlag(options::OPT_fdebug_ranges_base_address,
+                   options::OPT_fno_debug_ranges_base_address, false)) {
+    CmdArgs.push_back("-fdebug-ranges-base-address");
+  }
+
   // -gdwarf-aranges turns on the emission of the aranges section in the
   // backend.
   // Always enabled for SCE tuning.
@@ -5502,8 +5507,13 @@ void Clang::AddClangCLArgs(const ArgList &Args, types::ID InputType,
 
  if (Args.hasFlag(options::OPT__SLASH_Zc_dllexportInlines_,
                   options::OPT__SLASH_Zc_dllexportInlines,
-                  false))
+                  false)) {
+   if (Args.hasArg(options::OPT__SLASH_fallback)) {
+     D.Diag(clang::diag::err_drv_dllexport_inlines_and_fallback);
+   } else {
     CmdArgs.push_back("-fno-dllexport-inlines");
+   }
+ }
 
   Arg *MostGeneralArg = Args.getLastArg(options::OPT__SLASH_vmg);
   Arg *BestCaseArg = Args.getLastArg(options::OPT__SLASH_vmb);
