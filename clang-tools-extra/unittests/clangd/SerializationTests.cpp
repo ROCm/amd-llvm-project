@@ -27,7 +27,7 @@ namespace {
 const char *YAML = R"(
 ---
 !Symbol
-ID: 057557CEBF6E6B2DD437FBF60CC58F35
+ID: 057557CEBF6E6B2D
 Name:   'Foo1'
 Scope:   'clang::'
 SymInfo:
@@ -53,7 +53,7 @@ IncludeHeaders:
 ...
 ---
 !Symbol
-ID: 057557CEBF6E6B2DD437FBF60CC58F36
+ID: 057557CEBF6E6B2E
 Name:   'Foo2'
 Scope:   'clang::'
 SymInfo:
@@ -72,7 +72,7 @@ Signature:    '-sig'
 CompletionSnippetSuffix:    '-snippet'
 ...
 !Refs
-ID: 057557CEBF6E6B2DD437FBF60CC58F35
+ID: 057557CEBF6E6B2D
 References:
   - Kind: 4
     Location:
@@ -99,19 +99,19 @@ TEST(SerializationTest, YAMLConversions) {
   ASSERT_TRUE(bool(ParsedYAML)) << ParsedYAML.takeError();
   ASSERT_TRUE(bool(ParsedYAML->Symbols));
   EXPECT_THAT(*ParsedYAML->Symbols,
-              UnorderedElementsAre(ID("057557CEBF6E6B2DD437FBF60CC58F35"),
-                                   ID("057557CEBF6E6B2DD437FBF60CC58F36")));
+              UnorderedElementsAre(ID("057557CEBF6E6B2D"),
+                                   ID("057557CEBF6E6B2E")));
 
   auto Sym1 = *ParsedYAML->Symbols->find(
-      cantFail(SymbolID::fromStr("057557CEBF6E6B2DD437FBF60CC58F35")));
+      cantFail(SymbolID::fromStr("057557CEBF6E6B2D")));
   auto Sym2 = *ParsedYAML->Symbols->find(
-      cantFail(SymbolID::fromStr("057557CEBF6E6B2DD437FBF60CC58F36")));
+      cantFail(SymbolID::fromStr("057557CEBF6E6B2E")));
 
   EXPECT_THAT(Sym1, QName("clang::Foo1"));
   EXPECT_EQ(Sym1.Signature, "");
   EXPECT_EQ(Sym1.Documentation, "Foo doc");
   EXPECT_EQ(Sym1.ReturnType, "int");
-  EXPECT_EQ(Sym1.CanonicalDeclaration.FileURI, "file:///path/foo.h");
+  EXPECT_EQ(StringRef(Sym1.CanonicalDeclaration.FileURI), "file:///path/foo.h");
   EXPECT_EQ(Sym1.Origin, SymbolOrigin::Static);
   EXPECT_TRUE(Sym1.Flags & Symbol::IndexedForCodeCompletion);
   EXPECT_FALSE(Sym1.Flags & Symbol::Deprecated);
@@ -122,7 +122,8 @@ TEST(SerializationTest, YAMLConversions) {
   EXPECT_THAT(Sym2, QName("clang::Foo2"));
   EXPECT_EQ(Sym2.Signature, "-sig");
   EXPECT_EQ(Sym2.ReturnType, "");
-  EXPECT_EQ(Sym2.CanonicalDeclaration.FileURI, "file:///path/bar.h");
+  EXPECT_EQ(llvm::StringRef(Sym2.CanonicalDeclaration.FileURI),
+            "file:///path/bar.h");
   EXPECT_FALSE(Sym2.Flags & Symbol::IndexedForCodeCompletion);
   EXPECT_TRUE(Sym2.Flags & Symbol::Deprecated);
 
@@ -130,11 +131,11 @@ TEST(SerializationTest, YAMLConversions) {
   EXPECT_THAT(
       *ParsedYAML->Refs,
       UnorderedElementsAre(
-          Pair(cantFail(SymbolID::fromStr("057557CEBF6E6B2DD437FBF60CC58F35")),
+          Pair(cantFail(SymbolID::fromStr("057557CEBF6E6B2D")),
                testing::SizeIs(1))));
   auto Ref1 = ParsedYAML->Refs->begin()->second.front();
   EXPECT_EQ(Ref1.Kind, RefKind::Reference);
-  EXPECT_EQ(Ref1.Location.FileURI, "file:///path/foo.cc");
+  EXPECT_EQ(StringRef(Ref1.Location.FileURI), "file:///path/foo.cc");
 }
 
 std::vector<std::string> YAMLFromSymbols(const SymbolSlab &Slab) {

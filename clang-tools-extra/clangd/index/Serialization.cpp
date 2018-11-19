@@ -239,7 +239,7 @@ void writeLocation(const SymbolLocation &Loc, const StringTableOut &Strings,
 
 SymbolLocation readLocation(Reader &Data, ArrayRef<StringRef> Strings) {
   SymbolLocation Loc;
-  Loc.FileURI = Data.consumeString(Strings);
+  Loc.FileURI = Data.consumeString(Strings).data();
   for (auto *Endpoint : {&Loc.Start, &Loc.End}) {
     Endpoint->setLine(Data.consumeVar());
     Endpoint->setColumn(Data.consumeVar());
@@ -300,7 +300,7 @@ Symbol readSymbol(Reader &Data, ArrayRef<StringRef> Strings) {
 
 // REFS ENCODING
 // A refs section has data grouped by Symbol. Each symbol has:
-//  - SymbolID: 16 bytes
+//  - SymbolID: 8 bytes
 //  - NumRefs: varint
 //  - Ref[NumRefs]
 // Fields of Ref are encoded in turn, see implementation.
@@ -338,7 +338,7 @@ std::pair<SymbolID, std::vector<Ref>> readRefs(Reader &Data,
 // The current versioning scheme is simple - non-current versions are rejected.
 // If you make a breaking change, bump this version number to invalidate stored
 // data. Later we may want to support some backward compatibility.
-constexpr static uint32_t Version = 6;
+constexpr static uint32_t Version = 7;
 
 Expected<IndexFileIn> readRIFF(StringRef Data) {
   auto RIFF = riff::readFile(Data);
@@ -409,8 +409,11 @@ void writeRIFF(const IndexFileOut &Data, raw_ostream &OS) {
   if (Data.Refs) {
     for (const auto &Sym : *Data.Refs) {
       Refs.emplace_back(Sym);
-      for (auto &Ref : Refs.back().second)
-        Strings.intern(Ref.Location.FileURI);
+      for (auto &Ref : Refs.back().second) {
+        StringRef File = Ref.Location.FileURI;
+        Strings.intern(File);
+        Ref.Location.FileURI = File.data();
+      }
     }
   }
 
