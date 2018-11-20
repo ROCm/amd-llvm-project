@@ -2207,5 +2207,5 @@ void CodeGenModule::EmitOMPDeclareReduction(const OMPDeclareReductionDecl *D,
 }
 
 void CodeGenModule::EmitOMPRequiresDecl(const OMPRequiresDecl *D) {
-  //Do nothing - here to avoid build errors
+  getOpenMPRuntime().checkArchForUnifiedAddressing(*this, D);
 }
