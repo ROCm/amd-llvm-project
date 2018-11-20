@@ -7236,21 +7236,8 @@ SDValue DAGCombiner::visitSELECT(SDNode *N) {
   EVT VT0 = N0.getValueType();
   SDLoc DL(N);
 
-  // fold (select C, X, X) -> X
-  if (N1 == N2)
-    return N1;
-
-  // fold (select, C, X, undef) -> X
-  if (N2.isUndef())
-    return N1;
-  if (N1.isUndef())
-    return N2;
-
-  if (const ConstantSDNode *N0C = dyn_cast<const ConstantSDNode>(N0)) {
-    // fold (select true, X, Y) -> X
-    // fold (select false, X, Y) -> Y
-    return !N0C->isNullValue() ? N1 : N2;
-  }
+  if (SDValue V = DAG.simplifySelect(N0, N1, N2))
+    return V;
 
   // fold (select X, X, Y) -> (or X, Y)
   // fold (select X, 1, Y) -> (or C, Y)
@@ -7829,9 +7816,8 @@ SDValue DAGCombiner::visitVSELECT(SDNode *N) {
   SDValue N2 = N->getOperand(2);
   SDLoc DL(N);
 
-  // fold (vselect C, X, X) -> X
-  if (N1 == N2)
-    return N1;
+  if (SDValue V = DAG.simplifySelect(N0, N1, N2))
+    return V;
 
   // Canonicalize integer abs.
   // vselect (setg[te] X,  0),  X, -X ->
