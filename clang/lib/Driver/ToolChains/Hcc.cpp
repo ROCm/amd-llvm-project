@@ -293,29 +293,13 @@ void HCC::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
     Output.getInputArg().renderAsInput(Args, CmdArgs);
 
   if (JA.getKind() == Action::AssembleJobClass) {
-    std::string assembler;
-    if (JA.ContainsActions(Action::AssembleJobClass, types::TY_HC_HOST))
-      assembler = "hc-host-assemble";
-    else if (JA.ContainsActions(Action::AssembleJobClass, types::TY_HC_KERNEL)) {
-      assembler = "hc-kernel-assemble";
-      if (!Args.hasFlag(options::OPT_fgpu_rdc, options::OPT_fno_gpu_rdc, true)) {
-        CmdArgs.push_back("--early_finalize");
-        // add the amdgpu target args
-        construct_amdgpu_target_cmdargs(C, getToolChain(), Args, CmdArgs);
-      }
-    }
-    else if (JA.ContainsActions(Action::AssembleJobClass, types::TY_PP_CXX_AMP) ||
-      JA.ContainsActions(Action::AssembleJobClass, types::TY_PP_CXX_AMP_CPU)) {
-      assembler = "clamp-assemble";
-      // embed the device IR into the .kernel_ir section
-      CmdArgs.push_back(".kernel_ir");
-    }
-    else {
-      assert(!assembler.empty() && "Unsupported assembler.");
-      return;
+    if (!Args.hasFlag(options::OPT_fgpu_rdc, options::OPT_fno_gpu_rdc, true)) {
+      CmdArgs.push_back("--early_finalize");
+      // add the amdgpu target args
+      construct_amdgpu_target_cmdargs(C, getToolChain(), Args, CmdArgs);
     }
     const char *Exec = Args.MakeArgString(
-      getToolChain().GetProgramPath(assembler.c_str()));
+      getToolChain().GetProgramPath("hc-kernel-assemble"));
     C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
   }
 }
