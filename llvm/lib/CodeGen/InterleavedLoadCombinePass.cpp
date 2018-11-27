@@ -619,10 +619,12 @@ private:
   }
 };
 
-static raw_ostream &operator<<(raw_ostream &OS, const Polynomial &P) {
-  P.print(OS);
+#ifndef NDEBUG
+static raw_ostream &operator<<(raw_ostream &OS, const Polynomial &S) {
+  S.print(OS);
   return OS;
 }
+#endif
 
 /// VectorInfo stores abstract the following information for each vector
 /// element:
@@ -810,7 +812,7 @@ public:
       Result.PV = LHS.PV;
     }
     // Both operands produced sensible results?
-    else if ((LHS.BB == RHS.BB) && (LHS.PV == LHS.PV)) {
+    else if ((LHS.BB == RHS.BB) && (LHS.PV == RHS.PV)) {
       Result.BB = LHS.BB;
       Result.PV = LHS.PV;
     }
@@ -1045,12 +1047,6 @@ public:
 #endif
 };
 
-#ifndef NDEBUG
-static raw_ostream &operator<<(raw_ostream &OS, const VectorInfo &S) {
-  S.print(OS);
-  return OS;
-}
-#endif
 } // anonymous namespace
 
 bool InterleavedLoadCombineImpl::findPattern(
