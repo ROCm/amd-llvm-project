@@ -698,6 +698,12 @@ void ClangdLSPServer::onReference(const ReferenceParams &Params,
                          std::move(Reply));
 }
 
+void ClangdLSPServer::onSymbolInfo(const TextDocumentPositionParams &Params,
+                                   Callback<std::vector<SymbolDetails>> Reply) {
+  Server->symbolInfo(Params.textDocument.uri.file(), Params.position,
+                     std::move(Reply));
+}
+
 ClangdLSPServer::ClangdLSPServer(class Transport &Transp,
                                  const clangd::CodeCompleteOptions &CCOpts,
                                  Optional<Path> CompileCommandsDir,
@@ -733,6 +739,7 @@ ClangdLSPServer::ClangdLSPServer(class Transport &Transp,
   MsgHandler->bind("textDocument/didChange", &ClangdLSPServer::onDocumentDidChange);
   MsgHandler->bind("workspace/didChangeWatchedFiles", &ClangdLSPServer::onFileEvent);
   MsgHandler->bind("workspace/didChangeConfiguration", &ClangdLSPServer::onChangeConfiguration);
+  MsgHandler->bind("textDocument/symbolInfo", &ClangdLSPServer::onSymbolInfo);
   // clang-format on
 }
 
@@ -768,7 +775,7 @@ std::vector<Fix> ClangdLSPServer::getFixes(StringRef File,
 
 void ClangdLSPServer::onDiagnosticsReady(PathRef File,
                                          std::vector<Diag> Diagnostics) {
-  URIForFile URI(File);
+  auto URI = URIForFile::canonicalize(File, /*TUPath=*/File);
   std::vector<Diagnostic> LSPDiagnostics;
   DiagnosticToReplacementMap LocalFixIts; // Temporary storage
   for (auto &Diag : Diagnostics) {

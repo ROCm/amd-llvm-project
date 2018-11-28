@@ -35429,11 +35429,12 @@ static SDValue combineVectorShiftImm(SDNode *N, SelectionDAG &DAG,
   unsigned NumBitsPerElt = VT.getScalarSizeInBits();
   assert(VT == N0.getValueType() && (NumBitsPerElt % 8) == 0 &&
          "Unexpected value type");
+  assert(N1.getValueType() == MVT::i8 && "Unexpected shift amount type");
 
   // Out of range logical bit shifts are guaranteed to be zero.
   // Out of range arithmetic bit shifts splat the sign bit.
-  APInt ShiftVal = cast<ConstantSDNode>(N1)->getAPIntValue();
-  if (ShiftVal.zextOrTrunc(8).uge(NumBitsPerElt)) {
+  unsigned ShiftVal = cast<ConstantSDNode>(N1)->getZExtValue();
+  if (ShiftVal >= NumBitsPerElt) {
     if (LogicalShift)
       return DAG.getConstant(0, SDLoc(N), VT);
     else
@@ -35460,12 +35461,23 @@ static SDValue combineVectorShiftImm(SDNode *N, SelectionDAG &DAG,
       N1 == N0.getOperand(1)) {
     SDValue N00 = N0.getOperand(0);
     unsigned NumSignBits = DAG.ComputeNumSignBits(N00);
-    if (ShiftVal.ult(NumSignBits))
+    if (ShiftVal < NumSignBits)
       return N00;
   }
 
+  // Fold (VSRAI (VSRAI X, C1), C2) --> (VSRAI X, (C1 + C2)) with (C1 + C2)
+  // clamped to (NumBitsPerElt - 1).
+  if (Opcode == X86ISD::VSRAI && N0.getOpcode() == X86ISD::VSRAI) {
+    unsigned ShiftVal2 = cast<ConstantSDNode>(N0.getOperand(1))->getZExtValue();
+    unsigned NewShiftVal = ShiftVal + ShiftVal2;
+    if (NewShiftVal >= NumBitsPerElt)
+      NewShiftVal = NumBitsPerElt - 1;
+    return DAG.getNode(X86ISD::VSRAI, SDLoc(N), VT, N0.getOperand(0),
+                       DAG.getConstant(NewShiftVal, SDLoc(N), MVT::i8));
+  }
+
   // We can decode 'whole byte' logical bit shifts as shuffles.
-  if (LogicalShift && (ShiftVal.getZExtValue() % 8) == 0) {
+  if (LogicalShift && (ShiftVal % 8) == 0) {
     SDValue Op(N, 0);
     if (SDValue Res = combineX86ShufflesRecursively(
             {Op}, 0, Op, {0}, {}, /*Depth*/ 1,
@@ -35480,14 +35492,13 @@ static SDValue combineVectorShiftImm(SDNode *N, SelectionDAG &DAG,
       getTargetConstantBitsFromNode(N0, NumBitsPerElt, UndefElts, EltBits)) {
     assert(EltBits.size() == VT.getVectorNumElements() &&
            "Unexpected shift value type");
-    unsigned ShiftImm = ShiftVal.getZExtValue();
     for (APInt &Elt : EltBits) {
       if (X86ISD::VSHLI == Opcode)
-        Elt <<= ShiftImm;
+        Elt <<= ShiftVal;
       else if (X86ISD::VSRAI == Opcode)
-        Elt.ashrInPlace(ShiftImm);
+        Elt.ashrInPlace(ShiftVal);
       else
-        Elt.lshrInPlace(ShiftImm);
+        Elt.lshrInPlace(ShiftVal);
     }
     return getConstVector(EltBits, UndefElts, VT.getSimpleVT(), DAG, SDLoc(N));
   }
