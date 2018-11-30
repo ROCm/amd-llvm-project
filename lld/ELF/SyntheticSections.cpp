@@ -1255,11 +1255,20 @@ void DynamicSection<ELFT>::addSym(int32_t Tag, Symbol *Sym) {
   Entries.push_back({Tag, [=] { return Sym->getVA(); }});
 }
 
+// A Linker script may assign the RELA relocation sections to the same
+// output section. When this occurs we cannot just use the OutputSection
+// Size. Moreover the [DT_JMPREL, DT_JMPREL + DT_PLTRELSZ) is permitted to
+// overlap with the [DT_RELA, DT_RELA + DT_RELASZ).
+static uint64_t addPltRelSz() {
+  size_t Size = In.RelaPlt->getSize();
+  if (In.RelaIplt->getParent() == In.RelaPlt->getParent() &&
+      In.RelaIplt->Name == In.RelaPlt->Name)
+    Size += In.RelaIplt->getSize();
+  return Size;
+}
+
 // Add remaining entries to complete .dynamic contents.
 template <class ELFT> void DynamicSection<ELFT>::finalizeContents() {
-  if (this->Size)
-    return; // Already finalized.
-
   // Set DT_FLAGS and DT_FLAGS_1.
   uint32_t DtFlags = 0;
   uint32_t DtFlags1 = 0;
@@ -1271,6 +1280,8 @@ template <class ELFT> void DynamicSection<ELFT>::finalizeContents() {
     DtFlags1 |= DF_1_INITFIRST;
   if (Config->ZInterpose)
     DtFlags1 |= DF_1_INTERPOSE;
+  if (Config->ZNodefaultlib)
+    DtFlags1 |= DF_1_NODEFLIB;
   if (Config->ZNodelete)
     DtFlags1 |= DF_1_NODELETE;
   if (Config->ZNodlopen)
@@ -1336,7 +1347,7 @@ template <class ELFT> void DynamicSection<ELFT>::finalizeContents() {
   // .rel[a].plt section.
   if (In.RelaPlt->getParent()->Live) {
     addInSec(DT_JMPREL, In.RelaPlt);
-    addSize(DT_PLTRELSZ, In.RelaPlt->getParent());
+    Entries.push_back({DT_PLTRELSZ, addPltRelSz});
     switch (Config->EMachine) {
     case EM_MIPS:
       addInSec(DT_MIPS_PLTGOT, In.GotPlt);
@@ -2280,7 +2291,8 @@ void HashTableSection::writeTo(uint8_t *Buf) {
 PltSection::PltSection(bool IsIplt)
     : SyntheticSection(SHF_ALLOC | SHF_EXECINSTR, SHT_PROGBITS, 16,
                        Config->EMachine == EM_PPC64 ? ".glink" : ".plt"),
-      HeaderSize(IsIplt ? 0 : Target->PltHeaderSize), IsIplt(IsIplt) {
+      HeaderSize(!IsIplt || Config->ZRetpolineplt ? Target->PltHeaderSize : 0),
+      IsIplt(IsIplt) {
   // The PLT needs to be writable on SPARC as the dynamic linker will
   // modify the instructions in the PLT entries.
   if (Config->EMachine == EM_SPARCV9)
@@ -2288,9 +2300,9 @@ PltSection::PltSection(bool IsIplt)
 }
 
 void PltSection::writeTo(uint8_t *Buf) {
-  // At beginning of PLT but not the IPLT, we have code to call the dynamic
+  // At beginning of PLT or retpoline IPLT, we have code to call the dynamic
   // linker to resolve dynsyms at runtime. Write such code.
-  if (!IsIplt)
+  if (HeaderSize > 0)
     Target->writePltHeader(Buf);
   size_t Off = HeaderSize;
   // The IPlt is immediately after the Plt, account for this in RelOff

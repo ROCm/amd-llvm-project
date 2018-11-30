@@ -4022,7 +4022,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   const char *SplitDWARFOut;
   if (SplitDWARF) {
     CmdArgs.push_back("-split-dwarf-file");
-    SplitDWARFOut = SplitDebugName(Args, Output);
+    SplitDWARFOut = SplitDebugName(Args, Input, Output);
     CmdArgs.push_back(SplitDWARFOut);
   }
 
@@ -4523,8 +4523,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   Args.AddLastArg(CmdArgs, options::OPT_pthread);
 
-  Args.AddLastArg(CmdArgs, options::OPT_mspeculative_load_hardening,
-                  options::OPT_mno_speculative_load_hardening);
+  if (Args.hasFlag(options::OPT_mspeculative_load_hardening, options::OPT_mno_speculative_load_hardening,
+                   false))
+    CmdArgs.push_back(Args.MakeArgString("-mspeculative-load-hardening"));
 
   RenderSSPOptions(TC, Args, CmdArgs, KernelOrKext);
 
@@ -6041,7 +6042,7 @@ void ClangAs::ConstructJob(Compilation &C, const JobAction &JA,
   if ((getDebugFissionKind(D, Args, A) == DwarfFissionKind::Split) &&
       (T.isOSLinux() || T.isOSFuchsia())) {
     CmdArgs.push_back("-split-dwarf-file");
-    CmdArgs.push_back(SplitDebugName(Args, Output));
+    CmdArgs.push_back(SplitDebugName(Args, Input, Output));
   }
 
   assert(Input.isFilename() && "Invalid input.");

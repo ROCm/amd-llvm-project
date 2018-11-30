@@ -56,7 +56,12 @@ public:
   }
 };
 
-TEST(BackgroundIndexTest, IndexTwoFiles) {
+class BackgroundIndexTest : public ::testing::Test {
+protected:
+  BackgroundIndexTest() { preventThreadStarvationInTests(); }
+};
+
+TEST_F(BackgroundIndexTest, IndexTwoFiles) {
   MockFSProvider FS;
   // a.h yields different symbols when included by A.cc vs B.cc.
   FS.Files[testPath("root/A.h")] = R"cpp(
@@ -80,16 +85,17 @@ TEST(BackgroundIndexTest, IndexTwoFiles) {
   llvm::StringMap<std::string> Storage;
   size_t CacheHits = 0;
   MemoryShardStorage MSS(Storage, CacheHits);
-  BackgroundIndex Idx(Context::empty(), "", FS, /*URISchemes=*/{"unittest"},
+  OverlayCDB CDB(/*Base=*/nullptr);
+  BackgroundIndex Idx(Context::empty(), "", FS, CDB,
                       [&](llvm::StringRef) { return &MSS; });
 
   tooling::CompileCommand Cmd;
   Cmd.Filename = testPath("root/A.cc");
   Cmd.Directory = testPath("root");
   Cmd.CommandLine = {"clang++", "-DA=1", testPath("root/A.cc")};
-  Idx.enqueue(testPath("root"), Cmd);
+  CDB.setCompileCommand(testPath("root"), Cmd);
 
-  Idx.blockUntilIdleForTest();
+  ASSERT_TRUE(Idx.blockUntilIdleForTest());
   EXPECT_THAT(
       runFuzzyFind(Idx, ""),
       UnorderedElementsAre(Named("common"), Named("A_CC"),
@@ -97,9 +103,9 @@ TEST(BackgroundIndexTest, IndexTwoFiles) {
 
   Cmd.Filename = testPath("root/B.cc");
   Cmd.CommandLine = {"clang++", Cmd.Filename};
-  Idx.enqueue(testPath("root"), Cmd);
+  CDB.setCompileCommand(testPath("root"), Cmd);
 
-  Idx.blockUntilIdleForTest();
+  ASSERT_TRUE(Idx.blockUntilIdleForTest());
   // B_CC is dropped as we don't collect symbols from A.h in this compilation.
   EXPECT_THAT(runFuzzyFind(Idx, ""),
               UnorderedElementsAre(Named("common"), Named("A_CC"),
@@ -114,7 +120,7 @@ TEST(BackgroundIndexTest, IndexTwoFiles) {
                        FileURI("unittest:///root/B.cc")}));
 }
 
-TEST(BackgroundIndexTest, ShardStorageWriteTest) {
+TEST_F(BackgroundIndexTest, ShardStorageWriteTest) {
   MockFSProvider FS;
   FS.Files[testPath("root/A.h")] = R"cpp(
       void common();
@@ -123,8 +129,6 @@ TEST(BackgroundIndexTest, ShardStorageWriteTest) {
       )cpp";
   std::string A_CC = "#include \"A.h\"\nvoid g() { (void)common; }";
   FS.Files[testPath("root/A.cc")] = A_CC;
-  auto Digest = llvm::SHA1::hash(
-      {reinterpret_cast<const uint8_t *>(A_CC.data()), A_CC.size()});
 
   llvm::StringMap<std::string> Storage;
   size_t CacheHits = 0;
@@ -136,10 +140,11 @@ TEST(BackgroundIndexTest, ShardStorageWriteTest) {
   Cmd.CommandLine = {"clang++", testPath("root/A.cc")};
   // Check nothing is loaded from Storage, but A.cc and A.h has been stored.
   {
-    BackgroundIndex Idx(Context::empty(), "", FS, /*URISchemes=*/{"unittest"},
+    OverlayCDB CDB(/*Base=*/nullptr);
+    BackgroundIndex Idx(Context::empty(), "", FS, CDB,
                         [&](llvm::StringRef) { return &MSS; });
-    Idx.enqueue(testPath("root"), Cmd);
-    Idx.blockUntilIdleForTest();
+    CDB.setCompileCommand(testPath("root"), Cmd);
+    ASSERT_TRUE(Idx.blockUntilIdleForTest());
   }
   EXPECT_EQ(CacheHits, 0U);
   EXPECT_EQ(Storage.size(), 2U);
@@ -158,7 +163,6 @@ TEST(BackgroundIndexTest, ShardStorageWriteTest) {
   EXPECT_NE(ShardSource, nullptr);
   EXPECT_THAT(*ShardSource->Symbols, UnorderedElementsAre());
   EXPECT_THAT(*ShardSource->Refs, RefsAre({FileURI("unittest:///root/A.cc")}));
-  EXPECT_EQ(*ShardSource->Digest, Digest);
 }
 
 } // namespace clangd
