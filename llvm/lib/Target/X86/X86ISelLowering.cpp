@@ -785,10 +785,13 @@ X86TargetLowering::X86TargetLowering(const X86TargetMachine &TM,
     addRegisterClass(MVT::v2i64, Subtarget.hasVLX() ? &X86::VR128XRegClass
                                                     : &X86::VR128RegClass);
 
-    setOperationAction(ISD::SDIV, MVT::v2i32, Custom);
-    setOperationAction(ISD::SREM, MVT::v2i32, Custom);
-    setOperationAction(ISD::UDIV, MVT::v2i32, Custom);
-    setOperationAction(ISD::UREM, MVT::v2i32, Custom);
+    for (auto VT : { MVT::v2i8, MVT::v4i8, MVT::v8i8,
+                     MVT::v2i16, MVT::v4i16, MVT::v2i32 }) {
+      setOperationAction(ISD::SDIV, VT, Custom);
+      setOperationAction(ISD::SREM, VT, Custom);
+      setOperationAction(ISD::UDIV, VT, Custom);
+      setOperationAction(ISD::UREM, VT, Custom);
+    }
 
     setOperationAction(ISD::MUL,                MVT::v2i8,  Custom);
     setOperationAction(ISD::MUL,                MVT::v2i16, Custom);
@@ -11525,7 +11528,7 @@ static SDValue lowerVectorShuffleAsBroadcast(const SDLoc &DL, MVT VT,
   SDValue BC = peekThroughBitcasts(V);
 
   // Also check the simpler case, where we can directly reuse the scalar.
-  if (V.getOpcode() == ISD::BUILD_VECTOR ||
+  if ((V.getOpcode() == ISD::BUILD_VECTOR && V.hasOneUse()) ||
       (V.getOpcode() == ISD::SCALAR_TO_VECTOR && BroadcastIdx == 0)) {
     V = V.getOperand(BroadcastIdx);
 
@@ -23901,7 +23904,7 @@ static SDValue LowerScalarImmediateShift(SDValue Op, SelectionDAG &DAG,
         Ex = DAG.getVectorShuffle(ExVT, dl, Upper, Lower,
                                   {9, 1, 11, 3, 13, 5, 15, 7});
     } else {
-      // SRA upper i32, SHL whole i64 and select lower i32.
+      // SRA upper i32, SRL whole i64 and select lower i32.
       SDValue Upper = getTargetVShiftByConstNode(X86ISD::VSRAI, dl, ExVT, Ex,
                                                  ShiftAmt, DAG);
       SDValue Lower =
@@ -26308,19 +26311,39 @@ void X86TargetLowering::ReplaceNodeResults(SDNode *N,
   case ISD::SDIV:
   case ISD::UDIV:
   case ISD::SREM:
-  case ISD::UREM:
-    if (N->getValueType(0) == MVT::v2i32) {
-      // If we're already legalizing via widening, we don't need this since
-      // that will scalarize div/rem.
-      if (getTypeAction(*DAG.getContext(), MVT::v2i32) == TypeWidenVector)
-        return;
+  case ISD::UREM: {
+    EVT VT = N->getValueType(0);
+    if (getTypeAction(*DAG.getContext(), VT) == TypeWidenVector) {
+      // If this RHS is a constant splat vector we can widen this and let
+      // division/remainder by constant optimize it.
+      // TODO: Can we do something for non-splat?
+      APInt SplatVal;
+      if (ISD::isConstantSplatVector(N->getOperand(1).getNode(), SplatVal)) {
+        unsigned NumConcats = 128 / VT.getSizeInBits();
+        SmallVector<SDValue, 8> Ops0(NumConcats, DAG.getUNDEF(VT));
+        Ops0[0] = N->getOperand(0);
+        EVT ResVT = TLI.getTypeToTransformTo(*DAG.getContext(), VT);
+        SDValue N0 = DAG.getNode(ISD::CONCAT_VECTORS, dl, ResVT, Ops0);
+        SDValue N1 = DAG.getConstant(SplatVal, dl, ResVT);
+        SDValue Res = DAG.getNode(N->getOpcode(), dl, ResVT, N0, N1);
+        Results.push_back(Res);
+      }
+      return;
+    }
+
+    if (VT == MVT::v2i32) {
       // Legalize v2i32 div/rem by unrolling. Otherwise we promote to the
       // v2i64 and unroll later. But then we create i64 scalar ops which
       // might be slow in 64-bit mode or require a libcall in 32-bit mode.
       Results.push_back(DAG.UnrollVectorOp(N));
       return;
     }
+
+    if (VT.isVector())
+      return;
+
     LLVM_FALLTHROUGH;
+  }
   case ISD::SDIVREM:
   case ISD::UDIVREM: {
     SDValue V = LowerWin64_i128OP(SDValue(N,0), DAG);
@@ -33674,9 +33697,14 @@ static SDValue combineSelect(SDNode *N, SelectionDAG &DAG,
                              const X86Subtarget &Subtarget) {
   SDLoc DL(N);
   SDValue Cond = N->getOperand(0);
-  // Get the LHS/RHS of the select.
   SDValue LHS = N->getOperand(1);
   SDValue RHS = N->getOperand(2);
+
+  // Try simplification again because we use this function to optimize
+  // SHRUNKBLEND nodes that are not handled by the generic combiner.
+  if (SDValue V = DAG.simplifySelect(Cond, LHS, RHS))
+    return V;
+
   EVT VT = LHS.getValueType();
   EVT CondVT = Cond.getValueType();
   const TargetLowering &TLI = DAG.getTargetLoweringInfo();
