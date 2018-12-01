@@ -10175,17 +10175,17 @@ static SDValue lowerVectorShuffleAsBlend(const SDLoc &DL, MVT VT, SDValue V1,
     assert((VT.is128BitVector() || Subtarget.hasAVX2()) &&
            "256-bit byte-blends require AVX2 support!");
 
+    // Attempt to lower to a bitmask if we can. VPAND is faster than VPBLENDVB.
+    if (SDValue Masked =
+            lowerVectorShuffleAsBitMask(DL, VT, V1, V2, Mask, Zeroable, DAG))
+      return Masked;
+
     if (Subtarget.hasBWI() && Subtarget.hasVLX()) {
       MVT IntegerType =
           MVT::getIntegerVT(std::max((int)VT.getVectorNumElements(), 8));
       SDValue MaskNode = DAG.getConstant(BlendMask, DL, IntegerType);
       return getVectorMaskingNode(V2, MaskNode, V1, Subtarget, DAG);
     }
-
-    // Attempt to lower to a bitmask if we can. VPAND is faster than VPBLENDVB.
-    if (SDValue Masked =
-            lowerVectorShuffleAsBitMask(DL, VT, V1, V2, Mask, Zeroable, DAG))
-      return Masked;
 
     // Scale the blend by the number of bytes per element.
     int Scale = VT.getScalarSizeInBits() / 8;
@@ -23654,119 +23654,112 @@ static SDValue LowerMULH(SDValue Op, const X86Subtarget &Subtarget,
 
   // With SSE41 we can use sign/zero extend, but for pre-SSE41 we unpack
   // and then ashr/lshr the upper bits down to the lower bits before multiply.
-  unsigned ExShift = IsSigned ? X86ISD::VSRAI : X86ISD::VSRLI;
   unsigned ExAVX = IsSigned ? ISD::SIGN_EXTEND : ISD::ZERO_EXTEND;
 
-  // For 512-bit vectors, split into 256-bit vectors to allow the
-  // sign-extension to occur.
-  if (VT == MVT::v64i8)
-    return split512IntArith(Op, DAG);
-
-  // AVX2 implementations - extend xmm subvectors to ymm.
-  if (Subtarget.hasInt256()) {
-    SDValue Lo = DAG.getIntPtrConstant(0, dl);
-    SDValue Hi = DAG.getIntPtrConstant(NumElts / 2, dl);
-
-    if (VT == MVT::v32i8) {
-      if (Subtarget.canExtendTo512BW()) {
-        MVT ExVT = MVT::v32i16;
-        SDValue ExA = DAG.getNode(ExAVX, dl, ExVT, A);
-        SDValue ExB = DAG.getNode(ExAVX, dl, ExVT, B);
-        SDValue Mul = DAG.getNode(ISD::MUL, dl, ExVT, ExA, ExB);
-        Mul = getTargetVShiftByConstNode(X86ISD::VSRLI, dl, ExVT, Mul, 8, DAG);
-        return DAG.getNode(ISD::TRUNCATE, dl, VT, Mul);
-      }
-      MVT ExVT = MVT::v16i16;
-      SDValue ALo = extract128BitVector(A, 0, DAG, dl);
-      SDValue BLo = extract128BitVector(B, 0, DAG, dl);
-      SDValue AHi = extract128BitVector(A, NumElts / 2, DAG, dl);
-      SDValue BHi = extract128BitVector(B, NumElts / 2, DAG, dl);
-      ALo = DAG.getNode(ExAVX, dl, ExVT, ALo);
-      BLo = DAG.getNode(ExAVX, dl, ExVT, BLo);
-      AHi = DAG.getNode(ExAVX, dl, ExVT, AHi);
-      BHi = DAG.getNode(ExAVX, dl, ExVT, BHi);
-      Lo = DAG.getNode(ISD::MUL, dl, ExVT, ALo, BLo);
-      Hi = DAG.getNode(ISD::MUL, dl, ExVT, AHi, BHi);
-      Lo = getTargetVShiftByConstNode(X86ISD::VSRLI, dl, ExVT, Lo, 8, DAG);
-      Hi = getTargetVShiftByConstNode(X86ISD::VSRLI, dl, ExVT, Hi, 8, DAG);
-
-      // Bitcast back to VT and then pack all the even elements from Lo and Hi.
-      // Shuffle lowering should turn this into PACKUS+PERMQ
-      Lo = DAG.getBitcast(VT, Lo);
-      Hi = DAG.getBitcast(VT, Hi);
-      return DAG.getVectorShuffle(VT, dl, Lo, Hi,
-                                  { 0,  2,  4,  6,  8, 10, 12, 14,
-                                   16, 18, 20, 22, 24, 26, 28, 30,
-                                   32, 34, 36, 38, 40, 42, 44, 46,
-                                   48, 50, 52, 54, 56, 58, 60, 62});
-    }
-
-    assert(VT == MVT::v16i8 && "Unexpected VT");
-
-    SDValue ExA = DAG.getNode(ExAVX, dl, MVT::v16i16, A);
-    SDValue ExB = DAG.getNode(ExAVX, dl, MVT::v16i16, B);
-    SDValue Mul = DAG.getNode(ISD::MUL, dl, MVT::v16i16, ExA, ExB);
-    Mul =
-        getTargetVShiftByConstNode(X86ISD::VSRLI, dl, MVT::v16i16, Mul, 8, DAG);
+  if ((VT == MVT::v16i8 && Subtarget.hasInt256()) ||
+      (VT == MVT::v32i8 && Subtarget.canExtendTo512BW())) {
+    MVT ExVT = MVT::getVectorVT(MVT::i16, NumElts);
+    SDValue ExA = DAG.getNode(ExAVX, dl, ExVT, A);
+    SDValue ExB = DAG.getNode(ExAVX, dl, ExVT, B);
+    SDValue Mul = DAG.getNode(ISD::MUL, dl, ExVT, ExA, ExB);
+    Mul = getTargetVShiftByConstNode(X86ISD::VSRLI, dl, ExVT, Mul, 8, DAG);
     return DAG.getNode(ISD::TRUNCATE, dl, VT, Mul);
   }
 
-  assert(VT == MVT::v16i8 &&
-         "Pre-AVX2 support only supports v16i8 multiplication");
-  MVT ExVT = MVT::v8i16;
+  // For signed 512-bit vectors, split into 256-bit vectors to allow the
+  // sign-extension to occur.
+  if (VT == MVT::v64i8 && IsSigned)
+    return split512IntArith(Op, DAG);
+
+  // Signed AVX2 implementation - extend xmm subvectors to ymm.
+  if (VT == MVT::v32i8 && IsSigned) {
+    SDValue Lo = DAG.getIntPtrConstant(0, dl);
+    SDValue Hi = DAG.getIntPtrConstant(NumElts / 2, dl);
+
+    MVT ExVT = MVT::v16i16;
+    SDValue ALo = extract128BitVector(A, 0, DAG, dl);
+    SDValue BLo = extract128BitVector(B, 0, DAG, dl);
+    SDValue AHi = extract128BitVector(A, NumElts / 2, DAG, dl);
+    SDValue BHi = extract128BitVector(B, NumElts / 2, DAG, dl);
+    ALo = DAG.getNode(ExAVX, dl, ExVT, ALo);
+    BLo = DAG.getNode(ExAVX, dl, ExVT, BLo);
+    AHi = DAG.getNode(ExAVX, dl, ExVT, AHi);
+    BHi = DAG.getNode(ExAVX, dl, ExVT, BHi);
+    Lo = DAG.getNode(ISD::MUL, dl, ExVT, ALo, BLo);
+    Hi = DAG.getNode(ISD::MUL, dl, ExVT, AHi, BHi);
+    Lo = getTargetVShiftByConstNode(X86ISD::VSRLI, dl, ExVT, Lo, 8, DAG);
+    Hi = getTargetVShiftByConstNode(X86ISD::VSRLI, dl, ExVT, Hi, 8, DAG);
+
+    // Bitcast back to VT and then pack all the even elements from Lo and Hi.
+    // Shuffle lowering should turn this into PACKUS+PERMQ
+    Lo = DAG.getBitcast(VT, Lo);
+    Hi = DAG.getBitcast(VT, Hi);
+    return DAG.getVectorShuffle(VT, dl, Lo, Hi,
+                                { 0,  2,  4,  6,  8, 10, 12, 14,
+                                 16, 18, 20, 22, 24, 26, 28, 30,
+                                 32, 34, 36, 38, 40, 42, 44, 46,
+                                 48, 50, 52, 54, 56, 58, 60, 62});
+  }
+
+  // For signed v16i8 and all unsigned vXi8 we will unpack the low and high
+  // half of each 128 bit lane to widen to a vXi16 type. Do the multiplies,
+  // shift the results and pack the half lane results back together.
+
+  MVT ExVT = MVT::getVectorVT(MVT::i16, NumElts / 2);
   unsigned ExSSE41 = IsSigned ? ISD::SIGN_EXTEND_VECTOR_INREG
                               : ISD::ZERO_EXTEND_VECTOR_INREG;
 
   // Extract the lo parts and zero/sign extend to i16.
   SDValue ALo, BLo;
-  if (Subtarget.hasSSE41()) {
+  if (VT == MVT::v16i8 && Subtarget.hasSSE41()) {
     ALo = DAG.getNode(ExSSE41, dl, ExVT, A);
     BLo = DAG.getNode(ExSSE41, dl, ExVT, B);
-  } else {
-    const int ShufMask[] = {-1, 0, -1, 1, -1, 2, -1, 3,
-                            -1, 4, -1, 5, -1, 6, -1, 7};
-    ALo = DAG.getVectorShuffle(VT, dl, A, A, ShufMask);
-    BLo = DAG.getVectorShuffle(VT, dl, B, B, ShufMask);
+  } else if (IsSigned) {
+    ALo = getUnpackl(DAG, dl, VT, DAG.getUNDEF(VT), A);
+    BLo = getUnpackl(DAG, dl, VT, DAG.getUNDEF(VT), B);
     ALo = DAG.getBitcast(ExVT, ALo);
     BLo = DAG.getBitcast(ExVT, BLo);
-    ALo = getTargetVShiftByConstNode(ExShift, dl, ExVT, ALo, 8, DAG);
-    BLo = getTargetVShiftByConstNode(ExShift, dl, ExVT, BLo, 8, DAG);
+    ALo = getTargetVShiftByConstNode(X86ISD::VSRAI, dl, ExVT, ALo, 8, DAG);
+    BLo = getTargetVShiftByConstNode(X86ISD::VSRAI, dl, ExVT, BLo, 8, DAG);
+  } else {
+    ALo = getUnpackl(DAG, dl, VT, A, DAG.getConstant(0, dl, VT));
+    BLo = getUnpackl(DAG, dl, VT, B, DAG.getConstant(0, dl, VT));
+    ALo = DAG.getBitcast(ExVT, ALo);
+    BLo = DAG.getBitcast(ExVT, BLo);
   }
 
   // Extract the hi parts and zero/sign extend to i16.
   SDValue AHi, BHi;
-  if (Subtarget.hasSSE41()) {
+  if (VT == MVT::v16i8 && Subtarget.hasSSE41()) {
     const int ShufMask[] = { 8,  9, 10, 11, 12, 13, 14, 15,
                             -1, -1, -1, -1, -1, -1, -1, -1};
     AHi = DAG.getVectorShuffle(VT, dl, A, A, ShufMask);
     BHi = DAG.getVectorShuffle(VT, dl, B, B, ShufMask);
     AHi = DAG.getNode(ExSSE41, dl, ExVT, AHi);
     BHi = DAG.getNode(ExSSE41, dl, ExVT, BHi);
-  } else {
-    const int ShufMask[] = {-1, 8,  -1, 9,  -1, 10, -1, 11,
-                            -1, 12, -1, 13, -1, 14, -1, 15};
-    AHi = DAG.getVectorShuffle(VT, dl, A, A, ShufMask);
-    BHi = DAG.getVectorShuffle(VT, dl, B, B, ShufMask);
+  } else if (IsSigned) {
+    AHi = getUnpackh(DAG, dl, VT, DAG.getUNDEF(VT), A);
+    BHi = getUnpackh(DAG, dl, VT, DAG.getUNDEF(VT), B);
     AHi = DAG.getBitcast(ExVT, AHi);
     BHi = DAG.getBitcast(ExVT, BHi);
-    AHi = getTargetVShiftByConstNode(ExShift, dl, ExVT, AHi, 8, DAG);
-    BHi = getTargetVShiftByConstNode(ExShift, dl, ExVT, BHi, 8, DAG);
+    AHi = getTargetVShiftByConstNode(X86ISD::VSRAI, dl, ExVT, AHi, 8, DAG);
+    BHi = getTargetVShiftByConstNode(X86ISD::VSRAI, dl, ExVT, BHi, 8, DAG);
+  } else {
+    AHi = getUnpackh(DAG, dl, VT, A, DAG.getConstant(0, dl, VT));
+    BHi = getUnpackh(DAG, dl, VT, B, DAG.getConstant(0, dl, VT));
+    AHi = DAG.getBitcast(ExVT, AHi);
+    BHi = DAG.getBitcast(ExVT, BHi);
   }
 
   // Multiply, lshr the upper 8bits to the lower 8bits of the lo/hi results and
-  // pack back to v16i8.
+  // pack back to vXi8.
   SDValue RLo = DAG.getNode(ISD::MUL, dl, ExVT, ALo, BLo);
   SDValue RHi = DAG.getNode(ISD::MUL, dl, ExVT, AHi, BHi);
   RLo = getTargetVShiftByConstNode(X86ISD::VSRLI, dl, ExVT, RLo, 8, DAG);
   RHi = getTargetVShiftByConstNode(X86ISD::VSRLI, dl, ExVT, RHi, 8, DAG);
 
   // Bitcast back to VT and then pack all the even elements from Lo and Hi.
-  // Shuffle lowering should turn this into PACKUS.
-  RLo = DAG.getBitcast(VT, RLo);
-  RHi = DAG.getBitcast(VT, RHi);
-  return DAG.getVectorShuffle(VT, dl, RLo, RHi,
-                              { 0,  2,  4,  6,  8, 10, 12, 14,
-                               16, 18, 20, 22, 24, 26, 28, 30});
+  return DAG.getNode(X86ISD::PACKUS, dl, VT, RLo, RHi);
 }
 
 SDValue X86TargetLowering::LowerWin64_i128OP(SDValue Op, SelectionDAG &DAG) const {
@@ -32253,10 +32246,10 @@ bool X86TargetLowering::SimplifyDemandedVectorEltsForTargetNode(
   case X86ISD::VSRA: {
     // We only need the bottom 64-bits of the (128-bit) shift amount.
     SDValue Amt = Op.getOperand(1);
-    EVT AmtVT = Amt.getSimpleValueType();
+    MVT AmtVT = Amt.getSimpleValueType();
     assert(AmtVT.is128BitVector() && "Unexpected value type");
     APInt AmtUndef, AmtZero;
-    int NumAmtElts = AmtVT.getVectorNumElements();
+    unsigned NumAmtElts = AmtVT.getVectorNumElements();
     APInt AmtElts = APInt::getLowBitsSet(NumAmtElts, NumAmtElts / 2);
     if (SimplifyDemandedVectorElts(Amt, AmtElts, AmtUndef, AmtZero, TLO,
                                    Depth + 1))
@@ -32266,7 +32259,7 @@ bool X86TargetLowering::SimplifyDemandedVectorEltsForTargetNode(
   case X86ISD::CVTSI2P:
   case X86ISD::CVTUI2P: {
     SDValue Src = Op.getOperand(0);
-    EVT SrcVT = Src.getValueType();
+    MVT SrcVT = Src.getSimpleValueType();
     APInt SrcUndef, SrcZero;
     APInt SrcElts = DemandedElts.zextOrTrunc(SrcVT.getVectorNumElements());
     if (SimplifyDemandedVectorElts(Src, SrcElts, SrcUndef, SrcZero, TLO,
