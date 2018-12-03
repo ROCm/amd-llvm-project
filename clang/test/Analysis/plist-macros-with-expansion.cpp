@@ -317,9 +317,19 @@ void variadicMacroArgumentTest() {
   *ptr = 5; // expected-warning{{Dereference of null pointer}}
 }
 
-// TODO: Should correctly display the rest of the parameters.
 // CHECK: <key>name</key><string>VARIADIC_SET_TO_NULL</string>
-// CHECK-NEXT: <key>expansion</key><string>ptr = nullptr; variadicFunc( 1)</string>
+// CHECK-NEXT: <key>expansion</key><string>ptr = nullptr; variadicFunc( 1, 5, &quot;haha!&quot;)</string>
+
+void variadicMacroArgumentWithoutAnyArgumentTest() {
+  int *ptr;
+  // Not adding a single parameter to ... is silly (and also causes a
+  // preprocessor warning), but is not an excuse to crash on it.
+  VARIADIC_SET_TO_NULL(ptr);
+  *ptr = 5; // expected-warning{{Dereference of null pointer}}
+}
+
+// CHECK: <key>name</key><string>VARIADIC_SET_TO_NULL</string>
+// CHECK-NEXT: <key>expansion</key><string>ptr = nullptr; variadicFunc()</string>
 
 //===----------------------------------------------------------------------===//
 // Tests for # and ##.
@@ -335,9 +345,17 @@ void hashHashOperatorTest() {
   *ptr = 5; // expected-warning{{Dereference of null pointer}}
 }
 
-// TODO: Should expand correctly.
 // CHECK: <key>name</key><string>DECLARE_FUNC_AND_SET_TO_NULL</string>
-// CHECK-NEXT: <key>expansion</key><string>void generated_##whatever(); ptr = nullptr;</string>
+// CHECK-NEXT: <key>expansion</key><string>void generated_whatever(); ptr = nullptr;</string>
+
+void macroArgContainsHashHashInStringTest() {
+  int *a;
+  TO_NULL_AND_PRINT(a, "Will this ## cause a crash?");
+  *a = 5; // expected-warning{{Dereference of null pointer}}
+}
+
+// CHECK: <key>name</key><string>TO_NULL_AND_PRINT</string>
+// CHECK-NEXT: <key>expansion</key><string>a = 0; print( &quot;Will this ## cause a crash?&quot;)</string>
 
 #define PRINT_STR(str, ptr) \
   print(#str);              \
@@ -349,9 +367,17 @@ void hashOperatorTest() {
   *ptr = 5; // expected-warning{{Dereference of null pointer}}
 }
 
-// TODO: Should expand correctly.
 // CHECK: <key>name</key><string>PRINT_STR</string>
-// CHECK-NEXT: <key>expansion</key><string>print(#Hello); ptr = nullptr</string>
+// CHECK-NEXT: <key>expansion</key><string>print(&quot;Hello&quot;); ptr = nullptr</string>
+
+void macroArgContainsHashInStringTest() {
+  int *a;
+  TO_NULL_AND_PRINT(a, "Will this # cause a crash?");
+  *a = 5; // expected-warning{{Dereference of null pointer}}
+}
+
+// CHECK: <key>name</key><string>TO_NULL_AND_PRINT</string>
+// CHECK-NEXT: <key>expansion</key><string>a = 0; print( &quot;Will this # cause a crash?&quot;)</string>
 
 //===----------------------------------------------------------------------===//
 // Tests for more complex macro expansions.

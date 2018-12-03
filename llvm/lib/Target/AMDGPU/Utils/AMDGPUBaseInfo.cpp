@@ -522,6 +522,14 @@ void decodeWaitcnt(const IsaVersion &Version, unsigned Waitcnt,
   Lgkmcnt = decodeLgkmcnt(Version, Waitcnt);
 }
 
+Waitcnt decodeWaitcnt(const IsaVersion &Version, unsigned Encoded) {
+  Waitcnt Decoded;
+  Decoded.VmCnt = decodeVmcnt(Version, Encoded);
+  Decoded.ExpCnt = decodeExpcnt(Version, Encoded);
+  Decoded.LgkmCnt = decodeLgkmcnt(Version, Encoded);
+  return Decoded;
+}
+
 unsigned encodeVmcnt(const IsaVersion &Version, unsigned Waitcnt,
                      unsigned Vmcnt) {
   Waitcnt =
@@ -550,6 +558,10 @@ unsigned encodeWaitcnt(const IsaVersion &Version,
   Waitcnt = encodeExpcnt(Version, Waitcnt, Expcnt);
   Waitcnt = encodeLgkmcnt(Version, Waitcnt, Lgkmcnt);
   return Waitcnt;
+}
+
+unsigned encodeWaitcnt(const IsaVersion &Version, const Waitcnt &Decoded) {
+  return encodeWaitcnt(Version, Decoded.VmCnt, Decoded.ExpCnt, Decoded.LgkmCnt);
 }
 
 unsigned getInitialPSInputAddr(const Function &F) {
@@ -896,9 +908,12 @@ bool isLegalSMRDImmOffset(const MCSubtargetInfo &ST, int64_t ByteOffset) {
 // Given Imm, split it into the values to put into the SOffset and ImmOffset
 // fields in an MUBUF instruction. Return false if it is not possible (due to a
 // hardware bug needing a workaround).
+//
+// The required alignment ensures that individual address components remain
+// aligned if they are aligned to begin with. It also ensures that additional
+// offsets within the given alignment can be added to the resulting ImmOffset.
 bool splitMUBUFOffset(uint32_t Imm, uint32_t &SOffset, uint32_t &ImmOffset,
-                      const GCNSubtarget *Subtarget) {
-  const uint32_t Align = 4;
+                      const GCNSubtarget *Subtarget, uint32_t Align) {
   const uint32_t MaxImm = alignDown(4095, Align);
   uint32_t Overflow = 0;
 

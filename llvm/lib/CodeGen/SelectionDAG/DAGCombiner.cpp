@@ -6098,16 +6098,21 @@ SDValue DAGCombiner::visitXOR(SDNode *N) {
   if ((N0Opcode == ISD::SRL || N0Opcode == ISD::SHL) && N0.hasOneUse()) {
     ConstantSDNode *XorC = isConstOrConstSplat(N1);
     ConstantSDNode *ShiftC = isConstOrConstSplat(N0.getOperand(1));
+    unsigned BitWidth = VT.getScalarSizeInBits();
     if (XorC && ShiftC) {
-      APInt Ones = APInt::getAllOnesValue(VT.getScalarSizeInBits());
-      Ones = N0Opcode == ISD::SHL ? Ones.shl(ShiftC->getZExtValue())
-                                  : Ones.lshr(ShiftC->getZExtValue());
-      if (XorC->getAPIntValue() == Ones) {
-        // If the xor constant is a shifted -1, do a 'not' before the shift:
-        // xor (X << ShiftC), XorC --> (not X) << ShiftC
-        // xor (X >> ShiftC), XorC --> (not X) >> ShiftC
-        SDValue Not = DAG.getNOT(DL, N0.getOperand(0), VT);
-        return DAG.getNode(N0Opcode, DL, VT, Not, N0.getOperand(1));
+      // Don't crash on an oversized shift. We can not guarantee that a bogus
+      // shift has been simplified to undef.
+      uint64_t ShiftAmt = ShiftC->getLimitedValue();
+      if (ShiftAmt < BitWidth) {
+        APInt Ones = APInt::getAllOnesValue(BitWidth);
+        Ones = N0Opcode == ISD::SHL ? Ones.shl(ShiftAmt) : Ones.lshr(ShiftAmt);
+        if (XorC->getAPIntValue() == Ones) {
+          // If the xor constant is a shifted -1, do a 'not' before the shift:
+          // xor (X << ShiftC), XorC --> (not X) << ShiftC
+          // xor (X >> ShiftC), XorC --> (not X) >> ShiftC
+          SDValue Not = DAG.getNOT(DL, N0.getOperand(0), VT);
+          return DAG.getNode(N0Opcode, DL, VT, Not, N0.getOperand(1));
+        }
       }
     }
   }
@@ -9721,6 +9726,28 @@ SDValue DAGCombiner::visitTRUNCATE(SDNode *N) {
 
   if (SDValue NewVSel = matchVSelectOpSizesWithSetCC(N))
     return NewVSel;
+
+  // Narrow a suitable binary operation with a constant operand by moving it
+  // ahead of the truncate. This is limited to pre-legalization because targets
+  // may prefer a wider type during later combines and invert this transform.
+  switch (N0.getOpcode()) {
+  // TODO: Add case for ADD - that will likely require a change in logic here
+  // or target-specific changes to avoid regressions.
+  case ISD::SUB:
+  case ISD::MUL:
+  case ISD::AND:
+  case ISD::OR:
+  case ISD::XOR:
+    // TODO: This should allow vector constants/types too.
+    if (!LegalOperations && N0.hasOneUse() &&
+        (isa<ConstantSDNode>(N0.getOperand(0)) ||
+         isa<ConstantSDNode>(N0.getOperand(1)))) {
+      SDLoc DL(N);
+      SDValue NarrowL = DAG.getNode(ISD::TRUNCATE, DL, VT, N0.getOperand(0));
+      SDValue NarrowR = DAG.getNode(ISD::TRUNCATE, DL, VT, N0.getOperand(1));
+      return DAG.getNode(N0.getOpcode(), DL, VT, NarrowL, NarrowR);
+    }
+  }
 
   return SDValue();
 }

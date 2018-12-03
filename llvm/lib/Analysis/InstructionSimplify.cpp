@@ -3966,6 +3966,10 @@ static Value *SimplifySelectInst(Value *Cond, Value *TrueVal, Value *FalseVal,
   if (Value *V = foldSelectWithBinaryOp(Cond, TrueVal, FalseVal))
     return V;
 
+  Optional<bool> Imp = isImpliedByDomCondition(Cond, Q.CxtI, Q.DL);
+  if (Imp)
+    return *Imp ? TrueVal : FalseVal;
+
   return nullptr;
 }
 

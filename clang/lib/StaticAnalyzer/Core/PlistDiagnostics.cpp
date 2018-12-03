@@ -471,7 +471,7 @@ static void printBugPath(llvm::raw_ostream &o, const FIDMap& FM,
 
   o << "   </array>\n";
 
-  if (!AnOpts.shouldDisplayMacroExpansions())
+  if (!AnOpts.ShouldDisplayMacroExpansions)
     return;
 
   o << "   <key>macro_expansions</key>\n"
@@ -704,7 +704,7 @@ void PlistDiagnostics::FlushDiagnosticsImpl(
     EmitString(o << "  ", SM.getFileEntryForID(FID)->getName()) << '\n';
   o << " </array>\n";
 
-  if (llvm::AreStatisticsEnabled() && AnOpts.shouldSerializeStats()) {
+  if (llvm::AreStatisticsEnabled() && AnOpts.ShouldSerializeStats) {
     o << " <key>statistics</key>\n";
     std::string stats;
     llvm::raw_string_ostream os(stats);
@@ -904,8 +904,6 @@ static std::string getMacroNameAndPrintExpansion(TokenPrinter &Printer,
       continue;
     }
 
-    // TODO: Handle tok::hash and tok::hashhash.
-
     // If control reached here, then this token isn't a macro identifier, nor an
     // unexpanded macro argument that we need to handle, print it.
     Printer.printToken(T);
@@ -962,41 +960,62 @@ static MacroNameAndArgs getMacroNameAndArgs(SourceLocation ExpanLoc,
   //   CALL_FN(someFunctionName(param1, param2))
   // we will find tok::l_paren, tok::r_paren, and tok::comma that do not divide
   // actual macro arguments, or do not represent the macro argument's closing
-  // parentheses, so we'll count how many parentheses aren't closed yet.
+  // parantheses, so we'll count how many parantheses aren't closed yet.
+  // If ParanthesesDepth
+  //   * = 0, then there are no more arguments to lex.
+  //   * = 1, then if we find a tok::comma, we can start lexing the next arg.
+  //   * > 1, then tok::comma is a part of the current arg.
   int ParenthesesDepth = 1;
+
+  // If we encounter __VA_ARGS__, we will lex until the closing tok::r_paren,
+  // even if we lex a tok::comma and ParanthesesDepth == 1.
+  const IdentifierInfo *__VA_ARGS__II = PP.getIdentifierInfo("__VA_ARGS__");
 
   for (const IdentifierInfo *UnexpArgII : MacroArgs) {
     MacroArgMap::mapped_type ExpandedArgTokens;
 
-    // Lex the first token of the next macro parameter.
-    RawLexer.LexFromRawLexer(TheTok);
+    // One could also simply not supply a single argument to __VA_ARGS__ -- this
+    // results in a preprocessor warning, but is not an error:
+    //   #define VARIADIC(ptr, ...) \
+    //     someVariadicTemplateFunction(__VA_ARGS__)
+    //
+    //   int *ptr;
+    //   VARIADIC(ptr); // Note that there are no commas, this isn't just an
+    //                  // empty parameter -- there are no parameters for '...'.
+    // In any other case, ParenthesesDepth mustn't be 0 here.
+    if (ParenthesesDepth != 0) {
 
-    while (TheTok.isNot(tok::comma) || ParenthesesDepth != 1) {
-      assert(TheTok.isNot(tok::eof) &&
-             "EOF encountered while looking for expanded macro args!");
-
-      if (TheTok.is(tok::l_paren))
-        ++ParenthesesDepth;
-
-      if (TheTok.is(tok::r_paren))
-        --ParenthesesDepth;
-
-      if (ParenthesesDepth == 0)
-        break;
-
-      if (TheTok.is(tok::raw_identifier))
-        PP.LookUpIdentifierInfo(TheTok);
-
-      ExpandedArgTokens.push_back(TheTok);
+      // Lex the first token of the next macro parameter.
       RawLexer.LexFromRawLexer(TheTok);
+
+      while (!(ParenthesesDepth == 1 &&
+              (UnexpArgII == __VA_ARGS__II ? false : TheTok.is(tok::comma)))) {
+        assert(TheTok.isNot(tok::eof) &&
+               "EOF encountered while looking for expanded macro args!");
+
+        if (TheTok.is(tok::l_paren))
+          ++ParenthesesDepth;
+
+        if (TheTok.is(tok::r_paren))
+          --ParenthesesDepth;
+
+        if (ParenthesesDepth == 0)
+          break;
+
+        if (TheTok.is(tok::raw_identifier))
+          PP.LookUpIdentifierInfo(TheTok);
+
+        ExpandedArgTokens.push_back(TheTok);
+        RawLexer.LexFromRawLexer(TheTok);
+      }
+    } else {
+      assert(UnexpArgII == __VA_ARGS__II);
     }
 
     Args.emplace(UnexpArgII, std::move(ExpandedArgTokens));
   }
 
-  // TODO: The condition really should be TheTok.is(tok::r_paren), but variadic
-  // macro arguments are not handled yet.
-  assert(TheTok.isOneOf(tok::r_paren, tok::comma) &&
+  assert(TheTok.is(tok::r_paren) &&
          "Expanded macro argument acquisition failed! After the end of the loop"
          " this token should be ')'!");
 
@@ -1073,14 +1092,25 @@ void MacroArgMap::expandFromPrevMacro(const MacroArgMap &Super) {
 }
 
 void TokenPrinter::printToken(const Token &Tok) {
-  // If the tokens were already space separated, or if they must be to avoid
-  // them being implicitly pasted, add a space between them.
   // If this is the first token to be printed, don't print space.
-  if (PrevTok.isNot(tok::unknown) && (Tok.hasLeadingSpace() ||
-      ConcatInfo.AvoidConcat(PrevPrevTok, PrevTok, Tok)))
-    OS << ' ';
+  if (PrevTok.isNot(tok::unknown)) {
+    // If the tokens were already space separated, or if they must be to avoid
+    // them being implicitly pasted, add a space between them.
+    if(Tok.hasLeadingSpace() || ConcatInfo.AvoidConcat(PrevPrevTok, PrevTok,
+                                                       Tok)) {
+      // AvoidConcat doesn't check for ##, don't print a space around it.
+      if (PrevTok.isNot(tok::hashhash) && Tok.isNot(tok::hashhash)) {
+        OS << ' ';
+      }
+    }
+  }
 
-  OS << PP.getSpelling(Tok);
+  if (!Tok.isOneOf(tok::hash, tok::hashhash)) {
+    if (PrevTok.is(tok::hash))
+      OS << '\"' << PP.getSpelling(Tok) << '\"';
+    else
+      OS << PP.getSpelling(Tok);
+  }
 
   PrevPrevTok = PrevTok;
   PrevTok = Tok;

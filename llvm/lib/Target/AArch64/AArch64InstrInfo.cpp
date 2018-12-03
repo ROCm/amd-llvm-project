@@ -2355,7 +2355,7 @@ static bool shouldClusterFI(const MachineFrameInfo &MFI, int FI1,
   if (MFI.isFixedObjectIndex(FI1) && MFI.isFixedObjectIndex(FI2)) {
     int64_t ObjectOffset1 = MFI.getObjectOffset(FI1);
     int64_t ObjectOffset2 = MFI.getObjectOffset(FI2);
-    assert(ObjectOffset1 >= ObjectOffset2 && "Object offsets are not ordered.");
+    assert(ObjectOffset1 <= ObjectOffset2 && "Object offsets are not ordered.");
     // Get the byte-offset from the object offset.
     if (!unscaleOffset(Opcode1, Offset1) || !unscaleOffset(Opcode2, Offset2))
       return false;
@@ -2365,7 +2365,7 @@ static bool shouldClusterFI(const MachineFrameInfo &MFI, int FI1,
     if (!scaleOffset(Opcode1, ObjectOffset1) ||
         !scaleOffset(Opcode2, ObjectOffset2))
       return false;
-    return ObjectOffset2 + 1 == ObjectOffset1;
+    return ObjectOffset1 + 1 == ObjectOffset2;
   }
 
   return FI1 == FI2;
@@ -2424,15 +2424,18 @@ bool AArch64InstrInfo::shouldClusterMemOps(MachineOperand &BaseOp1,
 
   // The caller should already have ordered First/SecondLdSt by offset.
   // Note: except for non-equal frame index bases
-  assert((!BaseOp1.isIdenticalTo(BaseOp2) || Offset1 <= Offset2) &&
-         "Caller should have ordered offsets.");
-
   if (BaseOp1.isFI()) {
+    assert((!BaseOp1.isIdenticalTo(BaseOp2) || Offset1 >= Offset2) &&
+           "Caller should have ordered offsets.");
+
     const MachineFrameInfo &MFI =
         FirstLdSt.getParent()->getParent()->getFrameInfo();
     return shouldClusterFI(MFI, BaseOp1.getIndex(), Offset1, FirstOpc,
                            BaseOp2.getIndex(), Offset2, SecondOpc);
   }
+
+  assert((!BaseOp1.isIdenticalTo(BaseOp2) || Offset1 <= Offset2) &&
+         "Caller should have ordered offsets.");
 
   return Offset1 + 1 == Offset2;
 }
@@ -5162,42 +5165,36 @@ AArch64InstrInfo::getOutliningCandidateInfo(
     SetCandidateCallInfo(MachineOutlinerThunk, 4);
   }
 
-  // Make sure that LR isn't live on entry to this candidate. The only
-  // instructions that use LR that could possibly appear in a repeated sequence
-  // are calls. Therefore, we only have to check and see if LR is dead on entry
-  // to (or exit from) some candidate.
-  else if (std::all_of(RepeatedSequenceLocs.begin(),
-                       RepeatedSequenceLocs.end(),
-                       [&TRI](outliner::Candidate &C) {
-                         C.initLRU(TRI);
-                         return C.LRU.available(AArch64::LR);
-                         })) {
-    FrameID = MachineOutlinerNoLRSave;
-    NumBytesToCreateFrame = 4;
-    SetCandidateCallInfo(MachineOutlinerNoLRSave, 4);
-  }
-
-  // LR is live, so we need to save it. Decide whether it should be saved to
-  // the stack, or if it can be saved to a register.
   else {
-    if (all_of(RepeatedSequenceLocs, [this, &TRI](outliner::Candidate &C) {
-          C.initLRU(TRI);
-          return findRegisterToSaveLRTo(C);
-        })) {
-      // Every candidate has an available callee-saved register for the save.
-      // We can save LR to a register.
-      FrameID = MachineOutlinerRegSave;
-      NumBytesToCreateFrame = 4;
-      SetCandidateCallInfo(MachineOutlinerRegSave, 12);
+    // We need to decide how to emit calls + frames. We can always emit the same
+    // frame if we don't need to save to the stack. If we have to save to the
+    // stack, then we need a different frame.
+    unsigned NumNoStackSave = 0;
+
+    for (outliner::Candidate &C : RepeatedSequenceLocs) {
+      C.initLRU(TRI);
+
+      // Is LR available? If so, we don't need a save.
+      if (C.LRU.available(AArch64::LR)) {
+        C.setCallInfo(MachineOutlinerNoLRSave, 4);
+        ++NumNoStackSave;
+      }
+
+      // Is an unused register available? If so, we won't modify the stack, so
+      // we can outline with the same frame type as those that don't save LR.
+      else if (findRegisterToSaveLRTo(C)) {
+        C.setCallInfo(MachineOutlinerRegSave, 12);
+        ++NumNoStackSave;
+      }
     }
 
-    else {
-      // At least one candidate does not have an available callee-saved
-      // register. We must save LR to the stack.
-      FrameID = MachineOutlinerDefault;
-      NumBytesToCreateFrame = 4;
+    // If there are no places where we have to save LR, then note that we don't
+    // have to update the stack. Otherwise, give every candidate the default
+    // call type.
+    if (NumNoStackSave == RepeatedSequenceLocs.size())
+      FrameID = MachineOutlinerNoLRSave;
+    else
       SetCandidateCallInfo(MachineOutlinerDefault, 12);
-    }
   }
 
   // Does every candidate's MBB contain a call? If so, then we might have a call
@@ -5287,7 +5284,29 @@ bool AArch64InstrInfo::isMBBSafeToOutlineFrom(MachineBasicBlock &MBB,
   if (any_of(MBB, [](MachineInstr &MI) { return MI.isCall(); }))
     Flags |= MachineOutlinerMBBFlags::HasCalls;
 
-  if (!LRU.available(AArch64::LR))
+  MachineFunction *MF = MBB.getParent();
+
+  // In the event that we outline, we may have to save LR. If there is an
+  // available register in the MBB, then we'll always save LR there. Check if
+  // this is true.
+  bool CanSaveLR = false;
+  const AArch64RegisterInfo *ARI = static_cast<const AArch64RegisterInfo *>(
+      MF->getSubtarget().getRegisterInfo());
+
+  // Check if there is an available register across the sequence that we can
+  // use.
+  for (unsigned Reg : AArch64::GPR64RegClass) {
+    if (!ARI->isReservedReg(*MF, Reg) && Reg != AArch64::LR &&
+        Reg != AArch64::X16 && Reg != AArch64::X17 && LRU.available(Reg)) {
+      CanSaveLR = true;
+      break;
+    }
+  }
+
+  // Check if we have a register we can save LR to, and if LR was used
+  // somewhere. If both of those things are true, then we need to evaluate the
+  // safety of outlining stack instructions later.
+  if (!CanSaveLR && !LRU.available(AArch64::LR))
     Flags |= MachineOutlinerMBBFlags::LRUnavailableSomewhere;
 
   return true;
