@@ -260,10 +260,6 @@ def rsp_quoting : Joined<["--"], "rsp-quoting=">, Group<internal_driver_Group>,
 def ccc_gcc_name : Separate<["-"], "ccc-gcc-name">, InternalDriverOpt,
   HelpText<"Name for native GCC compiler">,
   MetaVarName<"<gcc-path>">;
-def ccc_pch_is_pch : Flag<["-"], "ccc-pch-is-pch">, InternalDriverOpt,
-  HelpText<"Use lazy PCH for precompiled headers">;
-def ccc_pch_is_pth : Flag<["-"], "ccc-pch-is-pth">, InternalDriverOpt,
-  HelpText<"Use pretokenized headers for precompiled headers">;
 
 class InternalDebugOpt : Group<internal_debug_Group>,
   Flags<[DriverOption, HelpHidden, CoreOption]>;
@@ -1002,6 +998,14 @@ def fno_sanitize_address_poison_custom_array_cookie
 def fsanitize_address_globals_dead_stripping : Flag<["-"], "fsanitize-address-globals-dead-stripping">,
                                         Group<f_clang_Group>,
                                         HelpText<"Enable linker dead stripping of globals in AddressSanitizer">;
+def fsanitize_address_use_odr_indicator
+    : Flag<["-"], "fsanitize-address-use-odr-indicator">,
+      Group<f_clang_Group>,
+      HelpText<"Enable ODR indicator globals to avoid false ODR violation reports in partially sanitized programs at the cost of an increase in binary size">;
+def fno_sanitize_address_use_odr_indicator
+    : Flag<["-"], "fno-sanitize-address-use-odr-indicator">,
+      Group<f_clang_Group>,
+      HelpText<"Disable ODR indicator globals">;
 def fsanitize_recover : Flag<["-"], "fsanitize-recover">, Group<f_clang_Group>;
 def fno_sanitize_recover : Flag<["-"], "fno-sanitize-recover">,
                            Flags<[CoreOption, DriverOption]>,
