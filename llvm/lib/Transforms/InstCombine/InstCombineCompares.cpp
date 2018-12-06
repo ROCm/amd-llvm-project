@@ -1385,6 +1385,11 @@ Instruction *InstCombiner::foldICmpWithDominatingICmp(ICmpInst &Cmp) {
   if (TrueBB == FalseBB)
     return nullptr;
 
+  // Try to simplify this compare to T/F based on the dominating condition.
+  Optional<bool> Imp = isImpliedCondition(DomCond, &Cmp, DL, TrueBB == CmpBB);
+  if (Imp)
+    return replaceInstUsesWith(Cmp, ConstantInt::get(Cmp.getType(), *Imp));
+
   CmpInst::Predicate Pred = Cmp.getPredicate();
   Value *X = Cmp.getOperand(0), *Y = Cmp.getOperand(1);
   ICmpInst::Predicate DomPred;
@@ -2969,6 +2974,8 @@ static Value *foldICmpWithLowBitMaskedVal(ICmpInst &I,
       return nullptr;         // Ignore the other case.
     if (!match(M, m_Constant())) // Can not do this fold with non-constant.
       return nullptr;
+    if (!match(M, m_NonNegative())) // Must not have any -1 vector elements.
+      return nullptr;
     DstPred = ICmpInst::Predicate::ICMP_SLE;
     break;
   case ICmpInst::Predicate::ICMP_SLT:
@@ -2976,6 +2983,8 @@ static Value *foldICmpWithLowBitMaskedVal(ICmpInst &I,
     if (X != I.getOperand(1)) // X must be on RHS of comparison!
       return nullptr;         // Ignore the other case.
     if (!match(M, m_Constant())) // Can not do this fold with non-constant.
+      return nullptr;
+    if (!match(M, m_NonNegative())) // Must not have any -1 vector elements.
       return nullptr;
     DstPred = ICmpInst::Predicate::ICMP_SGT;
     break;
