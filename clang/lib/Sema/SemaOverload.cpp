@@ -13877,35 +13877,11 @@ Sema::BuildCallToObjectOfClassType(Scope *S, Expr *Obj,
 
   // Build the full argument list for the method call (the implicit object
   // parameter is placed at the beginning of the list).
-/* <<<<<<< HEAD
-  SmallVector<Expr *, 8> MethodArgs(Args.size() + 1);
-  MethodArgs[0] = Object.get();
-  std::copy(Args.begin(), Args.end(), MethodArgs.begin() + 1);
-
-  // Once we've built TheCall, all of the expressions are properly
-  // owned.
-  QualType ResultTy = Method->getReturnType();
-  ExprValueKind VK = Expr::getValueKindForType(ResultTy);
-  ResultTy = ResultTy.getNonLValueExprType(Context);
-
-  CXXOperatorCallExpr *TheCall = new (Context)
-      CXXOperatorCallExpr(Context, OO_Call, NewFn.get(), MethodArgs, ResultTy,
-                          VK, RParenLoc, FPOptions());
-*/
   // C++AMP
   if(getLangOpts().CPlusPlusAMP && Method && Method->getParent()->isLambda())
     DiagnoseCXXAMPMethodCallExpr(LParenLoc, Method);
-/*
-  if (CheckCallReturnType(Method->getReturnType(), LParenLoc, TheCall, Method))
-    return true;
 
-  // We may have default arguments. If so, we need to allocate more
-  // slots in the call for them.
-  if (Args.size() < NumParams)
-    TheCall->setNumArgs(Context, NumParams + 1);
-======= */
   SmallVector<Expr *, 8> MethodArgs(NumArgsSlots);
-// >>>>>>> upstream/amd-common
 
   bool IsError = false;
 
