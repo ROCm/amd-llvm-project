@@ -5,3 +5,5 @@ set(LLVM_LINK_COMPONENTS
 add_llvm_unittest(TapiTests
   ELFYAMLTest.cpp
 )
+
+target_link_libraries(TapiTests PRIVATE LLVMTestingSupport)

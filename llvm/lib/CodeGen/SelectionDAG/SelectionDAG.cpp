@@ -4994,8 +4994,6 @@ SDValue SelectionDAG::getNode(unsigned Opcode, const SDLoc &DL, EVT VT,
         return getConstant(0, DL, VT);
       LLVM_FALLTHROUGH;
     case ISD::ADD:
-    case ISD::ADDC:
-    case ISD::ADDE:
     case ISD::SUB:
     case ISD::UDIV:
     case ISD::SDIV:
@@ -7742,8 +7740,11 @@ void SelectionDAG::transferDbgValues(SDValue From, SDValue To,
                     Dbg->getDebugLoc(), Dbg->getOrder());
     ClonedDVs.push_back(Clone);
 
-    if (InvalidateDbg)
+    if (InvalidateDbg) {
+      // Invalidate value and indicate the SDDbgValue should not be emitted.
       Dbg->setIsInvalidated();
+      Dbg->setIsEmitted();
+    }
   }
 
   for (SDDbgValue *Dbg : ClonedDVs)
@@ -7780,6 +7781,7 @@ void SelectionDAG::salvageDebugInfo(SDNode &N) {
                         DV->isIndirect(), DV->getDebugLoc(), DV->getOrder());
         ClonedDVs.push_back(Clone);
         DV->setIsInvalidated();
+        DV->setIsEmitted();
         LLVM_DEBUG(dbgs() << "SALVAGE: Rewriting";
                    N0.getNode()->dumprFull(this);
                    dbgs() << " into " << *DIExpr << '\n');

@@ -20,8 +20,8 @@
 #include "clang/AST/ExternalASTSource.h"
 #include "clang/AST/Type.h"
 #include "clang/AST/TypeOrdering.h"
+#include "clang/Basic/CodeGenOptions.h"
 #include "clang/Basic/SourceLocation.h"
-#include "clang/Frontend/CodeGenOptions.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/Optional.h"
@@ -740,7 +740,7 @@ public:
   /// function \p InlinedFn. The current debug location becomes the inlined call
   /// site of the inlined function.
   ApplyInlineDebugLocation(CodeGenFunction &CGF, GlobalDecl InlinedFn);
-  /// Restore everything back to the orginial state.
+  /// Restore everything back to the original state.
   ~ApplyInlineDebugLocation();
 };
 

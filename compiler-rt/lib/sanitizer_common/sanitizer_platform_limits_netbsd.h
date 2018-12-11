@@ -31,8 +31,6 @@
   _GET_LINK_MAP_BY_DLOPEN_HANDLE(handle, 136)
 #endif
 
-#undef INLINE
-
 namespace __sanitizer {
 extern unsigned struct_utsname_sz;
 extern unsigned struct_stat_sz;
@@ -2225,6 +2223,36 @@ extern unsigned IOCTL_SNDCTL_DSP_SILENCE;
 
 extern const int si_SEGV_MAPERR;
 extern const int si_SEGV_ACCERR;
+
+extern const unsigned SHA1_CTX_sz;
+extern const unsigned SHA1_return_length;
+
+extern const unsigned MD4_CTX_sz;
+extern const unsigned MD4_return_length;
+
+extern const unsigned RMD160_CTX_sz;
+extern const unsigned RMD160_return_length;
+
+extern const unsigned MD5_CTX_sz;
+extern const unsigned MD5_return_length;
+
+extern const unsigned fpos_t_sz;
+
+extern const unsigned MD2_CTX_sz;
+extern const unsigned MD2_return_length;
+
+#define SHA2_EXTERN(LEN)                          \
+  extern const unsigned SHA##LEN##_CTX_sz;        \
+  extern const unsigned SHA##LEN##_return_length; \
+  extern const unsigned SHA##LEN##_block_length;  \
+  extern const unsigned SHA##LEN##_digest_length
+
+SHA2_EXTERN(224);
+SHA2_EXTERN(256);
+SHA2_EXTERN(384);
+SHA2_EXTERN(512);
+
+#undef SHA2_EXTERN
 }  // namespace __sanitizer
 
 #define CHECK_TYPE_SIZE(TYPE) \
