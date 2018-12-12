@@ -11,6 +11,7 @@
 #include "TestModuleFileExtension.h"
 #include "clang/Basic/Builtins.h"
 #include "clang/Basic/CharInfo.h"
+#include "clang/Basic/CodeGenOptions.h"
 #include "clang/Basic/CommentOptions.h"
 #include "clang/Basic/DebugInfoOptions.h"
 #include "clang/Basic/Diagnostic.h"
@@ -28,7 +29,6 @@
 #include "clang/Config/config.h"
 #include "clang/Driver/DriverDiagnostic.h"
 #include "clang/Driver/Options.h"
-#include "clang/Frontend/CodeGenOptions.h"
 #include "clang/Frontend/CommandLineSourceLoc.h"
 #include "clang/Frontend/DependencyOutputOptions.h"
 #include "clang/Frontend/FrontendDiagnostic.h"
@@ -994,7 +994,7 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
       for (const auto &arg : ASL) {
         StringRef ArgStr(arg);
         Opts.CmdArgs.insert(Opts.CmdArgs.end(), ArgStr.begin(), ArgStr.end());
-        // using \00 to seperate each commandline options.
+        // using \00 to separate each commandline options.
         Opts.CmdArgs.push_back('\0');
       }
     }
@@ -1157,6 +1157,10 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
         static_cast<CodeGenOptions::ObjCDispatchMethodKind>(Method));
     }
   }
+
+
+  if (Args.hasArg(OPT_fno_objc_convert_messages_to_runtime_calls))
+    Opts.ObjCConvertMessagesToRuntimeCalls = 0;
 
   if (Args.getLastArg(OPT_femulated_tls) ||
       Args.getLastArg(OPT_fno_emulated_tls)) {
@@ -2542,7 +2546,7 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
                                   VT.getSubminor().getValueOr(0);
   }
 
-  // Mimicing gcc's behavior, trigraphs are only enabled if -trigraphs
+  // Mimicking gcc's behavior, trigraphs are only enabled if -trigraphs
   // is specified, or -std is set to a conforming mode.
   // Trigraphs are disabled by default in c++1z onwards.
   Opts.Trigraphs = !Opts.GNUMode && !Opts.MSVCCompat && !Opts.CPlusPlus17;
@@ -3279,6 +3283,7 @@ bool CompilerInvocation::CreateFromArgs(CompilerInvocation &Res,
                               Res.getTargetOpts(), Res.getFrontendOpts());
   ParseHeaderSearchArgs(Res.getHeaderSearchOpts(), Args,
                         Res.getFileSystemOpts().WorkingDir);
+  llvm::Triple T(Res.getTargetOpts().Triple);
   if (DashX.getFormat() == InputKind::Precompiled ||
       DashX.getLanguage() == InputKind::LLVM_IR) {
     // ObjCAAutoRefCount and Sanitize LangOpts are used to setup the
@@ -3293,12 +3298,18 @@ bool CompilerInvocation::CreateFromArgs(CompilerInvocation &Res,
     parseSanitizerKinds("-fsanitize=", Args.getAllArgValues(OPT_fsanitize_EQ),
                         Diags, LangOpts.Sanitize);
   } else {
-    // Other LangOpts are only initialzed when the input is not AST or LLVM IR.
+    // Other LangOpts are only initialized when the input is not AST or LLVM IR.
     // FIXME: Should we really be calling this for an InputKind::Asm input?
     ParseLangArgs(LangOpts, Args, DashX, Res.getTargetOpts(),
                   Res.getPreprocessorOpts(), Diags);
     if (Res.getFrontendOpts().ProgramAction == frontend::RewriteObjC)
       LangOpts.ObjCExceptions = 1;
+    if (T.isOSDarwin() && DashX.isPreprocessed()) {
+      // Supress the darwin-specific 'stdlibcxx-not-found' diagnostic for
+      // preprocessed input as we don't expect it to be used with -std=libc++
+      // anyway.
+      Res.getDiagnosticOpts().Warnings.push_back("no-stdlibcxx-not-found");
+    }
   }
 
   LangOpts.FunctionAlignment =
@@ -3334,7 +3345,6 @@ bool CompilerInvocation::CreateFromArgs(CompilerInvocation &Res,
                               Res.getFrontendOpts().ProgramAction);
 
   // Turn on -Wspir-compat for SPIR target.
-  llvm::Triple T(Res.getTargetOpts().Triple);
   auto Arch = T.getArch();
   if (Arch == llvm::Triple::spir || Arch == llvm::Triple::spir64) {
     Res.getDiagnosticOpts().Warnings.push_back("spir-compat");

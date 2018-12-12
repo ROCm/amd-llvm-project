@@ -37,13 +37,13 @@
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/Basic/Builtins.h"
 #include "clang/Basic/CharInfo.h"
+#include "clang/Basic/CodeGenOptions.h"
 #include "clang/Basic/Diagnostic.h"
 #include "clang/Basic/Module.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Basic/Version.h"
 #include "clang/CodeGen/ConstantInitBuilder.h"
-#include "clang/Frontend/CodeGenOptions.h"
 #include "clang/Frontend/FrontendDiagnostic.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/Triple.h"
@@ -2738,11 +2738,22 @@ void CodeGenModule::emitCPUDispatchDefinition(GlobalDecl GD) {
 
     llvm::Constant *Func = GetGlobalValue(MangledName);
 
-    if (!Func)
+    if (!Func) {
+      GlobalDecl ExistingDecl = Manglings.lookup(MangledName);
+      if (ExistingDecl.getDecl() &&
+          ExistingDecl.getDecl()->getAsFunction()->isDefined()) {
+        EmitGlobalFunctionDefinition(ExistingDecl, nullptr);
+        Func = GetGlobalValue(MangledName);
+      } else {
+        if (!ExistingDecl.getDecl())
+          ExistingDecl = GD.getWithMultiVersionIndex(Index);
+
       Func = GetOrCreateLLVMFunction(
-          MangledName, DeclTy, GD.getWithMultiVersionIndex(Index),
+          MangledName, DeclTy, ExistingDecl,
           /*ForVTable=*/false, /*DontDefer=*/true,
           /*IsThunk=*/false, llvm::AttributeList(), ForDefinition);
+      }
+    }
 
     llvm::SmallVector<StringRef, 32> Features;
     Target.getCPUSpecificCPUDispatchFeatures(II->getName(), Features);

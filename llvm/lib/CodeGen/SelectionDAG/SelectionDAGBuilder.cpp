@@ -5312,7 +5312,8 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
       return nullptr;
 
     SDDbgValue *SDV;
-    if (isa<ConstantInt>(V) || isa<ConstantFP>(V) || isa<UndefValue>(V)) {
+    if (isa<ConstantInt>(V) || isa<ConstantFP>(V) || isa<UndefValue>(V) ||
+        isa<ConstantPointerNull>(V)) {
       SDV = DAG.getConstantDbgValue(Variable, Expression, V, dl, SDNodeOrder);
       DAG.AddDbgValue(SDV, nullptr, false);
       return nullptr;
@@ -6390,6 +6391,20 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
     return "objc_storeStrong";
   case Intrinsic::objc_storeWeak:
     return "objc_storeWeak";
+  case Intrinsic::objc_unsafeClaimAutoreleasedReturnValue:
+    return "objc_unsafeClaimAutoreleasedReturnValue";
+  case Intrinsic::objc_retainedObject:
+    return "objc_retainedObject";
+  case Intrinsic::objc_unretainedObject:
+    return "objc_unretainedObject";
+  case Intrinsic::objc_unretainedPointer:
+    return "objc_unretainedPointer";
+  case Intrinsic::objc_retain_autorelease:
+    return "objc_retain_autorelease";
+  case Intrinsic::objc_sync_enter:
+    return "objc_sync_enter";
+  case Intrinsic::objc_sync_exit:
+    return "objc_sync_exit";
   }
 }
 

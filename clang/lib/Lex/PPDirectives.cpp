@@ -118,7 +118,7 @@ static bool isReservedId(StringRef Text, const LangOptions &Lang) {
 // the specified module, meaning clang won't build the specified module. This is
 // useful in a number of situations, for instance, when building a library that
 // vends a module map, one might want to avoid hitting intermediate build
-// products containig the the module map or avoid finding the system installed
+// products containimg the the module map or avoid finding the system installed
 // modulemap for that library.
 static bool isForModuleBuilding(Module *M, StringRef CurrentModule,
                                 StringRef ModuleName) {
@@ -399,7 +399,7 @@ void Preprocessor::SkipExcludedConditionalBlock(SourceLocation HashTokenLoc,
     // If this is the end of the buffer, we have an error.
     if (Tok.is(tok::eof)) {
       // We don't emit errors for unterminated conditionals here,
-      // Lexer::LexEndOfFile can do that propertly.
+      // Lexer::LexEndOfFile can do that properly.
       // Just return and let the caller lex after this #include.
       if (PreambleConditionalStack.isRecording())
         PreambleConditionalStack.SkipInfo.emplace(
@@ -1707,6 +1707,7 @@ void Preprocessor::HandleIncludeDirective(SourceLocation HashLoc,
   // Check that we don't have infinite #include recursion.
   if (IncludeMacroStack.size() == MaxAllowedIncludeStackDepth-1) {
     Diag(FilenameTok, diag::err_pp_include_too_deep);
+    HasReachedMaxIncludeDepth = true;
     return;
   }
 
@@ -1855,10 +1856,11 @@ void Preprocessor::HandleIncludeDirective(SourceLocation HashLoc,
   if (PPOpts->SingleFileParseMode)
     ShouldEnter = false;
 
-  // Any diagnostics after the fatal error will not be visible. As the
-  // compilation failed already and errors in subsequently included files won't
-  // be visible, avoid preprocessing those files.
-  if (ShouldEnter && Diags->hasFatalErrorOccurred())
+  // If we've reached the max allowed include depth, it is usually due to an
+  // include cycle. Don't enter already processed files again as it can lead to
+  // reaching the max allowed include depth again.
+  if (ShouldEnter && HasReachedMaxIncludeDepth && File &&
+      HeaderInfo.getFileInfo(File).NumIncludes)
     ShouldEnter = false;
 
   // Determine whether we should try to import the module for this #include, if

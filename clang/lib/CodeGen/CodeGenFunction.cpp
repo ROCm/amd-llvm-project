@@ -29,9 +29,9 @@
 #include "clang/AST/StmtCXX.h"
 #include "clang/AST/StmtObjC.h"
 #include "clang/Basic/Builtins.h"
+#include "clang/Basic/CodeGenOptions.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/CodeGen/CGFunctionInfo.h"
-#include "clang/Frontend/CodeGenOptions.h"
 #include "clang/Frontend/FrontendDiagnostic.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/Dominators.h"
@@ -1123,9 +1123,8 @@ void CodeGenFunction::StartFunction(GlobalDecl GD,
     // Count the implicit return.
     if (!endsWithReturn(D))
       ++NumReturnExprs;
-  } else if (CurFnInfo->getReturnInfo().getKind() == ABIArgInfo::Indirect &&
-             !hasScalarEvaluationKind(CurFnInfo->getReturnType())) {
-    // Indirect aggregate return; emit returned value directly into sret slot.
+  } else if (CurFnInfo->getReturnInfo().getKind() == ABIArgInfo::Indirect) {
+    // Indirect return; emit returned value directly into sret slot.
     // This reduces code size, and affects correctness in C++.
     auto AI = CurFn->arg_begin();
     if (CurFnInfo->getReturnInfo().isSRetAfterThis())

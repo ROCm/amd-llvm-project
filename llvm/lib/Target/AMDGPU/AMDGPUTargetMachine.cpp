@@ -150,6 +150,13 @@ static cl::opt<bool> EnableAtomicOptimizations(
   cl::init(false),
   cl::Hidden);
 
+// Enable Mode register optimization
+static cl::opt<bool> EnableSIModeRegisterPass(
+  "amdgpu-mode-register",
+  cl::desc("Enable mode register pass"),
+  cl::init(true),
+  cl::Hidden);
+
 extern "C" void LLVMInitializeAMDGPUTarget() {
   // Register the target
   RegisterTargetMachine<R600TargetMachine> X(getTheAMDGPUTarget());
@@ -189,6 +196,7 @@ extern "C" void LLVMInitializeAMDGPUTarget() {
   initializeAMDGPUUnifyMetadataPass(*PR);
   initializeSIAnnotateControlFlowPass(*PR);
   initializeSIInsertWaitcntsPass(*PR);
+  initializeSIModeRegisterPass(*PR);
   initializeSIWholeQuadModePass(*PR);
   initializeSILowerControlFlowPass(*PR);
   initializeSIInsertSkipsPass(*PR);
@@ -310,12 +318,6 @@ static Reloc::Model getEffectiveRelocModel(Optional<Reloc::Model> RM) {
   return Reloc::PIC_;
 }
 
-static CodeModel::Model getEffectiveCodeModel(Optional<CodeModel::Model> CM) {
-  if (CM)
-    return *CM;
-  return CodeModel::Small;
-}
-
 AMDGPUTargetMachine::AMDGPUTargetMachine(const Target &T, const Triple &TT,
                                          StringRef CPU, StringRef FS,
                                          TargetOptions Options,
@@ -324,7 +326,7 @@ AMDGPUTargetMachine::AMDGPUTargetMachine(const Target &T, const Triple &TT,
                                          CodeGenOpt::Level OptLevel)
     : LLVMTargetMachine(T, computeDataLayout(TT), TT, getGPUOrDefault(TT, CPU),
                         FS, Options, getEffectiveRelocModel(RM),
-                        getEffectiveCodeModel(CM), OptLevel),
+                        getEffectiveCodeModel(CM, CodeModel::Small), OptLevel),
       TLOF(createTLOF(getTargetTriple())) {
   initAsmInfo();
 }
@@ -900,6 +902,7 @@ void GCNPassConfig::addPreEmitPass() {
   addPass(createSIMemoryLegalizerPass());
   addPass(createSIInsertWaitcntsPass());
   addPass(createSIShrinkInstructionsPass());
+  addPass(createSIModeRegisterPass());
 
   // The hazard recognizer that runs as part of the post-ra scheduler does not
   // guarantee to be able handle all hazards correctly. This is because if there

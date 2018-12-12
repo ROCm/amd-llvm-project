@@ -258,7 +258,7 @@ public:
   /// operand to the LEA instruction.
   bool classifyLEAReg(MachineInstr &MI, const MachineOperand &Src,
                       unsigned LEAOpcode, bool AllowSP, unsigned &NewSrc,
-                      bool &isKill, bool &isUndef, MachineOperand &ImplicitOp,
+                      bool &isKill, MachineOperand &ImplicitOp,
                       LiveVariables *LV) const;
 
   /// convertToThreeAddress - This method must be implemented by targets that
@@ -584,6 +584,9 @@ protected:
                        const MachineOperand *&Destination) const override;
 
 private:
+  /// This is a helper for convertToThreeAddress for 16-bit instructions.
+  /// We use 32-bit LEA to form 3-address code by promoting to a 32-bit
+  /// super-register and then truncating back down to a 16-bit sub-register.
   MachineInstr *convertToThreeAddressWithLEA(unsigned MIOpc,
                                              MachineFunction::iterator &MFI,
                                              MachineInstr &MI,

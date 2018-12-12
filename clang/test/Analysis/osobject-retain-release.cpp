@@ -1,10 +1,11 @@
-// RUN: %clang_analyze_cc1 -analyze -analyzer-checker=core,osx.cocoa.RetainCount -analyzer-output=text -verify %s
+// RUN: %clang_analyze_cc1 -analyze -analyzer-checker=core,osx -analyzer-output=text -verify %s
 
 struct OSMetaClass;
 
 #define OS_CONSUME __attribute__((os_consumed))
 #define OS_RETURNS_RETAINED __attribute__((os_returns_retained))
 #define OS_RETURNS_NOT_RETAINED __attribute__((os_returns_not_retained))
+#define OS_CONSUMES_THIS __attribute__((os_consumes_this))
 
 #define OSTypeID(type)   (type::metaClass)
 
@@ -45,7 +46,14 @@ struct OSArray : public OSObject {
 
   OSObject *identity() override;
 
+  virtual OSObject *generateObject(OSObject *input);
+
   virtual void consumeReference(OS_CONSUME OSArray *other);
+
+  void putIntoArray(OSArray *array) OS_CONSUMES_THIS;
+
+  template <typename T>
+  void putIntoT(T *owner) OS_CONSUMES_THIS;
 
   static OSArray *generateArrayHasCode() {
     return new OSArray;
@@ -68,6 +76,8 @@ struct MyArray : public OSArray {
   void consumeReference(OSArray *other) override;
 
   OSObject *identity() override;
+
+  OSObject *generateObject(OSObject *input) override;
 };
 
 struct OtherStruct {
@@ -78,6 +88,47 @@ struct OtherStruct {
 struct OSMetaClassBase {
   static OSObject *safeMetaCast(const OSObject *inst, const OSMetaClass *meta);
 };
+
+void escape(void *);
+bool coin();
+
+bool os_consume_violation(OS_CONSUME OSObject *obj) {
+  if (coin()) { // expected-note{{Assuming the condition is false}}
+                // expected-note@-1{{Taking false branch}}
+    escape(obj);
+    return true;
+  }
+  return false; // expected-note{{Parameter 'obj' is marked as consuming, but the function does not consume the reference}}
+}
+
+void os_consume_ok(OS_CONSUME OSObject *obj) {
+  escape(obj);
+}
+
+void use_os_consume_violation() {
+  OSObject *obj = new OSObject; // expected-note{{Operator 'new' returns an OSObject of type OSObject with a +1 retain count}}
+  os_consume_violation(obj); // expected-note{{Calling 'os_consume_violation'}}
+                             // expected-note@-1{{Returning from 'os_consume_violation'}}
+} // expected-note{{Object leaked: object allocated and stored into 'obj' is not referenced later in this execution path and has a retain count of +1}}
+  // expected-warning@-1{{Potential leak of an object stored into 'obj'}}
+
+void use_os_consume_ok() {
+  OSObject *obj = new OSObject;
+  os_consume_ok(obj);
+}
+
+void test_escaping_into_voidstar() {
+  OSObject *obj = new OSObject;
+  escape(obj);
+}
+
+void test_no_infinite_check_recursion(MyArray *arr) {
+  OSObject *input = new OSObject;
+  OSObject *o = arr->generateObject(input);
+  o->release();
+  input->release();
+}
+
 
 void check_param_attribute_propagation(MyArray *parent) {
   OSArray *arr = new OSArray;
@@ -100,6 +151,16 @@ unsigned int check_attribute_indirect_propagation(MyArray *arr) {
   return 0;
 }
 
+void check_consumes_this(OSArray *owner) {
+  OSArray *arr = new OSArray;
+  arr->putIntoArray(owner);
+}
+
+void check_consumes_this_with_template(OSArray *owner) {
+  OSArray *arr = new OSArray;
+  arr->putIntoT(owner);
+}
+
 void check_free_no_error() {
   OSArray *arr = OSArray::withCapacity(10);
   arr->retain();
@@ -117,9 +178,9 @@ void check_free_use_after_free() {
 }
 
 unsigned int check_leak_explicit_new() {
-  OSArray *arr = new OSArray; // expected-note{{Operator new returns an OSObject of type OSArray with a +1 retain count}}
-  return arr->getCount(); // expected-note{{Object leaked: allocated object of type OSArray is not referenced later in this execution path and has a retain count of +1}}
-                          // expected-warning@-1{{Potential leak of an object of type OSArray}}
+  OSArray *arr = new OSArray; // expected-note{{Operator 'new' returns an OSObject of type OSArray with a +1 retain count}}
+  return arr->getCount(); // expected-note{{Object leaked: object allocated and stored into 'arr' is not referenced later in this execution path and has a retain count of +1}}
+                          // expected-warning@-1{{Potential leak of an object stored into 'arr'}}
 }
 
 unsigned int check_leak_factory() {

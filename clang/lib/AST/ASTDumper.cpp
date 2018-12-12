@@ -48,7 +48,6 @@ namespace  {
     TextNodeDumper NodeDumper;
 
     raw_ostream &OS;
-    const CommandTraits *Traits;
 
     /// The policy to use for printing; can be defaulted.
     PrintingPolicy PrintPolicy;
@@ -77,14 +76,13 @@ namespace  {
               const SourceManager *SM, bool ShowColors,
               const PrintingPolicy &PrintPolicy)
         : TreeStructure(OS, ShowColors),
-          NodeDumper(OS, ShowColors, SM, PrintPolicy), OS(OS), Traits(Traits),
+          NodeDumper(OS, ShowColors, SM, PrintPolicy, Traits), OS(OS),
           PrintPolicy(PrintPolicy), ShowColors(ShowColors) {}
 
     void setDeserialize(bool D) { Deserialize = D; }
 
     void dumpDecl(const Decl *D);
     void dumpStmt(const Stmt *S);
-    void dumpFullComment(const FullComment *C);
 
     // Utilities
     void dumpType(QualType T) { NodeDumper.dumpType(T); }
@@ -92,7 +90,6 @@ namespace  {
     void dumpTypeAsChild(const Type *T);
     void dumpDeclRef(const Decl *Node, const char *Label = nullptr);
     void dumpBareDeclRef(const Decl *Node) { NodeDumper.dumpBareDeclRef(Node); }
-    bool hasNodes(const DeclContext *DC);
     void dumpDeclContext(const DeclContext *DC);
     void dumpLookups(const DeclContext *DC, bool DumpDecls);
     void dumpAttr(const Attr *A);
@@ -101,10 +98,20 @@ namespace  {
     void dumpCXXCtorInitializer(const CXXCtorInitializer *Init);
     void dumpTemplateParameters(const TemplateParameterList *TPL);
     void dumpTemplateArgumentListInfo(const TemplateArgumentListInfo &TALI);
-    void dumpTemplateArgumentLoc(const TemplateArgumentLoc &A);
+    void dumpTemplateArgumentLoc(const TemplateArgumentLoc &A,
+                                 const Decl *From = nullptr,
+                                 const char *Label = nullptr);
     void dumpTemplateArgumentList(const TemplateArgumentList &TAL);
     void dumpTemplateArgument(const TemplateArgument &A,
-                              SourceRange R = SourceRange());
+                              SourceRange R = SourceRange(),
+                              const Decl *From = nullptr,
+                              const char *Label = nullptr);
+    template <typename SpecializationDecl>
+    void dumpTemplateDeclSpecialization(const SpecializationDecl *D,
+                                        bool DumpExplicitInst,
+                                        bool DumpRefOnly);
+    template <typename TemplateDecl>
+    void dumpTemplateDecl(const TemplateDecl *D, bool DumpExplicitInst);
 
     // Objective-C utilities.
     void dumpObjCTypeParamList(const ObjCTypeParamList *typeParams);
@@ -319,12 +326,6 @@ namespace  {
     void VisitTypeAliasTemplateDecl(const TypeAliasTemplateDecl *D);
     void VisitCXXRecordDecl(const CXXRecordDecl *D);
     void VisitStaticAssertDecl(const StaticAssertDecl *D);
-    template<typename SpecializationDecl>
-    void VisitTemplateDeclSpecialization(const SpecializationDecl *D,
-                                         bool DumpExplicitInst,
-                                         bool DumpRefOnly);
-    template<typename TemplateDecl>
-    void VisitTemplateDecl(const TemplateDecl *D, bool DumpExplicitInst);
     void VisitFunctionTemplateDecl(const FunctionTemplateDecl *D);
     void VisitClassTemplateDecl(const ClassTemplateDecl *D);
     void VisitClassTemplateSpecializationDecl(
@@ -366,7 +367,6 @@ namespace  {
     void VisitBlockDecl(const BlockDecl *D);
 
     // Stmts.
-    void VisitStmt(const Stmt *Node);
     void VisitDeclStmt(const DeclStmt *Node);
     void VisitAttributedStmt(const AttributedStmt *Node);
     void VisitIfStmt(const IfStmt *Node);
@@ -382,7 +382,6 @@ namespace  {
     void VisitOMPExecutableDirective(const OMPExecutableDirective *Node);
 
     // Exprs
-    void VisitExpr(const Expr *Node);
     void VisitCastExpr(const CastExpr *Node);
     void VisitImplicitCastExpr(const ImplicitCastExpr *Node);
     void VisitDeclRefExpr(const DeclRefExpr *Node);
@@ -418,7 +417,6 @@ namespace  {
     void VisitExprWithCleanups(const ExprWithCleanups *Node);
     void VisitUnresolvedLookupExpr(const UnresolvedLookupExpr *Node);
     void VisitLambdaExpr(const LambdaExpr *Node) {
-      VisitExpr(Node);
       dumpDecl(Node->getLambdaClass());
     }
     void VisitSizeOfPackExpr(const SizeOfPackExpr *Node);
@@ -438,31 +436,7 @@ namespace  {
     void VisitObjCBoolLiteralExpr(const ObjCBoolLiteralExpr *Node);
 
     // Comments.
-    const char *getCommandName(unsigned CommandID);
     void dumpComment(const Comment *C, const FullComment *FC);
-
-    // Inline comments.
-    void visitTextComment(const TextComment *C, const FullComment *FC);
-    void visitInlineCommandComment(const InlineCommandComment *C,
-                                   const FullComment *FC);
-    void visitHTMLStartTagComment(const HTMLStartTagComment *C,
-                                  const FullComment *FC);
-    void visitHTMLEndTagComment(const HTMLEndTagComment *C,
-                                const FullComment *FC);
-
-    // Block comments.
-    void visitBlockCommandComment(const BlockCommandComment *C,
-                                  const FullComment *FC);
-    void visitParamCommandComment(const ParamCommandComment *C,
-                                  const FullComment *FC);
-    void visitTParamCommandComment(const TParamCommandComment *C,
-                                   const FullComment *FC);
-    void visitVerbatimBlockComment(const VerbatimBlockComment *C,
-                                   const FullComment *FC);
-    void visitVerbatimBlockLineComment(const VerbatimBlockLineComment *C,
-                                       const FullComment *FC);
-    void visitVerbatimLineComment(const VerbatimLineComment *C,
-                                  const FullComment *FC);
   };
 }
 
@@ -541,15 +515,6 @@ void ASTDumper::dumpDeclRef(const Decl *D, const char *Label) {
       OS << Label << ' ';
     dumpBareDeclRef(D);
   });
-}
-
-bool ASTDumper::hasNodes(const DeclContext *DC) {
-  if (!DC)
-    return false;
-
-  return DC->hasExternalLexicalStorage() ||
-         (Deserialize ? DC->decls_begin() != DC->decls_end()
-                      : DC->noload_decls_begin() != DC->noload_decls_end());
 }
 
 void ASTDumper::dumpDeclContext(const DeclContext *DC) {
@@ -712,8 +677,9 @@ void ASTDumper::dumpTemplateArgumentListInfo(
     dumpTemplateArgumentLoc(TALI[i]);
 }
 
-void ASTDumper::dumpTemplateArgumentLoc(const TemplateArgumentLoc &A) {
-  dumpTemplateArgument(A.getArgument(), A.getSourceRange());
+void ASTDumper::dumpTemplateArgumentLoc(const TemplateArgumentLoc &A,
+                                        const Decl *From, const char *Label) {
+  dumpTemplateArgument(A.getArgument(), A.getSourceRange(), From, Label);
 }
 
 void ASTDumper::dumpTemplateArgumentList(const TemplateArgumentList &TAL) {
@@ -721,11 +687,15 @@ void ASTDumper::dumpTemplateArgumentList(const TemplateArgumentList &TAL) {
     dumpTemplateArgument(TAL[i]);
 }
 
-void ASTDumper::dumpTemplateArgument(const TemplateArgument &A, SourceRange R) {
+void ASTDumper::dumpTemplateArgument(const TemplateArgument &A, SourceRange R,
+                                     const Decl *From, const char *Label) {
   dumpChild([=] {
     OS << "TemplateArgument";
     if (R.isValid())
       NodeDumper.dumpSourceRange(R);
+
+    if (From)
+      dumpDeclRef(From, Label);
 
     switch (A.getKind()) {
     case TemplateArgument::Null:
@@ -834,12 +804,17 @@ void ASTDumper::dumpDecl(const Decl *D) {
 
     if (const FullComment *Comment =
             D->getASTContext().getLocalCommentForDeclUncached(D))
-      dumpFullComment(Comment);
+      dumpComment(Comment, Comment);
 
     // Decls within functions are visited by the body.
-    if (!isa<FunctionDecl>(*D) && !isa<ObjCMethodDecl>(*D) &&
-        hasNodes(dyn_cast<DeclContext>(D)))
-      dumpDeclContext(cast<DeclContext>(D));
+    if (!isa<FunctionDecl>(*D) && !isa<ObjCMethodDecl>(*D)) {
+      auto DC = dyn_cast<DeclContext>(D);
+      if (DC &&
+          (DC->hasExternalLexicalStorage() ||
+           (Deserialize ? DC->decls_begin() != DC->decls_end()
+                        : DC->noload_decls_begin() != DC->noload_decls_end())))
+        dumpDeclContext(DC);
+    }
   });
 }
 
@@ -1074,9 +1049,10 @@ void ASTDumper::VisitOMPDeclareReductionDecl(const OMPDeclareReductionDecl *D) {
   NodeDumper.dumpName(D);
   NodeDumper.dumpType(D->getType());
   OS << " combiner";
-  dumpStmt(D->getCombiner());
-  if (auto *Initializer = D->getInitializer()) {
+  NodeDumper.dumpPointer(D->getCombiner());
+  if (const auto *Initializer = D->getInitializer()) {
     OS << " initializer";
+    NodeDumper.dumpPointer(Initializer);
     switch (D->getInitializerKind()) {
     case OMPDeclareReductionDecl::DirectInit:
       OS << " omp_priv = ";
@@ -1087,8 +1063,11 @@ void ASTDumper::VisitOMPDeclareReductionDecl(const OMPDeclareReductionDecl *D) {
     case OMPDeclareReductionDecl::CallInit:
       break;
     }
-    dumpStmt(Initializer);
   }
+
+  dumpStmt(D->getCombiner());
+  if (const auto *Initializer = D->getInitializer())
+    dumpStmt(Initializer);
 }
 
 void ASTDumper::VisitOMPRequiresDecl(const OMPRequiresDecl *D) {
@@ -1295,10 +1274,10 @@ void ASTDumper::VisitStaticAssertDecl(const StaticAssertDecl *D) {
   dumpStmt(D->getMessage());
 }
 
-template<typename SpecializationDecl>
-void ASTDumper::VisitTemplateDeclSpecialization(const SpecializationDecl *D,
-                                                bool DumpExplicitInst,
-                                                bool DumpRefOnly) {
+template <typename SpecializationDecl>
+void ASTDumper::dumpTemplateDeclSpecialization(const SpecializationDecl *D,
+                                               bool DumpExplicitInst,
+                                               bool DumpRefOnly) {
   bool DumpedAny = false;
   for (auto *RedeclWithBadType : D->redecls()) {
     // FIXME: The redecls() range sometimes has elements of a less-specific
@@ -1337,28 +1316,27 @@ void ASTDumper::VisitTemplateDeclSpecialization(const SpecializationDecl *D,
     dumpDeclRef(D);
 }
 
-template<typename TemplateDecl>
-void ASTDumper::VisitTemplateDecl(const TemplateDecl *D,
-                                  bool DumpExplicitInst) {
+template <typename TemplateDecl>
+void ASTDumper::dumpTemplateDecl(const TemplateDecl *D, bool DumpExplicitInst) {
   NodeDumper.dumpName(D);
   dumpTemplateParameters(D->getTemplateParameters());
 
   dumpDecl(D->getTemplatedDecl());
 
   for (auto *Child : D->specializations())
-    VisitTemplateDeclSpecialization(Child, DumpExplicitInst,
-                                    !D->isCanonicalDecl());
+    dumpTemplateDeclSpecialization(Child, DumpExplicitInst,
+                                   !D->isCanonicalDecl());
 }
 
 void ASTDumper::VisitFunctionTemplateDecl(const FunctionTemplateDecl *D) {
   // FIXME: We don't add a declaration of a function template specialization
   // to its context when it's explicitly instantiated, so dump explicit
   // instantiations when we dump the template itself.
-  VisitTemplateDecl(D, true);
+  dumpTemplateDecl(D, true);
 }
 
 void ASTDumper::VisitClassTemplateDecl(const ClassTemplateDecl *D) {
-  VisitTemplateDecl(D, false);
+  dumpTemplateDecl(D, false);
 }
 
 void ASTDumper::VisitClassTemplateSpecializationDecl(
@@ -1381,7 +1359,7 @@ void ASTDumper::VisitClassScopeFunctionSpecializationDecl(
 }
 
 void ASTDumper::VisitVarTemplateDecl(const VarTemplateDecl *D) {
-  VisitTemplateDecl(D, false);
+  dumpTemplateDecl(D, false);
 }
 
 void ASTDumper::VisitBuiltinTemplateDecl(const BuiltinTemplateDecl *D) {
@@ -1411,10 +1389,10 @@ void ASTDumper::VisitTemplateTypeParmDecl(const TemplateTypeParmDecl *D) {
     OS << " ...";
   NodeDumper.dumpName(D);
   if (D->hasDefaultArgument())
-    dumpTemplateArgument(D->getDefaultArgument());
-  if (auto *From = D->getDefaultArgStorage().getInheritedFrom())
-    dumpDeclRef(From, D->defaultArgumentWasInherited() ? "inherited from"
-                                                       : "previous");
+    dumpTemplateArgument(D->getDefaultArgument(), SourceRange(),
+                         D->getDefaultArgStorage().getInheritedFrom(),
+                         D->defaultArgumentWasInherited() ? "inherited from"
+                                                          : "previous");
 }
 
 void ASTDumper::VisitNonTypeTemplateParmDecl(const NonTypeTemplateParmDecl *D) {
@@ -1424,10 +1402,10 @@ void ASTDumper::VisitNonTypeTemplateParmDecl(const NonTypeTemplateParmDecl *D) {
     OS << " ...";
   NodeDumper.dumpName(D);
   if (D->hasDefaultArgument())
-    dumpTemplateArgument(D->getDefaultArgument());
-  if (auto *From = D->getDefaultArgStorage().getInheritedFrom())
-    dumpDeclRef(From, D->defaultArgumentWasInherited() ? "inherited from"
-                                                       : "previous");
+    dumpTemplateArgument(D->getDefaultArgument(), SourceRange(),
+                         D->getDefaultArgStorage().getInheritedFrom(),
+                         D->defaultArgumentWasInherited() ? "inherited from"
+                                                          : "previous");
 }
 
 void ASTDumper::VisitTemplateTemplateParmDecl(
@@ -1438,10 +1416,9 @@ void ASTDumper::VisitTemplateTemplateParmDecl(
   NodeDumper.dumpName(D);
   dumpTemplateParameters(D->getTemplateParameters());
   if (D->hasDefaultArgument())
-    dumpTemplateArgumentLoc(D->getDefaultArgument());
-  if (auto *From = D->getDefaultArgStorage().getInheritedFrom())
-    dumpDeclRef(From, D->defaultArgumentWasInherited() ? "inherited from"
-                                                       : "previous");
+    dumpTemplateArgumentLoc(
+        D->getDefaultArgument(), D->getDefaultArgStorage().getInheritedFrom(),
+        D->defaultArgumentWasInherited() ? "inherited from" : "previous");
 }
 
 void ASTDumper::VisitUsingDecl(const UsingDecl *D) {
@@ -1727,6 +1704,50 @@ void ASTDumper::dumpStmt(const Stmt *S) {
       OS << "<<<NULL>>>";
       return;
     }
+    {
+      ColorScope Color(OS, ShowColors, StmtColor);
+      OS << S->getStmtClassName();
+    }
+    NodeDumper.dumpPointer(S);
+    NodeDumper.dumpSourceRange(S->getSourceRange());
+
+    if (const auto *E = dyn_cast<Expr>(S)) {
+      NodeDumper.dumpType(E->getType());
+
+      {
+        ColorScope Color(OS, ShowColors, ValueKindColor);
+        switch (E->getValueKind()) {
+        case VK_RValue:
+          break;
+        case VK_LValue:
+          OS << " lvalue";
+          break;
+        case VK_XValue:
+          OS << " xvalue";
+          break;
+        }
+      }
+
+      {
+        ColorScope Color(OS, ShowColors, ObjectKindColor);
+        switch (E->getObjectKind()) {
+        case OK_Ordinary:
+          break;
+        case OK_BitField:
+          OS << " bitfield";
+          break;
+        case OK_ObjCProperty:
+          OS << " objcproperty";
+          break;
+        case OK_ObjCSubscript:
+          OS << " objcsubscript";
+          break;
+        case OK_VectorComponent:
+          OS << " vectorcomponent";
+          break;
+        }
+      }
+    }
 
     ConstStmtVisitor<ASTDumper>::Visit(S);
 
@@ -1740,17 +1761,7 @@ void ASTDumper::dumpStmt(const Stmt *S) {
   });
 }
 
-void ASTDumper::VisitStmt(const Stmt *Node) {
-  {
-    ColorScope Color(OS, ShowColors, StmtColor);
-    OS << Node->getStmtClassName();
-  }
-  NodeDumper.dumpPointer(Node);
-  NodeDumper.dumpSourceRange(Node->getSourceRange());
-}
-
 void ASTDumper::VisitDeclStmt(const DeclStmt *Node) {
-  VisitStmt(Node);
   for (DeclStmt::const_decl_iterator I = Node->decl_begin(),
                                      E = Node->decl_end();
        I != E; ++I)
@@ -1758,7 +1769,6 @@ void ASTDumper::VisitDeclStmt(const DeclStmt *Node) {
 }
 
 void ASTDumper::VisitAttributedStmt(const AttributedStmt *Node) {
-  VisitStmt(Node);
   for (ArrayRef<const Attr *>::iterator I = Node->getAttrs().begin(),
                                         E = Node->getAttrs().end();
        I != E; ++I)
@@ -1766,7 +1776,6 @@ void ASTDumper::VisitAttributedStmt(const AttributedStmt *Node) {
 }
 
 void ASTDumper::VisitIfStmt(const IfStmt *Node) {
-  VisitStmt(Node);
   if (Node->hasInitStorage())
     OS << " has_init";
   if (Node->hasVarStorage())
@@ -1776,7 +1785,6 @@ void ASTDumper::VisitIfStmt(const IfStmt *Node) {
 }
 
 void ASTDumper::VisitSwitchStmt(const SwitchStmt *Node) {
-  VisitStmt(Node);
   if (Node->hasInitStorage())
     OS << " has_init";
   if (Node->hasVarStorage())
@@ -1784,35 +1792,29 @@ void ASTDumper::VisitSwitchStmt(const SwitchStmt *Node) {
 }
 
 void ASTDumper::VisitWhileStmt(const WhileStmt *Node) {
-  VisitStmt(Node);
   if (Node->hasVarStorage())
     OS << " has_var";
 }
 
 void ASTDumper::VisitLabelStmt(const LabelStmt *Node) {
-  VisitStmt(Node);
   OS << " '" << Node->getName() << "'";
 }
 
 void ASTDumper::VisitGotoStmt(const GotoStmt *Node) {
-  VisitStmt(Node);
   OS << " '" << Node->getLabel()->getName() << "'";
   NodeDumper.dumpPointer(Node->getLabel());
 }
 
 void ASTDumper::VisitCXXCatchStmt(const CXXCatchStmt *Node) {
-  VisitStmt(Node);
   dumpDecl(Node->getExceptionDecl());
 }
 
 void ASTDumper::VisitCaseStmt(const CaseStmt *Node) {
-  VisitStmt(Node);
   if (Node->caseStmtIsGNURange())
     OS << " gnu_range";
 }
 
 void ASTDumper::VisitCapturedStmt(const CapturedStmt *Node) {
-  VisitStmt(Node);
   dumpDecl(Node->getCapturedDecl());
 }
 
@@ -1822,7 +1824,6 @@ void ASTDumper::VisitCapturedStmt(const CapturedStmt *Node) {
 
 void ASTDumper::VisitOMPExecutableDirective(
     const OMPExecutableDirective *Node) {
-  VisitStmt(Node);
   for (auto *C : Node->clauses()) {
     dumpChild([=] {
       if (!C) {
@@ -1850,45 +1851,6 @@ void ASTDumper::VisitOMPExecutableDirective(
 //  Expr dumping methods.
 //===----------------------------------------------------------------------===//
 
-void ASTDumper::VisitExpr(const Expr *Node) {
-  VisitStmt(Node);
-  NodeDumper.dumpType(Node->getType());
-
-  {
-    ColorScope Color(OS, ShowColors, ValueKindColor);
-    switch (Node->getValueKind()) {
-    case VK_RValue:
-      break;
-    case VK_LValue:
-      OS << " lvalue";
-      break;
-    case VK_XValue:
-      OS << " xvalue";
-      break;
-    }
-  }
-
-  {
-    ColorScope Color(OS, ShowColors, ObjectKindColor);
-    switch (Node->getObjectKind()) {
-    case OK_Ordinary:
-      break;
-    case OK_BitField:
-      OS << " bitfield";
-      break;
-    case OK_ObjCProperty:
-      OS << " objcproperty";
-      break;
-    case OK_ObjCSubscript:
-      OS << " objcsubscript";
-      break;
-    case OK_VectorComponent:
-      OS << " vectorcomponent";
-      break;
-    }
-  }
-}
-
 static void dumpBasePath(raw_ostream &OS, const CastExpr *Node) {
   if (Node->path_empty())
     return;
@@ -1915,7 +1877,6 @@ static void dumpBasePath(raw_ostream &OS, const CastExpr *Node) {
 }
 
 void ASTDumper::VisitCastExpr(const CastExpr *Node) {
-  VisitExpr(Node);
   OS << " <";
   {
     ColorScope Color(OS, ShowColors, CastColor);
@@ -1932,8 +1893,6 @@ void ASTDumper::VisitImplicitCastExpr(const ImplicitCastExpr *Node) {
 }
 
 void ASTDumper::VisitDeclRefExpr(const DeclRefExpr *Node) {
-  VisitExpr(Node);
-
   OS << " ";
   NodeDumper.dumpBareDeclRef(Node->getDecl());
   if (Node->getDecl() != Node->getFoundDecl()) {
@@ -1944,7 +1903,6 @@ void ASTDumper::VisitDeclRefExpr(const DeclRefExpr *Node) {
 }
 
 void ASTDumper::VisitUnresolvedLookupExpr(const UnresolvedLookupExpr *Node) {
-  VisitExpr(Node);
   OS << " (";
   if (!Node->requiresADL())
     OS << "no ";
@@ -1959,8 +1917,6 @@ void ASTDumper::VisitUnresolvedLookupExpr(const UnresolvedLookupExpr *Node) {
 }
 
 void ASTDumper::VisitObjCIvarRefExpr(const ObjCIvarRefExpr *Node) {
-  VisitExpr(Node);
-
   {
     ColorScope Color(OS, ShowColors, DeclKindNameColor);
     OS << " " << Node->getDecl()->getDeclKindName() << "Decl";
@@ -1972,60 +1928,50 @@ void ASTDumper::VisitObjCIvarRefExpr(const ObjCIvarRefExpr *Node) {
 }
 
 void ASTDumper::VisitPredefinedExpr(const PredefinedExpr *Node) {
-  VisitExpr(Node);
   OS << " " << PredefinedExpr::getIdentKindName(Node->getIdentKind());
 }
 
 void ASTDumper::VisitCharacterLiteral(const CharacterLiteral *Node) {
-  VisitExpr(Node);
   ColorScope Color(OS, ShowColors, ValueColor);
   OS << " " << Node->getValue();
 }
 
 void ASTDumper::VisitIntegerLiteral(const IntegerLiteral *Node) {
-  VisitExpr(Node);
-
   bool isSigned = Node->getType()->isSignedIntegerType();
   ColorScope Color(OS, ShowColors, ValueColor);
   OS << " " << Node->getValue().toString(10, isSigned);
 }
 
 void ASTDumper::VisitFixedPointLiteral(const FixedPointLiteral *Node) {
-  VisitExpr(Node);
-
   ColorScope Color(OS, ShowColors, ValueColor);
   OS << " " << Node->getValueAsString(/*Radix=*/10);
 }
 
 void ASTDumper::VisitFloatingLiteral(const FloatingLiteral *Node) {
-  VisitExpr(Node);
   ColorScope Color(OS, ShowColors, ValueColor);
   OS << " " << Node->getValueAsApproximateDouble();
 }
 
 void ASTDumper::VisitStringLiteral(const StringLiteral *Str) {
-  VisitExpr(Str);
   ColorScope Color(OS, ShowColors, ValueColor);
   OS << " ";
   Str->outputString(OS);
 }
 
 void ASTDumper::VisitInitListExpr(const InitListExpr *ILE) {
-  VisitExpr(ILE);
+  if (auto *Field = ILE->getInitializedFieldInUnion()) {
+    OS << " field ";
+    NodeDumper.dumpBareDeclRef(Field);
+  }
   if (auto *Filler = ILE->getArrayFiller()) {
     dumpChild([=] {
       OS << "array filler";
       dumpStmt(Filler);
     });
   }
-  if (auto *Field = ILE->getInitializedFieldInUnion()) {
-    OS << " field ";
-    NodeDumper.dumpBareDeclRef(Field);
-  }
 }
 
 void ASTDumper::VisitUnaryOperator(const UnaryOperator *Node) {
-  VisitExpr(Node);
   OS << " " << (Node->isPostfix() ? "postfix" : "prefix")
      << " '" << UnaryOperator::getOpcodeStr(Node->getOpcode()) << "'";
   if (!Node->canOverflow())
@@ -2034,7 +1980,6 @@ void ASTDumper::VisitUnaryOperator(const UnaryOperator *Node) {
 
 void ASTDumper::VisitUnaryExprOrTypeTraitExpr(
     const UnaryExprOrTypeTraitExpr *Node) {
-  VisitExpr(Node);
   switch(Node->getKind()) {
   case UETT_SizeOf:
     OS << " sizeof";
@@ -2057,24 +2002,20 @@ void ASTDumper::VisitUnaryExprOrTypeTraitExpr(
 }
 
 void ASTDumper::VisitMemberExpr(const MemberExpr *Node) {
-  VisitExpr(Node);
   OS << " " << (Node->isArrow() ? "->" : ".") << *Node->getMemberDecl();
   NodeDumper.dumpPointer(Node->getMemberDecl());
 }
 
 void ASTDumper::VisitExtVectorElementExpr(const ExtVectorElementExpr *Node) {
-  VisitExpr(Node);
   OS << " " << Node->getAccessor().getNameStart();
 }
 
 void ASTDumper::VisitBinaryOperator(const BinaryOperator *Node) {
-  VisitExpr(Node);
   OS << " '" << BinaryOperator::getOpcodeStr(Node->getOpcode()) << "'";
 }
 
 void ASTDumper::VisitCompoundAssignOperator(
     const CompoundAssignOperator *Node) {
-  VisitExpr(Node);
   OS << " '" << BinaryOperator::getOpcodeStr(Node->getOpcode())
      << "' ComputeLHSTy=";
   NodeDumper.dumpBareType(Node->getComputationLHSType());
@@ -2083,19 +2024,15 @@ void ASTDumper::VisitCompoundAssignOperator(
 }
 
 void ASTDumper::VisitBlockExpr(const BlockExpr *Node) {
-  VisitExpr(Node);
   dumpDecl(Node->getBlockDecl());
 }
 
 void ASTDumper::VisitOpaqueValueExpr(const OpaqueValueExpr *Node) {
-  VisitExpr(Node);
-
   if (Expr *Source = Node->getSourceExpr())
     dumpStmt(Source);
 }
 
 void ASTDumper::VisitGenericSelectionExpr(const GenericSelectionExpr *E) {
-  VisitExpr(E);
   if (E->isResultDependent())
     OS << " result_dependent";
   dumpStmt(E->getControllingExpr());
@@ -2123,7 +2060,6 @@ void ASTDumper::VisitGenericSelectionExpr(const GenericSelectionExpr *E) {
 // GNU extensions.
 
 void ASTDumper::VisitAddrLabelExpr(const AddrLabelExpr *Node) {
-  VisitExpr(Node);
   OS << " " << Node->getLabel()->getName();
   NodeDumper.dumpPointer(Node->getLabel());
 }
@@ -2133,7 +2069,6 @@ void ASTDumper::VisitAddrLabelExpr(const AddrLabelExpr *Node) {
 //===----------------------------------------------------------------------===//
 
 void ASTDumper::VisitCXXNamedCastExpr(const CXXNamedCastExpr *Node) {
-  VisitExpr(Node);
   OS << " " << Node->getCastName()
      << "<" << Node->getTypeAsWritten().getAsString() << ">"
      << " <" << Node->getCastKindName();
@@ -2142,31 +2077,26 @@ void ASTDumper::VisitCXXNamedCastExpr(const CXXNamedCastExpr *Node) {
 }
 
 void ASTDumper::VisitCXXBoolLiteralExpr(const CXXBoolLiteralExpr *Node) {
-  VisitExpr(Node);
   OS << " " << (Node->getValue() ? "true" : "false");
 }
 
 void ASTDumper::VisitCXXThisExpr(const CXXThisExpr *Node) {
-  VisitExpr(Node);
   OS << " this";
 }
 
 void ASTDumper::VisitCXXFunctionalCastExpr(const CXXFunctionalCastExpr *Node) {
-  VisitExpr(Node);
   OS << " functional cast to " << Node->getTypeAsWritten().getAsString()
      << " <" << Node->getCastKindName() << ">";
 }
 
 void ASTDumper::VisitCXXUnresolvedConstructExpr(
     const CXXUnresolvedConstructExpr *Node) {
-  VisitExpr(Node);
   NodeDumper.dumpType(Node->getTypeAsWritten());
   if (Node->isListInitialization())
     OS << " list";
 }
 
 void ASTDumper::VisitCXXConstructExpr(const CXXConstructExpr *Node) {
-  VisitExpr(Node);
   CXXConstructorDecl *Ctor = Node->getConstructor();
   NodeDumper.dumpType(Ctor->getType());
   if (Node->isElidable())
@@ -2180,13 +2110,11 @@ void ASTDumper::VisitCXXConstructExpr(const CXXConstructExpr *Node) {
 }
 
 void ASTDumper::VisitCXXBindTemporaryExpr(const CXXBindTemporaryExpr *Node) {
-  VisitExpr(Node);
   OS << " ";
   NodeDumper.dumpCXXTemporary(Node->getTemporary());
 }
 
 void ASTDumper::VisitCXXNewExpr(const CXXNewExpr *Node) {
-  VisitExpr(Node);
   if (Node->isGlobalNew())
     OS << " global";
   if (Node->isArray())
@@ -2200,7 +2128,6 @@ void ASTDumper::VisitCXXNewExpr(const CXXNewExpr *Node) {
 }
 
 void ASTDumper::VisitCXXDeleteExpr(const CXXDeleteExpr *Node) {
-  VisitExpr(Node);
   if (Node->isGlobalDelete())
     OS << " global";
   if (Node->isArrayForm())
@@ -2213,7 +2140,6 @@ void ASTDumper::VisitCXXDeleteExpr(const CXXDeleteExpr *Node) {
 
 void
 ASTDumper::VisitMaterializeTemporaryExpr(const MaterializeTemporaryExpr *Node) {
-  VisitExpr(Node);
   if (const ValueDecl *VD = Node->getExtendingDecl()) {
     OS << " extended by ";
     NodeDumper.dumpBareDeclRef(VD);
@@ -2221,13 +2147,11 @@ ASTDumper::VisitMaterializeTemporaryExpr(const MaterializeTemporaryExpr *Node) {
 }
 
 void ASTDumper::VisitExprWithCleanups(const ExprWithCleanups *Node) {
-  VisitExpr(Node);
   for (unsigned i = 0, e = Node->getNumObjects(); i != e; ++i)
     dumpDeclRef(Node->getObject(i), "cleanup");
 }
 
 void ASTDumper::VisitSizeOfPackExpr(const SizeOfPackExpr *Node) {
-  VisitExpr(Node);
   NodeDumper.dumpPointer(Node->getPack());
   NodeDumper.dumpName(Node->getPack());
   if (Node->isPartiallySubstituted())
@@ -2237,7 +2161,6 @@ void ASTDumper::VisitSizeOfPackExpr(const SizeOfPackExpr *Node) {
 
 void ASTDumper::VisitCXXDependentScopeMemberExpr(
     const CXXDependentScopeMemberExpr *Node) {
-  VisitExpr(Node);
   OS << " " << (Node->isArrow() ? "->" : ".") << Node->getMember();
 }
 
@@ -2246,7 +2169,6 @@ void ASTDumper::VisitCXXDependentScopeMemberExpr(
 //===----------------------------------------------------------------------===//
 
 void ASTDumper::VisitObjCMessageExpr(const ObjCMessageExpr *Node) {
-  VisitExpr(Node);
   OS << " selector=";
   Node->getSelector().print(OS);
   switch (Node->getReceiverKind()) {
@@ -2269,7 +2191,6 @@ void ASTDumper::VisitObjCMessageExpr(const ObjCMessageExpr *Node) {
 }
 
 void ASTDumper::VisitObjCBoxedExpr(const ObjCBoxedExpr *Node) {
-  VisitExpr(Node);
   if (auto *BoxingMethod = Node->getBoxingMethod()) {
     OS << " selector=";
     BoxingMethod->getSelector().print(OS);
@@ -2277,7 +2198,6 @@ void ASTDumper::VisitObjCBoxedExpr(const ObjCBoxedExpr *Node) {
 }
 
 void ASTDumper::VisitObjCAtCatchStmt(const ObjCAtCatchStmt *Node) {
-  VisitStmt(Node);
   if (const VarDecl *CatchParam = Node->getCatchParamDecl())
     dumpDecl(CatchParam);
   else
@@ -2285,25 +2205,19 @@ void ASTDumper::VisitObjCAtCatchStmt(const ObjCAtCatchStmt *Node) {
 }
 
 void ASTDumper::VisitObjCEncodeExpr(const ObjCEncodeExpr *Node) {
-  VisitExpr(Node);
   NodeDumper.dumpType(Node->getEncodedType());
 }
 
 void ASTDumper::VisitObjCSelectorExpr(const ObjCSelectorExpr *Node) {
-  VisitExpr(Node);
-
   OS << " ";
   Node->getSelector().print(OS);
 }
 
 void ASTDumper::VisitObjCProtocolExpr(const ObjCProtocolExpr *Node) {
-  VisitExpr(Node);
-
   OS << ' ' << *Node->getProtocol();
 }
 
 void ASTDumper::VisitObjCPropertyRefExpr(const ObjCPropertyRefExpr *Node) {
-  VisitExpr(Node);
   if (Node->isImplicitProperty()) {
     OS << " Kind=MethodRef Getter=\"";
     if (Node->getImplicitPropertyGetter())
@@ -2334,7 +2248,6 @@ void ASTDumper::VisitObjCPropertyRefExpr(const ObjCPropertyRefExpr *Node) {
 }
 
 void ASTDumper::VisitObjCSubscriptRefExpr(const ObjCSubscriptRefExpr *Node) {
-  VisitExpr(Node);
   if (Node->isArraySubscriptRefExpr())
     OS << " Kind=ArraySubscript GetterForArray=\"";
   else
@@ -2355,7 +2268,6 @@ void ASTDumper::VisitObjCSubscriptRefExpr(const ObjCSubscriptRefExpr *Node) {
 }
 
 void ASTDumper::VisitObjCBoolLiteralExpr(const ObjCBoolLiteralExpr *Node) {
-  VisitExpr(Node);
   OS << " " << (Node->getValue() ? "__objc_yes" : "__objc_no");
 }
 
@@ -2363,148 +2275,17 @@ void ASTDumper::VisitObjCBoolLiteralExpr(const ObjCBoolLiteralExpr *Node) {
 // Comments
 //===----------------------------------------------------------------------===//
 
-const char *ASTDumper::getCommandName(unsigned CommandID) {
-  if (Traits)
-    return Traits->getCommandInfo(CommandID)->Name;
-  const CommandInfo *Info = CommandTraits::getBuiltinCommandInfo(CommandID);
-  if (Info)
-    return Info->Name;
-  return "<not a builtin command>";
-}
-
-void ASTDumper::dumpFullComment(const FullComment *C) {
-  if (!C)
-    return;
-  dumpComment(C, C);
-}
-
 void ASTDumper::dumpComment(const Comment *C, const FullComment *FC) {
   dumpChild([=] {
+    NodeDumper.Visit(C, FC);
     if (!C) {
-      ColorScope Color(OS, ShowColors, NullColor);
-      OS << "<<<NULL>>>";
       return;
     }
-
-    {
-      ColorScope Color(OS, ShowColors, CommentColor);
-      OS << C->getCommentKindName();
-    }
-    NodeDumper.dumpPointer(C);
-    NodeDumper.dumpSourceRange(C->getSourceRange());
     ConstCommentVisitor<ASTDumper, void, const FullComment *>::visit(C, FC);
     for (Comment::child_iterator I = C->child_begin(), E = C->child_end();
          I != E; ++I)
       dumpComment(*I, FC);
   });
-}
-
-void ASTDumper::visitTextComment(const TextComment *C, const FullComment *) {
-  OS << " Text=\"" << C->getText() << "\"";
-}
-
-void ASTDumper::visitInlineCommandComment(const InlineCommandComment *C,
-                                          const FullComment *) {
-  OS << " Name=\"" << getCommandName(C->getCommandID()) << "\"";
-  switch (C->getRenderKind()) {
-  case InlineCommandComment::RenderNormal:
-    OS << " RenderNormal";
-    break;
-  case InlineCommandComment::RenderBold:
-    OS << " RenderBold";
-    break;
-  case InlineCommandComment::RenderMonospaced:
-    OS << " RenderMonospaced";
-    break;
-  case InlineCommandComment::RenderEmphasized:
-    OS << " RenderEmphasized";
-    break;
-  }
-
-  for (unsigned i = 0, e = C->getNumArgs(); i != e; ++i)
-    OS << " Arg[" << i << "]=\"" << C->getArgText(i) << "\"";
-}
-
-void ASTDumper::visitHTMLStartTagComment(const HTMLStartTagComment *C,
-                                         const FullComment *) {
-  OS << " Name=\"" << C->getTagName() << "\"";
-  if (C->getNumAttrs() != 0) {
-    OS << " Attrs: ";
-    for (unsigned i = 0, e = C->getNumAttrs(); i != e; ++i) {
-      const HTMLStartTagComment::Attribute &Attr = C->getAttr(i);
-      OS << " \"" << Attr.Name << "=\"" << Attr.Value << "\"";
-    }
-  }
-  if (C->isSelfClosing())
-    OS << " SelfClosing";
-}
-
-void ASTDumper::visitHTMLEndTagComment(const HTMLEndTagComment *C,
-                                       const FullComment *) {
-  OS << " Name=\"" << C->getTagName() << "\"";
-}
-
-void ASTDumper::visitBlockCommandComment(const BlockCommandComment *C,
-                                         const FullComment *) {
-  OS << " Name=\"" << getCommandName(C->getCommandID()) << "\"";
-  for (unsigned i = 0, e = C->getNumArgs(); i != e; ++i)
-    OS << " Arg[" << i << "]=\"" << C->getArgText(i) << "\"";
-}
-
-void ASTDumper::visitParamCommandComment(const ParamCommandComment *C,
-                                         const FullComment *FC) {
-  OS << " " << ParamCommandComment::getDirectionAsString(C->getDirection());
-
-  if (C->isDirectionExplicit())
-    OS << " explicitly";
-  else
-    OS << " implicitly";
-
-  if (C->hasParamName()) {
-    if (C->isParamIndexValid())
-      OS << " Param=\"" << C->getParamName(FC) << "\"";
-    else
-      OS << " Param=\"" << C->getParamNameAsWritten() << "\"";
-  }
-
-  if (C->isParamIndexValid() && !C->isVarArgParam())
-    OS << " ParamIndex=" << C->getParamIndex();
-}
-
-void ASTDumper::visitTParamCommandComment(const TParamCommandComment *C,
-                                          const FullComment *FC) {
-  if (C->hasParamName()) {
-    if (C->isPositionValid())
-      OS << " Param=\"" << C->getParamName(FC) << "\"";
-    else
-      OS << " Param=\"" << C->getParamNameAsWritten() << "\"";
-  }
-
-  if (C->isPositionValid()) {
-    OS << " Position=<";
-    for (unsigned i = 0, e = C->getDepth(); i != e; ++i) {
-      OS << C->getIndex(i);
-      if (i != e - 1)
-        OS << ", ";
-    }
-    OS << ">";
-  }
-}
-
-void ASTDumper::visitVerbatimBlockComment(const VerbatimBlockComment *C,
-                                          const FullComment *) {
-  OS << " Name=\"" << getCommandName(C->getCommandID()) << "\""
-        " CloseName=\"" << C->getCloseName() << "\"";
-}
-
-void ASTDumper::visitVerbatimBlockLineComment(const VerbatimBlockLineComment *C,
-                                              const FullComment *) {
-  OS << " Text=\"" << C->getText() << "\"";
-}
-
-void ASTDumper::visitVerbatimLineComment(const VerbatimLineComment *C,
-                                         const FullComment *) {
-  OS << " Text=\"" << C->getText() << "\"";
 }
 
 //===----------------------------------------------------------------------===//
@@ -2615,12 +2396,16 @@ LLVM_DUMP_METHOD void Comment::dump(const ASTContext &Context) const {
 void Comment::dump(raw_ostream &OS, const CommandTraits *Traits,
                    const SourceManager *SM) const {
   const FullComment *FC = dyn_cast<FullComment>(this);
+  if (!FC)
+    return;
   ASTDumper D(OS, Traits, SM);
-  D.dumpFullComment(FC);
+  D.dumpComment(FC, FC);
 }
 
 LLVM_DUMP_METHOD void Comment::dumpColor() const {
   const FullComment *FC = dyn_cast<FullComment>(this);
+  if (!FC)
+    return;
   ASTDumper D(llvm::errs(), nullptr, nullptr, /*ShowColors*/true);
-  D.dumpFullComment(FC);
+  D.dumpComment(FC, FC);
 }
