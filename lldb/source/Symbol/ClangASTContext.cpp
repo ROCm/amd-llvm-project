@@ -2205,7 +2205,7 @@ CompilerType ClangASTContext::CreateFunctionType(
   proto_info.ExtInfo = cc;
   proto_info.Variadic = is_variadic;
   proto_info.ExceptionSpec = EST_None;
-  proto_info.TypeQuals = type_quals;
+  proto_info.TypeQuals = clang::Qualifiers::fromFastMask(type_quals);
   proto_info.RefQualifier = RQ_None;
 
   return CompilerType(ast,
@@ -2214,14 +2214,17 @@ CompilerType ClangASTContext::CreateFunctionType(
 }
 
 ParmVarDecl *ClangASTContext::CreateParameterDeclaration(
-    const char *name, const CompilerType &param_type, int storage) {
+    clang::DeclContext *decl_ctx, const char *name,
+    const CompilerType &param_type, int storage) {
   ASTContext *ast = getASTContext();
   assert(ast != nullptr);
-  return ParmVarDecl::Create(*ast, ast->getTranslationUnitDecl(),
-                             SourceLocation(), SourceLocation(),
-                             name && name[0] ? &ast->Idents.get(name) : nullptr,
-                             ClangUtil::GetQualType(param_type), nullptr,
-                             (clang::StorageClass)storage, nullptr);
+  auto *decl =
+      ParmVarDecl::Create(*ast, decl_ctx, SourceLocation(), SourceLocation(),
+                          name && name[0] ? &ast->Idents.get(name) : nullptr,
+                          ClangUtil::GetQualType(param_type), nullptr,
+                          (clang::StorageClass)storage, nullptr);
+  decl_ctx->addDecl(decl);
+  return decl;
 }
 
 void ClangASTContext::SetFunctionParameters(FunctionDecl *function_decl,
