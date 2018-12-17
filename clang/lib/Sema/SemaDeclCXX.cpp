@@ -5572,6 +5572,9 @@ static void ReferenceDllExportedMembers(Sema &S, CXXRecordDecl *Class) {
     // declaration.
     return;
 
+  if (S.Context.getTargetInfo().getTriple().isWindowsGNUEnvironment())
+    S.MarkVTableUsed(Class->getLocation(), Class, true);
+
   for (Decl *Member : Class->decls()) {
     // Defined static variables that are members of an exported base
     // class must be marked export too.
@@ -8026,7 +8029,7 @@ void Sema::DeclareAMPSerializer(CXXRecordDecl *ClassDecl, DeclarationName Name) 
     ;
   }
 
- ExtInfo.TypeQuals|= Qualifiers::Const;
+  ExtInfo.TypeQuals.addConst();
   SerializeType = dyn_cast<FunctionProtoType>(Context.getFunctionType(Context.VoidTy,
                                               LocalArgs,
                                               ExtInfo).getTypePtr());
@@ -8503,7 +8506,7 @@ QualType Sema::CheckConstructorDeclarator(Declarator &D, QualType R,
     return R;
 
   FunctionProtoType::ExtProtoInfo EPI = Proto->getExtProtoInfo();
-  EPI.TypeQuals = 0;
+  EPI.TypeQuals = Qualifiers();
   EPI.RefQualifier = RQ_None;
 
   return Context.getFunctionType(Context.VoidTy, Proto->getParamTypes(), EPI);
@@ -8709,7 +8712,7 @@ QualType Sema::CheckDestructorDeclarator(Declarator &D, QualType R,
   const FunctionProtoType *Proto = R->getAs<FunctionProtoType>();
   FunctionProtoType::ExtProtoInfo EPI = Proto->getExtProtoInfo();
   EPI.Variadic = false;
-  EPI.TypeQuals = 0;
+  EPI.TypeQuals = Qualifiers();
   EPI.RefQualifier = RQ_None;
   return Context.getFunctionType(Context.VoidTy, None, EPI);
 }
@@ -12295,7 +12298,7 @@ void Sema::DefineImplicitCopyAssignment(SourceLocation CurrentLocation,
     // Dereference "this".
     DerefBuilder DerefThis(This);
     CastBuilder To(DerefThis,
-                   Context.getCVRQualifiedType(
+                   Context.getQualifiedType(
                        BaseType, CopyAssignOperator->getTypeQualifiers()),
                    VK_LValue, BasePath);
 
@@ -13019,7 +13022,7 @@ void Sema::DefineAmpCpuSerializeFunction(SourceLocation CurrentLocation,
 
           // Implicitly cast "this" to the appropriately-qualified base type.
           Base = ImpCastExprToType(Base.get(),
-                                   Context.getCVRQualifiedType(B->getType().getUnqualifiedType(),
+                                   Context.getQualifiedType(B->getType().getUnqualifiedType(),
                                              Serialization->getTypeQualifiers()),
                                    CK_UncheckedDerivedToBase,
                                    VK_LValue, &BasePath);
@@ -13613,7 +13616,7 @@ void Sema::DefineImplicitMoveAssignment(SourceLocation CurrentLocation,
 
     // Implicitly cast "this" to the appropriately-qualified base type.
     CastBuilder To(DerefThis,
-                   Context.getCVRQualifiedType(
+                   Context.getQualifiedType(
                        BaseType, MoveAssignOperator->getTypeQualifiers()),
                    VK_LValue, BasePath);
 

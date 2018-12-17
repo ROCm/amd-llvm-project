@@ -3962,7 +3962,7 @@ LValue CodeGenFunction::EmitLValueForField(LValue base,
       LValue RefLVal = MakeAddrLValue(addr, FieldType, FieldBaseInfo,
                                       FieldTBAAInfo);
       if (RecordCVR & Qualifiers::Volatile)
-        RefLVal.getQuals().setVolatile(true);
+        RefLVal.getQuals().addVolatile();
       addr = EmitLoadOfReference(RefLVal, &FieldBaseInfo, &FieldTBAAInfo);
 
       // Qualifiers on the struct don't apply to the referencee.

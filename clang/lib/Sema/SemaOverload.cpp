@@ -1210,8 +1210,9 @@ bool Sema::IsOverload(FunctionDecl *New, FunctionDecl *Old,
     // function yet (because we haven't yet resolved whether this is a static
     // or non-static member function). Add it now, on the assumption that this
     // is a redeclaration of OldMethod.
-    unsigned OldQuals = OldMethod->getTypeQualifiers();
-    unsigned NewQuals = NewMethod->getTypeQualifiers();
+    // FIXME: OpenCL: Need to consider address spaces
+    unsigned OldQuals = OldMethod->getTypeQualifiers().getCVRUQualifiers();
+    unsigned NewQuals = NewMethod->getTypeQualifiers().getCVRUQualifiers();
     if (!getLangOpts().CPlusPlus14 && NewMethod->isConstexpr() &&
         !isa<CXXConstructorDecl>(NewMethod))
       NewQuals |= Qualifiers::Const;
@@ -2891,8 +2892,9 @@ void Sema::HandleFunctionTypeMismatch(PartialDiagnostic &PDiag,
     return;
   }
 
-  unsigned FromQuals = FromFunction->getTypeQuals(),
-           ToQuals = ToFunction->getTypeQuals();
+  // FIXME: OpenCL: Need to consider address spaces
+  unsigned FromQuals = FromFunction->getTypeQuals().getCVRUQualifiers();
+  unsigned ToQuals = ToFunction->getTypeQuals().getCVRUQualifiers();
   if (FromQuals != ToQuals) {
     PDiag << ft_qualifer_mismatch << ToQuals << FromQuals;
     return;
@@ -5133,9 +5135,15 @@ TryObjectArgumentInitialization(Sema &S, SourceLocation Loc, QualType FromType,
   QualType ClassType = S.Context.getTypeDeclType(ActingContext);
   // [class.dtor]p2: A destructor can be invoked for a const, volatile or
   //                 const volatile object.
-  unsigned Quals = isa<CXXDestructorDecl>(Method) ?
-    Qualifiers::Const | Qualifiers::Volatile : Method->getTypeQualifiers();
-  QualType ImplicitParamType =  S.Context.getCVRQualifiedType(ClassType, Quals);
+  Qualifiers Quals;
+  if (isa<CXXDestructorDecl>(Method)) {
+    Quals.addConst();
+    Quals.addVolatile();
+  } else {
+    Quals = Method->getTypeQualifiers();
+  }
+
+  QualType ImplicitParamType = S.Context.getQualifiedType(ClassType, Quals);
 
   // Set up the conversion sequence as a "bad" conversion, to allow us
   // to exit early.
@@ -5201,7 +5209,7 @@ TryObjectArgumentInitialization(Sema &S, SourceLocation Loc, QualType FromType,
     break;
 
   case RQ_LValue:
-    if (!FromClassification.isLValue() && Quals != Qualifiers::Const) {
+    if (!FromClassification.isLValue() && !Quals.hasOnlyConst()) {
       // non-const lvalue reference cannot bind to an rvalue
       ICS.setBad(BadConversionSequence::lvalue_ref_to_rvalue, FromType,
                  ImplicitParamType);
@@ -5317,9 +5325,14 @@ Sema::PerformObjectArgumentInitialization(Expr *From,
     From = FromRes.get();
   }
 
-  if (!Context.hasSameType(From->getType(), DestType))
-    From = ImpCastExprToType(From, DestType, CK_NoOp,
+  if (!Context.hasSameType(From->getType(), DestType)) {
+    if (From->getType().getAddressSpace() != DestType.getAddressSpace())
+      From = ImpCastExprToType(From, DestType, CK_AddressSpaceConversion,
                              From->getValueKind()).get();
+    else
+      From = ImpCastExprToType(From, DestType, CK_NoOp,
+                             From->getValueKind()).get();
+  }
   return From;
 }
 
@@ -6014,15 +6027,13 @@ static bool IsAcceptableNonMemberOperatorCandidate(ASTContext &Context,
 /// \param PartialOverloading true if we are performing "partial" overloading
 /// based on an incomplete set of function arguments. This feature is used by
 /// code completion.
-void
-Sema::AddOverloadCandidate(FunctionDecl *Function,
-                           DeclAccessPair FoundDecl,
-                           ArrayRef<Expr *> Args,
-                           OverloadCandidateSet &CandidateSet,
-                           bool SuppressUserConversions,
-                           bool PartialOverloading,
-                           bool AllowExplicit,
-                           ConversionSequenceList EarlyConversions) {
+void Sema::AddOverloadCandidate(FunctionDecl *Function,
+                                DeclAccessPair FoundDecl, ArrayRef<Expr *> Args,
+                                OverloadCandidateSet &CandidateSet,
+                                bool SuppressUserConversions,
+                                bool PartialOverloading, bool AllowExplicit,
+                                ADLCallKind IsADLCandidate,
+                                ConversionSequenceList EarlyConversions) {
   const FunctionProtoType *Proto
     = dyn_cast<FunctionProtoType>(Function->getType()->getAs<FunctionType>());
   assert(Proto && "Functions without a prototype cannot be overloaded");
@@ -6081,6 +6092,7 @@ Sema::AddOverloadCandidate(FunctionDecl *Function,
   Candidate.Function = Function;
   Candidate.Viable = true;
   Candidate.IsSurrogate = false;
+  Candidate.IsADLCandidate = IsADLCandidate;
   Candidate.IgnoreObjectArgument = false;
   Candidate.ExplicitCallArguments = Args.size();
 
@@ -6783,14 +6795,11 @@ Sema::AddMethodTemplateCandidate(FunctionTemplateDecl *MethodTmpl,
 /// Add a C++ function template specialization as a candidate
 /// in the candidate set, using template argument deduction to produce
 /// an appropriate function template specialization.
-void
-Sema::AddTemplateOverloadCandidate(FunctionTemplateDecl *FunctionTemplate,
-                                   DeclAccessPair FoundDecl,
-                                 TemplateArgumentListInfo *ExplicitTemplateArgs,
-                                   ArrayRef<Expr *> Args,
-                                   OverloadCandidateSet& CandidateSet,
-                                   bool SuppressUserConversions,
-                                   bool PartialOverloading) {
+void Sema::AddTemplateOverloadCandidate(
+    FunctionTemplateDecl *FunctionTemplate, DeclAccessPair FoundDecl,
+    TemplateArgumentListInfo *ExplicitTemplateArgs, ArrayRef<Expr *> Args,
+    OverloadCandidateSet &CandidateSet, bool SuppressUserConversions,
+    bool PartialOverloading, ADLCallKind IsADLCandidate) {
   if (!CandidateSet.isNewCandidate(FunctionTemplate))
     return;
 
@@ -6819,6 +6828,7 @@ Sema::AddTemplateOverloadCandidate(FunctionTemplateDecl *FunctionTemplate,
     Candidate.Function = FunctionTemplate->getTemplatedDecl();
     Candidate.Viable = false;
     Candidate.IsSurrogate = false;
+    Candidate.IsADLCandidate = IsADLCandidate;
     // Ignore the object argument if there is one, since we don't have an object
     // type.
     Candidate.IgnoreObjectArgument =
@@ -6840,7 +6850,7 @@ Sema::AddTemplateOverloadCandidate(FunctionTemplateDecl *FunctionTemplate,
   assert(Specialization && "Missing function template specialization?");
   AddOverloadCandidate(Specialization, FoundDecl, Args, CandidateSet,
                        SuppressUserConversions, PartialOverloading,
-                       /*AllowExplicit*/false, Conversions);
+                       /*AllowExplicit*/ false, IsADLCandidate, Conversions);
 }
 
 /// Check that implicit conversion sequences can be formed for each argument
@@ -9003,17 +9013,19 @@ Sema::AddArgumentDependentLookupCandidates(DeclarationName Name,
   // set.
   for (ADLResult::iterator I = Fns.begin(), E = Fns.end(); I != E; ++I) {
     DeclAccessPair FoundDecl = DeclAccessPair::make(*I, AS_none);
+
     if (FunctionDecl *FD = dyn_cast<FunctionDecl>(*I)) {
       if (ExplicitTemplateArgs)
         continue;
 
       AddOverloadCandidate(FD, FoundDecl, Args, CandidateSet,
-                           /*SupressUserConversions=*/false,
-                           PartialOverloading);
+                           /*SupressUserConversions=*/false, PartialOverloading,
+                           /*AllowExplicit=*/false, ADLCallKind::UsesADL);
     } else {
-     AddTemplateOverloadCandidate(
-          cast<FunctionTemplateDecl>(*I), FoundDecl, ExplicitTemplateArgs, Args,
-          CandidateSet, /*SupressUserConversions=*/false, PartialOverloading);
+      AddTemplateOverloadCandidate(cast<FunctionTemplateDecl>(*I), FoundDecl,
+                                   ExplicitTemplateArgs, Args, CandidateSet,
+                                   /*SupressUserConversions=*/false,
+                                   PartialOverloading, ADLCallKind::UsesADL);
     }
   }
 }
@@ -12635,7 +12647,8 @@ static ExprResult FinishOverloadedCallExpr(Sema &SemaRef, Scope *S, Expr *Fn,
 
     Fn = SemaRef.FixOverloadedFunctionReference(Fn, (*Best)->FoundDecl, FDecl);
     return SemaRef.BuildResolvedCallExpr(Fn, FDecl, LParenLoc, Args, RParenLoc,
-                                         ExecConfig);
+                                         ExecConfig, /*IsExecConfig=*/false,
+                                         (*Best)->IsADLCandidate);
   }
 
   case OR_No_Viable_Function: {
@@ -12687,7 +12700,8 @@ static ExprResult FinishOverloadedCallExpr(Sema &SemaRef, Scope *S, Expr *Fn,
     FunctionDecl *FDecl = (*Best)->Function;
     Fn = SemaRef.FixOverloadedFunctionReference(Fn, (*Best)->FoundDecl, FDecl);
     return SemaRef.BuildResolvedCallExpr(Fn, FDecl, LParenLoc, Args, RParenLoc,
-                                         ExecConfig);
+                                         ExecConfig, /*IsExecConfig=*/false,
+                                         (*Best)->IsADLCandidate);
   }
   }
 
@@ -12876,9 +12890,9 @@ Sema::CreateOverloadedUnaryOp(SourceLocation OpLoc, UnaryOperatorKind Opc,
       ResultTy = ResultTy.getNonLValueExprType(Context);
 
       Args[0] = Input;
-      CallExpr *TheCall =
-        new (Context) CXXOperatorCallExpr(Context, Op, FnExpr.get(), ArgsArray,
-                                          ResultTy, VK, OpLoc, FPOptions());
+      CallExpr *TheCall = new (Context)
+          CXXOperatorCallExpr(Context, Op, FnExpr.get(), ArgsArray, ResultTy,
+                              VK, OpLoc, FPOptions(), Best->IsADLCandidate);
 
       if (CheckCallReturnType(FnDecl->getReturnType(), OpLoc, TheCall, FnDecl))
         return ExprError();
@@ -13108,10 +13122,9 @@ Sema::CreateOverloadedBinOp(SourceLocation OpLoc,
         ExprValueKind VK = Expr::getValueKindForType(ResultTy);
         ResultTy = ResultTy.getNonLValueExprType(Context);
 
-        CXXOperatorCallExpr *TheCall =
-          new (Context) CXXOperatorCallExpr(Context, Op, FnExpr.get(),
-                                            Args, ResultTy, VK, OpLoc,
-                                            FPFeatures);
+        CXXOperatorCallExpr *TheCall = new (Context)
+            CXXOperatorCallExpr(Context, Op, FnExpr.get(), Args, ResultTy, VK,
+                                OpLoc, FPFeatures, Best->IsADLCandidate);
 
         if (CheckCallReturnType(FnDecl->getReturnType(), OpLoc, TheCall,
                                 FnDecl))
@@ -13438,7 +13451,7 @@ Sema::BuildCallToMemberFunction(Scope *S, Expr *MemExprE,
 
     // Check that the object type isn't more qualified than the
     // member function we're calling.
-    Qualifiers funcQuals = Qualifiers::fromCVRMask(proto->getTypeQuals());
+    Qualifiers funcQuals = proto->getTypeQuals();
 
     QualType objectType = op->getLHS()->getType();
     if (op->getOpcode() == BO_PtrMemI)
