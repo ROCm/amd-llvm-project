@@ -2347,8 +2347,8 @@ Sema::ActOnBaseSpecifier(Decl *classdecl, SourceRange SpecifierRange,
     if (AL.isInvalid() || AL.getKind() == ParsedAttr::IgnoredAttribute)
       continue;
     Diag(AL.getLoc(), AL.getKind() == ParsedAttr::UnknownAttribute
-                          ? diag::warn_unknown_attribute_ignored
-                          : diag::err_base_specifier_attribute)
+                          ? (unsigned)diag::warn_unknown_attribute_ignored
+                          : (unsigned)diag::err_base_specifier_attribute)
         << AL.getName();
   }
 
@@ -5527,6 +5527,9 @@ static void ReferenceDllExportedMembers(Sema &S, CXXRecordDecl *Class) {
     // Don't go any further if this is just an explicit instantiation
     // declaration.
     return;
+
+  if (S.Context.getTargetInfo().getTriple().isWindowsGNUEnvironment())
+    S.MarkVTableUsed(Class->getLocation(), Class, true);
 
   for (Decl *Member : Class->decls()) {
     // Defined static variables that are members of an exported base

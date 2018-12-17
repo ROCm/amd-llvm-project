@@ -799,6 +799,12 @@ def fcomment_block_commands : CommaJoined<["-"], "fcomment-block-commands=">, Gr
   HelpText<"Treat each comma separated argument in <arg> as a documentation comment block command">,
   MetaVarName<"<arg>">;
 def fparse_all_comments : Flag<["-"], "fparse-all-comments">, Group<f_clang_Group>, Flags<[CC1Option]>;
+def frecord_command_line : Flag<["-"], "frecord-command-line">,
+  Group<f_clang_Group>;
+def fno_record_command_line : Flag<["-"], "fno-record-command-line">,
+  Group<f_clang_Group>;
+def : Flag<["-"], "frecord-gcc-switches">, Alias<frecord_command_line>;
+def : Flag<["-"], "fno-record-gcc-switches">, Alias<fno_record_command_line>;
 def fcommon : Flag<["-"], "fcommon">, Group<f_Group>;
 def fcompile_resource_EQ : Joined<["-"], "fcompile-resource=">, Group<f_Group>;
 def fcomplete_member_pointers : Flag<["-"], "fcomplete-member-pointers">, Group<f_clang_Group>,
@@ -1633,11 +1639,18 @@ def fno_signed_char : Flag<["-"], "fno-signed-char">, Group<f_Group>,
     Flags<[CC1Option]>, HelpText<"Char is unsigned">;
 def fsplit_stack : Flag<["-"], "fsplit-stack">, Group<f_Group>;
 def fstack_protector_all : Flag<["-"], "fstack-protector-all">, Group<f_Group>,
-  HelpText<"Force the usage of stack protectors for all functions">;
+  HelpText<"Enable stack protectors for all functions">;
 def fstack_protector_strong : Flag<["-"], "fstack-protector-strong">, Group<f_Group>,
-  HelpText<"Use a strong heuristic to apply stack protectors to functions">;
+  HelpText<"Enable stack protectors for some functions vulnerable to stack smashing. "
+           "Compared to -fstack-protector, this uses a stronger heuristic "
+           "that includes functions containing arrays of any size (and any type), "
+           "as well as any calls to alloca or the taking of an address from a local variable">;
 def fstack_protector : Flag<["-"], "fstack-protector">, Group<f_Group>,
-  HelpText<"Enable stack protectors for functions potentially vulnerable to stack smashing">;
+  HelpText<"Enable stack protectors for some functions vulnerable to stack smashing. "
+           "This uses a loose heuristic which considers functions vulnerable "
+           "if they contain a char (or 8bit integer) array or constant sized calls to "
+           "alloca, which are of greater size than ssp-buffer-size (default: 8 bytes). "
+           "All variable sized calls to alloca are considered vulnerable">;
 def fstandalone_debug : Flag<["-"], "fstandalone-debug">, Group<f_Group>, Flags<[CoreOption]>,
   HelpText<"Emit full debug info for all types used by the program">;
 def fno_standalone_debug : Flag<["-"], "fno-standalone-debug">, Group<f_Group>, Flags<[CoreOption]>,
@@ -1854,9 +1867,12 @@ def gcoff : Joined<["-"], "gcoff">, Group<g_Group>, Flags<[Unsupported]>;
 def gxcoff : Joined<["-"], "gxcoff">, Group<g_Group>, Flags<[Unsupported]>;
 def gvms : Joined<["-"], "gvms">, Group<g_Group>, Flags<[Unsupported]>;
 def gtoggle : Flag<["-"], "gtoggle">, Group<g_flags_Group>, Flags<[Unsupported]>;
-def grecord_gcc_switches : Flag<["-"], "grecord-gcc-switches">, Group<g_flags_Group>;
-def gno_record_gcc_switches : Flag<["-"], "gno-record-gcc-switches">,
+def grecord_command_line : Flag<["-"], "grecord-command-line">,
   Group<g_flags_Group>;
+def gno_record_command_line : Flag<["-"], "gno-record-command-line">,
+  Group<g_flags_Group>;
+def : Flag<["-"], "grecord-gcc-switches">, Alias<grecord_command_line>;
+def : Flag<["-"], "gno-record-gcc-switches">, Alias<gno_record_command_line>;
 def gstrict_dwarf : Flag<["-"], "gstrict-dwarf">, Group<g_flags_Group>;
 def gno_strict_dwarf : Flag<["-"], "gno-strict-dwarf">, Group<g_flags_Group>;
 def gcolumn_info : Flag<["-"], "gcolumn-info">, Group<g_flags_Group>, Flags<[CoreOption]>;
