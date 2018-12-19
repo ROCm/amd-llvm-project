@@ -6,7 +6,12 @@ except ImportError:
     from SimpleHTTPServer import SimpleHTTPRequestHandler
 import os
 import sys
-import urllib, urlparse
+try:
+    from urlparse import urlparse
+    from urllib import unquote
+except ImportError:
+    from urllib.parse import urlparse, unquote
+
 import posixpath
 import StringIO
 import re
@@ -192,14 +197,14 @@ class ScanViewServer(HTTPServer):
 def parse_query(qs, fields=None):
     if fields is None:
         fields = {}
-    for chunk in filter(None, qs.split('&')):
+    for chunk in (_f for _f in qs.split('&') if _f):
         if '=' not in chunk:
             name = chunk
             value = ''
         else:
             name, value = chunk.split('=', 1)
-        name = urllib.unquote(name.replace('+', ' '))
-        value = urllib.unquote(value.replace('+', ' '))
+        name = unquote(name.replace('+', ' '))
+        value = unquote(value.replace('+', ' '))
         item = fields.get(name)
         if item is None:
             fields[name] = [value]
@@ -654,9 +659,9 @@ File Bug</h3>
             fields = {}
         self.fields = fields
 
-        o = urlparse.urlparse(self.path)
+        o = urlparse(self.path)
         self.fields = parse_query(o.query, fields)
-        path = posixpath.normpath(urllib.unquote(o.path))
+        path = posixpath.normpath(unquote(o.path))
 
         # Split the components and strip the root prefix.
         components = path.split('/')[1:]
