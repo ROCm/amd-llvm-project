@@ -485,8 +485,14 @@ CXXOperatorCallExpr::CXXOperatorCallExpr(OverloadedOperatorKind OpKind,
                                          FPOptions FPFeatures,
                                          ADLCallKind UsesADL)
     : CallExpr(CXXOperatorCallExprClass, Fn, /*PreArgs=*/{}, Args, Ty, VK,
-               OperatorLoc, /*MinNumArgs=*/0, UsesADL),
-      Operator(OpKind), FPFeatures(FPFeatures) {
+               OperatorLoc, /*MinNumArgs=*/0, UsesADL) {
+  CXXOperatorCallExprBits.OperatorKind = OpKind;
+  CXXOperatorCallExprBits.FPFeatures = FPFeatures.getInt();
+  assert(
+      (CXXOperatorCallExprBits.OperatorKind == static_cast<unsigned>(OpKind)) &&
+      "OperatorKind overflow!");
+  assert((CXXOperatorCallExprBits.FPFeatures == FPFeatures.getInt()) &&
+         "FPFeatures overflow!");
   Range = getSourceRangeImpl();
 }
 
