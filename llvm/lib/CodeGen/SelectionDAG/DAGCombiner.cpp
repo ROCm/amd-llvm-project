@@ -3731,13 +3731,12 @@ SDValue DAGCombiner::hoistLogicOpWithSameOpcodeHands(SDNode *N) {
     if (!N0.hasOneUse() && !N1.hasOneUse())
       return SDValue();
     // We need matching integer source types.
-    // Do not hoist logic op inside of a vector extend, since it may combine
-    // into a vsetcc.
-    // TODO: Should the vector check apply to truncate though?
-    if (VT.isVector() || XVT != Y.getValueType())
+    if (XVT != Y.getValueType())
       return SDValue();
-    // Don't create an illegal op during or after legalization.
-    if (LegalOperations && !TLI.isOperationLegal(LogicOpcode, XVT))
+    // Don't create an illegal op during or after legalization. Don't ever
+    // create an unsupported vector op.
+    if ((VT.isVector() || LegalOperations) &&
+        !TLI.isOperationLegalOrCustom(LogicOpcode, XVT))
       return SDValue();
     // Avoid infinite looping with PromoteIntBinOp.
     // TODO: Should we apply desirable/legal constraints to all opcodes?
@@ -9825,8 +9824,7 @@ SDValue DAGCombiner::visitTRUNCATE(SDNode *N) {
   // because targets may prefer a wider type during later combines and invert
   // this transform.
   switch (N0.getOpcode()) {
-  // TODO: Add case for ADD - that will likely require a change in logic here
-  // or target-specific changes to avoid regressions.
+  case ISD::ADD:
   case ISD::SUB:
   case ISD::MUL:
   case ISD::AND:
@@ -15734,14 +15732,13 @@ SDValue DAGCombiner::visitEXTRACT_VECTOR_ELT(SDNode *N) {
     ExtVT = BCVT.getVectorElementType();
   }
 
-  // (vextract (vN[if]M load $addr), i) -> ([if]M load $addr + i * size)
+  // extract (vector load $addr), i --> load $addr + i * size
   if (!LegalOperations && !IndexC && VecOp.hasOneUse() &&
       ISD::isNormalLoad(VecOp.getNode()) &&
-      !N->getOperand(1)->hasPredecessor(VecOp.getNode())) {
-    SDValue Index = N->getOperand(1);
-    if (auto *OrigLoad = dyn_cast<LoadSDNode>(VecOp))
-      if (!OrigLoad->isVolatile())
-        return scalarizeExtractedVectorLoad(N, VecVT, Index, OrigLoad);
+      !Index->hasPredecessor(VecOp.getNode())) {
+    auto *VecLoad = dyn_cast<LoadSDNode>(VecOp);
+    if (VecLoad && !VecLoad->isVolatile())
+      return scalarizeExtractedVectorLoad(N, VecVT, Index, VecLoad);
   }
 
   // Perform only after legalization to ensure build_vector / vector_shuffle
@@ -17095,8 +17092,7 @@ static SDValue combineShuffleOfScalars(ShuffleVectorSDNode *SVN,
 static SDValue combineShuffleToVectorExtend(ShuffleVectorSDNode *SVN,
                                             SelectionDAG &DAG,
                                             const TargetLowering &TLI,
-                                            bool LegalOperations,
-                                            bool LegalTypes) {
+                                            bool LegalOperations) {
   EVT VT = SVN->getValueType(0);
   bool IsBigEndian = DAG.getDataLayout().isBigEndian();
 
@@ -17132,7 +17128,9 @@ static SDValue combineShuffleToVectorExtend(ShuffleVectorSDNode *SVN,
 
     EVT OutSVT = EVT::getIntegerVT(*DAG.getContext(), EltSizeInBits * Scale);
     EVT OutVT = EVT::getVectorVT(*DAG.getContext(), OutSVT, NumElts / Scale);
-    if (!LegalTypes || TLI.isTypeLegal(OutVT))
+    // Never create an illegal type. Only create unsupported operations if we
+    // are pre-legalization.
+    if (TLI.isTypeLegal(OutVT))
       if (!LegalOperations ||
           TLI.isOperationLegalOrCustom(ISD::ANY_EXTEND_VECTOR_INREG, OutVT))
         return DAG.getBitcast(VT,
@@ -17442,7 +17440,7 @@ SDValue DAGCombiner::visitVECTOR_SHUFFLE(SDNode *N) {
     return SDValue(N, 0);
 
   // Match shuffles that can be converted to any_vector_extend_in_reg.
-  if (SDValue V = combineShuffleToVectorExtend(SVN, DAG, TLI, LegalOperations, LegalTypes))
+  if (SDValue V = combineShuffleToVectorExtend(SVN, DAG, TLI, LegalOperations))
     return V;
 
   // Combine "truncate_vector_in_reg" style shuffles.

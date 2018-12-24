@@ -4945,17 +4945,14 @@ bool X86TargetLowering::hasAndNotCompare(SDValue Y) const {
   if (VT != MVT::i32 && VT != MVT::i64)
     return false;
 
-  // A mask and compare against constant is ok for an 'andn' too
-  // even though the BMI instruction doesn't have an immediate form.
-
-  return true;
+  return !isa<ConstantSDNode>(Y);
 }
 
 bool X86TargetLowering::hasAndNot(SDValue Y) const {
   EVT VT = Y.getValueType();
 
-  if (!VT.isVector()) // x86 can't form 'andn' with an immediate.
-    return !isa<ConstantSDNode>(Y) && hasAndNotCompare(Y);
+  if (!VT.isVector())
+    return hasAndNotCompare(Y);
 
   // Vector.
 
@@ -18699,57 +18696,52 @@ static SDValue EmitTest(SDValue Op, unsigned X86CC, const SDLoc &dl,
       SDValue Op0 = ArithOp->getOperand(0);
       SDValue Op1 = ArithOp->getOperand(1);
       EVT VT = ArithOp.getValueType();
-      bool isAndn = isBitwiseNot(Op0) || isBitwiseNot(Op1);
-      bool isLegalAndnType = VT == MVT::i32 || VT == MVT::i64;
-      bool isProperAndn = isAndn && isLegalAndnType && Subtarget.hasBMI();
 
-      // If we cannot select an ANDN instruction, check if we can replace
-      // AND+IMM64 with a shift before giving up. This is possible for masks
-      // like 0xFF000000 or 0x00FFFFFF and if we care only about the zero flag.
-      if (!isProperAndn) {
-        if (!ZeroCheck)
-          break;
+      // Check if we can replace AND+IMM64 with a shift before giving up. This
+      // is possible for masks/ like 0xFF000000 or 0x00FFFFFF and if we care
+      // only about the zero flag.
+      if (!ZeroCheck)
+        break;
 
-        // And with cosntant should be canonicalized unless we're dealing
-        // with opaque constants.
-        assert((!isa<ConstantSDNode>(Op0) ||
-                (isa<ConstantSDNode>(Op1) &&
-                 (cast<ConstantSDNode>(Op0)->isOpaque() ||
-                  cast<ConstantSDNode>(Op1)->isOpaque()))) &&
-               "AND node isn't canonicalized");
-        auto *CN = dyn_cast<ConstantSDNode>(Op1);
-        if (!CN)
-          break;
+      // And with constant should be canonicalized unless we're dealing
+      // with opaque constants.
+      assert((!isa<ConstantSDNode>(Op0) ||
+              (isa<ConstantSDNode>(Op1) &&
+               (cast<ConstantSDNode>(Op0)->isOpaque() ||
+                cast<ConstantSDNode>(Op1)->isOpaque()))) &&
+             "AND node isn't canonicalized");
+      auto *CN = dyn_cast<ConstantSDNode>(Op1);
+      if (!CN)
+        break;
 
-        const APInt &Mask = CN->getAPIntValue();
-        if (Mask.isSignedIntN(ShiftToAndMaxMaskWidth))
-          break; // Prefer TEST instruction.
+      const APInt &Mask = CN->getAPIntValue();
+      if (Mask.isSignedIntN(ShiftToAndMaxMaskWidth))
+        break; // Prefer TEST instruction.
 
-        unsigned BitWidth = Mask.getBitWidth();
-        unsigned LeadingOnes = Mask.countLeadingOnes();
-        unsigned TrailingZeros = Mask.countTrailingZeros();
+      unsigned BitWidth = Mask.getBitWidth();
+      unsigned LeadingOnes = Mask.countLeadingOnes();
+      unsigned TrailingZeros = Mask.countTrailingZeros();
 
-        if (LeadingOnes + TrailingZeros == BitWidth) {
-          assert(TrailingZeros < VT.getSizeInBits() &&
-                 "Shift amount should be less than the type width");
-          SDValue ShAmt = DAG.getConstant(TrailingZeros, dl, MVT::i8);
-          Op = DAG.getNode(ISD::SRL, dl, VT, Op0, ShAmt);
-          break;
-        }
-
-        unsigned LeadingZeros = Mask.countLeadingZeros();
-        unsigned TrailingOnes = Mask.countTrailingOnes();
-
-        if (LeadingZeros + TrailingOnes == BitWidth) {
-          assert(LeadingZeros < VT.getSizeInBits() &&
-                 "Shift amount should be less than the type width");
-          SDValue ShAmt = DAG.getConstant(LeadingZeros, dl, MVT::i8);
-          Op = DAG.getNode(ISD::SHL, dl, VT, Op0, ShAmt);
-          break;
-        }
-
+      if (LeadingOnes + TrailingZeros == BitWidth) {
+        assert(TrailingZeros < VT.getSizeInBits() &&
+               "Shift amount should be less than the type width");
+        SDValue ShAmt = DAG.getConstant(TrailingZeros, dl, MVT::i8);
+        Op = DAG.getNode(ISD::SRL, dl, VT, Op0, ShAmt);
         break;
       }
+
+      unsigned LeadingZeros = Mask.countLeadingZeros();
+      unsigned TrailingOnes = Mask.countTrailingOnes();
+
+      if (LeadingZeros + TrailingOnes == BitWidth) {
+        assert(LeadingZeros < VT.getSizeInBits() &&
+               "Shift amount should be less than the type width");
+        SDValue ShAmt = DAG.getConstant(LeadingZeros, dl, MVT::i8);
+        Op = DAG.getNode(ISD::SHL, dl, VT, Op0, ShAmt);
+        break;
+      }
+
+      break;
     }
     LLVM_FALLTHROUGH;
   case ISD::SUB:
@@ -25180,7 +25172,7 @@ static SDValue LowerATOMIC_FENCE(SDValue Op, const X86Subtarget &Subtarget,
       return DAG.getNode(X86ISD::MFENCE, dl, MVT::Other, Op.getOperand(0));
 
     SDValue Chain = Op.getOperand(0);
-    SDValue Zero = DAG.getConstant(0, dl, MVT::i32);
+    SDValue Zero = DAG.getTargetConstant(0, dl, MVT::i32);
     SDValue Ops[] = {
       DAG.getRegister(X86::ESP, MVT::i32),     // Base
       DAG.getTargetConstant(1, dl, MVT::i8),   // Scale
@@ -25190,7 +25182,7 @@ static SDValue LowerATOMIC_FENCE(SDValue Op, const X86Subtarget &Subtarget,
       Zero,
       Chain
     };
-    SDNode *Res = DAG.getMachineNode(X86::OR32mrLocked, dl, MVT::Other, Ops);
+    SDNode *Res = DAG.getMachineNode(X86::OR32mi8Locked, dl, MVT::Other, Ops);
     return SDValue(Res, 0);
   }
 
