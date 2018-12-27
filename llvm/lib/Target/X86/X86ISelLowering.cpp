@@ -18482,7 +18482,8 @@ static SDValue getSETCC(X86::CondCode Cond, SDValue EFLAGS, const SDLoc &dl,
 // Check whether an OR'd tree is PTEST-able.
 static SDValue LowerVectorAllZeroTest(SDValue Op, ISD::CondCode CC,
                                       const X86Subtarget &Subtarget,
-                                      SelectionDAG &DAG) {
+                                      SelectionDAG &DAG,
+                                      SDValue &X86CC) {
   assert(Op.getOpcode() == ISD::OR && "Only check OR'd tree.");
 
   if (!Subtarget.hasSSE41())
@@ -18568,9 +18569,10 @@ static SDValue LowerVectorAllZeroTest(SDValue Op, ISD::CondCode CC,
     VecIns.push_back(DAG.getNode(ISD::OR, DL, TestVT, LHS, RHS));
   }
 
-  SDValue Res = DAG.getNode(X86ISD::PTEST, DL, MVT::i32,
-                            VecIns.back(), VecIns.back());
-  return getSETCC(CC == ISD::SETEQ ? X86::COND_E : X86::COND_NE, Res, DL, DAG);
+  X86CC = DAG.getConstant(CC == ISD::SETEQ ? X86::COND_E : X86::COND_NE,
+                          DL, MVT::i8);
+  return DAG.getNode(X86ISD::PTEST, DL, MVT::i32,
+                     VecIns.back(), VecIns.back());
 }
 
 /// return true if \c Op has a use that doesn't just read flags.
@@ -18640,12 +18642,6 @@ static SDValue EmitTest(SDValue Op, unsigned X86CC, const SDLoc &dl,
 
   SDValue ArithOp = Op;
 
-  // Sometimes flags can be set either with an AND or with an SRL/SHL
-  // instruction. SRL/SHL variant should be preferred for masks longer than this
-  // number of bits.
-  const int ShiftToAndMaxMaskWidth = 32;
-  const bool ZeroCheck = (X86CC == X86::COND_E || X86CC == X86::COND_NE);
-
   // NOTICE: In the code below we use ArithOp to hold the arithmetic operation
   // which may be the result of a CAST.  We use the variable 'Op', which is the
   // non-casted variable when we check for possible users.
@@ -18690,64 +18686,10 @@ static SDValue EmitTest(SDValue Op, unsigned X86CC, const SDLoc &dl,
 
   case ISD::AND:
     // If the primary 'and' result isn't used, don't bother using X86ISD::AND,
-    // because a TEST instruction will be better. However, AND should be
-    // preferred if the instruction can be combined into ANDN.
-    if (!hasNonFlagsUse(Op)) {
-      SDValue Op0 = ArithOp->getOperand(0);
-      SDValue Op1 = ArithOp->getOperand(1);
-      EVT VT = ArithOp.getValueType();
-      bool isAndn = isBitwiseNot(Op0) || isBitwiseNot(Op1);
-      bool isLegalAndnType = VT == MVT::i32 || VT == MVT::i64;
-      bool isProperAndn = isAndn && isLegalAndnType && Subtarget.hasBMI();
+    // because a TEST instruction will be better.
+    if (!hasNonFlagsUse(Op))
+      break;
 
-      // If we cannot select an ANDN instruction, check if we can replace
-      // AND+IMM64 with a shift before giving up. This is possible for masks
-      // like 0xFF000000 or 0x00FFFFFF and if we care only about the zero flag.
-      if (!isProperAndn) {
-        if (!ZeroCheck)
-          break;
-
-        // And with cosntant should be canonicalized unless we're dealing
-        // with opaque constants.
-        assert((!isa<ConstantSDNode>(Op0) ||
-                (isa<ConstantSDNode>(Op1) &&
-                 (cast<ConstantSDNode>(Op0)->isOpaque() ||
-                  cast<ConstantSDNode>(Op1)->isOpaque()))) &&
-               "AND node isn't canonicalized");
-        auto *CN = dyn_cast<ConstantSDNode>(Op1);
-        if (!CN)
-          break;
-
-        const APInt &Mask = CN->getAPIntValue();
-        if (Mask.isSignedIntN(ShiftToAndMaxMaskWidth))
-          break; // Prefer TEST instruction.
-
-        unsigned BitWidth = Mask.getBitWidth();
-        unsigned LeadingOnes = Mask.countLeadingOnes();
-        unsigned TrailingZeros = Mask.countTrailingZeros();
-
-        if (LeadingOnes + TrailingZeros == BitWidth) {
-          assert(TrailingZeros < VT.getSizeInBits() &&
-                 "Shift amount should be less than the type width");
-          SDValue ShAmt = DAG.getConstant(TrailingZeros, dl, MVT::i8);
-          Op = DAG.getNode(ISD::SRL, dl, VT, Op0, ShAmt);
-          break;
-        }
-
-        unsigned LeadingZeros = Mask.countLeadingZeros();
-        unsigned TrailingOnes = Mask.countTrailingOnes();
-
-        if (LeadingZeros + TrailingOnes == BitWidth) {
-          assert(LeadingZeros < VT.getSizeInBits() &&
-                 "Shift amount should be less than the type width");
-          SDValue ShAmt = DAG.getConstant(LeadingZeros, dl, MVT::i8);
-          Op = DAG.getNode(ISD::SHL, dl, VT, Op0, ShAmt);
-          break;
-        }
-
-        break;
-      }
-    }
     LLVM_FALLTHROUGH;
   case ISD::SUB:
   case ISD::OR:
@@ -18947,10 +18889,61 @@ unsigned X86TargetLowering::combineRepeatedFPDivisors() const {
   return 2;
 }
 
-/// Create a BT (Bit Test) node - Test bit \p BitNo in \p Src and set condition
-/// according to equal/not-equal condition code \p CC.
-static SDValue getBitTestCondition(SDValue Src, SDValue BitNo, ISD::CondCode CC,
-                                   const SDLoc &dl, SelectionDAG &DAG) {
+/// Result of 'and' is compared against zero. Change to a BT node if possible.
+/// Returns the BT node and the condition code needed to use it.
+static SDValue LowerAndToBT(SDValue And, ISD::CondCode CC,
+                            const SDLoc &dl, SelectionDAG &DAG,
+                            SDValue &X86CC) {
+  assert(And.getOpcode() == ISD::AND && "Expected AND node!");
+  SDValue Op0 = And.getOperand(0);
+  SDValue Op1 = And.getOperand(1);
+  if (Op0.getOpcode() == ISD::TRUNCATE)
+    Op0 = Op0.getOperand(0);
+  if (Op1.getOpcode() == ISD::TRUNCATE)
+    Op1 = Op1.getOperand(0);
+
+  SDValue Src, BitNo;
+  if (Op1.getOpcode() == ISD::SHL)
+    std::swap(Op0, Op1);
+  if (Op0.getOpcode() == ISD::SHL) {
+    if (isOneConstant(Op0.getOperand(0))) {
+      // If we looked past a truncate, check that it's only truncating away
+      // known zeros.
+      unsigned BitWidth = Op0.getValueSizeInBits();
+      unsigned AndBitWidth = And.getValueSizeInBits();
+      if (BitWidth > AndBitWidth) {
+        KnownBits Known = DAG.computeKnownBits(Op0);
+        if (Known.countMinLeadingZeros() < BitWidth - AndBitWidth)
+          return SDValue();
+      }
+      Src = Op1;
+      BitNo = Op0.getOperand(1);
+    }
+  } else if (Op1.getOpcode() == ISD::Constant) {
+    ConstantSDNode *AndRHS = cast<ConstantSDNode>(Op1);
+    uint64_t AndRHSVal = AndRHS->getZExtValue();
+    SDValue AndLHS = Op0;
+
+    if (AndRHSVal == 1 && AndLHS.getOpcode() == ISD::SRL) {
+      Src = AndLHS.getOperand(0);
+      BitNo = AndLHS.getOperand(1);
+    } else {
+      // Use BT if the immediate can't be encoded in a TEST instruction or we
+      // are optimizing for size and the immedaite won't fit in a byte.
+      bool OptForSize = DAG.getMachineFunction().getFunction().optForSize();
+      if ((!isUInt<32>(AndRHSVal) || (OptForSize && !isUInt<8>(AndRHSVal))) &&
+          isPowerOf2_64(AndRHSVal)) {
+        Src = AndLHS;
+        BitNo = DAG.getConstant(Log2_64_Ceil(AndRHSVal), dl,
+                                Src.getValueType());
+      }
+    }
+  }
+
+  // No patterns found, give up.
+  if (!Src.getNode())
+    return SDValue();
+
   // If Src is i8, promote it to i32 with any_extend.  There is no i8 BT
   // instruction.  Since the shift amount is in-range-or-undefined, we know
   // that doing a bittest on the i32 value is ok.  We extend to i32 because
@@ -18972,63 +18965,9 @@ static SDValue getBitTestCondition(SDValue Src, SDValue BitNo, ISD::CondCode CC,
   if (Src.getValueType() != BitNo.getValueType())
     BitNo = DAG.getNode(ISD::ANY_EXTEND, dl, Src.getValueType(), BitNo);
 
-  SDValue BT = DAG.getNode(X86ISD::BT, dl, MVT::i32, Src, BitNo);
-  X86::CondCode Cond = CC == ISD::SETEQ ? X86::COND_AE : X86::COND_B;
-  return getSETCC(Cond, BT, dl , DAG);
-}
-
-/// Result of 'and' is compared against zero. Change to a BT node if possible.
-static SDValue LowerAndToBT(SDValue And, ISD::CondCode CC,
-                            const SDLoc &dl, SelectionDAG &DAG) {
-  assert(And.getOpcode() == ISD::AND && "Expected AND node!");
-  SDValue Op0 = And.getOperand(0);
-  SDValue Op1 = And.getOperand(1);
-  if (Op0.getOpcode() == ISD::TRUNCATE)
-    Op0 = Op0.getOperand(0);
-  if (Op1.getOpcode() == ISD::TRUNCATE)
-    Op1 = Op1.getOperand(0);
-
-  SDValue LHS, RHS;
-  if (Op1.getOpcode() == ISD::SHL)
-    std::swap(Op0, Op1);
-  if (Op0.getOpcode() == ISD::SHL) {
-    if (isOneConstant(Op0.getOperand(0))) {
-      // If we looked past a truncate, check that it's only truncating away
-      // known zeros.
-      unsigned BitWidth = Op0.getValueSizeInBits();
-      unsigned AndBitWidth = And.getValueSizeInBits();
-      if (BitWidth > AndBitWidth) {
-        KnownBits Known = DAG.computeKnownBits(Op0);
-        if (Known.countMinLeadingZeros() < BitWidth - AndBitWidth)
-          return SDValue();
-      }
-      LHS = Op1;
-      RHS = Op0.getOperand(1);
-    }
-  } else if (Op1.getOpcode() == ISD::Constant) {
-    ConstantSDNode *AndRHS = cast<ConstantSDNode>(Op1);
-    uint64_t AndRHSVal = AndRHS->getZExtValue();
-    SDValue AndLHS = Op0;
-
-    if (AndRHSVal == 1 && AndLHS.getOpcode() == ISD::SRL) {
-      LHS = AndLHS.getOperand(0);
-      RHS = AndLHS.getOperand(1);
-    } else {
-      // Use BT if the immediate can't be encoded in a TEST instruction or we
-      // are optimizing for size and the immedaite won't fit in a byte.
-      bool OptForSize = DAG.getMachineFunction().getFunction().optForSize();
-      if ((!isUInt<32>(AndRHSVal) || (OptForSize && !isUInt<8>(AndRHSVal))) &&
-          isPowerOf2_64(AndRHSVal)) {
-        LHS = AndLHS;
-        RHS = DAG.getConstant(Log2_64_Ceil(AndRHSVal), dl, LHS.getValueType());
-      }
-    }
-  }
-
-  if (LHS.getNode())
-    return getBitTestCondition(LHS, RHS, CC, dl, DAG);
-
-  return SDValue();
+  X86CC = DAG.getConstant(CC == ISD::SETEQ ? X86::COND_AE : X86::COND_B,
+                          dl, MVT::i8);
+  return DAG.getNode(X86ISD::BT, dl, MVT::i32, Src, BitNo);
 }
 
 /// Turns an ISD::CondCode into a value suitable for SSE floating-point mask
@@ -19513,7 +19452,8 @@ static SDValue LowerVSETCC(SDValue Op, const X86Subtarget &Subtarget,
 // Try to select this as a KORTEST+SETCC if possible.
 static SDValue EmitKORTEST(SDValue Op0, SDValue Op1, ISD::CondCode CC,
                            const SDLoc &dl, SelectionDAG &DAG,
-                           const X86Subtarget &Subtarget) {
+                           const X86Subtarget &Subtarget,
+                           SDValue &X86CC) {
   // Only support equality comparisons.
   if (CC != ISD::SETEQ && CC != ISD::SETNE)
     return SDValue();
@@ -19529,12 +19469,12 @@ static SDValue EmitKORTEST(SDValue Op0, SDValue Op1, ISD::CondCode CC,
       !(Subtarget.hasBWI() && (VT == MVT::v32i1 || VT == MVT::v64i1)))
     return SDValue();
 
-  X86::CondCode X86CC;
+  X86::CondCode X86Cond;
   if (isNullConstant(Op1)) {
-    X86CC = CC == ISD::SETEQ ? X86::COND_E : X86::COND_NE;
+    X86Cond = CC == ISD::SETEQ ? X86::COND_E : X86::COND_NE;
   } else if (isAllOnesConstant(Op1)) {
     // C flag is set for all ones.
-    X86CC = CC == ISD::SETEQ ? X86::COND_B : X86::COND_AE;
+    X86Cond = CC == ISD::SETEQ ? X86::COND_B : X86::COND_AE;
   } else
     return SDValue();
 
@@ -19546,8 +19486,67 @@ static SDValue EmitKORTEST(SDValue Op0, SDValue Op1, ISD::CondCode CC,
     RHS = Op0.getOperand(1);
   }
 
-  SDValue KORTEST = DAG.getNode(X86ISD::KORTEST, dl, MVT::i32, LHS, RHS);
-  return getSETCC(X86CC, KORTEST, dl, DAG);
+  X86CC = DAG.getConstant(X86Cond, dl, MVT::i8);
+  return DAG.getNode(X86ISD::KORTEST, dl, MVT::i32, LHS, RHS);
+}
+
+/// Emit flags for the given setcc condition and operands. Also returns the
+/// corresponding X86 condition code constant in X86CC.
+SDValue X86TargetLowering::emitFlagsForSetcc(SDValue Op0, SDValue Op1,
+                                             ISD::CondCode CC, const SDLoc &dl,
+                                             SelectionDAG &DAG,
+                                             SDValue &X86CC) const {
+  // Optimize to BT if possible.
+  // Lower (X & (1 << N)) == 0 to BT(X, N).
+  // Lower ((X >>u N) & 1) != 0 to BT(X, N).
+  // Lower ((X >>s N) & 1) != 0 to BT(X, N).
+  if (Op0.getOpcode() == ISD::AND && Op0.hasOneUse() && isNullConstant(Op1) &&
+      (CC == ISD::SETEQ || CC == ISD::SETNE)) {
+    if (SDValue BT = LowerAndToBT(Op0, CC, dl, DAG, X86CC))
+      return BT;
+  }
+
+  // Try to use PTEST for a tree ORs equality compared with 0.
+  // TODO: We could do AND tree with all 1s as well by using the C flag.
+  if (Op0.getOpcode() == ISD::OR && isNullConstant(Op1) &&
+      (CC == ISD::SETEQ || CC == ISD::SETNE)) {
+    if (SDValue PTEST = LowerVectorAllZeroTest(Op0, CC, Subtarget, DAG, X86CC))
+      return PTEST;
+  }
+
+  // Try to lower using KORTEST.
+  if (SDValue KORTEST = EmitKORTEST(Op0, Op1, CC, dl, DAG, Subtarget, X86CC))
+    return KORTEST;
+
+  // Look for X == 0, X == 1, X != 0, or X != 1.  We can simplify some forms of
+  // these.
+  if ((isOneConstant(Op1) || isNullConstant(Op1)) &&
+      (CC == ISD::SETEQ || CC == ISD::SETNE)) {
+    // If the input is a setcc, then reuse the input setcc or use a new one with
+    // the inverted condition.
+    if (Op0.getOpcode() == X86ISD::SETCC) {
+      bool Invert = (CC == ISD::SETNE) ^ isNullConstant(Op1);
+
+      X86CC = Op0.getOperand(0);
+      if (Invert) {
+        X86::CondCode CCode = (X86::CondCode)Op0.getConstantOperandVal(0);
+        CCode = X86::GetOppositeBranchCondition(CCode);
+        X86CC = DAG.getConstant(CCode, dl, MVT::i8);
+      }
+
+      return Op0.getOperand(1);
+    }
+  }
+
+  bool IsFP = Op1.getSimpleValueType().isFloatingPoint();
+  X86::CondCode CondCode = TranslateX86CC(CC, dl, IsFP, Op0, Op1, DAG);
+  if (CondCode == X86::COND_INVALID)
+    return SDValue();
+
+  SDValue EFLAGS = EmitCmp(Op0, Op1, CondCode, dl, DAG);
+  EFLAGS = ConvertCmpIfNecessary(EFLAGS, DAG);
+  X86CC = DAG.getConstant(CondCode, dl, MVT::i8);
+  return EFLAGS;
 }
 
 SDValue X86TargetLowering::LowerSETCC(SDValue Op, SelectionDAG &DAG) const {
@@ -19562,54 +19561,12 @@ SDValue X86TargetLowering::LowerSETCC(SDValue Op, SelectionDAG &DAG) const {
   SDLoc dl(Op);
   ISD::CondCode CC = cast<CondCodeSDNode>(Op.getOperand(2))->get();
 
-  // Optimize to BT if possible.
-  // Lower (X & (1 << N)) == 0 to BT(X, N).
-  // Lower ((X >>u N) & 1) != 0 to BT(X, N).
-  // Lower ((X >>s N) & 1) != 0 to BT(X, N).
-  if (Op0.getOpcode() == ISD::AND && Op0.hasOneUse() && isNullConstant(Op1) &&
-      (CC == ISD::SETEQ || CC == ISD::SETNE)) {
-    if (SDValue NewSetCC = LowerAndToBT(Op0, CC, dl, DAG))
-      return NewSetCC;
-  }
-
-  // Try to use PTEST for a tree ORs equality compared with 0.
-  // TODO: We could do AND tree with all 1s as well by using the C flag.
-  if (Op0.getOpcode() == ISD::OR && isNullConstant(Op1) &&
-      (CC == ISD::SETEQ || CC == ISD::SETNE)) {
-    if (SDValue NewSetCC = LowerVectorAllZeroTest(Op0, CC, Subtarget, DAG))
-      return NewSetCC;
-  }
-
-  // Try to lower using KORTEST.
-  if (SDValue NewSetCC = EmitKORTEST(Op0, Op1, CC, dl, DAG, Subtarget))
-    return NewSetCC;
-
-  // Look for X == 0, X == 1, X != 0, or X != 1.  We can simplify some forms of
-  // these.
-  if ((isOneConstant(Op1) || isNullConstant(Op1)) &&
-      (CC == ISD::SETEQ || CC == ISD::SETNE)) {
-
-    // If the input is a setcc, then reuse the input setcc or use a new one with
-    // the inverted condition.
-    if (Op0.getOpcode() == X86ISD::SETCC) {
-      X86::CondCode CCode = (X86::CondCode)Op0.getConstantOperandVal(0);
-      bool Invert = (CC == ISD::SETNE) ^ isNullConstant(Op1);
-      if (!Invert)
-        return Op0;
-
-      CCode = X86::GetOppositeBranchCondition(CCode);
-      return getSETCC(CCode, Op0.getOperand(1), dl, DAG);
-    }
-  }
-
-  bool IsFP = Op1.getSimpleValueType().isFloatingPoint();
-  X86::CondCode X86CC = TranslateX86CC(CC, dl, IsFP, Op0, Op1, DAG);
-  if (X86CC == X86::COND_INVALID)
+  SDValue X86CC;
+  SDValue EFLAGS = emitFlagsForSetcc(Op0, Op1, CC, dl, DAG, X86CC);
+  if (!EFLAGS)
     return SDValue();
 
-  SDValue EFLAGS = EmitCmp(Op0, Op1, X86CC, dl, DAG);
-  EFLAGS = ConvertCmpIfNecessary(EFLAGS, DAG);
-  return getSETCC(X86CC, EFLAGS, dl, DAG);
+  return DAG.getNode(X86ISD::SETCC, dl, MVT::i8, X86CC, EFLAGS);
 }
 
 SDValue X86TargetLowering::LowerSETCCCARRY(SDValue Op, SelectionDAG &DAG) const {
@@ -19934,9 +19891,10 @@ SDValue X86TargetLowering::LowerSELECT(SDValue Op, SelectionDAG &DAG) const {
     // We know the result of AND is compared against zero. Try to match
     // it to BT.
     if (Cond.getOpcode() == ISD::AND && Cond.hasOneUse()) {
-      if (SDValue NewSetCC = LowerAndToBT(Cond, ISD::SETNE, DL, DAG)) {
-        CC = NewSetCC.getOperand(0);
-        Cond = NewSetCC.getOperand(1);
+      SDValue BTCC;
+      if (SDValue BT = LowerAndToBT(Cond, ISD::SETNE, DL, DAG, BTCC)) {
+        CC = BTCC;
+        Cond = BT;
         AddTest = false;
       }
     }
@@ -20781,9 +20739,10 @@ SDValue X86TargetLowering::LowerBRCOND(SDValue Op, SelectionDAG &DAG) const {
     // We know the result of AND is compared against zero. Try to match
     // it to BT.
     if (Cond.getOpcode() == ISD::AND && Cond.hasOneUse()) {
-      if (SDValue NewSetCC = LowerAndToBT(Cond, ISD::SETNE, dl, DAG)) {
-        CC = NewSetCC.getOperand(0);
-        Cond = NewSetCC.getOperand(1);
+      SDValue BTCC;
+      if (SDValue BT = LowerAndToBT(Cond, ISD::SETNE, dl, DAG, BTCC)) {
+        CC = BTCC;
+        Cond = BT;
         addTest = false;
       }
     }
@@ -41271,6 +41230,15 @@ static SDValue combinePMULDQ(SDNode *N, SelectionDAG &DAG,
   // Multiply by zero.
   if (ISD::isBuildVectorAllZeros(RHS.getNode()))
     return RHS;
+
+  // Aggressively peek through ops to get at the demanded low bits.
+  APInt DemandedMask = APInt::getLowBitsSet(64, 32);
+  SDValue DemandedLHS = DAG.GetDemandedBits(LHS, DemandedMask);
+  SDValue DemandedRHS = DAG.GetDemandedBits(RHS, DemandedMask);
+  if (DemandedLHS || DemandedRHS)
+    return DAG.getNode(N->getOpcode(), SDLoc(N), N->getValueType(0),
+                       DemandedLHS ? DemandedLHS : LHS,
+                       DemandedRHS ? DemandedRHS : RHS);
 
   // PMULDQ/PMULUDQ only uses lower 32 bits from each vector element.
   const TargetLowering &TLI = DAG.getTargetLoweringInfo();
