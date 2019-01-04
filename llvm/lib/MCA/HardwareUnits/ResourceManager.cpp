@@ -24,29 +24,35 @@ namespace mca {
 #define DEBUG_TYPE "llvm-mca"
 ResourceStrategy::~ResourceStrategy() = default;
 
+// Returns the index of the highest bit set. For resource masks, the position of
+// the highest bit set can be used to construct a resource mask identifier.
+static unsigned getResourceStateIndex(uint64_t Mask) {
+  return std::numeric_limits<uint64_t>::digits - countLeadingZeros(Mask);
+}
+
+static uint64_t selectImpl(uint64_t CandidateMask,
+                           uint64_t &NextInSequenceMask) {
+  // The upper bit set in CandidateMask identifies our next candidate resource.
+  CandidateMask = 1ULL << (getResourceStateIndex(CandidateMask) - 1);
+  NextInSequenceMask &= (CandidateMask | (CandidateMask - 1));
+  return CandidateMask;
+}
+
 uint64_t DefaultResourceStrategy::select(uint64_t ReadyMask) {
   // This method assumes that ReadyMask cannot be zero.
   uint64_t CandidateMask = ReadyMask & NextInSequenceMask;
-  if (CandidateMask) {
-    CandidateMask = PowerOf2Floor(CandidateMask);
-    NextInSequenceMask &= (CandidateMask | (CandidateMask - 1));
-    return CandidateMask;
-  }
+  if (CandidateMask)
+    return selectImpl(CandidateMask, NextInSequenceMask);
 
   NextInSequenceMask = ResourceUnitMask ^ RemovedFromNextInSequence;
   RemovedFromNextInSequence = 0;
   CandidateMask = ReadyMask & NextInSequenceMask;
-
-  if (CandidateMask) {
-    CandidateMask = PowerOf2Floor(CandidateMask);
-    NextInSequenceMask &= (CandidateMask | (CandidateMask - 1));
-    return CandidateMask;
-  }
+  if (CandidateMask)
+    return selectImpl(CandidateMask, NextInSequenceMask);
 
   NextInSequenceMask = ResourceUnitMask;
-  CandidateMask = PowerOf2Floor(ReadyMask & NextInSequenceMask);
-  NextInSequenceMask &= (CandidateMask | (CandidateMask - 1));
-  return CandidateMask;
+  CandidateMask = ReadyMask & NextInSequenceMask;
+  return selectImpl(CandidateMask, NextInSequenceMask);
 }
 
 void DefaultResourceStrategy::used(uint64_t Mask) {
@@ -66,11 +72,13 @@ void DefaultResourceStrategy::used(uint64_t Mask) {
 ResourceState::ResourceState(const MCProcResourceDesc &Desc, unsigned Index,
                              uint64_t Mask)
     : ProcResourceDescIndex(Index), ResourceMask(Mask),
-      BufferSize(Desc.BufferSize), IsAGroup(countPopulation(ResourceMask)>1) {
-  if (IsAGroup)
-    ResourceSizeMask = ResourceMask ^ PowerOf2Floor(ResourceMask);
-  else
+      BufferSize(Desc.BufferSize), IsAGroup(countPopulation(ResourceMask) > 1) {
+  if (IsAGroup) {
+    ResourceSizeMask =
+        ResourceMask ^ 1ULL << (getResourceStateIndex(ResourceMask) - 1);
+  } else {
     ResourceSizeMask = (1ULL << Desc.NumUnits) - 1;
+  }
   ReadyMask = ResourceSizeMask;
   AvailableSlots = BufferSize == -1 ? 0U : static_cast<unsigned>(BufferSize);
   Unavailable = false;
@@ -99,10 +107,6 @@ void ResourceState::dump() const {
          << ", Reserved=" << Unavailable << '\n';
 }
 #endif
-
-static unsigned getResourceStateIndex(uint64_t Mask) {
-  return std::numeric_limits<uint64_t>::digits - countLeadingZeros(Mask);
-}
 
 static std::unique_ptr<ResourceStrategy>
 getStrategyFor(const ResourceState &RS) {
