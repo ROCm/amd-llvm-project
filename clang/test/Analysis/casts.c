@@ -224,3 +224,24 @@ void no_crash_SymbolCast_of_float_type() {
   char (*f)() = no_crash_SymbolCast_of_float_type_aux;
   f(&x);
 }
+
+double no_crash_reinterpret_double_as_int(double a) {
+  *(int *)&a = 1;
+  return a * a;
+}
+
+double no_crash_reinterpret_double_as_ptr(double a) {
+  *(void **)&a = 0;
+  return a * a;
+}
+
+double no_crash_reinterpret_double_as_sym_int(double a, int b) {
+  *(int *)&a = b;
+  return a * a;
+}
+
+double no_crash_reinterpret_double_as_sym_ptr(double a, void * b) {
+  *(void **)&a = b;
+  return a * a;
+}
+

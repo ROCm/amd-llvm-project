@@ -350,6 +350,9 @@ bool TargetLowering::ShrinkDemandedConstant(SDValue Op, const APInt &Demanded,
   SDLoc DL(Op);
   unsigned Opcode = Op.getOpcode();
 
+  if (!Op.hasOneUse())
+    return false;
+
   // Do target-specific constant optimization.
   if (targetShrinkDemandedConstant(Op, Demanded, TLO))
     return TLO.New.getNode();
@@ -550,7 +553,7 @@ bool TargetLowering::SimplifyDemandedBits(
     if (Depth != 0) {
       // If not at the root, Just compute the Known bits to
       // simplify things downstream.
-      TLO.DAG.computeKnownBits(Op, Known, DemandedElts, Depth);
+      Known = TLO.DAG.computeKnownBits(Op, DemandedElts, Depth);
       return false;
     }
     // If this is the root being simplified, allow it to have multiple uses,
@@ -666,9 +669,8 @@ bool TargetLowering::SimplifyDemandedBits(
     // simplify the LHS, here we're using information from the LHS to simplify
     // the RHS.
     if (ConstantSDNode *RHSC = isConstOrConstSplat(Op1)) {
-      KnownBits LHSKnown;
       // Do not increment Depth here; that can cause an infinite loop.
-      TLO.DAG.computeKnownBits(Op0, LHSKnown, DemandedElts, Depth);
+      KnownBits LHSKnown = TLO.DAG.computeKnownBits(Op0, DemandedElts, Depth);
       // If the LHS already has zeros where RHSC does, this 'and' is dead.
       if ((LHSKnown.Zero & DemandedBits) ==
           (~RHSC->getAPIntValue() & DemandedBits))
@@ -1381,7 +1383,7 @@ bool TargetLowering::SimplifyDemandedBits(
     // If this is a bitcast, let computeKnownBits handle it.  Only do this on a
     // recursive call where Known may be useful to the caller.
     if (Depth > 0) {
-      TLO.DAG.computeKnownBits(Op, Known, Depth);
+      Known = TLO.DAG.computeKnownBits(Op, Depth);
       return false;
     }
     break;
@@ -1442,7 +1444,7 @@ bool TargetLowering::SimplifyDemandedBits(
     }
 
     // Just use computeKnownBits to compute output bits.
-    TLO.DAG.computeKnownBits(Op, Known, DemandedElts, Depth);
+    Known = TLO.DAG.computeKnownBits(Op, DemandedElts, Depth);
     break;
   }
 

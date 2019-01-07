@@ -14,6 +14,9 @@ set(LLVM_ENABLE_ZLIB OFF CACHE BOOL "")
 set(CLANG_INCLUDE_TESTS OFF CACHE BOOL "")
 set(CLANG_PLUGIN_SUPPORT OFF CACHE BOOL "")
 
+set(ENABLE_LINKER_BUILD_ID ON CACHE BOOL "")
+set(ENABLE_X86_RELAX_RELOCATIONS ON CACHE BOOL "")
+
 set(LLVM_ENABLE_ASSERTIONS ON CACHE BOOL "")
 set(CMAKE_BUILD_TYPE Release CACHE STRING "")
 
@@ -82,14 +85,17 @@ set(CLANG_BOOTSTRAP_TARGETS
   check-all
   check-llvm
   check-clang
+  check-lld
   llvm-config
   test-suite
   test-depends
   llvm-test-depends
   clang-test-depends
+  lld-test-depends
   distribution
   install-distribution
   install-distribution-stripped
+  install-distribution-toolchain
   clang CACHE STRING "")
 
 get_cmake_property(variableNames VARIABLES)

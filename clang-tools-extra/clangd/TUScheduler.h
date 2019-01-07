@@ -62,7 +62,7 @@ struct TUAction {
     Idle, // Indicates the worker thread is idle, and ready to run any upcoming
           // actions.
   };
-  TUAction(State S, llvm::StringRef Name) : S(S), Name(Name){};
+  TUAction(State S, llvm::StringRef Name) : S(S), Name(Name) {}
   State S;
   /// The name of the action currently running, e.g. Update, GoToDef, Hover.
   /// Empty if we are in the idle state.
@@ -226,12 +226,13 @@ private:
 /// propagated.
 template <typename T>
 std::future<T> runAsync(llvm::unique_function<T()> Action) {
-  return std::async(std::launch::async,
-                    [](llvm::unique_function<T()> &&Action, Context Ctx) {
-                      WithContext WithCtx(std::move(Ctx));
-                      return Action();
-                    },
-                    std::move(Action), Context::current().clone());
+  return std::async(
+      std::launch::async,
+      [](llvm::unique_function<T()> &&Action, Context Ctx) {
+        WithContext WithCtx(std::move(Ctx));
+        return Action();
+      },
+      std::move(Action), Context::current().clone());
 }
 
 } // namespace clangd

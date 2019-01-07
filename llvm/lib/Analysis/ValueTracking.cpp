@@ -2023,10 +2023,10 @@ bool isKnownNonZero(const Value *V, unsigned Depth, const Query &Q) {
       if (Q.IIQ.getMetadata(LI, LLVMContext::MD_nonnull))
         return true;
 
-    if (auto CS = ImmutableCallSite(V)) {
-      if (CS.isReturnNonNull())
+    if (const auto *Call = dyn_cast<CallBase>(V)) {
+      if (Call->isReturnNonNull())
         return true;
-      if (const auto *RP = getArgumentAliasingToReturnedPointer(CS))
+      if (const auto *RP = getArgumentAliasingToReturnedPointer(Call))
         return isKnownNonZero(RP, Depth, Q);
     }
   }
@@ -3389,7 +3389,14 @@ Value *llvm::GetPointerBaseWithConstantOffset(Value *Ptr, int64_t &Offset,
       if (!GEP->accumulateConstantOffset(DL, GEPOffset))
         break;
 
-      ByteOffset += GEPOffset.getSExtValue();
+      APInt OrigByteOffset(ByteOffset);
+      ByteOffset += GEPOffset.sextOrTrunc(ByteOffset.getBitWidth());
+      if (ByteOffset.getMinSignedBits() > 64) {
+        // Stop traversal if the pointer offset wouldn't fit into int64_t
+        // (this should be removed if Offset is updated to an APInt)
+        ByteOffset = OrigByteOffset;
+        break;
+      }
 
       Ptr = GEP->getPointerOperand();
     } else if (Operator::getOpcode(Ptr) == Instruction::BitCast ||
@@ -3617,21 +3624,21 @@ uint64_t llvm::GetStringLength(const Value *V, unsigned CharSize) {
   return Len == ~0ULL ? 1 : Len;
 }
 
-const Value *llvm::getArgumentAliasingToReturnedPointer(ImmutableCallSite CS) {
-  assert(CS &&
-         "getArgumentAliasingToReturnedPointer only works on nonnull CallSite");
-  if (const Value *RV = CS.getReturnedArgOperand())
+const Value *llvm::getArgumentAliasingToReturnedPointer(const CallBase *Call) {
+  assert(Call &&
+         "getArgumentAliasingToReturnedPointer only works on nonnull calls");
+  if (const Value *RV = Call->getReturnedArgOperand())
     return RV;
   // This can be used only as a aliasing property.
-  if (isIntrinsicReturningPointerAliasingArgumentWithoutCapturing(CS))
-    return CS.getArgOperand(0);
+  if (isIntrinsicReturningPointerAliasingArgumentWithoutCapturing(Call))
+    return Call->getArgOperand(0);
   return nullptr;
 }
 
 bool llvm::isIntrinsicReturningPointerAliasingArgumentWithoutCapturing(
-    ImmutableCallSite CS) {
-  return CS.getIntrinsicID() == Intrinsic::launder_invariant_group ||
-         CS.getIntrinsicID() == Intrinsic::strip_invariant_group;
+    const CallBase *Call) {
+  return Call->getIntrinsicID() == Intrinsic::launder_invariant_group ||
+         Call->getIntrinsicID() == Intrinsic::strip_invariant_group;
 }
 
 /// \p PN defines a loop-variant pointer to an object.  Check if the
@@ -3679,7 +3686,7 @@ Value *llvm::GetUnderlyingObject(Value *V, const DataLayout &DL,
       // An alloca can't be further simplified.
       return V;
     } else {
-      if (auto CS = CallSite(V)) {
+      if (auto *Call = dyn_cast<CallBase>(V)) {
         // CaptureTracking can know about special capturing properties of some
         // intrinsics like launder.invariant.group, that can't be expressed with
         // the attributes, but have properties like returning aliasing pointer.
@@ -3689,7 +3696,7 @@ Value *llvm::GetUnderlyingObject(Value *V, const DataLayout &DL,
         // because it should be in sync with CaptureTracking. Not using it may
         // cause weird miscompilations where 2 aliasing pointers are assumed to
         // noalias.
-        if (auto *RP = getArgumentAliasingToReturnedPointer(CS)) {
+        if (auto *RP = getArgumentAliasingToReturnedPointer(Call)) {
           V = RP;
           continue;
         }
@@ -3822,8 +3829,7 @@ bool llvm::onlyUsedByLifetimeMarkers(const Value *V) {
     const IntrinsicInst *II = dyn_cast<IntrinsicInst>(U);
     if (!II) return false;
 
-    if (II->getIntrinsicID() != Intrinsic::lifetime_start &&
-        II->getIntrinsicID() != Intrinsic::lifetime_end)
+    if (!II->isLifetimeStartOrEnd())
       return false;
   }
   return true;

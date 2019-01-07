@@ -139,6 +139,10 @@ struct ObjCEntrypoints {
   /// id objc_autorelease(id);
   llvm::Constant *objc_autorelease;
 
+  /// id objc_autorelease(id);
+  /// Note this is the runtime method not the intrinsic.
+  llvm::Constant *objc_autoreleaseRuntimeFunction;
+
   /// id objc_autoreleaseReturnValue(id);
   llvm::Constant *objc_autoreleaseReturnValue;
 
@@ -163,6 +167,10 @@ struct ObjCEntrypoints {
   /// id objc_retain(id);
   llvm::Constant *objc_retain;
 
+  /// id objc_retain(id);
+  /// Note this is the runtime method not the intrinsic.
+  llvm::Constant *objc_retainRuntimeFunction;
+
   /// id objc_retainAutorelease(id);
   llvm::Constant *objc_retainAutorelease;
 
@@ -177,6 +185,10 @@ struct ObjCEntrypoints {
 
   /// void objc_release(id);
   llvm::Constant *objc_release;
+
+  /// void objc_release(id);
+  /// Note this is the runtime method not the intrinsic.
+  llvm::Constant *objc_releaseRuntimeFunction;
 
   /// void objc_storeStrong(id*, id);
   llvm::Constant *objc_storeStrong;

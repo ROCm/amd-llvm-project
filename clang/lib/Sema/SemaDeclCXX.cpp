@@ -1205,7 +1205,7 @@ static bool checkTupleLikeDecomposition(Sema &S,
     E = Seq.Perform(S, Entity, Kind, Init);
     if (E.isInvalid())
       return true;
-    E = S.ActOnFinishFullExpr(E.get(), Loc);
+    E = S.ActOnFinishFullExpr(E.get(), Loc, /*DiscardedValue*/ false);
     if (E.isInvalid())
       return true;
     RefVD->setInit(E.get());
@@ -3682,7 +3682,7 @@ void Sema::ActOnFinishCXXInClassMemberInitializer(Decl *D,
   // C++11 [class.base.init]p7:
   //   The initialization of each base and member constitutes a
   //   full-expression.
-  Init = ActOnFinishFullExpr(Init.get(), InitLoc);
+  Init = ActOnFinishFullExpr(Init.get(), InitLoc, /*DiscardedValue*/ false);
   if (Init.isInvalid()) {
     FD->setInvalidDecl();
     return;
@@ -4084,7 +4084,8 @@ Sema::BuildMemberInitializer(ValueDecl *Member, Expr *Init,
     // C++11 [class.base.init]p7:
     //   The initialization of each base and member constitutes a
     //   full-expression.
-    MemberInit = ActOnFinishFullExpr(MemberInit.get(), InitRange.getBegin());
+    MemberInit = ActOnFinishFullExpr(MemberInit.get(), InitRange.getBegin(),
+                                     /*DiscardedValue*/ false);
     if (MemberInit.isInvalid())
       return true;
 
@@ -4139,8 +4140,8 @@ Sema::BuildDelegatingInitializer(TypeSourceInfo *TInfo, Expr *Init,
   // C++11 [class.base.init]p7:
   //   The initialization of each base and member constitutes a
   //   full-expression.
-  DelegationInit = ActOnFinishFullExpr(DelegationInit.get(),
-                                       InitRange.getBegin());
+  DelegationInit = ActOnFinishFullExpr(
+      DelegationInit.get(), InitRange.getBegin(), /*DiscardedValue*/ false);
   if (DelegationInit.isInvalid())
     return true;
 
@@ -4269,7 +4270,8 @@ Sema::BuildBaseInitializer(QualType BaseType, TypeSourceInfo *BaseTInfo,
   // C++11 [class.base.init]p7:
   //   The initialization of each base and member constitutes a
   //   full-expression.
-  BaseInit = ActOnFinishFullExpr(BaseInit.get(), InitRange.getBegin());
+  BaseInit = ActOnFinishFullExpr(BaseInit.get(), InitRange.getBegin(),
+                                 /*DiscardedValue*/ false);
   if (BaseInit.isInvalid())
     return true;
 
@@ -8592,6 +8594,7 @@ bool Sema::CheckDestructor(CXXDestructorDecl *Destructor) {
         }
       }
 
+      DiagnoseUseOfDecl(OperatorDelete, Loc);
       MarkFunctionReferenced(Loc, OperatorDelete);
       Destructor->setOperatorDelete(OperatorDelete, ThisArg);
     }
@@ -15666,25 +15669,6 @@ NamedDecl *Sema::ActOnFriendFunctionDecl(Scope *S, Declarator &D,
 
     LookupQualifiedName(Previous, DC);
 
-    // Ignore things found implicitly in the wrong scope.
-    // TODO: better diagnostics for this case.  Suggesting the right
-    // qualified scope would be nice...
-    LookupResult::Filter F = Previous.makeFilter();
-    while (F.hasNext()) {
-      NamedDecl *D = F.next();
-      if (!DC->InEnclosingNamespaceSetOf(
-              D->getDeclContext()->getRedeclContext()))
-        F.erase();
-    }
-    F.done();
-
-    if (Previous.empty()) {
-      D.setInvalidType();
-      Diag(Loc, diag::err_qualified_friend_not_found)
-          << Name << TInfo->getType();
-      return nullptr;
-    }
-
     // C++ [class.friend]p1: A friend of a class is a function or
     //   class that is not a member of the class . . .
     if (DC->Equals(CurContext))
@@ -15698,6 +15682,10 @@ NamedDecl *Sema::ActOnFriendFunctionDecl(Scope *S, Declarator &D,
       //   A function can be defined in a friend declaration of a class if and
       //   only if the class is a non-local class (9.8), the function name is
       //   unqualified, and the function has namespace scope.
+      //
+      // FIXME: We should only do this if the scope specifier names the
+      // innermost enclosing namespace; otherwise the fixit changes the
+      // meaning of the code.
       SemaDiagnosticBuilder DB
         = Diag(SS.getRange().getBegin(), diag::err_qualified_friend_def);
 

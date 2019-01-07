@@ -2920,6 +2920,8 @@ void DecompositionDecl::printName(llvm::raw_ostream &os) const {
   os << ']';
 }
 
+void MSPropertyDecl::anchor() {}
+
 MSPropertyDecl *MSPropertyDecl::Create(ASTContext &C, DeclContext *DC,
                                        SourceLocation L, DeclarationName N,
                                        QualType T, TypeSourceInfo *TInfo,

@@ -999,22 +999,22 @@ static void AddAliasScopeMetadata(CallSite CS, ValueToValueMapTy &VMap,
         PtrArgs.push_back(CXI->getPointerOperand());
       else if (const AtomicRMWInst *RMWI = dyn_cast<AtomicRMWInst>(I))
         PtrArgs.push_back(RMWI->getPointerOperand());
-      else if (ImmutableCallSite ICS = ImmutableCallSite(I)) {
+      else if (const auto *Call = dyn_cast<CallBase>(I)) {
         // If we know that the call does not access memory, then we'll still
         // know that about the inlined clone of this call site, and we don't
         // need to add metadata.
-        if (ICS.doesNotAccessMemory())
+        if (Call->doesNotAccessMemory())
           continue;
 
         IsFuncCall = true;
         if (CalleeAAR) {
-          FunctionModRefBehavior MRB = CalleeAAR->getModRefBehavior(ICS);
+          FunctionModRefBehavior MRB = CalleeAAR->getModRefBehavior(Call);
           if (MRB == FMRB_OnlyAccessesArgumentPointees ||
               MRB == FMRB_OnlyReadsArgumentPointees)
             IsArgMemOnlyCall = true;
         }
 
-        for (Value *Arg : ICS.args()) {
+        for (Value *Arg : Call->args()) {
           // We need to check the underlying objects of all arguments, not just
           // the pointer arguments, because we might be passing pointers as
           // integers, etc.
@@ -1320,16 +1320,10 @@ static Value *HandleByValArgument(Value *Arg, Instruction *TheCall,
 
 // Check whether this Value is used by a lifetime intrinsic.
 static bool isUsedByLifetimeMarker(Value *V) {
-  for (User *U : V->users()) {
-    if (IntrinsicInst *II = dyn_cast<IntrinsicInst>(U)) {
-      switch (II->getIntrinsicID()) {
-      default: break;
-      case Intrinsic::lifetime_start:
-      case Intrinsic::lifetime_end:
+  for (User *U : V->users())
+    if (IntrinsicInst *II = dyn_cast<IntrinsicInst>(U))
+      if (II->isLifetimeStartOrEnd())
         return true;
-      }
-    }
-  }
   return false;
 }
 
