@@ -15549,8 +15549,7 @@ NamedDecl *Sema::ActOnFriendFunctionDecl(Scope *S, Declarator &D,
 
   CXXScopeSpec &SS = D.getCXXScopeSpec();
   DeclarationNameInfo NameInfo = GetNameForDeclarator(D);
-  DeclarationName Name = NameInfo.getName();
-  assert(Name);
+  assert(NameInfo.getName());
 
   // Check for unexpanded parameter packs.
   if (DiagnoseUnexpandedParameterPack(Loc, TInfo, UPPC_FriendDeclaration) ||
