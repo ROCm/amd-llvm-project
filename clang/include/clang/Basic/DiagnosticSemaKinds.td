@@ -1298,8 +1298,8 @@ def ext_unelaborated_friend_type : ExtWarn<
 def warn_cxx98_compat_unelaborated_friend_type : Warning<
   "befriending %1 without '%select{struct|interface|union|class|enum}0' "
   "keyword is incompatible with C++98">, InGroup<CXX98Compat>, DefaultIgnore;
-def err_qualified_friend_not_found : Error<
-  "no function named %0 with type %1 was found in the specified scope">;
+def err_qualified_friend_no_match : Error<
+  "friend declaration of %0 does not match any declaration in %1">;
 def err_introducing_special_friend : Error<
   "%plural{[0,2]:must use a qualified name when declaring|3:cannot declare}0"
   " a %select{constructor|destructor|conversion operator|deduction guide}0 "
@@ -6460,7 +6460,7 @@ def note_delete_non_virtual : Note<
   "qualify call to silence this warning">;
 def warn_delete_abstract_non_virtual_dtor : Warning<
   "%select{delete|destructor}0 called on %1 that is abstract but has "
-  "non-virtual destructor">, InGroup<DeleteNonVirtualDtor>, ShowInSystemHeader;
+  "non-virtual destructor">, InGroup<DeleteAbstractNonVirtualDtor>, ShowInSystemHeader;
 def warn_overloaded_virtual : Warning<
   "%q0 hides overloaded virtual %select{function|functions}1">,
   InGroup<OverloadedVirtual>, DefaultIgnore;
