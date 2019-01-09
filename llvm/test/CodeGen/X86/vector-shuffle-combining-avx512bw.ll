@@ -824,6 +824,54 @@ define <32 x i16> @combine_pshufb_as_pshufhw(<32 x i16> %a0) {
   ret <32 x i16> %1
 }
 
+define <64 x i8> @combine_pshufb_as_packsswb(<32 x i16> %a0, <32 x i16> %a1) nounwind {
+; X32-LABEL: combine_pshufb_as_packsswb:
+; X32:       # %bb.0:
+; X32-NEXT:    vpsraw $11, %zmm0, %zmm0
+; X32-NEXT:    vpsraw $11, %zmm1, %zmm1
+; X32-NEXT:    vpacksswb %zmm1, %zmm0, %zmm0
+; X32-NEXT:    retl
+;
+; X64-LABEL: combine_pshufb_as_packsswb:
+; X64:       # %bb.0:
+; X64-NEXT:    vpsraw $11, %zmm0, %zmm0
+; X64-NEXT:    vpsraw $11, %zmm1, %zmm1
+; X64-NEXT:    vpacksswb %zmm1, %zmm0, %zmm0
+; X64-NEXT:    retq
+  %1 = ashr <32 x i16> %a0, <i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11>
+  %2 = ashr <32 x i16> %a1, <i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11>
+  %3 = bitcast <32 x i16> %1 to <64 x i8>
+  %4 = bitcast <32 x i16> %2 to <64 x i8>
+  %5 = tail call <64 x i8> @llvm.x86.avx512.mask.pshuf.b.512(<64 x i8> %3, <64 x i8> <i8 0, i8 2, i8 4, i8 6, i8 8, i8 10, i8 12, i8 14, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 0, i8 2, i8 4, i8 6, i8 8, i8 10, i8 12, i8 14, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 0, i8 2, i8 4, i8 6, i8 8, i8 10, i8 12, i8 14, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 0, i8 2, i8 4, i8 6, i8 8, i8 10, i8 12, i8 14, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1>, <64 x i8> undef, i64 -1)
+  %6 = tail call <64 x i8> @llvm.x86.avx512.mask.pshuf.b.512(<64 x i8> %4, <64 x i8> <i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 0, i8 2, i8 4, i8 6, i8 8, i8 10, i8 12, i8 14, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 0, i8 2, i8 4, i8 6, i8 8, i8 10, i8 12, i8 14, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 0, i8 2, i8 4, i8 6, i8 8, i8 10, i8 12, i8 14, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 0, i8 2, i8 4, i8 6, i8 8, i8 10, i8 12, i8 14>, <64 x i8> undef, i64 -1)
+  %7 = or <64 x i8> %5, %6
+  ret <64 x i8> %7
+}
+
+define <64 x i8> @combine_pshufb_as_packuswb(<32 x i16> %a0, <32 x i16> %a1) nounwind {
+; X32-LABEL: combine_pshufb_as_packuswb:
+; X32:       # %bb.0:
+; X32-NEXT:    vpsrlw $11, %zmm0, %zmm0
+; X32-NEXT:    vpsrlw $11, %zmm1, %zmm1
+; X32-NEXT:    vpackuswb %zmm1, %zmm0, %zmm0
+; X32-NEXT:    retl
+;
+; X64-LABEL: combine_pshufb_as_packuswb:
+; X64:       # %bb.0:
+; X64-NEXT:    vpsrlw $11, %zmm0, %zmm0
+; X64-NEXT:    vpsrlw $11, %zmm1, %zmm1
+; X64-NEXT:    vpackuswb %zmm1, %zmm0, %zmm0
+; X64-NEXT:    retq
+  %1 = lshr <32 x i16> %a0, <i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11>
+  %2 = lshr <32 x i16> %a1, <i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11, i16 11>
+  %3 = bitcast <32 x i16> %1 to <64 x i8>
+  %4 = bitcast <32 x i16> %2 to <64 x i8>
+  %5 = tail call <64 x i8> @llvm.x86.avx512.mask.pshuf.b.512(<64 x i8> %3, <64 x i8> <i8 0, i8 2, i8 4, i8 6, i8 8, i8 10, i8 12, i8 14, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 0, i8 2, i8 4, i8 6, i8 8, i8 10, i8 12, i8 14, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 0, i8 2, i8 4, i8 6, i8 8, i8 10, i8 12, i8 14, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 0, i8 2, i8 4, i8 6, i8 8, i8 10, i8 12, i8 14, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1>, <64 x i8> undef, i64 -1)
+  %6 = tail call <64 x i8> @llvm.x86.avx512.mask.pshuf.b.512(<64 x i8> %4, <64 x i8> <i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 0, i8 2, i8 4, i8 6, i8 8, i8 10, i8 12, i8 14, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 0, i8 2, i8 4, i8 6, i8 8, i8 10, i8 12, i8 14, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 0, i8 2, i8 4, i8 6, i8 8, i8 10, i8 12, i8 14, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 -1, i8 0, i8 2, i8 4, i8 6, i8 8, i8 10, i8 12, i8 14>, <64 x i8> undef, i64 -1)
+  %7 = or <64 x i8> %5, %6
+  ret <64 x i8> %7
+}
+
 define <32 x i16> @combine_vpermi2var_32i16_as_pshufb(<32 x i16> %a0) {
 ; X32-LABEL: combine_vpermi2var_32i16_as_pshufb:
 ; X32:       # %bb.0:
