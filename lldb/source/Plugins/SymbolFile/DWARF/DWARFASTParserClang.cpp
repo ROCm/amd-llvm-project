@@ -125,7 +125,7 @@ ClangASTImporter &DWARFASTParserClang::GetClangASTImporter() {
 }
 
 /// Detect a forward declaration that is nested in a DW_TAG_module.
-static bool isClangModuleFwdDecl(const DWARFDIE &Die) {
+static bool IsClangModuleFwdDecl(const DWARFDIE &Die) {
   if (!Die.GetAttributeValueAsUnsigned(DW_AT_declaration, 0))
     return false;
   auto Parent = Die.GetParent();
@@ -142,30 +142,31 @@ TypeSP DWARFASTParserClang::ParseTypeFromDWO(const DWARFDIE &die, Log *log) {
   if (!dwo_module_sp)
     return TypeSP();
 
-  // This type comes from an external DWO module.
-  std::vector<CompilerContext> dwo_context;
-  die.GetDWOContext(dwo_context);
+  // If this type comes from a Clang module, look in the DWARF section
+  // of the pcm file in the module cache. Clang generates DWO skeleton
+  // units as breadcrumbs to find them.
+  std::vector<CompilerContext> decl_context;
+  die.GetDeclContext(decl_context);
   TypeMap dwo_types;
 
-  if (!dwo_module_sp->GetSymbolVendor()->FindTypes(dwo_context, true,
+  if (!dwo_module_sp->GetSymbolVendor()->FindTypes(decl_context, true,
                                                    dwo_types)) {
-    if (!isClangModuleFwdDecl(die))
+    if (!IsClangModuleFwdDecl(die))
       return TypeSP();
 
     // Since this this type is defined in one of the Clang modules imported by
     // this symbol file, search all of them.
-    auto *SymFile = die.GetCU()->GetSymbolFileDWARF();
-    for (const auto &NameModule : SymFile->getExternalTypeModules()) {
-      if (!NameModule.second)
+    auto *sym_file = die.GetCU()->GetSymbolFileDWARF();
+    for (const auto &name_module : sym_file->getExternalTypeModules()) {
+      if (!name_module.second)
         continue;
-      SymbolVendor *SymVendor = NameModule.second->GetSymbolVendor();
-      if (SymVendor->FindTypes(dwo_context, true, dwo_types))
+      SymbolVendor *sym_vendor = name_module.second->GetSymbolVendor();
+      if (sym_vendor->FindTypes(decl_context, true, dwo_types))
         break;
     }
   }
 
-  const size_t num_dwo_types = dwo_types.GetSize();
-  if (num_dwo_types != 1)
+  if (dwo_types.GetSize() != 1)
     return TypeSP();
 
   // We found a real definition for this type in the Clang module, so lets use
