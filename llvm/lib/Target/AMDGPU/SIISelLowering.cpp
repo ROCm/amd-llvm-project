@@ -8385,7 +8385,7 @@ SDValue SITargetLowering::performFMACombine(SDNode *N,
   EVT VT = N->getValueType(0);
   SDLoc SL(N);
 
-  if (!Subtarget->hasDLInsts() || VT != MVT::f32)
+  if (!Subtarget->hasDotInsts() || VT != MVT::f32)
     return SDValue();
 
   // FMA((F32)S0.x, (F32)S1. x, FMA((F32)S0.y, (F32)S1.y, (F32)z)) ->
@@ -8586,8 +8586,7 @@ SDValue SITargetLowering::performCvtF32UByteNCombine(SDNode *N,
   TargetLowering::TargetLoweringOpt TLO(DAG, !DCI.isBeforeLegalize(),
                                         !DCI.isBeforeLegalizeOps());
   const TargetLowering &TLI = DAG.getTargetLoweringInfo();
-  if (TLI.ShrinkDemandedConstant(Src, Demanded, TLO) ||
-      TLI.SimplifyDemandedBits(Src, Demanded, Known, TLO)) {
+  if (TLI.SimplifyDemandedBits(Src, Demanded, Known, TLO)) {
     DCI.CommitTargetLoweringOpt(TLO);
   }
 
