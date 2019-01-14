@@ -62,10 +62,18 @@ static cl::opt<std::string> ClDefaultArch("default-arch", cl::init(""),
                                           cl::desc("Default architecture "
                                                    "(for multi-arch objects)"));
 
+// -obj, -exe, -e
 static cl::opt<std::string>
 ClBinaryName("obj", cl::init(""),
              cl::desc("Path to object file to be symbolized (if not provided, "
                       "object file should be specified for each input line)"));
+static cl::alias
+ClBinaryNameAliasExe("exe", cl::desc("Alias for -obj"),
+                     cl::NotHidden, cl::aliasopt(ClBinaryName));
+static cl::alias
+ClBinaryNameAliasE("e", cl::desc("Alias for -obj"),
+                   cl::NotHidden, cl::aliasopt(ClBinaryName));
+
 
 static cl::opt<std::string>
     ClDwpName("dwp", cl::init(""),
@@ -75,9 +83,17 @@ static cl::list<std::string>
 ClDsymHint("dsym-hint", cl::ZeroOrMore,
            cl::desc("Path to .dSYM bundles to search for debug info for the "
                     "object files"));
+
+// -print-address, -addresses, -a
 static cl::opt<bool>
-    ClPrintAddress("print-address", cl::init(false),
-                   cl::desc("Show address before line information"));
+ClPrintAddress("print-address", cl::init(false),
+               cl::desc("Show address before line information"));
+static cl::alias
+ClPrintAddressAliasAddresses("addresses", cl::desc("Alias for -print-address"),
+                             cl::NotHidden, cl::aliasopt(ClPrintAddress));
+static cl::alias
+ClPrintAddressAliasA("a", cl::desc("Alias for -print-address"),
+                     cl::NotHidden, cl::aliasopt(ClPrintAddress));
 
 // -pretty-print, -p
 static cl::opt<bool>
