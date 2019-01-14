@@ -61,8 +61,8 @@ void CGAMPRuntime::EmitCXXAMPDeserializer(CodeGenFunction &CGF,
 
   // this
   DeserializerArgs.add(RValue::get(ai.getPointer()),
+                       DeserializeConstructor->getThisType());
 
-  DeserializeConstructor ->getThisType(CGF.getContext()));
   // the rest of constructor args. Create temporary objects for references
   // on stack
   CXXConstructorDecl::param_iterator CPI = DeserializeConstructor->param_begin(),
@@ -303,7 +303,7 @@ void CGAMPRuntime::EmitTrampolineBody(CodeGenFunction &CGF,
   CallArgList KArgs;
 
   // this
-  KArgs.add(RValue::get(ai.getPointer()), Kernel ->getThisType(CGF.getContext()));
+  KArgs.add(RValue::get(ai.getPointer()), Kernel->getThisType());
 
   if (KernelDecl) {
 

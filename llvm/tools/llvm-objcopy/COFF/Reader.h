@@ -23,22 +23,17 @@ struct Object;
 
 using object::COFFObjectFile;
 
-class Reader {
-public:
-  virtual ~Reader();
-  virtual Expected<std::unique_ptr<Object>> create() const = 0;
-};
-
-class COFFReader : public Reader {
+class COFFReader {
   const COFFObjectFile &COFFObj;
 
   Error readExecutableHeaders(Object &Obj) const;
   Error readSections(Object &Obj) const;
   Error readSymbols(Object &Obj, bool IsBigObj) const;
+  Error setRelocTargets(Object &Obj) const;
 
 public:
   explicit COFFReader(const COFFObjectFile &O) : COFFObj(O) {}
-  Expected<std::unique_ptr<Object>> create() const override;
+  Expected<std::unique_ptr<Object>> create() const;
 };
 
 } // end namespace coff
