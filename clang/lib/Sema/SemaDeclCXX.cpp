@@ -6595,8 +6595,11 @@ void Sema::CheckExplicitlyDefaultedSpecialMember(CXXMethodDecl *MD) {
   if (CSM == CXXCopyAssignment || CSM == CXXMoveAssignment) {
     // Check for return type matching.
     ReturnType = Type->getReturnType();
-    QualType ExpectedReturnType =
-        Context.getLValueReferenceType(Context.getTypeDeclType(RD));
+
+    QualType DeclType = Context.getTypeDeclType(RD);
+    DeclType = Context.getAddrSpaceQualType(DeclType, MD->getTypeQualifiers().getAddressSpace());
+    QualType ExpectedReturnType = Context.getLValueReferenceType(DeclType);
+
     if (!Context.hasSameType(ReturnType, ExpectedReturnType)) {
       Diag(MD->getLocation(), diag::err_defaulted_special_member_return_type)
         << (CSM == CXXMoveAssignment) << ExpectedReturnType;
@@ -6604,7 +6607,7 @@ void Sema::CheckExplicitlyDefaultedSpecialMember(CXXMethodDecl *MD) {
     }
 
     // A defaulted special member cannot have cv-qualifiers.
-    if (Type->getTypeQuals()) {
+    if (Type->getTypeQuals().hasConst() || Type->getTypeQuals().hasVolatile()) {
       if (DeleteOnTypeMismatch)
         ShouldDeleteForTypeMismatch = true;
       else {
@@ -11214,6 +11217,22 @@ void Sema::CheckImplicitSpecialMemberDeclaration(Scope *S, FunctionDecl *FD) {
   CheckFunctionDeclaration(S, FD, R, /*IsMemberSpecialization*/false);
 }
 
+void Sema::setupImplicitSpecialMemberType(CXXMethodDecl *SpecialMem,
+                                          QualType ResultTy,
+                                          ArrayRef<QualType> Args) {
+  // Build an exception specification pointing back at this constructor.
+  FunctionProtoType::ExtProtoInfo EPI = getImplicitMethodEPI(*this, SpecialMem);
+
+  if (getLangOpts().OpenCLCPlusPlus) {
+    // OpenCL: Implicitly defaulted special member are of the generic address
+    // space.
+    EPI.TypeQuals.addAddressSpace(LangAS::opencl_generic);
+  }
+
+  auto QT = Context.getFunctionType(ResultTy, Args, EPI);
+  SpecialMem->setType(QT);
+}
+
 CXXConstructorDecl *Sema::DeclareImplicitDefaultConstructor(
                                                      CXXRecordDecl *ClassDecl) {
   // C++ [class.ctor]p5:
@@ -11254,9 +11273,7 @@ CXXConstructorDecl *Sema::DeclareImplicitDefaultConstructor(
                                             /* Diagnose */ false);
   }
 
-  // Build an exception specification pointing back at this constructor.
-  FunctionProtoType::ExtProtoInfo EPI = getImplicitMethodEPI(*this, DefaultCon);
-  DefaultCon->setType(Context.getFunctionType(Context.VoidTy, None, EPI));
+  setupImplicitSpecialMemberType(DefaultCon, Context.VoidTy, None);
 
   // We don't need to use SpecialMemberIsTrivial here; triviality for default
   // constructors is easy to compute.
@@ -11527,9 +11544,7 @@ CXXDestructorDecl *Sema::DeclareImplicitDestructor(CXXRecordDecl *ClassDecl) {
                                             /* Diagnose */ false);
   }
 
-  // Build an exception specification pointing back at this destructor.
-  FunctionProtoType::ExtProtoInfo EPI = getImplicitMethodEPI(*this, Destructor);
-  Destructor->setType(Context.getFunctionType(Context.VoidTy, None, EPI));
+  setupImplicitSpecialMemberType(Destructor, Context.VoidTy, None);
 
   // We don't need to use SpecialMemberIsTrivial here; triviality for
   // destructors is easy to compute.
@@ -12103,6 +12118,10 @@ CXXMethodDecl *Sema::DeclareImplicitCopyAssignment(CXXRecordDecl *ClassDecl) {
   bool Const = ClassDecl->implicitCopyAssignmentHasConstParam();
   if (Const)
     ArgType = ArgType.withConst();
+
+  if (Context.getLangOpts().OpenCLCPlusPlus)
+    ArgType = Context.getAddrSpaceQualType(ArgType, LangAS::opencl_generic);
+
   ArgType = Context.getLValueReferenceType(ArgType);
 
   bool Constexpr = defaultedSpecialMemberIsConstexpr(*this, ClassDecl,
@@ -12129,10 +12148,7 @@ CXXMethodDecl *Sema::DeclareImplicitCopyAssignment(CXXRecordDecl *ClassDecl) {
                                             /* Diagnose */ false);
   }
 
-  // Build an exception specification pointing back at this member.
-  FunctionProtoType::ExtProtoInfo EPI =
-      getImplicitMethodEPI(*this, CopyAssignment);
-  CopyAssignment->setType(Context.getFunctionType(RetType, ArgType, EPI));
+  setupImplicitSpecialMemberType(CopyAssignment, RetType, ArgType);
 
   // Add the parameter to the operator.
   ParmVarDecl *FromParam = ParmVarDecl::Create(Context, CopyAssignment,
@@ -13567,8 +13583,6 @@ void Sema::DefineImplicitMoveAssignment(SourceLocation CurrentLocation,
   ParmVarDecl *Other = MoveAssignOperator->getParamDecl(0);
   QualType OtherRefType = Other->getType()->
       getAs<RValueReferenceType>()->getPointeeType();
-  assert(!OtherRefType.getQualifiers() &&
-         "Bad argument type of defaulted move assignment");
 
   // Our location for everything implicitly-generated.
   SourceLocation Loc = MoveAssignOperator->getEndLoc().isValid()
@@ -13750,6 +13764,10 @@ CXXConstructorDecl *Sema::DeclareImplicitCopyConstructor(
   bool Const = ClassDecl->implicitCopyConstructorHasConstParam();
   if (Const)
     ArgType = ArgType.withConst();
+
+  if (Context.getLangOpts().OpenCLCPlusPlus)
+    ArgType = Context.getAddrSpaceQualType(ArgType, LangAS::opencl_generic);
+
   ArgType = Context.getLValueReferenceType(ArgType);
 
   bool Constexpr = defaultedSpecialMemberIsConstexpr(*this, ClassDecl,
@@ -13778,11 +13796,7 @@ CXXConstructorDecl *Sema::DeclareImplicitCopyConstructor(
                                             /* Diagnose */ false);
   }
 
-  // Build an exception specification pointing back at this member.
-  FunctionProtoType::ExtProtoInfo EPI =
-      getImplicitMethodEPI(*this, CopyConstructor);
-  CopyConstructor->setType(
-      Context.getFunctionType(Context.VoidTy, ArgType, EPI));
+  setupImplicitSpecialMemberType(CopyConstructor, Context.VoidTy, ArgType);
 
   // Add the parameter to the constructor.
   ParmVarDecl *FromParam = ParmVarDecl::Create(Context, CopyConstructor,
@@ -13879,7 +13893,11 @@ CXXConstructorDecl *Sema::DeclareImplicitMoveConstructor(
     return nullptr;
 
   QualType ClassType = Context.getTypeDeclType(ClassDecl);
-  QualType ArgType = Context.getRValueReferenceType(ClassType);
+
+  QualType ArgType = ClassType;
+  if (Context.getLangOpts().OpenCLCPlusPlus)
+    ArgType = Context.getAddrSpaceQualType(ClassType, LangAS::opencl_generic);
+  ArgType = Context.getRValueReferenceType(ArgType);
 
   bool Constexpr = defaultedSpecialMemberIsConstexpr(*this, ClassDecl,
                                                      CXXMoveConstructor,
@@ -13908,11 +13926,7 @@ CXXConstructorDecl *Sema::DeclareImplicitMoveConstructor(
                                             /* Diagnose */ false);
   }
 
-  // Build an exception specification pointing back at this member.
-  FunctionProtoType::ExtProtoInfo EPI =
-      getImplicitMethodEPI(*this, MoveConstructor);
-  MoveConstructor->setType(
-      Context.getFunctionType(Context.VoidTy, ArgType, EPI));
+  setupImplicitSpecialMemberType(MoveConstructor, Context.VoidTy, ArgType);
 
   // Add the parameter to the constructor.
   ParmVarDecl *FromParam = ParmVarDecl::Create(Context, MoveConstructor,
