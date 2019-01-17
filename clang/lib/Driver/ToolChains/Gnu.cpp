@@ -914,6 +914,10 @@ static bool isRISCV(llvm::Triple::ArchType Arch) {
   return Arch == llvm::Triple::riscv32 || Arch == llvm::Triple::riscv64;
 }
 
+static bool isMSP430(llvm::Triple::ArchType Arch) {
+  return Arch == llvm::Triple::msp430;
+}
+
 static Multilib makeMultilib(StringRef commonSuffix) {
   return Multilib(commonSuffix, commonSuffix, commonSuffix);
 }
@@ -1459,6 +1463,26 @@ static void findAndroidArmMultilibs(const Driver &D,
     Result.Multilibs = AndroidArmMultilibs;
 }
 
+static bool findMSP430Multilibs(const Driver &D,
+                                const llvm::Triple &TargetTriple,
+                                StringRef Path, const ArgList &Args,
+                                DetectedMultilibs &Result) {
+  FilterNonExistent NonExistent(Path, "/crtbegin.o", D.getVFS());
+  Multilib MSP430Multilib = makeMultilib("/430");
+  // FIXME: when clang starts to support msp430x ISA additional logic
+  // to select between multilib must be implemented
+  // Multilib MSP430xMultilib = makeMultilib("/large");
+
+  Result.Multilibs.push_back(MSP430Multilib);
+  Result.Multilibs.FilterOut(NonExistent);
+
+  Multilib::flags_list Flags;
+  if (Result.Multilibs.select(Flags, Result.SelectedMultilib))
+    return true;
+
+  return false;
+}
+
 static void findRISCVMultilibs(const Driver &D,
                                const llvm::Triple &TargetTriple, StringRef Path,
                                const ArgList &Args, DetectedMultilibs &Result) {
@@ -1947,6 +1971,9 @@ void Generic_GCC::GCCInstallationDetector::AddDefaultGCCPrefixes(
   static const char *const MIPSN32ELTriples[] = {
       "mips64el-linux-gnuabin32", "mipsisa64r6el-linux-gnuabin32"};
 
+  static const char *const MSP430LibDirs[] = {"/lib"};
+  static const char *const MSP430Triples[] = {"msp430-elf"};
+
   static const char *const PPCLibDirs[] = {"/lib32", "/lib"};
   static const char *const PPCTriples[] = {
       "powerpc-linux-gnu", "powerpc-unknown-linux-gnu", "powerpc-linux-gnuspe",
@@ -2171,6 +2198,10 @@ void Generic_GCC::GCCInstallationDetector::AddDefaultGCCPrefixes(
     BiarchTripleAliases.append(begin(MIPSN32ELTriples), end(MIPSN32ELTriples));
     BiarchTripleAliases.append(begin(MIPSTriples), end(MIPSTriples));
     break;
+  case llvm::Triple::msp430:
+    LibDirs.append(begin(MSP430LibDirs), end(MSP430LibDirs));
+    TripleAliases.append(begin(MSP430Triples), end(MSP430Triples));
+    break;
   case llvm::Triple::ppc:
     LibDirs.append(begin(PPCLibDirs), end(PPCLibDirs));
     TripleAliases.append(begin(PPCTriples), end(PPCTriples));
@@ -2242,6 +2273,8 @@ bool Generic_GCC::GCCInstallationDetector::ScanGCCForMultilibs(
       return false;
   } else if (isRISCV(TargetArch)) {
     findRISCVMultilibs(D, TargetTriple, Path, Args, Detected);
+  } else if (isMSP430(TargetArch)) {
+    findMSP430Multilibs(D, TargetTriple, Path, Args, Detected);
   } else if (!findBiarchMultilibs(D, TargetTriple, Path, Args,
                                   NeedsBiarchSuffix, Detected)) {
     return false;
@@ -2512,7 +2545,14 @@ bool Generic_GCC::IsIntegratedAssemblerDefault() const {
   case llvm::Triple::mipsel:
   case llvm::Triple::mips64:
   case llvm::Triple::mips64el:
+  case llvm::Triple::msp430:
     return true;
+  case llvm::Triple::sparc:
+  case llvm::Triple::sparcel:
+  case llvm::Triple::sparcv9:
+    if (getTriple().isOSSolaris() || getTriple().isOSOpenBSD())
+      return true;
+    return false;
   default:
     return false;
   }

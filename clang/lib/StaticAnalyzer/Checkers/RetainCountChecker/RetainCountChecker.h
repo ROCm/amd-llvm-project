@@ -342,8 +342,6 @@ public:
 
   void processObjCLiterals(CheckerContext &C, const Expr *Ex) const;
 
-  const ProgramPointTag *getDeadSymbolTag(SymbolRef sym) const;
-
   ProgramStateRef handleSymbolDeath(ProgramStateRef state,
                                     SymbolRef sid, RefVal V,
                                     SmallVectorImpl<SymbolRef> &Leaked) const;
@@ -372,11 +370,6 @@ private:
 //===----------------------------------------------------------------------===//
 
 const RefVal *getRefBinding(ProgramStateRef State, SymbolRef Sym);
-
-ProgramStateRef setRefBinding(ProgramStateRef State, SymbolRef Sym,
-                                     RefVal Val);
-
-ProgramStateRef removeRefBinding(ProgramStateRef State, SymbolRef Sym);
 
 /// Returns true if this stack frame is for an Objective-C method that is a
 /// property getter or setter whose body has been synthesized by the analyzer.

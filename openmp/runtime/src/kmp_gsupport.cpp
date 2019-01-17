@@ -120,6 +120,10 @@ int KMP_EXPAND_NAME(KMP_API_NAME_GOMP_SINGLE_START)(void) {
   if (!TCR_4(__kmp_init_parallel))
     __kmp_parallel_initialize();
 
+#if OMP_50_ENABLED
+  __kmp_resume_if_soft_paused();
+#endif
+
   // 3rd parameter == FALSE prevents kmp_enter_single from pushing a
   // workshare when USE_CHECKS is defined.  We need to avoid the push,
   // as there is no corresponding GOMP_single_end() call.
@@ -167,6 +171,10 @@ void *KMP_EXPAND_NAME(KMP_API_NAME_GOMP_SINGLE_COPY_START)(void) {
 
   if (!TCR_4(__kmp_init_parallel))
     __kmp_parallel_initialize();
+
+#if OMP_50_ENABLED
+  __kmp_resume_if_soft_paused();
+#endif
 
   // If this is the first thread to enter, return NULL.  The generated code will
   // then call GOMP_single_copy_end() for this thread only, with the
@@ -400,7 +408,7 @@ static
       ompt_team_size = __kmp_team_from_gtid(gtid)->t.t_nproc;
       ompt_callbacks.ompt_callback(ompt_callback_implicit_task)(
           ompt_scope_begin, &(team_info->parallel_data),
-          &(task_info->task_data), ompt_team_size, __kmp_tid_from_gtid(gtid));
+          &(task_info->task_data), ompt_team_size, __kmp_tid_from_gtid(gtid), ompt_task_implicit); // TODO: Can this be ompt_task_initial?
       task_info->thread_num = __kmp_tid_from_gtid(gtid);
     }
     thr->th.ompt_thread_info.state = ompt_state_work_parallel;

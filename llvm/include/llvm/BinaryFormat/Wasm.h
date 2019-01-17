@@ -26,7 +26,7 @@ const char WasmMagic[] = {'\0', 'a', 's', 'm'};
 // Wasm binary format version
 const uint32_t WasmVersion = 0x1;
 // Wasm linking metadata version
-const uint32_t WasmMetadataVersion = 0x1;
+const uint32_t WasmMetadataVersion = 0x2;
 // Wasm uses a 64k page size
 const uint32_t WasmPageSize = 65536;
 
@@ -41,6 +41,12 @@ struct WasmDylinkInfo {
   uint32_t TableSize;  // Table size in elements
   uint32_t TableAlignment;  // P2 alignment of table
   std::vector<StringRef> Needed; // Shared library depenedencies
+};
+
+struct WasmProducerInfo {
+  std::vector<std::pair<std::string, std::string>> Languages;
+  std::vector<std::pair<std::string, std::string>> Tools;
+  std::vector<std::pair<std::string, std::string>> SDKs;
 };
 
 struct WasmExport {
