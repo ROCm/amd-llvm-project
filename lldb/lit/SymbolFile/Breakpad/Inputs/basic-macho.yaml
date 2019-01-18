@@ -44,4 +44,7 @@ LoadCommands:
         reserved1:       0x00000000
         reserved2:       0x00000000
         reserved3:       0x00000000
+  - cmd:             LC_UUID
+    cmdsize:         24
+    uuid:            B3051760-22B1-7D7B-39F9-240E077D625B
 ...
