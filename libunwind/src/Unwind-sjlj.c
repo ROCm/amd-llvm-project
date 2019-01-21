@@ -1,9 +1,8 @@
 //===--------------------------- Unwind-sjlj.c ----------------------------===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is dual licensed under the MIT and the University of Illinois Open
-// Source Licenses. See LICENSE.TXT for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //
 //  Implements setjump-longjump based C++ exceptions
@@ -52,7 +51,7 @@ struct _Unwind_FunctionContext {
 #else
 # if __STDC_VERSION__ >= 201112L
 #  define _LIBUNWIND_THREAD_LOCAL _Thread_local
-# elif defined(_WIN32)
+# elif defined(_MSC_VER)
 #  define _LIBUNWIND_THREAD_LOCAL __declspec(thread)
 # elif defined(__GNUC__) || defined(__clang__)
 #  define _LIBUNWIND_THREAD_LOCAL __thread
