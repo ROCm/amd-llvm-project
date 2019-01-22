@@ -16213,23 +16213,29 @@ static SDValue reduceBuildVecToShuffleWithZero(SDNode *BV, SelectionDAG &DAG) {
   // The build vector contains some number of undef elements and exactly
   // one other element. That other element must be a zero-extended scalar
   // extracted from a vector at a constant index to turn this into a shuffle.
+  // Also, require that the build vector does not implicitly truncate/extend
+  // its elements.
   // TODO: This could be enhanced to allow ANY_EXTEND as well as ZERO_EXTEND.
+  EVT VT = BV->getValueType(0);
   SDValue Zext = BV->getOperand(ZextElt);
   if (Zext.getOpcode() != ISD::ZERO_EXTEND || !Zext.hasOneUse() ||
       Zext.getOperand(0).getOpcode() != ISD::EXTRACT_VECTOR_ELT ||
-      !isa<ConstantSDNode>(Zext.getOperand(0).getOperand(1)))
+      !isa<ConstantSDNode>(Zext.getOperand(0).getOperand(1)) ||
+      Zext.getValueSizeInBits() != VT.getScalarSizeInBits())
     return SDValue();
 
-  // The zero-extend must be a multiple of the source size.
+  // The zero-extend must be a multiple of the source size, and we must be
+  // building a vector of the same size as the source of the extract element.
   SDValue Extract = Zext.getOperand(0);
   unsigned DestSize = Zext.getValueSizeInBits();
   unsigned SrcSize = Extract.getValueSizeInBits();
-  if (DestSize % SrcSize != 0)
+  if (DestSize % SrcSize != 0 ||
+      Extract.getOperand(0).getValueSizeInBits() != VT.getSizeInBits())
     return SDValue();
 
   // Create a shuffle mask that will combine the extracted element with zeros
   // and undefs.
-  int ZextRatio =  DestSize / SrcSize;
+  int ZextRatio = DestSize / SrcSize;
   int NumMaskElts = NumBVOps * ZextRatio;
   SmallVector<int, 32> ShufMask(NumMaskElts, -1);
   for (int i = 0; i != NumMaskElts; ++i) {
@@ -16259,7 +16265,7 @@ static SDValue reduceBuildVecToShuffleWithZero(SDNode *BV, SelectionDAG &DAG) {
   SDValue ZeroVec = DAG.getConstant(0, DL, VecVT);
   SDValue Shuf = DAG.getVectorShuffle(VecVT, DL, Extract.getOperand(0), ZeroVec,
                                       ShufMask);
-  return DAG.getBitcast(BV->getValueType(0), Shuf);
+  return DAG.getBitcast(VT, Shuf);
 }
 
 // Check to see if this is a BUILD_VECTOR of a bunch of EXTRACT_VECTOR_ELT
@@ -18168,6 +18174,7 @@ SDValue DAGCombiner::SimplifyVBinOp(SDNode *N) {
   SDValue LHS = N->getOperand(0);
   SDValue RHS = N->getOperand(1);
   SDValue Ops[] = {LHS, RHS};
+  EVT VT = N->getValueType(0);
 
   // See if we can constant fold the vector operation.
   if (SDValue Fold = DAG.FoldConstantVectorArithmetic(
@@ -18185,7 +18192,6 @@ SDValue DAGCombiner::SimplifyVBinOp(SDNode *N) {
     ShuffleVectorSDNode *SVN1 = cast<ShuffleVectorSDNode>(RHS);
 
     if (SVN0->getMask().equals(SVN1->getMask())) {
-      EVT VT = N->getValueType(0);
       SDValue UndefVector = LHS.getOperand(1);
       SDValue NewBinOp = DAG.getNode(N->getOpcode(), SDLoc(N), VT,
                                      LHS.getOperand(0), RHS.getOperand(0),
@@ -18193,6 +18199,29 @@ SDValue DAGCombiner::SimplifyVBinOp(SDNode *N) {
       AddUsersToWorklist(N);
       return DAG.getVectorShuffle(VT, SDLoc(N), NewBinOp, UndefVector,
                                   SVN0->getMask());
+    }
+  }
+
+  // The following pattern is likely to emerge with vector reduction ops. Moving
+  // the binary operation ahead of insertion may allow using a narrower vector
+  // instruction that has better performance than the wide version of the op:
+  // VBinOp (ins undef, X, Z), (ins undef, Y, Z) --> ins VecC, (VBinOp X, Y), Z
+  if (LHS.getOpcode() == ISD::INSERT_SUBVECTOR && LHS.getOperand(0).isUndef() &&
+      RHS.getOpcode() == ISD::INSERT_SUBVECTOR && RHS.getOperand(0).isUndef() &&
+      LHS.getOperand(2) == RHS.getOperand(2) &&
+      (LHS.hasOneUse() || RHS.hasOneUse())) {
+    SDValue X = LHS.getOperand(1);
+    SDValue Y = RHS.getOperand(1);
+    SDValue Z = LHS.getOperand(2);
+    EVT NarrowVT = X.getValueType();
+    if (NarrowVT == Y.getValueType() &&
+        TLI.isOperationLegalOrCustomOrPromote(N->getOpcode(), NarrowVT)) {
+      // (binop undef, undef) may not return undef, so compute that result.
+      SDLoc DL(N);
+      SDValue VecC = DAG.getNode(N->getOpcode(), DL, VT, DAG.getUNDEF(VT),
+                                 DAG.getUNDEF(VT));
+      SDValue NarrowBO = DAG.getNode(N->getOpcode(), DL, NarrowVT, X, Y);
+      return DAG.getNode(ISD::INSERT_SUBVECTOR, DL, VT, VecC, NarrowBO, Z);
     }
   }
 

@@ -9925,9 +9925,7 @@ static SDValue lowerVectorShuffleToEXPAND(const SDLoc &DL, MVT VT,
                               Subtarget, DAG, DL);
   SDValue ZeroVector = getZeroVector(VT, Subtarget, DAG, DL);
   SDValue ExpandedVector = IsLeftZeroSide ? V2 : V1;
-  return DAG.getSelect(DL, VT, VMask,
-                       DAG.getNode(X86ISD::EXPAND, DL, VT, ExpandedVector),
-                       ZeroVector);
+  return DAG.getNode(X86ISD::EXPAND, DL, VT, ExpandedVector, ZeroVector, VMask);
 }
 
 static bool matchVectorShuffleWithUNPCK(MVT VT, SDValue &V1, SDValue &V2,
@@ -21883,35 +21881,6 @@ SDValue X86TargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
       // first.
       return DAG.getNode(IntrData->Opc0, dl, Op.getValueType(),
                          Op.getOperand(2), Op.getOperand(3), Op.getOperand(1));
-    case CVTPD2PS:
-      // ISD::FP_ROUND has a second argument that indicates if the truncation
-      // does not change the value. Set it to 0 since it can change.
-      return DAG.getNode(IntrData->Opc0, dl, VT, Op.getOperand(1),
-                         DAG.getIntPtrConstant(0, dl));
-    case CVTPD2PS_RND_MASK: {
-      SDValue Src = Op.getOperand(1);
-      SDValue PassThru = Op.getOperand(2);
-      SDValue Mask = Op.getOperand(3);
-      // We add rounding mode to the Node when
-      //   - RM Opcode is specified and
-      //   - RM is not "current direction".
-      unsigned IntrWithRoundingModeOpcode = IntrData->Opc1;
-      if (IntrWithRoundingModeOpcode != 0) {
-        SDValue Rnd = Op.getOperand(4);
-        if (!isRoundModeCurDirection(Rnd)) {
-          return getVectorMaskingNode(DAG.getNode(IntrWithRoundingModeOpcode,
-                                      dl, Op.getValueType(),
-                                      Src, Rnd),
-                                      Mask, PassThru, Subtarget, DAG);
-        }
-      }
-      assert(IntrData->Opc0 == ISD::FP_ROUND && "Unexpected opcode!");
-      // ISD::FP_ROUND has a second argument that indicates if the truncation
-      // does not change the value. Set it to 0 since it can change.
-      return getVectorMaskingNode(DAG.getNode(IntrData->Opc0, dl, VT, Src,
-                                              DAG.getIntPtrConstant(0, dl)),
-                                  Mask, PassThru, Subtarget, DAG);
-    }
     case FPCLASSS: {
       SDValue Src1 = Op.getOperand(1);
       SDValue Imm = Op.getOperand(2);
@@ -22043,9 +22012,15 @@ SDValue X86TargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
       if (isAllOnesConstant(Mask)) // return data as is
         return Op.getOperand(1);
 
-      return getVectorMaskingNode(DAG.getNode(IntrData->Opc0, dl, VT,
-                                              DataToCompress),
-                                  Mask, PassThru, Subtarget, DAG);
+      MVT MaskVT = MVT::getVectorVT(MVT::i1, VT.getVectorNumElements());
+      Mask = getMaskNode(Mask, MaskVT, Subtarget, DAG, dl);
+
+      // Avoid false dependency.
+      if (PassThru.isUndef())
+        PassThru = DAG.getConstant(0, dl, VT);
+
+      return DAG.getNode(IntrData->Opc0, dl, VT, DataToCompress, PassThru,
+                         Mask);
     }
     case FIXUPIMMS:
     case FIXUPIMMS_MASKZ:
@@ -30258,6 +30233,27 @@ void X86TargetLowering::computeKnownBitsForTargetNode(const SDValue Op,
     Known = Known.trunc(BitWidth);
     break;
   }
+  case X86ISD::ANDNP: {
+    KnownBits Known2;
+    Known = DAG.computeKnownBits(Op.getOperand(1), DemandedElts, Depth + 1);
+    Known2 = DAG.computeKnownBits(Op.getOperand(0), DemandedElts, Depth + 1);
+
+    // ANDNP = (~X & Y);
+    Known.One &= Known2.Zero;
+    Known.Zero |= Known2.One;
+    break;
+  }
+  case X86ISD::FOR: {
+    KnownBits Known2;
+    Known = DAG.computeKnownBits(Op.getOperand(1), DemandedElts, Depth + 1);
+    Known2 = DAG.computeKnownBits(Op.getOperand(0), DemandedElts, Depth + 1);
+
+    // Output known-0 bits are only known if clear in both the LHS & RHS.
+    Known.Zero &= Known2.Zero;
+    // Output known-1 are known to be set if set in either the LHS | RHS.
+    Known.One |= Known2.One;
+    break;
+  }
   case X86ISD::CMOV: {
     Known = DAG.computeKnownBits(Op.getOperand(1), Depth+1);
     // If we don't know any bits, early out.
@@ -36544,6 +36540,52 @@ static SDValue combineAnd(SDNode *N, SelectionDAG &DAG,
   return SDValue();
 }
 
+// Canonicalize OR(AND(X,C),AND(Y,~C)) -> OR(AND(X,C),ANDNP(C,Y))
+static SDValue canonicalizeBitSelect(SDNode *N, SelectionDAG &DAG,
+                                     const X86Subtarget &Subtarget) {
+  assert(N->getOpcode() == ISD::OR && "Unexpected Opcode");
+
+  EVT VT = N->getValueType(0);
+  if (!VT.isVector())
+    return SDValue();
+
+  SDValue N0 = peekThroughBitcasts(N->getOperand(0));
+  SDValue N1 = peekThroughBitcasts(N->getOperand(1));
+  if (N0.getOpcode() != ISD::AND || N1.getOpcode() != ISD::AND)
+    return SDValue();
+
+  // On XOP we'll lower to PCMOV so accept one use, otherwise only
+  // do this if either mask has multiple uses already.
+  if (!(Subtarget.hasXOP() || !N0.getOperand(1).hasOneUse() ||
+        !N1.getOperand(1).hasOneUse()))
+    return SDValue();
+
+  // Attempt to extract constant byte masks.
+  APInt UndefElts0, UndefElts1;
+  SmallVector<APInt, 32> EltBits0, EltBits1;
+  if (!getTargetConstantBitsFromNode(N0.getOperand(1), 8, UndefElts0, EltBits0,
+                                     false, false))
+    return SDValue();
+  if (!getTargetConstantBitsFromNode(N1.getOperand(1), 8, UndefElts1, EltBits1,
+                                     false, false))
+    return SDValue();
+
+  for (unsigned i = 0, e = EltBits0.size(); i != e; ++i) {
+    // TODO - add UNDEF elts support.
+    if (UndefElts0[i] || UndefElts1[i])
+      return SDValue();
+    if (EltBits0[i] != ~EltBits1[i])
+      return SDValue();
+  }
+
+  SDLoc DL(N);
+  SDValue X = N->getOperand(0);
+  SDValue Y =
+      DAG.getNode(X86ISD::ANDNP, DL, VT, DAG.getBitcast(VT, N0.getOperand(1)),
+                  DAG.getBitcast(VT, N1.getOperand(0)));
+  return DAG.getNode(ISD::OR, DL, VT, X, Y);
+}
+
 // Try to match OR(AND(~MASK,X),AND(MASK,Y)) logic pattern.
 static bool matchLogicBlend(SDNode *N, SDValue &X, SDValue &Y, SDValue &Mask) {
   if (N->getOpcode() != ISD::OR)
@@ -36805,6 +36847,9 @@ static SDValue combineOr(SDNode *N, SelectionDAG &DAG,
 
   if (SDValue FPLogic = convertIntLogicToFPLogic(N, DAG, Subtarget))
     return FPLogic;
+
+  if (SDValue R = canonicalizeBitSelect(N, DAG, Subtarget))
+    return R;
 
   if (SDValue R = combineLogicBlendIntoPBLENDV(N, DAG, Subtarget))
     return R;

@@ -1769,11 +1769,11 @@ def : InstAlias<"vcvtpd2psx\t{$src, $dst|$dst, $src}",
 let Predicates = [HasAVX, NoVLX] in {
 def VCVTPD2PSYrr : VPDI<0x5A, MRMSrcReg, (outs VR128:$dst), (ins VR256:$src),
                         "cvtpd2ps\t{$src, $dst|$dst, $src}",
-                        [(set VR128:$dst, (fpround VR256:$src))]>,
+                        [(set VR128:$dst, (X86vfpround VR256:$src))]>,
                         VEX, VEX_L, Sched<[WriteCvtPD2PSY]>, VEX_WIG;
 def VCVTPD2PSYrm : VPDI<0x5A, MRMSrcMem, (outs VR128:$dst), (ins f256mem:$src),
                         "cvtpd2ps{y}\t{$src, $dst|$dst, $src}",
-                        [(set VR128:$dst, (fpround (loadv4f64 addr:$src)))]>,
+                        [(set VR128:$dst, (X86vfpround (loadv4f64 addr:$src)))]>,
                         VEX, VEX_L, Sched<[WriteCvtPD2PSY.Folded]>, VEX_WIG;
 }
 def : InstAlias<"vcvtpd2psy\t{$src, $dst|$dst, $src}",
@@ -1795,6 +1795,11 @@ def CVTPD2PSrm : PDI<0x5A, MRMSrcMem, (outs VR128:$dst), (ins f128mem:$src),
 // whenever possible to avoid declaring two versions of each one.
 
 let Predicates = [HasAVX, NoVLX] in {
+  def : Pat<(v4f32 (fpround (v4f64 VR256:$src))),
+            (VCVTPD2PSYrr VR256:$src)>;
+  def : Pat<(v4f32 (fpround (loadv4f64 addr:$src))),
+            (VCVTPD2PSYrm addr:$src)>;
+
   // Match fpround and fpextend for 128/256-bit conversions
   def : Pat<(X86vzmovl (v2f64 (bitconvert
                                (v4f32 (X86vfpround (v2f64 VR128:$src)))))),
@@ -5646,6 +5651,7 @@ let Constraints = "$src1 = $dst" in
 // vector. The next one matches the intrinsic and could zero arbitrary elements
 // in the target vector.
 multiclass SS41I_insertf32<bits<8> opc, string asm, bit Is2Addr = 1> {
+  let isCommutable = 1 in
   def rr : SS4AIi8<opc, MRMSrcReg, (outs VR128:$dst),
       (ins VR128:$src1, VR128:$src2, u8imm:$src3),
       !if(Is2Addr,
