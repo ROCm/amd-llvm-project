@@ -940,9 +940,12 @@ void MachineVerifier::visitMachineInstrBefore(const MachineInstr *MI) {
     if (isFunctionSelected)
       report("Unexpected generic instruction in a Selected function", MI);
 
+    unsigned NumOps = MI->getNumOperands();
+
     // Check types.
     SmallVector<LLT, 4> Types;
-    for (unsigned I = 0; I < MCID.getNumOperands(); ++I) {
+    for (unsigned I = 0, E = std::min(MCID.getNumOperands(), NumOps);
+         I != E; ++I) {
       if (!MCID.OpInfo[I].isGenericType())
         continue;
       // Generic instructions specify type equality constraints between some of
@@ -973,6 +976,10 @@ void MachineVerifier::visitMachineInstrBefore(const MachineInstr *MI) {
       if (MO->isReg() && TargetRegisterInfo::isPhysicalRegister(MO->getReg()))
         report("Generic instruction cannot have physical register", MO, I);
     }
+
+    // Avoid out of bounds in checks below. This was already reported earlier.
+    if (MI->getNumOperands() < MCID.getNumOperands())
+      return;
   }
 
   StringRef ErrorInfo;
@@ -983,6 +990,16 @@ void MachineVerifier::visitMachineInstrBefore(const MachineInstr *MI) {
   switch(MI->getOpcode()) {
   default:
     break;
+  case TargetOpcode::G_CONSTANT:
+  case TargetOpcode::G_FCONSTANT: {
+    if (MI->getNumOperands() < MCID.getNumOperands())
+      break;
+
+    LLT DstTy = MRI->getType(MI->getOperand(0).getReg());
+    if (DstTy.isVector())
+      report("Instruction cannot use a vector result type", MI);
+    break;
+  }
   case TargetOpcode::G_LOAD:
   case TargetOpcode::G_STORE:
     // Generic loads and stores must have a single MachineMemOperand
@@ -1033,8 +1050,6 @@ void MachineVerifier::visitMachineInstrBefore(const MachineInstr *MI) {
     // instructions aren't guaranteed to have the right number of operands or
     // types attached to them at this point
     assert(MCID.getNumOperands() == 2 && "Expected 2 operands G_*{EXT,TRUNC}");
-    if (MI->getNumOperands() < MCID.getNumOperands())
-      break;
     LLT DstTy = MRI->getType(MI->getOperand(0).getReg());
     LLT SrcTy = MRI->getType(MI->getOperand(1).getReg());
     if (!DstTy.isValid() || !SrcTy.isValid())
