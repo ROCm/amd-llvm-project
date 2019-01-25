@@ -15,7 +15,8 @@ class TestTailCallFrameSBAPI(TestBase):
     # each debug info format.
     NO_DEBUG_INFO_TESTCASE = True
 
-    @skipIf(compiler="clang", compiler_version=['<', '7.0'])
+    @skipIf(compiler="clang", compiler_version=['<', '8.0'])
+    @skipIf(dwarf_version=['<', '4'])
     @expectedFailureAll(oslist=["windows"], bugnumber="llvm.org/pr26265")
     def test_tail_call_frame_sbapi(self):
         self.build()
