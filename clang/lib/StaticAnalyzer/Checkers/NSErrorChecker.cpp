@@ -307,6 +307,14 @@ static bool IsCFError(QualType T, IdentifierInfo *II) {
   return TT->getDecl()->getIdentifier() == II;
 }
 
+void ento::registerNSOrCFErrorDerefChecker(CheckerManager &mgr) {
+  mgr.registerChecker<NSOrCFErrorDerefChecker>();
+}
+
+bool ento::shouldRegisterNSOrCFErrorDerefChecker(const LangOptions &LO) {
+  return true;
+}
+
 void ento::registerNSErrorChecker(CheckerManager &mgr) {
   mgr.registerChecker<NSErrorMethodChecker>();
   NSOrCFErrorDerefChecker *checker =
@@ -314,9 +322,17 @@ void ento::registerNSErrorChecker(CheckerManager &mgr) {
   checker->ShouldCheckNSError = true;
 }
 
+bool ento::shouldRegisterNSErrorChecker(const LangOptions &LO) {
+  return true;
+}
+
 void ento::registerCFErrorChecker(CheckerManager &mgr) {
   mgr.registerChecker<CFErrorFunctionChecker>();
   NSOrCFErrorDerefChecker *checker =
       mgr.registerChecker<NSOrCFErrorDerefChecker>();
   checker->ShouldCheckCFError = true;
+}
+
+bool ento::shouldRegisterCFErrorChecker(const LangOptions &LO) {
+  return true;
 }
