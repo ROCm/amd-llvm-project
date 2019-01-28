@@ -6770,8 +6770,6 @@ static void handleDeviceAttr(Sema &S, Decl *D, const ParsedAttr &Attr) {
                               Attr.getAttributeSpellingListIndex()));
   } else if (S.LangOpts.CPlusPlusAMP) {
     if (!S.LangOpts.AMPCPU)
-      D->addAttr(::new (S.Context) AlwaysInlineAttr(Attr.getRange(),
-                                                    S.Context, Attr.getAttributeSpellingListIndex()));
     D->addAttr(::new (S.Context) CXXAMPRestrictAMPAttr(Attr.getRange(),
           S.Context, Attr.getAttributeSpellingListIndex()));
   } else {
