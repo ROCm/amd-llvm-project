@@ -129,6 +129,7 @@ public:
   X86TargetInfo(const llvm::Triple &Triple, const TargetOptions &)
       : TargetInfo(Triple) {
     LongDoubleFormat = &llvm::APFloat::x87DoubleExtended();
+    HasFloat16 = true;
   }
 
   unsigned getFloatEvalMethod() const override {

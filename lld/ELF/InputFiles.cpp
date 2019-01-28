@@ -401,9 +401,8 @@ void ObjFile<ELFT>::initializeSections(
     const Elf_Shdr &Sec = ObjSections[I];
 
     if (Sec.sh_type == ELF::SHT_LLVM_CALL_GRAPH_PROFILE)
-      CGProfile = check(
-          this->getObj().template getSectionContentsAsArray<Elf_CGProfile>(
-              &Sec));
+      CGProfile =
+          check(Obj.template getSectionContentsAsArray<Elf_CGProfile>(&Sec));
 
     // SHF_EXCLUDE'ed sections are discarded by the linker. However,
     // if -r is given, we'll let the final link discard such sections.
@@ -452,7 +451,6 @@ void ObjFile<ELFT>::initializeSections(
           this->Sections[I] = createInputSection(Sec);
         continue;
       }
-
 
       // Otherwise, discard group members.
       for (uint32_t SecIndex : Entries.slice(1)) {
@@ -735,7 +733,8 @@ InputSectionBase *ObjFile<ELFT>::createInputSection(const Elf_Shdr &Sec) {
   // sections. Drop those sections to avoid duplicate symbol errors.
   // FIXME: This is glibc PR20543, we should remove this hack once that has been
   // fixed for a while.
-  if (Name.startswith(".gnu.linkonce."))
+  if (Name == ".gnu.linkonce.t.__x86.get_pc_thunk.bx" ||
+      Name == ".gnu.linkonce.t.__i686.get_pc_thunk.bx")
     return &InputSection::Discarded;
 
   // If we are creating a new .build-id section, strip existing .build-id

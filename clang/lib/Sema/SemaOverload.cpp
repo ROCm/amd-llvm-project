@@ -14327,7 +14327,7 @@ Expr *Sema::FixOverloadedFunctionReference(Expr *E, DeclAccessPair Found,
       unsigned ResultIdx = GSE->getResultIndex();
       AssocExprs[ResultIdx] = SubExpr;
 
-      return new (Context) GenericSelectionExpr(
+      return GenericSelectionExpr::Create(
           Context, GSE->getGenericLoc(), GSE->getControllingExpr(),
           GSE->getAssocTypeSourceInfos(), AssocExprs, GSE->getDefaultLoc(),
           GSE->getRParenLoc(), GSE->containsUnexpandedParameterPack(),

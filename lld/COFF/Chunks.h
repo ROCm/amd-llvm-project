@@ -223,6 +223,9 @@ public:
   // The COMDAT leader symbol if this is a COMDAT chunk.
   DefinedRegular *Sym = nullptr;
 
+  // The COMDAT selection if this is a COMDAT chunk.
+  llvm::COFF::COMDATType Selection = (llvm::COFF::COMDATType)0;
+
   ArrayRef<coff_relocation> Relocs;
 
   // Used by the garbage collector.
