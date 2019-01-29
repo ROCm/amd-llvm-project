@@ -392,6 +392,11 @@ static bool isPreISelGenericFloatingPointOpcode(unsigned Opc) {
   case TargetOpcode::G_FPEXT:
   case TargetOpcode::G_FPTRUNC:
   case TargetOpcode::G_FCEIL:
+  case TargetOpcode::G_FNEG:
+  case TargetOpcode::G_FCOS:
+  case TargetOpcode::G_FSIN:
+  case TargetOpcode::G_FLOG10:
+  case TargetOpcode::G_FLOG:
     return true;
   }
   return false;
@@ -565,10 +570,14 @@ AArch64RegisterBankInfo::getInstrMapping(const MachineInstr &MI) const {
   switch (Opc) {
   case TargetOpcode::G_SITOFP:
   case TargetOpcode::G_UITOFP:
+    if (MRI.getType(MI.getOperand(0).getReg()).isVector())
+      break;
     OpRegBankIdx = {PMI_FirstFPR, PMI_FirstGPR};
     break;
   case TargetOpcode::G_FPTOSI:
   case TargetOpcode::G_FPTOUI:
+    if (MRI.getType(MI.getOperand(0).getReg()).isVector())
+      break;
     OpRegBankIdx = {PMI_FirstGPR, PMI_FirstFPR};
     break;
   case TargetOpcode::G_FCMP:
