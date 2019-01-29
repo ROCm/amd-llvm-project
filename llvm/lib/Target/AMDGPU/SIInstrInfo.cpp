@@ -275,6 +275,11 @@ bool SIInstrInfo::getMemOperandWithOffset(MachineInstr &LdSt,
     if (OffsetImm) {
       // Normal, single offset LDS instruction.
       BaseOp = getNamedOperand(LdSt, AMDGPU::OpName::addr);
+      // TODO: ds_consume/ds_append use M0 for the base address. Is it safe to
+      // report that here?
+      if (!BaseOp)
+        return false;
+
       Offset = OffsetImm->getImm();
       assert(BaseOp->isReg() && "getMemOperandWithOffset only supports base "
                                 "operands of type register.");
@@ -3272,18 +3277,6 @@ const TargetRegisterClass *SIInstrInfo::getOpRegClass(const MachineInstr &MI,
   return RI.getRegClass(RCID);
 }
 
-bool SIInstrInfo::canReadVGPR(const MachineInstr &MI, unsigned OpNo) const {
-  switch (MI.getOpcode()) {
-  case AMDGPU::COPY:
-  case AMDGPU::REG_SEQUENCE:
-  case AMDGPU::PHI:
-  case AMDGPU::INSERT_SUBREG:
-    return RI.hasVGPRs(getOpRegClass(MI, 0));
-  default:
-    return RI.hasVGPRs(getOpRegClass(MI, OpNo));
-  }
-}
-
 void SIInstrInfo::legalizeOpWithMove(MachineInstr &MI, unsigned OpIdx) const {
   MachineBasicBlock::iterator I = MI;
   MachineBasicBlock *MBB = MI.getParent();
@@ -4952,7 +4945,23 @@ void SIInstrInfo::addUsersToMoveToVALUWorklist(
   for (MachineRegisterInfo::use_iterator I = MRI.use_begin(DstReg),
          E = MRI.use_end(); I != E;) {
     MachineInstr &UseMI = *I->getParent();
-    if (!canReadVGPR(UseMI, I.getOperandNo())) {
+
+    unsigned OpNo = 0;
+
+    switch (UseMI.getOpcode()) {
+    case AMDGPU::COPY:
+    case AMDGPU::WQM:
+    case AMDGPU::WWM:
+    case AMDGPU::REG_SEQUENCE:
+    case AMDGPU::PHI:
+    case AMDGPU::INSERT_SUBREG:
+      break;
+    default:
+      OpNo = I.getOperandNo();
+      break;
+    }
+
+    if (!RI.hasVGPRs(getOpRegClass(UseMI, OpNo))) {
       Worklist.insert(&UseMI);
 
       do {

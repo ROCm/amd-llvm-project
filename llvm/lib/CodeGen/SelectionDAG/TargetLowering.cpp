@@ -4319,7 +4319,7 @@ bool TargetLowering::expandFP_TO_SINT(SDNode *Node, SDValue &Result,
 
   // Expand f32 -> i64 conversion
   // This algorithm comes from compiler-rt's implementation of fixsfdi:
-  // https://github.com/llvm-mirror/compiler-rt/blob/master/lib/builtins/fixsfdi.c
+  // https://github.com/llvm/llvm-project/blob/master/compiler-rt/lib/builtins/fixsfdi.c
   unsigned SrcEltBits = SrcVT.getScalarSizeInBits();
   EVT IntVT = SrcVT.changeTypeToInteger();
   EVT IntShVT = getShiftAmountTy(IntVT, DAG.getDataLayout());
@@ -5285,6 +5285,12 @@ SDValue TargetLowering::expandAddSubSat(SDNode *Node, SelectionDAG &DAG) const {
   if (Opcode == ISD::USUBSAT && isOperationLegalOrCustom(ISD::UMAX, VT)) {
     SDValue Max = DAG.getNode(ISD::UMAX, dl, VT, LHS, RHS);
     return DAG.getNode(ISD::SUB, dl, VT, Max, RHS);
+  }
+
+  if (Opcode == ISD::UADDSAT && isOperationLegalOrCustom(ISD::UMIN, VT)) {
+    SDValue InvRHS = DAG.getNOT(dl, RHS, VT);
+    SDValue Min = DAG.getNode(ISD::UMIN, dl, VT, LHS, InvRHS);
+    return DAG.getNode(ISD::ADD, dl, VT, Min, RHS);
   }
 
   if (VT.isVector()) {
