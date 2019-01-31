@@ -51,11 +51,20 @@ defm remove_section : Eq<"remove-section", "Remove <section>">,
                       MetaVarName<"section">;
 def R : JoinedOrSeparate<["-"], "R">, Alias<remove_section>;
 
+defm strip_symbol : Eq<"strip-symbol", "Strip <symbol>">,
+                    MetaVarName<"symbol">;
+def N : JoinedOrSeparate<["-"], "N">, Alias<strip_symbol>;
+
 defm keep_section : Eq<"keep-section", "Keep <section>">,
                     MetaVarName<"section">;
 defm keep_symbol : Eq<"keep-symbol", "Do not remove symbol <symbol>">,
                    MetaVarName<"symbol">;
 def K : JoinedOrSeparate<["-"], "K">, Alias<keep_symbol>;
+
+def discard_locals : Flag<["-", "--"], "discard-locals">,
+                     HelpText<"Remove compiler-generated local symbols, (e.g. "
+                              "symbols starting with .L)">;
+def X : Flag<["-"], "X">, Alias<discard_locals>;
 
 def discard_all
     : Flag<["-", "--"], "discard-all">,

@@ -387,7 +387,11 @@ DriverConfig parseObjcopyOptions(ArrayRef<const char *> ArgsArr) {
   Config.ExtractDWO = InputArgs.hasArg(OBJCOPY_extract_dwo);
   Config.LocalizeHidden = InputArgs.hasArg(OBJCOPY_localize_hidden);
   Config.Weaken = InputArgs.hasArg(OBJCOPY_weaken);
-  Config.DiscardAll = InputArgs.hasArg(OBJCOPY_discard_all);
+  if (InputArgs.hasArg(OBJCOPY_discard_all, OBJCOPY_discard_locals))
+    Config.DiscardMode =
+        InputArgs.hasFlag(OBJCOPY_discard_all, OBJCOPY_discard_locals)
+            ? DiscardType::All
+            : DiscardType::Locals;
   Config.OnlyKeepDebug = InputArgs.hasArg(OBJCOPY_only_keep_debug);
   Config.KeepFileSymbols = InputArgs.hasArg(OBJCOPY_keep_file_symbols);
   Config.DecompressDebugSections =
@@ -467,14 +471,14 @@ DriverConfig parseStripOptions(ArrayRef<const char *> ArgsArr) {
   CopyConfig Config;
   Config.StripDebug = InputArgs.hasArg(STRIP_strip_debug);
 
-  Config.DiscardAll = InputArgs.hasArg(STRIP_discard_all);
+  if (InputArgs.hasArg(STRIP_discard_all, STRIP_discard_locals))
+    Config.DiscardMode =
+        InputArgs.hasFlag(STRIP_discard_all, STRIP_discard_locals)
+            ? DiscardType::All
+            : DiscardType::Locals;
   Config.StripUnneeded = InputArgs.hasArg(STRIP_strip_unneeded);
   Config.StripAll = InputArgs.hasArg(STRIP_strip_all);
   Config.StripAllGNU = InputArgs.hasArg(STRIP_strip_all_gnu);
-
-  if (!Config.StripDebug && !Config.StripUnneeded && !Config.DiscardAll &&
-      !Config.StripAllGNU)
-    Config.StripAll = true;
 
   for (auto Arg : InputArgs.filtered(STRIP_keep_section))
     Config.KeepSection.push_back(Arg->getValue());
@@ -482,8 +486,15 @@ DriverConfig parseStripOptions(ArrayRef<const char *> ArgsArr) {
   for (auto Arg : InputArgs.filtered(STRIP_remove_section))
     Config.ToRemove.push_back(Arg->getValue());
 
+  for (auto Arg : InputArgs.filtered(STRIP_strip_symbol))
+    Config.SymbolsToRemove.push_back(Arg->getValue());
+
   for (auto Arg : InputArgs.filtered(STRIP_keep_symbol))
     Config.SymbolsToKeep.push_back(Arg->getValue());
+
+  if (!Config.StripDebug && !Config.StripUnneeded &&
+      Config.DiscardMode == DiscardType::None && !Config.StripAllGNU && Config.SymbolsToRemove.empty())
+    Config.StripAll = true;
 
   Config.DeterministicArchives =
       InputArgs.hasFlag(STRIP_enable_deterministic_archives,
