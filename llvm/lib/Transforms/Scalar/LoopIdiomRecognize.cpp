@@ -930,9 +930,8 @@ bool LoopIdiomRecognize::processLoopStridedStore(
 
     Module *M = TheStore->getModule();
     StringRef FuncName = "memset_pattern16";
-    Value *MSP =
-        M->getOrInsertFunction(FuncName, Builder.getVoidTy(),
-                               Int8PtrTy, Int8PtrTy, IntPtr);
+    FunctionCallee MSP = M->getOrInsertFunction(FuncName, Builder.getVoidTy(),
+                                                Int8PtrTy, Int8PtrTy, IntPtr);
     inferLibFuncAttributes(M, FuncName, *TLI);
 
     // Otherwise we should form a memset_pattern16.  PatternValue is known to be
@@ -1528,7 +1527,7 @@ static CallInst *createPopcntIntrinsic(IRBuilder<> &IRBuilder, Value *Val,
   Type *Tys[] = {Val->getType()};
 
   Module *M = IRBuilder.GetInsertBlock()->getParent()->getParent();
-  Value *Func = Intrinsic::getDeclaration(M, Intrinsic::ctpop, Tys);
+  Function *Func = Intrinsic::getDeclaration(M, Intrinsic::ctpop, Tys);
   CallInst *CI = IRBuilder.CreateCall(Func, Ops);
   CI->setDebugLoc(DL);
 
@@ -1542,7 +1541,7 @@ static CallInst *createFFSIntrinsic(IRBuilder<> &IRBuilder, Value *Val,
   Type *Tys[] = {Val->getType()};
 
   Module *M = IRBuilder.GetInsertBlock()->getParent()->getParent();
-  Value *Func = Intrinsic::getDeclaration(M, IID, Tys);
+  Function *Func = Intrinsic::getDeclaration(M, IID, Tys);
   CallInst *CI = IRBuilder.CreateCall(Func, Ops);
   CI->setDebugLoc(DL);
 
