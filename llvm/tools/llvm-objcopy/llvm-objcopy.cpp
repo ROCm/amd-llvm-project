@@ -11,6 +11,7 @@
 #include "COFF/COFFObjcopy.h"
 #include "CopyConfig.h"
 #include "ELF/ELFObjcopy.h"
+#include "MachO/MachOObjcopy.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
@@ -23,6 +24,7 @@
 #include "llvm/Object/ELFObjectFile.h"
 #include "llvm/Object/ELFTypes.h"
 #include "llvm/Object/Error.h"
+#include "llvm/Object/MachO.h"
 #include "llvm/Option/Arg.h"
 #include "llvm/Option/ArgList.h"
 #include "llvm/Option/Option.h"
@@ -96,10 +98,13 @@ static Error deepWriteArchive(StringRef ArcName,
                               ArrayRef<NewArchiveMember> NewMembers,
                               bool WriteSymtab, object::Archive::Kind Kind,
                               bool Deterministic, bool Thin) {
-  Error E =
-      writeArchive(ArcName, NewMembers, WriteSymtab, Kind, Deterministic, Thin);
-  if (!Thin || E)
-    return E;
+  if (Error E = writeArchive(ArcName, NewMembers, WriteSymtab, Kind,
+                             Deterministic, Thin))
+    return createFileError(ArcName, std::move(E));
+
+  if (!Thin)
+    return Error::success();
+
   for (const NewArchiveMember &Member : NewMembers) {
     // Internally, FileBuffer will use the buffer created by
     // FileOutputBuffer::create, for regular files (that is the case for
@@ -139,6 +144,8 @@ static Error executeObjcopyOnBinary(const CopyConfig &Config,
     return elf::executeObjcopyOnBinary(Config, *ELFBinary, Out);
   else if (auto *COFFBinary = dyn_cast<object::COFFObjectFile>(&In))
     return coff::executeObjcopyOnBinary(Config, *COFFBinary, Out);
+  else if (auto *MachOBinary = dyn_cast<object::MachOObjectFile>(&In))
+    return macho::executeObjcopyOnBinary(Config, *MachOBinary, Out);
   else
     return createStringError(object_error::invalid_file_type,
                              "Unsupported object file format");
@@ -149,14 +156,17 @@ static Error executeObjcopyOnArchive(const CopyConfig &Config,
   std::vector<NewArchiveMember> NewArchiveMembers;
   Error Err = Error::success();
   for (const Archive::Child &Child : Ar.children(Err)) {
+    // FIXME: Archive::child_iterator requires that Err be checked *during* loop
+    // iteration, and hence does not allow early returns.
+    cantFail(std::move(Err));
     Expected<std::unique_ptr<Binary>> ChildOrErr = Child.getAsBinary();
     if (!ChildOrErr)
-      reportError(Ar.getFileName(), ChildOrErr.takeError());
+      return createFileError(Ar.getFileName(), ChildOrErr.takeError());
     Binary *Bin = ChildOrErr->get();
 
     Expected<StringRef> ChildNameOrErr = Child.getName();
     if (!ChildNameOrErr)
-      reportError(Ar.getFileName(), ChildNameOrErr.takeError());
+      return createFileError(Ar.getFileName(), ChildNameOrErr.takeError());
 
     MemBuffer MB(ChildNameOrErr.get());
     if (Error E = executeObjcopyOnBinary(Config, *Bin, MB))
@@ -165,19 +175,17 @@ static Error executeObjcopyOnArchive(const CopyConfig &Config,
     Expected<NewArchiveMember> Member =
         NewArchiveMember::getOldMember(Child, Config.DeterministicArchives);
     if (!Member)
-      reportError(Ar.getFileName(), Member.takeError());
+      return createFileError(Ar.getFileName(), Member.takeError());
     Member->Buf = MB.releaseMemoryBuffer();
     Member->MemberName = Member->Buf->getBufferIdentifier();
     NewArchiveMembers.push_back(std::move(*Member));
   }
-
   if (Err)
-    reportError(Config.InputFilename, std::move(Err));
-  if (Error E = deepWriteArchive(Config.OutputFilename, NewArchiveMembers,
-                                 Ar.hasSymbolTable(), Ar.kind(),
-                                 Config.DeterministicArchives, Ar.isThin()))
-    reportError(Config.OutputFilename, std::move(E));
-  return Error::success();
+    return createFileError(Config.InputFilename, std::move(Err));
+
+  return deepWriteArchive(Config.OutputFilename, NewArchiveMembers,
+                          Ar.hasSymbolTable(), Ar.kind(),
+                          Config.DeterministicArchives, Ar.isThin());
 }
 
 static void restoreDateOnFile(StringRef Filename,
