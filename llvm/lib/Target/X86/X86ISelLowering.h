@@ -831,6 +831,12 @@ namespace llvm {
       return VTIsOk(XVT) && VTIsOk(KeptBitsVT);
     }
 
+    bool shouldExpandShift(SelectionDAG &DAG, SDNode *N) const override {
+      if (DAG.getMachineFunction().getFunction().optForMinSize())
+        return false;
+      return true;
+    }
+
     bool shouldSplatInsEltVarIndex(EVT VT) const override;
 
     bool convertSetCCLogicToBitwiseLogic(EVT VT) const override {
@@ -1104,7 +1110,7 @@ namespace llvm {
     bool useStackGuardXorFP() const override;
     void insertSSPDeclarations(Module &M) const override;
     Value *getSDagStackGuard(const Module &M) const override;
-    Value *getSSPStackGuardCheck(const Module &M) const override;
+    Function *getSSPStackGuardCheck(const Module &M) const override;
     SDValue emitStackGuardXorFP(SelectionDAG &DAG, SDValue Val,
                                 const SDLoc &DL) const override;
 

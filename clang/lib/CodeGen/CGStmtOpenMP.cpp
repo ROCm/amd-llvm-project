@@ -18,7 +18,6 @@
 #include "clang/AST/Stmt.h"
 #include "clang/AST/StmtOpenMP.h"
 #include "clang/AST/DeclOpenMP.h"
-#include "llvm/IR/CallSite.h"
 using namespace clang;
 using namespace CodeGen;
 
@@ -4079,8 +4078,9 @@ static void emitCommonOMPTargetDirective(CodeGenFunction &CGF,
                                               /*IsSigned=*/false);
     return NumIterations;
   };
-  CGM.getOpenMPRuntime().emitTargetNumIterationsCall(CGF, S, Device,
-                                                     SizeEmitter);
+  if (IsOffloadEntry)
+    CGM.getOpenMPRuntime().emitTargetNumIterationsCall(CGF, S, Device,
+                                                       SizeEmitter);
   CGM.getOpenMPRuntime().emitTargetCall(CGF, S, Fn, FnID, IfCond, Device);
 }
 
@@ -5076,4 +5076,3 @@ void CodeGenFunction::EmitSimpleOMPExecutableDirective(
                                                   : D.getDirectiveKind(),
       CodeGen);
 }
-

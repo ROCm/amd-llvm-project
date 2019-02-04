@@ -397,6 +397,10 @@ static bool isPreISelGenericFloatingPointOpcode(unsigned Opc) {
   case TargetOpcode::G_FSIN:
   case TargetOpcode::G_FLOG10:
   case TargetOpcode::G_FLOG:
+  case TargetOpcode::G_FLOG2:
+  case TargetOpcode::G_FSQRT:
+  case TargetOpcode::G_FABS:
+  case TargetOpcode::G_FEXP:
     return true;
   }
   return false;
@@ -669,7 +673,11 @@ AArch64RegisterBankInfo::getInstrMapping(const MachineInstr &MI) const {
              &AArch64::FPRRegBank;
     };
 
-    if (any_of(MRI.use_instructions(MI.getOperand(0).getReg()),
+    LLT SrcTy = MRI.getType(MI.getOperand(MI.getNumOperands()-1).getReg());
+    // UNMERGE into scalars from a vector should always use FPR.
+    // Likewise if any of the uses are FP instructions.
+    if (SrcTy.isVector() ||
+        any_of(MRI.use_instructions(MI.getOperand(0).getReg()),
                [&](MachineInstr &MI) { return HasFPConstraints(MI); })) {
       // Set the register bank of every operand to FPR.
       for (unsigned Idx = 0, NumOperands = MI.getNumOperands();

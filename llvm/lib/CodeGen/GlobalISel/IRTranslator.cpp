@@ -868,10 +868,11 @@ bool IRTranslator::translateKnownIntrinsic(const CallInst &CI, Intrinsic::ID ID,
     Value *Ptr = CI.getArgOperand(0);
     unsigned ListSize = TLI.getVaListSizeInBits(*DL) / 8;
 
+    // FIXME: Get alignment
     MIRBuilder.buildInstr(TargetOpcode::G_VASTART)
         .addUse(getOrCreateVReg(*Ptr))
         .addMemOperand(MF->getMachineMemOperand(
-            MachinePointerInfo(Ptr), MachineMemOperand::MOStore, ListSize, 0));
+            MachinePointerInfo(Ptr), MachineMemOperand::MOStore, ListSize, 1));
     return true;
   }
   case Intrinsic::dbg_value: {
@@ -1086,6 +1087,11 @@ bool IRTranslator::translateKnownIntrinsic(const CallInst &CI, Intrinsic::ID ID,
         .addDef(getOrCreateVReg(CI))
         .addUse(getOrCreateVReg(*CI.getArgOperand(0)));
     return true;
+  case Intrinsic::sqrt:
+    MIRBuilder.buildInstr(TargetOpcode::G_FSQRT)
+        .addDef(getOrCreateVReg(CI))
+        .addUse(getOrCreateVReg(*CI.getArgOperand(0)));
+    return true;
   }
   return false;
 }
@@ -1207,9 +1213,13 @@ bool IRTranslator::translateCall(const User &U, MachineIRBuilder &MIRBuilder) {
   TargetLowering::IntrinsicInfo Info;
   // TODO: Add a GlobalISel version of getTgtMemIntrinsic.
   if (TLI.getTgtMemIntrinsic(Info, CI, *MF, ID)) {
+    unsigned Align = Info.align;
+    if (Align == 0)
+      Align = DL->getABITypeAlignment(Info.memVT.getTypeForEVT(F->getContext()));
+
     uint64_t Size = Info.memVT.getStoreSize();
     MIB.addMemOperand(MF->getMachineMemOperand(MachinePointerInfo(Info.ptrVal),
-                                               Info.flags, Size, Info.align));
+                                               Info.flags, Size, Align));
   }
 
   return true;

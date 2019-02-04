@@ -62,6 +62,17 @@
 			name = "ios-mini";
 			productName = ios;
 		};
+		DD8DC26B22026E2C00EB6F9E /* lldb-docs */ = {
+			isa = PBXAggregateTarget;
+			buildConfigurationList = DD8DC27022026E2C00EB6F9E /* Build configuration list for PBXAggregateTarget "lldb-docs" */;
+			buildPhases = (
+				DD8DC27122026E4400EB6F9E /* ShellScript */,
+			);
+			dependencies = (
+			);
+			name = "lldb-docs";
+			productName = "lldb-docs";
+		};
 /* End PBXAggregateTarget section */
 
 /* Begin PBXBuildFile section */
@@ -174,6 +185,8 @@
 		30B38A001CAAA6D7009524E3 /* ClangUtil.h in Headers */ = {isa = PBXBuildFile; fileRef = 3032B1B91CAAA400004BE1AB /* ClangUtil.h */; };
 		2689006513353E0E00698AC0 /* ClangUtilityFunction.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 497C86BD122823D800B54702 /* ClangUtilityFunction.cpp */; };
 		949EEDA31BA76577008C63CF /* Cocoa.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 949EEDA11BA76571008C63CF /* Cocoa.cpp */; };
+		5A6424962204D05000C3D9DB /* CodeViewRegisterMapping.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 5A6424922204D04F00C3D9DB /* CodeViewRegisterMapping.cpp */; };
+		5A6424982204D05000C3D9DB /* CodeViewRegisterMapping.h in Headers */ = {isa = PBXBuildFile; fileRef = 5A6424942204D05000C3D9DB /* CodeViewRegisterMapping.h */; };
 		9441816E1C8F5EC900E5A8D9 /* CommandAlias.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 9441816D1C8F5EC900E5A8D9 /* CommandAlias.cpp */; };
 		2689007F13353E2200698AC0 /* CommandCompletions.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 4C09CB74116BD98B00C7A725 /* CommandCompletions.cpp */; };
 		94BA8B70176F97CE005A91B5 /* CommandHistory.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 94BA8B6F176F97CE005A91B5 /* CommandHistory.cpp */; };
@@ -310,6 +323,8 @@
 		2689006E13353E1A00698AC0 /* File.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 260C6EA213011581005E16B0 /* File.cpp */; };
 		3FDFDDBD199C3A06009756A7 /* FileAction.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3FDFDDBC199C3A06009756A7 /* FileAction.cpp */; };
 		3FDFDDBF199D345E009756A7 /* FileCache.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3FDFDDBE199D345E009756A7 /* FileCache.cpp */; };
+		DD8F277F22011CD8004ED75B /* FileCollector.cpp in Sources */ = {isa = PBXBuildFile; fileRef = DD8F277D22011CC9004ED75B /* FileCollector.cpp */; };
+		DD8F278222011D15004ED75B /* FileCollectorTest.cpp in Sources */ = {isa = PBXBuildFile; fileRef = DD8F278022011D0F004ED75B /* FileCollectorTest.cpp */; };
 		26BD407F135D2AE000237D80 /* FileLineResolver.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 26BD407E135D2ADF00237D80 /* FileLineResolver.cpp */; };
 		2689006F13353E1A00698AC0 /* FileSpec.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 26FA43171301048600E71120 /* FileSpec.cpp */; };
 		2689003E13353E0400698AC0 /* FileSpecList.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 26BC7E7B10F1B85900F91463 /* FileSpecList.cpp */; };
@@ -587,6 +602,8 @@
 		268900EE13353E6F00698AC0 /* PathMappingList.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 495BBACB119A0DBE00418BEA /* PathMappingList.cpp */; };
 		2668A2EE20AF417D00D94111 /* PathMappingListTest.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 2668A2ED20AF417D00D94111 /* PathMappingListTest.cpp */; };
 		AF815DF921C855B400023A34 /* PdbAstBuilder.cpp in Sources */ = {isa = PBXBuildFile; fileRef = AF815DF721C855B400023A34 /* PdbAstBuilder.cpp */; };
+		5A6424952204D05000C3D9DB /* PdbFPOProgramToDWARFExpression.h in Headers */ = {isa = PBXBuildFile; fileRef = 5A6424912204D04F00C3D9DB /* PdbFPOProgramToDWARFExpression.h */; };
+		5A6424972204D05000C3D9DB /* PdbFPOProgramToDWARFExpression.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 5A6424932204D04F00C3D9DB /* PdbFPOProgramToDWARFExpression.cpp */; };
 		AFD966BA217140B6006714AC /* PdbIndex.cpp in Sources */ = {isa = PBXBuildFile; fileRef = AFD966B6217140B6006714AC /* PdbIndex.cpp */; };
 		AF0F459E219FA1C800C1E612 /* PdbSymUid.cpp in Sources */ = {isa = PBXBuildFile; fileRef = AF0F459D219FA1C800C1E612 /* PdbSymUid.cpp */; };
 		AFD966B9217140B6006714AC /* PdbUtil.cpp in Sources */ = {isa = PBXBuildFile; fileRef = AFD966B5217140B6006714AC /* PdbUtil.cpp */; };
@@ -1603,6 +1620,8 @@
 		7F94D7172040A13A006EE3EA /* CleanUpTest.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = CleanUpTest.cpp; sourceTree = "<group>"; };
 		949EEDA11BA76571008C63CF /* Cocoa.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = Cocoa.cpp; path = Language/ObjC/Cocoa.cpp; sourceTree = "<group>"; };
 		949EEDA21BA76571008C63CF /* Cocoa.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = Cocoa.h; path = Language/ObjC/Cocoa.h; sourceTree = "<group>"; };
+		5A6424942204D05000C3D9DB /* CodeViewRegisterMapping.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = CodeViewRegisterMapping.h; path = source/Plugins/SymbolFile/NativePDB/CodeViewRegisterMapping.h; sourceTree = SOURCE_ROOT; };
+		5A6424922204D04F00C3D9DB /* CodeViewRegisterMapping.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = CodeViewRegisterMapping.cpp; path = source/Plugins/SymbolFile/NativePDB/CodeViewRegisterMapping.cpp; sourceTree = SOURCE_ROOT; };
 		9441816D1C8F5EC900E5A8D9 /* CommandAlias.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = CommandAlias.cpp; path = source/Interpreter/CommandAlias.cpp; sourceTree = "<group>"; };
 		9441816B1C8F5EB000E5A8D9 /* CommandAlias.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = CommandAlias.h; path = include/lldb/Interpreter/CommandAlias.h; sourceTree = "<group>"; };
 		4C09CB74116BD98B00C7A725 /* CommandCompletions.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = CommandCompletions.cpp; path = source/Commands/CommandCompletions.cpp; sourceTree = "<group>"; };
@@ -1875,6 +1894,8 @@
 		3FDFD6C3199C396E009756A7 /* FileAction.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = FileAction.h; path = include/lldb/Target/FileAction.h; sourceTree = "<group>"; };
 		3FDFDDBE199D345E009756A7 /* FileCache.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = FileCache.cpp; path = source/Host/common/FileCache.cpp; sourceTree = "<group>"; };
 		3FDFDDC0199D34E2009756A7 /* FileCache.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = FileCache.h; path = include/lldb/Host/FileCache.h; sourceTree = "<group>"; };
+		DD8F277D22011CC9004ED75B /* FileCollector.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = FileCollector.cpp; path = source/Utility/FileCollector.cpp; sourceTree = "<group>"; };
+		DD8F278022011D0F004ED75B /* FileCollectorTest.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = FileCollectorTest.cpp; sourceTree = "<group>"; };
 		26BD407E135D2ADF00237D80 /* FileLineResolver.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = FileLineResolver.cpp; path = source/Core/FileLineResolver.cpp; sourceTree = "<group>"; };
 		26BD407D135D2AC400237D80 /* FileLineResolver.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = FileLineResolver.h; path = include/lldb/Core/FileLineResolver.h; sourceTree = "<group>"; };
 		26FA43171301048600E71120 /* FileSpec.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = FileSpec.cpp; path = source/Utility/FileSpec.cpp; sourceTree = "<group>"; };
@@ -2420,6 +2441,8 @@
 		4C639EC321FA684700A7B957 /* OptionsWithRawTest.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = OptionsWithRawTest.cpp; sourceTree = "<group>"; };
 		4C562CC21CC07DDD00C52EAC /* PDBASTParser.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = PDBASTParser.cpp; path = PDB/PDBASTParser.cpp; sourceTree = "<group>"; };
 		4C562CC31CC07DDD00C52EAC /* PDBASTParser.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = PDBASTParser.h; path = PDB/PDBASTParser.h; sourceTree = "<group>"; };
+		5A6424912204D04F00C3D9DB /* PdbFPOProgramToDWARFExpression.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = PdbFPOProgramToDWARFExpression.h; path = source/Plugins/SymbolFile/NativePDB/PdbFPOProgramToDWARFExpression.h; sourceTree = SOURCE_ROOT; };
+		5A6424932204D04F00C3D9DB /* PdbFPOProgramToDWARFExpression.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = PdbFPOProgramToDWARFExpression.cpp; path = source/Plugins/SymbolFile/NativePDB/PdbFPOProgramToDWARFExpression.cpp; sourceTree = SOURCE_ROOT; };
 		4CA0C6CA20F929C600CFE6BB /* PDBLocationToDWARFExpression.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = PDBLocationToDWARFExpression.cpp; path = PDB/PDBLocationToDWARFExpression.cpp; sourceTree = "<group>"; };
 		4CA0C6CB20F929C700CFE6BB /* PDBLocationToDWARFExpression.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = PDBLocationToDWARFExpression.h; path = PDB/PDBLocationToDWARFExpression.h; sourceTree = "<group>"; };
 		AF3F54B21B3BA5D500186E73 /* POSIXStopInfo.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = POSIXStopInfo.cpp; sourceTree = "<group>"; };
@@ -3639,6 +3662,7 @@
 				4C639EBF21FA684700A7B957 /* StreamTest.cpp */,
 				58EAC73D2106A0740029571E /* StreamTeeTest.cpp */,
 				2321F9441BDD346100BA9A93 /* StringExtractorTest.cpp */,
+				DD8F278022011D0F004ED75B /* FileCollectorTest.cpp */,
 				4C639EC621FA684800A7B957 /* StringLexerTest.cpp */,
 				4C639EBE21FA684600A7B957 /* StringListTest.cpp */,
 				9A3D43CA1F3150D200EB767C /* StructuredDataTest.cpp */,
@@ -4638,6 +4662,7 @@
 				26BC7E6F10F1B85900F91463 /* Connection.cpp */,
 				26FA4315130103F400E71120 /* FileSpec.h */,
 				26FA43171301048600E71120 /* FileSpec.cpp */,
+				DD8F277D22011CC9004ED75B /* FileCollector.cpp */,
 				26CF992414428766001E4138 /* AnsiTerminal.h */,
 				26F996A7119B79C300412154 /* ARM_DWARF_Registers.h */,
 				264A12FF137252C700875C42 /* ARM64_DWARF_Registers.h */,
@@ -6880,10 +6905,14 @@
 			children = (
 				AFD966B4217140B5006714AC /* CompileUnitIndex.cpp */,
 				AFD966BD217140C8006714AC /* CompileUnitIndex.h */,
+				5A6424922204D04F00C3D9DB /* CodeViewRegisterMapping.cpp */,
+				5A6424942204D05000C3D9DB /* CodeViewRegisterMapping.h */,
 				4C38996221B9AECC002BAEF4 /* DWARFLocationExpression.cpp */,
 				4C38996321B9AECC002BAEF4 /* DWARFLocationExpression.h */,
 				AF815DF721C855B400023A34 /* PdbAstBuilder.cpp */,
 				AF815DF821C855B400023A34 /* PdbAstBuilder.h */,
+				5A6424932204D04F00C3D9DB /* PdbFPOProgramToDWARFExpression.cpp */,
+				5A6424912204D04F00C3D9DB /* PdbFPOProgramToDWARFExpression.h */,
 				AFD966B6217140B6006714AC /* PdbIndex.cpp */,
 				AFD966BF217140C8006714AC /* PdbIndex.h */,
 				AF0F459D219FA1C800C1E612 /* PdbSymUid.cpp */,
@@ -7098,6 +7127,8 @@
 				E414F6EE21388F0300C50BC6 /* LibCxxVariant.h in Headers */,
 				267F684B1CC02DED0086832B /* ABISysV_s390x.h in Headers */,
 				AF8AD6311BEC28A400150209 /* PlatformAppleWatchSimulator.h in Headers */,
+				5A6424952204D05000C3D9DB /* PdbFPOProgramToDWARFExpression.h in Headers */,
+				5A6424982204D05000C3D9DB /* CodeViewRegisterMapping.h in Headers */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -7349,6 +7380,10 @@
 					942829BF1A89835300521B30 = {
 						CreatedOnToolsVersion = 7.0;
 					};
+					DD8DC26B22026E2C00EB6F9E = {
+						CreatedOnToolsVersion = 11.0;
+						ProvisioningStyle = Automatic;
+					};
 				};
 			};
 			buildConfigurationList = 1DEB91EF08733DB70010E9CD /* Build configuration list for PBXProject "lldb" */;
@@ -7384,6 +7419,7 @@
 				2690CD161A6DC0D000E717C8 /* lldb-mi */,
 				942829BF1A89835300521B30 /* lldb-argdumper */,
 				2679260B211CA3AC00EE1D10 /* lldb-vscode */,
+				DD8DC26B22026E2C00EB6F9E /* lldb-docs */,
 			);
 		};
 /* End PBXProject section */
@@ -7657,6 +7693,65 @@
 			shellPath = /bin/sh;
 			shellScript = "mkdir -p $BUILT_PRODUCTS_DIR/include\n$LLVM_BUILD_DIR/x86_64/bin/llvm-tblgen -I$LLVM_SOURCE_DIR/include -gen-opt-parser-defs $SRCROOT/tools/driver/Options.td -o $BUILT_PRODUCTS_DIR/include/Options.inc\n";
 		};
+		DD8DC27122026E4400EB6F9E /* ShellScript */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/docs/index.rst",
+				"$(SRCROOT)/docs/resources/build.rst",
+				"$(SRCROOT)/docs/resources/download.rst",
+				"$(SRCROOT)/docs/resources/external.rst",
+				"$(SRCROOT)/docs/resources/sbapi.rst",
+				"$(SRCROOT)/docs/resources/test.rst",
+				"$(SRCROOT)/docs/status/about.rst",
+				"$(SRCROOT)/docs/status/features.rst",
+				"$(SRCROOT)/docs/status/goals.rst",
+				"$(SRCROOT)/docs/status/projects.rst",
+				"$(SRCROOT)/docs/status/status.rst",
+				"$(SRCROOT)/docs/use/architecture.rst",
+				"$(SRCROOT)/docs/use/formatting.rst",
+				"$(SRCROOT)/docs/use/map.rst",
+				"$(SRCROOT)/docs/use/python.rst",
+				"$(SRCROOT)/docs/use/remote.rst",
+				"$(SRCROOT)/docs/use/symbolication.rst",
+				"$(SRCROOT)/docs/use/symbols.rst",
+				"$(SRCROOT)/docs/use/troubleshooting.rst",
+				"$(SRCROOT)/docs/use/tutorial.rst",
+				"$(SRCROOT)/docs/use/variable.rst",
+			);
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				$BUILT_PRODUCTS_DIR/docs/html/index.html,
+				$BUILT_PRODUCTS_DIR/docs/html/resources/build.html,
+				$BUILT_PRODUCTS_DIR/docs/html/resources/download.html,
+				$BUILT_PRODUCTS_DIR/docs/html/resources/external.html,
+				$BUILT_PRODUCTS_DIR/docs/html/resources/sbapi.html,
+				$BUILT_PRODUCTS_DIR/docs/html/resources/test.html,
+				$BUILT_PRODUCTS_DIR/docs/html/status/about.html,
+				$BUILT_PRODUCTS_DIR/docs/html/status/features.html,
+				$BUILT_PRODUCTS_DIR/docs/html/status/goals.html,
+				$BUILT_PRODUCTS_DIR/docs/html/status/projects.html,
+				$BUILT_PRODUCTS_DIR/docs/html/status/status.html,
+				$BUILT_PRODUCTS_DIR/docs/html/use/architecture.html,
+				$BUILT_PRODUCTS_DIR/docs/html/use/formatting.html,
+				$BUILT_PRODUCTS_DIR/docs/html/use/map.html,
+				$BUILT_PRODUCTS_DIR/docs/html/use/python.html,
+				$BUILT_PRODUCTS_DIR/docs/html/use/remote.html,
+				$BUILT_PRODUCTS_DIR/docs/html/use/symbolication.html,
+				$BUILT_PRODUCTS_DIR/docs/html/use/symbols.html,
+				$BUILT_PRODUCTS_DIR/docs/html/use/troubleshooting.html,
+				$BUILT_PRODUCTS_DIR/docs/html/use/tutorial.html,
+				$BUILT_PRODUCTS_DIR/docs/html/use/variable.html,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "mkdir -p $BUILT_PRODUCTS_DIR/docs\ncd $SRCROOT/docs\nsphinx-build -b html -d $BUILT_PRODUCTS_DIR/docs/_doctrees-lldb-html -q -W $SRCROOT/docs $BUILT_PRODUCTS_DIR/docs/html\necho \"Docs written to $BUILT_PRODUCTS_DIR/docs/html\"\n";
+		};
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -7702,6 +7797,7 @@
 				9A3D43ED1F3237F900EB767C /* StateTest.cpp in Sources */,
 				23CB153A1D66DA9300EDDDE1 /* GDBRemoteClientBaseTest.cpp in Sources */,
 				23CB153B1D66DA9300EDDDE1 /* SocketTest.cpp in Sources */,
+				DD8F278222011D15004ED75B /* FileCollectorTest.cpp in Sources */,
 				23CB153C1D66DA9300EDDDE1 /* ArgsTest.cpp in Sources */,
 				9A3D43DB1F3151C400EB767C /* TildeExpressionResolverTest.cpp in Sources */,
 				4C639ED021FA684900A7B957 /* UUIDTest.cpp in Sources */,
@@ -8293,6 +8389,7 @@
 				94A5B3971AB9FE8D00A5EE7F /* EmulateInstructionMIPS64.cpp in Sources */,
 				256CBDC01ADD11C000BC6CDC /* RegisterContextPOSIX_arm.cpp in Sources */,
 				26CA97A1172B1FD5005DC71B /* RegisterContextThreadMemory.cpp in Sources */,
+				DD8F277F22011CD8004ED75B /* FileCollector.cpp in Sources */,
 				2689010B13353E6F00698AC0 /* ThreadSpec.cpp in Sources */,
 				2689010C13353E6F00698AC0 /* UnixSignals.cpp in Sources */,
 				2689011013353E8200698AC0 /* SharingPtr.cpp in Sources */,
@@ -8507,6 +8604,8 @@
 				AF6335E21C87B21E00F7D554 /* SymbolFilePDB.cpp in Sources */,
 				4CD44CFC20B37C440003557C /* ManualDWARFIndex.cpp in Sources */,
 				A36FF33C17D8E94600244D40 /* OptionParser.cpp in Sources */,
+				5A6424962204D05000C3D9DB /* CodeViewRegisterMapping.cpp in Sources */,
+				5A6424972204D05000C3D9DB /* PdbFPOProgramToDWARFExpression.cpp in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -11333,6 +11432,38 @@
 			};
 			name = BuildAndIntegration;
 		};
+		DD8DC26C22026E2C00EB6F9E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Debug;
+		};
+		DD8DC26D22026E2C00EB6F9E /* DebugClang */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = DebugClang;
+		};
+		DD8DC26E22026E2C00EB6F9E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Release;
+		};
+		DD8DC26F22026E2C00EB6F9E /* BuildAndIntegration */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = BuildAndIntegration;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -11519,6 +11650,17 @@
 				AFA9B72120606A13008E86C6 /* DebugClang */,
 				AFA9B72220606A13008E86C6 /* Release */,
 				AFA9B72320606A13008E86C6 /* BuildAndIntegration */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = BuildAndIntegration;
+		};
+		DD8DC27022026E2C00EB6F9E /* Build configuration list for PBXAggregateTarget "lldb-docs" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DD8DC26C22026E2C00EB6F9E /* Debug */,
+				DD8DC26D22026E2C00EB6F9E /* DebugClang */,
+				DD8DC26E22026E2C00EB6F9E /* Release */,
+				DD8DC26F22026E2C00EB6F9E /* BuildAndIntegration */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = BuildAndIntegration;

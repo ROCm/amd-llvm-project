@@ -326,7 +326,7 @@ void CodeGenFunction::EmitCallAndReturnForThunk(llvm::Constant *CalleePtr,
 
 #ifndef NDEBUG
   const CGFunctionInfo &CallFnInfo = CGM.getTypes().arrangeCXXMethodCall(
-      CallArgs, FPT, RequiredArgs::forPrototypePlus(FPT, 1, MD), PrefixArgs);
+      CallArgs, FPT, RequiredArgs::forPrototypePlus(FPT, 1), PrefixArgs);
   assert(CallFnInfo.getRegParm() == CurFnInfo->getRegParm() &&
          CallFnInfo.isNoReturn() == CurFnInfo->isNoReturn() &&
          CallFnInfo.getCallingConvention() == CurFnInfo->getCallingConvention());
@@ -353,7 +353,7 @@ void CodeGenFunction::EmitCallAndReturnForThunk(llvm::Constant *CalleePtr,
     Slot = ReturnValueSlot(ReturnValue, ResultType.isVolatileQualified());
 
   // Now emit our call.
-  llvm::Instruction *CallOrInvoke;
+  llvm::CallBase *CallOrInvoke;
   CGCallee Callee = CGCallee::forDirect(CalleePtr, CurGD);
   RValue RV = EmitCall(*CurFnInfo, Callee, Slot, CallArgs, &CallOrInvoke);
 

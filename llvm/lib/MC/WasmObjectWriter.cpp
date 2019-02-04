@@ -194,6 +194,33 @@ raw_ostream &operator<<(raw_ostream &OS, const WasmRelocationEntry &Rel) {
 }
 #endif
 
+// Write X as an (unsigned) LEB value at offset Offset in Stream, padded
+// to allow patching.
+static void WritePatchableLEB(raw_pwrite_stream &Stream, uint32_t X,
+                              uint64_t Offset) {
+  uint8_t Buffer[5];
+  unsigned SizeLen = encodeULEB128(X, Buffer, 5);
+  assert(SizeLen == 5);
+  Stream.pwrite((char *)Buffer, SizeLen, Offset);
+}
+
+// Write X as an signed LEB value at offset Offset in Stream, padded
+// to allow patching.
+static void WritePatchableSLEB(raw_pwrite_stream &Stream, int32_t X,
+                               uint64_t Offset) {
+  uint8_t Buffer[5];
+  unsigned SizeLen = encodeSLEB128(X, Buffer, 5);
+  assert(SizeLen == 5);
+  Stream.pwrite((char *)Buffer, SizeLen, Offset);
+}
+
+// Write X as a plain integer value at offset Offset in Stream.
+static void WriteI32(raw_pwrite_stream &Stream, uint32_t X, uint64_t Offset) {
+  uint8_t Buffer[4];
+  support::endian::write32le(Buffer, X);
+  Stream.pwrite((char *)Buffer, sizeof(Buffer), Offset);
+}
+
 class WasmObjectWriter : public MCObjectWriter {
   support::endian::Writer W;
 
@@ -345,7 +372,7 @@ void WasmObjectWriter::startSection(SectionBookkeeping &Section,
 
   // The section size. We don't know the size yet, so reserve enough space
   // for any 32-bit value; we'll patch it later.
-  encodeULEB128(UINT32_MAX, W.OS);
+  encodeULEB128(0, W.OS, 5);
 
   // The position where the section starts, for measuring its size.
   Section.ContentsOffset = W.OS.tell();
@@ -371,7 +398,13 @@ void WasmObjectWriter::startCustomSection(SectionBookkeeping &Section,
 // Now that the section is complete and we know how big it is, patch up the
 // section size field at the start of the section.
 void WasmObjectWriter::endSection(SectionBookkeeping &Section) {
-  uint64_t Size = W.OS.tell() - Section.PayloadOffset;
+  uint64_t Size = W.OS.tell();
+  // /dev/null doesn't support seek/tell and can report offset of 0.
+  // Simply skip this patching in that case.
+  if (!Size)
+    return;
+
+  Size -= Section.PayloadOffset;
   if (uint32_t(Size) != Size)
     report_fatal_error("section size does not fit in a uint32_t");
 
@@ -379,11 +412,8 @@ void WasmObjectWriter::endSection(SectionBookkeeping &Section) {
 
   // Write the final section size to the payload_len field, which follows
   // the section id byte.
-  uint8_t Buffer[16];
-  unsigned SizeLen = encodeULEB128(Size, Buffer, 5);
-  assert(SizeLen == 5);
-  static_cast<raw_pwrite_stream &>(W.OS).pwrite((char *)Buffer, SizeLen,
-                                                Section.SizeOffset);
+  WritePatchableLEB(static_cast<raw_pwrite_stream &>(W.OS), Size,
+                    Section.SizeOffset);
 }
 
 // Emit the Wasm header.
@@ -530,33 +560,6 @@ void WasmObjectWriter::recordRelocation(MCAssembler &Asm,
   } else {
     llvm_unreachable("unexpected section type");
   }
-}
-
-// Write X as an (unsigned) LEB value at offset Offset in Stream, padded
-// to allow patching.
-static void WritePatchableLEB(raw_pwrite_stream &Stream, uint32_t X,
-                              uint64_t Offset) {
-  uint8_t Buffer[5];
-  unsigned SizeLen = encodeULEB128(X, Buffer, 5);
-  assert(SizeLen == 5);
-  Stream.pwrite((char *)Buffer, SizeLen, Offset);
-}
-
-// Write X as an signed LEB value at offset Offset in Stream, padded
-// to allow patching.
-static void WritePatchableSLEB(raw_pwrite_stream &Stream, int32_t X,
-                               uint64_t Offset) {
-  uint8_t Buffer[5];
-  unsigned SizeLen = encodeSLEB128(X, Buffer, 5);
-  assert(SizeLen == 5);
-  Stream.pwrite((char *)Buffer, SizeLen, Offset);
-}
-
-// Write X as a plain integer value at offset Offset in Stream.
-static void WriteI32(raw_pwrite_stream &Stream, uint32_t X, uint64_t Offset) {
-  uint8_t Buffer[4];
-  support::endian::write32le(Buffer, X);
-  Stream.pwrite((char *)Buffer, sizeof(Buffer), Offset);
 }
 
 static const MCSymbolWasm *ResolveSymbol(const MCSymbolWasm &Symbol) {
@@ -1164,8 +1167,8 @@ uint64_t WasmObjectWriter::writeObject(MCAssembler &Asm,
   MCSymbolWasm *MemorySym =
       cast<MCSymbolWasm>(Ctx.getOrCreateSymbol("__linear_memory"));
   wasm::WasmImport MemImport;
-  MemImport.Module = MemorySym->getModuleName();
-  MemImport.Field = MemorySym->getName();
+  MemImport.Module = MemorySym->getImportModule();
+  MemImport.Field = MemorySym->getImportName();
   MemImport.Kind = wasm::WASM_EXTERNAL_MEMORY;
   Imports.push_back(MemImport);
 
@@ -1175,8 +1178,8 @@ uint64_t WasmObjectWriter::writeObject(MCAssembler &Asm,
   MCSymbolWasm *TableSym =
       cast<MCSymbolWasm>(Ctx.getOrCreateSymbol("__indirect_function_table"));
   wasm::WasmImport TableImport;
-  TableImport.Module = TableSym->getModuleName();
-  TableImport.Field = TableSym->getName();
+  TableImport.Module = TableSym->getImportModule();
+  TableImport.Field = TableSym->getImportName();
   TableImport.Kind = wasm::WASM_EXTERNAL_TABLE;
   TableImport.Table.ElemType = wasm::WASM_TYPE_FUNCREF;
   Imports.push_back(TableImport);
@@ -1202,8 +1205,8 @@ uint64_t WasmObjectWriter::writeObject(MCAssembler &Asm,
     if (!WS.isDefined() && !WS.isComdat()) {
       if (WS.isFunction()) {
         wasm::WasmImport Import;
-        Import.Module = WS.getModuleName();
-        Import.Field = WS.getName();
+        Import.Module = WS.getImportModule();
+        Import.Field = WS.getImportName();
         Import.Kind = wasm::WASM_EXTERNAL_FUNCTION;
         Import.SigIndex = getFunctionType(WS);
         Imports.push_back(Import);
@@ -1213,8 +1216,8 @@ uint64_t WasmObjectWriter::writeObject(MCAssembler &Asm,
           report_fatal_error("undefined global symbol cannot be weak");
 
         wasm::WasmImport Import;
-        Import.Module = WS.getModuleName();
-        Import.Field = WS.getName();
+        Import.Module = WS.getImportModule();
+        Import.Field = WS.getImportName();
         Import.Kind = wasm::WASM_EXTERNAL_GLOBAL;
         Import.Global = WS.getGlobalType();
         Imports.push_back(Import);
@@ -1224,8 +1227,8 @@ uint64_t WasmObjectWriter::writeObject(MCAssembler &Asm,
           report_fatal_error("undefined event symbol cannot be weak");
 
         wasm::WasmImport Import;
-        Import.Module = WS.getModuleName();
-        Import.Field = WS.getName();
+        Import.Module = WS.getImportModule();
+        Import.Field = WS.getImportName();
         Import.Kind = wasm::WASM_EXTERNAL_EVENT;
         Import.Event.Attribute = wasm::WASM_EVENT_ATTRIBUTE_EXCEPTION;
         Import.Event.SigIndex = getEventType(WS);

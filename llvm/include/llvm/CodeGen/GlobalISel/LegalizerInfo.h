@@ -221,6 +221,8 @@ LegalityPredicate widerThan(unsigned TypeIdx, unsigned Size);
 /// True iff the specified type index is a scalar whose size is not a power of
 /// 2.
 LegalityPredicate sizeNotPow2(unsigned TypeIdx);
+/// True iff the specified type indices are both the same bit size.
+LegalityPredicate sameSize(unsigned TypeIdx0, unsigned TypeIdx1);
 /// True iff the specified MMO index has a size that is not a power of 2
 LegalityPredicate memSizeInBytesNotPow2(unsigned MMOIdx);
 /// True iff the specified type index is a vector whose element count is not a
@@ -606,6 +608,11 @@ public:
     return actionForCartesianProduct(LegalizeAction::Custom, Types0, Types1);
   }
 
+  /// Unconditionally custom lower.
+  LegalizeRuleSet &custom() {
+    return customIf(always);
+  }
+
   /// Widen the scalar to the next power of two that is at least MinSize.
   /// No effect if the type is not a scalar or is a power of two.
   LegalizeRuleSet &widenScalarToNextPow2(unsigned TypeIdx,
@@ -707,7 +714,7 @@ public:
         [=](const LegalityQuery &Query) {
           LLT VecTy = Query.Types[TypeIdx];
           return std::make_pair(
-              TypeIdx, LLT::vector(MinElements, VecTy.getScalarSizeInBits()));
+              TypeIdx, LLT::vector(MinElements, VecTy.getElementType()));
         });
   }
   /// Limit the number of elements in EltTy vectors to at most MaxElements.
@@ -724,10 +731,8 @@ public:
         },
         [=](const LegalityQuery &Query) {
           LLT VecTy = Query.Types[TypeIdx];
-          if (MaxElements == 1)
-            return std::make_pair(TypeIdx, VecTy.getElementType());
-          return std::make_pair(
-              TypeIdx, LLT::vector(MaxElements, VecTy.getScalarSizeInBits()));
+          LLT NewTy = LLT::scalarOrVector(MaxElements, VecTy.getElementType());
+          return std::make_pair(TypeIdx, NewTy);
         });
   }
   /// Limit the number of elements for the given vectors to at least MinTy's

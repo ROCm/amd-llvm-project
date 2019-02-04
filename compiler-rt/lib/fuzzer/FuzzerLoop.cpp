@@ -13,7 +13,6 @@
 #include "FuzzerInternal.h"
 #include "FuzzerMutate.h"
 #include "FuzzerRandom.h"
-#include "FuzzerShmem.h"
 #include "FuzzerTracePC.h"
 #include <algorithm>
 #include <cstring>
@@ -39,8 +38,6 @@ namespace fuzzer {
 static const size_t kMaxUnitSizeToPrint = 256;
 
 thread_local bool Fuzzer::IsMyThread;
-
-SharedMemoryRegion SMR;
 
 bool RunningUserCallback = false;
 
@@ -230,8 +227,9 @@ void Fuzzer::StaticFileSizeExceedCallback() {
 }
 
 void Fuzzer::CrashCallback() {
-  if (EF->__sanitizer_acquire_crash_state)
-    EF->__sanitizer_acquire_crash_state();
+  if (EF->__sanitizer_acquire_crash_state &&
+      !EF->__sanitizer_acquire_crash_state())
+    return;
   Printf("==%lu== ERROR: libFuzzer: deadly signal\n", GetPid());
   PrintStackTrace();
   Printf("NOTE: libFuzzer has rudimentary signal handlers.\n"
@@ -354,8 +352,6 @@ void Fuzzer::PrintStats(const char *Where, const char *End, size_t Units) {
 void Fuzzer::PrintFinalStats() {
   if (Options.PrintCoverage)
     TPC.PrintCoverage();
-  if (Options.DumpCoverage)
-    TPC.DumpCoverage();
   if (Options.PrintCorpusStats)
     Corpus.PrintStats();
   if (!Options.PrintFinalStats)
@@ -512,8 +508,6 @@ void Fuzzer::ExecuteCallback(const uint8_t *Data, size_t Size) {
   TPC.RecordInitialStack();
   TotalNumberOfRuns++;
   assert(InFuzzingThread());
-  if (SMR.IsClient())
-    SMR.WriteByteArray(Data, Size);
   // We copy the contents of Unit into a separate heap buffer
   // so that we reliably find buffer overflows in it.
   uint8_t *DataCopy = new uint8_t[Size];
@@ -721,6 +715,10 @@ void Fuzzer::ReadAndExecuteSeedCorpora(const Vector<std::string> &CorpusDirs) {
   uint8_t dummy = 0;
   ExecuteCallback(&dummy, 0);
 
+  // Protect lazy counters here, after the once-init code has been executed.
+  if (Options.LazyCounters)
+    TPC.ProtectLazyCounters();
+
   if (SizedFiles.empty()) {
     Printf("INFO: A corpus is not provided, starting from an empty corpus\n");
     Unit U({'\n'}); // Valid ASCII input.
@@ -823,30 +821,6 @@ void Fuzzer::MinimizeCrashLoop(const Unit &U) {
   }
 }
 
-void Fuzzer::AnnounceOutput(const uint8_t *Data, size_t Size) {
-  if (SMR.IsServer()) {
-    SMR.WriteByteArray(Data, Size);
-  } else if (SMR.IsClient()) {
-    SMR.PostClient();
-    SMR.WaitServer();
-    size_t OtherSize = SMR.ReadByteArraySize();
-    uint8_t *OtherData = SMR.GetByteArray();
-    if (Size != OtherSize || memcmp(Data, OtherData, Size) != 0) {
-      size_t i = 0;
-      for (i = 0; i < Min(Size, OtherSize); i++)
-        if (Data[i] != OtherData[i])
-          break;
-      Printf("==%lu== ERROR: libFuzzer: equivalence-mismatch. Sizes: %zd %zd; "
-             "offset %zd\n",
-             GetPid(), Size, OtherSize, i);
-      DumpCurrentUnit("mismatch-");
-      Printf("SUMMARY: libFuzzer: equivalence-mismatch\n");
-      PrintFinalStats();
-      _Exit(Options.ErrorExitCode);
-    }
-  }
-}
-
 } // namespace fuzzer
 
 extern "C" {
@@ -857,10 +831,4 @@ LLVMFuzzerMutate(uint8_t *Data, size_t Size, size_t MaxSize) {
   return fuzzer::F->GetMD().DefaultMutate(Data, Size, MaxSize);
 }
 
-// Experimental
-ATTRIBUTE_INTERFACE void
-LLVMFuzzerAnnounceOutput(const uint8_t *Data, size_t Size) {
-  assert(fuzzer::F);
-  fuzzer::F->AnnounceOutput(Data, Size);
-}
 } // extern "C"

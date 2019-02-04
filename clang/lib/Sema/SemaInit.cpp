@@ -9200,6 +9200,7 @@ bool InitializationSequence::Diagnose(Sema &S,
   case FK_ReferenceInitFailed:
     S.Diag(Kind.getLocation(), diag::err_reference_bind_failed)
       << DestType.getNonReferenceType()
+      << DestType.getNonReferenceType()->isIncompleteType()
       << OnlyArg->isLValue()
       << OnlyArg->getType()
       << Args[0]->getSourceRange();

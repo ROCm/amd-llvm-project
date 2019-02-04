@@ -1091,6 +1091,8 @@ bool DAGTypeLegalizer::PromoteIntegerOperand(SDNode *N, unsigned OpNo) {
   case ISD::PREFETCH: Res = PromoteIntOp_PREFETCH(N, OpNo); break;
 
   case ISD::SMULFIX: Res = PromoteIntOp_SMULFIX(N); break;
+
+  case ISD::FPOWI: Res = PromoteIntOp_FPOWI(N); break;
   }
 
   // If the result is null, the sub-method took care of registering results etc.
@@ -1474,6 +1476,11 @@ SDValue DAGTypeLegalizer::PromoteIntOp_PREFETCH(SDNode *N, unsigned OpNo) {
                  0);
 }
 
+SDValue DAGTypeLegalizer::PromoteIntOp_FPOWI(SDNode *N) {
+  SDValue Op = SExtPromotedInteger(N->getOperand(1));
+  return SDValue(DAG.UpdateNodeOperands(N, N->getOperand(0), Op), 0);
+}
+
 //===----------------------------------------------------------------------===//
 //  Integer Result Expansion
 //===----------------------------------------------------------------------===//
@@ -1498,7 +1505,8 @@ void DAGTypeLegalizer::ExpandIntegerResult(SDNode *N, unsigned ResNo) {
     dbgs() << "ExpandIntegerResult #" << ResNo << ": ";
     N->dump(&DAG); dbgs() << "\n";
 #endif
-    llvm_unreachable("Do not know how to expand the result of this operator!");
+    report_fatal_error("Do not know how to expand the result of this "
+                       "operator!");
 
   case ISD::MERGE_VALUES: SplitRes_MERGE_VALUES(N, ResNo, Lo, Hi); break;
   case ISD::SELECT:       SplitRes_SELECT(N, Lo, Hi); break;
@@ -2764,11 +2772,15 @@ void DAGTypeLegalizer::ExpandIntRes_Shift(SDNode *N,
   }
 
   // Next check to see if the target supports this SHL_PARTS operation or if it
-  // will custom expand it.
+  // will custom expand it. Don't lower this to SHL_PARTS when we optimise for
+  // size, but create a libcall instead.
   EVT NVT = TLI.getTypeToTransformTo(*DAG.getContext(), VT);
   TargetLowering::LegalizeAction Action = TLI.getOperationAction(PartsOpc, NVT);
-  if ((Action == TargetLowering::Legal && TLI.isTypeLegal(NVT)) ||
-      Action == TargetLowering::Custom) {
+  const bool LegalOrCustom =
+    (Action == TargetLowering::Legal && TLI.isTypeLegal(NVT)) ||
+    Action == TargetLowering::Custom;
+
+  if (LegalOrCustom && TLI.shouldExpandShift(DAG, N)) {
     // Expand the subcomponents.
     SDValue LHSL, LHSH;
     GetExpandedInteger(N->getOperand(0), LHSL, LHSH);
@@ -3166,7 +3178,7 @@ bool DAGTypeLegalizer::ExpandIntegerOperand(SDNode *N, unsigned OpNo) {
     dbgs() << "ExpandIntegerOperand Op #" << OpNo << ": ";
     N->dump(&DAG); dbgs() << "\n";
   #endif
-    llvm_unreachable("Do not know how to expand this operator's operand!");
+    report_fatal_error("Do not know how to expand this operator's operand!");
 
   case ISD::BITCAST:           Res = ExpandOp_BITCAST(N); break;
   case ISD::BR_CC:             Res = ExpandIntOp_BR_CC(N); break;

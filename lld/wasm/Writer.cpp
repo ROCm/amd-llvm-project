@@ -41,6 +41,7 @@ using namespace lld::wasm;
 
 static constexpr int kStackAlignment = 16;
 static constexpr const char *kFunctionTableName = "__indirect_function_table";
+const char *lld::wasm::kDefaultModule = "env";
 
 namespace {
 
@@ -156,7 +157,7 @@ void Writer::createImportSection() {
 
   if (Config->ImportMemory) {
     WasmImport Import;
-    Import.Module = "env";
+    Import.Module = kDefaultModule;
     Import.Field = "memory";
     Import.Kind = WASM_EXTERNAL_MEMORY;
     Import.Memory.Flags = 0;
@@ -173,7 +174,7 @@ void Writer::createImportSection() {
   if (Config->ImportTable) {
     uint32_t TableSize = TableBase + IndirectFunctions.size();
     WasmImport Import;
-    Import.Module = "env";
+    Import.Module = kDefaultModule;
     Import.Field = kFunctionTableName;
     Import.Kind = WASM_EXTERNAL_TABLE;
     Import.Table.ElemType = WASM_TYPE_FUNCREF;
@@ -183,7 +184,11 @@ void Writer::createImportSection() {
 
   for (const Symbol *Sym : ImportedSymbols) {
     WasmImport Import;
-    Import.Module = "env";
+    if (auto *F = dyn_cast<UndefinedFunction>(Sym))
+      Import.Module = F->Module;
+    else
+      Import.Module = kDefaultModule;
+
     Import.Field = Sym->getName();
     if (auto *FunctionSym = dyn_cast<FunctionSymbol>(Sym)) {
       Import.Kind = WASM_EXTERNAL_FUNCTION;
@@ -903,40 +908,42 @@ void Writer::assignSymtab() {
   StringMap<uint32_t> SectionSymbolIndices;
 
   unsigned SymbolIndex = SymtabEntries.size();
-  for (ObjFile *File : Symtab->ObjectFiles) {
-    LLVM_DEBUG(dbgs() << "Symtab entries: " << File->getName() << "\n");
-    for (Symbol *Sym : File->getSymbols()) {
-      if (Sym->getFile() != File)
-        continue;
 
-      if (auto *S = dyn_cast<SectionSymbol>(Sym)) {
-        StringRef Name = S->getName();
-        if (CustomSectionMapping.count(Name) == 0)
-          continue;
+  auto AddSymbol = [&](Symbol *Sym) {
+    if (auto *S = dyn_cast<SectionSymbol>(Sym)) {
+      StringRef Name = S->getName();
+      if (CustomSectionMapping.count(Name) == 0)
+        return;
 
-        auto SSI = SectionSymbolIndices.find(Name);
-        if (SSI != SectionSymbolIndices.end()) {
-          Sym->setOutputSymbolIndex(SSI->second);
-          continue;
-        }
-
-        SectionSymbolIndices[Name] = SymbolIndex;
-        CustomSectionSymbols[Name] = cast<SectionSymbol>(Sym);
-
-        Sym->markLive();
+      auto SSI = SectionSymbolIndices.find(Name);
+      if (SSI != SectionSymbolIndices.end()) {
+        Sym->setOutputSymbolIndex(SSI->second);
+        return;
       }
 
-      // (Since this is relocatable output, GC is not performed so symbols must
-      // be live.)
-      assert(Sym->isLive());
-      Sym->setOutputSymbolIndex(SymbolIndex++);
-      SymtabEntries.emplace_back(Sym);
-    }
-  }
+      SectionSymbolIndices[Name] = SymbolIndex;
+      CustomSectionSymbols[Name] = cast<SectionSymbol>(Sym);
 
-  // For the moment, relocatable output doesn't contain any synthetic functions,
-  // so no need to look through the Symtab for symbols not referenced by
-  // Symtab->ObjectFiles.
+      Sym->markLive();
+    }
+
+    // (Since this is relocatable output, GC is not performed so symbols must
+    // be live.)
+    assert(Sym->isLive());
+    Sym->setOutputSymbolIndex(SymbolIndex++);
+    SymtabEntries.emplace_back(Sym);
+  };
+
+  for (Symbol *Sym : Symtab->getSymbols())
+    if (!Sym->isLazy())
+      AddSymbol(Sym);
+
+  for (ObjFile *File : Symtab->ObjectFiles) {
+    LLVM_DEBUG(dbgs() << "Local symtab entries: " << File->getName() << "\n");
+    for (Symbol *Sym : File->getSymbols())
+      if (Sym->isLocal())
+        AddSymbol(Sym);
+  }
 }
 
 uint32_t Writer::lookupType(const WasmSignature &Sig) {

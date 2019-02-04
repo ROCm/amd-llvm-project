@@ -310,6 +310,19 @@ bool Sema::DiagnoseUseOfDecl(NamedDecl *D, ArrayRef<SourceLocation> Locs,
     return true;
   }
 
+  // [OpenMP 5.0], 2.19.7.3. declare mapper Directive, Restrictions
+  //  List-items in map clauses on this construct may only refer to the declared
+  //  variable var and entities that could be referenced by a procedure defined
+  //  at the same location
+  auto *DMD = dyn_cast<OMPDeclareMapperDecl>(CurContext);
+  if (LangOpts.OpenMP && DMD && !CurContext->containsDecl(D) &&
+      isa<VarDecl>(D)) {
+    Diag(Loc, diag::err_omp_declare_mapper_wrong_var)
+        << DMD->getVarName().getAsString();
+    Diag(D->getLocation(), diag::note_entity_declared_at) << D;
+    return true;
+  }
+
   DiagnoseAvailabilityOfDecl(D, Locs, UnknownObjCClass, ObjCPropertyAccess,
                              AvoidPartialAvailabilityChecks, ClassReceiver);
 
@@ -737,33 +750,20 @@ ExprResult Sema::DefaultArgumentPromotion(Expr *E) {
     return ExprError();
   E = Res.get();
 
-  QualType ScalarTy = Ty;
-  unsigned NumElts = 0;
-  if (const ExtVectorType *VecTy = Ty->getAs<ExtVectorType>()) {
-    NumElts = VecTy->getNumElements();
-    ScalarTy = VecTy->getElementType();
-  }
-
   // If this is a 'float'  or '__fp16' (CVR qualified or typedef)
   // promote to double.
   // Note that default argument promotion applies only to float (and
   // half/fp16); it does not apply to _Float16.
-  const BuiltinType *BTy = ScalarTy->getAs<BuiltinType>();
+  const BuiltinType *BTy = Ty->getAs<BuiltinType>();
   if (BTy && (BTy->getKind() == BuiltinType::Half ||
               BTy->getKind() == BuiltinType::Float)) {
     if (getLangOpts().OpenCL &&
         !getOpenCLOptions().isEnabled("cl_khr_fp64")) {
-      if (BTy->getKind() == BuiltinType::Half) {
-        QualType Ty = Context.FloatTy;
-        if (NumElts != 0)
-          Ty = Context.getExtVectorType(Ty, NumElts);
-        E = ImpCastExprToType(E, Ty, CK_FloatingCast).get();
-      }
+        if (BTy->getKind() == BuiltinType::Half) {
+            E = ImpCastExprToType(E, Context.FloatTy, CK_FloatingCast).get();
+        }
     } else {
-      QualType Ty = Context.DoubleTy;
-      if (NumElts != 0)
-        Ty = Context.getExtVectorType(Ty, NumElts);
-      E = ImpCastExprToType(E, Ty, CK_FloatingCast).get();
+      E = ImpCastExprToType(E, Context.DoubleTy, CK_FloatingCast).get();
     }
   }
 
@@ -3001,6 +3001,7 @@ ExprResult Sema::BuildDeclarationNameExpr(
     case Decl::EnumConstant:
     case Decl::UnresolvedUsingValue:
     case Decl::OMPDeclareReduction:
+    case Decl::OMPDeclareMapper:
       valueKind = VK_RValue;
       break;
 

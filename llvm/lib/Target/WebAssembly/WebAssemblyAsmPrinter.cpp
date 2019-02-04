@@ -43,6 +43,8 @@ using namespace llvm;
 
 #define DEBUG_TYPE "asm-printer"
 
+extern cl::opt<bool> WasmKeepRegisters;
+
 //===----------------------------------------------------------------------===//
 // Helpers.
 //===----------------------------------------------------------------------===//
@@ -112,8 +114,15 @@ void WebAssemblyAsmPrinter::EmitEndOfAsmFile(Module &M) {
           F.hasFnAttribute("wasm-import-module")) {
         StringRef Name =
             F.getFnAttribute("wasm-import-module").getValueAsString();
-        Sym->setModuleName(Name);
+        Sym->setImportModule(Name);
         getTargetStreamer()->emitImportModule(Sym, Name);
+      }
+      if (TM.getTargetTriple().isOSBinFormatWasm() &&
+          F.hasFnAttribute("wasm-import-name")) {
+        StringRef Name =
+            F.getFnAttribute("wasm-import-name").getValueAsString();
+        Sym->setImportName(Name);
+        getTargetStreamer()->emitImportName(Sym, Name);
       }
     }
   }
@@ -304,6 +313,14 @@ void WebAssemblyAsmPrinter::EmitInstruction(const MachineInstr *MI) {
       OutStreamer->AddBlankLine();
     }
     break;
+  case WebAssembly::EXTRACT_EXCEPTION_I32:
+  case WebAssembly::EXTRACT_EXCEPTION_I32_S:
+    // These are pseudo instructions that simulates popping values from stack.
+    // We print these only when we have -wasm-keep-registers on for assembly
+    // readability.
+    if (!WasmKeepRegisters)
+      break;
+    LLVM_FALLTHROUGH;
   default: {
     WebAssemblyMCInstLower MCInstLowering(OutContext, *this);
     MCInst TmpInst;

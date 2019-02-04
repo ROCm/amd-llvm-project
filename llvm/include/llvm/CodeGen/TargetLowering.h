@@ -642,6 +642,13 @@ public:
     return RepRegClassCostForVT[VT.SimpleTy];
   }
 
+  /// Return true if SHIFT instructions should be expanded to SHIFT_PARTS
+  /// instructions, and false if a library call is preferred (e.g for code-size
+  /// reasons).
+  virtual bool shouldExpandShift(SelectionDAG &DAG, SDNode *N) const {
+    return true;
+  }
+
   /// Return true if the target has native support for the specified value type.
   /// This means that it has a register that directly holds it without
   /// promotions or expansions.
@@ -1514,7 +1521,7 @@ public:
   /// performs validation and error handling, returns the function. Otherwise,
   /// returns nullptr. Must be previously inserted by insertSSPDeclarations.
   /// Should be used only when getIRStackGuard returns nullptr.
-  virtual Value *getSSPStackGuardCheck(const Module &M) const;
+  virtual Function *getSSPStackGuardCheck(const Module &M) const;
 
 protected:
   Value *getDefaultSafeStackPointerLocation(IRBuilder<> &IRB,

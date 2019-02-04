@@ -737,12 +737,13 @@ void CodeGenFunction::EmitTypeCheck(TypeCheckKind TCK, SourceLocation Loc,
       //        to check this.
       // FIXME: Get object address space
       llvm::Type *Tys[2] = { IntPtrTy, Int8PtrTy };
-      llvm::Value *F = CGM.getIntrinsic(llvm::Intrinsic::objectsize, Tys);
+      llvm::Function *F = CGM.getIntrinsic(llvm::Intrinsic::objectsize, Tys);
       llvm::Value *Min = Builder.getFalse();
       llvm::Value *NullIsUnknown = Builder.getFalse();
+      llvm::Value *Dynamic = Builder.getFalse();
       llvm::Value *CastAddr = Builder.CreateBitCast(Ptr, Int8PtrTy);
       llvm::Value *LargeEnough = Builder.CreateICmpUGE(
-          Builder.CreateCall(F, {CastAddr, Min, NullIsUnknown}), Size);
+          Builder.CreateCall(F, {CastAddr, Min, NullIsUnknown, Dynamic}), Size);
       Checks.push_back(std::make_pair(LargeEnough, SanitizerKind::ObjectSize));
     }
   }
@@ -1916,7 +1917,7 @@ RValue CodeGenFunction::EmitLoadOfGlobalRegLValue(LValue LV) {
     Ty = CGM.getTypes().getDataLayout().getIntPtrType(OrigTy);
   llvm::Type *Types[] = { Ty };
 
-  llvm::Value *F = CGM.getIntrinsic(llvm::Intrinsic::read_register, Types);
+  llvm::Function *F = CGM.getIntrinsic(llvm::Intrinsic::read_register, Types);
   llvm::Value *Call = Builder.CreateCall(
       F, llvm::MetadataAsValue::get(Ty->getContext(), RegName));
   if (OrigTy->isPointerTy())
@@ -2177,7 +2178,7 @@ void CodeGenFunction::EmitStoreThroughGlobalRegLValue(RValue Src, LValue Dst) {
     Ty = CGM.getTypes().getDataLayout().getIntPtrType(OrigTy);
   llvm::Type *Types[] = { Ty };
 
-  llvm::Value *F = CGM.getIntrinsic(llvm::Intrinsic::write_register, Types);
+  llvm::Function *F = CGM.getIntrinsic(llvm::Intrinsic::write_register, Types);
   llvm::Value *Value = Src.getScalarVal();
   if (OrigTy->isPointerTy())
     Value = Builder.CreatePtrToInt(Value, Ty);
@@ -3068,7 +3069,7 @@ void CodeGenFunction::EmitCfiSlowPathCheck(
   bool WithDiag = !CGM.getCodeGenOpts().SanitizeTrap.has(Kind);
 
   llvm::CallInst *CheckCall;
-  llvm::Constant *SlowPathFn;
+  llvm::FunctionCallee SlowPathFn;
   if (WithDiag) {
     llvm::Constant *Info = llvm::ConstantStruct::getAnon(StaticArgs);
     auto *InfoPtr =
@@ -3090,7 +3091,8 @@ void CodeGenFunction::EmitCfiSlowPathCheck(
     CheckCall = Builder.CreateCall(SlowPathFn, {TypeId, Ptr});
   }
 
-  CGM.setDSOLocal(cast<llvm::GlobalValue>(SlowPathFn->stripPointerCasts()));
+  CGM.setDSOLocal(
+      cast<llvm::GlobalValue>(SlowPathFn.getCallee()->stripPointerCasts()));
   CheckCall->setDoesNotThrow();
 
   EmitBlock(Cont);

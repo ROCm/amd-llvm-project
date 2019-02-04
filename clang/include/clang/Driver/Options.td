@@ -1628,6 +1628,9 @@ def frwpi : Flag<["-"], "frwpi">, Group<f_Group>;
 def fno_rwpi : Flag<["-"], "fno-rwpi">, Group<f_Group>;
 def fplugin_EQ : Joined<["-"], "fplugin=">, Group<f_Group>, Flags<[DriverOption]>, MetaVarName<"<dsopath>">,
   HelpText<"Load the named plugin (dynamic shared object)">;
+def fpass_plugin_EQ : Joined<["-"], "fpass-plugin=">,
+  Group<f_Group>, Flags<[CC1Option]>, MetaVarName<"<dsopath>">,
+  HelpText<"Load pass plugin from a dynamic shared object file (only with new pass manager).">;
 def fpreserve_as_comments : Flag<["-"], "fpreserve-as-comments">, Group<f_Group>;
 def fno_preserve_as_comments : Flag<["-"], "fno-preserve-as-comments">, Group<f_Group>, Flags<[CC1Option]>,
   HelpText<"Do not preserve comments in inline assembly">;
@@ -2171,6 +2174,8 @@ def msign_ext : Flag<["-"], "msign-ext">, Group<m_wasm_Features_Group>;
 def mno_sign_ext : Flag<["-"], "mno-sign-ext">, Group<m_wasm_Features_Group>;
 def mexception_handing : Flag<["-"], "mexception-handling">, Group<m_wasm_Features_Group>;
 def mno_exception_handing : Flag<["-"], "mno-exception-handling">, Group<m_wasm_Features_Group>;
+def mbulk_memory : Flag<["-"], "mbulk-memory">, Group<m_wasm_Features_Group>;
+def mno_bulk_memory : Flag<["-"], "mno-bulk-memory">, Group<m_wasm_Features_Group>;
 
 def mamdgpu_debugger_abi : Joined<["-"], "mamdgpu-debugger-abi=">,
   Flags<[HelpHidden]>,
@@ -2584,8 +2589,6 @@ def std_EQ : Joined<["-", "--"], "std=">, Flags<[CC1Option]>,
   }]>;
 def stdlib_EQ : Joined<["-", "--"], "stdlib=">, Flags<[CC1Option]>,
   HelpText<"C++ standard library to use">, Values<"libc++,libstdc++,platform">;
-def unwindlib_EQ : Joined<["-", "--"], "unwindlib=">, Flags<[CC1Option]>,
-  HelpText<"Unwind library to use">, Values<"libgcc,compiler-rt,platform">;
 def sub__library : JoinedOrSeparate<["-"], "sub_library">;
 def sub__umbrella : JoinedOrSeparate<["-"], "sub_umbrella">;
 def system_header_prefix : Joined<["--"], "system-header-prefix=">,

@@ -53,7 +53,7 @@ CodeAction toCodeAction(const ClangdServer::TweakRef &T, const URIForFile &File,
   CA.command->tweakArgs->tweakID = T.ID;
   CA.command->tweakArgs->selection = Selection;
   return CA;
-};
+}
 
 void adjustSymbolKinds(llvm::MutableArrayRef<DocumentSymbol> Syms,
                        SymbolKindBitset Kinds) {
@@ -354,6 +354,7 @@ void ClangdLSPServer::onInitialize(const InitializeParams &Params,
              llvm::json::Object{
                  {"triggerCharacters", {"(", ","}},
              }},
+            {"declarationProvider", true},
             {"definitionProvider", true},
             {"documentHighlightProvider", true},
             {"hoverProvider", true},
@@ -672,14 +673,8 @@ void ClangdLSPServer::onCodeAction(const CodeActionParams &Params,
       [this](decltype(Reply) Reply, URIForFile File, std::string Code,
              Range Selection, std::vector<CodeAction> FixIts,
              llvm::Expected<std::vector<ClangdServer::TweakRef>> Tweaks) {
-        if (!Tweaks) {
-          auto Err = Tweaks.takeError();
-          if (Err.isA<CancelledError>())
-            return Reply(std::move(Err)); // do no logging, this is expected.
-          elog("error while getting semantic code actions: {0}",
-               std::move(Err));
-          return Reply(llvm::json::Array(FixIts));
-        }
+        if (!Tweaks)
+          return Reply(Tweaks.takeError());
 
         std::vector<CodeAction> Actions = std::move(FixIts);
         Actions.reserve(Actions.size() + Tweaks->size());
@@ -697,8 +692,8 @@ void ClangdLSPServer::onCodeAction(const CodeActionParams &Params,
       };
 
   Server->enumerateTweaks(File.file(), Params.range,
-                          Bind(ConsumeActions, std::move(Reply),
-                               std::move(File), std::move(*Code), Params.range,
+                          Bind(ConsumeActions, std::move(Reply), File,
+                               std::move(*Code), Params.range,
                                std::move(FixIts)));
 }
 
@@ -731,10 +726,65 @@ void ClangdLSPServer::onSignatureHelp(const TextDocumentPositionParams &Params,
                         std::move(Reply));
 }
 
+// Go to definition has a toggle function: if def and decl are distinct, then
+// the first press gives you the def, the second gives you the matching def.
+// getToggle() returns the counterpart location that under the cursor.
+//
+// We return the toggled location alone (ignoring other symbols) to encourage
+// editors to "bounce" quickly between locations, without showing a menu.
+static Location *getToggle(const TextDocumentPositionParams &Point,
+                           LocatedSymbol &Sym) {
+  // Toggle only makes sense with two distinct locations.
+  if (!Sym.Definition || *Sym.Definition == Sym.PreferredDeclaration)
+    return nullptr;
+  if (Sym.Definition->uri.file() == Point.textDocument.uri.file() &&
+      Sym.Definition->range.contains(Point.position))
+    return &Sym.PreferredDeclaration;
+  if (Sym.PreferredDeclaration.uri.file() == Point.textDocument.uri.file() &&
+      Sym.PreferredDeclaration.range.contains(Point.position))
+    return &*Sym.Definition;
+  return nullptr;
+}
+
 void ClangdLSPServer::onGoToDefinition(const TextDocumentPositionParams &Params,
                                        Callback<std::vector<Location>> Reply) {
-  Server->findDefinitions(Params.textDocument.uri.file(), Params.position,
-                          std::move(Reply));
+  Server->locateSymbolAt(
+      Params.textDocument.uri.file(), Params.position,
+      Bind(
+          [&, Params](decltype(Reply) Reply,
+                      llvm::Expected<std::vector<LocatedSymbol>> Symbols) {
+            if (!Symbols)
+              return Reply(Symbols.takeError());
+            std::vector<Location> Defs;
+            for (auto &S : *Symbols) {
+              if (Location *Toggle = getToggle(Params, S))
+                return Reply(std::vector<Location>{std::move(*Toggle)});
+              Defs.push_back(S.Definition.getValueOr(S.PreferredDeclaration));
+            }
+            Reply(std::move(Defs));
+          },
+          std::move(Reply)));
+}
+
+void ClangdLSPServer::onGoToDeclaration(
+    const TextDocumentPositionParams &Params,
+    Callback<std::vector<Location>> Reply) {
+  Server->locateSymbolAt(
+      Params.textDocument.uri.file(), Params.position,
+      Bind(
+          [&, Params](decltype(Reply) Reply,
+                      llvm::Expected<std::vector<LocatedSymbol>> Symbols) {
+            if (!Symbols)
+              return Reply(Symbols.takeError());
+            std::vector<Location> Decls;
+            for (auto &S : *Symbols) {
+              if (Location *Toggle = getToggle(Params, S))
+                return Reply(std::vector<Location>{std::move(*Toggle)});
+              Decls.push_back(std::move(S.PreferredDeclaration));
+            }
+            Reply(std::move(Decls));
+          },
+          std::move(Reply)));
 }
 
 void ClangdLSPServer::onSwitchSourceHeader(const TextDocumentIdentifier &Params,
@@ -820,6 +870,7 @@ ClangdLSPServer::ClangdLSPServer(class Transport &Transp,
   MsgHandler->bind("textDocument/completion", &ClangdLSPServer::onCompletion);
   MsgHandler->bind("textDocument/signatureHelp", &ClangdLSPServer::onSignatureHelp);
   MsgHandler->bind("textDocument/definition", &ClangdLSPServer::onGoToDefinition);
+  MsgHandler->bind("textDocument/declaration", &ClangdLSPServer::onGoToDeclaration);
   MsgHandler->bind("textDocument/references", &ClangdLSPServer::onReference);
   MsgHandler->bind("textDocument/switchSourceHeader", &ClangdLSPServer::onSwitchSourceHeader);
   MsgHandler->bind("textDocument/rename", &ClangdLSPServer::onRename);

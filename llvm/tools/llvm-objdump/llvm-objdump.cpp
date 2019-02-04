@@ -941,8 +941,11 @@ static void disassembleObject(const Target *TheTarget, const ObjectFile *Obj,
       report_error(Obj->getFileName(), SectionOrErr.takeError());
 
     uint8_t SymbolType = ELF::STT_NOTYPE;
-    if (Obj->isELF())
+    if (Obj->isELF()) {
       SymbolType = getElfSymbolType(Obj, Symbol);
+      if (SymbolType == ELF::STT_SECTION)
+        continue;
+    }
 
     section_iterator SecI = *SectionOrErr;
     if (SecI != Obj->section_end())
@@ -1265,7 +1268,7 @@ static void disassembleObject(const Target *TheTarget, const ObjectFile *Obj,
               // Indent the space for less than 8 bytes data.
               // 2 spaces for byte and one for space between bytes
               IndentOffset = 3 * (8 - NumBytes);
-              for (int Excess = 8 - NumBytes; Excess < 8; Excess++)
+              for (int Excess = NumBytes; Excess < 8; Excess++)
                 AsciiData[Excess] = '\0';
               NumBytes = 8;
             }

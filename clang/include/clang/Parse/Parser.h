@@ -74,6 +74,10 @@ class Parser : public CodeCompletionHandler {
   // a statement).
   SourceLocation PrevTokLocation;
 
+  /// Tracks an expected type for the current token when parsing an expression.
+  /// Used by code completion for ranking.
+  PreferredTypeBuilder PreferredType;
+
   unsigned short ParenCount = 0, BracketCount = 0, BraceCount = 0;
   unsigned short MisplacedModuleBeginCount = 0;
 
@@ -844,6 +848,7 @@ private:
   ///
   class TentativeParsingAction {
     Parser &P;
+    PreferredTypeBuilder PrevPreferredType;
     Token PrevTok;
     size_t PrevTentativelyDeclaredIdentifierCount;
     unsigned short PrevParenCount, PrevBracketCount, PrevBraceCount;
@@ -851,6 +856,7 @@ private:
 
   public:
     explicit TentativeParsingAction(Parser& p) : P(p) {
+      PrevPreferredType = P.PreferredType;
       PrevTok = P.Tok;
       PrevTentativelyDeclaredIdentifierCount =
           P.TentativelyDeclaredIdentifiers.size();
@@ -870,6 +876,7 @@ private:
     void Revert() {
       assert(isActive && "Parsing action was finished!");
       P.PP.Backtrack();
+      P.PreferredType = PrevPreferredType;
       P.Tok = PrevTok;
       P.TentativelyDeclaredIdentifiers.resize(
           PrevTentativelyDeclaredIdentifierCount);
@@ -2809,6 +2816,13 @@ private:
   /// Parses initializer for provided omp_priv declaration inside the reduction
   /// initializer.
   void ParseOpenMPReductionInitializerForDecl(VarDecl *OmpPrivParm);
+
+  /// Parses 'omp declare mapper' directive.
+  DeclGroupPtrTy ParseOpenMPDeclareMapperDirective(AccessSpecifier AS);
+  /// Parses variable declaration in 'omp declare mapper' directive.
+  TypeResult parseOpenMPDeclareMapperVarDecl(SourceRange &Range,
+                                             DeclarationName &Name,
+                                             AccessSpecifier AS = AS_none);
 
   /// Parses simple list of variables.
   ///

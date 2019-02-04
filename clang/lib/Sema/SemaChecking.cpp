@@ -1076,6 +1076,7 @@ Sema::CheckBuiltinFunctionCall(FunctionDecl *FDecl, unsigned BuiltinID,
     if (SemaBuiltinAssumeAligned(TheCall))
       return ExprError();
     break;
+  case Builtin::BI__builtin_dynamic_object_size:
   case Builtin::BI__builtin_object_size:
     if (SemaBuiltinConstantArgRange(TheCall, 1, 0, 3))
       return ExprError();
@@ -7650,7 +7651,8 @@ CheckPrintfHandler::HandlePrintfSpecifier(const analyze_printf::PrintfSpecifier
             startSpecifier, specifierLen);
 
   // Check the length modifier is valid with the given conversion specifier.
-  if (!FS.hasValidLengthModifier(S.getASTContext().getTargetInfo()))
+  if (!FS.hasValidLengthModifier(S.getASTContext().getTargetInfo(),
+                                 S.getLangOpts()))
     HandleInvalidLengthModifier(FS, CS, startSpecifier, specifierLen,
                                 diag::warn_format_nonsensical_length);
   else if (!FS.hasStandardLengthModifier())
@@ -8154,7 +8156,8 @@ bool CheckScanfHandler::HandleScanfSpecifier(
   }
 
   // Check the length modifier is valid with the given conversion specifier.
-  if (!FS.hasValidLengthModifier(S.getASTContext().getTargetInfo()))
+  if (!FS.hasValidLengthModifier(S.getASTContext().getTargetInfo(),
+                                 S.getLangOpts()))
     HandleInvalidLengthModifier(FS, CS, startSpecifier, specifierLen,
                                 diag::warn_format_nonsensical_length);
   else if (!FS.hasStandardLengthModifier())

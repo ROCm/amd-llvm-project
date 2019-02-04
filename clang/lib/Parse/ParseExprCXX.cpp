@@ -1744,6 +1744,8 @@ Parser::ParseCXXTypeConstructExpression(const DeclSpec &DS) {
     BalancedDelimiterTracker T(*this, tok::l_paren);
     T.consumeOpen();
 
+    PreferredType.enterTypeCast(Tok.getLocation(), TypeRep.get());
+
     ExprVector Exprs;
     CommaLocsTy CommaLocs;
 
@@ -1811,6 +1813,7 @@ Sema::ConditionResult Parser::ParseCXXCondition(StmtResult *InitStmt,
                                                 Sema::ConditionKind CK,
                                                 ForRangeInfo *FRI) {
   ParenBraceBracketBalancer BalancerRAIIObj(*this);
+  PreferredType.enterCondition(Actions, Tok.getLocation());
 
   if (Tok.is(tok::code_completion)) {
     Actions.CodeCompleteOrdinaryName(getCurScope(), Sema::PCC_Condition);
@@ -1930,6 +1933,7 @@ Sema::ConditionResult Parser::ParseCXXCondition(StmtResult *InitStmt,
          diag::warn_cxx98_compat_generalized_initializer_lists);
     InitExpr = ParseBraceInitializer();
   } else if (CopyInitialization) {
+    PreferredType.enterVariableInit(Tok.getLocation(), DeclOut);
     InitExpr = ParseAssignmentExpression();
   } else if (Tok.is(tok::l_paren)) {
     // This was probably an attempt to initialize the variable.

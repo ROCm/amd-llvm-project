@@ -141,6 +141,9 @@ void CodeGenFunction::EmitDecl(const Decl &D) {
   case Decl::OMPDeclareReduction:
     return CGM.EmitOMPDeclareReduction(cast<OMPDeclareReductionDecl>(&D), this);
 
+  case Decl::OMPDeclareMapper:
+    return CGM.EmitOMPDeclareMapper(cast<OMPDeclareMapperDecl>(&D), this);
+
   case Decl::Typedef:      // typedef int X;
   case Decl::TypeAlias: {  // using X = int; [C++0x]
     const TypedefNameDecl &TD = cast<TypedefNameDecl>(D);
@@ -543,7 +546,7 @@ namespace {
     CallStackRestore(Address Stack) : Stack(Stack) {}
     void Emit(CodeGenFunction &CGF, Flags flags) override {
       llvm::Value *V = CGF.Builder.CreateLoad(Stack);
-      llvm::Value *F = CGF.CGM.getIntrinsic(llvm::Intrinsic::stackrestore);
+      llvm::Function *F = CGF.CGM.getIntrinsic(llvm::Intrinsic::stackrestore);
       CGF.Builder.CreateCall(F, V);
     }
   };
@@ -1459,7 +1462,7 @@ CodeGenFunction::EmitAutoVarAlloca(const VarDecl &D) {
       Address Stack =
         CreateTempAlloca(Int8PtrTy, getPointerAlign(), "saved_stack");
 
-      llvm::Value *F = CGM.getIntrinsic(llvm::Intrinsic::stacksave);
+      llvm::Function *F = CGM.getIntrinsic(llvm::Intrinsic::stacksave);
       llvm::Value *V = Builder.CreateCall(F);
       Builder.CreateStore(V, Stack);
 
@@ -2436,6 +2439,13 @@ void CodeGenModule::EmitOMPDeclareReduction(const OMPDeclareReductionDecl *D,
   if (!LangOpts.OpenMP || (!LangOpts.EmitAllDecls && !D->isUsed()))
     return;
   getOpenMPRuntime().emitUserDefinedReduction(CGF, D);
+}
+
+void CodeGenModule::EmitOMPDeclareMapper(const OMPDeclareMapperDecl *D,
+                                            CodeGenFunction *CGF) {
+  if (!LangOpts.OpenMP || (!LangOpts.EmitAllDecls && !D->isUsed()))
+    return;
+  // FIXME: need to implement mapper code generation
 }
 
 void CodeGenModule::EmitOMPRequiresDecl(const OMPRequiresDecl *D) {

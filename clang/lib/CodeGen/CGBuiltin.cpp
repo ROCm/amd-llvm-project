@@ -26,7 +26,6 @@
 #include "clang/CodeGen/CGFunctionInfo.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringExtras.h"
-#include "llvm/IR/CallSite.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Intrinsics.h"
@@ -306,7 +305,7 @@ static Value *emitUnaryBuiltin(CodeGenFunction &CGF,
                                unsigned IntrinsicID) {
   llvm::Value *Src0 = CGF.EmitScalarExpr(E->getArg(0));
 
-  Value *F = CGF.CGM.getIntrinsic(IntrinsicID, Src0->getType());
+  Function *F = CGF.CGM.getIntrinsic(IntrinsicID, Src0->getType());
   return CGF.Builder.CreateCall(F, Src0);
 }
 
@@ -317,7 +316,7 @@ static Value *emitBinaryBuiltin(CodeGenFunction &CGF,
   llvm::Value *Src0 = CGF.EmitScalarExpr(E->getArg(0));
   llvm::Value *Src1 = CGF.EmitScalarExpr(E->getArg(1));
 
-  Value *F = CGF.CGM.getIntrinsic(IntrinsicID, Src0->getType());
+  Function *F = CGF.CGM.getIntrinsic(IntrinsicID, Src0->getType());
   return CGF.Builder.CreateCall(F, { Src0, Src1 });
 }
 
@@ -329,7 +328,7 @@ static Value *emitTernaryBuiltin(CodeGenFunction &CGF,
   llvm::Value *Src1 = CGF.EmitScalarExpr(E->getArg(1));
   llvm::Value *Src2 = CGF.EmitScalarExpr(E->getArg(2));
 
-  Value *F = CGF.CGM.getIntrinsic(IntrinsicID, Src0->getType());
+  Function *F = CGF.CGM.getIntrinsic(IntrinsicID, Src0->getType());
   return CGF.Builder.CreateCall(F, { Src0, Src1, Src2 });
 }
 
@@ -340,13 +339,13 @@ static Value *emitFPIntBuiltin(CodeGenFunction &CGF,
   llvm::Value *Src0 = CGF.EmitScalarExpr(E->getArg(0));
   llvm::Value *Src1 = CGF.EmitScalarExpr(E->getArg(1));
 
-  Value *F = CGF.CGM.getIntrinsic(IntrinsicID, Src0->getType());
+  Function *F = CGF.CGM.getIntrinsic(IntrinsicID, Src0->getType());
   return CGF.Builder.CreateCall(F, {Src0, Src1});
 }
 
 /// EmitFAbs - Emit a call to @llvm.fabs().
 static Value *EmitFAbs(CodeGenFunction &CGF, Value *V) {
-  Value *F = CGF.CGM.getIntrinsic(Intrinsic::fabs, V->getType());
+  Function *F = CGF.CGM.getIntrinsic(Intrinsic::fabs, V->getType());
   llvm::CallInst *Call = CGF.Builder.CreateCall(F, V);
   Call->setDoesNotAccessMemory();
   return Call;
@@ -407,7 +406,7 @@ static llvm::Value *EmitOverflowIntrinsic(CodeGenFunction &CGF,
          "Arguments must be the same type. (Did you forget to make sure both "
          "arguments have the same integer width?)");
 
-  llvm::Value *Callee = CGF.CGM.getIntrinsic(IntrinsicID, X->getType());
+  Function *Callee = CGF.CGM.getIntrinsic(IntrinsicID, X->getType());
   llvm::Value *Tmp = CGF.Builder.CreateCall(Callee, {X, Y});
   Carry = CGF.Builder.CreateExtractValue(Tmp, 1);
   return CGF.Builder.CreateExtractValue(Tmp, 0);
@@ -418,7 +417,7 @@ static Value *emitRangedBuiltin(CodeGenFunction &CGF,
                                 int low, int high) {
     llvm::MDBuilder MDHelper(CGF.getLLVMContext());
     llvm::MDNode *RNode = MDHelper.createRange(APInt(32, low), APInt(32, high));
-    Value *F = CGF.CGM.getIntrinsic(IntrinsicID, {});
+    Function *F = CGF.CGM.getIntrinsic(IntrinsicID, {});
     llvm::Instruction *Call = CGF.Builder.CreateCall(F);
     Call->setMetadata(llvm::LLVMContext::MD_range, RNode);
     return Call;
@@ -495,10 +494,11 @@ getDefaultBuiltinObjectSizeResult(unsigned Type, llvm::IntegerType *ResType) {
 llvm::Value *
 CodeGenFunction::evaluateOrEmitBuiltinObjectSize(const Expr *E, unsigned Type,
                                                  llvm::IntegerType *ResType,
-                                                 llvm::Value *EmittedE) {
+                                                 llvm::Value *EmittedE,
+                                                 bool IsDynamic) {
   uint64_t ObjectSize;
   if (!E->tryEvaluateObjectSize(ObjectSize, getContext(), Type))
-    return emitBuiltinObjectSize(E, Type, ResType, EmittedE);
+    return emitBuiltinObjectSize(E, Type, ResType, EmittedE, IsDynamic);
   return ConstantInt::get(ResType, ObjectSize, /*isSigned=*/true);
 }
 
@@ -514,7 +514,7 @@ CodeGenFunction::evaluateOrEmitBuiltinObjectSize(const Expr *E, unsigned Type,
 llvm::Value *
 CodeGenFunction::emitBuiltinObjectSize(const Expr *E, unsigned Type,
                                        llvm::IntegerType *ResType,
-                                       llvm::Value *EmittedE) {
+                                       llvm::Value *EmittedE, bool IsDynamic) {
   // We need to reference an argument if the pointer is a parameter with the
   // pass_object_size attribute.
   if (auto *D = dyn_cast<DeclRefExpr>(E->IgnoreParenImpCasts())) {
@@ -544,13 +544,15 @@ CodeGenFunction::emitBuiltinObjectSize(const Expr *E, unsigned Type,
   assert(Ptr->getType()->isPointerTy() &&
          "Non-pointer passed to __builtin_object_size?");
 
-  Value *F = CGM.getIntrinsic(Intrinsic::objectsize, {ResType, Ptr->getType()});
+  Function *F =
+      CGM.getIntrinsic(Intrinsic::objectsize, {ResType, Ptr->getType()});
 
   // LLVM only supports 0 and 2, make sure that we pass along that as a boolean.
   Value *Min = Builder.getInt1((Type & 2) != 0);
   // For GCC compatibility, __builtin_object_size treat NULL as unknown size.
   Value *NullIsUnknown = Builder.getTrue();
-  return Builder.CreateCall(F, {Ptr, Min, NullIsUnknown});
+  Value *Dynamic = Builder.getInt1(IsDynamic);
+  return Builder.CreateCall(F, {Ptr, Min, NullIsUnknown, Dynamic});
 }
 
 namespace {
@@ -799,9 +801,9 @@ static RValue EmitMSVCRTSetJmp(CodeGenFunction &CGF, MSVCSetJmpKind SJKind,
   llvm::Value *Buf = CGF.Builder.CreateBitOrPointerCast(
       CGF.EmitScalarExpr(E->getArg(0)), CGF.Int8PtrTy);
   llvm::Value *Args[] = {Buf, Arg1};
-  llvm::CallSite CS = CGF.EmitRuntimeCallOrInvoke(SetJmpFn, Args);
-  CS.setAttributes(ReturnsTwiceAttr);
-  return RValue::get(CS.getInstruction());
+  llvm::CallBase *CB = CGF.EmitRuntimeCallOrInvoke(SetJmpFn, Args);
+  CB->setAttributes(ReturnsTwiceAttr);
+  return RValue::get(CB);
 }
 
 // Many of MSVC builtins are on x64, ARM and AArch64; to avoid repeating code,
@@ -875,7 +877,7 @@ Value *CodeGenFunction::EmitMSVCBuiltinExpr(MSVCIntrin BuiltinID,
     Address IndexAddress = EmitPointerWithAlignment(E->getArg(0));
 
     if (BuiltinID == MSVCIntrin::_BitScanForward) {
-      Value *F = CGM.getIntrinsic(Intrinsic::cttz, ArgType);
+      Function *F = CGM.getIntrinsic(Intrinsic::cttz, ArgType);
       Value *ZeroCount = Builder.CreateCall(F, {ArgValue, Builder.getTrue()});
       ZeroCount = Builder.CreateIntCast(ZeroCount, IndexType, false);
       Builder.CreateStore(ZeroCount, IndexAddress, false);
@@ -883,7 +885,7 @@ Value *CodeGenFunction::EmitMSVCBuiltinExpr(MSVCIntrin BuiltinID,
       unsigned ArgWidth = cast<llvm::IntegerType>(ArgType)->getBitWidth();
       Value *ArgTypeLastIndex = llvm::ConstantInt::get(IndexType, ArgWidth - 1);
 
-      Value *F = CGM.getIntrinsic(Intrinsic::ctlz, ArgType);
+      Function *F = CGM.getIntrinsic(Intrinsic::ctlz, ArgType);
       Value *ZeroCount = Builder.CreateCall(F, {ArgValue, Builder.getTrue()});
       ZeroCount = Builder.CreateIntCast(ZeroCount, IndexType, false);
       Value *Index = Builder.CreateNSWSub(ArgTypeLastIndex, ZeroCount);
@@ -1002,9 +1004,9 @@ Value *CodeGenFunction::EmitMSVCBuiltinExpr(MSVCIntrin BuiltinID,
     llvm::AttributeList NoReturnAttr = llvm::AttributeList::get(
         getLLVMContext(), llvm::AttributeList::FunctionIndex,
         llvm::Attribute::NoReturn);
-    CallSite CS = Builder.CreateCall(IA, EmitScalarExpr(E->getArg(0)));
-    CS.setAttributes(NoReturnAttr);
-    return CS.getInstruction();
+    llvm::CallInst *CI = Builder.CreateCall(IA, EmitScalarExpr(E->getArg(0)));
+    CI->setAttributes(NoReturnAttr);
+    return CI;
   }
   }
   llvm_unreachable("Incorrect MSVC intrinsic!");
@@ -1465,7 +1467,7 @@ RValue CodeGenFunction::emitRotate(const CallExpr *E, bool IsRotateRight) {
 
   // Rotate is a special case of LLVM funnel shift - 1st 2 args are the same.
   unsigned IID = IsRotateRight ? Intrinsic::fshr : Intrinsic::fshl;
-  Value *F = CGM.getIntrinsic(IID, Ty);
+  Function *F = CGM.getIntrinsic(IID, Ty);
   return RValue::get(Builder.CreateCall(F, { Src, Src, ShiftAmt }));
 }
 
@@ -1762,7 +1764,7 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
     Value *ArgValue = EmitScalarExpr(E->getArg(0));
 
     llvm::Type *ArgType = ArgValue->getType();
-    Value *F = CGM.getIntrinsic(Intrinsic::ctlz, ArgType);
+    Function *F = CGM.getIntrinsic(Intrinsic::ctlz, ArgType);
 
     llvm::Type *ResultType = ConvertType(E->getType());
     Value *Zero = llvm::Constant::getNullValue(ArgType);
@@ -1782,7 +1784,7 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
     Value *ArgValue = EmitCheckedArgForBuiltin(E->getArg(0), BCK_CTZPassedZero);
 
     llvm::Type *ArgType = ArgValue->getType();
-    Value *F = CGM.getIntrinsic(Intrinsic::cttz, ArgType);
+    Function *F = CGM.getIntrinsic(Intrinsic::cttz, ArgType);
 
     llvm::Type *ResultType = ConvertType(E->getType());
     Value *ZeroUndef = Builder.getInt1(getTarget().isCLZForZeroUndef());
@@ -1799,7 +1801,7 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
     Value *ArgValue = EmitCheckedArgForBuiltin(E->getArg(0), BCK_CLZPassedZero);
 
     llvm::Type *ArgType = ArgValue->getType();
-    Value *F = CGM.getIntrinsic(Intrinsic::ctlz, ArgType);
+    Function *F = CGM.getIntrinsic(Intrinsic::ctlz, ArgType);
 
     llvm::Type *ResultType = ConvertType(E->getType());
     Value *ZeroUndef = Builder.getInt1(getTarget().isCLZForZeroUndef());
@@ -1816,7 +1818,7 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
     Value *ArgValue = EmitScalarExpr(E->getArg(0));
 
     llvm::Type *ArgType = ArgValue->getType();
-    Value *F = CGM.getIntrinsic(Intrinsic::cttz, ArgType);
+    Function *F = CGM.getIntrinsic(Intrinsic::cttz, ArgType);
 
     llvm::Type *ResultType = ConvertType(E->getType());
     Value *Tmp =
@@ -1837,7 +1839,7 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
     Value *ArgValue = EmitScalarExpr(E->getArg(0));
 
     llvm::Type *ArgType = ArgValue->getType();
-    Value *F = CGM.getIntrinsic(Intrinsic::ctpop, ArgType);
+    Function *F = CGM.getIntrinsic(Intrinsic::ctpop, ArgType);
 
     llvm::Type *ResultType = ConvertType(E->getType());
     Value *Tmp = Builder.CreateCall(F, ArgValue);
@@ -1853,7 +1855,7 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
     Value *ArgValue = EmitScalarExpr(E->getArg(0));
 
     llvm::Type *ArgType = ArgValue->getType();
-    Value *F = CGM.getIntrinsic(Intrinsic::ctlz, ArgType);
+    Function *F = CGM.getIntrinsic(Intrinsic::ctlz, ArgType);
 
     llvm::Type *ResultType = ConvertType(E->getType());
     Value *Result = Builder.CreateCall(F, {ArgValue, Builder.getFalse()});
@@ -1871,7 +1873,7 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
     Value *ArgValue = EmitScalarExpr(E->getArg(0));
 
     llvm::Type *ArgType = ArgValue->getType();
-    Value *F = CGM.getIntrinsic(Intrinsic::ctpop, ArgType);
+    Function *F = CGM.getIntrinsic(Intrinsic::ctpop, ArgType);
 
     llvm::Type *ResultType = ConvertType(E->getType());
     Value *Result = Builder.CreateCall(F, ArgValue);
@@ -1897,7 +1899,7 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
     if (CGM.getCodeGenOpts().OptimizationLevel == 0)
       return RValue::get(ArgValue);
 
-    Value *FnExpect = CGM.getIntrinsic(Intrinsic::expect, ArgType);
+    Function *FnExpect = CGM.getIntrinsic(Intrinsic::expect, ArgType);
     Value *Result =
         Builder.CreateCall(FnExpect, {ArgValue, ExpectedValue}, "expval");
     return RValue::get(Result);
@@ -1922,7 +1924,7 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
       return RValue::get(nullptr);
 
     Value *ArgValue = EmitScalarExpr(E->getArg(0));
-    Value *FnAssume = CGM.getIntrinsic(Intrinsic::assume);
+    Function *FnAssume = CGM.getIntrinsic(Intrinsic::assume);
     return RValue::get(Builder.CreateCall(FnAssume, ArgValue));
   }
   case Builtin::BI__builtin_bswap16:
@@ -1972,12 +1974,14 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
       return RValue::get(ConstantInt::get(ResultType, 0));
 
     Value *ArgValue = EmitScalarExpr(Arg);
-    Value *F = CGM.getIntrinsic(Intrinsic::is_constant, ConvertType(ArgType));
+    Function *F =
+        CGM.getIntrinsic(Intrinsic::is_constant, ConvertType(ArgType));
     Value *Result = Builder.CreateCall(F, ArgValue);
     if (Result->getType() != ResultType)
       Result = Builder.CreateIntCast(Result, ResultType, /*isSigned*/false);
     return RValue::get(Result);
   }
+  case Builtin::BI__builtin_dynamic_object_size:
   case Builtin::BI__builtin_object_size: {
     unsigned Type =
         E->getArg(1)->EvaluateKnownConstInt(getContext()).getZExtValue();
@@ -1985,8 +1989,9 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
 
     // We pass this builtin onto the optimizer so that it can figure out the
     // object size in more complex cases.
+    bool IsDynamic = BuiltinID == Builtin::BI__builtin_dynamic_object_size;
     return RValue::get(emitBuiltinObjectSize(E->getArg(0), Type, ResType,
-                                             /*EmittedE=*/nullptr));
+                                             /*EmittedE=*/nullptr, IsDynamic));
   }
   case Builtin::BI__builtin_prefetch: {
     Value *Locality, *RW, *Address = EmitScalarExpr(E->getArg(0));
@@ -1996,17 +2001,17 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
     Locality = (E->getNumArgs() > 2) ? EmitScalarExpr(E->getArg(2)) :
       llvm::ConstantInt::get(Int32Ty, 3);
     Value *Data = llvm::ConstantInt::get(Int32Ty, 1);
-    Value *F = CGM.getIntrinsic(Intrinsic::prefetch);
+    Function *F = CGM.getIntrinsic(Intrinsic::prefetch);
     return RValue::get(Builder.CreateCall(F, {Address, RW, Locality, Data}));
   }
   case Builtin::BI__builtin_readcyclecounter: {
-    Value *F = CGM.getIntrinsic(Intrinsic::readcyclecounter);
+    Function *F = CGM.getIntrinsic(Intrinsic::readcyclecounter);
     return RValue::get(Builder.CreateCall(F));
   }
   case Builtin::BI__builtin___clear_cache: {
     Value *Begin = EmitScalarExpr(E->getArg(0));
     Value *End = EmitScalarExpr(E->getArg(1));
-    Value *F = CGM.getIntrinsic(Intrinsic::clear_cache);
+    Function *F = CGM.getIntrinsic(Intrinsic::clear_cache);
     return RValue::get(Builder.CreateCall(F, {Begin, End}));
   }
   case Builtin::BI__builtin_trap:
@@ -2028,7 +2033,7 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
     Value *Base = EmitScalarExpr(E->getArg(0));
     Value *Exponent = EmitScalarExpr(E->getArg(1));
     llvm::Type *ArgType = Base->getType();
-    Value *F = CGM.getIntrinsic(Intrinsic::powi, ArgType);
+    Function *F = CGM.getIntrinsic(Intrinsic::powi, ArgType);
     return RValue::get(Builder.CreateCall(F, {Base, Exponent}));
   }
 
@@ -2130,7 +2135,7 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
   }
 
   case Builtin::BI__builtin_flt_rounds: {
-    Value *F = CGM.getIntrinsic(Intrinsic::flt_rounds);
+    Function *F = CGM.getIntrinsic(Intrinsic::flt_rounds);
 
     llvm::Type *ResultType = ConvertType(E->getType());
     Value *Result = Builder.CreateCall(F);
@@ -2402,24 +2407,24 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
     // this instead of hard-coding 0, which is correct for most targets.
     int32_t Offset = 0;
 
-    Value *F = CGM.getIntrinsic(Intrinsic::eh_dwarf_cfa);
+    Function *F = CGM.getIntrinsic(Intrinsic::eh_dwarf_cfa);
     return RValue::get(Builder.CreateCall(F,
                                       llvm::ConstantInt::get(Int32Ty, Offset)));
   }
   case Builtin::BI__builtin_return_address: {
     Value *Depth = ConstantEmitter(*this).emitAbstract(E->getArg(0),
                                                    getContext().UnsignedIntTy);
-    Value *F = CGM.getIntrinsic(Intrinsic::returnaddress);
+    Function *F = CGM.getIntrinsic(Intrinsic::returnaddress);
     return RValue::get(Builder.CreateCall(F, Depth));
   }
   case Builtin::BI_ReturnAddress: {
-    Value *F = CGM.getIntrinsic(Intrinsic::returnaddress);
+    Function *F = CGM.getIntrinsic(Intrinsic::returnaddress);
     return RValue::get(Builder.CreateCall(F, Builder.getInt32(0)));
   }
   case Builtin::BI__builtin_frame_address: {
     Value *Depth = ConstantEmitter(*this).emitAbstract(E->getArg(0),
                                                    getContext().UnsignedIntTy);
-    Value *F = CGM.getIntrinsic(Intrinsic::frameaddress);
+    Function *F = CGM.getIntrinsic(Intrinsic::frameaddress);
     return RValue::get(Builder.CreateCall(F, Depth));
   }
   case Builtin::BI__builtin_extract_return_addr: {
@@ -2455,9 +2460,9 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
     llvm::IntegerType *IntTy = cast<llvm::IntegerType>(Int->getType());
     assert((IntTy->getBitWidth() == 32 || IntTy->getBitWidth() == 64) &&
            "LLVM's __builtin_eh_return only supports 32- and 64-bit variants");
-    Value *F = CGM.getIntrinsic(IntTy->getBitWidth() == 32
-                                  ? Intrinsic::eh_return_i32
-                                  : Intrinsic::eh_return_i64);
+    Function *F =
+        CGM.getIntrinsic(IntTy->getBitWidth() == 32 ? Intrinsic::eh_return_i32
+                                                    : Intrinsic::eh_return_i64);
     Builder.CreateCall(F, {Int, Ptr});
     Builder.CreateUnreachable();
 
@@ -2467,7 +2472,7 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
     return RValue::get(nullptr);
   }
   case Builtin::BI__builtin_unwind_init: {
-    Value *F = CGM.getIntrinsic(Intrinsic::eh_unwind_init);
+    Function *F = CGM.getIntrinsic(Intrinsic::eh_unwind_init);
     return RValue::get(Builder.CreateCall(F));
   }
   case Builtin::BI__builtin_extend_pointer: {
@@ -2513,7 +2518,7 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
     Builder.CreateStore(StackAddr, StackSaveSlot);
 
     // Call LLVM's EH setjmp, which is lightweight.
-    Value *F = CGM.getIntrinsic(Intrinsic::eh_sjlj_setjmp);
+    Function *F = CGM.getIntrinsic(Intrinsic::eh_sjlj_setjmp);
     Buf = Builder.CreateBitCast(Buf, Int8PtrTy);
     return RValue::get(Builder.CreateCall(F, Buf.getPointer()));
   }
@@ -2969,14 +2974,15 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
     }
 
     // Build and MDTuple of MDStrings and emit the intrinsic call.
-    llvm::Value *F = CGM.getIntrinsic(llvm::Intrinsic::codeview_annotation, {});
+    llvm::Function *F =
+        CGM.getIntrinsic(llvm::Intrinsic::codeview_annotation, {});
     MDTuple *StrTuple = MDTuple::get(getLLVMContext(), Strings);
     Builder.CreateCall(F, MetadataAsValue::get(getLLVMContext(), StrTuple));
     return RValue::getIgnored();
   }
   case Builtin::BI__builtin_annotation: {
     llvm::Value *AnnVal = EmitScalarExpr(E->getArg(0));
-    llvm::Value *F = CGM.getIntrinsic(llvm::Intrinsic::annotation,
+    llvm::Function *F = CGM.getIntrinsic(llvm::Intrinsic::annotation,
                                       AnnVal->getType());
 
     // Get the annotation string, go through casts. Sema requires this to be a
@@ -3358,7 +3364,7 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
     auto & Context = getContext();
     auto SizeTy = Context.getSizeType();
     auto T = Builder.getIntNTy(Context.getTypeSize(SizeTy));
-    Value *F = CGM.getIntrinsic(Intrinsic::coro_size, T);
+    Function *F = CGM.getIntrinsic(Intrinsic::coro_size, T);
     return RValue::get(Builder.CreateCall(F));
   }
 
@@ -5274,7 +5280,7 @@ Value *CodeGenFunction::EmitCommonNeonBuiltinExpr(
   }
   case NEON::BI__builtin_neon_vfma_v:
   case NEON::BI__builtin_neon_vfmaq_v: {
-    Value *F = CGM.getIntrinsic(Intrinsic::fma, Ty);
+    Function *F = CGM.getIntrinsic(Intrinsic::fma, Ty);
     Ops[0] = Builder.CreateBitCast(Ops[0], Ty);
     Ops[1] = Builder.CreateBitCast(Ops[1], Ty);
     Ops[2] = Builder.CreateBitCast(Ops[2], Ty);
@@ -5743,7 +5749,7 @@ static Value *EmitSpecialRegisterBuiltin(CodeGenFunction &CGF,
             && "Can't fit 64-bit value in 32-bit register");
 
   if (IsRead) {
-    llvm::Value *F = CGM.getIntrinsic(llvm::Intrinsic::read_register, Types);
+    llvm::Function *F = CGM.getIntrinsic(llvm::Intrinsic::read_register, Types);
     llvm::Value *Call = Builder.CreateCall(F, Metadata);
 
     if (MixedTypes)
@@ -5757,7 +5763,7 @@ static Value *EmitSpecialRegisterBuiltin(CodeGenFunction &CGF,
     return Call;
   }
 
-  llvm::Value *F = CGM.getIntrinsic(llvm::Intrinsic::write_register, Types);
+  llvm::Function *F = CGM.getIntrinsic(llvm::Intrinsic::write_register, Types);
   llvm::Value *ArgValue = CGF.EmitScalarExpr(E->getArg(1));
   if (MixedTypes) {
     // Extend 32 bit write value to 64 bit to pass to write.
@@ -5878,7 +5884,7 @@ Value *CodeGenFunction::EmitARMBuiltinExpr(unsigned BuiltinID,
     // Locality is not supported on ARM target
     Value *Locality = llvm::ConstantInt::get(Int32Ty, 3);
 
-    Value *F = CGM.getIntrinsic(Intrinsic::prefetch);
+    Function *F = CGM.getIntrinsic(Intrinsic::prefetch);
     return Builder.CreateCall(F, {Address, RW, Locality, IsData});
   }
 
@@ -6830,7 +6836,7 @@ Value *CodeGenFunction::EmitAArch64BuiltinExpr(unsigned BuiltinID,
 
     // FIXME: We need AArch64 specific LLVM intrinsic if we want to specify
     // PLDL3STRM or PLDL2STRM.
-    Value *F = CGM.getIntrinsic(Intrinsic::prefetch);
+    Function *F = CGM.getIntrinsic(Intrinsic::prefetch);
     return Builder.CreateCall(F, {Address, RW, Locality, IsData});
   }
 
@@ -6968,7 +6974,7 @@ Value *CodeGenFunction::EmitAArch64BuiltinExpr(unsigned BuiltinID,
     llvm::MDNode *RegName = llvm::MDNode::get(Context, Ops);
     llvm::Value *Metadata = llvm::MetadataAsValue::get(Context, RegName);
 
-    llvm::Value *F =
+    llvm::Function *F =
         CGM.getIntrinsic(llvm::Intrinsic::read_register, {Int64Ty});
     return Builder.CreateCall(F, Metadata);
   }
@@ -7068,13 +7074,13 @@ Value *CodeGenFunction::EmitAArch64BuiltinExpr(unsigned BuiltinID,
     llvm::Type *Types[] = { RegisterType };
 
     if (BuiltinID == AArch64::BI_ReadStatusReg) {
-      llvm::Value *F = CGM.getIntrinsic(llvm::Intrinsic::read_register, Types);
+      llvm::Function *F = CGM.getIntrinsic(llvm::Intrinsic::read_register, Types);
       llvm::Value *Call = Builder.CreateCall(F, Metadata);
 
       return Builder.CreateTrunc(Call, ValueType);
     }
 
-    llvm::Value *F = CGM.getIntrinsic(llvm::Intrinsic::write_register, Types);
+    llvm::Function *F = CGM.getIntrinsic(llvm::Intrinsic::write_register, Types);
     llvm::Value *ArgValue = EmitScalarExpr(E->getArg(1));
     ArgValue = Builder.CreateZExt(ArgValue, RegisterType);
 
@@ -7082,7 +7088,7 @@ Value *CodeGenFunction::EmitAArch64BuiltinExpr(unsigned BuiltinID,
   }
 
   if (BuiltinID == AArch64::BI_AddressOfReturnAddress) {
-    llvm::Value *F = CGM.getIntrinsic(Intrinsic::addressofreturnaddress);
+    llvm::Function *F = CGM.getIntrinsic(Intrinsic::addressofreturnaddress);
     return Builder.CreateCall(F);
   }
 
@@ -7620,13 +7626,13 @@ Value *CodeGenFunction::EmitAArch64BuiltinExpr(unsigned BuiltinID,
     Ops.push_back(EmitScalarExpr(E->getArg(1)));
     return Builder.CreateFDiv(Ops[0], Ops[1], "vdivh");
   case NEON::BI__builtin_neon_vfmah_f16: {
-    Value *F = CGM.getIntrinsic(Intrinsic::fma, HalfTy);
+    Function *F = CGM.getIntrinsic(Intrinsic::fma, HalfTy);
     // NEON intrinsic puts accumulator first, unlike the LLVM fma.
     return Builder.CreateCall(F,
       {EmitScalarExpr(E->getArg(1)), EmitScalarExpr(E->getArg(2)), Ops[0]});
   }
   case NEON::BI__builtin_neon_vfmsh_f16: {
-    Value *F = CGM.getIntrinsic(Intrinsic::fma, HalfTy);
+    Function *F = CGM.getIntrinsic(Intrinsic::fma, HalfTy);
     Value *Zero = llvm::ConstantFP::getZeroValueForNegation(HalfTy);
     Value* Sub = Builder.CreateFSub(Zero, EmitScalarExpr(E->getArg(1)), "vsubh");
     // NEON intrinsic puts accumulator first, unlike the LLVM fma.
@@ -7857,11 +7863,11 @@ Value *CodeGenFunction::EmitAArch64BuiltinExpr(unsigned BuiltinID,
         NeonTypeFlags(NeonTypeFlags::Float64, false, true));
       Ops[2] = Builder.CreateBitCast(Ops[2], VTy);
       Ops[2] = Builder.CreateExtractElement(Ops[2], Ops[3], "extract");
-      Value *F = CGM.getIntrinsic(Intrinsic::fma, DoubleTy);
+      Function *F = CGM.getIntrinsic(Intrinsic::fma, DoubleTy);
       Value *Result = Builder.CreateCall(F, {Ops[1], Ops[2], Ops[0]});
       return Builder.CreateBitCast(Result, Ty);
     }
-    Value *F = CGM.getIntrinsic(Intrinsic::fma, Ty);
+    Function *F = CGM.getIntrinsic(Intrinsic::fma, Ty);
     Ops[0] = Builder.CreateBitCast(Ops[0], Ty);
     Ops[1] = Builder.CreateBitCast(Ops[1], Ty);
 
@@ -7875,7 +7881,7 @@ Value *CodeGenFunction::EmitAArch64BuiltinExpr(unsigned BuiltinID,
     return Builder.CreateCall(F, {Ops[2], Ops[1], Ops[0]});
   }
   case NEON::BI__builtin_neon_vfmaq_laneq_v: {
-    Value *F = CGM.getIntrinsic(Intrinsic::fma, Ty);
+    Function *F = CGM.getIntrinsic(Intrinsic::fma, Ty);
     Ops[0] = Builder.CreateBitCast(Ops[0], Ty);
     Ops[1] = Builder.CreateBitCast(Ops[1], Ty);
 
@@ -7891,7 +7897,7 @@ Value *CodeGenFunction::EmitAArch64BuiltinExpr(unsigned BuiltinID,
   case NEON::BI__builtin_neon_vfmad_laneq_f64: {
     Ops.push_back(EmitScalarExpr(E->getArg(3)));
     llvm::Type *Ty = ConvertType(E->getCallReturnType(getContext()));
-    Value *F = CGM.getIntrinsic(Intrinsic::fma, Ty);
+    Function *F = CGM.getIntrinsic(Intrinsic::fma, Ty);
     Ops[2] = Builder.CreateExtractElement(Ops[2], Ops[3], "extract");
     return Builder.CreateCall(F, {Ops[1], Ops[2], Ops[0]});
   }
@@ -9210,7 +9216,7 @@ static Value *EmitX86FunnelShift(CodeGenFunction &CGF, Value *Op0, Value *Op1,
   }
 
   unsigned IID = IsRight ? Intrinsic::fshr : Intrinsic::fshl;
-  Value *F = CGF.CGM.getIntrinsic(IID, Ty);
+  Function *F = CGF.CGM.getIntrinsic(IID, Ty);
   return CGF.Builder.CreateCall(F, {Op0, Op1, Amt});
 }
 
@@ -9807,7 +9813,7 @@ Value *CodeGenFunction::EmitX86BuiltinExpr(unsigned BuiltinID,
     Value *RW = ConstantInt::get(Int32Ty, (C->getZExtValue() >> 2) & 0x1);
     Value *Locality = ConstantInt::get(Int32Ty, C->getZExtValue() & 0x3);
     Value *Data = ConstantInt::get(Int32Ty, 1);
-    Value *F = CGM.getIntrinsic(Intrinsic::prefetch);
+    Function *F = CGM.getIntrinsic(Intrinsic::prefetch);
     return Builder.CreateCall(F, {Address, RW, Locality, Data});
   }
   case X86::BI_mm_clflush: {
@@ -9838,13 +9844,13 @@ Value *CodeGenFunction::EmitX86BuiltinExpr(unsigned BuiltinID,
   case X86::BI__builtin_ia32_lzcnt_u16:
   case X86::BI__builtin_ia32_lzcnt_u32:
   case X86::BI__builtin_ia32_lzcnt_u64: {
-    Value *F = CGM.getIntrinsic(Intrinsic::ctlz, Ops[0]->getType());
+    Function *F = CGM.getIntrinsic(Intrinsic::ctlz, Ops[0]->getType());
     return Builder.CreateCall(F, {Ops[0], Builder.getInt1(false)});
   }
   case X86::BI__builtin_ia32_tzcnt_u16:
   case X86::BI__builtin_ia32_tzcnt_u32:
   case X86::BI__builtin_ia32_tzcnt_u64: {
-    Value *F = CGM.getIntrinsic(Intrinsic::cttz, Ops[0]->getType());
+    Function *F = CGM.getIntrinsic(Intrinsic::cttz, Ops[0]->getType());
     return Builder.CreateCall(F, {Ops[0], Builder.getInt1(false)});
   }
   case X86::BI__builtin_ia32_undef128:
@@ -11834,7 +11840,7 @@ Value *CodeGenFunction::EmitX86BuiltinExpr(unsigned BuiltinID,
   }
 
   case X86::BI_AddressOfReturnAddress: {
-    Value *F = CGM.getIntrinsic(Intrinsic::addressofreturnaddress);
+    Function *F = CGM.getIntrinsic(Intrinsic::addressofreturnaddress);
     return Builder.CreateCall(F);
   }
   case X86::BI__stosb: {
@@ -11853,9 +11859,9 @@ Value *CodeGenFunction::EmitX86BuiltinExpr(unsigned BuiltinID,
     llvm::AttributeList NoReturnAttr = llvm::AttributeList::get(
         getLLVMContext(), llvm::AttributeList::FunctionIndex,
         llvm::Attribute::NoReturn);
-    CallSite CS = Builder.CreateCall(IA);
-    CS.setAttributes(NoReturnAttr);
-    return CS.getInstruction();
+    llvm::CallInst *CI = Builder.CreateCall(IA);
+    CI->setAttributes(NoReturnAttr);
+    return CI;
   }
   case X86::BI__readfsbyte:
   case X86::BI__readfsword:
@@ -12370,7 +12376,7 @@ Value *CodeGenFunction::EmitAMDGPUBuiltinExpr(unsigned BuiltinID,
     llvm::Value *Y = EmitScalarExpr(E->getArg(1));
     llvm::Value *Z = EmitScalarExpr(E->getArg(2));
 
-    llvm::Value *Callee = CGM.getIntrinsic(Intrinsic::amdgcn_div_scale,
+    llvm::Function *Callee = CGM.getIntrinsic(Intrinsic::amdgcn_div_scale,
                                            X->getType());
 
     llvm::Value *Tmp = Builder.CreateCall(Callee, {X, Y, Z});
@@ -12392,7 +12398,7 @@ Value *CodeGenFunction::EmitAMDGPUBuiltinExpr(unsigned BuiltinID,
     llvm::Value *Src2 = EmitScalarExpr(E->getArg(2));
     llvm::Value *Src3 = EmitScalarExpr(E->getArg(3));
 
-    llvm::Value *F = CGM.getIntrinsic(Intrinsic::amdgcn_div_fmas,
+    llvm::Function *F = CGM.getIntrinsic(Intrinsic::amdgcn_div_fmas,
                                       Src0->getType());
     llvm::Value *Src3ToBool = Builder.CreateIsNotNull(Src3);
     return Builder.CreateCall(F, {Src0, Src1, Src2, Src3ToBool});
@@ -12408,7 +12414,7 @@ Value *CodeGenFunction::EmitAMDGPUBuiltinExpr(unsigned BuiltinID,
     assert(Args.size() == 5 || Args.size() == 6);
     if (Args.size() == 5)
       Args.insert(Args.begin(), llvm::UndefValue::get(Args[0]->getType()));
-    Value *F =
+    Function *F =
         CGM.getIntrinsic(Intrinsic::amdgcn_update_dpp, Args[0]->getType());
     return Builder.CreateCall(F, Args);
   }
@@ -12449,13 +12455,13 @@ Value *CodeGenFunction::EmitAMDGPUBuiltinExpr(unsigned BuiltinID,
   case AMDGPU::BI__builtin_amdgcn_frexp_exp:
   case AMDGPU::BI__builtin_amdgcn_frexp_expf: {
     Value *Src0 = EmitScalarExpr(E->getArg(0));
-    Value *F = CGM.getIntrinsic(Intrinsic::amdgcn_frexp_exp,
+    Function *F = CGM.getIntrinsic(Intrinsic::amdgcn_frexp_exp,
                                 { Builder.getInt32Ty(), Src0->getType() });
     return Builder.CreateCall(F, Src0);
   }
   case AMDGPU::BI__builtin_amdgcn_frexp_exph: {
     Value *Src0 = EmitScalarExpr(E->getArg(0));
-    Value *F = CGM.getIntrinsic(Intrinsic::amdgcn_frexp_exp,
+    Function *F = CGM.getIntrinsic(Intrinsic::amdgcn_frexp_exp,
                                 { Builder.getInt16Ty(), Src0->getType() });
     return Builder.CreateCall(F, Src0);
   }
@@ -12537,7 +12543,7 @@ static Value *EmitSystemZIntrinsicWithCC(CodeGenFunction &CGF,
   for (unsigned I = 0; I < NumArgs; ++I)
     Args[I] = CGF.EmitScalarExpr(E->getArg(I));
   Address CCPtr = CGF.EmitPointerWithAlignment(E->getArg(NumArgs));
-  Value *F = CGF.CGM.getIntrinsic(IntrinsicID);
+  Function *F = CGF.CGM.getIntrinsic(IntrinsicID);
   Value *Call = CGF.Builder.CreateCall(F, Args);
   Value *CC = CGF.Builder.CreateExtractValue(Call, 1);
   CGF.Builder.CreateStore(CC, CCPtr);
@@ -12550,30 +12556,30 @@ Value *CodeGenFunction::EmitSystemZBuiltinExpr(unsigned BuiltinID,
   case SystemZ::BI__builtin_tbegin: {
     Value *TDB = EmitScalarExpr(E->getArg(0));
     Value *Control = llvm::ConstantInt::get(Int32Ty, 0xff0c);
-    Value *F = CGM.getIntrinsic(Intrinsic::s390_tbegin);
+    Function *F = CGM.getIntrinsic(Intrinsic::s390_tbegin);
     return Builder.CreateCall(F, {TDB, Control});
   }
   case SystemZ::BI__builtin_tbegin_nofloat: {
     Value *TDB = EmitScalarExpr(E->getArg(0));
     Value *Control = llvm::ConstantInt::get(Int32Ty, 0xff0c);
-    Value *F = CGM.getIntrinsic(Intrinsic::s390_tbegin_nofloat);
+    Function *F = CGM.getIntrinsic(Intrinsic::s390_tbegin_nofloat);
     return Builder.CreateCall(F, {TDB, Control});
   }
   case SystemZ::BI__builtin_tbeginc: {
     Value *TDB = llvm::ConstantPointerNull::get(Int8PtrTy);
     Value *Control = llvm::ConstantInt::get(Int32Ty, 0xff08);
-    Value *F = CGM.getIntrinsic(Intrinsic::s390_tbeginc);
+    Function *F = CGM.getIntrinsic(Intrinsic::s390_tbeginc);
     return Builder.CreateCall(F, {TDB, Control});
   }
   case SystemZ::BI__builtin_tabort: {
     Value *Data = EmitScalarExpr(E->getArg(0));
-    Value *F = CGM.getIntrinsic(Intrinsic::s390_tabort);
+    Function *F = CGM.getIntrinsic(Intrinsic::s390_tabort);
     return Builder.CreateCall(F, Builder.CreateSExt(Data, Int64Ty, "tabort"));
   }
   case SystemZ::BI__builtin_non_tx_store: {
     Value *Address = EmitScalarExpr(E->getArg(0));
     Value *Data = EmitScalarExpr(E->getArg(1));
-    Value *F = CGM.getIntrinsic(Intrinsic::s390_ntstg);
+    Function *F = CGM.getIntrinsic(Intrinsic::s390_ntstg);
     return Builder.CreateCall(F, {Data, Address});
   }
 
@@ -12946,7 +12952,7 @@ Value *CodeGenFunction::EmitNVPTXBuiltinExpr(unsigned BuiltinID,
     Value *Val = EmitScalarExpr(E->getArg(1));
     // atomicrmw only deals with integer arguments so we need to use
     // LLVM's nvvm_atomic_load_add_f32 intrinsic for that.
-    Value *FnALAF32 =
+    Function *FnALAF32 =
         CGM.getIntrinsic(Intrinsic::nvvm_atomic_load_add_f32, Ptr->getType());
     return Builder.CreateCall(FnALAF32, {Ptr, Val});
   }
@@ -12956,7 +12962,7 @@ Value *CodeGenFunction::EmitNVPTXBuiltinExpr(unsigned BuiltinID,
     Value *Val = EmitScalarExpr(E->getArg(1));
     // atomicrmw only deals with integer arguments, so we need to use
     // LLVM's nvvm_atomic_load_add_f64 intrinsic.
-    Value *FnALAF64 =
+    Function *FnALAF64 =
         CGM.getIntrinsic(Intrinsic::nvvm_atomic_load_add_f64, Ptr->getType());
     return Builder.CreateCall(FnALAF64, {Ptr, Val});
   }
@@ -12964,7 +12970,7 @@ Value *CodeGenFunction::EmitNVPTXBuiltinExpr(unsigned BuiltinID,
   case NVPTX::BI__nvvm_atom_inc_gen_ui: {
     Value *Ptr = EmitScalarExpr(E->getArg(0));
     Value *Val = EmitScalarExpr(E->getArg(1));
-    Value *FnALI32 =
+    Function *FnALI32 =
         CGM.getIntrinsic(Intrinsic::nvvm_atomic_load_inc_32, Ptr->getType());
     return Builder.CreateCall(FnALI32, {Ptr, Val});
   }
@@ -12972,7 +12978,7 @@ Value *CodeGenFunction::EmitNVPTXBuiltinExpr(unsigned BuiltinID,
   case NVPTX::BI__nvvm_atom_dec_gen_ui: {
     Value *Ptr = EmitScalarExpr(E->getArg(0));
     Value *Val = EmitScalarExpr(E->getArg(1));
-    Value *FnALD32 =
+    Function *FnALD32 =
         CGM.getIntrinsic(Intrinsic::nvvm_atomic_load_dec_32, Ptr->getType());
     return Builder.CreateCall(FnALD32, {Ptr, Val});
   }
@@ -13454,7 +13460,7 @@ Value *CodeGenFunction::EmitWebAssemblyBuiltinExpr(unsigned BuiltinID,
   case WebAssembly::BI__builtin_wasm_memory_size: {
     llvm::Type *ResultType = ConvertType(E->getType());
     Value *I = EmitScalarExpr(E->getArg(0));
-    Value *Callee = CGM.getIntrinsic(Intrinsic::wasm_memory_size, ResultType);
+    Function *Callee = CGM.getIntrinsic(Intrinsic::wasm_memory_size, ResultType);
     return Builder.CreateCall(Callee, I);
   }
   case WebAssembly::BI__builtin_wasm_memory_grow: {
@@ -13463,37 +13469,37 @@ Value *CodeGenFunction::EmitWebAssemblyBuiltinExpr(unsigned BuiltinID,
       EmitScalarExpr(E->getArg(0)),
       EmitScalarExpr(E->getArg(1))
     };
-    Value *Callee = CGM.getIntrinsic(Intrinsic::wasm_memory_grow, ResultType);
+    Function *Callee = CGM.getIntrinsic(Intrinsic::wasm_memory_grow, ResultType);
     return Builder.CreateCall(Callee, Args);
   }
   case WebAssembly::BI__builtin_wasm_throw: {
     Value *Tag = EmitScalarExpr(E->getArg(0));
     Value *Obj = EmitScalarExpr(E->getArg(1));
-    Value *Callee = CGM.getIntrinsic(Intrinsic::wasm_throw);
+    Function *Callee = CGM.getIntrinsic(Intrinsic::wasm_throw);
     return Builder.CreateCall(Callee, {Tag, Obj});
   }
   case WebAssembly::BI__builtin_wasm_rethrow: {
-    Value *Callee = CGM.getIntrinsic(Intrinsic::wasm_rethrow);
+    Function *Callee = CGM.getIntrinsic(Intrinsic::wasm_rethrow);
     return Builder.CreateCall(Callee);
   }
   case WebAssembly::BI__builtin_wasm_atomic_wait_i32: {
     Value *Addr = EmitScalarExpr(E->getArg(0));
     Value *Expected = EmitScalarExpr(E->getArg(1));
     Value *Timeout = EmitScalarExpr(E->getArg(2));
-    Value *Callee = CGM.getIntrinsic(Intrinsic::wasm_atomic_wait_i32);
+    Function *Callee = CGM.getIntrinsic(Intrinsic::wasm_atomic_wait_i32);
     return Builder.CreateCall(Callee, {Addr, Expected, Timeout});
   }
   case WebAssembly::BI__builtin_wasm_atomic_wait_i64: {
     Value *Addr = EmitScalarExpr(E->getArg(0));
     Value *Expected = EmitScalarExpr(E->getArg(1));
     Value *Timeout = EmitScalarExpr(E->getArg(2));
-    Value *Callee = CGM.getIntrinsic(Intrinsic::wasm_atomic_wait_i64);
+    Function *Callee = CGM.getIntrinsic(Intrinsic::wasm_atomic_wait_i64);
     return Builder.CreateCall(Callee, {Addr, Expected, Timeout});
   }
   case WebAssembly::BI__builtin_wasm_atomic_notify: {
     Value *Addr = EmitScalarExpr(E->getArg(0));
     Value *Count = EmitScalarExpr(E->getArg(1));
-    Value *Callee = CGM.getIntrinsic(Intrinsic::wasm_atomic_notify);
+    Function *Callee = CGM.getIntrinsic(Intrinsic::wasm_atomic_notify);
     return Builder.CreateCall(Callee, {Addr, Count});
   }
   case WebAssembly::BI__builtin_wasm_trunc_saturate_s_i32_f32:
@@ -13504,7 +13510,7 @@ Value *CodeGenFunction::EmitWebAssemblyBuiltinExpr(unsigned BuiltinID,
   case WebAssembly::BI__builtin_wasm_trunc_saturate_s_i64x2_f64x2: {
     Value *Src = EmitScalarExpr(E->getArg(0));
     llvm::Type *ResT = ConvertType(E->getType());
-    Value *Callee = CGM.getIntrinsic(Intrinsic::wasm_trunc_saturate_signed,
+    Function *Callee = CGM.getIntrinsic(Intrinsic::wasm_trunc_saturate_signed,
                                      {ResT, Src->getType()});
     return Builder.CreateCall(Callee, {Src});
   }
@@ -13516,7 +13522,7 @@ Value *CodeGenFunction::EmitWebAssemblyBuiltinExpr(unsigned BuiltinID,
   case WebAssembly::BI__builtin_wasm_trunc_saturate_u_i64x2_f64x2: {
     Value *Src = EmitScalarExpr(E->getArg(0));
     llvm::Type *ResT = ConvertType(E->getType());
-    Value *Callee = CGM.getIntrinsic(Intrinsic::wasm_trunc_saturate_unsigned,
+    Function *Callee = CGM.getIntrinsic(Intrinsic::wasm_trunc_saturate_unsigned,
                                      {ResT, Src->getType()});
     return Builder.CreateCall(Callee, {Src});
   }
@@ -13526,7 +13532,7 @@ Value *CodeGenFunction::EmitWebAssemblyBuiltinExpr(unsigned BuiltinID,
   case WebAssembly::BI__builtin_wasm_min_f64x2: {
     Value *LHS = EmitScalarExpr(E->getArg(0));
     Value *RHS = EmitScalarExpr(E->getArg(1));
-    Value *Callee = CGM.getIntrinsic(Intrinsic::minimum,
+    Function *Callee = CGM.getIntrinsic(Intrinsic::minimum,
                                      ConvertType(E->getType()));
     return Builder.CreateCall(Callee, {LHS, RHS});
   }
@@ -13536,7 +13542,7 @@ Value *CodeGenFunction::EmitWebAssemblyBuiltinExpr(unsigned BuiltinID,
   case WebAssembly::BI__builtin_wasm_max_f64x2: {
     Value *LHS = EmitScalarExpr(E->getArg(0));
     Value *RHS = EmitScalarExpr(E->getArg(1));
-    Value *Callee = CGM.getIntrinsic(Intrinsic::maximum,
+    Function *Callee = CGM.getIntrinsic(Intrinsic::maximum,
                                      ConvertType(E->getType()));
     return Builder.CreateCall(Callee, {LHS, RHS});
   }
@@ -13629,14 +13635,14 @@ Value *CodeGenFunction::EmitWebAssemblyBuiltinExpr(unsigned BuiltinID,
     }
     Value *LHS = EmitScalarExpr(E->getArg(0));
     Value *RHS = EmitScalarExpr(E->getArg(1));
-    Value *Callee = CGM.getIntrinsic(IntNo, ConvertType(E->getType()));
+    Function *Callee = CGM.getIntrinsic(IntNo, ConvertType(E->getType()));
     return Builder.CreateCall(Callee, {LHS, RHS});
   }
   case WebAssembly::BI__builtin_wasm_bitselect: {
     Value *V1 = EmitScalarExpr(E->getArg(0));
     Value *V2 = EmitScalarExpr(E->getArg(1));
     Value *C = EmitScalarExpr(E->getArg(2));
-    Value *Callee = CGM.getIntrinsic(Intrinsic::wasm_bitselect,
+    Function *Callee = CGM.getIntrinsic(Intrinsic::wasm_bitselect,
                                      ConvertType(E->getType()));
     return Builder.CreateCall(Callee, {V1, V2, C});
   }
@@ -13666,19 +13672,19 @@ Value *CodeGenFunction::EmitWebAssemblyBuiltinExpr(unsigned BuiltinID,
       llvm_unreachable("unexpected builtin ID");
     }
     Value *Vec = EmitScalarExpr(E->getArg(0));
-    Value *Callee = CGM.getIntrinsic(IntNo, Vec->getType());
+    Function *Callee = CGM.getIntrinsic(IntNo, Vec->getType());
     return Builder.CreateCall(Callee, {Vec});
   }
   case WebAssembly::BI__builtin_wasm_abs_f32x4:
   case WebAssembly::BI__builtin_wasm_abs_f64x2: {
     Value *Vec = EmitScalarExpr(E->getArg(0));
-    Value *Callee = CGM.getIntrinsic(Intrinsic::fabs, Vec->getType());
+    Function *Callee = CGM.getIntrinsic(Intrinsic::fabs, Vec->getType());
     return Builder.CreateCall(Callee, {Vec});
   }
   case WebAssembly::BI__builtin_wasm_sqrt_f32x4:
   case WebAssembly::BI__builtin_wasm_sqrt_f64x2: {
     Value *Vec = EmitScalarExpr(E->getArg(0));
-    Value *Callee = CGM.getIntrinsic(Intrinsic::sqrt, Vec->getType());
+    Function *Callee = CGM.getIntrinsic(Intrinsic::sqrt, Vec->getType());
     return Builder.CreateCall(Callee, {Vec});
   }
 

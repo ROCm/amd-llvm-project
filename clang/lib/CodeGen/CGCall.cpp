@@ -31,7 +31,6 @@
 #include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/Attributes.h"
-#include "llvm/IR/CallSite.h"
 #include "llvm/IR/CallingConv.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/InlineAsm.h"
@@ -168,11 +167,9 @@ static void appendParameterTypes(const CodeGenTypes &CGT,
 static const CGFunctionInfo &
 arrangeLLVMFunctionInfo(CodeGenTypes &CGT, bool instanceMethod,
                         SmallVectorImpl<CanQualType> &prefix,
-                        CanQual<FunctionProtoType> FTP,
-                        const FunctionDecl *FD) {
+                        CanQual<FunctionProtoType> FTP, const FunctionDecl *FD) {
   SmallVector<FunctionProtoType::ExtParameterInfo, 16> paramInfos;
-  RequiredArgs Required =
-      RequiredArgs::forPrototypePlus(FTP, prefix.size(), FD);
+  RequiredArgs Required = RequiredArgs::forPrototypePlus(FTP, prefix.size());
   // FIXME: Kill copy.
   appendParameterTypes(CGT, prefix, paramInfos, FTP);
   CanQualType resultType = FTP->getReturnType().getUnqualifiedType();
@@ -202,8 +199,7 @@ arrangeLLVMFunctionInfo(CodeGenTypes &CGT, bool instanceMethod,
 /// Arrange the argument and result information for a value of the
 /// given freestanding function type.
 const CGFunctionInfo &
-CodeGenTypes::arrangeFreeFunctionType(CanQual<FunctionProtoType> FTP,
-                                      const FunctionDecl *FD) {
+CodeGenTypes::arrangeFreeFunctionType(CanQual<FunctionProtoType> FTP, const FunctionDecl *FD) {
   SmallVector<CanQualType, 16> argTypes;
   return ::arrangeLLVMFunctionInfo(*this, /*instanceMethod=*/false, argTypes,
                                    FTP, FD);
@@ -424,7 +420,7 @@ CodeGenTypes::arrangeCXXConstructorCall(const CallArgList &args,
 
   CanQual<FunctionProtoType> FPT = GetFormalType(D);
   RequiredArgs Required =
-      RequiredArgs::forPrototypePlus(FPT, TotalPrefixArgs + ExtraSuffixArgs, D);
+      RequiredArgs::forPrototypePlus(FPT, TotalPrefixArgs + ExtraSuffixArgs);
   GlobalDecl GD(D, CtorKind);
   CanQualType ResultType = TheCXXABI.HasThisReturn(GD)
                                ? ArgTypes.front()
@@ -650,11 +646,10 @@ CodeGenTypes::arrangeBlockFunctionDeclaration(const FunctionProtoType *proto,
   auto paramInfos = getExtParameterInfosForCall(proto, 1, params.size());
   auto argTypes = getArgTypesForDeclaration(Context, params);
 
-  return arrangeLLVMFunctionInfo(
-      GetReturnType(proto->getReturnType()),
-      /*instanceMethod*/ false, /*chainCall*/ false, argTypes,
-      proto->getExtInfo(), paramInfos,
-      RequiredArgs::forPrototypePlus(proto, 1, nullptr));
+  return arrangeLLVMFunctionInfo(GetReturnType(proto->getReturnType()),
+                                 /*instanceMethod*/ false, /*chainCall*/ false,
+                                 argTypes, proto->getExtInfo(), paramInfos,
+                                 RequiredArgs::forPrototypePlus(proto, 1));
 }
 
 const CGFunctionInfo &
@@ -3398,7 +3393,7 @@ void CallArgList::allocateArgumentMemory(CodeGenFunction &CGF) {
 void CallArgList::freeArgumentMemory(CodeGenFunction &CGF) const {
   if (StackBase) {
     // Restore the stack after the call.
-    llvm::Value *F = CGF.CGM.getIntrinsic(llvm::Intrinsic::stackrestore);
+    llvm::Function *F = CGF.CGM.getIntrinsic(llvm::Intrinsic::stackrestore);
     CGF.Builder.CreateCall(F, StackBase);
   }
 }
@@ -3485,7 +3480,8 @@ void CodeGenFunction::EmitCallArgs(
     auto T = Builder.getIntNTy(Context.getTypeSize(SizeTy));
     assert(EmittedArg.getScalarVal() && "We emitted nothing for the arg?");
     llvm::Value *V = evaluateOrEmitBuiltinObjectSize(Arg, PS->getType(), T,
-                                                     EmittedArg.getScalarVal());
+                                                     EmittedArg.getScalarVal(),
+                                                     /*IsDynamic=*/false);
     Args.add(RValue::get(V), SizeTy);
     // If we're emitting args in reverse, be sure to do so with
     // pass_object_size, as well.
@@ -3785,33 +3781,29 @@ void CodeGenFunction::EmitNoreturnRuntimeCallOrInvoke(llvm::Value *callee,
 }
 
 /// Emits a call or invoke instruction to the given nullary runtime function.
-llvm::CallSite
-CodeGenFunction::EmitRuntimeCallOrInvoke(llvm::Value *callee,
-                                         const Twine &name) {
+llvm::CallBase *CodeGenFunction::EmitRuntimeCallOrInvoke(llvm::Value *callee,
+                                                         const Twine &name) {
   return EmitRuntimeCallOrInvoke(callee, None, name);
 }
 
 /// Emits a call or invoke instruction to the given runtime function.
-llvm::CallSite
-CodeGenFunction::EmitRuntimeCallOrInvoke(llvm::Value *callee,
-                                         ArrayRef<llvm::Value*> args,
-                                         const Twine &name) {
-  llvm::CallSite callSite = EmitCallOrInvoke(callee, args, name);
-  callSite.setCallingConv(getRuntimeCC());
-  return callSite;
+llvm::CallBase *CodeGenFunction::EmitRuntimeCallOrInvoke(
+    llvm::Value *callee, ArrayRef<llvm::Value *> args, const Twine &name) {
+  llvm::CallBase *call = EmitCallOrInvoke(callee, args, name);
+  call->setCallingConv(getRuntimeCC());
+  return call;
 }
 
 /// Emits a call or invoke instruction to the given function, depending
 /// on the current state of the EH stack.
-llvm::CallSite
-CodeGenFunction::EmitCallOrInvoke(llvm::Value *Callee,
-                                  ArrayRef<llvm::Value *> Args,
-                                  const Twine &Name) {
+llvm::CallBase *CodeGenFunction::EmitCallOrInvoke(llvm::Value *Callee,
+                                                  ArrayRef<llvm::Value *> Args,
+                                                  const Twine &Name) {
   llvm::BasicBlock *InvokeDest = getInvokeDest();
   SmallVector<llvm::OperandBundleDef, 1> BundleList =
       getBundlesForFunclet(Callee);
 
-  llvm::Instruction *Inst;
+  llvm::CallBase *Inst;
   if (!InvokeDest)
     Inst = Builder.CreateCall(Callee, Args, BundleList, Name);
   else {
@@ -3826,7 +3818,7 @@ CodeGenFunction::EmitCallOrInvoke(llvm::Value *Callee,
   if (CGM.getLangOpts().ObjCAutoRefCount)
     AddObjCARCExceptionMetadata(Inst);
 
-  return llvm::CallSite(Inst);
+  return Inst;
 }
 
 void CodeGenFunction::deferPlaceholderReplacement(llvm::Instruction *Old,
@@ -3838,7 +3830,7 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
                                  const CGCallee &Callee,
                                  ReturnValueSlot ReturnValue,
                                  const CallArgList &CallArgs,
-                                 llvm::Instruction **callOrInvoke,
+                                 llvm::CallBase **callOrInvoke,
                                  SourceLocation Loc) {
   // FIXME: We no longer need the types from CallArgs; lift up and simplify.
 
@@ -4396,22 +4388,21 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
       getBundlesForFunclet(CalleePtr);
 
   // Emit the actual call/invoke instruction.
-  llvm::CallSite CS;
+  llvm::CallBase *CI;
   if (!InvokeDest) {
-    CS = Builder.CreateCall(CalleePtr, IRCallArgs, BundleList);
+    CI = Builder.CreateCall(CalleePtr, IRCallArgs, BundleList);
   } else {
     llvm::BasicBlock *Cont = createBasicBlock("invoke.cont");
-    CS = Builder.CreateInvoke(CalleePtr, Cont, InvokeDest, IRCallArgs,
+    CI = Builder.CreateInvoke(CalleePtr, Cont, InvokeDest, IRCallArgs,
                               BundleList);
     EmitBlock(Cont);
   }
-  llvm::Instruction *CI = CS.getInstruction();
   if (callOrInvoke)
     *callOrInvoke = CI;
 
   // Apply the attributes and calling convention.
-  CS.setAttributes(Attrs);
-  CS.setCallingConv(static_cast<llvm::CallingConv::ID>(CallingConv));
+  CI->setAttributes(Attrs);
+  CI->setCallingConv(static_cast<llvm::CallingConv::ID>(CallingConv));
 
   // Apply various metadata.
 
@@ -4426,7 +4417,7 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
   // Insert instrumentation or attach profile metadata at indirect call sites.
   // For more details, see the comment before the definition of
   // IPVK_IndirectCallTarget in InstrProfData.inc.
-  if (!CS.getCalledFunction())
+  if (!CI->getCalledFunction())
     PGO.valueProfile(Builder, llvm::IPVK_IndirectCallTarget,
                      CI, CalleePtr);
 
@@ -4447,16 +4438,29 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
   // If the call doesn't return, finish the basic block and clear the
   // insertion point; this allows the rest of IRGen to discard
   // unreachable code.
-  if (CS.doesNotReturn()) {
+  if (CI->doesNotReturn()) {
     if (UnusedReturnSizePtr)
       PopCleanupBlock();
 
     // Strip away the noreturn attribute to better diagnose unreachable UB.
     if (SanOpts.has(SanitizerKind::Unreachable)) {
-      if (auto *F = CS.getCalledFunction())
+      // Also remove from function since CallBase::hasFnAttr additionally checks
+      // attributes of the called function.
+      if (auto *F = CI->getCalledFunction())
         F->removeFnAttr(llvm::Attribute::NoReturn);
-      CS.removeAttribute(llvm::AttributeList::FunctionIndex,
-                         llvm::Attribute::NoReturn);
+      CI->removeAttribute(llvm::AttributeList::FunctionIndex,
+                          llvm::Attribute::NoReturn);
+
+      // Avoid incompatibility with ASan which relies on the `noreturn`
+      // attribute to insert handler calls.
+      if (SanOpts.has(SanitizerKind::Address)) {
+        SanitizerScope SanScope(this);
+        llvm::IRBuilder<>::InsertPointGuard IPGuard(Builder);
+        Builder.SetInsertPoint(CI);
+        auto *FnType = llvm::FunctionType::get(CGM.VoidTy, /*isVarArg=*/false);
+        auto *Fn = CGM.CreateRuntimeFunction(FnType, "__asan_handle_no_return");
+        EmitNounwindRuntimeCall(Fn);
+      }
     }
 
     EmitUnreachable(Loc);

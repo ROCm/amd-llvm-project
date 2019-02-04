@@ -448,20 +448,23 @@ _Unwind_GetRegionStart(struct _Unwind_Context *context) {
 static int
 _unw_init_seh(unw_cursor_t *cursor, CONTEXT *context) {
 #ifdef _LIBUNWIND_TARGET_X86_64
-  new ((void *)cursor) UnwindCursor<LocalAddressSpace, Registers_x86_64>(
-      context, LocalAddressSpace::sThisAddressSpace);
+  new (reinterpret_cast<UnwindCursor<LocalAddressSpace, Registers_x86_64> *>(cursor))
+      UnwindCursor<LocalAddressSpace, Registers_x86_64>(
+          context, LocalAddressSpace::sThisAddressSpace);
   auto *co = reinterpret_cast<AbstractUnwindCursor *>(cursor);
   co->setInfoBasedOnIPRegister();
   return UNW_ESUCCESS;
 #elif defined(_LIBUNWIND_TARGET_ARM)
-  new ((void *)cursor) UnwindCursor<LocalAddressSpace, Registers_arm>(
-      context, LocalAddressSpace::sThisAddressSpace);
+  new (reinterpret_cast<UnwindCursor<LocalAddressSpace, Registers_arm> *>(cursor))
+      UnwindCursor<LocalAddressSpace, Registers_arm>(
+          context, LocalAddressSpace::sThisAddressSpace);
   auto *co = reinterpret_cast<AbstractUnwindCursor *>(cursor);
   co->setInfoBasedOnIPRegister();
   return UNW_ESUCCESS;
 #elif defined(_LIBUNWIND_TARGET_AARCH64)
-  new ((void *)cursor) UnwindCursor<LocalAddressSpace, Registers_arm64>(
-      context, LocalAddressSpace::sThisAddressSpace);
+  new (reinterpret_cast<UnwindCursor<LocalAddressSpace, Registers_arm64> *>(cursor))
+      UnwindCursor<LocalAddressSpace, Registers_arm64>(
+          context, LocalAddressSpace::sThisAddressSpace);
   auto *co = reinterpret_cast<AbstractUnwindCursor *>(cursor);
   co->setInfoBasedOnIPRegister();
   return UNW_ESUCCESS;

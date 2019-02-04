@@ -162,6 +162,9 @@ class CodeGenTypes {
 
   llvm::SmallSet<const Type *, 8> RecordsWithOpaqueMemberPointers;
 
+  /// Helper for ConvertType.
+  llvm::Type *ConvertFunctionTypeInternal(QualType FT, const FunctionDecl *FD = nullptr);
+
 public:
   CodeGenTypes(CodeGenModule &cgm);
   ~CodeGenTypes();
@@ -272,8 +275,7 @@ public:
   const CGFunctionInfo &arrangeFreeFunctionCall(const CallArgList &Args,
                                                 const FunctionType *Ty,
                                                 bool ChainCall);
-  const CGFunctionInfo &arrangeFreeFunctionType(CanQual<FunctionProtoType> Ty,
-                                                const FunctionDecl *FD);
+  const CGFunctionInfo &arrangeFreeFunctionType(CanQual<FunctionProtoType> Ty, const FunctionDecl *FD);
   const CGFunctionInfo &arrangeFreeFunctionType(CanQual<FunctionNoProtoType> Ty);
 
   /// A nullary function is a freestanding function of type 'void ()'.

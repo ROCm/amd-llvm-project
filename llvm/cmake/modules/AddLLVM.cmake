@@ -380,7 +380,7 @@ endfunction(set_windows_version_resource_properties)
 function(llvm_add_library name)
   cmake_parse_arguments(ARG
     "MODULE;SHARED;STATIC;OBJECT;DISABLE_LLVM_LINK_LLVM_DYLIB;SONAME;NO_INSTALL_RPATH"
-    "OUTPUT_NAME;PLUGIN_TOOL"
+    "OUTPUT_NAME;PLUGIN_TOOL;ENTITLEMENTS"
     "ADDITIONAL_HEADERS;DEPENDS;LINK_COMPONENTS;LINK_LIBS;OBJLIBS"
     ${ARGN})
   list(APPEND LLVM_COMMON_DEPENDS ${ARG_DEPENDS})
@@ -584,7 +584,7 @@ function(llvm_add_library name)
 
   if(ARG_SHARED OR ARG_MODULE)
     llvm_externalize_debuginfo(${name})
-    llvm_codesign(${name})
+    llvm_codesign(${name} ENTITLEMENTS ${ARG_ENTITLEMENTS})
   endif()
 endfunction()
 
@@ -911,18 +911,28 @@ macro(add_llvm_utility name)
 
   add_llvm_executable(${name} DISABLE_LLVM_LINK_LLVM_DYLIB ${ARGN})
   set_target_properties(${name} PROPERTIES FOLDER "Utils")
-  if( LLVM_INSTALL_UTILS AND LLVM_BUILD_UTILS )
-    install (TARGETS ${name}
-      RUNTIME DESTINATION ${LLVM_UTILS_INSTALL_DIR}
-      COMPONENT ${name})
-    if (NOT LLVM_ENABLE_IDE)
-      add_llvm_install_targets(install-${name}
-                               DEPENDS ${name}
-                               COMPONENT ${name})
+  if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY)
+    if (LLVM_INSTALL_UTILS AND LLVM_BUILD_UTILS)
+      if (${name} IN_LIST LLVM_DISTRIBUTION_COMPONENTS OR
+          NOT LLVM_DISTRIBUTION_COMPONENTS)
+        set(export_to_llvmexports EXPORT LLVMExports)
+        set_property(GLOBAL PROPERTY LLVM_HAS_EXPORTS True)
+      endif()
+
+      install(TARGETS ${name}
+              ${export_to_llvmexports}
+              RUNTIME DESTINATION ${LLVM_UTILS_INSTALL_DIR}
+              COMPONENT ${name})
+
+      if (NOT LLVM_ENABLE_IDE)
+        add_llvm_install_targets(install-${name}
+                                 DEPENDS ${name}
+                                 COMPONENT ${name})
+      endif()
+      set_property(GLOBAL APPEND PROPERTY LLVM_EXPORTS ${name})
+    elseif(LLVM_BUILD_UTILS)
+      set_property(GLOBAL APPEND PROPERTY LLVM_EXPORTS_BUILDTREE_ONLY ${name})
     endif()
-    set_property(GLOBAL APPEND PROPERTY LLVM_EXPORTS ${name})
-  elseif( LLVM_BUILD_UTILS )
-    set_property(GLOBAL APPEND PROPERTY LLVM_EXPORTS_BUILDTREE_ONLY ${name})
   endif()
 endmacro(add_llvm_utility name)
 

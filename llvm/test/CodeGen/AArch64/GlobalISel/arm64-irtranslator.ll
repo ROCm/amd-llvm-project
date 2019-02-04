@@ -2315,3 +2315,20 @@ define float @test_sin_f32(float %x) {
   %y = call float @llvm.sin.f32(float %x)
   ret float %y
 }
+
+declare float @llvm.sqrt.f32(float)
+define float @test_sqrt_f32(float %x) {
+  ; CHECK-LABEL: name:            test_sqrt_f32
+  ; CHECK: %{{[0-9]+}}:_(s32) = G_FSQRT %{{[0-9]+}}
+  %y = call float @llvm.sqrt.f32(float %x)
+  ret float %y
+}
+
+; CHECK-LABEL: name: test_llvm.aarch64.neon.ld3.v4i32.p0i32
+; CHECK: %1:_(s384) = G_INTRINSIC_W_SIDE_EFFECTS intrinsic(@llvm.aarch64.neon.ld3), %0(p0) :: (load 48 from %ir.ptr, align 64)
+define void @test_llvm.aarch64.neon.ld3.v4i32.p0i32(i32* %ptr) {
+  %arst = call { <4 x i32>, <4 x i32>, <4 x i32> } @llvm.aarch64.neon.ld3.v4i32.p0i32(i32* %ptr)
+  ret void
+}
+
+declare { <4 x i32>, <4 x i32>, <4 x i32> } @llvm.aarch64.neon.ld3.v4i32.p0i32(i32*) #3
