@@ -1147,53 +1147,54 @@ static bool OptimizeNoopCopyExpression(CastInst *CI, const TargetLowering &TLI,
   return SinkCast(CI);
 }
 
+static void replaceMathCmpWithIntrinsic(BinaryOperator *BO, CmpInst *Cmp,
+                                        Instruction *InsertPt,
+                                        Intrinsic::ID IID) {
+  IRBuilder<> Builder(InsertPt);
+  Value *MathOV = Builder.CreateBinaryIntrinsic(IID, BO->getOperand(0),
+                                                BO->getOperand(1));
+  Value *Math = Builder.CreateExtractValue(MathOV, 0, "math");
+  Value *OV = Builder.CreateExtractValue(MathOV, 1, "ov");
+  BO->replaceAllUsesWith(Math);
+  Cmp->replaceAllUsesWith(OV);
+  BO->eraseFromParent();
+  Cmp->eraseFromParent();
+}
+
 /// Try to combine the compare into a call to the llvm.uadd.with.overflow
 /// intrinsic. Return true if any changes were made.
-static bool combineToUAddWithOverflow(CmpInst *Cmp, const TargetLowering &TLI) {
-  // TODO: Why is this transform limited by this condition?
-  if (TLI.hasMultipleConditionRegisters())
-    return false;
-
+static bool combineToUAddWithOverflow(CmpInst *Cmp, const TargetLowering &TLI,
+                                      const DataLayout &DL) {
   Value *A, *B;
-  Instruction *AddI;
-  if (!match(Cmp,
-             m_UAddWithOverflow(m_Value(A), m_Value(B), m_Instruction(AddI))))
+  BinaryOperator *Add;
+  if (!match(Cmp, m_UAddWithOverflow(m_Value(A), m_Value(B), m_BinOp(Add))))
     return false;
 
-  Type *Ty = AddI->getType();
+  // Allow the transform as long as we have an integer type that is not
+  // obviously illegal and unsupported.
+  Type *Ty = Add->getType();
   if (!isa<IntegerType>(Ty))
     return false;
+  EVT CodegenVT = TLI.getValueType(DL, Ty);
+  if (!CodegenVT.isSimple() && TLI.isOperationExpand(ISD::UADDO, CodegenVT))
+    return false;
 
-  // We don't want to move around uses of condition values this late, so we we
+  // We don't want to move around uses of condition values this late, so we
   // check if it is legal to create the call to the intrinsic in the basic
-  // block containing the icmp:
-  if (AddI->getParent() != Cmp->getParent() && !AddI->hasOneUse())
+  // block containing the icmp.
+  if (Add->getParent() != Cmp->getParent() && !Add->hasOneUse())
     return false;
 
 #ifndef NDEBUG
   // Someday m_UAddWithOverflow may get smarter, but this is a safe assumption
   // for now:
-  if (AddI->hasOneUse())
-    assert(*AddI->user_begin() == Cmp && "expected!");
+  if (Add->hasOneUse())
+    assert(*Add->user_begin() == Cmp && "expected!");
 #endif
 
-  Module *M = Cmp->getModule();
-  Function *F = Intrinsic::getDeclaration(M, Intrinsic::uadd_with_overflow, Ty);
-  Instruction *InsertPt = AddI->hasOneUse() ? Cmp : AddI;
-  DebugLoc Loc = Cmp->getDebugLoc();
-  Instruction *UAddWithOverflow = CallInst::Create(F, {A, B}, "uadd.overflow",
-                                                   InsertPt);
-  UAddWithOverflow->setDebugLoc(Loc);
-  Instruction *UAdd = ExtractValueInst::Create(UAddWithOverflow, 0, "uadd",
-                                               InsertPt);
-  UAdd->setDebugLoc(Loc);
-  Instruction *Overflow = ExtractValueInst::Create(UAddWithOverflow, 1,
-                                                   "overflow", InsertPt);
-  Overflow->setDebugLoc(Loc);
-  Cmp->replaceAllUsesWith(Overflow);
-  AddI->replaceAllUsesWith(UAdd);
-  Cmp->eraseFromParent();
-  AddI->eraseFromParent();
+  Instruction *InPt = Add->hasOneUse() ? cast<Instruction>(Cmp)
+                                       : cast<Instruction>(Add);
+  replaceMathCmpWithIntrinsic(Add, Cmp, InPt, Intrinsic::uadd_with_overflow);
   return true;
 }
 
@@ -1263,11 +1264,12 @@ static bool sinkCmpExpression(CmpInst *Cmp, const TargetLowering &TLI) {
   return MadeChange;
 }
 
-static bool optimizeCmpExpression(CmpInst *Cmp, const TargetLowering &TLI) {
+static bool optimizeCmpExpression(CmpInst *Cmp, const TargetLowering &TLI,
+                                  const DataLayout &DL) {
   if (sinkCmpExpression(Cmp, TLI))
     return true;
 
-  if (combineToUAddWithOverflow(Cmp, TLI))
+  if (combineToUAddWithOverflow(Cmp, TLI, DL))
     return true;
 
   return false;
@@ -6714,7 +6716,7 @@ bool CodeGenPrepare::optimizeInst(Instruction *I, bool &ModifiedDT) {
   }
 
   if (CmpInst *CI = dyn_cast<CmpInst>(I))
-    if (TLI && optimizeCmpExpression(CI, *TLI))
+    if (TLI && optimizeCmpExpression(CI, *TLI, *DL))
       return true;
 
   if (LoadInst *LI = dyn_cast<LoadInst>(I)) {
