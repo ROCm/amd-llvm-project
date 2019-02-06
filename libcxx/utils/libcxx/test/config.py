@@ -547,10 +547,10 @@ class Configuration(object):
         self.cxx.flags += ['-v']
         sysroot = self.get_lit_conf('sysroot')
         if sysroot:
-            self.cxx.flags += ['--sysroot', sysroot]
+            self.cxx.flags += ['--sysroot=' + sysroot]
         gcc_toolchain = self.get_lit_conf('gcc_toolchain')
         if gcc_toolchain:
-            self.cxx.flags += ['-gcc-toolchain', gcc_toolchain]
+            self.cxx.flags += ['--gcc-toolchain=' + gcc_toolchain]
         # NOTE: the _DEBUG definition must preceed the triple check because for
         # the Windows build of libc++, the forced inclusion of a header requires
         # that _DEBUG is defined.  Incorrect ordering will result in -target
@@ -559,8 +559,8 @@ class Configuration(object):
             self.cxx.compile_flags += ['-D_DEBUG']
         if self.use_target:
             if not self.cxx.addFlagIfSupported(
-                    ['-target', self.config.target_triple]):
-                self.lit_config.warning('use_target is true but -target is '\
+                    ['--target=' + self.config.target_triple]):
+                self.lit_config.warning('use_target is true but --target is '\
                         'not supported by the compiler')
         if self.use_deployment:
             arch, name, version = self.config.deployment
@@ -1142,6 +1142,18 @@ class Configuration(object):
         self.config.target_triple = arch + '-apple-' + name + version
         self.lit_config.note(
             "computed target_triple as: %r" % self.config.target_triple)
+
+        # Throwing bad_optional_access, bad_variant_access and bad_any_cast is
+        # supported starting in macosx10.14.
+        if name == 'macosx' and version in ('10.%s' % v for v in range(7, 14)):
+            self.config.available_features.add('dylib-has-no-bad_optional_access')
+            self.lit_config.note("throwing bad_optional_access is not supported by the deployment target")
+
+            self.config.available_features.add('dylib-has-no-bad_variant_access')
+            self.lit_config.note("throwing bad_variant_access is not supported by the deployment target")
+
+            self.config.available_features.add('dylib-has-no-bad_any_cast')
+            self.lit_config.note("throwing bad_any_cast is not supported by the deployment target")
 
     def configure_env(self):
         self.target_info.configure_env(self.exec_env)
