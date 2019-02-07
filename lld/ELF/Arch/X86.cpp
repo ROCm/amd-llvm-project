@@ -23,6 +23,7 @@ namespace {
 class X86 : public TargetInfo {
 public:
   X86();
+  int getTlsGdRelaxSkip(RelType Type) const override;
   RelExpr getRelExpr(RelType Type, const Symbol &S,
                      const uint8_t *Loc) const override;
   int64_t getImplicitAddend(const uint8_t *Buf, RelType Type) const override;
@@ -58,7 +59,6 @@ X86::X86() {
   GotPltEntrySize = 4;
   PltEntrySize = 16;
   PltHeaderSize = 16;
-  TlsGdRelaxSkip = 2;
   TrapInstr = {0xcc, 0xcc, 0xcc, 0xcc}; // 0xcc = INT3
 
   // Align to the non-PAE large page size (known as a superpage or huge page).
@@ -66,8 +66,20 @@ X86::X86() {
   DefaultImageBase = 0x400000;
 }
 
+int X86::getTlsGdRelaxSkip(RelType Type) const {
+  return 2;
+}
+
 RelExpr X86::getRelExpr(RelType Type, const Symbol &S,
                         const uint8_t *Loc) const {
+  // There are 4 different TLS variable models with varying degrees of
+  // flexibility and performance. LocalExec and InitialExec models are fast but
+  // less-flexible models. If they are in use, we set DF_STATIC_TLS flag in the
+  // dynamic section to let runtime know about that.
+  if (Type == R_386_TLS_LE || Type == R_386_TLS_LE_32 || Type == R_386_TLS_IE ||
+      Type == R_386_TLS_GOTIE)
+    Config->HasStaticTlsModel = true;
+
   switch (Type) {
   case R_386_8:
   case R_386_16:

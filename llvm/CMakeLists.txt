@@ -104,7 +104,7 @@ endif()
 # LLVM_EXTERNAL_${project}_SOURCE_DIR using LLVM_ALL_PROJECTS
 # This allows an easy way of setting up a build directory for llvm and another
 # one for llvm+clang+... using the same sources.
-set(LLVM_ALL_PROJECTS "clang;libcxx;libcxxabi;libunwind;lldb;compiler-rt;lld;polly;debuginfo-tests")
+set(LLVM_ALL_PROJECTS "clang;compiler-rt;debuginfo-tests;libclc;libcxx;libcxxabi;libunwind;lld;lldb;llgo;llvm;openmp;parallel-libs;polly;pstl")
 set(LLVM_ENABLE_PROJECTS "" CACHE STRING
 	"Semicolon-separated list of projects to build (${LLVM_ALL_PROJECTS}), or \"all\".")
 if( LLVM_ENABLE_PROJECTS STREQUAL "all" )
@@ -239,7 +239,7 @@ endif()
 include(VersionFromVCS)
 
 option(LLVM_APPEND_VC_REV
-  "Embed the version control system revision id in LLVM" ON)
+  "Embed the version control system revision in LLVM" ON)
 
 set(PACKAGE_NAME LLVM)
 set(PACKAGE_STRING "${PACKAGE_NAME} ${PACKAGE_VERSION}")
@@ -791,13 +791,12 @@ set(LLVM_SRPM_USER_BINARY_SPECFILE ${CMAKE_CURRENT_SOURCE_DIR}/llvm.spec.in
 set(LLVM_SRPM_BINARY_SPECFILE ${CMAKE_CURRENT_BINARY_DIR}/llvm.spec)
 set(LLVM_SRPM_DIR "${CMAKE_CURRENT_BINARY_DIR}/srpm")
 
-# SVN_REVISION and GIT_COMMIT get set by the call to add_version_info_from_vcs.
-# DUMMY_VAR contains a version string which we don't care about.
-add_version_info_from_vcs(DUMMY_VAR)
-if ( SVN_REVISION )
-  set(LLVM_RPM_SPEC_REVISION "r${SVN_REVISION}")
-elseif ( GIT_COMMIT )
-  set (LLVM_RPM_SPEC_REVISION "g${GIT_COMMIT}")
+get_source_info(${CMAKE_CURRENT_SOURCE_DIR} revision repository)
+string(LENGTH "${revision}" revision_length)
+if(revision MATCHES "^[0-9]+$" AND revision_length LESS 40)
+  set(LLVM_RPM_SPEC_REVISION "r${revision}")
+else()
+  set(LLVM_RPM_SPEC_REVISION "${revision}")
 endif()
 
 configure_file(

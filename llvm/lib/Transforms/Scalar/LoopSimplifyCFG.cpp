@@ -20,6 +20,7 @@
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/BasicAliasAnalysis.h"
 #include "llvm/Analysis/DependenceAnalysis.h"
+#include "llvm/Analysis/DomTreeUpdater.h"
 #include "llvm/Analysis/GlobalsModRef.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/LoopPass.h"
@@ -28,7 +29,6 @@
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/ScalarEvolutionAliasAnalysis.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
-#include "llvm/IR/DomTreeUpdater.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Scalar/LoopPassManager.h"
@@ -229,8 +229,10 @@ private:
     // Now, all exit blocks that are not marked as live are dead.
     SmallVector<BasicBlock *, 8> ExitBlocks;
     L.getExitBlocks(ExitBlocks);
+    SmallPtrSet<BasicBlock *, 8> UniqueDeadExits;
     for (auto *ExitBlock : ExitBlocks)
-      if (!LiveExitBlocks.count(ExitBlock))
+      if (!LiveExitBlocks.count(ExitBlock) &&
+          UniqueDeadExits.insert(ExitBlock).second)
         DeadExitBlocks.push_back(ExitBlock);
 
     // Whether or not the edge From->To will still be present in graph after the

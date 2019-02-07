@@ -25,6 +25,7 @@ namespace {
 template <class ELFT> class X86_64 : public TargetInfo {
 public:
   X86_64();
+  int getTlsGdRelaxSkip(RelType Type) const override;
   RelExpr getRelExpr(RelType Type, const Symbol &S,
                      const uint8_t *Loc) const override;
   RelType getDynRel(RelType Type) const override;
@@ -65,12 +66,16 @@ template <class ELFT> X86_64<ELFT>::X86_64() {
   GotPltEntrySize = 8;
   PltEntrySize = 16;
   PltHeaderSize = 16;
-  TlsGdRelaxSkip = 2;
   TrapInstr = {0xcc, 0xcc, 0xcc, 0xcc}; // 0xcc = INT3
 
   // Align to the large page size (known as a superpage or huge page).
   // FreeBSD automatically promotes large, superpage-aligned allocations.
   DefaultImageBase = 0x200000;
+}
+
+template <class ELFT>
+int X86_64<ELFT>::getTlsGdRelaxSkip(RelType Type) const {
+  return 2;
 }
 
 template <class ELFT>
@@ -96,6 +101,8 @@ RelExpr X86_64<ELFT>::getRelExpr(RelType Type, const Symbol &S,
     return R_SIZE;
   case R_X86_64_PLT32:
     return R_PLT_PC;
+  case R_X86_64_PC8:
+  case R_X86_64_PC16:
   case R_X86_64_PC32:
   case R_X86_64_PC64:
     return R_PC;
@@ -314,10 +321,12 @@ template <class ELFT>
 void X86_64<ELFT>::relocateOne(uint8_t *Loc, RelType Type, uint64_t Val) const {
   switch (Type) {
   case R_X86_64_8:
+  case R_X86_64_PC8:
     checkUInt(Loc, Val, 8, Type);
     *Loc = Val;
     break;
   case R_X86_64_16:
+  case R_X86_64_PC16:
     checkUInt(Loc, Val, 16, Type);
     write16le(Loc, Val);
     break;
