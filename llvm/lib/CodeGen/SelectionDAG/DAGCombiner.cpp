@@ -7127,13 +7127,48 @@ SDValue DAGCombiner::visitFunnelShift(SDNode *N) {
             N2, APInt(N2.getScalarValueSizeInBits(), BitWidth - 1)))
       return IsFSHL ? N0 : N1;
 
-  // fold (fsh* N0, N1, c) -> (fsh* N0, N1, c % BitWidth)
+  auto IsUndefOrZero = [](SDValue V) {
+    return V.isUndef() || isNullOrNullSplat(V, /*AllowUndefs*/ true);
+  };
+
   if (ConstantSDNode *Cst = isConstOrConstSplat(N2)) {
+    EVT ShAmtTy = N2.getValueType();
+
+    // fold (fsh* N0, N1, c) -> (fsh* N0, N1, c % BitWidth)
     if (Cst->getAPIntValue().uge(BitWidth)) {
       uint64_t RotAmt = Cst->getAPIntValue().urem(BitWidth);
       return DAG.getNode(N->getOpcode(), SDLoc(N), VT, N0, N1,
-                         DAG.getConstant(RotAmt, SDLoc(N), N2.getValueType()));
+                         DAG.getConstant(RotAmt, SDLoc(N), ShAmtTy));
     }
+
+    unsigned ShAmt = Cst->getZExtValue();
+    if (ShAmt == 0)
+      return IsFSHL ? N0 : N1;
+
+    // fold fshl(undef_or_zero, N1, C) -> lshr(N1, BW-C)
+    // fold fshr(undef_or_zero, N1, C) -> lshr(N1, C)
+    // fold fshl(N0, undef_or_zero, C) -> shl(N0, C)
+    // fold fshr(N0, undef_or_zero, C) -> shl(N0, BW-C)
+    if (IsUndefOrZero(N0))
+      return DAG.getNode(ISD::SRL, SDLoc(N), VT, N1,
+                         DAG.getConstant(IsFSHL ? BitWidth - ShAmt : ShAmt,
+                                         SDLoc(N), ShAmtTy));
+    if (IsUndefOrZero(N1))
+      return DAG.getNode(ISD::SHL, SDLoc(N), VT, N0,
+                         DAG.getConstant(IsFSHL ? ShAmt : BitWidth - ShAmt,
+                                         SDLoc(N), ShAmtTy));
+  }
+
+  // fold fshr(undef_or_zero, N1, N2) -> lshr(N1, N2)
+  // fold fshl(N0, undef_or_zero, N2) -> shl(N0, N2)
+  // iff We know the shift amount is in range.
+  // TODO: when is it worth doing SUB(BW, N2) as well?
+  if (isPowerOf2_32(BitWidth)) {
+    APInt ModuloBits(N2.getScalarValueSizeInBits(), BitWidth - 1);
+    if (IsUndefOrZero(N0) && !IsFSHL && DAG.MaskedValueIsZero(N2, ~ModuloBits))
+      return DAG.getNode(ISD::SRL, SDLoc(N), VT, N1, N2);
+    if (IsUndefOrZero(N1) && IsFSHL && DAG.MaskedValueIsZero(N2, ~ModuloBits))
+      return DAG.getNode(ISD::SHL, SDLoc(N), VT, N0, N2);
   }
 
   // fold (fshl N0, N0, N2) -> (rotl N0, N2)
@@ -11912,18 +11947,24 @@ SDValue DAGCombiner::visitFPOW(SDNode *N) {
     return DAG.getNode(ISD::FCBRT, SDLoc(N), VT, N->getOperand(0), Flags);
   }
 
-  // Try to convert x ** (1/4) into square roots.
+  // Try to convert x ** (1/4) and x ** (3/4) into square roots.
   // x ** (1/2) is canonicalized to sqrt, so we do not bother with that case.
   // TODO: This could be extended (using a target hook) to handle smaller
   // power-of-2 fractional exponents.
-  if (ExponentC->getValueAPF().isExactlyValue(0.25)) {
+  bool ExponentIs025 = ExponentC->getValueAPF().isExactlyValue(0.25);
+  bool ExponentIs075 = ExponentC->getValueAPF().isExactlyValue(0.75);
+  if (ExponentIs025 || ExponentIs075) {
     // pow(-0.0, 0.25) = +0.0; sqrt(sqrt(-0.0)) = -0.0.
     // pow(-inf, 0.25) = +inf; sqrt(sqrt(-inf)) =  NaN.
+    // pow(-0.0, 0.75) = +0.0; sqrt(-0.0) * sqrt(sqrt(-0.0)) = +0.0.
+    // pow(-inf, 0.75) = +inf; sqrt(-inf) * sqrt(sqrt(-inf)) =  NaN.
     // For regular numbers, rounding may cause the results to differ.
     // Therefore, we require { nsz ninf afn } for this transform.
     // TODO: We could select out the special cases if we don't have nsz/ninf.
     SDNodeFlags Flags = N->getFlags();
-    if (!Flags.hasNoSignedZeros() || !Flags.hasNoInfs() ||
+
+    // We only need no signed zeros for the 0.25 case.
+    if ((!Flags.hasNoSignedZeros() && ExponentIs025) || !Flags.hasNoInfs() ||
         !Flags.hasApproximateFuncs())
       return SDValue();
 
@@ -11939,7 +11980,11 @@ SDValue DAGCombiner::visitFPOW(SDNode *N) {
     // pow(X, 0.25) --> sqrt(sqrt(X))
     SDLoc DL(N);
     SDValue Sqrt = DAG.getNode(ISD::FSQRT, DL, VT, N->getOperand(0), Flags);
-    return DAG.getNode(ISD::FSQRT, DL, VT, Sqrt, Flags);
+    SDValue SqrtSqrt = DAG.getNode(ISD::FSQRT, DL, VT, Sqrt, Flags);
+    if (ExponentIs025)
+      return SqrtSqrt;
+    // pow(X, 0.75) --> sqrt(X) * sqrt(sqrt(X))
+    return DAG.getNode(ISD::FMUL, DL, VT, Sqrt, SqrtSqrt, Flags);
   }
 
   return SDValue();
@@ -19359,10 +19404,12 @@ SDValue DAGCombiner::FindBetterChain(LSBaseSDNode *N, SDValue OldChain) {
   return DAG.getNode(ISD::TokenFactor, SDLoc(N), MVT::Other, Aliases);
 }
 
+namespace {
 // TODO: Replace with with std::monostate when we move to C++17.
 struct UnitT { } Unit;
 bool operator==(const UnitT &, const UnitT &) { return true; }
 bool operator!=(const UnitT &, const UnitT &) { return false; }
+} // namespace
 
 // This function tries to collect a bunch of potentially interesting
 // nodes to improve the chains of, all at once. This might seem

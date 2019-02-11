@@ -46,6 +46,7 @@ class AtomicRMWInst;
 class BasicBlock;
 class BranchInst;
 class CallInst;
+class CallBrInst;
 class CatchPadInst;
 class CatchReturnInst;
 class CatchSwitchInst;
@@ -732,7 +733,7 @@ public:
                                  SDValue Op);
 
   void populateCallLoweringInfo(TargetLowering::CallLoweringInfo &CLI,
-                                ImmutableCallSite CS, unsigned ArgIdx,
+                                const CallBase *Call, unsigned ArgIdx,
                                 unsigned NumArgs, SDValue Callee,
                                 Type *ReturnTy, bool IsPatchPoint);
 
@@ -796,13 +797,13 @@ public:
   void LowerStatepoint(ImmutableStatepoint ISP,
                        const BasicBlock *EHPadBB = nullptr);
 
-  void LowerCallSiteWithDeoptBundle(ImmutableCallSite CS, SDValue Callee,
+  void LowerCallSiteWithDeoptBundle(const CallBase *Call, SDValue Callee,
                                     const BasicBlock *EHPadBB);
 
   void LowerDeoptimizeCall(const CallInst *CI);
   void LowerDeoptimizingReturn();
 
-  void LowerCallSiteWithDeoptBundleImpl(ImmutableCallSite CS, SDValue Callee,
+  void LowerCallSiteWithDeoptBundleImpl(const CallBase *Call, SDValue Callee,
                                         const BasicBlock *EHPadBB,
                                         bool VarArgDisallowed,
                                         bool ForceVoidReturnTy);
@@ -851,6 +852,7 @@ public:
 private:
   // These all get lowered before this pass.
   void visitInvoke(const InvokeInst &I);
+  void visitCallBr(const CallBrInst &I);
   void visitResume(const ResumeInst &I);
 
   void visitUnary(const User &I, unsigned Opcode);

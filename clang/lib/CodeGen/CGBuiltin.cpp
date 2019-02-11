@@ -1982,6 +1982,12 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
       return RValue::get(ConstantInt::get(ResultType, 0));
 
     Value *ArgValue = EmitScalarExpr(Arg);
+    if (ArgType->isObjCObjectPointerType()) {
+      // Convert Objective-C objects to id because we cannot distinguish between
+      // LLVM types for Obj-C classes as they are opaque.
+      ArgType = CGM.getContext().getObjCIdType();
+      ArgValue = Builder.CreateBitCast(ArgValue, ConvertType(ArgType));
+    }
     Function *F =
         CGM.getIntrinsic(Intrinsic::is_constant, ConvertType(ArgType));
     Value *Result = Builder.CreateCall(F, ArgValue);
@@ -2521,8 +2527,7 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
     // Store the stack pointer to the setjmp buffer.
     Value *StackAddr =
         Builder.CreateCall(CGM.getIntrinsic(Intrinsic::stacksave));
-    Address StackSaveSlot =
-      Builder.CreateConstInBoundsGEP(Buf, 2, getPointerSize());
+    Address StackSaveSlot = Builder.CreateConstInBoundsGEP(Buf, 2);
     Builder.CreateStore(StackAddr, StackSaveSlot);
 
     // Call LLVM's EH setjmp, which is lightweight.

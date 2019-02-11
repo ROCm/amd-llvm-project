@@ -2548,6 +2548,35 @@ void SelectionDAGBuilder::visitInvoke(const InvokeInst &I) {
   InvokeMBB->normalizeSuccProbs();
 
   // Drop into normal successor.
+  DAG.setRoot(DAG.getNode(ISD::BR, getCurSDLoc(), MVT::Other, getControlRoot(),
+                          DAG.getBasicBlock(Return)));
+}
+
+void SelectionDAGBuilder::visitCallBr(const CallBrInst &I) {
+  MachineBasicBlock *CallBrMBB = FuncInfo.MBB;
+
+  // Deopt bundles are lowered in LowerCallSiteWithDeoptBundle, and we don't
+  // have to do anything here to lower funclet bundles.
+  assert(!I.hasOperandBundlesOtherThan(
+             {LLVMContext::OB_deopt, LLVMContext::OB_funclet}) &&
+         "Cannot lower callbrs with arbitrary operand bundles yet!");
+
+  assert(isa<InlineAsm>(I.getCalledValue()) &&
+         "Only know how to handle inlineasm callbr");
+  visitInlineAsm(&I);
+
+  // Retrieve successors.
+  MachineBasicBlock *Return = FuncInfo.MBBMap[I.getDefaultDest()];
+
+  // Update successor info.
+  addSuccessorWithProb(CallBrMBB, Return);
+  for (unsigned i = 0, e = I.getNumIndirectDests(); i < e; ++i) {
+    MachineBasicBlock *Target = FuncInfo.MBBMap[I.getIndirectDest(i)];
+    addSuccessorWithProb(CallBrMBB, Target);
+  }
+  CallBrMBB->normalizeSuccProbs();
+
+  // Drop into default successor.
   DAG.setRoot(DAG.getNode(ISD::BR, getCurSDLoc(),
                           MVT::Other, getControlRoot(),
                           DAG.getBasicBlock(Return)));
@@ -7584,7 +7613,14 @@ void SelectionDAGBuilder::visitInlineAsm(ImmutableCallSite CS) {
 
       // Process the call argument. BasicBlocks are labels, currently appearing
       // only in asm's.
-      if (const BasicBlock *BB = dyn_cast<BasicBlock>(OpInfo.CallOperandVal)) {
+      const Instruction *I = CS.getInstruction();
+      if (isa<CallBrInst>(I) &&
+          (ArgNo - 1) >= (cast<CallBrInst>(I)->getNumArgOperands() -
+                          cast<CallBrInst>(I)->getNumIndirectDests())) {
+        const auto *BA = cast<BlockAddress>(OpInfo.CallOperandVal);
+        EVT VT = TLI.getValueType(DAG.getDataLayout(), BA->getType(), true);
+        OpInfo.CallOperand = DAG.getTargetBlockAddress(BA, VT);
+      } else if (const auto *BB = dyn_cast<BasicBlock>(OpInfo.CallOperandVal)) {
         OpInfo.CallOperand = DAG.getBasicBlock(FuncInfo.MBBMap[BB]);
       } else {
         OpInfo.CallOperand = getValue(OpInfo.CallOperandVal);
@@ -7883,7 +7919,8 @@ void SelectionDAGBuilder::visitInlineAsm(ImmutableCallSite CS) {
   AsmNodeOperands[InlineAsm::Op_InputChain] = Chain;
   if (Flag.getNode()) AsmNodeOperands.push_back(Flag);
 
-  Chain = DAG.getNode(ISD::INLINEASM, getCurSDLoc(),
+  unsigned ISDOpc = isa<CallBrInst>(CS.getInstruction()) ? ISD::INLINEASM_BR : ISD::INLINEASM;
+  Chain = DAG.getNode(ISDOpc, getCurSDLoc(),
                       DAG.getVTList(MVT::Other, MVT::Glue), AsmNodeOperands);
   Flag = Chain.getValue(1);
 
@@ -8095,7 +8132,7 @@ SDValue SelectionDAGBuilder::lowerRangeToAssertZExt(SelectionDAG &DAG,
 /// convention or require stack pointer adjustment. Only a subset of the
 /// intrinsic's operands need to participate in the calling convention.
 void SelectionDAGBuilder::populateCallLoweringInfo(
-    TargetLowering::CallLoweringInfo &CLI, ImmutableCallSite CS,
+    TargetLowering::CallLoweringInfo &CLI, const CallBase *Call,
     unsigned ArgIdx, unsigned NumArgs, SDValue Callee, Type *ReturnTy,
     bool IsPatchPoint) {
   TargetLowering::ArgListTy Args;
@@ -8105,21 +8142,21 @@ void SelectionDAGBuilder::populateCallLoweringInfo(
   // Attributes for args start at offset 1, after the return attribute.
   for (unsigned ArgI = ArgIdx, ArgE = ArgIdx + NumArgs;
        ArgI != ArgE; ++ArgI) {
-    const Value *V = CS->getOperand(ArgI);
+    const Value *V = Call->getOperand(ArgI);
 
     assert(!V->getType()->isEmptyTy() && "Empty type passed to intrinsic.");
 
     TargetLowering::ArgListEntry Entry;
     Entry.Node = getValue(V);
     Entry.Ty = V->getType();
-    Entry.setAttributes(&CS, ArgI);
+    Entry.setAttributes(Call, ArgI);
     Args.push_back(Entry);
   }
 
   CLI.setDebugLoc(getCurSDLoc())
       .setChain(getRoot())
-      .setCallee(CS.getCallingConv(), ReturnTy, Callee, std::move(Args))
-      .setDiscardResult(CS->use_empty())
+      .setCallee(Call->getCallingConv(), ReturnTy, Callee, std::move(Args))
+      .setDiscardResult(Call->use_empty())
       .setIsPatchPoint(IsPatchPoint);
 }
 
@@ -8263,8 +8300,8 @@ void SelectionDAGBuilder::visitPatchpoint(ImmutableCallSite CS,
     IsAnyRegCC ? Type::getVoidTy(*DAG.getContext()) : CS->getType();
 
   TargetLowering::CallLoweringInfo CLI(DAG);
-  populateCallLoweringInfo(CLI, CS, NumMetaOpers, NumCallArgs, Callee, ReturnTy,
-                           true);
+  populateCallLoweringInfo(CLI, cast<CallBase>(CS.getInstruction()),
+                           NumMetaOpers, NumCallArgs, Callee, ReturnTy, true);
   std::pair<SDValue, SDValue> Result = lowerInvokable(CLI, EHPadBB);
 
   SDNode *CallEnd = Result.second.getNode();
