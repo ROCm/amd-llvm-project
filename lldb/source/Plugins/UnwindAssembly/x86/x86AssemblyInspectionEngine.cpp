@@ -8,6 +8,8 @@
 
 #include "x86AssemblyInspectionEngine.h"
 
+#include <memory>
+
 #include "llvm-c/Disassembler.h"
 
 #include "lldb/Core/Address.h"
@@ -665,10 +667,10 @@ bool x86AssemblyInspectionEngine::mov_reg_to_local_stack_frame_p(
   return false;
 }
 
-// ret [0xc9] or [0xc2 imm8] or [0xca imm8]
+// ret [0xc3] or [0xcb] or [0xc2 imm16] or [0xca imm16]
 bool x86AssemblyInspectionEngine::ret_pattern_p() {
   uint8_t *p = m_cur_insn;
-  return *p == 0xc9 || *p == 0xc2 || *p == 0xca || *p == 0xc3;
+  return *p == 0xc3 || *p == 0xc2 || *p == 0xca || *p == 0xcb;
 }
 
 uint32_t x86AssemblyInspectionEngine::extract_4(uint8_t *b) {
@@ -1172,7 +1174,7 @@ bool x86AssemblyInspectionEngine::AugmentUnwindPlanFromCallSite(
       *new_row = *original_last_row;
       new_row->SetOffset(offset);
       unwind_plan.AppendRow(new_row);
-      row.reset(new UnwindPlan::Row());
+      row = std::make_shared<UnwindPlan::Row>();
       *row = *new_row;
       reinstate_unwind_state = false;
       unwind_plan_updated = true;
