@@ -124,18 +124,23 @@ ARMLegalizerInfo::ARMLegalizerInfo(const ARMSubtarget &ST) {
       .legalForCartesianProduct({s1}, {s32, p0})
       .minScalar(1, s32);
 
+  getActionDefinitionsBuilder(G_SELECT).legalForCartesianProduct({s32, p0},
+                                                                 {s1});
+
   // We're keeping these builders around because we'll want to add support for
   // floating point to them.
   auto &LoadStoreBuilder =
       getActionDefinitionsBuilder({G_LOAD, G_STORE})
-          .legalForTypesWithMemSize({
-              {s1, p0, 8},
-              {s8, p0, 8},
-              {s16, p0, 16},
-              {s32, p0, 32},
-              {p0, p0, 32}});
+          .legalForTypesWithMemDesc({
+              {s1, p0, 8, 8},
+              {s8, p0, 8, 8},
+              {s16, p0, 16, 8},
+              {s32, p0, 32, 8},
+              {p0, p0, 32, 8}});
 
   getActionDefinitionsBuilder(G_GEP).legalFor({{p0, s32}});
+
+  getActionDefinitionsBuilder(G_BRCOND).legalFor({s1});
 
   if (ST.isThumb()) {
     // FIXME: merge with the code for non-Thumb.
@@ -166,11 +171,6 @@ ARMLegalizerInfo::ARMLegalizerInfo(const ARMSubtarget &ST) {
         .clampScalar(1, s32, s32)
         .clampScalar(0, s32, s32);
   }
-
-  getActionDefinitionsBuilder(G_SELECT).legalForCartesianProduct({s32, p0},
-                                                                 {s1});
-
-  getActionDefinitionsBuilder(G_BRCOND).legalFor({s1});
 
   // We're keeping these builders around because we'll want to add support for
   // floating point to them.

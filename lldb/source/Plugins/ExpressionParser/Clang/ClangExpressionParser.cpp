@@ -11,7 +11,6 @@
 #include "clang/AST/ExternalASTSource.h"
 #include "clang/AST/PrettyPrinter.h"
 #include "clang/Basic/DiagnosticIDs.h"
-#include "clang/Basic/FileManager.h"
 #include "clang/Basic/SourceLocation.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Basic/Version.h"
@@ -113,24 +112,19 @@ public:
 
   void moduleImport(SourceLocation import_location, clang::ModuleIdPath path,
                     const clang::Module * /*null*/) override {
-    std::vector<ConstString> string_path;
+    SourceModule module;
 
-    for (const std::pair<IdentifierInfo *, SourceLocation> &component : path) {
-      string_path.push_back(ConstString(component.first->getName()));
-    }
+    for (const std::pair<IdentifierInfo *, SourceLocation> &component : path)
+      module.path.push_back(ConstString(component.first->getName()));
 
     StreamString error_stream;
 
     ClangModulesDeclVendor::ModuleVector exported_modules;
-
-    if (!m_decl_vendor.AddModule(string_path, &exported_modules,
-                                 m_error_stream)) {
+    if (!m_decl_vendor.AddModule(module, &exported_modules, m_error_stream))
       m_has_errors = true;
-    }
 
-    for (ClangModulesDeclVendor::ModuleID module : exported_modules) {
+    for (ClangModulesDeclVendor::ModuleID module : exported_modules)
       m_persistent_vars.AddHandLoadedClangModule(module);
-    }
   }
 
   bool hasErrors() { return m_has_errors; }
@@ -495,14 +489,9 @@ ClangExpressionParser::ClangExpressionParser(ExecutionContextScope *exe_scope,
   m_compiler->getDiagnostics().setClient(new ClangDiagnosticManagerAdapter);
 
   // 7. Set up the source management objects inside the compiler
-
-  clang::FileSystemOptions file_system_options;
-  m_file_manager.reset(new clang::FileManager(file_system_options));
-
-  if (!m_compiler->hasSourceManager())
-    m_compiler->createSourceManager(*m_file_manager);
-
   m_compiler->createFileManager();
+  if (!m_compiler->hasSourceManager())
+    m_compiler->createSourceManager(m_compiler->getFileManager());
   m_compiler->createPreprocessor(TU_Complete);
 
   if (ClangModulesDeclVendor *decl_vendor =
@@ -860,9 +849,9 @@ ClangExpressionParser::ParseInternal(DiagnosticManager &diagnostic_manager,
       if (file.Write(expr_text, bytes_written).Success()) {
         if (bytes_written == expr_text_len) {
           file.Close();
-          source_mgr.setMainFileID(
-              source_mgr.createFileID(m_file_manager->getFile(result_path),
-                                      SourceLocation(), SrcMgr::C_User));
+          source_mgr.setMainFileID(source_mgr.createFileID(
+              m_compiler->getFileManager().getFile(result_path),
+              SourceLocation(), SrcMgr::C_User));
           created_main_file = true;
         }
       }
