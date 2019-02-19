@@ -13505,7 +13505,7 @@ Sema::ActOnStartOfFunctionDef(Scope *FnBodyScope, Declarator &D,
   D.setFunctionDefinitionKind(FDK_Definition);
   Decl *DP = HandleDeclarator(ParentScope, D, TemplateParameterLists);
 
-  if (LangOpts.CPlusPlusAMP && SkipBody) {
+  if (LangOpts.CPlusPlusAMP && SkipBody && LangOpts.AMDGPUFunctionCalls) {
     const bool IsGlobal = DP->hasAttr<AnnotateAttr>() &&
       DP->getAttr<AnnotateAttr>()->getAnnotation() == "__HIP_global_function__";
     const bool IsHC = !IsGlobal && DP->hasAttr<CXXAMPRestrictAMPAttr>();

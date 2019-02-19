@@ -90,6 +90,9 @@ void HCCInstallationDetector::AddHCCLibArgs(const llvm::opt::ArgList &Args, llvm
       for(auto&& Lib:HccExtraLibs)
         CmdArgs.push_back(Args.MakeArgString(prefix + Lib));
     }
+
+    if (Args.hasArg(options::OPT_amdgpu_function_calls))
+      CmdArgs.push_back("--amdgpu-func-calls");
   }
 }
 
