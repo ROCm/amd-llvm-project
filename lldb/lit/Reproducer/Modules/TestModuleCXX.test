@@ -1,3 +1,5 @@
+# UNSUPPORTED: system-windows
+
 # Start fresh.
 # RUN: rm -rf %t.root
 # RUN: rm -rf %t.clang-cache
