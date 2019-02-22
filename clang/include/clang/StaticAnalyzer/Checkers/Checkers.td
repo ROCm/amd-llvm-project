@@ -508,6 +508,7 @@ def ValistBase : Checker<"ValistBase">,
 
 def UninitializedChecker : Checker<"Uninitialized">,
   HelpText<"Check for usages of uninitialized (or already released) va_lists.">,
+  Dependencies<[ValistBase]>,
   Documentation<NotDocumented>;
 
 def UnterminatedChecker : Checker<"Unterminated">,
@@ -710,6 +711,11 @@ def MacOSXAPIChecker : Checker<"API">,
 def MacOSKeychainAPIChecker : Checker<"SecKeychainAPI">,
   HelpText<"Check for proper uses of Secure Keychain APIs">,
   Documentation<HasDocumentation>;
+
+def MIGChecker : Checker<"MIG">,
+  HelpText<"Find violations of the Mach Interface Generator "
+           "calling convention">,
+  Documentation<NotDocumented>;
 
 def ObjCPropertyChecker : Checker<"ObjCProperty">,
   HelpText<"Check for proper uses of Objective-C properties">,

@@ -106,9 +106,10 @@ struct WasmSignatureDenseMapInfo {
 struct WasmDataSegment {
   MCSectionWasm *Section;
   StringRef Name;
+  uint32_t InitFlags;
   uint32_t Offset;
   uint32_t Alignment;
-  uint32_t Flags;
+  uint32_t LinkerFlags;
   SmallVector<char, 4> Data;
 };
 
@@ -899,10 +900,14 @@ void WasmObjectWriter::writeDataSection() {
   encodeULEB128(DataSegments.size(), W.OS); // count
 
   for (const WasmDataSegment &Segment : DataSegments) {
-    encodeULEB128(0, W.OS); // memory index
-    W.OS << char(wasm::WASM_OPCODE_I32_CONST);
-    encodeSLEB128(Segment.Offset, W.OS); // offset
-    W.OS << char(wasm::WASM_OPCODE_END);
+    encodeULEB128(Segment.InitFlags, W.OS); // flags
+    if (Segment.InitFlags & wasm::WASM_SEGMENT_HAS_MEMINDEX)
+      encodeULEB128(0, W.OS); // memory index
+    if ((Segment.InitFlags & wasm::WASM_SEGMENT_IS_PASSIVE) == 0) {
+      W.OS << char(wasm::WASM_OPCODE_I32_CONST);
+      encodeSLEB128(Segment.Offset, W.OS); // offset
+      W.OS << char(wasm::WASM_OPCODE_END);
+    }
     encodeULEB128(Segment.Data.size(), W.OS); // size
     Segment.Section->setSectionOffset(W.OS.tell() - Section.ContentsOffset);
     W.OS << Segment.Data; // data
@@ -1013,7 +1018,7 @@ void WasmObjectWriter::writeLinkingMetaDataSection(
     for (const WasmDataSegment &Segment : DataSegments) {
       writeString(Segment.Name);
       encodeULEB128(Segment.Alignment, W.OS);
-      encodeULEB128(Segment.Flags, W.OS);
+      encodeULEB128(Segment.LinkerFlags, W.OS);
     }
     endSection(SubSection);
   }
@@ -1143,7 +1148,6 @@ uint64_t WasmObjectWriter::writeObject(MCAssembler &Asm,
   uint64_t StartOffset = W.OS.tell();
 
   LLVM_DEBUG(dbgs() << "WasmObjectWriter::writeObject\n");
-  MCContext &Ctx = Asm.getContext();
 
   // Collect information from the available symbols.
   SmallVector<WasmFunction, 4> Functions;
@@ -1159,22 +1163,18 @@ uint64_t WasmObjectWriter::writeObject(MCAssembler &Asm,
   // For now, always emit the memory import, since loads and stores are not
   // valid without it. In the future, we could perhaps be more clever and omit
   // it if there are no loads or stores.
-  auto *MemorySym =
-      cast<MCSymbolWasm>(Ctx.getOrCreateSymbol("__linear_memory"));
   wasm::WasmImport MemImport;
-  MemImport.Module = MemorySym->getImportModule();
-  MemImport.Field = MemorySym->getImportName();
+  MemImport.Module = "env";
+  MemImport.Field = "__linear_memory";
   MemImport.Kind = wasm::WASM_EXTERNAL_MEMORY;
   Imports.push_back(MemImport);
 
   // For now, always emit the table section, since indirect calls are not
   // valid without it. In the future, we could perhaps be more clever and omit
   // it if there are no indirect calls.
-  auto *TableSym =
-      cast<MCSymbolWasm>(Ctx.getOrCreateSymbol("__indirect_function_table"));
   wasm::WasmImport TableImport;
-  TableImport.Module = TableSym->getImportModule();
-  TableImport.Field = TableSym->getImportName();
+  TableImport.Module = "env";
+  TableImport.Field = "__indirect_function_table";
   TableImport.Kind = wasm::WASM_EXTERNAL_TABLE;
   TableImport.Table.ElemType = wasm::WASM_TYPE_FUNCREF;
   Imports.push_back(TableImport);
@@ -1253,11 +1253,12 @@ uint64_t WasmObjectWriter::writeObject(MCAssembler &Asm,
       DataSegments.emplace_back();
       WasmDataSegment &Segment = DataSegments.back();
       Segment.Name = SectionName;
+      Segment.InitFlags = Section.getPassive() ? wasm::WASM_SEGMENT_IS_PASSIVE : 0;
       Segment.Offset = DataSize;
       Segment.Section = &Section;
       addData(Segment.Data, Section);
       Segment.Alignment = Log2_32(Section.getAlignment());
-      Segment.Flags = 0;
+      Segment.LinkerFlags = 0;
       DataSize += Segment.Data.size();
       Section.setSegmentIndex(SegmentIndex);
 

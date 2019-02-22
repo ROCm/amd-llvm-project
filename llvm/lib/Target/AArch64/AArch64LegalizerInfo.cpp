@@ -192,12 +192,12 @@ AArch64LegalizerInfo::AArch64LegalizerInfo(const AArch64Subtarget &ST) {
       .widenScalarToNextPow2(0);
 
   getActionDefinitionsBuilder({G_SEXTLOAD, G_ZEXTLOAD})
-      .legalForTypesWithMemSize({{s32, p0, 8},
-                                 {s32, p0, 16},
-                                 {s32, p0, 32},
-                                 {s64, p0, 64},
-                                 {p0, p0, 64},
-                                 {v2s32, p0, 64}})
+      .legalForTypesWithMemDesc({{s32, p0, 8, 8},
+                                 {s32, p0, 16, 8},
+                                 {s32, p0, 32, 8},
+                                 {s64, p0, 64, 8},
+                                 {p0, p0, 64, 8},
+                                 {v2s32, p0, 64, 8}})
       .clampScalar(0, s32, s64)
       .widenScalarToNextPow2(0)
       // TODO: We could support sum-of-pow2's but the lowering code doesn't know
@@ -207,15 +207,15 @@ AArch64LegalizerInfo::AArch64LegalizerInfo(const AArch64Subtarget &ST) {
       .lower();
 
   getActionDefinitionsBuilder(G_LOAD)
-      .legalForTypesWithMemSize({{s8, p0, 8},
-                                 {s16, p0, 16},
-                                 {s32, p0, 32},
-                                 {s64, p0, 64},
-                                 {p0, p0, 64},
-                                 {v2s32, p0, 64}})
+      .legalForTypesWithMemDesc({{s8, p0, 8, 8},
+                                 {s16, p0, 16, 8},
+                                 {s32, p0, 32, 8},
+                                 {s64, p0, 64, 8},
+                                 {p0, p0, 64, 8},
+                                 {v2s32, p0, 64, 8}})
       // These extends are also legal
-      .legalForTypesWithMemSize({{s32, p0, 8},
-                                 {s32, p0, 16}})
+      .legalForTypesWithMemDesc({{s32, p0, 8, 8},
+                                 {s32, p0, 16, 8}})
       .clampScalar(0, s8, s64)
       .widenScalarToNextPow2(0)
       // TODO: We could support sum-of-pow2's but the lowering code doesn't know
@@ -229,12 +229,12 @@ AArch64LegalizerInfo::AArch64LegalizerInfo(const AArch64Subtarget &ST) {
       .clampMaxNumElements(0, s64, 1);
 
   getActionDefinitionsBuilder(G_STORE)
-      .legalForTypesWithMemSize({{s8, p0, 8},
-                                 {s16, p0, 16},
-                                 {s32, p0, 32},
-                                 {s64, p0, 64},
-                                 {p0, p0, 64},
-                                 {v2s32, p0, 64}})
+      .legalForTypesWithMemDesc({{s8, p0, 8, 8},
+                                 {s16, p0, 16, 8},
+                                 {s32, p0, 32, 8},
+                                 {s64, p0, 64, 8},
+                                 {p0, p0, 64, 8},
+                                 {v2s32, p0, 64, 8}})
       .clampScalar(0, s8, s64)
       .widenScalarToNextPow2(0)
       // TODO: We could support sum-of-pow2's but the lowering code doesn't know
@@ -456,6 +456,32 @@ AArch64LegalizerInfo::AArch64LegalizerInfo(const AArch64Subtarget &ST) {
                Query.Types[1].getSizeInBits();
       })
       .minScalarSameAs(1, 0);
+
+  getActionDefinitionsBuilder(G_CTLZ).legalForCartesianProduct(
+      {s32, s64, v8s8, v16s8, v4s16, v8s16, v2s32, v4s32})
+      .scalarize(1);
+
+  getActionDefinitionsBuilder(G_SHUFFLE_VECTOR)
+      .legalIf([=](const LegalityQuery &Query) {
+        const LLT &DstTy = Query.Types[0];
+        const LLT &SrcTy = Query.Types[1];
+        // For now just support the TBL2 variant which needs the source vectors
+        // to be the same size as the dest.
+        if (DstTy != SrcTy)
+          return false;
+        for (auto &Ty : {v2s32, v4s32, v2s64}) {
+          if (DstTy == Ty)
+            return true;
+        }
+        return false;
+      })
+      // G_SHUFFLE_VECTOR can have scalar sources (from 1 x s vectors), we
+      // just want those lowered into G_BUILD_VECTOR
+      .lowerIf([=](const LegalityQuery &Query) {
+        return !Query.Types[1].isVector();
+      })
+      .clampNumElements(0, v4s32, v4s32)
+      .clampNumElements(0, v2s64, v2s64);
 
   computeTables();
   verify(*ST.getInstrInfo());

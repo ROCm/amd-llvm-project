@@ -128,15 +128,13 @@ llvm::PointerType *CGOpenCLRuntime::getGenericVoidPointerType() {
 // all block variables must be initialized at declaration time and may not be
 // reassigned.
 static const BlockExpr *getBlockExpr(const Expr *E) {
-  if (auto Cast = dyn_cast<CastExpr>(E)) {
-    E = Cast->getSubExpr();
-  }
-  if (auto DR = dyn_cast<DeclRefExpr>(E)) {
-    E = cast<VarDecl>(DR->getDecl())->getInit();
-  }
-  E = E->IgnoreImplicit();
-  if (auto Cast = dyn_cast<CastExpr>(E)) {
-    E = Cast->getSubExpr();
+  const Expr *Prev = nullptr; // to make sure we do not stuck in infinite loop.
+  while(!isa<BlockExpr>(E) && E != Prev) {
+    Prev = E;
+    E = E->IgnoreCasts();
+    if (auto DR = dyn_cast<DeclRefExpr>(E)) {
+      E = cast<VarDecl>(DR->getDecl())->getInit();
+    }
   }
   return cast<BlockExpr>(E);
 }
@@ -163,7 +161,10 @@ CGOpenCLRuntime::EnqueuedBlockInfo
 CGOpenCLRuntime::emitOpenCLEnqueuedBlock(CodeGenFunction &CGF, const Expr *E) {
   CGF.EmitScalarExpr(E);
 
+  // The block literal may be assigned to a const variable. Chasing down
+  // to get the block literal.
   const BlockExpr *Block = getBlockExpr(E);
+
   assert(EnqueuedBlockMap.find(Block) != EnqueuedBlockMap.end() &&
          "Block expression not emitted");
 

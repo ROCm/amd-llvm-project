@@ -97,6 +97,9 @@ private:
     unsigned STORE8;
     unsigned LOAD8;
 
+    unsigned ADDrr;
+    unsigned ADDri;
+
     // Used for G_ICMP
     unsigned CMPrr;
     unsigned MOVi;
@@ -105,6 +108,9 @@ private:
     // Used for G_SELECT
     unsigned CMPri;
     unsigned MOVCCr;
+
+    unsigned TSTri;
+    unsigned Bcc;
 
     OpcodeCache(const ARMSubtarget &STI);
   } const Opcodes;
@@ -294,12 +300,18 @@ ARMInstructionSelector::OpcodeCache::OpcodeCache(const ARMSubtarget &STI) {
   STORE_OPCODE(STORE8, STRBi12);
   STORE_OPCODE(LOAD8, LDRBi12);
 
+  STORE_OPCODE(ADDrr, ADDrr);
+  STORE_OPCODE(ADDri, ADDri);
+
   STORE_OPCODE(CMPrr, CMPrr);
   STORE_OPCODE(MOVi, MOVi);
   STORE_OPCODE(MOVCCi, MOVCCi);
 
   STORE_OPCODE(CMPri, CMPri);
   STORE_OPCODE(MOVCCr, MOVCCr);
+
+  STORE_OPCODE(TSTri, TSTri);
+  STORE_OPCODE(Bcc, Bcc);
 #undef MAP_OPCODE
 }
 
@@ -951,13 +963,13 @@ bool ARMInstructionSelector::select(MachineInstr &I,
     return selectShift(ARM_AM::ShiftOpc::lsl, MIB);
   }
   case G_GEP:
-    I.setDesc(TII.get(STI.isThumb2() ? ARM::t2ADDrr : ARM::ADDrr));
+    I.setDesc(TII.get(Opcodes.ADDrr));
     MIB.add(predOps(ARMCC::AL)).add(condCodeOp());
     break;
   case G_FRAME_INDEX:
     // Add 0 to the given frame index and hope it will eventually be folded into
     // the user(s).
-    I.setDesc(TII.get(ARM::ADDri));
+    I.setDesc(TII.get(Opcodes.ADDri));
     MIB.addImm(0).add(predOps(ARMCC::AL)).add(condCodeOp());
     break;
   case G_GLOBAL_VALUE:
@@ -1008,17 +1020,19 @@ bool ARMInstructionSelector::select(MachineInstr &I,
     }
 
     // Set the flags.
-    auto Test = BuildMI(*I.getParent(), I, I.getDebugLoc(), TII.get(ARM::TSTri))
-                    .addReg(I.getOperand(0).getReg())
-                    .addImm(1)
-                    .add(predOps(ARMCC::AL));
+    auto Test =
+        BuildMI(*I.getParent(), I, I.getDebugLoc(), TII.get(Opcodes.TSTri))
+            .addReg(I.getOperand(0).getReg())
+            .addImm(1)
+            .add(predOps(ARMCC::AL));
     if (!constrainSelectedInstRegOperands(*Test, TII, TRI, RBI))
       return false;
 
     // Branch conditionally.
-    auto Branch = BuildMI(*I.getParent(), I, I.getDebugLoc(), TII.get(ARM::Bcc))
-                      .add(I.getOperand(1))
-                      .add(predOps(ARMCC::NE, ARM::CPSR));
+    auto Branch =
+        BuildMI(*I.getParent(), I, I.getDebugLoc(), TII.get(Opcodes.Bcc))
+            .add(I.getOperand(1))
+            .add(predOps(ARMCC::NE, ARM::CPSR));
     if (!constrainSelectedInstRegOperands(*Branch, TII, TRI, RBI))
       return false;
     I.eraseFromParent();

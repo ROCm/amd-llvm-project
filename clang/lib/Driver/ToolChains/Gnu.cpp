@@ -337,6 +337,7 @@ void tools::gnutools::Linker::ConstructLinkerJob(Compilation &C,
   const bool isAndroid = ToolChain.getTriple().isAndroid();
   const bool IsIAMCU = ToolChain.getTriple().isOSIAMCU();
   const bool IsPIE = getPIE(Args, ToolChain);
+  const bool IsStaticPIE = Args.hasArg(options::OPT_static_pie);
   const bool HasCRTBeginEndFiles =
       ToolChain.getTriple().hasEnvironment() ||
       (ToolChain.getTriple().getVendor() != llvm::Triple::MipsTechnologies);
@@ -354,6 +355,12 @@ void tools::gnutools::Linker::ConstructLinkerJob(Compilation &C,
 
   if (IsPIE)
     CmdArgs.push_back("-pie");
+
+  if (IsStaticPIE) {
+    CmdArgs.push_back("-static");
+    CmdArgs.push_back("-pie");
+    CmdArgs.push_back("--no-dynamic-linker");
+  }
 
   if (Args.hasArg(options::OPT_rdynamic))
     CmdArgs.push_back("-export-dynamic");
@@ -404,7 +411,7 @@ void tools::gnutools::Linker::ConstructLinkerJob(Compilation &C,
     if (Args.hasArg(options::OPT_rdynamic))
       CmdArgs.push_back("-export-dynamic");
 
-    if (!Args.hasArg(options::OPT_shared)) {
+    if (!Args.hasArg(options::OPT_shared) && !IsStaticPIE) {
       const std::string Loader =
           D.DyldPrefix + ToolChain.getDynamicLinker(Args);
       CmdArgs.push_back("-dynamic-linker");
@@ -423,6 +430,8 @@ void tools::gnutools::Linker::ConstructLinkerJob(Compilation &C,
           crt1 = "gcrt1.o";
         else if (IsPIE)
           crt1 = "Scrt1.o";
+        else if (IsStaticPIE)
+          crt1 = "rcrt1.o";
         else
           crt1 = "crt1.o";
       }
@@ -440,14 +449,14 @@ void tools::gnutools::Linker::ConstructLinkerJob(Compilation &C,
         crtbegin = isAndroid ? "crtbegin_static.o" : "crtbeginT.o";
       else if (Args.hasArg(options::OPT_shared))
         crtbegin = isAndroid ? "crtbegin_so.o" : "crtbeginS.o";
-      else if (IsPIE)
+      else if (IsPIE || IsStaticPIE)
         crtbegin = isAndroid ? "crtbegin_dynamic.o" : "crtbeginS.o";
       else
         crtbegin = isAndroid ? "crtbegin_dynamic.o" : "crtbegin.o";
 
       if (HasCRTBeginEndFiles)
         CmdArgs.push_back(Args.MakeArgString(ToolChain.GetFilePath(crtbegin)));
-    }
+	}
 
     // Add crtfastmath.o if available and fast math is enabled.
     ToolChain.AddFastMathRuntimeIfAvailable(Args, CmdArgs);
@@ -491,7 +500,7 @@ void tools::gnutools::Linker::ConstructLinkerJob(Compilation &C,
 
   if (!Args.hasArg(options::OPT_nostdlib)) {
     if (!Args.hasArg(options::OPT_nodefaultlibs)) {
-      if (Args.hasArg(options::OPT_static))
+      if (Args.hasArg(options::OPT_static) || IsStaticPIE)
         CmdArgs.push_back("--start-group");
 
       if (NeedsSanitizerDeps)
@@ -520,13 +529,14 @@ void tools::gnutools::Linker::ConstructLinkerJob(Compilation &C,
       if (Args.hasArg(options::OPT_fsplit_stack))
         CmdArgs.push_back("--wrap=pthread_create");
 
-      CmdArgs.push_back("-lc");
+      if (!Args.hasArg(options::OPT_nolibc))
+        CmdArgs.push_back("-lc");
 
       // Add IAMCU specific libs, if needed.
       if (IsIAMCU)
         CmdArgs.push_back("-lgloss");
 
-      if (Args.hasArg(options::OPT_static))
+      if (Args.hasArg(options::OPT_static) || IsStaticPIE)
         CmdArgs.push_back("--end-group");
       else
         AddRunTimeLibs(ToolChain, D, CmdArgs, Args);
@@ -543,7 +553,7 @@ void tools::gnutools::Linker::ConstructLinkerJob(Compilation &C,
       const char *crtend;
       if (Args.hasArg(options::OPT_shared))
         crtend = isAndroid ? "crtend_so.o" : "crtendS.o";
-      else if (IsPIE)
+      else if (IsPIE || IsStaticPIE)
         crtend = isAndroid ? "crtend_android.o" : "crtendS.o";
       else
         crtend = isAndroid ? "crtend_android.o" : "crtend.o";
