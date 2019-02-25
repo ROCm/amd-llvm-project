@@ -269,67 +269,12 @@ AMDGPUTargetInfo::AMDGPUTargetInfo(const llvm::Triple &Triple,
   }
 
   MaxAtomicPromoteWidth = MaxAtomicInlineWidth = 64;
-
-  // If possible, get a TargetInfo for our host triple, so we can match its
-  // types.
-  llvm::Triple HostTriple(Opts.HostTriple);
-  if (AMDGPUTargetInfo::isAMDGCN(HostTriple))
-    return;
-  std::unique_ptr<TargetInfo> HostTarget(AllocateTarget(llvm::Triple(Opts.HostTriple), Opts));
-  if (!HostTarget) {
-    return;
-  }
-
-  PointerWidth = HostTarget->getPointerWidth(/* AddrSpace = */ 0);
-  PointerAlign = HostTarget->getPointerAlign(/* AddrSpace = */ 0);
-  BoolWidth = HostTarget->getBoolWidth();
-  BoolAlign = HostTarget->getBoolAlign();
-  IntWidth = HostTarget->getIntWidth();
-  IntAlign = HostTarget->getIntAlign();
-  HalfWidth = HostTarget->getHalfWidth();
-  HalfAlign = HostTarget->getHalfAlign();
-  FloatWidth = HostTarget->getFloatWidth();
-  FloatAlign = HostTarget->getFloatAlign();
-  DoubleWidth = HostTarget->getDoubleWidth();
-  DoubleAlign = HostTarget->getDoubleAlign();
-  LongWidth = HostTarget->getLongWidth();
-  LongAlign = HostTarget->getLongAlign();
-  LongLongWidth = HostTarget->getLongLongWidth();
-  LongLongAlign = HostTarget->getLongLongAlign();
-  MinGlobalAlign = HostTarget->getMinGlobalAlign();
-  NewAlign = HostTarget->getNewAlign();
-  DefaultAlignForAttributeAligned =
-      HostTarget->getDefaultAlignForAttributeAligned();
-  SizeType = HostTarget->getSizeType();
-  IntMaxType = HostTarget->getIntMaxType();
-  PtrDiffType = HostTarget->getPtrDiffType(/* AddrSpace = */ 0);
-  IntPtrType = HostTarget->getIntPtrType();
-  WCharType = HostTarget->getWCharType();
-  WIntType = HostTarget->getWIntType();
-  Char16Type = HostTarget->getChar16Type();
-  Char32Type = HostTarget->getChar32Type();
-  Int64Type = HostTarget->getInt64Type();
-  SigAtomicType = HostTarget->getSigAtomicType();
-  ProcessIDType = HostTarget->getProcessIDType();
-
-  UseBitFieldTypeAlignment = HostTarget->useBitFieldTypeAlignment();
-  UseZeroLengthBitfieldAlignment = HostTarget->useZeroLengthBitfieldAlignment();
-  UseExplicitBitFieldAlignment = HostTarget->useExplicitBitFieldAlignment();
-  ZeroLengthBitfieldBoundary = HostTarget->getZeroLengthBitfieldBoundary();
-
-  // This is a bit of a lie, but it controls __GCC_ATOMIC_XXX_LOCK_FREE, and
-  // we need those macros to be identical on host and device, because (among
-  // other things) they affect which standard library classes are defined, and
-  // we need all classes to be defined on both the host and device.
-  MaxAtomicInlineWidth = HostTarget->getMaxAtomicInlineWidth();
-
-  // Properties intentionally not copied from host:
-  // - LargeArrayMinWidth, LargeArrayAlign: Not visible across the
-  //   host/device boundary.
-  // - SuitableAlign: Not visible across the host/device boundary, and may
-  //   correctly be different on host/device, e.g. if host has wider vector
-  //   types than device.
-  // - LongDoubleWidth, LongDoubleAlign: TBD
+  // This is a workaround for HIP to get things going until
+  // https://reviews.llvm.org/D57831 is committed.
+#if _WIN32
+  WCharType = UnsignedShort;
+  WIntType = UnsignedShort;
+#endif
 }
 
 void AMDGPUTargetInfo::adjust(LangOptions &Opts) {
