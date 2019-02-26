@@ -224,6 +224,8 @@ LANGOPT(HSAExtension      , 1, 0, "C++AMP Extension for HSA")
 LANGOPT(AutoAuto          , 1, 0, "Enable auto-auto")
 LANGOPT(AutoCompileForAccelerator, 1, 0, "Enable auto-compile-for-accelerator")
 
+LANGOPT(SYCLIsDevice      , 1, 0, "Generate code for SYCL device")
+
 LANGOPT(SizedDeallocation , 1, 0, "sized deallocation")
 LANGOPT(AlignedAllocation , 1, 0, "aligned allocation")
 LANGOPT(AlignedAllocationUnavailable, 1, 0, "aligned allocation functions are unavailable")

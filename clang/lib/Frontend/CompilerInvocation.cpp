@@ -2918,7 +2918,9 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
   // rules for auto-compile-for-accelerator:
   Opts.AutoCompileForAccelerator = Args.hasArg(OPT_fauto_compile_for_accelerator);
 
-  // set CUDA mode for OpenMP target NVPTX if specified in options
+  Opts.SYCLIsDevice = Args.hasArg(options::OPT_fsycl_is_device);
+
+  // Set CUDA mode for OpenMP target NVPTX if specified in options
   Opts.OpenMPCUDAMode = Opts.OpenMPIsDevice && T.isNVPTX() &&
                         Args.hasArg(options::OPT_fopenmp_cuda_mode);
 

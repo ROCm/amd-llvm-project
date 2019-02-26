@@ -2976,22 +2976,6 @@ X86TargetLowering::LowerMemArgument(SDValue Chain, CallingConv::ID CallConv,
   else
     ValVT = VA.getValVT();
 
-  // Calculate SP offset of interrupt parameter, re-arrange the slot normally
-  // taken by a return address.
-  int Offset = 0;
-  if (CallConv == CallingConv::X86_INTR) {
-    // X86 interrupts may take one or two arguments.
-    // On the stack there will be no return address as in regular call.
-    // Offset of last argument need to be set to -4/-8 bytes.
-    // Where offset of the first argument out of two, should be set to 0 bytes.
-    Offset = (Subtarget.is64Bit() ? 8 : 4) * ((i + 1) % Ins.size() - 1);
-    if (Subtarget.is64Bit() && Ins.size() == 2) {
-      // The stack pointer needs to be realigned for 64 bit handlers with error
-      // code, so the argument offset changes by 8 bytes.
-      Offset += 8;
-    }
-  }
-
   // FIXME: For now, all byval parameter objects are marked mutable. This can be
   // changed with more analysis.
   // In case of tail call optimization mark all arguments mutable. Since they
@@ -3004,10 +2988,6 @@ X86TargetLowering::LowerMemArgument(SDValue Chain, CallingConv::ID CallConv,
     // can be improved with deeper analysis.
     int FI = MFI.CreateFixedObject(Bytes, VA.getLocMemOffset(), isImmutable,
                                    /*isAliased=*/true);
-    // Adjust SP offset of interrupt parameter.
-    if (CallConv == CallingConv::X86_INTR) {
-      MFI.setObjectOffset(FI, Offset);
-    }
     return DAG.getFrameIndex(FI, PtrVT);
   }
 
@@ -3060,11 +3040,6 @@ X86TargetLowering::LowerMemArgument(SDValue Chain, CallingConv::ID CallConv,
     MFI.setObjectZExt(FI, true);
   } else if (VA.getLocInfo() == CCValAssign::SExt) {
     MFI.setObjectSExt(FI, true);
-  }
-
-  // Adjust SP offset of interrupt parameter.
-  if (CallConv == CallingConv::X86_INTR) {
-    MFI.setObjectOffset(FI, Offset);
   }
 
   SDValue FIN = DAG.getFrameIndex(FI, PtrVT);
@@ -3155,14 +3130,6 @@ SDValue X86TargetLowering::LowerFormalArguments(
   assert(
       !(isVarArg && canGuaranteeTCO(CallConv)) &&
       "Var args not supported with calling conv' regcall, fastcc, ghc or hipe");
-
-  if (CallConv == CallingConv::X86_INTR) {
-    bool isLegal = Ins.size() == 1 ||
-                   (Ins.size() == 2 && ((Is64Bit && Ins[1].VT == MVT::i64) ||
-                                        (!Is64Bit && Ins[1].VT == MVT::i32)));
-    if (!isLegal)
-      report_fatal_error("X86 interrupts may take one or two arguments");
-  }
 
   // Assign locations to all of the incoming arguments.
   SmallVector<CCValAssign, 16> ArgLocs;
@@ -20209,8 +20176,7 @@ static SDValue LowerXALUO(SDValue Op, SelectionDAG &DAG) {
   std::tie(Value, Overflow) = getX86XALUOOp(Cond, Op, DAG);
 
   SDValue SetCC = getSETCC(Cond, Overflow, DL, DAG);
-  if (Op->getValueType(1) != MVT::i8)
-    SetCC = DAG.getNode(ISD::ZERO_EXTEND, DL, Op->getValueType(1), SetCC);
+  assert(Op->getValueType(1) == MVT::i8 && "Unexpected VT!");
   return DAG.getNode(ISD::MERGE_VALUES, DL, Op->getVTList(), Value, SetCC);
 }
 
@@ -40329,6 +40295,20 @@ static SDValue combineZext(SDNode *N, SelectionDAG &DAG,
   if (SDValue R = combineOrCmpEqZeroToCtlzSrl(N, DAG, DCI, Subtarget))
     return R;
 
+  // TODO: Combine with any target/faux shuffle.
+  if (N0.getOpcode() == X86ISD::PACKUS && N0.getValueSizeInBits() == 128 &&
+      VT.getScalarSizeInBits() == N0.getOperand(0).getScalarValueSizeInBits()) {
+    SDValue N00 = N0.getOperand(0);
+    SDValue N01 = N0.getOperand(1);
+    unsigned NumSrcElts = N00.getValueType().getVectorNumElements();
+    unsigned NumSrcEltBits = N00.getScalarValueSizeInBits();
+    APInt ZeroMask = APInt::getHighBitsSet(NumSrcEltBits, NumSrcEltBits / 2);
+    if ((N00.isUndef() || DAG.MaskedValueIsZero(N00, ZeroMask)) &&
+        (N01.isUndef() || DAG.MaskedValueIsZero(N01, ZeroMask))) {
+      return concatSubVectors(N00, N01, VT, NumSrcElts * 2, DAG, dl, 128);
+    }
+  }
+
   return SDValue();
 }
 
@@ -40959,20 +40939,38 @@ static SDValue combineCMP(SDNode *N, SelectionDAG &DAG) {
   return Op.getValue(1);
 }
 
-static SDValue combineX86AddSub(SDNode *N, SelectionDAG &DAG) {
+static SDValue combineX86AddSub(SDNode *N, SelectionDAG &DAG,
+                                TargetLowering::DAGCombinerInfo &DCI) {
   assert((X86ISD::ADD == N->getOpcode() || X86ISD::SUB == N->getOpcode()) &&
          "Expected X86ISD::ADD or X86ISD::SUB");
 
-  // If we don't use the flag result, simplify back to a simple ADD/SUB.
-  if (N->hasAnyUseOfValue(1))
-    return SDValue();
-
-  SDLoc DL(N);
   SDValue LHS = N->getOperand(0);
   SDValue RHS = N->getOperand(1);
-  SDValue Res = DAG.getNode(X86ISD::ADD == N->getOpcode() ? ISD::ADD : ISD::SUB,
-                            DL, LHS.getSimpleValueType(), LHS, RHS);
-  return DAG.getMergeValues({Res, DAG.getConstant(0, DL, MVT::i32)}, DL);
+  MVT VT = LHS.getSimpleValueType();
+  unsigned GenericOpc = X86ISD::ADD == N->getOpcode() ? ISD::ADD : ISD::SUB;
+
+  // If we don't use the flag result, simplify back to a generic ADD/SUB.
+  if (!N->hasAnyUseOfValue(1)) {
+    SDLoc DL(N);
+    SDValue Res = DAG.getNode(GenericOpc, DL, VT, LHS, RHS);
+    return DAG.getMergeValues({Res, DAG.getConstant(0, DL, MVT::i32)}, DL);
+  }
+
+  // Fold any similar generic ADD/SUB opcodes to reuse this node.
+  auto MatchGeneric = [&](SDValue N0, SDValue N1, bool Negate) {
+    // TODO: Add SUB(RHS, LHS) -> SUB(0, SUB(LHS, RHS)) negation support, this
+    // currently causes regressions as we don't have broad x86sub combines.
+    if (Negate)
+      return;
+    SDValue Ops[] = {N0, N1};
+    SDVTList VTs = DAG.getVTList(N->getValueType(0));
+    if (SDNode *GenericAddSub = DAG.getNodeIfExists(GenericOpc, VTs, Ops))
+      DCI.CombineTo(GenericAddSub, SDValue(N, 0));
+  };
+  MatchGeneric(LHS, RHS, false);
+  MatchGeneric(RHS, LHS, X86ISD::SUB == N->getOpcode());
+
+  return SDValue();
 }
 
 static SDValue combineSBB(SDNode *N, SelectionDAG &DAG) {
@@ -42185,7 +42183,7 @@ SDValue X86TargetLowering::PerformDAGCombine(SDNode *N,
   case ISD::ADD:            return combineAdd(N, DAG, Subtarget);
   case ISD::SUB:            return combineSub(N, DAG, Subtarget);
   case X86ISD::ADD:
-  case X86ISD::SUB:         return combineX86AddSub(N, DAG);
+  case X86ISD::SUB:         return combineX86AddSub(N, DAG, DCI);
   case X86ISD::SBB:         return combineSBB(N, DAG);
   case X86ISD::ADC:         return combineADC(N, DAG, DCI);
   case ISD::MUL:            return combineMul(N, DAG, DCI, Subtarget);

@@ -858,6 +858,13 @@ def fauto_auto : Flag<["-"], "fauto-auto">,
 def fauto_compile_for_accelerator : Flag<["-"], "fauto-compile-for-accelerator">,
   HelpText<"Enable auto-compile-for-accelerator feature">;
 
+//===----------------------------------------------------------------------===//
+// SYCL Options
+//===----------------------------------------------------------------------===//
+
+def fsycl_is_device : Flag<["-"], "fsycl-is-device">,
+  HelpText<"Generate code for SYCL device.">;
+
 } // let Flags = [CC1Option]
 
 //===----------------------------------------------------------------------===//
