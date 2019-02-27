@@ -12432,12 +12432,19 @@ static void maybeCastArgsForHIPGlobalFunction(Sema &S,
   if (ULE->getName().getAsString().find(HIPLaunch) == std::string::npos) {
     return;
   }
-  if (!isa<UnresolvedLookupExpr>(*Args.begin())) return;
+
+  auto F = Args.front();
+  while (!isa<UnresolvedLookupExpr>(F)) {
+    ParenExpr *PE = dyn_cast<ParenExpr>(F);
+    if (!PE)
+      return;
+    F = PE->getSubExpr();
+  }
 
   static constexpr unsigned int IgnoreCnt{5u}; // Skip launch configuration.
 
   FunctionDecl *FD =
-    getBestCandidateForHIP(S, cast<UnresolvedLookupExpr>(*Args.begin()),
+    getBestCandidateForHIP(S, cast<UnresolvedLookupExpr>(F),
                            MultiExprArg{Args.begin() + IgnoreCnt, Args.end()});
 
   if (!FD) return;
