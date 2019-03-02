@@ -1499,8 +1499,7 @@ def AMDGPUFlatWorkGroupSize : InheritableAttr {
   let Spellings = [Clang<"amdgpu_flat_work_group_size",0>,
                    CXX11<"","hc_flat_workgroup_size", 201511>];
   let Args = [ExprArgument<"Min">,
-              ExprArgument<"Max", 1>,
-              StringArgument<"ISA", 1>];
+              ExprArgument<"Max", 1>];
   let Documentation = [AMDGPUFlatWorkGroupSizeDocs];
   let TemplateDependent = 1;
   let Subjects = SubjectList<[Function], ErrorDiag, "kernel functions">;
@@ -1511,8 +1510,7 @@ def AMDGPUWavesPerEU : InheritableAttr {
   let Spellings = [Clang<"amdgpu_waves_per_eu",0>,
                    CXX11<"", "hc_waves_per_eu", 201511>];
   let Args = [ExprArgument<"Min">,
-              ExprArgument<"Max", 1>,
-              StringArgument<"ISA", 1>];
+              ExprArgument<"Max", 1>];
   let Documentation = [AMDGPUWavesPerEUDocs];
   let TemplateDependent = 1;
   let Subjects = SubjectList<[Function], ErrorDiag, "kernel functions">;

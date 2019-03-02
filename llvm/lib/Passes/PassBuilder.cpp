@@ -93,6 +93,7 @@
 #include "llvm/Transforms/Instrumentation/CGProfile.h"
 #include "llvm/Transforms/Instrumentation/ControlHeightReduction.h"
 #include "llvm/Transforms/Instrumentation/GCOVProfiler.h"
+#include "llvm/Transforms/Instrumentation/InstrOrderFile.h"
 #include "llvm/Transforms/Instrumentation/InstrProfiling.h"
 #include "llvm/Transforms/Instrumentation/MemorySanitizer.h"
 #include "llvm/Transforms/Instrumentation/PGOInstrumentation.h"
@@ -211,6 +212,7 @@ static cl::opt<bool>
               cl::desc("Enable control height reduction optimization (CHR)"));
 
 extern cl::opt<bool> EnableHotColdSplit;
+extern cl::opt<bool> EnableOrderFileInstrumentation;
 
 extern cl::opt<bool> FlattenedProfileUsed;
 
@@ -569,7 +571,8 @@ void PassBuilder::addPGOInstrPasses(ModulePassManager &MPM, bool DebugLogging,
     if (!ProfileGenFile.empty())
       Options.InstrProfileOutput = ProfileGenFile;
     Options.DoCounterPromotion = true;
-    MPM.addPass(InstrProfiling(Options));
+    Options.UseBFIInPromotion = false;
+    MPM.addPass(InstrProfiling(Options, false));
   }
 
   if (!ProfileUseFile.empty())
@@ -783,6 +786,9 @@ ModulePassManager PassBuilder::buildModuleOptimizationPipeline(
   // may make globals referenced by available external functions dead and saves
   // running remaining passes on the eliminated functions.
   MPM.addPass(EliminateAvailableExternallyPass());
+
+  if (EnableOrderFileInstrumentation)
+    MPM.addPass(InstrOrderFilePass());
 
   // Do RPO function attribute inference across the module to forward-propagate
   // attributes where applicable.
@@ -1082,7 +1088,7 @@ PassBuilder::buildLTODefaultPipeline(OptimizationLevel Level, bool DebugLogging,
   // FIXME: Is this really an optimization rather than a canonicalization?
   MPM.addPass(ReversePostOrderFunctionAttrsPass());
 
-  // Use inragne annotations on GEP indices to split globals where beneficial.
+  // Use in-range annotations on GEP indices to split globals where beneficial.
   MPM.addPass(GlobalSplitPass());
 
   // Run whole program optimization of virtual call when the list of callees

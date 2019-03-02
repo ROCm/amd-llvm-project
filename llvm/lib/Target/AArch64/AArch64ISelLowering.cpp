@@ -660,14 +660,9 @@ AArch64TargetLowering::AArch64TargetLowering(const TargetMachine &TM,
     // elements smaller than i32, so promote the input to i32 first.
     setOperationPromotedToType(ISD::UINT_TO_FP, MVT::v4i8, MVT::v4i32);
     setOperationPromotedToType(ISD::SINT_TO_FP, MVT::v4i8, MVT::v4i32);
-    setOperationPromotedToType(ISD::UINT_TO_FP, MVT::v4i16, MVT::v4i32);
-    setOperationPromotedToType(ISD::SINT_TO_FP, MVT::v4i16, MVT::v4i32);
-    // i8 and i16 vector elements also need promotion to i32 for v8i8 or v8i16
-    // -> v8f16 conversions.
+    // i8 vector elements also need promotion to i32 for v8i8
     setOperationPromotedToType(ISD::SINT_TO_FP, MVT::v8i8, MVT::v8i32);
     setOperationPromotedToType(ISD::UINT_TO_FP, MVT::v8i8, MVT::v8i32);
-    setOperationPromotedToType(ISD::SINT_TO_FP, MVT::v8i16, MVT::v8i32);
-    setOperationPromotedToType(ISD::UINT_TO_FP, MVT::v8i16, MVT::v8i32);
     // Similarly, there is no direct i32 -> f64 vector conversion instruction.
     setOperationAction(ISD::SINT_TO_FP, MVT::v2i32, Custom);
     setOperationAction(ISD::UINT_TO_FP, MVT::v2i32, Custom);
@@ -677,6 +672,20 @@ AArch64TargetLowering::AArch64TargetLowering(const TargetMachine &TM,
     // conversion happens in two steps: v4i32 -> v4f32 -> v4f16
     setOperationAction(ISD::SINT_TO_FP, MVT::v4i32, Custom);
     setOperationAction(ISD::UINT_TO_FP, MVT::v4i32, Custom);
+
+    if (Subtarget->hasFullFP16()) {
+      setOperationAction(ISD::SINT_TO_FP, MVT::v4i16, Custom);
+      setOperationAction(ISD::UINT_TO_FP, MVT::v4i16, Custom);
+      setOperationAction(ISD::SINT_TO_FP, MVT::v8i16, Custom);
+      setOperationAction(ISD::UINT_TO_FP, MVT::v8i16, Custom);
+    } else {
+      // when AArch64 doesn't have fullfp16 support, promote the input
+      // to i32 first.
+      setOperationPromotedToType(ISD::UINT_TO_FP, MVT::v4i16, MVT::v4i32);
+      setOperationPromotedToType(ISD::SINT_TO_FP, MVT::v4i16, MVT::v4i32);
+      setOperationPromotedToType(ISD::SINT_TO_FP, MVT::v8i16, MVT::v8i32);
+      setOperationPromotedToType(ISD::UINT_TO_FP, MVT::v8i16, MVT::v8i32);
+    }
 
     setOperationAction(ISD::CTLZ,       MVT::v1i64, Expand);
     setOperationAction(ISD::CTLZ,       MVT::v2i64, Expand);
@@ -7779,8 +7788,8 @@ SDValue AArch64TargetLowering::LowerVSETCC(SDValue Op,
 
   // Make v4f16 (only) fcmp operations utilise vector instructions
   // v8f16 support will be a litle more complicated
-  if (LHS.getValueType().getVectorElementType() == MVT::f16) {
-    if (!FullFP16 && LHS.getValueType().getVectorNumElements() == 4) {
+  if (!FullFP16 && LHS.getValueType().getVectorElementType() == MVT::f16) {
+    if (LHS.getValueType().getVectorNumElements() == 4) {
       LHS = DAG.getNode(ISD::FP_EXTEND, dl, MVT::v4f32, LHS);
       RHS = DAG.getNode(ISD::FP_EXTEND, dl, MVT::v4f32, RHS);
       SDValue NewSetcc = DAG.getSetCC(dl, MVT::v4i16, LHS, RHS, CC);
@@ -7790,8 +7799,8 @@ SDValue AArch64TargetLowering::LowerVSETCC(SDValue Op,
       return SDValue();
   }
 
-  assert(LHS.getValueType().getVectorElementType() == MVT::f32 ||
-         LHS.getValueType().getVectorElementType() == MVT::f64);
+  assert((!FullFP16 && LHS.getValueType().getVectorElementType() != MVT::f16) ||
+          LHS.getValueType().getVectorElementType() != MVT::f128);
 
   // Unfortunately, the mapping of LLVM FP CC's onto AArch64 CC's isn't totally
   // clean.  Some of them require two branches to implement.

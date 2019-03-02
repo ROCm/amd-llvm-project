@@ -8760,6 +8760,16 @@ public:
   void AddXConsumedAttr(Decl *D, SourceRange SR, unsigned SpellingIndex,
                         RetainOwnershipKind K, bool IsTemplateInstantiation);
 
+  /// addAMDGPUFlatWorkGroupSizeAttr - Adds an amdgpu_flat_work_group_size
+  /// attribute to a particular declaration.
+  void addAMDGPUFlatWorkGroupSizeAttr(SourceRange AttrRange, Decl *D, Expr *Min,
+                                      Expr *Max, unsigned SpellingListIndex);
+
+  /// addAMDGPUWavePersEUAttr - Adds an amdgpu_waves_per_eu attribute to a
+  /// particular declaration.
+  void addAMDGPUWavesPerEUAttr(SourceRange AttrRange, Decl *D, Expr *Min,
+                               Expr *Max, unsigned SpellingListIndex);
+
   bool checkNSReturnsRetainedReturnType(SourceLocation loc, QualType type);
 
   //===--------------------------------------------------------------------===//
@@ -8880,6 +8890,10 @@ private:
 
   /// Check whether we're allowed to call Callee from the current function.
   void checkOpenMPDeviceFunction(SourceLocation Loc, FunctionDecl *Callee);
+
+  /// Check if the expression is allowed to be used in expressions for the
+  /// OpenMP devices.
+  void checkOpenMPDeviceExpr(const Expr *E);
 
   /// Checks if a type or a declaration is disabled due to the owning extension
   /// being disabled, and emits diagnostic messages if it is disabled.
