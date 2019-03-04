@@ -511,6 +511,8 @@ def hcc_path_EQ : Joined<["--"], "hcc-path=">, Group<i_Group>,
   HelpText<"HCC installation path">;
 def hcc_extra_libs_EQ : Joined<["-", "--"], "hcc-extra-libs=">, Flags<[DriverOption]>,
   HelpText<"Specify hcc extra libraries to be linked in.">;
+def amdgpu_function_calls : Flag<["-"], "amdgpu-function-calls">, Flags<[DriverOption]>,
+  HelpText<"Enable AMD GPU Function Call Support">;
 def cfguard : Flag<["-"], "cfguard">, Flags<[CC1Option]>,
   HelpText<"Emit tables required for Windows Control Flow Guard.">;
 def cl_opt_disable : Flag<["-"], "cl-opt-disable">, Group<opencl_Group>, Flags<[CC1Option]>,

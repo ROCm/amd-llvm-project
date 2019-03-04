@@ -2375,6 +2375,8 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
     Opts.NativeHalfArgsAndReturns = 1;
   }
 
+  Opts.AMDGPUFunctionCalls = Args.hasArg(OPT_amdgpu_function_calls);
+
   // -cl-strict-aliasing needs to emit diagnostic in the case where CL > 1.0.
   // This option should be deprecated for CL > 1.0 because
   // this option was added for compatibility with OpenCL 1.0.
