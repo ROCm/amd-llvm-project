@@ -46,6 +46,7 @@
 #include "lldb/Utility/Status.h"
 #include "lldb/Utility/StructuredData.h"
 #include "lldb/Utility/TraceOptions.h"
+#include "lldb/Utility/UserIDResolver.h"
 #include "lldb/lldb-private.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -150,12 +151,11 @@ public:
     return m_parent_pid != LLDB_INVALID_PROCESS_ID;
   }
 
-  void Dump(Stream &s, Platform *platform) const;
+  void Dump(Stream &s, UserIDResolver &resolver) const;
 
-  static void DumpTableHeader(Stream &s, Platform *platform, bool show_args,
-                              bool verbose);
+  static void DumpTableHeader(Stream &s, bool show_args, bool verbose);
 
-  void DumpAsTableRow(Stream &s, Platform *platform, bool show_args,
+  void DumpAsTableRow(Stream &s, UserIDResolver &resolver, bool show_args,
                       bool verbose) const;
 
 protected:
@@ -2519,6 +2519,10 @@ public:
   ///
   //------------------------------------------------------------------
   void RestoreProcessEvents();
+  
+  bool StateChangedIsHijackedForSynchronousResume();
+
+  bool StateChangedIsExternallyHijacked();
 
   const lldb::ABISP &GetABI();
 
@@ -3210,8 +3214,6 @@ protected:
   Status StopForDestroyOrDetach(lldb::EventSP &exit_event_sp);
 
   virtual Status UpdateAutomaticSignalFiltering();
-
-  bool StateChangedIsExternallyHijacked();
 
   void LoadOperatingSystemPlugin(bool flush);
 
