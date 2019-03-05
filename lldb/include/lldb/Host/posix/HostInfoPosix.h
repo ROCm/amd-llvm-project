@@ -22,7 +22,6 @@ class HostInfoPosix : public HostInfoBase {
 public:
   static size_t GetPageSize();
   static bool GetHostname(std::string &s);
-  static UserIDResolver &GetUserIDResolver();
 
   static uint32_t GetUserID();
   static uint32_t GetGroupID();
@@ -35,6 +34,8 @@ public:
 
   static bool ComputePathRelativeToLibrary(FileSpec &file_spec,
                                            llvm::StringRef dir);
+
+  static UserIDResolver &GetUserIDResolver();
 
 protected:
   static bool ComputeSupportExeDirectory(FileSpec &file_spec);
