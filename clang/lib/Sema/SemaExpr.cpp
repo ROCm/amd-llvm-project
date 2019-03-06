@@ -6293,6 +6293,7 @@ CastKind Sema::PrepareScalarCast(ExprResult &Src, QualType DestTy) {
     case Type::STK_Bool:
       return CK_FixedPointToBoolean;
     case Type::STK_Integral:
+      return CK_FixedPointToIntegral;
     case Type::STK_Floating:
     case Type::STK_IntegralComplex:
     case Type::STK_FloatingComplex:
@@ -6337,10 +6338,7 @@ CastKind Sema::PrepareScalarCast(ExprResult &Src, QualType DestTy) {
     case Type::STK_MemberPointer:
       llvm_unreachable("member pointer type in C");
     case Type::STK_FixedPoint:
-      Diag(Src.get()->getExprLoc(),
-           diag::err_unimplemented_conversion_with_fixed_point_type)
-          << SrcTy;
-      return CK_IntegralCast;
+      return CK_IntegralToFixedPoint;
     }
     llvm_unreachable("Should have returned before this");
 
