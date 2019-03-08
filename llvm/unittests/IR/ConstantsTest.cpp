@@ -490,8 +490,16 @@ bool foldFuncPtrAndConstToNull(LLVMContext &Context, Module *TheModule,
   Constant *TheConstantExpr(
       ConstantExpr::getPtrToInt(Func, ConstantIntType));
 
-  return ConstantExpr::get(Instruction::And, TheConstantExpr,
+
+  bool result = ConstantExpr::get(Instruction::And, TheConstantExpr,
                            TheConstant)->isNullValue();
+
+  if (!TheModule) {
+    // If the Module exists then it will delete the Function.
+    delete Func;
+  }
+
+  return result;
 }
 
 TEST(ConstantsTest, FoldFunctionPtrAlignUnknownAnd2) {
@@ -558,7 +566,6 @@ TEST(ConstantsTest, DontFoldFunctionPtrIfNoModule) {
 
 TEST(ConstantsTest, FoldGlobalVariablePtr) {
   LLVMContext Context;
-
 
   IntegerType *IntType(Type::getInt32Ty(Context));
 
