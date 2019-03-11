@@ -21,7 +21,6 @@
 
 #include <Block.h>
 #include <dispatch/dispatch.h>
-#include <pthread.h>
 
 // DISPATCH_NOESCAPE is only defined on Apple platforms with at least Xcode 8.
 #ifndef DISPATCH_NOESCAPE
@@ -162,7 +161,7 @@ static void invoke_and_release_block(void *param) {
   Block_release(block);
 }
 
-#define DISPATCH_INTERCEPT_B(name, barrier)                                  \
+#define DISPATCH_INTERCEPT_ASYNC_B(name, barrier)                            \
   TSAN_INTERCEPTOR(void, name, dispatch_queue_t q, dispatch_block_t block) { \
     SCOPED_TSAN_INTERCEPTOR(name, q, block);                                 \
     SCOPED_TSAN_INTERCEPTOR_USER_CALLBACK_START();                           \
@@ -190,7 +189,7 @@ static void invoke_and_release_block(void *param) {
     Acquire(thr, pc, (uptr)&new_context);                                    \
   }
 
-#define DISPATCH_INTERCEPT_F(name, barrier)                       \
+#define DISPATCH_INTERCEPT_ASYNC_F(name, barrier)                 \
   TSAN_INTERCEPTOR(void, name, dispatch_queue_t q, void *context, \
                    dispatch_function_t work) {                    \
     SCOPED_TSAN_INTERCEPTOR(name, q, context, work);              \
@@ -216,18 +215,21 @@ static void invoke_and_release_block(void *param) {
     Acquire(thr, pc, (uptr)&new_context);                                     \
   }
 
+#define DISPATCH_INTERCEPT(name, barrier)             \
+  DISPATCH_INTERCEPT_ASYNC_F(name##_async_f, barrier) \
+  DISPATCH_INTERCEPT_ASYNC_B(name##_async, barrier)   \
+  DISPATCH_INTERCEPT_SYNC_F(name##_sync_f, barrier)   \
+  DISPATCH_INTERCEPT_SYNC_B(name##_sync, barrier)
+
 // We wrap dispatch_async, dispatch_sync and friends where we allocate a new
 // context, which is used to synchronize (we release the context before
 // submitting, and the callback acquires it before executing the original
 // callback).
-DISPATCH_INTERCEPT_B(dispatch_async, false)
-DISPATCH_INTERCEPT_B(dispatch_barrier_async, true)
-DISPATCH_INTERCEPT_F(dispatch_async_f, false)
-DISPATCH_INTERCEPT_F(dispatch_barrier_async_f, true)
-DISPATCH_INTERCEPT_SYNC_B(dispatch_sync, false)
-DISPATCH_INTERCEPT_SYNC_B(dispatch_barrier_sync, true)
-DISPATCH_INTERCEPT_SYNC_F(dispatch_sync_f, false)
-DISPATCH_INTERCEPT_SYNC_F(dispatch_barrier_sync_f, true)
+DISPATCH_INTERCEPT(dispatch, false)
+DISPATCH_INTERCEPT(dispatch_barrier, true)
+
+DECLARE_REAL(void, dispatch_after_f, dispatch_time_t when,
+             dispatch_queue_t queue, void *context, dispatch_function_t work)
 
 TSAN_INTERCEPTOR(void, dispatch_after, dispatch_time_t when,
                  dispatch_queue_t queue, dispatch_block_t block) {
@@ -353,6 +355,9 @@ TSAN_INTERCEPTOR(void, dispatch_group_async_f, dispatch_group_t group,
     dispatch_release(group);
   });
 }
+
+DECLARE_REAL(void, dispatch_group_notify_f, dispatch_group_t group,
+             dispatch_queue_t q, void *context, dispatch_function_t work)
 
 TSAN_INTERCEPTOR(void, dispatch_group_notify, dispatch_group_t group,
                  dispatch_queue_t q, dispatch_block_t block) {
@@ -716,6 +721,48 @@ TSAN_INTERCEPTOR(void, dispatch_resume, dispatch_object_t o) {
   Release(thr, pc, (uptr)o);  // Synchronizes with the Acquire() on serial_sync
                               // in dispatch_sync_pre_execute
   return REAL(dispatch_resume)(o);
+}
+
+void InitializeLibdispatchInterceptors() {
+  INTERCEPT_FUNCTION(dispatch_async);
+  INTERCEPT_FUNCTION(dispatch_async_f);
+  INTERCEPT_FUNCTION(dispatch_sync);
+  INTERCEPT_FUNCTION(dispatch_sync_f);
+  INTERCEPT_FUNCTION(dispatch_barrier_async);
+  INTERCEPT_FUNCTION(dispatch_barrier_async_f);
+  INTERCEPT_FUNCTION(dispatch_barrier_sync);
+  INTERCEPT_FUNCTION(dispatch_barrier_sync_f);
+  INTERCEPT_FUNCTION(dispatch_after);
+  INTERCEPT_FUNCTION(dispatch_after_f);
+  INTERCEPT_FUNCTION(dispatch_once);
+  INTERCEPT_FUNCTION(dispatch_once_f);
+  INTERCEPT_FUNCTION(dispatch_semaphore_signal);
+  INTERCEPT_FUNCTION(dispatch_semaphore_wait);
+  INTERCEPT_FUNCTION(dispatch_group_wait);
+  INTERCEPT_FUNCTION(dispatch_group_leave);
+  INTERCEPT_FUNCTION(dispatch_group_async);
+  INTERCEPT_FUNCTION(dispatch_group_async_f);
+  INTERCEPT_FUNCTION(dispatch_group_notify);
+  INTERCEPT_FUNCTION(dispatch_group_notify_f);
+  INTERCEPT_FUNCTION(dispatch_source_set_event_handler);
+  INTERCEPT_FUNCTION(dispatch_source_set_event_handler_f);
+  INTERCEPT_FUNCTION(dispatch_source_set_cancel_handler);
+  INTERCEPT_FUNCTION(dispatch_source_set_cancel_handler_f);
+  INTERCEPT_FUNCTION(dispatch_source_set_registration_handler);
+  INTERCEPT_FUNCTION(dispatch_source_set_registration_handler_f);
+  INTERCEPT_FUNCTION(dispatch_apply);
+  INTERCEPT_FUNCTION(dispatch_apply_f);
+  INTERCEPT_FUNCTION(dispatch_data_create);
+  INTERCEPT_FUNCTION(dispatch_read);
+  INTERCEPT_FUNCTION(dispatch_write);
+  INTERCEPT_FUNCTION(dispatch_io_read);
+  INTERCEPT_FUNCTION(dispatch_io_write);
+  INTERCEPT_FUNCTION(dispatch_io_barrier);
+  INTERCEPT_FUNCTION(dispatch_io_create);
+  INTERCEPT_FUNCTION(dispatch_io_create_with_path);
+  INTERCEPT_FUNCTION(dispatch_io_create_with_io);
+  INTERCEPT_FUNCTION(dispatch_io_close);
+  INTERCEPT_FUNCTION(dispatch_resume);
 }
 
 }  // namespace __tsan
