@@ -398,6 +398,7 @@ namespace {
     SDValue visitMSCATTER(SDNode *N);
     SDValue visitFP_TO_FP16(SDNode *N);
     SDValue visitFP16_TO_FP(SDNode *N);
+    SDValue visitVECREDUCE(SDNode *N);
 
     SDValue visitFADDForFMACombine(SDNode *N);
     SDValue visitFSUBForFMACombine(SDNode *N);
@@ -1592,6 +1593,19 @@ SDValue DAGCombiner::visit(SDNode *N) {
   case ISD::MSTORE:             return visitMSTORE(N);
   case ISD::FP_TO_FP16:         return visitFP_TO_FP16(N);
   case ISD::FP16_TO_FP:         return visitFP16_TO_FP(N);
+  case ISD::VECREDUCE_FADD:
+  case ISD::VECREDUCE_FMUL:
+  case ISD::VECREDUCE_ADD:
+  case ISD::VECREDUCE_MUL:
+  case ISD::VECREDUCE_AND:
+  case ISD::VECREDUCE_OR:
+  case ISD::VECREDUCE_XOR:
+  case ISD::VECREDUCE_SMAX:
+  case ISD::VECREDUCE_SMIN:
+  case ISD::VECREDUCE_UMAX:
+  case ISD::VECREDUCE_UMIN:
+  case ISD::VECREDUCE_FMAX:
+  case ISD::VECREDUCE_FMIN:     return visitVECREDUCE(N);
   }
   return SDValue();
 }
@@ -2186,10 +2200,30 @@ SDValue DAGCombiner::visitADD(SDNode *N) {
       DAG.haveNoCommonBitsSet(N0, N1))
     return DAG.getNode(ISD::OR, DL, VT, N0, N1);
 
-  // fold (add (xor a, -1), 1) -> (sub 0, a)
-  if (isBitwiseNot(N0) && isOneOrOneSplat(N1))
-    return DAG.getNode(ISD::SUB, DL, VT, DAG.getConstant(0, DL, VT),
-                       N0.getOperand(0));
+  if (isOneOrOneSplat(N1)) {
+    // fold (add (xor a, -1), 1) -> (sub 0, a)
+    if (isBitwiseNot(N0))
+      return DAG.getNode(ISD::SUB, DL, VT, DAG.getConstant(0, DL, VT),
+                         N0.getOperand(0));
+
+    // fold (add (add (xor a, -1), b), 1) -> (sub b, a)
+    if (N0.getOpcode() == ISD::ADD ||
+        N0.getOpcode() == ISD::UADDO ||
+        N0.getOpcode() == ISD::SADDO) {
+      SDValue A, Xor;
+
+      if (isBitwiseNot(N0.getOperand(0))) {
+        A = N0.getOperand(1);
+        Xor = N0.getOperand(0);
+      } else if (isBitwiseNot(N0.getOperand(1))) {
+        A = N0.getOperand(0);
+        Xor = N0.getOperand(1);
+      }
+
+      if (Xor)
+        return DAG.getNode(ISD::SUB, DL, VT, A, Xor.getOperand(0));
+    }
+  }
 
   if (SDValue Combined = visitADDLike(N0, N1, N))
     return Combined;
@@ -2379,8 +2413,10 @@ SDValue DAGCombiner::visitADDC(SDNode *N) {
   return SDValue();
 }
 
-static SDValue flipBoolean(SDValue V, const SDLoc &DL, EVT VT,
+static SDValue flipBoolean(SDValue V, const SDLoc &DL,
                            SelectionDAG &DAG, const TargetLowering &TLI) {
+  EVT VT = V.getValueType();
+
   SDValue Cst;
   switch (TLI.getBooleanContents(VT)) {
   case TargetLowering::ZeroOrOneBooleanContent:
@@ -2395,23 +2431,32 @@ static SDValue flipBoolean(SDValue V, const SDLoc &DL, EVT VT,
   return DAG.getNode(ISD::XOR, DL, VT, V, Cst);
 }
 
-static bool isBooleanFlip(SDValue V, EVT VT, const TargetLowering &TLI) {
+static SDValue extractBooleanFlip(SDValue V, const TargetLowering &TLI) {
   if (V.getOpcode() != ISD::XOR)
-    return false;
+    return SDValue();
 
   ConstantSDNode *Const = isConstOrConstSplat(V.getOperand(1), false);
   if (!Const)
-    return false;
+    return SDValue();
 
+  EVT VT = V.getValueType();
+
+  bool IsFlip = false;
   switch(TLI.getBooleanContents(VT)) {
     case TargetLowering::ZeroOrOneBooleanContent:
-      return Const->isOne();
+      IsFlip = Const->isOne();
+      break;
     case TargetLowering::ZeroOrNegativeOneBooleanContent:
-      return Const->isAllOnesValue();
+      IsFlip = Const->isAllOnesValue();
+      break;
     case TargetLowering::UndefinedBooleanContent:
-      return (Const->getAPIntValue() & 0x01) == 1;
+      IsFlip = (Const->getAPIntValue() & 0x01) == 1;
+      break;
   }
-  llvm_unreachable("Unsupported boolean content");
+
+  if (IsFlip)
+    return V.getOperand(0);
+  return SDValue();
 }
 
 SDValue DAGCombiner::visitADDO(SDNode *N) {
@@ -2448,7 +2493,7 @@ SDValue DAGCombiner::visitADDO(SDNode *N) {
       SDValue Sub = DAG.getNode(ISD::USUBO, DL, N->getVTList(),
                                 DAG.getConstant(0, DL, VT), N0.getOperand(0));
       return CombineTo(N, Sub,
-                       flipBoolean(Sub.getValue(1), DL, CarryVT, DAG, TLI));
+                       flipBoolean(Sub.getValue(1), DL, DAG, TLI));
     }
 
     if (SDValue Combined = visitUADDOLike(N0, N1, N))
@@ -2536,13 +2581,14 @@ SDValue DAGCombiner::visitADDCARRY(SDNode *N) {
   }
 
   // fold (addcarry (xor a, -1), 0, !b) -> (subcarry 0, a, b) and flip carry.
-  if (isBitwiseNot(N0) && isNullConstant(N1) &&
-      isBooleanFlip(CarryIn, CarryVT, TLI)) {
-    SDValue Sub = DAG.getNode(ISD::SUBCARRY, DL, N->getVTList(),
-                              DAG.getConstant(0, DL, N0.getValueType()),
-                              N0.getOperand(0), CarryIn.getOperand(0));
-    return CombineTo(N, Sub,
-                     flipBoolean(Sub.getValue(1), DL, CarryVT, DAG, TLI));
+  if (isBitwiseNot(N0) && isNullConstant(N1)) {
+    if (SDValue B = extractBooleanFlip(CarryIn, TLI)) {
+      SDValue Sub = DAG.getNode(ISD::SUBCARRY, DL, N->getVTList(),
+                                DAG.getConstant(0, DL, N0.getValueType()),
+                                N0.getOperand(0), B);
+      return CombineTo(N, Sub,
+                       flipBoolean(Sub.getValue(1), DL, DAG, TLI));
+    }
   }
 
   if (SDValue Combined = visitADDCARRYLike(N0, N1, CarryIn, N))
@@ -7586,8 +7632,8 @@ SDValue DAGCombiner::visitSELECT(SDNode *N) {
   }
 
   // select (not Cond), N1, N2 -> select Cond, N2, N1
-  if (isBooleanFlip(N0, VT0, TLI))
-    return DAG.getSelect(DL, VT, N0.getOperand(0), N2, N1);
+  if (SDValue F = extractBooleanFlip(N0, TLI))
+    return DAG.getSelect(DL, VT, F, N2, N1);
 
   // Fold selects based on a setcc into other things, such as min/max/abs.
   if (N0.getOpcode() == ISD::SETCC) {
@@ -8061,15 +8107,14 @@ SDValue DAGCombiner::visitVSELECT(SDNode *N) {
   SDValue N1 = N->getOperand(1);
   SDValue N2 = N->getOperand(2);
   EVT VT = N->getValueType(0);
-  EVT VT0 = N0.getValueType();
   SDLoc DL(N);
 
   if (SDValue V = DAG.simplifySelect(N0, N1, N2))
     return V;
 
   // vselect (not Cond), N1, N2 -> vselect Cond, N2, N1
-  if (isBooleanFlip(N0, VT0, TLI))
-    return DAG.getSelect(DL, VT, N0.getOperand(0), N2, N1);
+  if (SDValue F = extractBooleanFlip(N0, TLI))
+    return DAG.getSelect(DL, VT, F, N2, N1);
 
   // Canonicalize integer abs.
   // vselect (setg[te] X,  0),  X, -X ->
@@ -15375,23 +15420,22 @@ SDValue DAGCombiner::visitSTORE(SDNode *N) {
       Value.getValueType().isInteger() &&
       (!isa<ConstantSDNode>(Value) ||
        !cast<ConstantSDNode>(Value)->isOpaque())) {
+    APInt TruncDemandedBits =
+        APInt::getLowBitsSet(Value.getScalarValueSizeInBits(),
+                             ST->getMemoryVT().getScalarSizeInBits());
+
     // See if we can simplify the input to this truncstore with knowledge that
     // only the low bits are being used.  For example:
     // "truncstore (or (shl x, 8), y), i8"  -> "truncstore y, i8"
-    SDValue Shorter = DAG.GetDemandedBits(
-        Value, APInt::getLowBitsSet(Value.getScalarValueSizeInBits(),
-                                    ST->getMemoryVT().getScalarSizeInBits()));
+    SDValue Shorter = DAG.GetDemandedBits(Value, TruncDemandedBits);
     AddToWorklist(Value.getNode());
-    if (Shorter.getNode())
-      return DAG.getTruncStore(Chain, SDLoc(N), Shorter,
-                               Ptr, ST->getMemoryVT(), ST->getMemOperand());
+    if (Shorter)
+      return DAG.getTruncStore(Chain, SDLoc(N), Shorter, Ptr, ST->getMemoryVT(),
+                               ST->getMemOperand());
 
     // Otherwise, see if we can simplify the operation with
     // SimplifyDemandedBits, which only works if the value has a single use.
-    if (SimplifyDemandedBits(
-            Value,
-            APInt::getLowBitsSet(Value.getScalarValueSizeInBits(),
-                                 ST->getMemoryVT().getScalarSizeInBits()))) {
+    if (SimplifyDemandedBits(Value, TruncDemandedBits)) {
       // Re-visit the store if anything changed and the store hasn't been merged
       // with another node (N is deleted) SimplifyDemandedBits will add Value's
       // node back to the worklist if necessary, but we also need to re-visit
@@ -18271,6 +18315,24 @@ SDValue DAGCombiner::visitFP16_TO_FP(SDNode *N) {
       return DAG.getNode(ISD::FP16_TO_FP, SDLoc(N), N->getValueType(0),
                          N0.getOperand(0));
     }
+  }
+
+  return SDValue();
+}
+
+SDValue DAGCombiner::visitVECREDUCE(SDNode *N) {
+  SDValue N0 = N->getOperand(0);
+  EVT VT = N0.getValueType();
+
+  // VECREDUCE over 1-element vector is just an extract.
+  if (VT.getVectorNumElements() == 1) {
+    SDLoc dl(N);
+    SDValue Res = DAG.getNode(
+        ISD::EXTRACT_VECTOR_ELT, dl, VT.getVectorElementType(), N0,
+        DAG.getConstant(0, dl, TLI.getVectorIdxTy(DAG.getDataLayout())));
+    if (Res.getValueType() != N->getValueType(0))
+      Res = DAG.getNode(ISD::ANY_EXTEND, dl, N->getValueType(0), Res);
+    return Res;
   }
 
   return SDValue();

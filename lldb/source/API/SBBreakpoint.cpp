@@ -92,6 +92,10 @@ break_id_t SBBreakpoint::GetID() const {
 
 bool SBBreakpoint::IsValid() const {
   LLDB_RECORD_METHOD_CONST_NO_ARGS(bool, SBBreakpoint, IsValid);
+  return this->operator bool();
+}
+SBBreakpoint::operator bool() const {
+  LLDB_RECORD_METHOD_CONST_NO_ARGS(bool, SBBreakpoint, operator bool);
 
   BreakpointSP bkpt_sp = GetSP();
   if (!bkpt_sp)
@@ -569,9 +573,10 @@ SBError SBBreakpoint::AddLocation(SBAddress &address) {
   return LLDB_RECORD_RESULT(error);
 }
 
-void SBBreakpoint
-  ::SetCallback(SBBreakpointHitCallback callback,
-  void *baton) {
+void SBBreakpoint ::SetCallback(SBBreakpointHitCallback callback, void *baton) {
+  LLDB_RECORD_DUMMY(void, SBBreakpoint, SetCallback,
+                    (lldb::SBBreakpointHitCallback, void *), callback, baton);
+
   BreakpointSP bkpt_sp = GetSP();
 
   if (bkpt_sp) {

@@ -119,6 +119,10 @@ void SBProcess::Clear() {
 
 bool SBProcess::IsValid() const {
   LLDB_RECORD_METHOD_CONST_NO_ARGS(bool, SBProcess, IsValid);
+  return this->operator bool();
+}
+SBProcess::operator bool() const {
+  LLDB_RECORD_METHOD_CONST_NO_ARGS(bool, SBProcess, operator bool);
 
   ProcessSP process_sp(m_opaque_wp.lock());
   return ((bool)process_sp && process_sp->IsValid());
@@ -854,6 +858,9 @@ const char *SBProcess::GetBroadcasterClass() {
 
 size_t SBProcess::ReadMemory(addr_t addr, void *dst, size_t dst_len,
                              SBError &sb_error) {
+  LLDB_RECORD_DUMMY(size_t, SBProcess, ReadMemory,
+                    (lldb::addr_t, void *, size_t, lldb::SBError &), addr, dst,
+                    dst_len, sb_error);
 
   size_t bytes_read = 0;
 
@@ -878,6 +885,10 @@ size_t SBProcess::ReadMemory(addr_t addr, void *dst, size_t dst_len,
 
 size_t SBProcess::ReadCStringFromMemory(addr_t addr, void *buf, size_t size,
                                         lldb::SBError &sb_error) {
+  LLDB_RECORD_DUMMY(size_t, SBProcess, ReadCStringFromMemory,
+                    (lldb::addr_t, void *, size_t, lldb::SBError &), addr, buf,
+                    size, sb_error);
+
   size_t bytes_read = 0;
   ProcessSP process_sp(GetSP());
   if (process_sp) {
@@ -944,6 +955,10 @@ lldb::addr_t SBProcess::ReadPointerFromMemory(addr_t addr,
 
 size_t SBProcess::WriteMemory(addr_t addr, const void *src, size_t src_len,
                               SBError &sb_error) {
+  LLDB_RECORD_DUMMY(size_t, SBProcess, WriteMemory,
+                    (lldb::addr_t, const void *, size_t, lldb::SBError &), addr,
+                    src, src_len, sb_error);
+
   size_t bytes_written = 0;
 
   ProcessSP process_sp(GetSP());

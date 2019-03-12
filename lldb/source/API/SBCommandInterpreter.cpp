@@ -201,6 +201,10 @@ operator=(const SBCommandInterpreter &rhs) {
 
 bool SBCommandInterpreter::IsValid() const {
   LLDB_RECORD_METHOD_CONST_NO_ARGS(bool, SBCommandInterpreter, IsValid);
+  return this->operator bool();
+}
+SBCommandInterpreter::operator bool() const {
+  LLDB_RECORD_METHOD_CONST_NO_ARGS(bool, SBCommandInterpreter, operator bool);
 
   return m_opaque_ptr != nullptr;
 }
@@ -611,6 +615,10 @@ bool SBCommandInterpreter::EventIsCommandInterpreterEvent(
 bool SBCommandInterpreter::SetCommandOverrideCallback(
     const char *command_name, lldb::CommandOverrideCallback callback,
     void *baton) {
+  LLDB_RECORD_DUMMY(bool, SBCommandInterpreter, SetCommandOverrideCallback,
+                    (const char *, lldb::CommandOverrideCallback, void *),
+                    command_name, callback, baton);
+
   if (command_name && command_name[0] && IsValid()) {
     llvm::StringRef command_name_str = command_name;
     CommandObject *cmd_obj =
@@ -681,6 +689,10 @@ SBCommand::SBCommand(lldb::CommandObjectSP cmd_sp) : m_opaque_sp(cmd_sp) {}
 
 bool SBCommand::IsValid() {
   LLDB_RECORD_METHOD_NO_ARGS(bool, SBCommand, IsValid);
+  return this->operator bool();
+}
+SBCommand::operator bool() const {
+  LLDB_RECORD_METHOD_CONST_NO_ARGS(bool, SBCommand, operator bool);
 
   return m_opaque_sp.get() != nullptr;
 }

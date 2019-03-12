@@ -190,6 +190,10 @@ bool SBBreakpointName::operator!=(const lldb::SBBreakpointName &rhs) {
 
 bool SBBreakpointName::IsValid() const {
   LLDB_RECORD_METHOD_CONST_NO_ARGS(bool, SBBreakpointName, IsValid);
+  return this->operator bool();
+}
+SBBreakpointName::operator bool() const {
+  LLDB_RECORD_METHOD_CONST_NO_ARGS(bool, SBBreakpointName, operator bool);
 
   if (!m_impl_up)
     return false;
@@ -543,6 +547,9 @@ bool SBBreakpointName::GetDescription(SBStream &s) {
 
 void SBBreakpointName::SetCallback(SBBreakpointHitCallback callback,
                                    void *baton) {
+  LLDB_RECORD_DUMMY(void, SBBreakpointName, SetCallback,
+                    (lldb::SBBreakpointHitCallback, void *), callback, baton);
+
   BreakpointName *bp_name = GetBreakpointName();
   if (!bp_name)
     return;
