@@ -15,6 +15,8 @@
 #include "clang/Driver/Tool.h"
 #include "llvm/Support/Compiler.h"
 
+extern bool FunctionCallDefault;
+
 namespace clang {
 namespace driver {
 

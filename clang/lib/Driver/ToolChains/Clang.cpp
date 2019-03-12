@@ -3502,6 +3502,12 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-fno-common");
     //CmdArgs.push_back("-m32"); // added below using -triple
     CmdArgs.push_back("-O2");
+
+    if (Args.hasFlag(options::OPT_famdgpu_function_calls,
+                     options::OPT_fno_amdgpu_function_calls,
+                     FunctionCallDefault))
+      CmdArgs.push_back("-famdgpu-function-calls");
+
   } else if (JA.ContainsActions(Action::BackendJobClass, types::TY_PP_CXX_AMP_CPU) ||
              JA.ContainsActions(Action::PreprocessJobClass, types::TY_CXX_AMP_CPU)) {
     // path to compile kernel codes on CPU

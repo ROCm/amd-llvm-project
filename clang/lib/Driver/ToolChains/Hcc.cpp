@@ -27,6 +27,8 @@ using namespace clang::driver::toolchains;
 using namespace clang::driver::tools;
 using namespace llvm::opt;
 
+bool FunctionCallDefault = false;
+
 HCCInstallationDetector::HCCInstallationDetector(const Driver &D, const llvm::opt::ArgList &Args) : D(D) {
   std::string BinPath = D.Dir;
   std::string InstallPath = D.InstalledDir;
@@ -90,9 +92,6 @@ void HCCInstallationDetector::AddHCCLibArgs(const llvm::opt::ArgList &Args, llvm
       for(auto&& Lib:HccExtraLibs)
         CmdArgs.push_back(Args.MakeArgString(prefix + Lib));
     }
-
-    if (Args.hasArg(options::OPT_amdgpu_function_calls))
-      CmdArgs.push_back("--amdgpu-func-calls");
   }
 }
 
@@ -269,6 +268,12 @@ namespace
 
         for (auto&& AMDGPUTarget : AMDGPUTargetVector) {
             validate_and_add_to_command(AMDGPUTarget, C, Args, CmdArgs);
+        }
+
+        if (Args.hasFlag(options::OPT_famdgpu_function_calls,
+                         options::OPT_fno_amdgpu_function_calls,
+                         FunctionCallDefault)) {
+          CmdArgs.push_back("--amdgpu-func-calls");
         }
     }
 }
