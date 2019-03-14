@@ -3004,13 +3004,10 @@ SDValue TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
   if (N0 == N1) {
     // The sext(setcc()) => setcc() optimization relies on the appropriate
     // constant being emitted.
+    assert(!N0.getValueType().isInteger() &&
+           "Integer types should be handled by FoldSetCC");
 
     bool EqTrue = ISD::isTrueWhenEqual(Cond);
-
-    // We can always fold X == X for integer setcc's.
-    if (N0.getValueType().isInteger())
-      return DAG.getBoolConstant(EqTrue, dl, VT, OpVT);
-
     unsigned UOF = ISD::getUnorderedFlavor(Cond);
     if (UOF == 2) // FP operators that are undefined on NaNs.
       return DAG.getBoolConstant(EqTrue, dl, VT, OpVT);
@@ -5496,19 +5493,39 @@ bool TargetLowering::expandMULO(SDNode *Node, SDValue &Result,
                                 SDValue &Overflow, SelectionDAG &DAG) const {
   SDLoc dl(Node);
   EVT VT = Node->getValueType(0);
+  EVT SetCCVT = getSetCCResultType(DAG.getDataLayout(), *DAG.getContext(), VT);
+  SDValue LHS = Node->getOperand(0);
+  SDValue RHS = Node->getOperand(1);
+  bool isSigned = Node->getOpcode() == ISD::SMULO;
+
+  // For power-of-two multiplications we can use a simpler shift expansion.
+  if (ConstantSDNode *RHSC = isConstOrConstSplat(RHS)) {
+    const APInt &C = RHSC->getAPIntValue();
+    // mulo(X, 1 << S) -> { X << S, (X << S) >> S != X }
+    if (C.isPowerOf2()) {
+      // smulo(x, signed_min) is same as umulo(x, signed_min).
+      bool UseArithShift = isSigned && !C.isMinSignedValue();
+      EVT ShiftAmtTy = getShiftAmountTy(VT, DAG.getDataLayout());
+      SDValue ShiftAmt = DAG.getConstant(C.logBase2(), dl, ShiftAmtTy);
+      Result = DAG.getNode(ISD::SHL, dl, VT, LHS, ShiftAmt);
+      Overflow = DAG.getSetCC(dl, SetCCVT,
+          DAG.getNode(UseArithShift ? ISD::SRA : ISD::SRL,
+                      dl, VT, Result, ShiftAmt),
+          LHS, ISD::SETNE);
+      return true;
+    }
+  }
+
   EVT WideVT = EVT::getIntegerVT(*DAG.getContext(), VT.getScalarSizeInBits() * 2);
   if (VT.isVector())
     WideVT = EVT::getVectorVT(*DAG.getContext(), WideVT,
                               VT.getVectorNumElements());
 
-  SDValue LHS = Node->getOperand(0);
-  SDValue RHS = Node->getOperand(1);
   SDValue BottomHalf;
   SDValue TopHalf;
   static const unsigned Ops[2][3] =
       { { ISD::MULHU, ISD::UMUL_LOHI, ISD::ZERO_EXTEND },
         { ISD::MULHS, ISD::SMUL_LOHI, ISD::SIGN_EXTEND }};
-  bool isSigned = Node->getOpcode() == ISD::SMULO;
   if (isOperationLegalOrCustom(Ops[isSigned][0], VT)) {
     BottomHalf = DAG.getNode(ISD::MUL, dl, VT, LHS, RHS);
     TopHalf = DAG.getNode(Ops[isSigned][0], dl, VT, LHS, RHS);
@@ -5595,7 +5612,6 @@ bool TargetLowering::expandMULO(SDNode *Node, SDValue &Result,
     }
   }
 
-  EVT SetCCVT = getSetCCResultType(DAG.getDataLayout(), *DAG.getContext(), VT);
   Result = BottomHalf;
   if (isSigned) {
     SDValue ShiftAmt = DAG.getConstant(
