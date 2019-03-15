@@ -492,8 +492,8 @@ ClangExpressionParser::ClangExpressionParser(
   // long time parsing and importing debug information.
   lang_opts.SpellChecking = false;
 
-  auto &clang_expr = *static_cast<ClangUserExpression *>(&m_expr);
-  if (clang_expr.DidImportCxxModules()) {
+  auto *clang_expr = dyn_cast<ClangUserExpression>(&m_expr);
+  if (clang_expr && clang_expr->DidImportCxxModules()) {
     LLDB_LOG(log, "Adding lang options for importing C++ modules");
 
     lang_opts.Modules = true;
@@ -857,8 +857,8 @@ bool ClangExpressionParser::Complete(CompletionRequest &request, unsigned line,
   // To actually get the raw user input here, we have to cast our expression to
   // the LLVMUserExpression which exposes the right API. This should never fail
   // as we always have a ClangUserExpression whenever we call this.
-  LLVMUserExpression &llvm_expr = *static_cast<LLVMUserExpression *>(&m_expr);
-  CodeComplete CC(request, m_compiler->getLangOpts(), llvm_expr.GetUserText(),
+  ClangUserExpression *llvm_expr = cast<ClangUserExpression>(&m_expr);
+  CodeComplete CC(request, m_compiler->getLangOpts(), llvm_expr->GetUserText(),
                   typed_pos);
   // We don't need a code generator for parsing.
   m_code_generator.reset();

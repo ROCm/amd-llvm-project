@@ -1844,6 +1844,7 @@ X86TargetLowering::X86TargetLowering(const X86TargetMachine &TM,
   setTargetDAGCombine(ISD::VECTOR_SHUFFLE);
   setTargetDAGCombine(ISD::SCALAR_TO_VECTOR);
   setTargetDAGCombine(ISD::EXTRACT_VECTOR_ELT);
+  setTargetDAGCombine(ISD::CONCAT_VECTORS);
   setTargetDAGCombine(ISD::INSERT_SUBVECTOR);
   setTargetDAGCombine(ISD::EXTRACT_SUBVECTOR);
   setTargetDAGCombine(ISD::BITCAST);
@@ -27208,6 +27209,8 @@ void X86TargetLowering::ReplaceNodeResults(SDNode *N,
     EVT T = N->getValueType(0);
     assert((T == MVT::i64 || T == MVT::i128) && "can only expand cmpxchg pair");
     bool Regs64bit = T == MVT::i128;
+    assert((!Regs64bit || Subtarget.hasCmpxchg16b()) &&
+           "64-bit ATOMIC_CMP_SWAP_WITH_SUCCESS requires CMPXCHG16B");
     MVT HalfT = Regs64bit ? MVT::i64 : MVT::i32;
     SDValue cpInL, cpInH;
     cpInL = DAG.getNode(ISD::EXTRACT_ELEMENT, dl, HalfT, N->getOperand(2),
@@ -33038,6 +33041,20 @@ bool X86TargetLowering::SimplifyDemandedVectorEltsForTargetNode(
       return true;
     break;
   }
+  case X86ISD::VTRUNC:
+  case X86ISD::VTRUNCS:
+  case X86ISD::VTRUNCUS: {
+    SDValue Src = Op.getOperand(0);
+    MVT SrcVT = Src.getSimpleValueType();
+    APInt DemandedSrc = DemandedElts.zextOrTrunc(SrcVT.getVectorNumElements());
+    APInt SrcUndef, SrcZero;
+    if (SimplifyDemandedVectorElts(Src, DemandedSrc, SrcUndef, SrcZero, TLO,
+                                   Depth + 1))
+      return true;
+    KnownZero = SrcZero.zextOrTrunc(NumElts);
+    KnownUndef = SrcUndef.zextOrTrunc(NumElts);
+    break;
+  }
   case X86ISD::BLENDV: {
     APInt SelUndef, SelZero;
     if (SimplifyDemandedVectorElts(Op.getOperand(0), DemandedElts, SelUndef,
@@ -33076,6 +33093,25 @@ bool X86TargetLowering::SimplifyDemandedVectorEltsForTargetNode(
     if (SimplifyDemandedVectorElts(Src, SrcElts, SrcUndef, SrcZero, TLO,
                                    Depth + 1))
       return true;
+    break;
+  }
+  case X86ISD::SUBV_BROADCAST: {
+    // Reduce size of broadcast if we don't need the upper half.
+    unsigned HalfElts = NumElts / 2;
+    if (DemandedElts.extractBits(HalfElts, HalfElts).isNullValue()) {
+      SDValue Src = Op.getOperand(0);
+      MVT SrcVT = Src.getSimpleValueType();
+
+      SDValue Half = Src;
+      if (SrcVT.getVectorNumElements() != HalfElts) {
+        MVT HalfVT = MVT::getVectorVT(SrcVT.getScalarType(), HalfElts);
+        Half = TLO.DAG.getNode(X86ISD::SUBV_BROADCAST, SDLoc(Op), HalfVT, Src);
+      }
+
+      return TLO.CombineTo(Op, insertSubVector(TLO.DAG.getUNDEF(VT), Half, 0,
+                                               TLO.DAG, SDLoc(Op),
+                                               Half.getValueSizeInBits()));
+    }
     break;
   }
   case X86ISD::PSHUFB: {
@@ -34523,11 +34559,15 @@ combineVSelectWithAllOnesOrZeros(SDNode *N, SelectionDAG &DAG,
 
   assert(CondVT.isVector() && "Vector select expects a vector selector!");
 
-  bool TValIsAllZeros = ISD::isBuildVectorAllZeros(LHS.getNode());
   // Check if the first operand is all zeros and Cond type is vXi1.
   // This situation only applies to avx512.
-  if (TValIsAllZeros  && Subtarget.hasAVX512() && Cond.hasOneUse() &&
-      CondVT.getVectorElementType() == MVT::i1) {
+  // TODO: Use isNullOrNullSplat() to distinguish constants with undefs?
+  // TODO: Can we assert that both operands are not zeros (because that should
+  //       get simplified at node creation time)?
+  bool TValIsAllZeros = ISD::isBuildVectorAllZeros(LHS.getNode());
+  bool FValIsAllZeros = ISD::isBuildVectorAllZeros(RHS.getNode());
+  if (TValIsAllZeros && !FValIsAllZeros && Subtarget.hasAVX512() &&
+      Cond.hasOneUse() && CondVT.getVectorElementType() == MVT::i1) {
     // Invert the cond to not(cond) : xor(op,allones)=not(op)
     SDValue CondNew = DAG.getNOT(DL, Cond, CondVT);
     // Vselect cond, op1, op2 = Vselect not(cond), op2, op1
@@ -34542,11 +34582,9 @@ combineVSelectWithAllOnesOrZeros(SDNode *N, SelectionDAG &DAG,
   if (CondVT.getScalarSizeInBits() != VT.getScalarSizeInBits())
     return SDValue();
 
-  bool TValIsAllOnes = ISD::isBuildVectorAllOnes(LHS.getNode());
-  bool FValIsAllZeros = ISD::isBuildVectorAllZeros(RHS.getNode());
-
   // Try to invert the condition if true value is not all 1s and false value is
   // not all 0s. Only do this if the condition has one use.
+  bool TValIsAllOnes = ISD::isBuildVectorAllOnes(LHS.getNode());
   if (!TValIsAllOnes && !FValIsAllZeros && Cond.hasOneUse() &&
       // Check if the selector will be produced by CMPP*/PCMP*.
       Cond.getOpcode() == ISD::SETCC &&
@@ -42041,6 +42079,23 @@ static SDValue combineConcatVectorOps(const SDLoc &DL, MVT VT,
   return SDValue();
 }
 
+static SDValue combineConcatVectors(SDNode *N, SelectionDAG &DAG,
+                                    TargetLowering::DAGCombinerInfo &DCI,
+                                    const X86Subtarget &Subtarget) {
+  EVT VT = N->getValueType(0);
+  EVT SrcVT = N->getOperand(0).getValueType();
+  const TargetLowering &TLI = DAG.getTargetLoweringInfo();
+
+  if (Subtarget.hasAVX() && TLI.isTypeLegal(VT) && TLI.isTypeLegal(SrcVT)) {
+    SmallVector<SDValue, 4> Ops(N->op_begin(), N->op_end());
+    if (SDValue R = combineConcatVectorOps(SDLoc(N), VT.getSimpleVT(), Ops, DAG,
+                                           DCI, Subtarget))
+      return R;
+  }
+
+  return SDValue();
+}
+
 static SDValue combineInsertSubvector(SDNode *N, SelectionDAG &DAG,
                                       TargetLowering::DAGCombinerInfo &DCI,
                                       const X86Subtarget &Subtarget) {
@@ -42384,6 +42439,8 @@ SDValue X86TargetLowering::PerformDAGCombine(SDNode *N,
   case X86ISD::PEXTRW:
   case X86ISD::PEXTRB:
     return combineExtractVectorElt(N, DAG, DCI, Subtarget);
+  case ISD::CONCAT_VECTORS:
+    return combineConcatVectors(N, DAG, DCI, Subtarget);
   case ISD::INSERT_SUBVECTOR:
     return combineInsertSubvector(N, DAG, DCI, Subtarget);
   case ISD::EXTRACT_SUBVECTOR:
