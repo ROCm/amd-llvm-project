@@ -1994,10 +1994,22 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
 
   case Intrinsic::fshl:
   case Intrinsic::fshr: {
+    // Canonicalize a shift amount constant operand to be modulo the bit-width.
+    unsigned BitWidth = II->getType()->getScalarSizeInBits();
+    Constant *ShAmtC;
+    if (match(II->getArgOperand(2), m_Constant(ShAmtC)) &&
+        !isa<ConstantExpr>(ShAmtC) && !ShAmtC->containsConstantExpression()) {
+      Constant *WidthC = ConstantInt::get(II->getType(), BitWidth);
+      Constant *ModuloC = ConstantExpr::getURem(ShAmtC, WidthC);
+      if (ModuloC != ShAmtC) {
+        II->setArgOperand(2, ModuloC);
+        return II;
+      }
+    }
+
     const APInt *SA;
     if (match(II->getArgOperand(2), m_APInt(SA))) {
       Value *Op0 = II->getArgOperand(0), *Op1 = II->getArgOperand(1);
-      unsigned BitWidth = SA->getBitWidth();
       uint64_t ShiftAmt = SA->urem(BitWidth);
       assert(ShiftAmt != 0 && "SimplifyCall should have handled zero shift");
       // Normalize to funnel shift left.
@@ -2020,7 +2032,6 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
     // The shift amount (operand 2) of a funnel shift is modulo the bitwidth,
     // so only the low bits of the shift amount are demanded if the bitwidth is
     // a power-of-2.
-    unsigned BitWidth = II->getType()->getScalarSizeInBits();
     if (!isPowerOf2_32(BitWidth))
       break;
     APInt Op2Demanded = APInt::getLowBitsSet(BitWidth, Log2_32_Ceil(BitWidth));
@@ -3576,10 +3587,7 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
   }
   case Intrinsic::amdgcn_exp:
   case Intrinsic::amdgcn_exp_compr: {
-    ConstantInt *En = dyn_cast<ConstantInt>(II->getArgOperand(1));
-    if (!En) // Illegal.
-      break;
-
+    ConstantInt *En = cast<ConstantInt>(II->getArgOperand(1));
     unsigned EnBits = En->getZExtValue();
     if (EnBits == 0xf)
       break; // All inputs enabled.
@@ -3669,10 +3677,7 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
   }
   case Intrinsic::amdgcn_icmp:
   case Intrinsic::amdgcn_fcmp: {
-    const ConstantInt *CC = dyn_cast<ConstantInt>(II->getArgOperand(2));
-    if (!CC)
-      break;
-
+    const ConstantInt *CC = cast<ConstantInt>(II->getArgOperand(2));
     // Guard against invalid arguments.
     int64_t CCVal = CC->getZExtValue();
     bool IsInteger = II->getIntrinsicID() == Intrinsic::amdgcn_icmp;
@@ -3822,11 +3827,10 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
   case Intrinsic::amdgcn_update_dpp: {
     Value *Old = II->getArgOperand(0);
 
-    auto BC = dyn_cast<ConstantInt>(II->getArgOperand(5));
-    auto RM = dyn_cast<ConstantInt>(II->getArgOperand(3));
-    auto BM = dyn_cast<ConstantInt>(II->getArgOperand(4));
-    if (!BC || !RM || !BM ||
-        BC->isZeroValue() ||
+    auto BC = cast<ConstantInt>(II->getArgOperand(5));
+    auto RM = cast<ConstantInt>(II->getArgOperand(3));
+    auto BM = cast<ConstantInt>(II->getArgOperand(4));
+    if (BC->isZeroValue() ||
         RM->getZExtValue() != 0xF ||
         BM->getZExtValue() != 0xF ||
         isa<UndefValue>(Old))

@@ -28,6 +28,7 @@
 #include "llvm/Support/Format.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/LEB128.h"
+#include "llvm/Support/Path.h"
 
 #include <cstdarg>
 #include <map>
@@ -198,6 +199,9 @@ void Writer::createImportSection() {
     if (auto *FunctionSym = dyn_cast<FunctionSymbol>(Sym)) {
       Import.Kind = WASM_EXTERNAL_FUNCTION;
       Import.SigIndex = lookupType(*FunctionSym->Signature);
+    } else if (auto *DataSym = dyn_cast<UndefinedData>(Sym)) {
+      Import.Kind = WASM_EXTERNAL_GLOBAL;
+      Import.Global = {WASM_TYPE_I32, true};
     } else if (auto *GlobalSym = dyn_cast<GlobalSymbol>(Sym)) {
       Import.Kind = WASM_EXTERNAL_GLOBAL;
       Import.Global = *GlobalSym->getGlobalType();
@@ -499,7 +503,9 @@ void Writer::createDylinkSection() {
   writeUleb128(OS, MemAlign, "MemAlign");
   writeUleb128(OS, IndirectFunctions.size(), "TableSize");
   writeUleb128(OS, 0, "TableAlign");
-  writeUleb128(OS, 0, "Needed");  // TODO: Support "needed" shared libraries
+  writeUleb128(OS, Symtab->SharedFiles.size(), "Needed");
+  for (auto *SO : Symtab->SharedFiles)
+    writeStr(OS, llvm::sys::path::filename(SO->getName()), "so name");
 }
 
 // Create the custom "linking" section containing linker metadata.
@@ -851,13 +857,15 @@ void Writer::calculateImports() {
   for (Symbol *Sym : Symtab->getSymbols()) {
     if (!Sym->isUndefined())
       continue;
-    if (isa<DataSymbol>(Sym))
-      continue;
     if (Sym->isWeak() && !Config->Relocatable)
       continue;
     if (!Sym->isLive())
       continue;
     if (!Sym->IsUsedInRegularObj)
+      continue;
+    // In relocatable output we don't generate imports for data symbols.
+    // These live only in the symbol table.
+    if (Config->Relocatable && isa<DataSymbol>(Sym))
       continue;
 
     LLVM_DEBUG(dbgs() << "import: " << Sym->getName() << "\n");
@@ -866,6 +874,8 @@ void Writer::calculateImports() {
       F->setFunctionIndex(NumImportedFunctions++);
     else if (auto *G = dyn_cast<GlobalSymbol>(Sym))
       G->setGlobalIndex(NumImportedGlobals++);
+    else if (auto *D = dyn_cast<UndefinedData>(Sym))
+      D->setGlobalIndex(NumImportedGlobals++);
     else
       cast<EventSymbol>(Sym)->setEventIndex(NumImportedEvents++);
   }
