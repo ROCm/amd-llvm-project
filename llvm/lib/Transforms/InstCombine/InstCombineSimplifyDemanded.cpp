@@ -1175,9 +1175,18 @@ Value *InstCombiner::SimplifyDemandedVectorElts(Value *V, APInt DemandedElts,
     // wouldn't have a vector result to get here. Note that we intentionally
     // merge the undef bits here since gepping with either an undef base or
     // index results in undef. 
-    for (unsigned i = 0; i < I->getNumOperands(); i++)
-      if (I->getOperand(i)->getType()->isVectorTy())
-        simplifyAndSetOp(I, i, DemandedElts, UndefElts);
+    for (unsigned i = 0; i < I->getNumOperands(); i++) {
+      if (isa<UndefValue>(I->getOperand(i))) {
+        // If the entire vector is undefined, just return this info.
+        UndefElts = EltMask;
+        return nullptr;
+      }
+      if (I->getOperand(i)->getType()->isVectorTy()) {
+        APInt UndefEltsOp(VWidth, 0);
+        simplifyAndSetOp(I, i, DemandedElts, UndefEltsOp);
+        UndefElts |= UndefEltsOp;
+      }
+    }
 
     break;
   }
@@ -1635,12 +1644,8 @@ Value *InstCombiner::SimplifyDemandedVectorElts(Value *V, APInt DemandedElts,
     case Intrinsic::amdgcn_struct_buffer_load_format:
       return simplifyAMDGCNMemoryIntrinsicDemanded(II, DemandedElts);
     default: {
-      if (getAMDGPUImageDMaskIntrinsic(II->getIntrinsicID())) {
-        assert(cast<ConstantInt>(
-                 II->getArgOperand(
-                   II->getNumOperands() - 2))->getZExtValue() == 0);
+      if (getAMDGPUImageDMaskIntrinsic(II->getIntrinsicID()))
         return simplifyAMDGCNMemoryIntrinsicDemanded(II, DemandedElts, 0);
-      }
 
       break;
     }
@@ -1666,6 +1671,11 @@ Value *InstCombiner::SimplifyDemandedVectorElts(Value *V, APInt DemandedElts,
     // like undef & 0. The result is known zero, not undef.
     UndefElts &= UndefElts2;
   }
+
+  // If we've proven all of the lanes undef, return an undef value.
+  // TODO: Intersect w/demanded lanes
+  if (UndefElts.isAllOnesValue())
+    return UndefValue::get(I->getType());;
 
   return MadeChange ? I : nullptr;
 }
