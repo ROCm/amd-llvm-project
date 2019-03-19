@@ -4064,6 +4064,19 @@ llvm::computeOverflowForSignedMul(const Value *LHS, const Value *RHS,
   return OverflowResult::MayOverflow;
 }
 
+/// Convert ConstantRange OverflowResult into ValueTracking OverflowResult.
+static OverflowResult mapOverflowResult(ConstantRange::OverflowResult OR) {
+  switch (OR) {
+    case ConstantRange::OverflowResult::MayOverflow:
+      return OverflowResult::MayOverflow;
+    case ConstantRange::OverflowResult::AlwaysOverflows:
+      return OverflowResult::AlwaysOverflows;
+    case ConstantRange::OverflowResult::NeverOverflows:
+      return OverflowResult::NeverOverflows;
+  }
+  llvm_unreachable("Unknown OverflowResult");
+}
+
 OverflowResult llvm::computeOverflowForUnsignedAdd(
     const Value *LHS, const Value *RHS, const DataLayout &DL,
     AssumptionCache *AC, const Instruction *CxtI, const DominatorTree *DT,
@@ -4072,61 +4085,11 @@ OverflowResult llvm::computeOverflowForUnsignedAdd(
                                         nullptr, UseInstrInfo);
   KnownBits RHSKnown = computeKnownBits(RHS, DL, /*Depth=*/0, AC, CxtI, DT,
                                         nullptr, UseInstrInfo);
-
-  // a + b overflows iff a > ~b. Determine whether this is never/always true
-  // based on the min/max values achievable under the known bits constraint.
-  APInt MinLHS = LHSKnown.One, MaxLHS = ~LHSKnown.Zero;
-  APInt MinInvRHS = RHSKnown.Zero, MaxInvRHS = ~RHSKnown.One;
-  if (MaxLHS.ule(MinInvRHS))
-    return OverflowResult::NeverOverflows;
-  if (MinLHS.ugt(MaxInvRHS))
-    return OverflowResult::AlwaysOverflows;
-  return OverflowResult::MayOverflow;
-}
-
-/// Return true if we can prove that adding the two values of the
-/// knownbits will not overflow.
-/// Otherwise return false.
-static bool checkRippleForSignedAdd(const KnownBits &LHSKnown,
-                                    const KnownBits &RHSKnown) {
-  // Addition of two 2's complement numbers having opposite signs will never
-  // overflow.
-  if ((LHSKnown.isNegative() && RHSKnown.isNonNegative()) ||
-      (LHSKnown.isNonNegative() && RHSKnown.isNegative()))
-    return true;
-
-  // If either of the values is known to be non-negative, adding them can only
-  // overflow if the second is also non-negative, so we can assume that.
-  // Two non-negative numbers will only overflow if there is a carry to the
-  // sign bit, so we can check if even when the values are as big as possible
-  // there is no overflow to the sign bit.
-  if (LHSKnown.isNonNegative() || RHSKnown.isNonNegative()) {
-    APInt MaxLHS = ~LHSKnown.Zero;
-    MaxLHS.clearSignBit();
-    APInt MaxRHS = ~RHSKnown.Zero;
-    MaxRHS.clearSignBit();
-    APInt Result = std::move(MaxLHS) + std::move(MaxRHS);
-    return Result.isSignBitClear();
-  }
-
-  // If either of the values is known to be negative, adding them can only
-  // overflow if the second is also negative, so we can assume that.
-  // Two negative number will only overflow if there is no carry to the sign
-  // bit, so we can check if even when the values are as small as possible
-  // there is overflow to the sign bit.
-  if (LHSKnown.isNegative() || RHSKnown.isNegative()) {
-    APInt MinLHS = LHSKnown.One;
-    MinLHS.clearSignBit();
-    APInt MinRHS = RHSKnown.One;
-    MinRHS.clearSignBit();
-    APInt Result = std::move(MinLHS) + std::move(MinRHS);
-    return Result.isSignBitSet();
-  }
-
-  // If we reached here it means that we know nothing about the sign bits.
-  // In this case we can't know if there will be an overflow, since by
-  // changing the sign bits any two values can be made to overflow.
-  return false;
+  ConstantRange LHSRange =
+      ConstantRange::fromKnownBits(LHSKnown, /*signed*/ false);
+  ConstantRange RHSRange =
+      ConstantRange::fromKnownBits(RHSKnown, /*signed*/ false);
+  return mapOverflowResult(LHSRange.unsignedAddMayOverflow(RHSRange));
 }
 
 static OverflowResult computeOverflowForSignedAdd(const Value *LHS,
@@ -4160,9 +4123,14 @@ static OverflowResult computeOverflowForSignedAdd(const Value *LHS,
 
   KnownBits LHSKnown = computeKnownBits(LHS, DL, /*Depth=*/0, AC, CxtI, DT);
   KnownBits RHSKnown = computeKnownBits(RHS, DL, /*Depth=*/0, AC, CxtI, DT);
-
-  if (checkRippleForSignedAdd(LHSKnown, RHSKnown))
-    return OverflowResult::NeverOverflows;
+  ConstantRange LHSRange =
+      ConstantRange::fromKnownBits(LHSKnown, /*signed*/ true);
+  ConstantRange RHSRange =
+      ConstantRange::fromKnownBits(RHSKnown, /*signed*/ true);
+  OverflowResult OR =
+      mapOverflowResult(LHSRange.signedAddMayOverflow(RHSRange));
+  if (OR != OverflowResult::MayOverflow)
+    return OR;
 
   // The remaining code needs Add to be available. Early returns if not so.
   if (!Add)
@@ -4195,16 +4163,11 @@ OverflowResult llvm::computeOverflowForUnsignedSub(const Value *LHS,
                                                    const DominatorTree *DT) {
   KnownBits LHSKnown = computeKnownBits(LHS, DL, /*Depth=*/0, AC, CxtI, DT);
   KnownBits RHSKnown = computeKnownBits(RHS, DL, /*Depth=*/0, AC, CxtI, DT);
-
-  // a - b overflows iff a < b. Determine whether this is never/always true
-  // based on the min/max values achievable under the known bits constraint.
-  APInt MinLHS = LHSKnown.One, MaxLHS = ~LHSKnown.Zero;
-  APInt MinRHS = RHSKnown.One, MaxRHS = ~RHSKnown.Zero;
-  if (MinLHS.uge(MaxRHS))
-    return OverflowResult::NeverOverflows;
-  if (MaxLHS.ult(MinRHS))
-    return OverflowResult::AlwaysOverflows;
-  return OverflowResult::MayOverflow;
+  ConstantRange LHSRange =
+      ConstantRange::fromKnownBits(LHSKnown, /*signed*/ false);
+  ConstantRange RHSRange =
+      ConstantRange::fromKnownBits(RHSKnown, /*signed*/ false);
+  return mapOverflowResult(LHSRange.unsignedSubMayOverflow(RHSRange));
 }
 
 OverflowResult llvm::computeOverflowForSignedSub(const Value *LHS,
