@@ -403,6 +403,10 @@ void ARMPassConfig::addIRPasses() {
 
   TargetPassConfig::addIRPasses();
 
+  // Run the parallel DSP pass.
+  if (getOptLevel() == CodeGenOpt::Aggressive) 
+    addPass(createARMParallelDSPPass());
+
   // Match interleaved memory accesses to ldN/stN intrinsics.
   if (TM->getOptLevel() != CodeGenOpt::None)
     addPass(createInterleavedAccessPass());
@@ -415,9 +419,6 @@ void ARMPassConfig::addCodeGenPrepare() {
 }
 
 bool ARMPassConfig::addPreISel() {
-  if (getOptLevel() != CodeGenOpt::None)
-    addPass(createARMParallelDSPPass());
-
   if ((TM->getOptLevel() != CodeGenOpt::None &&
        EnableGlobalMerge == cl::BOU_UNSET) ||
       EnableGlobalMerge == cl::BOU_TRUE) {

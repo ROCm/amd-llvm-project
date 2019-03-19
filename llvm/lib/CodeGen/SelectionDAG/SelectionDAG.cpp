@@ -1974,6 +1974,10 @@ SDValue SelectionDAG::FoldSetCC(EVT VT, SDValue N1, SDValue N2,
     break;
   }
 
+  // We can always fold X == X for integer setcc's.
+  if (N1 == N2 && OpVT.isInteger())
+    return getBoolConstant(ISD::isTrueWhenEqual(Cond), dl, VT, OpVT);
+
   if (ConstantSDNode *N2C = dyn_cast<ConstantSDNode>(N2)) {
     const APInt &C2 = N2C->getAPIntValue();
     if (ConstantSDNode *N1C = dyn_cast<ConstantSDNode>(N1)) {
@@ -9121,6 +9125,15 @@ SelectionDAG::SplitVector(const SDValue &N, const SDLoc &DL, const EVT &LoVT,
                getConstant(LoVT.getVectorNumElements(), DL,
                            TLI->getVectorIdxTy(getDataLayout())));
   return std::make_pair(Lo, Hi);
+}
+
+/// Widen the vector up to the next power of two using INSERT_SUBVECTOR.
+SDValue SelectionDAG::WidenVector(const SDValue &N, const SDLoc &DL) {
+  EVT VT = N.getValueType();
+  EVT WideVT = EVT::getVectorVT(*getContext(), VT.getVectorElementType(),
+                                NextPowerOf2(VT.getVectorNumElements()));
+  return getNode(ISD::INSERT_SUBVECTOR, DL, WideVT, getUNDEF(WideVT), N,
+                 getConstant(0, DL, TLI->getVectorIdxTy(getDataLayout())));
 }
 
 void SelectionDAG::ExtractVectorElements(SDValue Op,

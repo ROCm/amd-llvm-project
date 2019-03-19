@@ -850,22 +850,6 @@ _LIBCPP_BEGIN_NAMESPACE_STD _LIBCPP_END_NAMESPACE_STD
 #  define _NOEXCEPT_(x)
 #endif
 
-#if defined(_LIBCPP_DEBUG_USE_EXCEPTIONS)
-#  if !defined(_LIBCPP_DEBUG)
-#    error cannot use _LIBCPP_DEBUG_USE_EXCEPTIONS unless _LIBCPP_DEBUG is defined
-#  endif
-#  ifdef _LIBCPP_HAS_NO_NOEXCEPT
-#    define _NOEXCEPT_DEBUG
-#    define _NOEXCEPT_DEBUG_(x)
-#  else
-#    define _NOEXCEPT_DEBUG noexcept(false)
-#    define _NOEXCEPT_DEBUG_(x) noexcept(false)
-#  endif
-#else
-#  define _NOEXCEPT_DEBUG _NOEXCEPT
-#  define _NOEXCEPT_DEBUG_(x) _NOEXCEPT_(x)
-#endif
-
 #ifdef _LIBCPP_HAS_NO_UNICODE_CHARS
 typedef unsigned short char16_t;
 typedef unsigned int   char32_t;
@@ -1029,8 +1013,10 @@ template <unsigned> struct __static_assert_check {};
 #endif
 
 // Deprecation macros.
-// Deprecations warnings are only enabled when _LIBCPP_ENABLE_DEPRECATION_WARNINGS is defined.
-#if defined(_LIBCPP_ENABLE_DEPRECATION_WARNINGS)
+//
+// Deprecations warnings are always enabled, except when users explicitly opt-out
+// by defining _LIBCPP_DISABLE_DEPRECATION_WARNINGS.
+#if !defined(_LIBCPP_DISABLE_DEPRECATION_WARNINGS)
 #  if __has_attribute(deprecated)
 #    define _LIBCPP_DEPRECATED __attribute__ ((deprecated))
 #  elif _LIBCPP_STD_VER > 11

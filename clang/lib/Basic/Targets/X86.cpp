@@ -214,11 +214,12 @@ bool X86TargetInfo::initFeatureMap(
     setFeatureEnabledImpl(Features, "ssse3", true);
     setFeatureEnabledImpl(Features, "sahf", true);
     LLVM_FALLTHROUGH;
+  case CK_Nocona:
+    setFeatureEnabledImpl(Features, "cx16", true);
+    LLVM_FALLTHROUGH;
   case CK_Yonah:
   case CK_Prescott:
-  case CK_Nocona:
     setFeatureEnabledImpl(Features, "sse3", true);
-    setFeatureEnabledImpl(Features, "cx16", true);
     LLVM_FALLTHROUGH;
   case CK_PentiumM:
   case CK_Pentium4:
@@ -1279,7 +1280,7 @@ void X86TargetInfo::getTargetDefines(const LangOptions &Opts,
   }
   if (CPU >= CK_i586)
     Builder.defineMacro("__GCC_HAVE_SYNC_COMPARE_AND_SWAP_8");
-  if (HasCX16)
+  if (HasCX16 && getTriple().getArch() == llvm::Triple::x86_64)
     Builder.defineMacro("__GCC_HAVE_SYNC_COMPARE_AND_SWAP_16");
 
   if (HasFloat128)

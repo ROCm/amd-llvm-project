@@ -107,7 +107,7 @@ protected:
   Buffer &Out;
 
 public:
-  virtual ~SectionWriter(){};
+  virtual ~SectionWriter() = default;
 
   void visit(const Section &Sec) override;
   void visit(const OwnedDataSection &Sec) override;
@@ -421,7 +421,7 @@ public:
 
   void addString(StringRef Name);
   uint32_t findIndex(StringRef Name) const;
-  void finalize() override;
+  void prepareForLayout();
   void accept(SectionVisitor &Visitor) const override;
   void accept(MutableSectionVisitor &Visitor) override;
 

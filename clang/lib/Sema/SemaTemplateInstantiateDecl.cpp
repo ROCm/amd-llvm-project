@@ -2915,9 +2915,20 @@ Decl *TemplateDeclInstantiator::VisitOMPAllocateDecl(OMPAllocateDecl *D) {
     assert(isa<DeclRefExpr>(Var) && "allocate arg is not a DeclRefExpr");
     Vars.push_back(Var);
   }
+  SmallVector<OMPClause *, 4> Clauses;
+  // Copy map clauses from the original mapper.
+  for (OMPClause *C : D->clauselists()) {
+    auto *AC = cast<OMPAllocatorClause>(C);
+    ExprResult NewE = SemaRef.SubstExpr(AC->getAllocator(), TemplateArgs);
+    if (!NewE.isUsable())
+      continue;
+    OMPClause *IC = SemaRef.ActOnOpenMPAllocatorClause(
+        NewE.get(), AC->getBeginLoc(), AC->getLParenLoc(), AC->getEndLoc());
+    Clauses.push_back(IC);
+  }
 
-  Sema::DeclGroupPtrTy Res =
-      SemaRef.ActOnOpenMPAllocateDirective(D->getLocation(), Vars, Owner);
+  Sema::DeclGroupPtrTy Res = SemaRef.ActOnOpenMPAllocateDirective(
+      D->getLocation(), Vars, Clauses, Owner);
   if (Res.get().isNull())
     return nullptr;
   return Res.get().getSingleDecl();
@@ -3825,25 +3836,25 @@ static bool addInstantiatedParametersToScope(Sema &S, FunctionDecl *Function,
     Scope.MakeInstantiatedLocalArgPack(PatternParam);
     Optional<unsigned> NumArgumentsInExpansion
       = S.getNumArgumentsInExpansion(PatternParam->getType(), TemplateArgs);
-    assert(NumArgumentsInExpansion &&
-           "should only be called when all template arguments are known");
-    QualType PatternType =
-        PatternParam->getType()->castAs<PackExpansionType>()->getPattern();
-    for (unsigned Arg = 0; Arg < *NumArgumentsInExpansion; ++Arg) {
-      ParmVarDecl *FunctionParam = Function->getParamDecl(FParamIdx);
-      FunctionParam->setDeclName(PatternParam->getDeclName());
-      if (!PatternDecl->getType()->isDependentType()) {
-        Sema::ArgumentPackSubstitutionIndexRAII SubstIndex(S, Arg);
-        QualType T = S.SubstType(PatternType, TemplateArgs,
-                                 FunctionParam->getLocation(),
-                                 FunctionParam->getDeclName());
-        if (T.isNull())
-          return true;
-        FunctionParam->setType(T);
-      }
+    if (NumArgumentsInExpansion) {
+      QualType PatternType =
+          PatternParam->getType()->castAs<PackExpansionType>()->getPattern();
+      for (unsigned Arg = 0; Arg < *NumArgumentsInExpansion; ++Arg) {
+        ParmVarDecl *FunctionParam = Function->getParamDecl(FParamIdx);
+        FunctionParam->setDeclName(PatternParam->getDeclName());
+        if (!PatternDecl->getType()->isDependentType()) {
+          Sema::ArgumentPackSubstitutionIndexRAII SubstIndex(S, Arg);
+          QualType T = S.SubstType(PatternType, TemplateArgs,
+                                   FunctionParam->getLocation(),
+                                   FunctionParam->getDeclName());
+          if (T.isNull())
+            return true;
+          FunctionParam->setType(T);
+        }
 
-      Scope.InstantiatedLocalPackArg(PatternParam, FunctionParam);
-      ++FParamIdx;
+        Scope.InstantiatedLocalPackArg(PatternParam, FunctionParam);
+        ++FParamIdx;
+      }
     }
   }
 

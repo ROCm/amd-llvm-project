@@ -94,6 +94,7 @@
 		2689006713353E0E00698AC0 /* ASTDumper.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 4906FD4012F2255300A2A77C /* ASTDumper.cpp */; };
 		2689006813353E0E00698AC0 /* ASTResultSynthesizer.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 49A8A39F11D568A300AD3B68 /* ASTResultSynthesizer.cpp */; };
 		2689006913353E0E00698AC0 /* ASTStructExtractor.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 491193501226386000578B7F /* ASTStructExtractor.cpp */; };
+		4C0B95802238342C0026C840 /* ASTUtils.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 4C0B957E2238342C0026C840 /* ASTUtils.cpp */; };
 		8CF02AEA19DCC02100B14BE0 /* ASanRuntime.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 8CF02AE519DCBF8400B14BE0 /* ASanRuntime.cpp */; };
 		257906641BD5AFD000178368 /* Acceptor.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 257906621BD5AFD000178368 /* Acceptor.cpp */; };
 		257906651BD5AFD000178368 /* Acceptor.h in Headers */ = {isa = PBXBuildFile; fileRef = 257906631BD5AFD000178368 /* Acceptor.h */; };
@@ -251,7 +252,6 @@
 		268900D713353E6F00698AC0 /* DWARFCallFrameInfo.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 26BC7F1710F1B8EC00F91463 /* DWARFCallFrameInfo.cpp */; };
 		268900B813353E5F00698AC0 /* DWARFCompileUnit.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 260C89B710F57C5600BB2B04 /* DWARFCompileUnit.cpp */; };
 		266E82971B8CE3AC008FCA06 /* DWARFDIE.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 266E82961B8CE3AC008FCA06 /* DWARFDIE.cpp */; };
-		268900C513353E5F00698AC0 /* DWARFDIECollection.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 260C89D110F57C5600BB2B04 /* DWARFDIECollection.cpp */; };
 		26AB92121819D74600E63F3E /* DWARFDataExtractor.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 26AB92101819D74600E63F3E /* DWARFDataExtractor.cpp */; };
 		268900B913353E5F00698AC0 /* DWARFDebugAbbrev.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 260C89B910F57C5600BB2B04 /* DWARFDebugAbbrev.cpp */; };
 		268900BB13353E5F00698AC0 /* DWARFDebugArangeSet.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 260C89BD10F57C5600BB2B04 /* DWARFDebugArangeSet.cpp */; };
@@ -1427,6 +1427,8 @@
 		49A8A3A311D568BF00AD3B68 /* ASTResultSynthesizer.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = ASTResultSynthesizer.h; path = ExpressionParser/Clang/ASTResultSynthesizer.h; sourceTree = "<group>"; };
 		491193501226386000578B7F /* ASTStructExtractor.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = ASTStructExtractor.cpp; path = ExpressionParser/Clang/ASTStructExtractor.cpp; sourceTree = "<group>"; };
 		4911934B1226383D00578B7F /* ASTStructExtractor.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = ASTStructExtractor.h; path = ExpressionParser/Clang/ASTStructExtractor.h; sourceTree = "<group>"; };
+		4C0B957E2238342C0026C840 /* ASTUtils.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = ASTUtils.cpp; path = ExpressionParser/Clang/ASTUtils.cpp; sourceTree = "<group>"; };
+		4C0B957F2238342C0026C840 /* ASTUtils.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = ASTUtils.h; path = ExpressionParser/Clang/ASTUtils.h; sourceTree = "<group>"; };
 		8CF02AE519DCBF8400B14BE0 /* ASanRuntime.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = ASanRuntime.cpp; sourceTree = "<group>"; };
 		8CF02AE619DCBF8400B14BE0 /* ASanRuntime.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ASanRuntime.h; sourceTree = "<group>"; };
 		257906621BD5AFD000178368 /* Acceptor.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = Acceptor.cpp; path = "tools/lldb-server/Acceptor.cpp"; sourceTree = "<group>"; };
@@ -1758,8 +1760,6 @@
 		260C89B810F57C5600BB2B04 /* DWARFCompileUnit.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = DWARFCompileUnit.h; sourceTree = "<group>"; };
 		266E82961B8CE3AC008FCA06 /* DWARFDIE.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = DWARFDIE.cpp; sourceTree = "<group>"; };
 		266E82951B8CE346008FCA06 /* DWARFDIE.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = DWARFDIE.h; sourceTree = "<group>"; };
-		260C89D110F57C5600BB2B04 /* DWARFDIECollection.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = DWARFDIECollection.cpp; sourceTree = "<group>"; };
-		260C89D210F57C5600BB2B04 /* DWARFDIECollection.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = DWARFDIECollection.h; sourceTree = "<group>"; };
 		26AB92101819D74600E63F3E /* DWARFDataExtractor.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = DWARFDataExtractor.cpp; sourceTree = "<group>"; };
 		26AB92111819D74600E63F3E /* DWARFDataExtractor.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = DWARFDataExtractor.h; sourceTree = "<group>"; };
 		260C89B910F57C5600BB2B04 /* DWARFDebugAbbrev.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = DWARFDebugAbbrev.cpp; sourceTree = "<group>"; };
@@ -4169,8 +4169,6 @@
 				260C89D010F57C5600BB2B04 /* DWARFDefines.h */,
 				266E82951B8CE346008FCA06 /* DWARFDIE.h */,
 				266E82961B8CE3AC008FCA06 /* DWARFDIE.cpp */,
-				260C89D110F57C5600BB2B04 /* DWARFDIECollection.cpp */,
-				260C89D210F57C5600BB2B04 /* DWARFDIECollection.h */,
 				260C89D310F57C5600BB2B04 /* DWARFFormValue.cpp */,
 				260C89D410F57C5600BB2B04 /* DWARFFormValue.h */,
 				4CD44CF820B37C440003557C /* DWARFIndex.cpp */,
@@ -6252,6 +6250,8 @@
 				49A8A39F11D568A300AD3B68 /* ASTResultSynthesizer.cpp */,
 				4911934B1226383D00578B7F /* ASTStructExtractor.h */,
 				491193501226386000578B7F /* ASTStructExtractor.cpp */,
+				4C0B957E2238342C0026C840 /* ASTUtils.cpp */,
+				4C0B957F2238342C0026C840 /* ASTUtils.h */,
 				49307AB111DEA4F20081F992 /* IRForTarget.h */,
 				49307AAD11DEA4D90081F992 /* IRForTarget.cpp */,
 				4984BA0F1B978C3E008658D4 /* ClangExpressionVariable.h */,
@@ -8084,6 +8084,7 @@
 				236124A51986B4E2004EFC37 /* Socket.cpp in Sources */,
 				3FDFDDBF199D345E009756A7 /* FileCache.cpp in Sources */,
 				AF1729D7182C907200E0AB97 /* HistoryUnwind.cpp in Sources */,
+				4C0B95802238342C0026C840 /* ASTUtils.cpp in Sources */,
 				AF77E0A11A033D360096C0EA /* RegisterContextFreeBSD_powerpc.cpp in Sources */,
 				26764CA01E48F528008D3573 /* RegularExpression.cpp in Sources */,
 				2689003B13353E0400698AC0 /* EmulateInstruction.cpp in Sources */,
@@ -8281,7 +8282,6 @@
 				238F2BA81D2C85FA001FF92A /* StructuredDataDarwinLog.cpp in Sources */,
 				94380B8219940B0A00BFE4A8 /* StringLexer.cpp in Sources */,
 				268900C413353E5F00698AC0 /* DWARFDefines.cpp in Sources */,
-				268900C513353E5F00698AC0 /* DWARFDIECollection.cpp in Sources */,
 				268900C613353E5F00698AC0 /* DWARFFormValue.cpp in Sources */,
 				3FDFE53119A292F0009756A7 /* HostInfoPosix.cpp in Sources */,
 				26BC17B118C7F4CB00D2196D /* ThreadElfCore.cpp in Sources */,

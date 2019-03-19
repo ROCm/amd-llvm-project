@@ -1,4 +1,5 @@
 ; RUN: opt -mtriple=arm-arm-eabi -mcpu=cortex-m33 < %s -arm-parallel-dsp -S | FileCheck %s
+; RUN: opt -mtriple=armeb-arm-eabi -mcpu=cortex-m0 < %s -arm-parallel-dsp -S | FileCheck %s --check-prefix=CHECK-UNSUPPORTED
 ;
 ; The Cortex-M0 does not support unaligned accesses:
 ; RUN: opt -mtriple=arm-arm-eabi -mcpu=cortex-m0 < %s -arm-parallel-dsp -S | FileCheck %s --check-prefix=CHECK-UNSUPPORTED
@@ -210,3 +211,4 @@ for.body:
   %exitcond = icmp ne i32 %add, %arg
   br i1 %exitcond, label %for.body, label %for.cond.cleanup
 }
+

@@ -221,13 +221,19 @@ function(add_link_opts target_name)
       elseif(${CMAKE_SYSTEM_NAME} MATCHES "SunOS")
         set_property(TARGET ${target_name} APPEND_STRING PROPERTY
                      LINK_FLAGS " -Wl,-z -Wl,discard-unused=sections")
-      elseif(NOT WIN32 AND NOT LLVM_LINKER_IS_GOLD AND NOT ${CMAKE_SYSTEM_NAME} MATCHES "OpenBSD")
+      elseif(NOT WIN32 AND NOT LLVM_LINKER_IS_GOLD AND
+             NOT ${CMAKE_SYSTEM_NAME} MATCHES "OpenBSD|AIX")
         # Object files are compiled with -ffunction-data-sections.
         # Versions of bfd ld < 2.23.1 have a bug in --gc-sections that breaks
         # tools that use plugins. Always pass --gc-sections once we require
         # a newer linker.
         set_property(TARGET ${target_name} APPEND_STRING PROPERTY
                      LINK_FLAGS " -Wl,--gc-sections")
+      endif()
+    else() #LLVM_NO_DEAD_STRIP
+      if(${CMAKE_SYSTEM_NAME} MATCHES "AIX")
+        set_property(TARGET ${target_name} APPEND_STRING PROPERTY
+                     LINK_FLAGS " -Wl,-bnogc")
       endif()
     endif()
   endif()
@@ -1305,7 +1311,7 @@ function(get_llvm_lit_path base_dir file_name)
         set(${base_dir} ${LIT_BASE_DIR} PARENT_SCOPE)
         return()
       else()
-        message(WARN "LLVM_EXTERNAL_LIT set to ${LLVM_EXTERNAL_LIT}, but the path does not exist.")
+        message(WARNING "LLVM_EXTERNAL_LIT set to ${LLVM_EXTERNAL_LIT}, but the path does not exist.")
       endif()
     endif()
   endif()

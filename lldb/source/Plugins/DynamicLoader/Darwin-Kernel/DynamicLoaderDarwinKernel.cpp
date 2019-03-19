@@ -32,6 +32,7 @@
 #include "DynamicLoaderDarwinKernel.h"
 
 #include <memory>
+#include <algorithm>
 
 //#define ENABLE_DEBUG_PRINTF // COMMENT THIS LINE OUT PRIOR TO CHECKIN
 #ifdef ENABLE_DEBUG_PRINTF
@@ -240,8 +241,7 @@ DynamicLoaderDarwinKernel::SearchForKernelWithDebugHints(Process *process) {
       0xffffff8000002010ULL, // oldest arm64 devices
       LLDB_INVALID_ADDRESS};
   addr_t kernel_addresses_32[] = {0xffff0110, // 2016 and earlier armv7 devices
-                                  0xffff1010, 
-                                  LLDB_INVALID_ADDRESS};
+                                  0xffff1010, LLDB_INVALID_ADDRESS};
 
   uint8_t uval[8];
   if (process->GetAddressByteSize() == 8) {
@@ -766,24 +766,24 @@ bool DynamicLoaderDarwinKernel::KextImageInfo::LoadImageUsingMemoryModule(
 
   Target &target = process->GetTarget();
 
-  // If we don't have / can't create a memory module for this kext, don't try
-  // to load it - we won't have the correct segment load addresses.
-  if (!ReadMemoryModule(process)) {
-    Log *log(GetLogIfAnyCategoriesSet(LIBLLDB_LOG_DYNAMIC_LOADER));
-    if (log)
-      log->Printf("Unable to read '%s' from memory at address 0x%" PRIx64
-                  " to get the segment load addresses.",
-                  m_name.c_str(), m_load_address);
-    return false;
+  // kexts will have a uuid from the table.
+  // for the kernel, we'll need to read the load commands out of memory to get it.
+  if (m_uuid.IsValid() == false) {
+    if (ReadMemoryModule(process) == false) {
+      Log *log(GetLogIfAnyCategoriesSet(LIBLLDB_LOG_DYNAMIC_LOADER));
+      if (log)
+        log->Printf("Unable to read '%s' from memory at address 0x%" PRIx64
+                    " to get the segment load addresses.",
+                    m_name.c_str(), m_load_address);
+      return false;
+    }
   }
 
-  bool uuid_is_valid = m_uuid.IsValid();
-
-  if (IsKernel() && uuid_is_valid && m_memory_module_sp.get()) {
+  if (IsKernel() && m_uuid.IsValid()) {
     Stream *s = target.GetDebugger().GetOutputFile().get();
     if (s) {
       s->Printf("Kernel UUID: %s\n",
-                m_memory_module_sp->GetUUID().GetAsString().c_str());
+                m_uuid.GetAsString().c_str());
       s->Printf("Load Address: 0x%" PRIx64 "\n", m_load_address);
     }
   }
@@ -795,7 +795,7 @@ bool DynamicLoaderDarwinKernel::KextImageInfo::LoadImageUsingMemoryModule(
     m_module_sp = target_images.FindModule(m_uuid);
 
     // Search for the kext on the local filesystem via the UUID
-    if (!m_module_sp && uuid_is_valid) {
+    if (!m_module_sp && m_uuid.IsValid()) {
       ModuleSpec module_spec;
       module_spec.GetUUID() = m_uuid;
       module_spec.GetArchitecture() = target.GetArchitecture();
@@ -857,13 +857,7 @@ bool DynamicLoaderDarwinKernel::KextImageInfo::LoadImageUsingMemoryModule(
     // images. If we also have a memory module, require that they have matching
     // UUIDs
     if (m_module_sp) {
-      bool uuid_match_ok = true;
-      if (m_memory_module_sp) {
-        if (m_module_sp->GetUUID() != m_memory_module_sp->GetUUID()) {
-          uuid_match_ok = false;
-        }
-      }
-      if (uuid_match_ok) {
+      if (m_uuid.IsValid() && m_module_sp->GetUUID() == m_uuid) {
         target.GetImages().AppendIfNeeded(m_module_sp);
         if (IsKernel() &&
             target.GetExecutableModulePointer() != m_module_sp.get()) {
@@ -872,6 +866,11 @@ bool DynamicLoaderDarwinKernel::KextImageInfo::LoadImageUsingMemoryModule(
       }
     }
   }
+
+  // If we've found a binary, read the load commands out of memory so we
+  // can set the segment load addresses.
+  if (m_module_sp)
+    ReadMemoryModule (process);
 
   static ConstString g_section_name_LINKEDIT("__LINKEDIT");
 
@@ -1042,7 +1041,7 @@ void DynamicLoaderDarwinKernel::LoadKernelModuleIfNeeded() {
         m_kernel.LoadImageAtFileAddress(m_process);
       }
     }
-    
+
     // The operating system plugin gets loaded and initialized in
     // LoadImageUsingMemoryModule when we discover the kernel dSYM.  For a core
     // file in particular, that's the wrong place to do this, since  we haven't
@@ -1244,9 +1243,9 @@ bool DynamicLoaderDarwinKernel::ParseKextSummaries(
     // If this "kext" entry is actually an alias for the kernel -- the kext was
     // compiled into the kernel or something -- then we don't want to load the
     // kernel's text section at a different address.  Ignore this kext entry.
-    if (kext_summaries[new_kext].GetUUID().IsValid() 
-        && m_kernel.GetUUID().IsValid() 
-        && kext_summaries[new_kext].GetUUID() == m_kernel.GetUUID()) {
+    if (kext_summaries[new_kext].GetUUID().IsValid() &&
+        m_kernel.GetUUID().IsValid() &&
+        kext_summaries[new_kext].GetUUID() == m_kernel.GetUUID()) {
       to_be_added[new_kext] = false;
       break;
     }
@@ -1288,7 +1287,8 @@ bool DynamicLoaderDarwinKernel::ParseKextSummaries(
     }
   }
 
-  int failed_to_load_kexts = 0;
+  // Build up a list of <kext-name, uuid> for any kexts that fail to load
+  std::vector<std::pair<std::string, UUID>> kexts_failed_to_load;
   if (number_of_new_kexts_being_added > 0) {
     ModuleList loaded_module_list;
 
@@ -1296,10 +1296,14 @@ bool DynamicLoaderDarwinKernel::ParseKextSummaries(
     for (uint32_t new_kext = 0; new_kext < num_of_new_kexts; new_kext++) {
       if (to_be_added[new_kext]) {
         KextImageInfo &image_info = kext_summaries[new_kext];
+        bool kext_successfully_added = true;
         if (load_kexts) {
           if (!image_info.LoadImageUsingMemoryModule(m_process)) {
-            failed_to_load_kexts++;
+            kexts_failed_to_load.push_back(std::pair<std::string, UUID>(
+                kext_summaries[new_kext].GetName(),
+                kext_summaries[new_kext].GetUUID()));
             image_info.LoadImageAtFileAddress(m_process);
+            kext_successfully_added = false;
           }
         }
 
@@ -1309,8 +1313,12 @@ bool DynamicLoaderDarwinKernel::ParseKextSummaries(
             m_process->GetStopID() == image_info.GetProcessStopId())
           loaded_module_list.AppendIfNeeded(image_info.GetModule());
 
-        if (s && load_kexts)
-          s->Printf(".");
+        if (s && load_kexts) {
+          if (kext_successfully_added)
+            s->Printf(".");
+          else
+            s->Printf("-");
+        }
 
         if (log)
           kext_summaries[new_kext].PutToLog(log);
@@ -1344,11 +1352,25 @@ bool DynamicLoaderDarwinKernel::ParseKextSummaries(
   }
 
   if (s && load_kexts) {
-    s->Printf(" done.");
-    if (failed_to_load_kexts > 0 && number_of_new_kexts_being_added > 0)
-      s->Printf("  Failed to load %d of %d kexts.", failed_to_load_kexts,
+    s->Printf(" done.\n");
+    if (kexts_failed_to_load.size() > 0 && number_of_new_kexts_being_added > 0) {
+      s->Printf("Failed to load %d of %d kexts:\n",
+                (int)kexts_failed_to_load.size(),
                 number_of_new_kexts_being_added);
-    s->Printf("\n");
+      // print a sorted list of <kext-name, uuid> kexts which failed to load
+      unsigned longest_name = 0;
+      std::sort(kexts_failed_to_load.begin(), kexts_failed_to_load.end());
+      for (const auto &ku : kexts_failed_to_load) {
+        if (ku.first.size() > longest_name)
+          longest_name = ku.first.size();
+      }
+      for (const auto &ku : kexts_failed_to_load) {
+        std::string uuid;
+        if (ku.second.IsValid())
+          uuid = ku.second.GetAsString();
+        s->Printf (" %-*s %s\n", longest_name, ku.first.c_str(), uuid.c_str());
+      }
+    }
     s->Flush();
   }
 

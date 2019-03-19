@@ -2194,9 +2194,13 @@ Sema::CheckOMPThreadPrivateDecl(SourceLocation Loc, ArrayRef<Expr *> VarList) {
   return D;
 }
 
-Sema::DeclGroupPtrTy
-Sema::ActOnOpenMPAllocateDirective(SourceLocation Loc, ArrayRef<Expr *> VarList,
-                                   DeclContext *Owner) {
+Sema::DeclGroupPtrTy Sema::ActOnOpenMPAllocateDirective(
+    SourceLocation Loc, ArrayRef<Expr *> VarList,
+    ArrayRef<OMPClause *> Clauses, DeclContext *Owner) {
+  assert(Clauses.size() <= 1 && "Expected at most one clause.");
+  Expr *Allocator = nullptr;
+  if (!Clauses.empty())
+    Allocator = cast<OMPAllocatorClause>(Clauses.back())->getAllocator();
   SmallVector<Expr *, 8> Vars;
   for (Expr *RefExpr : VarList) {
     auto *DE = cast<DeclRefExpr>(RefExpr);
@@ -2213,17 +2217,18 @@ Sema::ActOnOpenMPAllocateDirective(SourceLocation Loc, ArrayRef<Expr *> VarList,
       continue;
 
     Vars.push_back(RefExpr);
-    VD->addAttr(
-        OMPAllocateDeclAttr::CreateImplicit(Context, DE->getSourceRange()));
+    Attr *A = OMPAllocateDeclAttr::CreateImplicit(Context, Allocator,
+                                                  DE->getSourceRange());
+    VD->addAttr(A);
     if (ASTMutationListener *ML = Context.getASTMutationListener())
-      ML->DeclarationMarkedOpenMPAllocate(VD,
-                                          VD->getAttr<OMPAllocateDeclAttr>());
+      ML->DeclarationMarkedOpenMPAllocate(VD, A);
   }
   if (Vars.empty())
     return nullptr;
   if (!Owner)
     Owner = getCurLexicalContext();
-  OMPAllocateDecl *D = OMPAllocateDecl::Create(Context, Owner, Loc, Vars);
+  OMPAllocateDecl *D =
+      OMPAllocateDecl::Create(Context, Owner, Loc, Vars, Clauses);
   D->setAccess(AS_public);
   Owner->addDecl(D);
   return DeclGroupPtrTy::make(DeclGroupRef(D));
@@ -4753,8 +4758,7 @@ DeclRefExpr *OpenMPIterationSpaceChecker::buildCounterVar(
       Captures.insert(std::make_pair(LCRef, Ref));
     return Ref;
   }
-  return buildDeclRefExpr(SemaRef, VD, VD->getType().getNonReferenceType(),
-                          DefaultLoc);
+  return cast<DeclRefExpr>(LCRef);
 }
 
 Expr *OpenMPIterationSpaceChecker::buildPrivateCounterVar() const {
@@ -8436,6 +8440,9 @@ OMPClause *Sema::ActOnOpenMPSingleExprClause(OpenMPClauseKind Kind, Expr *Expr,
   case OMPC_simdlen:
     Res = ActOnOpenMPSimdlenClause(Expr, StartLoc, LParenLoc, EndLoc);
     break;
+  case OMPC_allocator:
+    Res = ActOnOpenMPAllocatorClause(Expr, StartLoc, LParenLoc, EndLoc);
+    break;
   case OMPC_collapse:
     Res = ActOnOpenMPCollapseClause(Expr, StartLoc, LParenLoc, EndLoc);
     break;
@@ -9009,6 +9016,7 @@ static OpenMPDirectiveKind getOpenMPCaptureRegionForClause(
   case OMPC_final:
   case OMPC_safelen:
   case OMPC_simdlen:
+  case OMPC_allocator:
   case OMPC_collapse:
   case OMPC_private:
   case OMPC_shared:
@@ -9259,6 +9267,43 @@ OMPClause *Sema::ActOnOpenMPSimdlenClause(Expr *Len, SourceLocation StartLoc,
       OMPSimdlenClause(Simdlen.get(), StartLoc, LParenLoc, EndLoc);
 }
 
+/// Tries to find omp_allocator_handle_t type.
+static bool FindOMPAllocatorHandleT(Sema &S, SourceLocation Loc,
+                                    QualType &OMPAllocatorHandleT) {
+  if (!OMPAllocatorHandleT.isNull())
+    return true;
+  DeclarationName OMPAllocatorHandleTName =
+      &S.getASTContext().Idents.get("omp_allocator_handle_t");
+  auto *TD = dyn_cast_or_null<TypeDecl>(S.LookupSingleName(
+      S.TUScope, OMPAllocatorHandleTName, Loc, Sema::LookupAnyName));
+  if (!TD) {
+    S.Diag(Loc, diag::err_implied_omp_allocator_handle_t_not_found);
+    return false;
+  }
+  OMPAllocatorHandleT = S.getASTContext().getTypeDeclType(TD);
+  return true;
+}
+
+OMPClause *Sema::ActOnOpenMPAllocatorClause(Expr *A, SourceLocation StartLoc,
+                                            SourceLocation LParenLoc,
+                                            SourceLocation EndLoc) {
+  // OpenMP [2.11.3, allocate Directive, Description]
+  // allocator is an expression of omp_allocator_handle_t type.
+  if (!FindOMPAllocatorHandleT(*this, A->getExprLoc(), OMPAllocatorHandleT))
+    return nullptr;
+
+  ExprResult Allocator = DefaultLvalueConversion(A);
+  if (Allocator.isInvalid())
+    return nullptr;
+  Allocator = PerformImplicitConversion(Allocator.get(), OMPAllocatorHandleT,
+                                        Sema::AA_Initializing,
+                                        /*AllowExplicit=*/true);
+  if (Allocator.isInvalid())
+    return nullptr;
+  return new (Context)
+      OMPAllocatorClause(Allocator.get(), StartLoc, LParenLoc, EndLoc);
+}
+
 OMPClause *Sema::ActOnOpenMPCollapseClause(Expr *NumForLoops,
                                            SourceLocation StartLoc,
                                            SourceLocation LParenLoc,
@@ -9326,6 +9371,7 @@ OMPClause *Sema::ActOnOpenMPSimpleClause(
   case OMPC_num_threads:
   case OMPC_safelen:
   case OMPC_simdlen:
+  case OMPC_allocator:
   case OMPC_collapse:
   case OMPC_schedule:
   case OMPC_private:
@@ -9503,6 +9549,7 @@ OMPClause *Sema::ActOnOpenMPSingleExprWithArgClause(
   case OMPC_num_threads:
   case OMPC_safelen:
   case OMPC_simdlen:
+  case OMPC_allocator:
   case OMPC_collapse:
   case OMPC_default:
   case OMPC_proc_bind:
@@ -9724,6 +9771,7 @@ OMPClause *Sema::ActOnOpenMPClause(OpenMPClauseKind Kind,
   case OMPC_num_threads:
   case OMPC_safelen:
   case OMPC_simdlen:
+  case OMPC_allocator:
   case OMPC_collapse:
   case OMPC_schedule:
   case OMPC_private:
@@ -9928,6 +9976,7 @@ OMPClause *Sema::ActOnOpenMPVarListClause(
   case OMPC_num_threads:
   case OMPC_safelen:
   case OMPC_simdlen:
+  case OMPC_allocator:
   case OMPC_collapse:
   case OMPC_default:
   case OMPC_proc_bind:
@@ -10908,35 +10957,37 @@ buildDeclareReductionRef(Sema &SemaRef, SourceLocation Loc, SourceRange Range,
     }
   }
   // Perform ADL.
-  argumentDependentLookup(SemaRef, ReductionId, Loc, Ty, Lookups);
-  if (auto *VD = filterLookupForUDReductionAndMapper<ValueDecl *>(
-          Lookups, [&SemaRef, Ty](ValueDecl *D) -> ValueDecl * {
-            if (!D->isInvalidDecl() &&
-                SemaRef.Context.hasSameType(D->getType(), Ty))
-              return D;
-            return nullptr;
-          }))
-    return SemaRef.BuildDeclRefExpr(VD, VD->getType().getNonReferenceType(),
-                                    VK_LValue, Loc);
-  if (auto *VD = filterLookupForUDReductionAndMapper<ValueDecl *>(
-          Lookups, [&SemaRef, Ty, Loc](ValueDecl *D) -> ValueDecl * {
-            if (!D->isInvalidDecl() &&
-                SemaRef.IsDerivedFrom(Loc, Ty, D->getType()) &&
-                !Ty.isMoreQualifiedThan(D->getType()))
-              return D;
-            return nullptr;
-          })) {
-    CXXBasePaths Paths(/*FindAmbiguities=*/true, /*RecordPaths=*/true,
-                       /*DetectVirtual=*/false);
-    if (SemaRef.IsDerivedFrom(Loc, Ty, VD->getType(), Paths)) {
-      if (!Paths.isAmbiguous(SemaRef.Context.getCanonicalType(
-              VD->getType().getUnqualifiedType()))) {
-        if (SemaRef.CheckBaseClassAccess(Loc, VD->getType(), Ty, Paths.front(),
-                                         /*DiagID=*/0) !=
-            Sema::AR_inaccessible) {
-          SemaRef.BuildBasePathArray(Paths, BasePath);
-          return SemaRef.BuildDeclRefExpr(
-              VD, VD->getType().getNonReferenceType(), VK_LValue, Loc);
+  if (SemaRef.getLangOpts().CPlusPlus) {
+    argumentDependentLookup(SemaRef, ReductionId, Loc, Ty, Lookups);
+    if (auto *VD = filterLookupForUDReductionAndMapper<ValueDecl *>(
+            Lookups, [&SemaRef, Ty](ValueDecl *D) -> ValueDecl * {
+              if (!D->isInvalidDecl() &&
+                  SemaRef.Context.hasSameType(D->getType(), Ty))
+                return D;
+              return nullptr;
+            }))
+      return SemaRef.BuildDeclRefExpr(VD, VD->getType().getNonReferenceType(),
+                                      VK_LValue, Loc);
+    if (auto *VD = filterLookupForUDReductionAndMapper<ValueDecl *>(
+            Lookups, [&SemaRef, Ty, Loc](ValueDecl *D) -> ValueDecl * {
+              if (!D->isInvalidDecl() &&
+                  SemaRef.IsDerivedFrom(Loc, Ty, D->getType()) &&
+                  !Ty.isMoreQualifiedThan(D->getType()))
+                return D;
+              return nullptr;
+            })) {
+      CXXBasePaths Paths(/*FindAmbiguities=*/true, /*RecordPaths=*/true,
+                         /*DetectVirtual=*/false);
+      if (SemaRef.IsDerivedFrom(Loc, Ty, VD->getType(), Paths)) {
+        if (!Paths.isAmbiguous(SemaRef.Context.getCanonicalType(
+                VD->getType().getUnqualifiedType()))) {
+          if (SemaRef.CheckBaseClassAccess(
+                  Loc, VD->getType(), Ty, Paths.front(),
+                  /*DiagID=*/0) != Sema::AR_inaccessible) {
+            SemaRef.BuildBasePathArray(Paths, BasePath);
+            return SemaRef.BuildDeclRefExpr(
+                VD, VD->getType().getNonReferenceType(), VK_LValue, Loc);
+          }
         }
       }
     }

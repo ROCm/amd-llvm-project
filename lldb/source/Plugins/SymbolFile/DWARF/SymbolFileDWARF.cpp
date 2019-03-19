@@ -54,7 +54,6 @@
 #include "AppleDWARFIndex.h"
 #include "DWARFASTParser.h"
 #include "DWARFASTParserClang.h"
-#include "DWARFDIECollection.h"
 #include "DWARFDebugAbbrev.h"
 #include "DWARFDebugAranges.h"
 #include "DWARFDebugInfo.h"
@@ -661,14 +660,23 @@ const DWARFDataExtractor &SymbolFileDWARF::get_gnu_debugaltlink() {
 }
 
 DWARFDebugAbbrev *SymbolFileDWARF::DebugAbbrev() {
-  if (m_abbr == NULL) {
-    const DWARFDataExtractor &debug_abbrev_data = get_debug_abbrev_data();
-    if (debug_abbrev_data.GetByteSize() > 0) {
-      m_abbr.reset(new DWARFDebugAbbrev());
-      if (m_abbr)
-        m_abbr->Parse(debug_abbrev_data);
-    }
+  if (m_abbr)
+    return m_abbr.get();
+
+  const DWARFDataExtractor &debug_abbrev_data = get_debug_abbrev_data();
+  if (debug_abbrev_data.GetByteSize() == 0)
+    return nullptr;
+
+  auto abbr = llvm::make_unique<DWARFDebugAbbrev>();
+  llvm::Error error = abbr->parse(debug_abbrev_data);
+  if (error) {
+    Log *log = LogChannelDWARF::GetLogIfAll(DWARF_LOG_DEBUG_INFO);
+    LLDB_LOG_ERROR(log, std::move(error),
+                   "Unable to read .debug_abbrev section: {0}");
+    return nullptr;
   }
+
+  m_abbr = std::move(abbr);
   return m_abbr.get();
 }
 
@@ -861,22 +869,20 @@ lldb::LanguageType SymbolFileDWARF::ParseLanguage(CompileUnit &comp_unit) {
 
 size_t SymbolFileDWARF::ParseFunctions(CompileUnit &comp_unit) {
   ASSERT_MODULE_LOCK(this);
-  size_t functions_added = 0;
   DWARFUnit *dwarf_cu = GetDWARFCompileUnit(&comp_unit);
-  if (dwarf_cu) {
-    DWARFDIECollection function_dies;
-    const size_t num_functions =
-        dwarf_cu->AppendDIEsWithTag(DW_TAG_subprogram, function_dies);
-    size_t func_idx;
-    for (func_idx = 0; func_idx < num_functions; ++func_idx) {
-      DWARFDIE die = function_dies.GetDIEAtIndex(func_idx);
-      if (comp_unit.FindFunctionByUID(die.GetID()).get() == NULL) {
-        if (ParseFunction(comp_unit, die))
-          ++functions_added;
-      }
-    }
-    // FixupTypes();
+  if (!dwarf_cu)
+    return 0;
+
+  size_t functions_added = 0;
+  std::vector<DWARFDIE> function_dies;
+  dwarf_cu->AppendDIEsWithTag(DW_TAG_subprogram, function_dies);
+  for (const DWARFDIE &die : function_dies) {
+    if (comp_unit.FindFunctionByUID(die.GetID()))
+      continue;
+    if (ParseFunction(comp_unit, die))
+      ++functions_added;
   }
+  // FixupTypes();
   return functions_added;
 }
 
@@ -1752,8 +1758,18 @@ uint32_t SymbolFileDWARF::ResolveSymbolContext(const Address &so_addr,
 
     DWARFDebugInfo *debug_info = DebugInfo();
     if (debug_info) {
-      const dw_offset_t cu_offset =
-          debug_info->GetCompileUnitAranges().FindAddress(file_vm_addr);
+      llvm::Expected<DWARFDebugAranges &> aranges =
+          debug_info->GetCompileUnitAranges();
+      if (!aranges) {
+        Log *log = LogChannelDWARF::GetLogIfAll(DWARF_LOG_DEBUG_INFO |
+                                                DWARF_LOG_DEBUG_ARANGES);
+        LLDB_LOG_ERROR(log, aranges.takeError(),
+                       "SymbolFileDWARF::ResolveSymbolContext failed to get cu "
+                       "aranges.  {0}");
+        return 0;
+      }
+
+      const dw_offset_t cu_offset = aranges->FindAddress(file_vm_addr);
       if (cu_offset == DW_INVALID_OFFSET) {
         // Global variables are not in the compile unit address ranges. The
         // only way to currently find global variables is to iterate over the
@@ -2807,8 +2823,8 @@ bool SymbolFileDWARF::DIEDeclContextsMatch(const DWARFDIE &die1,
   if (die1 == die2)
     return true;
 
-  DWARFDIECollection decl_ctx_1;
-  DWARFDIECollection decl_ctx_2;
+  std::vector<DWARFDIE> decl_ctx_1;
+  std::vector<DWARFDIE> decl_ctx_2;
   // The declaration DIE stack is a stack of the declaration context DIEs all
   // the way back to the compile unit. If a type "T" is declared inside a class
   // "B", and class "B" is declared inside a class "A" and class "A" is in a
@@ -2824,11 +2840,11 @@ bool SymbolFileDWARF::DIEDeclContextsMatch(const DWARFDIE &die1,
   // back to the compiler unit.
 
   // First lets grab the decl contexts for both DIEs
-  die1.GetDeclContextDIEs(decl_ctx_1);
-  die2.GetDeclContextDIEs(decl_ctx_2);
+  decl_ctx_1 = die1.GetDeclContextDIEs();
+  decl_ctx_2 = die2.GetDeclContextDIEs();
   // Make sure the context arrays have the same size, otherwise we are done
-  const size_t count1 = decl_ctx_1.Size();
-  const size_t count2 = decl_ctx_2.Size();
+  const size_t count1 = decl_ctx_1.size();
+  const size_t count2 = decl_ctx_2.size();
   if (count1 != count2)
     return false;
 
@@ -2838,8 +2854,8 @@ bool SymbolFileDWARF::DIEDeclContextsMatch(const DWARFDIE &die1,
   DWARFDIE decl_ctx_die2;
   size_t i;
   for (i = 0; i < count1; i++) {
-    decl_ctx_die1 = decl_ctx_1.GetDIEAtIndex(i);
-    decl_ctx_die2 = decl_ctx_2.GetDIEAtIndex(i);
+    decl_ctx_die1 = decl_ctx_1[i];
+    decl_ctx_die2 = decl_ctx_2[i];
     if (decl_ctx_die1.Tag() != decl_ctx_die2.Tag())
       return false;
   }
@@ -2849,7 +2865,7 @@ bool SymbolFileDWARF::DIEDeclContextsMatch(const DWARFDIE &die1,
   // DW_TAG_compile_unit or DW_TAG_partial_unit. If it isn't then
   // something went wrong in the DWARFDIE::GetDeclContextDIEs()
   // function.
-  dw_tag_t cu_tag = decl_ctx_1.GetDIEAtIndex(count1 - 1).Tag();
+  dw_tag_t cu_tag = decl_ctx_1[count1 - 1].Tag();
   UNUSED_IF_ASSERT_DISABLED(cu_tag);
   assert(cu_tag == DW_TAG_compile_unit || cu_tag == DW_TAG_partial_unit);
 
@@ -2857,8 +2873,8 @@ bool SymbolFileDWARF::DIEDeclContextsMatch(const DWARFDIE &die1,
   // Always skip the compile unit when comparing by only iterating up to "count
   // - 1". Here we compare the names as we go.
   for (i = 0; i < count1 - 1; i++) {
-    decl_ctx_die1 = decl_ctx_1.GetDIEAtIndex(i);
-    decl_ctx_die2 = decl_ctx_2.GetDIEAtIndex(i);
+    decl_ctx_die1 = decl_ctx_1[i];
+    decl_ctx_die2 = decl_ctx_2[i];
     const char *name1 = decl_ctx_die1.GetName();
     const char *name2 = decl_ctx_die2.GetName();
     // If the string was from a DW_FORM_strp, then the pointer will often be
@@ -3256,8 +3272,7 @@ VariableSP SymbolFileDWARF::ParseVariableDIE(const SymbolContext &sc,
                 // Retrieve the value as a data expression.
                 DWARFFormValue::FixedFormSizes fixed_form_sizes =
                     DWARFFormValue::GetFixedFormSizesForAddressSize(
-                        attributes.CompileUnitAtIndex(i)->GetAddressByteSize(),
-                        attributes.CompileUnitAtIndex(i)->IsDWARF64());
+                        attributes.CompileUnitAtIndex(i)->GetAddressByteSize());
                 uint32_t data_offset = attributes.DIEOffsetAtIndex(i);
                 uint32_t data_length =
                     fixed_form_sizes.GetSize(form_value.Form());
@@ -3279,8 +3294,7 @@ VariableSP SymbolFileDWARF::ParseVariableDIE(const SymbolContext &sc,
                   DWARFFormValue::FixedFormSizes fixed_form_sizes =
                       DWARFFormValue::GetFixedFormSizesForAddressSize(
                           attributes.CompileUnitAtIndex(i)
-                              ->GetAddressByteSize(),
-                          attributes.CompileUnitAtIndex(i)->IsDWARF64());
+                              ->GetAddressByteSize());
                   uint32_t data_offset = attributes.DIEOffsetAtIndex(i);
                   uint32_t data_length =
                       fixed_form_sizes.GetSize(form_value.Form());

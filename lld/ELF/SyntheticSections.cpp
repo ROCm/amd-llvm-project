@@ -1205,25 +1205,6 @@ DynamicSection<ELFT>::DynamicSection()
   // ftp://www.linux-mips.org/pub/linux/mips/doc/ABI/mipsabi.pdf
   if (Config->EMachine == EM_MIPS || Config->ZRodynamic)
     this->Flags = SHF_ALLOC;
-
-  // Add strings to .dynstr early so that .dynstr's size will be
-  // fixed early.
-  for (StringRef S : Config->FilterList)
-    addInt(DT_FILTER, In.DynStrTab->addString(S));
-  for (StringRef S : Config->AuxiliaryList)
-    addInt(DT_AUXILIARY, In.DynStrTab->addString(S));
-
-  if (!Config->Rpath.empty())
-    addInt(Config->EnableNewDtags ? DT_RUNPATH : DT_RPATH,
-           In.DynStrTab->addString(Config->Rpath));
-
-  for (InputFile *File : SharedFiles) {
-    SharedFile<ELFT> *F = cast<SharedFile<ELFT>>(File);
-    if (F->IsNeeded)
-      addInt(DT_NEEDED, In.DynStrTab->addString(F->SoName));
-  }
-  if (!Config->SoName.empty())
-    addInt(DT_SONAME, In.DynStrTab->addString(Config->SoName));
 }
 
 template <class ELFT>
@@ -1277,6 +1258,23 @@ static uint64_t addPltRelSz() {
 
 // Add remaining entries to complete .dynamic contents.
 template <class ELFT> void DynamicSection<ELFT>::finalizeContents() {
+  for (StringRef S : Config->FilterList)
+    addInt(DT_FILTER, In.DynStrTab->addString(S));
+  for (StringRef S : Config->AuxiliaryList)
+    addInt(DT_AUXILIARY, In.DynStrTab->addString(S));
+
+  if (!Config->Rpath.empty())
+    addInt(Config->EnableNewDtags ? DT_RUNPATH : DT_RPATH,
+           In.DynStrTab->addString(Config->Rpath));
+
+  for (InputFile *File : SharedFiles) {
+    SharedFile<ELFT> *F = cast<SharedFile<ELFT>>(File);
+    if (F->IsNeeded)
+      addInt(DT_NEEDED, In.DynStrTab->addString(F->SoName));
+  }
+  if (!Config->SoName.empty())
+    addInt(DT_SONAME, In.DynStrTab->addString(Config->SoName));
+
   // Set DT_FLAGS and DT_FLAGS_1.
   uint32_t DtFlags = 0;
   uint32_t DtFlags1 = 0;
@@ -3018,7 +3016,6 @@ void elf::mergeSections() {
     }
 
     StringRef OutsecName = getOutputSectionName(MS);
-    uint32_t Alignment = std::max<uint32_t>(MS->Alignment, MS->Entsize);
 
     auto I = llvm::find_if(MergeSections, [=](MergeSyntheticSection *Sec) {
       // While we could create a single synthetic section for two different
@@ -3030,11 +3027,11 @@ void elf::mergeSections() {
       // Using Entsize in here also allows us to propagate it to the synthetic
       // section.
       return Sec->Name == OutsecName && Sec->Flags == MS->Flags &&
-             Sec->Entsize == MS->Entsize && Sec->Alignment == Alignment;
+             Sec->Entsize == MS->Entsize && Sec->Alignment == MS->Alignment;
     });
     if (I == MergeSections.end()) {
       MergeSyntheticSection *Syn =
-          createMergeSynthetic(OutsecName, MS->Type, MS->Flags, Alignment);
+          createMergeSynthetic(OutsecName, MS->Type, MS->Flags, MS->Alignment);
       MergeSections.push_back(Syn);
       I = std::prev(MergeSections.end());
       S = Syn;

@@ -920,8 +920,8 @@ bool SITargetLowering::getTgtMemIntrinsic(IntrinsicInfo &Info,
     Info.align = 0;
     Info.flags = MachineMemOperand::MOLoad | MachineMemOperand::MOStore;
 
-    const ConstantInt *Vol = dyn_cast<ConstantInt>(CI.getOperand(4));
-    if (!Vol || !Vol->isZero())
+    const ConstantInt *Vol = cast<ConstantInt>(CI.getOperand(4));
+    if (!Vol->isZero())
       Info.flags |= MachineMemOperand::MOVolatile;
 
     return true;
@@ -934,8 +934,8 @@ bool SITargetLowering::getTgtMemIntrinsic(IntrinsicInfo &Info,
     Info.align = 0;
     Info.flags = MachineMemOperand::MOLoad | MachineMemOperand::MOStore;
 
-    const ConstantInt *Vol = dyn_cast<ConstantInt>(CI.getOperand(1));
-    if (!Vol || !Vol->isZero())
+    const ConstantInt *Vol = cast<ConstantInt>(CI.getOperand(1));
+    if (!Vol->isZero())
       Info.flags |= MachineMemOperand::MOVolatile;
 
     return true;
@@ -1046,7 +1046,8 @@ bool SITargetLowering::isLegalAddressingMode(const DataLayout &DL,
     return isLegalGlobalAddressingMode(AM);
 
   if (AS == AMDGPUAS::CONSTANT_ADDRESS ||
-      AS == AMDGPUAS::CONSTANT_ADDRESS_32BIT) {
+      AS == AMDGPUAS::CONSTANT_ADDRESS_32BIT ||
+      AS == AMDGPUAS::BUFFER_FAT_POINTER) {
     // If the offset isn't a multiple of 4, it probably isn't going to be
     // correctly aligned.
     // FIXME: Can we get the real alignment here?
@@ -3436,11 +3437,15 @@ MachineBasicBlock *SITargetLowering::EmitInstrWithCustomInserter(
     BuildMI(*BB, MI, DL, TII->get(AMDGPU::COPY), SrcCondCopy)
       .addReg(SrcCond);
     BuildMI(*BB, MI, DL, TII->get(AMDGPU::V_CNDMASK_B32_e64), DstLo)
+      .addImm(0)
       .addReg(Src0, 0, AMDGPU::sub0)
+      .addImm(0)
       .addReg(Src1, 0, AMDGPU::sub0)
       .addReg(SrcCondCopy);
     BuildMI(*BB, MI, DL, TII->get(AMDGPU::V_CNDMASK_B32_e64), DstHi)
+      .addImm(0)
       .addReg(Src0, 0, AMDGPU::sub1)
+      .addImm(0)
       .addReg(Src1, 0, AMDGPU::sub1)
       .addReg(SrcCondCopy);
 
@@ -3741,10 +3746,7 @@ SDValue SITargetLowering::adjustLoadValueType(unsigned Opcode,
 static SDValue lowerICMPIntrinsic(const SITargetLowering &TLI,
                                   SDNode *N, SelectionDAG &DAG) {
   EVT VT = N->getValueType(0);
-  const auto *CD = dyn_cast<ConstantSDNode>(N->getOperand(3));
-  if (!CD)
-    return DAG.getUNDEF(VT);
-
+  const auto *CD = cast<ConstantSDNode>(N->getOperand(3));
   int CondCode = CD->getSExtValue();
   if (CondCode < ICmpInst::Predicate::FIRST_ICMP_PREDICATE ||
       CondCode > ICmpInst::Predicate::LAST_ICMP_PREDICATE)
@@ -3775,9 +3777,7 @@ static SDValue lowerICMPIntrinsic(const SITargetLowering &TLI,
 static SDValue lowerFCMPIntrinsic(const SITargetLowering &TLI,
                                   SDNode *N, SelectionDAG &DAG) {
   EVT VT = N->getValueType(0);
-  const auto *CD = dyn_cast<ConstantSDNode>(N->getOperand(3));
-  if (!CD)
-    return DAG.getUNDEF(VT);
+  const auto *CD = cast<ConstantSDNode>(N->getOperand(3));
 
   int CondCode = CD->getSExtValue();
   if (CondCode < FCmpInst::Predicate::FIRST_FCMP_PREDICATE ||
@@ -4618,9 +4618,7 @@ static SDValue getBuildDwordsVector(SelectionDAG &DAG, SDLoc DL,
 
 static bool parseCachePolicy(SDValue CachePolicy, SelectionDAG &DAG,
                              SDValue *GLC, SDValue *SLC) {
-  auto CachePolicyConst = dyn_cast<ConstantSDNode>(CachePolicy.getNode());
-  if (!CachePolicyConst)
-    return false;
+  auto CachePolicyConst = cast<ConstantSDNode>(CachePolicy.getNode());
 
   uint64_t Value = CachePolicyConst->getZExtValue();
   SDLoc DL(CachePolicy);
@@ -4721,9 +4719,7 @@ static SDValue constructRetValue(SelectionDAG &DAG,
 
 static bool parseTexFail(SDValue TexFailCtrl, SelectionDAG &DAG, SDValue *TFE,
                          SDValue *LWE, bool &IsTexFail) {
-  auto TexFailCtrlConst = dyn_cast<ConstantSDNode>(TexFailCtrl.getNode());
-  if (!TexFailCtrlConst)
-    return false;
+  auto TexFailCtrlConst = cast<ConstantSDNode>(TexFailCtrl.getNode());
 
   uint64_t Value = TexFailCtrlConst->getZExtValue();
   if (Value) {
@@ -4786,9 +4782,7 @@ SDValue SITargetLowering::lowerImage(SDValue Op,
     }
   } else {
     unsigned DMaskIdx = BaseOpcode->Store ? 3 : isa<MemSDNode>(Op) ? 2 : 1;
-    auto DMaskConst = dyn_cast<ConstantSDNode>(Op.getOperand(DMaskIdx));
-    if (!DMaskConst)
-      return Op;
+    auto DMaskConst = cast<ConstantSDNode>(Op.getOperand(DMaskIdx));
     DMask = DMaskConst->getZExtValue();
     DMaskLanes = BaseOpcode->Gather4 ? 4 : countPopulation(DMask);
 
@@ -4902,9 +4896,7 @@ SDValue SITargetLowering::lowerImage(SDValue Op,
     CtrlIdx = AddrIdx + NumVAddrs + 1;
   } else {
     auto UnormConst =
-        dyn_cast<ConstantSDNode>(Op.getOperand(AddrIdx + NumVAddrs + 2));
-    if (!UnormConst)
-      return Op;
+        cast<ConstantSDNode>(Op.getOperand(AddrIdx + NumVAddrs + 2));
 
     Unorm = UnormConst->getZExtValue() ? True : False;
     CtrlIdx = AddrIdx + NumVAddrs + 3;
@@ -5357,10 +5349,7 @@ SDValue SITargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
     return DAG.getNode(AMDGPUISD::TRIG_PREOP, DL, VT,
                        Op.getOperand(1), Op.getOperand(2));
   case Intrinsic::amdgcn_div_scale: {
-    // 3rd parameter required to be a constant.
-    const ConstantSDNode *Param = dyn_cast<ConstantSDNode>(Op.getOperand(3));
-    if (!Param)
-      return DAG.getMergeValues({ DAG.getUNDEF(VT), DAG.getUNDEF(MVT::i1) }, DL);
+    const ConstantSDNode *Param = cast<ConstantSDNode>(Op.getOperand(3));
 
     // Translate to the operands expected by the machine instruction. The
     // first parameter must be the same as the first instruction.
@@ -9623,13 +9612,22 @@ void SITargetLowering::finalizeLowering(MachineFunction &MF) const {
     assert(Info->getStackPtrOffsetReg() != Info->getFrameOffsetReg());
     assert(!TRI->isSubRegister(Info->getScratchRSrcReg(),
                                Info->getStackPtrOffsetReg()));
-    MRI.replaceRegWith(AMDGPU::SP_REG, Info->getStackPtrOffsetReg());
+    if (Info->getStackPtrOffsetReg() != AMDGPU::SP_REG)
+      MRI.replaceRegWith(AMDGPU::SP_REG, Info->getStackPtrOffsetReg());
   }
 
-  MRI.replaceRegWith(AMDGPU::PRIVATE_RSRC_REG, Info->getScratchRSrcReg());
-  MRI.replaceRegWith(AMDGPU::FP_REG, Info->getFrameOffsetReg());
-  MRI.replaceRegWith(AMDGPU::SCRATCH_WAVE_OFFSET_REG,
-                     Info->getScratchWaveOffsetReg());
+  // We need to worry about replacing the default register with itself in case
+  // of MIR testcases missing the MFI.
+  if (Info->getScratchRSrcReg() != AMDGPU::PRIVATE_RSRC_REG)
+    MRI.replaceRegWith(AMDGPU::PRIVATE_RSRC_REG, Info->getScratchRSrcReg());
+
+  if (Info->getFrameOffsetReg() != AMDGPU::FP_REG)
+    MRI.replaceRegWith(AMDGPU::FP_REG, Info->getFrameOffsetReg());
+
+  if (Info->getScratchWaveOffsetReg() != AMDGPU::SCRATCH_WAVE_OFFSET_REG) {
+    MRI.replaceRegWith(AMDGPU::SCRATCH_WAVE_OFFSET_REG,
+                       Info->getScratchWaveOffsetReg());
+  }
 
   Info->limitOccupancy(MF);
 

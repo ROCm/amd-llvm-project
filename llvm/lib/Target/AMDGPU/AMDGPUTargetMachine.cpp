@@ -24,11 +24,13 @@
 #include "GCNIterativeScheduler.h"
 #include "GCNSchedStrategy.h"
 #include "R600MachineScheduler.h"
+#include "SIMachineFunctionInfo.h"
 #include "SIMachineScheduler.h"
 #include "llvm/CodeGen/GlobalISel/IRTranslator.h"
 #include "llvm/CodeGen/GlobalISel/InstructionSelect.h"
 #include "llvm/CodeGen/GlobalISel/Legalizer.h"
 #include "llvm/CodeGen/GlobalISel/RegBankSelect.h"
+#include "llvm/CodeGen/MIRParser/MIParser.h"
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
 #include "llvm/IR/Attributes.h"
@@ -293,10 +295,11 @@ static StringRef computeDataLayout(const Triple &TT) {
   }
 
   // 32-bit private, local, and region pointers. 64-bit global, constant and
-  // flat.
+  // flat, non-integral buffer fat pointers.
     return "e-p:64:64-p1:64:64-p2:32:32-p3:32:32-p4:64:64-p5:32:32-p6:32:32"
          "-i64:64-v16:16-v24:32-v32:32-v48:64-v96:128"
-         "-v192:256-v256:256-v512:512-v1024:1024-v2048:2048-n32:64-S32-A5";
+         "-v192:256-v256:256-v512:512-v1024:1024-v2048:2048-n32:64-S32-A5"
+         "-ni:7";
 }
 
 LLVM_READNONE
@@ -304,8 +307,9 @@ static StringRef getGPUOrDefault(const Triple &TT, StringRef GPU) {
   if (!GPU.empty())
     return GPU;
 
+  // Need to default to a target with flat support for HSA.
   if (TT.getArch() == Triple::amdgcn)
-    return "generic";
+    return TT.getOS() == Triple::AMDHSA ? "generic-hsa" : "generic";
 
   return "r600";
 }
@@ -929,4 +933,75 @@ void GCNPassConfig::addPreEmitPass() {
 
 TargetPassConfig *GCNTargetMachine::createPassConfig(PassManagerBase &PM) {
   return new GCNPassConfig(*this, PM);
+}
+
+yaml::MachineFunctionInfo *GCNTargetMachine::createDefaultFuncInfoYAML() const {
+  return new yaml::SIMachineFunctionInfo();
+}
+
+yaml::MachineFunctionInfo *
+GCNTargetMachine::convertFuncInfoToYAML(const MachineFunction &MF) const {
+  const SIMachineFunctionInfo *MFI = MF.getInfo<SIMachineFunctionInfo>();
+  return new yaml::SIMachineFunctionInfo(*MFI,
+                                         *MF.getSubtarget().getRegisterInfo());
+}
+
+bool GCNTargetMachine::parseMachineFunctionInfo(
+    const yaml::MachineFunctionInfo &MFI_, PerFunctionMIParsingState &PFS,
+    SMDiagnostic &Error, SMRange &SourceRange) const {
+  const yaml::SIMachineFunctionInfo &YamlMFI =
+      reinterpret_cast<const yaml::SIMachineFunctionInfo &>(MFI_);
+  MachineFunction &MF = PFS.MF;
+  SIMachineFunctionInfo *MFI = MF.getInfo<SIMachineFunctionInfo>();
+
+  MFI->initializeBaseYamlFields(YamlMFI);
+
+  auto parseRegister = [&](const yaml::StringValue &RegName, unsigned &RegVal) {
+    if (parseNamedRegisterReference(PFS, RegVal, RegName.Value, Error)) {
+      SourceRange = RegName.SourceRange;
+      return true;
+    }
+
+    return false;
+  };
+
+  auto diagnoseRegisterClass = [&](const yaml::StringValue &RegName) {
+    // Create a diagnostic for a the register string literal.
+    const MemoryBuffer &Buffer =
+        *PFS.SM->getMemoryBuffer(PFS.SM->getMainFileID());
+    Error = SMDiagnostic(*PFS.SM, SMLoc(), Buffer.getBufferIdentifier(), 1,
+                         RegName.Value.size(), SourceMgr::DK_Error,
+                         "incorrect register class for field", RegName.Value,
+                         None, None);
+    SourceRange = RegName.SourceRange;
+    return true;
+  };
+
+  if (parseRegister(YamlMFI.ScratchRSrcReg, MFI->ScratchRSrcReg) ||
+      parseRegister(YamlMFI.ScratchWaveOffsetReg, MFI->ScratchWaveOffsetReg) ||
+      parseRegister(YamlMFI.FrameOffsetReg, MFI->FrameOffsetReg) ||
+      parseRegister(YamlMFI.StackPtrOffsetReg, MFI->StackPtrOffsetReg))
+    return true;
+
+  if (MFI->ScratchRSrcReg != AMDGPU::PRIVATE_RSRC_REG &&
+      !AMDGPU::SReg_128RegClass.contains(MFI->ScratchRSrcReg)) {
+    return diagnoseRegisterClass(YamlMFI.ScratchRSrcReg);
+  }
+
+  if (MFI->ScratchWaveOffsetReg != AMDGPU::SCRATCH_WAVE_OFFSET_REG &&
+      !AMDGPU::SGPR_32RegClass.contains(MFI->ScratchWaveOffsetReg)) {
+    return diagnoseRegisterClass(YamlMFI.ScratchWaveOffsetReg);
+  }
+
+  if (MFI->FrameOffsetReg != AMDGPU::FP_REG &&
+      !AMDGPU::SGPR_32RegClass.contains(MFI->FrameOffsetReg)) {
+    return diagnoseRegisterClass(YamlMFI.FrameOffsetReg);
+  }
+
+  if (MFI->StackPtrOffsetReg != AMDGPU::SP_REG &&
+      !AMDGPU::SGPR_32RegClass.contains(MFI->StackPtrOffsetReg)) {
+    return diagnoseRegisterClass(YamlMFI.StackPtrOffsetReg);
+  }
+
+  return false;
 }
