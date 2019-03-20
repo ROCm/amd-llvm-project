@@ -38,7 +38,9 @@ set(SCUDO_SOURCES
   crc32_hw.cc
   common.cc
   fuchsia.cc
-  linux.cc)
+  linux.cc
+  report.cc
+  string_utils.cc)
 
 # Enable the SSE 4.2 instruction set for crc32_hw.cc, if available.
 if (COMPILER_RT_HAS_MSSE4_2_FLAG)
@@ -60,7 +62,9 @@ set(SCUDO_HEADERS
   list.h
   mutex.h
   platform.h
+  report.h
   stats.h
+  string_utils.h
   vector.h)
 
 if(COMPILER_RT_HAS_SCUDO_STANDALONE)
