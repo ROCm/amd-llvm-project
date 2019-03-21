@@ -122,6 +122,7 @@ bool X86TargetInfo::initFeatureMap(
   case CK_i586:
   case CK_Pentium:
   case CK_PentiumPro:
+  case CK_i686:
   case CK_Lakemont:
     break;
 
@@ -926,6 +927,7 @@ void X86TargetInfo::getTargetDefines(const LangOptions &Opts,
     Builder.defineMacro("__tune_pentium2__");
     LLVM_FALLTHROUGH;
   case CK_PentiumPro:
+  case CK_i686:
     defineCPUMacros(Builder, "i686");
     defineCPUMacros(Builder, "pentiumpro");
     break;
@@ -1536,18 +1538,6 @@ void X86TargetInfo::getCPUSpecificCPUDispatchFeatures(
 #include "clang/Basic/X86Target.def"
           .Default("");
   WholeList.split(Features, ',', /*MaxSplit=*/-1, /*KeepEmpty=*/false);
-}
-
-std::string X86TargetInfo::getCPUKindCanonicalName(CPUKind Kind) const {
-  switch (Kind) {
-  case CK_Generic:
-    return "";
-#define PROC(ENUM, STRING, IS64BIT)                                            \
-  case CK_##ENUM:                                                              \
-    return STRING;
-#include "clang/Basic/X86Target.def"
-  }
-  llvm_unreachable("Invalid CPUKind");
 }
 
 // We can't use a generic validation scheme for the cpus accepted here
