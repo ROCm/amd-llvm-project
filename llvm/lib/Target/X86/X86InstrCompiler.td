@@ -867,7 +867,7 @@ let isCodeGenOnly = 1, SchedRW = [WriteCMPXCHGRMW] in {
 }
 
 let Defs = [EAX, EDX, EFLAGS], Uses = [EAX, EBX, ECX, EDX],
-    SchedRW = [WriteCMPXCHGRMW] in {
+    Predicates = [HasCmpxchg8b], SchedRW = [WriteCMPXCHGRMW] in {
 defm LCMPXCHG8B : LCMPXCHG_UnOp<0xC7, MRM1m, "cmpxchg8b", X86cas8, i64mem>;
 }
 
@@ -891,8 +891,9 @@ defm LCMPXCHG8B : LCMPXCHG_UnOp<0xC7, MRM1m, "cmpxchg8b", X86cas8, i64mem>;
 // the instruction and we are sure we will have a valid register to restore
 // the value of RBX.
 let Defs = [EAX, EDX, EBX, EFLAGS], Uses = [EAX, ECX, EDX],
-    SchedRW = [WriteCMPXCHGRMW], isCodeGenOnly = 1, isPseudo = 1,
-    Constraints = "$ebx_save = $dst", usesCustomInserter = 1 in {
+    Predicates = [HasCmpxchg8b], SchedRW = [WriteCMPXCHGRMW],
+    isCodeGenOnly = 1, isPseudo = 1, Constraints = "$ebx_save = $dst",
+    usesCustomInserter = 1 in {
 def LCMPXCHG8B_SAVE_EBX :
     I<0, Pseudo, (outs GR32:$dst),
       (ins i64mem:$ptr, GR32:$ebx_input, GR32:$ebx_save),
@@ -1993,8 +1994,8 @@ def : Pat<(X86sub_flag 0, GR32:$src), (NEG32r GR32:$src)>;
 def : Pat<(X86sub_flag 0, GR64:$src), (NEG64r GR64:$src)>;
 
 // sub reg, relocImm
-def : Pat<(X86sub_flag GR64:$src1, i64relocImmSExt8_su:$src2),
-          (SUB64ri8 GR64:$src1, i64relocImmSExt8_su:$src2)>;
+def : Pat<(X86sub_flag GR64:$src1, i64relocImmSExt8:$src2),
+          (SUB64ri8 GR64:$src1, i64relocImmSExt8:$src2)>;
 
 // mul reg, reg
 def : Pat<(mul GR16:$src1, GR16:$src2),

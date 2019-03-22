@@ -2634,13 +2634,6 @@ public:
   bool IsOverload(FunctionDecl *New, FunctionDecl *Old, bool IsForUsingDecl,
                   bool ConsiderCudaAttrs = true);
 
-  /// Checks availability of the function depending on the current
-  /// function context.Inside an unavailable function,unavailability is ignored.
-  ///
-  /// \returns true if \p FD is unavailable and current context is inside
-  /// an available function, false otherwise.
-  bool isFunctionConsideredUnavailable(FunctionDecl *FD);
-
   ImplicitConversionSequence
   TryImplicitConversion(Expr *From, QualType ToType,
                         bool SuppressUserConversions,
@@ -4102,7 +4095,6 @@ public:
                          ObjCInterfaceDecl *ClassReciever = nullptr);
   void NoteDeletedFunction(FunctionDecl *FD);
   void NoteDeletedInheritingConstructor(CXXConstructorDecl *CD);
-  std::string getDeletedOrUnavailableSuffix(const FunctionDecl *FD);
   bool DiagnosePropertyAccessorMismatch(ObjCPropertyDecl *PD,
                                         ObjCMethodDecl *Getter,
                                         SourceLocation Loc);
@@ -8781,8 +8773,6 @@ public:
   //
 private:
   void *VarDataSharingAttributesStack;
-  /// omp_allocator_handle_t type.
-  QualType OMPAllocatorHandleT;
   /// Number of nested '#pragma omp declare target' directives.
   unsigned DeclareTargetNestingLevel = 0;
   /// Initialization of data-sharing attributes stack.
@@ -11027,6 +11017,15 @@ public:
       Expr *E,
       llvm::function_ref<void(Expr *, RecordDecl *, FieldDecl *, CharUnits)>
           Action);
+
+  /// Describes the reason a calling convention specification was ignored, used
+  /// for diagnostics.
+  enum class CallingConventionIgnoredReason {
+    ForThisTarget = 0,
+    VariadicFunction,
+    ConstructorDestructor,
+    BuiltinFunction
+  };
 };
 
 /// RAII object that enters a new expression evaluation context.
