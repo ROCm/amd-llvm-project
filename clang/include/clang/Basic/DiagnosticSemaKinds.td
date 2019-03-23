@@ -2923,7 +2923,14 @@ def err_cconv_change : Error<
   "function declared '%0' here was previously declared "
   "%select{'%2'|without calling convention}1">;
 def warn_cconv_ignored : Warning<
-  "calling convention %0 ignored for this target">, InGroup<IgnoredAttributes>;
+  "%0 calling convention ignored %select{"
+  // Use CallingConventionIgnoredReason Enum to specify these.
+  "for this target"
+  "|on variadic function"
+  "|on constructor/destructor"
+  "|on builtin function"
+  "}1">,
+  InGroup<IgnoredAttributes>;
 def err_cconv_knr : Error<
   "function with no prototype cannot use the %0 calling convention">;
 def warn_cconv_knr : Warning<
@@ -2931,12 +2938,6 @@ def warn_cconv_knr : Warning<
   InGroup<DiagGroup<"missing-prototype-for-cc">>;
 def err_cconv_varargs : Error<
   "variadic function cannot use %0 calling convention">;
-def warn_cconv_varargs : Warning<
-  "%0 calling convention ignored on variadic function">,
-  InGroup<IgnoredAttributes>;
-def warn_cconv_structors : Warning<
-  "%0 calling convention ignored on constructor/destructor">,
-  InGroup<IgnoredAttributes>;
 def err_regparm_mismatch : Error<"function declared with regparm(%0) "
   "attribute was previously declared "
   "%plural{0:without the regparm|:with the regparm(%1)}1 attribute">;
@@ -9151,6 +9152,9 @@ def warn_omp_used_different_allocator : Warning<
   InGroup<OpenMPClauses>;
 def note_omp_previous_allocator : Note<
   "previous allocator is specified here">;
+def err_expected_allocator_clause : Error<"expected an 'allocator' clause "
+  "inside of the target region; provide an 'allocator' clause or use 'requires'"
+  " directive with the 'dynamic_allocators' clause">;
 } // end of OpenMP category
 
 let CategoryName = "Related Result Type Issue" in {
@@ -9267,8 +9271,6 @@ def err_coroutine_objc_method : Error<
   "Objective-C methods as coroutines are not yet supported">;
 def err_coroutine_unevaluated_context : Error<
   "'%0' cannot be used in an unevaluated context">;
-def err_coroutine_within_handler : Error<
-  "'%0' cannot be used in the handler of a try block">;
 def err_coroutine_outside_function : Error<
   "'%0' cannot be used outside a function">;
 def err_coroutine_invalid_func_context : Error<
