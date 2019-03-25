@@ -7200,8 +7200,9 @@ def err_cuda_device_exceptions : Error<
 def err_dynamic_var_init : Error<
     "dynamic initialization is not supported for "
     "__device__, __constant__, and __shared__ variables.">;
-def err_shared_var_init : Error<
-    "initialization is not supported for __shared__ variables.">;
+def warn_shared_var_init : Warning<
+    "initialization is not supported for __shared__ variables.">,
+    InGroup<DiagGroup<"cuda-shared-init">>, DefaultError;
 def err_device_static_local_var : Error<
     "within a %select{__device__|__global__|__host__|__host__ __device__}0 "
     "function, only __shared__ variables or const variables without device "
@@ -9232,6 +9233,9 @@ def warn_omp_used_different_allocator : Warning<
   InGroup<OpenMPClauses>;
 def note_omp_previous_allocator : Note<
   "previous allocator is specified here">;
+def err_expected_allocator_clause : Error<"expected an 'allocator' clause "
+  "inside of the target region; provide an 'allocator' clause or use 'requires'"
+  " directive with the 'dynamic_allocators' clause">;
 } // end of OpenMP category
 
 let CategoryName = "Related Result Type Issue" in {

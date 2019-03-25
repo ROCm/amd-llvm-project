@@ -208,14 +208,13 @@ void CGAMPRuntime::EmitCXXAMPDeserializer(CodeGenFunction &CGF,
   }
 
   // Emit code to call the deserializing constructor
-  llvm::Constant *Callee = CGM.getAddrOfCXXStructor(DeserializeConstructor, 
-                                                    StructorType::Complete);
+  llvm::Constant *Callee = CGM.getAddrOfCXXStructor(GlobalDecl(DeserializeConstructor,Dtor_Complete));
 
   const FunctionProtoType *FPT =
       DeserializeConstructor->getType()->castAs<FunctionProtoType>();
 
   const CGFunctionInfo &DesFnInfo = 
-      CGM.getTypes().arrangeCXXStructorDeclaration(DeserializeConstructor, StructorType::Complete);
+      CGM.getTypes().arrangeCXXStructorDeclaration(GlobalDecl(DeserializeConstructor, Dtor_Complete));
 
   for (unsigned I = 1, E = DeserializerArgs.size(); I != E; ++I) {
     auto T = FPT->getParamType(I-1);

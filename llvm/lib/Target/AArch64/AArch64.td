@@ -573,7 +573,7 @@ def ProcExynosM4 : SubtargetFeature<"exynosm4", "ARMProcFamily", "ExynosM3",
                                      FeatureDotProd,
                                      FeatureExynosCheapAsMoveHandling,
                                      FeatureForce32BitJumpTables,
-                                     FeatureFP16FML,
+                                     FeatureFullFP16,
                                      FeatureFuseAddress,
                                      FeatureFuseAES,
                                      FeatureFuseArithmeticLogic,
@@ -723,6 +723,7 @@ def : ProcessorModel<"exynos-m1", ExynosM1Model, [ProcExynosM1]>;
 def : ProcessorModel<"exynos-m2", ExynosM1Model, [ProcExynosM2]>;
 def : ProcessorModel<"exynos-m3", ExynosM3Model, [ProcExynosM3]>;
 def : ProcessorModel<"exynos-m4", ExynosM4Model, [ProcExynosM4]>;
+def : ProcessorModel<"exynos-m5", ExynosM4Model, [ProcExynosM4]>;
 def : ProcessorModel<"falkor", FalkorModel, [ProcFalkor]>;
 def : ProcessorModel<"saphira", FalkorModel, [ProcSaphira]>;
 def : ProcessorModel<"kryo", KryoModel, [ProcKryo]>;
