@@ -462,8 +462,11 @@ TargetCodeGenInfo::performAddrSpaceCast(CodeGenModule &CGM, llvm::Constant *Src,
 }
 
 llvm::SyncScope::ID
-TargetCodeGenInfo::getLLVMSyncScopeID(SyncScope S, llvm::LLVMContext &C) const {
-  return C.getOrInsertSyncScopeID(""); /* default sync scope */
+TargetCodeGenInfo::getLLVMSyncScopeID(const LangOptions &LangOpts,
+                                      SyncScope Scope,
+                                      llvm::AtomicOrdering Ordering,
+                                      llvm::LLVMContext &Ctx) const {
+  return Ctx.getOrInsertSyncScopeID(""); /* default sync scope */
 }
 
 static bool isEmptyRecord(ASTContext &Context, QualType T, bool AllowArrays);
@@ -7825,8 +7828,10 @@ public:
   }
   LangAS getGlobalVarAddressSpace(CodeGenModule &CGM,
                                   const VarDecl *D) const override;
-  llvm::SyncScope::ID getLLVMSyncScopeID(SyncScope S,
-                                         llvm::LLVMContext &C) const override;
+  llvm::SyncScope::ID getLLVMSyncScopeID(const LangOptions &LangOpts,
+                                         SyncScope Scope,
+                                         llvm::AtomicOrdering Ordering,
+                                         llvm::LLVMContext &Ctx) const override;
   llvm::Function *
   createEnqueuedBlockKernel(CodeGenFunction &CGF,
                             llvm::Function *BlockInvokeFunc,
@@ -8015,10 +8020,12 @@ AMDGPUTargetCodeGenInfo::getGlobalVarAddressSpace(CodeGenModule &CGM,
 }
 
 llvm::SyncScope::ID
-AMDGPUTargetCodeGenInfo::getLLVMSyncScopeID(SyncScope S,
-                                            llvm::LLVMContext &C) const {
-  StringRef Name;
-  switch (S) {
+AMDGPUTargetCodeGenInfo::getLLVMSyncScopeID(const LangOptions &LangOpts,
+                                            SyncScope Scope,
+                                            llvm::AtomicOrdering Ordering,
+                                            llvm::LLVMContext &Ctx) const {
+  std::string Name;
+  switch (Scope) {
   case SyncScope::OpenCLWorkGroup:
     Name = "workgroup";
     break;
@@ -8031,7 +8038,15 @@ AMDGPUTargetCodeGenInfo::getLLVMSyncScopeID(SyncScope S,
   case SyncScope::OpenCLSubGroup:
     Name = "wavefront";
   }
-  return C.getOrInsertSyncScopeID(Name);
+
+  if (Ordering != llvm::AtomicOrdering::SequentiallyConsistent) {
+    if (!Name.empty())
+      Name = Twine(Twine(Name) + Twine("-")).str();
+
+    Name = Twine(Twine(Name) + Twine("one-as")).str();
+  }
+
+  return Ctx.getOrInsertSyncScopeID(Name);
 }
 
 bool AMDGPUTargetCodeGenInfo::shouldEmitStaticExternCAliases() const {

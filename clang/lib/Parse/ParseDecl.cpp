@@ -2895,7 +2895,7 @@ Parser::DiagnoseMissingSemiAfterTagDefinition(DeclSpec &DS, AccessSpecifier AS,
       IdentifierInfo *Name = AfterScope.getIdentifierInfo();
       Sema::NameClassification Classification = Actions.ClassifyName(
           getCurScope(), SS, Name, AfterScope.getLocation(), Next,
-          /*IsAddressOfOperand*/false);
+          /*IsAddressOfOperand=*/false, /*CCC=*/nullptr);
       switch (Classification.getKind()) {
       case Sema::NC_Error:
         SkipMalformedDecl();
@@ -3872,6 +3872,7 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
         break;
       };
       LLVM_FALLTHROUGH;
+    case tok::kw_private:
     case tok::kw___private:
     case tok::kw___global:
     case tok::kw___local:
@@ -4838,6 +4839,7 @@ bool Parser::isTypeSpecifierQualifier() {
 
   case tok::kw___kindof:
 
+  case tok::kw_private:
   case tok::kw___private:
   case tok::kw___local:
   case tok::kw___global:
@@ -5028,6 +5030,7 @@ bool Parser::isDeclarationSpecifier(bool DisambiguatingWithExpression) {
 
   case tok::kw___kindof:
 
+  case tok::kw_private:
   case tok::kw___private:
   case tok::kw___local:
   case tok::kw___global:
@@ -5240,6 +5243,7 @@ void Parser::ParseTypeQualifierListOpt(
       break;
 
     // OpenCL qualifiers:
+    case tok::kw_private:
     case tok::kw___private:
     case tok::kw___global:
     case tok::kw___local:
