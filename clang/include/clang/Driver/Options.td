@@ -501,6 +501,8 @@ def bundle : Flag<["-"], "bundle">;
 def b : JoinedOrSeparate<["-"], "b">, Flags<[Unsupported]>;
 def hc_mode : Flag<["-"], "hc">, Flags<[DriverOption]>,
   HelpText<"Enable Heterogeneous C++ (HC) mode">;
+def hc_function_calls : Flag<["-"], "hc-function-calls">, Flags<[DriverOption]>,
+  HelpText<"Enable support for direct function calls in [[hc]] code">;
 def cxxamp_kernel_mode : Flag<["-"], "gpu">, Flags<[DriverOption]>,Group<cxxamp_Group>,
   HelpText<"C++AMP only.  This option allows the compiler to emit kernel-specific artifacts"> ;
 def cxxamp_cpu_mode : Flag<["-"], "cpu">, Flags<[DriverOption]>,Group<cxxamp_Group>,
@@ -511,9 +513,6 @@ def hcc_path_EQ : Joined<["--"], "hcc-path=">, Group<i_Group>,
   HelpText<"HCC installation path">;
 def hcc_extra_libs_EQ : Joined<["-", "--"], "hcc-extra-libs=">, Flags<[DriverOption]>,
   HelpText<"Specify hcc extra libraries to be linked in.">;
-def famdgpu_function_calls : Flag<["-"], "famdgpu-function-calls">, Flags<[CC1Option]>,
-  HelpText<"Enable AMDGPU Function Call Support">;
-def fno_amdgpu_function_calls : Flag<["-"], "fno-amdgpu-function-calls">;
 def cfguard : Flag<["-"], "cfguard">, Flags<[CC1Option]>,
   HelpText<"Emit tables required for Windows Control Flow Guard.">;
 def cl_opt_disable : Flag<["-"], "cl-opt-disable">, Group<opencl_Group>, Flags<[CC1Option]>,

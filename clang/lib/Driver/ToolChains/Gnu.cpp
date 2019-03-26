@@ -595,6 +595,10 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C,
     if (!HCLinker)
       HCLinker = std::unique_ptr<HCC::CXXAMPLink>(new HCC::CXXAMPLink(getToolChain()));
 
+    if (C.getArgs().hasFlag(options::OPT_hc_function_calls, {}, false)) {
+      CmdArgs.emplace_back("--amdgpu-func-calls");
+    }
+  
     HCLinker->ConstructLinkerJob(C, JA, Output, Inputs, Args, LinkingOutput, CmdArgs);
     this->ConstructLinkerJob(C, JA, Output, Inputs, Args, LinkingOutput, CmdArgs);
 
