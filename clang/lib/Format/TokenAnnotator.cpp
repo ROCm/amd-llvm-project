@@ -13,6 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "TokenAnnotator.h"
+#include "FormatToken.h"
 #include "clang/Basic/SourceManager.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/Support/Debug.h"
@@ -440,10 +441,11 @@ private:
         Contexts.back().InCSharpAttributeSpecifier;
 
     bool InsideInlineASM = Line.startsWith(tok::kw_asm);
+    bool IsCppStructuredBinding = Left->isCppStructuredBinding(Style);
     bool StartsObjCMethodExpr =
-        !InsideInlineASM && !CppArrayTemplates && Style.isCpp() &&
-        !IsCpp11AttributeSpecifier && Contexts.back().CanBeExpression &&
-        Left->isNot(TT_LambdaLSquare) &&
+        !IsCppStructuredBinding && !InsideInlineASM && !CppArrayTemplates &&
+        Style.isCpp() && !IsCpp11AttributeSpecifier &&
+        Contexts.back().CanBeExpression && Left->isNot(TT_LambdaLSquare) &&
         !CurrentToken->isOneOf(tok::l_brace, tok::r_square) &&
         (!Parent ||
          Parent->isOneOf(tok::colon, tok::l_square, tok::l_paren,
@@ -451,14 +453,12 @@ private:
          Parent->isUnaryOperator() ||
          // FIXME(bug 36976): ObjC return types shouldn't use TT_CastRParen.
          Parent->isOneOf(TT_ObjCForIn, TT_CastRParen) ||
-         // for (auto && [A,B] : C)  && structure binding seen as ObjCMethodExpr
-         (Parent->isNot(tok::ampamp) &&
-          getBinOpPrecedence(Parent->Tok.getKind(), true, true) >
-              prec::Unknown));
+         (getBinOpPrecedence(Parent->Tok.getKind(), true, true) >
+          prec::Unknown));
     bool ColonFound = false;
 
     unsigned BindingIncrease = 1;
-    if (Left->isCppStructuredBinding(Style)) {
+    if (IsCppStructuredBinding) {
       Left->Type = TT_StructuredBindingLSquare;
     } else if (Left->is(TT_Unknown)) {
       if (StartsObjCMethodExpr) {
@@ -1119,10 +1119,10 @@ public:
       return LT_ImportStatement;
     }
 
-    // In .proto files, top-level options and package statements are very
-    // similar to import statements and should not be line-wrapped.
+    // In .proto files, top-level options are very similar to import statements
+    // and should not be line-wrapped.
     if (Style.Language == FormatStyle::LK_Proto && Line.Level == 0 &&
-        CurrentToken->isOneOf(Keywords.kw_option, Keywords.kw_package)) {
+        CurrentToken->is(Keywords.kw_option)) {
       next();
       if (CurrentToken && CurrentToken->is(tok::identifier))
         return LT_ImportStatement;
@@ -1191,11 +1191,11 @@ private:
 
     // Reset token type in case we have already looked at it and then
     // recovered from an error (e.g. failure to find the matching >).
-    if (!CurrentToken->isOneOf(TT_LambdaLSquare, TT_ForEachMacro,
-                               TT_FunctionLBrace, TT_ImplicitStringLiteral,
-                               TT_InlineASMBrace, TT_JsFatArrow, TT_LambdaArrow,
-                               TT_OverloadedOperator, TT_RegexLiteral,
-                               TT_TemplateString, TT_ObjCStringLiteral))
+    if (!CurrentToken->isOneOf(
+            TT_LambdaLSquare, TT_LambdaLBrace, TT_ForEachMacro,
+            TT_FunctionLBrace, TT_ImplicitStringLiteral, TT_InlineASMBrace,
+            TT_JsFatArrow, TT_LambdaArrow, TT_OverloadedOperator,
+            TT_RegexLiteral, TT_TemplateString, TT_ObjCStringLiteral))
       CurrentToken->Type = TT_Unknown;
     CurrentToken->Role.reset();
     CurrentToken->MatchingParen = nullptr;
@@ -2896,7 +2896,7 @@ bool TokenAnnotator::spaceRequiredBefore(const AnnotatedLine &Line,
 // Returns 'true' if 'Tok' is a brace we'd want to break before in Allman style.
 static bool isAllmanBrace(const FormatToken &Tok) {
   return Tok.is(tok::l_brace) && Tok.BlockKind == BK_Block &&
-         !Tok.isOneOf(TT_ObjCBlockLBrace, TT_DictLiteral);
+         !Tok.isOneOf(TT_ObjCBlockLBrace, TT_LambdaLBrace, TT_DictLiteral);
 }
 
 bool TokenAnnotator::mustBreakBefore(const AnnotatedLine &Line,
@@ -3023,6 +3023,19 @@ bool TokenAnnotator::mustBreakBefore(const AnnotatedLine &Line,
            (Line.startsWith(tok::kw_struct) && Style.BraceWrapping.AfterStruct);
   if (Left.is(TT_ObjCBlockLBrace) && !Style.AllowShortBlocksOnASingleLine)
     return true;
+
+  if (Left.is(TT_LambdaLBrace)) {
+    if (Left.MatchingParen && Left.MatchingParen->Next &&
+        Left.MatchingParen->Next->isOneOf(tok::comma, tok::r_paren) &&
+        Style.AllowShortLambdasOnASingleLine == FormatStyle::SLS_Inline)
+      return false;
+
+    if (Style.AllowShortLambdasOnASingleLine == FormatStyle::SLS_None ||
+        Style.AllowShortLambdasOnASingleLine == FormatStyle::SLS_Inline ||
+        (!Left.Children.empty() &&
+         Style.AllowShortLambdasOnASingleLine == FormatStyle::SLS_Empty))
+      return true;
+  }
 
   // Put multiple C# attributes on a new line.
   if (Style.isCSharp() &&

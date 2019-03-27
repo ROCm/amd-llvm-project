@@ -3008,30 +3008,25 @@ bool X86DAGToDAGISel::matchBitExtract(SDNode *Node) {
     assert(XVT == MVT::i64 && "Expected truncation from i64");
   }
 
-  SDValue OrigNBits = NBits;
   // Truncate the shift amount.
   NBits = CurDAG->getNode(ISD::TRUNCATE, DL, MVT::i8, NBits);
-  insertDAGNode(*CurDAG, OrigNBits, NBits);
+  insertDAGNode(*CurDAG, SDValue(Node, 0), NBits);
 
   // Insert 8-bit NBits into lowest 8 bits of 32-bit register.
   // All the other bits are undefined, we do not care about them.
   SDValue ImplDef = SDValue(
       CurDAG->getMachineNode(TargetOpcode::IMPLICIT_DEF, DL, MVT::i32), 0);
-  insertDAGNode(*CurDAG, OrigNBits, ImplDef);
+  insertDAGNode(*CurDAG, SDValue(Node, 0), ImplDef);
   NBits = CurDAG->getTargetInsertSubreg(X86::sub_8bit, DL, MVT::i32, ImplDef,
                                         NBits);
-  insertDAGNode(*CurDAG, OrigNBits, NBits);
+  insertDAGNode(*CurDAG, SDValue(Node, 0), NBits);
 
   if (Subtarget->hasBMI2()) {
     // Great, just emit the the BZHI..
     if (XVT != MVT::i32) {
       // But have to place the bit count into the wide-enough register first.
-      SDValue ImplDef = SDValue(
-          CurDAG->getMachineNode(TargetOpcode::IMPLICIT_DEF, DL, XVT), 0);
-      insertDAGNode(*CurDAG, OrigNBits, ImplDef);
-      NBits = CurDAG->getTargetInsertSubreg(X86::sub_32bit, DL, XVT, ImplDef,
-                                            NBits);
-      insertDAGNode(*CurDAG, OrigNBits, NBits);
+      NBits = CurDAG->getNode(ISD::ANY_EXTEND, DL, XVT, NBits);
+      insertDAGNode(*CurDAG, SDValue(Node, 0), NBits);
     }
 
     SDValue Extract = CurDAG->getNode(X86ISD::BZHI, DL, XVT, X, NBits);
@@ -3050,7 +3045,7 @@ bool X86DAGToDAGISel::matchBitExtract(SDNode *Node) {
   // This makes the low 8 bits to be zero.
   SDValue C8 = CurDAG->getConstant(8, DL, MVT::i8);
   SDValue Control = CurDAG->getNode(ISD::SHL, DL, MVT::i32, NBits, C8);
-  insertDAGNode(*CurDAG, OrigNBits, Control);
+  insertDAGNode(*CurDAG, SDValue(Node, 0), Control);
 
   // If the 'X' is *logically* shifted, we can fold that shift into 'control'.
   if (X.getOpcode() == ISD::SRL) {
@@ -3068,17 +3063,13 @@ bool X86DAGToDAGISel::matchBitExtract(SDNode *Node) {
 
     // And now 'or' these low 8 bits of shift amount into the 'control'.
     Control = CurDAG->getNode(ISD::OR, DL, MVT::i32, Control, ShiftAmt);
-    insertDAGNode(*CurDAG, OrigNBits, Control);
+    insertDAGNode(*CurDAG, SDValue(Node, 0), Control);
   }
 
   // But have to place the 'control' into the wide-enough register first.
   if (XVT != MVT::i32) {
-    SDValue ImplDef =
-        SDValue(CurDAG->getMachineNode(TargetOpcode::IMPLICIT_DEF, DL, XVT), 0);
-    insertDAGNode(*CurDAG, OrigNBits, ImplDef);
-    Control = CurDAG->getTargetInsertSubreg(X86::sub_32bit, DL, XVT, ImplDef,
-                                            Control);
-    insertDAGNode(*CurDAG, OrigNBits, Control);
+    Control = CurDAG->getNode(ISD::ANY_EXTEND, DL, XVT, Control);
+    insertDAGNode(*CurDAG, SDValue(Node, 0), Control);
   }
 
   // And finally, form the BEXTR itself.
@@ -3086,7 +3077,7 @@ bool X86DAGToDAGISel::matchBitExtract(SDNode *Node) {
 
   // The 'X' was originally truncated. Do that now.
   if (XVT != NVT) {
-    insertDAGNode(*CurDAG, OrigNBits, Extract);
+    insertDAGNode(*CurDAG, SDValue(Node, 0), Extract);
     Extract = CurDAG->getNode(ISD::TRUNCATE, DL, NVT, Extract);
   }
 
@@ -3167,14 +3158,14 @@ MachineSDNode *X86DAGToDAGISel::matchBEXTRFromAndImm(SDNode *Node) {
   SDValue Tmp0, Tmp1, Tmp2, Tmp3, Tmp4;
   if (tryFoldLoad(Node, N0.getNode(), Input, Tmp0, Tmp1, Tmp2, Tmp3, Tmp4)) {
     SDValue Ops[] = { Tmp0, Tmp1, Tmp2, Tmp3, Tmp4, New, Input.getOperand(0) };
-    SDVTList VTs = CurDAG->getVTList(NVT, MVT::Other);
+    SDVTList VTs = CurDAG->getVTList(NVT, MVT::i32, MVT::Other);
     NewNode = CurDAG->getMachineNode(MOpc, dl, VTs, Ops);
     // Update the chain.
-    ReplaceUses(Input.getValue(1), SDValue(NewNode, 1));
+    ReplaceUses(Input.getValue(1), SDValue(NewNode, 2));
     // Record the mem-refs
     CurDAG->setNodeMemRefs(NewNode, {cast<LoadSDNode>(Input)->getMemOperand()});
   } else {
-    NewNode = CurDAG->getMachineNode(ROpc, dl, NVT, Input, New);
+    NewNode = CurDAG->getMachineNode(ROpc, dl, NVT, MVT::i32, Input, New);
   }
 
   return NewNode;
@@ -3561,13 +3552,15 @@ void X86DAGToDAGISel::Select(SDNode *Node) {
     }
 
     // Emit the smaller op and the shift.
-    SDValue NewCst = CurDAG->getTargetConstant(Val >> ShlVal, dl, CstVT);
-    SDNode *New = CurDAG->getMachineNode(Op, dl, NVT, N0->getOperand(0),NewCst);
+    // Even though we shrink the constant, the VT should match the operation VT.
+    SDValue NewCst = CurDAG->getTargetConstant(Val >> ShlVal, dl, NVT);
+    SDNode *New = CurDAG->getMachineNode(Op, dl, NVT, MVT::i32,
+                                         N0->getOperand(0), NewCst);
     if (ShlVal == 1)
-      CurDAG->SelectNodeTo(Node, AddOp, NVT, SDValue(New, 0),
+      CurDAG->SelectNodeTo(Node, AddOp, NVT, MVT::i32, SDValue(New, 0),
                            SDValue(New, 0));
     else
-      CurDAG->SelectNodeTo(Node, ShlOp, NVT, SDValue(New, 0),
+      CurDAG->SelectNodeTo(Node, ShlOp, NVT, MVT::i32, SDValue(New, 0),
                            getI8Imm(ShlVal, dl));
     return;
   }
@@ -3968,7 +3961,7 @@ void X86DAGToDAGISel::Select(SDNode *Node) {
           unsigned TrailingZeros = countTrailingZeros(Mask);
           SDValue Imm = CurDAG->getTargetConstant(TrailingZeros, dl, MVT::i64);
           SDValue Shift =
-            SDValue(CurDAG->getMachineNode(X86::SHR64ri, dl, MVT::i64,
+            SDValue(CurDAG->getMachineNode(X86::SHR64ri, dl, MVT::i64, MVT::i32,
                                            N0.getOperand(0), Imm), 0);
           MachineSDNode *Test = CurDAG->getMachineNode(X86::TEST64rr, dl,
                                                        MVT::i32, Shift, Shift);
@@ -3979,7 +3972,7 @@ void X86DAGToDAGISel::Select(SDNode *Node) {
           unsigned LeadingZeros = countLeadingZeros(Mask);
           SDValue Imm = CurDAG->getTargetConstant(LeadingZeros, dl, MVT::i64);
           SDValue Shift =
-            SDValue(CurDAG->getMachineNode(X86::SHL64ri, dl, MVT::i64,
+            SDValue(CurDAG->getMachineNode(X86::SHL64ri, dl, MVT::i64, MVT::i32,
                                            N0.getOperand(0), Imm), 0);
           MachineSDNode *Test = CurDAG->getMachineNode(X86::TEST64rr, dl,
                                                        MVT::i32, Shift, Shift);
@@ -4036,8 +4029,6 @@ void X86DAGToDAGISel::Select(SDNode *Node) {
         // No eligible transformation was found.
         break;
       }
-
-      // FIXME: We should be able to fold loads here.
 
       SDValue Imm = CurDAG->getTargetConstant(Mask, dl, VT);
       SDValue Reg = N0.getOperand(0);

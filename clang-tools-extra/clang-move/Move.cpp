@@ -87,8 +87,7 @@ std::string MakeAbsolutePath(StringRef CurrentDir, StringRef Path) {
 std::string MakeAbsolutePath(const SourceManager &SM, StringRef Path) {
   llvm::SmallString<128> AbsolutePath(Path);
   if (std::error_code EC =
-          SM.getFileManager().getVirtualFileSystem()->makeAbsolute(
-              AbsolutePath))
+          SM.getFileManager().getVirtualFileSystem().makeAbsolute(AbsolutePath))
     llvm::errs() << "Warning: could not make absolute file: '" << EC.message()
                  << '\n';
   // Handle symbolic link path cases.
@@ -765,7 +764,7 @@ void ClangMoveTool::removeDeclsInOldFiles() {
     if (Context->Spec.OldDependOnNew &&
         MakeAbsolutePath(SM, FilePath) ==
             makeAbsolutePath(Context->Spec.OldHeader)) {
-      // FIXME: Minimize the include path like include-fixer.
+      // FIXME: Minimize the include path like clang-include-fixer.
       std::string IncludeNewH =
           "#include \"" + Context->Spec.NewHeader + "\"\n";
       // This replacment for inserting header will be cleaned up at the end.
