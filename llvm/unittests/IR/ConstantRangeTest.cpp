@@ -176,6 +176,29 @@ TEST_F(ConstantRangeTest, SignWrapped) {
   EXPECT_FALSE(ConstantRange(APInt(8, 250), APInt(8, 251)).isSignWrappedSet());
 }
 
+TEST_F(ConstantRangeTest, UpperWrapped) {
+  // The behavior here is the same as for isWrappedSet() / isSignWrappedSet().
+  EXPECT_FALSE(Full.isUpperWrapped());
+  EXPECT_FALSE(Empty.isUpperWrapped());
+  EXPECT_FALSE(One.isUpperWrapped());
+  EXPECT_FALSE(Some.isUpperWrapped());
+  EXPECT_TRUE(Wrap.isUpperWrapped());
+  EXPECT_FALSE(Full.isUpperSignWrapped());
+  EXPECT_FALSE(Empty.isUpperSignWrapped());
+  EXPECT_FALSE(One.isUpperSignWrapped());
+  EXPECT_FALSE(Some.isUpperSignWrapped());
+  EXPECT_TRUE(Wrap.isUpperSignWrapped());
+
+  // The behavior differs if Upper is the Min/SignedMin value.
+  ConstantRange CR1(APInt(8, 42), APInt::getMinValue(8));
+  EXPECT_FALSE(CR1.isWrappedSet());
+  EXPECT_TRUE(CR1.isUpperWrapped());
+
+  ConstantRange CR2(APInt(8, 42), APInt::getSignedMinValue(8));
+  EXPECT_FALSE(CR2.isSignWrappedSet());
+  EXPECT_TRUE(CR2.isUpperSignWrapped());
+}
+
 TEST_F(ConstantRangeTest, Trunc) {
   ConstantRange TFull = Full.truncate(10);
   ConstantRange TEmpty = Empty.truncate(10);
