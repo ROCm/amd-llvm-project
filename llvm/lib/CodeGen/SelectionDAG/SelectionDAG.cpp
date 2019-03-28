@@ -85,7 +85,6 @@ static SDVTList makeVTList(const EVT *VTs, unsigned NumVTs) {
 // Default null implementations of the callbacks.
 void SelectionDAG::DAGUpdateListener::NodeDeleted(SDNode*, SDNode*) {}
 void SelectionDAG::DAGUpdateListener::NodeUpdated(SDNode*) {}
-void SelectionDAG::DAGUpdateListener::NodeInserted(SDNode *) {}
 
 void SelectionDAG::DAGNodeDeletedListener::anchor() {}
 
@@ -518,6 +517,13 @@ static void AddNodeIDCustom(FoldingSetNodeID &ID, const SDNode *N) {
   case ISD::TargetFrameIndex:
     ID.AddInteger(cast<FrameIndexSDNode>(N)->getIndex());
     break;
+  case ISD::LIFETIME_START:
+  case ISD::LIFETIME_END:
+    if (cast<LifetimeSDNode>(N)->hasOffset()) {
+      ID.AddInteger(cast<LifetimeSDNode>(N)->getSize());
+      ID.AddInteger(cast<LifetimeSDNode>(N)->getOffset());
+    }
+    break;
   case ISD::JumpTable:
   case ISD::TargetJumpTable:
     ID.AddInteger(cast<JumpTableSDNode>(N)->getIndex());
@@ -834,8 +840,6 @@ void SelectionDAG::InsertNode(SDNode *N) {
   N->PersistentId = NextPersistentId++;
   VerifySDNode(N);
 #endif
-  for (DAGUpdateListener *DUL = UpdateListeners; DUL; DUL = DUL->Next)
-    DUL->NodeInserted(N);
 }
 
 /// RemoveNodeFromCSEMaps - Take the specified node out of the CSE map that

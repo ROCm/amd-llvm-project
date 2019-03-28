@@ -643,16 +643,6 @@ public:
   }
 };
 
-class WorklistInserter : public SelectionDAG::DAGUpdateListener {
-  DAGCombiner &DC;
-
-public:
-  explicit WorklistInserter(DAGCombiner &dc)
-      : SelectionDAG::DAGUpdateListener(dc.getDAG()), DC(dc) {}
-
-  void NodeInserted(SDNode *N) override { DC.AddToWorklist(N); }
-};
-
 } // end anonymous namespace
 
 //===----------------------------------------------------------------------===//
@@ -1405,8 +1395,6 @@ void DAGCombiner::Run(CombineLevel AtLevel) {
   LegalOperations = Level >= AfterLegalizeVectorOps;
   LegalTypes = Level >= AfterLegalizeTypes;
 
-  WorklistInserter AddNodes(*this);
-
   // Add all the dag nodes to the worklist.
   for (SDNode &Node : DAG.allnodes())
     AddToWorklist(&Node);
@@ -1849,6 +1837,8 @@ SDValue DAGCombiner::visitTokenFactor(SDNode *N) {
       for (const SDValue &Op : CurNode->op_values())
         AddToWorklist(i, Op.getNode(), CurOpNumber);
       break;
+    case ISD::LIFETIME_START:
+    case ISD::LIFETIME_END:
     case ISD::CopyFromReg:
     case ISD::CopyToReg:
       AddToWorklist(i, CurNode->getOperand(0).getNode(), CurOpNumber);
@@ -9040,6 +9030,16 @@ SDValue DAGCombiner::visitSIGN_EXTEND(SDNode *N) {
   if (SDValue NewVSel = matchVSelectOpSizesWithSetCC(N))
     return NewVSel;
 
+  // Eliminate this sign extend by doing a negation in the destination type:
+  // sext i32 (0 - (zext i8 X to i32)) to i64 --> 0 - (zext i8 X to i64)
+  if (N0.getOpcode() == ISD::SUB && N0.hasOneUse() &&
+      isNullOrNullSplat(N0.getOperand(0)) &&
+      N0.getOperand(1).getOpcode() == ISD::ZERO_EXTEND &&
+      TLI.isOperationLegalOrCustom(ISD::SUB, VT)) {
+    SDValue Zext = DAG.getZExtOrTrunc(N0.getOperand(1).getOperand(0), DL, VT);
+    return DAG.getNode(ISD::SUB, DL, VT, DAG.getConstant(0, DL, VT), Zext);
+  }
+
   return SDValue();
 }
 
@@ -9905,10 +9905,11 @@ SDValue DAGCombiner::visitZERO_EXTEND_VECTOR_INREG(SDNode *N) {
 SDValue DAGCombiner::visitTRUNCATE(SDNode *N) {
   SDValue N0 = N->getOperand(0);
   EVT VT = N->getValueType(0);
+  EVT SrcVT = N0.getValueType();
   bool isLE = DAG.getDataLayout().isLittleEndian();
 
   // noop truncate
-  if (N0.getValueType() == N->getValueType(0))
+  if (SrcVT == VT)
     return N0;
 
   // fold (truncate (truncate x)) -> (truncate x)
@@ -10007,6 +10008,19 @@ SDValue DAGCombiner::visitTRUNCATE(SDNode *N) {
       }
       return DAG.getNode(ISD::SHL, SL, VT, Trunc, Amt);
     }
+  }
+
+  // Attempt to pre-truncate BUILD_VECTOR sources.
+  if (N0.getOpcode() == ISD::BUILD_VECTOR && !LegalOperations &&
+      TLI.isTruncateFree(SrcVT.getScalarType(), VT.getScalarType())) {
+    SDLoc DL(N);
+    EVT SVT = VT.getScalarType();
+    SmallVector<SDValue, 8> TruncOps;
+    for (const SDValue &Op : N0->op_values()) {
+      SDValue TruncOp = DAG.getNode(ISD::TRUNCATE, DL, SVT, Op);
+      TruncOps.push_back(TruncOp);
+    }
+    return DAG.getBuildVector(VT, DL, TruncOps);
   }
 
   // Fold a series of buildvector, bitcast, and truncate if possible.
