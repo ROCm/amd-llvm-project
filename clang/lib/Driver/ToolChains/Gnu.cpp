@@ -360,6 +360,11 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("--no-dynamic-linker");
   }
 
+  if (ToolChain.isNoExecStackDefault()) {
+    CmdArgs.push_back("-z");
+    CmdArgs.push_back("noexecstack");
+  }
+
   if (Args.hasArg(options::OPT_rdynamic))
     CmdArgs.push_back("-export-dynamic");
 
@@ -609,6 +614,10 @@ void tools::gnutools::Assembler::ConstructJob(Compilation &C,
     }
   }
 
+  if (getToolChain().isNoExecStackDefault()) {
+      CmdArgs.push_back("--noexecstack");
+  }
+
   switch (getToolChain().getArch()) {
   default:
     break;
@@ -826,7 +835,7 @@ void tools::gnutools::Assembler::ConstructJob(Compilation &C,
   if (Args.hasArg(options::OPT_gsplit_dwarf) &&
       getToolChain().getTriple().isOSLinux())
     SplitDebugInfo(getToolChain(), C, *this, JA, Args, Output,
-                   SplitDebugName(Args, Output));
+                   SplitDebugName(Args, Inputs[0], Output));
 }
 
 namespace {

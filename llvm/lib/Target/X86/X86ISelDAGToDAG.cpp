@@ -181,6 +181,13 @@ namespace {
       Subtarget = &MF.getSubtarget<X86Subtarget>();
       IndirectTlsSegRefs = MF.getFunction().hasFnAttribute(
                              "indirect-tls-seg-refs");
+
+      // OptFor[Min]Size are used in pattern predicates that isel is matching.
+      OptForSize = MF.getFunction().optForSize();
+      OptForMinSize = MF.getFunction().optForMinSize();
+      assert((!OptForMinSize || OptForSize) &&
+             "OptForMinSize implies OptForSize");
+
       SelectionDAGISel::runOnMachineFunction(MF);
       return true;
     }
@@ -738,11 +745,6 @@ static bool isCalleeLoad(SDValue Callee, SDValue &Chain, bool HasCallSeq) {
 }
 
 void X86DAGToDAGISel::PreprocessISelDAG() {
-  // OptFor[Min]Size are used in pattern predicates that isel is matching.
-  OptForSize = MF->getFunction().optForSize();
-  OptForMinSize = MF->getFunction().optForMinSize();
-  assert((!OptForMinSize || OptForSize) && "OptForMinSize implies OptForSize");
-
   for (SelectionDAG::allnodes_iterator I = CurDAG->allnodes_begin(),
        E = CurDAG->allnodes_end(); I != E; ) {
     SDNode *N = &*I++; // Preincrement iterator to avoid invalidation issues.
@@ -3499,70 +3501,45 @@ void X86DAGToDAGISel::Select(SDNode *Node) {
       break;
 
     int64_t Val = Cst->getSExtValue();
-    uint64_t ShlVal = ShlCst->getZExtValue();
+    uint64_t ShAmt = ShlCst->getZExtValue();
 
     // Make sure that we don't change the operation by removing bits.
     // This only matters for OR and XOR, AND is unaffected.
-    uint64_t RemovedBitsMask = (1ULL << ShlVal) - 1;
+    uint64_t RemovedBitsMask = (1ULL << ShAmt) - 1;
     if (Opcode != ISD::AND && (Val & RemovedBitsMask) != 0)
       break;
 
-    unsigned ShlOp, AddOp, Op;
-    MVT CstVT = NVT;
-
     // Check the minimum bitwidth for the new constant.
-    // TODO: AND32ri is the same as AND64ri32 with zext imm.
-    // TODO: MOV32ri+OR64r is cheaper than MOV64ri64+OR64rr
     // TODO: Using 16 and 8 bit operations is also possible for or32 & xor32.
-    if (!isInt<8>(Val) && isInt<8>(Val >> ShlVal))
-      CstVT = MVT::i8;
-    else if (!isInt<32>(Val) && isInt<32>(Val >> ShlVal))
-      CstVT = MVT::i32;
+    auto CanShrinkImmediate = [&](int64_t &ShiftedVal) {
+      ShiftedVal = Val >> ShAmt;
+      if ((!isInt<8>(Val) && isInt<8>(ShiftedVal)) ||
+          (!isInt<32>(Val) && isInt<32>(ShiftedVal)))
+        return true;
+      // For 64-bit we can also try unsigned 32 bit immediates.
+      // AND32ri is the same as AND64ri32 with zext imm.
+      // MOV32ri+OR64r is cheaper than MOV64ri64+OR64rr
+      ShiftedVal = (uint64_t)Val >> ShAmt;
+      if (NVT == MVT::i64 && !isUInt<32>(Val) && isUInt<32>(ShiftedVal))
+        return true;
+      return false;
+    };
 
-    // Bail if there is no smaller encoding.
-    if (NVT == CstVT)
-      break;
-
-    switch (NVT.SimpleTy) {
-    default: llvm_unreachable("Unsupported VT!");
-    case MVT::i32:
-      assert(CstVT == MVT::i8);
-      ShlOp = X86::SHL32ri;
-      AddOp = X86::ADD32rr;
-
-      switch (Opcode) {
-      default: llvm_unreachable("Impossible opcode");
-      case ISD::AND: Op = X86::AND32ri8; break;
-      case ISD::OR:  Op =  X86::OR32ri8; break;
-      case ISD::XOR: Op = X86::XOR32ri8; break;
-      }
-      break;
-    case MVT::i64:
-      assert(CstVT == MVT::i8 || CstVT == MVT::i32);
-      ShlOp = X86::SHL64ri;
-      AddOp = X86::ADD64rr;
-
-      switch (Opcode) {
-      default: llvm_unreachable("Impossible opcode");
-      case ISD::AND: Op = CstVT==MVT::i8? X86::AND64ri8 : X86::AND64ri32; break;
-      case ISD::OR:  Op = CstVT==MVT::i8?  X86::OR64ri8 :  X86::OR64ri32; break;
-      case ISD::XOR: Op = CstVT==MVT::i8? X86::XOR64ri8 : X86::XOR64ri32; break;
-      }
-      break;
+    int64_t ShiftedVal;
+    if (CanShrinkImmediate(ShiftedVal)) {
+      SDValue NewCst = CurDAG->getConstant(ShiftedVal, dl, NVT);
+      insertDAGNode(*CurDAG, SDValue(Node, 0), NewCst);
+      SDValue NewBinOp = CurDAG->getNode(Opcode, dl, NVT, N0->getOperand(0),
+                                         NewCst);
+      insertDAGNode(*CurDAG, SDValue(Node, 0), NewBinOp);
+      SDValue NewSHL = CurDAG->getNode(ISD::SHL, dl, NVT, NewBinOp,
+                                       N0->getOperand(1));
+      ReplaceNode(Node, NewSHL.getNode());
+      SelectCode(NewSHL.getNode());
+      return;
     }
 
-    // Emit the smaller op and the shift.
-    // Even though we shrink the constant, the VT should match the operation VT.
-    SDValue NewCst = CurDAG->getTargetConstant(Val >> ShlVal, dl, NVT);
-    SDNode *New = CurDAG->getMachineNode(Op, dl, NVT, MVT::i32,
-                                         N0->getOperand(0), NewCst);
-    if (ShlVal == 1)
-      CurDAG->SelectNodeTo(Node, AddOp, NVT, MVT::i32, SDValue(New, 0),
-                           SDValue(New, 0));
-    else
-      CurDAG->SelectNodeTo(Node, ShlOp, NVT, MVT::i32, SDValue(New, 0),
-                           getI8Imm(ShlVal, dl));
-    return;
+    break;
   }
   case X86ISD::SMUL:
     // i16/i32/i64 are handled with isel patterns.

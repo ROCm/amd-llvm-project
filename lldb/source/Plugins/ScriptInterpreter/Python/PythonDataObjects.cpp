@@ -20,12 +20,11 @@
 #include "lldb/Interpreter/ScriptInterpreter.h"
 #include "lldb/Utility/Stream.h"
 
+#include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/ConvertUTF.h"
 #include "llvm/Support/Errno.h"
 
 #include <stdio.h>
-
-#include "llvm/ADT/StringSwitch.h"
 
 using namespace lldb_private;
 using namespace lldb;
@@ -110,7 +109,7 @@ PythonString PythonObject::Str() const {
 PythonObject
 PythonObject::ResolveNameWithDictionary(llvm::StringRef name,
                                         const PythonDictionary &dict) {
-  size_t dot_pos = name.find_first_of('.');
+  size_t dot_pos = name.find('.');
   llvm::StringRef piece = name.substr(0, dot_pos);
   PythonObject result = dict.GetItemForKey(PythonString(piece));
   if (dot_pos == llvm::StringRef::npos) {
@@ -134,7 +133,7 @@ PythonObject PythonObject::ResolveName(llvm::StringRef name) const {
   // refers to the `sys` module, and `name` == "path.append", then it will find
   // the function `sys.path.append`.
 
-  size_t dot_pos = name.find_first_of('.');
+  size_t dot_pos = name.find('.');
   if (dot_pos == llvm::StringRef::npos) {
     // No dots in the name, we should be able to find the value immediately as
     // an attribute of `m_py_obj`.

@@ -9883,6 +9883,20 @@ static bool is128BitUnpackShuffleMask(ArrayRef<int> Mask) {
   return false;
 }
 
+/// Return true if a shuffle mask chooses elements identically in its top and
+/// bottom halves. For example, any splat mask has the same top and bottom
+/// halves. If an element is undefined in only one half of the mask, the halves
+/// are not considered identical.
+static bool hasIdenticalHalvesShuffleMask(ArrayRef<int> Mask) {
+  assert(Mask.size() % 2 == 0 && "Expecting even number of elements in mask");
+  unsigned HalfSize = Mask.size() / 2;
+  for (unsigned i = 0; i != HalfSize; ++i) {
+    if (Mask[i] != Mask[i + HalfSize])
+      return false;
+  }
+  return true;
+}
+
 /// Get a 4-lane 8-bit shuffle immediate for a mask.
 ///
 /// This helper function produces an 8-bit shuffle immediate corresponding to
@@ -18368,6 +18382,12 @@ static SDValue LowerAVXExtend(SDValue Op, SelectionDAG &DAG,
                                 VT.getVectorNumElements() / 2);
 
   SDValue OpLo = DAG.getNode(ISD::ZERO_EXTEND_VECTOR_INREG, dl, HalfVT, In);
+
+  // Short-circuit if we can determine that each 128-bit half is the same value.
+  // Otherwise, this is difficult to match and optimize.
+  if (auto *Shuf = dyn_cast<ShuffleVectorSDNode>(In))
+    if (hasIdenticalHalvesShuffleMask(Shuf->getMask()))
+      return DAG.getNode(ISD::CONCAT_VECTORS, dl, VT, OpLo, OpLo);
 
   SDValue ZeroVec = DAG.getConstant(0, dl, InVT);
   SDValue Undef = DAG.getUNDEF(InVT);
@@ -30885,39 +30905,33 @@ static bool matchUnaryShuffle(MVT MaskVT, ArrayRef<int> Mask,
 
   // Match against a ZERO_EXTEND_VECTOR_INREG/VZEXT instruction.
   // TODO: Add 512-bit vector support (split AVX512F and AVX512BW).
-  if ((MaskVT.is128BitVector() && Subtarget.hasSSE41()) ||
-      (MaskVT.is256BitVector() && Subtarget.hasInt256())) {
-    // Allow this with FloatDomain if we'll be able to fold the load.
-    SDValue BC1 = peekThroughOneUseBitcasts(V1);
-    if (AllowIntDomain ||
-        (BC1.hasOneUse() && BC1.getOpcode() == ISD::SCALAR_TO_VECTOR &&
-         MayFoldLoad(BC1.getOperand(0)))) {
-      unsigned MaxScale = 64 / MaskEltSize;
-      for (unsigned Scale = 2; Scale <= MaxScale; Scale *= 2) {
-        bool Match = true;
-        unsigned NumDstElts = NumMaskElts / Scale;
-        for (unsigned i = 0; i != NumDstElts && Match; ++i) {
-          Match &= isUndefOrEqual(Mask[i * Scale], (int)i);
-          Match &= isUndefOrZeroInRange(Mask, (i * Scale) + 1, Scale - 1);
-        }
-        if (Match) {
-          unsigned SrcSize = std::max(128u, NumDstElts * MaskEltSize);
-          MVT ScalarTy = MaskVT.isInteger() ? MaskVT.getScalarType()
-                                            : MVT::getIntegerVT(MaskEltSize);
-          SrcVT = MVT::getVectorVT(ScalarTy, SrcSize / MaskEltSize);
+  if (AllowIntDomain && ((MaskVT.is128BitVector() && Subtarget.hasSSE41()) ||
+                         (MaskVT.is256BitVector() && Subtarget.hasInt256()))) {
+    unsigned MaxScale = 64 / MaskEltSize;
+    for (unsigned Scale = 2; Scale <= MaxScale; Scale *= 2) {
+      bool Match = true;
+      unsigned NumDstElts = NumMaskElts / Scale;
+      for (unsigned i = 0; i != NumDstElts && Match; ++i) {
+        Match &= isUndefOrEqual(Mask[i * Scale], (int)i);
+        Match &= isUndefOrZeroInRange(Mask, (i * Scale) + 1, Scale - 1);
+      }
+      if (Match) {
+        unsigned SrcSize = std::max(128u, NumDstElts * MaskEltSize);
+        MVT ScalarTy = MaskVT.isInteger() ? MaskVT.getScalarType() :
+                                            MVT::getIntegerVT(MaskEltSize);
+        SrcVT = MVT::getVectorVT(ScalarTy, SrcSize / MaskEltSize);
 
-          if (SrcVT.getSizeInBits() != MaskVT.getSizeInBits())
-            V1 = extractSubVector(V1, 0, DAG, DL, SrcSize);
+        if (SrcVT.getSizeInBits() != MaskVT.getSizeInBits())
+          V1 = extractSubVector(V1, 0, DAG, DL, SrcSize);
 
-          if (SrcVT.getVectorNumElements() == NumDstElts)
-            Shuffle = unsigned(ISD::ZERO_EXTEND);
-          else
-            Shuffle = unsigned(ISD::ZERO_EXTEND_VECTOR_INREG);
+        if (SrcVT.getVectorNumElements() == NumDstElts)
+          Shuffle = unsigned(ISD::ZERO_EXTEND);
+        else
+          Shuffle = unsigned(ISD::ZERO_EXTEND_VECTOR_INREG);
 
-          DstVT = MVT::getIntegerVT(Scale * MaskEltSize);
-          DstVT = MVT::getVectorVT(DstVT, NumDstElts);
-          return true;
-        }
+        DstVT = MVT::getIntegerVT(Scale * MaskEltSize);
+        DstVT = MVT::getVectorVT(DstVT, NumDstElts);
+        return true;
       }
     }
   }
@@ -34288,37 +34302,39 @@ static SDValue combineHorizontalPredicateResult(SDNode *Extract,
     return SDValue();
 
   // For 32/64 bit comparisons use MOVMSKPS/MOVMSKPD, else PMOVMSKB.
-  MVT MaskVT;
+  MVT MaskSrcVT;
   if (64 == BitWidth || 32 == BitWidth)
-    MaskVT = MVT::getVectorVT(MVT::getFloatingPointVT(BitWidth),
-                              MatchSizeInBits / BitWidth);
+    MaskSrcVT = MVT::getVectorVT(MVT::getFloatingPointVT(BitWidth),
+                                 MatchSizeInBits / BitWidth);
   else
-    MaskVT = MVT::getVectorVT(MVT::i8, MatchSizeInBits / 8);
+    MaskSrcVT = MVT::getVectorVT(MVT::i8, MatchSizeInBits / 8);
 
-  APInt CompareBits;
+  SDLoc DL(Extract);
+  SDValue CmpC;
   ISD::CondCode CondCode;
   if (BinOp == ISD::OR) {
     // any_of -> MOVMSK != 0
-    CompareBits = APInt::getNullValue(32);
+    CmpC = DAG.getConstant(0, DL, MVT::i32);
     CondCode = ISD::CondCode::SETNE;
   } else {
     // all_of -> MOVMSK == ((1 << NumElts) - 1)
-    CompareBits = APInt::getLowBitsSet(32, MaskVT.getVectorNumElements());
+    uint64_t NumElts = MaskSrcVT.getVectorNumElements();
+    assert(NumElts <= 32 && "Not expecting more than 32 elements");
+    CmpC = DAG.getConstant((1ULL << NumElts) - 1, DL, MVT::i32);
     CondCode = ISD::CondCode::SETEQ;
   }
 
-  // Perform the select as i32/i64 and then truncate to avoid partial register
-  // stalls.
-  unsigned ResWidth = std::max(BitWidth, 32u);
-  EVT ResVT = EVT::getIntegerVT(*DAG.getContext(), ResWidth);
-  SDLoc DL(Extract);
-  SDValue Zero = DAG.getConstant(0, DL, ResVT);
-  SDValue Ones = DAG.getAllOnesConstant(DL, ResVT);
-  SDValue Res = DAG.getBitcast(MaskVT, Match);
-  Res = DAG.getNode(X86ISD::MOVMSK, DL, MVT::i32, Res);
-  Res = DAG.getSelectCC(DL, Res, DAG.getConstant(CompareBits, DL, MVT::i32),
-                        Ones, Zero, CondCode);
-  return DAG.getSExtOrTrunc(Res, DL, ExtractVT);
+  // The setcc produces an i8 of 0/1, so extend that to the result width and
+  // negate to get the final 0/-1 mask value.
+  SDValue BitcastLogicOp = DAG.getBitcast(MaskSrcVT, Match);
+  SDValue Movmsk = DAG.getNode(X86ISD::MOVMSK, DL, MVT::i32, BitcastLogicOp);
+  const TargetLowering &TLI = DAG.getTargetLoweringInfo();
+  EVT SetccVT = TLI.getSetCCResultType(DAG.getDataLayout(), *DAG.getContext(),
+                                       MVT::i32);
+  SDValue Setcc = DAG.getSetCC(DL, SetccVT, Movmsk, CmpC, CondCode);
+  SDValue Zext = DAG.getZExtOrTrunc(Setcc, DL, ExtractVT);
+  SDValue Zero = DAG.getConstant(0, DL, ExtractVT);
+  return DAG.getNode(ISD::SUB, DL, ExtractVT, Zero, Zext);
 }
 
 static SDValue combineBasicSADPattern(SDNode *Extract, SelectionDAG &DAG,
@@ -40906,7 +40922,7 @@ static SDValue combineMOVMSK(SDNode *N, SelectionDAG &DAG,
 
   // Perform constant folding.
   if (ISD::isBuildVectorOfConstantSDNodes(Src.getNode())) {
-    assert(VT== MVT::i32 && "Unexpected result type");
+    assert(VT == MVT::i32 && "Unexpected result type");
     APInt Imm(32, 0);
     for (unsigned Idx = 0, e = Src.getNumOperands(); Idx < e; ++Idx) {
       if (!Src.getOperand(Idx).isUndef() &&
@@ -40917,11 +40933,10 @@ static SDValue combineMOVMSK(SDNode *N, SelectionDAG &DAG,
   }
 
   // Look through int->fp bitcasts that don't change the element width.
-  if (Src.getOpcode() == ISD::BITCAST && Src.hasOneUse() &&
-      SrcVT.isFloatingPoint() &&
-      Src.getOperand(0).getValueType() ==
-        EVT(SrcVT).changeVectorElementTypeToInteger())
-    Src = Src.getOperand(0);
+  unsigned EltWidth = SrcVT.getScalarSizeInBits();
+  if (Src.getOpcode() == ISD::BITCAST &&
+      Src.getOperand(0).getScalarValueSizeInBits() == EltWidth)
+    return DAG.getNode(X86ISD::MOVMSK, SDLoc(N), VT, Src.getOperand(0));
 
   // Simplify the inputs.
   const TargetLowering &TLI = DAG.getTargetLoweringInfo();
@@ -42622,7 +42637,8 @@ static SDValue combineExtInVec(SDNode *N, SelectionDAG &DAG,
     return DAG.getNode(N->getOpcode(), SDLoc(N), VT, In.getOperand(0));
 
   // Attempt to combine as a shuffle.
-  if (Subtarget.hasSSE41() && N->getOpcode() == ISD::ZERO_EXTEND_VECTOR_INREG) {
+  // TODO: SSE41 support
+  if (Subtarget.hasAVX() && N->getOpcode() == ISD::ZERO_EXTEND_VECTOR_INREG) {
     SDValue Op(N, 0);
     if (TLI.isTypeLegal(VT) && TLI.isTypeLegal(In.getValueType()))
       if (SDValue Res = combineX86ShufflesRecursively(Op, DAG, Subtarget))
