@@ -1171,7 +1171,14 @@ static Value *evaluateInDifferentElementOrder(Value *V, ArrayRef<int> Mask) {
       SmallVector<Value*, 8> NewOps;
       bool NeedsRebuild = (Mask.size() != I->getType()->getVectorNumElements());
       for (int i = 0, e = I->getNumOperands(); i != e; ++i) {
-        Value *V = evaluateInDifferentElementOrder(I->getOperand(i), Mask);
+        Value *V;
+        // Recursively call evaluateInDifferentElementOrder on vector arguments
+        // as well. E.g. GetElementPtr may have scalar operands even if the
+        // return value is a vector, so we need to examine the operand type.
+        if (I->getOperand(i)->getType()->isVectorTy())
+          V = evaluateInDifferentElementOrder(I->getOperand(i), Mask);
+        else
+          V = I->getOperand(i);
         NewOps.push_back(V);
         NeedsRebuild |= (V != I->getOperand(i));
       }
@@ -1342,6 +1349,15 @@ static Instruction *foldSelectShuffle(ShuffleVectorInst &Shuf,
                                       const DataLayout &DL) {
   if (!Shuf.isSelect())
     return nullptr;
+
+  // Canonicalize to choose from operand 0 first.
+  unsigned NumElts = Shuf.getType()->getVectorNumElements();
+  if (Shuf.getMaskValue(0) >= (int)NumElts) {
+    assert(!isa<UndefValue>(Shuf.getOperand(1)) &&
+           "Not expecting undef shuffle operand with select mask");
+    Shuf.commute();
+    return &Shuf;
+  }
 
   if (Instruction *I = foldSelectShuffleWith1Binop(Shuf))
     return I;

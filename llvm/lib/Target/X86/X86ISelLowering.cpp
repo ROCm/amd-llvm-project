@@ -4764,7 +4764,6 @@ bool X86TargetLowering::getTgtMemIntrinsic(IntrinsicInfo &Info,
   if (!IntrData)
     return false;
 
-  Info.opc = ISD::INTRINSIC_W_CHAIN;
   Info.flags = MachineMemOperand::MONone;
   Info.offset = 0;
 
@@ -4772,6 +4771,7 @@ bool X86TargetLowering::getTgtMemIntrinsic(IntrinsicInfo &Info,
   case TRUNCATE_TO_MEM_VI8:
   case TRUNCATE_TO_MEM_VI16:
   case TRUNCATE_TO_MEM_VI32: {
+    Info.opc = ISD::INTRINSIC_VOID;
     Info.ptrVal = I.getArgOperand(0);
     MVT VT  = MVT::getVT(I.getArgOperand(1)->getType());
     MVT ScalarVT = MVT::INVALID_SIMPLE_VALUE_TYPE;
@@ -4789,6 +4789,7 @@ bool X86TargetLowering::getTgtMemIntrinsic(IntrinsicInfo &Info,
   }
   case GATHER:
   case GATHER_AVX2: {
+    Info.opc = ISD::INTRINSIC_W_CHAIN;
     Info.ptrVal = nullptr;
     MVT DataVT = MVT::getVT(I.getType());
     MVT IndexVT = MVT::getVT(I.getArgOperand(2)->getType());
@@ -4800,6 +4801,7 @@ bool X86TargetLowering::getTgtMemIntrinsic(IntrinsicInfo &Info,
     break;
   }
   case SCATTER: {
+    Info.opc = ISD::INTRINSIC_VOID;
     Info.ptrVal = nullptr;
     MVT DataVT = MVT::getVT(I.getArgOperand(3)->getType());
     MVT IndexVT = MVT::getVT(I.getArgOperand(2)->getType());
@@ -34306,8 +34308,11 @@ static SDValue combineHorizontalPredicateResult(SDNode *Extract,
          ((Subtarget.hasAVX() && BitWidth >= 32) || Subtarget.hasAVX2()))))
     return SDValue();
 
-  // Don't bother performing this for 2-element vectors.
-  if (Match.getValueType().getVectorNumElements() <= 2)
+  // Make sure this isn't a vector of 1 element. The perf win from using MOVMSK
+  // diminishes with less elements in the reduction, but it is generally better
+  // to get the comparison over to the GPRs as soon as possible to reduce the
+  // number of vector ops.
+  if (Match.getValueType().getVectorNumElements() < 2)
     return SDValue();
 
   // Check that we are extracting a reduction of all sign bits.
@@ -38203,15 +38208,35 @@ static SDValue detectAVGPattern(SDValue In, EVT VT, SelectionDAG &DAG,
                             AVGBuilder);
   }
 
-  if (Operands[0].getOpcode() == ISD::ADD)
+  // Matches 'add like' patterns: add(Op0,Op1) + zext(or(Op0,Op1)).
+  // Match the or case only if its 'add-like' - can be replaced by an add.
+  auto FindAddLike = [&](SDValue V, SDValue &Op0, SDValue &Op1) {
+    if (ISD::ADD == V.getOpcode()) {
+      Op0 = V.getOperand(0);
+      Op1 = V.getOperand(1);
+      return true;
+    }
+    if (ISD::ZERO_EXTEND != V.getOpcode())
+      return false;
+    V = V.getOperand(0);
+    if (V.getValueType() != VT || ISD::OR != V.getOpcode() ||
+        !DAG.haveNoCommonBitsSet(V.getOperand(0), V.getOperand(1)))
+      return false;
+    Op0 = V.getOperand(0);
+    Op1 = V.getOperand(1);
+    return true;
+  };
+
+  SDValue Op0, Op1;
+  if (FindAddLike(Operands[0], Op0, Op1))
     std::swap(Operands[0], Operands[1]);
-  else if (Operands[1].getOpcode() != ISD::ADD)
+  else if (!FindAddLike(Operands[1], Op0, Op1))
     return SDValue();
-  Operands[2] = Operands[1].getOperand(0);
-  Operands[1] = Operands[1].getOperand(1);
+  Operands[2] = Op0;
+  Operands[1] = Op1;
 
   // Now we have three operands of two additions. Check that one of them is a
-  // constant vector with ones, and the other two are promoted from i8/i16.
+  // constant vector with ones, and the other two can be promoted from i8/i16.
   for (int i = 0; i < 3; ++i) {
     if (!IsConstVectorInRange(Operands[i], 1, 1))
       continue;
@@ -38219,14 +38244,16 @@ static SDValue detectAVGPattern(SDValue In, EVT VT, SelectionDAG &DAG,
 
     // Check if Operands[0] and Operands[1] are results of type promotion.
     for (int j = 0; j < 2; ++j)
-      if (Operands[j].getOpcode() != ISD::ZERO_EXTEND ||
-          Operands[j].getOperand(0).getValueType() != VT)
-        return SDValue();
+      if (Operands[j].getValueType() != VT) {
+        if (Operands[j].getOpcode() != ISD::ZERO_EXTEND ||
+            Operands[j].getOperand(0).getValueType() != VT)
+          return SDValue();
+        Operands[j] = Operands[j].getOperand(0);
+      }
 
     // The pattern is detected, emit X86ISD::AVG instruction(s).
-    return SplitOpsAndApply(DAG, Subtarget, DL, VT,
-                            { Operands[0].getOperand(0),
-                              Operands[1].getOperand(0) }, AVGBuilder);
+    return SplitOpsAndApply(DAG, Subtarget, DL, VT, {Operands[0], Operands[1]},
+                            AVGBuilder);
   }
 
   return SDValue();
