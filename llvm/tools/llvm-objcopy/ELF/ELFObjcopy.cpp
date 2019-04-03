@@ -70,6 +70,21 @@ static bool onlyKeepDWOPred(const Object &Obj, const SectionBase &Sec) {
   return !isDWOSection(Sec);
 }
 
+uint64_t getNewShfFlags(SectionFlag AllFlags) {
+  uint64_t NewFlags = 0;
+  if (AllFlags & SectionFlag::SecAlloc)
+    NewFlags |= ELF::SHF_ALLOC;
+  if (!(AllFlags & SectionFlag::SecReadonly))
+    NewFlags |= ELF::SHF_WRITE;
+  if (AllFlags & SectionFlag::SecCode)
+    NewFlags |= ELF::SHF_EXECINSTR;
+  if (AllFlags & SectionFlag::SecMerge)
+    NewFlags |= ELF::SHF_MERGE;
+  if (AllFlags & SectionFlag::SecStrings)
+    NewFlags |= ELF::SHF_STRINGS;
+  return NewFlags;
+}
+
 static uint64_t setSectionFlagsPreserveMask(uint64_t OldFlags,
                                             uint64_t NewFlags) {
   // Preserve some flags which should not be dropped when setting flags.
@@ -542,10 +557,14 @@ static Error handleArgs(const CopyConfig &Config, Object &Obj,
     Obj.OSABI = Config.OutputArch.getValue().OSABI;
   }
 
-  if (Error E = updateAndRemoveSymbols(Config, Obj))
+  // It is important to remove the sections first. For example, we want to
+  // remove the relocation sections before removing the symbols. That allows
+  // us to avoid reporting the inappropriate errors about removing symbols
+  // named in relocations.
+  if (Error E = replaceAndRemoveSections(Config, Obj))
     return E;
 
-  if (Error E = replaceAndRemoveSections(Config, Obj))
+  if (Error E = updateAndRemoveSymbols(Config, Obj))
     return E;
 
   if (!Config.SectionsToRename.empty()) {
@@ -555,8 +574,8 @@ static Error handleArgs(const CopyConfig &Config, Object &Obj,
         const SectionRename &SR = Iter->second;
         Sec.Name = SR.NewName;
         if (SR.NewFlags.hasValue())
-          Sec.Flags =
-              setSectionFlagsPreserveMask(Sec.Flags, SR.NewFlags.getValue());
+          Sec.Flags = setSectionFlagsPreserveMask(
+              Sec.Flags, getNewShfFlags(SR.NewFlags.getValue()));
       }
     }
   }
@@ -566,11 +585,12 @@ static Error handleArgs(const CopyConfig &Config, Object &Obj,
       const auto Iter = Config.SetSectionFlags.find(Sec.Name);
       if (Iter != Config.SetSectionFlags.end()) {
         const SectionFlagsUpdate &SFU = Iter->second;
-        Sec.Flags = setSectionFlagsPreserveMask(Sec.Flags, SFU.NewFlags);
+        Sec.Flags = setSectionFlagsPreserveMask(Sec.Flags,
+                                                getNewShfFlags(SFU.NewFlags));
       }
     }
   }
-  
+
   for (const auto &Flag : Config.AddSection) {
     std::pair<StringRef, StringRef> SecPair = Flag.split("=");
     StringRef SecName = SecPair.first;

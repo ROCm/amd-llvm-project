@@ -215,26 +215,26 @@ void X86::writePltHeader(uint8_t *Buf) const {
 void X86::writePlt(uint8_t *Buf, uint64_t GotPltEntryAddr,
                    uint64_t PltEntryAddr, int32_t Index,
                    unsigned RelOff) const {
-  const uint8_t Inst[] = {
-      0xff, 0x00, 0, 0, 0, 0, // jmp *foo_in_GOT or jmp *foo@GOT(%ebx)
-      0x68, 0, 0, 0, 0,       // pushl $reloc_offset
-      0xe9, 0, 0, 0, 0,       // jmp .PLT0@PC
-  };
-  memcpy(Buf, Inst, sizeof(Inst));
-
   if (Config->Pic) {
-    // jmp *foo@GOT(%ebx)
-    uint32_t Ebx = In.GotPlt->getVA();
-    Buf[1] = 0xa3;
-    write32le(Buf + 2, GotPltEntryAddr - Ebx);
+    const uint8_t Inst[] = {
+        0xff, 0xa3, 0, 0, 0, 0, // jmp *foo@GOT(%ebx)
+        0x68, 0,    0, 0, 0,    // pushl $reloc_offset
+        0xe9, 0,    0, 0, 0,    // jmp .PLT0@PC
+    };
+    memcpy(Buf, Inst, sizeof(Inst));
+    write32le(Buf + 2, GotPltEntryAddr - In.GotPlt->getVA());
   } else {
-    // jmp *foo_in_GOT
-    Buf[1] = 0x25;
+    const uint8_t Inst[] = {
+        0xff, 0x25, 0, 0, 0, 0, // jmp *foo@GOT
+        0x68, 0,    0, 0, 0,    // pushl $reloc_offset
+        0xe9, 0,    0, 0, 0,    // jmp .PLT0@PC
+    };
+    memcpy(Buf, Inst, sizeof(Inst));
     write32le(Buf + 2, GotPltEntryAddr);
   }
 
   write32le(Buf + 7, RelOff);
-  write32le(Buf + 12, -getPltEntryOffset(Index) - 16);
+  write32le(Buf + 12, -PltHeaderSize - PltEntrySize * Index - 16);
 }
 
 int64_t X86::getImplicitAddend(const uint8_t *Buf, RelType Type) const {
@@ -474,7 +474,7 @@ void RetpolinePic::writePlt(uint8_t *Buf, uint64_t GotPltEntryAddr,
   memcpy(Buf, Insn, sizeof(Insn));
 
   uint32_t Ebx = In.GotPlt->getVA();
-  unsigned Off = getPltEntryOffset(Index);
+  unsigned Off = PltHeaderSize + PltEntrySize * Index;
   write32le(Buf + 3, GotPltEntryAddr - Ebx);
   write32le(Buf + 8, -Off - 12 + 32);
   write32le(Buf + 13, -Off - 17 + 18);
@@ -532,7 +532,7 @@ void RetpolineNoPic::writePlt(uint8_t *Buf, uint64_t GotPltEntryAddr,
   };
   memcpy(Buf, Insn, sizeof(Insn));
 
-  unsigned Off = getPltEntryOffset(Index);
+  unsigned Off = PltHeaderSize + PltEntrySize * Index;
   write32le(Buf + 2, GotPltEntryAddr);
   write32le(Buf + 7, -Off - 11 + 32);
   write32le(Buf + 12, -Off - 16 + 17);

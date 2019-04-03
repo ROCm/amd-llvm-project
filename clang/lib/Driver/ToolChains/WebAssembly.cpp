@@ -54,7 +54,7 @@ std::string wasm::Linker::getLinkerPath(const ArgList &Args) const {
     }
   }
 
-  return ToolChain.getDefaultLinker();
+  return ToolChain.GetProgramPath(ToolChain.getDefaultLinker());
 }
 
 void wasm::Linker::ConstructJob(Compilation &C, const JobAction &JA,

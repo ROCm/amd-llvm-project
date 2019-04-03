@@ -3740,9 +3740,6 @@ public:
                                          Address PtrOp0, Address PtrOp1,
                                          llvm::Triple::ArchType Arch);
 
-  llvm::Value *EmitISOVolatileLoad(const CallExpr *E);
-  llvm::Value *EmitISOVolatileStore(const CallExpr *E);
-
   llvm::Function *LookupNeonLLVMIntrinsic(unsigned IntrinsicID,
                                           unsigned Modifier, llvm::Type *ArgTy,
                                           const CallExpr *E);

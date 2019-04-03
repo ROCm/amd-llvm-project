@@ -58,7 +58,7 @@ class LLVM_NODISCARD ConstantRange {
   }
 
 public:
-  /// Initialize a full (the default) or empty set for the specified bit width.
+  /// Initialize a full or empty set for the specified bit width.
   explicit ConstantRange(uint32_t BitWidth, bool isFullSet);
 
   /// Initialize a range to hold the single specified value.
@@ -163,13 +163,31 @@ public:
   /// Return true if this set contains no members.
   bool isEmptySet() const;
 
-  /// Return true if this set wraps around the top of the range.
-  /// For example: [100, 8).
+  /// Return true if this set wraps around the unsigned domain. Special cases:
+  ///  * Empty set: Not wrapped.
+  ///  * Full set: Not wrapped.
+  ///  * [X, 0) == [X, Max]: Not wrapped.
   bool isWrappedSet() const;
 
-  /// Return true if this set wraps around the INT_MIN of
-  /// its bitwidth. For example: i8 [120, 140).
+  /// Return true if the exclusive upper bound wraps around the unsigned
+  /// domain. Special cases:
+  ///  * Empty set: Not wrapped.
+  ///  * Full set: Not wrapped.
+  ///  * [X, 0): Wrapped.
+  bool isUpperWrapped() const;
+
+  /// Return true if this set wraps around the signed domain. Special cases:
+  ///  * Empty set: Not wrapped.
+  ///  * Full set: Not wrapped.
+  ///  * [X, SignedMin) == [X, SignedMax]: Not wrapped.
   bool isSignWrappedSet() const;
+
+  /// Return true if the (exclusive) upper bound wraps around the signed
+  /// domain. Special cases:
+  ///  * Empty set: Not wrapped.
+  ///  * Full set: Not wrapped.
+  ///  * [X, SignedMin): Wrapped.
+  bool isUpperSignWrapped() const;
 
   /// Return true if the specified value is in the set.
   bool contains(const APInt &Val) const;

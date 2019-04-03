@@ -2181,8 +2181,7 @@ bool Preprocessor::ReadMacroParameterList(MacroInfo *MI, Token &Tok) {
 
       // OpenCL v1.2 s6.9.e: variadic macros are not supported.
       if (LangOpts.OpenCL) {
-        Diag(Tok, diag::err_pp_opencl_variadic_macros);
-        return true;
+        Diag(Tok, diag::ext_pp_opencl_variadic_macros);
       }
 
       // Lex the token after the identifier.
@@ -2211,8 +2210,7 @@ bool Preprocessor::ReadMacroParameterList(MacroInfo *MI, Token &Tok) {
 
       // If this is already used as a parameter, it is used multiple times (e.g.
       // #define X(A,A.
-      if (std::find(Parameters.begin(), Parameters.end(), II) !=
-          Parameters.end()) {  // C99 6.10.3p6
+      if (llvm::find(Parameters, II) != Parameters.end()) { // C99 6.10.3p6
         Diag(Tok, diag::err_pp_duplicate_name_in_arg_list) << II;
         return true;
       }

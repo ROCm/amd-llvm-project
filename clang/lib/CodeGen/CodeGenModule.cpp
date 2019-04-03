@@ -60,6 +60,7 @@
 #include "llvm/Support/ConvertUTF.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MD5.h"
+#include "llvm/Support/TimeProfiler.h"
 
 #include <unordered_map>
 
@@ -2633,6 +2634,9 @@ void CodeGenModule::EmitGlobalDefinition(GlobalDecl GD, llvm::GlobalValue *GV) {
     // linkage.
     if (!shouldEmitFunction(GD))
       return;
+
+    llvm::TimeTraceScope TimeScope(
+        "CodeGen Function", [&]() { return FD->getQualifiedNameAsString(); });
 
     if (const auto *Method = dyn_cast<CXXMethodDecl>(D)) {
       // Make sure to emit the definition(s) before we emit the thunks.

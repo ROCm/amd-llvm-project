@@ -362,6 +362,11 @@ void tools::gnutools::Linker::ConstructLinkerJob(Compilation &C,
     CmdArgs.push_back("--no-dynamic-linker");
   }
 
+  if (ToolChain.isNoExecStackDefault()) {
+    CmdArgs.push_back("-z");
+    CmdArgs.push_back("noexecstack");
+  }
+
   if (Args.hasArg(options::OPT_rdynamic))
     CmdArgs.push_back("-export-dynamic");
 
@@ -383,6 +388,11 @@ void tools::gnutools::Linker::ConstructLinkerJob(Compilation &C,
     if (CPU.empty() || CPU == "generic" || CPU == "cortex-a53")
       CmdArgs.push_back("--fix-cortex-a53-843419");
   }
+
+  // Android does not allow shared text relocations. Emit a warning if the
+  // user's code contains any.
+  if (isAndroid)
+      CmdArgs.push_back("--warn-shared-textrel");
 
   for (const auto &Opt : ToolChain.ExtraOpts)
     CmdArgs.push_back(Opt.c_str());
@@ -649,6 +659,10 @@ void tools::gnutools::Assembler::ConstructJob(Compilation &C,
     }
   }
 
+  if (getToolChain().isNoExecStackDefault()) {
+      CmdArgs.push_back("--noexecstack");
+  }
+
   switch (getToolChain().getArch()) {
   default:
     break;
@@ -866,7 +880,7 @@ void tools::gnutools::Assembler::ConstructJob(Compilation &C,
   if (Args.hasArg(options::OPT_gsplit_dwarf) &&
       getToolChain().getTriple().isOSLinux())
     SplitDebugInfo(getToolChain(), C, *this, JA, Args, Output,
-                   SplitDebugName(Args, Output));
+                   SplitDebugName(Args, Inputs[0], Output));
 }
 
 namespace {

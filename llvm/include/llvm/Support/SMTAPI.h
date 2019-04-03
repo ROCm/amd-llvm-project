@@ -70,7 +70,7 @@ public:
 
   virtual void print(raw_ostream &OS) const = 0;
 
-  LLVM_DUMP_METHOD void dump() const { print(llvm::errs()); }
+  LLVM_DUMP_METHOD void dump() const;
 
 protected:
   /// Query the SMT solver and returns true if two sorts are equal (same kind
@@ -117,7 +117,7 @@ public:
 
   virtual void print(raw_ostream &OS) const = 0;
 
-  LLVM_DUMP_METHOD void dump() const { print(llvm::errs()); }
+  LLVM_DUMP_METHOD void dump() const;
 
 protected:
   /// Query the SMT solver and returns true if two sorts are equal (same kind
@@ -138,7 +138,7 @@ public:
   SMTSolver() = default;
   virtual ~SMTSolver() = default;
 
-  LLVM_DUMP_METHOD void dump() const { print(llvm::errs()); }
+  LLVM_DUMP_METHOD void dump() const;
 
   // Returns an appropriate floating-point sort for the given bitwidth.
   SMTSortRef getFloatSort(unsigned BitWidth) {
@@ -278,6 +278,48 @@ public:
   /// Creates a bitvector concat operation
   virtual SMTExprRef mkBVConcat(const SMTExprRef &LHS,
                                 const SMTExprRef &RHS) = 0;
+
+  /// Creates a predicate that checks for overflow in a bitvector addition
+  /// operation
+  virtual SMTExprRef mkBVAddNoOverflow(const SMTExprRef &LHS,
+                                       const SMTExprRef &RHS,
+                                       bool isSigned) = 0;
+
+  /// Creates a predicate that checks for underflow in a signed bitvector
+  /// addition operation
+  virtual SMTExprRef mkBVAddNoUnderflow(const SMTExprRef &LHS,
+                                        const SMTExprRef &RHS) = 0;
+
+  /// Creates a predicate that checks for overflow in a signed bitvector
+  /// subtraction operation
+  virtual SMTExprRef mkBVSubNoOverflow(const SMTExprRef &LHS,
+                                       const SMTExprRef &RHS) = 0;
+
+  /// Creates a predicate that checks for underflow in a bitvector subtraction
+  /// operation
+  virtual SMTExprRef mkBVSubNoUnderflow(const SMTExprRef &LHS,
+                                        const SMTExprRef &RHS,
+                                        bool isSigned) = 0;
+
+  /// Creates a predicate that checks for overflow in a signed bitvector
+  /// division/modulus operation
+  virtual SMTExprRef mkBVSDivNoOverflow(const SMTExprRef &LHS,
+                                        const SMTExprRef &RHS) = 0;
+
+  /// Creates a predicate that checks for overflow in a bitvector negation
+  /// operation
+  virtual SMTExprRef mkBVNegNoOverflow(const SMTExprRef &Exp) = 0;
+
+  /// Creates a predicate that checks for overflow in a bitvector multiplication
+  /// operation
+  virtual SMTExprRef mkBVMulNoOverflow(const SMTExprRef &LHS,
+                                       const SMTExprRef &RHS,
+                                       bool isSigned) = 0;
+
+  /// Creates a predicate that checks for underflow in a signed bitvector
+  /// multiplication operation
+  virtual SMTExprRef mkBVMulNoUnderflow(const SMTExprRef &LHS,
+                                        const SMTExprRef &RHS) = 0;
 
   /// Creates a floating-point negation operation
   virtual SMTExprRef mkFPNeg(const SMTExprRef &Exp) = 0;

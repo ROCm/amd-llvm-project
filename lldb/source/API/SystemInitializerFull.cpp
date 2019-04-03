@@ -6,10 +6,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#if !defined(LLDB_DISABLE_PYTHON)
-#include "Plugins/ScriptInterpreter/Python/lldb-python.h"
-#endif
-
 #include "SystemInitializerFull.h"
 
 #include "lldb/API/SBCommandInterpreter.h"
@@ -69,7 +65,6 @@
 #include "Plugins/OperatingSystem/Python/OperatingSystemPython.h"
 #include "Plugins/Platform/Android/PlatformAndroid.h"
 #include "Plugins/Platform/FreeBSD/PlatformFreeBSD.h"
-#include "Plugins/Platform/Kalimba/PlatformKalimba.h"
 #include "Plugins/Platform/Linux/PlatformLinux.h"
 #include "Plugins/Platform/MacOSX/PlatformMacOSX.h"
 #include "Plugins/Platform/MacOSX/PlatformRemoteiOS.h"
@@ -142,7 +137,6 @@ llvm::Error SystemInitializerFull::Initialize() {
 #endif
 
 #if !defined(LLDB_DISABLE_PYTHON)
-  ScriptInterpreterPython::InitializeSWIG();
   ScriptInterpreterPython::Initialize();
 #endif
 
@@ -151,7 +145,6 @@ llvm::Error SystemInitializerFull::Initialize() {
   platform_netbsd::PlatformNetBSD::Initialize();
   platform_openbsd::PlatformOpenBSD::Initialize();
   PlatformWindows::Initialize();
-  PlatformKalimba::Initialize();
   platform_android::PlatformAndroid::Initialize();
   PlatformRemoteiOS::Initialize();
   PlatformMacOSX::Initialize();
@@ -357,7 +350,6 @@ void SystemInitializerFull::Terminate() {
   platform_netbsd::PlatformNetBSD::Terminate();
   platform_openbsd::PlatformOpenBSD::Terminate();
   PlatformWindows::Terminate();
-  PlatformKalimba::Terminate();
   platform_android::PlatformAndroid::Terminate();
   PlatformMacOSX::Terminate();
   PlatformRemoteiOS::Terminate();
