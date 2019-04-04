@@ -1466,7 +1466,13 @@ CodeGenFunction::EmitAutoVarAlloca(const VarDecl &D) {
 
   Address address = Address::invalid();
   Address AllocaAddr = Address::invalid();
-  if (Ty->isConstantSizeType()) {
+  Address OpenMPLocalAddr =
+      getLangOpts().OpenMP
+          ? CGM.getOpenMPRuntime().getAddressOfLocalVariable(*this, &D)
+          : Address::invalid();
+  if (getLangOpts().OpenMP && OpenMPLocalAddr.isValid()) {
+    address = OpenMPLocalAddr;
+  } else if (Ty->isConstantSizeType()) {
     bool NRVO = getLangOpts().ElideConstructors &&
       D.isNRVOVariable();
 
@@ -1509,14 +1515,7 @@ CodeGenFunction::EmitAutoVarAlloca(const VarDecl &D) {
     // unless:
     // - it's an NRVO variable.
     // - we are compiling OpenMP and it's an OpenMP local variable.
-
-    Address OpenMPLocalAddr =
-        getLangOpts().OpenMP
-            ? CGM.getOpenMPRuntime().getAddressOfLocalVariable(*this, &D)
-            : Address::invalid();
-    if (getLangOpts().OpenMP && OpenMPLocalAddr.isValid()) {
-      address = OpenMPLocalAddr;
-    } else if (NRVO) {
+    if (NRVO) {
       // The named return value optimization: allocate this variable in the
       // return slot, so that we can elide the copy when returning this
       // variable (C++0x [class.copy]p34).

@@ -134,6 +134,7 @@ class MiniDumpUUIDTestCase(TestBase):
         self.verify_module(modules[0], "/not/exist/a", None)
         self.verify_module(modules[1], "/not/exist/b", None)
 
+    @expectedFailureAll(oslist=["windows"])
     def test_partial_uuid_match(self):
         """
             Breakpad has been known to create minidump files using CvRecord in each
@@ -156,8 +157,7 @@ class MiniDumpUUIDTestCase(TestBase):
         self.process = self.target.LoadCore("linux-arm-partial-uuids-match.dmp")
         modules = self.target.modules
         self.assertEqual(1, len(modules))
-        self.verify_module(modules[0],
-                           "libuuidmatch.so", 
+        self.verify_module(modules[0], so_path, 
                            "7295E17C-6668-9E05-CBB5-DEE5003865D5-5267C116")
 
     def test_partial_uuid_mismatch(self):
@@ -173,7 +173,7 @@ class MiniDumpUUIDTestCase(TestBase):
             from the minidump file and the path from the minidump file.
         """
         so_path = self.getBuildArtifact("libuuidmismatch.so")
-        self.yaml2obj("libuuidmatch.yaml", so_path)
+        self.yaml2obj("libuuidmismatch.yaml", so_path)
         self.dbg.CreateTarget(None)
         self.target = self.dbg.GetSelectedTarget()
         cmd = 'settings set target.exec-search-paths "%s"' % (os.path.dirname(so_path))

@@ -9761,21 +9761,20 @@ Address CGOpenMPRuntime::getAddressOfLocalVariable(CodeGenFunction &CGF,
     return Address::invalid();
   const auto *AA = CVD->getAttr<OMPAllocateDeclAttr>();
   // Use the default allocation.
-  if (AA->getAllocatorType() == OMPAllocateDeclAttr::OMPDefaultMemAlloc)
+  if (AA->getAllocatorType() == OMPAllocateDeclAttr::OMPDefaultMemAlloc &&
+      !AA->getAllocator())
     return Address::invalid();
-  auto &Elem = OpenMPLocThreadIDMap.FindAndConstruct(CGF.CurFn);
-  if (!Elem.second.ServiceInsertPt)
-    setLocThreadIdInsertPt(CGF);
-  CGBuilderTy::InsertPointGuard IPG(CGF.Builder);
-  CGF.Builder.SetInsertPoint(Elem.second.ServiceInsertPt);
   llvm::Value *Size;
   CharUnits Align = CGM.getContext().getDeclAlign(CVD);
   if (CVD->getType()->isVariablyModifiedType()) {
     Size = CGF.getTypeSize(CVD->getType());
-    Align = CGM.getContext().getTypeAlignInChars(CVD->getType());
+    // Align the size: ((size + align - 1) / align) * align
+    Size = CGF.Builder.CreateNUWAdd(
+        Size, CGM.getSize(Align - CharUnits::fromQuantity(1)));
+    Size = CGF.Builder.CreateUDiv(Size, CGM.getSize(Align));
+    Size = CGF.Builder.CreateNUWMul(Size, CGM.getSize(Align));
   } else {
     CharUnits Sz = CGM.getContext().getTypeSizeInChars(CVD->getType());
-    Align = CGM.getContext().getDeclAlign(CVD);
     Size = CGM.getSize(Sz.alignTo(Align));
   }
   llvm::Value *ThreadID = getThreadID(CGF, CVD->getBeginLoc());

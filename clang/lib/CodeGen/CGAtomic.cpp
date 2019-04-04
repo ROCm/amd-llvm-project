@@ -1694,7 +1694,7 @@ EmitAtomicUpdateValue(CodeGenFunction &CGF, AtomicInfo &Atomics, RValue OldRVal,
     UpRVal = OldRVal;
     DesiredLVal = CGF.MakeAddrLValue(DesiredAddr, AtomicLVal.getType());
   } else {
-    // Build new lvalue for temp address
+    // Build new lvalue for temp address.
     Address Ptr = Atomics.materializeRValue(OldRVal);
     LValue UpdateLVal;
     if (AtomicLVal.isBitField()) {
@@ -1727,7 +1727,7 @@ EmitAtomicUpdateValue(CodeGenFunction &CGF, AtomicInfo &Atomics, RValue OldRVal,
     }
     UpRVal = CGF.EmitLoadOfLValue(UpdateLVal, SourceLocation());
   }
-  // Store new value in the corresponding memory area
+  // Store new value in the corresponding memory area.
   RValue NewRVal = UpdateOp(UpRVal);
   if (NewRVal.isScalar()) {
     CGF.EmitStoreThroughLValue(NewRVal, DesiredLVal);
@@ -1792,7 +1792,7 @@ void AtomicInfo::EmitAtomicUpdateOp(
                                            SourceLocation(), /*AsValue=*/false);
   EmitAtomicUpdateValue(CGF, *this, OldRVal, UpdateOp, NewAtomicAddr);
   auto *DesiredVal = CGF.Builder.CreateLoad(NewAtomicIntAddr);
-  // Try to write new value using cmpxchg operation
+  // Try to write new value using cmpxchg operation.
   auto Res = EmitAtomicCompareExchangeOp(PHI, DesiredVal, AO, Failure);
   PHI->addIncoming(Res.first, CGF.Builder.GetInsertBlock());
   CGF.Builder.CreateCondBr(Res.second, ExitBB, ContBB);
@@ -1803,7 +1803,7 @@ static void EmitAtomicUpdateValue(CodeGenFunction &CGF, AtomicInfo &Atomics,
                                   RValue UpdateRVal, Address DesiredAddr) {
   LValue AtomicLVal = Atomics.getAtomicLValue();
   LValue DesiredLVal;
-  // Build new lvalue for temp address
+  // Build new lvalue for temp address.
   if (AtomicLVal.isBitField()) {
     DesiredLVal =
         LValue::MakeBitfield(DesiredAddr, AtomicLVal.getBitFieldInfo(),
@@ -1820,7 +1820,7 @@ static void EmitAtomicUpdateValue(CodeGenFunction &CGF, AtomicInfo &Atomics,
         DesiredAddr, AtomicLVal.getExtVectorElts(), AtomicLVal.getType(),
         AtomicLVal.getBaseInfo(), AtomicLVal.getTBAAInfo());
   }
-  // Store new value in the corresponding memory area
+  // Store new value in the corresponding memory area.
   assert(UpdateRVal.isScalar());
   CGF.EmitStoreThroughLValue(UpdateRVal, DesiredLVal);
 }
@@ -1872,7 +1872,7 @@ void AtomicInfo::EmitAtomicUpdateOp(llvm::AtomicOrdering AO, RValue UpdateRVal,
   }
   EmitAtomicUpdateValue(CGF, *this, UpdateRVal, NewAtomicAddr);
   auto *DesiredVal = CGF.Builder.CreateLoad(NewAtomicIntAddr);
-  // Try to write new value using cmpxchg operation
+  // Try to write new value using cmpxchg operation.
   auto Res = EmitAtomicCompareExchangeOp(PHI, DesiredVal, AO, Failure);
   PHI->addIncoming(Res.first, CGF.Builder.GetInsertBlock());
   CGF.Builder.CreateCondBr(Res.second, ExitBB, ContBB);
