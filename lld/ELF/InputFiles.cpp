@@ -259,11 +259,6 @@ typename ELFT::SymRange ELFFileBase<ELFT>::getGlobalELFSyms() {
 }
 
 template <class ELFT>
-uint32_t ELFFileBase<ELFT>::getSectionIndex(const Elf_Sym &Sym) const {
-  return CHECK(getObj().getSectionIndex(&Sym, ELFSyms, SymtabSHNDX), this);
-}
-
-template <class ELFT>
 void ELFFileBase<ELFT>::initSymtab(ArrayRef<Elf_Shdr> Sections,
                                    const Elf_Shdr *Symtab) {
   FirstGlobal = Symtab->sh_info;
@@ -279,6 +274,12 @@ template <class ELFT>
 ObjFile<ELFT>::ObjFile(MemoryBufferRef M, StringRef ArchiveName)
     : ELFFileBase<ELFT>(Base::ObjKind, M) {
   this->ArchiveName = ArchiveName;
+}
+
+template <class ELFT>
+uint32_t ObjFile<ELFT>::getSectionIndex(const Elf_Sym &Sym) const {
+  return CHECK(this->getObj().getSectionIndex(&Sym, this->ELFSyms, SymtabSHNDX),
+               this);
 }
 
 template <class ELFT> ArrayRef<Symbol *> ObjFile<ELFT>::getLocalSymbols() {
@@ -875,7 +876,7 @@ SharedFile<ELFT>::SharedFile(MemoryBufferRef M, StringRef DefaultSoName)
 // Partially parse the shared object file so that we can call
 // getSoName on this object.
 template <class ELFT> void SharedFile<ELFT>::parseDynamic() {
-  const Elf_Shdr *DynamicSec = nullptr;
+  ArrayRef<Elf_Dyn> DynamicTags;
   const ELFFile<ELFT> Obj = this->getObj();
   ArrayRef<Elf_Shdr> Sections = CHECK(Obj.sections(), this);
 
@@ -888,10 +889,8 @@ template <class ELFT> void SharedFile<ELFT>::parseDynamic() {
       this->initSymtab(Sections, &Sec);
       break;
     case SHT_DYNAMIC:
-      DynamicSec = &Sec;
-      break;
-    case SHT_SYMTAB_SHNDX:
-      this->SymtabSHNDX = CHECK(Obj.getSHNDXTable(Sec, Sections), this);
+      DynamicTags =
+          CHECK(Obj.template getSectionContentsAsArray<Elf_Dyn>(&Sec), this);
       break;
     case SHT_GNU_versym:
       this->VersymSec = &Sec;
@@ -906,11 +905,7 @@ template <class ELFT> void SharedFile<ELFT>::parseDynamic() {
     error("SHT_GNU_versym should be associated with symbol table");
 
   // Search for a DT_SONAME tag to initialize this->SoName.
-  if (!DynamicSec)
-    return;
-  ArrayRef<Elf_Dyn> Arr =
-      CHECK(Obj.template getSectionContentsAsArray<Elf_Dyn>(DynamicSec), this);
-  for (const Elf_Dyn &Dyn : Arr) {
+  for (const Elf_Dyn &Dyn : DynamicTags) {
     if (Dyn.d_tag == DT_NEEDED) {
       uint64_t Val = Dyn.getVal();
       if (Val >= this->StringTable.size())
