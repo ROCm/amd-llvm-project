@@ -5709,6 +5709,42 @@ TEST_F(FormatTest, ReturnTypeBreakingStyle) {
                "}\n"
                "template <class T> T *f(T &c);\n", // No break here.
                Style);
+  verifyFormat("int\n"
+               "foo(A<bool> a)\n"
+               "{\n"
+               "  return a;\n"
+               "}\n",
+               Style);
+  verifyFormat("int\n"
+               "foo(A<8> a)\n"
+               "{\n"
+               "  return a;\n"
+               "}\n",
+               Style);
+  verifyFormat("int\n"
+               "foo(A<B<bool>, 8> a)\n"
+               "{\n"
+               "  return a;\n"
+               "}\n",
+               Style);
+  verifyFormat("int\n"
+               "foo(A<B<8>, bool> a)\n"
+               "{\n"
+               "  return a;\n"
+               "}\n",
+               Style);
+  verifyFormat("int\n"
+               "foo(A<B<bool>, bool> a)\n"
+               "{\n"
+               "  return a;\n"
+               "}\n",
+               Style);
+  verifyFormat("int\n"
+               "foo(A<B<8>, 8> a)\n"
+               "{\n"
+               "  return a;\n"
+               "}\n",
+               Style);
 }
 
 TEST_F(FormatTest, AlwaysBreakBeforeMultilineStrings) {
@@ -9683,6 +9719,17 @@ TEST_F(FormatTest, ConfigurableSpaceBeforeParens) {
   verifyFormat("auto lambda = []() { return 0; };", SomeSpace);
 }
 
+TEST_F(FormatTest, SpaceAfterLogicalNot) {
+  FormatStyle Spaces = getLLVMStyle();
+  Spaces.SpaceAfterLogicalNot = true;
+
+  verifyFormat("bool x = ! y", Spaces);
+  verifyFormat("if (! isFailure())", Spaces);
+  verifyFormat("if (! (a && b))", Spaces);
+  verifyFormat("\"Error!\"", Spaces);
+  verifyFormat("! ! x", Spaces);
+}
+
 TEST_F(FormatTest, ConfigurableSpacesInParentheses) {
   FormatStyle Spaces = getLLVMStyle();
 
@@ -11475,6 +11522,12 @@ TEST_F(FormatTest, ParsesConfiguration) {
   CHECK_PARSE("SpaceAfterControlStatementKeyword: true", SpaceBeforeParens,
               FormatStyle::SBPO_ControlStatements);
 
+  Style.SpaceAfterLogicalNot = false;
+  CHECK_PARSE("SpaceAfterLogicalNot: true", SpaceAfterLogicalNot,
+              true);
+  CHECK_PARSE("SpaceAfterLogicalNot: false", SpaceAfterLogicalNot,
+              false);
+
   Style.ColumnLimit = 123;
   FormatStyle BaseStyle = getLLVMStyle();
   CHECK_PARSE("BasedOnStyle: LLVM", ColumnLimit, BaseStyle.ColumnLimit);
@@ -11909,6 +11962,13 @@ TEST_F(FormatTest, ConstructorInitializerIndentWidth) {
   verifyFormat(
       "bool smaller = 1 < bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb(\n"
       "                       aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa);",
+      Style);
+
+  Style.BreakConstructorInitializers = FormatStyle::BCIS_AfterColon;
+  verifyFormat(
+      "SomeClass::Constructor() :\n"
+      "aaaaaaaaaaaaaaaaaaaa(aaaaaaaaaaaaaaaaaaaa),\n"
+      "aaaaaaaaaaaaaaaaaaaa(aaaaaaaaaaaaaaaaaaaa) {}",
       Style);
 }
 
@@ -12777,6 +12837,24 @@ TEST_F(FormatTest, ConfigurableContinuationIndentWidth) {
             "      longFunction(\n"
             "            arg);",
             format("int i = longFunction(arg);", SixIndent));
+}
+
+TEST_F(FormatTest, WrappedClosingParenthesisIndent) {
+  FormatStyle Style = getLLVMStyle();
+  verifyFormat(
+      "int Foo::getter(\n"
+      "    //\n"
+      ") const {\n"
+      "  return foo;\n"
+      "}",
+      Style);
+  verifyFormat(
+      "void Foo::setter(\n"
+      "    //\n"
+      ") {\n"
+      "  foo = 1;\n"
+      "}",
+      Style);
 }
 
 TEST_F(FormatTest, SpacesInAngles) {

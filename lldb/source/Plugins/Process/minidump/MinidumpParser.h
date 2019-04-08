@@ -21,6 +21,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Object/Minidump.h"
 
 // C includes
 
@@ -63,8 +64,6 @@ public:
 
   llvm::ArrayRef<uint8_t> GetThreadContextWow64(const MinidumpThread &td);
 
-  const SystemInfo *GetSystemInfo();
-
   ArchSpec GetArchitecture();
 
   const MinidumpMiscInfo *GetMiscInfo();
@@ -93,20 +92,17 @@ public:
 
   static llvm::StringRef GetStreamTypeAsString(StreamType stream_type);
 
-  const llvm::DenseMap<StreamType, LocationDescriptor> &
-  GetDirectoryMap() const {
-    return m_directory_map;
-  }
+  llvm::object::MinidumpFile &GetMinidumpFile() { return *m_file; }
 
 private:
   MinidumpParser(lldb::DataBufferSP data_sp,
-                 llvm::DenseMap<StreamType, LocationDescriptor> directory_map);
+                 std::unique_ptr<llvm::object::MinidumpFile> file);
 
   MemoryRegionInfo FindMemoryRegion(lldb::addr_t load_addr) const;
 
 private:
   lldb::DataBufferSP m_data_sp;
-  llvm::DenseMap<StreamType, LocationDescriptor> m_directory_map;
+  std::unique_ptr<llvm::object::MinidumpFile> m_file;
   ArchSpec m_arch;
   MemoryRegionInfos m_regions;
   bool m_parsed_regions = false;

@@ -14,10 +14,12 @@
 #include "lldb/Host/FileSystem.h"
 #include "lldb/Target/MemoryRegionInfo.h"
 #include "lldb/Utility/ArchSpec.h"
+#include "lldb/Utility/DataBufferHeap.h"
 #include "lldb/Utility/DataExtractor.h"
 #include "lldb/Utility/FileSpec.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/Optional.h"
+#include "llvm/ObjectYAML/MinidumpYAML.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
@@ -49,17 +51,43 @@ public:
     ASSERT_GT(parser->GetData().size(), 0UL);
   }
 
-  void InvalidMinidump(const char *minidump_filename, uint64_t load_size) {
-    std::string filename = GetInputFilePath(minidump_filename);
-    auto BufferPtr =
-        FileSystem::Instance().CreateDataBuffer(filename, load_size, 0);
-    ASSERT_NE(BufferPtr, nullptr);
+  llvm::Error SetUpFromYaml(llvm::StringRef yaml) {
+    std::string data;
+    llvm::raw_string_ostream os(data);
+    if (llvm::Error E = llvm::MinidumpYAML::writeAsBinary(yaml, os))
+      return E;
 
-    EXPECT_THAT_EXPECTED(MinidumpParser::Create(BufferPtr), llvm::Failed());
+    os.flush();
+    auto data_buffer_sp =
+        std::make_shared<DataBufferHeap>(data.data(), data.size());
+    auto expected_parser = MinidumpParser::Create(std::move(data_buffer_sp));
+    if (!expected_parser)
+      return expected_parser.takeError();
+    parser = std::move(*expected_parser);
+    return llvm::Error::success();
   }
 
   llvm::Optional<MinidumpParser> parser;
 };
+
+TEST_F(MinidumpParserTest, InvalidMinidump) {
+  std::string duplicate_streams;
+  llvm::raw_string_ostream os(duplicate_streams);
+  ASSERT_THAT_ERROR(llvm::MinidumpYAML::writeAsBinary(R"(
+--- !minidump
+Streams:         
+  - Type:            LinuxAuxv
+    Content:         DEADBEEFBAADF00D
+  - Type:            LinuxAuxv
+    Content:         DEADBEEFBAADF00D
+  )",
+                                                      os),
+                    llvm::Succeeded());
+  os.flush();
+  auto data_buffer_sp = std::make_shared<DataBufferHeap>(
+      duplicate_streams.data(), duplicate_streams.size());
+  ASSERT_THAT_EXPECTED(MinidumpParser::Create(data_buffer_sp), llvm::Failed());
+}
 
 TEST_F(MinidumpParserTest, GetThreadsAndGetThreadContext) {
   SetUpData("linux-x86_64.dmp");
@@ -146,19 +174,23 @@ TEST_F(MinidumpParserTest, GetMemoryListPadded) {
   EXPECT_EQ((lldb::addr_t)0x8010, mem->start);
 }
 
-TEST_F(MinidumpParserTest, TruncatedMinidumps) {
-  InvalidMinidump("linux-x86_64.dmp", 32);
-  InvalidMinidump("linux-x86_64.dmp", 100);
-  InvalidMinidump("linux-x86_64.dmp", 20 * 1024);
-}
-
-TEST_F(MinidumpParserTest, IllFormedMinidumps) {
-  InvalidMinidump("bad_duplicate_streams.dmp", -1);
-  InvalidMinidump("bad_overlapping_streams.dmp", -1);
-}
-
 TEST_F(MinidumpParserTest, GetArchitecture) {
-  SetUpData("linux-x86_64.dmp");
+  ASSERT_THAT_ERROR(SetUpFromYaml(R"(
+--- !minidump
+Streams:         
+  - Type:            SystemInfo
+    Processor Arch:  AMD64
+    Processor Level: 6
+    Processor Revision: 16130
+    Number of Processors: 1
+    Platform ID:     Linux
+    CPU:             
+      Vendor ID:       GenuineIntel
+      Version Info:    0x00000000
+      Feature Info:    0x00000000
+...
+)"),
+                    llvm::Succeeded());
   ASSERT_EQ(llvm::Triple::ArchType::x86_64,
             parser->GetArchitecture().GetMachine());
   ASSERT_EQ(llvm::Triple::OSType::Linux,
@@ -403,15 +435,37 @@ TEST_F(MinidumpParserTest, GetMemoryRegionInfoLinuxMaps) {
 }
 
 // Windows Minidump tests
-// fizzbuzz_no_heap.dmp is copied from the WinMiniDump tests
 TEST_F(MinidumpParserTest, GetArchitectureWindows) {
-  SetUpData("fizzbuzz_no_heap.dmp");
+  ASSERT_THAT_ERROR(SetUpFromYaml(R"(
+--- !minidump
+Streams:         
+  - Type:            SystemInfo
+    Processor Arch:  X86
+    Processor Level: 6
+    Processor Revision: 15876
+    Number of Processors: 32
+    Product type:    1
+    Major Version:   6
+    Minor Version:   1
+    Build Number:    7601
+    Platform ID:     Win32NT
+    CSD Version:     Service Pack 1
+    Suite Mask:      0x0100
+    CPU:             
+      Vendor ID:       GenuineIntel
+      Version Info:    0x000306E4
+      Feature Info:    0xBFEBFBFF
+      AMD Extended Features: 0x771EEC80
+...
+)"),
+                    llvm::Succeeded());
   ASSERT_EQ(llvm::Triple::ArchType::x86,
             parser->GetArchitecture().GetMachine());
   ASSERT_EQ(llvm::Triple::OSType::Win32,
             parser->GetArchitecture().GetTriple().getOS());
 }
 
+// fizzbuzz_no_heap.dmp is copied from the WinMiniDump tests
 TEST_F(MinidumpParserTest, GetLinuxProcStatusWindows) {
   SetUpData("fizzbuzz_no_heap.dmp");
   llvm::Optional<LinuxProcStatus> proc_status = parser->GetLinuxProcStatus();
