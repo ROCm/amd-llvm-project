@@ -113,7 +113,12 @@ void CGAMPRuntime::EmitCXXAMPDeserializer(CodeGenFunction &CGF,
                                                            CXXConstructExpr::CK_Complete,
                                                            SourceLocation());
 
-        CGF.EmitCXXConstructorCall(MemberDeserializer, Ctor_Complete, false, false, mai, CXXCE, AggValueSlot::DoesNotOverlap, false);
+        auto currAVS = AggValueSlot::forAddr(mai, MemberType.getQualifiers(),
+        		                               AggValueSlot::IsNotDestructed,
+        		                               AggValueSlot::DoesNotNeedGCBarriers,
+        		                               AggValueSlot::IsNotAliased,
+        		                               AggValueSlot::DoesNotOverlap);
+        CGF.EmitCXXConstructorCall(MemberDeserializer, Ctor_Complete, false, false, currAVS, CXXCE);
         DeserializerArgs.add(RValue::get(mai.getPointer()), (*CPI)->getType());
 
       } else { // HSA extension check
@@ -158,7 +163,12 @@ void CGAMPRuntime::EmitCXXAMPDeserializer(CodeGenFunction &CGF,
                                                                CXXConstructExpr::CK_Complete,
                                                                SourceLocation());
 
-            CGF.EmitCXXConstructorCall(MemberDeserializer, Ctor_Complete, false, false, mai, CXXCE, AggValueSlot::DoesNotOverlap, false);
+            auto currAVS = AggValueSlot::forAddr(mai, MemberType.getQualifiers(),
+                    		                               AggValueSlot::IsNotDestructed,
+                    		                               AggValueSlot::DoesNotNeedGCBarriers,
+                    		                               AggValueSlot::IsNotAliased,
+                    		                               AggValueSlot::DoesNotOverlap);
+            CGF.EmitCXXConstructorCall(MemberDeserializer, Ctor_Complete, false, false, currAVS, CXXCE);
             DeserializerArgs.add(RValue::get(mai.getPointer()), (*CPI)->getType());
 
           } else {
@@ -327,7 +337,13 @@ void CGAMPRuntime::EmitTrampolineBody(CodeGenFunction &CGF,
                                                            false, false, false, false,
                                                            CXXConstructExpr::CK_Complete,
                                                            SourceLocation());
-        CGF.EmitCXXConstructorCall(Constructor, Ctor_Complete, false, false, index, CXXCE, AggValueSlot::DoesNotOverlap, false);
+
+        auto currAVS = AggValueSlot::forAddr(index, IndexTy.getQualifiers(),
+                            		                               AggValueSlot::IsNotDestructed,
+                            		                               AggValueSlot::DoesNotNeedGCBarriers,
+                            		                               AggValueSlot::IsNotAliased,
+                            		                               AggValueSlot::DoesNotOverlap);
+        CGF.EmitCXXConstructorCall(Constructor, Ctor_Complete, false, false, currAVS, CXXCE);
 
       } else {
         llvm::FunctionType *indexInitType = CGM.getTypes().GetFunctionType(

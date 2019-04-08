@@ -1829,7 +1829,7 @@ void CodeGenModule::ConstructDefaultFnAttrList(StringRef Name, bool HasOptnone,
 
 void CodeGenModule::AddDefaultFnAttrs(llvm::Function &F) {
   llvm::AttrBuilder FuncAttrs;
-  ConstructDefaultFnAttrList(F.getName(), F.optForNone(),
+  ConstructDefaultFnAttrList(F.getName(), F.hasOptNone(),
                              /* AttrOnCallsite = */ false, FuncAttrs);
   F.addAttributes(llvm::AttributeList::FunctionIndex, FuncAttrs);
 }
