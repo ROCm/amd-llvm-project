@@ -412,10 +412,9 @@ static void printRelocationTargetName(const MachOObjectFile *O,
   Fmt << S;
 }
 
-std::error_code
-llvm::getMachORelocationValueString(const MachOObjectFile *Obj,
-                                    const RelocationRef &RelRef,
-                                    SmallVectorImpl<char> &Result) {
+Error llvm::getMachORelocationValueString(const MachOObjectFile *Obj,
+                                          const RelocationRef &RelRef,
+                                          SmallVectorImpl<char> &Result) {
   DataRefImpl Rel = RelRef.getRawDataRefImpl();
   MachO::any_relocation_info RE = Obj->getRelocation(Rel);
 
@@ -488,7 +487,7 @@ llvm::getMachORelocationValueString(const MachOObjectFile *Obj,
     // Generic relocation types...
     switch (Type) {
     case MachO::GENERIC_RELOC_PAIR: // prints no info
-      return std::error_code();
+      return Error::success();
     case MachO::GENERIC_RELOC_SECTDIFF: {
       DataRefImpl RelNext = Rel;
       Obj->moveRelocationNext(RelNext);
@@ -588,7 +587,7 @@ llvm::getMachORelocationValueString(const MachOObjectFile *Obj,
 
   Fmt.flush();
   Result.append(FmtBuf.begin(), FmtBuf.end());
-  return std::error_code();
+  return Error::success();
 }
 
 static void PrintIndirectSymbolTable(MachOObjectFile *O, bool verbose,
@@ -2009,6 +2008,10 @@ static void printCPUType(uint32_t cputype, uint32_t cpusubtype) {
     case MachO::CPU_SUBTYPE_ARM64_ALL:
       outs() << "    cputype CPU_TYPE_ARM64\n";
       outs() << "    cpusubtype CPU_SUBTYPE_ARM64_ALL\n";
+      break;
+    case MachO::CPU_SUBTYPE_ARM64E:
+      outs() << "    cputype CPU_TYPE_ARM64\n";
+      outs() << "    cpusubtype CPU_SUBTYPE_ARM64E\n";
       break;
     default:
       printUnknownCPUType(cputype, cpusubtype);
@@ -8084,6 +8087,9 @@ static void PrintMachHeader(uint32_t magic, uint32_t cputype,
       switch (cpusubtype & ~MachO::CPU_SUBTYPE_MASK) {
       case MachO::CPU_SUBTYPE_ARM64_ALL:
         outs() << "        ALL";
+        break;
+      case MachO::CPU_SUBTYPE_ARM64E:
+        outs() << "          E";
         break;
       default:
         outs() << format(" %10d", cpusubtype & ~MachO::CPU_SUBTYPE_MASK);
