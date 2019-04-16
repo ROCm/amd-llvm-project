@@ -19,8 +19,9 @@
 
 namespace llvm {
 
+/// A parser for the latest stackmap format.  At the moment, latest=V2.
 template <support::endianness Endianness>
-class StackMapV2Parser {
+class StackMapParser {
 public:
   template <typename AccessorT>
   class AccessorIterator {
@@ -49,7 +50,7 @@ public:
 
   /// Accessor for function records.
   class FunctionAccessor {
-    friend class StackMapV2Parser;
+    friend class StackMapParser;
 
   public:
     /// Get the function address.
@@ -81,7 +82,7 @@ public:
 
   /// Accessor for constants.
   class ConstantAccessor {
-    friend class StackMapV2Parser;
+    friend class StackMapParser;
 
   public:
     /// Return the value of this constant.
@@ -105,7 +106,7 @@ public:
 
   /// Accessor for location records.
   class LocationAccessor {
-    friend class StackMapV2Parser;
+    friend class StackMapParser;
     friend class RecordAccessor;
 
   public:
@@ -115,8 +116,8 @@ public:
     }
 
     /// Get the Size for this location.
-    uint8_t getSize() const {
-        return read<uint8_t>(P + SizeOffset);
+    unsigned getSizeInBytes() const {
+        return read<uint16_t>(P + SizeOffset);
 
     }
 
@@ -154,17 +155,17 @@ public:
     }
 
     static const int KindOffset = 0;
-    static const int SizeOffset = KindOffset + sizeof(uint8_t);
-    static const int DwarfRegNumOffset = SizeOffset + sizeof(uint8_t);
-    static const int SmallConstantOffset = DwarfRegNumOffset + sizeof(uint16_t);
-    static const int LocationAccessorSize = sizeof(uint64_t);
+    static const int SizeOffset = KindOffset + sizeof(uint16_t);
+    static const int DwarfRegNumOffset = SizeOffset + sizeof(uint16_t);
+    static const int SmallConstantOffset = DwarfRegNumOffset + sizeof(uint32_t);
+    static const int LocationAccessorSize = sizeof(uint64_t) + sizeof(uint32_t);
 
     const uint8_t *P;
   };
 
   /// Accessor for stackmap live-out fields.
   class LiveOutAccessor {
-    friend class StackMapV2Parser;
+    friend class StackMapParser;
     friend class RecordAccessor;
 
   public:
@@ -195,7 +196,7 @@ public:
 
   /// Accessor for stackmap records.
   class RecordAccessor {
-    friend class StackMapV2Parser;
+    friend class StackMapParser;
 
   public:
     using location_iterator = AccessorIterator<LocationAccessor>;
@@ -270,8 +271,9 @@ public:
     RecordAccessor(const uint8_t *P) : P(P) {}
 
     unsigned getNumLiveOutsOffset() const {
-      return LocationListOffset + LocationSize * getNumLocations() +
-             sizeof(uint16_t);
+      unsigned LocOffset = 
+          ((LocationListOffset + LocationSize * getNumLocations()) + 7) & ~0x7; 
+      return LocOffset + sizeof(uint16_t);
     }
 
     unsigned getSizeInBytes() const {
@@ -291,7 +293,7 @@ public:
       InstructionOffsetOffset + sizeof(uint32_t) + sizeof(uint16_t);
     static const unsigned LocationListOffset =
       NumLocationsOffset + sizeof(uint16_t);
-    static const unsigned LocationSize = sizeof(uint64_t);
+    static const unsigned LocationSize = sizeof(uint64_t) + sizeof(uint32_t);
     static const unsigned LiveOutSize = sizeof(uint32_t);
 
     const uint8_t *P;
@@ -299,12 +301,12 @@ public:
 
   /// Construct a parser for a version-2 stackmap. StackMap data will be read
   /// from the given array.
-  StackMapV2Parser(ArrayRef<uint8_t> StackMapSection)
+  StackMapParser(ArrayRef<uint8_t> StackMapSection)
       : StackMapSection(StackMapSection) {
     ConstantsListOffset = FunctionListOffset + getNumFunctions() * FunctionSize;
 
-    assert(StackMapSection[0] == 2 &&
-           "StackMapV2Parser can only parse version 2 stackmaps");
+    assert(StackMapSection[0] == 3 &&
+           "StackMapParser can only parse version 3 stackmaps");
 
     unsigned CurrentRecordOffset =
       ConstantsListOffset + getNumConstants() * ConstantSize;
@@ -320,8 +322,8 @@ public:
   using constant_iterator = AccessorIterator<ConstantAccessor>;
   using record_iterator = AccessorIterator<RecordAccessor>;
 
-  /// Get the version number of this stackmap. (Always returns 2).
-  unsigned getVersion() const { return 2; }
+  /// Get the version number of this stackmap. (Always returns 3).
+  unsigned getVersion() const { return 3; }
 
   /// Get the number of functions in the stack map.
   uint32_t getNumFunctions() const {

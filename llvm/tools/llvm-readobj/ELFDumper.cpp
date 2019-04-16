@@ -2407,7 +2407,7 @@ template <class ELFT> void ELFDumper<ELFT>::printStackMap() const {
       unwrapOrError(Obj->getSectionContents(StackMapSection));
 
   prettyPrintStackMap(
-      W, StackMapV2Parser<ELFT::TargetEndianness>(StackMapContentsArray));
+      W, StackMapParser<ELFT::TargetEndianness>(StackMapContentsArray));
 }
 
 template <class ELFT> void ELFDumper<ELFT>::printGroupSections() {
@@ -2961,9 +2961,10 @@ std::string GNUStyle<ELFT>::getSymbolSectionNdx(const ELFO *Obj,
   case ELF::SHN_COMMON:
     return "COM";
   case ELF::SHN_XINDEX:
-    SectionIndex = unwrapOrError(object::getExtendedSymbolTableIndex<ELFT>(
-        Symbol, FirstSym, this->dumper()->getShndxTable()));
-    LLVM_FALLTHROUGH;
+    return to_string(
+        format_decimal(unwrapOrError(object::getExtendedSymbolTableIndex<ELFT>(
+                           Symbol, FirstSym, this->dumper()->getShndxTable())),
+                       3));
   default:
     // Find if:
     // Processor specific
