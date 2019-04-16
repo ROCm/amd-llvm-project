@@ -1,7 +1,7 @@
 # RUN: llvm-mc -filetype=obj -triple=x86_64 %s -o %t
-# RUN: llvm-objdump -d -print-imm-hex %t | sed 'y/\t/ /' | FileCheck -strict-whitespace %s
+# RUN: llvm-objdump -d -print-imm-hex %t | tr '\t' ' ' | FileCheck -strict-whitespace %s
 
-# RUN: llvm-objdump -d -print-imm-hex -no-show-raw-insn %t | sed 's/\t/ /g' | \
+# RUN: llvm-objdump -d -print-imm-hex -no-show-raw-insn %t | tr '\t' ' ' | \
 # RUN:   FileCheck -check-prefix=NORAW -strict-whitespace %s
 
 # Instructions are expected to be aligned if the instruction in hex is not too long.
