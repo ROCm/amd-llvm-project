@@ -13542,13 +13542,11 @@ Sema::ActOnStartOfFunctionDef(Scope *FnBodyScope, Declarator &D,
   Decl *DP = HandleDeclarator(ParentScope, D, TemplateParameterLists);
 
   if (LangOpts.CPlusPlusAMP && SkipBody) {
-    const bool IsGlobal = DP->hasAttr<AnnotateAttr>() &&
-      DP->getAttr<AnnotateAttr>()->getAnnotation() == "__HIP_global_function__";
-    const bool IsHC = !IsGlobal && DP->hasAttr<CXXAMPRestrictAMPAttr>();
-    const bool IsCPU = !IsGlobal && DP->hasAttr<CXXAMPRestrictCPUAttr>();
+    const bool IsHC = DP->hasAttr<CXXAMPRestrictAMPAttr>();
+    const bool IsCPU = DP->hasAttr<CXXAMPRestrictCPUAttr>();
 
     SkipBody->ShouldSkip = LangOpts.DevicePath ? (!IsHC && IsCPU) :
-                                                 (IsGlobal || (IsHC && !IsCPU));
+                                                 (IsHC && !IsCPU);
 
     if (SkipBody->ShouldSkip) {
       auto Empty = new (getASTContext()) NullStmt{DP->getLocation()};
