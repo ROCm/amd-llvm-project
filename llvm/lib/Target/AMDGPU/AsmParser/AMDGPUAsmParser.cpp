@@ -1079,8 +1079,9 @@ public:
   OperandMatchResultTy parseStringWithPrefix(StringRef Prefix,
                                              StringRef &Value);
 
-  bool parseAbsoluteExpr(int64_t &Val, bool AbsMod = false);
-  OperandMatchResultTy parseImm(OperandVector &Operands, bool AbsMod = false);
+  bool parseAbsoluteExpr(int64_t &Val, bool HasSP3AbsModifier = false);
+  bool parseSP3NegModifier();
+  OperandMatchResultTy parseImm(OperandVector &Operands, bool HasSP3AbsModifier = false);
   OperandMatchResultTy parseReg(OperandVector &Operands);
   OperandMatchResultTy parseRegOrImm(OperandVector &Operands, bool AbsMod = false);
   OperandMatchResultTy parseRegOrImmWithFPInputMods(OperandVector &Operands, bool AllowImm = true);
@@ -1134,8 +1135,10 @@ private:
   bool trySkipToken(const AsmToken::TokenKind Kind);
   bool skipToken(const AsmToken::TokenKind Kind, const StringRef ErrMsg);
   bool parseString(StringRef &Val, const StringRef ErrMsg = "expected a string");
+  void peekTokens(MutableArrayRef<AsmToken> Tokens);
   AsmToken::TokenKind getTokenKind() const;
   bool parseExpr(int64_t &Imm);
+  StringRef getTokenStr() const;
   AsmToken peekToken();
   AsmToken getToken() const;
   SMLoc getLoc() const;
@@ -2001,70 +2004,84 @@ std::unique_ptr<AMDGPUOperand> AMDGPUAsmParser::parseRegister() {
 }
 
 bool
-AMDGPUAsmParser::parseAbsoluteExpr(int64_t &Val, bool AbsMod) {
-  if (AbsMod && getLexer().peekTok().is(AsmToken::Pipe) &&
-      (getLexer().getKind() == AsmToken::Integer ||
-       getLexer().getKind() == AsmToken::Real)) {
-    // This is a workaround for handling operands like these:
+AMDGPUAsmParser::parseAbsoluteExpr(int64_t &Val, bool HasSP3AbsModifier) {
+  if (HasSP3AbsModifier) {
+    // This is a workaround for handling expressions
+    // as arguments of SP3 'abs' modifier, for example:
     //     |1.0|
     //     |-1|
+    //     |1+x|
     // This syntax is not compatible with syntax of standard
     // MC expressions (due to the trailing '|').
 
     SMLoc EndLoc;
     const MCExpr *Expr;
+    SMLoc StartLoc = getLoc();
 
     if (getParser().parsePrimaryExpr(Expr, EndLoc)) {
       return true;
     }
 
-    return !Expr->evaluateAsAbsolute(Val);
+    if (!Expr->evaluateAsAbsolute(Val))
+      return Error(StartLoc, "expected absolute expression");
+
+    return false;
   }
 
   return getParser().parseAbsoluteExpression(Val);
 }
 
 OperandMatchResultTy
-AMDGPUAsmParser::parseImm(OperandVector &Operands, bool AbsMod) {
+AMDGPUAsmParser::parseImm(OperandVector &Operands, bool HasSP3AbsModifier) {
   // TODO: add syntactic sugar for 1/(2*PI)
-  bool Minus = false;
-  if (getLexer().getKind() == AsmToken::Minus) {
-    const AsmToken NextToken = getLexer().peekTok();
-    if (!NextToken.is(AsmToken::Integer) &&
-        !NextToken.is(AsmToken::Real)) {
-        return MatchOperand_NoMatch;
-    }
-    Minus = true;
-    Parser.Lex();
+
+  const auto& Tok = getToken();
+  const auto& NextTok = peekToken();
+  bool IsReal = Tok.is(AsmToken::Real);
+  SMLoc S = Tok.getLoc();
+  bool Negate = false;
+
+  if (!IsReal && Tok.is(AsmToken::Minus) && NextTok.is(AsmToken::Real)) {
+    lex();
+    IsReal = true;
+    Negate = true;
   }
 
-  SMLoc S = Parser.getTok().getLoc();
-  switch(getLexer().getKind()) {
-  case AsmToken::Integer: {
-    int64_t IntVal;
-    if (parseAbsoluteExpr(IntVal, AbsMod))
+  if (IsReal) {
+    // Floating-point expressions are not supported.
+    // Can only allow floating-point literals with an
+    // optional sign.
+
+    StringRef Num = getTokenStr();
+    lex();
+
+    APFloat RealVal(APFloat::IEEEdouble());
+    auto roundMode = APFloat::rmNearestTiesToEven;
+    if (RealVal.convertFromString(Num, roundMode) == APFloat::opInvalidOp) {
       return MatchOperand_ParseFail;
-    if (Minus)
-      IntVal *= -1;
+    }
+    if (Negate)
+      RealVal.changeSign();
+
+    Operands.push_back(
+      AMDGPUOperand::CreateImm(this, RealVal.bitcastToAPInt().getZExtValue(), S,
+                               AMDGPUOperand::ImmTyNone, true));
+
+    return MatchOperand_Success;
+
+    // FIXME: Should enable arbitrary expressions here
+  } else if (Tok.is(AsmToken::Integer) ||
+             (Tok.is(AsmToken::Minus) && NextTok.is(AsmToken::Integer))){
+
+    int64_t IntVal;
+    if (parseAbsoluteExpr(IntVal, HasSP3AbsModifier))
+      return MatchOperand_ParseFail;
+
     Operands.push_back(AMDGPUOperand::CreateImm(this, IntVal, S));
     return MatchOperand_Success;
   }
-  case AsmToken::Real: {
-    int64_t IntVal;
-    if (parseAbsoluteExpr(IntVal, AbsMod))
-      return MatchOperand_ParseFail;
 
-    APFloat F(BitsToDouble(IntVal));
-    if (Minus)
-      F.changeSign();
-    Operands.push_back(
-        AMDGPUOperand::CreateImm(this, F.bitcastToAPInt().getZExtValue(), S,
-                                 AMDGPUOperand::ImmTyNone, true));
-    return MatchOperand_Success;
-  }
-  default:
-    return MatchOperand_NoMatch;
-  }
+  return MatchOperand_NoMatch;
 }
 
 OperandMatchResultTy
@@ -2089,33 +2106,57 @@ AMDGPUAsmParser::parseRegOrImm(OperandVector &Operands, bool AbsMod) {
          res;
 }
 
+// Check if the current token is an SP3 'neg' modifier.
+// Currently this modifier is allowed in the following context:
+//
+// 1. Before a register, e.g. "-v0", "-v[...]" or "-[v0,v1]".
+// 2. Before an 'abs' modifier: -abs(...)
+// 3. Before an SP3 'abs' modifier: -|...|
+//
+// In all other cases "-" is handled as a part
+// of an expression that follows the sign.
+//
+// Note: When "-" is followed by an integer literal,
+// this is interpreted as integer negation rather
+// than a floating-point NEG modifier applied to N.
+// Beside being contr-intuitive, such use of floating-point
+// NEG modifier would have resulted in different meaning
+// of integer literals used with VOP1/2/C and VOP3,
+// for example:
+//    v_exp_f32_e32 v5, -1 // VOP1: src0 = 0xFFFFFFFF
+//    v_exp_f32_e64 v5, -1 // VOP3: src0 = 0x80000001
+// Negative fp literals with preceding "-" are
+// handled likewise for unifomtity
+//
+bool
+AMDGPUAsmParser::parseSP3NegModifier() {
+
+  AsmToken NextToken[2];
+  peekTokens(NextToken);
+
+  if (isToken(AsmToken::Minus) &&
+      (isRegister(NextToken[0], NextToken[1]) ||
+       NextToken[0].is(AsmToken::Pipe) ||
+       isId(NextToken[0], "abs"))) {
+    lex();
+    return true;
+  }
+
+  return false;
+}
+
 OperandMatchResultTy
 AMDGPUAsmParser::parseRegOrImmWithFPInputMods(OperandVector &Operands,
                                               bool AllowImm) {
-  bool Negate = false, Negate2 = false, Abs = false, Abs2 = false;
+  bool Negate, Negate2 = false, Abs = false, Abs2 = false;
 
-  if (getLexer().getKind()== AsmToken::Minus) {
-    const AsmToken NextToken = getLexer().peekTok();
-
-    // Disable ambiguous constructs like '--1' etc. Should use neg(-1) instead.
-    if (NextToken.is(AsmToken::Minus)) {
-      Error(Parser.getTok().getLoc(), "invalid syntax, expected 'neg' modifier");
-      return MatchOperand_ParseFail;
-    }
-
-    // '-' followed by an integer literal N should be interpreted as integer
-    // negation rather than a floating-point NEG modifier applied to N.
-    // Beside being contr-intuitive, such use of floating-point NEG modifier
-    // results in different meaning of integer literals used with VOP1/2/C
-    // and VOP3, for example:
-    //    v_exp_f32_e32 v5, -1 // VOP1: src0 = 0xFFFFFFFF
-    //    v_exp_f32_e64 v5, -1 // VOP3: src0 = 0x80000001
-    // Negative fp literals should be handled likewise for unifomtity
-    if (!NextToken.is(AsmToken::Integer) && !NextToken.is(AsmToken::Real)) {
-      Parser.Lex();
-      Negate = true;
-    }
+  // Disable ambiguous constructs like '--1' etc. Should use neg(-1) instead.
+  if (isToken(AsmToken::Minus) && peekToken().is(AsmToken::Minus)) {
+    Error(getLoc(), "invalid syntax, expected 'neg' modifier");
+    return MatchOperand_ParseFail;
   }
+
+  Negate = parseSP3NegModifier();
 
   if (getLexer().getKind() == AsmToken::Identifier &&
       Parser.getTok().getString() == "neg") {
@@ -2159,7 +2200,7 @@ AMDGPUAsmParser::parseRegOrImmWithFPInputMods(OperandVector &Operands,
     Res = parseReg(Operands);
   }
   if (Res != MatchOperand_Success) {
-    return Res;
+    return (Negate || Negate2 || Abs || Abs2)? MatchOperand_ParseFail : Res;
   }
 
   AMDGPUOperand::Modifiers Mods;
@@ -2221,7 +2262,7 @@ AMDGPUAsmParser::parseRegOrImmWithIntInputMods(OperandVector &Operands,
     Res = parseReg(Operands);
   }
   if (Res != MatchOperand_Success) {
-    return Res;
+    return Sext? MatchOperand_ParseFail : Res;
   }
 
   AMDGPUOperand::Modifiers Mods;
@@ -4622,6 +4663,14 @@ AMDGPUAsmParser::peekToken() {
   return getLexer().peekTok();
 }
 
+void
+AMDGPUAsmParser::peekTokens(MutableArrayRef<AsmToken> Tokens) {
+  auto TokCount = getLexer().peekTokens(Tokens);
+
+  for (auto Idx = TokCount; Idx < Tokens.size(); ++Idx)
+    Tokens[Idx] = AsmToken(AsmToken::Error, "");
+}
+
 AsmToken::TokenKind
 AMDGPUAsmParser::getTokenKind() const {
   return getLexer().getKind();
@@ -4630,6 +4679,11 @@ AMDGPUAsmParser::getTokenKind() const {
 SMLoc
 AMDGPUAsmParser::getLoc() const {
   return getToken().getLoc();
+}
+
+StringRef
+AMDGPUAsmParser::getTokenStr() const {
+  return getToken().getString();
 }
 
 void

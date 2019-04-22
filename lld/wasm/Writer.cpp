@@ -93,6 +93,7 @@ private:
   void createImportSection();
   void createMemorySection();
   void createElemSection();
+  void createDataCountSection();
   void createCodeSection();
   void createDataSection();
   void createCustomSections();
@@ -414,6 +415,16 @@ void Writer::createElemSection() {
   }
 }
 
+void Writer::createDataCountSection() {
+  if (!Segments.size() || !TargetFeatures.count("bulk-memory"))
+    return;
+
+  log("createDataCountSection");
+  SyntheticSection *Section = createSyntheticSection(WASM_SEC_DATACOUNT);
+  raw_ostream &OS = Section->getStream();
+  writeUleb128(OS, Segments.size(), "data count");
+}
+
 void Writer::createCodeSection() {
   if (InputFunctions.empty())
     return;
@@ -718,12 +729,12 @@ void Writer::createProducersSection() {
 }
 
 void Writer::createTargetFeaturesSection() {
-  if (TargetFeatures.size() == 0)
+  if (TargetFeatures.empty())
     return;
 
   SmallVector<std::string, 8> Emitted(TargetFeatures.begin(),
                                       TargetFeatures.end());
-  std::sort(Emitted.begin(), Emitted.end());
+  llvm::sort(Emitted);
   SyntheticSection *Section =
       createSyntheticSection(WASM_SEC_CUSTOM, "target_features");
   auto &OS = Section->getStream();
@@ -865,6 +876,7 @@ void Writer::createSections() {
   createEventSection();
   createExportSection();
   createElemSection();
+  createDataCountSection();
   createCodeSection();
   createDataSection();
   createCustomSections();

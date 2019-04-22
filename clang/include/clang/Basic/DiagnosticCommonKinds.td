@@ -296,7 +296,7 @@ def err_amp_ill_formed_functor : Error<
 
 // Static Analyzer Core
 def err_unknown_analyzer_checker : Error<
-    "no analyzer checkers are associated with '%0'">;
+    "no analyzer checkers or packages are associated with '%0'">;
 def note_suggest_disabling_all_checkers : Note<
     "use -analyzer-disable-all-checks to disable all static analyzer checkers">;
 }
