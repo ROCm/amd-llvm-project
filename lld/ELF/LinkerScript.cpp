@@ -86,7 +86,7 @@ OutputSection *LinkerScript::createOutputSection(StringRef Name,
     // There was a forward reference.
     Sec = SecRef;
   } else {
-    Sec = make<OutputSection>(Name, SHT_NOBITS, 0);
+    Sec = make<OutputSection>(Name, SHT_PROGBITS, 0);
     if (!SecRef)
       SecRef = Sec;
   }
@@ -345,7 +345,7 @@ static bool matchConstraints(ArrayRef<InputSection *> Sections,
 static void sortSections(MutableArrayRef<InputSection *> Vec,
                          SortSectionPolicy K) {
   if (K != SortSectionPolicy::Default && K != SortSectionPolicy::None)
-    std::stable_sort(Vec.begin(), Vec.end(), getComparator(K));
+    llvm::stable_sort(Vec, getComparator(K));
 }
 
 // Sort sections as instructed by SORT-family commands and --sort-section
@@ -887,8 +887,8 @@ void LinkerScript::adjustSectionsBeforeSorting() {
     // in case it is empty.
     bool IsEmpty = getInputSections(Sec).empty();
     if (IsEmpty)
-      Sec->Flags =
-          Flags & ((Sec->NonAlloc ? 0 : SHF_ALLOC) | SHF_WRITE | SHF_EXECINSTR);
+      Sec->Flags = Flags & ((Sec->NonAlloc ? 0 : (uint64_t)SHF_ALLOC) |
+                            SHF_WRITE | SHF_EXECINSTR);
 
     if (IsEmpty && isDiscardable(*Sec)) {
       Sec->Live = false;

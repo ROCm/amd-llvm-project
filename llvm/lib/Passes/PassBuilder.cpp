@@ -1046,9 +1046,15 @@ ModulePassManager PassBuilder::buildThinLTODefaultPipeline(
     //
     // Also, WPD has access to more precise information than ICP and can
     // devirtualize more effectively, so it should operate on the IR first.
+    //
+    // The WPD and LowerTypeTest passes need to run at -O0 to lower type
+    // metadata and intrinsics.
     MPM.addPass(WholeProgramDevirtPass(nullptr, ImportSummary));
     MPM.addPass(LowerTypeTestsPass(nullptr, ImportSummary));
   }
+
+  if (Level == O0)
+    return MPM;
 
   // Force any function attributes we want the rest of the pipeline to observe.
   MPM.addPass(ForceFunctionAttrsPass());
@@ -1075,8 +1081,15 @@ PassBuilder::buildLTOPreLinkDefaultPipeline(OptimizationLevel Level,
 ModulePassManager
 PassBuilder::buildLTODefaultPipeline(OptimizationLevel Level, bool DebugLogging,
                                      ModuleSummaryIndex *ExportSummary) {
-  assert(Level != O0 && "Must request optimizations for the default pipeline!");
   ModulePassManager MPM(DebugLogging);
+
+  if (Level == O0) {
+    // The WPD and LowerTypeTest passes need to run at -O0 to lower type
+    // metadata and intrinsics.
+    MPM.addPass(WholeProgramDevirtPass(ExportSummary, nullptr));
+    MPM.addPass(LowerTypeTestsPass(ExportSummary, nullptr));
+    return MPM;
+  }
 
   if (PGOOpt && PGOOpt->Action == PGOOptions::SampleUse) {
     // Load sample profile before running the LTO optimization pipeline.
@@ -1498,6 +1511,24 @@ Expected<LoopVectorizeOptions> parseLoopVectorizeOptions(StringRef Params) {
   return Opts;
 }
 
+Expected<bool> parseLoopUnswitchOptions(StringRef Params) {
+  bool Result = false;
+  while (!Params.empty()) {
+    StringRef ParamName;
+    std::tie(ParamName, Params) = Params.split(';');
+
+    bool Enable = !ParamName.consume_front("no-");
+    if (ParamName == "nontrivial") {
+      Result = Enable;
+    } else {
+      return make_error<StringError>(
+          formatv("invalid LoopUnswitch pass parameter '{0}' ", ParamName)
+              .str(),
+          inconvertibleErrorCode());
+    }
+  }
+  return Result;
+}
 } // namespace
 
 /// Tests whether a pass name starts with a valid prefix for a default pipeline
@@ -1618,6 +1649,9 @@ static bool isLoopPassName(StringRef Name, CallbacksT &Callbacks) {
 
 #define LOOP_PASS(NAME, CREATE_PASS)                                           \
   if (Name == NAME)                                                            \
+    return true;
+#define LOOP_PASS_WITH_PARAMS(NAME, CREATE_PASS, PARSER)                       \
+  if (checkParametrizedPassName(Name, NAME))                                   \
     return true;
 #define LOOP_ANALYSIS(NAME, CREATE_PASS)                                       \
   if (Name == "require<" NAME ">" || Name == "invalidate<" NAME ">")           \
@@ -2004,6 +2038,14 @@ Error PassBuilder::parseLoopPass(LoopPassManager &LPM, const PipelineElement &E,
 #define LOOP_PASS(NAME, CREATE_PASS)                                           \
   if (Name == NAME) {                                                          \
     LPM.addPass(CREATE_PASS);                                                  \
+    return Error::success();                                                   \
+  }
+#define LOOP_PASS_WITH_PARAMS(NAME, CREATE_PASS, PARSER)                       \
+  if (checkParametrizedPassName(Name, NAME)) {                                 \
+    auto Params = parsePassParameters(PARSER, Name, NAME);                     \
+    if (!Params)                                                               \
+      return Params.takeError();                                               \
+    LPM.addPass(CREATE_PASS(Params.get()));                                    \
     return Error::success();                                                   \
   }
 #define LOOP_ANALYSIS(NAME, CREATE_PASS)                                       \

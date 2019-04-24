@@ -130,14 +130,14 @@ public:
 
     Launch a new process by spawning a new process using the
     target object's executable module's file as the file to launch.
-    Arguments are given in \a argv, and the environment variables
-    are in \a envp. Standard input and output files can be
-    optionally re-directed to \a stdin_path, \a stdout_path, and
-    \a stderr_path.
+    Arguments are given in argv, and the environment variables
+    are in envp. Standard input and output files can be
+    optionally re-directed to stdin_path, stdout_path, and
+    stderr_path.
 
     @param[in] listener
         An optional listener that will receive all process events.
-        If \a listener is valid then \a listener will listen to all
+        If listener is valid then listener will listen to all
         process events. If not valid, then this target's debugger
         (SBTarget::GetDebugger()) will listen to all process events.
 
@@ -180,7 +180,6 @@ public:
 
     @return
          A process object for the newly created process.
-    //------------------------------------------------------------------
 
     For example,
 
@@ -232,7 +231,6 @@ public:
 
     @return
          A process object for the newly created process.
-    //------------------------------------------------------------------
 
     For example,
 
@@ -260,7 +258,6 @@ public:
 
     @return
          A process object for the newly created core file.
-    //------------------------------------------------------------------
 
     For example,
 
@@ -281,7 +278,7 @@ public:
 
     @param[in] listener
         An optional listener that will receive all process events.
-        If \a listener is valid then \a listener will listen to all
+        If listener is valid then listener will listen to all
         process events. If not valid, then this target's debugger
         (SBTarget::GetDebugger()) will listen to all process events.
 
@@ -303,7 +300,7 @@ public:
 
     @param[in] listener
         An optional listener that will receive all process events.
-        If \a listener is valid then \a listener will listen to all
+        If listener is valid then listener will listen to all
         process events. If not valid, then this target's debugger
         (SBTarget::GetDebugger()) will listen to all process events.
 
@@ -329,7 +326,7 @@ public:
 
     @param[in] listener
         An optional listener that will receive all process events.
-        If \a listener is valid then \a listener will listen to all
+        If listener is valid then listener will listen to all
         process events. If not valid, then this target's debugger
         (SBTarget::GetDebugger()) will listen to all process events.
 
@@ -487,7 +484,7 @@ public:
         for.
 
     @param[in] max_matches
-        Allow the number of matches to be limited to \a max_matches.
+        Allow the number of matches to be limited to max_matches.
 
     @return
         A list of matched variables in an SBValueList.") FindGlobalVariables;
@@ -688,63 +685,63 @@ public:
     BreakpointCreateBySBAddress (SBAddress &sb_address);
 
     %feature("docstring", "
-  /// Create a breakpoint using a scripted resolver.
-  ///
-  /// @param[in] class_name
-  ///    This is the name of the class that implements a scripted resolver.
-  ///    The class should have the following signature:
-  ///    class Resolver:
-  ///        def __init__(self, bkpt, extra_args):
-  ///            # bkpt - the breakpoint for which this is the resolver.  When
-  ///            # the resolver finds an interesting address, call AddLocation
-  ///            # on this breakpoint to add it.
-  ///            #
-  ///            # extra_args - an SBStructuredData that can be used to
-  ///            # parametrize this instance.  Same as the extra_args passed
-  ///            # to BreakpointCreateFromScript.
-  ///
-  ///        def __get_depth__ (self):
-  ///            # This is optional, but if defined, you should return the
-  ///            # depth at which you want the callback to be called.  The
-  ///            # available options are:
-  ///            #    lldb.eSearchDepthModule
-  ///            #    lldb.eSearchDepthCompUnit
-  ///            # The default if you don't implement this method is
-  ///            # eSearchDepthModule.
-  ///
-  ///        def __callback__(self, sym_ctx):
-  ///            # sym_ctx - an SBSymbolContext that is the cursor in the
-  ///            # search through the program to resolve breakpoints.
-  ///            # The sym_ctx will be filled out to the depth requested in
-  ///            # __get_depth__.
-  ///            # Look in this sym_ctx for new breakpoint locations,
-  ///            # and if found use bkpt.AddLocation to add them.
-  ///            # Note, you will only get called for modules/compile_units that
-  ///            # pass the SearchFilter provided by the module_list & file_list
-  ///            # passed into BreakpointCreateFromScript.
-  ///
-  ///        def get_short_help(self):
-  ///            # Optional, but if implemented return a short string that will
-  ///            # be printed at the beginning of the break list output for the
-  ///            # breakpoint.
-  ///
-  /// @param[in] extra_args
-  ///    This is an SBStructuredData object that will get passed to the
-  ///    constructor of the class in class_name.  You can use this to
-  ///    reuse the same class, parametrizing it with entries from this
-  ///    dictionary.
-  ///
-  /// @param module_list
-  ///    If this is non-empty, this will be used as the module filter in the
-  ///    SearchFilter created for this breakpoint.
-  ///
-  /// @param file_list
-  ///    If this is non-empty, this will be used as the comp unit filter in the
-  ///    SearchFilter created for this breakpoint.
-  ///
-  /// @return
-  ///     An SBBreakpoint that will set locations based on the logic in the
-  ///     resolver's search callback.") BreakpointCreateFromScript;
+    Create a breakpoint using a scripted resolver.
+  
+    @param[in] class_name
+       This is the name of the class that implements a scripted resolver.
+       The class should have the following signature:
+       class Resolver:
+           def __init__(self, bkpt, extra_args):
+               # bkpt - the breakpoint for which this is the resolver.  When
+               # the resolver finds an interesting address, call AddLocation
+               # on this breakpoint to add it.
+               #
+               # extra_args - an SBStructuredData that can be used to
+               # parametrize this instance.  Same as the extra_args passed
+               # to BreakpointCreateFromScript.
+  
+           def __get_depth__ (self):
+               # This is optional, but if defined, you should return the
+               # depth at which you want the callback to be called.  The
+               # available options are:
+               #    lldb.eSearchDepthModule
+               #    lldb.eSearchDepthCompUnit
+               # The default if you don't implement this method is
+               # eSearchDepthModule.
+  
+           def __callback__(self, sym_ctx):
+               # sym_ctx - an SBSymbolContext that is the cursor in the
+               # search through the program to resolve breakpoints.
+               # The sym_ctx will be filled out to the depth requested in
+               # __get_depth__.
+               # Look in this sym_ctx for new breakpoint locations,
+               # and if found use bkpt.AddLocation to add them.
+               # Note, you will only get called for modules/compile_units that
+               # pass the SearchFilter provided by the module_list & file_list
+               # passed into BreakpointCreateFromScript.
+  
+           def get_short_help(self):
+               # Optional, but if implemented return a short string that will
+               # be printed at the beginning of the break list output for the
+               # breakpoint.
+  
+    @param[in] extra_args
+       This is an SBStructuredData object that will get passed to the
+       constructor of the class in class_name.  You can use this to
+       reuse the same class, parametrizing it with entries from this
+       dictionary.
+  
+    @param module_list
+       If this is non-empty, this will be used as the module filter in the
+       SearchFilter created for this breakpoint.
+  
+    @param file_list
+       If this is non-empty, this will be used as the comp unit filter in the
+       SearchFilter created for this breakpoint.
+  
+    @return
+        An SBBreakpoint that will set locations based on the logic in the
+        resolver's search callback.") BreakpointCreateFromScript;
     lldb::SBBreakpoint BreakpointCreateFromScript(
       const char *class_name,
       SBStructuredData &extra_args,
@@ -837,7 +834,7 @@ public:
        Only write breakpoints from this list.
 
     @param[in] append
-       If \btrue, append the breakpoints in bkpt_list to the others
+       If true, append the breakpoints in bkpt_list to the others
        serialized in dest_file.  If dest_file doesn't exist, then a new
        file will be created and the breakpoints in bkpt_list written to it.
 

@@ -87,7 +87,7 @@ extern cl::opt<bool> Rebase;
 extern cl::opt<bool> UniversalHeaders;
 extern cl::opt<bool> WeakBind;
 
-static cl::opt<unsigned long long> AdjustVMA(
+static cl::opt<uint64_t> AdjustVMA(
     "adjust-vma",
     cl::desc("Increase the displayed address by the specified offset"),
     cl::value_desc("offset"), cl::init(0));
@@ -271,12 +271,13 @@ static cl::alias PrintSourceShort("S", cl::desc("Alias for -source"),
                                   cl::NotHidden, cl::Grouping,
                                   cl::aliasopt(PrintSource));
 
-static cl::opt<unsigned long long>
+static cl::opt<uint64_t>
     StartAddress("start-address", cl::desc("Disassemble beginning at address"),
                  cl::value_desc("address"), cl::init(0));
-static cl::opt<unsigned long long>
-    StopAddress("stop-address", cl::desc("Stop disassembly at address"),
-                cl::value_desc("address"), cl::init(UINT64_MAX));
+static cl::opt<uint64_t> StopAddress("stop-address",
+                                     cl::desc("Stop disassembly at address"),
+                                     cl::value_desc("address"),
+                                     cl::init(UINT64_MAX));
 
 cl::opt<bool> SymbolTable("syms", cl::desc("Display the symbol table"));
 static cl::alias SymbolTableShort("t", cl::desc("Alias for --syms"),
@@ -1141,33 +1142,25 @@ static void disassembleObject(const Target *TheTarget, const ObjectFile *Obj,
     std::vector<RelocationRef>::const_iterator RelEnd = Rels.end();
     // Disassemble symbol by symbol.
     for (unsigned SI = 0, SE = Symbols.size(); SI != SE; ++SI) {
-      uint64_t Start = std::get<0>(Symbols[SI]) - SectionAddr;
-      // The end is either the section end or the beginning of the next
-      // symbol.
-      uint64_t End = (SI == SE - 1)
-                         ? SectSize
-                         : std::get<0>(Symbols[SI + 1]) - SectionAddr;
-      // Don't try to disassemble beyond the end of section contents.
-      if (End > SectSize)
-        End = SectSize;
-      // If this symbol has the same address as the next symbol, then skip it.
-      if (Start >= End)
-        continue;
-
-      // Check if we need to skip symbol
-      // Skip if the symbol's data is not between StartAddress and StopAddress
-      if (End + SectionAddr <= StartAddress ||
-          Start + SectionAddr >= StopAddress)
-        continue;
-
-      // Stop disassembly at the stop address specified
-      if (End + SectionAddr > StopAddress)
-        End = StopAddress - SectionAddr;
-
-      /// Skip if user requested specific symbols and this is not in the list
+      // Skip if --disassemble-functions is not empty and the symbol is not in
+      // the list.
       if (!DisasmFuncsSet.empty() &&
           !DisasmFuncsSet.count(std::get<1>(Symbols[SI])))
         continue;
+
+      uint64_t Start = std::get<0>(Symbols[SI]);
+      if (Start < SectionAddr || StopAddress <= Start)
+        continue;
+
+      // The end is the section end, the beginning of the next symbol, or
+      // --stop-address.
+      uint64_t End = std::min<uint64_t>(SectionAddr + SectSize, StopAddress);
+      if (SI + 1 < SE)
+        End = std::min(End, std::get<0>(Symbols[SI + 1]));
+      if (Start >= End || End <= StartAddress)
+        continue;
+      Start -= SectionAddr;
+      End -= SectionAddr;
 
       if (!PrintedSection) {
         PrintedSection = true;
