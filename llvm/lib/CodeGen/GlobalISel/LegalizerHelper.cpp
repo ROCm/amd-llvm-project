@@ -902,6 +902,13 @@ LegalizerHelper::widenScalarExtract(MachineInstr &MI, unsigned TypeIdx,
     return Legalized;
   }
 
+  if (SrcTy.isScalar()) {
+    Observer.changingInstr(MI);
+    widenScalarSrc(MI, WideTy, 1, TargetOpcode::G_ANYEXT);
+    Observer.changedInstr(MI);
+    return Legalized;
+  }
+
   if (!SrcTy.isVector())
     return UnableToLegalize;
 
@@ -1320,6 +1327,8 @@ LegalizerHelper::widenScalar(MachineInstr &MI, unsigned TypeIdx, LLT WideTy) {
   case TargetOpcode::G_FEXP:
   case TargetOpcode::G_FEXP2:
   case TargetOpcode::G_FPOW:
+  case TargetOpcode::G_INTRINSIC_TRUNC:
+  case TargetOpcode::G_INTRINSIC_ROUND:
     assert(TypeIdx == 0);
     Observer.changingInstr(MI);
 
