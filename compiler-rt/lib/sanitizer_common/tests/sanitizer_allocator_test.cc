@@ -155,7 +155,7 @@ struct AP32Compact {
   using AddressSpaceView = AddressSpaceViewTy;
   using ByteMap = FlatByteMap<kFlatByteMapSize, AddressSpaceView>;
   typedef NoOpMapUnmapCallback MapUnmapCallback;
-  static const uptr kFlags = 0;
+  static const uptr kFlags = SizeClassAllocator32FlagMasks::kForTest;
 };
 template <typename AddressSpaceView>
 using Allocator32CompactASVT =
@@ -302,7 +302,8 @@ struct AP32SeparateBatches {
   using ByteMap = FlatByteMap<kFlatByteMapSize, AddressSpaceView>;
   typedef NoOpMapUnmapCallback MapUnmapCallback;
   static const uptr kFlags =
-      SizeClassAllocator32FlagMasks::kUseSeparateSizeClassForBatch;
+      SizeClassAllocator32FlagMasks::kUseSeparateSizeClassForBatch |
+      SizeClassAllocator32FlagMasks::kForTest;
 };
 template <typename AddressSpaceView>
 using Allocator32SeparateBatchesASVT =
@@ -476,7 +477,7 @@ struct AP32WithCallback {
   using AddressSpaceView = AddressSpaceViewTy;
   using ByteMap = FlatByteMap<kFlatByteMapSize, AddressSpaceView>;
   typedef TestMapUnmapCallback MapUnmapCallback;
-  static const uptr kFlags = 0;
+  static const uptr kFlags = SizeClassAllocator32FlagMasks::kForTest;
 };
 
 TEST(SanitizerCommon, SizeClassAllocator32MapUnmapCallback) {

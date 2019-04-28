@@ -69,7 +69,7 @@ struct AP32 {
   using AddressSpaceView = LocalAddressSpaceView;
   using ByteMap = __tsan::ByteMap;
   typedef __tsan::MapUnmapCallback MapUnmapCallback;
-  static const uptr kFlags = 0;
+  static const uptr kFlags = SizeClassAllocator32FlagMasks::kForTest;
 };
 typedef SizeClassAllocator32<AP32> PrimaryAllocator;
 #else
