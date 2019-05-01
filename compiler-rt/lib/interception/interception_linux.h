@@ -30,18 +30,16 @@ void *GetFuncAddrVer(const char *name, const char *ver);
 }  // namespace __interception
 
 #define INTERCEPT_FUNCTION_LINUX_OR_FREEBSD(func)                          \
-  do { ::__interception::GetRealFunctionAddress(                           \
+  ::__interception::GetRealFunctionAddress(                                \
       #func, (::__interception::uptr *)&__interception::PTR_TO_REAL(func), \
       (::__interception::uptr) & (func),                                   \
-      (::__interception::uptr) & WRAP(func));                              \
-  } while (0)  // TODO(yln): temporarily make macro void.
+      (::__interception::uptr) & WRAP(func))
 
 // Android,  Solaris and OpenBSD do not have dlvsym
 #if !SANITIZER_ANDROID && !SANITIZER_SOLARIS && !SANITIZER_OPENBSD
 #define INTERCEPT_FUNCTION_VER_LINUX_OR_FREEBSD(func, symver) \
-  do { (::__interception::real_##func = (func##_type)(                \
-       unsigned long)::__interception::GetFuncAddrVer(#func, symver)); \
-  } while (0)
+  (::__interception::real_##func = (func##_type)(                \
+       unsigned long)::__interception::GetFuncAddrVer(#func, symver))
 #else
 #define INTERCEPT_FUNCTION_VER_LINUX_OR_FREEBSD(func, symver) \
   INTERCEPT_FUNCTION_LINUX_OR_FREEBSD(func)
