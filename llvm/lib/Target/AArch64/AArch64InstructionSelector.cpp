@@ -101,6 +101,7 @@ private:
                                 MachineRegisterInfo &MRI) const;
   bool selectIntrinsicWithSideEffects(MachineInstr &I,
                                       MachineRegisterInfo &MRI) const;
+  bool selectIntrinsic(MachineInstr &I, MachineRegisterInfo &MRI) const;
   bool selectVectorICmp(MachineInstr &I, MachineRegisterInfo &MRI) const;
   bool selectIntrinsicTrunc(MachineInstr &I, MachineRegisterInfo &MRI) const;
   bool selectIntrinsicRound(MachineInstr &I, MachineRegisterInfo &MRI) const;
@@ -116,6 +117,12 @@ private:
                                      const RegisterBank &DstRB, LLT ScalarTy,
                                      unsigned VecReg, unsigned LaneIdx,
                                      MachineIRBuilder &MIRBuilder) const;
+
+  /// Helper function for selecting G_FCONSTANT. If the G_FCONSTANT can be
+  /// materialized using a FMOV instruction, then update MI and return it.
+  /// Otherwise, do nothing and return a nullptr.
+  MachineInstr *emitFMovForFConstant(MachineInstr &MI,
+                                     MachineRegisterInfo &MRI) const;
 
   ComplexRendererFns selectArithImmed(MachineOperand &Root) const;
 
@@ -1177,14 +1184,18 @@ bool AArch64InstructionSelector::select(MachineInstr &I,
     const unsigned MovOpc =
         DefSize == 32 ? AArch64::MOVi32imm : AArch64::MOVi64imm;
 
-    I.setDesc(TII.get(MovOpc));
-
     if (isFP) {
+      // Either emit a FMOV, or emit a copy to emit a normal mov.
       const TargetRegisterClass &GPRRC =
           DefSize == 32 ? AArch64::GPR32RegClass : AArch64::GPR64RegClass;
       const TargetRegisterClass &FPRRC =
           DefSize == 32 ? AArch64::FPR32RegClass : AArch64::FPR64RegClass;
 
+      // Can we use a FMOV instruction to represent the immediate?
+      if (emitFMovForFConstant(I, MRI))
+        return true;
+
+      // Nope. Emit a copy and use a normal mov instead.
       const unsigned DefGPRReg = MRI.createVirtualRegister(&GPRRC);
       MachineOperand &RegOp = I.getOperand(0);
       RegOp.setReg(DefGPRReg);
@@ -1208,6 +1219,7 @@ bool AArch64InstructionSelector::select(MachineInstr &I,
       I.getOperand(1).ChangeToImmediate(Val);
     }
 
+    I.setDesc(TII.get(MovOpc));
     constrainSelectedInstRegOperands(I, TII, TRI, RBI);
     return true;
   }
@@ -1855,6 +1867,8 @@ bool AArch64InstructionSelector::select(MachineInstr &I,
   case TargetOpcode::G_VASTART:
     return STI.isTargetDarwin() ? selectVaStartDarwin(I, MF, MRI)
                                 : selectVaStartAAPCS(I, MF, MRI);
+  case TargetOpcode::G_INTRINSIC:
+    return selectIntrinsic(I, MRI);
   case TargetOpcode::G_INTRINSIC_W_SIDE_EFFECTS:
     return selectIntrinsicWithSideEffects(I, MRI);
   case TargetOpcode::G_IMPLICIT_DEF: {
@@ -2713,6 +2727,39 @@ MachineInstr *AArch64InstructionSelector::emitVectorConcat(
   return &*InsElt;
 }
 
+MachineInstr *AArch64InstructionSelector::emitFMovForFConstant(
+    MachineInstr &I, MachineRegisterInfo &MRI) const {
+  assert(I.getOpcode() == TargetOpcode::G_FCONSTANT &&
+         "Expected a G_FCONSTANT!");
+  MachineOperand &ImmOp = I.getOperand(1);
+  unsigned DefSize = MRI.getType(I.getOperand(0).getReg()).getSizeInBits();
+
+  // Only handle 32 and 64 bit defs for now.
+  if (DefSize != 32 && DefSize != 64)
+    return nullptr;
+
+  // Don't handle null values using FMOV.
+  if (ImmOp.getFPImm()->isNullValue())
+    return nullptr;
+
+  // Get the immediate representation for the FMOV.
+  const APFloat &ImmValAPF = ImmOp.getFPImm()->getValueAPF();
+  int Imm = DefSize == 32 ? AArch64_AM::getFP32Imm(ImmValAPF)
+                          : AArch64_AM::getFP64Imm(ImmValAPF);
+
+  // If this is -1, it means the immediate can't be represented as the requested
+  // floating point value. Bail.
+  if (Imm == -1)
+    return nullptr;
+
+  // Update MI to represent the new FMOV instruction, constrain it, and return.
+  ImmOp.ChangeToImmediate(Imm);
+  unsigned MovOpc = DefSize == 32 ? AArch64::FMOVSi : AArch64::FMOVDi;
+  I.setDesc(TII.get(MovOpc));
+  constrainSelectedInstRegOperands(I, TII, TRI, RBI);
+  return &I;
+}
+
 bool AArch64InstructionSelector::tryOptVectorDup(MachineInstr &I) const {
   // Try to match a vector splat operation into a dup instruction.
   // We're looking for this pattern:
@@ -3083,6 +3130,17 @@ bool AArch64InstructionSelector::selectBuildVector(
   return true;
 }
 
+/// Helper function to find an intrinsic ID on an a MachineInstr. Returns the
+/// ID if it exists, and 0 otherwise.
+static unsigned findIntrinsicID(MachineInstr &I) {
+  auto IntrinOp = find_if(I.operands(), [&](const MachineOperand &Op) {
+    return Op.isIntrinsicID();
+  });
+  if (IntrinOp == I.operands_end())
+    return 0;
+  return IntrinOp->getIntrinsicID();
+}
+
 /// Helper function to emit the correct opcode for a llvm.aarch64.stlxr
 /// intrinsic.
 static unsigned getStlxrOpcode(unsigned NumBytesToStore) {
@@ -3101,12 +3159,9 @@ static unsigned getStlxrOpcode(unsigned NumBytesToStore) {
 bool AArch64InstructionSelector::selectIntrinsicWithSideEffects(
     MachineInstr &I, MachineRegisterInfo &MRI) const {
   // Find the intrinsic ID.
-  auto IntrinOp = find_if(I.operands(), [&](const MachineOperand &Op) {
-    return Op.isIntrinsicID();
-  });
-  if (IntrinOp == I.operands_end())
+  unsigned IntrinID = findIntrinsicID(I);
+  if (!IntrinID)
     return false;
-  unsigned IntrinID = IntrinOp->getIntrinsicID();
   MachineIRBuilder MIRBuilder(I);
 
   // Select the instruction.
@@ -3146,6 +3201,58 @@ bool AArch64InstructionSelector::selectIntrinsicWithSideEffects(
 
   I.eraseFromParent();
   return true;
+}
+
+bool AArch64InstructionSelector::selectIntrinsic(
+    MachineInstr &I, MachineRegisterInfo &MRI) const {
+  unsigned IntrinID = findIntrinsicID(I);
+  if (!IntrinID)
+    return false;
+  MachineIRBuilder MIRBuilder(I);
+
+  switch (IntrinID) {
+  default:
+    break;
+  case Intrinsic::aarch64_crypto_sha1h:
+    unsigned DstReg = I.getOperand(0).getReg();
+    unsigned SrcReg = I.getOperand(2).getReg();
+
+    // FIXME: Should this be an assert?
+    if (MRI.getType(DstReg).getSizeInBits() != 32 ||
+        MRI.getType(SrcReg).getSizeInBits() != 32)
+      return false;
+
+    // The operation has to happen on FPRs. Set up some new FPR registers for
+    // the source and destination if they are on GPRs.
+    if (RBI.getRegBank(SrcReg, MRI, TRI)->getID() != AArch64::FPRRegBankID) {
+      SrcReg = MRI.createVirtualRegister(&AArch64::FPR32RegClass);
+      MIRBuilder.buildCopy({SrcReg}, {I.getOperand(2)});
+
+      // Make sure the copy ends up getting constrained properly.
+      RBI.constrainGenericRegister(I.getOperand(2).getReg(),
+                                   AArch64::GPR32RegClass, MRI);
+    }
+
+    if (RBI.getRegBank(DstReg, MRI, TRI)->getID() != AArch64::FPRRegBankID)
+      DstReg = MRI.createVirtualRegister(&AArch64::FPR32RegClass);
+
+    // Actually insert the instruction.
+    auto SHA1Inst = MIRBuilder.buildInstr(AArch64::SHA1Hrr, {DstReg}, {SrcReg});
+    constrainSelectedInstRegOperands(*SHA1Inst, TII, TRI, RBI);
+
+    // Did we create a new register for the destination?
+    if (DstReg != I.getOperand(0).getReg()) {
+      // Yep. Copy the result of the instruction back into the original
+      // destination.
+      MIRBuilder.buildCopy({I.getOperand(0)}, {DstReg});
+      RBI.constrainGenericRegister(I.getOperand(0).getReg(),
+                                   AArch64::GPR32RegClass, MRI);
+    }
+
+    I.eraseFromParent();
+    return true;
+  }
+  return false;
 }
 
 /// SelectArithImmed - Select an immediate value that can be represented as

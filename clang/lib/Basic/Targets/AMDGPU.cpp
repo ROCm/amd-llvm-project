@@ -260,6 +260,9 @@ AMDGPUTargetInfo::AMDGPUTargetInfo(const llvm::Triple &Triple,
   UseAddrSpaceMapMangling = true;
   HasFloat16=true;
 
+  HasLegalHalfType = true;
+  HasFloat16 = true;
+
   // Set pointer width and alignment for target address space 0.
   PointerWidth = PointerAlign = DataLayout->getPointerSizeInBits();
   if (getMaxPointerWidth() == 64) {

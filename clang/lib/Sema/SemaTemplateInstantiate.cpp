@@ -133,9 +133,8 @@ Sema::getTemplateInstantiationArgs(NamedDecl *D,
     // Add template arguments from a function template specialization.
     else if (FunctionDecl *Function = dyn_cast<FunctionDecl>(Ctx)) {
       if (!RelativeToPrimary &&
-          (Function->getTemplateSpecializationKind() ==
-                                                  TSK_ExplicitSpecialization &&
-           !Function->getClassScopeSpecializationPattern()))
+          Function->getTemplateSpecializationKindForInstantiation() ==
+              TSK_ExplicitSpecialization)
         break;
 
       if (const TemplateArgumentList *TemplateArgs
@@ -2684,15 +2683,14 @@ Sema::InstantiateClassMembers(SourceLocation PointOfInstantiation,
                                                 == TSK_ExplicitSpecialization)
         continue;
 
-      if ((Context.getTargetInfo().getCXXABI().isMicrosoft() ||
-           Context.getTargetInfo().getTriple().isWindowsItaniumEnvironment() ||
-           Context.getTargetInfo().getTriple().isWindowsGNUEnvironment()) &&
+      if (Context.getTargetInfo().getTriple().isOSWindows() &&
           TSK == TSK_ExplicitInstantiationDeclaration) {
-        // In MSVC and Windows Itanium mode, explicit instantiation decl of the
-        // outer class doesn't affect the inner class.
-        // In GNU mode, inner classes aren't dllexported. Don't let the
-        // instantiation cover the inner class, to avoid undefined references
-        // to inner classes that weren't exported.
+        // On Windows, explicit instantiation decl of the outer class doesn't
+        // affect the inner class. Typically extern template declarations are
+        // used in combination with dll import/export annotations, but those
+        // are not propagated from the outer class templates to inner classes.
+        // Therefore, do not instantiate inner classes on this platform, so
+        // that users don't end up with undefined symbols during linking.
         continue;
       }
 

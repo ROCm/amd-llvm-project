@@ -1615,7 +1615,9 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
 
       SourceLocation RLoc = Tok.getLocation();
 
-      ExprResult OrigLHS = LHS;
+      LHS = Actions.CorrectDelayedTyposInExpr(LHS);
+      Idx = Actions.CorrectDelayedTyposInExpr(Idx);
+      Length = Actions.CorrectDelayedTyposInExpr(Length);
       if (!LHS.isInvalid() && !Idx.isInvalid() && !Length.isInvalid() &&
           Tok.is(tok::r_square)) {
         if (ColonLoc.isValid()) {
@@ -1626,12 +1628,6 @@ Parser::ParsePostfixExpressionSuffix(ExprResult LHS) {
                                                 Idx.get(), RLoc);
         }
       } else {
-        LHS = ExprError();
-      }
-      if (LHS.isInvalid()) {
-        (void)Actions.CorrectDelayedTyposInExpr(OrigLHS);
-        (void)Actions.CorrectDelayedTyposInExpr(Idx);
-        (void)Actions.CorrectDelayedTyposInExpr(Length);
         LHS = ExprError();
         Idx = ExprError();
       }
