@@ -1056,6 +1056,7 @@ Sema::CheckOverload(Scope *S, FunctionDecl *New, const LookupResult &Old,
   // third bullet. If the type of the friend is dependent, skip this lookup
   // until instantiation.
   if (New->getFriendObjectKind() && New->getQualifier() &&
+      !New->getDescribedFunctionTemplate() &&
       !New->getDependentSpecializationInfo() &&
       !New->getType()->isDependentType()) {
     LookupResult TemplateSpecResult(LookupResult::Temporary, Old);
@@ -5278,12 +5279,12 @@ Sema::PerformObjectArgumentInitialization(Expr *From,
   }
 
   if (!Context.hasSameType(From->getType(), DestType)) {
-    if (From->getType().getAddressSpace() != DestType.getAddressSpace())
-      From = ImpCastExprToType(From, DestType, CK_AddressSpaceConversion,
-                             From->getValueKind()).get();
+    CastKind CK;
+    if (FromRecordType.getAddressSpace() != DestType.getAddressSpace())
+      CK = CK_AddressSpaceConversion;
     else
-      From = ImpCastExprToType(From, DestType, CK_NoOp,
-                             From->getValueKind()).get();
+      CK = CK_NoOp;
+    From = ImpCastExprToType(From, DestType, CK, From->getValueKind()).get();
   }
   return From;
 }
