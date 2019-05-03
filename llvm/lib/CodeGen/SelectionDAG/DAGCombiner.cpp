@@ -11915,7 +11915,7 @@ SDValue DAGCombiner::combineRepeatedFPDivisors(SDNode *N) {
 
   // Skip if current node is a reciprocal.
   SDValue N0 = N->getOperand(0);
-  ConstantFPSDNode *N0CFP = dyn_cast<ConstantFPSDNode>(N0);
+  ConstantFPSDNode *N0CFP = isConstOrConstSplatFP(N0, /* AllowUndefs */ true);
   if (N0CFP && N0CFP->isExactlyValue(1.0))
     return SDValue();
 
