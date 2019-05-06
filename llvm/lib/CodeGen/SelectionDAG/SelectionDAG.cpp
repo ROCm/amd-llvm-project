@@ -262,12 +262,7 @@ bool ISD::allOperandsUndef(const SDNode *N) {
   // is probably the desired behavior.
   if (N->getNumOperands() == 0)
     return false;
-
-  for (const SDValue &Op : N->op_values())
-    if (!Op.isUndef())
-      return false;
-
-  return true;
+  return all_of(N->op_values(), [](SDValue Op) { return Op.isUndef(); });
 }
 
 bool ISD::matchUnaryPredicate(SDValue Op,
@@ -8239,19 +8234,17 @@ void SelectionDAG::updateDivergence(SDNode * N)
   }
 }
 
-
-void SelectionDAG::CreateTopologicalOrder(std::vector<SDNode*>& Order) {
+void SelectionDAG::CreateTopologicalOrder(std::vector<SDNode *> &Order) {
   DenseMap<SDNode *, unsigned> Degree;
   Order.reserve(AllNodes.size());
-  for (auto & N : allnodes()) {
+  for (auto &N : allnodes()) {
     unsigned NOps = N.getNumOperands();
     Degree[&N] = NOps;
     if (0 == NOps)
       Order.push_back(&N);
   }
-  for (std::vector<SDNode *>::iterator I = Order.begin();
-  I!=Order.end();++I) {
-    SDNode * N = *I;
+  for (size_t I = 0; I != Order.size(); ++I) {
+    SDNode *N = Order[I];
     for (auto U : N->uses()) {
       unsigned &UnsortedOps = Degree[U];
       if (0 == --UnsortedOps)
@@ -8261,9 +8254,8 @@ void SelectionDAG::CreateTopologicalOrder(std::vector<SDNode*>& Order) {
 }
 
 #ifndef NDEBUG
-void SelectionDAG::VerifyDAGDiverence()
-{
-  std::vector<SDNode*> TopoOrder;
+void SelectionDAG::VerifyDAGDiverence() {
+  std::vector<SDNode *> TopoOrder;
   CreateTopologicalOrder(TopoOrder);
   const TargetLowering &TLI = getTargetLoweringInfo();
   DenseMap<const SDNode *, bool> DivergenceMap;
@@ -8288,7 +8280,6 @@ void SelectionDAG::VerifyDAGDiverence()
   }
 }
 #endif
-
 
 /// ReplaceAllUsesOfValuesWith - Replace any uses of From with To, leaving
 /// uses of other values produced by From.getNode() alone.  The same value
@@ -8765,17 +8756,12 @@ bool SDNode::areOnlyUsersOf(ArrayRef<const SDNode *> Nodes, const SDNode *N) {
 
 /// isOperand - Return true if this node is an operand of N.
 bool SDValue::isOperandOf(const SDNode *N) const {
-  for (const SDValue &Op : N->op_values())
-    if (*this == Op)
-      return true;
-  return false;
+  return any_of(N->op_values(), [this](SDValue Op) { return *this == Op; });
 }
 
 bool SDNode::isOperandOf(const SDNode *N) const {
-  for (const SDValue &Op : N->op_values())
-    if (this == Op.getNode())
-      return true;
-  return false;
+  return any_of(N->op_values(),
+                [this](SDValue Op) { return this == Op.getNode(); });
 }
 
 /// reachesChainWithoutSideEffects - Return true if this operand (which must
