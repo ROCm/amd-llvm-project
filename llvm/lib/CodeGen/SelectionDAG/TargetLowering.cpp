@@ -448,7 +448,6 @@ TargetLowering::isOffsetFoldingLegal(const GlobalAddressSDNode *GA) const {
 /// return true.
 bool TargetLowering::ShrinkDemandedConstant(SDValue Op, const APInt &Demanded,
                                             TargetLoweringOpt &TLO) const {
-  SelectionDAG &DAG = TLO.DAG;
   SDLoc DL(Op);
   unsigned Opcode = Op.getOpcode();
 
@@ -474,8 +473,8 @@ bool TargetLowering::ShrinkDemandedConstant(SDValue Op, const APInt &Demanded,
 
     if (!C.isSubsetOf(Demanded)) {
       EVT VT = Op.getValueType();
-      SDValue NewC = DAG.getConstant(Demanded & C, DL, VT);
-      SDValue NewOp = DAG.getNode(Opcode, DL, VT, Op.getOperand(0), NewC);
+      SDValue NewC = TLO.DAG.getConstant(Demanded & C, DL, VT);
+      SDValue NewOp = TLO.DAG.getNode(Opcode, DL, VT, Op.getOperand(0), NewC);
       return TLO.CombineTo(Op, NewOp);
     }
 
@@ -3331,9 +3330,8 @@ SDValue TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
   }
 
   // Fold away ALL boolean setcc's.
-  SDValue Temp;
   if (N0.getValueType().getScalarType() == MVT::i1 && foldBooleans) {
-    EVT OpVT = N0.getValueType();
+    SDValue Temp;
     switch (Cond) {
     default: llvm_unreachable("Unknown integer setcc!");
     case ISD::SETEQ:  // X == Y  -> ~(X^Y)

@@ -388,9 +388,9 @@ class TypePromotionTransaction;
     bool tryToSinkFreeOperands(Instruction *I);
     bool replaceMathCmpWithIntrinsic(BinaryOperator *BO, CmpInst *Cmp,
                                      Intrinsic::ID IID);
-    bool optimizeCmp(CmpInst *Cmp);
-    bool combineToUSubWithOverflow(CmpInst *Cmp);
-    bool combineToUAddWithOverflow(CmpInst *Cmp);
+    bool optimizeCmp(CmpInst *Cmp, bool &ModifiedDT);
+    bool combineToUSubWithOverflow(CmpInst *Cmp, bool &ModifiedDT);
+    bool combineToUAddWithOverflow(CmpInst *Cmp, bool &ModifiedDT);
   };
 
 } // end anonymous namespace
@@ -484,13 +484,9 @@ bool CodeGenPrepare::runOnFunction(Function &F) {
     if (!LargeOffsetGEPMap.empty())
       MadeChange |= splitLargeGEPOffsets();
 
-    // Really free instructions removed during promotion or kept around to
-    // improve efficiency (see comments in overflow intrinsic transforms).
-    for (Instruction *I : RemovedInsts) {
-      if (I->getParent())
-        I->removeFromParent();
+    // Really free removed instructions during promotion.
+    for (Instruction *I : RemovedInsts)
       I->deleteValue();
-    }
 
     EverMadeChange |= MadeChange;
     SeenChainsForSExt.clear();
@@ -1218,14 +1214,10 @@ bool CodeGenPrepare::replaceMathCmpWithIntrinsic(BinaryOperator *BO,
   Value *MathOV = Builder.CreateBinaryIntrinsic(IID, Arg0, Arg1);
   Value *Math = Builder.CreateExtractValue(MathOV, 0, "math");
   Value *OV = Builder.CreateExtractValue(MathOV, 1, "ov");
-
-  // Delay the actual removal/deletion of the binop and compare for efficiency.
-  // If we delete those now, we would invalidate the instruction iterator and
-  // trigger dominator tree updates.
   BO->replaceAllUsesWith(Math);
   Cmp->replaceAllUsesWith(OV);
-  RemovedInsts.insert(BO);
-  RemovedInsts.insert(Cmp);
+  BO->eraseFromParent();
+  Cmp->eraseFromParent();
   return true;
 }
 
@@ -1261,7 +1253,8 @@ static bool matchUAddWithOverflowConstantEdgeCases(CmpInst *Cmp,
 
 /// Try to combine the compare into a call to the llvm.uadd.with.overflow
 /// intrinsic. Return true if any changes were made.
-bool CodeGenPrepare::combineToUAddWithOverflow(CmpInst *Cmp) {
+bool CodeGenPrepare::combineToUAddWithOverflow(CmpInst *Cmp,
+                                               bool &ModifiedDT) {
   Value *A, *B;
   BinaryOperator *Add;
   if (!match(Cmp, m_UAddWithOverflow(m_Value(A), m_Value(B), m_BinOp(Add))))
@@ -1281,10 +1274,13 @@ bool CodeGenPrepare::combineToUAddWithOverflow(CmpInst *Cmp) {
   if (!replaceMathCmpWithIntrinsic(Add, Cmp, Intrinsic::uadd_with_overflow))
     return false;
 
+  // Reset callers - do not crash by iterating over a dead instruction.
+  ModifiedDT = true;
   return true;
 }
 
-bool CodeGenPrepare::combineToUSubWithOverflow(CmpInst *Cmp) {
+bool CodeGenPrepare::combineToUSubWithOverflow(CmpInst *Cmp,
+                                               bool &ModifiedDT) {
   // We are not expecting non-canonical/degenerate code. Just bail out.
   Value *A = Cmp->getOperand(0), *B = Cmp->getOperand(1);
   if (isa<Constant>(A) && isa<Constant>(B))
@@ -1339,6 +1335,8 @@ bool CodeGenPrepare::combineToUSubWithOverflow(CmpInst *Cmp) {
   if (!replaceMathCmpWithIntrinsic(Sub, Cmp, Intrinsic::usub_with_overflow))
     return false;
 
+  // Reset callers - do not crash by iterating over a dead instruction.
+  ModifiedDT = true;
   return true;
 }
 
@@ -1408,14 +1406,14 @@ static bool sinkCmpExpression(CmpInst *Cmp, const TargetLowering &TLI) {
   return MadeChange;
 }
 
-bool CodeGenPrepare::optimizeCmp(CmpInst *Cmp) {
+bool CodeGenPrepare::optimizeCmp(CmpInst *Cmp, bool &ModifiedDT) {
   if (sinkCmpExpression(Cmp, *TLI))
     return true;
 
-  if (combineToUAddWithOverflow(Cmp))
+  if (combineToUAddWithOverflow(Cmp, ModifiedDT))
     return true;
 
-  if (combineToUSubWithOverflow(Cmp))
+  if (combineToUSubWithOverflow(Cmp, ModifiedDT))
     return true;
 
   return false;
@@ -6940,7 +6938,7 @@ bool CodeGenPrepare::optimizeInst(Instruction *I, bool &ModifiedDT) {
   }
 
   if (auto *Cmp = dyn_cast<CmpInst>(I))
-    if (TLI && optimizeCmp(Cmp))
+    if (TLI && optimizeCmp(Cmp, ModifiedDT))
       return true;
 
   if (LoadInst *LI = dyn_cast<LoadInst>(I)) {
@@ -7223,11 +7221,7 @@ bool CodeGenPrepare::splitBranchCondition(Function &F, bool &ModifiedDT) {
       std::swap(TBB, FBB);
 
     // Replace the old BB with the new BB.
-    for (PHINode &PN : TBB->phis()) {
-      int i;
-      while ((i = PN.getBasicBlockIndex(&BB)) >= 0)
-        PN.setIncomingBlock(i, TmpBB);
-    }
+    TBB->replacePhiUsesWith(&BB, TmpBB);
 
     // Add another incoming edge form the new BB.
     for (PHINode &PN : FBB->phis()) {
