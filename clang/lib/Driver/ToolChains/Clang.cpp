@@ -1160,6 +1160,21 @@ void Clang::AddPreprocessingOptions(Compilation &C, const JobAction &JA,
     Args.getLastArgValue(options::OPT_std_EQ).equals("c++amp"))
     getToolChain().AddHCCIncludeArgs(Args, CmdArgs);
 
+  // If we are offloading to a target via OpenMP we need to include the
+  // openmp_wrappers folder which contains alternative system headers.
+  if (JA.isDeviceOffloading(Action::OFK_OpenMP) &&
+      getToolChain().getTriple().isNVPTX()){
+    if (!Args.hasArg(options::OPT_nobuiltininc)) {
+      // Add openmp_wrappers/* to our system include path.  This lets us wrap
+      // standard library headers.
+      SmallString<128> P(D.ResourceDir);
+      llvm::sys::path::append(P, "include");
+      llvm::sys::path::append(P, "openmp_wrappers");
+      CmdArgs.push_back("-internal-isystem");
+      CmdArgs.push_back(Args.MakeArgString(P));
+    }
+  }
+
   // Add -i* options, and automatically translate to
   // -include-pch/-include-pth for transparent PCH support. It's
   // wonky, but we include looking for .gch so we can support seamless
@@ -5367,6 +5382,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     if (Args.hasFlag(options::OPT_fgpu_rdc, options::OPT_fno_gpu_rdc, true))
       CmdArgs.push_back("-fgpu-rdc");
   }
+
+  if (IsHIP)
+    CmdArgs.push_back("-fcuda-allow-variadic-functions");
 
   // OpenMP offloading device jobs take the argument -fopenmp-host-ir-file-path
   // to specify the result of the compile phase on the host, so the meaningful
