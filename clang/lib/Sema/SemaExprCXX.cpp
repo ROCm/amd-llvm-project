@@ -941,6 +941,21 @@ bool Sema::CheckCXXThrowOperand(SourceLocation ThrowLoc,
     }
   }
 
+  // Under the Itanium C++ ABI, memory for the exception object is allocated by
+  // the runtime with no ability for the compiler to request additional
+  // alignment. Warn if the exception type requires alignment beyond the minimum
+  // guaranteed by the target C++ runtime.
+  if (Context.getTargetInfo().getCXXABI().isItaniumFamily()) {
+    CharUnits TypeAlign = Context.getTypeAlignInChars(Ty);
+    CharUnits ExnObjAlign = Context.getExnObjectAlignment();
+    if (ExnObjAlign < TypeAlign) {
+      Diag(ThrowLoc, diag::warn_throw_underaligned_obj);
+      Diag(ThrowLoc, diag::note_throw_underaligned_obj)
+          << Ty << (unsigned)TypeAlign.getQuantity()
+          << (unsigned)ExnObjAlign.getQuantity();
+    }
+  }
+
   return false;
 }
 
@@ -6790,9 +6805,12 @@ ExprResult Sema::ActOnStartCXXMemberReference(Scope *S, Expr *Base,
       FirstIteration = false;
     }
 
-    if (OpKind == tok::arrow &&
-        (BaseType->isPointerType() || BaseType->isObjCObjectPointerType()))
-      BaseType = BaseType->getPointeeType();
+    if (OpKind == tok::arrow) {
+      if (BaseType->isPointerType())
+        BaseType = BaseType->getPointeeType();
+      else if (auto *AT = Context.getAsArrayType(BaseType))
+        BaseType = AT->getElementType();
+    }
   }
 
   // Objective-C properties allow "." access on Objective-C pointer types,
@@ -7074,7 +7092,8 @@ ExprResult Sema::ActOnPseudoDestructorExpr(Scope *S, Expr *Base,
     TemplateIdAnnotation *TemplateId = SecondTypeName.TemplateId;
     ASTTemplateArgsPtr TemplateArgsPtr(TemplateId->getTemplateArgs(),
                                        TemplateId->NumArgs);
-    TypeResult T = ActOnTemplateIdType(TemplateId->SS,
+    TypeResult T = ActOnTemplateIdType(S,
+                                       TemplateId->SS,
                                        TemplateId->TemplateKWLoc,
                                        TemplateId->Template,
                                        TemplateId->Name,
@@ -7126,7 +7145,8 @@ ExprResult Sema::ActOnPseudoDestructorExpr(Scope *S, Expr *Base,
       TemplateIdAnnotation *TemplateId = FirstTypeName.TemplateId;
       ASTTemplateArgsPtr TemplateArgsPtr(TemplateId->getTemplateArgs(),
                                          TemplateId->NumArgs);
-      TypeResult T = ActOnTemplateIdType(TemplateId->SS,
+      TypeResult T = ActOnTemplateIdType(S,
+                                         TemplateId->SS,
                                          TemplateId->TemplateKWLoc,
                                          TemplateId->Template,
                                          TemplateId->Name,

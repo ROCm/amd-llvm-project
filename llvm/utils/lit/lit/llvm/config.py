@@ -58,7 +58,7 @@ class LLVMConfig(object):
         elif platform.system() == "Linux":
             features.add('system-linux')
         elif platform.system() in ['FreeBSD']:
-            config.available_features.add('system-freebsd')
+            features.add('system-freebsd')
         elif platform.system() == "NetBSD":
             features.add('system-netbsd')
 
@@ -233,8 +233,8 @@ class LLVMConfig(object):
             major_version_number = int(version_regex.group(1))
             minor_version_number = int(version_regex.group(2))
             patch_version_number = int(version_regex.group(3))
-            if 'Apple LLVM' in version_string:
-                # Apple LLVM doesn't yet support LSan
+            if ('Apple LLVM' in version_string) or ('Apple clang' in version_string):
+                # Apple clang doesn't yet support LSan
                 return False
             else:
                 return major_version_number >= 5
