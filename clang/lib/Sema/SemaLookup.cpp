@@ -3059,10 +3059,11 @@ Sema::SpecialMemberOverloadResult Sema::LookupSpecialMember(CXXRecordDecl *RD,
                            llvm::makeArrayRef(&Arg, NumArgs), OCS, true);
       else if (CtorInfo)
         AddOverloadCandidate(CtorInfo.Constructor, CtorInfo.FoundDecl,
-                             llvm::makeArrayRef(&Arg, NumArgs), OCS, true);
+                             llvm::makeArrayRef(&Arg, NumArgs), OCS,
+                             /*SuppressUserConversions*/ true);
       else
         AddOverloadCandidate(M, Cand, llvm::makeArrayRef(&Arg, NumArgs), OCS,
-                             true);
+                             /*SuppressUserConversions*/ true);
     } else if (FunctionTemplateDecl *Tmpl =
                  dyn_cast<FunctionTemplateDecl>(Cand->getUnderlyingDecl())) {
       if (SM == CXXCopyAssignment || SM == CXXMoveAssignment)
@@ -5101,7 +5102,9 @@ FunctionCallFilterCCC::FunctionCallFilterCCC(Sema &SemaRef, unsigned NumArgs,
     : NumArgs(NumArgs), HasExplicitTemplateArgs(HasExplicitTemplateArgs),
       CurContext(SemaRef.CurContext), MemberFn(ME) {
   WantTypeSpecifiers = false;
-  WantFunctionLikeCasts = SemaRef.getLangOpts().CPlusPlus && NumArgs == 1;
+  WantFunctionLikeCasts = SemaRef.getLangOpts().CPlusPlus &&
+                          !HasExplicitTemplateArgs && NumArgs == 1;
+  WantCXXNamedCasts = HasExplicitTemplateArgs && NumArgs == 1;
   WantRemainingKeywords = false;
 }
 
@@ -5129,6 +5132,13 @@ bool FunctionCallFilterCCC::ValidateCandidate(const TypoCorrection &candidate) {
             return true;
       }
     }
+
+    // A typo for a function-style cast can look like a function call in C++.
+    if ((HasExplicitTemplateArgs ? getAsTypeTemplateDecl(ND) != nullptr
+                                 : isa<TypeDecl>(ND)) &&
+        CurContext->getParentASTContext().getLangOpts().CPlusPlus)
+      // Only a class or class template can take two or more arguments.
+      return NumArgs <= 1 || HasExplicitTemplateArgs || isa<CXXRecordDecl>(ND);
 
     // Skip the current candidate if it is not a FunctionDecl or does not accept
     // the current number of arguments.

@@ -7080,7 +7080,8 @@ ExprResult Sema::ActOnPseudoDestructorExpr(Scope *S, Expr *Base,
     TemplateIdAnnotation *TemplateId = SecondTypeName.TemplateId;
     ASTTemplateArgsPtr TemplateArgsPtr(TemplateId->getTemplateArgs(),
                                        TemplateId->NumArgs);
-    TypeResult T = ActOnTemplateIdType(TemplateId->SS,
+    TypeResult T = ActOnTemplateIdType(S,
+                                       TemplateId->SS,
                                        TemplateId->TemplateKWLoc,
                                        TemplateId->Template,
                                        TemplateId->Name,
@@ -7132,7 +7133,8 @@ ExprResult Sema::ActOnPseudoDestructorExpr(Scope *S, Expr *Base,
       TemplateIdAnnotation *TemplateId = FirstTypeName.TemplateId;
       ASTTemplateArgsPtr TemplateArgsPtr(TemplateId->getTemplateArgs(),
                                          TemplateId->NumArgs);
-      TypeResult T = ActOnTemplateIdType(TemplateId->SS,
+      TypeResult T = ActOnTemplateIdType(S,
+                                         TemplateId->SS,
                                          TemplateId->TemplateKWLoc,
                                          TemplateId->Template,
                                          TemplateId->Name,
