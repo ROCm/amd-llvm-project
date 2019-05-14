@@ -9,6 +9,7 @@
 #ifndef LLVM_CLANG_FRONTEND_FRONTENDOPTIONS_H
 #define LLVM_CLANG_FRONTEND_FRONTENDOPTIONS_H
 
+#include "clang/AST/ASTDumperUtils.h"
 #include "clang/Frontend/CommandLineSourceLoc.h"
 #include "clang/Serialization/ModuleFileExtension.h"
 #include "clang/Sema/CodeCompleteOptions.h"
@@ -308,6 +309,9 @@ public:
   unsigned IncludeTimestamps : 1;
 
   CodeCompleteOptions CodeCompleteOpts;
+
+  /// Specifies the output format of the AST.
+  ASTDumpOutputFormat ASTDumpFormat = ADOF_Default;
 
   enum {
     ARCMT_None,
