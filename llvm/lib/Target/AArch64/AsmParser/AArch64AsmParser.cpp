@@ -10,6 +10,7 @@
 #include "MCTargetDesc/AArch64MCExpr.h"
 #include "MCTargetDesc/AArch64MCTargetDesc.h"
 #include "MCTargetDesc/AArch64TargetStreamer.h"
+#include "TargetInfo/AArch64TargetInfo.h"
 #include "AArch64InstrInfo.h"
 #include "Utils/AArch64BaseInfo.h"
 #include "llvm/ADT/APFloat.h"
@@ -2835,6 +2836,11 @@ static const struct Extension {
     {"pan-rwv", {AArch64::FeaturePAN_RWV}},
     {"ccpp", {AArch64::FeatureCCPP}},
     {"sve", {AArch64::FeatureSVE}},
+    {"sve2", {AArch64::FeatureSVE2}},
+    {"sve2-aes", {AArch64::FeatureSVE2AES}},
+    {"sve2-sm4", {AArch64::FeatureSVE2SM4}},
+    {"sve2-sha3", {AArch64::FeatureSVE2SHA3}},
+    {"bitperm", {AArch64::FeatureSVE2BitPerm}},
     // FIXME: Unsupported extensions
     {"pan", {}},
     {"lor", {}},
@@ -5509,6 +5515,8 @@ extern "C" void LLVMInitializeAArch64AsmParser() {
   RegisterMCAsmParser<AArch64AsmParser> X(getTheAArch64leTarget());
   RegisterMCAsmParser<AArch64AsmParser> Y(getTheAArch64beTarget());
   RegisterMCAsmParser<AArch64AsmParser> Z(getTheARM64Target());
+  RegisterMCAsmParser<AArch64AsmParser> W(getTheARM64_32Target());
+  RegisterMCAsmParser<AArch64AsmParser> V(getTheAArch64_32Target());
 }
 
 #define GET_REGISTER_MATCHER
