@@ -349,10 +349,10 @@ SymbolFileDWARF::GetParentSymbolContextDIE(const DWARFDIE &child_die) {
 }
 
 SymbolFileDWARF::SymbolFileDWARF(ObjectFile *objfile)
-    : SymbolFile(objfile), UserID(uint64_t(DW_INVALID_OFFSET)
-                                  << 32), // Used by SymbolFileDWARFDebugMap to
-                                          // when this class parses .o files to
-                                          // contain the .o file index/ID
+    : SymbolFile(objfile),
+      UserID(0x7fffffff00000000), // Used by SymbolFileDWARFDebugMap to
+                                  // when this class parses .o files to
+                                  // contain the .o file index/ID
       m_debug_map_module_wp(), m_debug_map_symfile(NULL),
       m_context(*objfile->GetModule()), m_data_debug_abbrev(),
       m_data_debug_frame(), m_data_debug_info(), m_data_debug_line(),
@@ -1257,9 +1257,11 @@ SymbolFileDWARF::DecodedUID SymbolFileDWARF::DecodeUID(lldb::user_id_t uid) {
   if (SymbolFileDWARFDebugMap *debug_map = GetDebugMapSymfile()) {
     SymbolFileDWARF *dwarf = debug_map->GetSymbolFileByOSOIndex(
         debug_map->GetOSOIndexFromUserID(uid));
-    return {dwarf, {DW_INVALID_OFFSET, dw_offset_t(uid)}};
+    return {dwarf, {DIERef::Section::DebugInfo, DW_INVALID_OFFSET, dw_offset_t(uid)}};
   }
-  uint32_t dwarf_id = uid >> 32;
+  DIERef::Section section =
+      uid >> 63 ? DIERef::Section::DebugTypes : DIERef::Section::DebugInfo;
+  uint32_t dwarf_id = uid >> 32 & 0x7fffffff;
   dw_offset_t die_offset = uid;
 
   if (die_offset == DW_INVALID_OFFSET)
@@ -1272,7 +1274,7 @@ SymbolFileDWARF::DecodedUID SymbolFileDWARF::DecodeUID(lldb::user_id_t uid) {
         dwarf = unit->GetDwoSymbolFile();
     }
   }
-  return {dwarf, {DW_INVALID_OFFSET, die_offset}};
+  return {dwarf, {section, DW_INVALID_OFFSET, die_offset}};
 }
 
 DWARFDIE
@@ -1765,7 +1767,8 @@ uint32_t SymbolFileDWARF::ResolveSymbolContext(const Address &so_addr,
         }
       } else {
         uint32_t cu_idx = DW_INVALID_INDEX;
-        DWARFUnit *dwarf_cu = debug_info->GetUnitAtOffset(cu_offset, &cu_idx);
+        DWARFUnit *dwarf_cu = debug_info->GetUnitAtOffset(DIERef::Section::DebugInfo,
+                                                          cu_offset, &cu_idx);
         if (dwarf_cu) {
           sc.comp_unit = GetCompUnitForDWARFCompUnit(dwarf_cu, cu_idx);
           if (sc.comp_unit) {
@@ -3309,7 +3312,7 @@ VariableSP SymbolFileDWARF::ParseVariableDIE(const SymbolContext &sc,
             }
           } break;
           case DW_AT_specification:
-            spec_die = GetDIE(DIERef(form_value));
+            spec_die = form_value.Reference();
             break;
           case DW_AT_start_scope: {
             if (form_value.Form() == DW_FORM_sec_offset) {
@@ -3584,12 +3587,11 @@ SymbolFileDWARF::FindBlockContainingSpecification(
     case DW_TAG_subprogram:
     case DW_TAG_inlined_subroutine:
     case DW_TAG_lexical_block: {
-      if (die.GetAttributeValueAsReference(
-              DW_AT_specification, DW_INVALID_OFFSET) == spec_block_die_offset)
+      if (die.GetReferencedDIE(DW_AT_specification).GetOffset() ==
+          spec_block_die_offset)
         return die;
 
-      if (die.GetAttributeValueAsReference(DW_AT_abstract_origin,
-                                           DW_INVALID_OFFSET) ==
+      if (die.GetReferencedDIE(DW_AT_abstract_origin).GetOffset() ==
           spec_block_die_offset)
         return die;
     } break;
