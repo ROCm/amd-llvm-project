@@ -1961,7 +1961,7 @@ static ConstantSDNode *getAsNonOpaqueConstant(SDValue N) {
 }
 
 SDValue DAGCombiner::foldBinOpIntoSelect(SDNode *BO) {
-  assert(ISD::isBinaryOp(BO) && "Unexpected binary operator");
+  assert(TLI.isBinOp(BO->getOpcode()) && "Unexpected binary operator");
 
   // Don't do this unless the old select is going away. We want to eliminate the
   // binary operator, not replace a binop with a select.
@@ -6582,11 +6582,16 @@ SDValue DAGCombiner::visitXOR(SDNode *N) {
 
 /// Handle transforms common to the three shifts, when the shift amount is a
 /// constant.
+/// We are looking for: (shift being one of shl/sra/srl)
+///   shift (binop X, C0), C1
+/// And want to transform into:
+///   binop (shift X, C1), (shift C0, C1)
 SDValue DAGCombiner::visitShiftByConstant(SDNode *N, ConstantSDNode *Amt) {
   // Do not turn a 'not' into a regular xor.
   if (isBitwiseNot(N->getOperand(0)))
     return SDValue();
 
+  // The inner binop must be one-use, since we want to replace it.
   SDNode *LHS = N->getOperand(0).getNode();
   if (!LHS->hasOneUse()) return SDValue();
 
@@ -6594,27 +6599,23 @@ SDValue DAGCombiner::visitShiftByConstant(SDNode *N, ConstantSDNode *Amt) {
   // instead of (shift (and)), likewise for add, or, xor, etc.  This sort of
   // thing happens with address calculations, so it's important to canonicalize
   // it.
-  bool HighBitSet = false;  // Can we transform this if the high bit is set?
-
   switch (LHS->getOpcode()) {
-  default: return SDValue();
+  default:
+    return SDValue();
   case ISD::OR:
   case ISD::XOR:
-    HighBitSet = false; // We can only transform sra if the high bit is clear.
-    break;
   case ISD::AND:
-    HighBitSet = true;  // We can only transform sra if the high bit is set.
     break;
   case ISD::ADD:
     if (N->getOpcode() != ISD::SHL)
       return SDValue(); // only shl(add) not sr[al](add).
-    HighBitSet = false; // We can only transform sra if the high bit is clear.
     break;
   }
 
   // We require the RHS of the binop to be a constant and not opaque as well.
   ConstantSDNode *BinOpCst = getAsNonOpaqueConstant(LHS->getOperand(1));
-  if (!BinOpCst) return SDValue();
+  if (!BinOpCst)
+    return SDValue();
 
   // FIXME: disable this unless the input to the binop is a shift by a constant
   // or is copy/select.Enable this in other cases when figure out it's exactly profitable.
@@ -6633,16 +6634,6 @@ SDValue DAGCombiner::visitShiftByConstant(SDNode *N, ConstantSDNode *Amt) {
     return SDValue();
 
   EVT VT = N->getValueType(0);
-
-  // If this is a signed shift right, and the high bit is modified by the
-  // logical operation, do not perform the transformation. The highBitSet
-  // boolean indicates the value of the high bit of the constant which would
-  // cause it to be modified for this operation.
-  if (N->getOpcode() == ISD::SRA) {
-    bool BinOpRHSSignSet = BinOpCst->getAPIntValue().isNegative();
-    if (BinOpRHSSignSet != HighBitSet)
-      return SDValue();
-  }
 
   if (!TLI.isDesirableToCommuteWithShift(N, Level))
     return SDValue();
@@ -16169,14 +16160,14 @@ SDValue DAGCombiner::scalarizeExtractedVectorLoad(SDNode *EVE, EVT InVecVT,
 /// the math/logic after an extract element of a vector.
 static SDValue scalarizeExtractedBinop(SDNode *ExtElt, SelectionDAG &DAG,
                                        bool LegalOperations) {
+  const TargetLowering &TLI = DAG.getTargetLoweringInfo();
   SDValue Vec = ExtElt->getOperand(0);
   SDValue Index = ExtElt->getOperand(1);
   auto *IndexC = dyn_cast<ConstantSDNode>(Index);
-  if (!IndexC || !ISD::isBinaryOp(Vec.getNode()) || !Vec.hasOneUse())
+  if (!IndexC || !TLI.isBinOp(Vec.getOpcode()) || !Vec.hasOneUse())
     return SDValue();
 
   // Targets may want to avoid this to prevent an expensive register transfer.
-  const TargetLowering &TLI = DAG.getTargetLoweringInfo();
   if (!TLI.shouldScalarizeBinop(Vec))
     return SDValue();
 
@@ -17411,8 +17402,9 @@ SDValue DAGCombiner::visitCONCAT_VECTORS(SDNode *N) {
 
 static SDValue narrowInsertExtractVectorBinOp(SDNode *Extract,
                                               SelectionDAG &DAG) {
+  const TargetLowering &TLI = DAG.getTargetLoweringInfo();
   SDValue BinOp = Extract->getOperand(0);
-  if (!ISD::isBinaryOp(BinOp.getNode()))
+  if (!TLI.isBinOp(BinOp.getOpcode()))
     return SDValue();
 
   SDValue Bop0 = BinOp.getOperand(0), Bop1 = BinOp.getOperand(1);
@@ -17424,7 +17416,6 @@ static SDValue narrowInsertExtractVectorBinOp(SDNode *Extract,
   bool IsInsert1 = Bop1.getOpcode() == ISD::INSERT_SUBVECTOR &&
                    Bop1.getOperand(1).getValueType() == VT &&
                    Bop1.getOperand(2) == Index;
-  const TargetLowering &TLI = DAG.getTargetLoweringInfo();
   // TODO: We could handle the case where only 1 operand is being inserted by
   //       creating an extract of the other operand, but that requires checking
   //       number of uses and/or costs.
@@ -17455,8 +17446,9 @@ static SDValue narrowExtractedVectorBinOp(SDNode *Extract, SelectionDAG &DAG) {
 
   // We are looking for an optionally bitcasted wide vector binary operator
   // feeding an extract subvector.
+  const TargetLowering &TLI = DAG.getTargetLoweringInfo();
   SDValue BinOp = peekThroughBitcasts(Extract->getOperand(0));
-  if (!ISD::isBinaryOp(BinOp.getNode()))
+  if (!TLI.isBinOp(BinOp.getOpcode()))
     return SDValue();
 
   // The binop must be a vector type, so we can extract some fraction of it.
@@ -17486,7 +17478,6 @@ static SDValue narrowExtractedVectorBinOp(SDNode *Extract, SelectionDAG &DAG) {
   EVT NarrowBVT = EVT::getVectorVT(*DAG.getContext(), WideBVT.getScalarType(),
                                    WideNumElts / NarrowingRatio);
   unsigned BOpcode = BinOp.getOpcode();
-  const TargetLowering &TLI = DAG.getTargetLoweringInfo();
   if (!TLI.isOperationLegalOrCustomOrPromote(BOpcode, NarrowBVT))
     return SDValue();
 
@@ -18269,7 +18260,7 @@ SDValue DAGCombiner::visitVECTOR_SHUFFLE(SDNode *N) {
   if (SVN->isSplat() && SVN->getSplatIndex() < (int)NumElts) {
     int SplatIndex = SVN->getSplatIndex();
     if (TLI.isExtractVecEltCheap(VT, SplatIndex) &&
-        ISD::isBinaryOp(N0.getNode())) {
+        TLI.isBinOp(N0.getOpcode())) {
       // splat (vector_bo L, R), Index -->
       // splat (scalar_bo (extelt L, Index), (extelt R, Index))
       SDValue L = N0.getOperand(0), R = N0.getOperand(1);
@@ -19830,6 +19821,8 @@ bool DAGCombiner::isAlias(SDNode *Op0, SDNode *Op1) const {
       return false;
   }
 
+  // Try to prove that there is aliasing, or that there is no aliasing. Either
+  // way, we can return now. If nothing can be proved, proceed with more tests.
   bool IsAlias;
   if (BaseIndexOffset::computeAliasing(Op0, MUC0.NumBytes, Op1, MUC1.NumBytes,
                                        DAG, IsAlias))

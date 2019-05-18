@@ -988,6 +988,9 @@ namespace llvm {
 
     bool isVectorShiftByScalarCheap(Type *Ty) const override;
 
+    /// Add x86-specific opcodes to the default list.
+    bool isBinOp(unsigned Opcode) const override;
+
     /// Returns true if the opcode is a commutative binary operation.
     bool isCommutativeBinOp(unsigned Opcode) const override;
 
@@ -1279,11 +1282,14 @@ namespace llvm {
                                   const unsigned char OpFlags = 0) const;
     SDValue LowerConstantPool(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerBlockAddress(SDValue Op, SelectionDAG &DAG) const;
-    SDValue LowerGlobalAddress(const GlobalValue *GV, const SDLoc &dl,
-                               int64_t Offset, SelectionDAG &DAG) const;
     SDValue LowerGlobalAddress(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerGlobalTLSAddress(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerExternalSymbol(SDValue Op, SelectionDAG &DAG) const;
+
+    /// Creates target global address or external symbol nodes for calls or
+    /// other uses.
+    SDValue LowerGlobalOrExternal(SDValue Op, SelectionDAG &DAG,
+                                  bool ForCall) const;
 
     SDValue LowerSINT_TO_FP(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerUINT_TO_FP(SDValue Op, SelectionDAG &DAG) const;

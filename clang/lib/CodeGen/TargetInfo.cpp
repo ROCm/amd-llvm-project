@@ -2348,22 +2348,6 @@ public:
   }
 };
 
-class PS4TargetCodeGenInfo : public X86_64TargetCodeGenInfo {
-public:
-  PS4TargetCodeGenInfo(CodeGen::CodeGenTypes &CGT, X86AVXABILevel AVXLevel)
-    : X86_64TargetCodeGenInfo(CGT, AVXLevel) {}
-
-  void getDependentLibraryOption(llvm::StringRef Lib,
-                                 llvm::SmallString<24> &Opt) const override {
-    Opt = "\01";
-    // If the argument contains a space, enclose it in quotes.
-    if (Lib.find(" ") != StringRef::npos)
-      Opt += "\"" + Lib.str() + "\"";
-    else
-      Opt += Lib;
-  }
-};
-
 static std::string qualifyWindowsLibrary(llvm::StringRef Lib) {
   // If the argument does not end in .lib, automatically add the suffix.
   // If the argument contains a space, enclose it in quotes.
@@ -8047,7 +8031,17 @@ AMDGPUTargetCodeGenInfo::getLLVMSyncScopeID(const LangOptions &LangOpts,
     Name = "wavefront";
   }
 
-  if (Ordering != llvm::AtomicOrdering::SequentiallyConsistent) {
+  // FIXME: It is incorrect for HIP and HCC to use one-as since
+  // it appears their memory model has a single happens-before
+  // relation across all address spaces. However, the recent fix
+  // in the backend to produce correct code has caused a
+  // performance regression in HIP/HCC. This can be mitigated by
+  // a backend optimization that is planned. Until that is
+  // implemented, this change makes HIP/HCC continue to generate
+  // the incorrect code. This will only break code that relies
+  // on a single happens-before between address spaces.
+  if (!LangOpts.OpenCL ||
+      Ordering != llvm::AtomicOrdering::SequentiallyConsistent) {
     if (!Name.empty())
       Name = Twine(Twine(Name) + Twine("-")).str();
 
@@ -9544,8 +9538,6 @@ const TargetCodeGenInfo &CodeGenModule::getTargetCodeGenInfo() {
     switch (Triple.getOS()) {
     case llvm::Triple::Win32:
       return SetCGInfo(new WinX86_64TargetCodeGenInfo(Types, AVXLevel));
-    case llvm::Triple::PS4:
-      return SetCGInfo(new PS4TargetCodeGenInfo(Types, AVXLevel));
     default:
       return SetCGInfo(new X86_64TargetCodeGenInfo(Types, AVXLevel));
     }

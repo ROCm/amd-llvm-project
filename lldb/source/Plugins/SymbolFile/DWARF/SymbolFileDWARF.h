@@ -84,7 +84,8 @@ public:
 
   // Constructors and Destructors
 
-  SymbolFileDWARF(lldb_private::ObjectFile *ofile);
+  SymbolFileDWARF(lldb_private::ObjectFile *ofile,
+                  lldb_private::SectionList *dwo_section_list);
 
   ~SymbolFileDWARF() override;
 
@@ -214,7 +215,6 @@ public:
   virtual const lldb_private::DWARFDataExtractor &get_debug_abbrev_data();
   virtual const lldb_private::DWARFDataExtractor &get_debug_addr_data();
   const lldb_private::DWARFDataExtractor &get_debug_frame_data();
-  virtual const lldb_private::DWARFDataExtractor &get_debug_info_data();
   const lldb_private::DWARFDataExtractor &get_debug_line_data();
   const lldb_private::DWARFDataExtractor &get_debug_line_str_data();
   const lldb_private::DWARFDataExtractor &get_debug_macro_data();
@@ -287,10 +287,13 @@ public:
   DWARFDIE GetDIE(lldb::user_id_t uid);
 
   lldb::user_id_t GetUID(const DWARFBaseDIE &die) {
-    return GetID() | die.GetOffset();
+    return GetUID(die.GetDIERef());
   }
 
-  lldb::user_id_t GetUID(const DIERef &ref) { return GetID() | ref.die_offset; }
+  lldb::user_id_t GetUID(const DIERef &ref) {
+    return GetID() | ref.die_offset |
+           (lldb::user_id_t(ref.section == DIERef::Section::DebugTypes) << 63);
+  }
 
   virtual std::unique_ptr<SymbolFileDWARFDwo>
   GetDwoSymbolFileForCompileUnit(DWARFUnit &dwarf_cu,
@@ -311,6 +314,8 @@ public:
   void Dump(lldb_private::Stream &s) override;
 
   void DumpClangAST(lldb_private::Stream &s) override;
+
+  lldb_private::DWARFContext &GetDWARFContext() { return m_context; }
 
 protected:
   typedef llvm::DenseMap<const DWARFDebugInfoEntry *, lldb_private::Type *>

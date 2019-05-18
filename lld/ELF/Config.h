@@ -137,6 +137,7 @@ struct Configuration {
   bool Cref;
   bool DefineCommon;
   bool Demangle = true;
+  bool DependentLibraries;
   bool DisableVerify;
   bool EhFrameHdr;
   bool EmitLLVM;
@@ -194,6 +195,7 @@ struct Configuration {
   bool ZExecstack;
   bool ZGlobal;
   bool ZHazardplt;
+  bool ZIfuncNoplt;
   bool ZInitfirst;
   bool ZInterpose;
   bool ZKeepTextSectionPrefix;
