@@ -2486,7 +2486,7 @@ bool SIInstrInfo::hasUnwantedEffectsWhenEXECEmpty(const MachineInstr &MI) const 
       Opcode == AMDGPU::DS_ORDERED_COUNT)
     return true;
 
-  if (MI.isInlineAsm())
+  if (MI.isCall() || MI.isInlineAsm())
     return true; // conservative assumption
 
   // These are like SALU instructions in terms of effects, so it's questionable
@@ -2513,6 +2513,10 @@ bool SIInstrInfo::mayReadEXEC(const MachineRegisterInfo &MRI,
     // Make sure this isn't copying exec as a normal operand
     return MI.readsRegister(AMDGPU::EXEC, &RI);
   }
+
+  // Make a conservative assumption about the callee.
+  if (MI.isCall())
+    return true;
 
   // Be conservative with any unhandled generic opcodes.
   if (!isTargetSpecificOpcode(MI.getOpcode()))
