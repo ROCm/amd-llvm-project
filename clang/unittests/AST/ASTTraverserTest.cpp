@@ -180,10 +180,13 @@ FunctionProtoType
 
   Attr *A = *Func->attr_begin();
 
-  EXPECT_EQ(dumpASTString(A),
-            R"cpp(
+  {
+    std::string expectedString = R"cpp(
 WarnUnusedResultAttr
-)cpp");
+)cpp";
+
+    EXPECT_EQ(dumpASTString(A), expectedString);
+  }
 
   auto *CTor = dyn_cast<CXXConstructorDecl>(CTorFunc);
   const CXXCtorInitializer *Init = *CTor->init_begin();
@@ -196,13 +199,14 @@ CXXCtorInitializer
 
   const comments::FullComment *Comment =
       AST->getASTContext().getLocalCommentForDeclUncached(CTorFunc);
-
-  EXPECT_EQ(dumpASTString(Comment, Comment),
-            R"cpp(
+  {
+    std::string expectedString = R"cpp(
 FullComment
 `-ParagraphComment
   `-TextComment
-)cpp");
+)cpp";
+    EXPECT_EQ(dumpASTString(Comment, Comment), expectedString);
+  }
 
   auto Result = ast_matchers::match(
       classTemplateSpecializationDecl(hasName("templ")).bind("fn"),

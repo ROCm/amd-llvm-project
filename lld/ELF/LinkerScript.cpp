@@ -135,8 +135,6 @@ void LinkerScript::setDot(Expr E, const Twine &Loc, bool InSec) {
   // Update to location counter means update to section size.
   if (InSec)
     expandOutputSection(Val - Dot);
-  else if (Val > Dot)
-    expandMemoryRegions(Val - Dot);
 
   Dot = Val;
 }
@@ -188,7 +186,7 @@ void LinkerScript::addSymbol(SymbolAssignment *Cmd) {
 
   Symbol *Sym = Symtab->insert(Cmd->Name);
   mergeSymbolProperties(Sym, New);
-  replaceSymbol(Sym, New);
+  Sym->replace(New);
   Cmd->Sym = cast<Defined>(Sym);
 }
 
@@ -205,7 +203,7 @@ static void declareSymbol(SymbolAssignment *Cmd) {
   // We can't calculate final value right now.
   Symbol *Sym = Symtab->insert(Cmd->Name);
   mergeSymbolProperties(Sym, New);
-  replaceSymbol(Sym, New);
+  Sym->replace(New);
 
   Cmd->Sym = cast<Defined>(Sym);
   Cmd->Provide = false;

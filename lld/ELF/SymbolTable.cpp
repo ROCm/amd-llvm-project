@@ -46,7 +46,7 @@ template <class ELFT> void SymbolTable::addCombinedLTOObject() {
     LTO->add(*F);
 
   for (InputFile *File : LTO->compile()) {
-    DenseSet<CachedHashStringRef> DummyGroups;
+    DenseMap<CachedHashStringRef, const InputFile *> DummyGroups;
     auto *Obj = cast<ObjFile<ELFT>>(File);
     Obj->parse(DummyGroups);
     for (Symbol *Sym : Obj->getGlobalSymbols())
@@ -135,8 +135,12 @@ Symbol *SymbolTable::addSymbol(const Symbol &New) {
 static void addUndefined(Symbol *Old, const Undefined &New) {
   // An undefined symbol with non default visibility must be satisfied
   // in the same DSO.
-  if (Old->isShared() && New.Visibility != STV_DEFAULT) {
-    replaceSymbol(Old, New);
+  //
+  // If this is a non-weak defined symbol in a discarded section, override the
+  // existing undefined symbol for better error message later.
+  if ((Old->isShared() && New.Visibility != STV_DEFAULT) ||
+      (Old->isUndefined() && New.Binding != STB_WEAK && New.DiscardedSecIdx)) {
+    Old->replace(New);
     return;
   }
 
@@ -284,7 +288,7 @@ static void addCommon(Symbol *Old, const CommonSymbol &New) {
     return;
 
   if (Cmp > 0) {
-    replaceSymbol(Old, New);
+    Old->replace(New);
     return;
   }
 
@@ -335,7 +339,7 @@ static void reportDuplicate(Symbol *Sym, InputFile *NewFile,
 static void addDefined(Symbol *Old, const Defined &New) {
   int Cmp = compare(Old, &New);
   if (Cmp > 0)
-    replaceSymbol(Old, New);
+    Old->replace(New);
   else if (Cmp == 0)
     reportDuplicate(Old, New.File,
                     dyn_cast_or_null<InputSectionBase>(New.Section), New.Value);
@@ -346,7 +350,7 @@ static void addShared(Symbol *Old, const SharedSymbol &New) {
     // An undefined symbol with non default visibility must be satisfied
     // in the same DSO.
     uint8_t Binding = Old->Binding;
-    replaceSymbol(Old, New);
+    Old->replace(New);
     Old->Binding = Binding;
   }
 }
@@ -368,7 +372,7 @@ template <class LazyT> static void addLazy(Symbol *Old, const LazyT &New) {
   // Symbols.h for the details.
   if (Old->isWeak()) {
     uint8_t Type = Old->Type;
-    replaceSymbol(Old, New);
+    Old->replace(New);
     Old->Type = Type;
     Old->Binding = STB_WEAK;
     return;
@@ -578,7 +582,7 @@ void elf::resolveSymbol(Symbol *Old, const Symbol &New) {
   mergeSymbolProperties(Old, New);
 
   if (Old->isPlaceholder()) {
-    replaceSymbol(Old, New);
+    Old->replace(New);
     return;
   }
 

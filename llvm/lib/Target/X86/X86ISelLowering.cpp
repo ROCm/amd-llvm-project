@@ -23230,8 +23230,7 @@ static SDValue LowerINTRINSIC_W_CHAIN(SDValue Op, const X86Subtarget &Subtarget,
           DAG.getNode(Opcode, dl, VTs, Chain, Op->getOperand(2),
                       Op->getOperand(3), Op->getOperand(4));
       SDValue SetCC = getSETCC(X86::COND_B, Operation.getValue(0), dl, DAG);
-      SDValue Result = DAG.getNode(ISD::ZERO_EXTEND, dl, MVT::i8, SetCC);
-      return DAG.getNode(ISD::MERGE_VALUES, dl, Op->getVTList(), Result,
+      return DAG.getNode(ISD::MERGE_VALUES, dl, Op->getVTList(), SetCC,
                          Operation.getValue(1));
     }
     }
@@ -31026,6 +31025,15 @@ unsigned X86TargetLowering::ComputeNumSignBitsForTargetNode(
     // Vector compares return zero/all-bits result values.
     return VTBits;
 
+  case X86ISD::ANDNP: {
+    unsigned Tmp0 =
+        DAG.ComputeNumSignBits(Op.getOperand(0), DemandedElts, Depth + 1);
+    if (Tmp0 == 1) return 1; // Early out.
+    unsigned Tmp1 =
+        DAG.ComputeNumSignBits(Op.getOperand(1), DemandedElts, Depth + 1);
+    return std::min(Tmp0, Tmp1);
+  }
+
   case X86ISD::CMOV: {
     unsigned Tmp0 = DAG.ComputeNumSignBits(Op.getOperand(0), Depth+1);
     if (Tmp0 == 1) return 1;  // Early out.
@@ -37083,24 +37091,6 @@ static SDValue combineShiftRightLogical(SDNode *N, SelectionDAG &DAG,
   return SDValue();
 }
 
-static SDValue combineShift(SDNode* N, SelectionDAG &DAG,
-                            TargetLowering::DAGCombinerInfo &DCI,
-                            const X86Subtarget &Subtarget) {
-  if (N->getOpcode() == ISD::SHL)
-    if (SDValue V = combineShiftLeft(N, DAG))
-      return V;
-
-  if (N->getOpcode() == ISD::SRA)
-    if (SDValue V = combineShiftRightArithmetic(N, DAG))
-      return V;
-
-  if (N->getOpcode() == ISD::SRL)
-    if (SDValue V = combineShiftRightLogical(N, DAG, DCI))
-      return V;
-
-  return SDValue();
-}
-
 static SDValue combineVectorPack(SDNode *N, SelectionDAG &DAG,
                                  TargetLowering::DAGCombinerInfo &DCI,
                                  const X86Subtarget &Subtarget) {
@@ -37840,6 +37830,24 @@ static SDValue combineAnd(SDNode *N, SelectionDAG &DAG,
   // This must be done before legalization has expanded the ctpop.
   if (SDValue V = combineParity(N, DAG, Subtarget))
     return V;
+
+  // Match all-of bool scalar reductions into a bitcast/movmsk + cmp.
+  // TODO: Support multiple SrcOps.
+  if (VT == MVT::i1) {
+    SmallVector<SDValue, 2> SrcOps;
+    if (matchBitOpReduction(SDValue(N, 0), ISD::AND, SrcOps) &&
+        SrcOps.size() == 1) {
+      SDLoc dl(N);
+      unsigned NumElts = SrcOps[0].getValueType().getVectorNumElements();
+      EVT MaskVT = EVT::getIntegerVT(*DAG.getContext(), NumElts);
+      SDValue Mask = combineBitcastvxi1(DAG, MaskVT, SrcOps[0], dl, Subtarget);
+      if (Mask) {
+        APInt AllBits = APInt::getAllOnesValue(NumElts);
+        return DAG.getSetCC(dl, MVT::i1, Mask,
+                            DAG.getConstant(AllBits, dl, MaskVT), ISD::SETEQ);
+      }
+    }
+  }
 
   if (DCI.isBeforeLegalizeOps())
     return SDValue();
@@ -41341,9 +41349,14 @@ static SDValue combineVectorSizedSetCCEquality(SDNode *SetCC, SelectionDAG &DAG,
   if (isNullConstant(Y) && !IsOrXorXorCCZero)
     return SDValue();
 
-  // Bail out if we know that this is not really just an oversized integer.
-  if (peekThroughBitcasts(X).getValueType() == MVT::f128 ||
-      peekThroughBitcasts(Y).getValueType() == MVT::f128)
+  // Don't perform this combine if constructing the vector will be expensive.
+  auto IsVectorBitCastCheap = [](SDValue X) {
+    X = peekThroughBitcasts(X);
+    return isa<ConstantSDNode>(X) || X.getValueType().isVector() ||
+           X.getOpcode() == ISD::LOAD;
+  };
+  if ((!IsVectorBitCastCheap(X) || !IsVectorBitCastCheap(Y)) &&
+      !IsOrXorXorCCZero)
     return SDValue();
 
   // TODO: Use PXOR + PTEST for SSE4.1 or later?
@@ -41480,6 +41493,8 @@ static SDValue combineMOVMSK(SDNode *N, SelectionDAG &DAG,
   SDValue Src = N->getOperand(0);
   MVT SrcVT = Src.getSimpleValueType();
   MVT VT = N->getSimpleValueType(0);
+  unsigned NumBits = VT.getScalarSizeInBits();
+  unsigned NumElts = SrcVT.getVectorNumElements();
 
   // Perform constant folding.
   if (ISD::isBuildVectorOfConstantSDNodes(Src.getNode())) {
@@ -41499,9 +41514,20 @@ static SDValue combineMOVMSK(SDNode *N, SelectionDAG &DAG,
       Src.getOperand(0).getScalarValueSizeInBits() == EltWidth)
     return DAG.getNode(X86ISD::MOVMSK, SDLoc(N), VT, Src.getOperand(0));
 
+  // Fold movmsk(not(x)) -> not(movmsk) to improve folding of movmsk results
+  // with scalar comparisons.
+  if (SDValue NotSrc = IsNOT(Src, DAG)) {
+    SDLoc DL(N);
+    APInt NotMask = APInt::getLowBitsSet(NumBits, NumElts);
+    NotSrc = DAG.getBitcast(SrcVT, NotSrc);
+    return DAG.getNode(ISD::XOR, DL, VT,
+                       DAG.getNode(X86ISD::MOVMSK, DL, VT, NotSrc),
+                       DAG.getConstant(NotMask, DL, VT));
+  }
+
   // Simplify the inputs.
   const TargetLowering &TLI = DAG.getTargetLoweringInfo();
-  APInt DemandedMask(APInt::getAllOnesValue(VT.getScalarSizeInBits()));
+  APInt DemandedMask(APInt::getAllOnesValue(NumBits));
   if (TLI.SimplifyDemandedBits(SDValue(N, 0), DemandedMask, DCI))
     return SDValue(N, 0);
 
@@ -43227,9 +43253,9 @@ SDValue X86TargetLowering::PerformDAGCombine(SDNode *N,
   case X86ISD::SBB:         return combineSBB(N, DAG);
   case X86ISD::ADC:         return combineADC(N, DAG, DCI);
   case ISD::MUL:            return combineMul(N, DAG, DCI, Subtarget);
-  case ISD::SHL:
-  case ISD::SRA:
-  case ISD::SRL:            return combineShift(N, DAG, DCI, Subtarget);
+  case ISD::SHL:            return combineShiftLeft(N, DAG);
+  case ISD::SRA:            return combineShiftRightArithmetic(N, DAG);
+  case ISD::SRL:            return combineShiftRightLogical(N, DAG, DCI);
   case ISD::AND:            return combineAnd(N, DAG, DCI, Subtarget);
   case ISD::OR:             return combineOr(N, DAG, DCI, Subtarget);
   case ISD::XOR:            return combineXor(N, DAG, DCI, Subtarget);

@@ -1042,6 +1042,13 @@ SDValue DAGCombiner::reassociateOps(unsigned Opc, const SDLoc &DL, SDValue N0,
   // Don't reassociate reductions.
   if (Flags.hasVectorReduction())
     return SDValue();
+
+  // Floating-point reassociation is not allowed without loose FP math.
+  if (N0.getValueType().isFloatingPoint() ||
+      N1.getValueType().isFloatingPoint())
+    if (!Flags.hasAllowReassociation() || !Flags.hasNoSignedZeros())
+      return SDValue();
+
   if (SDValue Combined = reassociateOpsCommutative(Opc, DL, N0, N1))
     return Combined;
   if (SDValue Combined = reassociateOpsCommutative(Opc, DL, N1, N0))
@@ -1728,7 +1735,7 @@ SDValue DAGCombiner::combine(SDNode *N) {
     }
   }
 
-  // If N is a commutative binary node, try eliminate it if the commuted
+  // If N is a commutative binary node, try to eliminate it if the commuted
   // version is already present in the DAG.
   if (!RV.getNode() && TLI.isCommutativeBinOp(N->getOpcode()) &&
       N->getNumValues() == 1) {
@@ -6618,19 +6625,20 @@ SDValue DAGCombiner::visitShiftByConstant(SDNode *N, ConstantSDNode *Amt) {
     return SDValue();
 
   // FIXME: disable this unless the input to the binop is a shift by a constant
-  // or is copy/select.Enable this in other cases when figure out it's exactly profitable.
-  SDNode *BinOpLHSVal = LHS->getOperand(0).getNode();
-  bool isShift = BinOpLHSVal->getOpcode() == ISD::SHL ||
-                 BinOpLHSVal->getOpcode() == ISD::SRA ||
-                 BinOpLHSVal->getOpcode() == ISD::SRL;
-  bool isCopyOrSelect = BinOpLHSVal->getOpcode() == ISD::CopyFromReg ||
-                        BinOpLHSVal->getOpcode() == ISD::SELECT;
+  // or is copy/select. Enable this in other cases when figure out it's exactly
+  // profitable.
+  SDValue BinOpLHSVal = LHS->getOperand(0);
+  bool IsShiftByConstant = (BinOpLHSVal.getOpcode() == ISD::SHL ||
+                            BinOpLHSVal.getOpcode() == ISD::SRA ||
+                            BinOpLHSVal.getOpcode() == ISD::SRL) &&
+                           isa<ConstantSDNode>(BinOpLHSVal.getOperand(1));
+  bool IsCopyOrSelect = BinOpLHSVal.getOpcode() == ISD::CopyFromReg ||
+                        BinOpLHSVal.getOpcode() == ISD::SELECT;
 
-  if ((!isShift || !isa<ConstantSDNode>(BinOpLHSVal->getOperand(1))) &&
-      !isCopyOrSelect)
+  if (!IsShiftByConstant && !IsCopyOrSelect)
     return SDValue();
 
-  if (isCopyOrSelect && N->hasOneUse())
+  if (IsCopyOrSelect && N->hasOneUse())
     return SDValue();
 
   EVT VT = N->getValueType(0);

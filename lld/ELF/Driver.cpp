@@ -975,9 +975,17 @@ static void readConfigs(opt::InputArgList &Args) {
   std::tie(Config->AndroidPackDynRelocs, Config->RelrPackDynRelocs) =
       getPackDynRelocs(Args);
 
-  if (auto *Arg = Args.getLastArg(OPT_symbol_ordering_file))
-    if (Optional<MemoryBufferRef> Buffer = readFile(Arg->getValue()))
+  if (auto *Arg = Args.getLastArg(OPT_symbol_ordering_file)){
+    if (Args.hasArg(OPT_call_graph_ordering_file))
+      error("--symbol-ordering-file and --call-graph-order-file "
+            "may not be used together");
+    if (Optional<MemoryBufferRef> Buffer = readFile(Arg->getValue())){
       Config->SymbolOrderingFile = getSymbolOrderingFile(*Buffer);
+      // Also need to disable CallGraphProfileSort to prevent
+      // LLD order symbols with CGProfile
+      Config->CallGraphProfileSort = false;
+    }
+  }
 
   // If --retain-symbol-file is used, we'll keep only the symbols listed in
   // the file and discard all others.
@@ -1338,9 +1346,8 @@ static void replaceCommonSymbols() {
     Bss->File = S->File;
     Bss->Live = !Config->GcSections;
     InputSections.push_back(Bss);
-    replaceSymbol(S, Defined{S->File, S->getName(), S->Binding, S->StOther,
-                             S->Type,
-                             /*Value=*/0, S->Size, Bss});
+    S->replace(Defined{S->File, S->getName(), S->Binding, S->StOther, S->Type,
+                       /*Value=*/0, S->Size, Bss});
   }
 }
 
@@ -1355,8 +1362,7 @@ static void demoteSharedSymbols() {
       continue;
 
     bool Used = S->Used;
-    replaceSymbol(
-        S, Undefined{nullptr, S->getName(), STB_WEAK, S->StOther, S->Type});
+    S->replace(Undefined{nullptr, S->getName(), STB_WEAK, S->StOther, S->Type});
     S->Used = Used;
   }
 }
