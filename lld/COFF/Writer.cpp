@@ -73,7 +73,6 @@ static unsigned char DOSProgram[] = {
 static_assert(sizeof(DOSProgram) % 8 == 0,
               "DOSProgram size must be multiple of 8");
 
-static const int SectorSize = 512;
 static const int DOSStubSize = sizeof(dos_header) + sizeof(DOSProgram);
 static_assert(DOSStubSize % 8 == 0, "DOSStub size must be multiple of 8");
 
@@ -865,9 +864,12 @@ void Writer::createSections() {
 }
 
 void Writer::createMiscChunks() {
-  for (MergeChunk *P : MergeChunk::Instances)
-    if (P)
+  for (MergeChunk *P : MergeChunk::Instances) {
+    if (P) {
+      P->finalizeContents();
       RdataSec->addChunk(P);
+    }
+  }
 
   // Create thunks for locally-dllimported symbols.
   if (!Symtab->LocalImportChunks.empty()) {
@@ -1097,7 +1099,7 @@ void Writer::createSymbolAndStringTable() {
   PointerToSymbolTable = FileOff;
   FileOff += OutputSymtab.size() * sizeof(coff_symbol16);
   FileOff += 4 + Strtab.size();
-  FileSize = alignTo(FileOff, SectorSize);
+  FileSize = alignTo(FileOff, Config->FileAlign);
 }
 
 void Writer::mergeSections() {
@@ -1139,7 +1141,7 @@ void Writer::assignAddresses() {
                   sizeof(coff_section) * OutputSections.size();
   SizeOfHeaders +=
       Config->is64() ? sizeof(pe32plus_header) : sizeof(pe32_header);
-  SizeOfHeaders = alignTo(SizeOfHeaders, SectorSize);
+  SizeOfHeaders = alignTo(SizeOfHeaders, Config->FileAlign);
   uint64_t RVA = PageSize; // The first page is kept unmapped.
   FileSize = SizeOfHeaders;
 
@@ -1162,10 +1164,9 @@ void Writer::assignAddresses() {
         VirtualSize += Padding;
       VirtualSize = alignTo(VirtualSize, C->getAlignment());
       C->setRVA(RVA + VirtualSize);
-      C->finalizeContents();
       VirtualSize += C->getSize();
       if (C->hasData())
-        RawSize = alignTo(VirtualSize, SectorSize);
+        RawSize = alignTo(VirtualSize, Config->FileAlign);
     }
     if (VirtualSize > UINT32_MAX)
       error("section larger than 4 GiB: " + Sec->Name);
@@ -1174,9 +1175,14 @@ void Writer::assignAddresses() {
     if (RawSize != 0)
       Sec->Header.PointerToRawData = FileSize;
     RVA += alignTo(VirtualSize, PageSize);
-    FileSize += alignTo(RawSize, SectorSize);
+    FileSize += alignTo(RawSize, Config->FileAlign);
   }
   SizeOfImage = alignTo(RVA, PageSize);
+
+  // Assign addresses to sections in MergeChunks.
+  for (MergeChunk *MC : MergeChunk::Instances)
+    if (MC)
+      MC->assignSubsectionRVAs();
 }
 
 template <typename PEHeaderTy> void Writer::writeHeader() {
@@ -1241,7 +1247,7 @@ template <typename PEHeaderTy> void Writer::writeHeader() {
 
   PE->ImageBase = Config->ImageBase;
   PE->SectionAlignment = PageSize;
-  PE->FileAlignment = SectorSize;
+  PE->FileAlignment = Config->FileAlign;
   PE->MajorImageVersion = Config->MajorImageVersion;
   PE->MinorImageVersion = Config->MinorImageVersion;
   PE->MajorOperatingSystemVersion = Config->MajorOSVersion;
