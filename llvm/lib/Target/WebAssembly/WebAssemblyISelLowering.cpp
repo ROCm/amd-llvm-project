@@ -182,7 +182,8 @@ WebAssemblyTargetLowering::WebAssemblyTargetLowering(
 
     // Expand float operations supported for scalars but not SIMD
     for (auto Op : {ISD::FCEIL, ISD::FFLOOR, ISD::FTRUNC, ISD::FNEARBYINT,
-                    ISD::FCOPYSIGN}) {
+                    ISD::FCOPYSIGN, ISD::FLOG, ISD::FLOG2, ISD::FLOG10,
+                    ISD::FEXP, ISD::FEXP2, ISD::FRINT}) {
       setOperationAction(Op, MVT::v4f32, Expand);
       if (Subtarget->hasUnimplementedSIMD128())
         setOperationAction(Op, MVT::v2f64, Expand);
@@ -272,6 +273,11 @@ WebAssemblyTargetLowering::WebAssemblyTargetLowering(
   // consistent with the f64 and f128 names.
   setLibcallName(RTLIB::FPEXT_F16_F32, "__extendhfsf2");
   setLibcallName(RTLIB::FPROUND_F32_F16, "__truncsfhf2");
+
+  // Define the emscripten name for return address helper.
+  // TODO: when implementing other WASM backends, make this generic or only do
+  // this on emscripten depending on what they end up doing.
+  setLibcallName(RTLIB::RETURN_ADDRESS, "emscripten_return_address");
 
   // Always convert switches to br_tables unless there is only one case, which
   // is equivalent to a simple branch. This reduces code size for wasm, and we
@@ -892,6 +898,21 @@ SDValue WebAssemblyTargetLowering::LowerFormalArguments(
   return Chain;
 }
 
+void WebAssemblyTargetLowering::ReplaceNodeResults(
+    SDNode *N, SmallVectorImpl<SDValue> &Results, SelectionDAG &DAG) const {
+  switch (N->getOpcode()) {
+  case ISD::SIGN_EXTEND_INREG:
+    // Do not add any results, signifying that N should not be custom lowered
+    // after all. This happens because simd128 turns on custom lowering for
+    // SIGN_EXTEND_INREG, but for non-vector sign extends the result might be an
+    // illegal type.
+    break;
+  default:
+    llvm_unreachable(
+        "ReplaceNodeResults not implemented for this op for WebAssembly!");
+  }
+}
+
 //===----------------------------------------------------------------------===//
 //  Custom lowering hooks.
 //===----------------------------------------------------------------------===//
@@ -919,9 +940,8 @@ SDValue WebAssemblyTargetLowering::LowerOperation(SDValue Op,
   case ISD::BRIND:
     fail(DL, DAG, "WebAssembly hasn't implemented computed gotos");
     return SDValue();
-  case ISD::RETURNADDR: // Probably nothing meaningful can be returned here.
-    fail(DL, DAG, "WebAssembly hasn't implemented __builtin_return_address");
-    return SDValue();
+  case ISD::RETURNADDR:
+    return LowerRETURNADDR(Op, DAG);
   case ISD::FRAMEADDR:
     return LowerFRAMEADDR(Op, DAG);
   case ISD::CopyToReg:
@@ -976,6 +996,26 @@ SDValue WebAssemblyTargetLowering::LowerFrameIndex(SDValue Op,
                                                    SelectionDAG &DAG) const {
   int FI = cast<FrameIndexSDNode>(Op)->getIndex();
   return DAG.getTargetFrameIndex(FI, Op.getValueType());
+}
+
+SDValue WebAssemblyTargetLowering::LowerRETURNADDR(SDValue Op,
+                                                   SelectionDAG &DAG) const {
+  SDLoc DL(Op);
+
+  if (!Subtarget->getTargetTriple().isOSEmscripten()) {
+    fail(DL, DAG,
+         "Non-Emscripten WebAssembly hasn't implemented "
+         "__builtin_return_address");
+    return SDValue();
+  }
+
+  if (verifyReturnAddressArgumentIsConstant(Op, DAG))
+    return SDValue();
+
+  unsigned Depth = cast<ConstantSDNode>(Op.getOperand(0))->getZExtValue();
+  return makeLibCall(DAG, RTLIB::RETURN_ADDRESS, Op.getValueType(),
+                     {DAG.getConstant(Depth, DL, MVT::i32)}, false, DL)
+      .first;
 }
 
 SDValue WebAssemblyTargetLowering::LowerFRAMEADDR(SDValue Op,
