@@ -2013,11 +2013,9 @@ void Driver::BuildUniversalActions(Compilation &C, const ToolChain &TC,
   }
 }
 
-/// Check that the file referenced by Value exists. If it doesn't,
-/// issue a diagnostic and return false.
-static bool DiagnoseInputExistence(const Driver &D, const DerivedArgList &Args,
-                                   StringRef Value, types::ID Ty) {
-  if (!D.getCheckInputsExist())
+bool Driver::DiagnoseInputExistence(const DerivedArgList &Args, StringRef Value,
+                                    types::ID Ty, bool TypoCorrect) const {
+  if (!getCheckInputsExist())
     return true;
 
   // stdin always exists.
@@ -2033,10 +2031,10 @@ static bool DiagnoseInputExistence(const Driver &D, const DerivedArgList &Args,
     }
   }
 
-  if (D.getVFS().exists(Path))
+  if (getVFS().exists(Path))
     return true;
 
-  if (D.IsCLMode()) {
+  if (IsCLMode()) {
     if (!llvm::sys::path::is_absolute(Twine(Path)) &&
         llvm::sys::Process::FindInEnvPath("LIB", Value))
       return true;
@@ -2049,7 +2047,26 @@ static bool DiagnoseInputExistence(const Driver &D, const DerivedArgList &Args,
     }
   }
 
-  D.Diag(clang::diag::err_drv_no_such_file) << Path;
+  if (TypoCorrect) {
+    // Check if the filename is a typo for an option flag. OptTable thinks
+    // that all args that are not known options and that start with / are
+    // filenames, but e.g. `/diagnostic:caret` is more likely a typo for
+    // the option `/diagnostics:caret` than a reference to a file in the root
+    // directory.
+    unsigned IncludedFlagsBitmask;
+    unsigned ExcludedFlagsBitmask;
+    std::tie(IncludedFlagsBitmask, ExcludedFlagsBitmask) =
+        getIncludeExcludeOptionFlagMasks(IsCLMode());
+    std::string Nearest;
+    if (getOpts().findNearest(Value, Nearest, IncludedFlagsBitmask,
+                              ExcludedFlagsBitmask) <= 1) {
+      Diag(clang::diag::err_drv_no_such_file_with_suggestion)
+          << Path << Nearest;
+      return false;
+    }
+  }
+
+  Diag(clang::diag::err_drv_no_such_file) << Path;
   return false;
 }
 
@@ -2166,7 +2183,7 @@ void Driver::BuildInputs(const ToolChain &TC, DerivedArgList &Args,
         }
       }
 
-      if (DiagnoseInputExistence(*this, Args, Value, Ty)) {
+      if (DiagnoseInputExistence(Args, Value, Ty, /*TypoCorrect=*/true)) {
         // C++ AMP-specific
         // For C++ source files, duplicate the input so we launch the compiler twice
         // 1 for GPU compilation (TY_CXX_AMP), 1 for CPU compilation (TY_CXX)
@@ -2212,14 +2229,16 @@ void Driver::BuildInputs(const ToolChain &TC, DerivedArgList &Args,
       }
     } else if (A->getOption().matches(options::OPT__SLASH_Tc)) {
       StringRef Value = A->getValue();
-      if (DiagnoseInputExistence(*this, Args, Value, types::TY_C)) {
+      if (DiagnoseInputExistence(Args, Value, types::TY_C,
+                                 /*TypoCorrect=*/false)) {
         Arg *InputArg = MakeInputArg(Args, *Opts, A->getValue());
         Inputs.push_back(std::make_pair(types::TY_C, InputArg));
       }
       A->claim();
     } else if (A->getOption().matches(options::OPT__SLASH_Tp)) {
       StringRef Value = A->getValue();
-      if (DiagnoseInputExistence(*this, Args, Value, types::TY_CXX)) {
+      if (DiagnoseInputExistence(Args, Value, types::TY_CXX,
+                                 /*TypoCorrect=*/false)) {
         Arg *InputArg = MakeInputArg(Args, *Opts, A->getValue());
         Inputs.push_back(std::make_pair(types::TY_CXX, InputArg));
       }
