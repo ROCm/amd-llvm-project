@@ -1298,10 +1298,20 @@ ExprResult Sema::ActOnCXXThis(SourceLocation Loc) {
   /// which the function is called.
 
   QualType ThisTy = getCurrentThisType();
-  if (ThisTy.isNull()) return Diag(Loc, diag::err_invalid_this_use);
+  if (ThisTy.isNull())
+    return Diag(Loc, diag::err_invalid_this_use);
+  return BuildCXXThisExpr(Loc, ThisTy, /*isImplicit=*/false);
+}
 
-  CheckCXXThisCapture(Loc);
-  return new (Context) CXXThisExpr(Loc, ThisTy, /*isImplicit=*/false);
+Expr *Sema::BuildCXXThisExpr(SourceLocation Loc, QualType Type,
+                             bool IsImplicit) {
+  auto *This = new (Context) CXXThisExpr(Loc, Type, IsImplicit);
+  MarkThisReferenced(This);
+  return This;
+}
+
+void Sema::MarkThisReferenced(CXXThisExpr *This) {
+  CheckCXXThisCapture(This->getExprLoc());
 }
 
 bool Sema::isThisOutsideMemberFunctionBody(QualType BaseType) {
@@ -2816,7 +2826,7 @@ void Sema::DeclareGlobalAllocationFunction(DeclarationName Name,
   }
 
   FunctionProtoType::ExtProtoInfo EPI(Context.getDefaultCallingConvention(
-      /*IsVariadic=*/false, /*IsCXXMethod=*/false));
+      /*IsVariadic=*/false, /*IsCXXMethod=*/false, /*IsBuiltin=*/true));
 
   QualType BadAllocType;
   bool HasBadAllocExceptionSpec
