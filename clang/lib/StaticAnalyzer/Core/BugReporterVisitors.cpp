@@ -1494,7 +1494,7 @@ SuppressInlineDefensiveChecksVisitor::VisitNode(const ExplodedNode *Succ,
         return nullptr;
 
       CFGStmtMap *Map = CurLC->getAnalysisDeclContext()->getCFGStmtMap();
-      CurTerminatorStmt = Map->getBlock(CurStmt)->getTerminator();
+      CurTerminatorStmt = Map->getBlock(CurStmt)->getTerminatorStmt();
     } else {
       return nullptr;
     }
@@ -1566,7 +1566,7 @@ static const Expr *peelOffOuterExpr(const Expr *Ex,
       ProgramPoint ProgPoint = NI->getLocation();
       if (Optional<BlockEdge> BE = ProgPoint.getAs<BlockEdge>()) {
         const CFGBlock *srcBlk = BE->getSrc();
-        if (const Stmt *term = srcBlk->getTerminator()) {
+        if (const Stmt *term = srcBlk->getTerminatorStmt()) {
           if (term == CO) {
             bool TookTrueBranch = (*(srcBlk->succ_begin()) == BE->getDst());
             if (TookTrueBranch)
@@ -1852,7 +1852,7 @@ ConditionBRVisitor::VisitNodeImpl(const ExplodedNode *N,
   // here by looking at the state transition.
   if (Optional<BlockEdge> BE = progPoint.getAs<BlockEdge>()) {
     const CFGBlock *srcBlk = BE->getSrc();
-    if (const Stmt *term = srcBlk->getTerminator())
+    if (const Stmt *term = srcBlk->getTerminatorStmt())
       return VisitTerminator(term, N, srcBlk, BE->getDst(), BR, BRC);
     return nullptr;
   }
@@ -2501,7 +2501,9 @@ TagVisitor::VisitNode(const ExplodedNode *N, BugReporterContext &BRC,
   if (Optional<std::string> Msg = T->generateMessage(BRC, R)) {
     PathDiagnosticLocation Loc =
         PathDiagnosticLocation::create(PP, BRC.getSourceManager());
-    return std::make_shared<PathDiagnosticEventPiece>(Loc, *Msg);
+    auto Piece = std::make_shared<PathDiagnosticEventPiece>(Loc, *Msg);
+    Piece->setPrunable(T->isPrunable());
+    return Piece;
   }
 
   return nullptr;

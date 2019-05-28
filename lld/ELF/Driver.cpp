@@ -250,7 +250,7 @@ void LinkerDriver::addFile(StringRef Path, bool WithLOption) {
     // significant, as a user did not specify it. This behavior is
     // compatible with GNU.
     Files.push_back(
-        createSharedFile(MBRef, WithLOption ? path::filename(Path) : Path));
+        make<SharedFile>(MBRef, WithLOption ? path::filename(Path) : Path));
     return;
   case file_magic::bitcode:
   case file_magic::elf_relocatable:
@@ -1522,7 +1522,7 @@ static void wrapSymbols(ArrayRef<WrappedSymbol> Wrapped) {
 
   // Update pointers in input files.
   parallelForEach(ObjectFiles, [&](InputFile *File) {
-    std::vector<Symbol *> &Syms = File->getMutableSymbols();
+    MutableArrayRef<Symbol *> Syms = File->getMutableSymbols();
     for (size_t I = 0, E = Syms.size(); I != E; ++I)
       if (Symbol *S = Map.lookup(Syms[I]))
         Syms[I] = S;
