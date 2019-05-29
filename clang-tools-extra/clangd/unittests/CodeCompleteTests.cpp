@@ -449,6 +449,20 @@ TEST(CompletionTest, Kinds) {
   Results = completions("nam^");
   EXPECT_THAT(Results.Completions,
               Has("namespace", CompletionItemKind::Snippet));
+
+  // Members of anonymous unions are of kind 'field'.
+  Results = completions(
+      R"cpp(
+        struct X{
+            union {
+              void *a;
+            };
+        };
+        auto u = X().^
+      )cpp");
+  EXPECT_THAT(
+      Results.Completions,
+      UnorderedElementsAre(AllOf(Named("a"), Kind(CompletionItemKind::Field))));
 }
 
 TEST(CompletionTest, NoDuplicates) {
@@ -2380,6 +2394,28 @@ TEST(CompletionTest, ObjectiveCMethodTwoArgumentsFromMiddle) {
   EXPECT_THAT(C, ElementsAre(ReturnType("id")));
   EXPECT_THAT(C, ElementsAre(Signature("(unsigned int)")));
   EXPECT_THAT(C, ElementsAre(SnippetSuffix("${1:(unsigned int)}")));
+}
+
+TEST(CompletionTest, CursorInSnippets) {
+  clangd::CodeCompleteOptions Options;
+  Options.EnableSnippets = true;
+  auto Results = completions(
+      R"cpp(
+    void while_foo(int a, int b);
+    void test() {
+      whil^
+    })cpp",
+      /*IndexSymbols=*/{}, Options);
+
+  // Last placeholder in code patterns should be $0 to put the cursor there.
+  EXPECT_THAT(
+      Results.Completions,
+      Contains(AllOf(Named("while"),
+                     SnippetSuffix("(${1:condition}){\n${0:statements}\n}"))));
+  // However, snippets for functions must *not* end with $0.
+  EXPECT_THAT(Results.Completions,
+              Contains(AllOf(Named("while_foo"),
+                             SnippetSuffix("(${1:int a}, ${2:int b})"))));
 }
 
 TEST(CompletionTest, WorksWithNullType) {
