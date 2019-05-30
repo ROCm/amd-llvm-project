@@ -2893,7 +2893,6 @@ private:
   V(IsStructField, 4)                                                          \
   V(EncodeBlockParameters, 5)                                                  \
   V(EncodeClassNames, 6)                                                       \
-  V(EncodePointerToObjCTypedef, 7)
 
 #define V(N,I) ObjCEncOptions& set##N() { Bits |= 1 << I; return *this; }
 OPT_LIST(V)
@@ -2912,8 +2911,7 @@ OPT_LIST(V)
     LLVM_NODISCARD ObjCEncOptions forComponentType() const {
       ObjCEncOptions Mask = ObjCEncOptions()
                                 .setIsOutermostType()
-                                .setIsStructField()
-                                .setEncodePointerToObjCTypedef();
+                                .setIsStructField();
       return Bits & ~Mask.Bits;
     }
   };

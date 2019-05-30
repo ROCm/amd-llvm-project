@@ -284,14 +284,17 @@ class SubjectList<list<AttrSubject> subjects, SubjectDiag diag = WarnDiag,
   string CustomDiag = customDiag;
 }
 
-class LangOpt<string name, bit negated = 0> {
+class LangOpt<string name, code customCode = [{}]> {
   string Name = name;
-  bit Negated = negated;
+
+  // A custom predicate, written as an expression evaluated in a context with
+  // "LangOpts" bound.
+  code CustomCode = customCode;
 }
 def MicrosoftExt : LangOpt<"MicrosoftExt">;
 def Borland : LangOpt<"Borland">;
 def CUDA : LangOpt<"CUDA">;
-def COnly : LangOpt<"CPlusPlus", 1>;
+def COnly : LangOpt<"COnly", "!LangOpts.CPlusPlus">;
 def CPlusPlus : LangOpt<"CPlusPlus">;
 def OpenCL : LangOpt<"OpenCL">;
 def RenderScript : LangOpt<"RenderScript">;
@@ -299,6 +302,8 @@ def CPlusPlusAMP : LangOpt<"CPlusPlusAMP">;
 def ObjC : LangOpt<"ObjC">;
 def BlocksSupported : LangOpt<"Blocks">;
 def ObjCAutoRefCount : LangOpt<"ObjCAutoRefCount">;
+def ObjCNonFragileRuntime : LangOpt<"ObjCNonFragileRuntime",
+                                    "LangOpts.ObjCRuntime.allowsClassStubs()">;
 
 // Language option for CMSE extensions
 def Cmse : LangOpt<"Cmse">;
@@ -1839,6 +1844,13 @@ def ObjCRuntimeVisible : Attr {
   let Spellings = [Clang<"objc_runtime_visible">];
   let Subjects = SubjectList<[ObjCInterface], ErrorDiag>;
   let Documentation = [ObjCRuntimeVisibleDocs];
+}
+
+def ObjCClassStub : Attr {
+  let Spellings = [Clang<"objc_class_stub">];
+  let Subjects = SubjectList<[ObjCInterface], ErrorDiag>;
+  let Documentation = [ObjCClassStubDocs];
+  let LangOpts = [ObjCNonFragileRuntime];
 }
 
 def ObjCBoxable : Attr {

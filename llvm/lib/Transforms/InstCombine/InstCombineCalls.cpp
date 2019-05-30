@@ -13,6 +13,7 @@
 #include "InstCombineInternal.h"
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/APInt.h"
+#include "llvm/ADT/APSInt.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/None.h"
 #include "llvm/ADT/Optional.h"
@@ -2052,38 +2053,32 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
     LLVM_FALLTHROUGH;
   case Intrinsic::usub_sat:
   case Intrinsic::ssub_sat: {
-    Value *Arg0 = II->getArgOperand(0);
-    Value *Arg1 = II->getArgOperand(1);
+    SaturatingInst *SI = cast<SaturatingInst>(II);
+    Type *Ty = SI->getType();
+    Value *Arg0 = SI->getLHS();
+    Value *Arg1 = SI->getRHS();
 
     // Make use of known overflow information.
-    OverflowResult OR;
-    switch (IID) {
-    default:
-      llvm_unreachable("Unexpected intrinsic!");
-    case Intrinsic::uadd_sat:
-      OR = computeOverflowForUnsignedAdd(Arg0, Arg1, II);
-      if (OR == OverflowResult::NeverOverflows)
-        return BinaryOperator::CreateNUWAdd(Arg0, Arg1);
-      if (OR == OverflowResult::AlwaysOverflows)
-        return replaceInstUsesWith(*II,
-                                   ConstantInt::getAllOnesValue(II->getType()));
-      break;
-    case Intrinsic::usub_sat:
-      OR = computeOverflowForUnsignedSub(Arg0, Arg1, II);
-      if (OR == OverflowResult::NeverOverflows)
-        return BinaryOperator::CreateNUWSub(Arg0, Arg1);
-      if (OR == OverflowResult::AlwaysOverflows)
-        return replaceInstUsesWith(*II,
-                                   ConstantInt::getNullValue(II->getType()));
-      break;
-    case Intrinsic::sadd_sat:
-      if (willNotOverflowSignedAdd(Arg0, Arg1, *II))
-        return BinaryOperator::CreateNSWAdd(Arg0, Arg1);
-      break;
-    case Intrinsic::ssub_sat:
-      if (willNotOverflowSignedSub(Arg0, Arg1, *II))
-        return BinaryOperator::CreateNSWSub(Arg0, Arg1);
-      break;
+    OverflowResult OR = computeOverflow(SI->getBinaryOp(), SI->isSigned(),
+                                        Arg0, Arg1, SI);
+    switch (OR) {
+      case OverflowResult::MayOverflow:
+        break;
+      case OverflowResult::NeverOverflows:
+        if (SI->isSigned())
+          return BinaryOperator::CreateNSW(SI->getBinaryOp(), Arg0, Arg1);
+        else
+          return BinaryOperator::CreateNUW(SI->getBinaryOp(), Arg0, Arg1);
+      case OverflowResult::AlwaysOverflowsLow: {
+        unsigned BitWidth = Ty->getScalarSizeInBits();
+        APInt Min = APSInt::getMinValue(BitWidth, !SI->isSigned());
+        return replaceInstUsesWith(*SI, ConstantInt::get(Ty, Min));
+      }
+      case OverflowResult::AlwaysOverflowsHigh: {
+        unsigned BitWidth = Ty->getScalarSizeInBits();
+        APInt Max = APSInt::getMaxValue(BitWidth, !SI->isSigned());
+        return replaceInstUsesWith(*SI, ConstantInt::get(Ty, Max));
+      }
     }
 
     // ssub.sat(X, C) -> sadd.sat(X, -C) if C != MIN

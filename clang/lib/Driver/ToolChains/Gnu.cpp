@@ -385,6 +385,8 @@ void tools::gnutools::Linker::ConstructLinkerJob(Compilation &C,
     CmdArgs.push_back("-static");
     CmdArgs.push_back("-pie");
     CmdArgs.push_back("--no-dynamic-linker");
+    CmdArgs.push_back("-z");
+    CmdArgs.push_back("text");
   }
 
   if (ToolChain.isNoExecStackDefault()) {

@@ -4364,9 +4364,13 @@ void CGDebugInfo::EmitGlobalVariable(const ValueDecl *VD, const APValue &Init) {
     return;
   }
 
-  // Do not emit separate definitions for function local const/statics.
+  llvm::DIScope *DContext = nullptr;
+
+  // Do not emit separate definitions for function local consts.
   if (isa<FunctionDecl>(VD->getDeclContext()))
     return;
+
+  // Emit definition for static members in CodeView.
   VD = cast<ValueDecl>(VD->getCanonicalDecl());
   auto *VarD = cast<VarDecl>(VD);
   if (VarD->isStaticDataMember()) {
@@ -4378,10 +4382,16 @@ void CGDebugInfo::EmitGlobalVariable(const ValueDecl *VD, const APValue &Init) {
     // through its scope.
     RetainedTypes.push_back(
         CGM.getContext().getRecordType(RD).getAsOpaquePtr());
-    return;
-  }
 
-  llvm::DIScope *DContext = getDeclContextDescriptor(VD);
+    if (!CGM.getCodeGenOpts().EmitCodeView)
+      return;
+
+    // Use the global scope for static members.
+    DContext = getContextDescriptor(
+        cast<Decl>(CGM.getContext().getTranslationUnitDecl()), TheCU);
+  } else {
+    DContext = getDeclContextDescriptor(VD);
+  }
 
   auto &GV = DeclCache[VD];
   if (GV)
