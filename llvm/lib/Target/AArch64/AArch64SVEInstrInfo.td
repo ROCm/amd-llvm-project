@@ -1324,12 +1324,68 @@ let Predicates = [HasSVE2] in {
   // sve_int_rotate_imm
   defm XAR_ZZZI : sve2_int_rotate_right_imm<"xar">;
 
+  // SVE2 extract vector (immediate offset, constructive)
+  def EXT_ZZI_B : sve2_int_perm_extract_i_cons<"ext">;
+
+  // SVE floating-point convert precision
+  def FCVTX_ZPmZ_DtoS : sve_fp_2op_p_zd<0b0001010, "fcvtx", ZPR64, ZPR32, ElementSizeD>;
+
+  // SVE floating-point convert to integer
+  defm FLOGB_ZPmZ : sve2_fp_flogb<"flogb">;
+
+  // Non-temporal contiguous loads (vector + register)
+  defm LDNT1SB_ZZR_S : sve2_mem_cldnt_vs<0b00000, "ldnt1sb", Z_s, ZPR32>;
+  defm LDNT1B_ZZR_S  : sve2_mem_cldnt_vs<0b00001, "ldnt1b",  Z_s, ZPR32>;
+  defm LDNT1SH_ZZR_S : sve2_mem_cldnt_vs<0b00100, "ldnt1sh", Z_s, ZPR32>;
+  defm LDNT1H_ZZR_S  : sve2_mem_cldnt_vs<0b00101, "ldnt1h",  Z_s, ZPR32>;
+  defm LDNT1W_ZZR_S  : sve2_mem_cldnt_vs<0b01001, "ldnt1w",  Z_s, ZPR32>;
+
+  defm LDNT1SB_ZZR_D : sve2_mem_cldnt_vs<0b10000, "ldnt1sb", Z_d, ZPR64>;
+  defm LDNT1B_ZZR_D  : sve2_mem_cldnt_vs<0b10010, "ldnt1b",  Z_d, ZPR64>;
+  defm LDNT1SH_ZZR_D : sve2_mem_cldnt_vs<0b10100, "ldnt1sh", Z_d, ZPR64>;
+  defm LDNT1H_ZZR_D  : sve2_mem_cldnt_vs<0b10110, "ldnt1h",  Z_d, ZPR64>;
+  defm LDNT1SW_ZZR_D : sve2_mem_cldnt_vs<0b11000, "ldnt1sw", Z_d, ZPR64>;
+  defm LDNT1W_ZZR_D  : sve2_mem_cldnt_vs<0b11010, "ldnt1w",  Z_d, ZPR64>;
+  defm LDNT1D_ZZR_D  : sve2_mem_cldnt_vs<0b11110, "ldnt1d",  Z_d, ZPR64>;
+
+  // SVE2 vector splice (constructive)
+  defm SPLICE_ZPZZ : sve2_int_perm_splice_cons<"splice">;
+
   // Predicated shifts
   defm SQSHL_ZPmI  : sve_int_bin_pred_shift_imm_left< 0b0110, "sqshl">;
   defm UQSHL_ZPmI  : sve_int_bin_pred_shift_imm_left< 0b0111, "uqshl">;
   defm SRSHR_ZPmI  : sve_int_bin_pred_shift_imm_right<0b1100, "srshr">;
   defm URSHR_ZPmI  : sve_int_bin_pred_shift_imm_right<0b1101, "urshr">;
   defm SQSHLU_ZPmI : sve_int_bin_pred_shift_imm_left< 0b1111, "sqshlu">;
+
+  // Non-temporal contiguous stores (vector + register)
+  defm STNT1B_ZZR_S : sve2_mem_cstnt_vs<0b001, "stnt1b", Z_s, ZPR32>;
+  defm STNT1H_ZZR_S : sve2_mem_cstnt_vs<0b011, "stnt1h", Z_s, ZPR32>;
+  defm STNT1W_ZZR_S : sve2_mem_cstnt_vs<0b101, "stnt1w", Z_s, ZPR32>;
+
+  defm STNT1B_ZZR_D : sve2_mem_cstnt_vs<0b000, "stnt1b", Z_d, ZPR64>;
+  defm STNT1H_ZZR_D : sve2_mem_cstnt_vs<0b010, "stnt1h", Z_d, ZPR64>;
+  defm STNT1W_ZZR_D : sve2_mem_cstnt_vs<0b100, "stnt1w", Z_d, ZPR64>;
+  defm STNT1D_ZZR_D : sve2_mem_cstnt_vs<0b110, "stnt1d", Z_d, ZPR64>;
+
+  // SVE table lookup (three sources)
+  defm TBL_ZZZZ : sve2_int_perm_tbl<"tbl">;
+  defm TBX_ZZZ  : sve2_int_perm_tbx<"tbx">;
+
+  // SVE integer compare scalar count and limit
+  defm WHILEGE_PWW : sve_int_while4_rr<0b000, "whilege">;
+  defm WHILEGT_PWW : sve_int_while4_rr<0b001, "whilegt">;
+  defm WHILEHS_PWW : sve_int_while4_rr<0b100, "whilehs">;
+  defm WHILEHI_PWW : sve_int_while4_rr<0b101, "whilehi">;
+
+  defm WHILEGE_PXX : sve_int_while8_rr<0b000, "whilege">;
+  defm WHILEGT_PXX : sve_int_while8_rr<0b001, "whilegt">;
+  defm WHILEHS_PXX : sve_int_while8_rr<0b100, "whilehs">;
+  defm WHILEHI_PXX : sve_int_while8_rr<0b101, "whilehi">;
+
+  // SVE pointer conflict compare
+  defm WHILEWR_PXX : sve2_int_while_rr<0b0, "whilewr">;
+  defm WHILERW_PXX : sve2_int_while_rr<0b1, "whilerw">;
 }
 
 let Predicates = [HasSVE2AES] in {
