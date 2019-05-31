@@ -258,7 +258,7 @@ StmtResult Sema::ActOnGCCAsmStmt(SourceLocation AsmLoc, bool IsSimple,
   if (!DeclAttrsMatchCUDAMode(getLangOpts(), getCurFunctionDecl())) {
     GCCAsmStmt *NS = new (Context) GCCAsmStmt(
         Context, AsmLoc, IsSimple, IsVolatile, NumOutputs, NumInputs, Names,
-        Constraints, Exprs.data(), AsmString, NumClobbers, Clobbers, NumLabels, RParenLoc);
+        Constraints, Exprs.data(), AsmString, NumClobbers, Clobbers, RParenLoc);
     return NS;
   }
 
@@ -267,7 +267,7 @@ StmtResult Sema::ActOnGCCAsmStmt(SourceLocation AsmLoc, bool IsSimple,
   if (!DeclAttrsMatchHCCMode(getLangOpts(), getCurFunctionDecl())) {
     GCCAsmStmt *NS = new (Context) GCCAsmStmt(
         Context, AsmLoc, IsSimple, IsVolatile, NumOutputs, NumInputs, Names,
-        Constraints, Exprs.data(), AsmString, NumClobbers, Clobbers, NumLabels, RParenLoc);
+        Constraints, Exprs.data(), AsmString, NumClobbers, Clobbers, RParenLoc);
     return NS;
   }
 
