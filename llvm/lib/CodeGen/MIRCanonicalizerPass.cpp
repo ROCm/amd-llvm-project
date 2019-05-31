@@ -104,6 +104,8 @@ INITIALIZE_PASS_END(MIRCanonicalizer, "mir-canonicalizer",
                     "Rename Register Operands Canonically", false, false)
 
 static std::vector<MachineBasicBlock *> GetRPOList(MachineFunction &MF) {
+  if (MF.empty())
+    return {};
   ReversePostOrderTraversal<MachineBasicBlock *> RPOT(&*MF.begin());
   std::vector<MachineBasicBlock *> RPOList;
   for (auto MBB : RPOT) {
@@ -500,14 +502,15 @@ public:
     return virtualVRegNumber;
   }
 
-  unsigned createVirtualRegister(const TargetRegisterClass *RC) {
+  unsigned createVirtualRegister(unsigned VReg) {
     std::string S;
     raw_string_ostream OS(S);
     OS << "namedVReg" << (virtualVRegNumber & ~0x80000000);
     OS.flush();
     virtualVRegNumber++;
-
-    return MRI.createVirtualRegister(RC, OS.str());
+    if (auto RC = MRI.getRegClassOrNull(VReg))
+      return MRI.createVirtualRegister(RC, OS.str());
+    return MRI.createGenericVirtualRegister(MRI.getType(VReg), OS.str());
   }
 };
 } // namespace
@@ -557,7 +560,7 @@ GetVRegRenameMap(const std::vector<TypedVReg> &VRegs,
       continue;
     }
 
-    auto Rename = NVC.createVirtualRegister(MRI.getRegClass(Reg));
+    auto Rename = NVC.createVirtualRegister(Reg);
 
     if (VRegRenameMap.find(Reg) == VRegRenameMap.end()) {
       LLVM_DEBUG(dbgs() << "Mapping vreg ";);
@@ -741,7 +744,7 @@ static bool runOnBasicBlock(MachineBasicBlock *MBB,
     MachineInstr &MI = *MII++;
     Changed = true;
     unsigned vRegToRename = MI.getOperand(0).getReg();
-    auto Rename = NVC.createVirtualRegister(MRI.getRegClass(vRegToRename));
+    auto Rename = NVC.createVirtualRegister(vRegToRename);
 
     std::vector<MachineOperand *> RenameMOs;
     for (auto &MO : MRI.reg_operands(vRegToRename)) {
