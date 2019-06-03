@@ -2877,6 +2877,14 @@ static unsigned getLoadStoreRegOpcode(unsigned Reg,
       assert(STI.hasBWI() && "KMOVD requires BWI");
       return load ? X86::KMOVDkm : X86::KMOVDmk;
     }
+    // All of these mask pair classes have the same spill size, the same kind
+    // of kmov instructions can be used with all of them.
+    if (X86::VK1PAIRRegClass.hasSubClassEq(RC) ||
+        X86::VK2PAIRRegClass.hasSubClassEq(RC) ||
+        X86::VK4PAIRRegClass.hasSubClassEq(RC) ||
+        X86::VK8PAIRRegClass.hasSubClassEq(RC) ||
+        X86::VK16PAIRRegClass.hasSubClassEq(RC))
+      return load ? X86::MASKPAIR16LOAD : X86::MASKPAIR16STORE;
     llvm_unreachable("Unknown 4-byte regclass");
   case 8:
     if (X86::GR64RegClass.hasSubClassEq(RC))
@@ -6912,6 +6920,8 @@ bool X86InstrInfo::isAssociativeAndCommutative(const MachineInstr &Inst) const {
   case X86::PADDWrr:
   case X86::PADDDrr:
   case X86::PADDQrr:
+  case X86::PMULLWrr:
+  case X86::PMULLDrr:
   case X86::VPANDrr:
   case X86::VPANDYrr:
   case X86::VPANDDZ128rr:
