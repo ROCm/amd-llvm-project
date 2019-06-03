@@ -138,8 +138,7 @@ StringRef elf::getOutputSectionName(const InputSectionBase *S) {
 }
 
 static bool needsInterpSection() {
-  return !SharedFiles.empty() && !Config->DynamicLinker.empty() &&
-         Script->needsInterpSection();
+  return !Config->DynamicLinker.empty() && Script->needsInterpSection();
 }
 
 template <class ELFT> void elf::writeResult() { Writer<ELFT>().run(); }
@@ -188,8 +187,6 @@ static Defined *addOptionalRegular(StringRef Name, SectionBase *Sec,
 static Defined *addAbsolute(StringRef Name) {
   Symbol *Sym = Symtab->addSymbol(Defined{nullptr, Name, STB_GLOBAL, STV_HIDDEN,
                                           STT_NOTYPE, 0, 0, nullptr});
-  if (!Sym->isDefined())
-    error("duplicate symbol: " + toString(*Sym));
   return cast<Defined>(Sym);
 }
 

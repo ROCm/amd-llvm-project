@@ -117,6 +117,11 @@ if(${CMAKE_SOURCE_DIR} STREQUAL ${CMAKE_CURRENT_SOURCE_DIR})
   # Remove the -nostdlib++ option we've added earlier.
   string(REPLACE "-nostdlib++" "" CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS}")
 
+  # Use libtool instead of ar if you are both on an Apple host, and targeting Apple.
+  if(CMAKE_HOST_APPLE AND APPLE)
+    include(UseLibtool)
+  endif()
+
   # This can be used to detect whether we're in the runtimes build.
   set(RUNTIMES_BUILD ON)
 
@@ -375,6 +380,7 @@ else() # if this is included from LLVM's CMake
                              CMAKE_ARGS -DCOMPILER_RT_BUILD_BUILTINS=Off
                                         -DLLVM_INCLUDE_TESTS=${LLVM_INCLUDE_TESTS}
                                         -DLLVM_DEFAULT_TARGET_TRIPLE=${TARGET_TRIPLE}
+                                        -DLLVM_ENABLE_PROJECTS_USED=${LLVM_ENABLE_PROJECTS_USED}
                                         -DLLVM_ENABLE_PER_TARGET_RUNTIME_DIR=ON
                                         -DCMAKE_C_COMPILER_TARGET=${TARGET_TRIPLE}
                                         -DCMAKE_CXX_COMPILER_TARGET=${TARGET_TRIPLE}
@@ -464,6 +470,7 @@ else() # if this is included from LLVM's CMake
                              CMAKE_ARGS -DCOMPILER_RT_BUILD_BUILTINS=Off
                                         -DLLVM_INCLUDE_TESTS=${LLVM_INCLUDE_TESTS}
                                         -DLLVM_DEFAULT_TARGET_TRIPLE=${target}
+                                        -DLLVM_ENABLE_PROJECTS_USED=${LLVM_ENABLE_PROJECTS_USED}
                                         -DLLVM_ENABLE_PER_TARGET_RUNTIME_DIR=ON
                                         -DCMAKE_C_COMPILER_TARGET=${target}
                                         -DCMAKE_CXX_COMPILER_TARGET=${target}

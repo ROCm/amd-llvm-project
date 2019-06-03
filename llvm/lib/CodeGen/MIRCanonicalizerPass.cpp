@@ -343,15 +343,23 @@ static bool propagateLocalCopies(MachineBasicBlock *MBB) {
       continue;
     if (!TargetRegisterInfo::isVirtualRegister(Src))
       continue;
+    // Not folding COPY instructions if regbankselect has not set the RCs.
+    // Why are we only considering Register Classes? Because the verifier
+    // sometimes gets upset if the register classes don't match even if the
+    // types do. A future patch might add COPY folding for matching types in
+    // pre-registerbankselect code.
+    if (!MRI.getRegClassOrNull(Dst))
+      continue;
     if (MRI.getRegClass(Dst) != MRI.getRegClass(Src))
       continue;
 
-    for (auto UI = MRI.use_begin(Dst); UI != MRI.use_end(); ++UI) {
-      MachineOperand *MO = &*UI;
+    std::vector<MachineOperand *> Uses;
+    for (auto UI = MRI.use_begin(Dst); UI != MRI.use_end(); ++UI)
+      Uses.push_back(&*UI);
+    for (auto *MO : Uses)
       MO->setReg(Src);
-      Changed = true;
-    }
 
+    Changed = true;
     MI->eraseFromParent();
   }
 
@@ -475,18 +483,14 @@ class NamedVRegCursor {
   unsigned virtualVRegNumber;
 
 public:
-  NamedVRegCursor(MachineRegisterInfo &MRI) : MRI(MRI) {
-    unsigned VRegGapIndex = 0;
-    const unsigned VR_GAP = (++VRegGapIndex * 1000);
-
-    unsigned I = MRI.createIncompleteVirtualRegister();
-    const unsigned E = (((I + VR_GAP) / VR_GAP) + 1) * VR_GAP;
-
-    virtualVRegNumber = E;
-  }
+  NamedVRegCursor(MachineRegisterInfo &MRI) : MRI(MRI), virtualVRegNumber(0) {}
 
   void SkipVRegs() {
     unsigned VRegGapIndex = 1;
+    if (!virtualVRegNumber) {
+      VRegGapIndex = 0;
+      virtualVRegNumber = MRI.createIncompleteVirtualRegister();
+    }
     const unsigned VR_GAP = (++VRegGapIndex * 1000);
 
     unsigned I = virtualVRegNumber;
@@ -503,6 +507,8 @@ public:
   }
 
   unsigned createVirtualRegister(unsigned VReg) {
+    if (!virtualVRegNumber)
+      SkipVRegs();
     std::string S;
     raw_string_ostream OS(S);
     OS << "namedVReg" << (virtualVRegNumber & ~0x80000000);
@@ -737,7 +743,8 @@ static bool runOnBasicBlock(MachineBasicBlock *MBB,
   // of the MachineBasicBlock so that they are named in the order that we sorted
   // them alphabetically. Eventually we wont need SkipVRegs because we will use
   // named vregs instead.
-  NVC.SkipVRegs();
+  if (IdempotentInstCount)
+    NVC.SkipVRegs();
 
   auto MII = MBB->begin();
   for (unsigned i = 0; i < IdempotentInstCount && MII != MBB->end(); ++i) {
