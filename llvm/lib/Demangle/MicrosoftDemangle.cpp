@@ -429,10 +429,10 @@ FunctionSymbolNode *Demangler::demangleInitFiniStub(StringView &MangledName,
 
 SymbolNode *Demangler::demangleSpecialIntrinsic(StringView &MangledName) {
   SpecialIntrinsicKind SIK = consumeSpecialIntrinsicKind(MangledName);
-  if (SIK == SpecialIntrinsicKind::None)
-    return nullptr;
 
   switch (SIK) {
+  case SpecialIntrinsicKind::None:
+    return nullptr;
   case SpecialIntrinsicKind::StringLiteralSymbol:
     return demangleStringLiteral(MangledName);
   case SpecialIntrinsicKind::Vftable:
@@ -465,11 +465,16 @@ SymbolNode *Demangler::demangleSpecialIntrinsic(StringView &MangledName) {
   case SpecialIntrinsicKind::RttiBaseClassDescriptor:
     return demangleRttiBaseClassDescriptorNode(Arena, MangledName);
   case SpecialIntrinsicKind::DynamicInitializer:
-    return demangleInitFiniStub(MangledName, false);
+    return demangleInitFiniStub(MangledName, /*IsDestructor=*/false);
   case SpecialIntrinsicKind::DynamicAtexitDestructor:
-    return demangleInitFiniStub(MangledName, true);
-  default:
+    return demangleInitFiniStub(MangledName, /*IsDestructor=*/true);
+  case SpecialIntrinsicKind::Typeof:
+  case SpecialIntrinsicKind::UdtReturning:
+    // It's unclear which tools produces these manglings, so demangling
+    // support is not (yet?) implemented.
     break;
+  case SpecialIntrinsicKind::Unknown:
+    DEMANGLE_UNREACHABLE; // Never returned by consumeSpecialIntrinsicKind.
   }
   Error = true;
   return nullptr;
@@ -1821,7 +1826,7 @@ FunctionSignatureNode *Demangler::demangleFunctionType(StringView &MangledName,
   if (!IsStructor)
     FTy->ReturnType = demangleType(MangledName, QualifierMangleMode::Result);
 
-  FTy->Params = demangleFunctionParameterList(MangledName);
+  FTy->Params = demangleFunctionParameterList(MangledName, FTy->IsVariadic);
 
   FTy->IsNoexcept = demangleThrowSpecification(MangledName);
 
@@ -2088,9 +2093,9 @@ ArrayTypeNode *Demangler::demangleArrayType(StringView &MangledName) {
   return ATy;
 }
 
-// Reads a function or a template parameters.
-NodeArrayNode *
-Demangler::demangleFunctionParameterList(StringView &MangledName) {
+// Reads a function's parameters.
+NodeArrayNode *Demangler::demangleFunctionParameterList(StringView &MangledName,
+                                                        bool &IsVariadic) {
   // Empty parameter list.
   if (MangledName.consumeFront('X'))
     return nullptr;
@@ -2147,13 +2152,11 @@ Demangler::demangleFunctionParameterList(StringView &MangledName) {
     return NA;
 
   if (MangledName.consumeFront('Z')) {
-    // This is a variadic parameter list.  We probably need a variadic node to
-    // append to the end.
+    IsVariadic = true;
     return NA;
   }
 
-  Error = true;
-  return nullptr;
+  DEMANGLE_UNREACHABLE;
 }
 
 NodeArrayNode *
@@ -2162,7 +2165,7 @@ Demangler::demangleTemplateParameterList(StringView &MangledName) {
   NodeList **Current = &Head;
   size_t Count = 0;
 
-  while (!Error && !MangledName.startsWith('@')) {
+  while (!MangledName.startsWith('@')) {
     if (MangledName.consumeFront("$S") || MangledName.consumeFront("$$V") ||
         MangledName.consumeFront("$$$V") || MangledName.consumeFront("$$Z")) {
       // parameter pack separator
@@ -2273,15 +2276,14 @@ Demangler::demangleTemplateParameterList(StringView &MangledName) {
     Current = &TP.Next;
   }
 
-  if (Error)
-    return nullptr;
+  // The loop above returns nullptr on Error.
+  assert(!Error);
 
   // Template parameter lists cannot be variadic, so it can only be terminated
-  // by @.
-  if (MangledName.consumeFront('@'))
-    return nodeListToNodeArray(Arena, Head, Count);
-  Error = true;
-  return nullptr;
+  // by @ (as opposed to 'Z' in the function parameter case).
+  assert(MangledName.startsWith('@')); // The above loop exits only on '@'.
+  MangledName.consumeFront('@');
+  return nodeListToNodeArray(Arena, Head, Count);
 }
 
 void Demangler::dumpBackReferences() {

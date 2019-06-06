@@ -6955,6 +6955,13 @@ void SelectionDAGBuilder::visitConstrainedFPIntrinsic(
                          { Chain, getValue(FPI.getArgOperand(0)),
                            getValue(FPI.getArgOperand(1))  });
 
+  if (FPI.getExceptionBehavior() !=
+      ConstrainedFPIntrinsic::ExceptionBehavior::ebIgnore) {
+    SDNodeFlags Flags;
+    Flags.setFPExcept(true);
+    Result->setFlags(Flags);
+  }
+
   assert(Result.getNode()->getNumValues() == 2);
   SDValue OutChain = Result.getValue(1);
   DAG.setRoot(OutChain);
@@ -9111,8 +9118,11 @@ TargetLowering::LowerCallTo(TargetLowering::CallLoweringInfo &CLI) const {
       // for now.
       if (Args[i].IsReturned && !Op.getValueType().isVector() &&
           CanLowerReturn) {
-        assert(CLI.RetTy == Args[i].Ty && RetTys.size() == NumValues &&
-               "unexpected use of 'returned'");
+        assert((CLI.RetTy == Args[i].Ty ||
+                (CLI.RetTy->isPointerTy() && Args[i].Ty->isPointerTy() &&
+                 CLI.RetTy->getPointerAddressSpace() ==
+                     Args[i].Ty->getPointerAddressSpace())) &&
+               RetTys.size() == NumValues && "unexpected use of 'returned'");
         // Before passing 'returned' to the target lowering code, ensure that
         // either the register MVT and the actual EVT are the same size or that
         // the return value and argument are extended in the same way; in these
@@ -9581,8 +9591,7 @@ void SelectionDAGISel::LowerArguments(const Function &F) {
         // For ByVal, size and alignment should be passed from FE.  BE will
         // guess if this info is not there but there are cases it cannot get
         // right.
-        unsigned FrameSize = DL.getTypeAllocSize(
-            Arg.getParamByValType() ? Arg.getParamByValType() : ElementTy);
+        unsigned FrameSize = DL.getTypeAllocSize(Arg.getParamByValType());
         Flags.setByValSize(FrameSize);
 
         unsigned FrameAlign;
