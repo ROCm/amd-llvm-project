@@ -56,8 +56,6 @@ public:
   unsigned reservedPrivateSegmentWaveByteOffsetReg(
     const MachineFunction &MF) const;
 
-  unsigned reservedStackPtrOffsetReg(const MachineFunction &MF) const;
-
   BitVector getReservedRegs(const MachineFunction &MF) const override;
 
   const MCPhysReg *getCalleeSavedRegs(const MachineFunction *MF) const override;
@@ -73,6 +71,7 @@ public:
 
   unsigned getFrameRegister(const MachineFunction &MF) const override;
 
+  bool canRealignStack(const MachineFunction &MF) const override;
   bool requiresRegisterScavenging(const MachineFunction &Fn) const override;
 
   bool requiresFrameIndexScavenging(const MachineFunction &MF) const override;

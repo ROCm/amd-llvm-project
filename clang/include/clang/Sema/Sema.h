@@ -1564,6 +1564,7 @@ public:
   bool CheckExceptionSpecSubset(const PartialDiagnostic &DiagID,
                                 const PartialDiagnostic &NestedDiagID,
                                 const PartialDiagnostic &NoteID,
+                                const PartialDiagnostic &NoThrowDiagID,
                                 const FunctionProtoType *Superset,
                                 SourceLocation SuperLoc,
                                 const FunctionProtoType *Subset,
@@ -4019,6 +4020,7 @@ public:
                              unsigned NumInputs, IdentifierInfo **Names,
                              MultiExprArg Constraints, MultiExprArg Exprs,
                              Expr *AsmString, MultiExprArg Clobbers,
+                             unsigned NumLabels,
                              SourceLocation RParenLoc);
 
   void FillInlineAsmIdentifierInfo(Expr *Res,
@@ -4213,6 +4215,7 @@ public:
   void MarkVariableReferenced(SourceLocation Loc, VarDecl *Var);
   void MarkDeclRefReferenced(DeclRefExpr *E, const Expr *Base = nullptr);
   void MarkMemberReferenced(MemberExpr *E);
+  void MarkFunctionParmPackReferenced(FunctionParmPackExpr *E);
   void MarkCaptureUsedInEnclosingContext(VarDecl *Capture, SourceLocation Loc,
                                          unsigned CapturingScopeIndex);
 
@@ -4336,16 +4339,24 @@ public:
                                         bool isAddressOfOperand,
                                 const TemplateArgumentListInfo *TemplateArgs);
 
-  ExprResult BuildDeclRefExpr(ValueDecl *D, QualType Ty,
-                              ExprValueKind VK,
-                              SourceLocation Loc,
-                              const CXXScopeSpec *SS = nullptr);
-  ExprResult
+  DeclRefExpr *BuildDeclRefExpr(ValueDecl *D, QualType Ty, ExprValueKind VK,
+                                SourceLocation Loc,
+                                const CXXScopeSpec *SS = nullptr);
+  DeclRefExpr *
   BuildDeclRefExpr(ValueDecl *D, QualType Ty, ExprValueKind VK,
                    const DeclarationNameInfo &NameInfo,
                    const CXXScopeSpec *SS = nullptr,
                    NamedDecl *FoundD = nullptr,
+                   SourceLocation TemplateKWLoc = SourceLocation(),
                    const TemplateArgumentListInfo *TemplateArgs = nullptr);
+  DeclRefExpr *
+  BuildDeclRefExpr(ValueDecl *D, QualType Ty, ExprValueKind VK,
+                   const DeclarationNameInfo &NameInfo,
+                   NestedNameSpecifierLoc NNS,
+                   NamedDecl *FoundD = nullptr,
+                   SourceLocation TemplateKWLoc = SourceLocation(),
+                   const TemplateArgumentListInfo *TemplateArgs = nullptr);
+
   ExprResult
   BuildAnonymousStructUnionMemberReference(
       const CXXScopeSpec &SS,

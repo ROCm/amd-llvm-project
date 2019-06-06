@@ -11779,7 +11779,7 @@ class RefBuilder: public ExprBuilder {
 
 public:
   Expr *build(Sema &S, SourceLocation Loc) const override {
-    return assertNotNull(S.BuildDeclRefExpr(Var, VarType, VK_LValue, Loc).get());
+    return assertNotNull(S.BuildDeclRefExpr(Var, VarType, VK_LValue, Loc));
   }
 
   RefBuilder(VarDecl *Var, QualType VarType)
@@ -13085,7 +13085,7 @@ void Sema::DefineAmpCpuSerializeFunction(SourceLocation CurrentLocation,
   if (const LValueReferenceType *SRef = SRefType->getAs<LValueReferenceType>()) {
     SRefType = SRef->getPointeeType();
   }
-  Expr *SRef = BuildDeclRefExpr(S, SRefType, VK_LValue, Loc).get();
+  Expr *SRef = BuildDeclRefExpr(S, SRefType, VK_LValue, Loc);
   assert(SRef && "Reference to parameter cannot fail!");
 
   // Call direct base-class serialize.
@@ -14132,7 +14132,7 @@ void Sema::DefineImplicitLambdaToFunctionPointerConversion(
 
   // Construct the body of the conversion function { return __invoke; }.
   Expr *FunctionRef = BuildDeclRefExpr(Invoker, Invoker->getType(),
-                                       VK_LValue, Conv->getLocation()).get();
+                                       VK_LValue, Conv->getLocation());
   assert(FunctionRef && "Can't refer to __invoke function?");
   Stmt *Return = BuildReturnStmt(Conv->getLocation(), FunctionRef).get();
   Conv->setBody(CompoundStmt::Create(Context, Return, Conv->getLocation(),
