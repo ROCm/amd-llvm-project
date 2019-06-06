@@ -201,8 +201,7 @@ public:
     this->ArchiveName = ArchiveName;
   }
 
-  void parse(llvm::DenseMap<llvm::CachedHashStringRef, const InputFile *>
-                 &ComdatGroups);
+  void parse(bool IgnoreComdats = false);
 
   StringRef getShtGroupSignature(ArrayRef<Elf_Shdr> Sections,
                                  const Elf_Shdr &Sec);
@@ -228,6 +227,8 @@ public:
   // R_MIPS_GPREL16 / R_MIPS_GPREL32 relocations.
   uint32_t MipsGp0 = 0;
 
+  uint32_t AndFeatures = 0;
+
   // Name of source file obtained from STT_FILE symbol value,
   // or empty string if there is no such symbol in object file
   // symbol table.
@@ -248,8 +249,7 @@ public:
   ArrayRef<Elf_CGProfile> CGProfile;
 
 private:
-  void initializeSections(llvm::DenseMap<llvm::CachedHashStringRef,
-                                         const InputFile *> &ComdatGroups);
+  void initializeSections(bool IgnoreComdats);
   void initializeSymbols();
   void initializeJustSymbols();
   void initializeDwarf();
@@ -338,9 +338,7 @@ public:
   BitcodeFile(MemoryBufferRef M, StringRef ArchiveName,
               uint64_t OffsetInArchive);
   static bool classof(const InputFile *F) { return F->kind() == BitcodeKind; }
-  template <class ELFT>
-  void parse(llvm::DenseMap<llvm::CachedHashStringRef, const InputFile *>
-                 &ComdatGroups);
+  template <class ELFT> void parse();
   std::unique_ptr<llvm::lto::InputFile> Obj;
 };
 
