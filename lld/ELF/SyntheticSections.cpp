@@ -290,8 +290,9 @@ static size_t getHashSize() {
 
 // This class represents a linker-synthesized .note.gnu.property section.
 //
-// In x86, object files may contain feature flags indicating the features that
-// they are using. The flags are stored in a .note.gnu.property section.
+// In x86 and AArch64, object files may contain feature flags indicating the
+// features that they have used. The flags are stored in a .note.gnu.property
+// section.
 //
 // lld reads the sections from input files and merges them by computing AND of
 // the flags. The result is written as a new .note.gnu.property section.
@@ -304,11 +305,15 @@ GnuPropertySection::GnuPropertySection()
                        ".note.gnu.property") {}
 
 void GnuPropertySection::writeTo(uint8_t *Buf) {
+  uint32_t FeatureAndType = Config->EMachine == EM_AARCH64
+                                ? GNU_PROPERTY_AARCH64_FEATURE_1_AND
+                                : GNU_PROPERTY_X86_FEATURE_1_AND;
+
   write32(Buf, 4);                                   // Name size
   write32(Buf + 4, Config->Is64 ? 16 : 12);          // Content size
   write32(Buf + 8, NT_GNU_PROPERTY_TYPE_0);          // Type
   memcpy(Buf + 12, "GNU", 4);                        // Name string
-  write32(Buf + 16, GNU_PROPERTY_X86_FEATURE_1_AND); // Feature type
+  write32(Buf + 16, FeatureAndType);                 // Feature type
   write32(Buf + 20, 4);                              // Feature size
   write32(Buf + 24, Config->AndFeatures);            // Feature flags
   if (Config->Is64)
@@ -1057,10 +1062,15 @@ void MipsGotSection::writeTo(uint8_t *Buf) {
 // section. I don't know why we have a BSS style type for the section but it is
 // consitent across both 64-bit PowerPC ABIs as well as the 32-bit PowerPC ABI.
 GotPltSection::GotPltSection()
-    : SyntheticSection(SHF_ALLOC | SHF_WRITE,
-                       Config->EMachine == EM_PPC64 ? SHT_NOBITS : SHT_PROGBITS,
-                       Config->Wordsize,
-                       Config->EMachine == EM_PPC64 ? ".plt" : ".got.plt") {}
+    : SyntheticSection(SHF_ALLOC | SHF_WRITE, SHT_PROGBITS, Config->Wordsize,
+                       ".got.plt") {
+  if (Config->EMachine == EM_PPC) {
+    Name = ".plt";
+  } else if (Config->EMachine == EM_PPC64) {
+    Type = SHT_NOBITS;
+    Name = ".plt";
+  }
+}
 
 void GotPltSection::addEntry(Symbol &Sym) {
   assert(Sym.PltIndex == Entries.size());
@@ -1335,6 +1345,13 @@ template <class ELFT> void DynamicSection<ELFT>::finalizeContents() {
     addInt(DT_PLTREL, Config->IsRela ? DT_RELA : DT_REL);
   }
 
+  if (Config->EMachine == EM_AARCH64) {
+    if (Config->AndFeatures & GNU_PROPERTY_AARCH64_FEATURE_1_BTI)
+      addInt(DT_AARCH64_BTI_PLT, 0);
+    if (Config->AndFeatures & GNU_PROPERTY_AARCH64_FEATURE_1_PAC)
+      addInt(DT_AARCH64_PAC_PLT, 0);
+  }
+
   addInSec(DT_SYMTAB, In.DynSymTab);
   addInt(DT_SYMENT, sizeof(Elf_Sym));
   addInSec(DT_STRTAB, In.DynStrTab);
@@ -1403,6 +1420,11 @@ template <class ELFT> void DynamicSection<ELFT>::finalizeContents() {
       addInSecRelative(DT_MIPS_RLD_MAP_REL, In.MipsRldMap);
     }
   }
+
+  // DT_PPC_GOT indicates to glibc Secure PLT is used. If DT_PPC_GOT is absent,
+  // glibc assumes the old-style BSS PLT layout which we don't support.
+  if (Config->EMachine == EM_PPC)
+    add(DT_PPC_GOT, [] { return In.Got->getVA(); });
 
   // Glink dynamic tag is required by the V2 abi if the plt section isn't empty.
   if (Config->EMachine == EM_PPC64 && In.Plt->isNeeded()) {
@@ -2279,8 +2301,11 @@ void HashTableSection::writeTo(uint8_t *Buf) {
 // On PowerPC64 the lazy symbol resolvers go into the `global linkage table`
 // in the .glink section, rather then the typical .plt section.
 PltSection::PltSection(bool IsIplt)
-    : SyntheticSection(SHF_ALLOC | SHF_EXECINSTR, SHT_PROGBITS, 16,
-                       Config->EMachine == EM_PPC64 ? ".glink" : ".plt"),
+    : SyntheticSection(
+          SHF_ALLOC | SHF_EXECINSTR, SHT_PROGBITS, 16,
+          (Config->EMachine == EM_PPC || Config->EMachine == EM_PPC64)
+              ? ".glink"
+              : ".plt"),
       HeaderSize(!IsIplt || Config->ZRetpolineplt ? Target->PltHeaderSize : 0),
       IsIplt(IsIplt) {
   // The PLT needs to be writable on SPARC as the dynamic linker will
@@ -2290,6 +2315,11 @@ PltSection::PltSection(bool IsIplt)
 }
 
 void PltSection::writeTo(uint8_t *Buf) {
+  if (Config->EMachine == EM_PPC) {
+    writePPC32GlinkSection(Buf, Entries.size());
+    return;
+  }
+
   // At beginning of PLT or retpoline IPLT, we have code to call the dynamic
   // linker to resolve dynsyms at runtime. Write such code.
   if (HeaderSize)
@@ -3234,6 +3264,37 @@ bool ThunkSection::assignOffsets() {
   bool Changed = Off != Size;
   Size = Off;
   return Changed;
+}
+
+PPC32Got2Section::PPC32Got2Section()
+    : SyntheticSection(SHF_ALLOC | SHF_WRITE, SHT_PROGBITS, 4, ".got2") {}
+
+bool PPC32Got2Section::isNeeded() const {
+  // See the comment below. This is not needed if there is no other
+  // InputSection.
+  for (BaseCommand *Base : getParent()->SectionCommands)
+    if (auto *ISD = dyn_cast<InputSectionDescription>(Base))
+      for (InputSection *IS : ISD->Sections)
+        if (IS != this)
+          return true;
+  return false;
+}
+
+void PPC32Got2Section::finalizeContents() {
+  // PPC32 may create multiple GOT sections for -fPIC/-fPIE, one per file in
+  // .got2 . This function computes OutSecOff of each .got2 to be used in
+  // PPC32PltCallStub::writeTo(). The purpose of this empty synthetic section is
+  // to collect input sections named ".got2".
+  uint32_t Offset = 0;
+  for (BaseCommand *Base : getParent()->SectionCommands)
+    if (auto *ISD = dyn_cast<InputSectionDescription>(Base)) {
+      for (InputSection *IS : ISD->Sections) {
+        if (IS == this)
+          continue;
+        IS->File->PPC32Got2OutSecOff = Offset;
+        Offset += (uint32_t)IS->getSize();
+      }
+    }
 }
 
 // If linking position-dependent code then the table will store the addresses
