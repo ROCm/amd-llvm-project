@@ -107,7 +107,7 @@ private:
           DeclIndexPair(ND, Index));
     }
 
-    void Destroy() {
+    ~ShadowMapEntry() {
       if (DeclIndexPairVector *Vec =
               DeclOrVector.dyn_cast<DeclIndexPairVector *>()) {
         delete Vec;
@@ -1348,11 +1348,6 @@ void ResultBuilder::EnterNewScope() { ShadowMaps.emplace_back(); }
 
 /// Exit from the current scope.
 void ResultBuilder::ExitScope() {
-  for (ShadowMap::iterator E = ShadowMaps.back().begin(),
-                           EEnd = ShadowMaps.back().end();
-       E != EEnd; ++E)
-    E->second.Destroy();
-
   ShadowMaps.pop_back();
 }
 
