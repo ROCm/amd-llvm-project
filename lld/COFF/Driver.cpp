@@ -81,6 +81,7 @@ bool link(ArrayRef<const char *> Args, bool CanExitEarly, raw_ostream &Diag) {
   ObjFile::Instances.clear();
   ImportFile::Instances.clear();
   BitcodeFile::Instances.clear();
+  memset(MergeChunk::Instances, 0, sizeof(MergeChunk::Instances));
   return !errorCount();
 }
 
@@ -1698,6 +1699,14 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
   // link those files.
   Symtab->addCombinedLTOObjects();
   run();
+
+  if (Args.hasArg(OPT_include_optional)) {
+    // Handle /includeoptional
+    for (auto *Arg : Args.filtered(OPT_include_optional))
+      if (dyn_cast_or_null<Lazy>(Symtab->find(Arg->getValue())))
+        addUndefined(Arg->getValue());
+    while (run());
+  }
 
   if (Config->MinGW) {
     // Load any further object files that might be needed for doing automatic
