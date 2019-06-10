@@ -3421,7 +3421,10 @@ llvm::Constant *ItaniumRTTIBuilder::BuildTypeInfo(
   TypeName->setDLLStorageClass(DLLStorageClass);
   GV->setDLLStorageClass(DLLStorageClass);
 
-  return llvm::ConstantExpr::getPointerCast(GV, CGM.Int8PtrTy);
+  TypeName->setPartition(CGM.getCodeGenOpts().SymbolPartition);
+  GV->setPartition(CGM.getCodeGenOpts().SymbolPartition);
+
+  return llvm::ConstantExpr::getBitCast(GV, CGM.Int8PtrTy);
 }
 
 /// BuildObjCObjectTypeInfo - Build the appropriate kind of type_info
