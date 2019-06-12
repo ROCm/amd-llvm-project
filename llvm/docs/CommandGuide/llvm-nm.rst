@@ -100,10 +100,10 @@ OPTIONS
 
 .. option:: --format=format, -f format
 
- Select an output format; *format* may be *sysv*, *posix*, or *bsd*.  The default
- is *bsd*.
+ Select an output format; *format* may be *sysv*, *posix*, *darwin*, or *bsd*.
+ The default is *bsd*.
 
-.. option:: -help
+.. option:: --help, -h
 
  Print a summary of command-line options and their meanings.
 
@@ -121,7 +121,7 @@ OPTIONS
 
 .. option:: --print-size, -S
 
- Show symbol size instead of address.
+ Show symbol size as well as address (not applicable for Mach-O).
 
 .. option:: --size-sort
 
@@ -134,7 +134,7 @@ OPTIONS
 .. option:: --radix=RADIX, -t
 
  Specify the radix of the symbol address(es). Values accepted d(decimal),
- x(hexadecomal) and o(octal).
+ x(hexadecimal) and o(octal).
 
 BUGS
 ----

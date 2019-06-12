@@ -6,9 +6,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "DebugTypes.h"
 #include "Driver.h"
 #include "Config.h"
+#include "DebugTypes.h"
 #include "ICF.h"
 #include "InputFiles.h"
 #include "MarkLive.h"
@@ -30,6 +30,7 @@
 #include "llvm/Object/ArchiveWriter.h"
 #include "llvm/Object/COFFImportFile.h"
 #include "llvm/Object/COFFModuleDefinition.h"
+#include "llvm/Object/WindowsMachineFlag.h"
 #include "llvm/Option/Arg.h"
 #include "llvm/Option/ArgList.h"
 #include "llvm/Option/Option.h"
@@ -971,6 +972,32 @@ static void parsePDBAltPath(StringRef AltPath) {
   Config->PDBAltPath = Buf;
 }
 
+/// Check that at most one resource obj file was used.
+/// Call after ObjFile::Instances is complete.
+static void diagnoseMultipleResourceObjFiles() {
+  // The .rsrc$01 section in a resource obj file contains a tree description
+  // of resources.  Merging multiple resource obj files would require merging
+  // the trees instead of using usual linker section merging semantics.
+  // Since link.exe disallows linking more than one resource obj file with
+  // LNK4078, mirror that.  The normal use of resource files is to give the
+  // linker many .res files, which are then converted to a single resource obj
+  // file internally, so this is not a big restriction in practice.
+  ObjFile *ResourceObjFile = nullptr;
+  for (ObjFile *F : ObjFile::Instances) {
+    if (!F->IsResourceObjFile)
+      continue;
+
+    if (!ResourceObjFile) {
+      ResourceObjFile = F;
+      continue;
+    }
+
+    error(toString(F) +
+          ": more than one resource obj file not allowed, already got " +
+          toString(ResourceObjFile));
+  }
+}
+
 // In MinGW, if no symbols are chosen to be exported, then all symbols are
 // automatically exported by default. This behavior can be forced by the
 // -export-all-symbols option, so that it happens even when exports are
@@ -1811,6 +1838,9 @@ void LinkerDriver::link(ArrayRef<const char *> ArgsArr) {
   // Identify unreferenced COMDAT sections.
   if (Config->DoGC)
     markLive(Symtab->getChunks());
+
+  // Needs to happen after the last call to addFile().
+  diagnoseMultipleResourceObjFiles();
 
   // Identify identical COMDAT sections to merge them.
   if (Config->DoICF) {
