@@ -382,13 +382,16 @@ private:
 };
 
 template <typename ELFT> class GNUStyle : public DumpStyle<ELFT> {
-  formatted_raw_ostream OS;
+  formatted_raw_ostream &OS;
 
 public:
   TYPEDEF_ELF_TYPES(ELFT)
 
   GNUStyle(ScopedPrinter &W, ELFDumper<ELFT> *Dumper)
-      : DumpStyle<ELFT>(Dumper), OS(W.getOStream()) {}
+      : DumpStyle<ELFT>(Dumper),
+        OS(static_cast<formatted_raw_ostream&>(W.getOStream())) {
+    assert (&W.getOStream() == &llvm::fouts());
+  }
 
   void printFileHeaders(const ELFO *Obj) override;
   void printGroupSections(const ELFFile<ELFT> *Obj) override;
@@ -1294,6 +1297,8 @@ static const EnumEntry<unsigned> ElfHeaderAMDGPUFlags[] = {
   LLVM_READOBJ_ENUM_ENT(ELF, EF_AMDGPU_MACH_AMDGCN_GFX906),
   LLVM_READOBJ_ENUM_ENT(ELF, EF_AMDGPU_MACH_AMDGCN_GFX909),
   LLVM_READOBJ_ENUM_ENT(ELF, EF_AMDGPU_MACH_AMDGCN_GFX1010),
+  LLVM_READOBJ_ENUM_ENT(ELF, EF_AMDGPU_MACH_AMDGCN_GFX1011),
+  LLVM_READOBJ_ENUM_ENT(ELF, EF_AMDGPU_MACH_AMDGCN_GFX1012),
   LLVM_READOBJ_ENUM_ENT(ELF, EF_AMDGPU_XNACK),
   LLVM_READOBJ_ENUM_ENT(ELF, EF_AMDGPU_SRAM_ECC)
 };
