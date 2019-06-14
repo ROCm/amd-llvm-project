@@ -753,7 +753,7 @@ Value *SCEVExpander::visitAddExpr(const SCEVAddExpr *S) {
       Sum = InsertNoopCastOfTo(Sum, Ty);
       // Canonicalize a constant to the RHS.
       if (isa<Constant>(Sum)) std::swap(Sum, W);
-      Sum = InsertBinop(Instruction::Add, Sum, W, SCEV::FlagAnyWrap,
+      Sum = InsertBinop(Instruction::Add, Sum, W, S->getNoWrapFlags(),
                         /*IsSafeToHoist*/ true);
       ++I;
     }
@@ -783,7 +783,7 @@ Value *SCEVExpander::visitMulExpr(const SCEVMulExpr *S) {
   // Expand the calculation of X pow N in the following manner:
   // Let N = P1 + P2 + ... + PK, where all P are powers of 2. Then:
   // X pow N = (X pow P1) * (X pow P2) * ... * (X pow PK).
-  const auto ExpandOpBinPowN = [this, &I, &OpsAndLoops, &Ty, &S]() {
+  const auto ExpandOpBinPowN = [this, &I, &OpsAndLoops, &Ty]() {
     auto E = I;
     // Calculate how many times the same operand from the same loop is included
     // into this power.
