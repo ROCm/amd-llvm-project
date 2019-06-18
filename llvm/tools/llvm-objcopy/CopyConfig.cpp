@@ -11,6 +11,7 @@
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/Option/Arg.h"
 #include "llvm/Option/ArgList.h"
 #include "llvm/Support/CommandLine.h"
@@ -306,6 +307,9 @@ static const StringMap<MachineInfo> OutputFormatMap{
     {"elf32-tradlittlemips", {ELF::EM_MIPS, false, true}},
     {"elf64-tradbigmips", {ELF::EM_MIPS, true, false}},
     {"elf64-tradlittlemips", {ELF::EM_MIPS, true, true}},
+    // SPARC
+    {"elf32-sparc", {ELF::EM_SPARC, false, false}},
+    {"elf32-sparcel", {ELF::EM_SPARC, false, true}},
 };
 
 static Expected<MachineInfo> getOutputFormatMachineInfo(StringRef Format) {
@@ -668,6 +672,11 @@ Expected<DriverConfig> parseObjcopyOptions(ArrayRef<const char *> ArgsArr) {
 
   Config.PreserveDates = InputArgs.hasArg(OBJCOPY_preserve_dates);
 
+  if (Config.PreserveDates &&
+      (Config.OutputFilename == "-" || Config.InputFilename == "-"))
+    return createStringError(errc::invalid_argument,
+                             "--preserve-dates requires a file");
+
   for (auto Arg : InputArgs)
     if (Arg->getOption().matches(OBJCOPY_set_start)) {
       auto EAddr = getAsInteger<uint64_t>(Arg->getValue());
@@ -714,7 +723,9 @@ Expected<DriverConfig> parseObjcopyOptions(ArrayRef<const char *> ArgsArr) {
 // ParseStripOptions returns the config and sets the input arguments. If a
 // help flag is set then ParseStripOptions will print the help messege and
 // exit.
-Expected<DriverConfig> parseStripOptions(ArrayRef<const char *> ArgsArr) {
+Expected<DriverConfig>
+parseStripOptions(ArrayRef<const char *> ArgsArr,
+                  std::function<Error(Error)> ErrorCallback) {
   StripOptTable T;
   unsigned MissingArgumentIndex, MissingArgumentCount;
   llvm::opt::InputArgList InputArgs =
@@ -736,7 +747,7 @@ Expected<DriverConfig> parseStripOptions(ArrayRef<const char *> ArgsArr) {
     exit(0);
   }
 
-  SmallVector<const char *, 2> Positional;
+  SmallVector<StringRef, 2> Positional;
   for (auto Arg : InputArgs.filtered(STRIP_UNKNOWN))
     return createStringError(errc::invalid_argument, "unknown argument '%s'",
                              Arg->getAsString(InputArgs).c_str());
@@ -801,12 +812,28 @@ Expected<DriverConfig> parseStripOptions(ArrayRef<const char *> ArgsArr) {
         InputArgs.getLastArgValue(STRIP_output, Positional[0]);
     DC.CopyConfigs.push_back(std::move(Config));
   } else {
-    for (const char *Filename : Positional) {
+    StringMap<unsigned> InputFiles;
+    for (StringRef Filename : Positional) {
+      if (InputFiles[Filename]++ == 1) {
+        if (Filename == "-")
+          return createStringError(
+              errc::invalid_argument,
+              "cannot specify '-' as an input file more than once");
+        if (Error E = ErrorCallback(createStringError(
+                errc::invalid_argument, "'%s' was already specified",
+                Filename.str().c_str())))
+          return std::move(E);
+      }
       Config.InputFilename = Filename;
       Config.OutputFilename = Filename;
       DC.CopyConfigs.push_back(Config);
     }
   }
+
+  if (Config.PreserveDates && (is_contained(Positional, "-") ||
+                               InputArgs.getLastArgValue(STRIP_output) == "-"))
+    return createStringError(errc::invalid_argument,
+                             "--preserve-dates requires a file");
 
   return std::move(DC);
 }

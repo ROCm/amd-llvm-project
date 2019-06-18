@@ -72,7 +72,8 @@ static SlabTuple indexSymbols(ASTContext &AST, std::shared_ptr<Preprocessor> PP,
        "  relations slab: {7} relations, {8} bytes",
        FileName, IsIndexMainAST, Syms.size(), Syms.bytes(), Refs.size(),
        Refs.numRefs(), Refs.bytes(), Relations.size(), Relations.bytes());
-  return {std::move(Syms), std::move(Refs), std::move(Relations)};
+  return std::make_tuple(std::move(Syms), std::move(Refs),
+                         std::move(Relations));
 }
 
 SlabTuple indexMainDecls(ParsedAST &AST) {
@@ -259,7 +260,7 @@ void FileIndex::updateMain(PathRef Path, ParsedAST &AST) {
       llvm::make_unique<RelationSlab>(std::move(std::get<2>(Contents))),
       /*CountReferences=*/true);
   MainFileIndex.reset(
-      MainFileSymbols.buildIndex(IndexType::Light, DuplicateHandling::PickOne));
+      MainFileSymbols.buildIndex(IndexType::Light, DuplicateHandling::Merge));
 }
 
 } // namespace clangd
