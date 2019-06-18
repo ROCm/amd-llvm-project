@@ -5079,6 +5079,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   if (Args.hasFlag(options::OPT_fsave_optimization_record,
                    options::OPT_foptimization_record_file_EQ,
                    options::OPT_fno_save_optimization_record, false) ||
+      Args.hasFlag(options::OPT_fsave_optimization_record_EQ,
+                   options::OPT_fno_save_optimization_record, false) ||
       Args.hasFlag(options::OPT_foptimization_record_passes_EQ,
                    options::OPT_fno_save_optimization_record, false)) {
     CmdArgs.push_back("-opt-record-file");
@@ -5111,12 +5113,26 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
         }
       }
 
-      llvm::sys::path::replace_extension(F, "opt.yaml");
+      std::string Extension = "opt.";
+      if (const Arg *A =
+              Args.getLastArg(options::OPT_fsave_optimization_record_EQ))
+        Extension += A->getValue();
+      else
+        Extension += "yaml";
+
+      llvm::sys::path::replace_extension(F, Extension);
       CmdArgs.push_back(Args.MakeArgString(F));
     }
+
     if (const Arg *A =
             Args.getLastArg(options::OPT_foptimization_record_passes_EQ)) {
       CmdArgs.push_back("-opt-record-passes");
+      CmdArgs.push_back(A->getValue());
+    }
+
+    if (const Arg *A =
+            Args.getLastArg(options::OPT_fsave_optimization_record_EQ)) {
+      CmdArgs.push_back("-opt-record-format");
       CmdArgs.push_back(A->getValue());
     }
   }
