@@ -296,15 +296,6 @@ def rGPR : RegisterClass<"ARM", [i32], 32, (sub GPR, SP, PC)> {
   let DiagnosticType = "rGPR";
 }
 
-// t2rGPR : All Thumb 2 registers with the exception of SP and PC.
-def t2rGPR : RegisterClass<"ARM", [i32], 32, (sub GPR, SP, PC)> {
-  let AltOrders = [(add LR, t2rGPR), (trunc t2rGPR, 8)];
-  let AltOrderSelect = [{
-      return 1 + MF.getSubtarget<ARMSubtarget>().isThumb1Only();
-  }];
-  let DiagnosticType = "rGPR";
-}
-
 // Thumb registers are R0-R7 normally. Some instructions can still use
 // the general GPR register class above (MOV, e.g.)
 def tGPR : RegisterClass<"ARM", [i32], 32, (trunc GPR, 8)> {
@@ -477,8 +468,11 @@ def DPair : RegisterClass<"ARM", [v16i8, v8i16, v4i32, v2i64, v4f32, v2f64],
                           128, (interleave QPR, TuplesOE2D)> {
   // Allocate starting at non-VFP2 registers D16-D31 first.
   // Prefer even-odd pairs as they are easier to copy.
-  let AltOrders = [(add (rotl QPR, 8), (rotl DPair, 16))];
-  let AltOrderSelect = [{ return 1; }];
+  let AltOrders = [(add (rotl QPR, 8),  (rotl DPair, 16)),
+                   (add (trunc QPR, 8), (trunc DPair, 16))];
+  let AltOrderSelect = [{
+    return 1 + MF.getSubtarget<ARMSubtarget>().hasMVEIntegerOps();
+  }];
 }
 
 // Pseudo-registers representing even-odd pairs of GPRs from R1 to R13/SP.

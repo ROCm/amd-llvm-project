@@ -143,7 +143,9 @@ static cl::alias DisassembleAllShort("D",
 
 static cl::list<std::string>
     DisassembleFunctions("disassemble-functions", cl::CommaSeparated,
-                         cl::desc("List of functions to disassemble"),
+                         cl::desc("List of functions to disassemble. "
+                                  "Accept demangled names when --demangle is "
+                                  "specified, otherwise accept mangled names"),
                          cl::cat(ObjdumpCat));
 
 static cl::opt<bool> DisassembleZeroes(
@@ -855,10 +857,15 @@ addDynamicElfSymbols(const ELFObjectFile<ELFT> *Obj,
                      std::map<SectionRef, SectionSymbolsTy> &AllSymbols) {
   for (auto Symbol : Obj->getDynamicSymbolIterators()) {
     uint8_t SymbolType = Symbol.getELFType();
-    if (SymbolType != ELF::STT_FUNC || Symbol.getSize() == 0)
+    if (SymbolType == ELF::STT_SECTION)
       continue;
 
     uint64_t Address = unwrapOrError(Symbol.getAddress(), Obj->getFileName());
+    // ELFSymbolRef::getAddress() returns size instead of value for common
+    // symbols which is not desirable for disassembly output. Overriding.
+    if (SymbolType == ELF::STT_COMMON)
+      Address = Obj->getSymbol(Symbol.getRawDataRefImpl())->st_value;
+
     StringRef Name = unwrapOrError(Symbol.getName(), Obj->getFileName());
     if (Name.empty())
       continue;
@@ -1207,17 +1214,20 @@ static void disassembleObject(const Target *TheTarget, const ObjectFile *Obj,
     std::vector<RelocationRef>::const_iterator RelEnd = Rels.end();
     // Disassemble symbol by symbol.
     for (unsigned SI = 0, SE = Symbols.size(); SI != SE; ++SI) {
+      std::string SymbolName = std::get<1>(Symbols[SI]).str();
+      if (Demangle)
+        SymbolName = demangle(SymbolName);
+
       // Skip if --disassemble-functions is not empty and the symbol is not in
       // the list.
-      if (!DisasmFuncsSet.empty() &&
-          !DisasmFuncsSet.count(std::get<1>(Symbols[SI])))
+      if (!DisasmFuncsSet.empty() && !DisasmFuncsSet.count(SymbolName))
         continue;
 
       uint64_t Start = std::get<0>(Symbols[SI]);
       if (Start < SectionAddr || StopAddress <= Start)
         continue;
       else
-        FoundDisasmFuncsSet.insert(std::get<1>(Symbols[SI]));
+        FoundDisasmFuncsSet.insert(SymbolName);
 
       // The end is the section end, the beginning of the next symbol, or
       // --stop-address.
@@ -1259,11 +1269,7 @@ static void disassembleObject(const Target *TheTarget, const ObjectFile *Obj,
         outs() << format(Is64Bits ? "%016" PRIx64 " " : "%08" PRIx64 " ",
                          SectionAddr + Start + VMAAdjustment);
 
-      StringRef SymbolName = std::get<1>(Symbols[SI]);
-      if (Demangle)
-        outs() << demangle(SymbolName) << ":\n";
-      else
-        outs() << SymbolName << ":\n";
+      outs() << SymbolName << ":\n";
 
       // Don't print raw contents of a virtual section. A virtual section
       // doesn't have any contents in the file.
@@ -1288,13 +1294,15 @@ static void disassembleObject(const Target *TheTarget, const ObjectFile *Obj,
       if (SectionAddr < StartAddress)
         Index = std::max<uint64_t>(Index, StartAddress - SectionAddr);
 
-      // If there is a data symbol inside an ELF text section and we are
+      // If there is a data/common symbol inside an ELF text section and we are
       // only disassembling text (applicable all architectures), we are in a
       // situation where we must print the data and not disassemble it.
-      if (Obj->isELF() && std::get<2>(Symbols[SI]) == ELF::STT_OBJECT &&
-          !DisassembleAll && Section.isText()) {
-        dumpELFData(SectionAddr, Index, End, Bytes);
-        Index = End;
+      if (Obj->isELF() && !DisassembleAll && Section.isText()) {
+        uint8_t SymTy = std::get<2>(Symbols[SI]);
+        if (SymTy == ELF::STT_OBJECT || SymTy == ELF::STT_COMMON) {
+          dumpELFData(SectionAddr, Index, End, Bytes);
+          Index = End;
+        }
       }
 
       bool CheckARMELFData = hasMappingSymbols(Obj) &&
@@ -1453,9 +1461,6 @@ static void disassembleObject(const Target *TheTarget, const ObjectFile *Obj,
 }
 
 static void disassembleObject(const ObjectFile *Obj, bool InlineRelocs) {
-  if (StartAddress >= StopAddress)
-    error("start address should be less than stop address");
-
   const Target *TheTarget = getTarget(Obj);
 
   // Package up features to be passed to target/subtarget
@@ -2115,6 +2120,9 @@ int main(int argc, char **argv) {
   cl::AddExtraVersionPrinter(TargetRegistry::printRegisteredTargetsForVersion);
 
   cl::ParseCommandLineOptions(argc, argv, "llvm object file dumper\n");
+
+  if (StartAddress >= StopAddress)
+    error("start address should be less than stop address");
 
   ToolName = argv[0];
 
