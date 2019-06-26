@@ -2282,7 +2282,7 @@ bool VarDecl::isUsableInConstantExpressions(ASTContext &Context) const {
   //   declaration is encountered...
   const VarDecl *DefVD = nullptr;
   const Expr *Init = getAnyInitializer(DefVD);
-  if (!Init || Init->isValueDependent())
+  if (!Init || Init->isValueDependent() || getType()->isDependentType())
     return false;
   //   ... if it is a constexpr variable, or it is of reference type or of
   //   const-qualified integral or enumeration type, ...
@@ -2724,7 +2724,8 @@ FunctionDecl::FunctionDecl(Kind DK, ASTContext &C, DeclContext *DC,
                            SourceLocation StartLoc,
                            const DeclarationNameInfo &NameInfo, QualType T,
                            TypeSourceInfo *TInfo, StorageClass S,
-                           bool isInlineSpecified, bool isConstexprSpecified)
+                           bool isInlineSpecified,
+                           ConstexprSpecKind ConstexprKind)
     : DeclaratorDecl(DK, DC, NameInfo.getLoc(), NameInfo.getName(), T, TInfo,
                      StartLoc),
       DeclContext(DK), redeclarable_base(C), ODRHash(0),
@@ -2744,7 +2745,7 @@ FunctionDecl::FunctionDecl(Kind DK, ASTContext &C, DeclContext *DC,
   FunctionDeclBits.IsExplicitlyDefaulted = false;
   FunctionDeclBits.HasImplicitReturnZero = false;
   FunctionDeclBits.IsLateTemplateParsed = false;
-  FunctionDeclBits.IsConstexpr = isConstexprSpecified;
+  FunctionDeclBits.ConstexprKind = ConstexprKind;
   FunctionDeclBits.InstantiationIsPending = false;
   FunctionDeclBits.UsesSEHTry = false;
   FunctionDeclBits.HasSkippedBody = false;
@@ -3912,6 +3913,39 @@ bool FieldDecl::isZeroLengthBitField(const ASTContext &Ctx) const {
          getBitWidthValue(Ctx) == 0;
 }
 
+bool FieldDecl::isZeroSize(const ASTContext &Ctx) const {
+  if (isZeroLengthBitField(Ctx))
+    return true;
+
+  // C++2a [intro.object]p7:
+  //   An object has nonzero size if it
+  //     -- is not a potentially-overlapping subobject, or
+  if (!hasAttr<NoUniqueAddressAttr>())
+    return false;
+
+  //     -- is not of class type, or
+  const auto *RT = getType()->getAs<RecordType>();
+  if (!RT)
+    return false;
+  const RecordDecl *RD = RT->getDecl()->getDefinition();
+  if (!RD) {
+    assert(isInvalidDecl() && "valid field has incomplete type");
+    return false;
+  }
+
+  //     -- [has] virtual member functions or virtual base classes, or
+  //     -- has subobjects of nonzero size or bit-fields of nonzero length
+  const auto *CXXRD = cast<CXXRecordDecl>(RD);
+  if (!CXXRD->isEmpty())
+    return false;
+
+  // Otherwise, [...] the circumstances under which the object has zero size
+  // are implementation-defined.
+  // FIXME: This might be Itanium ABI specific; we don't yet know what the MS
+  // ABI will do.
+  return true;
+}
+
 unsigned FieldDecl::getFieldIndex() const {
   const FieldDecl *Canonical = getCanonicalDecl();
   if (Canonical != this)
@@ -4541,13 +4575,12 @@ FunctionDecl *FunctionDecl::Create(ASTContext &C, DeclContext *DC,
                                    SourceLocation StartLoc,
                                    const DeclarationNameInfo &NameInfo,
                                    QualType T, TypeSourceInfo *TInfo,
-                                   StorageClass SC,
-                                   bool isInlineSpecified,
+                                   StorageClass SC, bool isInlineSpecified,
                                    bool hasWrittenPrototype,
-                                   bool isConstexprSpecified) {
+                                   ConstexprSpecKind ConstexprKind) {
   FunctionDecl *New =
       new (C, DC) FunctionDecl(Function, C, DC, StartLoc, NameInfo, T, TInfo,
-                               SC, isInlineSpecified, isConstexprSpecified);
+                               SC, isInlineSpecified, ConstexprKind);
   New->setHasWrittenPrototype(hasWrittenPrototype);
   return New;
 }
@@ -4555,7 +4588,7 @@ FunctionDecl *FunctionDecl::Create(ASTContext &C, DeclContext *DC,
 FunctionDecl *FunctionDecl::CreateDeserialized(ASTContext &C, unsigned ID) {
   return new (C, ID) FunctionDecl(Function, C, nullptr, SourceLocation(),
                                   DeclarationNameInfo(), QualType(), nullptr,
-                                  SC_None, false, false);
+                                  SC_None, false, CSK_unspecified);
 }
 
 BlockDecl *BlockDecl::Create(ASTContext &C, DeclContext *DC, SourceLocation L) {

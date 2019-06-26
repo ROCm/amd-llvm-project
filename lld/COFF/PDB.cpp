@@ -1002,6 +1002,11 @@ void DebugSHandler::handleDebugS(lld::coff::SectionChunk &DebugS) {
   ExitOnErr(Reader.readArray(Subsections, RelocatedDebugContents.size()));
 
   for (const DebugSubsectionRecord &SS : Subsections) {
+    // Ignore subsections with the 'ignore' bit. Some versions of the Visual C++
+    // runtime have subsections with this bit set.
+    if (uint32_t(SS.kind()) & codeview::SubsectionIgnoreFlag)
+      continue;
+
     switch (SS.kind()) {
     case DebugSubsectionKind::StringTable: {
       assert(!CVStrTab.valid() &&
@@ -1058,7 +1063,7 @@ void DebugSHandler::handleDebugS(lld::coff::SectionChunk &DebugS) {
 
     default:
       warn("ignoring unknown debug$S subsection kind 0x" +
-           utohexstr(uint32_t(SS.kind())));
+           utohexstr(uint32_t(SS.kind())) + " in file " + toString(&File));
       break;
     }
   }

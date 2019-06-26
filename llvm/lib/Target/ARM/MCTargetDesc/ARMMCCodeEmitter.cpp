@@ -162,6 +162,15 @@ public:
                               SmallVectorImpl<MCFixup> &Fixups,
                               const MCSubtargetInfo &STI) const;
 
+  uint32_t getITMaskOpValue(const MCInst &MI, unsigned OpIdx,
+                            SmallVectorImpl<MCFixup> &Fixups,
+                            const MCSubtargetInfo &STI) const;
+
+  /// getMVEShiftImmOpValue - Return encoding info for the 'sz:imm5'
+  /// operand.
+  uint32_t getMVEShiftImmOpValue(const MCInst &MI, unsigned OpIdx,
+                                 SmallVectorImpl<MCFixup> &Fixups,
+                                 const MCSubtargetInfo &STI) const;
 
   /// getAddrModeImm12OpValue - Return encoding info for 'reg +/- imm12'
   /// operand.
@@ -389,6 +398,14 @@ public:
   unsigned getThumbSRImmOpValue(const MCInst &MI, unsigned Op,
                                  SmallVectorImpl<MCFixup> &Fixups,
                                  const MCSubtargetInfo &STI) const;
+  template <uint8_t shift, bool invert>
+  unsigned getExpandedImmOpValue(const MCInst &MI, unsigned Op,
+                                 SmallVectorImpl<MCFixup> &Fixups,
+                                 const MCSubtargetInfo &STI) const {
+    static_assert(shift <= 32, "Shift count must be less than or equal to 32.");
+    const MCOperand MO = MI.getOperand(Op);
+    return (invert ? (MO.getImm() ^ 0xff) : MO.getImm()) >> shift;
+  }
 
   unsigned NEONThumb2DataIPostEncoder(const MCInst &MI,
                                       unsigned EncodedValue,
@@ -406,6 +423,10 @@ public:
   unsigned VFPThumb2PostEncoder(const MCInst &MI,
                                 unsigned EncodedValue,
                                 const MCSubtargetInfo &STI) const;
+
+  uint32_t getPowerTwoOpValue(const MCInst &MI, unsigned OpIdx,
+                              SmallVectorImpl<MCFixup> &Fixups,
+                              const MCSubtargetInfo &STI) const;
 
   void EmitByte(unsigned char C, raw_ostream &OS) const {
     OS << (char)C;
@@ -431,6 +452,17 @@ public:
   uint32_t getBFAfterTargetOpValue(const MCInst &MI, unsigned OpIdx,
                                    SmallVectorImpl<MCFixup> &Fixups,
                                    const MCSubtargetInfo &STI) const;
+
+  uint32_t getVPTMaskOpValue(const MCInst &MI, unsigned OpIdx,
+                             SmallVectorImpl<MCFixup> &Fixups,
+                             const MCSubtargetInfo &STI) const;
+  uint32_t getRestrictedCondCodeOpValue(const MCInst &MI, unsigned OpIdx,
+                                        SmallVectorImpl<MCFixup> &Fixups,
+                                        const MCSubtargetInfo &STI) const;
+  template <unsigned size>
+  uint32_t getMVEPairVectorIndexOpValue(const MCInst &MI, unsigned OpIdx,
+                                        SmallVectorImpl<MCFixup> &Fixups,
+                                        const MCSubtargetInfo &STI) const;
 };
 
 } // end anonymous namespace
@@ -517,7 +549,15 @@ getMachineOpValue(const MCInst &MI, const MCOperand &MO,
     unsigned Reg = MO.getReg();
     unsigned RegNo = CTX.getRegisterInfo()->getEncodingValue(Reg);
 
-    // Q registers are encoded as 2x their register number.
+    // In NEON, Q registers are encoded as 2x their register number,
+    // because they're using the same indices as the D registers they
+    // overlap. In MVE, there are no 64-bit vector instructions, so
+    // the encodings all refer to Q-registers by their literal
+    // register number.
+
+    if (STI.getFeatureBits()[ARM::HasMVEIntegerOps])
+      return RegNo;
+
     switch (Reg) {
     default:
       return RegNo;
@@ -829,6 +869,33 @@ getT2AdrLabelOpValue(const MCInst &MI, unsigned OpIdx,
   return Val;
 }
 
+/// getITMaskOpValue - Return the architectural encoding of an IT
+/// predication mask, given the MCOperand format.
+uint32_t ARMMCCodeEmitter::
+getITMaskOpValue(const MCInst &MI, unsigned OpIdx,
+                 SmallVectorImpl<MCFixup> &Fixups,
+                 const MCSubtargetInfo &STI) const {
+  const MCOperand MaskMO = MI.getOperand(OpIdx);
+  assert(MaskMO.isImm() && "Unexpected operand type!");
+
+  unsigned Mask = MaskMO.getImm();
+
+  // IT masks are encoded as a sequence of replacement low-order bits
+  // for the condition code. So if the low bit of the starting
+  // condition code is 1, then we have to flip all the bits above the
+  // terminating bit (which is the lowest 1 bit).
+  assert(OpIdx > 0 && "IT mask appears first!");
+  const MCOperand CondMO = MI.getOperand(OpIdx-1);
+  assert(CondMO.isImm() && "Unexpected operand type!");
+  if (CondMO.getImm() & 1) {
+    unsigned LowBit = Mask & -Mask;
+    unsigned BitsAboveLowBit = 0xF & (-LowBit << 1);
+    Mask ^= BitsAboveLowBit;
+  }
+
+  return Mask;
+}
+
 /// getThumbAdrLabelOpValue - Return encoding info for 8-bit immediate ADR label
 /// target.
 uint32_t ARMMCCodeEmitter::
@@ -856,6 +923,41 @@ getThumbAddrModeRegRegOpValue(const MCInst &MI, unsigned OpIdx,
   unsigned Rn = CTX.getRegisterInfo()->getEncodingValue(MO1.getReg());
   unsigned Rm = CTX.getRegisterInfo()->getEncodingValue(MO2.getReg());
   return (Rm << 3) | Rn;
+}
+
+/// getMVEShiftImmOpValue - Return encoding info for the 'sz:imm5'
+/// operand.
+uint32_t
+ARMMCCodeEmitter::getMVEShiftImmOpValue(const MCInst &MI, unsigned OpIdx,
+                                        SmallVectorImpl<MCFixup> &Fixups,
+                                        const MCSubtargetInfo &STI) const {
+  // {4-0} = szimm5
+  // The value we are trying to encode is an immediate between either the
+  // range of [1-7] or [1-15] depending on whether we are dealing with the
+  // u8/s8 or the u16/s16 variants respectively.
+  // This value is encoded as follows, if ShiftImm is the value within those
+  // ranges then the encoding szimm5 = ShiftImm + size, where size is either 8
+  // or 16.
+
+  unsigned Size, ShiftImm;
+  switch(MI.getOpcode()) {
+    case ARM::MVE_VSHLL_imms16bh:
+    case ARM::MVE_VSHLL_imms16th:
+    case ARM::MVE_VSHLL_immu16bh:
+    case ARM::MVE_VSHLL_immu16th:
+      Size = 16;
+      break;
+    case ARM::MVE_VSHLL_imms8bh:
+    case ARM::MVE_VSHLL_imms8th:
+    case ARM::MVE_VSHLL_immu8bh:
+    case ARM::MVE_VSHLL_immu8th:
+      Size = 8;
+      break;
+    default:
+      llvm_unreachable("Use of operand not supported by this instruction");
+  }
+  ShiftImm = MI.getOperand(OpIdx).getImm();
+  return Size + ShiftImm;
 }
 
 /// getAddrModeImm12OpValue - Return encoding info for 'reg +/- imm12' operand.
@@ -1759,6 +1861,87 @@ ARMMCCodeEmitter::getBFAfterTargetOpValue(const MCInst &MI, unsigned OpIdx,
 
   return Diff == 4;
 }
+
+uint32_t ARMMCCodeEmitter::getVPTMaskOpValue(const MCInst &MI, unsigned OpIdx,
+                                             SmallVectorImpl<MCFixup> &Fixups,
+                                             const MCSubtargetInfo &STI)const {
+  const MCOperand MO = MI.getOperand(OpIdx);
+  assert(MO.isImm() && "Unexpected operand type!");
+
+  int Value = MO.getImm();
+  int Imm = 0;
+
+  // VPT Masks are actually encoded as a series of invert/don't invert bits,
+  // rather than true/false bits.
+  unsigned PrevBit = 0;
+  for (int i = 3; i >= 0; --i) {
+    unsigned Bit = (Value >> i) & 1;
+
+    // Check if we are at the end of the mask.
+    if ((Value & ~(~0U << i)) == 0) {
+      Imm |= (1 << i);
+      break;
+    }
+
+    // Convert the bit in the mask based on the previous bit.
+    if (Bit != PrevBit)
+      Imm |= (1 << i);
+
+    PrevBit = Bit;
+  }
+
+  return Imm;
+}
+
+uint32_t ARMMCCodeEmitter::getRestrictedCondCodeOpValue(
+    const MCInst &MI, unsigned OpIdx, SmallVectorImpl<MCFixup> &Fixups,
+    const MCSubtargetInfo &STI) const {
+
+  const MCOperand MO = MI.getOperand(OpIdx);
+  assert(MO.isImm() && "Unexpected operand type!");
+
+  switch (MO.getImm()) {
+  default:
+    assert(0 && "Unexpected Condition!");
+    return 0;
+  case ARMCC::HS:
+  case ARMCC::EQ:
+    return 0;
+  case ARMCC::HI:
+  case ARMCC::NE:
+    return 1;
+  case ARMCC::GE:
+    return 4;
+  case ARMCC::LT:
+    return 5;
+  case ARMCC::GT:
+    return 6;
+  case ARMCC::LE:
+    return 7;
+  }
+}
+
+uint32_t ARMMCCodeEmitter::
+getPowerTwoOpValue(const MCInst &MI, unsigned OpIdx,
+                   SmallVectorImpl<MCFixup> &Fixups,
+                   const MCSubtargetInfo &STI) const {
+  const MCOperand &MO = MI.getOperand(OpIdx);
+  assert(MO.isImm() && "Unexpected operand type!");
+  return countTrailingZeros((uint64_t)MO.getImm());
+}
+
+template <unsigned start>
+uint32_t ARMMCCodeEmitter::
+getMVEPairVectorIndexOpValue(const MCInst &MI, unsigned OpIdx,
+                             SmallVectorImpl<MCFixup> &Fixups,
+                             const MCSubtargetInfo &STI) const {
+  const MCOperand MO = MI.getOperand(OpIdx);
+  assert(MO.isImm() && "Unexpected operand type!");
+
+  int Value = MO.getImm();
+  return Value - start;
+}
+
 #include "ARMGenMCCodeEmitter.inc"
 
 MCCodeEmitter *llvm::createARMLEMCCodeEmitter(const MCInstrInfo &MCII,

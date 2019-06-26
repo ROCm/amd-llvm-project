@@ -175,7 +175,9 @@ multiclass VOP2bInst <string opName,
     let SchedRW = [Write32Bit, WriteSALU] in {
       let Uses = !if(useSGPRInput, [VCC, EXEC], [EXEC]), Defs = [VCC] in {
         def _e32 : VOP2_Pseudo <opName, P, VOPPatOrNull<node,P>.ret>,
-                   Commutable_REV<revOp#"_e32", !eq(revOp, opName)>;
+                   Commutable_REV<revOp#"_e32", !eq(revOp, opName)> {
+          let usesCustomInserter = !eq(P.NumSrcArgs, 2);
+        }
 
         def _sdwa  : VOP2_SDWA_Pseudo <opName, P> {
           let AsmMatchConverter = "cvtSdwaVOP2b";
@@ -199,7 +201,12 @@ class VOP2bInstAlias <VOP2_Pseudo ps, Instruction inst,
 }
 
 multiclass VOP2bInstAliases<VOP2_Pseudo ps, VOP2_Real inst, string OpName> {
+  let WaveSizePredicate = isWave32 in {
+    def : VOP2bInstAlias<ps, inst, OpName, "vcc_lo">;
+  }
+  let WaveSizePredicate = isWave64 in {
     def : VOP2bInstAlias<ps, inst, OpName, "vcc">;
+  }
 }
 
 multiclass VOP2eInst <string opName,
@@ -234,7 +241,12 @@ class VOP2eInstAlias <VOP2_Pseudo ps, Instruction inst, string opnd> :
 }
 
 multiclass VOP2eInstAliases<VOP2_Pseudo ps, VOP2_Real inst> {
+  let WaveSizePredicate = isWave32 in {
+    def : VOP2eInstAlias<ps, inst, "vcc_lo">;
+  }
+  let WaveSizePredicate = isWave64 in {
     def : VOP2eInstAlias<ps, inst, "vcc">;
+  }
 }
 
 class VOP_MADAK <ValueType vt> : VOPProfile <[vt, vt, vt, vt]> {
@@ -308,6 +320,20 @@ class VOP_MAC <ValueType vt0, ValueType vt1=vt0> : VOPProfile <[vt0, vt1, vt1, v
 def VOP_MAC_F16 : VOP_MAC <f16>;
 def VOP_MAC_F32 : VOP_MAC <f32>;
 
+class VOP_DOT_ACC<ValueType vt0, ValueType vt1> : VOP_MAC<vt0, vt1> {
+  let HasClamp = 0;
+  let HasExtSDWA = 0;
+  let HasModifiers = 1;
+  let HasOpSel = 0;
+  let IsPacked = 0;
+}
+
+def VOP_DOT_ACC_F32_V2F16 : VOP_DOT_ACC<f32, v2f16> {
+  let Src0ModDPP = FPVRegInputMods;
+  let Src1ModDPP = FPVRegInputMods;
+}
+def VOP_DOT_ACC_I32_I32   : VOP_DOT_ACC<i32, i32>;
+
 // Write out to vcc or arbitrary SGPR.
 def VOP2b_I32_I1_I32_I32 : VOPProfile<[i32, i32, i32, untyped], 0, /*EnableClamp=*/1> {
   let Asm32 = "$vdst, vcc, $src0, $src1";
@@ -318,7 +344,7 @@ def VOP2b_I32_I1_I32_I32 : VOPProfile<[i32, i32, i32, untyped], 0, /*EnableClamp
   let AsmDPP8 = "$vdst, vcc, $src0, $src1 $dpp8$fi";
   let AsmDPP16 = AsmDPP#"$fi";
   let Outs32 = (outs DstRC:$vdst);
-  let Outs64 = (outs DstRC:$vdst, SReg_64:$sdst);
+  let Outs64 = (outs DstRC:$vdst, VOPDstS64orS32:$sdst);
 }
 
 // Write out to vcc or arbitrary SGPR and read in from vcc or
@@ -332,7 +358,7 @@ def VOP2b_I32_I1_I32_I32_I1 : VOPProfile<[i32, i32, i32, i1], 0, /*EnableClamp=*
   let AsmDPP8 = "$vdst, vcc, $src0, $src1, vcc $dpp8$fi";
   let AsmDPP16 = AsmDPP#"$fi";
   let Outs32 = (outs DstRC:$vdst);
-  let Outs64 = (outs DstRC:$vdst, SReg_64:$sdst);
+  let Outs64 = (outs DstRC:$vdst, VOPDstS64orS32:$sdst);
 
   // Suppress src2 implied by type since the 32-bit encoding uses an
   // implicit VCC use.
@@ -623,6 +649,31 @@ defm V_FMAC_F32 : VOP2Inst <"v_fmac_f32", VOP_MAC_F32>;
 }
 
 } // End SubtargetPredicate = HasDLInsts
+
+let Constraints = "$vdst = $src2",
+      DisableEncoding="$src2",
+      isConvertibleToThreeAddress = 1,
+      isCommutable = 1 in {
+  let SubtargetPredicate = HasDot5Insts in
+    defm V_DOT2C_F32_F16 : VOP2Inst_e32<"v_dot2c_f32_f16", VOP_DOT_ACC_F32_V2F16>;
+  let SubtargetPredicate = HasDot6Insts in
+    defm V_DOT4C_I32_I8  : VOP2Inst_e32<"v_dot4c_i32_i8",  VOP_DOT_ACC_I32_I32>;
+}
+
+let AddedComplexity = 30 in {
+  def : GCNPat<
+    (f32 (AMDGPUfdot2 v2f16:$src0, v2f16:$src1, f32:$src2, (i1 DSTCLAMP.NONE))),
+    (f32 (V_DOT2C_F32_F16_e32 $src0, $src1, $src2))
+  > {
+    let SubtargetPredicate = HasDot5Insts;
+  }
+  def : GCNPat<
+    (i32 (int_amdgcn_sdot4 i32:$src0, i32:$src1, i32:$src2, (i1 DSTCLAMP.NONE))),
+    (i32 (V_DOT4C_I32_I8_e32 $src0, $src1, $src2))
+  > {
+    let SubtargetPredicate = HasDot6Insts;
+  }
+} // End AddedComplexity = 30
 
 let SubtargetPredicate = isGFX10Plus in {
 
@@ -953,6 +1004,30 @@ let AssemblerPredicate = isGFX10Plus, DecoderNamespace = "GFX10" in {
         let DecoderNamespace = "DPP8";
       }
 
+    let WaveSizePredicate = isWave32 in {
+      def _sdwa_w32_gfx10 :
+        Base_VOP_SDWA10_Real<!cast<VOP2_SDWA_Pseudo>(opName#"_sdwa")>,
+        VOP2_SDWA9Ae<op{5-0}, !cast<VOP2_SDWA_Pseudo>(opName#"_sdwa").Pfl> {
+          VOP2_SDWA_Pseudo Ps = !cast<VOP2_SDWA_Pseudo>(opName#"_sdwa");
+          let AsmString = asmName # !subst("vcc", "vcc_lo", Ps.AsmOperands);
+          let isAsmParserOnly = 1;
+          let DecoderNamespace = "SDWA10";
+        }
+      def _dpp_w32_gfx10 :
+        VOP2_DPP16<op, !cast<VOP2_Pseudo>(opName#"_e32"), asmName> {
+          string AsmDPP = !cast<VOP2_Pseudo>(opName#"_e32").Pfl.AsmDPP16;
+          let AsmString = asmName # !subst("vcc", "vcc_lo", AsmDPP);
+          let isAsmParserOnly = 1;
+        }
+      def _dpp8_w32_gfx10 :
+        VOP2_DPP8<op, !cast<VOP2_Pseudo>(opName#"_e32"), asmName> {
+          string AsmDPP8 = !cast<VOP2_Pseudo>(opName#"_e32").Pfl.AsmDPP8;
+          let AsmString = asmName # !subst("vcc", "vcc_lo", AsmDPP8);
+          let isAsmParserOnly = 1;
+        }
+    } // End WaveSizePredicate = isWave32
+
+    let WaveSizePredicate = isWave64 in {
       def _sdwa_w64_gfx10 :
         Base_VOP_SDWA10_Real<!cast<VOP2_SDWA_Pseudo>(opName#"_sdwa")>,
         VOP2_SDWA9Ae<op{5-0}, !cast<VOP2_SDWA_Pseudo>(opName#"_sdwa").Pfl> {
@@ -973,6 +1048,7 @@ let AssemblerPredicate = isGFX10Plus, DecoderNamespace = "GFX10" in {
           let AsmString = asmName # AsmDPP8;
           let isAsmParserOnly = 1;
         }
+    } // End WaveSizePredicate = isWave64
   }
 
   //===----------------------------- VOP3Only -----------------------------===//
@@ -1457,3 +1533,18 @@ defm V_FMAC_F32 : VOP2_Real_e32e64_vi <0x3b>;
 defm V_XNOR_B32 : VOP2_Real_e32e64_vi <0x3d>;
 
 } // End SubtargetPredicate = HasDLInsts
+
+multiclass VOP2_Real_DOT_ACC_gfx10<bits<6> op> :
+  VOP2_Real_e32_gfx10<op>,
+  VOP2_Real_dpp_gfx10<op>,
+  VOP2_Real_dpp8_gfx10<op>;
+
+let SubtargetPredicate = HasDot5Insts in {
+  // NB: Opcode conflicts with V_DOT8C_I32_I4
+  // This opcode exists in gfx 10.1* only
+  defm V_DOT2C_F32_F16 : VOP2_Real_DOT_ACC_gfx10<0x02>;
+}
+
+let SubtargetPredicate = HasDot6Insts in {
+  defm V_DOT4C_I32_I8  : VOP2_Real_DOT_ACC_gfx10<0x0d>;
+}

@@ -1148,10 +1148,12 @@ bool Parser::TryParseLambdaIntroducer(LambdaIntroducer &Intro, ParsedAttributes 
   return true;
 }
 
-static void
-tryConsumeMutableOrConstexprToken(Parser &P, SourceLocation &MutableLoc,
-                                  SourceLocation &ConstexprLoc,
-                                  SourceLocation &DeclEndLoc) {
+static void tryConsumeLambdaSpecifierToken(Parser &P,
+                                           SourceLocation &MutableLoc,
+                                           SourceLocation &ConstexprLoc,
+                                           SourceLocation &ConstevalLoc,
+                                           SourceLocation &DeclEndLoc) {
+
   assert(MutableLoc.isInvalid());
   assert(ConstexprLoc.isInvalid());
   // Consume constexpr-opt mutable-opt in any sequence, and set the DeclEndLoc
@@ -1179,6 +1181,15 @@ tryConsumeMutableOrConstexprToken(Parser &P, SourceLocation &MutableLoc,
       ConstexprLoc = P.ConsumeToken();
       DeclEndLoc = ConstexprLoc;
       break /*switch*/;
+    case tok::kw_consteval:
+      if (ConstevalLoc.isValid()) {
+        P.Diag(P.getCurToken().getLocation(),
+               diag::err_lambda_decl_specifier_repeated)
+            << 2 << FixItHint::CreateRemoval(P.getCurToken().getLocation());
+      }
+      ConstevalLoc = P.ConsumeToken();
+      DeclEndLoc = ConstevalLoc;
+      break /*switch*/;
     default:
       return;
     }
@@ -1194,9 +1205,22 @@ addConstexprToLambdaDeclSpecifier(Parser &P, SourceLocation ConstexprLoc,
                              : diag::warn_cxx14_compat_constexpr_on_lambda);
     const char *PrevSpec = nullptr;
     unsigned DiagID = 0;
-    DS.SetConstexprSpec(ConstexprLoc, PrevSpec, DiagID);
+    DS.SetConstexprSpec(CSK_constexpr, ConstexprLoc, PrevSpec, DiagID);
     assert(PrevSpec == nullptr && DiagID == 0 &&
            "Constexpr cannot have been set previously!");
+  }
+}
+
+static void addConstevalToLambdaDeclSpecifier(Parser &P,
+                                              SourceLocation ConstevalLoc,
+                                              DeclSpec &DS) {
+  if (ConstevalLoc.isValid()) {
+    P.Diag(ConstevalLoc, diag::warn_cxx20_compat_consteval);
+    const char *PrevSpec = nullptr;
+    unsigned DiagID = 0;
+    DS.SetConstexprSpec(CSK_consteval, ConstevalLoc, PrevSpec, DiagID);
+    if (DiagID != 0)
+      P.Diag(ConstevalLoc, DiagID) << PrevSpec;
   }
 }
 
@@ -1318,11 +1342,13 @@ ExprResult Parser::ParseLambdaExpressionAfterIntroducer(
     // compatible with MSVC.
     MaybeParseMicrosoftDeclSpecs(Attr, &DeclEndLoc);
 
-    // Parse mutable-opt and/or constexpr-opt, and update the DeclEndLoc.
+    // Parse mutable-opt and/or constexpr-opt or consteval-opt, and update the
+    // DeclEndLoc.
     SourceLocation MutableLoc;
     SourceLocation ConstexprLoc;
-    tryConsumeMutableOrConstexprToken(*this, MutableLoc, ConstexprLoc,
-                                      DeclEndLoc);
+    SourceLocation ConstevalLoc;
+    tryConsumeLambdaSpecifierToken(*this, MutableLoc, ConstexprLoc,
+                                   ConstevalLoc, DeclEndLoc);
 
     addConstexprToLambdaDeclSpecifier(*this, ConstexprLoc, DS);
 
@@ -1349,6 +1375,8 @@ ExprResult Parser::ParseLambdaExpressionAfterIntroducer(
       // take all attributes parsed before parameter list
       Attr.takeAllFrom(AttrPre);
     }
+
+    addConstevalToLambdaDeclSpecifier(*this, ConstevalLoc, DS);
 
     // Parse exception-specification[opt].
     ExceptionSpecificationType ESpecType = EST_None;
@@ -1407,7 +1435,7 @@ ExprResult Parser::ParseLambdaExpressionAfterIntroducer(
                       TrailingReturnType),
                   std::move(Attr), DeclEndLoc);
   } else if (Tok.isOneOf(tok::kw_mutable, tok::arrow, tok::kw___attribute,
-                         tok::kw_constexpr) ||
+                         tok::kw_constexpr, tok::kw_consteval) ||
              (Tok.is(tok::l_square) && NextToken().is(tok::l_square))) {
     // It's common to forget that one needs '()' before 'mutable', an attribute
     // specifier, or the result type. Deal with this.
@@ -1418,6 +1446,7 @@ ExprResult Parser::ParseLambdaExpressionAfterIntroducer(
     case tok::kw___attribute:
     case tok::l_square: TokKind = 2; break;
     case tok::kw_constexpr: TokKind = 3; break;
+    case tok::kw_consteval: TokKind = 4; break;
     default: llvm_unreachable("Unknown token kind");
     }
 

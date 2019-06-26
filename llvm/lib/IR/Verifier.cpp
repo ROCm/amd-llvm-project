@@ -43,6 +43,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "LLVMContextImpl.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/APInt.h"
@@ -318,6 +319,31 @@ public:
 
   bool hasBrokenDebugInfo() const { return BrokenDebugInfo; }
 
+  void verifyTypes() {
+    LLVMContext &Ctx = M.getContext();
+    for (auto &Entry : Ctx.pImpl->ArrayTypes) {
+      Type *EltTy = Entry.second->getElementType();
+      if (auto *VTy = dyn_cast<VectorType>(EltTy))
+        if (VTy->isScalable())
+          CheckFailed("Arrays cannot contain scalable vectors",
+                      Entry.second, &M);
+    }
+
+    for (StructType* STy : Ctx.pImpl->AnonStructTypes)
+      for (Type *EltTy : STy->elements())
+        if (auto *VTy = dyn_cast<VectorType>(EltTy))
+          if (VTy->isScalable())
+            CheckFailed("Structs cannot contain scalable vectors", STy, &M);
+
+    for (auto &Entry : Ctx.pImpl->NamedStructTypes) {
+      StructType *STy = Entry.second;
+      for (Type *EltTy : STy->elements())
+        if (auto *VTy = dyn_cast<VectorType>(EltTy))
+          if (VTy->isScalable())
+            CheckFailed("Structs cannot contain scalable vectors", STy, &M);
+    }
+  }
+
   bool verify(const Function &F) {
     assert(F.getParent() == &M &&
            "An instance of this class only works with a specific module!");
@@ -386,6 +412,8 @@ public:
     visitModuleCommandLines(M);
 
     verifyCompileUnits();
+
+    verifyTypes();
 
     verifyDeoptimizeCallingConvs();
     DISubprogramAttachments.clear();
@@ -690,6 +718,13 @@ void Verifier::visitGlobalVariable(const GlobalVariable &GV) {
       AssertDI(false, "!dbg attachment of global variable must be a "
                       "DIGlobalVariableExpression");
   }
+
+  // Scalable vectors cannot be global variables, since we don't know
+  // the runtime size. If the global is a struct or an array containing
+  // scalable vectors, that will be caught be verifyTypes instead.
+  if (auto *VTy = dyn_cast<VectorType>(GV.getValueType()))
+    if (VTy->isScalable())
+      CheckFailed("Globals cannot contain scalable vectors", &GV);
 
   if (!GV.hasInitializer()) {
     visitGlobalValue(GV);
@@ -2307,36 +2342,44 @@ void Verifier::visitFunction(const Function &F) {
   // FIXME: Check this incrementally while visiting !dbg attachments.
   // FIXME: Only check when N is the canonical subprogram for F.
   SmallPtrSet<const MDNode *, 32> Seen;
+  auto VisitDebugLoc = [&](const Instruction &I, const MDNode *Node) {
+    // Be careful about using DILocation here since we might be dealing with
+    // broken code (this is the Verifier after all).
+    const DILocation *DL = dyn_cast_or_null<DILocation>(Node);
+    if (!DL)
+      return;
+    if (!Seen.insert(DL).second)
+      return;
+
+    Metadata *Parent = DL->getRawScope();
+    AssertDI(Parent && isa<DILocalScope>(Parent),
+             "DILocation's scope must be a DILocalScope", N, &F, &I, DL,
+             Parent);
+    DILocalScope *Scope = DL->getInlinedAtScope();
+    if (Scope && !Seen.insert(Scope).second)
+      return;
+
+    DISubprogram *SP = Scope ? Scope->getSubprogram() : nullptr;
+
+    // Scope and SP could be the same MDNode and we don't want to skip
+    // validation in that case
+    if (SP && ((Scope != SP) && !Seen.insert(SP).second))
+      return;
+
+    // FIXME: Once N is canonical, check "SP == &N".
+    AssertDI(SP->describes(&F),
+             "!dbg attachment points at wrong subprogram for function", N, &F,
+             &I, DL, Scope, SP);
+  };
   for (auto &BB : F)
     for (auto &I : BB) {
-      // Be careful about using DILocation here since we might be dealing with
-      // broken code (this is the Verifier after all).
-      DILocation *DL =
-          dyn_cast_or_null<DILocation>(I.getDebugLoc().getAsMDNode());
-      if (!DL)
-        continue;
-      if (!Seen.insert(DL).second)
-        continue;
-
-      Metadata *Parent = DL->getRawScope();
-      AssertDI(Parent && isa<DILocalScope>(Parent),
-               "DILocation's scope must be a DILocalScope", N, &F, &I, DL,
-               Parent);
-      DILocalScope *Scope = DL->getInlinedAtScope();
-      if (Scope && !Seen.insert(Scope).second)
-        continue;
-
-      DISubprogram *SP = Scope ? Scope->getSubprogram() : nullptr;
-
-      // Scope and SP could be the same MDNode and we don't want to skip
-      // validation in that case
-      if (SP && ((Scope != SP) && !Seen.insert(SP).second))
-        continue;
-
-      // FIXME: Once N is canonical, check "SP == &N".
-      AssertDI(SP->describes(&F),
-               "!dbg attachment points at wrong subprogram for function", N, &F,
-               &I, DL, Scope, SP);
+      VisitDebugLoc(I, I.getDebugLoc().getAsMDNode());
+      // The llvm.loop annotations also contain two DILocations.
+      if (auto MD = I.getMetadata(LLVMContext::MD_loop))
+        for (unsigned i = 1; i < MD->getNumOperands(); ++i)
+          VisitDebugLoc(I, dyn_cast_or_null<MDNode>(MD->getOperand(i)));
+      if (BrokenDebugInfo)
+        return;
     }
 }
 
@@ -4154,14 +4197,14 @@ void Verifier::visitIntrinsicCall(Intrinsic::ID ID, CallBase &Call) {
   getIntrinsicInfoTableEntries(ID, Table);
   ArrayRef<Intrinsic::IITDescriptor> TableRef = Table;
 
+  // Walk the descriptors to extract overloaded types.
   SmallVector<Type *, 4> ArgTys;
-  Assert(!Intrinsic::matchIntrinsicType(IFTy->getReturnType(),
-                                        TableRef, ArgTys),
+  Intrinsic::MatchIntrinsicTypesResult Res =
+      Intrinsic::matchIntrinsicSignature(IFTy, TableRef, ArgTys);
+  Assert(Res != Intrinsic::MatchIntrinsicTypes_NoMatchRet,
          "Intrinsic has incorrect return type!", IF);
-  for (unsigned i = 0, e = IFTy->getNumParams(); i != e; ++i)
-    Assert(!Intrinsic::matchIntrinsicType(IFTy->getParamType(i),
-                                          TableRef, ArgTys),
-           "Intrinsic has incorrect argument type!", IF);
+  Assert(Res != Intrinsic::MatchIntrinsicTypes_NoMatchArg,
+         "Intrinsic has incorrect argument type!", IF);
 
   // Verify if the intrinsic call matches the vararg property.
   if (IsVarArg)

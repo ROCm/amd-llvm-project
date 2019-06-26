@@ -160,6 +160,10 @@ ARMRegisterBankInfo::ARMRegisterBankInfo(const TargetRegisterInfo &TRI)
          "Subclass not added?");
   assert(RBGPR.covers(*TRI.getRegClass(ARM::tGPR_and_tcGPRRegClassID)) &&
          "Subclass not added?");
+  assert(RBGPR.covers(*TRI.getRegClass(ARM::tGPREven_and_tGPR_and_tcGPRRegClassID)) &&
+         "Subclass not added?");
+  assert(RBGPR.covers(*TRI.getRegClass(ARM::tGPROdd_and_tcGPRRegClassID)) &&
+         "Subclass not added?");
   assert(RBGPR.getSize() == 32 && "GPRs should hold up to 32-bit");
 
 #ifndef NDEBUG
@@ -224,7 +228,15 @@ ARMRegisterBankInfo::getInstrMapping(const MachineInstr &MI) const {
 
   switch (Opc) {
   case G_ADD:
-  case G_SUB:
+  case G_SUB: {
+    // Integer operations where the source and destination are in the
+    // same register class.
+    LLT Ty = MRI.getType(MI.getOperand(0).getReg());
+    OperandsMapping = Ty.getSizeInBits() == 64
+                          ? &ARM::ValueMappings[ARM::DPR3OpsIdx]
+                          : &ARM::ValueMappings[ARM::GPR3OpsIdx];
+    break;
+  }
   case G_MUL:
   case G_AND:
   case G_OR:

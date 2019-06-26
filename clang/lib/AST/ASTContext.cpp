@@ -830,6 +830,9 @@ ASTContext::~ASTContext() {
 
   for (const auto &Value : ModuleInitializers)
     Value.second->~PerModuleInitializers();
+
+  for (APValue *Value : APValueCleanups)
+    Value->~APValue();
 }
 
 class ASTContext::ParentMap {
@@ -908,7 +911,7 @@ void ASTContext::setTraversalScope(const std::vector<Decl *> &TopLevelDecls) {
   Parents.reset();
 }
 
-void ASTContext::AddDeallocation(void (*Callback)(void*), void *Data) {
+void ASTContext::AddDeallocation(void (*Callback)(void *), void *Data) const {
   Deallocations.push_back({Callback, Data});
 }
 
@@ -1915,8 +1918,15 @@ TypeInfo ASTContext::getTypeInfoImpl(const Type *T) const {
       Align = Target->getDoubleAlign();
       break;
     case BuiltinType::LongDouble:
-      Width = Target->getLongDoubleWidth();
-      Align = Target->getLongDoubleAlign();
+      if (getLangOpts().OpenMP && getLangOpts().OpenMPIsDevice &&
+          (Target->getLongDoubleWidth() != AuxTarget->getLongDoubleWidth() ||
+           Target->getLongDoubleAlign() != AuxTarget->getLongDoubleAlign())) {
+        Width = AuxTarget->getLongDoubleWidth();
+        Align = AuxTarget->getLongDoubleAlign();
+      } else {
+        Width = Target->getLongDoubleWidth();
+        Align = Target->getLongDoubleAlign();
+      }
       break;
     case BuiltinType::Float128:
       if (Target->hasFloat128Type() || !getLangOpts().OpenMP ||

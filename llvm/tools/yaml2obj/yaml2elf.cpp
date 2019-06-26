@@ -151,8 +151,6 @@ class ELFState {
                                ELFYAML::Section *YAMLSec);
   void setProgramHeaderLayout(std::vector<Elf_Phdr> &PHeaders,
                               std::vector<Elf_Shdr> &SHeaders);
-  void addSymbols(ArrayRef<ELFYAML::Symbol> Symbols, std::vector<Elf_Sym> &Syms,
-                  const StringTableBuilder &Strtab);
   bool writeSectionContent(Elf_Shdr &SHeader,
                            const ELFYAML::RawContentSection &Section,
                            ContiguousBlobAccumulator &CBA);
@@ -303,7 +301,8 @@ bool ELFState<ELFT>::initSectionHeaders(ELFState<ELFT> &State,
 
     SHeader.sh_name = DotShStrtab.getOffset(SecName);
     SHeader.sh_type = Sec->Type;
-    SHeader.sh_flags = Sec->Flags;
+    if (Sec->Flags)
+      SHeader.sh_flags = *Sec->Flags;
     SHeader.sh_addr = Sec->Address;
     SHeader.sh_addralign = Sec->AddressAlign;
 
@@ -374,6 +373,48 @@ static uint64_t writeRawSectionData(raw_ostream &OS,
 }
 
 template <class ELFT>
+static std::vector<typename ELFT::Sym>
+toELFSymbols(NameToIdxMap &SN2I, ArrayRef<ELFYAML::Symbol> Symbols,
+             const StringTableBuilder &Strtab) {
+  using Elf_Sym = typename ELFT::Sym;
+
+  std::vector<Elf_Sym> Ret;
+  Ret.resize(Symbols.size() + 1);
+
+  size_t I = 0;
+  for (const auto &Sym : Symbols) {
+    Elf_Sym &Symbol = Ret[++I];
+
+    // If NameIndex, which contains the name offset, is explicitly specified, we
+    // use it. This is useful for preparing broken objects. Otherwise, we add
+    // the specified Name to the string table builder to get its offset.
+    if (Sym.NameIndex)
+      Symbol.st_name = *Sym.NameIndex;
+    else if (!Sym.Name.empty())
+      Symbol.st_name = Strtab.getOffset(Sym.Name);
+
+    Symbol.setBindingAndType(Sym.Binding, Sym.Type);
+    if (!Sym.Section.empty()) {
+      unsigned Index;
+      if (!SN2I.lookup(Sym.Section, Index)) {
+        WithColor::error() << "Unknown section referenced: '" << Sym.Section
+                           << "' by YAML symbol " << Sym.Name << ".\n";
+        exit(1);
+      }
+      Symbol.st_shndx = Index;
+    } else if (Sym.Index) {
+      Symbol.st_shndx = *Sym.Index;
+    }
+    // else Symbol.st_shndex == SHN_UNDEF (== 0), since it was zero'd earlier.
+    Symbol.st_value = Sym.Value;
+    Symbol.st_other = Sym.Other;
+    Symbol.st_size = Sym.Size;
+  }
+
+  return Ret;
+}
+
+template <class ELFT>
 void ELFState<ELFT>::initSymtabSectionHeader(Elf_Shdr &SHeader,
                                              SymtabType STType,
                                              ContiguousBlobAccumulator &CBA,
@@ -402,7 +443,11 @@ void ELFState<ELFT>::initSymtabSectionHeader(Elf_Shdr &SHeader,
 
   zero(SHeader);
   SHeader.sh_name = DotShStrtab.getOffset(IsStatic ? ".symtab" : ".dynsym");
-  SHeader.sh_type = IsStatic ? ELF::SHT_SYMTAB : ELF::SHT_DYNSYM;
+
+  if (YAMLSec)
+    SHeader.sh_type = YAMLSec->Type;
+  else
+    SHeader.sh_type = IsStatic ? ELF::SHT_SYMTAB : ELF::SHT_DYNSYM;
 
   if (RawSec && !RawSec->Link.empty()) {
     // If the Link field is explicitly defined in the document,
@@ -424,13 +469,15 @@ void ELFState<ELFT>::initSymtabSectionHeader(Elf_Shdr &SHeader,
     SHeader.sh_link = Link;
   }
 
-  if (!IsStatic)
-    SHeader.sh_flags |= ELF::SHF_ALLOC;
+  if (YAMLSec && YAMLSec->Flags)
+    SHeader.sh_flags = *YAMLSec->Flags;
+  else if (!IsStatic)
+    SHeader.sh_flags = ELF::SHF_ALLOC;
 
   // If the symbol table section is explicitly described in the YAML
   // then we should set the fields requested.
-  SHeader.sh_info =
-      RawSec ? (unsigned)RawSec->Info : findFirstNonGlobal(Symbols) + 1;
+  SHeader.sh_info = (RawSec && RawSec->Info) ? (unsigned)(*RawSec->Info)
+                                             : findFirstNonGlobal(Symbols) + 1;
   SHeader.sh_entsize = (YAMLSec && YAMLSec->EntSize)
                            ? (uint64_t)(*YAMLSec->EntSize)
                            : sizeof(Elf_Sym);
@@ -444,15 +491,8 @@ void ELFState<ELFT>::initSymtabSectionHeader(Elf_Shdr &SHeader,
     return;
   }
 
-  std::vector<Elf_Sym> Syms;
-  {
-    // Ensure STN_UNDEF is present
-    Elf_Sym Sym;
-    zero(Sym);
-    Syms.push_back(Sym);
-  }
-
-  addSymbols(Symbols, Syms, IsStatic ? DotStrtab : DotDynstr);
+  std::vector<Elf_Sym> Syms =
+      toELFSymbols<ELFT>(SN2I, Symbols, IsStatic ? DotStrtab : DotDynstr);
   writeArrayData(OS, makeArrayRef(Syms));
   SHeader.sh_size = arrayDataSize(makeArrayRef(Syms));
 }
@@ -464,7 +504,7 @@ void ELFState<ELFT>::initStrtabSectionHeader(Elf_Shdr &SHeader, StringRef Name,
                                              ELFYAML::Section *YAMLSec) {
   zero(SHeader);
   SHeader.sh_name = DotShStrtab.getOffset(Name);
-  SHeader.sh_type = ELF::SHT_STRTAB;
+  SHeader.sh_type = YAMLSec ? YAMLSec->Type : ELF::SHT_STRTAB;
   SHeader.sh_addralign = YAMLSec ? (uint64_t)YAMLSec->AddressAlign : 1;
 
   ELFYAML::RawContentSection *RawSec =
@@ -481,14 +521,18 @@ void ELFState<ELFT>::initStrtabSectionHeader(Elf_Shdr &SHeader, StringRef Name,
   if (YAMLSec && YAMLSec->EntSize)
     SHeader.sh_entsize = *YAMLSec->EntSize;
 
-  // If .dynstr section is explicitly described in the YAML
+  if (RawSec && RawSec->Info)
+    SHeader.sh_info = *RawSec->Info;
+
+  if (YAMLSec && YAMLSec->Flags)
+    SHeader.sh_flags = *YAMLSec->Flags;
+  else if (Name == ".dynstr")
+    SHeader.sh_flags = ELF::SHF_ALLOC;
+
+  // If the section is explicitly described in the YAML
   // then we want to use its section address.
-  if (Name == ".dynstr") {
-    if (YAMLSec)
-      SHeader.sh_addr = YAMLSec->Address;
-    // We assume that .dynstr is always allocatable.
-    SHeader.sh_flags |= ELF::SHF_ALLOC;
-  }
+  if (YAMLSec)
+    SHeader.sh_addr = YAMLSec->Address;
 }
 
 template <class ELFT>
@@ -567,42 +611,6 @@ void ELFState<ELFT>::setProgramHeaderLayout(std::vector<Elf_Phdr> &PHeaders,
 }
 
 template <class ELFT>
-void ELFState<ELFT>::addSymbols(ArrayRef<ELFYAML::Symbol> Symbols,
-                                std::vector<Elf_Sym> &Syms,
-                                const StringTableBuilder &Strtab) {
-  for (const auto &Sym : Symbols) {
-    Elf_Sym Symbol;
-    zero(Symbol);
-
-    // If NameIndex, which contains the name offset, is explicitly specified, we
-    // use it. This is useful for preparing broken objects. Otherwise, we add
-    // the specified Name to the string table builder to get its offset.
-    if (Sym.NameIndex)
-      Symbol.st_name = *Sym.NameIndex;
-    else if (!Sym.Name.empty())
-      Symbol.st_name = Strtab.getOffset(Sym.Name);
-
-    Symbol.setBindingAndType(Sym.Binding, Sym.Type);
-    if (!Sym.Section.empty()) {
-      unsigned Index;
-      if (!SN2I.lookup(Sym.Section, Index)) {
-        WithColor::error() << "Unknown section referenced: '" << Sym.Section
-                           << "' by YAML symbol " << Sym.Name << ".\n";
-        exit(1);
-      }
-      Symbol.st_shndx = Index;
-    } else if (Sym.Index) {
-      Symbol.st_shndx = *Sym.Index;
-    }
-    // else Symbol.st_shndex == SHN_UNDEF (== 0), since it was zero'd earlier.
-    Symbol.st_value = Sym.Value;
-    Symbol.st_other = Sym.Other;
-    Symbol.st_size = Sym.Size;
-    Syms.push_back(Symbol);
-  }
-}
-
-template <class ELFT>
 bool ELFState<ELFT>::writeSectionContent(
     Elf_Shdr &SHeader, const ELFYAML::RawContentSection &Section,
     ContiguousBlobAccumulator &CBA) {
@@ -616,7 +624,10 @@ bool ELFState<ELFT>::writeSectionContent(
     SHeader.sh_entsize = sizeof(Elf_Relr);
   else
     SHeader.sh_entsize = 0;
-  SHeader.sh_info = Section.Info;
+
+  if (Section.Info)
+    SHeader.sh_info = *Section.Info;
+
   return true;
 }
 

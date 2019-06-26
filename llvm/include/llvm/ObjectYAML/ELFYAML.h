@@ -129,7 +129,7 @@ struct Section {
   SectionKind Kind;
   StringRef Name;
   ELF_SHT Type;
-  ELF_SHF Flags;
+  Optional<ELF_SHF> Flags;
   llvm::yaml::Hex64 Address;
   StringRef Link;
   llvm::yaml::Hex64 AddressAlign;
@@ -153,7 +153,7 @@ struct DynamicSection : Section {
 struct RawContentSection : Section {
   Optional<yaml::BinaryRef> Content;
   Optional<llvm::yaml::Hex64> Size;
-  llvm::yaml::Hex64 Info;
+  Optional<llvm::yaml::Hex64> Info;
 
   RawContentSection() : Section(SectionKind::RawContent) {}
 

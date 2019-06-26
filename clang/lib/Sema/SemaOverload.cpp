@@ -5582,7 +5582,7 @@ static ExprResult CheckConvertedConstantExpression(Sema &S, Expr *From,
 
     if (Notes.empty()) {
       // It's a constant expression.
-      return ConstantExpr::Create(S.Context, Result.get());
+      return ConstantExpr::Create(S.Context, Result.get(), Value);
     }
   }
 
@@ -6168,6 +6168,15 @@ void Sema::AddOverloadCandidate(
         Candidate.FailureKind = ovl_fail_inhctor_slice;
         return;
       }
+    }
+
+    // Check that the constructor is capable of constructing an object in the
+    // destination address space.
+    if (!Qualifiers::isAddressSpaceSupersetOf(
+            Constructor->getMethodQualifiers().getAddressSpace(),
+            CandidateSet.getDestAS())) {
+      Candidate.Viable = false;
+      Candidate.FailureKind = ovl_fail_object_addrspace_mismatch;
     }
   }
 
@@ -10732,9 +10741,12 @@ static void DiagnoseOpenCLExtensionDisabled(Sema &S, OverloadCandidate *Cand) {
 /// It would be great to be able to express per-candidate problems
 /// more richly for those diagnostic clients that cared, but we'd
 /// still have to be just as careful with the default diagnostics.
+/// \param CtorDestAS Addr space of object being constructed (for ctor
+/// candidates only).
 static void NoteFunctionCandidate(Sema &S, OverloadCandidate *Cand,
                                   unsigned NumArgs,
-                                  bool TakingCandidateAddress) {
+                                  bool TakingCandidateAddress,
+                                  LangAS CtorDestAS = LangAS::Default) {
   FunctionDecl *Fn = Cand->Function;
 
   // Note deleted candidates, but only if they're viable.
@@ -10768,6 +10780,16 @@ static void NoteFunctionCandidate(Sema &S, OverloadCandidate *Cand,
   case ovl_fail_illegal_constructor: {
     S.Diag(Fn->getLocation(), diag::note_ovl_candidate_illegal_constructor)
       << (Fn->getPrimaryTemplate() ? 1 : 0);
+    MaybeEmitInheritedConstructorNote(S, Cand->FoundDecl);
+    return;
+  }
+
+  case ovl_fail_object_addrspace_mismatch: {
+    Qualifiers QualsForPrinting;
+    QualsForPrinting.setAddressSpace(CtorDestAS);
+    S.Diag(Fn->getLocation(),
+           diag::note_ovl_candidate_illegal_constructor_adrspace_mismatch)
+        << QualsForPrinting;
     MaybeEmitInheritedConstructorNote(S, Cand->FoundDecl);
     return;
   }
@@ -11202,7 +11224,7 @@ void OverloadCandidateSet::NoteCandidates(Sema &S, ArrayRef<Expr *> Args,
 
     if (Cand->Function)
       NoteFunctionCandidate(S, Cand, Args.size(),
-                            /*TakingCandidateAddress=*/false);
+                            /*TakingCandidateAddress=*/false, DestAS);
     else if (Cand->IsSurrogate)
       NoteSurrogateCandidate(S, Cand);
     else {

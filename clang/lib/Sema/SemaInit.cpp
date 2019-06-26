@@ -3283,7 +3283,6 @@ void InitializationSequence::Step::Destroy() {
   case SK_QualificationConversionXValue:
   case SK_QualificationConversionLValue:
   case SK_AtomicConversion:
-  case SK_LValueToRValue:
   case SK_ListInitialization:
   case SK_UnwrapInitList:
   case SK_RewrapInitList:
@@ -3463,15 +3462,6 @@ void InitializationSequence::AddQualificationConversionStep(QualType Ty,
 void InitializationSequence::AddAtomicConversionStep(QualType Ty) {
   Step S;
   S.Kind = SK_AtomicConversion;
-  S.Type = Ty;
-  Steps.push_back(S);
-}
-
-void InitializationSequence::AddLValueToRValueStep(QualType Ty) {
-  assert(!Ty.hasQualifiers() && "rvalues may not have qualifiers");
-
-  Step S;
-  S.Kind = SK_LValueToRValue;
   S.Type = Ty;
   Steps.push_back(S);
 }
@@ -3744,6 +3734,7 @@ ResolveConstructorOverload(Sema &S, SourceLocation DeclLoc,
                            bool OnlyListConstructors, bool IsListInit,
                            bool SecondStepOfCopyInit = false) {
   CandidateSet.clear(OverloadCandidateSet::CSK_InitByConstructor);
+  CandidateSet.setDestAS(DestType.getQualifiers().getAddressSpace());
 
   for (NamedDecl *D : Ctors) {
     auto Info = getConstructorInfo(D);
@@ -5383,7 +5374,10 @@ static void TryReferenceInitializationCore(Sema &S,
   //     - Otherwise, the reference shall be an lvalue reference to a
   //       non-volatile const type (i.e., cv1 shall be const), or the reference
   //       shall be an rvalue reference.
-  if (isLValueRef && !(T1Quals.hasConst() && !T1Quals.hasVolatile())) {
+  //       For address spaces, we interpret this to mean that an addr space
+  //       of a reference "cv1 T1" is a superset of addr space of "cv2 T2".
+  if (isLValueRef && !(T1Quals.hasConst() && !T1Quals.hasVolatile() &&
+                       T1Quals.isAddressSpaceSupersetOf(T2Quals))) {
     if (S.Context.getCanonicalType(T2) == S.Context.OverloadTy)
       Sequence.SetFailed(InitializationSequence::FK_AddressOfOverloadFailed);
     else if (ConvOvlResult && !Sequence.getFailedCandidateSet().empty())
@@ -5392,7 +5386,10 @@ static void TryReferenceInitializationCore(Sema &S,
                                   ConvOvlResult);
     else if (!InitCategory.isLValue())
       Sequence.SetFailed(
-          InitializationSequence::FK_NonConstLValueReferenceBindingToTemporary);
+          T1Quals.isAddressSpaceSupersetOf(T2Quals)
+              ? InitializationSequence::
+                    FK_NonConstLValueReferenceBindingToTemporary
+              : InitializationSequence::FK_ReferenceInitDropsQualifiers);
     else {
       InitializationSequence::FailureKind FK;
       switch (RefRelationship) {
@@ -5738,6 +5735,7 @@ static void TryUserDefinedConversion(Sema &S,
   // structure, so that it will persist if we fail.
   OverloadCandidateSet &CandidateSet = Sequence.getFailedCandidateSet();
   CandidateSet.clear(OverloadCandidateSet::CSK_InitByUserDefinedConversion);
+  CandidateSet.setDestAS(DestType.getQualifiers().getAddressSpace());
 
   // Determine whether we are allowed to call explicit constructors or
   // explicit conversion operators.
@@ -8255,7 +8253,6 @@ ExprResult InitializationSequence::Perform(Sema &S,
   case SK_QualificationConversionXValue:
   case SK_QualificationConversionRValue:
   case SK_AtomicConversion:
-  case SK_LValueToRValue:
   case SK_ConversionSequence:
   case SK_ConversionSequenceNoNarrowing:
   case SK_ListInitialization:
@@ -8524,14 +8521,6 @@ ExprResult InitializationSequence::Perform(Sema &S,
       assert(CurInit.get()->isRValue() && "cannot convert glvalue to atomic");
       CurInit = S.ImpCastExprToType(CurInit.get(), Step->Type,
                                     CK_NonAtomicToAtomic, VK_RValue);
-      break;
-    }
-
-    case SK_LValueToRValue: {
-      assert(CurInit.get()->isGLValue() && "cannot load from a prvalue");
-      CurInit = ImplicitCastExpr::Create(S.Context, Step->Type,
-                                         CK_LValueToRValue, CurInit.get(),
-                                         /*BasePath=*/nullptr, VK_RValue);
       break;
     }
 
@@ -9288,11 +9277,16 @@ bool InitializationSequence::Diagnose(Sema &S,
     Qualifiers DroppedQualifiers =
         SourceType.getQualifiers() - NonRefType.getQualifiers();
 
-    S.Diag(Kind.getLocation(), diag::err_reference_bind_drops_quals)
-      << SourceType
-      << NonRefType
-      << DroppedQualifiers.getCVRQualifiers()
-      << Args[0]->getSourceRange();
+    if (!NonRefType.getQualifiers().isAddressSpaceSupersetOf(
+            SourceType.getQualifiers()))
+      S.Diag(Kind.getLocation(), diag::err_reference_bind_drops_quals)
+          << NonRefType << SourceType << 1 /*addr space*/
+          << Args[0]->getSourceRange();
+    else
+      S.Diag(Kind.getLocation(), diag::err_reference_bind_drops_quals)
+          << NonRefType << SourceType << 0 /*cv quals*/
+          << Qualifiers::fromCVRMask(DroppedQualifiers.getCVRQualifiers())
+          << DroppedQualifiers.getCVRQualifiers() << Args[0]->getSourceRange();
     break;
   }
 
@@ -9766,10 +9760,6 @@ void InitializationSequence::dump(raw_ostream &OS) const {
 
     case SK_AtomicConversion:
       OS << "non-atomic-to-atomic conversion";
-      break;
-
-    case SK_LValueToRValue:
-      OS << "load (lvalue to rvalue)";
       break;
 
     case SK_ConversionSequence:

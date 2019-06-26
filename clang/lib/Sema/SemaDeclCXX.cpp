@@ -638,9 +638,9 @@ bool Sema::MergeCXXFunctionDecl(FunctionDecl *New, FunctionDecl *Old,
   // C++11 [dcl.constexpr]p1: If any declaration of a function or function
   // template has a constexpr specifier then all its declarations shall
   // contain the constexpr specifier.
-  if (New->isConstexpr() != Old->isConstexpr()) {
+  if (New->getConstexprKind() != Old->getConstexprKind()) {
     Diag(New->getLocation(), diag::err_constexpr_redecl_mismatch)
-      << New << New->isConstexpr();
+        << New << New->getConstexprKind() << Old->getConstexprKind();
     Diag(Old->getLocation(), diag::note_previous_declaration);
     Invalid = true;
   } else if (!Old->getMostRecentDecl()->isInlined() && New->isInlined() &&
@@ -741,8 +741,9 @@ Sema::ActOnDecompositionDeclarator(Scope *S, Declarator &D,
       CPlusPlus20Specifiers.push_back(DeclSpec::getSpecifierName(TSCS));
       CPlusPlus20SpecifierLocs.push_back(DS.getThreadStorageClassSpecLoc());
     }
-    if (DS.isConstexprSpecified()) {
-      BadSpecifiers.push_back("constexpr");
+    if (DS.hasConstexprSpecifier()) {
+      BadSpecifiers.push_back(
+          DeclSpec::getSpecifierName(DS.getConstexprSpecifier()));
       BadSpecifierLocs.push_back(DS.getConstexprSpecLoc());
     }
     if (DS.isInlineSpecified()) {
@@ -1581,10 +1582,10 @@ static bool CheckConstexprParameterTypes(Sema &SemaRef,
     const ParmVarDecl *PD = FD->getParamDecl(ArgIndex);
     SourceLocation ParamLoc = PD->getLocation();
     if (!(*i)->isDependentType() &&
-        SemaRef.RequireLiteralType(ParamLoc, *i,
-                                   diag::err_constexpr_non_literal_param,
-                                   ArgIndex+1, PD->getSourceRange(),
-                                   isa<CXXConstructorDecl>(FD)))
+        SemaRef.RequireLiteralType(
+            ParamLoc, *i, diag::err_constexpr_non_literal_param, ArgIndex + 1,
+            PD->getSourceRange(), isa<CXXConstructorDecl>(FD),
+            FD->isConsteval()))
       return false;
   }
   return true;
@@ -1661,7 +1662,8 @@ bool Sema::CheckConstexprFunctionDecl(const FunctionDecl *NewFD) {
     QualType RT = NewFD->getReturnType();
     if (!RT->isDependentType() &&
         RequireLiteralType(NewFD->getLocation(), RT,
-                           diag::err_constexpr_non_literal_return))
+                           diag::err_constexpr_non_literal_return,
+                           NewFD->isConsteval()))
       return false;
   }
 
@@ -1775,7 +1777,7 @@ static bool CheckConstexprDeclStmt(Sema &SemaRef, const FunctionDecl *Dcl,
 
     default:
       SemaRef.Diag(DS->getBeginLoc(), diag::err_constexpr_body_invalid_stmt)
-          << isa<CXXConstructorDecl>(Dcl);
+          << isa<CXXConstructorDecl>(Dcl) << Dcl->isConsteval();
       return false;
     }
   }
@@ -1960,7 +1962,7 @@ CheckConstexprFunctionStmt(Sema &SemaRef, const FunctionDecl *Dcl, Stmt *S,
   }
 
   SemaRef.Diag(S->getBeginLoc(), diag::err_constexpr_body_invalid_stmt)
-      << isa<CXXConstructorDecl>(Dcl);
+      << isa<CXXConstructorDecl>(Dcl) << Dcl->isConsteval();
   return false;
 }
 
@@ -2082,7 +2084,8 @@ bool Sema::CheckConstexprFunctionBody(const FunctionDecl *Dcl, Stmt *Body) {
                  Dcl->getReturnType()->isDependentType());
       Diag(Dcl->getLocation(),
            OK ? diag::warn_cxx11_compat_constexpr_body_no_return
-              : diag::err_constexpr_body_no_return);
+              : diag::err_constexpr_body_no_return)
+          << Dcl->isConsteval();
       if (!OK)
         return false;
     } else if (ReturnStmts.size() > 1) {
@@ -3052,7 +3055,7 @@ Sema::ActOnCXXMemberDeclarator(Scope *S, AccessSpecifier AS, Declarator &D,
                        DS.getStorageClassSpec() == DeclSpec::SCS_mutable) &&
                       !isFunc);
 
-  if (DS.isConstexprSpecified() && isInstField) {
+  if (DS.hasConstexprSpecifier() && isInstField) {
     SemaDiagnosticBuilder B =
         Diag(DS.getConstexprSpecLoc(), diag::err_invalid_constexpr_member);
     SourceLocation ConstexprLoc = DS.getConstexprSpecLoc();
@@ -6732,7 +6735,10 @@ void Sema::CheckExplicitlyDefaultedSpecialMember(CXXMethodDecl *MD) {
                                  : isa<CXXConstructorDecl>(MD)) &&
       MD->isConstexpr() && !Constexpr &&
       MD->getTemplatedKind() == FunctionDecl::TK_NonTemplate) {
-    Diag(MD->getBeginLoc(), diag::err_incorrect_defaulted_constexpr) << CSM;
+    Diag(MD->getBeginLoc(), MD->isConsteval()
+                                ? diag::err_incorrect_defaulted_consteval
+                                : diag::err_incorrect_defaulted_constexpr)
+        << CSM;
     // FIXME: Explain why the special member can't be constexpr.
     HadError = true;
   }
@@ -6742,7 +6748,7 @@ void Sema::CheckExplicitlyDefaultedSpecialMember(CXXMethodDecl *MD) {
     //   If a function is explicitly defaulted on its first declaration, it is
     //   implicitly considered to be constexpr if the implicit declaration
     //   would be.
-    MD->setConstexpr(Constexpr);
+    MD->setConstexprKind(Constexpr ? CSK_constexpr : CSK_unspecified);
 
     if (!Type->hasExceptionSpec()) {
       // C++2a [except.spec]p3:
@@ -8102,7 +8108,7 @@ void Sema::DeclareAMPSerializer(CXXRecordDecl *ClassDecl, DeclarationName Name) 
                                                         /*TInfo=*/TI,
                                                         SC_None,
                                                         /*Inline=*/false,
-                                                        /*isConstExpr*/false,
+                                                        CSK_unspecified, // /*isConstExpr*/false,
                                                         CurrentLocation);
   SerializeFunc->setAccess(AS_public);
 
@@ -8245,7 +8251,7 @@ void Sema::DeclareAMPDeserializer(CXXRecordDecl *ClassDecl, AMPDeserializerArgs 
                                   ExplicitSpecifier(), // /*isExplicit=*/ false, 
                                   /*isInline=*/true,
                                   /*isImplicitlyDeclared=*/true,
-                                  /*isConstexp*/false
+                                  CSK_unspecified // /*isConstexp*/false
                                   );
   Constructor->setAccess(AS_public);
   SmallVector<ParmVarDecl *, 4> FieldAsArgs;
@@ -8530,12 +8536,19 @@ QualType Sema::CheckConstructorDeclarator(Declarator &D, QualType R,
 
   DeclaratorChunk::FunctionTypeInfo &FTI = D.getFunctionTypeInfo();
   if (FTI.hasMethodTypeQualifiers()) {
+    bool DiagOccured = false;
     FTI.MethodQualifiers->forEachQualifier(
         [&](DeclSpec::TQ TypeQual, StringRef QualName, SourceLocation SL) {
+          // This diagnostic should be emitted on any qualifier except an addr
+          // space qualifier. However, forEachQualifier currently doesn't visit
+          // addr space qualifiers, so there's no way to write this condition
+          // right now; we just diagnose on everything.
           Diag(SL, diag::err_invalid_qualified_constructor)
               << QualName << SourceRange(SL);
+          DiagOccured = true;
         });
-    D.setInvalidType();
+    if (DiagOccured)
+      D.setInvalidType();
   }
 
   // C++0x [class.ctor]p4:
@@ -9048,7 +9061,7 @@ void Sema::CheckDeductionGuideDeclarator(Declarator &D, QualType &R,
   // We leave 'friend' and 'virtual' to be rejected in the normal way.
   if (DS.hasTypeSpecifier() || DS.getTypeQualifiers() ||
       DS.getStorageClassSpecLoc().isValid() || DS.isInlineSpecified() ||
-      DS.isNoreturnSpecified() || DS.isConstexprSpecified()) {
+      DS.isNoreturnSpecified() || DS.hasConstexprSpecifier()) {
     BadSpecifierDiagnoser Diagnoser(
         *this, D.getIdentifierLoc(),
         diag::err_deduction_guide_invalid_specifier);
@@ -11339,7 +11352,8 @@ CXXConstructorDecl *Sema::DeclareImplicitDefaultConstructor(
   CXXConstructorDecl *DefaultCon = CXXConstructorDecl::Create(
       Context, ClassDecl, ClassLoc, NameInfo, /*Type*/ QualType(),
       /*TInfo=*/nullptr, ExplicitSpecifier(),
-      /*isInline=*/true, /*isImplicitlyDeclared=*/true, Constexpr);
+      /*isInline=*/true, /*isImplicitlyDeclared=*/true,
+      Constexpr ? CSK_constexpr : CSK_unspecified);
   DefaultCon->setAccess(AS_public);
   DefaultCon->setDefaulted();
 
@@ -11459,7 +11473,8 @@ Sema::findInheritingConstructor(SourceLocation Loc,
   CXXConstructorDecl *DerivedCtor = CXXConstructorDecl::Create(
       Context, Derived, UsingLoc, NameInfo, TInfo->getType(), TInfo,
       BaseCtor->getExplicitSpecifier(), /*Inline=*/true,
-      /*ImplicitlyDeclared=*/true, Constexpr,
+      /*ImplicitlyDeclared=*/true,
+      Constexpr ? BaseCtor->getConstexprKind() : CSK_unspecified,
       InheritedConstructor(Shadow, BaseCtor));
   if (Shadow->isInvalidDecl())
     DerivedCtor->setInvalidDecl();
@@ -12208,10 +12223,11 @@ CXXMethodDecl *Sema::DeclareImplicitCopyAssignment(CXXRecordDecl *ClassDecl) {
   DeclarationName Name = Context.DeclarationNames.getCXXOperatorName(OO_Equal);
   SourceLocation ClassLoc = ClassDecl->getLocation();
   DeclarationNameInfo NameInfo(Name, ClassLoc);
-  CXXMethodDecl *CopyAssignment =
-      CXXMethodDecl::Create(Context, ClassDecl, ClassLoc, NameInfo, QualType(),
-                            /*TInfo=*/nullptr, /*StorageClass=*/SC_None,
-                            /*isInline=*/true, Constexpr, SourceLocation());
+  CXXMethodDecl *CopyAssignment = CXXMethodDecl::Create(
+      Context, ClassDecl, ClassLoc, NameInfo, QualType(),
+      /*TInfo=*/nullptr, /*StorageClass=*/SC_None,
+      /*isInline=*/true, Constexpr ? CSK_constexpr : CSK_unspecified,
+      SourceLocation());
   CopyAssignment->setAccess(AS_public);
   CopyAssignment->setDefaulted();
   CopyAssignment->setImplicit();
@@ -12537,7 +12553,7 @@ void Sema::DeclareAMPTrampolineName(CXXRecordDecl *ClassDecl, DeclarationName Na
       /*TInfo=*/TI,
       SC_Static,
       /*Inline=*/false,
-      /*isConstExpr*/false,
+      CSK_unspecified, // /*isConstExpr*/false,
       CurrentLocation
       );
   Trampoline->setAccess(AS_public);
@@ -12571,7 +12587,7 @@ void CreateDummyAMPTrampoline(Sema& S, DeclarationName Name, CXXRecordDecl *&Cla
         /*TInfo=*/TI,
         SC_Static,
         /*Inline=*/false,
-        /*isConstExpr*/false,
+        CSK_unspecified, // /*isConstExpr*/false,
         CurrentLocation
         );
   Trampoline->setAccess(AS_public);
@@ -12709,7 +12725,7 @@ void Sema::DeclareAMPTrampoline(CXXRecordDecl *ClassDecl,
       /*TInfo=*/TI,
       SC_Static,
       /*Inline=*/false,
-      /*isConstExpr*/false,
+      CSK_unspecified, // /*isConstExpr*/false,
       CurrentLocation
       );
   Trampoline->setAccess(AS_public);
@@ -13479,10 +13495,11 @@ CXXMethodDecl *Sema::DeclareImplicitMoveAssignment(CXXRecordDecl *ClassDecl) {
   DeclarationName Name = Context.DeclarationNames.getCXXOperatorName(OO_Equal);
   SourceLocation ClassLoc = ClassDecl->getLocation();
   DeclarationNameInfo NameInfo(Name, ClassLoc);
-  CXXMethodDecl *MoveAssignment =
-      CXXMethodDecl::Create(Context, ClassDecl, ClassLoc, NameInfo, QualType(),
-                            /*TInfo=*/nullptr, /*StorageClass=*/SC_None,
-                            /*isInline=*/true, Constexpr, SourceLocation());
+  CXXMethodDecl *MoveAssignment = CXXMethodDecl::Create(
+      Context, ClassDecl, ClassLoc, NameInfo, QualType(),
+      /*TInfo=*/nullptr, /*StorageClass=*/SC_None,
+      /*isInline=*/true, Constexpr ? CSK_constexpr : CSK_unspecified,
+      SourceLocation());
   MoveAssignment->setAccess(AS_public);
   MoveAssignment->setDefaulted();
   MoveAssignment->setImplicit();
@@ -13863,7 +13880,8 @@ CXXConstructorDecl *Sema::DeclareImplicitCopyConstructor(
       Context, ClassDecl, ClassLoc, NameInfo, QualType(), /*TInfo=*/nullptr,
       ExplicitSpecifier(),
       /*isInline=*/true,
-      /*isImplicitlyDeclared=*/true, Constexpr);
+      /*isImplicitlyDeclared=*/true,
+      Constexpr ? CSK_constexpr : CSK_unspecified);
   CopyConstructor->setAccess(AS_public);
   CopyConstructor->setDefaulted();
 
@@ -13994,7 +14012,8 @@ CXXConstructorDecl *Sema::DeclareImplicitMoveConstructor(
       Context, ClassDecl, ClassLoc, NameInfo, QualType(), /*TInfo=*/nullptr,
       ExplicitSpecifier(),
       /*isInline=*/true,
-      /*isImplicitlyDeclared=*/true, Constexpr);
+      /*isImplicitlyDeclared=*/true,
+      Constexpr ? CSK_constexpr : CSK_unspecified);
   MoveConstructor->setAccess(AS_public);
   MoveConstructor->setDefaulted();
 
@@ -15249,8 +15268,6 @@ Decl *Sema::BuildStaticAssertDeclaration(SourceLocation StaticAssertLoc,
     ExprResult Converted = PerformContextuallyConvertToBool(AssertExpr);
     if (Converted.isInvalid())
       Failed = true;
-    else
-      Converted = ConstantExpr::Create(Context, Converted.get());
 
     llvm::APSInt Cond;
     if (!Failed && VerifyIntegerConstantExpression(Converted.get(), &Cond,

@@ -14,6 +14,7 @@ class DocumentationCategory<string name> {
 }
 def DocCatFunction : DocumentationCategory<"Function Attributes">;
 def DocCatVariable : DocumentationCategory<"Variable Attributes">;
+def DocCatField : DocumentationCategory<"Field Attributes">;
 def DocCatType : DocumentationCategory<"Type Attributes">;
 def DocCatStmt : DocumentationCategory<"Statement Attributes">;
 def DocCatDecl : DocumentationCategory<"Declaration Attributes">;
@@ -316,12 +317,14 @@ class TargetSpec {
   // Specifies Operating Systems for which the target applies, based off the
   // OSType enumeration in Triple.h
   list<string> OSes;
-  // Specifies the C++ ABIs for which the target applies, based off the
-  // TargetCXXABI::Kind in TargetCXXABI.h.
-  list<string> CXXABIs;
   // Specifies Object Formats for which the target applies, based off the
   // ObjectFormatType enumeration in Triple.h
   list<string> ObjectFormats;
+  // A custom predicate, written as an expression evaluated in a context
+  // with the following declarations in scope:
+  //   const clang::TargetInfo &Target;
+  //   const llvm::Triple &T = Target.getTriple();
+  code CustomCode = [{}];
 }
 
 class TargetArch<list<string> arches> : TargetSpec {
@@ -339,8 +342,11 @@ def TargetWebAssembly : TargetArch<["wasm32", "wasm64"]>;
 def TargetWindows : TargetArch<["x86", "x86_64", "arm", "thumb", "aarch64"]> {
   let OSes = ["Win32"];
 }
+def TargetItaniumCXXABI : TargetSpec {
+  let CustomCode = [{ Target.getCXXABI().isItaniumFamily() }];
+}
 def TargetMicrosoftCXXABI : TargetArch<["x86", "x86_64", "arm", "thumb", "aarch64"]> {
-  let CXXABIs = ["Microsoft"];
+  let CustomCode = [{ Target.getCXXABI().isMicrosoft() }];
 }
 def TargetELF : TargetSpec {
   let ObjectFormats = ["ELF"];
@@ -1421,6 +1427,12 @@ def NeonVectorType : TypeAttr {
   let ASTNode = 0;
 }
 
+def NoUniqueAddress : InheritableAttr, TargetSpecificAttr<TargetItaniumCXXABI> {
+  let Spellings = [CXX11<"", "no_unique_address", 201803>];
+  let Subjects = SubjectList<[NonBitField], ErrorDiag>;
+  let Documentation = [NoUniqueAddressDocs];
+}
+
 def ReturnsTwice : InheritableAttr {
   let Spellings = [GCC<"returns_twice">];
   let Subjects = SubjectList<[Function]>;
@@ -1517,7 +1529,6 @@ def AMDGPUFlatWorkGroupSize : InheritableAttr {
   let Documentation = [AMDGPUFlatWorkGroupSizeDocs];
   let TemplateDependent = 1;
   let Subjects = SubjectList<[Function], ErrorDiag, "kernel functions">;
-  let TemplateDependent = 1;
 }
 
 def AMDGPUWavesPerEU : InheritableAttr {
@@ -1528,7 +1539,6 @@ def AMDGPUWavesPerEU : InheritableAttr {
   let Documentation = [AMDGPUWavesPerEUDocs];
   let TemplateDependent = 1;
   let Subjects = SubjectList<[Function], ErrorDiag, "kernel functions">;
-  let TemplateDependent = 1;
 }
 
 def AMDGPUNumSGPR : InheritableAttr {

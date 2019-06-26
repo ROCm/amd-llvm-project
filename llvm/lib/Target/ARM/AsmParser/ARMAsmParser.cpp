@@ -69,6 +69,10 @@
 
 using namespace llvm;
 
+namespace llvm {
+extern const MCInstrDesc ARMInsts[];
+} // end namespace llvm
+
 namespace {
 
 enum class ImplicitItModeTy { Always, Never, ARMOnly, ThumbOnly };
@@ -89,6 +93,16 @@ static cl::opt<bool> AddBuildAttributes("arm-add-build-attributes",
                                         cl::init(false));
 
 enum VectorLaneTy { NoLanes, AllLanes, IndexedLane };
+
+static inline unsigned extractITMaskBit(unsigned Mask, unsigned Position) {
+  // Position==0 means we're not in an IT block at all. Position==1
+  // means we want the first state bit, which is always 0 (Then).
+  // Position==2 means we want the second state bit, stored at bit 3
+  // of Mask, and so on downwards. So (5 - Position) will shift the
+  // right bit down to bit 0, including the always-0 bit at bit 4 for
+  // the mandatory initial Then.
+  return (Mask >> (5 - Position) & 1);
+}
 
 class UnwindContext {
   using Locs = SmallVector<SMLoc, 4>;
@@ -226,11 +240,10 @@ class ARMAsmParser : public MCTargetAsmParser {
     }
 
     // Emit the IT instruction
-    unsigned Mask = getITMaskEncoding();
     MCInst ITInst;
     ITInst.setOpcode(ARM::t2IT);
     ITInst.addOperand(MCOperand::createImm(ITState.Cond));
-    ITInst.addOperand(MCOperand::createImm(Mask));
+    ITInst.addOperand(MCOperand::createImm(ITState.Mask));
     Out.EmitInstruction(ITInst, getSTI());
 
     // Emit the conditonal instructions
@@ -288,27 +301,10 @@ class ARMAsmParser : public MCTargetAsmParser {
     return MRI->getSubReg(QReg, ARM::dsub_0);
   }
 
-  // Get the encoding of the IT mask, as it will appear in an IT instruction.
-  unsigned getITMaskEncoding() {
-    assert(inITBlock());
-    unsigned Mask = ITState.Mask;
-    unsigned TZ = countTrailingZeros(Mask);
-    if ((ITState.Cond & 1) == 0) {
-      assert(Mask && TZ <= 3 && "illegal IT mask value!");
-      Mask ^= (0xE << TZ) & 0xF;
-    }
-    return Mask;
-  }
-
   // Get the condition code corresponding to the current IT block slot.
   ARMCC::CondCodes currentITCond() {
-    unsigned MaskBit;
-    if (ITState.CurPosition == 1)
-      MaskBit = 1;
-    else
-      MaskBit = (ITState.Mask >> (5 - ITState.CurPosition)) & 1;
-
-    return MaskBit ? ITState.Cond : ARMCC::getOppositeCondition(ITState.Cond);
+    unsigned MaskBit = extractITMaskBit(ITState.Mask, ITState.CurPosition);
+    return MaskBit ? ARMCC::getOppositeCondition(ITState.Cond) : ITState.Cond;
   }
 
   // Invert the condition of the current IT block slot without changing any
@@ -338,7 +334,7 @@ class ARMAsmParser : public MCTargetAsmParser {
     // Keep any existing condition bits.
     NewMask |= ITState.Mask & (0xE << TZ);
     // Insert the new condition bit.
-    NewMask |= (Cond == ITState.Cond) << TZ;
+    NewMask |= (Cond != ITState.Cond) << TZ;
     // Move the trailing 1 down one bit.
     NewMask |= 1 << (TZ - 1);
     ITState.Mask = NewMask;
@@ -353,15 +349,28 @@ class ARMAsmParser : public MCTargetAsmParser {
     ITState.IsExplicit = false;
   }
 
-  // Create a new explicit IT block with the given condition and mask. The mask
-  // should be in the parsed format, with a 1 implying 't', regardless of the
-  // low bit of the condition.
+  // Create a new explicit IT block with the given condition and mask.
+  // The mask should be in the format used in ARMOperand and
+  // MCOperand, with a 1 implying 'e', regardless of the low bit of
+  // the condition.
   void startExplicitITBlock(ARMCC::CondCodes Cond, unsigned Mask) {
     assert(!inITBlock());
     ITState.Cond = Cond;
     ITState.Mask = Mask;
     ITState.CurPosition = 0;
     ITState.IsExplicit = true;
+  }
+
+  struct {
+    unsigned Mask : 4;
+    unsigned CurPosition;
+  } VPTState;
+  bool inVPTBlock() { return VPTState.CurPosition != ~0U; }
+  void forwardVPTPosition() {
+    if (!inVPTBlock()) return;
+    unsigned TZ = countTrailingZeros(VPTState.Mask);
+    if (++VPTState.CurPosition == 5 - TZ)
+      VPTState.CurPosition = ~0U;
   }
 
   void Note(SMLoc L, const Twine &Msg, SMRange Range = None) {
@@ -422,12 +431,15 @@ class ARMAsmParser : public MCTargetAsmParser {
   bool parseDirectiveAlign(SMLoc L);
   bool parseDirectiveThumbSet(SMLoc L);
 
-  StringRef splitMnemonic(StringRef Mnemonic, unsigned &PredicationCode,
-                          bool &CarrySetting, unsigned &ProcessorIMod,
-                          StringRef &ITMask);
-  void getMnemonicAcceptInfo(StringRef Mnemonic, StringRef FullInst,
-                             bool &CanAcceptCarrySet,
-                             bool &CanAcceptPredicationCode);
+  bool isMnemonicVPTPredicable(StringRef Mnemonic, StringRef ExtraToken);
+  StringRef splitMnemonic(StringRef Mnemonic, StringRef ExtraToken,
+                          unsigned &PredicationCode,
+                          unsigned &VPTPredicationCode, bool &CarrySetting,
+                          unsigned &ProcessorIMod, StringRef &ITMask);
+  void getMnemonicAcceptInfo(StringRef Mnemonic, StringRef ExtraToken,
+                             StringRef FullInst, bool &CanAcceptCarrySet,
+                             bool &CanAcceptPredicationCode,
+                             bool &CanAcceptVPTPredicationCode);
 
   void tryConvertingToTwoOperandForm(StringRef Mnemonic, bool CarrySetting,
                                      OperandVector &Operands);
@@ -481,6 +493,12 @@ class ARMAsmParser : public MCTargetAsmParser {
   }
   bool hasV8_1MMainline() const {
     return getSTI().getFeatureBits()[ARM::HasV8_1MMainlineOps];
+  }
+  bool hasMVE() const {
+    return getSTI().getFeatureBits()[ARM::HasMVEIntegerOps];
+  }
+  bool hasMVEFloat() const {
+    return getSTI().getFeatureBits()[ARM::HasMVEFloatOps];
   }
   bool has8MSecExt() const {
     return getSTI().getFeatureBits()[ARM::Feature8MSecExt];
@@ -559,11 +577,13 @@ class ARMAsmParser : public MCTargetAsmParser {
   // Asm Match Converter Methods
   void cvtThumbMultiply(MCInst &Inst, const OperandVector &);
   void cvtThumbBranches(MCInst &Inst, const OperandVector &);
+  void cvtMVEVMOVQtoDReg(MCInst &Inst, const OperandVector &);
 
   bool validateInstruction(MCInst &Inst, const OperandVector &Ops);
   bool processInstruction(MCInst &Inst, const OperandVector &Ops, MCStreamer &Out);
   bool shouldOmitCCOutOperand(StringRef Mnemonic, OperandVector &Operands);
   bool shouldOmitPredicateOperand(StringRef Mnemonic, OperandVector &Operands);
+  bool shouldOmitVectorPredicateOperand(StringRef Mnemonic, OperandVector &Operands);
   bool isITBlockTerminator(MCInst &Inst) const;
   void fixupGNULDRDAlias(StringRef Mnemonic, OperandVector &Operands);
   bool validateLDRDSTRD(MCInst &Inst, const OperandVector &Operands,
@@ -599,6 +619,8 @@ public:
 
     // Not in an ITBlock to start with.
     ITState.CurPosition = ~0U;
+
+    VPTState.CurPosition = ~0U;
 
     NextSymbolIsThumb = false;
   }
@@ -645,6 +667,7 @@ public:
 class ARMOperand : public MCParsedAsmOperand {
   enum KindTy {
     k_CondCode,
+    k_VPTPred,
     k_CCOut,
     k_ITCondMask,
     k_CoprocNum,
@@ -685,6 +708,10 @@ class ARMOperand : public MCParsedAsmOperand {
 
   struct CCOp {
     ARMCC::CondCodes Val;
+  };
+
+  struct VCCOp {
+    ARMVCC::VPTCodes Val;
   };
 
   struct CopOp {
@@ -803,6 +830,7 @@ class ARMOperand : public MCParsedAsmOperand {
 
   union {
     struct CCOp CC;
+    struct VCCOp VCC;
     struct CopOp Cop;
     struct CoprocOptionOp CoprocOption;
     struct MBOptOp MBOpt;
@@ -849,6 +877,11 @@ public:
   ARMCC::CondCodes getCondCode() const {
     assert(Kind == k_CondCode && "Invalid access!");
     return CC.Val;
+  }
+
+  ARMVCC::VPTCodes getVPTPred() const {
+    assert(isVPTPred() && "Invalid access!");
+    return VCC.Val;
   }
 
   unsigned getCoproc() const {
@@ -924,6 +957,7 @@ public:
   bool isCoprocReg() const { return Kind == k_CoprocReg; }
   bool isCoprocOption() const { return Kind == k_CoprocOption; }
   bool isCondCode() const { return Kind == k_CondCode; }
+  bool isVPTPred() const { return Kind == k_VPTPred; }
   bool isCCOut() const { return Kind == k_CCOut; }
   bool isITMask() const { return Kind == k_ITCondMask; }
   bool isITCondCode() const { return Kind == k_CondCode; }
@@ -1110,6 +1144,34 @@ public:
     return isImmediate<1, 33>();
   }
 
+  template<int shift>
+  bool isExpImmValue(uint64_t Value) const {
+    uint64_t mask = (1 << shift) - 1;
+    if ((Value & mask) != 0 || (Value >> shift) > 0xff)
+      return false;
+    return true;
+  }
+
+  template<int shift>
+  bool isExpImm() const {
+    if (!isImm()) return false;
+    const MCConstantExpr *CE = dyn_cast<MCConstantExpr>(getImm());
+    if (!CE) return false;
+
+    return isExpImmValue<shift>(CE->getValue());
+  }
+
+  template<int shift, int size>
+  bool isInvertedExpImm() const {
+    if (!isImm()) return false;
+    const MCConstantExpr *CE = dyn_cast<MCConstantExpr>(getImm());
+    if (!CE) return false;
+
+    uint64_t OriginalValue = CE->getValue();
+    uint64_t InvertedValue = OriginalValue ^ (((uint64_t)1 << size) - 1);
+    return isExpImmValue<shift>(InvertedValue);
+  }
+
   bool isPKHLSLImm() const {
     return isImmediate<0, 32>();
   }
@@ -1215,6 +1277,16 @@ public:
                RegShiftedImm.SrcReg);
   }
   bool isRotImm() const { return Kind == k_RotateImmediate; }
+
+  template<unsigned Min, unsigned Max>
+  bool isPowerTwoInRange() const {
+    if (!isImm()) return false;
+    const MCConstantExpr *CE = dyn_cast<MCConstantExpr>(getImm());
+    if (!CE) return false;
+    int64_t Value = CE->getValue();
+    return Value > 0 && countPopulation((uint64_t)Value) == 1 &&
+           Value >= Min && Value <= Max;
+  }
   bool isModImm() const { return Kind == k_ModifiedImmediate; }
 
   bool isModImmNot() const {
@@ -1862,23 +1934,24 @@ public:
     return VectorList.Count == 4 && VectorList.LaneIndex <= 1;
   }
 
-  bool isVectorIndex8() const {
+  bool isVectorIndex() const { return Kind == k_VectorIndex; }
+
+  template <unsigned NumLanes>
+  bool isVectorIndexInRange() const {
     if (Kind != k_VectorIndex) return false;
-    return VectorIndex.Val < 8;
+    return VectorIndex.Val < NumLanes;
   }
 
-  bool isVectorIndex16() const {
-    if (Kind != k_VectorIndex) return false;
-    return VectorIndex.Val < 4;
-  }
+  bool isVectorIndex8()  const { return isVectorIndexInRange<8>(); }
+  bool isVectorIndex16() const { return isVectorIndexInRange<4>(); }
+  bool isVectorIndex32() const { return isVectorIndexInRange<2>(); }
+  bool isVectorIndex64() const { return isVectorIndexInRange<1>(); }
 
-  bool isVectorIndex32() const {
+  template<int PermittedValue, int OtherPermittedValue>
+  bool isMVEPairVectorIndex() const {
     if (Kind != k_VectorIndex) return false;
-    return VectorIndex.Val < 2;
-  }
-  bool isVectorIndex64() const {
-    if (Kind != k_VectorIndex) return false;
-    return VectorIndex.Val < 1;
+    return VectorIndex.Val == PermittedValue ||
+           VectorIndex.Val == OtherPermittedValue;
   }
 
   bool isNEONi8splat() const {
@@ -2059,8 +2132,38 @@ public:
 
   bool isITCondCodeNoAL() const {
     if (!isITCondCode()) return false;
-    auto CC = (ARMCC::CondCodes) getCondCode();
+    ARMCC::CondCodes CC = getCondCode();
     return CC != ARMCC::AL;
+  }
+
+  bool isITCondCodeRestrictedI() const {
+    if (!isITCondCode())
+      return false;
+    ARMCC::CondCodes CC = getCondCode();
+    return CC == ARMCC::EQ || CC == ARMCC::NE;
+  }
+
+  bool isITCondCodeRestrictedS() const {
+    if (!isITCondCode())
+      return false;
+    ARMCC::CondCodes CC = getCondCode();
+    return CC == ARMCC::LT || CC == ARMCC::GT || CC == ARMCC::LE ||
+           CC == ARMCC::GE;
+  }
+
+  bool isITCondCodeRestrictedU() const {
+    if (!isITCondCode())
+      return false;
+    ARMCC::CondCodes CC = getCondCode();
+    return CC == ARMCC::HS || CC == ARMCC::HI;
+  }
+
+  bool isITCondCodeRestrictedFP() const {
+    if (!isITCondCode())
+      return false;
+    ARMCC::CondCodes CC = getCondCode();
+    return CC == ARMCC::EQ || CC == ARMCC::NE || CC == ARMCC::LT ||
+           CC == ARMCC::GT || CC == ARMCC::LE || CC == ARMCC::GE;
   }
 
   void addExpr(MCInst &Inst, const MCExpr *Expr) const {
@@ -2087,6 +2190,30 @@ public:
     assert(N == 2 && "Invalid number of operands!");
     Inst.addOperand(MCOperand::createImm(unsigned(getCondCode())));
     unsigned RegNum = getCondCode() == ARMCC::AL ? 0: ARM::CPSR;
+    Inst.addOperand(MCOperand::createReg(RegNum));
+  }
+
+  void addVPTPredNOperands(MCInst &Inst, unsigned N) const {
+    assert(N == 2 && "Invalid number of operands!");
+    Inst.addOperand(MCOperand::createImm(unsigned(getVPTPred())));
+    unsigned RegNum = getVPTPred() == ARMVCC::None ? 0: ARM::P0;
+    Inst.addOperand(MCOperand::createReg(RegNum));
+  }
+
+  void addVPTPredROperands(MCInst &Inst, unsigned N) const {
+    assert(N == 3 && "Invalid number of operands!");
+    addVPTPredNOperands(Inst, N-1);
+    unsigned RegNum;
+    if (getVPTPred() == ARMVCC::None) {
+      RegNum = 0;
+    } else {
+      unsigned NextOpIndex = Inst.getNumOperands();
+      const MCInstrDesc &MCID = ARMInsts[Inst.getOpcode()];
+      int TiedOp = MCID.getOperandConstraint(NextOpIndex, MCOI::TIED_TO);
+      assert(TiedOp >= 0 &&
+             "Inactive register in vpred_r is not tied to an output!");
+      RegNum = Inst.getOperand(TiedOp).getReg();
+    }
     Inst.addOperand(MCOperand::createReg(RegNum));
   }
 
@@ -2820,6 +2947,12 @@ public:
     Inst.addOperand(MCOperand::createImm(Imm));
   }
 
+  void addPowerTwoOperands(MCInst &Inst, unsigned N) const {
+    assert(N == 1 && "Invalid number of operands!");
+    const MCConstantExpr *CE = dyn_cast<MCConstantExpr>(getImm());
+    Inst.addOperand(MCOperand::createImm(CE->getValue()));
+  }
+
   void addMSRMaskOperands(MCInst &Inst, unsigned N) const {
     assert(N == 1 && "Invalid number of operands!");
     Inst.addOperand(MCOperand::createImm(unsigned(getMSRMask())));
@@ -2862,6 +2995,16 @@ public:
   }
 
   void addVectorIndex64Operands(MCInst &Inst, unsigned N) const {
+    assert(N == 1 && "Invalid number of operands!");
+    Inst.addOperand(MCOperand::createImm(getVectorIndex()));
+  }
+
+  void addMVEVectorIndexOperands(MCInst &Inst, unsigned N) const {
+    assert(N == 1 && "Invalid number of operands!");
+    Inst.addOperand(MCOperand::createImm(getVectorIndex()));
+  }
+
+  void addMVEPairVectorIndexOperands(MCInst &Inst, unsigned N) const {
     assert(N == 1 && "Invalid number of operands!");
     Inst.addOperand(MCOperand::createImm(getVectorIndex()));
   }
@@ -3029,6 +3172,15 @@ public:
                                                     SMLoc S) {
     auto Op = make_unique<ARMOperand>(k_CondCode);
     Op->CC.Val = CC;
+    Op->StartLoc = S;
+    Op->EndLoc = S;
+    return Op;
+  }
+
+  static std::unique_ptr<ARMOperand> CreateVPTPred(ARMVCC::VPTCodes CC,
+                                                   SMLoc S) {
+    auto Op = make_unique<ARMOperand>(k_VPTPred);
+    Op->VCC.Val = CC;
     Op->StartLoc = S;
     Op->EndLoc = S;
     return Op;
@@ -3350,15 +3502,18 @@ void ARMOperand::print(raw_ostream &OS) const {
   case k_CondCode:
     OS << "<ARMCC::" << ARMCondCodeToString(getCondCode()) << ">";
     break;
+  case k_VPTPred:
+    OS << "<ARMVCC::" << ARMVPTPredToString(getVPTPred()) << ">";
+    break;
   case k_CCOut:
     OS << "<ccout " << RegName(getReg()) << ">";
     break;
   case k_ITCondMask: {
     static const char *const MaskStr[] = {
-      "(invalid)", "(teee)", "(tee)", "(teet)",
-      "(te)",      "(tete)", "(tet)", "(tett)",
-      "(t)",       "(ttee)", "(tte)", "(ttet)",
-      "(tt)",      "(ttte)", "(ttt)", "(tttt)"
+      "(invalid)", "(tttt)", "(ttt)", "(ttte)",
+      "(tt)",      "(ttet)", "(tte)", "(ttee)",
+      "(t)",       "(tett)", "(tet)", "(tete)",
+      "(te)",      "(teet)", "(tee)", "(teee)",
     };
     assert((ITMask.Mask & 0xf) == ITMask.Mask);
     OS << "<it-mask " << MaskStr[ITMask.Mask] << ">";
@@ -5219,6 +5374,21 @@ void ARMAsmParser::cvtThumbBranches(MCInst &Inst,
   ((ARMOperand &)*Operands[CondOp]).addCondCodeOperands(Inst, 2);
 }
 
+void ARMAsmParser::cvtMVEVMOVQtoDReg(
+  MCInst &Inst, const OperandVector &Operands) {
+
+  // mnemonic, condition code, Rt, Rt2, Qd, idx, Qd again, idx2
+  assert(Operands.size() == 8);
+
+  ((ARMOperand &)*Operands[2]).addRegOperands(Inst, 1); // Rt
+  ((ARMOperand &)*Operands[3]).addRegOperands(Inst, 1); // Rt2
+  ((ARMOperand &)*Operands[4]).addRegOperands(Inst, 1); // Qd
+  ((ARMOperand &)*Operands[5]).addMVEPairVectorIndexOperands(Inst, 1); // idx
+  // skip second copy of Qd in Operands[6]
+  ((ARMOperand &)*Operands[7]).addMVEPairVectorIndexOperands(Inst, 1); // idx2
+  ((ARMOperand &)*Operands[1]).addCondCodeOperands(Inst, 2); // condition code
+}
+
 /// Parse an ARM memory expression, return false if successful else return true
 /// or an error.  The first token must be a '[' when called.
 bool ARMAsmParser::parseMemory(OperandVector &Operands) {
@@ -5782,11 +5952,14 @@ bool ARMAsmParser::parsePrefix(ARMMCExpr::VariantKind &RefKind) {
 // FIXME: Would be nice to autogen this.
 // FIXME: This is a bit of a maze of special cases.
 StringRef ARMAsmParser::splitMnemonic(StringRef Mnemonic,
+                                      StringRef ExtraToken,
                                       unsigned &PredicationCode,
+                                      unsigned &VPTPredicationCode,
                                       bool &CarrySetting,
                                       unsigned &ProcessorIMod,
                                       StringRef &ITMask) {
   PredicationCode = ARMCC::AL;
+  VPTPredicationCode = ARMVCC::None;
   CarrySetting = false;
   ProcessorIMod = 0;
 
@@ -5823,7 +5996,17 @@ StringRef ARMAsmParser::splitMnemonic(StringRef Mnemonic,
   if (Mnemonic != "adcs" && Mnemonic != "bics" && Mnemonic != "movs" &&
       Mnemonic != "muls" && Mnemonic != "smlals" && Mnemonic != "smulls" &&
       Mnemonic != "umlals" && Mnemonic != "umulls" && Mnemonic != "lsls" &&
-      Mnemonic != "sbcs" && Mnemonic != "rscs") {
+      Mnemonic != "sbcs" && Mnemonic != "rscs" &&
+      !(hasMVE() &&
+        (Mnemonic == "vmine" ||
+         Mnemonic == "vshle" || Mnemonic == "vshlt" || Mnemonic == "vshllt" ||
+         Mnemonic == "vrshle" || Mnemonic == "vrshlt" ||
+         Mnemonic == "vmvne" || Mnemonic == "vorne" ||
+         Mnemonic == "vnege" || Mnemonic == "vnegt" ||
+         Mnemonic == "vmule" || Mnemonic == "vmult" ||
+         Mnemonic == "vrintne" ||
+         Mnemonic == "vcmult" || Mnemonic == "vcmule" ||
+         Mnemonic.startswith("vq")))) {
     unsigned CC = ARMCondCodeFromString(Mnemonic.substr(Mnemonic.size()-2));
     if (CC != ~0U) {
       Mnemonic = Mnemonic.slice(0, Mnemonic.size() - 2);
@@ -5843,7 +6026,8 @@ StringRef ARMAsmParser::splitMnemonic(StringRef Mnemonic,
         Mnemonic == "fsts" || Mnemonic == "fcpys" || Mnemonic == "fdivs" ||
         Mnemonic == "fmuls" || Mnemonic == "fcmps" || Mnemonic == "fcmpzs" ||
         Mnemonic == "vfms" || Mnemonic == "vfnms" || Mnemonic == "fconsts" ||
-        Mnemonic == "bxns" || Mnemonic == "blxns" ||
+        Mnemonic == "bxns" || Mnemonic == "blxns" || Mnemonic == "vfmas" ||
+        Mnemonic == "vmlas" ||
         (Mnemonic == "movs" && isThumb()))) {
     Mnemonic = Mnemonic.slice(0, Mnemonic.size() - 1);
     CarrySetting = true;
@@ -5864,10 +6048,34 @@ StringRef ARMAsmParser::splitMnemonic(StringRef Mnemonic,
     }
   }
 
+  if (isMnemonicVPTPredicable(Mnemonic, ExtraToken) && Mnemonic != "vmovlt" &&
+      Mnemonic != "vshllt" && Mnemonic != "vrshrnt" && Mnemonic != "vshrnt" &&
+      Mnemonic != "vqrshrunt" && Mnemonic != "vqshrunt" &&
+      Mnemonic != "vqrshrnt" && Mnemonic != "vqshrnt" && Mnemonic != "vmullt" &&
+      Mnemonic != "vqmovnt" && Mnemonic != "vqmovunt" &&
+      Mnemonic != "vqmovnt" && Mnemonic != "vmovnt" && Mnemonic != "vqdmullt" &&
+      Mnemonic != "vcvtt" && Mnemonic != "vcvt") {
+    unsigned CC = ARMVectorCondCodeFromString(Mnemonic.substr(Mnemonic.size()-1));
+    if (CC != ~0U) {
+      Mnemonic = Mnemonic.slice(0, Mnemonic.size()-1);
+      VPTPredicationCode = CC;
+    }
+    return Mnemonic;
+  }
+
   // The "it" instruction has the condition mask on the end of the mnemonic.
   if (Mnemonic.startswith("it")) {
     ITMask = Mnemonic.slice(2, Mnemonic.size());
     Mnemonic = Mnemonic.slice(0, 2);
+  }
+
+  if (Mnemonic.startswith("vpst")) {
+    ITMask = Mnemonic.slice(4, Mnemonic.size());
+    Mnemonic = Mnemonic.slice(0, 4);
+  }
+  else if (Mnemonic.startswith("vpt")) {
+    ITMask = Mnemonic.slice(3, Mnemonic.size());
+    Mnemonic = Mnemonic.slice(0, 3);
   }
 
   return Mnemonic;
@@ -5877,9 +6085,14 @@ StringRef ARMAsmParser::splitMnemonic(StringRef Mnemonic,
 /// inclusion of carry set or predication code operands.
 //
 // FIXME: It would be nice to autogen this.
-void ARMAsmParser::getMnemonicAcceptInfo(StringRef Mnemonic, StringRef FullInst,
+void ARMAsmParser::getMnemonicAcceptInfo(StringRef Mnemonic,
+                                         StringRef ExtraToken,
+                                         StringRef FullInst,
                                          bool &CanAcceptCarrySet,
-                                         bool &CanAcceptPredicationCode) {
+                                         bool &CanAcceptPredicationCode,
+                                         bool &CanAcceptVPTPredicationCode) {
+  CanAcceptVPTPredicationCode = isMnemonicVPTPredicable(Mnemonic, ExtraToken);
+
   CanAcceptCarrySet =
       Mnemonic == "and" || Mnemonic == "lsl" || Mnemonic == "lsr" ||
       Mnemonic == "rrx" || Mnemonic == "ror" || Mnemonic == "sub" ||
@@ -5913,7 +6126,8 @@ void ARMAsmParser::getMnemonicAcceptInfo(StringRef Mnemonic, StringRef FullInst,
       Mnemonic == "dls" || Mnemonic == "le" || Mnemonic == "csel" ||
       Mnemonic == "csinc" || Mnemonic == "csinv" || Mnemonic == "csneg" ||
       Mnemonic == "cinc" || Mnemonic == "cinv" || Mnemonic == "cneg" ||
-      Mnemonic == "cset" || Mnemonic == "csetm") {
+      Mnemonic == "cset" || Mnemonic == "csetm" ||
+      Mnemonic.startswith("vpt") || Mnemonic.startswith("vpst")) {
     // These mnemonics are never predicable
     CanAcceptPredicationCode = false;
   } else if (!isThumb()) {
@@ -6147,7 +6361,8 @@ bool ARMAsmParser::shouldOmitPredicateOperand(StringRef Mnemonic,
                                               OperandVector &Operands) {
   // VRINT{Z, X} have a predicate operand in VFP, but not in NEON
   unsigned RegIdx = 3;
-  if ((Mnemonic == "vrintz" || Mnemonic == "vrintx") &&
+  if ((((Mnemonic == "vrintz" || Mnemonic == "vrintx") && !hasMVE()) ||
+      Mnemonic == "vrintr") &&
       (static_cast<ARMOperand &>(*Operands[2]).getToken() == ".f32" ||
        static_cast<ARMOperand &>(*Operands[2]).getToken() == ".f16")) {
     if (static_cast<ARMOperand &>(*Operands[3]).isToken() &&
@@ -6163,6 +6378,43 @@ bool ARMAsmParser::shouldOmitPredicateOperand(StringRef Mnemonic,
       return true;
   }
   return false;
+}
+
+bool ARMAsmParser::shouldOmitVectorPredicateOperand(StringRef Mnemonic,
+                                                    OperandVector &Operands) {
+  if (!hasMVE() || Operands.size() < 3)
+    return true;
+
+  if (Mnemonic.startswith("vctp"))
+    return false;
+
+  if (Mnemonic.startswith("vmov") &&
+      !(Mnemonic.startswith("vmovl") || Mnemonic.startswith("vmovn") ||
+        Mnemonic.startswith("vmovx"))) {
+    for (auto &Operand : Operands) {
+      if (static_cast<ARMOperand &>(*Operand).isVectorIndex() ||
+          ((*Operand).isReg() &&
+           (ARMMCRegisterClasses[ARM::SPRRegClassID].contains(
+             (*Operand).getReg()) ||
+            ARMMCRegisterClasses[ARM::DPRRegClassID].contains(
+              (*Operand).getReg())))) {
+        return true;
+      }
+    }
+    return false;
+  } else {
+    for (auto &Operand : Operands) {
+      // We check the larger class QPR instead of just the legal class
+      // MQPR, to more accurately report errors when using Q registers
+      // outside of the allowed range.
+      if (static_cast<ARMOperand &>(*Operand).isVectorIndex() ||
+          (Operand->isReg() &&
+           (ARMMCRegisterClasses[ARM::QPRRegClassID].contains(
+             Operand->getReg()))))
+        return false;
+    }
+    return true;
+  }
 }
 
 static bool isDataTypeToken(StringRef Tok) {
@@ -6256,14 +6508,16 @@ bool ARMAsmParser::ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
   // Create the leading tokens for the mnemonic, split by '.' characters.
   size_t Start = 0, Next = Name.find('.');
   StringRef Mnemonic = Name.slice(Start, Next);
+  StringRef ExtraToken = Name.slice(Next, Name.find(' ', Next + 1));
 
   // Split out the predication code and carry setting flag from the mnemonic.
   unsigned PredicationCode;
+  unsigned VPTPredicationCode;
   unsigned ProcessorIMod;
   bool CarrySetting;
   StringRef ITMask;
-  Mnemonic = splitMnemonic(Mnemonic, PredicationCode, CarrySetting,
-                           ProcessorIMod, ITMask);
+  Mnemonic = splitMnemonic(Mnemonic, ExtraToken, PredicationCode, VPTPredicationCode,
+                           CarrySetting, ProcessorIMod, ITMask);
 
   // In Thumb1, only the branch (B) instruction can be predicated.
   if (isThumbOne() && PredicationCode != ARMCC::AL && Mnemonic != "b") {
@@ -6272,15 +6526,24 @@ bool ARMAsmParser::ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
 
   Operands.push_back(ARMOperand::CreateToken(Mnemonic, NameLoc));
 
-  // Handle the IT instruction ITMask. Convert it to a bitmask. This
-  // is the mask as it will be for the IT encoding if the conditional
-  // encoding has a '1' as it's bit0 (i.e. 't' ==> '1'). In the case
-  // where the conditional bit0 is zero, the instruction post-processing
-  // will adjust the mask accordingly.
-  if (Mnemonic == "it") {
-    SMLoc Loc = SMLoc::getFromPointer(NameLoc.getPointer() + 2);
+  // Handle the mask for IT and VPT instructions. In ARMOperand and
+  // MCOperand, this is stored in a format independent of the
+  // condition code: the lowest set bit indicates the end of the
+  // encoding, and above that, a 1 bit indicates 'else', and an 0
+  // indicates 'then'. E.g.
+  //    IT    -> 1000
+  //    ITx   -> x100    (ITT -> 0100, ITE -> 1100)
+  //    ITxy  -> xy10    (e.g. ITET -> 1010)
+  //    ITxyz -> xyz1    (e.g. ITEET -> 1101)
+  if (Mnemonic == "it" || Mnemonic.startswith("vpt") ||
+      Mnemonic.startswith("vpst")) {
+    SMLoc Loc = Mnemonic == "it"  ? SMLoc::getFromPointer(NameLoc.getPointer() + 2) :
+                Mnemonic == "vpt" ? SMLoc::getFromPointer(NameLoc.getPointer() + 3) :
+                                    SMLoc::getFromPointer(NameLoc.getPointer() + 4);
     if (ITMask.size() > 3) {
-      return Error(Loc, "too many conditions on IT instruction");
+      if (Mnemonic == "it")
+        return Error(Loc, "too many conditions on IT instruction");
+      return Error(Loc, "too many conditions on VPT instruction");
     }
     unsigned Mask = 8;
     for (unsigned i = ITMask.size(); i != 0; --i) {
@@ -6289,7 +6552,7 @@ bool ARMAsmParser::ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
         return Error(Loc, "illegal IT block condition mask '" + ITMask + "'");
       }
       Mask >>= 1;
-      if (ITMask[i - 1] == 't')
+      if (ITMask[i - 1] == 'e')
         Mask |= 8;
     }
     Operands.push_back(ARMOperand::CreateITMask(Mask, Loc));
@@ -6305,8 +6568,9 @@ bool ARMAsmParser::ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
   // ConditionCode operands to match the mnemonic "as written" and then we let
   // the matcher deal with finding the right instruction or generating an
   // appropriate error.
-  bool CanAcceptCarrySet, CanAcceptPredicationCode;
-  getMnemonicAcceptInfo(Mnemonic, Name, CanAcceptCarrySet, CanAcceptPredicationCode);
+  bool CanAcceptCarrySet, CanAcceptPredicationCode, CanAcceptVPTPredicationCode;
+  getMnemonicAcceptInfo(Mnemonic, ExtraToken, Name, CanAcceptCarrySet,
+                        CanAcceptPredicationCode, CanAcceptVPTPredicationCode);
 
   // If we had a carry-set on an instruction that can't do that, issue an
   // error.
@@ -6321,6 +6585,13 @@ bool ARMAsmParser::ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
                  "' is not predicable, but condition code specified");
   }
 
+  // If we had a VPT predication code on an instruction that can't do that, issue an
+  // error.
+  if (!CanAcceptVPTPredicationCode && VPTPredicationCode != ARMVCC::None) {
+    return Error(NameLoc, "instruction '" + Mnemonic +
+                 "' is not VPT predicable, but VPT code T/E is specified");
+  }
+
   // Add the carry setting operand, if necessary.
   if (CanAcceptCarrySet) {
     SMLoc Loc = SMLoc::getFromPointer(NameLoc.getPointer() + Mnemonic.size());
@@ -6333,7 +6604,24 @@ bool ARMAsmParser::ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
     SMLoc Loc = SMLoc::getFromPointer(NameLoc.getPointer() + Mnemonic.size() +
                                       CarrySetting);
     Operands.push_back(ARMOperand::CreateCondCode(
-                         ARMCC::CondCodes(PredicationCode), Loc));
+                       ARMCC::CondCodes(PredicationCode), Loc));
+  }
+
+  // Add the VPT predication code operand, if necessary.
+  // FIXME: We don't add them for the instructions filtered below as these can
+  // have custom operands which need special parsing.  This parsing requires
+  // the operand to be in the same place in the OperandVector as their
+  // definition in tblgen.  Since these instructions may also have the
+  // scalar predication operand we do not add the vector one and leave until
+  // now to fix it up.
+  if (CanAcceptVPTPredicationCode && Mnemonic != "vmov" &&
+      !Mnemonic.startswith("vcmp") &&
+      !(Mnemonic.startswith("vcvt") && Mnemonic != "vcvta" &&
+        Mnemonic != "vcvtn" && Mnemonic != "vcvtp" && Mnemonic != "vcvtm")) {
+    SMLoc Loc = SMLoc::getFromPointer(NameLoc.getPointer() + Mnemonic.size() +
+                                      CarrySetting);
+    Operands.push_back(ARMOperand::CreateVPTPred(
+                         ARMVCC::VPTCodes(VPTPredicationCode), Loc));
   }
 
   // Add the processor imod operand, if necessary.
@@ -6349,7 +6637,7 @@ bool ARMAsmParser::ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
   while (Next != StringRef::npos) {
     Start = Next;
     Next = Name.find('.', Start + 1);
-    StringRef ExtraToken = Name.slice(Start, Next);
+    ExtraToken = Name.slice(Start, Next);
 
     // Some NEON instructions have an optional datatype suffix that is
     // completely ignored. Check for that.
@@ -6405,55 +6693,171 @@ bool ARMAsmParser::ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
 
   // Some instructions have the same mnemonic, but don't always
   // have a predicate. Distinguish them here and delete the
-  // predicate if needed.
+  // appropriate predicate if needed.  This could be either the scalar
+  // predication code or the vector predication code.
   if (PredicationCode == ARMCC::AL &&
       shouldOmitPredicateOperand(Mnemonic, Operands))
     Operands.erase(Operands.begin() + 1);
 
-  // ARM mode 'blx' need special handling, as the register operand version
-  // is predicable, but the label operand version is not. So, we can't rely
-  // on the Mnemonic based checking to correctly figure out when to put
-  // a k_CondCode operand in the list. If we're trying to match the label
-  // version, remove the k_CondCode operand here.
-  if (!isThumb() && Mnemonic == "blx" && Operands.size() == 3 &&
-      static_cast<ARMOperand &>(*Operands[2]).isImm())
-    Operands.erase(Operands.begin() + 1);
 
-  // Adjust operands of ldrexd/strexd to MCK_GPRPair.
-  // ldrexd/strexd require even/odd GPR pair. To enforce this constraint,
-  // a single GPRPair reg operand is used in the .td file to replace the two
-  // GPRs. However, when parsing from asm, the two GRPs cannot be automatically
-  // expressed as a GPRPair, so we have to manually merge them.
-  // FIXME: We would really like to be able to tablegen'erate this.
-  if (!isThumb() && Operands.size() > 4 &&
-      (Mnemonic == "ldrexd" || Mnemonic == "strexd" || Mnemonic == "ldaexd" ||
-       Mnemonic == "stlexd")) {
-    bool isLoad = (Mnemonic == "ldrexd" || Mnemonic == "ldaexd");
-    unsigned Idx = isLoad ? 2 : 3;
-    ARMOperand &Op1 = static_cast<ARMOperand &>(*Operands[Idx]);
-    ARMOperand &Op2 = static_cast<ARMOperand &>(*Operands[Idx + 1]);
-
-    const MCRegisterClass& MRC = MRI->getRegClass(ARM::GPRRegClassID);
-    // Adjust only if Op1 and Op2 are GPRs.
-    if (Op1.isReg() && Op2.isReg() && MRC.contains(Op1.getReg()) &&
-        MRC.contains(Op2.getReg())) {
-      unsigned Reg1 = Op1.getReg();
-      unsigned Reg2 = Op2.getReg();
-      unsigned Rt = MRI->getEncodingValue(Reg1);
-      unsigned Rt2 = MRI->getEncodingValue(Reg2);
-
-      // Rt2 must be Rt + 1 and Rt must be even.
-      if (Rt + 1 != Rt2 || (Rt & 1)) {
-        return Error(Op2.getStartLoc(),
-                     isLoad ? "destination operands must be sequential"
-                            : "source operands must be sequential");
-      }
-      unsigned NewReg = MRI->getMatchingSuperReg(Reg1, ARM::gsub_0,
-          &(MRI->getRegClass(ARM::GPRPairRegClassID)));
-      Operands[Idx] =
-          ARMOperand::CreateReg(NewReg, Op1.getStartLoc(), Op2.getEndLoc());
-      Operands.erase(Operands.begin() + Idx + 1);
+  if (hasMVE()) {
+    if (!shouldOmitVectorPredicateOperand(Mnemonic, Operands) &&
+        Mnemonic == "vmov" && PredicationCode == ARMCC::LT) {
+      // Very nasty hack to deal with the vector predicated variant of vmovlt
+      // the scalar predicated vmov with condition 'lt'.  We can not tell them
+      // apart until we have parsed their operands.
+      Operands.erase(Operands.begin() + 1);
+      Operands.erase(Operands.begin());
+      SMLoc MLoc = SMLoc::getFromPointer(NameLoc.getPointer());
+      SMLoc PLoc = SMLoc::getFromPointer(NameLoc.getPointer() +
+                                         Mnemonic.size() - 1 + CarrySetting);
+      Operands.insert(Operands.begin(),
+                      ARMOperand::CreateVPTPred(ARMVCC::None, PLoc));
+      Operands.insert(Operands.begin(),
+                      ARMOperand::CreateToken(StringRef("vmovlt"), MLoc));
+    } else if (Mnemonic == "vcvt" && PredicationCode == ARMCC::NE &&
+               !shouldOmitVectorPredicateOperand(Mnemonic, Operands)) {
+      // Another nasty hack to deal with the ambiguity between vcvt with scalar
+      // predication 'ne' and vcvtn with vector predication 'e'.  As above we
+      // can only distinguish between the two after we have parsed their
+      // operands.
+      Operands.erase(Operands.begin() + 1);
+      Operands.erase(Operands.begin());
+      SMLoc MLoc = SMLoc::getFromPointer(NameLoc.getPointer());
+      SMLoc PLoc = SMLoc::getFromPointer(NameLoc.getPointer() +
+                                         Mnemonic.size() - 1 + CarrySetting);
+      Operands.insert(Operands.begin(),
+                      ARMOperand::CreateVPTPred(ARMVCC::Else, PLoc));
+      Operands.insert(Operands.begin(),
+                      ARMOperand::CreateToken(StringRef("vcvtn"), MLoc));
+    } else if (Mnemonic == "vmul" && PredicationCode == ARMCC::LT &&
+               !shouldOmitVectorPredicateOperand(Mnemonic, Operands)) {
+      // Another hack, this time to distinguish between scalar predicated vmul
+      // with 'lt' predication code and the vector instruction vmullt with
+      // vector predication code "none"
+      Operands.erase(Operands.begin() + 1);
+      Operands.erase(Operands.begin());
+      SMLoc MLoc = SMLoc::getFromPointer(NameLoc.getPointer());
+      Operands.insert(Operands.begin(),
+                      ARMOperand::CreateToken(StringRef("vmullt"), MLoc));
     }
+    // For vmov and vcmp, as mentioned earlier, we did not add the vector
+    // predication code, since these may contain operands that require
+    // special parsing.  So now we have to see if they require vector
+    // predication and replace the scalar one with the vector predication
+    // operand if that is the case.
+    else if (Mnemonic == "vmov" || Mnemonic.startswith("vcmp") ||
+             (Mnemonic.startswith("vcvt") && !Mnemonic.startswith("vcvta") &&
+              !Mnemonic.startswith("vcvtn") && !Mnemonic.startswith("vcvtp") &&
+              !Mnemonic.startswith("vcvtm"))) {
+      if (!shouldOmitVectorPredicateOperand(Mnemonic, Operands)) {
+        // We could not split the vector predicate off vcvt because it might
+        // have been the scalar vcvtt instruction.  Now we know its a vector
+        // instruction, we still need to check whether its the vector
+        // predicated vcvt with 'Then' predication or the vector vcvtt.  We can
+        // distinguish the two based on the suffixes, if it is any of
+        // ".f16.f32", ".f32.f16", ".f16.f64" or ".f64.f16" then it is the vcvtt.
+        if (Mnemonic.startswith("vcvtt") && Operands.size() >= 4) {
+          auto Sz1 = static_cast<ARMOperand &>(*Operands[2]);
+          auto Sz2 = static_cast<ARMOperand &>(*Operands[3]);
+          if (!(Sz1.isToken() && Sz1.getToken().startswith(".f") &&
+              Sz2.isToken() && Sz2.getToken().startswith(".f"))) {
+            Operands.erase(Operands.begin());
+            SMLoc MLoc = SMLoc::getFromPointer(NameLoc.getPointer());
+            VPTPredicationCode = ARMVCC::Then;
+
+            Mnemonic = Mnemonic.substr(0, 4);
+            Operands.insert(Operands.begin(),
+                            ARMOperand::CreateToken(Mnemonic, MLoc));
+          }
+        }
+        Operands.erase(Operands.begin() + 1);
+        SMLoc PLoc = SMLoc::getFromPointer(NameLoc.getPointer() +
+                                          Mnemonic.size() + CarrySetting);
+        Operands.insert(Operands.begin() + 1,
+                        ARMOperand::CreateVPTPred(
+                            ARMVCC::VPTCodes(VPTPredicationCode), PLoc));
+      }
+    } else if (CanAcceptVPTPredicationCode) {
+      // For all other instructions, make sure only one of the two
+      // predication operands is left behind, depending on whether we should
+      // use the vector predication.
+      if (shouldOmitVectorPredicateOperand(Mnemonic, Operands)) {
+        if (CanAcceptPredicationCode)
+          Operands.erase(Operands.begin() + 2);
+        else
+          Operands.erase(Operands.begin() + 1);
+      } else if (CanAcceptPredicationCode && PredicationCode == ARMCC::AL) {
+        Operands.erase(Operands.begin() + 1);
+      }
+    }
+  }
+
+  if (VPTPredicationCode != ARMVCC::None) {
+    bool usedVPTPredicationCode = false;
+    for (unsigned I = 1; I < Operands.size(); ++I)
+      if (static_cast<ARMOperand &>(*Operands[I]).isVPTPred())
+        usedVPTPredicationCode = true;
+    if (!usedVPTPredicationCode) {
+      // If we have a VPT predication code and we haven't just turned it
+      // into an operand, then it was a mistake for splitMnemonic to
+      // separate it from the rest of the mnemonic in the first place,
+      // and this may lead to wrong disassembly (e.g. scalar floating
+      // point VCMPE is actually a different instruction from VCMP, so
+      // we mustn't treat them the same). In that situation, glue it
+      // back on.
+      Mnemonic = Name.slice(0, Mnemonic.size() + 1);
+      Operands.erase(Operands.begin());
+      Operands.insert(Operands.begin(),
+                      ARMOperand::CreateToken(Mnemonic, NameLoc));
+    }
+  }
+
+    // ARM mode 'blx' need special handling, as the register operand version
+    // is predicable, but the label operand version is not. So, we can't rely
+    // on the Mnemonic based checking to correctly figure out when to put
+    // a k_CondCode operand in the list. If we're trying to match the label
+    // version, remove the k_CondCode operand here.
+    if (!isThumb() && Mnemonic == "blx" && Operands.size() == 3 &&
+        static_cast<ARMOperand &>(*Operands[2]).isImm())
+      Operands.erase(Operands.begin() + 1);
+
+    // Adjust operands of ldrexd/strexd to MCK_GPRPair.
+    // ldrexd/strexd require even/odd GPR pair. To enforce this constraint,
+    // a single GPRPair reg operand is used in the .td file to replace the two
+    // GPRs. However, when parsing from asm, the two GRPs cannot be
+    // automatically
+    // expressed as a GPRPair, so we have to manually merge them.
+    // FIXME: We would really like to be able to tablegen'erate this.
+    if (!isThumb() && Operands.size() > 4 &&
+        (Mnemonic == "ldrexd" || Mnemonic == "strexd" || Mnemonic == "ldaexd" ||
+         Mnemonic == "stlexd")) {
+      bool isLoad = (Mnemonic == "ldrexd" || Mnemonic == "ldaexd");
+      unsigned Idx = isLoad ? 2 : 3;
+      ARMOperand &Op1 = static_cast<ARMOperand &>(*Operands[Idx]);
+      ARMOperand &Op2 = static_cast<ARMOperand &>(*Operands[Idx + 1]);
+
+      const MCRegisterClass &MRC = MRI->getRegClass(ARM::GPRRegClassID);
+      // Adjust only if Op1 and Op2 are GPRs.
+      if (Op1.isReg() && Op2.isReg() && MRC.contains(Op1.getReg()) &&
+          MRC.contains(Op2.getReg())) {
+        unsigned Reg1 = Op1.getReg();
+        unsigned Reg2 = Op2.getReg();
+        unsigned Rt = MRI->getEncodingValue(Reg1);
+        unsigned Rt2 = MRI->getEncodingValue(Reg2);
+
+        // Rt2 must be Rt + 1 and Rt must be even.
+        if (Rt + 1 != Rt2 || (Rt & 1)) {
+          return Error(Op2.getStartLoc(),
+                       isLoad ? "destination operands must be sequential"
+                              : "source operands must be sequential");
+        }
+        unsigned NewReg = MRI->getMatchingSuperReg(
+            Reg1, ARM::gsub_0, &(MRI->getRegClass(ARM::GPRPairRegClassID)));
+        Operands[Idx] =
+            ARMOperand::CreateReg(NewReg, Op1.getStartLoc(), Op2.getEndLoc());
+        Operands.erase(Operands.begin() + Idx + 1);
+      }
   }
 
   // GNU Assembler extension (compatibility).
@@ -6614,6 +7018,17 @@ bool ARMAsmParser::validateLDRDSTRD(MCInst &Inst,
   return false;
 }
 
+static int findFirstVectorPredOperandIdx(const MCInstrDesc &MCID) {
+  for (unsigned i = 0; i < MCID.NumOperands; ++i) {
+    if (ARM::isVpred(MCID.OpInfo[i].OperandType))
+      return i;
+  }
+  return -1;
+}
+
+static bool isVectorPredicable(const MCInstrDesc &MCID) {
+  return findFirstVectorPredOperandIdx(MCID) != -1;
+}
 
 // FIXME: We would really like to be able to tablegen'erate this.
 bool ARMAsmParser::validateInstruction(MCInst &Inst,
@@ -6672,6 +7087,28 @@ bool ARMAsmParser::validateInstruction(MCInst &Inst,
     return Error(Loc, "instruction must be outside of IT block or the last instruction in an IT block");
   }
 
+  if (inVPTBlock() && !instIsBreakpoint(Inst)) {
+    unsigned Bit = extractITMaskBit(VPTState.Mask, VPTState.CurPosition);
+    if (!isVectorPredicable(MCID))
+      return Error(Loc, "instruction in VPT block must be predicable");
+    unsigned Pred = Inst.getOperand(findFirstVectorPredOperandIdx(MCID)).getImm();
+    unsigned VPTPred = Bit ? ARMVCC::Else : ARMVCC::Then;
+    if (Pred != VPTPred) {
+      SMLoc PredLoc;
+      for (unsigned I = 1; I < Operands.size(); ++I)
+        if (static_cast<ARMOperand &>(*Operands[I]).isVPTPred())
+          PredLoc = Operands[I]->getStartLoc();
+      return Error(PredLoc, "incorrect predication in VPT block; got '" +
+                   StringRef(ARMVPTPredToString(ARMVCC::VPTCodes(Pred))) +
+                   "', but expected '" +
+                   ARMVPTPredToString(ARMVCC::VPTCodes(VPTPred)) + "'");
+    }
+  }
+  else if (isVectorPredicable(MCID) &&
+           Inst.getOperand(findFirstVectorPredOperandIdx(MCID)).getImm() !=
+           ARMVCC::None)
+    return Error(Loc, "VPT predicated instructions must be in VPT block");
+
   const unsigned Opcode = Inst.getOpcode();
   switch (Opcode) {
   case ARM::t2IT: {
@@ -6681,11 +7118,10 @@ bool ARMAsmParser::validateInstruction(MCInst &Inst,
     unsigned Cond = Inst.getOperand(0).getImm();
     unsigned Mask = Inst.getOperand(1).getImm();
 
-    // Mask hasn't been modified to the IT instruction encoding yet so
-    // conditions only allowing a 't' are a block of 1s starting at bit 3
-    // followed by all 0s. Easiest way is to just list the 4 possibilities.
-    if (Cond == ARMCC::AL && Mask != 8 && Mask != 12 && Mask != 14 &&
-        Mask != 15)
+    // Conditions only allowing a 't' are those with no set bit except
+    // the lowest-order one that indicates the end of the sequence. In
+    // other words, powers of 2.
+    if (Cond == ARMCC::AL && countPopulation(Mask) != 1)
       return Error(Loc, "unpredictable IT predicate sequence");
     break;
   }
@@ -7162,6 +7598,47 @@ bool ARMAsmParser::validateInstruction(MCInst &Inst,
                    "list of registers must be at least 1 and at most 16");
     break;
   }
+  case ARM::MVE_VQDMULLs32bh:
+  case ARM::MVE_VQDMULLs32th:
+  case ARM::MVE_VCMULf32:
+  case ARM::MVE_VMULLs32bh:
+  case ARM::MVE_VMULLs32th:
+  case ARM::MVE_VMULLu32bh:
+  case ARM::MVE_VMULLu32th:
+  case ARM::MVE_VQDMLADHs32:
+  case ARM::MVE_VQDMLADHXs32:
+  case ARM::MVE_VQRDMLADHs32:
+  case ARM::MVE_VQRDMLADHXs32:
+  case ARM::MVE_VQDMLSDHs32:
+  case ARM::MVE_VQDMLSDHXs32:
+  case ARM::MVE_VQRDMLSDHs32:
+  case ARM::MVE_VQRDMLSDHXs32: {
+    if (Operands[3]->getReg() == Operands[4]->getReg()) {
+      return Error (Operands[3]->getStartLoc(),
+                    "Qd register and Qn register can't be identical");
+    }
+    if (Operands[3]->getReg() == Operands[5]->getReg()) {
+      return Error (Operands[3]->getStartLoc(),
+                    "Qd register and Qm register can't be identical");
+    }
+    break;
+  }
+  case ARM::MVE_VMOV_rr_q: {
+    if (Operands[4]->getReg() != Operands[6]->getReg())
+      return Error (Operands[4]->getStartLoc(), "Q-registers must be the same");
+    if (static_cast<ARMOperand &>(*Operands[5]).getVectorIndex() !=
+        static_cast<ARMOperand &>(*Operands[7]).getVectorIndex() + 2)
+      return Error (Operands[5]->getStartLoc(), "Q-register indexes must be 2 and 0 or 3 and 1");
+    break;
+  }
+  case ARM::MVE_VMOV_q_rr: {
+    if (Operands[2]->getReg() != Operands[4]->getReg())
+      return Error (Operands[2]->getStartLoc(), "Q-registers must be the same");
+    if (static_cast<ARMOperand &>(*Operands[3]).getVectorIndex() !=
+        static_cast<ARMOperand &>(*Operands[5]).getVectorIndex() + 2)
+      return Error (Operands[3]->getStartLoc(), "Q-register indexes must be 2 and 0 or 3 and 1");
+    break;
+  }
   }
 
   return false;
@@ -7438,6 +7915,50 @@ bool ARMAsmParser::processInstruction(MCInst &Inst,
   }
 
   switch (Inst.getOpcode()) {
+  case ARM::MVE_VORNIZ0v4i32:
+  case ARM::MVE_VORNIZ0v8i16:
+  case ARM::MVE_VORNIZ8v4i32:
+  case ARM::MVE_VORNIZ8v8i16:
+  case ARM::MVE_VORNIZ16v4i32:
+  case ARM::MVE_VORNIZ24v4i32:
+  case ARM::MVE_VANDIZ0v4i32:
+  case ARM::MVE_VANDIZ0v8i16:
+  case ARM::MVE_VANDIZ8v4i32:
+  case ARM::MVE_VANDIZ8v8i16:
+  case ARM::MVE_VANDIZ16v4i32:
+  case ARM::MVE_VANDIZ24v4i32: {
+    unsigned Opcode;
+    bool imm16 = false;
+    switch(Inst.getOpcode()) {
+    case ARM::MVE_VORNIZ0v4i32: Opcode = ARM::MVE_VORRIZ0v4i32; break;
+    case ARM::MVE_VORNIZ0v8i16: Opcode = ARM::MVE_VORRIZ0v8i16; imm16 = true; break;
+    case ARM::MVE_VORNIZ8v4i32: Opcode = ARM::MVE_VORRIZ8v4i32; break;
+    case ARM::MVE_VORNIZ8v8i16: Opcode = ARM::MVE_VORRIZ8v8i16; imm16 = true; break;
+    case ARM::MVE_VORNIZ16v4i32: Opcode = ARM::MVE_VORRIZ16v4i32; break;
+    case ARM::MVE_VORNIZ24v4i32: Opcode = ARM::MVE_VORRIZ24v4i32; break;
+    case ARM::MVE_VANDIZ0v4i32: Opcode = ARM::MVE_VBICIZ0v4i32; break;
+    case ARM::MVE_VANDIZ0v8i16: Opcode = ARM::MVE_VBICIZ0v8i16; imm16 = true; break;
+    case ARM::MVE_VANDIZ8v4i32: Opcode = ARM::MVE_VBICIZ8v4i32; break;
+    case ARM::MVE_VANDIZ8v8i16: Opcode = ARM::MVE_VBICIZ8v8i16; imm16 = true; break;
+    case ARM::MVE_VANDIZ16v4i32: Opcode = ARM::MVE_VBICIZ16v4i32; break;
+    case ARM::MVE_VANDIZ24v4i32: Opcode = ARM::MVE_VBICIZ24v4i32; break;
+    default: llvm_unreachable("unexpected opcode");
+    }
+
+    MCInst TmpInst;
+    TmpInst.setOpcode(Opcode);
+    TmpInst.addOperand(Inst.getOperand(0));
+    TmpInst.addOperand(Inst.getOperand(1));
+
+    // invert immediate
+    unsigned imm = ~Inst.getOperand(2).getImm() & (imm16 ? 0xffff : 0xffffffff);
+    TmpInst.addOperand(MCOperand::createImm(imm));
+
+    TmpInst.addOperand(Inst.getOperand(3));
+    TmpInst.addOperand(Inst.getOperand(4));
+    Inst = TmpInst;
+    return true;
+  }
   // Alias for alternate form of 'ldr{,b}t Rt, [Rn], #imm' instruction.
   case ARM::LDRT_POST:
   case ARM::LDRBT_POST: {
@@ -9260,15 +9781,11 @@ bool ARMAsmParser::processInstruction(MCInst &Inst,
   }
   case ARM::ITasm:
   case ARM::t2IT: {
-    MCOperand &MO = Inst.getOperand(1);
-    unsigned Mask = MO.getImm();
-    ARMCC::CondCodes Cond = ARMCC::CondCodes(Inst.getOperand(0).getImm());
-
     // Set up the IT block state according to the IT instruction we just
     // matched.
     assert(!inITBlock() && "nested IT blocks?!");
-    startExplicitITBlock(Cond, Mask);
-    MO.setImm(getITMaskEncoding());
+    startExplicitITBlock(ARMCC::CondCodes(Inst.getOperand(0).getImm()),
+                         Inst.getOperand(1).getImm());
     break;
   }
   case ARM::t2LSLrr:
@@ -9344,6 +9861,35 @@ bool ARMAsmParser::processInstruction(MCInst &Inst,
       return true;
     }
     return false;
+  case ARM::MVE_VPST:
+  case ARM::MVE_VPTv16i8:
+  case ARM::MVE_VPTv8i16:
+  case ARM::MVE_VPTv4i32:
+  case ARM::MVE_VPTv16u8:
+  case ARM::MVE_VPTv8u16:
+  case ARM::MVE_VPTv4u32:
+  case ARM::MVE_VPTv16s8:
+  case ARM::MVE_VPTv8s16:
+  case ARM::MVE_VPTv4s32:
+  case ARM::MVE_VPTv4f32:
+  case ARM::MVE_VPTv8f16:
+  case ARM::MVE_VPTv16i8r:
+  case ARM::MVE_VPTv8i16r:
+  case ARM::MVE_VPTv4i32r:
+  case ARM::MVE_VPTv16u8r:
+  case ARM::MVE_VPTv8u16r:
+  case ARM::MVE_VPTv4u32r:
+  case ARM::MVE_VPTv16s8r:
+  case ARM::MVE_VPTv8s16r:
+  case ARM::MVE_VPTv4s32r:
+  case ARM::MVE_VPTv4f32r:
+  case ARM::MVE_VPTv8f16r: {
+    assert(!inVPTBlock() && "Nested VPT blocks are not allowed");
+    MCOperand &MO = Inst.getOperand(0);
+    VPTState.Mask = MO.getImm();
+    VPTState.CurPosition = 0;
+    break;
+  }
   }
   return false;
 }
@@ -9584,6 +10130,7 @@ bool ARMAsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
       // Still progress the IT block, otherwise one wrong condition causes
       // nasty cascading errors.
       forwardITPosition();
+      forwardVPTPosition();
       return true;
     }
 
@@ -9610,6 +10157,7 @@ bool ARMAsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
     // and process gets a consistent answer about whether we're in an IT
     // block.
     forwardITPosition();
+    forwardVPTPosition();
 
     // ITasm is an ARM mode pseudo-instruction that just sets the ITblock and
     // doesn't actually encode.
@@ -10966,6 +11514,18 @@ unsigned ARMAsmParser::validateTargetOperandClass(MCParsedAsmOperand &AsmOp,
         if (CE->getValue() == 0)
           return Match_Success;
     break;
+  case MCK__35_8:
+    if (Op.isImm())
+      if (const MCConstantExpr *CE = dyn_cast<MCConstantExpr>(Op.getImm()))
+        if (CE->getValue() == 8)
+          return Match_Success;
+    break;
+  case MCK__35_16:
+    if (Op.isImm())
+      if (const MCConstantExpr *CE = dyn_cast<MCConstantExpr>(Op.getImm()))
+        if (CE->getValue() == 16)
+          return Match_Success;
+    break;
   case MCK_ModImm:
     if (Op.isImm()) {
       const MCExpr *SOExpr = Op.getImm();
@@ -10988,4 +11548,77 @@ unsigned ARMAsmParser::validateTargetOperandClass(MCParsedAsmOperand &AsmOp,
     break;
   }
   return Match_InvalidOperand;
+}
+
+bool ARMAsmParser::isMnemonicVPTPredicable(StringRef Mnemonic,
+                                           StringRef ExtraToken) {
+  if (!hasMVE())
+    return false;
+
+  return Mnemonic.startswith("vabav") || Mnemonic.startswith("vaddv") ||
+         Mnemonic.startswith("vaddlv") || Mnemonic.startswith("vminnmv") ||
+         Mnemonic.startswith("vminnmav") || Mnemonic.startswith("vminv") ||
+         Mnemonic.startswith("vminav") || Mnemonic.startswith("vmaxnmv") ||
+         Mnemonic.startswith("vmaxnmav") || Mnemonic.startswith("vmaxv") ||
+         Mnemonic.startswith("vmaxav") || Mnemonic.startswith("vmladav") ||
+         Mnemonic.startswith("vrmlaldavh") || Mnemonic.startswith("vrmlalvh") ||
+         Mnemonic.startswith("vmlsdav") || Mnemonic.startswith("vmlav") ||
+         Mnemonic.startswith("vmlaldav") || Mnemonic.startswith("vmlalv") ||
+         Mnemonic.startswith("vmaxnm") || Mnemonic.startswith("vminnm") ||
+         Mnemonic.startswith("vmax") || Mnemonic.startswith("vmin") ||
+         Mnemonic.startswith("vshlc") || Mnemonic.startswith("vmovlt") ||
+         Mnemonic.startswith("vmovlb") || Mnemonic.startswith("vshll") ||
+         Mnemonic.startswith("vrshrn") || Mnemonic.startswith("vshrn") ||
+         Mnemonic.startswith("vqrshrun") || Mnemonic.startswith("vqshrun") ||
+         Mnemonic.startswith("vqrshrn") || Mnemonic.startswith("vqshrn") ||
+         Mnemonic.startswith("vbic") || Mnemonic.startswith("vrev64") ||
+         Mnemonic.startswith("vrev32") || Mnemonic.startswith("vrev16") ||
+         Mnemonic.startswith("vmvn") || Mnemonic.startswith("veor") ||
+         Mnemonic.startswith("vorn") || Mnemonic.startswith("vorr") ||
+         Mnemonic.startswith("vand") || Mnemonic.startswith("vmul") ||
+         Mnemonic.startswith("vqrdmulh") || Mnemonic.startswith("vqdmulh") ||
+         Mnemonic.startswith("vsub") || Mnemonic.startswith("vadd") ||
+         Mnemonic.startswith("vqsub") || Mnemonic.startswith("vqadd") ||
+         Mnemonic.startswith("vabd") || Mnemonic.startswith("vrhadd") ||
+         Mnemonic.startswith("vhsub") || Mnemonic.startswith("vhadd") ||
+         Mnemonic.startswith("vdup") || Mnemonic.startswith("vcls") ||
+         Mnemonic.startswith("vclz") || Mnemonic.startswith("vneg") ||
+         Mnemonic.startswith("vabs") || Mnemonic.startswith("vqneg") ||
+         Mnemonic.startswith("vqabs") ||
+         (Mnemonic.startswith("vrint") && Mnemonic != "vrintr") ||
+         Mnemonic.startswith("vcmla") || Mnemonic.startswith("vfma") ||
+         Mnemonic.startswith("vfms") || Mnemonic.startswith("vcadd") ||
+         Mnemonic.startswith("vadd") || Mnemonic.startswith("vsub") ||
+         Mnemonic.startswith("vshl") || Mnemonic.startswith("vqshl") ||
+         Mnemonic.startswith("vqrshl") || Mnemonic.startswith("vrshl") ||
+         Mnemonic.startswith("vsri") || Mnemonic.startswith("vsli") ||
+         Mnemonic.startswith("vrshr") || Mnemonic.startswith("vshr") ||
+         Mnemonic.startswith("vpsel") || Mnemonic.startswith("vcmp") ||
+         Mnemonic.startswith("vqdmladh") || Mnemonic.startswith("vqrdmladh") ||
+         Mnemonic.startswith("vqdmlsdh") || Mnemonic.startswith("vqrdmlsdh") ||
+         Mnemonic.startswith("vcmul") || Mnemonic.startswith("vrmulh") ||
+         Mnemonic.startswith("vqmovn") || Mnemonic.startswith("vqmovun") ||
+         Mnemonic.startswith("vmovnt") || Mnemonic.startswith("vmovnb") ||
+         Mnemonic.startswith("vmaxa") || Mnemonic.startswith("vmaxnma") ||
+         Mnemonic.startswith("vhcadd") || Mnemonic.startswith("vadc") ||
+         Mnemonic.startswith("vsbc") || Mnemonic.startswith("vrshr") ||
+         Mnemonic.startswith("vshr") || Mnemonic.startswith("vstrb") ||
+         Mnemonic.startswith("vldrb") ||
+         (Mnemonic.startswith("vstrh") && Mnemonic != "vstrhi") ||
+         (Mnemonic.startswith("vldrh") && Mnemonic != "vldrhi") ||
+         Mnemonic.startswith("vstrw") || Mnemonic.startswith("vldrw") ||
+         Mnemonic.startswith("vldrd") || Mnemonic.startswith("vstrd") ||
+         Mnemonic.startswith("vqdmull") || Mnemonic.startswith("vbrsr") ||
+         Mnemonic.startswith("vfmas") || Mnemonic.startswith("vmlas") ||
+         Mnemonic.startswith("vmla") || Mnemonic.startswith("vqdmlash") ||
+         Mnemonic.startswith("vqdmlah") || Mnemonic.startswith("vqrdmlash") ||
+         Mnemonic.startswith("vqrdmlah") || Mnemonic.startswith("viwdup") ||
+         Mnemonic.startswith("vdwdup") || Mnemonic.startswith("vidup") ||
+         Mnemonic.startswith("vddup") || Mnemonic.startswith("vctp") ||
+         Mnemonic.startswith("vpnot") || Mnemonic.startswith("vbic") ||
+         Mnemonic.startswith("vrmlsldavh") || Mnemonic.startswith("vmlsldav") ||
+         Mnemonic.startswith("vcvt") ||
+         (Mnemonic.startswith("vmov") &&
+          !(ExtraToken == ".f16" || ExtraToken == ".32" ||
+            ExtraToken == ".16" || ExtraToken == ".8"));
 }

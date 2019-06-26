@@ -1194,6 +1194,23 @@ static Instruction *foldCttzCtlz(IntrinsicInst &II, InstCombiner &IC) {
     return CallInst::Create(F, {X, II.getArgOperand(1)});
   }
 
+  if (IsTZ) {
+    // cttz(-x) -> cttz(x)
+    if (match(Op0, m_Neg(m_Value(X)))) {
+      II.setOperand(0, X);
+      return &II;
+    }
+
+    // cttz(abs(x)) -> cttz(x)
+    // cttz(nabs(x)) -> cttz(x)
+    Value *Y;
+    SelectPatternFlavor SPF = matchSelectPattern(Op0, X, Y).Flavor;
+    if (SPF == SPF_ABS || SPF == SPF_NABS) {
+      II.setOperand(0, X);
+      return &II;
+    }
+  }
+
   KnownBits Known = IC.computeKnownBits(Op0, 0, &II);
 
   // Create a mask for bits above (ctlz) or below (cttz) the first known one.
@@ -3733,7 +3750,9 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
         break;
 
       Function *NewF =
-          Intrinsic::getDeclaration(II->getModule(), NewIID, SrcLHS->getType());
+          Intrinsic::getDeclaration(II->getModule(), NewIID,
+                                    { II->getType(),
+                                      SrcLHS->getType() });
       Value *Args[] = { SrcLHS, SrcRHS,
                         ConstantInt::get(CC->getType(), SrcPred) };
       CallInst *NewCall = Builder.CreateCall(NewF, Args);
@@ -3773,6 +3792,37 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
     // If bound_ctrl = 1, row mask = bank mask = 0xf we can omit old value.
     II->setOperand(0, UndefValue::get(Old->getType()));
     return II;
+  }
+  case Intrinsic::amdgcn_readfirstlane:
+  case Intrinsic::amdgcn_readlane: {
+    // A constant value is trivially uniform.
+    if (Constant *C = dyn_cast<Constant>(II->getArgOperand(0)))
+      return replaceInstUsesWith(*II, C);
+
+    // The rest of these may not be safe if the exec may not be the same between
+    // the def and use.
+    Value *Src = II->getArgOperand(0);
+    Instruction *SrcInst = dyn_cast<Instruction>(Src);
+    if (SrcInst && SrcInst->getParent() != II->getParent())
+      break;
+
+    // readfirstlane (readfirstlane x) -> readfirstlane x
+    // readlane (readfirstlane x), y -> readfirstlane x
+    if (match(Src, m_Intrinsic<Intrinsic::amdgcn_readfirstlane>()))
+      return replaceInstUsesWith(*II, Src);
+
+    if (IID == Intrinsic::amdgcn_readfirstlane) {
+      // readfirstlane (readlane x, y) -> readlane x, y
+      if (match(Src, m_Intrinsic<Intrinsic::amdgcn_readlane>()))
+        return replaceInstUsesWith(*II, Src);
+    } else {
+      // readlane (readlane x, y), y -> readlane x, y
+      if (match(Src, m_Intrinsic<Intrinsic::amdgcn_readlane>(
+                  m_Value(), m_Specific(II->getArgOperand(1)))))
+        return replaceInstUsesWith(*II, Src);
+    }
+
+    break;
   }
   case Intrinsic::stackrestore: {
     // If the save is right next to the restore, remove the restore.  This can

@@ -322,6 +322,33 @@ protected:
   };
   enum { NumExprBits = NumStmtBits + 9 };
 
+  class ConstantExprBitfields {
+    friend class ASTStmtReader;
+    friend class ASTStmtWriter;
+    friend class ConstantExpr;
+
+    unsigned : NumExprBits;
+
+    /// The kind of result that is trail-allocated.
+    unsigned ResultKind : 2;
+
+    /// Kind of Result as defined by APValue::Kind
+    unsigned APValueKind : 4;
+
+    /// When ResultKind == RSK_Int64. whether the trail-allocated integer is
+    /// signed.
+    unsigned IsUnsigned : 1;
+
+    /// When ResultKind == RSK_Int64. the BitWidth of the trail-allocated
+    /// integer. 7 bits because it is the minimal number of bit to represent a
+    /// value from 0 to 64 (the size of the trail-allocated number).
+    unsigned BitWidth : 7;
+
+    /// When ResultKind == RSK_APValue. Wether the ASTContext will cleanup the
+    /// destructor on the trail-allocated APValue.
+    unsigned HasCleanup : 1;
+  };
+
   class PredefinedExprBitfields {
     friend class ASTStmtReader;
     friend class PredefinedExpr;
@@ -357,14 +384,6 @@ protected:
     SourceLocation Loc;
   };
 
-  enum APFloatSemantics {
-    IEEEhalf,
-    IEEEsingle,
-    IEEEdouble,
-    x87DoubleExtended,
-    IEEEquad,
-    PPCDoubleDouble
-  };
 
   class FloatingLiteralBitfields {
     friend class FloatingLiteral;
@@ -938,6 +957,7 @@ protected:
 
     // Expressions
     ExprBitfields ExprBits;
+    ConstantExprBitfields ConstantExprBits;
     PredefinedExprBitfields PredefinedExprBits;
     DeclRefExprBitfields DeclRefExprBits;
     FloatingLiteralBitfields FloatingLiteralBits;

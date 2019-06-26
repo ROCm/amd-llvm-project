@@ -60,7 +60,7 @@ private:
   SDValue lowerImage(SDValue Op, const AMDGPU::ImageDimIntrinsicInfo *Intr,
                      SelectionDAG &DAG) const;
   SDValue lowerSBuffer(EVT VT, SDLoc DL, SDValue Rsrc, SDValue Offset,
-                       SDValue GLC, SelectionDAG &DAG) const;
+                       SDValue GLC, SDValue DLC, SelectionDAG &DAG) const;
 
   SDValue LowerINTRINSIC_WO_CHAIN(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerINTRINSIC_W_CHAIN(SDValue Op, SelectionDAG &DAG) const;
@@ -312,6 +312,9 @@ public:
 
   MachineBasicBlock *splitKillBlock(MachineInstr &MI,
                                     MachineBasicBlock *BB) const;
+
+  MachineBasicBlock *emitGWSMemViolTestLoop(MachineInstr &MI,
+                                            MachineBasicBlock *BB) const;
 
   MachineBasicBlock *
   EmitInstrWithCustomInserter(MachineInstr &MI,

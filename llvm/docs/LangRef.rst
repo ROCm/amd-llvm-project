@@ -675,6 +675,9 @@ an optional list of attached :ref:`metadata <metadata>`.
 Variables and aliases can have a
 :ref:`Thread Local Storage Model <tls_model>`.
 
+:ref:`Scalable vectors <t_vector>` cannot be global variables or members of
+structs or arrays because their size is unknown at compile time.
+
 Syntax::
 
       @<GlobalVarName> = [Linkage] [PreemptionSpecifier] [Visibility]
@@ -2153,6 +2156,8 @@ to the following rules:
    address range of the allocated storage.
 -  A null pointer in the default address-space is associated with no
    address.
+-  An :ref:`undef value <undefvalues>` in *any* address-space is
+   associated with no address.
 -  An integer constant other than zero or a pointer value returned from
    a function not defined within LLVM may be associated with address
    ranges allocated through mechanisms other than those provided by
@@ -2733,30 +2738,40 @@ Vector Type
 A vector type is a simple derived type that represents a vector of
 elements. Vector types are used when multiple primitive data are
 operated in parallel using a single instruction (SIMD). A vector type
-requires a size (number of elements) and an underlying primitive data
-type. Vector types are considered :ref:`first class <t_firstclass>`.
+requires a size (number of elements), an underlying primitive data type,
+and a scalable property to represent vectors where the exact hardware
+vector length is unknown at compile time. Vector types are considered
+:ref:`first class <t_firstclass>`.
 
 :Syntax:
 
 ::
 
-      < <# elements> x <elementtype> >
+      < <# elements> x <elementtype> >          ; Fixed-length vector
+      < vscale x <# elements> x <elementtype> > ; Scalable vector
 
 The number of elements is a constant integer value larger than 0;
 elementtype may be any integer, floating-point or pointer type. Vectors
-of size zero are not allowed.
+of size zero are not allowed. For scalable vectors, the total number of
+elements is a constant multiple (called vscale) of the specified number
+of elements; vscale is a positive integer that is unknown at compile time
+and the same hardware-dependent constant for all scalable vectors at run
+time. The size of a specific scalable vector type is thus constant within
+IR, even if the exact size in bytes cannot be determined until run time.
 
 :Examples:
 
-+-------------------+--------------------------------------------------+
-| ``<4 x i32>``     | Vector of 4 32-bit integer values.               |
-+-------------------+--------------------------------------------------+
-| ``<8 x float>``   | Vector of 8 32-bit floating-point values.        |
-+-------------------+--------------------------------------------------+
-| ``<2 x i64>``     | Vector of 2 64-bit integer values.               |
-+-------------------+--------------------------------------------------+
-| ``<4 x i64*>``    | Vector of 4 pointers to 64-bit integer values.   |
-+-------------------+--------------------------------------------------+
++------------------------+----------------------------------------------------+
+| ``<4 x i32>``          | Vector of 4 32-bit integer values.                 |
++------------------------+----------------------------------------------------+
+| ``<8 x float>``        | Vector of 8 32-bit floating-point values.          |
++------------------------+----------------------------------------------------+
+| ``<2 x i64>``          | Vector of 2 64-bit integer values.                 |
++------------------------+----------------------------------------------------+
+| ``<4 x i64*>``         | Vector of 4 pointers to 64-bit integer values.     |
++------------------------+----------------------------------------------------+
+| ``<vscale x 4 x i32>`` | Vector with a multiple of 4 32-bit integer values. |
++------------------------+----------------------------------------------------+
 
 .. _t_label:
 
@@ -3205,10 +3220,9 @@ behavior.
 Poison Values
 -------------
 
-Poison values are similar to :ref:`undef values <undefvalues>`, however
-they also represent the fact that an instruction or constant expression
-that cannot evoke side effects has nevertheless detected a condition
-that results in undefined behavior.
+In order to facilitate speculative execution, many instructions do not
+invoke immediate undefined behavior when provided with illegal operands,
+and return a poison value instead.
 
 There is currently no way of representing a poison value in the IR; they
 only exist when produced by operations such as :ref:`add <i_add>` with
@@ -3245,9 +3259,22 @@ Poison value behavior is defined in terms of value *dependence*:
    successor.
 -  Dependence is transitive.
 
-Poison values have the same behavior as :ref:`undef values <undefvalues>`,
-with the additional effect that any instruction that has a *dependence*
-on a poison value has undefined behavior.
+An instruction that *depends* on a poison value, produces a poison value
+itself. A poison value may be relaxed into an
+:ref:`undef value <undefvalues>`, which takes an arbitrary bit-pattern.
+
+This means that immediate undefined behavior occurs if a poison value is
+used as an instruction operand that has any values that trigger undefined
+behavior. Notably this includes (but is not limited to):
+
+-  The pointer operand of a :ref:`load <i_load>`, :ref:`store <i_store>` or
+   any other pointer dereferencing instruction (independent of address
+   space).
+-  The divisor operand of a ``udiv``, ``sdiv``, ``urem`` or ``srem``
+   instruction.
+
+Additionally, undefined behavior occurs if a side effect *depends* on poison.
+This includes side effects that are control dependent on a poisoned branch.
 
 Here are some examples:
 
@@ -3257,12 +3284,11 @@ Here are some examples:
       %poison = sub nuw i32 0, 1           ; Results in a poison value.
       %still_poison = and i32 %poison, 0   ; 0, but also poison.
       %poison_yet_again = getelementptr i32, i32* @h, i32 %still_poison
-      store i32 0, i32* %poison_yet_again  ; memory at @h[0] is poisoned
+      store i32 0, i32* %poison_yet_again  ; Undefined behavior due to
+                                           ; store to poison.
 
       store i32 %poison, i32* @g           ; Poison value stored to memory.
       %poison2 = load i32, i32* @g         ; Poison value loaded back from memory.
-
-      store volatile i32 %poison, i32* @g  ; External observation; undefined behavior.
 
       %narrowaddr = bitcast i32* @g to i16*
       %wideaddr = bitcast i32* @g to i64*
@@ -4691,6 +4717,9 @@ The current supported opcode vocabulary is limited:
   (``16`` and ``DW_ATE_signed`` here, respectively) to which the top of the
   expression stack is to be converted. Maps into a ``DW_OP_convert`` operation
   that references a base type constructed from the supplied values.
+- ``DW_OP_LLVM_tag_offset, tag_offset`` specifies that a memory tag should be
+  optionally applied to the pointer. The memory tag is derived from the
+  given tag offset in an implementation-defined manner.
 - ``DW_OP_swap`` swaps top two stack entries.
 - ``DW_OP_xderef`` provides extended dereference mechanism. The entry at the top
   of the stack is treated as an address. The second stack entry is treated as an
@@ -8138,6 +8167,7 @@ Syntax:
 ::
 
       <result> = extractelement <n x <ty>> <val>, <ty2> <idx>  ; yields <ty>
+      <result> = extractelement <vscale x n x <ty>> <val>, <ty2> <idx> ; yields <ty>
 
 Overview:
 """""""""
@@ -8158,7 +8188,9 @@ Semantics:
 
 The result is a scalar of the same type as the element type of ``val``.
 Its value is the value at position ``idx`` of ``val``. If ``idx``
-exceeds the length of ``val``, the result is a
+exceeds the length of ``val`` for a fixed-length vector, the result is a
+:ref:`poison value <poisonvalues>`. For a scalable vector, if the value
+of ``idx`` exceeds the runtime length of the vector, the result is a
 :ref:`poison value <poisonvalues>`.
 
 Example:
@@ -8179,6 +8211,7 @@ Syntax:
 ::
 
       <result> = insertelement <n x <ty>> <val>, <ty> <elt>, <ty2> <idx>    ; yields <n x <ty>>
+      <result> = insertelement <vscale x n x <ty>> <val>, <ty> <elt>, <ty2> <idx> ; yields <vscale x n x <ty>>
 
 Overview:
 """""""""
@@ -8200,7 +8233,9 @@ Semantics:
 
 The result is a vector of the same type as ``val``. Its element values
 are those of ``val`` except at position ``idx``, where it gets the value
-``elt``. If ``idx`` exceeds the length of ``val``, the result
+``elt``. If ``idx`` exceeds the length of ``val`` for a fixed-length vector,
+the result is a :ref:`poison value <poisonvalues>`. For a scalable vector,
+if the value of ``idx`` exceeds the runtime length of the vector, the result
 is a :ref:`poison value <poisonvalues>`.
 
 Example:
@@ -8221,6 +8256,7 @@ Syntax:
 ::
 
       <result> = shufflevector <n x <ty>> <v1>, <n x <ty>> <v2>, <m x i32> <mask>    ; yields <m x <ty>>
+      <result> = shufflevector <vscale x n x <ty>> <v1>, <vscale x n x <ty>> v2, <vscale x m x i32> <mask>  ; yields <vscale x m x <ty>>
 
 Overview:
 """""""""
@@ -8251,6 +8287,10 @@ result element gets. If the shuffle mask is undef, the result vector is
 undef. If any element of the mask operand is undef, that element of the
 result is undef. If the shuffle mask selects an undef element from one
 of the input vectors, the resulting element is undef.
+
+For scalable vectors, the only valid mask values at present are
+``zeroinitializer`` and ``undef``, since we cannot write all indices as
+literals for a vector with a length unknown at compile time.
 
 Example:
 """"""""
@@ -13719,8 +13759,8 @@ Syntax:
 
 ::
 
-      declare i32 @llvm.experimental.vector.reduce.add.i32.v4i32(<4 x i32> %a)
-      declare i64 @llvm.experimental.vector.reduce.add.i64.v2i64(<2 x i64> %a)
+      declare i32 @llvm.experimental.vector.reduce.add.v4i32(<4 x i32> %a)
+      declare i64 @llvm.experimental.vector.reduce.add.v2i64(<2 x i64> %a)
 
 Overview:
 """""""""
@@ -13780,8 +13820,8 @@ Syntax:
 
 ::
 
-      declare i32 @llvm.experimental.vector.reduce.mul.i32.v4i32(<4 x i32> %a)
-      declare i64 @llvm.experimental.vector.reduce.mul.i64.v2i64(<2 x i64> %a)
+      declare i32 @llvm.experimental.vector.reduce.mul.v4i32(<4 x i32> %a)
+      declare i64 @llvm.experimental.vector.reduce.mul.v2i64(<2 x i64> %a)
 
 Overview:
 """""""""
@@ -13840,7 +13880,7 @@ Syntax:
 
 ::
 
-      declare i32 @llvm.experimental.vector.reduce.and.i32.v4i32(<4 x i32> %a)
+      declare i32 @llvm.experimental.vector.reduce.and.v4i32(<4 x i32> %a)
 
 Overview:
 """""""""
@@ -13861,7 +13901,7 @@ Syntax:
 
 ::
 
-      declare i32 @llvm.experimental.vector.reduce.or.i32.v4i32(<4 x i32> %a)
+      declare i32 @llvm.experimental.vector.reduce.or.v4i32(<4 x i32> %a)
 
 Overview:
 """""""""
@@ -13882,7 +13922,7 @@ Syntax:
 
 ::
 
-      declare i32 @llvm.experimental.vector.reduce.xor.i32.v4i32(<4 x i32> %a)
+      declare i32 @llvm.experimental.vector.reduce.xor.v4i32(<4 x i32> %a)
 
 Overview:
 """""""""
@@ -13903,7 +13943,7 @@ Syntax:
 
 ::
 
-      declare i32 @llvm.experimental.vector.reduce.smax.i32.v4i32(<4 x i32> %a)
+      declare i32 @llvm.experimental.vector.reduce.smax.v4i32(<4 x i32> %a)
 
 Overview:
 """""""""
@@ -13924,7 +13964,7 @@ Syntax:
 
 ::
 
-      declare i32 @llvm.experimental.vector.reduce.smin.i32.v4i32(<4 x i32> %a)
+      declare i32 @llvm.experimental.vector.reduce.smin.v4i32(<4 x i32> %a)
 
 Overview:
 """""""""
@@ -13945,7 +13985,7 @@ Syntax:
 
 ::
 
-      declare i32 @llvm.experimental.vector.reduce.umax.i32.v4i32(<4 x i32> %a)
+      declare i32 @llvm.experimental.vector.reduce.umax.v4i32(<4 x i32> %a)
 
 Overview:
 """""""""
@@ -13966,7 +14006,7 @@ Syntax:
 
 ::
 
-      declare i32 @llvm.experimental.vector.reduce.umin.i32.v4i32(<4 x i32> %a)
+      declare i32 @llvm.experimental.vector.reduce.umin.v4i32(<4 x i32> %a)
 
 Overview:
 """""""""
@@ -13987,8 +14027,8 @@ Syntax:
 
 ::
 
-      declare float @llvm.experimental.vector.reduce.fmax.f32.v4f32(<4 x float> %a)
-      declare double @llvm.experimental.vector.reduce.fmax.f64.v2f64(<2 x double> %a)
+      declare float @llvm.experimental.vector.reduce.fmax.v4f32(<4 x float> %a)
+      declare double @llvm.experimental.vector.reduce.fmax.v2f64(<2 x double> %a)
 
 Overview:
 """""""""
@@ -14012,8 +14052,8 @@ Syntax:
 
 ::
 
-      declare float @llvm.experimental.vector.reduce.fmin.f32.v4f32(<4 x float> %a)
-      declare double @llvm.experimental.vector.reduce.fmin.f64.v2f64(<2 x double> %a)
+      declare float @llvm.experimental.vector.reduce.fmin.v4f32(<4 x float> %a)
+      declare double @llvm.experimental.vector.reduce.fmin.v2f64(<2 x double> %a)
 
 Overview:
 """""""""
