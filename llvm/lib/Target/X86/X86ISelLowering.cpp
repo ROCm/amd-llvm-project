@@ -4899,15 +4899,22 @@ bool X86TargetLowering::isExtractSubvectorCheap(EVT ResVT, EVT SrcVT,
 }
 
 bool X86TargetLowering::shouldScalarizeBinop(SDValue VecOp) const {
+  unsigned Opc = VecOp.getOpcode();
+
+  // Assume target opcodes can't be scalarized.
+  // TODO - do we have any exceptions?
+  if (Opc >= ISD::BUILTIN_OP_END)
+    return false;
+
   // If the vector op is not supported, try to convert to scalar.
   EVT VecVT = VecOp.getValueType();
-  if (!isOperationLegalOrCustomOrPromote(VecOp.getOpcode(), VecVT))
+  if (!isOperationLegalOrCustomOrPromote(Opc, VecVT))
     return true;
 
   // If the vector op is supported, but the scalar op is not, the transform may
   // not be worthwhile.
   EVT ScalarVT = VecVT.getScalarType();
-  return isOperationLegalOrCustomOrPromote(VecOp.getOpcode(), ScalarVT);
+  return isOperationLegalOrCustomOrPromote(Opc, ScalarVT);
 }
 
 bool X86TargetLowering::shouldFormOverflowOp(unsigned Opcode, EVT VT) const {
@@ -5519,19 +5526,6 @@ SDValue SplitOpsAndApply(SelectionDAG &DAG, const X86Subtarget &Subtarget,
     Subs.push_back(Builder(DAG, DL, SubOps));
   }
   return DAG.getNode(ISD::CONCAT_VECTORS, DL, VT, Subs);
-}
-
-// Return true if the instruction zeroes the unused upper part of the
-// destination and accepts mask.
-static bool isMaskedZeroUpperBitsvXi1(unsigned int Opcode) {
-  switch (Opcode) {
-  default:
-    return false;
-  case X86ISD::CMPM:
-  case X86ISD::CMPM_SAE:
-  case ISD::SETCC:
-    return true;
-  }
 }
 
 /// Insert i1-subvector to i1-vector.
@@ -6669,6 +6663,40 @@ static bool getFauxShuffleMask(SDValue N, SmallVectorImpl<int> &Mask,
     return true;
   }
   case ISD::OR: {
+    // Inspect each operand at the byte level. We can merge these into a
+    // blend shuffle mask if for each byte at least one is masked out (zero).
+    KnownBits Known0 = DAG.computeKnownBits(N.getOperand(0));
+    KnownBits Known1 = DAG.computeKnownBits(N.getOperand(1));
+    if (Known0.One.isNullValue() && Known1.One.isNullValue()) {
+      bool IsByteMask = true;
+      unsigned NumSizeInBytes = NumSizeInBits / 8;
+      unsigned NumBytesPerElt = NumBitsPerElt / 8;
+      APInt ZeroMask = APInt::getNullValue(NumBytesPerElt);
+      APInt SelectMask = APInt::getNullValue(NumBytesPerElt);
+      for (unsigned i = 0; i != NumBytesPerElt && IsByteMask; ++i) {
+        unsigned LHS = Known0.Zero.extractBits(8, i * 8).getZExtValue();
+        unsigned RHS = Known1.Zero.extractBits(8, i * 8).getZExtValue();
+        if (LHS == 255 && RHS == 0)
+          SelectMask.setBit(i);
+        else if (LHS == 255 && RHS == 255)
+          ZeroMask.setBit(i);
+        else if (!(LHS == 0 && RHS == 255))
+          IsByteMask = false;
+      }
+      if (IsByteMask) {
+        for (unsigned i = 0; i != NumSizeInBytes; i += NumBytesPerElt) {
+          for (unsigned j = 0; j != NumBytesPerElt; ++j) {
+            unsigned Ofs = (SelectMask[j] ? NumSizeInBytes : 0);
+            int Idx = (ZeroMask[j] ? SM_SentinelZero : (i + j + Ofs));
+            Mask.push_back(Idx);
+          }
+        }
+        Ops.push_back(N.getOperand(0));
+        Ops.push_back(N.getOperand(1));
+        return true;
+      }
+    }
+
     // Handle OR(SHUFFLE,SHUFFLE) case where one source is zero and the other
     // is a valid shuffle index.
     SDValue N0 = peekThroughOneUseBitcasts(N.getOperand(0));
@@ -9649,60 +9677,9 @@ static SDValue LowerAVXCONCAT_VECTORS(SDValue Op, SelectionDAG &DAG,
   return Vec;
 }
 
-// Return true if all the operands of the given CONCAT_VECTORS node are zeros
-// except for the first one. (CONCAT_VECTORS Op, 0, 0,...,0)
-static bool isExpandWithZeros(const SDValue &Op) {
-  assert(Op.getOpcode() == ISD::CONCAT_VECTORS &&
-         "Expand with zeros only possible in CONCAT_VECTORS nodes!");
-
-  for (unsigned i = 1; i < Op.getNumOperands(); i++)
-    if (!ISD::isBuildVectorAllZeros(Op.getOperand(i).getNode()))
-      return false;
-
-  return true;
-}
-
 // Returns true if the given node is a type promotion (by concatenating i1
 // zeros) of the result of a node that already zeros all upper bits of
 // k-register.
-static SDValue isTypePromotionOfi1ZeroUpBits(SDValue Op) {
-  unsigned Opc = Op.getOpcode();
-
-  assert(Opc == ISD::CONCAT_VECTORS &&
-         Op.getSimpleValueType().getVectorElementType() == MVT::i1 &&
-         "Unexpected node to check for type promotion!");
-
-  // As long as we are concatenating zeros to the upper part of a previous node
-  // result, climb up the tree until a node with different opcode is
-  // encountered
-  while (Opc == ISD::INSERT_SUBVECTOR || Opc == ISD::CONCAT_VECTORS) {
-    if (Opc == ISD::INSERT_SUBVECTOR) {
-      if (ISD::isBuildVectorAllZeros(Op.getOperand(0).getNode()) &&
-          Op.getConstantOperandVal(2) == 0)
-        Op = Op.getOperand(1);
-      else
-        return SDValue();
-    } else { // Opc == ISD::CONCAT_VECTORS
-      if (isExpandWithZeros(Op))
-        Op = Op.getOperand(0);
-      else
-        return SDValue();
-    }
-    Opc = Op.getOpcode();
-  }
-
-  // Check if the first inserted node zeroes the upper bits, or an 'and' result
-  // of a node that zeros the upper bits (its masked version).
-  if (isMaskedZeroUpperBitsvXi1(Op.getOpcode()) ||
-      (Op.getOpcode() == ISD::AND &&
-       (isMaskedZeroUpperBitsvXi1(Op.getOperand(0).getOpcode()) ||
-        isMaskedZeroUpperBitsvXi1(Op.getOperand(1).getOpcode())))) {
-    return Op;
-  }
-
-  return SDValue();
-}
-
 // TODO: Merge this with LowerAVXCONCAT_VECTORS?
 static SDValue LowerCONCAT_VECTORSvXi1(SDValue Op,
                                        const X86Subtarget &Subtarget,
@@ -9713,13 +9690,6 @@ static SDValue LowerCONCAT_VECTORSvXi1(SDValue Op,
 
   assert(NumOperands > 1 && isPowerOf2_32(NumOperands) &&
          "Unexpected number of operands in CONCAT_VECTORS");
-
-  // If this node promotes - by concatenating zeroes - the type of the result
-  // of a node with instruction that zeroes all upper (irrelevant) bits of the
-  // output register, mark it as legal and catch the pattern in instruction
-  // selection to avoid emitting extra instructions (for zeroing upper bits).
-  if (SDValue Promoted = isTypePromotionOfi1ZeroUpBits(Op))
-    return widenSubVector(ResVT, Promoted, true, Subtarget, DAG, dl);
 
   unsigned NumZero = 0;
   unsigned NumNonZero = 0;
@@ -18766,8 +18736,11 @@ static SDValue truncateVectorWithPACK(unsigned Opcode, EVT DstVT, SDValue In,
 
     // 256-bit PACK(ARG0, ARG1) leaves us with ((LO0,LO1),(HI0,HI1)),
     // so we need to shuffle to get ((LO0,HI0),(LO1,HI1)).
-    Res = DAG.getBitcast(MVT::v4i64, Res);
-    Res = DAG.getVectorShuffle(MVT::v4i64, DL, Res, Res, {0, 2, 1, 3});
+    // Scale shuffle mask to avoid bitcasts and help ComputeNumSignBits.
+    SmallVector<int, 64> Mask;
+    int Scale = 64 / OutVT.getScalarSizeInBits();
+    scaleShuffleMask<int>(Scale, ArrayRef<int>({ 0, 2, 1, 3 }), Mask);
+    Res = DAG.getVectorShuffle(OutVT, DL, Res, Res, Mask);
 
     if (DstVT.is256BitVector())
       return DAG.getBitcast(DstVT, Res);
@@ -28563,6 +28536,7 @@ bool X86TargetLowering::isBinOp(unsigned Opcode) const {
   // These are non-commutative binops.
   // TODO: Add more X86ISD opcodes once we have test coverage.
   case X86ISD::ANDNP:
+  case X86ISD::PCMPGT:
   case X86ISD::FMAX:
   case X86ISD::FMIN:
   case X86ISD::FANDN:
@@ -28575,6 +28549,8 @@ bool X86TargetLowering::isBinOp(unsigned Opcode) const {
 bool X86TargetLowering::isCommutativeBinOp(unsigned Opcode) const {
   switch (Opcode) {
   // TODO: Add more X86ISD opcodes once we have test coverage.
+  case X86ISD::PCMPEQ:
+  case X86ISD::PMULDQ:
   case X86ISD::PMULUDQ:
   case X86ISD::FMAXC:
   case X86ISD::FMINC:
@@ -33675,6 +33651,26 @@ static SDValue combineShuffle(SDNode *N, SelectionDAG &DAG,
                        Movl, N->getOperand(0).getOperand(2));
   }
 
+  // If this a vzmovl of a full vector load, replace it with a vzload, unless
+  // the load is volatile.
+  if (N->getOpcode() == X86ISD::VZEXT_MOVL && N->getOperand(0).hasOneUse() &&
+      ISD::isNormalLoad(N->getOperand(0).getNode())) {
+    LoadSDNode *LN = cast<LoadSDNode>(N->getOperand(0));
+    if (!LN->isVolatile()) {
+      SDVTList Tys = DAG.getVTList(VT, MVT::Other);
+      SDValue Ops[] = { LN->getChain(), LN->getBasePtr() };
+      SDValue VZLoad =
+          DAG.getMemIntrinsicNode(X86ISD::VZEXT_LOAD, dl, Tys, Ops,
+                                  VT.getVectorElementType(),
+                                  LN->getPointerInfo(),
+                                  LN->getAlignment(),
+                                  MachineMemOperand::MOLoad);
+      DAG.ReplaceAllUsesOfValueWith(SDValue(LN, 0), VZLoad.getValue(1));
+      return VZLoad;
+    }
+  }
+
+
   // Look for a truncating shuffle to v2i32 of a PMULUDQ where one of the
   // operands is an extend from v2i32 to v2i64. Turn it into a pmulld.
   // FIXME: This can probably go away once we default to widening legalization.
@@ -33975,9 +33971,6 @@ bool X86TargetLowering::SimplifyDemandedVectorEltsForTargetNode(
           insertSubVector(UndefVec, ExtOp, 0, TLO.DAG, DL, ExtSizeInBits);
       return TLO.CombineTo(Op, Insert);
     }
-      // Arithmetic Ops.
-    case X86ISD::PMULDQ:
-    case X86ISD::PMULUDQ:
       // Target Shuffles.
     case X86ISD::PSHUFB:
     case X86ISD::UNPCKL:
@@ -43606,6 +43599,34 @@ static SDValue combineExtractSubvector(SDNode *N, SelectionDAG &DAG,
     return DAG.getBuildVector(
         VT, SDLoc(N),
         InVec.getNode()->ops().slice(IdxVal, VT.getVectorNumElements()));
+
+  // Try to move vector bitcast after extract_subv by scaling extraction index:
+  // extract_subv (bitcast X), Index --> bitcast (extract_subv X, Index')
+  // TODO: Move this to DAGCombiner::visitEXTRACT_SUBVECTOR
+  if (InVec.getOpcode() == ISD::BITCAST &&
+      InVec.getOperand(0).getValueType().isVector()) {
+    SDValue SrcOp = InVec.getOperand(0);
+    EVT SrcVT = SrcOp.getValueType();
+    unsigned SrcNumElts = SrcVT.getVectorNumElements();
+    unsigned DestNumElts = InVec.getValueType().getVectorNumElements();
+    if ((DestNumElts % SrcNumElts) == 0) {
+      unsigned DestSrcRatio = DestNumElts / SrcNumElts;
+      if ((VT.getVectorNumElements() % DestSrcRatio) == 0) {
+        unsigned NewExtNumElts = VT.getVectorNumElements() / DestSrcRatio;
+        EVT NewExtVT = EVT::getVectorVT(*DAG.getContext(),
+                                        SrcVT.getScalarType(), NewExtNumElts);
+        if ((N->getConstantOperandVal(1) % DestSrcRatio) == 0 &&
+            TLI.isOperationLegalOrCustom(ISD::EXTRACT_SUBVECTOR, NewExtVT)) {
+          unsigned IndexValScaled = N->getConstantOperandVal(1) / DestSrcRatio;
+          SDLoc DL(N);
+          SDValue NewIndex = DAG.getIntPtrConstant(IndexValScaled, DL);
+          SDValue NewExtract = DAG.getNode(ISD::EXTRACT_SUBVECTOR, DL, NewExtVT,
+                                           SrcOp, NewIndex);
+          return DAG.getBitcast(VT, NewExtract);
+        }
+      }
+    }
+  }
 
   // If we're extracting from a broadcast then we're better off just
   // broadcasting to the smaller type directly, assuming this is the only use.

@@ -3795,6 +3795,8 @@ All ARM modes:
 
 - ``Q``, ``Um``, ``Un``, ``Uq``, ``Us``, ``Ut``, ``Uv``, ``Uy``: Memory address
   operand. Treated the same as operand ``m``, at the moment.
+- ``Te``: An even general-purpose 32-bit integer register: ``r0,r2,...,r12,r14``
+- ``To``: An odd general-purpose 32-bit integer register: ``r1,r3,...,r11``
 
 ARM and ARM's Thumb2 mode:
 
@@ -4761,6 +4763,18 @@ valid debug intrinsic.
     !3 = !DIExpression(DW_OP_deref, DW_OP_constu, 3, DW_OP_plus, DW_OP_LLVM_fragment, 3, 7)
     !4 = !DIExpression(DW_OP_constu, 2, DW_OP_swap, DW_OP_xderef)
     !5 = !DIExpression(DW_OP_constu, 42, DW_OP_stack_value)
+
+DIFlags
+"""""""""""""""
+
+These flags encode various properties of DINodes.
+
+The `ArgumentNotModified` flag marks a function argument whose value
+is not modified throughout of a function. This flag is used to decide
+whether a DW_OP_entry_value can be used in a location description
+after the function prologue. The language frontend is expected to compute
+this property for each DILocalVariable. The flag should be used
+only in optimized code.
 
 DIObjCProperty
 """"""""""""""
