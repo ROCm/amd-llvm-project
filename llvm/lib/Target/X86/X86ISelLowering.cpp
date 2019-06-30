@@ -7359,7 +7359,7 @@ static SDValue LowerBuildVectorv4x32(SDValue Op, SelectionDAG &DAG,
     SDValue SrcVector = Current->getOperand(0);
     if (!V1.getNode())
       V1 = SrcVector;
-    CanFold = (SrcVector == V1) && (Current.getConstantOperandVal(1) == i);
+    CanFold = (SrcVector == V1) && (Current.getConstantOperandAPInt(1) == i);
   }
 
   if (!CanFold)
@@ -21985,42 +21985,41 @@ static SDValue getTargetVShiftByConstNode(unsigned Opc, const SDLoc &dl, MVT VT,
   if (ISD::isBuildVectorOfConstantSDNodes(SrcOp.getNode())) {
     SmallVector<SDValue, 8> Elts;
     unsigned NumElts = SrcOp->getNumOperands();
-    ConstantSDNode *ND;
 
-    switch(Opc) {
+    switch (Opc) {
     default: llvm_unreachable("Unknown opcode!");
     case X86ISD::VSHLI:
-      for (unsigned i=0; i!=NumElts; ++i) {
+      for (unsigned i = 0; i != NumElts; ++i) {
         SDValue CurrentOp = SrcOp->getOperand(i);
         if (CurrentOp->isUndef()) {
           Elts.push_back(CurrentOp);
           continue;
         }
-        ND = cast<ConstantSDNode>(CurrentOp);
+        auto *ND = cast<ConstantSDNode>(CurrentOp);
         const APInt &C = ND->getAPIntValue();
         Elts.push_back(DAG.getConstant(C.shl(ShiftAmt), dl, ElementType));
       }
       break;
     case X86ISD::VSRLI:
-      for (unsigned i=0; i!=NumElts; ++i) {
+      for (unsigned i = 0; i != NumElts; ++i) {
         SDValue CurrentOp = SrcOp->getOperand(i);
         if (CurrentOp->isUndef()) {
           Elts.push_back(CurrentOp);
           continue;
         }
-        ND = cast<ConstantSDNode>(CurrentOp);
+        auto *ND = cast<ConstantSDNode>(CurrentOp);
         const APInt &C = ND->getAPIntValue();
         Elts.push_back(DAG.getConstant(C.lshr(ShiftAmt), dl, ElementType));
       }
       break;
     case X86ISD::VSRAI:
-      for (unsigned i=0; i!=NumElts; ++i) {
+      for (unsigned i = 0; i != NumElts; ++i) {
         SDValue CurrentOp = SrcOp->getOperand(i);
         if (CurrentOp->isUndef()) {
           Elts.push_back(CurrentOp);
           continue;
         }
-        ND = cast<ConstantSDNode>(CurrentOp);
+        auto *ND = cast<ConstantSDNode>(CurrentOp);
         const APInt &C = ND->getAPIntValue();
         Elts.push_back(DAG.getConstant(C.ashr(ShiftAmt), dl, ElementType));
       }
@@ -32043,16 +32042,26 @@ static SDValue combineX86ShuffleChain(ArrayRef<SDValue> Inputs, SDValue Root,
       [&](SDValue &NewRoot, SmallVectorImpl<int> &NewMask,
           SmallVectorImpl<SDValue> &NewInputs) -> bool {
     assert(NewMask.empty() && NewInputs.empty() && "Non-empty shuffle mask");
-    if (UnaryShuffle || V1.getOpcode() != ISD::EXTRACT_SUBVECTOR ||
-        V2.getOpcode() != ISD::EXTRACT_SUBVECTOR ||
-        !isa<ConstantSDNode>(V1.getOperand(1)) ||
-        !isa<ConstantSDNode>(V2.getOperand(1)))
+    if (UnaryShuffle)
+      return false;
+
+    SDValue Src1 = V1, Src2 = V2;
+    unsigned Offset1 = 0, Offset2 = 0;
+    while (Src1.getOpcode() == ISD::EXTRACT_SUBVECTOR &&
+           isa<ConstantSDNode>(Src1.getOperand(1))) {
+      Offset1 += Src1.getConstantOperandVal(1);
+      Src1 = Src1.getOperand(0);
+    }
+    while (Src2.getOpcode() == ISD::EXTRACT_SUBVECTOR &&
+           isa<ConstantSDNode>(Src2.getOperand(1))) {
+      Offset2 += Src2.getConstantOperandVal(1);
+      Src2 = Src2.getOperand(0);
+    }
+    if (Offset1 == 0 && Offset2 == 0)
       return false;
 
     // If the src vector types aren't the same, see if we can extend
     // one to match the other.
-    SDValue Src1 = V1.getOperand(0);
-    SDValue Src2 = V2.getOperand(0);
     if ((Src1.getValueType().getScalarType() !=
          Src2.getValueType().getScalarType()) ||
         !DAG.getTargetLoweringInfo().isTypeLegal(Src1.getValueType()) ||
@@ -32076,8 +32085,6 @@ static SDValue combineX86ShuffleChain(ArrayRef<SDValue> Inputs, SDValue Root,
       }
     }
 
-    unsigned Offset1 = V1.getConstantOperandVal(1);
-    unsigned Offset2 = V2.getConstantOperandVal(1);
     assert(((Offset1 % VT1.getVectorNumElements()) == 0 &&
             (Offset2 % VT2.getVectorNumElements()) == 0 &&
             (Src1SizeInBits % RootSizeInBits) == 0 &&
@@ -32518,10 +32525,6 @@ static SDValue combineX86ShufflesRecursively(
   SmallVector<int, 64> OpMask;
   SmallVector<SDValue, 2> OpInputs;
   if (!resolveTargetShuffleInputs(Op, OpInputs, OpMask, DAG))
-    return SDValue();
-
-  // TODO - Add support for more than 2 inputs.
-  if (2 < OpInputs.size())
     return SDValue();
 
   // Add the inputs to the Ops list, avoiding duplicates.
@@ -33682,7 +33685,7 @@ static SDValue combineShuffle(SDNode *N, SelectionDAG &DAG,
                                   LN->getPointerInfo(),
                                   LN->getAlignment(),
                                   MachineMemOperand::MOLoad);
-      DAG.ReplaceAllUsesOfValueWith(SDValue(LN, 0), VZLoad.getValue(1));
+      DAG.ReplaceAllUsesOfValueWith(SDValue(LN, 1), VZLoad.getValue(1));
       return VZLoad;
     }
   }
@@ -38724,14 +38727,14 @@ static SDValue combineOr(SDNode *N, SelectionDAG &DAG,
   SDValue ShMsk0;
   if (ShAmt0.getOpcode() == ISD::AND &&
       isa<ConstantSDNode>(ShAmt0.getOperand(1)) &&
-      ShAmt0.getConstantOperandVal(1) == (Bits - 1)) {
+      ShAmt0.getConstantOperandAPInt(1) == (Bits - 1)) {
     ShMsk0 = ShAmt0;
     ShAmt0 = ShAmt0.getOperand(0);
   }
   SDValue ShMsk1;
   if (ShAmt1.getOpcode() == ISD::AND &&
       isa<ConstantSDNode>(ShAmt1.getOperand(1)) &&
-      ShAmt1.getConstantOperandVal(1) == (Bits - 1)) {
+      ShAmt1.getConstantOperandAPInt(1) == (Bits - 1)) {
     ShMsk1 = ShAmt1;
     ShAmt1 = ShAmt1.getOperand(0);
   }
@@ -38772,7 +38775,7 @@ static SDValue combineOr(SDNode *N, SelectionDAG &DAG,
       SDValue ShAmt1Op1 = ShAmt1.getOperand(1);
       if (ShAmt1Op1.getOpcode() == ISD::AND &&
           isa<ConstantSDNode>(ShAmt1Op1.getOperand(1)) &&
-          ShAmt1Op1.getConstantOperandVal(1) == (Bits - 1)) {
+          ShAmt1Op1.getConstantOperandAPInt(1) == (Bits - 1)) {
         ShMsk1 = ShAmt1Op1;
         ShAmt1Op1 = ShAmt1Op1.getOperand(0);
       }
@@ -38798,7 +38801,7 @@ static SDValue combineOr(SDNode *N, SelectionDAG &DAG,
           (ShAmt1Op0 == ShAmt0 || ShAmt1Op0 == ShMsk0)) {
         if (Op1.getOpcode() == InnerShift &&
             isa<ConstantSDNode>(Op1.getOperand(1)) &&
-            Op1.getConstantOperandVal(1) == 1) {
+            Op1.getConstantOperandAPInt(1) == 1) {
           return GetFunnelShift(Op0, Op1.getOperand(0), ShAmt0);
         }
         // Test for ADD( Y, Y ) as an equivalent to SHL( Y, 1 ).
@@ -38846,7 +38849,7 @@ static SDValue foldXorTruncShiftIntoCmp(SDNode *N, SelectionDAG &DAG) {
 
   // Make sure the shift amount extracts the sign bit.
   if (!isa<ConstantSDNode>(Shift.getOperand(1)) ||
-      Shift.getConstantOperandVal(1) != ShiftTy.getSizeInBits() - 1)
+      Shift.getConstantOperandAPInt(1) != (ShiftTy.getSizeInBits() - 1))
     return SDValue();
 
   // Create a greater-than comparison against -1.
@@ -43455,10 +43458,10 @@ static SDValue combineInsertSubvector(SDNode *N, SelectionDAG &DAG,
     // least as large as the original insertion. Just insert the original
     // subvector into a zero vector.
     if (SubVec.getOpcode() == ISD::EXTRACT_SUBVECTOR && IdxVal == 0 &&
-        SubVec.getConstantOperandVal(1) == 0 &&
+        SubVec.getConstantOperandAPInt(1) == 0 &&
         SubVec.getOperand(0).getOpcode() == ISD::INSERT_SUBVECTOR) {
       SDValue Ins = SubVec.getOperand(0);
-      if (Ins.getConstantOperandVal(2) == 0 &&
+      if (Ins.getConstantOperandAPInt(2) == 0 &&
           ISD::isBuildVectorAllZeros(Ins.getOperand(0).getNode()) &&
           Ins.getOperand(1).getValueSizeInBits() <= SubVecVT.getSizeInBits())
         return DAG.getNode(ISD::INSERT_SUBVECTOR, dl, OpVT,
@@ -43535,13 +43538,22 @@ static SDValue narrowExtractedVectorSelect(SDNode *Ext, SelectionDAG &DAG) {
       !collectConcatOps(Sel.getOperand(0).getNode(), CatOps))
     return SDValue();
 
+  // Note: We assume simple value types because this should only be called with
+  //       legal operations/types.
   // TODO: This can be extended to handle extraction to 256-bits.
   MVT VT = Ext->getSimpleValueType(0);
   if (!VT.is128BitVector())
     return SDValue();
 
+  MVT SelCondVT = Sel.getOperand(0).getSimpleValueType();
+  if (!SelCondVT.is256BitVector() && !SelCondVT.is512BitVector())
+    return SDValue();
+
   MVT WideVT = Ext->getOperand(0).getSimpleValueType();
   MVT SelVT = Sel.getSimpleValueType();
+  assert((SelVT.is256BitVector() || SelVT.is512BitVector()) &&
+         "Unexpected vector type with legal operations");
+
   unsigned SelElts = SelVT.getVectorNumElements();
   unsigned CastedElts = WideVT.getVectorNumElements();
   unsigned ExtIdx = cast<ConstantSDNode>(Ext->getOperand(1))->getZExtValue();
