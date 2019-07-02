@@ -699,11 +699,17 @@ let Predicates = [UseAVX] in {
   def : Pat<(v2f64 (X86Unpckl VR128:$src1,
                       (bc_v2f64 (v2i64 (scalar_to_vector (loadi64 addr:$src2)))))),
             (VMOVHPDrm VR128:$src1, addr:$src2)>;
+  def : Pat<(v2f64 (X86Unpckl VR128:$src1, (X86vzload addr:$src2))),
+            (VMOVHPDrm VR128:$src1, addr:$src2)>;
 
   def : Pat<(store (f64 (extractelt
                           (v2f64 (X86VPermilpi VR128:$src, (i8 1))),
                           (iPTR 0))), addr:$dst),
             (VMOVHPDmr addr:$dst, VR128:$src)>;
+
+  // MOVLPD patterns
+  def : Pat<(v2f64 (X86Movsd VR128:$src1, (X86vzload addr:$src2))),
+            (VMOVLPDrm VR128:$src1, addr:$src2)>;
 }
 
 let Predicates = [UseSSE1] in {
@@ -722,11 +728,17 @@ let Predicates = [UseSSE2] in {
   def : Pat<(v2f64 (X86Unpckl VR128:$src1,
                       (bc_v2f64 (v2i64 (scalar_to_vector (loadi64 addr:$src2)))))),
             (MOVHPDrm VR128:$src1, addr:$src2)>;
+  def : Pat<(v2f64 (X86Unpckl VR128:$src1, (X86vzload addr:$src2))),
+            (MOVHPDrm VR128:$src1, addr:$src2)>;
 
   def : Pat<(store (f64 (extractelt
                           (v2f64 (X86Shufp VR128:$src, VR128:$src, (i8 1))),
                           (iPTR 0))), addr:$dst),
             (MOVHPDmr addr:$dst, VR128:$src)>;
+
+  // MOVLPD patterns
+  def : Pat<(v2f64 (X86Movsd VR128:$src1, (X86vzload addr:$src2))),
+            (MOVLPDrm VR128:$src1, addr:$src2)>;
 }
 
 //===----------------------------------------------------------------------===//
@@ -4916,8 +4928,6 @@ multiclass SS41I_pmovx_avx2_patterns<string OpcPrefix, string ExtTy,
 
   def : Pat<(v16i16 (ExtOp (loadv16i8 addr:$src))),
             (!cast<I>(OpcPrefix#BWYrm) addr:$src)>;
-  def : Pat<(v16i16 (ExtOp (v16i8 (vzload_v2i64 addr:$src)))),
-            (!cast<I>(OpcPrefix#BWYrm) addr:$src)>;
   }
 
   let Predicates = [HasAVX2, NoVLX] in {
@@ -4939,8 +4949,6 @@ multiclass SS41I_pmovx_avx2_patterns<string OpcPrefix, string ExtTy,
   let Predicates = [HasAVX2, NoVLX] in {
   def : Pat<(v8i32 (ExtOp (loadv8i16 addr:$src))),
             (!cast<I>(OpcPrefix#WDYrm) addr:$src)>;
-  def : Pat<(v8i32 (ExtOp (v8i16 (vzload_v2i64 addr:$src)))),
-            (!cast<I>(OpcPrefix#WDYrm) addr:$src)>;
 
   def : Pat<(v8i32 (InVecOp (bc_v16i8 (v2i64 (scalar_to_vector (loadi64 addr:$src)))))),
             (!cast<I>(OpcPrefix#BDYrm) addr:$src)>;
@@ -4950,8 +4958,6 @@ multiclass SS41I_pmovx_avx2_patterns<string OpcPrefix, string ExtTy,
             (!cast<I>(OpcPrefix#BDYrm) addr:$src)>;
 
   def : Pat<(v4i64 (ExtOp (loadv4i32 addr:$src))),
-            (!cast<I>(OpcPrefix#DQYrm) addr:$src)>;
-  def : Pat<(v4i64 (ExtOp (v4i32 (vzload_v2i64 addr:$src)))),
             (!cast<I>(OpcPrefix#DQYrm) addr:$src)>;
 
   def : Pat<(v4i64 (InVecOp (bc_v16i8 (v4i32 (scalar_to_vector (loadi32 addr:$src)))))),
@@ -5025,14 +5031,12 @@ multiclass SS41I_pmovx_patterns<string OpcPrefix, string ExtTy,
   let Predicates = [HasAVX, NoVLX] in {
   def : Pat<(v4i32 (ExtOp (bc_v16i8 (v4i32 (scalar_to_vector (loadi32 addr:$src)))))),
             (!cast<I>(OpcPrefix#BDrm) addr:$src)>;
-  def : Pat<(v4i32 (ExtOp (v16i8 (vzload_v2i64 addr:$src)))),
+  def : Pat<(v4i32 (ExtOp (v16i8 (vzload_v4i32 addr:$src)))),
             (!cast<I>(OpcPrefix#BDrm) addr:$src)>;
   def : Pat<(v4i32 (ExtOp (loadv16i8 addr:$src))),
             (!cast<I>(OpcPrefix#BDrm) addr:$src)>;
 
   def : Pat<(v2i64 (ExtOp (bc_v16i8 (v4i32 (scalar_to_vector (extloadi32i16 addr:$src)))))),
-            (!cast<I>(OpcPrefix#BQrm) addr:$src)>;
-  def : Pat<(v2i64 (ExtOp (v16i8 (vzload_v2i64 addr:$src)))),
             (!cast<I>(OpcPrefix#BQrm) addr:$src)>;
   def : Pat<(v2i64 (ExtOp (loadv16i8 addr:$src))),
             (!cast<I>(OpcPrefix#BQrm) addr:$src)>;
@@ -5048,7 +5052,7 @@ multiclass SS41I_pmovx_patterns<string OpcPrefix, string ExtTy,
 
   def : Pat<(v2i64 (ExtOp (bc_v8i16 (v4i32 (scalar_to_vector (loadi32 addr:$src)))))),
             (!cast<I>(OpcPrefix#WQrm) addr:$src)>;
-  def : Pat<(v2i64 (ExtOp (v8i16 (vzload_v2i64 addr:$src)))),
+  def : Pat<(v2i64 (ExtOp (v8i16 (vzload_v4i32 addr:$src)))),
             (!cast<I>(OpcPrefix#WQrm) addr:$src)>;
   def : Pat<(v2i64 (ExtOp (loadv8i16 addr:$src))),
             (!cast<I>(OpcPrefix#WQrm) addr:$src)>;
@@ -7757,11 +7761,6 @@ multiclass maskmov_lowering<string InstrStr, RegisterClass RC, ValueType VT,
     def: Pat<(VT (masked_load addr:$ptr, (MaskVT RC:$mask),
                               (VT immAllZerosV))),
              (!cast<Instruction>(InstrStr#"rm") RC:$mask, addr:$ptr)>;
-    def: Pat<(VT (masked_load addr:$ptr, (MaskVT RC:$mask), (VT RC:$src0))),
-             (!cast<Instruction>(BlendStr#"rr")
-                 RC:$src0,
-                 (VT (!cast<Instruction>(InstrStr#"rm") RC:$mask, addr:$ptr)),
-                 RC:$mask)>;
 }
 let Predicates = [HasAVX] in {
   defm : maskmov_lowering<"VMASKMOVPS", VR128, v4f32, v4i32, "VBLENDVPS", v4i32>;
