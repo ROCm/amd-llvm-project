@@ -3438,13 +3438,13 @@ SDValue DAGCombiner::visitMUL(SDNode *N) {
       MathOp = ISD::SUB;
 
     if (MathOp != ISD::DELETED_NODE) {
-      unsigned ShAmt = MathOp == ISD::ADD ? (MulC - 1).logBase2()
-                                          : (MulC + 1).logBase2();
-      assert(ShAmt > 0 && ShAmt < VT.getScalarSizeInBits() &&
-             "Not expecting multiply-by-constant that could have simplified");
+      unsigned ShAmt =
+          MathOp == ISD::ADD ? (MulC - 1).logBase2() : (MulC + 1).logBase2();
+      assert(ShAmt < VT.getScalarSizeInBits() &&
+             "multiply-by-constant generated out of bounds shift");
       SDLoc DL(N);
-      SDValue Shl = DAG.getNode(ISD::SHL, DL, VT, N0,
-                                DAG.getConstant(ShAmt, DL, VT));
+      SDValue Shl =
+          DAG.getNode(ISD::SHL, DL, VT, N0, DAG.getConstant(ShAmt, DL, VT));
       SDValue R = DAG.getNode(MathOp, DL, VT, Shl, N0);
       if (ConstValue1.isNegative())
         R = DAG.getNode(ISD::SUB, DL, VT, DAG.getConstant(0, DL, VT), R);
@@ -8437,11 +8437,6 @@ SDValue DAGCombiner::visitMSTORE(SDNode *N) {
     EVT MemoryVT = MST->getMemoryVT();
     unsigned Alignment = MST->getOriginalAlignment();
 
-    // if Alignment is equal to the vector size,
-    // take the half of it for the second part
-    unsigned SecondHalfAlignment =
-      (Alignment == VT.getSizeInBits() / 8) ? Alignment / 2 : Alignment;
-
     EVT LoMemVT, HiMemVT;
     std::tie(LoMemVT, HiMemVT) = DAG.GetSplitDestVTs(MemoryVT);
 
@@ -8463,7 +8458,7 @@ SDValue DAGCombiner::visitMSTORE(SDNode *N) {
 
     MMO = DAG.getMachineFunction().getMachineMemOperand(
         MST->getPointerInfo().getWithOffset(HiOffset),
-        MachineMemOperand::MOStore, HiMemVT.getStoreSize(), SecondHalfAlignment,
+        MachineMemOperand::MOStore, HiMemVT.getStoreSize(), Alignment,
         MST->getAAInfo(), MST->getRanges());
 
     Hi = DAG.getMaskedStore(Chain, DL, DataHi, Ptr, MaskHi, HiMemVT, MMO,
@@ -8598,12 +8593,6 @@ SDValue DAGCombiner::visitMLOAD(SDNode *N) {
     EVT MemoryVT = MLD->getMemoryVT();
     unsigned Alignment = MLD->getOriginalAlignment();
 
-    // if Alignment is equal to the vector size,
-    // take the half of it for the second part
-    unsigned SecondHalfAlignment =
-      (Alignment == MLD->getValueType(0).getSizeInBits()/8) ?
-         Alignment/2 : Alignment;
-
     EVT LoMemVT, HiMemVT;
     std::tie(LoMemVT, HiMemVT) = DAG.GetSplitDestVTs(MemoryVT);
 
@@ -8621,7 +8610,7 @@ SDValue DAGCombiner::visitMLOAD(SDNode *N) {
 
     MMO = DAG.getMachineFunction().getMachineMemOperand(
         MLD->getPointerInfo().getWithOffset(HiOffset),
-        MachineMemOperand::MOLoad, HiMemVT.getStoreSize(), SecondHalfAlignment,
+        MachineMemOperand::MOLoad, HiMemVT.getStoreSize(), Alignment,
         MLD->getAAInfo(), MLD->getRanges());
 
     Hi = DAG.getMaskedLoad(HiVT, DL, Chain, Ptr, MaskHi, PassThruHi, HiMemVT,
@@ -8913,6 +8902,7 @@ static SDValue tryToFoldExtendOfConstant(SDNode *N, const TargetLowering &TLI,
   unsigned Opcode = N->getOpcode();
   SDValue N0 = N->getOperand(0);
   EVT VT = N->getValueType(0);
+  SDLoc DL(N);
 
   assert((Opcode == ISD::SIGN_EXTEND || Opcode == ISD::ZERO_EXTEND ||
          Opcode == ISD::ANY_EXTEND || Opcode == ISD::SIGN_EXTEND_VECTOR_INREG ||
@@ -8923,7 +8913,33 @@ static SDValue tryToFoldExtendOfConstant(SDNode *N, const TargetLowering &TLI,
   // fold (zext c1) -> c1
   // fold (aext c1) -> c1
   if (isa<ConstantSDNode>(N0))
-    return DAG.getNode(Opcode, SDLoc(N), VT, N0);
+    return DAG.getNode(Opcode, DL, VT, N0);
+
+  // fold (sext (select cond, c1, c2)) -> (select cond, sext c1, sext c2)
+  // fold (zext (select cond, c1, c2)) -> (select cond, zext c1, zext c2)
+  // fold (aext (select cond, c1, c2)) -> (select cond, sext c1, sext c2)
+  if (N0->getOpcode() == ISD::SELECT) {
+    SDValue Op1 = N0->getOperand(1);
+    SDValue Op2 = N0->getOperand(2);
+    if (isa<ConstantSDNode>(Op1) && isa<ConstantSDNode>(Op2) &&
+        (Opcode != ISD::ZERO_EXTEND || !TLI.isZExtFree(N0.getValueType(), VT))) {
+      // For any_extend, choose sign extension of the constants to allow a
+      // possible further transform to sign_extend_inreg.i.e.
+      //
+      // t1: i8 = select t0, Constant:i8<-1>, Constant:i8<0>
+      // t2: i64 = any_extend t1
+      // -->
+      // t3: i64 = select t0, Constant:i64<-1>, Constant:i64<0>
+      // -->
+      // t4: i64 = sign_extend_inreg t3
+      unsigned FoldOpc = Opcode;
+      if (FoldOpc == ISD::ANY_EXTEND)
+        FoldOpc = ISD::SIGN_EXTEND;
+      return DAG.getSelect(DL, VT, N0->getOperand(0),
+                           DAG.getNode(FoldOpc, DL, VT, Op1),
+                           DAG.getNode(FoldOpc, DL, VT, Op2));
+    }
+  }
 
   // fold (sext (build_vector AllConstants) -> (build_vector AllConstants)
   // fold (zext (build_vector AllConstants) -> (build_vector AllConstants)
@@ -8938,7 +8954,6 @@ static SDValue tryToFoldExtendOfConstant(SDNode *N, const TargetLowering &TLI,
   unsigned EVTBits = N0->getValueType(0).getScalarSizeInBits();
   SmallVector<SDValue, 8> Elts;
   unsigned NumElts = VT.getVectorNumElements();
-  SDLoc DL(N);
 
   // For zero-extensions, UNDEF elements still guarantee to have the upper
   // bits set to zero.
@@ -12373,10 +12388,10 @@ SDValue DAGCombiner::combineRepeatedFPDivisors(SDNode *N) {
   if (!UnsafeMath && !Flags.hasAllowReciprocal())
     return SDValue();
 
-  // Skip if current node is a reciprocal.
+  // Skip if current node is a reciprocal/fneg-reciprocal.
   SDValue N0 = N->getOperand(0);
   ConstantFPSDNode *N0CFP = isConstOrConstSplatFP(N0, /* AllowUndefs */ true);
-  if (N0CFP && N0CFP->isExactlyValue(1.0))
+  if (N0CFP && (N0CFP->isExactlyValue(1.0) || N0CFP->isExactlyValue(-1.0)))
     return SDValue();
 
   // Exit early if the target does not want this transform or if there can't
@@ -14913,11 +14928,9 @@ SDValue DAGCombiner::ReduceLoadOpStoreWidth(SDNode *N) {
 /// load / store operations if the target deems the transformation profitable.
 SDValue DAGCombiner::TransformFPLoadStorePair(SDNode *N) {
   StoreSDNode *ST  = cast<StoreSDNode>(N);
-  SDValue Chain = ST->getChain();
   SDValue Value = ST->getValue();
   if (ISD::isNormalStore(ST) && ISD::isNormalLoad(Value.getNode()) &&
-      Value.hasOneUse() &&
-      Chain == SDValue(Value.getNode(), 1)) {
+      Value.hasOneUse()) {
     LoadSDNode *LD = cast<LoadSDNode>(Value);
     EVT VT = LD->getMemoryVT();
     if (!VT.isFloatingPoint() ||
@@ -14947,7 +14960,7 @@ SDValue DAGCombiner::TransformFPLoadStorePair(SDNode *N) {
                     LD->getPointerInfo(), LDAlign);
 
     SDValue NewST =
-        DAG.getStore(NewLD.getValue(1), SDLoc(N), NewLD, ST->getBasePtr(),
+        DAG.getStore(ST->getChain(), SDLoc(N), NewLD, ST->getBasePtr(),
                      ST->getPointerInfo(), STAlign);
 
     AddToWorklist(NewLD.getNode());
@@ -18117,6 +18130,7 @@ SDValue DAGCombiner::visitEXTRACT_SUBVECTOR(SDNode *N) {
         return DAG.getBitcast(NVT, NewExtract);
       }
     }
+    // TODO - handle (DestNumElts % SrcNumElts) == 0
   }
 
   // Combine:

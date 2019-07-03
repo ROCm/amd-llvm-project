@@ -857,10 +857,15 @@ addDynamicElfSymbols(const ELFObjectFile<ELFT> *Obj,
                      std::map<SectionRef, SectionSymbolsTy> &AllSymbols) {
   for (auto Symbol : Obj->getDynamicSymbolIterators()) {
     uint8_t SymbolType = Symbol.getELFType();
-    if (SymbolType != ELF::STT_FUNC || Symbol.getSize() == 0)
+    if (SymbolType == ELF::STT_SECTION)
       continue;
 
     uint64_t Address = unwrapOrError(Symbol.getAddress(), Obj->getFileName());
+    // ELFSymbolRef::getAddress() returns size instead of value for common
+    // symbols which is not desirable for disassembly output. Overriding.
+    if (SymbolType == ELF::STT_COMMON)
+      Address = Obj->getSymbol(Symbol.getRawDataRefImpl())->st_value;
+
     StringRef Name = unwrapOrError(Symbol.getName(), Obj->getFileName());
     if (Name.empty())
       continue;
@@ -968,14 +973,15 @@ static bool shouldAdjustVA(const SectionRef &Section) {
 typedef std::pair<uint64_t, char> MappingSymbolPair;
 static char getMappingSymbolKind(ArrayRef<MappingSymbolPair> MappingSymbols,
                                  uint64_t Address) {
-  auto Sym = bsearch(MappingSymbols, [Address](const MappingSymbolPair &Val) {
-      return Val.first > Address;
-  });
+  auto It =
+      partition_point(MappingSymbols, [Address](const MappingSymbolPair &Val) {
+        return Val.first <= Address;
+      });
   // Return zero for any address before the first mapping symbol; this means
   // we should use the default disassembly mode, depending on the target.
-  if (Sym == MappingSymbols.begin())
+  if (It == MappingSymbols.begin())
     return '\x00';
-  return (Sym - 1)->second;
+  return (It - 1)->second;
 }
 
 static uint64_t
@@ -1114,9 +1120,9 @@ static void disassembleObject(const Target *TheTarget, const ObjectFile *Obj,
       error(ExportEntry.getExportRVA(RVA));
 
       uint64_t VA = COFFObj->getImageBase() + RVA;
-      auto Sec = llvm::bsearch(
-          SectionAddresses, [VA](const std::pair<uint64_t, SectionRef> &RHS) {
-            return VA < RHS.first;
+      auto Sec = partition_point(
+          SectionAddresses, [VA](const std::pair<uint64_t, SectionRef> &O) {
+            return O.first <= VA;
           });
       if (Sec != SectionAddresses.begin()) {
         --Sec;
@@ -1289,13 +1295,15 @@ static void disassembleObject(const Target *TheTarget, const ObjectFile *Obj,
       if (SectionAddr < StartAddress)
         Index = std::max<uint64_t>(Index, StartAddress - SectionAddr);
 
-      // If there is a data symbol inside an ELF text section and we are
+      // If there is a data/common symbol inside an ELF text section and we are
       // only disassembling text (applicable all architectures), we are in a
       // situation where we must print the data and not disassemble it.
-      if (Obj->isELF() && std::get<2>(Symbols[SI]) == ELF::STT_OBJECT &&
-          !DisassembleAll && Section.isText()) {
-        dumpELFData(SectionAddr, Index, End, Bytes);
-        Index = End;
+      if (Obj->isELF() && !DisassembleAll && Section.isText()) {
+        uint8_t SymTy = std::get<2>(Symbols[SI]);
+        if (SymTy == ELF::STT_OBJECT || SymTy == ELF::STT_COMMON) {
+          dumpELFData(SectionAddr, Index, End, Bytes);
+          Index = End;
+        }
       }
 
       bool CheckARMELFData = hasMappingSymbols(Obj) &&
@@ -1371,10 +1379,10 @@ static void disassembleObject(const Target *TheTarget, const ObjectFile *Obj,
             // N.B. We don't walk the relocations in the relocatable case yet.
             auto *TargetSectionSymbols = &Symbols;
             if (!Obj->isRelocatableObject()) {
-              auto It = llvm::bsearch(
+              auto It = partition_point(
                   SectionAddresses,
-                  [=](const std::pair<uint64_t, SectionRef> &RHS) {
-                    return Target < RHS.first;
+                  [=](const std::pair<uint64_t, SectionRef> &O) {
+                    return O.first <= Target;
                   });
               if (It != SectionAddresses.begin()) {
                 --It;
@@ -1387,17 +1395,17 @@ static void disassembleObject(const Target *TheTarget, const ObjectFile *Obj,
             // Find the last symbol in the section whose offset is less than
             // or equal to the target. If there isn't a section that contains
             // the target, find the nearest preceding absolute symbol.
-            auto TargetSym = llvm::bsearch(
+            auto TargetSym = partition_point(
                 *TargetSectionSymbols,
-                [=](const std::tuple<uint64_t, StringRef, uint8_t> &RHS) {
-                  return Target < std::get<0>(RHS);
+                [=](const std::tuple<uint64_t, StringRef, uint8_t> &O) {
+                  return std::get<0>(O) <= Target;
                 });
             if (TargetSym == TargetSectionSymbols->begin()) {
               TargetSectionSymbols = &AbsoluteSymbols;
-              TargetSym = llvm::bsearch(
+              TargetSym = partition_point(
                   AbsoluteSymbols,
-                  [=](const std::tuple<uint64_t, StringRef, uint8_t> &RHS) {
-                    return Target < std::get<0>(RHS);
+                  [=](const std::tuple<uint64_t, StringRef, uint8_t> &O) {
+                    return std::get<0>(O) <= Target;
                   });
             }
             if (TargetSym != TargetSectionSymbols->begin()) {

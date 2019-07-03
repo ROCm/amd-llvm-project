@@ -20,7 +20,6 @@
 #include "lldb/Core/PluginInterface.h"
 #include "lldb/Core/ThreadSafeDenseMap.h"
 #include "lldb/Symbol/CompilerType.h"
-#include "lldb/Symbol/DeclVendor.h"
 #include "lldb/Symbol/Type.h"
 #include "lldb/Target/LanguageRuntime.h"
 #include "lldb/lldb-private.h"
@@ -276,8 +275,6 @@ public:
 
   virtual ObjCISA GetParentClass(ObjCISA isa);
 
-  virtual DeclVendor *GetDeclVendor() { return nullptr; }
-
   // Finds the byte offset of the child_type ivar in parent_type.  If it can't
   // find the offset, returns LLDB_INVALID_IVAR_OFFSET.
 
@@ -304,8 +301,7 @@ public:
 
   /// Check whether the name is "self" or "_cmd" and should show up in
   /// "frame variable".
-  static bool IsWhitelistedRuntimeValue(ConstString name);
-  bool IsRuntimeSupportValue(ValueObject &valobj) override;
+  bool IsWhitelistedRuntimeValue(ConstString name) override;
 
 protected:
   // Classes that inherit from ObjCLanguageRuntime can see and modify these

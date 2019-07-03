@@ -587,7 +587,8 @@ static Relocation *getRISCVPCRelHi20(const Symbol *Sym, uint64_t Addend) {
                        });
 
   for (auto It = Range.first; It != Range.second; ++It)
-    if (It->Expr == R_PC)
+    if (It->Type == R_RISCV_PCREL_HI20 || It->Type == R_RISCV_GOT_HI20 ||
+        It->Type == R_RISCV_TLS_GD_HI20 || It->Type == R_RISCV_TLS_GOT_HI20)
       return &*It;
 
   error("R_RISCV_PCREL_LO12 relocation points to " + IS->getObjMsg(D->Value) +
@@ -620,6 +621,8 @@ static int64_t getTlsTpOffset(const Symbol &S) {
     // offset to reach 0x1000 of TCB/thread-library data and 0xf000 of the
     // program's TLS segment.
     return S.getVA(0) - 0x7000;
+  case EM_RISCV:
+    return S.getVA(0);
   default:
     llvm_unreachable("unhandled Config->EMachine");
   }
@@ -1268,8 +1271,8 @@ SectionPiece *MergeInputSection::getSectionPiece(uint64_t Offset) {
 
   // If Offset is not at beginning of a section piece, it is not in the map.
   // In that case we need to  do a binary search of the original section piece vector.
-  auto It = llvm::bsearch(Pieces,
-                          [=](SectionPiece P) { return Offset < P.InputOff; });
+  auto It = partition_point(
+      Pieces, [=](SectionPiece P) { return P.InputOff <= Offset; });
   return &It[-1];
 }
 

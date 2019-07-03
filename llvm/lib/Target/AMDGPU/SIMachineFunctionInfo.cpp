@@ -46,7 +46,8 @@ SIMachineFunctionInfo::SIMachineFunctionInfo(const MachineFunction &MF)
     ImplicitBufferPtr(false),
     ImplicitArgPtr(false),
     GITPtrHigh(0xffffffff),
-    HighBitsOf32BitAddress(0) {
+    HighBitsOf32BitAddress(0),
+    GDSSize(0) {
   const GCNSubtarget &ST = MF.getSubtarget<GCNSubtarget>();
   const Function &F = MF.getFunction();
   FlatWorkGroupSizes = ST.getFlatWorkGroupSizes(F);
@@ -159,6 +160,10 @@ SIMachineFunctionInfo::SIMachineFunctionInfo(const MachineFunction &MF)
   S = A.getValueAsString();
   if (!S.empty())
     S.consumeInteger(0, HighBitsOf32BitAddress);
+
+  S = F.getFnAttribute("amdgpu-gds-size").getValueAsString();
+  if (!S.empty())
+    S.consumeInteger(0, GDSSize);
 }
 
 void SIMachineFunctionInfo::limitOccupancy(const MachineFunction &MF) {
@@ -250,7 +255,7 @@ bool SIMachineFunctionInfo::allocateSGPRSpillToVGPR(MachineFunction &MF,
 
   int NumLanes = Size / 4;
 
-  const MCPhysReg *CSRegs = TRI->getCalleeSavedRegs(&MF);
+  const MCPhysReg *CSRegs = MRI.getCalleeSavedRegs();
 
   // Make sure to handle the case where a wide SGPR spill may span between two
   // VGPRs.
@@ -298,23 +303,6 @@ void SIMachineFunctionInfo::removeSGPRToVGPRFrameIndices(MachineFrameInfo &MFI) 
   for (unsigned i = MFI.getObjectIndexBegin(), e = MFI.getObjectIndexEnd();
        i != e; ++i)
     MFI.setStackID(i, 0);
-}
-
-
-/// \returns VGPR used for \p Dim' work item ID.
-unsigned SIMachineFunctionInfo::getWorkItemIDVGPR(unsigned Dim) const {
-  switch (Dim) {
-  case 0:
-    assert(hasWorkItemIDX());
-    return AMDGPU::VGPR0;
-  case 1:
-    assert(hasWorkItemIDY());
-    return AMDGPU::VGPR1;
-  case 2:
-    assert(hasWorkItemIDZ());
-    return AMDGPU::VGPR2;
-  }
-  llvm_unreachable("unexpected dimension");
 }
 
 MCPhysReg SIMachineFunctionInfo::getNextUserSGPR() const {

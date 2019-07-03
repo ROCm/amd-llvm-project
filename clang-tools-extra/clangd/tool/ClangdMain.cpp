@@ -24,6 +24,7 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/Signals.h"
+#include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
 #include <cstdlib>
 #include <iostream>
@@ -268,6 +269,21 @@ static llvm::cl::opt<bool> HiddenFeatures(
     llvm::cl::desc("Enable hidden features mostly useful to clangd developers"),
     llvm::cl::init(false), llvm::cl::Hidden);
 
+static llvm::cl::list<std::string> QueryDriverGlobs(
+    "query-driver",
+    llvm::cl::desc(
+        "Comma separated list of globs for white-listing gcc-compatible "
+        "drivers that are safe to execute. Drivers matching any of these globs "
+        "will be used to extract system includes. e.g. "
+        "/usr/bin/**/clang-*,/path/to/repo/**/g++-*"),
+    llvm::cl::CommaSeparated);
+
+static llvm::cl::list<std::string> TweakList(
+    "tweaks",
+    llvm::cl::desc(
+        "Specify a list of Tweaks to enable (only for clangd developers)."),
+    llvm::cl::Hidden, llvm::cl::CommaSeparated);
+
 namespace {
 
 /// \brief Supports a test URI scheme with relaxed constraints for lit tests.
@@ -329,6 +345,7 @@ int main(int argc, char *argv[]) {
   using namespace clang;
   using namespace clang::clangd;
 
+  llvm::InitializeAllTargetInfos();
   llvm::sys::PrintStackTraceOnErrorSignal(argv[0]);
   llvm::cl::SetVersionPrinter([](llvm::raw_ostream &OS) {
     OS << clang::getClangToolFullVersion("clangd") << "\n";
@@ -521,6 +538,12 @@ int main(int argc, char *argv[]) {
     };
   }
   Opts.SuggestMissingIncludes = SuggestMissingIncludes;
+  Opts.QueryDriverGlobs = std::move(QueryDriverGlobs);
+  if (TweakList.getNumOccurrences())
+    Opts.TweakFilter = [&](llvm::StringRef TweakToSearch) {
+      // return true if any tweak matches the TweakToSearch
+      return llvm::find(TweakList, TweakToSearch) != TweakList.end();
+    };
   llvm::Optional<OffsetEncoding> OffsetEncodingFromFlag;
   if (ForceOffsetEncoding != OffsetEncoding::UnsupportedEncoding)
     OffsetEncodingFromFlag = ForceOffsetEncoding;

@@ -714,8 +714,8 @@ def VCVTBHS: ASuI<0b11101, 0b11, 0b0010, 0b01, 0, (outs SPR:$Sd), (ins SPR:$Sm),
                  Requires<[HasFP16]>,
              Sched<[WriteFPCVT]>;
 
-def : FullFP16Pat<(f32 (fpextend HPR:$Sm)),
-                  (VCVTBHS (COPY_TO_REGCLASS HPR:$Sm, SPR))>;
+def : FP16Pat<(f32 (fpextend HPR:$Sm)),
+              (VCVTBHS (COPY_TO_REGCLASS HPR:$Sm, SPR))>;
 def : FP16Pat<(f16_to_fp GPR:$a),
               (VCVTBHS (COPY_TO_REGCLASS GPR:$a, SPR))>;
 
@@ -725,8 +725,8 @@ def VCVTBSH: ASuI<0b11101, 0b11, 0b0011, 0b01, 0, (outs SPR:$Sd), (ins SPR:$Sm),
                  Requires<[HasFP16]>,
              Sched<[WriteFPCVT]>;
 
-def : FullFP16Pat<(f16 (fpround SPR:$Sm)),
-                  (COPY_TO_REGCLASS (VCVTBSH SPR:$Sm), HPR)>;
+def : FP16Pat<(f16 (fpround SPR:$Sm)),
+              (COPY_TO_REGCLASS (VCVTBSH SPR:$Sm), HPR)>;
 def : FP16Pat<(fp_to_f16 SPR:$a),
               (i32 (COPY_TO_REGCLASS (VCVTBSH SPR:$a), GPR))>;
 
@@ -2269,13 +2269,13 @@ def VMOVDcc  : PseudoInst<(outs DPR:$Dd), (ins DPR:$Dn, DPR:$Dm, cmovpred:$p),
                     IIC_fpUNA64,
                     [(set (f64 DPR:$Dd),
                           (ARMcmov DPR:$Dn, DPR:$Dm, cmovpred:$p))]>,
-               RegConstraint<"$Dn = $Dd">, Requires<[HasVFP2,HasDPVFP]>;
+               RegConstraint<"$Dn = $Dd">, Requires<[HasFPRegs64]>;
 
 def VMOVScc  : PseudoInst<(outs SPR:$Sd), (ins SPR:$Sn, SPR:$Sm, cmovpred:$p),
                     IIC_fpUNA32,
                     [(set (f32 SPR:$Sd),
                           (ARMcmov SPR:$Sn, SPR:$Sm, cmovpred:$p))]>,
-               RegConstraint<"$Sn = $Sd">, Requires<[HasVFP2]>;
+               RegConstraint<"$Sn = $Sd">, Requires<[HasFPRegs]>;
 } // hasSideEffects
 
 //===----------------------------------------------------------------------===//

@@ -438,6 +438,8 @@ def ADJCALLSTACKUP : SPseudoInstSI<
   let FixedSize = 1;
   let hasSideEffects = 1;
   let usesCustomInserter = 1;
+  let SchedRW = [WriteSALU];
+  let Defs = [SCC];
 }
 
 def ADJCALLSTACKDOWN : SPseudoInstSI<
@@ -447,6 +449,8 @@ def ADJCALLSTACKDOWN : SPseudoInstSI<
   let Size = 8; // Worst case. (s_add_u32 + constant)
   let hasSideEffects = 1;
   let usesCustomInserter = 1;
+  let SchedRW = [WriteSALU];
+  let Defs = [SCC];
 }
 
 let Defs = [M0, EXEC, SCC],
@@ -1140,6 +1144,16 @@ def : GCNPat <
 def : GCNPat <
   (i32 imm:$imm),
   (S_MOV_B32 imm:$imm)
+>;
+
+def : GCNPat <
+  (VGPRImm<(SIlds tglobaladdr:$ga)>),
+  (V_MOV_B32_e32 $ga)
+>;
+
+def : GCNPat <
+  (SIlds tglobaladdr:$ga),
+  (S_MOV_B32 $ga)
 >;
 
 // FIXME: Workaround for ordering issue with peephole optimizer where

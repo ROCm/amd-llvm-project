@@ -105,8 +105,7 @@ namespace llvm {
 
       /// X86 conditional moves. Operand 0 and operand 1 are the two values
       /// to select from. Operand 2 is the condition code, and operand 3 is the
-      /// flag operand produced by a CMP or TEST instruction. It also writes a
-      /// flag result.
+      /// flag operand produced by a CMP or TEST instruction.
       CMOV,
 
       /// X86 conditional branches. Operand 0 is the chain operand, operand 1
@@ -878,11 +877,6 @@ namespace llvm {
 
     /// Vector-sized comparisons are fast using PCMPEQ + PMOVMSK or PTEST.
     MVT hasFastEqualityCompare(unsigned NumBits) const override;
-
-    /// Allow multiple load pairs per block for smaller and faster code.
-    unsigned getMemcmpEqZeroLoadsPerBlock() const override {
-      return 2;
-    }
 
     /// Return the value type to use for ISD::SETCC.
     EVT getSetCCResultType(const DataLayout &DL, LLVMContext &Context,

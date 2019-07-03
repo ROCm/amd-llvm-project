@@ -75,6 +75,11 @@ struct FileHeader {
   ELF_EM Machine;
   ELF_EF Flags;
   llvm::yaml::Hex64 Entry;
+
+  Optional<llvm::yaml::Hex16> SHEntSize;
+  Optional<llvm::yaml::Hex16> SHOffset;
+  Optional<llvm::yaml::Hex16> SHNum;
+  Optional<llvm::yaml::Hex16> SHStrNdx;
 };
 
 struct SectionName {
@@ -134,6 +139,10 @@ struct Section {
   StringRef Link;
   llvm::yaml::Hex64 AddressAlign;
   Optional<llvm::yaml::Hex64> EntSize;
+
+  // This can be used to override the sh_offset field. It does not place the
+  // section data at the offset specified. Useful for creating invalid objects.
+  Optional<llvm::yaml::Hex64> ShOffset;
 
   Section(SectionKind Kind) : Kind(Kind) {}
   virtual ~Section();

@@ -6016,28 +6016,18 @@ void SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I,
                              getValue(I.getArgOperand(0))));
     return;
   }
-  case Intrinsic::minnum: {
-    auto VT = getValue(I.getArgOperand(0)).getValueType();
-    unsigned Opc =
-        I.hasNoNaNs() && TLI.isOperationLegalOrCustom(ISD::FMINIMUM, VT)
-            ? ISD::FMINIMUM
-            : ISD::FMINNUM;
-    setValue(&I, DAG.getNode(Opc, sdl, VT,
+  case Intrinsic::minnum:
+    setValue(&I, DAG.getNode(ISD::FMINNUM, sdl,
+                             getValue(I.getArgOperand(0)).getValueType(),
                              getValue(I.getArgOperand(0)),
                              getValue(I.getArgOperand(1))));
     return;
-  }
-  case Intrinsic::maxnum: {
-    auto VT = getValue(I.getArgOperand(0)).getValueType();
-    unsigned Opc =
-        I.hasNoNaNs() && TLI.isOperationLegalOrCustom(ISD::FMAXIMUM, VT)
-            ? ISD::FMAXIMUM
-            : ISD::FMAXNUM;
-    setValue(&I, DAG.getNode(Opc, sdl, VT,
+  case Intrinsic::maxnum:
+    setValue(&I, DAG.getNode(ISD::FMAXNUM, sdl,
+                             getValue(I.getArgOperand(0)).getValueType(),
                              getValue(I.getArgOperand(0)),
                              getValue(I.getArgOperand(1))));
     return;
-  }
   case Intrinsic::minimum:
     setValue(&I, DAG.getNode(ISD::FMINIMUM, sdl,
                              getValue(I.getArgOperand(0)).getValueType(),
@@ -7879,7 +7869,7 @@ static void GetRegistersForValue(SelectionDAG &DAG, const SDLoc &DL,
 
   for (; NumRegs; --NumRegs, ++I) {
     assert(I != RC->end() && "Ran out of registers to allocate!");
-    auto R = (AssignedReg) ? *I : RegInfo.createVirtualRegister(RC);
+    Register R = AssignedReg ? Register(*I) : RegInfo.createVirtualRegister(RC);
     Regs.push_back(R);
   }
 

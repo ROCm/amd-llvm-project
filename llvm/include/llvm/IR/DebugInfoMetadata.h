@@ -2464,6 +2464,10 @@ public:
   /// Return whether this is an implicit location description.
   bool isImplicit() const;
 
+  /// Return whether the location is computed on the expression stack, meaning
+  /// it cannot be a simple register location.
+  bool isComplex() const;
+
   /// Append \p Ops with operations to apply the \p Offset.
   static void appendOffset(SmallVectorImpl<uint64_t> &Ops, int64_t Offset);
 
@@ -2482,11 +2486,12 @@ public:
     ApplyOffset = 0,
     DerefBefore = 1 << 0,
     DerefAfter = 1 << 1,
-    StackValue = 1 << 2
+    StackValue = 1 << 2,
+    EntryValue = 1 << 3
   };
 
   /// Prepend \p DIExpr with a deref and offset operation and optionally turn it
-  /// into a stack value.
+  /// into a stack value or/and an entry value.
   static DIExpression *prepend(const DIExpression *Expr, uint8_t Flags,
                                int64_t Offset = 0);
 
@@ -2494,7 +2499,8 @@ public:
   /// stack value.
   static DIExpression *prependOpcodes(const DIExpression *Expr,
                                       SmallVectorImpl<uint64_t> &Ops,
-                                      bool StackValue = false);
+                                      bool StackValue = false,
+                                      bool EntryValue = false);
 
   /// Append the opcodes \p Ops to \p DIExpr. Unlike \ref appendToStack, the
   /// returned expression is a stack value only if \p DIExpr is a stack value.
@@ -2557,6 +2563,13 @@ public:
     if (!isFragment() || !Other->isFragment())
       return true;
     return fragmentCmp(Other) == 0;
+  }
+
+  /// Check if the expression consists of exactly one entry value operand.
+  /// (This is the only configuration of entry values that is supported.)
+  bool isEntryValue() const {
+    return getNumElements() > 0 &&
+           getElement(0) == dwarf::DW_OP_entry_value;
   }
 };
 
@@ -2795,6 +2808,11 @@ public:
 
   bool isArtificial() const { return getFlags() & FlagArtificial; }
   bool isObjectPointer() const { return getFlags() & FlagObjectPointer; }
+
+  /// Check that an argument is unmodified.
+  bool isNotModified() const { return getFlags() & FlagArgumentNotModified; }
+  /// Set the flag if an argument is unmodified.
+  void setIsNotModified() { Flags |= FlagArgumentNotModified; }
 
   /// Check that a location is valid for this variable.
   ///

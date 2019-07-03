@@ -205,6 +205,10 @@ def SIpc_add_rel_offset : SDNode<"AMDGPUISD::PC_ADD_REL_OFFSET",
   SDTypeProfile<1, 2, [SDTCisVT<0, iPTR>, SDTCisSameAs<0,1>, SDTCisSameAs<0,2>]>
 >;
 
+def SIlds : SDNode<"AMDGPUISD::LDS",
+  SDTypeProfile<1, 1, [SDTCisVT<0, iPTR>, SDTCisSameAs<0,1>]>
+>;
+
 def SIload_d16_lo : SDNode<"AMDGPUISD::LOAD_D16_LO",
   SIload_d16,
   [SDNPMayLoad, SDNPMemOperand, SDNPHasChain]
@@ -501,6 +505,7 @@ multiclass SIAtomicM0Glue2 <string op_name, bit is_amdgpu = 0,
   >;
 
   def _local_m0 : local_binary_atomic_op <!cast<SDNode>(NAME#"_glue")>;
+  def _region_m0 : region_binary_atomic_op <!cast<SDNode>(NAME#"_glue")>;
 }
 
 defm atomic_load_add : SIAtomicM0Glue2 <"LOAD_ADD">;
@@ -524,6 +529,7 @@ def atomic_cmp_swap_glue : SDNode <"ISD::ATOMIC_CMP_SWAP", SDTAtomic3,
 >;
 
 def atomic_cmp_swap_local_m0 : AtomicCmpSwapLocal<atomic_cmp_swap_glue>;
+def atomic_cmp_swap_region_m0 : AtomicCmpSwapRegion<atomic_cmp_swap_glue>;
 
 
 def as_i1imm : SDNodeXForm<imm, [{
@@ -2303,6 +2309,15 @@ def getVCMPXNoSDstOp : InstrMapping {
   let ColFields = ["HasSDst"];
   let KeyCol = ["1"];
   let ValueCols = [["0"]];
+}
+
+// Maps a SOPP to a SOPP with S_NOP
+def getSOPPWithRelaxation : InstrMapping {
+  let FilterClass = "Base_SOPP";
+  let RowFields = ["AsmString"];
+  let ColFields = ["Size"];
+  let KeyCol = ["4"];
+  let ValueCols = [["8"]];
 }
 
 include "SIInstructions.td"

@@ -128,23 +128,17 @@ SymbolLocation getPreferredLocation(const Location &ASTLoc,
   return Merged.CanonicalDeclaration;
 }
 
-struct MacroDecl {
-  llvm::StringRef Name;
-  const MacroInfo *Info;
-};
-
 /// Finds declarations locations that a given source location refers to.
 class DeclarationAndMacrosFinder : public index::IndexDataConsumer {
-  std::vector<MacroDecl> MacroInfos;
+  std::vector<DefinedMacro> MacroInfos;
   llvm::DenseSet<const Decl *> Decls;
   const SourceLocation &SearchedLocation;
-  const ASTContext &AST;
   Preprocessor &PP;
 
 public:
   DeclarationAndMacrosFinder(const SourceLocation &SearchedLocation,
-                             ASTContext &AST, Preprocessor &PP)
-      : SearchedLocation(SearchedLocation), AST(AST), PP(PP) {}
+                             Preprocessor &PP)
+      : SearchedLocation(SearchedLocation), PP(PP) {}
 
   // The results are sorted by declaration location.
   std::vector<const Decl *> getFoundDecls() const {
@@ -158,16 +152,18 @@ public:
     return Result;
   }
 
-  std::vector<MacroDecl> takeMacroInfos() {
+  std::vector<DefinedMacro> takeMacroInfos() {
     // Don't keep the same Macro info multiple times.
-    llvm::sort(MacroInfos, [](const MacroDecl &Left, const MacroDecl &Right) {
-      return Left.Info < Right.Info;
-    });
+    llvm::sort(MacroInfos,
+               [](const DefinedMacro &Left, const DefinedMacro &Right) {
+                 return Left.Info < Right.Info;
+               });
 
-    auto Last = std::unique(MacroInfos.begin(), MacroInfos.end(),
-                            [](const MacroDecl &Left, const MacroDecl &Right) {
-                              return Left.Info == Right.Info;
-                            });
+    auto Last =
+        std::unique(MacroInfos.begin(), MacroInfos.end(),
+                    [](const DefinedMacro &Left, const DefinedMacro &Right) {
+                      return Left.Info == Right.Info;
+                    });
     MacroInfos.erase(Last, MacroInfos.end());
     return std::move(MacroInfos);
   }
@@ -211,43 +207,21 @@ public:
 
 private:
   void finish() override {
-    // Also handle possible macro at the searched location.
-    Token Result;
-    auto &Mgr = AST.getSourceManager();
-    if (!Lexer::getRawToken(Mgr.getSpellingLoc(SearchedLocation), Result, Mgr,
-                            AST.getLangOpts(), false)) {
-      if (Result.is(tok::raw_identifier)) {
-        PP.LookUpIdentifierInfo(Result);
-      }
-      IdentifierInfo *IdentifierInfo = Result.getIdentifierInfo();
-      if (IdentifierInfo && IdentifierInfo->hadMacroDefinition()) {
-        std::pair<FileID, unsigned int> DecLoc =
-            Mgr.getDecomposedExpansionLoc(SearchedLocation);
-        // Get the definition just before the searched location so that a macro
-        // referenced in a '#undef MACRO' can still be found.
-        SourceLocation BeforeSearchedLocation = Mgr.getMacroArgExpandedLocation(
-            Mgr.getLocForStartOfFile(DecLoc.first)
-                .getLocWithOffset(DecLoc.second - 1));
-        MacroDefinition MacroDef =
-            PP.getMacroDefinitionAtLoc(IdentifierInfo, BeforeSearchedLocation);
-        MacroInfo *MacroInf = MacroDef.getMacroInfo();
-        if (MacroInf) {
-          MacroInfos.push_back(MacroDecl{IdentifierInfo->getName(), MacroInf});
-          assert(Decls.empty());
-        }
-      }
+    if (auto DefinedMacro = locateMacroAt(SearchedLocation, PP)) {
+      MacroInfos.push_back(*DefinedMacro);
+      assert(Decls.empty());
     }
   }
 };
 
 struct IdentifiedSymbol {
   std::vector<const Decl *> Decls;
-  std::vector<MacroDecl> Macros;
+  std::vector<DefinedMacro> Macros;
 };
 
 IdentifiedSymbol getSymbolAtPosition(ParsedAST &AST, SourceLocation Pos) {
-  auto DeclMacrosFinder = DeclarationAndMacrosFinder(Pos, AST.getASTContext(),
-                                                     AST.getPreprocessor());
+  auto DeclMacrosFinder =
+      DeclarationAndMacrosFinder(Pos, AST.getPreprocessor());
   index::IndexingOptions IndexOpts;
   IndexOpts.SystemSymbolFilter =
       index::IndexingOptions::SystemSymbolFilterKind::All;
@@ -258,14 +232,6 @@ IdentifiedSymbol getSymbolAtPosition(ParsedAST &AST, SourceLocation Pos) {
                      AST.getLocalTopLevelDecls(), DeclMacrosFinder, IndexOpts);
 
   return {DeclMacrosFinder.getFoundDecls(), DeclMacrosFinder.takeMacroInfos()};
-}
-
-Range getTokenRange(ASTContext &AST, SourceLocation TokLoc) {
-  const SourceManager &SourceMgr = AST.getSourceManager();
-  SourceLocation LocEnd =
-      Lexer::getLocForEndOfToken(TokLoc, 0, SourceMgr, AST.getLangOpts());
-  return {sourceLocToPosition(SourceMgr, TokLoc),
-          sourceLocToPosition(SourceMgr, LocEnd)};
 }
 
 llvm::Optional<Location> makeLocation(ASTContext &AST, SourceLocation TokLoc,
@@ -279,10 +245,14 @@ llvm::Optional<Location> makeLocation(ASTContext &AST, SourceLocation TokLoc,
     log("failed to get path!");
     return None;
   }
-  Location L;
-  L.uri = URIForFile::canonicalize(*FilePath, TUPath);
-  L.range = getTokenRange(AST, TokLoc);
-  return L;
+  if (auto Range =
+          getTokenRange(AST.getSourceManager(), AST.getLangOpts(), TokLoc)) {
+    Location L;
+    L.uri = URIForFile::canonicalize(*FilePath, TUPath);
+    L.range = *Range;
+    return L;
+  }
+  return None;
 }
 
 } // namespace
@@ -471,15 +441,19 @@ std::vector<DocumentHighlight> findDocumentHighlights(ParsedAST &AST,
 
   std::vector<DocumentHighlight> Result;
   for (const auto &Ref : References) {
-    DocumentHighlight DH;
-    DH.range = getTokenRange(AST.getASTContext(), Ref.Loc);
-    if (Ref.Role & index::SymbolRoleSet(index::SymbolRole::Write))
-      DH.kind = DocumentHighlightKind::Write;
-    else if (Ref.Role & index::SymbolRoleSet(index::SymbolRole::Read))
-      DH.kind = DocumentHighlightKind::Read;
-    else
-      DH.kind = DocumentHighlightKind::Text;
-    Result.push_back(std::move(DH));
+    if (auto Range =
+            getTokenRange(AST.getASTContext().getSourceManager(),
+                          AST.getASTContext().getLangOpts(), Ref.Loc)) {
+      DocumentHighlight DH;
+      DH.range = *Range;
+      if (Ref.Role & index::SymbolRoleSet(index::SymbolRole::Write))
+        DH.kind = DocumentHighlightKind::Write;
+      else if (Ref.Role & index::SymbolRoleSet(index::SymbolRole::Read))
+        DH.kind = DocumentHighlightKind::Read;
+      else
+        DH.kind = DocumentHighlightKind::Text;
+      Result.push_back(std::move(DH));
+    }
   }
   return Result;
 }
@@ -610,18 +584,6 @@ fetchTemplateParameters(const TemplateParameterList *Params,
   return TempParameters;
 }
 
-static llvm::Optional<Range> getTokenRange(SourceLocation Loc,
-                                           const ASTContext &Ctx) {
-  if (!Loc.isValid())
-    return llvm::None;
-  SourceLocation End = Lexer::getLocForEndOfToken(
-      Loc, 0, Ctx.getSourceManager(), Ctx.getLangOpts());
-  if (!End.isValid())
-    return llvm::None;
-  return halfOpenToRange(Ctx.getSourceManager(),
-                         CharSourceRange::getCharRange(Loc, End));
-}
-
 static const FunctionDecl *getUnderlyingFunction(const Decl *D) {
   // Extract lambda from variables.
   if (const VarDecl *VD = llvm::dyn_cast<VarDecl>(D)) {
@@ -719,6 +681,21 @@ static HoverInfo getHoverContents(const Decl *D) {
     VD->getType().print(OS, Policy);
   }
 
+  // Fill in value with evaluated initializer if possible.
+  // FIXME(kadircet): Also set Value field for expressions like "sizeof" and
+  // function calls.
+  if (const auto *Var = dyn_cast<VarDecl>(D)) {
+    if (const Expr *Init = Var->getInit()) {
+      Expr::EvalResult Result;
+      if (!Init->isValueDependent() && Init->EvaluateAsRValue(Result, Ctx)) {
+        HI.Value.emplace();
+        llvm::raw_string_ostream ValueOS(*HI.Value);
+        Result.Val.printPretty(ValueOS, const_cast<ASTContext &>(Ctx),
+                               Var->getType());
+      }
+    }
+  }
+
   HI.Definition = printDefinition(D);
   return HI;
 }
@@ -737,18 +714,18 @@ static HoverInfo getHoverContents(QualType T, const Decl *D,
 }
 
 /// Generate a \p Hover object given the macro \p MacroDecl.
-static HoverInfo getHoverContents(MacroDecl Decl, ParsedAST &AST) {
+static HoverInfo getHoverContents(const DefinedMacro &Macro, ParsedAST &AST) {
   HoverInfo HI;
   SourceManager &SM = AST.getSourceManager();
-  HI.Name = Decl.Name;
+  HI.Name = Macro.Name;
   HI.Kind = indexSymbolKindToSymbolKind(
-      index::getSymbolInfoForMacro(*Decl.Info).Kind);
+      index::getSymbolInfoForMacro(*Macro.Info).Kind);
   // FIXME: Populate documentation
   // FIXME: Pupulate parameters
 
   // Try to get the full definition, not just the name
-  SourceLocation StartLoc = Decl.Info->getDefinitionLoc();
-  SourceLocation EndLoc = Decl.Info->getDefinitionEndLoc();
+  SourceLocation StartLoc = Macro.Info->getDefinitionLoc();
+  SourceLocation EndLoc = Macro.Info->getDefinitionEndLoc();
   if (EndLoc.isValid()) {
     EndLoc = Lexer::getLocForEndOfToken(EndLoc, 0, SM,
                                         AST.getASTContext().getLangOpts());
@@ -910,7 +887,9 @@ llvm::Optional<HoverInfo> getHover(ParsedAST &AST, Position Pos,
           tooling::applyAllReplacements(HI->Definition, Replacements))
     HI->Definition = *Formatted;
 
-  HI->SymRange = getTokenRange(SourceLocationBeg, AST.getASTContext());
+  HI->SymRange =
+      getTokenRange(AST.getASTContext().getSourceManager(),
+                    AST.getASTContext().getLangOpts(), SourceLocationBeg);
   return HI;
 }
 
@@ -933,10 +912,14 @@ std::vector<Location> findReferences(ParsedAST &AST, Position Pos,
   // TODO: should we handle macros, too?
   auto MainFileRefs = findRefs(Symbols.Decls, AST);
   for (const auto &Ref : MainFileRefs) {
-    Location Result;
-    Result.range = getTokenRange(AST.getASTContext(), Ref.Loc);
-    Result.uri = URIForFile::canonicalize(*MainFilePath, *MainFilePath);
-    Results.push_back(std::move(Result));
+    if (auto Range =
+            getTokenRange(AST.getASTContext().getSourceManager(),
+                          AST.getASTContext().getLangOpts(), Ref.Loc)) {
+      Location Result;
+      Result.range = *Range;
+      Result.uri = URIForFile::canonicalize(*MainFilePath, *MainFilePath);
+      Results.push_back(std::move(Result));
+    }
   }
 
   // Now query the index for references from other files.

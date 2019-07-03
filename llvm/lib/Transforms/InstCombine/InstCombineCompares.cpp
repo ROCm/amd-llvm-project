@@ -1317,14 +1317,16 @@ static Instruction *processUGT_ADDCST_ADD(ICmpInst &I, Value *A, Value *B,
   return ExtractValueInst::Create(Call, 1, "sadd.overflow");
 }
 
-// Handle (icmp sgt smin(PosA, B) 0) -> (icmp sgt B 0)
+// Handle  icmp pred X, 0
 Instruction *InstCombiner::foldICmpWithZero(ICmpInst &Cmp) {
   CmpInst::Predicate Pred = Cmp.getPredicate();
-  Value *X = Cmp.getOperand(0);
+  if (!match(Cmp.getOperand(1), m_Zero()))
+    return nullptr;
 
-  if (match(Cmp.getOperand(1), m_Zero()) && Pred == ICmpInst::ICMP_SGT) {
+  // (icmp sgt smin(PosA, B) 0) -> (icmp sgt B 0)
+  if (Pred == ICmpInst::ICMP_SGT) {
     Value *A, *B;
-    SelectPatternResult SPR = matchSelectPattern(X, A, B);
+    SelectPatternResult SPR = matchSelectPattern(Cmp.getOperand(0), A, B);
     if (SPR.Flavor == SPF_SMIN) {
       if (isKnownPositive(A, DL, 0, &AC, &Cmp, &DT))
         return new ICmpInst(Pred, B, Cmp.getOperand(1));
@@ -1332,6 +1334,20 @@ Instruction *InstCombiner::foldICmpWithZero(ICmpInst &Cmp) {
         return new ICmpInst(Pred, A, Cmp.getOperand(1));
     }
   }
+
+  // Given:
+  //   icmp eq/ne (urem %x, %y), 0
+  // Iff %x has 0 or 1 bits set, and %y has at least 2 bits set, omit 'urem':
+  //   icmp eq/ne %x, 0
+  Value *X, *Y;
+  if (match(Cmp.getOperand(0), m_URem(m_Value(X), m_Value(Y))) &&
+      ICmpInst::isEquality(Pred)) {
+    KnownBits XKnown = computeKnownBits(X, 0, &Cmp);
+    KnownBits YKnown = computeKnownBits(Y, 0, &Cmp);
+    if (XKnown.countMaxPopulation() == 1 && YKnown.countMinPopulation() >= 2)
+      return new ICmpInst(Pred, X, Cmp.getOperand(1));
+  }
+
   return nullptr;
 }
 
@@ -1651,6 +1667,15 @@ Instruction *InstCombiner::foldICmpAndConstConst(ICmpInst &Cmp,
       Constant *Zero = Constant::getNullValue(X->getType());
       auto NewPred = isICMP_NE ? ICmpInst::ICMP_SLT : ICmpInst::ICMP_SGE;
       return new ICmpInst(NewPred, X, Zero);
+    }
+
+    // Restrict this fold only for single-use 'and' (PR10267).
+    // ((%x & C) == 0) --> %x u< (-C)  iff (-C) is power of two.
+    if ((~(*C2) + 1).isPowerOf2()) {
+      Constant *NegBOC =
+          ConstantExpr::getNeg(cast<Constant>(And->getOperand(1)));
+      auto NewPred = isICMP_NE ? ICmpInst::ICMP_UGE : ICmpInst::ICMP_ULT;
+      return new ICmpInst(NewPred, X, NegBOC);
     }
   }
 
@@ -2017,6 +2042,27 @@ Instruction *InstCombiner::foldICmpShlConstant(ICmpInst &Cmp,
     Value *And = Builder.CreateAnd(X, Mask, Shl->getName() + ".mask");
     return new ICmpInst(TrueIfSigned ? ICmpInst::ICMP_NE : ICmpInst::ICMP_EQ,
                         And, Constant::getNullValue(ShType));
+  }
+
+  // Simplify 'shl' inequality test into 'and' equality test.
+  if (Cmp.isUnsigned() && Shl->hasOneUse()) {
+    // (X l<< C2) u<=/u> C1 iff C1+1 is power of two -> X & (~C1 l>> C2) ==/!= 0
+    if ((C + 1).isPowerOf2() &&
+        (Pred == ICmpInst::ICMP_ULE || Pred == ICmpInst::ICMP_UGT)) {
+      Value *And = Builder.CreateAnd(X, (~C).lshr(ShiftAmt->getZExtValue()));
+      return new ICmpInst(Pred == ICmpInst::ICMP_ULE ? ICmpInst::ICMP_EQ
+                                                     : ICmpInst::ICMP_NE,
+                          And, Constant::getNullValue(ShType));
+    }
+    // (X l<< C2) u</u>= C1 iff C1 is power of two -> X & (-C1 l>> C2) ==/!= 0
+    if (C.isPowerOf2() &&
+        (Pred == ICmpInst::ICMP_ULT || Pred == ICmpInst::ICMP_UGE)) {
+      Value *And =
+          Builder.CreateAnd(X, (~(C - 1)).lshr(ShiftAmt->getZExtValue()));
+      return new ICmpInst(Pred == ICmpInst::ICMP_ULT ? ICmpInst::ICMP_EQ
+                                                     : ICmpInst::ICMP_NE,
+                          And, Constant::getNullValue(ShType));
+    }
   }
 
   // Transform (icmp pred iM (shl iM %v, N), C)
@@ -2797,17 +2843,6 @@ Instruction *InstCombiner::foldICmpBinOpEqualityWithConstant(ICmpInst &Cmp,
       if (C == *BOC && C.isPowerOf2())
         return new ICmpInst(isICMP_NE ? ICmpInst::ICMP_EQ : ICmpInst::ICMP_NE,
                             BO, Constant::getNullValue(RHS->getType()));
-
-      // Don't perform the following transforms if the AND has multiple uses
-      if (!BO->hasOneUse())
-        break;
-
-      // ((X & ~7) == 0) --> X < 8
-      if (C.isNullValue() && (~(*BOC) + 1).isPowerOf2()) {
-        Constant *NegBOC = ConstantExpr::getNeg(cast<Constant>(BOp1));
-        auto NewPred = isICMP_NE ? ICmpInst::ICMP_UGE : ICmpInst::ICMP_ULT;
-        return new ICmpInst(NewPred, BOp0, NegBOC);
-      }
     }
     break;
   }
@@ -3235,6 +3270,63 @@ foldICmpWithTruncSignExtendedVal(ICmpInst &I,
   return T1;
 }
 
+// Given pattern:
+//   icmp eq/ne (and ((x shift Q), (y oppositeshift K))), 0
+// we should move shifts to the same hand of 'and', i.e. rewrite as
+//   icmp eq/ne (and (x shift (Q+K)), y), 0  iff (Q+K) u< bitwidth(x)
+// We are only interested in opposite logical shifts here.
+// If we can, we want to end up creating 'lshr' shift.
+static Value *
+foldShiftIntoShiftInAnotherHandOfAndInICmp(ICmpInst &I, const SimplifyQuery SQ,
+                                           InstCombiner::BuilderTy &Builder) {
+  if (!I.isEquality() || !match(I.getOperand(1), m_Zero()) ||
+      !I.getOperand(0)->hasOneUse())
+    return nullptr;
+
+  auto m_AnyLogicalShift = m_LogicalShift(m_Value(), m_Value());
+  auto m_AnyLShr = m_LShr(m_Value(), m_Value());
+
+  // Look for an 'and' of two (opposite) logical shifts.
+  // Pick the single-use shift as XShift.
+  Value *XShift, *YShift;
+  if (!match(I.getOperand(0),
+             m_c_And(m_OneUse(m_CombineAnd(m_AnyLogicalShift, m_Value(XShift))),
+                     m_CombineAnd(m_AnyLogicalShift, m_Value(YShift)))))
+    return nullptr;
+
+  // If YShift is a single-use 'lshr', swap the shifts around.
+  if (match(YShift, m_OneUse(m_AnyLShr)))
+    std::swap(XShift, YShift);
+
+  // The shifts must be in opposite directions.
+  Instruction::BinaryOps XShiftOpcode =
+      cast<BinaryOperator>(XShift)->getOpcode();
+  if (XShiftOpcode == cast<BinaryOperator>(YShift)->getOpcode())
+    return nullptr; // Do not care about same-direction shifts here.
+
+  Value *X, *XShAmt, *Y, *YShAmt;
+  match(XShift, m_BinOp(m_Value(X), m_Value(XShAmt)));
+  match(YShift, m_BinOp(m_Value(Y), m_Value(YShAmt)));
+
+  // Can we fold (XShAmt+YShAmt) ?
+  Value *NewShAmt = SimplifyBinOp(Instruction::BinaryOps::Add, XShAmt, YShAmt,
+                                  SQ.getWithInstruction(&I));
+  if (!NewShAmt)
+    return nullptr;
+  // Is the new shift amount smaller than the bit width?
+  // FIXME: could also rely on ConstantRange.
+  unsigned BitWidth = X->getType()->getScalarSizeInBits();
+  if (!match(NewShAmt, m_SpecificInt_ULT(APInt(BitWidth, BitWidth))))
+    return nullptr;
+  // All good, we can do this fold. The shift is the same that was for X.
+  Value *T0 = XShiftOpcode == Instruction::BinaryOps::LShr
+                  ? Builder.CreateLShr(X, NewShAmt)
+                  : Builder.CreateShl(X, NewShAmt);
+  Value *T1 = Builder.CreateAnd(T0, Y);
+  return Builder.CreateICmp(I.getPredicate(), T1,
+                            Constant::getNullValue(X->getType()));
+}
+
 /// Try to fold icmp (binop), X or icmp X, (binop).
 /// TODO: A large part of this logic is duplicated in InstSimplify's
 /// simplifyICmpWithBinOp(). We should be able to share that and avoid the code
@@ -3590,6 +3682,9 @@ Instruction *InstCombiner::foldICmpBinOp(ICmpInst &I) {
   if (Value *V = foldICmpWithTruncSignExtendedVal(I, Builder))
     return replaceInstUsesWith(I, V);
 
+  if (Value *V = foldShiftIntoShiftInAnotherHandOfAndInICmp(I, SQ, Builder))
+    return replaceInstUsesWith(I, V);
+
   return nullptr;
 }
 
@@ -3831,23 +3926,27 @@ Instruction *InstCombiner::foldICmpEquality(ICmpInst &I) {
     return new ICmpInst(Pred, A, B);
 
   // Canonicalize checking for a power-of-2-or-zero value:
-  // (A & -A) == A --> (A & (A - 1)) == 0
-  // (-A & A) == A --> (A & (A - 1)) == 0
-  // A == (A & -A) --> (A & (A - 1)) == 0
-  // A == (-A & A) --> (A & (A - 1)) == 0
-  // TODO: This could be reduced by using the ctpop intrinsic.
-  A = nullptr;
-  if (match(Op0, m_OneUse(m_c_And(m_OneUse(m_Neg(m_Specific(Op1))),
-                                  m_Specific(Op1)))))
+  // (A & (A-1)) == 0 --> ctpop(A) < 2 (two commuted variants)
+  // ((A-1) & A) != 0 --> ctpop(A) > 1 (two commuted variants)
+  if (!match(Op0, m_OneUse(m_c_And(m_Add(m_Value(A), m_AllOnes()),
+                                   m_Deferred(A)))) ||
+      !match(Op1, m_ZeroInt()))
+    A = nullptr;
+
+  // (A & -A) == A --> ctpop(A) < 2 (four commuted variants)
+  // (-A & A) != A --> ctpop(A) > 1 (four commuted variants)
+  if (match(Op0, m_OneUse(m_c_And(m_Neg(m_Specific(Op1)), m_Specific(Op1)))))
     A = Op1;
-  else if (match(Op1, m_OneUse(m_c_And(m_OneUse(m_Neg(m_Specific(Op0))),
-                                       m_Specific(Op0)))))
+  else if (match(Op1,
+                 m_OneUse(m_c_And(m_Neg(m_Specific(Op0)), m_Specific(Op0)))))
     A = Op0;
+
   if (A) {
     Type *Ty = A->getType();
-    Value *Dec = Builder.CreateAdd(A, ConstantInt::getAllOnesValue(Ty));
-    Value *And = Builder.CreateAnd(A, Dec);
-    return new ICmpInst(Pred, And, ConstantInt::getNullValue(Ty));
+    CallInst *CtPop = Builder.CreateUnaryIntrinsic(Intrinsic::ctpop, A);
+    return Pred == ICmpInst::ICMP_EQ
+        ? new ICmpInst(ICmpInst::ICMP_ULT, CtPop, ConstantInt::get(Ty, 2))
+        : new ICmpInst(ICmpInst::ICMP_UGT, CtPop, ConstantInt::get(Ty, 1));
   }
 
   return nullptr;
