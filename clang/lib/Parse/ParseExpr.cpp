@@ -1249,6 +1249,9 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
   case tok::kw_static_cast:
     Res = ParseCXXCasts();
     break;
+  case tok::kw___builtin_bit_cast:
+    Res = ParseBuiltinBitCast();
+    break;
   case tok::kw_typeid:
     // C++ AMP-specific, reject if we are in an AMP-restricted function
     if (getLangOpts().CPlusPlusAMP && getLangOpts().DevicePath) {
