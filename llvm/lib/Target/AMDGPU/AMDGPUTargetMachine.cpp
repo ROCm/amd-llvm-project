@@ -197,6 +197,7 @@ extern "C" void LLVMInitializeAMDGPUTarget() {
   initializeAMDGPUDAGToDAGISelPass(*PR);
   initializeGCNDPPCombinePass(*PR);
   initializeSILowerI1CopiesPass(*PR);
+  initializeSILowerSGPRSpillsPass(*PR);
   initializeSIFixSGPRCopiesPass(*PR);
   initializeSIFixVGPRCopiesPass(*PR);
   initializeSIFixupVectorISelPass(*PR);
@@ -739,6 +740,8 @@ void AMDGPUPassConfig::addCodeGenPrepare() {
       EnableLowerKernelArguments)
     addPass(createAMDGPULowerKernelArgumentsPass());
 
+  addPass(&AMDGPUPerfHintAnalysisID);
+
   TargetPassConfig::addCodeGenPrepare();
 
   if (EnableLoadStoreVectorizer)
@@ -959,6 +962,9 @@ void GCNPassConfig::addPostRegAlloc() {
   if (getOptLevel() > CodeGenOpt::None)
     addPass(&SIOptimizeExecMaskingID);
   TargetPassConfig::addPostRegAlloc();
+
+  // Equivalent of PEI for SGPRs.
+  addPass(&SILowerSGPRSpillsID);
 }
 
 void GCNPassConfig::addPreSched2() {

@@ -119,7 +119,7 @@ class GlobalValueSummary;
 
 using GlobalValueSummaryList = std::vector<std::unique_ptr<GlobalValueSummary>>;
 
-struct GlobalValueSummaryInfo {
+struct LLVM_ALIGNAS(8) GlobalValueSummaryInfo {
   union NameOrGV {
     NameOrGV(bool HaveGVs) {
       if (HaveGVs)
@@ -209,11 +209,11 @@ struct ValueInfo {
   void setReadOnly() {
     // We expect ro/wo attribute to set only once during
     // ValueInfo lifetime.
-    assert(getAccessSpecifier() == 0);   
+    assert(getAccessSpecifier() == 0);
     RefAndFlags.setInt(RefAndFlags.getInt() | ReadOnly);
   }
   void setWriteOnly() {
-    assert(getAccessSpecifier() == 0);   
+    assert(getAccessSpecifier() == 0);
     RefAndFlags.setInt(RefAndFlags.getInt() | WriteOnly);
   }
 

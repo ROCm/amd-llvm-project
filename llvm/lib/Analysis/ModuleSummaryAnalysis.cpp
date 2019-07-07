@@ -288,7 +288,7 @@ static void computeFunctionSummary(ModuleSummaryIndex &Index, const Module &M,
           NonVolatileStores.push_back(&I);
           // All references from second operand of store (destination address)
           // can be considered write-only if they're not referenced by any
-          // non-store instruction. References from first operand of store 
+          // non-store instruction. References from first operand of store
           // (stored value) can't be treated either as read- or as write-only
           // so we add them to RefEdges as we do with all other instructions
           // except non-volatile load.
@@ -394,18 +394,30 @@ static void computeFunctionSummary(ModuleSummaryIndex &Index, const Module &M,
   std::vector<ValueInfo> Refs;
   if (IsThinLTO) {
     auto AddRefEdges = [&](const std::vector<const Instruction *> &Instrs,
-                          SetVector<ValueInfo> &Edges) {
+                           SetVector<ValueInfo> &Edges,
+                           SmallPtrSet<const User *, 8> &Cache) {
       for (const auto *I : Instrs) {
-        Visited.erase(I);
-        findRefEdges(Index, I, Edges, Visited);
+        Cache.erase(I);
+        findRefEdges(Index, I, Edges, Cache);
       }
     };
 
     // By now we processed all instructions in a function, except
     // non-volatile loads and non-volatile value stores. Let's find
     // ref edges for both of instruction sets
-    AddRefEdges(NonVolatileLoads, LoadRefEdges);
-    AddRefEdges(NonVolatileStores, StoreRefEdges);
+    AddRefEdges(NonVolatileLoads, LoadRefEdges, Visited);
+    // We can add some values to the Visited set when processing load
+    // instructions which are also used by stores in NonVolatileStores.
+    // For example this can happen if we have following code:
+    //
+    // store %Derived* @foo, %Derived** bitcast (%Base** @bar to %Derived**)
+    // %42 = load %Derived*, %Derived** bitcast (%Base** @bar to %Derived**)
+    //
+    // After processing loads we'll add bitcast to the Visited set, and if
+    // we use the same set while processing stores, we'll never see store
+    // to @bar and @bar will be mistakenly treated as readonly.
+    SmallPtrSet<const llvm::User *, 8> StoreCache;
+    AddRefEdges(NonVolatileStores, StoreRefEdges, StoreCache);
 
     // If both load and store instruction reference the same variable
     // we won't be able to optimize it. Add all such reference edges

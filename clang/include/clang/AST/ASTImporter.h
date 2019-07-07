@@ -201,7 +201,7 @@ class TypeSourceInfo;
       }
 
     private:
-      // All the nodes of the path.
+      // All nodes of the path.
       VecTy Nodes;
       // Auxiliary container to be able to answer "Do we have a cycle ending
       // at last element?" as fast as possible.
@@ -300,7 +300,7 @@ class TypeSourceInfo;
     /// as little as it can, e.g., by importing declarations as forward
     /// declarations that can be completed at a later point.
     ///
-    /// \param LookupTable The importer specific lookup table which may be
+    /// \param SharedState The importer specific lookup table which may be
     /// shared amongst several ASTImporter objects.
     /// If not set then the original C/C++ lookup is used.
     ASTImporter(ASTContext &ToContext, FileManager &ToFileManager,
