@@ -3545,6 +3545,18 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // Select the appropriate action.
   RewriteKind rewriteKind = RK_None;
 
+  // If CollectArgsForIntegratedAssembler() isn't called below, call it here
+  // with a dummy args list to mark assembler flags as used even when not
+  // running an assembler. Otherwise, clang would emit "argument unused"
+  // warnings for assembler flags when e.g. adding "-E" to flags while debugging
+  // something. That'd be somewhat inconvenient, and it's also inconsistent with
+  // most other flags -- we don't warn on -ffunction-sections not being used
+  // in -E mode either for example, even though it's not really used either.
+  if (!isa<AssembleJobAction>(JA)) {
+    ArgStringList DummyArgs;
+    CollectArgsForIntegratedAssembler(C, Args, DummyArgs, D);
+  }
+
   if (isa<AnalyzeJobAction>(JA)) {
     assert(JA.getType() == types::TY_Plist && "Invalid output type.");
     CmdArgs.push_back("-analyze");
@@ -4000,6 +4012,17 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-split-stacks");
 
   RenderFloatingPointOptions(TC, D, OFastEnabled, Args, CmdArgs);
+
+  if (Arg *A = Args.getLastArg(options::OPT_mlong_double_64)) {
+    if (TC.getArch() == llvm::Triple::x86 ||
+        TC.getArch() == llvm::Triple::x86_64 ||
+        TC.getArch() == llvm::Triple::ppc || TC.getTriple().isPPC64()) {
+      CmdArgs.push_back("-mlong-double-64");
+    } else {
+      D.Diag(diag::err_drv_unsupported_opt_for_target)
+          << A->getAsString(Args) << TripleStr;
+    }
+  }
 
   // Decide whether to use verbose asm. Verbose assembly is the default on
   // toolchains which have the integrated assembler on by default.

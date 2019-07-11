@@ -110,9 +110,9 @@ private:
       auto It = Trees.lower_bound(Range.begin());
       assert(It != Trees.end() && "no node found");
       assert(It->first == Range.begin() && "no child with the specified range");
-      assert(std::next(It) == Trees.end() ||
-             std::next(It)->first == Range.end() &&
-                 "no child with the specified range");
+      assert((std::next(It) == Trees.end() ||
+              std::next(It)->first == Range.end()) &&
+             "no child with the specified range");
       It->second.Role = Role;
     }
 
@@ -129,9 +129,9 @@ private:
              BeginChildren->first == FirstToken &&
              "fold crosses boundaries of existing subtrees");
       auto EndChildren = Trees.lower_bound(NodeTokens.end());
-      assert(EndChildren == Trees.end() ||
-             EndChildren->first == NodeTokens.end() &&
-                 "fold crosses boundaries of existing subtrees");
+      assert((EndChildren == Trees.end() ||
+              EndChildren->first == NodeTokens.end()) &&
+             "fold crosses boundaries of existing subtrees");
 
       // (!) we need to go in reverse order, because we can only prepend.
       for (auto It = EndChildren; It != BeginChildren; --It)
@@ -170,7 +170,7 @@ private:
     /// A with a role that should be assigned to it when adding to a parent.
     struct NodeAndRole {
       explicit NodeAndRole(syntax::Node *Node)
-          : Node(Node), Role(NodeRoleUnknown) {}
+          : Node(Node), Role(NodeRole::Unknown) {}
 
       syntax::Node *Node;
       NodeRole Role;
@@ -221,10 +221,12 @@ public:
   }
 
   bool WalkUpFromCompoundStmt(CompoundStmt *S) {
-    using Roles = syntax::CompoundStatement::Roles;
+    using NodeRole = syntax::NodeRole;
 
-    Builder.markChildToken(S->getLBracLoc(), tok::l_brace, Roles::lbrace);
-    Builder.markChildToken(S->getRBracLoc(), tok::r_brace, Roles::rbrace);
+    Builder.markChildToken(S->getLBracLoc(), tok::l_brace,
+                           NodeRole::CompoundStatement_lbrace);
+    Builder.markChildToken(S->getRBracLoc(), tok::r_brace,
+                           NodeRole::CompoundStatement_rbrace);
 
     Builder.foldNode(Builder.getRange(S),
                      new (allocator()) syntax::CompoundStatement);

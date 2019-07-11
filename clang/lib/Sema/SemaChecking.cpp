@@ -191,6 +191,16 @@ static bool SemaBuiltinAddressof(Sema &S, CallExpr *TheCall) {
   return false;
 }
 
+/// Check the number of arguments, and set the result type to
+/// the argument type.
+static bool SemaBuiltinPreserveAI(Sema &S, CallExpr *TheCall) {
+  if (checkArgCount(S, TheCall, 1))
+    return true;
+
+  TheCall->setType(TheCall->getArg(0)->getType());
+  return false;
+}
+
 static bool SemaBuiltinOverflow(Sema &S, CallExpr *TheCall) {
   if (checkArgCount(S, TheCall, 3))
     return true;
@@ -1409,6 +1419,10 @@ Sema::CheckBuiltinFunctionCall(FunctionDecl *FDecl, unsigned BuiltinID,
     TheCall->setType(Context.IntTy);
     break;
   }
+  case Builtin::BI__builtin_preserve_access_index:
+    if (SemaBuiltinPreserveAI(*this, TheCall))
+      return ExprError();
+    break;
   case Builtin::BI__builtin_call_with_static_chain:
     if (SemaBuiltinCallWithStaticChain(*this, TheCall))
       return ExprError();
@@ -10188,9 +10202,16 @@ static bool IsEnumConstOrFromMacro(Sema &S, Expr *E) {
     if (isa<EnumConstantDecl>(DR->getDecl()))
       return true;
 
-  // Suppress cases where the '0' value is expanded from a macro.
-  if (E->getBeginLoc().isMacroID())
-    return true;
+  // Suppress cases where the value is expanded from a macro, unless that macro
+  // is how a language represents a boolean literal. This is the case in both C
+  // and Objective-C.
+  SourceLocation BeginLoc = E->getBeginLoc();
+  if (BeginLoc.isMacroID()) {
+    StringRef MacroName = Lexer::getImmediateMacroName(
+        BeginLoc, S.getSourceManager(), S.getLangOpts());
+    return MacroName != "YES" && MacroName != "NO" &&
+           MacroName != "true" && MacroName != "false";
+  }
 
   return false;
 }
@@ -10382,11 +10403,17 @@ static bool CheckTautologicalComparison(Sema &S, BinaryOperator *E,
     OtherT = AT->getValueType();
   IntRange OtherRange = IntRange::forValueOfType(S.Context, OtherT);
 
+  // Special case for ObjC BOOL on targets where its a typedef for a signed char
+  // (Namely, macOS).
+  bool IsObjCSignedCharBool = S.getLangOpts().ObjC &&
+                              S.NSAPIObj->isObjCBOOLType(OtherT) &&
+                              OtherT->isSpecificBuiltinType(BuiltinType::SChar);
+
   // Whether we're treating Other as being a bool because of the form of
   // expression despite it having another type (typically 'int' in C).
   bool OtherIsBooleanDespiteType =
       !OtherT->isBooleanType() && Other->isKnownToHaveBooleanValue();
-  if (OtherIsBooleanDespiteType)
+  if (OtherIsBooleanDespiteType || IsObjCSignedCharBool)
     OtherRange = IntRange::forBoolType();
 
   // Determine the promoted range of the other type and see if a comparison of
@@ -10417,10 +10444,21 @@ static bool CheckTautologicalComparison(Sema &S, BinaryOperator *E,
   // Should be enough for uint128 (39 decimal digits)
   SmallString<64> PrettySourceValue;
   llvm::raw_svector_ostream OS(PrettySourceValue);
-  if (ED)
+  if (ED) {
     OS << '\'' << *ED << "' (" << Value << ")";
-  else
+  } else if (auto *BL = dyn_cast<ObjCBoolLiteralExpr>(
+               Constant->IgnoreParenImpCasts())) {
+    OS << (BL->getValue() ? "YES" : "NO");
+  } else {
     OS << Value;
+  }
+
+  if (IsObjCSignedCharBool) {
+    S.DiagRuntimeBehavior(E->getOperatorLoc(), E,
+                          S.PDiag(diag::warn_tautological_compare_objc_bool)
+                              << OS.str() << *Result);
+    return true;
+  }
 
   // FIXME: We use a somewhat different formatting for the in-range cases and
   // cases involving boolean values for historical reasons. We should pick a
@@ -11111,6 +11149,11 @@ static bool isSameWidthConstantConversion(Sema &S, Expr *E, QualType T,
   return true;
 }
 
+static bool isObjCSignedCharBool(Sema &S, QualType Ty) {
+  return Ty->isSpecificBuiltinType(BuiltinType::SChar) &&
+         S.getLangOpts().ObjC && S.NSAPIObj->isObjCBOOLType(Ty);
+}
+
 static void
 CheckImplicitConversion(Sema &S, Expr *E, QualType T, SourceLocation CC,
                         bool *ICContext = nullptr) {
@@ -11151,6 +11194,29 @@ CheckImplicitConversion(Sema &S, Expr *E, QualType T, SourceLocation CC,
       // Warn on pointer to bool conversion that is always true.
       S.DiagnoseAlwaysNonNullPointer(E, Expr::NPCK_NotNull, /*IsEqual*/ false,
                                      SourceRange(CC));
+    }
+  }
+
+  // If the we're converting a constant to an ObjC BOOL on a platform where BOOL
+  // is a typedef for signed char (macOS), then that constant value has to be 1
+  // or 0.
+  if (isObjCSignedCharBool(S, T) && Source->isIntegralType(S.Context)) {
+    Expr::EvalResult Result;
+    if (E->EvaluateAsInt(Result, S.getASTContext(),
+                         Expr::SE_AllowSideEffects) &&
+        Result.Val.getInt() != 1 && Result.Val.getInt() != 0) {
+      auto Builder = S.Diag(CC, diag::warn_impcast_constant_int_to_objc_bool)
+                     << Result.Val.getInt().toString(10);
+      Expr *Ignored = E->IgnoreImplicit();
+      bool NeedsParens = isa<AbstractConditionalOperator>(Ignored) ||
+                         isa<BinaryOperator>(Ignored) ||
+                         isa<CXXOperatorCallExpr>(Ignored);
+      SourceLocation EndLoc = S.getLocForEndOfToken(E->getEndLoc());
+      if (NeedsParens)
+        Builder << FixItHint::CreateInsertion(E->getBeginLoc(), "(")
+                << FixItHint::CreateInsertion(EndLoc, ")");
+      Builder << FixItHint::CreateInsertion(EndLoc, " ? YES : NO");
+      return;
     }
   }
 

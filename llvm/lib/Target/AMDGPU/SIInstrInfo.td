@@ -251,7 +251,8 @@ class isFloatType<ValueType SrcVT> {
     !if(!eq(SrcVT.Value, f32.Value), 1,
     !if(!eq(SrcVT.Value, f64.Value), 1,
     !if(!eq(SrcVT.Value, v2f16.Value), 1,
-    0))));
+    !if(!eq(SrcVT.Value, v4f16.Value), 1,
+    0)))));
 }
 
 class isIntType<ValueType SrcVT> {
@@ -265,8 +266,9 @@ class isIntType<ValueType SrcVT> {
 class isPackedType<ValueType SrcVT> {
   bit ret =
     !if(!eq(SrcVT.Value, v2i16.Value), 1,
-      !if(!eq(SrcVT.Value, v2f16.Value), 1, 0)
-    );
+      !if(!eq(SrcVT.Value, v2f16.Value), 1,
+        !if(!eq(SrcVT.Value, v4f16.Value), 1, 0)
+    ));
 }
 
 //===----------------------------------------------------------------------===//
@@ -300,13 +302,13 @@ def AMDGPUatomic_ld_glue : SDNode <"ISD::ATOMIC_LOAD", SDTAtomicLoad,
   [SDNPHasChain, SDNPMayLoad, SDNPMemOperand, SDNPInGlue]
 >;
 
-def unindexedload_glue : PatFrag <(ops node:$ptr), (AMDGPUld_glue node:$ptr), [{
-  return cast<LoadSDNode>(N)->getAddressingMode() == ISD::UNINDEXED;
-}]>;
+def unindexedload_glue : PatFrag <(ops node:$ptr), (AMDGPUld_glue node:$ptr)> {
+  let IsUnindexed = 1;
+}
 
-def load_glue : PatFrag <(ops node:$ptr), (unindexedload_glue node:$ptr), [{
-  return cast<LoadSDNode>(N)->getExtensionType() == ISD::NON_EXTLOAD;
-}]>;
+def load_glue : PatFrag <(ops node:$ptr), (unindexedload_glue node:$ptr)> {
+  let IsNonExtLoad = 1;
+}
 
 def atomic_load_32_glue : PatFrag<(ops node:$ptr),
   (AMDGPUatomic_ld_glue node:$ptr)> {
@@ -320,35 +322,49 @@ def atomic_load_64_glue : PatFrag<(ops node:$ptr),
   let MemoryVT = i64;
 }
 
-def extload_glue : PatFrag<(ops node:$ptr), (load_glue node:$ptr), [{
-  return cast<LoadSDNode>(N)->getExtensionType() == ISD::EXTLOAD;
-}]>;
+def extload_glue : PatFrag<(ops node:$ptr), (load_glue node:$ptr)> {
+  let IsLoad = 1;
+  let IsAnyExtLoad = 1;
+}
 
 def sextload_glue : PatFrag<(ops node:$ptr), (unindexedload_glue node:$ptr), [{
   return cast<LoadSDNode>(N)->getExtensionType() == ISD::SEXTLOAD;
 }]>;
 
-def zextload_glue : PatFrag<(ops node:$ptr), (unindexedload_glue node:$ptr), [{
-  return cast<LoadSDNode>(N)->getExtensionType() == ISD::ZEXTLOAD;
-}]>;
+def zextload_glue : PatFrag<(ops node:$ptr), (unindexedload_glue node:$ptr)> {
+  let IsLoad = 1;
+  let IsZeroExtLoad = 1;
+}
 
-def az_extload_glue : AZExtLoadBase <unindexedload_glue>;
+def extloadi8_glue : PatFrag<(ops node:$ptr), (extload_glue node:$ptr)> {
+  let IsLoad = 1;
+  let MemoryVT = i8;
+}
 
-def az_extloadi8_glue : PatFrag<(ops node:$ptr), (az_extload_glue node:$ptr), [{
-  return cast<LoadSDNode>(N)->getMemoryVT() == MVT::i8;
-}]>;
+def zextloadi8_glue : PatFrag<(ops node:$ptr), (zextload_glue node:$ptr)> {
+  let IsLoad = 1;
+  let MemoryVT = i8;
+}
 
-def az_extloadi16_glue : PatFrag<(ops node:$ptr), (az_extload_glue node:$ptr), [{
-  return cast<LoadSDNode>(N)->getMemoryVT() == MVT::i16;
-}]>;
+def extloadi16_glue : PatFrag<(ops node:$ptr), (extload_glue node:$ptr)> {
+  let IsLoad = 1;
+  let MemoryVT = i16;
+}
 
-def sextloadi8_glue : PatFrag<(ops node:$ptr), (sextload_glue node:$ptr), [{
-  return cast<LoadSDNode>(N)->getMemoryVT() == MVT::i8;
-}]>;
+def zextloadi16_glue : PatFrag<(ops node:$ptr), (zextload_glue node:$ptr)> {
+  let IsLoad = 1;
+  let MemoryVT = i16;
+}
 
-def sextloadi16_glue : PatFrag<(ops node:$ptr), (sextload_glue node:$ptr), [{
-  return cast<LoadSDNode>(N)->getMemoryVT() == MVT::i16;
-}]>;
+def sextloadi8_glue : PatFrag<(ops node:$ptr), (sextload_glue node:$ptr)> {
+  let IsLoad = 1;
+  let MemoryVT = i8;
+}
+
+def sextloadi16_glue : PatFrag<(ops node:$ptr), (sextload_glue node:$ptr)> {
+  let IsLoad = 1;
+  let MemoryVT = i16;
+}
 
 def load_glue_align8 : Aligned8Bytes <
   (ops node:$ptr), (load_glue node:$ptr)
@@ -361,8 +377,10 @@ def load_glue_align16 : Aligned16Bytes <
 def load_local_m0 : LoadFrag<load_glue>, LocalAddress;
 def sextloadi8_local_m0 : LoadFrag<sextloadi8_glue>, LocalAddress;
 def sextloadi16_local_m0 : LoadFrag<sextloadi16_glue>, LocalAddress;
-def az_extloadi8_local_m0 : LoadFrag<az_extloadi8_glue>, LocalAddress;
-def az_extloadi16_local_m0 : LoadFrag<az_extloadi16_glue>, LocalAddress;
+def extloadi8_local_m0 : LoadFrag<extloadi8_glue>, LocalAddress;
+def zextloadi8_local_m0 : LoadFrag<zextloadi8_glue>, LocalAddress;
+def extloadi16_local_m0 : LoadFrag<extloadi16_glue>, LocalAddress;
+def zextloadi16_local_m0 : LoadFrag<zextloadi16_glue>, LocalAddress;
 def load_align8_local_m0 : LoadFrag <load_glue_align8>, LocalAddress;
 def load_align16_local_m0 : LoadFrag <load_glue_align16>, LocalAddress;
 def atomic_load_32_local_m0 : LoadFrag<atomic_load_32_glue>, LocalAddress;
@@ -913,6 +931,10 @@ def op_sel_hi : NamedOperandU32Default0<"OpSelHi", NamedMatchClass<"OpSelHi">>;
 def neg_lo : NamedOperandU32Default0<"NegLo", NamedMatchClass<"NegLo">>;
 def neg_hi : NamedOperandU32Default0<"NegHi", NamedMatchClass<"NegHi">>;
 
+def blgp : NamedOperandU32<"BLGP", NamedMatchClass<"BLGP">>;
+def cbsz : NamedOperandU32<"CBSZ", NamedMatchClass<"CBSZ">>;
+def abid : NamedOperandU32<"ABID", NamedMatchClass<"ABID">>;
+
 def hwreg : NamedOperandU16<"Hwreg", NamedMatchClass<"Hwreg", 0>>;
 
 def exp_tgt : NamedOperandU8<"ExpTgt", NamedMatchClass<"ExpTgt", 0>> {
@@ -1143,6 +1165,31 @@ def TRAPID{
   int LLVM_DEBUG_TRAP = 3;
 }
 
+def HWREG {
+  int MODE = 1;
+  int STATUS = 2;
+  int TRAPSTS = 3;
+  int HW_ID = 4;
+  int GPR_ALLOC = 5;
+  int LDS_ALLOC = 6;
+  int IB_STS = 7;
+  int MEM_BASES = 15;
+  int TBA_LO = 16;
+  int TBA_HI = 17;
+  int TMA_LO = 18;
+  int TMA_HI = 19;
+  int FLAT_SCR_LO = 20;
+  int FLAT_SCR_HI = 21;
+  int XNACK_MASK = 22;
+  int POPS_PACKER = 25;
+}
+
+class getHwRegImm<int Reg, int Offset = 0, int Size = 32> {
+  int ret = !or(Reg,
+                !or(!shl(Offset, 6),
+                    !shl(!add(Size, -1), 11)));
+}
+
 //===----------------------------------------------------------------------===//
 //
 // SI Instruction multiclass helpers.
@@ -1243,11 +1290,12 @@ class getVALUDstForVT<ValueType VT> {
 class getIsFP<ValueType VT> {
   bit ret = !if(!eq(VT.Value, f16.Value), 1,
             !if(!eq(VT.Value, v2f16.Value), 1,
+            !if(!eq(VT.Value, v4f16.Value), 1,
             !if(!eq(VT.Value, f32.Value), 1,
             !if(!eq(VT.Value, v2f32.Value), 1,
             !if(!eq(VT.Value, f64.Value), 1,
             !if(!eq(VT.Value, v2f64.Value), 1,
-            0))))));
+            0)))))));
 }
 
 // Returns the register class to use for the destination of VOP[12C]
@@ -1271,7 +1319,10 @@ class getVOPSrc0ForVT<ValueType VT> {
             VSrc_f16,
             !if(!eq(VT.Value, v2f16.Value),
                VSrc_v2f16,
-               VSrc_f32
+               !if(!eq(VT.Value, v4f16.Value),
+                 AVSrc_64,
+                 VSrc_f32
+               )
             )
          )
        ),
@@ -1319,7 +1370,10 @@ class getVOP3SrcForVT<ValueType VT> {
                  VSrc_f16,
                  !if(!eq(VT.Value, v2f16.Value),
                     VSrc_v2f16,
-                    VSrc_f32
+                    !if(!eq(VT.Value, v4f16.Value),
+                      AVSrc_64,
+                      VSrc_f32
+                    )
                  )
               ),
               !if(!eq(VT.Value, i16.Value),
@@ -1952,6 +2006,8 @@ class VOPProfile <list<ValueType> _ArgVT, bit _EnableF32SrcMods = 0,
   field bit HasExtSDWA9 = HasExt;
   field int NeedPatGen = PatGenMode.NoPattern;
 
+  field bit IsMAI = 0;
+
   field Operand Src0PackedMod = !if(HasSrc0FloatMods, PackedF16InputMods, PackedI16InputMods);
   field Operand Src1PackedMod = !if(HasSrc1FloatMods, PackedF16InputMods, PackedI16InputMods);
   field Operand Src2PackedMod = !if(HasSrc2FloatMods, PackedF16InputMods, PackedI16InputMods);
@@ -2088,6 +2144,20 @@ def VOP_V4I32_I64_I32_V4I32 : VOPProfile <[v4i32, i64, i32, v4i32]>;
 
 def VOP_F32_V2F16_V2F16_F32 : VOPProfile <[f32, v2f16, v2f16, f32]>;
 def VOP_I32_V2I16_V2I16_I32 : VOPProfile <[i32, v2i16, v2i16, i32]>;
+
+def VOP_V4F32_F32_F32_V4F32       : VOPProfile <[v4f32,  f32,   f32,   v4f32]>;
+def VOP_V16F32_F32_F32_V16F32     : VOPProfile <[v16f32, f32,   f32,   v16f32]>;
+// TODO: define v32f32
+def VOP_V32F32_F32_F32_V32F32     : VOPProfile <[v32i32, f32,   f32,   v32i32]>;
+def VOP_V4F32_V4F16_V4F16_V4F32   : VOPProfile <[v4f32,  v4f16, v4f16, v4f32]>;
+def VOP_V16F32_V4F16_V4F16_V16F32 : VOPProfile <[v16f32, v4f16, v4f16, v16f32]>;
+def VOP_V32F32_V4F16_V4F16_V32F32 : VOPProfile <[v32i32, v4f16, v4f16, v32i32]>;
+def VOP_V4F32_V2I16_V2I16_V4F32   : VOPProfile <[v4f32,  v2i16, v2i16, v4f32]>;
+def VOP_V16F32_V2I16_V2I16_V16F32 : VOPProfile <[v16f32, v2i16, v2i16, v16f32]>;
+def VOP_V32F32_V2I16_V2I16_V32F32 : VOPProfile <[v32i32, v2i16, v2i16, v32i32]>;
+def VOP_V4I32_I32_I32_V4I32       : VOPProfile <[v4i32,  i32,   i32,   v4i32]>;
+def VOP_V16I32_I32_I32_V16I32     : VOPProfile <[v16i32, i32,   i32,   v16i32]>;
+def VOP_V32I32_I32_I32_V32I32     : VOPProfile <[v32i32, i32,   i32,   v32i32]>;
 
 class Commutable_REV <string revOp, bit isOrig> {
   string RevOp = revOp;

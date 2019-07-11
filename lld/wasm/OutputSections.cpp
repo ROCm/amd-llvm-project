@@ -113,10 +113,10 @@ void CodeSection::writeTo(uint8_t *Buf) {
     Chunk->writeTo(Buf);
 }
 
-uint32_t CodeSection::numRelocations() const {
+uint32_t CodeSection::getNumRelocations() const {
   uint32_t Count = 0;
   for (const InputChunk *Func : Functions)
-    Count += Func->NumRelocations();
+    Count += Func->getNumRelocations();
   return Count;
 }
 
@@ -132,9 +132,8 @@ void DataSection::finalizeContents() {
   OS.flush();
   BodySize = DataSectionHeader.size();
 
-  assert(!Config->Pic ||
-         Segments.size() <= 1 &&
-             "Currenly only a single data segment is supported in PIC mode");
+  assert((!Config->Pic || Segments.size() <= 1) &&
+         "Currenly only a single data segment is supported in PIC mode");
 
   for (OutputSegment *Segment : Segments) {
     raw_string_ostream OS(Segment->Header);
@@ -191,11 +190,11 @@ void DataSection::writeTo(uint8_t *Buf) {
   }
 }
 
-uint32_t DataSection::numRelocations() const {
+uint32_t DataSection::getNumRelocations() const {
   uint32_t Count = 0;
   for (const OutputSegment *Seg : Segments)
     for (const InputChunk *InputSeg : Seg->InputSegments)
-      Count += InputSeg->NumRelocations();
+      Count += InputSeg->getNumRelocations();
   return Count;
 }
 
@@ -238,10 +237,10 @@ void CustomSection::writeTo(uint8_t *Buf) {
     Section->writeTo(Buf);
 }
 
-uint32_t CustomSection::numRelocations() const {
+uint32_t CustomSection::getNumRelocations() const {
   uint32_t Count = 0;
   for (const InputSection *InputSect : InputSections)
-    Count += InputSect->NumRelocations();
+    Count += InputSect->getNumRelocations();
   return Count;
 }
 
