@@ -791,8 +791,8 @@ def : FMADModsPat<V_MAD_F16, AMDGPUfmad_ftz, f16> {
 
 multiclass SelectPat <ValueType vt> {
   def : GCNPat <
-    (vt (select i1:$src0, (VOP3Mods vt:$src1, i32:$src1_mods),
-                          (VOP3Mods vt:$src2, i32:$src2_mods))),
+    (vt (select i1:$src0, (VOP3Mods_f32 vt:$src1, i32:$src1_mods),
+                          (VOP3Mods_f32 vt:$src2, i32:$src2_mods))),
     (V_CNDMASK_B32_e64 $src2_mods, $src2, $src1_mods, $src1, $src0)
   >;
 }
@@ -942,6 +942,14 @@ foreach Index = 0-31 in {
   def Insert_Element_v32i32_#Index : Insert_Element <
     i32, v32i32, Index, !cast<SubRegIndex>(sub#Index)
   >;
+
+  def Extract_Element_v32f32_#Index : Extract_Element <
+    f32, v32f32, Index, !cast<SubRegIndex>(sub#Index)
+  >;
+
+  def Insert_Element_v32f32_#Index : Insert_Element <
+    f32, v32f32, Index, !cast<SubRegIndex>(sub#Index)
+  >;
 }
 
 // FIXME: Why do only some of these type combinations for SReg and
@@ -1033,6 +1041,10 @@ def : BitConvert <v8f32, v8i32, VReg_256>;
 // 512-bit bitcast
 def : BitConvert <v16i32, v16f32, VReg_512>;
 def : BitConvert <v16f32, v16i32, VReg_512>;
+
+// 1024-bit bitcast
+def : BitConvert <v32i32, v32f32, VReg_1024>;
+def : BitConvert <v32f32, v32i32, VReg_1024>;
 
 /********** =================== **********/
 /********** Src & Dst modifiers **********/

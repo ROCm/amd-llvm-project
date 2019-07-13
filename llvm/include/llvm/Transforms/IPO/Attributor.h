@@ -179,9 +179,12 @@ struct Attributor {
     assert(AAType::ID != Attribute::None &&
            "Cannot lookup generic abstract attributes!");
 
-    // Determine the argument number automatically for llvm::Arguments.
+    // Determine the argument number automatically for llvm::Arguments if none
+    // is set. Do not override a given one as it could be a use of the argument
+    // in a call site.
     if (auto *Arg = dyn_cast<Argument>(&V))
-      ArgNo = Arg->getArgNo();
+      if (ArgNo == -1)
+        ArgNo = Arg->getArgNo();
 
     // If a function was given together with an argument number, perform the
     // lookup for the actual argument instead. Don't do it for variadic
@@ -657,7 +660,7 @@ struct AAReturnedValues : public AbstractAttribute {
   checkForallReturnedValues(std::function<bool(Value &)> &Pred) const = 0;
 
   /// See AbstractAttribute::getAttrKind()
-  virtual Attribute::AttrKind getAttrKind() const override { return ID; }
+  Attribute::AttrKind getAttrKind() const override { return ID; }
 
   /// The identifier used by the Attributor for this class of attributes.
   static constexpr Attribute::AttrKind ID = Attribute::Returned;
@@ -669,7 +672,7 @@ struct AANoUnwind : public AbstractAttribute {
       : AbstractAttribute(V, InfoCache) {}
 
   /// See AbstractAttribute::getAttrKind()/
-  virtual Attribute::AttrKind getAttrKind() const override { return ID; }
+  Attribute::AttrKind getAttrKind() const override { return ID; }
 
   static constexpr Attribute::AttrKind ID = Attribute::NoUnwind;
 
@@ -686,7 +689,7 @@ struct AANoSync : public AbstractAttribute {
       : AbstractAttribute(V, InfoCache) {}
 
   /// See AbstractAttribute::getAttrKind().
-  virtual Attribute::AttrKind getAttrKind() const override {
+  Attribute::AttrKind getAttrKind() const override {
     return ID;
   }
 
