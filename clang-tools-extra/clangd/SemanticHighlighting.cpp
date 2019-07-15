@@ -34,14 +34,33 @@ public:
     return Tokens;
   }
 
+  bool VisitNamespaceAliasDecl(NamespaceAliasDecl *NAD) {
+    // The target namespace of an alias can not be found in any other way.
+    addToken(NAD->getTargetNameLoc(), HighlightingKind::Namespace);
+    return true;
+  }
+
   bool VisitNamedDecl(NamedDecl *ND) {
-    // FIXME: (De)Constructors/operator need to be highlighted some other way.
+    // UsingDirectiveDecl's namespaces do not show up anywhere else in the
+    // Visit/Traverse mehods. But they should also be highlighted as a
+    // namespace.
+    if (const auto *UD = dyn_cast<UsingDirectiveDecl>(ND)) {
+      addToken(UD->getIdentLocation(), HighlightingKind::Namespace);
+      return true;
+    }
+
+    // Constructors' TypeLoc has a TypePtr that is a FunctionProtoType. It has
+    // no tag decl and therefore constructors must be gotten as NamedDecls
+    // instead.
+    if (ND->getDeclName().getNameKind() ==
+        DeclarationName::CXXConstructorName) {
+      addToken(ND->getLocation(), ND);
+      return true;
+    }
+
     if (ND->getDeclName().getNameKind() != DeclarationName::Identifier)
       return true;
 
-    if (ND->getDeclName().isEmpty())
-      // Don't add symbols that don't have any length.
-      return true;
     addToken(ND->getLocation(), ND);
     return true;
   }
@@ -56,14 +75,64 @@ public:
     return true;
   }
 
+  bool VisitTypeLoc(TypeLoc &TL) {
+    // This check is for not getting two entries when there are anonymous
+    // structs. It also makes us not highlight certain namespace qualifiers
+    // twice. For elaborated types the actual type is highlighted as an inner
+    // TypeLoc.
+    if (TL.getTypeLocClass() == TypeLoc::TypeLocClass::Elaborated)
+      return true;
+
+    if (const Type *TP = TL.getTypePtr())
+      if (const TagDecl *TD = TP->getAsTagDecl())
+        addToken(TL.getBeginLoc(), TD);
+    return true;
+  }
+
+  bool TraverseNestedNameSpecifierLoc(NestedNameSpecifierLoc NNSLoc) {
+    if (NestedNameSpecifier *NNS = NNSLoc.getNestedNameSpecifier())
+      if (NNS->getKind() == NestedNameSpecifier::Namespace ||
+          NNS->getKind() == NestedNameSpecifier::NamespaceAlias)
+        addToken(NNSLoc.getLocalBeginLoc(), HighlightingKind::Namespace);
+
+    return RecursiveASTVisitor<
+        HighlightingTokenCollector>::TraverseNestedNameSpecifierLoc(NNSLoc);
+  }
+
 private:
-  void addToken(SourceLocation Loc, const Decl *D) {
+  void addToken(SourceLocation Loc, const NamedDecl *D) {
+    if (D->getDeclName().isIdentifier() && D->getName().empty())
+      // Don't add symbols that don't have any length.
+      return;
+    // We highlight class decls, constructor decls and destructor decls as
+    // `Class` type. The destructor decls are handled in `VisitTypeLoc` (we will
+    // visit a TypeLoc where the underlying Type is a CXXRecordDecl).
+    if (isa<RecordDecl>(D)) {
+      addToken(Loc, HighlightingKind::Class);
+      return;
+    }
+    if (isa<CXXConstructorDecl>(D)) {
+      addToken(Loc, HighlightingKind::Class);
+      return;
+    }
+    if (isa<EnumDecl>(D)) {
+      addToken(Loc, HighlightingKind::Enum);
+      return;
+    }
     if (isa<VarDecl>(D)) {
       addToken(Loc, HighlightingKind::Variable);
       return;
     }
     if (isa<FunctionDecl>(D)) {
       addToken(Loc, HighlightingKind::Function);
+      return;
+    }
+    if (isa<NamespaceDecl>(D)) {
+      addToken(Loc, HighlightingKind::Namespace);
+      return;
+    }
+    if (isa<NamespaceAliasDecl>(D)) {
+      addToken(Loc, HighlightingKind::Namespace);
       return;
     }
   }
@@ -176,6 +245,12 @@ llvm::StringRef toTextMateScope(HighlightingKind Kind) {
     return "entity.name.function.cpp";
   case HighlightingKind::Variable:
     return "variable.cpp";
+  case HighlightingKind::Class:
+    return "entity.name.type.class.cpp";
+  case HighlightingKind::Enum:
+    return "entity.name.type.enum.cpp";
+  case HighlightingKind::Namespace:
+    return "entity.name.namespace.cpp";
   case HighlightingKind::NumKinds:
     llvm_unreachable("must not pass NumKinds to the function");
   }

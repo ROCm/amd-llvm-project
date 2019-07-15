@@ -5433,7 +5433,7 @@ static bool checkArgsForPlaceholders(Sema &S, MultiExprArg args) {
 ///                  FunctionDecl is returned.
 /// TODO: Handle pointer return types.
 static FunctionDecl *rewriteBuiltinFunctionDecl(Sema *Sema, ASTContext &Context,
-                                                const FunctionDecl *FDecl,
+                                                FunctionDecl *FDecl,
                                                 MultiExprArg ArgExprs) {
 
   QualType DeclType = FDecl->getType();
@@ -5481,7 +5481,7 @@ static FunctionDecl *rewriteBuiltinFunctionDecl(Sema *Sema, ASTContext &Context,
   FunctionProtoType::ExtProtoInfo EPI;
   QualType OverloadTy = Context.getFunctionType(FT->getReturnType(),
                                                 OverloadParams, EPI);
-  DeclContext *Parent = Context.getTranslationUnitDecl();
+  DeclContext *Parent = FDecl->getParent();
   FunctionDecl *OverloadDecl = FunctionDecl::Create(Context, Parent,
                                                     FDecl->getLocation(),
                                                     FDecl->getLocation(),
@@ -6207,7 +6207,7 @@ Sema::BuildCompoundLiteralExpr(SourceLocation LParenLoc, TypeSourceInfo *TInfo,
         ILE->setInit(i, ConstantExpr::Create(Context, Init));
       }
 
-  Expr *E = new (Context) CompoundLiteralExpr(LParenLoc, TInfo, literalType,
+  auto *E = new (Context) CompoundLiteralExpr(LParenLoc, TInfo, literalType,
                                               VK, LiteralExpr, isFileScope);
   if (isFileScope) {
     if (!LiteralExpr->isTypeDependent() &&
@@ -6224,6 +6224,19 @@ Sema::BuildCompoundLiteralExpr(SourceLocation LParenLoc, TypeSourceInfo *TInfo,
       << SourceRange(LParenLoc, LiteralExpr->getSourceRange().getEnd());
     return ExprError();
   }
+
+  // Compound literals that have automatic storage duration are destroyed at
+  // the end of the scope. Emit diagnostics if it is or contains a C union type
+  // that is non-trivial to destruct.
+  if (!isFileScope)
+    if (E->getType().hasNonTrivialToPrimitiveDestructCUnion())
+      checkNonTrivialCUnion(E->getType(), E->getExprLoc(),
+                            NTCUC_CompoundLiteral, NTCUK_Destruct);
+
+  if (E->getType().hasNonTrivialToPrimitiveDefaultInitializeCUnion() ||
+      E->getType().hasNonTrivialToPrimitiveCopyCUnion())
+    checkNonTrivialCUnionInInitializer(E->getInitializer(),
+                                       E->getInitializer()->getExprLoc());
 
   return MaybeBindToTemporary(E);
 }
@@ -12778,6 +12791,10 @@ ExprResult Sema::CreateBuiltinBinOp(SourceLocation OpLoc,
           if (auto *VD = dyn_cast<VarDecl>(DRE->getDecl()))
             if (VD->hasLocalStorage() && getCurScope()->isDeclScope(VD))
               BE->getBlockDecl()->setCanAvoidCopyToHeap();
+
+      if (LHS.get()->getType().hasNonTrivialToPrimitiveCopyCUnion())
+        checkNonTrivialCUnion(LHS.get()->getType(), LHS.get()->getExprLoc(),
+                              NTCUC_Assignment, NTCUK_Copy);
     }
     RecordModifiableNonNullParam(*this, LHS.get());
     break;
@@ -13690,7 +13707,9 @@ Sema::ActOnStmtExpr(SourceLocation LPLoc, Stmt *SubStmt,
   QualType Ty = Context.VoidTy;
   bool StmtExprMayBindToTemp = false;
   if (!Compound->body_empty()) {
-    if (const auto *LastStmt = dyn_cast<ValueStmt>(Compound->body_back())) {
+    // For GCC compatibility we get the last Stmt excluding trailing NullStmts.
+    if (const auto *LastStmt =
+            dyn_cast<ValueStmt>(Compound->getStmtExprResult())) {
       if (const Expr *Value = LastStmt->getExprStmt()) {
         StmtExprMayBindToTemp = true;
         Ty = Value->getType();
@@ -14200,6 +14219,11 @@ ExprResult Sema::ActOnBlockStmtExpr(SourceLocation CaretLoc,
   if (getLangOpts().CPlusPlus && RetTy->isRecordType() &&
       !BD->isDependentContext())
     computeNRVO(Body, BSI);
+
+  if (RetTy.hasNonTrivialToPrimitiveDestructCUnion() ||
+      RetTy.hasNonTrivialToPrimitiveCopyCUnion())
+    checkNonTrivialCUnion(RetTy, BD->getCaretLocation(), NTCUC_FunctionReturn,
+                          NTCUK_Destruct|NTCUK_Copy);
 
   PopDeclContext();
 
@@ -16515,6 +16539,15 @@ static ExprResult rebuildPotentialResultsAsNonOdrUsed(Sema &S, Expr *E,
 }
 
 ExprResult Sema::CheckLValueToRValueConversionOperand(Expr *E) {
+  // Check whether the operand is or contains an object of non-trivial C union
+  // type.
+  if (E->getType().isVolatileQualified() &&
+      (E->getType().hasNonTrivialToPrimitiveDestructCUnion() ||
+       E->getType().hasNonTrivialToPrimitiveCopyCUnion()))
+    checkNonTrivialCUnion(E->getType(), E->getExprLoc(),
+                          Sema::NTCUC_LValueToRValueVolatile,
+                          NTCUK_Destruct|NTCUK_Copy);
+
   // C++2a [basic.def.odr]p4:
   //   [...] an expression of non-volatile-qualified non-class type to which
   //   the lvalue-to-rvalue conversion is applied [...]

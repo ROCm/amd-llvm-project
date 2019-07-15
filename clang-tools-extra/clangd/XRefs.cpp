@@ -14,6 +14,7 @@
 #include "Protocol.h"
 #include "SourceCode.h"
 #include "URI.h"
+#include "index/Index.h"
 #include "index/Merge.h"
 #include "index/SymbolCollector.h"
 #include "index/SymbolLocation.h"
@@ -601,8 +602,32 @@ static const FunctionDecl *getUnderlyingFunction(const Decl *D) {
   return D->getAsFunction();
 }
 
+// Look up information about D from the index, and add it to Hover.
+static void enhanceFromIndex(HoverInfo &Hover, const Decl *D,
+                             const SymbolIndex *Index) {
+  if (!Index || !llvm::isa<NamedDecl>(D))
+    return;
+  const NamedDecl &ND = *cast<NamedDecl>(D);
+  // We only add documentation, so don't bother if we already have some.
+  if (!Hover.Documentation.empty())
+    return;
+  // Skip querying for non-indexable symbols, there's no point.
+  // We're searching for symbols that might be indexed outside this main file.
+  if (!SymbolCollector::shouldCollectSymbol(ND, ND.getASTContext(),
+                                            SymbolCollector::Options(),
+                                            /*IsMainFileOnly=*/false))
+    return;
+  auto ID = getSymbolID(&ND);
+  if (!ID)
+    return;
+  LookupRequest Req;
+  Req.IDs.insert(*ID);
+  Index->lookup(
+      Req, [&](const Symbol &S) { Hover.Documentation = S.Documentation; });
+}
+
 /// Generate a \p Hover object given the declaration \p D.
-static HoverInfo getHoverContents(const Decl *D) {
+static HoverInfo getHoverContents(const Decl *D, const SymbolIndex *Index) {
   HoverInfo HI;
   const ASTContext &Ctx = D->getASTContext();
 
@@ -697,19 +722,22 @@ static HoverInfo getHoverContents(const Decl *D) {
   }
 
   HI.Definition = printDefinition(D);
+  enhanceFromIndex(HI, D, Index);
   return HI;
 }
 
 /// Generate a \p Hover object given the type \p T.
-static HoverInfo getHoverContents(QualType T, const Decl *D,
-                                  ASTContext &ASTCtx) {
+static HoverInfo getHoverContents(QualType T, const Decl *D, ASTContext &ASTCtx,
+                                  const SymbolIndex *Index) {
   HoverInfo HI;
   llvm::raw_string_ostream OS(HI.Name);
   PrintingPolicy Policy = printingPolicyForDecls(ASTCtx.getPrintingPolicy());
   T.print(OS, Policy);
 
-  if (D)
+  if (D) {
     HI.Kind = indexSymbolKindToSymbolKind(index::getSymbolInfo(D).Kind);
+    enhanceFromIndex(HI, D, Index);
+  }
   return HI;
 }
 
@@ -842,7 +870,9 @@ public:
 } // namespace
 
 /// Retrieves the deduced type at a given location (auto, decltype).
-bool hasDeducedType(ParsedAST &AST, SourceLocation SourceLocationBeg) {
+/// SourceLocationBeg must point to the first character of the token
+llvm::Optional<QualType> getDeducedType(ParsedAST &AST,
+                                        SourceLocation SourceLocationBeg) {
   Token Tok;
   auto &ASTCtx = AST.getASTContext();
   // Only try to find a deduced type if the token is auto or decltype.
@@ -850,16 +880,25 @@ bool hasDeducedType(ParsedAST &AST, SourceLocation SourceLocationBeg) {
       Lexer::getRawToken(SourceLocationBeg, Tok, ASTCtx.getSourceManager(),
                          ASTCtx.getLangOpts(), false) ||
       !Tok.is(tok::raw_identifier)) {
-    return false;
+    return {};
   }
   AST.getPreprocessor().LookUpIdentifierInfo(Tok);
   if (!(Tok.is(tok::kw_auto) || Tok.is(tok::kw_decltype)))
-    return false;
-  return true;
+    return {};
+
+  DeducedTypeVisitor V(SourceLocationBeg);
+  V.TraverseAST(AST.getASTContext());
+  return V.DeducedType;
+}
+
+/// Retrieves the deduced type at a given location (auto, decltype).
+bool hasDeducedType(ParsedAST &AST, SourceLocation SourceLocationBeg) {
+  return (bool)getDeducedType(AST, SourceLocationBeg);
 }
 
 llvm::Optional<HoverInfo> getHover(ParsedAST &AST, Position Pos,
-                                   format::FormatStyle Style) {
+                                   format::FormatStyle Style,
+                                   const SymbolIndex *Index) {
   llvm::Optional<HoverInfo> HI;
   SourceLocation SourceLocationBeg = getBeginningOfIdentifier(
       AST, Pos, AST.getSourceManager().getMainFileID());
@@ -869,7 +908,7 @@ llvm::Optional<HoverInfo> getHover(ParsedAST &AST, Position Pos,
   if (!Symbols.Macros.empty())
     HI = getHoverContents(Symbols.Macros[0], AST);
   else if (!Symbols.Decls.empty())
-    HI = getHoverContents(Symbols.Decls[0]);
+    HI = getHoverContents(Symbols.Decls[0], Index);
   else {
     if (!hasDeducedType(AST, SourceLocationBeg))
       return None;
@@ -878,7 +917,7 @@ llvm::Optional<HoverInfo> getHover(ParsedAST &AST, Position Pos,
     V.TraverseAST(AST.getASTContext());
     if (V.DeducedType.isNull())
       return None;
-    HI = getHoverContents(V.DeducedType, V.D, AST.getASTContext());
+    HI = getHoverContents(V.DeducedType, V.D, AST.getASTContext(), Index);
   }
 
   auto Replacements = format::reformat(
@@ -1065,6 +1104,10 @@ symbolToTypeHierarchyItem(const Symbol &S, const SymbolIndex *Index,
   // (https://github.com/clangd/clangd/issues/59).
   THI.range = THI.selectionRange;
   THI.uri = Loc->uri;
+  // Store the SymbolID in the 'data' field. The client will
+  // send this back in typeHierarchy/resolve, allowing us to
+  // continue resolving additional levels of the type hierarchy.
+  THI.data = S.ID.str();
 
   return std::move(THI);
 }
@@ -1191,6 +1234,8 @@ getTypeHierarchy(ParsedAST &AST, Position Pos, int ResolveLevels,
   RecursionProtectionSet RPSet;
   Optional<TypeHierarchyItem> Result =
       getTypeAncestors(*CXXRD, AST.getASTContext(), RPSet);
+  if (!Result)
+    return Result;
 
   if ((Direction == TypeHierarchyDirection::Children ||
        Direction == TypeHierarchyDirection::Both) &&
@@ -1204,6 +1249,25 @@ getTypeHierarchy(ParsedAST &AST, Position Pos, int ResolveLevels,
   }
 
   return Result;
+}
+
+void resolveTypeHierarchy(TypeHierarchyItem &Item, int ResolveLevels,
+                          TypeHierarchyDirection Direction,
+                          const SymbolIndex *Index) {
+  // We only support typeHierarchy/resolve for children, because for parents
+  // we ignore ResolveLevels and return all levels of parents eagerly.
+  if (Direction == TypeHierarchyDirection::Parents || ResolveLevels == 0)
+    return;
+
+  Item.children.emplace();
+
+  if (Index && Item.data) {
+    // We store the item's SymbolID in the 'data' field, and the client
+    // passes it back to us in typeHierarchy/resolve.
+    if (Expected<SymbolID> ID = SymbolID::fromStr(*Item.data)) {
+      fillSubTypes(*ID, *Item.children, Index, ResolveLevels, Item.uri.file());
+    }
+  }
 }
 
 FormattedString HoverInfo::present() const {
@@ -1225,6 +1289,9 @@ FormattedString HoverInfo::present() const {
     // Builtin types
     Output.appendCodeBlock(Name);
   }
+
+  if (!Documentation.empty())
+    Output.appendText(Documentation);
   return Output;
 }
 

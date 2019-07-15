@@ -335,6 +335,8 @@ std::string Attribute::getAsString(bool InAttrGrp) const {
     return "noredzone";
   if (hasAttribute(Attribute::NoReturn))
     return "noreturn";
+  if (hasAttribute(Attribute::NoSync))
+    return "nosync";
   if (hasAttribute(Attribute::WillReturn))
     return "willreturn";
   if (hasAttribute(Attribute::NoCfCheck))
@@ -716,13 +718,18 @@ LLVM_DUMP_METHOD void AttributeSet::dump() const {
 //===----------------------------------------------------------------------===//
 
 AttributeSetNode::AttributeSetNode(ArrayRef<Attribute> Attrs)
-    : AvailableAttrs(0), NumAttrs(Attrs.size()) {
+    : NumAttrs(Attrs.size()) {
   // There's memory after the node where we can store the entries in.
   llvm::copy(Attrs, getTrailingObjects<Attribute>());
 
+  static_assert(Attribute::EndAttrKinds <=
+                    sizeof(AvailableAttrs) * CHAR_BIT,
+                "Too many attributes");
+
   for (const auto I : *this) {
     if (!I.isStringAttribute()) {
-      AvailableAttrs |= ((uint64_t)1) << I.getKindAsEnum();
+      Attribute::AttrKind Kind = I.getKindAsEnum();
+      AvailableAttrs[Kind / 8] |= 1ULL << (Kind % 8);
     }
   }
 }
@@ -894,7 +901,7 @@ static constexpr unsigned attrIdxToArrayIdx(unsigned Index) {
 
 AttributeListImpl::AttributeListImpl(LLVMContext &C,
                                      ArrayRef<AttributeSet> Sets)
-    : AvailableFunctionAttrs(0), Context(C), NumAttrSets(Sets.size()) {
+    : Context(C), NumAttrSets(Sets.size()) {
   assert(!Sets.empty() && "pointless AttributeListImpl");
 
   // There's memory after the node where we can store the entries in.
@@ -907,8 +914,10 @@ AttributeListImpl::AttributeListImpl(LLVMContext &C,
   static_assert(attrIdxToArrayIdx(AttributeList::FunctionIndex) == 0U,
                 "function should be stored in slot 0");
   for (const auto I : Sets[0]) {
-    if (!I.isStringAttribute())
-      AvailableFunctionAttrs |= 1ULL << I.getKindAsEnum();
+    if (!I.isStringAttribute()) {
+      Attribute::AttrKind Kind = I.getKindAsEnum();
+      AvailableFunctionAttrs[Kind / 8] |= 1ULL << (Kind % 8);
+    }
   }
 }
 

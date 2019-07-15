@@ -543,6 +543,7 @@ DIE *DwarfCompileUnit::constructInlinedScopeDIE(LexicalScope *Scope) {
   addUInt(*ScopeDIE, dwarf::DW_AT_call_file, None,
           getOrCreateSourceID(IA->getFile()));
   addUInt(*ScopeDIE, dwarf::DW_AT_call_line, None, IA->getLine());
+  addUInt(*ScopeDIE, dwarf::DW_AT_call_column, None, IA->getColumn());
   if (IA->getDiscriminator() && DD->getDwarfVersion() >= 4)
     addUInt(*ScopeDIE, dwarf::DW_AT_GNU_discriminator, None,
             IA->getDiscriminator());
@@ -1128,6 +1129,12 @@ void DwarfCompileUnit::addComplexAddress(const DbgVariable &DV, DIE &Die,
     DwarfExpr.setMemoryLocationKind();
 
   DIExpressionCursor Cursor(DIExpr);
+
+  if (DIExpr->isEntryValue()) {
+    DwarfExpr.setEntryValueFlag();
+    DwarfExpr.addEntryValueExpression(Cursor);
+  }
+
   const TargetRegisterInfo &TRI = *Asm->MF->getSubtarget().getRegisterInfo();
   if (!DwarfExpr.addMachineRegExpression(TRI, Cursor, Location.getReg()))
     return;

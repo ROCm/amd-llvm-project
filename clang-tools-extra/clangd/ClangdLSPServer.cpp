@@ -577,7 +577,7 @@ void ClangdLSPServer::onRename(const RenameParams &Params,
         "onRename called for non-added file", ErrorCode::InvalidParams));
 
   Server->rename(
-      File, Params.position, Params.newName,
+      File, Params.position, Params.newName, /*WantFormat=*/true,
       Bind(
           [File, Code, Params](decltype(Reply) Reply,
                                llvm::Expected<std::vector<TextEdit>> Edits) {
@@ -926,6 +926,13 @@ void ClangdLSPServer::onTypeHierarchy(
                         Params.resolve, Params.direction, std::move(Reply));
 }
 
+void ClangdLSPServer::onResolveTypeHierarchy(
+    const ResolveTypeHierarchyItemParams &Params,
+    Callback<Optional<TypeHierarchyItem>> Reply) {
+  Server->resolveTypeHierarchy(Params.item, Params.resolve, Params.direction,
+                               std::move(Reply));
+}
+
 void ClangdLSPServer::applyConfiguration(
     const ConfigurationSettings &Settings) {
   // Per-file update to the compilation database.
@@ -1021,6 +1028,7 @@ ClangdLSPServer::ClangdLSPServer(
   MsgHandler->bind("workspace/didChangeConfiguration", &ClangdLSPServer::onChangeConfiguration);
   MsgHandler->bind("textDocument/symbolInfo", &ClangdLSPServer::onSymbolInfo);
   MsgHandler->bind("textDocument/typeHierarchy", &ClangdLSPServer::onTypeHierarchy);
+  MsgHandler->bind("typeHierarchy/resolve", &ClangdLSPServer::onResolveTypeHierarchy);
   // clang-format on
 }
 

@@ -17,6 +17,8 @@ add_clang_library(clangDaemonTweaks OBJECT
   ExpandMacro.cpp
   RawStringLiteral.cpp
   SwapIfBranches.cpp
+  ExtractVariable.cpp
+  ExpandAutoType.cpp
 
   LINK_LIBS
   clangAST

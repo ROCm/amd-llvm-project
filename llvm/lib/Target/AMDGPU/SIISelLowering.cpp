@@ -151,6 +151,11 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
     addRegisterClass(MVT::v4f16, &AMDGPU::SReg_64RegClass);
   }
 
+  if (Subtarget->hasMAIInsts()) {
+    addRegisterClass(MVT::v32i32, &AMDGPU::AReg_1024RegClass);
+    addRegisterClass(MVT::v32f32, &AMDGPU::AReg_1024RegClass);
+  }
+
   computeRegisterProperties(Subtarget->getRegisterInfo());
 
   // We need to custom lower vector stores from local memory
@@ -259,8 +264,9 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
 
   // We only support LOAD/STORE and vector manipulation ops for vectors
   // with > 4 elements.
-  for (MVT VT : {MVT::v8i32, MVT::v8f32, MVT::v16i32, MVT::v16f32,
-        MVT::v2i64, MVT::v2f64, MVT::v4i16, MVT::v4f16, MVT::v32i32 }) {
+  for (MVT VT : { MVT::v8i32, MVT::v8f32, MVT::v16i32, MVT::v16f32,
+                  MVT::v2i64, MVT::v2f64, MVT::v4i16, MVT::v4f16,
+                  MVT::v32i32, MVT::v32f32 }) {
     for (unsigned Op = 0; Op < ISD::BUILTIN_OP_END; ++Op) {
       switch (Op) {
       case ISD::LOAD:
@@ -950,6 +956,33 @@ bool SITargetLowering::getTgtMemIntrinsic(IntrinsicInfo &Info,
 
     return true;
   }
+  case Intrinsic::amdgcn_buffer_atomic_fadd: {
+    SIMachineFunctionInfo *MFI = MF.getInfo<SIMachineFunctionInfo>();
+
+    Info.opc = ISD::INTRINSIC_VOID;
+    Info.memVT = MVT::getVT(CI.getOperand(0)->getType());
+    Info.ptrVal = MFI->getBufferPSV(
+      *MF.getSubtarget<GCNSubtarget>().getInstrInfo(),
+      CI.getArgOperand(1));
+    Info.align = 0;
+    Info.flags = MachineMemOperand::MOLoad | MachineMemOperand::MOStore;
+
+    const ConstantInt *Vol = dyn_cast<ConstantInt>(CI.getOperand(4));
+    if (!Vol || !Vol->isZero())
+      Info.flags |= MachineMemOperand::MOVolatile;
+
+    return true;
+  }
+  case Intrinsic::amdgcn_global_atomic_fadd: {
+    Info.opc = ISD::INTRINSIC_VOID;
+    Info.memVT = MVT::getVT(CI.getOperand(0)->getType()
+                            ->getPointerElementType());
+    Info.ptrVal = CI.getOperand(0);
+    Info.align = 0;
+    Info.flags = MachineMemOperand::MOLoad | MachineMemOperand::MOStore;
+
+    return true;
+  }
   case Intrinsic::amdgcn_ds_append:
   case Intrinsic::amdgcn_ds_consume: {
     Info.opc = ISD::INTRINSIC_W_CHAIN;
@@ -1521,8 +1554,7 @@ static void processShaderInputArgs(SmallVectorImpl<ISD::InputArg> &Splits,
 
     // First check if it's a PS input addr.
     if (CallConv == CallingConv::AMDGPU_PS &&
-        !Arg->Flags.isInReg() && !Arg->Flags.isByVal() && PSInputNum <= 15) {
-
+        !Arg->Flags.isInReg() && PSInputNum <= 15) {
       bool SkipArg = !Arg->Used && !Info->isPSInputAllocated(PSInputNum);
 
       // Inconveniently only the first part of the split is marked as isSplit,
@@ -2234,16 +2266,13 @@ SITargetLowering::LowerReturn(SDValue Chain, CallingConv::ID CallConv,
     SDValue ReturnAddrReg = CreateLiveInRegister(
       DAG, &AMDGPU::SReg_64RegClass, TRI->getReturnAddressReg(MF), MVT::i64);
 
-    // FIXME: Should be able to use a vreg here, but need a way to prevent it
-    // from being allcoated to a CSR.
-
-    SDValue PhysReturnAddrReg = DAG.getRegister(TRI->getReturnAddressReg(MF),
-                                                MVT::i64);
-
-    Chain = DAG.getCopyToReg(Chain, DL, PhysReturnAddrReg, ReturnAddrReg, Flag);
+    SDValue ReturnAddrVirtualReg = DAG.getRegister(
+        MF.getRegInfo().createVirtualRegister(&AMDGPU::CCR_SGPR_64RegClass),
+        MVT::i64);
+    Chain =
+        DAG.getCopyToReg(Chain, DL, ReturnAddrVirtualReg, ReturnAddrReg, Flag);
     Flag = Chain.getValue(1);
-
-    RetOps.push_back(PhysReturnAddrReg);
+    RetOps.push_back(ReturnAddrVirtualReg);
   }
 
   // Copy the result values into the output registers.
@@ -6861,6 +6890,49 @@ SDValue SITargetLowering::LowerINTRINSIC_VOID(SDValue Op,
                                    M->getMemoryVT(), M->getMemOperand());
   }
 
+  case Intrinsic::amdgcn_buffer_atomic_fadd: {
+    unsigned Slc = cast<ConstantSDNode>(Op.getOperand(6))->getZExtValue();
+    unsigned IdxEn = 1;
+    if (auto Idx = dyn_cast<ConstantSDNode>(Op.getOperand(4)))
+      IdxEn = Idx->getZExtValue() != 0;
+    SDValue Ops[] = {
+      Chain,
+      Op.getOperand(2), // vdata
+      Op.getOperand(3), // rsrc
+      Op.getOperand(4), // vindex
+      SDValue(),        // voffset -- will be set by setBufferOffsets
+      SDValue(),        // soffset -- will be set by setBufferOffsets
+      SDValue(),        // offset -- will be set by setBufferOffsets
+      DAG.getConstant(Slc << 1, DL, MVT::i32), // cachepolicy
+      DAG.getConstant(IdxEn, DL, MVT::i1), // idxen
+    };
+    setBufferOffsets(Op.getOperand(5), DAG, &Ops[4]);
+    EVT VT = Op.getOperand(2).getValueType();
+
+    auto *M = cast<MemSDNode>(Op);
+    unsigned Opcode = VT.isVector() ? AMDGPUISD::BUFFER_ATOMIC_PK_FADD
+                                    : AMDGPUISD::BUFFER_ATOMIC_FADD;
+
+    return DAG.getMemIntrinsicNode(Opcode, DL, Op->getVTList(), Ops, VT,
+                                   M->getMemOperand());
+  }
+
+  case Intrinsic::amdgcn_global_atomic_fadd: {
+    SDValue Ops[] = {
+      Chain,
+      Op.getOperand(2), // ptr
+      Op.getOperand(3)  // vdata
+    };
+    EVT VT = Op.getOperand(3).getValueType();
+
+    auto *M = cast<MemSDNode>(Op);
+    unsigned Opcode = VT.isVector() ? AMDGPUISD::ATOMIC_PK_FADD
+                                    : AMDGPUISD::ATOMIC_FADD;
+
+    return DAG.getMemIntrinsicNode(Opcode, DL, Op->getVTList(), Ops, VT,
+                                   M->getMemOperand());
+  }
+
   case Intrinsic::amdgcn_end_cf:
     return SDValue(DAG.getMachineNode(AMDGPU::SI_END_CF, DL, MVT::Other,
                                       Op->getOperand(2), Chain), 0);
@@ -10127,6 +10199,36 @@ void SITargetLowering::AdjustInstrPostInstrSelection(MachineInstr &MI,
   if (TII->isVOP3(MI.getOpcode())) {
     // Make sure constant bus requirements are respected.
     TII->legalizeOperandsVOP3(MRI, MI);
+
+    // Prefer VGPRs over AGPRs in mAI instructions where possible.
+    // This saves a chain-copy of registers and better ballance register
+    // use between vgpr and agpr as agpr tuples tend to be big.
+    if (const MCOperandInfo *OpInfo = MI.getDesc().OpInfo) {
+      unsigned Opc = MI.getOpcode();
+      const SIRegisterInfo *TRI = Subtarget->getRegisterInfo();
+      for (auto I : { AMDGPU::getNamedOperandIdx(Opc, AMDGPU::OpName::src0),
+                      AMDGPU::getNamedOperandIdx(Opc, AMDGPU::OpName::src1) }) {
+        if (I == -1)
+          break;
+        MachineOperand &Op = MI.getOperand(I);
+        if ((OpInfo[I].RegClass != llvm::AMDGPU::AV_64RegClassID &&
+             OpInfo[I].RegClass != llvm::AMDGPU::AV_32RegClassID) ||
+            !TargetRegisterInfo::isVirtualRegister(Op.getReg()) ||
+            !TRI->isAGPR(MRI, Op.getReg()))
+          continue;
+        auto *Src = MRI.getUniqueVRegDef(Op.getReg());
+        if (!Src || !Src->isCopy() ||
+            !TRI->isSGPRReg(MRI, Src->getOperand(1).getReg()))
+          continue;
+        auto *RC = TRI->getRegClassForReg(MRI, Op.getReg());
+        auto *NewRC = TRI->getEquivalentVGPRClass(RC);
+        // All uses of agpr64 and agpr32 can also accept vgpr except for
+        // v_accvgpr_read, but we do not produce agpr reads during selection,
+        // so no use checks are needed.
+        MRI.setRegClass(Op.getReg(), NewRC);
+      }
+    }
+
     return;
   }
 
@@ -10307,6 +10409,29 @@ SITargetLowering::getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
         break;
       }
       break;
+    case 'a':
+      switch (VT.getSizeInBits()) {
+      default:
+        return std::make_pair(0U, nullptr);
+      case 32:
+      case 16:
+        RC = &AMDGPU::AGPR_32RegClass;
+        break;
+      case 64:
+        RC = &AMDGPU::AReg_64RegClass;
+        break;
+      case 128:
+        RC = &AMDGPU::AReg_128RegClass;
+        break;
+      case 512:
+        RC = &AMDGPU::AReg_512RegClass;
+        break;
+      case 1024:
+        RC = &AMDGPU::AReg_1024RegClass;
+        // v32 types are not legal but we support them here.
+        return std::make_pair(0U, RC);
+      }
+      break;
     }
     // We actually support i128, i16 and f16 as inline parameters
     // even if they are not reported as legal
@@ -10320,6 +10445,8 @@ SITargetLowering::getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
       RC = &AMDGPU::VGPR_32RegClass;
     } else if (Constraint[1] == 's') {
       RC = &AMDGPU::SGPR_32RegClass;
+    } else if (Constraint[1] == 'a') {
+      RC = &AMDGPU::AGPR_32RegClass;
     }
 
     if (RC) {
@@ -10339,6 +10466,7 @@ SITargetLowering::getConstraintType(StringRef Constraint) const {
     default: break;
     case 's':
     case 'v':
+    case 'a':
       return C_RegisterClass;
     }
   }

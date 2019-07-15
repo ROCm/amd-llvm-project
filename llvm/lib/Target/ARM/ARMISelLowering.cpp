@@ -250,6 +250,11 @@ void ARMTargetLowering::addMVEVectorTypes(bool HasMVEFP) {
     setOperationAction(ISD::INSERT_VECTOR_ELT, VT, Custom);
     setOperationAction(ISD::EXTRACT_VECTOR_ELT, VT, Custom);
     setOperationAction(ISD::BUILD_VECTOR, VT, Custom);
+    setOperationAction(ISD::SMIN, VT, Legal);
+    setOperationAction(ISD::SMAX, VT, Legal);
+    setOperationAction(ISD::UMIN, VT, Legal);
+    setOperationAction(ISD::UMAX, VT, Legal);
+    setOperationAction(ISD::ABS, VT, Legal);
 
     // No native support for these.
     setOperationAction(ISD::UDIV, VT, Expand);
@@ -281,6 +286,10 @@ void ARMTargetLowering::addMVEVectorTypes(bool HasMVEFP) {
     setOperationAction(ISD::SCALAR_TO_VECTOR, VT, Legal);
 
     if (HasMVEFP) {
+      setOperationAction(ISD::FMINNUM, VT, Legal);
+      setOperationAction(ISD::FMAXNUM, VT, Legal);
+      setOperationAction(ISD::FROUND, VT, Legal);
+
       // No native support for these.
       setOperationAction(ISD::FDIV, VT, Expand);
       setOperationAction(ISD::FREM, VT, Expand);
@@ -293,6 +302,7 @@ void ARMTargetLowering::addMVEVectorTypes(bool HasMVEFP) {
       setOperationAction(ISD::FLOG10, VT, Expand);
       setOperationAction(ISD::FEXP, VT, Expand);
       setOperationAction(ISD::FEXP2, VT, Expand);
+      setOperationAction(ISD::FNEARBYINT, VT, Expand);
     }
   }
 
@@ -1254,10 +1264,12 @@ ARMTargetLowering::ARMTargetLowering(const TargetMachine &TM,
     setOperationAction(ISD::FRINT, MVT::f32, Legal);
     setOperationAction(ISD::FMINNUM, MVT::f32, Legal);
     setOperationAction(ISD::FMAXNUM, MVT::f32, Legal);
-    setOperationAction(ISD::FMINNUM, MVT::v2f32, Legal);
-    setOperationAction(ISD::FMAXNUM, MVT::v2f32, Legal);
-    setOperationAction(ISD::FMINNUM, MVT::v4f32, Legal);
-    setOperationAction(ISD::FMAXNUM, MVT::v4f32, Legal);
+    if (Subtarget->hasNEON()) {
+      setOperationAction(ISD::FMINNUM, MVT::v2f32, Legal);
+      setOperationAction(ISD::FMAXNUM, MVT::v2f32, Legal);
+      setOperationAction(ISD::FMINNUM, MVT::v4f32, Legal);
+      setOperationAction(ISD::FMAXNUM, MVT::v4f32, Legal);
+    }
 
     if (Subtarget->hasFP64()) {
       setOperationAction(ISD::FFLOOR, MVT::f64, Legal);
@@ -11168,7 +11180,7 @@ static SDValue PerformANDCombine(SDNode *N,
   APInt SplatBits, SplatUndef;
   unsigned SplatBitSize;
   bool HasAnyUndefs;
-  if (BVN &&
+  if (BVN && Subtarget->hasNEON() &&
       BVN->isConstantSplat(SplatBits, SplatUndef, SplatBitSize, HasAnyUndefs)) {
     if (SplatBitSize <= 64) {
       EVT VbicVT;
@@ -12989,21 +13001,25 @@ static SDValue PerformHWLoopCombine(SDNode *N,
                                     const ARMSubtarget *ST) {
   // Look for (brcond (xor test.set.loop.iterations, -1)
   SDValue CC = N->getOperand(1);
+  unsigned Opc = CC->getOpcode();
+  SDValue Int;
 
-  if (CC->getOpcode() != ISD::XOR && CC->getOpcode() != ISD::SETCC)
+  if ((Opc == ISD::XOR || Opc == ISD::SETCC) &&
+      (CC->getOperand(0)->getOpcode() == ISD::INTRINSIC_W_CHAIN)) {
+
+    assert((isa<ConstantSDNode>(CC->getOperand(1)) &&
+            cast<ConstantSDNode>(CC->getOperand(1))->isOne()) &&
+            "Expected to compare against 1");
+
+    Int = CC->getOperand(0);
+  } else if (CC->getOpcode() == ISD::INTRINSIC_W_CHAIN)
+    Int = CC;
+  else 
     return SDValue();
 
-  if (CC->getOperand(0)->getOpcode() != ISD::INTRINSIC_W_CHAIN)
-    return SDValue();
-
-  SDValue Int = CC->getOperand(0);
   unsigned IntOp = cast<ConstantSDNode>(Int.getOperand(1))->getZExtValue();
   if (IntOp != Intrinsic::test_set_loop_iterations)
     return SDValue();
-
-  assert((isa<ConstantSDNode>(CC->getOperand(1)) &&
-          cast<ConstantSDNode>(CC->getOperand(1))->isOne()) &&
-          "Expected to compare against 1");
 
   SDLoc dl(Int);
   SDValue Chain = N->getOperand(0);

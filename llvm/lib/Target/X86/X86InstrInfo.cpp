@@ -3374,6 +3374,11 @@ inline static bool isDefConvertible(const MachineInstr &MI, bool &NoSignFlag) {
 static X86::CondCode isUseDefConvertible(const MachineInstr &MI) {
   switch (MI.getOpcode()) {
   default: return X86::COND_INVALID;
+  case X86::NEG8r:
+  case X86::NEG16r:
+  case X86::NEG32r:
+  case X86::NEG64r:
+    return X86::COND_AE;
   case X86::LZCNT16rr:
   case X86::LZCNT32rr:
   case X86::LZCNT64rr:
@@ -3396,7 +3401,12 @@ static X86::CondCode isUseDefConvertible(const MachineInstr &MI) {
   case X86::BLSI32rr:
   case X86::BLSI64rr:
     return X86::COND_AE;
-  // TODO: BLSR, BLSMSK, and TBM instructions.
+  case X86::BLSR32rr:
+  case X86::BLSR64rr:
+  case X86::BLSMSK32rr:
+  case X86::BLSMSK64rr:
+    return X86::COND_B;
+  // TODO: TBM instructions.
   }
 }
 
@@ -3665,15 +3675,9 @@ bool X86InstrInfo::optimizeCompareInstr(MachineInstr &CmpInstr, unsigned SrcReg,
   }
 
   // Make sure Sub instruction defines EFLAGS and mark the def live.
-  unsigned i = 0, e = Sub->getNumOperands();
-  for (; i != e; ++i) {
-    MachineOperand &MO = Sub->getOperand(i);
-    if (MO.isReg() && MO.isDef() && MO.getReg() == X86::EFLAGS) {
-      MO.setIsDead(false);
-      break;
-    }
-  }
-  assert(i != e && "Unable to locate a def EFLAGS operand");
+  MachineOperand *FlagDef = Sub->findRegisterDefOperand(X86::EFLAGS);
+  assert(FlagDef && "Unable to locate a def EFLAGS operand");
+  FlagDef->setIsDead(false);
 
   CmpInstr.eraseFromParent();
 

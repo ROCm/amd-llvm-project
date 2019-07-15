@@ -7674,7 +7674,7 @@ ScalarEvolution::ExitLimit ScalarEvolution::computeShiftCompareExitLimit(
 static bool CanConstantFold(const Instruction *I) {
   if (isa<BinaryOperator>(I) || isa<CmpInst>(I) ||
       isa<SelectInst>(I) || isa<CastInst>(I) || isa<GetElementPtrInst>(I) ||
-      isa<LoadInst>(I))
+      isa<LoadInst>(I) || isa<ExtractValueInst>(I))
     return true;
 
   if (const CallInst *CI = dyn_cast<CallInst>(I))
@@ -10708,13 +10708,10 @@ ScalarEvolution::howManyGreaterThans(const SCEV *LHS, const SCEV *RHS,
     IsSigned ? APIntOps::smax(getSignedRangeMin(RHS), Limit)
              : APIntOps::umax(getUnsignedRangeMin(RHS), Limit);
 
-
-  const SCEV *MaxBECount = getCouldNotCompute();
-  if (isa<SCEVConstant>(BECount))
-    MaxBECount = BECount;
-  else
-    MaxBECount = computeBECount(getConstant(MaxStart - MinEnd),
-                                getConstant(MinStride), false);
+  const SCEV *MaxBECount = isa<SCEVConstant>(BECount)
+                               ? BECount
+                               : computeBECount(getConstant(MaxStart - MinEnd),
+                                                getConstant(MinStride), false);
 
   if (isa<SCEVCouldNotCompute>(MaxBECount))
     MaxBECount = BECount;
