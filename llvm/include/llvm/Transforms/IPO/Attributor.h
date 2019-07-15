@@ -182,8 +182,8 @@ struct Attributor {
     // Determine the argument number automatically for llvm::Arguments if none
     // is set. Do not override a given one as it could be a use of the argument
     // in a call site.
-    if (auto *Arg = dyn_cast<Argument>(&V))
-      if (ArgNo == -1)
+    if (ArgNo == -1)
+      if (auto *Arg = dyn_cast<Argument>(&V))
         ArgNo = Arg->getArgNo();
 
     // If a function was given together with an argument number, perform the
@@ -199,8 +199,12 @@ struct Attributor {
     const auto &KindToAbstractAttributeMap = AAMap.lookup({&V, ArgNo});
     if (AAType *AA = static_cast<AAType *>(
             KindToAbstractAttributeMap.lookup(AAType::ID))) {
-      QueryMap[AA].insert(&QueryingAA);
-      return AA;
+      // Do not return an attribute with an invalid state. This minimizes checks
+      // at the calls sites and allows the fallback below to kick in.
+      if (AA->getState().isValidState()) {
+        QueryMap[AA].insert(&QueryingAA);
+        return AA;
+      }
     }
 
     // If no abstract attribute was found and we look for a call site argument,
@@ -228,10 +232,13 @@ struct Attributor {
                   "'AbstractAttribute'!");
 
     // Determine the anchor value and the argument number which are used to
-    // lookup the attribute together with AAType::ID.
+    // lookup the attribute together with AAType::ID. If passed an argument,
+    // use its argument number but do not override a given one as it could be a
+    // use of the argument at a call site.
     Value &AnchoredVal = AA.getAnchoredValue();
-    if (auto *Arg = dyn_cast<Argument>(&AnchoredVal))
-      ArgNo = Arg->getArgNo();
+    if (ArgNo == -1)
+      if (auto *Arg = dyn_cast<Argument>(&AnchoredVal))
+        ArgNo = Arg->getArgNo();
 
     // Put the attribute in the lookup map structure and the container we use to
     // keep track of all attributes.
@@ -255,6 +262,14 @@ struct Attributor {
   void identifyDefaultAbstractAttributes(
       Function &F, InformationCache &InfoCache,
       DenseSet</* Attribute::AttrKind */ unsigned> *Whitelist = nullptr);
+
+  /// Check \p Pred on all function call sites.
+  ///
+  /// This method will evaluate \p Pred on call sites and return
+  /// true if \p Pred holds in every call sites. However, this is only possible
+  /// all call sites are known, hence the function has internal linkage.
+  bool checkForAllCallSites(Function &F, std::function<bool(CallSite)> &Pred,
+                            bool RequireAllCallSites);
 
 private:
   /// The set of all abstract attributes.
@@ -689,9 +704,7 @@ struct AANoSync : public AbstractAttribute {
       : AbstractAttribute(V, InfoCache) {}
 
   /// See AbstractAttribute::getAttrKind().
-  Attribute::AttrKind getAttrKind() const override {
-    return ID;
-  }
+  Attribute::AttrKind getAttrKind() const override { return ID; }
 
   static constexpr Attribute::AttrKind ID =
       Attribute::AttrKind(Attribute::NoSync);
@@ -703,6 +716,30 @@ struct AANoSync : public AbstractAttribute {
   virtual bool isKnownNoSync() const = 0;
 };
 
+/// An abstract interface for all nonnull attributes.
+struct AANonNull : public AbstractAttribute {
+
+  /// See AbstractAttribute::AbstractAttribute(...).
+  AANonNull(Value &V, InformationCache &InfoCache)
+      : AbstractAttribute(V, InfoCache) {}
+
+  /// See AbstractAttribute::AbstractAttribute(...).
+  AANonNull(Value *AssociatedVal, Value &AnchoredValue,
+            InformationCache &InfoCache)
+      : AbstractAttribute(AssociatedVal, AnchoredValue, InfoCache) {}
+
+  /// Return true if we assume that the underlying value is nonnull.
+  virtual bool isAssumedNonNull() const = 0;
+
+  /// Return true if we know that underlying value is nonnull.
+  virtual bool isKnownNonNull() const = 0;
+
+  /// See AbastractState::getAttrKind().
+  Attribute::AttrKind getAttrKind() const override { return ID; }
+
+  /// The identifier used by the Attributor for this class of attributes.
+  static constexpr Attribute::AttrKind ID = Attribute::NonNull;
+};
 } // end namespace llvm
 
 #endif // LLVM_TRANSFORMS_IPO_FUNCTIONATTRS_H
