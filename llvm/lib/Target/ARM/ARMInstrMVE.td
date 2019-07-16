@@ -995,27 +995,27 @@ def MVE_VREV32_16 : MVE_VREV<"vrev32", "16", 0b01, 0b01>;
 def MVE_VREV16_8  : MVE_VREV<"vrev16", "8", 0b00, 0b10>;
 
 let Predicates = [HasMVEInt] in {
-def : Pat<(v4i32 (ARMvrev64 (v4i32 MQPR:$src))),
-          (v4i32 (MVE_VREV64_32 (v4i32 MQPR:$src)))>;
-def : Pat<(v8i16 (ARMvrev64 (v8i16 MQPR:$src))),
-          (v8i16 (MVE_VREV64_16 (v8i16 MQPR:$src)))>;
-def : Pat<(v16i8 (ARMvrev64 (v16i8 MQPR:$src))),
-          (v16i8 (MVE_VREV64_8  (v16i8 MQPR:$src)))>;
+  def : Pat<(v4i32 (ARMvrev64 (v4i32 MQPR:$src))),
+            (v4i32 (MVE_VREV64_32 (v4i32 MQPR:$src)))>;
+  def : Pat<(v8i16 (ARMvrev64 (v8i16 MQPR:$src))),
+            (v8i16 (MVE_VREV64_16 (v8i16 MQPR:$src)))>;
+  def : Pat<(v16i8 (ARMvrev64 (v16i8 MQPR:$src))),
+            (v16i8 (MVE_VREV64_8  (v16i8 MQPR:$src)))>;
 
-def : Pat<(v8i16 (ARMvrev32 (v8i16 MQPR:$src))),
-          (v8i16 (MVE_VREV32_16 (v8i16 MQPR:$src)))>;
-def : Pat<(v16i8 (ARMvrev32 (v16i8 MQPR:$src))),
-          (v16i8 (MVE_VREV32_8  (v16i8 MQPR:$src)))>;
+  def : Pat<(v8i16 (ARMvrev32 (v8i16 MQPR:$src))),
+            (v8i16 (MVE_VREV32_16 (v8i16 MQPR:$src)))>;
+  def : Pat<(v16i8 (ARMvrev32 (v16i8 MQPR:$src))),
+            (v16i8 (MVE_VREV32_8  (v16i8 MQPR:$src)))>;
 
-def : Pat<(v16i8 (ARMvrev16 (v16i8 MQPR:$src))),
-          (v16i8 (MVE_VREV16_8  (v16i8 MQPR:$src)))>;
+  def : Pat<(v16i8 (ARMvrev16 (v16i8 MQPR:$src))),
+            (v16i8 (MVE_VREV16_8  (v16i8 MQPR:$src)))>;
 
-def : Pat<(v4f32 (ARMvrev64 (v4f32 MQPR:$src))),
-          (v4f32 (MVE_VREV64_32 (v4f32 MQPR:$src)))>;
-def : Pat<(v8f16 (ARMvrev64 (v8f16 MQPR:$src))),
-          (v8f16 (MVE_VREV64_16 (v8f16 MQPR:$src)))>;
-def : Pat<(v8f16 (ARMvrev32 (v8f16 MQPR:$src))),
-          (v8f16 (MVE_VREV32_16 (v8f16 MQPR:$src)))>;
+  def : Pat<(v4f32 (ARMvrev64 (v4f32 MQPR:$src))),
+            (v4f32 (MVE_VREV64_32 (v4f32 MQPR:$src)))>;
+  def : Pat<(v8f16 (ARMvrev64 (v8f16 MQPR:$src))),
+            (v8f16 (MVE_VREV64_16 (v8f16 MQPR:$src)))>;
+  def : Pat<(v8f16 (ARMvrev32 (v8f16 MQPR:$src))),
+            (v8f16 (MVE_VREV32_16 (v8f16 MQPR:$src)))>;
 }
 
 def MVE_VMVN : MVE_bit_arith<(outs MQPR:$Qd), (ins MQPR:$Qm),
@@ -1035,6 +1035,8 @@ let Predicates = [HasMVEInt] in {
             (v8i16 (MVE_VMVN (v8i16 MQPR:$val1)))>;
   def : Pat<(v4i32 (vnotq  (v4i32 MQPR:$val1))),
             (v4i32 (MVE_VMVN (v4i32 MQPR:$val1)))>;
+  def : Pat<(v2i64 (vnotq  (v2i64 MQPR:$val1))),
+            (v2i64 (MVE_VMVN (v2i64 MQPR:$val1)))>;
 }
 
 class MVE_bit_ops<string iname, bits<2> bit_21_20, bit bit_28>
@@ -1081,6 +1083,8 @@ let Predicates = [HasMVEInt] in {
             (v8i16 (MVE_VAND (v8i16 MQPR:$val1), (v8i16 MQPR:$val2)))>;
   def : Pat<(v4i32 (and (v4i32 MQPR:$val1), (v4i32 MQPR:$val2))),
             (v4i32 (MVE_VAND (v4i32 MQPR:$val1), (v4i32 MQPR:$val2)))>;
+  def : Pat<(v2i64 (and (v2i64 MQPR:$val1), (v2i64 MQPR:$val2))),
+            (v2i64 (MVE_VAND (v2i64 MQPR:$val1), (v2i64 MQPR:$val2)))>;
 
   def : Pat<(v16i8 (or (v16i8 MQPR:$val1), (v16i8 MQPR:$val2))),
             (v16i8 (MVE_VORR (v16i8 MQPR:$val1), (v16i8 MQPR:$val2)))>;
@@ -1088,6 +1092,8 @@ let Predicates = [HasMVEInt] in {
             (v8i16 (MVE_VORR (v8i16 MQPR:$val1), (v8i16 MQPR:$val2)))>;
   def : Pat<(v4i32 (or (v4i32 MQPR:$val1), (v4i32 MQPR:$val2))),
             (v4i32 (MVE_VORR (v4i32 MQPR:$val1), (v4i32 MQPR:$val2)))>;
+  def : Pat<(v2i64 (or (v2i64 MQPR:$val1), (v2i64 MQPR:$val2))),
+            (v2i64 (MVE_VORR (v2i64 MQPR:$val1), (v2i64 MQPR:$val2)))>;
 
   def : Pat<(v16i8 (xor (v16i8 MQPR:$val1), (v16i8 MQPR:$val2))),
             (v16i8 (MVE_VEOR (v16i8 MQPR:$val1), (v16i8 MQPR:$val2)))>;
@@ -1095,6 +1101,8 @@ let Predicates = [HasMVEInt] in {
             (v8i16 (MVE_VEOR (v8i16 MQPR:$val1), (v8i16 MQPR:$val2)))>;
   def : Pat<(v4i32 (xor (v4i32 MQPR:$val1), (v4i32 MQPR:$val2))),
             (v4i32 (MVE_VEOR (v4i32 MQPR:$val1), (v4i32 MQPR:$val2)))>;
+  def : Pat<(v2i64 (xor (v2i64 MQPR:$val1), (v2i64 MQPR:$val2))),
+            (v2i64 (MVE_VEOR (v2i64 MQPR:$val1), (v2i64 MQPR:$val2)))>;
 
   def : Pat<(v16i8 (and (v16i8 MQPR:$val1), (vnotq MQPR:$val2))),
             (v16i8 (MVE_VBIC (v16i8 MQPR:$val1), (v16i8 MQPR:$val2)))>;
@@ -1102,13 +1110,17 @@ let Predicates = [HasMVEInt] in {
             (v8i16 (MVE_VBIC (v8i16 MQPR:$val1), (v8i16 MQPR:$val2)))>;
   def : Pat<(v4i32 (and (v4i32 MQPR:$val1), (vnotq MQPR:$val2))),
             (v4i32 (MVE_VBIC (v4i32 MQPR:$val1), (v4i32 MQPR:$val2)))>;
+  def : Pat<(v2i64 (and (v2i64 MQPR:$val1), (vnotq MQPR:$val2))),
+            (v2i64 (MVE_VBIC (v2i64 MQPR:$val1), (v2i64 MQPR:$val2)))>;
 
-  def : Pat<(v16i8 (or (v16i8 MQPR:$val1), (vnotq (v16i8 MQPR:$val2)))),
+  def : Pat<(v16i8 (or (v16i8 MQPR:$val1), (vnotq MQPR:$val2))),
             (v16i8 (MVE_VORN (v16i8 MQPR:$val1), (v16i8 MQPR:$val2)))>;
   def : Pat<(v8i16 (or (v8i16 MQPR:$val1), (vnotq MQPR:$val2))),
             (v8i16 (MVE_VORN (v8i16 MQPR:$val1), (v8i16 MQPR:$val2)))>;
   def : Pat<(v4i32 (or (v4i32 MQPR:$val1), (vnotq MQPR:$val2))),
             (v4i32 (MVE_VORN (v4i32 MQPR:$val1), (v4i32 MQPR:$val2)))>;
+  def : Pat<(v2i64 (or (v2i64 MQPR:$val1), (vnotq MQPR:$val2))),
+            (v2i64 (MVE_VORN (v2i64 MQPR:$val1), (v2i64 MQPR:$val2)))>;
 }
 
 class MVE_bit_cmode<string iname, string suffix, bits<4> cmode, dag inOps>
@@ -2119,6 +2131,22 @@ defm MVE_VQSHL_by_vec  : mve_shift_by_vec_multi<"vqshl",  0b1, 0b0>;
 defm MVE_VQRSHL_by_vec : mve_shift_by_vec_multi<"vqrshl", 0b1, 0b1>;
 defm MVE_VRSHL_by_vec  : mve_shift_by_vec_multi<"vrshl",  0b0, 0b1>;
 
+let Predicates = [HasMVEInt] in {
+  def : Pat<(v4i32 (ARMvshlu (v4i32 MQPR:$Qm), (v4i32 MQPR:$Qn))),
+            (v4i32 (MVE_VSHL_by_vecu32 (v4i32 MQPR:$Qm), (v4i32 MQPR:$Qn)))>;
+  def : Pat<(v8i16 (ARMvshlu (v8i16 MQPR:$Qm), (v8i16 MQPR:$Qn))),
+            (v8i16 (MVE_VSHL_by_vecu16 (v8i16 MQPR:$Qm), (v8i16 MQPR:$Qn)))>;
+  def : Pat<(v16i8 (ARMvshlu (v16i8 MQPR:$Qm), (v16i8 MQPR:$Qn))),
+            (v16i8 (MVE_VSHL_by_vecu8 (v16i8 MQPR:$Qm), (v16i8 MQPR:$Qn)))>;
+
+  def : Pat<(v4i32 (ARMvshls (v4i32 MQPR:$Qm), (v4i32 MQPR:$Qn))),
+            (v4i32 (MVE_VSHL_by_vecs32 (v4i32 MQPR:$Qm), (v4i32 MQPR:$Qn)))>;
+  def : Pat<(v8i16 (ARMvshls (v8i16 MQPR:$Qm), (v8i16 MQPR:$Qn))),
+            (v8i16 (MVE_VSHL_by_vecs16 (v8i16 MQPR:$Qm), (v8i16 MQPR:$Qn)))>;
+  def : Pat<(v16i8 (ARMvshls (v16i8 MQPR:$Qm), (v16i8 MQPR:$Qn))),
+            (v16i8 (MVE_VSHL_by_vecs8 (v16i8 MQPR:$Qm), (v16i8 MQPR:$Qn)))>;
+}
+
 class MVE_shift_with_imm<string iname, string suffix, dag oops, dag iops,
                          string ops, vpred_ops vpred, string cstr,
                          list<dag> pattern=[]>
@@ -2342,6 +2370,29 @@ def MVE_VSHL_immi16 : MVE_VSHL_imm<"i16", (ins imm0_15:$imm)> {
 
 def MVE_VSHL_immi32 : MVE_VSHL_imm<"i32", (ins imm0_31:$imm)> {
   let Inst{21} = 0b1;
+}
+
+let Predicates = [HasMVEInt] in {
+  def : Pat<(v4i32 (ARMvshlImm (v4i32 MQPR:$src), imm0_31:$imm)),
+            (v4i32 (MVE_VSHL_immi32 (v4i32 MQPR:$src), imm0_31:$imm))>;
+  def : Pat<(v8i16 (ARMvshlImm (v8i16 MQPR:$src), imm0_15:$imm)),
+            (v8i16 (MVE_VSHL_immi16 (v8i16 MQPR:$src), imm0_15:$imm))>;
+  def : Pat<(v16i8 (ARMvshlImm (v16i8 MQPR:$src), imm0_7:$imm)),
+            (v16i8 (MVE_VSHL_immi8 (v16i8 MQPR:$src), imm0_7:$imm))>;
+
+  def : Pat<(v4i32 (ARMvshruImm (v4i32 MQPR:$src), imm0_31:$imm)),
+            (v4i32 (MVE_VSHR_immu32 (v4i32 MQPR:$src), imm0_31:$imm))>;
+  def : Pat<(v8i16 (ARMvshruImm (v8i16 MQPR:$src), imm0_15:$imm)),
+            (v8i16 (MVE_VSHR_immu16 (v8i16 MQPR:$src), imm0_15:$imm))>;
+  def : Pat<(v16i8 (ARMvshruImm (v16i8 MQPR:$src), imm0_7:$imm)),
+            (v16i8 (MVE_VSHR_immu8 (v16i8 MQPR:$src), imm0_7:$imm))>;
+
+  def : Pat<(v4i32 (ARMvshrsImm (v4i32 MQPR:$src), imm0_31:$imm)),
+            (v4i32 (MVE_VSHR_imms32 (v4i32 MQPR:$src), imm0_31:$imm))>;
+  def : Pat<(v8i16 (ARMvshrsImm (v8i16 MQPR:$src), imm0_15:$imm)),
+            (v8i16 (MVE_VSHR_imms16 (v8i16 MQPR:$src), imm0_15:$imm))>;
+  def : Pat<(v16i8 (ARMvshrsImm (v16i8 MQPR:$src), imm0_7:$imm)),
+            (v16i8 (MVE_VSHR_imms8 (v16i8 MQPR:$src), imm0_7:$imm))>;
 }
 
 // end of mve_shift instructions
@@ -2691,22 +2742,22 @@ def MVE_VCVTf32s32n : MVE_VCVT_fp_int<"f32.s32", 0b10, 0b00>;
 def MVE_VCVTf32u32n : MVE_VCVT_fp_int<"f32.u32", 0b10, 0b01>;
 
 let Predicates = [HasMVEFloat] in {
-def : Pat<(v4i32 (fp_to_sint (v4f32 MQPR:$src))),
-          (v4i32 (MVE_VCVTs32f32z (v4f32 MQPR:$src)))>;
-def : Pat<(v4i32 (fp_to_uint (v4f32 MQPR:$src))),
-          (v4i32 (MVE_VCVTu32f32z (v4f32 MQPR:$src)))>;
-def : Pat<(v8i16 (fp_to_sint (v8f16 MQPR:$src))),
-          (v8i16 (MVE_VCVTs16f16z (v8f16 MQPR:$src)))>;
-def : Pat<(v8i16 (fp_to_uint (v8f16 MQPR:$src))),
-          (v8i16 (MVE_VCVTu16f16z (v8f16 MQPR:$src)))>;
-def : Pat<(v4f32 (sint_to_fp (v4i32 MQPR:$src))),
-          (v4f32 (MVE_VCVTf32s32n (v4i32 MQPR:$src)))>;
-def : Pat<(v4f32 (uint_to_fp (v4i32 MQPR:$src))),
-          (v4f32 (MVE_VCVTf32u32n (v4i32 MQPR:$src)))>;
-def : Pat<(v8f16 (sint_to_fp (v8i16 MQPR:$src))),
-          (v8f16 (MVE_VCVTf16s16n (v8i16 MQPR:$src)))>;
-def : Pat<(v8f16 (uint_to_fp (v8i16 MQPR:$src))),
-          (v8f16 (MVE_VCVTf16u16n (v8i16 MQPR:$src)))>;
+  def : Pat<(v4i32 (fp_to_sint (v4f32 MQPR:$src))),
+            (v4i32 (MVE_VCVTs32f32z (v4f32 MQPR:$src)))>;
+  def : Pat<(v4i32 (fp_to_uint (v4f32 MQPR:$src))),
+            (v4i32 (MVE_VCVTu32f32z (v4f32 MQPR:$src)))>;
+  def : Pat<(v8i16 (fp_to_sint (v8f16 MQPR:$src))),
+            (v8i16 (MVE_VCVTs16f16z (v8f16 MQPR:$src)))>;
+  def : Pat<(v8i16 (fp_to_uint (v8f16 MQPR:$src))),
+            (v8i16 (MVE_VCVTu16f16z (v8f16 MQPR:$src)))>;
+  def : Pat<(v4f32 (sint_to_fp (v4i32 MQPR:$src))),
+            (v4f32 (MVE_VCVTf32s32n (v4i32 MQPR:$src)))>;
+  def : Pat<(v4f32 (uint_to_fp (v4i32 MQPR:$src))),
+            (v4f32 (MVE_VCVTf32u32n (v4i32 MQPR:$src)))>;
+  def : Pat<(v8f16 (sint_to_fp (v8i16 MQPR:$src))),
+            (v8f16 (MVE_VCVTf16s16n (v8i16 MQPR:$src)))>;
+  def : Pat<(v8f16 (uint_to_fp (v8i16 MQPR:$src))),
+            (v8f16 (MVE_VCVTf16u16n (v8i16 MQPR:$src)))>;
 }
 
 class MVE_VABSNEG_fp<string iname, string suffix, bits<2> size, bit negate,
@@ -3352,6 +3403,22 @@ defm MVE_VSHL_qr   : MVE_VxSHL_qr_types<"vshl",   0b0, 0b0>;
 defm MVE_VRSHL_qr  : MVE_VxSHL_qr_types<"vrshl",  0b0, 0b1>;
 defm MVE_VQSHL_qr  : MVE_VxSHL_qr_types<"vqshl",  0b1, 0b0>;
 defm MVE_VQRSHL_qr : MVE_VxSHL_qr_types<"vqrshl", 0b1, 0b1>;
+
+let Predicates = [HasMVEInt] in {
+  def : Pat<(v4i32 (ARMvshlu (v4i32 MQPR:$Qm), (v4i32 (ARMvdup GPR:$Rm)))),
+            (v4i32 (MVE_VSHL_qru32 (v4i32 MQPR:$Qm), GPR:$Rm))>;
+  def : Pat<(v8i16 (ARMvshlu (v8i16 MQPR:$Qm), (v8i16 (ARMvdup GPR:$Rm)))),
+            (v8i16 (MVE_VSHL_qru16 (v8i16 MQPR:$Qm), GPR:$Rm))>;
+  def : Pat<(v16i8 (ARMvshlu (v16i8 MQPR:$Qm), (v16i8 (ARMvdup GPR:$Rm)))),
+            (v16i8 (MVE_VSHL_qru8 (v16i8 MQPR:$Qm), GPR:$Rm))>;
+
+  def : Pat<(v4i32 (ARMvshls (v4i32 MQPR:$Qm), (v4i32 (ARMvdup GPR:$Rm)))),
+            (v4i32 (MVE_VSHL_qrs32 (v4i32 MQPR:$Qm), GPR:$Rm))>;
+  def : Pat<(v8i16 (ARMvshls (v8i16 MQPR:$Qm), (v8i16 (ARMvdup GPR:$Rm)))),
+            (v8i16 (MVE_VSHL_qrs16 (v8i16 MQPR:$Qm), GPR:$Rm))>;
+  def : Pat<(v16i8 (ARMvshls (v16i8 MQPR:$Qm), (v16i8 (ARMvdup GPR:$Rm)))),
+            (v16i8 (MVE_VSHL_qrs8 (v16i8 MQPR:$Qm), GPR:$Rm))>;
+}
 
 class MVE_VBRSR<string iname, string suffix, bits<2> size, list<dag> pattern=[]>
   : MVE_qDest_rSrc<iname, suffix, pattern> {

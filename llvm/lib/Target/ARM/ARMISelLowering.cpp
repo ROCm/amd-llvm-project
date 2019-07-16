@@ -250,6 +250,9 @@ void ARMTargetLowering::addMVEVectorTypes(bool HasMVEFP) {
     setOperationAction(ISD::INSERT_VECTOR_ELT, VT, Custom);
     setOperationAction(ISD::EXTRACT_VECTOR_ELT, VT, Custom);
     setOperationAction(ISD::BUILD_VECTOR, VT, Custom);
+    setOperationAction(ISD::SHL, VT, Custom);
+    setOperationAction(ISD::SRA, VT, Custom);
+    setOperationAction(ISD::SRL, VT, Custom);
     setOperationAction(ISD::SMIN, VT, Legal);
     setOperationAction(ISD::SMAX, VT, Legal);
     setOperationAction(ISD::UMIN, VT, Legal);
@@ -317,6 +320,10 @@ void ARMTargetLowering::addMVEVectorTypes(bool HasMVEFP) {
     setOperationAction(ISD::EXTRACT_VECTOR_ELT, VT, Custom);
     setOperationAction(ISD::BUILD_VECTOR, VT, Custom);
   }
+  // We can do bitwise operations on v2i64 vectors
+  setOperationAction(ISD::AND, MVT::v2i64, Legal);
+  setOperationAction(ISD::OR, MVT::v2i64, Legal);
+  setOperationAction(ISD::XOR, MVT::v2i64, Legal);
 
   // It is legal to extload from v4i8 to v4i16 or v4i32.
   addAllExtLoads(MVT::v8i16, MVT::v8i8, Legal);
@@ -5718,10 +5725,11 @@ static SDValue LowerShift(SDNode *N, SelectionDAG &DAG,
     return SDValue();
 
   // We essentially have two forms here. Shift by an immediate and shift by a
-  // vector register. We cannot easily match shift by an immediate in tablegen
-  // so we do that here and generate a VSHLIMM/VSHRsIMM/VSHRuIMM.  For shifting
-  // by a vector, we don't have VSHR, only VSHL (which can be signed or
-  // unsigned, and a negative shift indicates a shift right).
+  // vector register (there are also shift by a gpr, but that is just handled
+  // with a tablegen pattern). We cannot easily match shift by an immediate in
+  // tablegen so we do that here and generate a VSHLIMM/VSHRsIMM/VSHRuIMM.
+  // For shifting by a vector, we don't have VSHR, only VSHL (which can be
+  // signed or unsigned, and a negative shift indicates a shift right).
   if (N->getOpcode() == ISD::SHL) {
     if (isVShiftLImm(N->getOperand(1), VT, false, Cnt))
       return DAG.getNode(ARMISD::VSHLIMM, dl, VT, N->getOperand(0),
@@ -12851,8 +12859,9 @@ static SDValue PerformShiftCombine(SDNode *N,
   const TargetLowering &TLI = DAG.getTargetLoweringInfo();
   if (!VT.isVector() || !TLI.isTypeLegal(VT))
     return SDValue();
+  if (ST->hasMVEIntegerOps() && VT == MVT::v2i64)
+    return SDValue();
 
-  assert(ST->hasNEON() && "unexpected vector shift");
   int64_t Cnt;
 
   switch (N->getOpcode()) {
