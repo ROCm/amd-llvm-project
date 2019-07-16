@@ -367,7 +367,7 @@ void xxx(int argc) {
 // CHECK-NEXT:  [[#TDPFS+4]]: cond
 // CHECK-NEXT:  [[#TDPFS+5]]: [B1.[[#TDPFS+4]]] (ImplicitCastExpr, LValueToRValue, int)
 // CHECK-NEXT:  [[#TDPFS+6]]: [B1.[[#TDPFS+5]]] (ImplicitCastExpr, IntegralToBoolean, _Bool)
-// CHECK-NEXT:  [[#TDPFS+7]]: #pragma omp teams distribute parallel for simd
+// CHECK-NEXT:  [[#TDPFS+7]]: #pragma omp teams distribute parallel for simd if(cond)
 // CHECK-NEXT:    for (int i = 0; i < 10; ++i)
 // CHECK-NEXT:        [B1.[[#TDPFS+3]]];
 // CHECK-NEXT:  [[#TDPFS+8]]: #pragma omp target
