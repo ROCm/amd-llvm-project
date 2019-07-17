@@ -6979,6 +6979,14 @@ Value *CodeGenFunction::EmitAArch64BuiltinExpr(unsigned BuiltinID,
         CGM.getIntrinsic(Intrinsic::bitreverse, Arg->getType()), Arg, "rbit");
   }
 
+  if (BuiltinID == AArch64::BI__builtin_arm_jcvt) {
+    assert((getContext().getTypeSize(E->getType()) == 32) &&
+           "__jcvt of unusual size!");
+    llvm::Value *Arg = EmitScalarExpr(E->getArg(0));
+    return Builder.CreateCall(
+        CGM.getIntrinsic(Intrinsic::aarch64_fjcvtzs), Arg);
+  }
+
   if (BuiltinID == AArch64::BI__clear_cache) {
     assert(E->getNumArgs() == 2 && "__clear_cache takes 2 arguments");
     const FunctionDecl *FD = E->getDirectCallee();
@@ -12673,6 +12681,8 @@ Value *CodeGenFunction::EmitAMDGPUBuiltinExpr(unsigned BuiltinID,
 
   case AMDGPU::BI__builtin_amdgcn_ds_swizzle:
     return emitBinaryBuiltin(*this, E, Intrinsic::amdgcn_ds_swizzle);
+  case AMDGPU::BI__builtin_amdgcn_mov_dpp8:
+    return emitBinaryBuiltin(*this, E, Intrinsic::amdgcn_mov_dpp8);
   case AMDGPU::BI__builtin_amdgcn_mov_dpp:
   case AMDGPU::BI__builtin_amdgcn_update_dpp: {
     llvm::SmallVector<llvm::Value *, 6> Args;
@@ -12738,6 +12748,10 @@ Value *CodeGenFunction::EmitAMDGPUBuiltinExpr(unsigned BuiltinID,
     return emitUnaryBuiltin(*this, E, Intrinsic::amdgcn_fract);
   case AMDGPU::BI__builtin_amdgcn_lerp:
     return emitTernaryBuiltin(*this, E, Intrinsic::amdgcn_lerp);
+  case AMDGPU::BI__builtin_amdgcn_ubfe:
+    return emitTernaryBuiltin(*this, E, Intrinsic::amdgcn_ubfe);
+  case AMDGPU::BI__builtin_amdgcn_sbfe:
+    return emitTernaryBuiltin(*this, E, Intrinsic::amdgcn_sbfe);
   case AMDGPU::BI__builtin_amdgcn_uicmp:
   case AMDGPU::BI__builtin_amdgcn_uicmpl:
   case AMDGPU::BI__builtin_amdgcn_sicmp:
@@ -13906,6 +13920,11 @@ Value *CodeGenFunction::EmitWebAssemblyBuiltinExpr(unsigned BuiltinID,
     Value *Arg = llvm::ConstantInt::get(getLLVMContext(), SegConst);
     Function *Callee = CGM.getIntrinsic(Intrinsic::wasm_data_drop);
     return Builder.CreateCall(Callee, {Arg});
+  }
+  case WebAssembly::BI__builtin_wasm_tls_size: {
+    llvm::Type *ResultType = ConvertType(E->getType());
+    Function *Callee = CGM.getIntrinsic(Intrinsic::wasm_tls_size, ResultType);
+    return Builder.CreateCall(Callee);
   }
   case WebAssembly::BI__builtin_wasm_throw: {
     Value *Tag = EmitScalarExpr(E->getArg(0));

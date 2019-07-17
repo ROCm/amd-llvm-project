@@ -335,7 +335,7 @@ void OutputSection::addContributingPartialSection(PartialSection *sec) {
 } // namespace lld
 
 // Check whether the target address S is in range from a relocation
-// of type RelType at address P.
+// of type relType at address P.
 static bool isInRange(uint16_t relType, uint64_t s, uint64_t p, int margin) {
   if (config->machine == ARMNT) {
     int64_t diff = AbsoluteDifference(s, p + 4) + margin;
@@ -427,7 +427,7 @@ static bool createThunks(OutputSection *os, int margin) {
 
       // The estimate of the source address P should be pretty accurate,
       // but we don't know whether the target Symbol address should be
-      // offset by ThunkSize or not (or by some of ThunksSize but not all of
+      // offset by thunksSize or not (or by some of thunksSize but not all of
       // it), giving us some uncertainty once we have added one thunk.
       uint64_t p = sc->getRVA() + rel.VirtualAddress + thunksSize;
 
@@ -917,7 +917,7 @@ void Writer::createMiscChunks() {
   }
 
   // Create SEH table. x86-only.
-  if (config->machine == I386)
+  if (config->safeSEH)
     createSEHTable();
 
   // Create /guard:cf tables if requested.
@@ -1428,23 +1428,15 @@ void Writer::openFile(StringRef path) {
 }
 
 void Writer::createSEHTable() {
-  // Set the no SEH characteristic on x86 binaries unless we find exception
-  // handlers.
-  setNoSEHCharacteristic = true;
-
   SymbolRVASet handlers;
   for (ObjFile *file : ObjFile::instances) {
-    // FIXME: We should error here instead of earlier unless /safeseh:no was
-    // passed.
     if (!file->hasSafeSEH())
-      return;
-
+      error("/safeseh: " + file->getName() + " is not compatible with SEH");
     markSymbolsForRVATable(file, file->getSXDataChunks(), handlers);
   }
 
-  // Remove the "no SEH" characteristic if all object files were built with
-  // safeseh, we found some exception handlers, and there is a load config in
-  // the object.
+  // Set the "no SEH" characteristic if there really were no handlers, or if
+  // there is no load config object to point to the table of handlers.
   setNoSEHCharacteristic =
       handlers.empty() || !symtab->findUnderscore("_load_config_used");
 
@@ -1626,7 +1618,7 @@ void Writer::markSymbolsForRVATable(ObjFile *file,
 }
 
 // Replace the absolute table symbol with a synthetic symbol pointing to
-// TableChunk so that we can emit base relocations for it and resolve section
+// tableChunk so that we can emit base relocations for it and resolve section
 // relative relocations.
 void Writer::maybeAddRVATable(SymbolRVASet tableSymbols, StringRef tableSym,
                               StringRef countSym) {
