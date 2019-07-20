@@ -199,9 +199,9 @@ def int_amdgcn_wavefrontsize :
 // The first parameter is s_sendmsg immediate (i16),
 // the second one is copied to m0
 def int_amdgcn_s_sendmsg : GCCBuiltin<"__builtin_amdgcn_s_sendmsg">,
-  Intrinsic <[], [llvm_i32_ty, llvm_i32_ty], [ImmArg<0>]>;
+  Intrinsic <[], [llvm_i32_ty, llvm_i32_ty], [ImmArg<0>, IntrInaccessibleMemOnly]>;
 def int_amdgcn_s_sendmsghalt : GCCBuiltin<"__builtin_amdgcn_s_sendmsghalt">,
-  Intrinsic <[], [llvm_i32_ty, llvm_i32_ty], [ImmArg<0>]>;
+  Intrinsic <[], [llvm_i32_ty, llvm_i32_ty], [ImmArg<0>, IntrInaccessibleMemOnly]>;
 
 def int_amdgcn_s_barrier : GCCBuiltin<"__builtin_amdgcn_s_barrier">,
   Intrinsic<[], [], [IntrConvergent]>;
@@ -1249,15 +1249,12 @@ def int_amdgcn_ds_swizzle :
   Intrinsic<[llvm_i32_ty], [llvm_i32_ty, llvm_i32_ty],
             [IntrNoMem, IntrConvergent, ImmArg<1>]>;
 
-def int_amdgcn_ubfe :
-  GCCBuiltin<"__builtin_amdgcn_ubfe">,
-  Intrinsic<[llvm_anyint_ty],
+def int_amdgcn_ubfe : Intrinsic<[llvm_anyint_ty],
     [LLVMMatchType<0>, llvm_i32_ty, llvm_i32_ty],
     [IntrNoMem, IntrSpeculatable]
 >;
 
-def int_amdgcn_sbfe : GCCBuiltin<"__builtin_amdgcn_sbfe">,
-  Intrinsic<[llvm_anyint_ty],
+def int_amdgcn_sbfe : Intrinsic<[llvm_anyint_ty],
     [LLVMMatchType<0>, llvm_i32_ty, llvm_i32_ty],
     [IntrNoMem, IntrSpeculatable]
 >;
