@@ -320,9 +320,8 @@ static void readConfigs(opt::InputArgList &args) {
       args.hasFlag(OPT_fatal_warnings, OPT_no_fatal_warnings, false);
   config->importMemory = args.hasArg(OPT_import_memory);
   config->sharedMemory = args.hasArg(OPT_shared_memory);
-  // TODO: Make passive segments the default with shared memory
-  config->passiveSegments =
-      args.hasFlag(OPT_passive_segments, OPT_active_segments, false);
+  config->passiveSegments = args.hasFlag(
+      OPT_passive_segments, OPT_active_segments, config->sharedMemory);
   config->importTable = args.hasArg(OPT_import_table);
   config->ltoo = args::getInteger(args, OPT_lto_O, 2);
   config->ltoPartitions = args::getInteger(args, OPT_lto_partitions, 1);
@@ -454,6 +453,7 @@ createUndefinedGlobal(StringRef name, llvm::wasm::WasmGlobalType *type) {
 // Create ABI-defined synthetic symbols
 static void createSyntheticSymbols() {
   static WasmSignature nullSignature = {{}, {}};
+  static WasmSignature i32ArgSignature = {{}, {ValType::I32}};
   static llvm::wasm::WasmGlobalType globalTypeI32 = {WASM_TYPE_I32, false};
   static llvm::wasm::WasmGlobalType mutableGlobalTypeI32 = {WASM_TYPE_I32,
                                                             true};
@@ -514,6 +514,30 @@ static void createSyntheticSymbols() {
         "__stack_pointer", WASM_SYMBOL_VISIBILITY_HIDDEN, stackPointer);
     WasmSym::globalBase = symtab->addOptionalDataSymbol("__global_base");
     WasmSym::heapBase = symtab->addOptionalDataSymbol("__heap_base");
+  }
+
+  if (config->sharedMemory && !config->shared) {
+    llvm::wasm::WasmGlobal tlsBaseGlobal;
+    tlsBaseGlobal.Type = {WASM_TYPE_I32, true};
+    tlsBaseGlobal.InitExpr.Value.Int32 = 0;
+    tlsBaseGlobal.InitExpr.Opcode = WASM_OPCODE_I32_CONST;
+    tlsBaseGlobal.SymbolName = "__tls_base";
+    WasmSym::tlsBase =
+        symtab->addSyntheticGlobal("__tls_base", WASM_SYMBOL_VISIBILITY_HIDDEN,
+                                   make<InputGlobal>(tlsBaseGlobal, nullptr));
+
+    llvm::wasm::WasmGlobal tlsSizeGlobal;
+    tlsSizeGlobal.Type = {WASM_TYPE_I32, false};
+    tlsSizeGlobal.InitExpr.Value.Int32 = 0;
+    tlsSizeGlobal.InitExpr.Opcode = WASM_OPCODE_I32_CONST;
+    tlsSizeGlobal.SymbolName = "__tls_size";
+    WasmSym::tlsSize =
+        symtab->addSyntheticGlobal("__tls_size", WASM_SYMBOL_VISIBILITY_HIDDEN,
+                                   make<InputGlobal>(tlsSizeGlobal, nullptr));
+
+    WasmSym::initTLS = symtab->addSyntheticFunction(
+        "__wasm_init_tls", WASM_SYMBOL_VISIBILITY_HIDDEN,
+        make<SyntheticFunction>(i32ArgSignature, "__wasm_init_tls"));
   }
 
   WasmSym::dsoHandle = symtab->addSyntheticDataSymbol(
