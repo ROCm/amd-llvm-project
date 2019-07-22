@@ -13926,6 +13926,15 @@ Value *CodeGenFunction::EmitWebAssemblyBuiltinExpr(unsigned BuiltinID,
     Function *Callee = CGM.getIntrinsic(Intrinsic::wasm_tls_size, ResultType);
     return Builder.CreateCall(Callee);
   }
+  case WebAssembly::BI__builtin_wasm_tls_align: {
+    llvm::Type *ResultType = ConvertType(E->getType());
+    Function *Callee = CGM.getIntrinsic(Intrinsic::wasm_tls_align, ResultType);
+    return Builder.CreateCall(Callee);
+  }
+  case WebAssembly::BI__builtin_wasm_tls_base: {
+    Function *Callee = CGM.getIntrinsic(Intrinsic::wasm_tls_base);
+    return Builder.CreateCall(Callee);
+  }
   case WebAssembly::BI__builtin_wasm_throw: {
     Value *Tag = EmitScalarExpr(E->getArg(0));
     Value *Obj = EmitScalarExpr(E->getArg(1));

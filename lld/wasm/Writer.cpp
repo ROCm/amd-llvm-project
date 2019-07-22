@@ -247,6 +247,9 @@ void Writer::layoutMemory() {
     if (WasmSym::tlsSize && seg->name == ".tdata") {
       auto *tlsSize = cast<DefinedGlobal>(WasmSym::tlsSize);
       tlsSize->global->global.InitExpr.Value.Int32 = seg->size;
+
+      auto *tlsAlign = cast<DefinedGlobal>(WasmSym::tlsAlign);
+      tlsAlign->global->global.InitExpr.Value.Int32 = 1U << seg->alignment;
     }
   }
 
@@ -771,9 +774,10 @@ void Writer::createInitTLSFunction() {
 
     OutputSegment *tlsSeg = nullptr;
     for (auto *seg : segments) {
-      if (seg->name == ".tdata")
+      if (seg->name == ".tdata") {
         tlsSeg = seg;
-      break;
+        break;
+      }
     }
 
     writeUleb128(os, 0, "num locals");
@@ -821,6 +825,7 @@ void Writer::calculateInitFunctions() {
       assert(sym->isLive());
       if (*sym->signature != WasmSignature{{}, {}})
         error("invalid signature for init func: " + toString(*sym));
+      LLVM_DEBUG(dbgs() << "initFunctions: " << toString(*sym) << "\n");
       initFunctions.emplace_back(WasmInitEntry{sym, f.Priority});
     }
   }
