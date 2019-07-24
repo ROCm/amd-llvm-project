@@ -9,6 +9,8 @@
 #include "llvm/Bitcode/BitcodeAnalyzer.h"
 #include "llvm/Bitcode/BitcodeReader.h"
 #include "llvm/Bitcode/LLVMBitCodes.h"
+#include "llvm/Bitstream/BitCodes.h"
+#include "llvm/Bitstream/BitstreamReader.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/SHA1.h"
 
@@ -537,8 +539,11 @@ BitcodeAnalyzer::BitcodeAnalyzer(StringRef Buffer,
 
 Error BitcodeAnalyzer::analyze(Optional<BCDumpOptions> O,
                                Optional<StringRef> CheckHash) {
-  if (Expected<CurStreamTypeType> H = analyzeHeader(O, Stream))
-    CurStreamType = *H;
+  Expected<CurStreamTypeType> MaybeType = analyzeHeader(O, Stream);
+  if (!MaybeType)
+    return MaybeType.takeError();
+  else
+    CurStreamType = *MaybeType;
 
   Stream.setBlockInfo(&BlockInfo);
 

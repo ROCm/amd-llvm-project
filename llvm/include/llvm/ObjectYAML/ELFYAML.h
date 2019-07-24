@@ -144,7 +144,16 @@ struct Section {
   // section data at the offset specified. Useful for creating invalid objects.
   Optional<llvm::yaml::Hex64> ShOffset;
 
-  Section(SectionKind Kind) : Kind(Kind) {}
+  // This can be used to override the sh_size field. It does not affect the
+  // content written.
+  Optional<llvm::yaml::Hex64> ShSize;
+
+  // Usually sections are not created implicitly, but loaded from YAML.
+  // When they are, this flag is used to signal about that.
+  bool IsImplicit;
+
+  Section(SectionKind Kind, bool IsImplicit = false)
+      : Kind(Kind), IsImplicit(IsImplicit) {}
   virtual ~Section();
 };
 

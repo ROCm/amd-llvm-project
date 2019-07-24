@@ -688,7 +688,7 @@ static void InsertOCLBuiltinDeclarations(Sema &S, LookupResult &LR,
                                          unsigned Len) {
 
   for (unsigned i = 0; i < Len; ++i) {
-    OpenCLBuiltinDecl &Decl = OpenCLBuiltins[Index - 1 + i];
+    const OpenCLBuiltinDecl &Decl = OpenCLBuiltins[Index - 1 + i];
     ASTContext &Context = S.Context;
 
     // Ignore this BIF if the version is incorrect.
@@ -5274,7 +5274,8 @@ static NamedDecl *getDefinitionToImport(NamedDecl *D) {
   if (ObjCProtocolDecl *PD = dyn_cast<ObjCProtocolDecl>(D))
     return PD->getDefinition();
   if (TemplateDecl *TD = dyn_cast<TemplateDecl>(D))
-    return getDefinitionToImport(TD->getTemplatedDecl());
+    if (NamedDecl *TTD = TD->getTemplatedDecl())
+      return getDefinitionToImport(TTD);
   return nullptr;
 }
 

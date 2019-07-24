@@ -721,27 +721,16 @@ ObjectFileELF::ObjectFileELF(const lldb::ModuleSP &module_sp,
                              DataBufferSP &data_sp, lldb::offset_t data_offset,
                              const FileSpec *file, lldb::offset_t file_offset,
                              lldb::offset_t length)
-    : ObjectFile(module_sp, file, file_offset, length, data_sp, data_offset),
-      m_header(), m_uuid(), m_gnu_debuglink_file(), m_gnu_debuglink_crc(0),
-      m_program_headers(), m_section_headers(), m_dynamic_symbols(),
-      m_filespec_up(), m_entry_point_address(), m_arch_spec() {
+    : ObjectFile(module_sp, file, file_offset, length, data_sp, data_offset) {
   if (file)
     m_file = *file;
-  ::memset(&m_header, 0, sizeof(m_header));
 }
 
 ObjectFileELF::ObjectFileELF(const lldb::ModuleSP &module_sp,
                              DataBufferSP &header_data_sp,
                              const lldb::ProcessSP &process_sp,
                              addr_t header_addr)
-    : ObjectFile(module_sp, process_sp, header_addr, header_data_sp),
-      m_header(), m_uuid(), m_gnu_debuglink_file(), m_gnu_debuglink_crc(0),
-      m_program_headers(), m_section_headers(), m_dynamic_symbols(),
-      m_filespec_up(), m_entry_point_address(), m_arch_spec() {
-  ::memset(&m_header, 0, sizeof(m_header));
-}
-
-ObjectFileELF::~ObjectFileELF() {}
+    : ObjectFile(module_sp, process_sp, header_addr, header_data_sp) {}
 
 bool ObjectFileELF::IsExecutable() const {
   return ((m_header.e_type & ET_EXEC) != 0) || (m_header.e_entry != 0);
@@ -1674,38 +1663,40 @@ lldb::user_id_t ObjectFileELF::GetSectionIndexByName(const char *name) {
 }
 
 static SectionType GetSectionTypeFromName(llvm::StringRef Name) {
+  if (Name.consume_front(".debug_") || Name.consume_front(".zdebug_")) {
+    return llvm::StringSwitch<SectionType>(Name)
+        .Case("abbrev", eSectionTypeDWARFDebugAbbrev)
+        .Case("abbrev.dwo", eSectionTypeDWARFDebugAbbrevDwo)
+        .Case("addr", eSectionTypeDWARFDebugAddr)
+        .Case("aranges", eSectionTypeDWARFDebugAranges)
+        .Case("cu_index", eSectionTypeDWARFDebugCuIndex)
+        .Case("frame", eSectionTypeDWARFDebugFrame)
+        .Case("info", eSectionTypeDWARFDebugInfo)
+        .Case("info.dwo", eSectionTypeDWARFDebugInfoDwo)
+        .Cases("line", "line.dwo", eSectionTypeDWARFDebugLine)
+        .Cases("line_str", "line_str.dwo", eSectionTypeDWARFDebugLineStr)
+        .Cases("loc", "loc.dwo", eSectionTypeDWARFDebugLoc)
+        .Cases("loclists", "loclists.dwo", eSectionTypeDWARFDebugLocLists)
+        .Case("macinfo", eSectionTypeDWARFDebugMacInfo)
+        .Cases("macro", "macro.dwo", eSectionTypeDWARFDebugMacro)
+        .Case("names", eSectionTypeDWARFDebugNames)
+        .Case("pubnames", eSectionTypeDWARFDebugPubNames)
+        .Case("pubtypes", eSectionTypeDWARFDebugPubTypes)
+        .Case("ranges", eSectionTypeDWARFDebugRanges)
+        .Case("rnglists", eSectionTypeDWARFDebugRngLists)
+        .Case("str", eSectionTypeDWARFDebugStr)
+        .Case("str.dwo", eSectionTypeDWARFDebugStrDwo)
+        .Case("str_offsets", eSectionTypeDWARFDebugStrOffsets)
+        .Case("str_offsets.dwo", eSectionTypeDWARFDebugStrOffsetsDwo)
+        .Case("types", eSectionTypeDWARFDebugTypes)
+        .Case("types.dwo", eSectionTypeDWARFDebugTypesDwo)
+        .Default(eSectionTypeOther);
+  }
   return llvm::StringSwitch<SectionType>(Name)
       .Case(".ARM.exidx", eSectionTypeARMexidx)
       .Case(".ARM.extab", eSectionTypeARMextab)
       .Cases(".bss", ".tbss", eSectionTypeZeroFill)
       .Cases(".data", ".tdata", eSectionTypeData)
-      .Case(".debug_abbrev", eSectionTypeDWARFDebugAbbrev)
-      .Case(".debug_abbrev.dwo", eSectionTypeDWARFDebugAbbrevDwo)
-      .Case(".debug_addr", eSectionTypeDWARFDebugAddr)
-      .Case(".debug_aranges", eSectionTypeDWARFDebugAranges)
-      .Case(".debug_cu_index", eSectionTypeDWARFDebugCuIndex)
-      .Case(".debug_frame", eSectionTypeDWARFDebugFrame)
-      .Case(".debug_info", eSectionTypeDWARFDebugInfo)
-      .Case(".debug_info.dwo", eSectionTypeDWARFDebugInfoDwo)
-      .Cases(".debug_line", ".debug_line.dwo", eSectionTypeDWARFDebugLine)
-      .Cases(".debug_line_str", ".debug_line_str.dwo",
-             eSectionTypeDWARFDebugLineStr)
-      .Cases(".debug_loc", ".debug_loc.dwo", eSectionTypeDWARFDebugLoc)
-      .Cases(".debug_loclists", ".debug_loclists.dwo",
-             eSectionTypeDWARFDebugLocLists)
-      .Case(".debug_macinfo", eSectionTypeDWARFDebugMacInfo)
-      .Cases(".debug_macro", ".debug_macro.dwo", eSectionTypeDWARFDebugMacro)
-      .Case(".debug_names", eSectionTypeDWARFDebugNames)
-      .Case(".debug_pubnames", eSectionTypeDWARFDebugPubNames)
-      .Case(".debug_pubtypes", eSectionTypeDWARFDebugPubTypes)
-      .Case(".debug_ranges", eSectionTypeDWARFDebugRanges)
-      .Case(".debug_rnglists", eSectionTypeDWARFDebugRngLists)
-      .Case(".debug_str", eSectionTypeDWARFDebugStr)
-      .Case(".debug_str.dwo", eSectionTypeDWARFDebugStrDwo)
-      .Case(".debug_str_offsets", eSectionTypeDWARFDebugStrOffsets)
-      .Case(".debug_str_offsets.dwo", eSectionTypeDWARFDebugStrOffsetsDwo)
-      .Case(".debug_types", eSectionTypeDWARFDebugTypes)
-      .Case(".debug_types.dwo", eSectionTypeDWARFDebugTypesDwo)
       .Case(".eh_frame", eSectionTypeEHFrame)
       .Case(".gnu_debugaltlink", eSectionTypeDWARFGNUDebugAltLink)
       .Case(".gosymtab", eSectionTypeGoSymtab)
@@ -3302,7 +3293,8 @@ size_t ObjectFileELF::ReadSectionData(Section *section,
     return section->GetObjectFile()->ReadSectionData(section, section_data);
 
   size_t result = ObjectFile::ReadSectionData(section, section_data);
-  if (result == 0 || !section->Test(SHF_COMPRESSED))
+  if (result == 0 || !llvm::object::Decompressor::isCompressedELFSection(
+                         section->Get(), section->GetName().GetStringRef()))
     return result;
 
   auto Decompressor = llvm::object::Decompressor::create(

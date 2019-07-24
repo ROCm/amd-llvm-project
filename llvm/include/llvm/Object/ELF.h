@@ -201,14 +201,12 @@ public:
   /// \param Err [out] an error to support fallible iteration, which should
   ///  be checked after iteration ends.
   Elf_Note_Iterator notes_begin(const Elf_Phdr &Phdr, Error &Err) const {
-    if (Phdr.p_type != ELF::PT_NOTE) {
-      // TODO: this error is untested.
-      Err = createError("attempt to iterate notes of non-note program header");
-      return Elf_Note_Iterator(Err);
-    }
+    assert(Phdr.p_type == ELF::PT_NOTE && "Phdr is not of type PT_NOTE");
+    ErrorAsOutParameter ErrAsOutParam(&Err);
     if (Phdr.p_offset + Phdr.p_filesz > getBufSize()) {
-      // TODO: this error is untested.
-      Err = createError("invalid program header offset/size");
+      Err = createError("PT_NOTE header has invalid offset (0x" +
+                        Twine::utohexstr(Phdr.p_offset) + ") or size (0x" +
+                        Twine::utohexstr(Phdr.p_filesz) + ")");
       return Elf_Note_Iterator(Err);
     }
     return Elf_Note_Iterator(base() + Phdr.p_offset, Phdr.p_filesz, Err);
@@ -222,14 +220,13 @@ public:
   /// \param Err [out] an error to support fallible iteration, which should
   ///  be checked after iteration ends.
   Elf_Note_Iterator notes_begin(const Elf_Shdr &Shdr, Error &Err) const {
-    if (Shdr.sh_type != ELF::SHT_NOTE) {
-      // TODO: this error is untested.
-      Err = createError("attempt to iterate notes of non-note section");
-      return Elf_Note_Iterator(Err);
-    }
+    assert(Shdr.sh_type == ELF::SHT_NOTE && "Shdr is not of type SHT_NOTE");
+    ErrorAsOutParameter ErrAsOutParam(&Err);
     if (Shdr.sh_offset + Shdr.sh_size > getBufSize()) {
-      // TODO: this error is untested.
-      Err = createError("invalid section offset/size");
+      Err = createError("SHT_NOTE section " + getSecIndexForError(this, &Shdr) +
+                        " has invalid offset (0x" +
+                        Twine::utohexstr(Shdr.sh_offset) + ") or size (0x" +
+                        Twine::utohexstr(Shdr.sh_size) + ")");
       return Elf_Note_Iterator(Err);
     }
     return Elf_Note_Iterator(base() + Shdr.sh_offset, Shdr.sh_size, Err);
@@ -358,21 +355,18 @@ ELFFile<ELFT>::getSection(const Elf_Sym *Sym, Elf_Sym_Range Symbols,
 }
 
 template <class ELFT>
-inline Expected<const typename ELFT::Sym *>
-getSymbol(typename ELFT::SymRange Symbols, uint32_t Index) {
-  if (Index >= Symbols.size())
-    // TODO: this error is untested.
-    return createError("invalid symbol index");
-  return &Symbols[Index];
-}
-
-template <class ELFT>
 Expected<const typename ELFT::Sym *>
 ELFFile<ELFT>::getSymbol(const Elf_Shdr *Sec, uint32_t Index) const {
-  auto SymtabOrErr = symbols(Sec);
-  if (!SymtabOrErr)
-    return SymtabOrErr.takeError();
-  return object::getSymbol<ELFT>(*SymtabOrErr, Index);
+  auto SymsOrErr = symbols(Sec);
+  if (!SymsOrErr)
+    return SymsOrErr.takeError();
+
+  Elf_Sym_Range Symbols = *SymsOrErr;
+  if (Index >= Symbols.size())
+    return createError("unable to get symbol from section " +
+                       getSecIndexForError(this, Sec) +
+                       ": invalid symbol index (" + Twine(Index) + ")");
+  return &Symbols[Index];
 }
 
 template <class ELFT>
@@ -472,9 +466,10 @@ ELFFile<ELFT>::getSectionStringTable(Elf_Shdr_Range Sections) const {
 
   if (!Index) // no section string table.
     return "";
+  // TODO: Test a case when the sh_link of the section with index 0 is broken.
   if (Index >= Sections.size())
-    // TODO: this error is untested.
-    return createError("invalid section index");
+    return createError("section header string table index " + Twine(Index) +
+                       " does not exist");
   return getStringTable(&Sections[Index]);
 }
 

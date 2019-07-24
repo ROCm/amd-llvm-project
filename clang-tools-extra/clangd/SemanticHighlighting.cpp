@@ -31,17 +31,54 @@ public:
   std::vector<HighlightingToken> collectTokens() {
     Tokens.clear();
     TraverseAST(Ctx);
+    // Initializer lists can give duplicates of tokens, therefore all tokens
+    // must be deduplicated.
+    llvm::sort(Tokens,
+               [](const HighlightingToken &L, const HighlightingToken &R) {
+                 return std::tie(L.R, L.Kind) < std::tie(R.R, R.Kind);
+               });
+    auto Last = std::unique(Tokens.begin(), Tokens.end());
+    Tokens.erase(Last, Tokens.end());
     return Tokens;
   }
 
+  bool VisitNamespaceAliasDecl(NamespaceAliasDecl *NAD) {
+    // The target namespace of an alias can not be found in any other way.
+    addToken(NAD->getTargetNameLoc(), HighlightingKind::Namespace);
+    return true;
+  }
+
+  bool VisitMemberExpr(MemberExpr *ME) {
+    const auto *MD = ME->getMemberDecl();
+    if (isa<CXXDestructorDecl>(MD))
+      // When calling the destructor manually like: AAA::~A(); The ~ is a
+      // MemberExpr. Other methods should still be highlighted though.
+      return true;
+    addToken(ME->getMemberLoc(), MD);
+    return true;
+  }
+
   bool VisitNamedDecl(NamedDecl *ND) {
-    // FIXME: (De)Constructors/operator need to be highlighted some other way.
+    // UsingDirectiveDecl's namespaces do not show up anywhere else in the
+    // Visit/Traverse mehods. But they should also be highlighted as a
+    // namespace.
+    if (const auto *UD = dyn_cast<UsingDirectiveDecl>(ND)) {
+      addToken(UD->getIdentLocation(), HighlightingKind::Namespace);
+      return true;
+    }
+
+    // Constructors' TypeLoc has a TypePtr that is a FunctionProtoType. It has
+    // no tag decl and therefore constructors must be gotten as NamedDecls
+    // instead.
+    if (ND->getDeclName().getNameKind() ==
+        DeclarationName::CXXConstructorName) {
+      addToken(ND->getLocation(), ND);
+      return true;
+    }
+
     if (ND->getDeclName().getNameKind() != DeclarationName::Identifier)
       return true;
 
-    if (ND->getDeclName().isEmpty())
-      // Don't add symbols that don't have any length.
-      return true;
     addToken(ND->getLocation(), ND);
     return true;
   }
@@ -56,14 +93,111 @@ public:
     return true;
   }
 
+  bool VisitTypedefNameDecl(TypedefNameDecl *TD) {
+    if(const auto *TSI = TD->getTypeSourceInfo())
+      addTypeLoc(TD->getLocation(), TSI->getTypeLoc());
+    return true;
+  }
+
+  bool VisitTemplateTypeParmTypeLoc(TemplateTypeParmTypeLoc &TL) {
+    // TemplateTypeParmTypeLoc does not have a TagDecl in its type ptr.
+    addToken(TL.getBeginLoc(), TL.getDecl());
+    return true;
+  }
+
+  bool VisitTemplateSpecializationTypeLoc(TemplateSpecializationTypeLoc &TL) {
+    if (const TemplateDecl *TD =
+            TL.getTypePtr()->getTemplateName().getAsTemplateDecl())
+      addToken(TL.getBeginLoc(), TD);
+    return true;
+  }
+
+  bool VisitTypeLoc(TypeLoc &TL) {
+    // This check is for not getting two entries when there are anonymous
+    // structs. It also makes us not highlight certain namespace qualifiers
+    // twice. For elaborated types the actual type is highlighted as an inner
+    // TypeLoc.
+    if (TL.getTypeLocClass() == TypeLoc::TypeLocClass::Elaborated)
+      return true;
+
+    addTypeLoc(TL.getBeginLoc(), TL);
+    return true;
+  }
+
+  bool TraverseNestedNameSpecifierLoc(NestedNameSpecifierLoc NNSLoc) {
+    if (NestedNameSpecifier *NNS = NNSLoc.getNestedNameSpecifier())
+      if (NNS->getKind() == NestedNameSpecifier::Namespace ||
+          NNS->getKind() == NestedNameSpecifier::NamespaceAlias)
+        addToken(NNSLoc.getLocalBeginLoc(), HighlightingKind::Namespace);
+
+    return RecursiveASTVisitor<
+        HighlightingTokenCollector>::TraverseNestedNameSpecifierLoc(NNSLoc);
+  }
+
 private:
-  void addToken(SourceLocation Loc, const Decl *D) {
+  void addTypeLoc(SourceLocation Loc, const TypeLoc &TL) {
+    if (const Type *TP = TL.getTypePtr())
+      if (const TagDecl *TD = TP->getAsTagDecl())
+        addToken(Loc, TD);
+  }
+
+  void addToken(SourceLocation Loc, const NamedDecl *D) {
+    if (D->getDeclName().isIdentifier() && D->getName().empty())
+      // Don't add symbols that don't have any length.
+      return;
+    // We highlight class decls, constructor decls and destructor decls as
+    // `Class` type. The destructor decls are handled in `VisitTypeLoc` (we will
+    // visit a TypeLoc where the underlying Type is a CXXRecordDecl).
+    if (isa<ClassTemplateDecl>(D)) {
+      addToken(Loc, HighlightingKind::Class);
+      return;
+    }
+    if (isa<RecordDecl>(D)) {
+      addToken(Loc, HighlightingKind::Class);
+      return;
+    }
+    if (isa<CXXConstructorDecl>(D)) {
+      addToken(Loc, HighlightingKind::Class);
+      return;
+    }
+    if (isa<CXXMethodDecl>(D)) {
+      addToken(Loc, HighlightingKind::Method);
+      return;
+    }
+    if (isa<FieldDecl>(D)) {
+      addToken(Loc, HighlightingKind::Field);
+      return;
+    }
+    if (isa<EnumDecl>(D)) {
+      addToken(Loc, HighlightingKind::Enum);
+      return;
+    }
+    if (isa<EnumConstantDecl>(D)) {
+      addToken(Loc, HighlightingKind::EnumConstant);
+      return;
+    }
     if (isa<VarDecl>(D)) {
       addToken(Loc, HighlightingKind::Variable);
       return;
     }
     if (isa<FunctionDecl>(D)) {
       addToken(Loc, HighlightingKind::Function);
+      return;
+    }
+    if (isa<NamespaceDecl>(D)) {
+      addToken(Loc, HighlightingKind::Namespace);
+      return;
+    }
+    if (isa<NamespaceAliasDecl>(D)) {
+      addToken(Loc, HighlightingKind::Namespace);
+      return;
+    }
+    if (isa<TemplateTemplateParmDecl>(D)) {
+      addToken(Loc, HighlightingKind::TemplateParameter);
+      return;
+    }
+    if (isa<TemplateTypeParmDecl>(D)) {
+      addToken(Loc, HighlightingKind::TemplateParameter);
       return;
     }
   }
@@ -174,8 +308,22 @@ llvm::StringRef toTextMateScope(HighlightingKind Kind) {
   switch (Kind) {
   case HighlightingKind::Function:
     return "entity.name.function.cpp";
+  case HighlightingKind::Method:
+    return "entity.name.function.method.cpp";
   case HighlightingKind::Variable:
-    return "variable.cpp";
+    return "variable.other.cpp";
+  case HighlightingKind::Field:
+    return "variable.other.field.cpp";
+  case HighlightingKind::Class:
+    return "entity.name.type.class.cpp";
+  case HighlightingKind::Enum:
+    return "entity.name.type.enum.cpp";
+  case HighlightingKind::EnumConstant:
+    return "variable.other.enummember.cpp";
+  case HighlightingKind::Namespace:
+    return "entity.name.namespace.cpp";
+  case HighlightingKind::TemplateParameter:
+    return "entity.name.type.template.cpp";
   case HighlightingKind::NumKinds:
     llvm_unreachable("must not pass NumKinds to the function");
   }

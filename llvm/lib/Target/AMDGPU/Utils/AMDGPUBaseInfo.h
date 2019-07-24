@@ -94,7 +94,7 @@ unsigned getMinWavesPerEU(const MCSubtargetInfo *STI);
 
 /// \returns Maximum number of waves per execution unit for given subtarget \p
 /// STI without any kind of limitation.
-unsigned getMaxWavesPerEU();
+unsigned getMaxWavesPerEU(const MCSubtargetInfo *STI);
 
 /// \returns Maximum number of waves per execution unit for given subtarget \p
 /// STI and limited by given \p FlatWorkGroupSize.
@@ -564,6 +564,8 @@ inline unsigned getOperandSize(const MCOperandInfo &OpInfo) {
   case AMDGPU::OPERAND_REG_IMM_FP32:
   case AMDGPU::OPERAND_REG_INLINE_C_INT32:
   case AMDGPU::OPERAND_REG_INLINE_C_FP32:
+  case AMDGPU::OPERAND_REG_INLINE_AC_INT32:
+  case AMDGPU::OPERAND_REG_INLINE_AC_FP32:
     return 4;
 
   case AMDGPU::OPERAND_REG_IMM_INT64:
@@ -578,6 +580,10 @@ inline unsigned getOperandSize(const MCOperandInfo &OpInfo) {
   case AMDGPU::OPERAND_REG_INLINE_C_FP16:
   case AMDGPU::OPERAND_REG_INLINE_C_V2INT16:
   case AMDGPU::OPERAND_REG_INLINE_C_V2FP16:
+  case AMDGPU::OPERAND_REG_INLINE_AC_INT16:
+  case AMDGPU::OPERAND_REG_INLINE_AC_FP16:
+  case AMDGPU::OPERAND_REG_INLINE_AC_V2INT16:
+  case AMDGPU::OPERAND_REG_INLINE_AC_V2FP16:
   case AMDGPU::OPERAND_REG_IMM_V2INT16:
   case AMDGPU::OPERAND_REG_IMM_V2FP16:
     return 2;

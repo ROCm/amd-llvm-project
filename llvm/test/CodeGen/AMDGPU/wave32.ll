@@ -920,7 +920,7 @@ main_body:
 
 ; GCN-LABEL: {{^}}test_vgprblocks_w64_attr:
 ; Test that the wave size can be overridden in function attributes and that the block size is correct as a result
-; GFX10DEFWAVE: ; VGPRBlocks: 2
+; GFX10DEFWAVE: ; VGPRBlocks: 11
 define amdgpu_gs float @test_vgprblocks_w64_attr(float %a, float %b, float %c, float %d, float %e,
                                         float %f, float %g, float %h, float %i, float %j, float %k, float %l) #4 {
 main_body:
@@ -1073,6 +1073,7 @@ declare void @external_void_func_void() #1
 ; GFX1064-NEXT: s_or_saveexec_b64 [[COPY_EXEC0:s\[[0-9]+:[0-9]+\]]], -1{{$}}
 ; GFX1032-NEXT: s_or_saveexec_b32 [[COPY_EXEC0:s[0-9]]], -1{{$}}
 ; GCN-NEXT: buffer_store_dword v32, off, s[0:3], s32 ; 4-byte Folded Spill
+; GCN-NEXT: v_nop
 ; GFX1064-NEXT: s_mov_b64 exec, [[COPY_EXEC0]]
 ; GFX1032-NEXT: s_mov_b32 exec_lo, [[COPY_EXEC0]]
 
@@ -1082,11 +1083,11 @@ declare void @external_void_func_void() #1
 ; GFX1032: s_add_u32 s32, s32, 0x200
 
 
-; GCN-DAG: v_writelane_b32 v32, s36, 0
-; GCN-DAG: v_writelane_b32 v32, s37, 1
+; GCN-DAG: v_writelane_b32 v32, s30, 0
+; GCN-DAG: v_writelane_b32 v32, s31, 1
 ; GCN: s_swappc_b64
-; GCN-DAG: v_readlane_b32 s36, v32, 0
-; GCN-DAG: v_readlane_b32 s37, v32, 1
+; GCN-DAG: v_readlane_b32 s4, v32, 0
+; GCN-DAG: v_readlane_b32 s5, v32, 1
 
 
 ; GFX1064: s_sub_u32 s32, s32, 0x400
@@ -1095,6 +1096,7 @@ declare void @external_void_func_void() #1
 ; GFX1064: s_or_saveexec_b64 [[COPY_EXEC1:s\[[0-9]+:[0-9]+\]]], -1{{$}}
 ; GFX1032: s_or_saveexec_b32 [[COPY_EXEC1:s[0-9]]], -1{{$}}
 ; GCN-NEXT: buffer_load_dword v32, off, s[0:3], s32 ; 4-byte Folded Reload
+; GCN-NEXT: v_nop
 ; GFX1064-NEXT: s_mov_b64 exec, [[COPY_EXEC1]]
 ; GFX1032-NEXT: s_mov_b32 exec_lo, [[COPY_EXEC1]]
 ; GCN-NEXT: s_waitcnt vmcnt(0)

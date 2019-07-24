@@ -20,8 +20,9 @@
 #include "clang/Basic/SourceManager.h"
 #include "clang/Format/Format.h"
 #include "clang/Tooling/Core/Replacement.h"
-#include "llvm/ADT/StringSet.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/StringSet.h"
+#include "llvm/Support/SHA1.h"
 
 namespace clang {
 class SourceManager;
@@ -73,6 +74,14 @@ llvm::Optional<Range> getTokenRange(const SourceManager &SM,
 /// care to avoid comparing the result with expansion locations.
 llvm::Expected<SourceLocation> sourceLocationInMainFile(const SourceManager &SM,
                                                         Position P);
+
+/// Returns true iff \p Loc is inside the main file. This function handles
+/// file & macro locations. For macro locations, returns iff the macro is being
+/// expanded inside the main file.
+///
+/// The function is usually used to check whether a declaration is inside the
+/// the main file.
+bool isInsideMainFile(SourceLocation Loc, const SourceManager &SM);
 
 /// Turns a token range into a half-open range and checks its correctness.
 /// The resulting range will have only valid source location on both sides, both

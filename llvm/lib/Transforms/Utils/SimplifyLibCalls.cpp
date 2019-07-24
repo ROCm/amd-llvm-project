@@ -1235,7 +1235,8 @@ static Value *getPow(Value *InnerChain[33], unsigned Exp, IRBuilder<> &B) {
 }
 
 /// Use exp{,2}(x * y) for pow(exp{,2}(x), y);
-/// exp2(n * x) for pow(2.0 ** n, x); exp10(x) for pow(10.0, x).
+/// exp2(n * x) for pow(2.0 ** n, x); exp10(x) for pow(10.0, x);
+/// exp2(log2(n) * x) for pow(n, x).
 Value *LibCallSimplifier::replacePowWithExp(CallInst *Pow, IRBuilder<> &B) {
   Value *Base = Pow->getArgOperand(0), *Expo = Pow->getArgOperand(1);
   AttributeList Attrs = Pow->getCalledFunction()->getAttributes();
@@ -1347,6 +1348,28 @@ Value *LibCallSimplifier::replacePowWithExp(CallInst *Pow, IRBuilder<> &B) {
     return emitUnaryFloatFnCall(Expo, TLI, LibFunc_exp10, LibFunc_exp10f,
                                 LibFunc_exp10l, B, Attrs);
 
+  // pow(n, x) -> exp2(log2(n) * x)
+  if (Pow->hasOneUse() && Pow->hasApproxFunc() && Pow->hasNoNaNs() &&
+      Pow->hasNoInfs() && BaseF->isNormal() && !BaseF->isNegative()) {
+    Value *Log = nullptr;
+    if (Ty->isFloatTy())
+      Log = ConstantFP::get(Ty, std::log2(BaseF->convertToFloat()));
+    else if (Ty->isDoubleTy())
+      Log = ConstantFP::get(Ty, std::log2(BaseF->convertToDouble()));
+
+    if (Log) {
+      Value *FMul = B.CreateFMul(Log, Expo, "mul");
+      if (Pow->doesNotAccessMemory()) {
+        return B.CreateCall(Intrinsic::getDeclaration(Mod, Intrinsic::exp2, Ty),
+                            FMul, "exp2");
+      } else {
+        if (hasUnaryFloatFn(TLI, Ty, LibFunc_exp2, LibFunc_exp2f,
+                            LibFunc_exp2l))
+          return emitUnaryFloatFnCall(FMul, TLI, LibFunc_exp2, LibFunc_exp2f,
+                                      LibFunc_exp2l, B, Attrs);
+      }
+    }
+  }
   return nullptr;
 }
 
@@ -1448,21 +1471,6 @@ Value *LibCallSimplifier::optimizePow(CallInst *Pow, IRBuilder<> &B) {
   if (match(Base, m_FPOne()))
     return Base;
 
-  // powf(x, sitofp(e)) -> powi(x, e)
-  // powf(x, uitofp(e)) -> powi(x, e)
-  if (AllowApprox && (isa<SIToFPInst>(Expo) || isa<UIToFPInst>(Expo))) {
-    Value *IntExpo = cast<Instruction>(Expo)->getOperand(0);
-    Value *NewExpo = nullptr;
-    unsigned BitWidth = IntExpo->getType()->getPrimitiveSizeInBits();
-    if (isa<SIToFPInst>(Expo) && BitWidth == 32)
-      NewExpo = IntExpo;
-    else if (BitWidth < 32)
-      NewExpo = isa<SIToFPInst>(Expo) ? B.CreateSExt(IntExpo, B.getInt32Ty())
-                                      : B.CreateZExt(IntExpo, B.getInt32Ty());
-    if (NewExpo)
-      return createPowWithIntegerExponent(Base, NewExpo, M, B);
-  }
-
   if (Value *Exp = replacePowWithExp(Pow, B))
     return Exp;
 
@@ -1487,12 +1495,9 @@ Value *LibCallSimplifier::optimizePow(CallInst *Pow, IRBuilder<> &B) {
   if (Value *Sqrt = replacePowWithSqrt(Pow, B))
     return Sqrt;
 
-  if (!AllowApprox)
-    return Shrunk;
-
   // pow(x, n) -> x * x * x * ...
   const APFloat *ExpoF;
-  if (match(Expo, m_APFloat(ExpoF))) {
+  if (AllowApprox && match(Expo, m_APFloat(ExpoF))) {
     // We limit to a max of 7 multiplications, thus the maximum exponent is 32.
     // If the exponent is an integer+0.5 we generate a call to sqrt and an
     // additional fmul.
@@ -1542,13 +1547,27 @@ Value *LibCallSimplifier::optimizePow(CallInst *Pow, IRBuilder<> &B) {
     }
 
     APSInt IntExpo(32, /*isUnsigned=*/false);
-    // powf(x, C) -> powi(x, C) iff C is a constant signed integer value
+    // powf(x, n) -> powi(x, n) if n is a constant signed integer value
     if (ExpoF->isInteger() &&
         ExpoF->convertToInteger(IntExpo, APFloat::rmTowardZero, &Ignored) ==
             APFloat::opOK) {
       return createPowWithIntegerExponent(
           Base, ConstantInt::get(B.getInt32Ty(), IntExpo), M, B);
     }
+  }
+
+  // powf(x, itofp(y)) -> powi(x, y)
+  if (AllowApprox && (isa<SIToFPInst>(Expo) || isa<UIToFPInst>(Expo))) {
+    Value *IntExpo = cast<Instruction>(Expo)->getOperand(0);
+    Value *NewExpo = nullptr;
+    unsigned BitWidth = IntExpo->getType()->getPrimitiveSizeInBits();
+    if (isa<SIToFPInst>(Expo) && BitWidth == 32)
+      NewExpo = IntExpo;
+    else if (BitWidth < 32)
+      NewExpo = isa<SIToFPInst>(Expo) ? B.CreateSExt(IntExpo, B.getInt32Ty())
+                                      : B.CreateZExt(IntExpo, B.getInt32Ty());
+    if (NewExpo)
+      return createPowWithIntegerExponent(Base, NewExpo, M, B);
   }
 
   return Shrunk;

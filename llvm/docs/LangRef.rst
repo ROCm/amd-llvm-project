@@ -1493,6 +1493,16 @@ example:
     Annotated functions may still raise an exception, i.a., ``nounwind`` is not implied.
     If an invocation of an annotated function does not return control back
     to a point in the call stack, the behavior is undefined.
+``nosync``
+    This function attribute indicates that the function does not communicate
+    (synchronize) with another thread through memory or other well-defined means.
+    Synchronization is considered possible in the presence of `atomic` accesses
+    that enforce an order, thus not "unordered" and "monotonic", `volatile` accesses,
+    as well as `convergent` function calls. Note that through `convergent` function calls
+    non-memory communication, e.g., cross-lane operations, are possible and are also
+    considered synchronization. However `convergent` does not contradict `nosync`.
+    If an annotated function does ever synchronize with another thread,
+    the behavior is undefined.
 ``nounwind``
     This function attribute indicates that the function never raises an
     exception. If the function does raise an exception, its runtime
@@ -1670,6 +1680,10 @@ example:
 ``sanitize_hwaddress``
     This attribute indicates that HWAddressSanitizer checks
     (dynamic address safety analysis based on tagged pointers) are enabled for
+    this function.
+``sanitize_memtag``
+    This attribute indicates that MemTagSanitizer checks
+    (dynamic address safety analysis based on Armv8 MTE) are enabled for
     this function.
 ``speculative_load_hardening``
     This attribute indicates that
@@ -17322,7 +17336,7 @@ Syntax:
 """""""
 ::
 
-      declare <type2>
+      declare <ret_type>
       @llvm.preserve.array.access.index.p0s_union.anons.p0a10s_union.anons(<type> base,
                                                                            i32 dim,
                                                                            i32 index)
@@ -17332,7 +17346,9 @@ Overview:
 
 The '``llvm.preserve.array.access.index``' intrinsic returns the getelementptr address
 based on array base ``base``, array dimension ``dim`` and the last access index ``index``
-into the array.
+into the array. The return type ``ret_type`` is a pointer type to the array element.
+The array ``dim`` and ``index`` are preserved which is more robust than
+getelementptr instruction which may be subject to compiler transformation.
 
 Arguments:
 """"""""""
@@ -17365,6 +17381,8 @@ The '``llvm.preserve.union.access.index``' intrinsic carries the debuginfo field
 ``di_index`` and returns the ``base`` address.
 The ``llvm.preserve.access.index`` type of metadata is attached to this call instruction
 to provide union debuginfo type.
+The metadata is a ``DICompositeType`` representing the debuginfo version of ``type``.
+The return type ``type`` is the same as the ``base`` type.
 
 Arguments:
 """"""""""
@@ -17383,7 +17401,7 @@ Syntax:
 """""""
 ::
 
-      declare <type2>
+      declare <ret_type>
       @llvm.preserve.struct.access.index.p0i8.p0s_struct.anon.0s(<type> base,
                                                                  i32 gep_index,
                                                                  i32 di_index)
@@ -17395,6 +17413,8 @@ The '``llvm.preserve.struct.access.index``' intrinsic returns the getelementptr 
 based on struct base ``base`` and IR struct member index ``gep_index``.
 The ``llvm.preserve.access.index`` type of metadata is attached to this call instruction
 to provide struct debuginfo type.
+The metadata is a ``DICompositeType`` representing the debuginfo version of ``type``.
+The return type ``ret_type`` is a pointer type to the structure member.
 
 Arguments:
 """"""""""

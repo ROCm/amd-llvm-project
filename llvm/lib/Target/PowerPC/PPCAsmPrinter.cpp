@@ -51,9 +51,11 @@
 #include "llvm/MC/MCInstBuilder.h"
 #include "llvm/MC/MCSectionELF.h"
 #include "llvm/MC/MCSectionMachO.h"
+#include "llvm/MC/MCSectionXCOFF.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/MC/MCSymbolELF.h"
+#include "llvm/MC/MCSymbolXCOFF.h"
 #include "llvm/MC/SectionKind.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/CodeGen.h"
@@ -156,6 +158,16 @@ public:
 
   bool doFinalization(Module &M) override;
   void EmitStartOfAsmFile(Module &M) override;
+};
+
+class PPCAIXAsmPrinter : public PPCAsmPrinter {
+public:
+  PPCAIXAsmPrinter(TargetMachine &TM, std::unique_ptr<MCStreamer> Streamer)
+      : PPCAsmPrinter(TM, std::move(Streamer)) {}
+
+  StringRef getPassName() const override { return "AIX PPC Assembly Printer"; }
+
+  void EmitGlobalVariable(const GlobalVariable *GV) override;
 };
 
 } // end anonymous namespace
@@ -712,8 +724,8 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
     return;
   }
 
-  case PPC::ADDIStocHA: {
-    // Transform %xd = ADDIStocHA %x2, @sym
+  case PPC::ADDIStocHA8: {
+    // Transform %xd = ADDIStocHA8 %x2, @sym
     LowerPPCMachineInstrToMCInst(MI, TmpInst, *this, isDarwin);
 
     // Change the opcode to ADDIS8.  If the global address is external, has
@@ -724,7 +736,7 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
     const MachineOperand &MO = MI->getOperand(2);
     assert((MO.isGlobal() || MO.isCPI() || MO.isJTI() ||
             MO.isBlockAddress()) &&
-           "Invalid operand for ADDIStocHA!");
+           "Invalid operand for ADDIStocHA8!");
     MCSymbol *MOSymbol = nullptr;
     bool GlobalToc = false;
 
@@ -791,7 +803,7 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
           unsigned char GVFlags = Subtarget->classifyGlobalReference(GV);
           assert((GVFlags & PPCII::MO_NLP_FLAG) &&
                  "LDtocL used on symbol that could be accessed directly is "
-                 "invalid. Must match ADDIStocHA."));
+                 "invalid. Must match ADDIStocHA8."));
       MOSymbol = lookUpOrCreateTOCEntry(MOSymbol);
     }
 
@@ -1635,6 +1647,35 @@ bool PPCDarwinAsmPrinter::doFinalization(Module &M) {
   return AsmPrinter::doFinalization(M);
 }
 
+void PPCAIXAsmPrinter::EmitGlobalVariable(const GlobalVariable *GV) {
+  // Early error checking limiting what is supported.
+  if (GV->isThreadLocal())
+    report_fatal_error("Thread local not yet supported on AIX.");
+
+  if (GV->hasSection())
+    report_fatal_error("Custom section for Data not yet supported.");
+
+  if (GV->hasComdat())
+    report_fatal_error("COMDAT not yet supported on AIX.");
+
+  SectionKind GVKind = getObjFileLowering().getKindForGlobal(GV, TM);
+  if (!GVKind.isCommon())
+    report_fatal_error("Only common variables are supported on AIX.");
+
+  // Create the containing csect and switch to it.
+  MCSectionXCOFF *CSect = dyn_cast<MCSectionXCOFF>(
+      getObjFileLowering().SectionForGlobal(GV, GVKind, TM));
+  OutStreamer->SwitchSection(CSect);
+
+  // Create the symbol and emit it.
+  MCSymbolXCOFF *XSym = dyn_cast<MCSymbolXCOFF>(getSymbol(GV));
+  auto DL = GV->getParent()->getDataLayout();
+  unsigned Align =
+      GV->getAlignment() ? GV->getAlignment() : DL.getPreferredAlignment(GV);
+  uint64_t Size = DL.getTypeAllocSize(GV->getType()->getElementType());
+  OutStreamer->EmitCommonSymbol(XSym, Size, Align);
+}
+
 /// createPPCAsmPrinterPass - Returns a pass that prints the PPC assembly code
 /// for a MachineFunction to the given output stream, in a format that the
 /// Darwin assembler can deal with.
@@ -1644,6 +1685,9 @@ createPPCAsmPrinterPass(TargetMachine &tm,
                         std::unique_ptr<MCStreamer> &&Streamer) {
   if (tm.getTargetTriple().isMacOSX())
     return new PPCDarwinAsmPrinter(tm, std::move(Streamer));
+  if (tm.getTargetTriple().isOSAIX())
+    return new PPCAIXAsmPrinter(tm, std::move(Streamer));
+
   return new PPCLinuxAsmPrinter(tm, std::move(Streamer));
 }
 

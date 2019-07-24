@@ -171,8 +171,8 @@ namespace
 
     bool is_valid(const std::string& gfxip)
     {
-        static constexpr std::array<const char*, 4u> valid = {
-            { "gfx701", "gfx803", "gfx900", "gfx906" }};
+        static constexpr std::array<const char*, 5u> valid = {
+            { "gfx701", "gfx803", "gfx900", "gfx906", "gfx908" }};
 
         return std::find(valid.cbegin(), valid.cend(), gfxip) != valid.cend();
     }

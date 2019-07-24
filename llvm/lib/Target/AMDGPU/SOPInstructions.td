@@ -125,8 +125,8 @@ class SOP1_64_0 <string opName, list<dag> pattern=[]> : SOP1_Pseudo <
 }
 
 // 64-bit input, no output
-class SOP1_1 <string opName, list<dag> pattern=[]> : SOP1_Pseudo <
-  opName, (outs), (ins SReg_64:$src0), "$src0", pattern> {
+class SOP1_1 <string opName, RegisterClass rc = SReg_64, list<dag> pattern=[]> : SOP1_Pseudo <
+  opName, (outs), (ins rc:$src0), "$src0", pattern> {
   let has_sdst = 0;
 }
 
@@ -224,7 +224,7 @@ def S_SETPC_B64 : SOP1_1  <"s_setpc_b64">;
 
 let isReturn = 1 in {
 // Define variant marked as return rather than branch.
-def S_SETPC_B64_return : SOP1_1<"", [(AMDGPUret_flag i64:$src0)]>;
+def S_SETPC_B64_return : SOP1_1<"", CCR_SGPR_64, [(AMDGPUret_flag i64:$src0)]>;
 }
 } // End isTerminator = 1, isBarrier = 1
 
@@ -511,22 +511,22 @@ let AddedComplexity = 1 in {
 let Defs = [SCC] in {
 // TODO: b64 versions require VOP3 change since v_lshlrev_b64 is VOP3
 def S_LSHL_B32 : SOP2_32 <"s_lshl_b32",
-  [(set i32:$sdst, (UniformBinFrag<shl> i32:$src0, i32:$src1))]
+  [(set SReg_32:$sdst, (shl (i32 SSrc_b32:$src0), (i32 SSrc_b32:$src1)))]
 >;
 def S_LSHL_B64 : SOP2_64_32 <"s_lshl_b64",
-  [(set i64:$sdst, (UniformBinFrag<shl> i64:$src0, i32:$src1))]
+  [(set SReg_64:$sdst, (shl (i64 SSrc_b64:$src0), (i32 SSrc_b32:$src1)))]
 >;
 def S_LSHR_B32 : SOP2_32 <"s_lshr_b32",
-  [(set i32:$sdst, (UniformBinFrag<srl> i32:$src0, i32:$src1))]
+  [(set SReg_32:$sdst, (srl (i32 SSrc_b32:$src0), (i32 SSrc_b32:$src1)))]
 >;
 def S_LSHR_B64 : SOP2_64_32 <"s_lshr_b64",
-  [(set i64:$sdst, (UniformBinFrag<srl> i64:$src0, i32:$src1))]
+  [(set SReg_64:$sdst, (srl (i64 SSrc_b64:$src0), (i32 SSrc_b32:$src1)))]
 >;
 def S_ASHR_I32 : SOP2_32 <"s_ashr_i32",
-  [(set i32:$sdst, (UniformBinFrag<sra> i32:$src0, i32:$src1))]
+  [(set SReg_32:$sdst, (sra (i32 SSrc_b32:$src0), (i32 SSrc_b32:$src1)))]
 >;
 def S_ASHR_I64 : SOP2_64_32 <"s_ashr_i64",
-  [(set i64:$sdst, (UniformBinFrag<sra> i64:$src0, i32:$src1))]
+  [(set SReg_64:$sdst, (sra (i64 SSrc_b64:$src0), (i32 SSrc_b32:$src1)))]
 >;
 } // End Defs = [SCC]
 
@@ -853,13 +853,13 @@ class SOPC_Base <bits<7> op, RegisterOperand rc0, RegisterOperand rc1,
   let Defs = [SCC];
 }
 class SOPC_Helper <bits<7> op, RegisterOperand rc, ValueType vt,
-                    string opName, PatLeaf cond> : SOPC_Base <
+                    string opName, SDPatternOperator cond> : SOPC_Base <
   op, rc, rc, opName,
   [(set SCC, (si_setcc_uniform vt:$src0, vt:$src1, cond))] > {
 }
 
 class SOPC_CMP_32<bits<7> op, string opName,
-                  PatLeaf cond = COND_NULL, string revOp = opName>
+                  SDPatternOperator cond = COND_NULL, string revOp = opName>
   : SOPC_Helper<op, SSrc_b32, i32, opName, cond>,
     Commutable_REV<revOp, !eq(revOp, opName)>,
     SOPKInstTable<0, opName> {
@@ -868,7 +868,7 @@ class SOPC_CMP_32<bits<7> op, string opName,
 }
 
 class SOPC_CMP_64<bits<7> op, string opName,
-                  PatLeaf cond = COND_NULL, string revOp = opName>
+                  SDPatternOperator cond = COND_NULL, string revOp = opName>
   : SOPC_Helper<op, SSrc_b64, i64, opName, cond>,
     Commutable_REV<revOp, !eq(revOp, opName)> {
   let isCompare = 1;
@@ -1090,7 +1090,7 @@ def S_WAKEUP : SOPP <0x00000003, (ins), "s_wakeup"> {
 
 let mayLoad = 1, mayStore = 1, hasSideEffects = 1 in
 def S_WAITCNT : SOPP <0x0000000c, (ins WAIT_FLAG:$simm16), "s_waitcnt $simm16",
-    [(int_amdgcn_s_waitcnt SIMM16bit:$simm16)]>;
+    [(int_amdgcn_s_waitcnt UIMM16bit:$simm16)]>;
 def S_SETHALT : SOPP <0x0000000d, (ins i16imm:$simm16), "s_sethalt $simm16">;
 def S_SETKILL : SOPP <0x0000000b, (ins i16imm:$simm16), "s_setkill $simm16">;
 

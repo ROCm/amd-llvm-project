@@ -38,6 +38,8 @@ class DS_Pseudo <string opName, dag outs, dag ins, string asmOps, list<dag> patt
   bits<1> has_data0 = 1;
   bits<1> has_data1 = 1;
 
+  bits<1> has_gws_data0 = 0; // data0 is encoded as addr
+
   bits<1> has_offset  = 1; // has "offset" that should be split to offset0,1
   bits<1> has_offset0 = 1;
   bits<1> has_offset1 = 1;
@@ -59,6 +61,7 @@ class DS_Real <DS_Pseudo ds> :
 
   // copy relevant pseudo op flags
   let SubtargetPredicate = ds.SubtargetPredicate;
+  let OtherPredicates = ds.OtherPredicates;
   let AsmMatchConverter  = ds.AsmMatchConverter;
 
   // encoding fields
@@ -314,13 +317,16 @@ class DS_GWS <string opName, dag ins, string asmOps>
 
 class DS_GWS_0D <string opName>
 : DS_GWS<opName,
-  (ins offset:$offset, gds:$gds), "$offset gds">;
+  (ins offset:$offset, gds:$gds), "$offset gds"> {
+  let hasSideEffects = 1;
+}
 
 class DS_GWS_1D <string opName>
 : DS_GWS<opName,
   (ins VGPR_32:$data0, offset:$offset, gds:$gds), "$data0$offset gds"> {
 
-  let has_data0 = 1;
+  let has_gws_data0 = 1;
+  let hasSideEffects = 1;
 }
 
 class DS_VOID <string opName> : DS_Pseudo<opName,
@@ -602,8 +608,8 @@ def : GCNPat <
 >;
 
 class DSReadPat <DS_Pseudo inst, ValueType vt, PatFrag frag, int gds=0> : GCNPat <
-  (vt (frag (DS1Addr1Offset i32:$ptr, i32:$offset))),
-  (inst $ptr, (as_i16imm $offset), (i1 gds))
+  (vt (frag (DS1Addr1Offset i32:$ptr, i16:$offset))),
+  (inst $ptr, offset:$offset, (i1 gds))
 >;
 
 multiclass DSReadPat_mc<DS_Pseudo inst, ValueType vt, string frag> {
@@ -618,8 +624,8 @@ multiclass DSReadPat_mc<DS_Pseudo inst, ValueType vt, string frag> {
 }
 
 class DSReadPat_D16 <DS_Pseudo inst, PatFrag frag, ValueType vt> : GCNPat <
-  (frag (DS1Addr1Offset i32:$ptr, i32:$offset), vt:$in),
-  (inst $ptr, (as_i16imm $offset), (i1 0), $in)
+  (frag (DS1Addr1Offset i32:$ptr, i16:$offset), vt:$in),
+  (inst $ptr, offset:$offset, (i1 0), $in)
 >;
 
 defm : DSReadPat_mc <DS_READ_I8, i32, "sextloadi8_local">;
@@ -661,8 +667,8 @@ def : DSReadPat_D16<DS_READ_I8_D16, sextloadi8_d16_lo_local, v2f16>;
 }
 
 class DSWritePat <DS_Pseudo inst, ValueType vt, PatFrag frag, int gds=0> : GCNPat <
-  (frag vt:$value, (DS1Addr1Offset i32:$ptr, i32:$offset)),
-  (inst $ptr, $value, (as_i16imm $offset), (i1 gds))
+  (frag vt:$value, (DS1Addr1Offset i32:$ptr, i16:$offset)),
+  (inst $ptr, $value, offset:$offset, (i1 gds))
 >;
 
 multiclass DSWritePat_mc <DS_Pseudo inst, ValueType vt, string frag> {
@@ -678,8 +684,8 @@ multiclass DSWritePat_mc <DS_Pseudo inst, ValueType vt, string frag> {
 // Irritatingly, atomic_store reverses the order of operands from a
 // normal store.
 class DSAtomicWritePat <DS_Pseudo inst, ValueType vt, PatFrag frag> : GCNPat <
-  (frag (DS1Addr1Offset i32:$ptr, i32:$offset), vt:$value),
-  (inst $ptr, $value, (as_i16imm $offset), (i1 0))
+  (frag (DS1Addr1Offset i32:$ptr, i16:$offset), vt:$value),
+  (inst $ptr, $value, offset:$offset, (i1 0))
 >;
 
 multiclass DSAtomicWritePat_mc <DS_Pseudo inst, ValueType vt, string frag> {
@@ -738,8 +744,8 @@ defm : DSWritePat_mc <DS_WRITE_B128, v4i32, "store_align16_local">;
 
 } // End AddedComplexity = 100
 class DSAtomicRetPat<DS_Pseudo inst, ValueType vt, PatFrag frag, bit gds=0> : GCNPat <
-  (frag (DS1Addr1Offset i32:$ptr, i32:$offset), vt:$value),
-  (inst $ptr, $value, (as_i16imm $offset), (i1 gds))
+  (frag (DS1Addr1Offset i32:$ptr, i16:$offset), vt:$value),
+  (inst $ptr, $value, offset:$offset, (i1 gds))
 >;
 
 multiclass DSAtomicRetPat_mc<DS_Pseudo inst, ValueType vt, string frag> {
@@ -758,8 +764,8 @@ multiclass DSAtomicRetPat_mc<DS_Pseudo inst, ValueType vt, string frag> {
 
 
 class DSAtomicCmpXChg<DS_Pseudo inst, ValueType vt, PatFrag frag, bit gds=0> : GCNPat <
-  (frag (DS1Addr1Offset i32:$ptr, i32:$offset), vt:$cmp, vt:$swap),
-  (inst $ptr, $cmp, $swap, (as_i16imm $offset), (i1 gds))
+  (frag (DS1Addr1Offset i32:$ptr, i16:$offset), vt:$cmp, vt:$swap),
+  (inst $ptr, $cmp, $swap, offset:$offset, (i1 gds))
 >;
 
 multiclass DSAtomicCmpXChg_mc<DS_Pseudo inst, ValueType vt, string frag> {
@@ -832,7 +838,7 @@ class Base_DS_Real_gfx6_gfx7_gfx10<bits<8> op, DS_Pseudo ps, int ef> :
   let Inst{17}    = !if(ps.has_gds, gds, ps.gdsValue);
   let Inst{25-18} = op;
   let Inst{31-26} = 0x36;
-  let Inst{39-32} = !if(ps.has_addr, addr, 0);
+  let Inst{39-32} = !if(ps.has_addr, addr, !if(ps.has_gws_data0, data0, 0));
   let Inst{47-40} = !if(ps.has_data0, data0, 0);
   let Inst{55-48} = !if(ps.has_data1, data1, 0);
   let Inst{63-56} = !if(ps.has_vdst, vdst, 0);
@@ -1051,7 +1057,7 @@ class DS_Real_vi <bits<8> op, DS_Pseudo ds> :
   let Inst{16}    = !if(ds.has_gds, gds, ds.gdsValue);
   let Inst{24-17} = op;
   let Inst{31-26} = 0x36; // ds prefix
-  let Inst{39-32} = !if(ds.has_addr, addr, 0);
+  let Inst{39-32} = !if(ds.has_addr, addr, !if(ds.has_gws_data0, data0, 0));
   let Inst{47-40} = !if(ds.has_data0, data0, 0);
   let Inst{55-48} = !if(ds.has_data1, data1, 0);
   let Inst{63-56} = !if(ds.has_vdst, vdst, 0);

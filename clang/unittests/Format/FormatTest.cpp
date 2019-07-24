@@ -1716,7 +1716,17 @@ TEST_F(FormatTest, FormatsTypedefEnum) {
 
 TEST_F(FormatTest, FormatsNSEnums) {
   verifyGoogleFormat("typedef NS_ENUM(NSInteger, SomeName) { AAA, BBB }");
+  verifyGoogleFormat(
+      "typedef NS_CLOSED_ENUM(NSInteger, SomeName) { AAA, BBB }");
   verifyGoogleFormat("typedef NS_ENUM(NSInteger, MyType) {\n"
+                     "  // Information about someDecentlyLongValue.\n"
+                     "  someDecentlyLongValue,\n"
+                     "  // Information about anotherDecentlyLongValue.\n"
+                     "  anotherDecentlyLongValue,\n"
+                     "  // Information about aThirdDecentlyLongValue.\n"
+                     "  aThirdDecentlyLongValue\n"
+                     "};");
+  verifyGoogleFormat("typedef NS_CLOSED_ENUM(NSInteger, MyType) {\n"
                      "  // Information about someDecentlyLongValue.\n"
                      "  someDecentlyLongValue,\n"
                      "  // Information about anotherDecentlyLongValue.\n"
@@ -1730,6 +1740,11 @@ TEST_F(FormatTest, FormatsNSEnums) {
                      "  c = 3,\n"
                      "};");
   verifyGoogleFormat("typedef CF_ENUM(NSInteger, MyType) {\n"
+                     "  a = 1,\n"
+                     "  b = 2,\n"
+                     "  c = 3,\n"
+                     "};");
+  verifyGoogleFormat("typedef CF_CLOSED_ENUM(NSInteger, MyType) {\n"
                      "  a = 1,\n"
                      "  b = 2,\n"
                      "  c = 3,\n"
@@ -7026,6 +7041,12 @@ TEST_F(FormatTest, UnderstandsSquareAttributes) {
 
   // On the other hand, we still need to correctly find array subscripts.
   verifyFormat("int a = std::vector<int>{1, 2, 3}[0];");
+
+  // Make sure that we do not mistake Objective-C method inside array literals
+  // as attributes, even if those method names are also keywords.
+  verifyFormat("@[ [foo bar] ];");
+  verifyFormat("@[ [NSArray class] ];");
+  verifyFormat("@[ [foo enum] ];");
 
   // Make sure we do not parse attributes as lambda introducers.
   FormatStyle MultiLineFunctions = getLLVMStyle();
