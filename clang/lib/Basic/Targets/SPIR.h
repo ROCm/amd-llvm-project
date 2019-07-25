@@ -91,7 +91,7 @@ public:
                                                             : CCCR_Warning;
   }
 
-  CallingConv getDefaultCallingConv(CallingConvMethodType MT) const override {
+  CallingConv getDefaultCallingConv() const override {
     return CC_SpirFunction;
   }
 
