@@ -21,6 +21,16 @@ std::unique_ptr<Generator> getHTMLGenerator() {
   return std::move(G.get());
 }
 
+ClangDocContext
+getClangDocContext(std::vector<std::string> UserStylesheets = {}) {
+  ClangDocContext CDCtx;
+  CDCtx.UserStylesheets = {UserStylesheets.begin(), UserStylesheets.end()};
+  CDCtx.UserStylesheets.insert(
+      CDCtx.UserStylesheets.begin(),
+      "../share/clang/clang-doc-default-stylesheet.css");
+  return CDCtx;
+}
+
 TEST(HTMLGeneratorTest, emitNamespaceHTML) {
   NamespaceInfo I;
   I.Name = "Namespace";
@@ -38,12 +48,14 @@ TEST(HTMLGeneratorTest, emitNamespaceHTML) {
   assert(G);
   std::string Buffer;
   llvm::raw_string_ostream Actual(Buffer);
-  auto Err = G->generateDocForInfo(&I, Actual);
+  ClangDocContext CDCtx = getClangDocContext({"user-provided-stylesheet.css"});
+  auto Err = G->generateDocForInfo(&I, Actual, CDCtx);
   assert(!Err);
   std::string Expected = R"raw(<!DOCTYPE html>
 <meta charset="utf-8"/>
 <title>namespace Namespace</title>
 <link rel="stylesheet" href="clang-doc-default-stylesheet.css"/>
+<link rel="stylesheet" href="user-provided-stylesheet.css"/>
 <div>
   <h1>namespace Namespace</h1>
   <h2>Namespaces</h2>
@@ -95,12 +107,9 @@ TEST(HTMLGeneratorTest, emitRecordHTML) {
   assert(G);
   std::string Buffer;
   llvm::raw_string_ostream Actual(Buffer);
-  auto Err = G->generateDocForInfo(&I, Actual);
+  ClangDocContext CDCtx = getClangDocContext();
+  auto Err = G->generateDocForInfo(&I, Actual, CDCtx);
   assert(!Err);
-  SmallString<16> PathToF;
-  llvm::sys::path::native("../../../path/to/F.html", PathToF);
-  SmallString<16> PathToInt;
-  llvm::sys::path::native("../int.html", PathToInt);
   std::string Expected = R"raw(<!DOCTYPE html>
 <meta charset="utf-8"/>
 <title>class r</title>
@@ -110,16 +119,14 @@ TEST(HTMLGeneratorTest, emitRecordHTML) {
   <p>Defined at line 10 of test.cpp</p>
   <p>
     Inherits from 
-    <a href=")raw" + std::string(PathToF.str()) +
-                         R"raw(">F</a>
+    <a href="../../../path/to/F.html">F</a>
     , G
   </p>
   <h2>Members</h2>
   <ul>
     <li>
       private 
-      <a href=")raw" + std::string(PathToInt.str()) +
-                         R"raw(">int</a>
+      <a href="../int.html">int</a>
        X
     </li>
   </ul>
@@ -161,7 +168,8 @@ TEST(HTMLGeneratorTest, emitFunctionHTML) {
   assert(G);
   std::string Buffer;
   llvm::raw_string_ostream Actual(Buffer);
-  auto Err = G->generateDocForInfo(&I, Actual);
+  ClangDocContext CDCtx = getClangDocContext();
+  auto Err = G->generateDocForInfo(&I, Actual, CDCtx);
   assert(!Err);
   SmallString<16> PathToFloat;
   llvm::sys::path::native("path/to/float.html", PathToFloat);
@@ -203,7 +211,8 @@ TEST(HTMLGeneratorTest, emitEnumHTML) {
   assert(G);
   std::string Buffer;
   llvm::raw_string_ostream Actual(Buffer);
-  auto Err = G->generateDocForInfo(&I, Actual);
+  ClangDocContext CDCtx = getClangDocContext();
+  auto Err = G->generateDocForInfo(&I, Actual, CDCtx);
   assert(!Err);
   std::string Expected = R"raw(<!DOCTYPE html>
 <meta charset="utf-8"/>
@@ -271,7 +280,8 @@ TEST(HTMLGeneratorTest, emitCommentHTML) {
   assert(G);
   std::string Buffer;
   llvm::raw_string_ostream Actual(Buffer);
-  auto Err = G->generateDocForInfo(&I, Actual);
+  ClangDocContext CDCtx = getClangDocContext();
+  auto Err = G->generateDocForInfo(&I, Actual, CDCtx);
   assert(!Err);
   std::string Expected = R"raw(<!DOCTYPE html>
 <meta charset="utf-8"/>
