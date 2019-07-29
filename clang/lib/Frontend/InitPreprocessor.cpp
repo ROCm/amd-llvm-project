@@ -576,8 +576,10 @@ static void InitializePredefinedMacros(const TargetInfo &TI,
   Builder.defineMacro("__clang__"); // Clang Frontend
 
   // hcc macros
-  Builder.defineMacro("__KALMAR_CC__", "1");
-  Builder.defineMacro("__HCC__", "1");
+  if (LangOpts.CPlusPlusAMP) {
+    Builder.defineMacro("__KALMAR_CC__", "1");
+    Builder.defineMacro("__HCC__", "1");
+  }
 
 #define TOSTR2(X) #X
 #define TOSTR(X) TOSTR2(X)
