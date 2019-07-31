@@ -89,14 +89,12 @@ static constexpr const char *InitFileWarning =
     "and\n"
     "accept the security risk.";
 
-static constexpr PropertyDefinition g_properties[] = {
-#define LLDB_PROPERTIES_commandinterpreter
-#include "Properties.inc"
-};
+#define LLDB_PROPERTIES_interpreter
+#include "InterpreterProperties.inc"
 
 enum {
-#define LLDB_PROPERTIES_commandinterpreter
-#include "PropertiesEnum.inc"
+#define LLDB_PROPERTIES_interpreter
+#include "InterpreterPropertiesEnum.inc"
 };
 
 ConstString &CommandInterpreter::GetStaticBroadcasterClass() {
@@ -121,19 +119,19 @@ CommandInterpreter::CommandInterpreter(Debugger &debugger,
   SetEventName(eBroadcastBitResetPrompt, "reset-prompt");
   SetEventName(eBroadcastBitQuitCommandReceived, "quit");
   CheckInWithManager();
-  m_collection_sp->Initialize(g_properties);
+  m_collection_sp->Initialize(g_interpreter_properties);
 }
 
 bool CommandInterpreter::GetExpandRegexAliases() const {
   const uint32_t idx = ePropertyExpandRegexAliases;
   return m_collection_sp->GetPropertyAtIndexAsBoolean(
-      nullptr, idx, g_properties[idx].default_uint_value != 0);
+      nullptr, idx, g_interpreter_properties[idx].default_uint_value != 0);
 }
 
 bool CommandInterpreter::GetPromptOnQuit() const {
   const uint32_t idx = ePropertyPromptOnQuit;
   return m_collection_sp->GetPropertyAtIndexAsBoolean(
-      nullptr, idx, g_properties[idx].default_uint_value != 0);
+      nullptr, idx, g_interpreter_properties[idx].default_uint_value != 0);
 }
 
 void CommandInterpreter::SetPromptOnQuit(bool b) {
@@ -144,7 +142,7 @@ void CommandInterpreter::SetPromptOnQuit(bool b) {
 bool CommandInterpreter::GetEchoCommands() const {
   const uint32_t idx = ePropertyEchoCommands;
   return m_collection_sp->GetPropertyAtIndexAsBoolean(
-      nullptr, idx, g_properties[idx].default_uint_value != 0);
+      nullptr, idx, g_interpreter_properties[idx].default_uint_value != 0);
 }
 
 void CommandInterpreter::SetEchoCommands(bool b) {
@@ -155,7 +153,7 @@ void CommandInterpreter::SetEchoCommands(bool b) {
 bool CommandInterpreter::GetEchoCommentCommands() const {
   const uint32_t idx = ePropertyEchoCommentCommands;
   return m_collection_sp->GetPropertyAtIndexAsBoolean(
-      nullptr, idx, g_properties[idx].default_uint_value != 0);
+      nullptr, idx, g_interpreter_properties[idx].default_uint_value != 0);
 }
 
 void CommandInterpreter::SetEchoCommentCommands(bool b) {
@@ -195,13 +193,13 @@ void CommandInterpreter::ResolveCommand(const char *command_line,
 bool CommandInterpreter::GetStopCmdSourceOnError() const {
   const uint32_t idx = ePropertyStopCmdSourceOnError;
   return m_collection_sp->GetPropertyAtIndexAsBoolean(
-      nullptr, idx, g_properties[idx].default_uint_value != 0);
+      nullptr, idx, g_interpreter_properties[idx].default_uint_value != 0);
 }
 
 bool CommandInterpreter::GetSpaceReplPrompts() const {
   const uint32_t idx = ePropertySpaceReplPrompts;
   return m_collection_sp->GetPropertyAtIndexAsBoolean(
-      nullptr, idx, g_properties[idx].default_uint_value != 0);
+      nullptr, idx, g_interpreter_properties[idx].default_uint_value != 0);
 }
 
 void CommandInterpreter::Initialize() {
@@ -1815,15 +1813,15 @@ int CommandInterpreter::HandleCompletionMatches(CompletionRequest &request) {
   return num_command_matches;
 }
 
-int CommandInterpreter::HandleCompletion(
-    const char *current_line, const char *cursor, const char *last_char,
-    int match_start_point, int max_return_elements, StringList &matches,
-    StringList &descriptions) {
+int CommandInterpreter::HandleCompletion(const char *current_line,
+                                         const char *cursor,
+                                         const char *last_char,
+                                         StringList &matches,
+                                         StringList &descriptions) {
 
   llvm::StringRef command_line(current_line, last_char - current_line);
   CompletionResult result;
-  CompletionRequest request(command_line, cursor - current_line,
-                            match_start_point, max_return_elements, result);
+  CompletionRequest request(command_line, cursor - current_line, result);
   // Don't complete comments, and if the line we are completing is just the
   // history repeat character, substitute the appropriate history line.
   const char *first_arg = request.GetParsedLine().GetArgumentAtIndex(0);
@@ -1839,9 +1837,6 @@ int CommandInterpreter::HandleCompletion(
         return 0;
     }
   }
-
-  // Only max_return_elements == -1 is supported at present:
-  lldbassert(max_return_elements == -1);
 
   int num_command_matches = HandleCompletionMatches(request);
   result.GetMatches(matches);
@@ -1859,8 +1854,7 @@ int CommandInterpreter::HandleCompletion(
     // element 0, otherwise put an empty string in element 0.
     std::string command_partial_str = request.GetCursorArgumentPrefix().str();
 
-    std::string common_prefix;
-    matches.LongestCommonPrefix(common_prefix);
+    std::string common_prefix = matches.LongestCommonPrefix();
     const size_t partial_name_len = command_partial_str.size();
     common_prefix.erase(0, partial_name_len);
 
