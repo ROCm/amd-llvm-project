@@ -3223,8 +3223,7 @@ static void RenderDebugOptions(const ToolChain &TC, const Driver &D,
     }
   }
 
-  if (!IsHCCKernelPath ||
-       DebugInfoKind == codegenoptions::DebugLineTablesOnly) {
+  if (DebugInfoKind == codegenoptions::DebugLineTablesOnly) {
   // If a debugger tuning argument appeared, remember it.
   if (const Arg *A =
           Args.getLastArg(options::OPT_gTune_Group, options::OPT_ggdbN_Group)) {
@@ -4345,22 +4344,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back("-O3");
       D.Diag(diag::warn_O4_is_O3);
     } else {
-      // C++ AMP-specific
-      if (JA.ContainsActions(Action::BackendJobClass, types::TY_PP_CXX_AMP)) {
-        // ignore -O0 and -O1 for GPU compilation paths
-        // because inliner would not be enabled and will cause compilation fail
-        if (A->getOption().matches(options::OPT_O0)) {
-          D.Diag(diag::warn_drv_O0_ignored_for_GPU);
-        } else if (A->containsValue("1")) {
-          D.Diag(diag::warn_drv_O1_ignored_for_GPU);
-        } else {
-          // let all other optimization levels pass
-          A->render(Args, CmdArgs);
-        }
-      } else {
-        // normal cases
-        A->render(Args, CmdArgs);
-      }
+      A->render(Args, CmdArgs);
     }
   }
 

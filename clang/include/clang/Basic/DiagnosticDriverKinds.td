@@ -267,8 +267,6 @@ def err_amdgpu_no_agent_available : Error<
     "ROCm agent detector could not identify any valid targets; please specify "
     "the target explicitly by passing a valid value to -amdgpu-target">;
 def warn_amdgpu_target_invalid : Warning<"-amdgpu-target argument '%0' is not recognized; using gfx803 instead">, InGroup<InvalidCommandLineArgument>;
-def warn_drv_O0_ignored_for_GPU : Warning<"-O0 is ignored in GPU compilation path">, InGroup<InvalidCommandLineArgument>;
-def warn_drv_O1_ignored_for_GPU : Warning<"-O1 is ignored in GPU compilation path">, InGroup<InvalidCommandLineArgument>;
 def warn_O4_is_O3 : Warning<"-O4 is equivalent to -O3">, InGroup<Deprecated>;
 def warn_drv_optimization_value : Warning<"optimization level '%0' is not supported; using '%1%2' instead">,
   InGroup<InvalidCommandLineArgument>;
