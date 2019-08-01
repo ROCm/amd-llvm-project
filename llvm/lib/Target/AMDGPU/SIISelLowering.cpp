@@ -653,6 +653,7 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
 
     setOperationAction(ISD::FADD, MVT::v4f16, Custom);
     setOperationAction(ISD::FMUL, MVT::v4f16, Custom);
+    setOperationAction(ISD::FMA, MVT::v4f16, Custom);
 
     setOperationAction(ISD::FMAXNUM, MVT::v2f16, Custom);
     setOperationAction(ISD::FMINNUM, MVT::v2f16, Custom);
@@ -1569,7 +1570,8 @@ static void processShaderInputArgs(SmallVectorImpl<ISD::InputArg> &Splits,
       // entire split argument.
       if (Arg->Flags.isSplit()) {
         while (!Arg->Flags.isSplitEnd()) {
-          assert(!Arg->VT.isVector() &&
+          assert((!Arg->VT.isVector() ||
+                  Arg->VT.getScalarSizeInBits() == 16) &&
                  "unexpected vector split in ps argument type");
           if (!SkipArg)
             Splits.push_back(*Arg);
@@ -3970,6 +3972,30 @@ SDValue SITargetLowering::splitBinaryVectorOp(SDValue Op,
   return DAG.getNode(ISD::CONCAT_VECTORS, SDLoc(Op), VT, OpLo, OpHi);
 }
 
+SDValue SITargetLowering::splitTernaryVectorOp(SDValue Op,
+                                              SelectionDAG &DAG) const {
+  unsigned Opc = Op.getOpcode();
+  EVT VT = Op.getValueType();
+  assert(VT == MVT::v4i16 || VT == MVT::v4f16);
+
+  SDValue Lo0, Hi0;
+  std::tie(Lo0, Hi0) = DAG.SplitVectorOperand(Op.getNode(), 0);
+  SDValue Lo1, Hi1;
+  std::tie(Lo1, Hi1) = DAG.SplitVectorOperand(Op.getNode(), 1);
+  SDValue Lo2, Hi2;
+  std::tie(Lo2, Hi2) = DAG.SplitVectorOperand(Op.getNode(), 2);
+
+  SDLoc SL(Op);
+
+  SDValue OpLo = DAG.getNode(Opc, SL, Lo0.getValueType(), Lo0, Lo1, Lo2,
+                             Op->getFlags());
+  SDValue OpHi = DAG.getNode(Opc, SL, Hi0.getValueType(), Hi0, Hi1, Hi2,
+                             Op->getFlags());
+
+  return DAG.getNode(ISD::CONCAT_VECTORS, SDLoc(Op), VT, OpLo, OpHi);
+}
+
+
 SDValue SITargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
   switch (Op.getOpcode()) {
   default: return AMDGPUTargetLowering::LowerOperation(Op, DAG);
@@ -4022,6 +4048,8 @@ SDValue SITargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
   case ISD::FMINNUM:
   case ISD::FMAXNUM:
     return lowerFMINNUM_FMAXNUM(Op, DAG);
+  case ISD::FMA:
+    return splitTernaryVectorOp(Op, DAG);
   case ISD::SHL:
   case ISD::SRA:
   case ISD::SRL:
@@ -5977,16 +6005,6 @@ SDValue SITargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
     SDValue Node = DAG.getNode(Opcode, DL, MVT::i32,
                                Op.getOperand(1), Op.getOperand(2));
     return DAG.getNode(ISD::BITCAST, DL, VT, Node);
-  }
-  case Intrinsic::amdgcn_wqm: {
-    SDValue Src = Op.getOperand(1);
-    return SDValue(DAG.getMachineNode(AMDGPU::WQM, DL, Src.getValueType(), Src),
-                   0);
-  }
-  case Intrinsic::amdgcn_wwm: {
-    SDValue Src = Op.getOperand(1);
-    return SDValue(DAG.getMachineNode(AMDGPU::WWM, DL, Src.getValueType(), Src),
-                   0);
   }
   case Intrinsic::amdgcn_fmad_ftz:
     return DAG.getNode(AMDGPUISD::FMAD_FTZ, DL, VT, Op.getOperand(1),
@@ -10446,6 +10464,8 @@ SITargetLowering::getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
       }
       break;
     case 'a':
+      if (!Subtarget->hasMAIInsts())
+        break;
       switch (VT.getSizeInBits()) {
       default:
         return std::make_pair(0U, nullptr);

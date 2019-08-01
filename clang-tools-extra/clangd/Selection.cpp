@@ -63,10 +63,8 @@ private:
   std::vector<std::pair<unsigned, unsigned>> Ranges; // Always sorted.
 };
 
-// Dump a node for debugging.
-// DynTypedNode::print() doesn't include the kind of node, which is useful.
-void printNode(llvm::raw_ostream &OS, const DynTypedNode &N,
-               const PrintingPolicy &PP) {
+// Show the type of a node for debugging.
+void printNodeKind(llvm::raw_ostream &OS, const DynTypedNode &N) {
   if (const TypeLoc *TL = N.get<TypeLoc>()) {
     // TypeLoc is a hierarchy, but has only a single ASTNodeKind.
     // Synthesize the name from the Type subclass (except for QualifiedTypeLoc).
@@ -77,16 +75,17 @@ void printNode(llvm::raw_ostream &OS, const DynTypedNode &N,
   } else {
     OS << N.getNodeKind().asStringRef();
   }
-  OS << " ";
-  N.print(OS, PP);
 }
 
+#ifndef NDEBUG
 std::string printNodeToString(const DynTypedNode &N, const PrintingPolicy &PP) {
   std::string S;
   llvm::raw_string_ostream OS(S);
-  printNode(OS, N, PP);
+  printNodeKind(OS, N);
+  OS << " ";
   return std::move(OS.str());
 }
+#endif
 
 // We find the selection by visiting written nodes in the AST, looking for nodes
 // that intersect with the selected character range.
@@ -106,8 +105,14 @@ public:
     V.TraverseAST(AST);
     assert(V.Stack.size() == 1 && "Unpaired push/pop?");
     assert(V.Stack.top() == &V.Nodes.front());
-    if (V.Nodes.size() == 1) // TUDecl, but no nodes under it.
-      V.Nodes.clear();
+    // We selected TUDecl if characters were unclaimed (or the file is empty).
+    if (V.Nodes.size() == 1 || V.Claimed.add(Begin, End)) {
+      StringRef FileContent = AST.getSourceManager().getBufferData(File);
+      // Don't require the trailing newlines to be selected.
+      bool SelectedAll = Begin == 0 && End >= FileContent.rtrim().size();
+      V.Stack.top()->Selected =
+          SelectedAll ? SelectionTree::Complete : SelectionTree::Partial;
+    }
     return std::move(V.Nodes);
   }
 
@@ -155,6 +160,15 @@ public:
     pop();
     return true;
   }
+  // QualifiedTypeLoc is handled strangely in RecursiveASTVisitor: the derived
+  // TraverseTypeLoc is not called for the inner UnqualTypeLoc.
+  // This means we'd never see 'int' in 'const int'! Work around that here.
+  // (The reason for the behavior is to avoid traversing the nested Type twice,
+  // but we ignore TraverseType anyway).
+  bool TraverseQualifiedTypeLoc(QualifiedTypeLoc QX) {
+    return traverseNode<TypeLoc>(
+        &QX, [&] { return TraverseTypeLoc(QX.getUnqualifiedLoc()); });
+  }
   // Uninteresting parts of the AST that don't have locations within them.
   bool TraverseNestedNameSpecifier(NestedNameSpecifier *) { return true; }
   bool TraverseType(QualType) { return true; }
@@ -165,7 +179,10 @@ private:
   SelectionVisitor(ASTContext &AST, const PrintingPolicy &PP, unsigned SelBegin,
                    unsigned SelEnd, FileID SelFile)
       : SM(AST.getSourceManager()), LangOpts(AST.getLangOpts()),
-        PrintPolicy(PP), SelBegin(SelBegin), SelEnd(SelEnd), SelFile(SelFile),
+#ifndef NDEBUG
+        PrintPolicy(PP),
+#endif
+        SelBegin(SelBegin), SelEnd(SelEnd), SelFile(SelFile),
         SelBeginTokenStart(SM.getFileOffset(Lexer::GetBeginningOfToken(
             SM.getComposedLoc(SelFile, SelBegin), SM, LangOpts))) {
     // Ensure we have a node for the TU decl, regardless of traversal scope.
@@ -336,7 +353,9 @@ private:
 
   SourceManager &SM;
   const LangOptions &LangOpts;
+#ifndef NDEBUG
   const PrintingPolicy &PrintPolicy;
+#endif
   std::stack<Node *> Stack;
   RangeSet Claimed;
   std::deque<Node> Nodes; // Stable pointers as we add more nodes.
@@ -361,10 +380,19 @@ void SelectionTree::print(llvm::raw_ostream &OS, const SelectionTree::Node &N,
                                                                     : '.');
   else
     OS.indent(Indent);
-  printNode(OS, N.ASTNode, PrintPolicy);
+  printNodeKind(OS, N.ASTNode);
+  OS << ' ';
+  N.ASTNode.print(OS, PrintPolicy);
   OS << "\n";
   for (const Node *Child : N.Children)
     print(OS, *Child, Indent + 2);
+}
+
+std::string SelectionTree::Node::kind() const {
+  std::string S;
+  llvm::raw_string_ostream OS(S);
+  printNodeKind(OS, ASTNode);
+  return std::move(OS.str());
 }
 
 // Decide which selection emulates a "point" query in between characters.
@@ -409,12 +437,13 @@ SelectionTree::SelectionTree(ASTContext &AST, unsigned Offset)
     : SelectionTree(AST, Offset, Offset) {}
 
 const Node *SelectionTree::commonAncestor() const {
-  if (!Root)
-    return nullptr;
   const Node *Ancestor = Root;
   while (Ancestor->Children.size() == 1 && !Ancestor->Selected)
     Ancestor = Ancestor->Children.front();
-  return Ancestor;
+  // Returning nullptr here is a bit unprincipled, but it makes the API safer:
+  // the TranslationUnitDecl contains all of the preamble, so traversing it is a
+  // performance cliff. Callers can check for null and use root() if they want.
+  return Ancestor != Root ? Ancestor : nullptr;
 }
 
 const DeclContext& SelectionTree::Node::getDeclContext() const {
@@ -428,6 +457,13 @@ const DeclContext& SelectionTree::Node::getDeclContext() const {
     }
   }
   llvm_unreachable("A tree must always be rooted at TranslationUnitDecl.");
+}
+
+const SelectionTree::Node &SelectionTree::Node::ignoreImplicit() const {
+  if (Children.size() == 1 &&
+      Children.front()->ASTNode.getSourceRange() == ASTNode.getSourceRange())
+    return Children.front()->ignoreImplicit();
+  return *this;
 }
 
 } // namespace clangd

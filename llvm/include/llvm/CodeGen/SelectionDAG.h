@@ -269,7 +269,13 @@ class SelectionDAG {
 
   using CallSiteInfo = MachineFunction::CallSiteInfo;
   using CallSiteInfoImpl = MachineFunction::CallSiteInfoImpl;
-  DenseMap<const SDNode *, CallSiteInfo> SDCallSiteInfo;
+
+  struct CallSiteDbgInfo {
+    CallSiteInfo CSInfo;
+    MDNode *HeapAllocSite = nullptr;
+  };
+
+  DenseMap<const SDNode *, CallSiteDbgInfo> SDCallSiteDbgInfo;
 
   uint16_t NextPersistentId = 0;
 
@@ -1588,9 +1594,12 @@ public:
   /// Extract. The reduction must use one of the opcodes listed in /p
   /// CandidateBinOps and on success /p BinOp will contain the matching opcode.
   /// Returns the vector that is being reduced on, or SDValue() if a reduction
-  /// was not matched.
+  /// was not matched. If \p AllowPartials is set then in the case of a
+  /// reduction pattern that only matches the first few stages, the extracted
+  /// subvector of the start of the reduction is returned.
   SDValue matchBinOpReduction(SDNode *Extract, ISD::NodeType &BinOp,
-                              ArrayRef<ISD::NodeType> CandidateBinOps);
+                              ArrayRef<ISD::NodeType> CandidateBinOps,
+                              bool AllowPartials = false);
 
   /// Utility function used by legalize and lowering to
   /// "unroll" a vector operation by splitting out the scalars and operating
@@ -1664,14 +1673,26 @@ public:
   }
 
   void addCallSiteInfo(const SDNode *CallNode, CallSiteInfoImpl &&CallInfo) {
-    SDCallSiteInfo[CallNode] = std::move(CallInfo);
+    SDCallSiteDbgInfo[CallNode].CSInfo = std::move(CallInfo);
   }
 
   CallSiteInfo getSDCallSiteInfo(const SDNode *CallNode) {
-    auto I = SDCallSiteInfo.find(CallNode);
-    if (I != SDCallSiteInfo.end())
-      return std::move(I->second);
+    auto I = SDCallSiteDbgInfo.find(CallNode);
+    if (I != SDCallSiteDbgInfo.end())
+      return std::move(I->second).CSInfo;
     return CallSiteInfo();
+  }
+
+  void addHeapAllocSite(const SDNode *Node, MDNode *MD) {
+    SDCallSiteDbgInfo[Node].HeapAllocSite = MD;
+  }
+
+  /// Return the HeapAllocSite type associated with the SDNode, if it exists.
+  MDNode *getHeapAllocSite(const SDNode* Node) {
+    auto It = SDCallSiteDbgInfo.find(Node);
+    if (It == SDCallSiteDbgInfo.end())
+      return nullptr;
+    return It->second.HeapAllocSite;
   }
 
 private:

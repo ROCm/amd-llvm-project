@@ -40,14 +40,14 @@ define i8* @test3() {
 ; just never return period.)
 define i8* @test4_helper() {
 ; FNATTR: define noalias nonnull i8* @test4_helper
-; ATTRIBUTOR: define noalias nonnull i8* @test4_helper
+; ATTRIBUTOR: define noalias nonnull align 536870912 dereferenceable(4294967295) i8* @test4_helper
   %ret = call i8* @test4()
   ret i8* %ret
 }
 
 define i8* @test4() {
 ; FNATTR: define noalias nonnull i8* @test4
-; ATTRIBUTOR: define noalias nonnull i8* @test4
+; ATTRIBUTOR: define noalias nonnull align 536870912 dereferenceable(4294967295) i8* @test4
   %ret = call i8* @test4_helper()
   ret i8* %ret
 }
@@ -219,6 +219,15 @@ bb:
   %tmp = call i32* @f1(i32* %arg)
   ret i32* null
 }
+
+; TEST 15
+define void @f15(i8* %arg) {
+; ATTRIBUTOR:   tail call void @use1(i8* nonnull dereferenceable(4) %arg)
+
+  tail call void @use1(i8* dereferenceable(4) %arg)
+  ret void
+}
+
 ; Test propagation of nonnull callsite args back to caller.
 
 declare void @use1(i8* %x)
@@ -338,10 +347,12 @@ f:
 }
 
 ; The callsite must execute in order for the attribute to transfer to the parent.
-; The volatile load might trap, so there's no guarantee that we'll ever get to the call.
+; The volatile load can't trap, so we can guarantee that we'll get to the call.
 
 define i8 @parent6(i8* %a, i8* %b) {
-; BOTH-LABEL: @parent6(i8* %a, i8* %b)
+; FNATTR-LABEL: @parent6(i8* nonnull %a, i8* %b)
+; FIXME: missing "nonnull"
+; ATTRIBUTOR-LABEL: @parent6(i8* %a, i8* %b)
 ; BOTH-NEXT:    [[C:%.*]] = load volatile i8, i8* %b
 ; FNATTR-NEXT:    call void @use1nonnull(i8* %a)
 ; ATTRIBUTOR-NEXT:    call void @use1nonnull(i8* nonnull %a)

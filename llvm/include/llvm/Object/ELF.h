@@ -495,7 +495,8 @@ Expected<typename ELFT::ShdrRange> ELFFile<ELFT>::sections() const {
                        Twine(getHeader()->e_shentsize));
 
   const uint64_t FileSize = Buf.size();
-  if (SectionTableOffset + sizeof(Elf_Shdr) > FileSize)
+  if (SectionTableOffset + sizeof(Elf_Shdr) > FileSize ||
+      SectionTableOffset + (uintX_t)sizeof(Elf_Shdr) < SectionTableOffset)
     return createError(
         "section header table goes past the end of the file: e_shoff = 0x" +
         Twine::utohexstr(SectionTableOffset));
@@ -513,15 +514,22 @@ Expected<typename ELFT::ShdrRange> ELFFile<ELFT>::sections() const {
     NumSections = First->sh_size;
 
   if (NumSections > UINT64_MAX / sizeof(Elf_Shdr))
-    // TODO: this error is untested.
-    return createError("section table goes past the end of file");
+    return createError("invalid number of sections specified in the NULL "
+                       "section's sh_size field (" +
+                       Twine(NumSections) + ")");
 
   const uint64_t SectionTableSize = NumSections * sizeof(Elf_Shdr);
+  if (SectionTableOffset + SectionTableSize < SectionTableOffset)
+    return createError(
+        "invalid section header table offset (e_shoff = 0x" +
+        Twine::utohexstr(SectionTableOffset) +
+        ") or invalid number of sections specified in the first section "
+        "header's sh_size field (0x" +
+        Twine::utohexstr(NumSections) + ")");
 
   // Section table goes past end of file!
   if (SectionTableOffset + SectionTableSize > FileSize)
     return createError("section table goes past the end of file");
-
   return makeArrayRef(First, NumSections);
 }
 
@@ -591,12 +599,10 @@ ELFFile<ELFT>::getStringTable(const Elf_Shdr *Section) const {
     return V.takeError();
   ArrayRef<char> Data = *V;
   if (Data.empty())
-    // TODO: this error is untested.
-    return createError("empty string table");
+    return createError("SHT_STRTAB string table section " +
+                       getSecIndexForError(this, Section) + " is empty");
   if (Data.back() != '\0')
-    return createError(object::getELFSectionTypeName(getHeader()->e_machine,
-                                                     Section->sh_type) +
-                       " string table section " +
+    return createError("SHT_STRTAB string table section " +
                        getSecIndexForError(this, Section) +
                        " is non-null terminated");
   return StringRef(Data.begin(), Data.size());

@@ -10041,7 +10041,7 @@ CallingConv ASTContext::getDefaultCallingConvention(bool IsVariadic,
       break;
     }
   }
-  return Target->getDefaultCallingConv(TargetInfo::CCMT_Unknown);
+  return Target->getDefaultCallingConv();
 }
 
 bool ASTContext::isNearlyEmpty(const CXXRecordDecl *RD) const {

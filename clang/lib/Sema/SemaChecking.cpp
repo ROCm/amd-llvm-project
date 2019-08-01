@@ -1179,6 +1179,10 @@ Sema::CheckBuiltinFunctionCall(FunctionDecl *FDecl, unsigned BuiltinID,
   case Builtin::BI__builtin_alloca_with_align:
     if (SemaBuiltinAllocaWithAlign(TheCall))
       return ExprError();
+    LLVM_FALLTHROUGH;
+  case Builtin::BI__builtin_alloca:
+    Diag(TheCall->getBeginLoc(), diag::warn_alloca)
+        << TheCall->getDirectCallee();
     break;
   case Builtin::BI__assume:
   case Builtin::BI__builtin_assume:
@@ -1928,6 +1932,7 @@ bool Sema::CheckAArch64BuiltinFunctionCall(unsigned BuiltinID,
   case AArch64::BI__builtin_arm_dmb:
   case AArch64::BI__builtin_arm_dsb:
   case AArch64::BI__builtin_arm_isb: l = 0; u = 15; break;
+  case AArch64::BI__builtin_arm_tcancel: l = 0; u = 65535; break;
   }
 
   return SemaBuiltinConstantArgRange(TheCall, i, l, u + l);

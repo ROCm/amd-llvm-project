@@ -153,6 +153,7 @@ Clang-Tidy Checks
    google-runtime-int
    google-runtime-operator
    google-runtime-references
+   google-upgrade-googletest-case
    hicpp-avoid-c-arrays (redirects to modernize-avoid-c-arrays) <hicpp-avoid-c-arrays>
    hicpp-avoid-goto
    hicpp-braces-around-statements (redirects to readability-braces-around-statements) <hicpp-braces-around-statements>
@@ -183,6 +184,7 @@ Clang-Tidy Checks
    hicpp-use-nullptr (redirects to modernize-use-nullptr) <hicpp-use-nullptr>
    hicpp-use-override (redirects to modernize-use-override) <hicpp-use-override>
    hicpp-vararg (redirects to cppcoreguidelines-pro-type-vararg) <hicpp-vararg>
+   linuxkernel-must-use-errs
    llvm-header-guard
    llvm-include-order
    llvm-namespace-comment

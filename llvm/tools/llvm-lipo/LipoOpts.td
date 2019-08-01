@@ -18,6 +18,12 @@ def archs : Option<["-", "--"], "archs", KIND_FLAG>,
             Group<action_group>,
             HelpText<"Display the arch_types present in the input file">;
 
+def info : Option<["-", "--"], "info", KIND_FLAG>,
+           Group<action_group>,
+           HelpText<"Display descriptions of each input file including "
+                    "filename and arch_types. Groups universal binaries "
+                    "together followed by thin files">;
+
 def thin : Option<["-", "--"], "thin", KIND_SEPARATE>,
            Group<action_group>,
            HelpText<"Create a thin output file of specified arch_type from the "
@@ -27,6 +33,12 @@ def create : Option<["-", "--"], "create", KIND_FLAG>,
              Group<action_group>,
              HelpText<"Create a universal binary output file from the input "
                       "files. Requires -output option">;
+
+def replace
+    : MultiArg<["-", "--"], "replace", 2>,
+      Group<action_group>,
+      HelpText<"Replace the specified arch type with the contents of the "
+               "input_file in a universal binary. Requires -output option">;
 
 def output : Option<["-", "--"], "output", KIND_SEPARATE>,
              HelpText<"Create output file with specified name">;

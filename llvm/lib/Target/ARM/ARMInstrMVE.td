@@ -2572,6 +2572,27 @@ def MVE_VFMSf32 : MVE_VADDSUBFMA_fp<"vfms", "f32", 0b0, 0b1, 0b0, 0b1,
 def MVE_VFMSf16 : MVE_VADDSUBFMA_fp<"vfms", "f16", 0b1, 0b1, 0b0, 0b1,
     (ins MQPR:$Qd_src), vpred_n, "$Qd = $Qd_src">;
 
+let Predicates = [HasMVEFloat, UseFusedMAC] in {
+  def : Pat<(v8f16 (fadd (v8f16 MQPR:$src1),
+                             (fmul (v8f16 MQPR:$src2),
+                                      (v8f16 MQPR:$src3)))),
+            (v8f16 (MVE_VFMAf16 $src1, $src2, $src3))>;
+  def : Pat<(v4f32 (fadd (v4f32 MQPR:$src1),
+                             (fmul (v4f32 MQPR:$src2),
+                                      (v4f32 MQPR:$src3)))),
+            (v4f32 (MVE_VFMAf32 $src1, $src2, $src3))>;
+
+  def : Pat<(v8f16 (fsub (v8f16 MQPR:$src1),
+                             (fmul (v8f16 MQPR:$src2),
+                                      (v8f16 MQPR:$src3)))),
+            (v8f16 (MVE_VFMSf16 $src1, $src2, $src3))>;
+  def : Pat<(v4f32 (fsub (v4f32 MQPR:$src1),
+                             (fmul (v4f32 MQPR:$src2),
+                                      (v4f32 MQPR:$src3)))),
+            (v4f32 (MVE_VFMSf32 $src1, $src2, $src3))>;
+}
+
+
 def MVE_VADDf32 : MVE_VADDSUBFMA_fp<"vadd", "f32", 0b0, 0b0, 0b1, 0b0>;
 def MVE_VADDf16 : MVE_VADDSUBFMA_fp<"vadd", "f16", 0b1, 0b0, 0b1, 0b0>;
 
@@ -2981,6 +3002,168 @@ def MVE_VCMPu32r : MVE_VCMPqru<"u32", 0b10>;
 def MVE_VCMPs8r  : MVE_VCMPqrs<"s8",  0b00>;
 def MVE_VCMPs16r : MVE_VCMPqrs<"s16", 0b01>;
 def MVE_VCMPs32r : MVE_VCMPqrs<"s32", 0b10>;
+
+multiclass unpred_vcmp_z<string suffix, int fc> {
+  def i8  : Pat<(v16i1 (ARMvcmpz (v16i8 MQPR:$v1), (i32 fc))),
+                (v16i1 (!cast<Instruction>("MVE_VCMP"#suffix#"8r") (v16i8 MQPR:$v1), ZR, fc))>;
+  def i16 : Pat<(v8i1 (ARMvcmpz (v8i16 MQPR:$v1), (i32 fc))),
+                (v8i1 (!cast<Instruction>("MVE_VCMP"#suffix#"16r") (v8i16 MQPR:$v1), ZR, fc))>;
+  def i32 : Pat<(v4i1 (ARMvcmpz (v4i32 MQPR:$v1), (i32 fc))),
+                (v4i1 (!cast<Instruction>("MVE_VCMP"#suffix#"32r") (v4i32 MQPR:$v1), ZR, fc))>;
+
+  def : Pat<(v16i1 (and (v16i1 VCCR:$p1), (v16i1 (ARMvcmpz (v16i8 MQPR:$v1), (i32 fc))))),
+            (v16i1 (!cast<Instruction>("MVE_VCMP"#suffix#"8r") (v16i8 MQPR:$v1), ZR, fc, 1, VCCR:$p1))>;
+  def : Pat<(v8i1 (and (v8i1 VCCR:$p1), (v8i1 (ARMvcmpz (v8i16 MQPR:$v1), (i32 fc))))),
+            (v8i1 (!cast<Instruction>("MVE_VCMP"#suffix#"16r") (v8i16 MQPR:$v1), ZR, fc, 1, VCCR:$p1))>;
+  def : Pat<(v4i1 (and (v4i1 VCCR:$p1), (v4i1 (ARMvcmpz (v4i32 MQPR:$v1), (i32 fc))))),
+            (v4i1 (!cast<Instruction>("MVE_VCMP"#suffix#"32r") (v4i32 MQPR:$v1), ZR, fc, 1, VCCR:$p1))>;
+}
+
+multiclass unpred_vcmp_r<string suffix, int fc> {
+  def i8  : Pat<(v16i1 (ARMvcmp (v16i8 MQPR:$v1), (v16i8 MQPR:$v2), (i32 fc))),
+                (v16i1 (!cast<Instruction>("MVE_VCMP"#suffix#"8") (v16i8 MQPR:$v1), (v16i8 MQPR:$v2), fc))>;
+  def i16 : Pat<(v8i1 (ARMvcmp (v8i16 MQPR:$v1), (v8i16 MQPR:$v2), (i32 fc))),
+                (v8i1 (!cast<Instruction>("MVE_VCMP"#suffix#"16") (v8i16 MQPR:$v1), (v8i16 MQPR:$v2), fc))>;
+  def i32 : Pat<(v4i1 (ARMvcmp (v4i32 MQPR:$v1), (v4i32 MQPR:$v2), (i32 fc))),
+                (v4i1 (!cast<Instruction>("MVE_VCMP"#suffix#"32") (v4i32 MQPR:$v1), (v4i32 MQPR:$v2), fc))>;
+
+  def i8r  : Pat<(v16i1 (ARMvcmp (v16i8 MQPR:$v1), (v16i8 (ARMvdup GPR:$v2)), (i32 fc))),
+                 (v16i1 (!cast<Instruction>("MVE_VCMP"#suffix#"8r") (v16i8 MQPR:$v1), (i32 GPR:$v2), fc))>;
+  def i16r : Pat<(v8i1 (ARMvcmp (v8i16 MQPR:$v1), (v8i16 (ARMvdup GPR:$v2)), (i32 fc))),
+                 (v8i1 (!cast<Instruction>("MVE_VCMP"#suffix#"16r") (v8i16 MQPR:$v1), (i32 GPR:$v2), fc))>;
+  def i32r : Pat<(v4i1 (ARMvcmp (v4i32 MQPR:$v1), (v4i32 (ARMvdup GPR:$v2)), (i32 fc))),
+                 (v4i1 (!cast<Instruction>("MVE_VCMP"#suffix#"32r") (v4i32 MQPR:$v1), (i32 GPR:$v2), fc))>;
+
+  def : Pat<(v16i1 (and (v16i1 VCCR:$p1), (v16i1 (ARMvcmp (v16i8 MQPR:$v1), (v16i8 MQPR:$v2), (i32 fc))))),
+            (v16i1 (!cast<Instruction>("MVE_VCMP"#suffix#"8") (v16i8 MQPR:$v1), (v16i8 MQPR:$v2), fc, 1, VCCR:$p1))>;
+  def : Pat<(v8i1 (and (v8i1 VCCR:$p1), (v8i1 (ARMvcmp (v8i16 MQPR:$v1), (v8i16 MQPR:$v2), (i32 fc))))),
+            (v8i1 (!cast<Instruction>("MVE_VCMP"#suffix#"16") (v8i16 MQPR:$v1), (v8i16 MQPR:$v2), fc, 1, VCCR:$p1))>;
+  def : Pat<(v4i1 (and (v4i1 VCCR:$p1), (v4i1 (ARMvcmp (v4i32 MQPR:$v1), (v4i32 MQPR:$v2), (i32 fc))))),
+            (v4i1 (!cast<Instruction>("MVE_VCMP"#suffix#"32") (v4i32 MQPR:$v1), (v4i32 MQPR:$v2), fc, 1, VCCR:$p1))>;
+
+  def : Pat<(v16i1 (and (v16i1 VCCR:$p1), (v16i1 (ARMvcmp (v16i8 MQPR:$v1), (v16i8 (ARMvdup GPR:$v2)), (i32 fc))))),
+            (v16i1 (!cast<Instruction>("MVE_VCMP"#suffix#"8r") (v16i8 MQPR:$v1), (i32 GPR:$v2), fc, 1, VCCR:$p1))>;
+  def : Pat<(v8i1 (and (v8i1 VCCR:$p1), (v8i1 (ARMvcmp (v8i16 MQPR:$v1), (v8i16 (ARMvdup GPR:$v2)), (i32 fc))))),
+            (v8i1 (!cast<Instruction>("MVE_VCMP"#suffix#"16r") (v8i16 MQPR:$v1), (i32 GPR:$v2), fc, 1, VCCR:$p1))>;
+  def : Pat<(v4i1 (and (v4i1 VCCR:$p1), (v4i1 (ARMvcmp (v4i32 MQPR:$v1), (v4i32 (ARMvdup GPR:$v2)), (i32 fc))))),
+            (v4i1 (!cast<Instruction>("MVE_VCMP"#suffix#"32r") (v4i32 MQPR:$v1), (i32 GPR:$v2), fc, 1, VCCR:$p1))>;
+}
+
+multiclass unpred_vcmpf_z<int fc> {
+  def f16 : Pat<(v8i1 (ARMvcmpz (v8f16 MQPR:$v1), (i32 fc))),
+                (v8i1 (MVE_VCMPf16r (v8f16 MQPR:$v1), ZR, fc))>;
+  def f32 : Pat<(v4i1 (ARMvcmpz (v4f32 MQPR:$v1), (i32 fc))),
+                (v4i1 (MVE_VCMPf32r (v4f32 MQPR:$v1), ZR, fc))>;
+
+  def : Pat<(v8i1 (and (v8i1 VCCR:$p1), (v8i1 (ARMvcmpz (v8f16 MQPR:$v1), (i32 fc))))),
+            (v8i1 (MVE_VCMPf32r (v8f16 MQPR:$v1), ZR, fc, 1, VCCR:$p1))>;
+  def : Pat<(v4i1 (and (v4i1 VCCR:$p1), (v4i1 (ARMvcmpz (v4f32 MQPR:$v1), (i32 fc))))),
+            (v4i1 (MVE_VCMPf32r (v4f32 MQPR:$v1), ZR, fc, 1, VCCR:$p1))>;
+}
+
+multiclass unpred_vcmpf_r<int fc> {
+  def f16 : Pat<(v8i1 (ARMvcmp (v8f16 MQPR:$v1), (v8f16 MQPR:$v2), (i32 fc))),
+                (v8i1 (MVE_VCMPf16 (v8f16 MQPR:$v1), (v8f16 MQPR:$v2), fc))>;
+  def f32 : Pat<(v4i1 (ARMvcmp (v4f32 MQPR:$v1), (v4f32 MQPR:$v2), (i32 fc))),
+                (v4i1 (MVE_VCMPf32 (v4f32 MQPR:$v1), (v4f32 MQPR:$v2), fc))>;
+
+  def f16r : Pat<(v8i1 (ARMvcmp (v8f16 MQPR:$v1), (v8f16 (ARMvdup HPR:$v2)), (i32 fc))),
+                 (v8i1 (MVE_VCMPf16r (v8f16 MQPR:$v1), (i32 (COPY_TO_REGCLASS (f16 HPR:$v2), rGPR)), fc))>;
+  def f32r : Pat<(v4i1 (ARMvcmp (v4f32 MQPR:$v1), (v4f32 (ARMvdup SPR:$v2)), (i32 fc))),
+                 (v4i1 (MVE_VCMPf32r (v4f32 MQPR:$v1), (i32 (COPY_TO_REGCLASS (f32 SPR:$v2), rGPR)), fc))>;
+
+  def : Pat<(v8i1 (and (v8i1 VCCR:$p1), (v8i1 (ARMvcmp (v8f16 MQPR:$v1), (v8f16 MQPR:$v2), (i32 fc))))),
+            (v8i1 (MVE_VCMPf16 (v8f16 MQPR:$v1), (v8f16 MQPR:$v2), fc, 1, VCCR:$p1))>;
+  def : Pat<(v4i1 (and (v4i1 VCCR:$p1), (v4i1 (ARMvcmp (v4f32 MQPR:$v1), (v4f32 MQPR:$v2), (i32 fc))))),
+            (v4i1 (MVE_VCMPf32 (v4f32 MQPR:$v1), (v4f32 MQPR:$v2), fc, 1, VCCR:$p1))>;
+
+  def : Pat<(v8i1 (and (v8i1 VCCR:$p1), (v8i1 (ARMvcmp (v8f16 MQPR:$v1), (v8f16 (ARMvdup HPR:$v2)), (i32 fc))))),
+            (v8i1 (MVE_VCMPf16r (v8f16 MQPR:$v1), (i32 (COPY_TO_REGCLASS (f16 HPR:$v2), rGPR)), fc, 1, VCCR:$p1))>;
+  def : Pat<(v4i1 (and (v4i1 VCCR:$p1), (v4i1 (ARMvcmp (v4f32 MQPR:$v1), (v4f32 (ARMvdup SPR:$v2)), (i32 fc))))),
+            (v4i1 (MVE_VCMPf32r (v4f32 MQPR:$v1), (i32 (COPY_TO_REGCLASS (f32 SPR:$v2), rGPR)), fc, 1, VCCR:$p1))>;
+}
+
+let Predicates = [HasMVEInt] in {
+  defm MVE_VCEQZ  : unpred_vcmp_z<"i", 0>;
+  defm MVE_VCNEZ  : unpred_vcmp_z<"i", 1>;
+  defm MVE_VCGEZ  : unpred_vcmp_z<"s", 10>;
+  defm MVE_VCLTZ  : unpred_vcmp_z<"s", 11>;
+  defm MVE_VCGTZ  : unpred_vcmp_z<"s", 12>;
+  defm MVE_VCLEZ  : unpred_vcmp_z<"s", 13>;
+  defm MVE_VCGTUZ : unpred_vcmp_z<"u", 8>;
+  defm MVE_VCGEUZ : unpred_vcmp_z<"u", 2>;
+
+  defm MVE_VCEQ   : unpred_vcmp_r<"i", 0>;
+  defm MVE_VCNE   : unpred_vcmp_r<"i", 1>;
+  defm MVE_VCGE   : unpred_vcmp_r<"s", 10>;
+  defm MVE_VCLT   : unpred_vcmp_r<"s", 11>;
+  defm MVE_VCGT   : unpred_vcmp_r<"s", 12>;
+  defm MVE_VCLE   : unpred_vcmp_r<"s", 13>;
+  defm MVE_VCGTU  : unpred_vcmp_r<"u", 8>;
+  defm MVE_VCGEU  : unpred_vcmp_r<"u", 2>;
+}
+
+let Predicates = [HasMVEFloat] in {
+  defm MVE_VFCEQZ  : unpred_vcmpf_z<0>;
+  defm MVE_VFCNEZ  : unpred_vcmpf_z<1>;
+  defm MVE_VFCGEZ  : unpred_vcmpf_z<10>;
+  defm MVE_VFCLTZ  : unpred_vcmpf_z<11>;
+  defm MVE_VFCGTZ  : unpred_vcmpf_z<12>;
+  defm MVE_VFCLEZ  : unpred_vcmpf_z<13>;
+
+  defm MVE_VFCEQ   : unpred_vcmpf_r<0>;
+  defm MVE_VFCNE   : unpred_vcmpf_r<1>;
+  defm MVE_VFCGE   : unpred_vcmpf_r<10>;
+  defm MVE_VFCLT   : unpred_vcmpf_r<11>;
+  defm MVE_VFCGT   : unpred_vcmpf_r<12>;
+  defm MVE_VFCLE   : unpred_vcmpf_r<13>;
+}
+
+
+// Extra "worst case" and/or/xor partterns, going into and out of GRP
+multiclass two_predops<SDPatternOperator opnode, Instruction insn> {
+  def v16i1 : Pat<(v16i1 (opnode (v16i1 VCCR:$p1), (v16i1 VCCR:$p2))),
+                  (v16i1 (COPY_TO_REGCLASS
+                           (insn (i32 (COPY_TO_REGCLASS (v16i1 VCCR:$p1), rGPR)),
+                                 (i32 (COPY_TO_REGCLASS (v16i1 VCCR:$p2), rGPR))),
+                           VCCR))>;
+  def v8i1  : Pat<(v8i1 (opnode (v8i1 VCCR:$p1), (v8i1 VCCR:$p2))),
+                  (v8i1 (COPY_TO_REGCLASS
+                          (insn (i32 (COPY_TO_REGCLASS (v8i1 VCCR:$p1), rGPR)),
+                                (i32 (COPY_TO_REGCLASS (v8i1 VCCR:$p2), rGPR))),
+                          VCCR))>;
+  def v4i1  : Pat<(v4i1 (opnode (v4i1 VCCR:$p1), (v4i1 VCCR:$p2))),
+                  (v4i1 (COPY_TO_REGCLASS
+                          (insn (i32 (COPY_TO_REGCLASS (v4i1 VCCR:$p1), rGPR)),
+                                (i32 (COPY_TO_REGCLASS (v4i1 VCCR:$p2), rGPR))),
+                          VCCR))>;
+}
+
+let Predicates = [HasMVEInt] in {
+  defm POR    : two_predops<or,  t2ORRrr>;
+  defm PAND   : two_predops<and, t2ANDrr>;
+  defm PEOR   : two_predops<xor, t2EORrr>;
+}
+
+// Occasionally we need to cast between a i32 and a boolean vector, for
+// example when moving between rGPR and VPR.P0 as part of predicate vector
+// shuffles. We also sometimes need to cast between different predicate
+// vector types (v4i1<>v8i1, etc.) also as part of lowering vector shuffles.
+
+def predicate_cast : SDNode<"ARMISD::PREDICATE_CAST", SDTUnaryOp>;
+
+let Predicates = [HasMVEInt] in {
+  foreach VT = [ v4i1, v8i1, v16i1 ] in {
+    def : Pat<(i32 (predicate_cast (VT VCCR:$src))),
+              (i32 (COPY_TO_REGCLASS (VT VCCR:$src), VCCR))>;
+    def : Pat<(VT  (predicate_cast (i32 VCCR:$src))),
+              (VT  (COPY_TO_REGCLASS (i32 VCCR:$src), VCCR))>;
+
+    foreach VT2 = [ v4i1, v8i1, v16i1 ] in
+      def : Pat<(VT  (predicate_cast (VT2 VCCR:$src))),
+                (VT  (COPY_TO_REGCLASS (VT2 VCCR:$src), VCCR))>;
+  }
+}
 
 // end of MVE compares
 
@@ -3493,8 +3676,8 @@ let Predicates = [HasMVEFloat] in {
 }
 
 class MVE_VFMAMLA_qr<string iname, string suffix,
-                   bit bit_28, bits<2> bits_21_20, bit S,
-                   list<dag> pattern=[]>
+                     bit bit_28, bits<2> bits_21_20, bit S,
+                     list<dag> pattern=[]>
   : MVE_qDestSrc_rSrc<iname, suffix, pattern> {
 
   let Inst{28} = bit_28;
@@ -4369,18 +4552,105 @@ foreach suffix = ["s8", "s16", "s32", "u8", "u16", "u32",
 def : MVEInstAlias<"vpsel${vp}." # suffix # "\t$Qd, $Qn, $Qm",
                    (MVE_VPSEL MQPR:$Qd, MQPR:$Qn, MQPR:$Qm, vpred_n:$vp)>;
 
-def MVE_VPNOT : MVE_p<(outs), (ins), NoItinerary,
+let Predicates = [HasMVEInt] in {
+  def : Pat<(v16i8 (vselect (v16i1 VCCR:$pred), (v16i8 MQPR:$v1), (v16i8 MQPR:$v2))),
+            (v16i8 (MVE_VPSEL MQPR:$v1, MQPR:$v2, 0, VCCR:$pred))>;
+  def : Pat<(v8i16 (vselect (v8i1 VCCR:$pred), (v8i16 MQPR:$v1), (v8i16 MQPR:$v2))),
+            (v8i16 (MVE_VPSEL MQPR:$v1, MQPR:$v2, 0, VCCR:$pred))>;
+  def : Pat<(v4i32 (vselect (v4i1 VCCR:$pred), (v4i32 MQPR:$v1), (v4i32 MQPR:$v2))),
+            (v4i32 (MVE_VPSEL MQPR:$v1, MQPR:$v2, 0, VCCR:$pred))>;
+
+  def : Pat<(v8f16 (vselect (v8i1 VCCR:$pred), (v8f16 MQPR:$v1), (v8f16 MQPR:$v2))),
+            (v8f16 (MVE_VPSEL MQPR:$v1, MQPR:$v2, 0, VCCR:$pred))>;
+  def : Pat<(v4f32 (vselect (v4i1 VCCR:$pred), (v4f32 MQPR:$v1), (v4f32 MQPR:$v2))),
+            (v4f32 (MVE_VPSEL MQPR:$v1, MQPR:$v2, 0, VCCR:$pred))>;
+
+  def : Pat<(v16i8 (vselect (v16i8 MQPR:$pred), (v16i8 MQPR:$v1), (v16i8 MQPR:$v2))),
+            (v16i8 (MVE_VPSEL MQPR:$v1, MQPR:$v2, 0,
+                              (MVE_VCMPi8 (v16i8 MQPR:$pred), (MVE_VMOVimmi8 0), 1)))>;
+  def : Pat<(v8i16 (vselect (v8i16 MQPR:$pred), (v8i16 MQPR:$v1), (v8i16 MQPR:$v2))),
+            (v8i16 (MVE_VPSEL MQPR:$v1, MQPR:$v2, 0,
+                              (MVE_VCMPi16 (v8i16 MQPR:$pred), (MVE_VMOVimmi16 0), 1)))>;
+  def : Pat<(v4i32 (vselect (v4i32 MQPR:$pred), (v4i32 MQPR:$v1), (v4i32 MQPR:$v2))),
+            (v4i32 (MVE_VPSEL MQPR:$v1, MQPR:$v2, 0,
+                              (MVE_VCMPi32 (v4i32 MQPR:$pred), (MVE_VMOVimmi32 0), 1)))>;
+
+  def : Pat<(v8f16 (vselect (v8i16 MQPR:$pred), (v8f16 MQPR:$v1), (v8f16 MQPR:$v2))),
+            (v8f16 (MVE_VPSEL MQPR:$v1, MQPR:$v2, 0,
+                              (MVE_VCMPi16 (v8i16 MQPR:$pred), (MVE_VMOVimmi16 0), 1)))>;
+  def : Pat<(v4f32 (vselect (v4i32 MQPR:$pred), (v4f32 MQPR:$v1), (v4f32 MQPR:$v2))),
+            (v4f32 (MVE_VPSEL MQPR:$v1, MQPR:$v2, 0,
+                              (MVE_VCMPi32 (v4i32 MQPR:$pred), (MVE_VMOVimmi32 0), 1)))>;
+
+  // Pred <-> Int
+  def : Pat<(v16i8 (zext  (v16i1 VCCR:$pred))),
+            (v16i8 (MVE_VPSEL (MVE_VMOVimmi8 1), (MVE_VMOVimmi8 0), 0, VCCR:$pred))>;
+  def : Pat<(v8i16 (zext  (v8i1  VCCR:$pred))),
+            (v8i16 (MVE_VPSEL (MVE_VMOVimmi16 1), (MVE_VMOVimmi16 0), 0, VCCR:$pred))>;
+  def : Pat<(v4i32 (zext  (v4i1  VCCR:$pred))),
+            (v4i32 (MVE_VPSEL (MVE_VMOVimmi32 1), (MVE_VMOVimmi32 0), 0, VCCR:$pred))>;
+
+  def : Pat<(v16i8 (sext  (v16i1 VCCR:$pred))),
+            (v16i8 (MVE_VPSEL (MVE_VMOVimmi8 255), (MVE_VMOVimmi8 0), 0, VCCR:$pred))>;
+  def : Pat<(v8i16 (sext  (v8i1  VCCR:$pred))),
+            (v8i16 (MVE_VPSEL (MVE_VMOVimmi8 255), (MVE_VMOVimmi16 0), 0, VCCR:$pred))>;
+  def : Pat<(v4i32 (sext  (v4i1  VCCR:$pred))),
+            (v4i32 (MVE_VPSEL (MVE_VMOVimmi8 255), (MVE_VMOVimmi32 0), 0, VCCR:$pred))>;
+
+  def : Pat<(v16i8 (anyext  (v16i1 VCCR:$pred))),
+            (v16i8 (MVE_VPSEL (MVE_VMOVimmi8 1), (MVE_VMOVimmi8 0), 0, VCCR:$pred))>;
+  def : Pat<(v8i16 (anyext  (v8i1  VCCR:$pred))),
+            (v8i16 (MVE_VPSEL (MVE_VMOVimmi16 1), (MVE_VMOVimmi16 0), 0, VCCR:$pred))>;
+  def : Pat<(v4i32 (anyext  (v4i1  VCCR:$pred))),
+            (v4i32 (MVE_VPSEL (MVE_VMOVimmi32 1), (MVE_VMOVimmi32 0), 0, VCCR:$pred))>;
+}
+
+let Predicates = [HasMVEFloat] in {
+  // Pred <-> Float
+  // 112 is 1.0 in float
+  def : Pat<(v4f32 (uint_to_fp (v4i1 VCCR:$pred))),
+            (v4f32 (MVE_VPSEL (v4f32 (MVE_VMOVimmf32 112)), (v4f32 (MVE_VMOVimmi32 0)), 0, VCCR:$pred))>;
+  // 2620 in 1.0 in half
+  def : Pat<(v8f16 (uint_to_fp (v8i1 VCCR:$pred))),
+            (v8f16 (MVE_VPSEL (v8f16 (MVE_VMOVimmi16 2620)), (v8f16 (MVE_VMOVimmi16 0)), 0, VCCR:$pred))>;
+  // 240 is -1.0 in float
+  def : Pat<(v4f32 (sint_to_fp (v4i1 VCCR:$pred))),
+            (v4f32 (MVE_VPSEL (v4f32 (MVE_VMOVimmf32 240)), (v4f32 (MVE_VMOVimmi32 0)), 0, VCCR:$pred))>;
+  // 2748 is -1.0 in half
+  def : Pat<(v8f16 (sint_to_fp (v8i1 VCCR:$pred))),
+            (v8f16 (MVE_VPSEL (v8f16 (MVE_VMOVimmi16 2748)), (v8f16 (MVE_VMOVimmi16 0)), 0, VCCR:$pred))>;
+
+  def : Pat<(v4i1 (fp_to_uint (v4f32 MQPR:$v1))),
+            (v4i1 (MVE_VCMPf32r (v4f32 MQPR:$v1), ZR, 1))>;
+  def : Pat<(v8i1 (fp_to_uint (v8f16 MQPR:$v1))),
+            (v8i1 (MVE_VCMPf16r (v8f16 MQPR:$v1), ZR, 1))>;
+  def : Pat<(v4i1 (fp_to_sint (v4f32 MQPR:$v1))),
+            (v4i1 (MVE_VCMPf32r (v4f32 MQPR:$v1), ZR, 1))>;
+  def : Pat<(v8i1 (fp_to_sint (v8f16 MQPR:$v1))),
+            (v8i1 (MVE_VCMPf16r (v8f16 MQPR:$v1), ZR, 1))>;
+}
+
+def MVE_VPNOT : MVE_p<(outs VCCR:$P0), (ins VCCR:$P0_in), NoItinerary,
                       "vpnot", "", "", vpred_n, "", []> {
   let Inst{31-0} = 0b11111110001100010000111101001101;
   let Unpredictable{19-17} = 0b111;
   let Unpredictable{12} = 0b1;
   let Unpredictable{7} = 0b1;
   let Unpredictable{5} = 0b1;
-  let Defs = [P0];
-  let Uses = [P0];
 
   let Constraints = "";
+  let DecoderMethod = "DecodeMVEVPNOT";
 }
+
+let Predicates = [HasMVEInt] in {
+  def : Pat<(v4i1 (xor (v4i1 VCCR:$pred), (v4i1 (predicate_cast (i32 65535))))),
+            (v4i1 (MVE_VPNOT (v4i1 VCCR:$pred)))>;
+  def : Pat<(v8i1 (xor (v8i1 VCCR:$pred), (v8i1 (predicate_cast (i32 65535))))),
+            (v8i1 (MVE_VPNOT (v8i1 VCCR:$pred)))>;
+  def : Pat<(v16i1 (xor (v16i1 VCCR:$pred), (v16i1 (predicate_cast (i32 65535))))),
+            (v16i1 (MVE_VPNOT (v16i1 VCCR:$pred)))>;
+}
+
 
 class MVE_loltp_start<dag iops, string asm, string ops, bits<2> size>
   : t2LOL<(outs GPRlr:$LR), iops, asm, ops> {

@@ -273,7 +273,7 @@ void LinkerDriver::enqueueArchiveMember(const Archive::Child &c,
 
   auto reportBufferError = [=](Error &&e, StringRef childName) {
     fatal("could not get the buffer for the member defining symbol " +
-          toString(sym) + ": " + parentName + "(" + childName + "): " +
+          toCOFFString(sym) + ": " + parentName + "(" + childName + "): " +
           toString(std::move(e)));
   };
 
@@ -284,7 +284,8 @@ void LinkerDriver::enqueueArchiveMember(const Archive::Child &c,
       reportBufferError(mbOrErr.takeError(), check(c.getFullName()));
     MemoryBufferRef mb = mbOrErr.get();
     enqueueTask([=]() {
-      driver->addArchiveBuffer(mb, toString(sym), parentName, offsetInArchive);
+      driver->addArchiveBuffer(mb, toCOFFString(sym), parentName,
+                               offsetInArchive);
     });
     return;
   }
@@ -292,7 +293,7 @@ void LinkerDriver::enqueueArchiveMember(const Archive::Child &c,
   std::string childName = CHECK(
       c.getFullName(),
       "could not get the filename for the member defining symbol " +
-      toString(sym));
+      toCOFFString(sym));
   auto future = std::make_shared<std::future<MBErrPair>>(
       createFutureForFile(childName));
   enqueueTask([=]() {
@@ -300,7 +301,8 @@ void LinkerDriver::enqueueArchiveMember(const Archive::Child &c,
     if (mbOrErr.second)
       reportBufferError(errorCodeToError(mbOrErr.second), childName);
     driver->addArchiveBuffer(takeBuffer(std::move(mbOrErr.first)),
-                             toString(sym), parentName, /*OffsetInArchive=*/0);
+                             toCOFFString(sym), parentName,
+                             /*OffsetInArchive=*/0);
   });
 }
 
@@ -1750,24 +1752,6 @@ void LinkerDriver::link(ArrayRef<const char *> argsArr) {
       addUndefined(mangle("_load_config_used"));
   } while (run());
 
-  if (errorCount())
-    return;
-
-  // Do LTO by compiling bitcode input files to a set of native COFF files then
-  // link those files (unless -thinlto-index-only was given, in which case we
-  // resolve symbols and write indices, but don't generate native code or link).
-  symtab->addCombinedLTOObjects();
-
-  // If -thinlto-index-only is given, we should create only "index
-  // files" and not object files. Index file creation is already done
-  // in addCombinedLTOObject, so we are done if that's the case.
-  if (config->thinLTOIndexOnly)
-    return;
-
-  // If we generated native object files from bitcode files, this resolves
-  // references to the symbols we use from them.
-  run();
-
   if (args.hasArg(OPT_include_optional)) {
     // Handle /includeoptional
     for (auto *arg : args.filtered(OPT_include_optional))
@@ -1794,8 +1778,32 @@ void LinkerDriver::link(ArrayRef<const char *> argsArr) {
     run();
   }
 
-  // Make sure we have resolved all symbols.
-  symtab->reportRemainingUndefines();
+  // At this point, we should not have any symbols that cannot be resolved.
+  // If we are going to do codegen for link-time optimization, check for
+  // unresolvable symbols first, so we don't spend time generating code that
+  // will fail to link anyway.
+  if (!BitcodeFile::instances.empty() && !config->forceUnresolved)
+    symtab->reportUnresolvable();
+  if (errorCount())
+    return;
+
+  // Do LTO by compiling bitcode input files to a set of native COFF files then
+  // link those files (unless -thinlto-index-only was given, in which case we
+  // resolve symbols and write indices, but don't generate native code or link).
+  symtab->addCombinedLTOObjects();
+
+  // If -thinlto-index-only is given, we should create only "index
+  // files" and not object files. Index file creation is already done
+  // in addCombinedLTOObject, so we are done if that's the case.
+  if (config->thinLTOIndexOnly)
+    return;
+
+  // If we generated native object files from bitcode files, this resolves
+  // references to the symbols we use from them.
+  run();
+
+  // Resolve remaining undefined symbols and warn about imported locals.
+  symtab->resolveRemainingUndefines();
   if (errorCount())
     return;
 

@@ -598,6 +598,10 @@ def ext_implicit_lib_function_decl : ExtWarn<
 def note_include_header_or_declare : Note<
   "include the header <%0> or explicitly provide a declaration for '%1'">;
 def note_previous_builtin_declaration : Note<"%0 is a builtin with type %1">;
+def warn_implicit_decl_no_jmp_buf
+    : Warning<"declaration of built-in function '%0' requires the declaration"
+    " of the 'jmp_buf' type, commonly provided in the header <setjmp.h>.">,
+      InGroup<DiagGroup<"incomplete-setjmp-declaration">>;
 def warn_implicit_decl_requires_sysheader : Warning<
   "declaration of built-in function '%1' requires inclusion of the header <%0>">,
   InGroup<BuiltinRequiresHeader>;
@@ -620,23 +624,8 @@ def warn_cstruct_memaccess : Warning<
   InGroup<NonTrivialMemaccess>;
 def note_nontrivial_field : Note<
   "field is non-trivial to %select{copy|default-initialize}0">;
-def err_non_trivial_c_union_in_invalid_context : Error<
-  "cannot %select{"
-  "use type %1 for a function/method parameter|"
-  "use type %1 for function/method return|"
-  "default-initialize an object of type %1|"
-  "declare an automatic variable of type %1|"
-  "copy-initialize an object of type %1|"
-  "assign to a variable of type %1|"
-  "construct an automatic compound literal of type %1|"
-  "capture a variable of type %1|"
-  "cannot use volatile type %1 where it causes an lvalue-to-rvalue conversion"
-  "}3 "
-  "since it %select{contains|is}2 a union that is non-trivial to "
-  "%select{default-initialize|destruct|copy}0">;
-def note_non_trivial_c_union : Note<
-  "%select{%2 has subobjects that are|%3 has type %2 that is}0 "
-  "non-trivial to %select{default-initialize|destruct|copy}1">;
+def err_nontrivial_primitive_type_in_union : Error<
+  "non-trivial C types are disallowed in union">;
 def warn_dyn_class_memaccess : Warning<
   "%select{destination for|source of|first operand of|second operand of}0 this "
   "%1 call is a pointer to %select{|class containing a }2dynamic class %3; "
@@ -2519,6 +2508,9 @@ def err_nsobject_attribute : Error<
   "'NSObject' attribute is for pointer types only">;
 def err_attributes_are_not_compatible : Error<
   "%0 and %1 attributes are not compatible">;
+def err_attribute_invalid_argument : Error<
+  "%select{'void'|a reference type|an array type|a non-vector or "
+  "non-vectorizable scalar type}0 is an invalid argument to attribute %1">;
 def err_attribute_wrong_number_arguments : Error<
   "%0 attribute %plural{0:takes no arguments|1:takes one argument|"
   ":requires exactly %1 arguments}1">;
@@ -2567,8 +2559,6 @@ def err_attribute_argument_out_of_range : Error<
 def err_init_priority_object_attr : Error<
   "can only use 'init_priority' attribute on file-scope definitions "
   "of objects of class type">;
-def err_attribute_argument_vec_type_hint : Error<
-  "invalid attribute argument %0 - expecting a vector or vectorizable scalar type">;
 def err_attribute_argument_out_of_bounds : Error<
   "%0 attribute parameter %1 is out of bounds">;
 def err_attribute_only_once_per_parameter : Error<
@@ -2779,6 +2769,11 @@ def err_no_accessor_for_property : Error<
   "no %select{getter|setter}0 defined for property %1">;
 def err_cannot_find_suitable_accessor : Error<
   "cannot find suitable %select{getter|setter}0 for property %1">;
+
+def warn_alloca : Warning<
+  "use of function %0 is discouraged; there is no way to check for failure but "
+  "failure may still occur, resulting in a possibly exploitable security vulnerability">,
+  InGroup<DiagGroup<"alloca">>, DefaultIgnore;
 
 def warn_alloca_align_alignof : Warning<
   "second argument to __builtin_alloca_with_align is supposed to be in bits">,
@@ -7433,6 +7428,12 @@ def warn_unused_container_subscript_expr : Warning<
 def warn_unused_call : Warning<
   "ignoring return value of function declared with %0 attribute">,
   InGroup<UnusedValue>;
+def warn_unused_constructor : Warning<
+  "ignoring temporary created by a constructor declared with %0 attribute">,
+  InGroup<UnusedValue>;
+def warn_unused_constructor_msg : Warning<
+  "ignoring temporary created by a constructor declared with %0 attribute: %1">,
+  InGroup<UnusedValue>;
 def warn_side_effects_unevaluated_context : Warning<
   "expression with side effects has no effect in an unevaluated context">,
   InGroup<UnevaluatedExpression>;
@@ -8515,10 +8516,11 @@ def warn_sync_fetch_and_nand_semantics_change : Warning<
   InGroup<DiagGroup<"sync-fetch-and-nand-semantics-changed">>;
 
 // Type
-def ext_invalid_sign_spec : Extension<"'%0' cannot be signed or unsigned">;
+def ext_wchar_t_sign_spec : ExtWarn<"'%0' cannot be signed or unsigned">,
+  InGroup<DiagGroup<"signed-unsigned-wchar">>, DefaultError;
 def warn_receiver_forward_class : Warning<
-    "receiver %0 is a forward class and corresponding @interface may not exist">,
-    InGroup<ForwardClassReceiver>;
+  "receiver %0 is a forward class and corresponding @interface may not exist">,
+  InGroup<ForwardClassReceiver>;
 def note_method_sent_forward_class : Note<"method %0 is used for the forward class">;
 def ext_missing_declspec : ExtWarn<
   "declaration specifier missing, defaulting to 'int'">;

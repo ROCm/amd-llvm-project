@@ -42,6 +42,7 @@ public:
     CortexA53,
     CortexA55,
     CortexA57,
+    CortexA65,
     CortexA72,
     CortexA73,
     CortexA75,
@@ -51,6 +52,8 @@ public:
     ExynosM3,
     Falkor,
     Kryo,
+    NeoverseE1,
+    NeoverseN1,
     Saphira,
     ThunderX2T99,
     ThunderX,
@@ -134,12 +137,17 @@ protected:
   bool HasBTI = false;
   bool HasRandGen = false;
   bool HasMTE = false;
+  bool HasTME = false;
 
   // Arm SVE2 extensions
   bool HasSVE2AES = false;
   bool HasSVE2SM4 = false;
   bool HasSVE2SHA3 = false;
   bool HasSVE2BitPerm = false;
+
+  // Future architecture extensions.
+  bool HasETE = false;
+  bool HasTRBE = false;
 
   // HasZeroCycleRegMove - Has zero-cycle register mov instructions.
   bool HasZeroCycleRegMove = false;
@@ -380,6 +388,7 @@ public:
   bool hasBTI() const { return HasBTI; }
   bool hasRandGen() const { return HasRandGen; }
   bool hasMTE() const { return HasMTE; }
+  bool hasTME() const { return HasTME; }
   // Arm SVE2 extensions
   bool hasSVE2AES() const { return HasSVE2AES; }
   bool hasSVE2SM4() const { return HasSVE2SM4; }

@@ -528,10 +528,15 @@ Error opts::symbols::dumpAST(lldb_private::Module &Module) {
   if (!symfile)
     return make_string_error("Module has no symbol file.");
 
-  auto clang_ast_ctx = llvm::dyn_cast_or_null<ClangASTContext>(
-      symfile->GetTypeSystemForLanguage(eLanguageTypeC_plus_plus));
+  auto type_system_or_err =
+      symfile->GetTypeSystemForLanguage(eLanguageTypeC_plus_plus);
+  if (!type_system_or_err)
+    return make_string_error("Can't retrieve ClangASTContext");
+
+  auto *clang_ast_ctx =
+      llvm::dyn_cast_or_null<ClangASTContext>(&type_system_or_err.get());
   if (!clang_ast_ctx)
-    return make_string_error("Can't retrieve Clang AST context.");
+    return make_string_error("Retrieved TypeSystem was not a ClangASTContext");
 
   auto ast_ctx = clang_ast_ctx->getASTContext();
   if (!ast_ctx)
@@ -558,7 +563,7 @@ Error opts::symbols::verify(lldb_private::Module &Module) {
   outs() << "Found " << comp_units_count << " compile units.\n";
 
   for (uint32_t i = 0; i < comp_units_count; i++) {
-    lldb::CompUnitSP comp_unit = symfile->ParseCompileUnitAtIndex(i);
+    lldb::CompUnitSP comp_unit = symfile->GetCompileUnitAtIndex(i);
     if (!comp_unit)
       return make_string_error("Connot parse compile unit {0}.", i);
 
@@ -976,6 +981,10 @@ int main(int argc, const char *argv[]) {
 
   auto Dbg = lldb_private::Debugger::CreateInstance();
   ModuleList::GetGlobalModuleListProperties().SetEnableExternalLookup(false);
+  CommandReturnObject Result;
+  Dbg->GetCommandInterpreter().HandleCommand(
+      "settings set plugin.process.gdb-remote.packet-timeout 60",
+      /*add_to_history*/ eLazyBoolNo, Result);
 
   if (!opts::Log.empty())
     Dbg->EnableLog("lldb", {"all"}, opts::Log, 0, errs());

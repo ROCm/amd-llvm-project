@@ -608,8 +608,8 @@ static FormatStyle expandPresets(const FormatStyle &Style) {
     return Style;
   FormatStyle Expanded = Style;
   Expanded.BraceWrapping = {false, false, false, false, false, false,
-                            false, false, false, false, false,
-                            false, false, true,  true,  true};
+                            false, false, false, false, false, false,
+                            false, true,  true,  true};
   switch (Style.BreakBeforeBraces) {
   case FormatStyle::BS_Linux:
     Expanded.BraceWrapping.AfterClass = true;
@@ -687,8 +687,8 @@ FormatStyle getLLVMStyle(FormatStyle::LanguageKind Language) {
   LLVMStyle.BreakBeforeTernaryOperators = true;
   LLVMStyle.BreakBeforeBraces = FormatStyle::BS_Attach;
   LLVMStyle.BraceWrapping = {false, false, false, false, false, false,
-                             false, false, false, false, false,
-                             false, false, true,  true,  true};
+                             false, false, false, false, false, false,
+                             false, true,  true,  true};
   LLVMStyle.BreakAfterJavaFieldAnnotations = false;
   LLVMStyle.BreakConstructorInitializers = FormatStyle::BCIS_BeforeColon;
   LLVMStyle.BreakInheritanceList = FormatStyle::BILS_BeforeColon;
@@ -1774,8 +1774,8 @@ FindCursorIndex(const SmallVectorImpl<IncludeDirective> &Includes,
 static void sortCppIncludes(const FormatStyle &Style,
                             const SmallVectorImpl<IncludeDirective> &Includes,
                             ArrayRef<tooling::Range> Ranges, StringRef FileName,
-                            StringRef Code,
-                            tooling::Replacements &Replaces, unsigned *Cursor) {
+                            StringRef Code, tooling::Replacements &Replaces,
+                            unsigned *Cursor) {
   unsigned IncludesBeginOffset = Includes.front().Offset;
   unsigned IncludesEndOffset =
       Includes.back().Offset + Includes.back().Text.size();
@@ -2365,11 +2365,14 @@ tooling::Replacements sortUsingDeclarations(const FormatStyle &Style,
 
 LangOptions getFormattingLangOpts(const FormatStyle &Style) {
   LangOptions LangOpts;
+  FormatStyle::LanguageStandard LexingStd =
+      Style.Standard == FormatStyle::LS_Auto ? FormatStyle::LS_Cpp11
+                                             : Style.Standard;
   LangOpts.CPlusPlus = 1;
-  LangOpts.CPlusPlus11 = Style.Standard == FormatStyle::LS_Cpp03 ? 0 : 1;
-  LangOpts.CPlusPlus14 = Style.Standard == FormatStyle::LS_Cpp03 ? 0 : 1;
-  LangOpts.CPlusPlus17 = Style.Standard == FormatStyle::LS_Cpp03 ? 0 : 1;
-  LangOpts.CPlusPlus2a = Style.Standard == FormatStyle::LS_Cpp03 ? 0 : 1;
+  LangOpts.CPlusPlus11 = LexingStd >= FormatStyle::LS_Cpp11;
+  LangOpts.CPlusPlus14 = LexingStd >= FormatStyle::LS_Cpp11;
+  LangOpts.CPlusPlus17 = LexingStd >= FormatStyle::LS_Cpp11;
+  LangOpts.CPlusPlus2a = LexingStd >= FormatStyle::LS_Cpp11;
   LangOpts.LineComment = 1;
   bool AlternativeOperators = Style.isCpp();
   LangOpts.CXXOperatorNames = AlternativeOperators ? 1 : 0;

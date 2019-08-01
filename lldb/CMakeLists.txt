@@ -14,6 +14,7 @@ set(CMAKE_MODULE_PATH
 # If we are not building as part of LLVM, build LLDB as a standalone project,
 # using LLVM as an external library.
 if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+  project(lldb)
   include(LLDBStandalone)
 endif()
 
@@ -52,7 +53,9 @@ if(CMAKE_CROSSCOMPILING AND LLDB_BUILT_STANDALONE)
     -DClang_DIR=${NATIVE_Clang_DIR})
 endif()
 
+# TableGen
 add_subdirectory(utils/TableGen)
+
 add_subdirectory(source)
 add_subdirectory(tools)
 add_subdirectory(docs)

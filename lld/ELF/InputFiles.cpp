@@ -127,18 +127,18 @@ static bool isCompatible(InputFile *file) {
 
   if (!config->emulation.empty()) {
     error(toString(file) + " is incompatible with " + config->emulation);
-  } else {
-    InputFile *existing;
-    if (!objectFiles.empty())
-      existing = objectFiles[0];
-    else if (!sharedFiles.empty())
-      existing = sharedFiles[0];
-    else
-      existing = bitcodeFiles[0];
-
-    error(toString(file) + " is incompatible with " + toString(existing));
+    return false;
   }
 
+  InputFile *existing;
+  if (!objectFiles.empty())
+    existing = objectFiles[0];
+  else if (!sharedFiles.empty())
+    existing = sharedFiles[0];
+  else
+    existing = bitcodeFiles[0];
+
+  error(toString(file) + " is incompatible with " + toString(existing));
   return false;
 }
 
@@ -1148,7 +1148,7 @@ void ArchiveFile::fetch(const Archive::Symbol &sym) {
   Archive::Child c =
       CHECK(sym.getMember(), toString(this) +
                                  ": could not get the member for symbol " +
-                                 sym.getName());
+                                 toELFString(sym));
 
   if (!seen.insert(c.getChildOffset()).second)
     return;
@@ -1157,7 +1157,7 @@ void ArchiveFile::fetch(const Archive::Symbol &sym) {
       CHECK(c.getMemoryBufferRef(),
             toString(this) +
                 ": could not get the buffer for the member defining symbol " +
-                sym.getName());
+                toELFString(sym));
 
   if (tar && c.getParent()->isThin())
     tar->append(relativeToRoot(CHECK(c.getFullName(), this)), mb.getBuffer());

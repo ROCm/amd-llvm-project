@@ -111,6 +111,11 @@ static cl::opt<bool>
   MaySplitLoadIndex("combiner-split-load-index", cl::Hidden, cl::init(true),
                     cl::desc("DAG combiner may split indexing from loads"));
 
+static cl::opt<bool>
+    EnableStoreMerging("combiner-store-merging", cl::Hidden, cl::init(true),
+                       cl::desc("DAG combiner enable merging multiple stores "
+                                "into a wider store"));
+
 static cl::opt<unsigned> TokenFactorInlineLimit(
     "combiner-tokenfactor-inline-limit", cl::Hidden, cl::init(2048),
     cl::desc("Limit the number of operands to inline for Token Factors"));
@@ -14829,13 +14834,7 @@ CheckForMaskedLoad(SDValue V, SDValue Ptr, SDValue Chain) {
   else if (Chain->getOpcode() == ISD::TokenFactor &&
            SDValue(LD, 1).hasOneUse()) {
     // LD has only 1 chain use so they are no indirect dependencies.
-    bool isOk = false;
-    for (const SDValue &ChainOp : Chain->op_values())
-      if (ChainOp.getNode() == LD) {
-        isOk = true;
-        break;
-      }
-    if (!isOk)
+    if (!LD->isOperandOf(Chain.getNode()))
       return Result;
   } else
     return Result; // Fail.
@@ -14848,7 +14847,7 @@ CheckForMaskedLoad(SDValue V, SDValue Ptr, SDValue Chain) {
 /// Check to see if IVal is something that provides a value as specified by
 /// MaskInfo. If so, replace the specified store with a narrower store of
 /// truncated IVal.
-static SDNode *
+static SDValue
 ShrinkLoadReplaceStoreWithStore(const std::pair<unsigned, unsigned> &MaskInfo,
                                 SDValue IVal, StoreSDNode *St,
                                 DAGCombiner *DC) {
@@ -14860,14 +14859,14 @@ ShrinkLoadReplaceStoreWithStore(const std::pair<unsigned, unsigned> &MaskInfo,
   // that uses this.  If not, this is not a replacement.
   APInt Mask = ~APInt::getBitsSet(IVal.getValueSizeInBits(),
                                   ByteShift*8, (ByteShift+NumBytes)*8);
-  if (!DAG.MaskedValueIsZero(IVal, Mask)) return nullptr;
+  if (!DAG.MaskedValueIsZero(IVal, Mask)) return SDValue();
 
   // Check that it is legal on the target to do this.  It is legal if the new
   // VT we're shrinking to (i8/i16/i32) is legal or we're still before type
   // legalization.
   MVT VT = MVT::getIntegerVT(NumBytes*8);
   if (!DC->isTypeLegal(VT))
-    return nullptr;
+    return SDValue();
 
   // Okay, we can do this!  Replace the 'St' store with a store of IVal that is
   // shifted by ByteShift and truncated down to NumBytes.
@@ -14901,8 +14900,7 @@ ShrinkLoadReplaceStoreWithStore(const std::pair<unsigned, unsigned> &MaskInfo,
   ++OpsNarrowed;
   return DAG
       .getStore(St->getChain(), SDLoc(St), IVal, Ptr,
-                St->getPointerInfo().getWithOffset(StOffset), NewAlign)
-      .getNode();
+                St->getPointerInfo().getWithOffset(StOffset), NewAlign);
 }
 
 /// Look for sequence of load / op / store where op is one of 'or', 'xor', and
@@ -14933,16 +14931,16 @@ SDValue DAGCombiner::ReduceLoadOpStoreWidth(SDNode *N) {
     std::pair<unsigned, unsigned> MaskedLoad;
     MaskedLoad = CheckForMaskedLoad(Value.getOperand(0), Ptr, Chain);
     if (MaskedLoad.first)
-      if (SDNode *NewST = ShrinkLoadReplaceStoreWithStore(MaskedLoad,
+      if (SDValue NewST = ShrinkLoadReplaceStoreWithStore(MaskedLoad,
                                                   Value.getOperand(1), ST,this))
-        return SDValue(NewST, 0);
+        return NewST;
 
     // Or is commutative, so try swapping X and Y.
     MaskedLoad = CheckForMaskedLoad(Value.getOperand(1), Ptr, Chain);
     if (MaskedLoad.first)
-      if (SDNode *NewST = ShrinkLoadReplaceStoreWithStore(MaskedLoad,
+      if (SDValue NewST = ShrinkLoadReplaceStoreWithStore(MaskedLoad,
                                                   Value.getOperand(0), ST,this))
-        return SDValue(NewST, 0);
+        return NewST;
   }
 
   if ((Opc != ISD::OR && Opc != ISD::XOR && Opc != ISD::AND) ||
@@ -15528,7 +15526,7 @@ bool DAGCombiner::checkMergeStoreCandidatesForDependencies(
 }
 
 bool DAGCombiner::MergeConsecutiveStores(StoreSDNode *St) {
-  if (OptLevel == CodeGenOpt::None)
+  if (OptLevel == CodeGenOpt::None || !EnableStoreMerging)
     return false;
 
   EVT MemVT = St->getMemoryVT();
@@ -18027,16 +18025,23 @@ static SDValue narrowInsertExtractVectorBinOp(SDNode *Extract,
   if (!TLI.isBinOp(BinOpcode) || BinOp.getNode()->getNumValues() != 1)
     return SDValue();
 
+  EVT VecVT = BinOp.getValueType();
   SDValue Bop0 = BinOp.getOperand(0), Bop1 = BinOp.getOperand(1);
+  if (VecVT != Bop0.getValueType() || VecVT != Bop1.getValueType())
+    return SDValue();
+
   SDValue Index = Extract->getOperand(1);
   EVT SubVT = Extract->getValueType(0);
+  if (!TLI.isOperationLegalOrCustom(BinOpcode, SubVT))
+    return SDValue();
+
   SDValue Sub0 = getSubVectorSrc(Bop0, Index, SubVT);
   SDValue Sub1 = getSubVectorSrc(Bop1, Index, SubVT);
 
   // TODO: We could handle the case where only 1 operand is being inserted by
   //       creating an extract of the other operand, but that requires checking
   //       number of uses and/or costs.
-  if (!Sub0 || !Sub1 || !TLI.isOperationLegalOrCustom(BinOpcode, SubVT))
+  if (!Sub0 || !Sub1)
     return SDValue();
 
   // We are inserting both operands of the wide binop only to extract back

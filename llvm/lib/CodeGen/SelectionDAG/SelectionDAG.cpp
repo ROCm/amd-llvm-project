@@ -2154,12 +2154,9 @@ SDValue SelectionDAG::GetDemandedBits(SDValue V, const APInt &DemandedBits,
   }
   case ISD::OR:
   case ISD::XOR:
-    // If the LHS or RHS don't contribute bits to the or, drop them.
-    if (MaskedValueIsZero(V.getOperand(0), DemandedBits))
-      return V.getOperand(1);
-    if (MaskedValueIsZero(V.getOperand(1), DemandedBits))
-      return V.getOperand(0);
-    break;
+  case ISD::SIGN_EXTEND_INREG:
+    return TLI->SimplifyMultipleUseDemandedBits(V, DemandedBits, DemandedElts,
+                                                *this, 0);
   case ISD::SRL:
     // Only look at single-use SRLs.
     if (!V.getNode()->hasOneUse())
@@ -2203,15 +2200,6 @@ SDValue SelectionDAG::GetDemandedBits(SDValue V, const APInt &DemandedBits,
       return getNode(ISD::ANY_EXTEND, SDLoc(V), V.getValueType(), DemandedSrc);
     break;
   }
-  case ISD::SIGN_EXTEND_INREG:
-    EVT ExVT = cast<VTSDNode>(V.getOperand(1))->getVT();
-    unsigned ExVTBits = ExVT.getScalarSizeInBits();
-
-    // If none of the extended bits are demanded, eliminate the sextinreg.
-    if (DemandedBits.getActiveBits() <= ExVTBits)
-      return V.getOperand(0);
-
-    break;
   }
   return SDValue();
 }
@@ -2437,7 +2425,7 @@ KnownBits SelectionDAG::computeKnownBits(SDValue Op, const APInt &DemandedElts,
     return Known;
   }
 
-  if (Depth == 6)
+  if (Depth >= 6)
     return Known;  // Limit search depth.
 
   KnownBits Known2;
@@ -3427,7 +3415,7 @@ unsigned SelectionDAG::ComputeNumSignBits(SDValue Op, const APInt &DemandedElts,
     return Val.getNumSignBits();
   }
 
-  if (Depth == 6)
+  if (Depth >= 6)
     return 1;  // Limit search depth.
 
   if (!DemandedElts)
@@ -3976,7 +3964,7 @@ bool SelectionDAG::isKnownNeverNaN(SDValue Op, bool SNaN, unsigned Depth) const 
   if (getTarget().Options.NoNaNsFPMath || Op->getFlags().hasNoNaNs())
     return true;
 
-  if (Depth == 6)
+  if (Depth >= 6)
     return false; // Limit search depth.
 
   // TODO: Handle vectors.
@@ -8619,7 +8607,7 @@ SDValue SelectionDAG::makeEquivalentMemoryOrdering(LoadSDNode *OldLoad,
   // TokenFactor.
   SDValue OldChain = SDValue(OldLoad, 1);
   SDValue NewChain = SDValue(NewMemOp.getNode(), 1);
-  if (!OldLoad->hasAnyUseOfValue(1))
+  if (OldChain == NewChain || !OldLoad->hasAnyUseOfValue(1))
     return NewChain;
 
   SDValue TokenFactor =
@@ -9005,7 +8993,8 @@ void SDNode::intersectFlagsWith(const SDNodeFlags Flags) {
 
 SDValue
 SelectionDAG::matchBinOpReduction(SDNode *Extract, ISD::NodeType &BinOp,
-                                  ArrayRef<ISD::NodeType> CandidateBinOps) {
+                                  ArrayRef<ISD::NodeType> CandidateBinOps,
+                                  bool AllowPartials) {
   // The pattern must end in an extract from index 0.
   if (Extract->getOpcode() != ISD::EXTRACT_VECTOR_ELT ||
       !isNullConstant(Extract->getOperand(1)))
@@ -9019,6 +9008,23 @@ SelectionDAG::matchBinOpReduction(SDNode *Extract, ISD::NodeType &BinOp,
         return Op.getOpcode() == unsigned(BinOp);
       }))
     return SDValue();
+  unsigned CandidateBinOp = Op.getOpcode();
+
+  // Matching failed - attempt to see if we did enough stages that a partial
+  // reduction from a subvector is possible.
+  auto PartialReduction = [&](SDValue Op, unsigned NumSubElts) {
+    if (!AllowPartials || !Op)
+      return SDValue();
+    EVT OpVT = Op.getValueType();
+    EVT OpSVT = OpVT.getScalarType();
+    EVT SubVT = EVT::getVectorVT(*getContext(), OpSVT, NumSubElts);
+    if (!TLI->isExtractSubvectorCheap(SubVT, OpVT, 0))
+      return SDValue();
+    BinOp = (ISD::NodeType)CandidateBinOp;
+    return getNode(
+        ISD::EXTRACT_SUBVECTOR, SDLoc(Op), SubVT, Op,
+        getConstant(0, SDLoc(Op), TLI->getVectorIdxTy(getDataLayout())));
+  };
 
   // At each stage, we're looking for something that looks like:
   // %s = shufflevector <8 x i32> %op, <8 x i32> undef,
@@ -9030,10 +9036,15 @@ SelectionDAG::matchBinOpReduction(SDNode *Extract, ISD::NodeType &BinOp,
   // <4,5,6,7,u,u,u,u>
   // <2,3,u,u,u,u,u,u>
   // <1,u,u,u,u,u,u,u>
-  unsigned CandidateBinOp = Op.getOpcode();
+  // While a partial reduction match would be:
+  // <2,3,u,u,u,u,u,u>
+  // <1,u,u,u,u,u,u,u>
+  SDValue PrevOp;
   for (unsigned i = 0; i < Stages; ++i) {
+    unsigned MaskEnd = (1 << i);
+
     if (Op.getOpcode() != CandidateBinOp)
-      return SDValue();
+      return PartialReduction(PrevOp, MaskEnd);
 
     SDValue Op0 = Op.getOperand(0);
     SDValue Op1 = Op.getOperand(1);
@@ -9049,12 +9060,14 @@ SelectionDAG::matchBinOpReduction(SDNode *Extract, ISD::NodeType &BinOp,
     // The first operand of the shuffle should be the same as the other operand
     // of the binop.
     if (!Shuffle || Shuffle->getOperand(0) != Op)
-      return SDValue();
+      return PartialReduction(PrevOp, MaskEnd);
 
     // Verify the shuffle has the expected (at this stage of the pyramid) mask.
-    for (int Index = 0, MaskEnd = 1 << i; Index < MaskEnd; ++Index)
-      if (Shuffle->getMaskElt(Index) != MaskEnd + Index)
-        return SDValue();
+    for (int Index = 0; Index < (int)MaskEnd; ++Index)
+      if (Shuffle->getMaskElt(Index) != (int)(MaskEnd + Index))
+        return PartialReduction(PrevOp, MaskEnd);
+
+    PrevOp = Op;
   }
 
   BinOp = (ISD::NodeType)CandidateBinOp;
