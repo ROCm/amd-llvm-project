@@ -652,9 +652,6 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C,
     if (!HCLinker)
       HCLinker = std::unique_ptr<HCC::CXXAMPLink>(new HCC::CXXAMPLink(getToolChain()));
 
-    if (C.getArgs().hasFlag(options::OPT_hc_function_calls, {}, false)) {
-      CmdArgs.emplace_back("--amdgpu-func-calls");
-    }
     if (C.getArgs().hasFlag(options::OPT_mcode_object_v3,
                             options::OPT_mno_code_object_v3, false)) {
       CmdArgs.emplace_back("--hcc-cov3");

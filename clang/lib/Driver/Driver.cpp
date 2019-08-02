@@ -420,9 +420,6 @@ DerivedArgList *Driver::TranslateInputArgs(const InputArgList &Args) const {
     if (!Args.hasArg(options::OPT_std_EQ)) {
       DAL->AddPositionalArg(0, Opts->getOption(options::OPT_std_EQ), "c++amp");
     }
-    if (Args.hasArg(options::OPT_hc_function_calls)) {
-      DAL->AddFlagArg(nullptr, Opts->getOption(options::OPT_hc_function_calls));
-    }
   } else if (Args.hasArg(options::OPT_famp)) {
     DAL->AddPositionalArg(0, Opts->getOption(options::OPT_Xclang), "-famp");
   }

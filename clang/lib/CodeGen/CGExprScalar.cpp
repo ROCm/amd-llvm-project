@@ -576,6 +576,18 @@ public:
     return EmitNullValue(E->getType());
   }
   Value *VisitExplicitCastExpr(ExplicitCastExpr *E) {
+    // TODO: HCC specific kludge due to how ROCDL feels it is OK to force
+    //       address spaces unto everyone.
+    if (auto CCE = dyn_cast_or_null<CStyleCastExpr>(E)) {
+      auto DstTy = ConvertType(CCE->getTypeAsWritten());
+      auto SrcTy = ConvertType(CCE->getSubExpr()->getType());
+
+      if (DstTy->isPointerTy() && SrcTy->isPointerTy() &&
+          DstTy->getPointerAddressSpace() != SrcTy->getPointerAddressSpace())
+        if (CCE->getCastKind() != CK_AddressSpaceConversion)
+          CCE->setCastKind(CK_AddressSpaceConversion);
+    }
+
     CGF.CGM.EmitExplicitCastExprType(E, &CGF);
     return VisitCastExpr(E);
   }

@@ -501,8 +501,6 @@ def bundle : Flag<["-"], "bundle">;
 def b : JoinedOrSeparate<["-"], "b">, Flags<[Unsupported]>;
 def hc_mode : Flag<["-"], "hc">, Flags<[DriverOption]>,
   HelpText<"Enable Heterogeneous C++ (HC) mode">;
-def hc_function_calls : Flag<["-"], "hc-function-calls">, Flags<[DriverOption]>,
-  HelpText<"Enable support for direct function calls in [[hc]] code">;
 def cxxamp_kernel_mode : Flag<["-"], "gpu">, Flags<[DriverOption]>,Group<cxxamp_Group>,
   HelpText<"C++AMP only.  This option allows the compiler to emit kernel-specific artifacts"> ;
 def cxxamp_cpu_mode : Flag<["-"], "cpu">, Flags<[DriverOption]>,Group<cxxamp_Group>,

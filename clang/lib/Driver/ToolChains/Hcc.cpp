@@ -296,9 +296,6 @@ void HCC::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
 
   if (JA.getKind() == Action::AssembleJobClass) {
     if (!Args.hasFlag(options::OPT_fgpu_rdc, options::OPT_fno_gpu_rdc, true)) {
-      if (Args.hasFlag(options::OPT_hc_function_calls, {}, false)) {
-        CmdArgs.push_back("--amdgpu-func-calls");
-      }
       if (Args.hasFlag(options::OPT_mcode_object_v3,
                        options::OPT_mno_code_object_v3, false)) {
         CmdArgs.push_back("--hcc-cov3");

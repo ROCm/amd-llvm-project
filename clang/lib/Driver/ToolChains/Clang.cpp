@@ -3507,8 +3507,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-famp-is-device");
     CmdArgs.push_back("-fno-builtin");
     CmdArgs.push_back("-fno-common");
-    //CmdArgs.push_back("-m32"); // added below using -triple
-    CmdArgs.push_back("-O2");
+    if (!Args.hasArg(options::OPT_O_Group)) CmdArgs.push_back("-O2");
   } else if (JA.ContainsActions(Action::BackendJobClass, types::TY_PP_CXX_AMP_CPU) ||
              JA.ContainsActions(Action::PreprocessJobClass, types::TY_CXX_AMP_CPU)) {
     // path to compile kernel codes on CPU
