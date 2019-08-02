@@ -3223,7 +3223,6 @@ static void RenderDebugOptions(const ToolChain &TC, const Driver &D,
     }
   }
 
-  if (DebugInfoKind == codegenoptions::DebugLineTablesOnly) {
   // If a debugger tuning argument appeared, remember it.
   if (const Arg *A =
           Args.getLastArg(options::OPT_gTune_Group, options::OPT_ggdbN_Group)) {
@@ -3404,8 +3403,6 @@ static void RenderDebugOptions(const ToolChain &TC, const Driver &D,
   // scope?
   if (DebuggerTuning == llvm::DebuggerKind::SCE)
     CmdArgs.push_back("-dwarf-explicit-import");
-
-  } // if (!IsHCCKernelPath)
 
   RenderDebugInfoCompressionArgs(Args, CmdArgs, D, TC);
 }
@@ -5122,9 +5119,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                     options::OPT_fno_gnu_inline_asm, true))
     CmdArgs.push_back("-fno-gnu-inline-asm");
 
-  // Turn off vectorization support for GPU kernels for now
-  if (!IsHCCKernelPath) {
-
   // Enable vectorization per default according to the optimization level
   // selected. For optimization levels that want vectorization we use the alias
   // option to simplify the hasFlag logic.
@@ -5135,10 +5129,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                    options::OPT_fno_vectorize, EnableVec))
     CmdArgs.push_back("-vectorize-loops");
 
-  } // if (!IsHCCKernelPath)
-
   // -fslp-vectorize is enabled based on the optimization level selected.
-  bool EnableSLPVec = shouldEnableVectorizerAtOLevel(Args, true) && !IsHCCKernelPath;
+  bool EnableSLPVec = shouldEnableVectorizerAtOLevel(Args, true);
   OptSpecifier SLPVectAliasOption =
       EnableSLPVec ? options::OPT_O_Group : options::OPT_fslp_vectorize;
   if (Args.hasFlag(options::OPT_fslp_vectorize, SLPVectAliasOption,
