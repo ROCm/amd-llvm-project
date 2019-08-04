@@ -162,7 +162,9 @@ private:
   ComplexRendererFns selectShiftA_64(const MachineOperand &Root) const;
   ComplexRendererFns selectShiftB_64(const MachineOperand &Root) const;
 
+  ComplexRendererFns select12BitValueWithLeftShift(uint64_t Immed) const;
   ComplexRendererFns selectArithImmed(MachineOperand &Root) const;
+  ComplexRendererFns selectNegArithImmed(MachineOperand &Root) const;
 
   ComplexRendererFns selectAddrModeUnscaled(MachineOperand &Root,
                                             unsigned Size) const;
@@ -373,7 +375,7 @@ static bool unsupportedBinOp(const MachineInstr &I,
     // so, this will need to be taught about that, and we'll need to get the
     // bank out of the minimal class for the register.
     // Either way, this needs to be documented (and possibly verified).
-    if (!TargetRegisterInfo::isVirtualRegister(MO.getReg())) {
+    if (!Register::isVirtualRegister(MO.getReg())) {
       LLVM_DEBUG(dbgs() << "Generic inst has physical register operand\n");
       return true;
     }
@@ -518,7 +520,7 @@ static bool isValidCopy(const MachineInstr &I, const RegisterBank &DstBank,
       (DstSize == SrcSize ||
        // Copies are a mean to setup initial types, the number of
        // bits may not exactly match.
-       (TargetRegisterInfo::isPhysicalRegister(SrcReg) && DstSize <= SrcSize) ||
+       (Register::isPhysicalRegister(SrcReg) && DstSize <= SrcSize) ||
        // Copies are a mean to copy bits around, as long as we are
        // on the same register class, that's fine. Otherwise, that
        // means we need some SUBREG_TO_REG or AND & co.
@@ -555,7 +557,7 @@ static bool selectSubregisterCopy(MachineInstr &I, MachineRegisterInfo &MRI,
 
   // It's possible that the destination register won't be constrained. Make
   // sure that happens.
-  if (!TargetRegisterInfo::isPhysicalRegister(I.getOperand(0).getReg()))
+  if (!Register::isPhysicalRegister(I.getOperand(0).getReg()))
     RBI.constrainGenericRegister(I.getOperand(0).getReg(), *To, MRI);
 
   return true;
@@ -623,11 +625,10 @@ static bool selectCopy(MachineInstr &I, const TargetInstrInfo &TII,
   // result.
   auto CheckCopy = [&]() {
     // If we have a bitcast or something, we can't have physical registers.
-    assert(
-        (I.isCopy() ||
-         (!TargetRegisterInfo::isPhysicalRegister(I.getOperand(0).getReg()) &&
-          !TargetRegisterInfo::isPhysicalRegister(I.getOperand(1).getReg()))) &&
-        "No phys reg on generic operator!");
+    assert((I.isCopy() ||
+            (!Register::isPhysicalRegister(I.getOperand(0).getReg()) &&
+             !Register::isPhysicalRegister(I.getOperand(1).getReg()))) &&
+           "No phys reg on generic operator!");
     assert(KnownValid || isValidCopy(I, DstRegBank, MRI, TRI, RBI));
     (void)KnownValid;
     return true;
@@ -690,7 +691,7 @@ static bool selectCopy(MachineInstr &I, const TargetInstrInfo &TII,
 
     // If the destination is a physical register, then there's nothing to
     // change, so we're done.
-    if (TargetRegisterInfo::isPhysicalRegister(DstReg))
+    if (Register::isPhysicalRegister(DstReg))
       return CheckCopy();
   }
 
@@ -3355,7 +3356,7 @@ bool AArch64InstructionSelector::tryOptSelect(MachineInstr &I) const {
 
     // Can't see past copies from physregs.
     if (Opc == TargetOpcode::COPY &&
-        TargetRegisterInfo::isPhysicalRegister(CondDef->getOperand(1).getReg()))
+        Register::isPhysicalRegister(CondDef->getOperand(1).getReg()))
       return false;
 
     CondDef = MRI.getVRegDef(CondDef->getOperand(1).getReg());
@@ -4082,22 +4083,15 @@ AArch64InstructionSelector::selectShiftB_64(const MachineOperand &Root) const {
   return {{[=](MachineInstrBuilder &MIB) { MIB.addImm(Enc); }}};
 }
 
-/// SelectArithImmed - Select an immediate value that can be represented as
-/// a 12-bit value shifted left by either 0 or 12.  If so, return true with
-/// Val set to the 12-bit value and Shift set to the shifter operand.
+/// Helper to select an immediate value that can be represented as a 12-bit
+/// value shifted left by either 0 or 12. If it is possible to do so, return
+/// the immediate and shift value. If not, return None.
+///
+/// Used by selectArithImmed and selectNegArithImmed.
 InstructionSelector::ComplexRendererFns
-AArch64InstructionSelector::selectArithImmed(MachineOperand &Root) const {
-  // This function is called from the addsub_shifted_imm ComplexPattern,
-  // which lists [imm] as the list of opcode it's interested in, however
-  // we still need to check whether the operand is actually an immediate
-  // here because the ComplexPattern opcode list is only used in
-  // root-level opcode matching.
-  auto MaybeImmed = getImmedFromMO(Root);
-  if (MaybeImmed == None)
-    return None;
-  uint64_t Immed = *MaybeImmed;
+AArch64InstructionSelector::select12BitValueWithLeftShift(
+    uint64_t Immed) const {
   unsigned ShiftAmt;
-
   if (Immed >> 12 == 0) {
     ShiftAmt = 0;
   } else if ((Immed & 0xfff) == 0 && Immed >> 24 == 0) {
@@ -4111,6 +4105,56 @@ AArch64InstructionSelector::selectArithImmed(MachineOperand &Root) const {
       [=](MachineInstrBuilder &MIB) { MIB.addImm(Immed); },
       [=](MachineInstrBuilder &MIB) { MIB.addImm(ShVal); },
   }};
+}
+
+/// SelectArithImmed - Select an immediate value that can be represented as
+/// a 12-bit value shifted left by either 0 or 12.  If so, return true with
+/// Val set to the 12-bit value and Shift set to the shifter operand.
+InstructionSelector::ComplexRendererFns
+AArch64InstructionSelector::selectArithImmed(MachineOperand &Root) const {
+  // This function is called from the addsub_shifted_imm ComplexPattern,
+  // which lists [imm] as the list of opcode it's interested in, however
+  // we still need to check whether the operand is actually an immediate
+  // here because the ComplexPattern opcode list is only used in
+  // root-level opcode matching.
+  auto MaybeImmed = getImmedFromMO(Root);
+  if (MaybeImmed == None)
+    return None;
+  return select12BitValueWithLeftShift(*MaybeImmed);
+}
+
+/// SelectNegArithImmed - As above, but negates the value before trying to
+/// select it.
+InstructionSelector::ComplexRendererFns
+AArch64InstructionSelector::selectNegArithImmed(MachineOperand &Root) const {
+  // We need a register here, because we need to know if we have a 64 or 32
+  // bit immediate.
+  if (!Root.isReg())
+    return None;
+  auto MaybeImmed = getImmedFromMO(Root);
+  if (MaybeImmed == None)
+    return None;
+  uint64_t Immed = *MaybeImmed;
+
+  // This negation is almost always valid, but "cmp wN, #0" and "cmn wN, #0"
+  // have the opposite effect on the C flag, so this pattern mustn't match under
+  // those circumstances.
+  if (Immed == 0)
+    return None;
+
+  // Check if we're dealing with a 32-bit type on the root or a 64-bit type on
+  // the root.
+  MachineRegisterInfo &MRI = Root.getParent()->getMF()->getRegInfo();
+  if (MRI.getType(Root.getReg()).getSizeInBits() == 32)
+    Immed = ~((uint32_t)Immed) + 1;
+  else
+    Immed = ~Immed + 1ULL;
+
+  if (Immed & 0xFFFFFFFFFF000000ULL)
+    return None;
+
+  Immed &= 0xFFFFFFULL;
+  return select12BitValueWithLeftShift(Immed);
 }
 
 /// Return true if it is worth folding MI into an extended register. That is,
