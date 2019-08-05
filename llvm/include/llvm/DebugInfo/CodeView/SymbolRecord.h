@@ -521,7 +521,7 @@ class DefRangeFramePointerRelSym : public SymbolRecord {
 
 public:
   struct Header {
-    int32_t Offset;
+    little32_t Offset;
   };
 
   explicit DefRangeFramePointerRelSym(SymbolRecordKind Kind)

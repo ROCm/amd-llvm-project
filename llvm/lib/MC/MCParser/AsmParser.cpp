@@ -3891,6 +3891,7 @@ bool AsmParser::parseDirectiveCVDefRange() {
 
     codeview::DefRangeRegisterSym::Header DRHdr;
     DRHdr.Register = DRRegister;
+    DRHdr.MayHaveNoName = 0;
     getStreamer().EmitCVDefRangeDirective(Ranges, DRHdr);
     break;
   }
@@ -3920,6 +3921,7 @@ bool AsmParser::parseDirectiveCVDefRange() {
 
     codeview::DefRangeSubfieldRegisterSym::Header DRHdr;
     DRHdr.Register = DRRegister;
+    DRHdr.MayHaveNoName = 0;
     DRHdr.OffsetInParent = DROffsetInParent;
     getStreamer().EmitCVDefRangeDirective(Ranges, DRHdr);
     break;

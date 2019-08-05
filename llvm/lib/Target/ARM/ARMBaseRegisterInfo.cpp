@@ -176,8 +176,8 @@ ARMBaseRegisterInfo::getThisReturnPreservedMask(const MachineFunction &MF,
 
 ArrayRef<MCPhysReg> ARMBaseRegisterInfo::getIntraCallClobberedRegs(
     const MachineFunction *MF) const {
-  static MCPhysReg IntraCallClobberedRegs[] = {ARM::R12};
-  return IntraCallClobberedRegs;
+  static const MCPhysReg IntraCallClobberedRegs[] = {ARM::R12};
+  return ArrayRef<MCPhysReg>(IntraCallClobberedRegs);
 }
 
 BitVector ARMBaseRegisterInfo::
