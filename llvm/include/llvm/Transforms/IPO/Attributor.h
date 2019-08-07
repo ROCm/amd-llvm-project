@@ -333,7 +333,7 @@ struct InformationCache {
 
   /// Return the map that relates "interesting" opcodes with all instructions
   /// with that opcode in \p F.
-  OpcodeInstMapTy &getOpcodeInstMapForFunction(Function &F) {
+  OpcodeInstMapTy &getOpcodeInstMapForFunction(const Function &F) {
     return FuncInstOpcodeMap[&F];
   }
 
@@ -341,16 +341,16 @@ struct InformationCache {
   using InstructionVectorTy = std::vector<Instruction *>;
 
   /// Return the instructions in \p F that may read or write memory.
-  InstructionVectorTy &getReadOrWriteInstsForFunction(Function &F) {
+  InstructionVectorTy &getReadOrWriteInstsForFunction(const Function &F) {
     return FuncRWInstsMap[&F];
   }
 
 private:
   /// A map type from functions to opcode to instruction maps.
-  using FuncInstOpcodeMapTy = DenseMap<Function *, OpcodeInstMapTy>;
+  using FuncInstOpcodeMapTy = DenseMap<const Function *, OpcodeInstMapTy>;
 
   /// A map type from functions to their read or write instructions.
-  using FuncRWInstsMapTy = DenseMap<Function *, InstructionVectorTy>;
+  using FuncRWInstsMapTy = DenseMap<const Function *, InstructionVectorTy>;
 
   /// A nested map that remembers all instructions in a function with a certain
   /// instruction opcode (Instruction::getOpcode()).
@@ -655,9 +655,17 @@ protected:
   int AttributeIdx;
 };
 
+/// Helper struct necessary as the modular build fails if the virtual method
+/// IRAttribute::manifest is defined in the Attributor.cpp.
+struct IRAttributeManifest {
+  static ChangeStatus manifestAttrs(Attributor &A, IRPosition &IRP,
+      const ArrayRef<Attribute> &DeducedAttrs);
+};
+
 /// Helper class that provides common functionality to manifest IR attributes.
 template <Attribute::AttrKind AK, typename Base>
-struct IRAttribute : public IRPosition, public Base {
+struct IRAttribute : public IRPosition, public Base, public IRAttributeManifest {
+  ~IRAttribute() {}
 
   /// Constructors for the IRPosition.
   ///
@@ -666,7 +674,11 @@ struct IRAttribute : public IRPosition, public Base {
   ///}
 
   /// See AbstractAttribute::manifest(...).
-  virtual ChangeStatus manifest(Attributor &A);
+  ChangeStatus manifest(Attributor &A) {
+    SmallVector<Attribute, 4> DeducedAttrs;
+    getDeducedAttributes(getAnchorScope().getContext(), DeducedAttrs);
+    return IRAttributeManifest::manifestAttrs(A, getIRPosition(), DeducedAttrs);
+  }
 
   /// Return the kind that identifies the abstract attribute implementation.
   Attribute::AttrKind getAttrKind() const { return AK; }
