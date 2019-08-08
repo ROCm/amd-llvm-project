@@ -37,9 +37,9 @@ void DWARFUnitVector::addUnitsForSection(DWARFContext &C,
                                          const DWARFSection &Section,
                                          DWARFSectionKind SectionKind) {
   const DWARFObject &D = C.getDWARFObj();
-  addUnitsImpl(C, D, Section, C.getDebugAbbrev(), &D.getRangeSection(),
-               &D.getLocSection(), D.getStringSection(),
-               D.getStringOffsetSection(), &D.getAddrSection(),
+  addUnitsImpl(C, D, Section, C.getDebugAbbrev(), &D.getRangesSection(),
+               &D.getLocSection(), D.getStrSection(),
+               D.getStrOffsetsSection(), &D.getAddrSection(),
                D.getLineSection(), D.isLittleEndian(), false, false,
                SectionKind);
 }
@@ -49,9 +49,9 @@ void DWARFUnitVector::addUnitsForDWOSection(DWARFContext &C,
                                             DWARFSectionKind SectionKind,
                                             bool Lazy) {
   const DWARFObject &D = C.getDWARFObj();
-  addUnitsImpl(C, D, DWOSection, C.getDebugAbbrevDWO(), &D.getRangeDWOSection(),
-               &D.getLocDWOSection(), D.getStringDWOSection(),
-               D.getStringOffsetDWOSection(), &D.getAddrSection(),
+  addUnitsImpl(C, D, DWOSection, C.getDebugAbbrevDWO(), &D.getRangesDWOSection(),
+               &D.getLocDWOSection(), D.getStrDWOSection(),
+               D.getStrOffsetsDWOSection(), &D.getAddrSection(),
                D.getLineDWOSection(), C.isLittleEndian(), true, Lazy,
                SectionKind);
 }
@@ -478,7 +478,7 @@ size_t DWARFUnit::extractDIEsIfNeeded(bool CUDieOnly) {
 
     // Don't fall back to DW_AT_GNU_ranges_base: it should be ignored for
     // skeleton CU DIE, so that DWARF users not aware of it are not broken.
-    }
+  }
 
   return DieArray.size();
 }
