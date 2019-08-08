@@ -9,6 +9,7 @@
 #include "clang/Rewrite/Frontend/FrontendActions.h"
 #include "clang/AST/ASTConsumer.h"
 #include "clang/Basic/CharInfo.h"
+#include "clang/Basic/LangStandard.h"
 #include "clang/Config/config.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendActions.h"
@@ -211,16 +212,16 @@ public:
 
   void visitModuleFile(StringRef Filename,
                        serialization::ModuleKind Kind) override {
-    auto *File = CI.getFileManager().getFile(Filename);
+    auto File = CI.getFileManager().getFile(Filename);
     assert(File && "missing file for loaded module?");
 
     // Only rewrite each module file once.
-    if (!Rewritten.insert(File).second)
+    if (!Rewritten.insert(*File).second)
       return;
 
     serialization::ModuleFile *MF =
-        CI.getModuleManager()->getModuleManager().lookup(File);
-    assert(File && "missing module file for loaded module?");
+        CI.getModuleManager()->getModuleManager().lookup(*File);
+    assert(MF && "missing module file for loaded module?");
 
     // Not interested in PCH / preambles.
     if (!MF->isModule())
@@ -250,7 +251,7 @@ public:
     Instance.getFrontendOpts().DisableFree = false;
     Instance.getFrontendOpts().Inputs.clear();
     Instance.getFrontendOpts().Inputs.emplace_back(
-        Filename, InputKind(InputKind::Unknown, InputKind::Precompiled));
+        Filename, InputKind(Language::Unknown, InputKind::Precompiled));
     Instance.getFrontendOpts().ModuleFiles.clear();
     Instance.getFrontendOpts().ModuleMapFiles.clear();
     // Don't recursively rewrite imports. We handle them all at the top level.

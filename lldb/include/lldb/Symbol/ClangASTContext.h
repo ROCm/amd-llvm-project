@@ -395,7 +395,8 @@ public:
   clang::ParmVarDecl *CreateParameterDeclaration(clang::DeclContext *decl_ctx,
                                                  const char *name,
                                                  const CompilerType &param_type,
-                                                 int storage);
+                                                 int storage,
+                                                 bool add_decl=false);
 
   void SetFunctionParameters(clang::FunctionDecl *function_decl,
                              clang::ParmVarDecl **params, unsigned num_params);
@@ -877,12 +878,6 @@ public:
   // pointer type to pointee_type.
   static CompilerType CreateMemberPointerType(const CompilerType &type,
                                               const CompilerType &pointee_type);
-
-  // Converts "s" to a floating point value and place resulting floating point
-  // bytes in the "dst" buffer.
-  size_t ConvertStringToFloatValue(lldb::opaque_compiler_type_t type,
-                                   const char *s, uint8_t *dst,
-                                   size_t dst_size) override;
 
   // Dumping types
 #ifndef NDEBUG

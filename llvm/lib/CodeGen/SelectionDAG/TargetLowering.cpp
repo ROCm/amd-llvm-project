@@ -569,8 +569,17 @@ bool TargetLowering::SimplifyDemandedBits(SDValue Op, const APInt &DemandedBits,
 SDValue TargetLowering::SimplifyMultipleUseDemandedBits(
     SDValue Op, const APInt &DemandedBits, const APInt &DemandedElts,
     SelectionDAG &DAG, unsigned Depth) const {
-  if (Depth >= 6) // Limit search depth.
+  // Limit search depth.
+  if (Depth >= 6)
     return SDValue();
+
+  // Ignore UNDEFs.
+  if (Op.isUndef())
+    return SDValue();
+
+  // Not demanding any bits/elts from Op.
+  if (DemandedBits == 0 || DemandedElts == 0)
+    return DAG.getUNDEF(Op.getValueType());
 
   unsigned NumElts = DemandedElts.getBitWidth();
   KnownBits LHSKnown, RHSKnown;
@@ -674,6 +683,16 @@ SDValue TargetLowering::SimplifyMultipleUseDemandedBits(
     EVT ExVT = cast<VTSDNode>(Op.getOperand(1))->getVT();
     if (DemandedBits.getActiveBits() <= ExVT.getScalarSizeInBits())
       return Op.getOperand(0);
+    break;
+  }
+  case ISD::INSERT_VECTOR_ELT: {
+    // If we don't demand the inserted element, return the base vector.
+    SDValue Vec = Op.getOperand(0);
+    auto *CIdx = dyn_cast<ConstantSDNode>(Op.getOperand(2));
+    EVT VecVT = Vec.getValueType();
+    if (CIdx && CIdx->getAPIntValue().ult(VecVT.getVectorNumElements()) &&
+        !DemandedElts[CIdx->getZExtValue()])
+      return Vec;
     break;
   }
   case ISD::VECTOR_SHUFFLE: {
@@ -918,21 +937,36 @@ bool TargetLowering::SimplifyDemandedBits(
     }
 
     if (!!DemandedLHS || !!DemandedRHS) {
+      SDValue Op0 = Op.getOperand(0);
+      SDValue Op1 = Op.getOperand(1);
+
       Known.Zero.setAllBits();
       Known.One.setAllBits();
       if (!!DemandedLHS) {
-        if (SimplifyDemandedBits(Op.getOperand(0), DemandedBits, DemandedLHS,
-                                 Known2, TLO, Depth + 1))
+        if (SimplifyDemandedBits(Op0, DemandedBits, DemandedLHS, Known2, TLO,
+                                 Depth + 1))
           return true;
         Known.One &= Known2.One;
         Known.Zero &= Known2.Zero;
       }
       if (!!DemandedRHS) {
-        if (SimplifyDemandedBits(Op.getOperand(1), DemandedBits, DemandedRHS,
-                                 Known2, TLO, Depth + 1))
+        if (SimplifyDemandedBits(Op1, DemandedBits, DemandedRHS, Known2, TLO,
+                                 Depth + 1))
           return true;
         Known.One &= Known2.One;
         Known.Zero &= Known2.Zero;
+      }
+
+      // Attempt to avoid multi-use ops if we don't need anything from them.
+      SDValue DemandedOp0 = SimplifyMultipleUseDemandedBits(
+          Op0, DemandedBits, DemandedLHS, TLO.DAG, Depth + 1);
+      SDValue DemandedOp1 = SimplifyMultipleUseDemandedBits(
+          Op1, DemandedBits, DemandedRHS, TLO.DAG, Depth + 1);
+      if (DemandedOp0 || DemandedOp1) {
+        Op0 = DemandedOp0 ? DemandedOp0 : Op0;
+        Op1 = DemandedOp1 ? DemandedOp1 : Op1;
+        SDValue NewOp = TLO.DAG.getVectorShuffle(VT, dl, Op0, Op1, ShuffleMask);
+        return TLO.CombineTo(Op, NewOp);
       }
     }
     break;
@@ -2205,6 +2239,15 @@ bool TargetLowering::SimplifyDemandedVectorElts(
       return true;
     APInt BaseElts = DemandedElts;
     BaseElts.insertBits(APInt::getNullValue(NumSubElts), SubIdx);
+
+    // If none of the base operand elements are demanded, replace it with undef.
+    if (!BaseElts && !Base.isUndef())
+      return TLO.CombineTo(Op,
+                           TLO.DAG.getNode(ISD::INSERT_SUBVECTOR, DL, VT,
+                                           TLO.DAG.getUNDEF(VT),
+                                           Op.getOperand(1),
+                                           Op.getOperand(2)));
+
     if (SimplifyDemandedVectorElts(Base, BaseElts, KnownUndef, KnownZero, TLO,
                                    Depth + 1))
       return true;
@@ -2505,6 +2548,12 @@ void TargetLowering::computeKnownBitsForTargetNode(const SDValue Op,
           Op.getOpcode() == ISD::INTRINSIC_VOID) &&
          "Should use MaskedValueIsZero if you don't know whether Op"
          " is a target node!");
+  Known.resetAll();
+}
+
+void TargetLowering::computeKnownBitsForTargetInstr(
+    Register R, KnownBits &Known, const APInt &DemandedElts,
+    const MachineRegisterInfo &MRI, unsigned Depth) const {
   Known.resetAll();
 }
 
@@ -3863,15 +3912,17 @@ TargetLowering::getConstraintType(StringRef Constraint) const {
   if (S == 1) {
     switch (Constraint[0]) {
     default: break;
-    case 'r': return C_RegisterClass;
+    case 'r':
+      return C_RegisterClass;
     case 'm': // memory
     case 'o': // offsetable
     case 'V': // not offsetable
       return C_Memory;
-    case 'i': // Simple Integer or Relocatable Constant
     case 'n': // Simple Integer
     case 'E': // Floating Point Constant
     case 'F': // Floating Point Constant
+      return C_Immediate;
+    case 'i': // Simple Integer or Relocatable Constant
     case 's': // Relocatable Constant
     case 'p': // Address.
     case 'X': // Allow ANY value.
@@ -4246,6 +4297,7 @@ TargetLowering::ParseConstraints(const DataLayout &DL,
 /// Return an integer indicating how general CT is.
 static unsigned getConstraintGenerality(TargetLowering::ConstraintType CT) {
   switch (CT) {
+  case TargetLowering::C_Immediate:
   case TargetLowering::C_Other:
   case TargetLowering::C_Unknown:
     return 0;
@@ -4365,11 +4417,12 @@ static void ChooseConstraint(TargetLowering::AsmOperandInfo &OpInfo,
     TargetLowering::ConstraintType CType =
       TLI.getConstraintType(OpInfo.Codes[i]);
 
-    // If this is an 'other' constraint, see if the operand is valid for it.
-    // For example, on X86 we might have an 'rI' constraint.  If the operand
-    // is an integer in the range [0..31] we want to use I (saving a load
-    // of a register), otherwise we must use 'r'.
-    if (CType == TargetLowering::C_Other && Op.getNode()) {
+    // If this is an 'other' or 'immediate' constraint, see if the operand is
+    // valid for it. For example, on X86 we might have an 'rI' constraint. If
+    // the operand is an integer in the range [0..31] we want to use I (saving a
+    // load of a register), otherwise we must use 'r'.
+    if ((CType == TargetLowering::C_Other ||
+         CType == TargetLowering::C_Immediate) && Op.getNode()) {
       assert(OpInfo.Codes[i].size() == 1 &&
              "Unhandled multi-letter 'other' constraint");
       std::vector<SDValue> ResultOps;

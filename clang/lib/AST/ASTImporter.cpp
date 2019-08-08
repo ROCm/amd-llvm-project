@@ -3118,9 +3118,19 @@ ExpectedDecl ASTNodeImporter::VisitFunctionDecl(FunctionDecl *D) {
   if (FoundByLookup) {
     if (isa<CXXMethodDecl>(FoundByLookup)) {
       if (D->getLexicalDeclContext() == D->getDeclContext()) {
-        if (!D->doesThisDeclarationHaveABody())
+        if (!D->doesThisDeclarationHaveABody()) {
+          if (FunctionTemplateDecl *DescribedD =
+                  D->getDescribedFunctionTemplate()) {
+            // Handle a "templated" function together with its described
+            // template. This avoids need for a similar check at import of the
+            // described template.
+            assert(FoundByLookup->getDescribedFunctionTemplate() &&
+                   "Templated function mapped to non-templated?");
+            Importer.MapImported(DescribedD,
+                                 FoundByLookup->getDescribedFunctionTemplate());
+          }
           return Importer.MapImported(D, FoundByLookup);
-        else {
+        } else {
           // Let's continue and build up the redecl chain in this case.
           // FIXME Merge the functions into one decl.
         }
@@ -8442,13 +8452,13 @@ Expected<FileID> ASTImporter::Import(FileID FromID, bool IsBuiltin) {
         // disk again
         // FIXME: We definitely want to re-use the existing MemoryBuffer, rather
         // than mmap the files several times.
-        const FileEntry *Entry =
+        auto Entry =
             ToFileManager.getFile(Cache->OrigEntry->getName());
         // FIXME: The filename may be a virtual name that does probably not
         // point to a valid file and we get no Entry here. In this case try with
         // the memory buffer below.
         if (Entry)
-          ToID = ToSM.createFileID(Entry, *ToIncludeLoc,
+          ToID = ToSM.createFileID(*Entry, *ToIncludeLoc,
                                    FromSLoc.getFile().getFileCharacteristic());
       }
     }

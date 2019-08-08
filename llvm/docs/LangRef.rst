@@ -1480,8 +1480,9 @@ example:
     target-specific ABI normally permits it.
 ``noreturn``
     This function attribute indicates that the function never returns
-    normally. This produces undefined behavior at runtime if the
-    function ever does dynamically return.
+    normally, hence through a return instruction. This produces undefined
+    behavior at runtime if the function ever does dynamically return. Annotated
+    functions may still raise an exception, i.a., ``nounwind`` is not implied.
 ``norecurse``
     This function attribute indicates that the function does not call itself
     either directly or indirectly down any possible call path. This produces
@@ -3950,6 +3951,17 @@ PowerPC:
   register set (overlapping both the floating-point and vector register files).
 - ``ws``: A 32 or 64-bit floating-point register, from the full VSX register
   set.
+
+RISC-V:
+
+- ``A``: An address operand (using a general-purpose register, without an
+  offset).
+- ``I``: A 12-bit signed integer immediate operand.
+- ``J``: A zero integer immediate operand.
+- ``K``: A 5-bit unsigned integer immediate operand.
+- ``f``: A 32- or 64-bit floating-point register (requires F or D extension).
+- ``r``: A 32- or 64-bit general-purpose register (depending on the platform
+  ``XLEN``).
 
 Sparc:
 
@@ -17395,6 +17407,10 @@ based on array base ``base``, array dimension ``dim`` and the last access index 
 into the array. The return type ``ret_type`` is a pointer type to the array element.
 The array ``dim`` and ``index`` are preserved which is more robust than
 getelementptr instruction which may be subject to compiler transformation.
+The ``llvm.preserve.access.index`` type of metadata is attached to this call instruction
+to provide array or pointer debuginfo type.
+The metadata is a ``DICompositeType`` or ``DIDerivedType`` representing the
+debuginfo version of ``type``.
 
 Arguments:
 """"""""""

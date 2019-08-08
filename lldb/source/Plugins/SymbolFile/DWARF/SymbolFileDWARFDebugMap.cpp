@@ -420,7 +420,11 @@ Module *SymbolFileDWARFDebugMap::GetModuleByCompUnitInfo(
         // than the one from the CU.
         auto oso_mod_time = std::chrono::time_point_cast<std::chrono::seconds>(
             FileSystem::Instance().GetModificationTime(oso_file));
-        if (oso_mod_time != comp_unit_info->oso_mod_time) {
+        // A timestamp of 0 means that the linker was in deterministic mode. In
+        // that case, we should skip the check against the filesystem last
+        // modification timestamp, since it will never match.
+        if (comp_unit_info->oso_mod_time != llvm::sys::TimePoint<>() &&
+            oso_mod_time != comp_unit_info->oso_mod_time) {
           obj_file->GetModule()->ReportError(
               "debug map object file '%s' has changed (actual time is "
               "%s, debug map time is %s"
@@ -776,7 +780,7 @@ SymbolFileDWARFDebugMap::ResolveSymbolContext(const Address &exe_so_addr,
             Address oso_so_addr;
             if (oso_module->ResolveFileAddress(oso_file_addr, oso_so_addr)) {
               resolved_flags |=
-                  oso_module->GetSymbolVendor()->ResolveSymbolContext(
+                  oso_module->GetSymbolFile()->ResolveSymbolContext(
                       oso_so_addr, resolve_scope, sc);
             }
           }
@@ -1405,8 +1409,8 @@ bool SymbolFileDWARFDebugMap::LinkOSOAddress(Address &addr) {
   if (addr_module == exe_module)
     return true; // Address is already in terms of the main executable module
 
-  CompileUnitInfo *cu_info = GetCompileUnitInfo(GetSymbolFileAsSymbolFileDWARF(
-      addr_module->GetSymbolVendor()->GetSymbolFile()));
+  CompileUnitInfo *cu_info = GetCompileUnitInfo(
+      GetSymbolFileAsSymbolFileDWARF(addr_module->GetSymbolFile()));
   if (cu_info) {
     const lldb::addr_t oso_file_addr = addr.GetFileAddress();
     const FileRangeMap::Entry *oso_range_entry =

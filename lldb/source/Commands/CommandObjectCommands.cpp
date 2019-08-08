@@ -1296,8 +1296,6 @@ public:
 
   bool IsRemovable() const override { return true; }
 
-  StructuredData::GenericSP GetImplementingObject() { return m_cmd_obj_sp; }
-
   ScriptedCommandSynchronicity GetSynchronicity() { return m_synchro; }
 
   llvm::StringRef GetHelp() override {
@@ -1486,12 +1484,22 @@ protected:
 
 // CommandObjectCommandsScriptAdd
 static constexpr OptionEnumValueElement g_script_synchro_type[] = {
-  {eScriptedCommandSynchronicitySynchronous, "synchronous",
-   "Run synchronous"},
-  {eScriptedCommandSynchronicityAsynchronous, "asynchronous",
-   "Run asynchronous"},
-  {eScriptedCommandSynchronicityCurrentValue, "current",
-   "Do not alter current setting"} };
+    {
+        eScriptedCommandSynchronicitySynchronous,
+        "synchronous",
+        "Run synchronous",
+    },
+    {
+        eScriptedCommandSynchronicityAsynchronous,
+        "asynchronous",
+        "Run asynchronous",
+    },
+    {
+        eScriptedCommandSynchronicityCurrentValue,
+        "current",
+        "Do not alter current setting",
+    },
+};
 
 static constexpr OptionEnumValues ScriptSynchroType() {
   return OptionEnumValues(g_script_synchro_type);
