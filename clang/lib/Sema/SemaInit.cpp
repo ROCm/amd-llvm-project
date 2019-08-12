@@ -7829,8 +7829,12 @@ static SourceRange nextPathEntryRange(const IndirectLocalPath &Path, unsigned I,
 }
 
 static bool pathOnlyInitializesGslPointer(IndirectLocalPath &Path) {
-  return !Path.empty() &&
-         Path.back().Kind == IndirectLocalPathEntry::GslPointerInit;
+  for (auto It = Path.rbegin(), End = Path.rend(); It != End; ++It) {
+    if (It->Kind == IndirectLocalPathEntry::VarInit)
+      continue;
+    return It->Kind == IndirectLocalPathEntry::GslPointerInit;
+  }
+  return false;
 }
 
 void Sema::checkInitializerLifetime(const InitializedEntity &Entity,
@@ -7850,7 +7854,8 @@ void Sema::checkInitializerLifetime(const InitializedEntity &Entity,
     SourceLocation DiagLoc = DiagRange.getBegin();
 
     auto *MTE = dyn_cast<MaterializeTemporaryExpr>(L);
-    bool IsTempGslOwner = MTE && isRecordWithAttr<OwnerAttr>(MTE->getType());
+    bool IsTempGslOwner = MTE && !MTE->getExtendingDecl() &&
+                          isRecordWithAttr<OwnerAttr>(MTE->getType());
     bool IsLocalGslOwner =
         isa<DeclRefExpr>(L) && isRecordWithAttr<OwnerAttr>(L->getType());
 
@@ -7859,8 +7864,8 @@ void Sema::checkInitializerLifetime(const InitializedEntity &Entity,
     // a local or temporary owner or the address of a local variable/param. We
     // do not want to follow the references when returning a pointer originating
     // from a local owner to avoid the following false positive:
-    //   int &p = *localOwner;
-    //   someContainer.add(std::move(localOwner));
+    //   int &p = *localUniquePtr;
+    //   someContainer.add(std::move(localUniquePtr));
     //   return p;
     if (!IsTempGslOwner && pathOnlyInitializesGslPointer(Path) &&
         !(IsLocalGslOwner && !pathContainsInit(Path)))
@@ -7967,7 +7972,7 @@ void Sema::checkInitializerLifetime(const InitializedEntity &Entity,
         if (pathContainsInit(Path))
           return false;
 
-        // Suppress false positives for code like the below:
+        // Suppress false positives for code like the one below:
         //   Ctor(unique_ptr<T> up) : member(*up), member2(move(up)) {}
         if (IsLocalGslOwner && pathOnlyInitializesGslPointer(Path))
           return false;
