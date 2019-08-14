@@ -156,9 +156,12 @@ clang::NamedDecl *IRForTarget::DeclForGlobal(GlobalValue *global_val) {
 }
 
 /// Returns true iff the mangled symbol is for a static guard variable.
-static bool isGuardVariableSymbol(llvm::StringRef mangled_symbol) {
-  return mangled_symbol.startswith("_ZGV") || // Itanium ABI guard variable
-         mangled_symbol.startswith("@4IA");   // Microsoft ABI guard variable
+static bool isGuardVariableSymbol(llvm::StringRef mangled_symbol,
+                                  bool check_ms_abi = true) {
+  bool result = mangled_symbol.startswith("_ZGV"); // Itanium ABI guard variable
+  if (check_ms_abi)
+    result |= mangled_symbol.endswith("@4IA"); // Microsoft ABI
+  return result;
 }
 
 bool IRForTarget::CreateResultVariable(llvm::Function &llvm_function) {
@@ -178,15 +181,17 @@ bool IRForTarget::CreateResultVariable(llvm::Function &llvm_function) {
   for (StringMapEntry<llvm::Value *> &value_symbol : value_symbol_table) {
     result_name = value_symbol.first();
 
-    if (result_name.contains("$__lldb_expr_result_ptr") &&
-        !isGuardVariableSymbol(result_name)) {
+    // Check if this is a guard variable. It seems this causes some hiccups
+    // on Windows, so let's only check for Itanium guard variables.
+    bool is_guard_var = isGuardVariableSymbol(result_name, /*MS ABI*/ false);
+
+    if (result_name.contains("$__lldb_expr_result_ptr") && !is_guard_var) {
       found_result = true;
       m_result_is_pointer = true;
       break;
     }
 
-    if (result_name.contains("$__lldb_expr_result") &&
-        !isGuardVariableSymbol(result_name)) {
+    if (result_name.contains("$__lldb_expr_result") && !is_guard_var) {
       found_result = true;
       m_result_is_pointer = false;
       break;
@@ -1265,10 +1270,16 @@ bool IRForTarget::MaybeHandleVariable(Value *llvm_value_ptr) {
     clang::NamedDecl *named_decl = DeclForGlobal(global_variable);
 
     if (!named_decl) {
+      if (IsObjCSelectorRef(llvm_value_ptr))
+        return true;
+
+      if (!global_variable->hasExternalLinkage())
+        return true;
+
       LLDB_LOG(log, "Found global variable \"{0}\" without metadata",
                global_variable->getName());
 
-      return true;
+      return false;
     }
 
     llvm::StringRef name(named_decl->getName());
@@ -1277,8 +1288,10 @@ bool IRForTarget::MaybeHandleVariable(Value *llvm_value_ptr) {
     if (value_decl == nullptr)
       return false;
 
-    lldb_private::CompilerType compiler_type(&value_decl->getASTContext(),
-                                             value_decl->getType());
+    lldb_private::CompilerType compiler_type(
+        lldb_private::ClangASTContext::GetASTContext(
+            &value_decl->getASTContext()),
+        value_decl->getType().getAsOpaquePtr());
 
     const Type *value_type = nullptr;
 
@@ -1302,8 +1315,10 @@ bool IRForTarget::MaybeHandleVariable(Value *llvm_value_ptr) {
     llvm::Optional<uint64_t> value_size = compiler_type.GetByteSize(nullptr);
     if (!value_size)
       return false;
-    lldb::offset_t value_alignment =
-        (compiler_type.GetTypeBitAlign() + 7ull) / 8ull;
+    llvm::Optional<size_t> opt_alignment = compiler_type.GetTypeBitAlign(nullptr);
+    if (!opt_alignment)
+      return false;
+    lldb::offset_t value_alignment = (*opt_alignment + 7ull) / 8ull;
 
     LLDB_LOG(log,
              "Type of \"{0}\" is [clang \"{1}\", llvm \"{2}\"] [size {3}, "
