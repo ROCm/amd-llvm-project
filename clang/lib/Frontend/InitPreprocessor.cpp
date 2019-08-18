@@ -437,17 +437,17 @@ static void InitializeStandardPredefinedMacros(const TargetInfo &TI,
       default:
         llvm_unreachable("Unsupported OpenCL version");
       }
-      Builder.defineMacro("CL_VERSION_1_0", "100");
-      Builder.defineMacro("CL_VERSION_1_1", "110");
-      Builder.defineMacro("CL_VERSION_1_2", "120");
-      Builder.defineMacro("CL_VERSION_2_0", "200");
-
-      if (TI.isLittleEndian())
-        Builder.defineMacro("__ENDIAN_LITTLE__");
-
-      if (LangOpts.FastRelaxedMath)
-        Builder.defineMacro("__FAST_RELAXED_MATH__");
     }
+    Builder.defineMacro("CL_VERSION_1_0", "100");
+    Builder.defineMacro("CL_VERSION_1_1", "110");
+    Builder.defineMacro("CL_VERSION_1_2", "120");
+    Builder.defineMacro("CL_VERSION_2_0", "200");
+
+    if (TI.isLittleEndian())
+      Builder.defineMacro("__ENDIAN_LITTLE__");
+
+    if (LangOpts.FastRelaxedMath)
+      Builder.defineMacro("__FAST_RELAXED_MATH__");
   }
   // Not "standard" per se, but available even with the -undef flag.
   if (LangOpts.AsmPreprocessor)
@@ -1067,15 +1067,18 @@ static void InitializePredefinedMacros(const TargetInfo &TI,
     switch (LangOpts.OpenMP) {
     case 0:
       break;
+    case 31:
+      Builder.defineMacro("_OPENMP", "201107");
+      break;
     case 40:
       Builder.defineMacro("_OPENMP", "201307");
       break;
-    case 45:
-      Builder.defineMacro("_OPENMP", "201511");
+    case 50:
+      Builder.defineMacro("_OPENMP", "201811");
       break;
     default:
-      // Default version is OpenMP 3.1
-      Builder.defineMacro("_OPENMP", "201107");
+      // Default version is OpenMP 4.5
+      Builder.defineMacro("_OPENMP", "201511");
       break;
     }
   }

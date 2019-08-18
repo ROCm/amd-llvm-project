@@ -40,9 +40,11 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
+#include <algorithm>
 #include <future>
 #include <memory>
 #include <mutex>
+#include <type_traits>
 
 namespace clang {
 namespace clangd {
@@ -71,10 +73,19 @@ struct UpdateIndexCallbacks : public ParsingCallbacks {
     if (SemanticHighlighting)
       Highlightings = getSemanticHighlightings(AST);
 
+    // FIXME: We need a better way to send the maximum line number to the
+    // differ.
+    // The differ needs the information about the max number of lines
+    // to not send diffs that are outside the file.
+    const SourceManager &SM = AST.getSourceManager();
+    FileID MainFileID = SM.getMainFileID();
+    int NumLines = SM.getBufferData(MainFileID).count('\n') + 1;
+
     Publish([&]() {
       DiagConsumer.onDiagnosticsReady(Path, std::move(Diagnostics));
       if (SemanticHighlighting)
-        DiagConsumer.onHighlightingsReady(Path, std::move(Highlightings));
+        DiagConsumer.onHighlightingsReady(Path, std::move(Highlightings),
+                                          NumLines);
     });
   }
 
@@ -108,8 +119,7 @@ ClangdServer::ClangdServer(const GlobalCompilationDatabase &CDB,
                      : nullptr),
       GetClangTidyOptions(Opts.GetClangTidyOptions),
       SuggestMissingIncludes(Opts.SuggestMissingIncludes),
-      TweakFilter(Opts.TweakFilter),
-      WorkspaceRoot(Opts.WorkspaceRoot),
+      TweakFilter(Opts.TweakFilter), WorkspaceRoot(Opts.WorkspaceRoot),
       // Pass a callback into `WorkScheduler` to extract symbols from a newly
       // parsed file and rebuild the file index synchronously each time an AST
       // is parsed.
@@ -135,7 +145,8 @@ ClangdServer::ClangdServer(const GlobalCompilationDatabase &CDB,
     BackgroundIdx = llvm::make_unique<BackgroundIndex>(
         Context::current().clone(), FSProvider, CDB,
         BackgroundIndexStorage::createDiskBackedStorageFactory(
-            [&CDB](llvm::StringRef File) { return CDB.getProjectInfo(File); }));
+            [&CDB](llvm::StringRef File) { return CDB.getProjectInfo(File); }),
+        std::max(Opts.AsyncThreadsCount, 1u));
     AddIndex(BackgroundIdx.get());
   }
   if (DynamicIdx)

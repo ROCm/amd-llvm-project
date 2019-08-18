@@ -548,7 +548,7 @@ public:
   /// Take ownership of the stored error.
   /// After calling this the Expected<T> is in an indeterminate state that can
   /// only be safely destructed. No further calls (beside the destructor) should
-  /// be made on the Expected<T> vaule.
+  /// be made on the Expected<T> value.
   Error takeError() {
 #if LLVM_ENABLE_ABI_BREAKING_CHECKS
     Unchecked = false;
@@ -1170,7 +1170,7 @@ inline Error createStringError(std::error_code EC, char const *Fmt,
 
 Error createStringError(std::error_code EC, char const *Msg);
 
-static inline Error createStringError(std::error_code EC, const Twine &S) {
+inline Error createStringError(std::error_code EC, const Twine &S) {
   return createStringError(EC, S.str().c_str());
 }
 

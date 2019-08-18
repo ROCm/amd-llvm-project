@@ -324,6 +324,11 @@ namespace opts {
   PrintStackMap("stackmap",
                 cl::desc("Display contents of stackmap section"));
 
+  // --stack-sizes
+  cl::opt<bool>
+      PrintStackSizes("stack-sizes",
+                      cl::desc("Display contents of all stack sizes sections"));
+
   // --version-info, -V
   cl::opt<bool>
       VersionInfo("version-info",
@@ -377,10 +382,12 @@ LLVM_ATTRIBUTE_NORETURN void reportError(Twine Msg) {
   exit(1);
 }
 
-void reportError(StringRef Input, Error Err) {
+void reportError(Error Err, StringRef Input) {
+  assert(Err);
   if (Input == "-")
     Input = "<stdin>";
-  error(createFileError(Input, std::move(Err)));
+  handleAllErrors(createFileError(Input, std::move(Err)),
+                  [&](const ErrorInfoBase &EI) { reportError(EI.message()); });
 }
 
 void reportWarning(Twine Msg) {
@@ -389,17 +396,16 @@ void reportWarning(Twine Msg) {
   WithColor::warning(errs()) << Msg << "\n";
 }
 
+void reportWarning(StringRef Input, Error Err) {
+  if (Input == "-")
+    Input = "<stdin>";
+  warn(createFileError(Input, std::move(Err)));
+}
+
 void warn(Error Err) {
   handleAllErrors(std::move(Err), [&](const ErrorInfoBase &EI) {
     reportWarning(EI.message());
   });
-}
-
-void error(Error EC) {
-  if (!EC)
-    return;
-  handleAllErrors(std::move(EC),
-                  [&](const ErrorInfoBase &EI) { reportError(EI.message()); });
 }
 
 void error(std::error_code EC) {
@@ -410,8 +416,9 @@ void error(std::error_code EC) {
 
 } // namespace llvm
 
-static void reportError(StringRef Input, std::error_code EC) {
-  reportError(Input, errorCodeToError(EC));
+static void reportError(std::error_code EC, StringRef Input) {
+  assert(EC != readobj_error::success);
+  reportError(errorCodeToError(EC), Input);
 }
 
 static bool isMipsArch(unsigned Arch) {
@@ -471,19 +478,19 @@ static void dumpObject(const ObjectFile *Obj, ScopedPrinter &Writer,
 
   std::unique_ptr<ObjDumper> Dumper;
   if (std::error_code EC = createDumper(Obj, Writer, Dumper))
-    reportError(FileStr, EC);
+    reportError(EC, FileStr);
 
-  Writer.startLine() << "\n";
-  if (opts::Output == opts::LLVM) {
+  if (opts::Output == opts::LLVM || opts::InputFilenames.size() > 1 || A) {
+    Writer.startLine() << "\n";
     Writer.printString("File", FileStr);
+  }
+  if (opts::Output == opts::LLVM) {
     Writer.printString("Format", Obj->getFileFormatName());
     Writer.printString("Arch", Triple::getArchTypeName(
                                    (llvm::Triple::ArchType)Obj->getArch()));
     Writer.printString("AddressSize",
                        formatv("{0}bit", 8 * Obj->getBytesInAddress()));
     Dumper->printLoadName();
-  } else if (opts::Output == opts::GNU && A) {
-    Writer.printString("File", FileStr);
   }
 
   if (opts::FileHeaders)
@@ -583,6 +590,8 @@ static void dumpObject(const ObjectFile *Obj, ScopedPrinter &Writer,
   }
   if (opts::PrintStackMap)
     Dumper->printStackMap();
+  if (opts::PrintStackSizes)
+    Dumper->printStackSizes();
 }
 
 /// Dumps each object file in \a Arc;
@@ -591,9 +600,8 @@ static void dumpArchive(const Archive *Arc, ScopedPrinter &Writer) {
   for (auto &Child : Arc->children(Err)) {
     Expected<std::unique_ptr<Binary>> ChildOrErr = Child.getAsBinary();
     if (!ChildOrErr) {
-      if (auto E = isNotObjectErrorInvalidFileType(ChildOrErr.takeError())) {
-        reportError(Arc->getFileName(), std::move(E));
-      }
+      if (auto E = isNotObjectErrorInvalidFileType(ChildOrErr.takeError()))
+        reportError(std::move(E), Arc->getFileName());
       continue;
     }
     if (ObjectFile *Obj = dyn_cast<ObjectFile>(&*ChildOrErr.get()))
@@ -601,10 +609,10 @@ static void dumpArchive(const Archive *Arc, ScopedPrinter &Writer) {
     else if (COFFImportFile *Imp = dyn_cast<COFFImportFile>(&*ChildOrErr.get()))
       dumpCOFFImportFile(Imp, Writer);
     else
-      reportError(Arc->getFileName(), readobj_error::unrecognized_file_format);
+      reportError(readobj_error::unrecognized_file_format, Arc->getFileName());
   }
   if (Err)
-    reportError(Arc->getFileName(), std::move(Err));
+    reportError(std::move(Err), Arc->getFileName());
 }
 
 /// Dumps each object file in \a MachO Universal Binary;
@@ -614,9 +622,8 @@ static void dumpMachOUniversalBinary(const MachOUniversalBinary *UBinary,
     Expected<std::unique_ptr<MachOObjectFile>> ObjOrErr = Obj.getAsObjectFile();
     if (ObjOrErr)
       dumpObject(&*ObjOrErr.get(), Writer);
-    else if (auto E = isNotObjectErrorInvalidFileType(ObjOrErr.takeError())) {
-      reportError(UBinary->getFileName(), ObjOrErr.takeError());
-    }
+    else if (auto E = isNotObjectErrorInvalidFileType(ObjOrErr.takeError()))
+      reportError(ObjOrErr.takeError(), UBinary->getFileName());
     else if (Expected<std::unique_ptr<Archive>> AOrErr = Obj.getAsArchive())
       dumpArchive(&*AOrErr.get(), Writer);
   }
@@ -627,7 +634,7 @@ static void dumpWindowsResourceFile(WindowsResource *WinRes,
                                     ScopedPrinter &Printer) {
   WindowsRes::Dumper Dumper(WinRes, Printer);
   if (auto Err = Dumper.printData())
-    reportError(WinRes->getFileName(), std::move(Err));
+    reportError(std::move(Err), WinRes->getFileName());
 }
 
 
@@ -636,7 +643,7 @@ static void dumpInput(StringRef File, ScopedPrinter &Writer) {
   // Attempt to open the binary.
   Expected<OwningBinary<Binary>> BinaryOrErr = createBinary(File);
   if (!BinaryOrErr)
-    reportError(File, BinaryOrErr.takeError());
+    reportError(BinaryOrErr.takeError(), File);
   Binary &Binary = *BinaryOrErr.get().getBinary();
 
   if (Archive *Arc = dyn_cast<Archive>(&Binary))
@@ -651,7 +658,7 @@ static void dumpInput(StringRef File, ScopedPrinter &Writer) {
   else if (WindowsResource *WinRes = dyn_cast<WindowsResource>(&Binary))
     dumpWindowsResourceFile(WinRes, Writer);
   else
-    reportError(File, readobj_error::unrecognized_file_format);
+    reportError(readobj_error::unrecognized_file_format, File);
 
   CVTypes.Binaries.push_back(std::move(*BinaryOrErr));
 }
@@ -727,6 +734,10 @@ int main(int argc, const char *argv[]) {
     opts::UnwindInfo = true;
     opts::SectionGroups = true;
     opts::HashHistogram = true;
+    // FIXME: As soon as we implement LLVM-style printing of the .stack_size
+    // section, we will enable it with --all (only for LLVM-style).
+    if (opts::Output == opts::LLVM)
+      opts::PrintStackSizes = false;
   }
 
   if (opts::Headers) {

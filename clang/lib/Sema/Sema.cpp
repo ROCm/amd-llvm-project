@@ -335,7 +335,13 @@ void Sema::Initialize() {
     addImplicitTypedef(#ExtType, Context.Id##Ty); \
     setOpenCLExtensionForType(Context.Id##Ty, #Ext);
 #include "clang/Basic/OpenCLExtensionTypes.def"
-    };
+  }
+
+  if (Context.getTargetInfo().hasAArch64SVETypes()) {
+#define SVE_TYPE(Name, Id, SingletonId) \
+    addImplicitTypedef(Name, Context.SingletonId);
+#include "clang/Basic/AArch64SVEACLETypes.def"
+  }
 
   if (Context.getTargetInfo().hasBuiltinMSVaList()) {
     DeclarationName MSVaList = &Context.Idents.get("__builtin_ms_va_list");
@@ -961,6 +967,7 @@ void Sema::ActOnEndOfTranslationUnit() {
 
   // All dllexport classes should have been processed already.
   assert(DelayedDllExportClasses.empty());
+  assert(DelayedDllExportMemberFunctions.empty());
 
   // Remove file scoped decls that turned out to be used.
   UnusedFileScopedDecls.erase(

@@ -17,6 +17,7 @@
 #include "MipsTargetMachine.h"
 #include "llvm/CodeGen/GlobalISel/InstructionSelectorImpl.h"
 #include "llvm/CodeGen/GlobalISel/MachineIRBuilder.h"
+#include "llvm/CodeGen/MachineJumpTableInfo.h"
 
 #define DEBUG_TYPE "mips-isel"
 
@@ -33,7 +34,7 @@ public:
   MipsInstructionSelector(const MipsTargetMachine &TM, const MipsSubtarget &STI,
                           const MipsRegisterBankInfo &RBI);
 
-  bool select(MachineInstr &I, CodeGenCoverage &CoverageInfo) const override;
+  bool select(MachineInstr &I) override;
   static const char *getName() { return DEBUG_TYPE; }
 
 private:
@@ -84,7 +85,7 @@ MipsInstructionSelector::MipsInstructionSelector(
 bool MipsInstructionSelector::selectCopy(MachineInstr &I,
                                          MachineRegisterInfo &MRI) const {
   Register DstReg = I.getOperand(0).getReg();
-  if (TargetRegisterInfo::isPhysicalRegister(DstReg))
+  if (Register::isPhysicalRegister(DstReg))
     return true;
 
   const RegisterBank *RegBank = RBI.getRegBank(DstReg, MRI, TRI);
@@ -203,8 +204,7 @@ static unsigned selectLoadStoreOpCode(unsigned Opc, unsigned MemSizeInBytes,
   return Opc;
 }
 
-bool MipsInstructionSelector::select(MachineInstr &I,
-                                     CodeGenCoverage &CoverageInfo) const {
+bool MipsInstructionSelector::select(MachineInstr &I) {
 
   MachineBasicBlock &MBB = *I.getParent();
   MachineFunction &MF = *MBB.getParent();
@@ -231,7 +231,7 @@ bool MipsInstructionSelector::select(MachineInstr &I,
     return true;
   }
 
-  if (selectImpl(I, CoverageInfo))
+  if (selectImpl(I, *CoverageInfo))
     return true;
 
   MachineInstr *MI = nullptr;
@@ -284,12 +284,66 @@ bool MipsInstructionSelector::select(MachineInstr &I,
              .add(I.getOperand(1));
     break;
   }
+  case G_BRJT: {
+    unsigned EntrySize =
+        MF.getJumpTableInfo()->getEntrySize(MF.getDataLayout());
+    assert(isPowerOf2_32(EntrySize) &&
+           "Non-power-of-two jump-table entry size not supported.");
+
+    Register JTIndex = MRI.createVirtualRegister(&Mips::GPR32RegClass);
+    MachineInstr *SLL = BuildMI(MBB, I, I.getDebugLoc(), TII.get(Mips::SLL))
+                            .addDef(JTIndex)
+                            .addUse(I.getOperand(2).getReg())
+                            .addImm(Log2_32(EntrySize));
+    if (!constrainSelectedInstRegOperands(*SLL, TII, TRI, RBI))
+      return false;
+
+    Register DestAddress = MRI.createVirtualRegister(&Mips::GPR32RegClass);
+    MachineInstr *ADDu = BuildMI(MBB, I, I.getDebugLoc(), TII.get(Mips::ADDu))
+                             .addDef(DestAddress)
+                             .addUse(I.getOperand(0).getReg())
+                             .addUse(JTIndex);
+    if (!constrainSelectedInstRegOperands(*ADDu, TII, TRI, RBI))
+      return false;
+
+    Register Dest = MRI.createVirtualRegister(&Mips::GPR32RegClass);
+    MachineInstr *LW =
+        BuildMI(MBB, I, I.getDebugLoc(), TII.get(Mips::LW))
+            .addDef(Dest)
+            .addUse(DestAddress)
+            .addJumpTableIndex(I.getOperand(1).getIndex(), MipsII::MO_ABS_LO)
+            .addMemOperand(MF.getMachineMemOperand(
+                MachinePointerInfo(), MachineMemOperand::MOLoad, 4, 4));
+    if (!constrainSelectedInstRegOperands(*LW, TII, TRI, RBI))
+      return false;
+
+    if (MF.getTarget().isPositionIndependent()) {
+      Register DestTmp = MRI.createVirtualRegister(&Mips::GPR32RegClass);
+      LW->getOperand(0).setReg(DestTmp);
+      MachineInstr *ADDu = BuildMI(MBB, I, I.getDebugLoc(), TII.get(Mips::ADDu))
+                               .addDef(Dest)
+                               .addUse(DestTmp)
+                               .addUse(MF.getInfo<MipsFunctionInfo>()
+                                           ->getGlobalBaseRegForGlobalISel());
+      if (!constrainSelectedInstRegOperands(*ADDu, TII, TRI, RBI))
+        return false;
+    }
+
+    MachineInstr *Branch =
+        BuildMI(MBB, I, I.getDebugLoc(), TII.get(Mips::PseudoIndirectBranch))
+            .addUse(Dest);
+    if (!constrainSelectedInstRegOperands(*Branch, TII, TRI, RBI))
+      return false;
+
+    I.eraseFromParent();
+    return true;
+  }
   case G_PHI: {
     const Register DestReg = I.getOperand(0).getReg();
     const unsigned OpSize = MRI.getType(DestReg).getSizeInBits();
 
     const TargetRegisterClass *DefRC = nullptr;
-    if (TargetRegisterInfo::isPhysicalRegister(DestReg))
+    if (Register::isPhysicalRegister(DestReg))
       DefRC = TRI.getRegClass(DestReg);
     else
       DefRC = getRegClassForTypeOnBank(OpSize,
@@ -318,10 +372,31 @@ bool MipsInstructionSelector::select(MachineInstr &I,
     if (NewOpc == I.getOpcode())
       return false;
 
+    MachineOperand BaseAddr = I.getOperand(1);
+    int64_t SignedOffset = 0;
+    // Try to fold load/store + G_GEP + G_CONSTANT
+    // %SignedOffset:(s32) = G_CONSTANT i32 16_bit_signed_immediate
+    // %Addr:(p0) = G_GEP %BaseAddr, %SignedOffset
+    // %LoadResult/%StoreSrc = load/store %Addr(p0)
+    // into:
+    // %LoadResult/%StoreSrc = NewOpc %BaseAddr(p0), 16_bit_signed_immediate
+
+    MachineInstr *Addr = MRI.getVRegDef(I.getOperand(1).getReg());
+    if (Addr->getOpcode() == G_GEP) {
+      MachineInstr *Offset = MRI.getVRegDef(Addr->getOperand(2).getReg());
+      if (Offset->getOpcode() == G_CONSTANT) {
+        APInt OffsetValue = Offset->getOperand(1).getCImm()->getValue();
+        if (OffsetValue.isSignedIntN(16)) {
+          BaseAddr = Addr->getOperand(1);
+          SignedOffset = OffsetValue.getSExtValue();
+        }
+      }
+    }
+
     MI = BuildMI(MBB, I, I.getDebugLoc(), TII.get(NewOpc))
              .add(I.getOperand(0))
-             .add(I.getOperand(1))
-             .addImm(0)
+             .add(BaseAddr)
+             .addImm(SignedOffset)
              .addMemOperand(*I.memoperands_begin());
     break;
   }
@@ -500,6 +575,24 @@ bool MipsInstructionSelector::select(MachineInstr &I,
     }
     I.eraseFromParent();
     return true;
+  }
+  case G_JUMP_TABLE: {
+    if (MF.getTarget().isPositionIndependent()) {
+      MI = BuildMI(MBB, I, I.getDebugLoc(), TII.get(Mips::LW))
+               .addDef(I.getOperand(0).getReg())
+               .addReg(MF.getInfo<MipsFunctionInfo>()
+                           ->getGlobalBaseRegForGlobalISel())
+               .addJumpTableIndex(I.getOperand(1).getIndex(), MipsII::MO_GOT)
+               .addMemOperand(
+                   MF.getMachineMemOperand(MachinePointerInfo::getGOT(MF),
+                                           MachineMemOperand::MOLoad, 4, 4));
+    } else {
+      MI =
+          BuildMI(MBB, I, I.getDebugLoc(), TII.get(Mips::LUi))
+              .addDef(I.getOperand(0).getReg())
+              .addJumpTableIndex(I.getOperand(1).getIndex(), MipsII::MO_ABS_HI);
+    }
+    break;
   }
   case G_ICMP: {
     struct Instr {

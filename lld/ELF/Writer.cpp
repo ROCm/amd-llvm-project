@@ -355,6 +355,8 @@ template <class ELFT> static void createSyntheticSections() {
       add(sec);
   }
 
+  StringRef relaDynName = config->isRela ? ".rela.dyn" : ".rel.dyn";
+
   for (Partition &part : partitions) {
     auto add = [&](InputSectionBase *sec) {
       sec->partition = part.getNumber();
@@ -378,13 +380,11 @@ template <class ELFT> static void createSyntheticSections() {
     part.dynStrTab = make<StringTableSection>(".dynstr", true);
     part.dynSymTab = make<SymbolTableSection<ELFT>>(*part.dynStrTab);
     part.dynamic = make<DynamicSection<ELFT>>();
-    if (config->androidPackDynRelocs) {
-      part.relaDyn = make<AndroidPackedRelocationSection<ELFT>>(
-          config->isRela ? ".rela.dyn" : ".rel.dyn");
-    } else {
-      part.relaDyn = make<RelocationSection<ELFT>>(
-          config->isRela ? ".rela.dyn" : ".rel.dyn", config->zCombreloc);
-    }
+    if (config->androidPackDynRelocs)
+      part.relaDyn = make<AndroidPackedRelocationSection<ELFT>>(relaDynName);
+    else
+      part.relaDyn =
+          make<RelocationSection<ELFT>>(relaDynName, config->zCombreloc);
 
     if (needsInterpSection())
       add(createInterpSection());
@@ -396,7 +396,7 @@ template <class ELFT> static void createSyntheticSections() {
       part.verSym = make<VersionTableSection>();
       add(part.verSym);
 
-      if (!config->versionDefinitions.empty()) {
+      if (!namedVersionDefs().empty()) {
         part.verDef = make<VersionDefinitionSection>();
         add(part.verDef);
       }
@@ -504,16 +504,14 @@ template <class ELFT> static void createSyntheticSections() {
       config->isRela ? ".rela.plt" : ".rel.plt", /*sort=*/false);
   add(in.relaPlt);
 
-  // The relaIplt immediately follows .rel.plt (.rel.dyn for ARM) to ensure
-  // that the IRelative relocations are processed last by the dynamic loader.
-  // We cannot place the iplt section in .rel.dyn when Android relocation
-  // packing is enabled because that would cause a section type mismatch.
-  // However, because the Android dynamic loader reads .rel.plt after .rel.dyn,
-  // we can get the desired behaviour by placing the iplt section in .rel.plt.
+  // The relaIplt immediately follows .rel[a].dyn to ensure that the IRelative
+  // relocations are processed last by the dynamic loader. We cannot place the
+  // iplt section in .rel.dyn when Android relocation packing is enabled because
+  // that would cause a section type mismatch. However, because the Android
+  // dynamic loader reads .rel.plt after .rel.dyn, we can get the desired
+  // behaviour by placing the iplt section in .rel.plt.
   in.relaIplt = make<RelocationSection<ELFT>>(
-      (config->emachine == EM_ARM && !config->androidPackDynRelocs)
-          ? ".rel.dyn"
-          : in.relaPlt->name,
+      config->androidPackDynRelocs ? in.relaPlt->name : relaDynName,
       /*sort=*/false);
   add(in.relaIplt);
 
@@ -1070,7 +1068,7 @@ template <class ELFT> void Writer<ELFT>::setReservedSymbolSections() {
     ElfSym::globalOffsetTable->section = gotSection;
   }
 
-  // .rela_iplt_{start,end} mark the start and the end of .rela.plt section.
+  // .rela_iplt_{start,end} mark the start and the end of in.relaIplt.
   if (ElfSym::relaIpltStart && in.relaIplt->isNeeded()) {
     ElfSym::relaIpltStart->section = in.relaIplt;
     ElfSym::relaIpltEnd->section = in.relaIplt;
@@ -1655,12 +1653,12 @@ static bool computeIsPreemptible(const Symbol &b) {
   if (!b.isDefined())
     return true;
 
-  // If we have a dynamic list it specifies which local symbols are preemptible.
-  if (config->hasDynamicList)
-    return false;
-
   if (!config->shared)
     return false;
+
+  // If the dynamic list is present, it specifies preemptable symbols in a DSO.
+  if (config->hasDynamicList)
+    return b.inDynamicList;
 
   // -Bsymbolic means that definitions are not preempted.
   if (config->bsymbolic || (config->bsymbolicFunctions && b.isFunc()))
@@ -1730,10 +1728,8 @@ template <class ELFT> void Writer<ELFT>::finalizeSections() {
   for (Partition &part : partitions)
     finalizeSynthetic(part.ehFrame);
 
-  symtab->forEachSymbol([](Symbol *s) {
-    if (!s->isPreemptible)
-      s->isPreemptible = computeIsPreemptible(*s);
-  });
+  symtab->forEachSymbol(
+      [](Symbol *s) { s->isPreemptible = computeIsPreemptible(*s); });
 
   // Scan relocations. This must be done after every symbol is declared so that
   // we can correctly decide if a dynamic relocation is needed.
@@ -1741,8 +1737,6 @@ template <class ELFT> void Writer<ELFT>::finalizeSections() {
     forEachRelSec(scanRelocations<ELFT>);
     reportUndefinedSymbols<ELFT>();
   }
-
-  addIRelativeRelocs();
 
   if (in.plt && in.plt->isNeeded())
     in.plt->addSymbols();
@@ -2289,13 +2283,11 @@ template <class ELFT> void Writer<ELFT>::assignFileOffsets() {
 
   for (OutputSection *sec : outputSections) {
     off = setFileOffset(sec, off);
-    if (script->hasSectionsCommand)
-      continue;
 
     // If this is a last section of the last executable segment and that
     // segment is the last loadable segment, align the offset of the
     // following section to avoid loading non-segments parts of the file.
-    if (lastRX && lastRX->lastSec == sec)
+    if (config->zSeparateCode && lastRX && lastRX->lastSec == sec)
       off = alignTo(off, config->commonPageSize);
   }
 
@@ -2568,7 +2560,7 @@ static void fillTrap(uint8_t *i, uint8_t *end) {
 // We'll leave other pages in segments as-is because the rest will be
 // overwritten by output sections.
 template <class ELFT> void Writer<ELFT>::writeTrapInstr() {
-  if (script->hasSectionsCommand)
+  if (!config->zSeparateCode)
     return;
 
   for (Partition &part : partitions) {

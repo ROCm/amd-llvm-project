@@ -181,12 +181,12 @@ void LinkerScript::addSymbol(SymbolAssignment *cmd) {
   // write expressions like this: `alignment = 16; . = ALIGN(., alignment)`.
   uint64_t symValue = value.sec ? 0 : value.getValue();
 
-  Defined New(nullptr, cmd->name, STB_GLOBAL, visibility, STT_NOTYPE, symValue,
-              0, sec);
+  Defined newSym(nullptr, cmd->name, STB_GLOBAL, visibility, STT_NOTYPE,
+                 symValue, 0, sec);
 
   Symbol *sym = symtab->insert(cmd->name);
-  sym->mergeProperties(New);
-  sym->replace(New);
+  sym->mergeProperties(newSym);
+  sym->replace(newSym);
   cmd->sym = cast<Defined>(sym);
 }
 
@@ -197,13 +197,13 @@ static void declareSymbol(SymbolAssignment *cmd) {
     return;
 
   uint8_t visibility = cmd->hidden ? STV_HIDDEN : STV_DEFAULT;
-  Defined New(nullptr, cmd->name, STB_GLOBAL, visibility, STT_NOTYPE, 0, 0,
-              nullptr);
+  Defined newSym(nullptr, cmd->name, STB_GLOBAL, visibility, STT_NOTYPE, 0, 0,
+                 nullptr);
 
   // We can't calculate final value right now.
   Symbol *sym = symtab->insert(cmd->name);
-  sym->mergeProperties(New);
-  sym->replace(New);
+  sym->mergeProperties(newSym);
+  sym->replace(newSym);
 
   cmd->sym = cast<Defined>(sym);
   cmd->provide = false;
@@ -771,6 +771,14 @@ void LinkerScript::assignOffsets(OutputSection *sec) {
 
   if ((sec->flags & SHF_ALLOC) && sec->addrExpr)
     setDot(sec->addrExpr, sec->location, false);
+
+  // If the address of the section has been moved forward by an explicit
+  // expression so that it now starts past the current curPos of the enclosing
+  // region, we need to expand the current region to account for the space
+  // between the previous section, if any, and the start of this section.
+  if (ctx->memRegion && ctx->memRegion->curPos < dot)
+    expandMemoryRegion(ctx->memRegion, dot - ctx->memRegion->curPos,
+                       ctx->memRegion->name, sec->name);
 
   switchTo(sec);
 

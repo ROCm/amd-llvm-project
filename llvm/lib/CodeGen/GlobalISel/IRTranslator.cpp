@@ -1544,6 +1544,37 @@ bool IRTranslator::translateInlineAsm(const CallInst &CI,
   return true;
 }
 
+bool IRTranslator::translateCallSite(const ImmutableCallSite &CS,
+                                     MachineIRBuilder &MIRBuilder) {
+  const Instruction &I = *CS.getInstruction();
+  ArrayRef<Register> Res = getOrCreateVRegs(I);
+
+  SmallVector<ArrayRef<Register>, 8> Args;
+  Register SwiftInVReg = 0;
+  Register SwiftErrorVReg = 0;
+  for (auto &Arg : CS.args()) {
+    if (CLI->supportSwiftError() && isSwiftError(Arg)) {
+      assert(SwiftInVReg == 0 && "Expected only one swift error argument");
+      LLT Ty = getLLTForType(*Arg->getType(), *DL);
+      SwiftInVReg = MRI->createGenericVirtualRegister(Ty);
+      MIRBuilder.buildCopy(SwiftInVReg, SwiftError.getOrCreateVRegUseAt(
+                                            &I, &MIRBuilder.getMBB(), Arg));
+      Args.emplace_back(makeArrayRef(SwiftInVReg));
+      SwiftErrorVReg =
+          SwiftError.getOrCreateVRegDefAt(&I, &MIRBuilder.getMBB(), Arg);
+      continue;
+    }
+    Args.push_back(getOrCreateVRegs(*Arg));
+  }
+
+  MF->getFrameInfo().setHasCalls(true);
+  bool Success =
+      CLI->lowerCall(MIRBuilder, CS, Res, Args, SwiftErrorVReg,
+                     [&]() { return getOrCreateVReg(*CS.getCalledValue()); });
+
+  return Success;
+}
+
 bool IRTranslator::translateCall(const User &U, MachineIRBuilder &MIRBuilder) {
   const CallInst &CI = cast<CallInst>(U);
   auto TII = MF->getTarget().getIntrinsicInfo();
@@ -1563,34 +1594,8 @@ bool IRTranslator::translateCall(const User &U, MachineIRBuilder &MIRBuilder) {
       ID = static_cast<Intrinsic::ID>(TII->getIntrinsicID(F));
   }
 
-  if (!F || !F->isIntrinsic() || ID == Intrinsic::not_intrinsic) {
-    ArrayRef<Register> Res = getOrCreateVRegs(CI);
-
-    SmallVector<ArrayRef<Register>, 8> Args;
-    Register SwiftInVReg = 0;
-    Register SwiftErrorVReg = 0;
-    for (auto &Arg: CI.arg_operands()) {
-      if (CLI->supportSwiftError() && isSwiftError(Arg)) {
-        assert(SwiftInVReg == 0 && "Expected only one swift error argument");
-        LLT Ty = getLLTForType(*Arg->getType(), *DL);
-        SwiftInVReg = MRI->createGenericVirtualRegister(Ty);
-        MIRBuilder.buildCopy(SwiftInVReg, SwiftError.getOrCreateVRegUseAt(
-                                              &CI, &MIRBuilder.getMBB(), Arg));
-        Args.emplace_back(makeArrayRef(SwiftInVReg));
-        SwiftErrorVReg =
-            SwiftError.getOrCreateVRegDefAt(&CI, &MIRBuilder.getMBB(), Arg);
-        continue;
-      }
-      Args.push_back(getOrCreateVRegs(*Arg));
-    }
-
-    MF->getFrameInfo().setHasCalls(true);
-    bool Success =
-        CLI->lowerCall(MIRBuilder, &CI, Res, Args, SwiftErrorVReg,
-                       [&]() { return getOrCreateVReg(*CI.getCalledValue()); });
-
-    return Success;
-  }
+  if (!F || !F->isIntrinsic() || ID == Intrinsic::not_intrinsic)
+    return translateCallSite(&CI, MIRBuilder);
 
   assert(ID != Intrinsic::not_intrinsic && "unknown intrinsic");
 
@@ -1623,13 +1628,14 @@ bool IRTranslator::translateCall(const User &U, MachineIRBuilder &MIRBuilder) {
   TargetLowering::IntrinsicInfo Info;
   // TODO: Add a GlobalISel version of getTgtMemIntrinsic.
   if (TLI.getTgtMemIntrinsic(Info, CI, *MF, ID)) {
-    unsigned Align = Info.align;
-    if (Align == 0)
-      Align = DL->getABITypeAlignment(Info.memVT.getTypeForEVT(F->getContext()));
+    MaybeAlign Align = Info.align;
+    if (!Align)
+      Align = MaybeAlign(
+          DL->getABITypeAlignment(Info.memVT.getTypeForEVT(F->getContext())));
 
     uint64_t Size = Info.memVT.getStoreSize();
-    MIB.addMemOperand(MF->getMachineMemOperand(MachinePointerInfo(Info.ptrVal),
-                                               Info.flags, Size, Align));
+    MIB.addMemOperand(MF->getMachineMemOperand(
+        MachinePointerInfo(Info.ptrVal), Info.flags, Size, Align->value()));
   }
 
   return true;
@@ -1665,30 +1671,7 @@ bool IRTranslator::translateInvoke(const User &U,
   MCSymbol *BeginSymbol = Context.createTempSymbol();
   MIRBuilder.buildInstr(TargetOpcode::EH_LABEL).addSym(BeginSymbol);
 
-  ArrayRef<Register> Res;
-  if (!I.getType()->isVoidTy())
-    Res = getOrCreateVRegs(I);
-  SmallVector<ArrayRef<Register>, 8> Args;
-  Register SwiftErrorVReg = 0;
-  Register SwiftInVReg = 0;
-  for (auto &Arg : I.arg_operands()) {
-    if (CLI->supportSwiftError() && isSwiftError(Arg)) {
-      assert(SwiftInVReg == 0 && "Expected only one swift error argument");
-      LLT Ty = getLLTForType(*Arg->getType(), *DL);
-      SwiftInVReg = MRI->createGenericVirtualRegister(Ty);
-      MIRBuilder.buildCopy(SwiftInVReg, SwiftError.getOrCreateVRegUseAt(
-                                            &I, &MIRBuilder.getMBB(), Arg));
-      Args.push_back(makeArrayRef(SwiftInVReg));
-      SwiftErrorVReg =
-          SwiftError.getOrCreateVRegDefAt(&I, &MIRBuilder.getMBB(), Arg);
-      continue;
-    }
-
-    Args.push_back(getOrCreateVRegs(*Arg));
-  }
-
-  if (!CLI->lowerCall(MIRBuilder, &I, Res, Args, SwiftErrorVReg,
-                      [&]() { return getOrCreateVReg(*I.getCalledValue()); }))
+  if (!translateCallSite(&I, MIRBuilder))
     return false;
 
   MCSymbol *EndSymbol = Context.createTempSymbol();
@@ -1919,7 +1902,7 @@ bool IRTranslator::translateShuffleVector(const User &U,
       .addDef(getOrCreateVReg(U))
       .addUse(getOrCreateVReg(*U.getOperand(0)))
       .addUse(getOrCreateVReg(*U.getOperand(1)))
-      .addUse(getOrCreateVReg(*U.getOperand(2)));
+      .addShuffleMask(cast<Constant>(U.getOperand(2)));
   return true;
 }
 
@@ -2281,18 +2264,6 @@ bool IRTranslator::runOnMachineFunction(MachineFunction &CurMF) {
     if (Arg.hasSwiftErrorAttr()) {
       assert(VRegs.size() == 1 && "Too many vregs for Swift error");
       SwiftError.setCurrentVReg(EntryBB, SwiftError.getFunctionArg(), VRegs[0]);
-    }
-  }
-
-  // We don't currently support translating swifterror or swiftself functions.
-  for (auto &Arg : F.args()) {
-    if (Arg.hasSwiftSelfAttr()) {
-      OptimizationRemarkMissed R("gisel-irtranslator", "GISelFailure",
-                                 F.getSubprogram(), &F.getEntryBlock());
-      R << "unable to lower arguments due to swiftself: "
-        << ore::NV("Prototype", F.getType());
-      reportTranslationError(*MF, *TPC, *ORE, R);
-      return false;
     }
   }
 

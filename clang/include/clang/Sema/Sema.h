@@ -1099,10 +1099,11 @@ public:
   /// block literal.
   /// \param[out] ManglingContextDecl - Returns the ManglingContextDecl
   /// associated with the context, if relevant.
-  MangleNumberingContext *getCurrentMangleNumberContext(
-    const DeclContext *DC,
-    Decl *&ManglingContextDecl);
-
+  MangleNumberingContext *
+  getCurrentMangleNumberContext(const DeclContext *DC,
+                                Decl *&ManglingContextDecl,
+                                bool SkpNoODRChk = false,
+                                bool *Forced = nullptr);
 
   /// SpecialMemberOverloadResult - The overloading result for a special member
   /// function.
@@ -6196,6 +6197,17 @@ public:
       ClassTemplateSpecializationDecl *BaseTemplateSpec,
       SourceLocation BaseLoc);
 
+  /// Add gsl::Pointer attribute to std::container::iterator
+  /// \param ND The declaration that introduces the name
+  /// std::container::iterator. \param UnderlyingRecord The record named by ND.
+  void inferGslPointerAttribute(NamedDecl *ND, CXXRecordDecl *UnderlyingRecord);
+
+  /// Add [[gsl::Owner]] and [[gsl::Pointer]] attributes for std:: types.
+  void inferGslOwnerPointerAttribute(CXXRecordDecl *Record);
+
+  /// Add [[gsl::Pointer]] attributes for std:: types.
+  void inferGslPointerAttribute(TypedefNameDecl *TD);
+
   void CheckCompletedCXXClass(CXXRecordDecl *Record);
 
   /// Check that the C++ class annoated with "trivial_abi" satisfies all the
@@ -10111,6 +10123,7 @@ public:
   QualType CheckShiftOperands( // C99 6.5.7
     ExprResult &LHS, ExprResult &RHS, SourceLocation Loc,
     BinaryOperatorKind Opc, bool IsCompAssign = false);
+  void CheckPtrComparisonWithNullChar(ExprResult &E, ExprResult &NullE);
   QualType CheckCompareOperands( // C99 6.5.8/9
       ExprResult &LHS, ExprResult &RHS, SourceLocation Loc,
       BinaryOperatorKind Opc);
@@ -11225,6 +11238,7 @@ public:
   // Emitting members of dllexported classes is delayed until the class
   // (including field initializers) is fully parsed.
   SmallVector<CXXRecordDecl*, 4> DelayedDllExportClasses;
+  SmallVector<CXXMethodDecl*, 4> DelayedDllExportMemberFunctions;
 
 private:
   class SavePendingParsedClassStateRAII {

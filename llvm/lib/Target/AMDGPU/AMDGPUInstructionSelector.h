@@ -47,7 +47,7 @@ public:
                             const AMDGPURegisterBankInfo &RBI,
                             const AMDGPUTargetMachine &TM);
 
-  bool select(MachineInstr &I, CodeGenCoverage &CoverageInfo) const override;
+  bool select(MachineInstr &I) override;
   static const char *getName();
 
 private:
@@ -81,18 +81,19 @@ private:
   bool selectG_GEP(MachineInstr &I) const;
   bool selectG_IMPLICIT_DEF(MachineInstr &I) const;
   bool selectG_INSERT(MachineInstr &I) const;
-  bool selectG_INTRINSIC(MachineInstr &I, CodeGenCoverage &CoverageInfo) const;
-  bool selectG_INTRINSIC_W_SIDE_EFFECTS(MachineInstr &I,
-                                        CodeGenCoverage &CoverageInfo) const;
+  bool selectG_INTRINSIC(MachineInstr &I) const;
+  bool selectG_INTRINSIC_W_SIDE_EFFECTS(MachineInstr &I) const;
   int getS_CMPOpcode(CmpInst::Predicate P, unsigned Size) const;
   bool selectG_ICMP(MachineInstr &I) const;
   bool hasVgprParts(ArrayRef<GEPInfo> AddrInfo) const;
   void getAddrModeInfo(const MachineInstr &Load, const MachineRegisterInfo &MRI,
                        SmallVectorImpl<GEPInfo> &AddrInfo) const;
   bool selectSMRD(MachineInstr &I, ArrayRef<GEPInfo> AddrInfo) const;
-  bool selectG_LOAD(MachineInstr &I, CodeGenCoverage &CoverageInfo) const;
-  bool selectG_SELECT(MachineInstr &I) const;
+
+  void initM0(MachineInstr &I) const;
+  bool selectG_LOAD_ATOMICRMW(MachineInstr &I) const;
   bool selectG_STORE(MachineInstr &I) const;
+  bool selectG_SELECT(MachineInstr &I) const;
   bool selectG_BRCOND(MachineInstr &I) const;
   bool selectG_FRAME_INDEX(MachineInstr &I) const;
 

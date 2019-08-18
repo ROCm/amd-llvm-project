@@ -77,10 +77,13 @@ static void LocationAbbrev(std::shared_ptr<llvm::BitCodeAbbrev> &Abbrev) {
       {// 0. Fixed-size integer (line number)
        llvm::BitCodeAbbrevOp(llvm::BitCodeAbbrevOp::Fixed,
                              BitCodeConstants::LineNumberSize),
-       // 1. Fixed-size integer (length of the following string (filename))
+       // 1. Boolean (IsFileInRootDir)
+       llvm::BitCodeAbbrevOp(llvm::BitCodeAbbrevOp::Fixed,
+                             BitCodeConstants::BoolSize),
+       // 2. Fixed-size integer (length of the following string (filename))
        llvm::BitCodeAbbrevOp(llvm::BitCodeAbbrevOp::Fixed,
                              BitCodeConstants::StringLengthSize),
-       // 2. The string blob
+       // 3. The string blob
        llvm::BitCodeAbbrevOp(llvm::BitCodeAbbrevOp::Blob)});
 }
 
@@ -172,6 +175,8 @@ static const llvm::IndexedMap<RecordIdDsc, RecordIdToIndexFunctor>
           {REFERENCE_NAME, {"Name", &StringAbbrev}},
           {REFERENCE_TYPE, {"RefType", &IntAbbrev}},
           {REFERENCE_PATH, {"Path", &StringAbbrev}},
+          {REFERENCE_IS_IN_GLOBAL_NAMESPACE,
+           {"IsInGlobalNamespace", &BoolAbbrev}},
           {REFERENCE_FIELD, {"Field", &IntAbbrev}}};
       assert(Inits.size() == RecordIdCount);
       for (const auto &Init : Inits) {
@@ -215,7 +220,7 @@ static const std::vector<std::pair<BlockId, std::vector<RecordId>>>
         // Reference Block
         {BI_REFERENCE_BLOCK_ID,
          {REFERENCE_USR, REFERENCE_NAME, REFERENCE_TYPE, REFERENCE_PATH,
-          REFERENCE_FIELD}}};
+          REFERENCE_IS_IN_GLOBAL_NAMESPACE, REFERENCE_FIELD}}};
 
 // AbbreviationMap
 
@@ -314,6 +319,7 @@ void ClangDocBitcodeWriter::emitRecord(const Location &Loc, RecordId ID) {
   // FIXME: Assert that the line number is of the appropriate size.
   Record.push_back(Loc.LineNumber);
   assert(Loc.Filename.size() < (1U << BitCodeConstants::StringLengthSize));
+  Record.push_back(Loc.IsFileInRootDir);
   Record.push_back(Loc.Filename.size());
   Stream.EmitRecordWithBlob(Abbrevs.get(ID), Record, Loc.Filename);
 }
@@ -387,6 +393,7 @@ void ClangDocBitcodeWriter::emitBlock(const Reference &R, FieldId Field) {
   emitRecord(R.Name, REFERENCE_NAME);
   emitRecord((unsigned)R.RefType, REFERENCE_TYPE);
   emitRecord(R.Path, REFERENCE_PATH);
+  emitRecord(R.IsInGlobalNamespace, REFERENCE_IS_IN_GLOBAL_NAMESPACE);
   emitRecord((unsigned)Field, REFERENCE_FIELD);
 }
 

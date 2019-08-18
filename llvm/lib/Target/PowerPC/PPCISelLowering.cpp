@@ -1118,6 +1118,8 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM,
   setTargetDAGCombine(ISD::ANY_EXTEND);
 
   setTargetDAGCombine(ISD::TRUNCATE);
+  setTargetDAGCombine(ISD::VECTOR_SHUFFLE);
+
 
   if (Subtarget.useCRBits()) {
     setTargetDAGCombine(ISD::TRUNCATE);
@@ -1352,6 +1354,8 @@ const char *PPCTargetLowering::getTargetNodeName(unsigned Opcode) const {
   case PPCISD::SExtVElems:      return "PPCISD::SExtVElems";
   case PPCISD::LXVD2X:          return "PPCISD::LXVD2X";
   case PPCISD::STXVD2X:         return "PPCISD::STXVD2X";
+  case PPCISD::LOAD_VEC_BE:     return "PPCISD::LOAD_VEC_BE";
+  case PPCISD::STORE_VEC_BE:    return "PPCISD::STORE_VEC_BE";
   case PPCISD::ST_VSR_SCAL_INT:
                                 return "PPCISD::ST_VSR_SCAL_INT";
   case PPCISD::COND_BRANCH:     return "PPCISD::COND_BRANCH";
@@ -1517,7 +1521,7 @@ bool PPC::isVPKUWUMShuffleMask(ShuffleVectorSDNode *N, unsigned ShuffleKind,
 bool PPC::isVPKUDUMShuffleMask(ShuffleVectorSDNode *N, unsigned ShuffleKind,
                                SelectionDAG &DAG) {
   const PPCSubtarget& Subtarget =
-    static_cast<const PPCSubtarget&>(DAG.getSubtarget());
+      static_cast<const PPCSubtarget&>(DAG.getSubtarget());
   if (!Subtarget.hasP8Vector())
     return false;
 
@@ -2667,12 +2671,14 @@ static void setUsesTOCBasePtr(SelectionDAG &DAG) {
   setUsesTOCBasePtr(DAG.getMachineFunction());
 }
 
-static SDValue getTOCEntry(SelectionDAG &DAG, const SDLoc &dl, bool Is64Bit,
-                           SDValue GA) {
+SDValue PPCTargetLowering::getTOCEntry(SelectionDAG &DAG, const SDLoc &dl,
+                                       SDValue GA) const {
+  const bool Is64Bit = Subtarget.isPPC64();
   EVT VT = Is64Bit ? MVT::i64 : MVT::i32;
-  SDValue Reg = Is64Bit ? DAG.getRegister(PPC::X2, VT) :
-                DAG.getNode(PPCISD::GlobalBaseReg, dl, VT);
-
+  SDValue Reg = Is64Bit ? DAG.getRegister(PPC::X2, VT)
+                        : Subtarget.isAIXABI()
+                              ? DAG.getRegister(PPC::R2, VT)
+                              : DAG.getNode(PPCISD::GlobalBaseReg, dl, VT);
   SDValue Ops[] = { GA, Reg };
   return DAG.getMemIntrinsicNode(
       PPCISD::TOC_ENTRY, dl, DAG.getVTList(VT, MVT::Other), Ops, VT,
@@ -2691,7 +2697,7 @@ SDValue PPCTargetLowering::LowerConstantPool(SDValue Op,
   if (Subtarget.isSVR4ABI() && Subtarget.isPPC64()) {
     setUsesTOCBasePtr(DAG);
     SDValue GA = DAG.getTargetConstantPool(C, PtrVT, CP->getAlignment(), 0);
-    return getTOCEntry(DAG, SDLoc(CP), true, GA);
+    return getTOCEntry(DAG, SDLoc(CP), GA);
   }
 
   unsigned MOHiFlag, MOLoFlag;
@@ -2701,7 +2707,7 @@ SDValue PPCTargetLowering::LowerConstantPool(SDValue Op,
   if (IsPIC && Subtarget.isSVR4ABI()) {
     SDValue GA = DAG.getTargetConstantPool(C, PtrVT, CP->getAlignment(),
                                            PPCII::MO_PIC_FLAG);
-    return getTOCEntry(DAG, SDLoc(CP), false, GA);
+    return getTOCEntry(DAG, SDLoc(CP), GA);
   }
 
   SDValue CPIHi =
@@ -2767,7 +2773,7 @@ SDValue PPCTargetLowering::LowerJumpTable(SDValue Op, SelectionDAG &DAG) const {
   if (Subtarget.isSVR4ABI() && Subtarget.isPPC64()) {
     setUsesTOCBasePtr(DAG);
     SDValue GA = DAG.getTargetJumpTable(JT->getIndex(), PtrVT);
-    return getTOCEntry(DAG, SDLoc(JT), true, GA);
+    return getTOCEntry(DAG, SDLoc(JT), GA);
   }
 
   unsigned MOHiFlag, MOLoFlag;
@@ -2777,7 +2783,7 @@ SDValue PPCTargetLowering::LowerJumpTable(SDValue Op, SelectionDAG &DAG) const {
   if (IsPIC && Subtarget.isSVR4ABI()) {
     SDValue GA = DAG.getTargetJumpTable(JT->getIndex(), PtrVT,
                                         PPCII::MO_PIC_FLAG);
-    return getTOCEntry(DAG, SDLoc(GA), false, GA);
+    return getTOCEntry(DAG, SDLoc(GA), GA);
   }
 
   SDValue JTIHi = DAG.getTargetJumpTable(JT->getIndex(), PtrVT, MOHiFlag);
@@ -2798,7 +2804,7 @@ SDValue PPCTargetLowering::LowerBlockAddress(SDValue Op,
     if (Subtarget.isPPC64())
       setUsesTOCBasePtr(DAG);
     SDValue GA = DAG.getTargetBlockAddress(BA, PtrVT, BASDN->getOffset());
-    return getTOCEntry(DAG, SDLoc(BASDN), Subtarget.isPPC64(), GA);
+    return getTOCEntry(DAG, SDLoc(BASDN), GA);
   }
 
   unsigned MOHiFlag, MOLoFlag;
@@ -2913,12 +2919,12 @@ SDValue PPCTargetLowering::LowerGlobalAddress(SDValue Op,
   SDLoc DL(GSDN);
   const GlobalValue *GV = GSDN->getGlobal();
 
-  // 64-bit SVR4 ABI code is always position-independent.
+  // 64-bit SVR4 ABI & AIX ABI code is always position-independent.
   // The actual address of the GlobalValue is stored in the TOC.
-  if (Subtarget.isSVR4ABI() && Subtarget.isPPC64()) {
+  if ((Subtarget.isSVR4ABI() && Subtarget.isPPC64()) || Subtarget.isAIXABI()) {
     setUsesTOCBasePtr(DAG);
     SDValue GA = DAG.getTargetGlobalAddress(GV, DL, PtrVT, GSDN->getOffset());
-    return getTOCEntry(DAG, DL, true, GA);
+    return getTOCEntry(DAG, DL, GA);
   }
 
   unsigned MOHiFlag, MOLoFlag;
@@ -2929,7 +2935,7 @@ SDValue PPCTargetLowering::LowerGlobalAddress(SDValue Op,
     SDValue GA = DAG.getTargetGlobalAddress(GV, DL, PtrVT,
                                             GSDN->getOffset(),
                                             PPCII::MO_PIC_FLAG);
-    return getTOCEntry(DAG, DL, false, GA);
+    return getTOCEntry(DAG, DL, GA);
   }
 
   SDValue GAHi =
@@ -3235,8 +3241,8 @@ SDValue PPCTargetLowering::LowerVASTART(SDValue Op, SelectionDAG &DAG) const {
                       MachinePointerInfo(SV, nextOffset));
 }
 
-/// FPR - The set of FP registers that should be allocated for arguments,
-/// on Darwin.
+/// FPR - The set of FP registers that should be allocated for arguments
+/// on Darwin and AIX.
 static const MCPhysReg FPR[] = {PPC::F1,  PPC::F2,  PPC::F3, PPC::F4, PPC::F5,
                                 PPC::F6,  PPC::F7,  PPC::F8, PPC::F9, PPC::F10,
                                 PPC::F11, PPC::F12, PPC::F13};
@@ -6730,8 +6736,12 @@ SDValue PPCTargetLowering::LowerCall_AIX(
 
   const unsigned NumGPRs = isPPC64 ? array_lengthof(GPR_64)
                                    : array_lengthof(GPR_32);
+  const unsigned NumFPRs = array_lengthof(FPR);
+  assert(NumFPRs == 13 && "Only FPR 1-13 could be used for parameter passing "
+                          "on AIX");
+
   const MCPhysReg *GPR = isPPC64 ? GPR_64 : GPR_32;
-  unsigned GPR_idx = 0;
+  unsigned GPR_idx = 0, FPR_idx = 0;
 
   SmallVector<std::pair<unsigned, SDValue>, 8> RegsToPass;
 
@@ -6768,6 +6778,20 @@ SDValue PPCTargetLowering::LowerCall_AIX(
       break;
     case MVT::f32:
     case MVT::f64:
+      if (FPR_idx != NumFPRs) {
+        RegsToPass.push_back(std::make_pair(FPR[FPR_idx++], Arg));
+
+        // If we have any FPRs remaining, we may also have GPRs remaining.
+        // Args passed in FPRs consume 1 or 2 (f64 in 32 bit mode) available
+        // GPRs.
+        if (GPR_idx != NumGPRs)
+          ++GPR_idx;
+        if (GPR_idx != NumGPRs && Arg.getValueType() == MVT::f64 && !isPPC64)
+          ++GPR_idx;
+      } else
+        report_fatal_error("Handling of placing parameters on the stack is "
+                           "unimplemented!");
+      break;
     case MVT::v4f32:
     case MVT::v4i32:
     case MVT::v8i16:
@@ -10048,9 +10072,11 @@ void PPCTargetLowering::ReplaceNodeResults(SDNode *N,
     return;
   case ISD::TRUNCATE: {
     EVT TrgVT = N->getValueType(0);
+    EVT OpVT = N->getOperand(0).getValueType();
     if (TrgVT.isVector() &&
         isOperationCustom(N->getOpcode(), TrgVT) &&
-        N->getOperand(0).getValueType().getSizeInBits() <= 128)
+        OpVT.getSizeInBits() <= 128 &&
+        isPowerOf2_32(OpVT.getVectorElementType().getSizeInBits()))
       Results.push_back(LowerTRUNCATEVector(SDValue(N, 0), DAG));
     return;
   }
@@ -13113,6 +13139,61 @@ SDValue PPCTargetLowering::combineStoreFPToInt(SDNode *N,
   return Val;
 }
 
+SDValue PPCTargetLowering::combineVReverseMemOP(ShuffleVectorSDNode *SVN,
+                                                LSBaseSDNode *LSBase,
+                                                DAGCombinerInfo &DCI) const {
+  assert((ISD::isNormalLoad(LSBase) || ISD::isNormalStore(LSBase)) &&
+        "Not a reverse memop pattern!");
+
+  auto IsElementReverse = [](const ShuffleVectorSDNode *SVN) -> bool {
+    auto Mask = SVN->getMask();
+    int i = 0;
+    auto I = Mask.rbegin();
+    auto E = Mask.rend();
+
+    for (; I != E; ++I) {
+      if (*I != i)
+        return false;
+      i++;
+    }
+    return true;
+  };
+
+  SelectionDAG &DAG = DCI.DAG;
+  EVT VT = SVN->getValueType(0);
+
+  if (!isTypeLegal(VT) || !Subtarget.isLittleEndian() || !Subtarget.hasVSX())
+    return SDValue();
+
+  // Before P9, we have PPCVSXSwapRemoval pass to hack the element order.
+  // See comment in PPCVSXSwapRemoval.cpp.
+  // It is conflict with PPCVSXSwapRemoval opt. So we don't do it.
+  if (!Subtarget.hasP9Vector())
+    return SDValue();
+
+  if(!IsElementReverse(SVN))
+    return SDValue();
+
+  if (LSBase->getOpcode() == ISD::LOAD) {
+    SDLoc dl(SVN);
+    SDValue LoadOps[] = {LSBase->getChain(), LSBase->getBasePtr()};
+    return DAG.getMemIntrinsicNode(
+        PPCISD::LOAD_VEC_BE, dl, DAG.getVTList(VT, MVT::Other), LoadOps,
+        LSBase->getMemoryVT(), LSBase->getMemOperand());
+  }
+
+  if (LSBase->getOpcode() == ISD::STORE) {
+    SDLoc dl(LSBase);
+    SDValue StoreOps[] = {LSBase->getChain(), SVN->getOperand(0),
+                          LSBase->getBasePtr()};
+    return DAG.getMemIntrinsicNode(
+        PPCISD::STORE_VEC_BE, dl, DAG.getVTList(MVT::Other), StoreOps,
+        LSBase->getMemoryVT(), LSBase->getMemOperand());
+  }
+
+  llvm_unreachable("Expected a load or store node here");
+}
+
 SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
                                              DAGCombinerInfo &DCI) const {
   SelectionDAG &DAG = DCI.DAG;
@@ -13159,6 +13240,12 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
   case ISD::SINT_TO_FP:
   case ISD::UINT_TO_FP:
     return combineFPToIntToFP(N, DCI);
+  case ISD::VECTOR_SHUFFLE:
+    if (ISD::isNormalLoad(N->getOperand(0).getNode())) {
+      LSBaseSDNode* LSBase = cast<LSBaseSDNode>(N->getOperand(0));
+      return combineVReverseMemOP(cast<ShuffleVectorSDNode>(N), LSBase, DCI);
+    }
+    break;
   case ISD::STORE: {
 
     EVT Op1VT = N->getOperand(1).getValueType();
@@ -13166,6 +13253,13 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
 
     if (Opcode == ISD::FP_TO_SINT || Opcode == ISD::FP_TO_UINT) {
       SDValue Val= combineStoreFPToInt(N, DCI);
+      if (Val)
+        return Val;
+    }
+
+    if (Opcode == ISD::VECTOR_SHUFFLE && ISD::isNormalStore(N)) {
+      ShuffleVectorSDNode *SVN = cast<ShuffleVectorSDNode>(N->getOperand(1));
+      SDValue Val= combineVReverseMemOP(SVN, cast<LSBaseSDNode>(N), DCI);
       if (Val)
         return Val;
     }
@@ -14333,11 +14427,14 @@ bool PPCTargetLowering::isAccessedAsGotIndirect(SDValue GA) const {
   if (Subtarget.isSVR4ABI() && !Subtarget.isPPC64())
     return true;
 
+  // AIX accesses everything indirectly through the TOC, which is similar to
+  // the GOT.
+  if (Subtarget.isAIXABI())
+    return true;
+
   CodeModel::Model CModel = getTargetMachine().getCodeModel();
   // If it is small or large code model, module locals are accessed
-  // indirectly by loading their address from .toc/.got. The difference
-  // is that for large code model we have ADDIStocHA8 + LDtocL and for
-  // small code model we simply have LDtoc.
+  // indirectly by loading their address from .toc/.got.
   if (CModel == CodeModel::Small || CModel == CodeModel::Large)
     return true;
 
@@ -14417,7 +14514,7 @@ bool PPCTargetLowering::getTgtMemIntrinsic(IntrinsicInfo &Info,
     Info.ptrVal = I.getArgOperand(0);
     Info.offset = -VT.getStoreSize()+1;
     Info.size = 2*VT.getStoreSize()-1;
-    Info.align = 1;
+    Info.align = Align(1);
     Info.flags = MachineMemOperand::MOLoad;
     return true;
   }
@@ -14451,7 +14548,7 @@ bool PPCTargetLowering::getTgtMemIntrinsic(IntrinsicInfo &Info,
     Info.ptrVal = I.getArgOperand(0);
     Info.offset = 0;
     Info.size = VT.getStoreSize();
-    Info.align = 1;
+    Info.align = Align(1);
     Info.flags = MachineMemOperand::MOLoad;
     return true;
   }
@@ -14503,7 +14600,7 @@ bool PPCTargetLowering::getTgtMemIntrinsic(IntrinsicInfo &Info,
     Info.ptrVal = I.getArgOperand(1);
     Info.offset = -VT.getStoreSize()+1;
     Info.size = 2*VT.getStoreSize()-1;
-    Info.align = 1;
+    Info.align = Align(1);
     Info.flags = MachineMemOperand::MOStore;
     return true;
   }
@@ -14536,7 +14633,7 @@ bool PPCTargetLowering::getTgtMemIntrinsic(IntrinsicInfo &Info,
     Info.ptrVal = I.getArgOperand(1);
     Info.offset = 0;
     Info.size = VT.getStoreSize();
-    Info.align = 1;
+    Info.align = Align(1);
     Info.flags = MachineMemOperand::MOStore;
     return true;
   }

@@ -444,7 +444,7 @@ static bool tryToFoldACImm(const SIInstrInfo *TII,
     return false;
 
   unsigned UseReg = OpToFold.getReg();
-  if (!TargetRegisterInfo::isVirtualRegister(UseReg))
+  if (!Register::isVirtualRegister(UseReg))
     return false;
 
   if (llvm::find_if(FoldList, [UseMI](const FoldCandidate &FC) {
@@ -570,14 +570,13 @@ void SIFoldOperands::foldOperand(
 
   if (FoldingImmLike && UseMI->isCopy()) {
     unsigned DestReg = UseMI->getOperand(0).getReg();
-    const TargetRegisterClass *DestRC
-      = TargetRegisterInfo::isVirtualRegister(DestReg) ?
-      MRI->getRegClass(DestReg) :
-      TRI->getPhysRegClass(DestReg);
+    const TargetRegisterClass *DestRC = Register::isVirtualRegister(DestReg)
+                                            ? MRI->getRegClass(DestReg)
+                                            : TRI->getPhysRegClass(DestReg);
 
     unsigned SrcReg  = UseMI->getOperand(1).getReg();
-    if (TargetRegisterInfo::isVirtualRegister(DestReg) &&
-      TargetRegisterInfo::isVirtualRegister(SrcReg)) {
+    if (Register::isVirtualRegister(DestReg) &&
+        Register::isVirtualRegister(SrcReg)) {
       const TargetRegisterClass * SrcRC = MRI->getRegClass(SrcReg);
       if (TRI->isSGPRClass(SrcRC) && TRI->hasVectorRegisters(DestRC)) {
         MachineRegisterInfo::use_iterator NextUse;
@@ -616,7 +615,7 @@ void SIFoldOperands::foldOperand(
     CopiesToReplace.push_back(UseMI);
   } else {
     if (UseMI->isCopy() && OpToFold.isReg() &&
-        TargetRegisterInfo::isVirtualRegister(UseMI->getOperand(0).getReg()) &&
+        Register::isVirtualRegister(UseMI->getOperand(0).getReg()) &&
         TRI->isVectorRegister(*MRI, UseMI->getOperand(0).getReg()) &&
         TRI->isVectorRegister(*MRI, UseMI->getOperand(1).getReg()) &&
         !UseMI->getOperand(1).getSubReg()) {
@@ -677,6 +676,9 @@ void SIFoldOperands::foldOperand(
         // =>
         // %sgpr1 = COPY %sgpr0
         UseMI->setDesc(TII->get(AMDGPU::COPY));
+        UseMI->getOperand(1).setReg(OpToFold.getReg());
+        UseMI->getOperand(1).setSubReg(OpToFold.getSubReg());
+        UseMI->getOperand(1).setIsKill(false);
         UseMI->RemoveOperand(2); // Remove exec read (or src1 for readlane)
         return;
       }
@@ -810,7 +812,7 @@ static MachineOperand *getImmOrMaterializedImm(MachineRegisterInfo &MRI,
   if (Op.isReg()) {
     // If this has a subregister, it obviously is a register source.
     if (Op.getSubReg() != AMDGPU::NoSubRegister ||
-        !TargetRegisterInfo::isVirtualRegister(Op.getReg()))
+        !Register::isVirtualRegister(Op.getReg()))
       return &Op;
 
     MachineInstr *Def = MRI.getVRegDef(Op.getReg());
@@ -1339,8 +1341,7 @@ bool SIFoldOperands::runOnMachineFunction(MachineFunction &MF) {
       if (!FoldingImm && !OpToFold.isReg())
         continue;
 
-      if (OpToFold.isReg() &&
-          !TargetRegisterInfo::isVirtualRegister(OpToFold.getReg()))
+      if (OpToFold.isReg() && !Register::isVirtualRegister(OpToFold.getReg()))
         continue;
 
       // Prevent folding operands backwards in the function. For example,
@@ -1350,8 +1351,7 @@ bool SIFoldOperands::runOnMachineFunction(MachineFunction &MF) {
       //    ...
       //    %vgpr0 = V_MOV_B32_e32 1, implicit %exec
       MachineOperand &Dst = MI.getOperand(0);
-      if (Dst.isReg() &&
-          !TargetRegisterInfo::isVirtualRegister(Dst.getReg()))
+      if (Dst.isReg() && !Register::isVirtualRegister(Dst.getReg()))
         continue;
 
       foldInstOperand(MI, OpToFold);

@@ -57,3 +57,8 @@ MCStreamer *llvm::createXCOFFStreamer(MCContext &Context,
     S->getAssembler().setRelaxAll(true);
   return S;
 }
+
+void MCXCOFFStreamer::EmitXCOFFLocalCommonSymbol(MCSymbol *Symbol, uint64_t Size,
+                                            unsigned ByteAlign) {
+  report_fatal_error("Emission of local commons not implemented yet.");
+}

@@ -306,6 +306,8 @@ LLVM <http://llvm.org/docs/BuildingADistribution.html>`_):
 
   > DESTDIR=/path/to/lldb-install ninja -C /path/to/lldb-build check-lldb install-distribution
 
+.. _CMakeGeneratedXcodeProject:
+
 Build LLDB standalone for development with Xcode:
 
 ::
@@ -318,7 +320,7 @@ Build LLDB standalone for development with Xcode:
           llvm-project/llvm
   > ninja -C /path/to/llvm-build
 
-  > cmake -B /path/to/lldb-build -G Xcode \
+  > cmake -B /path/to/lldb-build \
           -C /path/to/llvm-project/lldb/cmake/caches/Apple-lldb-Xcode.cmake \
           -DLLVM_DIR=/path/to/llvm-build/lib/cmake/llvm \
           -DClang_DIR=/path/to/llvm-build/lib/cmake/clang \

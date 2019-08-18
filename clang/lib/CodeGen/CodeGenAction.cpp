@@ -15,6 +15,7 @@
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/DeclGroup.h"
 #include "clang/Basic/FileManager.h"
+#include "clang/Basic/LangStandard.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/CodeGen/BackendUtil.h"
@@ -263,10 +264,6 @@ namespace clang {
       Ctx.setDiagnosticHandler(llvm::make_unique<ClangDiagnosticHandler>(
         CodeGenOpts, this));
 
-      PerformPrelinkPasses(Diags, HeaderSearchOpts, CodeGenOpts, TargetOpts,
-                           LangOpts, C.getTargetInfo().getDataLayout(),
-                           getModule(), Action);
-
       Expected<std::unique_ptr<llvm::ToolOutputFile>> OptRecordFileOrErr =
           setupOptimizationRemarks(Ctx, CodeGenOpts.OptRecordFile,
                                    CodeGenOpts.OptRecordPasses,
@@ -306,8 +303,7 @@ namespace clang {
 
       EmitBackendOutput(Diags, HeaderSearchOpts, CodeGenOpts, TargetOpts,
                         LangOpts, C.getTargetInfo().getDataLayout(),
-                        getModule(), Action, std::move(AsmOutStream),
-                        false /* SetLLVMOpts */);
+                        getModule(), Action, std::move(AsmOutStream));
 
       Ctx.setInlineAsmDiagnosticHandler(OldHandler, OldContext);
 
@@ -566,13 +562,13 @@ const FullSourceLoc BackendConsumer::getBestLocationFromDebugLoc(
   if (D.isLocationAvailable()) {
     D.getLocation(Filename, Line, Column);
     if (Line > 0) {
-      const FileEntry *FE = FileMgr.getFile(Filename);
+      auto FE = FileMgr.getFile(Filename);
       if (!FE)
         FE = FileMgr.getFile(D.getAbsolutePath());
       if (FE) {
         // If -gcolumn-info was not used, Column will be 0. This upsets the
         // source manager, so pass 1 if Column is not set.
-        DILoc = SourceMgr.translateFileLineCol(FE, Line, Column ? Column : 1);
+        DILoc = SourceMgr.translateFileLineCol(*FE, Line, Column ? Column : 1);
       }
     }
     BadDebugInfo = DILoc.isInvalid();
@@ -1019,7 +1015,7 @@ CodeGenAction::loadModule(MemoryBufferRef MBRef) {
 
 void CodeGenAction::ExecuteAction() {
   // If this is an IR file, we have to treat it specially.
-  if (getCurrentFileKind().getLanguage() == InputKind::LLVM_IR) {
+  if (getCurrentFileKind().getLanguage() == Language::LLVM_IR) {
     BackendAction BA = static_cast<BackendAction>(Act);
     CompilerInstance &CI = getCompilerInstance();
     std::unique_ptr<raw_pwrite_stream> OS =

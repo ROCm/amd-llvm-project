@@ -60,6 +60,10 @@ using namespace llvm::codeview;
 using namespace llvm::support;
 using namespace llvm::Win64EH;
 
+static inline Error createError(const Twine &Err) {
+  return make_error<StringError>(Err, object_error::parse_failed);
+}
+
 namespace {
 
 struct LoadConfigTables {
@@ -167,7 +171,7 @@ private:
   void printDelayImportedSymbols(
       const DelayImportDirectoryEntryRef &I,
       iterator_range<imported_symbol_iterator> Range);
-  ErrorOr<const coff_resource_dir_entry &>
+  Expected<const coff_resource_dir_entry &>
   getResourceDirectoryTableEntry(const coff_resource_dir_table &Table,
                                  uint32_t Index);
 
@@ -887,16 +891,14 @@ void COFFDumper::printBaseOfDataField(const pe32plus_header *) {}
 void COFFDumper::printCodeViewDebugInfo() {
   // Print types first to build CVUDTNames, then print symbols.
   for (const SectionRef &S : Obj->sections()) {
-    StringRef SectionName;
-    error(S.getName(SectionName));
+    StringRef SectionName = unwrapOrError(Obj->getFileName(), S.getName());
     // .debug$T is a standard CodeView type section, while .debug$P is the same
     // format but used for MSVC precompiled header object files.
     if (SectionName == ".debug$T" || SectionName == ".debug$P")
       printCodeViewTypeSection(SectionName, S);
   }
   for (const SectionRef &S : Obj->sections()) {
-    StringRef SectionName;
-    error(S.getName(SectionName));
+    StringRef SectionName = unwrapOrError(Obj->getFileName(), S.getName());
     if (SectionName == ".debug$S")
       printCodeViewSymbolSection(SectionName, S);
   }
@@ -908,32 +910,40 @@ void COFFDumper::initializeFileAndStringTables(BinaryStreamReader &Reader) {
     // The section consists of a number of subsection in the following format:
     // |SubSectionType|SubSectionSize|Contents...|
     uint32_t SubType, SubSectionSize;
-    error(Reader.readInteger(SubType));
-    error(Reader.readInteger(SubSectionSize));
+
+    if (Error E = Reader.readInteger(SubType))
+      reportError(std::move(E), Obj->getFileName());
+    if (Error E = Reader.readInteger(SubSectionSize))
+      reportError(std::move(E), Obj->getFileName());
 
     StringRef Contents;
-    error(Reader.readFixedString(Contents, SubSectionSize));
+    if (Error E = Reader.readFixedString(Contents, SubSectionSize))
+      reportError(std::move(E), Obj->getFileName());
 
     BinaryStreamRef ST(Contents, support::little);
     switch (DebugSubsectionKind(SubType)) {
     case DebugSubsectionKind::FileChecksums:
-      error(CVFileChecksumTable.initialize(ST));
+      if (Error E = CVFileChecksumTable.initialize(ST))
+        reportError(std::move(E), Obj->getFileName());
       break;
     case DebugSubsectionKind::StringTable:
-      error(CVStringTable.initialize(ST));
+      if (Error E = CVStringTable.initialize(ST))
+        reportError(std::move(E), Obj->getFileName());
       break;
     default:
       break;
     }
 
     uint32_t PaddedSize = alignTo(SubSectionSize, 4);
-    error(Reader.skip(PaddedSize - SubSectionSize));
+    if (Error E = Reader.skip(PaddedSize - SubSectionSize))
+      reportError(std::move(E), Obj->getFileName());
   }
 }
 
 void COFFDumper::printCodeViewSymbolSection(StringRef SectionName,
                                             const SectionRef &Section) {
-  StringRef SectionContents = unwrapOrError(Section.getContents());
+  StringRef SectionContents =
+      unwrapOrError(Obj->getFileName(), Section.getContents());
   StringRef Data = SectionContents;
 
   SmallVector<StringRef, 10> FunctionNames;
@@ -944,7 +954,9 @@ void COFFDumper::printCodeViewSymbolSection(StringRef SectionName,
   W.printNumber("Section", SectionName, Obj->getSectionID(Section));
 
   uint32_t Magic;
-  error(consume(Data, Magic));
+  if (Error E = consume(Data, Magic))
+    reportError(std::move(E), Obj->getFileName());
+
   W.printHex("Magic", Magic);
   if (Magic != COFF::DEBUG_SECTION_MAGIC)
     return error(object_error::parse_failed);
@@ -957,8 +969,10 @@ void COFFDumper::printCodeViewSymbolSection(StringRef SectionName,
     // The section consists of a number of subsection in the following format:
     // |SubSectionType|SubSectionSize|Contents...|
     uint32_t SubType, SubSectionSize;
-    error(consume(Data, SubType));
-    error(consume(Data, SubSectionSize));
+    if (Error E = consume(Data, SubType))
+      reportError(std::move(E), Obj->getFileName());
+    if (Error E = consume(Data, SubSectionSize))
+      reportError(std::move(E), Obj->getFileName());
 
     ListScope S(W, "Subsection");
     // Dump the subsection as normal even if the ignore bit is set.
@@ -1033,7 +1047,8 @@ void COFFDumper::printCodeViewSymbolSection(StringRef SectionName,
       BinaryStreamReader SR(Contents, llvm::support::little);
 
       DebugFrameDataSubsectionRef FrameData;
-      error(FrameData.initialize(SR));
+      if (Error E = FrameData.initialize(SR))
+        reportError(std::move(E), Obj->getFileName());
 
       StringRef LinkageName;
       error(resolveSymbolName(Obj->getCOFFSection(Section), SectionContents,
@@ -1043,7 +1058,8 @@ void COFFDumper::printCodeViewSymbolSection(StringRef SectionName,
       // To find the active frame description, search this array for the
       // smallest PC range that includes the current PC.
       for (const auto &FD : FrameData) {
-        StringRef FrameFunc = error(CVStringTable.getString(FD.FrameFunc));
+        StringRef FrameFunc = unwrapOrError(
+            Obj->getFileName(), CVStringTable.getString(FD.FrameFunc));
 
         DictScope S(W, "FrameData");
         W.printHex("RvaStart", FD.RvaStart);
@@ -1094,7 +1110,8 @@ void COFFDumper::printCodeViewSymbolSection(StringRef SectionName,
     BinaryStreamReader Reader(FunctionLineTables[Name], support::little);
 
     DebugLinesSubsectionRef LineInfo;
-    error(LineInfo.initialize(Reader));
+    if (Error E = LineInfo.initialize(Reader))
+      reportError(std::move(E), Obj->getFileName());
 
     W.printHex("Flags", LineInfo.header()->Flags);
     W.printHex("CodeSize", LineInfo.header()->CodeSize);
@@ -1148,9 +1165,9 @@ void COFFDumper::printCodeViewSymbolsSubsection(StringRef Subsection,
     error(object_error::parse_failed);
   }
 
-  if (auto EC = CVSD.dump(Symbols)) {
+  if (Error E = CVSD.dump(Symbols)) {
     W.flush();
-    error(std::move(EC));
+    reportError(std::move(E), Obj->getFileName());
   }
   CompilationCPUType = CVSD.getCompilationCPUType();
   W.flush();
@@ -1159,12 +1176,14 @@ void COFFDumper::printCodeViewSymbolsSubsection(StringRef Subsection,
 void COFFDumper::printCodeViewFileChecksums(StringRef Subsection) {
   BinaryStreamRef Stream(Subsection, llvm::support::little);
   DebugChecksumsSubsectionRef Checksums;
-  error(Checksums.initialize(Stream));
+  if (Error E = Checksums.initialize(Stream))
+    reportError(std::move(E), Obj->getFileName());
 
   for (auto &FC : Checksums) {
     DictScope S(W, "FileChecksum");
 
-    StringRef Filename = error(CVStringTable.getString(FC.FileNameOffset));
+    StringRef Filename = unwrapOrError(
+        Obj->getFileName(), CVStringTable.getString(FC.FileNameOffset));
     W.printHex("Filename", Filename, FC.FileNameOffset);
     W.printHex("ChecksumSize", FC.Checksum.size());
     W.printEnum("ChecksumKind", uint8_t(FC.Kind),
@@ -1177,7 +1196,8 @@ void COFFDumper::printCodeViewFileChecksums(StringRef Subsection) {
 void COFFDumper::printCodeViewInlineeLines(StringRef Subsection) {
   BinaryStreamReader SR(Subsection, llvm::support::little);
   DebugInlineeLinesSubsectionRef Lines;
-  error(Lines.initialize(SR));
+  if (Error E = Lines.initialize(SR))
+    reportError(std::move(E), Obj->getFileName());
 
   for (auto &Line : Lines) {
     DictScope S(W, "InlineeSourceLine");
@@ -1206,7 +1226,8 @@ StringRef COFFDumper::getFileNameForFileOffset(uint32_t FileOffset) {
   if (Iter == CVFileChecksumTable.end())
     error(object_error::parse_failed);
 
-  return error(CVStringTable.getString(Iter->FileNameOffset));
+  return unwrapOrError(Obj->getFileName(),
+                       CVStringTable.getString(Iter->FileNameOffset));
 }
 
 void COFFDumper::printFileNameForOffset(StringRef Label, uint32_t FileOffset) {
@@ -1219,12 +1240,13 @@ void COFFDumper::mergeCodeViewTypes(MergingTypeTableBuilder &CVIDs,
                                     GlobalTypeTableBuilder &GlobalCVTypes,
                                     bool GHash) {
   for (const SectionRef &S : Obj->sections()) {
-    StringRef SectionName;
-    error(S.getName(SectionName));
+    StringRef SectionName = unwrapOrError(Obj->getFileName(), S.getName());
     if (SectionName == ".debug$T") {
-      StringRef Data = unwrapOrError(S.getContents());
+      StringRef Data = unwrapOrError(Obj->getFileName(), S.getContents());
       uint32_t Magic;
-      error(consume(Data, Magic));
+      if (Error E = consume(Data, Magic))
+        reportError(std::move(E), Obj->getFileName());
+
       if (Magic != 4)
         error(object_error::parse_failed);
 
@@ -1240,14 +1262,14 @@ void COFFDumper::mergeCodeViewTypes(MergingTypeTableBuilder &CVIDs,
       if (GHash) {
         std::vector<GloballyHashedType> Hashes =
             GloballyHashedType::hashTypes(Types);
-        if (auto EC =
+        if (Error E =
                 mergeTypeAndIdRecords(GlobalCVIDs, GlobalCVTypes, SourceToDest,
                                       Types, Hashes, PCHSignature))
-          return error(std::move(EC));
+          return reportError(std::move(E), Obj->getFileName());
       } else {
-        if (auto EC = mergeTypeAndIdRecords(CVIDs, CVTypes, SourceToDest, Types,
+        if (Error E = mergeTypeAndIdRecords(CVIDs, CVTypes, SourceToDest, Types,
                                             PCHSignature))
-          return error(std::move(EC));
+          return reportError(std::move(E), Obj->getFileName());
       }
     }
   }
@@ -1258,12 +1280,14 @@ void COFFDumper::printCodeViewTypeSection(StringRef SectionName,
   ListScope D(W, "CodeViewTypes");
   W.printNumber("Section", SectionName, Obj->getSectionID(Section));
 
-  StringRef Data = unwrapOrError(Section.getContents());
+  StringRef Data = unwrapOrError(Obj->getFileName(), Section.getContents());
   if (opts::CodeViewSubsectionBytes)
     W.printBinaryBlock("Data", Data);
 
   uint32_t Magic;
-  error(consume(Data, Magic));
+  if (Error E = consume(Data, Magic))
+    reportError(std::move(E), Obj->getFileName());
+
   W.printHex("Magic", Magic);
   if (Magic != COFF::DEBUG_SECTION_MAGIC)
     return error(object_error::parse_failed);
@@ -1271,7 +1295,9 @@ void COFFDumper::printCodeViewTypeSection(StringRef SectionName,
   Types.reset(Data, 100);
 
   TypeDumpVisitor TDV(Types, &W, opts::CodeViewSubsectionBytes);
-  error(codeview::visitTypeStream(Types, TDV));
+  if (Error E = codeview::visitTypeStream(Types, TDV))
+    reportError(std::move(E), Obj->getFileName());
+
   W.flush();
 }
 
@@ -1282,8 +1308,7 @@ void COFFDumper::printSectionHeaders() {
     ++SectionNumber;
     const coff_section *Section = Obj->getCOFFSection(Sec);
 
-    StringRef Name;
-    error(Sec.getName(Name));
+    StringRef Name = unwrapOrError(Obj->getFileName(), Sec.getName());
 
     DictScope D(W, "Section");
     W.printNumber("Number", SectionNumber);
@@ -1318,7 +1343,7 @@ void COFFDumper::printSectionHeaders() {
 
     if (opts::SectionData &&
         !(Section->Characteristics & COFF::IMAGE_SCN_CNT_UNINITIALIZED_DATA)) {
-      StringRef Data = unwrapOrError(Sec.getContents());
+      StringRef Data = unwrapOrError(Obj->getFileName(), Sec.getContents());
       W.printBinaryBlock("SectionData", Data);
     }
   }
@@ -1330,8 +1355,7 @@ void COFFDumper::printRelocations() {
   int SectionNumber = 0;
   for (const SectionRef &Section : Obj->sections()) {
     ++SectionNumber;
-    StringRef Name;
-    error(Section.getName(Name));
+    StringRef Name = unwrapOrError(Obj->getFileName(), Section.getName());
 
     bool PrintedGroup = false;
     for (const RelocationRef &Reloc : Section.relocations()) {
@@ -1496,7 +1520,7 @@ void COFFDumper::printSymbol(const SymbolRef &Sym) {
           error(EC);
         Expected<StringRef> Res = getSectionName(Obj, AuxNumber, Assoc);
         if (!Res)
-          error(Res.takeError());
+          reportError(Res.takeError(), Obj->getFileName());
         AssocName = *Res;
 
         W.printNumber("AssocSection", AssocName, AuxNumber);
@@ -1660,13 +1684,12 @@ void COFFDumper::printCOFFExports() {
 
 void COFFDumper::printCOFFDirectives() {
   for (const SectionRef &Section : Obj->sections()) {
-    StringRef Name;
-
-    error(Section.getName(Name));
+    StringRef Name = unwrapOrError(Obj->getFileName(), Section.getName());
     if (Name != ".drectve")
       continue;
 
-    StringRef Contents = unwrapOrError(Section.getContents());
+    StringRef Contents =
+        unwrapOrError(Obj->getFileName(), Section.getContents());
     W.printString("Directive(s)", Contents);
   }
 }
@@ -1700,16 +1723,15 @@ void COFFDumper::printCOFFBaseReloc() {
 void COFFDumper::printCOFFResources() {
   ListScope ResourcesD(W, "Resources");
   for (const SectionRef &S : Obj->sections()) {
-    StringRef Name;
-    error(S.getName(Name));
+    StringRef Name = unwrapOrError(Obj->getFileName(), S.getName());
     if (!Name.startswith(".rsrc"))
       continue;
 
-    StringRef Ref = unwrapOrError(S.getContents());
+    StringRef Ref = unwrapOrError(Obj->getFileName(), S.getContents());
 
     if ((Name == ".rsrc") || (Name == ".rsrc$01")) {
       ResourceSectionRef RSF(Ref);
-      auto &BaseTable = unwrapOrError(RSF.getBaseTable());
+      auto &BaseTable = unwrapOrError(Obj->getFileName(), RSF.getBaseTable());
       W.printNumber("Total Number of Resources",
                     countTotalTableEntries(RSF, BaseTable, "Type"));
       W.printHex("Base Table Address",
@@ -1729,14 +1751,16 @@ COFFDumper::countTotalTableEntries(ResourceSectionRef RSF,
   uint32_t TotalEntries = 0;
   for (int i = 0; i < Table.NumberOfNameEntries + Table.NumberOfIDEntries;
        i++) {
-    auto Entry = unwrapOrError(getResourceDirectoryTableEntry(Table, i));
+    auto Entry = unwrapOrError(Obj->getFileName(),
+                               getResourceDirectoryTableEntry(Table, i));
     if (Entry.Offset.isSubDir()) {
       StringRef NextLevel;
       if (Level == "Name")
         NextLevel = "Language";
       else
         NextLevel = "Name";
-      auto &NextTable = unwrapOrError(RSF.getEntrySubDir(Entry));
+      auto &NextTable =
+          unwrapOrError(Obj->getFileName(), RSF.getEntrySubDir(Entry));
       TotalEntries += countTotalTableEntries(RSF, NextTable, NextLevel);
     } else {
       TotalEntries += 1;
@@ -1755,13 +1779,14 @@ void COFFDumper::printResourceDirectoryTable(
   // Iterate through level in resource directory tree.
   for (int i = 0; i < Table.NumberOfNameEntries + Table.NumberOfIDEntries;
        i++) {
-    auto Entry = unwrapOrError(getResourceDirectoryTableEntry(Table, i));
+    auto Entry = unwrapOrError(Obj->getFileName(),
+                               getResourceDirectoryTableEntry(Table, i));
     StringRef Name;
     SmallString<20> IDStr;
     raw_svector_ostream OS(IDStr);
     if (i < Table.NumberOfNameEntries) {
       ArrayRef<UTF16> RawEntryNameString =
-          unwrapOrError(RSF.getEntryNameString(Entry));
+          unwrapOrError(Obj->getFileName(), RSF.getEntryNameString(Entry));
       std::vector<UTF16> EndianCorrectedNameString;
       if (llvm::sys::IsBigEndianHost) {
         EndianCorrectedNameString.resize(RawEntryNameString.size() + 1);
@@ -1793,7 +1818,8 @@ void COFFDumper::printResourceDirectoryTable(
         NextLevel = "Language";
       else
         NextLevel = "Name";
-      auto &NextTable = unwrapOrError(RSF.getEntrySubDir(Entry));
+      auto &NextTable =
+          unwrapOrError(Obj->getFileName(), RSF.getEntrySubDir(Entry));
       printResourceDirectoryTable(RSF, NextTable, NextLevel);
     } else {
       W.printHex("Entry Offset", Entry.Offset.value());
@@ -1808,11 +1834,11 @@ void COFFDumper::printResourceDirectoryTable(
   }
 }
 
-ErrorOr<const coff_resource_dir_entry &>
+Expected<const coff_resource_dir_entry &>
 COFFDumper::getResourceDirectoryTableEntry(const coff_resource_dir_table &Table,
                                            uint32_t Index) {
   if (Index >= (uint32_t)(Table.NumberOfNameEntries + Table.NumberOfIDEntries))
-    return object_error::parse_failed;
+    return createError("can't get resource directory table entry");
   auto TablePtr = reinterpret_cast<const coff_resource_dir_entry *>(&Table + 1);
   return TablePtr[Index];
 }
@@ -1821,7 +1847,11 @@ void COFFDumper::printStackMap() const {
   object::SectionRef StackMapSection;
   for (auto Sec : Obj->sections()) {
     StringRef Name;
-    Sec.getName(Name);
+    if (Expected<StringRef> NameOrErr = Sec.getName())
+      Name = *NameOrErr;
+    else
+      consumeError(NameOrErr.takeError());
+
     if (Name == ".llvm_stackmaps") {
       StackMapSection = Sec;
       break;
@@ -1831,7 +1861,8 @@ void COFFDumper::printStackMap() const {
   if (StackMapSection == object::SectionRef())
     return;
 
-  StringRef StackMapContents = unwrapOrError(StackMapSection.getContents());
+  StringRef StackMapContents =
+      unwrapOrError(Obj->getFileName(), StackMapSection.getContents());
   ArrayRef<uint8_t> StackMapContentsArray =
       arrayRefFromStringRef(StackMapContents);
 
@@ -1847,7 +1878,11 @@ void COFFDumper::printAddrsig() {
   object::SectionRef AddrsigSection;
   for (auto Sec : Obj->sections()) {
     StringRef Name;
-    Sec.getName(Name);
+    if (Expected<StringRef> NameOrErr = Sec.getName())
+      Name = *NameOrErr;
+    else
+      consumeError(NameOrErr.takeError());
+
     if (Name == ".llvm_addrsig") {
       AddrsigSection = Sec;
       break;
@@ -1857,7 +1892,8 @@ void COFFDumper::printAddrsig() {
   if (AddrsigSection == object::SectionRef())
     return;
 
-  StringRef AddrsigContents = unwrapOrError(AddrsigSection.getContents());
+  StringRef AddrsigContents =
+      unwrapOrError(Obj->getFileName(), AddrsigSection.getContents());
   ArrayRef<uint8_t> AddrsigContentsArray(AddrsigContents.bytes_begin(),
                                          AddrsigContents.size());
 
@@ -1891,7 +1927,8 @@ void llvm::dumpCodeViewMergedTypes(ScopedPrinter &Writer,
   {
     ListScope S(Writer, "MergedTypeStream");
     TypeDumpVisitor TDV(TpiTypes, &Writer, opts::CodeViewSubsectionBytes);
-    error(codeview::visitTypeStream(TpiTypes, TDV));
+    if (Error Err = codeview::visitTypeStream(TpiTypes, TDV))
+      reportError(std::move(Err), "<?>");
     Writer.flush();
   }
 
@@ -1902,7 +1939,8 @@ void llvm::dumpCodeViewMergedTypes(ScopedPrinter &Writer,
     ListScope S(Writer, "MergedIDStream");
     TypeDumpVisitor TDV(TpiTypes, &Writer, opts::CodeViewSubsectionBytes);
     TDV.setIpiTypes(IpiTypes);
-    error(codeview::visitTypeStream(IpiTypes, TDV));
+    if (Error Err = codeview::visitTypeStream(IpiTypes, TDV))
+      reportError(std::move(Err), "<?>");
     Writer.flush();
   }
 }

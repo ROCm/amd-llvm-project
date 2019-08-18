@@ -208,10 +208,8 @@ public:
 
 private:
   void finish() override {
-    if (auto DefinedMacro = locateMacroAt(SearchedLocation, PP)) {
+    if (auto DefinedMacro = locateMacroAt(SearchedLocation, PP))
       MacroInfos.push_back(*DefinedMacro);
-      assert(Decls.empty());
-    }
   }
 };
 
@@ -310,7 +308,9 @@ std::vector<LocatedSymbol> locateSymbolAt(ParsedAST &AST, Position Pos,
 
   // Emit all symbol locations (declaration or definition) from AST.
   for (const Decl *D : Symbols.Decls) {
-    auto Loc = makeLocation(AST.getASTContext(), findNameLoc(D), *MainFilePath);
+    auto Loc =
+        makeLocation(AST.getASTContext(), spellingLocIfSpelled(findName(D), SM),
+                     *MainFilePath);
     if (!Loc)
       continue;
 
@@ -438,6 +438,7 @@ std::vector<DocumentHighlight> findDocumentHighlights(ParsedAST &AST,
   const SourceManager &SM = AST.getSourceManager();
   auto Symbols = getSymbolAtPosition(
       AST, getBeginningOfIdentifier(AST, Pos, SM.getMainFileID()));
+  // FIXME: show references to macro within file?
   auto References = findRefs(Symbols.Decls, AST);
 
   std::vector<DocumentHighlight> Result;
@@ -716,7 +717,7 @@ static HoverInfo getHoverContents(const Decl *D, const SymbolIndex *Index) {
         HI.Value.emplace();
         llvm::raw_string_ostream ValueOS(*HI.Value);
         Result.Val.printPretty(ValueOS, const_cast<ASTContext &>(Ctx),
-                               Var->getType());
+                               Init->getType());
       }
     }
   }
@@ -1045,7 +1046,8 @@ static llvm::Optional<TypeHierarchyItem>
 declToTypeHierarchyItem(ASTContext &Ctx, const NamedDecl &ND) {
   auto &SM = Ctx.getSourceManager();
 
-  SourceLocation NameLoc = findNameLoc(&ND);
+  SourceLocation NameLoc =
+      spellingLocIfSpelled(findName(&ND), Ctx.getSourceManager());
   // getFileLoc is a good choice for us, but we also need to make sure
   // sourceLocToPosition won't switch files, so we call getSpellingLoc on top of
   // that to make sure it does not switch files.

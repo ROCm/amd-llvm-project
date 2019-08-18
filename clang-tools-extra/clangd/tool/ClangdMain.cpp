@@ -267,7 +267,8 @@ list<std::string> TweakList{
 opt<unsigned> WorkerThreadsCount{
     "j",
     cat(Misc),
-    desc("Number of async workers used by clangd"),
+    desc("Number of async workers used by clangd. Background index also "
+         "uses this many workers."),
     init(getDefaultAsyncThreadsCount()),
 };
 
@@ -308,7 +309,8 @@ opt<PCHStorageFlag> PCHStorage{
 opt<bool> Sync{
     "sync",
     cat(Misc),
-    desc("Parse on main thread. If set, -j is ignored"),
+    desc("Handle client requests on main thread. Background index still uses "
+         "its own thread."),
     init(false),
     Hidden,
 };
@@ -359,7 +361,9 @@ opt<OffsetEncoding> ForceOffsetEncoding{
     values(
         clEnumValN(OffsetEncoding::UTF8, "utf-8", "Offsets are in UTF-8 bytes"),
         clEnumValN(OffsetEncoding::UTF16, "utf-16",
-                   "Offsets are in UTF-16 code units")),
+                   "Offsets are in UTF-16 code units"),
+        clEnumValN(OffsetEncoding::UTF32, "utf-32",
+                   "Offsets are in unicode codepoints")),
     init(OffsetEncoding::UnsupportedEncoding),
 };
 

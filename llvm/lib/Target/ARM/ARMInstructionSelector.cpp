@@ -34,7 +34,7 @@ public:
   ARMInstructionSelector(const ARMBaseTargetMachine &TM, const ARMSubtarget &STI,
                          const ARMRegisterBankInfo &RBI);
 
-  bool select(MachineInstr &I, CodeGenCoverage &CoverageInfo) const override;
+  bool select(MachineInstr &I) override;
   static const char *getName() { return DEBUG_TYPE; }
 
 private:
@@ -211,7 +211,7 @@ static bool selectCopy(MachineInstr &I, const TargetInstrInfo &TII,
                        MachineRegisterInfo &MRI, const TargetRegisterInfo &TRI,
                        const RegisterBankInfo &RBI) {
   unsigned DstReg = I.getOperand(0).getReg();
-  if (TargetRegisterInfo::isPhysicalRegister(DstReg))
+  if (Register::isPhysicalRegister(DstReg))
     return true;
 
   const TargetRegisterClass *RC = guessRegClass(DstReg, MRI, TRI, RBI);
@@ -833,8 +833,7 @@ void ARMInstructionSelector::renderVFPF64Imm(
   NewInstBuilder.addImm(FPImmEncoding);
 }
 
-bool ARMInstructionSelector::select(MachineInstr &I,
-                                    CodeGenCoverage &CoverageInfo) const {
+bool ARMInstructionSelector::select(MachineInstr &I) {
   assert(I.getParent() && "Instruction should be in a basic block!");
   assert(I.getParent()->getParent() && "Instruction should be in a function!");
 
@@ -851,7 +850,7 @@ bool ARMInstructionSelector::select(MachineInstr &I,
 
   using namespace TargetOpcode;
 
-  if (selectImpl(I, CoverageInfo))
+  if (selectImpl(I, *CoverageInfo))
     return true;
 
   MachineInstrBuilder MIB{MF, I};

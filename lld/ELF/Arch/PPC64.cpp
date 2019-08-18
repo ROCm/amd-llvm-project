@@ -175,6 +175,10 @@ bool elf::tryRelaxPPC64TocIndirection(RelType type, const Relocation &rel,
   if (!d || d->isPreemptible)
     return false;
 
+  // R_PPC64_ADDR64 should have created a canonical PLT for the non-preemptable
+  // ifunc and changed its type to STT_FUNC.
+  assert(!d->isGnuIFunc());
+
   // Two instructions can materialize a 32-bit signed offset from the toc base.
   uint64_t tocRelative = d->getVA(addend) - getPPC64TocBase();
   if (!isInt<32>(tocRelative))

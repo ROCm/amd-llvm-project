@@ -440,10 +440,7 @@ void MachODumper::printSectionHeaders(const MachOObjectFile *Obj) {
     MachOSection MOSection;
     getSection(Obj, Section.getRawDataRefImpl(), MOSection);
     DataRefImpl DR = Section.getRawDataRefImpl();
-
-    StringRef Name;
-    error(Section.getName(Name));
-
+    StringRef Name = unwrapOrError(Obj->getFileName(), Section.getName());
     ArrayRef<char> RawName = Obj->getSectionRawName(DR);
     StringRef SegmentName = Obj->getSectionFinalSegmentName(DR);
     ArrayRef<char> RawSegmentName = Obj->getSectionRawFinalSegmentName(DR);
@@ -484,7 +481,8 @@ void MachODumper::printSectionHeaders(const MachOObjectFile *Obj) {
     }
 
     if (opts::SectionData && !Section.isBSS())
-      W.printBinaryBlock("SectionData", unwrapOrError(Section.getContents()));
+      W.printBinaryBlock("SectionData", unwrapOrError(Obj->getFileName(),
+                                                      Section.getContents()));
   }
 }
 
@@ -493,9 +491,7 @@ void MachODumper::printRelocations() {
 
   std::error_code EC;
   for (const SectionRef &Section : Obj->sections()) {
-    StringRef Name;
-    error(Section.getName(Name));
-
+    StringRef Name = unwrapOrError(Obj->getFileName(), Section.getName());
     bool PrintedGroup = false;
     for (const RelocationRef &Reloc : Section.relocations()) {
       if (!PrintedGroup) {
@@ -540,9 +536,8 @@ void MachODumper::printRelocation(const MachOObjectFile *Obj,
     }
   } else if (!IsScattered) {
     section_iterator SecI = Obj->getRelocationSection(DR);
-    if (SecI != Obj->section_end()) {
-      error(SecI->getName(TargetName));
-    }
+    if (SecI != Obj->section_end())
+      TargetName = unwrapOrError(Obj->getFileName(), SecI->getName());
   }
   if (TargetName.empty())
     TargetName = "-";
@@ -613,7 +608,7 @@ void MachODumper::printSymbol(const SymbolRef &Symbol) {
   error(errorToErrorCode(SecIOrErr.takeError()));
   section_iterator SecI = *SecIOrErr;
   if (SecI != Obj->section_end())
-    error(SecI->getName(SectionName));
+    SectionName = unwrapOrError(Obj->getFileName(), SecI->getName());
 
   DictScope D(W, "Symbol");
   W.printNumber("Name", SymbolName, MOSymbol.StringIndex);
@@ -643,7 +638,11 @@ void MachODumper::printStackMap() const {
   object::SectionRef StackMapSection;
   for (auto Sec : Obj->sections()) {
     StringRef Name;
-    Sec.getName(Name);
+    if (Expected<StringRef> NameOrErr = Sec.getName())
+      Name = *NameOrErr;
+    else
+      consumeError(NameOrErr.takeError());
+
     if (Name == "__llvm_stackmaps") {
       StackMapSection = Sec;
       break;
@@ -653,7 +652,8 @@ void MachODumper::printStackMap() const {
   if (StackMapSection == object::SectionRef())
     return;
 
-  StringRef StackMapContents = unwrapOrError(StackMapSection.getContents());
+  StringRef StackMapContents =
+      unwrapOrError(Obj->getFileName(), StackMapSection.getContents());
   ArrayRef<uint8_t> StackMapContentsArray =
       arrayRefFromStringRef(StackMapContents);
 

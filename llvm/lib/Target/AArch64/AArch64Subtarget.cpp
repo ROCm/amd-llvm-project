@@ -80,6 +80,7 @@ void AArch64Subtarget::initializeProperties() {
     PrefFunctionAlignment = 4;
     break;
   case CortexA65:
+    PrefFunctionAlignment = 3;
     break;
   case CortexA72:
   case CortexA73:
@@ -125,7 +126,10 @@ void AArch64Subtarget::initializeProperties() {
     MinVectorRegisterBitWidth = 128;
     break;
   case NeoverseE1:
+    PrefFunctionAlignment = 3;
+    break;
   case NeoverseN1:
+    PrefFunctionAlignment = 4;
     break;
   case Saphira:
     MaxInterleaveFactor = 4;
@@ -192,7 +196,7 @@ const CallLowering *AArch64Subtarget::getCallLowering() const {
   return CallLoweringInfo.get();
 }
 
-const InstructionSelector *AArch64Subtarget::getInstructionSelector() const {
+InstructionSelector *AArch64Subtarget::getInstructionSelector() const {
   return InstSelector.get();
 }
 

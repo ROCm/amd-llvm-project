@@ -83,7 +83,7 @@ llvm::Error decodeRecord(Record R, llvm::Optional<Location> &Field,
   if (R[0] > INT_MAX)
     return llvm::make_error<llvm::StringError>("Integer too large to parse.\n",
                                                llvm::inconvertibleErrorCode());
-  Field.emplace((int)R[0], Blob);
+  Field.emplace((int)R[0], Blob, (bool)R[1]);
   return llvm::Error::success();
 }
 
@@ -129,7 +129,7 @@ llvm::Error decodeRecord(Record R, llvm::SmallVectorImpl<Location> &Field,
   if (R[0] > INT_MAX)
     return llvm::make_error<llvm::StringError>("Integer too large to parse.\n",
                                                llvm::inconvertibleErrorCode());
-  Field.emplace_back((int)R[0], Blob);
+  Field.emplace_back((int)R[0], Blob, (bool)R[1]);
   return llvm::Error::success();
 }
 
@@ -292,6 +292,8 @@ llvm::Error parseRecord(Record R, unsigned ID, llvm::StringRef Blob,
     return decodeRecord(R, I->RefType, Blob);
   case REFERENCE_PATH:
     return decodeRecord(R, I->Path, Blob);
+  case REFERENCE_IS_IN_GLOBAL_NAMESPACE:
+    return decodeRecord(R, I->IsInGlobalNamespace, Blob);
   case REFERENCE_FIELD:
     return decodeRecord(R, F, Blob);
   default:

@@ -200,6 +200,8 @@ def compress_debug_sections_EQ : Joined<["-", "--"], "compress-debug-sections=">
     HelpText<"DWARF debug sections compression type">;
 def mno_exec_stack : Flag<["-"], "mnoexecstack">,
   HelpText<"Mark the file as not needing an executable stack">;
+def massembler_no_warn : Flag<["-"], "massembler-no-warn">,
+  HelpText<"Make assembler not emit warnings">;
 def massembler_fatal_warnings : Flag<["-"], "massembler-fatal-warnings">,
   HelpText<"Make assembler warnings fatal">;
 def mrelax_relocations : Flag<["--"], "mrelax-relocations">,
@@ -863,6 +865,8 @@ def fcuda_allow_variadic_functions : Flag<["-"], "fcuda-allow-variadic-functions
   HelpText<"Allow variadic functions in CUDA device code.">;
 def fno_cuda_host_device_constexpr : Flag<["-"], "fno-cuda-host-device-constexpr">,
   HelpText<"Don't treat unattributed constexpr functions as __host__ __device__.">;
+def fcuda_force_lambda_odr : Flag<["-"], "fcuda-force-lambda-odr">,
+  HelpText<"Force lambda naming following one definition rule (ODR).">;
 
 //===----------------------------------------------------------------------===//
 // OpenMP Options

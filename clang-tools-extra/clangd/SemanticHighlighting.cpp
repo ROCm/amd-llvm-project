@@ -11,7 +11,9 @@
 #include "Protocol.h"
 #include "SourceCode.h"
 #include "clang/AST/ASTContext.h"
+#include "clang/AST/DeclCXX.h"
 #include "clang/AST/RecursiveASTVisitor.h"
+#include <algorithm>
 
 namespace clang {
 namespace clangd {
@@ -33,10 +35,7 @@ public:
     TraverseAST(Ctx);
     // Initializer lists can give duplicates of tokens, therefore all tokens
     // must be deduplicated.
-    llvm::sort(Tokens,
-               [](const HighlightingToken &L, const HighlightingToken &R) {
-                 return std::tie(L.R, L.Kind) < std::tie(R.R, R.Kind);
-               });
+    llvm::sort(Tokens);
     auto Last = std::unique(Tokens.begin(), Tokens.end());
     Tokens.erase(Last, Tokens.end());
     return Tokens;
@@ -53,6 +52,10 @@ public:
     if (isa<CXXDestructorDecl>(MD))
       // When calling the destructor manually like: AAA::~A(); The ~ is a
       // MemberExpr. Other methods should still be highlighted though.
+      return true;
+    if (isa<CXXConversionDecl>(MD))
+      // The MemberLoc is invalid for C++ conversion operators. We do not
+      // attempt to add tokens with invalid locations.
       return true;
     addToken(ME->getMemberLoc(), MD);
     return true;
@@ -94,8 +97,8 @@ public:
   }
 
   bool VisitTypedefNameDecl(TypedefNameDecl *TD) {
-    if(const auto *TSI = TD->getTypeSourceInfo())
-      addTypeLoc(TD->getLocation(), TSI->getTypeLoc());
+    if (const auto *TSI = TD->getTypeSourceInfo())
+      addType(TD->getLocation(), TSI->getTypeLoc().getTypePtr());
     return true;
   }
 
@@ -117,10 +120,8 @@ public:
     // structs. It also makes us not highlight certain namespace qualifiers
     // twice. For elaborated types the actual type is highlighted as an inner
     // TypeLoc.
-    if (TL.getTypeLocClass() == TypeLoc::TypeLocClass::Elaborated)
-      return true;
-
-    addTypeLoc(TL.getBeginLoc(), TL);
+    if (TL.getTypeLocClass() != TypeLoc::TypeLocClass::Elaborated)
+      addType(TL.getBeginLoc(), TL.getTypePtr());
     return true;
   }
 
@@ -134,11 +135,34 @@ public:
         HighlightingTokenCollector>::TraverseNestedNameSpecifierLoc(NNSLoc);
   }
 
+  bool TraverseConstructorInitializer(CXXCtorInitializer *CI) {
+    if (const FieldDecl *FD = CI->getMember())
+      addToken(CI->getSourceLocation(), FD);
+    return RecursiveASTVisitor<
+        HighlightingTokenCollector>::TraverseConstructorInitializer(CI);
+  }
+
+  bool VisitDeclaratorDecl(DeclaratorDecl *D) {
+    if ((!D->getTypeSourceInfo()))
+      return true;
+
+    if (auto *AT = D->getType()->getContainedAutoType()) {
+      const auto Deduced = AT->getDeducedType();
+      if (!Deduced.isNull())
+        addType(D->getTypeSpecStartLoc(), Deduced.getTypePtr());
+    }
+    return true;
+  }
+
 private:
-  void addTypeLoc(SourceLocation Loc, const TypeLoc &TL) {
-    if (const Type *TP = TL.getTypePtr())
-      if (const TagDecl *TD = TP->getAsTagDecl())
-        addToken(Loc, TD);
+  void addType(SourceLocation Loc, const Type *TP) {
+    if (!TP)
+      return;
+    if (TP->isBuiltinType())
+      // Builtins must be special cased as they do not have a TagDecl.
+      addToken(Loc, HighlightingKind::Primitive);
+    if (const TagDecl *TD = TP->getAsTagDecl())
+      addToken(Loc, TD);
   }
 
   void addToken(SourceLocation Loc, const NamedDecl *D) {
@@ -207,6 +231,12 @@ private:
       // FIXME: skip tokens inside macros for now.
       return;
 
+    // Non top level decls that are included from a header are not filtered by
+    // topLevelDecls. (example: method declarations being included from another
+    // file for a class from another file)
+    if (!isInsideMainFile(Loc, SM))
+      return;
+
     auto R = getTokenRange(SM, Ctx.getLangOpts(), Loc);
     if (!R) {
       // R should always have a value, if it doesn't something is very wrong.
@@ -260,10 +290,74 @@ void write16be(uint16_t I, llvm::raw_ostream &OS) {
   llvm::support::endian::write16be(Buf.data(), I);
   OS.write(Buf.data(), Buf.size());
 }
+
+// Get the highlightings on \c Line where the first entry of line is at \c
+// StartLineIt. If it is not at \c StartLineIt an empty vector is returned.
+ArrayRef<HighlightingToken>
+takeLine(ArrayRef<HighlightingToken> AllTokens,
+         ArrayRef<HighlightingToken>::iterator StartLineIt, int Line) {
+  return ArrayRef<HighlightingToken>(StartLineIt, AllTokens.end())
+      .take_while([Line](const HighlightingToken &Token) {
+        return Token.R.start.line == Line;
+      });
+}
 } // namespace
 
-bool operator==(const HighlightingToken &Lhs, const HighlightingToken &Rhs) {
-  return Lhs.Kind == Rhs.Kind && Lhs.R == Rhs.R;
+std::vector<LineHighlightings>
+diffHighlightings(ArrayRef<HighlightingToken> New,
+                  ArrayRef<HighlightingToken> Old, int NewMaxLine) {
+  assert(std::is_sorted(New.begin(), New.end()) && "New must be a sorted vector");
+  assert(std::is_sorted(Old.begin(), Old.end()) && "Old must be a sorted vector");
+
+  // FIXME: There's an edge case when tokens span multiple lines. If the first
+  // token on the line started on a line above the current one and the rest of
+  // the line is the equal to the previous one than we will remove all
+  // highlights but the ones for the token spanning multiple lines. This means
+  // that when we get into the LSP layer the only highlights that will be
+  // visible are the ones for the token spanning multiple lines.
+  // Example:
+  // EndOfMultilineToken  Token Token Token
+  // If "Token Token Token" don't differ from previously the line is
+  // incorrectly removed. Suggestion to fix is to separate any multiline tokens
+  // into one token for every line it covers. This requires reading from the
+  // file buffer to figure out the length of each line though.
+  std::vector<LineHighlightings> DiffedLines;
+  // ArrayRefs to the current line in the highlightings.
+  ArrayRef<HighlightingToken> NewLine(New.begin(),
+                                      /*length*/ static_cast<size_t>(0));
+  ArrayRef<HighlightingToken> OldLine(Old.begin(),
+                                      /*length*/ static_cast<size_t>(0));
+  auto NewEnd = New.end();
+  auto OldEnd = Old.end();
+  auto NextLineNumber = [&]() {
+    int NextNew = NewLine.end() != NewEnd ? NewLine.end()->R.start.line
+                                             : std::numeric_limits<int>::max();
+    int NextOld = OldLine.end() != OldEnd ? OldLine.end()->R.start.line
+                                             : std::numeric_limits<int>::max();
+    return std::min(NextNew, NextOld);
+  };
+
+  // If the New file has fewer lines than the Old file we don't want to send
+  // highlightings beyond the end of the file.
+  for (int LineNumber = 0; LineNumber < NewMaxLine;
+       LineNumber = NextLineNumber()) {
+    NewLine = takeLine(New, NewLine.end(), LineNumber);
+    OldLine = takeLine(Old, OldLine.end(), LineNumber);
+    if (NewLine != OldLine)
+      DiffedLines.push_back({LineNumber, NewLine});
+  }
+
+  return DiffedLines;
+}
+
+bool operator==(const HighlightingToken &L, const HighlightingToken &R) {
+  return std::tie(L.R, L.Kind) == std::tie(R.R, R.Kind);
+}
+bool operator<(const HighlightingToken &L, const HighlightingToken &R) {
+  return std::tie(L.R, L.Kind) < std::tie(R.R, R.Kind);
+}
+bool operator==(const LineHighlightings &L, const LineHighlightings &R) {
+  return std::tie(L.Line, L.Tokens) == std::tie(R.Line, R.Tokens);
 }
 
 std::vector<HighlightingToken> getSemanticHighlightings(ParsedAST &AST) {
@@ -271,22 +365,18 @@ std::vector<HighlightingToken> getSemanticHighlightings(ParsedAST &AST) {
 }
 
 std::vector<SemanticHighlightingInformation>
-toSemanticHighlightingInformation(llvm::ArrayRef<HighlightingToken> Tokens) {
+toSemanticHighlightingInformation(llvm::ArrayRef<LineHighlightings> Tokens) {
   if (Tokens.size() == 0)
     return {};
 
   // FIXME: Tokens might be multiple lines long (block comments) in this case
   // this needs to add multiple lines for those tokens.
-  std::map<int, std::vector<HighlightingToken>> TokenLines;
-  for (const HighlightingToken &Token : Tokens)
-    TokenLines[Token.R.start.line].push_back(Token);
-
   std::vector<SemanticHighlightingInformation> Lines;
-  Lines.reserve(TokenLines.size());
-  for (const auto &Line : TokenLines) {
+  Lines.reserve(Tokens.size());
+  for (const auto &Line : Tokens) {
     llvm::SmallVector<char, 128> LineByteTokens;
     llvm::raw_svector_ostream OS(LineByteTokens);
-    for (const auto &Token : Line.second) {
+    for (const auto &Token : Line.Tokens) {
       // Writes the token to LineByteTokens in the byte format specified by the
       // LSP proposal. Described below.
       // |<---- 4 bytes ---->|<-- 2 bytes -->|<--- 2 bytes -->|
@@ -297,7 +387,7 @@ toSemanticHighlightingInformation(llvm::ArrayRef<HighlightingToken> Tokens) {
       write16be(static_cast<int>(Token.Kind), OS);
     }
 
-    Lines.push_back({Line.first, encodeBase64(LineByteTokens)});
+    Lines.push_back({Line.Line, encodeBase64(LineByteTokens)});
   }
 
   return Lines;
@@ -324,6 +414,8 @@ llvm::StringRef toTextMateScope(HighlightingKind Kind) {
     return "entity.name.namespace.cpp";
   case HighlightingKind::TemplateParameter:
     return "entity.name.type.template.cpp";
+  case HighlightingKind::Primitive:
+    return "storage.type.primitive.cpp";
   case HighlightingKind::NumKinds:
     llvm_unreachable("must not pass NumKinds to the function");
   }

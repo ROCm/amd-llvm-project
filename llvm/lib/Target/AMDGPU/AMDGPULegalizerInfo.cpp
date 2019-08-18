@@ -98,6 +98,12 @@ static LegalityPredicate isRegisterType(unsigned TypeIdx) {
   };
 }
 
+static LegalityPredicate elementTypeIs(unsigned TypeIdx, LLT Type) {
+  return [=](const LegalityQuery &Query) {
+    return Query.Types[TypeIdx].getElementType() == Type;
+  };
+}
+
 AMDGPULegalizerInfo::AMDGPULegalizerInfo(const GCNSubtarget &ST_,
                                          const GCNTargetMachine &TM)
   :  ST(ST_) {
@@ -511,6 +517,7 @@ AMDGPULegalizerInfo::AMDGPULegalizerInfo(const GCNSubtarget &ST_,
       [](const LegalityQuery &Query) {
         return std::make_pair(0, LLT::scalar(32));
       })
+    .moreElementsIf(isSmallOddVector(0), oneMoreElement(0))
     .fewerElementsIf([=](const LegalityQuery &Query) {
         unsigned MemSize = Query.MMODescrs[0].SizeInBits;
         return (MemSize == 96) &&
@@ -591,6 +598,9 @@ AMDGPULegalizerInfo::AMDGPULegalizerInfo(const GCNSubtarget &ST_,
   if (ST.hasFlatAddressSpace()) {
     Atomics.legalFor({{S32, FlatPtr}, {S64, FlatPtr}});
   }
+
+  getActionDefinitionsBuilder(G_ATOMICRMW_FADD)
+    .legalFor({{S32, LocalPtr}});
 
   // TODO: Pointer types, any 32-bit or 64-bit vector
   getActionDefinitionsBuilder(G_SELECT)
@@ -700,6 +710,9 @@ AMDGPULegalizerInfo::AMDGPULegalizerInfo(const GCNSubtarget &ST_,
   getActionDefinitionsBuilder(G_CONCAT_VECTORS)
     .legalIf(isRegisterType(0));
 
+  // TODO: Don't fully scalarize v2s16 pieces
+  getActionDefinitionsBuilder(G_SHUFFLE_VECTOR).lower();
+
   // Merge/Unmerge
   for (unsigned Op : {G_MERGE_VALUES, G_UNMERGE_VALUES}) {
     unsigned BigTyIdx = Op == G_MERGE_VALUES ? 0 : 1;
@@ -724,7 +737,10 @@ AMDGPULegalizerInfo::AMDGPULegalizerInfo(const GCNSubtarget &ST_,
       // valid.
       .clampScalar(LitTyIdx, S16, S256)
       .widenScalarToNextPow2(LitTyIdx, /*Min*/ 32)
-
+      .legalIf(all(typeIs(0, S16), typeIs(1, LLT::vector(3, 16)))) // FIXME: Testing hack
+      .fewerElementsIf(all(typeIs(0, S16), vectorWiderThan(1, 32),
+                           elementTypeIs(1, S16)),
+                       changeTo(1, V2S16))
       // Break up vectors with weird elements into scalars
       .fewerElementsIf(
         [=](const LegalityQuery &Query) { return notValidElt(Query, 0); },
@@ -733,6 +749,7 @@ AMDGPULegalizerInfo::AMDGPULegalizerInfo(const GCNSubtarget &ST_,
         [=](const LegalityQuery &Query) { return notValidElt(Query, 1); },
         scalarize(1))
       .clampScalar(BigTyIdx, S32, S512)
+      .lowerFor({{S16, V2S16}})
       .widenScalarIf(
         [=](const LegalityQuery &Query) {
           const LLT &Ty = Query.Types[BigTyIdx];
@@ -768,6 +785,8 @@ AMDGPULegalizerInfo::AMDGPULegalizerInfo(const GCNSubtarget &ST_,
       .scalarize(0)
       .scalarize(1);
   }
+
+  getActionDefinitionsBuilder(G_SEXT_INREG).lower();
 
   computeTables();
   verify(*ST.getInstrInfo());

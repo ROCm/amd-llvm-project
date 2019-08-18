@@ -49,8 +49,7 @@ getSectionRefsByNameOrIndex(const object::ObjectFile *Obj,
 
   SecIndex = Obj->isELF() ? 0 : 1;
   for (object::SectionRef SecRef : Obj->sections()) {
-    StringRef SecName;
-    error(SecRef.getName(SecName));
+    StringRef SecName = unwrapOrError(Obj->getFileName(), SecRef.getName());
     auto NameIt = SecNames.find(SecName);
     if (NameIt != SecNames.end())
       NameIt->second = true;
@@ -77,14 +76,16 @@ void ObjDumper::printSectionsAsString(const object::ObjectFile *Obj,
   bool First = true;
   for (object::SectionRef Section :
        getSectionRefsByNameOrIndex(Obj, Sections)) {
-    StringRef SectionName;
-    error(Section.getName(SectionName));
+    StringRef SectionName =
+        unwrapOrError(Obj->getFileName(), Section.getName());
+
     if (!First)
       W.startLine() << '\n';
     First = false;
     W.startLine() << "String dump of section '" << SectionName << "':\n";
 
-    StringRef SectionContent = unwrapOrError(Section.getContents());
+    StringRef SectionContent =
+        unwrapOrError(Obj->getFileName(), Section.getContents());
 
     const uint8_t *SecContent = SectionContent.bytes_begin();
     const uint8_t *CurrentWord = SecContent;
@@ -110,14 +111,16 @@ void ObjDumper::printSectionsAsHex(const object::ObjectFile *Obj,
   bool First = true;
   for (object::SectionRef Section :
        getSectionRefsByNameOrIndex(Obj, Sections)) {
-    StringRef SectionName;
-    error(Section.getName(SectionName));
+    StringRef SectionName =
+        unwrapOrError(Obj->getFileName(), Section.getName());
+
     if (!First)
       W.startLine() << '\n';
     First = false;
     W.startLine() << "Hex dump of section '" << SectionName << "':\n";
 
-    StringRef SectionContent = unwrapOrError(Section.getContents());
+    StringRef SectionContent =
+        unwrapOrError(Obj->getFileName(), Section.getContents());
     const uint8_t *SecContent = SectionContent.bytes_begin();
     const uint8_t *SecEnd = SecContent + SectionContent.size();
 

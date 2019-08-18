@@ -185,10 +185,19 @@ TEST(Support, Path) {
     path::native(*i, temp_store);
   }
 
-  SmallString<32> Relative("foo.cpp");
-  sys::fs::make_absolute("/root", Relative);
-  Relative[5] = '/'; // Fix up windows paths.
-  ASSERT_EQ("/root/foo.cpp", Relative);
+  {
+    SmallString<32> Relative("foo.cpp");
+    sys::fs::make_absolute("/root", Relative);
+    Relative[5] = '/'; // Fix up windows paths.
+    ASSERT_EQ("/root/foo.cpp", Relative);
+  }
+
+  {
+    SmallString<32> Relative("foo.cpp");
+    sys::fs::make_absolute("//root", Relative);
+    Relative[6] = '/'; // Fix up windows paths.
+    ASSERT_EQ("//root/foo.cpp", Relative);
+  }
 }
 
 TEST(Support, FilenameParent) {
@@ -1021,7 +1030,7 @@ TEST_F(FileSystemTest, CarriageReturn) {
   path::append(FilePathname, "test");
 
   {
-    raw_fd_ostream File(FilePathname, EC, sys::fs::F_Text);
+    raw_fd_ostream File(FilePathname, EC, sys::fs::OF_Text);
     ASSERT_NO_ERROR(EC);
     File << '\n';
   }
@@ -1032,7 +1041,7 @@ TEST_F(FileSystemTest, CarriageReturn) {
   }
 
   {
-    raw_fd_ostream File(FilePathname, EC, sys::fs::F_None);
+    raw_fd_ostream File(FilePathname, EC, sys::fs::OF_None);
     ASSERT_NO_ERROR(EC);
     File << '\n';
   }
@@ -1418,7 +1427,7 @@ TEST_F(FileSystemTest, AppendSetsCorrectFileOffset) {
                                      fs::CD_OpenExisting};
 
   // Write some data and re-open it with every possible disposition (this is a
-  // hack that shouldn't work, but is left for compatibility.  F_Append
+  // hack that shouldn't work, but is left for compatibility.  OF_Append
   // overrides
   // the specified disposition.
   for (fs::CreationDisposition Disp : Disps) {
