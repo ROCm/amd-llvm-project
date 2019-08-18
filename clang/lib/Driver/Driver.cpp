@@ -743,7 +743,7 @@ void Driver::CreateOffloadingDeviceToolChains(Compilation &C,
     auto &HccTC = ToolChains[HccTriple.str()];
     if (!HccTC)
       HccTC = llvm::make_unique<toolchains::HCCToolChain>(*this, HccTriple, *HostTC, C.getInputArgs());
-      
+
     const ToolChain *TC = HccTC.get();
 
     C.addOffloadDeviceToolChain(TC, Action::OFK_HCC);
@@ -4175,6 +4175,15 @@ InputInfo Driver::BuildJobsForActionNoCache(
   if (!T)
     return InputInfo();
 
+  // UPGRADE_TBD: Find a better way to check HCC-specific Action objects
+  // Find correct Tool for HCC-specific Actions in HCC ToolChain
+  bool IsHccTC =
+    JA->ContainsActions(Action::BackendJobClass, types::TY_PP_CXX_AMP) ||
+    JA->ContainsActions(Action::BackendJobClass, types::TY_PP_CXX_AMP_CPU) ||
+    JA->ContainsActions(Action::AssembleJobClass, types::TY_HC_KERNEL) ||
+    JA->ContainsActions(Action::AssembleJobClass, types::TY_PP_CXX_AMP) ||
+    JA->ContainsActions(Action::AssembleJobClass, types::TY_PP_CXX_AMP_CPU);
+
   // If we've collapsed action list that contained OffloadAction we
   // need to build jobs for host/device-side inputs it may have held.
   for (const auto *OA : CollapsedOffloadActions)
@@ -4195,14 +4204,6 @@ InputInfo Driver::BuildJobsForActionNoCache(
     // FIXME: Clean this up.
     bool SubJobAtTopLevel =
         AtTopLevel && (isa<DsymutilJobAction>(A) || isa<VerifyJobAction>(A));
-    // UPGRADE_TBD: Find a better way to check HCC-specific Action objects
-    // Find correct Tool for HCC-specific Actions in HCC ToolChain
-    bool IsHccTC =
-      JA->ContainsActions(Action::BackendJobClass, types::TY_PP_CXX_AMP) ||
-      JA->ContainsActions(Action::BackendJobClass, types::TY_PP_CXX_AMP_CPU) ||
-      JA->ContainsActions(Action::AssembleJobClass, types::TY_HC_KERNEL) ||
-      JA->ContainsActions(Action::AssembleJobClass, types::TY_PP_CXX_AMP) ||
-      JA->ContainsActions(Action::AssembleJobClass, types::TY_PP_CXX_AMP_CPU);
     InputInfos.push_back(BuildJobsForAction(
       C, Input, IsHccTC ? C.getSingleOffloadToolChain<Action::OFK_HCC>() : TC,
       BoundArch, SubJobAtTopLevel, MultipleArchs, LinkingOutput, CachedResults,
@@ -4667,7 +4668,7 @@ std::string Driver::GetProgramPath(StringRef Name, const ToolChain &TC) const {
 
 std::string Driver::GetTemporaryPath(StringRef Prefix, StringRef Suffix) const {
   SmallString<128> Path;
-  std::error_code EC = llvm::sys::fs::getPotentiallyUniqueTempFileName(Prefix, Suffix, Path); 
+  std::error_code EC = llvm::sys::fs::getPotentiallyUniqueTempFileName(Prefix, Suffix, Path);
   if (EC) {
     Diag(clang::diag::err_unable_to_make_temp) << EC.message();
     return "";

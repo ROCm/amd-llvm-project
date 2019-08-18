@@ -38,14 +38,14 @@ HCCInstallationDetector::HCCInstallationDetector(const Driver &D, const llvm::op
   if (Args.hasArg(options::OPT_hcc_path_EQ))
     HCCPathCandidates.push_back(
       Args.getLastArgValue(options::OPT_hcc_path_EQ));
-    
+
   HCCPathCandidates.push_back(InstallPath + "/..");
   HCCPathCandidates.push_back(BinPath + "/..");
   HCCPathCandidates.push_back(BinPath + "/../..");
 
   for (const auto &HCCPath: HCCPathCandidates) {
     if (HCCPath.empty() ||
-        !(FS.exists(HCCPath + "/include/hc.hpp") || FS.exists(HCCPath + "/include/hcc/hc.hpp")) || 
+        !(FS.exists(HCCPath + "/include/hc.hpp") || FS.exists(HCCPath + "/include/hcc/hc.hpp")) ||
         !FS.exists(HCCPath + "/lib/libmcwamp.so"))
       continue;
 
@@ -68,7 +68,7 @@ void HCCInstallationDetector::AddHCCLibArgs(const llvm::opt::ArgList &Args, llvm
   if (IsValid) {
     // add verbose flag to linker script if clang++ is invoked with --verbose flag
     if (Args.hasArg(options::OPT_v)) CmdArgs.push_back("--verbose");
-        
+
     // Reverse translate the -lstdc++ option
     // Or add -lstdc++ when running on RHEL 7 or CentOS 7
     if (Args.hasArg(options::OPT_Z_reserved_lib_stdcxx) ||
@@ -81,7 +81,7 @@ void HCCInstallationDetector::AddHCCLibArgs(const llvm::opt::ArgList &Args, llvm
 
     for (auto &lib: SystemLibs)
       CmdArgs.push_back(lib);
-    
+
     for (auto &lib: RuntimeLibs)
       CmdArgs.push_back(lib);
 
@@ -99,7 +99,7 @@ void HCCInstallationDetector::print(raw_ostream &OS) const {
   if (IsValid)
     OS << "Found HCC installation: " << IncPath << "\n";
 }
-    
+
 namespace
 {
     struct Process_deleter {
@@ -252,10 +252,11 @@ namespace
             AMDGPUTargetVector = split_gfx_list(HCC_AMDGPU_TARGET, ' ');
         }
 
-        const auto cnt = std::count(
+        const std::size_t cnt = std::count(
             AMDGPUTargetVector.cbegin(), AMDGPUTargetVector.cend(), auto_tgt);
 
-        if (cnt > 1) C.getDriver().Diag(diag::warn_amdgpu_target_auto_nonsingular);
+        if (cnt > 1)
+          C.getDriver().Diag(diag::warn_amdgpu_target_auto_nonsingular);
         if (cnt == AMDGPUTargetVector.size()) {
             AMDGPUTargetVector = detect_and_add_targets(C, tc);
         }
@@ -295,11 +296,13 @@ void HCC::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
     Output.getInputArg().renderAsInput(Args, CmdArgs);
 
   if (JA.getKind() == Action::AssembleJobClass) {
+    if (Args.hasFlag(options::OPT_mcode_object_v3,
+                     options::OPT_mno_code_object_v3, false))
+      CmdArgs.push_back("--hcc-cov3");
+    if (auto A = Args.getLastArg(options::OPT_O_Group)) {
+      CmdArgs.push_back(A->getSpelling().data());
+    }
     if (!Args.hasFlag(options::OPT_fgpu_rdc, options::OPT_fno_gpu_rdc, true)) {
-      if (Args.hasFlag(options::OPT_mcode_object_v3,
-                       options::OPT_mno_code_object_v3, false)) {
-        CmdArgs.push_back("--hcc-cov3");
-      }
       CmdArgs.push_back("--early_finalize");
       // add the amdgpu target args
       construct_amdgpu_target_cmdargs(C, getToolChain(), Args, CmdArgs);
