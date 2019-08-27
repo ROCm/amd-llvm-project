@@ -458,9 +458,8 @@ void InstrBuilder::populateReads(InstrDesc &ID, const MCInst &MCI,
 
   // FIXME: If an instruction opcode is marked as 'mayLoad', and it has no
   // "unmodeledSideEffects", then this logic optimistically assumes that any
-  // extra register operands in the variadic sequence are not register
+  // extra register operand in the variadic sequence is not a register
   // definition.
-
   bool AssumeDefsOnly = !MCDesc.mayStore() && MCDesc.mayLoad() &&
                         !MCDesc.hasUnmodeledSideEffects();
   for (unsigned I = 0, OpIndex = MCDesc.getNumOperands();
@@ -544,7 +543,7 @@ InstrBuilder::createInstrDescImpl(const MCInst &MCI) {
   LLVM_DEBUG(dbgs() << "\t\tSchedClassID=" << SchedClassID << '\n');
 
   // Create a new empty descriptor.
-  std::unique_ptr<InstrDesc> ID = llvm::make_unique<InstrDesc>();
+  std::unique_ptr<InstrDesc> ID = std::make_unique<InstrDesc>();
   ID->NumMicroOps = SCDesc.NumMicroOps;
   ID->SchedClassID = SchedClassID;
 
@@ -613,7 +612,7 @@ InstrBuilder::createInstruction(const MCInst &MCI) {
   if (!DescOrErr)
     return DescOrErr.takeError();
   const InstrDesc &D = *DescOrErr;
-  std::unique_ptr<Instruction> NewIS = llvm::make_unique<Instruction>(D);
+  std::unique_ptr<Instruction> NewIS = std::make_unique<Instruction>(D);
 
   // Check if this is a dependency breaking instruction.
   APInt Mask;
@@ -630,8 +629,8 @@ InstrBuilder::createInstruction(const MCInst &MCI) {
   }
 
   // Initialize Reads first.
+  MCPhysReg RegID = 0;
   for (const ReadDescriptor &RD : D.Reads) {
-    int RegID = -1;
     if (!RD.isImplicitRead()) {
       // explicit read.
       const MCOperand &Op = MCI.getOperand(RD.OpIndex);
@@ -649,7 +648,6 @@ InstrBuilder::createInstruction(const MCInst &MCI) {
       continue;
 
     // Okay, this is a register operand. Create a ReadState for it.
-    assert(RegID > 0 && "Invalid register ID found!");
     NewIS->getUses().emplace_back(RD, RegID);
     ReadState &RS = NewIS->getUses().back();
 
@@ -690,8 +688,8 @@ InstrBuilder::createInstruction(const MCInst &MCI) {
   // Initialize writes.
   unsigned WriteIndex = 0;
   for (const WriteDescriptor &WD : D.Writes) {
-    unsigned RegID = WD.isImplicitWrite() ? WD.RegisterID
-                                          : MCI.getOperand(WD.OpIndex).getReg();
+    RegID = WD.isImplicitWrite() ? WD.RegisterID
+                                 : MCI.getOperand(WD.OpIndex).getReg();
     // Check if this is a optional definition that references NoReg.
     if (WD.IsOptionalDef && !RegID) {
       ++WriteIndex;
