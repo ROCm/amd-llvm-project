@@ -910,6 +910,27 @@ FormatStyle getGoogleStyle(FormatStyle::LanguageKind Language) {
 
 FormatStyle getChromiumStyle(FormatStyle::LanguageKind Language) {
   FormatStyle ChromiumStyle = getGoogleStyle(Language);
+
+  // Disable include reordering across blocks in Chromium code.
+  // - clang-format tries to detect that foo.h is the "main" header for
+  //   foo.cc and foo_unittest.cc via IncludeIsMainRegex. However, Chromium
+  //   uses many other suffices (_win.cc, _mac.mm, _posix.cc, _browsertest.cc,
+  //   _private.cc, _impl.cc etc) in different permutations
+  //   (_win_browsertest.cc) so disable this until IncludeIsMainRegex has a
+  //   better default for Chromium code.
+  // - The default for .cc and .mm files is different (r357695) for Google style
+  //   for the same reason. The plan is to unify this again once the main
+  //   header detection works for Google's ObjC code, but this hasn't happened
+  //   yet. Since Chromium has some ObjC code, switching Chromium is blocked
+  //   on that.
+  // - Finally, "If include reordering is harmful, put things in different
+  //   blocks to prevent it" has been a recommendation for a long time that
+  //   people are used to. We'll need a dev education push to change this to
+  //   "If include reordering is harmful, put things in a different block and
+  //   _prepend that with a comment_ to prevent it" before changing behavior.
+  ChromiumStyle.IncludeStyle.IncludeBlocks =
+      tooling::IncludeStyle::IBS_Preserve;
+
   if (Language == FormatStyle::LK_Java) {
     ChromiumStyle.AllowShortIfStatementsOnASingleLine =
         FormatStyle::SIS_WithoutElse;
@@ -2303,7 +2324,7 @@ reformat(const FormatStyle &Style, StringRef Code,
   });
 
   auto Env =
-      llvm::make_unique<Environment>(Code, FileName, Ranges, FirstStartColumn,
+      std::make_unique<Environment>(Code, FileName, Ranges, FirstStartColumn,
                                      NextStartColumn, LastStartColumn);
   llvm::Optional<std::string> CurrentCode = None;
   tooling::Replacements Fixes;
@@ -2317,7 +2338,7 @@ reformat(const FormatStyle &Style, StringRef Code,
       Penalty += PassFixes.second;
       if (I + 1 < E) {
         CurrentCode = std::move(*NewCode);
-        Env = llvm::make_unique<Environment>(
+        Env = std::make_unique<Environment>(
             *CurrentCode, FileName,
             tooling::calculateRangesAfterReplacements(Fixes, Ranges),
             FirstStartColumn, NextStartColumn, LastStartColumn);
@@ -2411,8 +2432,9 @@ const char *StyleOptionHelpDescription =
 static FormatStyle::LanguageKind getLanguageByFileName(StringRef FileName) {
   if (FileName.endswith(".java"))
     return FormatStyle::LK_Java;
-  if (FileName.endswith_lower(".js") || FileName.endswith_lower(".ts"))
-    return FormatStyle::LK_JavaScript; // JavaScript or TypeScript.
+  if (FileName.endswith_lower(".js") || FileName.endswith_lower(".mjs") ||
+      FileName.endswith_lower(".ts"))
+    return FormatStyle::LK_JavaScript; // (module) JavaScript or TypeScript.
   if (FileName.endswith(".m") || FileName.endswith(".mm"))
     return FormatStyle::LK_ObjC;
   if (FileName.endswith_lower(".proto") ||

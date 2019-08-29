@@ -17,6 +17,11 @@ let Component = "Common" in {
 def fatal_too_many_errors
   : Error<"too many errors emitted, stopping now">, DefaultFatal;
 
+def warn_stack_exhausted : Warning<
+  "stack nearly exhausted; compilation time may suffer, and "
+  "crashes due to stack overflow are likely">,
+  InGroup<DiagGroup<"stack-exhausted">>, NoSFINAE;
+
 def note_declared_at : Note<"declared here">;
 def note_previous_definition : Note<"previous definition is here">;
 def note_previous_declaration : Note<"previous declaration is here">;
@@ -304,7 +309,7 @@ def err_amp_ill_formed_functor : Error<
   "Ill-formed functor class. Check restriction specifier of kernel.">;
 
 // Static Analyzer Core
-def err_unknown_analyzer_checker : Error<
+def err_unknown_analyzer_checker_or_package : Error<
     "no analyzer checkers or packages are associated with '%0'">;
 def note_suggest_disabling_all_checkers : Note<
     "use -analyzer-disable-all-checks to disable all static analyzer checkers">;
