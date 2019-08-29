@@ -804,7 +804,7 @@ MacroArgs *Preprocessor::ReadMacroCallArgumentList(Token &MacroName,
           return nullptr;
         }
         // Do not lose the EOF/EOD.
-        auto Toks = llvm::make_unique<Token[]>(1);
+        auto Toks = std::make_unique<Token[]>(1);
         Toks[0] = Tok;
         EnterTokenStream(std::move(Toks), 1, true, /*IsReinject*/ false);
         break;
@@ -1210,19 +1210,21 @@ static bool EvaluateHasIncludeCommon(Token &Tok,
 
   // Search include directories.
   const DirectoryLookup *CurDir;
-  const FileEntry *File =
+  Optional<FileEntryRef> File =
       PP.LookupFile(FilenameLoc, Filename, isAngled, LookupFrom, LookupFromFile,
                     CurDir, nullptr, nullptr, nullptr, nullptr, nullptr);
 
   if (PPCallbacks *Callbacks = PP.getPPCallbacks()) {
     SrcMgr::CharacteristicKind FileType = SrcMgr::C_User;
     if (File)
-      FileType = PP.getHeaderSearchInfo().getFileDirFlavor(File);
-    Callbacks->HasInclude(FilenameLoc, Filename, isAngled, File, FileType);
+      FileType =
+          PP.getHeaderSearchInfo().getFileDirFlavor(&File->getFileEntry());
+    Callbacks->HasInclude(FilenameLoc, Filename, isAngled,
+                          File ? &File->getFileEntry() : nullptr, FileType);
   }
 
   // Get the result value.  A result of true means the file exists.
-  return File != nullptr;
+  return File.hasValue();
 }
 
 /// EvaluateHasInclude - Process a '__has_include("path")' expression.

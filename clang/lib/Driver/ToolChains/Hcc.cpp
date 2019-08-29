@@ -305,7 +305,7 @@ void HCC::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
     }
     const char *Exec = Args.MakeArgString(
       getToolChain().GetProgramPath("hc-kernel-assemble"));
-    C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
+    C.addCommand(std::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
   }
 }
 
