@@ -245,7 +245,7 @@ void ARMTargetLowering::addMVEVectorTypes(bool HasMVEFP) {
   const MVT IntTypes[] = { MVT::v16i8, MVT::v8i16, MVT::v4i32 };
 
   for (auto VT : IntTypes) {
-    addRegisterClass(VT, &ARM::QPRRegClass);
+    addRegisterClass(VT, &ARM::MQPRRegClass);
     setOperationAction(ISD::VECTOR_SHUFFLE, VT, Custom);
     setOperationAction(ISD::INSERT_VECTOR_ELT, VT, Custom);
     setOperationAction(ISD::EXTRACT_VECTOR_ELT, VT, Custom);
@@ -259,8 +259,6 @@ void ARMTargetLowering::addMVEVectorTypes(bool HasMVEFP) {
     setOperationAction(ISD::UMAX, VT, Legal);
     setOperationAction(ISD::ABS, VT, Legal);
     setOperationAction(ISD::SETCC, VT, Custom);
-    setOperationAction(ISD::MLOAD, VT, Custom);
-    setOperationAction(ISD::MSTORE, VT, Legal);
 
     // No native support for these.
     setOperationAction(ISD::UDIV, VT, Expand);
@@ -289,7 +287,7 @@ void ARMTargetLowering::addMVEVectorTypes(bool HasMVEFP) {
 
   const MVT FloatTypes[] = { MVT::v8f16, MVT::v4f32 };
   for (auto VT : FloatTypes) {
-    addRegisterClass(VT, &ARM::QPRRegClass);
+    addRegisterClass(VT, &ARM::MQPRRegClass);
     if (!HasMVEFP)
       setAllExpand(VT);
 
@@ -302,8 +300,6 @@ void ARMTargetLowering::addMVEVectorTypes(bool HasMVEFP) {
     setOperationAction(ISD::BUILD_VECTOR, VT.getVectorElementType(), Custom);
     setOperationAction(ISD::SCALAR_TO_VECTOR, VT, Legal);
     setOperationAction(ISD::SETCC, VT, Custom);
-    setOperationAction(ISD::MLOAD, VT, Custom);
-    setOperationAction(ISD::MSTORE, VT, Legal);
 
     // Pre and Post inc are supported on loads and stores
     for (unsigned im = (unsigned)ISD::PRE_INC;
@@ -338,7 +334,7 @@ void ARMTargetLowering::addMVEVectorTypes(bool HasMVEFP) {
   // vector types is inhibited at integer-only level.
   const MVT LongTypes[] = { MVT::v2i64, MVT::v2f64 };
   for (auto VT : LongTypes) {
-    addRegisterClass(VT, &ARM::QPRRegClass);
+    addRegisterClass(VT, &ARM::MQPRRegClass);
     setAllExpand(VT);
     setOperationAction(ISD::INSERT_VECTOR_ELT, VT, Custom);
     setOperationAction(ISD::EXTRACT_VECTOR_ELT, VT, Custom);
@@ -1638,6 +1634,9 @@ const char *ARMTargetLowering::getTargetNodeName(unsigned Opcode) const {
   case ARMISD::WLS:           return "ARMISD::WLS";
   case ARMISD::LE:            return "ARMISD::LE";
   case ARMISD::LOOP_DEC:      return "ARMISD::LOOP_DEC";
+  case ARMISD::CSINV:         return "ARMISD::CSINV";
+  case ARMISD::CSNEG:         return "ARMISD::CSNEG";
+  case ARMISD::CSINC:         return "ARMISD::CSINC";
   }
   return nullptr;
 }
@@ -4819,6 +4818,58 @@ SDValue ARMTargetLowering::LowerSELECT_CC(SDValue Op, SelectionDAG &DAG) const {
   ISD::CondCode CC = cast<CondCodeSDNode>(Op.getOperand(4))->get();
   SDValue TrueVal = Op.getOperand(2);
   SDValue FalseVal = Op.getOperand(3);
+  ConstantSDNode *CFVal = dyn_cast<ConstantSDNode>(FalseVal);
+  ConstantSDNode *CTVal = dyn_cast<ConstantSDNode>(TrueVal);
+
+  if (Subtarget->hasV8_1MMainlineOps() && CFVal && CTVal &&
+      LHS.getValueType() == MVT::i32 && RHS.getValueType() == MVT::i32) {
+    unsigned TVal = CTVal->getZExtValue();
+    unsigned FVal = CFVal->getZExtValue();
+    unsigned Opcode = 0;
+
+    if (TVal == ~FVal) {
+      Opcode = ARMISD::CSINV;
+    } else if (TVal == ~FVal + 1) {
+      Opcode = ARMISD::CSNEG;
+    } else if (TVal + 1 == FVal) {
+      Opcode = ARMISD::CSINC;
+    } else if (TVal == FVal + 1) {
+      Opcode = ARMISD::CSINC;
+      std::swap(TrueVal, FalseVal);
+      std::swap(TVal, FVal);
+      CC = ISD::getSetCCInverse(CC, true);
+    }
+
+    if (Opcode) {
+      // If one of the constants is cheaper than another, materialise the
+      // cheaper one and let the csel generate the other.
+      if (Opcode != ARMISD::CSINC &&
+          HasLowerConstantMaterializationCost(FVal, TVal, Subtarget)) {
+        std::swap(TrueVal, FalseVal);
+        std::swap(TVal, FVal);
+        CC = ISD::getSetCCInverse(CC, true);
+      }
+
+      // Attempt to use ZR checking TVal is 0, possibly inverting the condition
+      // to get there. CSINC not is invertable like the other two (~(~a) == a,
+      // -(-a) == a, but (a+1)+1 != a).
+      if (FVal == 0 && Opcode != ARMISD::CSINC) {
+        std::swap(TrueVal, FalseVal);
+        std::swap(TVal, FVal);
+        CC = ISD::getSetCCInverse(CC, true);
+      }
+      if (TVal == 0)
+        TrueVal = DAG.getRegister(ARM::ZR, MVT::i32);
+
+      // Drops F's value because we can get it by inverting/negating TVal.
+      FalseVal = TrueVal;
+
+      SDValue ARMcc;
+      SDValue Cmp = getARMCmp(LHS, RHS, CC, ARMcc, DAG, dl);
+      EVT VT = TrueVal.getValueType();
+      return DAG.getNode(Opcode, dl, VT, TrueVal, FalseVal, ARMcc, Cmp);
+    }
+  }
 
   if (isUnsupportedFloatingType(LHS.getValueType())) {
     DAG.getTargetLoweringInfo().softenSetCCOperands(
@@ -8730,31 +8781,6 @@ void ARMTargetLowering::ExpandDIV_Windows(
   Results.push_back(Upper);
 }
 
-static SDValue LowerMLOAD(SDValue Op, SelectionDAG &DAG) {
-  MaskedLoadSDNode *N = cast<MaskedLoadSDNode>(Op.getNode());
-  MVT VT = Op.getSimpleValueType();
-  SDValue Mask = N->getMask();
-  SDValue PassThru = N->getPassThru();
-  SDLoc dl(Op);
-
-  if (ISD::isBuildVectorAllZeros(PassThru.getNode()) ||
-      (PassThru->getOpcode() == ARMISD::VMOVIMM &&
-       isNullConstant(PassThru->getOperand(0))))
-    return Op;
-
-  // MVE Masked loads use zero as the passthru value. Here we convert undef to
-  // zero too, and other values are lowered to a select.
-  SDValue ZeroVec = DAG.getNode(ARMISD::VMOVIMM, dl, VT,
-                                DAG.getTargetConstant(0, dl, MVT::i32));
-  SDValue NewLoad = DAG.getMaskedLoad(
-      VT, dl, N->getChain(), N->getBasePtr(), Mask, ZeroVec, N->getMemoryVT(),
-      N->getMemOperand(), N->getExtensionType(), N->isExpandingLoad());
-  SDValue Combo = NewLoad;
-  if (!PassThru.isUndef())
-    Combo = DAG.getNode(ISD::VSELECT, dl, VT, Mask, NewLoad, PassThru);
-  return DAG.getMergeValues({Combo, NewLoad.getValue(1)}, dl);
-}
-
 static SDValue LowerAtomicLoadStore(SDValue Op, SelectionDAG &DAG) {
   if (isStrongerThanMonotonic(cast<AtomicSDNode>(Op)->getOrdering()))
     // Acquire/Release load/store is not legal for targets without a dmb or
@@ -8954,8 +8980,6 @@ SDValue ARMTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
   case ISD::UADDO:
   case ISD::USUBO:
     return LowerUnsignedALUO(Op, DAG);
-  case ISD::MLOAD:
-    return LowerMLOAD(Op, DAG);
   case ISD::ATOMIC_LOAD:
   case ISD::ATOMIC_STORE:  return LowerAtomicLoadStore(Op, DAG);
   case ISD::FSINCOS:       return LowerFSINCOS(Op, DAG);
