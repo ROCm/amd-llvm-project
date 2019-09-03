@@ -245,7 +245,7 @@ void ARMTargetLowering::addMVEVectorTypes(bool HasMVEFP) {
   const MVT IntTypes[] = { MVT::v16i8, MVT::v8i16, MVT::v4i32 };
 
   for (auto VT : IntTypes) {
-    addRegisterClass(VT, &ARM::QPRRegClass);
+    addRegisterClass(VT, &ARM::MQPRRegClass);
     setOperationAction(ISD::VECTOR_SHUFFLE, VT, Custom);
     setOperationAction(ISD::INSERT_VECTOR_ELT, VT, Custom);
     setOperationAction(ISD::EXTRACT_VECTOR_ELT, VT, Custom);
@@ -287,7 +287,7 @@ void ARMTargetLowering::addMVEVectorTypes(bool HasMVEFP) {
 
   const MVT FloatTypes[] = { MVT::v8f16, MVT::v4f32 };
   for (auto VT : FloatTypes) {
-    addRegisterClass(VT, &ARM::QPRRegClass);
+    addRegisterClass(VT, &ARM::MQPRRegClass);
     if (!HasMVEFP)
       setAllExpand(VT);
 
@@ -334,7 +334,7 @@ void ARMTargetLowering::addMVEVectorTypes(bool HasMVEFP) {
   // vector types is inhibited at integer-only level.
   const MVT LongTypes[] = { MVT::v2i64, MVT::v2f64 };
   for (auto VT : LongTypes) {
-    addRegisterClass(VT, &ARM::QPRRegClass);
+    addRegisterClass(VT, &ARM::MQPRRegClass);
     setAllExpand(VT);
     setOperationAction(ISD::INSERT_VECTOR_ELT, VT, Custom);
     setOperationAction(ISD::EXTRACT_VECTOR_ELT, VT, Custom);
@@ -4818,7 +4818,7 @@ SDValue ARMTargetLowering::LowerSELECT_CC(SDValue Op, SelectionDAG &DAG) const {
 
   if (isUnsupportedFloatingType(LHS.getValueType())) {
     DAG.getTargetLoweringInfo().softenSetCCOperands(
-        DAG, LHS.getValueType(), LHS, RHS, CC, dl);
+        DAG, LHS.getValueType(), LHS, RHS, CC, dl, LHS, RHS);
 
     // If softenSetCCOperands only returned one value, we should compare it to
     // zero.
@@ -5062,7 +5062,7 @@ SDValue ARMTargetLowering::LowerBR_CC(SDValue Op, SelectionDAG &DAG) const {
 
   if (isUnsupportedFloatingType(LHS.getValueType())) {
     DAG.getTargetLoweringInfo().softenSetCCOperands(
-        DAG, LHS.getValueType(), LHS, RHS, CC, dl);
+        DAG, LHS.getValueType(), LHS, RHS, CC, dl, LHS, RHS);
 
     // If softenSetCCOperands only returned one value, we should compare it to
     // zero.
@@ -7323,9 +7323,6 @@ SDValue ARMTargetLowering::ReconstructShuffle(SDValue Op,
       LaneMask[j] = ExtractBase + j;
   }
 
-  // Final check before we try to produce nonsense...
-  if (!isShuffleMaskLegal(Mask, ShuffleVT))
-    return SDValue();
 
   // We can't handle more than two sources. This should have already
   // been checked before this point.
@@ -7335,8 +7332,10 @@ SDValue ARMTargetLowering::ReconstructShuffle(SDValue Op,
   for (unsigned i = 0; i < Sources.size(); ++i)
     ShuffleOps[i] = Sources[i].ShuffleVec;
 
-  SDValue Shuffle = DAG.getVectorShuffle(ShuffleVT, dl, ShuffleOps[0],
-                                         ShuffleOps[1], Mask);
+  SDValue Shuffle = buildLegalVectorShuffle(ShuffleVT, dl, ShuffleOps[0],
+                                            ShuffleOps[1], Mask, DAG);
+  if (!Shuffle)
+    return SDValue();
   return DAG.getNode(ISD::BITCAST, dl, VT, Shuffle);
 }
 

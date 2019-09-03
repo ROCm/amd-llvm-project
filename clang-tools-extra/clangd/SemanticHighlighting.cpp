@@ -24,16 +24,20 @@ namespace {
 class HighlightingTokenCollector
     : public RecursiveASTVisitor<HighlightingTokenCollector> {
   std::vector<HighlightingToken> Tokens;
-  ASTContext &Ctx;
-  const SourceManager &SM;
+  ParsedAST &AST;
 
 public:
-  HighlightingTokenCollector(ParsedAST &AST)
-      : Ctx(AST.getASTContext()), SM(AST.getSourceManager()) {}
+  HighlightingTokenCollector(ParsedAST &AST) : AST(AST) {}
 
   std::vector<HighlightingToken> collectTokens() {
     Tokens.clear();
-    TraverseAST(Ctx);
+    TraverseAST(AST.getASTContext());
+    // Add highlightings for macro expansions as they are not traversed by the
+    // visitor.
+    // FIXME: Should add highlighting to the macro definitions as well. But this
+    // information is not collected in ParsedAST right now.
+    for (const SourceLocation &L : AST.getMainFileExpansions())
+      addToken(L, HighlightingKind::Macro);
     // Initializer lists can give duplicates of tokens, therefore all tokens
     // must be deduplicated.
     llvm::sort(Tokens);
@@ -205,8 +209,9 @@ private:
       addToken(Loc, HighlightingKind::Class);
       return;
     }
-    if (isa<CXXMethodDecl>(D)) {
-      addToken(Loc, HighlightingKind::Method);
+    if (auto *MD = dyn_cast<CXXMethodDecl>(D)) {
+      addToken(Loc, MD->isStatic() ? HighlightingKind::StaticMethod
+                                   : HighlightingKind::Method);
       return;
     }
     if (isa<FieldDecl>(D)) {
@@ -225,7 +230,14 @@ private:
       addToken(Loc, HighlightingKind::Parameter);
       return;
     }
-    if (isa<VarDecl>(D)) {
+    if (const VarDecl *VD = dyn_cast<VarDecl>(D)) {
+      addToken(Loc, VD->isStaticDataMember()
+                        ? HighlightingKind::StaticField
+                        : VD->isLocalVarDecl() ? HighlightingKind::LocalVariable
+                                               : HighlightingKind::Variable);
+      return;
+    }
+    if (isa<BindingDecl>(D)) {
       addToken(Loc, HighlightingKind::Variable);
       return;
     }
@@ -256,7 +268,8 @@ private:
   }
 
   void addToken(SourceLocation Loc, HighlightingKind Kind) {
-    if(Loc.isMacroID()) {
+    const auto &SM = AST.getSourceManager();
+    if (Loc.isMacroID()) {
       // Only intereseted in highlighting arguments in macros (DEF_X(arg)).
       if (!SM.isMacroArgExpansion(Loc))
         return;
@@ -266,12 +279,12 @@ private:
     // Non top level decls that are included from a header are not filtered by
     // topLevelDecls. (example: method declarations being included from another
     // file for a class from another file)
-    // There are also cases with macros where the spelling loc will not be in the
-    // main file and the highlighting would be incorrect.
+    // There are also cases with macros where the spelling loc will not be in
+    // the main file and the highlighting would be incorrect.
     if (!isInsideMainFile(Loc, SM))
       return;
 
-    auto R = getTokenRange(SM, Ctx.getLangOpts(), Loc);
+    auto R = getTokenRange(SM, AST.getASTContext().getLangOpts(), Loc);
     if (!R) {
       // R should always have a value, if it doesn't something is very wrong.
       elog("Tried to add semantic token with an invalid range");
@@ -367,9 +380,9 @@ diffHighlightings(ArrayRef<HighlightingToken> New,
   auto OldEnd = Old.end();
   auto NextLineNumber = [&]() {
     int NextNew = NewLine.end() != NewEnd ? NewLine.end()->R.start.line
-                                             : std::numeric_limits<int>::max();
+                                          : std::numeric_limits<int>::max();
     int NextOld = OldLine.end() != OldEnd ? OldLine.end()->R.start.line
-                                             : std::numeric_limits<int>::max();
+                                          : std::numeric_limits<int>::max();
     return std::min(NextNew, NextOld);
   };
 
@@ -434,12 +447,18 @@ llvm::StringRef toTextMateScope(HighlightingKind Kind) {
     return "entity.name.function.cpp";
   case HighlightingKind::Method:
     return "entity.name.function.method.cpp";
+  case HighlightingKind::StaticMethod:
+    return "entity.name.function.method.static.cpp";
   case HighlightingKind::Variable:
     return "variable.other.cpp";
+  case HighlightingKind::LocalVariable:
+    return "variable.other.local.cpp";
   case HighlightingKind::Parameter:
     return "variable.parameter.cpp";
   case HighlightingKind::Field:
     return "variable.other.field.cpp";
+  case HighlightingKind::StaticField:
+    return "variable.other.field.static.cpp";
   case HighlightingKind::Class:
     return "entity.name.type.class.cpp";
   case HighlightingKind::Enum:
@@ -452,6 +471,8 @@ llvm::StringRef toTextMateScope(HighlightingKind Kind) {
     return "entity.name.type.template.cpp";
   case HighlightingKind::Primitive:
     return "storage.type.primitive.cpp";
+  case HighlightingKind::Macro:
+    return "entity.name.function.preprocessor.cpp";
   case HighlightingKind::NumKinds:
     llvm_unreachable("must not pass NumKinds to the function");
   }

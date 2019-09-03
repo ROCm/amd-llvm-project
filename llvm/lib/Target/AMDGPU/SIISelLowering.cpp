@@ -1351,9 +1351,9 @@ bool SITargetLowering::isMemOpUniform(const SDNode *N) const {
 
 TargetLoweringBase::LegalizeTypeAction
 SITargetLowering::getPreferredVectorAction(MVT VT) const {
-  if (VT.getVectorNumElements() != 1 && VT.getScalarType().bitsLE(MVT::i16))
-    return TypeSplitVector;
-
+  int NumElts = VT.getVectorNumElements();
+  if (NumElts != 1 && VT.getScalarType().bitsLE(MVT::i16))
+    return VT.isPow2VectorType() ? TypeSplitVector : TypeWidenVector;
   return TargetLoweringBase::getPreferredVectorAction(VT);
 }
 
@@ -5030,11 +5030,8 @@ buildPCRelGlobalAddress(SelectionDAG &DAG, const GlobalValue *GV,
   // of the s_add_u32 instruction, we end up with an offset that is 4 bytes too
   // small. This requires us to add 4 to the global variable offset in order to
   // compute the correct address.
-  unsigned LoFlags = GAFlags;
-  if (LoFlags == SIInstrInfo::MO_NONE)
-    LoFlags = SIInstrInfo::MO_REL32;
   SDValue PtrLo =
-      DAG.getTargetGlobalAddress(GV, DL, MVT::i32, Offset + 4, LoFlags);
+      DAG.getTargetGlobalAddress(GV, DL, MVT::i32, Offset + 4, GAFlags);
   SDValue PtrHi;
   if (GAFlags == SIInstrInfo::MO_NONE) {
     PtrHi = DAG.getTargetConstant(0, DL, MVT::i32);
