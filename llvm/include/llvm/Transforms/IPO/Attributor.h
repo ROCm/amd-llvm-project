@@ -270,6 +270,38 @@ struct IRPosition {
   }
   ///}
 
+  /// Return the associated argument, if any.
+  ///
+  ///{
+  Argument *getAssociatedArgument() {
+    if (auto *Arg = dyn_cast<Argument>(&getAnchorValue()))
+      return Arg;
+    int ArgNo = getArgNo();
+    if (ArgNo < 0)
+      return nullptr;
+    Function *AssociatedFn = getAssociatedFunction();
+    if (!AssociatedFn || AssociatedFn->arg_size() <= unsigned(ArgNo))
+      return nullptr;
+    return AssociatedFn->arg_begin() + ArgNo;
+  }
+  const Argument *getAssociatedArgument() const {
+    return const_cast<IRPosition *>(this)->getAssociatedArgument();
+  }
+  ///}
+
+  /// Return true if the position refers to a function interface, that is the
+  /// function scope, the function return, or an argumnt.
+  bool isFnInterfaceKind() const {
+    switch (getPositionKind()) {
+    case IRPosition::IRP_FUNCTION:
+    case IRPosition::IRP_RETURNED:
+    case IRPosition::IRP_ARGUMENT:
+      return true;
+    default:
+      return false;
+    }
+  }
+
   /// Return the Function surrounding the anchor value.
   ///
   ///{
@@ -1016,6 +1048,27 @@ struct IRAttribute : public IRPosition, public Base {
   IRAttribute(const IRPosition &IRP) : IRPosition(IRP) {}
   ~IRAttribute() {}
 
+  /// See AbstractAttribute::initialize(...).
+  virtual void initialize(Attributor &A) override {
+    if (hasAttr(getAttrKind())) {
+      this->getState().indicateOptimisticFixpoint();
+      return;
+    }
+
+    const IRPosition &IRP = this->getIRPosition();
+    bool IsFnInterface = IRP.isFnInterfaceKind();
+    const Function *FnScope = IRP.getAnchorScope();
+    // TODO: Not all attributes require an exact definition. Find a way to
+    //       enable deduction for some but not all attributes in case the
+    //       definition might be changed at runtime, see also
+    //       http://lists.llvm.org/pipermail/llvm-dev/2018-February/121275.html.
+    // TODO: We could always determine abstract attributes and if sufficient
+    //       information was found we could duplicate the functions that do not
+    //       have an exact definition.
+    if (IsFnInterface && (!FnScope || !FnScope->hasExactDefinition()))
+      this->getState().indicatePessimisticFixpoint();
+  }
+
   /// See AbstractAttribute::manifest(...).
   ChangeStatus manifest(Attributor &A) override {
     SmallVector<Attribute, 4> DeducedAttrs;
@@ -1399,8 +1452,8 @@ struct AAIsDead : public StateWrapper<BooleanState, AbstractAttribute>,
   /// Return an IR position, see struct IRPosition.
   ///
   ///{
-  IRPosition &getIRPosition() { return *this; }
-  const IRPosition &getIRPosition() const { return *this; }
+  IRPosition &getIRPosition() override { return *this; }
+  const IRPosition &getIRPosition() const override { return *this; }
   ///}
 
   /// Create an abstract attribute view for the position \p IRP.
@@ -1544,6 +1597,56 @@ struct AAAlign
 
   /// Create an abstract attribute view for the position \p IRP.
   static AAAlign &createForPosition(const IRPosition &IRP, Attributor &A);
+
+  /// Unique ID (due to the unique address)
+  static const char ID;
+};
+
+/// An abstract interface for all nocapture attributes.
+struct AANoCapture
+    : public IRAttribute<Attribute::NoCapture,
+                         StateWrapper<IntegerState, AbstractAttribute>> {
+  AANoCapture(const IRPosition &IRP) : IRAttribute(IRP) {}
+
+  /// State encoding bits. A set bit in the state means the property holds.
+  /// NO_CAPTURE is the best possible state, 0 the worst possible state.
+  enum {
+    NOT_CAPTURED_IN_MEM = 1 << 0,
+    NOT_CAPTURED_IN_INT = 1 << 1,
+    NOT_CAPTURED_IN_RET = 1 << 2,
+
+    /// If we do not capture the value in memory or through integers we can only
+    /// communicate it back as a derived pointer.
+    NO_CAPTURE_MAYBE_RETURNED = NOT_CAPTURED_IN_MEM | NOT_CAPTURED_IN_INT,
+
+    /// If we do not capture the value in memory, through integers, or as a
+    /// derived pointer we know it is not captured.
+    NO_CAPTURE =
+        NOT_CAPTURED_IN_MEM | NOT_CAPTURED_IN_INT | NOT_CAPTURED_IN_RET,
+  };
+
+  /// Return true if we know that the underlying value is not captured in its
+  /// respective scope.
+  bool isKnownNoCapture() const { return isKnown(NO_CAPTURE); }
+
+  /// Return true if we assume that the underlying value is not captured in its
+  /// respective scope.
+  bool isAssumedNoCapture() const { return isAssumed(NO_CAPTURE); }
+
+  /// Return true if we know that the underlying value is not captured in its
+  /// respective scope but we allow it to escape through a "return".
+  bool isKnownNoCaptureMaybeReturned() const {
+    return isKnown(NO_CAPTURE_MAYBE_RETURNED);
+  }
+
+  /// Return true if we assume that the underlying value is not captured in its
+  /// respective scope but we allow it to escape through a "return".
+  bool isAssumedNoCaptureMaybeReturned() const {
+    return isAssumed(NO_CAPTURE_MAYBE_RETURNED);
+  }
+
+  /// Create an abstract attribute view for the position \p IRP.
+  static AANoCapture &createForPosition(const IRPosition &IRP, Attributor &A);
 
   /// Unique ID (due to the unique address)
   static const char ID;
