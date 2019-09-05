@@ -2369,6 +2369,7 @@ Decl *TemplateDeclInstantiator::VisitTemplateTypeParmDecl(
       D->getDepth() - TemplateArgs.getNumSubstitutedLevels(), D->getIndex(),
       D->getIdentifier(), D->wasDeclaredWithTypename(), D->isParameterPack());
   Inst->setAccess(AS_public);
+  Inst->setImplicit(D->isImplicit());
 
   if (D->hasDefaultArgument() && !D->defaultArgumentWasInherited()) {
     TypeSourceInfo *InstantiatedDefaultArg =
@@ -2515,6 +2516,7 @@ Decl *TemplateDeclInstantiator::VisitNonTypeTemplateParmDecl(
         D->getPosition(), D->getIdentifier(), T, D->isParameterPack(), DI);
 
   Param->setAccess(AS_public);
+  Param->setImplicit(D->isImplicit());
   if (Invalid)
     Param->setInvalidDecl();
 
@@ -2658,6 +2660,7 @@ TemplateDeclInstantiator::VisitTemplateTemplateParmDecl(
                               D->getDefaultArgument().getTemplateNameLoc()));
   }
   Param->setAccess(AS_public);
+  Param->setImplicit(D->isImplicit());
 
   // Introduce this template parameter's instantiation into the instantiation
   // scope.
