@@ -69,7 +69,9 @@ STATISTIC(NumAttributesManifested,
 #define BUILD_STAT_MSG_IR_ATTR(TYPE, NAME)                                     \
   ("Number of " #TYPE " marked '" #NAME "'")
 #define BUILD_STAT_NAME(NAME, TYPE) NumIR##TYPE##_##NAME
-#define STATS_DECL(NAME, TYPE, MSG) STATISTIC(BUILD_STAT_NAME(NAME, TYPE), MSG);
+#define STATS_DECL_(NAME, MSG) STATISTIC(NAME, MSG);
+#define STATS_DECL(NAME, TYPE, MSG)                                            \
+  STATS_DECL_(BUILD_STAT_NAME(NAME, TYPE), MSG);
 #define STATS_TRACK(NAME, TYPE) ++(BUILD_STAT_NAME(NAME, TYPE));
 #define STATS_DECLTRACK(NAME, TYPE, MSG)                                       \
   {                                                                            \
@@ -1714,7 +1716,7 @@ struct AANoAliasCallSiteArgument final : AANoAliasImpl {
   }
 
   /// See AbstractAttribute::trackStatistics()
-  void trackStatistics() const override { STATS_DECLTRACK_ARG_ATTR(noalias) }
+  void trackStatistics() const override { STATS_DECLTRACK_CSARG_ATTR(noalias) }
 };
 
 /// NoAlias attribute for function return value.
@@ -1780,7 +1782,7 @@ struct AANoAliasCallSiteReturned final : AANoAliasImpl {
   }
 
   /// See AbstractAttribute::trackStatistics()
-  void trackStatistics() const override { STATS_DECLTRACK_CS_ATTR(noalias); }
+  void trackStatistics() const override { STATS_DECLTRACK_CSRET_ATTR(noalias); }
 };
 
 /// -------------------AAIsDead Function Attribute-----------------------
@@ -1790,21 +1792,13 @@ struct AAIsDeadImpl : public AAIsDead {
 
   void initialize(Attributor &A) override {
     const Function *F = getAssociatedFunction();
-
-    if (F->hasInternalLinkage())
-      return;
-
-    if (!F || !F->hasExactDefinition()) {
-      indicatePessimisticFixpoint();
-      return;
-    }
-
-    exploreFromEntry(A, F);
+    if (F && !F->isDeclaration())
+      exploreFromEntry(A, F);
   }
 
   void exploreFromEntry(Attributor &A, const Function *F) {
     ToBeExploredPaths.insert(&(F->getEntryBlock().front()));
-    AssumedLiveBlocks.insert(&(F->getEntryBlock()));
+    assumeLive(A, F->getEntryBlock());
 
     for (size_t i = 0; i < ToBeExploredPaths.size(); ++i)
       if (const Instruction *NextNoReturnI =
@@ -1889,8 +1883,20 @@ struct AAIsDeadImpl : public AAIsDead {
           }
         }
 
-        if (SplitPos == &NormalDestBB->front())
-          AssumedLiveBlocks.insert(NormalDestBB);
+        if (SplitPos == &NormalDestBB->front()) {
+          // If this is an invoke of a noreturn function the edge to the normal
+          // destination block is dead but not necessarily the block itself.
+          // TODO: We need to move to an edge based system during deduction and
+          //       also manifest.
+          assert(!NormalDestBB->isLandingPad() &&
+                 "Expected the normal destination not to be a landingpad!");
+          BasicBlock *SplitBB =
+              SplitBlockPredecessors(NormalDestBB, {BB}, ".dead");
+          // The split block is live even if it contains only an unreachable
+          // instruction at the end.
+          assumeLive(A, *SplitBB);
+          SplitPos = SplitBB->getTerminator();
+        }
       }
 
       BB = SplitPos->getParent();
@@ -1954,6 +1960,23 @@ struct AAIsDeadImpl : public AAIsDead {
     return F.hasPersonalityFn() && !canSimplifyInvokeNoUnwind(&F);
   }
 
+  /// Assume \p BB is (partially) live now and indicate to the Attributor \p A
+  /// that internal function called from \p BB should now be looked at.
+  void assumeLive(Attributor &A, const BasicBlock &BB) {
+    if (!AssumedLiveBlocks.insert(&BB).second)
+      return;
+
+    // We assume that all of BB is (probably) live now and if there are calls to
+    // internal functions we will assume that those are now live as well. This
+    // is a performance optimization for blocks with calls to a lot of internal
+    // functions. It can however cause dead functions to be treated as live.
+    for (const Instruction &I : BB)
+      if (ImmutableCallSite ICS = ImmutableCallSite(&I))
+        if (const Function *F = ICS.getCalledFunction())
+          if (F->hasInternalLinkage())
+            A.markLiveInternalFunction(*F);
+  }
+
   /// Collection of to be explored paths.
   SmallSetVector<const Instruction *, 8> ToBeExploredPaths;
 
@@ -1969,18 +1992,6 @@ struct AAIsDeadFunction final : public AAIsDeadImpl {
 
   /// See AbstractAttribute::trackStatistics()
   void trackStatistics() const override {
-    STATS_DECL(
-        DeadInternalFunction, Function,
-        "Number of internal functions classified as dead (no live callsite)");
-    BUILD_STAT_NAME(DeadInternalFunction, Function) +=
-        (getAssociatedFunction()->hasInternalLinkage() &&
-         AssumedLiveBlocks.empty())
-            ? 1
-            : 0;
-    STATS_DECL(DeadBlocks, Function,
-               "Number of basic blocks classified as dead");
-    BUILD_STAT_NAME(DeadBlocks, Function) +=
-        getAssociatedFunction()->size() - AssumedLiveBlocks.size();
     STATS_DECL(PartiallyDeadBlocks, Function,
                "Number of basic blocks classified as partially dead");
     BUILD_STAT_NAME(PartiallyDeadBlocks, Function) += NoReturnCalls.size();
@@ -2024,7 +2035,7 @@ const Instruction *AAIsDeadImpl::findNextNoReturn(Attributor &A,
         // Use nounwind to justify the unwind block is dead as well.
         const auto &AANoUnw = A.getAAFor<AANoUnwind>(*this, IPos);
         if (!Invoke2CallAllowed || !AANoUnw.isAssumedNoUnwind()) {
-          AssumedLiveBlocks.insert(Invoke->getUnwindDest());
+          assumeLive(A, *Invoke->getUnwindDest());
           ToBeExploredPaths.insert(&Invoke->getUnwindDest()->front());
         }
       }
@@ -2039,7 +2050,7 @@ const Instruction *AAIsDeadImpl::findNextNoReturn(Attributor &A,
 
   // get new paths (reachable blocks).
   for (const BasicBlock *SuccBB : successors(BB)) {
-    AssumedLiveBlocks.insert(SuccBB);
+    assumeLive(A, *SuccBB);
     ToBeExploredPaths.insert(&SuccBB->front());
   }
 
@@ -2048,21 +2059,7 @@ const Instruction *AAIsDeadImpl::findNextNoReturn(Attributor &A,
 }
 
 ChangeStatus AAIsDeadImpl::updateImpl(Attributor &A) {
-  const Function *F = getAssociatedFunction();
   ChangeStatus Status = ChangeStatus::UNCHANGED;
-
-  if (F->hasInternalLinkage() && AssumedLiveBlocks.empty()) {
-    auto CallSiteCheck = [&](CallSite) { return false; };
-
-    // All callsites of F are dead.
-    if (A.checkForAllCallSites(CallSiteCheck, *this, true))
-      return ChangeStatus::UNCHANGED;
-
-    // There exists at least one live call site, so we explore the function.
-    Status = ChangeStatus::CHANGED;
-
-    exploreFromEntry(A, F);
-  }
 
   // Temporary collection to iterate over existing noreturn instructions. This
   // will alow easier modification of NoReturnCalls collection
@@ -2355,6 +2352,11 @@ struct AAAlignImpl : AAAlign {
     getAttrs({Attribute::Alignment}, Attrs);
     for (const Attribute &Attr : Attrs)
       takeKnownMaximum(Attr.getValueAsInt());
+
+    if (getIRPosition().isFnInterfaceKind() &&
+        (!getAssociatedFunction() ||
+         !getAssociatedFunction()->hasExactDefinition()))
+      indicatePessimisticFixpoint();
   }
 
   /// See AbstractAttribute::manifest(...).
@@ -3102,11 +3104,7 @@ bool Attributor::checkForAllReadWriteInstructions(
   return true;
 }
 
-ChangeStatus Attributor::run() {
-  // Initialize all abstract attributes, allow new ones to be created.
-  for (unsigned u = 0; u < AllAbstractAttributes.size(); u++)
-    AllAbstractAttributes[u]->initialize(*this);
-
+ChangeStatus Attributor::run(Module &M) {
   LLVM_DEBUG(dbgs() << "[Attributor] Identified and initialized "
                     << AllAbstractAttributes.size()
                     << " abstract attributes.\n");
@@ -3259,7 +3257,7 @@ ChangeStatus Attributor::run() {
   if (VerifyAttributor && FinishedAtFixpoint &&
       ManifestChange == ChangeStatus::CHANGED) {
     VerifyAttributor = false;
-    ChangeStatus VerifyStatus = run();
+    ChangeStatus VerifyStatus = run(M);
     if (VerifyStatus != ChangeStatus::UNCHANGED)
       llvm_unreachable(
           "Attributor verification failed, re-run did result in an IR change "
@@ -3277,26 +3275,64 @@ ChangeStatus Attributor::run() {
       "Expected the final number of abstract attributes to remain unchanged!");
 
   // Delete stuff at the end to avoid invalid references and a nice order.
-  LLVM_DEBUG(dbgs() << "\n[Attributor] Delete " << ToBeDeletedFunctions.size()
-                    << " functions and " << ToBeDeletedBlocks.size()
-                    << " blocks and " << ToBeDeletedInsts.size()
-                    << " instructions\n");
-  for (Instruction *I : ToBeDeletedInsts) {
-    if (!I->use_empty())
-      I->replaceAllUsesWith(UndefValue::get(I->getType()));
-    I->eraseFromParent();
-  }
+  {
+    LLVM_DEBUG(dbgs() << "\n[Attributor] Delete at least "
+                      << ToBeDeletedFunctions.size() << " functions and "
+                      << ToBeDeletedBlocks.size() << " blocks and "
+                      << ToBeDeletedInsts.size() << " instructions\n");
+    for (Instruction *I : ToBeDeletedInsts) {
+      if (!I->use_empty())
+        I->replaceAllUsesWith(UndefValue::get(I->getType()));
+      I->eraseFromParent();
+    }
 
-  if (unsigned NumDeadBlocks = ToBeDeletedBlocks.size()) {
-    SmallVector<BasicBlock *, 8> ToBeDeletedBBs;
-    ToBeDeletedBBs.reserve(NumDeadBlocks);
-    ToBeDeletedBBs.append(ToBeDeletedBlocks.begin(), ToBeDeletedBlocks.end());
-    DeleteDeadBlocks(ToBeDeletedBBs);
-  }
+    if (unsigned NumDeadBlocks = ToBeDeletedBlocks.size()) {
+      SmallVector<BasicBlock *, 8> ToBeDeletedBBs;
+      ToBeDeletedBBs.reserve(NumDeadBlocks);
+      ToBeDeletedBBs.append(ToBeDeletedBlocks.begin(), ToBeDeletedBlocks.end());
+      DeleteDeadBlocks(ToBeDeletedBBs);
+      STATS_DECLTRACK(AAIsDead, BasicBlock,
+                      "Number of dead basic blocks deleted.");
+    }
 
-  for (Function *Fn : ToBeDeletedFunctions) {
-    Fn->replaceAllUsesWith(UndefValue::get(Fn->getType()));
-    Fn->eraseFromParent();
+    STATS_DECL(AAIsDead, Function, "Number of dead functions deleted.");
+    for (Function *Fn : ToBeDeletedFunctions) {
+      Fn->replaceAllUsesWith(UndefValue::get(Fn->getType()));
+      Fn->eraseFromParent();
+      STATS_TRACK(AAIsDead, Function);
+    }
+
+    // Identify dead internal functions and delete them. This happens outside
+    // the other fixpoint analysis as we might treat potentially dead functions
+    // as live to lower the number of iterations. If they happen to be dead, the
+    // below fixpoint loop will identify and eliminate them.
+    SmallVector<Function *, 8> InternalFns;
+    for (Function &F : M)
+      if (F.hasInternalLinkage())
+        InternalFns.push_back(&F);
+
+    bool FoundDeadFn = true;
+    while (FoundDeadFn) {
+      FoundDeadFn = false;
+      for (unsigned u = 0, e = InternalFns.size(); u < e; ++u) {
+        Function *F = InternalFns[u];
+        if (!F)
+          continue;
+
+        const auto *LivenessAA =
+            lookupAAFor<AAIsDead>(IRPosition::function(*F));
+        if (LivenessAA &&
+            !checkForAllCallSites([](CallSite CS) { return false; },
+                                  *LivenessAA, true))
+          continue;
+
+        STATS_TRACK(AAIsDead, Function);
+        F->replaceAllUsesWith(UndefValue::get(F->getType()));
+        F->eraseFromParent();
+        InternalFns[u] = nullptr;
+        FoundDeadFn = true;
+      }
+    }
   }
 
   if (VerifyMaxFixpointIterations &&
@@ -3311,70 +3347,54 @@ ChangeStatus Attributor::run() {
   return ManifestChange;
 }
 
-/// Helper function that checks if an abstract attribute of type \p AAType
-/// should be created for IR position \p IRP and if so creates and registers it
-/// with the Attributor \p A.
-///
-/// This method will look at the provided whitelist. If one is given and the
-/// kind \p AAType::ID is not contained, no abstract attribute is created.
-///
-/// \returns The created abstract argument, or nullptr if none was created.
-template <typename AAType>
-static const AAType *checkAndRegisterAA(const IRPosition &IRP, Attributor &A,
-                                        DenseSet<const char *> *Whitelist) {
-  if (Whitelist && !Whitelist->count(&AAType::ID))
-    return nullptr;
-
-  return &A.registerAA<AAType>(*new AAType(IRP));
-}
-
-void Attributor::identifyDefaultAbstractAttributes(
-    Function &F, DenseSet<const char *> *Whitelist) {
+void Attributor::identifyDefaultAbstractAttributes(Function &F) {
+  if (!VisitedFunctions.insert(&F).second)
+    return;
 
   IRPosition FPos = IRPosition::function(F);
 
   // Check for dead BasicBlocks in every function.
   // We need dead instruction detection because we do not want to deal with
   // broken IR in which SSA rules do not apply.
-  checkAndRegisterAA<AAIsDeadFunction>(FPos, *this, /* Whitelist */ nullptr);
+  getOrCreateAAFor<AAIsDead>(FPos);
 
   // Every function might be "will-return".
-  checkAndRegisterAA<AAWillReturnFunction>(FPos, *this, Whitelist);
+  getOrCreateAAFor<AAWillReturn>(FPos);
 
   // Every function can be nounwind.
-  checkAndRegisterAA<AANoUnwindFunction>(FPos, *this, Whitelist);
+  getOrCreateAAFor<AANoUnwind>(FPos);
 
   // Every function might be marked "nosync"
-  checkAndRegisterAA<AANoSyncFunction>(FPos, *this, Whitelist);
+  getOrCreateAAFor<AANoSync>(FPos);
 
   // Every function might be "no-free".
-  checkAndRegisterAA<AANoFreeFunction>(FPos, *this, Whitelist);
+  getOrCreateAAFor<AANoFree>(FPos);
 
   // Every function might be "no-return".
-  checkAndRegisterAA<AANoReturnFunction>(FPos, *this, Whitelist);
+  getOrCreateAAFor<AANoReturn>(FPos);
 
   // Return attributes are only appropriate if the return type is non void.
   Type *ReturnType = F.getReturnType();
   if (!ReturnType->isVoidTy()) {
     // Argument attribute "returned" --- Create only one per function even
     // though it is an argument attribute.
-    checkAndRegisterAA<AAReturnedValuesFunction>(FPos, *this, Whitelist);
+    getOrCreateAAFor<AAReturnedValues>(FPos);
 
     if (ReturnType->isPointerTy()) {
       IRPosition RetPos = IRPosition::returned(F);
 
       // Every function with pointer return type might be marked align.
-      checkAndRegisterAA<AAAlignReturned>(RetPos, *this, Whitelist);
+      getOrCreateAAFor<AAAlign>(RetPos);
 
       // Every function with pointer return type might be marked nonnull.
-      checkAndRegisterAA<AANonNullReturned>(RetPos, *this, Whitelist);
+      getOrCreateAAFor<AANonNull>(RetPos);
 
       // Every function with pointer return type might be marked noalias.
-      checkAndRegisterAA<AANoAliasReturned>(RetPos, *this, Whitelist);
+      getOrCreateAAFor<AANoAlias>(RetPos);
 
       // Every function with pointer return type might be marked
       // dereferenceable.
-      checkAndRegisterAA<AADereferenceableReturned>(RetPos, *this, Whitelist);
+      getOrCreateAAFor<AADereferenceable>(RetPos);
     }
   }
 
@@ -3382,19 +3402,19 @@ void Attributor::identifyDefaultAbstractAttributes(
     if (Arg.getType()->isPointerTy()) {
       IRPosition ArgPos = IRPosition::argument(Arg);
       // Every argument with pointer type might be marked nonnull.
-      checkAndRegisterAA<AANonNullArgument>(ArgPos, *this, Whitelist);
+      getOrCreateAAFor<AANonNull>(ArgPos);
 
       // Every argument with pointer type might be marked noalias.
-      checkAndRegisterAA<AANoAliasArgument>(ArgPos, *this, Whitelist);
+      getOrCreateAAFor<AANoAlias>(ArgPos);
 
       // Every argument with pointer type might be marked dereferenceable.
-      checkAndRegisterAA<AADereferenceableArgument>(ArgPos, *this, Whitelist);
+      getOrCreateAAFor<AADereferenceable>(ArgPos);
 
       // Every argument with pointer type might be marked align.
-      checkAndRegisterAA<AAAlignArgument>(ArgPos, *this, Whitelist);
+      getOrCreateAAFor<AAAlign>(ArgPos);
 
       // Every argument with pointer type might be marked nocapture.
-      checkAndRegisterAA<AANoCaptureArgument>(ArgPos, *this, Whitelist);
+      getOrCreateAAFor<AANoCapture>(ArgPos);
     }
   }
 
@@ -3420,15 +3440,13 @@ void Attributor::identifyDefaultAbstractAttributes(
       break;
     case Instruction::Load:
       // The alignment of a pointer is interesting for loads.
-      checkAndRegisterAA<AAAlignFloating>(
-          IRPosition::value(*cast<LoadInst>(I).getPointerOperand()), *this,
-          Whitelist);
+      getOrCreateAAFor<AAAlign>(
+          IRPosition::value(*cast<LoadInst>(I).getPointerOperand()));
       break;
     case Instruction::Store:
       // The alignment of a pointer is interesting for stores.
-      checkAndRegisterAA<AAAlignFloating>(
-          IRPosition::value(*cast<StoreInst>(I).getPointerOperand()), *this,
-          Whitelist);
+      getOrCreateAAFor<AAAlign>(
+          IRPosition::value(*cast<StoreInst>(I).getPointerOperand()));
       break;
     case Instruction::Call:
     case Instruction::CallBr:
@@ -3452,19 +3470,16 @@ void Attributor::identifyDefaultAbstractAttributes(
         IRPosition CSArgPos = IRPosition::callsite_argument(CS, i);
 
         // Call site argument attribute "non-null".
-        checkAndRegisterAA<AANonNullCallSiteArgument>(CSArgPos, *this,
-                                                      Whitelist);
+        getOrCreateAAFor<AANonNull>(CSArgPos);
 
         // Call site argument attribute "no-alias".
-        checkAndRegisterAA<AANoAliasCallSiteArgument>(CSArgPos, *this,
-                                                      Whitelist);
+        getOrCreateAAFor<AANoAlias>(CSArgPos);
 
         // Call site argument attribute "dereferenceable".
-        checkAndRegisterAA<AADereferenceableCallSiteArgument>(CSArgPos, *this,
-                                                              Whitelist);
+        getOrCreateAAFor<AADereferenceable>(CSArgPos);
 
         // Call site argument attribute "align".
-        checkAndRegisterAA<AAAlignCallSiteArgument>(CSArgPos, *this, Whitelist);
+        getOrCreateAAFor<AAAlign>(CSArgPos);
       }
     }
   }
@@ -3552,12 +3567,22 @@ static bool runAttributorOnModule(Module &M) {
         F.hasFnAttribute(Attribute::OptimizeNone))
       continue;
 
+    // We look at internal functions only on-demand but if any use is not a
+    // direct call, we have to do it eagerly.
+    if (F.hasInternalLinkage()) {
+      if (llvm::all_of(F.uses(), [](const Use &U) {
+            return ImmutableCallSite(U.getUser()) &&
+                   ImmutableCallSite(U.getUser()).isCallee(&U);
+          }))
+        continue;
+    }
+
     // Populate the Attributor with abstract attribute opportunities in the
     // function and the information cache with IR information.
     A.identifyDefaultAbstractAttributes(F);
   }
 
-  return A.run() == ChangeStatus::CHANGED;
+  return A.run(M) == ChangeStatus::CHANGED;
 }
 
 PreservedAnalyses AttributorPass::run(Module &M, ModuleAnalysisManager &AM) {
@@ -3633,7 +3658,6 @@ const char AANoCapture::ID = 0;
       SWITCH_PK_CREATE(CLASS, IRP, IRP_FUNCTION, Function)                     \
       SWITCH_PK_CREATE(CLASS, IRP, IRP_CALL_SITE, CallSite)                    \
     }                                                                          \
-    AA->initialize(A);                                                         \
     return *AA;                                                                \
   }
 
@@ -3650,7 +3674,6 @@ const char AANoCapture::ID = 0;
       SWITCH_PK_CREATE(CLASS, IRP, IRP_CALL_SITE_RETURNED, CallSiteReturned)   \
       SWITCH_PK_CREATE(CLASS, IRP, IRP_CALL_SITE_ARGUMENT, CallSiteArgument)   \
     }                                                                          \
-    AA->initialize(A);                                                         \
     return *AA;                                                                \
   }
 
