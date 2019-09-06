@@ -1957,6 +1957,14 @@ template <class ELFT> bool RelrSection<ELFT>::updateAllocSize() {
     }
   }
 
+  // Don't allow the section to shrink; otherwise the size of the section can
+  // oscillate infinitely. Trailing 1s do not decode to more relocations.
+  if (relrRelocs.size() < oldSize) {
+    log(".relr.dyn needs " + Twine(oldSize - relrRelocs.size()) +
+        " padding word(s)");
+    relrRelocs.resize(oldSize, Elf_Relr(1));
+  }
+
   return relrRelocs.size() != oldSize;
 }
 
@@ -3504,23 +3512,6 @@ bool PPC64LongBranchTargetSection::isNeeded() const {
   // creation. Becuase of this, if we don't create any long-branch thunks we end
   // up with an empty .branch_lt section in the binary.
   return !finalized || !entries.empty();
-}
-
-RISCVSdataSection::RISCVSdataSection()
-    : SyntheticSection(SHF_ALLOC | SHF_WRITE, SHT_PROGBITS, 1, ".sdata") {}
-
-bool RISCVSdataSection::isNeeded() const {
-  if (!ElfSym::riscvGlobalPointer)
-    return false;
-
-  // __global_pointer$ is defined relative to .sdata . If the section does not
-  // exist, create a dummy one.
-  for (BaseCommand *base : getParent()->sectionCommands)
-    if (auto *isd = dyn_cast<InputSectionDescription>(base))
-      for (InputSection *isec : isd->sections)
-        if (isec != this)
-          return false;
-  return true;
 }
 
 static uint8_t getAbiVersion() {

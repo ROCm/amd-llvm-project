@@ -6248,6 +6248,77 @@ Sema::BuildCompoundLiteralExpr(SourceLocation LParenLoc, TypeSourceInfo *TInfo,
 ExprResult
 Sema::ActOnInitList(SourceLocation LBraceLoc, MultiExprArg InitArgList,
                     SourceLocation RBraceLoc) {
+  // Only produce each kind of designated initialization diagnostic once.
+  SourceLocation FirstDesignator;
+  bool DiagnosedArrayDesignator = false;
+  bool DiagnosedNestedDesignator = false;
+  bool DiagnosedMixedDesignator = false;
+
+  // Check that any designated initializers are syntactically valid in the
+  // current language mode.
+  for (unsigned I = 0, E = InitArgList.size(); I != E; ++I) {
+    if (auto *DIE = dyn_cast<DesignatedInitExpr>(InitArgList[I])) {
+      if (FirstDesignator.isInvalid())
+        FirstDesignator = DIE->getBeginLoc();
+
+      if (!getLangOpts().CPlusPlus)
+        break;
+
+      if (!DiagnosedNestedDesignator && DIE->size() > 1) {
+        DiagnosedNestedDesignator = true;
+        Diag(DIE->getBeginLoc(), diag::ext_designated_init_nested)
+          << DIE->getDesignatorsSourceRange();
+      }
+
+      for (auto &Desig : DIE->designators()) {
+        if (!Desig.isFieldDesignator() && !DiagnosedArrayDesignator) {
+          DiagnosedArrayDesignator = true;
+          Diag(Desig.getBeginLoc(), diag::ext_designated_init_array)
+            << Desig.getSourceRange();
+        }
+      }
+
+      if (!DiagnosedMixedDesignator &&
+          !isa<DesignatedInitExpr>(InitArgList[0])) {
+        DiagnosedMixedDesignator = true;
+        Diag(DIE->getBeginLoc(), diag::ext_designated_init_mixed)
+          << DIE->getSourceRange();
+        Diag(InitArgList[0]->getBeginLoc(), diag::note_designated_init_mixed)
+          << InitArgList[0]->getSourceRange();
+      }
+    } else if (getLangOpts().CPlusPlus && !DiagnosedMixedDesignator &&
+               isa<DesignatedInitExpr>(InitArgList[0])) {
+      DiagnosedMixedDesignator = true;
+      auto *DIE = cast<DesignatedInitExpr>(InitArgList[0]);
+      Diag(DIE->getBeginLoc(), diag::ext_designated_init_mixed)
+        << DIE->getSourceRange();
+      Diag(InitArgList[I]->getBeginLoc(), diag::note_designated_init_mixed)
+        << InitArgList[I]->getSourceRange();
+    }
+  }
+
+  if (FirstDesignator.isValid()) {
+    // Only diagnose designated initiaization as a C++20 extension if we didn't
+    // already diagnose use of (non-C++20) C99 designator syntax.
+    if (getLangOpts().CPlusPlus && !DiagnosedArrayDesignator &&
+        !DiagnosedNestedDesignator && !DiagnosedMixedDesignator) {
+      Diag(FirstDesignator, getLangOpts().CPlusPlus2a
+                                ? diag::warn_cxx17_compat_designated_init
+                                : diag::ext_cxx_designated_init);
+    } else if (!getLangOpts().CPlusPlus && !getLangOpts().C99) {
+      Diag(FirstDesignator, diag::ext_designated_init);
+    }
+  }
+
+  return BuildInitList(LBraceLoc, InitArgList, RBraceLoc);
+}
+
+ExprResult
+Sema::BuildInitList(SourceLocation LBraceLoc, MultiExprArg InitArgList,
+                    SourceLocation RBraceLoc) {
+  // Semantic analysis for initializers is done by ActOnDeclarator() and
+  // CheckInitializer() - it requires knowledge of the object being initialized.
+
   // Immediately handle non-overload placeholders.  Overloads can be
   // resolved contextually, but everything else here can't.
   for (unsigned I = 0, E = InitArgList.size(); I != E; ++I) {
@@ -6261,9 +6332,6 @@ Sema::ActOnInitList(SourceLocation LBraceLoc, MultiExprArg InitArgList,
       InitArgList[I] = result.get();
     }
   }
-
-  // Semantic analysis for initializers is done by ActOnDeclarator() and
-  // CheckInitializer() - it requires knowledge of the object being initialized.
 
   InitListExpr *E = new (Context) InitListExpr(Context, LBraceLoc, InitArgList,
                                                RBraceLoc);
@@ -11232,33 +11300,42 @@ QualType Sema::CheckVectorCompareOperands(ExprResult &LHS, ExprResult &RHS,
   return GetSignedVectorType(vType);
 }
 
-static void diagnoseXorMisusedAsPow(Sema &S, ExprResult &LHS, ExprResult &RHS,
-                                    SourceLocation Loc) {
+static void diagnoseXorMisusedAsPow(Sema &S, const ExprResult &XorLHS,
+                                    const ExprResult &XorRHS,
+                                    const SourceLocation Loc) {
   // Do not diagnose macros.
   if (Loc.isMacroID())
     return;
 
   bool Negative = false;
-  const auto *LHSInt = dyn_cast<IntegerLiteral>(LHS.get());
-  const auto *RHSInt = dyn_cast<IntegerLiteral>(RHS.get());
+  bool ExplicitPlus = false;
+  const auto *LHSInt = dyn_cast<IntegerLiteral>(XorLHS.get());
+  const auto *RHSInt = dyn_cast<IntegerLiteral>(XorRHS.get());
 
   if (!LHSInt)
     return;
   if (!RHSInt) {
     // Check negative literals.
-    if (const auto *UO = dyn_cast<UnaryOperator>(RHS.get())) {
-      if (UO->getOpcode() != UO_Minus)
+    if (const auto *UO = dyn_cast<UnaryOperator>(XorRHS.get())) {
+      UnaryOperatorKind Opc = UO->getOpcode();
+      if (Opc != UO_Minus && Opc != UO_Plus)
         return;
       RHSInt = dyn_cast<IntegerLiteral>(UO->getSubExpr());
       if (!RHSInt)
         return;
-      Negative = true;
+      Negative = (Opc == UO_Minus);
+      ExplicitPlus = !Negative;
     } else {
       return;
     }
   }
 
-  if (LHSInt->getValue().getBitWidth() != RHSInt->getValue().getBitWidth())
+  const llvm::APInt &LeftSideValue = LHSInt->getValue();
+  llvm::APInt RightSideValue = RHSInt->getValue();
+  if (LeftSideValue != 2 && LeftSideValue != 10)
+    return;
+
+  if (LeftSideValue.getBitWidth() != RightSideValue.getBitWidth())
     return;
 
   CharSourceRange ExprRange = CharSourceRange::getCharRange(
@@ -11274,10 +11351,6 @@ static void diagnoseXorMisusedAsPow(Sema &S, ExprResult &LHS, ExprResult &RHS,
   if (XorStr == "xor")
     return;
 
-  const llvm::APInt &LeftSideValue = LHSInt->getValue();
-  const llvm::APInt &RightSideValue = RHSInt->getValue();
-  const llvm::APInt XorValue = LeftSideValue ^ RightSideValue;
-
   std::string LHSStr = Lexer::getSourceText(
       CharSourceRange::getTokenRange(LHSInt->getSourceRange()),
       S.getSourceManager(), S.getLangOpts());
@@ -11285,23 +11358,30 @@ static void diagnoseXorMisusedAsPow(Sema &S, ExprResult &LHS, ExprResult &RHS,
       CharSourceRange::getTokenRange(RHSInt->getSourceRange()),
       S.getSourceManager(), S.getLangOpts());
 
-  int64_t RightSideIntValue = RightSideValue.getSExtValue();
   if (Negative) {
-    RightSideIntValue = -RightSideIntValue;
+    RightSideValue = -RightSideValue;
     RHSStr = "-" + RHSStr;
+  } else if (ExplicitPlus) {
+    RHSStr = "+" + RHSStr;
   }
 
   StringRef LHSStrRef = LHSStr;
   StringRef RHSStrRef = RHSStr;
-  // Do not diagnose binary, hexadecimal, octal literals.
+  // Do not diagnose literals with digit separators, binary, hexadecimal, octal
+  // literals.
   if (LHSStrRef.startswith("0b") || LHSStrRef.startswith("0B") ||
       RHSStrRef.startswith("0b") || RHSStrRef.startswith("0B") ||
       LHSStrRef.startswith("0x") || LHSStrRef.startswith("0X") ||
       RHSStrRef.startswith("0x") || RHSStrRef.startswith("0X") ||
       (LHSStrRef.size() > 1 && LHSStrRef.startswith("0")) ||
-      (RHSStrRef.size() > 1 && RHSStrRef.startswith("0")))
+      (RHSStrRef.size() > 1 && RHSStrRef.startswith("0")) ||
+      LHSStrRef.find('\'') != StringRef::npos ||
+      RHSStrRef.find('\'') != StringRef::npos)
     return;
 
+  bool SuggestXor = S.getLangOpts().CPlusPlus || S.getPreprocessor().isMacroDefined("xor");
+  const llvm::APInt XorValue = LeftSideValue ^ RightSideValue;
+  int64_t RightSideIntValue = RightSideValue.getSExtValue();
   if (LeftSideValue == 2 && RightSideIntValue >= 0) {
     std::string SuggestedExpr = "1 << " + RHSStr;
     bool Overflow = false;
@@ -11312,8 +11392,9 @@ static void diagnoseXorMisusedAsPow(Sema &S, ExprResult &LHS, ExprResult &RHS,
         S.Diag(Loc, diag::warn_xor_used_as_pow_base)
             << ExprStr << XorValue.toString(10, true) << ("1LL << " + RHSStr)
             << FixItHint::CreateReplacement(ExprRange, "1LL << " + RHSStr);
+      else if (RightSideIntValue == 64)
+        S.Diag(Loc, diag::warn_xor_used_as_pow) << ExprStr << XorValue.toString(10, true);
       else
-         // TODO: 2 ^ 64 - 1
         return;
     } else {
       S.Diag(Loc, diag::warn_xor_used_as_pow_base_extra)
@@ -11323,13 +11404,13 @@ static void diagnoseXorMisusedAsPow(Sema &S, ExprResult &LHS, ExprResult &RHS,
                  ExprRange, (RightSideIntValue == 0) ? "1" : SuggestedExpr);
     }
 
-    S.Diag(Loc, diag::note_xor_used_as_pow_silence) << ("0x2 ^ " + RHSStr);
+    S.Diag(Loc, diag::note_xor_used_as_pow_silence) << ("0x2 ^ " + RHSStr) << SuggestXor;
   } else if (LeftSideValue == 10) {
     std::string SuggestedValue = "1e" + std::to_string(RightSideIntValue);
     S.Diag(Loc, diag::warn_xor_used_as_pow_base)
         << ExprStr << XorValue.toString(10, true) << SuggestedValue
         << FixItHint::CreateReplacement(ExprRange, SuggestedValue);
-    S.Diag(Loc, diag::note_xor_used_as_pow_silence) << ("0xA ^ " + RHSStr);
+    S.Diag(Loc, diag::note_xor_used_as_pow_silence) << ("0xA ^ " + RHSStr) << SuggestXor;
   }
 }
 
@@ -11376,9 +11457,6 @@ inline QualType Sema::CheckBitwiseOperands(ExprResult &LHS, ExprResult &RHS,
   if (Opc == BO_And)
     diagnoseLogicalNotOnLHSofCheck(*this, LHS, RHS, Loc, Opc);
 
-  if (Opc == BO_Xor)
-    diagnoseXorMisusedAsPow(*this, LHS, RHS, Loc);
-
   ExprResult LHSResult = LHS, RHSResult = RHS;
   QualType compType = UsualArithmeticConversions(LHSResult, RHSResult,
                                                  IsCompAssign);
@@ -11386,6 +11464,9 @@ inline QualType Sema::CheckBitwiseOperands(ExprResult &LHS, ExprResult &RHS,
     return QualType();
   LHS = LHSResult.get();
   RHS = RHSResult.get();
+
+  if (Opc == BO_Xor)
+    diagnoseXorMisusedAsPow(*this, LHS, RHS, Loc);
 
   if (!compType.isNull() && compType->isIntegralOrUnscopedEnumerationType())
     return compType;

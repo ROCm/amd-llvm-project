@@ -595,6 +595,7 @@ bool LoopVectorizationLegality::canVectorizeInstrs() {
           // Unsafe cyclic dependencies with header phis are identified during
           // legalization for reduction, induction and first order
           // recurrences.
+          AllowedExit.insert(&I);
           continue;
         }
 
@@ -738,7 +739,8 @@ bool LoopVectorizationLegality::canVectorizeInstrs() {
           Type *VecTy = VectorType::get(T, /*NumElements=*/2);
           assert(VecTy && "did not find vectorized version of stored type");
           unsigned Alignment = getLoadStoreAlignment(ST);
-          if (!TTI->isLegalNTStore(VecTy, Alignment)) {
+          assert(Alignment && "Alignment should be set");
+          if (!TTI->isLegalNTStore(VecTy, llvm::Align(Alignment))) {
             reportVectorizationFailure(
                 "nontemporal store instruction cannot be vectorized",
                 "nontemporal store instruction cannot be vectorized",
@@ -754,7 +756,8 @@ bool LoopVectorizationLegality::canVectorizeInstrs() {
           Type *VecTy = VectorType::get(I.getType(), /*NumElements=*/2);
           assert(VecTy && "did not find vectorized version of load type");
           unsigned Alignment = getLoadStoreAlignment(LD);
-          if (!TTI->isLegalNTLoad(VecTy, Alignment)) {
+          assert(Alignment && "Alignment should be set");
+          if (!TTI->isLegalNTLoad(VecTy, llvm::Align(Alignment))) {
             reportVectorizationFailure(
                 "nontemporal load instruction cannot be vectorized",
                 "nontemporal load instruction cannot be vectorized",
@@ -1176,18 +1179,17 @@ bool LoopVectorizationLegality::prepareToFoldTailByMasking() {
     return false;
   }
 
-  // TODO: handle reductions when tail is folded by masking.
-  if (!Reductions.empty()) {
-    reportVectorizationFailure(
-        "Loop has reductions, cannot fold tail by masking",
-        "Cannot fold tail by masking in the presence of reductions.",
-        "ReductionFoldingTailByMasking", ORE, TheLoop);
-    return false;
-  }
+  SmallPtrSet<const Value *, 8> ReductionLiveOuts;
 
-  // TODO: handle outside users when tail is folded by masking.
+  for (auto &Reduction : *getReductionVars())
+    ReductionLiveOuts.insert(Reduction.second.getLoopExitInstr());
+
+  // TODO: handle non-reduction outside users when tail is folded by masking.
   for (auto *AE : AllowedExit) {
-    // Check that all users of allowed exit values are inside the loop.
+    // Check that all users of allowed exit values are inside the loop or
+    // are the live-out of a reduction.
+    if (ReductionLiveOuts.count(AE))
+      continue;
     for (User *U : AE->users()) {
       Instruction *UI = cast<Instruction>(U);
       if (TheLoop->contains(UI))

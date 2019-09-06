@@ -295,14 +295,7 @@ bool AMDGPUInstructionSelector::selectG_AND_OR_XOR(MachineInstr &I) const {
   if (DstRB->getID() == AMDGPU::SGPRRegBankID) {
     unsigned InstOpc = getLogicalBitOpcode(I.getOpcode(), Size > 32);
     I.setDesc(TII.get(InstOpc));
-
-    const TargetRegisterClass *RC
-      = TRI.getConstrainedRegClassForOperand(Dst, MRI);
-    if (!RC)
-      return false;
-    return RBI.constrainGenericRegister(DstReg, *RC, MRI) &&
-           RBI.constrainGenericRegister(Src0.getReg(), *RC, MRI) &&
-           RBI.constrainGenericRegister(Src1.getReg(), *RC, MRI);
+    return constrainSelectedInstRegOperands(I, TII, TRI, RBI);
   }
 
   return false;
@@ -1144,13 +1137,13 @@ void AMDGPUInstructionSelector::getAddrModeInfo(const MachineInstr &Load,
 
   GEPInfo GEPInfo(*PtrMI);
 
-  for (unsigned i = 1, e = 3; i < e; ++i) {
+  for (unsigned i = 1; i != 3; ++i) {
     const MachineOperand &GEPOp = PtrMI->getOperand(i);
     const MachineInstr *OpDef = MRI.getUniqueVRegDef(GEPOp.getReg());
     assert(OpDef);
-    if (isConstant(*OpDef)) {
-      // FIXME: Is it possible to have multiple Imm parts?  Maybe if we
-      // are lacking other optimizations.
+    if (i == 2 && isConstant(*OpDef)) {
+      // TODO: Could handle constant base + variable offset, but a combine
+      // probably should have commuted it.
       assert(GEPInfo.Imm == 0);
       GEPInfo.Imm = OpDef->getOperand(1).getCImm()->getSExtValue();
       continue;

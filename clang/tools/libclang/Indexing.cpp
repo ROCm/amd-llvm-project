@@ -19,6 +19,7 @@
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/CompilerInvocation.h"
 #include "clang/Frontend/FrontendAction.h"
+#include "clang/Frontend/MultiplexConsumer.h"
 #include "clang/Frontend/Utils.h"
 #include "clang/Index/IndexingAction.h"
 #include "clang/Lex/HeaderSearch.h"
@@ -87,8 +88,6 @@ public:
   }
 };
 
-typedef llvm::DenseSet<PPRegion> PPRegionSetTy;
-
 } // end anonymous namespace
 
 namespace llvm {
@@ -123,20 +122,20 @@ namespace {
 /// Keeps track of function bodies that have already been parsed.
 ///
 /// Is thread-safe.
-class SharedParsedRegionsStorage {
-  std::mutex Mux;
-  PPRegionSetTy ParsedRegions;
+class ThreadSafeParsedRegions {
+  mutable std::mutex Mutex;
+  llvm::DenseSet<PPRegion> ParsedRegions;
 
 public:
-  ~SharedParsedRegionsStorage() = default;
+  ~ThreadSafeParsedRegions() = default;
 
-  void copyTo(PPRegionSetTy &Set) {
-    std::lock_guard<std::mutex> MG(Mux);
-    Set = ParsedRegions;
+  llvm::DenseSet<PPRegion> getParsedRegions() const {
+    std::lock_guard<std::mutex> MG(Mutex);
+    return ParsedRegions;
   }
 
-  void merge(ArrayRef<PPRegion> Regions) {
-    std::lock_guard<std::mutex> MG(Mux);
+  void addParsedRegions(ArrayRef<PPRegion> Regions) {
+    std::lock_guard<std::mutex> MG(Mutex);
     ParsedRegions.insert(Regions.begin(), Regions.end());
   }
 };
@@ -146,13 +145,13 @@ public:
 ///
 /// Is NOT thread-safe.
 class ParsedSrcLocationsTracker {
-  SharedParsedRegionsStorage &ParsedRegionsStorage;
+  ThreadSafeParsedRegions &ParsedRegionsStorage;
   PPConditionalDirectiveRecord &PPRec;
   Preprocessor &PP;
 
   /// Snapshot of the shared state at the point when this instance was
   /// constructed.
-  PPRegionSetTy ParsedRegions;
+  llvm::DenseSet<PPRegion> ParsedRegionsSnapshot;
   /// Regions that were queried during this instance lifetime.
   SmallVector<PPRegion, 32> NewParsedRegions;
 
@@ -162,12 +161,11 @@ class ParsedSrcLocationsTracker {
 
 public:
   /// Creates snapshot of \p ParsedRegionsStorage.
-  ParsedSrcLocationsTracker(SharedParsedRegionsStorage &ParsedRegionsStorage,
+  ParsedSrcLocationsTracker(ThreadSafeParsedRegions &ParsedRegionsStorage,
                             PPConditionalDirectiveRecord &ppRec,
                             Preprocessor &pp)
-      : ParsedRegionsStorage(ParsedRegionsStorage), PPRec(ppRec), PP(pp) {
-    ParsedRegionsStorage.copyTo(ParsedRegions);
-  }
+      : ParsedRegionsStorage(ParsedRegionsStorage), PPRec(ppRec), PP(pp),
+        ParsedRegionsSnapshot(ParsedRegionsStorage.getParsedRegions()) {}
 
   /// \returns true iff \p Loc has already been parsed.
   ///
@@ -189,14 +187,16 @@ public:
     // That means if we hit the same region again, it's a different location in
     // the same region and so the "is parsed" value from the snapshot is still
     // correct.
-    LastIsParsed = ParsedRegions.count(region);
+    LastIsParsed = ParsedRegionsSnapshot.count(region);
     if (!LastIsParsed)
       NewParsedRegions.emplace_back(std::move(region));
     return LastIsParsed;
   }
 
   /// Updates ParsedRegionsStorage with newly parsed regions.
-  void syncWithStorage() { ParsedRegionsStorage.merge(NewParsedRegions); }
+  void syncWithStorage() {
+    ParsedRegionsStorage.addParsedRegions(NewParsedRegions);
+  }
 
 private:
   PPRegion getRegion(SourceLocation Loc, FileID FID, const FileEntry *FE) {
@@ -296,53 +296,19 @@ public:
 
 class IndexingConsumer : public ASTConsumer {
   CXIndexDataConsumer &DataConsumer;
-  ParsedSrcLocationsTracker *ParsedLocsTracker;
 
 public:
   IndexingConsumer(CXIndexDataConsumer &dataConsumer,
                    ParsedSrcLocationsTracker *parsedLocsTracker)
-      : DataConsumer(dataConsumer), ParsedLocsTracker(parsedLocsTracker) {}
-
-  // ASTConsumer Implementation
+      : DataConsumer(dataConsumer) {}
 
   void Initialize(ASTContext &Context) override {
     DataConsumer.setASTContext(Context);
     DataConsumer.startedTranslationUnit();
   }
 
-  void HandleTranslationUnit(ASTContext &Ctx) override {
-    if (ParsedLocsTracker)
-      ParsedLocsTracker->syncWithStorage();
-  }
-
   bool HandleTopLevelDecl(DeclGroupRef DG) override {
     return !DataConsumer.shouldAbort();
-  }
-
-  bool shouldSkipFunctionBody(Decl *D) override {
-    if (!ParsedLocsTracker) {
-      // Always skip bodies.
-      return true;
-    }
-
-    const SourceManager &SM = DataConsumer.getASTContext().getSourceManager();
-    SourceLocation Loc = D->getLocation();
-    if (Loc.isMacroID())
-      return false;
-    if (SM.isInSystemHeader(Loc))
-      return true; // always skip bodies from system headers.
-
-    FileID FID;
-    unsigned Offset;
-    std::tie(FID, Offset) = SM.getDecomposedLoc(Loc);
-    // Don't skip bodies from main files; this may be revisited.
-    if (SM.getMainFileID() == FID)
-      return false;
-    const FileEntry *FE = SM.getFileEntryForID(FID);
-    if (!FE)
-      return false;
-
-    return ParsedLocsTracker->hasAlredyBeenParsed(Loc, FID, FE);
   }
 };
 
@@ -367,14 +333,16 @@ public:
 
 class IndexingFrontendAction : public ASTFrontendAction {
   std::shared_ptr<CXIndexDataConsumer> DataConsumer;
+  IndexingOptions Opts;
 
-  SharedParsedRegionsStorage *SKData;
+  ThreadSafeParsedRegions *SKData;
   std::unique_ptr<ParsedSrcLocationsTracker> ParsedLocsTracker;
 
 public:
   IndexingFrontendAction(std::shared_ptr<CXIndexDataConsumer> dataConsumer,
-                         SharedParsedRegionsStorage *skData)
-      : DataConsumer(std::move(dataConsumer)), SKData(skData) {}
+                         const IndexingOptions &Opts,
+                         ThreadSafeParsedRegions *skData)
+      : DataConsumer(std::move(dataConsumer)), Opts(Opts), SKData(skData) {}
 
   std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI,
                                                  StringRef InFile) override {
@@ -398,8 +366,39 @@ public:
           std::make_unique<ParsedSrcLocationsTracker>(*SKData, *PPRec, PP);
     }
 
-    return std::make_unique<IndexingConsumer>(*DataConsumer,
-                                              ParsedLocsTracker.get());
+    std::vector<std::unique_ptr<ASTConsumer>> Consumers;
+    Consumers.push_back(std::make_unique<IndexingConsumer>(
+        *DataConsumer, ParsedLocsTracker.get()));
+    Consumers.push_back(createIndexingASTConsumer(
+        DataConsumer, Opts, CI.getPreprocessorPtr(),
+        [this](const Decl *D) { return this->shouldSkipFunctionBody(D); }));
+    return std::make_unique<MultiplexConsumer>(std::move(Consumers));
+  }
+
+  bool shouldSkipFunctionBody(const Decl *D) {
+    if (!ParsedLocsTracker) {
+      // Always skip bodies.
+      return true;
+    }
+
+    const SourceManager &SM = D->getASTContext().getSourceManager();
+    SourceLocation Loc = D->getLocation();
+    if (Loc.isMacroID())
+      return false;
+    if (SM.isInSystemHeader(Loc))
+      return true; // always skip bodies from system headers.
+
+    FileID FID;
+    unsigned Offset;
+    std::tie(FID, Offset) = SM.getDecomposedLoc(Loc);
+    // Don't skip bodies from main files; this may be revisited.
+    if (SM.getMainFileID() == FID)
+      return false;
+    const FileEntry *FE = SM.getFileEntryForID(FID);
+    if (!FE)
+      return false;
+
+    return ParsedLocsTracker->hasAlredyBeenParsed(Loc, FID, FE);
   }
 
   TranslationUnitKind getTranslationUnitKind() override {
@@ -409,6 +408,11 @@ public:
       return TU_Prefix;
   }
   bool hasCodeCompletionSupport() const override { return false; }
+
+  void EndSourceFileAction() override {
+    if (ParsedLocsTracker)
+      ParsedLocsTracker->syncWithStorage();
+  }
 };
 
 //===----------------------------------------------------------------------===//
@@ -426,10 +430,10 @@ static IndexingOptions getIndexingOptionsFromCXOptions(unsigned index_options) {
 
 struct IndexSessionData {
   CXIndex CIdx;
-  std::unique_ptr<SharedParsedRegionsStorage> SkipBodyData;
+  std::unique_ptr<ThreadSafeParsedRegions> SkipBodyData =
+      std::make_unique<ThreadSafeParsedRegions>();
 
-  explicit IndexSessionData(CXIndex cIdx)
-      : CIdx(cIdx), SkipBodyData(new SharedParsedRegionsStorage) {}
+  explicit IndexSessionData(CXIndex cIdx) : CIdx(cIdx) {}
 };
 
 } // anonymous namespace
@@ -569,12 +573,9 @@ static CXErrorCode clang_indexSourceFile_Impl(
   auto DataConsumer =
     std::make_shared<CXIndexDataConsumer>(client_data, CB, index_options,
                                           CXTU->getTU());
-  auto InterAction = std::make_unique<IndexingFrontendAction>(DataConsumer,
-                         SkipBodies ? IdxSession->SkipBodyData.get() : nullptr);
-  std::unique_ptr<FrontendAction> IndexAction;
-  IndexAction = createIndexingAction(DataConsumer,
-                                getIndexingOptionsFromCXOptions(index_options),
-                                     std::move(InterAction));
+  auto IndexAction = std::make_unique<IndexingFrontendAction>(
+      DataConsumer, getIndexingOptionsFromCXOptions(index_options),
+      SkipBodies ? IdxSession->SkipBodyData.get() : nullptr);
 
   // Recover resources if we crash before exiting this method.
   llvm::CrashRecoveryContextCleanupRegistrar<FrontendAction>
@@ -995,4 +996,3 @@ CXSourceLocation clang_indexLoc_getCXSourceLocation(CXIdxLoc location) {
       *static_cast<CXIndexDataConsumer*>(location.ptr_data[0]);
   return cxloc::translateSourceLocation(DataConsumer.getASTContext(), Loc);
 }
-

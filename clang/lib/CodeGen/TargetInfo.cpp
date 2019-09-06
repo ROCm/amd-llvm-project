@@ -7933,8 +7933,12 @@ void AMDGPUTargetCodeGenInfo::setTargetAttributes(
   const auto *ReqdWGS = M.getLangOpts().OpenCL ?
     FD->getAttr<ReqdWorkGroupSizeAttr>() : nullptr;
 
-  if (((M.getLangOpts().OpenCL && FD->hasAttr<OpenCLKernelAttr>()) ||
-      (M.getLangOpts().HIP && FD->hasAttr<CUDAGlobalAttr>())) &&
+
+  const bool IsOpenCLKernel = M.getLangOpts().OpenCL &&
+                              FD->hasAttr<OpenCLKernelAttr>();
+  const bool IsHIPKernel = M.getLangOpts().HIP &&
+                           FD->hasAttr<CUDAGlobalAttr>();
+  if ((IsOpenCLKernel || IsHIPKernel) &&
       (M.getTriple().getOS() == llvm::Triple::AMDHSA))
     F->addFnAttr("amdgpu-implicitarg-num-bytes", "56");
 
@@ -7964,6 +7968,9 @@ void AMDGPUTargetCodeGenInfo::setTargetAttributes(
       F->addFnAttr("amdgpu-flat-work-group-size", AttrVal);
     } else
       assert(Max == 0 && "Max must be zero");
+  } else if (IsOpenCLKernel || IsHIPKernel) {
+    // By default, restrict the maximum size to 256.
+    F->addFnAttr("amdgpu-flat-work-group-size", "1,256");
   }
 
   if (const auto *Attr = FD->getAttr<AMDGPUWavesPerEUAttr>()) {
@@ -9770,7 +9777,8 @@ const TargetCodeGenInfo &CodeGenModule::getTargetCodeGenInfo() {
 
   case llvm::Triple::ppc:
     return SetCGInfo(
-        new PPC32TargetCodeGenInfo(Types, CodeGenOpts.FloatABI == "soft"));
+        new PPC32TargetCodeGenInfo(Types, CodeGenOpts.FloatABI == "soft" ||
+                                   getTarget().hasFeature("spe")));
   case llvm::Triple::ppc64:
     if (Triple.isOSBinFormatELF()) {
       PPC64_SVR4_ABIInfo::ABIKind Kind = PPC64_SVR4_ABIInfo::ELFv1;

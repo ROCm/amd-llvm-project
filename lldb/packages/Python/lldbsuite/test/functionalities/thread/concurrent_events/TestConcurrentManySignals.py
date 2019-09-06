@@ -14,6 +14,9 @@ class ConcurrentManySignals(ConcurrentEventsBase):
 
     # Atomic sequences are not supported yet for MIPS in LLDB.
     @skipIf(triple='^mips')
+    # This test is flaky on Darwin.
+    @skipIfDarwin
+    @expectedFailureNetBSD
     def test(self):
         """Test 100 signals from 100 threads."""
         self.build(dictionary=self.getBuildFlags())

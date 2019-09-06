@@ -416,6 +416,8 @@ CXXMethodDecl *Sema::startLambdaDefinition(
       MethodType, MethodTypeInfo, SC_None,
       /*isInline=*/true, ConstexprKind, EndLoc);
   Method->setAccess(AS_public);
+  if (!TemplateParams)
+    Class->addDecl(Method);
 
   // Temporarily set the lexical declaration context to the current
   // context, so that the Scope stack matches the lexical nesting.
@@ -427,9 +429,10 @@ CXXMethodDecl *Sema::startLambdaDefinition(
                                          TemplateParams,
                                          Method) : nullptr;
   if (TemplateMethod) {
-    TemplateMethod->setLexicalDeclContext(CurContext);
     TemplateMethod->setAccess(AS_public);
     Method->setDescribedFunctionTemplate(TemplateMethod);
+    Class->addDecl(TemplateMethod);
+    TemplateMethod->setLexicalDeclContext(CurContext);
   }
 
   // Add parameters.
@@ -838,11 +841,8 @@ VarDecl *Sema::createLambdaInitCaptureVarDecl(SourceLocation Loc,
   // FIXME: Retain the TypeSourceInfo from buildLambdaInitCaptureInitialization
   // rather than reconstructing it here.
   TypeSourceInfo *TSI = Context.getTrivialTypeSourceInfo(InitCaptureType, Loc);
-  bool IsInitCapturePack = false;
-  if (auto PETL = TSI->getTypeLoc().getAs<PackExpansionTypeLoc>()) {
+  if (auto PETL = TSI->getTypeLoc().getAs<PackExpansionTypeLoc>())
     PETL.setEllipsisLoc(EllipsisLoc);
-    IsInitCapturePack = true;
-  }
 
   // Create a dummy variable representing the init-capture. This is not actually
   // used as a variable, and only exists as a way to name and refer to the
@@ -1658,8 +1658,9 @@ ExprResult Sema::BuildLambdaExpr(SourceLocation StartLoc, SourceLocation EndLoc,
         ? CallOperator->getDescribedFunctionTemplate()
         : cast<Decl>(CallOperator);
 
+    // FIXME: Is this really the best choice? Keeping the lexical decl context
+    // set as CurContext seems more faithful to the source.
     TemplateOrNonTemplateCallOperatorDecl->setLexicalDeclContext(Class);
-    Class->addDecl(TemplateOrNonTemplateCallOperatorDecl);
 
     PopExpressionEvaluationContext();
 

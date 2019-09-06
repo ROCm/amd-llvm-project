@@ -75,6 +75,14 @@ llvm::Optional<Range> getTokenRange(const SourceManager &SM,
 llvm::Expected<SourceLocation> sourceLocationInMainFile(const SourceManager &SM,
                                                         Position P);
 
+/// Get the beginning SourceLocation at a specified \p Pos in the main file.
+/// May be invalid if Pos is, or if there's no identifier.
+/// The returned position is in the main file, callers may prefer to
+/// obtain the macro expansion location.
+SourceLocation getBeginningOfIdentifier(const Position &Pos,
+                                        const SourceManager &SM,
+                                        const LangOptions &LangOpts);
+
 /// Returns true iff \p Loc is inside the main file. This function handles
 /// file & macro locations. For macro locations, returns iff the macro is being
 /// expanded inside the main file.
@@ -82,6 +90,11 @@ llvm::Expected<SourceLocation> sourceLocationInMainFile(const SourceManager &SM,
 /// The function is usually used to check whether a declaration is inside the
 /// the main file.
 bool isInsideMainFile(SourceLocation Loc, const SourceManager &SM);
+
+/// Returns the #include location through which IncludedFIle was loaded.
+/// Where SM.getIncludeLoc() returns the location of the *filename*, which may
+/// be in a macro, includeHashLoc() returns the location of the #.
+SourceLocation includeHashLoc(FileID IncludedFile, const SourceManager &SM);
 
 /// Returns true if the token at Loc is spelled in the source code.
 /// This is not the case for:

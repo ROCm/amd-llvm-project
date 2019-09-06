@@ -1809,7 +1809,7 @@ void SelectionDAGBuilder::visitRet(const ReturnInst &I) {
       // offsets to its parts don't wrap either.
       SDValue Ptr = DAG.getObjectPtrOffset(getCurSDLoc(), RetPtr, Offsets[i]);
 
-      SDValue Val = RetOp.getValue(i);
+      SDValue Val = RetOp.getValue(RetOp.getResNo() + i);
       if (MemVTs[i] != ValueVTs[i])
         Val = DAG.getPtrExtOrTrunc(Val, getCurSDLoc(), MemVTs[i]);
       Chains[i] = DAG.getStore(Chain, getCurSDLoc(), Val,
@@ -2262,7 +2262,7 @@ void SelectionDAGBuilder::visitBr(const BranchInst &I) {
   if (const BinaryOperator *BOp = dyn_cast<BinaryOperator>(CondVal)) {
     Instruction::BinaryOps Opcode = BOp->getOpcode();
     if (!DAG.getTargetLoweringInfo().isJumpExpensive() && BOp->hasOneUse() &&
-        !I.getMetadata(LLVMContext::MD_unpredictable) &&
+        !I.hasMetadata(LLVMContext::MD_unpredictable) &&
         (Opcode == Instruction::And || Opcode == Instruction::Or)) {
       FindMergedConditions(BOp, Succ0MBB, Succ1MBB, BrMBB, BrMBB,
                            Opcode,
@@ -3826,7 +3826,7 @@ void SelectionDAGBuilder::visitGetElementPtr(const User &I) {
   // Normalize Vector GEP - all scalar operands should be converted to the
   // splat vector.
   unsigned VectorWidth = I.getType()->isVectorTy() ?
-    cast<VectorType>(I.getType())->getVectorNumElements() : 0;
+    I.getType()->getVectorNumElements() : 0;
 
   if (VectorWidth && !N.getValueType().isVector()) {
     LLVMContext &Context = *DAG.getContext();
@@ -3859,12 +3859,11 @@ void SelectionDAGBuilder::visitGetElementPtr(const User &I) {
 
       // If this is a scalar constant or a splat vector of constants,
       // handle it quickly.
-      const auto *CI = dyn_cast<ConstantInt>(Idx);
-      if (!CI && isa<ConstantDataVector>(Idx) &&
-          cast<ConstantDataVector>(Idx)->getSplatValue())
-        CI = cast<ConstantInt>(cast<ConstantDataVector>(Idx)->getSplatValue());
+      const auto *C = dyn_cast<Constant>(Idx);
+      if (C && isa<VectorType>(C->getType()))
+        C = C->getSplatValue();
 
-      if (CI) {
+      if (const auto *CI = dyn_cast_or_null<ConstantInt>(C)) {
         if (CI->isZero())
           continue;
         APInt Offs = ElementSize * CI->getValue().sextOrTrunc(IdxSize);
@@ -3873,7 +3872,7 @@ void SelectionDAGBuilder::visitGetElementPtr(const User &I) {
           DAG.getConstant(Offs, dl, EVT::getVectorVT(Context, IdxTy, VectorWidth)) :
           DAG.getConstant(Offs, dl, IdxTy);
 
-        // In an inbouds GEP with an offset that is nonnegative even when
+        // In an inbounds GEP with an offset that is nonnegative even when
         // interpreted as signed, assume there is no unsigned overflow.
         SDNodeFlags Flags;
         if (Offs.isNonNegative() && cast<GEPOperator>(I).isInBounds())
@@ -4003,8 +4002,8 @@ void SelectionDAGBuilder::visitLoad(const LoadInst &I) {
   Type *Ty = I.getType();
 
   bool isVolatile = I.isVolatile();
-  bool isNonTemporal = I.getMetadata(LLVMContext::MD_nontemporal) != nullptr;
-  bool isInvariant = I.getMetadata(LLVMContext::MD_invariant_load) != nullptr;
+  bool isNonTemporal = I.hasMetadata(LLVMContext::MD_nontemporal);
+  bool isInvariant = I.hasMetadata(LLVMContext::MD_invariant_load);
   bool isDereferenceable =
       isDereferenceablePointer(SV, I.getType(), DAG.getDataLayout());
   unsigned Alignment = I.getAlignment();
@@ -4133,8 +4132,8 @@ void SelectionDAGBuilder::visitLoadFromSwiftError(const LoadInst &I) {
          "call visitLoadFromSwiftError when backend supports swifterror");
 
   assert(!I.isVolatile() &&
-         I.getMetadata(LLVMContext::MD_nontemporal) == nullptr &&
-         I.getMetadata(LLVMContext::MD_invariant_load) == nullptr &&
+         !I.hasMetadata(LLVMContext::MD_nontemporal) &&
+         !I.hasMetadata(LLVMContext::MD_invariant_load) &&
          "Support volatile, non temporal, invariant for load_from_swift_error");
 
   const Value *SV = I.getOperand(0);
@@ -4210,7 +4209,7 @@ void SelectionDAGBuilder::visitStore(const StoreInst &I) {
   auto MMOFlags = MachineMemOperand::MONone;
   if (I.isVolatile())
     MMOFlags |= MachineMemOperand::MOVolatile;
-  if (I.getMetadata(LLVMContext::MD_nontemporal) != nullptr)
+  if (I.hasMetadata(LLVMContext::MD_nontemporal))
     MMOFlags |= MachineMemOperand::MONonTemporal;
   MMOFlags |= TLI.getMMOFlags(I);
 
@@ -4642,7 +4641,7 @@ void SelectionDAGBuilder::visitAtomicLoad(const LoadInst &I) {
   auto Flags = MachineMemOperand::MOLoad;
   if (I.isVolatile())
     Flags |= MachineMemOperand::MOVolatile;
-  if (I.getMetadata(LLVMContext::MD_invariant_load) != nullptr)
+  if (I.hasMetadata(LLVMContext::MD_invariant_load))
     Flags |= MachineMemOperand::MOInvariant;
   if (isDereferenceablePointer(I.getPointerOperand(), I.getType(),
                                DAG.getDataLayout()))
@@ -6107,6 +6106,8 @@ void SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I,
   case Intrinsic::experimental_constrained_fdiv:
   case Intrinsic::experimental_constrained_frem:
   case Intrinsic::experimental_constrained_fma:
+  case Intrinsic::experimental_constrained_fptosi:
+  case Intrinsic::experimental_constrained_fptoui:
   case Intrinsic::experimental_constrained_fptrunc:
   case Intrinsic::experimental_constrained_fpext:
   case Intrinsic::experimental_constrained_sqrt:
@@ -6899,6 +6900,12 @@ void SelectionDAGBuilder::visitConstrainedFPIntrinsic(
     break;
   case Intrinsic::experimental_constrained_fma:
     Opcode = ISD::STRICT_FMA;
+    break;
+  case Intrinsic::experimental_constrained_fptosi:
+    Opcode = ISD::STRICT_FP_TO_SINT;
+    break;
+  case Intrinsic::experimental_constrained_fptoui:
+    Opcode = ISD::STRICT_FP_TO_UINT;
     break;
   case Intrinsic::experimental_constrained_fptrunc:
     Opcode = ISD::STRICT_FP_ROUND;

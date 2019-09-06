@@ -163,11 +163,10 @@ unsigned AMDGPURegisterBankInfo::getBreakDownCost(
 
 const RegisterBank &AMDGPURegisterBankInfo::getRegBankFromRegClass(
     const TargetRegisterClass &RC) const {
+  if (&RC == &AMDGPU::SReg_1RegClass)
+    return AMDGPU::VCCRegBank;
 
-  if (TRI->isSGPRClass(&RC))
-    return getRegBank(AMDGPU::SGPRRegBankID);
-
-  return getRegBank(AMDGPU::VGPRRegBankID);
+  return TRI->isSGPRClass(&RC) ? AMDGPU::SGPRRegBank : AMDGPU::VGPRRegBank;
 }
 
 template <unsigned NumOps>
@@ -1776,6 +1775,7 @@ AMDGPURegisterBankInfo::getInstrMapping(const MachineInstr &MI) const {
   case AMDGPU::G_CTTZ_ZERO_UNDEF:
   case AMDGPU::G_CTPOP:
   case AMDGPU::G_BSWAP:
+  case AMDGPU::G_BITREVERSE:
   case AMDGPU::G_FABS:
   case AMDGPU::G_FNEG: {
     unsigned Size = MRI.getType(MI.getOperand(0).getReg()).getSizeInBits();
