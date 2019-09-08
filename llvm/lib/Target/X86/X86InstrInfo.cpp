@@ -3616,8 +3616,9 @@ bool X86InstrInfo::optimizeCompareInstr(MachineInstr &CmpInstr, unsigned SrcReg,
   if (!IsCmpZero && !Sub)
     return false;
 
-  bool IsSwapped = (SrcReg2 != 0 && Sub->getOperand(1).getReg() == SrcReg2 &&
-                    Sub->getOperand(2).getReg() == SrcReg);
+  bool IsSwapped =
+      (SrcReg2 != 0 && Sub && Sub->getOperand(1).getReg() == SrcReg2 &&
+       Sub->getOperand(2).getReg() == SrcReg);
 
   // Scan forward from the instruction after CmpInstr for uses of EFLAGS.
   // It is safe to remove CmpInstr if EFLAGS is redefined or killed.
@@ -7544,7 +7545,12 @@ X86InstrInfo::describeLoadedValue(const MachineInstr &MI) const {
     DIExpression::appendOffset(Ops, Offset);
     Expr = DIExpression::get(MI.getMF()->getFunction().getContext(), Ops);
 
-    return ParamLoadedValue(Op, Expr);;
+    return ParamLoadedValue(*Op, Expr);;
+  }
+  case X86::XOR32rr: {
+    if (MI.getOperand(1).getReg() == MI.getOperand(2).getReg())
+      return ParamLoadedValue(MachineOperand::CreateImm(0), Expr);
+    return None;
   }
   default:
     return TargetInstrInfo::describeLoadedValue(MI);
