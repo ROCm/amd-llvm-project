@@ -923,6 +923,7 @@ public:
     case ISD::SMULFIX:
     case ISD::SMULFIXSAT:
     case ISD::UMULFIX:
+    case ISD::UMULFIXSAT:
       Supported = isSupportedFixedPointOperation(Op, VT, Scale);
       break;
     }
@@ -2958,6 +2959,14 @@ public:
     return false;
   }
 
+  /// Returns true if the specified base+offset is a legal indexed addressing
+  /// mode for this target. \p MI is the load or store instruction that is being
+  /// considered for transformation.
+  virtual bool isIndexingLegal(MachineInstr &MI, Register Base, Register Offset,
+                               bool IsPre, MachineRegisterInfo &MRI) const {
+    return false;
+  }
+
   /// Return the entry encoding for a jump table in the current function.  The
   /// returned value is a member of the MachineJumpTableInfo::JTEntryKind enum.
   virtual unsigned getJumpTableEncoding() const;
@@ -4097,8 +4106,8 @@ public:
   /// method accepts integers as its arguments.
   SDValue expandAddSubSat(SDNode *Node, SelectionDAG &DAG) const;
 
-  /// Method for building the DAG expansion of ISD::SMULFIX. This method accepts
-  /// integers as its arguments.
+  /// Method for building the DAG expansion of ISD::[U|S]MULFIX[SAT]. This
+  /// method accepts integers as its arguments.
   SDValue expandFixedPointMul(SDNode *Node, SelectionDAG &DAG) const;
 
   /// Method for building the DAG expansion of ISD::U(ADD|SUB)O. Expansion

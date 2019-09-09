@@ -392,6 +392,10 @@ AMDGPULegalizerInfo::AMDGPULegalizerInfo(const GCNSubtarget &ST_,
     .legalForCartesianProduct(AddrSpaces32, {S32})
     .scalarize(0);
 
+  getActionDefinitionsBuilder(G_PTR_MASK)
+    .scalarize(0)
+    .alwaysLegal();
+
   setAction({G_BLOCK_ADDR, CodePtr}, Legal);
 
   auto &CmpBuilder =
@@ -1534,6 +1538,12 @@ bool AMDGPULegalizerInfo::legalizeIntrinsic(MachineInstr &MI,
     return legalizeIsAddrSpace(MI, MRI, B, AMDGPUAS::LOCAL_ADDRESS);
   case Intrinsic::amdgcn_is_private:
     return legalizeIsAddrSpace(MI, MRI, B, AMDGPUAS::PRIVATE_ADDRESS);
+  case Intrinsic::amdgcn_wavefrontsize: {
+    B.setInstr(MI);
+    B.buildConstant(MI.getOperand(0), ST.getWavefrontSize());
+    MI.eraseFromParent();
+    return true;
+  }
   default:
     return true;
   }

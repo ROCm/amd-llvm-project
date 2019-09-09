@@ -303,28 +303,30 @@ AMDGPURegisterBankInfo::getInstrAlternativeMappingsIntrinsicWSideEffects(
   }
   case Intrinsic::amdgcn_s_sendmsg:
   case Intrinsic::amdgcn_s_sendmsghalt: {
-    static const OpRegBankEntry<1> Table[2] = {
+    // FIXME: Should have no register for immediate
+    static const OpRegBankEntry<2> Table[2] = {
       // Perfectly legal.
-      { { AMDGPU::SGPRRegBankID }, 1 },
+      { { AMDGPU::SGPRRegBankID, AMDGPU::SGPRRegBankID }, 1 },
 
       // Need readlane
-      { { AMDGPU::VGPRRegBankID }, 3 }
+      { { AMDGPU::SGPRRegBankID, AMDGPU::VGPRRegBankID }, 3 }
     };
 
-    const std::array<unsigned, 1> RegSrcOpIdx = { { 2 } };
-    return addMappingFromTable<1>(MI, MRI, RegSrcOpIdx, makeArrayRef(Table));
+    const std::array<unsigned, 2> RegSrcOpIdx = { { 1, 2 } };
+    return addMappingFromTable<2>(MI, MRI, RegSrcOpIdx, makeArrayRef(Table));
   }
   default:
     return RegisterBankInfo::getInstrAlternativeMappings(MI);
   }
 }
 
-static bool isInstrUniform(const MachineInstr &MI) {
+static bool isInstrUniformNonExtLoadAlign4(const MachineInstr &MI) {
   if (!MI.hasOneMemOperand())
     return false;
 
   const MachineMemOperand *MMO = *MI.memoperands_begin();
-  return AMDGPUInstrInfo::isUniformMMO(MMO);
+  return MMO->getSize() >= 4 && MMO->getAlignment() >= 4 &&
+         AMDGPUInstrInfo::isUniformMMO(MMO);
 }
 
 RegisterBankInfo::InstructionMappings
@@ -421,21 +423,24 @@ AMDGPURegisterBankInfo::getInstrAlternativeMappings(
   }
   case TargetOpcode::G_LOAD: {
     unsigned Size = getSizeInBits(MI.getOperand(0).getReg(), MRI, *TRI);
+    LLT PtrTy = MRI.getType(MI.getOperand(1).getReg());
+    unsigned PtrSize = PtrTy.getSizeInBits();
+    unsigned AS = PtrTy.getAddressSpace();
     LLT LoadTy = MRI.getType(MI.getOperand(0).getReg());
-    // FIXME: Should we be hard coding the size for these mappings?
-    if (isInstrUniform(MI)) {
+    if (isInstrUniformNonExtLoadAlign4(MI) &&
+        (AS != AMDGPUAS::LOCAL_ADDRESS && AS != AMDGPUAS::REGION_ADDRESS)) {
       const InstructionMapping &SSMapping = getInstructionMapping(
           1, 1, getOperandsMapping(
                     {AMDGPU::getValueMapping(AMDGPU::SGPRRegBankID, Size),
-                     AMDGPU::getValueMapping(AMDGPU::SGPRRegBankID, 64)}),
+                     AMDGPU::getValueMapping(AMDGPU::SGPRRegBankID, PtrSize)}),
           2); // Num Operands
       AltMappings.push_back(&SSMapping);
     }
 
     const InstructionMapping &VVMapping = getInstructionMapping(
         2, 1, getOperandsMapping(
-                  {AMDGPU::getValueMappingLoadSGPROnly(AMDGPU::VGPRRegBankID, LoadTy),
-                   AMDGPU::getValueMapping(AMDGPU::VGPRRegBankID, 64)}),
+          {AMDGPU::getValueMappingLoadSGPROnly(AMDGPU::VGPRRegBankID, LoadTy),
+           AMDGPU::getValueMapping(AMDGPU::VGPRRegBankID, PtrSize)}),
         2); // Num Operands
     AltMappings.push_back(&VVMapping);
 
@@ -1470,18 +1475,21 @@ AMDGPURegisterBankInfo::getInstrMappingForLoad(const MachineInstr &MI) const {
   SmallVector<const ValueMapping*, 8> OpdsMapping(MI.getNumOperands());
   unsigned Size = getSizeInBits(MI.getOperand(0).getReg(), MRI, *TRI);
   LLT LoadTy = MRI.getType(MI.getOperand(0).getReg());
-  unsigned PtrSize = getSizeInBits(MI.getOperand(1).getReg(), MRI, *TRI);
+  Register PtrReg = MI.getOperand(1).getReg();
+  LLT PtrTy = MRI.getType(PtrReg);
+  unsigned AS = PtrTy.getAddressSpace();
+  unsigned PtrSize = PtrTy.getSizeInBits();
 
   const ValueMapping *ValMapping;
   const ValueMapping *PtrMapping;
 
-  if (isInstrUniform(MI)) {
+  if (isInstrUniformNonExtLoadAlign4(MI) &&
+      (AS != AMDGPUAS::LOCAL_ADDRESS && AS != AMDGPUAS::REGION_ADDRESS)) {
     // We have a uniform instruction so we want to use an SMRD load
     ValMapping = AMDGPU::getValueMapping(AMDGPU::SGPRRegBankID, Size);
     PtrMapping = AMDGPU::getValueMapping(AMDGPU::SGPRRegBankID, PtrSize);
   } else {
     ValMapping = AMDGPU::getValueMappingLoadSGPROnly(AMDGPU::VGPRRegBankID, LoadTy);
-    // FIXME: What would happen if we used SGPRRegBankID here?
     PtrMapping = AMDGPU::getValueMapping(AMDGPU::VGPRRegBankID, PtrSize);
   }
 
@@ -2179,6 +2187,7 @@ AMDGPURegisterBankInfo::getInstrMapping(const MachineInstr &MI) const {
       // This must be an SGPR, but accept a VGPR.
       unsigned Bank = getRegBankID(MI.getOperand(2).getReg(), MRI, *TRI,
                                    AMDGPU::SGPRRegBankID);
+      OpdsMapping[1] = AMDGPU::getValueMapping(Bank, 32);
       OpdsMapping[2] = AMDGPU::getValueMapping(Bank, 32);
       break;
     }
