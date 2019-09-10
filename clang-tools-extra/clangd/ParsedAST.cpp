@@ -110,9 +110,8 @@ public:
                                  std::vector<SourceLocation> &MainFileMacroLocs)
       : SM(SM), MainFileMacroLocs(MainFileMacroLocs) {}
 
-  virtual void MacroExpands(const Token &MacroNameTok,
-                            const MacroDefinition &MD, SourceRange Range,
-                            const MacroArgs *Args) {
+  void MacroExpands(const Token &MacroNameTok, const MacroDefinition &MD,
+                    SourceRange Range, const MacroArgs *Args) override {
     SourceLocation L = MacroNameTok.getLocation();
     if (!L.isMacroID() && isInsideMainFile(L, SM))
       MainFileMacroLocs.push_back(L);
@@ -368,7 +367,7 @@ ParsedAST::build(std::unique_ptr<clang::CompilerInvocation> CI,
   if (Preamble)
     CanonIncludes = Preamble->CanonIncludes;
   else
-    addSystemHeadersMapping(&CanonIncludes, Clang->getLangOpts());
+    CanonIncludes.addSystemHeadersMapping(Clang->getLangOpts());
   std::unique_ptr<CommentHandler> IWYUHandler =
       collectIWYUHeaderMaps(&CanonIncludes);
   Clang->getPreprocessor().addCommentHandler(IWYUHandler.get());

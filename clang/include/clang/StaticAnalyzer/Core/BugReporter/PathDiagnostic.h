@@ -282,8 +282,7 @@ public:
 
   /// Create a location corresponding to the next valid ExplodedNode as end
   /// of path location.
-  static PathDiagnosticLocation createEndOfPath(const ExplodedNode* N,
-                                                const SourceManager &SM);
+  static PathDiagnosticLocation createEndOfPath(const ExplodedNode* N);
 
   /// Convert the given location into a single kind location.
   static PathDiagnosticLocation createSingleLocation(
@@ -393,6 +392,7 @@ private:
   StringRef Tag;
 
   std::vector<SourceRange> ranges;
+  std::vector<FixItHint> fixits;
 
 protected:
   PathDiagnosticPiece(StringRef s, Kind k, DisplayHint hint = Below);
@@ -437,8 +437,15 @@ public:
     ranges.push_back(SourceRange(B,E));
   }
 
+  void addFixit(FixItHint F) {
+    fixits.push_back(F);
+  }
+
   /// Return the SourceRanges associated with this PathDiagnosticPiece.
   ArrayRef<SourceRange> getRanges() const { return ranges; }
+
+  /// Return the fix-it hints associated with this PathDiagnosticPiece.
+  ArrayRef<FixItHint> getFixits() const { return fixits; }
 
   virtual void Profile(llvm::FoldingSetNodeID &ID) const;
 

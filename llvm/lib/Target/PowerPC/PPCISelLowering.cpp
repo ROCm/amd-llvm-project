@@ -950,7 +950,6 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM,
     setOperationAction(ISD::FP_TO_UINT , MVT::v4f64, Expand);
 
     setOperationAction(ISD::FP_ROUND , MVT::v4f32, Legal);
-    setOperationAction(ISD::FP_ROUND_INREG , MVT::v4f32, Expand);
     setOperationAction(ISD::FP_EXTEND, MVT::v4f64, Legal);
 
     setOperationAction(ISD::FNEG , MVT::v4f64, Legal);
@@ -1180,9 +1179,9 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM,
     setJumpIsExpensive();
   }
 
-  setMinFunctionLogAlignment(2);
+  setMinFunctionAlignment(llvm::Align(4));
   if (Subtarget.isDarwin())
-    setPrefFunctionLogAlignment(4);
+    setPrefFunctionAlignment(llvm::Align(16));
 
   switch (Subtarget.getDarwinDirective()) {
   default: break;
@@ -1199,8 +1198,8 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM,
   case PPC::DIR_PWR7:
   case PPC::DIR_PWR8:
   case PPC::DIR_PWR9:
-    setPrefFunctionLogAlignment(4);
-    setPrefLoopLogAlignment(4);
+    setPrefLoopAlignment(llvm::Align(16));
+    setPrefFunctionAlignment(llvm::Align(16));
     break;
   }
 
