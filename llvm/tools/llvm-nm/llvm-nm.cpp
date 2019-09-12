@@ -28,6 +28,8 @@
 #include "llvm/Object/MachO.h"
 #include "llvm/Object/MachOUniversal.h"
 #include "llvm/Object/ObjectFile.h"
+#include "llvm/Object/TapiFile.h"
+#include "llvm/Object/TapiUniversal.h"
 #include "llvm/Object/Wasm.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileSystem.h"
@@ -336,6 +338,8 @@ static char isSymbolList64Bit(SymbolicFile &Obj) {
     return false;
   if (isa<WasmObjectFile>(Obj))
     return false;
+  if (TapiFile *Tapi = dyn_cast<TapiFile>(&Obj))
+    return Tapi->is64Bit();
   if (MachOObjectFile *MachO = dyn_cast<MachOObjectFile>(&Obj))
     return MachO->is64Bit();
   return cast<ELFObjectFileBase>(Obj).getBytesInAddress() == 8;
@@ -1041,6 +1045,10 @@ static char getSymbolNMTypeChar(MachOObjectFile &Obj, basic_symbol_iterator I) {
   return '?';
 }
 
+static char getSymbolNMTypeChar(TapiFile &Obj, basic_symbol_iterator I) {
+  return 's';
+}
+
 static char getSymbolNMTypeChar(WasmObjectFile &Obj, basic_symbol_iterator I) {
   uint32_t Flags = I->getFlags();
   if (Flags & SymbolRef::SF_Executable)
@@ -1082,7 +1090,7 @@ static StringRef getNMTypeName(SymbolicFile &Obj, basic_symbol_iterator I) {
 static char getNMSectionTagAndName(SymbolicFile &Obj, basic_symbol_iterator I,
                                    StringRef &SecName) {
   uint32_t Symflags = I->getFlags();
-  if (isa<ELFObjectFileBase>(&Obj)) {
+  if (ELFObjectFileBase *ELFObj = dyn_cast<ELFObjectFileBase>(&Obj)) {
     if (Symflags & object::SymbolRef::SF_Absolute)
       SecName = "*ABS*";
     else if (Symflags & object::SymbolRef::SF_Common)
@@ -1096,6 +1104,9 @@ static char getNMSectionTagAndName(SymbolicFile &Obj, basic_symbol_iterator I,
         consumeError(SecIOrErr.takeError());
         return '?';
       }
+
+      if (*SecIOrErr == ELFObj->section_end())
+        return '?';
 
       Expected<StringRef> NameOrErr = (*SecIOrErr)->getName();
       if (!NameOrErr) {
@@ -1130,6 +1141,8 @@ static char getNMSectionTagAndName(SymbolicFile &Obj, basic_symbol_iterator I,
     Ret = getSymbolNMTypeChar(*MachO, I);
   else if (WasmObjectFile *Wasm = dyn_cast<WasmObjectFile>(&Obj))
     Ret = getSymbolNMTypeChar(*Wasm, I);
+  else if (TapiFile *Tapi = dyn_cast<TapiFile>(&Obj))
+    Ret = getSymbolNMTypeChar(*Tapi, I);
   else
     Ret = getSymbolNMTypeChar(cast<ELFObjectFileBase>(Obj), I);
 
@@ -2060,6 +2073,26 @@ static void dumpSymbolNamesFromFile(std::string &Filename) {
     }
     return;
   }
+
+  if (TapiUniversal *TU = dyn_cast<TapiUniversal>(&Bin)) {
+    for (auto &I : TU->objects()) {
+      auto ObjOrErr = I.getAsObjectFile();
+      if (ObjOrErr) {
+        auto &Obj = *ObjOrErr.get();
+        outs() << "\n"
+               << Obj.getFileName() << " (for architecture "
+               << I.getArchFlagName() << ")"
+               << ":\n";
+        dumpSymbolNamesFromObject(Obj, false, {}, I.getArchFlagName());
+      } else if (auto E =
+                     isNotObjectErrorInvalidFileType(ObjOrErr.takeError())) {
+        error(std::move(E), Filename, I.getArchFlagName());
+      }
+    }
+
+    return;
+  }
+
   if (SymbolicFile *O = dyn_cast<SymbolicFile>(&Bin)) {
     if (!MachOPrintSizeWarning && PrintSize &&  isa<MachOObjectFile>(O)) {
       WithColor::warning(errs(), ToolName)

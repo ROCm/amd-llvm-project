@@ -1990,16 +1990,7 @@ bool Sema::DiagnoseEmptyLookup(Scope *S, CXXScopeSpec &SS, LookupResult &R,
       R.clear();
     }
 
-    // In Microsoft mode, if we are performing lookup from within a friend
-    // function definition declared at class scope then we must set
-    // DC to the lexical parent to be able to search into the parent
-    // class.
-    if (getLangOpts().MSVCCompat && isa<FunctionDecl>(DC) &&
-        cast<FunctionDecl>(DC)->getFriendObjectKind() &&
-        DC->getLexicalParent()->isRecord())
-      DC = DC->getLexicalParent();
-    else
-      DC = DC->getParent();
+    DC = DC->getLookupParent();
   }
 
   // We didn't find anything, so try to correct for a typo.
@@ -6224,7 +6215,7 @@ Sema::BuildCompoundLiteralExpr(SourceLocation LParenLoc, TypeSourceInfo *TInfo,
         ILE->setInit(i, ConstantExpr::Create(Context, Init));
       }
 
-  Expr *E = new (Context) CompoundLiteralExpr(LParenLoc, TInfo, literalType,
+  auto *E = new (Context) CompoundLiteralExpr(LParenLoc, TInfo, literalType,
                                               VK, LiteralExpr, isFileScope);
   if (isFileScope) {
     if (!LiteralExpr->isTypeDependent() &&
@@ -6241,6 +6232,19 @@ Sema::BuildCompoundLiteralExpr(SourceLocation LParenLoc, TypeSourceInfo *TInfo,
       << SourceRange(LParenLoc, LiteralExpr->getSourceRange().getEnd());
     return ExprError();
   }
+
+  // Compound literals that have automatic storage duration are destroyed at
+  // the end of the scope. Emit diagnostics if it is or contains a C union type
+  // that is non-trivial to destruct.
+  if (!isFileScope)
+    if (E->getType().hasNonTrivialToPrimitiveDestructCUnion())
+      checkNonTrivialCUnion(E->getType(), E->getExprLoc(),
+                            NTCUC_CompoundLiteral, NTCUK_Destruct);
+
+  if (E->getType().hasNonTrivialToPrimitiveDefaultInitializeCUnion() ||
+      E->getType().hasNonTrivialToPrimitiveCopyCUnion())
+    checkNonTrivialCUnionInInitializer(E->getInitializer(),
+                                       E->getInitializer()->getExprLoc());
 
   return MaybeBindToTemporary(E);
 }
@@ -9276,7 +9280,7 @@ static void checkArithmeticNull(Sema &S, ExprResult &LHS, ExprResult &RHS,
       << LHS.get()->getSourceRange() << RHS.get()->getSourceRange();
 }
 
-static void DiagnoseDivisionSizeofPointer(Sema &S, Expr *LHS, Expr *RHS,
+static void DiagnoseDivisionSizeofPointerOrArray(Sema &S, Expr *LHS, Expr *RHS,
                                           SourceLocation Loc) {
   const auto *LUE = dyn_cast<UnaryExprOrTypeTraitExpr>(LHS);
   const auto *RUE = dyn_cast<UnaryExprOrTypeTraitExpr>(RHS);
@@ -9297,7 +9301,8 @@ static void DiagnoseDivisionSizeofPointer(Sema &S, Expr *LHS, Expr *RHS,
 
   if (!LHSTy->isPointerType() || RHSTy->isPointerType())
     return;
-  if (LHSTy->getPointeeType().getCanonicalType() != RHSTy.getCanonicalType())
+  if (LHSTy->getPointeeType().getCanonicalType().getUnqualifiedType() !=
+      RHSTy.getCanonicalType().getUnqualifiedType())
     return;
 
   S.Diag(Loc, diag::warn_division_sizeof_ptr) << LHS << LHS->getSourceRange();
@@ -9341,7 +9346,7 @@ QualType Sema::CheckMultiplyDivideOperands(ExprResult &LHS, ExprResult &RHS,
     return InvalidOperands(Loc, LHS, RHS);
   if (IsDiv) {
     DiagnoseBadDivideOrRemainderValues(*this, LHS, RHS, Loc, IsDiv);
-    DiagnoseDivisionSizeofPointer(*this, LHS.get(), RHS.get(), Loc);
+    DiagnoseDivisionSizeofPointerOrArray(*this, LHS.get(), RHS.get(), Loc);
   }
   return compType;
 }
@@ -13026,6 +13031,10 @@ ExprResult Sema::CreateBuiltinBinOp(SourceLocation OpLoc,
           if (auto *VD = dyn_cast<VarDecl>(DRE->getDecl()))
             if (VD->hasLocalStorage() && getCurScope()->isDeclScope(VD))
               BE->getBlockDecl()->setCanAvoidCopyToHeap();
+
+      if (LHS.get()->getType().hasNonTrivialToPrimitiveCopyCUnion())
+        checkNonTrivialCUnion(LHS.get()->getType(), LHS.get()->getExprLoc(),
+                              NTCUC_Assignment, NTCUK_Copy);
     }
     RecordModifiableNonNullParam(*this, LHS.get());
     break;
@@ -14450,6 +14459,11 @@ ExprResult Sema::ActOnBlockStmtExpr(SourceLocation CaretLoc,
   if (getLangOpts().CPlusPlus && RetTy->isRecordType() &&
       !BD->isDependentContext())
     computeNRVO(Body, BSI);
+
+  if (RetTy.hasNonTrivialToPrimitiveDestructCUnion() ||
+      RetTy.hasNonTrivialToPrimitiveCopyCUnion())
+    checkNonTrivialCUnion(RetTy, BD->getCaretLocation(), NTCUC_FunctionReturn,
+                          NTCUK_Destruct|NTCUK_Copy);
 
   PopDeclContext();
 
@@ -16013,27 +16027,11 @@ static bool captureInBlock(BlockScopeInfo *BSI, VarDecl *Var,
 
   // Warn about implicitly autoreleasing indirect parameters captured by blocks.
   if (const auto *PT = CaptureType->getAs<PointerType>()) {
-    // This function finds out whether there is an AttributedType of kind
-    // attr::ObjCOwnership in Ty. The existence of AttributedType of kind
-    // attr::ObjCOwnership implies __autoreleasing was explicitly specified
-    // rather than being added implicitly by the compiler.
-    auto IsObjCOwnershipAttributedType = [](QualType Ty) {
-      while (const auto *AttrTy = Ty->getAs<AttributedType>()) {
-        if (AttrTy->getAttrKind() == attr::ObjCOwnership)
-          return true;
-
-        // Peel off AttributedTypes that are not of kind ObjCOwnership.
-        Ty = AttrTy->getModifiedType();
-      }
-
-      return false;
-    };
-
     QualType PointeeTy = PT->getPointeeType();
 
     if (!Invalid && PointeeTy->getAs<ObjCObjectPointerType>() &&
         PointeeTy.getObjCLifetime() == Qualifiers::OCL_Autoreleasing &&
-        !IsObjCOwnershipAttributedType(PointeeTy)) {
+        !S.Context.hasDirectOwnershipQualifier(PointeeTy)) {
       if (BuildAndDiagnose) {
         SourceLocation VarLoc = Var->getLocation();
         S.Diag(Loc, diag::warn_block_capture_autoreleasing);
@@ -16785,6 +16783,15 @@ static ExprResult rebuildPotentialResultsAsNonOdrUsed(Sema &S, Expr *E,
 }
 
 ExprResult Sema::CheckLValueToRValueConversionOperand(Expr *E) {
+  // Check whether the operand is or contains an object of non-trivial C union
+  // type.
+  if (E->getType().isVolatileQualified() &&
+      (E->getType().hasNonTrivialToPrimitiveDestructCUnion() ||
+       E->getType().hasNonTrivialToPrimitiveCopyCUnion()))
+    checkNonTrivialCUnion(E->getType(), E->getExprLoc(),
+                          Sema::NTCUC_LValueToRValueVolatile,
+                          NTCUK_Destruct|NTCUK_Copy);
+
   // C++2a [basic.def.odr]p4:
   //   [...] an expression of non-volatile-qualified non-class type to which
   //   the lvalue-to-rvalue conversion is applied [...]

@@ -175,6 +175,7 @@ def int_amdgcn_implicit_buffer_ptr :
 
 // Set EXEC to the 64-bit value given.
 // This is always moved to the beginning of the basic block.
+// FIXME: Should be mangled for wave size.
 def int_amdgcn_init_exec : Intrinsic<[],
   [llvm_i64_ty],      // 64-bit literal constant
   [IntrConvergent, ImmArg<0>]>;
@@ -206,7 +207,7 @@ def int_amdgcn_s_sendmsghalt : GCCBuiltin<"__builtin_amdgcn_s_sendmsghalt">,
   [ImmArg<0>, IntrNoMem, IntrHasSideEffects]>;
 
 def int_amdgcn_s_barrier : GCCBuiltin<"__builtin_amdgcn_s_barrier">,
-  Intrinsic<[], [], [IntrConvergent]>;
+  Intrinsic<[], [], [IntrNoMem, IntrHasSideEffects, IntrConvergent]>;
 
 def int_amdgcn_wave_barrier : GCCBuiltin<"__builtin_amdgcn_wave_barrier">,
   Intrinsic<[], [], [IntrConvergent]>;

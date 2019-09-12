@@ -40,6 +40,9 @@ Non-comprehensive list of changes in this release
    functionality, or simply have a lot to talk about), see the `NOTE` below
    for adding a new subsection.
 
+* The ISD::FP_ROUND_INREG opcode and related code was removed from SelectionDAG.
+* Enabled MemorySSA as a loop dependency.
+
 .. NOTE
    If you would like to document a larger change, then you can add a
    subsection about it right here. You can copy the following boilerplate
