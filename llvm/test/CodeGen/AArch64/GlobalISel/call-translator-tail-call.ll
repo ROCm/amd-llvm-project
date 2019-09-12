@@ -52,50 +52,6 @@ define i32 @test_nonvoid_ret() {
   ret i32 %call
 }
 
-; Don't want to handle swifterror at all right now, since lowerCall will
-; insert a COPY after the call right now.
-; TODO: Support this.
-%swift_error = type {i64, i8}
-define float @swifterror(%swift_error** swifterror %ptr) {
-  ; COMMON-LABEL: name: swifterror
-  ; COMMON: bb.1 (%ir-block.0):
-  ; COMMON:   liveins: $x21
-  ; COMMON:   [[COPY:%[0-9]+]]:_(p0) = COPY $x21
-  ; COMMON:   [[COPY1:%[0-9]+]]:gpr64all = COPY [[COPY]](p0)
-  ; COMMON:   [[COPY2:%[0-9]+]]:_(p0) = COPY [[COPY1]]
-  ; COMMON:   ADJCALLSTACKDOWN 0, 0, implicit-def $sp, implicit $sp
-  ; COMMON:   $x21 = COPY [[COPY2]](p0)
-  ; COMMON:   BL @swifterror, csr_aarch64_aapcs_swifterror, implicit-def $lr, implicit $sp, implicit $x21, implicit-def $s0, implicit-def $x21
-  ; COMMON:   [[COPY3:%[0-9]+]]:_(s32) = COPY $s0
-  ; COMMON:   [[COPY4:%[0-9]+]]:gpr64all = COPY $x21
-  ; COMMON:   ADJCALLSTACKUP 0, 0, implicit-def $sp, implicit $sp
-  ; COMMON:   $s0 = COPY [[COPY3]](s32)
-  ; COMMON:   $x21 = COPY [[COPY4]]
-  ; COMMON:   RET_ReallyLR implicit $s0, implicit $x21
-  %call = tail call float @swifterror(%swift_error** swifterror %ptr)
-  ret float %call
-}
-
-define swiftcc float @swifterror_swiftcc(%swift_error** swifterror %ptr) {
-  ; COMMON-LABEL: name: swifterror_swiftcc
-  ; COMMON: bb.1 (%ir-block.0):
-  ; COMMON:   liveins: $x21
-  ; COMMON:   [[COPY:%[0-9]+]]:_(p0) = COPY $x21
-  ; COMMON:   [[COPY1:%[0-9]+]]:gpr64all = COPY [[COPY]](p0)
-  ; COMMON:   [[COPY2:%[0-9]+]]:_(p0) = COPY [[COPY1]]
-  ; COMMON:   ADJCALLSTACKDOWN 0, 0, implicit-def $sp, implicit $sp
-  ; COMMON:   $x21 = COPY [[COPY2]](p0)
-  ; COMMON:   BL @swifterror_swiftcc, csr_aarch64_aapcs_swifterror, implicit-def $lr, implicit $sp, implicit $x21, implicit-def $s0, implicit-def $x21
-  ; COMMON:   [[COPY3:%[0-9]+]]:_(s32) = COPY $s0
-  ; COMMON:   [[COPY4:%[0-9]+]]:gpr64all = COPY $x21
-  ; COMMON:   ADJCALLSTACKUP 0, 0, implicit-def $sp, implicit $sp
-  ; COMMON:   $s0 = COPY [[COPY3]](s32)
-  ; COMMON:   $x21 = COPY [[COPY4]]
-  ; COMMON:   RET_ReallyLR implicit $s0, implicit $x21
-  %call = tail call swiftcc float @swifterror_swiftcc(%swift_error** swifterror %ptr)
-  ret float %call
-}
-
 ; Right now, this should not be tail called.
 ; TODO: Support this.
 declare void @varargs(i32, double, i64, ...)
@@ -175,16 +131,41 @@ define void @test_extern_weak() {
   ret void
 }
 
-; Right now, mismatched calling conventions should not be tail called.
-; TODO: Support this.
 declare fastcc void @fast_fn()
 define void @test_mismatched_caller() {
   ; COMMON-LABEL: name: test_mismatched_caller
   ; COMMON: bb.1 (%ir-block.0):
-  ; COMMON:   ADJCALLSTACKDOWN 0, 0, implicit-def $sp, implicit $sp
-  ; COMMON:   BL @fast_fn, csr_aarch64_aapcs, implicit-def $lr, implicit $sp
-  ; COMMON:   ADJCALLSTACKUP 0, 0, implicit-def $sp, implicit $sp
-  ; COMMON:   RET_ReallyLR
+  ; COMMON:   TCRETURNdi @fast_fn, 0, csr_aarch64_aapcs, implicit $sp
   tail call fastcc void @fast_fn()
+  ret void
+}
+
+; Verify that lifetime markers and llvm.assume don't impact tail calling.
+declare void @llvm.assume(i1)
+define void @test_assume() local_unnamed_addr {
+  ; COMMON-LABEL: name: test_assume
+  ; COMMON: bb.1.entry:
+  ; COMMON:   TCRETURNdi @nonvoid_ret, 0, csr_aarch64_aapcs, implicit $sp
+entry:
+  %x = tail call i32 @nonvoid_ret()
+  %y = icmp ne i32 %x, 0
+  tail call void @llvm.assume(i1 %y)
+  ret void
+}
+
+declare void @llvm.lifetime.start.p0i8(i64, i8* nocapture)
+declare void @llvm.lifetime.end.p0i8(i64, i8* nocapture)
+define void @test_lifetime() local_unnamed_addr {
+  ; COMMON-LABEL: name: test_lifetime
+  ; COMMON: bb.1.entry:
+  ; COMMON:   [[FRAME_INDEX:%[0-9]+]]:_(p0) = G_FRAME_INDEX %stack.0.t
+  ; COMMON:   LIFETIME_START %stack.0.t
+  ; COMMON:   TCRETURNdi @nonvoid_ret, 0, csr_aarch64_aapcs, implicit $sp
+entry:
+  %t = alloca i8, align 1
+  call void @llvm.lifetime.start.p0i8(i64 1, i8* %t)
+  %x = tail call i32 @nonvoid_ret()
+  %y = icmp ne i32 %x, 0
+  tail call void @llvm.lifetime.end.p0i8(i64 1, i8* %t)
   ret void
 }

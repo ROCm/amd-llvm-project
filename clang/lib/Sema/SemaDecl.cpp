@@ -6846,7 +6846,9 @@ NamedDecl *Sema::ActOnVariableDeclarator(
     // C++1z [dcl.spec.constexpr]p1:
     //   A static data member declared with the constexpr specifier is
     //   implicitly an inline variable.
-    if (NewVD->isStaticDataMember() && getLangOpts().CPlusPlus17)
+    if (NewVD->isStaticDataMember() &&
+        (getLangOpts().CPlusPlus17 ||
+         Context.getTargetInfo().getCXXABI().isMicrosoft()))
       NewVD->setImplicitlyInline();
     break;
 
@@ -12003,7 +12005,8 @@ void Sema::ActOnUninitializedDecl(Decl *RealDecl) {
       if (Var->isStaticDataMember()) {
         // C++1z removes the relevant rule; the in-class declaration is always
         // a definition there.
-        if (!getLangOpts().CPlusPlus17) {
+        if (!getLangOpts().CPlusPlus17 &&
+            !Context.getTargetInfo().getCXXABI().isMicrosoft()) {
           Diag(Var->getLocation(),
                diag::err_constexpr_static_mem_var_requires_init)
             << Var->getDeclName();
@@ -14723,7 +14726,7 @@ Decl *Sema::ActOnTag(Scope *S, unsigned TagSpec, TagUseKind TUK,
                                           UPPC_FixedUnderlyingType))
         EnumUnderlying = Context.IntTy.getTypePtr();
 
-    } else if (Context.getTargetInfo().getCXXABI().isMicrosoft()) {
+    } else if (Context.getTargetInfo().getTriple().isWindowsMSVCEnvironment()) {
       // For MSVC ABI compatibility, unfixed enums must use an underlying type
       // of 'int'. However, if this is an unfixed forward declaration, don't set
       // the underlying type unless the user enables -fms-compatibility. This
@@ -16850,8 +16853,7 @@ EnumConstantDecl *Sema::CheckEnumConstant(EnumDecl *Enum,
     if (Enum->isDependentType() || Val->isTypeDependent())
       EltTy = Context.DependentTy;
     else {
-      if (getLangOpts().CPlusPlus11 && Enum->isFixed() &&
-          !getLangOpts().MSVCCompat) {
+      if (getLangOpts().CPlusPlus11 && Enum->isFixed()) {
         // C++11 [dcl.enum]p5: If the underlying type is fixed, [...] the
         // constant-expression in the enumerator-definition shall be a converted
         // constant expression of the underlying type.
@@ -16876,15 +16878,19 @@ EnumConstantDecl *Sema::CheckEnumConstant(EnumDecl *Enum,
           // we perform a non-narrowing conversion as part of converted constant
           // expression checking.
           if (!isRepresentableIntegerValue(Context, EnumVal, EltTy)) {
-            if (getLangOpts().MSVCCompat) {
+            if (Context.getTargetInfo()
+                    .getTriple()
+                    .isWindowsMSVCEnvironment()) {
               Diag(IdLoc, diag::ext_enumerator_too_large) << EltTy;
-              Val = ImpCastExprToType(Val, EltTy, CK_IntegralCast).get();
-            } else
+            } else {
               Diag(IdLoc, diag::err_enumerator_too_large) << EltTy;
-          } else
-            Val = ImpCastExprToType(Val, EltTy,
-                                    EltTy->isBooleanType() ?
-                                    CK_IntegralToBoolean : CK_IntegralCast)
+            }
+          }
+
+          // Cast to the underlying type.
+          Val = ImpCastExprToType(Val, EltTy,
+                                  EltTy->isBooleanType() ? CK_IntegralToBoolean
+                                                         : CK_IntegralCast)
                     .get();
         } else if (getLangOpts().CPlusPlus) {
           // C++11 [dcl.enum]p5:
