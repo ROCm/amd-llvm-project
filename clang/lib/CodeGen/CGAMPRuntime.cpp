@@ -218,13 +218,15 @@ void CGAMPRuntime::EmitCXXAMPDeserializer(CodeGenFunction &CGF,
   }
 
   // Emit code to call the deserializing constructor
-  llvm::Constant *Callee = CGM.getAddrOfCXXStructor(GlobalDecl(DeserializeConstructor,Dtor_Complete));
+  llvm::Constant *Callee =
+    CGM.getAddrOfCXXStructor(GlobalDecl(DeserializeConstructor, Ctor_Complete));
 
   const FunctionProtoType *FPT =
       DeserializeConstructor->getType()->castAs<FunctionProtoType>();
 
-  const CGFunctionInfo &DesFnInfo = 
-      CGM.getTypes().arrangeCXXStructorDeclaration(GlobalDecl(DeserializeConstructor, Dtor_Complete));
+  const CGFunctionInfo &DesFnInfo =
+    CGM.getTypes().arrangeCXXStructorDeclaration(
+      GlobalDecl(DeserializeConstructor, Ctor_Complete));
 
   for (unsigned I = 1, E = DeserializerArgs.size(); I != E; ++I) {
     auto T = FPT->getParamType(I-1);
@@ -251,7 +253,7 @@ void CGAMPRuntime::EmitTrampolineBody(CodeGenFunction &CGF,
   // Allocate "this"
   Address ai = CGF.CreateMemTemp(QualType(ClassDecl->getTypeForDecl(),0));
   // Locate the constructor to call
-  if(ClassDecl->getCXXAMPDeserializationConstructor()!=NULL) {
+  if(ClassDecl->getCXXAMPDeserializationConstructor()) {
     EmitCXXAMPDeserializer(CGF,Trampoline,Args,ai); 
   }
 
@@ -300,7 +302,7 @@ void CGAMPRuntime::EmitTrampolineBody(CodeGenFunction &CGF,
     return;
   }
 
-  CXXMethodDecl *Kernel = (KernelDecl != NULL) ? KernelDecl : KernelDeclNoArg;
+  CXXMethodDecl *Kernel = KernelDecl ? KernelDecl : KernelDeclNoArg;
 
   // Invoke this->operator(index)
   // Prepate the operator() to call

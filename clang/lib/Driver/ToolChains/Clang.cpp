@@ -3276,8 +3276,6 @@ static void RenderDebugOptions(const ToolChain &TC, const Driver &D,
     }
   }
 
-  if (!IsHCCKernelPath ||
-       DebugInfoKind == codegenoptions::DebugLineTablesOnly) {
   // If a debugger tuning argument appeared, remember it.
   if (const Arg *A =
           Args.getLastArg(options::OPT_gTune_Group, options::OPT_ggdbN_Group)) {
@@ -3458,8 +3456,6 @@ static void RenderDebugOptions(const ToolChain &TC, const Driver &D,
   if (DebuggerTuning == llvm::DebuggerKind::SCE)
     CmdArgs.push_back("-dwarf-explicit-import");
 
-  } // if (!IsHCCKernelPath)
-
   RenderDebugInfoCompressionArgs(Args, CmdArgs, D, TC);
 }
 
@@ -3560,8 +3556,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-famp-is-device");
     CmdArgs.push_back("-fno-builtin");
     CmdArgs.push_back("-fno-common");
-    //CmdArgs.push_back("-m32"); // added below using -triple
-    CmdArgs.push_back("-O2");
+    if (!Args.hasArg(options::OPT_O_Group)) CmdArgs.push_back("-O2");
   } else if (JA.ContainsActions(Action::BackendJobClass, types::TY_PP_CXX_AMP_CPU) ||
              JA.ContainsActions(Action::PreprocessJobClass, types::TY_CXX_AMP_CPU)) {
     // path to compile kernel codes on CPU
@@ -4409,22 +4404,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back("-O3");
       D.Diag(diag::warn_O4_is_O3);
     } else {
-      // C++ AMP-specific
-      if (JA.ContainsActions(Action::BackendJobClass, types::TY_PP_CXX_AMP)) {
-        // ignore -O0 and -O1 for GPU compilation paths
-        // because inliner would not be enabled and will cause compilation fail
-        if (A->getOption().matches(options::OPT_O0)) {
-          D.Diag(diag::warn_drv_O0_ignored_for_GPU);
-        } else if (A->containsValue("1")) {
-          D.Diag(diag::warn_drv_O1_ignored_for_GPU);
-        } else {
-          // let all other optimization levels pass
-          A->render(Args, CmdArgs);
-        }
-      } else {
-        // normal cases
-        A->render(Args, CmdArgs);
-      }
+      A->render(Args, CmdArgs);
     }
   }
 
@@ -5203,9 +5183,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                     options::OPT_fno_gnu_inline_asm, true))
     CmdArgs.push_back("-fno-gnu-inline-asm");
 
-  // Turn off vectorization support for GPU kernels for now
-  if (!IsHCCKernelPath) {
-
   // Enable vectorization per default according to the optimization level
   // selected. For optimization levels that want vectorization we use the alias
   // option to simplify the hasFlag logic.
@@ -5216,10 +5193,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                    options::OPT_fno_vectorize, EnableVec))
     CmdArgs.push_back("-vectorize-loops");
 
-  } // if (!IsHCCKernelPath)
-
   // -fslp-vectorize is enabled based on the optimization level selected.
-  bool EnableSLPVec = shouldEnableVectorizerAtOLevel(Args, true) && !IsHCCKernelPath;
+  bool EnableSLPVec = shouldEnableVectorizerAtOLevel(Args, true);
   OptSpecifier SLPVectAliasOption =
       EnableSLPVec ? options::OPT_O_Group : options::OPT_fslp_vectorize;
   if (Args.hasFlag(options::OPT_fslp_vectorize, SLPVectAliasOption,
