@@ -58,9 +58,11 @@ Getting Started, How-tos, Developer Guides, and Tutorials.
 .. toctree::
    :hidden:
 
-   Programming Documentation
-   Subsystem Documentation
-   User Guides
+   UserGuides
+   ProgrammingDocumentation
+   SubsystemDocumentation
+   ReferenceDocumentation
+
 
 :doc:`UserGuides`
   For those new to the LLVM system.
@@ -70,6 +72,9 @@ Getting Started, How-tos, Developer Guides, and Tutorials.
 
 :doc:`SubsystemDocumentation`
   For API clients and LLVM developers.
+
+:doc:`ReferenceDocumentation`
+  LLVM and API reference documentation.
 
 Community
 =========

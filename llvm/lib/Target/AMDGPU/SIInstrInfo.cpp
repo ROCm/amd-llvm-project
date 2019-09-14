@@ -6110,7 +6110,7 @@ MachineInstrBuilder SIInstrInfo::getAddNoCarry(MachineBasicBlock &MBB,
                                                Register DestReg,
                                                RegScavenger &RS) const {
   if (ST.hasAddNoCarry())
-    return BuildMI(MBB, I, DL, get(AMDGPU::V_ADD_U32_e64), DestReg);
+    return BuildMI(MBB, I, DL, get(AMDGPU::V_ADD_U32_e32), DestReg);
 
   Register UnusedCarry = RS.scavengeRegister(RI.getBoolRC(), I, 0, false);
   // TODO: Users need to deal with this.
@@ -6409,34 +6409,4 @@ bool llvm::execMayBeModifiedBeforeAnyUse(const MachineRegisterInfo &MRI,
     if (I->modifiesRegister(AMDGPU::EXEC, TRI))
       return true;
   }
-}
-
-MachineInstr *SIInstrInfo::createPHIDestinationCopy(
-    MachineBasicBlock &MBB, MachineBasicBlock::iterator LastPHIIt,
-    const DebugLoc &DL, Register Src, Register Dst) const {
-  auto Cur = MBB.begin();
-  while (Cur != MBB.end()) {
-    if (!Cur->isPHI() && Cur->readsRegister(Dst))
-      return BuildMI(MBB, Cur, DL, get(TargetOpcode::COPY), Dst).addReg(Src);
-    ++Cur;
-    if (Cur == LastPHIIt)
-      break;
-  }
-
-  return TargetInstrInfo::createPHIDestinationCopy(MBB, LastPHIIt, DL, Src,
-                                                   Dst);
-}
-
-MachineInstr *SIInstrInfo::createPHISourceCopy(
-    MachineBasicBlock &MBB, MachineBasicBlock::iterator InsPt,
-    const DebugLoc &DL, Register Src, Register SrcSubReg, Register Dst) const {
-  if (InsPt != MBB.end() && InsPt->isPseudo() && InsPt->definesRegister(Src)) {
-    InsPt++;
-    return BuildMI(MBB, InsPt, InsPt->getDebugLoc(), get(TargetOpcode::COPY),
-                   Dst)
-        .addReg(Src, 0, SrcSubReg)
-        .addReg(AMDGPU::EXEC, RegState::Implicit);
-  }
-  return TargetInstrInfo::createPHISourceCopy(MBB, InsPt, DL, Src, SrcSubReg,
-                                              Dst);
 }
