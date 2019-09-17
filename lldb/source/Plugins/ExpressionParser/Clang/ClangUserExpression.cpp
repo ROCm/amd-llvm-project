@@ -313,13 +313,13 @@ void ClangUserExpression::ScanContext(ExecutionContext &exe_ctx, Status &err) {
 // count is not available, [myArray count] returns id, which can't be directly
 // cast to int without causing a clang error.
 static void ApplyObjcCastHack(std::string &expr) {
-  std::string from = "(int)[";
-  std::string to = "(int)(long long)[";
+  const std::string from = "(int)[";
+  const std::string to = "(int)(long long)[";
 
   size_t offset;
 
   while ((offset = expr.find(from)) != expr.npos)
-    expr.replace(offset, to.size(), to);
+    expr.replace(offset, from.size(), to);
 }
 
 bool ClangUserExpression::SetupPersistentState(DiagnosticManager &diagnostic_manager,
