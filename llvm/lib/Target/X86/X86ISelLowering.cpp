@@ -1996,14 +1996,16 @@ X86TargetLowering::getPreferredVectorAction(MVT VT) const {
 MVT X86TargetLowering::getRegisterTypeForCallingConv(LLVMContext &Context,
                                                      CallingConv::ID CC,
                                                      EVT VT) const {
-  // Break wide vXi1 vectors into scalars to match avx2 behavior.
-  if (VT.isVector() && VT.getVectorElementType() == MVT::i1 &&
-      Subtarget.hasAVX512() &&
-      ((VT.getVectorNumElements() > 32 && !Subtarget.hasBWI()) ||
-       (VT.getVectorNumElements() > 64 && Subtarget.hasBWI())))
-    return MVT::i8;
+  // v32i1 vectors should be promoted to v32i8 to match avx2.
   if (VT == MVT::v32i1 && Subtarget.hasAVX512() && !Subtarget.hasBWI())
     return MVT::v32i8;
+  // Break wide or odd vXi1 vectors into scalars to match avx2 behavior.
+  if (VT.isVector() && VT.getVectorElementType() == MVT::i1 &&
+      Subtarget.hasAVX512() &&
+      (!isPowerOf2_32(VT.getVectorNumElements()) ||
+       (VT.getVectorNumElements() > 16 && !Subtarget.hasBWI()) ||
+       (VT.getVectorNumElements() > 64 && Subtarget.hasBWI())))
+    return MVT::i8;
   // FIXME: Should we just make these types legal and custom split operations?
   if ((VT == MVT::v32i16 || VT == MVT::v64i8) &&
       Subtarget.hasAVX512() && !Subtarget.hasBWI() && !EnableOldKNLABI)
@@ -2014,14 +2016,16 @@ MVT X86TargetLowering::getRegisterTypeForCallingConv(LLVMContext &Context,
 unsigned X86TargetLowering::getNumRegistersForCallingConv(LLVMContext &Context,
                                                           CallingConv::ID CC,
                                                           EVT VT) const {
-  // Break wide vXi1 vectors into scalars to match avx2 behavior.
-  if (VT.isVector() && VT.getVectorElementType() == MVT::i1 &&
-      Subtarget.hasAVX512() &&
-      ((VT.getVectorNumElements() > 32 && !Subtarget.hasBWI()) ||
-       (VT.getVectorNumElements() > 64 && Subtarget.hasBWI())))
-    return VT.getVectorNumElements();
+  // v32i1 vectors should be promoted to v32i8 to match avx2.
   if (VT == MVT::v32i1 && Subtarget.hasAVX512() && !Subtarget.hasBWI())
     return 1;
+  // Break wide or odd vXi1 vectors into scalars to match avx2 behavior.
+  if (VT.isVector() && VT.getVectorElementType() == MVT::i1 &&
+      Subtarget.hasAVX512() &&
+      (!isPowerOf2_32(VT.getVectorNumElements()) ||
+       (VT.getVectorNumElements() > 16 && !Subtarget.hasBWI()) ||
+       (VT.getVectorNumElements() > 64 && Subtarget.hasBWI())))
+    return VT.getVectorNumElements();
   // FIXME: Should we just make these types legal and custom split operations?
   if ((VT == MVT::v32i16 || VT == MVT::v64i8) &&
       Subtarget.hasAVX512() && !Subtarget.hasBWI() && !EnableOldKNLABI)
@@ -2032,10 +2036,11 @@ unsigned X86TargetLowering::getNumRegistersForCallingConv(LLVMContext &Context,
 unsigned X86TargetLowering::getVectorTypeBreakdownForCallingConv(
     LLVMContext &Context, CallingConv::ID CC, EVT VT, EVT &IntermediateVT,
     unsigned &NumIntermediates, MVT &RegisterVT) const {
-  // Break wide vXi1 vectors into scalars to match avx2 behavior.
+  // Break wide or odd vXi1 vectors into scalars to match avx2 behavior.
   if (VT.isVector() && VT.getVectorElementType() == MVT::i1 &&
       Subtarget.hasAVX512() &&
-      ((VT.getVectorNumElements() > 32 && !Subtarget.hasBWI()) ||
+      (!isPowerOf2_32(VT.getVectorNumElements()) ||
+       (VT.getVectorNumElements() > 16 && !Subtarget.hasBWI()) ||
        (VT.getVectorNumElements() > 64 && Subtarget.hasBWI()))) {
     RegisterVT = MVT::i8;
     IntermediateVT = MVT::i1;
@@ -2899,6 +2904,10 @@ SDValue X86TargetLowering::LowerCallResult(
     if ((CopyVT == MVT::f32 || CopyVT == MVT::f64 || CopyVT == MVT::f128) &&
         ((Is64Bit || Ins[InsIndex].Flags.isInReg()) && !Subtarget.hasSSE1())) {
       errorUnsupported(DAG, dl, "SSE register return with SSE disabled");
+      VA.convertToReg(X86::FP0); // Set reg to FP0, avoid hitting asserts.
+    } else if (CopyVT == MVT::f64 &&
+               (Is64Bit && !Subtarget.hasSSE2())) {
+      errorUnsupported(DAG, dl, "SSE2 register return with SSE2 disabled");
       VA.convertToReg(X86::FP0); // Set reg to FP0, avoid hitting asserts.
     }
 
@@ -8538,22 +8547,15 @@ static SDValue LowerBUILD_VECTORvXi1(SDValue Op, SelectionDAG &DAG,
 
   // insert elements one by one
   SDValue DstVec;
-  SDValue Imm;
-  if (Immediate) {
-    MVT ImmVT = MVT::getIntegerVT(std::max((int)VT.getSizeInBits(), 8));
-    Imm = DAG.getConstant(Immediate, dl, ImmVT);
-  }
-  else if (HasConstElts)
-    Imm = DAG.getConstant(0, dl, VT);
-  else
-    Imm = DAG.getUNDEF(VT);
-  if (Imm.getValueSizeInBits() == VT.getSizeInBits())
-    DstVec = DAG.getBitcast(VT, Imm);
-  else {
-    SDValue ExtVec = DAG.getBitcast(MVT::v8i1, Imm);
-    DstVec = DAG.getNode(ISD::EXTRACT_SUBVECTOR, dl, VT, ExtVec,
+  if (HasConstElts) {
+    MVT ImmVT = MVT::getIntegerVT(std::max(VT.getSizeInBits(), 8U));
+    SDValue Imm = DAG.getConstant(Immediate, dl, ImmVT);
+    MVT VecVT = VT.getSizeInBits() >= 8 ? VT : MVT::v8i1;
+    DstVec = DAG.getBitcast(VecVT, Imm);
+    DstVec = DAG.getNode(ISD::EXTRACT_SUBVECTOR, dl, VT, DstVec,
                          DAG.getIntPtrConstant(0, dl));
-  }
+  } else
+    DstVec = DAG.getUNDEF(VT);
 
   for (unsigned i = 0, e = NonConstIdx.size(); i != e; ++i) {
     unsigned InsertIdx = NonConstIdx[i];
@@ -34634,29 +34636,82 @@ bool X86TargetLowering::SimplifyDemandedVectorEltsForTargetNode(
     // TODO convert SrcUndef to KnownUndef.
     break;
   }
-  case X86ISD::KSHIFTL:
+  case X86ISD::KSHIFTL: {
+    SDValue Src = Op.getOperand(0);
+    auto *Amt = cast<ConstantSDNode>(Op.getOperand(1));
+    assert(Amt->getAPIntValue().ult(NumElts) && "Out of range shift amount");
+    unsigned ShiftAmt = Amt->getZExtValue();
+
+    if (ShiftAmt == 0)
+      return TLO.CombineTo(Op, Src);
+
+    // If this is ((X >>u C1) << ShAmt), see if we can simplify this into a
+    // single shift.  We can do this if the bottom bits (which are shifted
+    // out) are never demanded.
+    if (Src.getOpcode() == X86ISD::KSHIFTR) {
+      if (!DemandedElts.intersects(APInt::getLowBitsSet(NumElts, ShiftAmt))) {
+        unsigned C1 = Src.getConstantOperandVal(1);
+        unsigned Opc = X86ISD::KSHIFTL;
+        int Diff = ShiftAmt - C1;
+        if (Diff < 0) {
+          Diff = -Diff;
+          Opc = X86ISD::KSHIFTR;
+        }
+
+        SDLoc dl(Op);
+        SDValue NewSA = TLO.DAG.getConstant(Diff, dl, MVT::i8);
+        return TLO.CombineTo(
+            Op, TLO.DAG.getNode(Opc, dl, VT, Src.getOperand(0), NewSA));
+      }
+    }
+
+    APInt DemandedSrc = DemandedElts.lshr(ShiftAmt);
+    if (SimplifyDemandedVectorElts(Src, DemandedSrc, KnownUndef, KnownZero, TLO,
+                                   Depth + 1))
+      return true;
+
+    KnownUndef <<= ShiftAmt;
+    KnownZero <<= ShiftAmt;
+    KnownZero.setLowBits(ShiftAmt);
+    break;
+  }
   case X86ISD::KSHIFTR: {
     SDValue Src = Op.getOperand(0);
     auto *Amt = cast<ConstantSDNode>(Op.getOperand(1));
     assert(Amt->getAPIntValue().ult(NumElts) && "Out of range shift amount");
     unsigned ShiftAmt = Amt->getZExtValue();
-    bool ShiftLeft = (X86ISD::KSHIFTL == Opc);
 
-    APInt DemandedSrc =
-        ShiftLeft ? DemandedElts.lshr(ShiftAmt) : DemandedElts.shl(ShiftAmt);
+    if (ShiftAmt == 0)
+      return TLO.CombineTo(Op, Src);
+
+    // If this is ((X << C1) >>u ShAmt), see if we can simplify this into a
+    // single shift.  We can do this if the top bits (which are shifted
+    // out) are never demanded.
+    if (Src.getOpcode() == X86ISD::KSHIFTL) {
+      if (!DemandedElts.intersects(APInt::getHighBitsSet(NumElts, ShiftAmt))) {
+        unsigned C1 = Src.getConstantOperandVal(1);
+        unsigned Opc = X86ISD::KSHIFTR;
+        int Diff = ShiftAmt - C1;
+        if (Diff < 0) {
+          Diff = -Diff;
+          Opc = X86ISD::KSHIFTL;
+        }
+
+        SDLoc dl(Op);
+        SDValue NewSA = TLO.DAG.getConstant(Diff, dl, MVT::i8);
+        return TLO.CombineTo(
+            Op, TLO.DAG.getNode(Opc, dl, VT, Src.getOperand(0), NewSA));
+      }
+    }
+
+    APInt DemandedSrc = DemandedElts.shl(ShiftAmt);
     if (SimplifyDemandedVectorElts(Src, DemandedSrc, KnownUndef, KnownZero, TLO,
                                    Depth + 1))
       return true;
 
-    if (ShiftLeft) {
-      KnownUndef = KnownUndef.shl(ShiftAmt);
-      KnownZero = KnownZero.shl(ShiftAmt);
-      KnownZero.setLowBits(ShiftAmt);
-    } else {
-      KnownUndef = KnownUndef.lshr(ShiftAmt);
-      KnownZero = KnownZero.lshr(ShiftAmt);
-      KnownZero.setHighBits(ShiftAmt);
-    }
+    KnownUndef.lshrInPlace(ShiftAmt);
+    KnownZero.lshrInPlace(ShiftAmt);
+    KnownZero.setHighBits(ShiftAmt);
     break;
   }
   case X86ISD::CVTSI2P:
@@ -45114,6 +45169,20 @@ static SDValue combineExtInVec(SDNode *N, SelectionDAG &DAG,
   return SDValue();
 }
 
+static SDValue combineKSHIFT(SDNode *N, SelectionDAG &DAG,
+                             TargetLowering::DAGCombinerInfo &DCI) {
+  EVT VT = N->getValueType(0);
+
+  APInt KnownUndef, KnownZero;
+  const TargetLowering &TLI = DAG.getTargetLoweringInfo();
+  APInt DemandedElts = APInt::getAllOnesValue(VT.getVectorNumElements());
+  if (TLI.SimplifyDemandedVectorElts(SDValue(N, 0), DemandedElts, KnownUndef,
+                                     KnownZero, DCI))
+    return SDValue(N, 0);
+
+  return SDValue();
+}
+
 SDValue X86TargetLowering::PerformDAGCombine(SDNode *N,
                                              DAGCombinerInfo &DCI) const {
   SelectionDAG &DAG = DCI.DAG;
@@ -45254,6 +45323,8 @@ SDValue X86TargetLowering::PerformDAGCombine(SDNode *N,
   case X86ISD::PCMPGT:      return combineVectorCompare(N, DAG, Subtarget);
   case X86ISD::PMULDQ:
   case X86ISD::PMULUDQ:     return combinePMULDQ(N, DAG, DCI, Subtarget);
+  case X86ISD::KSHIFTL:
+  case X86ISD::KSHIFTR:     return combineKSHIFT(N, DAG, DCI);
   }
 
   return SDValue();
