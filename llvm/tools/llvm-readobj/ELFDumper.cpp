@@ -4639,10 +4639,9 @@ void GNUStyle<ELFT>::printNotes(const ELFFile<ELFT> *Obj) {
         OS << "    " << N.Type << ":\n        " << N.Value << '\n';
     } else if (Name == "CORE") {
       if (Type == ELF::NT_FILE) {
-        DataExtractor DescExtractor(
-            StringRef(reinterpret_cast<const char *>(Descriptor.data()),
-                      Descriptor.size()),
-            ELFT::TargetEndianness == support::little, sizeof(Elf_Addr));
+        DataExtractor DescExtractor(Descriptor,
+                                    ELFT::TargetEndianness == support::little,
+                                    sizeof(Elf_Addr));
         Expected<CoreNote> Note = readCoreNote(DescExtractor);
         if (Note)
           printCoreNote<ELFT>(OS, *Note);
@@ -4830,16 +4829,13 @@ void DumpStyle<ELFT>::printNonRelocatableStackSizes(
   StringRef FileStr = Obj->getFileName();
   for (const SectionRef &Sec : Obj->sections()) {
     StringRef SectionName = getSectionName(Sec);
-    if (!SectionName.startswith(".stack_sizes"))
+    if (SectionName != ".stack_sizes")
       continue;
     PrintHeader();
     const Elf_Shdr *ElfSec = Obj->getSection(Sec.getRawDataRefImpl());
     ArrayRef<uint8_t> Contents =
         unwrapOrError(this->FileName, EF->getSectionContents(ElfSec));
-    DataExtractor Data(
-        StringRef(reinterpret_cast<const char *>(Contents.data()),
-                  Contents.size()),
-        Obj->isLittleEndian(), sizeof(Elf_Addr));
+    DataExtractor Data(Contents, Obj->isLittleEndian(), sizeof(Elf_Addr));
     // A .stack_sizes section header's sh_link field is supposed to point
     // to the section that contains the functions whose stack sizes are
     // described in it.
@@ -4883,7 +4879,7 @@ void DumpStyle<ELFT>::printRelocatableStackSizes(
 
     // A stack size section that we haven't encountered yet is mapped to the
     // null section until we find its corresponding relocation section.
-    if (SectionName.startswith(".stack_sizes"))
+    if (SectionName == ".stack_sizes")
       if (StackSizeRelocMap.count(Sec) == 0) {
         StackSizeRelocMap[Sec] = NullSection;
         continue;
@@ -4904,7 +4900,7 @@ void DumpStyle<ELFT>::printRelocatableStackSizes(
       consumeError(ContentsSectionNameOrErr.takeError());
       continue;
     }
-    if (!ContentsSectionNameOrErr->startswith(".stack_sizes"))
+    if (*ContentsSectionNameOrErr != ".stack_sizes")
       continue;
     // Insert a mapping from the stack sizes section to its relocation section.
     StackSizeRelocMap[Obj->toSectionRef(ContentsSec)] = Sec;
@@ -4937,10 +4933,7 @@ void DumpStyle<ELFT>::printRelocatableStackSizes(
     RelocationResolver Resolver;
     std::tie(IsSupportedFn, Resolver) = getRelocationResolver(*Obj);
     auto Contents = unwrapOrError(this->FileName, StackSizesSec.getContents());
-    DataExtractor Data(
-        StringRef(reinterpret_cast<const char *>(Contents.data()),
-                  Contents.size()),
-        Obj->isLittleEndian(), sizeof(Elf_Addr));
+    DataExtractor Data(Contents, Obj->isLittleEndian(), sizeof(Elf_Addr));
     for (const RelocationRef &Reloc : RelocSec.relocations()) {
       if (!IsSupportedFn(Reloc.getType()))
         reportError(createStringError(
@@ -5831,10 +5824,9 @@ void LLVMStyle<ELFT>::printNotes(const ELFFile<ELFT> *Obj) {
         W.printString(N.Type, N.Value);
     } else if (Name == "CORE") {
       if (Type == ELF::NT_FILE) {
-        DataExtractor DescExtractor(
-            StringRef(reinterpret_cast<const char *>(Descriptor.data()),
-                      Descriptor.size()),
-            ELFT::TargetEndianness == support::little, sizeof(Elf_Addr));
+        DataExtractor DescExtractor(Descriptor,
+                                    ELFT::TargetEndianness == support::little,
+                                    sizeof(Elf_Addr));
         Expected<CoreNote> Note = readCoreNote(DescExtractor);
         if (Note)
           printCoreNoteLLVMStyle(*Note, W);
@@ -5899,13 +5891,18 @@ void LLVMStyle<ELFT>::printELFLinkerOptions(const ELFFile<ELFT> *Obj) {
 
 template <class ELFT>
 void LLVMStyle<ELFT>::printStackSizes(const ELFObjectFile<ELFT> *Obj) {
-  W.printString(
-      "Dumping of stack sizes in LLVM style is not implemented yet\n");
+  ListScope L(W, "StackSizes");
+  if (Obj->isRelocatableObject())
+    this->printRelocatableStackSizes(Obj, []() {});
+  else
+    this->printNonRelocatableStackSizes(Obj, []() {});
 }
 
 template <class ELFT>
 void LLVMStyle<ELFT>::printStackSizeEntry(uint64_t Size, StringRef FuncName) {
-  // FIXME: Implement this function for LLVM-style dumping.
+  DictScope D(W, "Entry");
+  W.printString("Function", FuncName);
+  W.printHex("Size", Size);
 }
 
 template <class ELFT>
