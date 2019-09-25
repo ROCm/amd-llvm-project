@@ -1040,9 +1040,9 @@ void Sema::TryCXXAMPRestrictionInferring(Decl *dcl, Stmt *S) {
     CXXAMPRestrictAUTOAttr *AUTOAttr = dcl->getAttr<CXXAMPRestrictAUTOAttr>();
     assert(AUTOAttr);
     if(OtherSpec & CPPAMP_AMP)
-      dcl->addAttr(::new (Context) CXXAMPRestrictAMPAttr(AUTOAttr->getRange(), Context, 0));
+      dcl->addAttr(::new (Context) CXXAMPRestrictAMPAttr(Context, AUTOAttr->getRange()));
     if(OtherSpec & CPPAMP_CPU)
-      dcl->addAttr(::new (Context) CXXAMPRestrictCPUAttr(AUTOAttr->getRange(), Context, 0));
+      dcl->addAttr(::new (Context) CXXAMPRestrictCPUAttr(Context, AUTOAttr->getRange()));
   }
   
   // The inferring process is done. Drop AUTO Attribute in this compilation path

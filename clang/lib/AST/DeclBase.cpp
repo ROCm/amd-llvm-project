@@ -99,8 +99,8 @@ void *Decl::operator new(std::size_t Size, const ASTContext &Ctx,
   if (Ctx.getLangOpts().trackLocalOwningModule() || !Parent) {
     // Ensure required alignment of the resulting object by adding extra
     // padding at the start if required.
-    size_t ExtraAlign = // TODO: HCC specific, remove on next upstream merge!!
-        llvm::offsetToAlignment(sizeof(Module *), llvm::Align{alignof(Decl)});
+    size_t ExtraAlign =
+        llvm::offsetToAlignment(sizeof(Module *), llvm::Align(alignof(Decl)));
     auto *Buffer = reinterpret_cast<char *>(
         ::operator new(ExtraAlign + sizeof(Module *) + Size + Extra, Ctx));
     Buffer += ExtraAlign;

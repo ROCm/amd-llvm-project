@@ -3315,19 +3315,36 @@ defm FNMSUB : ThreeOperandFPData<1, 1, "fnmsub",
 
 // N.b. FMSUB etc have the accumulator at the *end* of (outs), unlike
 // the NEON variant.
+
+// Here we handle first -(a + b*c) for FNMADD:
+
+let Predicates = [HasNEON, HasFullFP16] in
+def : Pat<(f16 (fma (fneg FPR16:$Rn), FPR16:$Rm, FPR16:$Ra)),
+          (FMSUBHrrr FPR16:$Rn, FPR16:$Rm, FPR16:$Ra)>;
+
 def : Pat<(f32 (fma (fneg FPR32:$Rn), FPR32:$Rm, FPR32:$Ra)),
           (FMSUBSrrr FPR32:$Rn, FPR32:$Rm, FPR32:$Ra)>;
 
 def : Pat<(f64 (fma (fneg FPR64:$Rn), FPR64:$Rm, FPR64:$Ra)),
           (FMSUBDrrr FPR64:$Rn, FPR64:$Rm, FPR64:$Ra)>;
 
-// We handled -(a + b*c) for FNMADD above, now it's time for "(-a) + (-b)*c" and
-// "(-a) + b*(-c)".
+// Now it's time for "(-a) + (-b)*c"
+
+let Predicates = [HasNEON, HasFullFP16] in
+def : Pat<(f16 (fma (fneg FPR16:$Rn), FPR16:$Rm, (fneg FPR16:$Ra))),
+          (FNMADDHrrr FPR16:$Rn, FPR16:$Rm, FPR16:$Ra)>;
+
 def : Pat<(f32 (fma (fneg FPR32:$Rn), FPR32:$Rm, (fneg FPR32:$Ra))),
           (FNMADDSrrr FPR32:$Rn, FPR32:$Rm, FPR32:$Ra)>;
 
 def : Pat<(f64 (fma (fneg FPR64:$Rn), FPR64:$Rm, (fneg FPR64:$Ra))),
           (FNMADDDrrr FPR64:$Rn, FPR64:$Rm, FPR64:$Ra)>;
+
+// And here "(-a) + b*(-c)"
+
+let Predicates = [HasNEON, HasFullFP16] in
+def : Pat<(f16 (fma FPR16:$Rn, (fneg FPR16:$Rm), (fneg FPR16:$Ra))),
+          (FNMADDHrrr FPR16:$Rn, FPR16:$Rm, FPR16:$Ra)>;
 
 def : Pat<(f32 (fma FPR32:$Rn, (fneg FPR32:$Rm), (fneg FPR32:$Ra))),
           (FNMADDSrrr FPR32:$Rn, FPR32:$Rm, FPR32:$Ra)>;
@@ -6972,6 +6989,16 @@ def : Pat<(AArch64tcret texternalsym:$dst, (i32 timm:$FPDiff)),
 
 def MOVMCSym : Pseudo<(outs GPR64:$dst), (ins i64imm:$sym), []>, Sched<[]>;
 def : Pat<(i64 (AArch64LocalRecover mcsym:$sym)), (MOVMCSym mcsym:$sym)>;
+
+// Extracting lane zero is a special case where we can just use a plain
+// EXTRACT_SUBREG instruction, which will become FMOV. This is easier for the
+// rest of the compiler, especially the register allocator and copy propagation,
+// to reason about, so is preferred when it's possible to use it.
+let AddedComplexity = 10 in {
+  def : Pat<(i64 (extractelt (v2i64 V128:$V), (i64 0))), (EXTRACT_SUBREG V128:$V, dsub)>;
+  def : Pat<(i32 (extractelt (v4i32 V128:$V), (i64 0))), (EXTRACT_SUBREG V128:$V, ssub)>;
+  def : Pat<(i32 (extractelt (v2i32 V64:$V), (i64 0))), (EXTRACT_SUBREG V64:$V, ssub)>;
+}
 
 include "AArch64InstrAtomics.td"
 include "AArch64SVEInstrInfo.td"

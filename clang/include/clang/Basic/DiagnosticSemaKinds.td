@@ -3292,9 +3292,9 @@ def warn_impcast_integer_precision_constant : Warning<
 def warn_impcast_bitfield_precision_constant : Warning<
   "implicit truncation from %2 to bit-field changes value from %0 to %1">,
   InGroup<BitFieldConstantConversion>;
-def warn_impcast_constant_int_to_objc_bool : Warning<
-  "implicit conversion from constant value %0 to BOOL; "
-  "the only well defined values for BOOL are YES and NO">,
+def warn_impcast_constant_value_to_objc_bool : Warning<
+  "implicit conversion from constant value %0 to 'BOOL'; "
+  "the only well defined values for 'BOOL' are YES and NO">,
   InGroup<ObjCBoolConstantConversion>;
 
 def warn_impcast_fixed_point_range : Warning<
@@ -3310,6 +3310,12 @@ def warn_impcast_literal_float_to_integer_out_of_range : Warning<
 def warn_impcast_float_integer : Warning<
   "implicit conversion turns floating-point number into integer: %0 to %1">,
   InGroup<FloatConversion>, DefaultIgnore;
+def warn_impcast_float_to_objc_signed_char_bool : Warning<
+  "implicit conversion from floating-point type %0 to 'BOOL'">,
+  InGroup<ObjCSignedCharBoolImplicitFloatConversion>;
+def warn_impcast_int_to_objc_signed_char_bool : Warning<
+  "implicit conversion from integral type %0 to 'BOOL'">,
+  InGroup<ObjCSignedCharBoolImplicitIntConversion>, DefaultIgnore;
 
 // Implicit int -> float conversion precision loss warnings.
 def warn_impcast_integer_float_precision : Warning<
@@ -3408,6 +3414,10 @@ def note_pointer_declared_here : Note<
 def warn_division_sizeof_ptr : Warning<
   "'%0' will return the size of the pointer, not the array itself">,
   InGroup<DiagGroup<"sizeof-pointer-div">>;
+def warn_division_sizeof_array : Warning<
+  "expression does not compute the number of elements in this array; element "
+  "type is %0, not %1">,
+  InGroup<DiagGroup<"sizeof-array-div">>;
 
 def note_function_warning_silence : Note<
     "prefix with the address-of operator to silence this warning">;
@@ -3998,6 +4008,8 @@ def err_ovl_no_viable_literal_operator : Error<
 // C++ Template Declarations
 def err_template_param_shadow : Error<
   "declaration of %0 shadows template parameter">;
+def ext_template_param_shadow : ExtWarn<
+  err_template_param_shadow.Text>, InGroup<MicrosoftTemplate>;
 def note_template_param_here : Note<"template parameter is declared here">;
 def warn_template_export_unsupported : Warning<
   "exported templates are unsupported">;
@@ -6105,8 +6117,8 @@ def warn_tautological_constant_compare : Warning<
   "%select{%1|%3}0 is always %4">,
   InGroup<TautologicalTypeLimitCompare>, DefaultIgnore;
 def warn_tautological_compare_objc_bool : Warning<
-  "result of comparison of constant %0 with expression of type BOOL"
-  " is always %1, as the only well defined values for BOOL are YES and NO">,
+  "result of comparison of constant %0 with expression of type 'BOOL'"
+  " is always %1, as the only well defined values for 'BOOL' are YES and NO">,
   InGroup<TautologicalObjCBoolCompare>;
 
 def warn_mixed_sign_comparison : Warning<
@@ -9171,7 +9183,7 @@ def ext_omp_loop_not_canonical_init : ExtWarn<
   "('var = init' or 'T var = init')">, InGroup<OpenMPLoopForm>;
 def err_omp_loop_not_canonical_cond : Error<
   "condition of OpenMP for loop must be a relational comparison "
-  "('<', '<=', '>', or '>=') of loop variable %0">;
+	"('<', '<=', '>', %select{or '>='|'>=', or '!='}0) of loop variable %1">;
 def err_omp_loop_not_canonical_incr : Error<
   "increment clause of OpenMP for loop must perform simple addition "
   "or subtraction on loop variable %0">;
@@ -9288,10 +9300,10 @@ def err_omp_single_copyprivate_with_nowait : Error<
   "the 'copyprivate' clause must not be used with the 'nowait' clause">;
 def note_omp_nowait_clause_here : Note<
   "'nowait' clause is here">;
-def err_omp_single_decl_in_declare_simd : Error<
-  "single declaration is expected after 'declare simd' directive">;
+def err_omp_single_decl_in_declare_simd_variant : Error<
+  "single declaration is expected after 'declare %select{simd|variant}0' directive">;
 def err_omp_function_expected : Error<
-  "'#pragma omp declare simd' can only be applied to functions">;
+  "'#pragma omp declare %select{simd|variant}0' can only be applied to functions">;
 def err_omp_wrong_cancel_region : Error<
   "one of 'for', 'parallel', 'sections' or 'taskgroup' is expected">;
 def err_omp_parent_cancel_region_nowait : Error<
@@ -9483,6 +9495,31 @@ def note_omp_marked_device_type_here : Note<"marked as 'device_type(%0)' here">;
 def warn_omp_declare_target_after_first_use : Warning<
   "declaration marked as declare target after first use, it may lead to incorrect results">,
   InGroup<OpenMPTarget>;
+def err_omp_declare_variant_incompat_attributes : Error<
+  "'#pragma omp declare variant' is not compatible with any target-specific attributes">;
+def err_omp_declare_variant_after_used : Error<
+  "'#pragma omp declare variant' cannot be applied for function after first "
+  "usage">;
+def err_omp_declare_variant_noproto : Error<
+  "function with '#pragma omp declare variant' must have a prototype">;
+def note_omp_declare_variant_specified_here : Note<
+  "'#pragma omp declare variant' for function specified here">;
+def err_omp_declare_variant_doesnt_support : Error<
+  "'#pragma omp declare variant' does not "
+  "support %select{function templates|virtual functions|"
+  "deduced return types|constructors|destructors|deleted functions|"
+  "defaulted functions|constexpr functions|consteval function}0">;
+def err_omp_declare_variant_diff : Error<
+  "function with '#pragma omp declare variant' has a different %select{calling convention"
+  "|return type|constexpr specification|inline specification|storage class|"
+  "linkage}0">;
+def err_omp_declare_variant_incompat_types : Error<
+  "variant in '#pragma omp declare variant' with type %0 is incompatible with type %1"
+  >;
+def warn_omp_declare_variant_marked_as_declare_variant : Warning<
+  "variant function in '#pragma omp declare variant' is itself marked as '#pragma omp declare variant'"
+  >, InGroup<SourceUsesOpenMP>;
+def note_omp_marked_declare_variant_here : Note<"marked as 'declare variant' here">;
 } // end of OpenMP category
 
 let CategoryName = "Related Result Type Issue" in {

@@ -1066,7 +1066,6 @@ void Clang::AddPreprocessingOptions(Compilation &C, const JobAction &JA,
                                     ArgStringList &CmdArgs,
                                     const InputInfo &Output,
                                     const InputInfoList &Inputs) const {
-  Arg *A;
   const bool IsIAMCU = getToolChain().getTriple().isOSIAMCU();
 
   CheckPreprocessingOptions(D, Args);
@@ -1075,9 +1074,20 @@ void Clang::AddPreprocessingOptions(Compilation &C, const JobAction &JA,
   Args.AddLastArg(CmdArgs, options::OPT_CC);
 
   // Handle dependency file generation.
-  if ((A = Args.getLastArg(options::OPT_M, options::OPT_MM)) ||
-      (A = Args.getLastArg(options::OPT_MD)) ||
-      (A = Args.getLastArg(options::OPT_MMD))) {
+  Arg *ArgM = Args.getLastArg(options::OPT_MM);
+  if (!ArgM)
+    ArgM = Args.getLastArg(options::OPT_M);
+  Arg *ArgMD = Args.getLastArg(options::OPT_MMD);
+  if (!ArgMD)
+    ArgMD = Args.getLastArg(options::OPT_MD);
+
+  // -M and -MM imply -w.
+  if (ArgM)
+    CmdArgs.push_back("-w");
+  else
+    ArgM = ArgMD;
+
+  if (ArgM) {
     // Determine the output location.
     const char *DepFile;
     if (Arg *MF = Args.getLastArg(options::OPT_MF)) {
@@ -1085,8 +1095,7 @@ void Clang::AddPreprocessingOptions(Compilation &C, const JobAction &JA,
       C.addFailureResultFile(DepFile, &JA);
     } else if (Output.getType() == types::TY_Dependencies) {
       DepFile = Output.getFilename();
-    } else if (A->getOption().matches(options::OPT_M) ||
-               A->getOption().matches(options::OPT_MM)) {
+    } else if (!ArgMD) {
       DepFile = "-";
     } else {
       DepFile = getDependencyFileName(Args, Inputs);
@@ -1095,8 +1104,22 @@ void Clang::AddPreprocessingOptions(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-dependency-file");
     CmdArgs.push_back(DepFile);
 
+    bool HasTarget = false;
+    for (const Arg *A : Args.filtered(options::OPT_MT, options::OPT_MQ)) {
+      HasTarget = true;
+      A->claim();
+      if (A->getOption().matches(options::OPT_MT)) {
+        A->render(Args, CmdArgs);
+      } else {
+        CmdArgs.push_back("-MT");
+        SmallString<128> Quoted;
+        QuoteTarget(A->getValue(), Quoted);
+        CmdArgs.push_back(Args.MakeArgString(Quoted));
+      }
+    }
+
     // Add a default target if one wasn't specified.
-    if (!Args.hasArg(options::OPT_MT) && !Args.hasArg(options::OPT_MQ)) {
+    if (!HasTarget) {
       const char *DepTarget;
 
       // If user provided -o, that is the dependency target, except
@@ -1113,17 +1136,14 @@ void Clang::AddPreprocessingOptions(Compilation &C, const JobAction &JA,
         DepTarget = Args.MakeArgString(llvm::sys::path::filename(P));
       }
 
-      if (!A->getOption().matches(options::OPT_MD) && !A->getOption().matches(options::OPT_MMD)) {
-        CmdArgs.push_back("-w");
-      }
       CmdArgs.push_back("-MT");
       SmallString<128> Quoted;
       QuoteTarget(DepTarget, Quoted);
       CmdArgs.push_back(Args.MakeArgString(Quoted));
     }
 
-    if (A->getOption().matches(options::OPT_M) ||
-        A->getOption().matches(options::OPT_MD))
+    if (ArgM->getOption().matches(options::OPT_M) ||
+        ArgM->getOption().matches(options::OPT_MD))
       CmdArgs.push_back("-sys-header-deps");
     if ((isa<PrecompileJobAction>(JA) &&
          !Args.hasArg(options::OPT_fno_module_file_deps)) ||
@@ -1132,30 +1152,14 @@ void Clang::AddPreprocessingOptions(Compilation &C, const JobAction &JA,
   }
 
   if (Args.hasArg(options::OPT_MG)) {
-    if (!A || A->getOption().matches(options::OPT_MD) ||
-        A->getOption().matches(options::OPT_MMD))
+    if (!ArgM || ArgM->getOption().matches(options::OPT_MD) ||
+        ArgM->getOption().matches(options::OPT_MMD))
       D.Diag(diag::err_drv_mg_requires_m_or_mm);
     CmdArgs.push_back("-MG");
   }
 
   Args.AddLastArg(CmdArgs, options::OPT_MP);
   Args.AddLastArg(CmdArgs, options::OPT_MV);
-
-  // Convert all -MQ <target> args to -MT <quoted target>
-  for (const Arg *A : Args.filtered(options::OPT_MT, options::OPT_MQ)) {
-    A->claim();
-
-    if (A->getOption().matches(options::OPT_MQ)) {
-      CmdArgs.push_back("-MT");
-      SmallString<128> Quoted;
-      QuoteTarget(A->getValue(), Quoted);
-      CmdArgs.push_back(Args.MakeArgString(Quoted));
-
-      // -MT flag - no change
-    } else {
-      A->render(Args, CmdArgs);
-    }
-  }
 
   // Add offload include arguments specific for CUDA.  This must happen before
   // we -I or -include anything else, because we must pick up the CUDA headers
@@ -4544,6 +4548,12 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back(A->getValue());
   }
 
+  if (Args.hasArg(options::OPT_fexperimental_new_constant_interpreter))
+    CmdArgs.push_back("-fexperimental-new-constant-interpreter");
+
+  if (Args.hasArg(options::OPT_fforce_experimental_new_constant_interpreter))
+    CmdArgs.push_back("-fforce-experimental-new-constant-interpreter");
+
   if (Arg *A = Args.getLastArg(options::OPT_fbracket_depth_EQ)) {
     CmdArgs.push_back("-fbracket-depth");
     CmdArgs.push_back(A->getValue());
@@ -4729,15 +4739,11 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   if (TC.SupportsProfiling())
     Args.AddLastArg(CmdArgs, options::OPT_mfentry);
 
-  // -flax-vector-conversions is default.
-  if (!Args.hasFlag(options::OPT_flax_vector_conversions,
-                    options::OPT_fno_lax_vector_conversions))
-    CmdArgs.push_back("-fno-lax-vector-conversions");
-
   if (Args.getLastArg(options::OPT_fapple_kext) ||
       (Args.hasArg(options::OPT_mkernel) && types::isCXX(InputType)))
     CmdArgs.push_back("-fapple-kext");
 
+  Args.AddLastArg(CmdArgs, options::OPT_flax_vector_conversions_EQ);
   Args.AddLastArg(CmdArgs, options::OPT_fobjc_sender_dependent_dispatch);
   Args.AddLastArg(CmdArgs, options::OPT_fdiagnostics_print_source_range_info);
   Args.AddLastArg(CmdArgs, options::OPT_fdiagnostics_parseable_fixits);
@@ -5032,9 +5038,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     addExceptionArgs(Args, InputType, TC, KernelOrKext, Runtime, CmdArgs);
 
   // Handle exception personalities
-  Arg *A = Args.getLastArg(options::OPT_fsjlj_exceptions,
-                           options::OPT_fseh_exceptions,
-                           options::OPT_fdwarf_exceptions);
+  Arg *A = Args.getLastArg(
+      options::OPT_fsjlj_exceptions, options::OPT_fseh_exceptions,
+      options::OPT_fdwarf_exceptions, options::OPT_fwasm_exceptions);
   if (A) {
     const Option &Opt = A->getOption();
     if (Opt.matches(options::OPT_fsjlj_exceptions))
@@ -5043,6 +5049,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back("-fseh-exceptions");
     if (Opt.matches(options::OPT_fdwarf_exceptions))
       CmdArgs.push_back("-fdwarf-exceptions");
+    if (Opt.matches(options::OPT_fwasm_exceptions))
+      CmdArgs.push_back("-fwasm-exceptions");
   } else {
     switch (TC.GetExceptionModel(Args)) {
     default:
@@ -6150,15 +6158,14 @@ const char *Clang::getBaseInputStem(const ArgList &Args,
 const char *Clang::getDependencyFileName(const ArgList &Args,
                                          const InputInfoList &Inputs) {
   // FIXME: Think about this more.
-  std::string Res;
 
   if (Arg *OutputOpt = Args.getLastArg(options::OPT_o)) {
-    std::string Str(OutputOpt->getValue());
-    Res = Str.substr(0, Str.rfind('.'));
-  } else {
-    Res = getBaseInputStem(Args, Inputs);
+    SmallString<128> OutputFilename(OutputOpt->getValue());
+    llvm::sys::path::replace_extension(OutputFilename, llvm::Twine('d'));
+    return Args.MakeArgString(OutputFilename);
   }
-  return Args.MakeArgString(Res + ".d");
+
+  return Args.MakeArgString(Twine(getBaseInputStem(Args, Inputs)) + ".d");
 }
 
 // Begin ClangAs

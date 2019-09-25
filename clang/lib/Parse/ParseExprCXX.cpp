@@ -1263,7 +1263,7 @@ ExprResult Parser::ParseLambdaExpressionAfterIntroducer(
             A.getKind() == ParsedAttr::AT_CUDAHost ||
             A.getKind() == ParsedAttr::AT_CUDAGlobal)
           Diag(A.getLoc(), diag::warn_cuda_attr_lambda_position)
-              << A.getName()->getName();
+              << A.getAttrName()->getName();
   };
 
   // try parse attributes before parameter list

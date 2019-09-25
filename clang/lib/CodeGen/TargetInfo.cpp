@@ -8032,18 +8032,14 @@ void AMDGPUTargetCodeGenInfo::setTargetAttributes(
   }
 
   if (const auto *Attr = FD->getAttr<AMDGPUNumSGPRAttr>()) {
-    llvm::APSInt sgprs =
-      getConstexprInt(Attr->getNumSGPR(), FD->getASTContext());
-    unsigned NumSGPR = sgprs.getZExtValue();
+    unsigned NumSGPR = Attr->getNumSGPR();
 
     if (NumSGPR != 0)
       F->addFnAttr("amdgpu-num-sgpr", llvm::utostr(NumSGPR));
   }
 
   if (const auto *Attr = FD->getAttr<AMDGPUNumVGPRAttr>()) {
-    llvm::APSInt vgprs =
-      getConstexprInt(Attr->getNumVGPR(), FD->getASTContext());
-    unsigned NumVGPR = vgprs.getZExtValue();
+    uint32_t NumVGPR = Attr->getNumVGPR();
 
     if (NumVGPR != 0)
       F->addFnAttr("amdgpu-num-vgpr", llvm::utostr(NumVGPR));
@@ -8089,7 +8085,7 @@ llvm::Constant *AMDGPUTargetCodeGenInfo::getNullPointer(
   auto &Ctx = CGM.getContext();
   auto NPT = llvm::PointerType::get(PT->getElementType(),
       Ctx.getTargetAddressSpace(LangAS::opencl_generic));
-  return llvm::ConstantExpr::getPointerCast(
+  return llvm::ConstantExpr::getAddrSpaceCast(
       llvm::ConstantPointerNull::get(NPT), PT);
 }
 

@@ -1180,7 +1180,7 @@ Sema::BuildMemberReferenceExpr(Expr *BaseExpr, QualType BaseExprType,
              QualifiedName.find("__cxxamp_trampoline_name")!=std::string::npos) {
           } else {
             //llvm::errs() << "add [[hc]] to member: " << MemberFn->getName() << "\n";
-            MemberFn->addAttr(::new (Context) CXXAMPRestrictAMPAttr(MemberFn->getLocation(), Context, 0));
+            MemberFn->addAttr(::new (Context) CXXAMPRestrictAMPAttr(Context, MemberFn->getLocation()));
             MemberAMP = MemberFn->hasAttr<CXXAMPRestrictAMPAttr>();
             MemberCPU = MemberFn->hasAttr<CXXAMPRestrictCPUAttr>() || !MemberAMP;
           }

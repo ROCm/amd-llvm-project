@@ -929,7 +929,7 @@ void PrintDependencyDirectivesSourceMinimizerAction::ExecuteAction() {
     // 'expected' comments.
     if (CI.getDiagnosticOpts().VerifyDiagnostics) {
       // Make sure we don't emit new diagnostics!
-      CI.getDiagnostics().setSuppressAllDiagnostics();
+      CI.getDiagnostics().setSuppressAllDiagnostics(true);
       Preprocessor &PP = getCompilerInstance().getPreprocessor();
       PP.EnterMainSourceFile();
       Token Tok;

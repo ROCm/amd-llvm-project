@@ -97,6 +97,8 @@
 #define LLVM_TRANSFORMS_IPO_ATTRIBUTOR_H
 
 #include "llvm/ADT/SetVector.h"
+#include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/IR/CallSite.h"
 #include "llvm/IR/PassManager.h"
@@ -518,6 +520,21 @@ public:
   iterator end() { return IRPositions.end(); }
 };
 
+/// Wrapper for FunctoinAnalysisManager.
+struct AnalysisGetter {
+  template <typename Analysis>
+  typename Analysis::Result *getAnalysis(const Function &F) {
+    if (!FAM)
+      return nullptr;
+    return &FAM->getResult<Analysis>(const_cast<Function &>(F));
+  }
+  AnalysisGetter(FunctionAnalysisManager &FAM) : FAM(&FAM) {}
+  AnalysisGetter() {}
+
+private:
+  FunctionAnalysisManager *FAM = nullptr;
+};
+
 /// Data structure to hold cached (LLVM-IR) information.
 ///
 /// All attributes are given an InformationCache object at creation time to
@@ -531,7 +548,7 @@ public:
 /// reusable, it is advised to inherit from the InformationCache and cast the
 /// instance down in the abstract attributes.
 struct InformationCache {
-  InformationCache(const DataLayout &DL) : DL(DL) {}
+  InformationCache(const DataLayout &DL, AnalysisGetter &AG) : DL(DL), AG(AG) {}
 
   /// A map type from opcodes to instructions with this opcode.
   using OpcodeInstMapTy = DenseMap<unsigned, SmallVector<Instruction *, 32>>;
@@ -550,6 +567,19 @@ struct InformationCache {
     return FuncRWInstsMap[&F];
   }
 
+  /// Return TargetLibraryInfo for function \p F.
+  TargetLibraryInfo *getTargetLibraryInfoForFunction(const Function &F) {
+    return AG.getAnalysis<TargetLibraryAnalysis>(F);
+  }
+
+  /// Return AliasAnalysis Result for function \p F.
+  AAResults *getAAResultsForFunction(const Function &F) {
+    return AG.getAnalysis<AAManager>(F);
+  }
+
+  /// Return datalayout used in the module.
+  const DataLayout &getDL() { return DL; }
+
 private:
   /// A map type from functions to opcode to instruction maps.
   using FuncInstOpcodeMapTy = DenseMap<const Function *, OpcodeInstMapTy>;
@@ -564,8 +594,13 @@ private:
   /// A map from functions to their instructions that may read or write memory.
   FuncRWInstsMapTy FuncRWInstsMap;
 
+  /// A map from functions to their TLI.
+
   /// The datalayout used in the module.
   const DataLayout &DL;
+
+  /// Getters for analysis.
+  AnalysisGetter &AG;
 
   /// Give the Attributor access to the members so
   /// Attributor::identifyDefaultAbstractAttributes(...) can initialize them.
@@ -689,6 +724,7 @@ struct Attributor {
   /// abstract attribute objects for them.
   ///
   /// \param F The function that is checked for attribute opportunities.
+  /// \param TLIGetter helper function to get TargetLibraryInfo Analysis result.
   ///
   /// Note that abstract attribute instances are generally created even if the
   /// IR already contains the information they would deduce. The most important
@@ -697,13 +733,20 @@ struct Attributor {
   /// various places.
   void identifyDefaultAbstractAttributes(Function &F);
 
+  /// Initialize the information cache for queries regarding function \p F.
+  ///
+  /// This method needs to be called for all function that might be looked at
+  /// through the information cache interface *prior* to looking at them.
+  void initializeInformationCache(Function &F);
+
   /// Mark the internal function \p F as live.
   ///
   /// This will trigger the identification and initialization of attributes for
   /// \p F.
   void markLiveInternalFunction(const Function &F) {
     assert(F.hasInternalLinkage() &&
-            "Only internal linkage is assumed dead initially.");
+           "Only internal linkage is assumed dead initially.");
+
     identifyDefaultAbstractAttributes(const_cast<Function &>(F));
   }
 
@@ -1720,6 +1763,30 @@ struct AAValueSimplify : public StateWrapper<BooleanState, AbstractAttribute>,
   /// Create an abstract attribute view for the position \p IRP.
   static AAValueSimplify &createForPosition(const IRPosition &IRP,
                                             Attributor &A);
+
+  /// Unique ID (due to the unique address)
+  static const char ID;
+};
+
+struct AAHeapToStack : public StateWrapper<BooleanState, AbstractAttribute>,
+                       public IRPosition {
+  AAHeapToStack(const IRPosition &IRP) : IRPosition(IRP) {}
+
+  /// Returns true if HeapToStack conversion is assumed to be possible.
+  bool isAssumedHeapToStack() const { return getAssumed(); }
+
+  /// Returns true if HeapToStack conversion is known to be possible.
+  bool isKnownHeapToStack() const { return getKnown(); }
+
+  /// Return an IR position, see struct IRPosition.
+  ///
+  ///{
+  IRPosition &getIRPosition() { return *this; }
+  const IRPosition &getIRPosition() const { return *this; }
+  ///}
+
+  /// Create an abstract attribute view for the position \p IRP.
+  static AAHeapToStack &createForPosition(const IRPosition &IRP, Attributor &A);
 
   /// Unique ID (due to the unique address)
   static const char ID;

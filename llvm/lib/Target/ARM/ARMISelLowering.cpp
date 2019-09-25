@@ -259,6 +259,12 @@ void ARMTargetLowering::addMVEVectorTypes(bool HasMVEFP) {
     setOperationAction(ISD::UMAX, VT, Legal);
     setOperationAction(ISD::ABS, VT, Legal);
     setOperationAction(ISD::SETCC, VT, Custom);
+    setOperationAction(ISD::MLOAD, VT, Custom);
+    setOperationAction(ISD::MSTORE, VT, Legal);
+    setOperationAction(ISD::CTLZ, VT, Legal);
+    setOperationAction(ISD::CTTZ, VT, Expand);
+    setOperationAction(ISD::BITREVERSE, VT, Legal);
+    setOperationAction(ISD::BSWAP, VT, Legal);
 
     // No native support for these.
     setOperationAction(ISD::UDIV, VT, Expand);
@@ -269,6 +275,10 @@ void ARMTargetLowering::addMVEVectorTypes(bool HasMVEFP) {
 
     // Vector reductions
     setOperationAction(ISD::VECREDUCE_ADD, VT, Legal);
+    setOperationAction(ISD::VECREDUCE_SMAX, VT, Legal);
+    setOperationAction(ISD::VECREDUCE_UMAX, VT, Legal);
+    setOperationAction(ISD::VECREDUCE_SMIN, VT, Legal);
+    setOperationAction(ISD::VECREDUCE_UMIN, VT, Legal);
 
     if (!HasMVEFP) {
       setOperationAction(ISD::SINT_TO_FP, VT, Expand);
@@ -300,6 +310,8 @@ void ARMTargetLowering::addMVEVectorTypes(bool HasMVEFP) {
     setOperationAction(ISD::BUILD_VECTOR, VT.getVectorElementType(), Custom);
     setOperationAction(ISD::SCALAR_TO_VECTOR, VT, Legal);
     setOperationAction(ISD::SETCC, VT, Custom);
+    setOperationAction(ISD::MLOAD, VT, Custom);
+    setOperationAction(ISD::MSTORE, VT, Legal);
 
     // Pre and Post inc are supported on loads and stores
     for (unsigned im = (unsigned)ISD::PRE_INC;
@@ -692,8 +704,8 @@ ARMTargetLowering::ARMTargetLowering(const TargetMachine &TM,
     setOperationAction(ISD::FMAXNUM, MVT::f16, Legal);
   }
 
-  for (MVT VT : MVT::vector_valuetypes()) {
-    for (MVT InnerVT : MVT::vector_valuetypes()) {
+  for (MVT VT : MVT::fixedlen_vector_valuetypes()) {
+    for (MVT InnerVT : MVT::fixedlen_vector_valuetypes()) {
       setTruncStoreAction(VT, InnerVT, Expand);
       addAllExtLoads(VT, InnerVT, Expand);
     }
@@ -898,7 +910,7 @@ ARMTargetLowering::ARMTargetLowering(const TargetMachine &TM,
     // It is legal to extload from v4i8 to v4i16 or v4i32.
     for (MVT Ty : {MVT::v8i8, MVT::v4i8, MVT::v2i8, MVT::v4i16, MVT::v2i16,
                    MVT::v2i32}) {
-      for (MVT VT : MVT::integer_vector_valuetypes()) {
+      for (MVT VT : MVT::integer_fixedlen_vector_valuetypes()) {
         setLoadExtAction(ISD::EXTLOAD, VT, Ty, Legal);
         setLoadExtAction(ISD::ZEXTLOAD, VT, Ty, Legal);
         setLoadExtAction(ISD::SEXTLOAD, VT, Ty, Legal);
@@ -1042,7 +1054,7 @@ ARMTargetLowering::ARMTargetLowering(const TargetMachine &TM,
 
   // ARM does not have ROTL.
   setOperationAction(ISD::ROTL, MVT::i32, Expand);
-  for (MVT VT : MVT::vector_valuetypes()) {
+  for (MVT VT : MVT::fixedlen_vector_valuetypes()) {
     setOperationAction(ISD::ROTL, VT, Expand);
     setOperationAction(ISD::ROTR, VT, Expand);
   }
@@ -5796,8 +5808,7 @@ static SDValue LowerCTTZ(SDNode *N, SelectionDAG &DAG,
                          const ARMSubtarget *ST) {
   SDLoc dl(N);
   EVT VT = N->getValueType(0);
-  if (VT.isVector()) {
-    assert(ST->hasNEON());
+  if (VT.isVector() && ST->hasNEON()) {
 
     // Compute the least significant set bit: LSB = X & -X
     SDValue X = N->getOperand(0);
@@ -8844,6 +8855,31 @@ static SDValue LowerPredicateStore(SDValue Op, SelectionDAG &DAG) {
       ST->getMemOperand());
 }
 
+static SDValue LowerMLOAD(SDValue Op, SelectionDAG &DAG) {
+  MaskedLoadSDNode *N = cast<MaskedLoadSDNode>(Op.getNode());
+  MVT VT = Op.getSimpleValueType();
+  SDValue Mask = N->getMask();
+  SDValue PassThru = N->getPassThru();
+  SDLoc dl(Op);
+
+  if (ISD::isBuildVectorAllZeros(PassThru.getNode()) ||
+      (PassThru->getOpcode() == ARMISD::VMOVIMM &&
+       isNullConstant(PassThru->getOperand(0))))
+    return Op;
+
+  // MVE Masked loads use zero as the passthru value. Here we convert undef to
+  // zero too, and other values are lowered to a select.
+  SDValue ZeroVec = DAG.getNode(ARMISD::VMOVIMM, dl, VT,
+                                DAG.getTargetConstant(0, dl, MVT::i32));
+  SDValue NewLoad = DAG.getMaskedLoad(
+      VT, dl, N->getChain(), N->getBasePtr(), Mask, ZeroVec, N->getMemoryVT(),
+      N->getMemOperand(), N->getExtensionType(), N->isExpandingLoad());
+  SDValue Combo = NewLoad;
+  if (!PassThru.isUndef())
+    Combo = DAG.getNode(ISD::VSELECT, dl, VT, Mask, NewLoad, PassThru);
+  return DAG.getMergeValues({Combo, NewLoad.getValue(1)}, dl);
+}
+
 static SDValue LowerAtomicLoadStore(SDValue Op, SelectionDAG &DAG) {
   if (isStrongerThanMonotonic(cast<AtomicSDNode>(Op)->getOrdering()))
     // Acquire/Release load/store is not legal for targets without a dmb or
@@ -9047,6 +9083,8 @@ SDValue ARMTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
     return LowerPredicateLoad(Op, DAG);
   case ISD::STORE:
     return LowerPredicateStore(Op, DAG);
+  case ISD::MLOAD:
+    return LowerMLOAD(Op, DAG);
   case ISD::ATOMIC_LOAD:
   case ISD::ATOMIC_STORE:  return LowerAtomicLoadStore(Op, DAG);
   case ISD::FSINCOS:       return LowerFSINCOS(Op, DAG);
@@ -12591,6 +12629,24 @@ PerformARMBUILD_VECTORCombine(SDNode *N, TargetLowering::DAGCombinerInfo &DCI) {
   return Vec;
 }
 
+static SDValue
+PerformPREDICATE_CASTCombine(SDNode *N, TargetLowering::DAGCombinerInfo &DCI) {
+  EVT VT = N->getValueType(0);
+  SDValue Op = N->getOperand(0);
+  SDLoc dl(N);
+
+  // PREDICATE_CAST(PREDICATE_CAST(x)) == PREDICATE_CAST(x)
+  if (Op->getOpcode() == ARMISD::PREDICATE_CAST) {
+    // If the valuetypes are the same, we can remove the cast entirely.
+    if (Op->getOperand(0).getValueType() == VT)
+      return Op->getOperand(0);
+    return DCI.DAG.getNode(ARMISD::PREDICATE_CAST, dl,
+                           Op->getOperand(0).getValueType(), Op->getOperand(0));
+  }
+
+  return SDValue();
+}
+
 /// PerformInsertEltCombine - Target-specific dag combine xforms for
 /// ISD::INSERT_VECTOR_ELT.
 static SDValue PerformInsertEltCombine(SDNode *N,
@@ -14131,6 +14187,8 @@ SDValue ARMTargetLowering::PerformDAGCombine(SDNode *N,
     return PerformVLDCombine(N, DCI);
   case ARMISD::BUILD_VECTOR:
     return PerformARMBUILD_VECTORCombine(N, DCI);
+  case ARMISD::PREDICATE_CAST:
+    return PerformPREDICATE_CASTCombine(N, DCI);
   case ARMISD::SMULWB: {
     unsigned BitWidth = N->getValueType(0).getSizeInBits();
     APInt DemandedMask = APInt::getLowBitsSet(BitWidth, 16);

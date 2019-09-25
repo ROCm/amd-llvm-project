@@ -907,6 +907,21 @@ bool TargetLowering::SimplifyDemandedBits(
     }
     break;
   }
+  case ISD::EXTRACT_SUBVECTOR: {
+    // If index isn't constant, assume we need all the source vector elements.
+    SDValue Src = Op.getOperand(0);
+    ConstantSDNode *SubIdx = dyn_cast<ConstantSDNode>(Op.getOperand(1));
+    unsigned NumSrcElts = Src.getValueType().getVectorNumElements();
+    APInt SrcElts = APInt::getAllOnesValue(NumSrcElts);
+    if (SubIdx && SubIdx->getAPIntValue().ule(NumSrcElts - NumElts)) {
+      // Offset the demanded elts by the subvector index.
+      uint64_t Idx = SubIdx->getZExtValue();
+      SrcElts = DemandedElts.zextOrSelf(NumSrcElts).shl(Idx);
+    }
+    if (SimplifyDemandedBits(Src, DemandedBits, SrcElts, Known, TLO, Depth + 1))
+      return true;
+    break;
+  }
   case ISD::CONCAT_VECTORS: {
     Known.Zero.setAllBits();
     Known.One.setAllBits();
@@ -1270,7 +1285,7 @@ bool TargetLowering::SimplifyDemandedBits(
       // out) are never demanded.
       // TODO - support non-uniform vector amounts.
       if (Op0.getOpcode() == ISD::SRL) {
-        if ((DemandedBits & APInt::getLowBitsSet(BitWidth, ShAmt)) == 0) {
+        if (!DemandedBits.intersects(APInt::getLowBitsSet(BitWidth, ShAmt))) {
           if (ConstantSDNode *SA2 =
                   isConstOrConstSplat(Op0.getOperand(1), DemandedElts)) {
             if (SA2->getAPIntValue().ult(BitWidth)) {
@@ -1377,7 +1392,8 @@ bool TargetLowering::SimplifyDemandedBits(
       if (Op0.getOpcode() == ISD::SHL) {
         if (ConstantSDNode *SA2 =
                 isConstOrConstSplat(Op0.getOperand(1), DemandedElts)) {
-          if ((DemandedBits & APInt::getHighBitsSet(BitWidth, ShAmt)) == 0) {
+          if (!DemandedBits.intersects(
+                  APInt::getHighBitsSet(BitWidth, ShAmt))) {
             if (SA2->getAPIntValue().ult(BitWidth)) {
               unsigned C1 = SA2->getZExtValue();
               unsigned Opc = ISD::SRL;
@@ -3224,7 +3240,7 @@ SDValue TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
       LoadSDNode *Lod = cast<LoadSDNode>(N0.getOperand(0));
       APInt bestMask;
       unsigned bestWidth = 0, bestOffset = 0;
-      if (!Lod->isVolatile() && Lod->isUnindexed()) {
+      if (Lod->isSimple() && Lod->isUnindexed()) {
         unsigned origWidth = N0.getValueSizeInBits();
         unsigned maskWidth = origWidth;
         // We can narrow (e.g.) 16-bit extending loads on 32-bit target to

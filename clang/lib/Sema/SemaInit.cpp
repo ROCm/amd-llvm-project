@@ -4471,10 +4471,10 @@ static void CheckCXXAMPSMFDestructor(Sema &S, CXXRecordDecl* RDecl,
     if(!DD->hasAttr<CXXAMPRestrictCPUAttr>() &&
        !DD->hasAttr<CXXAMPRestrictAMPAttr>()) {
       if(CPUAttr && !DD->hasAttr<CXXAMPRestrictCPUAttr>())
-        DD->addAttr(::new (Context) CXXAMPRestrictCPUAttr(Loc, Context, 0));
+        DD->addAttr(::new (Context) CXXAMPRestrictCPUAttr(Context, Loc));
 
        if(AMPAttr && !DD->hasAttr<CXXAMPRestrictAMPAttr>()) {
-         DD->addAttr(::new (Context) CXXAMPRestrictAMPAttr(Loc, Context, 0));
+         DD->addAttr(::new (Context) CXXAMPRestrictAMPAttr(Context, Loc));
       }
     } else {
         // FIXME:
@@ -4514,10 +4514,10 @@ static void CheckCXXAMPSMFConstructor(Sema &S, CXXRecordDecl* RDecl,
         S.InheritSMFCtorIntersections(RDecl, CPUAttr, AMPAttr,
           ParentCPUAttr, ParentAMPAttr, SMF_DefaultConstructor);
       if(DefaultCtor && CPUAttr && !DefaultCtor->hasAttr<CXXAMPRestrictCPUAttr>())
-        DefaultCtor->addAttr(::new (Context) CXXAMPRestrictCPUAttr(Loc, Context, 0));
+        DefaultCtor->addAttr(::new (Context) CXXAMPRestrictCPUAttr(Context, Loc));
 
       if(DefaultCtor && AMPAttr && !DefaultCtor->hasAttr<CXXAMPRestrictAMPAttr>())
-        DefaultCtor->addAttr(::new (Context) CXXAMPRestrictAMPAttr(Loc, Context, 0));
+        DefaultCtor->addAttr(::new (Context) CXXAMPRestrictAMPAttr(Context, Loc));
     }
     if(DefaultCtor && (DefaultCtor->hasAttr<CXXAMPRestrictCPUAttr>() ||
       DefaultCtor->hasAttr<CXXAMPRestrictAMPAttr>()))
@@ -4547,10 +4547,10 @@ static void CheckCXXAMPSMFConstructor(Sema &S, CXXRecordDecl* RDecl,
       S.InheritSMFCtorIntersections(RDecl, CPUAttr, AMPAttr,
         ParentCPUAttr, ParentAMPAttr, SMF_CopyConstructor, ConstParam);
       if(CopyCtor && CPUAttr && !CopyCtor->hasAttr<CXXAMPRestrictCPUAttr>())
-        CopyCtor->addAttr(::new (Context) CXXAMPRestrictCPUAttr(Loc, Context, 0));
+        CopyCtor->addAttr(::new (Context) CXXAMPRestrictCPUAttr(Context, Loc));
 
       if(CopyCtor && AMPAttr && !CopyCtor->hasAttr<CXXAMPRestrictAMPAttr>())
-        CopyCtor->addAttr(::new (Context) CXXAMPRestrictAMPAttr(Loc, Context, 0));
+        CopyCtor->addAttr(::new (Context) CXXAMPRestrictAMPAttr(Context, Loc));
 
       if(CopyCtor && (CopyCtor->hasAttr<CXXAMPRestrictCPUAttr>() ||
         CopyCtor->hasAttr<CXXAMPRestrictAMPAttr>()))
@@ -4578,10 +4578,10 @@ static void CheckCXXAMPSMFConstructor(Sema &S, CXXRecordDecl* RDecl,
       S.InheritSMFCtorIntersections(RDecl, CPUAttr, AMPAttr,
         ParentCPUAttr, ParentAMPAttr, SMF_MoveConstructor);
       if(MoveCtor && CPUAttr && !MoveCtor->hasAttr<CXXAMPRestrictCPUAttr>())
-        MoveCtor->addAttr(::new (Context) CXXAMPRestrictCPUAttr(Loc, Context, 0));
+        MoveCtor->addAttr(::new (Context) CXXAMPRestrictCPUAttr(Context, Loc));
 
       if(MoveCtor && AMPAttr && !MoveCtor->hasAttr<CXXAMPRestrictAMPAttr>())
-        MoveCtor->addAttr(::new (Context) CXXAMPRestrictAMPAttr(Loc, Context, 0));
+        MoveCtor->addAttr(::new (Context) CXXAMPRestrictAMPAttr(Context, Loc));
 
       if(MoveCtor && (MoveCtor->hasAttr<CXXAMPRestrictCPUAttr>() ||
         MoveCtor->hasAttr<CXXAMPRestrictAMPAttr>()))
@@ -4620,10 +4620,10 @@ static void CheckCXXAMPSMFMethod(Sema& S, CXXRecordDecl* RDecl,
       S.InheritSMFMethodIntersections(RDecl, CPUAttr, AMPAttr,
         ParentCPUAttr, ParentAMPAttr, SMF_CopyAssignment, ConstParam);
       if(CopyAssign && CPUAttr && !CopyAssign->hasAttr<CXXAMPRestrictCPUAttr>())
-        CopyAssign->addAttr(::new (Context) CXXAMPRestrictCPUAttr(Loc, Context, 0));
+        CopyAssign->addAttr(::new (Context) CXXAMPRestrictCPUAttr(Context, Loc));
 
       if(CopyAssign && AMPAttr && !CopyAssign->hasAttr<CXXAMPRestrictAMPAttr>())
-        CopyAssign->addAttr(::new (Context) CXXAMPRestrictAMPAttr(Loc, Context, 0));
+        CopyAssign->addAttr(::new (Context) CXXAMPRestrictAMPAttr(Context, Loc));
 
       if(CopyAssign && (CopyAssign->hasAttr<CXXAMPRestrictCPUAttr>() ||
         CopyAssign->hasAttr<CXXAMPRestrictAMPAttr>()))

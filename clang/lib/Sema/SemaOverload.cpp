@@ -12655,7 +12655,7 @@ void Sema::DiagnoseCXXAMPOverloadedCallExpr(SourceLocation LParenLoc,
     if ((CallerAMP && !CalleeAMP) &&
         (Callee->isGlobal() || Callee->getStorageClass() == SC_Static)) {
       //llvm::errs() << "add [[hc]] to callee: " << Callee->getName() << "\n";
-      Callee->addAttr(::new (Context) CXXAMPRestrictAMPAttr(Callee->getLocation(), Context, 0));
+      Callee->addAttr(::new (Context) CXXAMPRestrictAMPAttr(Context, Callee->getLocation()));
       CalleeAMP = Callee->hasAttr<CXXAMPRestrictAMPAttr>();
     }
   }

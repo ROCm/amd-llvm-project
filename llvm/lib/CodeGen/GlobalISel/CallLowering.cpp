@@ -243,8 +243,8 @@ bool CallLowering::handleAssignments(CCState &CCInfo,
             }
             Args[i].Regs.push_back(Reg);
             Args[i].Flags.push_back(Flags);
-            if (Handler.assignArg(i, NewVT, NewVT, CCValAssign::Full, Args[i],
-                                  Args[i].Flags[Part], CCInfo)) {
+            if (Handler.assignArg(i + Part, NewVT, NewVT, CCValAssign::Full,
+                                  Args[i], Args[i].Flags[Part], CCInfo)) {
               // Still couldn't assign this smaller part type for some reason.
               return false;
             }
@@ -276,8 +276,8 @@ bool CallLowering::handleAssignments(CCState &CCInfo,
           }
           Args[i].Regs.push_back(Unmerge.getReg(PartIdx));
           Args[i].Flags.push_back(Flags);
-          if (Handler.assignArg(i, NewVT, NewVT, CCValAssign::Full, Args[i],
-                                Args[i].Flags[PartIdx], CCInfo))
+          if (Handler.assignArg(i + PartIdx, NewVT, NewVT, CCValAssign::Full,
+                                Args[i], Args[i].Flags[PartIdx], CCInfo))
             return false;
         }
       }
@@ -298,9 +298,9 @@ bool CallLowering::handleAssignments(CCState &CCInfo,
     // FIXME: Pack registers if we have more than one.
     Register ArgReg = Args[i].Regs[0];
 
+    MVT OrigVT = MVT::getVT(Args[i].Ty);
+    MVT VAVT = VA.getValVT();
     if (VA.isRegLoc()) {
-      MVT OrigVT = MVT::getVT(Args[i].Ty);
-      MVT VAVT = VA.getValVT();
       if (Handler.isIncomingArgumentHandler() && VAVT != OrigVT) {
         if (VAVT.getSizeInBits() < OrigVT.getSizeInBits()) {
           // Expected to be multiple regs for a single incoming arg.
@@ -355,6 +355,14 @@ bool CallLowering::handleAssignments(CCState &CCInfo,
         Handler.assignValueToReg(ArgReg, VA.getLocReg(), VA);
       }
     } else if (VA.isMemLoc()) {
+      // Don't currently support loading/storing a type that needs to be split
+      // to the stack. Should be easy, just not implemented yet.
+      if (Args[i].Regs.size() > 1) {
+        LLVM_DEBUG(
+            dbgs()
+            << "Load/store a split arg to/from the stack not implemented yet");
+        return false;
+      }
       MVT VT = MVT::getVT(Args[i].Ty);
       unsigned Size = VT == MVT::iPTR ? DL.getPointerSize()
                                       : alignTo(VT.getSizeInBits(), 8) / 8;
@@ -370,7 +378,7 @@ bool CallLowering::handleAssignments(CCState &CCInfo,
   return true;
 }
 
-bool CallLowering::analyzeCallResult(CCState &CCState,
+bool CallLowering::analyzeArgInfo(CCState &CCState,
                                      SmallVectorImpl<ArgInfo> &Args,
                                      CCAssignFn &Fn) const {
   for (unsigned i = 0, e = Args.size(); i < e; ++i) {
@@ -399,12 +407,12 @@ bool CallLowering::resultsCompatible(CallLoweringInfo &Info,
 
   SmallVector<CCValAssign, 16> ArgLocs1;
   CCState CCInfo1(CalleeCC, false, MF, ArgLocs1, F.getContext());
-  if (!analyzeCallResult(CCInfo1, InArgs, CalleeAssignFn))
+  if (!analyzeArgInfo(CCInfo1, InArgs, CalleeAssignFn))
     return false;
 
   SmallVector<CCValAssign, 16> ArgLocs2;
   CCState CCInfo2(CallerCC, false, MF, ArgLocs2, F.getContext());
-  if (!analyzeCallResult(CCInfo2, InArgs, CallerAssignFn))
+  if (!analyzeArgInfo(CCInfo2, InArgs, CallerAssignFn))
     return false;
 
   // We need the argument locations to match up exactly. If there's more in

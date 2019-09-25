@@ -6110,7 +6110,7 @@ MachineInstrBuilder SIInstrInfo::getAddNoCarry(MachineBasicBlock &MBB,
                                                Register DestReg,
                                                RegScavenger &RS) const {
   if (ST.hasAddNoCarry())
-    return BuildMI(MBB, I, DL, get(AMDGPU::V_ADD_U32_e64), DestReg);
+    return BuildMI(MBB, I, DL, get(AMDGPU::V_ADD_U32_e32), DestReg);
 
   Register UnusedCarry = RS.scavengeRegister(RI.getBoolRC(), I, 0, false);
   // TODO: Users need to deal with this.
@@ -6415,11 +6415,12 @@ MachineInstr *SIInstrInfo::createPHIDestinationCopy(
     MachineBasicBlock &MBB, MachineBasicBlock::iterator LastPHIIt,
     const DebugLoc &DL, Register Src, Register Dst) const {
   auto Cur = MBB.begin();
-  do {
-    if (!Cur->isPHI() && Cur->readsRegister(Dst))
-      return BuildMI(MBB, Cur, DL, get(TargetOpcode::COPY), Dst).addReg(Src);
-    ++Cur;
-  } while (Cur != MBB.end() && Cur != LastPHIIt);
+  if (Cur != MBB.end())
+    do {
+      if (!Cur->isPHI() && Cur->readsRegister(Dst))
+        return BuildMI(MBB, Cur, DL, get(TargetOpcode::COPY), Dst).addReg(Src);
+      ++Cur;
+    } while (Cur != MBB.end() && Cur != LastPHIIt);
 
   return TargetInstrInfo::createPHIDestinationCopy(MBB, LastPHIIt, DL, Src,
                                                    Dst);
@@ -6428,9 +6429,15 @@ MachineInstr *SIInstrInfo::createPHIDestinationCopy(
 MachineInstr *SIInstrInfo::createPHISourceCopy(
     MachineBasicBlock &MBB, MachineBasicBlock::iterator InsPt,
     const DebugLoc &DL, Register Src, Register SrcSubReg, Register Dst) const {
-  if (InsPt != MBB.end() && InsPt->isPseudo() && InsPt->definesRegister(Src)) {
+  if (InsPt != MBB.end() &&
+      (InsPt->getOpcode() == AMDGPU::SI_IF ||
+       InsPt->getOpcode() == AMDGPU::SI_ELSE ||
+       InsPt->getOpcode() == AMDGPU::SI_IF_BREAK) &&
+      InsPt->definesRegister(Src)) {
     InsPt++;
-    return BuildMI(MBB, InsPt, InsPt->getDebugLoc(), get(TargetOpcode::COPY),
+    return BuildMI(MBB, InsPt, InsPt->getDebugLoc(),
+                   get(ST.isWave32() ? AMDGPU::S_MOV_B32_term
+                                     : AMDGPU::S_MOV_B64_term),
                    Dst)
         .addReg(Src, 0, SrcSubReg)
         .addReg(AMDGPU::EXEC, RegState::Implicit);
@@ -6438,3 +6445,5 @@ MachineInstr *SIInstrInfo::createPHISourceCopy(
   return TargetInstrInfo::createPHISourceCopy(MBB, InsPt, DL, Src, SrcSubReg,
                                               Dst);
 }
+
+bool llvm::SIInstrInfo::isWave32() const { return ST.isWave32(); }

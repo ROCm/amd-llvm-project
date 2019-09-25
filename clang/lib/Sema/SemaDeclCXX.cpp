@@ -24,6 +24,7 @@
 #include "clang/AST/StmtVisitor.h"
 #include "clang/AST/TypeLoc.h"
 #include "clang/AST/TypeOrdering.h"
+#include "clang/Basic/AttributeCommonInfo.h"
 #include "clang/Basic/PartialDiagnostic.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Lex/LiteralSupport.h"
@@ -2500,7 +2501,7 @@ Sema::ActOnBaseSpecifier(Decl *classdecl, SourceRange SpecifierRange,
     Diag(AL.getLoc(), AL.getKind() == ParsedAttr::UnknownAttribute
                           ? (unsigned)diag::warn_unknown_attribute_ignored
                           : (unsigned)diag::err_base_specifier_attribute)
-        << AL.getName();
+        << AL;
   }
 
   TypeSourceInfo *TInfo = nullptr;
@@ -3344,10 +3345,12 @@ Sema::ActOnCXXMemberDeclarator(Scope *S, AccessSpecifier AS, Declarator &D,
   }
 
   if (VS.isOverrideSpecified())
-    Member->addAttr(new (Context) OverrideAttr(VS.getOverrideLoc(), Context, 0));
+    Member->addAttr(OverrideAttr::Create(Context, VS.getOverrideLoc(),
+                                         AttributeCommonInfo::AS_Keyword));
   if (VS.isFinalSpecified())
-    Member->addAttr(new (Context) FinalAttr(VS.getFinalLoc(), Context,
-                                            VS.isFinalSpelledSealed()));
+    Member->addAttr(FinalAttr::Create(
+        Context, VS.getFinalLoc(), AttributeCommonInfo::AS_Keyword,
+        static_cast<FinalAttr::Spelling>(VS.isFinalSpelledSealed())));
 
   if (VS.getLastLocation().isValid()) {
     // Update the end location of a method that has a virt-specifiers.
@@ -5964,14 +5967,10 @@ void Sema::checkClassLevelDLLAttribute(CXXRecordDecl *Class) {
           TSK != TSK_ExplicitInstantiationDefinition) {
         if (ClassExported) {
           NewAttr = ::new (getASTContext())
-            DLLExportStaticLocalAttr(ClassAttr->getRange(),
-                                     getASTContext(),
-                                     ClassAttr->getSpellingListIndex());
+              DLLExportStaticLocalAttr(getASTContext(), *ClassAttr);
         } else {
           NewAttr = ::new (getASTContext())
-            DLLImportStaticLocalAttr(ClassAttr->getRange(),
-                                     getASTContext(),
-                                     ClassAttr->getSpellingListIndex());
+              DLLImportStaticLocalAttr(getASTContext(), *ClassAttr);
         }
       } else {
         NewAttr = cast<InheritableAttr>(ClassAttr->clone(getASTContext()));
@@ -8145,8 +8144,7 @@ void Sema::ActOnFinishCXXMemberSpecification(
     if (AL.getKind() != ParsedAttr::AT_Visibility)
       continue;
     AL.setInvalid();
-    Diag(AL.getLoc(), diag::warn_attribute_after_definition_ignored)
-        << AL.getName();
+    Diag(AL.getLoc(), diag::warn_attribute_after_definition_ignored) << AL;
   }
 
   ActOnFields(S, RLoc, TagDecl, llvm::makeArrayRef(
@@ -8266,11 +8264,11 @@ void Sema::DeclareAMPSerializer(CXXRecordDecl *ClassDecl, DeclarationName Name) 
   // Set appropriate attributes for AMP
   if (getLangOpts().AMPCPU)
       SerializeFunc->addAttr(new (Context)
-                             CXXAMPRestrictAMPAttr(CurrentLocation, Context, 0));
+                             CXXAMPRestrictAMPAttr(Context, CurrentLocation));
   SerializeFunc->addAttr(::new (Context)
-                         CXXAMPRestrictCPUAttr(CurrentLocation, Context, 0));
+                         CXXAMPRestrictCPUAttr(Context, CurrentLocation));
   SerializeFunc->addAttr(::new (Context)
-                         AnnotateAttr(CurrentLocation, Context, "serialize", 0));
+                         AnnotateAttr(Context, CurrentLocation, "serialize"));
   ClassDecl->addDecl(SerializeFunc);
   // Now we've obtained a valid Name. Use that to recursively declare
   // __cxxamp_serialize() for member classes. TBD: base classes?
@@ -8407,10 +8405,9 @@ void Sema::DeclareAMPDeserializer(CXXRecordDecl *ClassDecl, AMPDeserializerArgs 
   Constructor->setParams(FieldAsArgs);
   // Set appropriate attributes for AMP
   if (getLangOpts().AMPCPU)
-      Constructor->addAttr(new (Context) CXXAMPRestrictCPUAttr(ClassLoc, Context, 0));
-  Constructor->addAttr(::new (Context) CXXAMPRestrictAMPAttr(ClassLoc, Context, 0));
-  Constructor->addAttr(::new (Context)
-    AnnotateAttr(ClassLoc, Context, "auto_deserialize", 0));
+      Constructor->addAttr(new (Context) CXXAMPRestrictCPUAttr(Context, ClassLoc));
+  Constructor->addAttr(::new (Context) CXXAMPRestrictAMPAttr(Context, ClassLoc));
+  Constructor->addAttr(::new (Context) AnnotateAttr(Context, ClassLoc, "auto_deserialize"));
   // Introduce this constructor into its scope.
   if (Scope *S = getScopeForContext(ClassDecl))
     PushOnScopeChains(Constructor, S, false);
@@ -12710,9 +12707,9 @@ void Sema::DeclareAMPTrampolineName(CXXRecordDecl *ClassDecl, DeclarationName Na
   Trampoline->setAccess(AS_public);
   // Set appropriate attributes for AMP
  if (getLangOpts().AMPCPU)
-     Trampoline->addAttr(new (Context) CXXAMPRestrictAMPAttr(CurrentLocation, Context, 0));
-  Trampoline->addAttr(new (Context) CXXAMPRestrictCPUAttr(CurrentLocation, Context, 0));
-  Trampoline->addAttr(new (Context) AnnotateAttr(CurrentLocation, Context, "__cxxamp_trampoline_name", 0));
+     Trampoline->addAttr(new (Context) CXXAMPRestrictAMPAttr(Context, CurrentLocation));
+  Trampoline->addAttr(new (Context) CXXAMPRestrictCPUAttr(Context, CurrentLocation));
+  Trampoline->addAttr(new (Context) AnnotateAttr(Context, CurrentLocation,  "__cxxamp_trampoline_name"));
   ClassDecl->addDecl(Trampoline);
   // Generate definition
   MarkFunctionReferenced(CurrentLocation, Trampoline);
@@ -12750,16 +12747,16 @@ void CreateDummyAMPTrampoline(Sema& S, DeclarationName Name, CXXRecordDecl *&Cla
   #endif
 
   // Set appropriate attributes for AMP
-   Trampoline->addAttr(::new (Context) OpenCLKernelAttr(CurrentLocation, Context, 0));
-   Trampoline->addAttr(::new (Context) CXXAMPRestrictAMPAttr(CurrentLocation, Context, 0));
+   Trampoline->addAttr(::new (Context) OpenCLKernelAttr(Context, CurrentLocation));
+   Trampoline->addAttr(::new (Context) CXXAMPRestrictAMPAttr(Context, CurrentLocation));
 
    // In CPU compilation mode, we need an empty implementation of trampoline
    // so that parallel_for_each can find it.
-   Trampoline->addAttr(::new (Context) CXXAMPRestrictCPUAttr(CurrentLocation, Context, 0));
-   Trampoline->addAttr(::new (Context) AnnotateAttr(CurrentLocation, Context, "__cxxamp_trampoline", 0));
+   Trampoline->addAttr(::new (Context) CXXAMPRestrictCPUAttr(Context, CurrentLocation));
+   Trampoline->addAttr(::new (Context) AnnotateAttr(Context, CurrentLocation, "__cxxamp_trampoline"));
    // Manually add this Attribute on this stage to avoid
    //     ClassDecl->getCXXAMPDeserializationConstructor() == NULL
-   Trampoline->addAttr(::new (Context) AnnotateAttr(CurrentLocation, Context, "dummy_deserialize", 0));
+   Trampoline->addAttr(::new (Context) AnnotateAttr(Context, CurrentLocation, "dummy_deserialize"));
    ClassDecl->addDecl(Trampoline);
 }
 
@@ -12962,12 +12959,12 @@ void Sema::DeclareAMPTrampoline(CXXRecordDecl *ClassDecl,
   // Popluate arguments
   Trampoline->setParams(TrampolineParams);
   // Set appropriate attributes for AMP
-  Trampoline->addAttr(::new (Context) OpenCLKernelAttr(CurrentLocation, Context, 0));
-  Trampoline->addAttr(::new (Context) CXXAMPRestrictAMPAttr(CurrentLocation, Context, 0));
+  Trampoline->addAttr(::new (Context) OpenCLKernelAttr(Context, CurrentLocation));
+  Trampoline->addAttr(::new (Context) CXXAMPRestrictAMPAttr(Context, CurrentLocation));
   // In CPU compilation mode, we need an empty implementation of trampoline
   // so that parallel_for_each can find it.
-  Trampoline->addAttr(::new (Context) CXXAMPRestrictCPUAttr(CurrentLocation, Context, 0));
-  Trampoline->addAttr(::new (Context) AnnotateAttr(CurrentLocation, Context, "__cxxamp_trampoline", 0));
+  Trampoline->addAttr(::new (Context) CXXAMPRestrictCPUAttr(Context, CurrentLocation));
+  Trampoline->addAttr(::new (Context) AnnotateAttr(Context, CurrentLocation, "__cxxamp_trampoline"));
   ClassDecl->addDecl(Trampoline);
   // Generate definition
   MarkFunctionReferenced(CurrentLocation, Trampoline);

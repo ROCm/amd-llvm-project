@@ -313,17 +313,13 @@ void ClangUserExpression::ScanContext(ExecutionContext &exe_ctx, Status &err) {
 // count is not available, [myArray count] returns id, which can't be directly
 // cast to int without causing a clang error.
 static void ApplyObjcCastHack(std::string &expr) {
-#define OBJC_CAST_HACK_FROM "(int)["
-#define OBJC_CAST_HACK_TO "(int)(long long)["
+  const std::string from = "(int)[";
+  const std::string to = "(int)(long long)[";
 
-  size_t from_offset;
+  size_t offset;
 
-  while ((from_offset = expr.find(OBJC_CAST_HACK_FROM)) != expr.npos)
-    expr.replace(from_offset, sizeof(OBJC_CAST_HACK_FROM) - 1,
-                 OBJC_CAST_HACK_TO);
-
-#undef OBJC_CAST_HACK_TO
-#undef OBJC_CAST_HACK_FROM
+  while ((offset = expr.find(from)) != expr.npos)
+    expr.replace(offset, from.size(), to);
 }
 
 bool ClangUserExpression::SetupPersistentState(DiagnosticManager &diagnostic_manager,
@@ -469,7 +465,7 @@ ClangUserExpression::GetModulesToImport(ExecutionContext &exe_ctx) {
   }
 
   for (const SourceModule &m : sc.comp_unit->GetImportedModules())
-    m_include_directories.push_back(m.search_path);
+    m_include_directories.emplace_back(m.search_path.GetCString());
 
   // Check if we imported 'std' or any of its submodules.
   // We currently don't support importing any other modules in the expression

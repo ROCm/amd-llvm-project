@@ -92,7 +92,7 @@ void DeleteWithNonVirtualDtorChecker::checkPreStmt(const CXXDeleteExpr *DE,
                          "Logic error"));
 
   ExplodedNode *N = C.generateNonFatalErrorNode();
-  auto R = std::make_unique<PathSensitiveBugReport>(*BT, BT->getName(), N);
+  auto R = std::make_unique<PathSensitiveBugReport>(*BT, BT->getDescription(), N);
 
   // Mark region of problematic base class for later use in the BugVisitor.
   R->markInteresting(BaseClassRegion);
@@ -108,7 +108,7 @@ DeleteWithNonVirtualDtorChecker::DeleteBugVisitor::VisitNode(
   if (Satisfied)
     return nullptr;
 
-  const Stmt *S = PathDiagnosticLocation::getStmt(N);
+  const Stmt *S = N->getStmtForDiagnostics();
   if (!S)
     return nullptr;
 
@@ -140,8 +140,7 @@ DeleteWithNonVirtualDtorChecker::DeleteBugVisitor::VisitNode(
   OS << "Conversion from derived to base happened here";
   PathDiagnosticLocation Pos(S, BRC.getSourceManager(),
                              N->getLocationContext());
-  return std::make_shared<PathDiagnosticEventPiece>(Pos, OS.str(), true,
-                                                    nullptr);
+  return std::make_shared<PathDiagnosticEventPiece>(Pos, OS.str(), true);
 }
 
 void ento::registerDeleteWithNonVirtualDtorChecker(CheckerManager &mgr) {

@@ -47,7 +47,8 @@ public:
   bool
   isEligibleForTailCallOptimization(MachineIRBuilder &MIRBuilder,
                                     CallLoweringInfo &Info,
-                                    SmallVectorImpl<ArgInfo> &InArgs) const;
+                                    SmallVectorImpl<ArgInfo> &InArgs,
+                                    SmallVectorImpl<ArgInfo> &OutArgs) const;
 
   bool supportSwiftError() const override { return true; }
 
@@ -63,10 +64,17 @@ private:
                          const DataLayout &DL, MachineRegisterInfo &MRI,
                          CallingConv::ID CallConv) const;
 
+  bool lowerTailCall(MachineIRBuilder &MIRBuilder, CallLoweringInfo &Info,
+                     SmallVectorImpl<ArgInfo> &OutArgs) const;
+
   bool
   doCallerAndCalleePassArgsTheSameWay(CallLoweringInfo &Info,
                                       MachineFunction &MF,
                                       SmallVectorImpl<ArgInfo> &InArgs) const;
+
+  bool
+  areCalleeOutgoingArgsTailCallable(CallLoweringInfo &Info, MachineFunction &MF,
+                                    SmallVectorImpl<ArgInfo> &OutArgs) const;
 };
 
 } // end namespace llvm

@@ -112,11 +112,11 @@ public:
     DefaultBool CheckNullablePassedToNonnull;
     DefaultBool CheckNullableReturnedFromNonnull;
 
-    CheckName CheckNameNullPassedToNonnull;
-    CheckName CheckNameNullReturnedFromNonnull;
-    CheckName CheckNameNullableDereferenced;
-    CheckName CheckNameNullablePassedToNonnull;
-    CheckName CheckNameNullableReturnedFromNonnull;
+    CheckerNameRef CheckNameNullPassedToNonnull;
+    CheckerNameRef CheckNameNullReturnedFromNonnull;
+    CheckerNameRef CheckNameNullableDereferenced;
+    CheckerNameRef CheckNameNullablePassedToNonnull;
+    CheckerNameRef CheckNameNullableReturnedFromNonnull;
   };
 
   NullabilityChecksFilter Filter;
@@ -309,7 +309,7 @@ PathDiagnosticPieceRef NullabilityChecker::NullabilityBugVisitor::VisitNode(
   // Retrieve the associated statement.
   const Stmt *S = TrackedNullab->getNullabilitySource();
   if (!S || S->getBeginLoc().isInvalid()) {
-    S = PathDiagnosticLocation::getStmt(N);
+    S = N->getStmtForDiagnostics();
   }
 
   if (!S)
@@ -323,8 +323,7 @@ PathDiagnosticPieceRef NullabilityChecker::NullabilityBugVisitor::VisitNode(
   // Generate the extra diagnostic.
   PathDiagnosticLocation Pos(S, BRC.getSourceManager(),
                              N->getLocationContext());
-  return std::make_shared<PathDiagnosticEventPiece>(Pos, InfoText, true,
-                                                    nullptr);
+  return std::make_shared<PathDiagnosticEventPiece>(Pos, InfoText, true);
 }
 
 /// Returns true when the value stored at the given location has been
@@ -1202,12 +1201,12 @@ bool ento::shouldRegisterNullabilityBase(const LangOptions &LO) {
   void ento::register##name##Checker(CheckerManager &mgr) {                    \
     NullabilityChecker *checker = mgr.getChecker<NullabilityChecker>();        \
     checker->Filter.Check##name = true;                                        \
-    checker->Filter.CheckName##name = mgr.getCurrentCheckName();               \
+    checker->Filter.CheckName##name = mgr.getCurrentCheckerName();             \
     checker->NeedTracking = checker->NeedTracking || trackingRequired;         \
     checker->NoDiagnoseCallsToSystemHeaders =                                  \
         checker->NoDiagnoseCallsToSystemHeaders ||                             \
         mgr.getAnalyzerOptions().getCheckerBooleanOption(                      \
-                      checker, "NoDiagnoseCallsToSystemHeaders", true);        \
+            checker, "NoDiagnoseCallsToSystemHeaders", true);                  \
   }                                                                            \
                                                                                \
   bool ento::shouldRegister##name##Checker(const LangOptions &LO) {            \

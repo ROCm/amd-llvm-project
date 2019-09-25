@@ -5841,7 +5841,7 @@ void Sema::DiagnoseCXXAMPMethodCallExpr(SourceLocation LParenLoc,
   if (getLangOpts().DevicePath && getLangOpts().AutoCompileForAccelerator) {
     if (CallerAMP && !CalleeAMP) {
       //llvm::errs() << "add [[hc]] to callee: " << Callee->getName() << "\n";
-      Callee->addAttr(::new (Context) CXXAMPRestrictAMPAttr(Callee->getLocation(), Context, 0));
+      Callee->addAttr(::new (Context) CXXAMPRestrictAMPAttr(Context, Callee->getLocation()));
       CalleeAMP = Callee->hasAttr<CXXAMPRestrictAMPAttr>();
     }
   }
@@ -6639,8 +6639,28 @@ bool Sema::areLaxCompatibleVectorTypes(QualType srcTy, QualType destTy) {
 bool Sema::isLaxVectorConversion(QualType srcTy, QualType destTy) {
   assert(destTy->isVectorType() || srcTy->isVectorType());
 
-  if (!Context.getLangOpts().LaxVectorConversions)
+  switch (Context.getLangOpts().getLaxVectorConversions()) {
+  case LangOptions::LaxVectorConversionKind::None:
     return false;
+
+  case LangOptions::LaxVectorConversionKind::Integer:
+    if (!srcTy->isIntegralOrEnumerationType()) {
+      auto *Vec = srcTy->getAs<VectorType>();
+      if (!Vec || !Vec->getElementType()->isIntegralOrEnumerationType())
+        return false;
+    }
+    if (!destTy->isIntegralOrEnumerationType()) {
+      auto *Vec = destTy->getAs<VectorType>();
+      if (!Vec || !Vec->getElementType()->isIntegralOrEnumerationType())
+        return false;
+    }
+    // OK, integer (vector) -> integer (vector) bitcast.
+    break;
+
+    case LangOptions::LaxVectorConversionKind::All:
+    break;
+  }
+
   return areLaxCompatibleVectorTypes(srcTy, destTy);
 }
 
@@ -9299,17 +9319,30 @@ static void DiagnoseDivisionSizeofPointerOrArray(Sema &S, Expr *LHS, Expr *RHS,
   else
     RHSTy = RUE->getArgumentExpr()->IgnoreParens()->getType();
 
-  if (!LHSTy->isPointerType() || RHSTy->isPointerType())
-    return;
-  if (LHSTy->getPointeeType().getCanonicalType().getUnqualifiedType() !=
-      RHSTy.getCanonicalType().getUnqualifiedType())
-    return;
+  if (LHSTy->isPointerType() && !RHSTy->isPointerType()) {
+    if (!S.Context.hasSameUnqualifiedType(LHSTy->getPointeeType(), RHSTy))
+      return;
 
-  S.Diag(Loc, diag::warn_division_sizeof_ptr) << LHS << LHS->getSourceRange();
-  if (const auto *DRE = dyn_cast<DeclRefExpr>(LHSArg)) {
-    if (const ValueDecl *LHSArgDecl = DRE->getDecl())
-      S.Diag(LHSArgDecl->getLocation(), diag::note_pointer_declared_here)
-          << LHSArgDecl;
+    S.Diag(Loc, diag::warn_division_sizeof_ptr) << LHS << LHS->getSourceRange();
+    if (const auto *DRE = dyn_cast<DeclRefExpr>(LHSArg)) {
+      if (const ValueDecl *LHSArgDecl = DRE->getDecl())
+        S.Diag(LHSArgDecl->getLocation(), diag::note_pointer_declared_here)
+            << LHSArgDecl;
+    }
+  } else if (const auto *ArrayTy = S.Context.getAsArrayType(LHSTy)) {
+    QualType ArrayElemTy = ArrayTy->getElementType();
+    if (ArrayElemTy->isDependentType() || RHSTy->isDependentType() ||
+        S.Context.getTypeSize(ArrayElemTy) == S.Context.getTypeSize(RHSTy))
+      return;
+    S.Diag(Loc, diag::warn_division_sizeof_array)
+        << LHSArg->getSourceRange() << ArrayElemTy << RHSTy;
+    if (const auto *DRE = dyn_cast<DeclRefExpr>(LHSArg)) {
+      if (const ValueDecl *LHSArgDecl = DRE->getDecl())
+        S.Diag(LHSArgDecl->getLocation(), diag::note_array_declared_here)
+            << LHSArgDecl;
+    }
+
+    S.Diag(Loc, diag::note_precedence_silence) << RHS;
   }
 }
 
@@ -15786,6 +15819,7 @@ void Sema::MarkFunctionReferenced(SourceLocation Loc, FunctionDecl *Func,
   }
 
   if (LangOpts.OpenMP) {
+    markOpenMPDeclareVariantFuncsReferenced(Loc, Func, MightBeOdrUse);
     if (LangOpts.OpenMPIsDevice)
       checkOpenMPDeviceFunction(Loc, Func);
     else
